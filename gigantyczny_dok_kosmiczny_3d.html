@@ -1,0 +1,1562 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gigantyczny Dok Kosmiczny — 3D</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #050510;
+            color: #4ade80;
+            font-family: 'Courier New', Courier, monospace;
+        }
+        canvas {
+            display: block;
+            cursor: grab;
+        }
+        canvas:active {
+            cursor: grabbing;
+        }
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 20px;
+            box-sizing: border-box;
+            z-index: 10;
+        }
+        .ui-panel {
+            background: rgba(5, 5, 16, 0.7);
+            border: 1px solid #1e3a8a;
+            border-radius: 8px;
+            padding: 15px;
+            backdrop-filter: blur(4px);
+            box-shadow: 0 0 15px rgba(30, 58, 138, 0.5);
+            pointer-events: auto;
+        }
+        .scan-line {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: rgba(74, 222, 128, 0.2);
+            box-shadow: 0 0 10px rgba(74, 222, 128, 0.5);
+            animation: scan 4s linear infinite;
+            pointer-events: none;
+            z-index: 20;
+        }
+        @keyframes scan {
+            0% { top: -10%; }
+            100% { top: 110%; }
+        }
+        .stat-bar {
+            width: 100%;
+            height: 8px;
+            background-color: #1e293b;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 5px;
+        }
+        .stat-fill {
+            height: 100%;
+            transition: width 0.3s ease;
+        }
+        #toast {
+            transition: opacity 0.3s ease;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="scan-line"></div>
+
+    <div id="ui-layer">
+        <div class="flex justify-between items-start">
+            <div class="ui-panel w-64">
+                <h1 class="text-xl font-bold mb-2 text-blue-400">DOK OMEGA-7</h1>
+                <p class="text-xs text-gray-400 mb-4">Węzeł Pierścienia Orbitalnego · THREE.JS + BLOOM</p>
+
+                <div class="mb-3">
+                    <div class="flex justify-between text-xs mb-1">
+                        <span>Zasilanie (Rdzeń)</span>
+                        <span class="text-blue-300">Optymalne</span>
+                    </div>
+                    <div class="stat-bar">
+                        <div class="stat-fill bg-blue-500" style="width: 92%;"></div>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <div class="flex justify-between text-xs mb-1">
+                        <span>Pojemność Doków</span>
+                        <span id="capacity-text">0%</span>
+                    </div>
+                    <div class="stat-bar">
+                        <div class="stat-fill bg-green-500" id="capacity-bar" style="width: 0%;"></div>
+                    </div>
+                </div>
+
+                <button onclick="exportDockLayout()" class="mt-4 w-full bg-blue-800 hover:bg-blue-600 text-white text-xs py-2 px-4 rounded border border-blue-400 transition-colors">
+                    Eksportuj Layout (JSON)
+                </button>
+                <button onclick="window.toggleArms()" class="mt-2 w-full bg-purple-800 hover:bg-purple-600 text-white text-xs py-2 px-4 rounded border border-purple-400 transition-colors shadow-[0_0_10px_rgba(168,85,247,0.5)]">
+                    Przełącz Ramiona (Tryb Obrony)
+                </button>
+                <button onclick="window.toggleCranes()" class="mt-2 w-full bg-amber-700 hover:bg-amber-500 text-white text-xs py-2 px-4 rounded border border-amber-400 transition-colors shadow-[0_0_10px_rgba(217,119,6,0.5)]">
+                    Szyny + Suwnice (Rozładunek)
+                </button>
+                <button onclick="window.undock()" class="mt-2 w-full bg-orange-700 hover:bg-orange-500 text-white text-xs py-2 px-4 rounded border border-orange-400 transition-colors shadow-[0_0_10px_rgba(249,115,22,0.5)]">
+                    Oddokuj (Niezależny Statek)
+                </button>
+            </div>
+
+            <div class="ui-panel w-64 text-right">
+                <h2 class="text-sm font-bold mb-2 text-yellow-400">RUCH ORBITALNY</h2>
+                <div class="text-xs space-y-1 text-left" id="traffic-log">
+                    <p class="text-gray-400">... nasłuchiwanie ...</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex flex-col items-center">
+            <div class="ui-panel text-center text-xs space-x-4 mb-2">
+                <span class="text-gray-400">LEGENDARIUM:</span>
+                <span class="text-red-400"><span class="inline-block w-2 h-2 rounded-full bg-red-500 mr-1"></span>Megafreighter</span>
+                <span class="text-pink-400"><span class="inline-block w-2 h-2 rounded-full bg-pink-500 mr-1"></span>Klasa L</span>
+                <span class="text-white"><span class="inline-block w-2 h-2 rounded-full bg-white mr-1"></span>Klasa M</span>
+                <span class="text-green-400"><span class="inline-block w-2 h-2 rounded-full bg-green-500 mr-1"></span>Klasa S</span>
+            </div>
+            <div class="ui-panel text-center text-xs text-gray-400">
+                KONTROLA: Przeciągnij (Pan) | Scroll (Zoom)
+            </div>
+        </div>
+    </div>
+
+    <div id="toast" class="absolute bottom-24 left-1/2 transform -translate-x-1/2 bg-blue-700 text-white px-6 py-2 rounded-full shadow-lg opacity-0 pointer-events-none z-50">
+        Wyeksportowano do konsoli!
+    </div>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+        import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+        import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+        // ===================================================================
+        //  RENDERER + SCENA + KAMERA + BLOOM
+        // ===================================================================
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.1;
+        document.body.appendChild(renderer.domElement);
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x030309);
+
+        const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 10, 80000);
+
+        // Otoczenie dla materiałów metalicznych
+        const pmrem = new THREE.PMREMGenerator(renderer);
+        const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+        scene.environment = envTex;
+
+        // PRAWDZIWY BLOOM (post-processing)
+        const composer = new EffectComposer(renderer);
+        composer.addPass(new RenderPass(scene, camera));
+        const bloomPass = new UnrealBloomPass(
+            new THREE.Vector2(window.innerWidth, window.innerHeight),
+            1.05,   // siła
+            0.55,   // promień
+            0.82    // próg
+        );
+        composer.addPass(bloomPass);
+        composer.addPass(new OutputPass());
+        window.bloomPass = bloomPass; // do strojenia z konsoli
+
+        // Światła bazowe
+        scene.add(new THREE.HemisphereLight(0x2a3a55, 0x05070d, 0.55));
+        const sun = new THREE.DirectionalLight(0x9db8dd, 0.65);
+        sun.position.set(-4000, 7000, -3000);
+        scene.add(sun);
+        const coreLight = new THREE.PointLight(0x7fb7ff, 2.2, 9000, 1.6);
+        coreLight.position.set(0, 450, 0);
+        scene.add(coreLight);
+
+        // ===================================================================
+        //  KAMERA TOP-DOWN Z LEKKIM POCHYŁEM + PAN/ZOOM
+        // ===================================================================
+        const camState = { tx: 5200, tz: 0, h: 15500 };
+        const TILT = 0.06; // niemal prosto z góry (widok jak w grze), lekki pochył dla głębi
+        function applyCamera() {
+            camera.position.set(camState.tx, camState.h, camState.tz + Math.tan(TILT) * camState.h);
+            camera.lookAt(camState.tx, 0, camState.tz);
+        }
+        applyCamera();
+
+        const raycaster = new THREE.Raycaster();
+        const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+        const _g = new THREE.Vector3();
+        function screenToGround(px, py, out) {
+            raycaster.setFromCamera(new THREE.Vector2((px / window.innerWidth) * 2 - 1, -(py / window.innerHeight) * 2 + 1), camera);
+            return raycaster.ray.intersectPlane(groundPlane, out);
+        }
+
+        let isDragging = false;
+        const grabPoint = new THREE.Vector3();
+        renderer.domElement.addEventListener('mousedown', e => {
+            isDragging = true;
+            screenToGround(e.clientX, e.clientY, grabPoint);
+        });
+        window.addEventListener('mouseup', () => { isDragging = false; });
+        window.addEventListener('mousemove', e => {
+            if (!isDragging) return;
+            if (screenToGround(e.clientX, e.clientY, _g)) {
+                camState.tx += grabPoint.x - _g.x;
+                camState.tz += grabPoint.z - _g.z;
+                applyCamera();
+            }
+        });
+        renderer.domElement.addEventListener('wheel', e => {
+            const before = new THREE.Vector3();
+            const hasBefore = screenToGround(e.clientX, e.clientY, before);
+            const factor = e.deltaY > 0 ? 1.18 : 1 / 1.18;
+            camState.h = Math.max(320, Math.min(camState.h * factor, 60000));
+            applyCamera();
+            if (hasBefore && screenToGround(e.clientX, e.clientY, _g)) {
+                camState.tx += before.x - _g.x;
+                camState.tz += before.z - _g.z;
+                applyCamera();
+            }
+        });
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // ===================================================================
+        //  POMOCNIKI MATERIAŁÓW / TEKSTUR
+        // ===================================================================
+        function std(color, opts = {}) {
+            return new THREE.MeshStandardMaterial(Object.assign({
+                color, metalness: 0.55, roughness: 0.55, envMapIntensity: 0.4
+            }, opts));
+        }
+        function glow(color, intensity) {
+            return new THREE.MeshStandardMaterial({
+                color: 0x000000, emissive: color, emissiveIntensity: intensity,
+                metalness: 0, roughness: 1
+            });
+        }
+        const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1);
+
+        // Tekstura pasów ostrzegawczych (żółto-czarne chevrony)
+        function makeHazardTexture() {
+            const c = document.createElement('canvas');
+            c.width = 128; c.height = 32;
+            const x = c.getContext('2d');
+            x.fillStyle = '#12161c'; x.fillRect(0, 0, 128, 32);
+            x.fillStyle = '#f5c518';
+            for (let i = -1; i < 5; i++) {
+                x.beginPath();
+                x.moveTo(i * 32, 0); x.lineTo(i * 32 + 16, 0);
+                x.lineTo(i * 32 + 32, 32); x.lineTo(i * 32 + 16, 32);
+                x.closePath(); x.fill();
+            }
+            const t = new THREE.CanvasTexture(c);
+            t.wrapS = t.wrapT = THREE.RepeatWrapping;
+            t.anisotropy = 4;
+            return t;
+        }
+        // Miękka plamka do pary/spritów
+        function makePuffTexture() {
+            const c = document.createElement('canvas');
+            c.width = c.height = 64;
+            const x = c.getContext('2d');
+            const g = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+            g.addColorStop(0, 'rgba(226,232,240,0.85)');
+            g.addColorStop(1, 'rgba(148,163,184,0)');
+            x.fillStyle = g; x.fillRect(0, 0, 64, 64);
+            return new THREE.CanvasTexture(c);
+        }
+        const puffTex = makePuffTexture();
+
+        // ===================================================================
+        //  STAN LOGICZNY DOKU (przeniesiony 1:1 z prototypu 2D)
+        // ===================================================================
+        // ===== REALNE WYMIARY SKŁADU MEGAFREIGHTERA (src/game/megafreighterTrain.js) =====
+        // UWAGA: HULL_RENDER_PROFILES.megafreighter.length (4600) to skalar VFX silników,
+        // NIE długość składu. Autorytatywna geometria jest tutaj:
+        const MF = {
+            moduleLen: 2760,   // MEGAFREIGHTER_MODULE_LENGTH (renderWidth — wzdłuż osi)
+            beam: 1554,        // renderHeight (w poprzek; radius 760 ≈ połowa)
+            spacing: 2920,     // MEGAFREIGHTER_MODULE_SPACING
+            wagons: 6          // MEGAFREIGHTER_WAGON_COUNT
+        };
+        MF.modules = MF.wagons + 2;                                  // lokomotywa + wagony + moduł ogonowy = 8
+        MF.trainLen = MF.spacing * (MF.modules - 1) + MF.moduleLen;  // 2920×7 + 2760 = 23 200
+
+        // Wymiary gniazd = realny kadłub + zapas manewrowy.
+        //   w = wzdłuż długości kadłuba, h = wzdłuż szerokości (2×radius)
+        //   Megafreighter 23 200 × Ø1554 | Battleship 1040–1200 × Ø440
+        //   Destroyer 480–600 × Ø340      | Frigate 320 × Ø240
+        // Dok NIE połyka całego składu (byłby długi na 23 km). Do berthu wjeżdża
+        // lokomotywa, reszta pociągu zostaje na zewnątrz i jest rozładowywana
+        // przez suwnice jeżdżące po wysuwanych szynach.
+        const BAY = {
+            Megafreighter: { w: 8600, h: MF.beam + 150 },   // berth = lokomotywa + ~2 wagony
+            L: { w: 1400, h: 560 },
+            M: { w: 720,  h: 430 },
+            S: { w: 380,  h: 300 }
+        };
+        const HALF_W = 2500, DECK_W = HALF_W * 2;            // oś Z (szerokość parkingu)
+        const R_TERM = HALF_W;                               // TERMINAL: średnica = szerokość parkingu
+        const START_X = R_TERM + 500;                        // parking tuż za obrysem terminala
+        const MFX = START_X + 200 + BAY.Megafreighter.w / 2; // środek berthu megafreightera
+        const DECK_LEN = BAY.Megafreighter.w + 2600;         // oś X (długość) — + apron podejścia w prawo
+        const END_X = START_X + DECK_LEN;
+        const ROOF_LEN = DECK_LEN + 150;
+        // Ściana pierścienia — odsunięta tak, by sięgały do niej wydłużone ramiona
+        const WALL_X = -5000;                                // świecąca krawędź ściany (wewnętrzna)
+        const WALL_HALF_Z = 9600;                            // połowa długości ściany
+        const MF_FAR = MFX + BAY.Megafreighter.w / 2;        // wejście na pas (otwarty koniec +X)
+        const MF_NEAR = MFX - BAY.Megafreighter.w / 2;       // czoło berthu przy terminalu
+        // Pasma boczne (środek Z): S najbliżej megafreightera → M → L na zewnątrz
+        const BAND_Z = { S: 1040, M: 1445, L: 1980 };
+
+        // --- Skład zadokowany: nos lokomotywy w czole berthu, ogon daleko poza dokiem ---
+        // Statek jest obrócony o π (dziób ku terminalowi), więc dziób = pos.x − trainLen/2.
+        const MF_DOCK_X = MF_NEAR + MF.trainLen / 2;
+        // Środek modułu k (0 = lokomotywa, 7 = ogon) w układzie świata
+        const mfModuleX = k => MF_NEAR + MF.moduleLen / 2 + MF.spacing * k;
+
+        // --- Szyny suwnic (wysuwane wzdłuż odsłoniętej części składu) ---
+        const RAIL_Z = MF.beam / 2 + 420;                    // rozstaw szyn (obejmują skład)
+        const RAIL_X0 = END_X - 500;                         // zakotwiczenie w doku
+        const RAIL_X1 = MF_NEAR + MF.trainLen + 700;         // koniec za ogonem składu
+        const RAIL_LEN = RAIL_X1 - RAIL_X0;
+        const CRANE_DROP_X = RAIL_X0 + 420;                  // punkt zrzutu ładunku przy doku
+
+        class DockState {
+            constructor() {
+                this.defenseMode = false;
+                this.defenseProgress = 0;
+                this.roofProgress = 0;
+                this.isUndocked = false;
+                this.undockProgress = 0;
+                this.distanceFromRing = 0;
+
+                // Szyny suwnic — wysuwają się, gdy skład stoi w berthcie
+                this.railsDeployed = false;
+                this.railsManual = false;   // ręczne wymuszenie (przycisk UI)
+                this.railProgress = 0;
+
+                // Długości dobrane tak, by chwytaki sięgały krawędzi ściany (WALL_X):
+                //   L = |WALL_X| / |cos(kąt)|  →  wewnętrzne 150°, zewnętrzne ~128.6°
+                this.supports = [
+                    { originZ: -1400, angle: -Math.PI/1.2, defaultAngle: -Math.PI/1.2, defenseAngle: -Math.PI, length: 5780, width: 460, grab: true, grip: 1, foldShrink: 0.24 },
+                    { originZ:  1400, angle:  Math.PI/1.2, defaultAngle:  Math.PI/1.2, defenseAngle:  Math.PI, length: 5780, width: 460, grab: true, grip: 1, foldShrink: 0.24 },
+                    { originZ: -1400, angle: -Math.PI/1.4, defaultAngle: -Math.PI/1.4, defenseAngle: 0, length: 8020, width: 380, grab: true, grip: 1 },
+                    { originZ:  1400, angle:  Math.PI/1.4, defaultAngle:  Math.PI/1.4, defenseAngle: 0, length: 8020, width: 380, grab: true, grip: 1 },
+                    { originZ: 0, angle: -Math.PI/4, defaultAngle: -Math.PI/4, defenseAngle: -Math.PI/2, length: 5600, width: 360 },
+                    { originZ: 0, angle:  Math.PI/4, defaultAngle:  Math.PI/4, defenseAngle:  Math.PI/2, length: 5600, width: 360 }
+                ];
+
+                // Węże paliwowe (umbilical) — dockY to pozycja Z portu na doku
+                this.fuelHoses = [
+                    // portX leży na obrysie terminala:  x = −√(R_TERM² − dockY²)
+                    { dockY: -1150, portX: -2200, hue: 0x38bdf8, sag: 620, phase: 0.0 },
+                    { dockY:  -400, portX: -2450, hue: 0x22d3ee, sag: 440, phase: 1.3 },
+                    { dockY:   400, portX: -2450, hue: 0x22d3ee, sag: 440, phase: 2.6 },
+                    { dockY:  1150, portX: -2200, hue: 0x38bdf8, sag: 620, phase: 3.9 }
+                ];
+                this._hoseDetached = false;
+
+                this.flightDeck = { length: DECK_LEN, width: DECK_W, bays: [] };
+
+                // Wszystkie klasy dokują równolegle (dziób ku terminalowi, angle = π),
+                // wlatując z otwartego końca (+X). Megafreighter w centralnym kanale,
+                // klasy bojowe w pasmach bocznych (±Z).
+                //  x   = środek prostokąta gniazda (obrys na pokładzie)
+                //  poseX = środek KADŁUBA po zadokowaniu (dla megafreightera przesunięty,
+                //          bo w berthcie mieści się tylko lokomotywa — reszta stoi na zewnątrz)
+                const addBay = (id, type, x, z, poseX = x) => {
+                    const hold = Math.max(BAY[type].w, poseX - x + BAY[type].w) * 0.5 + 2600;
+                    this.flightDeck.bays.push({
+                        id, type, x, y: z, angle: Math.PI,
+                        width: BAY[type].w, height: BAY[type].h, occupied: false,
+                        approachPoints: [{ x: poseX + hold, y: z }],
+                        dockPose: { x: poseX, y: z, angle: Math.PI },
+                        exitPoints: [{ x: poseX + hold, y: z }]
+                    });
+                };
+
+                // 1. MEGAFREIGHTER — berth centralny (nos w doku, skład wystaje na zewnątrz)
+                addBay('megafreighter_01', 'Megafreighter', MFX, 0, MF_DOCK_X);
+
+                // Rozkłada `n` gniazd danej klasy równomiernie wzdłuż całej długości berthu
+                const addRow = (type, n, bandZ) => {
+                    const pitch = BAY.Megafreighter.w / n;
+                    for (const side of [-1, 1]) {
+                        for (let c = 0; c < n; c++) {
+                            addBay(
+                                `${type}_${side < 0 ? 'top' : 'bot'}_${c}`, type,
+                                MFX + (c - (n - 1) / 2) * pitch, side * bandZ
+                            );
+                        }
+                    }
+                };
+
+                addRow('S', 12, BAND_Z.S);  // 2. FRIGATES  → 24× (12/burtę), najbliżej megafreightera
+                addRow('M', 6,  BAND_Z.M);  // 3. DESTROYERS → 12× (6/burtę), środek
+                addRow('L', 3,  BAND_Z.L);  // 4. BATTLESHIPS → 6× (3/burtę), na zewnątrz
+            }
+
+            update(hooks) {
+                const targetDef = this.defenseMode ? 1.0 : 0.0;
+                this.defenseProgress += (targetDef - this.defenseProgress) * 0.02;
+
+                this.supports.forEach(supp => {
+                    const target = this.defenseMode ? supp.defenseAngle : supp.defaultAngle;
+                    supp.angle += (target - supp.angle) * 0.02;
+                    if (supp.grab) {
+                        const gripTarget = (!this.defenseMode && !this.isUndocked && this.distanceFromRing < 60) ? 1 : 0;
+                        supp.grip += (gripTarget - (supp.grip || 0)) * 0.08;
+                    }
+                });
+
+                const targetRoof = this.defenseMode ? 1.0 : 0.0;
+                this.roofProgress += (targetRoof - this.roofProgress) * 0.015;
+
+                // Szyny chowają się przy trybie obrony i przy oddokowaniu
+                const targetRail = (this.railsDeployed && !this.defenseMode && !this.isUndocked) ? 1.0 : 0.0;
+                this.railProgress += (targetRail - this.railProgress) * 0.02;
+
+                const targetUndock = this.isUndocked ? 1.0 : 0.0;
+                this.undockProgress += (targetUndock - this.undockProgress) * 0.01;
+
+                if (this.isUndocked) {
+                    this.distanceFromRing += 15 + (this.undockProgress * 30);
+                } else {
+                    if (this.distanceFromRing > 0) this.distanceFromRing -= 15 + ((1 - this.undockProgress) * 30);
+                    if (this.distanceFromRing < 0) this.distanceFromRing = 0;
+                }
+
+                // Rozłączenie węży — upust ciśnienia
+                const detach = Math.max(0, Math.min(1, (this.undockProgress - 0.02) / 0.18));
+                if (detach > 0.02 && !this._hoseDetached) {
+                    this._hoseDetached = true;
+                    this.fuelHoses.forEach(h => hooks.ventBurst(h.portX, h.dockY));
+                    logTraffic("Odłączanie węży paliwowych — upust ciśnienia.");
+                }
+                if (!this.isUndocked && this.undockProgress < 0.02) this._hoseDetached = false;
+            }
+        }
+        const dock = new DockState();
+        window.dock = dock;
+
+        // ===================================================================
+        //  BUDOWA SCENY
+        // ===================================================================
+
+        // --- Gwiazdy ---
+        {
+            const N = 1600, pos = new Float32Array(N * 3);
+            for (let i = 0; i < N; i++) {
+                pos[i*3]   = (Math.random() - 0.5) * 70000;
+                pos[i*3+1] = -900 - Math.random() * 3000;
+                pos[i*3+2] = (Math.random() - 0.5) * 70000;
+            }
+            const g = new THREE.BufferGeometry();
+            g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+            scene.add(new THREE.Points(g, new THREE.PointsMaterial({ color: 0x51617e, size: 2.2, sizeAttenuation: false })));
+        }
+
+        // --- Ściana pierścienia (cofa się przy oddokowaniu) ---
+        const wallGroup = new THREE.Group();
+        {
+            const WZ = WALL_HALF_Z * 2;
+            const slab = new THREE.Mesh(new THREE.BoxGeometry(700, 700, WZ), std(0x0a0f1d, { metalness: 0.3, roughness: 0.8 }));
+            slab.position.set(WALL_X - 350, 0, 0);
+            wallGroup.add(slab);
+            // Świetlna krawędź pierścienia
+            const edge = new THREE.Mesh(new THREE.BoxGeometry(36, 730, WZ), glow(0x38bdf8, 1.6));
+            edge.position.set(WALL_X, 0, 0);
+            wallGroup.add(edge);
+            // Panele techniczne na ścianie
+            for (let z = -WALL_HALF_Z + 900; z <= WALL_HALF_Z - 900; z += 1600) {
+                const p = new THREE.Mesh(new THREE.BoxGeometry(110, 400, 700), std(0x101a30));
+                p.position.set(WALL_X - 55, 0, z);
+                wallGroup.add(p);
+            }
+        }
+        scene.add(wallGroup);
+
+        // --- Łącznik cumowniczy (kurczy się przy oddokowaniu) ---
+        const connectorGroup = new THREE.Group();
+        {
+            // Rozpięty od świecącej krawędzi ściany do obrysu terminala
+            const cLen = Math.abs(WALL_X), cMid = WALL_X / 2;
+            const main = new THREE.Mesh(UNIT_BOX, std(0x1a1a2e));
+            main.scale.set(cLen, 230, 1500); main.position.set(cMid, 55, 0);
+            const bulge = new THREE.Mesh(UNIT_BOX, std(0x16213e));
+            bulge.scale.set(cLen, 300, 760); bulge.position.set(cMid, 60, 0);
+            const plate = new THREE.Mesh(UNIT_BOX, std(0x0f172a));
+            plate.scale.set(440, 380, 1800); plate.position.set(WALL_X + 220, 55, 0);
+            const pads = new THREE.Mesh(UNIT_BOX, glow(0x38bdf8, 2.0));
+            pads.scale.set(100, 130, 450); pads.position.set(WALL_X + 50, 55, 0);
+            connectorGroup.add(main, bulge, plate, pads);
+        }
+        scene.add(connectorGroup);
+
+        // --- Silniki (widoczne po oddokowaniu) ---
+        const engineGroup = new THREE.Group();
+        const engineFlames = [];
+        {
+            const mkFlame = (r, len, color, opacity, z) => {
+                const geo = new THREE.ConeGeometry(r, 1, 20, 1, true);
+                geo.rotateZ(Math.PI / 2); // wierzchołek w -x
+                const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+                    color, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false
+                }));
+                m.position.set(0, 0, z);
+                engineGroup.add(m);
+                engineFlames.push({ mesh: m, len, z });
+                return m;
+            };
+            mkFlame(230, 4200, 0x3b82f6, 0.75, 0);
+            mkFlame(105, 2400, 0xdbeafe, 0.9, 0);
+            mkFlame(80, 1700, 0x93c5fd, 0.8, -540);
+            mkFlame(80, 1700, 0x93c5fd, 0.8, 540);
+        }
+        engineGroup.position.set(WALL_X, 55, 0);
+        engineGroup.visible = false;
+        scene.add(engineGroup);
+
+        // --- Ramiona wsporcze + chwytaki ---
+        const supportRigs = [];
+        dock.supports.forEach(supp => {
+            const g = new THREE.Group();
+            g.position.set(0, 95, supp.originZ);
+
+            const arm = new THREE.Mesh(UNIT_BOX, std(0x1a1a2e, { metalness: 0.6, roughness: 0.5 }));
+            const detail = new THREE.Mesh(UNIT_BOX, std(0x16213e));
+            const stripeT = new THREE.Mesh(UNIT_BOX, glow(0x38bdf8, 0.55));
+            const stripeB = new THREE.Mesh(UNIT_BOX, glow(0x38bdf8, 0.55));
+            g.add(arm, detail, stripeT, stripeB);
+
+            const rig = { supp, group: g, arm, detail, stripeT, stripeB, gripper: null };
+
+            if (supp.grab) {
+                const gr = new THREE.Group();
+                const w = supp.width;
+                const wrist = new THREE.Mesh(UNIT_BOX, std(0x243044, { metalness: 0.7, roughness: 0.4 }));
+                wrist.scale.set(150, 100, w * 1.24); wrist.position.set(35, 0, 0);
+                const inner = new THREE.Mesh(UNIT_BOX, std(0x0f172a));
+                inner.scale.set(84, 110, w * 0.72); inner.position.set(2, 0, 0);
+                gr.add(wrist, inner);
+
+                const lamp = new THREE.Mesh(new THREE.SphereGeometry(17, 12, 12), glow(0x22c55e, 2.4));
+                lamp.position.set(-12, 62, 0);
+                gr.add(lamp);
+
+                const fingers = [];
+                for (const s of [-1, 1]) {
+                    const pivot = new THREE.Group();
+                    pivot.position.set(56, 0, s * w * 0.32);
+                    const prox = new THREE.Mesh(UNIT_BOX, std(0x3a4a68, { metalness: 0.7, roughness: 0.35 }));
+                    prox.scale.set(150, 52, 50); prox.position.set(75, 0, 0);
+                    const knuckle = new THREE.Mesh(new THREE.SphereGeometry(30, 10, 10), std(0x1e293b));
+                    knuckle.position.set(150, 0, 0);
+                    const distal = new THREE.Group();
+                    distal.position.set(150, 0, 0);
+                    const dbox = new THREE.Mesh(UNIT_BOX, std(0x4a5a7a, { metalness: 0.7, roughness: 0.35 }));
+                    dbox.scale.set(140, 44, 40); dbox.position.set(70, 0, 0);
+                    const tipGeo = new THREE.ConeGeometry(20, 60, 10);
+                    tipGeo.rotateZ(-Math.PI / 2); // wierzchołek w +x
+                    const tip = new THREE.Mesh(tipGeo, std(0x94a3b8, { metalness: 0.9, roughness: 0.2 }));
+                    tip.position.set(165, 0, 0);
+                    distal.add(dbox, tip);
+                    pivot.add(prox, knuckle, distal);
+                    gr.add(pivot);
+                    fingers.push({ s, pivot, distal });
+                }
+                g.add(gr);
+                rig.gripper = { group: gr, fingers, lamp };
+            }
+            scene.add(g);
+            supportRigs.push(rig);
+        });
+
+        // --- Pierścienie wirujące wokół rdzenia ---
+        const spinRings = [];
+        [{ r: 1560, w: 150, s: 0.002 }, { r: 1960, w: 60, s: -0.003 }, { r: 2350, w: 190, s: 0.001 }].forEach(cfg => {
+            const g = new THREE.Group();
+            const tor = new THREE.Mesh(new THREE.TorusGeometry(cfg.r, cfg.w / 2, 10, 96), std(0x1a1a2e, { metalness: 0.5, roughness: 0.6 }));
+            tor.rotation.x = Math.PI / 2;
+            tor.scale.set(1, 1, 0.45);
+            g.add(tor);
+            for (let i = 0; i < 10; i++) {
+                const pad = new THREE.Mesh(UNIT_BOX, std(0x16213e));
+                pad.scale.set(cfg.w * 1.5, 24, cfg.w * 1.1);
+                const a = (i / 10) * Math.PI * 2;
+                pad.position.set(Math.cos(a) * cfg.r, 20, Math.sin(a) * cfg.r);
+                g.add(pad);
+            }
+            g.position.y = 232;   // wirują na powierzchni talerza terminala
+            scene.add(g);
+            spinRings.push({ group: g, speed: cfg.s });
+        });
+
+        // --- Rdzeń terminala ---
+        let corePulseMesh;
+        {
+            // Talerz terminala: promień R_TERM → średnica równa szerokości parkingu
+            const base = new THREE.Mesh(new THREE.CylinderGeometry(R_TERM - 70, R_TERM, 210, 80), std(0x0f3460, { metalness: 0.4, roughness: 0.6 }));
+            base.position.y = 100;
+            // Świetlny kołnierz na krawędzi talerza
+            const rim = new THREE.Mesh(new THREE.TorusGeometry(R_TERM - 40, 34, 10, 96), glow(0x1e40af, 0.9));
+            rim.rotation.x = Math.PI / 2;
+            rim.position.y = 200;
+            // Rdzeń wyniesiony ponad talerz
+            const mid = new THREE.Mesh(new THREE.CylinderGeometry(1250, 1250, 240, 56), glow(0x60a5fa, 1.1));
+            mid.position.y = 250;
+            corePulseMesh = new THREE.Mesh(new THREE.CylinderGeometry(650, 650, 290, 44), glow(0xbfdbfe, 2.6));
+            corePulseMesh.position.y = 300;
+            // Heksagonalna obwódka rdzenia
+            const hex = new THREE.Mesh(new THREE.TorusGeometry(1820, 32, 8, 6), glow(0x38bdf8, 1.5));
+            hex.rotation.x = Math.PI / 2;
+            hex.position.y = 400;
+            scene.add(base, rim, mid, corePulseMesh, hex);
+        }
+
+        // --- Kanał wyjściowy z rdzenia do berthu megafreightera ---
+        {
+            const bx0 = R_TERM - 250, bx1 = MF_NEAR + 120;
+            const body = new THREE.Mesh(UNIT_BOX, std(0x0f172a));
+            body.scale.set(bx1 - bx0, 60, BAY.Megafreighter.h * 0.92);
+            body.position.set((bx0 + bx1) / 2, 30, 0);
+            scene.add(body);
+            // Świetlne prowadnice tranzytowe
+            for (const z of [-BAY.Megafreighter.h * 0.4, BAY.Megafreighter.h * 0.4]) {
+                for (let x = bx0 + 40; x <= bx1; x += 130) {
+                    const d = new THREE.Mesh(UNIT_BOX, glow(0x38bdf8, 0.85));
+                    d.scale.set(56, 6, 12); d.position.set(x, 64, z);
+                    scene.add(d);
+                }
+            }
+        }
+
+        // --- Płyta parkingu (kształt z prototypu 2D) ---
+        {
+            const s = new THREE.Shape();
+            const ch = 700; // ścięcie narożników od strony otwartej (+X)
+            s.moveTo(START_X, -HALF_W * 0.55);
+            s.lineTo(START_X + 350, -HALF_W);
+            s.lineTo(END_X - ch, -HALF_W);
+            s.lineTo(END_X, -HALF_W + ch);
+            s.lineTo(END_X, HALF_W - ch);
+            s.lineTo(END_X - ch, HALF_W);
+            s.lineTo(START_X + 350, HALF_W);
+            s.lineTo(START_X, HALF_W * 0.55);
+            s.closePath();
+            const geo = new THREE.ExtrudeGeometry(s, { depth: 40, bevelEnabled: false });
+            geo.rotateX(Math.PI / 2);
+            const deck = new THREE.Mesh(geo, std(0x0f172a, { metalness: 0.35, roughness: 0.7, side: THREE.DoubleSide }));
+            deck.position.y = 20; // extrude schodzi w dół po obrocie
+            scene.add(deck);
+
+            // Głęboki kanał megafreightera (centralny berth kapitalny)
+            const cor = new THREE.Mesh(UNIT_BOX, std(0x050510, { metalness: 0.2, roughness: 0.9 }));
+            cor.scale.set(BAY.Megafreighter.w + 200, 6, BAY.Megafreighter.h);
+            cor.position.set(MFX, 24, 0);
+            scene.add(cor);
+            // Krawędzie kanału (świetlne prowadnice)
+            for (const sz of [-1, 1]) {
+                const rail = new THREE.Mesh(UNIT_BOX, glow(0x38bdf8, 0.8));
+                rail.scale.set(BAY.Megafreighter.w + 200, 8, 14);
+                rail.position.set(MFX, 30, sz * BAY.Megafreighter.h / 2);
+                scene.add(rail);
+            }
+        }
+
+        // ===================================================================
+        //  SZYNY SUWNIC + SUWNICE ROZŁADUNKOWE
+        //  Skład megafreightera jest za długi na dok — do berthu wjeżdża sama
+        //  lokomotywa, a wagony zostają na zewnątrz. Wzdłuż nich wysuwają się
+        //  teleskopowe szyny, po których jeżdżą suwnice bramowe przenoszące
+        //  kontenery z wagonów do doku.
+        // ===================================================================
+        const CRANE_COUNT = 4;
+        const railRig = { beams: [], trusses: [], caps: [], cranes: [] };
+        {
+            const railMat = std(0x27364f, { metalness: 0.75, roughness: 0.4 });
+            const trussMat = std(0x1a2438, { metalness: 0.6, roughness: 0.55 });
+
+            for (const sz of [-1, 1]) {
+                // Główna belka szyny (skalowana wzdłuż X przez railProgress)
+                const beam = new THREE.Mesh(UNIT_BOX, railMat);
+                beam.position.z = sz * RAIL_Z;
+                beam.position.y = 90;
+                scene.add(beam);
+                railRig.beams.push({ mesh: beam, sz });
+
+                // Świetlna krawędź prowadnicy
+                const cap = new THREE.Mesh(UNIT_BOX, glow(0x38bdf8, 1.1));
+                cap.position.z = sz * RAIL_Z;
+                cap.position.y = 118;
+                scene.add(cap);
+                railRig.caps.push({ mesh: cap, sz });
+
+                // Segmenty kratownicy (rozstawione wzdłuż szyny, chowają się z nią)
+                for (let i = 0; i < 14; i++) {
+                    const t = new THREE.Mesh(UNIT_BOX, trussMat);
+                    t.scale.set(90, 150, 240);
+                    t.position.z = sz * RAIL_Z;
+                    t.position.y = 40;
+                    scene.add(t);
+                    railRig.trusses.push({ mesh: t, sz, u: (i + 0.5) / 14 });
+                }
+            }
+
+            // --- Suwnice bramowe ---
+            const frameMat = std(0x3d4d6b, { metalness: 0.7, roughness: 0.4 });
+            const legMat = std(0x2a3750, { metalness: 0.75, roughness: 0.4 });
+            const cargoMat = std(0xd97706, { metalness: 0.4, roughness: 0.6, emissive: 0xd97706, emissiveIntensity: 0.25 });
+
+            // Pierwszy moduł składu wystający poza dok — od niego zaczynają suwnice
+            let firstServiced = MF.modules - 1;
+            for (let k = 1; k < MF.modules; k++) {
+                if (mfModuleX(k) > RAIL_X0 + 500) { firstServiced = k; break; }
+            }
+
+            for (let i = 0; i < CRANE_COUNT; i++) {
+                const g = new THREE.Group();
+
+                // Most poprzeczny nad składem
+                const bridge = new THREE.Mesh(UNIT_BOX, frameMat);
+                bridge.scale.set(210, 90, RAIL_Z * 2 + 120);
+                bridge.position.y = 700;
+                g.add(bridge);
+                // Górny pas kratownicy + lampy pozycyjne
+                const topRail = new THREE.Mesh(UNIT_BOX, glow(0xf59e0b, 0.9));
+                topRail.scale.set(70, 16, RAIL_Z * 2);
+                topRail.position.y = 762;
+                g.add(topRail);
+
+                // Nogi i wózki jezdne na szynach
+                for (const sz of [-1, 1]) {
+                    const leg = new THREE.Mesh(UNIT_BOX, legMat);
+                    leg.scale.set(150, 640, 170);
+                    leg.position.set(0, 380, sz * RAIL_Z);
+                    g.add(leg);
+                    const bogie = new THREE.Mesh(UNIT_BOX, std(0x0f172a, { metalness: 0.8, roughness: 0.3 }));
+                    bogie.scale.set(300, 90, 220);
+                    bogie.position.set(0, 110, sz * RAIL_Z);
+                    g.add(bogie);
+                }
+
+                // Wózek (trolley) jeżdżący po moście + teleskopowy chwyt
+                const trolley = new THREE.Group();
+                trolley.position.y = 640;
+                const tBody = new THREE.Mesh(UNIT_BOX, std(0x475569, { metalness: 0.7, roughness: 0.4 }));
+                tBody.scale.set(180, 110, 300);
+                trolley.add(tBody);
+                // Maszt opuszczany (skalowany w Y w dół)
+                const mast = new THREE.Mesh(UNIT_BOX, std(0x64748b, { metalness: 0.8, roughness: 0.3 }));
+                mast.scale.set(46, 100, 46);
+                trolley.add(mast);
+                // Trawersa chwytaka
+                const spreader = new THREE.Group();
+                const sBar = new THREE.Mesh(UNIT_BOX, std(0x94a3b8, { metalness: 0.85, roughness: 0.25 }));
+                sBar.scale.set(320, 60, 420);
+                spreader.add(sBar);
+                for (const cz of [-1, 1]) {
+                    const claw = new THREE.Mesh(UNIT_BOX, std(0x1e293b, { metalness: 0.8, roughness: 0.3 }));
+                    claw.scale.set(70, 120, 60);
+                    claw.position.set(0, -70, cz * 180);
+                    spreader.add(claw);
+                }
+                // Kontener (pojawia się po podjęciu ładunku)
+                const cargo = new THREE.Mesh(UNIT_BOX, cargoMat);
+                cargo.scale.set(360, 260, 460);
+                cargo.position.y = -190;
+                cargo.visible = false;
+                spreader.add(cargo);
+                trolley.add(spreader);
+                g.add(trolley);
+
+                g.visible = false;
+                scene.add(g);
+                railRig.cranes.push({
+                    group: g, trolley, mast, spreader, cargo,
+                    wagon: Math.min(firstServiced + i, MF.modules - 1),  // obsługiwany moduł składu
+                    phase: i / CRANE_COUNT        // przesunięcie fazy cyklu
+                });
+            }
+        }
+
+        // Animacja szyn i suwnic
+        const easeIO = p => p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
+        function syncRails(t) {
+            const rp = dock.railProgress;
+            const live = rp > 0.01;
+            const len = Math.max(1, RAIL_LEN * rp);
+            const midX = RAIL_X0 + len / 2;
+
+            railRig.beams.forEach(b => {
+                b.mesh.visible = live;
+                b.mesh.scale.set(len, 70, 150);
+                b.mesh.position.x = midX;
+            });
+            railRig.caps.forEach(c => {
+                c.mesh.visible = live;
+                c.mesh.scale.set(len, 10, 40);
+                c.mesh.position.x = midX;
+            });
+            railRig.trusses.forEach(tr => {
+                tr.mesh.visible = live;
+                tr.mesh.position.x = RAIL_X0 + len * tr.u;
+            });
+
+            // Suwnice pracują dopiero po pełnym wysunięciu szyn
+            const working = rp > 0.9 ? 1 : 0;
+            railRig.cranes.forEach((cr, i) => {
+                cr.group.visible = live && rp > 0.35;
+                if (!cr.group.visible) return;
+
+                const targetX = mfModuleX(cr.wagon);
+                if (!working) {
+                    // Podczas rozkładania suwnice czekają przy doku
+                    cr.group.position.x = CRANE_DROP_X;
+                    cr.cargo.visible = false;
+                    cr.mast.scale.y = 100; cr.mast.position.y = -50;
+                    cr.spreader.position.y = -100;
+                    return;
+                }
+
+                // Cykl: dojazd → opuszczenie → podjęcie → powrót → zrzut → podniesienie
+                const p = ((t * 0.045) + cr.phase) % 1;
+                let x = CRANE_DROP_X, drop = 0, hasCargo = false;
+
+                if (p < 0.28) {                       // jazda po ładunek
+                    x = CRANE_DROP_X + (targetX - CRANE_DROP_X) * easeIO(p / 0.28);
+                } else if (p < 0.38) {                // opuszczanie chwytaka
+                    x = targetX; drop = easeIO((p - 0.28) / 0.10);
+                } else if (p < 0.48) {                // podnoszenie z kontenerem
+                    x = targetX; drop = 1 - easeIO((p - 0.38) / 0.10); hasCargo = true;
+                } else if (p < 0.76) {                // powrót do doku
+                    x = targetX + (CRANE_DROP_X - targetX) * easeIO((p - 0.48) / 0.28); hasCargo = true;
+                } else if (p < 0.86) {                // zrzut w doku
+                    drop = easeIO((p - 0.76) / 0.10); hasCargo = true;
+                } else {                              // powrót chwytaka w górę (pusty)
+                    drop = 1 - easeIO((p - 0.86) / 0.14);
+                }
+
+                cr.group.position.x = x;
+                const reach = 100 + drop * 430;       // wysuw masztu
+                cr.mast.scale.y = reach;
+                cr.mast.position.y = -reach / 2;
+                cr.spreader.position.y = -reach;
+                cr.cargo.visible = hasCargo;
+                // Lekkie kołysanie wózka wzdłuż mostu
+                cr.trolley.position.z = Math.sin(t * 0.6 + cr.phase * 6.28) * 60;
+            });
+        }
+
+        // ===================================================================
+        //  ŚWIATŁA PASA STARTOWEGO — sekwencja biegnąca do terminala (BLOOM!)
+        // ===================================================================
+        const chase = { inst: null, xs: [], count: 0 };
+        {
+            const xs = [];
+            for (let x = MF_FAR - 120; x >= MF_NEAR + 180; x -= 140) xs.push(x);
+            const rows = [-150, 150];
+            chase.count = xs.length * rows.length;
+            const inst = new THREE.InstancedMesh(
+                new THREE.SphereGeometry(13, 10, 10),
+                new THREE.MeshBasicMaterial({ color: 0xffffff }),
+                chase.count
+            );
+            const m = new THREE.Matrix4();
+            let i = 0;
+            rows.forEach(z => xs.forEach(x => {
+                m.makeTranslation(x, 40, z);
+                inst.setMatrixAt(i, m);
+                inst.setColorAt(i, new THREE.Color(0x0a1522));
+                chase.xs[i] = x;
+                i++;
+            }));
+            scene.add(inst);
+            chase.inst = inst;
+
+            // Zielony próg pasa u wejścia (wewnątrz doku)
+            for (let z = -150; z <= 150; z += 50) {
+                const g1 = new THREE.Mesh(new THREE.SphereGeometry(11, 8, 8), new THREE.MeshBasicMaterial({ color: new THREE.Color(0.1, 2.4, 0.9) }));
+                g1.position.set(MF_FAR - 40, 40, z);
+                scene.add(g1);
+            }
+            // Czerwona linia stopu przy terminalu
+            for (let z = -150; z <= 150; z += 50) {
+                const r1 = new THREE.Mesh(new THREE.SphereGeometry(11, 8, 8), new THREE.MeshBasicMaterial({ color: new THREE.Color(2.6, 0.25, 0.2) }));
+                r1.position.set(MF_NEAR + 80, 40, z);
+                scene.add(r1);
+            }
+        }
+        const _chaseColor = new THREE.Color();
+        const CHASE_K = (Math.PI * 2) / 1500;   // długość fali
+        const CHASE_W = Math.PI * 2 * 0.55;     // prędkość przebiegu
+        function updateChase(t) {
+            for (let i = 0; i < chase.count; i++) {
+                const b = 0.08 + 3.4 * Math.pow(0.5 + 0.5 * Math.sin(CHASE_K * chase.xs[i] + CHASE_W * t), 14);
+                _chaseColor.setRGB(0.60 * b, 0.78 * b, 1.05 * b);
+                chase.inst.setColorAt(i, _chaseColor);
+            }
+            chase.inst.instanceColor.needsUpdate = true;
+        }
+
+        // --- Zatoki dokowe (obrysy + narożniki) ---
+        const TYPE_COLORS = { Megafreighter: 0xef4444, L: 0xec4899, M: 0xf8fafc, S: 0x22c55e };
+        const bayRigs = [];
+        dock.flightDeck.bays.forEach(bay => {
+            const color = TYPE_COLORS[bay.type];
+            const g = new THREE.Group();
+            g.position.set(bay.x, 46, bay.y);
+            g.rotation.y = -bay.angle;
+            const edgeMat = glow(color, 0.5);
+            const w = bay.width, h = bay.height, th = 12;
+            const mk = (sx, sz, px, pz) => {
+                const e = new THREE.Mesh(UNIT_BOX, edgeMat);
+                e.scale.set(sx, 5, sz); e.position.set(px, 0, pz);
+                g.add(e);
+            };
+            mk(w, th, 0, -h/2); mk(w, th, 0, h/2);
+            mk(th, h, -w/2, 0); mk(th, h, w/2, 0);
+            const cornerMat = glow(color, 0.95);
+            const corners = [];
+            [[-w/2,-h/2],[w/2,-h/2],[-w/2,h/2],[w/2,h/2]].forEach(c => {
+                const dot = new THREE.Mesh(new THREE.CylinderGeometry(9, 9, 10, 10), cornerMat);
+                dot.position.set(c[0], 4, c[1]);
+                g.add(dot); corners.push(dot);
+            });
+            const fill = new THREE.Mesh(UNIT_BOX, new THREE.MeshBasicMaterial({
+                color, transparent: true, opacity: 0.10, depthWrite: false
+            }));
+            fill.scale.set(w, 3, h); fill.visible = false;
+            g.add(fill);
+            scene.add(g);
+            bayRigs.push({ bay, edgeMat, cornerMat, fill, lastOccupied: false });
+        });
+        const RED = new THREE.Color(0xef4444);
+        function syncBays() {
+            bayRigs.forEach(r => {
+                if (r.bay.occupied === r.lastOccupied) return;
+                r.lastOccupied = r.bay.occupied;
+                r.fill.visible = r.bay.occupied;
+                r.cornerMat.emissive.set(r.bay.occupied ? 0xef4444 : TYPE_COLORS[r.bay.type]);
+                r.cornerMat.emissiveIntensity = r.bay.occupied ? 1.5 : 0.95;
+            });
+        }
+
+        // --- Żaluzje (dach) — teleskopowe listwy z obu stron ---
+        const hazardTex = makeHazardTexture();
+        hazardTex.repeat.set(ROOF_LEN / 300, 1);
+        const roofSides = [];
+        for (const sign of [-1, 1]) {
+            const slats = [];
+            const seams = [];
+            for (let i = 0; i < 10; i++) {
+                // Ciemniejsza stal + wyraźniejszy kontrast między listwami
+                const m = new THREE.Mesh(UNIT_BOX, std(i % 2 ? 0x3e4a60 : 0x4d5b75, { metalness: 0.55, roughness: 0.5, envMapIntensity: 0.28 }));
+                m.visible = false;
+                scene.add(m); slats.push(m);
+                // Ciemny szew na krawędzi każdej listwy (czytelny podział z góry)
+                const s = new THREE.Mesh(UNIT_BOX, std(0x0b1220, { metalness: 0.3, roughness: 0.85, envMapIntensity: 0.1 }));
+                s.visible = false;
+                scene.add(s); seams.push(s);
+            }
+            const hazard = new THREE.Mesh(UNIT_BOX, new THREE.MeshBasicMaterial({ map: hazardTex }));
+            hazard.visible = false;
+            const signal = new THREE.Mesh(UNIT_BOX, glow(0x38bdf8, 2.2));
+            signal.visible = false;
+            scene.add(hazard, signal);
+            roofSides.push({ sign, slats, seams, hazard, signal });
+        }
+        const lockSeam = new THREE.Mesh(UNIT_BOX, glow(0x60a5fa, 0));
+        lockSeam.scale.set(ROOF_LEN, 8, 26);
+        lockSeam.position.set(START_X + ROOF_LEN / 2, 168, 0);
+        lockSeam.visible = false;
+        scene.add(lockSeam);
+
+        function syncRoof() {
+            const p = dock.roofProgress;
+            const coverage = HALF_W * p;
+            const show = p > 0.01;
+            const step = coverage / 10, slatH = step + 20;
+            // Pasy ostrzegawcze i listwa sygnalizacyjna znikają po domknięciu
+            // (inaczej nakładały się na środku w jeden żółty pas) — zostaje zamek świetlny
+            const edgesVisible = show && p < 0.96;
+            roofSides.forEach(side => {
+                side.slats.forEach((s, i) => {
+                    const vis = show && slatH > 2;
+                    s.visible = vis;
+                    const seam = side.seams[i];
+                    seam.visible = vis;
+                    if (!vis) return;
+                    s.scale.set(ROOF_LEN, 16, Math.max(slatH, 2));
+                    s.position.set(START_X + ROOF_LEN / 2, 158 - i * 0.7, side.sign * (HALF_W - i * step - slatH / 2));
+                    // Szew na wewnętrznej (prowadzącej) krawędzi listwy
+                    seam.scale.set(ROOF_LEN, 4, 7);
+                    seam.position.set(START_X + ROOF_LEN / 2, 167, side.sign * (HALF_W - i * step - slatH));
+                });
+                side.hazard.visible = edgesVisible;
+                side.signal.visible = edgesVisible;
+                if (edgesVisible) {
+                    const edgeZ = side.sign * (HALF_W - coverage);
+                    side.hazard.scale.set(ROOF_LEN, 10, 40);
+                    side.hazard.position.set(START_X + ROOF_LEN / 2, 167, edgeZ + side.sign * 26);
+                    side.signal.scale.set(ROOF_LEN, 8, 10);
+                    side.signal.position.set(START_X + ROOF_LEN / 2, 168, edgeZ);
+                }
+            });
+            const meshA = Math.max(0, (p - 0.9) / 0.1);
+            lockSeam.visible = meshA > 0;
+            lockSeam.material.emissiveIntensity = 3.2 * meshA;
+            // Ruch chevronów gdy dach pracuje
+            if (dock.defenseMode ? p < 0.995 : p > 0.005) hazardTex.offset.x -= 0.004;
+        }
+
+        // ===================================================================
+        //  WĘŻE PALIWOWE (tuby aktualizowane co klatkę)
+        // ===================================================================
+        const hoseMat = std(0x233047, { metalness: 0.6, roughness: 0.45 });
+        const hoseRigs = [];
+        dock.fuelHoses.forEach(h => {
+            const rig = {
+                h,
+                tube: new THREE.Mesh(new THREE.BufferGeometry(), hoseMat),
+                clamps: [],
+                pulses: [],
+                cap: new THREE.Mesh(new THREE.SphereGeometry(50, 12, 12), std(0x475569, { metalness: 0.8, roughness: 0.3 })),
+                led: new THREE.Mesh(new THREE.SphereGeometry(22, 10, 10), glow(0x22c55e, 2.6)),
+                socket: new THREE.Mesh(UNIT_BOX, std(0x334155))
+            };
+            scene.add(rig.tube);
+            for (let i = 0; i < 6; i++) {
+                const c = new THREE.Mesh(new THREE.CylinderGeometry(52, 52, 44, 12), std(0x334155, { metalness: 0.75, roughness: 0.3 }));
+                scene.add(c); rig.clamps.push(c);
+            }
+            for (let i = 0; i < 3; i++) {
+                const s = new THREE.Mesh(new THREE.SphereGeometry(21, 10, 10), glow(h.hue, 3.0));
+                scene.add(s); rig.pulses.push(s);
+            }
+            rig.cap.visible = false;
+            scene.add(rig.cap);
+            // Port na doku
+            const port = new THREE.Mesh(UNIT_BOX, std(0x1e293b));
+            port.scale.set(110, 170, 170);
+            port.position.set(h.portX, 95, h.dockY);
+            scene.add(port);
+            rig.led.position.set(h.portX, 205, h.dockY);
+            scene.add(rig.led);
+            // Gniazdo na ścianie (dzieckiem grupy ściany — cofa się razem z nią)
+            rig.socket.scale.set(130, 200, 200);
+            rig.socket.position.set(WALL_X + 60, 55, h.dockY * 1.15);
+            wallGroup.add(rig.socket);
+            hoseRigs.push(rig);
+        });
+
+        const _vA = new THREE.Vector3(), _vB = new THREE.Vector3(), _vc1 = new THREE.Vector3(), _vc2 = new THREE.Vector3();
+        const _up = new THREE.Vector3(0, 1, 0), _tan = new THREE.Vector3();
+        function syncHoses(t) {
+            const detach = Math.max(0, Math.min(1, (dock.undockProgress - 0.02) / 0.18));
+            const wallX = WALL_X + 60 - dock.distanceFromRing;
+
+            hoseRigs.forEach(rig => {
+                const h = rig.h;
+                _vA.set(wallX + 50, 95, h.dockY * 1.15 + Math.sin(t * 1.2 + h.phase) * 18);
+
+                if (detach <= 0) {
+                    _vB.set(h.portX, 95, h.dockY);
+                } else {
+                    const rx = _vA.x + 290 + Math.sin(t * 3 + h.phase) * 70 * detach;
+                    const rz = _vA.z + (h.dockY >= 0 ? 1 : -1) * (410 + 510 * detach) + Math.sin(t * 4.2 + h.phase) * 100 * detach;
+                    const ry = 95 - 320 * detach;
+                    _vB.set(
+                        h.portX + (rx - h.portX) * detach,
+                        95 + (ry - 95) * detach,
+                        h.dockY + (rz - h.dockY) * detach
+                    );
+                }
+
+                const sway = Math.sin(t * 1.8 + h.phase) * 30 * (1 - detach);
+                const belly = h.sag + 150 * detach + sway;
+                const zOut = (h.dockY >= 0 ? 1 : -1) * belly * 0.45;
+                _vc1.lerpVectors(_vA, _vB, 0.3); _vc1.y -= belly * 0.6; _vc1.z += zOut;
+                _vc2.lerpVectors(_vA, _vB, 0.7); _vc2.y -= belly * 0.55; _vc2.z += zOut * 0.9;
+
+                const curve = new THREE.CubicBezierCurve3(_vA.clone(), _vc1.clone(), _vc2.clone(), _vB.clone());
+                rig.tube.geometry.dispose();
+                rig.tube.geometry = new THREE.TubeGeometry(curve, 40, 36, 10, false);
+
+                rig.clamps.forEach((c, i) => {
+                    const u = (i + 1) / 7;
+                    curve.getPoint(u, c.position);
+                    curve.getTangent(u, _tan);
+                    c.quaternion.setFromUnitVectors(_up, _tan);
+                });
+
+                const connected = detach < 0.05;
+                rig.pulses.forEach((s, i) => {
+                    s.visible = connected;
+                    if (connected) {
+                        const u = ((t * 0.14) + i / 3) % 1;
+                        curve.getPoint(u, s.position);
+                    }
+                });
+
+                rig.cap.visible = detach > 0.1;
+                if (rig.cap.visible) rig.cap.position.copy(_vB);
+
+                // LED portu: zielony = podłączony, czerwony migający = odłączony
+                if (connected) {
+                    rig.led.material.emissive.set(0x22c55e);
+                    rig.led.material.emissiveIntensity = 2.6;
+                } else {
+                    rig.led.material.emissive.set(0xef4444);
+                    rig.led.material.emissiveIntensity = (Math.floor(t * 3.5) % 2) ? 3.0 : 0.6;
+                }
+            });
+        }
+
+        // --- Para / upust ciśnienia (sprite'y) ---
+        const vents = [];
+        function ventBurst(x, z) {
+            for (let k = 0; k < 18; k++) {
+                const sp = new THREE.Sprite(new THREE.SpriteMaterial({
+                    map: puffTex, transparent: true, opacity: 0.5,
+                    blending: THREE.AdditiveBlending, depthWrite: false
+                }));
+                sp.position.set(x, 110, z);
+                sp.scale.setScalar(95 + Math.random() * 110);
+                vents.push({
+                    sp,
+                    vx: -10 - Math.random() * 15, vy: (Math.random() - 0.5) * 5, vz: (Math.random() - 0.5) * 19,
+                    life: 1
+                });
+                scene.add(sp);
+            }
+        }
+        function updateVents() {
+            for (let i = vents.length - 1; i >= 0; i--) {
+                const v = vents[i];
+                v.sp.position.x += v.vx; v.sp.position.y += v.vy; v.sp.position.z += v.vz;
+                v.vx *= 0.95; v.vz *= 0.95;
+                v.sp.scale.multiplyScalar(1.035);
+                v.life -= 0.016;
+                v.sp.material.opacity = Math.max(0, v.life) * 0.5;
+                if (v.life <= 0) { scene.remove(v.sp); v.sp.material.dispose(); vents.splice(i, 1); }
+            }
+        }
+
+        // ===================================================================
+        //  STATKI (logika 1:1 z 2D, ciała 3D)
+        // ===================================================================
+        function buildShipMesh(type) {
+            const g = new THREE.Group();
+            let size, color;
+            // Realne wymiary kadłubów (ships.js): długość × szerokość (2×radius)
+            switch (type) {
+                case 'S': size = { w: 320, h: 240 }; color = 0x22c55e; break;
+                case 'M': size = { w: 480, h: 340 }; color = 0xf8fafc; break;
+                case 'L': size = { w: 1040, h: 440 }; color = 0xec4899; break;
+                case 'Megafreighter': size = { w: MF.trainLen, h: MF.beam }; color = 0xef4444; break;
+            }
+            const mat = std(color, { metalness: 0.5, roughness: 0.5, emissive: color, emissiveIntensity: 0.22 });
+
+            if (type === 'Megafreighter') {
+                // Realny skład (megafreighterTrain.js): lokomotywa + 6 wagonów + moduł ogonowy.
+                // Moduł = MF.moduleLen × MF.beam, środki co MF.spacing.
+                const wagonMat = std(0x94a3b8, { metalness: 0.6, roughness: 0.5 });
+                const tailMat = std(0xb45309, { metalness: 0.6, roughness: 0.5, emissive: 0xb45309, emissiveIntensity: 0.15 });
+                const linkMat = std(0x334155);
+                const x0 = MF.trainLen / 2 - MF.moduleLen / 2;  // środek lokomotywy
+                const NOSE = 600;
+
+                for (let k = 0; k < MF.modules; k++) {
+                    const cx = x0 - MF.spacing * k;
+                    const isHead = k === 0, isTail = k === MF.modules - 1;
+                    const body = new THREE.Mesh(UNIT_BOX, isHead ? mat : (isTail ? tailMat : wagonMat));
+                    body.scale.set(isHead ? MF.moduleLen - NOSE : MF.moduleLen, isHead ? 150 : 120, isHead ? MF.beam : MF.beam - 90);
+                    body.position.set(isHead ? cx - NOSE / 2 : cx, 0, 0);
+                    g.add(body);
+                    // Sprzęg do kolejnego modułu
+                    if (!isTail) {
+                        const link = new THREE.Mesh(UNIT_BOX, linkMat);
+                        link.scale.set(MF.spacing - MF.moduleLen + 60, 60, 190);
+                        link.position.set(cx - MF.spacing / 2, 0, 0);
+                        g.add(link);
+                    }
+                }
+                // Stożkowy nos lokomotywy (mieści się w obrysie modułu)
+                const noseGeo = new THREE.ConeGeometry(MF.beam / 2, NOSE, 4);
+                noseGeo.rotateZ(-Math.PI / 2); noseGeo.rotateX(Math.PI / 4);
+                const nose = new THREE.Mesh(noseGeo, mat);
+                nose.position.set(MF.trainLen / 2 - NOSE / 2, 0, 0);
+                g.add(nose);
+            } else {
+                const s = new THREE.Shape();
+                s.moveTo(size.w/2, 0);
+                s.lineTo(-size.w/2, -size.h/2);
+                s.lineTo(-size.w/3, 0);
+                s.lineTo(-size.w/2, size.h/2);
+                s.closePath();
+                const geo = new THREE.ExtrudeGeometry(s, { depth: 26, bevelEnabled: false });
+                geo.rotateX(Math.PI / 2);
+                geo.translate(0, 26, 0);
+                g.add(new THREE.Mesh(geo, mat));
+            }
+            // Poświata silnika
+            const eng = new THREE.Mesh(new THREE.SphereGeometry(type === 'Megafreighter' ? 230 : Math.max(18, size.h * 0.18), 10, 10), glow(0x60a5fa, 3.0));
+            eng.position.set(-size.w/2 - 24, 10, 0);
+            g.add(eng);
+            g.userData.engine = eng;
+            return g;
+        }
+
+        class Ship {
+            constructor(type, dockState) {
+                this.type = type;
+                this.dock = dockState;
+                this.state = 'approaching';
+                this.waypointIndex = 0;
+
+                this.targetBay = this.findEmptyBay();
+                if (!this.targetBay) {
+                    this.state = 'waiting';
+                    this.x = 9000 + Math.random() * 2000;
+                    this.y = (Math.random() - 0.5) * 5000;
+                    this.rotation = Math.PI;
+                } else {
+                    this.targetBay.occupied = true;
+                    this.x = this.targetBay.approachPoints[0].x;
+                    this.y = this.targetBay.approachPoints[0].y;
+                    this.rotation = Math.PI;
+                }
+
+                switch (type) {
+                    case 'S': this.speed = 12; break;
+                    case 'M': this.speed = 8; break;
+                    case 'L': this.speed = 5; break;
+                    case 'Megafreighter': this.speed = 16; break;  // berth jest 23 200 długi — inaczej dokowanie trwa minutę
+                }
+                this.dockTime = 300 + Math.random() * 800;
+
+                this.mesh = buildShipMesh(type);
+                scene.add(this.mesh);
+            }
+
+            findEmptyBay() {
+                let available = this.dock.flightDeck.bays.filter(b => b.type === this.type && !b.occupied);
+                if (available.length > 0) return available[Math.floor(Math.random() * available.length)];
+                return null;
+            }
+
+            update() {
+                if (this.state === 'waiting') {
+                    this.targetBay = this.findEmptyBay();
+                    if (this.targetBay) {
+                        this.targetBay.occupied = true;
+                        this.state = 'approaching';
+                        this.waypointIndex = 0;
+                        logTraffic(`Statek ${this.type} otrzymał wektor podejścia do ${this.targetBay.id}.`);
+                    }
+                    this.rotation += 0.01;
+                    return;
+                }
+                if (!this.targetBay) return;
+
+                let targetPoint, targetRot;
+                if (this.state === 'approaching') {
+                    if (this.waypointIndex < this.targetBay.approachPoints.length) {
+                        targetPoint = this.targetBay.approachPoints[this.waypointIndex];
+                        targetRot = Math.atan2(targetPoint.y - this.y, targetPoint.x - this.x);
+                    } else {
+                        targetPoint = this.targetBay.dockPose;
+                        targetRot = this.targetBay.dockPose.angle;
+                    }
+                } else if (this.state === 'docked') {
+                    targetPoint = this.targetBay.dockPose;
+                    targetRot = this.targetBay.dockPose.angle;
+                } else if (this.state === 'leaving') {
+                    if (this.waypointIndex < this.targetBay.exitPoints.length) {
+                        targetPoint = this.targetBay.exitPoints[this.waypointIndex];
+                        targetRot = Math.atan2(targetPoint.y - this.y, targetPoint.x - this.x);
+                    } else {
+                        this.state = 'done';
+                        return;
+                    }
+                }
+
+                if (this.state !== 'docked') {
+                    let dx = targetPoint.x - this.x, dy = targetPoint.y - this.y;
+                    let dist = Math.hypot(dx, dy);
+                    if (dist > this.speed) {
+                        this.x += (dx / dist) * this.speed;
+                        this.y += (dy / dist) * this.speed;
+                    } else {
+                        this.x = targetPoint.x; this.y = targetPoint.y;
+                        if (this.state === 'approaching') {
+                            this.waypointIndex++;
+                            if (this.waypointIndex > this.targetBay.approachPoints.length) {
+                                this.state = 'docked';
+                                logTraffic(`Statek ${this.type} pomyślnie zadokował w ${this.targetBay.id}.`);
+                            }
+                        } else if (this.state === 'leaving') {
+                            this.waypointIndex++;
+                        }
+                    }
+                } else {
+                    this.dockTime--;
+                    if (this.dockTime <= 0) {
+                        this.state = 'leaving';
+                        this.waypointIndex = 0;
+                        this.targetBay.occupied = false;
+                        logTraffic(`Statek ${this.type} opuszcza ${this.targetBay.id}.`);
+                    }
+                }
+
+                let rotDiff = targetRot - this.rotation;
+                while (rotDiff > Math.PI) rotDiff -= Math.PI * 2;
+                while (rotDiff < -Math.PI) rotDiff += Math.PI * 2;
+                this.rotation += rotDiff * 0.05;
+            }
+
+            sync() {
+                this.mesh.position.set(this.x, 42, this.y);
+                this.mesh.rotation.y = -this.rotation;
+                this.mesh.userData.engine.visible = this.state !== 'docked';
+            }
+
+            dispose() {
+                scene.remove(this.mesh);
+            }
+        }
+
+        let ships = [];
+        function spawnShip() {
+            if (ships.length < 25) {
+                const rand = Math.random();
+                let type = 'S';
+                if (rand > 0.95) type = 'Megafreighter';
+                else if (rand > 0.8) type = 'L';
+                else if (rand > 0.4) type = 'M';
+                ships.push(new Ship(type, dock));
+                logTraffic(`Nowy kontakt radarowy: Klasa ${type}`);
+            }
+            setTimeout(spawnShip, 1500 + Math.random() * 3000);
+        }
+
+        // ===================================================================
+        //  UI / STEROWANIE
+        // ===================================================================
+        window.toggleArms = function() {
+            if (dock.isUndocked) {
+                logTraffic("BŁĄD: Nie można otworzyć ramion w locie! Najpierw zadokuj.");
+                return;
+            }
+            dock.defenseMode = !dock.defenseMode;
+            logTraffic(dock.defenseMode ? "UWAGA: Aktywowano tryb obronny! Ramiona zamykają strefę parkingu." : "Ramiona wracają do pozycji domyślnej.");
+        };
+
+        window.toggleCranes = function() {
+            dock.railsManual = !dock.railsManual;
+            logTraffic(dock.railsManual
+                ? "Wysuwanie szyn rozładunkowych — suwnice startują."
+                : "Szyny chowane (tryb auto: wysuw przy zadokowanym składzie).");
+        };
+
+        window.undock = function() {
+            if (!dock.defenseMode) {
+                logTraffic("BŁĄD: Ramiona muszą być zwinięte (Tryb Obrony) przed oddokowaniem!");
+                return;
+            }
+            dock.isUndocked = !dock.isUndocked;
+            logTraffic(dock.isUndocked ? "SEKWENCJA ODDOKOWANIA: Dok staje się niezależnym statkiem!" : "CUMOWANIE: Powrót do pierścienia orbitalnego...");
+        };
+
+        const trafficLog = document.getElementById('traffic-log');
+        let logs = [];
+        function logTraffic(msg) {
+            logs.push(msg);
+            if (logs.length > 5) logs.shift();
+            trafficLog.innerHTML = logs.map(l => `<p class="text-gray-300 border-l-2 border-blue-600 pl-2 mb-1">${l}</p>`).join('');
+        }
+        window.logTraffic = logTraffic;
+
+        function updateUI() {
+            let totalBays = dock.flightDeck.bays.length;
+            let occupiedBays = dock.flightDeck.bays.filter(b => b.occupied).length;
+            const percent = Math.round((occupiedBays / totalBays) * 100);
+            document.getElementById('capacity-text').innerText = `${percent}%`;
+            const bar = document.getElementById('capacity-bar');
+            bar.style.width = `${percent}%`;
+            if (percent > 80) bar.className = 'stat-fill bg-red-500';
+            else if (percent > 50) bar.className = 'stat-fill bg-yellow-500';
+            else bar.className = 'stat-fill bg-green-500';
+        }
+
+        window.exportDockLayout = function() {
+            const data = {
+                version: 2,
+                engine: 'three.js',
+                flightDeck: dock.flightDeck,
+                supports: dock.supports,
+                fuelHoses: dock.fuelHoses
+            };
+            console.log("=== EXPORTED DOCK LAYOUT ===");
+            console.log(JSON.stringify(data, null, 2));
+            const toast = document.getElementById('toast');
+            toast.style.opacity = '1';
+            setTimeout(() => { toast.style.opacity = '0'; }, 3000);
+        };
+
+        // ===================================================================
+        //  SYNCHRONIZACJA SCENY + PĘTLA
+        // ===================================================================
+        function syncSupports() {
+            supportRigs.forEach(rig => {
+                const supp = rig.supp;
+                rig.group.rotation.y = -supp.angle;
+                const effLen = supp.length * (1 - (supp.foldShrink || 0) * dock.defenseProgress);
+
+                rig.arm.scale.set(effLen, 115, supp.width);
+                rig.arm.position.set(effLen / 2, 0, 0);
+                rig.detail.scale.set(Math.max(effLen - 700, 10), 145, supp.width / 2);
+                rig.detail.position.set(effLen / 2, 0, 0);
+                rig.stripeT.scale.set(effLen, 12, 18);
+                rig.stripeT.position.set(effLen / 2, 36, -supp.width / 2 + 11);
+                rig.stripeB.scale.set(effLen, 12, 18);
+                rig.stripeB.position.set(effLen / 2, 36, supp.width / 2 - 11);
+
+                if (rig.gripper) {
+                    rig.gripper.group.position.x = effLen;
+                    const grip = supp.grip || 0;
+                    rig.gripper.fingers.forEach(f => {
+                        f.pivot.rotation.y = -f.s * (0.12 + (1 - grip) * 0.64);
+                        f.distal.rotation.y = f.s * (0.5 + grip * 0.9);
+                    });
+                    const lampMat = rig.gripper.lamp.material;
+                    if (grip > 0.55) { lampMat.emissive.set(0x22c55e); lampMat.emissiveIntensity = 2.6; }
+                    else { lampMat.emissive.set(0xf59e0b); lampMat.emissiveIntensity = 2.2; }
+                }
+            });
+        }
+
+        function syncDockBody() {
+            wallGroup.position.x = -dock.distanceFromRing;
+            const u = dock.undockProgress;
+            const cLen = Math.abs(WALL_X);
+            const w = Math.max(0.02, (cLen - cLen * 0.52 * u) / cLen);
+            connectorGroup.scale.x = w;
+
+            const thrust = u;
+            engineGroup.visible = u > 0.05;
+            if (engineGroup.visible) {
+                engineGroup.position.x = WALL_X * w;
+                engineFlames.forEach(f => {
+                    const flicker = 0.85 + Math.random() * 0.3;
+                    const L = f.len * thrust * flicker;
+                    f.mesh.scale.set(Math.max(L, 1), 1, 1);
+                    f.mesh.position.x = -L / 2;
+                });
+            }
+        }
+
+        const clock = new THREE.Clock();
+        let frame = 0;
+        let simTime = 0;
+        function stepFrame(dt) {
+            simTime += dt;
+            const t = simTime;
+            frame++;
+
+            // Szyny wysuwają się, gdy skład stoi w berthcie (albo ręcznie z UI)
+            dock.railsDeployed = dock.railsManual
+                || ships.some(s => s.type === 'Megafreighter' && s.state === 'docked');
+
+            dock.update({ ventBurst });
+
+            syncSupports();
+            syncDockBody();
+            syncRoof();
+            syncHoses(t);
+            syncBays();
+            syncRails(t);
+            updateChase(t);
+            updateVents();
+
+            // Pierścienie + rdzeń
+            spinRings.forEach(r => { r.group.rotation.y += r.speed; });
+            const pulse = 1 + Math.sin(t * 3) * 0.16;
+            corePulseMesh.scale.set(pulse, 1, pulse);
+            coreLight.intensity = 2.8 + Math.sin(t * 3) * 0.6;
+
+            // Statki
+            for (let i = ships.length - 1; i >= 0; i--) {
+                const ship = ships[i];
+                ship.update();
+                if (ship.state === 'done') {
+                    ship.dispose();
+                    ships.splice(i, 1);
+                } else {
+                    ship.sync();
+                }
+            }
+
+            if (frame % 30 === 0) updateUI();
+            composer.render();
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            stepFrame(Math.min(clock.getDelta(), 0.1));
+        }
+
+        // Hook diagnostyczny (podgląd bez rAF, strojenie bloom itd.)
+        window.__debug = { renderer, composer, camera, camState, applyCamera, stepFrame, scene, THREE };
+
+        logTraffic("Inicjalizacja systemów doku (silnik 3D)...");
+        setTimeout(spawnShip, 1000);
+        animate();
+    </script>
+</body>
+</html>

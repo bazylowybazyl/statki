@@ -44,6 +44,16 @@ test('hull classes scale speed and handling from nimble frigates to heavy capita
   assert.equal(combat[0].modeMaxSpeed, 3000);
 });
 
+test('megafreighter has stronger train steering than a passive supercapital profile', () => {
+  const train = createDriveTransmission({ mode: 'combat', hullClass: 'megafreighter' });
+  const capital = createDriveTransmission({ mode: 'combat', hullClass: 'atlas' });
+
+  assert.equal(train.hullClass, 'megafreighter');
+  assert.ok(train.sideForceScale > capital.sideForceScale);
+  assert.ok(train.turnAccelerationScale > capital.turnAccelerationScale);
+  assert.ok(train.maxTurnSpeedScale > capital.maxTurnSpeedScale);
+});
+
 test('well-timed manual upshift gives a temporary boost', () => {
   const drive = createDriveTransmission({ mode: 'travel' });
   const shiftSpeed = settleTravelRpm(drive, TRAVEL_SHIFT_RPM.ideal);

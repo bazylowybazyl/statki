@@ -219,14 +219,6 @@ function cockpitMarkup() {
       <section id="cockpit">
         <div class="cockpit-shell"></div><div class="shell-accent l"></div><div class="shell-accent r"></div>
         <div class="ck-left">
-          <section class="cockpit-module systems-module">
-            <span class="module-label">SYSTEMY</span>
-            <div class="vertical-bars">
-              <div class="vital-column hp" id="vitalHp"><span class="vital-value">100</span><div class="vital-track"><div class="vital-ghost"></div><div class="vital-fill"></div></div><span class="vital-label">HP</span></div>
-              <div class="vital-column shield" id="vitalShield"><span class="vital-value">100</span><div class="vital-track"><div class="vital-ghost"></div><div class="vital-fill"></div></div><span class="vital-label">TARCZA</span></div>
-              <div class="vital-column core" id="vitalCore"><span class="vital-value">100</span><div class="vital-track"><div class="vital-ghost"></div><div class="vital-fill"></div></div><span class="vital-label">RDZEŃ</span></div>
-            </div>
-          </section>
           <section class="cockpit-module primary-module">
             <span class="module-label">TERMINAL POKŁADOWY / UZBROJENIE</span>
             <div class="primary-layout">
@@ -246,7 +238,31 @@ function cockpitMarkup() {
             </div>
           </section>
         </div>
-        <div id="radarPod" aria-label="CIC radar"><canvas id="radarCanvas" class="hud-radar-canvas"></canvas><div class="rp-readout hud-radar-readout"><span id="rdTotal" class="total">C:00</span><span class="h hostile" id="rdHostile">H:00</span><span id="rdAst" class="asteroid">A:00</span><span class="r range" id="rdRange">20K</span></div><div class="rp-ranges hud-radar-controls" id="radarRanges"></div></div>
+        <div id="radarPod" aria-label="CIC radar">
+          <svg id="radarVitals" class="radar-vitals" viewBox="0 0 320 320" aria-label="Stan statku" role="img">
+            <g class="vital-arc hp" id="vitalHp" data-span="32" data-value-id="vitalHpValue" transform="rotate(152.4 160 160)">
+              <circle class="arc-track" cx="160" cy="160" r="151" pathLength="100"></circle>
+              <circle class="arc-ghost" cx="160" cy="160" r="151" pathLength="100"></circle>
+              <circle class="arc-fill" cx="160" cy="160" r="151" pathLength="100"></circle>
+            </g>
+            <g class="vital-arc shield" id="vitalShield" data-span="32" data-value-id="vitalShieldValue" transform="rotate(272.4 160 160)">
+              <circle class="arc-track" cx="160" cy="160" r="151" pathLength="100"></circle>
+              <circle class="arc-ghost" cx="160" cy="160" r="151" pathLength="100"></circle>
+              <circle class="arc-fill" cx="160" cy="160" r="151" pathLength="100"></circle>
+            </g>
+            <g class="vital-arc core" id="vitalCore" data-span="32" data-value-id="vitalCoreValue" transform="rotate(32.4 160 160)">
+              <circle class="arc-track" cx="160" cy="160" r="151" pathLength="100"></circle>
+              <circle class="arc-ghost" cx="160" cy="160" r="151" pathLength="100"></circle>
+              <circle class="arc-fill" cx="160" cy="160" r="151" pathLength="100"></circle>
+            </g>
+          </svg>
+          <div class="radar-vital-readout hp"><span>HP</span><b id="vitalHpValue">100</b></div>
+          <div class="radar-vital-readout shield"><span>TARCZA</span><b id="vitalShieldValue">100</b></div>
+          <div class="radar-vital-readout core"><span>RDZEŃ</span><b id="vitalCoreValue">100</b></div>
+          <canvas id="radarCanvas" class="hud-radar-canvas"></canvas>
+          <div class="rp-readout hud-radar-readout"><span id="rdTotal" class="total">C:00</span><span class="h hostile" id="rdHostile">H:00</span><span id="rdAst" class="asteroid">A:00</span><span class="r range" id="rdRange">20K</span></div>
+          <div class="rp-ranges hud-radar-controls" id="radarRanges"></div>
+        </div>
         <div class="ck-right">
           <section class="cockpit-module speed-module"><span class="module-label">NAPĘD / PRĘDKOŚĆ</span><div class="speed-layout"><div class="speed-stage"><canvas id="speedCanvas" aria-label="Prędkość i obroty napędu"></canvas><div class="gauge-readout speed-readout"><span class="gauge-label">PRĘDKOŚĆ</span><span class="gauge-number" id="spValue">0</span><span class="gauge-unit">U/S</span></div><div class="gauge-readout rpm-readout"><span class="gauge-label">OBROTY</span><span class="gauge-number" id="spRpm">0.0</span><span class="gauge-unit">×1000 RPM</span></div><div class="drive-mode-badge" id="spMode">B</div><div class="speed-trip"><span>ODO</span><span class="trip-value" id="spOdo">0 u</span><span>TRIP</span><span class="trip-value" id="spTrip">0 u</span></div></div><div class="speed-bottom"><span>CIĄG <b id="thrPct">0%</b></span><span id="spState">REJS</span><span>LIMIT <b id="spLimit">0</b></span></div><div class="speed-pedals"><button type="button" class="pedal" id="thrPlus">W · Gaz</button><button type="button" class="pedal" id="thrMinus">S · Hamulec</button></div></div></section>
           <section class="cockpit-module control-module"><span class="module-label">PANEL CENTRALNY / MODE</span><div class="console-layout"><div class="infotainment-screen"><div class="screen-content" id="modeTrack"><div class="menu-item active" data-mode="combat">BOJOWY</div><div class="menu-item" data-mode="maneuver">MANEWROWY</div><div class="menu-item" data-mode="travel">PODRÓŻ</div></div><div class="selection-indicator"></div></div><div class="controls-area"><div class="btn-group"><button type="button" class="physical-btn" id="pbComm"><span>Komunikacja</span><div class="led-indicator blue"></div></button><button type="button" class="physical-btn" id="pbMissions"><span>Misje</span><div class="led-indicator orange"></div></button></div><div class="center-console"><button type="button" class="shortcut-btn pos-t" id="scScan" title="[X]">Skan</button><button type="button" class="shortcut-btn pos-b" id="scLock" title="[T]">Cel</button><button type="button" class="shortcut-btn pos-l" id="scAuto" title="[7]">Auto</button><button type="button" class="shortcut-btn pos-r" id="scStab" title="[B]">Stab</button><div class="rotary-knob" id="rotaryKnob" title="Przeciągnij lub użyj kółka; V zmienia tryb"><div class="knob-indicator"></div><div class="knob-touchpad"><div class="knob-center-logo">///</div></div></div></div><div class="btn-group"><button type="button" class="physical-btn" id="pbShip"><span>Statek</span><div class="led-indicator green"></div></button><button type="button" class="physical-btn" id="pbMap"><span>Mapa</span><div class="led-indicator red"></div></button></div></div></div></section>
@@ -293,7 +309,9 @@ export class CockpitUI {
     this.lastSpeed = 0;
     this.odometer = 0;
     this.trip = 0;
+    this.vitalMotion = Object.create(null);
     this.lastUpdateAt = 0;
+    this.lastRingFlightSync = 0;
     this.lastStationOpen = false;
     this.lastStationTab = 'hangar';
   }
@@ -335,7 +353,8 @@ export class CockpitUI {
       'navMissions', 'navShip', 'navLog', 'stationTablet', 'tabletLabel', 'tabletTitle', 'tabletSub', 'tabletLinkText',
       'tabletClose', 'stationTabsBar', 'tabletTabs', 'tabletTabTrack', 'tabPrev', 'tabNext', 'stationPane', 'missionPane',
       'missionFilters', 'missionList', 'missionDetail', 'tabletCredits', 'tabletCargo', 'tabletFootLeft',
-      'tabletFootCenter', 'tabletFootRight', 'supportTooltip', 'dragGhost', 'deployReticle', 'toastStack', 'vitalHp', 'vitalShield', 'vitalCore'
+      'tabletFootCenter', 'tabletFootRight', 'supportTooltip', 'dragGhost', 'deployReticle', 'toastStack',
+      'radarVitals', 'vitalHp', 'vitalShield', 'vitalCore', 'vitalHpValue', 'vitalShieldValue', 'vitalCoreValue'
     ];
     for (const id of ids) this.els[id] = this.shadow.getElementById(id);
     this.radarCtx = this.els.radarCanvas?.getContext('2d') || null;
@@ -401,7 +420,7 @@ export class CockpitUI {
 
     this.els.pbMissions?.addEventListener('click', () => this.toggleMissionJournal());
     this.els.navMissions?.addEventListener('click', () => this.toggleMissionJournal());
-    this.els.pbShip?.addEventListener('click', () => this.logShipStatus());
+    this.els.pbShip?.addEventListener('click', () => this.launchRingCityFlight());
     this.els.navShip?.addEventListener('click', () => this.logShipStatus());
     this.els.navLog?.addEventListener('click', () => this.closeComm());
     this.els.pbMap?.addEventListener('click', () => this.dispatchGameKey('KeyM', 'm'));
@@ -618,9 +637,10 @@ export class CockpitUI {
     if (menuVisible) return;
 
     this.radarModel = environment.radar || this.radarModel;
-    this.updateVitals(ship, systems);
+    this.updateVitals(ship, systems, dt);
     this.updateSpeed(ship, systems, dt);
     this.updateHotkeys(environment.weaponHud);
+    this.syncRingCityFlightButton();
     this.syncDriveMode();
     this.updateConsoleStatus(systems, environment);
     this.updateClock(now - this.lastClockRefresh > 1000, environment.locationName);
@@ -636,24 +656,93 @@ export class CockpitUI {
     }
   }
 
-  updateVitals(ship, systems) {
+  updateVitals(ship, systems, dt) {
     const hullMax = Math.max(1, Number(ship?.hull?.max) || 1);
     const hullVal = Math.max(0, Number(ship?.hull?.val) || 0);
     const shieldMax = Math.max(1, Number(ship?.shield?.max) || 1);
     const shieldVal = Math.max(0, Number(ship?.shield?.val) || 0);
-    this.setVital(this.els.vitalHp, hullVal / hullMax, Math.round(hullVal));
-    this.setVital(this.els.vitalShield, shieldVal / shieldMax, Math.round(shieldVal));
-    this.setVital(this.els.vitalCore, clamp((systems.core ?? 100) / 100, 0, 1), Math.round(systems.core ?? 100));
+    this.setVital(this.els.vitalHp, hullVal / hullMax, Math.round(hullVal), dt);
+    this.setVital(this.els.vitalShield, shieldVal / shieldMax, Math.round(shieldVal), dt);
+    this.setVital(this.els.vitalCore, clamp((systems.core ?? 100) / 100, 0, 1), Math.round(systems.core ?? 100), dt);
   }
 
-  setVital(root, ratio, value) {
+  setVital(root, ratio, value, dt = 0) {
     if (!root) return;
-    const percent = Math.round(clamp(ratio, 0, 1) * 100);
-    root.style.setProperty('--value', `${percent}%`);
-    for (const fill of root.querySelectorAll('.vital-fill,.vital-ghost')) fill.style.setProperty('--value', `${percent}%`);
-    const valueEl = root.querySelector('.vital-value');
-    if (valueEl) valueEl.textContent = String(value);
-    root.classList.toggle('crit', percent < 25);
+    const target = clamp(ratio, 0, 1);
+    const step = clamp(Number(dt) || 0, 0, 0.2);
+    const targetValue = Number(value) || 0;
+    let motion = this.vitalMotion[root.id];
+    if (!motion) {
+      motion = this.vitalMotion[root.id] = {
+        display: target,
+        ghost: target,
+        value: targetValue,
+        target,
+        hitTime: 0,
+        fillNode: root.querySelector('.arc-fill'),
+        ghostNode: root.querySelector('.arc-ghost'),
+        valueNode: this.els[root.dataset.valueId],
+        label: root.classList.contains('hp') ? 'HP' : root.classList.contains('shield') ? 'Tarcza' : 'Rdzeń',
+        drawnFill: -1,
+        drawnGhost: -1,
+        drawnValue: null,
+        ariaValue: null,
+        ariaPercent: null,
+        isCrit: null,
+        isHit: null
+      };
+    }
+
+    if (target < motion.target - 0.0005) motion.hitTime = 0.32;
+    const displayRate = target < motion.display ? 15 : 7;
+    const ghostRate = target < motion.ghost ? 2.4 : 5.5;
+    const displayBlend = step > 0 ? 1 - Math.exp(-displayRate * step) : 1;
+    const ghostBlend = step > 0 ? 1 - Math.exp(-ghostRate * step) : 1;
+    motion.display += (target - motion.display) * displayBlend;
+    motion.ghost += (target - motion.ghost) * ghostBlend;
+    motion.value += (targetValue - motion.value) * displayBlend;
+    motion.target = target;
+    motion.hitTime = Math.max(0, motion.hitTime - step);
+
+    if (Math.abs(target - motion.display) < 0.0005) motion.display = target;
+    if (Math.abs(target - motion.ghost) < 0.0005) motion.ghost = target;
+
+    const span = Number(root.dataset.span) || 30;
+    const fillLength = span * motion.display;
+    const ghostLength = span * motion.ghost;
+    if (motion.fillNode && Math.abs(fillLength - motion.drawnFill) > 0.001) {
+      motion.fillNode.style.strokeDasharray = `${fillLength.toFixed(3)} 100`;
+      motion.drawnFill = fillLength;
+    }
+    if (motion.ghostNode && Math.abs(ghostLength - motion.drawnGhost) > 0.001) {
+      motion.ghostNode.style.strokeDasharray = `${ghostLength.toFixed(3)} 100`;
+      motion.drawnGhost = ghostLength;
+    }
+
+    const drawnValue = Math.round(motion.value);
+    if (motion.valueNode && drawnValue !== motion.drawnValue) {
+      motion.valueNode.textContent = String(drawnValue);
+      motion.drawnValue = drawnValue;
+    }
+
+    const isCrit = target < 0.25;
+    const isHit = motion.hitTime > 0;
+    if (isCrit !== motion.isCrit) {
+      root.classList.toggle('crit', isCrit);
+      motion.isCrit = isCrit;
+    }
+    if (isHit !== motion.isHit) {
+      root.classList.toggle('hit', isHit);
+      motion.isHit = isHit;
+    }
+
+    const ariaValue = Math.round(targetValue);
+    const ariaPercent = Math.round(target * 100);
+    if (ariaValue !== motion.ariaValue || ariaPercent !== motion.ariaPercent) {
+      root.setAttribute('aria-label', `${motion.label}: ${ariaValue}, ${ariaPercent}%`);
+      motion.ariaValue = ariaValue;
+      motion.ariaPercent = ariaPercent;
+    }
   }
 
   updateSpeed(ship, systems, dt) {
@@ -1434,6 +1523,41 @@ export class CockpitUI {
     const ship = window.ship;
     if (!ship) return;
     this.log(`STATEK — HP ${Math.round(ship.hull?.val || 0)}/${Math.round(ship.hull?.max || 0)} · TARCZA ${Math.round(ship.shield?.val || 0)}/${Math.round(ship.shield?.max || 0)}`, 'ok');
+  }
+
+  syncRingCityFlightButton(force = false) {
+    const button = this.els.pbShip;
+    if (!button) return;
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    if (!force && now - this.lastRingFlightSync < 250) return;
+    this.lastRingFlightSync = now;
+    const status = window.RingCityFlight?.getLaunchStatus?.() || {
+      available: false,
+      reason: 'Moduł lotu Ring City nie jest gotowy.'
+    };
+    button.disabled = !status.available;
+    button.classList.toggle('ring-flight-ready', !!status.available);
+    button.classList.toggle('ring-flight-loading', !!status.loading);
+    button.title = status.reason || 'Eksperymentalny lot po Ring City';
+    const label = button.querySelector('span');
+    if (label) label.textContent = status.loading ? 'Ładowanie…' : 'Statek';
+  }
+
+  launchRingCityFlight() {
+    const controller = window.RingCityFlight;
+    if (!controller?.requestLaunch) {
+      this.toast('Moduł lotu Ring City nie jest gotowy.', 'bad');
+      return;
+    }
+    const status = controller.getLaunchStatus?.();
+    if (!status?.available) {
+      this.log(status?.reason || 'Lot po Ring City jest teraz niedostępny.', 'warn');
+      this.toast(status?.reason || 'Podejdź bliżej ringu.', 'bad');
+      this.syncRingCityFlightButton(true);
+      return;
+    }
+    controller.requestLaunch();
+    this.syncRingCityFlightButton(true);
   }
 
   log(message, tone = '') {

@@ -93,6 +93,15 @@ export const HULL_DRIVE_PROFILES = Object.freeze({
     governorScale: 0.4,
     dragScale: 0.62
   }),
+  megafreighter: Object.freeze({
+    speedScale: Object.freeze({ combat: 0.92, maneuver: 0.95, travel: 0.72 }),
+    mainForceScale: 0.48,
+    sideForceScale: 0.78,
+    turnAccelerationScale: 0.9,
+    maxTurnSpeedScale: 0.7,
+    governorScale: 0.44,
+    dragScale: 0.62
+  }),
   supercapital: Object.freeze({
     speedScale: Object.freeze({ combat: 1.0, maneuver: 1.0, travel: 0.75 }),
     mainForceScale: 0.3,
@@ -158,6 +167,7 @@ function resolveMode(modeId) {
 
 export function normalizeDriveHullClass(hullClass) {
   const key = String(hullClass || '').toLowerCase();
+  if (key.includes('megafreighter')) return 'megafreighter';
   if (key.includes('fighter') || key.includes('interceptor')) return 'fighter';
   if (key.includes('frigate')) return 'frigate';
   if (key.includes('destroyer')) return 'destroyer';

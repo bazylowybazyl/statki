@@ -218,31 +218,6 @@ class AsteroidPool {
     this.mesh.count = 0;
 
     scene.add(this.mesh);
-
-    // Okluder shadow shafts: asteroida to sprite z alpha-cutout — z białym
-    // override'em maski rzucałaby PROSTOKĄT. Bliźniak instanced dzieli
-    // geometrię i TEN SAM atrybut instanceMatrix (zero dodatkowych uploadów),
-    // rysuje białą sylwetkę przez alphaTest w przejściu maski bez override'u
-    // (warstwa persp sprite-okluderów — asteroidy żyją w passie FG).
-    this.occluderMesh = null;
-    if (typeof Core3D.enableSpriteOccluderPersp3D === 'function') {
-      const occluderMat = new THREE.MeshBasicMaterial({
-        map: this.texture,
-        color: 0xffffff,
-        transparent: false,
-        alphaTest: 0.5,
-        depthWrite: false,
-        depthTest: false,
-        side: THREE.DoubleSide
-      });
-      this.occluderMesh = new THREE.InstancedMesh(geom, occluderMat, capacity);
-      this.occluderMesh.name = `asteroid_pool_occluder_${key}`;
-      this.occluderMesh.instanceMatrix = this.mesh.instanceMatrix;
-      this.occluderMesh.frustumCulled = false;
-      this.occluderMesh.count = 0;
-      Core3D.enableSpriteOccluderPersp3D(this.occluderMesh);
-      scene.add(this.occluderMesh);
-    }
   }
 
   allocate() {
@@ -252,7 +227,6 @@ class AsteroidPool {
     if (idx >= this.watermark) {
       this.watermark = idx + 1;
       this.mesh.count = this.watermark;
-      if (this.occluderMesh) this.occluderMesh.count = this.watermark;
     }
     return idx;
   }
@@ -292,12 +266,6 @@ class AsteroidPool {
     if (this.mesh.parent) this.mesh.parent.remove(this.mesh);
     // UWAGA: NIE dispose'ujemy geometrii bo jest współdzielona przez wszystkie pule.
     this.mesh.material.dispose();
-    if (this.occluderMesh) {
-      if (this.occluderMesh.parent) this.occluderMesh.parent.remove(this.occluderMesh);
-      // Geometria i instanceMatrix współdzielone z this.mesh — tylko materiał.
-      this.occluderMesh.material.dispose();
-      this.occluderMesh = null;
-    }
     if (this.texture) this.texture.dispose();
   }
 }
@@ -801,6 +769,7 @@ export class AsteroidField {
    */
   update(dt) {
     this._updatePoolRenderVisibility();
+    this._pushShaftOccluders();
     this._syncActiveHexAsteroidsFromEntities();
     this._updateActiveHexAsteroids(dt);
     this._resolveActiveAsteroidImpacts();
@@ -843,6 +812,48 @@ export class AsteroidField {
     });
 
     this._flushAll();
+  }
+
+  /**
+   * Największe asteroidy w pobliżu kamery jako analityczne dyski-okludery
+   * shadow shafts (pushShaftDiscWorld — wspólny rejestr z planetami).
+   * Selekcja throttlowana co 4 klatki (spatial-hash query po gęstym pasie
+   * nie jest darmowe), push z cache idzie co klatkę, bo rejestr dysków
+   * resetuje się w updatePlanets3D.
+   */
+  _pushShaftOccluders() {
+    if (typeof Core3D.pushShaftDiscWorld !== 'function') return;
+    if (!this._poolsVisible) return;
+    const cam = (typeof window !== 'undefined') ? (window.camera || window.ship?.pos || window.ship) : null;
+    const cx = Number(cam?.x);
+    const cy = Number(cam?.y);
+    if (!Number.isFinite(cx) || !Number.isFinite(cy)) return;
+
+    this._shaftFrameCounter = (this._shaftFrameCounter | 0) + 1;
+    const cache = this._shaftDiscCache || (this._shaftDiscCache = []);
+    if (this._shaftFrameCounter % 4 === 1) {
+      const vw = Math.max(1, Number(window.innerWidth) || 1920);
+      const vh = Math.max(1, Number(window.innerHeight) || 1080);
+      const zoom = Math.max(0.0001, Number(window.camera?.zoom) || 1);
+      // Cap zasięgu: przy dalekim zoomie pojedyncze skały i tak są
+      // sub-pikselowe, a query po gęstym pasie rośnie kwadratowo.
+      const reach = Math.min((Math.max(vw, vh) * 0.5) / zoom + 6000, 14000);
+      const MIN_RADIUS = 90; // tylko L/BIG — drobnica nie rzuca sensownego cienia
+      const radiusFactor = COLLISION_CONFIG.collisionRadiusFactor || 0.42;
+      cache.length = 0;
+      this.spatial.forEachInRadius(cx, cy, reach, (a) => {
+        if (!a.alive) return;
+        const r = (Number(a.scale) || 0) * radiusFactor;
+        if (r < MIN_RADIUS) return;
+        cache.push({ x: a.worldX, y: a.worldY, r });
+      });
+      if (cache.length > 1) cache.sort((p, q) => q.r - p.r);
+      const budget = 24;
+      if (cache.length > budget) cache.length = budget;
+    }
+    for (let i = 0; i < cache.length; i++) {
+      if (!Core3D.pushShaftDiscWorld(cache[i].x, cache[i].y, cache[i].r)) break;
+    }
   }
 
   /**
@@ -1461,6 +1472,24 @@ export class AsteroidField {
     }
 
     for (const a of toRemove) this.movingAsteroids.delete(a);
+  }
+
+  /** Keeps an asteroid in the moving working set while an external tow rope
+   * changes its velocity. Hex-promoted asteroids already have their own active
+   * integration path, so they only need their sleep flags cleared. */
+  wakeTowBody(body) {
+    const asteroid = body?.asteroidRef || body;
+    if (!asteroid || asteroid.alive === false) return false;
+    const hexEntity = asteroid.hexEntity || (body?.hexGrid ? body : null);
+    if (hexEntity?.hexGrid) {
+      hexEntity._wreckSleeping = false;
+      hexEntity.hexGrid.isSleeping = false;
+      hexEntity.hexGrid.sleepFrames = 0;
+      hexEntity.hexGrid.wakeHoldFrames = Math.max(20, hexEntity.hexGrid.wakeHoldFrames | 0);
+      return true;
+    }
+    this.movingAsteroids.add(asteroid);
+    return true;
   }
 
   /**

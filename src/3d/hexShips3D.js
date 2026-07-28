@@ -5,10 +5,14 @@ import { EngineVfxSystem } from './engineVfxSystem.js';
 import { Weapon3DSystem } from './weapon3DSystem.js';
 import {
   MAX_SHADER_SHIP_LIGHTS,
+  NAV_LIGHT_CHASE,
   buildCombinedShipLightShaderPayload,
+  buildPositionLightWorldSprites,
   buildRoadLightWorldEmitters,
-  buildShipLightShaderPayload
+  buildShipLightShaderPayload,
+  glslFloat
 } from '../game/shipLightRuntime.js';
+import { ShipLights3D } from './shipLights3D.js';
 import { allowsSolidArmorLod } from './hexLodPolicy.js';
 
 const HEX_VERTEX_SHADER = `
@@ -135,15 +139,19 @@ void main() {
     vec3 lampColor = lightColor.rgb;
     float lightType = lightColor.a;
 
+    // Sekwencja "pasa startowego": ta sama formuła co billboardy blasku
+    // (shipLights3D) — stałe wstrzyknięte z NAV_LIGHT_CHASE, znak "+" daje
+    // przebieg od dziobu (+X sprite'a) ku rufie.
     float localPhase = clamp(lightData.x / max(1.0, uSpriteSize.x), 0.0, 1.0);
-    float chase = fract(uTime * 0.42 - localPhase * 0.95);
-    float chasePulse = smoothstep(0.0, 0.10, chase) * (1.0 - smoothstep(0.18, 0.42, chase));
-    float sequenceMul = mix(0.62, 1.35, chasePulse);
+    float chase = fract(uTime * ${glslFloat(NAV_LIGHT_CHASE.speed)} + localPhase * ${glslFloat(NAV_LIGHT_CHASE.phaseGain)});
+    float chasePulse = smoothstep(0.0, ${glslFloat(NAV_LIGHT_CHASE.attack)}, chase)
+      * (1.0 - smoothstep(${glslFloat(NAV_LIGHT_CHASE.hold)}, ${glslFloat(NAV_LIGHT_CHASE.release)}, chase));
+    float sequenceMul = mix(${glslFloat(NAV_LIGHT_CHASE.rest)}, 1.35, chasePulse);
     if (lightType > 0.5) sequenceMul = 1.0;
 
     float core = smoothstep(radiusPx, 0.0, distPx);
-    float glow = smoothstep(radiusPx * 5.0, 0.0, distPx);
-    finalColor += lampColor * power * sequenceMul * (core * 1.55 + glow * 0.42);
+    float glow = smoothstep(radiusPx * 7.0, 0.0, distPx);
+    finalColor += lampColor * power * sequenceMul * (core * 1.15 + glow * 0.50);
 
     if (lightType > 0.5) {
       vec2 dir = normalize(lightExtra.xy);
@@ -255,6 +263,7 @@ const state = {
   visibleHexEntities: [],
   visibleVfxEntities: [],
   roadLightEmitters: [],
+  navLightSprites: [],
   staleEntities: [],
   validEntitySet: new Set(),
   weaponActiveEntities: new Set(),
@@ -432,6 +441,14 @@ const SHIP_LIGHT_EMITTER_OPTIONS = {
   ...SHIP_LIGHT_TRANSFORM_OPTIONS,
   maxEmitters: 64,
   out: null
+};
+
+const NAV_LIGHT_SPRITE_OPTIONS = {
+  ...SHIP_LIGHT_TRANSFORM_OPTIONS,
+  getGrid: (entity) => entity?.hexGrid,
+  out: null,
+  zoom: 1,
+  minHaloWorld: 0
 };
 
 function computeShardStress(shard) {
@@ -660,8 +677,6 @@ function disposeMeshData(data) {
   data.mesh?.material?.dispose?.();
   data.armorMesh?.geometry?.dispose?.();
   data.armorMesh?.material?.dispose?.();
-  // Geometrię i teksturę okluder dzieli z armorMesh — dispose tylko materiału.
-  data.armorOccluder?.material?.dispose?.();
   if (data.visualImageRef) releaseSharedVisualTexture(data.visualImageRef);
   else data.texture?.dispose?.();
   data.normalTexture?.dispose?.();
@@ -957,39 +972,10 @@ function createEntityMesh(entity) {
 
   Core3D.scene.add(armorMesh);
   Core3D.scene.add(mesh);
-  // Kadłub rzuca shadow shafts (maska okluzji renderowana kamerą ortho z białym
-  // override'em). Tylko instanced heksy — realna sylwetka; armorMesh celowo NIE:
-  // to pełny prostokąt sprite'a (kontur robi alpha-discard w shaderze), więc
-  // z override'em rzucałby prostokątny cień.
-  if (typeof Core3D.enableOrthoOccluder3D === 'function') Core3D.enableOrthoOccluder3D(mesh);
-
-  // Okluder sylwetki dla LOD HYBRID/IMPOSTOR: gdy armor-quad zastępuje heksy
-  // wnętrza, w masce shaftów zostawał sam obrys kadłuba (blur go zjadał) i cień
-  // statku znikał tuż po oddaleniu kamery. Bliźniaczy quad — biały, z alfą
-  // sprite'a (alphaTest wycina sylwetkę) — jest dzieckiem armorMesh, więc
-  // dziedziczy transform i widoczność LOD, a renderuje się wyłącznie
-  // w przejściu maski BEZ override'u (warstwa sprite-okluderów).
-  let armorOccluder = null;
-  if (typeof Core3D.enableSpriteOccluder3D === 'function') {
-    const armorOccluderMaterial = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      map: texture,
-      alphaTest: 0.35,
-      transparent: false,
-      depthWrite: false,
-      depthTest: false,
-      side: THREE.DoubleSide
-    });
-    armorOccluder = new THREE.Mesh(armorGeometry, armorOccluderMaterial);
-    armorOccluder.frustumCulled = false;
-    armorMesh.add(armorOccluder);
-    Core3D.enableSpriteOccluder3D(armorOccluder);
-  }
 
   const data = {
     mesh,
     armorMesh,
-    armorOccluder,
     texture,
     visualImageRef: visualImage,
     normalTexture,
@@ -1351,6 +1337,16 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
   SHIP_LIGHT_EMITTER_OPTIONS.out = state.roadLightEmitters;
   buildRoadLightWorldEmitters(visibleHex, SHIP_LIGHT_EMITTER_OPTIONS);
 
+  // Światła pozycyjne jako addytywne billboardy na warstwie FG (po
+  // shadowShaftsPass): świecą HDR-owo pod bloom i przebijają cień planety.
+  const navBuild = ShipLights3D.getSpriteBuildParams(cameraZoom);
+  NAV_LIGHT_SPRITE_OPTIONS.out = state.navLightSprites;
+  NAV_LIGHT_SPRITE_OPTIONS.zoom = cameraZoom;
+  NAV_LIGHT_SPRITE_OPTIONS.haloScale = navBuild.haloScale;
+  NAV_LIGHT_SPRITE_OPTIONS.minHaloWorld = navBuild.minHaloWorld;
+  buildPositionLightWorldSprites(visibleHex, NAV_LIGHT_SPRITE_OPTIONS);
+  ShipLights3D.sync(state.navLightSprites, now * 0.001);
+
   let hasRenderable = false;
   for (const entity of visibleHex) {
     let data = state.entityMeshes.get(entity);
@@ -1359,6 +1355,69 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
 
     updateEntityMesh(entity, data, camX, camY, cameraZoom);
     hasRenderable = true;
+  }
+
+  // Kapsuły-okludery shadow shafts: analityczne cienie kadłubów, liczone
+  // w shaderze passa (działają na każdym zoomie, także dla statków tuż poza
+  // kadrem). Selekcja od największych; ring-segmenty pomijamy — pierścień ma
+  // własny analityczny okluder (setShaftRingOccluder).
+  if (typeof Core3D.beginShaftCapsuleFrame === 'function') {
+    Core3D.beginShaftCapsuleFrame();
+    const halfView = Math.max(window.innerWidth || 1920, window.innerHeight || 1080) * 0.5 / cameraZoom;
+    const occluderReach = halfView + 30000;
+    const cands = state.shaftCapsuleCandidates || (state.shaftCapsuleCandidates = []);
+    cands.length = 0;
+    for (const entity of valid) {
+      if (!entity.hexGrid || entity.isRingSegment) continue;
+      if (entity.hideHexVisual === true || entity.visual?.hideHexMesh === true) continue;
+      const grid = entity.hexGrid;
+      const scaleX = Math.abs(getEntityScaleX(entity)) || 1;
+      const scaleY = Math.abs(getEntityScaleY(entity)) || 1;
+      const w = (Number(grid.srcWidth) || 0) * scaleX;
+      const h = (Number(grid.srcHeight) || 0) * scaleY;
+      const size = Math.max(w, h);
+      if (size < 40) continue; // drobnica nie rzuca sensownego cienia
+      const ex = getEntityPosX(entity);
+      const ey = getEntityPosY(entity);
+      if (Math.abs(ex - camX) > occluderReach || Math.abs(ey - camY) > occluderReach) continue;
+      cands.push({ entity, size, w, h, ex, ey, scaleX, scaleY });
+    }
+    if (cands.length > 1) cands.sort((a, b) => b.size - a.size);
+    for (let i = 0; i < cands.length; i++) {
+      const c = cands[i];
+      const interpPose = getInterpolatedRenderPose(c.entity);
+      const px = interpPose ? interpPose.x : c.ex;
+      const py = interpPose ? interpPose.y : c.ey;
+      const ang = interpPose ? interpPose.angle : (c.entity.angle || 0);
+      const cosA = Math.cos(ang);
+      const sinA = Math.sin(ang);
+      // entity.pos odpowiada PIVOTOWI grida (armor robi translate(-pivot),
+      // mesh: rotation=-angle, scale.y ujemne) — kapsuła centrowana na pos
+      // była odsunięta od widocznego kadłuba (luka między statkiem a cieniem).
+      // Środek sprite'a w koordach gry, z tą samą transformacją co render:
+      const pivotX = Number(c.entity.hexGrid?.pivot?.x) || 0;
+      const pivotY = Number(c.entity.hexGrid?.pivot?.y) || 0;
+      const vx = -c.scaleX * pivotX;
+      const vy = c.scaleY * pivotY;
+      const cx = px + cosA * vx + sinA * vy;
+      const cy = py + sinA * vx - cosA * vy;
+      // Długa oś wg realnych proporcji sprite'a: lokalne X (szerokość
+      // obrazka) mapuje się w świecie gry na (cos a, sin a), lokalne Y
+      // (wysokość) na (sin a, -cos a).
+      let axX;
+      let axY;
+      let halfLen;
+      let halfWid;
+      if (c.w >= c.h) {
+        axX = cosA; axY = sinA; halfLen = c.w * 0.5; halfWid = c.h * 0.5;
+      } else {
+        axX = sinA; axY = -cosA; halfLen = c.h * 0.5; halfWid = c.w * 0.5;
+      }
+      const capR = Math.max(6, halfWid * 0.9);
+      const seg = Math.max(halfLen - capR, 0);
+      // pushShaftCapsuleWorld zwraca false po zapełnieniu rejestru — koniec.
+      if (!Core3D.pushShaftCapsuleWorld(cx - axX * seg, cy - axY * seg, cx + axX * seg, cy + axY * seg, capR)) break;
+    }
   }
 
   for (const entity of visibleVfx) {
@@ -1485,6 +1544,8 @@ export function disposeHexShips3D() {
   GpuDebrisManager.dispose();
   EngineVfxSystem.disposeAll();
   Weapon3DSystem.disposeAll();
+  ShipLights3D.dispose();
+  state.navLightSprites.length = 0;
   state.frameId = 0;
   state.hadRenderableLastFrame = false;
 }

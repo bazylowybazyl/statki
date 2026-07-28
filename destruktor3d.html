@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Destruktor 3D — demo wokselowej destrukcji</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    overflow: hidden; background: #05060c;
+    color: #9fe8b8; font-family: 'Consolas', 'Courier New', monospace;
+  }
+  canvas { display: block; }
+  #ui {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    pointer-events: none; z-index: 10;
+  }
+  .panel {
+    position: absolute;
+    background: rgba(6, 10, 18, 0.82);
+    border: 1px solid #1d3a5f;
+    border-radius: 8px;
+    padding: 12px 14px;
+    backdrop-filter: blur(3px);
+    pointer-events: auto;
+    font-size: 11px;
+    line-height: 1.5;
+  }
+  #panel-left { top: 14px; left: 14px; width: 250px; }
+  #panel-stats { top: 14px; right: 14px; width: 230px; color: #7fc9ff; }
+  #panel-help {
+    bottom: 14px; left: 50%; transform: translateX(-50%);
+    color: #8aa3c0; white-space: nowrap;
+  }
+  h1 { font-size: 14px; margin: 0 0 8px 0; color: #6fb7ff; letter-spacing: 1px; }
+  h2 { font-size: 11px; margin: 10px 0 4px 0; color: #57d78a; }
+  .row { display: flex; justify-content: space-between; align-items: center; margin: 3px 0; gap: 8px; }
+  .row label { flex: 1; color: #b7cdd9; }
+  .row output { width: 44px; text-align: right; color: #ffd479; }
+  input[type=range] { flex: 1.3; accent-color: #2f81f7; height: 14px; }
+  select, button {
+    background: #0d1930; color: #cfe4ff; border: 1px solid #2b4a77;
+    border-radius: 4px; font-family: inherit; font-size: 11px; padding: 3px 8px;
+    cursor: pointer;
+  }
+  button:hover { background: #17325c; }
+  button.wide { width: 100%; margin-top: 5px; }
+  #stats div { display: flex; justify-content: space-between; }
+  #stats span:last-child { color: #ffd479; }
+  #toast {
+    position: absolute; top: 46%; left: 50%; transform: translate(-50%, -50%);
+    background: rgba(10, 22, 44, 0.92); border: 1px solid #2f81f7;
+    padding: 14px 26px; border-radius: 8px; font-size: 13px; color: #cfe4ff;
+    pointer-events: none; opacity: 0; transition: opacity 0.25s; z-index: 30;
+  }
+  #drop-hint {
+    position: absolute; inset: 0; display: none; z-index: 40;
+    background: rgba(10, 30, 60, 0.55); border: 3px dashed #2f81f7;
+    align-items: center; justify-content: center; font-size: 20px; color: #cfe4ff;
+    pointer-events: none;
+  }
+  kbd {
+    background: #14243d; border: 1px solid #2b4a77; border-radius: 3px;
+    padding: 0 4px; color: #ffd479;
+  }
+</style>
+</head>
+<body>
+
+<div id="ui">
+  <div class="panel" id="panel-left">
+    <h1>DESTRUKTOR 3D</h1>
+    <div class="row">
+      <label>Rozdzielczość wokseli</label>
+      <select id="opt-res">
+        <option value="26">niska (26)</option>
+        <option value="34">średnia (34)</option>
+        <option value="44" selected>wysoka (44)</option>
+        <option value="56">bardzo wysoka (56)</option>
+      </select>
+    </div>
+    <div class="row">
+      <label>Skorupa (warstwy)</label>
+      <select id="opt-shell">
+        <option value="2" selected>2 (zalecane)</option>
+        <option value="3">3</option>
+        <option value="0">pełny wolumen</option>
+      </select>
+    </div>
+    <button class="wide" id="btn-rebuild">Przebuduj woksele</button>
+
+    <h2>MATERIAŁ</h2>
+    <div class="row"><label>Sprężystość</label><input type="range" id="sl-tension" min="0.04" max="0.40" step="0.01" value="0.14"><output id="o-tension">0.14</output></div>
+    <div class="row"><label>Plastyczność (yield)</label><input type="range" id="sl-yield" min="0.5" max="4.0" step="0.1" value="1.6"><output id="o-yield">1.6</output></div>
+    <div class="row"><label>Próg rwania (tear)</label><input type="range" id="sl-tear" min="1.0" max="6.0" step="0.1" value="2.5"><output id="o-tear">2.5</output></div>
+    <div class="row"><label>Maks. wgniecenie</label><input type="range" id="sl-deform" min="3" max="15" step="0.5" value="7.4"><output id="o-deform">7.4</output></div>
+    <div class="row"><label>Energia zgniotu</label><input type="range" id="sl-crush" min="0.2" max="2.0" step="0.05" value="0.9"><output id="o-crush">0.9</output></div>
+
+    <h2>TARAN / BROŃ</h2>
+    <div class="row"><label>Masa tarana ×</label><input type="range" id="sl-ram" min="1" max="20" step="0.5" value="8"><output id="o-ram">8</output></div>
+    <div class="row"><label>Ciąg silnika</label><input type="range" id="sl-thrust" min="10" max="160" step="5" value="55"><output id="o-thrust">55</output></div>
+    <div class="row"><label>Obrażenia strzału</label><input type="range" id="sl-dmg" min="50" max="1500" step="25" value="400"><output id="o-dmg">400</output></div>
+    <div class="row"><label>Promień strzału</label><input type="range" id="sl-radius" min="1" max="9" step="0.5" value="3.5"><output id="o-radius">3.5</output></div>
+
+    <button class="wide" id="btn-launch">🚀 Wystrzel taran w stację (T)</button>
+    <button class="wide" id="btn-reset">↺ Reset sceny (R)</button>
+  </div>
+
+  <div class="panel" id="panel-stats">
+    <h1>TELEMETRIA</h1>
+    <div id="stats">
+      <div><span>FPS</span><span id="st-fps">—</span></div>
+      <div><span>Fizyka</span><span id="st-phys">—</span></div>
+      <div><span>Kontakty</span><span id="st-contacts">—</span></div>
+      <div><span>Ciała</span><span id="st-bodies">—</span></div>
+      <div><span>Komórki aktywne</span><span id="st-cells">—</span></div>
+      <div><span>Instancje render</span><span id="st-inst">—</span></div>
+      <div><span>Rozpady</span><span id="st-splits">—</span></div>
+      <div><span>Soft body</span><span id="st-gpu">…</span></div>
+    </div>
+  </div>
+
+  <div class="panel" id="panel-help">
+    <kbd>W/S/A/D</kbd>+<kbd>Spacja/C</kbd> ciąg tarana &nbsp;|&nbsp; <kbd>T</kbd> wystrzel taran
+    &nbsp;|&nbsp; <kbd>PPM</kbd> strzał &nbsp;|&nbsp; <kbd>Shift+PPM</kbd> salwa
+    &nbsp;|&nbsp; <kbd>N</kbd> napraw &nbsp;|&nbsp; <kbd>M</kbd> model źródłowy
+    &nbsp;|&nbsp; <kbd>P</kbd> pauza &nbsp;|&nbsp; <kbd>R</kbd> reset &nbsp;|&nbsp; przeciągnij tu plik <kbd>.glb</kbd>
+  </div>
+</div>
+
+<div id="toast"></div>
+<div id="drop-hint"><span>Upuść plik .glb — zostanie zwokselizowany</span></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import {
+  voxelizeTriangles,
+  buildVoxelBody,
+  extractTrianglesFromObject3D,
+  makeBoxTriangles,
+  concatTriangleSets
+} from './src/game/voxelBody3D.js';
+import { Destructor3D, createDestructor3DConfig } from './src/game/destructor3D.js';
+import { DestructorGpuSoftBody3D } from './src/game/destructorGpuSoftBody3D.js';
+import { VoxelShips3D } from './src/3d/voxelShips3D.js';
+
+// ============================== SCENA ==============================
+const TARGET_SIZE = 120;          // docelowy rozmiar stacji w jednostkach sceny
+const DEFAULT_GLB = './src/stations/earth-station.glb';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x04050a);
+
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.5, 12000);
+camera.position.set(TARGET_SIZE * 1.35, TARGET_SIZE * 0.85, TARGET_SIZE * 1.55);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: null };
+window.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// gwiazdy tła
+{
+  const starGeo = new THREE.BufferGeometry();
+  const N = 1600;
+  const pos = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    const r = 3000 + Math.random() * 5000;
+    const t = Math.random() * Math.PI * 2;
+    const p = Math.acos(2 * Math.random() - 1);
+    pos[i * 3] = r * Math.sin(p) * Math.cos(t);
+    pos[i * 3 + 1] = r * Math.cos(p);
+    pos[i * 3 + 2] = r * Math.sin(p) * Math.sin(t);
+  }
+  starGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0x6f88aa, size: 2.2, sizeAttenuation: false })));
+}
+const gridHelper = new THREE.GridHelper(TARGET_SIZE * 6, 24, 0x123055, 0x0b1c33);
+gridHelper.position.y = -TARGET_SIZE * 0.9;
+scene.add(gridHelper);
+
+// światła dla podglądu modelu źródłowego (woksele mają własny shader)
+scene.add(new THREE.AmbientLight(0x8899bb, 0.5));
+const dirLight = new THREE.DirectionalLight(0xffffff, 1.4);
+dirLight.position.set(0.35, 0.8, 0.5).multiplyScalar(400);
+scene.add(dirLight);
+
+VoxelShips3D.init(scene);
+VoxelShips3D.setLightDir(0.35, 0.8, 0.5);
+
+// ============================== STAN DEMO ==============================
+let bodies = [];
+let cfg = null;
+let cellSize = 1;
+let stationVoxelData = null;   // buildVoxelBody stacji (do resetu bez re-wokselizacji)
+let ramVoxelData = null;
+let stationTris = null;        // cache trójkątów (do przebudowy w innej rozdzielczości)
+let sourceModel = null;        // THREE.Object3D podglądu (klawisz M)
+let stationBody = null;
+let ramBody = null;
+let paused = false;
+
+const keys = Object.create(null);
+const toastEl = document.getElementById('toast');
+let toastTimer = 0;
+
+function toast(msg, holdMs = 2600) {
+  toastEl.textContent = msg;
+  toastEl.style.opacity = '1';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { toastEl.style.opacity = '0'; }, holdMs);
+}
+
+// ============================== BUDOWA CIAŁ ==============================
+function buildRamShipTriangles(size) {
+  // prosty taran: kadłub + dziób + skrzydła + gondole silników
+  const L = size;
+  return concatTriangleSets([
+    { positions: makeBoxTriangles(L * 0.86, L * 0.24, L * 0.30, -L * 0.05, 0, 0), color: [0.55, 0.58, 0.66] },
+    { positions: makeBoxTriangles(L * 0.34, L * 0.15, L * 0.18, L * 0.48, 0, 0), color: [0.75, 0.44, 0.28] },
+    { positions: makeBoxTriangles(L * 0.40, L * 0.06, L * 0.72, -L * 0.18, 0.02 * L, 0), color: [0.36, 0.45, 0.58] },
+    { positions: makeBoxTriangles(L * 0.24, L * 0.14, L * 0.14, -L * 0.46, 0, L * 0.20), color: [0.30, 0.62, 0.86] },
+    { positions: makeBoxTriangles(L * 0.24, L * 0.14, L * 0.14, -L * 0.46, 0, -L * 0.20), color: [0.30, 0.62, 0.86] },
+    { positions: makeBoxTriangles(L * 0.30, L * 0.30, L * 0.10, -L * 0.02, L * 0.20, 0), color: [0.48, 0.52, 0.60] }
+  ]);
+}
+
+function rebuildBodies({ revoxelize = false } = {}) {
+  const res = Number(document.getElementById('opt-res').value) || 34;
+  const shell = Number(document.getElementById('opt-shell').value);
+
+  try {
+    if (revoxelize || !stationVoxelData) {
+      cellSize = TARGET_SIZE / res;
+      cfg = createDestructor3DConfig(cellSize);
+      applySlidersToConfig();
+      Destructor3D.init(cfg);
+
+      const vox = voxelizeTriangles(stationTris.positions, stationTris.colors, {
+        cellSize,
+        shellLayers: shell
+      });
+      stationVoxelData = buildVoxelBody(vox, { cellMassBase: 10 });
+
+      const ramTris = buildRamShipTriangles(TARGET_SIZE * 0.42);
+      const ramVox = voxelizeTriangles(ramTris.positions, ramTris.colors, {
+        cellSize: cellSize * 0.85,
+        shellLayers: Math.max(2, shell || 2)
+      });
+      ramVoxelData = buildVoxelBody(ramVox, { cellMassBase: 10 });
+    }
+  } catch (err) {
+    toast(`Błąd wokselizacji: ${err.message}`, 5200);
+    console.error(err);
+    return;
+  }
+
+  // wyrzuć stare ciała
+  for (const b of bodies) b.dead = true;
+  VoxelShips3D.sync([], camera, performance.now() * 0.001);
+  bodies = [];
+  Destructor3D.splitQueue.length = 0;
+
+  stationBody = Destructor3D.createBody(stationVoxelData, {
+    name: 'stacja',
+    position: { x: 0, y: 0, z: 0 }
+  });
+  ramBody = Destructor3D.createBody(ramVoxelData, {
+    name: 'taran',
+    position: { x: TARGET_SIZE * 1.7, y: TARGET_SIZE * 0.12, z: TARGET_SIZE * 0.3 },
+    rammingMassMult: Number(document.getElementById('sl-ram').value) || 8
+  });
+  bodies.push(stationBody, ramBody);
+
+  toast(`Woksele: stacja ${stationBody.grid.cells.length} kom., taran ${ramBody.grid.cells.length} kom.`);
+}
+
+// ============================== ŁADOWANIE GLB ==============================
+const gltfLoader = new GLTFLoader();
+
+function prepareModel(root) {
+  // normalizacja do TARGET_SIZE i wycentrowanie
+  const box = new THREE.Box3().setFromObject(root);
+  const size = new THREE.Vector3();
+  const center = new THREE.Vector3();
+  box.getSize(size);
+  box.getCenter(center);
+  const maxDim = Math.max(size.x, size.y, size.z) || 1;
+  const scale = TARGET_SIZE / maxDim;
+  root.position.set(-center.x * scale, -center.y * scale, -center.z * scale);
+  root.scale.setScalar(scale);
+  root.updateMatrixWorld(true);
+  return root;
+}
+
+function adoptModel(root, label) {
+  if (sourceModel) {
+    scene.remove(sourceModel);
+    sourceModel = null;
+  }
+  prepareModel(root);
+  sourceModel = root;
+  let meshCount = 0;
+  root.traverse((o) => { if (o.isMesh) meshCount++; });
+  window.__dbgModel = root;
+  stationTris = extractTrianglesFromObject3D(root);
+  sourceModel.visible = false;
+  scene.add(sourceModel);
+  console.log(`[destruktor3d] adoptModel: meshy=${meshCount}, trójkąty=${(stationTris.positions.length / 9) | 0}`);
+  if (!stationTris.positions.length) {
+    console.warn('[destruktor3d] ekstrakcja dała 0 trójkątów — fallback');
+    toast('Model nie zawiera geometrii — używam zapasowej bryły', 4200);
+    stationTris = buildFallbackStationTris();
+  }
+  toast(`Model: ${label} (${(stationTris.positions.length / 9) | 0} trójkątów). Wokselizuję…`, 3400);
+  requestAnimationFrame(() => rebuildBodies({ revoxelize: true }));
+}
+
+function buildFallbackStationTris() {
+  const S = TARGET_SIZE;
+  return concatTriangleSets([
+    { positions: makeBoxTriangles(S * 0.9, S * 0.34, S * 0.34, 0, 0, 0), color: [0.5, 0.54, 0.62] },
+    { positions: makeBoxTriangles(S * 0.3, S * 0.62, S * 0.62, 0, 0, 0), color: [0.42, 0.48, 0.6] },
+    { positions: makeBoxTriangles(S * 0.22, S * 0.22, S * 0.95, S * 0.25, 0, 0), color: [0.62, 0.5, 0.34] },
+    { positions: makeBoxTriangles(S * 0.22, S * 0.95, S * 0.22, -S * 0.25, 0, 0), color: [0.34, 0.56, 0.62] }
+  ]);
+}
+
+function loadDefaultModel() {
+  gltfLoader.load(
+    DEFAULT_GLB,
+    (gltf) => {
+      try {
+        adoptModel(gltf.scene, 'earth-station.glb');
+      } catch (err) {
+        console.error('[destruktor3d] adoptModel padł:', err);
+        toast(`Błąd przetwarzania modelu: ${err.message}`, 5200);
+        stationTris = buildFallbackStationTris();
+        rebuildBodies({ revoxelize: true });
+      }
+    },
+    undefined,
+    (err) => {
+      console.error('[destruktor3d] GLB nie wczytany:', err);
+      toast('Nie wczytano earth-station.glb — używam zapasowej bryły', 4200);
+      stationTris = buildFallbackStationTris();
+      rebuildBodies({ revoxelize: true });
+    }
+  );
+}
+
+// drag & drop .glb
+const dropHint = document.getElementById('drop-hint');
+window.addEventListener('dragover', (e) => { e.preventDefault(); dropHint.style.display = 'flex'; });
+window.addEventListener('dragleave', (e) => { if (!e.relatedTarget) dropHint.style.display = 'none'; });
+window.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  dropHint.style.display = 'none';
+  const file = e.dataTransfer?.files?.[0];
+  if (!file || !/\.(glb|gltf)$/i.test(file.name)) {
+    toast('Obsługiwane są pliki .glb/.gltf', 3200);
+    return;
+  }
+  try {
+    const buf = await file.arrayBuffer();
+    gltfLoader.parse(buf, '', (gltf) => adoptModel(gltf.scene, file.name), (err) => {
+      toast(`Błąd parsowania: ${err?.message || err}`, 4200);
+    });
+  } catch (err) {
+    toast(`Błąd odczytu pliku: ${err.message}`, 4200);
+  }
+});
+
+// ============================== DEBRIS HOOK ==============================
+Destructor3D.onDebris = (body, cell, wx, wy, wz, vx, vy, vz) => {
+  VoxelShips3D.spawnDebris(wx, wy, wz, vx, vy, vz, cell.r, cell.g, cell.b, body.grid.cellSize * 0.9);
+};
+
+// ============================== SUWAKI ==============================
+function bindSlider(id, outId, onChange) {
+  const el = document.getElementById(id);
+  const out = document.getElementById(outId);
+  const update = () => {
+    out.textContent = el.value;
+    onChange(Number(el.value));
+  };
+  el.addEventListener('input', update);
+  return update;
+}
+
+function applySlidersToConfig() {
+  if (!cfg) return;
+  const cs = cfg.cellSize;
+  cfg.softBodyTension = Number(document.getElementById('sl-tension').value);
+  cfg.yieldPoint = Number(document.getElementById('sl-yield').value) * cs;
+  cfg.tearThreshold = Number(document.getElementById('sl-tear').value) * cs;
+  cfg.maxDeform = Number(document.getElementById('sl-deform').value) * cs;
+  cfg.crushImpulseScale = Number(document.getElementById('sl-crush').value);
+}
+
+bindSlider('sl-tension', 'o-tension', () => applySlidersToConfig());
+bindSlider('sl-yield', 'o-yield', () => applySlidersToConfig());
+bindSlider('sl-tear', 'o-tear', () => applySlidersToConfig());
+bindSlider('sl-deform', 'o-deform', () => applySlidersToConfig());
+bindSlider('sl-crush', 'o-crush', () => applySlidersToConfig());
+bindSlider('sl-ram', 'o-ram', (v) => { if (ramBody) ramBody.rammingMassMult = v; });
+bindSlider('sl-thrust', 'o-thrust', () => {});
+bindSlider('sl-dmg', 'o-dmg', () => {});
+bindSlider('sl-radius', 'o-radius', () => {});
+
+document.getElementById('btn-rebuild').addEventListener('click', () => rebuildBodies({ revoxelize: true }));
+document.getElementById('btn-reset').addEventListener('click', () => rebuildBodies({ revoxelize: false }));
+document.getElementById('btn-launch').addEventListener('click', launchRam);
+
+// ============================== STEROWANIE ==============================
+window.addEventListener('keydown', (e) => {
+  keys[e.code] = true;
+  if (e.code === 'KeyT') launchRam();
+  if (e.code === 'KeyR') rebuildBodies({ revoxelize: false });
+  if (e.code === 'KeyP') { paused = !paused; toast(paused ? 'PAUZA' : 'WZNOWIONO', 1200); }
+  if (e.code === 'KeyM' && sourceModel) {
+    sourceModel.visible = !sourceModel.visible;
+    toast(sourceModel.visible ? 'Model źródłowy: widoczny' : 'Model źródłowy: ukryty', 1400);
+  }
+  if (e.code === 'KeyN' && ramBody && !ramBody.dead) {
+    Destructor3D.repair([ramBody, stationBody].filter(Boolean), 0.5);
+    toast('Naprawa struktur…', 1200);
+  }
+});
+window.addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+function launchRam() {
+  if (!ramBody || ramBody.dead || !stationBody || stationBody.dead) return;
+  const dx = stationBody.pos.x - ramBody.pos.x;
+  const dy = stationBody.pos.y - ramBody.pos.y;
+  const dz = stationBody.pos.z - ramBody.pos.z;
+  const len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+  const speed = cfg.crashApproachSpeedThreshold * 1.8;
+  ramBody.vel.x = (dx / len) * speed;
+  ramBody.vel.y = (dy / len) * speed;
+  ramBody.vel.z = (dz / len) * speed;
+  toast('Taran wystrzelony!', 1400);
+}
+
+// strzały PPM (raycast w kratownicę)
+const raycaster = new THREE.Raycaster();
+const mouseNdc = new THREE.Vector2();
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  if (e.button !== 2) return;
+  mouseNdc.set((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
+  raycaster.setFromCamera(mouseNdc, camera);
+  const o = raycaster.ray.origin;
+  const d = raycaster.ray.direction;
+
+  let best = null;
+  let bestBody = null;
+  for (const body of bodies) {
+    if (body.dead) continue;
+    const hit = Destructor3D.raycastBody(body, o.x, o.y, o.z, d.x, d.y, d.z, 8000);
+    if (hit && (!best || hit.t < best.t)) { best = hit; bestBody = body; }
+  }
+  if (!best) return;
+
+  const dmg = Number(document.getElementById('sl-dmg').value);
+  const radius = Number(document.getElementById('sl-radius').value) * cfg.cellSize;
+  const impactSpeed = 30 * cfg.cellSize;
+  const shots = e.shiftKey ? 5 : 1;
+  for (let s = 0; s < shots; s++) {
+    const jitter = e.shiftKey ? radius * 1.6 : 0;
+    Destructor3D.applyImpact(
+      bestBody,
+      best.x + (Math.random() - 0.5) * jitter,
+      best.y + (Math.random() - 0.5) * jitter,
+      best.z + (Math.random() - 0.5) * jitter,
+      dmg,
+      { x: d.x * impactSpeed, y: d.y * impactSpeed, z: d.z * impactSpeed },
+      { radius }
+    );
+  }
+});
+
+// ============================== PĘTLA ==============================
+const FIXED_DT = 1 / 120;
+let accumulator = 0;
+let lastFrame = performance.now();
+let fpsFrames = 0;
+let fpsLast = performance.now();
+let fpsValue = 0;
+
+const camForward = new THREE.Vector3();
+const camRight = new THREE.Vector3();
+const UP = new THREE.Vector3(0, 1, 0);
+
+function applyThrust(h) {
+  if (!ramBody || ramBody.dead) return;
+  const thrust = Number(document.getElementById('sl-thrust').value);
+  camera.getWorldDirection(camForward);
+  camRight.crossVectors(camForward, UP).normalize();
+  let ax = 0, ay = 0, az = 0;
+  if (keys['KeyW']) { ax += camForward.x; ay += camForward.y; az += camForward.z; }
+  if (keys['KeyS']) { ax -= camForward.x; ay -= camForward.y; az -= camForward.z; }
+  if (keys['KeyD']) { ax += camRight.x; az += camRight.z; }
+  if (keys['KeyA']) { ax -= camRight.x; az -= camRight.z; }
+  if (keys['Space']) ay += 1;
+  if (keys['KeyC']) ay -= 1;
+  const len = Math.sqrt(ax * ax + ay * ay + az * az);
+  if (len < 1e-4) return;
+  const s = (thrust / len) * h;
+  ramBody.vel.x += ax * s;
+  ramBody.vel.y += ay * s;
+  ramBody.vel.z += az * s;
+  Destructor3D.wakeBody(ramBody, 4);
+}
+
+function pruneBodies() {
+  let changed = false;
+  for (const b of bodies) {
+    if (!b.dead && b.grid.activeCount <= 0) { b.dead = true; changed = true; }
+  }
+  if (changed || bodies.some(b => b.dead)) bodies = bodies.filter(b => !b.dead);
+}
+
+function frame() {
+  requestAnimationFrame(frame);
+  const now = performance.now();
+  let dt = (now - lastFrame) / 1000;
+  lastFrame = now;
+  if (dt > 0.25) dt = 0.25;
+
+  if (!paused && cfg) {
+    accumulator += dt;
+    let steps = 0;
+    while (accumulator >= FIXED_DT && steps < 6) {
+      applyThrust(FIXED_DT);
+      Destructor3D.integrate(FIXED_DT, bodies);
+      Destructor3D.update(FIXED_DT, bodies);
+      accumulator -= FIXED_DT;
+      steps++;
+    }
+    if (steps === 6) accumulator = 0;
+    Destructor3D.updateVisuals(dt, bodies);
+    pruneBodies();
+  }
+
+  VoxelShips3D.sync(bodies, camera, now * 0.001);
+  controls.update();
+  renderer.render(scene, camera);
+
+  fpsFrames++;
+  if (now - fpsLast > 500) {
+    fpsValue = Math.round(fpsFrames * 1000 / (now - fpsLast));
+    fpsFrames = 0;
+    fpsLast = now;
+    updateStats();
+  }
+}
+
+function updateStats() {
+  document.getElementById('st-fps').textContent = String(fpsValue);
+  document.getElementById('st-phys').textContent = `${Destructor3D.perf.lastUpdateMs.toFixed(2)} ms`;
+  document.getElementById('st-contacts').textContent = String(Destructor3D.perf.lastContacts);
+  document.getElementById('st-bodies').textContent = String(bodies.length);
+  document.getElementById('st-cells').textContent = String(VoxelShips3D.stats.cells);
+  document.getElementById('st-inst').textContent = String(VoxelShips3D.stats.instances);
+  document.getElementById('st-splits').textContent = String(Destructor3D.perf.bodiesSplit);
+  document.getElementById('st-gpu').textContent = DestructorGpuSoftBody3D.active
+    ? 'WebGPU ✓'
+    : (DestructorGpuSoftBody3D._supportsWebGPU() ? 'WebGPU (init…)' : 'CPU fallback');
+}
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// start
+toast('Ładowanie modelu stacji…', 2400);
+loadDefaultModel();
+frame();
+</script>
+</body>
+</html>

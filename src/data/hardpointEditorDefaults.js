@@ -7,6 +7,19 @@ export const SHIP_EDITOR_DEFAULTS = {
   source: 'hardpoint-editor-defaults',
   ships: {
     atlas: PLAYER_EDITOR_DEFAULTS,
+    // The freight locomotive intentionally has no weapon mounts or reactor
+    // markers yet. Keeping an explicit empty profile is important: without it
+    // the player layout resolver falls back to Atlas (including any markers
+    // saved by the user) and the integrity probes interpret those foreign
+    // coordinates as destroyed parts immediately after entering the hull.
+    megafreighter: {
+      label: 'Megafreighter',
+      frontAxis: '+X',
+      hardpoints: [],
+      cores: [],
+      engines: { main: [], side: [] },
+      lights: { position: [], road: [] }
+    },
     "capital_carrier": {
     "label": "Legacy Capital Carrier",
     "frontAxis": "+X",

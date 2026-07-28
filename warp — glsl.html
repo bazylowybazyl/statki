@@ -45,6 +45,41 @@
             text-shadow: 0 0 5px #0055ff;
             z-index: 10;
         }
+        #telemetry {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            min-width: 170px;
+            padding: 10px 14px;
+            border: 1px solid rgba(0, 221, 255, 0.45);
+            border-radius: 8px;
+            background: rgba(0, 8, 20, 0.7);
+            color: rgba(210, 242, 255, 0.8);
+            font-size: 12px;
+            line-height: 1.6;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            z-index: 10;
+        }
+        #telemetry strong { color: #9cecff; }
+        #turn-meter {
+            display: inline-block;
+            width: 64px;
+            height: 4px;
+            margin-left: 6px;
+            vertical-align: middle;
+            border-radius: 2px;
+            background: rgba(90, 150, 190, 0.22);
+            overflow: hidden;
+        }
+        #turn-meter-fill {
+            width: 100%;
+            height: 100%;
+            background: #7de8ff;
+            box-shadow: 0 0 8px #00bfff;
+            transform: scaleX(0);
+            transform-origin: center;
+        }
         #instructions {
             position: absolute;
             bottom: 140px;
@@ -83,7 +118,11 @@
 <body>
 
     <div id="status">STATUS: IDLE</div>
-    <div id="instructions">[A/D] - Sterowanie statkiem (Drift) | [Scroll] - Zoom kamery (tylko do podglądu)</div>
+    <div id="telemetry">
+        <div>Warp gear: <strong id="gear-value">1 / 5</strong></div>
+        <div>Turn pressure: <span id="turn-value">0%</span><span id="turn-meter"><span id="turn-meter-fill"></span></span></div>
+    </div>
+    <div id="instructions">[A/D] - Skręt / nacisk tunelu | [W/S] - Bieg warp | [Scroll] - Zoom podglądu</div>
     
     <div id="progress-container">
         <div id="progress-bar"></div>
@@ -91,7 +130,7 @@
 
     <div id="ui-container">
         <button onclick="setStage('SPOOL')">1. Ładowanie (Spool)</button>
-        <button onclick="setStage('JUMP')">2. Wystrzał -> Tunel</button>
+        <button onclick="setStage('JUMP')">2. Szew -> Tunel</button>
         <button onclick="setStage('EXIT')">3. Wyjście (Exit)</button>
     </div>
 
@@ -99,47 +138,28 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 
     <script>
-        // --- 0. CONFIG + HELPERS ---
-        const WARP_CONFIG = {
-            spoolDuration:        4.0,
-            jumpFlashDuration:    0.5,   // JUMP -> TUNNEL crossfade
-            exitPunchDuration:    0.4,   // 0.0 - 0.4s "punch out"
-            exitDecelDuration:    1.1,   // 0.4 - 1.5s decel
-            exitSettleDuration:   1.5,   // 1.5 - 3.0s settle into destination
-            exitTotalDuration:    3.0,
-            baseFov:              60.0,
-            spoolPeakFov:         72.0,
-            exitPunchFov:         80.0,
-            tunnelEventMinGap:    3.0,
-            tunnelEventMaxGap:    7.0,
-            cameraBaseY:          2500,
-            cameraExitZoomY:      1800,
-            cameraExitPullY:      3500
+        // Demo pozostaje look-devem; wszystkie przejścia są jednak napędzane dt,
+        // żeby zachowywały się tak samo po pauzie, hitchu i spamowaniu przycisków.
+        const clamp01 = (value) => Math.max(0, Math.min(1, value));
+        const lerp = (a, b, t) => a + (b - a) * t;
+        const smooth01 = (value) => {
+            const t = clamp01(value);
+            return t * t * (3.0 - 2.0 * t);
         };
-
-        // Frame-rate-independent damping (cache-warm, accurate at any dt).
-        // value approaches target with characteristic rate `rate` (higher = snappier).
-        function damp(value, target, rate, dt) {
-            return value + (target - value) * (1.0 - Math.exp(-rate * dt));
-        }
-        function smoothstep(edge0, edge1, x) {
-            const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
-            return t * t * (3 - 2 * t);
-        }
-        function lerp(a, b, t) { return a + (b - a) * t; }
-        function easeOutQuart(t) { return 1.0 - Math.pow(1.0 - t, 4.0); }
+        const damp = (value, target, rate, dt) =>
+            value + (target - value) * (1.0 - Math.exp(-rate * dt));
 
         // --- 1. SETUP SCENY ---
         const scene = new THREE.Scene();
-        let globalTime = 0;
-
-        const camera = new THREE.PerspectiveCamera(WARP_CONFIG.baseFov, window.innerWidth / window.innerHeight, 1, 25000);
-        let targetCameraY = WARP_CONFIG.cameraBaseY;
-        let baseCameraX = 0;
-        let baseCameraZ = 0;
-        let targetFov = WARP_CONFIG.baseFov;
-        let cameraRollTarget = 0.0;
-        let currentCameraRoll = 0.0;
+        let globalTime = 0; 
+        
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 25000);
+        const DEFAULT_CAMERA_Y = 3600;
+        const MIN_CAMERA_Y = 1000;
+        const MAX_CAMERA_Y = 9000;
+        let targetCameraY = DEFAULT_CAMERA_Y; 
+        let baseCameraX = 0; 
+        let baseCameraZ = 0; 
         camera.position.set(baseCameraX, targetCameraY, baseCameraZ);
         camera.lookAt(0, 0, 0);
 
@@ -149,91 +169,14 @@
         renderer.autoClear = false;
         document.body.appendChild(renderer.domElement);
 
-        const shipContainer = new THREE.Group();
-        shipContainer.position.y = 50;
+        const shipContainer = new THREE.Group(); 
+        shipContainer.position.y = 50; 
         scene.add(shipContainer);
-
-        // --- 1B. STARFIELD (always visible, distorts during warp) ---
-        const STARFIELD_COUNT = 1500;
-        const starGeo = new THREE.BufferGeometry();
-        const starPositions = new Float32Array(STARFIELD_COUNT * 3);
-        const starSizes = new Float32Array(STARFIELD_COUNT);
-        const starSeeds = new Float32Array(STARFIELD_COUNT);
-        for (let i = 0; i < STARFIELD_COUNT; i++) {
-            // Distribute stars on a far plane below the camera (top-down view)
-            starPositions[i * 3 + 0] = (Math.random() - 0.5) * 30000;
-            starPositions[i * 3 + 1] = -8000 - Math.random() * 4000; // far below ship
-            starPositions[i * 3 + 2] = (Math.random() - 0.5) * 30000;
-            starSizes[i] = 6.0 + Math.pow(Math.random(), 3.0) * 50.0;
-            starSeeds[i] = Math.random();
-        }
-        starGeo.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
-        starGeo.setAttribute('aSize', new THREE.BufferAttribute(starSizes, 1));
-        starGeo.setAttribute('aSeed', new THREE.BufferAttribute(starSeeds, 1));
-
-        const uniformsStarfield = {
-            uTime: { value: 0.0 },
-            uExitProgress: { value: 0.0 },     // 0 = streaks, 1 = points (used during EXIT settle)
-            uWarpStretch: { value: 0.0 },      // overall stretch from warp travel speed
-            uVisibility: { value: 1.0 },       // 0 = hidden (deep tunnel), 1 = full
-            uPixelRatio: { value: renderer ? renderer.getPixelRatio() : 1.0 }
-        };
-
-        const starMaterial = new THREE.ShaderMaterial({
-            uniforms: uniformsStarfield,
-            vertexShader: `
-                uniform float uTime;
-                uniform float uExitProgress;
-                uniform float uWarpStretch;
-                uniform float uPixelRatio;
-                attribute float aSize;
-                attribute float aSeed;
-                varying float vAlpha;
-                varying float vSeed;
-                void main() {
-                    vSeed = aSeed;
-                    vec4 mv = modelViewMatrix * vec4(position, 1.0);
-                    float twinkle = 0.7 + 0.3 * sin(uTime * 2.0 + aSeed * 12.566);
-                    // Slight size pulse + warp stretch contributes to perceived size
-                    float sz = aSize * twinkle * (1.0 + uWarpStretch * 0.4);
-                    gl_PointSize = sz * uPixelRatio * (300.0 / -mv.z);
-                    vAlpha = twinkle;
-                    gl_Position = projectionMatrix * mv;
-                }
-            `,
-            fragmentShader: `
-                uniform float uExitProgress;
-                uniform float uWarpStretch;
-                uniform float uVisibility;
-                varying float vAlpha;
-                varying float vSeed;
-                void main() {
-                    vec2 pt = gl_PointCoord - vec2(0.5);
-                    // During warp, stretch the star sprite vertically (tunnel axis = world Z, but
-                    // viewed top-down so screen-Y is the travel direction).
-                    float stretch = mix(1.0, 0.18, uExitProgress); // EXIT shrinks streaks toward dots
-                    float warpBoost = mix(0.0, 1.0, uWarpStretch);
-                    pt.y *= mix(1.0, 0.08, warpBoost) * (1.0 / stretch);
-                    float d = length(pt);
-                    float core = pow(max(0.0, 0.5 - d) * 2.0, 2.0);
-                    vec3 col = mix(vec3(0.7, 0.85, 1.0), vec3(1.0, 0.95, 0.85), vSeed);
-                    float a = core * vAlpha * uVisibility;
-                    if (a < 0.01) discard;
-                    gl_FragColor = vec4(col * a, a);
-                }
-            `,
-            transparent: true,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false
-        });
-        const starfield = new THREE.Points(starGeo, starMaterial);
-        starfield.renderOrder = -1;
-        starfield.frustumCulled = false;
-        scene.add(starfield);
 
         const uniformsShip = {
             tDiffuse: { value: null },
             uSpoolProgress: { value: 0.0 },
+            uHullPulse: { value: 0.0 },
             uTime: { value: 0.0 }
         };
 
@@ -256,6 +199,7 @@
                 fragmentShader: `
                     uniform sampler2D tDiffuse;
                     uniform float uSpoolProgress;
+                    uniform float uHullPulse;
                     uniform float uTime;
                     varying vec2 vUv;
 
@@ -285,17 +229,25 @@
 
                     void main() {
                         vec4 texColor = texture2D(tDiffuse, vUv);
-                        
-                        float wave = sin(vUv.x * 20.0 + uTime * 10.0) * 0.5 + 0.5;
-                        float energyMask = smoothstep(0.0, 1.0, uSpoolProgress) * wave;
-                        vec3 baseEnergy = vec3(0.1, 0.6, 1.0) * energyMask * 0.8;
-                        
+
+                        // UV.x biegnie od sekcji silnikowej do dziobu. Energia nie
+                        // zalewa już całej tekstury naraz, tylko wspina się po kadłubie.
+                        float chargeFront = clamp(uSpoolProgress * 1.15, 0.0, 1.0);
+                        float reached = 1.0 - smoothstep(chargeFront, chargeFront + 0.16, vUv.x);
+                        float conduitWave = 0.25 + 0.75 * (
+                            sin(vUv.x * 30.0 - uTime * 11.0 + vUv.y * 7.0) * 0.5 + 0.5
+                        );
+                        float sideFalloff = 1.0 - smoothstep(0.12, 0.34, abs(vUv.y - 0.5));
+                        float energyMask = reached * conduitWave * sideFalloff * smoothstep(0.02, 0.35, uSpoolProgress);
+                        energyMask += uHullPulse * (0.18 + 0.32 * conduitWave);
+                        vec3 baseEnergy = vec3(0.025, 0.18, 0.42) * energyMask;
+
                         float arcs = 0.0;
-                        arcs += electricArc(vUv, uTime, 1.1, 0.001);
-                        arcs += electricArc(vUv, uTime, 5.5, 0.002);
-                        arcs += electricArc(vec2(1.0 - vUv.x, vUv.y), uTime * 1.2, 12.3, 0.0008);
-                        arcs *= smoothstep(0.2, 0.9, uSpoolProgress) * 2.5;
-                        
+                        vec2 hullAxisUv = vec2(vUv.y, vUv.x);
+                        arcs += electricArc(hullAxisUv, uTime, 1.1, 0.0015);
+                        arcs += electricArc(vec2(1.0 - hullAxisUv.x, hullAxisUv.y), uTime * 1.2, 5.5, 0.001);
+                        arcs *= (smoothstep(0.55, 0.98, uSpoolProgress) * 0.72 + uHullPulse * 0.55);
+
                         vec3 arcColor = vec3(0.6, 0.9, 1.0) * arcs;
                         vec3 finalColor = texColor.rgb + (baseEnergy + arcColor) * texColor.a;
                         
@@ -331,14 +283,17 @@
             uniform float uTwist;
             uniform float uBowFocus;
             uniform float uAlphaMult; 
+            uniform float uGear;
+            uniform float uGearPulse;
+            uniform float uTurnPressure;
+            uniform float uEntryPulse;
+            uniform float uExitProgress;
+            uniform vec2 uResolution;
+            uniform vec2 uShipScreen;
             uniform vec3 uColorBase;
             uniform vec3 uColorBright;
-            uniform float uLightning;
-            uniform float uExitProgress;   // 0..1 EXIT collapse-to-axis
-            uniform float uEventFlash;     // 0..1 event brightness boost
-            uniform vec3  uColorAccent;    // event color override
-            uniform float uColorShift;     // 0..1 destination color gradient
-
+            uniform float uLightning; 
+            
             varying vec2 vUv;
 
             float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
@@ -354,7 +309,7 @@
 
             float fbm(vec2 p, float periodX) {
                 float v = 0.0; float a = 0.5;
-                for (int i = 0; i < 4; i++) {
+                for (int i = 0; i < 3; i++) {
                     v += a * noise(p, periodX);
                     p *= 2.0; periodX *= 2.0; a *= 0.5;
                 }
@@ -364,7 +319,7 @@
             float electricArcTunnel(vec2 uv, float time, float seed, float thickness, float periodX) {
                 vec2 nUv = vec2(uv.y * 2.0 - time * 4.0, seed);
                 float n = fbm(nUv, periodX) - 0.5;
-                n += (fbm(vec2(uv.y * 12.0 + time * 8.0, seed + 1.2), periodX) - 0.5) * 0.25;
+                n += sin(uv.y * 52.0 + time * 7.0 + seed * 11.0) * 0.055;
                 
                 float center = fract(time * 0.15 + seed + n * 0.4);
                 float dist = abs(uv.x - center);
@@ -386,54 +341,58 @@
                 float localTwist = baseTwist + (bowTwistMask * uBowFocus * 0.8);
 
                 uv.x += uv.y * localTwist;
-                // POPRAWKA: Zmiana '+=' na '-='. Zapewnia spójny lot z góry na dół ekranu (od dziobu do silników).
-                uv.y -= uTravelOffset + uTime * uFlowSpeed;
+                float longitudinal = vUv.y - bowY;
+                uv.x += uTurnPressure * longitudinal * abs(longitudinal) * 0.72;
+                float travel = uTravelOffset;
+                uv.y -= travel;
 
+                // Skala wstęg jest dyskretna i nie jest już lerpowana między
+                // wartościami całkowitymi, więc cały wzór nie "przeskakuje".
                 float stripesX = max(1.0, floor(uRibbonScale)); 
                 vec2 noiseUv = vec2(uv.x * stripesX, uv.y * 3.5);
-                
+                 
                 float n1 = fbm(noiseUv, stripesX);
-                // POPRAWKA: Zmiana '+' na '-' w wektorze przesuwania szumu.
-                float n2 = fbm(noiseUv * 2.0 - vec2(0.0, (uTravelOffset + uTime * uFlowSpeed) * 0.5), stripesX * 2.0); 
-                
-                float energy = n1 * n2;
-                energy = smoothstep(uEnergyThreshold, 0.7, energy); 
-                
+                float n2 = fbm(noiseUv * 1.85 - vec2(0.0, travel * 0.45), stripesX * 1.85); 
+                 
+                float broadCloud = smoothstep(0.20, 0.76, n1);
+                float filament = smoothstep(uEnergyThreshold, 0.68, n1 * n2);
+                float energy = broadCloud * 0.30 + filament * 0.70;
+
+                // Miękkie pasma kompresji dają czytelny rytm głębi. Bieg
+                // zwiększa ich częstotliwość i prędkość, ale nie przepala obrazu.
+                float ribDensity = mix(5.0, 10.0, clamp((uGear - 1.0) / 4.0, 0.0, 1.0));
+                float ribPhase = fract((uv.y + n1 * 0.07) * ribDensity);
+                float rib = exp(-pow((ribPhase - 0.5) * 5.5, 2.0));
+                rib *= 0.20 + uGearPulse * 0.18 + uEntryPulse * 0.24;
+                 
                 float edgeFade = smoothstep(0.0, 0.2, vUv.y) * (1.0 - smoothstep(0.8, 1.0, vUv.y));
                 float currentMask = mix(edgeFade, spoolMask * 1.5, uBowFocus);
 
-                // Distance-based color gradient: blue -> violet -> warm gold (destination).
-                vec3 colBase = uColorBase;
-                vec3 colBright = uColorBright;
-                vec3 violet = vec3(0.45, 0.15, 0.85);
-                vec3 gold = vec3(1.0, 0.75, 0.3);
-                float seg1 = smoothstep(0.0, 0.5, uColorShift);
-                float seg2 = smoothstep(0.5, 1.0, uColorShift);
-                vec3 shiftedBase = mix(colBase, mix(colBase * 0.7 + violet * 0.4, gold * 0.3, seg2), seg1);
-                vec3 shiftedBright = mix(colBright, mix(violet * 1.2, gold, seg2), seg1);
-                // Event flash overrides bright color momentarily.
-                shiftedBright = mix(shiftedBright, uColorAccent, uEventFlash);
-
-                vec3 colorIridescent = mix(shiftedBright, vec3(0.8, 0.2, 1.0), sin(uTime * 3.0 + n1 * 10.0) * 0.5 + 0.5);
-                vec3 finalColor = mix(shiftedBase, colorIridescent, energy * 2.0);
-                finalColor *= 1.0 + uEventFlash * 0.6;
-                
+                float violetMix = 0.08 + 0.04 * sin(uTime * 1.2 + n1 * 8.0);
+                vec3 colorIridescent = mix(uColorBright, vec3(0.18, 0.06, 0.45), violetMix);
+                vec3 finalColor = uColorBase;
+                finalColor += colorIridescent * (broadCloud * 0.45 + filament * 1.15);
+                 
                 float arcs = 0.0;
-                arcs += electricArcTunnel(uv, uTime, 0.1, 0.0005, stripesX);
-                arcs += electricArcTunnel(uv, uTime, 1.8, 0.0008, stripesX);
-                arcs += electricArcTunnel(uv, uTime, 3.3, 0.0004, stripesX);
-                arcs += electricArcTunnel(uv, uTime, 4.7, 0.0015, stripesX); 
-                
+                arcs += electricArcTunnel(uv, uTime, 0.1, 0.0011, stripesX);
+                arcs += electricArcTunnel(uv, uTime, 1.8, 0.0015, stripesX);
+                 
                 vec3 arcColor = vec3(0.8, 0.95, 1.0) * arcs * uLightning;
-                finalColor += arcColor; 
-                
-                float alpha = (energy * uIntensity + (arcs * uLightning * 0.5)) * currentMask * uAlphaMult;
-                // Tunnel collapses toward its central axis as exit progresses.
-                // collapseR shrinks from 1.0 (full tunnel) toward 0.0 (axis line).
-                float collapseR = max(0.0, 1.0 - smoothstep(0.0, 0.85, uExitProgress));
-                float distFromAxis = abs(vUv.x - 0.5) * 2.0;
-                float collapseFade = 1.0 - smoothstep(collapseR * 0.85, collapseR + 0.02, distFromAxis);
-                alpha *= mix(1.0, collapseFade, step(0.001, uExitProgress));
+                float wallSide = sin(vUv.x * 6.2831853);
+                float pressureGlow = max(0.0, wallSide * uTurnPressure);
+                finalColor += arcColor + vec3(0.12, 0.55, 1.3) * (rib + pressureGlow * 0.35);
+                 
+                float exitFade = 1.0 - smoothstep(0.02, 0.88, uExitProgress);
+                vec2 screenUv = gl_FragCoord.xy / uResolution;
+                vec2 shipDelta = (screenUv - uShipScreen) / vec2(0.17, 0.34);
+                float readabilityBubble = smoothstep(0.72, 1.12, length(shipDelta));
+                float alpha = (
+                    energy * uIntensity +
+                    rib * uIntensity +
+                    arcs * uLightning * 0.35 +
+                    pressureGlow * uIntensity * 0.2
+                ) * currentMask * uAlphaMult * exitFade;
+                alpha *= mix(0.30, 1.0, readabilityBubble);
                 alpha = clamp(alpha, 0.0, 1.0);
 
                 gl_FragColor = vec4(finalColor, alpha);
@@ -444,29 +403,35 @@
             return {
                 uTime: { value: 0.0 },
                 uTravelOffset: { value: 0.0 },
-                uFlowSpeed: { value: 0.0 },
-                uRibbonScale: { value: 12.0 },
-                uEnergyThreshold: { value: 0.15 },
+                uFlowSpeed: { value: 0.0 },       
+                uRibbonScale: { value: 12.0 },    
+                uEnergyThreshold: { value: 0.15 }, 
                 uIntensity: { value: 0.0 },
                 uTwist: { value: 0.0 },
-                uBowFocus: { value: 0.0 },
-                uAlphaMult: { value: alpha },
-                uLightning: { value: 0.0 },
-                uColorBase: { value: new THREE.Color(0x001155) },
-                uColorBright: { value: new THREE.Color(0x88ddff) },
+                uBowFocus: { value: 0.0 }, 
+                uAlphaMult: { value: alpha }, 
+                uGear: { value: 1.0 },
+                uGearPulse: { value: 0.0 },
+                uTurnPressure: { value: 0.0 },
+                uEntryPulse: { value: 0.0 },
                 uExitProgress: { value: 0.0 },
-                uEventFlash: { value: 0.0 },
-                uColorAccent: { value: new THREE.Color(1.0, 0.8, 0.3) },
-                uColorShift: { value: 0.0 }
+                uResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+                uShipScreen: { value: new THREE.Vector2(0.5, 0.5) },
+                uLightning: { value: 0.0 }, 
+                uColorBase: { value: new THREE.Color().setRGB(0.003, 0.018, 0.075) }, 
+                uColorBright: { value: new THREE.Color().setRGB(0.04, 0.36, 1.0) } 
             };
         }
 
         const uniformsBack = createUniforms(1.0); 
-        const uniformsFront = createUniforms(0.4); 
+        const uniformsFront = createUniforms(0.22); 
 
-        const tunnelGeo = new THREE.CylinderGeometry(800, 800, 12000, 64, 1, true);
-        tunnelGeo.rotateX(Math.PI / 2);
-        tunnelGeo.rotateZ(Math.PI / 2); 
+        const tunnelOuterGeo = new THREE.CylinderGeometry(4200, 4200, 18000, 96, 1, true);
+        tunnelOuterGeo.rotateX(Math.PI / 2);
+        tunnelOuterGeo.rotateZ(Math.PI / 2);
+        const tunnelInnerGeo = new THREE.CylinderGeometry(3520, 3520, 18000, 96, 1, true);
+        tunnelInnerGeo.rotateX(Math.PI / 2);
+        tunnelInnerGeo.rotateZ(Math.PI / 2);
 
         const tunnelBackMaterial = new THREE.ShaderMaterial({
             vertexShader: tunnelVertexShader,
@@ -477,8 +442,9 @@
             blending: THREE.AdditiveBlending, 
             depthWrite: false 
         });
-        const tunnelBack = new THREE.Mesh(tunnelGeo, tunnelBackMaterial);
+        const tunnelBack = new THREE.Mesh(tunnelOuterGeo, tunnelBackMaterial);
         tunnelBack.renderOrder = 0; 
+        tunnelBack.visible = false;
         scene.add(tunnelBack);
 
         const tunnelFrontMaterial = new THREE.ShaderMaterial({
@@ -486,20 +452,32 @@
             fragmentShader: tunnelFragmentShader,
             uniforms: uniformsFront,
             transparent: true,
-            side: THREE.FrontSide,
+            side: THREE.BackSide,
             blending: THREE.AdditiveBlending, 
             depthWrite: false 
         });
-        const tunnelFront = new THREE.Mesh(tunnelGeo, tunnelFrontMaterial);
+        const tunnelFront = new THREE.Mesh(tunnelInnerGeo, tunnelFrontMaterial);
         tunnelFront.renderOrder = 2; 
+        tunnelFront.visible = false;
         scene.add(tunnelFront);
+
+        // --- 2B. KOTWICA SZEWU PRZESTRZENI ---
+        // Sam efekt jest generowany w postprocessie z obrazu całej sceny. Pusta
+        // grupa daje mu pozycję świata oraz dwie osie projekcji na ekran.
+        const foldGroup = new THREE.Group();
+        foldGroup.position.set(0, 28, -1150);
+        scene.add(foldGroup);
+        const riftProjectedCenter = new THREE.Vector3();
+        const riftProjectedAxisX = new THREE.Vector3();
+        const riftProjectedAxisY = new THREE.Vector3();
+        const riftProjectedShip = new THREE.Vector3();
 
 
         // --- 3A. UNIWERSALNE ZAAWANSOWANE ISKRY (OPLOT + TUNEL + DETACH) ---
         const sparkBaseGeo = new THREE.PlaneGeometry(1, 1);
         sparkBaseGeo.translate(0, 0.5, 0); 
 
-        const sparkCount = 4000; 
+        const sparkCount = 2400; 
         const sparkGeoInst = new THREE.InstancedBufferGeometry().copy(sparkBaseGeo);
         sparkGeoInst.instanceCount = sparkCount;
 
@@ -536,7 +514,10 @@
             uTwist: { value: 0.0 },
             uBowFocus: { value: 0.0 },
             uVisualSpeed: { value: 0.0 },
-            uExitProgress: { value: 0.0 } 
+            uExitProgress: { value: 0.0 },
+            uGear: { value: 1.0 },
+            uGearPulse: { value: 0.0 },
+            uTurnPressure: { value: 0.0 }
         };
 
         const sparkMaterial = new THREE.ShaderMaterial({
@@ -549,6 +530,9 @@
                 uniform float uIntensity;
                 uniform float uVisualSpeed;
                 uniform float uExitProgress;
+                uniform float uGear;
+                uniform float uGearPulse;
+                uniform float uTurnPressure;
 
                 attribute vec3 aOffset; 
                 attribute vec3 aData;   
@@ -566,8 +550,7 @@
 
                     float len = 12000.0;
                     
-                    float travel = uTravelOffset * len + uTime * 600.0 * uBowFocus;
-                    // POPRAWKA: Zmiana '-' na '+'. Sprawia, że iskry tunelu lecą zawsze w stronę silników statku (+Z).
+                    float travel = uTravelOffset * len;
                     float shiftedZ = (aOffset.y + travel) + len / 2.0;
                     
                     float wrappedZ = (shiftedZ - len * floor(shiftedZ / len)) - len / 2.0;
@@ -576,7 +559,7 @@
                     float spoolRadius = mix(150.0 + aOffset.z * 80.0, 480.0 + aOffset.z * 150.0, spoolBulge);
                     
                     float tunnelBulge = smoothstep(-2000.0, 4000.0, wrappedZ); 
-                    float tunnelRadius = mix(320.0 + aOffset.z * 100.0, 600.0 + aOffset.z * 200.0, tunnelBulge);
+                    float tunnelRadius = mix(1050.0 + aOffset.z * 650.0, 2100.0 + aOffset.z * 1050.0, tunnelBulge);
                     
                     float currentRadius = mix(tunnelRadius, spoolRadius, uBowFocus);
 
@@ -595,29 +578,11 @@
                     float ny = pos.x * s + pos.y * c;
                     pos.x = nx;
                     pos.y = ny;
+                    float bendDepth = wrappedZ / (len * 0.5);
+                    pos.x += uTurnPressure * bendDepth * abs(bendDepth) * 720.0;
 
                     vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
-                    
-                    // --- 1. FIZYKA ODERWANIA W GÓRĘ EKRANU (-Z) ---
-                    float t_exit = uExitProgress * 2.5; 
-                    float drag = 1.5 + (aOffset.z * 1.5); 
-                    float initSpeed = 15000.0 + (aData.y * 1000.0); 
-                    
-                    float traveledDist = initSpeed * ((1.0 - exp(-t_exit * drag)) / drag);
-                    
-                    float dynamicSpread = uExitProgress * (0.8 + aOffset.z);
-                    
-                    vec3 localConeDir = normalize(vec3(
-                        cos(orbitAngle) * sin(dynamicSpread),
-                        sin(orbitAngle) * sin(dynamicSpread),
-                        -cos(dynamicSpread) // ZMIANA: -Z wysyła cząsteczki "w górę" ekranu, w stronę lotu
-                    ));
-                    
-                    vec3 viewConeDir = normalize((modelViewMatrix * vec4(localConeDir, 0.0)).xyz);
-                    
-                    mvPosition.xyz += viewConeDir * traveledDist;
 
-                    // --- 2. BILLBOARDING ---
                     float spiralPower = 1.6 * uBowFocus; 
                     vec3 localForward = normalize(vec3(
                         -sin(orbitAngle) * spiralPower,
@@ -626,7 +591,7 @@
                     ));
                     
                     vec3 viewForward = normalize((modelViewMatrix * vec4(localForward, 0.0)).xyz);
-                    vec3 finalViewForward = normalize(mix(viewForward, viewConeDir, smoothstep(0.0, 0.3, uExitProgress)));
+                    vec3 finalViewForward = viewForward;
                     
                     vec3 camToPos = normalize(mvPosition.xyz);
                     vec3 viewRight = cross(camToPos, finalViewForward);
@@ -637,14 +602,15 @@
                         viewRight = normalize(viewRight);
                     }
 
-                    // --- 3. DEFORMACJA W GRUZ ---
                     float width = aData.y;
-                    float baseStretch = mix(aData.z, aData.z * 0.25, uBowFocus) + (uVisualSpeed * 80.0); 
-                    
-                    float exitStretch = aData.z * mix(1.0, 0.15, smoothstep(0.0, 0.4, uExitProgress)); 
-                    float stretch = mix(baseStretch, exitStretch, uExitProgress > 0.0 ? 1.0 : 0.0); 
-                    
-                    width = mix(width, width * 3.0, uExitProgress > 0.0 ? 1.0 : 0.0);
+                    float gearStretch = mix(0.75, 1.35, clamp((uGear - 1.0) / 4.0, 0.0, 1.0));
+                    float baseStretch = (
+                        mix(aData.z, aData.z * 0.25, uBowFocus) +
+                        uVisualSpeed * 52.0
+                    ) * gearStretch * (1.0 + uGearPulse * 0.18);
+                    float exitMix = smoothstep(0.0, 0.55, uExitProgress);
+                    float stretch = mix(baseStretch, aData.z * 0.18, exitMix);
+                    width = mix(width, width * 0.7, exitMix);
 
                     vec3 localOffset = viewRight * position.x * width + finalViewForward * position.y * stretch;
                     mvPosition.xyz += localOffset;
@@ -655,7 +621,7 @@
 
                     float exitFadeAlpha = 1.0 - smoothstep(0.5, 1.0, uExitProgress);
 
-                    float flicker = 0.6 + 0.4 * sin(uTime * 40.0 + aData.x * 7.0);
+                    float flicker = 0.82 + 0.18 * sin(uTime * 9.0 + aData.x * 7.0);
                     
                     vAlpha = max(0.0, uIntensity * currentMask * flicker * exitFadeAlpha);
 
@@ -682,9 +648,9 @@
                     float twinkle = mix(baseTwinkle, exitTwinkle, smoothstep(0.0, 0.1, uExitProgress));
                     
                     vec3 brightColor = mix(vColor, vec3(1.0, 1.0, 1.0), uExitProgress * 0.9);
-                    vec3 finalColor = brightColor * 2.0 * (0.5 + twinkle * mix(1.5, 8.0, uExitProgress));
+                    vec3 finalColor = brightColor * 1.35 * (0.55 + twinkle * mix(0.9, 1.8, uExitProgress));
 
-                    gl_FragColor = vec4(finalColor * alpha, alpha);
+                    gl_FragColor = vec4(finalColor, alpha);
                 }
             `,
             transparent: true,
@@ -693,13 +659,14 @@
         });
 
         const sparksMesh = new THREE.Mesh(sparkGeoInst, sparkMaterial);
-        sparksMesh.renderOrder = 3; 
+        sparksMesh.renderOrder = 0.4; 
         sparksMesh.frustumCulled = false; 
+        sparksMesh.visible = false;
         scene.add(sparksMesh);
 
 
-        // --- 3B. EFEKT FALI UDERZENIOWEJ Z RAILGUNA (TYLKO JUMP - DOŁ STATKU) ---
-        const blastCount = 1000;
+        // --- 3B. KRÓTKI IMPULS KOMPRESJI PRZY WEJŚCIU ---
+        const blastCount = 420;
         const blastGeo = new THREE.InstancedBufferGeometry().copy(sparkBaseGeo);
         blastGeo.instanceCount = blastCount;
 
@@ -708,26 +675,26 @@
         const blSizes = new Float32Array(blastCount * 2);
 
         for(let i=0; i<blastCount; i++) {
-            if(i < 50) {
-                blData[i*4+0] = (Math.random() - 0.5) * 100;
-                blData[i*4+1] = (Math.random() - 0.5) * 100;
-                blData[i*4+2] = (Math.random() - 0.5) * 100;
+            if(i < 14) {
+                blData[i*4+0] = (Math.random() - 0.5) * 60;
+                blData[i*4+1] = (Math.random() - 0.5) * 60;
+                blData[i*4+2] = (Math.random() - 0.5) * 60;
                 blData[i*4+3] = 0.0; 
                 
-                blSizes[i*2+0] = 300 + Math.random() * 500; 
+                blSizes[i*2+0] = 120 + Math.random() * 220; 
                 blSizes[i*2+1] = 0.0; 
 
                 blColors[i*3+0] = 1.0; blColors[i*3+1] = 1.0; blColors[i*3+2] = 1.0; 
             } else {
                 const angle = Math.random() * Math.PI * 2;
-                const speedRad = 800 + Math.random() * 1500;
+                const speedRad = 420 + Math.random() * 850;
                 blData[i*4+0] = Math.cos(angle) * speedRad; 
                 blData[i*4+1] = Math.sin(angle) * speedRad; 
-                blData[i*4+2] = 500 + Math.random() * 2000; 
+                blData[i*4+2] = 300 + Math.random() * 1250; 
                 blData[i*4+3] = 1.0; 
 
-                blSizes[i*2+0] = 10.0 + Math.random() * 20.0; 
-                blSizes[i*2+1] = 0.05 + Math.random() * 0.1; 
+                blSizes[i*2+0] = 5.0 + Math.random() * 10.0; 
+                blSizes[i*2+1] = 0.035 + Math.random() * 0.06; 
 
                 let c = Math.random() > 0.5 ? cCyan : cBlue;
                 blColors[i*3+0] = c.r; blColors[i*3+1] = c.g; blColors[i*3+2] = c.b;
@@ -766,7 +733,7 @@
                     vType = aVelocity.w;
                     
                     float t = uTime - uShootTime;
-                    float maxLife = vType < 0.5 ? 0.6 : 1.5; 
+                    float maxLife = vType < 0.5 ? 0.34 : 0.82; 
                     
                     if (t < 0.0 || t > maxLife) {
                         gl_Position = vec4(9999.0, 9999.0, 9999.0, 1.0);
@@ -786,7 +753,10 @@
                     vec3 localPos = vec3(0.0);
 
                     if (vType < 0.5) {
-                        vec3 right = normalize(cross(camDir, vec3(0.0, 1.0, 0.0)));
+                        vec3 helperAxis = abs(camDir.y) > 0.95
+                            ? vec3(0.0, 0.0, 1.0)
+                            : vec3(0.0, 1.0, 0.0);
+                        vec3 right = normalize(cross(camDir, helperAxis));
                         vec3 up = normalize(cross(right, camDir));
                         float s = aSize.x * (1.0 + t * 5.0) * (1.0 - vLife);
                         localPos = right * position.x * s + up * (position.y - 0.5) * s;
@@ -795,7 +765,12 @@
                         vec3 velDirWorld = normalize((modelMatrix * vec4(currentVel, 0.0)).xyz);
                         vec3 velDir = speed > 0.1 ? velDirWorld : normalize((modelMatrix * vec4(0.0, 0.0, 1.0, 0.0)).xyz);
                         
-                        vec3 right = normalize(cross(camDir, velDir));
+                        vec3 rightRaw = cross(camDir, velDir);
+                        vec3 right = length(rightRaw) < 0.001
+                            ? normalize(cross(camDir, abs(camDir.y) > 0.95
+                                ? vec3(0.0, 0.0, 1.0)
+                                : vec3(0.0, 1.0, 0.0)))
+                            : normalize(rightRaw);
                         float width = aSize.x * (1.0 - vLife);
                         float stretch = aSize.y * speed;
                         localPos = right * position.x * width + velDir * (1.0 - position.y) * stretch;
@@ -824,8 +799,8 @@
                     }
 
                     alpha *= pow(1.0 - vLife, 2.0); 
-                    vec3 finalColor = vColor * 3.0; 
-                    gl_FragColor = vec4(finalColor * alpha, alpha);
+                    vec3 finalColor = vColor * 1.45; 
+                    gl_FragColor = vec4(finalColor, alpha);
                 }
             `,
             transparent: true,
@@ -836,49 +811,51 @@
         const blastMesh = new THREE.Mesh(blastGeo, blastMaterial);
         blastMesh.renderOrder = 4;
         blastMesh.frustumCulled = false; 
+        blastMesh.visible = false;
         shipContainer.add(blastMesh); 
 
-        // --- 3C. NOWE: POTĘŻNY STOŻEK HAMOWANIA (EXIT CONE - RAILGUN STYLE) ---
-        // Generuje falę iskierek WYŁĄCZNIE do przodu przy wyjściu z tunelu
-        const exitConeCount = 3000;
-        const exitConeGeo = new THREE.InstancedBufferGeometry().copy(sparkBaseGeo);
-        exitConeGeo.instanceCount = exitConeCount;
+        // --- 3C. WAKE PO WYJŚCIU ---
+        // Cząstki zostają za silnikami (+Z), dzięki czemu wyjście czyta się
+        // jako rozprężenie przestrzeni, nie strzał z dziobu.
+        const wakeCount = 900;
+        const wakeGeo = new THREE.InstancedBufferGeometry().copy(sparkBaseGeo);
+        wakeGeo.instanceCount = wakeCount;
 
-        const ecData = new Float32Array(exitConeCount * 4); 
-        const ecSizes = new Float32Array(exitConeCount * 3); 
-        const ecColors = new Float32Array(exitConeCount * 3);
+        const ecData = new Float32Array(wakeCount * 4); 
+        const ecSizes = new Float32Array(wakeCount * 3); 
+        const ecColors = new Float32Array(wakeCount * 3);
 
-        for(let i=0; i<exitConeCount; i++) {
+        for(let i=0; i<wakeCount; i++) {
             const theta = Math.random() * Math.PI * 2;
-            const spread = Math.pow(Math.random(), 2.0) * 0.4; 
-            const speed = 12000 + Math.random() * 20000; 
+            const spread = Math.pow(Math.random(), 1.7) * 0.42; 
+            const speed = 850 + Math.random() * 2350; 
             
             ecData[i*4+0] = Math.sin(spread) * Math.cos(theta) * speed;
             ecData[i*4+1] = Math.sin(spread) * Math.sin(theta) * speed;
-            ecData[i*4+2] = -Math.cos(spread) * speed; // KIERUNEK PRZÓD (GÓRA EKRANU)
+            ecData[i*4+2] = Math.cos(spread) * speed;
             ecData[i*4+3] = Math.random() * Math.PI * 2; 
             
-            ecSizes[i*3+0] = 5.0 + Math.random() * 15.0; 
-            ecSizes[i*3+1] = 0.02 + Math.random() * 0.06; 
-            ecSizes[i*3+2] = 1.0 + Math.random() * 3.0; // Opór powietrza (drag)
+            ecSizes[i*3+0] = 3.0 + Math.random() * 6.0; 
+            ecSizes[i*3+1] = 0.035 + Math.random() * 0.045; 
+            ecSizes[i*3+2] = 1.1 + Math.random() * 1.2;
             
             let c = Math.random() > 0.5 ? cCyan : cWhite;
             if (Math.random() > 0.8) c = cBlue;
             ecColors[i*3+0] = c.r; ecColors[i*3+1] = c.g; ecColors[i*3+2] = c.b;
         }
 
-        exitConeGeo.setAttribute('aVelocity', new THREE.InstancedBufferAttribute(ecData, 4));
-        exitConeGeo.setAttribute('aSizeDrag', new THREE.InstancedBufferAttribute(ecSizes, 3));
-        exitConeGeo.setAttribute('aColor', new THREE.InstancedBufferAttribute(ecColors, 3));
+        wakeGeo.setAttribute('aVelocity', new THREE.InstancedBufferAttribute(ecData, 4));
+        wakeGeo.setAttribute('aSizeDrag', new THREE.InstancedBufferAttribute(ecSizes, 3));
+        wakeGeo.setAttribute('aColor', new THREE.InstancedBufferAttribute(ecColors, 3));
 
-        const uniformsExitCone = {
+        const uniformsWake = {
             uTime: { value: 0.0 },
             uShootTime: { value: -999.0 },
-            uShipZ: { value: -200.0 } // ZMIANA: Przesunięto niżej (bliżej środka masy statku)
+            uShipZ: { value: 560.0 }
         };
 
-        const exitConeMaterial = new THREE.ShaderMaterial({
-            uniforms: uniformsExitCone,
+        const wakeMaterial = new THREE.ShaderMaterial({
+            uniforms: uniformsWake,
             vertexShader: `
                 uniform float uTime;
                 uniform float uShootTime;
@@ -897,7 +874,7 @@
                     vColor = aColor;
                     
                     float t = uTime - uShootTime;
-                    float maxLife = 3.0; 
+                    float maxLife = 1.15; 
                     
                     if (t < 0.0 || t > maxLife) {
                         gl_Position = vec4(9999.0, 9999.0, 9999.0, 1.0);
@@ -917,11 +894,16 @@
                     
                     float speed = length(currentVel);
                     vec3 velDirWorld = normalize((modelMatrix * vec4(currentVel, 0.0)).xyz);
-                    vec3 velDir = speed > 0.1 ? velDirWorld : normalize((modelMatrix * vec4(0.0, 0.0, -1.0, 0.0)).xyz);
+                    vec3 velDir = speed > 0.1 ? velDirWorld : normalize((modelMatrix * vec4(0.0, 0.0, 1.0, 0.0)).xyz);
                     
-                    vec3 right = normalize(cross(camDir, velDir));
+                    vec3 rightRaw = cross(camDir, velDir);
+                    vec3 right = length(rightRaw) < 0.001
+                        ? normalize(cross(camDir, abs(camDir.y) > 0.95
+                            ? vec3(0.0, 0.0, 1.0)
+                            : vec3(0.0, 1.0, 0.0)))
+                        : normalize(rightRaw);
                     
-                    float width = aSizeDrag.x * (1.0 + vLife * 2.0);
+                    float width = aSizeDrag.x * (1.0 + vLife * 0.8);
                     float stretch = aSizeDrag.y * speed;
                     
                     vec3 localPos = right * position.x * width + velDir * (1.0 - position.y) * stretch;
@@ -940,16 +922,15 @@
                     float fadeY = 1.0 - vUv.y; 
                     float alpha = glowX * fadeY;
 
-                    alpha *= pow(1.0 - vLife, 1.5);
+                    alpha *= pow(1.0 - vLife, 2.1);
                     
-                    // POTĘŻNY GLITTER
-                    float twinkle = pow(abs(sin(vLife * 60.0 + vColor.g * 100.0)), 2.0);
-                    float twinkleBlend = smoothstep(0.05, 0.2, vLife); 
+                    float twinkle = 0.65 + 0.35 * abs(sin(vLife * 36.0 + vColor.g * 70.0));
+                    float twinkleBlend = smoothstep(0.04, 0.18, vLife); 
                     
-                    alpha *= mix(1.0, twinkle * 5.0, twinkleBlend);
+                    alpha *= mix(1.0, twinkle, twinkleBlend);
 
-                    vec3 finalColor = vColor * 3.0; 
-                    gl_FragColor = vec4(finalColor * alpha, alpha);
+                    vec3 finalColor = vColor * 1.65; 
+                    gl_FragColor = vec4(finalColor, alpha);
                 }
             `,
             transparent: true,
@@ -957,136 +938,11 @@
             depthWrite: false
         });
 
-        const exitConeMesh = new THREE.Mesh(exitConeGeo, exitConeMaterial);
-        exitConeMesh.renderOrder = 4;
-        exitConeMesh.frustumCulled = false;
-        shipContainer.add(exitConeMesh);
-
-
-        // --- 3D. PLASMA BALL AT BOW (charges during SPOOL, discharges on JUMP) ---
-        // Ship's bow points along +X (after the rotateY(PI/2) on the plane geometry).
-        // Place the ball ~1000u in front of the bow.
-        const plasmaBallGeo = new THREE.SphereGeometry(220, 24, 16);
-        const uniformsPlasma = {
-            uTime: { value: 0.0 },
-            uSpoolProgress: { value: 0.0 },  // 0..1 charge
-            uSpoolPeak: { value: 0.0 },      // 0..1 anticipation peak
-            uDischarge: { value: 0.0 }       // 0..1 momentary flash on JUMP
-        };
-        const plasmaMaterial = new THREE.ShaderMaterial({
-            uniforms: uniformsPlasma,
-            vertexShader: `
-                varying vec3 vNormal;
-                varying vec3 vViewDir;
-                void main() {
-                    vec4 mv = modelViewMatrix * vec4(position, 1.0);
-                    vNormal = normalize(normalMatrix * normal);
-                    vViewDir = normalize(-mv.xyz);
-                    gl_Position = projectionMatrix * mv;
-                }
-            `,
-            fragmentShader: `
-                uniform float uTime;
-                uniform float uSpoolProgress;
-                uniform float uSpoolPeak;
-                uniform float uDischarge;
-                varying vec3 vNormal;
-                varying vec3 vViewDir;
-
-                float hash(vec3 p) { return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
-                float noise(vec3 p) {
-                    vec3 i = floor(p); vec3 f = fract(p);
-                    f = f * f * (3.0 - 2.0 * f);
-                    float n000 = hash(i);
-                    float n100 = hash(i + vec3(1,0,0));
-                    float n010 = hash(i + vec3(0,1,0));
-                    float n110 = hash(i + vec3(1,1,0));
-                    float n001 = hash(i + vec3(0,0,1));
-                    float n101 = hash(i + vec3(1,0,1));
-                    float n011 = hash(i + vec3(0,1,1));
-                    float n111 = hash(i + vec3(1,1,1));
-                    return mix(
-                        mix(mix(n000, n100, f.x), mix(n010, n110, f.x), f.y),
-                        mix(mix(n001, n101, f.x), mix(n011, n111, f.x), f.y),
-                        f.z
-                    );
-                }
-
-                void main() {
-                    float fres = pow(1.0 - max(0.0, dot(vNormal, vViewDir)), 2.0);
-                    vec3 nUv = vNormal * 3.0 + vec3(uTime * 0.6);
-                    float n = noise(nUv) * 0.6 + noise(nUv * 2.5) * 0.3;
-
-                    float pulse = 0.6 + 0.4 * sin(uTime * 8.0);
-                    float intensity = uSpoolProgress * (0.6 + n * 0.5) * pulse;
-                    intensity += uSpoolPeak * (0.5 + 0.5 * sin(uTime * 40.0));
-                    intensity += uDischarge * 2.0;
-
-                    vec3 colCore = vec3(0.7, 0.95, 1.0);
-                    vec3 colHot = vec3(1.0, 1.0, 1.2);
-                    vec3 col = mix(colCore, colHot, fres + uDischarge);
-                    float a = (fres * 0.9 + 0.3) * intensity;
-                    a = clamp(a, 0.0, 1.0);
-                    gl_FragColor = vec4(col * intensity * 1.6, a);
-                }
-            `,
-            transparent: true,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false
-        });
-        const plasmaBall = new THREE.Mesh(plasmaBallGeo, plasmaMaterial);
-        plasmaBall.position.set(1000, 0, 0); // bow direction in shipContainer local space
-        plasmaBall.scale.setScalar(0.001);   // hidden initially
-        plasmaBall.renderOrder = 2;
-        shipContainer.add(plasmaBall);
-
-
-        // --- 3E. BOW SHOCK RIM (radial flash on EXIT punch-out) ---
-        const bowShockGeo = new THREE.RingGeometry(800, 1400, 64);
-        bowShockGeo.rotateX(-Math.PI / 2); // lay it flat (XZ plane)
-        const uniformsBowShock = {
-            uTime: { value: 0.0 },
-            uShockTime: { value: -999.0 },
-            uDuration: { value: 0.6 }
-        };
-        const bowShockMaterial = new THREE.ShaderMaterial({
-            uniforms: uniformsBowShock,
-            vertexShader: `
-                uniform float uTime;
-                uniform float uShockTime;
-                uniform float uDuration;
-                varying float vAlpha;
-                varying vec2 vUv;
-                void main() {
-                    vUv = uv;
-                    float t = (uTime - uShockTime) / uDuration;
-                    float life = clamp(t, 0.0, 1.0);
-                    float scale = mix(0.4, 2.6, life);
-                    vec3 p = position * scale;
-                    vAlpha = (t < 0.0 || t > 1.0) ? 0.0 : pow(1.0 - life, 1.5);
-                    gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
-                }
-            `,
-            fragmentShader: `
-                varying float vAlpha;
-                varying vec2 vUv;
-                void main() {
-                    // Radial soft band: vUv.y goes 0..1 across ring width.
-                    float band = pow(1.0 - abs(vUv.y - 0.5) * 2.0, 2.0);
-                    vec3 col = mix(vec3(0.7, 0.95, 1.0), vec3(1.0, 1.0, 1.2), band);
-                    float a = band * vAlpha;
-                    if (a < 0.005) discard;
-                    gl_FragColor = vec4(col * a * 2.5, a);
-                }
-            `,
-            transparent: true,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false
-        });
-        const bowShock = new THREE.Mesh(bowShockGeo, bowShockMaterial);
-        bowShock.renderOrder = 5;
-        bowShock.frustumCulled = false;
-        shipContainer.add(bowShock);
+        const wakeMesh = new THREE.Mesh(wakeGeo, wakeMaterial);
+        wakeMesh.renderOrder = 0.7;
+        wakeMesh.frustumCulled = false; 
+        wakeMesh.visible = false;
+        shipContainer.add(wakeMesh);
 
 
         // --- 4. ZAAWANSOWANY POST-PROCESSING ---
@@ -1097,10 +953,23 @@
         const uniformsPP = {
             tDiffuse: { value: renderTarget.texture },
             uAberration: { value: 0.0 },
-            uRadialBlur: { value: 0.0 },
+            uRadialBlur: { value: 0.0 }, 
             uFlash: { value: 0.0 },
-            uVignette: { value: 0.2 },     // NEW: dark corners (ramps in SPOOL peak + EXIT)
-            uDopplerY: { value: 1.0 }      // NEW: vertical blur multiplier (>1 stretches blur in Y)
+            uCenter: { value: new THREE.Vector2(0.5, 0.5) },
+            uAspect: { value: window.innerWidth / window.innerHeight },
+            uTexelSize: { value: new THREE.Vector2(1 / window.innerWidth, 1 / window.innerHeight) },
+            uShipScreen: { value: new THREE.Vector2(0.5, 0.5) },
+            uShipSafeRadius: { value: new THREE.Vector2(0.105, 0.30) },
+            uRiftCenter: { value: new THREE.Vector2(0.5, 0.72) },
+            uRiftAxisX: { value: new THREE.Vector2(0.42, 0.0) },
+            uRiftAxisY: { value: new THREE.Vector2(0.0, 0.16) },
+            uRiftVisibility: { value: 0.0 },
+            uRiftOpen: { value: 0.0 },
+            uRiftSpan: { value: 0.05 },
+            uRiftLens: { value: 0.0 },
+            uRiftPulse: { value: 0.0 },
+            uRiftTurnPressure: { value: 0.0 },
+            uTime: { value: 0.0 }
         };
 
         const ppMaterial = new THREE.ShaderMaterial({
@@ -1111,47 +980,381 @@
                 uniform float uAberration;
                 uniform float uRadialBlur;
                 uniform float uFlash;
-                uniform float uVignette;
-                uniform float uDopplerY;
+                uniform vec2 uCenter;
+                uniform float uAspect;
+                uniform vec2 uTexelSize;
+                uniform vec2 uShipScreen;
+                uniform vec2 uShipSafeRadius;
+                uniform vec2 uRiftCenter;
+                uniform vec2 uRiftAxisX;
+                uniform vec2 uRiftAxisY;
+                uniform float uRiftVisibility;
+                uniform float uRiftOpen;
+                uniform float uRiftSpan;
+                uniform float uRiftLens;
+                uniform float uRiftPulse;
+                uniform float uRiftTurnPressure;
+                uniform float uTime;
                 varying vec2 vUv;
 
-                void main() {
-                    vec2 center = vec2(0.5, 0.5);
-                    vec2 uv = vUv;
-                    vec2 dir = uv - center;
-                    float dist = length(dir);
+                float cross2(vec2 a, vec2 b) {
+                    return a.x * b.y - a.y * b.x;
+                }
 
-                    vec3 color = vec3(0.0);
-                    float totalWeight = 0.0;
-                    const int samples = 12;
-                    float blurAmount = uRadialBlur * 0.06;
+                float riftHash(vec2 p) {
+                    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+                }
 
-                    float shift = uAberration * pow(dist, 2.0) * 0.03;
+                float riftNoise(vec2 p) {
+                    vec2 i = floor(p);
+                    vec2 f = fract(p);
+                    f = f * f * (3.0 - 2.0 * f);
+                    float a = riftHash(i);
+                    float b = riftHash(i + vec2(1.0, 0.0));
+                    float c = riftHash(i + vec2(0.0, 1.0));
+                    float d = riftHash(i + vec2(1.0, 1.0));
+                    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+                }
 
-                    // Doppler stretch: bias the blur direction toward Y for hyperspace look.
-                    vec2 blurDir = dir;
-                    blurDir.y *= uDopplerY;
-
-                    for(int i = 0; i < samples; i++) {
-                        float f = float(i) / float(samples - 1);
-                        vec2 offsetUv = uv - blurDir * (f * blurAmount);
-
-                        float r = texture2D(tDiffuse, offsetUv + vec2(0.0, shift)).r;
-                        float g = texture2D(tDiffuse, offsetUv).g;
-                        float b = texture2D(tDiffuse, offsetUv - vec2(0.0, shift)).b;
-
-                        color += vec3(r, g, b);
-                        totalWeight += 1.0;
+                float riftFbm(vec2 p) {
+                    float value = 0.0;
+                    float amplitude = 0.5;
+                    for (int octave = 0; octave < 3; octave++) {
+                        value += riftNoise(p) * amplitude;
+                        p = p * 2.03 + vec2(17.1, 9.2);
+                        amplitude *= 0.5;
                     }
-                    color /= totalWeight;
+                    return value;
+                }
 
-                    // Flash (brief white-out)
-                    color = mix(color, vec3(1.0, 1.0, 1.1), uFlash);
+                void main() {
+                    vec2 uv = vUv;
+                    float riftActive = clamp(uRiftVisibility, 0.0, 1.0);
+                    float riftCore = 0.0;
+                    float riftPhoton = 0.0;
+                    float riftCorona = 0.0;
+                    float riftEcho = 0.0;
+                    float riftShock = 0.0;
+                    float riftAccretion = 0.0;
+                    float riftWave = 0.0;
+                    float gravityShadow = 0.0;
+                    float secondaryMix = 0.0;
+                    float caustic = 0.0;
+                    vec2 sceneUv = uv;
+                    vec2 mirrorUv = uv;
 
-                    // Vignette: dark corners scale with uVignette.
-                    float vig = 1.0 - smoothstep(0.3, 0.95, dist) * uVignette;
-                    color *= vig;
+                    if (riftActive > 0.0005) {
+                        float det = cross2(uRiftAxisX, uRiftAxisY);
+                        float valid = smoothstep(0.00001, 0.00005, abs(det));
+                        float safeDet = (det < 0.0 ? -1.0 : 1.0) * max(abs(det), 0.00001);
+                        vec2 delta = uv - uRiftCenter;
+                        vec2 p = vec2(
+                            cross2(delta, uRiftAxisY),
+                            cross2(uRiftAxisX, delta)
+                        ) / safeDet;
+                        p = clamp(p, vec2(-4.0), vec2(4.0));
 
+                        if (abs(p.x) < 1.42 && abs(p.y) < 1.72) {
+                        float open = clamp(uRiftOpen, 0.0, 1.0);
+                        float span = clamp(uRiftSpan, 0.025, 1.0);
+                        float domainWarp =
+                            (riftFbm(vec2(
+                                p.y * 1.7 + uTime * 0.045,
+                                -1.8
+                            )) - 0.5) *
+                            0.11 *
+                            open;
+                        p.x += domainWarp;
+                        float xn = abs(p.x) / span;
+                        float cap = pow(
+                            max(0.0, 1.0 - pow(min(xn, 1.0), 4.0)),
+                            0.70
+                        );
+
+                        // Otwarcie rozchodzi się od środka ku końcom. Dwie
+                        // krawędzie korzystają z niezależnych pól szumu.
+                        float propagation = smoothstep(
+                            xn * 0.62,
+                            xn * 0.62 + 0.20,
+                            open
+                        );
+                        float curveNoise = riftFbm(vec2(p.x * 2.4 - uTime * 0.07, 2.7)) - 0.5;
+                        float upperNoise = riftFbm(vec2(p.x * 7.7 - uTime * 0.16, 7.1)) - 0.5;
+                        float lowerNoise = riftFbm(vec2(p.x * 9.1 + uTime * 0.13, -3.4)) - 0.5;
+                        float curve =
+                            -0.03 +
+                            0.10 * p.x * p.x +
+                            curveNoise * 0.09 +
+                            p.x * uRiftTurnPressure * 0.03;
+
+                        float halfGap =
+                            (0.004 + 0.29 * pow(open, 0.72) * propagation) *
+                            cap;
+                        float upperEdge =
+                            curve +
+                            halfGap * 0.91 +
+                            upperNoise * 0.082 * open * cap;
+                        float lowerEdge =
+                            curve -
+                            halfGap * 1.08 +
+                            lowerNoise * 0.105 * open * cap;
+
+                        float signedEdge = max(
+                            p.y - upperEdge,
+                            lowerEdge - p.y
+                        );
+                        float edgeDistance = abs(signedEdge);
+                        float outside = max(signedEdge, 0.0);
+                        float spanMask =
+                            (1.0 - smoothstep(
+                                max(0.0, span - 0.065),
+                                span + 0.035,
+                                abs(p.x)
+                            )) *
+                            (1.0 - smoothstep(1.05, 1.55, abs(p.y)));
+                        float localMask =
+                            (1.0 - smoothstep(1.08, 1.34, abs(p.x))) *
+                            (1.0 - smoothstep(1.10, 1.60, abs(p.y)));
+
+                        float aa = 0.006;
+                        riftCore =
+                            (1.0 - smoothstep(-aa, aa, signedEdge)) *
+                            spanMask * valid;
+
+                        float photonProfile = exp2(-pow(edgeDistance / 0.020, 2.0));
+                        float causticNoise = riftFbm(vec2(
+                            p.x * 11.0 - uTime * 0.42,
+                            (p.y > curve ? 3.7 : -3.7) + uTime * 0.06
+                        ));
+                        caustic = smoothstep(0.58, 0.79, causticNoise);
+                        float doppler = mix(
+                            0.58,
+                            1.42,
+                            smoothstep(-span, span, p.x)
+                        );
+                        riftPhoton =
+                            photonProfile *
+                            (0.025 + caustic * 1.46) *
+                            doppler *
+                            (p.y > curve ? 1.0 : 0.48) *
+                            spanMask *
+                            valid;
+                        riftCorona =
+                            exp(-outside * 6.8) *
+                            (1.0 - riftCore) *
+                            spanMask *
+                            valid;
+                        riftEcho =
+                            exp(-abs(signedEdge - 0.095) * 43.0) *
+                            caustic *
+                            spanMask *
+                            valid;
+                        float contourNoise = riftFbm(vec2(
+                            p.x * 5.4 + uTime * 0.11,
+                            p.y * 2.2 - uTime * 0.045
+                        ));
+                        float accretionOffset =
+                            0.125 +
+                            0.030 * sin(
+                                p.x * 6.7 -
+                                uTime * 0.52 +
+                                contourNoise * 5.0
+                            );
+                        riftAccretion =
+                            exp(-abs(signedEdge - accretionOffset) * 22.0) *
+                            smoothstep(0.49, 0.76, contourNoise) *
+                            spanMask *
+                            valid;
+                        float wavePattern =
+                            0.5 +
+                            0.5 * sin(
+                                outside * 47.0 -
+                                uTime * 1.15 +
+                                p.x * 3.1 +
+                                contourNoise * 5.5
+                            );
+                        riftWave =
+                            pow(wavePattern, 7.0) *
+                            exp(-outside * 3.8) *
+                            (1.0 - riftCore) *
+                            spanMask *
+                            valid;
+                        gravityShadow =
+                            exp(-outside * 2.9) *
+                            spanMask *
+                            localMask *
+                            valid;
+
+                        float ellipseRadius = length(vec2(
+                            p.x / max(span, 0.025),
+                            (p.y - curve) / 0.62
+                        ));
+                        riftShock =
+                            exp(-abs(ellipseRadius - (1.05 + uRiftPulse * 0.42)) * 24.0) *
+                            uRiftPulse *
+                            spanMask *
+                            valid;
+
+                        float side = p.y >= curve ? 1.0 : -1.0;
+                        float curveSlope =
+                            0.20 * p.x +
+                            uRiftTurnPressure * 0.03;
+                        vec2 normalRaw =
+                            uRiftAxisY * side -
+                            uRiftAxisX * curveSlope * 0.22;
+                        vec2 normalMetric = normalRaw * vec2(max(uAspect, 0.1), 1.0);
+                        float invNormalLength = inversesqrt(
+                            max(dot(normalMetric, normalMetric), 0.00000001)
+                        );
+                        vec2 normalUv =
+                            normalMetric * invNormalLength /
+                            vec2(max(uAspect, 0.1), 1.0);
+
+                        vec2 tangentMetric =
+                            uRiftAxisX * vec2(max(uAspect, 0.1), 1.0);
+                        float invTangentLength = inversesqrt(
+                            max(dot(tangentMetric, tangentMetric), 0.00000001)
+                        );
+                        vec2 tangentUv =
+                            tangentMetric * invTangentLength /
+                            vec2(max(uAspect, 0.1), 1.0);
+
+                        vec2 shipP =
+                            (uv - uShipScreen) /
+                            max(uShipSafeRadius, vec2(0.001));
+                        float shipProtection =
+                            smoothstep(0.72, 1.12, length(shipP));
+                        float screenEdge = min(
+                            min(uv.x, 1.0 - uv.x),
+                            min(uv.y, 1.0 - uv.y)
+                        );
+                        float edgeProtection = smoothstep(0.015, 0.055, screenEdge);
+                        float lensBand =
+                            (1.0 - smoothstep(0.02, 0.46, outside)) *
+                            step(0.0, signedEdge) *
+                            spanMask *
+                            localMask;
+                        float ripple =
+                            0.88 +
+                            0.12 * sin(p.x * 19.0 - uTime * 1.35 + curveNoise * 8.0);
+                        float lensStrength =
+                            clamp(uRiftLens, 0.0, 1.0) *
+                            riftActive *
+                            lensBand *
+                            shipProtection *
+                            edgeProtection *
+                            valid;
+                        float lensAmount =
+                            mix(0.0045, 0.023, open) *
+                            lensStrength *
+                            ripple;
+                        vec2 lensOffset =
+                            normalUv * lensAmount +
+                            tangentUv * side * lensStrength * 0.0040;
+                        vec2 border = max(uTexelSize * 1.5, vec2(0.0001));
+                        sceneUv = clamp(uv + lensOffset, border, vec2(1.0) - border);
+                        mirrorUv = clamp(
+                            sceneUv - normalUv * lensAmount * (1.6 + open * 1.7),
+                            border,
+                            vec2(1.0) - border
+                        );
+                        secondaryMix = clamp(
+                            lensStrength * open * (0.045 + caustic * 0.15),
+                            0.0,
+                            0.22
+                        );
+                        }
+                    }
+
+                    vec2 uvDir = uv - uCenter;
+                    vec2 metricDir = uvDir * vec2(uAspect, 1.0);
+                    float dist = length(metricDir);
+                    float comfortMask = smoothstep(0.10, 0.52, dist);
+                    vec2 chromaDir = dist > 0.0001
+                        ? normalize(metricDir) / vec2(uAspect, 1.0)
+                        : vec2(0.0);
+                    float shift = uAberration * dist * dist * 0.012 * comfortMask;
+                    float blurAmount = uRadialBlur * 0.035 * comfortMask;
+
+                    vec3 color;
+                    if (uRadialBlur < 0.0005 && uAberration < 0.0005) {
+                        color = texture2D(tDiffuse, sceneUv).rgb;
+                    } else if (uRadialBlur < 0.0005) {
+                        color = vec3(
+                            texture2D(tDiffuse, sceneUv + chromaDir * shift).r,
+                            texture2D(tDiffuse, sceneUv).g,
+                            texture2D(tDiffuse, sceneUv - chromaDir * shift).b
+                        );
+                    } else {
+                        color = vec3(0.0);
+                        const int samples = 7;
+                        for(int i = 0; i < samples; i++) {
+                            float f = float(i) / float(samples - 1);
+                            vec2 sampleUv = sceneUv - uvDir * (f * blurAmount);
+                            color += vec3(
+                                texture2D(tDiffuse, sampleUv + chromaDir * shift).r,
+                                texture2D(tDiffuse, sampleUv).g,
+                                texture2D(tDiffuse, sampleUv - chromaDir * shift).b
+                            );
+                        }
+                        color /= float(samples);
+                    }
+
+                    if (riftActive > 0.0005) {
+                        vec3 secondaryImage = texture2D(tDiffuse, mirrorUv).rgb;
+                        color = mix(color, secondaryImage, secondaryMix);
+                        color *= 1.0 - gravityShadow * riftActive * (0.14 + uRiftOpen * 0.18);
+                        color = mix(
+                            color,
+                            vec3(0.0002, 0.0005, 0.0020),
+                            riftCore * riftActive * 0.985
+                        );
+
+                        vec3 photonColor =
+                            vec3(0.72, 1.30, 2.30) * riftPhoton;
+                        photonColor +=
+                            vec3(0.24, 0.08, 0.68) *
+                            riftPhoton *
+                            caustic *
+                            0.18;
+                        vec3 coronaColor =
+                            vec3(0.012, 0.13, 0.56) *
+                            riftCorona *
+                            0.38;
+                        vec3 echoColor =
+                            vec3(0.12, 0.32, 0.92) *
+                            riftEcho *
+                            0.20;
+                        vec3 shockColor =
+                            vec3(0.08, 0.42, 1.05) *
+                            riftShock *
+                            0.30;
+                        vec3 accretionColor =
+                            vec3(0.035, 0.26, 0.92) *
+                            riftAccretion *
+                            0.62;
+                        accretionColor +=
+                            vec3(0.18, 0.035, 0.52) *
+                            riftAccretion *
+                            caustic *
+                            0.12;
+                        vec3 waveColor =
+                            vec3(0.008, 0.075, 0.34) *
+                            riftWave *
+                            0.27;
+                        color +=
+                            (
+                                photonColor +
+                                coronaColor +
+                                echoColor +
+                                shockColor +
+                                accretionColor +
+                                waveColor
+                            ) *
+                            riftActive;
+                    }
+
+                    color = mix(color, vec3(0.82, 0.94, 1.0), clamp(uFlash, 0.0, 0.35));
                     gl_FragColor = vec4(color, 1.0);
                 }
             `
@@ -1163,479 +1366,522 @@
 
         // --- 5. STEROWANIE ---
         const keys = { a: false, d: false };
+        let warpGear = 3;
+        let gearPulse = 0.0;
+        const gearProfiles = {
+            1: { flowRate: 4.8, ribCount: 5.0, intensity: 0.54 },
+            2: { flowRate: 6.4, ribCount: 6.0, intensity: 0.58 },
+            3: { flowRate: 8.0, ribCount: 7.0, intensity: 0.62 },
+            4: { flowRate: 9.8, ribCount: 8.0, intensity: 0.67 },
+            5: { flowRate: 11.8, ribCount: 9.0, intensity: 0.72 }
+        };
+
+        const gearValueEl = document.getElementById('gear-value');
+        const turnValueEl = document.getElementById('turn-value');
+        const turnMeterFill = document.getElementById('turn-meter-fill');
+
+        function updateGear(direction) {
+            const nextGear = Math.max(1, Math.min(5, warpGear + direction));
+            if (nextGear === warpGear) return;
+            warpGear = nextGear;
+            gearPulse = 1.0;
+            uniformsShip.uHullPulse.value = Math.max(uniformsShip.uHullPulse.value, 0.32);
+            gearValueEl.textContent = warpGear + ' / 5';
+        }
+
         window.addEventListener('keydown', (e) => {
-            if (e.key.toLowerCase() === 'a') keys.a = true;
-            if (e.key.toLowerCase() === 'd') keys.d = true;
+            const key = e.key.toLowerCase();
+            if (key === 'a') keys.a = true;
+            if (key === 'd') keys.d = true;
+            if (!e.repeat && key === 'w') updateGear(1);
+            if (!e.repeat && key === 's') updateGear(-1);
         });
+
         window.addEventListener('keyup', (e) => {
-            if (e.key.toLowerCase() === 'a') keys.a = false;
-            if (e.key.toLowerCase() === 'd') keys.d = false;
+            const key = e.key.toLowerCase();
+            if (key === 'a') keys.a = false;
+            if (key === 'd') keys.d = false;
+        });
+
+        function releaseSteering() {
+            keys.a = false;
+            keys.d = false;
+        }
+
+        window.addEventListener('blur', releaseSteering);
+        document.addEventListener('visibilitychange', () => {
+            releaseSteering();
+            clock.getDelta();
         });
 
         window.addEventListener('wheel', (e) => {
-            targetCameraY += e.deltaY * 3.0; 
-            targetCameraY = Math.max(1000, Math.min(targetCameraY, 6000));
-        });
+            e.preventDefault();
+            targetCameraY += e.deltaY * 4.0; 
+            targetCameraY = Math.max(
+                MIN_CAMERA_Y,
+                Math.min(targetCameraY, MAX_CAMERA_Y)
+            );
+        }, { passive: false });
 
         let currentDrift = 0.0;
         let targetDrift = 0.0;
+        let flowHeading = 0.0;
+        let turnPressure = 0.0;
+        let currentCameraY = targetCameraY;
 
+        function shakeHash(index, channel) {
+            let value = Math.imul(
+                (index + Math.imul(channel, 1013)) | 0,
+                0x45d9f3b
+            );
+            value ^= value >>> 16;
+            value = Math.imul(value, 0x45d9f3b);
+            value ^= value >>> 16;
+            return (value >>> 0) / 4294967295 * 2.0 - 1.0;
+        }
 
-        // --- 6. MASZYNA STANÓW I DAMPING ---
-        const target = {
-            speed: 0.0,
-            flowSpeed: 0.0,
-            ribbonScale: 12.0,
-            energyThreshold: 0.15,
-            intensity: 0.0,
-            twist: 0.0,
-            bowFocus: 0.0,
-            aberration: 0.0,
-            radialBlur: 0.0,
-            shake: 0.0,
-            lightning: 0.0,
-            vignette: 0.2,
-            dopplerY: 1.0,
-            colorShift: 0.0
+        function shakeNoise(time, channel) {
+            const index = Math.floor(time);
+            const phase = time - index;
+            const blend = phase * phase * (3.0 - 2.0 * phase);
+            return lerp(
+                shakeHash(index, channel),
+                shakeHash(index + 1, channel),
+                blend
+            );
+        }
+
+        // --- 6. MASZYNA STANÓW ---
+        const STAGE_TARGETS = {
+            IDLE: {
+                speed: 0.0, flowSpeed: 0.0, ribbonScale: 8.0,
+                energyThreshold: 0.42, intensity: 0.0, twist: 0.0,
+                bowFocus: 0.0, aberration: 0.0, radialBlur: 0.0,
+                shake: 0.0, lightning: 0.0
+            },
+            SPOOL: {
+                speed: 0.1, flowSpeed: 0.0, ribbonScale: 8.0,
+                energyThreshold: 0.62, intensity: 0.0, twist: 0.0,
+                bowFocus: 1.0, aberration: 0.0, radialBlur: 0.0,
+                shake: 0.0, lightning: 0.0
+            },
+            JUMP: {
+                speed: 0.3, flowSpeed: 0.0, ribbonScale: 8.0,
+                energyThreshold: 0.46, intensity: 0.20, twist: 0.04,
+                bowFocus: 0.0, aberration: 0.0, radialBlur: 0.0,
+                shake: 0.0, lightning: 0.02
+            },
+            TUNNEL: {
+                speed: 8.0, flowSpeed: 0.0, ribbonScale: 8.0,
+                energyThreshold: 0.36, intensity: 0.62, twist: 0.13,
+                bowFocus: 0.0, aberration: 0.0, radialBlur: 0.0,
+                shake: 0.0, lightning: 0.08
+            },
+            EXIT: {
+                speed: 6.0, flowSpeed: 0.0, ribbonScale: 8.0,
+                energyThreshold: 0.38, intensity: 0.62, twist: 0.10,
+                bowFocus: 0.0, aberration: 0.18, radialBlur: 0.10,
+                shake: 0.0, lightning: 0.05
+            },
+            RECOVERY: {
+                speed: 0.0, flowSpeed: 0.0, ribbonScale: 8.0,
+                energyThreshold: 0.42, intensity: 0.0, twist: 0.0,
+                bowFocus: 0.0, aberration: 0.0, radialBlur: 0.0,
+                shake: 0.0, lightning: 0.0
+            }
         };
 
-        let currentFlash = 0.0;
-        let currentShake = 0.0;
-
-        let currentVisualSpeed = 0.0;
-        let globalTravelOffset = 0.0;
-
+        const target = { ...STAGE_TARGETS.IDLE };
         const statusEl = document.getElementById('status');
         const progressBarContainer = document.getElementById('progress-container');
         const progressBar = document.getElementById('progress-bar');
 
+        const SPOOL_DURATION = 2.8;
+        const JUMP_DURATION = 1.65;
+        const EXIT_DURATION = 0.62;
+        const RECOVERY_DURATION = 0.53;
+
         let currentStage = 'IDLE';
-
-        let isSpooling = false;
-        let spoolTimer = 0.0;
-        const spoolDuration = WARP_CONFIG.spoolDuration;
-
-        let isExiting = false;
-        let exitTimer = 0.0;
-
-        // Clock-based stage transitions (replace setTimeouts).
-        // When >= 0, the animate loop will fire the transition at the given globalTime.
-        let pendingTunnelAt = -1.0;
-        let pendingExitSettleAt = -1.0;
-
-        // Tunnel event scheduler
-        let nextTunnelEventAt = 0.0;
-        let tunnelEventEndAt = -1.0;
-        let tunnelEventStrength = 0.0;
-        const tunnelEventColor = new THREE.Color(1.0, 0.8, 0.3);
-
-        function scheduleNextTunnelEvent() {
-            const gap = WARP_CONFIG.tunnelEventMinGap +
-                        Math.random() * (WARP_CONFIG.tunnelEventMaxGap - WARP_CONFIG.tunnelEventMinGap);
-            nextTunnelEventAt = globalTime + gap;
-        }
-
-        function fireTunnelEvent() {
-            // Random color: gold, magenta, ice-cyan
-            const r = Math.random();
-            if (r < 0.5)       tunnelEventColor.setRGB(1.0, 0.75, 0.25);   // gold
-            else if (r < 0.8)  tunnelEventColor.setRGB(1.0, 0.35, 0.9);    // magenta
-            else               tunnelEventColor.setRGB(0.6, 1.0, 1.2);     // ice
-            tunnelEventEndAt = globalTime + 0.55;
-            tunnelEventStrength = 1.0;
-            scheduleNextTunnelEvent();
-        }
+        let stageElapsed = 0.0;
+        let stagePulseFired = false;
+        let currentFlash = 0.0;
+        let currentShake = 0.0;
+        let currentVisualSpeed = 0.0;
+        let globalTravelOffset = 0.0;
+        let currentRiftVisibility = 0.0;
+        let currentRiftOpen = 0.0;
+        let currentRiftSpan = 0.05;
+        let currentRiftLens = 0.0;
+        let currentRiftPulse = 0.0;
+        let currentRiftScale = 1.0;
 
         function setStage(stage) {
+            if (!STAGE_TARGETS[stage]) return;
+
             currentStage = stage;
-            statusEl.innerText = "STATUS: " + stage;
+            stageElapsed = 0.0;
+            stagePulseFired = false;
+            Object.assign(target, STAGE_TARGETS[stage]);
+            statusEl.textContent = 'STATUS: ' + stage;
+            progressBarContainer.style.display = stage === 'SPOOL' ? 'block' : 'none';
 
             if (stage === 'SPOOL') {
-                isSpooling = true;
-                isExiting = false;
-                spoolTimer = 0.0;
-                pendingTunnelAt = -1.0;
-                pendingExitSettleAt = -1.0;
-                progressBarContainer.style.display = 'block';
                 progressBar.style.width = '0%';
-
-                target.bowFocus = 1.0;
-                target.speed = 0.0;
-                target.aberration = 0.2;
-                target.lightning = 0.0;
-                target.shake = 0.05;
-                target.radialBlur = 0.0;
-                target.vignette = 0.2;
-                target.dopplerY = 1.0;
-                target.colorShift = 0.0;
-                targetFov = WARP_CONFIG.baseFov;
-                targetCameraY = WARP_CONFIG.cameraBaseY;
-                cameraRollTarget = 0.0;
             }
-            else if (stage === 'JUMP') {
-                isSpooling = false;
-                isExiting = false;
-                pendingExitSettleAt = -1.0;
-                progressBarContainer.style.display = 'none';
 
-                // Bow shock spawn (punch through membrane).
-                uniformsBowShock.uShockTime.value = globalTime;
-                uniformsPlasma.uDischarge.value = 1.0; // discharges, then damped down
-
-                // Blast u dołu statku (+Z) jako ciąg silnika
-                uniformsBlast.uShootTime.value = globalTime;
-                uniformsBlast.uShipZ.value = 1000.0;
-
-                target.speed = 18.0;
-                target.flowSpeed = 0.0;
-                target.ribbonScale = 12.0;
-                target.energyThreshold = 0.15;
-                target.intensity = 1.5;
-                target.twist = 0.0;
-                target.bowFocus = 0.0;
-
-                target.aberration = 1.0;
-                target.lightning = 1.2;
-
-                currentFlash = 1.0;
-                currentShake = 1.5;
-                target.shake = 0.4;
-                target.vignette = 0.6;
-                target.dopplerY = 1.6;
-                target.colorShift = 0.0;
-                targetFov = WARP_CONFIG.baseFov + 12.0; // FOV pop on jump
-                targetCameraY = WARP_CONFIG.cameraBaseY;
-
-                // Schedule TUNNEL transition via clock (no setTimeout — frame-rate independent).
-                pendingTunnelAt = globalTime + WARP_CONFIG.jumpFlashDuration;
-            }
-            else if (stage === 'EXIT') {
-                isSpooling = false;
-                isExiting = true;
-                exitTimer = 0.0;
-                pendingTunnelAt = -1.0;
-                progressBarContainer.style.display = 'none';
-
-                // NOWE: Odpalenie fali uderzeniowej do GÓRY (Cone z Railguna)
-                uniformsExitCone.uShootTime.value = globalTime;
-                // Bow shock on exit (popping through into normal space).
-                uniformsBowShock.uShockTime.value = globalTime;
-
-                // Phase-1 "punch out" targets — animate() will sweep these
-                // through phase 2 (decel) and phase 3 (settle).
-                target.speed = 8.0;          // start of decel; ramps to 0 over decel phase
-                target.flowSpeed = 5.0;
-                target.ribbonScale = 20.0;
-                target.energyThreshold = 0.6;
-                target.intensity = 0.0;
-                target.twist = 6.0;          // SOFTENED from 12.0 (motion-sickness)
-
-                target.aberration = 1.2;
-                target.lightning = 0.0;
-
-                currentFlash = 1.5;
-                currentShake = 2.0;
-                target.radialBlur = 0.0;
-                target.shake = 0.0;
-                target.vignette = 0.5;
-                target.dopplerY = 1.4;
-
-                targetFov = WARP_CONFIG.exitPunchFov; // FOV pop
-                cameraRollTarget = 0.0;
-
-                // Settle clean-up scheduled via clock.
-                pendingExitSettleAt = globalTime + WARP_CONFIG.exitTotalDuration;
+            if (stage === 'EXIT') {
+                uniformsWake.uShootTime.value = globalTime;
+                currentShake = Math.max(currentShake, 0.18);
+            } else if (stage !== 'RECOVERY') {
+                uniformsWake.uShootTime.value = -999.0;
             }
         }
 
+        function updateStageTargets() {
+            const profile = gearProfiles[warpGear];
+            let desiredSpool = 0.0;
+            let desiredExit = 0.0;
+            let desiredEntryPulse = 0.0;
+            let desiredRiftVisibility = 0.0;
+            let desiredRiftOpen = 0.0;
+            let desiredRiftSpan = 0.05;
+            let desiredRiftLens = 0.0;
+            let desiredRiftPulse = 0.0;
+            let desiredRiftScale = 1.0;
+
+            if (currentStage === 'SPOOL') {
+                const progress = clamp01(stageElapsed / SPOOL_DURATION);
+                const riftBirth = smooth01((progress - 0.72) / 0.12);
+                const riftStretch = smooth01((progress - 0.82) / 0.15);
+                desiredSpool = progress * 0.12;
+                progressBar.style.width = (progress * 100.0).toFixed(1) + '%';
+
+                target.speed = lerp(0.02, 0.30, progress);
+                target.intensity = lerp(0.0, 0.14, smooth01(progress));
+                target.twist = lerp(0.0, 0.42, smooth01(progress));
+                target.energyThreshold = lerp(0.62, 0.48, progress);
+
+                desiredRiftVisibility =
+                    riftBirth * 0.16 +
+                    riftStretch * 0.56;
+                desiredRiftOpen = riftBirth * 0.018;
+                desiredRiftSpan = lerp(
+                    0.05,
+                    0.72,
+                    smooth01(riftBirth * 0.42 + riftStretch * 0.58)
+                );
+                desiredRiftLens = riftBirth * 0.42;
+            } else if (currentStage === 'JUMP') {
+                const rupture = smooth01((stageElapsed - 0.12) / 0.58);
+                const reveal = smooth01((stageElapsed - 0.94) / 0.46);
+                const ingress = smooth01((stageElapsed - 1.10) / 0.42);
+                const riftFade = smooth01((stageElapsed - 1.37) / 0.24);
+                const pulseOffset = (stageElapsed - 0.53) / 0.105;
+                const rupturePulse = Math.exp(-pulseOffset * pulseOffset);
+
+                desiredSpool =
+                    0.12 *
+                    (1.0 - smooth01((stageElapsed - 0.04) / 0.36));
+                desiredRiftVisibility =
+                    lerp(0.72, 1.0, rupture) *
+                    (1.0 - riftFade);
+                desiredRiftOpen = rupture;
+                desiredRiftSpan = lerp(0.72, 1.0, rupture);
+                desiredRiftLens =
+                    lerp(0.42, 1.0, rupture) *
+                    (1.0 - riftFade * 0.55);
+                desiredRiftPulse = rupturePulse;
+                desiredRiftScale = 1.0 + ingress * 2.45;
+                desiredEntryPulse =
+                    rupturePulse * 0.65 +
+                    ingress * 0.35;
+
+                target.speed = lerp(0.30, profile.flowRate + 2.5, ingress);
+                target.intensity = lerp(0.20, profile.intensity, reveal);
+                target.energyThreshold = lerp(0.46, 0.36, reveal);
+                target.lightning = lerp(0.02, 0.08, reveal);
+                target.aberration = rupturePulse * 0.055 + ingress * 0.035;
+                target.radialBlur = rupturePulse * 0.035 + ingress * 0.07;
+            } else if (currentStage === 'TUNNEL') {
+                target.speed = profile.flowRate * (1.0 + gearPulse * 0.16);
+                target.intensity = profile.intensity * (1.0 + gearPulse * 0.08);
+                target.energyThreshold = 0.38 - (warpGear - 1) * 0.008;
+                target.lightning = 0.08;
+            } else if (currentStage === 'EXIT') {
+                const flowStop = smooth01((stageElapsed - 0.08) / 0.40);
+                const tunnelClose = smooth01((stageElapsed - 0.12) / 0.40);
+
+                target.speed = profile.flowRate * (1.0 - flowStop);
+                target.intensity = (profile.intensity + 0.12 * (1.0 - smooth01(stageElapsed / 0.08)))
+                    * (1.0 - tunnelClose);
+                target.aberration = 0.18 * (1.0 - smooth01(stageElapsed / 0.45));
+                target.radialBlur = 0.10 * (1.0 - smooth01(stageElapsed / 0.42));
+
+                desiredExit = tunnelClose;
+                desiredRiftVisibility =
+                    smooth01((stageElapsed - 0.02) / 0.10) *
+                    (1.0 - smooth01((stageElapsed - 0.46) / 0.16));
+                desiredRiftOpen =
+                    1.0 -
+                    smooth01((stageElapsed - 0.04) / 0.28);
+                desiredRiftSpan = 0.92;
+                desiredRiftLens =
+                    0.72 *
+                    (1.0 - smooth01((stageElapsed - 0.30) / 0.24));
+                const exitPulseOffset = (stageElapsed - 0.24) / 0.075;
+                desiredRiftPulse = Math.exp(-exitPulseOffset * exitPulseOffset) * 0.62;
+
+                if (!stagePulseFired && stageElapsed >= 0.25) {
+                    stagePulseFired = true;
+                    currentFlash = Math.max(currentFlash, 0.08);
+                }
+            } else if (currentStage === 'RECOVERY') {
+                desiredExit = 1.0;
+            }
+
+            uniformsShip.uSpoolProgress.value = damp(
+                uniformsShip.uSpoolProgress.value,
+                desiredSpool,
+                currentStage === 'SPOOL' ? 5.0 : 8.0,
+                frameDelta
+            );
+            currentRiftVisibility = damp(
+                currentRiftVisibility,
+                desiredRiftVisibility,
+                13.0,
+                frameDelta
+            );
+            currentRiftOpen = damp(currentRiftOpen, desiredRiftOpen, 15.0, frameDelta);
+            currentRiftSpan = damp(currentRiftSpan, desiredRiftSpan, 12.0, frameDelta);
+            currentRiftLens = damp(currentRiftLens, desiredRiftLens, 12.0, frameDelta);
+            currentRiftPulse = desiredRiftPulse;
+            currentRiftScale = damp(currentRiftScale, desiredRiftScale, 8.0, frameDelta);
+
+            uniformsBack.uExitProgress.value = desiredExit;
+            uniformsFront.uExitProgress.value = desiredExit;
+            uniformsSparks.uExitProgress.value = desiredExit;
+            uniformsBack.uEntryPulse.value = desiredEntryPulse;
+            uniformsFront.uEntryPulse.value = desiredEntryPulse;
+        }
+
+        function projectRiftToPostprocess() {
+            camera.updateMatrixWorld(true);
+            foldGroup.updateMatrixWorld(true);
+            shipContainer.updateMatrixWorld(true);
+
+            riftProjectedCenter.set(0.0, 0.0, 0.0);
+            foldGroup.localToWorld(riftProjectedCenter);
+            riftProjectedCenter.project(camera);
+
+            riftProjectedAxisX.set(1400.0 * currentRiftScale, 0.0, 0.0);
+            foldGroup.localToWorld(riftProjectedAxisX);
+            riftProjectedAxisX.project(camera);
+
+            riftProjectedAxisY.set(0.0, 0.0, -520.0 * currentRiftScale);
+            foldGroup.localToWorld(riftProjectedAxisY);
+            riftProjectedAxisY.project(camera);
+
+            riftProjectedShip.set(0.0, 0.0, 0.0);
+            shipContainer.localToWorld(riftProjectedShip);
+            riftProjectedShip.project(camera);
+
+            const centerX = riftProjectedCenter.x * 0.5 + 0.5;
+            const centerY = riftProjectedCenter.y * 0.5 + 0.5;
+            const axisXX = (riftProjectedAxisX.x - riftProjectedCenter.x) * 0.5;
+            const axisXY = (riftProjectedAxisX.y - riftProjectedCenter.y) * 0.5;
+            const axisYX = (riftProjectedAxisY.x - riftProjectedCenter.x) * 0.5;
+            const axisYY = (riftProjectedAxisY.y - riftProjectedCenter.y) * 0.5;
+            const determinant = axisXX * axisYY - axisXY * axisYX;
+            const projectionValid =
+                Number.isFinite(centerX) &&
+                Number.isFinite(centerY) &&
+                Number.isFinite(axisXX) &&
+                Number.isFinite(axisXY) &&
+                Number.isFinite(axisYX) &&
+                Number.isFinite(axisYY) &&
+                Math.abs(determinant) > 0.00001 &&
+                riftProjectedCenter.z >= -1.0 &&
+                riftProjectedCenter.z <= 1.0;
+
+            uniformsPP.uRiftCenter.value.set(centerX, centerY);
+            uniformsPP.uRiftAxisX.value.set(axisXX, axisXY);
+            uniformsPP.uRiftAxisY.value.set(axisYX, axisYY);
+            uniformsPP.uShipScreen.value.set(
+                riftProjectedShip.x * 0.5 + 0.5,
+                riftProjectedShip.y * 0.5 + 0.5
+            );
+            uniformsPP.uRiftVisibility.value =
+                projectionValid ? currentRiftVisibility : 0.0;
+            uniformsPP.uRiftOpen.value = currentRiftOpen;
+            uniformsPP.uRiftSpan.value = currentRiftSpan;
+            uniformsPP.uRiftLens.value = currentRiftLens;
+            uniformsPP.uRiftPulse.value = currentRiftPulse;
+            uniformsPP.uRiftTurnPressure.value = turnPressure;
+            uniformsPP.uTime.value = globalTime;
+        }
 
         // --- 7. PĘTLA RENDEROWANIA ---
         const clock = new THREE.Clock();
-
-        // Spool sub-uniforms for the plasma ball anticipation peak
-        let spoolPeakValue = 0.0;
+        let frameDelta = 0.0;
 
         function animate() {
             requestAnimationFrame(animate);
-            const delta = clock.getDelta();
-            globalTime += delta;
+            frameDelta = Math.min(clock.getDelta(), 0.05);
+            globalTime += frameDelta;
+            stageElapsed += frameDelta;
 
-            uniformsBack.uTime.value = globalTime;
-            uniformsFront.uTime.value = globalTime;
+            if (currentStage === 'JUMP' && stageElapsed >= JUMP_DURATION) {
+                setStage('TUNNEL');
+            } else if (currentStage === 'EXIT' && stageElapsed >= EXIT_DURATION) {
+                setStage('RECOVERY');
+            } else if (currentStage === 'RECOVERY' && stageElapsed >= RECOVERY_DURATION) {
+                setStage('IDLE');
+            }
+
+            updateStageTargets();
+
+            gearPulse = damp(gearPulse, 0.0, 5.5, frameDelta);
+            uniformsShip.uHullPulse.value = damp(
+                uniformsShip.uHullPulse.value,
+                0.0,
+                5.5,
+                frameDelta
+            );
+            currentFlash = damp(currentFlash, 0.0, 22.0, frameDelta);
+            currentShake = damp(currentShake, target.shake, 12.0, frameDelta);
+
+            currentVisualSpeed = damp(currentVisualSpeed, target.speed, 8.0, frameDelta);
+            globalTravelOffset = (
+                globalTravelOffset + currentVisualSpeed * frameDelta
+            ) % 1024.0;
+
+            const curIntensity = damp(uniformsBack.uIntensity.value, target.intensity, 7.0, frameDelta);
+            const curTwist = damp(uniformsBack.uTwist.value, target.twist, 4.0, frameDelta);
+            const curBowFocus = damp(uniformsBack.uBowFocus.value, target.bowFocus, 8.0, frameDelta);
+            const curEnergyThreshold = damp(
+                uniformsBack.uEnergyThreshold.value,
+                target.energyThreshold,
+                7.0,
+                frameDelta
+            );
+            const curLightning = damp(uniformsBack.uLightning.value, target.lightning, 6.0, frameDelta);
+
+            uniformsPP.uFlash.value = Math.min(
+                0.10,
+                currentFlash + currentRiftPulse * 0.065
+            );
+            uniformsPP.uAberration.value = damp(
+                uniformsPP.uAberration.value,
+                target.aberration,
+                10.0,
+                frameDelta
+            );
+            uniformsPP.uRadialBlur.value = damp(
+                uniformsPP.uRadialBlur.value,
+                target.radialBlur,
+                10.0,
+                frameDelta
+            );
+
+            targetDrift = ((keys.a ? 1.0 : 0.0) - (keys.d ? 1.0 : 0.0)) * 0.32;
+            currentDrift = damp(currentDrift, targetDrift, 8.0, frameDelta);
+            flowHeading = damp(flowHeading, currentDrift * 0.55, 1.6, frameDelta);
+            turnPressure = Math.max(
+                -1.0,
+                Math.min(1.0, (currentDrift - flowHeading) / 0.18)
+            );
+
+            const allTunnelUniforms = [uniformsBack, uniformsFront];
+            for (const uniforms of allTunnelUniforms) {
+                uniforms.uTime.value = globalTime;
+                uniforms.uTravelOffset.value = globalTravelOffset;
+                uniforms.uFlowSpeed.value = 0.0;
+                uniforms.uRibbonScale.value = target.ribbonScale;
+                uniforms.uEnergyThreshold.value = curEnergyThreshold;
+                uniforms.uIntensity.value = curIntensity;
+                uniforms.uTwist.value = curTwist;
+                uniforms.uBowFocus.value = curBowFocus;
+                uniforms.uLightning.value = curLightning;
+                uniforms.uGear.value = warpGear;
+                uniforms.uGearPulse.value = gearPulse;
+                uniforms.uTurnPressure.value = turnPressure;
+            }
+
             uniformsSparks.uTime.value = globalTime;
-            uniformsBlast.uTime.value = globalTime;
-            uniformsExitCone.uTime.value = globalTime;
-            uniformsShip.uTime.value = globalTime;
-            uniformsStarfield.uTime.value = globalTime;
-            uniformsPlasma.uTime.value = globalTime;
-            uniformsBowShock.uTime.value = globalTime;
-
-            // ===== Clock-based stage transitions (replace setTimeout) =====
-            if (pendingTunnelAt > 0 && globalTime >= pendingTunnelAt && currentStage === 'JUMP') {
-                pendingTunnelAt = -1.0;
-                currentStage = 'TUNNEL';
-                statusEl.innerText = "STATUS: TUNNEL";
-                target.speed = 8.0;
-                target.intensity = 1.0;
-                target.twist = 0.2;
-                target.aberration = 0.3;
-                target.lightning = 0.6;
-                target.shake = 0.1;
-                target.radialBlur = 0.5;
-                target.vignette = 0.35;
-                target.dopplerY = 1.8;
-                targetFov = WARP_CONFIG.baseFov;
-                // Start tunnel events scheduler.
-                scheduleNextTunnelEvent();
-            }
-
-            if (pendingExitSettleAt > 0 && globalTime >= pendingExitSettleAt && currentStage === 'EXIT') {
-                pendingExitSettleAt = -1.0;
-                // After full exit duration, kill warp visuals — destination space remains.
-                target.flowSpeed = 0.0;
-                target.aberration = 0.0;
-                target.intensity = 0.0;
-                target.twist = 0.0;
-                target.radialBlur = 0.0;
-                target.vignette = 0.2;
-                target.dopplerY = 1.0;
-                targetFov = WARP_CONFIG.baseFov;
-                targetCameraY = WARP_CONFIG.cameraBaseY;
-                isExiting = false; // freeze exit progress
-            }
-
-            // ===== SPOOL: 3-phase progress curve =====
-            if (isSpooling) {
-                spoolTimer += delta;
-                const p = Math.min(spoolTimer / spoolDuration, 1.0);
-
-                progressBar.style.width = (p * 100) + '%';
-
-                const charge = smoothstep(0.0, 0.5, p);
-                const arc    = smoothstep(0.5, 0.85, p);
-                const peak   = smoothstep(0.85, 1.0, p);
-
-                // Lightning crackles louder & faster as peak nears.
-                const peakFlicker = 0.5 + 0.5 * Math.sin(globalTime * 40.0);
-                target.lightning = charge * 0.3 + arc * 1.2 + peak * (1.5 + peakFlicker);
-                target.intensity = charge * 0.4 + arc * 0.7 + peak * 1.1;
-                target.shake     = charge * 0.05 + arc * 0.20 + peak * 0.55;
-                target.flowSpeed = charge * 1.0 + arc * 2.0 + peak * 3.0;
-                target.twist     = charge * 1.0 + arc * 3.5 + peak * 6.0;
-                target.ribbonScale     = 35.0 - (charge * 5.0 + arc * 8.0 + peak * 12.0);
-                target.energyThreshold = 0.70 - (charge * 0.10 + arc * 0.15 + peak * 0.10);
-                target.aberration = 0.1 + p * 0.5;
-                target.vignette   = 0.2 + peak * 0.6;
-
-                // FOV pump in peak phase: 60 -> 72, then snap back in last 0.2s.
-                const lastWindow = Math.max(0, (p - 0.92) / 0.08); // 0..1 in last 8%
-                targetFov = WARP_CONFIG.baseFov + peak * (WARP_CONFIG.spoolPeakFov - WARP_CONFIG.baseFov) * (1.0 - lastWindow);
-
-                uniformsShip.uSpoolProgress.value = p;
-                uniformsPlasma.uSpoolProgress.value = charge * 0.5 + arc + peak;
-                spoolPeakValue = peak;
-                uniformsPlasma.uSpoolPeak.value = peak;
-
-                // Plasma ball grows with charge progress.
-                const ballScale = 0.001 + (charge * 0.6 + arc * 0.4) * (1.0 + peak * 0.3);
-                plasmaBall.scale.setScalar(ballScale);
-            } else {
-                uniformsShip.uSpoolProgress.value = damp(uniformsShip.uSpoolProgress.value, 0.0, 8.0, delta);
-                uniformsPlasma.uSpoolProgress.value = damp(uniformsPlasma.uSpoolProgress.value, 0.0, 4.0, delta);
-                uniformsPlasma.uSpoolPeak.value = damp(uniformsPlasma.uSpoolPeak.value, 0.0, 6.0, delta);
-                plasmaBall.scale.setScalar(damp(plasmaBall.scale.x, 0.001, 4.0, delta));
-                spoolPeakValue = 0.0;
-            }
-            // Plasma discharge decays after JUMP.
-            uniformsPlasma.uDischarge.value = damp(uniformsPlasma.uDischarge.value, 0.0, 4.0, delta);
-
-            // ===== EXIT: 3-phase punch / decel / settle =====
-            if (isExiting) {
-                exitTimer += delta;
-                const totalP = Math.min(exitTimer / WARP_CONFIG.exitTotalDuration, 1.0);
-                uniformsSparks.uExitProgress.value = totalP;
-
-                // Phase booleans (with smooth curve for decel)
-                const t = exitTimer;
-                const T = WARP_CONFIG;
-                if (t < T.exitPunchDuration) {
-                    // Phase 1: PUNCH OUT
-                    target.twist = 6.0;
-                    target.intensity = lerp(1.0, 0.4, t / T.exitPunchDuration);
-                    target.aberration = 1.2;
-                    target.dopplerY = 1.6;
-                } else if (t < T.exitPunchDuration + T.exitDecelDuration) {
-                    // Phase 2: DECEL — smooth speed brake
-                    const decelP = (t - T.exitPunchDuration) / T.exitDecelDuration;
-                    target.speed = lerp(8.0, 0.0, easeOutQuart(decelP));
-                    target.twist = lerp(6.0, 0.5, easeOutQuart(decelP));
-                    target.intensity = lerp(0.4, 0.05, decelP);
-                    target.aberration = lerp(1.2, 0.4, decelP);
-                    target.dopplerY = lerp(1.6, 1.1, decelP);
-                    target.lightning = lerp(0.8, 0.15, decelP); // residual sparks
-                    targetFov = lerp(WARP_CONFIG.exitPunchFov, WARP_CONFIG.baseFov, decelP);
-                    targetCameraY = lerp(WARP_CONFIG.cameraBaseY, WARP_CONFIG.cameraExitZoomY, decelP);
-                } else {
-                    // Phase 3: SETTLE — destination space materialises
-                    const settleP = Math.min((t - T.exitPunchDuration - T.exitDecelDuration) / T.exitSettleDuration, 1.0);
-                    target.speed = 0.0;
-                    target.twist = lerp(0.5, 0.0, settleP);
-                    target.intensity = 0.0;
-                    target.aberration = lerp(0.4, 0.0, settleP);
-                    target.dopplerY = lerp(1.1, 1.0, settleP);
-                    target.lightning = lerp(0.15, 0.0, settleP);
-                    target.vignette = lerp(0.5, 0.2, settleP);
-                    targetCameraY = lerp(WARP_CONFIG.cameraExitZoomY, WARP_CONFIG.cameraExitPullY, easeOutQuart(settleP));
-                }
-
-                globalTravelOffset += delta * (1.0 - totalP) * 40.0;
-            } else {
-                // Damp exit progress back to 0 when not exiting.
-                uniformsSparks.uExitProgress.value = damp(uniformsSparks.uExitProgress.value, 0.0, 4.0, delta);
-            }
-
-            // Tunnel uExitProgress: drives collapse-to-axis.
-            const exitProgress = uniformsSparks.uExitProgress.value;
-            uniformsBack.uExitProgress.value = exitProgress;
-            uniformsFront.uExitProgress.value = exitProgress;
-
-            // ===== TUNNEL: events + color shift + pulsing twist + camera roll =====
-            if (currentStage === 'TUNNEL') {
-                // Pulsing twist (subtle breathing).
-                target.twist = 0.2 + Math.sin(globalTime * 0.4) * 0.25;
-                // Camera roll (very subtle hyperspace banking).
-                cameraRollTarget = Math.sin(globalTime * 0.18) * 0.05;
-
-                // Distance-based color shift advances slowly.
-                target.colorShift = Math.min(1.0, target.colorShift + delta * 0.025);
-
-                // Schedule events
-                if (nextTunnelEventAt > 0 && globalTime >= nextTunnelEventAt) {
-                    fireTunnelEvent();
-                }
-                if (tunnelEventEndAt > 0) {
-                    if (globalTime >= tunnelEventEndAt) {
-                        tunnelEventEndAt = -1.0;
-                        tunnelEventStrength = 0.0;
-                    } else {
-                        const eventDur = 0.55;
-                        const tt = (tunnelEventEndAt - globalTime) / eventDur; // 1 -> 0
-                        tunnelEventStrength = Math.sin(Math.max(0, Math.min(1, tt)) * Math.PI); // bell curve
-                    }
-                }
-            } else if (currentStage !== 'EXIT') {
-                cameraRollTarget = 0.0;
-                if (currentStage !== 'TUNNEL') target.colorShift = damp(target.colorShift, 0.0, 1.5, delta);
-            }
-
-            // Damping rates: stage-dependent for snappiness on JUMP/EXIT.
-            let rate = 2.0;
-            let twistRate = 1.0;
-            if (currentStage === 'JUMP') rate = 5.0;
-            if (currentStage === 'EXIT') { rate = 4.0; twistRate = 5.0; }
-            if (currentStage === 'TUNNEL') twistRate = 0.8;
-
-            // ===== Frame-rate-independent damping for all values =====
-            currentFlash = damp(currentFlash, 0.0, 5.0, delta);
-            currentShake = damp(currentShake, target.shake, 5.0, delta);
-            uniformsPP.uFlash.value = currentFlash;
-
-            uniformsPP.uAberration.value = damp(uniformsPP.uAberration.value, target.aberration, rate, delta);
-            uniformsPP.uRadialBlur.value = damp(uniformsPP.uRadialBlur.value, target.radialBlur, rate, delta);
-            uniformsPP.uVignette.value   = damp(uniformsPP.uVignette.value,   target.vignette,   rate, delta);
-            uniformsPP.uDopplerY.value   = damp(uniformsPP.uDopplerY.value,   target.dopplerY,   rate, delta);
-
-            currentVisualSpeed = damp(currentVisualSpeed, target.speed, rate, delta);
-            globalTravelOffset += currentVisualSpeed * delta;
-
-            const curIntensity       = damp(uniformsBack.uIntensity.value,       target.intensity,       rate, delta);
-            const curTwist           = damp(uniformsBack.uTwist.value,           target.twist,           twistRate, delta);
-            const curBowFocus        = damp(uniformsBack.uBowFocus.value,        target.bowFocus,        rate, delta);
-            const curFlowSpeed       = damp(uniformsBack.uFlowSpeed.value,       target.flowSpeed,       rate, delta);
-            const curRibbonScale     = damp(uniformsBack.uRibbonScale.value,     target.ribbonScale,     rate, delta);
-            const curEnergyThreshold = damp(uniformsBack.uEnergyThreshold.value, target.energyThreshold, rate, delta);
-            const curLightning       = damp(uniformsBack.uLightning.value,       target.lightning,       rate, delta);
-            const curColorShift      = damp(uniformsBack.uColorShift.value,      target.colorShift,      1.5, delta);
-            const curEventFlash      = damp(uniformsBack.uEventFlash.value,      tunnelEventStrength,    8.0, delta);
-
-            uniformsBack.uTravelOffset.value = globalTravelOffset;
-            uniformsFront.uTravelOffset.value = globalTravelOffset;
             uniformsSparks.uTravelOffset.value = globalTravelOffset;
-
             uniformsSparks.uVisualSpeed.value = currentVisualSpeed;
-
-            uniformsBack.uFlowSpeed.value = curFlowSpeed; uniformsFront.uFlowSpeed.value = curFlowSpeed;
-            uniformsBack.uRibbonScale.value = curRibbonScale; uniformsFront.uRibbonScale.value = curRibbonScale;
-            uniformsBack.uEnergyThreshold.value = curEnergyThreshold; uniformsFront.uEnergyThreshold.value = curEnergyThreshold;
-
-            uniformsBack.uIntensity.value = curIntensity; uniformsFront.uIntensity.value = curIntensity;
-            uniformsBack.uTwist.value = curTwist; uniformsFront.uTwist.value = curTwist;
-            uniformsBack.uBowFocus.value = curBowFocus; uniformsFront.uBowFocus.value = curBowFocus;
-            uniformsBack.uLightning.value = curLightning; uniformsFront.uLightning.value = curLightning;
-            uniformsBack.uColorShift.value = curColorShift; uniformsFront.uColorShift.value = curColorShift;
-            uniformsBack.uEventFlash.value = curEventFlash; uniformsFront.uEventFlash.value = curEventFlash;
-            uniformsBack.uColorAccent.value.copy(tunnelEventColor);
-            uniformsFront.uColorAccent.value.copy(tunnelEventColor);
-
-            uniformsSparks.uIntensity.value = curIntensity;
+            uniformsSparks.uIntensity.value = curIntensity * 0.72;
             uniformsSparks.uTwist.value = curTwist;
             uniformsSparks.uBowFocus.value = curBowFocus;
+            uniformsSparks.uGear.value = warpGear;
+            uniformsSparks.uGearPulse.value = gearPulse;
+            uniformsSparks.uTurnPressure.value = turnPressure;
+            uniformsBlast.uTime.value = globalTime;
+            uniformsWake.uTime.value = globalTime;
+            uniformsShip.uTime.value = globalTime;
 
-            // Starfield: stretch streaks scale with travel speed; visibility dims inside tunnel.
-            const tunnelOcclusion = (currentStage === 'TUNNEL' || currentStage === 'JUMP') ? 0.25 : 1.0;
-            uniformsStarfield.uVisibility.value = damp(uniformsStarfield.uVisibility.value, tunnelOcclusion, 2.5, delta);
-            uniformsStarfield.uWarpStretch.value = damp(uniformsStarfield.uWarpStretch.value, Math.min(1.0, currentVisualSpeed / 12.0), 4.0, delta);
-            uniformsStarfield.uExitProgress.value = damp(uniformsStarfield.uExitProgress.value,
-                isExiting ? smoothstep(WARP_CONFIG.exitPunchDuration + WARP_CONFIG.exitDecelDuration * 0.5, WARP_CONFIG.exitTotalDuration, exitTimer) : (currentStage === 'IDLE' ? 1.0 : 0.0), 2.0, delta);
-
-            // FOV damping
-            camera.fov = damp(camera.fov, targetFov, 4.0, delta);
-            camera.updateProjectionMatrix();
-
-            // Camera roll damping (very subtle)
-            currentCameraRoll = damp(currentCameraRoll, cameraRollTarget, 1.5, delta);
-
-            // Camera position with shake.
-            // IMPORTANT: do NOT call lookAt() every frame. The camera was oriented at startup
-            // (top-down). Calling lookAt(0,0,0) here combined with random per-frame shake
-            // would re-aim the camera each frame, making the entire scene appear to spin
-            // around the center. Just translate position; orientation stays from startup.
-            const lerpedCamY = damp(camera.position.y, targetCameraY, 5.0, delta);
+            currentCameraY = damp(currentCameraY, targetCameraY, 5.0, frameDelta);
+            const shakeTime = globalTime * 18.0;
+            const shakeAmplitude =
+                Math.max(currentShake, currentRiftPulse * 0.06) *
+                18.0;
             camera.position.set(
-                baseCameraX + (Math.random() - 0.5) * currentShake * 150.0,
-                lerpedCamY + (Math.random() - 0.5) * currentShake * 150.0,
-                baseCameraZ + (Math.random() - 0.5) * currentShake * 150.0
+                baseCameraX + shakeNoise(shakeTime, 1) * shakeAmplitude,
+                currentCameraY + shakeNoise(shakeTime, 2) * shakeAmplitude,
+                baseCameraZ + shakeNoise(shakeTime, 3) * shakeAmplitude
             );
-            // Camera roll: apply only to local Z, preserving the startup -PI/2 X rotation.
-            camera.rotation.z = currentCameraRoll;
-
-            targetDrift = 0.0;
-            if (keys.a) targetDrift = 0.6;
-            if (keys.d) targetDrift = -0.6;
-
-            currentDrift = damp(currentDrift, targetDrift, 5.0, delta);
 
             shipContainer.rotation.y = currentDrift;
-            tunnelBack.rotation.y = currentDrift * 0.7;
-            tunnelFront.rotation.y = currentDrift * 0.7;
-            sparksMesh.rotation.y = currentDrift * 0.7;
+            tunnelBack.rotation.y = flowHeading;
+            tunnelFront.rotation.y = flowHeading;
+            sparksMesh.rotation.y = flowHeading;
+            foldGroup.rotation.y = flowHeading * 0.25;
+            uniformsPP.uCenter.value.set(0.5 - flowHeading * 0.30, 0.5);
+
+            const radialScale = Math.max(1.0, currentCameraY / 2500.0 * 1.12);
+            tunnelBack.scale.set(radialScale, radialScale, 1.0);
+            tunnelFront.scale.set(radialScale, radialScale, 1.0);
+            projectRiftToPostprocess();
+
+            const pressurePercent = Math.round(Math.abs(turnPressure) * 100.0);
+            turnValueEl.textContent = pressurePercent + '%';
+            turnMeterFill.style.transform = 'scaleX(' + Math.abs(turnPressure).toFixed(3) + ')';
+            turnMeterFill.style.transformOrigin = turnPressure >= 0.0 ? 'left center' : 'right center';
+
+            const tunnelVisible = curIntensity > 0.002 || target.intensity > 0.002;
+            tunnelBack.visible = tunnelVisible;
+            tunnelFront.visible = tunnelVisible;
+            sparksMesh.visible = tunnelVisible;
+
+            const blastAge = globalTime - uniformsBlast.uShootTime.value;
+            blastMesh.visible = blastAge >= 0.0 && blastAge <= 0.82;
+            const wakeAge = globalTime - uniformsWake.uShootTime.value;
+            wakeMesh.visible = wakeAge >= 0.0 && wakeAge <= 1.15;
 
             renderer.setRenderTarget(renderTarget);
             renderer.clear();
             renderer.render(scene, camera);
-
+            
             renderer.setRenderTarget(null);
             renderer.clear();
             renderer.render(orthoScene, orthoCamera);
         }
 
         window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            camera.aspect = width / height;
             camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderTarget.setSize(window.innerWidth, window.innerHeight);
+            renderer.setSize(width, height);
+            renderTarget.setSize(width, height);
+            uniformsPP.uAspect.value = width / height;
+            uniformsPP.uTexelSize.value.set(1 / width, 1 / height);
+            uniformsBack.uResolution.value.set(width, height);
+            uniformsFront.uResolution.value.set(width, height);
         });
 
+        gearValueEl.textContent = warpGear + ' / 5';
+        setStage('IDLE');
         animate();
     </script>
 </body>
