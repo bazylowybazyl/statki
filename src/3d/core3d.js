@@ -515,7 +515,11 @@ export const Core3D = {
   },
 
   _makeRenderInfoBucket() {
-    return { calls: 0, triangles: 0, points: 0, lines: 0 };
+    // ms — bez czasu per pass nie da się odróżnić kosztu GPU (rysowanie) od
+    // kosztu CPU (przejście po grafie sceny). Pass rysujący 2 obiekty i pass
+    // rysujący 300 mają ten sam koszt trawersu, bo three chodzi po CAŁEJ scenie
+    // w każdym passie i dopiero testuje warstwy.
+    return { calls: 0, triangles: 0, points: 0, lines: 0, ms: 0 };
   },
 
   _ensureRenderInfoBuckets() {
@@ -534,6 +538,7 @@ export const Core3D = {
     bucket.triangles = 0;
     bucket.points = 0;
     bucket.lines = 0;
+    bucket.ms = 0;
   },
 
   _resetRenderInfoBuckets() {
@@ -551,7 +556,7 @@ export const Core3D = {
     return target;
   },
 
-  _addRenderInfoDelta(bucketName, before = this._renderInfoBefore) {
+  _addRenderInfoDelta(bucketName, elapsedMs = 0, before = this._renderInfoBefore) {
     const info = this._ensureRenderInfoBuckets();
     const safeBucketName = (bucketName === 'fg' || bucketName === 'bloom' || bucketName === 'refraction' || info[bucketName])
       ? bucketName
@@ -562,6 +567,7 @@ export const Core3D = {
     bucket.triangles += Math.max(0, (Number(current?.triangles) || 0) - before.triangles);
     bucket.points += Math.max(0, (Number(current?.points) || 0) - before.points);
     bucket.lines += Math.max(0, (Number(current?.lines) || 0) - before.lines);
+    bucket.ms += Math.max(0, Number(elapsedMs) || 0);
   },
 
   _finalizeRenderInfoBuckets() {
@@ -591,8 +597,9 @@ export const Core3D = {
     const core = this;
     pass.render = function (...args) {
       core._readRenderInfoInto(core._renderInfoBefore);
+      const t0 = performance.now();
       const result = originalRender.apply(this, args);
-      core._addRenderInfoDelta(bucketName);
+      core._addRenderInfoDelta(bucketName, performance.now() - t0);
       return result;
     };
     pass.__core3dRenderInfoWrapped = true;

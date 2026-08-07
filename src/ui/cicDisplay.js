@@ -1665,6 +1665,9 @@ export const CICDisplay = {
       ctx.restore();
     }
 
+    // === MISSION OBJECTIVE MARKERS ===
+    drawCicObjectiveMarkers(ctx, W, H, toScreen, gameTime, ship);
+
     // === BOX-SELECT RECTANGLE ===
     if (cicBoxSelecting) {
       const bx0 = Math.min(cicBoxStart.x, cicBoxEnd.x);
@@ -1709,10 +1712,35 @@ export const CICDisplay = {
     }
 
     // === CRUISE NAV MARKER ===
-    if (window.cruiseNav?.active && window.cruiseNav.target) {
+    if (window.cruiseNav?.target) {
       const ct = window.cruiseNav.target;
       const ctScr = toScreen(ct.x, ct.y);
+
+      // Trasa (waypointy) — przejęte z usuniętej mapy sektora.
+      const waypoints = Array.isArray(window.cruiseNav.waypoints) ? window.cruiseNav.waypoints : [];
       ctx.save();
+      ctx.strokeStyle = window.cruiseNav.active ? 'rgba(34, 211, 238, 0.75)' : 'rgba(34, 211, 238, 0.4)';
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([8, 6]);
+      ctx.beginPath();
+      ctx.moveTo(shipScr.x, shipScr.y);
+      if (waypoints.length) {
+        const firstIdx = Math.max(0, Math.min(waypoints.length - 1, window.cruiseNav.waypointIndex | 0));
+        for (let i = firstIdx; i < waypoints.length; i++) {
+          const wp = waypoints[i];
+          if (!wp) continue;
+          const wpScr = toScreen(wp.x, wp.y);
+          ctx.lineTo(wpScr.x, wpScr.y);
+        }
+      } else {
+        ctx.lineTo(ctScr.x, ctScr.y);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+
+      ctx.save();
+      ctx.globalAlpha = window.cruiseNav.active ? 1 : 0.6;
       ctx.strokeStyle = '#22d3ee';
       ctx.fillStyle = 'rgba(34, 211, 238, 0.15)';
       ctx.lineWidth = 1.5;
@@ -1812,9 +1840,9 @@ export const CICDisplay = {
     ctx.font = '10px monospace';
     ctx.textAlign = 'center';
     if (isSystemScale) {
-      ctx.fillText('[TAB] Zamknij    [V] Widok taktyczny    [SCROLL] Zoom    [WSAD/MMB] Pan    [LMB] Zaznacz    [PPM] Rozkaz', W / 2, H - 16);
+      ctx.fillText('[TAB/M] Zamknij    [V] Widok taktyczny    [SCROLL] Zoom    [WSAD/MMB] Pan    [LMB] Zaznacz    [PPM] Rozkaz', W / 2, H - 16);
     } else {
-      ctx.fillText('[TAB] Zamknij    [V] Widok systemu    [SCROLL] Zoom    [WSAD/MMB] Pan    [LMB] Zaznacz/Box    [PPM] Atak/Ruch/Cruise/Drone', W / 2, H - 16);
+      ctx.fillText('[TAB/M] Zamknij    [V] Widok systemu    [SCROLL] Zoom    [WSAD/MMB] Pan    [LMB] Zaznacz/Box    [PPM] Atak/Ruch/Cruise/Drone', W / 2, H - 16);
     }
 
     ctx.restore();
@@ -2326,34 +2354,276 @@ function drawSolarSystem(ctx, W, H, toScreen, zoom, gameTime) {
   }
 
   // === STATIONS ===
+  drawStationMarkers(ctx, W, H, toScreen, zoom, gameTime);
+}
+
+// =============================================================================
+// STATION & OBJECTIVE MARKERS
+// =============================================================================
+// Mapa sektora (M) została usunięta — CIC jest jedynym widokiem strategicznym,
+// więc musi pokazywać to, co dawała mapa: gdzie stoją stacje i gdzie jest cel
+// misji. Znaczniki mają stały rozmiar ekranowy, żeby nie znikały przy oddaleniu.
+
+const CIC_OBJECTIVE_COLOR = '#ff5c8a';
+const CIC_HOSTILE_STATION_COLOR = '#ff5555';
+const CIC_FRIENDLY_STATION_COLOR = '#60a5fa';
+
+function drawCicLabel(ctx, text, x, y, color, { size = 9, bold = false, align = 'center' } = {}) {
+  if (!text) return;
+  ctx.save();
+  ctx.font = `${bold ? 'bold ' : ''}${size}px monospace`;
+  ctx.textAlign = align;
+  ctx.textBaseline = 'middle';
+  const w = ctx.measureText(text).width;
+  const padX = 4;
+  const boxX = align === 'center' ? x - w / 2 - padX : align === 'right' ? x - w - padX : x - padX;
+  ctx.fillStyle = 'rgba(2, 10, 22, 0.72)';
+  ctx.fillRect(boxX, y - size * 0.75, w + padX * 2, size * 1.5);
+  ctx.fillStyle = color;
+  ctx.fillText(text, x, y);
+  ctx.restore();
+}
+
+/** Symbol instalacji: kwadrat z masztem. Wrogie stacje dostają krzyż i pierścień zagrożenia. */
+function drawStationMarkers(ctx, W, H, toScreen, zoom, gameTime) {
   const stations = window.stations;
-  if (stations) {
-    for (const st of stations) {
-      if (!st || !Number.isFinite(st.x)) continue;
-      const stScr = toScreen(st.x, st.y);
-      if (stScr.x < -50 || stScr.x > W + 50 || stScr.y < -50 || stScr.y > H + 50) continue;
+  if (!Array.isArray(stations) || stations.length === 0) return;
+  const t = finiteNumber(gameTime, 0);
+  const pulse = 0.5 + 0.5 * Math.sin(t * 2.6);
 
-      const stR = Math.max(2, (st.r || 120) * zoom);
+  for (const st of stations) {
+    if (!st || !Number.isFinite(st.x)) continue;
+    const scr = toScreen(st.x, st.y);
+    if (scr.x < -90 || scr.x > W + 90 || scr.y < -90 || scr.y > H + 90) continue;
 
-      ctx.save();
-      // Station marker — small square
-      ctx.strokeStyle = '#60a5fa';
-      ctx.fillStyle = 'rgba(96, 165, 250, 0.15)';
-      ctx.lineWidth = 1;
-      const sqSize = Math.max(3, Math.min(stR, 8));
-      ctx.fillRect(stScr.x - sqSize, stScr.y - sqSize, sqSize * 2, sqSize * 2);
-      ctx.strokeRect(stScr.x - sqSize, stScr.y - sqSize, sqSize * 2, sqSize * 2);
+    const hostile = !!st.isPirate;
+    const color = hostile ? CIC_HOSTILE_STATION_COLOR : CIC_FRIENDLY_STATION_COLOR;
+    // Rozmiar w pikselach, nie w jednostkach świata — stacja jest punktem taktycznym.
+    const size = Math.max(hostile ? 8 : 6, Math.min(16, (st.r || 120) * zoom));
 
-      // Station label (only if zoomed in enough)
-      if (sqSize > 4) {
-        ctx.fillStyle = '#60a5fa';
-        ctx.globalAlpha = 0.5;
-        ctx.font = '7px monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText('STN', stScr.x, stScr.y + sqSize + 9);
+    ctx.save();
+
+    // Pierścień zagrożenia wrogiej stacji (promień agresji obrony).
+    if (hostile) {
+      const aggroRadius = Math.max(0, finiteNumber(window.mercMission?.aggroRadius, 0));
+      const ringR = aggroRadius * zoom;
+      if (ringR > size * 1.6 && ringR < Math.max(W, H) * 2) {
+        ctx.globalAlpha = 0.28 + pulse * 0.12;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([5, 7]);
+        ctx.beginPath();
+        ctx.arc(scr.x, scr.y, ringR, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
       }
-      ctx.restore();
+      // Pulsujący halo — wroga stacja ma być widoczna od razu.
+      ctx.globalAlpha = 0.18 + pulse * 0.22;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(scr.x, scr.y, size * (1.9 + pulse * 0.5), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
     }
+
+    // Maszt (linia pionowa) — odróżnia instalację od statku.
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.4;
+    ctx.globalAlpha = 0.9;
+    ctx.beginPath();
+    ctx.moveTo(scr.x, scr.y - size);
+    ctx.lineTo(scr.x, scr.y - size * 1.9);
+    ctx.moveTo(scr.x - size * 0.5, scr.y - size * 1.9);
+    ctx.lineTo(scr.x + size * 0.5, scr.y - size * 1.9);
+    ctx.stroke();
+
+    // Korpus
+    ctx.fillStyle = hostile ? 'rgba(255, 85, 85, 0.22)' : 'rgba(96, 165, 250, 0.18)';
+    ctx.lineWidth = hostile ? 2 : 1.4;
+    ctx.beginPath();
+    ctx.rect(scr.x - size, scr.y - size, size * 2, size * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    if (hostile) {
+      // Krzyż w środku = cel wrogi
+      ctx.beginPath();
+      ctx.moveTo(scr.x - size * 0.6, scr.y - size * 0.6);
+      ctx.lineTo(scr.x + size * 0.6, scr.y + size * 0.6);
+      ctx.moveTo(scr.x - size * 0.6, scr.y + size * 0.6);
+      ctx.lineTo(scr.x + size * 0.6, scr.y - size * 0.6);
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = color;
+      ctx.globalAlpha = 0.65;
+      ctx.fillRect(scr.x - size * 0.35, scr.y - size * 0.35, size * 0.7, size * 0.7);
+      ctx.globalAlpha = 1;
+    }
+
+    // Pasek HP dla stacji, które można zniszczyć
+    if (hostile && Number.isFinite(st.hp) && Number.isFinite(st.maxHp) && st.maxHp > 0) {
+      const barW = Math.max(26, size * 3);
+      const ratio = Math.max(0, Math.min(1, st.hp / st.maxHp));
+      const barY = scr.y + size + 5;
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(scr.x - barW / 2, barY, barW, 3);
+      ctx.fillStyle = ratio > 0.5 ? '#4ade80' : ratio > 0.25 ? '#fbbf24' : '#ef4444';
+      ctx.fillRect(scr.x - barW / 2, barY, barW * ratio, 3);
+    }
+
+    ctx.restore();
+
+    const name = hostile
+      ? 'STACJA PIRACKA'
+      : `STACJA ${String(st.planet?.label || st.id || 'ORBIT').toUpperCase()}`;
+    drawCicLabel(ctx, name, scr.x, scr.y + size + (hostile ? 16 : 12), color, {
+      size: hostile ? 9 : 8,
+      bold: hostile
+    });
+  }
+}
+
+/** Zbiera cele misji z dziennika; pozycja stacji ma pierwszeństwo nad zapisanym snapshotem. */
+function collectCicObjectives() {
+  const missions = window.MISSIONS?.active;
+  if (!Array.isArray(missions) || missions.length === 0) return EMPTY_CIC_WORLD_FEATURES;
+  const stations = Array.isArray(window.stations) ? window.stations : null;
+  const out = [];
+  for (let i = 0; i < missions.length; i++) {
+    const mission = missions[i];
+    if (!mission || mission.status !== 'active') continue;
+    let x = finiteNumber(mission.pos?.x, NaN);
+    let y = finiteNumber(mission.pos?.y, NaN);
+    if (mission.stationId && stations) {
+      const station = stations.find(st => st && st.id === mission.stationId);
+      if (station && Number.isFinite(station.x)) { x = station.x; y = station.y; }
+    }
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    out.push({
+      x,
+      y,
+      title: String(mission.title || 'MISJA').toUpperCase(),
+      objective: String(mission.objective || mission.location || '')
+    });
+  }
+  return out;
+}
+
+function formatCicDistance(dist) {
+  return dist > 12000 ? `${(dist / 3000).toFixed(1)} AU` : `${(dist / 1000).toFixed(1)} km`;
+}
+
+/**
+ * Znaczniki celów misji. Na ekranie: pulsujący celownik z podpisem.
+ * Poza ekranem: strzałka przy krawędzi z kierunkiem i dystansem — dzięki temu
+ * gracz zawsze wie, GDZIE szukać celu, nawet przy pełnym oddaleniu.
+ */
+function drawCicObjectiveMarkers(ctx, W, H, toScreen, gameTime, ship) {
+  const objectives = collectCicObjectives();
+  if (objectives.length === 0) return;
+
+  const t = finiteNumber(gameTime, 0);
+  const pulse = 0.5 + 0.5 * Math.sin(t * 2.4);
+  const color = CIC_OBJECTIVE_COLOR;
+  const margin = 58;
+  const shipX = finiteNumber(ship?.pos?.x, 0);
+  const shipY = finiteNumber(ship?.pos?.y, 0);
+
+  for (const obj of objectives) {
+    const scr = toScreen(obj.x, obj.y);
+    const dist = Math.hypot(obj.x - shipX, obj.y - shipY);
+    const distLabel = formatCicDistance(dist);
+    const onScreen = scr.x >= margin && scr.x <= W - margin && scr.y >= margin && scr.y <= H - margin;
+
+    if (onScreen) {
+      const r = 20 + pulse * 6;
+      ctx.save();
+      ctx.translate(scr.x, scr.y);
+
+      // Obracający się pierścień
+      ctx.strokeStyle = color;
+      ctx.globalAlpha = 0.9;
+      ctx.lineWidth = 1.6;
+      ctx.setLineDash([7, 7]);
+      ctx.save();
+      ctx.rotate(t * 0.7);
+      ctx.beginPath();
+      ctx.arc(0, 0, r, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+      ctx.setLineDash([]);
+
+      // Narożniki celownika
+      ctx.lineWidth = 2;
+      const b = r + 7;
+      const arm = 7;
+      for (let q = 0; q < 4; q++) {
+        const sx = q === 0 || q === 3 ? -1 : 1;
+        const sy = q < 2 ? -1 : 1;
+        ctx.beginPath();
+        ctx.moveTo(sx * b, sy * b - sy * arm);
+        ctx.lineTo(sx * b, sy * b);
+        ctx.lineTo(sx * b - sx * arm, sy * b);
+        ctx.stroke();
+      }
+
+      // Romb w środku
+      ctx.globalAlpha = 0.55 + pulse * 0.45;
+      ctx.fillStyle = color;
+      const d = 6;
+      ctx.beginPath();
+      ctx.moveTo(0, -d); ctx.lineTo(d, 0); ctx.lineTo(0, d); ctx.lineTo(-d, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+
+      drawCicLabel(ctx, `◆ ${obj.title}`, scr.x, scr.y - r - 20, color, { size: 10, bold: true });
+      drawCicLabel(ctx, distLabel, scr.x, scr.y + r + 20, color, { size: 9 });
+      if (obj.objective) {
+        drawCicLabel(ctx, obj.objective.toUpperCase(), scr.x, scr.y + r + 33, 'rgba(255, 200, 220, 0.85)', { size: 8 });
+      }
+      continue;
+    }
+
+    // Poza ekranem — strzałka na krawędzi
+    const ex = Math.max(margin, Math.min(W - margin, scr.x));
+    const ey = Math.max(margin, Math.min(H - margin, scr.y));
+    let adx = scr.x - ex;
+    let ady = scr.y - ey;
+    if (Math.abs(adx) < 0.001 && Math.abs(ady) < 0.001) {
+      adx = scr.x - W / 2;
+      ady = scr.y - H / 2;
+    }
+    const angle = Math.atan2(ady, adx);
+
+    ctx.save();
+    ctx.translate(ex, ey);
+    ctx.globalAlpha = 0.55 + pulse * 0.35;
+    ctx.fillStyle = color;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.save();
+    ctx.rotate(angle);
+    ctx.beginPath();
+    ctx.moveTo(16, 0);
+    ctx.lineTo(-6, 9);
+    ctx.lineTo(-1, 0);
+    ctx.lineTo(-6, -9);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+    ctx.globalAlpha = 0.8;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.arc(0, 0, 20, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+
+    const labelY = ey < H / 2 ? ey + 34 : ey - 30;
+    drawCicLabel(ctx, `◆ ${obj.title}`, ex, labelY, color, { size: 9, bold: true });
+    drawCicLabel(ctx, distLabel, ex, labelY + 13, color, { size: 8 });
   }
 }
 

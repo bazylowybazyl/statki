@@ -43,6 +43,10 @@ const WEAPON_FX_PROFILE = {
   heavy_autocannon: { key: 'autocannon', recoil: 8.0, shake: 4.0 },
   ciws_mk1: { key: 'ciws', recoil: 1.5, shake: 1.0 },
   laser_pd_mk1: { key: 'laserPD', recoil: 0.5, shake: 0.3 },
+  flak_s: { key: 'flak', recoil: 3.5, shake: 1.8 },
+  flak_m: { key: 'flak', recoil: 5.0, shake: 2.6 },
+  flak_l: { key: 'flak', recoil: 8.0, shake: 4.2 },
+  flak_capital: { key: 'flak', recoil: 14.0, shake: 7.5 },
   missile_rack: { key: 'rocket', recoil: 4.0, shake: 2.0 },
   fast_missile_rack: { key: 'rocket', recoil: 3.0, shake: 1.5 },
   supernova_missile: { key: 'torpedo', recoil: 9.0, shake: 5.0 },
@@ -63,6 +67,7 @@ const WEAPON_3D_SCALE_BY_SIZE = Object.freeze({
 const WEAPON_3D_CATEGORY_TRIM = Object.freeze({
   beam: 0.94,
   ciws: 0.88,
+  flak: 0.92,
   rocket: 0.82,
   torpedo: 0.90,
   default: 1.0
@@ -89,6 +94,7 @@ function normalizeWeaponFxKey(weaponId) {
   if (id.includes('special_plasma')) return 'plasmaGatling';
   if (id.includes('heavy_auto')) return 'autocannon';
   if (id.includes('ciws')) return 'ciws';
+  if (id.includes('flak')) return 'flak';
   if (id.includes('laser_pd')) return 'laserPD';
   if (id.includes('fast_missile_rack')) return 'rocket';
   if (id.includes('supernova_missile')) return 'torpedo';
@@ -164,19 +170,14 @@ function makeHeadTexture() {
 const BULLET_HDR = Object.freeze({ trail: 2.6, core: 5.0, arc: 3.2 });
 const MUZZLE_HDR = Object.freeze({ outer: 2.5, inner: 4.0 });
 const BEAM_HDR = Object.freeze({ core: 4.0, glow: 2.4, spiral: 3.0 });
-const TURRET_GLOW_HDR = 1.8;
 
 function ensureWeaponResources() {
   if (!WEP_RESOURCES.mats || !WEP_RESOURCES.geos || !WEP_RESOURCES.bulletStyles) {
-    const makeGlowMaterial = (color, opacity = 0.98) => new THREE.MeshBasicMaterial({
-      color: new THREE.Color(color).multiplyScalar(TURRET_GLOW_HDR),
-      transparent: true,
-      opacity,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      depthTest: false,
-      side: THREE.DoubleSide,
-      toneMapped: false
+    // Turret details are painted/physical surfaces, never light emitters. Keeping
+    // them dark and Lambert-lit prevents the shared HDR bloom pass from treating
+    // weapon housings, lenses or feed strips as permanent lamps.
+    const makeTurretDetailMaterial = (color) => new THREE.MeshLambertMaterial({
+      color
     });
 
     WEP_RESOURCES.mats = {
@@ -186,17 +187,17 @@ function ensureWeaponResources() {
       base: new THREE.MeshLambertMaterial({ color: 0x3a465b }),
       barrel: new THREE.MeshLambertMaterial({ color: 0x5a6982 }),
       armor: new THREE.MeshLambertMaterial({ color: 0x647596 }),
-      glowBlue: makeGlowMaterial(0x8ad9ff, 0.96),
-      glowCyan: makeGlowMaterial(0x86f4ff, 0.98),
-      glowRed: makeGlowMaterial(0xff7b93, 0.96),
-      glowAmber: makeGlowMaterial(0xffd78f, 0.96),
+      detailBlue: makeTurretDetailMaterial(0x293b4d),
+      detailCyan: makeTurretDetailMaterial(0x294248),
+      detailRed: makeTurretDetailMaterial(0x4a2c33),
+      detailAmber: makeTurretDetailMaterial(0x4b402d),
     };
 
     WEP_RESOURCES.geos = {
       // Original shared
       railBase: new THREE.BoxGeometry(18, 22, 6),
       railBarrel: new THREE.BoxGeometry(38, 3, 3),
-      railGlow: new THREE.BoxGeometry(28, 1, 1),
+      railDetail: new THREE.BoxGeometry(28, 1, 1),
       armataBase: new THREE.BoxGeometry(20, 24, 8),
       armataBarrel: new THREE.BoxGeometry(28, 7, 7),
       autoBase: new THREE.CylinderGeometry(8, 8, 8, 16),
@@ -222,18 +223,26 @@ function ensureWeaponResources() {
       // CIWS — dome + single cluster barrel
       ciwsDome: new THREE.SphereGeometry(6, 10, 8, 0, Math.PI * 2, 0, Math.PI * 0.5),
       ciwsClusterBarrel: new THREE.CylinderGeometry(2.5, 2.5, 18, 8),
-      // Laser PD — single glow lens
+      // Flak — krępa jaskółka: podstawa, jarzmo, 2 krótkie lufy z hamulcami,
+      // bębny amunicyjne po bokach. Wszystko merguje się w 1 mesh metalu.
+      flakBase: new THREE.CylinderGeometry(9, 11, 5, 8),
+      flakMantlet: new THREE.BoxGeometry(13, 16, 9),
+      flakBarrel: new THREE.CylinderGeometry(2.0, 2.6, 16, 8),
+      flakBrake: new THREE.CylinderGeometry(3.2, 3.2, 4, 8),
+      flakDrum: new THREE.CylinderGeometry(4.5, 4.5, 5, 10),
+      flakFeedCover: new THREE.BoxGeometry(3, 12, 1.6),
+      // Laser PD — non-emissive optical housing
       laserPDLens: new THREE.CylinderGeometry(2.5, 2, 10, 8),
-      // Missile Rack — housing + glow strip
+      // Missile Rack — housing + front faceplate
       missileHousing: new THREE.BoxGeometry(20, 18, 14),
-      missileGlowStrip: new THREE.BoxGeometry(16, 14, 2),
+      missileFaceplate: new THREE.BoxGeometry(16, 14, 2),
       // Siege Torpedo — housing + tube
       torpedoHousing: new THREE.BoxGeometry(24, 26, 16),
       torpedoTube: new THREE.CylinderGeometry(5, 5.5, 28, 10),
-      // Hexlance — hex housing + core + glow + ring
+      // Hexlance — hex housing + inner core + ring
       hexHousing: new THREE.CylinderGeometry(16, 18, 10, 6),
       hexCore: new THREE.CylinderGeometry(3, 3, 40, 6),
-      hexCoreGlow: new THREE.CylinderGeometry(2, 2, 38, 6),
+      hexInnerCore: new THREE.CylinderGeometry(2, 2, 38, 6),
       hexFrontRing: new THREE.TorusGeometry(12, 1.5, 6, 6),
       // Siege Railgun — housing + rails + core
       siegeHousing: new THREE.BoxGeometry(28, 26, 18),
@@ -248,11 +257,15 @@ function ensureWeaponResources() {
     WEP_RESOURCES.geos.beamDish.rotateZ(Math.PI * 0.5);
     WEP_RESOURCES.geos.heavyAutoBarrel.rotateZ(Math.PI * 0.5);
     WEP_RESOURCES.geos.ciwsClusterBarrel.rotateZ(Math.PI * 0.5);
+    WEP_RESOURCES.geos.flakBase.rotateX(Math.PI / 2);
+    WEP_RESOURCES.geos.flakBarrel.rotateZ(Math.PI * 0.5);
+    WEP_RESOURCES.geos.flakBrake.rotateZ(Math.PI * 0.5);
+    WEP_RESOURCES.geos.flakDrum.rotateX(Math.PI / 2);
     WEP_RESOURCES.geos.laserPDLens.rotateZ(Math.PI * 0.5);
     WEP_RESOURCES.geos.torpedoTube.rotateZ(Math.PI * 0.5);
     WEP_RESOURCES.geos.hexHousing.rotateX(Math.PI / 2);
     WEP_RESOURCES.geos.hexCore.rotateZ(Math.PI * 0.5);
-    WEP_RESOURCES.geos.hexCoreGlow.rotateZ(Math.PI * 0.5);
+    WEP_RESOURCES.geos.hexInnerCore.rotateZ(Math.PI * 0.5);
     WEP_RESOURCES.geos.siegeCore.rotateZ(Math.PI * 0.5);
 
     WEP_RESOURCES.bulletHeadTex = makeHeadTexture();
@@ -262,6 +275,9 @@ function ensureWeaponResources() {
       helios: { key: 'helios', color: '#ff003c', trailColor: '#ff628d', trailWidth: 3.0, coreWidth: 1.1, minLen: 26, stretch: 1.35, z: 14, headScale: 12, ionArcs: false },
       tempest: { key: 'tempest', color: '#00ccff', trailColor: '#7ee9ff', trailWidth: 3.6, coreWidth: 1.5, minLen: 20, stretch: 1.15, z: 14, headScale: 11, ionArcs: true },
       ciws: { key: 'ciws', color: '#8cffd0', trailColor: '#aaffdf', trailWidth: 1.4, coreWidth: 0.7, minLen: 12, stretch: 0.8, z: 14, headScale: 5, ionArcs: false },
+      // Flak leci wolno i krótko — pocisk ma być widoczną, przysadzistą iskrą
+      // z rozżarzonym łbem, żeby dało się śledzić, gdzie pęknie.
+      flak: { key: 'flak', color: '#ffc258', trailColor: '#ffdc9a', trailWidth: 2.2, coreWidth: 1.0, minLen: 10, stretch: 0.7, z: 14, headScale: 9, ionArcs: false },
       autocannon: { key: 'autocannon', color: '#ffcc8a', trailColor: '#ffdba6', trailWidth: 1.8, coreWidth: 0.9, minLen: 16, stretch: 1.0, z: 14, headScale: 6, ionArcs: false },
       armata: { key: 'armata', color: '#ffb46b', trailColor: '#ffd6a0', trailWidth: 2.5, coreWidth: 1.2, minLen: 24, stretch: 1.2, z: 14, headScale: 10, ionArcs: false },
       plasma: { key: 'plasma', color: '#7cff9c', trailColor: '#aaffb4', trailWidth: 2.2, coreWidth: 1.1, minLen: 18, stretch: 1.1, z: 14, headScale: 9, ionArcs: false },
@@ -370,17 +386,14 @@ function markMeshTree(root, value = true) {
 
 function promoteWeaponOverlay(root, renderOrder = 60) {
   root.renderOrder = renderOrder;
-  const glowMaterials = WEP_RESOURCES.mats
-    ? new Set([WEP_RESOURCES.mats.glowBlue, WEP_RESOURCES.mats.glowCyan, WEP_RESOURCES.mats.glowRed, WEP_RESOURCES.mats.glowAmber])
-    : new Set();
-    
+
   root.traverse((obj) => {
     if (!obj.isMesh) return;
     const mat = obj.material;
     const materials = Array.isArray(mat) ? mat : [mat];
-    const isGlow = materials.some((material) => material && glowMaterials.has(material));
+    const isAdditiveFx = materials.some((material) => material?.blending === THREE.AdditiveBlending);
     
-    obj.renderOrder = isGlow ? (renderOrder + 3) : renderOrder;
+    obj.renderOrder = isAdditiveFx ? (renderOrder + 3) : renderOrder;
     obj.frustumCulled = true;
     
     if (!mat) return;
@@ -388,7 +401,7 @@ function promoteWeaponOverlay(root, renderOrder = 60) {
       if (!material) continue;
 
       // FIX: Światła i rdzenie mają włączony depthTest, wyłączony depthWrite
-      if (isGlow || material.blending === THREE.AdditiveBlending) {
+      if (material.blending === THREE.AdditiveBlending) {
         material.depthTest = true; // <--- KRYTYCZNA ZMIANA (było false)
         material.depthWrite = false; // Nie zapisujemy do głębi, żeby nie ucinać innych świateł
         material.transparent = true;
@@ -664,11 +677,11 @@ function buildVulcanTurret(sizeMult) {
   }
   const barrelsMerged = mergeTurretParts(barrelParts, mats.barrel);
   group.add(barrelsMerged);
-  // Glow ring
-  const glowRing = new THREE.Mesh(new THREE.TorusGeometry(4, 0.75, 8, 20), mats.glowAmber);
-  glowRing.rotation.x = Math.PI * 0.5;
-  glowRing.position.set(26, 0, 8);
-  group.add(glowRing);
+  // Matte barrel detail ring
+  const detailRing = new THREE.Mesh(new THREE.TorusGeometry(4, 0.75, 8, 20), mats.detailAmber);
+  detailRing.rotation.x = Math.PI * 0.5;
+  detailRing.position.set(26, 0, 8);
+  group.add(detailRing);
   // 3 meshes instead of 8
   attachWeaponFxData(group, {
     weaponId: 'vulcan_minigun', housing, barrels: [],
@@ -690,13 +703,13 @@ function buildHeliosTurret(sizeMult) {
     { geo: new THREE.BoxGeometry(35, 3, 4), position: new THREE.Vector3(29.5, -6, 8) }
   ], mats.armor);
   group.add(metal);
-  // Merge 2 barrel glows + noseGlow → 1 glow mesh
-  const glow = mergeTurretParts([
+  // Merge two barrel inlays and the nose plate into one matte detail mesh
+  const detail = mergeTurretParts([
     { geo: new THREE.BoxGeometry(30, 1.5, 4.2), position: new THREE.Vector3(29.5, 6, 8) },
     { geo: new THREE.BoxGeometry(30, 1.5, 4.2), position: new THREE.Vector3(29.5, -6, 8) },
     { geo: new THREE.BoxGeometry(4, 15, 5), position: new THREE.Vector3(43, 0, 8) }
-  ], mats.glowRed);
-  group.add(glow);
+  ], mats.detailRed);
+  group.add(detail);
   // 2 meshes instead of 5
   attachWeaponFxData(group, {
     weaponId: 'helios_laser', housing: metal, barrels: [],
@@ -720,12 +733,12 @@ function buildArmataTurret(sizeMult) {
     { geo: new THREE.BoxGeometry(2, 35, 6), position: new THREE.Vector3(31.5, -6, 9), rotation: rotZ }
   ], mats.armor);
   group.add(metal);
-  // Merge crystal + focusRing → 1 glow mesh
-  const glow = mergeTurretParts([
+  // Merge crystal and focus ring into one non-emissive detail mesh
+  const detail = mergeTurretParts([
     { geo: new THREE.OctahedronGeometry(3, 1), position: new THREE.Vector3(19, 0, 9), rotation: rotZ },
     { geo: new THREE.TorusGeometry(5, 1, 8, 16), position: new THREE.Vector3(49, 0, 9), rotation: new THREE.Euler(0, 0, -Math.PI * 0.5) }
-  ], mats.glowAmber);
-  group.add(glow);
+  ], mats.detailAmber);
+  group.add(detail);
   // 2 meshes instead of 5
   attachWeaponFxData(group, {
     weaponId: 'armata_mk1', housing: metal, barrels: [],
@@ -748,12 +761,12 @@ function buildBeamContinuousTurret(sizeMult) {
     { geo: new THREE.BoxGeometry(2, 35, 6), position: new THREE.Vector3(32.5, -6, 9), rotation: rotZ }
   ], mats.armor);
   group.add(metal);
-  // Merge crystal + focusRing → 1 glow mesh
-  const glow = mergeTurretParts([
+  // Merge crystal and focus ring into one non-emissive detail mesh
+  const detail = mergeTurretParts([
     { geo: new THREE.OctahedronGeometry(3, 1), position: new THREE.Vector3(20, 0, 9), rotation: rotZ },
     { geo: new THREE.TorusGeometry(5, 1, 8, 16), position: new THREE.Vector3(50, 0, 9), rotation: rotZ }
-  ], mats.glowCyan);
-  group.add(glow);
+  ], mats.detailCyan);
+  group.add(detail);
   // 2 meshes instead of 4
   attachWeaponFxData(group, {
     weaponId: 'beam_continuous', housing: metal, barrels: [],
@@ -774,21 +787,21 @@ function buildBeamPulseTurret(sizeMult) {
   const metalParts = [
     { geo: new THREE.BoxGeometry(20, 20, 15), position: new THREE.Vector3(5, 0, 10) }
   ];
-  const glowParts = [];
+  const detailParts = [];
   const muzzlePoints = [];
   for (const pos of positions) {
     const yOff = pos[1] * 6;
     const zOff = 10 + pos[0] * 4;
     // pivot at (15, yOff, zOff) rotated z=-PI/2; barrel at local y=10 → world x+10
     metalParts.push({ geo: new THREE.CylinderGeometry(1.5, 1.5, 20, 8), position: new THREE.Vector3(25, yOff, zOff), rotation: rotZ });
-    // glow at local y=18 → world x+18
-    glowParts.push({ geo: new THREE.CylinderGeometry(1.8, 1.8, 5, 8), position: new THREE.Vector3(33, yOff, zOff), rotation: rotZ });
+    // matte muzzle cap at local y=18 → world x+18
+    detailParts.push({ geo: new THREE.CylinderGeometry(1.8, 1.8, 5, 8), position: new THREE.Vector3(33, yOff, zOff), rotation: rotZ });
     muzzlePoints.push(new THREE.Vector3(38, yOff, zOff));
   }
   const metal = mergeTurretParts(metalParts, mats.armor);
   group.add(metal);
-  const glow = mergeTurretParts(glowParts, mats.glowRed);
-  group.add(glow);
+  const detail = mergeTurretParts(detailParts, mats.detailRed);
+  group.add(detail);
   // 2 meshes instead of 9
   attachWeaponFxData(group, {
     weaponId: 'beam_pulse', housing: metal, barrels: [],
@@ -816,18 +829,18 @@ function buildTempestTurret(sizeMult, barrelCount = 1) {
   }
   const metal = mergeTurretParts(metalParts, mats.armor);
   group.add(metal);
-  // Merge rings + muzzleGlow → 1 glow mesh
-  const glowParts = [
+  // Merge rings and muzzle insert into one non-emissive detail mesh
+  const detailParts = [
     { geo: new THREE.CylinderGeometry(1.2, 1.2, 10, 8), position: new THREE.Vector3(34, 0, 8), rotation: rotZ }
   ];
   if (barrelCount <= 1) {
-    glowParts.push({ geo: new THREE.TorusGeometry(5, 1, 8, 16), position: new THREE.Vector3(27, 0, 8), rotation: rotZ });
+    detailParts.push({ geo: new THREE.TorusGeometry(5, 1, 8, 16), position: new THREE.Vector3(27, 0, 8), rotation: rotZ });
   } else {
-    glowParts.push({ geo: new THREE.TorusGeometry(5, 1, 8, 16), position: new THREE.Vector3(27, -5, 8), rotation: rotZ });
-    glowParts.push({ geo: new THREE.TorusGeometry(5, 1, 8, 16), position: new THREE.Vector3(27, 5, 8), rotation: rotZ });
+    detailParts.push({ geo: new THREE.TorusGeometry(5, 1, 8, 16), position: new THREE.Vector3(27, -5, 8), rotation: rotZ });
+    detailParts.push({ geo: new THREE.TorusGeometry(5, 1, 8, 16), position: new THREE.Vector3(27, 5, 8), rotation: rotZ });
   }
-  const glow = mergeTurretParts(glowParts, mats.glowCyan);
-  group.add(glow);
+  const detail = mergeTurretParts(detailParts, mats.detailCyan);
+  group.add(detail);
   // 2 meshes instead of 4-6
   const muzzlePoints = barrelCount <= 1
     ? [new THREE.Vector3(34, 0, 8)]
@@ -875,7 +888,7 @@ function buildYamatoTurret(sizeMult) {
     { yOff: 0, scale: 1.0 },
     { yOff: -7.5, scale: 0.9 }
   ];
-  const glowParts = [];
+  const detailParts = [];
 
   for (const cfg of gunConfigs) {
     const s = cfg.scale;
@@ -885,14 +898,14 @@ function buildYamatoTurret(sizeMult) {
     // rails at (25*s, ±1.75*s, 0)
     metalParts.push({ geo: new THREE.BoxGeometry(40 * s, 5 * s, 2 * s), position: new THREE.Vector3(6 + 25 * s, gy - 1.75 * s, 12) });
     metalParts.push({ geo: new THREE.BoxGeometry(40 * s, 5 * s, 2 * s), position: new THREE.Vector3(6 + 25 * s, gy + 1.75 * s, 12) });
-    // core glow
-    glowParts.push({ geo: new THREE.CylinderGeometry(0.75 * s, 0.75 * s, 38 * s, 8), position: new THREE.Vector3(6 + 26 * s, gy, 12), rotation: rotZ90 });
+    // matte inner rail
+    detailParts.push({ geo: new THREE.CylinderGeometry(0.75 * s, 0.75 * s, 38 * s, 8), position: new THREE.Vector3(6 + 26 * s, gy, 12), rotation: rotZ90 });
   }
 
   const metal = mergeTurretParts(metalParts, mats.armor);
   group.add(metal);
-  const glow = mergeTurretParts(glowParts, mats.glowCyan);
-  group.add(glow);
+  const detail = mergeTurretParts(detailParts, mats.detailCyan);
+  group.add(detail);
 
   // 2 meshes instead of 14
   attachWeaponFxData(group, {
@@ -938,11 +951,11 @@ function buildPlasmaGatlingTurret(sizeMult) {
   const housing = new THREE.Mesh(geos.plasmaHousing, mats.armor);
   housing.position.set(2, 0, 8);
   group.add(housing);
-  // Merge 2 barrels → 1 glow mesh (skip spin — invisible at game zoom)
+  // Merge two conventionally lit barrels (skip spin — invisible at game zoom)
   const barrels = mergeTurretParts([
     { geo: geos.plasmaBarrel, position: new THREE.Vector3(25, 6, 8) },
     { geo: geos.plasmaBarrel, position: new THREE.Vector3(25, -6, 8) }
-  ], mats.glowCyan);
+  ], mats.barrel);
   group.add(barrels);
   // 2 meshes instead of 3 (no spin overhead)
   attachWeaponFxData(group, {
@@ -964,8 +977,8 @@ function buildBeamEmitterTurret(sizeMult) {
     { geo: geos.beamDish, position: new THREE.Vector3(32, 0, 7) }
   ], mats.armor);
   group.add(metal);
-  // Crystal (glow, 1 mesh)
-  const crystal = new THREE.Mesh(geos.beamCrystal, mats.glowCyan);
+  // Crystal-shaped matte optical detail (1 mesh)
+  const crystal = new THREE.Mesh(geos.beamCrystal, mats.detailCyan);
   crystal.position.set(36, 0, 7);
   group.add(crystal);
   // 2 meshes instead of 3
@@ -1019,6 +1032,38 @@ function buildCIWSTurret(sizeMult) {
   return group;
 }
 
+function buildFlakTurret(sizeMult) {
+  const { mats, geos } = WEP_RESOURCES;
+  const group = new THREE.Group();
+  // Cały metal w jednym merge'u: podstawa + jarzmo + 2 lufy + 2 hamulce wylotowe
+  // + 2 bębny amunicyjne. Wieżyczka ma kilkanaście pikseli na ekranie w bitwie,
+  // więc płacimy za nią 1 draw call, a nie 7.
+  const metal = mergeTurretParts([
+    { geo: geos.flakBase, position: new THREE.Vector3(0, 0, 2.5) },
+    { geo: geos.flakMantlet, position: new THREE.Vector3(4, 0, 6) },
+    { geo: geos.flakBarrel, position: new THREE.Vector3(17, -3.5, 6) },
+    { geo: geos.flakBarrel, position: new THREE.Vector3(17, 3.5, 6) },
+    { geo: geos.flakBrake, position: new THREE.Vector3(26, -3.5, 6) },
+    { geo: geos.flakBrake, position: new THREE.Vector3(26, 3.5, 6) },
+    { geo: geos.flakDrum, position: new THREE.Vector3(-1, -8, 6) },
+    { geo: geos.flakDrum, position: new THREE.Vector3(-1, 8, 6) }
+  ], mats.armor);
+  group.add(metal);
+  // Pokrywa podajnika taśmy — matowy detal (osobny materiał = 2. draw call).
+  const feed = new THREE.Mesh(geos.flakFeedCover, mats.detailAmber);
+  feed.position.set(-1, 0, 10.5);
+  group.add(feed);
+
+  attachWeaponFxData(group, {
+    weaponId: 'flak_m', housing: metal, barrels: [],
+    muzzlePoints: [new THREE.Vector3(29, -3.5, 6), new THREE.Vector3(29, 3.5, 6)],
+    muzzleColor: '#ffc258', recoil: 5, shake: 2.6
+  });
+  group.scale.setScalar(sizeMult);
+  markMeshTree(group, false);
+  return group;
+}
+
 function buildLaserPDTurret(sizeMult) {
   const { mats, geos } = WEP_RESOURCES;
   const group = new THREE.Group();
@@ -1026,8 +1071,8 @@ function buildLaserPDTurret(sizeMult) {
   const base = new THREE.Mesh(geos.ciwsBase, mats.base);
   base.position.set(0, 0, 2);
   group.add(base);
-  // 2. Lens (glow — separate material, 1 draw call)
-  const lens = new THREE.Mesh(geos.laserPDLens, mats.glowBlue);
+  // 2. Non-emissive lens housing (separate material, 1 draw call)
+  const lens = new THREE.Mesh(geos.laserPDLens, mats.detailBlue);
   lens.position.set(13, 0, 5);
   group.add(lens);
   // Total: 2 meshes (different materials — can't merge further)
@@ -1047,9 +1092,9 @@ function buildMissileRackTurret(sizeMult) {
   const housing = new THREE.Mesh(geos.missileHousing, mats.armor);
   housing.position.set(4, 0, 8);
   group.add(housing);
-  const glowStrip = new THREE.Mesh(geos.missileGlowStrip, mats.glowAmber);
-  glowStrip.position.set(14, 0, 8);
-  group.add(glowStrip);
+  const faceplate = new THREE.Mesh(geos.missileFaceplate, mats.detailAmber);
+  faceplate.position.set(14, 0, 8);
+  group.add(faceplate);
   // 2 meshes (different materials)
   attachWeaponFxData(group, {
     weaponId: 'missile_rack', housing, barrels: [],
@@ -1093,12 +1138,12 @@ function buildHexlanceTurret(sizeMult) {
     { geo: geos.hexCore, position: new THREE.Vector3(30, 0, 8) }
   ], mats.armor);
   group.add(metal);
-  // Merge coreGlow + frontRing → 1 glow mesh
-  const glow = mergeTurretParts([
-    { geo: geos.hexCoreGlow, position: new THREE.Vector3(30, 0, 8) },
+  // Merge inner core and front ring into one non-emissive detail mesh
+  const detail = mergeTurretParts([
+    { geo: geos.hexInnerCore, position: new THREE.Vector3(30, 0, 8) },
     { geo: geos.hexFrontRing, position: new THREE.Vector3(42, 0, 8), rotation: new THREE.Euler(0, Math.PI * 0.5, 0) }
-  ], mats.glowBlue);
-  group.add(glow);
+  ], mats.detailBlue);
+  group.add(detail);
   // 2 meshes instead of 4
   attachWeaponFxData(group, {
     weaponId: 'hexlance_siege', housing: metal, barrels: [],
@@ -1120,8 +1165,8 @@ function buildSiegeRailgunTurret(sizeMult) {
     { geo: geos.siegeRailBar, position: new THREE.Vector3(44, -5, 10) }
   ], mats.armor);
   group.add(metal);
-  // Core glow (1 mesh)
-  const core = new THREE.Mesh(geos.siegeCore, mats.glowCyan);
+  // Matte inner core (1 mesh)
+  const core = new THREE.Mesh(geos.siegeCore, mats.detailCyan);
   core.position.set(44, 0, 10);
   group.add(core);
   // 2 meshes instead of 4
@@ -1139,28 +1184,28 @@ function createFallbackWeaponMesh(category, sizeMult) {
   const group = new THREE.Group();
   const mBase = WEP_RESOURCES.mats.base;
   const mBarrel = WEP_RESOURCES.mats.barrel;
-  const mGlowB = WEP_RESOURCES.mats.glowBlue;
-  const mGlowR = WEP_RESOURCES.mats.glowRed;
+  const mDetailBlue = WEP_RESOURCES.mats.detailBlue;
+  const mDetailRed = WEP_RESOURCES.mats.detailRed;
 
   if (category === 'rail') {
-    // Merge base + 2 barrels → 1 metal, 2 glows → 1 glow
+    // Merge base + two barrels into one metal mesh and one matte detail mesh
     const metal = mergeTurretParts([
       { geo: WEP_RESOURCES.geos.railBase, position: new THREE.Vector3(0, 0, 3) },
       { geo: WEP_RESOURCES.geos.railBarrel, position: new THREE.Vector3(15, -5, 3) },
       { geo: WEP_RESOURCES.geos.railBarrel, position: new THREE.Vector3(15, 5, 3) }
     ], mBase);
-    const glow = mergeTurretParts([
-      { geo: WEP_RESOURCES.geos.railGlow, position: new THREE.Vector3(15, -5, 4.6) },
-      { geo: WEP_RESOURCES.geos.railGlow, position: new THREE.Vector3(15, 5, 4.6) }
-    ], mGlowB);
-    group.add(metal, glow);
+    const detail = mergeTurretParts([
+      { geo: WEP_RESOURCES.geos.railDetail, position: new THREE.Vector3(15, -5, 4.6) },
+      { geo: WEP_RESOURCES.geos.railDetail, position: new THREE.Vector3(15, 5, 4.6) }
+    ], mDetailBlue);
+    group.add(metal, detail);
   } else if (category === 'armata' || category === 'plasma') {
     // Merge base + barrel → 1 metal mesh
     const metal = mergeTurretParts([
       { geo: WEP_RESOURCES.geos.armataBase, position: new THREE.Vector3(0, 0, 4) },
       { geo: WEP_RESOURCES.geos.armataBarrel, position: new THREE.Vector3(14, 0, 4) }
     ], mBase);
-    const g = new THREE.Mesh(new THREE.BoxGeometry(20, 2, 8.2), category === 'plasma' ? mGlowB : mGlowR);
+    const g = new THREE.Mesh(new THREE.BoxGeometry(20, 2, 8.2), category === 'plasma' ? mDetailBlue : mDetailRed);
     g.position.set(16, 0, 4);
     group.add(metal, g);
   } else if (category === 'autocannon') {
@@ -1173,7 +1218,7 @@ function createFallbackWeaponMesh(category, sizeMult) {
     const merged = mergeTurretParts([
       { geo: WEP_RESOURCES.geos.ciwsBase, position: new THREE.Vector3(0, 0, 2.5) },
       { geo: WEP_RESOURCES.geos.ciwsBarrel, position: new THREE.Vector3(7, 0, 2.5) }
-    ], category === 'beam' ? mGlowB : mBarrel);
+    ], category === 'beam' ? mDetailBlue : mBarrel);
     group.add(merged);
   } else {
     const base = new THREE.Mesh(WEP_RESOURCES.geos.defaultBase, mBase);
@@ -1209,6 +1254,7 @@ function createWeapon3DMesh(weaponId, category, size, tierScale = 1) {
   else if (key === 'heavy_autocannon') mesh = buildHeavyAutocannonTurret(scaleMult);
   else if (key === 'ciws_mk1') mesh = buildCIWSTurret(scaleMult);
   else if (key === 'laser_pd_mk1') mesh = buildLaserPDTurret(scaleMult);
+  else if (key.startsWith('flak')) mesh = buildFlakTurret(scaleMult);
   else if (key === 'missile_rack' || key === 'fast_missile_rack') mesh = buildMissileRackTurret(scaleMult);
   else if (key === 'supernova_missile') mesh = buildSiegeTorpedoTurret(scaleMult * 1.08);
   else if (key === 'siege_torpedo' || key === 'siege_torpedo_mk2') mesh = buildSiegeTorpedoTurret(scaleMult);
@@ -1256,10 +1302,11 @@ function resolveBulletVisualStyle(bullet) {
   else if (key.includes('helios')) result = WEP_RESOURCES.bulletStyles.helios;
   else if (key.includes('tempest') || key.includes('rail')) result = WEP_RESOURCES.bulletStyles.tempest;
   else if (key.includes('laser_pd')) result = WEP_RESOURCES.bulletStyles.laserPD;
+  else if (key.includes('flak')) result = WEP_RESOURCES.bulletStyles.flak;
   else if (key.includes('ciws') || key.includes('pd')) result = WEP_RESOURCES.bulletStyles.ciws;
   else if (key.includes('heavy_auto')) result = WEP_RESOURCES.bulletStyles.autocannon;
   else if (key.includes('auto') || key.includes('gatling')) result = WEP_RESOURCES.bulletStyles.autocannon;
-  else if (key.includes('armata') || key.includes('flak')) result = WEP_RESOURCES.bulletStyles.armata;
+  else if (key.includes('armata')) result = WEP_RESOURCES.bulletStyles.armata;
   else if (key.includes('plasma')) result = WEP_RESOURCES.bulletStyles.plasma;
   else if (key.includes('rocket') || key.includes('missile') || key.includes('aim-') || key.includes('asm')) result = WEP_RESOURCES.bulletStyles.rocket;
   else if (key.includes('torpedo')) result = WEP_RESOURCES.bulletStyles.torpedo;

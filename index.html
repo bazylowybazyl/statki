@@ -765,7 +765,7 @@
                   </div>
                   <div
                     style="min-width:56px; height:44px; border-radius:10px; border:1px solid #2f426e; background:#0b1326; color:#8fb5ff; display:flex; flex-direction:column; align-items:center; justify-content:center;">
-                    <span style="font-weight:700; color:#fff;">M</span><span style="font-size:10px;">Mapa</span>
+                    <span style="font-weight:700; color:#fff;">TAB / M</span><span style="font-size:10px;">CIC</span>
                   </div>
                   <div
                     style="min-width:56px; height:44px; border-radius:10px; border:1px solid #2f426e; background:#0b1326; color:#8fb5ff; display:flex; flex-direction:column; align-items:center; justify-content:center;">
@@ -819,7 +819,7 @@
                     stabilizer.</div>
                   <div><strong style="color:#fff;">Walka:</strong> LPM to broń główna, PPM rakiety, F specjal, T lock
                     target.</div>
-                  <div><strong style="color:#fff;">Systemy:</strong> X skan, M mapa, P panel wydajności, R naprawa.
+                  <div><strong style="color:#fff;">Systemy:</strong> X skan, TAB/M CIC, P panel wydajności, R naprawa.
                   </div>
                 </div>
               </div>
@@ -1674,6 +1674,16 @@
     import { InfrastructureUI } from "./src/ui/infrastructureUI.js";
     import { ZonePainterUI } from "./src/ui/zonePainterUI.js";
     import { CanvasVFX } from "./src/vfx/canvasParticleSystem.js";
+    import { FlakBurstVFX } from "./src/vfx/flakBurstVfx.js";
+    import {
+      FLAK_TUNING,
+      collectFlakBurstHits,
+      flakDetonationReason,
+      flakFuseTime,
+      isFlakWeapon,
+      resolveFlakProfile
+    } from "./src/game/flakSystem.js";
+    window.FlakBurstVFX = FlakBurstVFX;
     import { SparkSystem3D } from './src/3d/sparkSystem3D.js';
     import { SensorSystem } from "./src/game/sensorSystem.js";
     window.SensorSystem = SensorSystem;
@@ -1734,6 +1744,13 @@
       PLAYER_HULL_MARKET,
       PLAYER_HULL_MARKET_ORDER
     } from "./src/data/playerHullMarket.js";
+    import {
+      FIGHTER_LAUNCH,
+      orderHangarTubes,
+      chevronFormationOffset,
+      computeLaunchVector,
+      buildLaunchPlan
+    } from "./src/game/fighterLaunch.js";
     import {
       getCallInHullFrame,
       getCallInSpawnPolicy,
@@ -4793,12 +4810,19 @@
           if (flight?.usedThrusters) return;
         }
 
-        // Wymuś odlot od lidera
-        const wantSpeed = npc.maxSpeed * 0.9;
-        const turned = window.clampTurnVec(npc.vx, npc.vy, dir.x * wantSpeed, dir.y * wantSpeed, dt, 360);
-
-        npc.vx = turned.vx;
-        npc.vy = turned.vy;
+        // Wymuś odlot od lidera. Prędkość proporcjonalna do tego, jak głęboko
+        // siedzimy w strefie — myśliwce spawnują się DOKŁADNIE na kadłubie
+        // Atlasa (promień 300), więc sztywne 0.9*maxSpeed wyrzucało świeżo
+        // wypuszczoną eskadrę na pełnym ciągu jak z procy.
+        const depth = clamp(1 - (distToLeader / minSafeDist), 0, 1);
+        const wantSpeed = npc.maxSpeed * (0.25 + 0.65 * depth);
+        if (npc.fighter && window.steerFighter) {
+          window.steerFighter(npc, dir.x * wantSpeed, dir.y * wantSpeed, dt, 360);
+        } else {
+          const turned = window.clampTurnVec(npc.vx, npc.vy, dir.x * wantSpeed, dir.y * wantSpeed, dt, 360);
+          npc.vx = turned.vx;
+          npc.vy = turned.vy;
+        }
         if (npc.vx * npc.vx + npc.vy * npc.vy > 25) {
           npc.desiredAngle = Math.atan2(npc.vy, npc.vx);
         }
@@ -4828,9 +4852,15 @@
       const sep = window.applySeparationForces ? window.applySeparationForces(npc, 0, 0) : null;
       const dir = { x: dx / dist, y: dy / dist };
       const wantSpeed = Math.min(npc.maxSpeed || 240, dist * 1.4);
-      const turned = window.clampTurnVec(npc.vx, npc.vy, dir.x * wantSpeed, dir.y * wantSpeed, dt, 220);
-      npc.vx = turned.vx + (sep?.ax || 0) * dt;
-      npc.vy = turned.vy + (sep?.ay || 0) * dt;
+      if (npc.fighter && window.steerFighter) {
+        // Myśliwce: ten sam model przyspieszenia co w walce, żeby powrót do
+        // formacji nie był skokiem 0 → maxSpeed w jednej klatce.
+        window.steerFighter(npc, dir.x * wantSpeed + (sep?.ax || 0) * 0.5, dir.y * wantSpeed + (sep?.ay || 0) * 0.5, dt, 220);
+      } else {
+        const turned = window.clampTurnVec(npc.vx, npc.vy, dir.x * wantSpeed, dir.y * wantSpeed, dt, 220);
+        npc.vx = turned.vx + (sep?.ax || 0) * dt;
+        npc.vy = turned.vy + (sep?.ay || 0) * dt;
+      }
       if (npc.vx * npc.vx + npc.vy * npc.vy > 25) {
         npc.desiredAngle = Math.atan2(npc.vy || 0, npc.vx || 0);
       }
@@ -5371,8 +5401,32 @@
       npc.supportRetargetT = (npc.supportRetargetT || 0) - dt;
 
       let target = (npc.forceTarget && !npc.forceTarget.dead) ? npc.forceTarget : npc.target;
+      if (target && target.dead) target = null;
 
-      if (!target || npc.supportRetargetT <= 0) {
+      // MYŚLIWCE SAME PROWADZĄ CELOWANIE.
+      // Wcześniej ta warstwa nadpisywała npc.forceTarget co 0.7-1.1 s, a
+      // forceTarget wygrywa w runAdvancedFighterAI — więc commitment i histereza
+      // mózgu myśliwca były kasowane, a gdy tutejszy (węższy) skan niczego nie
+      // znalazł, zerowała target i myśliwiec w środku ataku zawracał do slotu
+      // formacji. Tu decydujemy już tylko: walka czy formacja, a cel jedynie
+      // ZASIEWAMY (npc.target), gdy myśliwiec nie ma żadnego.
+      const isFighterUnit = data.type === 'fighter' || data.type === 'interceptor' || !!npc.fighter;
+
+      if (isFighterUnit) {
+        // Smycz szersza niż zasięg szukania, żeby pościg nie urywał się w pół drogi.
+        if (target && dist2(npc, target) > searchRangeSq * 2.25) target = null;
+        if (npc.supportRetargetT <= 0) {
+          // Timer resetujemy zawsze, także gdy nie szukamy — inaczej myśliwiec
+          // bez celu robiłby skan O(n) po npcs[] w KAŻDEJ klatce.
+          npc.supportRetargetT = 0.7 + Math.random() * 0.4;
+          if (!target) {
+            target = getSupportInheritedTarget(npc, searchRangeSq)
+              || (window.aiPickBestTarget ? window.aiPickBestTarget(npc, searchRange) : null);
+          }
+        }
+        npc.forceTarget = null;
+        npc.target = target || null;
+      } else if (!target || npc.supportRetargetT <= 0) {
         target = getSupportInheritedTarget(npc, searchRangeSq);
 
         if (!target && window.aiPickBestTarget) {
@@ -6078,6 +6132,10 @@
       'ciws_mk1',
       'ciws_mk2',
       'laser_pd_mk1',
+      'flak_s',
+      'flak_m',
+      'flak_l',
+      'flak_capital',
       'fighter_bay',
       'fighter_squad_interceptor',
       'fighter_squad_multirole',
@@ -6252,8 +6310,14 @@
     function autoMountDefaults() {
       mountFirstFree(HP.MAIN, 'railgun_mk2', 24);
       mountFirstFree(HP.MISSILE, 'missile_rack', 8);
-      mountFirstFree(HP.AUX, 'ciws_mk1', 8);
-      mountFirstFree(HP.HANGAR, 'fighter_squad_multirole', 4);
+      // Aux dzielony: sześć CIWS-ów robi za stały strumień, dwie baterie flaku
+      // "Perun" domykają obronę zaporą, która czyści całe nadlatujące eskadry.
+      mountFirstFree(HP.AUX, 'ciws_mk1', 6);
+      mountFirstFree(HP.AUX, 'flak_capital', 2);
+      // Wszystkie bay obsadzone — Atlas ma 6 hardpointów 'hangar' (3 na burtę),
+      // a przy 4 modułach obsadzały się 3 lewe + 1 prawy (kolejność tablicy),
+      // więc start był asymetryczny: trzy strumienie z jednej burty, jeden z drugiej.
+      mountFirstFree(HP.HANGAR, 'fighter_squad_multirole', 6);
       mountFirstFree(HP.BUILTIN, 'hexlance_siege', 1);
       mountFirstFree(HP.SPECIAL_MISSILE, 'supernova_missile', 4);
     }
@@ -7706,20 +7770,28 @@
       // Musimy mieć: API z modułu + host z DOM + overlayView z tego skryptu
       if (!init || !railFactory || !host || typeof overlayView === 'undefined') return false;
 
-      const ov = init({ host, getView: () => overlayView });
+      // Rakiety dzielą kontekst WebGL z overlayem efektów. Osobny initOverlay
+      // tworzył DRUGI WebGLRenderer (własna kanwa, własny stan sterownika) —
+      // przy strzelaniu „Overlay FX 3D" skakało z 0.22 do 3.45 ms. Awaryjny
+      // powrót do dwóch kontekstów: window.DevFlags.splitOverlayContexts = true
+      // przed startem gry.
+      const splitContexts = !!(window.DevFlags && window.DevFlags.splitOverlayContexts);
+      const ov = init({ host, getView: () => overlayView, withRawLayer: !splitContexts });
       overlay3D = ov;
       window.overlay3D = ov;
-      const rocketOv = init({
-        host,
-        getView: () => overlayView,
-        mode: 'raw',
-        zIndex: 21,
-        useBloom: false,
-        useAlphaPass: false,
-        adaptiveQuality: false,
-        updateSparkSystem: false,
-        baseRenderScale: 1.0
-      });
+      const rocketOv = splitContexts
+        ? init({
+            host,
+            getView: () => overlayView,
+            mode: 'raw',
+            zIndex: 21,
+            useBloom: false,
+            useAlphaPass: false,
+            adaptiveQuality: false,
+            updateSparkSystem: false,
+            baseRenderScale: 1.0
+          })
+        : ov.rawLayer;
       rocketOverlay3D = rocketOv;
       window.rocketOverlay3D = rocketOv;
       if (window.SparkSystem3D) {
@@ -8423,6 +8495,7 @@
     const AU_IN_WORLD_UNITS = getAuToWorldUnits();
     const ZONE_APPROACH_DISTANCE = AU_IN_WORLD_UNITS; // 1 AU przed granicą
     window.ZONE_APPROACH_DISTANCE = ZONE_APPROACH_DISTANCE;
+    window.AU_IN_WORLD_UNITS = AU_IN_WORLD_UNITS;
 
     const PIRATE_ORBIT = Object.freeze({
       innerAu: 4,
@@ -9113,6 +9186,8 @@
       getSnapshot: missionJournalSnapshot,
       complete: completeMission
     };
+    // CIC rysuje znaczniki celów misji bezpośrednio z tej listy (mapa sektora usunięta).
+    window.MISSIONS = MISSIONS;
 
     function createShieldState(shieldCfg) {
       if (!shieldCfg || !Number.isFinite(shieldCfg.max) || shieldCfg.max <= 0) return null;
@@ -9215,6 +9290,21 @@
     const CARRIER_MAX_BAYS = 5;      // nie startuj z więcej niż 5 bay (balans/perf)
     const CARRIER_LAUNCH_BATCH = 4;  // ile myśliwców na jeden cykl startu
 
+    // Wyrzutnie nosiciela NPC — te same hardpointy 'hangar', z których liczyliśmy
+    // bay. Wcześniej pozycja startu była losowana wokół dziobu (angle ±0.6 rad,
+    // r+50), więc myśliwce wysypywały się chmarą w jednym punkcie zamiast
+    // wychodzić burtami.
+    function carrierHangarTubes(npc) {
+      const hps = npc.editorHardpoints;
+      if (!Array.isArray(hps)) return [];
+      const entries = [];
+      for (let i = 0; i < hps.length; i++) {
+        const hp = hps[i];
+        if (hp && hp.type === 'hangar' && !hp.destroyed) entries.push({ hp, squadron: true });
+      }
+      return collectHangarTubes(npc, entries);
+    }
+
     function carrierHangarBayCount(npc) {
       const hps = npc.editorHardpoints;
       if (!Array.isArray(hps)) return 0;
@@ -9259,25 +9349,41 @@
       if (alive.length >= maxFighters) return;
       if (!carrierEnemyWithin(npc, CARRIER_LAUNCH_RANGE)) return;
 
+      const tubes = carrierHangarTubes(npc);
+      if (!tubes.length) return;
+
       const launch = Math.min(CARRIER_LAUNCH_BATCH, maxFighters - alive.length);
       const squadronId = npc.isPirate ? 'interceptor' : 'multirole';
       const base = alive.length;
+      // Rozdziel salwę po wyrzutniach: tyle strumieni, ile hangarów, każdy
+      // wypuszcza pojedynczo z odstępem (efekt katapultowania).
+      const perTube = new Array(tubes.length).fill(0);
       for (let i = 0; i < launch; i++) {
-        __carrierSpawnQueue.push({ carrier: npc, squadronId, idx: base + i });
+        const ti = i % tubes.length;
+        const slot = base + i;
+        __carrierSpawnQueue.push({
+          carrier: npc,
+          squadronId,
+          idx: slot,
+          tube: tubes[ti],
+          // Slot w klinie liczony od już żyjących, żeby dolatujące uzupełnienia
+          // nie wchodziły na miejsca zajęte przez wcześniejszą falę.
+          slotInTube: Math.floor(base / tubes.length) + perTube[ti],
+          delay: perTube[ti] * FIGHTER_LAUNCH_INTERVAL + ti * 0.08
+        });
+        perTube[ti]++;
       }
       npc.__hangarCd = 4.5 + Math.random() * 2.5;
     }
     window.updateNpcHangars = updateNpcHangars;
 
-    function spawnCarrierFighter(carrier, squadronId, idx) {
+    function spawnCarrierFighter(carrier, squadronId, idx, tube, slotInTube) {
       if (!carrier || carrier.dead) return;
+      if (tube?.hp?.destroyed) return;
       const tmpl = (squadronId === 'interceptor')
         ? (SUPPORT_SHIP_TEMPLATES.interceptor || SUPPORT_SHIP_TEMPLATES.fighter)
         : SUPPORT_SHIP_TEMPLATES.fighter;
-      const ang = (carrier.angle || 0) + (Math.random() - 0.5) * 1.2;
-      const r = (carrier.radius || 150) + 50;
-      const pos = { x: carrier.x + Math.cos(ang) * r, y: carrier.y + Math.sin(ang) * r };
-      const f = makeNPCBase(pos, { ...tmpl.stats, shield: tmpl.shield });
+      const f = makeNPCBase({ x: carrier.x, y: carrier.y }, { ...tmpl.stats, shield: tmpl.shield });
       f.friendly = carrier.friendly;
       f.isPirate = carrier.isPirate;
       f.mission = true;
@@ -9287,24 +9393,44 @@
       assignNpcShipFrame(f);
       f.squad = { leader: carrier };
       f.__carrierParent = carrier;
-      // Rozstaw formacji, żeby nie startowały w jednym punkcie.
-      const side = (idx % 2 === 0) ? 1 : -1;
-      const row = Math.floor(idx / 2) + 1;
-      f.formationOffset = { x: -row * 60, y: side * row * 45 };
-      f.vx = carrier.vx || 0;
-      f.vy = carrier.vy || 0;
-      f.angle = carrier.angle || 0;
+
+      // Kadłuby NPC nie mają w/h — połowę szerokości szacujemy z rozrzutu
+      // hardpointów hangarów (i tak są przy burtach).
+      const halfBeam = Math.max(carrier.radius || 150, Math.abs(tube?.local?.y || 0) * 1.35);
+      if (tube) {
+        ejectFighterFromTube(carrier, tube, f, halfBeam);
+        f.formationOffset = chevronFormationOffset(
+          tube.sideRank, tube.side, slotInTube || 0, CARRIER_FIGHTERS_PER_BAY, halfBeam
+        );
+      } else {
+        const side = (idx % 2 === 0) ? 1 : -1;
+        const row = Math.floor(idx / 2) + 1;
+        f.formationOffset = { x: -row * 60, y: side * row * 45 };
+        f.vx = carrier.vx || 0;
+        f.vy = carrier.vy || 0;
+        f.angle = carrier.angle || 0;
+      }
+
       npcs.push(f);
       (carrier.__hangarFighters || (carrier.__hangarFighters = [])).push(f);
     }
 
-    function flushCarrierSpawns() {
+    function flushCarrierSpawns(dt) {
       if (__carrierSpawnQueue.length === 0) return;
+      const step = Number(dt) || 0;
+      let write = 0;
       for (let i = 0; i < __carrierSpawnQueue.length; i++) {
         const req = __carrierSpawnQueue[i];
-        if (req.carrier && !req.carrier.dead) spawnCarrierFighter(req.carrier, req.squadronId, req.idx);
+        req.delay = (req.delay || 0) - step;
+        if (req.delay > 0) {
+          __carrierSpawnQueue[write++] = req;
+          continue;
+        }
+        if (req.carrier && !req.carrier.dead) {
+          spawnCarrierFighter(req.carrier, req.squadronId, req.idx, req.tube, req.slotInTube);
+        }
       }
-      __carrierSpawnQueue.length = 0;
+      __carrierSpawnQueue.length = write;
     }
 
     const SUPPORT_SHIP_CONFIGURERS = {
@@ -9344,10 +9470,14 @@
       destroyer(npc) {
         const mWpn = 'railgun_mk1';
         const aWpn = 'ciws_mk1';
+        const fWpn = 'flak_m';   // zapora plot. obok CIWS-a — niszczyciel odgania klucze
         npc.isCapitalShip = true;
         npc.weapons = {
           main:    [{ hp: mkSupportHp('main', mWpn), weapon: MASTER_WEAPONS[mWpn] }],
-          aux:     [{ hp: mkSupportHp('aux', aWpn, -20), weapon: MASTER_WEAPONS[aWpn] }],
+          aux:     [
+            { hp: mkSupportHp('aux', aWpn, -20), weapon: MASTER_WEAPONS[aWpn] },
+            { hp: mkSupportHp('aux', fWpn, 20), weapon: MASTER_WEAPONS[fWpn] }
+          ],
           missile: [], hangar: [], special: []
         };
         npc.boostDur = 1.8;
@@ -9362,10 +9492,14 @@
       battleship(npc) {
         const mWpn = 'vulcan_minigun';
         const aWpn = 'laser_pd_mk1';
+        const fWpn = 'flak_l';   // ciężka zapora — pancernik rozbija całe klucze
         npc.isCapitalShip = true;
         npc.weapons = {
           main:    [{ hp: mkSupportHp('main', mWpn), weapon: MASTER_WEAPONS[mWpn] }],
-          aux:     [{ hp: mkSupportHp('aux', aWpn, -20), weapon: MASTER_WEAPONS[aWpn] }],
+          aux:     [
+            { hp: mkSupportHp('aux', aWpn, -20), weapon: MASTER_WEAPONS[aWpn] },
+            { hp: mkSupportHp('aux', fWpn, 20), weapon: MASTER_WEAPONS[fWpn] }
+          ],
           missile: [], hangar: [], special: []
         };
         npc.preferredRange = 1600;
@@ -10114,6 +10248,13 @@
         }
       }
     };
+    // Ile myśliwców liczy pojedyncza eskadra roju i jak długo stacja przezbraja
+    // się po wypuszczeniu CAŁEGO kompletu.
+    const PIRATE_SWARM_SQUAD_SIZE = 7;
+    const PIRATE_SWARM_RELOAD = 30;
+    const isPirateFighterKind = (kind) =>
+      kind === 'fighter' || kind === 'interceptor' || kind === 'fighter_squad';
+
     function spawnPirateSquad(station, type, count, mode = 'guard', opts = {}) {
       const squad = new Squad('pirate', 'fighter');
       window.SQUADS.push(squad);
@@ -10135,17 +10276,30 @@
         attackDir = { x: Math.cos(attackAngle), y: Math.sin(attackAngle) };
       }
 
+      // Sektor tej eskadry w chmarze. Przy rzucie wielu eskadr naraz każda
+      // dostaje własny wycinek wachlarza i własne pasmo odległości, więc rój
+      // wychodzi szerokim frontem zamiast nakładać się w jednym punkcie.
+      const arcCount = Math.max(1, Number(opts.arcCount) || 1);
+      const arcIndex = Math.max(0, Number(opts.arcIndex) || 0);
+      const swarmFan = Math.min(2.4, 0.5 + arcCount * 0.24);
+
       for (let i = 0; i < count; i++) {
         // 1. Spawn jednostki
         const npc = spawnPirate(type, station);
 
         // 2. Pozycja startowa (dla obu trybów startują wokół stacji)
         // Dla ataku: spawnujemy ich w sektorze skierowanym do gracza, żeby nie lecieli przez stację
-        const angle = (mode === 'attack')
-          ? attackAngle + (i - (count - 1) / 2) * 0.15 // Wachlarz w stronę gracza
-          : startPhase + (i * phaseStep);          // Równomiernie dookoła (orbita)
-
-        const spawnR = (mode === 'attack') ? station.r + 50 : radius; // Atakujący wylatują z doków
+        let angle;
+        let spawnR;
+        if (mode === 'attack') {
+          const sectorCenter = attackAngle + (arcIndex - (arcCount - 1) / 2) * (swarmFan / arcCount);
+          angle = sectorCenter + (i - (count - 1) / 2) * 0.13;
+          // Trzy pasma odległości — chmara ma głębokość, nie jest płaską ścianą.
+          spawnR = station.r + 140 + (i % 3) * 340 + arcIndex * 90;
+        } else {
+          angle = startPhase + (i * phaseStep);   // Równomiernie dookoła (orbita)
+          spawnR = radius;
+        }
 
         npc.x = station.x + Math.cos(angle) * spawnR;
         npc.y = station.y + Math.sin(angle) * spawnR;
@@ -10173,11 +10327,17 @@
           // Wyczyść guardStation, żeby nie orbitowali
           npc.guardStation = null;
 
-          // Nadaj dużą prędkość w stronę gracza (Wyrzut z hangaru)
-          const launchSpeed = 400;
+          // Boczny rozrzut w obrębie pasma, żeby sąsiedzi nie startowali
+          // dokładnie na jednym promieniu.
+          const lane = ((i % 2 === 0) ? 1 : -1) * Math.ceil(i / 2) * 70;
+          npc.x += -Math.sin(angle) * lane;
+          npc.y += Math.cos(angle) * lane;
+
+          const launchSpeed = 780 + Math.random() * 220;
           npc.vx = Math.cos(angle) * launchSpeed;
           npc.vy = Math.sin(angle) * launchSpeed;
           npc.angle = angle;
+          npc.desiredAngle = angle;
 
           // Wymuś szukanie celu
           npc.forceTarget = null;
@@ -10187,11 +10347,12 @@
 
         squad.addUnit(npc);
 
-        // Offsety formacji (dla obu trybów, żeby ładnie latali w grupie)
+        // Klin za liderem. Dawne 50/40 u odstępu to przy prędkości myśliwca
+        // (~3400 u/s) 0.015 s lotu — eskadra sklejała się w jeden punkt.
         if (i > 0) {
-          const row = Math.floor((i + 1) / 2);
-          const side = (i % 2 === 0) ? 1 : -1;
-          npc.formationOffset = { x: -row * 50, y: side * row * 40 };
+          const row = Math.ceil(i / 2);
+          const wing = (i % 2 === 1) ? -1 : 1;
+          npc.formationOffset = { x: -row * 190, y: wing * row * 140 };
         } else {
           npc.formationOffset = { x: 0, y: 0 };
         }
@@ -10418,6 +10579,13 @@
       }
 
       const baseAngle = Math.atan2(aimPoint.y - muzzleData.pos.y, aimPoint.x - muzzleData.pos.x);
+
+      // FLAK: zapalnik nastawiamy raz na salwę, na dystans do punktu wyprzedzenia.
+      // Pocisk ma pęknąć TAM, gdzie cel będzie, a nie tam, gdzie jest teraz.
+      const flakProfile = isFlakWeapon(weapon) ? resolveFlakProfile(weapon) : null;
+      const flakAimDist = flakProfile
+        ? Math.min(range, Math.hypot(aimPoint.x - muzzleData.pos.x, aimPoint.y - muzzleData.pos.y))
+        : 0;
 
       // 3. Wystrzał (obsługa salwy / burst)
       let beamEventData = null;
@@ -10799,7 +10967,9 @@
               vy: dirY * speed + (muzzleData.baseVel?.y || 0) * 0.2,
               life: life,
               // weapon.bulletRadius opt-in override (e.g. osa_micro_missile sets r=8 to widen fuse for fast-mover)
-              r: weapon.bulletRadius || (weapon.category === 'torpedo' ? 10 : (weapon.size === 'L' ? 6 : (weapon.size === 'M' ? 4 : 2))),
+              // Flak ma stały, mały promień kolizji — robotę odwala pęknięcie, nie sam pocisk.
+              r: flakProfile ? FLAK_TUNING.SHELL_RADIUS
+                : (weapon.bulletRadius || (weapon.category === 'torpedo' ? 10 : (weapon.size === 'L' ? 6 : (weapon.size === 'M' ? 4 : 2)))),
               owner: isP2Ship ? 'player2' : (shooterIsFriendly ? 'player' : 'npc'),
               damage: damage,
               type: weapon.category, // 'rail', 'plasma', 'rocket', etc.
@@ -10815,7 +10985,20 @@
               homingDelay: weapon.homingDelay || 0,
               vfxKey: weapon.id,
               forceCanvas: !!weapon.forceCanvas,  // tells weapon3DSystem to skip 3D bullet render
-              lockOwner: isP2Ship ? 'player2' : (isP1Ship ? 'player' : null)
+              lockOwner: isP2Ship ? 'player2' : (isP1Ship ? 'player' : null),
+
+              // --- FLAK: dane zapalnika (obsługa w bulletsAndCollisionsStep) ---
+              ...(flakProfile ? {
+                flakAge: 0,
+                // Każdy pocisk salwy dostaje inny jitter — ściana pęknięć układa
+                // się warstwami w głąb zamiast w jedną płaską linię.
+                flakFuseTime: flakFuseTime(flakAimDist, speed, (Math.random() * 2 - 1)),
+                flakFuseRadius: flakProfile.fuseRadius,
+                flakArmTime: flakProfile.armTime,
+                flakBurstRadius: flakProfile.burstRadius,
+                flakFalloff: flakProfile.falloff,
+                flakHullFactor: flakProfile.hullFactor
+              } : null)
             });
           }
         }
@@ -11278,6 +11461,7 @@
     window.CANVAS_IMPACT_VFX_ENABLED = false;
     CanvasVFX.init();
     CanvasVFX.enabled = true;
+    FlakBurstVFX.init();
     window.spawnParticle = (...args) => CanvasVFX.spawnParticle(...args);
     window.spawnShockwave = (...args) => CanvasVFX.spawnShockwave(...args);
     window.spawnWeaponImpactFromPreset = (...args) => CanvasVFX.spawnWeaponImpactFromPreset?.(...args);
@@ -13897,6 +14081,8 @@
       };
 
       mercMission.guards = [];
+      // CIC czyta stąd promień agresji obrony stacji.
+      window.mercMission = mercMission;
 
       // 1. Eskadra Interceptorów (6 sztuk)
       // Używamy nowej funkcji: tworzy eskadrę, która orbituje (mode='guard')
@@ -13932,7 +14118,7 @@
         window.resetSwarmQueue();
       }
 
-      // Zapis do dziennika + koordy do markera mapy
+      // Zapis do dziennika + koordy do znacznika celu w CIC
       const exists = MISSIONS.active.find(m => m.id === 'merc_pirate_station' && m.status === 'active');
       if (!exists) {
         const missionEntry = {
@@ -13960,7 +14146,7 @@
         window.hudSystem?.onMissionUpdated?.(missionEntry, 'started');
       }
 
-      toast('Misja najemnik rozpoczęta. Wciśnij M aby otworzyć mapę — cel oznaczony X. Dziennik: J.');
+      toast('Misja najemnik rozpoczęta. TAB / M — CIC, cel oznaczony znacznikiem misji. Dziennik: J.');
     }
 
     function spawnWeaponPlatform(station, config = {}) {
@@ -14064,6 +14250,7 @@
         mercMission.weaponPlatforms.length = 0;
       }
       mercMission = null;
+      window.mercMission = null;
     }
     function startTerritoryWarMission() { toast('Dołączono do wojny terytorialnej'); }
 
@@ -14138,29 +14325,8 @@
     const ENGINE_TARGET_RATE = 2.4; // 0..1 na sekundę (szybka regulacja)
     const ENGINE_RESPONSE_RATE = 1.6; // jak szybko aktualna moc dogania target
     const keys = {};
-    let showMap = false;
     let lastDriveShiftSerial = driveState.shiftSerial;
-    const mapView = {
-      zoom: 1,
-      targetZoom: 1,
-      minZoom: 0.6,
-      maxZoom: 6,
-      viewX: null,
-      viewY: null,
-      smoothness: 0.15,
-      followShip: true,
-      dragging: false,
-      layout: null,
-    };
-    const mapContextMenu = {
-      open: false,
-      x: 0,
-      y: 0,
-      w: 188,
-      h: 54,
-      worldX: 0,
-      worldY: 0,
-    };
+    // Mapa sektora (M) usunięta — jej rolę przejął CIC (TAB / M).
     const cruiseNav = {
       active: false,
       target: null,
@@ -14234,10 +14400,6 @@
       return shifted;
     }
 
-    function closeMapContextMenu() {
-      mapContextMenu.open = false;
-    }
-
     function setWarpGear(nextGear, silent = false) {
       const speeds = Array.isArray(warp?.gearSpeeds) && warp.gearSpeeds.length
         ? warp.gearSpeeds
@@ -14253,64 +14415,6 @@
     function shiftWarpGearUp() {
       const maxGear = Array.isArray(warp?.gearSpeeds) ? warp.gearSpeeds.length : 5;
       setWarpGear(Math.min(maxGear, (warp.gear || 1) + 1), false);
-    }
-
-    function ensureMapLayoutState() {
-      const layout = syncMapViewLayout();
-      if (mapView.viewX == null || mapView.viewY == null) {
-        mapView.viewX = layout.targetX0;
-        mapView.viewY = layout.targetY0;
-      }
-      const clamped = clampMapViewPosition(mapView.viewX, mapView.viewY);
-      mapView.viewX = clamped.x;
-      mapView.viewY = clamped.y;
-      return layout;
-    }
-
-    function isPointInsideMapFrame(sx, sy) {
-      const layout = mapView.layout || ensureMapLayoutState();
-      return (
-        sx >= mapView.viewX &&
-        sx <= mapView.viewX + layout.mapW &&
-        sy >= mapView.viewY &&
-        sy <= mapView.viewY + layout.mapH
-      );
-    }
-
-    function mapScreenToWorld(sx, sy) {
-      const layout = mapView.layout || ensureMapLayoutState();
-      const scale = Math.max(1e-6, layout.mapW / Math.max(1, WORLD.w));
-      return {
-        x: clamp((sx - mapView.viewX) / scale, 0, WORLD.w),
-        y: clamp((sy - mapView.viewY) / scale, 0, WORLD.h)
-      };
-    }
-
-    function mapContextActionAt(sx, sy) {
-      if (!mapContextMenu.open) return null;
-      const mx = mapContextMenu.x;
-      const my = mapContextMenu.y;
-      const mw = mapContextMenu.w;
-      const rowH = 28;
-      if (sx >= mx + 10 && sx <= mx + mw - 10 && sy >= my + 22 && sy <= my + 22 + rowH) {
-        return 'cruise-to';
-      }
-      return null;
-    }
-
-    function openMapContextMenuAt(sx, sy) {
-      if (!showMap) return;
-      if (!isPointInsideMapFrame(sx, sy)) {
-        closeMapContextMenu();
-        return;
-      }
-      const worldPos = mapScreenToWorld(sx, sy);
-      mapContextMenu.worldX = worldPos.x;
-      mapContextMenu.worldY = worldPos.y;
-      const margin = 10;
-      mapContextMenu.x = clamp(sx + 10, margin, W - mapContextMenu.w - margin);
-      mapContextMenu.y = clamp(sy + 10, margin, H - mapContextMenu.h - margin);
-      mapContextMenu.open = true;
     }
 
     function getCruiseGravityObstacles(target) {
@@ -14852,20 +14956,11 @@
       if ((e.code === 'Digit6' || e.code === 'Numpad6') && !stationUI.open && !CICDisplay.active) {
         triggerEnergyShot();
       }
-      if (k === 'm') {
-        showMap = !showMap;
+      // M to stary skrót mapy sektora — mapa została usunięta, więc otwiera CIC.
+      if (k === 'm' && !stationUI.open) {
         closeWorldCommandMenu();
-        if (showMap) {
-          mapView.targetZoom = clamp(mapView.targetZoom, mapView.minZoom, mapView.maxZoom);
-          mapView.viewX = null;
-          mapView.viewY = null;
-          mapView.followShip = true;
-          mapView.dragging = false;
-          closeMapContextMenu();
-        } else {
-          mapView.dragging = false;
-          closeMapContextMenu();
-        }
+        const state = CICDisplay.toggle();
+        pushZoneMessage(state ? 'CIC: ONLINE' : 'CIC: OFFLINE', 1.5);
       }
       if (k === 'j') {
         e.preventDefault();
@@ -14945,10 +15040,14 @@
       // Sensor probe deployment disabled (fog of war removed)
       if (k === 'z') {
         if (!(Game.player.weapons?.[HP.HANGAR]?.length)) { toast('Brak dostępnych hangarów.'); return; }
+        // Start jest teraz rozłożony w czasie — dopóki kolejka nie pusta, SQUAD.list
+        // jeszcze się zapełnia i kolejne Z nie może odpalić drugiej salwy.
+        if (window.isFighterLaunchInProgress?.()) return;
         if (SQUAD.order === 'idle' || SQUAD.list.length === 0) {
           const launched = launchMountedFighterSquadrons();
           if (!launched.length) return;
-          toast(`Myśliwce: ESKORTA (${launched.length})`);
+          const tubes = getPlayerHangarTubes().length;
+          toast(`START: ${launched.length} myśliwców z ${tubes} ${tubes === 1 ? 'hangaru' : 'hangarów'}`);
         } else if (SQUAD.order === 'escort') {
           SQUAD.targets = pickSquadTargets();
           SQUAD.order = 'attack';
@@ -15254,6 +15353,10 @@
     let lockedTarget = null;
     let lockedTargets = [];
     let lockedTarget2 = null; // P2 target lock
+    // Gracz nie ma pola .target, więc dziedziczenie celu ze skrzydłowca
+    // (fighterAI.getEntityAssignedTarget) nie miało czego czytać i myśliwce
+    // wypuszczone z Atlasa nigdy nie dostawały rozkazu "bij to, co ja".
+    window.getPlayerLockedTarget = () => lockedTarget;
 
     // Weapon controllers (initialized after game start)
     let p1WeaponCtrl = null;
@@ -16295,7 +16398,6 @@
       worldCommandMenu.pressScreenY = sy;
       worldCommandMenu.pressWorld = worldPoint ? { x: worldPoint.x, y: worldPoint.y } : null;
       worldCommandMenu.openedAt = (typeof performance !== 'undefined' ? performance.now() : 0) * 0.001;
-      closeMapContextMenu();
     }
 
     function getOrbitCommandCenter(point, targetEntity) {
@@ -17517,16 +17619,7 @@
       mouse.dy += movementY;
       camera.lastPointerX = e.clientX;
       camera.lastPointerY = e.clientY;
-      if (showMap && mapView.dragging) {
-        mapView.followShip = false;
-        mapView.viewX = (mapView.viewX ?? 0) + movementX;
-        mapView.viewY = (mapView.viewY ?? 0) + movementY;
-        const clamped = clampMapViewPosition(mapView.viewX, mapView.viewY);
-        mapView.viewX = clamped.x;
-        mapView.viewY = clamped.y;
-        return;
-      }
-      if (worldCommandMenu.open && worldCommandMenu.rightHeld && worldCommandMenu.mode === 'rts' && !showMap && !stationUI.open && !CICDisplay.active) {
+      if (worldCommandMenu.open && worldCommandMenu.rightHeld && worldCommandMenu.mode === 'rts' && !stationUI.open && !CICDisplay.active) {
         const rect = canvas.getBoundingClientRect();
         const cur = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
         handleWorldCommandMenuRightDrag(e.clientX, e.clientY, cur);
@@ -17536,7 +17629,7 @@
         const cur = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
         updateSelectionRect(cur, { x: e.clientX, y: e.clientY });
       }
-      if (isRtsModeActive() && !showMap && !stationUI.open && !CICDisplay.active && rtsState.panPrimed) {
+      if (isRtsModeActive() && !stationUI.open && !CICDisplay.active && rtsState.panPrimed) {
         const dxFromStart = e.clientX - rtsState.panStartX;
         const dyFromStart = e.clientY - rtsState.panStartY;
         if (!rtsState.panDragging && Math.hypot(dxFromStart, dyFromStart) >= RTS_PAN_DRAG_THRESHOLD) {
@@ -17572,8 +17665,6 @@
       mouse.left = false;
       mouse.right = false;
       mouse.click = false;
-      mapView.dragging = false;
-      closeMapContextMenu();
       closeWorldCommandMenu();
       scan.target = null;
       scan.scanned = null;
@@ -17615,7 +17706,7 @@
         mouse.click = false;
         return;
       }
-      if (isRtsModeActive() && !showMap && !stationUI.open) {
+      if (isRtsModeActive() && !stationUI.open) {
         const rect = canvas.getBoundingClientRect();
         const world = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
         if (e.button === 0) {
@@ -17637,36 +17728,7 @@
           return;
         }
       }
-      if (showMap && e.button === 0) {
-        const action = mapContextActionAt(e.clientX, e.clientY);
-        if (action === 'cruise-to') {
-          setCruiseTarget(mapContextMenu.worldX, mapContextMenu.worldY);
-          closeMapContextMenu();
-          mapView.dragging = false;
-          mouse.left = false;
-          mouse.click = false;
-          return;
-        }
-        if (mapContextMenu.open) {
-          closeMapContextMenu();
-        }
-        if (!isPointInsideMapFrame(e.clientX, e.clientY)) {
-          mapView.dragging = false;
-          return;
-        }
-        mapView.dragging = true;
-        mapView.followShip = false;
-        const layout = syncMapViewLayout();
-        if (mapView.viewX == null || mapView.viewY == null) {
-          mapView.viewX = layout.targetX0;
-          mapView.viewY = layout.targetY0;
-        }
-        const clamped = clampMapViewPosition(mapView.viewX, mapView.viewY);
-        mapView.viewX = clamped.x;
-        mapView.viewY = clamped.y;
-        return;
-      }
-      if (e.button === 0 && e.ctrlKey && gameStarted && !stationUI.open && !showMap && !CICDisplay.active) {
+      if (e.button === 0 && e.ctrlKey && gameStarted && !stationUI.open && !CICDisplay.active) {
         const rect = canvas.getBoundingClientRect();
         const worldPoint = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
         const targetEntity = pickCommandTargetAtWorld(worldPoint);
@@ -17678,7 +17740,7 @@
         mouse.click = false;
         return;
       }
-      if (e.button === 0 && scannerState.active && gameStarted && !stationUI.open && !showMap && !CICDisplay.active) {
+      if (e.button === 0 && scannerState.active && gameStarted && !stationUI.open && !CICDisplay.active) {
         const rect = canvas.getBoundingClientRect();
         const worldPoint = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
         const targetEntity = pickCommandTargetAtWorld(worldPoint);
@@ -17708,11 +17770,6 @@
       }
       if (e.button === 2) {
         e.preventDefault();
-        if (showMap) {
-          openMapContextMenuAt(e.clientX, e.clientY);
-          mouse.right = false;
-          return;
-        }
         if (gameStarted && !stationUI.open && !CICDisplay.active) {
           openNormalWorldCommandMenuAt(e.clientX, e.clientY);
           worldCommandMenu.rightHeld = true;
@@ -17722,7 +17779,7 @@
       }
       if (e.button === 1) {
         e.preventDefault();
-        if (gameStarted && !stationUI.open && !showMap) {
+        if (gameStarted && !stationUI.open) {
           firingMode.wheelOpen = true;
           firingMode.wheelHover = -1;
           firingMode.wheelMouseStart = { x: mouse.x, y: mouse.y };
@@ -17758,7 +17815,7 @@
         if (item) executeWorldCommandItem(item);
         return;
       }
-      if (isRtsModeActive() && !showMap && !stationUI.open) {
+      if (isRtsModeActive() && !stationUI.open) {
         const rect = canvas.getBoundingClientRect();
         const world = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
         if (e.button === 0) {
@@ -17781,12 +17838,6 @@
           }
           return;
         }
-      }
-      if (showMap && e.button === 0) {
-        mapView.dragging = false;
-        mouse.left = false;
-        mouse.click = false;
-        return;
       }
       if (e.button === 0) {
         const wasDragging = stationUI.dragging;
@@ -17815,10 +17866,6 @@
         }
       }
       if (e.button === 2) {
-        if (showMap) {
-          mouse.right = false;
-          return;
-        }
         if (stationUI.open) return;
         mouse.right = false;
       }
@@ -17828,11 +17875,6 @@
       if (stationUI.open) return;
       e.preventDefault();
       if (CICDisplay.active) { CICDisplay.onWheel(e.deltaY); return; }
-      if (showMap) {
-        const zoomFactor = 1 - e.deltaY * 0.0016;
-        mapView.targetZoom = clamp(mapView.targetZoom * zoomFactor, mapView.minZoom, mapView.maxZoom);
-        return;
-      }
       const wheelDelta = clamp(e.deltaY, -240, 240);
       const f = Math.exp(-wheelDelta * camera.wheelSpeed);
       // Split-screen: wheel zooms the keyboard player's viewport
@@ -18304,24 +18346,81 @@
       return createdFighters;
     };
 
-    function getMountedFighterSquadrons() {
-      return (Game.player.weapons?.[HP.HANGAR] || [])
-        .map(entry => entry?.squadron || (entry?.weapon?.squadronId ? getFighterSquadronDef(entry.weapon.squadronId) : null))
-        .filter(Boolean);
+    // === WYRZUTNIE MYŚLIWCÓW ===================================================
+    // Jeden hardpoint typu 'hangar' = jedna wyrzutnia. Myśliwce wychodzą BURTĄ
+    // (prostopadle do osi kadłuba), pojedynczo, z odstępem czasowym — stąd efekt
+    // katapultowania. Wcześniej cała eskadra pojawiała się w jednej klatce na
+    // ±ship.w/2 (czyli na DZIOBIE i RUFIE, bo lokalne x to oś wzdłużna), z
+    // rozrzutem bocznym 18 u, a impuls wyrzutu szedł wektorem PRZODU (cos/sin
+    // kąta) mimo komentarza "wyrzut na boki" — stąd "zbite na sobie".
+    const FIGHTER_LAUNCH_INTERVAL = FIGHTER_LAUNCH.INTERVAL;
+
+    const __fighterLaunchQueue = [];
+
+    // Zbiera wyrzutnie z hardpointów 'hangar' danej jednostki. Każdy hardpoint to
+    // jedna wyrzutnia; burta wynika ze znaku lokalnego Y hardpointu.
+    function collectHangarTubes(entity, entries) {
+      const byHp = new Map();
+      for (const entry of entries) {
+        const hp = entry?.hp;
+        if (!hp || hp.destroyed) continue;
+        let tube = byHp.get(hp);
+        if (!tube) {
+          const local = getEntityHardpointLocalPos(entity, hp);
+          if (!local) continue;
+          tube = { hp, local, side: local.y >= 0 ? 1 : -1, squadrons: [] };
+          byHp.set(hp, tube);
+        }
+        if (entry.squadron) tube.squadrons.push(entry.squadron);
+      }
+      const tubes = [];
+      for (const tube of byHp.values()) {
+        if (tube.squadrons.length) tubes.push(tube);
+      }
+      return orderHangarTubes(tubes);
     }
 
-    function spawnFighterFromSquadron(squadron, squadronIndex = 0, fighterIndex = 0, globalIndex = 0, totalSquadrons = 1) {
-      if (!window.ship) return null;
-      const halfW = (ship.w || 60) * 0.5;
-      const halfH = (ship.h || 120) * 0.1;
-      const side = (fighterIndex % 2 === 0) ? -1 : 1;
-      const lane = Math.floor(fighterIndex / 2);
-      const slot = { x: halfW * side, y: halfH + (lane - 2) * 18, side };
-      const c = Math.cos(ship.angle);
-      const s = Math.sin(ship.angle);
-      const spawnX = ship.pos.x + (slot.x * c - slot.y * s);
-      const spawnY = ship.pos.y + (slot.x * s + slot.y * c);
-      const f = makeNPCBase({ x: spawnX, y: spawnY }, {
+    function getPlayerHangarTubes() {
+      if (!window.ship) return [];
+      return collectHangarTubes(ship, Game.player.weapons?.[HP.HANGAR] || []);
+    }
+
+    // Wspólny wyrzut: pozycja = hardpoint hangaru przesunięty na zewnątrz burty,
+    // prędkość = pęd nosiciela + impuls katapulty w bok (plus składowa do przodu).
+    function ejectFighterFromTube(carrier, tube, fighter, halfBeam) {
+      const frame = {
+        x: Number.isFinite(carrier?.pos?.x) ? carrier.pos.x : carrier.x,
+        y: Number.isFinite(carrier?.pos?.y) ? carrier.pos.y : carrier.y,
+        vx: Number(carrier.vel?.x ?? carrier.vx) || 0,
+        vy: Number(carrier.vel?.y ?? carrier.vy) || 0,
+        angle: (Number(carrier.angle) || 0)
+          + (carrier === ship ? 0 : (Number(carrier.capitalProfile?.spriteRotation) || 0))
+      };
+      const launch = computeLaunchVector(frame, tube, halfBeam);
+
+      fighter.x = launch.x;
+      fighter.y = launch.y;
+      fighter.vx = launch.vx;
+      fighter.vy = launch.vy;
+      fighter.angle = launch.angle;
+      fighter.desiredAngle = launch.angle;
+
+      if (window.spawnParticle) {
+        for (let i = 0; i < 6; i++) {
+          const spread = (Math.random() - 0.5) * 0.5;
+          const px = launch.nx * Math.cos(spread) - launch.ny * Math.sin(spread);
+          const py = launch.nx * Math.sin(spread) + launch.ny * Math.cos(spread);
+          window.spawnParticle(
+            { x: launch.x, y: launch.y },
+            { x: frame.vx - px * (180 + Math.random() * 220), y: frame.vy - py * (180 + Math.random() * 220) },
+            0.35, '#cfe8ff', 2 + Math.random() * 3, true
+          );
+        }
+      }
+    }
+
+    function buildSquadronFighter(squadron) {
+      const f = makeNPCBase({ x: 0, y: 0 }, {
         hp: squadron.hp,
         accel: squadron.accel,
         maxSpeed: squadron.maxSpeed,
@@ -18330,73 +18429,114 @@
         mass: squadron.mass,
         separationRange: squadron.separationRange
       });
-
-      f.friendly = true;
-      f.mission = true;
       f.fighter = true;
       f.type = 'fighter';
+      f.mission = true;
       f.squadronId = squadron.id;
       f.squadronName = squadron.name;
-      f.squadronIndex = squadronIndex;
       f.color = squadron.color || '#7cff91';
-      f.vx = ship.vel.x + (c * 180 * slot.side);
-      f.vy = ship.vel.y + (s * 180 * slot.side);
-      f.angle = ship.angle;
       f.gun = squadron.weaponId;
       f.msl = squadron.missileId;
       f.mslAmmo = squadron.missileAmmo;
       f.gunCD = 0.5;
+      return f;
+    }
+
+    function spawnFighterFromTube(req) {
+      if (!window.ship || ship.destroyed) return null;
+      const { tube, squadron, slotInTube } = req;
+      if (tube.hp?.destroyed) return null;
+
+      const f = buildSquadronFighter(squadron);
+      f.friendly = true;
+      f.squadronIndex = req.squadronIndex;
+
+      // ship.h ustawia się dopiero po wczytaniu sprite'a kadłuba — gdyby było
+      // puste, klin wylądowałby w obrysie statku. Rozrzut hardpointów hangarów
+      // jest drugim, niezależnym oszacowaniem połowy szerokości.
+      const halfBeam = Math.max(
+        (Number(ship.h) || 0) * 0.5,
+        Math.abs(tube.local?.y || 0) * 1.35,
+        120
+      );
+      ejectFighterFromTube(ship, tube, f, halfBeam);
 
       if (!window.SQUAD) window.SQUAD = { list: [], order: 'idle', targets: [] };
-      f.formIndex = globalIndex;
-      const row = Math.floor((fighterIndex + 1) / 2);
-      const formSide = (fighterIndex % 2 === 0) ? 1 : -1;
-      const squadLane = (squadronIndex - (Math.max(1, totalSquadrons) - 1) * 0.5) * 130;
-      f.formationOffset = { x: -140 - (row * 50), y: squadLane + formSide * (60 + row * 30) };
+      f.formIndex = req.globalIndex;
+      f.formationOffset = chevronFormationOffset(
+        tube.sideRank, tube.side, slotInTube, squadron.squadSize || 1, halfBeam
+      );
       f.squad = { leader: ship, type: 'fighter', squadronId: squadron.id };
       f.ai = (dt) => { if (window.runAdvancedFighterAI) window.runAdvancedFighterAI(f, dt); };
 
       window.SQUAD.list.push(f);
       npcs.push(f);
-
-      if (window.spawnParticle) {
-        for (let i = 0; i < 4; i++) {
-          window.spawnParticle(
-            { x: spawnX, y: spawnY },
-            { x: ship.vel.x + (Math.random() - 0.5) * 40, y: ship.vel.y + (Math.random() - 0.5) * 40 },
-            0.3, '#ffffff', 2 + Math.random() * 2, false
-          );
-        }
-      }
       return f;
     }
 
+    // Kolejka startów — opróżniana w update'cie klatki, nie w jednym rzucie.
+    function updateFighterLaunchQueue(dt) {
+      if (!__fighterLaunchQueue.length) return;
+      let ready = 0;
+      for (let i = 0; i < __fighterLaunchQueue.length; i++) {
+        const req = __fighterLaunchQueue[i];
+        req.delay -= dt;
+        if (req.delay <= 0) ready++;
+      }
+      if (!ready) return;
+      // Zachowaj kolejność startów: spawnujemy od przodu kolejki.
+      const pending = [];
+      for (let i = 0; i < __fighterLaunchQueue.length; i++) {
+        const req = __fighterLaunchQueue[i];
+        if (req.delay <= 0) req.spawn(req);
+        else pending.push(req);
+      }
+      __fighterLaunchQueue.length = 0;
+      for (let i = 0; i < pending.length; i++) __fighterLaunchQueue.push(pending[i]);
+    }
+    window.updateFighterLaunchQueue = updateFighterLaunchQueue;
+    window.isFighterLaunchInProgress = () => __fighterLaunchQueue.length > 0;
+
     function launchMountedFighterSquadrons() {
-      const squadrons = getMountedFighterSquadrons();
-      if (!squadrons.length) {
+      const tubes = getPlayerHangarTubes();
+      if (!tubes.length) {
         if (typeof toast === 'function') toast('Brak modułu hangaru!');
         return [];
       }
       SQUAD.list = [];
       SQUAD.order = 'escort';
       SQUAD.targets = [];
-      const created = [];
-      let globalIndex = 0;
-      for (let si = 0; si < squadrons.length; si++) {
-        const squadron = squadrons[si];
-        const count = Math.max(1, Number(squadron.squadSize) || 1);
-        for (let fi = 0; fi < count; fi++) {
-          const f = spawnFighterFromSquadron(squadron, si, fi, globalIndex++, squadrons.length);
-          if (f) created.push(f);
-        }
+      __fighterLaunchQueue.length = 0;
+
+      // Wszystkie wyrzutnie pracują RÓWNOLEGLE (tyle strumieni ile hangarów),
+      // każda wypuszcza pojedynczo co FIGHTER_LAUNCH.INTERVAL.
+      const plan = buildLaunchPlan(tubes, tube => tube.squadrons);
+      for (const req of plan) {
+        req.spawn = spawnFighterFromTube;
+        __fighterLaunchQueue.push(req);
       }
-      return created;
+      return plan;
     }
 
     window.spawnFighter = function (squadronId = 'multirole') {
-      return spawnFighterFromSquadron(getFighterSquadronDef(squadronId), 0, 0, window.SQUAD?.list?.length || 0, 1);
+      const tubes = getPlayerHangarTubes();
+      const squadron = getFighterSquadronDef(squadronId);
+      const tube = tubes[0] || {
+        local: { x: 0, y: (ship?.h || 200) * 0.35 },
+        side: 1,
+        sideRank: 0,
+        hp: null
+      };
+      return spawnFighterFromTube({
+        tube,
+        squadron,
+        slotInTube: window.SQUAD?.list?.length || 0,
+        squadronIndex: 0,
+        globalIndex: window.SQUAD?.list?.length || 0
+      });
     };
     window.launchMountedFighterSquadrons = launchMountedFighterSquadrons;
+    window.getPlayerHangarTubes = getPlayerHangarTubes;
 
 
 
@@ -18708,9 +18848,9 @@
         const wDef = loadout.weapon;
         const weaponId = wDef.id;
         const pdDef = wDef.aispacePdId ? AISPACE_PD[wDef.aispacePdId] : null;
-        const flakDef = wDef.aispaceFlakId ? AISPACE_FLAK[wDef.aispaceFlakId] : null;
+        const isFlak = isFlakWeapon(wDef);
         const isLaser = weaponId === 'laser_pd_mk1' || wDef.aispacePdId === 'pd_laser';
-        const stats = pdDef || flakDef;
+        const stats = pdDef;
         const gun = ship.ciws[i];
         gun.cd = Math.max(0, gun.cd - dt);
         const off = rotate(gun.offset, ship.angle);
@@ -18734,7 +18874,20 @@
           if (d2 < bestDistSq) { bestDistSq = d2; target = rb; }
         }
 
-        // Priorytet 2: myśliwce i statki NPC
+        // Priorytet 2: myśliwce i statki NPC.
+        // Flak przeszukuje dwuetapowo: najpierw SAME myśliwce, bo pancerz okrętu
+        // zjada mu ~85% odłamków. Bez tego bateria o zasięgu 5 km wybierałaby
+        // najbliższego pirata — zwykle wielki kadłub — i marnowała salwę,
+        // podczas gdy klucz myśliwców wchodziłby na burtę bez przeszkód.
+        if (!target && isFlak) {
+          for (const npc of npcs) {
+            if (npc.dead || npc.friendly || !npc.isPirate) continue;
+            if (!isFighterNPC(npc)) continue;
+            const ddx = npc.x - base.x, ddy = npc.y - base.y;
+            const d2 = ddx * ddx + ddy * ddy;
+            if (d2 < bestDistSq) { bestDistSq = d2; target = npc; }
+          }
+        }
         if (!target) {
           for (const npc of npcs) {
             if (npc.dead || npc.friendly || !npc.isPirate) continue;
@@ -18754,7 +18907,9 @@
         let desired = Math.atan2(aimPoint.y - base.y, aimPoint.x - base.x);
 
         // --- Barrage sweep: CIWS oscyluje po łuku wokół celu ---
-        if (!isLaser && !flakDef) {
+        // Flak nie omiata: chmura odłamków ma promień dziesiątek metrów,
+        // rozrzut robi za niego `spread` salwy przy wystrzale.
+        if (!isLaser && !isFlak) {
           if (gun._sweepPhase == null) gun._sweepPhase = Math.random() * Math.PI * 2;
           gun._sweepPhase += dt * 7.5;
           const sweepArc = 0.18 * Math.max(0.3, 1.0 - dist / range);
@@ -18762,8 +18917,9 @@
         }
 
         let diff = wrapAngle(desired - gun.angle);
-        const aimStrength = isLaser ? 9 : 10;
-        const maxVel = isLaser ? 6.5 : 8;
+        // Flak to ciężka, wolno obracająca się wieża — celuje spokojniej niż CIWS.
+        const aimStrength = isLaser ? 9 : (isFlak ? 6 : 10);
+        const maxVel = isLaser ? 6.5 : (isFlak ? 3.4 : 8);
         let desiredVel = clamp(diff * aimStrength, -maxVel, maxVel);
         const velDelta = desiredVel - gun.angVel;
         const maxDelta = 50 * dt;
@@ -18773,12 +18929,12 @@
         gun.angle = wrapAngle(gun.angle + gun.angVel * dt);
 
         // CIWS ma luźniejszą tolerancję — strzela w trakcie sweep
-        const aimTolerance = isLaser ? 0.1 : 0.35;
+        const aimTolerance = isLaser ? 0.1 : (isFlak ? 0.12 : 0.35);
         if (Math.abs(diff) >= aimTolerance || gun.cd > 0) continue;
 
         const fireInterval = stats?.rps ? (1 / stats.rps) : (wDef.cooldown || (isLaser ? LASER_PD_FIRE_INTERVAL : CIWS_FIRE_INTERVAL));
-        if (flakDef) {
-          fireAispaceFlakShell(gun, base, baseVel, target, flakDef, fireInterval);
+        if (isFlak) {
+          fireFlakSalvo(gun, base, baseVel, target, wDef, fireInterval);
         } else if (isLaser) {
           if (isRocketTarget) {
             // Laser niszczy rakietę natychmiast
@@ -18867,14 +19023,140 @@
       gun.cd = fireInterval ?? LASER_PD_FIRE_INTERVAL;
     }
 
-    function fireAispaceFlakShell(gun, base, baseVel, target, flakDef, fireInterval) {
-      spawnBulletAdapter(ship, target, flakDef, {
-        type: 'armata',
-        origin: base,
-        originVel: baseVel,
-        angleOverride: gun.angle
-      });
-      gun.cd = fireInterval ?? (flakDef?.rps ? 1 / flakDef.rps : CIWS_FIRE_INTERVAL);
+    // Salwa flaku z działka aux gracza.
+    //
+    // Świadomie NIE idzie przez fireWeaponCore: tamta ścieżka dla statku gracza
+    // przejmuje celowanie (lockedTargets przy wciśniętym LPM, celownik myszy),
+    // co dla automatycznej obrony punktowej znaczyłoby, że działko przestaje
+    // strzelać do myśliwca nadlatującego na burtę. Jak fireCIWSGun — działko PD
+    // strzela do celu, który wybrał mu ciwsStep, i do niczego innego.
+    function fireFlakSalvo(gun, base, baseVel, target, wDef, fireInterval) {
+      const profile = resolveFlakProfile(wDef);
+      const dir = { x: Math.cos(gun.angle), y: Math.sin(gun.angle) };
+      const muzzle = { x: base.x + dir.x * 10, y: base.y + dir.y * 10 };
+
+      // Zapalnik nastawiony na punkt wyprzedzenia, nie na aktualną pozycję celu.
+      const aim = leadTarget(base, baseVel, target, profile.speed);
+      const aimDist = Math.min(profile.range, Math.hypot(aim.x - muzzle.x, aim.y - muzzle.y));
+      const spread = wDef.spread || 0;
+      const life = profile.range / profile.speed;
+
+      for (let s = 0; s < profile.shells; s++) {
+        const ang = gun.angle + (Math.random() - 0.5) * spread;
+        const sx = Math.cos(ang), sy = Math.sin(ang);
+        window.bullets.push({
+          x: muzzle.x, y: muzzle.y,
+          vx: sx * profile.speed + baseVel.x,
+          vy: sy * profile.speed + baseVel.y,
+          life,
+          r: FLAK_TUNING.SHELL_RADIUS,
+          owner: 'player',
+          source: ship,
+          damage: profile.damage,
+          type: 'flak',
+          weaponSize: profile.size,
+          color: wDef.vfxColor,
+          vfxKey: wDef.id,
+          flakAge: 0,
+          // Jitter na pocisk — salwa pęka warstwami w głąb, nie jedną płaską ścianą.
+          flakFuseTime: flakFuseTime(aimDist, profile.speed, Math.random() * 2 - 1),
+          flakFuseRadius: profile.fuseRadius,
+          flakArmTime: profile.armTime,
+          flakBurstRadius: profile.burstRadius,
+          flakFalloff: profile.falloff,
+          flakHullFactor: profile.hullFactor
+        });
+      }
+
+      spawnFlakMuzzle(muzzle, dir, baseVel, wDef);
+      gun.cd = fireInterval ?? (wDef.cooldown || CIWS_FIRE_INTERVAL);
+    }
+
+    // Wylot flaku: krótki, gruby blask + kilka niedopalonych ziaren prochu.
+    function spawnFlakMuzzle(pos, dir, baseVel, wDef) {
+      if (!isCanvasWeaponVfxEnabled()) return;
+      const scale = wDef.size === 'Capital' ? 2.2 : (wDef.size === 'L' ? 1.5 : (wDef.size === 'M' ? 1.1 : 0.8));
+      const angle = Math.atan2(dir.y, dir.x);
+      spawnParticle({ x: pos.x, y: pos.y }, { x: dir.x * 140 + baseVel.x * 0.12, y: dir.y * 140 + baseVel.y * 0.12 }, 0.09, '#ffe6b0', 7 * scale, true);
+      for (let i = 0; i < 5; i++) {
+        const aa = angle + (Math.random() - 0.5) * 0.5;
+        const speed = 220 + Math.random() * 180;
+        spawnParticle(
+          { x: pos.x + Math.cos(aa) * 6 * scale, y: pos.y + Math.sin(aa) * 6 * scale },
+          { x: Math.cos(aa) * speed + baseVel.x * 0.15, y: Math.sin(aa) * speed + baseVel.y * 0.15 },
+          0.14 + Math.random() * 0.12,
+          (Math.random() < 0.4) ? '#fff0c8' : '#ffb347',
+          (1.8 + Math.random() * 2.0) * scale,
+          true
+        );
+      }
+    }
+
+    // ========================================================================
+    // FLAK — pęknięcie pocisku
+    // ========================================================================
+    // Pocisk flaku nie trafia w cel, tylko pęka i sieje odłamkami po kuli
+    // `flakBurstRadius`. Wszystko, co siedzi w tej kuli, obrywa wg spadku
+    // z flakSystem.js — myśliwce pełną porcją, kadłuby okrętów ułamkiem.
+    const _flakCandidates = [];
+    const _flakHits = [];
+
+    function detonateFlakShell(b) {
+      const radius = Number(b.flakBurstRadius) || 120;
+      const shooterFriendly = (b.owner === 'player' || b.owner === 'player2' || b.source?.friendly === true);
+      const radiusSq = radius * radius;
+
+      // 1. Encje w zasięgu — z tej samej siatki, której używa główna pętla kolizji.
+      //    Komórka ma 4000 u, skan 3x3 pokrywa nawet 480 u promienia Peruna.
+      _flakCandidates.length = 0;
+      const count = SpatialGrid.getPotentialTargets(b.x, b.y);
+      const buf = SpatialGrid._resultBuffer;
+      for (let k = 0; k < count; k++) {
+        const e = buf[k];
+        if (!e || e.isWreck) continue;                       // wrakom odłamki nie zaszkodzą
+        if ((e._realEntity || e) === b.source) continue;
+        _flakCandidates.push(e);
+      }
+
+      collectFlakBurstHits({
+        x: b.x, y: b.y, radius,
+        damage: Number(b.damage) || 0,
+        falloff: b.flakFalloff,
+        hullFactor: b.flakHullFactor,
+        friendly: shooterFriendly,
+        source: b.source
+      }, _flakCandidates, _flakHits);
+
+      for (let k = 0; k < _flakHits.length; k++) {
+        const hit = _flakHits[k];
+        const target = hit.entity;
+        if (target._isPlayerShip) {
+          // Jak w głównej pętli kolizji: proxy gracza routuje na applyDamageToPlayer.
+          applyDamageToPlayer(hit.damage);
+        } else {
+          applyDamageToNPC(target._realEntity || target, hit.damage, 'flak');
+        }
+      }
+
+      // 2. Rakiety i torpedy w chmurze odłamków — flak strąca je bez pardonu.
+      for (let k = 0; k < bullets.length; k++) {
+        const rb = bullets[k];
+        if (!rb || rb === b || rb.life <= 0) continue;
+        if (rb.type !== 'rocket' && rb.type !== 'torpedo') continue;
+        const rbFriendly = (rb.owner === 'player' || rb.owner === 'player2');
+        if (rbFriendly === shooterFriendly) continue;        // własnej salwy nie zestrzeliwujemy
+        const ddx = rb.x - b.x, ddy = rb.y - b.y;
+        if (ddx * ddx + ddy * ddy > radiusSq) continue;
+        spawnBulletImpactEffect(rb, rb.x, rb.y, 0.9);
+        rb.life = -1;   // sprząta go własna iteracja pętli pocisków
+      }
+
+      // 3. Efekt: pęknięcie 2D (port prototypu) + cięższy akcent 3D dla L/Capital.
+      FlakBurstVFX.spawn(b.x, b.y, { radius, vx: b.vx, vy: b.vy });
+      if (radius >= 240 && window.triggerArmataImpact3D) {
+        window.triggerArmataImpact3D(b.x, b.y, Math.min(260, radius * 0.5));
+      }
+      if (window.AudioSys) AudioSys.playSound('explosion');
     }
 
     function spawnPointDefenseLaserMuzzle(pos, dir, baseVel) {
@@ -19991,6 +20273,38 @@
         }
         secMoveVfx += performance.now() - tBulletSection0;
 
+        // --- FLAK: zapalnik czasowo-zbliżeniowy ---
+        // Sprawdzany PRZED wygaśnięciem życia, bo pocisk na końcu zasięgu też
+        // musi pęknąć (zapalnik samolikwidacyjny), a nie po prostu zniknąć.
+        if (b.type === 'flak' && b.flakBurstRadius) {
+          b.flakAge = (b.flakAge || 0) + dt;
+          // Zapalnik pyta tylko "czy ktoś wrogi jest bliżej niż fuseRadius" —
+          // to jest test binarny, więc porównujemy KWADRATY odległości i wychodzimy
+          // na pierwszym trafieniu. Bez tego każdy pocisk w locie płaciłby hypota
+          // za każdą encję w komórce siatki, w każdym podkroku fizyki.
+          let proximityHit = false;
+          if (b.flakAge >= (b.flakArmTime || 0) && b.flakFuseRadius > 0) {
+            const fuseR = b.flakFuseRadius;
+            const shooterFriendly = (b.owner === 'player' || b.owner === 'player2' || b.source?.friendly === true);
+            const nCount = SpatialGrid.getPotentialTargets(b.x, b.y);
+            const nBuf = SpatialGrid._resultBuffer;
+            for (let k = 0; k < nCount; k++) {
+              const e = nBuf[k];
+              if (!e || e.isWreck || e.dead) continue;
+              if ((e._realEntity || e) === b.source) continue;
+              if ((e.friendly === true) === shooterFriendly) continue;  // zapalnik reaguje tylko na wrogów
+              const ddx = e.x - b.x, ddy = e.y - b.y;
+              const reach = fuseR + (Number(e.radius) || 0);
+              if (ddx * ddx + ddy * ddy <= reach * reach) { proximityHit = true; break; }
+            }
+          }
+          if (flakDetonationReason(b, proximityHit ? 0 : Infinity)) {
+            detonateFlakShell(b);
+            removeBulletAt(i);
+            continue;
+          }
+        }
+
         if (b.life <= 0) { removeBulletAt(i); continue; }
 
         tBulletSection0 = performance.now();
@@ -20081,6 +20395,14 @@
         }
 
         if (hitNPC) {
+          // Flak trafiony bezpośrednio (np. w tarczę, zanim zadziałał zapalnik)
+          // i tak pęka — obrażenia rozchodzą się jako odłamki, nie jako trafienie.
+          if (b.type === 'flak' && b.flakBurstRadius) {
+            detonateFlakShell(b);
+            removeBulletAt(i);
+            secNpcHit += performance.now() - tBulletSection0;
+            continue;
+          }
           const _rawDmg = Number.isFinite(b.damage) ? b.damage : 0;
           // CIWS/laser_pd: 100% vs myśliwce, 20% vs hull/tarcza statków
           const _isCIWSBullet = b.type === 'ciws';
@@ -20343,29 +20665,36 @@
       window.__npcFireScanMs = (window.__npcFireScanMs || 0) + npcFireScanMs;
       window.__npcFireSpawnMs = (window.__npcFireSpawnMs || 0) + npcFireSpawnMs;
     }
-    function npcStep(dt, aiDbg = null) {
+    // runBrains=false → przebieg CZYSTO RUCHOWY: bez mózgów, grida, koordynatora
+    // i spawnów. Decyzje AI liczą się raz na klatkę (brainDt = pełne dt klatki),
+    // ale INTEGRACJA zostaje w każdym podkroku — inaczej myśliwiec przy 3400 u/s
+    // skakałby ~70 u naraz i pociski (16 u/podkrok) zaczęłyby go mijać.
+    function npcStep(dt, aiDbg = null, runBrains = true, brainDt = dt) {
       const DESPAWN_RADIUS_SQ = NPC_DESPAWN_RADIUS * NPC_DESPAWN_RADIUS;
       const frameNorm = dt / BASE_FRAME_DT;
-      const layoutChanged = pollNpcEditorLayoutCache(dt);
-      // Odroczone starty myśliwców z hangarów NPC — dopisz do npcs PRZED budową
-      // grida i pętlą AI (spawn w trakcie iteracji npcs[] byłby ryzykowny).
-      flushCarrierSpawns();
-      // Build AI spatial grid ONCE per frame for all subsequent AI queries
-      // (separation, weapon scan, target pick, dogfight neighbors).
-      // Cost: ~0.05ms for 200 entities. Saves 50-90ms in O(N²) hot loops.
-      const tAiGrid0 = performance.now();
-      if (window.rebuildAIGrid) window.rebuildAIGrid(npcs, true);
-      window.__aiGridMs = (window.__aiGridMs || 0) + (performance.now() - tAiGrid0);
-      // Koordynator bitewny: sloty linii walki + flankowania dla capitali
-      // (throttling wewnątrz — pełny rebuild co ~0.45s).
-      if (window.updateFleetCoordinator) {
-        const tCoord0 = performance.now();
-        window.updateFleetCoordinator(npcs, ship, dt);
-        window.__aiCoordMs = (window.__aiCoordMs || 0) + (performance.now() - tCoord0);
+      let layoutChanged = false;
+      if (runBrains) {
+        layoutChanged = pollNpcEditorLayoutCache(brainDt);
+        // Odroczone starty myśliwców z hangarów NPC — dopisz do npcs PRZED budową
+        // grida i pętlą AI (spawn w trakcie iteracji npcs[] byłby ryzykowny).
+        flushCarrierSpawns(brainDt);
+        // Build AI spatial grid ONCE per frame for all subsequent AI queries
+        // (separation, weapon scan, target pick, dogfight neighbors).
+        // Cost: ~0.05ms for 200 entities. Saves 50-90ms in O(N²) hot loops.
+        const tAiGrid0 = performance.now();
+        if (window.rebuildAIGrid) window.rebuildAIGrid(npcs, true);
+        window.__aiGridMs = (window.__aiGridMs || 0) + (performance.now() - tAiGrid0);
+        // Koordynator bitewny: sloty linii walki + flankowania dla capitali
+        // (throttling wewnątrz — pełny rebuild co ~0.45s).
+        if (window.updateFleetCoordinator) {
+          const tCoord0 = performance.now();
+          window.updateFleetCoordinator(npcs, ship, brainDt);
+          window.__aiCoordMs = (window.__aiCoordMs || 0) + (performance.now() - tCoord0);
+        }
       }
       let measuredAiMs = 0;
       for (const npc of npcs) {
-        if (layoutChanged || npc.__editorLayoutVersion !== npcHardpointRuntime.version) {
+        if (runBrains && (layoutChanged || npc.__editorLayoutVersion !== npcHardpointRuntime.version)) {
           applyEditorLayoutToNpc(npc);
         }
         if (npc.hitFlash) npc.hitFlash = Math.max(0, npc.hitFlash - dt);
@@ -20458,10 +20787,10 @@
             continue;
           }
 
-          // 2. AI
-          if (npc.ai) {
+          // 2. AI — tylko w przebiegu decyzyjnym, z pełnym dt klatki.
+          if (runBrains && npc.ai) {
             const tAi0 = performance.now();
-            npc.ai(dt);
+            npc.ai(brainDt);
             const aiMs = performance.now() - tAi0;
             measuredAiMs += aiMs;
             if (npc.friendly) window.__aiNpcFriendlyBrainMs = (window.__aiNpcFriendlyBrainMs || 0) + aiMs;
@@ -20753,10 +21082,42 @@
           ? Math.atan2(ship.pos.y - spawnPos.y, ship.pos.x - spawnPos.x)
           : Math.atan2(ship.pos.y - st.y, ship.pos.x - st.x);
 
-        // 1. MYŚLIWCE: Używamy spawnPirateSquad w trybie 'attack'
-        // Tworzy eskadrę 7 interceptorów, które od razu lecą na gracza
-        if (kind === 'fighter' || kind === 'interceptor' || kind === 'fighter_squad') {
-          spawnPirateSquad(st, 'interceptor', 7, 'attack');
+        // 1. MYŚLIWCE: CAŁA CHMARA JEDNYM RZUTEM.
+        // Dawniej jeden wpis z kolejki = 7 interceptorów co 8 s, a kolejka ma 8
+        // wpisów myśliwskich — gracz dostawał sznur małych grupek zamiast
+        // jednego uderzenia. Teraz zabieramy z kolejki WSZYSTKIE wpisy myśliwskie
+        // i startujemy je naraz, każda eskadra we własnym sektorze wachlarza.
+        if (isPirateFighterKind(kind)) {
+          const queueArr = Array.isArray(swarm.queue) ? swarm.queue : [];
+          const budget = Math.max(0, swarm.maxAlive - alive);
+          // Nie opróżniaj kolejki głębiej, niż pozwala limit żywych — przy
+          // zapchanej arenie jeden tick skasowałby cały komplet myśliwców,
+          // spawnując garstkę.
+          const maxSquads = Math.max(1, Math.ceil(budget / PIRATE_SWARM_SQUAD_SIZE));
+
+          let squads = 1;
+          for (let qi = queueArr.length - 1; qi >= 0 && squads < maxSquads; qi--) {
+            const q = queueArr[qi];
+            const qKind = (q && typeof q === 'object') ? q.kind : q;
+            if (isPirateFighterKind(qKind)) {
+              squads++;
+              queueArr.splice(qi, 1);
+            }
+          }
+
+          const total = Math.min(squads * PIRATE_SWARM_SQUAD_SIZE, budget);
+          let spawned = 0;
+          let arcIndex = 0;
+          while (spawned < total) {
+            const n = Math.min(PIRATE_SWARM_SQUAD_SIZE, total - spawned);
+            spawnPirateSquad(st, 'interceptor', n, 'attack', { arcIndex, arcCount: squads });
+            spawned += n;
+            arcIndex++;
+          }
+
+          // Po pełnym rzucie stacja potrzebuje czasu na przezbrojenie — bez tego
+          // resetSwarmQueue dorzucałby kolejny komplet co 8 s.
+          swarm.timer = PIRATE_SWARM_RELOAD;
         }
         // 2. DUŻE STATKI: Spawnujemy pojedynczo przez spawnPirate
         else {
@@ -20831,6 +21192,80 @@
       warp.lastDir.x = warp.dir.x;
       warp.lastDir.y = warp.dir.y;
     }
+
+    // === DEV: TELEPORT =========================================================
+    // Skok bez warpa. Poza samą pozycją trzeba wyzerować stan, który zakłada
+    // ciągłość ruchu: prevState (interpolacja renderu — inaczej statek "rozmaże
+    // się" przez pół układu w jednej klatce), przejście kamery i rozkaz RTS,
+    // który natychmiast zawróciłby autopilota do starego celu.
+    function devTeleportTo(x, y, opts = {}) {
+      if (!ship?.pos || !Number.isFinite(x) || !Number.isFinite(y)) return false;
+
+      if (warp.state !== 'idle') {
+        warp.state = 'idle';
+        warp.charge = 0;
+        warp.entryProgress = 0;
+      }
+      warp.gravityBrake.active = false;
+      warp.gravityBrake.timer = 0;
+      warpBrakeTimer = 0;
+
+      ship.pos.x = x;
+      ship.pos.y = y;
+      ship.vel.x = 0;
+      ship.vel.y = 0;
+      ship.angVel = 0;
+      if (Number.isFinite(opts.angle)) ship.angle = opts.angle;
+      ship.command = null;
+
+      // Snap interpolacji renderu do nowej pozycji.
+      if (prevState) {
+        prevState.pos.x = x;
+        prevState.pos.y = y;
+        prevState.angle = ship.angle;
+      }
+
+      camera.transition = null;
+      camera.x = x;
+      camera.y = y;
+      if (Number.isFinite(opts.zoom)) camera.zoom = clamp(opts.zoom, camera.minZoom, camera.maxZoom);
+
+      if (typeof spawnShockwave === 'function') {
+        spawnShockwave(x, y, { maxR: 1400, maxLife: 0.6, color: 'rgba(120, 200, 255,' });
+      }
+      camera.addShake(10, 0.25);
+      return true;
+    }
+    window.devTeleportTo = devTeleportTo;
+
+    // Cel = stacja piracka (mercMission.station albo pierwsza isPirate w stations).
+    // Domyślnie lądujemy na ORBICIE ZEWNĘTRZNEJ misji (PIRATE_ORBIT.outerAu = 6 AU),
+    // czyli w obrębie strefy misji, ale poza inner orbit — dolot i aggro zostają
+    // po stronie gracza. Zrzut tuż przy kadłubie stacji nie dawał żadnego dystansu.
+    // opts.orbit: 'outer' (domyślnie) | 'gravity' | 'inner' | 'close'
+    function devTeleportToPirateStation(opts = {}) {
+      const station = mercMission?.station
+        || (Array.isArray(stations) ? stations.find(isPirateStation) : null);
+      if (!station) return null;
+
+      const radii = (typeof pirateOrbitRadii === 'function') ? pirateOrbitRadii() : null;
+      const closeIn = Math.max(1200, (station.r || 600) * 2.2);
+      const orbit = String(opts.orbit || 'outer');
+      let standoff;
+      if (orbit === 'close') standoff = closeIn;
+      else if (orbit === 'inner') standoff = radii?.inner;
+      else if (orbit === 'gravity') standoff = radii?.gravityWell;
+      else standoff = radii?.outer;
+      if (!Number.isFinite(standoff) || standoff <= 0) standoff = closeIn;
+
+      const bearing = Number.isFinite(opts.bearing) ? opts.bearing : Math.random() * Math.PI * 2;
+      const x = station.x + Math.cos(bearing) * standoff;
+      const y = station.y + Math.sin(bearing) * standoff;
+
+      const ok = devTeleportTo(x, y, { angle: Math.atan2(station.y - y, station.x - x) });
+      return ok ? { station, standoff, orbit } : null;
+    }
+    window.devTeleportToPirateStation = devTeleportToPirateStation;
 
     function triggerGravityWarpBrake(zoneId) {
       if (warp.state !== 'active') return;
@@ -20935,7 +21370,15 @@
 	const _p1ForceScratch = { localFx: 0, localFy: 0, localTorque: 0 };
 	const _p2ForceScratch = { localFx: 0, localFy: 0, localTorque: 0 };
     // =============== Fizyk ===============
-    function physicsStep(dt) {
+    // dt        — krok fizyki (PHYS_DT, 120 Hz): integracja, pociski, kolizje.
+    // runLogic  — czy w tym podkroku liczymy warstwę decyzyjną (AI, sensory, CIC,
+    //             prep destruktora, hardpointy). Prawda tylko w PIERWSZYM podkroku
+    //             klatki: te systemy nie zależą od kroku całkowania, a płaciliśmy
+    //             za nie ~2.9× na klatkę (im niższy fps, tym więcej podkroków —
+    //             spirala śmierci).
+    // logicDt   — sumaryczne dt tej klatki, żeby timery warstwy decyzyjnej szły
+    //             w tym samym tempie co dotąd.
+    function physicsStep(dt, runLogic = true, logicDt = dt) {
       const tPhysics0 = performance.now();
       PerfHUD.markPhysicsStep();
       let tPhysSection0 = performance.now();
@@ -21112,6 +21555,10 @@
       PerfHUD.addTiming('playerSystemsTime', performance.now() - tPreSection0);
       tPreSection0 = performance.now();
 
+      // Skan pod kursorem, fale radaru, drony, sensory i CIC — to warstwa
+      // informacyjna, nie fizyka. Odświeżana raz na klatkę; wcześniej CIC
+      // przeliczał się ~2.9× na klatkę (0.68 ms zamiast 0.24 ms).
+      if (runLogic) {
       // hover scanning
       let hover = null;
       let hoverType = null;
@@ -21193,8 +21640,8 @@
       if (scannerSelectedTarget && !isTargetAlive(scannerSelectedTarget)) {
         scannerSelectedTarget = null;
       }
-      scannerState.lockAnim += dt * SCANNER_LOCK_PULSE_SPEED;
-      const scannerUiEnabled = (scannerState.active || lockedTargets.length > 0 || scannerSelectedTarget) && !CICDisplay.active && !stationUI.open && !showMap && !splitScreenMode;
+      scannerState.lockAnim += logicDt * SCANNER_LOCK_PULSE_SPEED;
+      const scannerUiEnabled = (scannerState.active || lockedTargets.length > 0 || scannerSelectedTarget) && !CICDisplay.active && !stationUI.open && !splitScreenMode;
       const radarUiEnabled = false;
       const scannerOverviewContacts = scannerUiEnabled ? getScannerOverviewContacts() : scannerContacts;
       // Locked targets always shown; scanner contacts shown when scanner active (excluding already-locked)
@@ -21215,7 +21662,7 @@
       });
       radarTargetingUI.update({
         enabled: radarUiEnabled,
-        dt,
+        dt: logicDt,
         deepScanDuration: RADAR_UI_DEEP_SCAN_DURATION,
         width: W,
         height: H,
@@ -21237,18 +21684,18 @@
       // update radar pings
       for (let i = radarPings.length - 1; i >= 0; i--) {
         const p = radarPings[i];
-        p.age += dt; if (p.age > p.life) radarPings.splice(i, 1);
+        p.age += logicDt; if (p.age > p.life) radarPings.splice(i, 1);
       }
       for (let i = scannerRevealFx.length - 1; i >= 0; i--) {
         const fx = scannerRevealFx[i];
-        fx.age += dt;
+        fx.age += logicDt;
         if (fx.age > fx.life || !isTargetAlive(fx.target)) scannerRevealFx.splice(i, 1);
       }
       // update scan waves
       for (let i = scanWaves.length - 1; i >= 0; i--) {
         const w = scanWaves[i];
-        w.age += dt;
-        w.r += w.speed * dt;
+        w.age += logicDt;
+        w.r += w.speed * logicDt;
         while (w.nextContact < w.contacts.length) {
           const contact = w.contacts[w.nextContact];
           if (!contact || !isTargetAlive(contact.target)) {
@@ -21285,13 +21732,14 @@
       }
 
       // === SPOTTER DRONES UPDATE ===
-      SpotterDroneSystem.update(dt, ship, npcs);
+      SpotterDroneSystem.update(logicDt, ship, npcs);
 
       // === SENSOR SYSTEM UPDATE === (fog rendering disabled, sensors still update for CIC)
-      SensorSystem.update(dt, ship, npcs, Game.infrastructure, stations, gameTime);
+      SensorSystem.update(logicDt, ship, npcs, Game.infrastructure, stations, gameTime);
 
       // === CIC UPDATE ===
-      CICDisplay.update(dt, ship, npcs, stations, SensorSystem);
+      CICDisplay.update(logicDt, ship, npcs, stations, SensorSystem);
+      } // koniec bloku runLogic (skan/sensory/CIC)
 
       PerfHUD.addTiming('scanUiTime', performance.now() - tPreSection0);
       tPreSection0 = performance.now();
@@ -21802,26 +22250,38 @@
       const aiDbgEnabled = AILiveDebug.enabled;
       const tAiTotal0 = performance.now();
       let tAiSection0 = performance.now();
-      SQUADS.forEach(s => s.update());
-      const aiSquadsMs = performance.now() - tAiSection0;
-      PerfHUD.addTiming('aiSquadsTime', aiSquadsMs);
-      if (aiDbgEnabled) AILiveDebug.record('squads', aiSquadsMs);
+      // Eskadry, skrzydło wsparcia i kolejka startów to decyzje, nie fizyka —
+      // raz na klatkę, z sumarycznym dt.
+      let aiSquadsMs = 0;
+      let aiSupportWingMs = 0;
+      if (runLogic) {
+        SQUADS.forEach(s => s.update());
+        aiSquadsMs = performance.now() - tAiSection0;
+        PerfHUD.addTiming('aiSquadsTime', aiSquadsMs);
+        if (aiDbgEnabled) AILiveDebug.record('squads', aiSquadsMs);
 
-      tAiSection0 = performance.now();
-      updateSupportWing(dt);
-      const aiSupportWingMs = performance.now() - tAiSection0;
-      PerfHUD.addTiming('aiSupportWingTime', aiSupportWingMs);
-      if (aiDbgEnabled) AILiveDebug.record('supportWing', aiSupportWingMs);
+        tAiSection0 = performance.now();
+        // Katapultowanie myśliwców z hangarów — kolejka opróżniana PRZED npcStep,
+        // żeby nowe jednostki nie lądowały w npcs[] w trakcie pętli AI.
+        updateFighterLaunchQueue(logicDt);
+        updateSupportWing(logicDt);
+        aiSupportWingMs = performance.now() - tAiSection0;
+        PerfHUD.addTiming('aiSupportWingTime', aiSupportWingMs);
+        if (aiDbgEnabled) AILiveDebug.record('supportWing', aiSupportWingMs);
+      }
 
       const tNpcStep0 = performance.now();
-      // Reset per-frame AI subsection counters before npcStep populates them.
-      window.__aiSepMs = 0;
-      window.__aiWeaponScanMs = 0;
-      window.__aiTargetPickMs = 0;
-      window.__aiGridMs = 0;
-      window.__aiNpcEnemyBrainMs = 0;
-      window.__aiNpcFriendlyBrainMs = 0;
-      npcStep(dt, aiDbgEnabled ? AILiveDebug : null);
+      if (runLogic) {
+        // Reset per-frame AI subsection counters before npcStep populates them.
+        window.__aiSepMs = 0;
+        window.__aiWeaponScanMs = 0;
+        window.__aiTargetPickMs = 0;
+        window.__aiGridMs = 0;
+        window.__aiNpcEnemyBrainMs = 0;
+        window.__aiNpcFriendlyBrainMs = 0;
+      }
+      // Ruch NPC integrujemy w KAŻDYM podkroku; mózgi tylko w decyzyjnym.
+      npcStep(dt, aiDbgEnabled ? AILiveDebug : null, runLogic, logicDt);
       const npcStepMs = performance.now() - tNpcStep0;
       // Ograniczenia holownicze rozwiązujemy po integracji wszystkich ruchomych
       // ciał, ale przed pociskami i destruktorem. Dzięki temu kontakt i damage
@@ -21853,7 +22313,8 @@
         AILiveDebug.record('targetPick', window.__aiTargetPickMs || 0);
       }
       tAiSection0 = performance.now();
-      pirateMissionStep(dt);
+      // Fale roju to logika misji (timery w sekundach) — raz na klatkę.
+      if (runLogic) pirateMissionStep(logicDt);
       const aiPirateMissionMs = performance.now() - tAiSection0;
       PerfHUD.addTiming('aiPirateMissionTime', aiPirateMissionMs);
       if (aiDbgEnabled) AILiveDebug.record('pirateMission', aiPirateMissionMs);
@@ -22121,12 +22582,17 @@
       window.__frameId = renderFrameId; // stempel klatki dla cache AI (separacja/omijanie)
       let steps = 0;
       const bridgeStartTick = physicsTickId + 1;
+      // Warstwa decyzyjna (AI, sensory, CIC, skan) liczy się RAZ na klatkę, z dt
+      // równym sumie podkroków tej klatki. Liczbę podkroków znamy z góry, więc
+      // timery AI idą dokładnie w tym samym tempie co przy liczeniu per podkrok.
+      const plannedSteps = Math.min(10, Math.floor(acc / PHYS_DT));
+      const logicDt = Math.max(PHYS_DT, plannedSteps * PHYS_DT);
       while (acc >= PHYS_DT && steps < 10) {
         prevCameraState.x = camera.x;
         prevCameraState.y = camera.y;
         prevCameraState.zoom = camera.zoom;
         saveState();
-        physicsStep(PHYS_DT);
+        physicsStep(PHYS_DT, steps === 0, logicDt);
         physicsTickId++;
         acc -= PHYS_DT; steps++;
       }
@@ -22147,6 +22613,7 @@
       // >>> TO JEST KLUCZOWE - ODDZIELNA AKTUALIZACJA WIZUALIÓW <<<
       const tVfxUpdate0 = performance.now();
       CanvasVFX.update(frame);
+      FlakBurstVFX.update(frame);
       PerfHUD.addTiming('vfxUpdateTime', performance.now() - tVfxUpdate0);
       // >>> BEZ TEGO CZĄSTECZKI STOJĄ W MIEJSCU <<<
 
@@ -23415,6 +23882,9 @@
         // === VFX Pass ===
         CanvasVFX.drawBeams(ctx, cam);
         CanvasVFX.drawParticles(ctx, cam);
+        // Pęknięcia flaku idą po cząstkach: dym ma przykryć iskry, a ogień
+        // i odłamki dopalić się addytywnie na wierzchu.
+        FlakBurstVFX.draw(ctx, cam);
 
         PerfHUD.addTiming('render2dVfxTime', performance.now() - tRender2dSection);
         tRender2dSection = performance.now();
@@ -24033,7 +24503,7 @@
         ctx.restore();
       }
 
-      if (gameStarted && !showMap && !stationUI.open && !firingMode.wheelOpen) {
+      if (gameStarted && !stationUI.open && !firingMode.wheelOpen) {
         if (splitScreenMode && camera2 && player2Ship) {
           const halfW = Math.floor(W / 2);
           // P1 crosshair (left half)
@@ -24191,24 +24661,23 @@
       }
 
       // === CIC DISPLAY ===
-      if (CICDisplay.active && !showMap) {
+      if (CICDisplay.active) {
         CICDisplay.draw(ctx, W, H, ship, SensorSystem, null, gameTime);
       }
 
       // === SPOTTER DRONE PiP ===
-      if (!CICDisplay.active && !showMap && gameStarted) {
+      if (!CICDisplay.active && gameStarted) {
         SpotterDroneSystem.drawPiP(ctx, W, H, cam, npcs, worldToScreen);
       }
 
       // === CONTACT MARKERS (taktyczne znaczniki w przestrzeni 3D) ===
-      if (!CICDisplay.active && !showMap && gameStarted) {
+      if (!CICDisplay.active && gameStarted) {
         ContactMarkers.draw(ctx, W, H, ship, SensorSystem, gameTime, cam, mercMission);
       }
 
-      if (showMap) drawSectorMap();
       renderStationUI();
       renderOptions();
-      if (!showMap && !CICDisplay.active && !stationUI.open) {
+      if (!CICDisplay.active && !stationUI.open) {
         drawWorldCommandMenu(ctx);
       }
       renderZoneMessages();
@@ -24311,364 +24780,6 @@
       ctx.restore();
     }
 
-    function getMapAxisClamp(contentSize, viewSize, padding) {
-      if (contentSize <= viewSize - padding * 2) {
-        const centered = (viewSize - contentSize) * 0.5;
-        return { min: centered, max: centered };
-      }
-      return {
-        min: viewSize - contentSize - padding,
-        max: padding,
-      };
-    }
-
-    function clampMapViewPosition(x, y) {
-      const layout = mapView.layout;
-      if (!layout) return { x, y };
-      const xClamp = getMapAxisClamp(layout.mapW, W, layout.padding);
-      const yClamp = getMapAxisClamp(layout.mapH, H, layout.padding);
-      return {
-        x: clamp(x, xClamp.min, xClamp.max),
-        y: clamp(y, yClamp.min, yClamp.max),
-      };
-    }
-
-    function syncMapViewLayout() {
-      const padding = Math.max(28, Math.min(W, H) * 0.05);
-      const baseScale = Math.min((W - padding * 2) / WORLD.w, (H - padding * 2) / WORLD.h);
-      const scale = baseScale * mapView.zoom;
-      const mapW = WORLD.w * scale;
-      const mapH = WORLD.h * scale;
-      mapView.layout = { padding, mapW, mapH };
-
-      const clampPos = (value, content, view) => {
-        const bounds = getMapAxisClamp(content, view, padding);
-        return clamp(value, bounds.min, bounds.max);
-      };
-
-      const targetX0 = clampPos(W / 2 - ship.pos.x * scale, mapW, W);
-      const targetY0 = clampPos(H / 2 - ship.pos.y * scale, mapH, H);
-
-      return { padding, scale, mapW, mapH, targetX0, targetY0 };
-    }
-
-    function drawSectorMap() {
-      mapView.zoom += (mapView.targetZoom - mapView.zoom) * mapView.smoothness;
-
-      const { padding, scale, mapW, mapH, targetX0, targetY0 } = syncMapViewLayout();
-
-      if (mapView.viewX == null || mapView.viewY == null) {
-        mapView.viewX = targetX0;
-        mapView.viewY = targetY0;
-      } else if (mapView.followShip) {
-        mapView.viewX += (targetX0 - mapView.viewX) * 0.18;
-        mapView.viewY += (targetY0 - mapView.viewY) * 0.18;
-      }
-
-      const clampedView = clampMapViewPosition(mapView.viewX, mapView.viewY);
-      mapView.viewX = clampedView.x;
-      mapView.viewY = clampedView.y;
-
-      const toScreen = (x, y) => ({
-        x: mapView.viewX + x * scale,
-        y: mapView.viewY + y * scale,
-      });
-
-      ctx.save();
-      ctx.resetTransform();
-
-      const bg = ctx.createLinearGradient(0, 0, 0, H);
-      bg.addColorStop(0, 'rgba(32, 74, 129, 0.95)');
-      bg.addColorStop(0.55, 'rgba(10, 44, 86, 0.9)');
-      bg.addColorStop(1, 'rgba(4, 18, 36, 0.92)');
-      ctx.fillStyle = bg;
-      ctx.fillRect(0, 0, W, H);
-
-      const glow = ctx.createRadialGradient(W * 0.6, H * 0.34, Math.min(W, H) * 0.08, W * 0.4, H * 0.66, Math.max(W, H) * 0.9);
-      glow.addColorStop(0, 'rgba(108, 227, 255, 0.35)');
-      glow.addColorStop(0.45, 'rgba(78, 196, 255, 0.16)');
-      glow.addColorStop(1, 'rgba(48, 168, 255, 0)');
-      ctx.fillStyle = glow;
-      ctx.fillRect(0, 0, W, H);
-
-      ctx.save();
-      ctx.globalAlpha = 0.8;
-      const glass = ctx.createLinearGradient(0, padding, 0, H - padding);
-      glass.addColorStop(0, 'rgba(255,255,255,0.08)');
-      glass.addColorStop(0.5, 'rgba(255,255,255,0.02)');
-      glass.addColorStop(1, 'rgba(255,255,255,0.07)');
-      ctx.fillStyle = glass;
-      ctx.fillRect(padding * 0.5, padding * 0.5, W - padding, H - padding);
-      ctx.restore();
-
-      ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-      ctx.lineWidth = 1;
-      const baseGridStep = 4000;
-      const visibleWorldXMin = clamp((padding - mapView.viewX) / Math.max(1e-6, scale), 0, WORLD.w);
-      const visibleWorldXMax = clamp(((W - padding) - mapView.viewX) / Math.max(1e-6, scale), 0, WORLD.w);
-      const visibleWorldYMin = clamp((padding - mapView.viewY) / Math.max(1e-6, scale), 0, WORLD.h);
-      const visibleWorldYMax = clamp(((H - padding) - mapView.viewY) / Math.max(1e-6, scale), 0, WORLD.h);
-
-      let gridStep = baseGridStep;
-      const MAX_GRID_LINES = 360;
-      const estLines = Math.ceil((visibleWorldXMax - visibleWorldXMin) / baseGridStep) + Math.ceil((visibleWorldYMax - visibleWorldYMin) / baseGridStep);
-      if (estLines > MAX_GRID_LINES) {
-        gridStep *= Math.ceil(estLines / MAX_GRID_LINES);
-      }
-
-      const startX = Math.floor(visibleWorldXMin / gridStep) * gridStep;
-      const endX = Math.ceil(visibleWorldXMax / gridStep) * gridStep;
-      const startY = Math.floor(visibleWorldYMin / gridStep) * gridStep;
-      const endY = Math.ceil(visibleWorldYMax / gridStep) * gridStep;
-      ctx.save();
-      ctx.beginPath();
-      for (let gx = startX; gx <= endX; gx += gridStep) {
-        const px = toScreen(gx, 0).x;
-        if (px < padding || px > W - padding) continue;
-        ctx.moveTo(px, padding);
-        ctx.lineTo(px, H - padding);
-      }
-      for (let gy = startY; gy <= endY; gy += gridStep) {
-        const py = toScreen(0, gy).y;
-        if (py < padding || py > H - padding) continue;
-        ctx.moveTo(padding, py);
-        ctx.lineTo(W - padding, py);
-      }
-      ctx.strokeStyle = 'rgba(255,255,255,0.12)';
-      ctx.stroke();
-      ctx.restore();
-
-      const frame = ctx.createLinearGradient(mapView.viewX, mapView.viewY, mapView.viewX, mapView.viewY + mapH);
-      frame.addColorStop(0, 'rgba(132, 228, 255, 0.9)');
-      frame.addColorStop(1, 'rgba(52, 142, 255, 0.8)');
-      ctx.strokeStyle = frame;
-      ctx.lineWidth = 2.5;
-      ctx.shadowColor = 'rgba(80, 200, 255, 0.4)';
-      ctx.shadowBlur = 14;
-      ctx.strokeRect(mapView.viewX, mapView.viewY, mapW, mapH);
-      ctx.shadowBlur = 0;
-
-      const drawGlowDot = (pos, radius, fill, stroke) => {
-        ctx.save();
-        ctx.shadowColor = fill;
-        ctx.shadowBlur = radius * 2;
-        ctx.fillStyle = fill;
-        ctx.strokeStyle = stroke || fill;
-        ctx.lineWidth = Math.max(1.5, radius * 0.25);
-        ctx.beginPath();
-        ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-        ctx.restore();
-      };
-
-      const sunPos = toScreen(SUN.x, SUN.y);
-      const sunRadius = Math.max(10, 12 * mapView.zoom);
-      drawGlowDot(sunPos, sunRadius, 'rgba(255, 200, 92, 0.9)', 'rgba(255, 243, 191, 0.9)');
-
-      if (ASTEROID_BELT) {
-        const cx = sunPos.x;
-        const cy = sunPos.y;
-        const outerRx = ASTEROID_BELT.outer * scale;
-        const outerRy = ASTEROID_BELT.outer * scale;
-        const innerRx = ASTEROID_BELT.inner * scale;
-        const innerRy = ASTEROID_BELT.inner * scale;
-        ctx.save();
-        ctx.strokeStyle = 'rgba(168, 182, 204, 0.55)';
-        ctx.lineWidth = 3;
-        ctx.globalAlpha = 0.7;
-        ctx.beginPath(); ctx.ellipse(cx, cy, outerRx, outerRy, 0, 0, Math.PI * 2); ctx.stroke();
-        ctx.beginPath(); ctx.ellipse(cx, cy, innerRx, innerRy, 0, 0, Math.PI * 2); ctx.stroke();
-        ctx.restore();
-      }
-
-      const planetMarkerRadius = Math.max(8, 10 * Math.sqrt(mapView.zoom));
-      const labelFont = Math.max(12, Math.round(Math.min(W, H) * 0.022));
-
-      if (Array.isArray(planets) && planets.length) {
-        ctx.save();
-
-        ctx.fillStyle = '#a5ebff';
-        for (const planet of planets) {
-          const pos = toScreen(planet.x, planet.y);
-          drawGlowDot(pos, planetMarkerRadius, 'rgba(140, 227, 255, 0.92)', 'rgba(214, 244, 255, 0.9)');
-        }
-
-        ctx.font = `600 ${labelFont}px Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'top';
-        ctx.lineWidth = Math.max(2, labelFont * 0.14);
-        ctx.strokeStyle = 'rgba(6, 10, 22, 0.85)';
-        ctx.fillStyle = '#e8f7ff';
-
-        for (const planet of planets) {
-          const name = typeof planet.label === 'string' ? planet.label.trim() : '';
-          if (!name) continue;
-          const pos = toScreen(planet.x, planet.y);
-          const labelY = pos.y + planetMarkerRadius + 8;
-          ctx.strokeText(name, pos.x, labelY);
-          ctx.fillText(name, pos.x, labelY);
-        }
-
-        ctx.restore();
-      }
-
-      ctx.save();
-      ctx.fillStyle = '#9df0ff';
-      ctx.strokeStyle = 'rgba(71, 191, 255, 0.65)';
-      ctx.lineWidth = 2.4;
-      for (const st of stations) {
-        const pos = toScreen(st.x, st.y);
-        ctx.beginPath();
-        ctx.arc(pos.x, pos.y, 5, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-      }
-      ctx.restore();
-
-      if (mercMission?.station) {
-        const piratePos = toScreen(mercMission.station.x, mercMission.station.y);
-        const labelY = piratePos.y + planetMarkerRadius + 8;
-        ctx.save();
-        ctx.font = `600 ${labelFont}px Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'top';
-        ctx.lineWidth = Math.max(2, labelFont * 0.14);
-        ctx.strokeStyle = 'rgba(46, 4, 4, 0.85)';
-        ctx.fillStyle = '#ffb3b3';
-        ctx.strokeText('Pirate Station', piratePos.x, labelY);
-        ctx.fillText('Pirate Station', piratePos.x, labelY);
-        ctx.restore();
-      }
-
-      // === SENSOR RANGES ON MAP === (disabled — fog of war removed)
-      // === GHOST CONTACTS ON MAP === (disabled — fog of war removed)
-
-      ctx.save();
-      const shipPos = toScreen(ship.pos.x, ship.pos.y);
-      const shipRadius = Math.max(7, 9 * Math.pow(mapView.zoom, 0.35));
-      const angle = ship.angle || 0;
-      ctx.translate(shipPos.x, shipPos.y);
-      ctx.rotate(angle);
-      ctx.fillStyle = '#e9fbff';
-      ctx.strokeStyle = 'rgba(126, 233, 255, 0.95)';
-      ctx.shadowColor = 'rgba(120, 230, 255, 0.6)';
-      ctx.shadowBlur = 10;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(shipRadius * 1.6, 0);
-      ctx.lineTo(-shipRadius * 0.9, shipRadius * 0.9);
-      ctx.lineTo(-shipRadius * 0.9, -shipRadius * 0.9);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-      ctx.restore();
-
-      ctx.strokeStyle = '#ff9cc2';
-      ctx.lineWidth = 3.2;
-      for (const m of MISSIONS.active) {
-        if (m.status !== 'active' || !m.pos) continue;
-        const pos = toScreen(m.pos.x, m.pos.y);
-        const s = Math.max(9, 10 * Math.sqrt(mapView.zoom));
-        ctx.beginPath();
-        ctx.moveTo(pos.x - s, pos.y - s); ctx.lineTo(pos.x + s, pos.y + s);
-        ctx.moveTo(pos.x - s, pos.y + s); ctx.lineTo(pos.x + s, pos.y - s);
-        ctx.stroke();
-      }
-
-      if (cruiseNav.target) {
-        const targetPos = toScreen(cruiseNav.target.x, cruiseNav.target.y);
-        ctx.save();
-        ctx.strokeStyle = cruiseNav.active ? 'rgba(126, 255, 226, 0.95)' : 'rgba(126, 196, 255, 0.7)';
-        ctx.lineWidth = 2.2;
-        ctx.setLineDash([10, 7]);
-        ctx.beginPath();
-        const startPos = toScreen(ship.pos.x, ship.pos.y);
-        ctx.moveTo(startPos.x, startPos.y);
-        if (cruiseNav.waypoints.length) {
-          const firstIdx = clamp(cruiseNav.waypointIndex | 0, 0, cruiseNav.waypoints.length - 1);
-          for (let i = firstIdx; i < cruiseNav.waypoints.length; i++) {
-            const wp = cruiseNav.waypoints[i];
-            const p = toScreen(wp.x, wp.y);
-            ctx.lineTo(p.x, p.y);
-          }
-        } else {
-          ctx.lineTo(targetPos.x, targetPos.y);
-        }
-        ctx.stroke();
-        ctx.setLineDash([]);
-
-        const markerR = Math.max(9, 12 * Math.sqrt(mapView.zoom));
-        ctx.strokeStyle = 'rgba(126, 255, 226, 0.98)';
-        ctx.lineWidth = 2.2;
-        ctx.beginPath();
-        ctx.arc(targetPos.x, targetPos.y, markerR, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(targetPos.x - markerR - 6, targetPos.y);
-        ctx.lineTo(targetPos.x + markerR + 6, targetPos.y);
-        ctx.moveTo(targetPos.x, targetPos.y - markerR - 6);
-        ctx.lineTo(targetPos.x, targetPos.y + markerR + 6);
-        ctx.stroke();
-
-        ctx.font = `600 ${Math.max(11, Math.min(W, H) * 0.015)}px Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif`;
-        ctx.fillStyle = 'rgba(186, 255, 234, 0.96)';
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'bottom';
-        ctx.fillText('CRUISE TARGET', targetPos.x + markerR + 10, targetPos.y - markerR - 4);
-        ctx.restore();
-      }
-
-      ctx.save();
-      const titleY = padding * 0.7;
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'top';
-      ctx.font = `700 ${Math.max(18, Math.min(W, H) * 0.03)}px Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif`;
-      ctx.fillStyle = '#f2f8ff';
-      ctx.shadowColor = 'rgba(72, 192, 255, 0.75)';
-      ctx.shadowBlur = 18;
-      ctx.fillText('Mapa Sektora', padding, titleY);
-
-      ctx.font = `500 ${Math.max(13, Math.min(W, H) * 0.018)}px Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif`;
-      ctx.shadowBlur = 0;
-      ctx.fillStyle = 'rgba(232, 241, 255, 0.85)';
-      ctx.fillText('LPM — przesuwanie · PPM — Cruise to · Scroll — powiększenie · M — zamknij', padding, titleY + 28);
-      ctx.restore();
-
-      if (mapContextMenu.open) {
-        const mx = mapContextMenu.x;
-        const my = mapContextMenu.y;
-        const mw = mapContextMenu.w;
-        const mh = mapContextMenu.h;
-        ctx.save();
-        ctx.fillStyle = 'rgba(6, 16, 34, 0.94)';
-        ctx.strokeStyle = 'rgba(118, 244, 255, 0.65)';
-        ctx.lineWidth = 1.5;
-        roundRectScreen(mx, my, mw, mh, 10);
-        ctx.fill();
-        ctx.stroke();
-
-        ctx.font = `600 ${Math.max(11, Math.min(W, H) * 0.014)}px Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif`;
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'top';
-        ctx.fillStyle = 'rgba(206, 236, 255, 0.92)';
-        ctx.fillText(`${Math.round(mapContextMenu.worldX)} / ${Math.round(mapContextMenu.worldY)}`, mx + 12, my + 6);
-
-        ctx.fillStyle = 'rgba(90, 255, 214, 0.18)';
-        roundRectScreen(mx + 8, my + 22, mw - 16, 26, 6);
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(104, 255, 220, 0.55)';
-        ctx.stroke();
-
-        ctx.fillStyle = '#b6ffe9';
-        ctx.font = `700 ${Math.max(12, Math.min(W, H) * 0.015)}px Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif`;
-        ctx.fillText('Cruise to', mx + 16, my + 28);
-        ctx.restore();
-      }
-
-      ctx.restore();
-    }
-
     // =============== Helpers (POPRAWIONE) ===============
     function roundRect(ctx, x, y, w, h, r) {
       // Zabezpieczenie: promień nie może być większy niż połowa krótszego boku
@@ -24685,10 +24796,6 @@
       ctx.closePath();
     }
 
-
-    function roundRectScreen(x, y, w, h, r) {
-      roundRect(ctx, x, y, w, h, r);
-    }
 
     function screenToWorld(sx, sy, camRef = camera) {
       const zoomNow = Math.max(0.0001, Number(camRef?.zoom) || Number(camera.zoom) || 1);

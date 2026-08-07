@@ -174,6 +174,57 @@ test('rozerwanie w pół: findIslands + processSplits tworzą wrak', () => {
   assert.ok(Math.abs(wreck.pos.x - body.pos.x) > 0.5, 'wrak nie odsunięty od rodzica');
 });
 
+test('nbrBase: powierzchnia to nie rana, martwy sąsiad to rana', () => {
+  freshSystem();
+  const body = makeCubeBody({});
+  const cells = body.grid.cells;
+
+  const aliveNeighbors = (cell) => cell.neighbors.reduce((n, x) => n + (x.active ? 1 : 0), 0);
+  // Nietknięta bryła: żadna komórka nie jest raną (skóra ją zakrywa).
+  for (const cell of cells) {
+    assert.equal(aliveNeighbors(cell), cell.nbrBase, 'nietknięta komórka wygląda jak rana');
+  }
+  // Komórki powierzchni mają mniej niż 6 sąsiadów — to właśnie te, które stara
+  // reguła „odsłonięta" renderowałaby mimo nienaruszonego poszycia.
+  assert.ok(cells.some((c) => c.nbrBase < 6), 'brak komórek powierzchni');
+
+  const victim = cells.find((c) => c.nbrBase === 6);
+  assert.ok(victim, 'brak komórki wnętrza do zniszczenia');
+  Destructor3D.destroyCell(body, victim);
+  for (const n of victim.neighbors) {
+    assert.ok(aliveNeighbors(n) < n.nbrBase, 'sąsiad zniszczonej komórki nie zgłasza rany');
+  }
+});
+
+test('skóra przeżywa rozłam: wrak dziedziczy dane i pierwotny układ kratownicy', () => {
+  freshSystem();
+  const body = makeBarBody({ position: { x: 4, y: 0, z: 0 } });
+  // Atrapa danych skóry — testujemy propagację, nie rendering.
+  body.skin = { parts: [], occupancy: new Uint8Array(8), dims: { x: 2, y: 2, z: 2 }, triangleCount: 12 };
+  const originalSkinMin = { ...body.grid.skinLatticeMin };
+
+  for (const cell of body.grid.cells) {
+    if (cell.active && Math.abs(cell.gx) < 0.4) Destructor3D.destroyCell(body, cell);
+  }
+  const bodies = [body];
+  Destructor3D.splitQueue.push(body);
+  Destructor3D.processSplits(bodies);
+  assert.equal(bodies.length, 2, 'nie powstał wrak');
+
+  const wreck = bodies.find((b) => b !== body);
+  assert.equal(wreck.skin, body.skin, 'wrak nie dziedziczy skóry rodzica');
+  // Mapowanie wierzchołek → komórka musi przetrwać recentrowanie fragmentów,
+  // inaczej skóra rozjeżdża się z kratownicą po każdym rozłamie.
+  for (const b of bodies) {
+    assert.deepEqual(b.grid.skinLatticeMin, originalSkinMin, 'pierwotny układ kratownicy został przesunięty');
+    assert.notDeepEqual(b.grid.latticeMin, b.grid.skinLatticeMin, 'latticeMin nie przesunął się do środka masy');
+  }
+  // Komórki po rozłamie zachowują indeksy kratownicy — na nich opiera się maska.
+  for (const cell of wreck.grid.cells) {
+    assert.ok(Number.isInteger(cell.ix) && cell.ix >= 0, 'wrak zgubił indeksy kratownicy');
+  }
+});
+
 test('applyImpact: trafienie deformuje i uszkadza komórki', () => {
   const cfg = freshSystem();
   const body = makeCubeBody({ position: { x: 2, y: 1, z: 0 } });

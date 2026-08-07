@@ -56,7 +56,12 @@ export function initOverlay({
   useAlphaPass = true,
   adaptiveQuality = true,
   updateSparkSystem = true,
-  baseRenderScale = 0.8
+  baseRenderScale = 0.8,
+  // Druga scena RENDEROWANA W TYM SAMYM KONTEKŚCIE, nad skomponowaną warstwą
+  // efektów (odpowiednik dawnego rocketOverlay3D na zIndex 21). Każdy osobny
+  // initOverlay tworzył własny WebGLRenderer — przy strzelaniu przeglądarka
+  // przełączała się między trzema kontekstami na klatkę.
+  withRawLayer = false
 } = {}) {
   if (!host) throw new Error("initOverlay: host element is required");
 
@@ -108,7 +113,13 @@ export function initOverlay({
   host.appendChild(dom);
 
   const scene = new THREE.Scene();
-  scene.background = null; 
+  scene.background = null;
+
+  // Warstwa "raw" (rakiety): bez bloomu i bez alpha-passa, rysowana bezpośrednio
+  // na kanwę PO skomponowanej warstwie efektów — czyli w tej samej kolejności co
+  // dawniej, gdy siedziała na osobnym canvasie z wyższym zIndexem.
+  const rawScene = withRawLayer ? new THREE.Scene() : null;
+  if (rawScene) rawScene.background = null;
 
   const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -1000, 1000);
   camera.up.set(0, 0, -1);
@@ -304,7 +315,9 @@ export function initOverlay({
 
     stats.activeEffects = effects.length;
     const hasPersistentSceneContent = scene.children.length > 0;
-    if (effects.length === 0 && !hasPersistentSceneContent) {
+    const hasRawContent = !!(rawScene && rawScene.children.length > 0);
+    stats.rawObjects = rawScene ? rawScene.children.length : 0;
+    if (effects.length === 0 && !hasPersistentSceneContent && !hasRawContent) {
       renderer.clear();
       stats.lastRenderMs = 0; perf.accumDt = 0;
       return;
@@ -314,7 +327,23 @@ export function initOverlay({
 
     renderer.clear();
     const t0 = (typeof performance !== "undefined") ? performance.now() : 0;
-    if (composer) composer.render(); else renderer.render(scene, camera);
+    if (effects.length || hasPersistentSceneContent) {
+      if (composer) composer.render(); else renderer.render(scene, camera);
+    }
+    if (hasRawContent) {
+      // Kompozytor kończy passem na kanwę (czyści ją przez autoClear), więc
+      // warstwa raw MUSI iść po nim — z wyłączonym autoClear, inaczej skasuje
+      // efekty. Kolejność = dawny zIndex 21 nad 20.
+      const prevAutoClear = renderer.autoClear;
+      renderer.autoClear = false;
+      renderer.setRenderTarget(null);
+      // Fullscreen quad kompozytora zostawia zapis w buforze głębi — bez
+      // wyczyszczenia samej głębi rakiety potrafią zostać odrzucone testem Z.
+      // Na osobnej kanwie miały własny bufor, więc problem nie istniał.
+      renderer.clearDepth();
+      renderer.render(rawScene, camera);
+      renderer.autoClear = prevAutoClear;
+    }
     stats.lastRenderMs = (t0 > 0) ? (performance.now() - t0) : 0;
   }
 
@@ -359,8 +388,24 @@ export function initOverlay({
     if (renderTarget) renderTarget.dispose();
   }
 
+  // Fasada warstwy raw — ten sam kształt API co osobny overlay (scene/tick/
+  // resize/dispose), ale tick i resize są puste: rysowaniem i kamerą zarządza
+  // nadrzędny tick, bo dzielą jeden renderer i jedną kanwę.
+  const rawLayer = rawScene ? {
+    scene: rawScene,
+    camera,
+    renderer,
+    composer: null,
+    tick: () => {},
+    spawn: () => {},
+    resize: () => {},
+    dispose: () => { rawScene.clear(); },
+    getStats: () => ({ merged: true, objects: rawScene.children.length })
+  } : null;
+
   return {
-    scene, camera, renderer, composer, tick, spawn, resize, dispose, getStats: () => ({ ...stats }),
+    scene, camera, renderer, composer, tick, spawn, resize, dispose, rawScene, rawLayer,
+    getStats: () => ({ ...stats }),
     getBloomConfig: () => ({ ...getOverlayBloomConfig() }),
     setBloomConfig: (next = {}) => {
       const devVfx = (window.DevVFX = window.DevVFX || {});

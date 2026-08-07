@@ -9,8 +9,43 @@ import {
   triBoxOverlap,
   invertSymmetric3,
   packKey,
-  extractTrianglesFromObject3D
+  extractTrianglesFromObject3D,
+  extractSkinParts,
+  bindSkinToLattice
 } from '../src/game/voxelBody3D.js';
+
+// Atrapa mesha ze wszystkimi atrybutami skóry (pozycja, normalna, UV) + indeksami.
+function makeFakeSkinMesh(tris, matrixElements = null) {
+  const vertCount = tris.length / 3;
+  const normals = new Float32Array(vertCount * 3);
+  const uvs = new Float32Array(vertCount * 2);
+  for (let i = 0; i < vertCount; i++) {
+    normals[i * 3] = 0; normals[i * 3 + 1] = 0; normals[i * 3 + 2] = 1;
+    uvs[i * 2] = (i % 7) / 7;
+    uvs[i * 2 + 1] = (i % 5) / 5;
+  }
+  const indices = new Uint32Array(vertCount);
+  for (let i = 0; i < vertCount; i++) indices[i] = i;
+  const acc = (arr, stride) => ({
+    count: vertCount,
+    array: arr,
+    getX: (i) => arr[i * stride],
+    getY: (i) => arr[i * stride + 1],
+    getZ: (i) => arr[i * stride + 2]
+  });
+  return {
+    isMesh: true,
+    visible: true,
+    geometry: {
+      attributes: { position: acc(tris, 3), normal: acc(normals, 3), uv: acc(uvs, 2) },
+      index: { array: indices },
+      groups: []
+    },
+    material: { color: { r: 0.3, g: 0.5, b: 0.7 }, map: null },
+    matrixWorld: { elements: matrixElements || [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] },
+    children: []
+  };
+}
 
 // Atrapa mesha z atrybutem INTERLEAVED (jak GLTFLoader dla .glb):
 // .array to cały przeplatany bufor (stride 8), a poprawne odczyty dają
@@ -166,6 +201,102 @@ test('extractTrianglesFromObject3D: ukryte DZIECKO jest pomijane', () => {
   };
   const out = extractTrianglesFromObject3D(root);
   assert.equal(out.positions.length, visibleTris.length, 'ukryte dziecko trafiło do ekstrakcji');
+});
+
+test('interiorMode: żebra są gęstsze od pustej skorupy, rzadsze od litej bryły', () => {
+  const tris = offsetCubeTris(6);
+  const opts = { cellSize: 0.5, shellLayers: 2 };
+  const shell = voxelizeTriangles(tris, null, { ...opts, interiorMode: 'shell' });
+  const ribs = voxelizeTriangles(tris, null, { ...opts, interiorMode: 'ribs', ribStep: 4 });
+  const full = voxelizeTriangles(tris, null, { ...opts, interiorMode: 'full' });
+
+  assert.ok(ribs.cells.length > shell.cells.length,
+    `żebra (${ribs.cells.length}) nie dodały komórek do skorupy (${shell.cells.length})`);
+  assert.ok(ribs.cells.length < full.cells.length,
+    `żebra (${ribs.cells.length}) nie są rzadsze od litej bryły (${full.cells.length})`);
+});
+
+test('interiorMode ribs: konstrukcja jest spójna ze skorupą (jedna wyspa)', async () => {
+  // Belki oderwane od skorupy odpadłyby jako wraki przy pierwszym sprawdzeniu rozpadów.
+  const { Destructor3D, createDestructor3DConfig } = await import('../src/game/destructor3D.js');
+  const vox = voxelizeTriangles(offsetCubeTris(6), null, {
+    cellSize: 0.5, shellLayers: 2, interiorMode: 'ribs', ribStep: 4
+  });
+  Destructor3D.init(createDestructor3DConfig(0.5));
+  const body = Destructor3D.createBody(buildVoxelBody(vox, { cellMassBase: 10 }), {});
+  const islands = Destructor3D.findIslands(body.grid);
+  assert.equal(islands.length, 1, `konstrukcja rozpadła się na ${islands.length} wysp`);
+});
+
+test('extractSkinParts: wypieka pozycje i normalne do przestrzeni ekstrakcji', () => {
+  const tris = makeBoxTriangles(2, 2, 2);
+  // przesunięcie o (10,0,0) w macierzy świata musi wejść w pozycje
+  const shifted = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 10, 0, 0, 1];
+  const root = { visible: true, children: [makeFakeSkinMesh(tris, shifted)], updateWorldMatrix() {} };
+  const parts = extractSkinParts(root);
+
+  assert.equal(parts.length, 1);
+  const part = parts[0];
+  assert.equal(part.positions.length, tris.length);
+  assert.equal(part.normals.length, tris.length);
+  assert.equal(part.uvs.length, (tris.length / 3) * 2);
+  assert.equal(part.indices.length, tris.length / 3);
+  for (let i = 0; i < tris.length; i += 3) {
+    assert.ok(Math.abs(part.positions[i] - (tris[i] + 10)) < 1e-5, 'macierz świata nie wypieczona w pozycje');
+  }
+});
+
+test('bindSkinToLattice: każdy wierzchołek trafia w ZAJĘTĄ komórkę', () => {
+  // Wierzchołki skóry leżą dokładnie na granicy bryły — bez szukania najbliższej
+  // zajętej komórki część z nich wskazywałaby pustkę i maska wycinałaby dziury
+  // w nietkniętym kadłubie.
+  const tris = makeBoxTriangles(3, 3, 3, 0.05, 0.05, 0.05);
+  const vox = voxelizeTriangles(tris, null, { cellSize: 0.5, shellLayers: 0 });
+  const root = { visible: true, children: [makeFakeSkinMesh(tris)], updateWorldMatrix() {} };
+  const parts = extractSkinParts(root);
+
+  const info = bindSkinToLattice(parts, vox.cells, {
+    nx: vox.nx, ny: vox.ny, nz: vox.nz, cellSize: vox.cellSize, origin: vox.origin
+  });
+  assert.equal(info.unbound, 0, `${info.unbound} wierzchołków bez zajętej komórki`);
+
+  const occupied = new Set(vox.cells.map((c) => packKey(c.ix, c.iy, c.iz)));
+  const uv = parts[0].cellUV;
+  assert.equal(uv.length, parts[0].positions.length);
+  for (let v = 0; v < uv.length / 3; v++) {
+    const i = Math.round(uv[v * 3] * vox.nx - 0.5);
+    const j = Math.round(uv[v * 3 + 1] * vox.ny - 0.5);
+    const k = Math.round(uv[v * 3 + 2] * vox.nz - 0.5);
+    assert.ok(occupied.has(packKey(i, j, k)), `wierzchołek ${v} wskazuje pustą komórkę (${i},${j},${k})`);
+  }
+});
+
+test('buildVoxelBody ze skórą: wierzchołki jadą do środka masy razem z komórkami', () => {
+  const tris = makeBoxTriangles(3, 3, 3, 4, 5, 6); // bryła daleko od początku układu
+  const vox = voxelizeTriangles(tris, null, { cellSize: 0.5, shellLayers: 0 });
+  const root = { visible: true, children: [makeFakeSkinMesh(tris)], updateWorldMatrix() {} };
+  const skinParts = extractSkinParts(root);
+  const body = buildVoxelBody(vox, { cellMassBase: 10, skinParts });
+
+  assert.ok(body.skin, 'brak danych skóry');
+  assert.equal(body.skin.unbound, 0);
+  assert.equal(body.skin.occupancy.length, vox.nx * vox.ny * vox.nz);
+  assert.ok(body.skin.triangleCount > 0);
+
+  // Po recentrowaniu środek chmury wierzchołków musi leżeć blisko zera — tak samo
+  // jak komórki. Rozjazd oznaczałby skórę przesuniętą względem kratownicy.
+  const p = body.skin.parts[0].positions;
+  let sx = 0, sy = 0, sz = 0;
+  for (let i = 0; i < p.length; i += 3) { sx += p[i]; sy += p[i + 1]; sz += p[i + 2]; }
+  const n = p.length / 3;
+  assert.ok(Math.abs(sx / n) < 0.6, `skóra nie wyśrodkowana w X: ${sx / n}`);
+  assert.ok(Math.abs(sy / n) < 0.6, `skóra nie wyśrodkowana w Y: ${sy / n}`);
+  assert.ok(Math.abs(sz / n) < 0.6, `skóra nie wyśrodkowana w Z: ${sz / n}`);
+
+  // occupancy musi zgadzać się z faktycznymi komórkami
+  let occCount = 0;
+  for (let i = 0; i < body.skin.occupancy.length; i++) if (body.skin.occupancy[i]) occCount++;
+  assert.equal(occCount, vox.cells.length);
 });
 
 test('packKey: unikalne klucze dla różnych indeksów', () => {

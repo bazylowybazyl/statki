@@ -236,6 +236,11 @@ function makeCell(src, index, cfg) {
     active: true,
     isDebris: false,
     neighbors: [],
+    // Liczba sąsiadów w NIETKNIĘTEJ bryle, ustalana raz przy tworzeniu ciała.
+    // Renderer po niej poznaje ranę: komórka ma mniej żywych sąsiadów, niż miała
+    // pierwotnie → sąsiad zginął albo odpadł przy rozłamie → pokaż woksel.
+    // Sama liczba < 6 to zwykła powierzchnia kadłuba, którą zasłania skóra.
+    nbrBase: 6,
     __meshIndex: index,
     __crushStamp: 0,
     __islandStamp: 0,
@@ -349,6 +354,10 @@ export const Destructor3D = {
       nx: voxelBody.nx, ny: voxelBody.ny, nz: voxelBody.nz,
       cellSize: voxelBody.cellSize,
       latticeMin: { ...voxelBody.latticeMin },
+      // Układ kratownicy z chwili utworzenia — NIGDY nie przesuwany. Skóra mapuje
+      // wierzchołek → komórkę względem niego, więc mapowanie przeżywa rozpady
+      // (przy których latticeMin jedzie do nowego środka masy fragmentu).
+      skinLatticeMin: { ...voxelBody.latticeMin },
       bbCenter: { x: 0, y: 0, z: 0 },
       bbHalf: { x: 0, y: 0, z: 0 },
       boundary: [],
@@ -361,6 +370,7 @@ export const Destructor3D = {
       baseCount: cells.length
     };
     buildNeighbors(grid);
+    for (const cell of cells) cell.nbrBase = cell.neighbors.length;
 
     let mass = 0;
     for (const c of cells) mass += c.mass;
@@ -380,6 +390,7 @@ export const Destructor3D = {
       radius: 0,
       grid,
       config: cfg,
+      skin: voxelBody.skin || null,
       dead: false,
       isWreck: false,
       noSplit: !!opts.noSplit,
@@ -1430,6 +1441,9 @@ export const Destructor3D = {
         y: parent.grid.latticeMin.y - com.y,
         z: parent.grid.latticeMin.z - com.z
       },
+      // Wrak dziedziczy PIERWOTNY układ kratownicy rodzica — dzięki temu może
+      // współdzielić z nim tę samą geometrię skóry, maskując tylko swoje komórki.
+      skinLatticeMin: { ...parent.grid.skinLatticeMin },
       bbCenter: { x: 0, y: 0, z: 0 },
       bbHalf: { x: 0, y: 0, z: 0 },
       boundary: [],
@@ -1462,6 +1476,7 @@ export const Destructor3D = {
       radius: 0,
       grid,
       config: cfg,
+      skin: parent.skin || null,
       dead: false,
       isWreck: true,
       noSplit: false,

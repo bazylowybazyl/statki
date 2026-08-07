@@ -13,6 +13,12 @@
  */
 
 import * as THREE from 'three';
+import { packKey, VOXEL_NEIGHBOR_OFFSETS } from '../game/voxelBody3D.js';
+
+// Wygląd wokseli widocznych w ranach kadłuba pokrytego skórą.
+const WOUND_BOX_SCALE = 0.70;   // mniejszy sześcian — nie wystaje ponad poszycie
+const WOUND_COLOR_MUL = 0.55;   // ciemniejszy — czyta się jak konstrukcja, nie pancerz
+const WOUND_INSET = 0.34;       // ułamek komórki, o który woksel chowa się pod blachę
 
 const CELL_VERTEX_SHADER = `
 attribute vec3 aColor;
@@ -38,6 +44,7 @@ uniform float uAmbient;
 uniform float uDiffuse;
 uniform float uStressTint;
 uniform float uStressNorm;
+uniform float uColorMul;
 
 varying vec3 vColor;
 varying float vStress;
@@ -47,12 +54,105 @@ void main() {
   vec3 n = normalize(vNormal);
   float ndl = max(0.0, dot(n, uLightDirView));
   float fill = max(0.0, dot(n, -uLightDirView)) * 0.12;
-  vec3 col = vColor * (uAmbient + ndl * uDiffuse + fill);
+  // Pod skórą woksel udaje odsłoniętą konstrukcję, nie pomalowany pancerz —
+  // stąd przyciemnienie względem koloru próbkowanego z tekstury kadłuba.
+  vec3 col = vColor * uColorMul * (uAmbient + ndl * uDiffuse + fill);
 
   float stress = clamp(vStress / max(0.001, uStressNorm), 0.0, 1.0);
   col += vec3(1.0, 0.28, 0.05) * stress * uStressTint;
 
   gl_FragColor = vec4(col, 1.0);
+}
+`;
+
+// ===================== SKÓRA (oryginalny mesh .glb) =====================
+// Trzy mechanizmy, wszystkie karmione jedną teksturą 3D pola kratownicy:
+//   RGB = przesunięcie komórki względem spoczynku (zakodowane w [0,1]),
+//   A   = 1.0 komórka żywa | 0.5 komórki tu nigdy nie było | 0.0 komórka zginęła.
+//
+// Vertex: FFD — wierzchołek zbiera trójliniowo przesunięcia 8 otaczających komórek
+//         (wagi tylko z komórek ŻYWYCH, potem renormalizacja), więc wgniecenie
+//         fizyki staje się prawdziwym wgnieceniem teksturowanego kadłuba.
+// Fragment: maska — próbka A w komórce przypisanej wierzchołkowi; martwa → discard.
+//         To 3D-owy odpowiednik `destination-out` na canvasie pancerza w 2D.
+const SKIN_VERTEX_SHADER = `
+attribute vec3 aCellUV;
+
+uniform sampler3D uField;
+uniform vec3 uDims;
+uniform vec3 uLatticeMin;
+uniform float uCellSize;
+uniform float uDeformScale;
+uniform float uFfd;
+
+varying vec3 vCellUV;
+varying vec3 vNormal;
+varying vec2 vUv;
+
+void main() {
+  vCellUV = aCellUV;
+  vUv = uv;
+  vNormal = normalize(normalMatrix * normal);
+
+  vec3 pos = position;
+
+  if (uFfd > 0.5) {
+    vec3 f = (position - uLatticeMin) / uCellSize - 0.5;
+    vec3 base = floor(f);
+    vec3 frac = f - base;
+    vec3 disp = vec3(0.0);
+    float wsum = 0.0;
+
+    for (int i = 0; i < 8; i++) {
+      vec3 o = vec3(float(i & 1), float((i / 2) & 1), float((i / 4) & 1));
+      vec4 t = texture(uField, (base + o + 0.5) / uDims);
+      vec3 wv = mix(1.0 - frac, frac, o);
+      // step(0.75) przepuszcza wyłącznie komórki żywe (A=1.0); komórki nieistniejące
+      // (A=0.5) i zniszczone (A=0.0) nie mają sensownego przesunięcia.
+      float w = wv.x * wv.y * wv.z * step(0.75, t.a);
+      disp += (t.rgb - 0.5) * 2.0 * w;
+      wsum += w;
+    }
+
+    if (wsum > 0.001) pos += disp * (uDeformScale / wsum);
+  }
+
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+}
+`;
+
+const SKIN_FRAGMENT_SHADER = `
+uniform sampler3D uField;
+uniform sampler2D uMap;
+uniform float uHasMap;
+uniform vec3 uBaseColor;
+uniform vec3 uLightDirView;
+uniform float uAmbient;
+uniform float uDiffuse;
+uniform float uInteriorDim;
+
+varying vec3 vCellUV;
+varying vec3 vNormal;
+varying vec2 vUv;
+
+void main() {
+  if (texture(uField, vCellUV).a < 0.25) discard;
+
+  vec3 base = uBaseColor;
+  if (uHasMap > 0.5) base *= texture2D(uMap, vUv).rgb;
+
+  vec3 n = normalize(vNormal);
+  // Poszycie oglądane od środka (przez wyrwę) — ta sama tekstura, przyciemniona,
+  // żeby wnętrze kadłuba czytało się inaczej niż zewnętrzny pancerz.
+  float dim = 1.0;
+  if (!gl_FrontFacing) {
+    n = -n;
+    dim = uInteriorDim;
+  }
+
+  float ndl = max(0.0, dot(n, uLightDirView));
+  float fill = max(0.0, dot(n, -uLightDirView)) * 0.12;
+  gl_FragColor = vec4(base * dim * (uAmbient + ndl * uDiffuse + fill), 1.0);
 }
 `;
 
@@ -224,6 +324,11 @@ class DebrisPool {
   }
 }
 
+// Kodowanie kanału A pola kratownicy — patrz komentarz przy SKIN_VERTEX_SHADER.
+const FIELD_ALIVE = 255;
+const FIELD_NEVER = 128;
+const FIELD_GONE = 0;
+
 export const VoxelShips3D = {
   scene: null,
   bodyMeshes: new Map(),
@@ -231,12 +336,152 @@ export const VoxelShips3D = {
   lightDirWorld: new THREE.Vector3(0.35, 0.8, 0.5).normalize(),
   _lightDirView: new THREE.Vector3(),
   _lastTimeSec: 0,
-  stats: { bodies: 0, instances: 0, cells: 0 },
+  skinEnabled: true,
+  ffdEnabled: true,
+  voxelsEnabled: true,
+  stats: { bodies: 0, instances: 0, cells: 0, skinTriangles: 0 },
 
   init(scene) {
     this.scene = scene;
     if (!this.debris) this.debris = new DebrisPool(scene);
     return this;
+  },
+
+  // Geometria skóry powstaje RAZ na model i jest współdzielona przez rodzica
+  // i wszystkie jego wraki — każde ciało różni się tylko własną teksturą pola.
+  _ensureSkinGeometries(skin) {
+    if (skin._gpu) return skin._gpu;
+    const attrCache = new Map();
+    skin._gpu = skin.parts.map((part) => {
+      let shared = attrCache.get(part.positions);
+      if (!shared) {
+        shared = {
+          position: new THREE.BufferAttribute(part.positions, 3),
+          normal: new THREE.BufferAttribute(part.normals, 3),
+          uv: new THREE.BufferAttribute(part.uvs, 2),
+          cell: new THREE.BufferAttribute(part.cellUV, 3)
+        };
+        attrCache.set(part.positions, shared);
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', shared.position);
+      geometry.setAttribute('normal', shared.normal);
+      geometry.setAttribute('uv', shared.uv);
+      geometry.setAttribute('aCellUV', shared.cell);
+      geometry.setIndex(new THREE.BufferAttribute(part.indices, 1));
+      return { geometry, material: part.material };
+    });
+    return skin._gpu;
+  },
+
+  _createBodySkin(body) {
+    const skin = body.skin;
+    const gpuParts = this._ensureSkinGeometries(skin);
+    const dims = skin.dims;
+    const texels = dims.x * dims.y * dims.z;
+
+    // Wzorzec pola: RGB neutralne (zerowe przesunięcie), A = „zginęła" dla komórek
+    // pierwotnie istniejących i „nigdy nie istniała" dla reszty. Każda aktualizacja
+    // kopiuje wzorzec i dopisuje wyłącznie komórki żywe TEGO ciała.
+    if (!skin._baseField) {
+      const base = new Uint8Array(texels * 4);
+      for (let i = 0; i < texels; i++) {
+        base[i * 4] = 128;
+        base[i * 4 + 1] = 128;
+        base[i * 4 + 2] = 128;
+        base[i * 4 + 3] = skin.occupancy[i] ? FIELD_GONE : FIELD_NEVER;
+      }
+      skin._baseField = base;
+    }
+
+    const data = new Uint8Array(texels * 4);
+    const texture = new THREE.Data3DTexture(data, dims.x, dims.y, dims.z);
+    texture.format = THREE.RGBAFormat;
+    texture.type = THREE.UnsignedByteType;
+    texture.minFilter = THREE.NearestFilter;
+    texture.magFilter = THREE.NearestFilter;
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.wrapR = THREE.ClampToEdgeWrapping;
+    texture.needsUpdate = true;
+
+    const cfg = body.config;
+    const grid = body.grid;
+    // Zapas ×1.5 nad maxDeform: pieczenie plastyczne potrafi skumulować przesunięcie
+    // większe niż pojedyncze wgniecenie, a saturacja kodowania wygląda jak zerwanie.
+    const deformScale = Math.max(1e-3, (cfg?.maxDeform || grid.cellSize * 7) * 1.5);
+    const meshes = [];
+    const materials = [];
+
+    for (const gp of gpuParts) {
+      const map = gp.material?.map || null;
+      const color = gp.material?.color;
+      const material = new THREE.ShaderMaterial({
+        uniforms: {
+          uField: { value: texture },
+          uMap: { value: map },
+          uHasMap: { value: map ? 1 : 0 },
+          uBaseColor: { value: new THREE.Vector3(color?.r ?? 0.75, color?.g ?? 0.76, color?.b ?? 0.78) },
+          uDims: { value: new THREE.Vector3(dims.x, dims.y, dims.z) },
+          uLatticeMin: { value: new THREE.Vector3(grid.skinLatticeMin.x, grid.skinLatticeMin.y, grid.skinLatticeMin.z) },
+          uCellSize: { value: grid.cellSize },
+          uDeformScale: { value: deformScale },
+          uFfd: { value: this.ffdEnabled ? 1 : 0 },
+          uLightDirView: { value: new THREE.Vector3(0, 0, 1) },
+          uAmbient: { value: 0.34 },
+          uDiffuse: { value: 0.95 },
+          uInteriorDim: { value: 0.45 }
+        },
+        vertexShader: SKIN_VERTEX_SHADER,
+        fragmentShader: SKIN_FRAGMENT_SHADER,
+        side: THREE.DoubleSide
+      });
+      const mesh = new THREE.Mesh(gp.geometry, material);
+      mesh.frustumCulled = false; // FFD przesuwa wierzchołki poza policzoną sferę
+      this.scene.add(mesh);
+      meshes.push(mesh);
+      materials.push(material);
+    }
+
+    return {
+      meshes,
+      materials,
+      texture,
+      data,
+      base: skin._baseField,
+      dims,
+      deformScale,
+      fieldDirty: true
+    };
+  },
+
+  _updateSkinField(body, sd) {
+    const data = sd.data;
+    data.set(sd.base);
+
+    const nx = sd.dims.x;
+    const nxy = sd.dims.x * sd.dims.y;
+    const invScale = 1 / sd.deformScale;
+
+    for (const cell of body.grid.cells) {
+      if (!cell.active) continue;
+      const o = (cell.ix + cell.iy * nx + cell.iz * nxy) * 4;
+      // Przesunięcie względem spoczynku = zapieczona plastyczność + deformacja wizualna.
+      // Różnica (g + d) − o jest niewrażliwa na recentrowanie fragmentu przy rozłamie,
+      // więc ta sama skóra pasuje do rodzica i do każdego wraka.
+      let vx = ((cell.gx + cell.dx) - cell.ox) * invScale;
+      let vy = ((cell.gy + cell.dy) - cell.oy) * invScale;
+      let vz = ((cell.gz + cell.dz) - cell.oz) * invScale;
+      if (vx < -1) vx = -1; else if (vx > 1) vx = 1;
+      if (vy < -1) vy = -1; else if (vy > 1) vy = 1;
+      if (vz < -1) vz = -1; else if (vz > 1) vz = 1;
+      data[o] = (vx * 127.5 + 127.5) | 0;
+      data[o + 1] = (vy * 127.5 + 127.5) | 0;
+      data[o + 2] = (vz * 127.5 + 127.5) | 0;
+      data[o + 3] = FIELD_ALIVE;
+    }
+
+    sd.texture.needsUpdate = true;
   },
 
   setLightDir(x, y, z) {
@@ -253,7 +498,12 @@ export const VoxelShips3D = {
     if (capacity <= 0) return null;
     const cs = grid.cellSize;
 
-    const geometry = new THREE.BoxGeometry(cs * 1.02, cs * 1.02, cs * 1.02);
+    // Ciało bez skóry (np. proceduralny taran) to CAŁY jego wygląd — sześciany
+    // muszą stykać się bokami. Pod skórą jest odwrotnie: powierzchnia poszycia
+    // biegnie ŚRODKIEM komórki, więc pełnowymiarowy sześcian wystawałby pół
+    // komórki ponad blachę i wyglądał jak klocek doklejony do kadłuba.
+    const boxScale = body.skin ? WOUND_BOX_SCALE : 1.02;
+    const geometry = new THREE.BoxGeometry(cs * boxScale, cs * boxScale, cs * boxScale);
     const colorArr = new Float32Array(capacity * 3);
     const stressArr = new Float32Array(capacity);
     geometry.setAttribute('aColor', new THREE.InstancedBufferAttribute(colorArr, 3));
@@ -266,7 +516,8 @@ export const VoxelShips3D = {
         uAmbient: { value: 0.32 },
         uDiffuse: { value: 0.95 },
         uStressTint: { value: 1.0 },
-        uStressNorm: { value: Math.max(0.001, (cfg?.tearThreshold || cs * 2.5) * 0.6) }
+        uStressNorm: { value: Math.max(0.001, (cfg?.tearThreshold || cs * 2.5) * 0.6) },
+        uColorMul: { value: body.skin ? WOUND_COLOR_MUL : 1.0 }
       },
       vertexShader: CELL_VERTEX_SHADER,
       fragmentShader: CELL_FRAGMENT_SHADER
@@ -294,6 +545,12 @@ export const VoxelShips3D = {
   _refreshInstances(body, data) {
     const grid = body.grid;
     const cells = grid.cells;
+    // Ze skórą pokazujemy TYLKO rany: komórkę, która straciła sąsiada obecnego
+    // w nietkniętej bryle. Zwykła powierzchnia kadłuba (nbrBase < 6) jest zakryta
+    // meshem, więc nie kosztuje ani instancji, ani z-fightingu z poszyciem.
+    const woundOnly = !!body.skin && this.skinEnabled;
+    const lattice = grid.lattice;
+    const cellSize = grid.cellSize;
     const mesh = data.mesh;
     const instArr = mesh.instanceMatrix.array;
     const colorAttr = mesh.geometry.getAttribute('aColor');
@@ -307,19 +564,38 @@ export const VoxelShips3D = {
       const cell = cells[i];
       if (!cell.active) continue;
 
-      // odsłonięta = ma mniej niż 6 żywych sąsiadów (test inline — bez mutacji fizyki)
       let alive = 0;
       const nbs = cell.neighbors;
       for (let n = 0; n < nbs.length; n++) if (nbs[n].active) alive++;
-      if (alive >= 6) continue;
+      if (alive >= (woundOnly ? cell.nbrBase : 6)) continue;
+
+      // Wsuń woksel pod poszycie wzdłuż lokalnej normalnej (kierunek brakujących
+      // sąsiadów = „na zewnątrz"). Bez tego sześcian siedzi środkiem na powierzchni
+      // kadłuba i połowa jego objętości sterczy nad blachą.
+      let insetX = 0, insetY = 0, insetZ = 0;
+      if (woundOnly) {
+        let outX = 0, outY = 0, outZ = 0;
+        for (let k = 0; k < VOXEL_NEIGHBOR_OFFSETS.length; k++) {
+          const dir = VOXEL_NEIGHBOR_OFFSETS[k];
+          const n = lattice.get(packKey(cell.ix + dir[0], cell.iy + dir[1], cell.iz + dir[2]));
+          if (!n || !n.active) { outX += dir[0]; outY += dir[1]; outZ += dir[2]; }
+        }
+        const len = Math.sqrt(outX * outX + outY * outY + outZ * outZ);
+        if (len > 1e-6) {
+          const s = (WOUND_INSET * cellSize) / len;
+          insetX = -outX * s;
+          insetY = -outY * s;
+          insetZ = -outZ * s;
+        }
+      }
 
       const o = write * 16;
       instArr[o + 0] = 1; instArr[o + 1] = 0; instArr[o + 2] = 0; instArr[o + 3] = 0;
       instArr[o + 4] = 0; instArr[o + 5] = 1; instArr[o + 6] = 0; instArr[o + 7] = 0;
       instArr[o + 8] = 0; instArr[o + 9] = 0; instArr[o + 10] = 1; instArr[o + 11] = 0;
-      instArr[o + 12] = cell.gx + cell.dx;
-      instArr[o + 13] = cell.gy + cell.dy;
-      instArr[o + 14] = cell.gz + cell.dz;
+      instArr[o + 12] = cell.gx + cell.dx + insetX;
+      instArr[o + 13] = cell.gy + cell.dy + insetY;
+      instArr[o + 14] = cell.gz + cell.dz + insetZ;
       instArr[o + 15] = 1;
 
       colorArr[write * 3] = cell.r;
@@ -344,6 +620,7 @@ export const VoxelShips3D = {
     this.stats.bodies = 0;
     this.stats.instances = 0;
     this.stats.cells = 0;
+    this.stats.skinTriangles = 0;
 
     const seen = new Set();
     for (const body of bodies) {
@@ -363,16 +640,48 @@ export const VoxelShips3D = {
         data.cellsRef = body.grid.cells;
         data.needsRefresh = true;
       }
-      if (body.grid.meshDirty || data.needsRefresh) {
+      // Przełącznik skóry zmienia regułę widoczności wokseli — wymuś przebudowę.
+      if (data.skinModeApplied !== this.skinEnabled) {
+        data.skinModeApplied = this.skinEnabled;
+        data.needsRefresh = true;
+      }
+
+      // meshDirty karmi DWA konsumenty (instancje wokseli i pole skóry),
+      // więc flagę czytamy raz i zerujemy dopiero po obsłużeniu obu.
+      const gridDirty = body.grid.meshDirty;
+      if (gridDirty || data.needsRefresh) {
         this._refreshInstances(body, data);
-        body.grid.meshDirty = false;
         data.needsRefresh = false;
       }
 
       const mesh = data.mesh;
+      // Warstwę wokseli można zgasić tylko tam, gdzie zastępuje ją skóra —
+      // ciało bez modelu (taran) zniknęłoby wtedy ze sceny całkowicie.
+      mesh.visible = this.voxelsEnabled || !(body.skin && this.skinEnabled);
       mesh.position.set(body.pos.x, body.pos.y, body.pos.z);
       mesh.quaternion.set(body.quat.x, body.quat.y, body.quat.z, body.quat.w);
       mesh.material.uniforms.uLightDirView.value.copy(this._lightDirView);
+
+      if (body.skin) {
+        if (!data.skin) data.skin = this._createBodySkin(body);
+        const sd = data.skin;
+        if (gridDirty || sd.fieldDirty) {
+          this._updateSkinField(body, sd);
+          sd.fieldDirty = false;
+        }
+        for (let i = 0; i < sd.meshes.length; i++) {
+          const sm = sd.meshes[i];
+          sm.visible = this.skinEnabled;
+          sm.position.set(body.pos.x, body.pos.y, body.pos.z);
+          sm.quaternion.set(body.quat.x, body.quat.y, body.quat.z, body.quat.w);
+          const u = sd.materials[i].uniforms;
+          u.uLightDirView.value.copy(this._lightDirView);
+          u.uFfd.value = this.ffdEnabled ? 1 : 0;
+        }
+        if (this.skinEnabled) this.stats.skinTriangles += body.skin.triangleCount;
+      }
+
+      body.grid.meshDirty = false;
 
       this.stats.bodies++;
       this.stats.instances += data.renderedCount;
@@ -396,7 +705,24 @@ export const VoxelShips3D = {
     if (this.scene && data.mesh) this.scene.remove(data.mesh);
     data.mesh?.geometry?.dispose?.();
     data.mesh?.material?.dispose?.();
+    if (data.skin) {
+      // Geometria skóry jest WSPÓŁDZIELONA z wrakami — zwalniamy tylko to,
+      // co należy do tego ciała: materiały i jego własną teksturę pola.
+      for (const sm of data.skin.meshes) this.scene?.remove(sm);
+      for (const mat of data.skin.materials) mat.dispose?.();
+      data.skin.texture?.dispose?.();
+      data.skin = null;
+    }
     this.bodyMeshes.delete(body);
+  },
+
+  // Zwalnia geometrię skóry współdzieloną przez rodzica i wraki. Wołane przy
+  // przebudowie sceny, nigdy przy usuwaniu pojedynczego ciała.
+  disposeSkinAssets(skin) {
+    if (!skin?._gpu) return;
+    for (const gp of skin._gpu) gp.geometry?.dispose?.();
+    skin._gpu = null;
+    skin._baseField = null;
   },
 
   dispose() {
