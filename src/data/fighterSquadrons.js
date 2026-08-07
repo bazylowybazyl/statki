@@ -10,6 +10,16 @@ export const HANGAR_SQUADRON_CAPACITY = Object.freeze({
   Capital: 2
 });
 
+// SKALA PRĘDKOŚCI. Punkt odniesienia to obwiednia gracza z driveTransmission.js:
+// DRIVE_MODES.combat = 3000 u/s dla kadłuba supercapital (Atlas), a profil
+// kadłuba 'fighter' ma tam speedScale.combat = 1.8 (czyli ~5400 u/s).
+// Eskadry chodziły na 600-820 u/s, czyli 4-5x WOLNIEJ niż okręt, który mają
+// eskortować — nie były w stanie utrzymać formacji, dogonić niczego ani wrócić
+// do Atlasa. Myśliwiec musi być szybszy od capitala, inaczej nie jest myśliwcem.
+//
+// accel jest teraz naprawdę używany (steerFighter w src/ai/fighterAI.js zmienia
+// prędkość z ograniczeniem przyspieszenia); wcześniej clampTurnVec ustawiał
+// moduł prędkości na maxSpeed w jednej klatce i pole accel leżało martwe.
 export const FIGHTER_SQUADRON_DEFS = Object.freeze({
   interceptor: Object.freeze({
     id: 'interceptor',
@@ -17,9 +27,9 @@ export const FIGHTER_SQUADRON_DEFS = Object.freeze({
     role: 'Anti-fighter screen',
     squadSize: 9,
     hp: 80,
-    accel: 460,
-    maxSpeed: 820,
-    turn: 9.5,
+    accel: 2600,
+    maxSpeed: 3400,
+    turn: 12.0,
     radius: 12,
     mass: 0.8,
     separationRange: 30,
@@ -34,9 +44,9 @@ export const FIGHTER_SQUADRON_DEFS = Object.freeze({
     role: 'Balanced escort',
     squadSize: 9,
     hp: 120,
-    accel: 350,
-    maxSpeed: 650,
-    turn: 7.0,
+    accel: 2000,
+    maxSpeed: 2800,
+    turn: 9.5,
     radius: 12,
     mass: 0.8,
     separationRange: 30,
@@ -51,9 +61,9 @@ export const FIGHTER_SQUADRON_DEFS = Object.freeze({
     role: 'Heavy attack wing',
     squadSize: 9,
     hp: 150,
-    accel: 320,
-    maxSpeed: 600,
-    turn: 6.2,
+    accel: 1700,
+    maxSpeed: 2400,
+    turn: 8.0,
     radius: 13,
     mass: 0.95,
     separationRange: 34,

@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dok Bębnowy — prototyp 2D</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body,html{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#050510;
+    color:#4ade80;font-family:'Courier New',Courier,monospace}
+  canvas{display:block;cursor:grab}
+  canvas:active{cursor:grabbing}
+  #ui{position:absolute;inset:0;pointer-events:none;display:flex;flex-direction:column;
+    justify-content:space-between;padding:18px;box-sizing:border-box;z-index:10}
+  .panel{background:rgba(5,5,16,.75);border:1px solid #1e3a8a;border-radius:8px;padding:14px;
+    backdrop-filter:blur(4px);box-shadow:0 0 15px rgba(30,58,138,.5);pointer-events:auto}
+  .btn{display:block;width:100%;font-size:11px;padding:7px 10px;border-radius:6px;border:1px solid;
+    margin-top:6px;color:#fff;transition:filter .15s;text-align:left}
+  .btn:hover{filter:brightness(1.35)}
+  .btn:disabled{opacity:.35;cursor:not-allowed}
+  .bar{width:100%;height:6px;background:#1e293b;border-radius:3px;overflow:hidden;margin-top:3px}
+  .fill{height:100%}
+</style>
+</head>
+<body>
+
+<div id="ui">
+  <div class="flex justify-between items-start">
+    <div class="panel w-72">
+      <h1 class="text-lg font-bold text-blue-400">DOK BĘBNOWY B-5</h1>
+      <p class="text-[10px] text-gray-400 mb-3">Cylindryczny · 5 bębnów · widok 2D (sprite-ready)</p>
+
+      <div class="text-[10px] text-gray-400 mb-1">ZAMÓW MIEJSCE</div>
+      <div id="order-buttons"></div>
+
+      <div class="text-[10px] text-gray-400 mt-3 mb-1">STAN SEKWENCJI</div>
+      <div class="text-xs text-green-300" id="phase">bezczynny</div>
+      <div class="text-[10px] text-gray-500 mt-1" id="hint">Kliknij klasę, aby wysunąć miejsce.</div>
+
+      <button class="btn bg-slate-700 border-slate-400 mt-3" onclick="toggleFollow()">
+        Kamera podąża za statkiem: <b id="follow-txt">TAK</b>
+      </button>
+      <button class="btn bg-slate-700 border-slate-400" onclick="fitView()">Pokaż cały dok</button>
+    </div>
+
+    <div class="panel w-64 text-right">
+      <h2 class="text-xs font-bold mb-2 text-yellow-400">OBŁOŻENIE BĘBNÓW</h2>
+      <div id="drum-stats" class="text-[10px] space-y-2 text-left"></div>
+    </div>
+  </div>
+
+  <div class="flex justify-center">
+    <div class="panel text-center text-[10px] text-gray-400">
+      Przeciągnij (Pan) · Scroll (Zoom) — statki rysowane jako płaskie kształty 2D = zgodne ze spritami
+    </div>
+  </div>
+</div>
+
+<canvas id="cv"></canvas>
+
+<script>
+// =====================================================================
+//  DOK BĘBNOWY — cały dok jest cylindrem, w środku 5 obrotowych bębnów.
+//  Wszystko obraca się W PŁASZCZYŹNIE EKRANU, więc działa na spritach 2D
+//  (sprite obrócony w 2D pozostaje poprawny — inaczej niż przy beczce 3D).
+//
+//  Cykl: zamów miejsce → bęben ustawia wolne gniazdo ku środkowi →
+//        kołyska wysuwa się do środka → statek na niej parkuje →
+//        kołyska wciąga się → bęben obraca się o jedno gniazdo.
+// =====================================================================
+
+const TAU = Math.PI * 2;
+const DOCK_R = 13500;              // promień całego doku (cylinder)
+const GATE_A = 0;                  // brama wlotowa: kierunek +X
+
+// Bębny: liczba gniazd wynika z obwodu / szerokości jednostki,
+// dlatego na bębnie S mieści się ich znacznie więcej niż na L.
+const DRUMS = [
+  { id:'S',  name:'Fregaty',    color:'#22c55e', slots:24, shipL:320,  shipB:240,  gap:130, a: 45, d:4000 },
+  { id:'M',  name:'Destroyery', color:'#e2e8f0', slots:16, shipL:480,  shipB:340,  gap:170, a:107, d:4300 },
+  { id:'C',  name:'Kapitalne',  color:'#a78bfa', slots: 5, shipL:3000, shipB:1000, gap:400, a:165, d:7800 },
+  { id:'B',  name:'Bertha',     color:'#ef4444', slots: 6, shipL:2760, shipB:1554, gap:450, a:240, d:8400 },
+  { id:'L',  name:'Battleshipy',color:'#ec4899', slots:10, shipL:1040, shipB:440,  gap:250, a:310, d:4600 }
+];
+
+for (const d of DRUMS) {
+  d.aRad  = d.a * Math.PI / 180;
+  d.cx    = Math.cos(d.aRad) * d.d;
+  d.cy    = Math.sin(d.aRad) * d.d;
+  d.hubR  = d.slots * (d.shipB + d.gap) / TAU;   // promień piasty z obwodu
+  d.step  = TAU / d.slots;
+  d.outR  = d.hubR + d.shipL;                    // zasięg z zaparkowaną jednostką
+  d.rot   = Math.random() * TAU;                 // aktualny obrót bębna
+  d.rotTo = d.rot;
+  d.ext   = 0;                                   // wysunięcie kołyski
+  d.extTo = 0;
+  d.extMax = d.shipL * 1.2 + 600;
+  d.inward = d.aRad + Math.PI;                   // kierunek "do środka doku"
+  d.filled = new Array(d.slots).fill(false);
+  d.loadSlot = -1;                               // gniazdo aktualnie obsługiwane
+  // Wstępne obłożenie — żeby dok wyglądał na używany
+  const pre = Math.floor(d.slots * (0.25 + Math.random() * 0.35));
+  for (let i = 0; i < pre; i++) d.filled[Math.floor(Math.random() * d.slots)] = true;
+}
+const byId = id => DRUMS.find(d => d.id === id);
+
+// --- Pozycja gniazda j danego bębna (świat) ---
+function slotPos(d, j, extra = 0) {
+  const th = d.rot + j * d.step;
+  const r = d.hubR + d.shipL / 2 + extra;
+  return { x: d.cx + Math.cos(th) * r, y: d.cy + Math.sin(th) * r, a: th };
+}
+
+// =====================================================================
+//  SEKWENCJA
+// =====================================================================
+const SEQ = { phase:'idle', drum:null, t:0 };
+const PHASE_TXT = {
+  idle:      'bezczynny',
+  aligning:  'ustawianie wolnego gniazda',
+  extending: 'wysuwanie miejsca',
+  waiting:   'oczekiwanie na statek',
+  approach:  'statek podchodzi',
+  parked:    'statek zacumowany',
+  retracting:'wciąganie miejsca',
+  rotating:  'obrót bębna'
+};
+const HINTS = {
+  idle:      'Kliknij klasę, aby wysunąć miejsce.',
+  waiting:   'Miejsce gotowe — statek wlatuje przez bramę.',
+  rotating:  'Kamera trzyma się statku podczas obrotu.'
+};
+
+// Statek gracza
+const ship = { active:false, x:0, y:0, a:Math.PI, cls:null, docked:false };
+
+function orderBerth(id) {
+  if (SEQ.phase !== 'idle') return;
+  const d = byId(id);
+  const free = d.filled.findIndex(f => !f);
+  if (free < 0) { flash(`Bęben ${d.id}: brak wolnych gniazd.`); return; }
+
+  d.loadSlot = free;
+  // Obróć bęben tak, by wolne gniazdo wskazywało środek doku
+  const cur = d.rot + free * d.step;
+  let diff = d.inward - cur;
+  while (diff >  Math.PI) diff -= TAU;
+  while (diff < -Math.PI) diff += TAU;
+  d.rotTo = d.rot + diff;
+
+  SEQ.phase = 'aligning'; SEQ.drum = d; SEQ.t = 0;
+  ship.active = false; ship.docked = false; ship.cls = id;
+}
+window.orderBerth = orderBerth;
+
+function stepSeq(dt) {
+  const d = SEQ.drum;
+  SEQ.t += dt;
+
+  switch (SEQ.phase) {
+    case 'aligning':
+      if (Math.abs(d.rotTo - d.rot) < 0.004) {
+        d.rot = d.rotTo; d.extTo = d.extMax;
+        SEQ.phase = 'extending'; SEQ.t = 0;
+      }
+      break;
+
+    case 'extending':
+      if (d.extMax - d.ext < 12) {
+        d.ext = d.extMax;
+        SEQ.phase = 'waiting'; SEQ.t = 0;
+        // Statek startuje przy bramie
+        ship.active = true; ship.docked = false;
+        ship.x = Math.cos(GATE_A) * (DOCK_R + 2200);
+        ship.y = Math.sin(GATE_A) * (DOCK_R + 2200);
+        ship.a = Math.PI;
+      }
+      break;
+
+    case 'waiting':
+      SEQ.phase = 'approach'; SEQ.t = 0;
+      break;
+
+    case 'approach': {
+      const t = slotPos(d, d.loadSlot, d.ext);
+      const dx = t.x - ship.x, dy = t.y - ship.y;
+      const dist = Math.hypot(dx, dy);
+      const spd = Math.max(900, dist * 1.8);
+      if (dist > 40) {
+        ship.x += (dx / dist) * spd * dt;
+        ship.y += (dy / dist) * spd * dt;
+        // Dziób celuje w miejsce, na końcu wyrównuje się z gniazdem
+        const want = dist > 900 ? Math.atan2(dy, dx) : t.a;
+        ship.a = lerpAng(ship.a, want, 1 - Math.pow(0.001, dt));
+      } else {
+        ship.x = t.x; ship.y = t.y; ship.a = t.a;
+        ship.docked = true;
+        SEQ.phase = 'parked'; SEQ.t = 0;
+        flash(`Statek klasy ${d.id} zacumowany — wciąganie miejsca.`);
+      }
+      break;
+    }
+
+    case 'parked':
+      if (SEQ.t > 0.8) { d.extTo = 0; SEQ.phase = 'retracting'; SEQ.t = 0; }
+      break;
+
+    case 'retracting':
+      if (d.ext < 12) {
+        d.ext = 0;
+        d.filled[d.loadSlot] = true;
+        d.rotTo = d.rot + d.step;            // obrót o jedno gniazdo
+        SEQ.phase = 'rotating'; SEQ.t = 0;
+      }
+      break;
+
+    case 'rotating':
+      if (Math.abs(d.rotTo - d.rot) < 0.004) {
+        d.rot = d.rotTo;
+        SEQ.phase = 'idle'; SEQ.drum = null;
+        ship.active = false; d.loadSlot = -1;
+        flash('Gniazdo schowane. Dok gotowy.');
+      }
+      break;
+  }
+
+  // Wygładzanie ruchu bębnów i kołysek
+  for (const dr of DRUMS) {
+    dr.rot += (dr.rotTo - dr.rot) * (1 - Math.pow(0.006, dt));
+    dr.ext += (dr.extTo - dr.ext) * (1 - Math.pow(0.004, dt));
+  }
+}
+
+function lerpAng(a, b, t) {
+  let diff = b - a;
+  while (diff >  Math.PI) diff -= TAU;
+  while (diff < -Math.PI) diff += TAU;
+  return a + diff * t;
+}
+
+// =====================================================================
+//  KAMERA
+// =====================================================================
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+let W, H, camX = 0, camY = 0, zoom = 0.028, tZoom = 0.028, tCamX = 0, tCamY = 0;
+let follow = true;
+
+function resize() { W = cv.width = innerWidth; H = cv.height = innerHeight; }
+addEventListener('resize', resize); resize();
+
+function fitView() { tCamX = 0; tCamY = 0; tZoom = 0.028; }
+window.fitView = fitView;
+window.toggleFollow = () => {
+  follow = !follow;
+  document.getElementById('follow-txt').innerText = follow ? 'TAK' : 'NIE';
+};
+
+let drag = false, lastX = 0, lastY = 0;
+cv.addEventListener('mousedown', e => { drag = true; lastX = e.clientX; lastY = e.clientY; });
+addEventListener('mouseup', () => drag = false);
+addEventListener('mousemove', e => {
+  if (!drag) return;
+  tCamX -= (e.clientX - lastX) / zoom;
+  tCamY -= (e.clientY - lastY) / zoom;
+  lastX = e.clientX; lastY = e.clientY;
+  follow = false; document.getElementById('follow-txt').innerText = 'NIE';
+});
+cv.addEventListener('wheel', e => {
+  tZoom = Math.max(0.008, Math.min(tZoom * (e.deltaY > 0 ? 0.85 : 1.18), 0.6));
+});
+
+function updateCamera(dt) {
+  // Podczas obrotu / cumowania kamera dojeżdża do statku i przybliża
+  if (follow && ship.active) {
+    tCamX = ship.x; tCamY = ship.y;
+    const close = (SEQ.phase === 'rotating' || SEQ.phase === 'parked' || SEQ.phase === 'retracting');
+    tZoom = close ? 0.12 : 0.055;
+  }
+  const k = 1 - Math.pow(0.004, dt);
+  camX += (tCamX - camX) * k;
+  camY += (tCamY - camY) * k;
+  zoom += (tZoom - zoom) * k;
+}
+
+// =====================================================================
+//  RYSOWANIE
+// =====================================================================
+let time = 0;
+
+// Statek jako PŁASKI kształt 2D — dokładnie tak zachowuje się sprite.
+function drawShip(x, y, a, L, B, color, dim) {
+  ctx.save();
+  ctx.translate(x, y); ctx.rotate(a);
+  ctx.globalAlpha = dim ? 0.75 : 1;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(L / 2, 0);
+  ctx.lineTo(L / 6, -B / 2);
+  ctx.lineTo(-L / 2, -B / 2);
+  ctx.lineTo(-L / 2 + L * 0.08, 0);
+  ctx.lineTo(-L / 2, B / 2);
+  ctx.lineTo(L / 6, B / 2);
+  ctx.closePath(); ctx.fill();
+  // Pas kadłuba
+  ctx.fillStyle = 'rgba(5,10,20,.45)';
+  ctx.fillRect(-L / 2 + L * 0.12, -B * 0.16, L * 0.55, B * 0.32);
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+function drawDrum(d) {
+  const active = SEQ.drum === d;
+
+  // Tarcza bębna
+  ctx.beginPath();
+  ctx.arc(d.cx, d.cy, d.outR + 130, 0, TAU);
+  ctx.fillStyle = 'rgba(12,20,36,.92)';
+  ctx.fill();
+  ctx.lineWidth = 26; ctx.strokeStyle = active ? '#38bdf8' : '#1e293b';
+  ctx.stroke();
+
+  // Piasta
+  ctx.beginPath();
+  ctx.arc(d.cx, d.cy, d.hubR * 0.42, 0, TAU);
+  ctx.fillStyle = '#16233c'; ctx.fill();
+  ctx.lineWidth = 10; ctx.strokeStyle = d.color; ctx.globalAlpha = .5;
+  ctx.stroke(); ctx.globalAlpha = 1;
+
+  // Gniazda: szprycha + kołyska + jednostka
+  for (let j = 0; j < d.slots; j++) {
+    const isLoad = (j === d.loadSlot);
+    const ext = isLoad ? d.ext : 0;
+    const p = slotPos(d, j, ext);
+
+    // Szprycha (rozciąga się, gdy gniazdo jest wysunięte)
+    ctx.save();
+    ctx.translate(d.cx, d.cy); ctx.rotate(p.a);
+    ctx.fillStyle = isLoad && ext > 1 ? '#33507a' : '#1b2740';
+    ctx.fillRect(d.hubR * 0.4, -d.shipB * 0.10, (d.hubR - d.shipB * 0.4) + ext, d.shipB * 0.20);
+    ctx.restore();
+
+    // Kołyska
+    ctx.save();
+    ctx.translate(p.x, p.y); ctx.rotate(p.a);
+    ctx.strokeStyle = d.filled[j] ? d.color : (isLoad ? '#f59e0b' : '#334155');
+    ctx.lineWidth = Math.max(8, d.shipB * 0.05);
+    ctx.globalAlpha = d.filled[j] ? .9 : .55;
+    ctx.setLineDash(d.filled[j] ? [] : [d.shipB * 0.22, d.shipB * 0.16]);
+    ctx.strokeRect(-d.shipL / 2, -d.shipB / 2, d.shipL, d.shipB);
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+    // Zaciski
+    ctx.fillStyle = d.filled[j] ? d.color : '#475569';
+    for (const s of [-1, 1]) {
+      ctx.fillRect(-d.shipL * 0.12, s * d.shipB / 2 - d.shipB * 0.06, d.shipL * 0.24, d.shipB * 0.12);
+    }
+    ctx.restore();
+
+    // Zaparkowana jednostka
+    if (d.filled[j]) drawShip(p.x, p.y, p.a, d.shipL * 0.9, d.shipB * 0.78, d.color, true);
+  }
+
+  // Etykieta
+  ctx.save();
+  ctx.fillStyle = d.color; ctx.globalAlpha = .85;
+  ctx.font = `bold ${Math.max(180, d.hubR * 0.30)}px 'Courier New', monospace`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(d.id, d.cx, d.cy);
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+function drawDock() {
+  // Powłoka cylindra
+  ctx.beginPath(); ctx.arc(0, 0, DOCK_R, 0, TAU);
+  ctx.fillStyle = 'rgba(8,13,26,.75)'; ctx.fill();
+  ctx.lineWidth = 420; ctx.strokeStyle = '#111c30'; ctx.stroke();
+  ctx.lineWidth = 40; ctx.strokeStyle = '#1e3a8a'; ctx.stroke();
+
+  // Żebra konstrukcyjne
+  ctx.strokeStyle = 'rgba(56,189,248,.10)'; ctx.lineWidth = 60;
+  for (let i = 0; i < 24; i++) {
+    const a = (i / 24) * TAU;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(a) * (DOCK_R - 620), Math.sin(a) * (DOCK_R - 620));
+    ctx.lineTo(Math.cos(a) * (DOCK_R + 180), Math.sin(a) * (DOCK_R + 180));
+    ctx.stroke();
+  }
+
+  // Brama wlotowa
+  const gw = 2600;
+  ctx.save();
+  ctx.translate(Math.cos(GATE_A) * DOCK_R, Math.sin(GATE_A) * DOCK_R);
+  ctx.rotate(GATE_A);
+  ctx.fillStyle = '#050510'; ctx.fillRect(-260, -gw / 2, 520, gw);
+  const pulse = 0.55 + 0.45 * Math.sin(time * 3);
+  ctx.fillStyle = `rgba(245,197,24,${pulse})`;
+  ctx.fillRect(-300, -gw / 2 - 130, 600, 110);
+  ctx.fillRect(-300,  gw / 2 + 20,  600, 110);
+  ctx.restore();
+
+  // Pierścień centralny (strefa manewrowa)
+  ctx.beginPath(); ctx.arc(0, 0, 1500, 0, TAU);
+  ctx.strokeStyle = 'rgba(56,189,248,.25)'; ctx.lineWidth = 30;
+  ctx.setLineDash([300, 220]); ctx.stroke(); ctx.setLineDash([]);
+}
+
+function drawApproachLane() {
+  if (!SEQ.drum || !ship.active) return;
+  const t = slotPos(SEQ.drum, SEQ.drum.loadSlot, SEQ.drum.ext);
+  ctx.strokeStyle = 'rgba(245,158,11,.5)'; ctx.lineWidth = 26;
+  ctx.setLineDash([260, 200]);
+  ctx.beginPath();
+  ctx.moveTo(Math.cos(GATE_A) * DOCK_R, Math.sin(GATE_A) * DOCK_R);
+  ctx.lineTo(t.x, t.y);
+  ctx.stroke(); ctx.setLineDash([]);
+  // Marker miejsca
+  ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 36;
+  ctx.beginPath(); ctx.arc(t.x, t.y, SEQ.drum.shipL * 0.75, 0, TAU); ctx.stroke();
+}
+
+function draw() {
+  ctx.fillStyle = '#050510'; ctx.fillRect(0, 0, W, H);
+  ctx.save();
+  ctx.translate(W / 2, H / 2); ctx.scale(zoom, zoom); ctx.translate(-camX, -camY);
+
+  drawDock();
+  for (const d of DRUMS) drawDrum(d);
+  drawApproachLane();
+
+  if (ship.active) {
+    const d = SEQ.drum;
+    drawShip(ship.x, ship.y, ship.a, d.shipL, d.shipB, '#67e8f9', false);
+    // Obwódka statku gracza
+    ctx.save();
+    ctx.translate(ship.x, ship.y); ctx.rotate(ship.a);
+    ctx.strokeStyle = '#22d3ee'; ctx.lineWidth = 14;
+    ctx.strokeRect(-d.shipL / 2, -d.shipB / 2, d.shipL, d.shipB);
+    ctx.restore();
+  }
+
+  ctx.restore();
+}
+
+// =====================================================================
+//  UI
+// =====================================================================
+const obEl = document.getElementById('order-buttons');
+obEl.innerHTML = DRUMS.map(d =>
+  `<button class="btn" style="background:${d.color}22;border-color:${d.color}"
+     onclick="orderBerth('${d.id}')" id="btn-${d.id}">
+     <b style="color:${d.color}">${d.id}</b> — ${d.name} <span class="text-gray-400">(${d.slots} gniazd)</span>
+   </button>`).join('');
+
+const statsEl = document.getElementById('drum-stats');
+function refreshUI() {
+  document.getElementById('phase').innerText = PHASE_TXT[SEQ.phase] + (SEQ.drum ? ` · bęben ${SEQ.drum.id}` : '');
+  document.getElementById('hint').innerText = HINTS[SEQ.phase] || '';
+  statsEl.innerHTML = DRUMS.map(d => {
+    const n = d.filled.filter(Boolean).length;
+    const pc = Math.round(n / d.slots * 100);
+    return `<div>
+      <div class="flex justify-between"><span style="color:${d.color}">${d.id} · ${d.name}</span>
+      <span class="text-gray-400">${n}/${d.slots}</span></div>
+      <div class="bar"><div class="fill" style="width:${pc}%;background:${d.color}"></div></div></div>`;
+  }).join('');
+  DRUMS.forEach(d => {
+    const b = document.getElementById('btn-' + d.id);
+    if (b) b.disabled = (SEQ.phase !== 'idle') || d.filled.every(Boolean);
+  });
+}
+function flash(msg) { document.getElementById('hint').innerText = msg; }
+
+// =====================================================================
+//  PĘTLA
+// =====================================================================
+let last = performance.now(), frame = 0;
+function loop(now) {
+  const dt = Math.min((now - last) / 1000, 0.05);
+  last = now; time += dt;
+
+  if (SEQ.phase !== 'idle') stepSeq(dt);
+  else for (const dr of DRUMS) {
+    dr.rot += (dr.rotTo - dr.rot) * (1 - Math.pow(0.006, dt));
+    dr.ext += (dr.extTo - dr.ext) * (1 - Math.pow(0.004, dt));
+  }
+
+  updateCamera(dt);
+  draw();
+  if (++frame % 12 === 0) refreshUI();
+  requestAnimationFrame(loop);
+}
+refreshUI();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

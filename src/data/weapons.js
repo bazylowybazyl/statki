@@ -133,6 +133,56 @@ export const MASTER_WEAPONS = {
     energyCost: 3, vfxColor: '#8cffd0'
   },
 
+  // --------------------------------------------------------------------------
+  // FLAK — zapora przeciwlotnicza (aux)
+  // --------------------------------------------------------------------------
+  // Trzecia rodzina PD obok CIWS i lasera. Nie trafia w cel: pocisk pęka
+  // w powietrzu w punkcie wyprzedzenia i sieje odłamkami po całej kuli
+  // `flakBurstRadius`. Liczy się objętość ognia, nie celność.
+  //
+  // Pola specyficzne (obsługa: src/game/flakSystem.js):
+  //   flakBurstRadius — promień rażenia odłamkami [u]
+  //   flakFuseRadius  — zasięg zapalnika zbliżeniowego [u]
+  //   flakFalloff     — ułamek obrażeń na krawędzi kuli (0..1)
+  //   flakHullFactor  — mnożnik obrażeń vs kadłuby okrętów (flak jest plot.)
+  //   burstCount      — ile pocisków leci w jednej salwie (ściana pęknięć)
+  //
+  // Skala kill: myśliwiec ma 80-150 HP i promień 12 u, eskadra 9 maszyn
+  // rozciąga się na ~250-400 u. Dlatego S gasi pojedynczą maszynę,
+  // a Capital wycina cały klin jednym pęknięciem.
+  flak_s: {
+    id: 'flak_s', name: 'Kartacz Flak — Lekki', mountType: 'aux', category: 'flak', size: 'S',
+    baseDamage: 110, baseRange: 1900, baseSpeed: 1500, cooldown: 0.85, spread: 0.05,
+    energyCost: 3, vfxColor: '#ffcf6b',
+    flakBurstRadius: 95, flakFuseRadius: 34, flakFalloff: 0.35, flakHullFactor: 0.10,
+    burstCount: 1,
+    description: 'Lekka zapora burtowa. Kopuła rażenia ~40 u: gasi przechwytywacz, cięższy myśliwiec tylko obrywa.'
+  },
+  flak_m: {
+    id: 'flak_m', name: 'Kartacz Flak — Średni', mountType: 'aux', category: 'flak', size: 'M',
+    baseDamage: 200, baseRange: 2600, baseSpeed: 1650, cooldown: 1.0, spread: 0.07,
+    energyCost: 5, vfxColor: '#ffc258',
+    flakBurstRadius: 170, flakFuseRadius: 46, flakFalloff: 0.35, flakHullFactor: 0.12,
+    burstCount: 2,
+    description: 'Dwupociskowa salwa. Rozbija parę myśliwców naraz i rozprasza szyk podejścia.'
+  },
+  flak_l: {
+    id: 'flak_l', name: 'Grad Flak — Ciężki', mountType: 'aux', category: 'flak', size: 'L',
+    baseDamage: 300, baseRange: 3600, baseSpeed: 1800, cooldown: 1.3, spread: 0.10,
+    energyCost: 8, vfxColor: '#ffb347',
+    flakBurstRadius: 270, flakFuseRadius: 62, flakFalloff: 0.35, flakHullFactor: 0.14,
+    burstCount: 3,
+    description: 'Trzy pęknięcia na salwę. Kasuje cały klucz myśliwców i strąca nadlatujące rakiety.'
+  },
+  flak_capital: {
+    id: 'flak_capital', name: 'Zapora Flak "Perun"', mountType: 'aux', category: 'flak', size: 'Capital',
+    baseDamage: 460, baseRange: 5200, baseSpeed: 1900, cooldown: 1.9, spread: 0.16,
+    energyCost: 14, vfxColor: '#ffa726',
+    flakBurstRadius: 480, flakFuseRadius: 92, flakFalloff: 0.35, flakHullFactor: 0.16,
+    burstCount: 5,
+    description: 'Ściana pięciu pęknięć po pół kilometra każde. Jedna salwa wymiata całą nadlatującą eskadrę.'
+  },
+
   // ==========================================================================
   // RAKIETY
   // ==========================================================================
@@ -300,6 +350,10 @@ export const WEAPON_ICON_PATHS = {
   ciws_mk1: 'assets/weapons/ciws.svg',
   ciws_mk2: 'assets/weapons/ciws.svg',
   laser_pd_mk1: 'assets/weapons/laser_pd.svg',
+  flak_s: 'assets/weapons/flak.svg',
+  flak_m: 'assets/weapons/flak.svg',
+  flak_l: 'assets/weapons/flak.svg',
+  flak_capital: 'assets/weapons/flak.svg',
   missile_rack: 'assets/weapons/missile_rack.svg',
   fast_missile_rack: 'assets/weapons/missile_rack.svg',
   // S/M/L variants reuse the family icons

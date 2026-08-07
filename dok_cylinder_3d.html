@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dok Cylindryczny — pilotowanie Bellatora</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body, html { margin:0; padding:0; width:100%; height:100%; overflow:hidden;
+            background:#050510; color:#4ade80; font-family:'Courier New', Courier, monospace; }
+        canvas { display:block; }
+        #ui { position:absolute; inset:0; pointer-events:none; display:flex; flex-direction:column;
+            justify-content:space-between; padding:16px; box-sizing:border-box; z-index:10; }
+        .panel { background:rgba(5,5,16,0.78); border:1px solid #1e3a8a; border-radius:8px; padding:12px;
+            backdrop-filter:blur(4px); box-shadow:0 0 15px rgba(30,58,138,0.5); pointer-events:auto; }
+        .btn { display:block; width:100%; font-size:11px; padding:6px 9px; border-radius:6px;
+            border:1px solid; margin-top:5px; color:#fff; text-align:left; }
+        .btn:hover { filter:brightness(1.35); }
+        .btn:disabled { opacity:.35; cursor:not-allowed; }
+        .bar { width:100%; height:5px; background:#1e293b; border-radius:3px; overflow:hidden; margin-top:2px; }
+        .fill { height:100%; }
+        kbd { background:#1e293b; border:1px solid #334155; border-radius:3px; padding:1px 5px; font-size:10px; }
+    </style>
+</head>
+<body>
+
+<div id="ui">
+  <div class="flex justify-between items-start">
+    <div class="panel w-64">
+      <h1 class="text-base font-bold text-blue-400">DOK CYLINDRYCZNY</h1>
+      <p class="text-[10px] text-gray-400 mb-2">Kamera top-down GTA — jak w grze</p>
+
+      <div class="text-[10px] text-gray-400 mb-1">ZAMÓW MIEJSCE</div>
+      <div id="order-buttons"></div>
+
+      <div class="text-[10px] text-gray-400 mt-2">SEKWENCJA</div>
+      <div class="text-xs text-green-300" id="phase">bezczynny</div>
+      <div class="text-[10px] text-gray-500 mt-1" id="hint">Zamów miejsce, potem wleć na nie.</div>
+    </div>
+
+    <div class="panel w-56 text-right">
+      <h2 class="text-xs font-bold mb-2 text-yellow-400">ŚCIANY-BĘBNY</h2>
+      <div id="stats" class="text-[10px] space-y-1 text-left"></div>
+    </div>
+  </div>
+
+  <div class="flex justify-between items-end">
+    <div class="panel text-[11px]">
+      <div class="text-blue-300 font-bold mb-1">BELLATOR-CLASS</div>
+      <div class="text-gray-400">Terra Nova · battleship · 1040 × 440</div>
+      <div class="mt-2 text-gray-300">
+        <kbd>W</kbd> ciąg &nbsp; <kbd>S</kbd> hamulec/wstecz &nbsp;
+        <kbd>A</kbd>/<kbd>D</kbd> skręt &nbsp; <kbd>Shift</kbd> dopalacz
+      </div>
+      <div class="mt-1 text-gray-500 text-[10px]">Scroll = zoom · <kbd>R</kbd> = reset pozycji</div>
+    </div>
+    <div class="panel text-[11px] text-right">
+      <div>Prędkość: <b id="spd" class="text-green-300">0</b></div>
+      <div>Pozycja: <b id="pos" class="text-gray-300">—</b></div>
+      <div>Status: <b id="inside" class="text-amber-300">NA ZEWNĄTRZ</b></div>
+    </div>
+  </div>
+</div>
+
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+const TAU = Math.PI * 2;
+const FLOOR_A0 = 0.5 * Math.PI;
+const FLOOR_A1 = 1.5 * Math.PI;
+
+// =====================================================================
+//  DOK: cylinder wzdłuż X, ściany podzielone na 5 obrotowych bębnów.
+//  Kamera: PERSPEKTYWICZNA top-down GTA — warstwa 3D/stacji z Core3D.
+//  Gdy statek wleci do środka, DACH (górna połowa poszycia) znika,
+//  żeby było widać wnętrze.
+// =====================================================================
+const R_WALL  = 4400;
+const BERTH_R = 1250;
+const TH_LOAD = Math.PI / 2;          // pozycja podawcza: burta +Z
+const R_HULL  = R_WALL + 520;
+const CYL_LEN = 13000, CYL_X0 = -CYL_LEN / 2, CYL_X1 = CYL_LEN / 2;
+const SLOT_W  = 2800, SLOT_H = 2400;
+const WALL_C  = TAU * R_WALL;
+
+// Bellator-class — wymiary z ships.js (HULL_RENDER_PROFILES.terran_battleship)
+const BELLATOR = { L: 1040, W: 440 };
+
+const CLASSES = [
+  { id:'B', name:'Bertha',      hull:'terran_supercapital', hex:0xef4444, css:'#ef4444', L:2760, W:1554, gap:450, seg:3200 },
+  { id:'C', name:'Kapitalne',   hull:'terran_capital',      hex:0xa78bfa, css:'#a78bfa', L:3000, W:1000, gap:400, seg:3400 },
+  { id:'L', name:'Battleshipy', hull:'terran_battleship',   hex:0xec4899, css:'#ec4899', L:1040, W: 440, gap:250, seg:1400 },
+  { id:'M', name:'Destroyery',  hull:'terran_destroyer',    hex:0xe2e8f0, css:'#e2e8f0', L: 480, W: 340, gap:170, seg: 800 },
+  { id:'S', name:'Fregaty',     hull:'terran_frigate',      hex:0x22c55e, css:'#22c55e', L: 320, W: 240, gap:130, seg: 600 }
+];
+{
+  let cursor = CYL_X1 - 260;
+  for (const c of CLASSES) {
+    c.slots = Math.floor(WALL_C / (c.W + c.gap));
+    c.step  = TAU / c.slots;
+    c.x     = cursor - c.seg / 2;
+    cursor  = c.x - c.seg / 2 - 320;
+  }
+}
+
+// =====================================================================
+//  RENDERER / SCENA
+// =====================================================================
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+renderer.localClippingEnabled = true;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x030309);
+// Identycznie jak we wzorcu: wszystko powyżej osi cylindra jest odcinane.
+const interiorClipPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
+
+// --- Kamera gry: cameraPersp dla obiektów 3D, dokładnie top-down ---
+let viewSize = 16000;
+const camera = new THREE.PerspectiveCamera(35, innerWidth / innerHeight, 100, 500000);
+camera.up.set(0, 0, -1);                    // odpowiednik osi +Y ekranu w Core3D
+function applyCamera(cx, cz) {
+  camera.aspect = innerWidth / innerHeight;
+  // Core3D.syncCamera(): targetZ = (h/2) / tan(fov/2) / zoom.
+  // viewSize jest tutaj odpowiednikiem h/zoom, a osią głębokości jest Y.
+  const fovRad = THREE.MathUtils.degToRad(camera.fov * 0.5);
+  const targetY = (viewSize * 0.5) / Math.tan(fovRad);
+  camera.position.set(cx, targetY, cz);
+  camera.lookAt(cx, 0, cz);
+  camera.updateProjectionMatrix();
+}
+applyCamera(0, 0);
+
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+composer.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.85, 0.5, 0.86));
+composer.addPass(new OutputPass());
+
+scene.add(new THREE.HemisphereLight(0x2a3a55, 0x05070d, 0.6));
+const sun = new THREE.DirectionalLight(0x9db8dd, 0.75);
+sun.position.set(2000, 9000, 3000); scene.add(sun);
+const interiorLights = [];
+for (const c of CLASSES) {
+  const l = new THREE.PointLight(0x8ec5ff, 0.0, 12000, 1.8);
+  l.position.set(c.x, 500, 0); scene.add(l); interiorLights.push(l);
+}
+
+addEventListener('resize', () => {
+  renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight);
+});
+// Viewport: sam dobiera kadr (szeroki na zewnątrz, ciaśniejszy w środku),
+// dopóki gracz nie użyje scrolla — wtedy zoom jest w pełni ręczny.
+let viewTarget = 17000, userZoom = false;
+addEventListener('wheel', e => {
+  userZoom = true;
+  viewTarget = Math.max(3600, Math.min(viewTarget * (e.deltaY > 0 ? 1.14 : 1 / 1.14), 46000));
+});
+
+// =====================================================================
+//  MATERIAŁY / SPRITY
+// =====================================================================
+const UNIT = new THREE.BoxGeometry(1, 1, 1);
+const std = (c, o = {}) => new THREE.MeshStandardMaterial(Object.assign(
+  { color: c, metalness: 0.6, roughness: 0.5, envMapIntensity: 0.35 }, o));
+const glow = (c, i) => new THREE.MeshStandardMaterial(
+  { color: 0x000000, emissive: c, emissiveIntensity: i, metalness: 0, roughness: 1 });
+
+// Te same pliki PNG, których używa gra. `crop` to granice nieprzezroczystego
+// kadłuba wyznaczone z kanału alfa; dzięki UV nie skalujemy pustych marginesów.
+const HULL_SPRITES = Object.freeze({
+  terran_frigate: {
+    src: './src/assets/ships/terranfrigate.png',
+    aspect: 2.2975,
+    crop: [0.119167, 0.306362, 0.910833, 0.767857]
+  },
+  terran_destroyer: {
+    src: './src/assets/ships/terrandestroyer.png',
+    aspect: 1.7826,
+    crop: [0.057292, 0.178010, 0.911458, 0.820244]
+  },
+  terran_battleship: {
+    src: './src/assets/ships/terranbattleship.png',
+    aspect: 1.6190,
+    crop: [0.000864, 0.000000, 0.999136, 1.000000]
+  },
+  terran_capital: {
+    src: './src/assets/ships/terrancapital.png',
+    aspect: 2.5194,
+    crop: [0.020335, 0.146652, 0.992225, 0.832094]
+  },
+  terran_supercapital: {
+    src: './src/assets/ships/terransupercapital.png',
+    aspect: 2.4547,
+    crop: [0.006579, 0.139214, 0.994617, 0.854410]
+  }
+});
+
+const textureLoader = new THREE.TextureLoader();
+const maxAnisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+const SPRITE_TEX = {};
+
+function loadGameHullTexture(def) {
+  const texture = textureLoader.load(def.src, loaded => {
+    loaded.colorSpace = THREE.SRGBColorSpace;
+    loaded.anisotropy = maxAnisotropy;
+    loaded.needsUpdate = true;
+  }, undefined, () => hint(`Nie udało się wczytać sprite'a: ${def.src}`));
+  const [u0, v0, u1, v1] = def.crop;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = maxAnisotropy;
+  texture.offset.set(u0, 1 - v1);
+  texture.repeat.set(u1 - u0, v1 - v0);
+  texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
+  return texture;
+}
+
+for (const cls of CLASSES) {
+  const def = HULL_SPRITES[cls.hull];
+  const visibleAspect = def.aspect;
+  const maxL = cls.L * 0.94;
+  const maxW = cls.W * 0.88;
+  cls.spriteL = Math.min(maxL, maxW * visibleAspect);
+  cls.spriteW = cls.spriteL / visibleAspect;
+  SPRITE_TEX[cls.id] = loadGameHullTexture(def);
+}
+
+const BELLATOR_TEX = SPRITE_TEX.L;
+const BELLATOR_VISUAL = CLASSES.find(c => c.id === 'L');
+
+// Sprite wewnętrzny jest jednostronny i leży stycznie do ściany bębna.
+// Na dolnej połowie jego normalna płynnie obraca się ku kamerze, a na suficie
+// FrontSide sam go odrzuca. Płaszczyzna Y=0 jest dodatkowym bezpiecznikiem.
+function makeQuad(tex, L, W, inward = true, opacity = 1) {
+  const g = new THREE.PlaneGeometry(L, W);
+  g.rotateX(inward ? Math.PI / 2 : -Math.PI / 2);
+  const mesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({
+    map: tex, transparent: true, opacity,
+    side: THREE.FrontSide,
+    clippingPlanes: inward ? [interiorClipPlane] : [],
+    depthWrite: false
+  }));
+  mesh.userData.baseOpacity = opacity;
+  return mesh;
+}
+
+// Gwiazdy
+{
+  const N = 1200, pos = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    pos[i*3] = (Math.random()-0.5)*90000; pos[i*3+1] = -6000-Math.random()*4000; pos[i*3+2] = (Math.random()-0.5)*90000;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  scene.add(new THREE.Points(g, new THREE.PointsMaterial({ color: 0x4c5c78, size: 2, sizeAttenuation: false })));
+}
+
+// =====================================================================
+//  POSZYCIE: pełny cylinder; DACH (górna połowa) chowa się po wejściu
+// =====================================================================
+const roofGroup = new THREE.Group();   // znika, gdy jesteśmy w środku
+const baseGroup = new THREE.Group();
+scene.add(roofGroup, baseGroup);
+const roofMats = [];
+{
+  const mk = (col) => {
+    const m = std(col, { side: THREE.DoubleSide, roughness: 0.65, transparent: true, opacity: 1 });
+    roofMats.push(m); return m;
+  };
+  const rA = mk(0x1c2740), rB = mk(0x25334f);
+  const bA = std(0x18213a, { side: THREE.DoubleSide, roughness: 0.65 });
+  const bB = std(0x212e47, { side: THREE.DoubleSide, roughness: 0.65 });
+
+  const N = 40, dTh = TAU / N, pw = R_HULL * dTh * 0.95;
+  for (let i = 0; i < N; i++) {
+    const th = dTh * (i + 0.5);
+    const up = Math.cos(th) > 0;                      // górna połowa = dach
+    const p = new THREE.Mesh(UNIT, up ? (i % 2 ? rA : rB) : (i % 2 ? bA : bB));
+    p.scale.set(CYL_LEN, 120, pw);
+    p.position.set(0, R_HULL * Math.cos(th), R_HULL * Math.sin(th));
+    p.rotation.x = th;
+    (up ? roofGroup : baseGroup).add(p);
+  }
+  // Żebra
+  for (const rx of [-5200, -1800, 1600, 5000]) {
+    for (let i = 0; i < N; i += 2) {
+      const th = dTh * (i + 0.5);
+      const up = Math.cos(th) > 0;
+      const r = new THREE.Mesh(UNIT, up ? rA : bA);
+      r.scale.set(240, 260, pw * 1.02);
+      r.position.set(rx, (R_HULL + 70) * Math.cos(th), (R_HULL + 70) * Math.sin(th));
+      r.rotation.x = th;
+      (up ? roofGroup : baseGroup).add(r);
+    }
+  }
+
+  // Czoła z otworem wlotu
+  const capShape = (withSlot) => {
+    const s = new THREE.Shape();
+    s.absarc(0, 0, R_HULL, 0, TAU, false);
+    if (withSlot) {
+      const h = new THREE.Path();
+      h.moveTo(-SLOT_W/2, -SLOT_H/2); h.lineTo(SLOT_W/2, -SLOT_H/2);
+      h.lineTo(SLOT_W/2, SLOT_H/2);   h.lineTo(-SLOT_W/2, SLOT_H/2);
+      h.closePath(); s.holes.push(h);
+    }
+    const g = new THREE.ExtrudeGeometry(s, { depth: 240, bevelEnabled: false });
+    g.rotateY(Math.PI / 2);
+    return g;
+  };
+  const cf = new THREE.Mesh(capShape(true), std(0x172236, { side: THREE.DoubleSide }));
+  cf.position.x = CYL_X1 + 120; baseGroup.add(cf);
+  const cb = new THREE.Mesh(capShape(false), std(0x101a2c, { side: THREE.DoubleSide }));
+  cb.position.x = CYL_X0 - 360; baseGroup.add(cb);
+
+  // Świetlna ramka wlotu + światła podejścia
+  const sm = glow(0xf59e0b, 1.8);
+  for (const sy of [-SLOT_H/2 - 60, SLOT_H/2 + 60]) {
+    const m = new THREE.Mesh(UNIT, sm);
+    m.scale.set(150, 90, SLOT_W + 200); m.position.set(CYL_X1 + 380, sy, 0); baseGroup.add(m);
+  }
+  for (const sz of [-SLOT_W/2 - 60, SLOT_W/2 + 60]) {
+    const m = new THREE.Mesh(UNIT, sm);
+    m.scale.set(150, SLOT_H + 120, 100); m.position.set(CYL_X1 + 380, 0, sz); baseGroup.add(m);
+  }
+}
+// Światła podejścia przed bramą
+const approachLights = [];
+{
+  const geo = new THREE.SphereGeometry(70, 8, 8);
+  for (let k = 0; k < 10; k++) {
+    for (const sz of [-1500, 1500]) {
+      const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0x0a1a2c }));
+      m.position.set(CYL_X1 + 900 + k * 900, 0, sz);
+      scene.add(m); approachLights.push({ mesh: m, k });
+    }
+  }
+}
+
+// =====================================================================
+//  WNĘTRZE JAK WE WZORCU: prawdziwy otwarty CylinderGeometry, przecięty
+//  płaszczyzną Y=0. Zostaje fizyczna dolna połowa — wklęsłe koryto.
+// =====================================================================
+{
+  const R_LINER = R_WALL + 200;
+  const floorGeo = new THREE.CylinderGeometry(
+    R_LINER, R_LINER, CYL_LEN - 200, 64, 1, true
+  );
+  floorGeo.rotateZ(Math.PI / 2);
+  const floor = new THREE.Mesh(floorGeo, new THREE.MeshStandardMaterial({
+    color: 0x18213a,
+    roughness: 0.6,
+    metalness: 0.1,
+    envMapIntensity: 0.35,
+    side: THREE.DoubleSide,
+    clippingPlanes: [interiorClipPlane]
+  }));
+  floor.receiveShadow = true;
+  baseGroup.add(floor);
+
+  // Wzdłużne linie prowadzące — podkreślają krzywiznę dna
+  for (let i = 0; i <= 8; i++) {
+    const th = FLOOR_A0 + (FLOOR_A1 - FLOOR_A0) * (i / 8);
+    const s = new THREE.Mesh(UNIT, glow(0x1e40af, 0.55));
+    s.scale.set(CYL_LEN - 200, 16, 30);
+    s.position.set(0, (R_LINER - 48) * Math.cos(th), (R_LINER - 48) * Math.sin(th));
+    s.rotation.x = th;
+    baseGroup.add(s);
+  }
+}
+
+// =====================================================================
+//  ŚCIANY-BĘBNY
+// =====================================================================
+const drums = [];
+for (const cls of CLASSES) {
+  const group = new THREE.Group();
+  group.position.x = cls.x;
+  scene.add(group);
+
+  // `parts` = elementy przycinane przy przekroju (górna połowa znika razem z dachem)
+  const parts = [];
+  const rimMat = std(0x2b3850, {
+    metalness: 0.7, roughness: 0.4, emissive: cls.hex, emissiveIntensity: 0.4,
+    clippingPlanes: [interiorClipPlane]
+  });
+  const baffleMat = std(0x475a7d, {
+    metalness: 0.7, roughness: 0.4, clippingPlanes: [interiorClipPlane]
+  });
+
+  // Każda sekcja jest teraz prawdziwym otwartym cylindrem jak w demie,
+  // a nie tylko zestawem obręczy sugerujących wypukłą powierzchnię.
+  const drumShellGeo = new THREE.CylinderGeometry(
+    R_WALL, R_WALL, cls.seg - 40, 64, 1, true
+  );
+  drumShellGeo.rotateZ(Math.PI / 2);
+  const drumShell = new THREE.Mesh(drumShellGeo, std(0x202b43, {
+    roughness: 0.6,
+    metalness: 0.1,
+    side: THREE.DoubleSide,
+    clippingPlanes: [interiorClipPlane]
+  }));
+  drumShell.receiveShadow = true;
+  group.add(drumShell);
+
+  // Obręcze czołowe — segmentowane, żeby dały się przyciąć
+  const RIM_SEG = 24, rimW = (R_WALL + 60) * (TAU / RIM_SEG) * 0.94;
+  for (const hx of [-cls.seg / 2, cls.seg / 2]) {
+    for (let i = 0; i < RIM_SEG; i++) {
+      const th = (i / RIM_SEG) * TAU;
+      const seg = new THREE.Mesh(UNIT, rimMat);
+      seg.scale.set(190, 200, rimW);
+      seg.position.set(hx, (R_WALL + 60) * Math.cos(th), (R_WALL + 60) * Math.sin(th));
+      seg.rotation.x = th; group.add(seg);
+      parts.push({ mesh: seg, ang: th });
+    }
+  }
+  const slots = [];
+  for (let j = 0; j < cls.slots; j++) {
+    const ang = j * cls.step;
+    const sg = new THREE.Group();
+    sg.rotation.x = ang;
+    group.add(sg);
+    // Półka 1:1 z proporcji dema: cienka podstawa wsunięta promieniowo
+    // do wnętrza cylindra oraz mały rant na jej wewnętrznej krawędzi.
+    const cradle = new THREE.Group();
+    const shelfDepth = R_WALL * (0.15 / 3);
+    const shelfThickness = R_WALL * (0.05 / 3);
+    const lipDepth = R_WALL * (0.05 / 3);
+    const lipWidth = R_WALL * (0.08 / 3);
+    const shelf = new THREE.Mesh(UNIT, baffleMat);
+    shelf.scale.set(cls.seg * (5.8 / 6), shelfDepth, shelfThickness);
+    shelf.position.y = -shelfDepth * 0.5;
+    const lip = new THREE.Mesh(UNIT, baffleMat);
+    lip.scale.set(cls.seg * (5.8 / 6), lipDepth, lipWidth);
+    lip.position.set(0, -shelfDepth, -lipWidth * 0.5);
+    cradle.add(shelf, lip);
+    sg.add(cradle);
+    slots.push({
+      group: sg,
+      cradle,
+      ang,
+      r: R_WALL - 20,
+      shipInset: shelfDepth + 18,
+      filled: false,
+      ship: null
+    });
+  }
+
+  const d = { cls, group, slots, parts, rot: Math.random() * TAU, rotTo: 0,
+              spin: 0.02 + Math.random() * 0.03, loadSlot: -1 };
+  d.rotTo = d.rot;
+  const pre = Math.floor(cls.slots * (0.25 + Math.random() * 0.3));
+  for (let i = 0; i < pre; i++) {
+    const j = Math.floor(Math.random() * cls.slots);
+    const s = d.slots[j];
+    if (s.filled) continue;
+    s.filled = true;
+    s.ship = makeQuad(SPRITE_TEX[cls.id], cls.spriteL, cls.spriteW, true, 0.92);
+    s.group.add(s.ship);
+  }
+  drums.push(d);
+}
+const drumById = id => drums.find(d => d.cls.id === id);
+function layoutSlot(s) {
+  s.cradle.position.set(0, s.r, 0);
+  if (s.ship) s.ship.position.set(0, s.r - s.shipInset, 0);
+}
+
+// =====================================================================
+//  BELLATOR — sterowanie WSAD
+// =====================================================================
+const SHIP_START = { x: CYL_X1 + 9000, z: 0, a: Math.PI };
+const ship = {
+  x: SHIP_START.x, z: SHIP_START.z, a: SHIP_START.a,
+  vx: 0, vz: 0, docked: false, mesh: null
+};
+ship.mesh = makeQuad(BELLATOR_TEX, BELLATOR_VISUAL.spriteL, BELLATOR_VISUAL.spriteW, false, 1);
+scene.add(ship.mesh);
+// Poświata silników
+const engineGlow = new THREE.Mesh(new THREE.PlaneGeometry(
+  BELLATOR_VISUAL.spriteL * 0.5,
+  BELLATOR_VISUAL.spriteW * 0.68
+), new THREE.MeshBasicMaterial({
+  color: 0x7dd3fc, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false
+}));
+engineGlow.geometry.rotateX(-Math.PI / 2);
+scene.add(engineGlow);
+
+const ACC = 3400, ACC_BOOST = 7200, REV = 1500, TURN = 1.15, DRAG = 0.55;
+const keys = {};
+addEventListener('keydown', e => {
+  const k = e.key.toLowerCase();
+  keys[k] = true;
+  if (k === 'r') resetShip();
+  if (['w','a','s','d',' '].includes(k)) e.preventDefault();
+});
+addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+
+function resetShip() {
+  ship.x = SHIP_START.x; ship.z = SHIP_START.z; ship.a = SHIP_START.a;
+  ship.vx = 0; ship.vz = 0; ship.docked = false;
+  ship.mesh.visible = true;
+  hint('Pozycja zresetowana — lecisz od bramy.');
+}
+
+let thrustLevel = 0;
+function stepShip(dt) {
+  if (ship.docked) { thrustLevel *= 0.9; return; }
+  const boost = keys['shift'];
+  let acc = 0;
+  if (keys['w']) acc = boost ? ACC_BOOST : ACC;
+  else if (keys['s']) acc = -REV;
+  thrustLevel += ((acc > 0 ? (boost ? 1 : 0.6) : 0) - thrustLevel) * (1 - Math.pow(0.02, dt));
+
+  if (keys['a']) ship.a -= TURN * dt;
+  if (keys['d']) ship.a += TURN * dt;
+
+  ship.vx += Math.cos(ship.a) * acc * dt;
+  ship.vz += Math.sin(ship.a) * acc * dt;
+  const damp = Math.pow(DRAG, dt);
+  ship.vx *= damp; ship.vz *= damp;
+  ship.x += ship.vx * dt; ship.z += ship.vz * dt;
+
+  // Miękkie odbicie od ściany cylindra, gdy jesteśmy w środku
+  if (ship.x < CYL_X1 && ship.x > CYL_X0) {
+    const lim = R_WALL - 400;
+    if (Math.abs(ship.z) > lim) {
+      ship.z = Math.sign(ship.z) * lim;
+      ship.vz *= -0.35;
+    }
+  }
+}
+
+function shipSpeed() { return Math.hypot(ship.vx, ship.vz); }
+
+// =====================================================================
+//  SEKWENCJA DOKOWANIA (gracz sam wlatuje na wysuniętą kołyskę)
+// =====================================================================
+const SEQ = { phase: 'idle', drum: null, slot: null, t: 0 };
+const PHASE_TXT = {
+  idle: 'bezczynny', aligning: 'ustawianie gniazda', extending: 'wysuwanie miejsca',
+  waiting: 'miejsce gotowe — wleć na nie', retracting: 'wciąganie do ściany', rotating: 'obrót bębna'
+};
+
+function orderBerth(id) {
+  if (SEQ.phase !== 'idle') return;
+  const d = drumById(id);
+  const j = d.slots.findIndex(s => !s.filled);
+  if (j < 0) { hint(`Bęben ${id}: brak wolnych gniazd.`); return; }
+  const cur = d.rot + j * d.cls.step;
+  let diff = TH_LOAD - cur;
+  diff = ((diff % TAU) + TAU) % TAU;
+  if (diff > Math.PI) diff -= TAU;
+  d.rotTo = d.rot + diff;
+  d.loadSlot = j;
+  SEQ.phase = 'aligning'; SEQ.drum = d; SEQ.slot = d.slots[j]; SEQ.t = 0;
+  hint(`Bęben ${id}: ustawianie gniazda ${j + 1} z ${d.cls.slots}.`);
+}
+window.orderBerth = orderBerth;
+
+const _wp = new THREE.Vector3();
+function stepSeq(dt) {
+  const d = SEQ.drum, s = SEQ.slot;
+  SEQ.t += dt;
+  switch (SEQ.phase) {
+    case 'aligning':
+      if (Math.abs(d.rotTo - d.rot) < 0.004) { d.rot = d.rotTo; SEQ.phase = 'extending'; SEQ.t = 0; }
+      break;
+    case 'extending':
+      s.r += (BERTH_R - s.r) * (1 - Math.pow(0.004, dt));
+      if (s.r - BERTH_R < 25) { s.r = BERTH_R; SEQ.phase = 'waiting'; hint('Miejsce wysunięte — wleć na nie i wyhamuj.'); }
+      break;
+    case 'waiting': {
+      s.cradle.getWorldPosition(_wp);
+      const dist = Math.hypot(ship.x - _wp.x, ship.z - _wp.z);
+      if (!ship.docked && dist < 520 && shipSpeed() < 420) {
+        ship.docked = true; ship.mesh.visible = false;
+        s.filled = true;
+        s.ship = makeQuad(BELLATOR_TEX, BELLATOR_VISUAL.spriteL, BELLATOR_VISUAL.spriteW, true, 1);
+        s.group.add(s.ship);
+        SEQ.phase = 'retracting'; SEQ.t = 0;
+        hint('Zacumowano! Wciąganie do ściany.');
+      }
+      break;
+    }
+    case 'retracting': {
+      const target = R_WALL - 20;
+      s.r += (target - s.r) * (1 - Math.pow(0.004, dt));
+      if (target - s.r < 25) {
+        s.r = target; d.rotTo = d.rot + d.cls.step;
+        SEQ.phase = 'rotating'; SEQ.t = 0; hint('Obrót bębna.');
+      }
+      break;
+    }
+    case 'rotating':
+      if (Math.abs(d.rotTo - d.rot) < 0.004) {
+        d.rot = d.rotTo;
+        SEQ.phase = 'idle'; SEQ.drum = null; SEQ.slot = null; d.loadSlot = -1;
+        hint('Zadokowano. Wciśnij R, żeby wylecieć ponownie.');
+      }
+      break;
+  }
+}
+
+// =====================================================================
+//  DACH: chowa się, gdy statek jest w środku
+// =====================================================================
+let roofHide = 0;
+function updateRoof(dt) {
+  // 0 = na zewnątrz (dach widoczny), 1 = w środku (dach schowany)
+  const inside = (ship.x < CYL_X1 + 400) && (ship.x > CYL_X0 - 400);
+  const target = inside ? 1 : 0;
+  roofHide += (target - roofHide) * (1 - Math.pow(0.01, dt));
+  const op = 1 - roofHide;
+  for (const m of roofMats) m.opacity = op;
+  roofGroup.visible = op > 0.02;
+  for (const l of interiorLights) l.intensity = 1.5 * roofHide;
+  // Kadr: w środku ciaśniej (przekrój tuby ma 2×R_HULL = ~9800 wszerz)
+  if (!userZoom) viewTarget = inside ? 12000 : 17000;
+  viewSize += (viewTarget - viewSize) * (1 - Math.pow(0.03, dt));
+  document.getElementById('inside').innerText = inside ? 'W DOKU' : 'NA ZEWNĄTRZ';
+  document.getElementById('inside').className = inside ? 'text-green-300' : 'text-amber-300';
+}
+
+// =====================================================================
+//  PĘTLA
+// =====================================================================
+let time = 0;
+const _c = new THREE.Color();
+function syncScene(dt) {
+  for (const d of drums) {
+    if (SEQ.drum !== d) { d.rot += d.spin * dt; d.rotTo = d.rot; }
+    else d.rot += (d.rotTo - d.rot) * (1 - Math.pow(0.006, dt));
+    d.group.rotation.x = d.rot;
+
+    for (const s of d.slots) {
+      layoutSlot(s);
+      const worldAngle = d.rot + s.ang;
+      // Półki nie znikają już całymi obiektami. Materiałowa płaszczyzna Y=0
+      // przecina je ciągle, tak samo jak CylinderGeometry z dema.
+      s.cradle.visible = true;
+      if (s.ship) {
+        // Obrót pozostaje lokalnie zerowy: rodzic `sg` układa statek stycznie
+        // do krzywizny. Przy krawędzi sprite naturalnie staje się wąski.
+        s.ship.rotation.x = 0;
+        s.ship.scale.setScalar(1);
+        const floorDepth = Math.max(0, -Math.cos(worldAngle));
+        const fadeT = Math.min(1, floorDepth / 0.22);
+        const edgeFade = fadeT * fadeT * (3 - 2 * fadeT);
+        s.ship.material.opacity = s.ship.userData.baseOpacity * edgeFade;
+        s.ship.visible = edgeFade > 0.002;
+      }
+    }
+  }
+  // Światła podejścia — fala ku bramie
+  for (const a of approachLights) {
+    const b = 0.05 + 2.4 * Math.pow(0.5 + 0.5 * Math.sin(a.k * 0.9 + time * 4), 8);
+    _c.setRGB(0.5 * b, 0.72 * b, 1.05 * b);
+    a.mesh.material.color.copy(_c);
+  }
+  if (!ship.docked) {
+    ship.mesh.position.set(ship.x, 0, ship.z);
+    ship.mesh.rotation.y = -ship.a;
+    engineGlow.visible = thrustLevel > 0.02;
+    engineGlow.material.opacity = thrustLevel * 0.75;
+    engineGlow.position.set(ship.x - Math.cos(ship.a) * BELLATOR_VISUAL.spriteL * 0.62, -10,
+                            ship.z - Math.sin(ship.a) * BELLATOR_VISUAL.spriteL * 0.62);
+    engineGlow.rotation.y = -ship.a;
+    engineGlow.scale.set(0.6 + thrustLevel * 0.8, 1, 1);
+  } else engineGlow.visible = false;
+}
+
+document.getElementById('order-buttons').innerHTML = CLASSES.map(c =>
+  `<button class="btn" style="background:${c.css}22;border-color:${c.css}"
+     onclick="orderBerth('${c.id}')" id="btn-${c.id}">
+     <b style="color:${c.css}">${c.id}</b> — ${c.name}
+     <span class="text-gray-400">(${c.slots})</span></button>`).join('');
+
+const statsEl = document.getElementById('stats');
+function hint(t) { document.getElementById('hint').innerText = t; }
+function refreshUI() {
+  document.getElementById('phase').innerText =
+    PHASE_TXT[SEQ.phase] + (SEQ.drum ? ` · ${SEQ.drum.cls.id}` : '');
+  document.getElementById('spd').innerText = Math.round(shipSpeed());
+  document.getElementById('pos').innerText = `${Math.round(ship.x)}, ${Math.round(ship.z)}`;
+  statsEl.innerHTML = drums.map(d => {
+    const n = d.slots.filter(s => s.filled).length, pc = Math.round(n / d.cls.slots * 100);
+    return `<div><div class="flex justify-between">
+      <span style="color:${d.cls.css}">${d.cls.id}</span>
+      <span class="text-gray-400">${n}/${d.cls.slots}</span></div>
+      <div class="bar"><div class="fill" style="width:${pc}%;background:${d.cls.css}"></div></div></div>`;
+  }).join('');
+  for (const d of drums) {
+    const b = document.getElementById('btn-' + d.cls.id);
+    if (b) b.disabled = (SEQ.phase !== 'idle') || d.slots.every(s => s.filled);
+  }
+}
+
+const clock = new THREE.Clock();
+let frame = 0;
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  time += dt;
+  stepShip(dt);
+  if (SEQ.phase !== 'idle') stepSeq(dt);
+  updateRoof(dt);     // najpierw stan dachu — syncScene przycina wg niego bębny
+  syncScene(dt);
+  // Tak jak kamera gry: środek widoku podąża za sterowanym bytem również w Z.
+  if (ship.docked && SEQ.slot) {
+    SEQ.slot.cradle.getWorldPosition(_wp);
+    applyCamera(_wp.x, _wp.z);
+  } else {
+    applyCamera(ship.x, ship.z);
+  }
+  if (++frame % 10 === 0) refreshUI();
+  composer.render();
+}
+refreshUI();
+hint('Lecisz WSAD. Zamów miejsce i wleć do doku.');
+animate();
+</script>
+</body>
+</html>

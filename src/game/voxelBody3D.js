@@ -86,6 +86,11 @@ export function voxelizeTriangles(positions, colors, opts = {}) {
   const shellLayers = Math.max(0, opts.shellLayers === undefined ? 2 : (opts.shellLayers | 0));
   const maxCells = Math.max(1000, Number(opts.maxCells) || 120000);
   const interiorColorMul = Number.isFinite(opts.interiorColorMul) ? opts.interiorColorMul : 0.55;
+  // 'shell' — tylko skorupa, wnętrze puste (przebicie odsłania pustkę)
+  // 'ribs'  — skorupa + kratownica belek w głębi (wygląda jak konstrukcja statku)
+  // 'full'  — pełny wolumen
+  const interiorMode = opts.interiorMode || 'shell';
+  const ribStep = Math.max(2, opts.ribStep === undefined ? 4 : (opts.ribStep | 0));
 
   const triCount = Math.floor(positions.length / 9);
   if (triCount <= 0) throw new Error('voxelizeTriangles: brak trójkątów');
@@ -257,7 +262,18 @@ export function voxelizeTriangles(positions, colors, opts = {}) {
         const o = occ[id];
         if (o !== OCC_SURFACE && o !== OCC_INTERIOR) continue;
         // Skorupa: odetnij wnętrze głębsze niż shellLayers (0 = pełny wolumen).
-        if (shellLayers > 0 && depth[id] > shellLayers) continue;
+        // Belki: komórka w głębi zostaje, gdy leży na przecięciu DWÓCH płaszczyzn
+        // siatki belek — daje to belki wzdłuż wszystkich trzech osi. Każda belka
+        // dobiega do powierzchni, więc struktura jest spójna ze skorupą i nie
+        // odpada jako osobna wyspa przy pierwszym sprawdzeniu rozpadów.
+        if (shellLayers > 0 && depth[id] > shellLayers && interiorMode !== 'full') {
+          if (interiorMode !== 'ribs') continue;
+          let aligned = 0;
+          if (i % ribStep === 0) aligned++;
+          if (j % ribStep === 0) aligned++;
+          if (k % ribStep === 0) aligned++;
+          if (aligned < 2) continue;
+        }
 
         const w = colW[id];
         const surface = (o === OCC_SURFACE);
@@ -287,6 +303,198 @@ export function voxelizeTriangles(positions, colors, opts = {}) {
     origin: { x: originX, y: originY, z: originZ },
     aabb: { minX, minY, minZ, maxX, maxY, maxZ }
   };
+}
+
+// ---------------------------------------------------------------------------
+// SKÓRA: oryginalna geometria modelu zachowana obok kratownicy.
+//
+// Renderer pokazuje mesh .glb (pełne tekstury), a kratownica pod spodem prowadzi
+// fizykę. Skóra jedzie po polu deformacji komórek (FFD) i znika tam, gdzie komórki
+// zginęły — to 3D-owy odpowiednik tego, co destructor 2D robi ze sprite'em pancerza
+// (deformacja przesuwa obraz, `destination-out` wycina dziury).
+// ---------------------------------------------------------------------------
+
+// Ogólne odwrócenie 3x3 (górny minor mat4) + transpozycja → macierz normalnych.
+function normalMatrixFromMat4(e) {
+  const a = e[0], b = e[4], c = e[8];
+  const d = e[1], f = e[5], g = e[9];
+  const h = e[2], i = e[6], j = e[10];
+  const A = f * j - g * i;
+  const B = g * h - d * j;
+  const C = d * i - f * h;
+  const det = a * A + b * B + c * C;
+  if (!Number.isFinite(det) || Math.abs(det) < 1e-12) return [1, 0, 0, 0, 1, 0, 0, 0, 1];
+  const inv = 1 / det;
+  // (M⁻¹)ᵀ — od razu w układzie wierszowym do mnożenia n' = N·n
+  return [
+    A * inv, B * inv, C * inv,
+    (c * i - b * j) * inv, (a * j - c * h) * inv, (b * h - a * i) * inv,
+    (b * g - c * f) * inv, (c * d - a * g) * inv, (a * f - b * d) * inv
+  ];
+}
+
+/**
+ * Wyciąga geometrię skóry z modelu three (duck-typing, bez importu three).
+ * Pozycje i normalne są WYPIECZONE do przestrzeni ekstrakcji — tej samej,
+ * w której powstają komórki — więc shader nie musi znać hierarchii modelu.
+ * Zwraca listę części: jedna na (mesh × grupa materiału).
+ */
+export function extractSkinParts(root) {
+  if (typeof root?.updateWorldMatrix === 'function') root.updateWorldMatrix(true, true);
+
+  const meshes = [];
+  (function walk(obj, isRoot) {
+    if (!obj) return;
+    if (!isRoot && obj.visible === false) return;
+    if (obj.isMesh && obj.geometry?.attributes?.position) meshes.push(obj);
+    const children = obj.children;
+    if (Array.isArray(children)) for (const ch of children) walk(ch, false);
+  })(root, true);
+
+  const parts = [];
+  for (const mesh of meshes) {
+    const geom = mesh.geometry;
+    const posAttr = geom.attributes.position;
+    const nrmAttr = geom.attributes.normal || null;
+    const uvAttr = geom.attributes.uv || null;
+    const count = posAttr.count;
+    const e = mesh.matrixWorld?.elements || [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+    const nm = normalMatrixFromMat4(e);
+
+    const positions = new Float32Array(count * 3);
+    const normals = new Float32Array(count * 3);
+    const uvs = new Float32Array(count * 2);
+
+    for (let v = 0; v < count; v++) {
+      const x = posAttr.getX(v), y = posAttr.getY(v), z = posAttr.getZ(v);
+      positions[v * 3] = e[0] * x + e[4] * y + e[8] * z + e[12];
+      positions[v * 3 + 1] = e[1] * x + e[5] * y + e[9] * z + e[13];
+      positions[v * 3 + 2] = e[2] * x + e[6] * y + e[10] * z + e[14];
+
+      let nx = 0, ny = 0, nz = 1;
+      if (nrmAttr) { nx = nrmAttr.getX(v); ny = nrmAttr.getY(v); nz = nrmAttr.getZ(v); }
+      let tx = nm[0] * nx + nm[1] * ny + nm[2] * nz;
+      let ty = nm[3] * nx + nm[4] * ny + nm[5] * nz;
+      let tz = nm[6] * nx + nm[7] * ny + nm[8] * nz;
+      const len = Math.hypot(tx, ty, tz) || 1;
+      normals[v * 3] = tx / len;
+      normals[v * 3 + 1] = ty / len;
+      normals[v * 3 + 2] = tz / len;
+
+      if (uvAttr) {
+        uvs[v * 2] = uvAttr.getX(v);
+        uvs[v * 2 + 1] = uvAttr.getY(v);
+      }
+    }
+
+    const index = geom.index ? geom.index.array : null;
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    const groups = (geom.groups && geom.groups.length > 0)
+      ? geom.groups
+      : [{ start: 0, count: index ? index.length : count, materialIndex: 0 }];
+
+    for (const group of groups) {
+      const material = materials[Math.min(group.materialIndex || 0, materials.length - 1)] || materials[0];
+      let indices;
+      if (index) {
+        const end = Math.min(index.length, group.start + group.count);
+        indices = index.slice(group.start, end);
+      } else {
+        const end = Math.min(count, group.start + group.count);
+        indices = new Uint32Array(end - group.start);
+        for (let k = 0; k < indices.length; k++) indices[k] = group.start + k;
+      }
+      // positions/normals/uvs są WSPÓŁDZIELONE między grupami tego samego mesha —
+      // renderer może z tego zrobić jeden zestaw atrybutów GPU.
+      parts.push({ positions, normals, uvs, indices, material: material || null });
+    }
+  }
+  return parts;
+}
+
+// Posortowane offsety kuli do szukania najbliższej zajętej komórki.
+const BIND_OFFSETS_CACHE = Object.create(null);
+function getBindOffsets(radius) {
+  const r = Math.max(0, radius | 0);
+  let arr = BIND_OFFSETS_CACHE[r];
+  if (arr) return arr;
+  const list = [];
+  for (let dz = -r; dz <= r; dz++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        list.push([dx, dy, dz, dx * dx + dy * dy + dz * dz]);
+      }
+    }
+  }
+  list.sort((a, b) => a[3] - b[3]);
+  arr = new Int16Array(list.length * 3);
+  for (let i = 0; i < list.length; i++) {
+    arr[i * 3] = list[i][0];
+    arr[i * 3 + 1] = list[i][1];
+    arr[i * 3 + 2] = list[i][2];
+  }
+  BIND_OFFSETS_CACHE[r] = arr;
+  return arr;
+}
+
+/**
+ * Wiąże każdy wierzchołek skóry z NAJBLIŻSZĄ ZAJĘTĄ komórką i zapisuje jej
+ * znormalizowane współrzędne tekstury 3D (atrybut aCellUV).
+ *
+ * Dlaczego najbliższa zajęta, a nie po prostu komórka pod wierzchołkiem:
+ * wierzchołki skóry leżą DOKŁADNIE na granicy bryły, więc zaokrąglenie w dół
+ * potrafi wskazać komórkę na zewnątrz (pustą). Maska dziur czytana z takiej
+ * komórki wycinałaby losowe fragmenty nietkniętego kadłuba.
+ *
+ * Wiązanie jest po indeksach kratownicy (ix,iy,iz), które NIE zmieniają się przy
+ * rozpadach — dlatego ta sama skóra obsługuje rodzica i każdy wrak.
+ */
+export function bindSkinToLattice(parts, occupiedCells, lattice) {
+  const { nx, ny, nz, cellSize, origin } = lattice;
+  const occupied = new Set();
+  for (const c of occupiedCells) occupied.add(packKey(c.ix, c.iy, c.iz));
+
+  const offsets = getBindOffsets(5);
+  let unbound = 0;
+
+  for (const part of parts) {
+    if (part.cellUV) continue; // części współdzielą tablice wierzchołków — licz raz
+    const count = part.positions.length / 3;
+    const cellUV = new Float32Array(count * 3);
+
+    for (let v = 0; v < count; v++) {
+      const px = part.positions[v * 3];
+      const py = part.positions[v * 3 + 1];
+      const pz = part.positions[v * 3 + 2];
+      const bi = Math.floor((px - origin.x) / cellSize);
+      const bj = Math.floor((py - origin.y) / cellSize);
+      const bk = Math.floor((pz - origin.z) / cellSize);
+
+      let fi = bi, fj = bj, fk = bk, found = false;
+      for (let o = 0; o < offsets.length; o += 3) {
+        const ci = bi + offsets[o];
+        const cj = bj + offsets[o + 1];
+        const ck = bk + offsets[o + 2];
+        if (ci < 0 || cj < 0 || ck < 0 || ci >= nx || cj >= ny || ck >= nz) continue;
+        if (!occupied.has(packKey(ci, cj, ck))) continue;
+        fi = ci; fj = cj; fk = ck;
+        found = true;
+        break;
+      }
+      if (!found) unbound++;
+
+      cellUV[v * 3] = (Math.min(nx - 1, Math.max(0, fi)) + 0.5) / nx;
+      cellUV[v * 3 + 1] = (Math.min(ny - 1, Math.max(0, fj)) + 0.5) / ny;
+      cellUV[v * 3 + 2] = (Math.min(nz - 1, Math.max(0, fk)) + 0.5) / nz;
+    }
+
+    // Rozdaj wynik wszystkim częściom dzielącym tę samą tablicę wierzchołków.
+    for (const other of parts) {
+      if (other.positions === part.positions) other.cellUV = cellUV;
+    }
+  }
+
+  return { unbound };
 }
 
 // ---------------------------------------------------------------------------
@@ -346,6 +554,60 @@ export function buildVoxelBody(vox, opts = {}) {
     if (d > radius) radius = d;
   }
 
+  // Skóra: wiązanie liczymy w przestrzeni SPRZED recentrowania (tam żyje vox.origin),
+  // a dopiero potem przesuwamy wierzchołki o ten sam wektor co komórki — dzięki temu
+  // mesh i kratownica zostają zgodne, a mapowanie (pozycja → komórka) jest wspólne.
+  let skin = null;
+  const skinParts = opts.skinParts;
+  if (Array.isArray(skinParts) && skinParts.length > 0) {
+    const bindInfo = bindSkinToLattice(skinParts, cells, {
+      nx: vox.nx, ny: vox.ny, nz: vox.nz,
+      cellSize: cs,
+      origin: vox.origin
+    });
+
+    const shifted = new Set();
+    for (const part of skinParts) {
+      if (shifted.has(part.positions)) continue;
+      shifted.add(part.positions);
+      const p = part.positions;
+      for (let i = 0; i < p.length; i += 3) {
+        p[i] -= comX;
+        p[i + 1] -= comY;
+        p[i + 2] -= comZ;
+      }
+    }
+
+    let vertexCount = 0;
+    let triangleCount = 0;
+    const counted = new Set();
+    for (const part of skinParts) {
+      triangleCount += part.indices.length / 3;
+      if (counted.has(part.positions)) continue;
+      counted.add(part.positions);
+      vertexCount += part.positions.length / 3;
+    }
+
+    // Mapa PIERWOTNEJ zajętości kratownicy. Maska dziur potrzebuje trzech stanów,
+    // nie dwóch: „komórka żywa", „komórka zginęła" i „komórki tu nigdy nie było".
+    // Bez tego trzeciego stanu wrak (który stracił komórki drugiej połowy) nie
+    // umiałby odróżnić własnej krawędzi rozłamu od pustki poza kadłubem i
+    // renderowałby całą skórę rodzica.
+    const occupancy = new Uint8Array(vox.nx * vox.ny * vox.nz);
+    for (const c of cells) {
+      occupancy[c.ix + c.iy * vox.nx + c.iz * vox.nx * vox.ny] = 1;
+    }
+
+    skin = {
+      parts: skinParts,
+      occupancy,
+      dims: { x: vox.nx, y: vox.ny, z: vox.nz },
+      vertexCount,
+      triangleCount,
+      unbound: bindInfo.unbound
+    };
+  }
+
   return {
     cells: outCells,
     nx: vox.nx, ny: vox.ny, nz: vox.nz,
@@ -358,7 +620,8 @@ export function buildVoxelBody(vox, opts = {}) {
     mass: mSum,
     inertia,
     invInertia,
-    radius: radius + cs
+    radius: radius + cs,
+    skin
   };
 }
 

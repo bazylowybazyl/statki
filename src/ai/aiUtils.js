@@ -71,6 +71,42 @@ export function isEnemyUnit(self, other) {
   return false;
 }
 
+export function isAiFighterUnit(u) {
+  return !!(u && (u.fighter || u.type === 'fighter' || u.type === 'interceptor'));
+}
+
+// Wspólna skala scoringu celów. Wydzielone z aiPickBestTarget, żeby mózgi mogły
+// PORÓWNAĆ obecny cel z kandydatem na tej samej skali — histereza po samym
+// dystansie nie umiała odróżnić "gracz" od "myśliwiec lecący tuż obok gracza".
+export function scoreAiTarget(self, target, amFighter) {
+  if (!self || !target) return -Infinity;
+  const isMe = (amFighter === undefined) ? isAiFighterUnit(self) : amFighter;
+
+  const tx = target.pos ? target.pos.x : target.x;
+  const ty = target.pos ? target.pos.y : target.y;
+  const dx = tx - self.x;
+  const dy = ty - self.y;
+  const distSq = dx * dx + dy * dy;
+
+  let score = -distSq * 0.00016;
+
+  const playerShip = (typeof window !== 'undefined') ? window.ship : null;
+  if (target === playerShip) {
+    // Gracz atrakcyjny, ale NIE jest magnesem — wrogie okręty (2600) i myśliwce
+    // (5000) biją gracza w scoringu, żeby flota się rozdzielała na cele.
+    score += isMe ? 1600 : 4200; // player is never a fighter
+  } else if (isMe) {
+    // Wrogie okręty są łakomym kąskiem dla bombardujących myśliwców (2600),
+    // ale wciąż priorytetem są wrogie myśliwce (5000).
+    score += isAiFighterUnit(target) ? 5000 : 2600;
+  } else {
+    score += isAiFighterUnit(target) ? 2200 : 4200;
+  }
+
+  if (distSq < 350 * 350) score += 1200;
+  return score;
+}
+
 export function aiPickBestTarget(self, rangeLimit) {
   const tPick0 = (typeof performance !== 'undefined') ? performance.now() : 0;
 
@@ -80,21 +116,15 @@ export function aiPickBestTarget(self, rangeLimit) {
   const MAX_RANGE = rangeLimit || 20000;
   const MAX_RANGE_SQ = MAX_RANGE * MAX_RANGE;
 
-  const amFighter = self.fighter || self.type === 'fighter' || self.type === 'interceptor';
+  const amFighter = isAiFighterUnit(self);
 
   // In-place check for player ship
   if (!self.friendly && window.ship && isEnemyUnit(self, window.ship)) {
     const u = window.ship;
     const dx = u.pos.x - self.x;
     const dy = u.pos.y - self.y;
-    const distSq = dx * dx + dy * dy;
-    if (distSq <= MAX_RANGE_SQ) {
-      let score = -distSq * 0.00016;
-      // Gracz atrakcyjny, ale NIE jest magnesem — wrogie okręty (2600) i myśliwce
-      // (5000) biją gracza w scoringu, żeby flota się rozdzielała na cele.
-      score += amFighter ? 1600 : 4200; // player is never a fighter
-      if (distSq < 350 * 350) score += 1200;
-      bestScore = score;
+    if (dx * dx + dy * dy <= MAX_RANGE_SQ) {
+      bestScore = scoreAiTarget(self, u, amFighter);
       bestTarget = u;
     }
   }
@@ -113,22 +143,9 @@ export function aiPickBestTarget(self, rangeLimit) {
     const uy = u.pos ? u.pos.y : u.y;
     const dx = ux - self.x;
     const dy = uy - self.y;
-    const distSq = dx * dx + dy * dy;
-    if (distSq > MAX_RANGE_SQ) continue;
+    if (dx * dx + dy * dy > MAX_RANGE_SQ) continue;
 
-    let score = -distSq * 0.00016;
-    const isFighter = u.fighter || u.type === 'fighter' || u.type === 'interceptor';
-
-    if (amFighter) {
-      // Wrogie okręty są łakomym kąskiem dla bombardujących myśliwców (2600),
-      // ale wciąż priorytetem są wrogie myśliwce (5000).
-      score += isFighter ? 5000 : 2600;
-    } else {
-      score += isFighter ? 2200 : 4200;
-    }
-
-    if (distSq < 350 * 350) score += 1200;
-
+    const score = scoreAiTarget(self, u, amFighter);
     if (score > bestScore) {
       bestScore = score;
       bestTarget = u;
@@ -152,4 +169,5 @@ window.clampTurnVec = clampTurnVec;
 window.getLeadAim = getLeadAim;
 window.isEnemyUnit = isEnemyUnit;
 window.aiPickBestTarget = aiPickBestTarget;
+window.scoreAiTarget = scoreAiTarget;
 window.getEffectiveRange = getEffectiveRange;

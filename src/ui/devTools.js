@@ -187,6 +187,19 @@ const HTML = `
   <div class="small muted">Dodaje wskazana ilosc kredytow graczowi.</div>
 </div>
 <div class="group">
+  <div class="row"><strong>Teleport</strong></div>
+  <div class="dt-row" style="align-items:center;">
+    <select id="dt-teleport-orbit" style="flex:1; background:#060e1c; color:#fff; border:1px solid #2a3a5a; padding:4px; border-radius:4px;">
+      <option value="outer" selected>Outer orbit (6 AU)</option>
+      <option value="gravity">Studnia graw. (7 AU)</option>
+      <option value="inner">Inner orbit (4 AU)</option>
+      <option value="close">Przy stacji</option>
+    </select>
+    <button id="dt-teleport-pirate-station-btn" class="dt-btn" style="white-space:nowrap;">Stacja piracka</button>
+  </div>
+  <div class="small muted" id="dt-teleport-status">Skok w obreb misji pirackiej (misja musi byc aktywna).</div>
+</div>
+<div class="group">
   <div class="row"><strong>Floty</strong></div>
   <div class="dt-row" style="align-items:center;">
     <button id="dt-spawn-pirate-heavy-fleet-btn" class="dt-btn" style="flex:1;">Spawn pirate fleet</button>
@@ -256,6 +269,9 @@ function wireDevToolsLogic() {
     perfPresetBase: 'dt-perf-preset-base', perfPresetFast: 'dt-perf-preset-fast', perfPresetUltra: 'dt-perf-preset-ultra',
     renderDbgStart: 'dt-renderdbg-start', renderDbgStop: 'dt-renderdbg-stop',
     addCreditsAmount: 'dt-add-credits-amount', addCreditsBtn: 'dt-add-credits-btn',
+    teleportPirateStationBtn: 'dt-teleport-pirate-station-btn',
+    teleportOrbit: 'dt-teleport-orbit',
+    teleportStatus: 'dt-teleport-status',
     spawnPirateHeavyFleetBtn: 'dt-spawn-pirate-heavy-fleet-btn',
     spawnEnemyFightersBtn: 'dt-spawn-enemy-fighters-btn',
     spawnSupportFleetBtn: 'dt-spawn-support-fleet-btn',
@@ -954,6 +970,37 @@ function wireDevToolsLogic() {
           if (typeof window.toast === 'function') window.toast(`Dodano ${amount} CR`);
           console.log(`[DevTools] Dodano ${amount} CR -> saldo ${Math.round(nextCredits)} CR`);
         }
+      });
+    }
+
+    if (ui.teleportPirateStationBtn) {
+      ui.teleportPirateStationBtn.addEventListener('click', () => {
+        const setStatus = (text) => { if (ui.teleportStatus) ui.teleportStatus.textContent = text; };
+
+        const teleportFn = window.devTeleportToPirateStation;
+        if (typeof teleportFn !== 'function') {
+          setStatus('Brak window.devTeleportToPirateStation.');
+          console.warn('[DevTools] Brak window.devTeleportToPirateStation.');
+          return;
+        }
+
+        const orbit = ui.teleportOrbit?.value || 'outer';
+        const result = teleportFn({ orbit });
+        if (!result) {
+          // Stacja powstaje dopiero razem z misja najemnicza — bez niej nie ma dokad skakac.
+          setStatus('Brak stacji pirackiej — odpal misje najemnicza.');
+          if (typeof window.toast === 'function') window.toast('Brak stacji pirackiej');
+          return;
+        }
+
+        const station = result.station || result;
+        const dist = Math.round(Math.hypot(
+          (window.ship?.pos?.x || 0) - station.x,
+          (window.ship?.pos?.y || 0) - station.y
+        ));
+        const au = Number(window.AU_IN_WORLD_UNITS) || 3000;
+        setStatus(`Skok: ${dist} u od stacji (~${(dist / au).toFixed(1)} AU).`);
+        if (typeof window.toast === 'function') window.toast(`TELEPORT: stacja piracka (${orbit})`);
       });
     }
 
