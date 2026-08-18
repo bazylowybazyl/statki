@@ -173,7 +173,7 @@ test('asteroid scan details include mass resource and motion data', () => {
   assert.deepEqual(details.rows.map((row) => row.name), [
     'Type', 'Size', 'Mass', 'Hull', 'Hardness', 'Resource', 'Yield', 'Belt', 'Velocity', 'Spin'
   ]);
-  assert.equal(details.rows.find((row) => row.name === 'Velocity').amount, '5 u/s');
+  assert.equal(details.rows.find((row) => row.name === 'Velocity').amount, '5 m/s');
 });
 
 test('target helpers support ship station and asteroid positions', () => {

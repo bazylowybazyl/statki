@@ -1,0 +1,1286 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<title>Ruch v2 — logistyka, paliwo, bramy, piractwo</title>
+<style>
+  :root {
+    --bg: #070b12;
+    --panel: #0e141f;
+    --panel2: #131b28;
+    --line: #1f2b3d;
+    --text: #c8d6e8;
+    --dim: #6b7d94;
+    --accent: #38bdf8;
+    --warn: #fbbf24;
+    --bad: #ef4444;
+    --good: #4ade80;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 13px/1.45 ui-monospace, "Cascadia Mono", Consolas, monospace;
+    display: flex; overflow: hidden;
+  }
+
+  /* ---------- mapa ---------- */
+  #mapa { flex: 1; position: relative; min-width: 0; }
+  #plotno { display: block; width: 100%; height: 100%; }
+  #naglowek {
+    position: absolute; top: 0; left: 0; right: 0;
+    display: flex; gap: 18px; flex-wrap: wrap; align-items: baseline;
+    padding: 10px 14px; background: linear-gradient(#070b12ee, #070b1200);
+    pointer-events: none;
+  }
+  #naglowek h1 { font-size: 13px; margin: 0 12px 0 0; color: var(--accent); font-weight: 600; }
+  .stat { color: var(--dim); }
+  .stat b { color: var(--text); font-weight: 600; }
+  /* Sterowanie nad mapą, nie w panelu bocznym — przy przewijaniu symulacji
+     skok w czasie musi być pod ręką, a nie na dole listy po prawej. */
+  #sterowanie {
+    position: absolute; top: 40px; left: 14px; z-index: 5;
+    display: flex; gap: 6px; flex-wrap: wrap;
+  }
+  #legenda {
+    position: absolute; left: 14px; bottom: 12px;
+    display: flex; gap: 14px; flex-wrap: wrap;
+    font-size: 11px; color: var(--dim); pointer-events: none;
+  }
+  #legenda i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
+
+  /* ---------- panel ---------- */
+  #panel {
+    width: 380px; flex: none; background: var(--panel);
+    border-left: 1px solid var(--line);
+    display: flex; flex-direction: column; overflow-y: auto;
+  }
+  section { border-bottom: 1px solid var(--line); padding: 12px 14px; }
+  h2 {
+    font-size: 11px; letter-spacing: .09em; text-transform: uppercase;
+    color: var(--dim); margin: 0 0 10px; font-weight: 600;
+  }
+
+  .suwak { margin-bottom: 11px; }
+  .suwak label { display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 3px; }
+  .suwak label span:last-child { color: var(--accent); }
+  .suwak input[type=range] { width: 100%; accent-color: var(--accent); }
+  .suwak p { margin: 2px 0 0; font-size: 10px; color: var(--dim); line-height: 1.35; }
+
+  button {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+    padding: 5px 10px; border-radius: 3px; cursor: pointer; font: inherit; font-size: 11px;
+  }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  button.on { border-color: var(--accent); color: var(--accent); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  td { padding: 2px 0; vertical-align: top; }
+  td.nazwa { color: var(--dim); width: 62px; }
+  td.stan { text-align: right; width: 42px; }
+  .pasek { height: 3px; background: var(--panel2); border-radius: 2px; overflow: hidden; margin-top: 2px; }
+  .pasek i { display: block; height: 100%; }
+
+  #dziennik { max-height: 168px; overflow-y: auto; font-size: 11px; }
+  #dziennik div { padding: 1px 0; color: var(--dim); }
+  #dziennik div.zly { color: var(--bad); }
+  #dziennik div.dobry { color: var(--good); }
+  #dziennik span { color: #45566d; margin-right: 6px; }
+</style>
+</head>
+<body>
+
+<div id="mapa">
+  <canvas id="plotno"></canvas>
+  <div id="naglowek">
+    <h1>RUCH v2</h1>
+    <div class="stat">czas <b id="s-czas">0:00</b></div>
+    <div class="stat">w locie <b id="s-aktywne">0</b></div>
+    <div class="stat">dostawy <b id="s-dostawy">0</b></div>
+    <div class="stat">przechwyty <b id="s-straty">0</b></div>
+    <div class="stat">skuteczność <b id="s-skutecznosc">—</b></div>
+    <div class="stat">utracone <b id="s-wartosc">0 CR</b></div>
+    <div class="stat">flota <b id="s-flota">0</b></div>
+    <div class="stat">zoom <b id="s-zoom">×1</b></div>
+  </div>
+  <div id="sterowanie">
+    <button id="b-pauza">Pauza</button>
+    <button id="b-reset">Restart</button>
+    <button id="b-piraci" class="on">Piraci</button>
+    <button id="b-skok">+10 min</button>
+  </div>
+  <div id="legenda">
+    <span style="color:#8fa3bd">klasa:</span>
+    <span><i style="background:#22d3ee"></i>S szutla 60t</span>
+    <span><i style="background:#818cf8"></i>M kontenerowiec 160t</span>
+    <span><i style="background:#e879f9"></i>L frachtowiec 380t</span>
+    <span><i style="background:#fb7185"></i>capital 900t</span>
+    <span><i style="background:#fecdd3"></i>mega 2400t</span>
+    <span style="color:#8fa3bd;margin-left:10px">kupcy ✕:</span>
+    <span><i style="background:#67e8f9"></i>ostrożny</span>
+    <span><i style="background:#818cf8"></i>handlarz</span>
+    <span><i style="background:#fb7185"></i>ryzykant</span>
+    <span style="color:#8fa3bd;margin-left:10px">obwódka:</span>
+    <span><i style="background:transparent;border:2px solid #fb923c"></i>czeka na stanowisko</span>
+    <span><i style="background:transparent;border:2px solid #fbbf24"></i>warp</span>
+    <span><i style="background:transparent;border:2px solid #4ade80"></i>brama</span>
+    <span><i style="background:transparent;border:2px solid #facc15"></i>wydobycie</span>
+    <span><i style="background:#ef4444"></i>wrak</span>
+    <span style="color:#45566d">kółko = zoom · przeciąganie = przesuwanie · klik w port, potem w dok = zbliż · dwuklik = całość</span>
+  </div>
+</div>
+
+<div id="panel">
+  <section>
+    <h2>Świat</h2>
+    <div class="suwak">
+      <label><span>tempo symulacji</span><span id="w-tempo">×20</span></label>
+      <input type="range" id="i-tempo" min="1" max="120" value="20">
+    </div>
+    <div class="suwak">
+      <label><span>skala gospodarki</span><span id="w-skala">×60</span></label>
+      <input type="range" id="i-skala" min="1" max="500" step="1" value="60">
+      <p>Mnoży produkcję, zużycie i magazyny tym samym czynnikiem, więc bilans
+         zostaje, a rośnie sam tonaż. Ładownia się nie zmienia, więc N× większy
+         przepływ to N× więcej kursów — i tylu przewoźników. ×500 to ~2700
+         jednostek w locie. Zmiana restartuje bieg.</p>
+    </div>
+    <div class="suwak">
+      <label><span>pojemność magazynów</span><span id="w-magazyn">×4</span></label>
+      <input type="range" id="i-magazyn" min="1" max="10" step="1" value="4">
+      <p>Baza 250/150/60 to stacja bez hal. Ziemia zjada 792 rudy/h, więc przy ×1
+         obraca składem 3× na godzinę i nie da się jej wykarmić. Zmiana restartuje bieg.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Piractwo</h2>
+    <div class="suwak">
+      <label><span>presja piratów</span><span id="w-presja">×1.0</span></label>
+      <input type="range" id="i-presja" min="0" max="60" step="1" value="10">
+      <p>Mnoży szansę przechwytu na odcinkach odsłoniętych. Warp ma ryzyko zerowe
+         z modelu, więc przelatuje nietknięty niezależnie od tego suwaka.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Ekonomia podróży</h2>
+    <div class="suwak">
+      <label><span>cena paliwa fuzyjnego</span><span id="w-fuzja">100 CR</span></label>
+      <input type="range" id="i-fuzja" min="10" max="400" step="5" value="100">
+      <p>Drożej = warp przestaje się opłacać nawet drogim ładunkom i wszystko
+         zjeżdża na trasy, na których da się je przechwycić.</p>
+    </div>
+    <div class="suwak">
+      <label><span>opłata za bramę</span><span id="w-brama">250 CR</span></label>
+      <input type="range" id="i-brama" min="0" max="3000" step="50" value="250">
+    </div>
+    <div class="suwak">
+      <label><span>wartość czasu</span><span id="w-czas">0.08 CR/s</span></label>
+      <input type="range" id="i-czas" min="0" max="100" step="1" value="8">
+      <p>Ile kosztuje przestój. Wysoko = pośpiech wygrywa z oszczędnością paliwa.</p>
+    </div>
+    <div class="suwak">
+      <label><span>odstęp wysyłek</span><span id="w-odstep">12 s</span></label>
+      <input type="range" id="i-odstep" min="2" max="60" step="1" value="12">
+    </div>
+  </section>
+
+  <section>
+    <h2>Wybór napędu <span style="color:var(--dim);font-weight:400">— kursy w locie</span></h2>
+    <div id="napedy"></div>
+  </section>
+
+  <section>
+    <h2>Konwoje i osłona</h2>
+    <div id="konwoje"></div>
+  </section>
+
+  <section>
+    <h2>Niezależni kupcy <span style="color:var(--dim);font-weight:400">— lecą po marżę</span></h2>
+    <table id="agenci"></table>
+    <p style="margin:8px 0 0;font-size:10px;color:var(--dim);line-height:1.35">
+      Agent płaci za towar z własnej kieszeni, więc ryzykuje nie tylko statkiem.
+      Wybiera cel po zysku na sekundę, nie po cudzym niedoborze — i odmawia
+      trasy powyżej swojego progu ryzyka.
+    </p>
+  </section>
+
+  <section>
+    <h2>Firmy transportowe</h2>
+    <table id="firmy"></table>
+    <p style="margin:8px 0 0;font-size:10px;color:var(--dim);line-height:1.35">
+      „puste" to przeloty bez ładunku po jednostkę tam, gdzie jest praca.
+      Bogatą firmę na nie stać, bo jej przestój kosztuje więcej niż paliwo.
+      Biedna czeka na ładunek powrotny — i przez to jest wolniejsza.
+    </p>
+  </section>
+
+  <section>
+    <h2>Magazyny <span id="stacje-tytul" style="color:var(--dim);font-weight:400">— kliknij port na mapie</span></h2>
+    <table id="stacje"></table>
+  </section>
+
+  <section>
+    <h2>Komputer handlowy <span style="color:var(--dim);font-weight:400">— natężenie</span></h2>
+    <table id="przeplywy"></table>
+  </section>
+
+  <section>
+    <h2>Dziennik</h2>
+    <div id="dziennik"></div>
+  </section>
+</div>
+
+<script type="module">
+/**
+ * DEMO RUCHU v2 — strona z suwakami obok modułów z `src/game/traffic/`.
+ *
+ * Strona nie zawiera ANI JEDNEJ reguły ruchu: cała logika siedzi w modułach,
+ * których używa też gra. Tutaj jest tylko widok i pokrętła. Dzięki temu to, co
+ * tu wystroisz, obowiązuje w grze bez przepisywania.
+ *
+ * Uruchamiać przez serwer deweloperski (`npm run dev`), bo strona importuje
+ * moduły ES — otwarta z dysku nie wczyta się.
+ */
+
+import { RESOURCES, RESOURCE_KEYS, TIER } from './src/data/resources.js';
+import { FACTION, getDefaultStationFaction, getFactionColor } from './src/data/factions.js';
+import {
+  seedStationStock, getStationDeficits, stationWantsResource, STATION_INDUSTRY
+} from './src/game/stationEconomy.js';
+import { createFleetState } from './src/game/cargoFleet.js';
+import { BELT_DEFINITIONS, getOutermostBeltEdgeAu } from './src/data/asteroidTypes.js';
+import { buildTravelNetwork, NODE_KIND } from './src/game/traffic/travelNetwork.js';
+import { createCourseRegistry, getActiveCourses, COURSE_KIND } from './src/game/traffic/courseRegistry.js';
+import {
+  createDirector, tickDirector, directorSnapshot, courseWorldPosition, settleCourseEvents
+} from './src/game/traffic/trafficDirector.js';
+import { summarizeFlows, currentStage, STAGE_KIND } from './src/game/traffic/courseRegistry.js';
+import {
+  buildStationDocks, parkingSlotPosition, berthOccupancy, BERTH_CLASSES,
+  suggestBerthMultiplier, berthClassForHull
+} from './src/game/traffic/dockLayout.js';
+import { createFleetRegistry, summarizeCompanies, SHIP_STATE } from './src/game/traffic/transportCompanies.js';
+import { buildCarriers, TONS_PER_SHIP_HOUR } from './src/game/traffic/carrierRoster.js';
+import {
+  createBubble, updateBubble, getActors, clearBubble
+} from './src/game/traffic/materializedFlight.js';
+import {
+  createAgentRegistry, createAgent, registerAgent, summarizeAgents, AGENT_PROFILE
+} from './src/game/traffic/agentFleets.js';
+import { resourcePrice, systemHaulTonnage, stationHaulTonnage } from './src/game/stationEconomy.js';
+
+// ============================================================
+// Świat
+// ============================================================
+
+const beltEdgeAu = getOutermostBeltEdgeAu(BELT_DEFINITIONS);
+const mainBelt = BELT_DEFINITIONS.find(belt => belt.id === 'main');
+const kuiper = BELT_DEFINITIONS.find(belt => belt.id === 'kuiper');
+const CAPACITY_BY_TIER = { [TIER.RAW]: 250, [TIER.REFINED]: 150, [TIER.COMPONENT]: 60 };
+
+let network, registry, fleet, director, stations, economies, docks, companies, agents;
+let worldRadius = 1;
+
+/**
+ * Bańka materializacji. W grze jej środkiem jest statek gracza; tutaj — środek
+ * kadru, bo to on odpowiada „temu, co gracz widzi". Poza nią kursy pozostają
+ * rekordami, więc koszt zależy od promienia, a nie od liczby statków.
+ */
+const bubble = createBubble({ maxActors: 500 });
+
+/** Promienie pierścieni z systemMap — to do nich przyczepione są doki. */
+const RING_RADIUS = { earth: 37800, mars: 30000 };
+let carrierCount = 0;
+let shipCount = 0;
+
+// Przeładunek każdej stacji w t/h — od tego, a nie od liczby mieszkańców,
+// zależy wielkość portu. Merkury to mała kolonia z ogromną kopalnią.
+const PRZEŁADUNEK = stationHaulTonnage();
+
+function buildWorld(capacityMultiplier) {
+  network = buildTravelNetwork({
+    beltEdgeAu,
+    // Kąty rozstawione, żeby planety nie stały w jednej linii — układ w linii
+    // to przypadek szczególny i najkrótsze możliwe trasy.
+    angleFor: (_def, index) => index * 0.79 + 0.3,
+    outposts: [
+    // LIGA PASA w pasie głównym (36–47 AU mapy). Kąty rozstawione tak, żeby
+    // nie leżały na jednej prostej z rdzeniem — inaczej cały ruch do nich
+    // szedłby jedną trasą i piractwo miałoby jedno wąskie gardło.
+    { id: 'ceres', label: 'Ceres', orbitAU: 39.5, angle: 2.6, berths: 6 },
+    { id: 'vesta', label: 'Westa', orbitAU: 44.0, angle: 5.1, berths: 4 },
+    // KRYJOWKI PIRACKIE. Leza przy trasach, nie przy zlozach: Hildy tuz za
+    // pasem glownym, zlomowisko na dlugim odcinku do olbrzymow gazowych.
+    // Malo stanowisk - to nie porty, tylko miejsca, gdzie sie uplynnia lup.
+    { id: 'gniazdo-hildy', label: 'Gniazdo Hildy', orbitAU: 52.0, angle: 0.9, berths: 3 },
+    { id: 'zlomowisko', label: 'Zlomowisko', orbitAU: 68.0, angle: 3.8, berths: 3 }
+  ],
+  fields: [
+      {
+        id: 'belt-main', label: 'Pas Główny',
+        orbitAU: (mainBelt.innerAU + mainBelt.outerAU) / 2, angle: 1.9,
+      innerAU: mainBelt.innerAU, outerAU: mainBelt.outerAU, arcSpread: 0.85,
+        yields: { iron_ore: 1, silicon_ore: 1, copper_ore: 1, titanium_ore: 1, raw_crystal: 1 },
+        extractionSeconds: 600
+      },
+      {
+        id: 'belt-kuiper', label: 'Pas Kuipera',
+        orbitAU: (kuiper.innerAU + kuiper.outerAU) / 2, angle: 4.2,
+      innerAU: kuiper.innerAU, outerAU: kuiper.outerAU, arcSpread: 0.7,
+        yields: { uranium_ore: 1, ice: 1, raw_crystal: 1 },
+        extractionSeconds: 900
+      }
+    ]
+  });
+
+  // Magazyn rośnie razem z przepływem — inaczej większa gospodarka to tylko
+  // szybsze przelewanie się tego samego wiadra.
+  const capacity = Object.fromEntries(RESOURCE_KEYS.map(key =>
+    [key, (CAPACITY_BY_TIER[RESOURCES[key].tier] ?? 100) * capacityMultiplier * ui.skala]));
+
+  economies = new Map();
+  stations = network.stations.map(node => {
+    const station = { id: node.id, name: node.label, factionId: getDefaultStationFaction(node.id) };
+    const econ = {
+      resources: Object.fromEntries(RESOURCE_KEYS.map(key => [key, 0])),
+      capacity: { ...capacity }
+    };
+    seedStationStock(station, econ, 0.45);
+    economies.set(station.id, econ);
+    return station;
+  });
+
+  // Doki: przy pierścieniu tam, gdzie pierścień jest, inaczej wokół stacji.
+  docks = new Map();
+  for (const node of network.stations) {
+    if (node.derelict) continue;
+    docks.set(node.id, buildStationDocks(
+      { id: node.id, x: node.x, y: node.y, r: 120, ringWorldRadius: RING_RADIUS[node.id] || 0 },
+      // Port rośnie razem z zakładami: Ziemia odbiera 55% tonażu układu.
+      { berthMultiplier: suggestBerthMultiplier(PRZEŁADUNEK[node.id], ui.skala) }
+    ));
+  }
+
+  // Rynek przewoźników skaluje się z gospodarką: kilku dużych, garść średnich
+  // i długi ogon drobnych. Statki rozstawione po całym układzie, nie tylko
+  // w portach macierzystych — inaczej pierwsze pół godziny to same puste przeloty.
+  companies = createFleetRegistry();
+  const ports = network.stations
+    .filter(node => !node.derelict && getDefaultStationFaction(node.id) !== FACTION.PIRATES)
+    .map(node => node.id);
+  // Flota wynika z tonażu, który gospodarka musi przewieźć — dołożenie stacji
+  // samo dokłada przewoźników zamiast po cichu zapychać transport.
+  const roster = buildCarriers(companies, ports, ui.skala,
+    { factionOf: getDefaultStationFaction, shipsPerScale: systemHaulTonnage() / TONS_PER_SHIP_HOUR });
+  carrierCount = roster.companies.length;
+  shipCount = roster.ships;
+
+  // Niezależni kupcy. Ruch agentowy jest z natury rzadszy od frakcyjnego —
+  // agent czeka na marżę, a nie na czyjś niedobór — więc skaluje się wolniej.
+  agents = createAgentRegistry();
+  const MIESZANKA = [AGENT_PROFILE.CAUTIOUS, AGENT_PROFILE.TRADER,
+    AGENT_PROFILE.TRADER, AGENT_PROFILE.BOLD];
+  const ilu = Math.max(4, Math.round(6 * Math.sqrt(ui.skala)));
+  for (let i = 0; i < ilu; i++) {
+    const profil = MIESZANKA[i % MIESZANKA.length];
+    const smialy = profil === AGENT_PROFILE.BOLD;
+    registerAgent(agents, createAgent({
+      name: `Kupiec ${i + 1}`,
+      profile: profil,
+      capital: smialy ? 120000 : 45000,
+      holdCapacity: smialy ? 900 : 380,
+      hullId: smialy ? 'heavy_freighter' : 'long_haul_freighter',
+      stationId: ports[i % ports.length]
+    }));
+  }
+
+  registry = createCourseRegistry({ keepHistory: false });
+  fleet = createFleetState();
+  director = createDirector(network, registry, {
+    fleet,
+    companies,
+    docks,
+    agents,
+    getEconomy: id => economies.get(String(id)) || null,
+    piracyPressure: ui.presja,
+    piracyEnabled: ui.piraci,
+    dispatchInterval: ui.odstep,
+    economyScale: ui.skala,
+    targetFleetPerCompany: Math.max(4, Math.round(shipCount / Math.max(1, carrierCount)))
+  });
+  applyEconomyKnobs();
+  // Encje ze starego świata wskazywałyby na nieistniejące kursy.
+  bubble.actors.clear();
+  camera.x = 0;
+  camera.y = 0;
+  camera.zoom = 1;
+
+  worldRadius = Math.max(...network.list.map(node => Math.hypot(node.x, node.y))) * 1.08;
+  wrecks.length = 0;
+}
+
+// ============================================================
+// Pokrętła
+// ============================================================
+
+const ui = {
+  tempo: 20, magazyn: 4, presja: 1, piraci: true, skala: 60,
+  fuzja: 100, brama: 250, czas: 0.08, odstep: 12, pauza: false
+};
+
+function applyEconomyKnobs() {
+  // Suwaki inicjalizują się PRZED zbudowaniem świata — pierwsze wywołania
+  // ustawiają tylko `ui`, a `buildWorld` czyta je i domyka konfigurację samo.
+  if (!network || !director) return;
+  network.config.fuelPrice = { hydrogen: 7, fusion_fuel: ui.fuzja };
+  network.config.gateFeeBase = ui.brama;
+  network.config.timeValuePerSecond = ui.czas;
+  director.config.piracyPressure = ui.presja;
+  director.config.piracyEnabled = ui.piraci;
+  director.config.dispatchInterval = ui.odstep;
+}
+
+function bindSlider(id, key, format, transform = value => value, onChange = applyEconomyKnobs) {
+  const input = document.getElementById(`i-${id}`);
+  const label = document.getElementById(`w-${id}`);
+  const update = () => {
+    ui[key] = transform(Number(input.value));
+    label.textContent = format(ui[key]);
+    onChange();
+  };
+  input.addEventListener('input', update);
+  update();
+}
+
+const wrecks = [];
+
+bindSlider('tempo', 'tempo', value => `×${value}`, value => value, () => {});
+bindSlider('presja', 'presja', value => `×${value.toFixed(1)}`, value => value / 10);
+bindSlider('fuzja', 'fuzja', value => `${value} CR`);
+bindSlider('brama', 'brama', value => `${value} CR`);
+bindSlider('czas', 'czas', value => `${value.toFixed(2)} CR/s`, value => value / 100);
+bindSlider('odstep', 'odstep', value => `${value} s`);
+bindSlider('magazyn', 'magazyn', value => `×${value}`, value => value, () => {
+  if (network) buildWorld(ui.magazyn);
+});
+bindSlider('skala', 'skala', value => `×${value}`, value => value, () => {
+  if (network) buildWorld(ui.magazyn);
+});
+
+document.getElementById('b-pauza').addEventListener('click', event => {
+  ui.pauza = !ui.pauza;
+  event.currentTarget.classList.toggle('on', ui.pauza);
+  event.currentTarget.textContent = ui.pauza ? 'Wznów' : 'Pauza';
+});
+document.getElementById('b-reset').addEventListener('click', () => buildWorld(ui.magazyn));
+document.getElementById('b-piraci').addEventListener('click', event => {
+  ui.piraci = !ui.piraci;
+  event.currentTarget.classList.toggle('on', ui.piraci);
+  applyEconomyKnobs();
+});
+// Skok w czasie: gospodarka potrzebuje kilkunastu minut, żeby magazyny rozjechały
+// się poza progi i pojawiła się pierwsza para nadwyżka→niedobór. Bez tego
+// przycisku strojenie jest czekaniem.
+document.getElementById('b-skok').addEventListener('click', () => {
+  for (let i = 0; i < 120; i++) step(5);
+});
+
+// ============================================================
+// Symulacja
+// ============================================================
+
+/** Indeks aktywnych kursów dla bańki — budowany raz na krok, nie na encję. */
+const aktywneIndeks = new Map();
+
+function step(dt) {
+  const before = director.stats.lost;
+  tickDirector(director, dt, stations);
+
+  // Warstwa 3 chodzi PO dyspozytorze: rekordy są już przesunięte, a encje
+  // przejmują te, które gracz faktycznie ogląda. Bańka materializuje się tylko
+  // przy zbliżeniu — z widoku całego układu i tak nie byłoby czego oglądać.
+  if (camera.zoom >= BUBBLE_MIN_ZOOM) {
+    aktywneIndeks.clear();
+    for (const course of getActiveCourses(registry)) aktywneIndeks.set(course.id, course);
+    const promien = Math.min(canvas.clientWidth, canvas.clientHeight) / 2 / Math.max(px(), 1e-9);
+    const bubbleEvents = updateBubble(bubble, network, registry, aktywneIndeks,
+      { x: camera.x, y: camera.y }, promien * 1.2, dt);
+    // Fizyczna encja jest właścicielem zegara w bańce, więc również jej `done`
+    // musi przejść przez dyspozytora: rozładunek, zwolnienie stanowiska i statku.
+    settleCourseEvents(director, bubbleEvents);
+  } else if (bubble.actors.size) {
+    // Oddalenie zwalnia wszystko naraz — postęp MUSI wrócić do rekordów,
+    // inaczej kursy z przypiętą encją zostaną zamrożone.
+    aktywneIndeks.clear();
+    for (const course of getActiveCourses(registry)) aktywneIndeks.set(course.id, course);
+    clearBubble(bubble, network, aktywneIndeks);
+  }
+  if (director.stats.lost > before) {
+    for (const wreck of director.wrecks.slice(before - director.stats.lost)) {
+      // Dyspozytor podaje teraz prawdziwą pozycję przechwytu. Liczenie jej tutaj
+      // po środkach węzłów układało wraki w sznurek, bo pole wydobywcze ma
+      // setki tysięcy jednostek szerokości, a jego „środek" to jeden punkt.
+      if (!Number.isFinite(wreck.x) || !Number.isFinite(wreck.y)) continue;
+      wrecks.push({ x: wreck.x, y: wreck.y, kind: wreck.kind, born: registry.clock });
+    }
+    while (wrecks.length > 200) wrecks.shift();
+  }
+}
+
+// ============================================================
+// Rysowanie
+// ============================================================
+
+const canvas = document.getElementById('plotno');
+const ctx = canvas.getContext('2d');
+let view = { scale: 1, cx: 0, cy: 0 };
+
+/**
+ * Kamera: `x`/`y` to punkt świata pod środkiem ekranu, `zoom` mnoży dopasowanie
+ * do całego układu. Przy zoomie 1 widać wszystko, przy ~300 widać pojedynczy
+ * dok — dzięki temu jest to JEDEN ciągły widok, a nie dwa osobne tryby.
+ */
+const camera = { x: 0, y: 0, zoom: 1, minZoom: 0.5, maxZoom: 4000 };
+
+/**
+ * Od tego zbliżenia włącza się warstwa 3. Niżej pojedynczy statek ma mniej niż
+ * piksel, więc pełna fizyka nie miałaby czego pokazać, a kosztowałaby tyle samo.
+ */
+const BUBBLE_MIN_ZOOM = 12;
+
+function resize() {
+  const ratio = window.devicePixelRatio || 1;
+  canvas.width = Math.max(1, canvas.clientWidth * ratio);
+  canvas.height = Math.max(1, canvas.clientHeight * ratio);
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  view.cx = canvas.clientWidth / 2;
+  view.cy = canvas.clientHeight / 2;
+  view.scale = Math.min(canvas.clientWidth, canvas.clientHeight) / 2 / worldRadius;
+}
+window.addEventListener('resize', resize);
+
+/** Jednostki świata na piksel ekranu przy bieżącym zoomie. */
+const px = () => view.scale * camera.zoom;
+const sx = x => view.cx + (x - camera.x) * px();
+const sy = y => view.cy + (y - camera.y) * px();
+const worldX = screenX => camera.x + (screenX - view.cx) / px();
+const worldY = screenY => camera.y + (screenY - view.cy) / px();
+
+/**
+ * Kolor = KLASA WIELKOŚCI jednostki, ta sama, którą dobierane są stanowiska
+ * w doku. Dzięki temu widać na mapie to samo, co w obłożeniu przystani: jeśli
+ * kolejka jest w jednym kolorze, wąskim gardłem jest klasa stanowisk, a nie
+ * port jako całość.
+ */
+// Odcienie rozjechane przez pół koła barw, nie w obrębie jednej rodziny:
+// pierwsza wersja (cyjan/błękit/indygo) czytała się jako „same niebieskie".
+// Pomarańcz, bursztyn, zieleń, żółć i czerwień są zajęte przez stany i wraki,
+// więc na klasy zostaje pasmo cyjan → barwinek → fuksja.
+const CLASS_COLOR = {
+  s: '#22d3ee',        // szutle
+  m: '#818cf8',        // kontenerowce — najliczniejsze
+  l: '#e879f9',        // frachtowce dalekiego zasięgu
+  capital: '#fb7185',  // ciężkie frachtowce
+  mega: '#fecdd3'      // megafrachtowce
+};
+
+/** Stan kursu na obwódce, żeby nie zjadał koloru klasy. */
+const STATE_COLOR = { blocked: '#fb923c', warp: '#fbbf24', gate: '#4ade80', mine: '#facc15' };
+
+/**
+ * Barwy profili niezależnych kupców — te same na mapie i w panelu.
+ *
+ * Agent to inna zwierzyna niż frachtowiec frakcyjny: płaci za towar z własnej
+ * kieszeni i sam wybiera trasę, więc jego kursy nie wynikają z niczyjego
+ * niedoboru. Dlatego dostaje własny kształt (krzyżyk), a nie tylko inny kolor —
+ * przy tysiącu kropek sam odcień ginie.
+ */
+const AGENT_COLOR = { cautious: '#67e8f9', trader: '#818cf8', bold: '#fb7185' };
+
+/** Profil kupca prowadzącego ten kurs albo `null`, gdy to zwykły przewóz. */
+function agentProfileOf(course) {
+  const id = course?.payload?.agentId;
+  if (!id || !agents?.agents) return null;
+  // `registry.agents` to TABLICA, nie mapa — szukanie przez `.get()` cicho
+  // zwracałoby domyślny profil i wszystkie krzyżyki miałyby jeden kolor.
+  return agents.agents.find(a => a.id === id)?.profile || 'trader';
+}
+
+/** Krzyżyk agenta — rysowany NA kropce kursu, więc klasa nadal jest czytelna. */
+function drawAgentCross(px2, py2, kolor, r) {
+  ctx.strokeStyle = kolor;
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.moveTo(px2 - r, py2 - r); ctx.lineTo(px2 + r, py2 + r);
+  ctx.moveTo(px2 + r, py2 - r); ctx.lineTo(px2 - r, py2 + r);
+  ctx.stroke();
+}
+
+// `berthClassForHull` liczy gabaryty za każdym razem, a kadłubów jest kilka —
+// przy tysiącach kursów na klatkę to się liczy.
+const classCache = new Map();
+function sizeClassOf(unitClass) {
+  const key = String(unitClass || '');
+  let cls = classCache.get(key);
+  if (cls === undefined) {
+    cls = berthClassForHull(key)?.id || 'm';
+    classCache.set(key, cls);
+  }
+  return cls;
+}
+
+function shipColor(unitClass) {
+  return CLASS_COLOR[sizeClassOf(unitClass)] || '#8fa3bd';
+}
+
+/** Obwódka: co jest nietypowego w tym kursie. `null` = nic. */
+function stateColor(blocked, mode, kind) {
+  if (blocked) return STATE_COLOR.blocked;
+  if (mode === 'warp') return STATE_COLOR.warp;
+  if (mode === 'gate') return STATE_COLOR.gate;
+  if (kind === COURSE_KIND.MINE) return STATE_COLOR.mine;
+  return null;
+}
+
+/** Czy punkt świata w ogóle trafia na ekran — przy tysiącach kursów to się liczy. */
+function onScreen(x, y, margin = 40) {
+  const px2 = sx(x);
+  const py2 = sy(y);
+  return px2 > -margin && px2 < canvas.clientWidth + margin
+    && py2 > -margin && py2 < canvas.clientHeight + margin;
+}
+
+function drawWorld() {
+  ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+  const scale = px();
+
+  // Słońce i orbity mają sens tylko póki widać cały układ.
+  if (camera.zoom < 60) {
+    ctx.fillStyle = '#ffbe3b';
+    ctx.beginPath(); ctx.arc(sx(0), sy(0), 4, 0, Math.PI * 2); ctx.fill();
+
+    // Pasy asteroid — jedyne miejsca, gdzie geometria naprawdę coś wymusza.
+    for (const belt of [mainBelt, kuiper]) {
+      const inner = belt.innerAU * network.auInWorldUnits * scale;
+      const outer = belt.outerAU * network.auInWorldUnits * scale;
+      ctx.strokeStyle = 'rgba(120,140,170,0.10)';
+      ctx.lineWidth = Math.max(1, outer - inner);
+      ctx.beginPath(); ctx.arc(sx(0), sy(0), (inner + outer) / 2, 0, Math.PI * 2); ctx.stroke();
+    }
+
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(80,100,130,0.18)';
+    for (const station of network.stations) {
+      ctx.beginPath();
+      ctx.arc(sx(0), sy(0), station.orbitRadius * scale, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+
+  // Pola wydobywcze
+  ctx.font = '11px ui-monospace, monospace';
+  for (const field of network.fields) {
+    if (!onScreen(field.x, field.y)) continue;
+    ctx.strokeStyle = 'rgba(251,191,36,0.55)';
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.arc(sx(field.x), sy(field.y), 7, 0, Math.PI * 2); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#8a7a4a';
+    ctx.fillText(field.label, sx(field.x) + 11, sy(field.y) + 3);
+  }
+
+  // Bramy
+  for (const gate of network.gates) {
+    if (!onScreen(gate.x, gate.y)) continue;
+    ctx.fillStyle = '#4ade80';
+    ctx.save();
+    ctx.translate(sx(gate.x), sy(gate.y));
+    ctx.rotate(Math.PI / 4);
+    ctx.fillRect(-3, -3, 6, 6);
+    ctx.restore();
+  }
+
+  // Stacje, a przy dostatecznym zbliżeniu także ich porty.
+  for (const node of network.stations) {
+    if (!onScreen(node.x, node.y, 400)) continue;
+    const layout = docks.get(node.id);
+    // Dok rysujemy dopiero, gdy ma na ekranie sensowny rozmiar — inaczej cztery
+    // pomosty zlewają się w jedną plamę i tylko kosztują.
+    if (layout && layout.dockRadius * scale > 26) drawPort(node, layout, scale);
+
+    const station = stations.find(entry => entry.id === node.id);
+    ctx.fillStyle = node.derelict ? '#5a6570' : getFactionColor(station?.factionId);
+    ctx.beginPath(); ctx.arc(sx(node.x), sy(node.y), 4.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = node.derelict ? '#5a6570' : '#93a5bd';
+    ctx.fillText(node.label, sx(node.x) + 8, sy(node.y) + 3);
+  }
+
+  // Wraki — gasną z czasem, ale zostawiają ślad po pobojowisku.
+  for (const wreck of wrecks) {
+    const age = (registry.clock - wreck.born) / 600;
+    if (age > 1 || !onScreen(wreck.x, wreck.y)) continue;
+    ctx.fillStyle = `rgba(239,68,68,${(1 - age) * 0.9})`;
+    ctx.beginPath(); ctx.arc(sx(wreck.x), sy(wreck.y), 3, 0, Math.PI * 2); ctx.fill();
+  }
+
+  // Kursy jako rekordy — kropki. Te, które przejęła warstwa 3, pomijamy tutaj
+  // i rysujemy niżej jako prawdziwe kadłuby.
+  const promien = camera.zoom > 20 ? 3.2 : 2.2;
+  for (const course of getActiveCourses(registry)) {
+    if (course.actorId) continue;
+    const pos = courseWorldPosition(network, course);
+    if (!pos || !onScreen(pos.x, pos.y)) continue;
+    ctx.fillStyle = pos.blocked ? STATE_COLOR.blocked : shipColor(course.unitClass);
+    ctx.globalAlpha = pos.moving ? 1 : 0.55;
+    ctx.beginPath();
+    ctx.arc(sx(pos.x), sy(pos.y), pos.moving ? promien : promien * 0.8, 0, Math.PI * 2);
+    ctx.fill();
+    const profil = agentProfileOf(course);
+    if (profil) drawAgentCross(sx(pos.x), sy(pos.y), AGENT_COLOR[profil] || '#818cf8', promien + 1.6);
+    ctx.globalAlpha = 1;
+  }
+
+  drawActors(scale);
+}
+
+/**
+ * Warstwa 3 na ekranie: kadłub w prawdziwych gabarytach, dziób zgodny z kursem,
+ * płomień silnika przy rozpędzaniu. Poniżej progu widoczności kadłuba wracamy
+ * do kropki, żeby nie płacić za kształt, którego i tak nie widać.
+ */
+function drawActors(scale) {
+  const actors = getActors(bubble);
+  if (!actors.length) return;
+
+  for (const actor of actors) {
+    if (!onScreen(actor.x, actor.y)) continue;
+    const dlugosc = actor.length * scale;
+    const szerokosc = actor.width * scale;
+    // Wypełnienie mówi o KLASIE jednostki, obwódka o jej stanie. Gdyby stan
+    // zjadał kolor, nie dałoby się odczytać, czy kolejka jest z jednej klasy —
+    // a to jest pierwsza rzecz, którą trzeba zobaczyć przy zatorze w porcie.
+    const kolor = shipColor(actor.unitClass);
+    const obwodka = stateColor(actor.blocked, actor.mode, actor.kind);
+
+    if (dlugosc < 3) {
+      ctx.fillStyle = obwodka || kolor;
+      ctx.beginPath(); ctx.arc(sx(actor.x), sy(actor.y), 2.2, 0, Math.PI * 2); ctx.fill();
+      continue;
+    }
+
+    ctx.save();
+    ctx.translate(sx(actor.x), sy(actor.y));
+    ctx.rotate(actor.angle);
+
+    // Ciąg widać tylko wtedy, gdy statek naprawdę przyspiesza — przy hamowaniu
+    // i na redzie ma być ciemno.
+    if (actor.speed > actor.cruise * 0.25 && !actor.docked) {
+      const plomien = Math.min(1, actor.speed / actor.cruise) * dlugosc * 0.55;
+      const gradient = ctx.createLinearGradient(-dlugosc / 2, 0, -dlugosc / 2 - plomien, 0);
+      gradient.addColorStop(0, 'rgba(120,200,255,0.75)');
+      gradient.addColorStop(1, 'rgba(120,200,255,0)');
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.moveTo(-dlugosc / 2, -szerokosc * 0.22);
+      ctx.lineTo(-dlugosc / 2 - plomien, 0);
+      ctx.lineTo(-dlugosc / 2, szerokosc * 0.22);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // Kadłub: wydłużony pięciokąt z dziobem — czytelny nawet przy kilku pikselach.
+    ctx.fillStyle = kolor;
+    ctx.beginPath();
+    ctx.moveTo(dlugosc / 2, 0);
+    ctx.lineTo(dlugosc * 0.15, -szerokosc / 2);
+    ctx.lineTo(-dlugosc / 2, -szerokosc * 0.38);
+    ctx.lineTo(-dlugosc / 2, szerokosc * 0.38);
+    ctx.lineTo(dlugosc * 0.15, szerokosc / 2);
+    ctx.closePath();
+    ctx.fill();
+    if (obwodka && dlugosc > 6) {
+      ctx.strokeStyle = obwodka;
+      ctx.lineWidth = Math.max(1, Math.min(2.5, dlugosc * 0.06));
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+/**
+ * Port z bliska: pierścień albo orbita dokowa, pomosty, stanowiska i parking.
+ * Rysowany w tym samym układzie współrzędnych co reszta mapy, więc zbliżanie
+ * jest ciągłe — nie ma osobnego „widoku stacji", w który trzeba wejść.
+ */
+function drawPort(node, layout, scale) {
+  // Obręcz, z której wyrastają pomosty.
+  ctx.strokeStyle = layout.hasRing ? 'rgba(120,170,220,0.30)' : 'rgba(120,140,170,0.14)';
+  ctx.lineWidth = layout.hasRing ? Math.max(1, 900 * scale) : 1;
+  ctx.beginPath(); ctx.arc(sx(node.x), sy(node.y), layout.dockRadius * scale, 0, Math.PI * 2); ctx.stroke();
+
+  ctx.strokeStyle = 'rgba(120,140,170,0.12)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 6]);
+  ctx.beginPath(); ctx.arc(sx(node.x), sy(node.y), layout.parkingRadius * scale, 0, Math.PI * 2); ctx.stroke();
+  ctx.setLineDash([]);
+
+  const szczegoly = layout.dockRadius * scale > 140;
+  const { atBerth, onHold } = szczegoly ? berthedCourses(node.id) : { atBerth: new Map(), onHold: [] };
+
+  for (const dock of layout.docks) {
+    ctx.save();
+    ctx.translate(sx(dock.x), sy(dock.y));
+    ctx.rotate(dock.angle);
+    ctx.fillStyle = 'rgba(56,120,180,0.35)';
+    ctx.strokeStyle = 'rgba(120,190,240,0.65)';
+    ctx.lineWidth = 1;
+    const pierL = Math.max(2, dock.length * scale);
+    const pierW = Math.max(1.5, dock.width * scale);
+    ctx.fillRect(-pierL / 2, -pierW / 2, pierL, pierW);
+    ctx.strokeRect(-pierL / 2, -pierW / 2, pierL, pierW);
+    ctx.restore();
+
+    if (!szczegoly) continue;
+
+    for (const berth of dock.berths) {
+      const course = atBerth.get(berth.id);
+      const zajete = !!course || !!berth.occupantId;
+      ctx.save();
+      ctx.translate(sx(berth.x), sy(berth.y));
+      ctx.rotate(dock.angle);
+      const bl = berth.width * scale;
+      const bw = berth.length * scale;
+      ctx.strokeStyle = zajete ? 'rgba(74,222,128,0.85)' : 'rgba(120,140,170,0.40)';
+      ctx.fillStyle = zajete ? 'rgba(74,222,128,0.18)' : 'rgba(120,140,170,0.06)';
+      ctx.fillRect(-bl / 2, -bw / 2, bl, bw);
+      ctx.strokeRect(-bl / 2, -bw / 2, bl, bw);
+      if (course) {
+        ctx.fillStyle = shipColor(course.unitClass);
+        ctx.fillRect(-bl * 0.3, -bw * 0.35, bl * 0.6, bw * 0.7);
+      }
+      ctx.restore();
+    }
+  }
+
+  // Czekających na redzie rysuje główna pętla kursów — mają teraz własne,
+  // prawdziwe pozycje, więc rysowanie ich tu drugi raz dublowałoby je w innym
+  // miejscu niż stoją.
+
+  // Parking: jednostki bez zlecenia. Kolor jak wszędzie indziej — po KLASIE,
+  // żeby jedna oś rządziła całą mapą. Kto jest czyj, mówi panel firm.
+  if (layout.parkingRadius * scale < 60) return;
+  companies.companies.forEach(company => {
+    for (const ship of company.ships) {
+      if (ship.state !== SHIP_STATE.PARKED || ship.stationId !== node.id) continue;
+      const spot = parkingSlotPosition(layout, node, ship.parkingSlot);
+      if (!spot) continue;
+      ctx.fillStyle = shipColor(ship.hullId);
+      ctx.save();
+      ctx.translate(sx(spot.x), sy(spot.y));
+      ctx.rotate(spot.angle);
+      ctx.fillRect(-1.6, -3.2, 3.2, 6.4);
+      ctx.restore();
+    }
+  });
+}
+
+// ============================================================
+// Kamera: zoom i przesuwanie
+// ============================================================
+
+/** Indeks kursów stojących w porcie, żeby nie przemiatać listy dla każdego doku. */
+function berthedCourses(stationId) {
+  const atBerth = new Map();
+  const onHold = [];
+  for (const course of getActiveCourses(registry)) {
+    const stage = currentStage(course);
+    if (!stage || stage.kind !== STAGE_KIND.DWELL || stage.nodeId !== stationId) continue;
+    if (course.berthId) atBerth.set(course.berthId, course);
+    else onHold.push(course);
+  }
+  return { atBerth, onHold };
+}
+
+/** Ustawia kamerę tak, żeby zadany obszar wypełnił ekran. */
+function focusOn(x, y, span) {
+  camera.x = x;
+  camera.y = y;
+  camera.zoom = Math.max(camera.minZoom, Math.min(camera.maxZoom,
+    (Math.min(canvas.clientWidth, canvas.clientHeight) / 2 / Math.max(1, span)) / view.scale));
+}
+
+/** Port, którego magazyn oglądamy w panelu. `null` = przegląd wszystkich. */
+let wybranyPort = null;
+
+function focusPort(nodeId) {
+  const node = network.nodes.get(nodeId);
+  if (!node) return;
+  wybranyPort = nodeId;
+  focusOn(node.x, node.y, (docks.get(nodeId)?.parkingRadius || 40_000) * 1.25);
+}
+
+/**
+ * Zbliżenie na pojedynczy pomost.
+ *
+ * Bez tego dojście do doku wymagało kilkunastu ruchów kółkiem, a zoom kotwiczony
+ * na kursorze gubi cel przy każdym drgnięciu — przy tej różnicy skal (dok ma
+ * 4 tys. jednostek, układ 12 milionów) to jest nie do trafienia ręcznie.
+ */
+function focusDock(dock) {
+  focusOn(dock.x, dock.y, Math.max(dock.length, 2200) * 1.6);
+}
+
+/** Dok pod kursorem, jeśli jest w ogóle rysowany. */
+function dockAt(mx, my) {
+  const scale = px();
+  for (const layout of docks.values()) {
+    if (layout.dockRadius * scale < 26) continue;
+    for (const dock of layout.docks) {
+      const promien = Math.max(12, dock.length * scale * 0.6);
+      if (Math.hypot(sx(dock.x) - mx, sy(dock.y) - my) < promien) return dock;
+    }
+  }
+  return null;
+}
+
+// Kółko przybliża W STRONĘ KURSORA — punkt świata pod myszą ma zostać w miejscu.
+canvas.addEventListener('wheel', event => {
+  event.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const mx = event.clientX - rect.left;
+  const my = event.clientY - rect.top;
+  const przed = { x: worldX(mx), y: worldY(my) };
+  const krok = Math.exp(-event.deltaY * 0.0016);
+  camera.zoom = Math.max(camera.minZoom, Math.min(camera.maxZoom, camera.zoom * krok));
+  camera.x += przed.x - worldX(mx);
+  camera.y += przed.y - worldY(my);
+}, { passive: false });
+
+// Przeciąganie przesuwa mapę. Rozróżniamy je od kliknięcia po przebytym dystansie,
+// żeby drobne drgnięcie ręki nie liczyło się jako wybór portu.
+let drag = null;
+canvas.addEventListener('mousedown', event => {
+  drag = { x: event.clientX, y: event.clientY, moved: 0 };
+});
+window.addEventListener('mousemove', event => {
+  if (!drag) return;
+  const dx = event.clientX - drag.x;
+  const dy = event.clientY - drag.y;
+  drag.moved += Math.abs(dx) + Math.abs(dy);
+  camera.x -= dx / px();
+  camera.y -= dy / px();
+  drag.x = event.clientX;
+  drag.y = event.clientY;
+});
+window.addEventListener('mouseup', event => {
+  const byloPrzeciaganie = drag && drag.moved > 6;
+  drag = null;
+  if (byloPrzeciaganie) return;
+  const rect = canvas.getBoundingClientRect();
+  const mx = event.clientX - rect.left;
+  const my = event.clientY - rect.top;
+  if (mx < 0 || my < 0 || mx > rect.width || my > rect.height) return;
+
+  // Dok ma pierwszeństwo przed stacją: gdy port jest już rozłożony na ekranie,
+  // kliknięcie ma wejść na konkretny pomost, a nie odbić z powrotem na całość.
+  const dock = dockAt(mx, my);
+  if (dock) { focusDock(dock); return; }
+
+  for (const node of network.stations) {
+    if (node.derelict) continue;
+    if (Math.hypot(sx(node.x) - mx, sy(node.y) - my) < 16) { focusPort(node.id); return; }
+  }
+});
+
+canvas.addEventListener('dblclick', () => {
+  camera.x = 0; camera.y = 0; camera.zoom = 1;
+  wybranyPort = null;
+});
+
+// ============================================================
+// Panele
+// ============================================================
+
+function pct(value) { return `${Math.round(value * 100)}%`; }
+
+/** Skrót liczbowy: przy skali gospodarki magazyny idą w setki tysięcy sztuk. */
+function ile(value) {
+  const n = Math.round(Number(value) || 0);
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 10_000) return `${Math.round(n / 1000)}k`;
+  return String(n);
+}
+
+/** Konwoje, patrole i to, ile osłona faktycznie ratuje. */
+function drawConvoysAndPatrols(snap) {
+  const k = snap.convoys;
+  const pat = snap.patrols;
+  const uratowane = k.stats.shipsSaved;
+  const stracone = k.stats.shipsLost;
+
+  const wiersz = (etykieta, wartosc, kolor) => `
+    <div style="display:flex;justify-content:space-between;font-size:11px;padding:1px 0">
+      <span style="color:var(--dim)">${etykieta}</span>
+      <span style="color:${kolor || 'var(--text)'}">${wartosc}</span>
+    </div>`;
+
+  document.getElementById('konwoje').innerHTML =
+    wiersz('grup w drodze', `${k.count} (${k.ships} jednostek)`)
+    + wiersz('największa', k.largest)
+    + wiersz('przechwyty konwojów', k.stats.intercepted, k.stats.intercepted ? 'var(--warn)' : null)
+    + wiersz('stracone / URATOWANE', `${stracone} / ${uratowane}`,
+      uratowane > stracone ? 'var(--good)' : 'var(--bad)')
+    + '<div style="margin:9px 0 5px;font-size:10px;color:var(--dim);letter-spacing:.06em">'
+    + 'PATROLE FRAKCYJNE</div>'
+    + wiersz('pilnowanych szlaków', `${pat.count} (siła ${pat.totalStrength})`)
+    + wiersz('ufundowane / rozwiązane', `${pat.stats.funded} / ${pat.stats.disbanded}`)
+    + (pat.lanes.length
+      ? pat.lanes.slice(0, 4).map(l => `
+        <div style="display:flex;justify-content:space-between;font-size:10px;padding:1px 0">
+          <span style="color:var(--dim)">${l.fromId} ↔ ${l.toId}</span>
+          <span style="color:var(--good)">siła ${l.strength}</span>
+        </div>`).join('')
+      : '<div style="font-size:10px;color:var(--dim)">— nikt nie płaci za osłonę</div>');
+}
+
+/** Niezależni kupcy: kto się dorobił i kto siedzi w porcie. */
+function drawAgents() {
+  const raport = summarizeAgents(agents);
+  document.getElementById('agenci').innerHTML =
+    `<tr><td colspan="2" style="padding-bottom:6px;font-size:10px;color:var(--dim)">
+      ${raport.count} kupców, ${raport.busy} w drodze · kapitał rynku
+      ${Math.round(raport.capital).toLocaleString('pl')} CR · straty ${raport.stats.losses}
+    </td></tr>`
+    + raport.rows.slice(0, 6).map(row => `
+      <tr>
+        <td class="nazwa" style="width:auto;color:${AGENT_COLOR[row.profile] || 'var(--text)'}">
+          ${row.name}${row.busy ? ' ▸' : ''}
+        </td>
+        <td class="stan" style="width:82px">${row.capital.toLocaleString('pl')} CR</td>
+      </tr>
+      <tr><td colspan="2" style="padding-bottom:5px;font-size:10px;color:var(--dim)">
+        ${row.profile} · kursy ${row.trades} ·
+        <span style="color:${row.zysk >= 0 ? 'var(--good)' : 'var(--bad)'}">
+          ${row.zysk >= 0 ? '+' : ''}${row.zysk.toLocaleString('pl')} CR</span>
+      </td></tr>`).join('');
+}
+
+/**
+ * Magazyny. Bez wybranego portu — przegląd braków po wszystkich stacjach.
+ * Po kliknięciu w port — jego PEŁNY stan w sztukach, bo procent zapełnienia
+ * nie mówi nic o tym, czy stać stację na cokolwiek.
+ */
+function drawWarehouses() {
+  const tabela = document.getElementById('stacje');
+  const naglowek = document.getElementById('stacje-tytul');
+
+  if (!wybranyPort || !economies.has(wybranyPort)) {
+    naglowek.textContent = '— kliknij port na mapie';
+    tabela.innerHTML = stations.map(station => {
+      const econ = economies.get(station.id);
+      if (!econ || !station.factionId) return '';
+      const deficits = getStationDeficits(station, econ, 4);
+      const cells = deficits.length
+        ? deficits.map(d => {
+          const color = d.fill < 0.05 ? 'var(--bad)' : d.fill < 0.15 ? 'var(--warn)' : 'var(--dim)';
+          return `<span style="color:${color};margin-right:8px">${RESOURCES[d.id].short} ${pct(d.fill)}</span>`;
+        }).join('')
+        : '<span style="color:var(--good)">pełne</span>';
+      return `<tr><td class="nazwa">${station.id}</td><td>${cells}</td></tr>`;
+    }).join('');
+    return;
+  }
+
+  const station = stations.find(entry => entry.id === wybranyPort);
+  const econ = economies.get(wybranyPort);
+  naglowek.textContent = `— ${wybranyPort.toUpperCase()} w sztukach`;
+
+  // Sortujemy po zapełnieniu: to, czego brakuje, ma być na wierzchu.
+  const wiersze = RESOURCE_KEYS
+    .map(id => {
+      const cap = Number(econ.capacity?.[id]) || 0;
+      const stan = Number(econ.resources?.[id]) || 0;
+      return { id, cap, stan, fill: cap > 0 ? stan / cap : 0, chce: stationWantsResource(station, id) };
+    })
+    // Pokazujemy to, co stacja obraca: produkuje albo zużywa. Reszta to zera.
+    .filter(row => row.stan > 0.5 || row.chce)
+    .sort((a, b) => a.fill - b.fill);
+
+  if (!wiersze.length) {
+    tabela.innerHTML = '<tr><td style="color:var(--dim)">magazyn pusty</td></tr>';
+    return;
+  }
+
+  tabela.innerHTML = wiersze.map(row => {
+    const def = RESOURCES[row.id];
+    const kolor = row.fill < 0.05 ? 'var(--bad)'
+      : row.fill < 0.25 ? 'var(--warn)'
+      : row.fill > 0.7 ? 'var(--good)' : 'var(--text)';
+    // Cena bierze się z niedoboru: pusty magazyn płaci 1.8× wartości bazowej,
+    // pełny 0.6×. To ta rozpiętość tworzy trasy handlowe — nie ma osobnej
+    // tabeli handlu, jest tylko to, co się nie bilansuje.
+    const cena = resourcePrice(station, econ, row.id);
+    const odniesienie = def.value;
+    const drogo = cena && cena.market > odniesienie;
+    return `<tr>
+      <td class="nazwa" style="width:auto;color:${def.color}">${def.label}</td>
+      <td class="stan" style="width:78px;color:${kolor}">${ile(row.stan)} / ${ile(row.cap)}</td>
+    </tr>
+    <tr><td colspan="2" style="padding-bottom:4px">
+      <div class="pasek"><i style="width:${Math.min(100, row.fill * 100)}%;background:${def.color}"></i></div>
+      <div style="display:flex;justify-content:space-between;font-size:10px;margin-top:2px">
+        <span style="color:var(--dim)">skup ${cena ? cena.bid.toFixed(1) : '—'} ·
+          sprzedaż ${cena ? cena.ask.toFixed(1) : '—'} CR</span>
+        <span style="color:${drogo ? 'var(--warn)' : 'var(--good)'}">
+          ${cena ? (cena.market / odniesienie).toFixed(2) : '—'}× bazy</span>
+      </div>
+    </td></tr>`;
+  }).join('');
+}
+
+function drawPanels() {
+  const snap = directorSnapshot(director);
+  const minutes = Math.floor(snap.clock / 60);
+  document.getElementById('s-czas').textContent =
+    `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, '0')}`;
+  document.getElementById('s-aktywne').textContent = snap.active;
+  document.getElementById('s-dostawy').textContent = snap.stats.delivered;
+  document.getElementById('s-straty').textContent = snap.stats.lost;
+  document.getElementById('s-wartosc').textContent = `${Math.round(snap.stats.lostValue)} CR`;
+  const attempted = snap.stats.hauls + snap.stats.mining;
+  document.getElementById('s-skutecznosc').textContent =
+    attempted ? pct(snap.stats.delivered / attempted) : '—';
+  let flota = 0;
+  for (const company of companies.companies) flota += company.ships.length;
+  document.getElementById('s-flota').textContent = `${flota} / ${carrierCount} firm`;
+  document.getElementById('s-zoom').textContent = camera.zoom < 10
+    ? `×${camera.zoom.toFixed(1)}` : `×${Math.round(camera.zoom)}`;
+
+  // Wybór napędu — to jest miara, czy suwaki ekonomiczne cokolwiek robią.
+  const modes = { conventional: 0, gate: 0, warp: 0 };
+  for (const course of getActiveCourses(registry)) {
+    const mode = course.payload?.mode;
+    if (modes[mode] !== undefined) modes[mode]++;
+  }
+  const total = Math.max(1, modes.conventional + modes.gate + modes.warp);
+  // Rozkład klas jednostek w locie — ta sama oś, którą pokolorowana jest mapa.
+  // Jeśli kolejka pod portem jest w jednym kolorze, wąskim gardłem jest klasa
+  // stanowisk, a nie port jako całość.
+  const klasy = { s: 0, m: 0, l: 0, capital: 0, mega: 0 };
+  let czeka = 0;
+  for (const course of getActiveCourses(registry)) {
+    klasy[sizeClassOf(course.unitClass)]++;
+    if (course.blocked) czeka++;
+  }
+  const klasSuma = Math.max(1, getActiveCourses(registry).length);
+
+  const pasek = (label, count, suma, color) => `
+    <div style="margin-bottom:5px">
+      <div style="display:flex;justify-content:space-between;font-size:11px">
+        <span style="color:var(--dim)">${label}</span><span>${count}</span>
+      </div>
+      <div class="pasek"><i style="width:${count / suma * 100}%;background:${color}"></i></div>
+    </div>`;
+
+  document.getElementById('napedy').innerHTML =
+    [['konwencjonalny', modes.conventional, '#8fa3bd'],
+     ['przez bramę', modes.gate, '#4ade80'],
+     ['warp', modes.warp, '#fbbf24']]
+      .map(([l, c, k]) => pasek(l, c, total, k)).join('')
+    + '<div style="margin:9px 0 5px;font-size:10px;color:var(--dim);'
+    + 'letter-spacing:.06em">KLASA JEDNOSTKI</div>'
+    + [['S szutla (60 t)', klasy.s, CLASS_COLOR.s],
+       ['M kontenerowiec (160 t)', klasy.m, CLASS_COLOR.m],
+       ['L frachtowiec (380 t)', klasy.l, CLASS_COLOR.l],
+       ['capital (900 t)', klasy.capital, CLASS_COLOR.capital],
+       ['mega (2400 t)', klasy.mega, CLASS_COLOR.mega]]
+      .map(([l, c, k]) => pasek(l, c, klasSuma, k)).join('')
+    + `<div style="font-size:10px;color:${czeka ? 'var(--warn)' : 'var(--dim)'}">`
+    + `czeka na stanowisko: ${czeka}</div>`;
+
+  // Firmy: kapitał, ile floty stoi, ile pustych przelotów wykupiły.
+  const palette = ['#38bdf8', '#a78bfa', '#f472b6', '#facc15'];
+  document.getElementById('firmy').innerHTML = summarizeCompanies(companies).map(row => {
+    const index = companies.companies.findIndex(company => company.id === row.id);
+    const ruch = row.ships ? (row.busy / row.ships) : 0;
+    return `<tr>
+      <td class="nazwa" style="width:auto;color:${palette[index % palette.length]}">${row.name}</td>
+      <td class="stan" style="width:74px">${row.capital.toLocaleString('pl')} CR</td>
+    </tr>
+    <tr><td colspan="2" style="padding-bottom:6px">
+      <span style="color:var(--dim);font-size:10px">
+        flota ${row.ships} · w ruchu ${row.busy} · kursy ${row.trips} ·
+        <span style="color:var(--warn)">puste ${row.deadheads}</span>
+      </span>
+      <div class="pasek"><i style="width:${ruch * 100}%;background:${palette[index % palette.length]}"></i></div>
+    </td></tr>`;
+  }).join('');
+
+  drawWarehouses();
+  drawConvoysAndPatrols(snap);
+  drawAgents();
+
+  // Komputer handlowy: agregat z warstwy rekordów, nie liczenie encji.
+  const flows = summarizeFlows(registry).slice(0, 8);
+  const peak = Math.max(1, ...flows.map(flow => flow.count));
+  document.getElementById('przeplywy').innerHTML = flows.length
+    ? flows.map(flow => `
+      <tr>
+        <td class="nazwa" style="width:auto">${flow.fromId} → ${flow.toId}</td>
+        <td class="stan">${flow.count}</td>
+      </tr>
+      <tr><td colspan="2"><div class="pasek">
+        <i style="width:${flow.count / peak * 100}%;background:var(--accent)"></i>
+      </div></td></tr>`).join('')
+    : '<tr><td style="color:var(--dim)">— nic nie leci</td></tr>';
+
+  const log = document.getElementById('dziennik');
+  log.innerHTML = director.log.slice(-40).reverse().map(entry => {
+    const cls = entry.text.startsWith('PRZECHWYT') ? 'zly'
+      : entry.text.startsWith('wyprawa') ? 'dobry' : '';
+    return `<div class="${cls}"><span>${Math.floor(entry.at / 60)}m</span>${entry.text}</div>`;
+  }).join('');
+}
+
+// ============================================================
+// Pętla
+// ============================================================
+
+buildWorld(ui.magazyn);
+resize();
+
+let last = performance.now();
+let panelTimer = 0;
+
+function frame(now) {
+  // dt obcinane z OBU stron: ujemna wartość (cofnięty zegar, zaległy callback)
+  // liczyłaby całą symulację wstecz. To jedna z pułapek opisanych w briefie.
+  const dt = Math.min(0.1, Math.max(0, (now - last) / 1000));
+  last = now;
+
+  try {
+    if (!ui.pauza) {
+      // Krok symulacji dzielimy, żeby przy dużym tempie nie przeskakiwać postojów
+      // przy stanowiskach — one trwają 90–120 s i decydują o przepustowości.
+      const total = dt * ui.tempo;
+      const steps = Math.max(1, Math.ceil(total / 10));
+      for (let i = 0; i < steps; i++) step(total / steps);
+    }
+    drawWorld();
+    panelTimer += dt;
+    if (panelTimer > 0.25) { panelTimer = 0; drawPanels(); }
+  } catch (blad) {
+    // Wyjątek w klatce nie może zabijać pętli w ciszy: bez tego strona zostaje
+    // z zamrożonym obrazem i pustymi panelami, a w konsoli nie ma nic, bo
+    // requestAnimationFrame po prostu przestaje być wołany.
+    window.__ruchBlad = blad?.stack || String(blad);
+    if (!frame.zgloszony) { frame.zgloszony = true; console.error('[ruch] błąd klatki:', blad); }
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

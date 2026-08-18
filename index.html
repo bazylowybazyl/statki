@@ -513,8 +513,8 @@
           </div>
         </div>
         <div class="dash-group center">
-          <div class="speed-display"><span class="speed-value" id="val-speed">0</span><span
-              class="speed-unit">M/S</span>
+            <div class="speed-display"><span class="speed-value" id="val-speed">0</span><span
+              class="speed-unit" id="val-speed-unit">M/S</span>
           </div>
           <div class="drive-readout" id="drive-readout">
             <span class="drive-mode" id="drive-mode">BOJOWY</span>
@@ -564,7 +564,7 @@
     </div>
     <div class="stat">Czas gry: <span id="game-time">00:00</span></div>
     <div class="stat">W — ciąg (duży silnik plazmowy) · Q/E — strafe · A/D — obrót</div>
-    <div class="stat">LPM — rail · PPM — broń specjalna · F — rakiety boczne · SHIFT — wyższy bieg · 9 — warp
+    <div class="stat">LPM — zatwierdź namiar · 1/2/3 — grupy broni · ŚPM — SINGLE/MULTI/SUB · SHIFT — wyższy bieg · 9 — warp
     </div>
     <div style="margin-top:6px"><small>Gwiazdy są proceduralne w całej galaktyce. Silnik: niebieski exhaust + krótki
         ślad przy ruchu.</small></div>
@@ -757,7 +757,7 @@
                   </div>
                   <div
                     style="min-width:56px; height:44px; border-radius:10px; border:1px solid #2f426e; background:#0b1326; color:#8fb5ff; display:flex; flex-direction:column; align-items:center; justify-content:center;">
-                    <span style="font-weight:700; color:#fff;">T</span><span style="font-size:10px;">Lock</span>
+                    <span style="font-weight:700; color:#fff;">LPM</span><span style="font-size:10px;">Namiar</span>
                   </div>
                   <div
                     style="min-width:56px; height:44px; border-radius:10px; border:1px solid #2f426e; background:#0b1326; color:#8fb5ff; display:flex; flex-direction:column; align-items:center; justify-content:center;">
@@ -800,9 +800,11 @@
                   Mysz</div>
                 <div style="display:grid; gap:8px;">
                   <div style="display:flex; justify-content:space-between; gap:10px; font-size:13px;"><span
-                      style="color:#fff;">LPM</span><span style="color:#9fc7ff;">Rail / ogien glówny</span></div>
+                      style="color:#fff;">LPM</span><span style="color:#9fc7ff;">Zatwierdź namiar</span></div>
+                   <div style="display:flex; justify-content:space-between; gap:10px; font-size:13px;"><span
+                      style="color:#fff;">PPM</span><span style="color:#9fc7ff;">Menu rozkazów</span></div>
                   <div style="display:flex; justify-content:space-between; gap:10px; font-size:13px;"><span
-                      style="color:#fff;">PPM</span><span style="color:#9fc7ff;">Rakiety / specjal</span></div>
+                      style="color:#fff;">ŚPM</span><span style="color:#9fc7ff;">SINGLE / MULTI / SUB</span></div>
                   <div style="display:flex; justify-content:space-between; gap:10px; font-size:13px;"><span
                       style="color:#fff;">Kólko</span><span style="color:#9fc7ff;">Zoom kamery</span></div>
                 </div>
@@ -817,8 +819,8 @@
                   </div>
                   <div><strong style="color:#fff;">Damper:</strong> S odpala damper, C przełącza damper, B przełącza
                     stabilizer.</div>
-                  <div><strong style="color:#fff;">Walka:</strong> LPM to broń główna, PPM rakiety, F specjal, T lock
-                    target.</div>
+                  <div><strong style="color:#fff;">Walka:</strong> LPM zatwierdza namiar; klawisze 1/2/3 uruchamiają
+                    główne grupy broni.</div>
                   <div><strong style="color:#fff;">Systemy:</strong> X skan, TAB/M CIC, P panel wydajności, R naprawa.
                   </div>
                 </div>
@@ -1603,7 +1605,9 @@
   <script type="module">
     
     import { DEFAULT_PLANET_SCALE, TIME_SCALE } from './src/config/constants.js';
-    import { BELT_DEFINITIONS } from './src/data/asteroidTypes.js';
+    import { formatLocalDistance, formatVelocity, resolveWorldUnitsPerAu } from './src/config/units.js';
+    import { BELT_DEFINITIONS, getOutermostBeltEdgeAu } from './src/data/asteroidTypes.js';
+    import { buildSystemMap, SYSTEM_MAP_CONSTANTS } from './src/data/systemMap.js';
     import { WORLD, setWorldSize } from './src/world/world.js';
     import { initShieldSystem, updateShieldFx, registerShieldImpact, resizeShieldSystem, triggerEnergyShot as applyEnergyShot, isEntityShieldBlocking, isShieldChargedEnoughToActivate, setEntityShieldForcedOff, getEntityShieldBaseRadius, getEntityShieldBlockingProgress, getEntityShieldRadiusTowards } from './shieldSystem.js';
     // DODANO IMPORT SHIP_PHYSICS
@@ -1645,6 +1649,17 @@
       hitTestCommandMenu
     } from "./src/game/worldCommandMenu.js";
     import {
+      TARGETING_MODE,
+      TARGETING_MODE_NAMES,
+      TARGETING_MODE_COLORS,
+      TARGETING_MODE_ICONS,
+      lerpTargetingAxisAngle,
+      perpendicularTargetingAngle,
+      reconcileLockedTargets,
+      targetingVisualScale,
+      targetingModeFromWheelVector
+    } from "./src/game/targetingModes.js";
+    import {
       isFighterUnit,
       computeFighterClouds,
       computeBattles,
@@ -1655,6 +1670,55 @@
     import { shouldZeroStabilizedAngularVelocity, updateHeadingStabilizer } from "./src/game/flight/stabilizer.js";
     import { DestructorSystem, initHexBody, isHexShips3DActive, getHexStructuralState, getHexArenaStats, disposeHexBody, DESTRUCTOR_CONFIG } from "./src/game/destructor.js";
     import { TowConstraintSystem } from "./src/game/towSystem.js";
+    import { createWeaponInventory } from "./src/game/weaponInventory.js";
+    import {
+      buildWarpRoutes,
+      getWarpRoute as lookupWarpRoute,
+      assignTransitRoute,
+      removeActorFromTransitQueues,
+      refreshWarpRoutes
+    } from "./src/game/transitController.js";
+    import {
+      createFleetState,
+      planShipment,
+      createShipmentOrder,
+      advanceShipmentOrders,
+      tryDeliverShipmentOrder,
+      wreckShipmentOrder,
+      recoverWreckedShipmentOrder,
+      materializeShipmentOrderView,
+      dematerializeShipmentOrderView,
+      getShipmentOrder,
+      tickCooldowns,
+      blockRoute,
+      getBlockedPairs,
+      describeCargo,
+      VAN_CLASSES,
+      SHIPMENT_STATUS,
+      SHIPMENT_OWNER_KIND,
+      DISPATCH_INTERVAL,
+      MAX_ACTIVE_VANS
+    } from "./src/game/cargoFleet.js";
+    import {
+      ECONOMY_CYCLE_SECONDS,
+      runStationEconomy,
+      seedStationStock,
+      getStationDeficits,
+      getStationSurpluses,
+      stationWantsResource,
+      describeStationRole
+    } from "./src/game/stationEconomy.js";
+    import {
+      ensureSalvageManifest,
+      getSalvage,
+      hasSalvage,
+      describeSalvage,
+      takeFieldCut,
+      takeDockSalvage,
+      FIELD_CUT_RANGE,
+      FIELD_CUT_SHARDS_PER_SECOND,
+      DOCK_DELIVERY_RANGE
+    } from "./src/game/salvage.js";
     import {
       buildMegafreighterTrainLayout,
       stepMegafreighterTrainKinematics,
@@ -1745,6 +1809,36 @@
       PLAYER_HULL_MARKET_ORDER
     } from "./src/data/playerHullMarket.js";
     import {
+      FACTION,
+      FACTIONS,
+      FACTION_IDS,
+      DERELICT,
+      REPUTATION_EVENTS,
+      areFactionsHostile,
+      applyReputationChange,
+      canDockWithFaction,
+      createInitialReputation,
+      getDefaultStationFaction,
+      getFactionColor,
+      getFactionName,
+      getFactionPriceMultiplier,
+      getFactionShort,
+      isDerelict,
+      isFactionHostileToPlayer,
+      normalizeFaction,
+      resolveStanding
+    } from "./src/data/factions.js";
+    import {
+      RESOURCES,
+      RESOURCE_KEYS,
+      RESOURCE_KEYS_BY_TIER,
+      TIER,
+      TIER_LABEL_PL,
+      getResourceLabel as resourceLabel,
+      getResourceValue,
+      getBagMass
+    } from "./src/data/resources.js";
+    import {
       FIGHTER_LAUNCH,
       orderHangarTubes,
       chevronFormationOffset,
@@ -1780,6 +1874,12 @@
     import pirateFrigateImg from "./src/assets/ships/piratefrigate.png";
     import pirateDestroyerImg from "./src/assets/ships/piratedestroyer.png";
     import pirateBattleshipImg from "./src/assets/ships/piratebattleship.png";
+
+    // Frachtowce cywilne — leżały w assets nieużywane. Bez nich vany towarowe
+    // renderowały się jako sam pasek statusu bez kadłuba pod spodem.
+    import interStationShuttleImg from "./assets/inter_station_shuttle.png";
+    import containerShipImg from "./assets/container_ship.png";
+    import longHaulFreighterImg from "./assets/long_haul_freighter.png";
 
     if (CAPITAL_SHIP_TEMPLATES_DATA?.carrier?.profile) {
       CAPITAL_SHIP_TEMPLATES_DATA.carrier.profile.spriteSrc = terranCarrierImg;
@@ -2693,7 +2793,12 @@
           const calls = Math.round(Number(bucket.calls) || 0);
           const triangles = Math.round(Number(bucket.triangles) || 0);
           const triText = triangles >= 10000 ? `${Math.round(triangles / 1000)}k` : `${triangles}`;
-          return `${calls} / ${triText}`;
+          // Czas passa obok jego draw calli — pass rysujący 2 obiekty i pass
+          // rysujący 300 mają ten sam koszt przejścia po grafie sceny, więc bez
+          // ms nie da się odróżnić kosztu GPU od kosztu trawersu w CPU.
+          const ms = Number(bucket.ms);
+          const msText = Number.isFinite(ms) && ms > 0 ? ` · ${ms.toFixed(2)}ms` : '';
+          return `${calls} / ${triText}${msText}`;
         };
 
         if (e.fps) {
@@ -4057,7 +4162,7 @@
     }
 
     function getAuToWorldUnits() {
-      return (typeof BASE_ORBIT === 'number' && BASE_ORBIT > 0) ? BASE_ORBIT : 3000;
+      return resolveWorldUnitsPerAu(window);
     }
 
     function getWarpLensThreshold() {
@@ -6112,47 +6217,26 @@
     Game.infrastructure = Game.infrastructure || new Map();
     Game.stationEconomy = Game.stationEconomy || new Map();
     const previousPlayer = Game.player || {};
-    const defaultInventory = [
-      'railgun_mk1',
-      'railgun_mk2',
-      'vulcan_minigun',
-      'helios_laser',
-      'armata_mk1',
-      'beam_continuous',
-      'beam_pulse',
-      'heavy_autocannon',
-      'tempest_ion_s',
-      'tempest_ion_l',
-      'helios_laser_s',
-      'helios_lance_l',
-      'gatling_s',
-      'heavy_autocannon_l',
-      'missile_rack',
-      'fast_missile_rack',
-      'ciws_mk1',
-      'ciws_mk2',
-      'laser_pd_mk1',
-      'flak_s',
-      'flak_m',
-      'flak_l',
-      'flak_capital',
-      'fighter_bay',
-      'fighter_squad_interceptor',
-      'fighter_squad_multirole',
-      'fighter_squad_strike',
-      'special_goliath_autocannon',
-      'special_plasma_gatling',
-      'special_valkyrie_railgun',
-      'special_yamato_cannon',
-      'supernova_missile',
-      'hexlance_siege',
-      'siege_torpedo',
-      'siege_torpedo_mk2',
-      'torpedo_salvo',
-      'siege_railgun'
-    ];
-    const existingInventory = previousPlayer.inventory ? Array.from(previousPlayer.inventory) : [];
-    const mergedInventory = new Set([...existingInventory, ...defaultInventory]);
+    // Inwentarz to broń W ŁADOWNI — montaż ją zabiera, demontaż zwraca.
+    // Ilości startowe pokrywają DOKŁADNIE to, co obsadza autoMountDefaults(),
+    // plus garść zapasu. Atlas startuje więc uzbrojony po zęby, ale z niemal
+    // pustą ładownią: każda zmiana fitu wymaga łupu z wraku albo zakupu.
+    const DEFAULT_INVENTORY_STOCK = {
+      railgun_mk2: 24,
+      missile_rack: 8,
+      ciws_mk1: 6,
+      flak_capital: 2,
+      fighter_squad_multirole: 6,
+      hexlance_siege: 1,
+      supernova_missile: 4,
+      // Zapas na pierwsze eksperymenty z fitem
+      armata_mk1: 2,
+      laser_pd_mk1: 2
+    };
+    const mergedInventory = createWeaponInventory(previousPlayer.inventory);
+    // Zapas uzupełniamy tylko na czystym starcie — po przeładowaniu sceny
+    // gracz ma zachować to, co zdobył, a nie dostać kolejne 24 railguny.
+    if (mergedInventory.size === 0) mergedInventory.merge(DEFAULT_INVENTORY_STOCK);
     const hasSavedShipPosition = !!previousPlayer.pos;
 
     // =============== Ship ===============
@@ -6260,6 +6344,18 @@
 
     function setHardpointMount(hp, weaponId, opts = {}) {
       if (!hp) return;
+      const inventory = Game.player?.inventory;
+      // Eskadry w hangarach mają własny tor (setHardpointHangarSquadrons) i
+      // zachowują się bardziej jak amunicja niż broń — nie liczymy ich sztukowo.
+      const trackInventory = !!inventory
+        && opts.skipInventory !== true
+        && hp.type !== HP.HANGAR;
+      const previousMount = hp.mount || null;
+      // Zniszczony hardpoint zabiera działo ze sobą — nie wraca do ładowni.
+      const releasePrevious = () => {
+        if (trackInventory && previousMount && !hp.destroyed) inventory.give(previousMount, 1);
+      };
+
       if (hp.destroyed) {
         hp.mount = null;
         if (hp.type === HP.HANGAR) hp.hangarSquadrons = [];
@@ -6269,9 +6365,9 @@
         return;
       }
       const weapon = weaponId ? WEAPONS[weaponId] : null;
-      const inventory = Game.player?.inventory;
       // POPRAWKA: Używamy weapon.mountType zamiast weapon.type
-      if (!weapon || (inventory && weaponId && !inventory.has(weaponId)) || weapon.mountType !== hp.type) {
+      if (!weapon || weapon.mountType !== hp.type) {
+        releasePrevious();
         hp.mount = null;
         if (hp.type === HP.HANGAR) hp.hangarSquadrons = [];
         hp.ammo = null;
@@ -6282,6 +6378,11 @@
       if (hp.type === HP.HANGAR && isHangarSquadronWeapon(weapon)) {
         setHardpointHangarSquadrons(hp, [weaponId]);
         return;
+      }
+      if (previousMount !== weaponId) {
+        // Brak sztuki w ładowni — slot zostaje nietknięty, zamiast się rozbroić.
+        if (trackInventory && !inventory.take(weaponId, 1)) return;
+        releasePrevious();
       }
       hp.mount = weaponId;
       if (hp.type === HP.HANGAR) hp.hangarSquadrons = [];
@@ -6296,10 +6397,23 @@
       }
     }
 
+    // Regeneracja hardpointów tworzy NOWE obiekty, więc dotychczasowe działa
+    // przepadłyby razem ze starą tablicą. Zwracamy je do ładowni, inaczej zmiana
+    // kadłuba po cichu kasowałaby całe uzbrojenie.
+    function reclaimMountedWeaponsToInventory() {
+      const inventory = Game.player?.inventory;
+      if (!inventory) return;
+      for (const hp of Game.player.hardpoints || []) {
+        if (!hp || hp.destroyed || hp.type === HP.HANGAR) continue;
+        if (hp.mount) inventory.give(hp.mount, 1);
+      }
+    }
+
     function rebuildHardpointsForFrame() {
       const frame = SHIPS[Game.player.shipFrame];
       if (!frame) return;
       const bounds = getPlayerHardpointBoundsForFrame(Game.player.shipFrame);
+      reclaimMountedWeaponsToInventory();
       Game.player.hardpoints = generatePlayerHardpointsForFrame(Game.player.shipFrame, frame, bounds);
       Game.player.editorCores = buildPlayerDefaultEditorCores();
       Game.player.editorLights = buildPlayerDefaultEditorLights(Game.player.shipFrame);
@@ -6323,9 +6437,12 @@
     }
 
     function mountFirstFree(type, weaponId, howMany) {
-      if (!Game.player.inventory.has(weaponId)) return;
+      const inventory = Game.player.inventory;
       for (const hp of Game.player.hardpoints) {
         if (howMany <= 0) break;
+        // Zapas sprawdzamy w pętli, nie raz na starcie — przy licznikach sztuk
+        // ładownia może się skończyć w połowie obsadzania.
+        if (!inventory.has(weaponId)) break;
         if (hp.type === type && !hp.mount && !hp.destroyed) {
           setHardpointMount(hp, weaponId);
           howMany--;
@@ -6692,7 +6809,9 @@
         setHardpointHangarSquadrons(hp, squadronMounts);
         return;
       }
-      setHardpointMount(hp, entry.weaponId, { ammo: entry.ammo, maxAmmo: entry.maxAmmo });
+      // Odtwarzanie zapisanego fitu — broń została pobrana z ładowni przy
+      // pierwotnym montażu, więc drugi raz jej nie liczymy.
+      setHardpointMount(hp, entry.weaponId, { ammo: entry.ammo, maxAmmo: entry.maxAmmo, skipInventory: true });
     }
 
     function tryPreserveMounts(previous) {
@@ -7938,7 +8057,10 @@
       terran_supercapital: terranSupercapitalImg,
       pirate_frigate: pirateFrigateImg,
       pirate_destroyer: pirateDestroyerImg,
-      pirate_battleship: pirateBattleshipImg
+      pirate_battleship: pirateBattleshipImg,
+      inter_station_shuttle: interStationShuttleImg,
+      container_ship: containerShipImg,
+      long_haul_freighter: longHaulFreighterImg
     });
     Object.values(HULL_SPRITE_PATHS_BY_ID).forEach(src => { try { loadHullSprite(src); } catch { } });
     const WEAPON_VISUAL_SCALE = Object.freeze({
@@ -7946,10 +8068,22 @@
       npc: 0.68
     });
 
+    // Typy frachtowców cywilnych. UWAGA: warunek `type.includes('frigate')`
+    // NIE łapie 'freighter' — to inne słowo (fr-ei-ghter vs fr-i-gate).
+    // Przez tę zbieżność wyglądu frachtowce latały bez kadłuba, bo funkcja
+    // spadała na `return null` i render pomijał całą gałąź sprite'ową.
+    const FREIGHTER_HULL_BY_TYPE = Object.freeze({
+      'freighter-small': 'inter_station_shuttle',
+      'freighter-medium': 'container_ship',
+      'freighter-large': 'long_haul_freighter',
+      'freighter-capital': 'long_haul_freighter'
+    });
+
     function getNpcHullRenderProfileId(npc) {
       const shipFrameId = resolveHullRenderProfileId(npc?.shipFrame);
       if (shipFrameId && shipFrameId !== 'atlas' && String(npc?.shipFrame || '').trim()) return shipFrameId;
       const type = String(npc?.type || '').toLowerCase();
+      if (FREIGHTER_HULL_BY_TYPE[type]) return FREIGHTER_HULL_BY_TYPE[type];
       if (type === 'battleship') return npc?.isPirate ? 'pirate_battleship' : 'terran_battleship';
       if (type === 'destroyer') return npc?.isPirate ? 'pirate_destroyer' : 'terran_destroyer';
       if (type.includes('frigate')) return npc?.isPirate ? 'pirate_frigate' : 'terran_frigate';
@@ -8230,103 +8364,33 @@
     const solarParams = new URLSearchParams(location.search);
     const USE_SOLAR = solarParams.has('solar') ? solarParams.get('solar') !== '0' : true; // można też sterować paramem URL ?solar=1
     window.USE_SOLAR = USE_SOLAR;
-    const WORLD_TARGET_DIAMETER = 12000000;
-    const WORLD_SAFETY_MARGIN_AU = 2;
+    // Te same liczby, którymi systemMap.js liczy skalę — trzymane w jednym miejscu,
+    // żeby świat i jego pomiary nie mogły się rozjechać.
+    const WORLD_TARGET_DIAMETER = SYSTEM_MAP_CONSTANTS.worldTargetDiameter;
+    const WORLD_SAFETY_MARGIN_AU = SYSTEM_MAP_CONSTANTS.safetyMarginAu;
     const WORLD_EDGE_MARGIN_AU = WORLD_SAFETY_MARGIN_AU;
-    const PLANET_3D_SIZE_MULTIPLIER = 4.5;
+    const PLANET_3D_SIZE_MULTIPLIER = SYSTEM_MAP_CONSTANTS.planet3dSizeMultiplier;
 
     function getRingBeltDefinition(id) {
       return BELT_DEFINITIONS.find(belt => belt.id === id && belt.shape === 'ring') || null;
     }
 
     function getOuterAsteroidEdgeAU() {
-      return BELT_DEFINITIONS.reduce((maxEdge, belt) => {
-        if (belt.shape === 'ring' && Number.isFinite(belt.outerAU)) {
-          return Math.max(maxEdge, belt.outerAU);
-        }
-        if (belt.shape === 'triangle' && Number.isFinite(belt.radiusAU)) {
-          return Math.max(maxEdge, belt.radiusAU + Math.max(0, Number(belt.spreadAU) || 0) * 0.5);
-        }
-        return maxEdge;
-      }, 0);
+      return getOutermostBeltEdgeAu(BELT_DEFINITIONS);
     }
 
     function makeSolarPlanets() {
-      // Skala AU dopasowuje cały układ do świata, łącznie z pasem Kuipera.
-      // orbitAU jest jedynym źródłem promienia orbity, dzięki czemu planety nie
-      // wpadają w pasy asteroid przez dodatkowe, ukryte offsety.
-      const BASE_AU = 3000;
-      const EARTH_BASE_R = 2800;
-      const MARS_BASE_R = 3000;
-      const EARTH_ORBIT_AU = 25.0;
-      const MARS_ORBIT_AU = 33.0;
-      const earthMarsMinGap = (EARTH_BASE_R + MARS_BASE_R) * PLANET_SCALE * PLANET_3D_SIZE_MULTIPLIER;
-      const earthMarsOrbitGapAu = MARS_ORBIT_AU - EARTH_ORBIT_AU;
-      const minAuForNoOverlap = earthMarsMinGap / earthMarsOrbitGapAu;
-      const defs = [
-        { id: 'mercury', name: 'mercury', baseR: 2000, orbitAU: 8.0, type: 'rocky' },
-        { id: 'venus', name: 'venus', baseR: 2800, orbitAU: 15.0, type: 'rocky' },
-        {
-          id: 'earth',
-          name: 'earth',
-          baseR: 2800,
-          ringWorldRadius: 37800,
-          orbitAU: 25.0,
-          type: 'terran',
-          orbitZone: {
-            inner: 8500,
-            outer: 12000,
-            gravity: 15000
-          }
-        },
-        { id: 'mars', name: 'mars', baseR: 3000, ringWorldRadius: 30000, orbitAU: 33.0, type: 'rocky' },
-        { id: 'jupiter', name: 'jupiter', baseR: 3800, orbitAU: 50.20, type: 'gas' },
-        { id: 'saturn', name: 'saturn', baseR: 3700, orbitAU: 80.58, type: 'gas' },
-        { id: 'uranus', name: 'uranus', baseR: 2000, orbitAU: 100.20, type: 'gas' },
-        { id: 'neptune', name: 'neptune', baseR: 2000, orbitAU: 120.00, type: 'gas' },
-        // { id:'pluto',   name:'pluto',   baseR:  30, orbitAU:39.50 },
-      ];
-      const outerPlanetOrbitAU = defs.reduce(
-        (maxOrbit, def) => Number.isFinite(def.orbitAU) ? Math.max(maxOrbit, def.orbitAU) : maxOrbit,
-        0
-      );
-      const outerRadiusAU = Math.max(outerPlanetOrbitAU, getOuterAsteroidEdgeAU()) + WORLD_SAFETY_MARGIN_AU;
-      const minAuForWorldTarget = WORLD_TARGET_DIAMETER / Math.max(1, outerRadiusAU * 2);
-      const AU = Math.max(BASE_AU, minAuForNoOverlap, minAuForWorldTarget);
-      window.BASE_ORBIT = AU;
-
-      const MIN_SUN_GAP = 600;
-      const MIN_PLANET_GAP = 800;
-      const rand = () => Math.random() * Math.PI * 2;
-
-      let minOrbitEdge = SUN.r;
-      return defs.map((def, index) => {
-        const effectiveR = def.baseR * PLANET_SCALE;
-        const baseOrbit = def.orbitAU * AU;
-        const sunGap = SUN.r + effectiveR + MIN_SUN_GAP;
-        const neighborGap = minOrbitEdge + effectiveR + MIN_PLANET_GAP;
-        const orbitRadius = Math.max(
-          baseOrbit,
-          sunGap,
-          neighborGap
-        );
-
-        minOrbitEdge = orbitRadius + effectiveR;
-
-        return {
-          id: def.id,
-          name: def.name,
-          type: def.type,
-          baseR: def.baseR,
-          r: effectiveR,
-          ringWorldRadius: def.ringWorldRadius,
-          orbitAU: def.orbitAU,
-          orbitZone: def.orbitZone,
-          orbitRadius,
-          angle: rand(),
-          speed: 0
-        };
+      // Tabela orbit i rachunek skali mieszkają w src/data/systemMap.js — ten sam
+      // moduł czytają skrypty pomiarowe i prototypy ruchu. Wcześniej ta tabela była
+      // tutaj wpisana, a wszystko poza grą przepisywało jej liczby ręcznie, więc
+      // każda zmiana skali po cichu unieważniała dokumentację i pomiary.
+      const { auInWorldUnits, planets } = buildSystemMap(getOuterAsteroidEdgeAU(), {
+        planetScale: PLANET_SCALE,
+        sunRadius: SUN.r
       });
+      window.BASE_ORBIT = auInWorldUnits;
+      window.WORLD_UNITS_PER_AU = auInWorldUnits;
+      return planets;
     }
 
     function computeWorldDiameter(planets) {
@@ -8382,6 +8446,7 @@
       ];
       const BASE_ORBIT = 7000;
       window.BASE_ORBIT = BASE_ORBIT;
+      window.WORLD_UNITS_PER_AU = BASE_ORBIT;
       const list = [];
       for (let i = 0; i < NUM_PLANETS; i++) {
         const orbitRadius = BASE_ORBIT * (i + 1);
@@ -8496,6 +8561,7 @@
     const ZONE_APPROACH_DISTANCE = AU_IN_WORLD_UNITS; // 1 AU przed granicą
     window.ZONE_APPROACH_DISTANCE = ZONE_APPROACH_DISTANCE;
     window.AU_IN_WORLD_UNITS = AU_IN_WORLD_UNITS;
+    window.WORLD_UNITS_PER_AU = AU_IN_WORLD_UNITS;
 
     const PIRATE_ORBIT = Object.freeze({
       innerAu: 4,
@@ -8895,9 +8961,15 @@
         { x: 0, y: -portOffset }
       ];
       const style = STATION_STYLES[Math.floor(Math.random() * STATION_STYLES.length)];
+      // Właściciel wynika z planety: rdzeń wewnętrzny należy do Terra Nova,
+      // olbrzymy gazowe do Konsorcjum. Planeta spoza żadnej listy (Neptun)
+      // dostaje null — to jest właśnie stacja opuszczona.
+      const factionId = getDefaultStationFaction(pl.id);
       return {
         id: pl.id,
         planet: pl,
+        factionId,
+        abandoned: !factionId,
         orbitRadius,
         angle,
         speed,
@@ -8982,32 +9054,11 @@
     // Warp routes between stations
     let warpRoutes = {};
     function initWarpRoutes() {
-      warpRoutes = {};
-      for (const from of stations) {
-        for (const to of stations) {
-          if (from.id === to.id) continue;
-          if (from.inner !== to.inner) continue;
-          const sx = from.warpGate?.x ?? from.x;
-          const sy = from.warpGate?.y ?? from.y;
-          const ex = to.warpGate?.x ?? to.x;
-          const ey = to.warpGate?.y ?? to.y;
-          const dx = ex - sx;
-          const dy = ey - sy;
-          const dist = Math.hypot(dx, dy) || 1;
-          warpRoutes[from.id + '-' + to.id] = {
-            from: from.id,
-            to: to.id,
-            fromRef: from,
-            toRef: to,
-            start: { x: sx, y: sy, queues: [[], []] },
-            end: { x: ex, y: ey },
-            dir: { x: dx / dist, y: dy / dist },
-            length: dist
-          };
-        }
-      }
+      // Pełna skierowana siatka obejmuje także przejścia inner <-> outer.
+      // Brak trasy jest błędem planowania; nigdy nie zastępujemy go lotem direct.
+      warpRoutes = buildWarpRoutes(stations);
     }
-    function getWarpRoute(fromId, toId) { return warpRoutes[fromId + '-' + toId]; }
+    function getWarpRoute(fromId, toId) { return lookupWarpRoute(warpRoutes, fromId, toId); }
     initWarpRoutes();
 
     let npcs = [];
@@ -10148,8 +10199,7 @@
       if (!shards || shards.length === 0) return;
       if (window.DestructorSystem?.spawnWreckEntity && parentEntity?.hexGrid) {
         try {
-          window.DestructorSystem.spawnWreckEntity(parentEntity, shards, null);
-          return;
+          return window.DestructorSystem.spawnWreckEntity(parentEntity, shards, null);
         } catch (err) {
           console.warn('[createWreckage] DestructorSystem.spawnWreckEntity failed, using fallback:', err);
         }
@@ -10238,6 +10288,12 @@
 
       wreck.radius = (Math.sqrt(maxR2) + 20) * scale;
 
+      if (parentEntity.dead && parentEntity._cargoOrderId && !parentEntity._cargoWreck) {
+        wreck._cargoOrderId = parentEntity._cargoOrderId;
+        wreck._cargoWreckId = `cargo-wreck:${parentEntity._cargoOrderId}`;
+        parentEntity._cargoWreck = wreck;
+      }
+
       if (window.wrecks) {
         window.wrecks.push(wreck);
       }
@@ -10247,6 +10303,7 @@
           window.spawnParticle({ x: worldX, y: worldY }, { x: wreck.vx, y: wreck.vy }, 1.0, '#aaaaaa', 5, false);
         }
       }
+      return wreck;
     };
     // Ile myśliwców liczy pojedyncza eskadra roju i jak długo stacja przezbraja
     // się po wypuszczeniu CAŁEGO kompletu.
@@ -10434,6 +10491,36 @@
       }
       return target.id;
     }
+
+    function beginStationTransit(npc, start, targetId, options = {}) {
+      const target = stations.find(station => station.id === targetId);
+      const route = start && target ? getWarpRoute(start.id, target.id) : null;
+      if (!npc || !start || !target || !route) return false;
+
+      const assigned = assignTransitRoute(npc, start, target, route, {
+        phase: options.phase || 'toGate',
+        lane: options.lane,
+        dockPort: options.dockPort,
+        speed: options.speed,
+        fade: options.fade ?? 1,
+        resetVelocity: options.resetVelocity
+      });
+      if (!assigned) return false;
+
+      if (options.spawnAtSource !== false) {
+        const portCount = Math.max(1, start.ports?.length || 0);
+        const startPort = Number.isFinite(options.startPort)
+          ? Math.abs(Math.trunc(options.startPort)) % portCount
+          : Math.floor(Math.random() * portCount);
+        const spawnPos = stationPortWorld(start, startPort);
+        npc.x = spawnPos.x;
+        npc.y = spawnPos.y;
+        npc.vx = 0;
+        npc.vy = 0;
+      }
+      return true;
+    }
+
     const NPC_TYPES = {
       'freighter-small': { radius: 10, speed: 100, hp: 100, color: '#8ab4d6', weapon: null, isCollidable: false },
       'freighter-medium': { radius: 15, speed: 100, hp: 150, color: '#769cb8', weapon: null, isCollidable: false },
@@ -10447,68 +10534,340 @@
     };
 
     // ============================================================================
-    // SYSTEM TRYBÓW OSTRZAŁU (Firing Modes)
+    // TRYBY CELOWNIKA — wpływają wyłącznie na wybór celów, nigdy na statystyki broni.
     // ============================================================================
-    const FIRE_MODE = {
-      PRECISE: 0,  // Kolko - 100% range, 100% reload
-      ARTILLERY: 1,  // Prostokąt - 200% range, 50% reload speed (= 200% cd)
-      RAPID: 2,  // Linia - 50% range, 200% reload speed (= 50% cd)
-    };
-    const FIRE_MODE_NAMES = ['Precyzyjny', 'Artyleryjski', 'Szybki'];
-    const FIRE_MODE_COLORS = ['#7dd3fc', '#ffaa44', '#44ff88'];
-    const FIRE_MODE_ICONS = ['◎', '▭', '│'];
-    const FIRE_MODE_CONFIG = [
-      { rangeMul: 1.0, cdMul: 1.0, baseSize: 40, maxSize: 140, growRate: 8, shrinkRate: 30 },   // PRECISE: circle
-      { rangeMul: 2.0, cdMul: 2.0, baseSize: 80, maxSize: 260, growRate: 5, shrinkRate: 15 },   // ARTILLERY: rect
-      { rangeMul: 0.5, cdMul: 0.5, baseSize: 20, maxSize: 200, growRate: 12, shrinkRate: 40 },  // RAPID: line
-    ];
+    const TARGETING_GROUP_RADIUS_PX = 190;
+    const TARGETING_GROUP_PAD_PX = 44;
+    const TARGETING_SUB_SCAN_TIME = 2.2;
+    const TARGETING_CORNERS = Object.freeze([[-1, -1], [1, -1], [1, 1], [-1, 1]]);
 
-    const firingMode = {
-      current: FIRE_MODE.PRECISE,
-      spread: 0,           // bieżący rozrzut (rośnie przy strzelaniu, maleje z czasem)
+    const targetingMode = {
+      current: TARGETING_MODE.SINGLE,
       wheelOpen: false,
-      wheelHover: -1,      // podświetlona opcja w kole wyboru
+      wheelHover: -1,
       wheelMouseStart: null,
-      rangeDraw: 0
+      rangeDraw: 0,
+      acquireTarget: null,
+      acquireProgress: 0,
+      groupAngle: 0,
+      groupX: 0,
+      groupY: 0,
+      groupW: 160,
+      groupH: 190,
+      groupCandidates: [],
+      groupPrevious: [],
+      groupAcquisition: new WeakMap(),
+      subScanTarget: null,
+      subScanProgress: 0,
+      scannedTargets: new WeakSet(),
+      subsystemTargets: new WeakMap(),
+      hoveredSubsystem: null,
+      pointerConfirmArmed: false
     };
-    window.firingMode = firingMode;
+    window.targetingMode = targetingMode;
 
-    function getFiringModeModifiers() {
-      const cfg = FIRE_MODE_CONFIG[firingMode.current];
-      return { rangeMul: cfg.rangeMul, cdMul: cfg.cdMul };
+    function setTargetingMode(nextMode) {
+      const next = Math.max(TARGETING_MODE.SINGLE, Math.min(TARGETING_MODE.SUB, Number(nextMode) || 0));
+      if (next === targetingMode.current) return;
+      targetingMode.current = next;
+      targetingMode.acquireTarget = null;
+      targetingMode.acquireProgress = 0;
+      targetingMode.groupCandidates.length = 0;
+      targetingMode.groupPrevious.length = 0;
+      if (next === TARGETING_MODE.MULTI) {
+        const visualScale = targetingVisualScale(camera?.zoom);
+        targetingMode.groupAngle = 0;
+        targetingMode.groupX = Number(mouse?.x) || W * 0.5;
+        targetingMode.groupY = Number(mouse?.y) || H * 0.5;
+        targetingMode.groupW = 160 * visualScale;
+        targetingMode.groupH = 190 * visualScale;
+      }
+      targetingMode.subScanTarget = null;
+      targetingMode.subScanProgress = 0;
+      targetingMode.hoveredSubsystem = null;
+      setLockedTargetsExact([]);
+      clearPlayerAttackState();
+      mainAutoFire = false;
+      specialAutoFire = false;
+      rocketAutoFire = false;
+      specialMissileAutoFire = false;
+      pushZoneMessage(`CELOWNIK: ${TARGETING_MODE_NAMES[next]}`, 1.1);
     }
 
-    function updateFiringModeSpread(dt, shotFired) {
-      const cfg = FIRE_MODE_CONFIG[firingMode.current];
-      if (shotFired) {
-        firingMode.spread = Math.min(cfg.maxSize, firingMode.spread + cfg.growRate);
-      }
-      firingMode.spread = Math.max(0, firingMode.spread - cfg.shrinkRate * dt);
+    function getTargetingLockDuration(target) {
+      const type = String(target?.type || target?.__scannerContactType || '').toLowerCase();
+      if (type.includes('fighter') || type.includes('interceptor') || type.includes('drone')) return 2.6;
+      if (type.includes('frigate')) return 1.6;
+      if (type.includes('destroyer') || type.includes('cruiser')) return 1.2;
+      if (type.includes('battleship') || type.includes('carrier')) return 0.9;
+      if (target?.isCapitalShip || type.includes('capital')) return 0.7;
+      return 1.2;
     }
 
-    // Losowy punkt w obszarze celownika (world-space offset od mouseWorld)
-    function getReticleRandomOffset() {
-      const cfg = FIRE_MODE_CONFIG[firingMode.current];
-      const size = cfg.baseSize + firingMode.spread;
+    function targetingStrokeGlass(drawCtx, color, width = 1.5, alpha = 1) {
+      drawCtx.save();
+      drawCtx.globalAlpha *= alpha;
+      drawCtx.strokeStyle = color;
+      drawCtx.lineWidth = width;
+      drawCtx.shadowColor = color;
+      drawCtx.shadowBlur = 10;
+      drawCtx.stroke();
+      drawCtx.shadowBlur = 0;
+      drawCtx.globalAlpha *= 0.68;
+      drawCtx.strokeStyle = '#eaffff';
+      drawCtx.lineWidth = Math.max(0.55, width * 0.32);
+      drawCtx.stroke();
+      drawCtx.restore();
+    }
 
-      if (firingMode.current === FIRE_MODE.PRECISE) {
-        // Kółko — losowy punkt w okręgu
-        const angle = Math.random() * Math.PI * 2;
-        const r = Math.sqrt(Math.random()) * size;
-        return { x: Math.cos(angle) * r, y: Math.sin(angle) * r };
+    function targetingFillGlass(drawCtx, color, alpha = 0.12) {
+      drawCtx.save();
+      drawCtx.globalAlpha *= alpha;
+      drawCtx.fillStyle = color;
+      drawCtx.shadowColor = color;
+      drawCtx.shadowBlur = 8;
+      drawCtx.fill();
+      drawCtx.restore();
+    }
+
+    function traceTargetingCorner(drawCtx, x, y, sx, sy, outer, inner, bevel) {
+      drawCtx.moveTo(x + sx * inner, y + sy * outer);
+      drawCtx.lineTo(x + sx * (outer - bevel), y + sy * outer);
+      drawCtx.lineTo(x + sx * outer, y + sy * (outer - bevel));
+      drawCtx.lineTo(x + sx * outer, y + sy * inner);
+    }
+
+    function drawSingleTargetingReticle(drawCtx, x, y, radius, progress, base = '#ffb648', accent = '#ffd27a', visualScale = 1) {
+      const scale = targetingVisualScale(visualScale);
+      radius = Math.max(0, Number(radius) || 0) / scale;
+      const p = clamp(progress, 0, 1);
+      const ready = p >= 1;
+      const q = 1 - Math.pow(1 - p, 2.4);
+      const color = ready ? accent : base;
+      const breath = ready ? (0.84 + 0.16 * Math.sin(gameTime * 6)) : 1;
+      const outer = Math.max(24, radius + 12) + 24 * (1 - q);
+      const inner = Math.max(9, outer * 0.38);
+      const bevel = clamp(outer * 0.14, 3, 9);
+
+      drawCtx.save();
+      drawCtx.translate(x, y);
+      drawCtx.scale(scale, scale);
+      x = 0;
+      y = 0;
+      drawCtx.lineCap = 'square';
+      drawCtx.lineJoin = 'miter';
+      drawCtx.globalAlpha = (0.5 + 0.5 * q) * breath;
+      drawCtx.beginPath();
+      for (const [sx, sy] of TARGETING_CORNERS) traceTargetingCorner(drawCtx, x, y, sx, sy, outer, inner, bevel);
+      targetingStrokeGlass(drawCtx, color, ready ? 2.8 : 2.1);
+
+      drawCtx.globalAlpha *= 0.62;
+      drawCtx.beginPath();
+      for (const [sx, sy] of TARGETING_CORNERS) traceTargetingCorner(drawCtx, x, y, sx, sy, outer + 9, inner + 6, bevel);
+      drawCtx.strokeStyle = color;
+      drawCtx.lineWidth = 1.1;
+      drawCtx.stroke();
+
+      const axis = outer + 19;
+      const ray = clamp(outer * 0.68, 22, 54);
+      drawCtx.globalAlpha = (0.42 + 0.35 * q) * breath;
+      drawCtx.strokeStyle = color;
+      drawCtx.lineWidth = 1.5;
+      for (let i = 0; i < 4; i++) {
+        drawCtx.save();
+        drawCtx.translate(x, y);
+        drawCtx.rotate(i * Math.PI * 0.5);
+        drawCtx.beginPath();
+        drawCtx.moveTo(-5, -axis);
+        drawCtx.lineTo(0, -axis + 6);
+        drawCtx.lineTo(5, -axis);
+        drawCtx.stroke();
+        drawCtx.setLineDash([2, 6]);
+        drawCtx.lineDashOffset = -gameTime * 18;
+        drawCtx.beginPath();
+        drawCtx.moveTo(0, -axis - 9);
+        drawCtx.lineTo(0, -axis - ray);
+        drawCtx.stroke();
+        drawCtx.restore();
       }
-      if (firingMode.current === FIRE_MODE.ARTILLERY) {
-        // Prostokąt - powiększony, zorientowany po promieniu od statku
-        return {
-          x: (Math.random() - 0.5) * size * 2.0,
-          y: (Math.random() - 0.5) * size * 3.5
-        };
+
+      drawCtx.setLineDash([]);
+      drawCtx.globalAlpha = (0.62 + 0.38 * q) * breath;
+      const diamond = ready ? 11 : 9;
+      drawCtx.beginPath();
+      drawCtx.moveTo(x, y - diamond);
+      drawCtx.lineTo(x + diamond, y);
+      drawCtx.lineTo(x, y + diamond);
+      drawCtx.lineTo(x - diamond, y);
+      drawCtx.closePath();
+      targetingFillGlass(drawCtx, color, 0.16);
+      targetingStrokeGlass(drawCtx, color, 1.5, 0.9);
+      drawCtx.fillStyle = color;
+      drawCtx.beginPath();
+      drawCtx.moveTo(x, y - 4.5);
+      drawCtx.lineTo(x + 4.5, y);
+      drawCtx.lineTo(x, y + 4.5);
+      drawCtx.lineTo(x - 4.5, y);
+      drawCtx.closePath();
+      drawCtx.fill();
+      drawCtx.restore();
+      return ready;
+    }
+
+    function drawMultiTargetingFrame(drawCtx, cx, cy, width, height, angle, color, alpha = 0.95, visualScale = 1) {
+      const scale = targetingVisualScale(visualScale);
+      width = Math.max(1, Number(width) || 1) / scale;
+      height = Math.max(1, Number(height) || 1) / scale;
+      const x1 = -width * 0.5;
+      const x2 = width * 0.5;
+      const top = -height * 0.5;
+      const bottom = height * 0.5;
+      const shoulder = clamp(height * 0.18, 24, 68);
+      const arm = clamp(width * 0.12, 28, 64);
+
+      drawCtx.save();
+      drawCtx.translate(cx, cy);
+      drawCtx.rotate(angle);
+      drawCtx.scale(scale, scale);
+      drawCtx.globalAlpha = alpha;
+      drawCtx.lineCap = 'square';
+      drawCtx.lineJoin = 'miter';
+      for (const side of [-1, 1]) {
+        const x = side < 0 ? x1 : x2;
+        const inward = -side;
+        drawCtx.beginPath();
+        drawCtx.moveTo(x + inward * arm, top);
+        drawCtx.lineTo(x, top + shoulder);
+        drawCtx.lineTo(x, bottom - shoulder);
+        drawCtx.lineTo(x + inward * arm, bottom);
+        targetingStrokeGlass(drawCtx, color, 4.6);
+
+        drawCtx.globalAlpha = alpha * 0.66;
+        drawCtx.beginPath();
+        drawCtx.moveTo(x + inward * (arm + 10), top - 5);
+        drawCtx.lineTo(x + inward * 8, top + shoulder - 2);
+        drawCtx.lineTo(x + inward * 8, -height * 0.12);
+        drawCtx.moveTo(x + inward * 8, height * 0.12);
+        drawCtx.lineTo(x + inward * 8, bottom - shoulder + 2);
+        drawCtx.lineTo(x + inward * (arm + 10), bottom + 5);
+        targetingStrokeGlass(drawCtx, color, 1.8, 0.68);
+
+        const glassW = clamp(width * 0.035, 8, 15);
+        const glassH = clamp(height * 0.13, 18, 42);
+        drawCtx.globalAlpha = alpha * 0.78;
+        drawCtx.beginPath();
+        drawCtx.moveTo(x, -glassH);
+        drawCtx.lineTo(x + inward * glassW, -glassH + 4);
+        drawCtx.lineTo(x + inward * glassW, glassH - 4);
+        drawCtx.lineTo(x, glassH);
+        drawCtx.closePath();
+        targetingFillGlass(drawCtx, color, 0.13);
+
+        drawCtx.globalAlpha = alpha * 0.82;
+        drawCtx.fillStyle = color;
+        const tip = x + inward * (arm + 2);
+        drawCtx.beginPath();
+        drawCtx.moveTo(tip, 0);
+        drawCtx.lineTo(tip - inward * 11, -7);
+        drawCtx.lineTo(tip - inward * 11, 7);
+        drawCtx.closePath();
+        drawCtx.fill();
+
+        drawCtx.globalAlpha = alpha * 0.58;
+        drawCtx.strokeStyle = color;
+        drawCtx.lineWidth = 2.2;
+        drawCtx.setLineDash([8, 6]);
+        drawCtx.beginPath();
+        drawCtx.moveTo(x + inward * (arm + 22), top + 5);
+        drawCtx.lineTo(x + inward * (arm + 42), top - 20);
+        drawCtx.moveTo(x + inward * (arm + 10), bottom - 5);
+        drawCtx.lineTo(x + inward * (arm + 30), bottom + 24);
+        drawCtx.stroke();
+        drawCtx.setLineDash([]);
       }
-      // RAPID — linia (wzdłuż kierunku od statku do myszki)
-      return {
-        x: (Math.random() - 0.5) * 20,
-        y: (Math.random() - 0.5) * size * 2
-      };
+      drawCtx.restore();
+    }
+
+    function drawMultiTargetingNode(drawCtx, x, y, radius, progress, base = '#ffb648', accent = '#ffd27a', visualScale = 1) {
+      const scale = targetingVisualScale(visualScale);
+      radius = Math.max(0, Number(radius) || 0) / scale;
+      const p = clamp(progress, 0, 1);
+      const ready = p >= 1;
+      const q = 1 - Math.pow(1 - p, 2.4);
+      const color = ready ? accent : base;
+      const size = clamp(radius * 0.3, 4, 13) + 10 * (1 - q);
+      drawCtx.save();
+      drawCtx.translate(x, y);
+      drawCtx.scale(scale, scale);
+      drawCtx.rotate(Math.PI * 0.25);
+      drawCtx.globalAlpha = 0.35 + 0.65 * q;
+      drawCtx.beginPath();
+      drawCtx.rect(-size, -size, size * 2, size * 2);
+      targetingFillGlass(drawCtx, color, ready ? 0.18 : 0.09);
+      targetingStrokeGlass(drawCtx, color, ready ? 2 : 1.5, 0.86);
+      if (ready) {
+        drawCtx.fillStyle = color;
+        drawCtx.fillRect(-2.5, -2.5, 5, 5);
+      }
+      drawCtx.restore();
+      return ready;
+    }
+
+    function drawSubTargetingReticle(drawCtx, x, y, radius, progress, base = '#ffb648', accent = '#ffd27a', visualScale = 1) {
+      const scale = targetingVisualScale(visualScale);
+      radius = Math.max(0, Number(radius) || 0) / scale;
+      const p = clamp(progress, 0, 1);
+      const ready = p >= 1;
+      const q = 1 - Math.pow(1 - p, 2.4);
+      const color = ready ? accent : base;
+      const core = clamp(radius, 10, 28);
+      const half = core + 9 * (1 - q);
+      const arm = Math.max(7, core * 0.55);
+
+      drawCtx.save();
+      drawCtx.translate(x, y);
+      drawCtx.scale(scale, scale);
+      x = 0;
+      y = 0;
+      drawCtx.globalAlpha = 0.52 + 0.48 * q;
+      drawCtx.lineCap = 'square';
+      drawCtx.beginPath();
+      for (const [sx, sy] of TARGETING_CORNERS) {
+        const px = x + sx * half;
+        const py = y + sy * half;
+        drawCtx.moveTo(px - sx * arm, py);
+        drawCtx.lineTo(px, py);
+        drawCtx.lineTo(px, py - sy * arm);
+      }
+      targetingStrokeGlass(drawCtx, color, ready ? 2.1 : 1.6, 0.92);
+
+      const guide = half + 10;
+      drawCtx.strokeStyle = color;
+      drawCtx.lineWidth = 1.5;
+      drawCtx.beginPath();
+      drawCtx.moveTo(x - guide - 5, y - 4);
+      drawCtx.lineTo(x - guide, y);
+      drawCtx.lineTo(x - guide - 5, y + 4);
+      drawCtx.moveTo(x + guide + 5, y - 4);
+      drawCtx.lineTo(x + guide, y);
+      drawCtx.lineTo(x + guide + 5, y + 4);
+      drawCtx.stroke();
+
+      const box = ready ? 7 : 6;
+      drawCtx.beginPath();
+      drawCtx.rect(x - box, y - box, box * 2, box * 2);
+      targetingFillGlass(drawCtx, color, 0.18);
+      targetingStrokeGlass(drawCtx, color, 1.4, 0.9);
+      drawCtx.fillStyle = color;
+      drawCtx.beginPath();
+      drawCtx.moveTo(x, y - 4);
+      drawCtx.lineTo(x + 4, y);
+      drawCtx.lineTo(x, y + 4);
+      drawCtx.lineTo(x - 4, y);
+      drawCtx.closePath();
+      drawCtx.fill();
+      drawCtx.restore();
+      return ready;
     }
 
     // ============================================================================
@@ -10523,11 +10882,10 @@
       const isP1Ship = (shooter === window.ship);
       const isP2Ship = (shooter === window.player2Ship);
       const isPlayerShip = isP1Ship || isP2Ship;
-      const fmMods = isP1Ship ? getFiringModeModifiers() : { rangeMul: 1, cdMul: 1 };
-      const range = (weapon.baseRange || 1000) * (mods.range || 1.0) * fmMods.rangeMul;
+      const range = (weapon.baseRange || 1000) * (mods.range || 1.0);
       const damage = (weapon.baseDamage || 10) * (mods.damage || 1.0);
       const speed = (weapon.baseSpeed || 1000) * (mods.projectileSpeed || 1.0);
-      const cd = (weapon.cooldown || 1.0) * (mods.fireRate || 1.0) * fmMods.cdMul;
+      const cd = (weapon.cooldown || 1.0) * (mods.fireRate || 1.0);
 
       const shooterIsFriendly = shooter === window.ship || shooter?.friendly === true;
       const burstCount = weapon.burstCount || 1;
@@ -10537,9 +10895,10 @@
       let aimPoint;
       let effectiveTarget = target;
 
-      // Auto-target dla broni gracza gdy LPM i w aktywnym trybie skanera mamy oznaczone cele
-      if (isPlayerShip && window.mouse && window.mouse.left && typeof lockedTargets !== 'undefined' && lockedTargets && lockedTargets.length > 0) {
-        // wybieramy losowego z zaznaczonych wrogów zeby działa sie rozpraszały
+      // Broń P1 korzysta z zatwierdzonych namiarów niezależnie od LPM.
+      // LPM obsługuje wyłącznie celownik; strzał uruchamiają klawisze broni.
+      if (isP1Ship && !isTargetAlive(effectiveTarget) && typeof lockedTargets !== 'undefined' && lockedTargets && lockedTargets.length > 0) {
+        // Wybieramy jeden z zatwierdzonych celów, gdy wywołanie broni nie wskazało konkretnego.
         effectiveTarget = lockedTargets[Math.floor(Math.random() * lockedTargets.length)];
       }
 
@@ -10547,29 +10906,16 @@
         aimPoint = (weapon.category === 'beam')
           ? scannerTargetPoint(effectiveTarget)
           : window.getLeadAim(muzzleData.pos, effectiveTarget, speed);
-      } else if (isPlayerShip && !firingMode.wheelOpen) {
-        // Gracz — strzela w obszar celownika z rozrzutem
+      } else if (isPlayerShip && !targetingMode.wheelOpen) {
+        // Tryb celownika nie zmienia balistyki: gracz zawsze strzela dokładnie
+        // według pełnych parametrów zamontowanej broni.
         const _mouseRef = isP2Ship ? window.mouse2 : mouse;
         const _camRef = isP2Ship ? (window.camera2 || undefined) : undefined;
         const mouseWorld = window.screenToWorld(_mouseRef.x, _mouseRef.y, _camRef);
-        const offset = getReticleRandomOffset();
-        // Dla trybu RAPID i ARTILLERY obracamy offset wzdłuż kierunku statek→myszka
-        if (firingMode.current === FIRE_MODE.RAPID || firingMode.current === FIRE_MODE.ARTILLERY) {
-          const dirX = mouseWorld.x - shooter.pos.x;
-          const dirY = mouseWorld.y - shooter.pos.y;
-          const len = Math.hypot(dirX, dirY) || 1;
-          const nx = dirX / len, ny = dirY / len;
-          // offset.x = lateral, offset.y = along line
-          const rotX = offset.x * (-ny) + offset.y * nx;
-          const rotY = offset.x * nx + offset.y * ny;
-          offset.x = rotX;
-          offset.y = rotY;
-        }
         aimPoint = {
-          x: mouseWorld.x + offset.x,
-          y: mouseWorld.y + offset.y
+          x: mouseWorld.x,
+          y: mouseWorld.y
         };
-        if (isP1Ship) updateFiringModeSpread(0, true);
       } else {
         // Strzał w ciemno (przed siebie)
         aimPoint = {
@@ -10905,7 +11251,10 @@
 
             if (allowDamage) {
               if (hitType === 'player') applyPlayerDamage(damage);
-              else if (hitType === 'npc' || hitType === 'wreck') applyNpcDamage(hitEntity, damage, 'beam');
+              else if (hitType === 'npc' || hitType === 'wreck') {
+                if (isPlayerShip) markPlayerDamage(hitEntity);
+                applyNpcDamage(hitEntity, damage, 'beam');
+              }
               else if (hitType === 'ring') {
                 // Ring segmenty używają wyłącznie HP heksów (DestructorSystem.applyImpact).
                 // Nie dotykamy entity.hp, bo to wycinałoby segment z kolizji globalnej.
@@ -11599,6 +11948,13 @@
 
     function openStationUI(station, requestedTab = 'hangar') {
       if (!station) return;
+      // Wrogi dok nie wpuszcza. Opuszczone stacje (factionId === null) wpuszczają
+      // każdego — nie ma tam kogo obrazić.
+      if (!canDockWithFaction(station.factionId, PLAYER.reputation)) {
+        pushZoneMessage(`${getFactionName(station.factionId)}: DOK ZAMKNIĘTY`, 2.4);
+        toast(`${getFactionName(station.factionId)} odmawia zezwolenia na dokowanie`);
+        return;
+      }
       setStationEditorMode(false);
       stationUI.open = true;
       stationUI.visible = true;
@@ -11820,7 +12176,9 @@
         return true;
       },
       getCargoLabel() {
-        const used = Object.values(PLAYER.cargo || {}).reduce((sum, value) => sum + (Number(value) || 0), 0);
+        // Ładownia liczy się masą, nie sztukami: tona rudy waży inaczej niż
+        // układ scalony (RESOURCES[*].mass).
+        const used = getBagMass(PLAYER.cargo);
         const capacity = Number(getPlayerHullDef(PLAYER.activeHullId)?.cargoCap) || 0;
         return `${Math.round(used)} / ${Math.round(capacity)}`;
       }
@@ -11944,7 +12302,7 @@
             lines.push({ label: 'Osłony', value: `${Math.max(0, Math.round(target.shield.val))}/${target.shield.max}` });
           }
           lines.push({ label: 'Kadłub', value: `${Math.max(0, Math.round(target.hp ?? 0))}/${Math.max(0, Math.round(target.maxHp ?? target.hp ?? 0))}` });
-          lines.push({ label: 'Orbita', value: `${Math.round(target.orbitRadius)} u` });
+          lines.push({ label: 'Orbita', value: formatLocalDistance(target.orbitRadius) });
           for (const line of lines) {
             const row = document.createElement('div');
             row.className = 'hover-line';
@@ -11955,6 +12313,38 @@
             row.appendChild(strong);
             row.appendChild(span);
             content.appendChild(row);
+          }
+        }
+      } else if (type === 'wreck') {
+        const info = describeSalvage(target);
+        if (title) title.textContent = info?.label ? `Wrak: ${info.label}` : 'Wrak';
+        if (subtitle) subtitle.textContent = 'ODZYSK MOŻLIWY';
+        if (content) {
+          if (!info || (!info.materials.length && !info.weaponCount)) {
+            const row = document.createElement('div');
+            row.className = 'hover-line';
+            row.textContent = 'Rozebrany do gołej konstrukcji.';
+            content.appendChild(row);
+          } else {
+            for (const material of info.materials) {
+              const row = document.createElement('div');
+              row.className = 'hover-line';
+              const strong = document.createElement('strong');
+              strong.textContent = `${material.label}:`;
+              const span = document.createElement('span');
+              span.textContent = `${material.amount}`;
+              row.appendChild(strong);
+              row.appendChild(span);
+              content.appendChild(row);
+            }
+            // Broń wychodzi tylko przez dok — mówimy o tym wprost, bo inaczej
+            // gracz przetnie wrak z działami i nie zrozumie, czemu ich nie ma.
+            const note = document.createElement('div');
+            note.className = 'hover-line hover-salvage-note';
+            note.textContent = info.weaponCount
+              ? `Uzbrojenie: ${info.weaponCount} szt. — tylko przez holowanie do doku`
+              : 'Bez sprawnego uzbrojenia';
+            content.appendChild(note);
           }
         }
       }
@@ -12247,10 +12637,18 @@
       sizeBadge.title = `Rozmiar broni: ${wSize}`;
       row.appendChild(sizeBadge);
 
-      // 2. Nazwa
+      // 2. Nazwa + liczba sztuk w ładowni
       const nameEl = document.createElement('div');
       nameEl.className = 'weapon-row-name';
       nameEl.textContent = weapon.name;
+      const stock = Game.player?.inventory?.count?.(weapon.id) ?? 0;
+      if (stock > 0) {
+        const countEl = document.createElement('span');
+        countEl.className = 'weapon-row-count';
+        countEl.textContent = `×${stock}`;
+        countEl.title = `Sztuk w ładowni: ${stock}`;
+        nameEl.appendChild(countEl);
+      }
       row.appendChild(nameEl);
 
       // 3. Statystyki (Dmg/Cd) - kompatybilne z nowym słownikiem
@@ -12916,6 +13314,9 @@
     const PLAYER = {
       credits: 1200,
       cargo: {},
+      // Stosunek frakcji do gracza. Zmienia ceny, dostęp do doków i to,
+      // czy patrole otwierają ogień.
+      reputation: previousPlayer.reputation || createInitialReputation(),
       shipId: normalizePlayerHullId(persistedActiveHull),
       activeHullId: normalizePlayerHullId(persistedActiveHull),
       // Per-hull weapon loadouts: { [hullId]: [{ id, type, mount, ammo, maxAmmo }] }.
@@ -12965,24 +13366,31 @@
       label: STATION_TAB_LABELS[tab.id] || toTitleCaseFromKey(tab.id)
     }));
 
-    const MARKET = { // ceny przykładowe
-      buy: { ruda: 22, paliwo: 15, zywnosc: 8 },
-      sell: { ruda: 18, paliwo: 12, zywnosc: 6 }
-    };
-    const ECONOMY_RESOURCES = {
-      gas: { label: 'Gaz', unit: 't' },
-      fuel: { label: 'Paliwo', unit: 't' },
-      rawMetal: { label: 'Surowy metal', unit: 't' },
-      refinedMetal: { label: 'Rafinowany metal', unit: 't' },
-    };
-    const ECONOMY_RESOURCE_KEYS = Object.keys(ECONOMY_RESOURCES);
+    // Surowce, ich wartości i łańcuchy produkcji żyją w src/data/resources.js.
+    // Stary MARKET (ruda/paliwo/zywnosc) i lokalne ECONOMY_RESOURCES zostały
+    // usunięte — handel działa teraz na tym samym rejestrze co wydobycie.
 
-    const RESOURCE_SVGS = {
-      gas: '<svg viewBox="0 0 24 24" fill="none"><path d="M12 3c-3.2 3.5-5 6.3-5 9a5 5 0 1010 0c0-2.7-1.8-5.5-5-9z" fill="#22d3ee" stroke="#67e8f9" stroke-width="1.5"/><circle cx="12" cy="13" r="2.6" fill="#0ea5e9" stroke="#bae6fd" stroke-width="0.8" opacity="0.9"/></svg>',
-      fuel: '<svg viewBox="0 0 24 24" fill="none"><path d="M12 4c1.5 2 4 4.5 4 7.5A4.5 4.5 0 0112 16a4.5 4.5 0 01-4-4.5c0-1.6.5-3.3 1.7-5.1L12 4z" fill="#f97316" stroke="#fdba74" stroke-width="1.4"/><path d="M11.2 9.8c-.6.7-.9 1.4-.9 2.2 0 1.4 1 2.4 2.2 2.4 1.1 0 2-.8 2.2-2" stroke="#fff7ed" stroke-width="1.1" stroke-linecap="round"/></svg>',
-      rawMetal: '<svg viewBox="0 0 24 24" fill="none"><path d="M12 3 18 7v10l-6 4-6-4V7z" fill="#94a3b8" stroke="#cbd5e1" stroke-width="1.2"/><path d="M12 3v8l6 6" stroke="#e2e8f0" stroke-width="1" stroke-linecap="round"/></svg>',
-      refinedMetal: '<svg viewBox="0 0 24 24" fill="none"><rect x="4.5" y="6.5" width="15" height="4" rx="1.2" fill="#d1d5db" stroke="#e5e7eb"/><rect x="6" y="11.5" width="13" height="4" rx="1.2" fill="#cbd5e1" stroke="#e5e7eb"/><rect x="7.5" y="16.5" width="10" height="3" rx="1" fill="#94a3b8" stroke="#cbd5e1"/></svg>'
+    // Ikona surowca: kształt z kategorii, kolor z rejestru. Jeden generator
+    // zamiast ręcznie pisanych SVG-ów — 28 surowców nie da się utrzymać ręcznie.
+    const RESOURCE_CATEGORY_SHAPES = {
+      ore: '<path d="M12 3 18 7v10l-6 4-6-4V7z" fill="COLOR" stroke="STROKE" stroke-width="1.2"/><path d="M12 3v8l6 6" stroke="STROKE" stroke-width="1" stroke-linecap="round" opacity="0.8"/>',
+      gas: '<path d="M12 3c-3.2 3.5-5 6.3-5 9a5 5 0 1010 0c0-2.7-1.8-5.5-5-9z" fill="COLOR" stroke="STROKE" stroke-width="1.4"/>',
+      volatile: '<path d="M12 3.5 15 9l6 .8-4.4 4.2 1.1 6-5.7-3-5.7 3 1.1-6L3 9.8 9 9z" fill="COLOR" stroke="STROKE" stroke-width="1.1"/>',
+      metal: '<rect x="4.5" y="6.5" width="15" height="4" rx="1.2" fill="COLOR" stroke="STROKE"/><rect x="6" y="11.5" width="13" height="4" rx="1.2" fill="COLOR" stroke="STROKE" opacity="0.85"/><rect x="7.5" y="16.5" width="10" height="3" rx="1" fill="COLOR" stroke="STROKE" opacity="0.7"/>',
+      electronic: '<rect x="7" y="7" width="10" height="10" rx="1.4" fill="COLOR" stroke="STROKE" stroke-width="1.2"/><path d="M10 4v3M14 4v3M10 17v3M14 17v3M4 10h3M4 14h3M17 10h3M17 14h3" stroke="STROKE" stroke-width="1.3" stroke-linecap="round"/>',
+      fuel: '<rect x="8" y="4" width="8" height="16" rx="3" fill="COLOR" stroke="STROKE" stroke-width="1.3"/><path d="M12 7v10" stroke="STROKE" stroke-width="1.6" stroke-linecap="round" opacity="0.85"/>',
+      chemical: '<path d="M10 3h4v5.5l4.4 8A2 2 0 0116.6 20H7.4a2 2 0 01-1.8-3.5L10 8.5z" fill="COLOR" stroke="STROKE" stroke-width="1.2"/>',
+      component: '<path d="M12 2.8 20 7v10l-8 4.2L4 17V7z" fill="COLOR" stroke="STROKE" stroke-width="1.3"/><circle cx="12" cy="12" r="3.2" fill="none" stroke="STROKE" stroke-width="1.3"/>',
+      salvage: '<path d="M4 15l5-5 3 3 4-6 4 8z" fill="COLOR" stroke="STROKE" stroke-width="1.2"/><path d="M4 19h16" stroke="STROKE" stroke-width="1.4" stroke-linecap="round"/>'
     };
+
+    function resourceIconSvg(key) {
+      const def = RESOURCES[key];
+      if (!def) return '';
+      const shape = RESOURCE_CATEGORY_SHAPES[def.category] || RESOURCE_CATEGORY_SHAPES.ore;
+      const body = shape.replace(/COLOR/g, def.color).replace(/STROKE/g, 'rgba(255,255,255,0.72)');
+      return `<svg viewBox="0 0 24 24" fill="none">${body}</svg>`;
+    }
 
     const stationOverlayDom = {
       root: document.getElementById('top-drawer'),
@@ -13009,14 +13417,14 @@
     function createResourceIcon(key) {
       const wrap = document.createElement('span');
       wrap.className = 'resource-icon-wrap';
-      wrap.innerHTML = RESOURCE_SVGS[key] || '';
+      wrap.innerHTML = resourceIconSvg(key);
       const svg = wrap.querySelector('svg');
       if (svg) svg.classList.add('resource-icon');
       return wrap;
     }
 
     function getResourceLabel(key) {
-      return ECONOMY_RESOURCES[key]?.label || toTitleCaseFromKey(key);
+      return RESOURCES[key] ? resourceLabel(key) : toTitleCaseFromKey(key);
     }
 
     function createStationCard({ title, badge, description, meta = [], actions = [], dataset = null }) {
@@ -13150,63 +13558,177 @@
 
       const resTable = document.createElement('table');
       resTable.className = 'trade-resource-table';
-      for (const key of ECONOMY_RESOURCE_KEYS) {
+      for (const tier of [TIER.RAW, TIER.REFINED, TIER.COMPONENT]) {
+        const headRow = document.createElement('tr');
+        headRow.className = 'trade-resource-tier';
+        const headCell = document.createElement('td');
+        headCell.colSpan = 2;
+        headCell.textContent = TIER_LABEL_PL[tier];
+        headRow.appendChild(headCell);
+        resTable.appendChild(headRow);
+
+        for (const key of RESOURCE_KEYS_BY_TIER[tier]) {
+          const row = document.createElement('tr');
+          row.dataset.resourceKey = key;
+          const labelCell = document.createElement('td');
+          labelCell.className = 'trade-resource-label';
+          labelCell.appendChild(createResourceIcon(key));
+          const label = document.createElement('span');
+          label.textContent = getResourceLabel(key);
+          labelCell.appendChild(label);
+          const values = document.createElement('td');
+          values.className = 'trade-resource-values';
+          const amount = document.createElement('span');
+          amount.dataset.field = 'amount';
+          amount.className = 'trade-resource-amount';
+          amount.textContent = '0';
+          const cap = document.createElement('span');
+          cap.dataset.field = 'capacity';
+          cap.className = 'trade-resource-capacity';
+          cap.textContent = '0';
+          values.appendChild(amount);
+          values.append(' / ');
+          values.appendChild(cap);
+          row.appendChild(labelCell);
+          row.appendChild(values);
+          resTable.appendChild(row);
+        }
+      }
+      resourcesCard.appendChild(resTable);
+      pane.appendChild(resourcesCard);
+
+      pane.appendChild(buildTradeMarketCard());
+    }
+
+    // Stacja skupuje poniżej i sprzedaje powyżej wartości bazowej z resources.js.
+    // Rozpiętość jest marżą doku — opłaca się produkować samemu, ale zakup
+    // brakującego surowca zawsze jest możliwy.
+    const TRADE_BUY_MARGIN = 1.18;
+    const TRADE_SELL_MARGIN = 0.82;
+
+    // Cena lokalna = wartość bazowa × niedobór × profil frakcji × reputacja.
+    // To ten mnożnik niedoboru tworzy trasy handlowe: pusty magazyn na Marsie
+    // płaci za stal dwa razy tyle co pełny magazyn na Ziemi, więc frachtowce
+    // (i gracz) mają dokąd lecieć.
+    const SCARCITY_MIN_MUL = 0.6;   // magazyn pełny — nadwyżka, nikt nie chce
+    const SCARCITY_MAX_MUL = 1.8;   // magazyn pusty — głód
+    // Frakcja płaci więcej za to, czego potrzebuje, i taniej oddaje to,
+    // czego ma w nadmiarze z własnej produkcji.
+    const FACTION_DEMAND_MUL = 1.25;
+    const FACTION_SUPPLY_MUL = 0.8;
+
+    function getStationScarcityMul(station, key) {
+      const econ = station ? InfrastructureUI.ensureEconomy(station) : null;
+      const cap = Number(econ?.capacity?.[key]);
+      if (!Number.isFinite(cap) || cap <= 0) return 1;
+      const fill = Math.max(0, Math.min(1, (Number(econ.resources?.[key]) || 0) / cap));
+      return SCARCITY_MIN_MUL + (SCARCITY_MAX_MUL - SCARCITY_MIN_MUL) * (1 - fill);
+    }
+
+    function getFactionProfileMul(station, key) {
+      const faction = FACTIONS[normalizeFaction(station?.factionId)];
+      if (!faction) return 1;
+      if (faction.demands?.includes(key)) return FACTION_DEMAND_MUL;
+      if (faction.supplies?.includes(key)) return FACTION_SUPPLY_MUL;
+      return 1;
+    }
+
+    function getLocalBasePrice(station, key) {
+      return getResourceValue(key) * getStationScarcityMul(station, key) * getFactionProfileMul(station, key);
+    }
+
+    function getTradeBuyPrice(key, station = stationUI.station) {
+      // Dobra reputacja obniża cenę zakupu...
+      const rep = getFactionPriceMultiplier(station?.factionId, PLAYER.reputation);
+      return Math.max(1, Math.round(getLocalBasePrice(station, key) * TRADE_BUY_MARGIN * rep));
+    }
+
+    function getTradeSellPrice(key, station = stationUI.station) {
+      // ...i podnosi cenę skupu, więc dzielimy zamiast mnożyć.
+      const rep = getFactionPriceMultiplier(station?.factionId, PLAYER.reputation) || 1;
+      return Math.max(1, Math.round(getLocalBasePrice(station, key) * TRADE_SELL_MARGIN / rep));
+    }
+
+    // Komponenty handluje się sztukami, surowce sypkie partiami po 10.
+    function getTradeStep(key) { return RESOURCES[key]?.tier === TIER.COMPONENT ? 1 : 10; }
+
+    function getPlayerCargoFree() {
+      const capacity = Number(getPlayerHullDef(PLAYER.activeHullId)?.cargoCap) || 0;
+      return Math.max(0, capacity - getBagMass(PLAYER.cargo));
+    }
+
+    function buildTradeMarketCard() {
+      const card = document.createElement('div');
+      card.className = 'station-card-aero trade-market-card';
+
+      const header = document.createElement('div');
+      header.className = 'card-header';
+      const title = document.createElement('div');
+      title.className = 'card-title';
+      title.textContent = 'Handel z dokiem';
+      header.appendChild(title);
+      const badge = document.createElement('span');
+      badge.className = 'card-badge';
+      badge.textContent = 'Rynek';
+      header.appendChild(badge);
+      card.appendChild(header);
+
+      const desc = document.createElement('p');
+      desc.className = 'card-desc';
+      desc.textContent = 'Sprzedaj nadwyżki z ładowni albo dokup surowiec, którego jeszcze nie produkujesz.';
+      card.appendChild(desc);
+
+      const holdNote = document.createElement('div');
+      holdNote.className = 'card-desc trade-hold-note';
+      card.appendChild(holdNote);
+
+      const table = document.createElement('table');
+      table.className = 'trade-market-table';
+      for (const key of RESOURCE_KEYS) {
         const row = document.createElement('tr');
-        row.dataset.resourceKey = key;
+        row.dataset.marketKey = key;
+
         const labelCell = document.createElement('td');
         labelCell.className = 'trade-resource-label';
         labelCell.appendChild(createResourceIcon(key));
         const label = document.createElement('span');
         label.textContent = getResourceLabel(key);
         labelCell.appendChild(label);
-        const values = document.createElement('td');
-        values.className = 'trade-resource-values';
-        const amount = document.createElement('span');
-        amount.dataset.field = 'amount';
-        amount.className = 'trade-resource-amount';
-        amount.textContent = '0';
-        const cap = document.createElement('span');
-        cap.dataset.field = 'capacity';
-        cap.className = 'trade-resource-capacity';
-        cap.textContent = '0';
-        values.appendChild(amount);
-        values.append(' / ');
-        values.appendChild(cap);
         row.appendChild(labelCell);
-        row.appendChild(values);
-        resTable.appendChild(row);
+
+        const stockCell = document.createElement('td');
+        stockCell.className = 'trade-market-stock';
+        stockCell.dataset.field = 'stock';
+        row.appendChild(stockCell);
+
+        // Ceny są lokalne (niedobór + profil frakcji + reputacja), więc wypełnia
+        // je updateTradeCards przy każdym odświeżeniu, nie budowa tabeli.
+        const priceCell = document.createElement('td');
+        priceCell.className = 'trade-market-price';
+        priceCell.dataset.field = 'price';
+        row.appendChild(priceCell);
+
+        const actionCell = document.createElement('td');
+        actionCell.className = 'trade-market-actions';
+        const step = getTradeStep(key);
+        const sellBtn = document.createElement('button');
+        sellBtn.className = 'card-action';
+        sellBtn.textContent = `Sprzedaj ${step}`;
+        sellBtn.dataset.tradeType = 'sell';
+        sellBtn.addEventListener('click', () => handleTrade('sell', key, step));
+        actionCell.appendChild(sellBtn);
+        const buyBtn = document.createElement('button');
+        buyBtn.className = 'card-action';
+        buyBtn.textContent = `Kup ${step}`;
+        buyBtn.dataset.tradeType = 'buy';
+        buyBtn.addEventListener('click', () => handleTrade('buy', key, step));
+        actionCell.appendChild(buyBtn);
+        row.appendChild(actionCell);
+
+        table.appendChild(row);
       }
-      resourcesCard.appendChild(resTable);
-      pane.appendChild(resourcesCard);
-      const allItems = new Set([...Object.keys(MARKET.buy), ...Object.keys(MARKET.sell)]);
-      for (const item of allItems) {
-        const buyPrice = MARKET.buy[item];
-        const sellPrice = MARKET.sell[item];
-        const card = createStationCard({
-          title: toTitleCaseFromKey(item),
-          badge: 'Rynek',
-          description: 'Handluj surowcami z dokami stacji.',
-          meta: [
-            buyPrice ? `Kupno: ${buyPrice} cr` : 'Kupno: niedostepne',
-            sellPrice ? `Sprzedaz: ${sellPrice} cr` : 'Sprzedaz: niedostepna',
-            `Ładownia: ${PLAYER.cargo[item] || 0}`
-          ],
-          dataset: { tradeCard: 'market', tradeItem: item },
-          actions: [
-            buyPrice ? {
-              label: 'Kup',
-              dataset: { tradeItem: item, tradeType: 'buy', price: buyPrice },
-              onClick: () => handleTrade('buy', item, buyPrice)
-            } : null,
-            sellPrice ? {
-              label: 'Sprzedaj',
-              dataset: { tradeItem: item, tradeType: 'sell', price: sellPrice },
-              onClick: () => handleTrade('sell', item, sellPrice)
-            } : null
-          ].filter(Boolean)
-        });
-        pane.appendChild(card);
-      }
+      card.appendChild(table);
+      return card;
     }
 
     function buildCantinaPanel() {
@@ -13733,10 +14255,16 @@
       }
       if (stationOverlayDom.subtitle) {
         const parts = [];
-        if (station?.planet?.name) parts.push(`Orbita: ${station.planet.name}`);
-        if (Number.isFinite(station?.x) && Number.isFinite(station?.y)) {
-          parts.push(`Pozycja: ${Math.round(station.x)}, ${Math.round(station.y)}`);
+        // Właściciel i nastawienie na pierwszym miejscu — to one decydują
+        // o cenach i o tym, czy dok w ogóle wpuści.
+        if (isDerelict(station)) {
+          parts.push('OPUSZCZONA — brak kontroli lotów');
+        } else {
+          const standing = resolveStanding(PLAYER.reputation[station.factionId]);
+          parts.push(`${getFactionName(station.factionId)} • ${standing.label}`);
         }
+        parts.push(describeStationRole(station));
+        if (station?.planet?.name) parts.push(`Orbita: ${station.planet.name}`);
         stationOverlayDom.subtitle.textContent = parts.join(' • ') || 'Przestrzeń cywilna';
       }
       if (stationOverlayDom.credits) {
@@ -13803,29 +14331,57 @@
 
     function updateTradeCards(station) {
       updateTradeResourceTable(station);
-      const cards = stationOverlayDom.panels.trade?.querySelectorAll('.station-card-aero[data-trade-card="market"]');
-      if (!cards) return;
-      cards.forEach(card => {
-        const item = card.dataset.tradeItem
-          || card.querySelector('[data-trade-item]')?.dataset.tradeItem
-          || card.querySelector('button[data-trade-item]')?.dataset.tradeItem;
-        if (!item) return;
-        const meta = card.querySelector('[data-card-meta="true"]');
-        if (meta) {
-          const metaLines = [...meta.querySelectorAll('div')];
-          if (metaLines[2]) metaLines[2].textContent = `Ładownia: ${PLAYER.cargo[item] || 0}`;
+      const pane = stationOverlayDom.panels.trade;
+      const table = pane?.querySelector('.trade-market-table');
+      if (!table) return;
+      const econ = station ? InfrastructureUI.ensureEconomy(station) : null;
+      const cargoFree = getPlayerCargoFree();
+      const cargoCap = Number(getPlayerHullDef(PLAYER.activeHullId)?.cargoCap) || 0;
+
+      const holdNote = pane.querySelector('.trade-hold-note');
+      if (holdNote) {
+        holdNote.textContent = `Ładownia: ${Math.round(getBagMass(PLAYER.cargo))} / ${Math.round(cargoCap)}`;
+      }
+
+      table.querySelectorAll('tr[data-market-key]').forEach(row => {
+        const key = row.dataset.marketKey;
+        const step = getTradeStep(key);
+        const held = Number(PLAYER.cargo?.[key]) || 0;
+        const stationStock = Number(econ?.resources?.[key]) || 0;
+
+        const stockCell = row.querySelector('[data-field="stock"]');
+        if (stockCell) stockCell.textContent = `${Math.round(held)} / stacja ${Math.round(stationStock)}`;
+
+        const sellPrice = getTradeSellPrice(key, station);
+        const buyPrice = getTradeBuyPrice(key, station);
+        const priceCell = row.querySelector('[data-field="price"]');
+        if (priceCell) {
+          priceCell.textContent = `${sellPrice} / ${buyPrice} CR`;
+          // Kolor mówi, czy tu się opłaca sprzedawać, czy kupować — bez tego
+          // gracz musiałby porównywać liczby między stacjami z pamięci.
+          const ratio = sellPrice / Math.max(1, getResourceValue(key));
+          priceCell.classList.toggle('is-rich', ratio >= 1.05);
+          priceCell.classList.toggle('is-poor', ratio <= 0.65);
         }
-        card.querySelectorAll('button[data-trade-type]').forEach(btn => {
-          const price = Number(btn.dataset.price) || 0;
-          const type = btn.dataset.tradeType;
-          if (type === 'buy') {
-            btn.disabled = PLAYER.credits < price;
-          }
-          if (type === 'sell') {
-            btn.disabled = (PLAYER.cargo[item] || 0) <= 0;
+
+        // Wiersze bez ruchu w obie strony tylko przygasają — pełne ukrycie
+        // sprawiłoby, że tabela skacze przy każdym zakupie.
+        row.classList.toggle('is-idle', held <= 0 && stationStock <= 0);
+
+        row.querySelectorAll('button[data-trade-type]').forEach(btn => {
+          if (btn.dataset.tradeType === 'buy') {
+            const cost = buyPrice * step;
+            const massNeeded = getResourceMassLocal(key, step);
+            btn.disabled = PLAYER.credits < cost || stationStock < step || cargoFree < massNeeded;
+          } else {
+            btn.disabled = held < step;
           }
         });
       });
+    }
+
+    function getResourceMassLocal(key, amount) {
+      return (RESOURCES[key]?.mass || 0) * amount;
     }
 
     function updateMechanicCards() {
@@ -13868,21 +14424,947 @@
       updateHangarCards();
     }
 
-    function handleTrade(type, item, price) {
+    // Handel przenosi surowiec między ładownią gracza a magazynem stacji —
+    // nic nie znika i nie powstaje z niczego. Kredyty to marża doku.
+    function handleTrade(type, key, qty) {
+      const amount = Math.max(1, Math.round(Number(qty) || 1));
+      if (!RESOURCES[key]) return;
+      const station = stationUI.station;
+      const econ = station ? InfrastructureUI.ensureEconomy(station) : null;
+      if (!econ) {
+        toast('Brak magazynu stacji');
+        return;
+      }
+
       if (type === 'buy') {
-        if (PLAYER.credits >= price) {
-          PLAYER.credits -= price;
-          PLAYER.cargo[item] = (PLAYER.cargo[item] || 0) + 1;
-        } else {
-          toast('Za mało kredytów');
-        }
+        const cost = getTradeBuyPrice(key, station) * amount;
+        if (PLAYER.credits < cost) { toast('Za mało kredytów'); return; }
+        if ((Number(econ.resources?.[key]) || 0) < amount) { toast('Stacja nie ma zapasu'); return; }
+        if (getPlayerCargoFree() < getResourceMassLocal(key, amount)) { toast('Ładownia pełna'); return; }
+        PLAYER.credits -= cost;
+        econ.resources[key] = (Number(econ.resources[key]) || 0) - amount;
+        PLAYER.cargo[key] = (Number(PLAYER.cargo[key]) || 0) + amount;
       } else if (type === 'sell') {
-        if ((PLAYER.cargo[item] || 0) > 0) {
-          PLAYER.cargo[item] -= 1;
-          PLAYER.credits += price;
-        }
+        const held = Number(PLAYER.cargo?.[key]) || 0;
+        if (held < amount) return;
+        const cap = Number(econ.capacity?.[key]);
+        const stock = Number(econ.resources?.[key]) || 0;
+        // Nadwyżka ponad pojemność magazynu przepada — dok ją odsprzedaje dalej,
+        // ale gracz i tak dostaje pełną zapłatę.
+        const stored = Number.isFinite(cap) ? Math.min(amount, Math.max(0, cap - stock)) : amount;
+        PLAYER.cargo[key] = held - amount;
+        if (PLAYER.cargo[key] <= 0) delete PLAYER.cargo[key];
+        econ.resources[key] = stock + stored;
+        PLAYER.credits += getTradeSellPrice(key, station) * amount;
+        // Regularny handel powoli ociepla stosunki z właścicielem doku.
+        if (station.factionId) changePlayerReputation(station.factionId, REPUTATION_EVENTS.tradedGoods);
       }
       updateStationOverlay(stationUI.tab, stationUI.station);
+    }
+
+    // ============================================================
+    // EKONOMIA STACJI
+    // Silnik chodzi dla WSZYSTKICH stacji naraz, nie tylko dla tej z otwartym
+    // terminalem — inaczej świat zamierałby, gdy gracz na niego nie patrzy,
+    // a o to właśnie chodzi, żeby żył sam.
+    // ============================================================
+
+    let economyCycleTimer = 0;
+
+    function updateStationEconomies(dt) {
+      economyCycleTimer += dt;
+      if (economyCycleTimer < ECONOMY_CYCLE_SECONDS) return;
+      const cycles = Math.floor(economyCycleTimer / ECONOMY_CYCLE_SECONDS);
+      economyCycleTimer -= cycles * ECONOMY_CYCLE_SECONDS;
+      for (const station of stations) {
+        if (!station || isDerelict(station)) continue;
+        const econ = InfrastructureUI.ensureEconomy(station);
+        if (econ) runStationEconomy(station, econ, cycles);
+      }
+      // Terminal pokazuje stany magazynowe — po cyklu trzeba go odświeżyć.
+      if (stationUI.open) updateStationOverlay(stationUI.tab, stationUI.station);
+    }
+
+    // ============================================================
+    // FLOTY TOWAROWE
+    // Vany wożą realny ładunek między stacjami. Trasy nie są wpisane w tabelę —
+    // biorą się z tego, co się nie bilansuje w produkcji stacji.
+    // ============================================================
+
+    const cargoFleet = createFleetState();
+    const cargoActors = new Map();
+    const cargoTransitEvents = [];
+    const cargoPoseScratch = { x: 0, y: 0, phase: 'toGate' };
+    const CARGO_MATERIALIZE_RADIUS = 15000;
+    const CARGO_DEMATERIALIZE_RADIUS = 18000;
+    const CARGO_WARP_SPEED = 4000;
+    const CARGO_DISPATCH_ENABLED = true;
+    const cargoAdvanceOptions = {
+      events: cargoTransitEvents,
+      getEconomy: resolveCargoEconomy,
+      onEvent: onCargoTransitEvent,
+      retryIntervalSeconds: 1
+    };
+
+    function getStationById(stationId) {
+      for (let i = 0; i < stations.length; i++) {
+        if (stations[i]?.id === stationId) return stations[i];
+      }
+      return null;
+    }
+
+    function resolveCargoEconomy(stationId) {
+      const station = getStationById(stationId);
+      return station ? InfrastructureUI.ensureEconomy(station) : null;
+    }
+
+    function getCargoVanClass(order) {
+      return VAN_CLASSES.find(vanClass => vanClass.id === order?.vanClassId) || VAN_CLASSES[0];
+    }
+
+    function getCargoTravelSeconds(shipment, route) {
+      if (!shipment || !route) return 0;
+      const speed = Math.max(1, Number(shipment.vanClass?.speed) || VAN_CLASSES[0].speed);
+      const source = shipment.source;
+      const target = shipment.target;
+      const toGate = Math.hypot(route.start.x - source.x, route.start.y - source.y) / speed;
+      const fromGate = Math.hypot(target.x - route.end.x, target.y - route.end.y) / speed;
+      return Math.max(1, toGate + route.length / CARGO_WARP_SPEED + fromGate);
+    }
+
+    function fillCargoOrderPose(order, route, out) {
+      const source = route?.fromRef;
+      const target = route?.toRef;
+      if (!source || !target || !out) return false;
+      if (order.status === SHIPMENT_STATUS.AWAITING_UNLOAD) {
+        out.x = target.x;
+        out.y = target.y;
+        out.phase = 'toStation';
+        return true;
+      }
+
+      const vanClass = getCargoVanClass(order);
+      const speed = Math.max(1, Number(vanClass?.speed) || 1);
+      const total = Math.max(0.001, Number(order.route?.durationSeconds) || 0.001);
+      const elapsed = Math.max(0, Math.min(total, Number(order.routeProgress) * total || 0));
+      const toGateDuration = Math.hypot(route.start.x - source.x, route.start.y - source.y) / speed;
+      const warpDuration = route.length / CARGO_WARP_SPEED;
+
+      if (elapsed < toGateDuration) {
+        const t = toGateDuration > 0 ? elapsed / toGateDuration : 1;
+        out.x = source.x + (route.start.x - source.x) * t;
+        out.y = source.y + (route.start.y - source.y) * t;
+        out.phase = 'toGate';
+        return true;
+      }
+      if (elapsed < toGateDuration + warpDuration) {
+        const t = warpDuration > 0 ? (elapsed - toGateDuration) / warpDuration : 1;
+        out.x = route.start.x + (route.end.x - route.start.x) * t;
+        out.y = route.start.y + (route.end.y - route.start.y) * t;
+        out.phase = 'warping';
+        return true;
+      }
+
+      const fromGateDuration = Math.max(0.001, total - toGateDuration - warpDuration);
+      const t = Math.max(0, Math.min(1, (elapsed - toGateDuration - warpDuration) / fromGateDuration));
+      out.x = route.end.x + (target.x - route.end.x) * t;
+      out.y = route.end.y + (target.y - route.end.y) * t;
+      out.phase = 'toStation';
+      return true;
+    }
+
+    function cargoSegmentProgress(ax, ay, bx, by, x, y) {
+      const dx = bx - ax;
+      const dy = by - ay;
+      const lengthSq = dx * dx + dy * dy;
+      if (lengthSq <= 0.000001) return 1;
+      return clamp(((x - ax) * dx + (y - ay) * dy) / lengthSq, 0, 1);
+    }
+
+    function getCargoActorRouteProgress(order, route, van) {
+      const source = route?.fromRef;
+      const target = route?.toRef;
+      if (!source || !target || !van) return Number(order?.routeProgress) || 0;
+      if (van.docking || order.status === SHIPMENT_STATUS.AWAITING_UNLOAD) return 1;
+
+      const vanClass = getCargoVanClass(order);
+      const speed = Math.max(1, Number(vanClass?.speed) || 1);
+      const toGateDuration = Math.hypot(route.start.x - source.x, route.start.y - source.y) / speed;
+      const warpDuration = route.length / CARGO_WARP_SPEED;
+      const toStationDuration = Math.hypot(target.x - route.end.x, target.y - route.end.y) / speed;
+      const duration = Math.max(0.001, Number(order.route?.durationSeconds)
+        || toGateDuration + warpDuration + toStationDuration);
+      let elapsed = 0;
+
+      if (van.phase === 'warping') {
+        elapsed = toGateDuration + warpDuration * cargoSegmentProgress(
+          route.start.x, route.start.y, route.end.x, route.end.y, van.x, van.y
+        );
+      } else if (van.phase === 'toStation') {
+        elapsed = toGateDuration + warpDuration + toStationDuration * cargoSegmentProgress(
+          route.end.x, route.end.y, target.x, target.y, van.x, van.y
+        );
+      } else {
+        elapsed = toGateDuration * cargoSegmentProgress(
+          source.x, source.y, route.start.x, route.start.y, van.x, van.y
+        );
+      }
+      return clamp(elapsed / duration, 0, 1);
+    }
+
+    function cargoDistanceToPlayerSq(x, y) {
+      const dx = (Number(x) || 0) - ship.pos.x;
+      const dy = (Number(y) || 0) - ship.pos.y;
+      return dx * dx + dy * dy;
+    }
+
+    function ensureCargoWreckFragment(van) {
+      if (van?._cargoWreck) return van._cargoWreck;
+      const shards = van?.hexGrid?.shards;
+      if (!Array.isArray(shards) || shards.length === 0 || !window.createWreckage) return null;
+      let shard = shards.find(candidate => candidate?.active && !candidate.isDebris && candidate.hp > 0);
+      if (!shard) shard = shards.find(candidate => candidate && !candidate.isDebris) || shards[0];
+      if (!shard) return null;
+
+      // Nawet całkowite zniszczenie kratownicy zostawia jeden realny fragment
+      // kadłuba jako nośnik partii; nie tworzymy osobnego obiektu-kontenera.
+      if (!shard.active || shard.hp <= 0 || shard.isDebris) {
+        shard.active = true;
+        shard.isDebris = false;
+        shard.hp = Math.max(1, Number(shard.maxHp) || 1);
+      }
+      return window.createWreckage(van, [shard]) || van._cargoWreck || null;
+    }
+
+    function ensureCargoWreckInventory(wreck, order) {
+      if (!wreck) return null;
+      const shardCount = Math.max(1, Number(wreck.hexGrid?.activeStructuralCount) || 1);
+      if (!wreck._salvage) {
+        wreck._salvage = {
+          weapons: [],
+          materials: {},
+          materialsTotal: {},
+          sourceShards: shardCount,
+          remainingShards: shardCount,
+          label: `Wrak transportu ${order.id}`
+        };
+      }
+      if (!wreck._salvage.materials) wreck._salvage.materials = {};
+      if (!wreck._salvage.materialsTotal) wreck._salvage.materialsTotal = { ...wreck._salvage.materials };
+      if (!wreck._cargoManifest || typeof wreck._cargoManifest !== 'object') wreck._cargoManifest = {};
+      return wreck._cargoManifest;
+    }
+
+    function handleCargoVanDestroyed(van) {
+      const order = getShipmentOrder(cargoFleet, van?._cargoOrderId || van?.shipmentOrderId);
+      if (!order || order.status === SHIPMENT_STATUS.DELIVERED) return false;
+      const wreck = van._cargoWreck || ensureCargoWreckFragment(van);
+      if (!wreck) return false;
+      const wreckId = wreck._cargoWreckId || `cargo-wreck:${order.id}`;
+      const inventory = ensureCargoWreckInventory(wreck, order);
+      const result = wreckShipmentOrder(order, wreckId, inventory, cargoFleet.elapsedSeconds);
+      if (wreck && Object.keys(result.moved || {}).length) {
+        wreck._cargoOrderId = order.id;
+        wreck._cargoWreckId = wreckId;
+      }
+      removeActorFromTransitQueues(van);
+      return result.changed;
+    }
+
+    function removeCargoVanView(order, van, saveState = true) {
+      if (!van) return;
+      removeActorFromTransitQueues(van);
+      if (saveState && order?.actorId && !van.dead) {
+        const route = getWarpRoute(order.sourceStationId, order.targetStationId);
+        const routeProgress = route
+          ? getCargoActorRouteProgress(order, route, van)
+          : (Number(order.routeProgress) || 0);
+        dematerializeShipmentOrderView(order, van, {
+          x: van.x,
+          y: van.y,
+          vx: van.vx,
+          vy: van.vy,
+          angle: van.angle,
+          hp: van.hp,
+          maxHp: van.maxHp,
+          lane: van.lane,
+          dockPort: van.dockPort,
+          phase: van.phase,
+          routeProgress,
+          clockTime: cargoFleet.elapsedSeconds
+        });
+      } else {
+        if (order?.actorId) dematerializeShipmentOrderView(order, van);
+        delete van.shipmentOrderId;
+        delete van.shipmentViewId;
+      }
+      releaseNpcHexBody(van);
+      const npcIndex = npcs.indexOf(van);
+      if (npcIndex >= 0) npcs.splice(npcIndex, 1);
+      if (order) cargoActors.delete(order.id);
+      van._cargoOrderId = null;
+    }
+
+    function materializeCargoOrder(order) {
+      const source = getStationById(order.sourceStationId);
+      const target = getStationById(order.targetStationId);
+      const route = getWarpRoute(order.sourceStationId, order.targetStationId);
+      if (!source || !target || !route || !fillCargoOrderPose(order, route, cargoPoseScratch)) return null;
+
+      const vanClass = getCargoVanClass(order);
+      const stats = NPC_TYPES[vanClass.npcType] || NPC_TYPES['freighter-small'];
+      const saved = order.viewState || null;
+      const savedIsCurrent = saved
+        && Number.isFinite(Number(saved.x))
+        && Number.isFinite(Number(saved.y))
+        && Number.isFinite(Number(saved.recordElapsedSeconds))
+        && Math.abs(Number(saved.recordElapsedSeconds) - Number(order.elapsedSeconds)) <= 1e-6;
+      const spawnPose = savedIsCurrent ? saved : cargoPoseScratch;
+      const van = makeNPCBase(spawnPose, {
+        ...stats,
+        hp: Number(saved?.maxHp) || stats.hp,
+        maxSpeed: vanClass.speed,
+        accel: vanClass.speed * 0.6,
+        turn: 1.4
+      });
+      van.id = `cargo-view:${order.id}`;
+      van.type = vanClass.npcType;
+      van.shipFrame = 'terran_frigate';
+      van.factionId = normalizeFaction(order.factionId);
+      van.isCargoVan = true;
+      van.isCollidable = true;
+      van.combatDisabled = true;
+      van.displayName = `Transport ${vanClass.id.toUpperCase()}`;
+      van.color = stats.color;
+      van._cargoOrderId = order.id;
+      van.hp = Math.max(1, Math.min(van.maxHp, Number(saved?.hp) || van.maxHp));
+      van.angle = savedIsCurrent && Number.isFinite(Number(saved?.angle))
+        ? Number(saved.angle)
+        : Math.atan2(route.dir.y, route.dir.x);
+
+      if (!assignTransitRoute(van, source, target, route, {
+        phase: spawnPose.phase,
+        lane: saved?.lane,
+        dockPort: saved?.dockPort,
+        speed: vanClass.speed,
+        resetVelocity: spawnPose.phase !== 'warping',
+        warpSpeed: CARGO_WARP_SPEED
+      })) return null;
+      van.x = spawnPose.x;
+      van.y = spawnPose.y;
+      if (savedIsCurrent && Number.isFinite(Number(saved.vx)) && Number.isFinite(Number(saved.vy))) {
+        van.vx = Number(saved.vx);
+        van.vy = Number(saved.vy);
+      }
+
+      if (order.status === SHIPMENT_STATUS.AWAITING_UNLOAD) {
+        const portPos = stationPortWorld(target, van.dockPort || 0);
+        van.x = portPos.x;
+        van.y = portPos.y;
+        van.vx = 0;
+        van.vy = 0;
+        van.docking = true;
+        van.lastStation = target.id;
+      }
+
+      if (!materializeShipmentOrderView(order, van)) {
+        removeActorFromTransitQueues(van);
+        return null;
+      }
+      syncEntityFactionFlags(van);
+      assignNpcShipFrame?.(van);
+      npcs.push(van);
+      cargoActors.set(order.id, van);
+      return van;
+    }
+
+    function notifyCargoDelivery(order, delivered) {
+      const target = getStationById(order?.targetStationId);
+      if (!cargoBagIsEmpty(delivered) && target && stationUI.open && stationUI.station === target) {
+        toast(`Dostawa: ${describeCargo(delivered)}`);
+      }
+    }
+
+    function reconcileCargoViewsBeforeAdvance() {
+      for (const [orderId, van] of cargoActors) {
+        const order = getShipmentOrder(cargoFleet, orderId);
+        if (!order) {
+          removeCargoVanView(null, van, false);
+          cargoActors.delete(orderId);
+          continue;
+        }
+        if (van.dead) {
+          handleCargoVanDestroyed(van);
+          removeCargoVanView(order, van, false);
+          continue;
+        }
+        if (order.status === SHIPMENT_STATUS.DELIVERED || order.status === SHIPMENT_STATUS.WRECK) {
+          removeCargoVanView(order, van, false);
+          continue;
+        }
+        if (van.docking && van.lastStation === order.targetStationId
+          && order.status === SHIPMENT_STATUS.IN_TRANSIT) {
+          const target = getStationById(order.targetStationId);
+          const econ = target ? InfrastructureUI.ensureEconomy(target) : null;
+          const result = tryDeliverShipmentOrder(order, econ, cargoFleet.elapsedSeconds);
+          if (result.changed) {
+            notifyCargoDelivery(order, result.delivered);
+            removeCargoVanView(order, van, false);
+            continue;
+          }
+          order.nextUnloadAttemptAt = cargoFleet.elapsedSeconds + cargoAdvanceOptions.retryIntervalSeconds;
+        }
+        if (cargoDistanceToPlayerSq(van.x, van.y) > CARGO_DEMATERIALIZE_RADIUS * CARGO_DEMATERIALIZE_RADIUS) {
+          removeCargoVanView(order, van, true);
+        }
+      }
+    }
+
+    function syncCargoOrderViews() {
+      for (const [orderId, van] of cargoActors) {
+        const order = getShipmentOrder(cargoFleet, orderId);
+        const active = order && (order.status === SHIPMENT_STATUS.IN_TRANSIT
+          || order.status === SHIPMENT_STATUS.AWAITING_UNLOAD);
+        if (!active) removeCargoVanView(order, van, false);
+      }
+      for (const order of cargoFleet.activeOrders) {
+        if (!order) continue;
+        const existing = cargoActors.get(order.id);
+        if (existing) continue;
+        if (order.actorId) dematerializeShipmentOrderView(order, order.actorId, order.viewState);
+        const route = getWarpRoute(order.sourceStationId, order.targetStationId);
+        if (!route || !fillCargoOrderPose(order, route, cargoPoseScratch)) continue;
+        if (cargoDistanceToPlayerSq(cargoPoseScratch.x, cargoPoseScratch.y)
+          <= CARGO_MATERIALIZE_RADIUS * CARGO_MATERIALIZE_RADIUS) {
+          materializeCargoOrder(order);
+        }
+      }
+    }
+
+    function onCargoTransitEvent(event, order) {
+      if (event?.type === 'delivered') notifyCargoDelivery(order, event.result?.delivered || {});
+    }
+
+    function countActiveCargoOrders() {
+      return cargoFleet.activeOrders.length;
+    }
+
+    /**
+     * Wystawia jedno zlecenie transportowe. Zwraca `{ ok, order, reason }`,
+     * żeby konsola deweloperska mogła powiedzieć, DLACZEGO nic nie poleciało —
+     * najczęstszy powód to brak rozbieżności w magazynach, nie usterka.
+     */
+    function dispatchOneCargoOrder(options = {}) {
+      if (!options.force && countActiveCargoOrders() >= MAX_ACTIVE_VANS) {
+        return { ok: false, reason: `limit ${MAX_ACTIVE_VANS} aktywnych transportów` };
+      }
+      const shipment = planShipment(
+        stations,
+        (station) => InfrastructureUI.ensureEconomy(station),
+        { skipPairs: options.ignoreCooldowns ? new Set() : getBlockedPairs(cargoFleet) }
+      );
+      if (!shipment) {
+        return { ok: false, reason: 'brak pary nadwyżka→niedobór (magazyny za blisko progów 70%/25%)' };
+      }
+      const route = getWarpRoute(shipment.source.id, shipment.target.id);
+      if (!route) {
+        blockRoute(cargoFleet, shipment.source, shipment.target);
+        return { ok: false, reason: `brak trasy warp ${shipment.source.id}→${shipment.target.id}` };
+      }
+      const sourceEcon = InfrastructureUI.ensureEconomy(shipment.source);
+      const order = createShipmentOrder(cargoFleet, shipment, sourceEcon, route, {
+        travelSeconds: getCargoTravelSeconds(shipment, route),
+        warpSpeed: CARGO_WARP_SPEED
+      });
+      if (!order) {
+        blockRoute(cargoFleet, shipment.source, shipment.target);
+        return { ok: false, reason: 'towar zniknął między planowaniem a załadunkiem' };
+      }
+      return { ok: true, order, shipment };
+    }
+
+    function updateCargoFleet(dt) {
+      tickCooldowns(cargoFleet, dt);
+      reconcileCargoViewsBeforeAdvance();
+      syncCargoOrderViews();
+      advanceShipmentOrders(cargoFleet, dt, cargoAdvanceOptions);
+
+      if (!CARGO_DISPATCH_ENABLED) return;
+      cargoFleet.dispatchTimer += dt;
+      if (cargoFleet.dispatchTimer < DISPATCH_INTERVAL) return;
+      cargoFleet.dispatchTimer -= DISPATCH_INTERVAL;
+      dispatchOneCargoOrder();
+    }
+
+    // ============================================================
+    // KONSOLA DEWELOPERSKA — window.Cargo
+    // Ekonomia potrzebuje minut, żeby magazyny rozjechały się poza progi
+    // 70%/25% i pojawiła się pierwsza para nadwyżka→niedobór. Testowanie
+    // transportu w tempie czasu rzeczywistego jest przez to bardzo powolne.
+    // ============================================================
+
+    window.Cargo = {
+      /** Przewija gospodarkę o N cykli (1 cykl = 20 s gry). To usuwa czekanie. */
+      economy(cycles = 30) {
+        const runs = Math.max(1, Math.floor(cycles));
+        let touched = 0;
+        for (const station of stations) {
+          if (!station || isDerelict(station)) continue;
+          const econ = InfrastructureUI.ensureEconomy(station);
+          if (econ && runStationEconomy(station, econ, runs)) touched++;
+        }
+        if (stationUI.open) updateStationOverlay(stationUI.tab, stationUI.station);
+        console.log(`[Cargo] przewinięto ${runs} cykli (${runs * ECONOMY_CYCLE_SECONDS}s gry) na ${touched} stacjach`);
+        return this.trade();
+      },
+
+      /** Wymusza jedno zlecenie natychmiast, z pominięciem timera i karencji. */
+      dispatch() {
+        const result = dispatchOneCargoOrder({ force: true, ignoreCooldowns: true });
+        if (!result.ok) {
+          console.warn(`[Cargo] nic nie wysłano — ${result.reason}`);
+          console.info('[Cargo] spróbuj najpierw: Cargo.economy(40)');
+          return null;
+        }
+        const { order, shipment } = result;
+        console.log(`[Cargo] ${shipment.source.id} → ${shipment.target.id}: `
+          + `${describeCargo(order.manifest)} (${shipment.vanClass.id}, ETA ${Math.round(order.remainingSeconds)}s)`);
+        return order;
+      },
+
+      /** Lista transportów w drodze. */
+      list() {
+        const rows = cargoFleet.activeOrders.map(o => ({
+          trasa: `${o.sourceStationId} → ${o.targetStationId}`,
+          ładunek: describeCargo(o.manifest),
+          'ETA (s)': Math.round(o.remainingSeconds ?? 0),
+          status: o.status,
+          widoczny: o.actorId ? 'tak' : 'nie'
+        }));
+        if (!rows.length) console.log('[Cargo] brak transportów w drodze');
+        else console.table(rows);
+        return rows;
+      },
+
+      /** Dowozi wszystko, co jest w drodze. Zmaterializowane pomija — te wiozą się fizyką. */
+      arrive() {
+        const visible = cargoFleet.activeOrders.filter(o => o.actorId).length;
+        advanceShipmentOrders(cargoFleet, 100000, cargoAdvanceOptions);
+        if (visible) console.warn(`[Cargo] ${visible} transportów jest widocznych — te dolecą fizycznie, nie skokiem`);
+        console.log('[Cargo] pozostałe dostarczone');
+        return this.list();
+      },
+
+      /** Stan magazynów: gdzie jest nadwyżka, a gdzie głód. */
+      trade() {
+        const rows = [];
+        for (const station of stations) {
+          if (!station || isDerelict(station)) continue;
+          const econ = InfrastructureUI.ensureEconomy(station);
+          if (!econ) continue;
+          rows.push({
+            stacja: station.id,
+            oddaje: getStationSurpluses(station, econ, 3).map(s => `${s.id}×${s.spare}`).join(' ') || '—',
+            potrzebuje: getStationDeficits(station, econ, 3).map(d => `${d.id} ${(d.fill * 100).toFixed(0)}%`).join(' ') || '—'
+          });
+        }
+        console.table(rows);
+        return rows;
+      },
+
+      help() {
+        console.log([
+          'Cargo.economy(n)  przewiń gospodarkę o n cykli po 20 s (domyślnie 30)',
+          'Cargo.dispatch()  wymuś jedno zlecenie natychmiast',
+          'Cargo.list()      transporty w drodze',
+          'Cargo.arrive()    dowieź wszystko, co niewidoczne',
+          'Cargo.trade()     kto ma nadwyżkę, a kto głoduje',
+          '',
+          'Typowy test:  Cargo.economy(40)  →  Cargo.dispatch()  →  Cargo.list()'
+        ].join('\n'));
+      }
+    };
+
+    // ============================================================
+    // OPUSZCZONE STACJE
+    // Stacja bez właściciela nic nie produkuje, ale w magazynach został towar
+    // po poprzednich mieszkańcach. To jedyne miejsce, gdzie da się wziąć
+    // komponenty bez płacenia i bez psucia sobie z kimkolwiek stosunków.
+    // ============================================================
+
+    const DERELICT_LOOT_POOL = [
+      { id: 'steel', min: 40, max: 180 },
+      { id: 'polymer', min: 20, max: 90 },
+      { id: 'chips', min: 4, max: 26 },
+      { id: 'copper_wire', min: 15, max: 70 },
+      { id: 'hull_plate', min: 2, max: 14 },
+      { id: 'coolant', min: 10, max: 45 },
+      { id: 'avionics', min: 0, max: 5 },
+      { id: 'scrap', min: 60, max: 240 }
+    ];
+
+    // Stacje nie zaczynają z pustymi magazynami: czynne mają zapas roboczy,
+    // opuszczone — resztki po poprzednikach. Start od zera dawał sztuczny
+    // kryzys, bo producent oddaje nadwyżkę dopiero powyżej progu zapełnienia.
+    function seedStationEconomies() {
+      for (const station of stations) {
+        if (isDerelict(station) || station._stockSeeded) continue;
+        station._stockSeeded = true;
+        const econ = InfrastructureUI.ensureEconomy(station);
+        if (econ) seedStationStock(station, econ);
+      }
+      seedDerelictStations();
+    }
+
+    function seedDerelictStations() {
+      for (const station of stations) {
+        if (!isDerelict(station) || station._derelictSeeded) continue;
+        station._derelictSeeded = true;
+        const econ = InfrastructureUI.ensureEconomy(station);
+        if (!econ) continue;
+        for (const entry of DERELICT_LOOT_POOL) {
+          const amount = Math.round(entry.min + Math.random() * (entry.max - entry.min));
+          if (amount <= 0) continue;
+          const cap = Number(econ.capacity?.[entry.id]);
+          econ.resources[entry.id] = Number.isFinite(cap) ? Math.min(cap, amount) : amount;
+        }
+      }
+    }
+
+    // ============================================================
+    // SALVAGE — odzysk łupu z wraków
+    // Dwie ścieżki: cięcie w polu (szybko, bez broni) i holowanie do doku
+    // (wolno, ryzykownie, pełny łup z bronią w całości).
+    // ============================================================
+
+    const salvageState = {
+      cutting: null,      // wrak aktualnie cięty
+      cutDebt: 0,         // ułamkowe komórki do zdjęcia, przenoszone między klatkami
+      towed: null,        // wrak na linie
+      towHandle: null,
+      messageCooldown: 0  // dławi spam komunikatów o odzysku
+    };
+
+    /** Dokłada surowce do ładowni w granicach udźwigu. Zwraca co faktycznie weszło. */
+    function addToPlayerCargo(bag) {
+      const accepted = {};
+      let free = getPlayerCargoFree();
+      for (const [id, amount] of Object.entries(bag || {})) {
+        const def = RESOURCES[id];
+        if (!def) continue;
+        const want = Math.floor(Number(amount) || 0);
+        if (want <= 0) continue;
+        // Surowce bez masy (gdyby się trafiły) nie mogą dzielić przez zero.
+        const perUnit = def.mass > 0 ? def.mass : 0.0001;
+        const fits = Math.min(want, Math.floor(free / perUnit));
+        if (fits <= 0) continue;
+        PLAYER.cargo[id] = (Number(PLAYER.cargo[id]) || 0) + fits;
+        accepted[id] = fits;
+        free -= fits * perUnit;
+      }
+      return accepted;
+    }
+
+    function cargoBagIsEmpty(bag) {
+      for (const amount of Object.values(bag || {})) {
+        if ((Number(amount) || 0) > 0) return false;
+      }
+      return true;
+    }
+
+    function recoverCargoWreckToPlayer(wreck) {
+      if (!wreck || cargoBagIsEmpty(wreck._cargoManifest)) return { changed: false, moved: {} };
+      if (getBagMass(wreck._cargoManifest) > getPlayerCargoFree() + 1e-6) {
+        return { changed: false, moved: {}, reason: 'capacity' };
+      }
+      const order = getShipmentOrder(cargoFleet, wreck._cargoOrderId);
+      if (!order) return { changed: false, moved: {}, reason: 'missing-order' };
+      return recoverWreckedShipmentOrder(order, wreck._cargoManifest, PLAYER.cargo, {
+        ownerKind: SHIPMENT_OWNER_KIND.PLAYER,
+        ownerId: 'player',
+        now: cargoFleet.elapsedSeconds
+      });
+    }
+
+    function recoverCargoWreckToStation(wreck, station, econ) {
+      if (!wreck || !station || cargoBagIsEmpty(wreck._cargoManifest)) return { changed: false, moved: {} };
+      const order = getShipmentOrder(cargoFleet, wreck._cargoOrderId);
+      if (!order) return { changed: false, moved: {}, reason: 'missing-order' };
+      return recoverWreckedShipmentOrder(order, wreck._cargoManifest, econ, {
+        ownerKind: SHIPMENT_OWNER_KIND.STATION,
+        ownerId: station.id,
+        now: cargoFleet.elapsedSeconds
+      });
+    }
+
+    function formatCargoBag(bag) {
+      return Object.entries(bag || {})
+        .filter(([, amount]) => (Number(amount) || 0) > 0)
+        .map(([id, amount]) => `${getResourceLabel(id)} ×${Math.round(amount)}`)
+        .join(', ');
+    }
+
+    function isSalvageableWreck(entity) {
+      return !!entity && entity.isWreck === true && !entity.dead && hasSalvage(entity);
+    }
+
+    function salvageDistanceToShip(wreck) {
+      if (!wreck || !ship?.pos) return Infinity;
+      return Math.hypot((wreck.x ?? wreck.pos?.x ?? 0) - ship.pos.x, (wreck.y ?? wreck.pos?.y ?? 0) - ship.pos.y);
+    }
+
+    function startFieldSalvage(wreck) {
+      if (!isSalvageableWreck(wreck)) {
+        pushZoneMessage('SALVAGE: NIC DO WYCIĘCIA', 1.4);
+        return;
+      }
+      if (salvageState.towed === wreck) {
+        pushZoneMessage('SALVAGE: WRAK NA HOLU — ODEPNIJ ALBO ODDAJ W DOKU', 1.6);
+        return;
+      }
+      salvageState.cutting = wreck;
+      salvageState.cutDebt = 0;
+      const info = describeSalvage(wreck);
+      const weaponsNote = info?.weaponCount ? ` | ${info.weaponCount} dz. przepadnie` : '';
+      pushZoneMessage(`SALVAGE: CIĘCIE${weaponsNote}`, 1.6);
+    }
+
+    function stopFieldSalvage(reason = '') {
+      if (!salvageState.cutting) return;
+      salvageState.cutting = null;
+      salvageState.cutDebt = 0;
+      if (reason) pushZoneMessage(reason, 1.4);
+    }
+
+    /**
+     * Zdejmuje komórkę najdalszą od środka fragmentu — kadłub znika od krawędzi
+     * do wnętrza, co czyta się jak cięcie, a nie losowe rozpuszczanie.
+     * Liczone w lokalnych współrzędnych kratownicy, bez transformacji do świata.
+     */
+    function cutOuterShard(wreck) {
+      const grid = wreck?.hexGrid;
+      const shards = grid?.shards;
+      if (!Array.isArray(shards) || !shards.length) return false;
+      const cx = (Number(grid.srcWidth) || 0) * 0.5 + (Number(grid.pivot?.x) || 0);
+      const cy = (Number(grid.srcHeight) || 0) * 0.5 + (Number(grid.pivot?.y) || 0);
+      let best = null;
+      let bestD2 = -1;
+      for (const shard of shards) {
+        if (!shard || !shard.active || shard.isDebris) continue;
+        const dx = (Number(shard.gridX) || 0) - cx;
+        const dy = (Number(shard.gridY) || 0) - cy;
+        const d2 = dx * dx + dy * dy;
+        if (d2 > bestD2) {
+          bestD2 = d2;
+          best = shard;
+        }
+      }
+      if (!best) return false;
+      window.DestructorSystem?.destroyShard?.(wreck, best, { x: 0, y: 0 });
+      return true;
+    }
+
+    function updateFieldSalvage(dt) {
+      const wreck = salvageState.cutting;
+      if (!wreck) return;
+      if (wreck.dead) {
+        stopFieldSalvage('SALVAGE: WRAK PRZEPADŁ');
+        return;
+      }
+      if (salvageDistanceToShip(wreck) > FIELD_CUT_RANGE) {
+        stopFieldSalvage('SALVAGE: POZA ZASIĘGIEM');
+        return;
+      }
+
+      const cargoRecovery = recoverCargoWreckToPlayer(wreck);
+      if (cargoRecovery.changed) {
+        pushZoneMessage(`ODZYSKANO ŁADUNEK: ${formatCargoBag(cargoRecovery.moved)}`, 1.8);
+      }
+      if (!wreck.hexGrid) {
+        stopFieldSalvage(cargoRecovery.reason === 'capacity'
+          ? 'SALVAGE: CAŁA PARTIA NIE MIEŚCI SIĘ W ŁADOWNI'
+          : 'SALVAGE: PUSTY KONTENER');
+        return;
+      }
+      if (getPlayerCargoFree() <= 0) {
+        stopFieldSalvage('SALVAGE: ŁADOWNIA PEŁNA');
+        return;
+      }
+
+      const before = Number(wreck.hexGrid.activeStructuralCount) || 0;
+      if (before <= 0) {
+        stopFieldSalvage('SALVAGE: WRAK ROZEBRANY');
+        return;
+      }
+
+      salvageState.cutDebt += FIELD_CUT_SHARDS_PER_SECOND * dt;
+      // Limit na klatkę chroni przed lawiną po zacięciu (np. po alt-tabie).
+      let budget = Math.min(8, Math.floor(salvageState.cutDebt));
+      while (budget > 0) {
+        if (!cutOuterShard(wreck)) break;
+        salvageState.cutDebt -= 1;
+        budget--;
+      }
+
+      const after = Number(wreck.hexGrid.activeStructuralCount) || 0;
+      const removed = Math.max(0, before - after);
+      if (removed <= 0) return;
+
+      // Łup liczony z FAKTYCZNIE ubytej struktury, nie z upływu czasu — dzięki
+      // temu nie da się go zdublować, gdy wrak rozwala równolegle ktoś inny.
+      const salvage = getSalvage(wreck);
+      const denom = Math.max(1, Number(salvage?.remainingShards) || before);
+      const yielded = takeFieldCut(wreck, removed / denom);
+      if (cargoBagIsEmpty(yielded)) return;
+
+      const accepted = addToPlayerCargo(yielded);
+      // Odliczanie własnym timerem, nie gameTime — ten zawija się co dobę.
+      salvageState.messageCooldown = Math.max(0, salvageState.messageCooldown - dt);
+      if (!cargoBagIsEmpty(accepted) && salvageState.messageCooldown <= 0) {
+        salvageState.messageCooldown = 1.2;
+        pushZoneMessage(`+ ${formatCargoBag(accepted)}`, 1.2);
+      }
+    }
+
+    // --- Holowanie ---
+
+    function startWreckTow(wreck) {
+      if (!isSalvageableWreck(wreck)) {
+        pushZoneMessage('HOL: NIC DO ZABRANIA', 1.4);
+        return;
+      }
+      if (salvageState.towed) {
+        pushZoneMessage('HOL: JUŻ HOLUJESZ WRAK', 1.4);
+        return;
+      }
+      if (salvageState.cutting === wreck) stopFieldSalvage();
+
+      const restLength = (Number(ship.radius) || 220) + (Number(wreck.radius) || 200) + 260;
+      const handle = window.attachTowRope?.(ship, wreck, {
+        length: restLength,
+        stiffness: 0.26,
+        damping: 0.9,
+        collideConnected: false,
+        // Zbyt ostry manewr zrywa linę — holowanie ma być realnym obciążeniem,
+        // a nie darmowym doczepieniem masy.
+        breakForce: 260000,
+        tag: 'salvage-tow',
+        onBreak: () => {
+          if (salvageState.towed === wreck) {
+            salvageState.towed = null;
+            salvageState.towHandle = null;
+            pushZoneMessage('HOL: LINA ZERWANA', 1.6);
+          }
+        }
+      });
+      if (!handle) {
+        pushZoneMessage('HOL: NIE UDAŁO SIĘ ZACZEPIĆ', 1.4);
+        return;
+      }
+      // Holowany wrak nie może zasnąć — uśpiony wypada z solvera i lina
+      // przestaje na niego działać.
+      wreck.noWreckSleep = true;
+      wreck._wreckSleeping = false;
+      salvageState.towed = wreck;
+      salvageState.towHandle = handle;
+      pushZoneMessage('HOL: WRAK NA LINIE — LEĆ DO STACJI', 2.0);
+    }
+
+    function releaseWreckTow(reason = '') {
+      if (!salvageState.towHandle) return;
+      window.detachTowRope?.(salvageState.towHandle);
+      if (salvageState.towed) salvageState.towed.noWreckSleep = false;
+      salvageState.towed = null;
+      salvageState.towHandle = null;
+      if (reason) pushZoneMessage(reason, 1.4);
+    }
+
+    /** Zdejmuje wrak ze świata i oddaje obiekt do puli destruktora. */
+    function removeWreckFromWorld(wreck) {
+      if (!wreck) return;
+      wreck.dead = true;
+      wreck.isCollidable = false;
+      TowSystem.detachBody(wreck, 'wreck-removed');
+      const list = Array.isArray(window.wrecks) ? window.wrecks : null;
+      const idx = list ? list.indexOf(wreck) : -1;
+      if (idx >= 0) list.splice(idx, 1);
+      window.DestructorSystem?.recycleWreck?.(wreck);
+    }
+
+    function findDeliveryStation(wreck) {
+      const list = Array.isArray(window.stations) ? window.stations : [];
+      const wx = wreck.x ?? wreck.pos?.x ?? 0;
+      const wy = wreck.y ?? wreck.pos?.y ?? 0;
+      for (const station of list) {
+        const sx = Number(station?.x);
+        const sy = Number(station?.y);
+        if (!Number.isFinite(sx) || !Number.isFinite(sy)) continue;
+        if (Math.hypot(sx - wx, sy - wy) <= DOCK_DELIVERY_RANGE) return station;
+      }
+      return null;
+    }
+
+    function updateWreckTow() {
+      const wreck = salvageState.towed;
+      if (!wreck) return;
+      if (wreck.dead || !wreck.hexGrid) {
+        releaseWreckTow('HOL: WRAK PRZEPADŁ');
+        return;
+      }
+      const station = findDeliveryStation(wreck);
+      if (!station) return;
+      deliverWreckToDock(wreck, station);
+    }
+
+    /**
+     * Rozbiórka w doku — pełne materiały trafiają do magazynu stacji (nie do
+     * ładowni: wrak ma masę setek ton), a broń w całości do ładowni gracza.
+     */
+    function deliverWreckToDock(wreck, station) {
+      const econ = InfrastructureUI.ensureEconomy(station);
+      const cargoRecovery = recoverCargoWreckToStation(wreck, station, econ);
+      const { materials, weapons } = takeDockSalvage(wreck);
+      const storedParts = [];
+      if (econ) {
+        for (const [id, amount] of Object.entries(materials)) {
+          if (!RESOURCES[id]) continue;
+          const cap = Number(econ.capacity?.[id]);
+          const stock = Number(econ.resources?.[id]) || 0;
+          const stored = Number.isFinite(cap) ? Math.min(amount, Math.max(0, cap - stock)) : amount;
+          if (stored <= 0) continue;
+          econ.resources[id] = stock + stored;
+          storedParts.push(`${getResourceLabel(id)} ×${Math.round(stored)}`);
+        }
+      }
+
+      const inventory = Game.player?.inventory;
+      const recovered = [];
+      for (const weaponId of weapons) {
+        if (!WEAPONS[weaponId]) continue;
+        inventory?.give(weaponId, 1);
+        recovered.push(WEAPONS[weaponId].name || weaponId);
+      }
+
+      releaseWreckTow();
+      if (!hasSalvage(wreck)) {
+        // Wrak zniknął w rozbiórce. Sama flaga `dead` nie wystarczy — pętla
+        // wraków jej nie sprawdza, więc kadłub wisiałby przy stacji w nieskończoność.
+        removeWreckFromWorld(wreck);
+      }
+
+      pushZoneMessage(cargoRecovery.reason === 'capacity'
+        ? 'ROZBIÓRKA: ŁADUNEK CZEKA NA MIEJSCE W MAGAZYNIE'
+        : 'ROZBIÓRKA UKOŃCZONA', 2.2);
+      if (cargoRecovery.changed) toast(`Odzyskany ładunek: ${formatCargoBag(cargoRecovery.moved)}`);
+      if (storedParts.length) toast(`Magazyn stacji: ${storedParts.join(', ')}`);
+      if (recovered.length) toast(`Odzyskana broń: ${recovered.join(', ')}`);
+      else toast('Wrak nie miał sprawnego uzbrojenia');
+      renderMechanic?.();
+    }
+
+    function updateSalvage(dt) {
+      updateFieldSalvage(dt);
+      updateWreckTow();
     }
 
     function purchaseUpgrade(upgrade) {
@@ -14003,6 +15485,7 @@
     initMechanicUI();
     InfrastructureUI.init(canvas);
     InfrastructureUI.autopopulate();
+    seedStationEconomies();
     ZonePainterUI.init(canvas);
     function startMercenaryMission() {
       if (mercMission) { toast('Misja już aktywna. Wciśnij J aby zobaczyć dziennik.'); return; }
@@ -14043,6 +15526,7 @@
         x, y, r,
         baseR: r,
         isPirate: true,
+        factionId: FACTION.PIRATES,
         hp: 10000, maxHp: 10000,
         static: true, mission: true,
         ports,
@@ -14297,8 +15781,6 @@
     // =============== Input ===============
     const input = { main: 0, leftSide: 0, rightSide: 0, retro: 0, torque: 0 };
     const driveState = createDriveTransmission({
-      mode: 'combat',
-      auto: false,
       hullClass: PLAYER.activeHullId
     });
     window.shipDriveState = driveState;
@@ -14325,6 +15807,7 @@
     const ENGINE_TARGET_RATE = 2.4; // 0..1 na sekundę (szybka regulacja)
     const ENGINE_RESPONSE_RATE = 1.6; // jak szybko aktualna moc dogania target
     const keys = {};
+    let shiftBinding = null;
     let lastDriveShiftSerial = driveState.shiftSerial;
     // Mapa sektora (M) usunięta — jej rolę przejął CIC (TAB / M).
     const cruiseNav = {
@@ -14348,7 +15831,7 @@
 
     function announceDriveMode() {
       const mode = getDriveMode(driveState);
-      pushZoneMessage(`${mode.label} · LIMIT ${Math.round(driveState.modeMaxSpeed)} m/s`, 1.4);
+      pushZoneMessage(`${mode.label} · LIMIT ${formatVelocity(driveState.modeMaxSpeed)}`, 1.4);
     }
 
     function setPlayerDriveMode(modeId, silent = false) {
@@ -14408,7 +15891,7 @@
       warp.gear = clampedGear;
       warp.speed = speeds[clampedGear - 1];
       if (!silent) {
-        pushZoneMessage(`Warp gear ${warp.gear}/${speeds.length} · ${Math.round(warp.speed)} m/s`, 1.2);
+        pushZoneMessage(`Warp gear ${warp.gear}/${speeds.length} · ${formatVelocity(warp.speed, { warp: true })}`, 1.2);
       }
     }
 
@@ -14738,6 +16221,27 @@
       }
     }
 
+    function handleShiftDown() {
+      if (ship.destroyed) return;
+      shiftBinding = currentShiftMode();
+      if (shiftBinding === 'boost') {
+        activateBoostIfAllowed();
+      } else {
+        handleWarpKeyDown();
+      }
+    }
+
+    function handleShiftUp() {
+      if (ship.destroyed) return;
+      const mode = shiftBinding || currentShiftMode();
+      if (mode === 'boost') {
+        stopBoost();
+      } else {
+        handleWarpKeyUp();
+      }
+      shiftBinding = null;
+    }
+
     function triggerForwardImpulse(entity, power = 0, opts = {}) {
       if (!entity || entity.dead || entity.destroyed) return false;
       const impulse = Number(power) || 0;
@@ -14890,7 +16394,7 @@
         return;
       }
       if (!inRtsMode && k === 'shift') {
-        requestPlayerShiftUp();
+        handleShiftDown();
       }
       if (!inRtsMode && (e.code === 'ControlLeft' || e.code === 'ControlRight')) {
         requestPlayerShiftDown();
@@ -15061,9 +16565,7 @@
           toast('Myśliwce: ESKORTA');
         }
       }
-      if (k === 't') {
-        lockNearestVisibleContacts();
-      } else if (k === 'r') {
+      if (k === 'r') {
         e.preventDefault();
         playerRepairActive = !playerRepairActive;
         pushZoneMessage(playerRepairActive ? 'REPAIR: ON' : 'REPAIR: OFF', 0.8);
@@ -15077,6 +16579,9 @@
       const k = e.key.toLowerCase();
       keys[k] = false;
       CICDisplay.onKeyUp(e.code);
+      if (k === 'shift' && camera.mode !== 'rts') {
+        handleShiftUp();
+      }
       if ((e.code === 'Digit9' || e.code === 'Numpad9') && camera.mode !== 'rts') {
         handleWarpKeyUp();
       }
@@ -15407,8 +16912,97 @@
       return getScannerSensors().scanWaveSpeed;
     }
 
+    // ============================================================
+    // FRAKCJE — warstwa własności nałożona na istniejący boolean `friendly`.
+    //
+    // `.friendly` siedzi w ~70 miejscach (render, AI, celowanie, CIC), więc nie
+    // wyrywamy go. Zamiast tego wyliczamy go Z FRAKCJI i trzymamy w synchronie:
+    // spadek reputacji u Terra Nova sam przestawia ich jednostki na wrogie,
+    // a cały stary kod działa dalej bez zmian.
+    // ============================================================
+
+    function resolveEntityFaction(entity) {
+      if (!entity) return null;
+      const explicit = normalizeFaction(entity.factionId ?? entity.faction);
+      if (explicit) return explicit;
+      // Jednostki sprzed wprowadzenia frakcji — wnioskujemy ze starych flag.
+      if (entity.isPirate) return FACTION.PIRATES;
+      if (entity.friendly) return FACTION.TERRA_NOVA;
+      return null;
+    }
+
+    function isEntityHostileToPlayer(entity) {
+      if (!entity) return false;
+      const faction = resolveEntityFaction(entity);
+      // Bezpańskie obiekty (wraki, dryf) nie atakują i nie są celem z urzędu.
+      if (!faction) return entity.friendly === false && !entity.isWreck;
+      return isFactionHostileToPlayer(faction, PLAYER.reputation);
+    }
+
+    /** Przepisuje wrogość frakcyjną na stary boolean, żeby reszta kodu ją widziała. */
+    function syncEntityFactionFlags(entity) {
+      if (!entity || entity.isWreck) return;
+      const faction = resolveEntityFaction(entity);
+      if (!faction) return;
+      entity.factionId = faction;
+      entity.friendly = !isFactionHostileToPlayer(faction, PLAYER.reputation);
+    }
+
+    /** Po zmianie reputacji przeliczamy wszystkie jednostki naraz. */
+    function refreshFactionHostility() {
+      const list = Array.isArray(window.npcs) ? window.npcs : npcs;
+      for (const npc of list || []) syncEntityFactionFlags(npc);
+    }
+
+    function changePlayerReputation(factionId, delta, reason = '') {
+      const faction = normalizeFaction(factionId);
+      if (!faction || !delta) return;
+      const before = resolveStanding(PLAYER.reputation[faction]).id;
+      applyReputationChange(PLAYER.reputation, faction, delta);
+      const after = resolveStanding(PLAYER.reputation[faction]);
+      refreshFactionHostility();
+      // Komunikat tylko przy PRZEKROCZENIU progu — inaczej każdy strzał
+      // wypluwałby toast.
+      if (before !== after.id) {
+        toast(`${getFactionName(faction)}: ${after.label}${reason ? ` (${reason})` : ''}`);
+      }
+    }
+    window.changePlayerReputation = changePlayerReputation;
+
+    const CAPITAL_KILL_TYPES = new Set(['battleship', 'carrier', 'supercapital', 'megafreighter', 'dreadnought']);
+
+    // Okno, w którym zabójstwo jest jeszcze przypisywane graczowi. Bez tego
+    // dobicie przez piratów celu, który gracz nadgryzł sekundę wcześniej,
+    // liczyłoby się jako cudza zasługa (albo cudza wina).
+    const PLAYER_KILL_CREDIT_WINDOW = 6;
+
+    function markPlayerDamage(entity) {
+      if (entity && !entity.dead) entity._lastPlayerHit = gameTime;
+    }
+    window.markPlayerDamage = markPlayerDamage;
+
+    /**
+     * Reputacyjny skutek zabicia jednostki. Liczy się TYLKO to, co zabił gracz —
+     * inaczej piraci strzelający do frachtowców psuliby graczowi stosunki.
+     * Kary nie ma też za dobijanie kogoś, kto już jest z graczem w stanie wojny:
+     * wtedy to nie zbrodnia, tylko walka.
+     */
+    function registerFactionKill(npc) {
+      const hitAt = Number(npc?._lastPlayerHit);
+      if (!Number.isFinite(hitAt) || gameTime - hitAt > PLAYER_KILL_CREDIT_WINDOW) return;
+      const faction = resolveEntityFaction(npc);
+      if (!faction) return;
+      const standing = resolveStanding(PLAYER.reputation[faction]);
+      if (standing.patrolsAttack) return;
+      const isCapital = CAPITAL_KILL_TYPES.has(String(npc.type || '').toLowerCase())
+        || CAPITAL_KILL_TYPES.has(String(npc.shipFrame || '').toLowerCase());
+      const penalty = isCapital ? REPUTATION_EVENTS.killedCapital : REPUTATION_EVENTS.killedShip;
+      changePlayerReputation(faction, penalty, 'zniszczona jednostka');
+    }
+
     function isHostileNpc(n) {
-      return !!(n && !n.dead && !n.friendly);
+      if (!n || n.dead) return false;
+      return isEntityHostileToPlayer(n);
     }
     window.isHostileNpc = isHostileNpc;
     window.isTargetAlive = isTargetAlive;
@@ -15430,8 +17024,7 @@
     }
 
     function formatSensorRange(value) {
-      const n = Math.max(0, Number(value) || 0);
-      return n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : `${Math.round(n)}u`;
+      return formatLocalDistance(value);
     }
 
     function isPlayerLockTargetInRange(target) {
@@ -15682,9 +17275,9 @@
     }
 
     function setLockedTargetsExact(nextTargets) {
-      const valid = Array.isArray(nextTargets) ? nextTargets.filter(canPlayerLockTarget) : [];
-      lockedTargets = valid;
-      lockedTarget = valid[0] || null;
+      const reconciled = reconcileLockedTargets(nextTargets, canPlayerLockTarget);
+      lockedTargets = reconciled.targets;
+      lockedTarget = reconciled.primary;
     }
 
     function clearLockedTargetsUi() {
@@ -15716,6 +17309,103 @@
       pushZoneMessage(`CEL ZABLOKOWANY${next.length > 1 ? ` (${next.length})` : ''}`, 1.0);
     }
 
+    function getTargetingSubsystemLabel(hp) {
+      const weaponName = hp?.mount ? WEAPONS[hp.mount]?.name : null;
+      return String(weaponName || hp?.type || 'HARDPOINT').toUpperCase();
+    }
+
+    function getTargetingSubsystemTarget(entity, hp) {
+      let byHardpoint = targetingMode.subsystemTargets.get(entity);
+      if (!byHardpoint) {
+        byHardpoint = new WeakMap();
+        targetingMode.subsystemTargets.set(entity, byHardpoint);
+      }
+      let target = byHardpoint.get(hp);
+      if (target) return target;
+
+      target = {
+        type: 'subsystem',
+        __targetingSubsystem: true,
+        ownerEntity: entity,
+        hardpoint: hp,
+        hostile: true,
+        radius: 12,
+        get x() { return getEntityHardpointWorldPos(entity, hp)?.x ?? getTargetX(entity); },
+        get y() { return getEntityHardpointWorldPos(entity, hp)?.y ?? getTargetY(entity); },
+        get vx() { return Number(entity?.vx ?? entity?.vel?.x) || 0; },
+        get vy() { return Number(entity?.vy ?? entity?.vel?.y) || 0; },
+        get friendly() { return entity?.friendly === true; },
+        get isPirate() { return entity?.isPirate === true; },
+        get dead() { return !isTargetAlive(entity) || hp?.destroyed === true; },
+        get destroyed() { return !isTargetAlive(entity) || hp?.destroyed === true; },
+        get label() { return getTargetingSubsystemLabel(hp); }
+      };
+      byHardpoint.set(hp, target);
+      return target;
+    }
+
+    function findTargetingHoveredSubsystem(entity, screenX = mouse.x, screenY = mouse.y, camRef = camera) {
+      if (!entity || !targetingMode.scannedTargets.has(entity)) return null;
+      const hardpoints = getEntityHardpoints(entity);
+      if (!Array.isArray(hardpoints)) return null;
+      let best = null;
+      let bestDistSq = 16 * 16;
+      for (let i = 0; i < hardpoints.length; i++) {
+        const hp = hardpoints[i];
+        if (!hp || hp.destroyed) continue;
+        const point = getEntityHardpointWorldPos(entity, hp);
+        if (!point) continue;
+        const screen = worldToScreen(point.x, point.y, camRef);
+        const dx = screen.x - screenX;
+        const dy = screen.y - screenY;
+        const distSq = dx * dx + dy * dy;
+        if (distSq >= bestDistSq) continue;
+        bestDistSq = distSq;
+        best = getTargetingSubsystemTarget(entity, hp);
+      }
+      return best;
+    }
+
+    function confirmTargetingSelection() {
+      if (targetingMode.current === TARGETING_MODE.SINGLE) {
+        const target = targetingMode.acquireTarget;
+        if (!target || targetingMode.acquireProgress < 1 || !canPlayerLockTarget(target)) {
+          pushZoneMessage('SINGLE: UTRZYMAJ CEL DO PEŁNEGO NAMIARU', 1.0);
+          return;
+        }
+        setLockedTargetsExact([target]);
+        pushZoneMessage(`SINGLE: LOCK ${getRadarTargetUnitId(target)}`, 1.1);
+        return;
+      }
+
+      if (targetingMode.current === TARGETING_MODE.MULTI) {
+        const ready = [];
+        for (let i = 0; i < targetingMode.groupCandidates.length; i++) {
+          const target = targetingMode.groupCandidates[i];
+          if (canPlayerLockTarget(target) && (targetingMode.groupAcquisition.get(target) || 0) >= 1) ready.push(target);
+        }
+        if (!ready.length) {
+          pushZoneMessage('MULTI: BRAK GOTOWYCH CELÓW', 1.0);
+          return;
+        }
+        setLockedTargetsExact(ready.slice(0, RADAR_UI_MAX_TARGETS));
+        pushZoneMessage(`MULTI: LOCK x${Math.min(ready.length, RADAR_UI_MAX_TARGETS)}`, 1.1);
+        return;
+      }
+
+      const entity = scan?.target;
+      const subsystem = targetingMode.hoveredSubsystem || findTargetingHoveredSubsystem(entity);
+      if (subsystem) {
+        toggleLockedTargetUi(subsystem);
+        return;
+      }
+      if (entity && targetingMode.scannedTargets.has(entity)) {
+        pushZoneMessage('SUB: WSKAŻ HARDPOINT I KLIKNIJ LPM', 1.1);
+      } else {
+        pushZoneMessage(`SUB: SKANUJ KADŁUB ${Math.round(targetingMode.subScanProgress * 100)}%`, 1.1);
+      }
+    }
+
     function lockNearestVisibleContacts(maxTargets = RADAR_UI_MAX_TARGETS) {
       const selected = scannerSelectedTarget;
       if (isValidLockedTarget(selected)) {
@@ -15735,6 +17425,7 @@
     }
 
     function getRadarTargetUnitClass(target) {
+      if (target?.__targetingSubsystem) return `HARDPOINT • ${target.label || 'SUB'}`;
       if (isAsteroidTarget(target)) {
         const size = String(target?.size || '').toUpperCase();
         const type = String(target?.type || target?.resource || '').toUpperCase();
@@ -15753,17 +17444,18 @@
 
     function getRadarTargetUnitId(target) {
       if (target?.__radarUnitId) return target.__radarUnitId;
-      const prefix = isAsteroidTarget(target) ? 'AST' : (target?.isPirate ? 'PIR' : 'TGT');
+      const prefix = target?.__targetingSubsystem ? 'SUB' : (isAsteroidTarget(target) ? 'AST' : (target?.isPirate ? 'PIR' : 'TGT'));
       const raw = Number(target?.id) || Math.floor(Math.abs(getTargetX(target) * 0.13 + getTargetY(target) * 0.07 + Math.random() * 9000));
       target.__radarUnitId = `${prefix}-${String(raw % 10000).padStart(4, '0')}`;
       return target.__radarUnitId;
     }
 
     function getRadarTargetMeta(target) {
-      const hpScale = getEntityHardpointScale(target);
-      const srcW = Number(target?.hexGrid?.srcWidth);
-      const srcH = Number(target?.hexGrid?.srcHeight);
-      const radius = Math.max(20, getTargetRadius(target));
+      const source = target?.__targetingSubsystem ? target.ownerEntity : target;
+      const hpScale = getEntityHardpointScale(source);
+      const srcW = Number(source?.hexGrid?.srcWidth);
+      const srcH = Number(source?.hexGrid?.srcHeight);
+      const radius = Math.max(20, getTargetRadius(source));
       return {
         unitId: getRadarTargetUnitId(target),
         unitClass: getRadarTargetUnitClass(target),
@@ -15943,8 +17635,8 @@
       isLocked: (target) => lockedTargets.includes(target) || target === lockedTarget
     });
 
-    const mouse = { x: W / 2, y: H / 2, left: false, right: false, click: false, overCanvas: false, dx: 0, dy: 0 };
-    const mouse2 = { x: W / 2, y: H / 2, left: false, right: false, click: false, overCanvas: false, dx: 0, dy: 0 };
+    const mouse = { x: W / 2, y: H / 2, left: false, right: false, click: false, fireMain: false, overCanvas: false, dx: 0, dy: 0 };
+    const mouse2 = { x: W / 2, y: H / 2, left: false, right: false, click: false, fireMain: false, overCanvas: false, dx: 0, dy: 0 };
     window.mouse2 = mouse2;
     const RTS_SELECTION_DRAG_THRESHOLD = 8;
     const RTS_PAN_DRAG_THRESHOLD = 8;
@@ -16231,9 +17923,32 @@
       return best;
     }
 
+    // Wraki są celem rozkazów tylko dla odzysku łupu, więc trafiamy w nie
+    // dopiero gdy w punkcie nie ma żywego wroga.
+    function pickWreckTargetAtWorld(worldPoint) {
+      const list = Array.isArray(window.wrecks) ? window.wrecks : null;
+      if (!list) return null;
+      let best = null;
+      let bestDistSq = Infinity;
+      for (const wreck of list) {
+        if (!wreck || wreck.dead) continue;
+        const dx = (wreck.x ?? wreck.pos?.x ?? 0) - worldPoint.x;
+        const dy = (wreck.y ?? wreck.pos?.y ?? 0) - worldPoint.y;
+        const distSq = dx * dx + dy * dy;
+        const hitR = (Number(wreck.radius) || 120) + 60;
+        if (distSq <= hitR * hitR && distSq < bestDistSq) {
+          bestDistSq = distSq;
+          best = wreck;
+        }
+      }
+      return best;
+    }
+
     function pickCommandTargetAtWorld(worldPoint) {
       const enemy = pickEnemyTargetAtWorld(worldPoint);
       if (enemy) return enemy;
+      const wreck = pickWreckTargetAtWorld(worldPoint);
+      if (wreck) return wreck;
       const asteroid = pickAsteroidTargetAtWorld(worldPoint);
       if (asteroid) return asteroid;
       let best = null;
@@ -16627,7 +18342,7 @@
       playerAttackState.statusKey = '';
     }
 
-    function getPlayerWeaponRange(weapon, applyFiringMode = true) {
+    function getPlayerWeaponRange(weapon) {
       let range = Number(weapon?.baseRange);
       if (!Number.isFinite(range) || range <= 0) range = Number(weapon?.range);
       if ((!Number.isFinite(range) || range <= 0) && weapon?.id === 'hexlance_siege') {
@@ -16636,12 +18351,6 @@
       if (!Number.isFinite(range) || range <= 0) return 0;
       const modRange = Number(ship?.modifiers?.range);
       if (Number.isFinite(modRange) && modRange > 0) range *= modRange;
-      if (applyFiringMode) {
-        const fmRangeScale = (typeof getFiringModeModifiers === 'function')
-          ? (Number(getFiringModeModifiers()?.rangeMul) || 1.0)
-          : 1.0;
-        range *= fmRangeScale;
-      }
       return range;
     }
 
@@ -16649,7 +18358,7 @@
       const ranges = [];
       const mainWeapons = Game.player?.weapons?.[HP.MAIN] || [];
       for (const loadout of mainWeapons) {
-        const range = getPlayerWeaponRange(loadout?.weapon, true);
+        const range = getPlayerWeaponRange(loadout?.weapon);
         if (range > 0) ranges.push(range);
       }
       return ranges;
@@ -16673,7 +18382,7 @@
     function selectLockedTargetInRangeForWeapon(weapon, seedIndex = 0) {
       const targets = (lockedTargets && lockedTargets.length) ? lockedTargets : (lockedTarget ? [lockedTarget] : []);
       if (!targets.length) return null;
-      const range = getPlayerWeaponRange(weapon, true);
+      const range = getPlayerWeaponRange(weapon);
       if (range <= 0) return null;
       const valid = [];
       for (let i = 0; i < targets.length; i++) {
@@ -16744,6 +18453,16 @@
       const liveTarget = isCommandEntityAlive(targetEntity) ? targetEntity : null;
       const targetPoint = commandEntityPoint(liveTarget, point) || point;
       if (!targetPoint) return;
+      if (action === 'salvage') {
+        if (salvageState.cutting && salvageState.cutting === liveTarget) stopFieldSalvage('SALVAGE: PRZERWANE');
+        else startFieldSalvage(liveTarget);
+        return;
+      }
+      if (action === 'tow') {
+        if (salvageState.towed === liveTarget) releaseWreckTow('HOL: ODCZEPIONO');
+        else startWreckTow(liveTarget);
+        return;
+      }
       if (action === 'attack') {
         setPlayerAttackTarget(liveTarget);
         return;
@@ -17225,6 +18944,34 @@
         if (!npc || npc.dead || !npc.command) continue;
         if (npc.friendly || Selection.units.has(npc)) drawForUnit(npc);
       }
+      drawSalvageLinks(renderCtx, cam, playerRenderPos || ship.pos);
+    }
+
+    // Wiązka tnąca i lina holownicza — bez tego gracz nie widzi, że cokolwiek
+    // trwa, bo wrak topnieje powoli i po cichu.
+    function drawSalvageLinks(renderCtx, cam, shipPos) {
+      const cutting = salvageState.cutting;
+      const towed = salvageState.towed;
+      if (!cutting && !towed) return;
+
+      const from = worldToScreen(shipPos.x, shipPos.y, cam);
+      const strokeTo = (target, color, width, dash) => {
+        if (!target || target.dead) return;
+        const to = worldToScreen(target.x ?? target.pos?.x ?? 0, target.y ?? target.pos?.y ?? 0, cam);
+        renderCtx.save();
+        renderCtx.strokeStyle = color;
+        renderCtx.lineWidth = width;
+        renderCtx.setLineDash(dash);
+        renderCtx.lineDashOffset = -(gameTime * 60) % 1000;
+        renderCtx.beginPath();
+        renderCtx.moveTo(from.x, from.y);
+        renderCtx.lineTo(to.x, to.y);
+        renderCtx.stroke();
+        renderCtx.restore();
+      };
+
+      strokeTo(towed, 'rgba(148, 163, 184, 0.75)', 2, []);
+      strokeTo(cutting, 'rgba(56, 220, 255, 0.9)', 3, [14, 8]);
     }
 
     // =================== CHMARY MYŚLIWCÓW ===================
@@ -17594,23 +19341,11 @@
       if (CICDisplay.active) {
         CICDisplay.onMouseMove(e.clientX, e.clientY, e.movementX || 0, e.movementY || 0);
       }
-      // Aktualizacja hover w kole wyboru trybu ostrzału
-      if (firingMode.wheelOpen && firingMode.wheelMouseStart) {
-        const dx = mouse.x - firingMode.wheelMouseStart.x;
-        const dy = mouse.y - firingMode.wheelMouseStart.y;
-        const dist = Math.hypot(dx, dy);
-        if (dist > 25) {
-          const deg = ((Math.atan2(dy, dx) * 180 / Math.PI) + 360) % 360;
-          // Sektory odpowiadają renderingowi (po obrocie -90°):
-          // PRECISE:   240°–360° (góra-prawo)
-          // ARTILLERY: 0°–120°   (prawo-dół)
-          // RAPID:     120°–240° (lewo)
-          if (deg < 120) firingMode.wheelHover = FIRE_MODE.ARTILLERY;
-          else if (deg < 240) firingMode.wheelHover = FIRE_MODE.RAPID;
-          else firingMode.wheelHover = FIRE_MODE.PRECISE;
-        } else {
-          firingMode.wheelHover = -1;
-        }
+      // Aktualizacja hover w kole wyboru celownika.
+      if (targetingMode.wheelOpen && targetingMode.wheelMouseStart) {
+        const dx = mouse.x - targetingMode.wheelMouseStart.x;
+        const dy = mouse.y - targetingMode.wheelMouseStart.y;
+        targetingMode.wheelHover = targetingModeFromWheelVector(dx, dy);
       }
       const hasMovement = typeof e.movementX === 'number' && typeof e.movementY === 'number';
       const movementX = hasMovement ? e.movementX : ((camera.lastPointerX == null) ? 0 : e.clientX - camera.lastPointerX);
@@ -17665,6 +19400,7 @@
       mouse.left = false;
       mouse.right = false;
       mouse.click = false;
+      targetingMode.pointerConfirmArmed = false;
       closeWorldCommandMenu();
       scan.target = null;
       scan.scanned = null;
@@ -17679,11 +19415,15 @@
       Selection.rect = null;
     });
     canvas.addEventListener('mousedown', e => {
+      if (e.button === 0) targetingMode.pointerConfirmArmed = false;
       // Split-screen: route clicks to the correct player's mouse
       if (splitScreenMode) {
         const { m, isP2 } = _getMouseForScreen(e.clientX);
         if (isP2) {
-          if (e.button === 0) m.left = true;
+          if (e.button === 0) {
+            m.left = false;
+            m.click = false;
+          }
           if (e.button === 2) {
             e.preventDefault();
             // Try special weapons first (mirrors P1 behavior)
@@ -17728,30 +19468,6 @@
           return;
         }
       }
-      if (e.button === 0 && e.ctrlKey && gameStarted && !stationUI.open && !CICDisplay.active) {
-        const rect = canvas.getBoundingClientRect();
-        const worldPoint = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
-        const targetEntity = pickCommandTargetAtWorld(worldPoint);
-        if (targetEntity && selectScannerTarget(targetEntity)) {
-          toggleLockedTargetUi(targetEntity);
-        }
-        e.preventDefault();
-        mouse.left = false;
-        mouse.click = false;
-        return;
-      }
-      if (e.button === 0 && scannerState.active && gameStarted && !stationUI.open && !CICDisplay.active) {
-        const rect = canvas.getBoundingClientRect();
-        const worldPoint = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
-        const targetEntity = pickCommandTargetAtWorld(worldPoint);
-        if (targetEntity && selectScannerTarget(targetEntity)) {
-          e.preventDefault();
-          mouse.left = false;
-          mouse.click = false;
-          pushZoneMessage(`SCAN: ${getRadarTargetUnitId(targetEntity)}`, 0.9);
-          return;
-        }
-      }
       if (e.button === 0) {
         if (stationUI.open) {
           const interactive = stationUI.visible && !stationUI.awaitingCamera && stationUI.appear > 0.05;
@@ -17767,6 +19483,12 @@
           }
           return;
         }
+        if (gameStarted) {
+          targetingMode.pointerConfirmArmed = true;
+          mouse.left = false;
+          mouse.click = false;
+          e.preventDefault();
+        }
       }
       if (e.button === 2) {
         e.preventDefault();
@@ -17780,9 +19502,9 @@
       if (e.button === 1) {
         e.preventDefault();
         if (gameStarted && !stationUI.open) {
-          firingMode.wheelOpen = true;
-          firingMode.wheelHover = -1;
-          firingMode.wheelMouseStart = { x: mouse.x, y: mouse.y };
+          targetingMode.wheelOpen = true;
+          targetingMode.wheelHover = -1;
+          targetingMode.wheelMouseStart = { x: mouse.x, y: mouse.y };
         } else {
           camera.zoom = Math.abs(camera.zoom - camera.defaultZoom) < 0.03 ? camera.altZoom : camera.defaultZoom;
           camera.targetZoom = camera.zoom;
@@ -17793,11 +19515,13 @@
       }
     });
     canvas.addEventListener('mouseup', e => {
+      const targetingConfirmArmed = e.button === 0 && targetingMode.pointerConfirmArmed;
+      if (e.button === 0) targetingMode.pointerConfirmArmed = false;
       // Split-screen: route releases to the correct player's mouse
       if (splitScreenMode) {
         const { m, isP2 } = _getMouseForScreen(e.clientX);
         if (isP2) {
-          if (e.button === 0) { m.left = false; m.click = true; }
+          if (e.button === 0) { m.left = false; m.click = false; }
           if (e.button === 2) m.right = false;
           return;
         }
@@ -17851,18 +19575,21 @@
           return;
         }
         mouse.left = false;
-        if (!wasDragging) {
+        if (targetingConfirmArmed && !wasDragging && gameStarted && scan.target && scan.targetType === 'station') {
           mouse.click = true;
+        } else if (targetingConfirmArmed && !wasDragging && gameStarted) {
+          mouse.click = false;
+          e.preventDefault();
+          confirmTargetingSelection();
         }
       }
       if (e.button === 1) {
-        if (firingMode.wheelOpen) {
-          if (firingMode.wheelHover >= 0 && firingMode.wheelHover <= 2) {
-            firingMode.current = firingMode.wheelHover;
-            firingMode.spread = 0;
+        if (targetingMode.wheelOpen) {
+          if (targetingMode.wheelHover >= TARGETING_MODE.SINGLE && targetingMode.wheelHover <= TARGETING_MODE.SUB) {
+            setTargetingMode(targetingMode.wheelHover);
           }
-          firingMode.wheelOpen = false;
-          firingMode.wheelHover = -1;
+          targetingMode.wheelOpen = false;
+          targetingMode.wheelHover = -1;
         }
       }
       if (e.button === 2) {
@@ -17971,9 +19698,8 @@
           if (btn(3)) attemptWarp();
 
           // --- R2 (7) = main weapon, L2 (6) = special weapon ---
-          // Set mouse.left to match R2 state; only override if gamepad was last to set it
-          if (btn(7)) { mouse.left = true; mouse._fromGamepad = true; }
-          else if (mouse._fromGamepad) { mouse.left = false; mouse._fromGamepad = false; }
+          // Spust pada ma osobny stan, żeby nigdy nie podszywał się pod LPM celownika.
+          mouse.fireMain = btn(7);
           if (btn(6)) {
             const firedSpecial = (typeof tryFireMountedSpecialWeapons === 'function') ? tryFireMountedSpecialWeapons() : false;
             if (!firedSpecial && !warp.isBusy()) {
@@ -18029,18 +19755,12 @@
           // --- P2 gamepad controls (mirrors P1 layout) ---
           const halfW = Math.floor(W / 2);
 
-          // A (0) = main weapon volley (same as P1 triggerRailVolley)
-          // For now P2 doesn't have own weapon system — map to mouse2.left
-          if (btn(0)) { mouse2.left = true; mouse2._fromGamepad = true; }
-          else if (mouse2._fromGamepad) { mouse2.left = false; mouse2._fromGamepad = false; }
+          // A (0) / R2 (7) = główna broń P2, niezależnie od LPM.
+          mouse2.fireMain = btn(0) || btn(7);
 
           // B (1) = rockets
           if (btn(1)) { mouse2.right = true; mouse2._fromGamepadR = true; }
           else if (mouse2._fromGamepadR) { mouse2.right = false; mouse2._fromGamepadR = false; }
-
-          // R2 (7) = continuous fire (main weapon hold)
-          if (btn(7)) { mouse2.left = true; mouse2._fromGamepadR2 = true; }
-          else if (mouse2._fromGamepadR2) { mouse2.left = false; mouse2._fromGamepadR2 = false; }
 
           // L2 (6) = special weapons, fallback to rockets
           if (btn(6)) {
@@ -18757,15 +20477,13 @@
           if (!targetToPass) continue;
         } else if (lockedTargets && lockedTargets.length > 1) {
           const rng = weaponData.baseRange || weaponData.range || 1000;
-          const fmRangeScale = (typeof getFiringModeModifiers === 'function') ? (getFiringModeModifiers()?.rangeMul || 1.0) : 1.0;
-          const actualRng = rng * fmRangeScale;
           const valid = [];
           for (let j = 0; j < lockedTargets.length; j++) {
             const lt = lockedTargets[j];
             if (!isTargetAlive(lt)) continue;
             const dx = getTargetX(lt) - ship.pos.x;
             const dy = getTargetY(lt) - ship.pos.y;
-            if (dx * dx + dy * dy <= actualRng * actualRng) valid.push(lt);
+            if (dx * dx + dy * dy <= rng * rng) valid.push(lt);
           }
           if (valid.length > 0) {
             targetToPass = valid[i % valid.length];
@@ -19026,7 +20744,7 @@
     // Salwa flaku z działka aux gracza.
     //
     // Świadomie NIE idzie przez fireWeaponCore: tamta ścieżka dla statku gracza
-    // przejmuje celowanie (lockedTargets przy wciśniętym LPM, celownik myszy),
+    // przejmuje celowanie z zatwierdzonych lockedTargets lub z kursora,
     // co dla automatycznej obrony punktowej znaczyłoby, że działko przestaje
     // strzelać do myśliwca nadlatującego na burtę. Jak fireCIWSGun — działko PD
     // strzela do celu, który wybrał mu ciwsStep, i do niczego innego.
@@ -19736,6 +21454,9 @@
     function applyDamageToNPC(npc, dmg, cause = 'default', opts = {}) {
       if (npc.dead) return;
       if (!Number.isFinite(dmg) || dmg <= 0) return;
+      // Cargo może umrzeć dopiero, gdy istnieje geometria zdolna utworzyć realny wrak.
+      // Do tego czasu rekord nadal leci, a encja jest wyłącznie niewrażliwym widokiem.
+      if (npc.isCargoVan && (!npc.hexGrid || !Array.isArray(npc.hexGrid.shards) || npc.hexGrid.shards.length === 0)) return;
       const bypassShield = !!opts?.bypassShield;
       npc.hitFlash = 0.12;
       npc.damageHue = (npc.damageHue || 0) + dmg;
@@ -19766,6 +21487,7 @@
       if (npc.hp <= 0) {
         npc.dead = true;
         npc.respawnTimer = 3 + Math.random() * 6;
+        registerFactionKill(npc);
         const overkillDmg = -npc.hp; // hp is negative here
         const npcType = String(npc.type || '').toLowerCase();
         const isFighterLike =
@@ -19792,7 +21514,7 @@
         const didCritBlow = tryTriggerCriticalReactorBlow(npc, overkillDmg, aliveRatio, survivingShards, _critChainDepth);
 
         if (!didCritBlow) {
-          if (survivingShards.length > 3 && window.createWreckage) {
+          if ((survivingShards.length > 3 || (npc.isCargoVan && survivingShards.length > 0)) && window.createWreckage) {
             window.createWreckage(npc, survivingShards);
           }
           if (cause === 'plasma') {
@@ -19803,6 +21525,10 @@
             CanvasVFX.spawnExplosionPlasma(npc.x, npc.y, isFighterLike ? 1.05 : 1.35);
           }
         }
+
+        // Towar przechodzi carrier -> dokładnie jeden wrak w tej samej operacji
+        // śmierci. Nie ma zwrotu do nadawcy ani oczekiwania na następny tick.
+        if (npc.isCargoVan) handleCargoVanDestroyed(npc);
 
         releaseNpcHexBody(npc);
       }
@@ -20456,6 +22182,7 @@
             if (hitNPC._isPlayerShip) {
               applyDamageToPlayer(npcDamage);
             } else {
+              if (b.owner === 'player' || b.owner === 'player2') markPlayerDamage(hitNPC);
               applyDamageToNPC(hitNPC, npcDamage, b.type);
             }
 
@@ -20720,7 +22447,7 @@
         }
 
         // Despawn logic (poza misją)
-        if (!npc.mission) {
+        if (!npc.mission && !npc.isCargoVan) {
           const dx = npc.x - ship.pos.x;
           const dy = npc.y - ship.pos.y;
           if (dx * dx + dy * dy > DESPAWN_RADIUS_SQ) {
@@ -20833,24 +22560,20 @@
 
         // --- LOGIKA CYWILNA (Reszta funkcji bez zmian) ---
         if (npc.dead) {
+          // Rekord transportowy obsługuje śmierć atomowo i usuwa widok; pusty
+          // frachtowiec nie może odrodzić się jako niezależny cywil.
+          if (npc.isCargoVan) continue;
           npc.respawnTimer -= dt;
           if (npc.respawnTimer <= 0) {
             const base = stations.find(s => s.id === npc.lastStation) || stations[0];
             const group = stations.filter(s => s.inner === base.inner);
-            const start = group[Math.floor(Math.random() * group.length)];
+            const start = group[Math.floor(Math.random() * group.length)] || base;
             const targetId = pickNextStation(start.id, npc.type);
-            const startPort = Math.floor(Math.random() * start.ports.length);
-            const spawnPos = stationPortWorld(start, startPort);
-            npc.x = spawnPos.x; npc.y = spawnPos.y; npc.vx = 0; npc.vy = 0;
-            npc.hp = npc.maxHp; npc.dead = false; npc.target = targetId; npc.fade = 1; npc.docking = false; npc.lastStation = start.id;
-            const target = stations.find(s => s.id === targetId);
-            npc.dockPort = target ? Math.floor(Math.random() * target.ports.length) : 0;
-            if (target && start.inner === target.inner) {
-              const route = getWarpRoute(start.id, targetId);
-              if (route) { npc.warpRoute = route; npc.phase = 'toGate'; npc.lane = Math.floor(Math.random() * 2); }
-              else { npc.warpRoute = null; npc.phase = 'direct'; npc.lane = 0; }
-            } else {
-              npc.warpRoute = null; npc.phase = 'direct'; npc.lane = 0;
+            npc.hp = npc.maxHp;
+            npc.dead = false;
+            if (!beginStationTransit(npc, start, targetId)) {
+              npc.dead = true;
+              npc.respawnTimer = 5;
             }
           }
           continue;
@@ -20858,20 +22581,19 @@
         if (npc.docking) {
           const st = stations.find(s => s.id === npc.lastStation);
           if (st) { const portPos = stationPortWorld(st, npc.dockPort || 0); npc.x = portPos.x; npc.y = portPos.y; }
+          if (npc.isCargoVan) {
+            npc.vx = 0;
+            npc.vy = 0;
+            npc.fade = 1;
+            continue;
+          }
           npc.fade -= dt / 0.6;
           if (npc.fade <= 0 && st) {
             const targetId = pickNextStation(npc.lastStation, npc.type);
-            const startPort = Math.floor(Math.random() * st.ports.length);
-            const spawnPos = stationPortWorld(st, startPort);
-            npc.x = spawnPos.x; npc.y = spawnPos.y; npc.vx = 0; npc.vy = 0;
-            npc.target = targetId; npc.fade = 1; npc.docking = false; npc.lastStation = st.id;
-            const target = stations.find(s => s.id === targetId);
-            npc.dockPort = target ? Math.floor(Math.random() * target.ports.length) : 0;
-            if (target && st.inner === target.inner) {
-              const route = getWarpRoute(st.id, targetId);
-              if (route) { npc.warpRoute = route; npc.phase = 'toGate'; npc.lane = Math.floor(Math.random() * 2); }
-              else { npc.warpRoute = null; npc.phase = 'direct'; npc.lane = 0; }
-            } else { npc.warpRoute = null; npc.phase = 'direct'; npc.lane = 0; }
+            if (!beginStationTransit(npc, st, targetId)) {
+              npc.fade = 0;
+              npc.docking = true;
+            }
           }
           continue;
         }
@@ -20883,7 +22605,13 @@
           npcRotationStep(npc, dt, frameNorm);
           const route = npc.warpRoute;
           const traveled = (npc.x - route.start.x) * route.dir.x + (npc.y - route.start.y) * route.dir.y;
-          if (traveled >= route.length) { npc.phase = 'toStation'; npc.x = route.end.x; npc.y = route.end.y; }
+          if (traveled >= route.length) {
+            npc.phase = 'toStation';
+            npc.x = route.end.x;
+            npc.y = route.end.y;
+            npc.vx = 0;
+            npc.vy = 0;
+          }
           continue;
         }
         if (npc.phase === 'toGate') {
@@ -20932,7 +22660,7 @@
             npc.target = pickNextStation(npc.lastStation, npc.type);
             continue;
           }
-          if (npc.phase === 'toStation' || npc.phase === 'direct') { targetPos = stationPortWorld(st, npc.dockPort || 0); }
+          if (npc.phase === 'toStation') { targetPos = stationPortWorld(st, npc.dockPort || 0); }
           else { targetPos = { x: st.x, y: st.y }; }
         }
         const to = { x: targetPos.x - npc.x, y: targetPos.y - npc.y };
@@ -21388,6 +23116,9 @@
       updateStationUIState(dt);
       InfrastructureUI.updateEditorState(dt);
       InfrastructureUI.update(dt);
+      updateStationEconomies(dt);
+      updateCargoFleet(dt);
+      updateSalvage(dt);
       if (window.updateInfrastructureAnimations) {
         window.updateInfrastructureAnimations(dt);
       }
@@ -21417,27 +23148,7 @@
         st.warpGate.x = st.x + ox;
         st.warpGate.y = st.y + oy;
       }
-      for (const key in warpRoutes) {
-        const route = warpRoutes[key];
-        if (!route) continue;
-        const from = route.fromRef;
-        const to = route.toRef;
-        if (!from || !to) continue;
-        const sx = from.warpGate?.x ?? from.x;
-        const sy = from.warpGate?.y ?? from.y;
-        const ex = to.warpGate?.x ?? to.x;
-        const ey = to.warpGate?.y ?? to.y;
-        route.start.x = sx;
-        route.start.y = sy;
-        route.end.x = ex;
-        route.end.y = ey;
-        const dx = ex - sx;
-        const dy = ey - sy;
-        const dist = Math.hypot(dx, dy) || 1;
-        route.dir.x = dx / dist;
-        route.dir.y = dy / dist;
-        route.length = dist;
-      }
+      refreshWarpRoutes(warpRoutes);
       InfrastructureUI.syncWorldPositions();
       for (const st of stations) {
         if (!st.shield) continue;
@@ -21498,7 +23209,7 @@
       rail.cd[1] = Math.max(0, rail.cd[1] - dt);
       const requiredBarrels = Math.max(1, rail.barrelsPerShot || 2);
       const secondaryReady = requiredBarrels < 2 || rail.cd[1] <= 0;
-      if (!stationUI.open && mouse.left && rail.queue.length === 0 && rail.cd[0] <= 0 && secondaryReady && !warp.isBusy()) { triggerRailVolley(); }
+      if (!stationUI.open && mouse.fireMain && rail.queue.length === 0 && rail.cd[0] <= 0 && secondaryReady && !warp.isBusy()) { triggerRailVolley(); }
       // Auto-fire: ciągły ogień na namierzone cele (toggle z klawisza 1/2/3)
       if (mainAutoFire && lockedTargets.length > 0 && hasAnyLockedTargetInMainWeaponRange() && !stationUI.open && rail.queue.length === 0 && rail.cd[0] <= 0 && secondaryReady && !warp.isBusy()) {
         triggerRailVolley();
@@ -21528,9 +23239,6 @@
         }
       }
       railTimer = (requiredBarrels > 1) ? Math.min(rail.cd[0], rail.cd[1]) : rail.cd[0];
-
-      // Spread decay dla trybu ostrzału (maleje gdy nie strzelamy)
-      updateFiringModeSpread(dt, false);
 
       ship.special.cooldownTimer = Math.max(0, ship.special.cooldownTimer - dt);
       updateSpecialWeaponCooldowns(dt);
@@ -21604,6 +23312,21 @@
             }
           }
         }
+        // Wraki na końcu — nie mają przejmować kursora nad żywym celem.
+        if (Array.isArray(window.wrecks)) {
+          for (const wreck of window.wrecks) {
+            if (!wreck || wreck.dead || !hasSalvage(wreck)) continue;
+            const radius = (Number(wreck.radius) || 120) + 40;
+            const dx = (wreck.x ?? 0) - mouseWorld.x;
+            const dy = (wreck.y ?? 0) - mouseWorld.y;
+            const distSq = dx * dx + dy * dy;
+            if (distSq <= radius * radius && distSq < bestDistSq) {
+              bestDistSq = distSq;
+              hover = wreck;
+              hoverType = 'wreck';
+            }
+          }
+        }
       }
 
       if (hover) {
@@ -21623,14 +23346,11 @@
         }
         hideHoverInfo();
       }
-      if (lockedTarget && !canPlayerLockTarget(lockedTarget)) lockedTarget = null;
-      lockedTargets = lockedTargets.filter(t => {
-        if (!canPlayerLockTarget(t)) return false;
-        if (scannerState.active) {
-          return t === scannerSelectedTarget || scannerState.sweepTargets.has(t) || scannerContacts.some(c => c.target === t);
-        }
-        return true;
-      });
+      // Nowy celownik jest jedynym źródłem zatwierdzonych namiarów. Stara lista
+      // kontaktów pojedynczego skanu nie może kasować poprawnego locka po powrocie celu.
+      const reconciledLocks = reconcileLockedTargets(lockedTargets, canPlayerLockTarget);
+      lockedTargets = reconciledLocks.targets;
+      lockedTarget = reconciledLocks.primary;
       if (lockedTargets.length === 0) {
         if (mainAutoFire) { mainAutoFire = false; pushZoneMessage('AUTO-FIRE OFF — brak celów', 1.5); }
         if (specialAutoFire) specialAutoFire = false;
@@ -21869,6 +23589,11 @@
         torque: stabilizerAssistTorque,
         leftSide: stabilizerAssistLeft,
         rightSide: stabilizerAssistRight,
+        // Czyste A/D obraca statek parą dysz manewrowych. Główne silniki
+        // pomagają w zakręcie tylko przy ciągu naprzód albo komendzie autopilota.
+        mainTorque: (commandHeadingActive || (Number(ship?.thrusterInput?.main) || 0) > 1e-3)
+          ? clamp(manualTorqueInput + stabilizerAssistTorque, -1, 1)
+          : 0,
         suppressManualTorque: warp.state === 'idle' && flightAssist.stabilizer && !commandHeadingActive
       });
       const thrusterDrive = updateShipThrusterState(ship, dt);
@@ -22081,6 +23806,7 @@
           main: input2.main,
           retro: input2.retro,
           torque: input2.torque,
+          mainTorque: input2.main > 1e-3 ? input2.torque : 0,
           leftSide: input2.leftSide,
           rightSide: input2.rightSide
         });
@@ -22227,9 +23953,15 @@
         // Despawn jeśli wrak nie ma już heksów lub jest bardzo daleko
         const distToPlayer = Math.hypot(w.x - ship.pos.x, w.y - ship.pos.y);
         const hasHexesLeft = w.hexGrid && w.hexGrid.activeStructuralCount > 0;
+        const ownsShipmentCargo = !cargoBagIsEmpty(w._cargoManifest);
 
         // Usuń tylko jeśli: brak heksów LUB ekstremalna odległość (50km)
-        if (!hasHexesLeft || distToPlayer > 50000) {
+        if ((!hasHexesLeft || distToPlayer > 50000) && !ownsShipmentCargo) {
+          // Wrak wraca do puli obiektów — lina i cięcie muszą go puścić PRZED
+          // recyklingiem, inaczej trzymałyby referencję do cudzego wraku.
+          if (salvageState.towed === w) releaseWreckTow('HOL: WRAK PRZEPADŁ');
+          if (salvageState.cutting === w) stopFieldSalvage('SALVAGE: WRAK ROZEBRANY');
+          TowSystem.detachBody(w, 'wreck-despawn');
           if (window.DestructorSystem?.recycleWreck) {
             window.DestructorSystem.recycleWreck(w);
           }
@@ -22978,7 +24710,7 @@
         return;
       }
 
-      if ((npc.type === 'destroyer' || npc.type === 'battleship' || npc.isCapitalShip || (npc.type && npc.type.includes('frigate'))) && !npc.hexGrid) {
+      if ((npc.type === 'destroyer' || npc.type === 'battleship' || npc.isCapitalShip || npc.isCargoVan || (npc.type && npc.type.includes('frigate'))) && !npc.hexGrid) {
         const sprite = getHullSpriteForNpc(npc) || (npc.capitalSprite && npc.capitalSprite.ready ? npc.capitalSprite : null);
         if (sprite && sprite.ready && !sprite.error) {
           const hexInit = getNpcHexInitSource(npc, sprite);
@@ -24016,35 +25748,10 @@
           }
         }
 
-        if (scan.target && scan.targetType && mouse.overCanvas) {
-          const obj = scan.target;
-          const s = worldToScreen(getTargetX(obj), getTargetY(obj), cam);
-          const base = getTargetRadius(obj);
-          const outerExtra = scan.targetType === 'station' ? 28 : 14;
-          const innerExtra = scan.targetType === 'station' ? 12 : 8;
-          const outerR = (base + outerExtra) * cam.zoom;
-          const innerR = Math.max(2, (base + innerExtra) * cam.zoom);
-          const color = scan.targetType === 'station'
-            ? 'rgba(143,181,255,0.95)'
-            : (isAsteroidTarget(obj) ? 'rgba(238,183,99,0.95)' : (obj.friendly ? 'rgba(96,192,255,0.95)' : 'rgba(255,160,122,0.95)'));
-
-          ctx.save();
-          ctx.strokeStyle = color;
-          ctx.lineWidth = Math.max(2, 2.5 * Math.sqrt(cam.zoom));
-          ctx.shadowBlur = 18 * cam.zoom;
-          ctx.shadowColor = color;
-          ctx.globalAlpha = 0.9;
-          ctx.beginPath(); ctx.arc(s.x, s.y, outerR, 0, Math.PI * 2); ctx.stroke();
-
-          ctx.shadowBlur = 0;
-          ctx.globalAlpha = 0.55;
-          ctx.setLineDash([6 * cam.zoom, 6 * cam.zoom]);
-          ctx.beginPath(); ctx.arc(s.x, s.y, innerR, 0, Math.PI * 2); ctx.stroke();
-          ctx.restore();
-
-          if (scan.targetType === 'station' && !stationUI.open) {
-            canvas.style.cursor = 'pointer';
-          }
+        // Stary hover-ring został usunięty; wizualizację celu prowadzi wyłącznie
+        // aktywny celownik SINGLE/MULTI/SUB. Stacja nadal sygnalizuje klik kursorem.
+        if (scan.target && scan.targetType === 'station' && mouse.overCanvas && !stationUI.open) {
+          canvas.style.cursor = 'pointer';
         }
         const radarUiActive = false;
         if (radarUiActive) {
@@ -24091,39 +25798,6 @@
             ctx.lineTo(s.x - gap, s.y + gap + tick);
             ctx.moveTo(s.x + gap, s.y + gap + tick); ctx.lineTo(s.x + gap, s.y + gap);
             ctx.lineTo(s.x + gap + tick, s.y + gap);
-            ctx.stroke();
-            ctx.restore();
-          }
-        }
-        const lockRenderList = lockedTargets.length ? lockedTargets : (lockedTarget ? [lockedTarget] : []);
-        if (!radarUiActive && lockRenderList.length) {
-          for (const obj of lockRenderList) {
-            if (!isTargetAlive(obj)) continue;
-            const s = worldToScreen(getTargetX(obj), getTargetY(obj), cam);
-            const rad = (getScanObjectRadius(obj) + 18) * cam.zoom;
-            const pulse = 0.82 + 0.18 * Math.sin(scannerState.lockAnim);
-            const sweep = scannerState.lockAnim % (Math.PI * 2);
-            ctx.save();
-            ctx.strokeStyle = `rgba(255,110,110,${0.92 * pulse})`;
-            ctx.lineWidth = Math.max(2, 3 * Math.sqrt(cam.zoom));
-            ctx.shadowBlur = 16 * cam.zoom;
-            ctx.shadowColor = 'rgba(255,90,90,0.45)';
-            const corner = Math.max(10, rad * 0.42);
-            const inner = rad * 0.72;
-            ctx.beginPath();
-            ctx.moveTo(s.x - rad, s.y - inner); ctx.lineTo(s.x - rad, s.y - rad); ctx.lineTo(s.x - inner, s.y - rad);
-            ctx.moveTo(s.x + inner, s.y - rad); ctx.lineTo(s.x + rad, s.y - rad); ctx.lineTo(s.x + rad, s.y - inner);
-            ctx.moveTo(s.x - rad, s.y + inner); ctx.lineTo(s.x - rad, s.y + rad); ctx.lineTo(s.x - inner, s.y + rad);
-            ctx.moveTo(s.x + inner, s.y + rad); ctx.lineTo(s.x + rad, s.y + rad); ctx.lineTo(s.x + rad, s.y + inner);
-            ctx.stroke();
-            ctx.globalAlpha = 0.85;
-            ctx.beginPath();
-            ctx.arc(s.x, s.y, Math.max(6, rad * 0.22), sweep - 0.42, sweep + 0.42);
-            ctx.stroke();
-            ctx.globalAlpha = 0.35;
-            ctx.setLineDash([5 * cam.zoom, 5 * cam.zoom]);
-            ctx.beginPath();
-            ctx.arc(s.x, s.y, rad + corner * 0.15, 0, Math.PI * 2);
             ctx.stroke();
             ctx.restore();
           }
@@ -24249,261 +25923,427 @@
       }
 
       // --- Celowniki trybu ostrzału (firing reticles) ---
-      // Draws a crosshair for a given mouse, camera, and viewport clip region
-      function _drawReticle(mouseRef, camRef, shipRef, clipX, clipW) {
-        if (!shipRef || shipRef.destroyed) return;
-        const mw = screenToWorld(mouseRef.x, mouseRef.y, camRef);
-        const cfg = FIRE_MODE_CONFIG[firingMode.current];
-        const size = cfg.baseSize + firingMode.spread;
-        const modeColor = FIRE_MODE_COLORS[firingMode.current];
-        const scr = worldToScreen(mw.x, mw.y, camRef);
-        const z = camRef.zoom;
+      // Draws the selected targeting system without changing weapon statistics.
+      function _targetingScreenRadius(target, zoom) {
+        const radius = Math.max(12, getTargetRadius(target));
+        const visualScale = targetingVisualScale(zoom);
+        const profile = target?.capitalProfile;
+        const hullScale = profile
+          ? Math.max(Number(profile.lengthScale) || 1, Number(profile.widthScale) || 1) * 0.58
+          : 1;
+        return clamp(radius * hullScale * zoom, 12 * visualScale, 180 * visualScale);
+      }
 
-        // Firing Range Circle
-        let maxRange = 0;
-        if (shipRef.weapons) {
-          for (const key of Object.keys(shipRef.weapons)) {
-            const arr = shipRef.weapons[key];
-            if (Array.isArray(arr)) {
-              for (const loadout of arr) {
-                const rng = loadout.weapon?.baseRange;
-                if (rng > maxRange) maxRange = rng;
-              }
-            }
-          }
-        }
-        const targetRangeDraw = maxRange * cfg.rangeMul;
-        firingMode.rangeDraw += (targetRangeDraw - firingMode.rangeDraw) * 0.1;
-
-        const shipScr = worldToScreen(shipRef.pos.x, shipRef.pos.y, camRef);
+      function _targetingLabel(text, x, y, color, align = 'center', visualScale = 1) {
+        const scale = targetingVisualScale(visualScale);
         ctx.save();
-        ctx.beginPath();
-        ctx.rect(clipX, 0, clipW, H);
-        ctx.clip();
-        ctx.beginPath();
-        ctx.arc(shipScr.x, shipScr.y, Math.max(1, firingMode.rangeDraw) * z, 0, Math.PI * 2);
-        ctx.strokeStyle = modeColor;
-        ctx.lineWidth = 1;
-        ctx.globalAlpha = 0.2;
-        ctx.setLineDash([12 * z, 12 * z]);
-        ctx.stroke();
-        ctx.restore();
-
-        function _getReticleWeaponRange(weapon, applyMode = false) {
-          let range = Number(weapon?.baseRange);
-          if (!Number.isFinite(range) || range <= 0) range = Number(weapon?.range);
-          if ((!Number.isFinite(range) || range <= 0) && weapon?.id === 'hexlance_siege') {
-            range = Number(Superweapon?.superweaponState?.range);
-          }
-          if (!Number.isFinite(range) || range <= 0) return 0;
-          if (applyMode) {
-            const mul = Number(cfg?.rangeMul);
-            if (Number.isFinite(mul) && mul > 0) range *= mul;
-          }
-          return range;
-        }
-
-        function _pushWeaponStatus(rows, label, inRange, ready) {
-          if (!inRange) {
-            rows.push({ text: `${label} OUT OF RANGE`, color: '#ff6b6b' });
-            return;
-          }
-          if (ready) {
-            rows.push({ text: `${label} IN RANGE`, color: '#7ef29a' });
-            return;
-          }
-          rows.push({ text: `${label} IN RANGE / CD`, color: '#fbbf24' });
-        }
-
-        const aimDist = Math.hypot(mw.x - shipRef.pos.x, mw.y - shipRef.pos.y);
-        const statusRows = [];
-
-        const mainEntries = shipRef.weapons?.[HP.MAIN] || [];
-        if (mainEntries.length) {
-          let mainRange = 0;
-          for (let i = 0; i < mainEntries.length; i++) {
-            mainRange = Math.max(mainRange, _getReticleWeaponRange(mainEntries[i]?.weapon, true));
-          }
-          const requiredBarrels = Math.max(1, Number(rail?.barrelsPerShot) || 1);
-          const secondaryReady = requiredBarrels < 2 || (Math.max(0, Number(rail?.cd?.[1]) || 0) <= 0);
-          const mainReady = (rail?.queue?.length || 0) === 0 && (Math.max(0, Number(rail?.cd?.[0]) || 0) <= 0) && secondaryReady;
-          _pushWeaponStatus(statusRows, 'MAIN', aimDist <= mainRange, mainReady);
-        }
-
-        const specialOnly = shipRef?.weapons?.[HP.SPECIAL] || [];
-        if (specialOnly.length) {
-          let specialRange = 0;
-          let specialReady = false;
-          for (let i = 0; i < specialOnly.length; i++) {
-            const loadout = specialOnly[i];
-            specialRange = Math.max(specialRange, _getReticleWeaponRange(loadout?.weapon));
-            if ((Math.max(0, Number(loadout?.hp?.specialCd) || 0) <= 0)) specialReady = true;
-          }
-          _pushWeaponStatus(statusRows, 'SPECIAL', aimDist <= specialRange, specialReady);
-        }
-        const specMissiles = shipRef?.weapons?.[HP.SPECIAL_MISSILE] || [];
-        if (specMissiles.length) {
-          let smRange = 0;
-          let smReady = false;
-          for (let i = 0; i < specMissiles.length; i++) {
-            const loadout = specMissiles[i];
-            smRange = Math.max(smRange, _getReticleWeaponRange(loadout?.weapon));
-            if ((Math.max(0, Number(loadout?.hp?.specialCd) || 0) <= 0)) smReady = true;
-          }
-          _pushWeaponStatus(statusRows, 'SP.MISSILE', aimDist <= smRange, smReady);
-        }
-
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(clipX, 0, clipW, H);
-        ctx.clip();
-
-        const braceHalfH = Math.max(12, size * z * 1.15);
-        const braceDepth = Math.max(10, size * z * 0.9);
-        const braceGap = Math.max(7, size * z * 0.55);
-        const tickLen = Math.max(6, size * z * 0.45);
-
-        ctx.strokeStyle = modeColor;
-        ctx.lineWidth = 1.8;
-        ctx.globalAlpha = 0.88;
-        ctx.setLineDash([]);
-        ctx.beginPath();
-        ctx.moveTo(scr.x - braceGap - braceDepth, scr.y - braceHalfH);
-        ctx.lineTo(scr.x - braceGap, scr.y - braceHalfH);
-        ctx.lineTo(scr.x - braceGap, scr.y + braceHalfH);
-        ctx.lineTo(scr.x - braceGap - braceDepth, scr.y + braceHalfH);
-        ctx.moveTo(scr.x + braceGap + braceDepth, scr.y - braceHalfH);
-        ctx.lineTo(scr.x + braceGap, scr.y - braceHalfH);
-        ctx.lineTo(scr.x + braceGap, scr.y + braceHalfH);
-        ctx.lineTo(scr.x + braceGap + braceDepth, scr.y + braceHalfH);
-        ctx.stroke();
-
-        ctx.globalAlpha = 0.72;
-        ctx.beginPath();
-        ctx.moveTo(scr.x - tickLen - 3, scr.y);
-        ctx.lineTo(scr.x - 3, scr.y);
-        ctx.moveTo(scr.x + 3, scr.y);
-        ctx.lineTo(scr.x + tickLen + 3, scr.y);
-        ctx.moveTo(scr.x, scr.y - tickLen - 3);
-        ctx.lineTo(scr.x, scr.y - 3);
-        ctx.moveTo(scr.x, scr.y + 3);
-        ctx.lineTo(scr.x, scr.y + tickLen + 3);
-        ctx.stroke();
-
-        ctx.globalAlpha = 0.95;
-        ctx.fillStyle = modeColor;
-        ctx.beginPath();
-        ctx.arc(scr.x, scr.y, 1.75, 0, Math.PI * 2);
-        ctx.fill();
-
-        if (statusRows.length) {
-          const statusBlockW = 156;
-          const preferRight = scr.x + braceGap + braceDepth + 18 + statusBlockW < (clipX + clipW - 6);
-          const statusX = preferRight
-            ? (scr.x + braceGap + braceDepth + 18)
-            : Math.max(clipX + 8, scr.x - braceGap - braceDepth - 18 - statusBlockW);
-          const statusStartY = scr.y - ((statusRows.length - 1) * 13) * 0.5;
-          ctx.font = '11px monospace';
-          ctx.textAlign = 'left';
-          for (let i = 0; i < statusRows.length; i++) {
-            const row = statusRows[i];
-            ctx.globalAlpha = 0.95;
-            ctx.fillStyle = row.color;
-            ctx.shadowColor = row.color;
-            ctx.shadowBlur = 5;
-            ctx.fillText(row.text, statusX, statusStartY + i * 13);
-          }
-        }
-
-        ctx.restore();
-
-        ctx.save();
-        ctx.fillStyle = modeColor;
-        ctx.globalAlpha = 0.7;
-        ctx.font = '11px monospace';
-        ctx.textAlign = 'left';
-        ctx.fillText(`${FIRE_MODE_ICONS[firingMode.current]} ${FIRE_MODE_NAMES[firingMode.current]}`, clipX + 10, H - 10);
-        ctx.restore();
-        return;
-
-        ctx.save();
-        // Clip to viewport
-        ctx.beginPath();
-        ctx.rect(clipX, 0, clipW, H);
-        ctx.clip();
-
-        ctx.globalAlpha = 0.5 + 0.2 * (firingMode.spread / cfg.maxSize);
-        ctx.strokeStyle = modeColor;
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([6, 4]);
-
-        if (firingMode.current === FIRE_MODE.PRECISE) {
-          ctx.beginPath();
-          ctx.arc(scr.x, scr.y, size * z, 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.setLineDash([]);
-          ctx.globalAlpha = 0.7;
-          const cross = 8;
-          ctx.beginPath();
-          ctx.moveTo(scr.x - cross, scr.y); ctx.lineTo(scr.x + cross, scr.y);
-          ctx.moveTo(scr.x, scr.y - cross); ctx.lineTo(scr.x, scr.y + cross);
-          ctx.stroke();
-        } else if (firingMode.current === FIRE_MODE.ARTILLERY) {
-          const dirX = mw.x - shipRef.pos.x;
-          const dirY = mw.y - shipRef.pos.y;
-          const angle = Math.atan2(dirY, dirX);
-
-          ctx.save();
-          ctx.translate(scr.x, scr.y);
-          ctx.rotate(angle);
-
-          const hw = size * z * 1.75; // "wzdluz", oś X w canvas
-          const hh = size * z * 1.0;  // "wszerz", oś Y w canvas
-
-          ctx.strokeRect(-hw, -hh, hw * 2, hh * 2);
-          ctx.setLineDash([]);
-          ctx.globalAlpha = 0.4;
-          const c = 6;
-          for (const [cx, cy] of [[-hw, -hh], [hw, -hh], [-hw, hh], [hw, hh]]) {
-            ctx.beginPath();
-            ctx.moveTo(cx - c, cy); ctx.lineTo(cx + c, cy);
-            ctx.moveTo(cx, cy - c); ctx.lineTo(cx, cy + c);
-            ctx.stroke();
-          }
-          ctx.restore();
-        } else {
-          const dirX = mw.x - shipRef.pos.x;
-          const dirY = mw.y - shipRef.pos.y;
-          const len = Math.hypot(dirX, dirY) || 1;
-          const nx = dirX / len, ny = dirY / len;
-          const halfLen = size * z;
-          ctx.beginPath();
-          ctx.moveTo(scr.x - nx * halfLen, scr.y - ny * halfLen);
-          ctx.lineTo(scr.x + nx * halfLen, scr.y + ny * halfLen);
-          ctx.stroke();
-          ctx.setLineDash([]);
-          const px = -ny, py = nx;
-          const tick = 6;
-          ctx.beginPath();
-          ctx.moveTo(scr.x - nx * halfLen + px * tick, scr.y - ny * halfLen + py * tick);
-          ctx.lineTo(scr.x - nx * halfLen - px * tick, scr.y - ny * halfLen - py * tick);
-          ctx.moveTo(scr.x + nx * halfLen + px * tick, scr.y + ny * halfLen + py * tick);
-          ctx.lineTo(scr.x + nx * halfLen - px * tick, scr.y + ny * halfLen - py * tick);
-          ctx.stroke();
-        }
-        ctx.restore();
-
-        // Firing mode label
-        ctx.save();
-        ctx.fillStyle = modeColor;
-        ctx.globalAlpha = 0.7;
-        ctx.font = '11px monospace';
-        ctx.textAlign = 'left';
-        ctx.fillText(`${FIRE_MODE_ICONS[firingMode.current]} ${FIRE_MODE_NAMES[firingMode.current]}`, clipX + 10, H - 10);
+        ctx.font = `${Math.max(6, 10 * scale).toFixed(1)}px Consolas, monospace`;
+        ctx.textAlign = align;
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = color;
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 6 * scale;
+        ctx.fillText(text, x, y);
         ctx.restore();
       }
 
-      if (gameStarted && !stationUI.open && !firingMode.wheelOpen) {
+      function _targetingEntityLabel(target) {
+        return target?.label || target?.displayName || target?.name || getRadarTargetUnitId(target);
+      }
+
+      function _drawTargetingRange(shipRef, camRef, clipX, clipW, color) {
+        let maxRange = 0;
+        const weapons = shipRef.weapons;
+        if (weapons) {
+          for (const key of Object.keys(weapons)) {
+            const entries = weapons[key];
+            if (!Array.isArray(entries)) continue;
+            for (let i = 0; i < entries.length; i++) {
+              const weapon = entries[i]?.weapon;
+              let range = Number(weapon?.baseRange ?? weapon?.range);
+              if ((!Number.isFinite(range) || range <= 0) && weapon?.id === 'hexlance_siege') {
+                range = Number(Superweapon?.superweaponState?.range);
+              }
+              if (Number.isFinite(range) && range > maxRange) maxRange = range;
+            }
+          }
+        }
+        const rangeMod = Number(shipRef?.modifiers?.range);
+        if (Number.isFinite(rangeMod) && rangeMod > 0) maxRange *= rangeMod;
+        targetingMode.rangeDraw += (maxRange - targetingMode.rangeDraw) * 0.1;
+
+        const shipScreen = worldToScreen(shipRef.pos.x, shipRef.pos.y, camRef);
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(clipX, 0, clipW, H);
+        ctx.clip();
+        ctx.globalAlpha = 0.18;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([12 * camRef.zoom, 12 * camRef.zoom]);
+        ctx.beginPath();
+        ctx.arc(shipScreen.x, shipScreen.y, Math.max(1, targetingMode.rangeDraw) * camRef.zoom, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      function _collectTargetingGroup(mouseWorld, camRef) {
+        const out = targetingMode.groupCandidates;
+        out.length = 0;
+        const radiusWorld = TARGETING_GROUP_RADIUS_PX / Math.max(0.0001, camRef.zoom);
+        const radiusSq = radiusWorld * radiusWorld;
+
+        const addTarget = (target) => {
+          if (!target || target.__targetingSubsystem || !canPlayerLockTarget(target)) return;
+          const dx = getTargetX(target) - mouseWorld.x;
+          const dy = getTargetY(target) - mouseWorld.y;
+          const reach = radiusWorld + getTargetRadius(target);
+          if (dx * dx + dy * dy > Math.max(radiusSq, reach * reach)) return;
+          if (!out.includes(target)) out.push(target);
+        };
+
+        for (let i = 0; i < npcs.length; i++) addTarget(npcs[i]);
+        const platforms = mercMission?.weaponPlatforms;
+        if (Array.isArray(platforms)) {
+          for (let i = 0; i < platforms.length; i++) addTarget(platforms[i]);
+        }
+
+        out.sort((a, b) => {
+          const adx = getTargetX(a) - mouseWorld.x;
+          const ady = getTargetY(a) - mouseWorld.y;
+          const bdx = getTargetX(b) - mouseWorld.x;
+          const bdy = getTargetY(b) - mouseWorld.y;
+          return adx * adx + ady * ady - (bdx * bdx + bdy * bdy);
+        });
+        if (out.length > RADAR_UI_MAX_TARGETS) out.length = RADAR_UI_MAX_TARGETS;
+        return out;
+      }
+
+      function _updateTargetingState(mouseRef, camRef, mouseWorld, dt) {
+        const step = clamp(Number(dt) || 0, 0, 0.05);
+        const visualScale = targetingVisualScale(camRef.zoom);
+        const hovered = scan?.target && canPlayerLockTarget(scan.target) ? scan.target : null;
+        targetingMode.hoveredSubsystem = null;
+
+        if (targetingMode.current === TARGETING_MODE.SINGLE) {
+          if (hovered && hovered === targetingMode.acquireTarget) {
+            targetingMode.acquireProgress = Math.min(1, targetingMode.acquireProgress + step / getTargetingLockDuration(hovered));
+          } else {
+            targetingMode.acquireTarget = hovered;
+            targetingMode.acquireProgress = 0;
+          }
+          return;
+        }
+
+        if (targetingMode.current === TARGETING_MODE.SUB) {
+          const hardpoints = hovered ? getEntityHardpoints(hovered) : null;
+          if (hovered && Array.isArray(hardpoints) && hardpoints.length) {
+            if (targetingMode.scannedTargets.has(hovered)) {
+              targetingMode.subScanTarget = hovered;
+              targetingMode.subScanProgress = 1;
+              targetingMode.hoveredSubsystem = findTargetingHoveredSubsystem(hovered, mouseRef.x, mouseRef.y, camRef);
+            } else if (hovered === targetingMode.subScanTarget) {
+              targetingMode.subScanProgress = Math.min(1, targetingMode.subScanProgress + step / TARGETING_SUB_SCAN_TIME);
+              if (targetingMode.subScanProgress >= 1) {
+                targetingMode.scannedTargets.add(hovered);
+                pushZoneMessage(`SUB: SKAN ZAKOŃCZONY • ${hardpoints.filter(hp => hp && !hp.destroyed).length} HARDPOINTÓW`, 1.4);
+              }
+            } else {
+              targetingMode.subScanTarget = hovered;
+              targetingMode.subScanProgress = 0;
+            }
+          } else {
+            targetingMode.subScanTarget = null;
+            targetingMode.subScanProgress = 0;
+          }
+          return;
+        }
+
+        const candidates = _collectTargetingGroup(mouseWorld, camRef);
+        for (let i = 0; i < targetingMode.groupPrevious.length; i++) {
+          const previous = targetingMode.groupPrevious[i];
+          if (!candidates.includes(previous)) targetingMode.groupAcquisition.set(previous, 0);
+        }
+        targetingMode.groupPrevious.length = 0;
+        for (let i = 0; i < candidates.length; i++) {
+          const target = candidates[i];
+          const progress = targetingMode.groupAcquisition.get(target) || 0;
+          targetingMode.groupAcquisition.set(target, Math.min(1, progress + step / getTargetingLockDuration(target)));
+          targetingMode.groupPrevious.push(target);
+        }
+
+        let targetX = mouseRef.x;
+        let targetY = mouseRef.y;
+        let targetW = 160 * visualScale;
+        let targetH = 190 * visualScale;
+        if (candidates.length) {
+          let centerX = 0;
+          let centerY = 0;
+          let averageVx = 0;
+          let averageVy = 0;
+          for (let i = 0; i < candidates.length; i++) {
+            centerX += getTargetX(candidates[i]);
+            centerY += getTargetY(candidates[i]);
+            averageVx += Number(candidates[i]?.vx ?? candidates[i]?.vel?.x) || 0;
+            averageVy += Number(candidates[i]?.vy ?? candidates[i]?.vel?.y) || 0;
+          }
+          centerX /= candidates.length;
+          centerY /= candidates.length;
+          averageVx /= candidates.length;
+          averageVy /= candidates.length;
+          const desiredAngle = perpendicularTargetingAngle(
+            averageVx,
+            averageVy,
+            ship.pos.x - centerX,
+            ship.pos.y - centerY
+          );
+          targetingMode.groupAngle = lerpTargetingAxisAngle(
+            targetingMode.groupAngle,
+            desiredAngle,
+            1 - Math.exp(-step * 1.7)
+          );
+
+          const centerScreen = worldToScreen(centerX, centerY, camRef);
+          const ca = Math.cos(targetingMode.groupAngle);
+          const sa = Math.sin(targetingMode.groupAngle);
+          let minX = Infinity;
+          let minY = Infinity;
+          let maxX = -Infinity;
+          let maxY = -Infinity;
+          for (let i = 0; i < candidates.length; i++) {
+            const target = candidates[i];
+            const screen = worldToScreen(getTargetX(target), getTargetY(target), camRef);
+            const dx = screen.x - centerScreen.x;
+            const dy = screen.y - centerScreen.y;
+            const localX = dx * ca + dy * sa;
+            const localY = -dx * sa + dy * ca;
+            const radius = _targetingScreenRadius(target, camRef.zoom);
+            minX = Math.min(minX, localX - radius);
+            maxX = Math.max(maxX, localX + radius);
+            minY = Math.min(minY, localY - radius);
+            maxY = Math.max(maxY, localY + radius);
+          }
+          const offsetX = (minX + maxX) * 0.5;
+          const offsetY = (minY + maxY) * 0.5;
+          targetX = centerScreen.x + offsetX * ca - offsetY * sa;
+          targetY = centerScreen.y + offsetX * sa + offsetY * ca;
+          targetW = maxX - minX + TARGETING_GROUP_PAD_PX * visualScale * 2;
+          targetH = maxY - minY + TARGETING_GROUP_PAD_PX * visualScale * 2;
+        } else {
+          targetingMode.groupAngle = lerpTargetingAxisAngle(
+            targetingMode.groupAngle,
+            0,
+            1 - Math.exp(-step * 1.4)
+          );
+        }
+
+        const positionK = 1 - Math.exp(-step * 12);
+        const expanding = targetW > targetingMode.groupW + 1 || targetH > targetingMode.groupH + 1;
+        const sizeK = 1 - Math.exp(-step * (expanding ? 10 : 4));
+        targetingMode.groupX += (targetX - targetingMode.groupX) * positionK;
+        targetingMode.groupY += (targetY - targetingMode.groupY) * positionK;
+        targetingMode.groupW += (targetW - targetingMode.groupW) * sizeK;
+        targetingMode.groupH += (targetH - targetingMode.groupH) * sizeK;
+      }
+
+      function _drawSubScanOverlay(entity, camRef) {
+        const center = worldToScreen(getTargetX(entity), getTargetY(entity), camRef);
+        const visualScale = targetingVisualScale(camRef.zoom);
+        const radius = Math.max(18 * visualScale, getTargetRadius(entity) * camRef.zoom) / visualScale;
+        const lengthScale = Math.max(1, Number(entity?.capitalProfile?.lengthScale) || 1);
+        const widthScale = Math.max(0.7, Number(entity?.capitalProfile?.widthScale) || 1);
+        const halfLength = clamp(radius * lengthScale, 30, 300);
+        const halfHeight = clamp(radius * widthScale * 0.72 + 10, 22, 150);
+        const rear = -halfLength - 16;
+        const nose = halfLength + 16;
+        const done = targetingMode.scannedTargets.has(entity);
+        const progress = done ? 1 : targetingMode.subScanProgress;
+        const color = done ? '#52ff9a' : '#34e7ff';
+        const angle = (Number(entity?.angle) || 0) + (Number(entity?.capitalProfile?.spriteRotation) || 0);
+
+        ctx.save();
+        ctx.translate(center.x, center.y);
+        ctx.rotate(angle);
+        ctx.scale(visualScale, visualScale);
+        ctx.strokeStyle = color;
+        ctx.fillStyle = color;
+        ctx.shadowColor = color;
+        ctx.shadowBlur = done ? 8 : 12;
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([2, 9]);
+        ctx.lineDashOffset = -gameTime * 20;
+        ctx.beginPath();
+        ctx.moveTo(rear, -halfHeight);
+        ctx.lineTo(rear, halfHeight);
+        ctx.moveTo(nose, -halfHeight);
+        ctx.lineTo(nose, halfHeight);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        if (!done) {
+          const scanX = rear + (nose - rear) * progress;
+          const gradient = ctx.createLinearGradient(scanX - 34, 0, scanX + 8, 0);
+          gradient.addColorStop(0, 'rgba(52,231,255,0)');
+          gradient.addColorStop(0.72, 'rgba(52,231,255,0.12)');
+          gradient.addColorStop(1, 'rgba(180,250,255,0.52)');
+          ctx.fillStyle = gradient;
+          ctx.fillRect(scanX - 34, -halfHeight, 42, halfHeight * 2);
+          ctx.beginPath();
+          ctx.moveTo(scanX, -halfHeight);
+          ctx.lineTo(scanX, halfHeight);
+          targetingStrokeGlass(ctx, '#34e7ff', 2.2);
+          ctx.globalAlpha = 0.18;
+          ctx.fillStyle = '#34e7ff';
+          ctx.fillRect(rear, -halfHeight, scanX - rear, halfHeight * 2);
+        } else {
+          ctx.globalAlpha = 0.18 + 0.12 * Math.sin(gameTime * 4);
+          ctx.strokeStyle = color;
+          ctx.strokeRect(rear, -halfHeight, nose - rear, halfHeight * 2);
+        }
+        ctx.restore();
+
+        const hardpoints = getEntityHardpoints(entity) || [];
+        const text = done
+          ? `SUB • SKAN ZAKOŃCZONY • ${hardpoints.filter(hp => hp && !hp.destroyed).length} HARDPOINTÓW`
+          : `SUB • SKANOWANIE ${Math.round(progress * 100)}%`;
+        _targetingLabel(text, center.x, center.y - (halfHeight + 18) * visualScale, color, 'center', visualScale);
+      }
+
+      function _drawReticle(mouseRef, camRef, shipRef, clipX, clipW) {
+        if (!shipRef || shipRef.destroyed) return;
+        const mouseWorld = screenToWorld(mouseRef.x, mouseRef.y, camRef);
+        const cursor = worldToScreen(mouseWorld.x, mouseWorld.y, camRef);
+        const color = TARGETING_MODE_COLORS[targetingMode.current];
+        const visualScale = targetingVisualScale(camRef.zoom);
+        const isPrimary = shipRef === ship && mouseRef === mouse;
+        if (isPrimary) _updateTargetingState(mouseRef, camRef, mouseWorld, frameDt);
+
+        _drawTargetingRange(shipRef, camRef, clipX, clipW, color);
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(clipX, 0, clipW, H);
+        ctx.clip();
+
+        if (!isPrimary) {
+          drawSingleTargetingReticle(ctx, cursor.x, cursor.y, 13 * visualScale, 0, color, '#dfffff', visualScale);
+        } else if (targetingMode.current === TARGETING_MODE.SINGLE) {
+          for (let i = 0; i < lockedTargets.length; i++) {
+            const target = lockedTargets[i];
+            if (!isTargetAlive(target) || target.__targetingSubsystem) continue;
+            const screen = worldToScreen(getTargetX(target), getTargetY(target), camRef);
+            drawSingleTargetingReticle(ctx, screen.x, screen.y, _targetingScreenRadius(target, camRef.zoom), 1, '#ff4d5e', '#ff8a94', visualScale);
+          }
+          const hovered = targetingMode.acquireTarget;
+          if (hovered && !lockedTargets.includes(hovered)) {
+            const screen = worldToScreen(getTargetX(hovered), getTargetY(hovered), camRef);
+            const radius = _targetingScreenRadius(hovered, camRef.zoom);
+            const ready = drawSingleTargetingReticle(ctx, screen.x, screen.y, radius, targetingMode.acquireProgress, '#ffb648', '#ffd27a', visualScale);
+            _targetingLabel(
+              ready ? 'SINGLE • LPM: LOCK' : `SINGLE • NAMIAR ${Math.round(targetingMode.acquireProgress * 100)}%`,
+              screen.x,
+              screen.y + radius + 28 * visualScale,
+              ready ? '#ffd27a' : '#ffb648',
+              'center',
+              visualScale
+            );
+          } else if (!hovered) {
+            drawSingleTargetingReticle(ctx, cursor.x, cursor.y, 13 * visualScale, 0, '#ffb648', '#ffd27a', visualScale);
+          }
+        } else if (targetingMode.current === TARGETING_MODE.MULTI) {
+          let readyCount = 0;
+          for (let i = 0; i < targetingMode.groupCandidates.length; i++) {
+            const target = targetingMode.groupCandidates[i];
+            const progress = targetingMode.groupAcquisition.get(target) || 0;
+            const screen = worldToScreen(getTargetX(target), getTargetY(target), camRef);
+            if (drawMultiTargetingNode(ctx, screen.x, screen.y, _targetingScreenRadius(target, camRef.zoom), progress, '#ffb648', '#ffd27a', visualScale)) readyCount++;
+          }
+          for (let i = 0; i < lockedTargets.length; i++) {
+            const target = lockedTargets[i];
+            if (!isTargetAlive(target) || target.__targetingSubsystem || targetingMode.groupCandidates.includes(target)) continue;
+            const screen = worldToScreen(getTargetX(target), getTargetY(target), camRef);
+            drawMultiTargetingNode(ctx, screen.x, screen.y, _targetingScreenRadius(target, camRef.zoom), 1, '#ff4d5e', '#ff8a94', visualScale);
+          }
+          const count = targetingMode.groupCandidates.length;
+          const frameColor = count > 0 && readyCount === count ? '#ffd27a' : '#34e7ff';
+          drawMultiTargetingFrame(
+            ctx,
+            targetingMode.groupX,
+            targetingMode.groupY,
+            targetingMode.groupW,
+            targetingMode.groupH,
+            targetingMode.groupAngle,
+            frameColor,
+            0.95,
+            visualScale
+          );
+          const labelOffset = targetingMode.groupH * 0.5 + 18 * visualScale;
+          _targetingLabel(
+            count === 0 ? 'MULTI • PRZESUŃ NAD GRUPĘ' : (readyCount === count ? `MULTI • ${count} GOTOWYCH • LPM: LOCK` : `MULTI • NAMIAR ${readyCount}/${count}`),
+            targetingMode.groupX + Math.sin(targetingMode.groupAngle) * labelOffset,
+            targetingMode.groupY - Math.cos(targetingMode.groupAngle) * labelOffset,
+            frameColor,
+            'center',
+            visualScale
+          );
+        } else {
+          const entity = targetingMode.subScanTarget;
+          if (entity && isTargetAlive(entity)) {
+            _drawSubScanOverlay(entity, camRef);
+            if (targetingMode.scannedTargets.has(entity)) {
+              const hardpoints = getEntityHardpoints(entity) || [];
+              for (let i = 0; i < hardpoints.length; i++) {
+                const hp = hardpoints[i];
+                if (!hp || hp.destroyed) continue;
+                const target = getTargetingSubsystemTarget(entity, hp);
+                const point = getEntityHardpointWorldPos(entity, hp);
+                if (!point) continue;
+                const screen = worldToScreen(point.x, point.y, camRef);
+                const selected = lockedTargets.includes(target);
+                const hovered = targetingMode.hoveredSubsystem === target;
+                drawSubTargetingReticle(
+                  ctx,
+                  screen.x,
+                  screen.y,
+                  (hovered ? 14 : 10) * visualScale,
+                  hovered || selected ? 1 : 0.72,
+                  selected ? '#ff4d5e' : '#ffb648',
+                  selected ? '#ff8a94' : '#ffd27a',
+                  visualScale
+                );
+                if (hovered) {
+                  _targetingLabel(
+                    `${target.label} • LPM: ${selected ? 'ODZNACZ' : 'NAMIERZ'}`,
+                    screen.x + 22 * visualScale,
+                    screen.y - 18 * visualScale,
+                    selected ? '#ff8a94' : '#ffd27a',
+                    'left',
+                    visualScale
+                  );
+                }
+              }
+            }
+          } else {
+            drawSubTargetingReticle(ctx, cursor.x, cursor.y, 13 * visualScale, 0, '#34e7ff', '#52ff9a', visualScale);
+          }
+          for (let i = 0; i < lockedTargets.length; i++) {
+            const target = lockedTargets[i];
+            if (!target?.__targetingSubsystem || !isTargetAlive(target)) continue;
+            const screen = worldToScreen(getTargetX(target), getTargetY(target), camRef);
+            drawSubTargetingReticle(ctx, screen.x, screen.y, 13 * visualScale, 1, '#ff4d5e', '#ff8a94', visualScale);
+          }
+        }
+
+        ctx.restore();
+        ctx.save();
+        ctx.fillStyle = color;
+        ctx.globalAlpha = 0.82;
+        ctx.font = '11px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(`${TARGETING_MODE_ICONS[targetingMode.current]} ${TARGETING_MODE_NAMES[targetingMode.current]} • BROŃ 100%`, clipX + 10, H - 10);
+        ctx.restore();
+      }
+
+      if (gameStarted && !stationUI.open && !targetingMode.wheelOpen) {
         if (splitScreenMode && camera2 && player2Ship) {
           const halfW = Math.floor(W / 2);
           // P1 crosshair (left half)
@@ -24523,15 +26363,15 @@
         }
       }
 
-      // --- Koło wyboru trybu ostrzału (firing mode wheel) ---
-      if (firingMode.wheelOpen && firingMode.wheelMouseStart) {
-        const cx = firingMode.wheelMouseStart.x;
-        const cy = firingMode.wheelMouseStart.y;
+      // --- Koło wyboru celownika: SINGLE / MULTI / SUB ---
+      if (targetingMode.wheelOpen && targetingMode.wheelMouseStart) {
+        const cx = targetingMode.wheelMouseStart.x;
+        const cy = targetingMode.wheelMouseStart.y;
         const wheelR = 90;
         const sectorAngles = [
-          { start: -30, end: 90 },    // PRECISE (prawo)
-          { start: 90, end: 210 },    // ARTILLERY (dół-lewo)
-          { start: 210, end: 330 },   // RAPID (góra-lewo)
+          { start: -30, end: 90 },    // SINGLE (góra-prawo)
+          { start: 90, end: 210 },    // MULTI (prawo-dół)
+          { start: 210, end: 330 },   // SUB (lewo)
         ];
 
         ctx.save();
@@ -24549,18 +26389,18 @@
           const s = sectorAngles[i];
           const a1 = (s.start - 90) * Math.PI / 180;
           const a2 = (s.end - 90) * Math.PI / 180;
-          const isHover = firingMode.wheelHover === i;
-          const isCurrent = firingMode.current === i;
+          const isHover = targetingMode.wheelHover === i;
+          const isCurrent = targetingMode.current === i;
 
           ctx.beginPath();
           ctx.moveTo(cx, cy);
           ctx.arc(cx, cy, wheelR, a1, a2);
           ctx.closePath();
           ctx.fillStyle = isHover
-            ? `${FIRE_MODE_COLORS[i]}44`
+            ? `${TARGETING_MODE_COLORS[i]}44`
             : (isCurrent ? 'rgba(40, 60, 100, 0.6)' : 'rgba(20, 30, 50, 0.4)');
           ctx.fill();
-          ctx.strokeStyle = isHover ? FIRE_MODE_COLORS[i] : 'rgba(80, 120, 180, 0.3)';
+          ctx.strokeStyle = isHover ? TARGETING_MODE_COLORS[i] : 'rgba(80, 120, 180, 0.3)';
           ctx.lineWidth = isHover ? 2 : 1;
           ctx.stroke();
 
@@ -24570,22 +26410,19 @@
           const lx = cx + Math.cos(midAngle) * labelR;
           const ly = cy + Math.sin(midAngle) * labelR;
 
-          ctx.fillStyle = isHover ? '#fff' : (isCurrent ? FIRE_MODE_COLORS[i] : '#8899bb');
+          ctx.fillStyle = isHover ? '#fff' : (isCurrent ? TARGETING_MODE_COLORS[i] : '#8899bb');
           ctx.font = `bold ${isHover ? 16 : 13}px monospace`;
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
-          ctx.fillText(FIRE_MODE_ICONS[i], lx, ly - 8);
+          ctx.fillText(TARGETING_MODE_ICONS[i], lx, ly - 8);
           ctx.font = `${isHover ? 11 : 9}px monospace`;
-          ctx.fillText(FIRE_MODE_NAMES[i], lx, ly + 8);
+          ctx.fillText(TARGETING_MODE_NAMES[i], lx, ly + 8);
 
-          // Statystyki
-          const cfgI = FIRE_MODE_CONFIG[i];
           ctx.font = '8px monospace';
           ctx.fillStyle = isHover ? '#aabbdd' : '#556688';
-          const rangeStr = `${Math.round(cfgI.rangeMul * 100)}% zasięg`;
-          const reloadStr = `${Math.round((1 / cfgI.cdMul) * 100)}% szybkość`;
-          ctx.fillText(rangeStr, lx, ly + 20);
-          ctx.fillText(reloadStr, lx, ly + 30);
+          const detail = i === TARGETING_MODE.SINGLE ? '1 CEL' : (i === TARGETING_MODE.MULTI ? 'GRUPA' : 'HARDPOINTY');
+          ctx.fillText(detail, lx, ly + 20);
+          ctx.fillText('BROŃ 100%', lx, ly + 30);
         }
 
         // Punkt centralny
@@ -24672,7 +26509,7 @@
 
       // === CONTACT MARKERS (taktyczne znaczniki w przestrzeni 3D) ===
       if (!CICDisplay.active && gameStarted) {
-        ContactMarkers.draw(ctx, W, H, ship, SensorSystem, gameTime, cam, mercMission);
+        ContactMarkers.draw(ctx, W, H, ship, SensorSystem, gameTime, cam, mercMission, false);
       }
 
       renderStationUI();
@@ -26220,6 +28057,7 @@
   <script type="module">
     import { initDevTools } from './src/ui/devTools.js';
     import { initBloomTunerPanel } from './src/ui/bloomTunerPanel.js';
+    import { initRingColorTunerPanel } from './src/ui/ringColorTunerPanel.js';
     import { initDestructorConfigPanel } from './src/ui/destructorConfigPanel.js';
     import { initDestructorMassPanel } from './src/ui/destructorMassPanel.js';
 
@@ -26227,6 +28065,7 @@
       setTimeout(() => {
         initDevTools();
         initBloomTunerPanel({ enableHotkey: false });
+        initRingColorTunerPanel();
         initDestructorConfigPanel();
         initDestructorMassPanel();
       }, 100);

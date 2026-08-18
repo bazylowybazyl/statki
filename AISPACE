@@ -1,3033 +1,2066 @@
-<!doctype html>
-<html lang="pl">
-<head>
-<meta charset="utf-8" />
-<title>Dogfight AI – Battleship Broadsides v2</title>
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<style>
-  :root {
-    --bg:#0b0f14;
-    --fg:#e5f0ff;
-    --muted:#9fb3c8;
-    --enemy:#ff5c7c;
-    --friend:#7cff91;
-    --proj:#ffd36e;
-    --draw:#6ecbff;
-    --move:#6eff7a
-  }
-  html,body{
-    margin:0;
-    padding:0;
-    background:var(--bg);
-    color:var(--fg);
-    font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Arial;
-    height:100%;
-    overflow:hidden;
-  }
-  header{
-    padding:10px 12px;
-    display:flex;
-    align-items:center;
-    gap:12px;
-    border-bottom:1px solid #17202a;
-    background:#0d131a;
-    flex-wrap:wrap;
-  }
-  header h1{
-    font-size:14px;
-    margin:0;
-    color:#9fb3c8;
-    font-weight:600;
-  }
-  .spacer{flex:1}
-  .counter{
-    padding:2px 8px;
-    background:#102233;
-    border:1px solid #1e3650;
-    border-radius:8px;
-    color:#a7c2e2;
-    font-size:12px;
-  }
-  .wrap{
-    display:grid;
-    grid-template-columns:360px 1fr 360px;
-    gap:0;
-    height:calc(100% - 54px);
-  }
-  canvas{
-    display:block;
-    width:100%;
-    height:100%;
-    background:radial-gradient(1200px 700px at 50% 40%,#0d1520,#081019 60%,#050b12 100%);
-    cursor:crosshair;
-  }
-  aside{
-    background:#0c131b;
-    border-left:1px solid #17202a;
-    border-right:1px solid #17202a;
-    overflow:auto;
-    display:flex;
-    flex-direction:column;
-  }
-  .fleet{
-    padding:12px;
-    display:flex;
-    flex-direction:column;
-    gap:12px;
-  }
-  .section{
-    background:#0f1823;
-    border:1px solid #1f2a36;
-    border-radius:10px;
-    overflow:hidden;
-  }
-  .sectHead{
-    padding:8px 10px;
-    color:#a9bfd6;
-    background:#0d1520;
-    border-bottom:1px solid #1a2a36;
-    font-weight:600;
-    display:flex;
-    align-items:center;
-    justify-content:space-between;
-    font-size:13px;
-  }
-  .sectBody{
-    padding:10px;
-    display:flex;
-    flex-direction:column;
-    gap:8px;
-    font-size:13px;
-  }
-  .row{
-    display:flex;
-    gap:8px;
-    align-items:center;
-    flex-wrap:wrap;
-  }
-  .pill{
-    padding:4px 8px;
-    border:1px solid #22364d;
-    border-radius:999px;
-    background:#12263a;
-    color:#cfe6ff;
-    font-size:11px;
-  }
-  button{
-    background:#122033;
-    color:var(--fg);
-    border:1px solid #20344d;
-    padding:5px 9px;
-    border-radius:8px;
-    cursor:pointer;
-    font-weight:600;
-    font-size:12px;
-  }
-  button:hover{background:#16263d}
-  button.active{
-    outline:2px solid #2a72ff;
-    background:#1a3a5a;
-  }
-  input[type=number], select{
-    width:90px;
-    background:#0a121a;
-    border:1px solid #1f2a36;
-    color:#cfe6ff;
-    border-radius:6px;
-    padding:4px 6px;
-    font-size:12px;
-  }
-  .small{width:72px}
-  .squadList{
-    display:grid;
-    grid-template-columns:repeat(2,1fr);
-    gap:6px;
-  }
-  .squadCard{
-    background:#0c1520;
-    border:1px solid #1b2a3a;
-    border-radius:8px;
-    padding:6px;
-    display:flex;
-    align-items:center;
-    justify-content:space-between;
-  }
-  .squadCard span{font-size:11px;color:#9fb3c8}
-  .note{font-size:11px;color:#789}
-  .timeParams button{font-size:11px;padding:3px 7px;}
-</style>
-</head>
-<body>
-<header>
-  <h1>Dogfight AI – Battleship Broadsides v2</h1>
-  <span class="counter" id="cntFriend">FR: 0</span>
-  <span class="counter" id="cntEnemy">EN: 0</span>
+// AI SPACE — combat sandbox for Super Capital: Battle for Solar System.
+//
+// This file intentionally has no extension because it replaces the historical
+// AISPACE demo checked into the repository. AISPACE.html is the browser entry
+// point and asks Vite to load this file as an ES module.
 
-  <div class="row timeParams" style="margin-left:20px">
-    <span>Time:</span>
-    <button id="t_02">x0.2</button>
-    <button id="t_05">x0.5</button>
-    <button id="t_1" class="active">x1.0</button>
-    <button id="t_2">x2.0</button>
-    <button id="t_4">x4.0</button>
-  </div>
+import {
+  CAPITAL_SHIP_TEMPLATES,
+  SHIPS,
+  SUPPORT_SHIP_TEMPLATES,
+  getHullRenderSize
+} from './src/data/ships.js';
+import { FIGHTER_SQUADRON_DEFS } from './src/data/fighterSquadrons.js';
+import { SHIP_EDITOR_DEFAULTS } from './src/data/hardpointEditorDefaults.js';
+import { MASTER_WEAPONS } from './src/data/weapons.js';
+import { createNpcHardpointRuntime } from './src/game/npcHardpointRuntime.js';
+import {
+  applyNpcFlightVector,
+  npcHasPhysicalThrusters,
+  syncNpcFlightState
+} from './src/game/flight/npcFlight.js';
+import { SHIP_PHYSICS } from './src/game/flight/thrusterModel.js';
+import { aiBattleship, aiDestroyer, aiFrigate } from './src/ai/capitalAI.js';
+import { runAdvancedFighterAI } from './src/ai/fighterAI.js';
+import {
+  aiPickBestTarget,
+  getLeadAim,
+  isEnemyUnit
+} from './src/ai/aiUtils.js';
+import { rebuildAIGrid, queryAIGrid } from './src/ai/aiSpatialGrid.js';
+import { getBattleSlot, updateFleetCoordinator } from './src/ai/fleetCoordinator.js';
 
-  <div class="spacer"></div>
-  <button id="pause">Pauza</button>
-  <button id="reset">Reset</button>
-  <button id="zoomIn">+</button>
-  <button id="zoomOut">−</button>
-  <button id="zoomFit">Fit</button>
-</header>
+const FIXED_DT = 1 / 60;
+const MAX_STEPS_PER_FRAME = 20;
+const TWO_PI = Math.PI * 2;
+const TEAM = Object.freeze({ BLUE: 'blue', RED: 'red' });
+const TEAM_COLOR = Object.freeze({ blue: '#62a8ff', red: '#ff647d' });
+const TEAM_PROJECTILE_OWNER = Object.freeze({ blue: 'player', red: 'npc' });
+const HP_TYPES = ['main', 'missile', 'aux', 'hangar', 'special', 'special_missile', 'builtin'];
+const DEFAULT_LOADOUT = Object.freeze({
+  blue: Object.freeze({ main: 'railgun_mk2', aux: 'laser_pd_mk1', missile: 'missile_rack' }),
+  red: Object.freeze({ main: 'armata_mk1', aux: 'ciws_mk1', missile: 'missile_rack' })
+});
 
-<div class="wrap">
-  <!-- LEFT: FRIENDLY -->
-  <aside id="left">
-    <div class="fleet">
-      <div class="section">
-        <div class="sectHead">
-          <span>Friendly Forces</span>
-          <span class="pill" style="border-color:#2b4; background:#103018;">Ready</span>
-        </div>
-        <div class="sectBody">
-          <div class="row">
-            <label>Squad (9): <button id="spawnF">Fighter Squad</button></label>
-          </div>
-          <div class="row">
-            <button id="spawnFF">Frigate (PD)</button>
-            <button id="spawnFL">Frigate (Laser)</button>
-          </div>
-          <div class="row">
-            <button id="spawnFD">Destroyer</button>
-            <button id="spawnFB">Battleship</button>
-          </div>
-          <hr style="border:0;border-top:1px solid #333;width:100%">
-          <div class="row">
-            <button id="f_engage">Engage</button>
-            <button id="f_guard" class="active">Guard</button>
-            <button id="f_move">Move</button>
-            <button id="f_return">Return</button>
-          </div>
-          <!-- Config -->
-          <div class="row" style="margin-top:10px">
-            <label>HP:
-              <input id="fr_hp" type="number" min="10" max="5000" value="120">
-            </label>
-            <label>Shield:
-              <input id="fr_sh" type="number" min="0" max="5000" value="80">
-            </label>
-          </div>
-          <div class="row">
-            <label>Wep:
-              <select id="fr_gun">
-                <option value="laserS">Laser S</option>
-                <option value="pulse">Pulse</option>
-                <option value="rail">Rail</option>
-                <option value="gatling">Gatling</option>
-              </select>
-            </label>
-            <label>Msl:
-              <select id="fr_msl">
-                <option value="AF">AIM-3</option>
-                <option value="AS">ASM-6</option>
-                <option value="HE">HET-4</option>
-                <option value="SW">Swarm</option>
-              </select>
-            </label>
-          </div>
-          <div class="row">
-            <label>PD:
-              <select id="fr_pd">
-                <option value="pd_mk1">PD Mk1</option>
-                <option value="pd_laser">PD Laser</option>
-              </select>
-            </label>
-            <label>Flak:
-              <select id="fr_flak">
-                <option value="flak_L">Flak L</option>
-              </select>
-            </label>
-          </div>
-          <div class="row">
-            <button id="fr_apply">Apply Config</button>
-          </div>
-          <div class="squadList" id="frSquads"></div>
-          <div class="note">
-            LPM na ikonie = zaznacz. PPM na mapie = formacja. PPM na wroga = atak.
-          </div>
-        </div>
-      </div>
-    </div>
-  </aside>
+const clamp = (value, min, max) => Math.max(min, Math.min(max, Number(value) || 0));
+const wrapAngle = (angle) => Math.atan2(Math.sin(Number(angle) || 0), Math.cos(Number(angle) || 0));
+const finite = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
+const entityX = (entity) => finite(entity?.pos?.x ?? entity?.x);
+const entityY = (entity) => finite(entity?.pos?.y ?? entity?.y);
 
-  <!-- CENTER: CANVAS -->
-  <canvas id="cv"></canvas>
-
-  <!-- RIGHT: ENEMY -->
-  <aside id="right">
-    <div class="fleet">
-      <div class="section">
-        <div class="sectHead">
-          <span>Enemy Forces</span>
-          <span class="pill" style="border-color:#b44; background:#2a1015;">Ready</span>
-        </div>
-        <div class="sectBody">
-          <div class="row">
-            <label>Squad (9): <button id="spawnE">Fighter Squad</button></label>
-          </div>
-          <div class="row">
-            <button id="spawnEF">Frigate (PD)</button>
-            <button id="spawnEL">Frigate (Laser)</button>
-          </div>
-          <div class="row">
-            <button id="spawnED">Destroyer</button>
-            <button id="spawnEB">Battleship</button>
-          </div>
-          <hr style="border:0;border-top:1px solid #333;width:100%">
-          <div class="row">
-            <button id="e_engage">Engage</button>
-            <button id="e_guard" class="active">Guard</button>
-            <button id="e_move">Move</button>
-            <button id="e_return">Return</button>
-          </div>
-          <div class="row" style="margin-top:10px">
-            <label>HP:
-              <input id="en_hp" type="number" min="10" max="5000" value="120">
-            </label>
-            <label>Shield:
-              <input id="en_sh" type="number" min="0" max="5000" value="80">
-            </label>
-          </div>
-          <div class="row">
-            <label>Wep:
-              <select id="en_gun">
-                <option value="laserS">Laser S</option>
-                <option value="pulse">Pulse</option>
-                <option value="rail">Rail</option>
-                <option value="gatling">Gatling</option>
-              </select>
-            </label>
-            <label>Msl:
-              <select id="en_msl">
-                <option value="AF">AIM-3</option>
-                <option value="AS">ASM-6</option>
-                <option value="HE">HET-4</option>
-                <option value="SW">Swarm</option>
-              </select>
-            </label>
-          </div>
-          <div class="row">
-            <label>PD:
-              <select id="en_pd">
-                <option value="pd_mk1">PD Mk1</option>
-                <option value="pd_laser">PD Laser</option>
-              </select>
-            </label>
-            <label>Flak:
-              <select id="en_flak">
-                <option value="flak_L">Flak L</option>
-              </select>
-            </label>
-          </div>
-          <div class="row">
-            <button id="en_apply">Apply Config</button>
-          </div>
-          <div class="squadList" id="enSquads"></div>
-        </div>
-      </div>
-    </div>
-  </aside>
-</div>
-
-<script type="module">
-/* ============================== Canvas / Camera ============================== */
-const canvas = document.getElementById('cv');
-const ctx = canvas.getContext('2d');
-let DPR = window.devicePixelRatio || 1;
-ctx.imageSmoothingEnabled = false;
-
-const WORLD = { W: 10000, H: 6000 };
-const CAM   = { x: WORLD.W*0.5, y: WORLD.H*0.5, scale: 0.25, min: 0.05, max: 3.0 };
-let TIME_SCALE = 1.0;
-
-function fit(){
-  DPR = window.devicePixelRatio || 1;
-  const W = canvas.clientWidth, H = canvas.clientHeight;
-  canvas.width  = Math.max(1, Math.floor(W * DPR));
-  canvas.height = Math.max(1, Math.floor(H * DPR));
-}
-window.addEventListener('resize', fit);
-
-function setBaseTransform(){ ctx.setTransform(DPR,0,0,DPR,0,0); }
-function applyCam(){
-  setBaseTransform();
-  const cssW = canvas.width / DPR, cssH = canvas.height / DPR;
-  ctx.translate(cssW*0.5, cssH*0.5);
-  ctx.scale(CAM.scale, CAM.scale);
-  ctx.translate(-CAM.x, -CAM.y);
-}
-function resetTransform(){ setBaseTransform(); }
-function screenToWorld(px, py){
-  const cssW = canvas.width / DPR, cssH = canvas.height / DPR;
-  const wx = (px - cssW*0.5) / CAM.scale + CAM.x;
-  const wy = (py - cssH*0.5) / CAM.scale + CAM.y;
-  return {x:wx, y:wy};
-}
-function worldClamp(obj, r=24){
-  obj.x = Math.max(r, Math.min(WORLD.W - r, obj.x));
-  obj.y = Math.max(r, Math.min(WORLD.H - r, obj.y));
-}
-
-/* ============================== Utils ======================================= */
-const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
-const norm  = (x,y)=>{const d=Math.hypot(x,y)||1;return {x:x/d,y:y/d};};
-const dist2 = (a,b)=>{const dx=a.x-b.x,dy=a.y-b.y;return dx*dx+dy*dy;};
-
-function rotateVec(vx,vy,deg){
-  const r = deg*Math.PI/180;
-  const c = Math.cos(r), s = Math.sin(r);
-  return {vx:vx*c - vy*s, vy:vx*s + vy*c};
-}
-
-function clampTurn(vx, vy, wantVx, wantVy, dt, maxDeg){
-  const maxRad = (maxDeg * Math.PI / 180) * dt;
-  const a = Math.atan2(vy, vx);
-  const b = Math.atan2(wantVy, wantVx);
-  let d = b - a;
-  while(d >  Math.PI) d -= 2*Math.PI;
-  while(d < -Math.PI) d += 2*Math.PI;
-  const lim = clamp(d, -maxRad, maxRad);
-  const speed = Math.hypot(wantVx, wantVy);
-  const ang = a + lim;
-  return { vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed };
-}
-function clampTurnAngle(currentAng, targetAng, maxRateRad, dt){
-  let d = targetAng - currentAng;
-  while(d >  Math.PI) d -= 2*Math.PI;
-  while(d < -Math.PI) d += 2*Math.PI;
-  const change = clamp(d, -maxRateRad * dt, maxRateRad * dt);
-  let out = currentAng + change;
-  if(out >  Math.PI) out -= 2*Math.PI;
-  if(out < -Math.PI) out += 2*Math.PI;
-  return out;
-}
-
-function leadAim(shooter,target,projSpeed=180){
-  const vx=target.vx||0, vy=target.vy||0;
-  const px=target.x-shooter.x, py=target.y-shooter.y;
-  const A=(vx*vx+vy*vy)-projSpeed*projSpeed;
-  const B=2*(px*vx+py*vy);
-  const C=(px*px+py*py);
-  let t=0;
-  if(Math.abs(A)<1e-3){
-    t = -C/Math.max(B,-1e-3);
-  }else{
-    const disc=B*B-4*A*C;
-    t = (disc>0)?(-B-Math.sqrt(disc))/(2*A):0;
-  }
-  t = Math.max(0,Math.min(2.0,t));
-  return {x:target.x+vx*t,y:target.y+vy*t};
-}
-
-/* ============================== Weapons ===================================== */
-const GUNS = {
-  laserS:{ name:'Laser krótki', dps:40, dmg:8,  rps:5,   speed:520, range:380, spread:2,  color:'#86f7ff' },
-  pulse :{ name:'Pulse blaster', dps:55, dmg:14, rps:4,   speed:420, range:420, spread:3,  color:'#ffd36e' },
-  rail  :{ name:'Rail micro',    dps:65, dmg:26, rps:1.8, speed:900, range:560, spread:0.6,color:'#c0b7ff' },
-  gatling:{name:'Gatling',       dps:70, dmg:3,  rps:12,  speed:520, range:320, spread:4,  color:'#9fff75' }
-};
-const PD = {
-  pd_mk1  :{ name:'PD Mk1',   dmg:5,  rps:9,  speed:560,  range:380, spread:6,   color:'#8cffd0' },
-  pd_laser:{ name:'PD Laser', dmg:3,  rps:18, speed:1200, range:420, spread:0.7, color:'#ff77ff' }
-};
-const FLAK = {
-  flak_L  :{ name:'Flak L', burst:1, rps:0.8, speed:380, range:520, radius:48, dmg:28, color:'#ffef8a' }
-};
-const MISSILES = {
-  AF:{ name:'AIM-3',  speed:360, turn:600, life:4.0, dmg:45,  seek:'fighter', color:'#7cd7ff' },
-  AS:{ name:'ASM-6',  speed:300, turn:320, life:6.0, dmg:120, seek:'ship',    color:'#ffad7c' },
-  HE:{ name:'HET-4',  speed:280, turn:250, life:5.0, dmg:160, seek:'any',     color:'#ff7cf0' },
-  SW:{ name:'Swarm-8',speed:340, turn:550, life:3.0, dmg:18,  seek:'fighter', color:'#b3ff7c', swarm:6, spread:18 }
-};
-const GUNS_M = {
-  m_beam      :{ name:'M Beam',       dmg:24,  rps:1.8, speed:900,  range:820,  spread:0.4, color:'#8fd8ff' },
-  m_pulse     :{ name:'M Pulse',      dmg:40,  rps:1.1, speed:700,  range:760,  spread:0.8, color:'#ffd98a' },
-  m_rail      :{ name:'M Rail',       dmg:85,  rps:0.55,speed:1200, range:880,  spread:0.35,color:'#d0c9ff' },
-  m_autocannon:{ name:'M Auto',       dmg:22,  rps:3.2, speed:780,  range:680,  spread:1.2, color:'#b6ff9a' },
-  h_beam      :{ name:'Heavy Beam',   dmg:260, rps:0.22,speed:1500, range:1100, spread:0.1, color:'#ff0000' },
-  h_rapid     :{ name:'Rapid Laser L',dmg:45,  rps:5.0, speed:900,  range:750,  spread:1.0, color:'#00ff00' }
-};
-// broadside definicja – grube plazmy
-const BS_BROADSIDE = {
-  dmg:80,
-  rps:0.6,
-  speed:620,
-  range:650,
-  spread:2.5,
-  color:'#ff9b4b'
-};
-const DESTROYER_MEDIUM_DEFAULT = 'm_rail';
-
-const COL = {
-  friend:'#7cff91',
-  enemy :'#ff5c7c',
-  proj  :'#ffd36e',
-  move  :'#6eff7a'
+const ui = {
+  canvas: document.getElementById('battlefield'),
+  loading: document.getElementById('loadingOverlay'),
+  blueCount: document.getElementById('blueCount'),
+  redCount: document.getElementById('redCount'),
+  pause: document.getElementById('pauseButton'),
+  reset: document.getElementById('resetButton'),
+  timeControls: document.getElementById('timeControls'),
+  spawnTeam: document.getElementById('spawnTeam'),
+  spawnHull: document.getElementById('spawnHull'),
+  spawnCount: document.getElementById('spawnCount'),
+  spawnButton: document.getElementById('spawnButton'),
+  spawnDescription: document.getElementById('spawnDescription'),
+  showHardpoints: document.getElementById('showHardpoints'),
+  showThrusters: document.getElementById('showThrusters'),
+  showVectors: document.getElementById('showVectors'),
+  showTrails: document.getElementById('showTrails'),
+  bodyCollisions: document.getElementById('bodyCollisions'),
+  hangarLaunches: document.getElementById('hangarLaunches'),
+  reloadLayouts: document.getElementById('reloadLayouts'),
+  clearLog: document.getElementById('clearLog'),
+  combatLog: document.getElementById('combatLog'),
+  cameraReadout: document.getElementById('cameraReadout'),
+  cursorReadout: document.getElementById('cursorReadout'),
+  fpsReadout: document.getElementById('fpsReadout'),
+  simReadout: document.getElementById('simReadout'),
+  runtimeStatus: document.getElementById('runtimeStatus'),
+  layoutStatus: document.getElementById('layoutStatus'),
+  projectileStatus: document.getElementById('projectileStatus'),
+  emptyInspector: document.getElementById('emptyInspector'),
+  inspector: document.getElementById('inspector'),
+  selectedName: document.getElementById('selectedName'),
+  selectedSubtitle: document.getElementById('selectedSubtitle'),
+  hullText: document.getElementById('hullText'),
+  shieldText: document.getElementById('shieldText'),
+  hullBar: document.getElementById('hullBar'),
+  shieldBar: document.getElementById('shieldBar'),
+  speedMetric: document.getElementById('speedMetric'),
+  maxSpeedMetric: document.getElementById('maxSpeedMetric'),
+  stateMetric: document.getElementById('stateMetric'),
+  targetMetric: document.getElementById('targetMetric'),
+  physicsMetric: document.getElementById('physicsMetric'),
+  hardpointMetric: document.getElementById('hardpointMetric'),
+  aiEnabled: document.getElementById('aiEnabled'),
+  tuneMaxSpeed: document.getElementById('tuneMaxSpeed'),
+  tuneAccel: document.getElementById('tuneAccel'),
+  tuneTurn: document.getElementById('tuneTurn'),
+  tuneRange: document.getElementById('tuneRange'),
+  applyTuning: document.getElementById('applyTuning'),
+  resetTuning: document.getElementById('resetTuning'),
+  mainWeapon: document.getElementById('mainWeapon'),
+  auxWeapon: document.getElementById('auxWeapon'),
+  missileWeapon: document.getElementById('missileWeapon'),
+  applyLoadout: document.getElementById('applyLoadout'),
+  hardpointSummary: document.getElementById('hardpointSummary'),
+  healSelected: document.getElementById('healSelected'),
+  clearTarget: document.getElementById('clearTarget'),
+  duplicateSelected: document.getElementById('duplicateSelected'),
+  deleteSelected: document.getElementById('deleteSelected'),
+  sourceFiles: document.getElementById('sourceFiles')
 };
 
-/* ============================== Player carrier ships ======================== */
-function makeCarrier({team,x,y,color}){
+const ctx = ui.canvas.getContext('2d', { alpha: false });
+if (!ctx) throw new Error('AI SPACE: Canvas 2D is unavailable.');
+
+const hardpoints = createNpcHardpointRuntime({
+  storageKey: 'hpEditor.v1',
+  defaultShips: SHIP_EDITOR_DEFAULTS.ships,
+  pollInterval: 0.35
+});
+
+const CATALOG = [
+  {
+    id: 'interceptor', family: 'fighter', label: FIGHTER_SQUADRON_DEFS.interceptor.name,
+    description: FIGHTER_SQUADRON_DEFS.interceptor.role, data: FIGHTER_SQUADRON_DEFS.interceptor
+  },
+  {
+    id: 'multirole', family: 'fighter', label: FIGHTER_SQUADRON_DEFS.multirole.name,
+    description: FIGHTER_SQUADRON_DEFS.multirole.role, data: FIGHTER_SQUADRON_DEFS.multirole
+  },
+  {
+    id: 'strike', family: 'fighter', label: FIGHTER_SQUADRON_DEFS.strike.name,
+    description: FIGHTER_SQUADRON_DEFS.strike.role, data: FIGHTER_SQUADRON_DEFS.strike
+  },
+  {
+    id: 'frigate_pd', family: 'support', label: `${SHIPS.terran_frigate.name} · PD`,
+    description: 'Bieżący mózg fregaty i loadout obrony punktowej.', data: SUPPORT_SHIP_TEMPLATES.frigate_pd
+  },
+  {
+    id: 'frigate_laser', family: 'support', label: `${SHIPS.terran_frigate.name} · laser`,
+    description: 'Wariant fregaty z większym preferredRange.', data: SUPPORT_SHIP_TEMPLATES.frigate_laser
+  },
+  {
+    id: 'destroyer', family: 'support', label: SHIPS.terran_destroyer.name,
+    description: 'Niszczyciel z flankowaniem, boostem i koordynatorem floty.', data: SUPPORT_SHIP_TEMPLATES.destroyer
+  },
+  {
+    id: 'battleship', family: 'support', label: SHIPS.terran_battleship.name,
+    description: 'Pancernik trzymający linię i ustawienie baterii.', data: SUPPORT_SHIP_TEMPLATES.battleship
+  },
+  {
+    id: 'carrier', family: 'capital', label: CAPITAL_SHIP_TEMPLATES.carrier.displayName,
+    description: CAPITAL_SHIP_TEMPLATES.carrier.roleText, data: CAPITAL_SHIP_TEMPLATES.carrier
+  },
+  {
+    id: 'supercapital', family: 'capital', label: CAPITAL_SHIP_TEMPLATES.supercapital.displayName,
+    description: CAPITAL_SHIP_TEMPLATES.supercapital.roleText, data: CAPITAL_SHIP_TEMPLATES.supercapital
+  },
+  {
+    id: 'atlas', family: 'capital', label: CAPITAL_SHIP_TEMPLATES.atlas.displayName,
+    description: CAPITAL_SHIP_TEMPLATES.atlas.roleText, data: CAPITAL_SHIP_TEMPLATES.atlas
+  },
+  {
+    id: 'megafreighter', family: 'civilian', label: CAPITAL_SHIP_TEMPLATES.megafreighter.displayName,
+    description: 'Nieuzbrojony cel testowy; zgodnie z grą nie ma autonomicznego AI.', data: CAPITAL_SHIP_TEMPLATES.megafreighter
+  }
+];
+const CATALOG_BY_ID = new Map(CATALOG.map((entry) => [entry.id, entry]));
+
+const HULL_SPRITE_URLS = Object.freeze({
+  atlas: new URL('./assets/capital_ship_rect_v1.png', import.meta.url).href,
+  megafreighter: new URL('./assets/megafreighterfront.png', import.meta.url).href,
+  terran_frigate: new URL('./src/assets/ships/terranfrigate.png', import.meta.url).href,
+  terran_destroyer: new URL('./src/assets/ships/terrandestroyer.png', import.meta.url).href,
+  terran_battleship: new URL('./src/assets/ships/terranbattleship.png', import.meta.url).href,
+  terran_carrier: new URL('./src/assets/ships/terrancarrier.png', import.meta.url).href,
+  terran_supercapital: new URL('./src/assets/ships/terransupercapital.png', import.meta.url).href,
+  pirate_frigate: new URL('./src/assets/ships/piratefrigate.png', import.meta.url).href,
+  pirate_destroyer: new URL('./src/assets/ships/piratedestroyer.png', import.meta.url).href,
+  pirate_battleship: new URL('./src/assets/ships/piratebattleship.png', import.meta.url).href
+});
+
+const spriteCache = new Map();
+function loadSprite(hullId, src) {
+  const record = { hullId, src, image: new Image(), ready: false, error: false, width: 1, height: 1 };
+  spriteCache.set(hullId, record);
+  return new Promise((resolve) => {
+    record.image.onload = () => {
+      record.ready = true;
+      record.width = Math.max(1, record.image.naturalWidth || record.image.width || 1);
+      record.height = Math.max(1, record.image.naturalHeight || record.image.height || 1);
+      resolve(record);
+    };
+    record.image.onerror = () => {
+      record.error = true;
+      resolve(record);
+    };
+    record.image.src = src;
+  });
+}
+
+const sim = {
+  units: [],
+  projectiles: [],
+  effects: [],
+  pendingSpawns: [],
+  time: 0,
+  frameId: 0,
+  paused: false,
+  timeScale: 1,
+  accumulator: 0,
+  nextId: 1,
+  lastAiMs: 0,
+  stats: {
+    blue: { shots: 0, hits: 0, damage: 0, kills: 0 },
+    red: { shots: 0, hits: 0, damage: 0, kills: 0 }
+  }
+};
+
+const camera = { x: 0, y: 0, zoom: 0.1, minZoom: 0.018, maxZoom: 3.2 };
+const viewport = { width: 1, height: 1, dpr: 1 };
+const selection = new Set();
+let primarySelection = null;
+let lastInspectorSelection = null;
+let lastUiUpdate = 0;
+let lastFrameTime = performance.now();
+let fpsSmoothing = 60;
+let logSequence = 0;
+let victoryState = '';
+
+const backgroundStars = Array.from({ length: 260 }, (_, index) => ({
+  x: ((index * 7919) % 1009) / 1009,
+  y: ((index * 3571 + 97) % 1013) / 1013,
+  size: 0.45 + ((index * 17) % 13) / 12,
+  alpha: 0.18 + ((index * 29) % 17) / 28
+}));
+
+function logEvent(message, kind = '') {
+  const row = document.createElement('p');
+  row.className = kind;
+  row.textContent = `${String(++logSequence).padStart(3, '0')}  ${message}`;
+  ui.combatLog.prepend(row);
+  while (ui.combatLog.childElementCount > 60) ui.combatLog.lastElementChild?.remove();
+}
+
+function resolveHullId(catalogEntry, team) {
+  if (!catalogEntry) return null;
+  if (catalogEntry.family === 'fighter') return null;
+  if (catalogEntry.id.includes('frigate')) return team === TEAM.RED ? 'pirate_frigate' : 'terran_frigate';
+  if (catalogEntry.id === 'destroyer') return team === TEAM.RED ? 'pirate_destroyer' : 'terran_destroyer';
+  if (catalogEntry.id === 'battleship') return team === TEAM.RED ? 'pirate_battleship' : 'terran_battleship';
+  if (catalogEntry.id === 'carrier') return 'terran_carrier';
+  if (catalogEntry.id === 'supercapital') return 'terran_supercapital';
+  if (catalogEntry.id === 'atlas') return 'atlas';
+  if (catalogEntry.id === 'megafreighter') return 'megafreighter';
+  return null;
+}
+
+function resolveStats(entry) {
+  if (entry.family === 'fighter') {
+    return {
+      hp: entry.data.hp,
+      shield: 0,
+      shieldRegen: 0,
+      shieldDelay: 0,
+      accel: entry.data.accel,
+      maxSpeed: entry.data.maxSpeed,
+      turn: entry.data.turn,
+      radius: entry.data.radius,
+      mass: entry.data.mass,
+      friction: 1,
+      separationRange: entry.data.separationRange
+    };
+  }
+  if (entry.family === 'support') {
+    const shield = entry.data.shield || {};
+    return {
+      ...entry.data.stats,
+      shield: finite(shield.val ?? shield.max),
+      shieldRegen: finite(shield.regenRate),
+      shieldDelay: finite(shield.regenDelay),
+      friction: finite(entry.data.stats?.friction, 1)
+    };
+  }
+  const data = entry.data;
   return {
-    team, x,y,
-    vx:0,vy:0,
-    ang:(team==='player'?0:Math.PI),
-    color,
-    accel:200,
-    maxv:160,
-    turnRate:2.8,
-    friction:0.98
+    hp: data.hull,
+    shield: data.shield,
+    shieldRegen: data.shieldRegen,
+    shieldDelay: data.shieldDelay,
+    accel: data.accel,
+    maxSpeed: data.maxSpeed,
+    turn: data.turn,
+    radius: data.radius,
+    mass: data.mass,
+    rammingMass: data.rammingMass,
+    friction: 0.99,
+    separationRange: Math.max(300, finite(data.radius) * 2.2)
   };
 }
-const SHIP = {
-  friend: makeCarrier({team:'player',x:600,       y:WORLD.H*0.5,color:COL.friend}),
-  enemy : makeCarrier({team:'enemy', x:WORLD.W-600,y:WORLD.H*0.5,color:COL.enemy})
-};
-const keys = new Set();
-window.addEventListener('keydown',e=>{
-  keys.add(e.key.toLowerCase());
-});
-window.addEventListener('keyup',e=>keys.delete(e.key.toLowerCase()));
 
-function updateCarrier(s,dt){
-  const l=keys.has('a'), r=keys.has('d'), u=keys.has('w'), d=keys.has('s'), brake=keys.has('q'), boost=keys.has('e');
-  if(l) s.ang -= s.turnRate*dt;
-  if(r) s.ang += s.turnRate*dt;
-  let thrust=0;
-  if(u) thrust+=1;
-  if(d) thrust-=0.6;
-  if(boost) thrust+=0.5;
-  const ax=Math.cos(s.ang)*s.accel*thrust;
-  const ay=Math.sin(s.ang)*s.accel*thrust;
-  s.vx += ax*dt;
-  s.vy += ay*dt;
-  const v = Math.hypot(s.vx,s.vy);
-  const maxv = s.maxv * (boost?1.2:1);
-  if(v>maxv){
-    s.vx *= maxv/v;
-    s.vy *= maxv/v;
-  }
-  if(brake){ s.vx*=0.92; s.vy*=0.92; }
-  s.vx *= s.friction;
-  s.vy *= s.friction;
-  s.x  += s.vx*dt;
-  s.y  += s.vy*dt;
-  worldClamp(s,24);
-}
-function drawCarrier(s){
-  ctx.save();
-  ctx.translate(s.x,s.y);
-  ctx.rotate(s.ang);
-  ctx.strokeStyle=s.color;
-  ctx.fillStyle=s.color+'22';
-  ctx.lineWidth=2;
-  ctx.beginPath();
-  ctx.moveTo(26,0);
-  ctx.lineTo(-20,14);
-  ctx.lineTo(-16,0);
-  ctx.lineTo(-20,-14);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(0,0);
-  ctx.lineTo(34,0);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.arc(52,0,10,0,Math.PI*2);
-  ctx.stroke();
-  ctx.restore();
+function preferredRangeFor(entry) {
+  if (entry.id === 'frigate_pd') return 800;
+  if (entry.id === 'frigate_laser') return 2400;
+  if (entry.id === 'destroyer') return 1400;
+  if (entry.id === 'battleship') return 1600;
+  if (entry.family === 'capital') return finite(entry.data.weaponRange, 3200);
+  return 0;
 }
 
-/* ============================== Fighters / squads =========================== */
-const PARAM = {
-  squadSize:9
-};
-const CHEVRON_FORMATION = [
-  {x:-20,y:-15},{x:-20,y:15},
-  {x:-40,y:-30},{x:-40,y:30},
-  {x:-60,y:-45},{x:-60,y:45},
-  {x:-80,y:-60},{x:-80,y:60}
-];
-
-class BattleSim{
-  constructor(){
-    this.time=0;
-    this.units=new Set();
-    this.squads=new Set();
-    this.wrecks=new Set();
-    this.projectiles=[];
-    this.missiles=[];
-    this.explosions=[];
-    this.nextId=1;
-    this.nextSquadId=1;
-
-    this.teamCmd={player:'GUARD',enemy:'GUARD'};
-    this.teamCfg={
-      player:{ hp:120, shield:80, gun:'laserS', msl:'AF', pd:'pd_mk1', flak:'flak_L' },
-      enemy :{ hp:120, shield:80, gun:'laserS', msl:'AF', pd:'pd_mk1', flak:'flak_L' }
-    };
-    // precomputed centers for fighters (do „leashowania” dogfightów)
-    this.fighterCenter = {
-      player:{x:WORLD.W*0.25,y:WORLD.H*0.5,count:0},
-      enemy :{x:WORLD.W*0.75,y:WORLD.H*0.5,count:0}
-    };
-  }
-
-  setCmd(team,cmd){
-    this.teamCmd[team]=cmd;
-  }
-
-  addUnit(u){
-    u.id=this.nextId++;
-    this.units.add(u);
-    return u;
-  }
-  addSquad(s){
-    s.id=this.nextSquadId++;
-    this.squads.add(s);
-    return s;
-  }
-
-  spawnWreck(u){
-    if(u.kind==='fighter') return;
-    const w = {
-      x:u.x, y:u.y,
-      vx:u.vx*0.4, vy:u.vy*0.4,
-      ang:u.ang || 0,
-      vAng:(Math.random()-0.5)*0.8,
-      radius:u.hitR || 30,
-      kind:u.kind,
-      size:u.size || {w:40,h:20},
-      life:30,
-      friction:0.98
-    };
-    this.wrecks.add(w);
-  }
-
-  getHangarPoints(numPerSide=5, sideDist=25, spacing=15){
-    const startOffset = -(numPerSide-1)*0.5*spacing;
-    const pts=[];
-    for(let i=0;i<numPerSide;i++){
-      const lx = startOffset + i*spacing;
-      pts.push({x:lx,y: sideDist});
-      pts.push({x:lx,y:-sideDist});
-    }
-    return pts;
-  }
-
-  spawnSquadron(team){
-    const cfg=this.teamCfg[team];
-    const ship = team==='player'?SHIP.friend:SHIP.enemy;
-    const squad = this.addSquad({
-      team,
-      units:new Set(),
-      x:ship.x,y:ship.y,
-      iconHitR:12,
-      isCapital:false,
-      type:'fighter',
-      leader:null,
-      moveAnchor:null,
-      attackTargetSquadId:null,
-      totalHp:0,totalMaxHp:0
-    });
-    const hangars = this.getHangarPoints(5,25,15);
-    const c = Math.cos(ship.ang), s = Math.sin(ship.ang);
-    const launchOffset=15;
-    const launchSpeed = 80;
-    for(let i=0;i<PARAM.squadSize;i++){
-      const h = hangars[i % hangars.length];
-      const sideSign = Math.sign(h.y)||1;
-      const dirx = -s*sideSign;
-      const diry =  c*sideSign;
-      const hx = ship.x + h.x*c - h.y*s;
-      const hy = ship.y + h.x*s + h.y*c;
-      const x = hx + dirx*launchOffset;
-      const y = hy + diry*launchOffset;
-      const playerShip = SHIP.friend;
-      const angleToPlayer = Math.atan2(playerShip.y - y, playerShip.x - x);
-      const u = {
-        kind:'fighter',
-        team,
-        x,y,
-        vx:ship.vx + dirx*launchSpeed,
-        vy:ship.vy + diry*launchSpeed,
-        alive:true,
-        hitR:10,
-        hp:cfg.hp,
-        hpMax:cfg.hp,
-        shield:cfg.shield,
-        shieldMax:cfg.shield,
-        gun:cfg.gun,
-        msl:cfg.msl,
-        mslAmmo:1,
-        gunCD:0,
-        mslCD:0,
-        incomingDamage:0,
-        state:'guard',
-        sub:'merge',
-        subT:0,
-        targetId:null,
-        _slashSign:1,
-        size:6,
-        ang:angleToPlayer,
-        squad,
-        formationSlot:null,
-        dogfightTime:0,
-        dogfightMin:1.0,
-        breakOffTimer:0
-      };
-      squad.units.add(u);
-      if(i===0){
-        squad.leader = u;
-      }else if(CHEVRON_FORMATION[i-1]){
-        u.formationSlot = CHEVRON_FORMATION[i-1];
-      }
-      u.aiUpdate = dt => aiFighter(this,u,dt);
-      this.addUnit(u);
-    }
-  }
-
-  spawnFrigate(team, type='pd'){
-    const ship = team==='player'?SHIP.friend:SHIP.enemy;
-    const playerShip = SHIP.friend;
-    const cfg=this.teamCfg[team];
-    const u = {
-      kind:'frigate',
-      team,
-      x:ship.x,
-      y:ship.y,
-      vx:0,vy:0,
-      alive:true,
-      hitR:28,
-      hp:1800, hpMax:1800,
-      shield:600, shieldMax:600,
-      incomingDamage:0,
-      pd:(type==='laser')?null:cfg.pd,
-      flak:(type==='laser')?null:cfg.flak,
-      mGun:(type==='laser')?'h_beam':null,
-      pdCD:0,
-      flakCD:0,
-      mCD:0,
-      state:'guard',
-      moveAnchor:null,
-      size:{w:44,h:18},
-      ang:(team==='player'?0:Math.PI),
-      turnRate:(65 * Math.PI / 180),
-      maxSpeed:160,
-      accel:150,
-      friction:0.985,
-      separationRange:90,
-      mass:2.5,
-      radius:28,
-      subType:type
-    };
-    if(team==='enemy'){
-      const angleToPlayer = Math.atan2(playerShip.y - u.y, playerShip.x - u.x);
-      u.ang = angleToPlayer;
-      const dirToPlayer = norm(playerShip.x - u.x, playerShip.y - u.y);
-      u.moveAnchor = { x: u.x + dirToPlayer.x * 260, y: u.y + dirToPlayer.y * 260 };
-    }
-    u.aiUpdate = dt => (type==='laser'? aiLaserFrigate(this,u,dt): aiFrigate(this,u,dt));
-    this.addUnit(u);
-    const squad = this.addSquad({
-      team,
-      units:new Set([u]),
-      x:u.x,y:u.y,
-      iconHitR:16,
-      isCapital:true,
-      type:'frigate',
-      leader:u,
-      moveAnchor:null,
-      attackTargetSquadId:null,
-      totalHp:0,totalMaxHp:0
-    });
-    u.squad=squad;
-    return u;
-  }
-
-  spawnDestroyer(team){
-    const ship = team==='player'?SHIP.friend:SHIP.enemy;
-    const playerShip = SHIP.friend;
-    const u = {
-      kind:'destroyer',
-      team,
-      x:ship.x,
-      y:ship.y,
-      vx:0,vy:0,
-      alive:true,
-      hitR:45,
-      hp:4200,hpMax:4200,
-      shield:2100,shieldMax:2100,
-      incomingDamage:0,
-      size:{w:86,h:26},
-      ang:(team==='player'?0:Math.PI),
-      turnRate:(25 * Math.PI / 180),
-      maxSpeed:140,
-      accel:120,
-      friction:0.986,
-      mGun:DESTROYER_MEDIUM_DEFAULT,
-      mCD:0,
-      mSeq:0,
-      pd:'pd_mk1',
-      pdCD:0,
-      state:'advance',
-      moveAnchor:null,
-      separationRange:150,
-      mass:8.0,
-      radius:45,
-      boostT:0,
-      boostCd:0,
-      boostDur:1.8,
-      boostCool:8.0
-    };
-    if(team==='enemy'){
-      const angleToPlayer = Math.atan2(playerShip.y - u.y, playerShip.x - u.x);
-      u.ang = angleToPlayer;
-      const dirToPlayer = norm(playerShip.x - u.x, playerShip.y - u.y);
-      u.moveAnchor = { x: u.x + dirToPlayer.x * 320, y: u.y + dirToPlayer.y * 320 };
-    }
-    u.aiUpdate = dt => aiDestroyer(this,u,dt);
-    this.addUnit(u);
-    const squad = this.addSquad({
-      team,
-      units:new Set([u]),
-      x:u.x,y:u.y,
-      iconHitR:20,
-      isCapital:true,
-      type:'destroyer',
-      leader:u,
-      moveAnchor:null,
-      attackTargetSquadId:null,
-      totalHp:0,totalMaxHp:0
-    });
-    u.squad=squad;
-    return u;
-  }
-
-  spawnBattleship(team){
-    const ship = team==='player'?SHIP.friend:SHIP.enemy;
-    const playerShip = SHIP.friend;
-    const u = {
-      kind:'battleship',
-      team,
-      x:ship.x,
-      y:ship.y,
-      vx:0,vy:0,
-      alive:true,
-      hitR:70,
-      hp:12000,hpMax:12000,
-      shield:6000,shieldMax:6000,
-      incomingDamage:0,
-      size:{w:140,h:50},
-      ang:(team==='player'?0:Math.PI),
-      turnRate:(12 * Math.PI / 180),
-      maxSpeed:90,
-      accel:45,
-      friction:0.99,
-      mGun:'h_rapid',
-      mCD:0,
-      pd:'pd_laser',
-      pdCD:0,
-      state:'advance',
-      moveAnchor:null,
-      separationRange:220,
-      mass:25.0,
-      radius:70,
-      // broadside
-      broadLeftCD:0,
-      broadRightCD:0,
-      broadsideRange:650,
-      // boosty
-      fwdBoostT:0,
-      fwdBoostCd:0,
-      fwdBoostDur:1.4,
-      fwdBoostCool:10.0,
-      rotBoostT:0,
-      rotBoostCd:0,
-      rotBoostDur:0.9,
-      rotBoostCool:8.0
-    };
-    if(team==='enemy'){
-      const angleToPlayer = Math.atan2(playerShip.y - u.y, playerShip.x - u.x);
-      u.ang = angleToPlayer;
-      const dirToPlayer = norm(playerShip.x - u.x, playerShip.y - u.y);
-      u.moveAnchor = { x: u.x + dirToPlayer.x * 380, y: u.y + dirToPlayer.y * 380 };
-    }
-    u.aiUpdate = dt => aiBattleship(this,u,dt);
-    this.addUnit(u);
-    const squad = this.addSquad({
-      team,
-      units:new Set([u]),
-      x:u.x,y:u.y,
-      iconHitR:26,
-      isCapital:true,
-      type:'battleship',
-      leader:u,
-      moveAnchor:null,
-      attackTargetSquadId:null,
-      totalHp:0,totalMaxHp:0
-    });
-    u.squad=squad;
-    return u;
-  }
-
-  resolveCollisions(){
-    const solids=[];
-    for(const u of this.units){
-      if(u.alive && u.kind!=='fighter') solids.push(u);
-    }
-    for(const w of this.wrecks) solids.push(w);
-
-    for(let i=0;i<solids.length;i++){
-      for(let j=i+1;j<solids.length;j++){
-        const a=solids[i], b=solids[j];
-        const dx=b.x-a.x, dy=b.y-a.y;
-        const d2=dx*dx+dy*dy;
-        const Ra=(a.radius||a.hitR||24)+4;
-        const Rb=(b.radius||b.hitR||24)+4;
-        const minD = Ra+Rb;
-        if(d2>0 && d2<minD*minD){
-          const d=Math.sqrt(d2)||0.001;
-          const nx=dx/d, ny=dy/d;
-          const overlap = (minD - d);
-
-          const aMoving = !!a.moveAnchor;
-          const bMoving = !!b.moveAnchor;
-          let wA,wB;
-          if(aMoving && !bMoving){ wA=0.2; wB=0.8; }
-          else if(bMoving && !aMoving){ wA=0.8; wB=0.2; }
-          else{
-            const ma=a.mass||1, mb=b.mass||1;
-            const tot = ma+mb;
-            wA = mb/tot;
-            wB = ma/tot;
-          }
-
-          a.x -= nx*overlap*wA*0.9;
-          a.y -= ny*overlap*wA*0.9;
-          b.x += nx*overlap*wB*0.9;
-          b.y += ny*overlap*wB*0.9;
-
-          const relVx=b.vx-a.vx;
-          const relVy=b.vy-a.vy;
-          const relAlong = relVx*nx + relVy*ny;
-          if(relAlong<0){
-            const e=0.2;
-            const ma=a.mass||1, mb=b.mass||1;
-            const jVal = -(1+e)*relAlong/(1/ma+1/mb);
-            const ix=jVal*nx, iy=jVal*ny;
-            a.vx -= ix/ma;
-            a.vy -= iy/ma;
-            b.vx += ix/mb;
-            b.vy += iy/mb;
-          }
-        }
-      }
-    }
-  }
-
-  tick(dt){
-    const stepDt = dt*TIME_SCALE;
-    this.time += stepDt;
-
-    for(const u of this.units) u.incomingDamage = 0;
-
-    // fighter centers (do "leashowania")
-    let fxP=0, fyP=0, nFP=0;
-    let fxE=0, fyE=0, nFE=0;
-    for(const u of this.units){
-      if(!u.alive || u.kind!=='fighter') continue;
-      if(u.team==='player'){ fxP+=u.x; fyP+=u.y; nFP++; }
-      else{ fxE+=u.x; fyE+=u.y; nFE++; }
-    }
-    this.fighterCenter.player = {
-      x:nFP?fxP/nFP:WORLD.W*0.25,
-      y:nFP?fyP/nFP:WORLD.H*0.5,
-      count:nFP
-    };
-    this.fighterCenter.enemy = {
-      x:nFE?fxE/nFE:WORLD.W*0.75,
-      y:nFE?fyE/nFE:WORLD.H*0.5,
-      count:nFE
-    };
-
-    const deadSquads=[];
-    for(const s of this.squads){
-      s.units = new Set([...s.units].filter(u=>u.alive));
-      s.totalHp=0;
-      s.totalMaxHp=0;
-      if(s.units.size===0){
-        deadSquads.push(s);
-        continue;
-      }
-      if(s.leader && !s.leader.alive && !s.isCapital){
-        s.leader = s.units.values().next().value;
-        let i=0;
-        for(const u of s.units){
-          if(u===s.leader) u.formationSlot=null;
-          else{
-            u.formationSlot = CHEVRON_FORMATION[i] || CHEVRON_FORMATION[0];
-            i++;
-          }
-        }
-      }
-      let sx=0,sy=0;
-      for(const u of s.units){
-        sx+=u.x; sy+=u.y;
-        s.totalHp += (u.hp+u.shield);
-        s.totalMaxHp += (u.hpMax+u.shieldMax);
-      }
-      s.x = sx/s.units.size;
-      s.y = sy/s.units.size;
-    }
-    deadSquads.forEach(s=>this.squads.delete(s));
-
-    for(const w of this.wrecks){
-      w.x += w.vx*stepDt;
-      w.y += w.vy*stepDt;
-      w.vx *= w.friction;
-      w.vy *= w.friction;
-      w.ang += w.vAng*stepDt;
-      w.life -= stepDt;
-      if(w.life<=0) this.wrecks.delete(w);
-    }
-
-    // incomingDamage z rakiet (bez robienia kopii tablicy)
-    for(const m of this.missiles){
-      if(!m.alive || !m.targetId) continue;
-      for(const u of this.units){
-        if(u.id===m.targetId && u.alive){
-          u.incomingDamage += m.dmg;
-          break;
-        }
-      }
-    }
-
-    for(const u of this.units){
-      if(!u.alive) continue;
-      u.aiUpdate(stepDt);
-    }
-
-    this.resolveCollisions();
-
-    for(const u of this.units){
-      if(!u.alive) continue;
-      u.x += u.vx*stepDt;
-      u.y += u.vy*stepDt;
-      worldClamp(u,(u.kind==='fighter'?8:(u.kind==='frigate'?26:40)));
-    }
-
-    stepProjectiles(this,stepDt);
-    stepMissiles(this,stepDt);
-    stepExplosions(this,stepDt);
-
-    this.units = new Set([...this.units].filter(u=>u.alive));
-    this.projectiles = this.projectiles.filter(p=>p.alive);
-    this.missiles    = this.missiles.filter(m=>m.alive);
-    this.explosions  = this.explosions.filter(e=>e.alive);
-  }
-
-  guardSlotsWorld(team){
-    const ship = team==='player'?SHIP.friend:SHIP.enemy;
-    const slots=[];
-    const dx = team==='player'?1:-1;
-    const baseX = ship.x + dx*120;
-    const baseY = ship.y;
-    const perRow = 4;
-    const colGap = 80;
-    const rowGap = 60;
-    const squads = [...this.squads].filter(s=>s.team===team && !s.isCapital && s.units.size>0)
-      .sort((a,b)=>a.id-b.id);
-    squads.forEach((s,idx)=>{
-      const row = Math.floor(idx/perRow);
-      const col = idx%perRow;
-      slots.push({
-        x: baseX + dx*(col*colGap),
-        y: baseY + (row-1)*rowGap
-      });
-    });
-    return slots;
-  }
+function brainFor(entry) {
+  if (entry.family === 'fighter') return { name: 'runAdvancedFighterAI', fn: (_sim, npc, dt) => runAdvancedFighterAI(npc, dt) };
+  if (entry.id.includes('frigate')) return { name: 'aiFrigate', fn: aiFrigate };
+  if (entry.id === 'destroyer') return { name: 'aiDestroyer', fn: aiDestroyer };
+  if (entry.family === 'support' || entry.family === 'capital') return { name: 'aiBattleship', fn: aiBattleship };
+  return { name: 'brak AI', fn: null };
 }
 
-/* ============================== Combat helpers ============================== */
-function canFireAt(self,target,weapon){
-  if(!target) return false;
-  const dx=target.x-self.x, dy=target.y-self.y;
-  const dist=Math.hypot(dx,dy);
-  if(dist>weapon.range) return false;
-  const vx=self.vx, vy=self.vy;
-  const vmag = Math.hypot(vx,vy)||1;
-  const ux=vx/vmag, uy=vy/vmag;
-  const dot = (dx/dist)*ux + (dy/dist)*uy;
-  return dot>0.4;
+function makeShield(stats) {
+  const max = Math.max(0, finite(stats.shield));
+  return {
+    val: max,
+    max,
+    regenRate: Math.max(0, finite(stats.shieldRegen)),
+    regenDelay: Math.max(0, finite(stats.shieldDelay)),
+    regenTimer: 0,
+    impacts: [],
+    state: max > 0 ? 'active' : 'off'
+  };
 }
-function canFireAtCap(self,target,weapon){
-  if(!target) return false;
-  const dx=target.x-self.x, dy=target.y-self.y;
-  const dist=Math.hypot(dx,dy);
-  if(dist>weapon.range) return false;
-  const ux=Math.cos(self.ang), uy=Math.sin(self.ang);
-  const dot = (dx/dist)*ux + (dy/dist)*uy;
-  return dot>0.7;
+
+function resetAutonomousWeapons(unit) {
+  unit.autoWeapons = undefined;
+  unit._weaponsInit = false;
+  unit._shipScanCaches = undefined;
+  unit.__weaponFacingBias = undefined;
 }
-function isLineOfFireClear(sim,self,target){
-  if(!target) return true;
-  const team=self.team;
-  const dxT = target.x-self.x, dyT=target.y-self.y;
-  const d2T = dxT*dxT + dyT*dyT;
-  if(d2T < (25*25)) return true;
-  const dT = Math.sqrt(d2T)||1;
-  const uxT = dxT/dT, uyT = dyT/dT;
-  const DOT = 0.985;
-  for(const u of sim.units){
-    if(!u.alive || u.team!==team || u===self) continue;
-    const dx=u.x-self.x, dy=u.y-self.y;
-    const d2=dx*dx+dy*dy;
-    if(d2>=d2T || d2<1) continue;
-    const d = Math.sqrt(d2)||1;
-    const ux=dx/d, uy=dy/d;
-    const dot = uxT*ux + uyT*uy;
-    if(dot>DOT) return false;
+
+function mountLoadout(unit, requested = null) {
+  const base = requested || unit.loadout || DEFAULT_LOADOUT[unit.team];
+  unit.loadout = {
+    main: MASTER_WEAPONS[base?.main] ? base.main : DEFAULT_LOADOUT[unit.team].main,
+    aux: MASTER_WEAPONS[base?.aux] ? base.aux : DEFAULT_LOADOUT[unit.team].aux,
+    missile: MASTER_WEAPONS[base?.missile] ? base.missile : DEFAULT_LOADOUT[unit.team].missile
+  };
+
+  unit.weapons = Object.fromEntries(HP_TYPES.map((type) => [type, []]));
+  const list = Array.isArray(unit.editorHardpoints) ? unit.editorHardpoints : [];
+  for (let index = 0; index < list.length; index++) {
+    const hp = list[index];
+    const weaponId = unit.loadout[hp.type];
+    hp.mount = weaponId && MASTER_WEAPONS[weaponId] ? weaponId : null;
+    hp.ammo = null;
+    hp.maxAmmo = null;
+    if (!hp.mount) continue;
+    const weapon = MASTER_WEAPONS[hp.mount];
+    if (weapon.ammo != null) {
+      hp.ammo = weapon.ammo;
+      hp.maxAmmo = weapon.ammo;
+    }
+    unit.weapons[hp.type].push({ hp, weapon });
+  }
+  resetAutonomousWeapons(unit);
+}
+
+function applyCurrentLayout(unit) {
+  if (!unit || unit.dead || unit.fighter) return false;
+  const applied = hardpoints.applyLayoutToNpc(unit);
+  if (applied) mountLoadout(unit, unit.loadout);
+  return applied;
+}
+
+function createUnit(entryId, team, x, y, options = {}) {
+  const entry = CATALOG_BY_ID.get(entryId);
+  if (!entry) throw new Error(`Unknown AI SPACE unit: ${entryId}`);
+  const stats = resolveStats(entry);
+  const hullId = resolveHullId(entry, team);
+  const sprite = hullId ? spriteCache.get(hullId) : null;
+  const renderSize = hullId
+    ? getHullRenderSize(hullId, sprite?.width || 0, sprite?.height || 0)
+    : { w: stats.radius * 2, h: stats.radius * 1.4, radius: stats.radius };
+  const brain = brainFor(entry);
+  const id = `ais_${sim.nextId++}`;
+  const maxHp = Math.max(1, finite(stats.hp, 100));
+  const angle = Number.isFinite(options.angle) ? options.angle : (team === TEAM.BLUE ? 0 : Math.PI);
+
+  const unit = {
+    id,
+    uid: id,
+    name: `${entry.label} ${sim.nextId - 1}`,
+    catalogId: entryId,
+    catalogEntry: entry,
+    type: entry.family === 'fighter' ? (entryId === 'interceptor' ? 'interceptor' : 'fighter') : entryId,
+    shipFrame: hullId,
+    team,
+    friendly: team === TEAM.BLUE,
+    isPirate: team === TEAM.RED,
+    color: TEAM_COLOR[team],
+    mission: true,
+    fighter: entry.family === 'fighter',
+    isCapitalShip: entry.family === 'capital' || entry.id === 'destroyer' || entry.id === 'battleship',
+    staticDummy: entry.data.staticDummy === true,
+    combatDisabled: entry.data.staticDummy === true,
+    disableEditorLayout: entry.data.disableEditorLayout === true,
+    x,
+    y,
+    vx: finite(options.vx),
+    vy: finite(options.vy),
+    pos: { x, y },
+    vel: { x: finite(options.vx), y: finite(options.vy) },
+    angle,
+    desiredAngle: angle,
+    angVel: 0,
+    hp: maxHp,
+    maxHp,
+    shield: makeShield(stats),
+    accel: Math.max(0, finite(stats.accel)),
+    maxSpeed: Math.max(0, finite(stats.maxSpeed)),
+    turn: Math.max(0.01, finite(stats.turn, 1)),
+    turnAccel: Math.max(0.04, finite(stats.turn, 1) * 4),
+    angularFriction: SHIP_PHYSICS.ANGULAR_FRICTION,
+    friction: finite(stats.friction, 1),
+    mass: Math.max(0.1, finite(stats.mass, 1)),
+    rammingMass: Math.max(0.1, finite(stats.rammingMass, stats.mass || 1)),
+    radius: Math.max(4, finite(stats.radius, renderSize.radius)),
+    separationRange: Math.max(20, finite(stats.separationRange, stats.radius * 2)),
+    w: renderSize.w,
+    h: renderSize.h,
+    visual: {},
+    engines: {},
+    sprite,
+    keepAngle: entry.family !== 'fighter',
+    preferredRange: preferredRangeFor(entry),
+    broadsideRange: entry.id === 'battleship' ? 1200 : undefined,
+    weaponRange: entry.family === 'capital' ? finite(entry.data.weaponRange) : undefined,
+    boostDur: entry.id === 'destroyer' ? 1.8 : undefined,
+    capitalProfile: entry.family === 'capital' ? { ...(entry.data.profile || {}) } : {
+      lengthScale: Math.max(2, renderSize.w / Math.max(1, stats.radius)),
+      widthScale: Math.max(1.2, renderSize.h / Math.max(1, stats.radius)),
+      spriteRotation: 0
+    },
+    brainName: brain.name,
+    brainFn: brain.fn,
+    aiEnabled: brain.fn != null && !entry.data.staticDummy,
+    dead: false,
+    state: entry.family === 'fighter' ? 'engage_formation' : 'combat',
+    target: null,
+    forceTarget: null,
+    hitFlash: 0,
+    trail: [],
+    trailTimer: Math.random() * 0.1,
+    loadout: { ...DEFAULT_LOADOUT[team] },
+    baseStats: {
+      maxSpeed: Math.max(0, finite(stats.maxSpeed)),
+      accel: Math.max(0, finite(stats.accel)),
+      turn: Math.max(0.01, finite(stats.turn, 1)),
+      preferredRange: preferredRangeFor(entry)
+    }
+  };
+
+  unit.inertia = (1 / 12) * unit.mass * ((unit.w * unit.w) + (unit.h * unit.h));
+  if (sprite?.ready) {
+    unit.__hardpointScaleX = unit.w / sprite.width;
+    unit.__hardpointScaleY = unit.h / sprite.height;
+    unit.__hardpointScale = (unit.__hardpointScaleX + unit.__hardpointScaleY) * 0.5;
+  } else {
+    unit.__hardpointScaleX = 1;
+    unit.__hardpointScaleY = 1;
+    unit.__hardpointScale = 1;
+  }
+
+  if (unit.fighter) {
+    const fighterDef = entry.data;
+    unit.squadronId = fighterDef.id;
+    unit.squadronName = fighterDef.name;
+    unit.gun = fighterDef.weaponId;
+    unit.msl = fighterDef.missileId;
+    unit.mslAmmo = fighterDef.missileAmmo;
+    unit.gunCD = 0;
+    unit.mslCD = 0;
+  } else {
+    applyCurrentLayout(unit);
+  }
+
+  unit.ai = (dt) => {
+    if (!unit.aiEnabled || !unit.brainFn || unit.dead) return;
+    unit.brainFn(sim, unit, dt);
+  };
+
+  syncNpcFlightState(unit);
+  return unit;
+}
+
+function spawnUnit(entryId, team, x, y, options = {}) {
+  const unit = createUnit(entryId, team, x, y, options);
+  sim.units.push(unit);
+  return unit;
+}
+
+function spawnFighterGroup(entryId, team, count, x, y, facing) {
+  const units = [];
+  const columns = Math.max(1, Math.ceil(Math.sqrt(count)));
+  for (let index = 0; index < count; index++) {
+    const row = Math.floor(index / columns);
+    const col = index % columns;
+    const px = x + (team === TEAM.BLUE ? -row * 80 : row * 80);
+    const py = y + (col - (columns - 1) * 0.5) * 72;
+    units.push(spawnUnit(entryId, team, px, py, { angle: facing }));
+  }
+  const leader = units[0] || null;
+  if (leader) {
+    for (let index = 0; index < units.length; index++) {
+      const row = Math.floor(index / 2) + 1;
+      const side = index % 2 === 0 ? 1 : -1;
+      units[index].squad = { leader };
+      units[index].formationOffset = index === 0 ? { x: 0, y: 0 } : { x: -row * 70, y: side * row * 48 };
+    }
+  }
+  return units;
+}
+
+function hardpointWorld(owner, hp) {
+  if (!owner || !hp) return null;
+  const scaleX = finite(owner.__hardpointScaleX, finite(owner.__hardpointScale, 1));
+  const scaleY = finite(owner.__hardpointScaleY, finite(owner.__hardpointScale, 1));
+  const lx = finite(hp.x ?? hp.pos?.x) * scaleX;
+  const ly = finite(hp.y ?? hp.pos?.y) * scaleY;
+  const angle = finite(owner.angle) + finite(owner.capitalProfile?.spriteRotation);
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  return { x: owner.x + lx * cos - ly * sin, y: owner.y + lx * sin + ly * cos };
+}
+
+function getUnitKind(entity) {
+  if (!entity) return 'other';
+  if (entity.__projectile) return entity.type === 'rocket' || entity.type === 'torpedo' ? 'rocket' : 'projectile';
+  if (entity.fighter || entity.type === 'fighter' || entity.type === 'interceptor') return 'fighter';
+  if (String(entity.type || '').includes('frigate')) return 'frigate';
+  if (entity.type === 'destroyer') return 'destroyer';
+  if (entity.type === 'battleship' || entity.isCapitalShip) return 'battleship';
+  return 'other';
+}
+
+function isCombatActive(unit) {
+  return !!(unit?.forceTarget || unit?.target || unit?.state === 'engage_formation' || unit?.state === 'dogfight3D' || unit?.state === 'bombing');
+}
+
+function applySeparationForces(unit, ax = 0, ay = 0) {
+  const cached = unit.__sandboxSeparation || (unit.__sandboxSeparation = { x: 0, y: 0, out: { ax: 0, ay: 0 }, frame: -1 });
+  if (cached.frame === sim.frameId) {
+    cached.out.ax = cached.x + ax;
+    cached.out.ay = cached.y + ay;
+    return cached.out;
+  }
+
+  const myRadius = unit.radius || 20;
+  const myMass = Math.max(1, unit.mass || 1);
+  const myFighter = !!unit.fighter;
+  const myCapital = !!unit.isCapitalShip || !myFighter;
+  const myGain = myMass <= 2 ? 1 / myMass : 1 / Math.pow(myMass, 0.25);
+  const query = queryAIGrid(unit.x, unit.y, myCapital ? 900 : 450);
+  let sumX = 0;
+  let sumY = 0;
+
+  for (let index = 0; index < query.count; index++) {
+    const other = query.buffer[index];
+    if (!other || other === unit || other.dead) continue;
+    const dx = unit.x - other.x;
+    const dy = unit.y - other.y;
+    const distSq = dx * dx + dy * dy;
+    const otherRadius = other.radius || 20;
+    const enemy = isEnemyUnit(unit, other);
+    const otherFighter = !!other.fighter;
+    const bigPair = myCapital || !!other.isCapitalShip || !otherFighter;
+    let safe = myRadius + otherRadius;
+    let strength;
+
+    if (enemy && myFighter && otherFighter) {
+      safe += 10;
+      strength = 6;
+    } else if (!enemy && myFighter && otherFighter) {
+      safe += isCombatActive(unit) ? 22 : 46;
+      strength = isCombatActive(unit) ? 8 : 12;
+    } else {
+      safe += Math.max(70, (myRadius + otherRadius) * 0.6);
+      strength = enemy ? 13 : 12;
+    }
+
+    const dist = Math.sqrt(distSq) || 1;
+    let overlap = safe - dist;
+    if (bigPair && overlap <= 0 && dist < safe + 420) {
+      const relVx = finite(unit.vx) - finite(other.vx);
+      const relVy = finite(unit.vy) - finite(other.vy);
+      const closing = -(relVx * dx + relVy * dy) / dist;
+      if (closing > 40) overlap = (safe - (dist - Math.min(420, closing * 0.85))) * 0.6;
+    }
+    if (overlap <= 0) continue;
+    const force = overlap * strength * myGain;
+    sumX += dx / dist * force;
+    sumY += dy / dist * force;
+  }
+
+  const limit = myFighter ? (isCombatActive(unit) ? 180 : 240) : 560;
+  const length = Math.hypot(sumX, sumY);
+  if (length > limit && length > 1e-6) {
+    const scale = limit / length;
+    sumX *= scale;
+    sumY *= scale;
+  }
+  cached.x = sumX;
+  cached.y = sumY;
+  cached.frame = sim.frameId;
+  cached.out.ax = sumX + ax;
+  cached.out.ay = sumY + ay;
+  return cached.out;
+}
+
+function segmentPointDistanceSq(x1, y1, x2, y2, px, py) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const lengthSq = dx * dx + dy * dy;
+  const t = lengthSq > 1e-8 ? clamp(((px - x1) * dx + (py - y1) * dy) / lengthSq, 0, 1) : 0;
+  const qx = x1 + dx * t;
+  const qy = y1 + dy * t;
+  const ox = px - qx;
+  const oy = py - qy;
+  return ox * ox + oy * oy;
+}
+
+function isLineOfFireBlocked(owner, target, range) {
+  if (!owner || !target) return false;
+  const tx = entityX(target);
+  const ty = entityY(target);
+  const dist = Math.hypot(tx - owner.x, ty - owner.y);
+  if (dist > finite(range, Infinity)) return true;
+  for (let index = 0; index < sim.units.length; index++) {
+    const blocker = sim.units[index];
+    if (!blocker || blocker.dead || blocker === owner || blocker === target) continue;
+    if (isEnemyUnit(owner, blocker)) continue;
+    const radius = Math.max(6, blocker.radius || 10) * 0.72;
+    if (segmentPointDistanceSq(owner.x, owner.y, tx, ty, blocker.x, blocker.y) < radius * radius) return true;
+  }
+  return false;
+}
+
+function projectileRadius(definition) {
+  if (definition.bulletRadius) return definition.bulletRadius;
+  if (definition.category === 'rocket' || definition.category === 'torpedo') return definition.size === 'Capital' ? 12 : 7;
+  if (definition.category === 'rail') return 4;
+  return 3;
+}
+
+function addEffect(effect) {
+  effect.maxLife = finite(effect.life, 0.25);
+  sim.effects.push(effect);
+}
+
+function damageTarget(target, amount, source, weapon) {
+  if (!target || target.dead || amount <= 0) return false;
+  if (target.__projectile) {
+    target.dead = true;
+    if (source?.team && sim.stats[source.team]) sim.stats[source.team].hits++;
+    addEffect({ type: 'burst', x: target.x, y: target.y, life: 0.18, radius: 24, color: '#ffd58a' });
+    return true;
+  }
+  if (!source || source.team === target.team) return false;
+
+  const stats = sim.stats[source.team];
+  let damage = Math.max(0, finite(amount));
+  const dealtBefore = damage;
+  if (target.shield?.val > 0) {
+    const absorbed = Math.min(target.shield.val, damage);
+    target.shield.val -= absorbed;
+    damage -= absorbed;
+    target.shield.regenTimer = target.shield.regenDelay;
+  }
+  if (damage > 0) target.hp = Math.max(0, target.hp - damage);
+  target.hitFlash = 0.12;
+  if (stats) {
+    stats.hits++;
+    stats.damage += Math.min(dealtBefore, (target.shield?.val || 0) + target.hp + dealtBefore);
+  }
+
+  if (target.hp <= 0 && !target.dead) {
+    target.dead = true;
+    target.deadAt = sim.time;
+    target.vx *= 0.25;
+    target.vy *= 0.25;
+    if (stats) stats.kills++;
+    addEffect({ type: 'explosion', x: target.x, y: target.y, life: 0.8, radius: Math.max(60, target.radius * 2.1), color: source.color });
+    logEvent(`${source.name} zniszczył ${target.name} · ${weapon?.name || 'trafienie'}`, 'kill');
+    selection.delete(target);
+    if (primarySelection === target) setPrimarySelection(selection.values().next().value || null);
   }
   return true;
 }
 
-function damageUnit(sim,u,dmg){
-  if(!u.alive) return;
-  if(u.shield>0){
-    const used = Math.min(u.shield,dmg);
-    u.shield-=used;
-    dmg-=used;
-  }
-  if(dmg>0){
-    u.hp-=dmg;
-    if(u.hp<=0){
-      u.alive=false;
-      sim.spawnWreck(u);
+function detonateProjectile(projectile, x, y) {
+  const def = projectile.weapon;
+  const radius = Math.max(0, finite(def.explosionRadius ?? def.explodeRadius ?? def.flakBurstRadius));
+  if (radius <= 0) {
+    if (projectile.target && !projectile.target.dead) damageTarget(projectile.target, def.baseDamage || 0, projectile.source, def);
+  } else {
+    for (let index = 0; index < sim.units.length; index++) {
+      const target = sim.units[index];
+      if (!target || target.dead || target.team === projectile.team) continue;
+      const dist = Math.hypot(target.x - x, target.y - y);
+      if (dist > radius + (target.radius || 0)) continue;
+      const edge = clamp(dist / Math.max(1, radius), 0, 1);
+      let scale = 1 - edge * 0.65;
+      if (def.category === 'flak' && !target.fighter) scale *= finite(def.flakHullFactor, 0.12);
+      damageTarget(target, finite(def.baseDamage) * scale, projectile.source, def);
+    }
+    if (def.category === 'flak') {
+      for (let index = 0; index < sim.projectiles.length; index++) {
+        const other = sim.projectiles[index];
+        if (!other || other.dead || other.team === projectile.team || (other.type !== 'rocket' && other.type !== 'torpedo')) continue;
+        if (Math.hypot(other.x - x, other.y - y) <= radius) other.dead = true;
+      }
     }
   }
-}
-
-/* ============================== Projectiles / Missiles ====================== */
-function spawnBullet(sim,from,to,weapon){
-  const ang=Math.atan2(to.y-from.y,to.x-from.x);
-  const spread=(weapon.spread||0)*(Math.PI/180);
-  const a=ang + (Math.random()*2-1)*spread;
-  const speed=weapon.speed;
-  sim.projectiles.push({
-    type:'bullet',
-    team:from.team,
-    x:from.x,
-    y:from.y,
-    vx:Math.cos(a)*speed,
-    vy:Math.sin(a)*speed,
-    dmg:weapon.dmg,
-    life:weapon.range/speed,
-    alive:true,
-    color:weapon.color||'#ffd36e',
-    isBeam:false
+  addEffect({
+    type: def.category === 'flak' ? 'flak' : 'explosion',
+    x, y, life: def.category === 'flak' ? 0.34 : 0.55,
+    radius: Math.max(28, radius || 34), color: def.vfxColor || '#ffb36b'
   });
-}
-function spawnFlakShell(sim,from,target,fdef){
-  const aim = target? leadAim(from,target,fdef.speed):{x:from.x+1,y:from.y};
-  const ang=Math.atan2(aim.y-from.y,aim.x-from.x);
-  sim.projectiles.push({
-    type:'flak',
-    team:from.team,
-    x:from.x,y:from.y,
-    vx:Math.cos(ang)*fdef.speed,
-    vy:Math.sin(ang)*fdef.speed,
-    dmg:fdef.dmg,
-    radius:fdef.radius,
-    life:fdef.range/fdef.speed,
-    alive:true,
-    color:fdef.color
-  });
-}
-function spawnExplosion(sim,x,y,radius,dmg,team,color){
-  sim.explosions.push({x,y,radius,t:0,life:0.18,dmg,team,color,alive:true,_did:false});
+  projectile.dead = true;
 }
 
-function stepExplosions(sim,dt){
-  for(const e of sim.explosions){
-    if(!e.alive) continue;
-    e.t += dt;
-    if(e.t>=e.life){ e.alive=false; continue; }
-    if(!e._did){
-      for(const u of sim.units){
-        if(!u.alive || u.team===e.team) continue;
-        const dist=Math.hypot(u.x-e.x,u.y-e.y);
-        if(dist<=e.radius){
-          const fall = 1 - dist/e.radius;
-          damageUnit(sim,u,e.dmg*(0.4+0.6*fall));
-        }
-      }
-      e._did=true;
-    }
+function spawnBulletAdapter(owner, target, weaponDef, options = {}) {
+  if (!owner || !target || !weaponDef || owner.dead || target.dead) return;
+  const exactOrigin = options.hp ? hardpointWorld(owner, options.hp) : null;
+  const fallbackOrigin = hardpoints.resolveOwnerHardpointOrigin(owner, weaponDef, options);
+  const origin = exactOrigin || fallbackOrigin || { x: owner.x, y: owner.y };
+  const speed = weaponDef.baseSpeed;
+  const finiteSpeed = Number.isFinite(speed) ? Math.max(1, speed) : Infinity;
+  const lead = finiteSpeed < Infinity
+    ? getLeadAim(origin, target, finiteSpeed, { x: 0, y: 0 })
+    : { x: entityX(target), y: entityY(target) };
+  const targetAngle = Math.atan2(lead.y - origin.y, lead.x - origin.x);
+  const firingAngle = Number.isFinite(options.angleOverride) ? options.angleOverride : targetAngle;
+  const spread = Math.max(0, finite(weaponDef.spread));
+  const teamStats = sim.stats[owner.team];
+  const burstCount = Math.max(1, Math.min(8, Math.round(finite(weaponDef.burstCount, 1))));
+
+  if (!Number.isFinite(speed) || weaponDef.category === 'beam') {
+    if (teamStats) teamStats.shots++;
+    damageTarget(target, finite(weaponDef.baseDamage), owner, weaponDef);
+    addEffect({
+      type: 'beam', x: origin.x, y: origin.y, x2: entityX(target), y2: entityY(target),
+      life: Math.max(0.06, finite(weaponDef.duration, 0.1)), radius: 2, color: weaponDef.vfxColor || '#7ffff0'
+    });
+    return;
+  }
+
+  for (let index = 0; index < burstCount; index++) {
+    const fan = burstCount > 1 ? (index - (burstCount - 1) * 0.5) * Math.max(0.012, spread * 0.8) : 0;
+    const angle = firingAngle + fan + (Math.random() - 0.5) * spread;
+    const category = String(options.type || weaponDef.category || 'bullet').toLowerCase();
+    const life = Math.max(0.2, finite(weaponDef.baseRange, 1000) / finiteSpeed);
+    sim.projectiles.push({
+      __projectile: true,
+      id: `shot_${sim.nextId++}`,
+      x: origin.x,
+      y: origin.y,
+      prevX: origin.x,
+      prevY: origin.y,
+      vx: Math.cos(angle) * finiteSpeed + finite(owner.vx),
+      vy: Math.sin(angle) * finiteSpeed + finite(owner.vy),
+      angle,
+      speed: finiteSpeed,
+      life,
+      maxLife: life,
+      radius: projectileRadius(weaponDef),
+      type: category,
+      owner: TEAM_PROJECTILE_OWNER[owner.team],
+      team: owner.team,
+      source: owner,
+      target,
+      weapon: weaponDef,
+      color: weaponDef.vfxColor || owner.color,
+      dead: false
+    });
+    if (teamStats) teamStats.shots++;
   }
 }
 
-function stepProjectiles(sim,dt){
-  for(const p of sim.projectiles){
-    if(!p.alive) continue;
-    p.life -= dt;
-    if(p.life<=0){
-      if(p.type==='flak'){
-        spawnExplosion(sim,p.x,p.y,p.radius,p.dmg,p.team,p.color);
-      }
-      p.alive=false;
-      continue;
-    }
-    p.x += p.vx*dt;
-    p.y += p.vy*dt;
+function updateProjectiles(dt) {
+  for (let index = 0; index < sim.projectiles.length; index++) {
+    const projectile = sim.projectiles[index];
+    if (!projectile || projectile.dead) continue;
+    projectile.life -= dt;
+    projectile.prevX = projectile.x;
+    projectile.prevY = projectile.y;
 
-    if(p.type==='bullet'){
-      if(p.isBeam) continue;
-      let hit=null, best=1e9;
-      for(const u of sim.units){
-        if(!u.alive || u.team===p.team) continue;
-        const d2v = dist2(p,u);
-        if(d2v < (u.hitR*u.hitR + 16) && d2v<best){
-          best=d2v; hit=u;
-        }
-      }
-      if(hit){
-        p.alive=false;
-        damageUnit(sim,hit,p.dmg);
-      }
-    }else if(p.type==='flak'){
-      for(const u of sim.units){
-        if(!u.alive || u.team===p.team) continue;
-        const d2v = dist2(p,u);
-        if(d2v < 100){
-          p.alive=false;
-          spawnExplosion(sim,p.x,p.y,p.radius,p.dmg,p.team,p.color);
-          break;
-        }
+    const homing = projectile.type === 'rocket' || projectile.type === 'torpedo';
+    if (homing && projectile.target && !projectile.target.dead) {
+      const targetAngle = Math.atan2(entityY(projectile.target) - projectile.y, entityX(projectile.target) - projectile.x);
+      const turnRate = Math.max(0.15, finite(projectile.weapon.turnRate, 180) * Math.PI / 180);
+      const delta = clamp(wrapAngle(targetAngle - projectile.angle), -turnRate * dt, turnRate * dt);
+      projectile.angle = wrapAngle(projectile.angle + delta);
+      projectile.vx = Math.cos(projectile.angle) * projectile.speed;
+      projectile.vy = Math.sin(projectile.angle) * projectile.speed;
+    }
+
+    projectile.x += projectile.vx * dt;
+    projectile.y += projectile.vy * dt;
+
+    if (projectile.target?.__projectile && !projectile.target.dead) {
+      const hitRadius = projectile.radius + (projectile.target.radius || 5);
+      if (segmentPointDistanceSq(projectile.prevX, projectile.prevY, projectile.x, projectile.y, projectile.target.x, projectile.target.y) <= hitRadius * hitRadius) {
+        damageTarget(projectile.target, finite(projectile.weapon.baseDamage), projectile.source, projectile.weapon);
+        projectile.dead = true;
+        continue;
       }
     }
-  }
-}
 
-function spawnMissile(sim,from,target,mdef){
-  const m = {
-    team:from.team,
-    x:from.x,
-    y:from.y,
-    vx:from.vx,
-    vy:from.vy,
-    life:mdef.life,
-    speed:mdef.speed,
-    turn:mdef.turn,
-    dmg:mdef.dmg,
-    seek:mdef.seek,
-    alive:true,
-    targetId:target?.id||null,
-    color:mdef.color,
-    hitR:8
-  };
-  const scatter=25;
-  m.x += (Math.random()-0.5)*scatter;
-  m.y += (Math.random()-0.5)*scatter;
-  m.vx+= (Math.random()-0.5)*50;
-  m.vy+= (Math.random()-0.5)*50;
-  sim.missiles.push(m);
-  if(mdef.swarm){
-    for(let i=0;i<mdef.swarm-1;i++){
-      const mm = {...m};
-      const angle=(Math.random()*2-1)*(mdef.spread||14)*(Math.PI/180);
-      const c=Math.cos(angle), s=Math.sin(angle);
-      const nvx=mm.vx*c - mm.vy*s;
-      const nvy=mm.vx*s + mm.vy*c;
-      mm.vx=nvx; mm.vy=nvy;
-      sim.missiles.push(mm);
-    }
-  }
-}
-function pickMissileTarget(sim,team,seek){
-  let cand=null,best=1e9;
-  const wantShip = (seek==='ship');
-  for(const u of sim.units){
-    if(!u.alive || u.team===team) continue;
-    const isShip = (u.kind!=='fighter');
-    if(wantShip && !isShip) continue;
-    if(seek==='fighter' && u.kind!=='fighter') continue;
-    const d2v = u.x*u.x + u.y*u.y;
-    if(d2v<best){ best=d2v; cand=u; }
-  }
-  if(!cand){
-    for(const u of sim.units){
-      if(u.alive && u.team!==team){ cand=u; break; }
-    }
-  }
-  return cand;
-}
-function stepMissiles(sim,dt){
-  for(const m of sim.missiles){
-    if(!m.alive) continue;
-    m.life -= dt;
-    if(m.life<=0){ m.alive=false; continue; }
-    let tgt=null;
-    if(m.targetId){
-      for(const u of sim.units){
-        if(u.id===m.targetId && u.alive){ tgt=u; break; }
+    if (projectile.weapon.category === 'flak') {
+      const fuse = Math.max(12, finite(projectile.weapon.flakFuseRadius, 34));
+      const targetDistance = projectile.target && !projectile.target.dead
+        ? Math.hypot(entityX(projectile.target) - projectile.x, entityY(projectile.target) - projectile.y)
+        : Infinity;
+      if (targetDistance <= fuse || projectile.life <= 0) {
+        detonateProjectile(projectile, projectile.x, projectile.y);
+        continue;
       }
     }
-    if(!tgt){
-      tgt = pickMissileTarget(sim,m.team,m.seek);
-      m.targetId = tgt?.id||null;
-    }
-    if(tgt){
-      const dx=tgt.x-m.x, dy=tgt.y-m.y;
-      const turned = clampTurn(m.vx,m.vy,dx,dy,dt,m.turn);
-      const v = Math.hypot(turned.vx,turned.vy)||1;
-      m.vx = (turned.vx/v)*m.speed;
-      m.vy = (turned.vy/v)*m.speed;
-    }
-    m.x += m.vx*dt;
-    m.y += m.vy*dt;
-    for(const u of sim.units){
-      if(!u.alive || u.team===m.team) continue;
-      const d2v = dist2(m,u);
-      if(d2v < (u.hitR*u.hitR+36)){
-        m.alive=false;
-        damageUnit(sim,u,m.dmg);
-        break;
+
+    let hit = null;
+    let bestDistanceSq = Infinity;
+    for (let unitIndex = 0; unitIndex < sim.units.length; unitIndex++) {
+      const target = sim.units[unitIndex];
+      if (!target || target.dead || target.team === projectile.team) continue;
+      const hitRadius = (target.radius || 8) + projectile.radius;
+      const distanceSq = segmentPointDistanceSq(projectile.prevX, projectile.prevY, projectile.x, projectile.y, target.x, target.y);
+      if (distanceSq <= hitRadius * hitRadius && distanceSq < bestDistanceSq) {
+        hit = target;
+        bestDistanceSq = distanceSq;
       }
     }
-  }
-}
-function getNearestMissile(sim,self,range){
-  let bestM=null, bestD2=range*range;
-  for(const m of sim.missiles){
-    if(!m.alive || m.team===self.team) continue;
-    const d2v = dist2(self,m);
-    if(d2v<bestD2){ bestD2=d2v; bestM=m; }
-  }
-  return bestM;
-}
 
-/* ============================== Target selection ============================ */
-// uproszczony, O(N^2) – bez lokalnej gęstości w środku pętli
-function pickBestTarget(sim,self,designatedTarget){
-  if(designatedTarget && designatedTarget.alive) return designatedTarget;
-
-  let bestTarget=null;
-  let bestScore=-Infinity;
-
-  for(const u of sim.units){
-    if(!u.alive || u.team===self.team) continue;
-    const effHP = (u.hp+u.shield);
-    if(effHP<=0) continue;
-
-    let score=0;
-    const d2v = dist2(self,u); 
-    
-    // 1. Kara za odległość
-    score -= d2v * 0.0008;
-
-    // 2. Priorytetyzacja (ZABEZPIECZONA)
-    if(self.kind==='fighter'){
-      
-      if(u.kind==='fighter') {
-          // FIX: STREFA REAGOWANIA
-          // Tylko jeśli wrogi myśliwiec jest w zasięgu ~2500px (2500^2 = 6250000)
-          // to dostaje ultra-priorytet. Jeśli jest dalej, olewamy go na rzecz bliższych celów.
-          if(d2v < 6250000){
-             score += 40000; 
-          } else {
-             score += 1000; // Mały priorytet, jak jest daleko
-          }
+    if (hit) {
+      if (homing || finite(projectile.weapon.explosionRadius ?? projectile.weapon.explodeRadius) > 0) {
+        projectile.target = hit;
+        detonateProjectile(projectile, projectile.x, projectile.y);
       } else {
-          // Capital ships (bazowo mało, ale bliskość podbije wynik niżej)
-          score += 1000; 
+        damageTarget(hit, finite(projectile.weapon.baseDamage), projectile.source, projectile.weapon);
+        addEffect({ type: 'hit', x: projectile.x, y: projectile.y, life: 0.16, radius: 18, color: projectile.color });
+        projectile.dead = true;
       }
-      
+    } else if (projectile.life <= 0) {
+      if (homing && finite(projectile.weapon.explosionRadius) > 0) detonateProjectile(projectile, projectile.x, projectile.y);
+      else projectile.dead = true;
+    }
+  }
+
+  let write = 0;
+  for (let read = 0; read < sim.projectiles.length; read++) {
+    const projectile = sim.projectiles[read];
+    if (projectile && !projectile.dead) sim.projectiles[write++] = projectile;
+  }
+  sim.projectiles.length = write;
+}
+
+function updateEffects(dt) {
+  let write = 0;
+  for (let index = 0; index < sim.effects.length; index++) {
+    const effect = sim.effects[index];
+    effect.life -= dt;
+    if (effect.life > 0) sim.effects[write++] = effect;
+  }
+  sim.effects.length = write;
+}
+
+function queueHangarLaunch(carrier, hp, index) {
+  const origin = hardpointWorld(carrier, hp) || { x: carrier.x, y: carrier.y };
+  const side = index % 2 === 0 ? 1 : -1;
+  sim.pendingSpawns.push({
+    entryId: 'multirole',
+    team: carrier.team,
+    x: origin.x + Math.cos(carrier.angle + side * Math.PI / 2) * 25,
+    y: origin.y + Math.sin(carrier.angle + side * Math.PI / 2) * 25,
+    angle: carrier.angle,
+    carrier,
+    slot: index
+  });
+}
+
+function updateNpcHangars(unit, dt) {
+  if (!ui.hangarLaunches.checked || !unit || unit.dead || unit.fighter || unit.combatDisabled) return;
+  const tubes = (unit.editorHardpoints || []).filter((hp) => hp && hp.type === 'hangar' && !hp.destroyed);
+  if (!tubes.length) return;
+  const enemy = aiPickBestTarget(unit, 9000);
+  if (!enemy) return;
+  unit.__hangarFighters = (unit.__hangarFighters || []).filter((fighter) => fighter && !fighter.dead);
+  const capacity = Math.min(tubes.length, 5) * 4;
+  if (unit.__hangarFighters.length >= capacity) return;
+  unit.__hangarCd = Math.max(0, finite(unit.__hangarCd) - dt);
+  if (unit.__hangarCd > 0) return;
+  const count = Math.min(4, capacity - unit.__hangarFighters.length);
+  for (let index = 0; index < count; index++) queueHangarLaunch(unit, tubes[index % tubes.length], unit.__hangarFighters.length + index);
+  unit.__hangarCd = 4.5 + Math.random() * 2.5;
+}
+
+function flushPendingSpawns() {
+  if (!sim.pendingSpawns.length) return;
+  for (let index = 0; index < sim.pendingSpawns.length; index++) {
+    const request = sim.pendingSpawns[index];
+    if (!request.carrier || request.carrier.dead) continue;
+    const fighter = spawnUnit(request.entryId, request.team, request.x, request.y, { angle: request.angle });
+    fighter.vx = request.carrier.vx;
+    fighter.vy = request.carrier.vy;
+    fighter.vel.x = fighter.vx;
+    fighter.vel.y = fighter.vy;
+    fighter.squad = { leader: request.carrier };
+    fighter.__carrierParent = request.carrier;
+    const side = request.slot % 2 === 0 ? 1 : -1;
+    const row = Math.floor(request.slot / 2) + 1;
+    fighter.formationOffset = { x: -row * 70, y: side * row * 48 };
+    request.carrier.__hangarFighters.push(fighter);
+  }
+  sim.pendingSpawns.length = 0;
+}
+
+function npcRotationStep(unit, dt) {
+  let desired = Number.isFinite(unit.desiredAngle) ? unit.desiredAngle : NaN;
+  if (!Number.isFinite(desired) && !unit.keepAngle && unit.vx * unit.vx + unit.vy * unit.vy > 25) {
+    desired = Math.atan2(unit.vy, unit.vx);
+    unit.desiredAngle = desired;
+  }
+  const frameNorm = dt / FIXED_DT;
+  const friction = clamp(finite(unit.angularFriction, SHIP_PHYSICS.ANGULAR_FRICTION), 0, 1);
+  if (!Number.isFinite(desired)) {
+    unit.angVel = finite(unit.angVel) * Math.pow(friction, frameNorm);
+    unit.angle = wrapAngle(unit.angle + unit.angVel * dt);
+    return;
+  }
+  const maxTurn = Math.max(0.01, finite(unit.turn, 1));
+  const desiredSpin = clamp(wrapAngle(desired - unit.angle) * finite(unit.turnKp, 5.5), -maxTurn, maxTurn);
+  const maxDelta = Math.max(0, finite(unit.turnAccel, maxTurn * 4)) * dt;
+  unit.angVel = finite(unit.angVel) + clamp(desiredSpin - finite(unit.angVel), -maxDelta, maxDelta);
+  unit.angVel *= Math.pow(friction, frameNorm);
+  unit.angVel = clamp(unit.angVel, -maxTurn, maxTurn);
+  unit.angle = wrapAngle(unit.angle + unit.angVel * dt);
+}
+
+function updateShield(unit, dt) {
+  if (!unit.shield || unit.shield.max <= 0) return;
+  if (unit.shield.regenTimer > 0) unit.shield.regenTimer = Math.max(0, unit.shield.regenTimer - dt);
+  else if (unit.shield.val < unit.shield.max) unit.shield.val = Math.min(unit.shield.max, unit.shield.val + unit.shield.regenRate * dt);
+}
+
+function updateTrail(unit, dt) {
+  if (!ui.showTrails.checked) {
+    if (unit.trail.length) unit.trail.length = 0;
+    return;
+  }
+  unit.trailTimer -= dt;
+  if (unit.trailTimer > 0) return;
+  unit.trailTimer = unit.fighter ? 0.08 : 0.14;
+  unit.trail.push({ x: unit.x, y: unit.y });
+  if (unit.trail.length > 42) unit.trail.shift();
+}
+
+function applyBodyCollisions() {
+  if (!ui.bodyCollisions.checked) return;
+  const units = sim.units;
+  for (let leftIndex = 0; leftIndex < units.length; leftIndex++) {
+    const left = units[leftIndex];
+    if (!left || left.dead || left.isCollidable === false) continue;
+    for (let rightIndex = leftIndex + 1; rightIndex < units.length; rightIndex++) {
+      const right = units[rightIndex];
+      if (!right || right.dead || right.isCollidable === false) continue;
+      const dx = right.x - left.x;
+      const dy = right.y - left.y;
+      const minDistance = (left.radius || 10) + (right.radius || 10);
+      const distSq = dx * dx + dy * dy;
+      if (distSq >= minDistance * minDistance) continue;
+      const distance = Math.sqrt(distSq) || 0.001;
+      const nx = dx / distance;
+      const ny = dy / distance;
+      const invMassLeft = 1 / Math.max(0.1, left.mass || 1);
+      const invMassRight = 1 / Math.max(0.1, right.mass || 1);
+      const invMassSum = invMassLeft + invMassRight;
+      const overlap = minDistance - distance;
+      const correction = overlap / invMassSum * 0.72;
+      left.x -= nx * correction * invMassLeft;
+      left.y -= ny * correction * invMassLeft;
+      right.x += nx * correction * invMassRight;
+      right.y += ny * correction * invMassRight;
+
+      const relNormal = (right.vx - left.vx) * nx + (right.vy - left.vy) * ny;
+      if (relNormal < 0) {
+        const impulse = -(1.08 * relNormal) / invMassSum;
+        left.vx -= impulse * nx * invMassLeft;
+        left.vy -= impulse * ny * invMassLeft;
+        right.vx += impulse * nx * invMassRight;
+        right.vy += impulse * ny * invMassRight;
+      }
+      left.pos.x = left.x;
+      left.pos.y = left.y;
+      right.pos.x = right.x;
+      right.pos.y = right.y;
+    }
+  }
+}
+
+function refreshLayoutsIfNeeded(dt) {
+  if (!hardpoints.pollCache(dt)) return;
+  for (let index = 0; index < sim.units.length; index++) applyCurrentLayout(sim.units[index]);
+  logEvent(`Zaktualizowano layouty hardpointów · wersja ${hardpoints.version}`, 'info');
+}
+
+function cleanupDeadUnits() {
+  for (let index = sim.units.length - 1; index >= 0; index--) {
+    const unit = sim.units[index];
+    if (!unit.dead || sim.time - finite(unit.deadAt, sim.time) < 4) continue;
+    selection.delete(unit);
+    sim.units.splice(index, 1);
+  }
+  if (primarySelection?.dead && !sim.units.includes(primarySelection)) setPrimarySelection(selection.values().next().value || null);
+}
+
+function simulationStep(dt) {
+  sim.time += dt;
+  sim.frameId++;
+  window.__frameId = sim.frameId;
+  refreshLayoutsIfNeeded(dt);
+  rebuildAIGrid(sim.units, false);
+  updateFleetCoordinator(sim.units, null, dt);
+  window.__aiWeaponScanMs = 0;
+  window.__aiTargetPickMs = 0;
+  const aiStarted = performance.now();
+
+  const countAtStart = sim.units.length;
+  for (let index = 0; index < countAtStart; index++) {
+    const unit = sim.units[index];
+    if (!unit || unit.dead) continue;
+    updateShield(unit, dt);
+    unit.hitFlash = Math.max(0, finite(unit.hitFlash) - dt);
+    unit.__npcFlightIntegrated = false;
+    if (unit.aiEnabled && unit.ai) unit.ai(dt);
+
+    if (unit.__npcFlightIntegrated) {
+      unit.__npcFlightIntegrated = false;
     } else {
-      // --- Reszta statków (bez zmian) ---
-      if(self.kind==='frigate' && self.subType!=='laser'){
-        if(u.kind==='fighter')      score += 2000;
-        else if(u.kind==='frigate') score += 800;
-        else                        score += 200;
-      }else if(self.kind==='frigate' && self.subType==='laser'){
-        if(u.kind==='battleship')   score += 2500;
-        else if(u.kind==='destroyer')score+=2000;
-        else if(u.kind==='frigate') score += 1500;
-        else                        score -= 300;
-      }else if(self.kind==='destroyer'){
-        if(u.kind==='frigate')      score += 4500; 
-        else if(u.kind==='destroyer')score+=2500;
-        else if(u.kind==='battleship')score+=1000;
-        else                        score += 500;
-      }else if(self.kind==='battleship'){
-        if(u.kind==='battleship')   score += 4000;
-        else if(u.kind==='destroyer')score+=3000;
-        else if(u.kind==='frigate') score += 2000;
-        else                        score -= 500;
-      }
+      if (!Number.isFinite(unit.vx)) unit.vx = 0;
+      if (!Number.isFinite(unit.vy)) unit.vy = 0;
+      unit.x += unit.vx * dt;
+      unit.y += unit.vy * dt;
+      const drag = Math.pow(clamp(finite(unit.friction, 1), 0.8, 1), dt / FIXED_DT);
+      unit.vx *= drag;
+      unit.vy *= drag;
+      npcRotationStep(unit, dt);
+      unit.pos.x = unit.x;
+      unit.pos.y = unit.y;
+      unit.vel.x = unit.vx;
+      unit.vel.y = unit.vy;
     }
-
-    // 3. Protokół Samoobrony (CAPITAL DEFENSE)
-    // Jeśli duży statek jest bardzo blisko (<350px), a myśliwiec wroga daleko,
-    // to ten bonus przebije "dalekiego myśliwca".
-    if(d2v < 122500) { 
-        if(self.kind === 'fighter' && u.kind !== 'fighter') {
-             score += 6000; // Fighter broni się przed Capem
-        } else {
-             score += 8000; // Inne statki
-        }
-    }
-
-    // 4. Overkill prevention
-    const overkill = u.incomingDamage / (effHP+1);
-    if(overkill>1.2) score -= 1500 * (overkill-1.0);
-
-    // 5. Fighter focus
-    if(self.kind==='fighter' && u.kind==='fighter'){
-      const fc = sim.fighterCenter[self.team==='player'?'enemy':'player'];
-      const dCenter = Math.hypot(u.x-fc.x,u.y-fc.y);
-      score -= dCenter*0.15;
-    }
-
-    score += Math.random()*250;
-
-    if(score>bestScore){
-      bestScore=score;
-      bestTarget=u;
-    }
+    updateTrail(unit, dt);
   }
-  return bestTarget;
+
+  sim.lastAiMs = performance.now() - aiStarted;
+  flushPendingSpawns();
+  applyBodyCollisions();
+  updateProjectiles(dt);
+  updateEffects(dt);
+  cleanupDeadUnits();
 }
 
-/* ============================== AI – Fighters =============================== */
-function fireIfPossible(sim,self,designatedTarget){
-  const gun = GUNS[self.gun]||GUNS.laserS;
-  let targetToShoot=null;
-  const bestTarget = pickBestTarget(sim,self,designatedTarget);
-  if(bestTarget && canFireAt(self,bestTarget,gun) && isLineOfFireClear(sim,self,bestTarget)){
-    targetToShoot=bestTarget;
-  }
-  if(targetToShoot && self.gunCD<=0){
-    spawnBullet(sim,self,targetToShoot,gun);
-    self.gunCD = 1.0/(gun.rps||3);
-  }
-
-  const missileTarget = bestTarget;
-  if(missileTarget && self.mslAmmo>0 && self.mslCD<=0){
-    const mdef=MISSILES[self.msl]||MISSILES.AF;
-    const dx=missileTarget.x-self.x, dy=missileTarget.y-self.y;
-    const dist=Math.hypot(dx,dy);
-    if(dist<1100){
-      spawnMissile(sim,self,missileTarget,mdef);
-      self.mslAmmo -= (mdef.swarm?Math.min(self.mslAmmo,1):1);
-      self.mslCD = 3.0;
+function installGameBridges() {
+  window.ship = null;
+  window.npcs = sim.units;
+  window.bullets = sim.projectiles;
+  window.MASTER_WEAPONS = MASTER_WEAPONS;
+  window.SupportWing = { order: 'engage', units: [] };
+  window.wrapAngle = wrapAngle;
+  window.getTargetX = entityX;
+  window.getTargetY = entityY;
+  window.getUnitKind = getUnitKind;
+  window.getLeadAim = getLeadAim;
+  window.isEnemyUnit = isEnemyUnit;
+  window.aiPickBestTarget = aiPickBestTarget;
+  window.aiPickTarget = (unit) => aiPickBestTarget(unit, 30000);
+  window.applyNpcFlightVector = applyNpcFlightVector;
+  window.npcHasPhysicalThrusters = npcHasPhysicalThrusters;
+  window.applySeparationForces = applySeparationForces;
+  window.rebuildAIGrid = rebuildAIGrid;
+  window.queryAIGrid = queryAIGrid;
+  window.updateFleetCoordinator = updateFleetCoordinator;
+  window.getBattleSlot = getBattleSlot;
+  window.spawnBulletAdapter = spawnBulletAdapter;
+  window.isLineOfFireBlocked = isLineOfFireBlocked;
+  window.updateNpcHangars = updateNpcHangars;
+  window.getPlayerLockedTarget = () => null;
+  window.pickSquadTargets = () => [];
+  window.spawnParticle = (position, _velocity, life, color, radius) => {
+    addEffect({ type: 'hit', x: position.x, y: position.y, life: finite(life, 0.2), radius: finite(radius, 4) * 3, color });
+  };
+  // Deliberately mutable developer surface: AI SPACE is a tuning laboratory.
+  // It lets a developer inspect live NPC state or construct a precise matchup
+  // without copying any of the imported game data into the browser console.
+  window.AISPACE = {
+    sim,
+    camera,
+    catalog: CATALOG,
+    ships: SHIPS,
+    weapons: MASTER_WEAPONS,
+    fighterSquadrons: FIGHTER_SQUADRON_DEFS,
+    hardpoints,
+    spawn: spawnUnit,
+    spawnFighterGroup,
+    spawnFighterReinforcements,
+    scenario: runScenario,
+    clear: clearSimulation,
+    fit: fitCameraToUnits,
+    get selected() {
+      return primarySelection;
+    },
+    select(unit) {
+      setPrimarySelection(unit || null);
+      return primarySelection;
     }
-  }
+  };
 }
 
-function aiFighter(sim,self,dt){
-  // 1. Aktualizacja liczników
-  self.gunCD=Math.max(0,(self.gunCD||0)-dt);
-  self.mslCD=Math.max(0,(self.mslCD||0)-dt);
-  self.breakOffTimer=Math.max(0,(self.breakOffTimer||0)-dt);
-  
-  if(self.state==='dogfight3D') self.dogfightTime = (self.dogfightTime||0)+dt;
-  else self.dogfightTime = 0;
-
-  // 2. Wybór celu
-  const cmd = sim.teamCmd[self.team];
-  let designatedTarget=null;
-  if(self.squad.attackTargetSquadId){
-    const tgtSquad=[...sim.squads].find(s=>s.id===self.squad.attackTargetSquadId);
-    if(tgtSquad && tgtSquad.units.size>0){
-      designatedTarget = tgtSquad.leader || tgtSquad.units.values().next().value;
-    }else{
-      self.squad.attackTargetSquadId = null;
-    }
-  }
-  const combatTarget = pickBestTarget(sim,self,designatedTarget);
-  
-function getEnemyCenter(sim, team){
-  let sx = 0, sy = 0, n = 0;
-  for (const u of sim.units){
-    if (!u.alive || u.team === team) continue;
-    sx += u.x;
-    sy += u.y;
-    n++;
-  }
-  if (!n) return null;
-  return { x: sx / n, y: sy / n };
-}
-  // ====================================================================
-  // FIX: WYMUSZENIE STANU "BOMBING" NA DUŻE CELE
-  // Jeśli mamy cel i nie jest to myśliwiec, wchodzimy w tryb nalotów.
-  // ====================================================================
-  const distToTarget = combatTarget ? Math.hypot(combatTarget.x - self.x, combatTarget.y - self.y) : Infinity;
-  const ATTACK_RANGE = 900; // Dystans, przy którym łamiemy formację i atakujemy
-
-  // 1. Jeśli cel to DUŻY STATEK (nie fighter)
-  if(combatTarget && combatTarget.kind !== 'fighter'){
-     if(distToTarget < ATTACK_RANGE) {
-         // Jesteśmy blisko -> Rozpoczynamy nalot (łamiemy formację)
-         self.state = 'bombing';
-     } else {
-         // Jesteśmy daleko -> Lecimy w formacji w stronę wroga
-         // (kod formacji na dole funkcji obsłuży ten stan)
-         self.state = 'engage_formation';
-     }
-  }
-  
-  // 2. Jeśli cel to FIGHTER (Dogfight)
-  // Twoja stara logika sprawdzała to niżej, ale warto to uporządkować tutaj:
-  else if(combatTarget && combatTarget.kind === 'fighter') {
-      // Dogfight zaczynamy, gdy jesteśmy dość blisko (np. 600px)
-      if(distToTarget < 600 && self.state !== 'dogfight3D') {
-          self.state = 'dogfight3D';
-          self.sub = 'merge';
-          self.subT = 0;
-          self._mergeInit = false;
-          self.dogfightTime = 0;
-      } 
-      // Jeśli daleko do wrogiego myśliwca, to też lecimy w formacji
-      else if (self.state !== 'dogfight3D') {
-          self.state = 'engage_formation';
-      }
-  }
-
-  // Jeśli cel zniknął całkowicie, wracamy do guard (zabezpieczenie)
-  else if(self.state === 'bombing' && !combatTarget){
-     self.state = 'guard';
-  }
-  // Jeśli cel zniknął całkowicie, wracamy do guard (zabezpieczenie)
-  else if(self.state === 'bombing' && !combatTarget){
-     self.state = 'guard';
-  }
-
-  // ====================================================================
-  // LOGIKA BOMBARDOWANIA (RAIL RUN)
-  // To musi być NA GÓRZE funkcji i kończyć się "return", 
-  // żeby kod formacji na dole nie nadpisał ruchu.
-  // ====================================================================
-  if(self.state === 'bombing' && combatTarget){
-      
-      // Inicjalizacja wektora linii przy pierwszym ataku lub zmianie celu
-      if(!self.bombardVec || self.lastTargetId !== combatTarget.id){
-        // Każdy myśliwiec losuje swój kąt nalotu, żeby nie latały w gęsiego
-        const angle = Math.random() * Math.PI * 2; 
-        self.bombardVec = { x: Math.cos(angle), y: Math.sin(angle) };
-        self.bombardSide = 1; // 1 lub -1 (strony linii)
-        self.lastTargetId = combatTarget.id;
-      }
-
-      // Długość "szyny" - punkt nawrotu daleko za statkiem
-      const lineLen = 1200; 
-
-      // Wyliczamy punkt docelowy (Waypoint)
-      const wayX = combatTarget.x + (self.bombardVec.x * lineLen * self.bombardSide);
-      const wayY = combatTarget.y + (self.bombardVec.y * lineLen * self.bombardSide);
-
-      // Sprawdzamy czy dolecieliśmy do końca linii
-      const distToWaypoint = Math.hypot(wayX - self.x, wayY - self.y);
-      if(distToWaypoint < 200){ // Margines nawrotu
-        self.bombardSide *= -1; // Zawracamy na drugi koniec
-      }
-
-      // FIZYKA LOTU (Lecimy do Waypointa, ignorując środek statku)
-      const dirToWay = norm(wayX - self.x, wayY - self.y);
-      const wantVx = dirToWay.x * 240; // Duża prędkość
-      const wantVy = dirToWay.y * 240;
-
-      // Płynny, szeroki nawrót (mniejsza zwrotność przy dużej prędkości daje ładne łuki)
-      const turned = clampTurn(self.vx, self.vy, wantVx, wantVy, dt, 220);
-      self.vx = turned.vx;
-      self.vy = turned.vy;
-
-      // STRZELANIE (Celujemy we wroga, nie w waypoint)
-      fireIfPossible(sim, self, designatedTarget);
-      
-      // WAŻNE: Return, żeby nie wykonywać kodu poniżej (formacji)
-      return;
-  }
-
-
-  // 3. Logika DOGFIGHT (tylko vs Fightery)
-  // wejście w dogfight
-  if((self.state==='guard' || self.state==='move' || self.state==='engage_formation' || self.state==='approach')
-    && combatTarget && combatTarget.kind==='fighter'){
-    if(dist2(self,combatTarget) < (450*450)){
-      self.state='dogfight3D';
-      self.sub='merge';
-      self.subT=0;
-      self._mergeInit=false;
-      self.dogfightTime=0;
-      self.dogfightMin = 0.8 + Math.random()*0.6;
-    }
-  }
-
-  // Obsługa komend globalnych (tylko jeśli nie bombardujemy)
-  if(cmd==='RETURN'){
-    self.state='returning';
-  }else if(cmd==='ENGAGE' && (self.state==='guard' || self.state==='move')){
-    self.state='engage_formation';
-  }else if(cmd==='GUARD' && (self.state==='dogfight3D' || self.state==='engage_formation' || self.state==='approach')){
-    self.state='guard';
-  }else if(cmd==='MOVE' && (self.state==='dogfight3D' || self.state==='engage_formation' || self.state==='approach')){
-    self.state='move';
-  }
-
-  if(self.state==='returning'){
-    const home = self.team==='player'?SHIP.friend:SHIP.enemy;
-    const dir = norm(home.x-self.x,home.y-self.y);
-    self.vx += dir.x*120*dt;
-    self.vy += dir.y*120*dt;
-    if(Math.hypot(self.x-home.x,self.y-home.y)<30) self.alive=false;
-    return;
-  }
-
-  // --- DOGFIGHT LOGIC (VS FIGHTER) ---
-  if(self.state==='dogfight3D' && combatTarget && combatTarget.kind==='fighter'){
-      if(self.sub==='core'){
-        let neighbors=0;
-        for(const u of sim.units){
-          if(u!==self && u.kind==='fighter' && dist2(self,u)<(30*30)) neighbors++;
-        }
-        const canBreak = (self.dogfightTime>self.dogfightMin) || neighbors>5;
-        if(canBreak && (neighbors>3 || (Math.random()<0.008 && self.breakOffTimer<=0))){
-          self.sub='break_off';
-          self.subT=1.5 + Math.random()*0.7;
-          const dx=self.x-combatTarget.x, dy=self.y-combatTarget.y;
-          const angle=Math.atan2(dy,dx) + (Math.random()-0.5);
-          self.breakVector = {x:Math.cos(angle),y:Math.sin(angle)};
-        }
-      }
-      if(self.sub==='break_off'){
-        const wantVx=self.breakVector.x*220;
-        const wantVy=self.breakVector.y*220;
-        const turned=clampTurn(self.vx,self.vy,wantVx,wantVy,dt,370);
-        self.vx=turned.vx;
-        self.vy=turned.vy;
-        self.subT-=dt;
-        if(self.subT<=0){
-          self.sub='merge';
-          self._mergeInit=false;
-          self.breakOffTimer=4.0;
-          self.dogfightTime=0;
-          self.dogfightMin = 1.3 + Math.random()*0.7;
-        }
-        fireIfPossible(sim,self,designatedTarget);
-        return;
-      }
-      if(self.sub==='merge'){
-        if(!self._mergeInit){
-          self._mergeInit=true;
-          self.subT = 0.5 + Math.random()*0.6;
-        }
-        const aim=leadAim(self,combatTarget,220);
-        const dir=norm(aim.x-self.x,aim.y-self.y);
-        const wantVx=dir.x*150*1.25;
-        const wantVy=dir.y*150*1.25;
-        const turned=clampTurn(self.vx,self.vy,wantVx,wantVy,dt,370*1.2);
-        self.vx=turned.vx;
-        self.vy=turned.vy;
-        self.subT-=dt;
-        if(self.subT<=0 || dist2(self,combatTarget)<(140*140)){
-          self.sub='slash';
-          self.subT=0.5;
-          self._slashSign = (self.id%2===0)?+1:-1;
-        }
-        fireIfPossible(sim,self,designatedTarget);
-        return;
-      }
-      if(self.sub==='slash'){
-        const aim={x:combatTarget.x,y:combatTarget.y};
-        const dir=norm(aim.x-self.x,aim.y-self.y);
-        const base={vx:dir.x*150,vy:dir.y*150};
-        const rotAng=self._slashSign*32;
-        const rot=rotateVec(base.vx,base.vy,rotAng);
-        const turned=clampTurn(self.vx,self.vy,rot.vx,rot.vy,dt,370*1.3);
-        self.vx=turned.vx;
-        self.vy=turned.vy;
-        self.subT-=dt;
-        if(self.subT<=0){
-          self.sub='core';
-        }
-        fireIfPossible(sim,self,designatedTarget);
-        return;
-      }
-      if(self.sub==='core'){
-        const aim=leadAim(self,combatTarget,220);
-        const dir=norm(aim.x-self.x,aim.y-self.y);
-        const wantVx=dir.x*150, wantVy=dir.y*150;
-        const t=sim.time + (self.id%17)*0.13;
-        const jrad=(4*Math.PI/180)*Math.sin(2*Math.PI*0.5*t);
-        const c=Math.cos(jrad), s=Math.sin(jrad);
-        const jvx=wantVx*c - wantVy*s;
-        const jvy=wantVx*s + wantVy*c;
-        const turned=clampTurn(self.vx,self.vy,jvx,jvy,dt,370);
-        const swirl=Math.sin(sim.time*2.0 + self.id*0.37)*0.10;
-        const rx=-turned.vy, ry=turned.vx;
-        const mag=Math.hypot(turned.vx,turned.vy)||1;
-        self.vx=turned.vx + (rx/mag)*150*swirl;
-        self.vy=turned.vy + (ry/mag)*150*swirl;
-        
-        // Unikanie kolizji w dogfighcie
-        const dx=combatTarget.x-self.x, dy=combatTarget.y-self.y;
-        const dist=Math.hypot(dx,dy);
-        if(dist<70){
-          const nx=-dy/(dist||1), ny=dx/(dist||1);
-          self.vx += nx*110;
-          self.vy += ny*110;
-        }
-        // Leash
-        /*const fc = sim.fighterCenter[self.team];
-        const dCenter = Math.hypot(self.x-fc.x,self.y-fc.y);
-        if(dCenter>900){
-          const back = norm(fc.x-self.x,fc.y-self.y);
-          self.vx += back.x*140*dt;
-          self.vy += back.y*140*dt;
-        }
-		*/
-        fireIfPossible(sim,self,designatedTarget);
-        return;
-      }
-  }
-
-  // Podejście
-  if(self.state==='approach' && combatTarget){ 
-    const dir = norm(combatTarget.x-self.x,combatTarget.y-self.y);
-    const wantVx=dir.x*130, wantVy=dir.y*130;
-    const turned=clampTurn(self.vx,self.vy,wantVx,wantVy,dt,260);
-    self.vx=turned.vx;
-    self.vy=turned.vy;
-    fireIfPossible(sim,self,designatedTarget);
-    return;
-  }
-
-  // --- FORMATION LOGIC (Guard / Move / Engage Formation) ---
-  // To wykonuje się TYLKO jeśli nie bombardujemy i nie walczymy z fighterami
-  const isLeader = (self.squad.leader===self);
-  const leader   = self.squad.leader;
-  if(!leader || !leader.alive){
-    self.vx*=0.95; self.vy*=0.95;
-    return;
-  }
-  const ship = self.team==='player'?SHIP.friend:SHIP.enemy;
-  let targetPos=null;
-  let formationAngle=0;
-  const kp=3.0;
-
-  if(isLeader){
-    if(self.state==='guard'){
-      const slots=sim.guardSlotsWorld(self.team);
-      if(slots && slots.length){
-        const order=[...sim.squads].filter(s=>s.team===self.team && s.units.size>0 && !s.isCapital)
-          .sort((a,b)=>a.id-b.id);
-        const idx=order.findIndex(s=>s.id===self.squad.id);
-        if(idx!==-1) targetPos = slots[idx % slots.length];
-      }
-      if(!targetPos){
-        targetPos={x:ship.x+80, y:ship.y+(self.id%2)*80-40};
-      }
-    }else if(self.state==='move'){
-      targetPos=self.squad.moveAnchor;
-    }else if(self.state==='engage_formation'){
-      // To był problematyczny fragment!
-      // Jeśli tu jesteśmy, to znaczy że cel jest NULL (bo inaczej bylibyśmy w 'bombing')
-      // Więc lecimy po prostu przed siebie lub do designated
-      const flyTo=designatedTarget || combatTarget;
-      if(flyTo) targetPos={x:flyTo.x,y:flyTo.y};
-    }
-  }else{
-    const offset=self.formationSlot;
-    if(!offset){
-      self.vx*=0.95; self.vy*=0.95;
-      return;
-    }
-    if(self.state==='guard') formationAngle=ship.ang;
-    else{
-      const enemyPos = designatedTarget || combatTarget || (self.team==='player'?SHIP.enemy:SHIP.friend);
-      formationAngle = Math.atan2(enemyPos.y-leader.y,enemyPos.x-leader.x);
-    }
-    const c=Math.cos(formationAngle), s=Math.sin(formationAngle);
-    targetPos={
-      x:leader.x + offset.x*c - offset.y*s,
-      y:leader.y + offset.x*s + offset.y*c
-    };
-  }
-
-  if(targetPos){
-    let desVX=(targetPos.x-self.x)*kp;
-    let desVY=(targetPos.y-self.y)*kp;
-    const speedBoost=isLeader?0:1.15;
-    const maxFollow=150*(1+speedBoost);
-    const tv=Math.hypot(desVX,desVY);
-    if(tv>maxFollow){
-      const sc=maxFollow/tv;
-      desVX*=sc; desVY*=sc;
-    }
-    const maxAccel=(isLeader?160:220)*dt;
-    const dvx=clamp(desVX-self.vx,-maxAccel,maxAccel);
-    const dvy=clamp(desVY-self.vy,-maxAccel,maxAccel);
-    self.vx+=dvx; self.vy+=dvy;
-  }else{
-    self.vx*=0.95; self.vy*=0.95;
-  }
-
-  fireIfPossible(sim,self,designatedTarget);
+function clearSimulation({ keepLog = false } = {}) {
+  sim.units.length = 0;
+  sim.projectiles.length = 0;
+  sim.effects.length = 0;
+  sim.pendingSpawns.length = 0;
+  sim.time = 0;
+  sim.accumulator = 0;
+  sim.nextId = 1;
+  sim.stats.blue = { shots: 0, hits: 0, damage: 0, kills: 0 };
+  sim.stats.red = { shots: 0, hits: 0, damage: 0, kills: 0 };
+  selection.clear();
+  setPrimarySelection(null);
+  victoryState = '';
+  if (!keepLog) ui.combatLog.replaceChildren();
 }
 
-/* ============================== AI – Frigates / Destroyer / Battleship ===== */
-function repulseFromWrecks(sim,self,ax,ay,strength=1.0){
-  for(const w of sim.wrecks){
-    const dx=self.x-w.x, dy=self.y-w.y;
-    const d2=dx*dx+dy*dy;
-    const avoidR=(self.radius||30)+(w.radius||30)+60;
-    if(d2<avoidR*avoidR){
-      const d=Math.sqrt(d2)||1;
-      const repel=(avoidR-d)/avoidR;
-      const rx=dx/d, ry=dy/d;
-      ax += rx*self.accel*1.2*repel*strength;
-      ay += ry*self.accel*1.2*repel*strength;
-    }
-  }
-  return {ax,ay};
-}
-
-function aiLaserFrigate(sim,self,dt){
-  self.mCD=Math.max(0,(self.mCD||0)-dt);
-  self.pdCD=Math.max(0,(self.pdCD||0)-dt);
-
-  let designatedTarget=null;
-  if(self.squad.attackTargetSquadId){
-    const tgtSquad=[...sim.squads].find(s=>s.id===self.squad.attackTargetSquadId);
-    if(tgtSquad && tgtSquad.units.size>0) designatedTarget=tgtSquad.leader || tgtSquad.units.values().next().value;
-    else self.squad.attackTargetSquadId=null;
-  }
-  const combatTarget=pickBestTarget(sim,self,designatedTarget);
-
-  const cmd=sim.teamCmd[self.team];
-  const moveTarget=self.moveAnchor;
-  let targetAng=self.ang;
-  let thrust=0, strafe=0;
-  let ax=0, ay=0;
-
-  if(cmd==='RETURN'){
-    const home=self.team==='player'?SHIP.friend:SHIP.enemy;
-    targetAng=Math.atan2(home.y-self.y,home.x-self.x);
-    if(Math.hypot(self.x-home.x,self.y-home.y)<30) self.alive=false;
-    thrust=self.accel;
-  }else if(moveTarget){
-    const dx=moveTarget.x-self.x, dy=moveTarget.y-self.y;
-    const dist=Math.hypot(dx,dy)||1;
-    targetAng=Math.atan2(dy,dx);
-    const ux=Math.cos(self.ang), uy=Math.sin(self.ang);
-    const dot=(dx/dist)*ux+(dy/dist)*uy;
-    if(dot>0.8){
-      const braking=150;
-      if(dist>braking) thrust=self.accel;
-      else thrust=self.accel*(dist/braking);
-    }
-    if(dist<30) self.moveAnchor=null;
-
-    for(const s of sim.squads){
-      if(s.team!==self.team || !s.isCapital || s===self.squad) continue;
-      const other=s.leader;
-      const d2v=dist2(self,other);
-      if(d2v<self.separationRange*self.separationRange){
-        const d=Math.sqrt(d2v)||1;
-        const repel=(self.separationRange-d)/self.separationRange;
-        const rx=(self.x-other.x)/d, ry=(self.y-other.y)/d;
-        ax += rx*self.accel*0.7*repel;
-        ay += ry*self.accel*0.7*repel;
-      }
-    }
-    ({ax,ay}=repulseFromWrecks(sim,self,ax,ay,1.0));
-  }else if((cmd==='GUARD' || cmd==='ENGAGE') && combatTarget){
-    targetAng=Math.atan2(combatTarget.y-self.y,combatTarget.x-self.x);
-    const mdef=GUNS_M[self.mGun];
-    const wantRange=(mdef.range||850)*0.9;
-    const dist=Math.hypot(combatTarget.x-self.x,combatTarget.y-self.y)||1;
-    if(dist<wantRange*0.95) thrust=-self.accel*0.7;
-    else if(dist>wantRange*1.05) thrust=self.accel*0.7;
-    strafe = Math.sin(sim.time*0.7 + self.id*0.3)*self.accel*0.4;
-    for(const s of sim.squads){
-      if(s.team!==self.team || !s.isCapital || s===self.squad) continue;
-      const other=s.leader;
-      const d2v=dist2(self,other);
-      if(d2v<self.separationRange*self.separationRange){
-        const d=Math.sqrt(d2v)||1;
-        const repel=(self.separationRange-d)/self.separationRange;
-        const rx=(self.x-other.x)/d, ry=(self.y-other.y)/d;
-        ax += rx*self.accel*0.5*repel;
-        ay += ry*self.accel*0.5*repel;
-      }
-    }
-    ({ax,ay}=repulseFromWrecks(sim,self,ax,ay,1.1));
-  }
-
-  self.ang = clampTurnAngle(self.ang,targetAng,self.turnRate,dt);
-  const c=Math.cos(self.ang), s=Math.sin(self.ang);
-  ax += (c*thrust - s*strafe);
-  ay += (s*thrust + c*strafe);
-  self.vx += ax*dt;
-  self.vy += ay*dt;
-  const v=Math.hypot(self.vx,self.vy);
-  if(v>self.maxSpeed){ self.vx*=self.maxSpeed/v; self.vy*=self.maxSpeed/v; }
-  self.vx *= self.friction;
-  self.vy *= self.friction;
-
-  if(combatTarget){
-    const mdef=GUNS_M[self.mGun];
-    if(dist2(self,combatTarget)<=mdef.range*mdef.range &&
-       canFireAtCap(self,combatTarget,mdef) &&
-       isLineOfFireClear(sim,self,combatTarget)){
-      if(self.mCD<=0){
-        // heavy beam jako instant
-        sim.projectiles.push({
-          type:'bullet',
-          team:self.team,
-          x:self.x,y:self.y,
-          vx:0,vy:0,
-          dmg:mdef.dmg,
-          life:0.08,
-          alive:true,
-          color:mdef.color,
-          isBeam:true,
-          tx:combatTarget.x,
-          ty:combatTarget.y
-        });
-        damageUnit(sim,combatTarget,mdef.dmg);
-        self.mCD = 1.0/mdef.rps;
-      }
-    }
-  }
-
-  // PD laser tylko defensywny
-  const pd=PD[self.pd]||PD.pd_laser;
-  if(self.pdCD<=0){
-    let pdTarget=getNearestMissile(sim,self,pd.range||400);
-    if(pdTarget && dist2(self,pdTarget) < (pd.range||400)**2){
-      const ignoreLOF=true;
-      if(ignoreLOF || canFireAtCap(self,pdTarget,pd)){
-        const burst=10;
-        for(let i=0;i<burst;i++){
-          spawnBullet(sim,self,pdTarget,{dmg:pd.dmg,speed:pd.speed,range:pd.range,spread:pd.spread,color:pd.color,rps:pd.rps});
-        }
-        self.pdCD = 1.0/(pd.rps||18);
-      }
-    }
-  }
-}
-
-function aiFrigate(sim,self,dt){
-  self.pdCD=Math.max(0,(self.pdCD||0)-dt);
-  self.flakCD=Math.max(0,(self.flakCD||0)-dt);
-  const pd=PD[self.pd]||PD.pd_mk1;
-  const fl=FLAK[self.flak]||FLAK.flak_L;
-
-  let designatedTarget=null;
-  if(self.squad.attackTargetSquadId){
-    const tgtSquad=[...sim.squads].find(s=>s.id===self.squad.attackTargetSquadId);
-    if(tgtSquad && tgtSquad.units.size>0){
-      designatedTarget=tgtSquad.leader || tgtSquad.units.values().next().value;
-    }else self.squad.attackTargetSquadId=null;
-  }
-  const combatTarget=pickBestTarget(sim,self,designatedTarget);
-
-  const cmd=sim.teamCmd[self.team];
-  const moveTarget=self.moveAnchor;
-  let targetAng=self.ang;
-  let thrust=0, strafe=0;
-  let ax=0, ay=0;
-
-  if(cmd==='RETURN'){
-    const home=self.team==='player'?SHIP.friend:SHIP.enemy;
-    targetAng=Math.atan2(home.y-self.y,home.x-self.x);
-    if(Math.hypot(self.x-home.x,self.y-home.y)<30) self.alive=false;
-    thrust=self.accel;
-  }else if(moveTarget){
-    const dx=moveTarget.x-self.x, dy=moveTarget.y-self.y;
-    const dist=Math.hypot(dx,dy)||1;
-    targetAng=Math.atan2(dy,dx);
-    const ux=Math.cos(self.ang), uy=Math.sin(self.ang);
-    const dot=(dx/dist)*ux+(dy/dist)*uy;
-    if(dot>0.8){
-      const braking=140;
-      if(dist>braking) thrust=self.accel;
-      else thrust=self.accel*(dist/braking);
-    }
-    if(dist<26) self.moveAnchor=null;
-
-    for(const s of sim.squads){
-      if(s.team!==self.team || !s.isCapital || s===self.squad) continue;
-      const other=s.leader;
-      const d2v=dist2(self,other);
-      if(d2v<self.separationRange*self.separationRange){
-        const d=Math.sqrt(d2v)||1;
-        const repel=(self.separationRange-d)/self.separationRange;
-        const rx=(self.x-other.x)/d, ry=(self.y-other.y)/d;
-        ax += rx*self.accel*0.7*repel;
-        ay += ry*self.accel*0.7*repel;
-      }
-    }
-    ({ax,ay}=repulseFromWrecks(sim,self,ax,ay,1.1));
-  }else if((cmd==='GUARD'||cmd==='ENGAGE') && combatTarget){
-    targetAng=Math.atan2(combatTarget.y-self.y,combatTarget.x-self.x);
-    let wantRange;
-    if(combatTarget.kind==='fighter') wantRange=(pd.range||380)*0.85;
-    else wantRange=(fl.range||520)*0.85;
-    const dist=Math.hypot(combatTarget.x-self.x,combatTarget.y-self.y)||1;
-    if(dist<wantRange*0.95) thrust=-self.accel*0.7;
-    else if(dist>wantRange*1.05) thrust=self.accel*0.7;
-    strafe = Math.sin(sim.time*0.7 + self.id*0.3)*self.accel*0.4;
-    for(const s of sim.squads){
-      if(s.team!==self.team || !s.isCapital || s===self.squad) continue;
-      const other=s.leader;
-      const d2v=dist2(self,other);
-      if(d2v<self.separationRange*self.separationRange){
-        const d=Math.sqrt(d2v)||1;
-        const repel=(self.separationRange-d)/self.separationRange;
-        const rx=(self.x-other.x)/d, ry=(self.y-other.y)/d;
-        ax += rx*self.accel*0.7*repel;
-        ay += ry*self.accel*0.7*repel;
-      }
-    }
-    ({ax,ay}=repulseFromWrecks(sim,self,ax,ay,1.0));
-  }
-
-  self.ang=clampTurnAngle(self.ang,targetAng,self.turnRate,dt);
-  const c=Math.cos(self.ang), s=Math.sin(self.ang);
-  ax += (c*thrust - s*strafe);
-  ay += (s*thrust + c*strafe);
-  self.vx += ax*dt;
-  self.vy += ay*dt;
-  const v=Math.hypot(self.vx,self.vy);
-  if(v>self.maxSpeed){ self.vx*=self.maxSpeed/v; self.vy*=self.maxSpeed/v; }
-  self.vx*=self.friction;
-  self.vy*=self.friction;
-
-  // PD
-  if(self.pdCD<=0){
-    let pdTarget = getNearestMissile(sim,self,pd.range||400);
-    if(!pdTarget) pdTarget = designatedTarget || pickBestTarget(sim,self,null);
-    if(pdTarget && dist2(self,pdTarget) < (pd.range||400)**2){
-      const ignoreLOF = (pdTarget.vx!==undefined);
-      if(ignoreLOF || canFireAtCap(self,pdTarget,pd)){
-        const burst=8;
-        for(let i=0;i<burst;i++){
-          spawnBullet(sim,self,pdTarget,{dmg:pd.dmg,speed:pd.speed,range:pd.range,spread:pd.spread,color:pd.color,rps:pd.rps});
-        }
-        self.pdCD = 1.0/(pd.rps||9);
-      }
-    }
-  }
-  // flak
-  if(self.flakCD<=0 && combatTarget){
-    if(dist2(self,combatTarget) < fl.range*fl.range){
-      spawnFlakShell(sim,self,combatTarget,fl);
-      self.flakCD = 1.0/(fl.rps||0.8);
-    }
-  }
-}
-
-function aiDestroyer(sim,self,dt){
-  self.mCD=Math.max(0,(self.mCD||0)-dt);
-  self.pdCD=Math.max(0,(self.pdCD||0)-dt);
-  self.boostT=Math.max(0,(self.boostT||0)-dt);
-  self.boostCd=Math.max(0,(self.boostCd||0)-dt);
-
-  let designatedTarget=null;
-  if(self.squad.attackTargetSquadId){
-    const tgtSquad=[...sim.squads].find(s=>s.id===self.squad.attackTargetSquadId);
-    if(tgtSquad && tgtSquad.units.size>0){
-      designatedTarget=tgtSquad.leader || tgtSquad.units.values().next().value;
-    }else self.squad.attackTargetSquadId=null;
-  }
-  const combatTarget=pickBestTarget(sim,self,designatedTarget);
-
-  const cmd=sim.teamCmd[self.team];
-  const moveTarget=self.moveAnchor;
-  let targetAng=self.ang;
-  let thrust=0, strafe=0;
-  let ax=0, ay=0;
-
-  if(cmd==='RETURN'){
-    const home=self.team==='player'?SHIP.friend:SHIP.enemy;
-    targetAng=Math.atan2(home.y-self.y,home.x-self.x);
-    if(Math.hypot(self.x-home.x,self.y-home.y)<40) self.alive=false;
-    thrust=self.accel;
-  }else if(moveTarget){
-    const dx=moveTarget.x-self.x, dy=moveTarget.y-self.y;
-    const dist=Math.hypot(dx,dy)||1;
-    targetAng=Math.atan2(dy,dx);
-    const ux=Math.cos(self.ang), uy=Math.sin(self.ang);
-    const dot=(dx/dist)*ux+(dy/dist)*uy;
-    if(dot>0.8){
-      const braking=160;
-      if(dist>braking) thrust=self.accel;
-      else thrust=self.accel*(dist/braking);
-    }
-    if(dist<30) self.moveAnchor=null;
-
-    // --- Separation Logic (bez zmian) ---
-    for(const s of sim.squads){
-      if(s.team!==self.team || !s.isCapital || s===self.squad) continue;
-      const other=s.leader;
-      const d2v=dist2(self,other);
-      if(d2v<self.separationRange*self.separationRange){
-        const d=Math.sqrt(d2v)||1;
-        const repel=(self.separationRange-d)/self.separationRange;
-        const rx=(self.x-other.x)/d, ry=(self.y-other.y)/d;
-        ax += rx*self.accel*0.8*repel;
-        ay += ry*self.accel*0.8*repel;
-      }
-    }
-    ({ax,ay}=repulseFromWrecks(sim,self,ax,ay,1.1));
-
-  }else if((cmd==='GUARD'||cmd==='ENGAGE') && combatTarget){
-    targetAng=Math.atan2(combatTarget.y-self.y,combatTarget.x-self.x);
-    const mdef=GUNS_M[self.mGun]||GUNS_M.m_rail;
-    const range=mdef.range||760;
-    const want = range*0.8;
-    const dist=Math.hypot(combatTarget.x-self.x,combatTarget.y-self.y)||1;
-
-    // Obliczanie kąta do celu
-    const ux=Math.cos(self.ang), uy=Math.sin(self.ang);
-    const dx=combatTarget.x-self.x, dy=combatTarget.y-self.y;
-    const dot=(dx/dist)*ux+(dy/dist)*uy; // 1.0 = patrzymy prosto na cel
-
-    // --- POPRAWIONA LOGIKA BOOSTA ---
-    // Boost tylko jeśli daleko I statek jest obrócony w stronę celu (dot > 0.9)
-    if(dist>range*0.95 && self.boostCd<=0 && dot > 0.9){
-      self.boostT = self.boostDur;
-      self.boostCd = self.boostCool;
-    }
-
-    // Hamulec awaryjny dla Boosta - jeśli jesteśmy za blisko, odetnij boost
-    if(dist < want * 0.9) {
-      self.boostT = 0; 
-    }
-
-    if(dist<want*0.95) {
-        // Mocniejsze hamowanie silnikami
-        thrust=-self.accel*1.2; 
-    }
-    else if(dist>want*1.05) thrust=self.accel*0.9;
-
-    // strafe
-    const strafeRange = range*1.1;
-    if(dist<strafeRange){
-      const sVal=Math.sin(sim.time*0.55 + self.id*0.2)*(self.boostT>0?24:16);
-      strafe = sVal*self.accel*0.5;
-    }
-
-    // Kolizje (bez zmian)
-    for(const s of sim.squads){
-      if(s.team!==self.team || !s.isCapital || s===self.squad) continue;
-      const other=s.leader;
-      const d2v=dist2(self,other);
-      if(d2v<self.separationRange*self.separationRange){
-        const d=Math.sqrt(d2v)||1;
-        const repel=(self.separationRange-d)/self.separationRange;
-        const rx=(self.x-other.x)/d, ry=(self.y-other.y)/d;
-        ax += rx*self.accel*0.7*repel;
-        ay += ry*self.accel*0.7*repel;
-      }
-    }
-    ({ax,ay}=repulseFromWrecks(sim,self,ax,ay,1.2));
-  }
-
-  // Fizyka ruchu
-  const speedBoost = (self.boostT>0)?1.7:1.0;
-  self.ang=clampTurnAngle(self.ang,targetAng,self.turnRate*speedBoost,dt);
-  const c=Math.cos(self.ang), s=Math.sin(self.ang);
-  ax += (c*thrust - s*strafe)*speedBoost;
-  ay += (s*thrust + c*strafe)*speedBoost;
-  self.vx += ax*dt;
-  self.vy += ay*dt;
-  const v=Math.hypot(self.vx,self.vy);
-  const maxv=self.maxSpeed*speedBoost;
-  if(v>maxv){ self.vx*=maxv/v; self.vy*=maxv/v; }
-  self.vx*=self.friction;
-  self.vy*=self.friction;
-
-  // Strzelanie (bez zmian)
-  if(combatTarget){
-    const mdef=GUNS_M[self.mGun]||GUNS_M.m_rail;
-    if(dist2(self,combatTarget)<=mdef.range*mdef.range &&
-       canFireAtCap(self,combatTarget,mdef) &&
-       isLineOfFireClear(sim,self,combatTarget)){
-      if(self.mCD<=0){
-        const aim=leadAim(self,combatTarget,mdef.speed||800);
-        spawnBullet(sim,self,aim,mdef);
-        self.mSeq=(self.mSeq+1)&3;
-        const seqGap=0.14;
-        self.mCD=seqGap;
-      }
-    }
-  }
-  const pd=PD[self.pd]||PD.pd_mk1;
-  if(self.pdCD<=0){
-    let pdTarget=(designatedTarget?.kind==='fighter'?designatedTarget:null) || pickBestTarget(sim,self,null);
-    if(pdTarget && dist2(self,pdTarget)<(pd.range*pd.range) &&
-       canFireAtCap(self,pdTarget,pd) && isLineOfFireClear(sim,self,pdTarget)){
-      const burst=8;
-      for(let i=0;i<burst;i++){
-        spawnBullet(sim,self,pdTarget,{dmg:pd.dmg,speed:pd.speed,range:pd.range,spread:pd.spread,color:pd.color,rps:pd.rps});
-      }
-      self.pdCD = 1.0/(pd.rps||9);
-    }
-  }
-}
-function aiBattleship(sim,self,dt){
-  self.mCD=Math.max(0,(self.mCD||0)-dt);
-  self.pdCD=Math.max(0,(self.pdCD||0)-dt);
-  self.broadLeftCD=Math.max(0,(self.broadLeftCD||0)-dt);
-  self.broadRightCD=Math.max(0,(self.broadRightCD||0)-dt);
-  self.rotBoostT=Math.max(0,(self.rotBoostT||0)-dt);
-  self.rotBoostCd=Math.max(0,(self.rotBoostCd||0)-dt);
-  self.fwdBoostT=Math.max(0,(self.fwdBoostT||0)-dt);
-  self.fwdBoostCd=Math.max(0,(self.fwdBoostCd||0)-dt);
-
-  let designatedTarget=null;
-  if(self.squad.attackTargetSquadId){
-    const tgtSquad=[...sim.squads].find(s=>s.id===self.squad.attackTargetSquadId);
-    if(tgtSquad && tgtSquad.units.size>0){
-      designatedTarget=tgtSquad.leader || tgtSquad.units.values().next().value;
-    }
-  }
-  const combatTarget=pickBestTarget(sim,self,designatedTarget);
-  const cmd=sim.teamCmd[self.team];
-  const moveTarget=self.moveAnchor;
-
-  let targetAng=self.ang;
-  let thrust=0, strafe=0;
-  let ax=0, ay=0;
-
-  if(cmd==='RETURN'){
-    const home=self.team==='player'?SHIP.friend:SHIP.enemy;
-    targetAng=Math.atan2(home.y-self.y,home.x-self.x);
-    if(Math.hypot(self.x-home.x,self.y-home.y)<90) self.alive=false;
-    thrust=self.accel;
-  }else if(moveTarget){
-    const dx=moveTarget.x-self.x, dy=moveTarget.y-self.y;
-    const dist=Math.hypot(dx,dy)||1;
-    targetAng=Math.atan2(dy,dx);
-    const ux=Math.cos(self.ang), uy=Math.sin(self.ang);
-    const dot=(dx/dist)*ux+(dy/dist)*uy;
-    if(dot>0.8){
-      const braking=260;
-      if(dist>braking) thrust=self.accel;
-      else thrust=self.accel*(dist/braking);
-    }
-    if(dist<60) self.moveAnchor=null;
-
-    for(const s of sim.squads){
-      if(s.team!==self.team || !s.isCapital || s===self.squad) continue;
-      const other=s.leader;
-      const d2v=dist2(self,other);
-      if(d2v<self.separationRange*self.separationRange){
-        const d=Math.sqrt(d2v)||1;
-        const repel=(self.separationRange-d)/self.separationRange;
-        const rx=(self.x-other.x)/d, ry=(self.y-other.y)/d;
-        ax += rx*self.accel*0.9*repel;
-        ay += ry*self.accel*0.9*repel;
-      }
-    }
-    ({ax,ay}=repulseFromWrecks(sim,self,ax,ay,1.3));
-  }else if((cmd==='GUARD'||cmd==='ENGAGE') && combatTarget){
-    // „linia frontu” – trzymamy się raczej blisko
-    const dx=combatTarget.x-self.x, dy=combatTarget.y-self.y;
-    const toAng=Math.atan2(dy,dx);
-    const dist=Math.hypot(dx,dy)||1;
-
-    // preferowany dystans – battleship nie boi się wejść bliżej
-    const mdef=GUNS_M[self.mGun];
-    const noseRange=(mdef.range||800);
-    const ideal = noseRange*0.75;
-
-    if(dist<ideal*0.9) thrust=-self.accel*0.5;
-    else if(dist>ideal*1.15) thrust=self.accel*0.9;
-
-    // strafe – wolny, żeby tworzyć linię
-    const lateralAmp = self.accel*0.35;
-    strafe = Math.sin(sim.time*0.4 + self.id*0.2)*lateralAmp;
-
-    // delikatna separacja z innymi capitalami
-    for(const s of sim.squads){
-      if(s.team!==self.team || !s.isCapital || s===self.squad) continue;
-      const other=s.leader;
-      const d2v=dist2(self,other);
-      if(d2v<self.separationRange*self.separationRange){
-        const d=Math.sqrt(d2v)||1;
-        const repel=(self.separationRange-d)/self.separationRange;
-        const rx=(self.x-other.x)/d, ry=(self.y-other.y)/d;
-        ax += rx*self.accel*0.9*repel;
-        ay += ry*self.accel*0.9*repel;
-      }
-    }
-    ({ax,ay}=repulseFromWrecks(sim,self,ax,ay,1.4));
-
-    // forward boost – tylko gdy daleko
-    if(dist>noseRange*0.95 && self.fwdBoostCd<=0){
-      self.fwdBoostT=self.fwdBoostDur;
-      self.fwdBoostCd=self.fwdBoostCool;
-    }
-
-    // rotation boost – gdy chcemy szybciej obrócić kadłub
-    const angDiff = Math.abs(((toAng-self.ang+Math.PI*3)%(2*Math.PI))-Math.PI);
-    if(angDiff>0.5 && self.rotBoostCd<=0){
-      self.rotBoostT=self.rotBoostDur;
-      self.rotBoostCd=self.rotBoostCool;
-    }
-
-    // broadside logika – tylko gdy JUŻ jesteśmy prawie bokiem
-    const noseAng = toAng;
-    const rightAng = noseAng + Math.PI/2;
-    const leftAng  = noseAng - Math.PI/2;
-
-    const diffNose  = Math.abs(((self.ang-noseAng+Math.PI*3)%(2*Math.PI))-Math.PI);
-    const diffRight = Math.abs(((self.ang-rightAng+Math.PI*3)%(2*Math.PI))-Math.PI);
-    const diffLeft  = Math.abs(((self.ang-leftAng+Math.PI*3)%(2*Math.PI))-Math.PI);
-
-    let sideBetter=false;
-    const sideArc = Math.PI/2; // ±45°
-    const minSideDiff = Math.min(diffRight,diffLeft);
-
-    // tylko jeśli już jesteśmy bliżej do "boku" niż do nosa
-    if(dist<self.broadsideRange*1.05 && minSideDiff + 0.2 < diffNose){
-      sideBetter=true;
-    }
-
-    if(sideBetter){
-      if(diffRight <= diffLeft) targetAng = rightAng;
-      else targetAng = leftAng;
-    }else{
-      targetAng = noseAng;
-    }
-
-    // broadside strzały – tylko gdy rzeczywiście mamy bok w stronę celu
-    if(dist<self.broadsideRange*1.05){
-      if(diffRight < sideArc*0.5 && self.broadRightCD<=0){
-        for(let i=0;i<4;i++){
-          spawnBullet(sim,self,combatTarget,{
-            dmg:BS_BROADSIDE.dmg,
-            speed:BS_BROADSIDE.speed,
-            range:BS_BROADSIDE.range,
-            spread:BS_BROADSIDE.spread,
-            color:BS_BROADSIDE.color,
-            rps:BS_BROADSIDE.rps
-          });
-        }
-        self.broadRightCD = 2.0;
-      }
-      if(diffLeft < sideArc*0.5 && self.broadLeftCD<=0){
-        for(let i=0;i<4;i++){
-          spawnBullet(sim,self,combatTarget,{
-            dmg:BS_BROADSIDE.dmg,
-            speed:BS_BROADSIDE.speed,
-            range:BS_BROADSIDE.range,
-            spread:BS_BROADSIDE.spread,
-            color:BS_BROADSIDE.color,
-            rps:BS_BROADSIDE.rps
-          });
-        }
-        self.broadLeftCD = 2.0;
-      }
-    }
-  }
-
-  const rotBoost = (self.rotBoostT>0)?1.8:1.0;
-  const speedBoost = (self.fwdBoostT>0)?1.6:1.0;
-
-  self.ang = clampTurnAngle(self.ang,targetAng,self.turnRate*rotBoost,dt);
-  const c=Math.cos(self.ang), s=Math.sin(self.ang);
-  ax += (c*thrust - s*strafe)*speedBoost;
-  ay += (s*thrust + c*strafe)*speedBoost;
-  self.vx += ax*dt;
-  self.vy += ay*dt;
-  const v=Math.hypot(self.vx,self.vy);
-  const maxv=self.maxSpeed*speedBoost;
-  if(v>maxv){ self.vx*=maxv/v; self.vy*=maxv/v; }
-  self.vx *= self.friction;
-  self.vy *= self.friction;
-
-  if(combatTarget){
-    const mdef=GUNS_M[self.mGun]||GUNS_M.h_rapid;
-    if(dist2(self,combatTarget)<=mdef.range*mdef.range &&
-       canFireAtCap(self,combatTarget,mdef) &&
-       isLineOfFireClear(sim,self,combatTarget)){
-      if(self.mCD<=0){
-        const aim=leadAim(self,combatTarget,mdef.speed||900);
-        spawnBullet(sim,self,aim,mdef);
-        self.mCD = 1.0/mdef.rps;
-      }
-    }
-  }
-
-  // PD – 8x, preferuje rakiety, potem fightery
-  const pd=PD[self.pd]||PD.pd_laser;
-  if(self.pdCD<=0){
-    let pdTarget = getNearestMissile(sim,self,pd.range||400);
-    if(!pdTarget) pdTarget = pickBestTarget(sim,self,null);
-    if(pdTarget && dist2(self,pdTarget) < (pd.range||400)**2){
-      if(canFireAtCap(self,pdTarget,pd) || pdTarget.vx!==undefined){
-        const burst=10;
-        for(let i=0;i<burst;i++){
-          spawnBullet(sim,self,pdTarget,{dmg:pd.dmg,speed:pd.speed,range:pd.range,spread:pd.spread,color:pd.color,rps:pd.rps});
-        }
-        self.pdCD = 1.0/(pd.rps||18);
-      }
-    }
-  }
-}
-
-/* ============================== Drawing ===================================== */
-function drawWreck(w){
-  ctx.save();
-  ctx.translate(w.x,w.y);
-  ctx.rotate(w.ang);
-  ctx.globalAlpha=0.6;
-  ctx.fillStyle='#444';
-  ctx.strokeStyle='#777';
-  const s=w.size;
-  if(w.kind==='fighter'){
-    ctx.beginPath();
-    ctx.moveTo(6,0); ctx.lineTo(-5,4); ctx.lineTo(-3,-2); ctx.closePath();
-    ctx.fill(); ctx.stroke();
-  }else{
-    ctx.beginPath();
-    ctx.rect(-s.w*0.5,-s.h*0.5,s.w,s.h);
-    ctx.fill(); ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(-5,-5); ctx.lineTo(5,5);
-    ctx.moveTo(5,-5); ctx.lineTo(-5,5);
-    ctx.stroke();
-  }
-  ctx.restore();
-}
-function drawFighter(f){
-  ctx.save();
-  ctx.translate(f.x,f.y);
-  const ang=Math.atan2(f.vy,f.vx);
-  ctx.rotate(ang);
-  const color=(f.team==='player')?COL.friend:COL.enemy;
-  ctx.fillStyle=color;
-  ctx.strokeStyle='#0006';
-  const s=6;
-  ctx.beginPath();
-  ctx.moveTo(s,0);
-  ctx.lineTo(-s*0.8,s*0.6);
-  ctx.lineTo(-s*0.8,-s*0.6);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
-  if(f.shield>0){
-    ctx.globalAlpha = clamp(f.shield/(f.shieldMax||1),0.15,0.6);
-    ctx.strokeStyle=(f.team==='player')?'#7cf5ff':'#ffb4d0';
-    ctx.beginPath();
-    ctx.arc(0,0,8,0,Math.PI*2);
-    ctx.stroke();
-    ctx.globalAlpha=1;
-  }
-  ctx.restore();
-}
-function drawFrigate(fr){
-  ctx.save();
-  ctx.translate(fr.x,fr.y);
-  ctx.rotate(fr.ang);
-  const w=fr.size.w, h=fr.size.h;
-  ctx.fillStyle=(fr.team==='player')?'#284b36':'#4b2836';
-  ctx.strokeStyle=(fr.team==='player')?COL.friend:COL.enemy;
-  ctx.lineWidth=2;
-  ctx.beginPath();
-  ctx.rect(-w*0.5,-h*0.5,w,h);
-  ctx.fill(); ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(0,0); ctx.lineTo(w*0.6,0);
-  ctx.stroke();
-  if(fr.subType==='laser'){
-    ctx.strokeStyle='#f0f'; ctx.beginPath();
-    ctx.moveTo(w*0.1,-h*0.25); ctx.lineTo(w*0.5,-h*0.25);
-    ctx.moveTo(w*0.1,h*0.25);  ctx.lineTo(w*0.5,h*0.25);
-    ctx.stroke();
-  }
-  if(fr.shield>0){
-    ctx.globalAlpha=clamp(fr.shield/(fr.shieldMax||1),0.1,0.35);
-    ctx.strokeStyle=(fr.team==='player')?'#7cf5ff':'#ffb4d0';
-    ctx.beginPath();
-    ctx.ellipse(0,0,w*0.7,h*0.9,0,0,Math.PI*2);
-    ctx.stroke();
-    ctx.globalAlpha=1;
-  }
-  ctx.restore();
-}
-function drawDestroyer(d){
-  ctx.save();
-  ctx.translate(d.x,d.y);
-  ctx.rotate(d.ang);
-  const w=d.size.w, h=d.size.h;
-  ctx.fillStyle=(d.team==='player')?'#2c3f56':'#563c2c';
-  ctx.strokeStyle=(d.team==='player')?COL.friend:COL.enemy;
-  ctx.lineWidth=2.2;
-  ctx.beginPath();
-  ctx.rect(-w*0.5,-h*0.5,w*0.8,h);
-  ctx.fill(); ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(w*0.3,-h*0.5);
-  ctx.lineTo(w*0.5,0);
-  ctx.lineTo(w*0.3,h*0.5);
-  ctx.closePath();
-  ctx.fill(); ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(-w*0.15,0);
-  ctx.lineTo(w*0.55,0);
-  ctx.stroke();
-  if(d.shield>0){
-    ctx.globalAlpha=clamp(d.shield/(d.shieldMax||1),0.1,0.35);
-    ctx.strokeStyle=(d.team==='player')?'#7cf5ff':'#ffb4d0';
-    ctx.beginPath();
-    ctx.ellipse(0,0,w*0.85,h*1.05,0,0,Math.PI*2);
-    ctx.stroke();
-    ctx.globalAlpha=1;
-  }
-  ctx.restore();
-}
-function drawBattleship(b){
-  ctx.save();
-  ctx.translate(b.x,b.y);
-  ctx.rotate(b.ang);
-  const w=b.size.w, h=b.size.h;
-  ctx.fillStyle=(b.team==='player')?'#1c2f46':'#462c1c';
-  ctx.strokeStyle=(b.team==='player')?COL.friend:COL.enemy;
-  ctx.lineWidth=3;
-
-  ctx.beginPath();
-  ctx.moveTo(w*0.6,0);
-  ctx.lineTo(w*0.4,h*0.5);
-  ctx.lineTo(-w*0.5,h*0.5);
-  ctx.lineTo(-w*0.6,0);
-  ctx.lineTo(-w*0.5,-h*0.5);
-  ctx.lineTo(w*0.4,-h*0.5);
-  ctx.closePath();
-  ctx.fill(); ctx.stroke();
-
-  ctx.beginPath();
-  ctx.rect(-w*0.2,-h*0.2,w*0.4,h*0.4);
-  ctx.stroke();
-
-  if(b.shield>0){
-    ctx.globalAlpha=clamp(b.shield/(b.shieldMax||1),0.1,0.35);
-    ctx.strokeStyle=(b.team==='player')?'#7cf5ff':'#ffb4d0';
-    ctx.beginPath();
-    ctx.ellipse(0,0,w*0.9,h*1.1,0,0,Math.PI*2);
-    ctx.stroke();
-    ctx.globalAlpha=1;
-  }
-  ctx.restore();
-}
-
-function drawSquadIcon(squad){
-  ctx.save();
-  const scaleFactor=Math.max(0.5,CAM.scale);
-  const iconSize=(squad.iconHitR||12)/scaleFactor;
-  ctx.translate(squad.x, squad.y - (22/scaleFactor));
-  ctx.strokeStyle=(squad.team==='player')?COL.friend:COL.enemy;
-  ctx.lineWidth=2/scaleFactor;
-  ctx.globalAlpha=0.85;
-
-  if(squad.isCapital){
-    if(squad.type==='frigate'){
-      ctx.strokeRect(-iconSize*0.7,-iconSize*0.7,iconSize*1.4,iconSize*1.4);
-    }else if(squad.type==='battleship'){
-      ctx.strokeRect(-iconSize,-iconSize*0.6,iconSize*2,iconSize*1.2);
-      ctx.strokeRect(-iconSize*0.5,-iconSize*0.3,iconSize,iconSize*0.6);
-    }else{
-      ctx.strokeRect(-iconSize,-iconSize*0.5,iconSize*2,iconSize);
-    }
-  }else{
-    ctx.beginPath();
-    ctx.moveTo(0,-iconSize*0.8);
-    ctx.lineTo(iconSize*0.8,iconSize*0.8);
-    ctx.lineTo(-iconSize*0.8,iconSize*0.8);
-    ctx.closePath();
-    ctx.stroke();
-  }
-
-  const hpPercent = (squad.totalMaxHp>0)?(squad.totalHp/squad.totalMaxHp):0;
-  const barW=iconSize*2.5;
-  const barH=Math.max(3/scaleFactor,iconSize*0.2);
-  const barY=iconSize*1.2;
-  ctx.fillStyle='#000';
-  ctx.fillRect(-barW/2,barY,barW,barH);
-  ctx.fillStyle=(squad.team==='player')?COL.friend:COL.enemy;
-  ctx.fillRect(-barW/2,barY,barW*hpPercent,barH);
-  ctx.restore();
-}
-
-function drawProjectiles(sim){
-  ctx.save();
-  for(const p of sim.projectiles){
-    if(!p.alive) continue;
-    if(p.isBeam){
-      ctx.lineWidth=3;
-      ctx.strokeStyle=p.color;
-      ctx.beginPath();
-      ctx.moveTo(p.x,p.y);
-      ctx.lineTo(p.tx||p.x,p.ty||p.y);
-      ctx.stroke();
+function spawnFleetSide(team, x, facing, composition) {
+  const direction = team === TEAM.BLUE ? 1 : -1;
+  for (let index = 0; index < composition.length; index++) {
+    const spec = composition[index];
+    if (spec.id === 'multirole' || spec.id === 'interceptor' || spec.id === 'strike') {
+      spawnFighterGroup(spec.id, team, spec.count, x - direction * finite(spec.depth), finite(spec.y), facing);
       continue;
     }
-    if(p.type==='bullet'){
-      const ang=Math.atan2(p.vy,p.vx);
-      const trail=6;
-      const tx=p.x-Math.cos(ang)*trail;
-      const ty=p.y-Math.sin(ang)*trail;
-      ctx.strokeStyle=p.color||'#ffd36e';
-      ctx.globalAlpha=0.9;
-      ctx.lineWidth=1.5;
-      ctx.beginPath();
-      ctx.moveTo(tx,ty);
-      ctx.lineTo(p.x,p.y);
-      ctx.stroke();
-    }else if(p.type==='flak'){
-      ctx.fillStyle=p.color||'#fff';
-      ctx.globalAlpha=0.9;
-      ctx.beginPath();
-      ctx.arc(p.x,p.y,2,0,Math.PI*2);
-      ctx.fill();
+    for (let copy = 0; copy < spec.count; copy++) {
+      const y = finite(spec.y) + (copy - (spec.count - 1) * 0.5) * finite(spec.spacing, 620);
+      spawnUnit(spec.id, team, x - direction * finite(spec.depth), y, { angle: facing });
     }
   }
-  ctx.restore();
 }
-function drawMissiles(sim){
-  for(const m of sim.missiles){
-    if(!m.alive) continue;
-    const ang=Math.atan2(m.vy,m.vx);
-    ctx.save();
-    ctx.translate(m.x,m.y);
-    ctx.rotate(ang);
-    ctx.fillStyle=m.color||'#fff';
-    ctx.strokeStyle='#000';
-    ctx.lineWidth=1;
+
+function spawnFighterReinforcements(team, count = 50, placement = {}) {
+  const total = Math.max(1, Math.round(finite(count, 50)));
+  const direction = team === TEAM.BLUE ? 1 : -1;
+  const fallbackX = camera.x + (team === TEAM.BLUE ? -1 : 1) * viewport.width / Math.max(0.01, camera.zoom) * 0.3;
+  const x = finite(placement.x, fallbackX);
+  const y = finite(placement.y, camera.y);
+  const facing = finite(placement.facing, team === TEAM.BLUE ? 0 : Math.PI);
+  const interceptorCount = Math.floor(total * 0.3);
+  const strikeCount = Math.floor(total * 0.3);
+  const multiroleCount = total - interceptorCount - strikeCount;
+  const groups = [
+    { id: 'interceptor', count: interceptorCount, y: y - 1350 },
+    { id: 'multirole', count: multiroleCount, y },
+    { id: 'strike', count: strikeCount, y: y + 1350 }
+  ];
+
+  for (let index = 0; index < groups.length; index++) {
+    const group = groups[index];
+    if (group.count <= 0) continue;
+    spawnFighterGroup(group.id, team, group.count, x - direction * index * 220, group.y, facing);
+  }
+
+  victoryState = '';
+  if (placement.log !== false) {
+    const side = team === TEAM.BLUE ? 'friendly' : 'enemy';
+    logEvent(`Spawn ${total} ${side} fighters · ${interceptorCount} interceptor / ${multiroleCount} multirole / ${strikeCount} strike`, 'info');
+  }
+}
+
+function spawnBigBattleSide(team) {
+  const direction = team === TEAM.BLUE ? 1 : -1;
+  const facing = team === TEAM.BLUE ? 0 : Math.PI;
+  const baseX = team === TEAM.BLUE ? -5200 : 5200;
+  const capitalX = baseX - direction * 2000;
+  const capitalTypes = ['atlas', 'supercapital', 'carrier'];
+  const capitalY = [-3000, 0, 3000];
+
+  for (let index = 0; index < capitalTypes.length; index++) {
+    spawnUnit(capitalTypes[index], team, capitalX, capitalY[index], { angle: facing });
+  }
+  for (let index = 0; index < 5; index++) {
+    spawnUnit('battleship', team, baseX - direction * 1100, (index - 2) * 1600, { angle: facing });
+  }
+  for (let index = 0; index < 10; index++) {
+    spawnUnit('destroyer', team, baseX, (index - 4.5) * 950, { angle: facing });
+  }
+  for (let index = 0; index < 15; index++) {
+    const frigateType = index % 2 === 0 ? 'frigate_pd' : 'frigate_laser';
+    spawnUnit(frigateType, team, baseX + direction * 900, (index - 7) * 650, { angle: facing });
+  }
+  spawnFighterReinforcements(team, 50, {
+    x: baseX + direction * 2000,
+    y: 0,
+    facing,
+    log: false
+  });
+}
+
+function runScenario(id) {
+  clearSimulation();
+  if (id === 'empty') {
+    logEvent('Pusty poligon gotowy.', 'info');
+    camera.x = 0;
+    camera.y = 0;
+    camera.zoom = 0.12;
+    return;
+  }
+
+  if (id === 'big') {
+    spawnBigBattleSide(TEAM.BLUE);
+    spawnBigBattleSide(TEAM.RED);
+    logEvent('Big battle: 3 capitale, 5 battleshipów, 10 destroyerów, 15 fregat i 50 myśliwców na stronę.', 'info');
+  } else if (id === 'fighters') {
+    spawnFighterGroup('interceptor', TEAM.BLUE, 9, -2600, -300, 0);
+    spawnFighterGroup('multirole', TEAM.BLUE, 9, -2800, 500, 0);
+    spawnFighterGroup('interceptor', TEAM.RED, 9, 2600, 300, Math.PI);
+    spawnFighterGroup('strike', TEAM.RED, 9, 2800, -500, Math.PI);
+  } else if (id === 'duel') {
+    spawnUnit('battleship', TEAM.BLUE, -2300, 0, { angle: 0 });
+    spawnUnit('battleship', TEAM.RED, 2300, 0, { angle: Math.PI });
+  } else if (id === 'capital') {
+    spawnUnit('atlas', TEAM.BLUE, -5200, 0, { angle: 0 });
+    spawnUnit('supercapital', TEAM.RED, 5200, 0, { angle: Math.PI });
+  } else if (id === 'line') {
+    const line = [
+      { id: 'battleship', count: 3, y: 0, spacing: 1100 },
+      { id: 'destroyer', count: 4, y: 0, spacing: 850, depth: 700 },
+      { id: 'frigate_pd', count: 4, y: 0, spacing: 700, depth: 1200 }
+    ];
+    spawnFleetSide(TEAM.BLUE, -6200, 0, line);
+    spawnFleetSide(TEAM.RED, 6200, Math.PI, line);
+  } else {
+    const mixed = [
+      { id: 'battleship', count: 1, y: 0 },
+      { id: 'destroyer', count: 2, y: 0, spacing: 1100, depth: 450 },
+      { id: 'frigate_pd', count: 2, y: 0, spacing: 1700, depth: 900 },
+      { id: 'multirole', count: 6, y: -950, depth: 350 }
+    ];
+    spawnFleetSide(TEAM.BLUE, -5000, 0, mixed);
+    spawnFleetSide(TEAM.RED, 5000, Math.PI, mixed);
+  }
+  logEvent(`Uruchomiono scenariusz: ${id}`, 'info');
+  requestAnimationFrame(() => fitCameraToUnits());
+}
+
+function resizeCanvas() {
+  const rect = ui.canvas.getBoundingClientRect();
+  viewport.width = Math.max(1, rect.width);
+  viewport.height = Math.max(1, rect.height);
+  viewport.dpr = Math.min(2, window.devicePixelRatio || 1);
+  const targetWidth = Math.round(viewport.width * viewport.dpr);
+  const targetHeight = Math.round(viewport.height * viewport.dpr);
+  if (ui.canvas.width !== targetWidth || ui.canvas.height !== targetHeight) {
+    ui.canvas.width = targetWidth;
+    ui.canvas.height = targetHeight;
+  }
+}
+
+function screenToWorld(screenX, screenY) {
+  return {
+    x: camera.x + (screenX - viewport.width * 0.5) / camera.zoom,
+    y: camera.y + (screenY - viewport.height * 0.5) / camera.zoom
+  };
+}
+
+function worldToScreen(x, y) {
+  return {
+    x: (x - camera.x) * camera.zoom + viewport.width * 0.5,
+    y: (y - camera.y) * camera.zoom + viewport.height * 0.5
+  };
+}
+
+function fitCameraToUnits() {
+  const live = sim.units.filter((unit) => unit && !unit.dead);
+  if (!live.length) {
+    camera.x = 0;
+    camera.y = 0;
+    camera.zoom = 0.12;
+    ui.cameraReadout.textContent = `zoom ${Math.round(camera.zoom * 100)}%`;
+    return;
+  }
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (let index = 0; index < live.length; index++) {
+    const unit = live[index];
+    const pad = Math.max(unit.radius, unit.w * 0.25, 80);
+    minX = Math.min(minX, unit.x - pad);
+    maxX = Math.max(maxX, unit.x + pad);
+    minY = Math.min(minY, unit.y - pad);
+    maxY = Math.max(maxY, unit.y + pad);
+  }
+  camera.x = (minX + maxX) * 0.5;
+  camera.y = (minY + maxY) * 0.5;
+  const spanX = Math.max(600, maxX - minX);
+  const spanY = Math.max(600, maxY - minY);
+  camera.zoom = clamp(Math.min(viewport.width / spanX, viewport.height / spanY) * 0.82, camera.minZoom, camera.maxZoom);
+  ui.cameraReadout.textContent = `zoom ${Math.round(camera.zoom * 100)}%`;
+}
+
+function drawBackground() {
+  ctx.setTransform(viewport.dpr, 0, 0, viewport.dpr, 0, 0);
+  const gradient = ctx.createRadialGradient(viewport.width * 0.5, viewport.height * 0.45, 20, viewport.width * 0.5, viewport.height * 0.5, Math.max(viewport.width, viewport.height));
+  gradient.addColorStop(0, '#09131d');
+  gradient.addColorStop(0.55, '#050b11');
+  gradient.addColorStop(1, '#020509');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, viewport.width, viewport.height);
+  for (let index = 0; index < backgroundStars.length; index++) {
+    const star = backgroundStars[index];
+    const parallaxX = ((star.x * viewport.width - camera.x * 0.008) % viewport.width + viewport.width) % viewport.width;
+    const parallaxY = ((star.y * viewport.height - camera.y * 0.008) % viewport.height + viewport.height) % viewport.height;
+    ctx.globalAlpha = star.alpha;
+    ctx.fillStyle = '#b7d7ea';
+    ctx.fillRect(parallaxX, parallaxY, star.size, star.size);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function chooseGridStep() {
+  const wantedWorld = 110 / camera.zoom;
+  const magnitude = 10 ** Math.floor(Math.log10(Math.max(1, wantedWorld)));
+  const normalized = wantedWorld / magnitude;
+  if (normalized < 2) return 2 * magnitude;
+  if (normalized < 5) return 5 * magnitude;
+  return 10 * magnitude;
+}
+
+function applyWorldTransform() {
+  const scale = viewport.dpr * camera.zoom;
+  ctx.setTransform(
+    scale, 0, 0, scale,
+    viewport.dpr * (viewport.width * 0.5 - camera.x * camera.zoom),
+    viewport.dpr * (viewport.height * 0.5 - camera.y * camera.zoom)
+  );
+}
+
+function drawGrid() {
+  const step = chooseGridStep();
+  const left = camera.x - viewport.width / camera.zoom * 0.5;
+  const right = camera.x + viewport.width / camera.zoom * 0.5;
+  const top = camera.y - viewport.height / camera.zoom * 0.5;
+  const bottom = camera.y + viewport.height / camera.zoom * 0.5;
+  ctx.lineWidth = 1 / camera.zoom;
+  ctx.strokeStyle = 'rgba(73, 112, 139, .14)';
+  ctx.beginPath();
+  for (let x = Math.floor(left / step) * step; x <= right; x += step) {
+    ctx.moveTo(x, top);
+    ctx.lineTo(x, bottom);
+  }
+  for (let y = Math.floor(top / step) * step; y <= bottom; y += step) {
+    ctx.moveTo(left, y);
+    ctx.lineTo(right, y);
+  }
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(100, 166, 201, .24)';
+  ctx.beginPath();
+  ctx.moveTo(left, 0);
+  ctx.lineTo(right, 0);
+  ctx.moveTo(0, top);
+  ctx.lineTo(0, bottom);
+  ctx.stroke();
+}
+
+function drawTrails() {
+  if (!ui.showTrails.checked) return;
+  ctx.lineWidth = 1.2 / camera.zoom;
+  for (let unitIndex = 0; unitIndex < sim.units.length; unitIndex++) {
+    const unit = sim.units[unitIndex];
+    if (!unit || unit.trail.length < 2) continue;
+    ctx.strokeStyle = unit.team === TEAM.BLUE ? 'rgba(98,168,255,.28)' : 'rgba(255,100,125,.28)';
     ctx.beginPath();
-    ctx.moveTo(5,0);
-    ctx.lineTo(-4,2.5);
-    ctx.lineTo(-2,0);
-    ctx.lineTo(-4,-2.5);
+    for (let index = 0; index < unit.trail.length; index++) {
+      const point = unit.trail[index];
+      if (index === 0) ctx.moveTo(point.x, point.y);
+      else ctx.lineTo(point.x, point.y);
+    }
+    ctx.stroke();
+  }
+}
+
+function drawEffects() {
+  for (let index = 0; index < sim.effects.length; index++) {
+    const effect = sim.effects[index];
+    const t = clamp(effect.life / effect.maxLife, 0, 1);
+    ctx.save();
+    ctx.globalAlpha = t;
+    ctx.strokeStyle = effect.color || '#fff';
+    ctx.fillStyle = effect.color || '#fff';
+    if (effect.type === 'beam') {
+      ctx.lineWidth = (1.5 + t * 3) / camera.zoom;
+      ctx.beginPath();
+      ctx.moveTo(effect.x, effect.y);
+      ctx.lineTo(effect.x2, effect.y2);
+      ctx.stroke();
+    } else {
+      const progress = 1 - t;
+      const radius = Math.max(3, effect.radius * (0.2 + progress * 0.8));
+      ctx.lineWidth = (effect.type === 'flak' ? 2.5 : 1.5) / camera.zoom;
+      ctx.beginPath();
+      ctx.arc(effect.x, effect.y, radius, 0, TWO_PI);
+      ctx.stroke();
+      if (effect.type === 'explosion') {
+        ctx.globalAlpha *= 0.18;
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+  }
+}
+
+function drawProjectiles() {
+  for (let index = 0; index < sim.projectiles.length; index++) {
+    const projectile = sim.projectiles[index];
+    ctx.save();
+    ctx.strokeStyle = projectile.color;
+    ctx.fillStyle = projectile.color;
+    ctx.globalAlpha = 0.9;
+    const rocket = projectile.type === 'rocket' || projectile.type === 'torpedo';
+    ctx.lineWidth = (rocket ? 2.4 : 1.3) / camera.zoom;
+    ctx.beginPath();
+    ctx.moveTo(projectile.prevX, projectile.prevY);
+    ctx.lineTo(projectile.x, projectile.y);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(projectile.x, projectile.y, Math.max(projectile.radius, 1.7 / camera.zoom), 0, TWO_PI);
+    ctx.fill();
+    if (rocket) {
+      ctx.globalAlpha = 0.38;
+      ctx.beginPath();
+      ctx.moveTo(projectile.x, projectile.y);
+      ctx.lineTo(projectile.x - Math.cos(projectile.angle) * 42, projectile.y - Math.sin(projectile.angle) * 42);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+function drawThrusters(unit) {
+  if (!ui.showThrusters.checked || unit.fighter || unit.dead) return;
+  const angle = unit.angle + finite(unit.capitalProfile?.spriteRotation);
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  const groups = [unit.visual?.mainThrusters || [], unit.visual?.torqueThrusters || []];
+  for (let groupIndex = 0; groupIndex < groups.length; groupIndex++) {
+    const group = groups[groupIndex];
+    for (let index = 0; index < group.length; index++) {
+      const thruster = group[index];
+      const ox = finite(thruster.offset?.x);
+      const oy = finite(thruster.offset?.y);
+      const x = unit.x + ox * cos - oy * sin;
+      const y = unit.y + ox * sin + oy * cos;
+      const fx = finite(thruster.forward?.x, 1);
+      const fy = finite(thruster.forward?.y);
+      const worldFx = fx * cos - fy * sin;
+      const worldFy = fx * sin + fy * cos;
+      const throttle = clamp(finite(thruster.__throttle), 0, 1);
+      const length = (8 + throttle * 54) / camera.zoom;
+      ctx.strokeStyle = groupIndex === 0 ? `rgba(84,205,255,${0.24 + throttle * 0.72})` : `rgba(255,194,92,${0.22 + throttle * 0.72})`;
+      ctx.lineWidth = (1.2 + throttle * 2.2) / camera.zoom;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x - worldFx * length, y - worldFy * length);
+      ctx.stroke();
+    }
+  }
+}
+
+function drawHardpoints(unit) {
+  if (!ui.showHardpoints.checked || unit.fighter || unit.dead) return;
+  const list = unit.editorHardpoints || [];
+  for (let index = 0; index < list.length; index++) {
+    const hp = list[index];
+    const point = hardpointWorld(unit, hp);
+    if (!point) continue;
+    const color = hardpoints.colors[hp.type] || '#d5e6ef';
+    ctx.fillStyle = hp.mount ? color : 'rgba(126,145,158,.65)';
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, Math.max(2.2 / camera.zoom, unit.fighter ? 2 : 3), 0, TWO_PI);
+    ctx.fill();
+    const autonomous = unit.autoWeapons?.find((weapon) => weapon.hpOffset === hp);
+    if (autonomous) {
+      const angle = Number.isFinite(autonomous.visualAngle)
+        ? autonomous.visualAngle
+        : unit.angle + finite(autonomous.mountAngle);
+      ctx.strokeStyle = color;
+      ctx.globalAlpha = 0.62;
+      ctx.lineWidth = 1 / camera.zoom;
+      ctx.beginPath();
+      ctx.moveTo(point.x, point.y);
+      ctx.lineTo(point.x + Math.cos(angle) * 34 / camera.zoom, point.y + Math.sin(angle) * 34 / camera.zoom);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+  }
+}
+
+function drawDebugVectors(unit) {
+  if (!ui.showVectors.checked || unit.dead) return;
+  const speed = Math.hypot(unit.vx, unit.vy);
+  if (speed > 1) {
+    ctx.strokeStyle = 'rgba(102, 224, 255, .62)';
+    ctx.lineWidth = 1.2 / camera.zoom;
+    ctx.beginPath();
+    ctx.moveTo(unit.x, unit.y);
+    ctx.lineTo(unit.x + unit.vx * 0.24, unit.y + unit.vy * 0.24);
+    ctx.stroke();
+  }
+  const target = unit.forceTarget && !unit.forceTarget.dead ? unit.forceTarget : unit.target;
+  if (target && !target.dead) {
+    ctx.setLineDash([8 / camera.zoom, 7 / camera.zoom]);
+    ctx.strokeStyle = 'rgba(255, 214, 119, .25)';
+    ctx.lineWidth = 1 / camera.zoom;
+    ctx.beginPath();
+    ctx.moveTo(unit.x, unit.y);
+    ctx.lineTo(entityX(target), entityY(target));
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  const slot = getBattleSlot(unit);
+  if (slot?.kind === 'line') {
+    ctx.strokeStyle = 'rgba(140, 255, 168, .55)';
+    ctx.lineWidth = 1 / camera.zoom;
+    const arm = 10 / camera.zoom;
+    ctx.beginPath();
+    ctx.moveTo(slot.x - arm, slot.y);
+    ctx.lineTo(slot.x + arm, slot.y);
+    ctx.moveTo(slot.x, slot.y - arm);
+    ctx.lineTo(slot.x, slot.y + arm);
+    ctx.stroke();
+  }
+}
+
+function drawUnitBody(unit) {
+  const selected = selection.has(unit);
+  const minRadius = 5 / camera.zoom;
+  const drawRadius = Math.max(unit.radius, minRadius);
+  ctx.save();
+  ctx.translate(unit.x, unit.y);
+  ctx.rotate(unit.angle + finite(unit.capitalProfile?.spriteRotation));
+  if (unit.dead) ctx.globalAlpha = clamp(1 - (sim.time - unit.deadAt) / 4, 0, 0.42);
+  if (unit.sprite?.ready && !unit.fighter) {
+    ctx.drawImage(unit.sprite.image, -unit.w * 0.5, -unit.h * 0.5, unit.w, unit.h);
+    ctx.strokeStyle = unit.hitFlash > 0 ? '#ffffff' : unit.color;
+    ctx.lineWidth = (selected ? 2.4 : 1.1) / camera.zoom;
+    ctx.globalAlpha = unit.dead ? ctx.globalAlpha : (selected ? 0.95 : 0.62);
+    ctx.strokeRect(-unit.w * 0.5, -unit.h * 0.5, unit.w, unit.h);
+  } else if (unit.fighter) {
+    const r = drawRadius;
+    ctx.fillStyle = unit.hitFlash > 0 ? '#ffffff' : unit.color;
+    ctx.beginPath();
+    ctx.moveTo(r * 1.35, 0);
+    ctx.lineTo(-r, -r * 0.72);
+    ctx.lineTo(-r * 0.55, 0);
+    ctx.lineTo(-r, r * 0.72);
     ctx.closePath();
     ctx.fill();
-    ctx.stroke();
-    ctx.restore();
-  }
-}
-function drawExplosions(sim){
-  ctx.save();
-  for(const e of sim.explosions){
-    if(!e.alive) continue;
-    const t=e.t/e.life;
-    const R=e.radius*(0.8+0.4*t);
-    ctx.globalAlpha=0.35*(1-t);
-    ctx.strokeStyle=e.color||'#ffef8a';
+  } else {
+    ctx.fillStyle = unit.hitFlash > 0 ? '#ffffff' : unit.color;
     ctx.beginPath();
-    ctx.arc(e.x,e.y,R,0,Math.PI*2);
-    ctx.stroke();
+    ctx.moveTo(drawRadius * 1.3, 0);
+    ctx.lineTo(-drawRadius, -drawRadius * 0.65);
+    ctx.lineTo(-drawRadius * 0.8, drawRadius * 0.65);
+    ctx.closePath();
+    ctx.fill();
   }
   ctx.restore();
+
+  if (selected && !unit.dead) {
+    ctx.strokeStyle = '#e7f7ff';
+    ctx.lineWidth = 1.7 / camera.zoom;
+    ctx.setLineDash([8 / camera.zoom, 5 / camera.zoom]);
+    ctx.beginPath();
+    ctx.arc(unit.x, unit.y, Math.max(unit.radius * 1.35, 14 / camera.zoom), 0, TWO_PI);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
 }
 
-/* ============================== Selection & Commands ======================== */
-const Selection = {
-  team:'player',
-  rect:null,
-  active:false,
-  units:new Set()
-};
-canvas.addEventListener('contextmenu',e=>e.preventDefault());
+function drawUnitHud(unit) {
+  if (unit.dead) return;
+  const screen = worldToScreen(unit.x, unit.y);
+  const visibleRadius = Math.max(7, unit.radius * camera.zoom);
+  if (screen.x < -100 || screen.y < -100 || screen.x > viewport.width + 100 || screen.y > viewport.height + 100) return;
+  ctx.setTransform(viewport.dpr, 0, 0, viewport.dpr, 0, 0);
+  const width = unit.fighter ? 26 : clamp(unit.w * camera.zoom * 0.42, 36, 84);
+  const x = screen.x - width * 0.5;
+  const y = screen.y - visibleRadius - 14;
+  ctx.fillStyle = 'rgba(3, 8, 12, .78)';
+  ctx.fillRect(x, y, width, 4);
+  ctx.fillStyle = unit.team === TEAM.BLUE ? '#5a9def' : '#e6536c';
+  ctx.fillRect(x, y, width * clamp(unit.hp / unit.maxHp, 0, 1), 2);
+  if (unit.shield.max > 0) {
+    ctx.fillStyle = '#68dbff';
+    ctx.fillRect(x, y + 2, width * clamp(unit.shield.val / unit.shield.max, 0, 1), 2);
+  }
+  if (selection.has(unit) || camera.zoom > 0.18) {
+    ctx.font = '9px ui-monospace, SFMono-Regular, Consolas, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = selection.has(unit) ? '#eefaff' : 'rgba(181,204,219,.72)';
+    ctx.fillText(unit.catalogEntry.label, screen.x, y - 4);
+  }
+  applyWorldTransform();
+}
 
-let isPanning=false;
-let panLast={x:0,y:0};
+function render() {
+  resizeCanvas();
+  drawBackground();
+  applyWorldTransform();
+  drawGrid();
+  drawTrails();
+  drawEffects();
+  drawProjectiles();
+  for (let index = 0; index < sim.units.length; index++) drawThrusters(sim.units[index]);
+  for (let index = 0; index < sim.units.length; index++) drawUnitBody(sim.units[index]);
+  for (let index = 0; index < sim.units.length; index++) drawHardpoints(sim.units[index]);
+  for (let index = 0; index < sim.units.length; index++) drawDebugVectors(sim.units[index]);
+  for (let index = 0; index < sim.units.length; index++) drawUnitHud(sim.units[index]);
+}
 
-canvas.addEventListener('mousedown',e=>{
-  // środkowy przycisk – pan
-  if((e.button===0 && e.ctrlKey) || e.button===1){
-    e.preventDefault();
-    isPanning=true;
-    panLast={x:e.clientX,y:e.clientY};
+function countHardpoints(unit) {
+  const counts = Object.fromEntries(HP_TYPES.map((type) => [type, 0]));
+  for (const hp of unit?.editorHardpoints || []) counts[hp.type] = (counts[hp.type] || 0) + 1;
+  return counts;
+}
+
+function setPrimarySelection(unit, additive = false) {
+  if (!additive) selection.clear();
+  if (unit) {
+    if (additive && selection.has(unit)) selection.delete(unit);
+    else selection.add(unit);
+  }
+  primarySelection = unit && selection.has(unit) ? unit : (selection.values().next().value || null);
+  refreshInspector(true);
+}
+
+function unitAtScreen(screenX, screenY) {
+  let best = null;
+  let bestSq = Infinity;
+  for (let index = sim.units.length - 1; index >= 0; index--) {
+    const unit = sim.units[index];
+    if (!unit || unit.dead) continue;
+    const screen = worldToScreen(unit.x, unit.y);
+    const radius = Math.max(9, unit.radius * camera.zoom, Math.min(34, unit.h * camera.zoom * 0.35));
+    const dx = screen.x - screenX;
+    const dy = screen.y - screenY;
+    const distanceSq = dx * dx + dy * dy;
+    if (distanceSq <= radius * radius && distanceSq < bestSq) {
+      best = unit;
+      bestSq = distanceSq;
+    }
+  }
+  return best;
+}
+
+function populateWeaponSelect(select, mountType) {
+  const fragment = document.createDocumentFragment();
+  for (const weapon of Object.values(MASTER_WEAPONS)) {
+    if (!weapon || weapon.mountType !== mountType || weapon.category === 'hangar') continue;
+    const option = document.createElement('option');
+    option.value = weapon.id;
+    option.textContent = `${weapon.name} · ${weapon.size || '—'}`;
+    fragment.appendChild(option);
+  }
+  select.replaceChildren(fragment);
+}
+
+function refreshHardpointSummary(unit) {
+  const counts = countHardpoints(unit);
+  const rows = HP_TYPES.filter((type) => counts[type] > 0).map((type) => {
+    const mounted = unit.weapons?.[type]?.length || 0;
+    return `<div><span>${type}</span><strong>${mounted}/${counts[type]}</strong></div>`;
+  });
+  if (unit.fighter) rows.push(`<div><span>gun</span><strong>${unit.gun}</strong></div><div><span>missile</span><strong>${unit.msl} × ${unit.mslAmmo}</strong></div>`);
+  ui.hardpointSummary.innerHTML = rows.join('') || '<div><span>brak hardpointów</span><strong>—</strong></div>';
+}
+
+function refreshInspector(force = false) {
+  const unit = primarySelection && !primarySelection.dead ? primarySelection : null;
+  if (!unit) {
+    ui.emptyInspector.classList.remove('hidden');
+    ui.inspector.classList.add('hidden');
+    ui.selectedName.textContent = 'Brak zaznaczenia';
+    ui.selectedSubtitle.textContent = 'Kliknij jednostkę na poligonie.';
+    lastInspectorSelection = null;
     return;
   }
-  if(e.button===0 && !e.ctrlKey){
-    const rect=canvas.getBoundingClientRect();
-    const start=screenToWorld(e.clientX-rect.left,e.clientY-rect.top);
-    Selection.active=true;
-    Selection.rect={x0:start.x,y0:start.y,x1:start.x,y1:start.y};
-  }
-});
+  ui.emptyInspector.classList.add('hidden');
+  ui.inspector.classList.remove('hidden');
+  ui.selectedName.textContent = unit.name;
+  ui.selectedSubtitle.textContent = `${unit.team === TEAM.BLUE ? 'Niebiescy' : 'Czerwoni'} · ${unit.brainName} · ${unit.shipFrame || unit.squadronId}`;
+  ui.hullText.textContent = `${Math.ceil(unit.hp).toLocaleString('pl-PL')} / ${unit.maxHp.toLocaleString('pl-PL')}`;
+  ui.shieldText.textContent = unit.shield.max > 0 ? `${Math.ceil(unit.shield.val).toLocaleString('pl-PL')} / ${unit.shield.max.toLocaleString('pl-PL')}` : 'brak';
+  ui.hullBar.style.width = `${clamp(unit.hp / unit.maxHp * 100, 0, 100)}%`;
+  ui.shieldBar.style.width = `${unit.shield.max > 0 ? clamp(unit.shield.val / unit.shield.max * 100, 0, 100) : 0}%`;
+  ui.speedMetric.textContent = `${Math.round(Math.hypot(unit.vx, unit.vy)).toLocaleString('pl-PL')} u/s`;
+  ui.maxSpeedMetric.textContent = `${Math.round(unit.maxSpeed).toLocaleString('pl-PL')} u/s`;
+  ui.stateMetric.textContent = unit.state || (unit.aiEnabled ? 'combat' : 'idle');
+  const target = unit.forceTarget && !unit.forceTarget.dead ? unit.forceTarget : unit.target;
+  ui.targetMetric.textContent = target && !target.dead ? (target.name || target.id || target.type) : 'brak';
+  ui.physicsMetric.textContent = npcHasPhysicalThrusters(unit) ? 'dysze fizyczne' : (unit.fighter ? 'fighter accel' : 'fallback AI');
+  const hpCounts = countHardpoints(unit);
+  ui.hardpointMetric.textContent = unit.fighter ? 'uzbrojenie eskadry' : `${(unit.editorHardpoints || []).length} · ${hpCounts.main} main`;
 
-window.addEventListener('mousemove',e=>{
-  if(isPanning){
-    e.preventDefault();
-    const dx=(e.clientX-panLast.x)/CAM.scale;
-    const dy=(e.clientY-panLast.y)/CAM.scale;
-    CAM.x -= dx;
-    CAM.y -= dy;
-    panLast={x:e.clientX,y:e.clientY};
-  }else if(Selection.active){
-    const rect=canvas.getBoundingClientRect();
-    const cur=screenToWorld(e.clientX-rect.left,e.clientY-rect.top);
-    Selection.rect.x1=cur.x;
-    Selection.rect.y1=cur.y;
+  if (force || lastInspectorSelection !== unit) {
+    ui.aiEnabled.checked = unit.aiEnabled;
+    ui.tuneMaxSpeed.value = String(Math.round(unit.maxSpeed * 100) / 100);
+    ui.tuneAccel.value = String(Math.round(unit.accel * 100) / 100);
+    ui.tuneTurn.value = String(Math.round(unit.turn * 1000) / 1000);
+    ui.tuneRange.value = String(Math.round(finite(unit.preferredRange)));
+    ui.mainWeapon.value = unit.loadout?.main || '';
+    ui.auxWeapon.value = unit.loadout?.aux || '';
+    ui.missileWeapon.value = unit.loadout?.missile || '';
+    ui.mainWeapon.disabled = unit.fighter;
+    ui.auxWeapon.disabled = unit.fighter;
+    ui.missileWeapon.disabled = unit.fighter;
+    ui.applyLoadout.disabled = unit.fighter;
+    ui.sourceFiles.textContent = unit.fighter
+      ? 'src/ai/fighterAI.js\nsrc/data/fighterSquadrons.js\nsrc/data/weapons.js'
+      : 'src/ai/capitalAI.js\nsrc/ai/fleetCoordinator.js\nsrc/game/flight/npcFlight.js\nsrc/data/hardpointEditorDefaults.js\nsrc/data/ships.js\nsrc/data/weapons.js';
+    refreshHardpointSummary(unit);
+    lastInspectorSelection = unit;
   }
-});
-window.addEventListener('mouseup',e=>{
-  if(e.button===0 || e.button===1){
-    isPanning=false;
+}
+
+function refreshGlobalUi(now) {
+  if (now - lastUiUpdate < 120) return;
+  lastUiUpdate = now;
+  let blue = 0;
+  let red = 0;
+  for (let index = 0; index < sim.units.length; index++) {
+    const unit = sim.units[index];
+    if (!unit || unit.dead) continue;
+    if (unit.team === TEAM.BLUE) blue++;
+    else red++;
   }
-  if(e.button===0 && Selection.active){
-    Selection.active=false;
-    Selection.units.clear();
-    const x0=Math.min(Selection.rect.x0,Selection.rect.x1);
-    const y0=Math.min(Selection.rect.y0,Selection.rect.y1);
-    const x1=Math.max(Selection.rect.x0,Selection.rect.x1);
-    const y1=Math.max(Selection.rect.y0,Selection.rect.y1);
-    const allowEnemy=e.shiftKey;
-    for(const squad of sim.squads){
-      if(!allowEnemy && squad.team!=='player') continue;
-      if(squad.x>=x0 && squad.x<=x1 && squad.y>=y0 && squad.y<=y1){
-        for(const u of squad.units) Selection.units.add(u);
-      }
+  ui.blueCount.textContent = String(blue);
+  ui.redCount.textContent = String(red);
+  ui.layoutStatus.textContent = `layouty: v${hardpoints.version}`;
+  ui.projectileStatus.textContent = `pociski: ${sim.projectiles.length}`;
+  ui.fpsReadout.textContent = `${Math.round(fpsSmoothing)} FPS`;
+  ui.simReadout.textContent = `${sim.lastAiMs.toFixed(2)} ms AI · ${sim.units.length} jednostek`;
+  refreshInspector(false);
+
+  if (sim.time > 1 && blue === 0 && red > 0 && victoryState !== TEAM.RED) {
+    victoryState = TEAM.RED;
+    logEvent('Zwycięstwo czerwonych.', 'kill');
+  } else if (sim.time > 1 && red === 0 && blue > 0 && victoryState !== TEAM.BLUE) {
+    victoryState = TEAM.BLUE;
+    logEvent('Zwycięstwo niebieskich.', 'info');
+  }
+}
+
+function frame(now) {
+  const realDt = Math.min(0.1, Math.max(0, (now - lastFrameTime) / 1000));
+  lastFrameTime = now;
+  if (realDt > 0) fpsSmoothing += ((1 / realDt) - fpsSmoothing) * 0.08;
+
+  if (!sim.paused) {
+    sim.accumulator += realDt * sim.timeScale;
+    let steps = 0;
+    while (sim.accumulator >= FIXED_DT && steps < MAX_STEPS_PER_FRAME) {
+      simulationStep(FIXED_DT);
+      sim.accumulator -= FIXED_DT;
+      steps++;
     }
+    if (steps === MAX_STEPS_PER_FRAME) sim.accumulator = 0;
   }
-});
-
-// PPM – move / attack
-canvas.addEventListener('mouseup',e=>{
-  if(e.button!==2) return;
-  if(Selection.units.size===0) return;
-  const rect=canvas.getBoundingClientRect();
-  const pt=screenToWorld(e.clientX-rect.left,e.clientY-rect.top);
-
-  let clickedEnemySquad=null;
-  let bestD2=1e9;
-  for(const squad of sim.squads){
-    if(squad.team==='player' || squad.units.size===0) continue;
-    const d2v=dist2(pt,squad);
-    const hitR = squad.iconHitR/Math.max(0.5,CAM.scale);
-    if(d2v<hitR*hitR && d2v<bestD2){
-      bestD2=d2v;
-      clickedEnemySquad=squad;
-    }
-  }
-  if(clickedEnemySquad) issueAttackOrder(clickedEnemySquad);
-  else issueMoveOrderToPoint(pt.x,pt.y);
-});
-
-function issueAttackOrder(targetSquad){
-  const selectedSquads=new Set([...Selection.units].map(u=>u.squad));
-  for(const squad of selectedSquads){
-    squad.attackTargetSquadId=targetSquad.id;
-    squad.moveAnchor=null;
-    if(squad.leader && squad.leader.moveAnchor) squad.leader.moveAnchor=null;
-    for(const u of squad.units){
-      if(u.state!=='dogfight3D' && u.state!=='approach') u.state='engage_formation';
-    }
-  }
-  sim.setCmd('player','ENGAGE');
-  setActive(fBtns,fBtns.engage);
-}
-function issueMoveOrderToPoint(x,y){
-  const units=[...Selection.units].filter(u=>u.alive);
-  if(units.length===0) return;
-  const squads=new Set(units.map(u=>u.squad));
-
-  const fighters=[...squads].filter(s=>s.type==='fighter');
-  const frigatesPD=[...squads].filter(s=>s.type==='frigate' && s.leader.subType!=='laser');
-  const frigatesL=[...squads].filter(s=>s.type==='frigate' && s.leader.subType==='laser');
-  const destroyers=[...squads].filter(s=>s.type==='destroyer');
-  const battleships=[...squads].filter(s=>s.type==='battleship');
-
-  const enemyShip=SHIP.enemy;
-  const ang=Math.atan2(enemyShip.y-y,enemyShip.x-x);
-  const forward={x:Math.cos(ang),y:Math.sin(ang)};
-  const right={x:-forward.y,y:forward.x};
-
-  let depth=0;
-  const placeLine=(list,spacing)=>{
-    if(list.length===0) return;
-    list.sort((a,b)=>a.id-b.id);
-    const totalW=(list.length-1)*spacing;
-    const cx=x - forward.x*depth;
-    const cy=y - forward.y*depth;
-    const startX=cx - right.x*totalW/2;
-    const startY=cy - right.y*totalW/2;
-    list.forEach((s,i)=>{
-      const tx=startX + right.x*(i*spacing);
-      const ty=startY + right.y*(i*spacing);
-      if(s.isCapital && s.leader) s.leader.moveAnchor={x:tx,y:ty};
-      else s.moveAnchor={x:tx,y:ty};
-    });
-    depth += 200;
-  };
-
-  placeLine(fighters,200);
-  depth += 80;
-  placeLine(frigatesPD,140);
-  placeLine(frigatesL,140);
-  placeLine(destroyers,180);
-  placeLine(battleships,220);
-
-  for(const u of units) u.state='move';
-  sim.setCmd('player','MOVE');
-  setActive(fBtns,fBtns.move);
-}
-
-/* ============================== UI / Controls =============================== */
-const frSquadsDiv=document.getElementById('frSquads');
-const enSquadsDiv=document.getElementById('enSquads');
-function renderSquadPlaceholders(){
-  frSquadsDiv.innerHTML='';
-  enSquadsDiv.innerHTML='';
-  const build=(root,color)=>{
-    for(let i=1;i<=5;i++){
-      const el=document.createElement('div');
-      el.className='squadCard';
-      el.innerHTML=`<span>Group ${i}</span><span style="color:${color}">—</span>`;
-      root.appendChild(el);
-    }
-  };
-  build(frSquadsDiv,COL.friend);
-  build(enSquadsDiv,COL.enemy);
-}
-renderSquadPlaceholders();
-
-const sim=new BattleSim();
-
-function spawnFriendly(){ sim.spawnSquadron('player'); }
-function spawnEnemy(){ sim.spawnSquadron('enemy'); }
-function spawnFrigF(){ sim.spawnFrigate('player','pd'); }
-function spawnFrigFL(){ sim.spawnFrigate('player','laser'); }
-function spawnFrigE(){ sim.spawnFrigate('enemy','pd'); }
-function spawnFrigEL(){ sim.spawnFrigate('enemy','laser'); }
-function spawnDestF(){ sim.spawnDestroyer('player'); }
-function spawnDestE(){ sim.spawnDestroyer('enemy'); }
-function spawnBatF(){ sim.spawnBattleship('player'); }
-function spawnBatE(){ sim.spawnBattleship('enemy'); }
-
-document.getElementById('spawnF').addEventListener('click',spawnFriendly);
-document.getElementById('spawnE').addEventListener('click',spawnEnemy);
-document.getElementById('spawnFF').addEventListener('click',spawnFrigF);
-document.getElementById('spawnFL').addEventListener('click',spawnFrigFL);
-document.getElementById('spawnEF').addEventListener('click',spawnFrigE);
-document.getElementById('spawnEL').addEventListener('click',spawnFrigEL);
-document.getElementById('spawnFD').addEventListener('click',spawnDestF);
-document.getElementById('spawnED').addEventListener('click',spawnDestE);
-document.getElementById('spawnFB').addEventListener('click',spawnBatF);
-document.getElementById('spawnEB').addEventListener('click',spawnBatE);
-
-document.getElementById('reset').addEventListener('click',()=>{
-  sim.units.clear();
-  sim.squads.clear();
-  sim.projectiles.length=0;
-  sim.missiles.length=0;
-  sim.explosions.length=0;
-  sim.wrecks.clear();
-  Selection.units.clear();
-});
-
-let paused=false;
-document.getElementById('pause').addEventListener('click',()=>{
-  paused=!paused;
-  document.getElementById('pause').textContent=paused?'Start':'Pauza';
-});
-
-// Time controls
-const timeBtns={
-  t02:document.getElementById('t_02'),
-  t05:document.getElementById('t_05'),
-  t1 :document.getElementById('t_1'),
-  t2 :document.getElementById('t_2'),
-  t4 :document.getElementById('t_4')
-};
-function setTimeScale(val,btn){
-  TIME_SCALE=val;
-  Object.values(timeBtns).forEach(b=>b.classList.remove('active'));
-  btn.classList.add('active');
-}
-timeBtns.t02.addEventListener('click',e=>setTimeScale(0.2,e.target));
-timeBtns.t05.addEventListener('click',e=>setTimeScale(0.5,e.target));
-timeBtns.t1 .addEventListener('click',e=>setTimeScale(1.0,e.target));
-timeBtns.t2 .addEventListener('click',e=>setTimeScale(2.0,e.target));
-timeBtns.t4 .addEventListener('click',e=>setTimeScale(4.0,e.target));
-
-const fBtns={
-  engage:document.getElementById('f_engage'),
-  guard :document.getElementById('f_guard'),
-  move  :document.getElementById('f_move'),
-  ret   :document.getElementById('f_return')
-};
-const eBtns={
-  engage:document.getElementById('e_engage'),
-  guard :document.getElementById('e_guard'),
-  move  :document.getElementById('e_move'),
-  ret   :document.getElementById('e_return')
-};
-function setActive(btns,active){
-  Object.values(btns).forEach(b=>b.classList.remove('active'));
-  active.classList.add('active');
-}
-fBtns.engage.addEventListener('click',()=>{ sim.setCmd('player','ENGAGE'); setActive(fBtns,fBtns.engage); });
-fBtns.guard .addEventListener('click',()=>{ sim.setCmd('player','GUARD');  setActive(fBtns,fBtns.guard ); });
-fBtns.move  .addEventListener('click',()=>{ sim.setCmd('player','MOVE');   setActive(fBtns,fBtns.move  ); });
-fBtns.ret   .addEventListener('click',()=>{ sim.setCmd('player','RETURN'); setActive(fBtns,fBtns.ret   ); });
-eBtns.engage.addEventListener('click',()=>{ sim.setCmd('enemy','ENGAGE'); setActive(eBtns,eBtns.engage); });
-eBtns.guard .addEventListener('click',()=>{ sim.setCmd('enemy','GUARD');  setActive(eBtns,eBtns.guard ); });
-eBtns.move  .addEventListener('click',()=>{ sim.setCmd('enemy','MOVE');   setActive(eBtns,eBtns.move  ); });
-eBtns.ret   .addEventListener('click',()=>{ sim.setCmd('enemy','RETURN'); setActive(eBtns,eBtns.ret   ); });
-
-function applyTeamCfg(team){
-  const hp = parseFloat(document.getElementById(team==='player'?'fr_hp':'en_hp').value)||120;
-  const sh = parseFloat(document.getElementById(team==='player'?'fr_sh':'en_sh').value)||80;
-  const gun= document.getElementById(team==='player'?'fr_gun':'en_gun').value;
-  const msl= document.getElementById(team==='player'?'fr_msl':'en_msl').value;
-  const pd = document.getElementById(team==='player'?'fr_pd':'en_pd').value;
-  const flk= document.getElementById(team==='player'?'fr_flak':'en_flak').value;
-  sim.teamCfg[team]={hp,shield:sh,gun,msl,pd,flak:flk};
-  for(const u of sim.units){
-    if(u.team!==team || !u.alive) continue;
-    if(u.kind==='fighter'){
-      u.hpMax=hp; u.shieldMax=sh; u.hp=hp; u.shield=sh;
-      u.gun=gun; u.msl=msl; u.mslAmmo=Math.max(u.mslAmmo,1);
-    }else if(u.kind==='frigate'){
-      u.pd=pd; u.flak=flk;
-    }else if(u.kind==='destroyer'){
-      u.pd=pd;
-    }
-  }
-}
-document.getElementById('fr_apply').addEventListener('click',()=>applyTeamCfg('player'));
-document.getElementById('en_apply').addEventListener('click',()=>applyTeamCfg('enemy'));
-
-// zoom
-canvas.addEventListener('wheel',e=>{
-  e.preventDefault();
-  const rect=canvas.getBoundingClientRect();
-  const mx=e.clientX-rect.left, my=e.clientY-rect.top;
-  const before=screenToWorld(mx,my);
-  const factor=(e.deltaY<0)?1.1:(1/1.1);
-  const ns=clamp(CAM.scale*factor,CAM.min,CAM.max);
-  CAM.scale=ns;
-  const after=screenToWorld(mx,my);
-  CAM.x+=(before.x-after.x);
-  CAM.y+=(before.y-after.y);
-},{passive:false});
-
-document.getElementById('zoomIn').addEventListener('click',()=>{CAM.scale=Math.min(CAM.max,CAM.scale*1.2);});
-document.getElementById('zoomOut').addEventListener('click',()=>{CAM.scale=Math.max(CAM.min,CAM.scale/1.2);});
-document.getElementById('zoomFit').addEventListener('click',()=>{
-  CAM.x=WORLD.W*0.5;
-  CAM.y=WORLD.H*0.5;
-  CAM.scale=0.35;
-});
-
-/* ============================== Main loop =================================== */
-function updateCounters(){
-  const fr=[...sim.units].filter(u=>u.alive && u.team==='player').length;
-  const en=[...sim.units].filter(u=>u.alive && u.team==='enemy').length;
-  document.getElementById('cntFriend').textContent=`FR: ${fr}`;
-  document.getElementById('cntEnemy').textContent =`EN: ${en}`;
-}
-function drawBackground(){
-  ctx.fillStyle = '#050a11';
-  ctx.fillRect(0,0,WORLD.W,WORLD.H);
-  ctx.strokeStyle='#101726';
-  ctx.lineWidth=1;
-  ctx.globalAlpha=0.3;
-  for(let x=0;x<=WORLD.W;x+=200){
-    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,WORLD.H); ctx.stroke();
-  }
-  for(let y=0;y<=WORLD.H;y+=200){
-    ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(WORLD.W,y); ctx.stroke();
-  }
-  ctx.globalAlpha=1;
-}
-
-function drawSelection(){
-  if(Selection.units.size===0) return;
-  ctx.save();
-  ctx.strokeStyle='#4a9eff';
-  ctx.lineWidth=2/CAM.scale;
-  ctx.globalAlpha=0.9;
-  for(const u of Selection.units){
-    if(!u.alive) continue;
-    const radius=(u.hitR||10) + (5/CAM.scale);
-    ctx.beginPath();
-    ctx.arc(u.x,u.y,radius,0,Math.PI*2);
-    ctx.stroke();
-  }
-  ctx.restore();
-}
-
-let last=performance.now();
-function frame(){
-  const now=performance.now();
-  const dt=Math.min(0.05,(now-last)/1000);
-  last=now;
-
-  if(!paused){
-    updateCarrier(SHIP.friend,dt);
-    updateCarrier(SHIP.enemy,dt);
-    sim.tick(dt);
-  }
-
-  resetTransform();
-  ctx.clearRect(0,0,canvas.width/DPR,canvas.height/DPR);
-  applyCam();
-  drawBackground();
-  drawCarrier(SHIP.friend);
-  drawCarrier(SHIP.enemy);
-
-  for(const w of sim.wrecks) drawWreck(w);
-  for(const u of sim.units){
-    if(!u.alive) continue;
-    if(u.kind==='fighter')      drawFighter(u);
-    else if(u.kind==='frigate') drawFrigate(u);
-    else if(u.kind==='destroyer')drawDestroyer(u);
-    else if(u.kind==='battleship')drawBattleship(u);
-  }
-  drawProjectiles(sim);
-  drawMissiles(sim);
-  drawExplosions(sim);
-  for(const s of sim.squads) drawSquadIcon(s);
-
-  if(Selection.active && Selection.rect){
-    ctx.save();
-    ctx.strokeStyle='#7aa8ff';
-    ctx.globalAlpha=0.8;
-    ctx.lineWidth=2/CAM.scale;
-    const x0=Math.min(Selection.rect.x0,Selection.rect.x1);
-    const y0=Math.min(Selection.rect.y0,Selection.rect.y1);
-    const w=Math.abs(Selection.rect.x1-Selection.rect.x0);
-    const h=Math.abs(Selection.rect.y1-Selection.rect.y0);
-    ctx.strokeRect(x0,y0,w,h);
-    ctx.restore();
-  }
-  drawSelection();
-  updateCounters();
+  render();
+  refreshGlobalUi(now);
   requestAnimationFrame(frame);
 }
-fit();
-requestAnimationFrame(frame);
-</script>
-</body>
-</html>
+
+function populateCatalog() {
+  const groups = [
+    ['Eskadry', CATALOG.filter((entry) => entry.family === 'fighter')],
+    ['Okręty liniowe', CATALOG.filter((entry) => entry.family === 'support')],
+    ['Capitale i cele', CATALOG.filter((entry) => entry.family === 'capital' || entry.family === 'civilian')]
+  ];
+  const fragment = document.createDocumentFragment();
+  for (const [label, entries] of groups) {
+    const group = document.createElement('optgroup');
+    group.label = label;
+    for (const entry of entries) {
+      const stats = resolveStats(entry);
+      const option = document.createElement('option');
+      option.value = entry.id;
+      option.textContent = `${entry.label} · ${Math.round(stats.maxSpeed)} u/s`;
+      group.appendChild(option);
+    }
+    fragment.appendChild(group);
+  }
+  ui.spawnHull.replaceChildren(fragment);
+  ui.spawnHull.value = 'battleship';
+  updateSpawnDescription();
+}
+
+function updateSpawnDescription() {
+  const entry = CATALOG_BY_ID.get(ui.spawnHull.value);
+  if (!entry) return;
+  const stats = resolveStats(entry);
+  ui.spawnDescription.textContent = `${entry.description}  HP ${stats.hp.toLocaleString('pl-PL')} · max ${stats.maxSpeed} · accel ${stats.accel}`;
+  if (entry.family === 'fighter' && Number(ui.spawnCount.value) === 1) ui.spawnCount.value = String(entry.data.squadSize);
+}
+
+function duplicateUnit(unit) {
+  if (!unit) return null;
+  const copy = spawnUnit(unit.catalogId, unit.team, unit.x + unit.radius * 2.5 + 80, unit.y + unit.radius * 0.5, { angle: unit.angle, vx: unit.vx, vy: unit.vy });
+  copy.maxSpeed = unit.maxSpeed;
+  copy.accel = unit.accel;
+  copy.turn = unit.turn;
+  copy.preferredRange = unit.preferredRange;
+  if (!copy.fighter) mountLoadout(copy, unit.loadout);
+  return copy;
+}
+
+function bindUi() {
+  document.querySelectorAll('[data-scenario]').forEach((button) => {
+    button.addEventListener('click', () => runScenario(button.dataset.scenario));
+  });
+  document.querySelectorAll('[data-spawn-fighters]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const team = button.dataset.spawnFighters === TEAM.RED ? TEAM.RED : TEAM.BLUE;
+      spawnFighterReinforcements(team, 50);
+    });
+  });
+  ui.timeControls.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-time]');
+    if (!button) return;
+    sim.timeScale = clamp(button.dataset.time, 0.1, 8);
+    ui.timeControls.querySelectorAll('button').forEach((entry) => entry.classList.toggle('active', entry === button));
+  });
+  ui.pause.addEventListener('click', () => {
+    sim.paused = !sim.paused;
+    ui.pause.textContent = sim.paused ? 'Wznów' : 'Pauza';
+    ui.pause.classList.toggle('active', sim.paused);
+  });
+  ui.reset.addEventListener('click', () => clearSimulation());
+  ui.clearLog.addEventListener('click', () => ui.combatLog.replaceChildren());
+  ui.spawnHull.addEventListener('change', updateSpawnDescription);
+  ui.spawnButton.addEventListener('click', () => {
+    const id = ui.spawnHull.value;
+    const team = ui.spawnTeam.value;
+    const count = clamp(Math.round(ui.spawnCount.value), 1, 80);
+    const x = team === TEAM.BLUE ? camera.x - viewport.width / camera.zoom * 0.28 : camera.x + viewport.width / camera.zoom * 0.28;
+    const facing = team === TEAM.BLUE ? 0 : Math.PI;
+    if (CATALOG_BY_ID.get(id)?.family === 'fighter') spawnFighterGroup(id, team, count, x, camera.y, facing);
+    else {
+      for (let index = 0; index < count; index++) {
+        spawnUnit(id, team, x, camera.y + (index - (count - 1) * 0.5) * 520, { angle: facing });
+      }
+    }
+    logEvent(`Dodano ${count} × ${CATALOG_BY_ID.get(id)?.label} (${team}).`, 'info');
+  });
+  ui.reloadLayouts.addEventListener('click', () => {
+    hardpoints.refreshCache(true);
+    for (let index = 0; index < sim.units.length; index++) applyCurrentLayout(sim.units[index]);
+    refreshInspector(true);
+    logEvent(`Ręcznie wczytano hardpointy gry · wersja ${hardpoints.version}`, 'info');
+  });
+
+  ui.aiEnabled.addEventListener('change', () => {
+    if (!primarySelection) return;
+    primarySelection.aiEnabled = ui.aiEnabled.checked && !!primarySelection.brainFn;
+  });
+  ui.applyTuning.addEventListener('click', () => {
+    const unit = primarySelection;
+    if (!unit) return;
+    unit.maxSpeed = Math.max(0, finite(ui.tuneMaxSpeed.value, unit.maxSpeed));
+    unit.accel = Math.max(0, finite(ui.tuneAccel.value, unit.accel));
+    unit.turn = Math.max(0.01, finite(ui.tuneTurn.value, unit.turn));
+    unit.turnAccel = unit.turn * 4;
+    unit.preferredRange = Math.max(0, finite(ui.tuneRange.value, unit.preferredRange));
+    unit.__fighterEnv = undefined;
+    logEvent(`Tuning zastosowany: ${unit.name}`, 'info');
+    refreshInspector(true);
+  });
+  ui.resetTuning.addEventListener('click', () => {
+    const unit = primarySelection;
+    if (!unit) return;
+    Object.assign(unit, unit.baseStats);
+    unit.turnAccel = unit.turn * 4;
+    unit.__fighterEnv = undefined;
+    refreshInspector(true);
+  });
+  ui.applyLoadout.addEventListener('click', () => {
+    const unit = primarySelection;
+    if (!unit || unit.fighter) return;
+    mountLoadout(unit, { main: ui.mainWeapon.value, aux: ui.auxWeapon.value, missile: ui.missileWeapon.value });
+    refreshHardpointSummary(unit);
+    logEvent(`Przemontowano hardpointy: ${unit.name}`, 'info');
+  });
+  ui.healSelected.addEventListener('click', () => {
+    if (!primarySelection) return;
+    primarySelection.hp = primarySelection.maxHp;
+    primarySelection.shield.val = primarySelection.shield.max;
+    primarySelection.shield.regenTimer = 0;
+  });
+  ui.clearTarget.addEventListener('click', () => {
+    for (const unit of selection) {
+      unit.forceTarget = null;
+      unit.target = null;
+      unit.retargetTimer = 0;
+    }
+  });
+  ui.duplicateSelected.addEventListener('click', () => {
+    const copy = duplicateUnit(primarySelection);
+    if (copy) setPrimarySelection(copy);
+  });
+  ui.deleteSelected.addEventListener('click', () => {
+    for (const unit of selection) {
+      unit.dead = true;
+      unit.deadAt = sim.time - 5;
+    }
+    selection.clear();
+    setPrimarySelection(null);
+    cleanupDeadUnits();
+  });
+}
+
+function bindCanvas() {
+  let panning = false;
+  let panStartX = 0;
+  let panStartY = 0;
+  let cameraStartX = 0;
+  let cameraStartY = 0;
+
+  ui.canvas.addEventListener('pointerdown', (event) => {
+    ui.canvas.focus();
+    const rect = ui.canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    if (event.button === 1) {
+      panning = true;
+      panStartX = event.clientX;
+      panStartY = event.clientY;
+      cameraStartX = camera.x;
+      cameraStartY = camera.y;
+      ui.canvas.classList.add('panning');
+      ui.canvas.setPointerCapture(event.pointerId);
+      event.preventDefault();
+      return;
+    }
+    const hit = unitAtScreen(x, y);
+    if (event.button === 0) {
+      setPrimarySelection(hit, event.shiftKey);
+    } else if (event.button === 2 && hit) {
+      let assigned = 0;
+      for (const unit of selection) {
+        if (!unit.dead && unit.team !== hit.team) {
+          unit.forceTarget = hit;
+          unit.target = hit;
+          unit.retargetTimer = 9999;
+          assigned++;
+        }
+      }
+      if (assigned) logEvent(`${assigned} jednostek otrzymało wymuszony cel: ${hit.name}`, 'info');
+    }
+  });
+
+  ui.canvas.addEventListener('pointermove', (event) => {
+    const rect = ui.canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    const world = screenToWorld(x, y);
+    ui.cursorReadout.textContent = `x ${Math.round(world.x)} · y ${Math.round(world.y)}`;
+    if (!panning) return;
+    camera.x = cameraStartX - (event.clientX - panStartX) / camera.zoom;
+    camera.y = cameraStartY - (event.clientY - panStartY) / camera.zoom;
+  });
+
+  const stopPan = (event) => {
+    if (!panning) return;
+    panning = false;
+    ui.canvas.classList.remove('panning');
+    if (ui.canvas.hasPointerCapture(event.pointerId)) ui.canvas.releasePointerCapture(event.pointerId);
+  };
+  ui.canvas.addEventListener('pointerup', stopPan);
+  ui.canvas.addEventListener('pointercancel', stopPan);
+  ui.canvas.addEventListener('contextmenu', (event) => event.preventDefault());
+  ui.canvas.addEventListener('wheel', (event) => {
+    event.preventDefault();
+    const rect = ui.canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    const before = screenToWorld(x, y);
+    camera.zoom = clamp(camera.zoom * Math.exp(-event.deltaY * 0.0012), camera.minZoom, camera.maxZoom);
+    const after = screenToWorld(x, y);
+    camera.x += before.x - after.x;
+    camera.y += before.y - after.y;
+    ui.cameraReadout.textContent = `zoom ${Math.round(camera.zoom * 100)}%`;
+  }, { passive: false });
+  ui.canvas.addEventListener('dblclick', (event) => {
+    const rect = ui.canvas.getBoundingClientRect();
+    const hit = unitAtScreen(event.clientX - rect.left, event.clientY - rect.top);
+    if (hit) {
+      camera.x = hit.x;
+      camera.y = hit.y;
+      camera.zoom = clamp(Math.max(camera.zoom, 0.45), camera.minZoom, camera.maxZoom);
+      setPrimarySelection(hit);
+    }
+  });
+
+  window.addEventListener('keydown', (event) => {
+    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) return;
+    if (event.code === 'Space') {
+      event.preventDefault();
+      ui.pause.click();
+    } else if (event.key.toLowerCase() === 'f') {
+      fitCameraToUnits();
+    } else if (event.key === 'Delete') {
+      ui.deleteSelected.click();
+    } else if (['1', '2', '4'].includes(event.key)) {
+      ui.timeControls.querySelector(`[data-time="${event.key}"]`)?.click();
+    }
+  });
+}
+
+async function bootstrap() {
+  installGameBridges();
+  hardpoints.refreshCache(true);
+  populateCatalog();
+  populateWeaponSelect(ui.mainWeapon, 'main');
+  populateWeaponSelect(ui.auxWeapon, 'aux');
+  populateWeaponSelect(ui.missileWeapon, 'missile');
+  bindUi();
+  bindCanvas();
+  resizeCanvas();
+
+  const assetPromises = Object.entries(HULL_SPRITE_URLS).map(([hullId, src]) => loadSprite(hullId, src));
+  const loaded = await Promise.all(assetPromises);
+  const failures = loaded.filter((record) => record.error);
+  if (failures.length) logEvent(`Nie udało się wczytać sprite'ów: ${failures.map((entry) => entry.hullId).join(', ')}`, 'kill');
+
+  ui.runtimeStatus.innerHTML = '<i class="status-light"></i>moduły gry podłączone';
+  ui.layoutStatus.textContent = `layouty: v${hardpoints.version}`;
+  ui.loading.classList.add('done');
+  runScenario('mixed');
+  logEvent('AI SPACE korzysta z bieżących modułów gry.', 'info');
+  requestAnimationFrame(frame);
+}
+
+bootstrap().catch((error) => {
+  console.error(error);
+  ui.loading.querySelector('strong').textContent = 'Nie udało się uruchomić AI SPACE';
+  ui.loading.querySelector('span').textContent = error?.stack || error?.message || String(error);
+  ui.runtimeStatus.textContent = 'błąd inicjalizacji';
+});

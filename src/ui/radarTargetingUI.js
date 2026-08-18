@@ -1,3 +1,5 @@
+import { formatLocalDistance } from '../config/units.js';
+
 const STYLE_ID = 'radar-targeting-ui-style';
 const ROOT_ID = 'radar-targeting-labels';
 
@@ -238,7 +240,7 @@ export function initRadarTargetingUI(opts = {}) {
         <table class="glitch-text">
           <tr><td class="hdr">NAME</td><td>${meta.unitId}</td></tr>
           <tr><td class="hdr">CLASS</td><td>${meta.unitClass}</td></tr>
-          <tr class="dist-row"><td class="hdr">DST</td><td class="dist-val">0 u</td></tr>
+          <tr class="dist-row"><td class="hdr">DST</td><td class="dist-val">0 m</td></tr>
           <tr class="status-row" style="display:${statusDisplay};"><td colspan="2" class="hdr" style="color:#ff4444; text-align:center;">LOCKED</td></tr>
         </table>
         <div class="scan-results">${scanHtml}</div>
@@ -402,7 +404,7 @@ export function initRadarTargetingUI(opts = {}) {
       const dist = Math.round(runtime.distanceTo(target));
       if (state.distEl && state.lastDist !== dist) {
         state.lastDist = dist;
-        state.distEl.textContent = `${dist} u`;
+        state.distEl.textContent = formatLocalDistance(dist);
       }
       applyLockClass(state.labelEl, runtime.isLocked(target));
     }

@@ -1,3 +1,5 @@
+import { formatVelocity } from '../config/units.js';
+
 const TONE_PRIORITY = {
   hostile: 0,
   resource: 1,
@@ -340,7 +342,7 @@ export function buildAsteroidScanDetails(asteroid) {
       { name: 'Resource', amount: String(a.resource || '-') },
       { name: 'Yield', amount: formatNumber(a.yield) },
       { name: 'Belt', amount: String(a.beltId || '-') },
-      { name: 'Velocity', amount: `${formatDecimal(speed, 0)} u/s` },
+      { name: 'Velocity', amount: formatVelocity(speed) },
       { name: 'Spin', amount: formatDecimal(a.spin, 3) }
     ]
   };

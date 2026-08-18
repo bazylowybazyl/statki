@@ -115,9 +115,6 @@
                 <button onclick="window.toggleArms()" class="mt-2 w-full bg-purple-800 hover:bg-purple-600 text-white text-xs py-2 px-4 rounded border border-purple-400 transition-colors shadow-[0_0_10px_rgba(168,85,247,0.5)]">
                     Przełącz Ramiona (Tryb Obrony)
                 </button>
-                <button onclick="window.toggleCranes()" class="mt-2 w-full bg-amber-700 hover:bg-amber-500 text-white text-xs py-2 px-4 rounded border border-amber-400 transition-colors shadow-[0_0_10px_rgba(217,119,6,0.5)]">
-                    Szyny + Suwnice (Rozładunek)
-                </button>
                 <button onclick="window.undock()" class="mt-2 w-full bg-orange-700 hover:bg-orange-500 text-white text-xs py-2 px-4 rounded border border-orange-400 transition-colors shadow-[0_0_10px_rgba(249,115,22,0.5)]">
                     Oddokuj (Niezależny Statek)
                 </button>
@@ -330,7 +327,7 @@
         //   Destroyer 480–600 × Ø340      | Frigate 320 × Ø240
         // Dok NIE połyka całego składu (byłby długi na 23 km). Do berthu wjeżdża
         // lokomotywa, reszta pociągu zostaje na zewnątrz i jest rozładowywana
-        // przez suwnice jeżdżące po wysuwanych szynach.
+        // przez suwnice jeżdżące po stałych szynach centralnego berthu.
         const BAY = {
             Megafreighter: { w: 8600, h: MF.beam + 150 },   // berth = lokomotywa + ~2 wagony
             L: { w: 1400, h: 560 },
@@ -355,14 +352,16 @@
         // --- Skład zadokowany: nos lokomotywy w czole berthu, ogon daleko poza dokiem ---
         // Statek jest obrócony o π (dziób ku terminalowi), więc dziób = pos.x − trainLen/2.
         const MF_DOCK_X = MF_NEAR + MF.trainLen / 2;
-        // Środek modułu k (0 = lokomotywa, 7 = ogon) w układzie świata
         const mfModuleX = k => MF_NEAR + MF.moduleLen / 2 + MF.spacing * k;
 
-        // --- Szyny suwnic (wysuwane wzdłuż odsłoniętej części składu) ---
-        const RAIL_Z = MF.beam / 2 + 420;                    // rozstaw szyn (obejmują skład)
-        const RAIL_X0 = END_X - 500;                         // zakotwiczenie w doku
-        const RAIL_X1 = MF_NEAR + MF.trainLen + 700;         // koniec za ogonem składu
-        const RAIL_LEN = RAIL_X1 - RAIL_X0;
+        // --- Szyny suwnicy: stała baza na berthcie + automatyczne przedłużenie ---
+        const RAIL_Z = BAY.Megafreighter.h / 2 - 20;          // przy krawędziach centralnego pasa
+        const RAIL_X0 = MF_NEAR;                              // próg przy terminalu
+        const RAIL_BASE_X1 = MF_FAR;                          // koniec stałej części na pokładzie
+        const RAIL_FULL_X1 = MF_NEAR + MF.trainLen;           // koniec zadokowanego składu 1:1
+        const RAIL_BASE_LEN = RAIL_BASE_X1 - RAIL_X0;
+        const RAIL_EXTENSION_LEN = RAIL_FULL_X1 - RAIL_BASE_X1;
+        const RAIL_BASE_MID_X = (RAIL_X0 + RAIL_BASE_X1) / 2;
         const CRANE_DROP_X = RAIL_X0 + 420;                  // punkt zrzutu ładunku przy doku
 
         class DockState {
@@ -373,11 +372,9 @@
                 this.isUndocked = false;
                 this.undockProgress = 0;
                 this.distanceFromRing = 0;
-
-                // Szyny suwnic — wysuwają się, gdy skład stoi w berthcie
-                this.railsDeployed = false;
-                this.railsManual = false;   // ręczne wymuszenie (przycisk UI)
+                this.megafreighterDocked = false;
                 this.railProgress = 0;
+                this.unloadTime = 0;
 
                 // Długości dobrane tak, by chwytaki sięgały krawędzi ściany (WALL_X):
                 //   L = |WALL_X| / |cos(kąt)|  →  wewnętrzne 150°, zewnętrzne ~128.6°
@@ -456,9 +453,11 @@
                 const targetRoof = this.defenseMode ? 1.0 : 0.0;
                 this.roofProgress += (targetRoof - this.roofProgress) * 0.015;
 
-                // Szyny chowają się przy trybie obrony i przy oddokowaniu
-                const targetRail = (this.railsDeployed && !this.defenseMode && !this.isUndocked) ? 1.0 : 0.0;
-                this.railProgress += (targetRail - this.railProgress) * 0.02;
+                // Teleskopowe przedłużenie istnieje tylko pod zadokowanym składem.
+                const targetRail = (this.megafreighterDocked && !this.isUndocked) ? 1.0 : 0.0;
+                this.railProgress += (targetRail - this.railProgress) * 0.025;
+                if (targetRail > 0.5 && this.railProgress > 0.98) this.unloadTime += hooks.dt;
+                else this.unloadTime = 0;
 
                 const targetUndock = this.isUndocked ? 1.0 : 0.0;
                 this.undockProgress += (targetUndock - this.undockProgress) * 0.01;
@@ -710,53 +709,66 @@
 
         // ===================================================================
         //  SZYNY SUWNIC + SUWNICE ROZŁADUNKOWE
-        //  Skład megafreightera jest za długi na dok — do berthu wjeżdża sama
-        //  lokomotywa, a wagony zostają na zewnątrz. Wzdłuż nich wysuwają się
-        //  teleskopowe szyny, po których jeżdżą suwnice bramowe przenoszące
-        //  kontenery z wagonów do doku.
+        //  Stała część biegnie przez centralny berth, a teleskopowe przedłużenie
+        //  automatycznie pokrywa pełną długość zadokowanego składu 1:1.
         // ===================================================================
-        const CRANE_COUNT = 4;
-        const railRig = { beams: [], trusses: [], caps: [], cranes: [] };
+        const CRANE_COUNT = 1;
+        const railRig = { extension: new THREE.Group(), cranes: [] };
         {
             const railMat = std(0x27364f, { metalness: 0.75, roughness: 0.4 });
             const trussMat = std(0x1a2438, { metalness: 0.6, roughness: 0.55 });
 
             for (const sz of [-1, 1]) {
-                // Główna belka szyny (skalowana wzdłuż X przez railProgress)
+                // Główna belka szyny — stała, na całej długości berthu
                 const beam = new THREE.Mesh(UNIT_BOX, railMat);
-                beam.position.z = sz * RAIL_Z;
-                beam.position.y = 90;
+                beam.scale.set(RAIL_BASE_LEN, 70, 150);
+                beam.position.set(RAIL_BASE_MID_X, 90, sz * RAIL_Z);
                 scene.add(beam);
-                railRig.beams.push({ mesh: beam, sz });
 
                 // Świetlna krawędź prowadnicy
                 const cap = new THREE.Mesh(UNIT_BOX, glow(0x38bdf8, 1.1));
-                cap.position.z = sz * RAIL_Z;
-                cap.position.y = 118;
+                cap.scale.set(RAIL_BASE_LEN, 10, 40);
+                cap.position.set(RAIL_BASE_MID_X, 118, sz * RAIL_Z);
                 scene.add(cap);
-                railRig.caps.push({ mesh: cap, sz });
 
-                // Segmenty kratownicy (rozstawione wzdłuż szyny, chowają się z nią)
+                // Segmenty kratownicy rozstawione wzdłuż całego pasa
                 for (let i = 0; i < 14; i++) {
                     const t = new THREE.Mesh(UNIT_BOX, trussMat);
                     t.scale.set(90, 150, 240);
-                    t.position.z = sz * RAIL_Z;
-                    t.position.y = 40;
+                    const u = (i + 0.5) / 14;
+                    t.position.set(RAIL_X0 + RAIL_BASE_LEN * u, 40, sz * RAIL_Z);
                     scene.add(t);
-                    railRig.trusses.push({ mesh: t, sz, u: (i + 0.5) / 14 });
+                }
+
+                // Teleskopowa część wyrasta z progu pasa i kończy się z końcem Berty.
+                const extBeam = new THREE.Mesh(UNIT_BOX, railMat);
+                extBeam.scale.set(RAIL_EXTENSION_LEN, 70, 150);
+                extBeam.position.set(RAIL_EXTENSION_LEN / 2, 90, sz * RAIL_Z);
+                railRig.extension.add(extBeam);
+
+                const extCap = new THREE.Mesh(UNIT_BOX, glow(0x38bdf8, 1.1));
+                extCap.scale.set(RAIL_EXTENSION_LEN, 10, 40);
+                extCap.position.set(RAIL_EXTENSION_LEN / 2, 118, sz * RAIL_Z);
+                railRig.extension.add(extCap);
+
+                const extTrussCount = 24;
+                for (let i = 0; i < extTrussCount; i++) {
+                    const t = new THREE.Mesh(UNIT_BOX, trussMat);
+                    t.scale.set(90, 150, 240);
+                    t.position.set(RAIL_EXTENSION_LEN * ((i + 0.5) / extTrussCount), 40, sz * RAIL_Z);
+                    railRig.extension.add(t);
                 }
             }
+
+            railRig.extension.position.x = RAIL_BASE_X1;
+            railRig.extension.scale.x = 0.001;
+            railRig.extension.visible = false;
+            scene.add(railRig.extension);
 
             // --- Suwnice bramowe ---
             const frameMat = std(0x3d4d6b, { metalness: 0.7, roughness: 0.4 });
             const legMat = std(0x2a3750, { metalness: 0.75, roughness: 0.4 });
             const cargoMat = std(0xd97706, { metalness: 0.4, roughness: 0.6, emissive: 0xd97706, emissiveIntensity: 0.25 });
-
-            // Pierwszy moduł składu wystający poza dok — od niego zaczynają suwnice
-            let firstServiced = MF.modules - 1;
-            for (let k = 1; k < MF.modules; k++) {
-                if (mfModuleX(k) > RAIL_X0 + 500) { firstServiced = k; break; }
-            }
 
             for (let i = 0; i < CRANE_COUNT; i++) {
                 const g = new THREE.Group();
@@ -814,57 +826,41 @@
                 trolley.add(spreader);
                 g.add(trolley);
 
-                g.visible = false;
+                // Jedyna suwnica wraz ze stelażem jest stałym elementem berthu.
+                g.visible = true;
+                g.position.x = CRANE_DROP_X;
                 scene.add(g);
                 railRig.cranes.push({
                     group: g, trolley, mast, spreader, cargo,
-                    wagon: Math.min(firstServiced + i, MF.modules - 1),  // obsługiwany moduł składu
                     phase: i / CRANE_COUNT        // przesunięcie fazy cyklu
                 });
             }
         }
 
-        // Animacja szyn i suwnic
+        // Animacja teleskopowych szyn i jednej, stale widocznej suwnicy
         const easeIO = p => p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
-        function syncRails(t) {
+        function syncCranes(t) {
             const rp = dock.railProgress;
-            const live = rp > 0.01;
-            const len = Math.max(1, RAIL_LEN * rp);
-            const midX = RAIL_X0 + len / 2;
+            railRig.extension.visible = rp > 0.005;
+            railRig.extension.scale.x = Math.max(0.001, rp);
 
-            railRig.beams.forEach(b => {
-                b.mesh.visible = live;
-                b.mesh.scale.set(len, 70, 150);
-                b.mesh.position.x = midX;
-            });
-            railRig.caps.forEach(c => {
-                c.mesh.visible = live;
-                c.mesh.scale.set(len, 10, 40);
-                c.mesh.position.x = midX;
-            });
-            railRig.trusses.forEach(tr => {
-                tr.mesh.visible = live;
-                tr.mesh.position.x = RAIL_X0 + len * tr.u;
-            });
-
-            // Suwnice pracują dopiero po pełnym wysunięciu szyn
-            const working = rp > 0.9 ? 1 : 0;
-            railRig.cranes.forEach((cr, i) => {
-                cr.group.visible = live && rp > 0.35;
-                if (!cr.group.visible) return;
-
-                const targetX = mfModuleX(cr.wagon);
-                if (!working) {
-                    // Podczas rozkładania suwnice czekają przy doku
+            railRig.cranes.forEach(cr => {
+                // Stelaż zawsze pozostaje widoczny; czeka przy terminalu na pełne wysunięcie.
+                if (!dock.megafreighterDocked || rp < 0.98) {
                     cr.group.position.x = CRANE_DROP_X;
                     cr.cargo.visible = false;
-                    cr.mast.scale.y = 100; cr.mast.position.y = -50;
+                    cr.mast.scale.y = 100;
+                    cr.mast.position.y = -50;
                     cr.spreader.position.y = -100;
+                    cr.trolley.position.z = 0;
                     return;
                 }
 
+                const serviceCycle = dock.unloadTime * 0.12;
+                const wagon = 1 + (Math.floor(serviceCycle) % MF.wagons);
+                const targetX = mfModuleX(wagon);
                 // Cykl: dojazd → opuszczenie → podjęcie → powrót → zrzut → podniesienie
-                const p = ((t * 0.045) + cr.phase) % 1;
+                const p = (serviceCycle + cr.phase) % 1;
                 let x = CRANE_DROP_X, drop = 0, hasCargo = false;
 
                 if (p < 0.28) {                       // jazda po ładunek
@@ -1276,7 +1272,7 @@
                     case 'S': this.speed = 12; break;
                     case 'M': this.speed = 8; break;
                     case 'L': this.speed = 5; break;
-                    case 'Megafreighter': this.speed = 16; break;  // berth jest 23 200 długi — inaczej dokowanie trwa minutę
+                    case 'Megafreighter': this.speed = 16; break;  // skład ma 23 200 długości — inaczej dokowanie trwa minutę
                 }
                 this.dockTime = 300 + Math.random() * 800;
 
@@ -1397,13 +1393,6 @@
             logTraffic(dock.defenseMode ? "UWAGA: Aktywowano tryb obronny! Ramiona zamykają strefę parkingu." : "Ramiona wracają do pozycji domyślnej.");
         };
 
-        window.toggleCranes = function() {
-            dock.railsManual = !dock.railsManual;
-            logTraffic(dock.railsManual
-                ? "Wysuwanie szyn rozładunkowych — suwnice startują."
-                : "Szyny chowane (tryb auto: wysuw przy zadokowanym składzie).");
-        };
-
         window.undock = function() {
             if (!dock.defenseMode) {
                 logTraffic("BŁĄD: Ramiona muszą być zwinięte (Tryb Obrony) przed oddokowaniem!");
@@ -1509,18 +1498,18 @@
             const t = simTime;
             frame++;
 
-            // Szyny wysuwają się, gdy skład stoi w berthcie (albo ręcznie z UI)
-            dock.railsDeployed = dock.railsManual
-                || ships.some(s => s.type === 'Megafreighter' && s.state === 'docked');
+            dock.megafreighterDocked = ships.some(
+                s => s.type === 'Megafreighter' && s.state === 'docked'
+            );
 
-            dock.update({ ventBurst });
+            dock.update({ ventBurst, dt });
 
             syncSupports();
             syncDockBody();
             syncRoof();
             syncHoses(t);
             syncBays();
-            syncRails(t);
+            syncCranes(t);
             updateChase(t);
             updateVents();
 

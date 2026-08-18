@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>AI SPACE — Combat Sandbox</title>
+  <link rel="stylesheet" href="./src/sandbox/aiSpaceSandbox.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">AI</span>
+      <div>
+        <h1>AI SPACE</h1>
+        <p>bieżące AI, kadłuby, hardpointy i fizyka gry</p>
+      </div>
+    </div>
+
+    <div class="battle-score" aria-label="Stan bitwy">
+      <span class="team-dot blue"></span>
+      <strong id="blueCount">0</strong>
+      <span class="score-separator">vs</span>
+      <strong id="redCount">0</strong>
+      <span class="team-dot red"></span>
+    </div>
+
+    <div class="top-actions">
+      <div class="segmented" id="timeControls" aria-label="Skala czasu">
+        <button type="button" data-time="0.25">¼×</button>
+        <button type="button" data-time="0.5">½×</button>
+        <button type="button" class="active" data-time="1">1×</button>
+        <button type="button" data-time="2">2×</button>
+        <button type="button" data-time="4">4×</button>
+      </div>
+      <button type="button" id="pauseButton" class="primary">Pauza</button>
+      <button type="button" id="resetButton">Wyczyść</button>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <aside class="panel left-panel">
+      <section class="panel-section">
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow">Gotowe układy</span>
+            <h2>Scenariusze</h2>
+          </div>
+          <span class="source-pill">LIVE DATA</span>
+        </div>
+        <div class="scenario-grid">
+          <button type="button" data-scenario="mixed">Floty mieszane</button>
+          <button type="button" data-scenario="line">Linia bojowa</button>
+          <button type="button" data-scenario="fighters">Kocioł myśliwców</button>
+          <button type="button" data-scenario="capital">Atlas vs Colossus</button>
+          <button type="button" data-scenario="duel">Dwa Bellatory</button>
+          <button type="button" data-scenario="empty">Pusty poligon</button>
+          <button class="scenario-wide big-battle-button" type="button" data-scenario="big">Big battle · 83 vs 83</button>
+        </div>
+        <span class="quick-spawn-label">Szybki spawn · bez czyszczenia pola</span>
+        <div class="scenario-grid quick-spawn-grid">
+          <button class="friendly-spawn-button" type="button" data-spawn-fighters="blue">Spawn 50 friendly</button>
+          <button class="enemy-spawn-button" type="button" data-spawn-fighters="red">Spawn 50 enemy</button>
+        </div>
+      </section>
+
+      <section class="panel-section">
+        <div class="section-heading compact">
+          <div>
+            <span class="eyebrow">Ręczne ustawienie</span>
+            <h2>Dodaj jednostki</h2>
+          </div>
+        </div>
+        <label class="field">
+          <span>Strona</span>
+          <select id="spawnTeam">
+            <option value="blue">Niebiescy / Terranie</option>
+            <option value="red">Czerwoni / Piraci</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Kadłub / eskadra</span>
+          <select id="spawnHull"></select>
+        </label>
+        <div class="field-row">
+          <label class="field grow">
+            <span>Liczba</span>
+            <input id="spawnCount" type="number" min="1" max="80" step="1" value="1">
+          </label>
+          <button type="button" id="spawnButton" class="primary field-button">Dodaj</button>
+        </div>
+        <p id="spawnDescription" class="muted"></p>
+      </section>
+
+      <section class="panel-section">
+        <div class="section-heading compact">
+          <div>
+            <span class="eyebrow">Podgląd</span>
+            <h2>Warstwy diagnostyczne</h2>
+          </div>
+        </div>
+        <label class="check"><input id="showHardpoints" type="checkbox" checked><span>Hardpointy i kierunki baterii</span></label>
+        <label class="check"><input id="showThrusters" type="checkbox" checked><span>Dysze i ich aktualny ciąg</span></label>
+        <label class="check"><input id="showVectors" type="checkbox" checked><span>Prędkość, cel i slot floty</span></label>
+        <label class="check"><input id="showTrails" type="checkbox"><span>Ślady ruchu jednostek</span></label>
+        <label class="check"><input id="bodyCollisions" type="checkbox" checked><span>Kolizje kadłubów (sandbox)</span></label>
+        <label class="check"><input id="hangarLaunches" type="checkbox" checked><span>Automatyczne starty z hangarów</span></label>
+        <button type="button" id="reloadLayouts" class="wide">Wczytaj ponownie layouty z gry</button>
+      </section>
+
+      <section class="panel-section grow-section">
+        <div class="section-heading compact">
+          <div>
+            <span class="eyebrow">Zdarzenia</span>
+            <h2>Dziennik walki</h2>
+          </div>
+          <button type="button" id="clearLog" class="tiny">Wyczyść</button>
+        </div>
+        <div id="combatLog" class="combat-log" aria-live="polite"></div>
+      </section>
+    </aside>
+
+    <section class="stage-wrap">
+      <canvas id="battlefield" tabindex="0" aria-label="Poligon AI SPACE"></canvas>
+      <div class="canvas-status top-left">
+        <span id="cameraReadout">zoom 100%</span>
+        <span id="cursorReadout">x 0 · y 0</span>
+      </div>
+      <div class="canvas-status top-right">
+        <span id="fpsReadout">0 FPS</span>
+        <span id="simReadout">0.0 ms AI</span>
+      </div>
+      <div class="canvas-help">
+        <span><kbd>LPM</kbd> wybór</span>
+        <span><kbd>Shift</kbd> + LPM dodaje</span>
+        <span><kbd>PPM</kbd> wymusza cel</span>
+        <span><kbd>ŚPM</kbd> przesuwa kamerę</span>
+        <span><kbd>F</kbd> pokazuje całość</span>
+        <span><kbd>Space</kbd> pauza</span>
+      </div>
+      <div id="loadingOverlay" class="loading-overlay">
+        <div class="loader"></div>
+        <strong>Ładowanie bieżących danych gry…</strong>
+        <span>AI · hardpointy · kadłuby · uzbrojenie</span>
+      </div>
+    </section>
+
+    <aside class="panel right-panel">
+      <section class="inspector-header">
+        <span class="eyebrow">Inspektor</span>
+        <h2 id="selectedName">Brak zaznaczenia</h2>
+        <p id="selectedSubtitle">Kliknij jednostkę na poligonie.</p>
+      </section>
+
+      <div id="emptyInspector" class="empty-inspector">
+        <div class="radar-glyph"></div>
+        <p>Zaznacz statek, aby zobaczyć stan jego AI, prędkość, fizykę dysz i uzbrojenie wczytane z hardpointów gry.</p>
+      </div>
+
+      <div id="inspector" class="inspector hidden">
+        <section class="vitals">
+          <div class="bar-label"><span>Kadłub</span><strong id="hullText">—</strong></div>
+          <div class="bar"><i id="hullBar" class="hull"></i></div>
+          <div class="bar-label"><span>Osłona</span><strong id="shieldText">—</strong></div>
+          <div class="bar"><i id="shieldBar" class="shield"></i></div>
+        </section>
+
+        <section class="metric-grid">
+          <div><span>Prędkość</span><strong id="speedMetric">—</strong></div>
+          <div><span>Limit bazowy</span><strong id="maxSpeedMetric">—</strong></div>
+          <div><span>Stan AI</span><strong id="stateMetric">—</strong></div>
+          <div><span>Cel</span><strong id="targetMetric">—</strong></div>
+          <div><span>Model ruchu</span><strong id="physicsMetric">—</strong></div>
+          <div><span>Hardpointy</span><strong id="hardpointMetric">—</strong></div>
+        </section>
+
+        <section class="panel-section inset">
+          <div class="section-heading compact">
+            <div>
+              <span class="eyebrow">Live tuning</span>
+              <h2>Parametry jednostki</h2>
+            </div>
+          </div>
+          <label class="check"><input id="aiEnabled" type="checkbox" checked><span>AI aktywne</span></label>
+          <div class="tuning-grid">
+            <label><span>maxSpeed</span><input id="tuneMaxSpeed" type="number" min="0" step="10"></label>
+            <label><span>accel</span><input id="tuneAccel" type="number" min="0" step="10"></label>
+            <label><span>turn [rad/s]</span><input id="tuneTurn" type="number" min="0" step="0.05"></label>
+            <label><span>ideal range</span><input id="tuneRange" type="number" min="0" step="50"></label>
+          </div>
+          <div class="button-row">
+            <button type="button" id="applyTuning" class="primary">Zastosuj</button>
+            <button type="button" id="resetTuning">Dane gry</button>
+          </div>
+        </section>
+
+        <section class="panel-section inset">
+          <div class="section-heading compact">
+            <div>
+              <span class="eyebrow">Montaż</span>
+              <h2>Uzbrojenie hardpointów</h2>
+            </div>
+          </div>
+          <label class="field"><span>Main</span><select id="mainWeapon"></select></label>
+          <label class="field"><span>Aux / PD</span><select id="auxWeapon"></select></label>
+          <label class="field"><span>Missile</span><select id="missileWeapon"></select></label>
+          <button type="button" id="applyLoadout" class="wide">Przemontuj dostępne hardpointy</button>
+          <div id="hardpointSummary" class="hardpoint-summary"></div>
+        </section>
+
+        <section class="panel-section inset actions-section">
+          <div class="button-row wrap-buttons">
+            <button type="button" id="healSelected">Napraw</button>
+            <button type="button" id="clearTarget">Puść cel</button>
+            <button type="button" id="duplicateSelected">Duplikuj</button>
+            <button type="button" id="deleteSelected" class="danger">Usuń</button>
+          </div>
+        </section>
+
+        <section class="source-card">
+          <span>Źródła tej jednostki</span>
+          <code id="sourceFiles">—</code>
+        </section>
+      </div>
+    </aside>
+  </main>
+
+  <footer class="statusbar">
+    <span id="runtimeStatus"><i class="status-light"></i>inicjalizacja</span>
+    <span id="layoutStatus">layouty: —</span>
+    <span id="projectileStatus">pociski: 0</span>
+    <span class="footer-note">Pociski i obrażenia są lekką warstwą sandboxa; mózgi, dane statków, bronie, hardpointy i napęd są importowane z gry.</span>
+  </footer>
+
+  <script type="module" src="./AISPACE?v=2"></script>
+</body>
+</html>

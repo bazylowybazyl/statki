@@ -184,7 +184,7 @@ function drawStackedLabel(ctx, lines, x, y, color, align = 'left') {
 
 export const ContactMarkers = {
 
-  draw(ctx, W, H, ship, SensorSystem, gameTime, camera, mercMission) {
+  draw(ctx, W, H, ship, SensorSystem, gameTime, camera, mercMission, drawOnscreen = true) {
     if (!ship || !SensorSystem) return;
     const wts = window.worldToScreen;
     if (!wts) return;
@@ -278,49 +278,51 @@ export const ContactMarkers = {
 
     // ── RYSUJ KONTAKTY NA EKRANIE ────────────────────────────────────────
 
-    for (const c of onscreen) {
-      const { x: cx, y: cy } = c._scr;
-      const alpha = c.isGhost ? MC.ghostAlpha : 1.0;
-      const color = c.isStation ? MC.colors.station
-                  : c.isGhost  ? MC.colors.ghost
-                  : MC.colors.hostile;
+    if (drawOnscreen) {
+      for (const c of onscreen) {
+        const { x: cx, y: cy } = c._scr;
+        const alpha = c.isGhost ? MC.ghostAlpha : 1.0;
+        const color = c.isStation ? MC.colors.station
+                    : c.isGhost  ? MC.colors.ghost
+                    : MC.colors.hostile;
 
-      const gap = Math.max(MC.bracketMinSize, c.radius * camera.zoom + 4);
+        const gap = Math.max(MC.bracketMinSize, c.radius * camera.zoom + 4);
 
-      ctx.save();
-      ctx.globalAlpha = alpha;
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 1.5;
-      if (c.isGhost) ctx.setLineDash([4, 3]);
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.5;
+        if (c.isGhost) ctx.setLineDash([4, 3]);
 
-      // Pulsujące świecenie dla wrogich TRACKED
-      if (!c.isGhost && c.awareness === AWARENESS.TRACKED) {
-        ctx.shadowColor = color;
-        ctx.shadowBlur = 6 + 3 * pulse;
+        // Pulsujące świecenie dla wrogich TRACKED
+        if (!c.isGhost && c.awareness === AWARENESS.TRACKED) {
+          ctx.shadowColor = color;
+          ctx.shadowBlur = 6 + 3 * pulse;
+        }
+
+        drawBrackets(ctx, cx, cy, gap, MC.bracketDepth, c.isCapital || c.isStation);
+        if (c.isStation) drawStationIcon(ctx, cx, cy);
+        ctx.setLineDash([]);
+        ctx.shadowBlur = 0;
+
+        // Etykieta dystansu (pod klamrami)
+        const outerGap = (c.isCapital || c.isStation) ? gap * MC.capitalMult : gap;
+        const labelY = cy + outerGap + MC.bracketDepth + 4;
+        ctx.font = MC.fontSmall;
+        drawLabel(ctx, fmtDist(c.x, c.y, shipX, shipY), cx, labelY, color, 'center');
+
+        // Etykieta typu (nad klamrami) — tylko TRACKED
+        if (c.awareness === AWARENESS.TRACKED) {
+          const tlabel = c.isStation ? 'STACJA PIRATÓW'
+                       : c.isCapital ? 'CAPITAL'
+                       : c.type.toUpperCase();
+          const labelY2 = cy - outerGap - MC.bracketDepth - 14;
+          ctx.font = MC.font;
+          drawLabel(ctx, tlabel, cx, labelY2, color, 'center');
+        }
+
+        ctx.restore();
       }
-
-      drawBrackets(ctx, cx, cy, gap, MC.bracketDepth, c.isCapital || c.isStation);
-      if (c.isStation) drawStationIcon(ctx, cx, cy);
-      ctx.setLineDash([]);
-      ctx.shadowBlur = 0;
-
-      // Etykieta dystansu (pod klamrami)
-      const outerGap = (c.isCapital || c.isStation) ? gap * MC.capitalMult : gap;
-      const labelY = cy + outerGap + MC.bracketDepth + 4;
-      ctx.font = MC.fontSmall;
-      drawLabel(ctx, fmtDist(c.x, c.y, shipX, shipY), cx, labelY, color, 'center');
-
-      // Etykieta typu (nad klamrami) — tylko TRACKED
-      if (c.awareness === AWARENESS.TRACKED) {
-        const tlabel = c.isStation ? 'STACJA PIRATÓW'
-                     : c.isCapital ? 'CAPITAL'
-                     : c.type.toUpperCase();
-        const labelY2 = cy - outerGap - MC.bracketDepth - 14;
-        ctx.font = MC.font;
-        drawLabel(ctx, tlabel, cx, labelY2, color, 'center');
-      }
-
-      ctx.restore();
     }
 
     // ── RYSUJ STRZAŁKI NA KRAWĘDZI EKRANU ───────────────────────────────

@@ -1174,6 +1174,75 @@
       font-size: 12px;
     }
 
+    /* Nagłówek poziomu (Surowiec / Rafinat / Komponent) w tabeli magazynów. */
+    .trade-resource-tier td {
+      padding-top: 12px;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: #7f9ad0;
+    }
+
+    .trade-hold-note {
+      font-variant-numeric: tabular-nums;
+      color: #9fb4e6;
+    }
+
+    .trade-market-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 8px;
+    }
+
+    .trade-market-table td {
+      padding: 5px 4px;
+      font-size: 12px;
+      color: #dfe7ff;
+      vertical-align: middle;
+    }
+
+    .trade-market-table tr+tr td {
+      border-top: 1px solid rgba(70, 94, 140, 0.32);
+    }
+
+    .trade-market-table tr.is-idle {
+      opacity: 0.42;
+    }
+
+    .trade-market-stock,
+    .trade-market-price {
+      white-space: nowrap;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .trade-market-price {
+      color: #9fb4e6;
+    }
+
+    /* Zielono = stacja płaci powyżej wartości bazowej (warto tu sprzedać),
+       czerwono = nadwyżka, skup poniżej wartości (warto tu kupować). */
+    .trade-market-price.is-rich {
+      color: #4ade80;
+      font-weight: 700;
+    }
+
+    .trade-market-price.is-poor {
+      color: #f87171;
+    }
+
+    .trade-market-actions {
+      white-space: nowrap;
+      text-align: right;
+    }
+
+    .trade-market-actions button {
+      margin-left: 6px;
+      padding: 3px 9px;
+      font-size: 11px;
+    }
+
     .resource-icon-wrap {
       width: 22px;
       height: 22px;
@@ -1814,6 +1883,15 @@
       letter-spacing: 0.05em;
     }
 
+    /* Przypomnienie, że działa wychodzą tylko przez dok — łatwo o pomyłkę. */
+    .hover-info .hover-salvage-note {
+      margin-top: 8px;
+      padding-top: 6px;
+      border-top: 1px solid rgba(143, 181, 255, 0.22);
+      font-size: 12px;
+      color: #fbbf24;
+    }
+
     #zoom-indicator {
       position: absolute;
       right: 24px;
@@ -2051,6 +2129,19 @@
       text-overflow: ellipsis;
     }
 
+    /* Liczba sztuk w ładowni — inwentarz jest licznikowy, nie zero-jedynkowy. */
+    .weapon-row-count {
+      margin-left: 6px;
+      padding: 1px 5px;
+      border-radius: 6px;
+      background: rgba(56, 189, 248, 0.16);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      color: #7dd3fc;
+      font-size: 10px;
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+    }
+
     .weapon-row-meta {
       color: #94a9d6;
       font-size: 11px;
@@ -2105,6 +2196,7 @@
     }
 
     .hangar-hull-summary {
+      grid-template-columns: 28px minmax(0, 1fr) auto;
       cursor: pointer;
       user-select: none;
     }

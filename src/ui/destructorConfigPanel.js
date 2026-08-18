@@ -33,41 +33,23 @@ const CONTROL_SECTIONS = [
       { key: 'collisionIterations', label: 'iterations', min: 1, max: 6, step: 1, integer: true },
       { key: 'collisionSearchRadius', label: 'search radius', min: 2, max: 12, step: 1, integer: true },
       { key: 'restitution', label: 'restitution', min: 0, max: 0.4, step: 0.01 },
-      { key: 'crushImpulseScale', label: 'crush impulse', min: 0.05, max: 1.5, step: 0.01 },
-      { key: 'crushPenetrationMin', label: 'crush penetration', min: 0.05, max: 1.0, step: 0.01 },
-      { key: 'rammingCrushSpeedThreshold', label: 'ram crush speed', min: 0, max: 200, step: 1 },
-      { key: 'rammingCrushMassRatio', label: 'ram mass ratio', min: 1.0, max: 12.0, step: 0.1 },
-      { key: 'rammingCrushScale', label: 'ram crush scale', min: 0.1, max: 2.0, step: 0.01 },
-      { key: 'rammingDamageCapMax', label: 'ram damage cap', min: 0.08, max: 2.0, step: 0.01 },
-      { key: 'rammingDamageCapLogScale', label: 'ram cap log scale', min: 0, max: 0.25, step: 0.005 },
-      { key: 'rammingOverrunMassRatio', label: 'overrun mass ratio', min: 1.0, max: 30.0, step: 0.5 },
-      { key: 'rammingOverrunImpulseScale', label: 'overrun impulse', min: 0.02, max: 1.0, step: 0.01 },
-      { key: 'rammingOverrunSeparationPercent', label: 'overrun separation', min: 0.02, max: 1.0, step: 0.01 },
-      { key: 'rammingOverrunDamageMin', label: 'overrun min dmg', min: 0, max: 2.0, step: 0.01 },
-      { key: 'rammingOverrunDamageMult', label: 'overrun dmg mult', min: 1.0, max: 5.0, step: 0.05 },
-      { key: 'rammingOverrunMaxContacts', label: 'overrun contacts', min: 24, max: 96, step: 1, integer: true },
+      { key: 'frictionCoeff', label: 'friction µ', min: 0, max: 1.2, step: 0.01 },
+      { key: 'tangentImpulseScale', label: 'tangent impulse', min: 0, max: 1.0, step: 0.01 },
+      { key: 'separationPercent', label: 'separation %', min: 0.05, max: 1.0, step: 0.01 },
       { key: 'shearK', label: 'shear k', min: 0, max: 0.25, step: 0.005 },
-      { key: 'crashApproachSpeedThreshold', label: 'crash speed', min: 20, max: 400, step: 1 }
+      { key: 'fastPairSpeedThreshold', label: 'fast pair (perf)', min: 20, max: 400, step: 1 }
     ]
   },
   {
-    title: 'Hull Bend (banan)',
+    // Jedna reguła na każdą prędkość — te suwaki skalują SIŁĘ reakcji,
+    // żaden z nich nie przełącza trybu zderzenia.
+    title: 'Zgniot i obrażenia',
     controls: [
-      { key: 'hullBendEnabled', label: 'bend enabled', min: 0, max: 1, step: 1, integer: true },
-      { key: 'hullBendGain', label: 'bend gain', min: 0, max: 0.01, step: 0.0001 },
-      { key: 'hullBendMax', label: 'bend max curv', min: 0.05, max: 1.5, step: 0.01 },
-      { key: 'hullBendRate', label: 'bend rate rad/s', min: 0.01, max: 1.5, step: 0.01 },
-      { key: 'hullBendExp', label: 'bend ramp exp', min: 0.3, max: 3.0, step: 0.05 },
-      { key: 'hullBendMinShards', label: 'bend min shards', min: 1, max: 2000, step: 1, integer: true },
-      { key: 'hullBendMinPenetration', label: 'bend min penetr', min: 0.05, max: 1.0, step: 0.01 },
-      { key: 'hullBendSplitCurvature', label: 'bend split curv', min: 0.05, max: 1.5, step: 0.01 },
-      { key: 'hullBendWreckSpin', label: 'bend wreck spin', min: 0, max: 2.0, step: 0.05 },
-      { key: 'hullBendDirSign', label: 'bend direction ±', min: -1, max: 1, step: 2, integer: true },
-      { key: 'hullRecoverEnabled', label: 'npc auto-straighten', min: 0, max: 1, step: 1, integer: true },
-      { key: 'hullRecoverDelay', label: 'recover delay s', min: 0, max: 15, step: 0.5 },
-      { key: 'hullRecoverRate', label: 'recover rate rad/s', min: 0.01, max: 1.5, step: 0.01 },
-      { key: 'sectionCoupleEnabled', label: 'section couple', min: 0, max: 1, step: 1, integer: true },
-      { key: 'sectionCoupleGain', label: 'section gain (α)', min: 0, max: 1.5, step: 0.01 }
+      { key: 'crushMinSpeed', label: 'crush min speed', min: 0, max: 80, step: 1 },
+      { key: 'crushImpulseScale', label: 'crush impulse', min: 0.02, max: 1.5, step: 0.01 },
+      { key: 'crushDeformScale', label: 'crush deform', min: 0.1, max: 3.0, step: 0.05 },
+      { key: 'contactDamageScale', label: 'contact damage', min: 0, max: 1.0, step: 0.01 },
+      { key: 'contactDamageCapFrac', label: 'damage cap /tick', min: 0.05, max: 4.0, step: 0.05 }
     ]
   },
   {

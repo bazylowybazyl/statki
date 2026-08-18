@@ -69,7 +69,7 @@ export class WeaponController {
 
     // Autofire state
     this.autoFire = false;
-    this.prevMouseLeft = false;
+    this.prevMainTrigger = false;
   }
 
   get lockedTarget() { return this.getLockedTarget(); }
@@ -335,24 +335,25 @@ export class WeaponController {
     const requiredBarrels = Math.max(1, this.rail.barrelsPerShot || 2);
     const secondaryReady = requiredBarrels < 2 || this.rail.cd[1] <= 0;
 
-    // Process mouse click for toggle
+    // Sterowanie bronią ma osobny sygnał. LPM należy wyłącznie do celownika.
     const hasTargets = this.lockedTargets && this.lockedTargets.length > 0;
-    if (mouseRef.left && !this.prevMouseLeft && hasTargets) {
+    const mainTrigger = !!mouseRef.fireMain;
+    if (mainTrigger && !this.prevMainTrigger && hasTargets) {
       this.autoFire = !this.autoFire;
       if (typeof window.pushZoneMessage === 'function') {
          window.pushZoneMessage(this.autoFire ? 'AUTO-FIRE: ON' : 'AUTO-FIRE: OFF', 1.5);
       }
     }
-    this.prevMouseLeft = mouseRef.left;
+    this.prevMainTrigger = mainTrigger;
 
     // Turn off autofire if no targets
     if (!hasTargets) {
       this.autoFire = false;
     }
 
-    // Main weapon trigger (mouse.left / mouse2.left OR autoFire with range check)
+    // Main weapon trigger (klawisz/pad OR autoFire with range check)
     const canAutoFire = this.autoFire && hasTargets && this._hasAnyTargetInRange();
-    const wantsToFire = (!stationOpen && mouseRef.left && !hasTargets) || canAutoFire;
+    const wantsToFire = (!stationOpen && mainTrigger && !hasTargets) || canAutoFire;
     if (wantsToFire && this.rail.queue.length === 0 &&
         this.rail.cd[0] <= 0 && secondaryReady && !warpBusy) {
       this.triggerRailVolley();

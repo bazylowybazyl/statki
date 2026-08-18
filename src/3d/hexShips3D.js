@@ -416,6 +416,146 @@ function getInterpolatedRenderPose(entity) {
   return pose;
 }
 
+// ── Sylwetka kadłuba dla shadow shafts ──────────────────────────────────────
+// Okluder statku to ŁAŃCUCH 3 KAPSUŁ o promieniach z LOKALNEJ szerokości
+// kadłuba — nie jedna bryła na cały statek. Jedna kapsuła z bboxa sprite'a
+// dawała "pigułkę", a jedna elipsa "przezroczyste jajo": przy wąskiej rufie
+// i dziobie obie są dużo szersze od kadłuba, więc cień startował na ich
+// krawędzi, kilkadziesiąt jednostek OBOK burty. Trzy pasma wzdłuż kadłuba
+// (rufa / śródokręcie / dziób) trzymają promień przy realnej szerokości,
+// więc smuga wychodzi spod samego pancerza.
+const HULL_SHAFT_SEGMENTS = 4;   // musi zgadzać się z HULL_SHAFT_BANDS w core3d
+const HULL_SHAFT_SLOTS = 24;     // rozdzielczość profilu szerokości
+
+// Podział profilu na pasma programowaniem dynamicznym: minimalizujemy pole
+// NADMIARU (promień pasma minus realna szerokość w każdym plasterku), więc
+// granice same wypadają tam, gdzie kadłub zmienia szerokość — wąski ogon
+// dostaje własne, cienkie pasmo zamiast tonąć w jednym grubym.
+function splitProfileIntoBands(slots, bandCount) {
+  const n = slots.length;
+  const cost = [];
+  for (let i = 0; i < n; i++) {
+    cost.push(new Float64Array(n));
+    let lo = Infinity, hi = -Infinity, sum = 0;
+    for (let j = i; j < n; j++) {
+      lo = Math.min(lo, slots[j].vMin);
+      hi = Math.max(hi, slots[j].vMax);
+      sum += slots[j].vMax - slots[j].vMin;
+      cost[i][j] = (hi - lo) * (j - i + 1) - sum;
+    }
+  }
+  const best = [];
+  const cut = [];
+  for (let b = 0; b < bandCount; b++) {
+    best.push(new Float64Array(n).fill(Infinity));
+    cut.push(new Int32Array(n).fill(-1));
+  }
+  for (let j = 0; j < n; j++) best[0][j] = cost[0][j];
+  for (let b = 1; b < bandCount; b++) {
+    for (let j = b; j < n; j++) {
+      for (let k = b - 1; k < j; k++) {
+        const c = best[b - 1][k] + cost[k + 1][j];
+        if (c < best[b][j]) { best[b][j] = c; cut[b][j] = k; }
+      }
+    }
+  }
+  let bands = Math.min(bandCount, n) - 1;
+  const ranges = [];
+  let end = n - 1;
+  while (bands >= 0 && end >= 0) {
+    const start = bands === 0 ? 0 : cut[bands][end] + 1;
+    ranges.unshift([start, end]);
+    end = start - 1;
+    bands--;
+  }
+  return ranges;
+}
+
+function buildHullSegments(grid, shards, sx, sy) {
+  const srcHalfW = (Number(grid.srcWidth) || 0) * 0.5;
+  const srcHalfH = (Number(grid.srcHeight) || 0) * 0.5;
+  const pivotX = Number(grid?.pivot?.x) || 0;
+  const pivotY = Number(grid?.pivot?.y) || 0;
+  const hexR = (Number(shards[0]?.radius) || 6) * Math.max(sx, sy);
+
+  // Klatka lokalna = ta sama co instance matrix heksów, czyli offset
+  // względem POZYCJI encji (pivot grida już w środku).
+  const us = new Float64Array(shards.length);
+  const vs = new Float64Array(shards.length);
+  let n = 0;
+  let uMin = Infinity, uMax = -Infinity;
+  for (let i = 0; i < shards.length; i++) {
+    const s = shards[i];
+    if (!s) continue;
+    const lx = (typeof s.gridX === 'number') ? (s.gridX - srcHalfW) : (Number(s.lx) || 0);
+    const ly = (typeof s.gridY === 'number') ? (s.gridY - srcHalfH) : (Number(s.ly) || 0);
+    const u = (lx - pivotX) * sx;
+    const v = (ly - pivotY) * sy;
+    if (!Number.isFinite(u) || !Number.isFinite(v)) continue;
+    us[n] = u;
+    vs[n] = v;
+    n++;
+    if (u < uMin) uMin = u;
+    if (u > uMax) uMax = u;
+  }
+  if (n === 0 || uMin > uMax) return null;
+
+  // Profil szerokości: plasterki wzdłuż kadłuba (puste pomijamy — kadłub po
+  // rozerwaniu bywa nieciągły).
+  const hullLen = Math.max(uMax - uMin, 1);
+  const slotLen = hullLen / HULL_SHAFT_SLOTS;
+  const raw = [];
+  for (let s = 0; s < HULL_SHAFT_SLOTS; s++) raw.push({ uMin: Infinity, uMax: -Infinity, vMin: Infinity, vMax: -Infinity });
+  for (let i = 0; i < n; i++) {
+    const u = us[i];
+    const v = vs[i];
+    let idx = Math.floor((u - uMin) / slotLen);
+    if (idx < 0) idx = 0;
+    if (idx >= HULL_SHAFT_SLOTS) idx = HULL_SHAFT_SLOTS - 1;
+    const slot = raw[idx];
+    if (u < slot.uMin) slot.uMin = u;
+    if (u > slot.uMax) slot.uMax = u;
+    if (v < slot.vMin) slot.vMin = v;
+    if (v > slot.vMax) slot.vMax = v;
+  }
+  const slots = raw.filter((s) => s.uMin <= s.uMax);
+  if (!slots.length) return null;
+
+  const segs = [];
+  for (const [from, to] of splitProfileIntoBands(slots, HULL_SHAFT_SEGMENTS)) {
+    let bMinU = Infinity, bMaxU = -Infinity, bMinV = Infinity, bMaxV = -Infinity;
+    for (let s = from; s <= to; s++) {
+      const slot = slots[s];
+      if (slot.uMin < bMinU) bMinU = slot.uMin;
+      if (slot.uMax > bMaxU) bMaxU = slot.uMax;
+      if (slot.vMin < bMinV) bMinV = slot.vMin;
+      if (slot.vMax > bMaxV) bMaxV = slot.vMax;
+    }
+    if (bMinU > bMaxU) continue;
+    const vc = (bMinV + bMaxV) * 0.5;
+    const r = Math.max((bMaxV - bMinV) * 0.5 + hexR, 1);
+    // Czapy kapsuły wchodzą do środka pasma, żeby nie wystawały przed dziób
+    // ani za rufę; pasmo krótsze od średnicy zwija się do samego okręgu.
+    const half = Math.max((bMaxU - bMinU) * 0.5 + hexR - r, 0);
+    const uc = (bMinU + bMaxU) * 0.5;
+    segs.push({ u0: uc - half, u1: uc + half, vc, r });
+  }
+  if (!segs.length) return null;
+  return { segs, span: hullLen };
+}
+
+function getHullSegments(entity, grid, sx, sy) {
+  const shards = grid?.shards;
+  if (!Array.isArray(shards) || shards.length === 0) return null;
+  const cache = entity._shaftHullSegments;
+  if (cache && cache.shards === shards && cache.count === shards.length && cache.sx === sx && cache.sy === sy) {
+    return cache.hull;
+  }
+  const hull = buildHullSegments(grid, shards, sx, sy);
+  entity._shaftHullSegments = { shards, count: shards.length, sx, sy, hull };
+  return hull;
+}
+
 function getEntityLightPosition(entity) {
   const interpPose = getInterpolatedRenderPose(entity);
   return {
@@ -747,9 +887,9 @@ class GpuDebrisPool {
     this.timeArray[i * 2] = globalTime;
     this.timeArray[i * 2 + 1] = 1.0;
 
-    // UV debrisa z bazy sprzed gięcia — zgięte gridX poza spritem = niewidzialny odłamek.
-    this.gridPosArray[i * 2] = (shard._bendBaseX !== undefined ? shard._bendBaseX : shard.gridX) || shard.origGridX || 0;
-    this.gridPosArray[i * 2 + 1] = (shard._bendBaseY !== undefined ? shard._bendBaseY : shard.gridY) || shard.origGridY || 0;
+    // UV odłamka z pozycji siatki bez deformacji — poza spritem shader go odrzuci.
+    this.gridPosArray[i * 2] = shard.gridX || shard.origGridX || 0;
+    this.gridPosArray[i * 2 + 1] = shard.gridY || shard.origGridY || 0;
 
     if (i < this._dirtyMin) this._dirtyMin = i;
     if (i > this._dirtyMax) this._dirtyMax = i;
@@ -930,12 +1070,11 @@ function createEntityMesh(entity) {
   for (let i = 0; i < count; i++) {
     const shard = shards[i];
     if (typeof shard?.gridX === 'number' && typeof shard?.gridY === 'number') {
-      // UV pancerza MUSI iść z pozycji sprzed gięcia kadłuba (_bendBaseX) — zgięte
-      // gridX wychodzi poza sprite → shader robi discard i heksy ZNIKAJĄ (wraki po
-      // przecięciu banana, statek po splicie). Pozycję na ekranie dalej daje instance
-      // matrix liczony ze zgiętego gridX w updateEntityMesh.
-      gridPosArray[i * 2] = (shard._bendBaseX !== undefined) ? shard._bendBaseX : shard.gridX;
-      gridPosArray[i * 2 + 1] = (shard._bendBaseY !== undefined) ? shard._bendBaseY : shard.gridY;
+      // aGridPos = kotwica UV pancerza. Shader odrzuca UV poza [0,1], więc czyta się
+      // ją z pozycji siatki BEZ deformacji — ekranową pozycję daje instance matrix
+      // (gridX + deformation) liczony w updateEntityMesh.
+      gridPosArray[i * 2] = shard.gridX;
+      gridPosArray[i * 2 + 1] = shard.gridY;
     } else {
       const cx = (grid.srcWidth || 0) * 0.5;
       const cy = (grid.srcHeight || 0) * 0.5;
@@ -1030,9 +1169,9 @@ function updateEntityMesh(entity, data, camX, camY, cameraZoom) {
 
     for (let i = 0; i < shards.length; i++) {
       const shard = shards[i];
-      // UV z bazy sprzed gięcia — patrz komentarz w createEntityMesh (znikanie heksów).
-      const baseX = (shard._bendBaseX !== undefined) ? shard._bendBaseX : shard.gridX;
-      const baseY = (shard._bendBaseY !== undefined) ? shard._bendBaseY : shard.gridY;
+      // UV z pozycji siatki bez deformacji — patrz komentarz w createEntityMesh.
+      const baseX = shard.gridX;
+      const baseY = shard.gridY;
       gridPosAttr.array[i * 2] = (typeof baseX === 'number') ? baseX : ((shard.lx || 0) + cx);
       gridPosAttr.array[i * 2 + 1] = (typeof baseY === 'number') ? baseY : ((shard.ly || 0) + cy);
     }
@@ -1117,8 +1256,8 @@ function updateEntityMesh(entity, data, camX, camY, cameraZoom) {
           instanceArray[offset + 0] = 1.0;
           instanceArray[offset + 5] = 1.0;
 
-          const baseX = shard._bendBaseX !== undefined ? shard._bendBaseX : shard.gridX;
-          const baseY = shard._bendBaseY !== undefined ? shard._bendBaseY : shard.gridY;
+          const baseX = shard.gridX;
+          const baseY = shard.gridY;
           gridPosAttr.array[i * 2] = Number(baseX) || 0;
           gridPosAttr.array[i * 2 + 1] = Number(baseY) || 0;
           stressAttr.array[i] = computeShardStress(shard);
@@ -1149,8 +1288,8 @@ function updateEntityMesh(entity, data, camX, camY, cameraZoom) {
           instanceArray[offset + 15] = 1.0;
           instanceArray[offset + 12] = gx - cx - data.pivotX;
           instanceArray[offset + 13] = gy - cy - data.pivotY;
-          const baseX = shard._bendBaseX !== undefined ? shard._bendBaseX : shard.gridX;
-          const baseY = shard._bendBaseY !== undefined ? shard._bendBaseY : shard.gridY;
+          const baseX = shard.gridX;
+          const baseY = shard.gridY;
           gridPosAttr.array[writeIndex * 2] = Number(baseX) || 0;
           gridPosAttr.array[writeIndex * 2 + 1] = Number(baseY) || 0;
           stressAttr.array[writeIndex] = computeShardStress(shard);
@@ -1357,15 +1496,17 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
     hasRenderable = true;
   }
 
-  // Kapsuły-okludery shadow shafts: analityczne cienie kadłubów, liczone
-  // w shaderze passa (działają na każdym zoomie, także dla statków tuż poza
-  // kadrem). Selekcja od największych; ring-segmenty pomijamy — pierścień ma
-  // własny analityczny okluder (setShaftRingOccluder).
-  if (typeof Core3D.beginShaftCapsuleFrame === 'function') {
-    Core3D.beginShaftCapsuleFrame();
+  // Okludery shadow shafts: analityczne cienie kadłubów, liczone w shaderze
+  // passa (działają na każdym zoomie, także dla statków tuż poza kadrem).
+  // Kształt = elipsa wpisana w obrys (buildHullEllipse) — shader przecina
+  // z nią promień do słońca, więc smuga zaczyna się DOKŁADNIE na krawędzi
+  // kadłuba pod każdym kątem. Selekcja od największych; ring-segmenty
+  // pomijamy — pierścień ma własny okluder (setShaftRingOccluder).
+  if (typeof Core3D.beginShaftHullFrame === 'function') Core3D.beginShaftHullFrame();
+  if (typeof Core3D.pushShaftHullWorld === 'function') {
     const halfView = Math.max(window.innerWidth || 1920, window.innerHeight || 1080) * 0.5 / cameraZoom;
     const occluderReach = halfView + 30000;
-    const cands = state.shaftCapsuleCandidates || (state.shaftCapsuleCandidates = []);
+    const cands = state.shaftHullCandidates || (state.shaftHullCandidates = []);
     cands.length = 0;
     for (const entity of valid) {
       if (!entity.hexGrid || entity.isRingSegment) continue;
@@ -1380,43 +1521,34 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
       const ex = getEntityPosX(entity);
       const ey = getEntityPosY(entity);
       if (Math.abs(ex - camX) > occluderReach || Math.abs(ey - camY) > occluderReach) continue;
-      cands.push({ entity, size, w, h, ex, ey, scaleX, scaleY });
+      cands.push({ entity, grid, size, ex, ey, scaleX, scaleY });
     }
     if (cands.length > 1) cands.sort((a, b) => b.size - a.size);
-    for (let i = 0; i < cands.length; i++) {
+    let registryFull = false;
+    for (let i = 0; i < cands.length && !registryFull; i++) {
       const c = cands[i];
+      const hull = getHullSegments(c.entity, c.grid, c.scaleX, c.scaleY);
+      if (!hull) continue;
       const interpPose = getInterpolatedRenderPose(c.entity);
       const px = interpPose ? interpPose.x : c.ex;
       const py = interpPose ? interpPose.y : c.ey;
-      const ang = interpPose ? interpPose.angle : (c.entity.angle || 0);
+      const rawAng = interpPose ? interpPose.angle : (c.entity.angle || 0);
+      // Ten sam znak obrotu co render heksów (uRotation = -angle, scale.y < 0
+      // → w koordach gry obrót o +angle; billboardy mają go odwrócony).
+      const ang = usesBillboardOrientation(c.entity) ? -rawAng : rawAng;
       const cosA = Math.cos(ang);
       const sinA = Math.sin(ang);
-      // entity.pos odpowiada PIVOTOWI grida (armor robi translate(-pivot),
-      // mesh: rotation=-angle, scale.y ujemne) — kapsuła centrowana na pos
-      // była odsunięta od widocznego kadłuba (luka między statkiem a cieniem).
-      // Środek sprite'a w koordach gry, z tą samą transformacją co render:
-      const pivotX = Number(c.entity.hexGrid?.pivot?.x) || 0;
-      const pivotY = Number(c.entity.hexGrid?.pivot?.y) || 0;
-      const vx = -c.scaleX * pivotX;
-      const vy = c.scaleY * pivotY;
-      const cx = px + cosA * vx + sinA * vy;
-      const cy = py + sinA * vx - cosA * vy;
-      // Długa oś wg realnych proporcji sprite'a: lokalne X (szerokość
-      // obrazka) mapuje się w świecie gry na (cos a, sin a), lokalne Y
-      // (wysokość) na (sin a, -cos a).
-      let axX;
-      let axY;
-      let halfLen;
-      let halfWid;
-      if (c.w >= c.h) {
-        axX = cosA; axY = sinA; halfLen = c.w * 0.5; halfWid = c.h * 0.5;
-      } else {
-        axX = sinA; axY = -cosA; halfLen = c.h * 0.5; halfWid = c.w * 0.5;
+      for (const seg of hull.segs) {
+        const x1 = px + seg.u0 * cosA - seg.vc * sinA;
+        const y1 = py + seg.u0 * sinA + seg.vc * cosA;
+        const x2 = px + seg.u1 * cosA - seg.vc * sinA;
+        const y2 = py + seg.u1 * sinA + seg.vc * cosA;
+        // pushShaftHullWorld zwraca false po zapełnieniu rejestru — koniec.
+        if (!Core3D.pushShaftHullWorld(x1, y1, x2, y2, seg.r, hull.span)) {
+          registryFull = true;
+          break;
+        }
       }
-      const capR = Math.max(6, halfWid * 0.9);
-      const seg = Math.max(halfLen - capR, 0);
-      // pushShaftCapsuleWorld zwraca false po zapełnieniu rejestru — koniec.
-      if (!Core3D.pushShaftCapsuleWorld(cx - axX * seg, cy - axY * seg, cx + axX * seg, cy + axY * seg, capR)) break;
     }
   }
 

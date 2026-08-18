@@ -1279,7 +1279,12 @@ function applyVfxOverride() {
 function stepEditorThrusterPreview(dt) {
   const ship = window.ship;
   if (!ship?.visual) return;
-  composeShipThrusterCommand(ship, { torque: 0 });
+  composeShipThrusterCommand(ship, {
+    torque: 0,
+    mainTorque: (Number(ship.thrusterInput?.main) || 0) > 1e-3
+      ? Number(ship.thrusterInput?.torque) || 0
+      : 0
+  });
   updateShipThrusterState(ship, dt);
 }
 

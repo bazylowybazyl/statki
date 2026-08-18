@@ -8,6 +8,37 @@ import {
   updateShipThrusterState,
   SHIP_PHYSICS
 } from '../src/game/flight/thrusterModel.js';
+import { ATLAS_EDITOR_DEFAULTS } from '../src/data/atlasHardpointDefaults.js';
+
+function makeAtlasThrusterShip(torque) {
+  const toThruster = (engine) => ({
+    offset: { x: engine.x, y: engine.y },
+    baseDeg: engine.deg,
+    nozzleDeg: engine.deg,
+    mount: engine.mount,
+    side: String(engine.mount || '').endsWith('_left') ? 'left' : 'right',
+    gimbalMinDeg: engine.gimbalMinDeg,
+    gimbalMaxDeg: engine.gimbalMaxDeg
+  });
+  return {
+    mass: 200000,
+    destroyed: false,
+    vel: { x: 0, y: 0 },
+    angle: 0,
+    thrusterInput: { main: 0, leftSide: 0, rightSide: 0, retro: 0, torque },
+    visual: {
+      mainThrusters: ATLAS_EDITOR_DEFAULTS.engines.main.map(toThruster),
+      torqueThrusters: ATLAS_EDITOR_DEFAULTS.engines.side.map(toThruster)
+    }
+  };
+}
+
+function snapThrustersToTargets(ship) {
+  for (const thruster of [...ship.visual.mainThrusters, ...ship.visual.torqueThrusters]) {
+    thruster.__throttle = thruster.__throttleTarget;
+    thruster.nozzleDeg = thruster.__nozzleTargetDeg;
+  }
+}
 
 test('main thruster force is computed through extracted flight module', () => {
   const ship = {
@@ -31,6 +62,28 @@ test('main thruster force is computed through extracted flight module', () => {
   assert.ok(forces.localFx > 0, 'main thruster should push along local +X');
   assert.ok(Math.abs(forces.localFy) < 1e-6, 'centered main thruster should not add lateral force');
   assert.ok(Math.abs(forces.localTorque) < 1e-6, 'centered main thruster should not add torque');
+});
+
+test('pure Atlas A/D turn uses a balanced side-thruster couple without main thrust', () => {
+  for (const torque of [-1, 1]) {
+    const ship = makeAtlasThrusterShip(torque);
+    composeShipThrusterCommand(ship, { mainTorque: 0 });
+    snapThrustersToTargets(ship);
+
+    const forces = computeShipThrusterForces(ship, { mainForceMul: 1, sideForceMul: 1.6 }, {});
+    const fullMainForce = ship.mass * SHIP_PHYSICS.SPEED;
+
+    assert.ok(
+      ship.visual.mainThrusters.every(thruster => thruster.__throttleTarget === 0),
+      'A/D without forward input must keep Atlas main engines off'
+    );
+    assert.ok(Math.abs(forces.localTorque) > 1, 'side thrusters should still rotate Atlas');
+    assert.equal(Math.sign(forces.localTorque), Math.sign(torque));
+    assert.ok(
+      Math.hypot(forces.localFx, forces.localFy) < fullMainForce * 1e-6,
+      'pure turn should not add measurable forward or lateral acceleration'
+    );
+  }
 });
 
 test('pure side strafe balances uneven thruster lever arms', () => {

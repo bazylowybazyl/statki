@@ -11,6 +11,12 @@ import pirateBattleshipSprite from '../assets/ships/piratebattleship.png';
 import atlasSprite from '../../assets/capital_ship_rect_v1.png';
 import megafreighterSprite from '../../assets/megafreighter.png';
 import { CAPITAL_SHIP_TEMPLATES, SUPPORT_SHIP_TEMPLATES } from '../data/ships.js';
+import {
+  formatLocalDistance,
+  formatNavigationDistance,
+  formatVelocity,
+  getVelocityDisplay
+} from '../config/units.js';
 
 const RADAR_RANGES = Object.freeze([5000, 10000, 20000, 40000, 60000]);
 const MODE_ORDER = Object.freeze(['combat', 'maneuver', 'travel']);
@@ -107,13 +113,6 @@ function clamp(value, min, max) {
 function mixRgb(from, to, amount) {
   const t = clamp(amount, 0, 1);
   return `rgb(${Math.round(from[0] + (to[0] - from[0]) * t)}, ${Math.round(from[1] + (to[1] - from[1]) * t)}, ${Math.round(from[2] + (to[2] - from[2]) * t)})`;
-}
-
-function formatDistance(value) {
-  const d = Math.max(0, Number(value) || 0);
-  if (d >= 1000000) return `${(d / 1000000).toFixed(1)}M`;
-  if (d >= 1000) return `${(d / 1000).toFixed(d >= 10000 ? 0 : 1)}K`;
-  return `${Math.round(d)}`;
 }
 
 function getEntityPosition(entity) {
@@ -264,7 +263,7 @@ function cockpitMarkup() {
           <div class="rp-ranges hud-radar-controls" id="radarRanges"></div>
         </div>
         <div class="ck-right">
-          <section class="cockpit-module speed-module"><span class="module-label">NAPĘD / PRĘDKOŚĆ</span><div class="speed-layout"><div class="speed-stage"><canvas id="speedCanvas" aria-label="Prędkość i obroty napędu"></canvas><div class="gauge-readout speed-readout"><span class="gauge-label">PRĘDKOŚĆ</span><span class="gauge-number" id="spValue">0</span><span class="gauge-unit">U/S</span></div><div class="gauge-readout rpm-readout"><span class="gauge-label">OBROTY</span><span class="gauge-number" id="spRpm">0.0</span><span class="gauge-unit">×1000 RPM</span></div><div class="drive-mode-badge" id="spMode">B</div><div class="speed-trip"><span>ODO</span><span class="trip-value" id="spOdo">0 u</span><span>TRIP</span><span class="trip-value" id="spTrip">0 u</span></div></div><div class="speed-bottom"><span>CIĄG <b id="thrPct">0%</b></span><span id="spState">REJS</span><span>LIMIT <b id="spLimit">0</b></span></div><div class="speed-pedals"><button type="button" class="pedal" id="thrPlus">W · Gaz</button><button type="button" class="pedal" id="thrMinus">S · Hamulec</button></div></div></section>
+          <section class="cockpit-module speed-module"><span class="module-label">NAPĘD / PRĘDKOŚĆ</span><div class="speed-layout"><div class="speed-stage"><canvas id="speedCanvas" aria-label="Prędkość i obroty napędu"></canvas><div class="gauge-readout speed-readout"><span class="gauge-label">PRĘDKOŚĆ</span><span class="gauge-number" id="spValue">0</span><span class="gauge-unit" id="spSpeedUnit">M/S</span></div><div class="gauge-readout rpm-readout"><span class="gauge-label">OBROTY</span><span class="gauge-number" id="spRpm">0.0</span><span class="gauge-unit">×1000 RPM</span></div><div class="drive-mode-badge" id="spMode">B</div><div class="speed-trip"><span>ODO</span><span class="trip-value" id="spOdo">0 m</span><span>TRIP</span><span class="trip-value" id="spTrip">0 m</span></div></div><div class="speed-bottom"><span>CIĄG <b id="thrPct">0%</b></span><span id="spState">REJS</span><span>LIMIT <b id="spLimit">0 m/s</b></span></div><div class="speed-pedals"><button type="button" class="pedal" id="thrPlus">W · Gaz</button><button type="button" class="pedal" id="thrMinus">S · Hamulec</button></div></div></section>
           <section class="cockpit-module control-module"><span class="module-label">PANEL CENTRALNY / MODE</span><div class="console-layout"><div class="infotainment-screen"><div class="screen-content" id="modeTrack"><div class="menu-item active" data-mode="combat">BOJOWY</div><div class="menu-item" data-mode="maneuver">MANEWROWY</div><div class="menu-item" data-mode="travel">PODRÓŻ</div></div><div class="selection-indicator"></div></div><div class="controls-area"><div class="btn-group"><button type="button" class="physical-btn" id="pbComm"><span>Komunikacja</span><div class="led-indicator blue"></div></button><button type="button" class="physical-btn" id="pbMissions"><span>Misje</span><div class="led-indicator orange"></div></button></div><div class="center-console"><button type="button" class="shortcut-btn pos-t" id="scScan" title="[X]">Skan</button><button type="button" class="shortcut-btn pos-b" id="scLock" title="[T]">Cel</button><button type="button" class="shortcut-btn pos-l" id="scAuto" title="[7]">Auto</button><button type="button" class="shortcut-btn pos-r" id="scStab" title="[B]">Stab</button><div class="rotary-knob" id="rotaryKnob" title="Przeciągnij lub użyj kółka; V zmienia tryb"><div class="knob-indicator"></div><div class="knob-touchpad"><div class="knob-center-logo">///</div></div></div></div><div class="btn-group"><button type="button" class="physical-btn" id="pbShip"><span>Statek</span><div class="led-indicator green"></div></button><button type="button" class="physical-btn" id="pbMap" title="[TAB / M]"><span>CIC</span><div class="led-indicator red"></div></button></div></div></div></section>
         </div>
       </section>
@@ -347,7 +346,7 @@ export class CockpitUI {
       'app', 'leftStack', 'rightStack', 'unitList', 'activeCount', 'supportOrders', 'supportFactions', 'reserveGrid',
       'scannerFilters', 'contactRows', 'contactCount', 'selBody', 'selKind', 'screenBezel', 'consoleStatus',
       'consoleLog', 'termClock', 'termDate', 'termLoc', 'termComm', 'commNet', 'commBody', 'commClose', 'hotkeyGrid',
-      'radarCanvas', 'radarRanges', 'rdTotal', 'rdHostile', 'rdAst', 'rdRange', 'speedCanvas', 'spValue', 'spRpm', 'spMode',
+      'radarCanvas', 'radarRanges', 'rdTotal', 'rdHostile', 'rdAst', 'rdRange', 'speedCanvas', 'spValue', 'spSpeedUnit', 'spRpm', 'spMode',
       'spOdo', 'spTrip', 'thrPct', 'spState', 'spLimit', 'thrPlus', 'thrMinus', 'modeTrack', 'rotaryKnob',
       'pbComm', 'pbMissions', 'pbShip', 'pbMap', 'scScan', 'scLock', 'scAuto', 'scStab', 'navComm',
       'navMissions', 'navShip', 'navLog', 'stationTablet', 'tabletLabel', 'tabletTitle', 'tabletSub', 'tabletLinkText',
@@ -502,10 +501,12 @@ export class CockpitUI {
     knob.addEventListener('pointercancel', release);
     knob.addEventListener('wheel', event => {
       event.preventDefault();
-      const current = window.shipDriveControls?.getState?.()?.mode || 'combat';
-      const index = Math.max(0, MODE_ORDER.indexOf(current));
-      const next = clamp(index + (event.deltaY > 0 ? 1 : -1), 0, MODE_ORDER.length - 1);
-      this.setDriveMode(MODE_ORDER[next]);
+      const state = window.shipDriveControls?.getState?.() || {};
+      const modes = state.availableModes?.length ? state.availableModes : MODE_ORDER;
+      const current = state.mode || modes[0];
+      const index = Math.max(0, modes.indexOf(current));
+      const next = clamp(index + (event.deltaY > 0 ? 1 : -1), 0, modes.length - 1);
+      this.setDriveMode(modes[next]);
     }, { passive: false });
   }
 
@@ -605,20 +606,25 @@ export class CockpitUI {
   setDriveMode(mode) {
     const normalized = MODE_META[mode] ? mode : 'combat';
     window.shipDriveControls?.setMode?.(normalized);
-    this.syncDriveMode(true, normalized);
+    this.syncDriveMode(true);
   }
 
-  syncDriveMode(force = false, explicitMode = null) {
+  syncDriveMode(force = false) {
     const state = window.shipDriveControls?.getState?.() || {};
-    const mode = MODE_META[explicitMode] ? explicitMode : (MODE_META[state.mode] ? state.mode : 'combat');
-    if (!force && this.cache.driveMode === mode) return;
+    const mode = MODE_META[state.mode] ? state.mode : 'combat';
+    const availableModes = state.availableModes?.length ? state.availableModes : MODE_ORDER;
+    const modeCacheKey = `${mode}:${availableModes.join(',')}`;
+    if (!force && this.cache.driveModeKey === modeCacheKey) return;
+    this.cache.driveModeKey = modeCacheKey;
     this.cache.driveMode = mode;
     const meta = MODE_META[mode];
     this.els.app.dataset.mode = meta.uiMode;
     if (this.els.rotaryKnob) this.els.rotaryKnob.style.transform = `rotate(${meta.angle}deg)`;
     for (const item of this.els.modeTrack?.querySelectorAll('[data-mode]') || []) {
+      item.hidden = !availableModes.includes(item.dataset.mode);
       item.classList.toggle('active', item.dataset.mode === mode);
     }
+    if (this.els.scAuto) this.els.scAuto.hidden = !availableModes.includes('travel');
     if (this.els.spMode) this.els.spMode.textContent = meta.gear;
   }
 
@@ -753,7 +759,10 @@ export class CockpitUI {
     this.odometer += speed * dt;
     this.trip += speed * dt;
     this.lastSpeed = speed;
-    if (this.els.spValue) this.els.spValue.textContent = String(Math.round(speed));
+    const warpActive = systems.warpState === 'active';
+    const speedDisplay = getVelocityDisplay(speed, { warp: warpActive });
+    if (this.els.spValue) this.els.spValue.textContent = speedDisplay.value;
+    if (this.els.spSpeedUnit) this.els.spSpeedUnit.textContent = speedDisplay.unit.toUpperCase();
     if (this.els.spRpm) {
       this.els.spRpm.textContent = (rpm * 8).toFixed(1);
       const cueColor = [
@@ -763,10 +772,11 @@ export class CockpitUI {
       ];
       this.els.spRpm.style.color = mixRgb([255, 255, 255], cueColor, shiftCueIntensity * 0.9);
     }
-    if (this.els.spOdo) this.els.spOdo.textContent = `${Math.round(this.odometer).toLocaleString('pl-PL')} u`;
-    if (this.els.spTrip) this.els.spTrip.textContent = `${Math.round(this.trip).toLocaleString('pl-PL')} u`;
+    if (this.els.spOdo) this.els.spOdo.textContent = formatLocalDistance(this.odometer);
+    if (this.els.spTrip) this.els.spTrip.textContent = formatLocalDistance(this.trip);
     if (this.els.thrPct) this.els.thrPct.textContent = `${Math.round(clamp(systems.power, 0, 100))}%`;
-    if (this.els.spLimit) this.els.spLimit.textContent = String(Math.round(Number(systems.driveSpeedLimit) || 0));
+    const speedLimit = warpActive ? Number(systems.warpSpeed) || speed : Number(systems.driveSpeedLimit) || 0;
+    if (this.els.spLimit) this.els.spLimit.textContent = formatVelocity(speedLimit, { warp: warpActive });
     if (this.els.spState) this.els.spState.textContent = systems.driveAuto ? 'AUTO' : systems.warpState === 'active' ? 'WARP' : 'REJS';
     this.els.scAuto?.classList.toggle('on', !!systems.driveAuto);
     this.drawSpeedGauge(
@@ -965,7 +975,7 @@ export class CockpitUI {
       code.className = `tone-${contact.type}`;
       code.textContent = contact.type === 'hostile' ? 'WRG' : contact.type === 'friendly' ? 'SOJ' : contact.type === 'station' ? 'STA' : 'AST';
       const name = document.createElement('span'); name.textContent = contact.label;
-      const distance = document.createElement('span'); distance.className = 'dist-cell'; distance.textContent = formatDistance(contact.distance);
+      const distance = document.createElement('span'); distance.className = 'dist-cell'; distance.textContent = formatLocalDistance(contact.distance);
       const lock = document.createElement('span'); lock.className = 'lock-cell'; lock.textContent = contact.locked ? 'LCK' : '–';
       row.append(code, name, distance, lock);
       root.appendChild(row);
@@ -991,7 +1001,7 @@ export class CockpitUI {
     if (this.els.selKind) this.els.selKind.textContent = contact.type.toUpperCase();
     const body = document.createElement('div'); body.className = 'sel-body';
     const name = document.createElement('div'); name.className = `sel-name tone-${contact.type}`; name.textContent = contact.label;
-    const sub = document.createElement('div'); sub.className = 'sel-sub'; sub.textContent = `${contact.type} · ${formatDistance(contact.distance)} u`;
+    const sub = document.createElement('div'); sub.className = 'sel-sub'; sub.textContent = `${contact.type} · ${formatLocalDistance(contact.distance)}`;
     const entity = contact.entity;
     const hull = Number(entity?.hp ?? entity?.hull?.val);
     const shield = Number(entity?.shield?.val);
@@ -1112,7 +1122,7 @@ export class CockpitUI {
       ['HP', details.hp.toLocaleString('pl-PL')],
       ['Shield', details.shield.toLocaleString('pl-PL')],
       ['Hardpointy', details.hardpoints],
-      ['V-max', details.speed ? `${details.speed} u/s` : '—'],
+      ['V-max', details.speed ? formatVelocity(details.speed) : '—'],
       ['Masa', details.mass ? details.mass.toLocaleString('pl-PL') : '—']
     ];
     for (const [label, value] of statRows) {
@@ -1252,7 +1262,7 @@ export class CockpitUI {
       bars.innerHTML = `<span class="micro-bar"><span style="--value:${Math.round(hp * 100)}%;--bar-color:#ff6600"></span></span><span class="micro-bar"><span style="--value:${Math.round(sh * 100)}%;--bar-color:#0088ff"></span></span>`;
       info.append(name, meta, bars);
       const distance = document.createElement('span'); distance.className = 'unit-distance';
-      const pos = getEntityPosition(unit); distance.textContent = window.ship?.pos ? formatDistance(Math.hypot(pos.x - window.ship.pos.x, pos.y - window.ship.pos.y)) : '—';
+      const pos = getEntityPosition(unit); distance.textContent = window.ship?.pos ? formatLocalDistance(Math.hypot(pos.x - window.ship.pos.x, pos.y - window.ship.pos.y)) : '—';
       card.append(portrait, info, distance); root.appendChild(card);
     }
     if (this.els.activeCount) this.els.activeCount.textContent = `${units.length} JEDN.`;
@@ -1323,7 +1333,7 @@ export class CockpitUI {
     }
     for (const [entryIndex, { station, distance }] of this.commDirectory.entries()) {
       const row = document.createElement('div'); row.className = 'term-row';
-      const target = document.createElement('span'); target.className = 'term-target'; target.textContent = `[${station.id ?? 'STA'}] ${getEntityLabel(station, 'Stacja')} — ${formatDistance(distance)} u`;
+      const target = document.createElement('span'); target.className = 'term-target'; target.textContent = `[${station.id ?? 'STA'}] ${getEntityLabel(station, 'Stacja')} — ${formatNavigationDistance(distance)}`;
       const button = document.createElement('button'); button.type = 'button'; button.className = 'term-btn'; button.dataset.connect = String(station.id ?? entryIndex); button.textContent = 'CONNECT';
       row.append(target, button); root.appendChild(row);
     }

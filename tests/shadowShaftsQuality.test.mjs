@@ -17,11 +17,11 @@ test('shadow shafts are fully analytic — screen-space mask is gone', () => {
     assert.ok(!coreSource.includes(relic), `mask relic still present in core3d.js: ${relic}`);
   }
   // Trzy rodziny analitycznych okluderow w shaderze passa.
-  for (const uniformName of ['uDiscs', 'uCapsuleSeg', 'uCapsuleR', 'uRings', 'uSunWorld', 'uCamCenter', 'uViewWorldSize', 'uSunActive']) {
+  for (const uniformName of ['uDiscs', 'uHulls', 'uHullMeta', 'uRings', 'uSunWorld', 'uCamCenter', 'uViewWorldSize', 'uSunActive']) {
     assert.ok(coreSource.includes(uniformName), `shafts shader missing uniform ${uniformName}`);
   }
   assert.match(coreSource, /const SHAFT_DISC_CAP = 48;/);
-  assert.match(coreSource, /const SHAFT_CAPSULE_CAP = 32;/);
+  assert.match(coreSource, /const SHAFT_HULL_CAP = 48;/);
   assert.match(coreSource, /const SHAFT_RING_CAP = 2;/);
 });
 
@@ -50,10 +50,25 @@ test('shafts pass shades the ortho world but not FG emissives', () => {
   assert.match(coreSource, /new FullScreenBlendPass\(createShadowShaftsShader\(\), BLEND_MULTIPLY_SCENE\)/);
 });
 
+test('shields render after the shafts pass, in ortho, without clearing depth', () => {
+  const shieldSource = readFileSync(new URL('../src/3d/shield3D.js', import.meta.url), 'utf8');
+  const scenePassList = coreSource.match(/_scenePasses\s*=\s*\[([\s\S]*?)\]/)?.[1] || '';
+  const shaftsIndex = scenePassList.indexOf('this.shadowShaftsPass');
+  const shieldIndex = scenePassList.indexOf('this.renderPassShields');
+  assert.ok(shieldIndex > shaftsIndex,
+    'shield pass must run AFTER shadow shafts — shield glow is emissive, not a lit surface');
+  // Kamera ortho (jak swiat) + BEZ czyszczenia glebi (test glebi wzgledem kadlubow).
+  assert.match(coreSource, /makeSplitScreenRenderPass\(this\.renderPassShields,\s*SHIELD_RENDER_LAYER,\s*true,\s*false,\s*false\)/);
+  assert.match(coreSource, /new RenderPass\(this\.scene, this\.cameraOrtho\)/);
+  // Obie tarcze (obrys kadluba i banka) musza trafic na warstwe tarcz.
+  const shieldLayerCalls = shieldSource.match(/Core3D\.enableShield3D\(mesh\)/g) || [];
+  assert.equal(shieldLayerCalls.length, 2, 'both hull and sphere shield meshes must use the shield layer');
+});
+
 test('analytic occluders skip interiors so surfaces keep their own lighting', () => {
-  // Dyski: wnetrze tarczy = oswietlenie planety; kapsuly: wnetrze kadluba =
-  // terminator w shaderze heksow; ring na powierzchni planety = uRingShadow*
-  // w shaderze planety (bez podwojnego liczenia w passie).
+  // Dyski: wnetrze tarczy = oswietlenie planety; kadluby: wnetrze elipsy
+  // (qc <= 0) = terminator w shaderze heksow; ring na powierzchni planety =
+  // uRingShadow* w shaderze planety (bez podwojnego liczenia w passie).
   assert.match(coreSource, /if \(along <= exitDist\) continue;/);
   assert.match(coreSource, /if \(dot\(fromHull, fromHull\) <= capR \* capR\) continue;/);
   assert.match(coreSource, /if \(!insideDisc\) \{/);
@@ -63,18 +78,51 @@ test('planets and moons push analytic discs every frame', () => {
   const planetPushes = planetSource.match(/Core3D\.pushShaftDiscWorld\(/g) || [];
   assert.ok(planetPushes.length >= 2, 'both DirectPlanet and DirectMoon must push disc occluders');
   assert.match(planetSource, /beginShaftDiscFrame/);
-  assert.match(coreSource, /pushShaftDiscWorld\(worldX, worldY, radius\)/);
+  assert.match(coreSource, /pushShaftDiscWorld\(worldX, worldY, radius, strength = 1\)/);
 });
 
-test('ships push size-sorted capsules from the hex update loop', () => {
-  assert.match(coreSource, /pushShaftCapsuleWorld\(x1, y1, x2, y2, radius\)/);
-  assert.match(shipsSource, /Core3D\.beginShaftCapsuleFrame\(\);/);
-  assert.match(shipsSource, /Core3D\.pushShaftCapsuleWorld\(/);
+test('ships push size-sorted hull silhouettes from the hex update loop', () => {
+  assert.match(coreSource, /pushShaftHullWorld\(x1, y1, x2, y2, radius, span\)/);
+  assert.match(shipsSource, /Core3D\.beginShaftHullFrame\(\);/);
+  assert.match(shipsSource, /Core3D\.pushShaftHullWorld\(/);
   assert.match(shipsSource, /cands\.sort\(\(a, b\) => b\.size - a\.size\)/);
   // Ring-segmenty pomijane — pierscien ma wlasny okrag-okluder.
   assert.match(shipsSource, /entity\.isRingSegment\) continue;/);
-  // Budzet kapsul wg jakosci tnie upload w render().
+  // Budzet kadlubow wg jakosci tnie upload w render().
   assert.match(coreSource, /shaftCfg\.capsuleBudget/);
+});
+
+test('hull occluder is a band chain fitted to the hex outline, not one blob', () => {
+  // Jedna brylа na caly statek (kapsula z bboxa albo elipsa) jest przy waskim
+  // ogonie duzo szersza niz kadlub — widac wtedy jej obrys jako "jajo",
+  // z ktorego dopiero wychodzi cien. Stad pasma o LOKALNYM promieniu.
+  assert.ok(!shipsSource.includes('const capR = Math.max(6, halfWid * 0.9)'),
+    'sprite-bbox capsule occluder is back');
+  assert.match(shipsSource, /function buildHullSegments\(grid, shards, sx, sy\)/);
+  assert.match(shipsSource, /const HULL_SHAFT_SEGMENTS = 4;/);
+  assert.match(coreSource, /const HULL_SHAFT_BANDS = 4;/);
+  // Granice pasm z programowania dynamicznego po profilu szerokosci —
+  // rowne pasma topily waski ogon w jednym grubym promieniu.
+  assert.match(shipsSource, /function splitProfileIntoBands\(slots, bandCount\)/);
+  assert.match(shipsSource, /cost\[i\]\[j\] = \(hi - lo\) \* \(j - i \+ 1\) - sum;/);
+  // Promien pasma = LOKALNA polowa szerokosci + promien heksa.
+  assert.match(shipsSource, /const r = Math\.max\(\(bMaxV - bMinV\) \* 0\.5 \+ hexR, 1\);/);
+  // Pasma cache'owane po tablicy shardow i skali — nie liczone co klatke
+  // ani per kierunek slonca (ksztalt od slonca nie zalezy).
+  assert.match(shipsSource, /entity\._shaftHullSegments = \{ shards, count: shards\.length, sx, sy, hull \}/);
+});
+
+test('hull shaft starts at the hull edge and only dims the scene', () => {
+  // Wnetrze kapsuly pomijane — smuga zaczyna sie na krawedzi pasma, czyli
+  // na burcie, a nie na obrysie jakiejs wiekszej bryly.
+  assert.match(coreSource, /if \(dot\(fromHull, fromHull\) <= capR \* capR\) continue;/);
+  // Polcien ciasny (bylo 0.25 + 0.7 — pas rozlewal sie do ~2x szerokosci).
+  assert.match(coreSource, /float soft = capR \* \(0\.12 \+ 0\.35 \* fallT\);/);
+  // Statek/asteroida tylko przygaszaja; umbra do czerni zostaje planetom.
+  assert.match(coreSource, /const HULL_SHADOW_STRENGTH = 0\.55;/);
+  assert.match(coreSource, /shadow = max\(shadow, edge \* fall \* max\(disc\.w, 0\.0\)\);/);
+  assert.match(asteroidSource, /const ASTEROID_SHAFT_STRENGTH = 0\.5;/);
+  assert.match(asteroidSource, /pushShaftDiscWorld\(cache\[i\]\.x, cache\[i\]\.y, cache\[i\]\.r, ASTEROID_SHAFT_STRENGTH\)/);
 });
 
 test('planetary rings register analytic circle occluders', () => {
@@ -92,7 +140,7 @@ test('planetary rings register analytic circle occluders', () => {
 
 test('large asteroids push analytic discs with throttled selection', () => {
   assert.match(asteroidSource, /_pushShaftOccluders\(\)/);
-  assert.match(asteroidSource, /Core3D\.pushShaftDiscWorld\(cache\[i\]\.x, cache\[i\]\.y, cache\[i\]\.r\)/);
+  assert.match(asteroidSource, /Core3D\.pushShaftDiscWorld\(cache\[i\]\.x, cache\[i\]\.y, cache\[i\]\.r, ASTEROID_SHAFT_STRENGTH\)/);
   assert.match(asteroidSource, /const MIN_RADIUS = 90;/);
   assert.match(asteroidSource, /this\._shaftFrameCounter % 4 === 1/);
   assert.ok(!asteroidSource.includes('occluderMesh'), 'asteroid sprite occluder twin should be gone');

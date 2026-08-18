@@ -25,6 +25,7 @@ import {
 } from './ringCityAssets.js';
 import { SYNTHCITY_PITCH, composeInwardCityMatrix } from './ringCitySurface.js';
 import { buildOutwardBatchedCity } from './ringCityBatchedBuildings.js';
+import { applyRingBuildingMaterialColor } from './ringColorConfig.js';
 
 // --- Constants ---
 const WINDOW_SCALE = 500;
@@ -1063,8 +1064,8 @@ function resolveChunkMaterial(matKey, zones) {
     if (matKey.startsWith('building_')) {
         material = material.clone();
         material.userData = { ...(material.userData || {}), shared: false };
-        material.emissive = new THREE.Color().setHSL(Math.random(), 1.0, 0.95);
         material.emissiveIntensity = 1.5;
+        applyRingBuildingMaterialColor(material, matKey);
         material.needsUpdate = true;
     }
 
@@ -1254,8 +1255,8 @@ export function createDistrictForCell(cell, ring) {
         if (matKey.startsWith('building_')) {
             material = material.clone();
             material.userData = { ...(material.userData || {}), shared: false };
-            material.emissive = new THREE.Color().setHSL(Math.random(), 1.0, 0.95);
             material.emissiveIntensity = 1.5;
+            applyRingBuildingMaterialColor(material, matKey);
         }
         if (matKey === 'neonEdges') {
             cellGroup.add(new THREE.LineSegments(mergedGeo, material));
@@ -1485,10 +1486,8 @@ function buildChunksForRing(cells, ringId, ring) {
             let material = resolveChunkMaterial(matKey, chunk.zones);
             if (!material) continue;
 
-            // Per-chunk random emissive for SynthCity building materials.
-            // Each chunk clones the shared material and gets its own unique neon
-            // hue — instead of all chunks sharing the same 10 colors, we get
-            // up to 16 × 10 = 160 distinct colors across the ring.
+            // Each material key keeps its palette colour across all chunks so
+            // the live Ring Colors tuner can recolour the whole city reliably.
             const mesh = createChunkMesh(mergedGeo, material, matKey);
             chunkGroup.add(mesh);
         }

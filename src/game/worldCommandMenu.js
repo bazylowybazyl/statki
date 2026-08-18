@@ -10,6 +10,13 @@ const NORMAL_TARGET_ACTIONS = [
 
 const NORMAL_EMPTY_ACTIONS = NORMAL_TARGET_ACTIONS.filter(([action]) => action !== 'attack' && action !== 'ram');
 
+// Wraki dostają własne wejścia na górze listy — to jedyne cele, na których
+// odzysk łupu w ogóle ma sens.
+const WRECK_ACTIONS = [
+  ['salvage', 'SALVAGE'],
+  ['tow', 'TOW']
+];
+
 const RTS_ACTIONS = [
   ['approach', 'APPROACH'],
   ['orbit', 'ORBIT'],
@@ -63,7 +70,9 @@ function smoothstep01(value) {
 }
 
 export function buildNormalCommandMenuItems({ targetEntity = null } = {}) {
-  return (targetEntity ? NORMAL_TARGET_ACTIONS : NORMAL_EMPTY_ACTIONS).map(menuItem);
+  const base = (targetEntity ? NORMAL_TARGET_ACTIONS : NORMAL_EMPTY_ACTIONS).map(menuItem);
+  if (targetEntity?.isWreck) return [...WRECK_ACTIONS.map(menuItem), ...base];
+  return base;
 }
 
 export function buildRtsCommandMenuItems({ selectedCount = 0 } = {}) {

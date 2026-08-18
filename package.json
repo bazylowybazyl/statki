@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test.mjs",
     "benchmark:100k": "node scripts/benchmark100k.mjs",
     "preview": "vite preview",
     "electron": "electron .",

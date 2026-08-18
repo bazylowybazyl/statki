@@ -8,6 +8,7 @@ import {
     OUTWARD_DOME_EDGE_HEIGHT,
     resolveOutwardCitySurface
 } from './ringCitySurface.js';
+import { applyRingDomeMaterialColor } from './ringColorConfig.js';
 
 const TAU = Math.PI * 2;
 
@@ -217,6 +218,8 @@ export class RingMegastructureVisuals {
             dome: new THREE.MeshStandardMaterial({ color: 0x438caf, emissive: 0x061821, emissiveIntensity: 0.12, roughness: 0.28, metalness: 0.03, transparent: true, opacity: 0.075, depthWrite: false, depthTest: true, side: THREE.FrontSide, blending: THREE.NormalBlending, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }),
             domeFrame: new THREE.LineBasicMaterial({ color: 0x62c5ec, transparent: true, opacity: 0.34, depthWrite: false, depthTest: true })
         };
+        applyRingDomeMaterialColor(materials.dome, 'shell');
+        applyRingDomeMaterialColor(materials.domeFrame, 'frame');
 
         if (this.citySurfaceMode === 'inward') {
             const surface = resolveOutwardCitySurface(layout);

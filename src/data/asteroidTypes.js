@@ -1,30 +1,21 @@
 /**
  * Asteroid type definitions, size classes, texture mappings, and belt layouts.
  *
- * 7 surowych typów asteroid odpowiadających łańcuchom produkcji w grze:
- *   iron    -> iron_ore    -> steel
- *   copper  -> copper_ore  -> copper_wire
- *   silicon -> silicon_ore -> chips
- *   titan   -> titanium_ore-> titan_alloy
- *   crystal -> raw_crystal -> optic_lens
- *   ice     -> ice         -> hydrogen / oxygen
- *   uran    -> uranium_ore -> fuel_rods
+ * 7 surowych typów asteroid. Pełne łańcuchy produkcji (surowiec -> rafinat ->
+ * komponent) definiuje src/data/resources.js — to jest jedyne źródło prawdy
+ * dla surowców. Ten plik odpowiada wyłącznie za asteroidy: wizualia, rozmiary
+ * i rozmieszczenie w pasach.
  *
  * Każdy typ ma 10 wariantów wizualnych (assetów PNG):
  *   3x small, 3x medium, 3x large, 1x BIG.
  */
 
+import { ASTEROID_YIELD } from './resources.js';
+
 export const ASTEROID_TYPES = ['iron', 'copper', 'silicon', 'titan', 'crystal', 'ice', 'uran'];
 
-export const ASTEROID_RESOURCE = {
-  iron:    'iron_ore',
-  copper:  'copper_ore',
-  silicon: 'silicon_ore',
-  titan:   'titanium_ore',
-  crystal: 'raw_crystal',
-  ice:     'ice',
-  uran:    'uranium_ore',
-};
+/** @deprecated Zgodność wsteczna — importuj ASTEROID_YIELD z resources.js. */
+export const ASTEROID_RESOURCE = ASTEROID_YIELD;
 
 // Tint mnożnikowy dla MeshBasicMaterial (PNG-i już są kolorowe, więc tint blisko bieli).
 export const ASTEROID_TINT = {
@@ -135,8 +126,8 @@ export const MAX_VARIANTS_PER_SIZE = 1;
  *   - Hildas   (rezonans 3:2 z Jowiszem - 3 klastry trójkątne)
  *   - Kuiper   (za Neptunem)
  *
- * W skali gry: Mars=33 AU, Jupiter=50.2 AU, Neptune=120 AU.
- * 1 AU ~ 3000 world units (getAuToWorldUnits()).
+ * Współrzędne poniżej opisują rozciągnięty układ mapy, nie fizyczne AU.
+ * Zachowują duże odstępy gameplayowe: Mars=33, Jupiter=50.2, Neptune=120.
  *
  * `count` to docelowa liczba asteroid w pasie. `types` i `sizes` to
  * rozkłady prawdopodobieństwa (powinny sumować się do ~1.0).
@@ -196,6 +187,24 @@ export const BELT_DEFINITIONS = [
     sizes: { S: 0.58, M: 0.27, L: 0.12, BIG: 0.03 },
   },
 ];
+
+export function getOutermostBeltEdgeAu(belts = BELT_DEFINITIONS, anchorOrbitAuById = {}) {
+  return (belts || []).reduce((maxEdge, belt) => {
+    if (belt?.shape === 'ring' && Number.isFinite(Number(belt.outerAU))) {
+      return Math.max(maxEdge, Number(belt.outerAU));
+    }
+    if (belt?.shape === 'triangle' && Number.isFinite(Number(belt.radiusAU))) {
+      return Math.max(maxEdge, Number(belt.radiusAU) + Math.max(0, Number(belt.spreadAU) || 0) * 0.5);
+    }
+    if (belt?.shape === 'lagrange') {
+      const anchorAu = Number(anchorOrbitAuById?.[belt.anchorPlanet]);
+      if (Number.isFinite(anchorAu)) {
+        return Math.max(maxEdge, anchorAu + Math.max(0, Number(belt.spreadAU) || 0) * 0.5);
+      }
+    }
+    return maxEdge;
+  }, 0);
+}
 
 /**
  * Capacity InstancedMesh per (type, size) - z marginesem na split'y i ewentualny respawn.

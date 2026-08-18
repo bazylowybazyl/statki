@@ -1,5 +1,12 @@
 import { getHullRenderSize, resolveHullRenderProfileId } from '../data/ships.js';
 import { BELT_DEFINITIONS } from '../data/asteroidTypes.js';
+import {
+  formatAstronomicalUnits,
+  formatLocalDistance,
+  formatNavigationDistance,
+  formatPhysicalVelocityKmS,
+  resolveWorldUnitsPerAu
+} from '../config/units.js';
 
 // =============================================================================
 // CIC — COMBAT INFORMATION CENTER
@@ -1089,7 +1096,6 @@ export const CICDisplay = {
       if (SUN && ship) {
         const sunOffX = SUN.x - ship.pos.x;
         const sunOffY = SUN.y - ship.pos.y;
-        // Lerp halfway toward sun — player stays roughly visible
         cicTargetPanX = sunOffX * 0.5;
         cicTargetPanY = sunOffY * 0.5;
       }
@@ -1639,7 +1645,7 @@ export const CICDisplay = {
         // Distance
         ctx.fillStyle = CIC_CONFIG.colors.text;
         ctx.font = '8px monospace';
-        ctx.fillText(`${(c.distance / 1000).toFixed(1)}k`, sp.x, sp.y + visualSize + 21);
+        ctx.fillText(formatLocalDistance(c.distance), sp.x, sp.y + visualSize + 21);
 
         // HP bar for tracked targets
         if (c.hp != null && c.maxHp) {
@@ -1666,7 +1672,7 @@ export const CICDisplay = {
     }
 
     // === MISSION OBJECTIVE MARKERS ===
-    drawCicObjectiveMarkers(ctx, W, H, toScreen, gameTime, ship);
+    drawCicObjectiveMarkers(ctx, W, H, toScreen, ship);
 
     // === BOX-SELECT RECTANGLE ===
     if (cicBoxSelecting) {
@@ -1777,7 +1783,7 @@ export const CICDisplay = {
 
     // Zoom level
     const viewRadius = Math.round((W / 2) / cicZoom);
-    const viewLabel = viewRadius > 50000 ? `${(viewRadius / 3000).toFixed(0)} AU` : `${(viewRadius / 1000).toFixed(0)}km`;
+    const viewLabel = formatLocalDistance(viewRadius);
     ctx.fillText(`ZOOM: ${cicZoom.toFixed(4)}  VIEW: ±${viewLabel}`, 20, 66);
 
     // Probe status
@@ -1816,7 +1822,7 @@ export const CICDisplay = {
       const dist = Math.hypot(t.x - ship.pos.x, t.y - ship.pos.y);
       const lines = [
         `TYPE: ${(t.type || 'UNKNOWN').toUpperCase()}${t.subType ? ' / ' + t.subType.toUpperCase() : ''}`,
-        `DIST: ${(dist / 1000).toFixed(1)}km (${dist.toFixed(0)}u)`,
+        `DIST: ${formatLocalDistance(dist)}`,
         `HULL: ${t.hp?.toFixed(0) || '?'} / ${t.maxHp?.toFixed(0) || '?'}`,
         `SHLD: ${t.shield?.val?.toFixed(0) || '0'} / ${t.shield?.max?.toFixed(0) || '0'}`,
         `STAT: ${t.isCapitalShip ? 'CAPITAL' : t.friendly ? 'FRIENDLY' : 'HOSTILE'}`,
@@ -1918,12 +1924,9 @@ function drawAsteroidBeltRegions(ctx, sunScr, zoom, W, H) {
   if (!sunScr) return;
   const SUN = window.SUN;
   if (!SUN) return;
-  // KRYTYCZNE: getAuToWorldUnits() nie jest wystawione na window. Faktyczna skala AU
-  // jest w window.BASE_ORBIT (~40000 dla świata 10M u, nie 3000). Bez tego pasy są
-  // ~13× za małe i wyglądają jak korona Słońca.
-  const auToWorld = (typeof window.BASE_ORBIT === 'number' && window.BASE_ORBIT > 0)
-    ? window.BASE_ORBIT
-    : 3000;
+  // Orbital geometry must use the live navigation scale. Local physics units
+  // are metres and are intentionally a separate domain.
+  const auToWorld = resolveWorldUnitsPerAu(window);
   const planets = Array.isArray(window.planets) ? window.planets : [];
   const jupiter = planets.find(p => p && (p.id === 'jupiter' || p.name === 'jupiter'));
 
@@ -2274,14 +2277,16 @@ function drawSolarSystem(ctx, W, H, toScreen, zoom, gameTime) {
     const name = (pl.name || pl.id || '').toUpperCase();
     ctx.fillText(name, plScr.x, plScr.y + dotR + 12 + blend * 4);
 
-    // Distance from player
+    // Tactical: distance from player. System: mean orbit and orbital speed.
     if (window.ship) {
       const dist = Math.hypot(pl.x - window.ship.pos.x, pl.y - window.ship.pos.y);
       ctx.font = `${Math.round(7 + blend * 3)}px monospace`;
       ctx.globalAlpha = 0.4 + blend * 0.2;
-      const distLabel = dist > 10000
-        ? `${(dist / 3000).toFixed(1)} AU`
-        : `${(dist / 1000).toFixed(0)}km`;
+      const hasOrbitalMetadata = Number.isFinite(Number(pl.physicalOrbitAU))
+        && Number.isFinite(Number(pl.meanOrbitalSpeedKmS));
+      const distLabel = blend > 0.5 && hasOrbitalMetadata
+        ? `${formatAstronomicalUnits(pl.physicalOrbitAU)} · ${formatPhysicalVelocityKmS(pl.meanOrbitalSpeedKmS)}`
+        : formatLocalDistance(dist);
       ctx.fillText(distLabel, plScr.x, plScr.y + dotR + 22 + blend * 6);
     }
 
@@ -2354,7 +2359,7 @@ function drawSolarSystem(ctx, W, H, toScreen, zoom, gameTime) {
   }
 
   // === STATIONS ===
-  drawStationMarkers(ctx, W, H, toScreen, zoom, gameTime);
+  drawStationMarkers(ctx, W, H, toScreen, zoom);
 }
 
 // =============================================================================
@@ -2384,12 +2389,15 @@ function drawCicLabel(ctx, text, x, y, color, { size = 9, bold = false, align = 
   ctx.restore();
 }
 
-/** Symbol instalacji: kwadrat z masztem. Wrogie stacje dostają krzyż i pierścień zagrożenia. */
-function drawStationMarkers(ctx, W, H, toScreen, zoom, gameTime) {
+// Rozmiar znacznika wrogiej stacji w pikselach — stały, niezależny od zoomu i od
+// promienia stacji. Każda animacja (puls, obrót, zależność od st.r) czyta się na
+// CIC jak migotanie, więc znacznik jest w pełni statyczny.
+const CIC_HOSTILE_STATION_SIZE = 14;
+
+/** Wroga stacja: statyczny X w okręgu. Cywilna: kwadrat z masztem. */
+function drawStationMarkers(ctx, W, H, toScreen, zoom) {
   const stations = window.stations;
   if (!Array.isArray(stations) || stations.length === 0) return;
-  const t = finiteNumber(gameTime, 0);
-  const pulse = 0.5 + 0.5 * Math.sin(t * 2.6);
 
   for (const st of stations) {
     if (!st || !Number.isFinite(st.x)) continue;
@@ -2398,17 +2406,18 @@ function drawStationMarkers(ctx, W, H, toScreen, zoom, gameTime) {
 
     const hostile = !!st.isPirate;
     const color = hostile ? CIC_HOSTILE_STATION_COLOR : CIC_FRIENDLY_STATION_COLOR;
-    // Rozmiar w pikselach, nie w jednostkach świata — stacja jest punktem taktycznym.
-    const size = Math.max(hostile ? 8 : 6, Math.min(16, (st.r || 120) * zoom));
+    const size = hostile
+      ? CIC_HOSTILE_STATION_SIZE
+      : Math.max(6, Math.min(16, (st.r || 120) * zoom));
 
     ctx.save();
 
-    // Pierścień zagrożenia wrogiej stacji (promień agresji obrony).
     if (hostile) {
+      // Pierścień zagrożenia (promień agresji obrony) — stała przezroczystość.
       const aggroRadius = Math.max(0, finiteNumber(window.mercMission?.aggroRadius, 0));
       const ringR = aggroRadius * zoom;
       if (ringR > size * 1.6 && ringR < Math.max(W, H) * 2) {
-        ctx.globalAlpha = 0.28 + pulse * 0.12;
+        ctx.globalAlpha = 0.34;
         ctx.strokeStyle = color;
         ctx.lineWidth = 1.2;
         ctx.setLineDash([5, 7]);
@@ -2418,58 +2427,63 @@ function drawStationMarkers(ctx, W, H, toScreen, zoom, gameTime) {
         ctx.setLineDash([]);
         ctx.globalAlpha = 1;
       }
-      // Pulsujący halo — wroga stacja ma być widoczna od razu.
-      ctx.globalAlpha = 0.18 + pulse * 0.22;
-      ctx.fillStyle = color;
+
+      // Ciemny kontur pod znacznikiem — czytelność na jasnym tle (Słońce, pasy).
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = 'rgba(2, 10, 22, 0.85)';
+      ctx.lineWidth = 6;
       ctx.beginPath();
-      ctx.arc(scr.x, scr.y, size * (1.9 + pulse * 0.5), 0, Math.PI * 2);
-      ctx.fill();
-      ctx.globalAlpha = 1;
-    }
-
-    // Maszt (linia pionowa) — odróżnia instalację od statku.
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 1.4;
-    ctx.globalAlpha = 0.9;
-    ctx.beginPath();
-    ctx.moveTo(scr.x, scr.y - size);
-    ctx.lineTo(scr.x, scr.y - size * 1.9);
-    ctx.moveTo(scr.x - size * 0.5, scr.y - size * 1.9);
-    ctx.lineTo(scr.x + size * 0.5, scr.y - size * 1.9);
-    ctx.stroke();
-
-    // Korpus
-    ctx.fillStyle = hostile ? 'rgba(255, 85, 85, 0.22)' : 'rgba(96, 165, 250, 0.18)';
-    ctx.lineWidth = hostile ? 2 : 1.4;
-    ctx.beginPath();
-    ctx.rect(scr.x - size, scr.y - size, size * 2, size * 2);
-    ctx.fill();
-    ctx.stroke();
-
-    if (hostile) {
-      // Krzyż w środku = cel wrogi
-      ctx.beginPath();
-      ctx.moveTo(scr.x - size * 0.6, scr.y - size * 0.6);
-      ctx.lineTo(scr.x + size * 0.6, scr.y + size * 0.6);
-      ctx.moveTo(scr.x - size * 0.6, scr.y + size * 0.6);
-      ctx.lineTo(scr.x + size * 0.6, scr.y - size * 0.6);
+      ctx.moveTo(scr.x - size, scr.y - size); ctx.lineTo(scr.x + size, scr.y + size);
+      ctx.moveTo(scr.x - size, scr.y + size); ctx.lineTo(scr.x + size, scr.y - size);
       ctx.stroke();
+
+      // X = cel wrogi
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(scr.x - size, scr.y - size); ctx.lineTo(scr.x + size, scr.y + size);
+      ctx.moveTo(scr.x - size, scr.y + size); ctx.lineTo(scr.x + size, scr.y - size);
+      ctx.stroke();
+
+      // Okrąg wokół X — symbol instalacji, nie statku.
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.arc(scr.x, scr.y, size * 1.5, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Pasek HP
+      if (Number.isFinite(st.hp) && Number.isFinite(st.maxHp) && st.maxHp > 0) {
+        const barW = 40;
+        const ratio = Math.max(0, Math.min(1, st.hp / st.maxHp));
+        const barY = scr.y + size * 1.5 + 5;
+        ctx.fillStyle = 'rgba(0,0,0,0.55)';
+        ctx.fillRect(scr.x - barW / 2, barY, barW, 3);
+        ctx.fillStyle = ratio > 0.5 ? '#4ade80' : ratio > 0.25 ? '#fbbf24' : '#ef4444';
+        ctx.fillRect(scr.x - barW / 2, barY, barW * ratio, 3);
+      }
     } else {
+      // Maszt (linia pionowa) — odróżnia instalację od statku.
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.4;
+      ctx.globalAlpha = 0.9;
+      ctx.beginPath();
+      ctx.moveTo(scr.x, scr.y - size);
+      ctx.lineTo(scr.x, scr.y - size * 1.9);
+      ctx.moveTo(scr.x - size * 0.5, scr.y - size * 1.9);
+      ctx.lineTo(scr.x + size * 0.5, scr.y - size * 1.9);
+      ctx.stroke();
+
+      // Korpus
+      ctx.fillStyle = 'rgba(96, 165, 250, 0.18)';
+      ctx.beginPath();
+      ctx.rect(scr.x - size, scr.y - size, size * 2, size * 2);
+      ctx.fill();
+      ctx.stroke();
+
       ctx.fillStyle = color;
       ctx.globalAlpha = 0.65;
       ctx.fillRect(scr.x - size * 0.35, scr.y - size * 0.35, size * 0.7, size * 0.7);
       ctx.globalAlpha = 1;
-    }
-
-    // Pasek HP dla stacji, które można zniszczyć
-    if (hostile && Number.isFinite(st.hp) && Number.isFinite(st.maxHp) && st.maxHp > 0) {
-      const barW = Math.max(26, size * 3);
-      const ratio = Math.max(0, Math.min(1, st.hp / st.maxHp));
-      const barY = scr.y + size + 5;
-      ctx.fillStyle = 'rgba(0,0,0,0.55)';
-      ctx.fillRect(scr.x - barW / 2, barY, barW, 3);
-      ctx.fillStyle = ratio > 0.5 ? '#4ade80' : ratio > 0.25 ? '#fbbf24' : '#ef4444';
-      ctx.fillRect(scr.x - barW / 2, barY, barW * ratio, 3);
     }
 
     ctx.restore();
@@ -2477,7 +2491,8 @@ function drawStationMarkers(ctx, W, H, toScreen, zoom, gameTime) {
     const name = hostile
       ? 'STACJA PIRACKA'
       : `STACJA ${String(st.planet?.label || st.id || 'ORBIT').toUpperCase()}`;
-    drawCicLabel(ctx, name, scr.x, scr.y + size + (hostile ? 16 : 12), color, {
+    const labelY = hostile ? scr.y + size * 1.5 + 18 : scr.y + size + 12;
+    drawCicLabel(ctx, name, scr.x, labelY, color, {
       size: hostile ? 9 : 8,
       bold: hostile
     });
@@ -2511,20 +2526,19 @@ function collectCicObjectives() {
 }
 
 function formatCicDistance(dist) {
-  return dist > 12000 ? `${(dist / 3000).toFixed(1)} AU` : `${(dist / 1000).toFixed(1)} km`;
+  return formatNavigationDistance(dist);
 }
 
 /**
- * Znaczniki celów misji. Na ekranie: pulsujący celownik z podpisem.
+ * Znaczniki celów misji — geometria statyczna (bez obrotu i pulsowania; na CIC
+ * animacja czyta się jak migotanie). Na ekranie: celownik z podpisem.
  * Poza ekranem: strzałka przy krawędzi z kierunkiem i dystansem — dzięki temu
  * gracz zawsze wie, GDZIE szukać celu, nawet przy pełnym oddaleniu.
  */
-function drawCicObjectiveMarkers(ctx, W, H, toScreen, gameTime, ship) {
+function drawCicObjectiveMarkers(ctx, W, H, toScreen, ship) {
   const objectives = collectCicObjectives();
   if (objectives.length === 0) return;
 
-  const t = finiteNumber(gameTime, 0);
-  const pulse = 0.5 + 0.5 * Math.sin(t * 2.4);
   const color = CIC_OBJECTIVE_COLOR;
   const margin = 58;
   const shipX = finiteNumber(ship?.pos?.x, 0);
@@ -2537,21 +2551,18 @@ function drawCicObjectiveMarkers(ctx, W, H, toScreen, gameTime, ship) {
     const onScreen = scr.x >= margin && scr.x <= W - margin && scr.y >= margin && scr.y <= H - margin;
 
     if (onScreen) {
-      const r = 20 + pulse * 6;
+      const r = 26;
       ctx.save();
       ctx.translate(scr.x, scr.y);
 
-      // Obracający się pierścień
+      // Przerywany pierścień (nieruchomy)
       ctx.strokeStyle = color;
-      ctx.globalAlpha = 0.9;
+      ctx.globalAlpha = 0.85;
       ctx.lineWidth = 1.6;
       ctx.setLineDash([7, 7]);
-      ctx.save();
-      ctx.rotate(t * 0.7);
       ctx.beginPath();
       ctx.arc(0, 0, r, 0, Math.PI * 2);
       ctx.stroke();
-      ctx.restore();
       ctx.setLineDash([]);
 
       // Narożniki celownika
@@ -2567,15 +2578,6 @@ function drawCicObjectiveMarkers(ctx, W, H, toScreen, gameTime, ship) {
         ctx.lineTo(sx * b - sx * arm, sy * b);
         ctx.stroke();
       }
-
-      // Romb w środku
-      ctx.globalAlpha = 0.55 + pulse * 0.45;
-      ctx.fillStyle = color;
-      const d = 6;
-      ctx.beginPath();
-      ctx.moveTo(0, -d); ctx.lineTo(d, 0); ctx.lineTo(0, d); ctx.lineTo(-d, 0);
-      ctx.closePath();
-      ctx.fill();
       ctx.restore();
 
       drawCicLabel(ctx, `◆ ${obj.title}`, scr.x, scr.y - r - 20, color, { size: 10, bold: true });
@@ -2599,7 +2601,7 @@ function drawCicObjectiveMarkers(ctx, W, H, toScreen, gameTime, ship) {
 
     ctx.save();
     ctx.translate(ex, ey);
-    ctx.globalAlpha = 0.55 + pulse * 0.35;
+    ctx.globalAlpha = 0.85;
     ctx.fillStyle = color;
     ctx.strokeStyle = color;
     ctx.lineWidth = 1.5;

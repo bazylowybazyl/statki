@@ -45,6 +45,13 @@ for (const cssFile of cssFiles) {
     `${cssFile}: weapon rows must reserve columns for icon, hardpoint size, name, and stats`
   );
 
+  const hangarSummaryRule = readRule(css, '.hangar-hull-summary');
+  assert.equal(
+    readDeclaration(hangarSummaryRule, 'grid-template-columns'),
+    '28px minmax(0, 1fr) auto',
+    `${cssFile}: hangar rows must give their name column the available width without reserving a weapon-size column`
+  );
+
   const hpRowRule = readRule(css, '.hp-row');
   const hpColumns = readDeclaration(hpRowRule, 'grid-template-columns');
   assert.ok(

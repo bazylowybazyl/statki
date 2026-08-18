@@ -685,6 +685,9 @@ function createShieldMesh(entity) {
     const mesh = new THREE.Mesh(getSharedGeometry(), material);
     mesh.renderOrder = 10;
     mesh.userData.kind = 'sphere';
+    // Warstwa tarcz = pass PO shadowShafts: cień statku/planety nie mnoży
+    // poświaty tarczy (patrz enableShield3D w core3d).
+    Core3D.enableShield3D(mesh);
     Core3D.scene.add(mesh);
     state.meshes.set(entity, mesh);
     return mesh;
@@ -698,6 +701,7 @@ function createHullShieldMesh(entity, profile) {
     mesh.userData.kind = 'hull';
     mesh.userData.geoKey = key;
     mesh.userData.profileRef = profile;
+    Core3D.enableShield3D(mesh);
     Core3D.scene.add(mesh);
     state.meshes.set(entity, mesh);
     return mesh;

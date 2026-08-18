@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Subsystem Target Reticle HUD</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&display=swap');
+
+        :root {
+            --primary-cyan: #4dc3ff;
+            --primary-cyan-dim: rgba(77, 195, 255, 0.4);
+            --primary-cyan-glow: rgba(77, 195, 255, 0.15);
+            --primary-red: #ff4d4d;
+            --text-main: #c4dbe0;
+            --text-dim: #7a9eab;
+            --bg-color: #02050b;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            /* Tło z mgławicą i gwiazdami */
+            background-color: var(--bg-color);
+            background-image: 
+                linear-gradient(25deg, transparent 35%, rgba(30, 80, 140, 0.15) 45%, rgba(77, 195, 255, 0.05) 50%, rgba(30, 80, 140, 0.15) 55%, transparent 65%),
+                radial-gradient(1px 1px at 20% 30%, #ffffff, rgba(0,0,0,0)),
+                radial-gradient(1.5px 1.5px at 15% 70%, #ffffff, rgba(0,0,0,0)),
+                radial-gradient(1px 1px at 80% 16%, #ffffff, rgba(0,0,0,0)),
+                radial-gradient(2px 2px at 85% 80%, rgba(255,255,255,0.8), rgba(0,0,0,0)),
+                radial-gradient(1px 1px at 45% 28%, #ffffff, rgba(0,0,0,0));
+            background-repeat: repeat;
+            background-size: 100% 100%, 400px 400px, 600px 600px, 500px 500px, 700px 700px, 300px 300px;
+            color: var(--text-main);
+            font-family: 'Rajdhani', sans-serif;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+        }
+
+        /* NAGŁÓWEK LEWY GÓRNY */
+        .header-top-left {
+            position: absolute;
+            top: 40px;
+            left: 50px;
+            z-index: 10;
+        }
+
+        .header-top-left h1 {
+            color: var(--text-main);
+            font-size: 24px;
+            font-weight: 500;
+            letter-spacing: 2px;
+            margin-bottom: 5px;
+            text-transform: uppercase;
+        }
+
+        .header-top-left h2 {
+            font-size: 13px;
+            color: var(--text-dim);
+            letter-spacing: 2px;
+            margin-bottom: 20px;
+            font-weight: 500;
+        }
+
+        .header-top-left p {
+            font-size: 14px;
+            color: var(--text-dim);
+            line-height: 1.5;
+            max-width: 320px;
+        }
+
+        /* ETYKIETA PRAWY GÓRNY */
+        .badge-top-right {
+            position: absolute;
+            top: 40px;
+            right: 50px;
+            border: 1px solid var(--primary-cyan-dim);
+            padding: 8px 30px;
+            color: var(--primary-cyan);
+            font-size: 16px;
+            letter-spacing: 2px;
+            clip-path: polygon(10% 0, 90% 0, 100% 50%, 90% 100%, 10% 100%, 0 50%);
+            box-shadow: inset 0 0 10px rgba(77, 195, 255, 0.1);
+            background: rgba(77, 195, 255, 0.05);
+            z-index: 10;
+            text-transform: uppercase;
+        }
+
+        /* GŁÓWNY CELOWNIK (ŚRODEK) */
+        .reticle-container {
+            position: relative;
+            width: 500px;
+            height: 500px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transform: translateY(-50px);
+        }
+
+        .reticle-svg {
+            width: 100%;
+            height: 100%;
+            filter: drop-shadow(0 0 3px var(--primary-cyan-glow));
+        }
+
+        .red-glow {
+            filter: drop-shadow(0 0 5px rgba(255, 77, 77, 0.7));
+        }
+
+        /* DOLNE PANELE KONTENER */
+        .panels-container {
+            position: absolute;
+            bottom: 120px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 20px;
+            z-index: 10;
+        }
+
+        /* POJEDYNCZY PANEL */
+        .panel {
+            position: relative;
+            width: 280px;
+            height: 90px;
+            display: flex;
+            align-items: center;
+        }
+
+        .panel-bg {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: 1;
+        }
+
+        .panel-content {
+            position: relative;
+            z-index: 2;
+            display: flex;
+            align-items: center;
+            width: 100%;
+            padding: 0 15px;
+            gap: 15px;
+        }
+
+        .panel-icon {
+            width: 46px;
+            height: 46px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-shrink: 0;
+        }
+
+        .panel-icon svg {
+            width: 100%;
+            height: 100%;
+            filter: drop-shadow(0 0 4px var(--primary-cyan-dim));
+        }
+
+        .panel-info h3 {
+            color: var(--primary-cyan);
+            font-size: 13px;
+            letter-spacing: 1px;
+            margin-bottom: 4px;
+            text-transform: uppercase;
+        }
+
+        .panel-info p {
+            color: var(--text-dim);
+            font-size: 12px;
+            line-height: 1.4;
+        }
+
+        /* STOPKA DOLNA */
+        .footer-bottom {
+            position: absolute;
+            bottom: 35px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            align-items: flex-start;
+            gap: 15px;
+            z-index: 10;
+        }
+
+        .footer-graphic {
+            margin-top: 4px;
+        }
+
+        .footer-text h4 {
+            color: var(--primary-cyan);
+            font-size: 13px;
+            letter-spacing: 1.5px;
+            margin-bottom: 2px;
+            text-transform: uppercase;
+        }
+
+        .footer-text p {
+            color: var(--text-dim);
+            font-size: 12px;
+            line-height: 1.4;
+        }
+
+    </style>
+</head>
+<body>
+
+    <header class="header-top-left">
+        <h1>SUBSYSTEM TARGET RETICLE</h1>
+        <h2>MICRO &bull; NIMBLE &bull; COMPONENT FOCUS</h2>
+        <p>Micro reticle for locking specific ship subsystems<br>with speed and precision.</p>
+    </header>
+
+    <div class="badge-top-right">
+        Proposal 2
+    </div>
+
+    <!-- Środkowy Celownik -->
+    <main class="reticle-container">
+        <svg class="reticle-svg" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
+            
+            <!-- Pionowe linie przerywane i kropki na końcach -->
+            <line x1="130" y1="120" x2="130" y2="280" stroke="#4dc3ff" stroke-width="1.5" stroke-dasharray="2 12" opacity="0.8"/>
+            <line x1="270" y1="120" x2="270" y2="280" stroke="#4dc3ff" stroke-width="1.5" stroke-dasharray="2 12" opacity="0.8"/>
+            
+            <rect x="129" y="119" width="2" height="2" fill="#4dc3ff" />
+            <rect x="129" y="279" width="2" height="2" fill="#4dc3ff" />
+            <rect x="269" y="119" width="2" height="2" fill="#4dc3ff" />
+            <rect x="269" y="279" width="2" height="2" fill="#4dc3ff" />
+
+            <!-- Środkowe kwadraty na pionowych liniach -->
+            <rect x="126" y="196" width="8" height="8" fill="none" stroke="#4dc3ff" stroke-width="1.5" />
+            <rect x="266" y="196" width="8" height="8" fill="none" stroke="#4dc3ff" stroke-width="1.5" />
+
+            <!-- Skierowane do wewnątrz wskaźniki (Chevrons) -->
+            <path d="M 144 196 L 150 200 L 144 204" fill="none" stroke="#4dc3ff" stroke-width="1.5" stroke-linecap="square"/>
+            <path d="M 256 196 L 250 200 L 256 204" fill="none" stroke="#4dc3ff" stroke-width="1.5" stroke-linecap="square"/>
+
+            <!-- Poziome przerywane linie prowadzące do środka -->
+            <line x1="158" y1="200" x2="175" y2="200" stroke="#4dc3ff" stroke-width="1.5" stroke-dasharray="2 6" opacity="0.7"/>
+            <line x1="225" y1="200" x2="242" y2="200" stroke="#4dc3ff" stroke-width="1.5" stroke-dasharray="2 6" opacity="0.7"/>
+
+            <!-- Centralne nawiasy kątowe (Cyan) -->
+            <path d="M 188 185 L 180 185 L 180 193" fill="none" stroke="#4dc3ff" stroke-width="1.5" />
+            <path d="M 188 215 L 180 215 L 180 207" fill="none" stroke="#4dc3ff" stroke-width="1.5" />
+            <path d="M 212 185 L 220 185 L 220 193" fill="none" stroke="#4dc3ff" stroke-width="1.5" />
+            <path d="M 212 215 L 220 215 L 220 207" fill="none" stroke="#4dc3ff" stroke-width="1.5" />
+
+            <!-- Czerwony punkt centralny -->
+            <g class="red-glow">
+                <!-- Zewnętrzny kwadrat -->
+                <rect x="194" y="194" width="12" height="12" fill="none" stroke="#ff4d4d" stroke-width="1.5" />
+                <!-- Wewnętrzny diament -->
+                <polygon points="200,197 203,200 200,203 197,200" fill="#ff4d4d" />
+            </g>
+
+        </svg>
+    </main>
+
+    <!-- Panele podsystemów -->
+    <div class="panels-container">
+        
+        <!-- Panel 1: ENGINE LOCK -->
+        <div class="panel">
+            <svg class="panel-bg" viewBox="0 0 280 90" preserveAspectRatio="none">
+                <!-- Ramka z wyciętymi rogami góra-lewo i dół-prawo -->
+                <polygon points="0,15 15,0 280,0 280,75 265,90 0,90" fill="rgba(77,195,255,0.03)" stroke="rgba(77,195,255,0.4)" stroke-width="1"/>
+                <polyline points="0,25 0,15 15,0 25,0" fill="none" stroke="#4dc3ff" stroke-width="1.5"/>
+                <polyline points="280,65 280,75 265,90 255,90" fill="none" stroke="#4dc3ff" stroke-width="1.5"/>
+            </svg>
+            <div class="panel-content">
+                <div class="panel-icon">
+                    <!-- Ikona Silników -->
+                    <svg viewBox="0 0 40 40">
+                        <g stroke="#4dc3ff" stroke-width="1.5" fill="none" stroke-linejoin="round">
+                            <path d="M 12 28 L 8 36 L 16 32 Z" fill="rgba(77,195,255,0.2)"/>
+                            <path d="M 18 22 L 14 30 L 22 26 Z" fill="rgba(77,195,255,0.2)"/>
+                            <path d="M 14 26 C 14 26, 8 18, 12 12 C 16 8, 24 14, 24 14 C 24 14, 28 8, 34 8 C 34 8, 30 18, 26 22 L 14 26 Z"/>
+                            <path d="M 18 16 L 24 22 M 22 12 L 28 18" stroke-width="1"/>
+                        </g>
+                    </svg>
+                </div>
+                <div class="panel-info">
+                    <h3>ENGINE LOCK</h3>
+                    <p>Target engine systems<br>to disable or disrupt<br>propulsion.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Panel 2: TURRET LOCK -->
+        <div class="panel">
+            <svg class="panel-bg" viewBox="0 0 280 90" preserveAspectRatio="none">
+                <polygon points="0,15 15,0 280,0 280,75 265,90 0,90" fill="rgba(77,195,255,0.03)" stroke="rgba(77,195,255,0.4)" stroke-width="1"/>
+                <polyline points="0,25 0,15 15,0 25,0" fill="none" stroke="#4dc3ff" stroke-width="1.5"/>
+                <polyline points="280,65 280,75 265,90 255,90" fill="none" stroke="#4dc3ff" stroke-width="1.5"/>
+            </svg>
+            <div class="panel-content">
+                <div class="panel-icon">
+                    <!-- Ikona Wieżyczki -->
+                    <svg viewBox="0 0 40 40">
+                        <circle cx="20" cy="22" r="8" fill="none" stroke="#4dc3ff" stroke-width="1.5"/>
+                        <circle cx="20" cy="22" r="3" fill="rgba(77,195,255,0.4)" stroke="#4dc3ff" stroke-width="1"/>
+                        <!-- Lufa -->
+                        <path d="M 18 14 L 18 6 L 22 6 L 22 14" fill="none" stroke="#4dc3ff" stroke-width="1.5"/>
+                        <line x1="20" y1="2" x2="20" y2="6" stroke="#4dc3ff" stroke-width="1.5"/>
+                        <!-- Celownik wokół wieżyczki -->
+                        <line x1="20" y1="10" x2="20" y2="12" stroke="#4dc3ff" stroke-width="1.5"/>
+                        <line x1="20" y1="32" x2="20" y2="36" stroke="#4dc3ff" stroke-width="1.5"/>
+                        <line x1="6" y1="22" x2="10" y2="22" stroke="#4dc3ff" stroke-width="1.5"/>
+                        <line x1="30" y1="22" x2="34" y2="22" stroke="#4dc3ff" stroke-width="1.5"/>
+                        <!-- Małe krzyżyki na skrajach -->
+                        <path d="M 20 8 L 20 10 M 19 9 L 21 9" stroke="#4dc3ff" stroke-width="1"/>
+                        <path d="M 20 34 L 20 36 M 19 35 L 21 35" stroke="#4dc3ff" stroke-width="1"/>
+                        <path d="M 6 22 L 8 22 M 7 21 L 7 23" stroke="#4dc3ff" stroke-width="1"/>
+                        <path d="M 32 22 L 34 22 M 33 21 L 33 23" stroke="#4dc3ff" stroke-width="1"/>
+                    </svg>
+                </div>
+                <div class="panel-info">
+                    <h3>TURRET LOCK</h3>
+                    <p>Acquire weapon mounts<br>to reduce enemy<br>offensive capability.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Panel 3: MODULE ACQUISITION -->
+        <div class="panel">
+            <svg class="panel-bg" viewBox="0 0 280 90" preserveAspectRatio="none">
+                <polygon points="0,15 15,0 280,0 280,75 265,90 0,90" fill="rgba(77,195,255,0.03)" stroke="rgba(77,195,255,0.4)" stroke-width="1"/>
+                <polyline points="0,25 0,15 15,0 25,0" fill="none" stroke="#4dc3ff" stroke-width="1.5"/>
+                <polyline points="280,65 280,75 265,90 255,90" fill="none" stroke="#4dc3ff" stroke-width="1.5"/>
+            </svg>
+            <div class="panel-content">
+                <div class="panel-icon">
+                    <!-- Ikona Modułu (Sześcian 3D) -->
+                    <svg viewBox="0 0 40 40">
+                        <g stroke="#4dc3ff" stroke-width="1.5" stroke-linejoin="round" fill="none">
+                            <polygon points="20,8 32,15 32,29 20,36 8,29 8,15" />
+                            <polyline points="8,15 20,22 32,15" />
+                            <line x1="20" y1="22" x2="20" y2="36" />
+                        </g>
+                    </svg>
+                </div>
+                <div class="panel-info">
+                    <h3>MODULE ACQUISITION</h3>
+                    <p>Lock onto critical modules<br>to breach, hack, or<br>neutralize.</p>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Stopka -->
+    <div class="footer-bottom">
+        <div class="footer-graphic">
+            <svg width="100" height="15" viewBox="0 0 100 15">
+                <!-- Lewa strona -->
+                <line x1="0" y1="7.5" x2="10" y2="7.5" stroke="#4dc3ff" stroke-width="1.5"/>
+                <line x1="15" y1="7.5" x2="25" y2="7.5" stroke="#4dc3ff" stroke-width="1.5" stroke-dasharray="3 3"/>
+                <!-- Środek -->
+                <rect x="30" y="4.5" width="20" height="6" fill="none" stroke="#4dc3ff" stroke-width="1.5"/>
+                <!-- Prawa strona -->
+                <line x1="55" y1="7.5" x2="65" y2="7.5" stroke="#4dc3ff" stroke-width="1.5" stroke-dasharray="3 3"/>
+                <line x1="70" y1="7.5" x2="80" y2="7.5" stroke="#4dc3ff" stroke-width="1.5"/>
+            </svg>
+        </div>
+        <div class="footer-text">
+            <h4>SUBSYSTEM RETICLE</h4>
+            <p>Smallest reticle in the targeting suite.<br>Built for speed. Focused on precision.</p>
+        </div>
+    </div>
+
+</body>
+</html>

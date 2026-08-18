@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
 import { COLORS, pickArrayEntry } from './ringCityZoneGrid.js';
+import { applyRingBuildingMaterialColor } from './ringColorConfig.js';
 
 export { BufferGeometryUtils };
 
@@ -47,8 +48,8 @@ export function loadSynthCityAssets() {
             // Przywracamy MeshPhongMaterial dla budynków - gwarantuje piękne kolory i ostre światła z prototypu!
             for (let i = 1; i <= 10; i++) {
                 const id = String(i).padStart(2, '0');
-                const windowTint = new THREE.Color().setHSL((0.52 + i * 0.071) % 1, 0.78, 0.62);
-                synthCityAssets.materials['building_' + id] = new THREE.MeshPhongMaterial({
+                const materialKey = 'building_' + id;
+                synthCityAssets.materials[materialKey] = new THREE.MeshPhongMaterial({
                     map: synthCityAssets.textures['building_' + id],
                     specular: 0xffffff,
                     specularMap: synthCityAssets.textures['building_' + id + '_spec'] || synthCityAssets.textures['building_' + id + '_rough'],
@@ -56,14 +57,15 @@ export function loadSynthCityAssets() {
                     // Deterministic, HDR-capable window colour. The previous
                     // near-white random emissive flattened whole towers into
                     // bloom silhouettes under the transparent canopy.
-                    emissive: windowTint,
+                    emissive: 0xffffff,
                     // HDR only on lit pixels: bright windows cross the shared
                     // bloom threshold without washing out the building shell.
                     emissiveIntensity: 1.45,
                     bumpMap: synthCityAssets.textures['building_' + id],
                     bumpScale: 1.4
                 });
-                synthCityAssets.materials['building_' + id].userData.shared = true;
+                synthCityAssets.materials[materialKey].userData.shared = true;
+                applyRingBuildingMaterialColor(synthCityAssets.materials[materialKey], materialKey);
             }
 
             // Przywracamy materiały reklam z prototypu
@@ -109,6 +111,7 @@ export function loadSynthCityAssets() {
                 side: THREE.DoubleSide
             });
             synthCityAssets.materials.storefronts.userData.shared = true;
+            applyRingBuildingMaterialColor(synthCityAssets.materials.storefronts, 'storefronts');
 
             synthCityAssets.materials.cars = new THREE.MeshPhongMaterial({
                 map: synthCityAssets.textures.cars,
@@ -127,6 +130,7 @@ export function loadSynthCityAssets() {
                 shininess: 0
             });
             synthCityAssets.materials.mega_building_01.userData.shared = true;
+            applyRingBuildingMaterialColor(synthCityAssets.materials.mega_building_01, 'mega_building_01');
 
             synthCityAssets.materials.storefrontBridge = new THREE.MeshStandardMaterial({
                 color: 0x101722,
