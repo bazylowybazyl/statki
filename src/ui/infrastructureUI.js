@@ -1,6 +1,12 @@
 // Infrastructure UI Module - extracted from index.html
 // Accesses globals via window: stationUI, stations, Game, camera, clamp, worldToScreen, screenToWorld, planetOrbitRadii
 
+import { RESOURCES, RESOURCE_KEYS, TIER, CATEGORY, migrateResourceBag } from '../data/resources.js';
+import { isDerelict } from '../data/factions.js';
+
+// Bump przy każdej zmianie kluczy surowców — wymusza migrację magazynów w locie.
+const ECONOMY_SCHEMA_VERSION = 2;
+
 const INFRASTRUCTURE_BUILDINGS = [
   { id: 'solar_array', name: 'Orbitalna Elektrownia Słoneczna', buildTime: 75, icon: 'solar', footprint: { w: 4, h: 4 } },
   { id: 'dock_s', name: 'Dok Orbitalny (S)', buildTime: 55, icon: 'dock', footprint: { w: 1, h: 1 } },
@@ -22,25 +28,41 @@ const INFRASTRUCTURE_BUILDINGS = [
   { id: 'gas_refinery', name: 'Gas Refinery', buildTime: 140, icon: 'gas_refinery', footprint: { w: 4, h: 4 }, requiresSolarSystem: true, allowedPlanetTypes: ['gas'] },
   { id: 'sensor_station', name: 'Stacja Sensorowa', buildTime: 95, icon: 'sensor', footprint: { w: 3, h: 3 } }
 ];
-const ECONOMY_RESOURCES = {
-  gas: { label: 'Gaz' },
-  fuel: { label: 'Paliwo' },
-  rawMetal: { label: 'Surowy metal' },
-  refinedMetal: { label: 'Rafinowany metal' }
+// LEGACY: ekonomia siatki wokół stacji orbitalnej. Mechanika (tick, pojemności,
+// produkcja) jest generyczna i działa na dowolnych kluczach, więc podpięliśmy ją
+// pod ujednolicony rejestr z resources.js. Sam system budynków-na-siatce zostanie
+// zastąpiony wydobyciem z asteroid i kolektorami planetarnymi.
+const ECONOMY_RESOURCE_KEYS = RESOURCE_KEYS;
+
+const ECONOMY_BASE_CAPACITY_BY_TIER = { [TIER.RAW]: 250, [TIER.REFINED]: 150, [TIER.COMPONENT]: 60 };
+const ECONOMY_BASE_CAPACITY = Object.fromEntries(
+  RESOURCE_KEYS.map(key => [key, ECONOMY_BASE_CAPACITY_BY_TIER[RESOURCES[key].tier] ?? 100])
+);
+
+// Magazyny podnoszą pojemność wszystkiego, co należy do ich kategorii.
+const STORAGE_BONUS_CATEGORIES = {
+  storage_metal: { categories: [CATEGORY.ORE, CATEGORY.METAL, CATEGORY.SALVAGE], amount: 320 },
+  storage_fuel: { categories: [CATEGORY.FUEL], amount: 240 },
+  storage_gas: { categories: [CATEGORY.GAS, CATEGORY.VOLATILE], amount: 260 },
+  storage_plastics: { categories: [CATEGORY.CHEMICAL, CATEGORY.COMPONENT, CATEGORY.ELECTRONIC], amount: 180 }
 };
-const ECONOMY_RESOURCE_KEYS = Object.keys(ECONOMY_RESOURCES);
-const ECONOMY_BASE_CAPACITY = { gas: 60, fuel: 90, rawMetal: 140, refinedMetal: 100 };
-const ECONOMY_STORAGE_BONUS = {
-  storage_gas: { gas: 260 },
-  storage_fuel: { fuel: 240 },
-  storage_metal: { rawMetal: 320, refinedMetal: 240 }
-};
-const ECONOMY_BUILDING_RULES = {
-  gas_harvester: { produce: { gas: 22 } },
-  gas_refinery: { consume: { gas: 16 }, produce: { fuel: 14 } },
-  metal_harvester: { produce: { rawMetal: 24 } },
-  metal_refinery: { consume: { rawMetal: 18 }, produce: { refinedMetal: 12 } }
-};
+const ECONOMY_STORAGE_BONUS = Object.fromEntries(
+  Object.entries(STORAGE_BONUS_CATEGORIES).map(([buildingId, spec]) => [
+    buildingId,
+    Object.fromEntries(
+      RESOURCE_KEYS
+        .filter(key => spec.categories.includes(RESOURCES[key].category))
+        .map(key => [key, spec.amount])
+    )
+  ])
+);
+
+// Produkcja przeniesiona do src/game/stationEconomy.js — tam stacje wydobywają
+// wg PLANET_YIELD i przetwarzają wg receptur z resources.js, dla WSZYSTKICH
+// stacji, nie tylko dla tej z otwartym UI. Zostawienie tu reguł oznaczałoby
+// dwa silniki produkujące równolegle do tego samego magazynu.
+// Ta siatka odpowiada już tylko za pojemności magazynów.
+const ECONOMY_BUILDING_RULES = {};
 const ECONOMY_TICK_SECONDS = 60;
 const INFRA_BUILDING_MAP = new Map(INFRASTRUCTURE_BUILDINGS.map(b => [b.id, b]));
 
@@ -373,9 +395,16 @@ function ensureStationEconomy(ctx) {
       stationKey: key,
       resources: createEmptyEconomyResources(),
       capacity: { ...ECONOMY_BASE_CAPACITY },
-      timer: 0
+      timer: 0,
+      schemaVersion: ECONOMY_SCHEMA_VERSION
     };
     window.Game.stationEconomy.set(key, econ);
+  } else if (econ.schemaVersion !== ECONOMY_SCHEMA_VERSION) {
+    // Magazyn sprzed ujednolicenia trzyma stare klucze (gas/fuel/rawMetal/...).
+    // Przepisujemy go na nowe, żeby zapas gracza nie wyparował.
+    econ.resources = { ...createEmptyEconomyResources(), ...migrateResourceBag(econ.resources) };
+    econ.capacity = { ...ECONOMY_BASE_CAPACITY };
+    econ.schemaVersion = ECONOMY_SCHEMA_VERSION;
   }
   econ.stationRef = ctx?.stationRef || ctx || findStationByKey(key);
   return econ;
@@ -441,6 +470,9 @@ function updateStationEconomyFromBuildings(state, buildingCounts, dt) {
   if (!econ) return;
   econ.capacity = computeEconomyCapacities(buildingCounts || {});
   clampEconomyResources(econ);
+  // Stacja bez właściciela nic nie produkuje — zostaje tylko to, co po
+  // poprzednich mieszkańcach zostało w magazynach.
+  if (isDerelict(econ.stationRef)) return;
   econ.timer = (econ.timer || 0) + dt;
   if (econ.timer < ECONOMY_TICK_SECONDS) return;
   const ticks = Math.floor(econ.timer / ECONOMY_TICK_SECONDS);

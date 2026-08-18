@@ -139,6 +139,9 @@ const HTML = `
     <button id="btn-bloom-panel" class="dt-btn" style="width:100%">Bloom panel</button>
   </div>
   <div class="row">
+    <button id="btn-ring-color-panel" class="dt-btn" style="width:100%">Ring Colors</button>
+  </div>
+  <div class="row">
     <button id="btn-destructor-panel" class="dt-btn" style="width:100%">Destructor panel</button>
   </div>
   <div class="row">
@@ -229,6 +232,18 @@ export function initDevTools() {
   container.innerHTML = HTML;
   document.body.appendChild(container);
 
+  // Ten skrót jest wiązany od razu, niezależnie od pozostałej (dużej)
+  // inicjalizacji DevTools. Dzięki temu tuner kolorów pozostaje dostępny nawet
+  // wtedy, gdy opcjonalna sekcja narzędzi przerwie dalsze wireDevToolsLogic().
+  container.querySelector('#btn-ring-color-panel')?.addEventListener('click', () => {
+    if (window.RingColors && typeof window.RingColors.toggle === 'function') {
+      window.RingColors.toggle();
+      return;
+    }
+    const panel = document.getElementById('ring-color-tuner-panel');
+    if (panel) panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
+  });
+
   // Obsługa F12
   window.addEventListener('keydown', (e) => {
     if (e.code === 'F12') {
@@ -261,7 +276,7 @@ function wireDevToolsLogic() {
     cbSunDir: 'dt-show-sundir', cbShake: 'dt-disable-shake', cbPlanetStations3D: 'dt-use-planet-stations',
     cbPirate3D: 'dt-use-3d-pirate', btnCopy: 'btnCopy', btnReset: 'btnReset', cfgOut: 'cfgOut',
     fileGlb: 'dt-file-glb', btnLoadGlb: 'btn-load-glb', glbRot: 'dt-glb-rot', glbZoom: 'dt-glb-zoom', glbScale: 'dt-glb-scale',
-    btnHardpointEditor: 'btn-hardpoint-editor', btnBloomPanel: 'btn-bloom-panel', btnDestructorPanel: 'btn-destructor-panel',
+    btnHardpointEditor: 'btn-hardpoint-editor', btnBloomPanel: 'btn-bloom-panel', btnRingColorPanel: 'btn-ring-color-panel', btnDestructorPanel: 'btn-destructor-panel',
     btnDestructorMassPanel: 'btn-destructor-mass-panel', cbDamageTint: 'dt-toggle-damage-tint',
     btnPerfTools: 'btn-perf-tools', perfPanel: 'dt-perf-panel', perfStatus: 'dt-perf-status',
     perfBloom: 'dt-perf-bloom', perfHeat: 'dt-perf-heat', perfBg: 'dt-perf-bg', perfOrtho: 'dt-perf-ortho',
@@ -556,7 +571,7 @@ function wireDevToolsLogic() {
         if (!Number.isFinite(num)) num = 0;
         const baseOrbit = getBaseOrbit();
         const worldR = Number.isFinite(baseOrbit) ? num * baseOrbit : NaN;
-        if (slot) slot.textContent = `${num.toFixed(2)} AU (${fmtU(worldR)} u)`;
+        if (slot) slot.textContent = `${num.toFixed(2)} AU (${fmtU(worldR)} WU)`;
         return worldR;
       };
       
@@ -999,7 +1014,7 @@ function wireDevToolsLogic() {
           (window.ship?.pos?.y || 0) - station.y
         ));
         const au = Number(window.AU_IN_WORLD_UNITS) || 3000;
-        setStatus(`Skok: ${dist} u od stacji (~${(dist / au).toFixed(1)} AU).`);
+        setStatus(`Skok: ${dist} WU od stacji (~${(dist / au).toFixed(1)} AU).`);
         if (typeof window.toast === 'function') window.toast(`TELEPORT: stacja piracka (${orbit})`);
       });
     }

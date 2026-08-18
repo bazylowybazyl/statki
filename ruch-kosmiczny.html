@@ -1,0 +1,2446 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ruch kosmiczny — demo potok/agent</title>
+<style>
+:root{
+  --bg:#05070d; --pan:#0b1018e6; --line:#1d2838; --tx:#c8d6e8; --dim:#6e8199;
+  --acc:#4fd1ff; --warn:#ffb648; --bad:#ff5f6d; --ok:#5ee08a;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--tx);
+  font:12px/1.35 ui-monospace,SFMono-Regular,Consolas,monospace;overflow:hidden;-webkit-user-select:none;user-select:none}
+canvas#cv{position:fixed;inset:0;display:block;cursor:crosshair}
+
+.pane{position:fixed;background:var(--pan);border:1px solid var(--line);border-radius:6px;
+  backdrop-filter:blur(6px);box-shadow:0 6px 24px #0009}
+
+#panel{left:8px;top:8px;bottom:8px;width:272px;overflow-y:auto;overflow-x:hidden;padding:8px 10px 14px}
+#panel::-webkit-scrollbar{width:7px}
+#panel::-webkit-scrollbar-thumb{background:#243044;border-radius:4px}
+
+#hud{right:8px;top:8px;width:310px;padding:8px 10px}
+#stwrap{right:8px;bottom:8px;width:362px;padding:6px 8px 8px}
+#legend{left:290px;bottom:8px;padding:6px 9px}
+#toast{left:50%;top:10px;transform:translateX(-50%);padding:6px 12px;display:none;color:var(--warn)}
+
+h1{font-size:12px;margin:0 0 6px;letter-spacing:.13em;color:var(--acc);font-weight:600}
+h2{font-size:10px;margin:12px 0 5px;letter-spacing:.16em;color:var(--dim);font-weight:600;
+   border-bottom:1px solid var(--line);padding-bottom:3px}
+
+.row{display:flex;align-items:center;gap:6px;margin:3px 0 0}
+.row label{flex:1 1 auto;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .val{flex:0 0 62px;text-align:right;color:var(--acc);font-size:11px;font-variant-numeric:tabular-nums}
+.rr{display:block;margin:-2px 0 4px}
+input[type=range]{width:100%;height:14px;margin:0;accent-color:#3aa8d8;background:transparent}
+.hint{color:var(--dim);font-size:10px;margin:2px 0 6px;white-space:normal}
+
+button{background:#152030;color:var(--tx);border:1px solid #27384d;border-radius:4px;
+  padding:4px 7px;font:11px ui-monospace,monospace;cursor:pointer}
+button:hover{background:#1d2c40}
+button.on{background:#1d4a5e;border-color:var(--acc);color:#dff6ff}
+.btns{display:flex;flex-wrap:wrap;gap:4px;margin:5px 0}
+
+table{width:100%;border-collapse:collapse;font-size:10.5px;font-variant-numeric:tabular-nums}
+td{padding:1px 2px}
+td.k{color:var(--dim)}
+td.n{text-align:right;color:#e7f1ff}
+.big{font-size:19px;line-height:1.1;color:#fff;font-variant-numeric:tabular-nums}
+.sub{color:var(--dim);font-size:10px}
+.gt{font-size:10px;width:100%;border-collapse:collapse;margin-top:4px}
+.gt th{color:var(--dim);font-weight:400;text-align:right;padding:1px 3px;border-bottom:1px solid var(--line)}
+.gt th:first-child{text-align:left}
+.gt td{text-align:right;padding:1px 3px}
+.gt td:first-child{text-align:left;color:var(--dim)}
+#st{display:block;width:346px;height:172px;image-rendering:pixelated;background:#04060a;border:1px solid #16202e}
+select{background:#152030;color:var(--tx);border:1px solid #27384d;border-radius:4px;
+  font:10.5px ui-monospace,monospace;padding:2px}
+.sw{display:inline-block;width:9px;height:9px;border-radius:2px;vertical-align:-1px;margin-right:3px}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<div id="panel" class="pane">
+  <h1>RUCH KOSMICZNY · POTOK/AGENT</h1>
+  <div class="btns">
+    <button id="bPause">⏸ Pauza</button>
+    <button id="bFit">Cała mapa</button>
+    <button id="bReset">Reset</button>
+  </div>
+  <div class="btns" id="jumps"></div>
+  <div class="btns"><button id="bReroll">↻ Przelosuj pozycje planet</button></div>
+  <div id="sliders"></div>
+
+  <h2>PRZESZKODY</h2>
+  <div class="hint">PPM (albo Shift+LPM) = postaw · LPM na przeszkodzie = usuń</div>
+  <div class="btns">
+    <button id="bJam">↯ w korku</button>
+    <button id="bDock">↯ na wlocie do doku</button>
+    <button id="bClr">Wyczyść</button>
+  </div>
+
+  <h2>SCENARIUSZE</h2>
+  <div class="btns">
+    <button id="bStress">Stress 5000</button>
+    <button id="bChoke">Zdław bramy</button>
+    <button id="bFull">Zapchaj doki</button>
+  </div>
+  <div class="hint">LPM-przeciągnij = pan · kółko = zoom · WASD/QE · spacja = pauza · H = ukryj panele · 0/1/2/3 = widoki</div>
+</div>
+
+<div id="hud" class="pane">
+  <div style="display:flex;align-items:baseline;gap:12px">
+    <div><span id="fps" class="big">–</span><span class="sub"> fps</span></div>
+    <div><span id="nShips" class="big">–</span><span class="sub"> statków</span></div>
+    <div><span id="nAg" class="big">–</span><span class="sub"> agentów</span></div>
+  </div>
+  <table>
+    <tr><td class="k">sim / render / klatka</td><td class="n" id="tms">–</td></tr>
+    <tr><td class="k">w potoku · zadokowanych · w kolejce</td><td class="n" id="mix">–</td></tr>
+    <tr><td class="k">agenci dolot/postój/odlot/objazd</td><td class="n" id="agmix">–</td></tr>
+    <tr><td class="k">wysycenie sieci pasów</td><td class="n" id="sat">–</td></tr>
+    <tr><td class="k">śr. prędkość · dokowań/s</td><td class="n" id="thr">–</td></tr>
+    <tr><td class="k">zmian pasa/s · kraksy · wraki</td><td class="n" id="chg">–</td></tr>
+    <tr><td class="k">kadłuby ze sprite'ami</td><td class="n" id="spr">–</td></tr>
+    <tr><td class="k">czas symulacji · skala</td><td class="n" id="simt">–</td></tr>
+    <tr><td class="k">zoom · szerokość widoku</td><td class="n" id="camr">–</td></tr>
+    <tr><td class="k">1 AU · trasy (min/med/maks)</td><td class="n" id="scale1">–</td></tr>
+    <tr><td class="k">lot konwencjonalny med. · Ziemia↔Mars</td><td class="n" id="scale2">–</td></tr>
+  </table>
+  <table class="gt" id="gates"></table>
+  <table class="gt" id="docks"></table>
+</div>
+
+<div id="stwrap" class="pane">
+  <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+    <span class="sub">CZAS ↔ POZYCJA</span>
+    <select id="stSel"></select>
+    <span class="sub" style="margin-left:auto">↕ pozycja na trasie · → czas</span>
+  </div>
+  <canvas id="st" width="346" height="172"></canvas>
+</div>
+
+<div id="legend" class="pane">
+  <span class="sub">prędkość:</span><span id="lgrad"></span>
+  <span class="sub" style="margin-left:10px"><span class="sw" style="background:#2b3a4d"></span>pas
+  <span class="sw" style="background:#7a4fd1"></span>booster
+  <span class="sw" style="background:#ffb648"></span>brama warp
+  <span class="sw" style="background:#ff5f6d"></span>przeszkoda
+  <span class="sw" style="background:#5ee08a"></span>rampa / agent</span>
+</div>
+
+<div id="toast" class="pane"></div>
+
+<script>
+'use strict';
+//══════════════════════════════════════════════════════════════════════════════
+//  DEMO RUCHU KOSMICZNEGO — dwie warstwy sterowania: POTOK (SoA) ⇄ AGENT (OOP)
+//  Jeden plik, zero zależności, canvas 2D.
+//
+//  Kluczowa decyzja: brama warp i booster NIE są obiektami leżącymi na pasie.
+//  Są GRANICAMI między pasami. Dzięki temu teleport = zdjęcie z głowy jednego
+//  pasa i doklejenie na ogon drugiego — O(1), a tablica zostaje posortowana.
+//══════════════════════════════════════════════════════════════════════════════
+
+//──────────────────────────── skala świata — 1:1 Z GRY ────────────────────────
+// AU liczone tak jak index.html (~8352-8414):
+//   WORLD_TARGET_DIAMETER 12 000 000 / ((max(orbita Neptuna 120, krawędź Kuipera
+//   140) + margines 2) × 2) = 12e6 / 284
+// BASE_AU = 3000 z gry to tylko podłoga i NIE jest wartością obowiązującą.
+const WORLD_TARGET_DIAMETER = 12000000;
+const OUTER_EDGE_AU = 140 + 2;               // Kuiper outerAU 140 + WORLD_SAFETY_MARGIN_AU
+const AU = WORLD_TARGET_DIAMETER/(OUTER_EDGE_AU*2);   // = 42 253,52
+// UWAGA — ODSTĘPSTWO OD 1:1. Gra ma `r = 120` (index.html:9006), ale
+// megafrachtowiec jest 2760 j. DŁUGI: statek byłby 23× większy od promienia
+// stacji, przy której cumuje. Kompleks dokowy jest tu przeskalowany tak, żeby
+// kadłuby fizycznie się mieściły. Same odległości międzyplanetarne zostają 1:1.
+const STATION_R = 1400;
+
+// Planety = stacje. orbitAU z makeSolarPlanets(), stacja stoi w pozycji planety.
+// Neptun bez frakcji → stacja opuszczona (factions.js: homeStations).
+// Wagi przemysłowe ze STATION_INDUSTRY (stationEconomy.js) — sterują wielkością doku.
+const PLANETS = [
+  {id:'mercury', label:'MERKURY', au:  8.00, faction:'Terra Nova',  weight:0.8},
+  {id:'venus',   label:'WENUS',   au: 15.00, faction:'Terra Nova',  weight:1.1},
+  {id:'earth',   label:'ZIEMIA',  au: 25.00, faction:'Terra Nova',  weight:2.2},
+  {id:'mars',    label:'MARS',    au: 33.00, faction:'Terra Nova',  weight:1.6},
+  {id:'jupiter', label:'JOWISZ',  au: 50.20, faction:'Konsorcjum',  weight:1.3},
+  {id:'saturn',  label:'SATURN',  au: 80.58, faction:'Konsorcjum',  weight:1.1},
+  {id:'uranus',  label:'URAN',    au:100.20, faction:'Konsorcjum',  weight:0.9},
+  {id:'neptune', label:'NEPTUN',  au:120.00, faction:null,          weight:0.0},
+];
+// Gra losuje kąt orbitalny każdej planety przy starcie (index.html:8445 `angle: rand()`),
+// więc odległości między stacjami zmieniają się z sesji na sesję. Tu ten sam los,
+// ale z ziarna — żeby dało się wrócić do tego samego układu.
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);
+  t=t+Math.imul(t^t>>>7,61|t)^t;return ((t^t>>>14)>>>0)/4294967296;};}
+const R_BERTH  = [3000,4200,5600,7200,9000]; // pierścienie stanowisk wg klasy
+const R_RING_IN = 12000, R_RING_OUT = 15000, R_LANE = 18000;
+const LANE_HW  = 900;                        // półszerokość pasa
+const LANE_SEP = 3000;                       // rozsunięcie kierunków
+const NSUB_MAX = 5;
+// Podpas = osobna posortowana tablica na TEJ SAMEJ geometrii. Poprzednik dalej
+// jest pod i-1, więc wyprzedzanie nie kosztuje wyszukiwania sąsiadów.
+const subQ=(k,ns)=>(k-(ns-1)/2)*(2*LANE_HW/ns);
+const PROMOTE_Q = LANE_HW*2.4;               // powyżej tego odchylenia → agent
+// PIERŚCIEŃ przy stacji — jednokierunkowa obwodnica w warstwie POTOKU.
+// Pasy wchodzą i wychodzą stycznie (spirala), więc kurs jest ciągły.
+// Ruch przelotowy nigdy nie schodzi z potoku: pas → pierścień → pas.
+const RING_R    = 20000;   // promień osi pierścienia
+const RING_OUT  = 55000;   // promień, na którym spirala przechodzi w prostą trasę
+const RING_SWEEP= 0.75;    // ile radianów zajmuje spirala wejścia/wyjścia
+const RING_EXIT_LEAD = 16000; // od tego dystansu statek zjeżdża na skrajny podpas
+const MERGE_ARC  = 26000;     // długość łuku biegnącego wzdłuż obwodnicy
+const MERGE_ZONE = 27000;     // na jakim odcinku pasa wolno się wtapiać
+const MERGE_RAD  = 3600;      // jak blisko promienia obwodnicy trzeba być
+// Dystans, na którym statek zauważa przeszkodę. To on decyduje, czy omijanie
+// jest darmowe. Duże okno = łagodne odgięcie bez straty prędkości i bez korka;
+// krótkie = ostry manewr, czapka prędkości i realne wąskie gardło.
+const OBS_LOOK = 6000;
+
+//──────────────────────── kadłuby 1:1 z src/data/ships.js ─────────────────────
+// Wymiary świata liczone tak jak gra (ships.js:308 getHullRenderSize):
+//   world = HULL_RENDER_PROFILES[id].length × HULL_RENDER_WORLD_SCALE (0.6)
+// Sprite dopasowany DŁUŻSZYM bokiem do tej długości — tak samo jak w grze.
+const HULL_SCALE = 0.6;
+const CLS_NAME = ['van','S','M','L','capital'];
+const CLS_COL  = ['#7fd4ff','#8effc0','#ffd479','#ff9a5c','#ff6ba6'];
+// cls = klasa STANOWISKA (z długości), mix = udział w ruchu
+const HULLS = [
+  // cywilne frachtowce — trzon ruchu
+  {id:'inter_station_shuttle', L:200, R:80,  cls:0, mix:0.40, img:'assets/inter_station_shuttle.png'},
+  {id:'container_ship',        L:520, R:180, cls:1, mix:0.20, img:'assets/container_ship.png'},
+  {id:'long_haul_freighter',   L:900, R:260, cls:2, mix:0.13, img:'assets/long_haul_freighter.png'},
+  {id:'megafreighter',         L:4600,R:760, cls:4, mix:0.01, img:'assets/megafreighter.png'},
+  // eskorty i okręty Terra Nova
+  {id:'corvus',                L:360, R:130, cls:1, mix:0.05, img:null},
+  {id:'terran_frigate',        L:320, R:120, cls:0, mix:0.06, img:'src/assets/ships/terranfrigate.png'},
+  {id:'terran_destroyer',      L:480, R:170, cls:1, mix:0.035,img:'src/assets/ships/terrandestroyer.png'},
+  {id:'terran_battleship',     L:1040,R:220, cls:2, mix:0.02, img:'src/assets/ships/terranbattleship.png'},
+  {id:'terran_carrier',        L:1800,R:320, cls:3, mix:0.012,img:'src/assets/ships/terrancarrier.png'},
+  {id:'terran_supercapital',   L:2600,R:500, cls:4, mix:0.005,img:'src/assets/ships/terransupercapital.png'},
+  {id:'terran_capital',        L:2000,R:500, cls:4, mix:0.005,img:'src/assets/ships/terrancapital.png'},
+  // piraci
+  {id:'pirate_frigate',        L:320, R:120, cls:0, mix:0.03, img:'src/assets/ships/piratefrigate.png'},
+  {id:'pirate_destroyer',      L:600, R:170, cls:1, mix:0.02, img:'src/assets/ships/piratedestroyer.png'},
+  {id:'pirate_battleship',     L:1200,R:220, cls:2, mix:0.008,img:'src/assets/ships/piratebattleship.png'},
+  {id:'pirate_capital',        L:2000,R:500, cls:4, mix:0.005,img:'src/assets/ships/piratecapital.png'},
+  // gracz
+  {id:'atlas',                 L:3000,R:500, cls:4, mix:0.000,img:null},
+];
+const HULL_LEN=[], HULL_W=[], HULL_HW=[], HULL_CLS=[], HULL_IMG=[], HULL_CUM=[];
+(function(){
+  let sum=0; for(const h of HULLS) sum+=h.mix;
+  let acc=0;
+  for(const h of HULLS){
+    HULL_LEN.push(Math.round(h.L*HULL_SCALE));
+    HULL_W.push(Math.round(h.R*HULL_SCALE*2));      // radius→szerokość obrysu
+    HULL_HW.push(Math.round(h.R*HULL_SCALE));
+    HULL_CLS.push(h.cls);
+    HULL_IMG.push(null);
+    acc+=h.mix/sum; HULL_CUM.push(acc);
+  }
+})();
+const HULL_BY_ID={}; HULLS.forEach((h,i)=>{HULL_BY_ID[h.id]=i;});
+// wolniejsze są większe — odchyłka prędkości wg klasy stanowiska
+const CLS_DEV = [0.10,0.03,-0.03,-0.10,-0.22];
+function pickHull(r){ for(let i=0;i<HULL_CUM.length;i++) if(r<HULL_CUM[i]) return i; return 0; }
+
+// sprite'y ładowane leniwie; brak pliku = render prostokątem (fallback)
+let spritesReady=0;
+for(let i=0;i<HULLS.length;i++){
+  const src=HULLS[i].img; if(!src) continue;
+  const im=new Image();
+  im.onload=()=>{ HULL_IMG[i]=im; spritesReady++; };
+  im.onerror=()=>{ HULL_IMG[i]=null; };
+  im.src=src;
+}
+
+//──────────────────────────── parametry (suwaki) ──────────────────────────────
+const P = {
+  ships: 8000,        // mapa gry jest ogromna — 2000 statkow po prostu na niej nie widac
+  cruise: 800,
+  timeScale: 40,
+
+  minGap: 220,        // s0 w IDM
+  headT: 0.78,        // czas reakcji T
+  // Rozbieg = v²/2a. Przy a=26 i v₀=800 to 12,3 km — statek wjeżdżający na pas
+  // pełzałby przez pół trasy i dławił wlot do 0,25 szt./s. a=120 daje 2,7 km.
+  accel: 120,
+  decel: 140,
+  spread: 1.0,        // rozrzut prędkości między klasami
+  jitter: 0.01,       // szum przyspieszenia (zarzewie fal)
+
+  nsub: 3,            // podpasy na jezdni
+  antic: 0.55,        // antycypacja drugiego poprzednika — tłumi fale stop-and-go
+  changeGain: 0.5,    // chęć wyprzedzania
+  daring: 0.6,        // brawura przy zmianie pasa (niżej = więcej kraks)
+  failRate: 0.4,      // awarie na 1000 statków na minutę
+  wreckLife: 45,      // ile sekund wrak blokuje jezdnię
+
+  // Popyt na trasę to ~0,43 szt./s przy 2000 statkach. Przepustowości bram są
+  // ustawione tuż PONIŻEJ tej wartości — stąd kolejki, które pulsują zamiast rosnąć:
+  // dłuższa kolejka spowalnia obieg, więc popyt sam opada do przepustowości.
+  // Swobodny przepływ przy 3 podpasach to ~0,69 zamknięcia trasy/s. Przepustowości
+  // bram siedzą tuż pod tym, więc kolejki pulsują. UWAGA: te liczby są związane
+  // z liczbą podpasów — przy nsub=1 jezdnia niesie 3× mniej i trzeba je obniżyć.
+  boostFill: 1.0,     // zapełnienie boostera (1.0 = wjazd bez czekania)
+  boostMul: 3.0,
+  // Kręgosłup ma 12 tras zamiast 42, więc każda niesie ~3,5× więcej ruchu.
+  // Stara wartość 0,62 dawała 1484 statki w kolejkach do bram.
+  warpRate: 2.2,      // statków/s przez bramę warp
+
+  berthVan:10, berthS:5, berthM:4, berthL:2, berthC:1,
+  service: 8,
+
+  obsRad: 900,        // promień nowo stawianej przeszkody
+  obsClear: 700,      // margines omijania
+  latSpeed: 170,      // maks. prędkość boczna
+  agentBudget: 240,   // ilu agentów wolno na objazdy
+
+  colorMode: 0,
+  showLanes: 1,
+};
+const SUB_DT = 0.07, SUB_MAX = 16;
+
+//──────────────────────────── narzędzia ───────────────────────────────────────
+const clamp=(v,a,b)=>v<a?a:(v>b?b:v);
+const lerp=(a,b,t)=>a+(b-a)*t;
+function hash01(i){let x=Math.imul(i^0x9e3779b9,2654435761)>>>0;x^=x>>>15;x=Math.imul(x,2246822519)>>>0;x^=x>>>13;return (x>>>0)/4294967296;}
+const pickClass=r=>HULL_CLS[pickHull(r)];   // klasa wynika z wylosowanego kadłuba
+// Skala barw prędkości: 0 = czerwony (stoi), prędkość przelotowa = zielony.
+// Normalizacja przez cruise*boostMul dawała żółć dla statku lecącego pełną
+// prędkością — cała mapa wyglądała wtedy na zakorkowaną.
+const SPD_NORM=()=>NBUCK/Math.max(1,P.cruise*1.02);
+
+const NBUCK=16, PAL=[], PALRGB=[];
+for(let k=0;k<NBUCK;k++){
+  const t=k/(NBUCK-1); let r,g,b;
+  if(t<0.5){const u=t/0.5;r=lerp(214,240,u);g=lerp(48,196,u);b=lerp(44,58,u);}
+  else{const u=(t-0.5)/0.5;r=lerp(240,74,u);g=lerp(196,222,u);b=lerp(58,128,u);}
+  PALRGB.push([r|0,g|0,b|0]); PAL.push('rgb('+(r|0)+','+(g|0)+','+(b|0)+')');
+}
+
+//══════════════════════════════════════════════════════════════════════════════
+//  ŚWIAT
+//══════════════════════════════════════════════════════════════════════════════
+// Stacje układają się z PLANETS + ziarna kątów. Rozmiar doku wynika z wagi
+// przemysłowej stacji, więc Ziemia (2.2) ma największy port, a Merkury (0.8) mały.
+const stations = [];
+function buildStations(seed){
+  const rnd=mulberry32(seed>>>0);
+  stations.length=0;
+  for(const p of PLANETS){
+    const ang=rnd()*Math.PI*2, R=p.au*AU;
+    const w=p.weight;
+    stations.push({
+      id:p.id, name:p.label, au:p.au, faction:p.faction, weight:w, ang,
+      x:Math.cos(ang)*R, y:Math.sin(ang)*R,
+      // maski stanowisk skalowane wagą; opuszczony Neptun nie ma żadnych
+      mask: w<=0 ? [0,0,0,0,0]
+                 : [w*1.1, w*0.9, w*0.7, w*0.5, w>=1.5?1:(w>=1.0?0.5:0)],
+      berths:[], byCls:[[],[],[],[],[]], maxCls:-1, inLanes:[], qlen:0, ring:null
+    });
+  }
+}
+buildStations(7);
+
+function buildBerths(st){
+  const cnt=[P.berthVan,P.berthS,P.berthM,P.berthL,P.berthC];
+  st.berths.length=0; st.maxCls=-1;
+  for(let c=0;c<5;c++){
+    const n=Math.round(cnt[c]*st.mask[c]);
+    if(n>0) st.maxCls=c;
+    for(let j=0;j<n;j++){
+      const ang=(j+0.5)/n*Math.PI*2 + c*0.41;
+      st.berths.push({cls:c,ang,r:R_BERTH[c],
+        x:st.x+Math.cos(ang)*R_BERTH[c], y:st.y+Math.sin(ang)*R_BERTH[c],
+        occ:-1,res:-1});
+    }
+  }
+  st.byCls=[[],[],[],[],[]];
+  st.berths.forEach((b,i)=>st.byCls[b.cls].push(i));
+}
+function anyDockOpen(){ for(const st of stations) if(st.maxCls>=0) return true; return false; }
+
+//────────────────────────────── pasy ──────────────────────────────────────────
+let LANES=[], ROUTES=[], routeOf=[], laneStepOrder=[];
+
+function makeLane(pts,opt){
+  const L={id:LANES.length,pts,
+    px:[],py:[],dx:[],dy:[],ux:[],uy:[],slen:[],cum:[],ang:[],nseg:pts.length-1,len:0,
+    vmul:opt.vmul||1, kind:opt.kind||'cruise',
+    entryGated:!!opt.gate, entryKey:opt.gate||null, entryMode:opt.mode||'rate',
+    teleport:!!opt.teleport,
+    next:null, prev:null, endStation:opt.endStation!=null?opt.endStation:-1,
+    route:-1, idx:0, s0inRoute:0,
+    order:null, count:0, cap:0,
+    tokens:1, clearedTo:-1,
+    subs:[], onRamp:null, offRamp:null, loop:false, station:-1, exits:[], ringEntryS:0,
+    obs:[], sumV:0, slow:0, qGate:0, flow:0, flowRate:0};
+  let acc=0;
+  for(let i=0;i<L.nseg;i++){
+    const ax=pts[i][0],ay=pts[i][1];
+    const dx=pts[i+1][0]-ax, dy=pts[i+1][1]-ay, l=Math.hypot(dx,dy);
+    L.px.push(ax);L.py.push(ay);L.dx.push(dx);L.dy.push(dy);
+    L.ux.push(dx/l);L.uy.push(dy/l);L.slen.push(l);L.cum.push(acc);
+    L.ang.push(Math.atan2(dy,dx));
+    acc+=l;
+  }
+  L.len=acc;
+  // prostokąt otaczający — do odcinania pasów poza widokiem
+  let bx0=1e18,by0=1e18,bx1=-1e18,by1=-1e18;
+  for(const q of pts){ if(q[0]<bx0)bx0=q[0]; if(q[0]>bx1)bx1=q[0];
+                       if(q[1]<by0)by0=q[1]; if(q[1]>by1)by1=q[1]; }
+  L.bx0=bx0-LANE_HW; L.by0=by0-LANE_HW; L.bx1=bx1+LANE_HW; L.by1=by1+LANE_HW;
+  // Pojemność liczona z ODSTĘPU RUCHU, nie z gęstości zatoru na całej długości —
+  // przy trasach po kilka milionów jednostek to drugie zjadałoby dziesiątki MB.
+  L.cap=Math.min(3600,Math.ceil(acc/700)+96);
+  for(let k=0;k<P.nsub;k++) L.subs.push({order:new Int32Array(L.cap),count:0,clearedTo:-1,
+    kind:'main', q:subQ(k,P.nsub), s0:0, s1:L.len});
+  LANES.push(L);
+  return L;
+}
+const laneCount=L=>{let c=0;for(let k=0;k<L.subs.length;k++)c+=L.subs[k].count;return c;};
+// Dojazd/odjazd = ŁUK WZDŁUŻ OBWODNICY + spirala. Sam łuk to pas włączania:
+// biegnie równolegle do pierścienia, tuż obok niego, więc statek ma cały jego
+// odcinek na znalezienie luki. Bez łuku spirala schodziła na promień obwodnicy
+// dopiero na ostatnich 2 km i wtopienie było praktycznie punktowe.
+const MERGE_ARC_R = RING_R+1600;                 // promień pasa włączania
+function spiralPts(st,th0,sweepSign,outward,N){
+  const out=[];
+  const arcSweep=MERGE_ARC/MERGE_ARC_R;          // ile radianów zajmuje łuk
+  const NA=6;
+  const spiral=[];
+  for(let k=0;k<=N;k++){
+    const t=k/N, u=outward?t:(1-t);
+    const r=MERGE_ARC_R+(RING_OUT-MERGE_ARC_R)*u*u;
+    const th=th0+sweepSign*(outward?(arcSweep+RING_SWEEP*t):(-arcSweep-RING_SWEEP*(1-t)));
+    spiral.push([st.x+Math.cos(th)*r, st.y+Math.sin(th)*r]);
+  }
+  const arc=[];
+  for(let k=0;k<=NA;k++){
+    const t=k/NA;
+    const th=th0+sweepSign*arcSweep*(outward? t : (t-1));
+    arc.push([st.x+Math.cos(th)*MERGE_ARC_R, st.y+Math.sin(th)*MERGE_ARC_R]);
+  }
+  return outward ? arc.concat(spiral.slice(1)) : spiral.concat(arc.slice(1));
+}
+function routePolyline(a,b){
+  const A=stations[a],B=stations[b];
+  const base=Math.atan2(B.y-A.y,B.x-A.x);
+  // Kąt wyjazdu z A i wlotu do B, odsunięte od osi A-B, żeby kierunki się
+  // rozeszły. Pierścień kręci się CCW, więc wyjazd bierzemy „po ruchu".
+  const thA=base-0.42, thB=base+Math.PI+0.42;
+  const sOut=spiralPts(A,thA,+1,true,6);      // z pierścienia A na zewnątrz
+  const sIn =spiralPts(B,thB,+1,false,6);     // z zewnątrz na pierścień B
+  const p0=sOut[sOut.length-1], p1=sIn[0];
+  const dxx=p1[0]-p0[0], dyy=p1[1]-p0[1], d=Math.hypot(dxx,dyy)||1;
+  const nx=-dyy/d, ny=dxx/d;
+  const bulge=Math.min(d*0.045,110000), N=14, mid=[];
+  for(let i=1;i<N;i++){
+    const t=i/N, w=Math.sin(Math.PI*t)*bulge;
+    mid.push([lerp(p0[0],p1[0],t)+nx*w, lerp(p0[1],p1[1],t)+ny*w]);
+  }
+  const pts=sOut.concat(mid,sIn);
+  pts.thA=thA; pts.thB=thB;
+  return pts;
+}
+function sliceLine(pts,t0,t1){
+  const cum=[0]; let tot=0;
+  for(let i=1;i<pts.length;i++){tot+=Math.hypot(pts[i][0]-pts[i-1][0],pts[i][1]-pts[i-1][1]);cum.push(tot);}
+  const at=(t)=>{const d=t*tot;
+    for(let i=1;i<cum.length;i++) if(d<=cum[i]+1e-6){
+      const u=(d-cum[i-1])/(cum[i]-cum[i-1]);
+      return [lerp(pts[i-1][0],pts[i][0],u),lerp(pts[i-1][1],pts[i][1],u)];
+    }
+    return pts[pts.length-1].slice();};
+  const out=[at(t0)];
+  for(let i=1;i<cum.length;i++){const t=cum[i]/tot; if(t>t0+1e-6&&t<t1-1e-6) out.push(pts[i].slice());}
+  out.push(at(t1));
+  return out;
+}
+// KRĘGOSŁUP: stacja łączy się tylko z sąsiadami po orbicie. 12 tras zamiast 42,
+// 4 pasy na stację zamiast 12 — i prawie zero przecięć pasów. Dalekie ładunki
+// jadą etapami, tak jak w ekonomii gry (uran rafinuje się przy źródle).
+let SPINE=[], spineIdx=[];
+function buildSpine(){
+  SPINE=stations.map((s,i)=>i).filter(i=>stations[i].weight>0)
+        .sort((a,b)=>stations[a].au-stations[b].au);
+  spineIdx=stations.map(()=>-1);
+  SPINE.forEach((si,k)=>{spineIdx[si]=k;});
+}
+const spineNeighbours=si=>{
+  const k=spineIdx[si]; if(k<0) return [];
+  const out=[]; if(k>0)out.push(SPINE[k-1]); if(k<SPINE.length-1)out.push(SPINE[k+1]);
+  return out;
+};
+// pierścień = zapętlony pas; s liczone od kąta 0, CCW
+function makeRing(si){
+  const st=stations[si], N=64, pts=[];
+  for(let k=0;k<=N;k++){
+    const th=k/N*Math.PI*2;
+    pts.push([st.x+Math.cos(th)*RING_R, st.y+Math.sin(th)*RING_R]);
+  }
+  const L=makeLane(pts,{vmul:0.9});            // w obwodnicy jedzie się wolniej
+  L.loop=true; L.kind='ring'; L.station=si; L.endStation=-1;
+  st.ring=L;
+  return L;
+}
+const ringS=(L,th)=>(((th%(Math.PI*2))+Math.PI*2)%(Math.PI*2))/(Math.PI*2)*L.len;
+
+function buildWorld(){
+  buildSpine();
+  LANES=[];ROUTES=[];routeOf=stations.map(()=>[]);
+  for(const st of stations){ st.ring=null; }
+  for(let si=0;si<stations.length;si++) if(stations[si].weight>0) makeRing(si);
+  for(let a=0;a<stations.length;a++) for(let b=0;b<stations.length;b++){
+    routeOf[a][b]=null;
+    if(a===b) continue;
+    if(stations[a].weight<=0 || stations[b].weight<=0) continue;   // Neptun odpada
+    if(Math.abs(spineIdx[a]-spineIdx[b])!==1) continue;            // tylko sąsiedzi po orbicie
+    const poly=routePolyline(a,b);
+    const len=Math.hypot(stations[b].x-stations[a].x,stations[b].y-stations[a].y);
+    const R={a,b,lanes:[],total:0,warp:null,boost:null,id:ROUTES.length,
+             thA:poly.thA, thB:poly.thB};
+    // Booster („ekspresówka") o DŁUGOŚCI BEZWZGLĘDNEJ — ułamek trasy dałby na
+    // Neptunie odcinek 600 km, a na Merkury→Wenus ledwie kilka tysięcy jednostek.
+    const bLen=clamp(len*0.12,30000,300000);
+    const b0=0.18, b1=b0+bLen/len;
+    // Brama warp tylko tam, gdzie lot konwencjonalny naprawdę boli
+    const segs = len>1500000 ? [
+        {t:[0,b0],      kind:'cruise'},
+        {t:[b0,b1],     kind:'boost'},
+        {t:[b1,0.45],   kind:'cruise'},
+        {t:[0.80,1.00], kind:'cruise',warp:true},
+      ] : [
+        {t:[0,b0],      kind:'cruise'},
+        {t:[b0,b1],     kind:'boost'},
+        {t:[b1,1.00],   kind:'cruise'},
+      ];
+    let prev=null;
+    for(let i=0;i<segs.length;i++){
+      const sg=segs[i];
+      const L=makeLane(sliceLine(poly,sg.t[0],sg.t[1]),{
+        vmul: sg.kind==='boost'?P.boostMul:1,
+        kind: sg.kind,
+        gate: sg.kind==='boost'?'boostCap':(sg.warp?'warpRate':null),
+        mode: sg.kind==='boost'?'cap':'rate',
+        teleport: !!sg.warp,
+        endStation: (i===segs.length-1)?b:-1,
+      });
+      L.route=R.id; L.idx=i; L.s0inRoute=R.total; R.total+=L.len;
+      if(prev){prev.next=L;L.prev=prev;}
+      prev=L; R.lanes.push(L);
+      if(sg.kind==='boost') R.boost=L;
+      if(sg.warp) R.warp=L;
+    }
+    routeOf[a][b]=R; ROUTES.push(R);
+  }
+  for(const R of ROUTES){
+    R.lanes[0].onRamps=[addRamp(R.lanes[0],'onramp',0),addRamp(R.lanes[0],'onramp',1)];
+    R.lanes[0].onRamp=R.lanes[0].onRamps[0];
+    const term=R.lanes[R.lanes.length-1];
+    // pas dolotowy kończy się WJAZDEM NA PIERŚCIEŃ, nie progiem doku
+    const ringB=stations[R.b].ring;
+    if(ringB){ term.next=ringB; term.endStation=-1; term.ringEntryS=ringS(ringB,R.thB); }
+    // zjazd z pierścienia A na tę trasę
+    const ringA=stations[R.a].ring;
+    if(ringA){ ringA.exits.push({s:ringS(ringA,R.thA), kind:2, route:R, to:R.b}); }
+    R.exitS=ringA?ringS(ringA,R.thA):0;
+  }
+  for(const st of stations) if(st.ring) st.ring.exits.sort((x,y)=>x.s-y.s);
+  for(const st of stations) st.inLanes=[];
+  for(const R of ROUTES) stations[R.b].inLanes.push(R.lanes[R.lanes.length-1]);
+  laneStepOrder=[];
+  // pierścienie NAJPIERW — są celem pasów dolotowych, więc transfery lądują
+  // w pasie już zaktualizowanym. Bez tego statki wjeżdżały na obwodnicę
+  // i zamierały, bo nikt jej nie krokował.
+  for(const st of stations) if(st.ring) laneStepOrder.push(st.ring);
+  for(const R of ROUTES) for(let i=R.lanes.length-1;i>=0;i--) laneStepOrder.push(R.lanes[i]);
+  for(const st of stations) buildBerths(st);
+  computeRouteStats();
+}
+const routeStats={min:0,med:0,max:0,em:0};
+function computeRouteStats(){
+  const d=ROUTES.map(R=>Math.hypot(stations[R.b].x-stations[R.a].x,stations[R.b].y-stations[R.a].y))
+                .sort((a,b)=>a-b);
+  routeStats.min=d[0]||0; routeStats.med=d[d.length>>1]||0; routeStats.max=d[d.length-1]||0;
+  const e=stations.find(s=>s.id==='earth'), m=stations.find(s=>s.id==='mars');
+  routeStats.em=(e&&m)?Math.hypot(m.x-e.x,m.y-e.y):0;
+}
+
+//══════════════════════════════════════════════════════════════════════════════
+//  PULA STATKÓW — SoA, zero obiektów w warstwie potoku
+//══════════════════════════════════════════════════════════════════════════════
+const NMAX=40000;
+const sLane =new Int32Array(NMAX);
+const sPos  =new Float32Array(NMAX);
+const sVel  =new Float32Array(NMAX);
+const sQ    =new Float32Array(NMAX);
+const sBias =new Float32Array(NMAX);
+const sCls  =new Uint8Array(NMAX);
+const sState=new Uint8Array(NMAX);
+const sSeg  =new Uint8Array(NMAX);
+const sSub  =new Uint8Array(NMAX);
+const sHull =new Uint8Array(NMAX);
+const sLen  =new Float32Array(NMAX);
+const sWid  =new Float32Array(NMAX);
+const sHalf =new Float32Array(NMAX);
+const sX    =new Float32Array(NMAX);
+const sY    =new Float32Array(NMAX);
+const sHdg  =new Float32Array(NMAX);
+const sVX   =new Float32Array(NMAX);
+const sVY   =new Float32Array(NMAX);
+const sWait =new Float32Array(NMAX);
+const sChgT =new Float32Array(NMAX);   // czas ostatniej zmiany podpasu (histereza)
+const sGrantB=new Int32Array(NMAX).fill(-1); // przydzielone stanowisko (-1 = brak)
+const sGrantS=new Int8Array(NMAX).fill(-1);  // stacja, która je przydzieliła
+const sDest  =new Int8Array(NMAX).fill(-1);  // stacja DOCELOWA (nie następny przeskok)
+const sExitS =new Float32Array(NMAX);        // pozycja zjazdu z pierścienia
+const sExitK =new Int8Array(NMAX);           // 0 krąż, 1 do stanowiska, 2 na trasę
+const sExitR =new Int8Array(NMAX).fill(-1);  // trasa zjazdu
+const sAg   =new Int32Array(NMAX);
+const ST_FREE=0, ST_FLOW=1, ST_AGENT=2;
+
+const freeList=new Int32Array(NMAX);
+let freeTop=0, popCount=0;
+function resetPool(){
+  freeTop=0; popCount=0;
+  for(let i=NMAX-1;i>=0;i--){freeList[freeTop++]=i;sState[i]=ST_FREE;sLane[i]=-1;sAg[i]=-1;}
+}
+function allocShip(cls,hull){
+  if(freeTop===0) return -1;
+  const i=freeList[--freeTop];
+  // kadłub: podany wprost albo losowany z rozkładu ruchu, ale zgodny z klasą
+  let h=(hull!=null)?hull:pickHull(Math.random());
+  if(HULL_CLS[h]!==cls){
+    let guard=0; do{ h=pickHull(Math.random()); }while(HULL_CLS[h]!==cls && guard++<40);
+    if(HULL_CLS[h]!==cls){ h=0; for(let k=0;k<HULLS.length;k++) if(HULL_CLS[k]===cls){h=k;break;} }
+  }
+  sHull[i]=h; sLen[i]=HULL_LEN[h]; sWid[i]=HULL_W[h]; sHalf[i]=HULL_HW[h];
+  sCls[i]=cls; sState[i]=ST_FLOW; sWait[i]=0; sAg[i]=-1; sSeg[i]=0;
+  // rozrzut TYLKO w obrębie podpasu — oś podpasu daje subQ()
+  sBias[i]=(hash01(i*7+3)*2-1)*(LANE_HW/Math.max(1,P.nsub))*0.34;
+  sQ[i]=sBias[i];
+  popCount++; return i;
+}
+function freeShip(i){
+  if(sState[i]===ST_FREE) return;
+  if(sGrantB[i]>=0){                       // oddaj zarezerwowane stanowisko
+    const st=stations[sGrantS[i]], b=st&&st.berths[sGrantB[i]];
+    if(b&&b.res===i) b.res=-1;
+    sGrantB[i]=-1; sGrantS[i]=-1;
+  }
+  sState[i]=ST_FREE; sLane[i]=-1; sAg[i]=-1; sDest[i]=-1; freeList[freeTop++]=i; popCount--;
+}
+
+//──────── operacje na podpasach ────────
+// pierwszy indeks o pozycji <= s (tablica malejąca) — wyszukiwanie binarne
+function subSlot(S,s){
+  let lo=0,hi=S.count;
+  while(lo<hi){const m=(lo+hi)>>1; if(sPos[S.order[m]]>s) lo=m+1; else hi=m;}
+  return lo;
+}
+function subTailGap(S,len){
+  if(S.count===0) return 1e9;
+  const t=S.order[S.count-1];
+  return sPos[t]-sLen[t]-len-P.minGap;
+}
+// najlepszy podpas na wjazd: ten z największą luką w ogonie. Rampy pomijamy —
+// wjazdowa jest tylko dla wyjeżdżających z doku, zjazdowa tylko dla tych
+// z przydzielonym stanowiskiem.
+function bestEntrySub(L,len){
+  let bk=-1,bg=-1;
+  for(let k=0;k<L.subs.length;k++){
+    const S=L.subs[k];
+    if(S.kind!=='main' || S.count>=L.cap-2) continue;
+    const g=subTailGap(S,len);
+    if(g>bg){bg=g;bk=k;}
+  }
+  return {k:bk,gap:bg};
+}
+function laneTailGap(L,len){ return bestEntrySub(L,len).gap; }
+
+function placeIn(L,sk,i,s,v){
+  const S=L.subs[sk];
+  S.order[S.count++]=i;
+  sLane[i]=L.id;sSub[i]=sk;sPos[i]=s;sVel[i]=v;sSeg[i]=0;sState[i]=ST_FLOW;sWait[i]=0;
+  sQ[i]=S.q+sBias[i];
+  return true;
+}
+function laneAppend(L,i,v){
+  const b=bestEntrySub(L,sLen[i]);
+  if(b.k<0||b.gap<0) return false;
+  return placeIn(L,b.k,i,0,v);
+}
+function laneAppendAt(L,sk,i,s,v){ // zasiew
+  if(L.subs[sk].count>=L.cap-2) return false;
+  return placeIn(L,sk,i,s,v);
+}
+// wstawienie w środek podpasu: powrót z objazdu, zmiana podpasu, wtapianie z rampy
+function subInsertMid(L,sk,i,s,v,force){
+  const S=L.subs[sk];
+  if(S.count>=L.cap-2) return false;
+  const cls=sCls[i], k=subSlot(S,s);
+  if(!force){
+    if(k>0){const a=S.order[k-1]; if(sPos[a]-sLen[a]-s < sLen[i]+P.minGap) return false;}
+    if(k<S.count){const b=S.order[k]; if(s-sLen[i]-sPos[b] < P.minGap+sLen[b]) return false;}
+  }else{
+    if(k>0) s=Math.min(s,sPos[S.order[k-1]]-1);
+    if(k<S.count) s=Math.max(s,sPos[S.order[k]]+1);
+    if(k>0 && s>=sPos[S.order[k-1]]) return false;
+  }
+  S.order.copyWithin(k+1,k,S.count); S.count++;
+  S.order[k]=i;
+  sLane[i]=L.id;sSub[i]=sk;sPos[i]=s;sVel[i]=v;sSeg[i]=0;sState[i]=ST_FLOW;sWait[i]=0;
+  return true;
+}
+// rzut pozycji świata na skalar pasa — potrzebny, gdy powrót z objazdu jest
+// wymuszany po czasie: wstawiamy tam, gdzie statek FAKTYCZNIE jest
+function projectSQ(L,x,y){
+  let bs=0,bq=0,bd=1e18;
+  for(let g=0;g<L.nseg;g++){
+    const ax=L.px[g],ay=L.py[g],dx=L.dx[g],dy=L.dy[g];
+    let t=((x-ax)*dx+(y-ay)*dy)/(dx*dx+dy*dy); t=clamp(t,0,1);
+    const ex=x-(ax+dx*t), ey=y-(ay+dy*t), d=ex*ex+ey*ey;
+    if(d<bd){bd=d;bs=L.cum[g]+L.slen[g]*t;bq=ex*(-L.uy[g])+ey*L.ux[g];}
+  }
+  return {s:bs,q:bq};
+}
+const projectToLane=(L,x,y)=>projectSQ(L,x,y).s;
+function laneInsertMid(L,i,s,v,force){          // objazd: dowolny GŁÓWNY podpas
+  for(let k=0;k<L.subs.length;k++)
+    if(L.subs[k].kind==='main' && subInsertMid(L,k,i,s,v,false)) return true;
+  return force ? subInsertMid(L,0,i,s,v,true) : false;
+}
+// ═══ RAMPY ═══════════════════════════════════════════════════════════════════
+// Wcześniej statek z doku teleportował się w lukę oddaloną nawet o 10 km — to
+// właśnie dawało „znikanie przy wjeździe" i „materializowanie się na jezdni".
+// Teraz jest fizyczna rampa: osobny podpas istniejący tylko na krótkim odcinku,
+// po którym statek się rozpędza i wtapia normalną zmianą podpasu.
+const RAMP_ON=9000;      // długość pasa rozbiegowego przy wyjeździe ze stacji
+const RAMP_OFF=6000;     // długość pasa zjazdowego przed progiem doku
+
+function addRamp(L,kind,slot=0){
+  const ns=P.nsub, step=2*LANE_HW/ns;
+  const q=subQ(ns-1,ns)+step*(1+slot);           // kolejne kroki za ostatnim głównym
+  const s0=kind==='onramp'?0:Math.max(0,L.len-RAMP_OFF);
+  const s1=kind==='onramp'?Math.min(RAMP_ON,L.len*0.6):L.len;
+  L.subs.push({order:new Int32Array(Math.min(512,L.cap)),count:0,clearedTo:-1,
+    kind,q,s0,s1});
+  return L.subs.length-1;
+}
+// wjazd na rampę rozbiegową — bez szukania luki w ruchu, rampa jest wyłącznie
+// dla wyjeżdżających, więc wystarczy odstęp od poprzedniego wyjeżdżającego
+// punkt, w który ma celować agent: początek pasa przesunięty na oś rampy
+const RAMP_AIM=350;   // celujemy w GŁĄB rampy, nie w jej próg — inaczej rzut
+                      // pozycji statku ucina się na s=0 i wychodzi skok
+function bestOnRamp(L,len){
+  const ks=L.onRamps; if(!ks) return L.onRamp==null?-1:L.onRamp;
+  let bk=-1,bg=-1e18;
+  for(const k of ks){ const S=L.subs[k];
+    if(S.count>=S.order.length-2) continue;
+    const g=S.count?subTailGap(S,len):1e9;
+    if(g>bg){bg=g;bk=k;} }
+  return bk;
+}
+// Celuj TUŻ ZA OGON kolejki na rampie, nie zawsze w jej próg. Rampa ma 9 km,
+// a wszyscy mierzyli w te same 350 j. — wjazd był wtedy odrzucany, dopóki
+// poprzedni nie odjechał, co ścinało przepustowość o połowę. Punkt celowania
+// przesuwa się teraz płynnie z prędkością ogona, więc statek się dopasowuje.
+function rampAimS(L,k,len){
+  const S=L.subs[k];
+  let aim=RAMP_AIM;
+  if(S.count>0){
+    const tl=S.order[S.count-1];
+    aim=Math.max(RAMP_AIM, sPos[tl]-sLen[tl]-(len||0)-P.minGap-260);
+  }
+  return Math.min(aim,S.s1*0.8);
+}
+function rampPt(L,len){
+  const k=(len==null)?L.onRamp:bestOnRamp(L,len);
+  if(k==null||k<0) return [L.pts[0][0],L.pts[0][1]];
+  return detPoint(L,rampAimS(L,k,len),L.subs[k].q);
+}
+function rampEnter(L,i,v){
+  const k=bestOnRamp(L,sLen[i]); if(k==null||k<0) return false;
+  const S=L.subs[k];
+  if(S.count>=S.order.length-2) return false;
+  const pr=projectSQ(L,sX[i],sY[i]);
+  let sp=clamp(pr.s,0,RAMP_ON*0.85);
+  if(S.count>0){
+    const tl=S.order[S.count-1];
+    const maxS=sPos[tl]-sLen[tl]-sLen[i]-P.minGap;
+    if(maxS<0) return false;
+    if(sp-maxS>420) return false;
+    if(sp>maxS) sp=maxS;
+  }
+  S.order[S.count++]=i;
+  sLane[i]=L.id;sSub[i]=k;sPos[i]=sp;sVel[i]=v;sSeg[i]=0;sState[i]=ST_FLOW;sWait[i]=0;
+  sQ[i]=pr.q;
+  return true;
+}
+
+//══════════════════════════════════════════════════════════════════════════════
+//  KROK POTOKU — IDM po skalarze s. Poprzednik = ord[k-1], czyli O(1).
+//══════════════════════════════════════════════════════════════════════════════
+let statSumV=0, statN=0, frameNo=0, chgAcc=0, chgRate=0;
+
+function obsAhead(L,s){
+  for(let o=0;o<L.obs.length;o++){const ds=L.obs[o].s-s; if(ds>400&&ds<9000) return true;}
+  return false;
+}
+
+// duże i wolne ciążą do wewnętrznego podpasu, wyprzedza się na zewnątrz
+const prefSub=(cls,ns)=> (ns<=1||cls>=3) ? 0 : -1;
+const CHG_COOLDOWN=6;                            // sekund symulacji między zmianami podpasu
+// Ile statków wolno wpuścić na booster. Liczone jako UŁAMEK jego pojemności przy
+// swobodnym ruchu, bo boostery mają różne długości — sztywna liczba dławiłaby
+// krótki i puszczała długi. 1.0 = wjazd bez czekania.
+function boostAllowed(L){
+  const sp=P.minGap+P.cruise*L.vmul*P.headT+180;
+  return Math.max(2,Math.floor(L.subs.length*L.len/sp*P.boostFill));
+}
+
+const _chg=[], _cand2=[], _wrap=[];
+// Co statek robi na pierścieniu: jedzie dalej trasą, czy czeka na stanowisko.
+function setRingExit(i,ring){
+  const si=ring.station;
+  if(sDest[i]===si){ sExitK[i]=0; sExitR[i]=-1; return; }   // czeka na przydział
+  const R=routeFor(i,si);
+  if(!R){ sExitK[i]=0; sExitR[i]=-1; return; }
+  sExitK[i]=2; sExitR[i]=R.id; sExitS[i]=R.exitS;
+}                                   // zmiany podpasu odłożone do końca przebiegu
+
+function stepLane(L,dt,last){
+  const ns=L.subs.length;
+  if(laneCount(L)===0){L.sumV=0;L.slow=0;L.qGate=0;return;}
+  const a=P.accel, bmax=P.decel, T=P.headT, s0=P.minGap;
+  const sqab=2*Math.sqrt(a*bmax);
+  const v0lane=P.cruise*L.vmul;
+  const nx=L.next;
+  const vNextLim = nx ? P.cruise*nx.vmul : 0;
+  const slowerAhead = nx ? (nx.vmul<L.vmul) : false;
+  const nobs=L.obs.length, jit=P.jitter, antic=P.antic;
+  const canChange = ns>1;
+  let sumV=0, slow=0, qg=0, tot=0;
+  _chg.length=0;
+
+  for(let sk=0;sk<ns;sk++){
+    const S=L.subs[sk], n=S.count;
+    if(n===0) continue;
+    const ord=S.order;
+
+    //── wirtualny lider czoła podpasu ────────────────────────────────────────
+    let head=-1;
+    for(let k=0;k<n;k++){ if(sState[ord[k]]===ST_FLOW){head=ord[k];break;} }
+    let cleared=false;
+    if(nx && head>=0){
+      if(nx.entryGated){
+        if(S.clearedTo!==head){
+          S.clearedTo=-1;
+          if(L.len-sPos[head] < Math.max(2500,sVel[head]*3)){
+            if(nx.entryMode==='cap'){
+              // BOOSTER: limit MIEJSCA, nie tempa. Przy limicie tempa odcinek stał
+              // pusty, a przed nim rosła kolejka — statek nie ma powodu czekać
+              // przed wolnym boosterem. Teraz wjeżdża od razu i przyspiesza.
+              let pend=0; for(let z=0;z<ns;z++) if(L.subs[z].clearedTo>=0) pend++;
+              if(laneCount(nx)+pend < boostAllowed(nx)) S.clearedTo=head;
+            }else if(nx.tokens>=1){ nx.tokens-=1; S.clearedTo=head; }
+          }
+        }
+        cleared = (S.clearedTo===head);
+      }else cleared=true;
+    }
+    let leadS,leadV,leadLen;
+    if(L.loop){
+      // lider czoła obwodnicy = ogon o jedno okrążenie dalej
+      if(n>0){ const t=ord[n-1]; leadS=sPos[t]+L.len; leadV=sVel[t]; leadLen=sLen[t]; }
+      else { leadS=1e9; leadV=v0lane; leadLen=0; }
+    }else if(nx && nx.loop){
+      // WJAZD NA PIERŚCIEŃ: liderem jest statek tuż PRZED punktem wjazdu,
+      // liczony PO OBWODZIE. Wcześniej brany był statek o najmniejszym `s`
+      // na całym okręgu — czyli losowy punkt oddalony o dziesiątki kilometrów.
+      // Nadlatujący widzieli fantomową przeszkodę tuż za końcem pasa i stawali.
+      const NS=nx.subs[0], es=L.ringEntryS;
+      if(NS.count>0){
+        const slot=subSlot(NS,es);
+        const t=(slot>0)?NS.order[slot-1]:NS.order[NS.count-1];
+        let d=sPos[t]-es; if(d<0) d+=nx.len;
+        leadS=L.len+d; leadV=sVel[t]; leadLen=sLen[t];
+      }else{ leadS=1e9; leadV=v0lane; leadLen=0; }
+    }else if(nx && cleared){
+      const NS=nx.subs[Math.min(sSub[head],nx.subs.length-1)];
+      if(NS && NS.count>0){
+        const t=NS.order[NS.count-1];
+        leadS=L.len+sPos[t]; leadV=sVel[t]; leadLen=sLen[t];
+      }else{ leadS=1e9; leadV=v0lane; leadLen=0; }
+    }else{ leadS=L.len; leadV=0; leadLen=0; }     // ściana: brama albo próg doku
+    // rampa rozbiegowa kończy się wcześniej niż pas — kto nie zdążył się wtopić,
+    // staje na jej końcu i czeka na lukę (widoczna kolejka zamiast teleportacji)
+    if(S.kind==='onramp'){ leadS=S.s1; leadV=0; leadLen=0; cleared=false; }
+    if(L.loop) _wrap.length=0;
+    // ściana bramy/progu NIE jest statkiem — inaczej każdy stojący w kolejce
+    // „rozbija się" o nią, bo dla niego gapL schodzi do zera
+    let leadIsShip = L.loop ? (n>0) : !!(nx && leadS<1e8 && (cleared||nx.loop));
+    let lead2S=1e9, lead2V=v0lane, lead2Len=0;
+
+    let w=0;
+    for(let k=0;k<n;k++){
+      const i=ord[k];
+      if(sState[i]!==ST_FLOW) continue;           // zabrany przez dok → kompaktuj
+      const cls=sCls[i];
+      let v=sVel[i], s=sPos[i];
+      const v0=v0lane*(1+CLS_DEV[cls]*P.spread);
+
+      //── IDM z antycypacją dwóch poprzedników ───────────────────────────────
+      // Sam pierwszy poprzednik daje niestabilność łańcucha: każdy hamuje
+      // dopiero po tym jak zahamował ten przed nim, i stąd fale hamuj-jedź.
+      // Drugi człon każe reagować na sytuację o jeden statek dalej.
+      const r2=(v/v0)*(v/v0);
+      let acc=a*(1-r2*r2);
+      let gapL=1e9;
+      if(leadS<1e8){
+        gapL=leadS-leadLen-s;
+        const g=Math.max(gapL,0.5);
+        const sStar=s0+Math.max(0,v*T+v*(v-leadV)/sqab);
+        let brake=(sStar/g)*(sStar/g);
+        if(antic>0 && lead2S<1e8){
+          const g2=Math.max(lead2S-lead2Len-s,0.5);
+          const s2=s0+Math.max(0,v*T+v*(v-lead2V)/sqab);
+          brake+=antic*(s2/g2)*(s2/g2);
+        }
+        acc-=a*brake;
+      }
+      //── limit prędkości za granicą pasa (zjazd z boostera) ─────────────────
+      // Hamować DOPIERO gdy trzeba. Stosowane bezwarunkowo na całej długości
+      // odcinka to ograniczenie przyszpilało prędkość do limitu wyjazdowego już
+      // od wjazdu — booster nie przyspieszał NIC.
+      if(slowerAhead && v>vNextLim){
+        const dsA=Math.max(60,L.len-s);
+        const need=(v*v-vNextLim*vNextLim)/(2*dsA);
+        if(need>bmax*0.7 && -need<acc) acc=-need;
+      }
+      //── przeszkody: cel boczny, czapka prędkości, zderzenie ────────────────
+      let qT=subQ(sk,ns)+sBias[i], promote=false, hitObs=-1;
+      if(nobs){
+        let bestDs=1e9;
+        for(let o=0;o<nobs;o++){
+          const ob=L.obs[o];
+          const ds=ob.s-s;
+          if(ds<-(ob.r+400) || ds>OBS_LOOK) continue;
+          if(Math.abs(ds)<ob.r*0.75+sLen[i]*0.3 &&
+             Math.abs(sQ[i]-ob.q)<ob.r*0.75+sHalf[i]) hitObs=o;
+          const need=ob.r+P.obsClear+sHalf[i];
+          const side=(sQ[i]>=ob.q)?1:-1;
+          const tq=ob.q+side*need;
+          if(ds<=0){ if(bestDs>0){qT=tq;bestDs=0;} }
+          else if(ds<bestDs){ bestDs=ds; qT=tq; }
+          const dsAvail=Math.max(120,ds-ob.r);
+          const dq=Math.abs(tq-sQ[i]);
+          if(dq>2){
+            // bez podłogi: gdy nie zdąży odsunąć się w bok, ma STANĄĆ przed
+            // przeszkodą, a nie wgryzać się w nią z prędkością minimalną
+            const vcap=dsAvail/(dq/P.latSpeed);
+            if(v>vcap){
+              const ac=(vcap*vcap-v*v)/(2*dsAvail);
+              if(ac<acc) acc=ac;
+            }
+          }
+        }
+        if(Math.abs(qT)>PROMOTE_Q && agents.length<P.agentBudget && obsAhead(L,s)) promote=true;
+      }
+      //── KRAKSA ─────────────────────────────────────────────────────────────
+      // Kraksa wymaga ENERGII. Wolne wtoczenie się w coś to nie zderzenie —
+      // inaczej każdy statek dopychający się w korku produkowałby wrak.
+      if(wrecks.length<WRECK_CAP){
+        if(hitObs>=0 && v>110){ crashIntoHazard(L,i,s,v,sk); continue; }
+        if(leadIsShip && gapL<=0 && v-leadV>50){ crashRearEnd(L,i,s,v,sk); continue; }
+        if(P.failRate>0 && Math.random()<P.failRate*dt/60000){ crashIntoHazard(L,i,s,v,sk); continue; }
+      }
+      //── szum o zerowej średniej ────────────────────────────────────────────
+      if(jit>0) acc+=a*jit*(hash01(i*131+frameNo)*2-1);
+
+      //── ZJAZD DO DOKU ──────────────────────────────────────────────────────
+      // Statek z przydzielonym stanowiskiem opuszcza potok dopiero na progu,
+      // po dojechaniu tam fizycznie — a nie wyrywa się bokiem ze środka kolejki.
+
+      //── ZMIANA PODPASU (MOBIL) + obsługa ramp ──────────────────────────────
+      const kindS=S.kind;
+      const mustLeave = kindS==='onramp';                       // rampa się kończy
+      const wantOff = false;
+      // przed zjazdem trzeba być na właściwym skraju obwodnicy
+      let ringPull=-1;
+      if(L.loop){
+        const rem=(sExitK[i]!==0)?((sExitS[i]-s+L.len)%L.len):1e18;
+        if(rem<RING_EXIT_LEAD) ringPull=(sExitK[i]===1)?(P.nsub-1):0;
+        // Z DALA OD ZJAZDU zejdź ze skrajnego podpasu do środka. Skrajny jest
+        // pasem włączania — jeśli jedzie po nim cały ruch okrężny, nowe statki
+        // nie mają się gdzie wcisnąć i przed wlotem rośnie kolejka.
+        else if(sk===0 && P.nsub>1) ringPull=Math.min(1,P.nsub-1);
+      }
+      const evalNow = ((i+frameNo)&7)===0 && simTime-sChgT[i]>CHG_COOLDOWN;
+      if(canChange && kindS!=='offramp' && evalNow &&
+         (mustLeave || wantOff || ringPull>=0 || acc<a*0.55)){
+        const want=prefSub(cls,P.nsub);
+        let bk=-1, bestGain=a*0.30*(1.2-P.changeGain);
+        // kandydaci: sąsiedzi (tylko główne) + rampa zjazdowa gdy mam przydział
+        _cand2.length=0;
+        if(mustLeave){ _cand2.push(P.nsub-1); if(L.onRamps&&sk===L.onRamps[1]) _cand2.push(L.onRamps[0]); }
+        else if(ringPull>=0 && ringPull!==sk){ _cand2.push(sk+(ringPull>sk?1:-1)); }
+        else{
+          if(sk-1>=0 && L.subs[sk-1].kind==='main') _cand2.push(sk-1);
+          if(sk+1<P.nsub && L.subs[sk+1].kind==='main') _cand2.push(sk+1);
+          if(wantOff) _cand2.push(L.offRamp);
+        }
+        // im bliżej końca rampy, tym mocniej trzeba zjechać
+        const urg = mustLeave ? clamp((s-(S.s1-5000))/5000,0,1) : 0;
+        if(mustLeave) bestGain=-a*(0.4+3*urg);
+        else if(ringPull>=0) bestGain=-a*0.9;
+        if(wantOff)   bestGain=Math.min(bestGain,-a*0.2);
+        for(let ci=0;ci<_cand2.length;ci++){
+          const tk=_cand2[ci], TS=L.subs[tk], slot=subSlot(TS,s);
+          let tls=1e9,tlv=v0,tll=0, ok=true;
+          if(slot>0){const j=TS.order[slot-1];tls=sPos[j];tlv=sVel[j];tll=sLen[j];}
+          const sweep=sWid[i]*1.5;
+          // przy wymuszonym zjeździe z rampy luzy są ciaśniejsze — inaczej
+          // statek dojedzie do końca rampy i stanie mimo wolnego miejsca obok
+          const dar=P.daring*(mustLeave?0.55:1);
+          if(slot<TS.count){
+            const j=TS.order[slot];
+            if(s-sLen[i]-sPos[j] < (s0+sweep+sVel[j]*T*0.5)*dar) ok=false;
+          }
+          if(ok && tls<1e8 && tls-tll-s < (s0+sweep+sLen[i])*dar) ok=false;
+          if(!ok) continue;
+          let accT=a*(1-r2*r2);
+          if(tls<1e8){
+            const g=Math.max(tls-tll-s,0.5);
+            const st2=s0+Math.max(0,v*T+v*(v-tlv)/sqab);
+            accT-=a*(st2/g)*(st2/g);
+          }
+          let gain=accT-acc;
+          if(mustLeave) gain+=a*(0.6+4*urg);
+          else if(ringPull>=0) gain+=a*1.4;
+          else if(tk===L.offRamp) gain+=a*1.2;
+          else{
+            if(tk<sk) gain+=a*0.12;
+            if(tk===want) gain+=a*0.10;
+          }
+          if(gain>bestGain){bestGain=gain;bk=tk;}
+        }
+        if(bk>=0){
+          v+=acc*dt; if(v<0)v=0; s+=v*dt;
+          sPos[i]=s; sVel[i]=v;
+          _chg.push(bk,i,s,v,sk);
+          continue;
+        }
+      }
+
+      if(acc>a) acc=a; else if(acc<-bmax*4) acc=-bmax*4;
+      v+=acc*dt; if(v<0) v=0;
+      s+=v*dt;
+
+      //── ruch boczny ────────────────────────────────────────────────────────
+      const step=P.latSpeed*dt;
+      let d=qT-sQ[i];
+      if(d>step) d=step; else if(d<-step) d=-step;
+      sQ[i]+=d;
+
+      sPos[i]=s; sVel[i]=v;
+
+      if(promote){ resolveOne(L,i); startDetour(i,L,s); continue; }
+
+      //── granica pasa: brama warp / wlot na booster / zwykłe przejście ──────
+      // ── ZAPĘTLENIE OBWODNICY ────────────────────────────────────────────
+      if(L.loop){
+        // zjazd z pierścienia
+        if(sExitK[i]!==0){
+          const rem=(sExitS[i]-s+L.len)%L.len;
+          if(rem<MERGE_ARC*0.9 || rem>L.len-60){
+            if(sExitK[i]===2){
+              // Zjazd na trasę też jest ŁUKIEM, nie punktem: pierwsze 26 km pasa
+              // wylotowego biegnie wzdłuż obwodnicy, więc statek może się na niego
+              // przełożyć na całej tej długości. Punktowy zjazd powodował, że
+              // wszyscy celowali w jedno miejsce.
+              const R2=ROUTES[sExitR[i]];
+              if(R2){
+                resolveOne(L,i);
+                const stx=stations[R2.a];
+                const rr=Math.hypot(sX[i]-stx.x,sY[i]-stx.y);
+                const th=Math.atan2(sY[i]-stx.y,sX[i]-stx.x);
+                let dth=th-R2.thA; while(dth<-Math.PI)dth+=6.283185; while(dth>Math.PI)dth-=6.283185;
+                const sOn=dth*MERGE_ARC_R;
+                if(sOn>=0 && sOn<=MERGE_ARC && Math.abs(rr-MERGE_ARC_R)<MERGE_RAD){
+                  const L0=R2.lanes[0];
+                  if(subInsertMid(L0,0,i,sOn,v,false)){
+                    sExitK[i]=0; sExitR[i]=-1;
+                    sQ[i]=MERGE_ARC_R-rr;         // zachowaj rzeczywisty promień
+                    sSeg[i]=0;
+                    continue;                     // opuścił pierścień, jedzie dalej
+                  }
+                }
+              }
+            }else if(sExitK[i]===1 && sGrantB[i]>=0){
+              sPos[i]=s; sVel[i]=v; resolveOne(L,i);
+              startInbound(i,sGrantS[i],sGrantB[i]);
+              sExitK[i]=0;
+              continue;
+            }
+          }
+        }
+        if(s>=L.len){                            // okrążenie zamknięte
+          s-=L.len; sPos[i]=s; sVel[i]=v; sSeg[i]=0;
+          _wrap.push(i);
+          lead2S=leadS; lead2V=leadV; lead2Len=leadLen;
+          leadS=s+L.len; leadV=v; leadLen=sLen[i]; leadIsShip=true;
+          continue;
+        }
+        ord[w++]=i;
+        lead2S=leadS; lead2V=leadV; lead2Len=leadLen;
+        leadS=s; leadV=v; leadLen=sLen[i]; leadIsShip=true;
+        if(last){ sumV+=v; if(v<0.35*v0) slow++; }
+        continue;
+      }
+
+      // ── WŁĄCZANIE SIĘ NA PIERŚCIEŃ ──────────────────────────────────────
+      // Ostatni odcinek pasa biegnie stycznie do obwodnicy, więc jest w praktyce
+      // PASEM WŁĄCZANIA. Wjazd wolno wykonać wszędzie na nim, a nie tylko
+      // w jednym punkcie — inaczej statek musi trafić na lukę dokładnie tam
+      // i dokładnie wtedy, i przed wlotem rośnie kolejka (zmierzone: 1500 stojących).
+      if(nx && nx.loop && L.len-s<MERGE_ZONE){
+        sPos[i]=s; sVel[i]=v;
+        if(((i+frameNo)&3)===0 || s>=L.len){
+          resolveOne(L,i);
+          const st=stations[nx.station];
+          const rr=Math.hypot(sX[i]-st.x,sY[i]-st.y);
+          const R0=RING_R-nx.subs[0].q;              // +q idzie DO ŚRODKA
+          if(Math.abs(rr-R0)<MERGE_RAD){
+            const th=Math.atan2(sY[i]-st.y,sX[i]-st.x);
+            if(subInsertMid(nx,0,i,ringS(nx,th),v,false)){
+              sQ[i]=nx.subs[0].q; sSeg[i]=0;
+              setRingExit(i,nx);
+              leadS=s; leadV=v; leadLen=sLen[i]; leadIsShip=true;
+              continue;
+            }
+          }
+        }
+        if(s>=L.len){ s=L.len-1; if(v>160) v=160; sPos[i]=s; sVel[i]=v; }
+      }
+      if(s>=L.len && nx && cleared && !nx.loop){
+        // TRZYMAJ SWÓJ PODPAS przez granicę. Przydzielanie „najlepszego" podpasu
+        // po drugiej stronie robiło skok w bok o 1200 j. i wyglądało jak czekanie
+        // na wjazd w konkretny pas.
+        const nsn=nx.subs.length;
+        let tk=Math.min(sSub[i],nsn-1), g=subTailGap(nx.subs[tk],sLen[i]);
+        if(g<=0 || nx.subs[tk].count>=nx.cap-2){ const b=bestEntrySub(nx,sLen[i]); tk=b.k; g=b.gap; }
+        if(tk>=0 && g>0){
+          const NS=nx.subs[tk];
+          sPos[i]=Math.min(s-L.len,Math.max(0,g*0.5));
+          sVel[i]=v; sSeg[i]=0; sLane[i]=nx.id; sSub[i]=tk;
+          if(nx.teleport) sQ[i]=subQ(tk,nsn)+sBias[i];
+          NS.order[NS.count++]=i;
+          S.clearedTo=-1; nx.flow++;
+          lead2S=leadS; lead2V=leadV; lead2Len=leadLen;
+          leadS=s; leadV=v; leadLen=sLen[i]; leadIsShip=true;
+          continue;
+        }else{ s=L.len-1; if(v>200) v=200; sPos[i]=s; sVel[i]=v; }
+      }
+      if(s>L.len){ s=L.len; sPos[i]=s; }
+
+      ord[w++]=i;
+      lead2S=leadS; lead2V=leadV; lead2Len=leadLen;
+      leadS=s; leadV=v; leadLen=sLen[i]; leadIsShip=true;
+      if(last){ sumV+=v; if(v<0.35*v0){ slow++; if(L.len-s<70000) qg++; } }
+    }
+    if(L.loop) for(let m=0;m<_wrap.length;m++){ if(w<L.cap) ord[w++]=_wrap[m]; }
+    S.count=w; tot+=w;
+  }
+
+  //── zastosuj zmiany podpasu (po przebiegu, żeby nie mieszać w tablicy) ─────
+  for(let m=0;m<_chg.length;m+=5){
+    const tk=_chg[m], i=_chg[m+1], s=_chg[m+2], v=_chg[m+3], from=_chg[m+4];
+    if(subInsertMid(L,tk,i,s,v,false)){ chgAcc++; sChgT[i]=simTime; }
+    else if(!subInsertMid(L,from,i,s,v,true)) freeShip(i);
+  }
+  if(last){L.sumV=sumV;L.slow=slow;L.qGate=qg;statSumV+=sumV;statN+=tot;}
+}
+
+//══════════════════════════════════════════════════════════════════════════════
+//  (s,q) → (x,y)
+//══════════════════════════════════════════════════════════════════════════════
+function resolveOne(L,i){
+  const ns=L.nseg, cum=L.cum, s=sPos[i];
+  let g=sSeg[i]; if(g>=ns) g=ns-1;
+  while(g<ns-1 && s>cum[g+1]) g++;
+  while(g>0    && s<cum[g])   g--;
+  sSeg[i]=g;
+  const t=clamp((s-cum[g])/L.slen[g],0,1), q=sQ[i];
+  sX[i]=L.px[g]+L.dx[g]*t-L.uy[g]*q;
+  sY[i]=L.py[g]+L.dy[g]*t+L.ux[g]*q;
+  sHdg[i]=L.ang[g];
+}
+function resolveAll(){
+  for(let li=0;li<LANES.length;li++){
+    const L=LANES[li],ns=L.nseg,cum=L.cum;
+    for(let sk=0;sk<L.subs.length;sk++){
+    const ord=L.subs[sk].order, n=L.subs[sk].count;
+    for(let k=0;k<n;k++){
+      const i=ord[k], s=sPos[i];
+      let g=sSeg[i]; if(g>=ns) g=ns-1;
+      while(g<ns-1 && s>cum[g+1]) g++;
+      while(g>0    && s<cum[g])   g--;
+      sSeg[i]=g;
+      let t=(s-cum[g])/L.slen[g]; if(t<0)t=0; else if(t>1)t=1;
+      const q=sQ[i];
+      sX[i]=L.px[g]+L.dx[g]*t-L.uy[g]*q;
+      sY[i]=L.py[g]+L.dy[g]*t+L.ux[g]*q;
+      sHdg[i]=L.ang[g];
+    }
+    }
+  }
+}
+
+//══════════════════════════════════════════════════════════════════════════════
+//  WARSTWA AGENTÓW — dziesiątki obiektów, pełne sterowanie 2D
+//══════════════════════════════════════════════════════════════════════════════
+const agents=[];
+const AG_IN=0, AG_DOCK=1, AG_HOLD=2, AG_OUT=3, AG_DET=4;
+let bounceCount=0, transitCount=0, dockAcc=0;
+
+function newAgent(i,mode){
+  const A={ship:i,mode,st:-1,berth:-1,t:0,wps:[],wi:0,lane:null,rejoinS:0,detOff:0,hold:0,route:null};
+  sVX[i]=Math.cos(sHdg[i])*sVel[i]; sVY[i]=Math.sin(sHdg[i])*sVel[i];
+  sState[i]=ST_AGENT; sLane[i]=-1; sAg[i]=agents.length;
+  agents.push(A); return A;
+}
+function killAgent(ai){
+  const A=agents[ai], lastI=agents.length-1;
+  sAg[A.ship]=-1;
+  if(ai!==lastI){agents[ai]=agents[lastI];sAg[agents[ai].ship]=ai;}
+  agents.pop();
+}
+const ringPt=(st,ang,r)=>[st.x+Math.cos(ang)*r, st.y+Math.sin(ang)*r];
+
+function startInbound(i,sti,bi){
+  const st=stations[sti], b=st.berths[bi];
+  sGrantB[i]=-1; sGrantS[i]=-1;
+  const A=newAgent(i,AG_IN);
+  A.st=sti; A.berth=bi; b.res=i;
+  // Odgięcie z pasa musi iść W PRZÓD i w bok. Czysto boczny punkt to zawrót
+  // ciaśniejszy niż promień skrętu statku — agent zaczyna wtedy krążyć.
+  const fx=Math.cos(sHdg[i]), fy=Math.sin(sHdg[i]), side=(sQ[i]>=0?1:-1);
+  A.wps=[
+    [sX[i]+fx*9000-fy*5000*side, sY[i]+fy*9000+fx*5000*side],
+    ringPt(st,b.ang,R_RING_IN),
+    ringPt(st,b.ang,b.r+1600),
+    [b.x,b.y]
+  ];
+  A.wi=0; A.hold=0;
+}
+// Cel KOŃCOWY — losowany wagą przemysłową stacji, więc Ziemia ciągnie najwięcej
+// ruchu. Statek jedzie do niego etapami po kręgosłupie i dokuje DOPIERO na miejscu.
+function pickDest(from,cls){
+  let sum=0; const c=[];
+  for(let b=0;b<stations.length;b++){
+    if(b===from||stations[b].weight<=0||stations[b].maxCls<cls) continue;
+    c.push(b); sum+=stations[b].weight;
+  }
+  if(!c.length) return -1;
+  let r=Math.random()*sum;
+  for(const b of c){ r-=stations[b].weight; if(r<=0) return b; }
+  return c[c.length-1];
+}
+// następny przeskok = sąsiad po orbicie w stronę celu
+function nextHop(from,dest){
+  if(dest<0||dest===from) return -1;
+  const a=spineIdx[from], b=spineIdx[dest];
+  if(a<0||b<0) return -1;
+  return SPINE[a+(b>a?1:-1)];
+}
+function routeToward(from,dest,cls){
+  const nh=nextHop(from,dest);
+  if(nh>=0){ const R=routeOf[from][nh]; if(R) return R; }
+  return null;
+}
+// trasa dla konkretnego statku: kontynuuj do celu, a jak go nie ma — wylosuj nowy
+function routeFor(i,from){
+  const cls=sCls[i], d0=sDest[i];
+  if(d0>=0 && d0!==from && stations[d0] && stations[d0].maxCls>=cls){
+    const R=routeToward(from,d0,cls); if(R) return R;
+  }
+  const d=pickDest(from,cls); sDest[i]=d;
+  return d<0?null:routeToward(from,d,cls);
+}
+function pickRoute(from,cls){            // tylko sonda „czy w ogóle jest dokąd lecieć"
+  const d=pickDest(from,cls);
+  return d<0?null:routeToward(from,d,cls);
+}
+function releaseAndOut(A){
+  const st=stations[A.st], b=A.berth>=0?st.berths[A.berth]:null;
+  sDest[A.ship]=-1;   // cel osiągnięty — routeFor wylosuje nowy
+  if(b){b.occ=-1;b.res=-1;}
+  const i=A.ship;
+  const R=(popCount<=P.ships)?routeFor(i,A.st):null;
+  if(!R||!st.ring){ killAgent(sAg[i]); freeShip(i); return; }
+  // Statek z doku wchodzi na OBWODNICĘ przy kącie WŁASNEGO stanowiska, a nie
+  // leci do wspólnego punktu rampy. Wcześniej wszyscy z całej stacji celowali
+  // w to samo miejsce i się na nim zbijali.
+  A.mode=AG_OUT; A.route=R; A.lane=R.lanes[0]; A.hold=0; A.berth=-1;
+  // Wejście na obwodnicę TUŻ PRZED własnym zjazdem, z rozrzutem per statek.
+  // Wejście przy kącie stanowiska kazało objechać pół obwodu i pierścienie
+  // puchły (1391→1646). Rozrzut 0,12–0,62 rad = 2,4–12 km łuku przed zjazdem,
+  // więc nie ma ani jednego punktu do obsadzenia, ani zbędnego okrążania.
+  const spread=0.12+hash01(i*977+5)*0.50;
+  const ang=R.thA-spread;
+  A.ringAng=ang;
+  const rIn=RING_R-st.ring.subs[P.nsub-1].q;
+  A.wps=[ ringPt(st,ang,(R_RING_OUT+rIn)*0.5), ringPt(st,ang,rIn) ];
+  A.wi=0;
+}
+function bounceFlow(i,sti,transit){             // zawrócenie ALBO przelot tranzytem
+  if(transit) transitCount++; else bounceCount++;
+  const st=stations[sti];
+  const A=newAgent(i,AG_OUT);
+  A.st=sti; A.berth=-1; A.hold=0;
+  const R=routeFor(i,sti);
+  if(!R){ killAgent(sAg[i]); freeShip(i); return; }
+  A.route=R; A.lane=R.lanes[0];
+  const ang=Math.atan2(sY[i]-st.y,sX[i]-st.x)+0.7;
+  A.wps=[ ringPt(st,ang,R_RING_OUT), rampPt(A.lane,sLen[i]) ];
+  A.wi=0;
+}
+function bounceAgent(A,sti){
+  bounceCount++;
+  const R=routeFor(A.ship,sti);
+  if(!R){ killAgent(sAg[A.ship]); freeShip(A.ship); return; }
+  const st=stations[sti];
+  A.mode=AG_OUT;A.route=R;A.lane=R.lanes[0];A.hold=0;A.berth=-1;A.st=sti;
+  const ang=Math.atan2(sY[A.ship]-st.y,sX[A.ship]-st.x)+0.7;
+  A.wps=[ringPt(st,ang,R_RING_OUT),rampPt(A.lane,sLen[A.ship])];A.wi=0;
+}
+function startDetour(i,L,s){
+  const A=newAgent(i,AG_DET);
+  A.lane=L; A.hold=0;
+  let far=s+4500, need=LANE_HW*2.6;
+  for(const ob of L.obs){
+    if(ob.s>s-1500 && ob.s<s+14000){
+      far=Math.max(far,ob.s+ob.r+3500);
+      need=Math.max(need,Math.abs(ob.q)+ob.r+P.obsClear+700);
+    }
+  }
+  A.rejoinS=Math.min(far,L.len-600);
+  const side=sQ[i]>=0?1:-1;
+  A.detOff=need*side;
+  const g=sSeg[i];
+  A.wps=[[sX[i]-L.uy[g]*A.detOff, sY[i]+L.ux[g]*A.detOff]];
+  A.wi=0;
+}
+function requestBerthForAgent(A,sti){
+  const st=stations[sti], bi=bestFit(st,sCls[A.ship]);
+  if(bi>=0){
+    const b=st.berths[bi]; b.res=A.ship;
+    A.st=sti;A.berth=bi;A.mode=AG_IN;A.wi=0;
+    A.wps=[ringPt(st,b.ang,R_RING_IN),ringPt(st,b.ang,b.r+230),[b.x,b.y]];
+  }else bounceAgent(A,sti);
+}
+function detPoint(L,s,off){
+  const ns=L.nseg,cum=L.cum;
+  let g=0; while(g<ns-1 && s>cum[g+1]) g++;
+  const t=clamp((s-cum[g])/L.slen[g],0,1);
+  return [L.px[g]+L.dx[g]*t-L.uy[g]*off, L.py[g]+L.dy[g]*t+L.ux[g]*off];
+}
+
+// Separacja tylko między statkami, które NAPRAWDĘ manewrują w otwartej przestrzeni.
+// Zaparkowane odpadają (stoją w swoich stanowiskach), a korytarz końcowego podejścia
+// jest promieniowy — każde stanowisko ma własny kąt, więc kolizji tam z definicji nie ma.
+// Bez tego wyłączenia odpychanie sąsiadów z pierścienia nie pozwala domknąć dokowania.
+const SEP_R=340, AG_ACC=450;
+const stAgents=stations.map(()=>[]);
+function inFreeFlight(A){
+  if(A.mode===AG_OUT) return A.wi===0;
+  if(A.mode===AG_IN)  return A.wi<=1;
+  return false;
+}
+function rebuildAgentIndex(){
+  for(let k=0;k<stAgents.length;k++) stAgents[k].length=0;
+  for(const A of agents) if(A.st>=0 && inFreeFlight(A)) stAgents[A.st].push(A.ship);
+}
+
+function stepAgents(dt){
+  for(let ai=agents.length-1;ai>=0;ai--){
+    const A=agents[ai], i=A.ship;
+
+    if(A.mode===AG_DOCK){
+      sVel[i]=0;sVX[i]=0;sVY[i]=0;
+      A.t-=dt;
+      if(A.t<=0){dockAcc++;A.mode=AG_HOLD;A.hold=0;}
+      continue;
+    }
+    if(A.mode===AG_HOLD){                        // czeka na okno w pasie wylotowym
+      sVel[i]=0;sVX[i]=0;sVY[i]=0;
+      A.hold+=dt;
+      // Buforem jest STANOWISKO, nie niebo. Statek czeka na miejsce w pasie zajmując
+      // dok — to właśnie tędy zator wraca do kolejki dolotowej. Limit czasu tylko
+      // po to, żeby zakleszczenie całej sieci dało się przerwać.
+      const R=pickRoute(A.st,sCls[i]);
+      const rk=R?bestOnRamp(R.lanes[0],sLen[i]):-1;
+      const free=R&&rk>=0&&(R.lanes[0].subs[rk].count===0||subTailGap(R.lanes[0].subs[rk],sLen[i])>0);
+      if(free || A.hold>40) releaseAndOut(A);
+      continue;
+    }
+
+    //── cel bieżący ──────────────────────────────────────────────────────────
+    let tx,ty,spd;
+    if(A.mode===AG_DET){
+      if(A.wi===0){tx=A.wps[0][0];ty=A.wps[0][1];spd=P.cruise*0.85;}
+      else{const p=detPoint(A.lane,A.rejoinS,A.detOff);tx=p[0];ty=p[1];spd=P.cruise*0.95;}
+    }else{
+      const wp=A.wps[Math.min(A.wi,A.wps.length-1)];
+      tx=wp[0];ty=wp[1];
+      if(A.mode===AG_IN) spd = A.wi===0 ? P.cruise : (A.wi===1 ? P.cruise*0.8 : (A.wi===2 ? 620 : 300));
+      else spd = (A.wi>=A.wps.length-1) ? 460 : P.cruise*0.8;
+    }
+
+    let vx=sVX[i],vy=sVY[i];
+    const dx=tx-sX[i], dy=ty-sY[i];
+    const dist=Math.hypot(dx,dy)||1e-6;
+    const want=Math.min(spd,dist/0.9);
+    let ax=dx/dist*want-vx, ay=dy/dist*want-vy;
+
+    //── separacja (agenci są nieliczni) ──────────────────────────────────────
+    const list=inFreeFlight(A)?stAgents[A.st]:null;
+    if(list){
+      for(let m=0;m<list.length;m++){
+        const j=list[m]; if(j===i) continue;
+        const ex=sX[i]-sX[j], ey=sY[i]-sY[j], dd=ex*ex+ey*ey;
+        if(dd<SEP_R*SEP_R && dd>1){
+          const dl=Math.sqrt(dd), f=(1-dl/SEP_R)*420;
+          ax+=ex/dl*f; ay+=ey/dl*f;
+        }
+      }
+    }
+    //── omijanie przeszkód: odpychanie + składowa styczna ────────────────────
+    for(let o=0;o<obstacles.length;o++){
+      const ob=obstacles[o];
+      const ex=sX[i]-ob.x, ey=sY[i]-ob.y;
+      const rr=(ob.r+P.obsClear+sHalf[i])*1.9;
+      const dd=Math.hypot(ex,ey);
+      if(dd<rr && dd>1){
+        const f=(1-dd/rr)*1500;
+        ax+=(ex/dd)*f - (ey/dd)*f*0.75;
+        ay+=(ey/dd)*f + (ex/dd)*f*0.75;
+      }
+    }
+    const amax=AG_ACC, al=Math.hypot(ax,ay);
+    if(al>amax){ax=ax/al*amax;ay=ay/al*amax;}
+    vx+=ax*dt; vy+=ay*dt;
+    const vl=Math.hypot(vx,vy);
+    if(vl>spd){const k2=spd/vl;vx*=k2;vy*=k2;}
+    sVX[i]=vx;sVY[i]=vy;
+    sX[i]+=vx*dt;sY[i]+=vy*dt;
+    sVel[i]=Math.hypot(vx,vy);
+    if(sVel[i]>1) sHdg[i]=Math.atan2(vy,vx);
+
+    const d2=Math.hypot(tx-sX[i],ty-sY[i]);
+
+    //── zakończenia ──────────────────────────────────────────────────────────
+    // Promień akceptacji punktu trasy rośnie z czasem lotu. Gdyby był stały i mniejszy
+    // od promienia skrętu, agent krążyłby wokół punktu w nieskończoność.
+    const accept=(A.wi<=1?3000:1100)*(1+A.hold*0.06);
+
+    if(A.mode===AG_IN){
+      A.hold+=dt;
+      if(A.wi<A.wps.length-1){ if(d2<accept) A.wi++; }
+      // przechwycenie stanowiska: albo dolot wyszedł, albo awaryjnie po czasie
+      else if((d2<320 && sVel[i]<340) || A.hold>60){
+        const st=stations[A.st], b=st.berths[A.berth];
+        if(!b){ bounceAgent(A,A.st); continue; }
+        b.occ=i; A.mode=AG_DOCK; A.t=P.service;
+        sX[i]=b.x;sY[i]=b.y;sHdg[i]=b.ang+Math.PI;sVX[i]=0;sVY[i]=0;
+      }
+    }else if(A.mode===AG_OUT){
+      if(A.wi<A.wps.length-1){ if(d2<accept) A.wi++; }
+      else if(A.st>=0 && stations[A.st].ring){
+        // wtopienie w OBWODNICĘ od środka, przy własnym kącie
+        const stR=stations[A.st], ring=stR.ring;
+        const rIn=RING_R-ring.subs[P.nsub-1].q;
+        const rr=Math.hypot(sX[i]-stR.x,sY[i]-stR.y);
+        if(Math.abs(rr-rIn)<2800){
+          const th=Math.atan2(sY[i]-stR.y,sX[i]-stR.x);
+          if(subInsertMid(ring,P.nsub-1,i,ringS(ring,th),Math.max(sVel[i],280),false)){
+            sQ[i]=RING_R-rr; sSeg[i]=0;
+            setRingExit(i,ring);
+            killAgent(ai); continue;
+          }
+        }
+        A.hold+=dt;
+        // krąż przy SWOIM kącie wejścia — nie ma wspólnego punktu do obsadzenia
+        const ph=(A.ringAng||0)+A.hold*0.05;
+        A.wps[A.wps.length-1]=ringPt(stR,ph,rIn);
+        if(A.hold>50) A.hold=0;
+      }
+      else{
+        // próba wejścia liczona od WLOTU PASA, nie od punktu oczekiwania —
+        // ten drugi krąży szybciej, niż statek potrafi lecieć, więc nigdy się go nie dogoni
+        const p0=rampPt(A.lane,sLen[i]);
+        // wjazd na PAS ROZBIEGOWY dopiero PRZY NIM — próg 1400 j. sprawiał, że
+        // statek był przyklejany do rampy z odległości ponad 2,5 km
+        const dEntry=Math.hypot(sX[i]-p0[0],sY[i]-p0[1]);
+        if(dEntry<380 && rampEnter(A.lane,i,Math.max(sVel[i],P.cruise*0.5))){
+          killAgent(ai); continue; }
+        A.hold+=dt;
+        if(A.hold>45){                           // ten kierunek stoi — spróbuj innego
+          const R2=routeFor(i,A.st);
+          A.hold=0;
+          if(R2){A.lane=R2.lanes[0];A.route=R2;}
+        }
+        // Cel zostaje NA punkcie rampy dopóki statek tam nie doleci. Orbita dopiero
+        // z bliska — wcześniej okrążała szybciej, niż statek potrafił lecieć, więc
+        // gonił ją bez końca zamiast wjechać.
+        if(dEntry<700){
+          const ph=A.hold*0.6;
+          A.wps[A.wps.length-1]=[p0[0]+Math.cos(ph)*240, p0[1]+Math.sin(ph)*240];
+        }else A.wps[A.wps.length-1]=p0;
+      }
+    }else if(A.mode===AG_DET){
+      A.hold+=dt;
+      if(A.wi===0){ if(d2<650) A.wi=1; }
+      else if(d2<750 || A.hold>22){
+        const rs=A.hold>22?projectToLane(A.lane,sX[i],sY[i]):A.rejoinS;
+        if(laneInsertMid(A.lane,i,rs,sVel[i],A.hold>22)){ killAgent(ai); continue; }
+        A.rejoinS=Math.min(A.rejoinS+900,A.lane.len-400);
+        if(A.rejoinS>=A.lane.len-420 && A.lane.endStation>=0) requestBerthForAgent(A,A.lane.endStation);
+      }
+    }
+  }
+}
+
+//══════════════════════════════════════════════════════════════════════════════
+//  DOK — przydział stanowisk: best-fit, kolejność wg czasu oczekiwania
+//══════════════════════════════════════════════════════════════════════════════
+// Statek prosi o stanowisko dopiero blisko progu. Rezerwacja z większej odległości
+// blokowałaby stanowisko na cały czas dolotu i marnowała przepustowość doku.
+const PEEK=10, REQ_DIST=5000, STARVE=110;
+function bestFit(st,cls){
+  for(let c=cls;c<5;c++){
+    const arr=st.byCls[c];
+    for(let k=0;k<arr.length;k++){const b=st.berths[arr[k]]; if(b.occ<0&&b.res<0) return arr[k];}
+  }
+  return -1;
+}
+// Wariant dla pierścienia: z wolnych stanowisk mieszczących klasę wybiera to,
+// do którego jest NAJBLIŻEJ PO OBWODZIE. Bez tego statek z przydziałem mógł
+// dokrążać nawet całe okrążenie (209 s) i to było główne opóźnienie doku.
+function bestFitAhead(st,cls,fromS){
+  const R=st.ring; if(!R) return bestFit(st,cls);
+  let best=-1,bestD=1e18;
+  for(let c=cls;c<5;c++){
+    const arr=st.byCls[c];
+    for(let k=0;k<arr.length;k++){
+      const bi=arr[k], b=st.berths[bi];
+      if(b.occ>=0||b.res>=0) continue;
+      const d=((ringS(R,b.ang)-fromS)%R.len+R.len)%R.len;
+      if(d<bestD){bestD=d;best=bi;}
+    }
+    if(best>=0) return best;                   // trzymamy best-fit po klasie
+  }
+  return best;
+}
+const _cand=[];
+function allocateBerths(dt){
+  for(let si=0;si<stations.length;si++){
+    const st=stations[si];
+    if(st.weight<=0) continue;
+    _cand.length=0;
+    // Kandydaci krążą po PIERŚCIENIU — to jest ta „chmara czekająca wokół stacji".
+    const ring=st.ring;
+    if(ring) for(const S of ring.subs){
+      for(let k=0;k<S.count;k++){
+        const i=S.order[k];
+        if(sState[i]!==ST_FLOW) continue;
+        if(sDest[i]!==si || sExitK[i]!==0) continue;
+        sWait[i]+=dt;
+        if(_cand.length<PEEK*6) _cand.push(i);
+      }
+    }
+    if(!_cand.length) continue;
+    // najdłużej czekający pierwszy — czas rośnie monotonicznie, więc nikt nie głoduje
+    _cand.sort((x,y)=>sWait[y]-sWait[x]);
+    for(let m=0;m<_cand.length;m++){
+      const i=_cand[m], cls=sCls[i];
+      if(sGrantB[i]>=0) continue;                       // już ma przydział
+      if(st.maxCls<cls){ bounceFlow(i,si); continue; }   // dok w ogóle nie ma tej klasy
+      const bi=bestFitAhead(st,cls,sPos[i]);
+      if(bi>=0){
+        const b=st.berths[bi]; b.res=i; sGrantB[i]=bi; sGrantS[i]=si;
+        // zjazd wypada na kącie stanowiska — statek dokrąża i schodzi do środka
+        sExitK[i]=1; sExitS[i]=ringS(st.ring,b.ang);
+      }
+      else if(sWait[i]>STARVE) bounceFlow(i,si);         // zawór bezpieczeństwa
+    }
+  }
+}
+
+//══════════════════════════════════════════════════════════════════════════════
+//  KRAKSY I WRAKI
+//  Model podążania jest bezkolizyjny z konstrukcji, więc zderzenie nie może być
+//  skutkiem złego sterowania — musi być zdarzeniem. Trzy źródła: wjechanie
+//  w przeszkodę, której nie dało się ominąć; najechanie na poprzednika po zbyt
+//  brawurowej zmianie podpasu; awaria napędu. Wrak zostaje na jezdni jako
+//  przeszkoda, więc kraksa produkuje prawdziwy korek, który rozładowuje się
+//  dopiero po jej usunięciu. W grze to są dokładnie te 2-3 kadłuby, które warto
+//  oddać destruktorowi.
+//══════════════════════════════════════════════════════════════════════════════
+const wrecks=[]; const WRECK_CAP=150;
+let crashCount=0, hazardDirty=false;
+const CLS_MASS=[1,2.6,7,20,60];
+
+function addWreck(x,y,vx,vy,cls,spin,len){
+  if(wrecks.length>=WRECK_CAP) return;
+  // Wrak w strefie stacji jest ściągany przez holowniki w kilka sekund.
+  // Bez tego jeden wrak na zamkniętym pierścieniu zbierał kolejne ofiary
+  // w kółko — kaskada dawała ~180 kraks/min zamiast oczekiwanych 3.
+  let life=P.wreckLife;
+  for(const st of stations){
+    if(Math.hypot(x-st.x,y-st.y)<RING_R*1.35){ life=Math.min(life,6); break; }
+  }
+  wrecks.push({x,y,vx,vy,ang:Math.random()*6.283,spin,r:len*0.5+140,life,cls});
+  hazardDirty=true;
+}
+// wspólny finisz: statek znika z potoku, na jego miejscu zostają szczątki
+function wreckShip(L,i,s,vLane,sk,extraVx,extraVy){
+  resolveOne(L,i);
+  const g=sSeg[i], ux=L.ux[g], uy=L.uy[g];
+  addWreck(sX[i],sY[i], ux*vLane*0.35+extraVx, uy*vLane*0.35+extraVy,
+           sCls[i], (Math.random()-0.5)*2.4, sLen[i]);
+  freeShip(i);
+  crashCount++;
+}
+function crashIntoHazard(L,i,s,v,sk){
+  const g=sSeg[i]!=null?sSeg[i]:0;
+  const ux=L.ux[g]||1, uy=L.uy[g]||0;
+  wreckShip(L,i,s,v,sk, -uy*(Math.random()-0.5)*180, ux*(Math.random()-0.5)*180);
+}
+// najechanie na poprzednika: pęd się dzieli, oba kadłuby idą na szczątki
+function crashRearEnd(L,i,s,v,sk){
+  const S=L.subs[sk], slot=subSlot(S,s);
+  let j=-1;
+  for(let k=slot-1;k>=0;k--){ if(sState[S.order[k]]===ST_FLOW){j=S.order[k];break;} }
+  if(j>=0 && sState[j]===ST_FLOW){
+    const mi=CLS_MASS[sCls[i]], mj=CLS_MASS[sCls[j]];
+    const vc=(mi*v+mj*sVel[j])/(mi+mj);
+    const g=sSeg[i]||0, ux=L.ux[g]||1, uy=L.uy[g]||0;
+    resolveOne(L,j);
+    addWreck(sX[j],sY[j],ux*vc*0.5,uy*vc*0.5,sCls[j],(Math.random()-0.5)*3,sLen[j]);
+    freeShip(j); crashCount++;
+    wreckShip(L,i,s,vc,sk, -uy*(Math.random()-0.5)*260, ux*(Math.random()-0.5)*260);
+  }else{
+    crashIntoHazard(L,i,s,v,sk);
+  }
+}
+function stepWrecks(dt){
+  for(let k=wrecks.length-1;k>=0;k--){
+    const w=wrecks[k];
+    w.x+=w.vx*dt; w.y+=w.vy*dt; w.ang+=w.spin*dt;
+    const dr=Math.exp(-0.35*dt); w.vx*=dr; w.vy*=dr; w.spin*=dr;
+    w.life-=dt;
+    if(w.life<=0){ wrecks[k]=wrecks[wrecks.length-1]; wrecks.pop(); hazardDirty=true; }
+  }
+}
+
+//══════════════════════════════════════════════════════════════════════════════
+//  PRZESZKODY
+//══════════════════════════════════════════════════════════════════════════════
+const obstacles=[];
+function projectObstacles(){
+  for(const L of LANES) L.obs.length=0;
+  for(const ob of obstacles.concat(wrecks)){
+    for(const L of LANES){
+      let bs=0,bq=0,bd=1e18;
+      for(let g=0;g<L.nseg;g++){
+        const ax=L.px[g],ay=L.py[g],dx=L.dx[g],dy=L.dy[g];
+        let t=((ob.x-ax)*dx+(ob.y-ay)*dy)/(dx*dx+dy*dy); t=clamp(t,0,1);
+        const ex=ob.x-(ax+dx*t), ey=ob.y-(ay+dy*t), d=ex*ex+ey*ey;
+        if(d<bd){ bd=d; bs=L.cum[g]+L.slen[g]*t; bq=ex*(-L.uy[g])+ey*L.ux[g]; }
+      }
+      if(Math.sqrt(bd) < ob.r + LANE_HW*4.5) L.obs.push({s:bs,q:bq,r:ob.r});
+    }
+  }
+  for(const L of LANES) L.obs.sort((a,b)=>a.s-b.s);
+}
+function addObstacle(x,y,r){ obstacles.push({x,y,r}); projectObstacles(); }
+function removeObstacleAt(x,y){
+  for(let i=obstacles.length-1;i>=0;i--){
+    const o=obstacles[i];
+    if(Math.hypot(o.x-x,o.y-y)<o.r*1.25){obstacles.splice(i,1);projectObstacles();return true;}
+  }
+  return false;
+}
+
+//══════════════════════════════════════════════════════════════════════════════
+//  POPULACJA
+//══════════════════════════════════════════════════════════════════════════════
+function clearAll(){
+  agents.length=0;
+  wrecks.length=0; crashCount=0; hazardDirty=true;
+  for(const L of LANES){
+    L.tokens=1; L.flow=0;
+    for(const S of L.subs){S.count=0;S.clearedTo=-1;}
+  }
+  for(const st of stations) for(const b of st.berths){b.occ=-1;b.res=-1;}
+  resetPool();
+}
+// Zasiew rozkłada populację po długości pasów. Odstęp schodzi od swobodnego aż do
+// zatorowego, więc da się zasiać znacznie więcej niż mieści się w równowadze
+// swobodnego ruchu — inaczej „Stress 5000" nigdy nie postawiłby 5000 statków.
+function seedShips(target){
+  clearAll();
+  if(!anyDockOpen()) return 0;
+  let totalLen=0;
+  for(const R of ROUTES) if(stations[R.b].maxCls>=0) totalLen+=R.total;
+  if(totalLen<=0) return 0;
+  let placed=0;
+  for(const R of ROUTES){
+    if(stations[R.b].maxCls<0) continue;
+    for(const L of R.lanes){
+      const quota=Math.round(target*L.len/totalLen);
+      if(quota<=0) continue;
+      const free=(P.minGap+P.cruise*L.vmul*P.headT+150)*1.25;
+      const jam=P.minGap+150;
+      let sp=L.len/quota;
+      if(sp>free) sp=free; else if(sp<jam) sp=jam;
+      // zasiew rozkłada się po podpasach, więc odstęp w podpasie jest ns× luźniejszy
+      const nsL=L.subs.length;
+      const n=Math.min(quota,Math.floor((L.len-60)/sp)*nsL,(L.cap-2)*nsL);
+      const spSub=sp*nsL;
+      // im ciaśniej zasiane, tym wolniej — inaczej pierwsza klatka to hamowanie awaryjne
+      const v=P.cruise*L.vmul*clamp((spSub-P.minGap)/Math.max(1,P.cruise*L.vmul*P.headT),0.06,1);
+      for(let j=0;j<n;j++){
+        const sk=j%nsL;
+        const s=L.len-40-((j/nsL)|0)*spSub; if(s<0) break;
+        // klasa musi mieć dokąd lecieć DALEJ z celu, inaczej statek utknie na końcu
+        const capB=Math.min(stations[R.b].maxCls,
+          Math.max(...spineNeighbours(R.b).map(x=>stations[x].maxCls),0));
+        let cls=pickClass(Math.random()), guard=0;
+        while(cls>capB && guard++<16) cls=pickClass(Math.random());
+        if(cls>capB) cls=Math.max(0,capB);
+        const i=allocShip(cls); if(i<0){ resolveAll(); return placed; }
+        sDest[i]=pickDest(R.a,cls);
+        laneAppendAt(L,sk,i,s,v*(0.85+Math.random()*0.15));
+        placed++;
+      }
+    }
+  }
+  resolveAll();
+  return placed;
+}
+function spawnTick(){
+  if(popCount>=P.ships || !anyDockOpen()) return;
+  // Statek POWSTAJE PRZY STANOWISKU i wychodzi w świat normalną procedurą
+  // odlotu. Wcześniej materializował się na s=0 pasa wylotowego, czyli dokładnie
+  // tam, gdzie droga wychodzi ze stacji — i to widać było jako „spawn na drodze".
+  let budget=12;
+  for(let g=0;g<60 && budget>0 && popCount<P.ships;g++){
+    const si=(Math.random()*stations.length)|0;
+    const st=stations[si]; if(st.weight<=0) continue;
+    const cls=pickClass(Math.random());
+    if(st.maxCls<cls) continue;
+    if(!pickRoute(si,cls)) continue;
+    const bi=bestFit(st,cls); if(bi<0) continue;
+    const i=allocShip(cls); if(i<0) return;
+    sDest[i]=pickDest(si,cls);
+    const b=st.berths[bi];
+    sX[i]=b.x; sY[i]=b.y; sHdg[i]=b.ang+Math.PI; sVel[i]=0; sVX[i]=0; sVY[i]=0;
+    const A=newAgent(i,AG_HOLD);
+    A.st=si; A.berth=bi; A.hold=Math.random()*4;
+    b.occ=i; b.res=i;
+    budget--;
+  }
+}
+function despawnTick(){
+  // Nadmiar znika WYŁĄCZNIE po obsłudze w doku (releaseAndOut). Wyrywanie statku
+  // z ogona pasa kasowało go tuż przy wjeździe na drogę — stąd „znikanie
+  // przy wejściu". Duże zmiany populacji i tak idą przez pełny zasiew.
+}
+
+//══════════════════════════════════════════════════════════════════════════════
+//  KAMERA / WEJŚCIE
+//══════════════════════════════════════════════════════════════════════════════
+const cv=document.getElementById('cv'), ctx=cv.getContext('2d',{alpha:false});
+let W=0,H=0,DPR=1;
+const cam={x:350000,y:110000,scale:0.0012};
+function resize(){
+  DPR=Math.min(1.5,window.devicePixelRatio||1);
+  W=Math.floor(innerWidth*DPR); H=Math.floor(innerHeight*DPR);
+  cv.width=W;cv.height=H;cv.style.width=innerWidth+'px';cv.style.height=innerHeight+'px';
+}
+addEventListener('resize',resize); resize();
+const w2sx=x=>(x-cam.x)*cam.scale+W/2;
+const w2sy=y=>(y-cam.y)*cam.scale+H/2;
+const s2wx=x=>(x*DPR-W/2)/cam.scale+cam.x;
+const s2wy=y=>(y*DPR-H/2)/cam.scale+cam.y;
+function fitAll(){
+  let x0=1e18,y0=1e18,x1=-1e18,y1=-1e18;
+  for(const L of LANES) for(const p of L.pts){
+    if(p[0]<x0)x0=p[0]; if(p[0]>x1)x1=p[0];
+    if(p[1]<y0)y0=p[1]; if(p[1]>y1)y1=p[1];
+  }
+  const m=40000;
+  cam.x=(x0+x1)/2;cam.y=(y0+y1)/2;
+  cam.scale=Math.min(W/(x1-x0+m*2),H/(y1-y0+m*2))*0.95;
+}
+const jumpTo=i=>{cam.x=stations[i].x;cam.y=stations[i].y;cam.scale=0.012;};
+
+let drag=null, moved=0;
+cv.addEventListener('mousedown',e=>{
+  if(e.button===2) return;
+  if(e.shiftKey){addObstacle(s2wx(e.clientX),s2wy(e.clientY),P.obsRad);return;}
+  drag={x:e.clientX,y:e.clientY};moved=0;
+});
+addEventListener('mousemove',e=>{
+  if(!drag) return;
+  const dx=e.clientX-drag.x, dy=e.clientY-drag.y;
+  moved+=Math.abs(dx)+Math.abs(dy);
+  cam.x-=dx*DPR/cam.scale; cam.y-=dy*DPR/cam.scale;
+  drag.x=e.clientX;drag.y=e.clientY;
+});
+addEventListener('mouseup',e=>{
+  if(drag && moved<4 && e.button===0) removeObstacleAt(s2wx(e.clientX),s2wy(e.clientY));
+  drag=null;
+});
+cv.addEventListener('contextmenu',e=>{e.preventDefault();addObstacle(s2wx(e.clientX),s2wy(e.clientY),P.obsRad);});
+cv.addEventListener('wheel',e=>{
+  e.preventDefault();
+  const wx=s2wx(e.clientX), wy=s2wy(e.clientY);
+  cam.scale=clamp(cam.scale*Math.exp(-e.deltaY*0.0016),0.00035,4);
+  cam.x=wx-(e.clientX*DPR-W/2)/cam.scale;
+  cam.y=wy-(e.clientY*DPR-H/2)/cam.scale;
+},{passive:false});
+
+const keys={};
+addEventListener('keydown',e=>{
+  keys[e.code]=1;
+  if(e.code==='Space'){paused=!paused;syncPause();e.preventDefault();}
+  if(e.code==='KeyH'){
+    const on=document.getElementById('panel').style.display==='none';
+    for(const id of ['panel','hud','stwrap','legend']) document.getElementById(id).style.display=on?'':'none';
+  }
+  if(e.code==='Digit0') fitAll();
+  if(e.code==='Digit1') jumpTo(0);
+  if(e.code==='Digit2') jumpTo(1);
+  if(e.code==='Digit3') jumpTo(2);
+});
+addEventListener('keyup',e=>{keys[e.code]=0;});
+function camKeys(dt){
+  const sp=520/cam.scale*dt;
+  if(keys['KeyW']||keys['ArrowUp'])   cam.y-=sp;
+  if(keys['KeyS']||keys['ArrowDown']) cam.y+=sp;
+  if(keys['KeyA']||keys['ArrowLeft']) cam.x-=sp;
+  if(keys['KeyD']||keys['ArrowRight'])cam.x+=sp;
+  if(keys['KeyQ']) cam.scale*=Math.exp(-1.4*dt);
+  if(keys['KeyE']) cam.scale*=Math.exp( 1.4*dt);
+  cam.scale=clamp(cam.scale,0.00035,4);
+}
+
+//══════════════════════════════════════════════════════════════════════════════
+//  RENDER — batch: jeden fill() na wariant koloru
+//══════════════════════════════════════════════════════════════════════════════
+const NBUF=NBUCK+5, bufs=[], bufH=[], bufN=new Int32Array(NBUF);
+for(let k=0;k<NBUF;k++){ bufs.push(new Float32Array(4096*5)); bufH.push(new Uint8Array(4096)); }
+function pushDraw(b,x,y,h,ln,wd,hull){
+  let a=bufs[b]; const n=bufN[b];
+  if((n+1)*5>a.length){
+    const na=new Float32Array(a.length*2);na.set(a);bufs[b]=na;a=na;
+    const nh=new Uint8Array(bufH[b].length*2);nh.set(bufH[b]);bufH[b]=nh;
+  }
+  const o=n*5; a[o]=x;a[o+1]=y;a[o+2]=h;a[o+3]=ln;a[o+4]=wd; bufH[b][n]=hull; bufN[b]=n+1;
+}
+// dokłada poprzeczkę bramy do BIEŻĄCEJ ścieżki (stroke robi wywołujący, zbiorczo)
+function gatePath(p,L,atStart){
+  const g=atStart?0:L.nseg-1;
+  const hw=Math.max(2,LANE_HW*1.35*cam.scale), X=w2sx(p[0]), Y=w2sy(p[1]);
+  ctx.moveTo(X+L.uy[g]*hw,Y-L.ux[g]*hw);
+  ctx.lineTo(X-L.uy[g]*hw,Y+L.ux[g]*hw);
+}
+function drawWorld(){
+  ctx.fillStyle='#05070d'; ctx.fillRect(0,0,W,H);
+  const sc=cam.scale;
+
+  const gp=AU*(sc>0.02?1:(sc>0.005?5:10));
+  if(gp*sc>26){
+    ctx.strokeStyle='#0e1622';ctx.lineWidth=1;ctx.beginPath();
+    const x0=Math.floor(s2wx(0)/gp)*gp, x1=s2wx(innerWidth);
+    for(let x=x0;x<x1;x+=gp){const X=w2sx(x);ctx.moveTo(X,0);ctx.lineTo(X,H);}
+    const y0=Math.floor(s2wy(0)/gp)*gp, y1=s2wy(innerHeight);
+    for(let y=y0;y<y1;y+=gp){const Y=w2sy(y);ctx.moveTo(0,Y);ctx.lineTo(W,Y);}
+    ctx.stroke();
+  }
+
+  // Słońce i orbity — punkt odniesienia dla skali 1:1
+  {
+    const SX=w2sx(0), SY=w2sy(0);
+    ctx.strokeStyle='rgba(120,140,170,0.10)'; ctx.lineWidth=1;
+    for(const st of stations){
+      const r=st.au*AU*sc; if(r<8||r>Math.max(W,H)*6) continue;
+      ctx.beginPath(); ctx.arc(SX,SY,r,0,6.283); ctx.stroke();
+    }
+    const sr=Math.max(2.5,60000*sc);
+    const gr=ctx.createRadialGradient(SX,SY,0,SX,SY,sr*3);
+    gr.addColorStop(0,'rgba(255,214,140,0.55)'); gr.addColorStop(1,'rgba(255,180,60,0)');
+    ctx.fillStyle=gr; ctx.beginPath(); ctx.arc(SX,SY,sr*3,0,6.283); ctx.fill();
+    ctx.fillStyle='#ffd98a'; ctx.beginPath(); ctx.arc(SX,SY,sr,0,6.283); ctx.fill();
+  }
+
+  if(P.showLanes){
+    ctx.lineCap='butt';
+    // JEDNA ścieżka na styl zamiast jednego stroke na pas — przy 162 pasach
+    // osobne stroke'i kosztowały 6 ms na klatkę
+    const vx0=s2wx(0),vy0=s2wy(0),vx1=s2wx(innerWidth),vy1=s2wy(innerHeight);
+    const vis=L=>!(L.bx1<vx0||L.bx0>vx1||L.by1<vy0||L.by0>vy1);
+    ctx.lineWidth=Math.max(0.7,LANE_HW*2*sc);
+    for(const kind of ['cruise','boost']){
+      ctx.strokeStyle=kind==='boost'?'rgba(122,79,209,0.32)':'rgba(43,58,77,0.42)';
+      ctx.beginPath();
+      for(const L of LANES){
+        if(L.kind!==kind || !vis(L)) continue;
+        ctx.moveTo(w2sx(L.pts[0][0]),w2sy(L.pts[0][1]));
+        for(let i=1;i<L.pts.length;i++) ctx.lineTo(w2sx(L.pts[i][0]),w2sy(L.pts[i][1]));
+      }
+      ctx.stroke();
+    }
+    // pierścienie przy stacjach
+    ctx.lineWidth=Math.max(0.8,LANE_HW*2*sc);
+    ctx.strokeStyle='rgba(79,209,255,0.16)';
+    ctx.beginPath();
+    for(const st of stations){
+      if(!st.ring || !vis(st.ring)) continue;
+      ctx.moveTo(w2sx(st.x+RING_R),w2sy(st.y));
+      ctx.arc(w2sx(st.x),w2sy(st.y),RING_R*sc,0,6.283);
+    }
+    ctx.stroke();
+    // rampy: krótkie pasma poza obrysem jezdni
+    ctx.lineWidth=Math.max(0.6,(2*LANE_HW/P.nsub)*sc);
+    ctx.strokeStyle='rgba(94,224,138,0.22)';
+    ctx.beginPath();
+    for(const L of LANES){
+      if(!vis(L)) continue;
+      for(const S of L.subs){
+        if(S.kind==='main') continue;
+        const N=5;
+        for(let m=0;m<=N;m++){
+          const pt=detPoint(L,S.s0+(S.s1-S.s0)*m/N,S.q);
+          const X=w2sx(pt[0]),Y=w2sy(pt[1]);
+          if(m===0) ctx.moveTo(X,Y); else ctx.lineTo(X,Y);
+        }
+      }
+    }
+    ctx.stroke();
+    ctx.setLineDash([7,7]); ctx.lineWidth=1.2; ctx.strokeStyle='rgba(255,182,72,0.40)';
+    ctx.beginPath();
+    for(const R of ROUTES){
+      if(!R.warp || !vis(R.warp.prev) && !vis(R.warp)) continue;
+      const pre=R.warp.prev, a=pre.pts[pre.pts.length-1], b=R.warp.pts[0];
+      ctx.moveTo(w2sx(a[0]),w2sy(a[1]));ctx.lineTo(w2sx(b[0]),w2sy(b[1]));
+    }
+    ctx.stroke(); ctx.setLineDash([]);
+    for(const col of ['#ffb648','#a77bff']){
+      ctx.strokeStyle=col; ctx.lineWidth=Math.max(1.2,2*Math.min(1,sc*400));
+      ctx.beginPath();
+      for(const R of ROUTES){
+        if(col==='#ffb648'){
+          if(!R.warp||!vis(R.warp)&&!vis(R.warp.prev)) continue;
+          gatePath(R.warp.prev.pts[R.warp.prev.pts.length-1],R.warp.prev,false);
+          gatePath(R.warp.pts[0],R.warp,true);
+        }else{
+          if(!R.boost||!vis(R.boost)) continue;
+          gatePath(R.boost.pts[0],R.boost,true);
+        }
+      }
+      ctx.stroke();
+    }
+  }
+
+  for(const ob of obstacles){
+    const X=w2sx(ob.x),Y=w2sy(ob.y),r=Math.max(2,ob.r*sc);
+    ctx.fillStyle='rgba(255,95,109,0.20)';ctx.beginPath();ctx.arc(X,Y,r,0,6.283);ctx.fill();
+    ctx.strokeStyle='#ff5f6d';ctx.lineWidth=1.2;ctx.beginPath();ctx.arc(X,Y,r,0,6.283);ctx.stroke();
+    if(P.obsClear*sc>3){
+      ctx.strokeStyle='rgba(255,95,109,0.22)';ctx.setLineDash([3,4]);
+      ctx.beginPath();ctx.arc(X,Y,(ob.r+P.obsClear)*sc,0,6.283);ctx.stroke();ctx.setLineDash([]);
+    }
+  }
+
+  // wraki: wirujące szczątki, które blokują jezdnię
+  for(const w of wrecks){
+    const X=w2sx(w.x),Y=w2sy(w.y),r=Math.max(1.5,w.r*sc);
+    const fade=Math.min(1,w.life/6);
+    ctx.fillStyle='rgba(255,110,60,'+(0.16*fade)+')';
+    ctx.beginPath();ctx.arc(X,Y,r,0,6.283);ctx.fill();
+    ctx.strokeStyle='rgba(255,140,80,'+(0.85*fade)+')';ctx.lineWidth=1.2;
+    ctx.beginPath();
+    for(let m=0;m<5;m++){
+      const A2=w.ang+m*1.2566, rr=r*(m&1?0.55:1);
+      const px=X+Math.cos(A2)*rr, py=Y+Math.sin(A2)*rr;
+      if(m===0) ctx.moveTo(px,py); else ctx.lineTo(px,py);
+    }
+    ctx.closePath();ctx.stroke();
+  }
+  ctx.textAlign='center';
+  for(const st of stations){
+    const X=w2sx(st.x),Y=w2sy(st.y);
+    if(X<-300||Y<-300||X>W+300||Y>H+300) continue;
+    const rr=Math.max(3,STATION_R*sc);
+    ctx.fillStyle='#1a2a3a';ctx.strokeStyle='#4fd1ff';ctx.lineWidth=1.2;
+    ctx.beginPath();ctx.arc(X,Y,rr,0,6.283);ctx.fill();ctx.stroke();
+    if(R_RING_IN*sc>60){
+      ctx.strokeStyle='rgba(79,209,255,0.10)';ctx.beginPath();ctx.arc(X,Y,R_RING_IN*sc,0,6.283);ctx.stroke();
+      ctx.strokeStyle='rgba(94,224,138,0.09)';ctx.beginPath();ctx.arc(X,Y,R_RING_OUT*sc,0,6.283);ctx.stroke();
+      for(const b of st.berths){
+        const s=Math.max(2,(90+b.cls*70)*sc*1.2);
+        ctx.fillStyle=b.occ>=0?'#ff9a5c':(b.res>=0?'#ffd479':'#2f4a63');
+        ctx.beginPath();ctx.arc(w2sx(b.x),w2sy(b.y),s,0,6.283);ctx.fill();
+      }
+    }
+    ctx.fillStyle=st.weight>0?'#8fb6d6':'#5b6472';
+    ctx.font=(11*DPR)+'px ui-monospace,monospace';
+    ctx.fillText(st.name+(st.weight>0?'':' (opuszczona)'),X,Y-rr-8*DPR);
+    if(sc>0.000004){
+      ctx.fillStyle='#4a5a6e';ctx.font=(9.5*DPR)+'px ui-monospace,monospace';
+      ctx.fillText(st.au.toFixed(st.au%1?2:0)+' AU',X,Y+rr+13*DPR);
+    }
+  }
+  ctx.textAlign='left';
+}
+
+function drawShips(){
+  const sc=cam.scale;
+  bufN.fill(0);
+  const x0=s2wx(0)-4000, x1=s2wx(innerWidth)+4000;
+  const y0=s2wy(0)-4000, y1=s2wy(innerHeight)+4000;
+  const byClass=P.colorMode===1;
+  const invV=SPD_NORM();
+
+  for(const L of LANES){
+    for(let sk=0;sk<L.subs.length;sk++){
+      const ord=L.subs[sk].order, n=L.subs[sk].count;
+      for(let k=0;k<n;k++){
+        const i=ord[k], x=sX[i], y=sY[i];
+        if(x<x0||x>x1||y<y0||y>y1) continue;
+        const b=byClass?(NBUCK+sCls[i]):clamp((sVel[i]*invV)|0,0,NBUCK-1);
+        pushDraw(b,x,y,sHdg[i],sLen[i],sWid[i],sHull[i]);
+      }
+    }
+  }
+  for(const A of agents){
+    const i=A.ship, x=sX[i], y=sY[i];
+    if(x<x0||x>x1||y<y0||y>y1) continue;
+    const b=byClass?(NBUCK+sCls[i]):clamp((sVel[i]*invV)|0,0,NBUCK-1);
+    pushDraw(b,x,y,sHdg[i],sLen[i],sWid[i],sHull[i]);
+  }
+
+  // SPRITE'Y przy bliskim zoomie — jeden drawImage na statek, więc tylko gdy
+  // widocznych jest mało. Dalej zostaje wsadowy prostokąt (jeden fill na wariant).
+  let spriteN=0;
+  if(sc*260>9 && spritesReady>0){
+    let tot=0; for(let b=0;b<NBUF;b++) tot+=bufN[b];
+    if(tot<=600){
+      for(let b=0;b<NBUF;b++){
+        const n=bufN[b]; if(!n) continue; const a=bufs[b];
+        for(let m=0;m<n;m++){
+          const o=m*5, hi=bufH[b][m], im=HULL_IMG[hi];
+          if(!im) continue;
+          const x=w2sx(a[o]), y=w2sy(a[o+1]), h=a[o+2];
+          const ln=a[o+3]*sc, wd=Math.max(1,ln*(im.height/im.width));
+          if(ln<6) continue;
+          ctx.save(); ctx.translate(x,y); ctx.rotate(h);
+          ctx.drawImage(im,-ln*0.5,-wd*0.5,ln,wd);
+          ctx.restore();
+          a[o+3]=-1;                       // narysowany sprite'em — pomiń w partii
+          spriteN++;
+        }
+      }
+    }
+  }
+  const box=sc*260>2.2;
+  for(let b=0;b<NBUF;b++){
+    const n=bufN[b]; if(!n) continue;
+    const a=bufs[b];
+    ctx.fillStyle=b<NBUCK?PAL[b]:CLS_COL[b-NBUCK];
+    ctx.beginPath();
+    if(box){
+      // kadłub = prostokąt: półoś wzdłuż kursu + półoś w poprzek
+      for(let m=0;m<n;m++){
+        const o=m*5; if(a[o+3]<0) continue;
+        const x=w2sx(a[o]), y=w2sy(a[o+1]), h=a[o+2];
+        let hl=a[o+3]*sc*0.5; if(hl<1.6) hl=1.6;
+        let hw=a[o+4]*sc*0.5; if(hw<0.8) hw=0.8;
+        const ch=Math.cos(h), sh=Math.sin(h);
+        const ax=ch*hl, ay=sh*hl, bx=-sh*hw, by=ch*hw;
+        ctx.moveTo(x+ax+bx, y+ay+by);
+        ctx.lineTo(x+ax-bx, y+ay-by);
+        ctx.lineTo(x-ax-bx, y-ay-by);
+        ctx.lineTo(x-ax+bx, y-ay+by);   // fill() domyka podścieżkę sam
+      }
+    }else{
+      const px=Math.max(1.3,Math.min(3,sc*900)), hp=px*0.5;
+      for(let m=0;m<n;m++){const o=m*5; if(a[o+3]<0) continue;
+        ctx.rect(w2sx(a[o])-hp,w2sy(a[o+1])-hp,px,px);}
+    }
+    ctx.fill();
+  }
+
+  if(sc>0.004){                                   // obwódka agentów: widać przejście potok→agent
+    ctx.strokeStyle='rgba(94,224,138,0.7)';ctx.lineWidth=1;ctx.beginPath();
+    for(const A of agents){
+      const i=A.ship, X=w2sx(sX[i]), Y=w2sy(sY[i]);
+      if(X<-20||Y<-20||X>W+20||Y>H+20) continue;
+      const r=Math.max(4,sLen[i]*sc*1.9);
+      ctx.moveTo(X+r,Y);ctx.arc(X,Y,r,0,6.283);
+    }
+    ctx.stroke();
+  }
+}
+const fmtU=u=>u>=1e6?(u/1e6).toFixed(2)+' M j.':(u>=1e3?(u/1e3).toFixed(0)+' k j.':Math.round(u)+' j.');
+function drawOverlay(){
+  const sc=cam.scale;
+  let unit=1000;
+  for(const c of [1e3,5e3,1e4,5e4,1e5,2.5e5,5e5,1e6,5e6]) if(c*sc<=170*DPR) unit=c;
+  const px=unit*sc, bx=W-30*DPR, by=H-16*DPR;
+  ctx.strokeStyle='#63809b';ctx.lineWidth=1.5*DPR;ctx.beginPath();
+  ctx.moveTo(bx-px,by);ctx.lineTo(bx,by);
+  ctx.moveTo(bx-px,by-4*DPR);ctx.lineTo(bx-px,by+4*DPR);
+  ctx.moveTo(bx,by-4*DPR);ctx.lineTo(bx,by+4*DPR);ctx.stroke();
+  ctx.fillStyle='#8fb6d6';ctx.font=(11*DPR)+'px ui-monospace,monospace';ctx.textAlign='right';
+  ctx.fillText(fmtU(unit)+'  ('+(unit/AU<1?(unit/AU).toFixed(2):(unit/AU).toFixed(1))+' AU)',bx,by-8*DPR);
+  ctx.textAlign='left';
+}
+
+//══════════════════════════════════════════════════════════════════════════════
+//  DIAGRAM CZAS ↔ POZYCJA — fale stop-and-go widać wprost
+//══════════════════════════════════════════════════════════════════════════════
+const stc=document.getElementById('st'), stx=stc.getContext('2d');
+const ST_W=346, ST_H=172;
+stx.fillStyle='#04060a';stx.fillRect(0,0,ST_W,ST_H);
+const stImg=stx.createImageData(1,ST_H);
+let stCol=0, stRoute=0, stAcc=0;
+function stSample(){
+  const R=ROUTES[stRoute]; if(!R) return;
+  const d=stImg.data;
+  for(let y=0;y<ST_H;y++){const o=y*4;d[o]=4;d[o+1]=6;d[o+2]=10;d[o+3]=255;}
+  let accS=0;
+  for(let li=0;li<R.lanes.length;li++){
+    accS+=R.lanes[li].len;
+    const y=clamp(ST_H-1-Math.round(accS/R.total*ST_H),0,ST_H-1), o=y*4;
+    const warpNext=R.lanes[li+1]&&R.lanes[li+1].teleport;
+    if(warpNext){d[o]=110;d[o+1]=78;d[o+2]=24;}
+    else if(R.lanes[li].kind==='boost'){d[o]=70;d[o+1]=48;d[o+2]=110;}
+    else{d[o]=20;d[o+1]=28;d[o+2]=40;}
+  }
+  const invV=SPD_NORM();
+  for(const L of R.lanes){
+    const base=L.s0inRoute;
+    for(let sk=0;sk<L.subs.length;sk++){
+      const ord=L.subs[sk].order, n=L.subs[sk].count;
+      for(let k=0;k<n;k++){
+        const i=ord[k];
+        let y=ST_H-1-(((base+sPos[i])/R.total*ST_H)|0);
+        if(y<0)y=0; else if(y>=ST_H)y=ST_H-1;
+        const c=PALRGB[clamp((sVel[i]*invV)|0,0,NBUCK-1)], o=y*4;
+        d[o]=c[0];d[o+1]=c[1];d[o+2]=c[2];
+      }
+    }
+  }
+  stx.putImageData(stImg,stCol,0);
+  stCol=(stCol+1)%ST_W;
+  stx.fillStyle='#2a3d52';stx.fillRect(stCol,0,1,ST_H);
+}
+
+//══════════════════════════════════════════════════════════════════════════════
+//  UI
+//══════════════════════════════════════════════════════════════════════════════
+const SLIDERS=[
+  ['h','RUCH'],
+  ['ships','liczba statków',200,40000,200,null,'reseed'],
+  ['cruise','prędkość przelotowa [j./s]',200,2500,25],
+  ['timeScale','skala czasu ×',1,150,1],
+  ['h','JEZDNIA'],
+  ['nsub','podpasy na jezdni',1,5,1,null,'rebuild'],
+  ['changeGain','chęć wyprzedzania',0,1,0.05,v=>v.toFixed(2)],
+  ['daring','brawura przy zmianie pasa',0.15,1.2,0.05,v=>v.toFixed(2)],
+  ['h','POTOK (model podążania)'],
+  ['antic','antycypacja 2. poprzednika',0,1.2,0.05,v=>v.toFixed(2)],
+  ['minGap','minimalny odstęp s₀ [j.]',60,1500,10],
+  ['headT','czas reakcji T [s]',0.2,2.6,0.02,v=>v.toFixed(2)],
+  ['decel','siła hamowania [j./s²]',15,500,5],
+  ['accel','przyspieszenie [j./s²]',10,400,5],
+  ['spread','rozrzut prędkości klas',0,2.5,0.05,v=>v.toFixed(2)],
+  ['jitter','szum (zarzewie fal)',0,0.3,0.005,v=>v.toFixed(3)],
+  ['h','BOOSTER'],
+  ['boostFill','zapełnienie boostera',0.05,1.2,0.05,v=>v.toFixed(2)],
+  ['boostMul','mnożnik prędkości ×',1,8,0.1,v=>v.toFixed(1)],
+  ['h','BRAMA WARP'],
+  ['warpRate','przepustowość [szt./s]',0.05,6,0.05,v=>v.toFixed(2)],
+  ['h','DOK'],
+  ['berthVan','stanowiska van',0,30,1,null,'berths'],
+  ['berthS','stanowiska S',0,20,1,null,'berths'],
+  ['berthM','stanowiska M',0,16,1,null,'berths'],
+  ['berthL','stanowiska L',0,12,1,null,'berths'],
+  ['berthC','stanowiska capital',0,8,1,null,'berths'],
+  ['service','czas obsługi [s]',1,60,0.5,v=>v.toFixed(1)],
+  ['h','KRAKSY'],
+  ['failRate','awarie /1000 statków /min',0,20,0.1,v=>v.toFixed(1)],
+  ['wreckLife','wrak blokuje jezdnię [s]',5,180,5],
+  ['h','OMIJANIE'],
+  ['obsRad','promień nowej przeszkody [j.]',200,8000,100],
+  ['obsClear','margines omijania [j.]',100,4000,50],
+  ['latSpeed','prędkość boczna [j./s]',20,500,10],
+  ['agentBudget','budżet agentów na objazdy',0,600,10],
+];
+function buildUI(){
+  let html='';
+  for(const s of SLIDERS){
+    if(s[0]==='h'){html+='<h2>'+s[1]+'</h2>';continue;}
+    html+='<div class="row"><label>'+s[1]+'</label><span class="val" id="v_'+s[0]+'"></span></div>'+
+          '<div class="rr"><input type="range" id="s_'+s[0]+'" min="'+s[2]+'" max="'+s[3]+'" step="'+s[4]+'"></div>';
+  }
+  html+='<h2>WIDOK</h2><div class="btns"><button id="bCol">Kolor: prędkość</button>'+
+        '<button id="bLan" class="on">Pasy</button></div>';
+  document.getElementById('sliders').innerHTML=html;
+
+  for(const s of SLIDERS){
+    if(s[0]==='h') continue;
+    const key=s[0], fmt=s[5]||(v=>Math.round(v)), act=s[6];
+    const inp=document.getElementById('s_'+key), lab=document.getElementById('v_'+key);
+    inp.value=P[key]; lab.textContent=fmt(P[key]);
+    inp.addEventListener('input',()=>{
+      P[key]=parseFloat(inp.value); lab.textContent=fmt(P[key]);
+      if(key==='boostMul') for(const L of LANES) if(L.kind==='boost') L.vmul=P.boostMul;
+    });
+    if(act==='reseed') inp.addEventListener('change',()=>{
+      if(Math.abs(popCount-P.ships)>P.ships*0.12) seedShips(P.ships);
+    });
+    if(act==='berths') inp.addEventListener('change',rebuildDocks);
+    if(act==='rebuild') inp.addEventListener('change',()=>{
+      obstacles.length=0; buildWorld(); seedShips(P.ships); projectObstacles();
+    });
+  }
+  document.getElementById('bCol').onclick=e=>{
+    P.colorMode=1-P.colorMode;
+    e.target.textContent='Kolor: '+(P.colorMode?'klasa':'prędkość');
+  };
+  document.getElementById('bLan').onclick=e=>{P.showLanes=1-P.showLanes;e.target.classList.toggle('on');};
+
+  let lg='';for(let k=0;k<NBUCK;k++) lg+='<span class="sw" style="margin:0;width:8px;background:'+PAL[k]+'"></span>';
+  document.getElementById('lgrad').innerHTML=lg;
+
+  rebuildRouteSelect();
+  rebuildJumpButtons();
+}
+function rebuildRouteSelect(){
+  const sel=document.getElementById('stSel');
+  sel.innerHTML=ROUTES.map((R,i)=>'<option value="'+i+'">'+
+    stations[R.a].name+'→'+stations[R.b].name+'</option>').join('');
+  if(stRoute>=ROUTES.length) stRoute=0;
+  sel.value=String(stRoute);
+  sel.onchange=()=>{stRoute=parseInt(sel.value);stx.fillStyle='#04060a';stx.fillRect(0,0,ST_W,ST_H);};
+}
+function rebuildJumpButtons(){
+  const host=document.getElementById('jumps');
+  host.innerHTML=stations.map((s,i)=>'<button data-jump="'+i+'"'+
+    (s.weight<=0?' style="opacity:.45"':'')+'>'+s.name+'</button>').join('');
+  host.querySelectorAll('[data-jump]').forEach(b=>b.onclick=()=>jumpTo(+b.dataset.jump));
+}
+function rebuildDocks(){
+  for(let ai=agents.length-1;ai>=0;ai--){
+    const A=agents[ai];
+    if(A.mode===AG_IN||A.mode===AG_DOCK||A.mode===AG_HOLD){A.berth=-1;bounceAgent(A,A.st>=0?A.st:0);}
+  }
+  for(const st of stations) buildBerths(st);
+}
+
+let paused=false;
+const el=id=>document.getElementById(id);
+function syncPause(){el('bPause').textContent=paused?'▶ Wznów':'⏸ Pauza';}
+el('bPause').onclick=()=>{paused=!paused;syncPause();};
+el('bFit').onclick=fitAll;
+el('bReset').onclick=()=>{obstacles.length=0;projectObstacles();bounceCount=0;crashCount=0;seedShips(P.ships);};
+let orbitSeed=7;
+el('bReroll').onclick=()=>{
+  orbitSeed=(Math.random()*1e9)|0;
+  obstacles.length=0; buildStations(orbitSeed); buildWorld();
+  rebuildRouteSelect(); rebuildJumpButtons();
+  seedShips(P.ships); projectObstacles(); fitAll();
+  toast('Nowe położenia planet (ziarno '+orbitSeed+') — gra losuje je tak samo przy starcie');
+};
+el('bClr').onclick=()=>{obstacles.length=0;projectObstacles();};
+el('bJam').onclick=()=>{
+  let bi=-1,bv=1e9,bl=null;
+  for(const L of LANES){
+    for(const S of L.subs) for(let k=0;k<S.count;k+=3){
+      const i=S.order[k];
+      if(sVel[i]<bv && L.len-sPos[i]>25000 && sPos[i]>10000){bv=sVel[i];bi=i;bl=L;}
+    }
+  }
+  if(bi<0){toast('Nie znalazłem miejsca w potoku');return;}
+  const p=detPoint(bl,Math.min(sPos[bi]+6000,bl.len-1500),0);
+  addObstacle(p[0],p[1],P.obsRad);
+  cam.x=p[0];cam.y=p[1];cam.scale=0.022;
+  toast('Przeszkoda w najwolniejszym miejscu · v = '+bv.toFixed(0)+' j./s');
+};
+el('bDock').onclick=()=>{
+  let st=null;
+  for(const s of stations) if(s.inLanes.length && (!st||s.weight>st.weight)) st=s;
+  if(!st){toast('Brak czynnego doku');return;}
+  const L=st.inLanes[0];
+  const p=detPoint(L,L.len-2500,0);
+  addObstacle(p[0],p[1],P.obsRad);
+  cam.x=st.x;cam.y=st.y;cam.scale=0.05;
+  toast('Przeszkoda na wlocie do doku '+st.name);
+};
+function setSlider(k,v){P[k]=v;const i=el('s_'+k),l=el('v_'+k);if(i){i.value=v;l.textContent=(SLIDERS.find(s=>s[0]===k)[5]||(x=>Math.round(x)))(v);} }
+el('bStress').onclick=()=>{setSlider('ships',5000);seedShips(5000);toast('Stress: 5000 statków');};
+el('bChoke').onclick=()=>{setSlider('warpRate',0.18);setSlider('boostFill',0.1);toast('Bramy zdławione — kolejki urosną');};
+el('bFull').onclick=()=>{setSlider('service',34);toast('Obsługa 34 s — doki się zapchają');};
+let toastT=0;
+function toast(m){const e=el('toast');e.textContent=m;e.style.display='block';toastT=3;}
+
+//══════════════════════════════════════════════════════════════════════════════
+//  HUD
+//══════════════════════════════════════════════════════════════════════════════
+let fpsAvg=60, simMs=0, rndMs=0, frameMs=16, simTime=0, dockRateSm=0;
+function updateHUD(){
+  el('fps').textContent=fpsAvg.toFixed(0);
+  el('fps').style.color=fpsAvg>55?'#5ee08a':(fpsAvg>35?'#ffb648':'#ff5f6d');
+  el('nShips').textContent=popCount;
+  el('nAg').textContent=agents.length;
+  el('tms').textContent=simMs.toFixed(1)+' / '+rndMs.toFixed(1)+' / '+frameMs.toFixed(1)+' ms';
+
+  let inFlow=0; for(const L of LANES) inFlow+=laneCount(L);
+  let nd=0,nh=0,ni=0,ndet=0;
+  for(const A of agents){
+    if(A.mode===AG_DOCK)nd++; else if(A.mode===AG_HOLD)nh++;
+    else if(A.mode===AG_IN)ni++; else if(A.mode===AG_DET)ndet++;
+  }
+  // realna kolejka do doku = statki wleczące się (<35% v₀) na pasach dolotowych
+  let q=0;
+  for(const st of stations){let c=0;for(const L of st.inLanes)c+=L.slow;st.qlen=c;q+=c;}
+  el('mix').textContent=inFlow+' · '+nd+' · '+q;
+  el('agmix').textContent=ni+' / '+nd+' / '+(agents.length-ni-nd-ndet)+' / '+ndet;
+
+  let cap=0;
+  for(const L of LANES) cap+=L.len/(P.minGap+P.cruise*L.vmul*P.headT+150);
+  const sat=inFlow/Math.max(1,cap)*100;
+  el('sat').textContent=sat.toFixed(0)+'%  ('+Math.round(cap)+' miejsc)';
+  el('sat').style.color=sat>92?'#ff5f6d':(sat>78?'#ffb648':'#5ee08a');
+
+  el('thr').textContent=(statN?statSumV/statN:0).toFixed(0)+' j./s · '+dockRateSm.toFixed(2)+'/s';
+  el('chg').textContent=chgRate.toFixed(1)+' · '+crashCount+' · '+wrecks.length;
+  const wanted=HULLS.filter(h=>h.img).length;
+  el('spr').textContent=spritesReady+'/'+wanted+(spritesReady?'':' (otwórz plik z dysku)');
+  el('spr').style.color=spritesReady?'#5ee08a':'#6e8199';
+  el('simt').textContent=(simTime/60).toFixed(1)+' min · ×'+P.timeScale;
+  el('camr').textContent=cam.scale.toFixed(6)+' · '+fmtU(innerWidth/cam.scale);
+  el('scale1').textContent=Math.round(AU).toLocaleString('pl')+' j. · '+
+    fmtU(routeStats.min)+' / '+fmtU(routeStats.med)+' / '+fmtU(routeStats.max);
+  el('scale2').textContent=(routeStats.med/P.cruise/60).toFixed(0)+' min · '+
+    fmtU(routeStats.em)+' ('+(routeStats.em/P.cruise/60).toFixed(1)+' min)';
+
+  // 42 trasy = do 84 bram; pokazujemy tylko te z najdłuższą kolejką
+  const gl=[];
+  for(const R of ROUTES){
+    const nm=stations[R.a].name.slice(0,3)+'→'+stations[R.b].name.slice(0,3);
+    if(R.boost) gl.push({nm,typ:'boost',q:R.boost.prev.qGate,f:R.boost.flowRate,n:laneCount(R.boost),c:''});
+    if(R.warp)  gl.push({nm,typ:'warp', q:R.warp.prev.qGate, f:R.warp.flowRate, n:laneCount(R.warp),c:'#ffb648'});
+  }
+  gl.sort((x,y)=>y.q-x.q||y.n-x.n);
+  const qAll=gl.reduce((a,g)=>a+g.q,0);
+  let h='<tr><th>brama (6 najdłuższych z '+gl.length+')</th><th>kolejka</th><th>przepływ</th><th>na odcinku</th></tr>';
+  for(const g of gl.slice(0,6))
+    h+='<tr'+(g.c?' style="color:'+g.c+'"':'')+'><td>'+g.nm+' '+g.typ+'</td><td>'+g.q+
+       '</td><td>'+g.f.toFixed(2)+'/s</td><td>'+g.n+'</td></tr>';
+  h+='<tr><td>łącznie w kolejkach do bram</td><td colspan="3" style="text-align:right">'+qAll+'</td></tr>';
+  el('gates').innerHTML=h;
+
+  let d='<tr><th>dok</th><th>zajęte</th><th>kolejka</th><th>stanowiska</th></tr>';
+  for(const st of stations){
+    let occ=0; for(const b of st.berths) if(b.occ>=0) occ++;
+    const cls=[0,0,0,0,0]; for(const b of st.berths) cls[b.cls]++;
+    d+='<tr><td>'+st.name.split('-')[0]+'</td><td>'+occ+'/'+st.berths.length+'</td><td>'+st.qlen+'</td><td>'+
+       cls.map((n,c)=>n?CLS_NAME[c][0].toUpperCase()+n:'').filter(Boolean).join(' ')+'</td></tr>';
+  }
+  d+='<tr><td>tranzyt bez dokowania · zawrócone</td><td colspan="3" style="text-align:right;color:#ffb648">'+
+     transitCount+' · '+bounceCount+'</td></tr>';
+  d+='<tr><td>kraksy · wraki na jezdni</td><td colspan="3" style="text-align:right;color:#ff8c50">'+
+     crashCount+' · '+wrecks.length+'</td></tr>';
+  el('docks').innerHTML=d;
+}
+
+//══════════════════════════════════════════════════════════════════════════════
+//  PĘTLA
+//══════════════════════════════════════════════════════════════════════════════
+buildWorld();
+buildUI();
+resetPool();
+seedShips(P.ships);
+fitAll();
+syncPause();
+
+let lastT=performance.now(), flowTimer=0;
+function frame(now){
+  // dt MUSI być obcięte z obu stron: ujemny krok (cofnięty zegar, zaległy callback)
+  // policzyłby całą symulację wstecz i rozsypał pozycje na pasach.
+  const real=clamp((now-lastT)/1000,0,0.05); lastT=now; frameNo++;
+  frameMs=frameMs*0.9+real*1000*0.1;
+  fpsAvg=fpsAvg*0.92+(1/Math.max(1e-4,real))*0.08;
+  camKeys(real);
+  if(toastT>0){toastT-=real; if(toastT<=0) el('toast').style.display='none';}
+
+  const t0=performance.now();
+  if(!paused){
+    const simDt=real*P.timeScale;
+    const nsub=Math.max(1,Math.min(SUB_MAX,Math.ceil(simDt/SUB_DT)));
+    const dt=simDt/nsub;
+    simTime+=simDt;
+    for(const L of LANES) if(L.entryGated && L.entryMode==='rate')
+      L.tokens=Math.min(L.tokens+P[L.entryKey]*simDt,2);
+    allocateBerths(simDt);
+    rebuildAgentIndex();
+    statSumV=0;statN=0;
+    for(let s=0;s<nsub;s++){
+      const lastSub=(s===nsub-1);
+      for(let li=0;li<laneStepOrder.length;li++) stepLane(laneStepOrder[li],dt,lastSub);
+      stepAgents(dt);
+    }
+    stepWrecks(simDt);
+    // wraki dryfują wolno — rzutowanie co 8 klatek wystarcza, ale nowy wrak
+    // musi trafić na pasy natychmiast, inaczej statki przez niego przelecą
+    if(hazardDirty || (frameNo&7)===0){ projectObstacles(); hazardDirty=false; }
+    spawnTick(); despawnTick();
+    resolveAll();
+    flowTimer+=simDt;
+    if(flowTimer>1){
+      for(const L of LANES){L.flowRate=L.flowRate*0.6+(L.flow/flowTimer)*0.4;L.flow=0;}
+      dockRateSm=dockRateSm*0.6+(dockAcc/flowTimer)*0.4; dockAcc=0;
+      chgRate=chgRate*0.6+(chgAcc/flowTimer)*0.4; chgAcc=0;
+      flowTimer=0;
+    }
+  }
+  simMs=simMs*0.85+(performance.now()-t0)*0.15;
+
+  const t1=performance.now();
+  drawWorld(); drawShips(); drawOverlay();
+  rndMs=rndMs*0.85+(performance.now()-t1)*0.15;
+
+  stAcc+=real;
+  if(!paused && stAcc>0.033){stAcc=0;stSample();}
+  if((frameNo&7)===0) updateHUD();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

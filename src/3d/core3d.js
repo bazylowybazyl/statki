@@ -11,6 +11,11 @@ const MAX_HEAT_HAZE_SOURCES = 24;
 const PLANET_RENDER_LAYER = 3;
 const PLANET_HALO_RENDER_LAYER = 5;
 const RING_PLANET_RENDER_LAYER = 6;
+// Tarcze: własna warstwa ortho renderowana PO shadowShaftsPass. Tarcza to
+// emisja (blend addytywny), a nie powierzchnia oświetlana słońcem — cień
+// statku/planety mnożył ją razem z kadłubem i przecinał poświatę ciemnym
+// pasem. Warstwa 0 zostaje w cieniu, tarcza świeci również w cieniu.
+const SHIELD_RENDER_LAYER = 7;
 // Shadow shafts: WSZYSTKIE okludery są analityczne (dyski / kapsuły /
 // pierścienie w world-space, liczone per piksel w shaderze passa). Maska
 // screen-space odeszła w całości: nie obejmowała okluderów poza kadrem
@@ -18,17 +23,26 @@ const RING_PLANET_RENDER_LAYER = 6;
 // downresie+blurze (cień statku znikał z oddaleniem) i kosztowała
 // 4 dodatkowe przejścia sceny na viewport + 2 blury.
 const SHAFT_DISC_CAP = 48;      // planety + księżyce + największe asteroidy
-const SHAFT_CAPSULE_CAP = 32;   // kadłuby statków (segment + promień)
+const SHAFT_HULL_CAP = 48;      // pasma kadłubów (3 kapsuły na statek)
+const HULL_SHAFT_BANDS = 4;     // musi zgadzać się z HULL_SHAFT_SEGMENTS w hexShips3D
 const SHAFT_RING_CAP = 2;       // ring city (Ziemia, Mars)
+// Siła cienia kadłuba: planeta gasi scenę do czerni (umbra), statek ma tylko
+// przygaszać — pełna siła robiła z każdego okrętu czarną kałużę na mgławicy.
+const HULL_SHADOW_STRENGTH = 0.55;
 
 // Poziomy jakości shadow shafts — po przejściu na pełną analitykę jedyne
-// różnice to długość smug i budżet kapsuł statków (koszt = ALU w jednym
+// różnice to długość smug i budżet kadłubów-okluderów (koszt = ALU w jednym
 // fullscreen passie, więc nawet Low wygląda poprawnie na każdym zoomie).
+// discLenMul liczony w PROMIENIACH tarczy, capsuleLenMul w DŁUGOŚCIACH
+// kadłuba (nazwy kluczy zostają — sam okluder statku to dziś elipsa
+// sylwetki, nie kapsuła). Poprzednie wartości (18 R / 10 kadłubów na medium)
+// dawały smugi ciągnące się przez pół sektora — 400u fregata rzucała cień
+// na 4000u.
 export const SHADOW_SHAFTS_QUALITY = {
-  off: { enabled: false, discLenMul: 10, capsuleLenMul: 6, capsuleBudget: 12 },
-  low: { enabled: true, discLenMul: 10, capsuleLenMul: 6, capsuleBudget: 12 },
-  medium: { enabled: true, discLenMul: 18, capsuleLenMul: 10, capsuleBudget: 24 },
-  high: { enabled: true, discLenMul: 30, capsuleLenMul: 16, capsuleBudget: 32 }
+  off: { enabled: false, discLenMul: 3.5, capsuleLenMul: 2, capsuleBudget: 12 },
+  low: { enabled: true, discLenMul: 3.5, capsuleLenMul: 2, capsuleBudget: 12 },
+  medium: { enabled: true, discLenMul: 5, capsuleLenMul: 3, capsuleBudget: 24 },
+  high: { enabled: true, discLenMul: 7, capsuleLenMul: 4, capsuleBudget: 32 }
 };
 
 export function resolveShadowShaftsQuality(level) {
@@ -49,13 +63,15 @@ function createShadowShaftsShader() {
       uCamCenter2: { value: new THREE.Vector2(0, 0) },
       uViewWorldSize: { value: new THREE.Vector2(1, 1) },
       uViewWorldSize2: { value: new THREE.Vector2(1, 1) },
-      uDiscLenMul: { value: 18.0 },
+      uDiscLenMul: { value: 5.0 },
       uDiscCount: { value: 0 },
       uDiscs: { value: Array.from({ length: SHAFT_DISC_CAP }, () => new THREE.Vector4(0, 0, 0, 0)) },
-      uCapsuleLenMul: { value: 10.0 },
-      uCapsuleCount: { value: 0 },
-      uCapsuleSeg: { value: Array.from({ length: SHAFT_CAPSULE_CAP }, () => new THREE.Vector4(0, 0, 0, 0)) },
-      uCapsuleR: { value: new Float32Array(SHAFT_CAPSULE_CAP) },
+      uHullLenMul: { value: 3.0 },
+      uHullCount: { value: 0 },
+      // uHulls[i]:    xy/zw = końcówki odcinka pasma kadłuba
+      // uHullMeta[i]: x = promień pasma, y = długość kadłuba (zasięg smugi)
+      uHulls: { value: Array.from({ length: SHAFT_HULL_CAP }, () => new THREE.Vector4(0, 0, 0, 0)) },
+      uHullMeta: { value: Array.from({ length: SHAFT_HULL_CAP }, () => new THREE.Vector4(0, 1, 0, 0)) },
       uRingCount: { value: 0 },
       // uRings[i]: xy = środek (three-space), z = promień pasma, w = zasięg cienia
       uRings: { value: Array.from({ length: SHAFT_RING_CAP }, () => new THREE.Vector4(0, 0, 0, 0)) }
@@ -73,10 +89,10 @@ function createShadowShaftsShader() {
       uniform float uDiscLenMul;
       uniform int uDiscCount;
       uniform vec4 uDiscs[${SHAFT_DISC_CAP}];
-      uniform float uCapsuleLenMul;
-      uniform int uCapsuleCount;
-      uniform vec4 uCapsuleSeg[${SHAFT_CAPSULE_CAP}];
-      uniform float uCapsuleR[${SHAFT_CAPSULE_CAP}];
+      uniform float uHullLenMul;
+      uniform int uHullCount;
+      uniform vec4 uHulls[${SHAFT_HULL_CAP}];
+      uniform vec4 uHullMeta[${SHAFT_HULL_CAP}];
       uniform int uRingCount;
       uniform vec4 uRings[${SHAFT_RING_CAP}];
       varying vec2 vUv;
@@ -111,6 +127,8 @@ function createShadowShaftsShader() {
         // ── Dyski: planety, ksiezyce, najwieksze asteroidy ───────────────
         // Wnetrze tarczy pomijane (along <= exitDist) — dzienna strona
         // planety zostaje przy wlasnym oswietleniu z jej shadera.
+        // disc.w = sila cienia: planeta 1.0 (umbra), asteroida ~0.5 (skala
+        // skaly nie uzasadnia czarnej dziury w mglawicy).
         for (int i = 0; i < ${SHAFT_DISC_CAP}; i++) {
           if (i >= uDiscCount) break;
           vec4 disc = uDiscs[i];
@@ -129,30 +147,34 @@ function createShadowShaftsShader() {
           if (along <= exitDist) continue;
           float fallT = clamp((along - exitDist) / max(discR * uDiscLenMul, 1.0), 0.0, 1.0);
           float fall = 1.0 - smoothstep(0.55, 1.0, fallT);
-          float soft = discR * (0.04 + 0.30 * fallT);
+          // Rozmycie rośnie po ZNORMALIZOWANEJ długości smugi, więc po jej
+          // skróceniu musi rosnąć wolniej — inaczej stożek rozlewa się na boki
+          // zamiast być smugą.
+          float soft = discR * (0.04 + 0.14 * fallT);
           float edge = 1.0 - smoothstep(discR - soft, discR + soft, perp);
-          shadow = max(shadow, edge * fall);
+          shadow = max(shadow, edge * fall * max(disc.w, 0.0));
         }
 
-        // ── Kapsuly: kadluby statkow (segment [a,b] + promien) ───────────
-        // Wnetrze kadluba pomijane — terminator w shaderze heksow robi
-        // wlasne dzien/noc; smuga zaczyna sie ZA statkiem.
-        for (int i = 0; i < ${SHAFT_CAPSULE_CAP}; i++) {
-          if (i >= uCapsuleCount) break;
-          vec4 seg = uCapsuleSeg[i];
-          float capR = uCapsuleR[i];
+        // ── Kadluby statkow: lancuch kapsul po obrysie ───────────────────
+        // hull.xy/zw = koncowki odcinka, meta.x = promien pasma, meta.y =
+        // dlugosc kadluba (zasieg smugi). Kazdy statek zglasza kilka pasm
+        // o promieniu z LOKALNEJ szerokosci kadluba, wiec brzeg cienia lezy
+        // na burcie — jedna bryla na caly statek (kapsula z bboxa / elipsa)
+        // byla przy dziobie i rufie duzo szersza niz kadlub i to jej obrys
+        // widac bylo jako "jajo", z ktorego dopiero wychodzil cien.
+        // Wnetrze pomijane: dzien/noc kadluba robi terminator w hexShips3D.
+        for (int i = 0; i < ${SHAFT_HULL_CAP}; i++) {
+          if (i >= uHullCount) break;
+          vec4 seg = uHulls[i];
+          vec4 meta = uHullMeta[i];
+          float capR = meta.x;
           if (capR <= 0.0) continue;
           vec2 pa = seg.xy - worldP;
           vec2 pb = seg.zw - worldP;
           float alongA = dot(pa, d);
           float alongB = dot(pb, d);
           if (alongA <= 0.0 && alongB <= 0.0) continue;
-          vec2 ab = seg.zw - seg.xy;
-          float segLen2 = max(dot(ab, ab), 0.0001);
-          float h = clamp(dot(worldP - seg.xy, ab) / segLen2, 0.0, 1.0);
-          vec2 fromHull = worldP - (seg.xy + ab * h);
-          if (dot(fromHull, fromHull) <= capR * capR) continue;
-          // najblizsze podejscie promienia (worldP -> slonce) do segmentu
+          // najblizsze podejscie promienia (worldP -> slonce) do odcinka
           float perpA = d.x * pa.y - d.y * pa.x;
           float perpB = d.x * pb.y - d.y * pb.x;
           float perpMin;
@@ -168,13 +190,19 @@ function createShadowShaftsShader() {
             perpMin = abs(perpB);
             alongHit = alongB;
           }
+          if (perpMin > capR * 1.6) continue;
           if (alongHit <= 0.0 || alongHit >= sunDist) continue;
-          float capLen = sqrt(segLen2) + 2.0 * capR;
-          float fallT = clamp(alongHit / max(capLen * uCapsuleLenMul, 1.0), 0.0, 1.0);
-          float fall = 1.0 - smoothstep(0.35, 1.0, fallT);
-          float soft = capR * (0.25 + 1.6 * fallT);
+          vec2 ab = seg.zw - seg.xy;
+          float segLen2 = max(dot(ab, ab), 0.0001);
+          float h = clamp(dot(worldP - seg.xy, ab) / segLen2, 0.0, 1.0);
+          vec2 fromHull = worldP - (seg.xy + ab * h);
+          if (dot(fromHull, fromHull) <= capR * capR) continue;
+          float fallT = clamp(alongHit / max(meta.y * uHullLenMul, 1.0), 0.0, 1.0);
+          float fall = 1.0 - smoothstep(0.2, 1.0, fallT);
+          float soft = capR * (0.12 + 0.35 * fallT);
           float edge = 1.0 - smoothstep(max(capR - soft * 0.5, 0.0), capR + soft, perpMin);
-          shadow = max(shadow, edge * fall);
+          // Statek nie robi czarnej dziury jak planeta — smuga tylko przygasza.
+          shadow = max(shadow, edge * fall * ${HULL_SHADOW_STRENGTH.toFixed(2)});
         }
 
         // ── Pierscienie (ring city wokol planety) ────────────────────────
@@ -390,7 +418,10 @@ function recordRenderDbg(name, ms) {
   fn(name, ms);
 }
 
-function makeSplitScreenRenderPass(pass, layerId, isOrtho, doClearColor) {
+// doClearDepth=false: pass dorysowuje się do bufora głębi zostawionego przez
+// poprzedni pass (używane przez pass tarcz, żeby tarcza dalej testowała
+// głębię względem świata ortho zamiast kłaść się na wszystkim).
+function makeSplitScreenRenderPass(pass, layerId, isOrtho, doClearColor, doClearDepth = true) {
   pass.clear = false;
 
   pass.render = function(renderer, writeBuffer, readBuffer) {
@@ -417,7 +448,7 @@ function makeSplitScreenRenderPass(pass, layerId, isOrtho, doClearColor) {
           if (doClearColor) {
               renderer.setClearColor(0x000000, 0.0);
               renderer.clear(true, true, true);
-          } else {
+          } else if (doClearDepth) {
               renderer.clear(false, true, false);
           }
 
@@ -433,7 +464,7 @@ function makeSplitScreenRenderPass(pass, layerId, isOrtho, doClearColor) {
           if (doClearColor) {
               renderer.setClearColor(0x000000, 0.0);
               renderer.clear(true, true, true);
-          } else {
+          } else if (doClearDepth) {
               renderer.clear(false, true, false);
           }
 
@@ -451,7 +482,7 @@ function makeSplitScreenRenderPass(pass, layerId, isOrtho, doClearColor) {
           if (doClearColor) {
               renderer.setClearColor(0x000000, 0.0);
               renderer.clear(true, true, true);
-          } else {
+          } else if (doClearDepth) {
               renderer.clear(false, true, false);
           }
           Core3D.syncCamera(Core3D.activeCam1, tw, th, 0);
@@ -475,14 +506,14 @@ export const Core3D = {
   _refractionValid: false, _refractionFlip: false,
   planetHaloTarget: null, haloDepthMaskMaterial: null,
 
-  renderPassBg: null, renderPassPlanets: null, planetHaloPass: null, renderPassRingPlanets: null, renderPassOrtho: null, renderPassFg: null,
+  renderPassBg: null, renderPassPlanets: null, planetHaloPass: null, renderPassRingPlanets: null, renderPassOrtho: null, renderPassShields: null, renderPassFg: null,
   heatHazeSources: null, heatHazeDirs: null, heatHazeCount: 0, heatHazeMaxSources: MAX_HEAT_HAZE_SOURCES, _heatHazeWorldScratch: new THREE.Vector3(),
   shadowShaftsPass: null,
   // Analityczne okludery shaftów, zgłaszane co klatkę przez systemy gry:
   // dyski (planet3d.assets + asteroidField3D), kapsuły (hexShips3D),
   // pierścienie (planetaryRing3D — Map po kluczu ringu, bez begin/reset).
-  shaftDiscs: new Float32Array(SHAFT_DISC_CAP * 3), shaftDiscCount: 0,
-  shaftCapsules: new Float32Array(SHAFT_CAPSULE_CAP * 5), shaftCapsuleCount: 0,
+  shaftDiscs: new Float32Array(SHAFT_DISC_CAP * 4), shaftDiscCount: 0,
+  shaftHulls: new Float32Array(SHAFT_HULL_CAP * 6), shaftHullCount: 0,
   shaftRings: new Map(),
   uberPass: null,
   bloomPass: null, bloomResolutionScale: BLOOM_DEFAULTS.resolutionScale, bloomBaseStrength: BLOOM_DEFAULTS.strength, bloomBaseThreshold: BLOOM_DEFAULTS.threshold,
@@ -613,6 +644,7 @@ export const Core3D = {
     this._wrapRenderInfoPass(this.renderPassRingPlanets, 'planets');
     this._wrapRenderInfoPass(this.shadowShaftsPass, 'shafts');
     this._wrapRenderInfoPass(this.renderPassOrtho, 'ortho');
+    this._wrapRenderInfoPass(this.renderPassShields, 'ortho');
     this._wrapRenderInfoPass(this.renderPassFg, 'fg');
     this._wrapRenderInfoPass(this.bloomPass, 'bloom');
     this._wrapRenderInfoPass(this.uberPass, 'post');
@@ -740,6 +772,12 @@ export const Core3D = {
     makeSplitScreenRenderPass(this.renderPassRingPlanets, RING_PLANET_RENDER_LAYER, true, false);
     this.renderPassOrtho = new RenderPass(this.scene, this.cameraOrtho);
     makeSplitScreenRenderPass(this.renderPassOrtho, 0, true, false);
+    // Tarcze: ta sama kamera ortho co świat, ale BEZ czyszczenia głębi —
+    // pass dokłada się do bufora zostawionego przez renderPassOrtho, więc
+    // tarcza dalej testuje głębię względem kadłubów zamiast kłaść się na
+    // wszystkim.
+    this.renderPassShields = new RenderPass(this.scene, this.cameraOrtho);
+    makeSplitScreenRenderPass(this.renderPassShields, SHIELD_RENDER_LAYER, true, false, false);
     this.renderPassFg = new RenderPass(this.scene, this.cameraPersp);
     makeSplitScreenRenderPass(this.renderPassFg, 2, false, false);
 
@@ -761,6 +799,11 @@ export const Core3D = {
     // ale PRZED FG: bronie, muzzle flashe i inne emisje rysują się już na
     // ocienionej scenie, więc świecą też W cieniu i bloom przez niego przebija.
     // (Na samym końcu pass gasił wszystko, łącznie z laserami.)
+    //
+    // Tarcze idą razem z FG (po shaftach), bo to emisja, nie oświetlona
+    // powierzchnia — cień kadłuba przecinał wcześniej bańkę ciemnym pasem.
+    // Własny pass zamiast warstwy FG, bo tarcza musi zostać w projekcji
+    // ortho (kopuła/sfera w perspektywie rozjeżdżałaby się z kadłubem).
     this._scenePasses = [
       this.renderPassBg,
       this.renderPassPlanets,
@@ -768,6 +811,7 @@ export const Core3D = {
       this.renderPassRingPlanets,
       this.renderPassOrtho,
       this.shadowShaftsPass,
+      this.renderPassShields,
       this.renderPassFg
     ];
 
@@ -822,6 +866,7 @@ export const Core3D = {
     if (this.planetHaloPass) this.planetHaloPass.enabled = t.planetPass !== false;
     if (this.renderPassRingPlanets) this.renderPassRingPlanets.enabled = t.planetPass !== false;
     if (this.renderPassOrtho) this.renderPassOrtho.enabled = t.orthoPass !== false;
+    if (this.renderPassShields) this.renderPassShields.enabled = t.orthoPass !== false;
     if (this.renderPassFg) this.renderPassFg.enabled = t.fgPass !== false;
     if (this.bloomPass) this.bloomPass.enabled = t.bloom !== false;
     if (this.shadowShaftsPass) this.shadowShaftsPass.enabled = t.shadowShafts !== false;
@@ -939,6 +984,7 @@ export const Core3D = {
   enablePlanetHalo3D(object3d) { if (object3d) object3d.traverse((child) => { child.layers.set(PLANET_HALO_RENDER_LAYER); }); },
   enableRingPlanet3D(object3d) { if (object3d) object3d.traverse((child) => { child.layers.set(RING_PLANET_RENDER_LAYER); }); },
   enableForeground3D(object3d) { if (object3d) object3d.traverse((child) => { child.layers.set(2); }); },
+  enableShield3D(object3d) { if (object3d) object3d.traverse((child) => { child.layers.set(SHIELD_RENDER_LAYER); }); },
 
   isFreePerspectiveCamera(cameraData = this.activeCam1) {
     return cameraData?.mode === 'free3d' && cameraData?.position && cameraData?.quaternion;
@@ -1146,28 +1192,30 @@ export const Core3D = {
           uShafts.uCamCenter2.value.copy(uShafts.uCamCenter.value);
           uShafts.uViewWorldSize2.value.copy(uShafts.uViewWorldSize.value);
         }
-        uShafts.uDiscLenMul.value = Math.max(1, Number(shaftCfg.discLenMul) || 18);
-        uShafts.uCapsuleLenMul.value = Math.max(1, Number(shaftCfg.capsuleLenMul) || 10);
+        uShafts.uDiscLenMul.value = Math.max(1, Number(shaftCfg.discLenMul) || 5);
+        uShafts.uHullLenMul.value = Math.max(1, Number(shaftCfg.capsuleLenMul) || 3);
 
         const discCount = Math.min(this.shaftDiscCount | 0, SHAFT_DISC_CAP);
         uShafts.uDiscCount.value = discCount;
         const discVals = uShafts.uDiscs.value;
         for (let i = 0; i < discCount; i++) {
-          const base = i * 3;
-          discVals[i].set(this.shaftDiscs[base], this.shaftDiscs[base + 1], this.shaftDiscs[base + 2], 0);
+          const base = i * 4;
+          discVals[i].set(this.shaftDiscs[base], this.shaftDiscs[base + 1], this.shaftDiscs[base + 2], this.shaftDiscs[base + 3]);
         }
 
-        // Budżet kapsuł wg jakości — hexShips3D pushuje od największych
-        // kadłubów, więc obcięcie zostawia najistotniejsze cienie.
-        const capsuleBudget = Math.max(0, Math.min(Number(shaftCfg.capsuleBudget) || SHAFT_CAPSULE_CAP, SHAFT_CAPSULE_CAP));
-        const capsuleCount = Math.min(this.shaftCapsuleCount | 0, capsuleBudget);
-        uShafts.uCapsuleCount.value = capsuleCount;
-        const capSegs = uShafts.uCapsuleSeg.value;
-        const capRs = uShafts.uCapsuleR.value;
-        for (let i = 0; i < capsuleCount; i++) {
-          const base = i * 5;
-          capSegs[i].set(this.shaftCapsules[base], this.shaftCapsules[base + 1], this.shaftCapsules[base + 2], this.shaftCapsules[base + 3]);
-          capRs[i] = this.shaftCapsules[base + 4];
+        // Budżet wg jakości liczony w STATKACH (capsuleBudget), a rejestr
+        // trzyma pasma — stąd ×HULL_SHAFT_BANDS. hexShips3D pushuje od
+        // największych kadłubów, więc obcięcie zostawia najistotniejsze cienie.
+        const shipBudget = Math.max(0, Number(shaftCfg.capsuleBudget) || SHAFT_HULL_CAP);
+        const hullBudget = Math.min(shipBudget * HULL_SHAFT_BANDS, SHAFT_HULL_CAP);
+        const hullCount = Math.min(this.shaftHullCount | 0, hullBudget);
+        uShafts.uHullCount.value = hullCount;
+        const hullVals = uShafts.uHulls.value;
+        const hullMeta = uShafts.uHullMeta.value;
+        for (let i = 0; i < hullCount; i++) {
+          const base = i * 6;
+          hullVals[i].set(this.shaftHulls[base], this.shaftHulls[base + 1], this.shaftHulls[base + 2], this.shaftHulls[base + 3]);
+          hullMeta[i].set(this.shaftHulls[base + 4], this.shaftHulls[base + 5], 0, 0);
         }
 
         let ringCount = 0;
@@ -1241,6 +1289,7 @@ export const Core3D = {
         const layers = [];
         if (t.bgPass !== false) layers.push({ layer: 1, ortho: false });
         if (t.orthoPass !== false) layers.push({ layer: 0, ortho: true });
+        if (t.orthoPass !== false) layers.push({ layer: SHIELD_RENDER_LAYER, ortho: true });
 
         const renderRefractionViewport = (camData, vpX, vpY, vpW, vpH) => {
           this.renderer.setViewport(vpX, vpY, vpW, vpH);
@@ -1331,6 +1380,7 @@ export const Core3D = {
     if (t.planetPass !== false) layers.push({ layer: PLANET_RENDER_LAYER, ortho: false });
     if (t.planetPass !== false) layers.push({ layer: RING_PLANET_RENDER_LAYER, ortho: true });
     layers.push({ layer: 0, ortho: true }); // ortho always
+    layers.push({ layer: SHIELD_RENDER_LAYER, ortho: true });
     if (t.fgPass !== false) layers.push({ layer: 2, ortho: false });
 
     const renderLayers = (camData, vpX, vpY, vpW, vpH) => {
@@ -1403,23 +1453,26 @@ export const Core3D = {
 
   beginShaftDiscFrame() { this.shaftDiscCount = 0; },
 
-  beginShaftCapsuleFrame() { this.shaftCapsuleCount = 0; },
+  beginShaftHullFrame() { this.shaftHullCount = 0; },
 
-  // Kadłub statku jako analityczna kapsuła (odcinek [x1,y1]-[x2,y2] + promień,
-  // współrzędne GRY, y w dół). Zgłaszane co klatkę z hexShips3D — selekcja
-  // największych kadłubów, budżet tnie render() wg jakości.
-  pushShaftCapsuleWorld(x1, y1, x2, y2, radius) {
+  // Pasmo kadłuba jako analityczna kapsuła (odcinek [x1,y1]-[x2,y2] +
+  // promień, współrzędne GRY, y w dół), span = długość całego kadłuba
+  // (zasięg smugi, wspólny dla pasm jednego statku). hexShips3D liczy pasma
+  // z heksów raz na kadłub i pushuje co klatkę — selekcja od największych
+  // statków, budżet tnie render() wg jakości.
+  pushShaftHullWorld(x1, y1, x2, y2, radius, span) {
     const r = Number(radius) || 0;
-    if (!(r > 0) || !this.shaftCapsules) return false;
-    const i = this.shaftCapsuleCount | 0;
-    if (i >= SHAFT_CAPSULE_CAP) return false;
-    const base = i * 5;
-    this.shaftCapsules[base] = Number(x1) || 0;
-    this.shaftCapsules[base + 1] = -(Number(y1) || 0);
-    this.shaftCapsules[base + 2] = Number(x2) || 0;
-    this.shaftCapsules[base + 3] = -(Number(y2) || 0);
-    this.shaftCapsules[base + 4] = r;
-    this.shaftCapsuleCount = i + 1;
+    if (!(r > 0) || !this.shaftHulls) return false;
+    const i = this.shaftHullCount | 0;
+    if (i >= SHAFT_HULL_CAP) return false;
+    const base = i * 6;
+    this.shaftHulls[base] = Number(x1) || 0;
+    this.shaftHulls[base + 1] = -(Number(y1) || 0);
+    this.shaftHulls[base + 2] = Number(x2) || 0;
+    this.shaftHulls[base + 3] = -(Number(y2) || 0);
+    this.shaftHulls[base + 4] = r;
+    this.shaftHulls[base + 5] = Math.max(1, Number(span) || (r * 4));
+    this.shaftHullCount = i + 1;
     return true;
   },
 
@@ -1441,16 +1494,19 @@ export const Core3D = {
 
   // Tarcza planety/księżyca (współrzędne GRY, y w dół) jako analityczny
   // okluder shaftów — zgłaszana co klatkę, także gdy ciało jest poza ekranem
-  // (cień musi istnieć niezależnie od kadru i zoomu).
-  pushShaftDiscWorld(worldX, worldY, radius) {
+  // (cień musi istnieć niezależnie od kadru i zoomu). strength < 1 dla ciał,
+  // które mają tylko przygaszać scenę zamiast robić umbrę (asteroidy).
+  pushShaftDiscWorld(worldX, worldY, radius, strength = 1) {
     const r = Number(radius) || 0;
     if (!(r > 0) || !this.shaftDiscs) return false;
     const i = this.shaftDiscCount | 0;
     if (i >= SHAFT_DISC_CAP) return false;
-    const base = i * 3;
+    const base = i * 4;
     this.shaftDiscs[base] = Number(worldX) || 0;
     this.shaftDiscs[base + 1] = -(Number(worldY) || 0);
     this.shaftDiscs[base + 2] = r;
+    const s = Number(strength);
+    this.shaftDiscs[base + 3] = Number.isFinite(s) ? Math.max(0, Math.min(1, s)) : 1;
     this.shaftDiscCount = i + 1;
     return true;
   },

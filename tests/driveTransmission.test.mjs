@@ -7,6 +7,7 @@ import {
   TRAVEL_SHIFT_RPM,
   applyDriveSpeedGovernor,
   createDriveTransmission,
+  cycleDriveMode,
   setDriveMode,
   setDriveHullClass,
   shiftDriveUp,
@@ -27,12 +28,12 @@ test('drive modes expose the requested speed envelopes', () => {
   assert.ok(DRIVE_MODES.travel.gears.length > 5);
 });
 
-test('hull classes scale speed and handling from nimble frigates to heavy capitals', () => {
+test('hull classes scale handling while Atlas keeps its classic combat envelope', () => {
   const hulls = ['frigate', 'destroyer', 'battleship', 'carrier', 'atlas'];
   const combat = hulls.map(hullClass => createDriveTransmission({ mode: 'combat', hullClass }));
   const maneuver = hulls.map(hullClass => createDriveTransmission({ mode: 'maneuver', hullClass }));
 
-  assert.deepEqual(combat.map(drive => drive.modeMaxSpeed), [4800, 4200, 3600, 3000, 3000]);
+  assert.deepEqual(combat.map(drive => drive.modeMaxSpeed), [4800, 4200, 3600, 3000, 10000]);
   assert.deepEqual(maneuver.map(drive => drive.modeMaxSpeed), [900, 700, 520, 400, 400]);
   assert.ok(combat[0].mainForceScale > combat[1].mainForceScale);
   assert.ok(combat[1].mainForceScale > combat[2].mainForceScale);
@@ -41,17 +42,53 @@ test('hull classes scale speed and handling from nimble frigates to heavy capita
 
   setDriveHullClass(combat[0], 'atlas');
   assert.equal(combat[0].hullClass, 'supercapital');
-  assert.equal(combat[0].modeMaxSpeed, 3000);
+  assert.equal(combat[0].modeMaxSpeed, 10000);
 });
 
 test('megafreighter has stronger train steering than a passive supercapital profile', () => {
-  const train = createDriveTransmission({ mode: 'combat', hullClass: 'megafreighter' });
-  const capital = createDriveTransmission({ mode: 'combat', hullClass: 'atlas' });
+  const train = createDriveTransmission({ mode: 'maneuver', hullClass: 'megafreighter' });
+  const capital = createDriveTransmission({ mode: 'maneuver', hullClass: 'atlas' });
 
   assert.equal(train.hullClass, 'megafreighter');
   assert.ok(train.sideForceScale > capital.sideForceScale);
   assert.ok(train.turnAccelerationScale > capital.turnAccelerationScale);
   assert.ok(train.maxTurnSpeedScale > capital.maxTurnSpeedScale);
+});
+
+test('Atlas exposes only combat and maneuver modes', () => {
+  const drive = createDriveTransmission({ hullClass: 'atlas' });
+
+  assert.equal(drive.mode, 'combat');
+  assert.equal(drive.modeMaxSpeed, 10000);
+  assert.deepEqual(drive.availableModes, ['combat', 'maneuver']);
+  assert.equal(setDriveMode(drive, 'travel'), false);
+  assert.equal(drive.mode, 'combat');
+  assert.equal(cycleDriveMode(drive), 'maneuver');
+  assert.equal(cycleDriveMode(drive), 'combat');
+});
+
+test('Bertha megafreighter defaults to automatic travel and has no combat drive', () => {
+  const drive = createDriveTransmission({ hullClass: 'bertha' });
+
+  assert.equal(drive.hullId, 'megafreighter');
+  assert.equal(drive.mode, 'travel');
+  assert.equal(drive.auto, true);
+  assert.deepEqual(drive.availableModes, ['travel', 'maneuver']);
+  assert.equal(setDriveMode(drive, 'combat'), false);
+  assert.equal(cycleDriveMode(drive), 'maneuver');
+  assert.equal(cycleDriveMode(drive), 'travel');
+});
+
+test('switching between Atlas and megafreighter replaces an unavailable drive mode', () => {
+  const drive = createDriveTransmission({ hullClass: 'atlas' });
+
+  setDriveHullClass(drive, 'megafreighter');
+  assert.equal(drive.mode, 'travel');
+  assert.equal(drive.auto, true);
+
+  setDriveHullClass(drive, 'atlas');
+  assert.equal(drive.mode, 'combat');
+  assert.equal(drive.auto, false);
 });
 
 test('well-timed manual upshift gives a temporary boost', () => {

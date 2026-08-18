@@ -5,6 +5,7 @@
 
 import { DestructorGpuSoftBody } from './destructorGpuSoftBody.js';
 import { areTowBodiesCollisionDisabled } from './towSystem.js';
+import { transferSalvageToWreck, clearSalvage } from './salvage.js';
 import { getEntityShieldBlockingRadius, getEntityShieldBlockingRadiusTowards } from '../../shieldSystem.js';
 import {
   attachHexGridToArena,
@@ -40,61 +41,31 @@ export const DESTRUCTOR_CONFIG = {
   elasticSleepVelocityThreshold: 0.03, //
   elasticSleepSnapThreshold: 0.04, //
   elasticWakeFrames: 20,       // Force-awake po uderzeniu (zapobiega przedwczesnemu zasypianiu)
-  restitution: 0.05, //
-  crashApproachSpeedThreshold: 200.0, //
-  crushPenetrationMin: 0.30,          // Min. penetracja do startu crush
-  rammingCrushSpeedThreshold: 35.0,   // Low-speed heavy ramming can crush on direct impact
-  rammingCrushMassRatio: 2.5,         // Mass dominance needed for penetration-based crush
-  rammingCrushScale: 0.70,            // Softer than crash crush, but not harmless
-  rammingDamageCapMin: 0.08,          // Base per-shard HP cap for steel
-  rammingDamageCapMax: 1.40,          // Heavy ram upper cap for steel
-  rammingDamageCapLogScale: 0.16,     // Cap growth per log2(mass advantage)
-  rammingOverrunMassRatio: 8.0,       // At this dominance, small ships get overrun instead of pushed
-  rammingOverrunImpulseScale: 0.18,   // Less bounce/push, more crush
-  rammingOverrunSeparationPercent: 0.16,
-  rammingOverrunDamageMin: 1.05,      // Minimum shardHP fraction on overrun contacts
-  rammingOverrunDamageMult: 1.75,
-  rammingOverrunMaxContacts: 64,
-  hardWallCrashSpeedThreshold: 150.0, // Fast impact vs ring/mass wall absorbs velocity into crush
-  hardWallCrashMassRatio: 2.5,
-  hardWallCrashImpulseScale: 0.08,
-  hardWallCrashNormalKeep: 0.04,
-  hardWallCrashTangentKeep: 0.55,
-  hardWallCrashCrushMult: 1.35,
-  hardWallCrashDamageMin: 1.15,
-  hardWallCrashDamageMult: 2.35,
-  crashStampRadiusMin: 72,
-  crashStampRadiusMax: 320,
-  crashStampFrameSpeedScale: 0.36,
-  crashStampMaxShards: 384,
-  crashStampDamageMult: 1.20,
-  crashStampSteelDamageFrac: 0.18,
-  crashStampSteelDeformScale: 0.32,
-  crashContactSteelDamageFrac: 0.28,
-  overrunTargetVelocityKeep: 0.12,
-  crushImpulseScale: 0.90, //
+  // === MODEL ZDERZEŃ ===
+  // Jedna reguła na każdą prędkość: impuls z restytucji, deformacja wprost z impulsu,
+  // obrażenia z energii kinetycznej. Żadnych progów prędkości ani przewagi masy —
+  // ciężej i szybciej znaczy tylko WIĘCEJ tego samego, nie inny tryb.
+  restitution: 0.05,                  // sprężystość odbicia (0 = zderzenie idealnie plastyczne)
+  frictionCoeff: 0.5,                 // µ — sufit impulsu stycznego względem normalnego
+  tangentImpulseScale: 0.8,           // ile impulsu stycznego faktycznie trafia w ciała
+  separationPercent: 0.9,             // ułamek korekty penetracji (pełna przy ścianie/głębokim zanurzeniu)
+  crushMinSpeed: 12.0,                // podłoga WYDAJNOŚCIOWA: poniżej tej prędkości zbliżania
+  //                                     wgniecenie byłoby subpikselowe — pomijamy pętlę kontaktów
+  crushImpulseScale: 0.25,            // prędkość zbliżania → energia zgniotu
+  //                                     (przy 0.25 pasmo 0-230 u/s rozdziela się na
+  //                                     realne głębokości; wyżej materiał jest wysycony)
+  crushDeformScale: 1.0,              // energia zgniotu → deformacja heksów
+  contactDamageScale: 0.18,           // deformacja → obrażenia heksa
+  contactDamageCapFrac: 1.5,          // BEZPIECZNIK obrażeń heksa na tick (× jego HP).
+  //                                     Nie jest regulatorem siły: przy 0.25 prędkość
+  //                                     przestawała mieć znaczenie dla zniszczeń, bo
+  //                                     sufit wiązał zawsze. Ma ciąć tylko wystrzały
+  //                                     numeryczne — resztę robi energia uderzenia.
   shearK: 0.06, //
 
-  // Hull bend ("banan") — globalne gięcie kadłuba przez przesunięcie SIATKI SPOCZYNKOWEJ
-  // (origGridX/gridX/_pristineX), nie deformację na wierzchu. Sprężyny GPU zostają
-  // rozluźnione na wygiętym kręgosłupie → nie prostują banana i nie rwą.
-  hullBendEnabled: 1,
-  hullBendGain: 0.0006,          // przyrost krzywizny na jednostkę prędkości zbliżania
-  hullBendMax: 0.5,              // maks. krzywizna (rad na końcu kadłuba)
-  hullBendRate: 0.15,            // rad/s — tempo wyginania banana (niżej = wolniej, płynniej)
-  hullBendExp: 1.3,              // wykładnik rampy wzdłuż osi — końce gną się mocniej
-  hullBendMinShards: 200,        // tylko większe kadłuby wyginają się w banana
-  hullBendMinPenetration: 0.25,  // wymagana penetracja do startu gięcia (× HIT_RAD)
-  hullBendSplitCurvature: 0.34,  // powyżej tej krzywizny pozwól na rozłam na wraki
-  hullBendWreckSpin: 0.6,        // ile krzywizny dziedziczą połówki jako rotacja
-  hullBendDirSign: 1,            // +1/-1 — strona wyginania (odwróć, gdy gnie w złą stronę)
-  hullRecoverEnabled: 1,         // NPC bez rozłamu (nie-locked) same prostują banan po walce
-  hullRecoverDelay: 2.5,         // s od ostatniej deformacji, zanim NPC zacznie się prostować
-  hullRecoverRate: 0.22,         // rad/s — tempo prostowania (osobne od tempa wyginania)
-
-  // Sprzężenie przekroju — wciśnięcie jednej ściany wypycha przeciwległą (dół→góra)
-  sectionCoupleEnabled: 1,
-  sectionCoupleGain: 0.45,       // α: ile wypchnięcia na jednostkę wciśnięcia
+  // Próg "szybkiej pary" — WYŁĄCZNIE wydajność: powyżej niego druga iteracja kolizji
+  // jest pomijana, a budżet kontaktów przechodzi w tryb otarcia. Nie zmienia fizyki.
+  fastPairSpeedThreshold: 200.0,
 
   collisionDeformScale: 1.15, //
   collisionSearchRadius: 5, //
@@ -107,8 +78,8 @@ export const DESTRUCTOR_CONFIG = {
   splitCheckInterval: 12, //
   splitMaxPerTick: 1, //
   splitTimeBudgetMs: 1.2, //
-  splitCrashDeferTicks: 8, //
-  splitCrashSpeedThreshold: 140, //
+  splitDeferTicks: 8, //
+  splitDeferSpeedThreshold: 140, //
 
   gpuSoftBody: 1, //
   gpuSoftBodyMinShards: 64, //
@@ -439,372 +410,6 @@ function clampCrushVector(fx, fy, ratio, mag, maxCrushLimit, out) {
   }
 }
 
-function getRammingDamageCap(shardHp, attackerMassAdvantage) {
-  const hp = Math.max(1, Number(shardHp) || 1);
-  const minFrac = Math.max(0.01, Number(DESTRUCTOR_CONFIG.rammingDamageCapMin) || 0.08);
-  const maxFrac = Math.max(minFrac, Number(DESTRUCTOR_CONFIG.rammingDamageCapMax) || 1.40);
-  const logScale = Math.max(0, Number(DESTRUCTOR_CONFIG.rammingDamageCapLogScale) || 0.16);
-  const advantage = Math.max(1, Number(attackerMassAdvantage) || 1);
-  const frac = Math.min(maxFrac, minFrac + Math.log2(advantage) * logScale);
-  return hp * frac;
-}
-
-function applyCrashStampDamage(system, entity, worldX, worldY, radiusWorld, damagePerShard, maxShards, forceWorldX = 0, forceWorldY = 0) {
-  const grid = entity?.hexGrid;
-  if (!system || !grid?.grid || !Array.isArray(grid.shards)) return 0;
-
-  const radius = Math.max(1, Number(radiusWorld) || 1);
-  const damage = Math.max(0, Number(damagePerShard) || 0);
-  const maxCount = Math.max(1, Number(maxShards) | 0);
-  if (damage <= 0 || maxCount <= 0) return 0;
-
-  const scaleX = Math.max(0.0001, getFinalScaleX(entity));
-  const scaleY = Math.max(0.0001, getFinalScaleY(entity));
-  const angle = getEntityHexAngle(entity);
-  const c = Math.cos(angle);
-  const s = Math.sin(angle);
-  const dx = worldX - getEntityPosX(entity);
-  const dy = worldY - getEntityPosY(entity);
-  const billboardOrientation = usesBillboardOrientation(entity);
-  const cx = grid.srcWidth * 0.5;
-  const cy = grid.srcHeight * 0.5;
-  const pX = grid.pivot ? grid.pivot.x : 0;
-  const pY = grid.pivot ? grid.pivot.y : 0;
-  const localX = worldDeltaToLocalX(dx, dy, scaleX, scaleY, c, s, billboardOrientation) + cx + pX;
-  const localY = worldDeltaToLocalY(dx, dy, scaleX, scaleY, c, s, billboardOrientation) + cy + pY;
-  const localRadius = radius / Math.min(scaleX, scaleY);
-  const cols = grid.cols | 0;
-  const rows = grid.rows | 0;
-  if (cols <= 0 || rows <= 0) return 0;
-
-  // Okno enumeracji komórek liczone we współrzędnych KRATOWNICY (inverse gięcia);
-  // test promienia w pętli zostaje na pozycjach fizycznych (localX/localY).
-  let winX = localX;
-  let winY = localY;
-  if (entityHasActiveBend(entity)) {
-    const lat = bendGridToLattice(entity, localX, localY);
-    winX = lat.x;
-    winY = lat.y;
-  }
-  const c0 = Math.max(0, Math.floor((winX - localRadius) / HEX_SPACING) - 2);
-  const c1 = Math.min(cols - 1, Math.ceil((winX + localRadius) / HEX_SPACING) + 2);
-  const r0 = Math.max(0, Math.floor((winY - localRadius) / HEX_HEIGHT) - 2);
-  const r1 = Math.min(rows - 1, Math.ceil((winY + localRadius) / HEX_HEIGHT) + 2);
-  const radiusSq = radius * radius;
-  const invRadius = 1 / radius;
-  const brittle = isBrittleEntity(entity);
-  const forceLen = Math.hypot(forceWorldX, forceWorldY) || 1;
-  const dirX = forceWorldX / forceLen;
-  const dirY = forceWorldY / forceLen;
-  const deformScale = Math.max(0.02, Number(DESTRUCTOR_CONFIG.crashStampSteelDeformScale) || 0.32);
-  const deformBase = Math.min(
-    (DESTRUCTOR_CONFIG.maxDeform || 100) * 0.85,
-    Math.max(10, radius * deformScale)
-  );
-  const steelDamageFrac = Math.max(0, Number(DESTRUCTOR_CONFIG.crashStampSteelDamageFrac) || 0.18);
-  let destroyed = 0;
-  let dirtyMin = Number.POSITIVE_INFINITY;
-  let dirtyMax = -1;
-  const vel = system._crashStampVel || (system._crashStampVel = { x: 0, y: 0 });
-  vel.x = getEntityVelX(entity);
-  vel.y = getEntityVelY(entity);
-
-  let stamp = (system._crashStampCounter + 1) | 0;
-  if (stamp <= 0) stamp = 1;
-  system._crashStampCounter = stamp;
-
-  for (let rr = r0; rr <= r1; rr++) {
-    const rowBase = rr * cols;
-    for (let cc = c0; cc <= c1; cc++) {
-      const shard = grid.grid[rowBase + cc];
-      if (!shard || !shard.active || shard.isDebris || shard._crashStamp === stamp) continue;
-      shard._crashStamp = stamp;
-
-      const sx = getShardCollisionGridX(shard);
-      const sy = getShardCollisionGridY(shard);
-      const wx = (sx - localX) * scaleX;
-      const wy = (sy - localY) * scaleY;
-      const d2 = wx * wx + wy * wy;
-      if (d2 > radiusSq) continue;
-
-      const dist = Math.sqrt(d2);
-      const factor = Math.max(0, 1 - dist * invRadius);
-      const influence = 0.35 + factor * 0.65;
-
-      if (brittle) {
-        shard.hp -= damage * (0.85 + factor * 0.30);
-      } else {
-        const pushWorldX = dirX * deformBase * influence;
-        const pushWorldY = dirY * deformBase * influence;
-        const pushLocalX = (pushWorldX * c + pushWorldY * s) / scaleX;
-        const pushLocalY = (-pushWorldX * s + pushWorldY * c) / scaleY;
-        shard.applyDeformation(pushLocalX, pushLocalY, 1.0, true);
-
-        const maxCrushLimit = DESTRUCTOR_CONFIG.maxDeform || 100;
-        const hardLimitSq = maxCrushLimit * maxCrushLimit * 1.5;
-        const defSq = shard.targetDeformation.x * shard.targetDeformation.x + shard.targetDeformation.y * shard.targetDeformation.y;
-        if (defSq > hardLimitSq) {
-          const defScale = Math.sqrt(hardLimitSq / defSq);
-          shard.targetDeformation.x *= defScale;
-          shard.targetDeformation.y *= defScale;
-          shard.deformation.x *= defScale;
-          shard.deformation.y *= defScale;
-        }
-
-        const shardHp = Math.max(1, Number(shard.maxHp) || DESTRUCTOR_CONFIG.shardHP);
-        const steelDamageCap = shardHp * Math.max(0.02, steelDamageFrac);
-        shard.hp -= Math.min(steelDamageCap, damage * steelDamageFrac * (0.55 + factor * 0.45));
-      }
-
-      const idx = Number(shard.__meshIndex);
-      if (Number.isFinite(idx)) {
-        if (idx < dirtyMin) dirtyMin = idx;
-        if (idx > dirtyMax) dirtyMax = idx;
-      } else {
-        dirtyMin = 0;
-        dirtyMax = grid.shards.length - 1;
-      }
-
-      if (shard.hp <= 0) {
-        system.destroyShard(entity, shard, vel);
-        destroyed++;
-        if (destroyed >= maxCount) {
-          if (dirtyMax >= 0 && Number.isFinite(dirtyMin)) markGridMeshDirtyRange(grid, dirtyMin, dirtyMax);
-          if (!entity.noSplit && system.splitQueue.indexOf(entity) === -1) system.splitQueue.push(entity);
-          return destroyed;
-        }
-      }
-    }
-  }
-
-  if (dirtyMax >= 0 && Number.isFinite(dirtyMin)) markGridMeshDirtyRange(grid, dirtyMin, dirtyMax);
-  if (destroyed > 0 && !entity.noSplit && system.splitQueue.indexOf(entity) === -1) system.splitQueue.push(entity);
-  return destroyed;
-}
-
-// ===================== HULL BEND ("banan") =====================
-// Globalny tryb gięcia kadłuba. Zamiast deformować heksy NA WIERZCHU (co kratownica
-// GPU natychmiast prostuje i rwie), przesuwamy SIATKĘ SPOCZYNKOWĄ każdego shardu
-// (origGridX/gridX/_pristineX) po polu obrotu wokół zawiasu w punkcie zgniotu.
-// Sprężyny liczą restLength z przesuniętego pristine → są rozluźnione na wygiętym
-// kręgosłupie, nie walczą z bananem i nie rwą. Lokalny crumple jedzie na wierzchu.
-
-function captureHullBendBase(shards) {
-  for (let i = 0; i < shards.length; i++) {
-    const s = shards[i];
-    if (!s) continue;
-    if (s._bendBaseX === undefined) {
-      s._bendBaseX = s.origGridX;
-      s._bendBaseY = s.origGridY;
-    }
-  }
-}
-
-// Rekonstruuje wygiętą siatkę spoczynkową z bazy (_bendBaseX/Y) wg entity._hullBend.
-// Idempotentne: przy niezmienionej krzywiźnie dOrig=0 → no-op.
-function applyHullBendField(entity) {
-  const bend = entity?._hullBend;
-  const grid = entity?.hexGrid;
-  if (!bend || !grid?.shards) return;
-  const shards = grid.shards;
-  captureHullBendBase(shards);
-
-  const hingeX = bend.hingeX;
-  const hingeY = bend.hingeY;
-  const halfLen = Math.max(1, bend.halfLen);
-  const curvature = bend.curvature; // signed
-  const exp = Math.max(0.2, Number(DESTRUCTOR_CONFIG.hullBendExp) || 1.3);
-  const invHalf = 1 / halfLen;
-  let changed = false;
-
-  for (let i = 0; i < shards.length; i++) {
-    const s = shards[i];
-    if (!s) continue;
-    const bx = s._bendBaseX;
-    const by = s._bendBaseY;
-    const along = bx - hingeX;
-    const t = Math.min(1, Math.abs(along) * invHalf);
-    const theta = curvature * Math.sign(along || 1) * Math.pow(t, exp);
-
-    let newOrigX, newOrigY;
-    if (theta === 0) {
-      newOrigX = bx;
-      newOrigY = by;
-    } else {
-      const c = Math.cos(theta);
-      const sn = Math.sin(theta);
-      const dx = bx - hingeX;
-      const dy = by - hingeY;
-      newOrigX = hingeX + dx * c - dy * sn;
-      newOrigY = hingeY + dx * sn + dy * c;
-    }
-
-    const dOrigX = newOrigX - s.origGridX;
-    const dOrigY = newOrigY - s.origGridY;
-    if (dOrigX !== 0 || dOrigY !== 0) {
-      s.origGridX = newOrigX;
-      s.origGridY = newOrigY;
-      s.gridX += dOrigX; // przesuwamy pozycję o tę samą deltę → zachowujemy baked dent
-      s.gridY += dOrigY;
-      s._pristineX = newOrigX; // GPU rest = wygięty kręgosłup
-      s._pristineY = newOrigY;
-      changed = true;
-    }
-  }
-
-  bend.appliedCurvature = curvature;
-  if (!changed) return;
-
-  // Promień rośnie z krzywizną — inaczej broadphase/bramka pocisków (radius-gate)
-  // obcina kontakty na wygiętych końcówkach kadłuba.
-  if (entity._bendRadiusBase === undefined) entity._bendRadiusBase = Number(entity.radius) || 0;
-  const bendScale = Math.max(getFinalScaleX(entity), getFinalScaleY(entity));
-  entity.radius = entity._bendRadiusBase + halfLen * Math.abs(curvature) * 0.6 * bendScale;
-
-  // Odrzuć readbacki GPU liczone na starym (prostszym) kręgosłupie — inaczej soft body
-  // "walczy" z bananem stale danymi i szarpie deformacją.
-  const lastStampCurv = Number(entity._bendStampCurv) || 0;
-  if (Math.abs(curvature - lastStampCurv) > 0.02) {
-    entity._gpuRepairStamp = ((Number(entity._gpuRepairStamp) || 0) + 1) | 0;
-    entity._bendStampCurv = curvature;
-  }
-
-  markGridMeshDirtyAll(grid);
-  grid.isSleeping = false;
-  grid.sleepFrames = 0;
-  grid.wakeHoldFrames = Math.max(Number(grid.wakeHoldFrames) || 0, DESTRUCTOR_CONFIG.elasticWakeFrames | 0);
-  entity._gpuForceAwakeFrames = Math.max(Number(entity._gpuForceAwakeFrames) || 0, 20);
-  if (!HEX_SHIPS_3D_ACTIVE) {
-    grid.textureDirty = true;
-    grid.cacheDirty = true;
-  }
-}
-
-// Odwrotność pola gięcia: fizyczny punkt w przestrzeni gridu → współrzędne KRATOWNICY
-// (sprzed gięcia). Konieczne, bo lookup heksów indeksuje po (c,r) = pozycji spoczynkowej
-// sprzed banana; po zgięciu shard leży setki px od swojej komórki. 3 iteracje punktu
-// stałego wystarczają (θ zmienia się wolno wzdłuż osi).
-const _bendLatticeScratch = { x: 0, y: 0 };
-function bendGridToLattice(entity, gridPX, gridPY) {
-  const out = _bendLatticeScratch;
-  out.x = gridPX;
-  out.y = gridPY;
-  const bend = entity?._hullBend;
-  if (!bend) return out;
-  const curv = Number(bend.appliedCurvature) || 0;
-  if (Math.abs(curv) < 1e-4) return out;
-
-  const exp = Math.max(0.2, Number(DESTRUCTOR_CONFIG.hullBendExp) || 1.3);
-  const hx = bend.hingeX;
-  const hy = bend.hingeY;
-  const invHalf = 1 / Math.max(1, bend.halfLen);
-  const dx = gridPX - hx;
-  const dy = gridPY - hy;
-  let bx = gridPX;
-
-  for (let it = 0; it < 3; it++) {
-    const along = bx - hx;
-    const t = Math.min(1, Math.abs(along) * invHalf);
-    const theta = curv * Math.sign(along || 1) * Math.pow(t, exp);
-    const c = Math.cos(-theta);
-    const sn = Math.sin(-theta);
-    bx = hx + dx * c - dy * sn;
-    out.y = hy + dx * sn + dy * c;
-  }
-  out.x = bx;
-  return out;
-}
-
-function entityHasActiveBend(entity) {
-  const bend = entity?._hullBend;
-  return !!bend && Math.abs(Number(bend.appliedCurvature) || 0) > 1e-4;
-}
-
-// Dokłada krzywiznę do celu. Zawias i kierunek ZATRZASKUJEMY raz (przy 1. zgniocie),
-// potem tylko pogłębiamy — inaczej drgająca normalna kontaktu co klatkę przesuwa zawias
-// i przełącza znak, przez co banan "szaleje" zamiast wygiąć się raz, płynnie.
-function accumulateHullBend(entity, worldHitX, worldHitY, worldDirX, worldDirY, amount) {
-  if ((DESTRUCTOR_CONFIG.hullBendEnabled | 0) !== 1) return;
-  const grid = entity?.hexGrid;
-  if (!grid?.shards || entity.isRingSegment) return;
-
-  const maxCurv = Math.max(0.05, Number(DESTRUCTOR_CONFIG.hullBendMax) || 0.5);
-  const add = Math.max(0, Number(amount) || 0);
-  const bend = entity._hullBend;
-
-  // Już ZATRZAŚNIĘTE: tylko pogłębiaj w ustalonym kierunku (monotonicznie).
-  // Bez ruszania zawiasu i bez przełączania znaku.
-  // locked = po rozłamie; kadłub już pękł, resztki nie kręcą się dalej wokół starego zawiasu.
-  if (bend) {
-    if (bend.locked) return;
-    const targetMag = Math.min(maxCurv, Math.abs(bend.targetCurvature) + add);
-    bend.targetCurvature = targetMag * bend.sign;
-    return;
-  }
-
-  const w = Number(grid.srcWidth) || 0;
-  const h = Number(grid.srcHeight) || 0;
-  if (w < h * 1.2) return; // tylko wydłużone kadłuby (długa oś = grid X)
-  if (grid.shards.length < Math.max(1, Number(DESTRUCTOR_CONFIG.hullBendMinShards) || 200)) return;
-
-  // LATCH: liczymy zawias i kierunek jeden raz.
-  const scaleX = Math.max(0.0001, getFinalScaleX(entity));
-  const scaleY = Math.max(0.0001, getFinalScaleY(entity));
-  const angle = getEntityHexAngle(entity);
-  const c = Math.cos(angle);
-  const s = Math.sin(angle);
-  const billboard = usesBillboardOrientation(entity);
-  const dx = worldHitX - getEntityPosX(entity);
-  const dy = worldHitY - getEntityPosY(entity);
-  const localX = worldDeltaToLocalX(dx, dy, scaleX, scaleY, c, s, billboard);
-  const localY = worldDeltaToLocalY(dx, dy, scaleX, scaleY, c, s, billboard);
-  const pX = grid.pivot ? grid.pivot.x : 0;
-  const pY = grid.pivot ? grid.pivot.y : 0;
-
-  // kierunek pchnięcia w lokalnej osi Y decyduje o znaku. Relacja odwrócona, by ram
-  // od dołu dawał wybrzuszenie DO GÓRY (łuk ∩), nie U. hullBendDirSign — override ±.
-  const dirLocalY = worldDeltaToLocalY(worldDirX, worldDirY, scaleX, scaleY, c, s, billboard);
-  const dirSign = (Number(DESTRUCTOR_CONFIG.hullBendDirSign) < 0) ? -1 : 1;
-  const sign = (dirLocalY >= 0 ? -1 : 1) * dirSign;
-
-  entity._hullBend = {
-    hingeX: localX + w * 0.5 + pX,
-    hingeY: h * 0.5 + pY, // zawias na KRĘGOSŁUPIE (środek krótkiej osi) → symetryczny łuk, nie obrót o krawędź trafienia
-    halfLen: w * 0.5,
-    sign,
-    curvature: 0,
-    targetCurvature: Math.min(maxCurv, add) * sign,
-    appliedCurvature: 0
-  };
-}
-
-// ===================== SPRZĘŻENIE PRZEKROJU (dół→góra) =====================
-// Ekstrema kolumn (żeber) w poprzek krótkiej osi. Lazy, cache'owane per grid;
-// przebudowa tylko gdy zmieni się tablica shardów (np. po splicie).
-function ensureColumnExtents(grid) {
-  if (!grid?.shards) return null;
-  if (grid._colExtent && grid._colExtentShardsRef === grid.shards) return grid._colExtent;
-  const cols = Math.max(1, grid.cols | 0);
-  const ext = new Array(cols);
-  const shards = grid.shards;
-  for (let i = 0; i < shards.length; i++) {
-    const s = shards[i];
-    if (!s || !s.active || s.isDebris) continue;
-    const c = s.c | 0;
-    if (c < 0 || c >= cols) continue;
-    const e = ext[c];
-    if (!e) {
-      ext[c] = { minShard: s, maxShard: s, minR: s.r, maxR: s.r };
-    } else {
-      if (s.r < e.minR) { e.minR = s.r; e.minShard = s; }
-      if (s.r > e.maxR) { e.maxR = s.r; e.maxShard = s; }
-    }
-  }
-  grid._colExtent = ext;
-  grid._colExtentShardsRef = shards;
-  return ext;
-}
-
 let HEX_SHIPS_3D_ACTIVE = false;
 
 export function setHexShips3DActive(active) {
@@ -1086,12 +691,7 @@ function refreshEntityObb(entity, tick) {
   obb.vy = localDeltaToWorldY(0, 1, scaleX, scaleY, c, s, billboardOrientation) / scaleY;
 
   // Zapas na deformacje shardów (collision pos = gridX + deformation*cds) i hitRadius.
-  let pad = ((Number(DESTRUCTOR_CONFIG.maxDeform) || 100) * Math.max(1, Number(DESTRUCTOR_CONFIG.collisionDeformScale) || 1)) + HEX_SPACING * 4;
-  // Banan wygina końcówki poza prostokąt sprite'a — poszerz OBB o strzałkę łuku.
-  const bendPadSrc = entity._hullBend;
-  if (bendPadSrc) {
-    pad += Math.max(0, Number(bendPadSrc.halfLen) || 0) * Math.min(1.2, Math.abs(Number(bendPadSrc.appliedCurvature) || 0));
-  }
+  const pad = ((Number(DESTRUCTOR_CONFIG.maxDeform) || 100) * Math.max(1, Number(DESTRUCTOR_CONFIG.collisionDeformScale) || 1)) + HEX_SPACING * 4;
   obb.eu = (w * 0.5 + pad) * scaleX;
   obb.ev = (h * 0.5 + pad) * scaleY;
   obb.valid = true;
@@ -1184,54 +784,6 @@ function setEntityVelocity(entity, vx, vy) {
 
 function addEntityVelocity(entity, dvx, dvy) {
   setEntityVelocity(entity, getEntityVelX(entity) + dvx, getEntityVelY(entity) + dvy);
-}
-
-function dampEntityAgainstHardWall(entity, wallEntity, nx, ny, tx, ty, normalKeep, tangentKeep, movingSign) {
-  if (!entity || !wallEntity) return;
-
-  const evx = getEntityVelX(entity);
-  const evy = getEntityVelY(entity);
-  const wvx = getEntityVelX(wallEntity);
-  const wvy = getEntityVelY(wallEntity);
-  const relN = (evx - wvx) * nx + (evy - wvy) * ny;
-  const movingIntoWall = movingSign < 0 ? relN < 0 : relN > 0;
-  if (!movingIntoWall) return;
-
-  const keepN = Math.max(0, Math.min(1, Number(normalKeep) || 0));
-  const deltaN = (relN * keepN) - relN;
-  if (Math.abs(deltaN) > 1e-6) {
-    addEntityVelocity(entity, deltaN * nx, deltaN * ny);
-  }
-
-  const keepT = Math.max(0, Math.min(1, Number(tangentKeep) || 0));
-  if (keepT >= 1) return;
-
-  const nextRelT = (getEntityVelX(entity) - wvx) * tx + (getEntityVelY(entity) - wvy) * ty;
-  const deltaT = -nextRelT * (1 - keepT);
-  if (Math.abs(deltaT) > 1e-6) {
-    addEntityVelocity(entity, deltaT * tx, deltaT * ty);
-  }
-}
-
-function dampOverrunTargetVelocity(target, rammer, dirX, dirY, keep) {
-  if (!target || !rammer) return;
-
-  const lenSq = dirX * dirX + dirY * dirY;
-  if (lenSq < 1e-10) return;
-
-  const invLen = 1 / Math.sqrt(lenSq);
-  const nx = dirX * invLen;
-  const ny = dirY * invLen;
-  const carryKeep = Math.max(0, Math.min(1, Number(keep) || 0));
-  const rammerN = getEntityVelX(rammer) * nx + getEntityVelY(rammer) * ny;
-  if (rammerN <= 0) return;
-
-  const targetN = getEntityVelX(target) * nx + getEntityVelY(target) * ny;
-  const maxTargetN = rammerN * carryKeep;
-  if (targetN <= maxTargetN) return;
-
-  const deltaN = maxTargetN - targetN;
-  addEntityVelocity(target, deltaN * nx, deltaN * ny);
 }
 
 function getEntityAngle(entity) {
@@ -2008,12 +1560,8 @@ export const DestructorSystem = {
         for (let q = 0; q < queue.length; q++) {
           const shard = queue[q];
           if (!shard) continue;
-          // Erase działa na teksturze pancerza w układzie PROSTYM — po zgięciu kadłuba
-          // wycinamy po bazie sprzed gięcia, inaczej dziura ląduje w złym miejscu.
-          const bx = (shard._bendBaseX !== undefined) ? shard._bendBaseX : shard.gridX;
-          const by = (shard._bendBaseY !== undefined) ? shard._bendBaseY : shard.gridY;
-          const x = bx + shard.deformation.x;
-          const y = by + shard.deformation.y;
+          const x = shard.gridX + shard.deformation.x;
+          const y = shard.gridY + shard.deformation.y;
           shard._traceHexPath(ctx, x, y, 1.12);
           shard.__eraseQueued = false;
           queue[q] = null;
@@ -2055,8 +1603,6 @@ export const DestructorSystem = {
       this.resolveCollisions(list, step, doDamage, skipRingPairs, true, i);
     }
 
-    this.updateHullRecovery(list, step);
-    this.updateHullBends(list, step);
 
     const tAfterCollision = nowMs();
     const splitInterval = Math.max(1, DESTRUCTOR_CONFIG.splitCheckInterval | 0);
@@ -2411,81 +1957,6 @@ export const DestructorSystem = {
     }
   },
 
-  // Raz na tick fizyki: lerp bieżącej krzywizny do celu i re-aplikacja pola gięcia.
-  // Gated do encji z aktywnym _hullBend; po osiągnięciu celu apply staje się no-op.
-  updateHullBends(entities, dt) {
-    if ((DESTRUCTOR_CONFIG.hullBendEnabled | 0) !== 1) return;
-    const list = Array.isArray(entities) ? entities : [];
-    // Limit prędkości krzywizny (rad/s) — banan rośnie wolno i płynnie, niezależnie od fps.
-    const step = Number.isFinite(dt) ? Math.max(1 / 1000, dt) : (1 / 120);
-    const bendMaxDelta = Math.max(0.005, Number(DESTRUCTOR_CONFIG.hullBendRate) || 0.15) * step;
-    const recoverMaxDelta = Math.max(0.005, Number(DESTRUCTOR_CONFIG.hullRecoverRate) || 0.22) * step;
-    const splitCurv = Math.max(0.05, Number(DESTRUCTOR_CONFIG.hullBendSplitCurvature) || 0.34);
-    const holdTicks = Math.max(4, Number(DESTRUCTOR_CONFIG.splitCrashDeferTicks) || 8);
-
-    for (let i = 0; i < list.length; i++) {
-      const e = list[i];
-      const bend = e?._hullBend;
-      if (!bend || !e.hexGrid?.shards) continue;
-
-      const diff = bend.targetCurvature - bend.curvature;
-      const stillRamping = Math.abs(diff) >= 0.0005;
-      // Prostowanie (cel≈0) idzie OSOBNYM tempem — hullRecoverRate, nie hullBendRate.
-      const recovering = Math.abs(bend.targetCurvature) < 1e-4 && Math.abs(bend.curvature) > 1e-4;
-      const maxDelta = recovering ? recoverMaxDelta : bendMaxDelta;
-
-      if (stillRamping) {
-        bend.curvature += Math.max(-maxDelta, Math.min(maxDelta, diff));
-        applyHullBendField(e);
-      } else if (Math.abs(bend.curvature - (Number(bend.appliedCurvature) || 0)) >= 0.0005) {
-        applyHullBendField(e);
-      }
-
-      // FINALIZACJA: kadłub sprawny (nie-locked) i wyprostowany → zdejmij deskryptor
-      // banana i przywróć promień. Snap dokładnie do prostej (curvature=0 → origGridX=_bendBaseX).
-      if (!bend.locked &&
-        Math.abs(bend.targetCurvature) < 1e-4 &&
-        Math.abs(bend.curvature) < 5e-4 &&
-        Math.abs(Number(bend.appliedCurvature) || 0) < 5e-4) {
-        bend.curvature = 0;
-        applyHullBendField(e);
-        e._hullBend = null;
-        if (e._bendRadiusBase !== undefined) {
-          e.radius = e._bendRadiusBase;
-          e._bendRadiusBase = undefined;
-        }
-        e._bendStampCurv = 0;
-        continue;
-      }
-
-      // Trzymaj rozłam odroczony, dopóki banan jeszcze rośnie i nie doszedł do progu —
-      // także po ustaniu kontaktu, żeby zdążył się wygiąć zanim się przełamie.
-      if (stillRamping && Math.abs(bend.curvature) < splitCurv && !e.noSplit) {
-        e._splitDeferUntilTick = Math.max(Number(e._splitDeferUntilTick) || 0, this._tick + holdTicks);
-      }
-    }
-  },
-
-  // NPC bez rozłamu (nie-locked) same prostują banan, gdy walka ucichła. Ustawia tylko
-  // CEL (=0); faktyczny ramp i finalizacja dzieją się w updateHullBends. Gracz prostuje
-  // ręcznie (klawisz R → DestructorSystem.repair).
-  updateHullRecovery(entities, dt) {
-    if ((DESTRUCTOR_CONFIG.hullBendEnabled | 0) !== 1) return;
-    if ((DESTRUCTOR_CONFIG.hullRecoverEnabled | 0) !== 1) return;
-    const list = Array.isArray(entities) ? entities : [];
-    const delayTicks = Math.max(0, (Number(DESTRUCTOR_CONFIG.hullRecoverDelay) || 2.5) * 120);
-    const tick = this._tick;
-    for (let i = 0; i < list.length; i++) {
-      const e = list[i];
-      const bend = e?._hullBend;
-      if (!bend || bend.locked || e.dead) continue;
-      if (e.isPlayer || e._isPlayerShip || e.isWreck) continue;
-      if (Math.abs(bend.targetCurvature) < 1e-4) continue; // już się prostuje
-      if ((tick - (Number(bend._lastDeformTick) || 0)) < delayTicks) continue; // za świeże
-      bend.targetCurvature = 0;
-    }
-  },
-
   repair(entities, dt) {
     const list = Array.isArray(entities) ? entities : [];
     const step = Number.isFinite(dt) ? Math.max(0.0001, dt) : 0.1;
@@ -2493,14 +1964,6 @@ export const DestructorSystem = {
 
     for (const e of list) {
       if (!e?.hexGrid?.shards) continue;
-
-      // Naprawa prostuje też banan (nie-locked): ustaw cel na 0 — ramp i finalizacja
-      // w updateHullBends. repairedAny trzyma naprawę aktywną, aż kadłub się wyprostuje.
-      const bend = e._hullBend;
-      if (bend && !bend.locked && Math.abs(Number(bend.curvature) || 0) > 5e-4) {
-        bend.targetCurvature = 0;
-        repairedAny = true;
-      }
 
       let anyFix = false;
       let dirtyMin = Number.POSITIVE_INFINITY;
@@ -2579,19 +2042,8 @@ export const DestructorSystem = {
 
     if (!grid || cols <= 0 || rows <= 0) return null;
 
-    // Zgięty kadłub: komórki (c,r) indeksują pozycje SPRZED gięcia — cofamy punkt
-    // zapytania przez inverse pola gięcia, inaczej lookup trafia w pustkę i pociski
-    // przelatują przez banana/wraki. Test dystansu niżej zostaje na pozycjach FIZYCZNYCH.
-    let latticeX = gridX;
-    let latticeY = gridY;
-    if (entityHasActiveBend(entity)) {
-      const lat = bendGridToLattice(entity, gridX, gridY);
-      latticeX = lat.x;
-      latticeY = lat.y;
-    }
-
-    const approxC = Math.round(latticeX / HEX_SPACING);
-    const approxR = Math.round(latticeY / HEX_HEIGHT);
+    const approxC = Math.round(gridX / HEX_SPACING);
+    const approxR = Math.round(gridY / HEX_HEIGHT);
     const searchR = Math.max(2, (DESTRUCTOR_CONFIG.collisionSearchRadius | 0) - 2);
     const offsets = getSearchOffsets(searchR);
 
@@ -2833,15 +2285,8 @@ export const DestructorSystem = {
       const rows = entity.hexGrid.rows;
       const grid = entity.hexGrid.grid;
 
-      // Zgięty kadłub: okno komórek liczymy w przestrzeni kratownicy (inverse gięcia);
-      // test dystansu w pętli porównuje fizyczne pozycje shardów z impactX/Y — bez zmian.
-      let impactWinX = impactX + cx;
-      let impactWinY = impactY + cy;
-      if (entityHasActiveBend(entity)) {
-        const lat = bendGridToLattice(entity, impactWinX, impactWinY);
-        impactWinX = lat.x;
-        impactWinY = lat.y;
-      }
+      const impactWinX = impactX + cx;
+      const impactWinY = impactY + cy;
       const approxC = Math.round(impactWinX / HEX_SPACING);
       const approxR = Math.round(impactWinY / HEX_HEIGHT);
       const cellRadC = Math.ceil(radius / HEX_SPACING) + 2;
@@ -3039,12 +2484,12 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
           const relSpeedSq = relVx * relVx + relVy * relVy;
           const shardSum = (A.hexGrid?.shards?.length || 0) + (B.hexGrid?.shards?.length || 0);
           const heavyPair = shardSum > 2500;
-          const crashApproachSpeedThreshold = Number(DESTRUCTOR_CONFIG.crashApproachSpeedThreshold) || 200.0;
-          const isCrashFrame = relSpeedSq > (crashApproachSpeedThreshold * crashApproachSpeedThreshold);
+          const fastPairSpeedThreshold = Number(DESTRUCTOR_CONFIG.fastPairSpeedThreshold) || 200.0;
+          const isFastFrame = relSpeedSq > (fastPairSpeedThreshold * fastPairSpeedThreshold);
           const aIsWreck = !!A.isWreck;
           const bIsWreck = !!B.isWreck;
 
-          if (iterIndex > 0 && (heavyPair || isCrashFrame)) continue;
+          if (iterIndex > 0 && (heavyPair || isFastFrame)) continue;
 
           // Shield collision: check before hull narrowphase
           const srA = A._shieldRadius || 0;
@@ -3205,9 +2650,9 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
             const relVy = velAy - getEntityVelY(B);
             const shardSum = (A.hexGrid?.shards?.length || 0) + (B.hexGrid?.shards?.length || 0);
             const heavyPair = shardSum > 2500;
-            const crashApproachSpeedThreshold = Number(DESTRUCTOR_CONFIG.crashApproachSpeedThreshold) || 200.0;
-            const isCrashFrame = (relVx * relVx + relVy * relVy) > (crashApproachSpeedThreshold * crashApproachSpeedThreshold);
-            if (iterIndex > 0 && (heavyPair || isCrashFrame)) continue;
+            const fastPairSpeedThreshold = Number(DESTRUCTOR_CONFIG.fastPairSpeedThreshold) || 200.0;
+            const isFastFrame = (relVx * relVx + relVy * relVy) > (fastPairSpeedThreshold * fastPairSpeedThreshold);
+            if (iterIndex > 0 && (heavyPair || isFastFrame)) continue;
 
             const bx = getEntityPosX(B);
             const by = getEntityPosY(B);
@@ -3467,7 +2912,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
       const relVx = getEntityVelX(A) - getEntityVelX(B);
       const relVy = getEntityVelY(A) - getEntityVelY(B);
       const relSpeed = Math.sqrt(relVx * relVx + relVy * relVy);
-      const scrapeSpeedThreshold = (Number(DESTRUCTOR_CONFIG.crashApproachSpeedThreshold) || 200.0) * 0.45;
+      const scrapeSpeedThreshold = (Number(DESTRUCTOR_CONFIG.fastPairSpeedThreshold) || 200.0) * 0.45;
       const scrapePair = relSpeed < scrapeSpeedThreshold;
       const speedHexes = Math.ceil((relSpeed * dt) / HEX_SPACING);
       const searchRCap = isRingCollision ? 5 : (heavyPair ? 5 : 6);
@@ -3477,17 +2922,11 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
       searchR = Math.min(searchRCap, searchR + searchBoost);
 
       const contacts = this._contactsBuf;
-      const contactMassRatio = Math.max(massA, massB) / Math.max(1, Math.min(massA, massB));
-      const contactOverrunRatio = Math.max(
-        Number(DESTRUCTOR_CONFIG.rammingCrushMassRatio) || 2.5,
-        Number(DESTRUCTOR_CONFIG.rammingOverrunMassRatio) || 8.0
-      );
-      const contactOverrunSpeed = Math.max(0, Number(DESTRUCTOR_CONFIG.rammingCrushSpeedThreshold) || 35.0);
-      const overrunContactPair = contactMassRatio >= contactOverrunRatio && relSpeed > contactOverrunSpeed;
-      const overrunMaxContacts = Math.max(24, Math.min(96, Number(DESTRUCTOR_CONFIG.rammingOverrunMaxContacts) || 64));
+      // Budżet kontaktów jest wyłącznie sprawą wydajności — zależy od rozmiaru siatek
+      // i od tego, czy para się ociera, a nie od przewagi masy.
       const maxContacts = isRingCollision
         ? 64
-        : (overrunContactPair ? overrunMaxContacts : (heavyPair ? 24 : ((shardSum > 1400 || scrapePair) ? 28 : 32)));
+        : (heavyPair ? 24 : ((shardSum > 1400 || scrapePair) ? 28 : 32));
       let contactsCount = 0;
       const holderGrid = gridHolder.hexGrid.grid;
       const holderCols = gridHolder.hexGrid.cols || 0;
@@ -3501,7 +2940,6 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         ? packedIteratorBody.boundaryCount
         : shardsIter.length;
       const offsets = getSearchOffsets(searchR);
-      const holderBent = entityHasActiveBend(gridHolder);
 
       if (!holderGrid || holderCols <= 0 || holderRows <= 0 || lenIter <= 0) return;
 
@@ -3521,15 +2959,8 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         const dy = worldIy - gy;
         const localGx = worldDeltaToLocalX(dx, dy, scaleGridX, scaleGridY, cosG, sinG, gridBillboardOrientation);
         const localGy = worldDeltaToLocalY(dx, dy, scaleGridX, scaleGridY, cosG, sinG, gridBillboardOrientation);
-        let gridGx = localGx + cxG + pGx;
-        let gridGy = localGy + cyG + pGy;
-        // Zgięty holder: enumeracja komórek po współrzędnych kratownicy (inverse gięcia);
-        // test dystansu niżej używa realnych (zgiętych) pozycji shardów — bez zmian.
-        if (holderBent) {
-          const lat = bendGridToLattice(gridHolder, gridGx, gridGy);
-          gridGx = lat.x;
-          gridGy = lat.y;
-        }
+        const gridGx = localGx + cxG + pGx;
+        const gridGy = localGy + cyG + pGy;
         const approxC = Math.round(gridGx / HEX_SPACING);
         const approxR = Math.round(gridGy / HEX_HEIGHT);
 
@@ -3656,29 +3087,11 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
       const invMassA = 1 / massA;
       const invMassB = 1 / massB;
       const slop = 0.01;
-      const pen = Math.max(0, penetration - slop);
-      const penMin = Math.max(0, Number(DESTRUCTOR_CONFIG.crushPenetrationMin) || 0.15);
-      const massRatio = Math.max(massA, massB) / Math.max(1, Math.min(massA, massB));
-      const rammingMassRatio = Math.max(1, Number(DESTRUCTOR_CONFIG.rammingCrushMassRatio) || 2.5);
-      const rammingSpeed = Math.max(0, Number(DESTRUCTOR_CONFIG.rammingCrushSpeedThreshold) || 35.0);
-      const deepCrushPenetration = penetration > (HIT_RAD * penMin);
-      const dominantMassPair = massRatio >= rammingMassRatio;
-      const directDominantRam = dominantMassPair && effectiveApproachSpeed > rammingSpeed;
-      const scrapeDominantRam = dominantMassPair && deepCrushPenetration && impactSpeed > rammingSpeed;
-      const overrunMassRatio = Math.max(rammingMassRatio, Number(DESTRUCTOR_CONFIG.rammingOverrunMassRatio) || 8.0);
-      const overrunDominantRam = directDominantRam && massRatio >= overrunMassRatio;
-      const dominantRammingCrush = directDominantRam || scrapeDominantRam;
-      const hardWallSpeed = Math.max(40, Number(DESTRUCTOR_CONFIG.hardWallCrashSpeedThreshold) || 150.0);
-      const hardWallMassRatio = Math.max(1.25, Number(DESTRUCTOR_CONFIG.hardWallCrashMassRatio) || rammingMassRatio);
-      const hardWallCandidate = effectiveApproachSpeed > hardWallSpeed;
-      const hardWallCrushA = hardWallCandidate && !A.isRingSegment && (B.isRingSegment || massB >= massA * hardWallMassRatio);
-      const hardWallCrushB = hardWallCandidate && !B.isRingSegment && (A.isRingSegment || massA >= massB * hardWallMassRatio);
-      const hardWallCrash = hardWallCrushA || hardWallCrushB;
-      const overrunDamageA = overrunDominantRam && massB > massA;
-      const overrunDamageB = overrunDominantRam && massA > massB;
-      const useCenterOverrunNormal = overrunDominantRam && centerApproachSpeed > approachSpeed;
+      // Normalna ze środków mas jest stabilniejsza niż normalna pierwszego kontaktu
+      // (ta na pierwszej styczności heksów bywa diagonalna) — bierzemy ją, gdy daje
+      // większą prędkość zbliżania.
+      const useCenterNormal = centerApproachSpeed > approachSpeed;
 
-      let isDestruction = false;
       let bounceForce = 0;
 
       if (velAlongNormal < 0) {
@@ -3693,20 +3106,10 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         const denom = invMassA + invMassB + rnA * rnA * invIa + rnB * rnB * invIb;
 
         if (Number.isFinite(denom) && denom > 1e-8) {
-          const restBase = DESTRUCTOR_CONFIG.restitution;
-          const crashApproachSpeedThreshold = Number(DESTRUCTOR_CONFIG.crashApproachSpeedThreshold) || 200.0;
-          isDestruction = effectiveApproachSpeed > crashApproachSpeedThreshold;
-          const restitution = isDestruction ? 0.0 : restBase;
-          let j = (-(1 + restitution) * velAlongNormal) / denom;
-
-          if (hardWallCrash) {
-            j *= Math.max(0.01, Math.min(1, Number(DESTRUCTOR_CONFIG.hardWallCrashImpulseScale) || 0.08));
-          } else if (overrunDominantRam) {
-            j *= Math.max(0.02, Math.min(1, Number(DESTRUCTOR_CONFIG.rammingOverrunImpulseScale) || 0.18));
-          } else if (isDestruction) {
-            const hittingWall = (invMassA === 0 || invMassB === 0) || A.isRingSegment || B.isRingSegment;
-            j *= hittingWall ? 0.8 : 0.8;
-          }
+          // JEDEN impuls dla każdej prędkości — bez progów, bez skalowania po masie.
+          // Energia zderzenia idzie w deformację i obrażenia niżej, nie w wyjątki tutaj.
+          const restitution = Math.max(0, Math.min(1, Number(DESTRUCTOR_CONFIG.restitution) || 0));
+          const j = (-(1 + restitution) * velAlongNormal) / denom;
 
           bounceForce = Math.abs(j);
 
@@ -3722,11 +3125,11 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
           const tDen = invMassA + invMassB + (rAx * ty - rAy * tx) ** 2 * invIa + (rBx * ty - rBy * tx) ** 2 * invIb;
           jt = (Number.isFinite(tDen) && tDen > 1e-8) ? (jt / tDen) : 0;
 
-          const mu = 0.5;
+          const mu = Math.max(0, Number(DESTRUCTOR_CONFIG.frictionCoeff) || 0);
           const maxF = Math.abs(j) * mu;
           if (Math.abs(jt) > maxF) jt = -maxF * Math.sign(velTangent || 1);
 
-          jt *= overrunDominantRam ? 0.12 : (isDestruction ? 0.25 : 0.8);
+          jt *= Math.max(0, Math.min(1, Number(DESTRUCTOR_CONFIG.tangentImpulseScale) || 0));
 
           const fX = jt * tx;
           const fY = jt * ty;
@@ -3738,18 +3141,6 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
 
           // GPU collision sparks — scale with impact violence
         }
-      }
-
-      if (hardWallCrash) {
-        const normalKeep = Math.max(0, Math.min(1, Number(DESTRUCTOR_CONFIG.hardWallCrashNormalKeep) || 0.04));
-        const tangentKeep = Math.max(0, Math.min(1, Number(DESTRUCTOR_CONFIG.hardWallCrashTangentKeep) || 0.55));
-        if (hardWallCrushA) dampEntityAgainstHardWall(A, B, nx, ny, tx, ty, normalKeep, tangentKeep, -1);
-        if (hardWallCrushB) dampEntityAgainstHardWall(B, A, nx, ny, tx, ty, normalKeep, tangentKeep, 1);
-      }
-      if (overrunDominantRam) {
-        const targetKeep = Math.max(0, Math.min(1, Number(DESTRUCTOR_CONFIG.overrunTargetVelocityKeep) || 0.12));
-        if (overrunDamageA) dampOverrunTargetVelocity(A, B, nx, ny, targetKeep);
-        if (overrunDamageB) dampOverrunTargetVelocity(B, A, -nx, -ny, targetKeep);
       }
 
       // === ISKRY PRZENIESIONE NA ZEWNATRZ ===
@@ -3770,17 +3161,20 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         );
       }
 
-      const crushActive = isDestruction || dominantRammingCrush || hardWallCrash;
-      const heavyCrushPass = crushActive && doDamage;
+      // Deformacja i obrażenia liczą się ZAWSZE, skalowane wprost impulsem — jedyny
+      // próg to podłoga wydajnościowa: poniżej niej wgniecenie byłoby subpikselowe,
+      // a pełna pętla kontaktów co tick dla ocierających się kadłubów kosztuje.
+      const crushMinSpeed = Math.max(0, Number(DESTRUCTOR_CONFIG.crushMinSpeed) || 0);
+      const crushPass = doDamage && effectiveApproachSpeed > crushMinSpeed;
 
-      if (heavyCrushPass) {
+      if (crushPass) {
         const gpuAwakeFrames = heavyPair ? 12 : 16;
         A._gpuForceAwakeFrames = Math.max(Number(A._gpuForceAwakeFrames) || 0, gpuAwakeFrames);
         B._gpuForceAwakeFrames = Math.max(Number(B._gpuForceAwakeFrames) || 0, gpuAwakeFrames);
 
-        const splitCrashSpeedThreshold = Math.max(40, Number(DESTRUCTOR_CONFIG.splitCrashSpeedThreshold) || 140);
-        if (impactSpeed > splitCrashSpeedThreshold || heavyPair) {
-          const deferTicks = Math.max(4, Number(DESTRUCTOR_CONFIG.splitCrashDeferTicks) || 8) + (heavyPair ? 2 : 0);
+        const splitDeferSpeed = Math.max(40, Number(DESTRUCTOR_CONFIG.splitDeferSpeedThreshold) || 140);
+        if (impactSpeed > splitDeferSpeed || heavyPair) {
+          const deferTicks = Math.max(4, Number(DESTRUCTOR_CONFIG.splitDeferTicks) || 8) + (heavyPair ? 2 : 0);
           const deferUntilTick = this._tick + deferTicks;
           if (!A.noSplit && this.splitQueue.indexOf(A) === -1) {
             A._splitDeferUntilTick = Math.max(Number(A._splitDeferUntilTick) || 0, deferUntilTick);
@@ -3797,14 +3191,15 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         const ca = Math.cos(angA), sa = Math.sin(angA);
         const cb = Math.cos(angB), sb = Math.sin(angB);
         const shearK = DESTRUCTOR_CONFIG.shearK ?? 0.06;
-        const impulse = (totalMass > 0) ? (impactSpeed * (massA * massB) / totalMass) : 0;
-        const hardWallCrushMult = hardWallCrash
-          ? Math.max(1, Number(DESTRUCTOR_CONFIG.hardWallCrashCrushMult) || 1.35)
-          : 1;
-        const crushEnergy = impulse * (DESTRUCTOR_CONFIG.crushImpulseScale ?? 0.25) * dtScale * hardWallCrushMult;
+        // Skalą zgniotu jest PRĘDKOŚĆ ZBLIŻANIA, nie pęd. Mnożenie przez masę
+        // zredukowaną dawało energie rzędu 1e7-1e10 przy zaciskaczu ~1e2 — deformacja
+        // była zawsze nasycona, więc nie niosła żadnej informacji o sile uderzenia
+        // (stąd wrażenie przełącznika zamiast fizyki). Podział energii między kadłuby
+        // załatwia realRatioA/B niżej, liczone z mas — masa nie znika z modelu.
+        const crushEnergy = impactSpeed * (DESTRUCTOR_CONFIG.crushImpulseScale ?? 0.25) * dtScale;
 
-        const crushNx = useCenterOverrunNormal ? centerNx : nx;
-        const crushNy = useCenterOverrunNormal ? centerNy : ny;
+        const crushNx = useCenterNormal ? centerNx : nx;
+        const crushNy = useCenterNormal ? centerNy : ny;
         let wForceAx = crushNx * crushEnergy;
         let wForceAy = crushNy * crushEnergy;
         let wForceBx = -crushNx * crushEnergy;
@@ -3824,7 +3219,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         const forceAy = (-wForceAx * sa + wForceAy * ca) / scaleAY;
         const forceBx = (wForceBx * cb + wForceBy * sb) / scaleBX;
         const forceBy = (-wForceBx * sb + wForceBy * cb) / scaleBY;
-        const crushScale = (isDestruction || hardWallCrash) ? 1 : Math.max(0.1, Number(DESTRUCTOR_CONFIG.rammingCrushScale) || 0.70);
+        const crushScale = Math.max(0, Number(DESTRUCTOR_CONFIG.crushDeformScale) || 0);
 
         // 2. Nonlinear impact weighting (squared mass ratios)
         const baseRatioA = (invMassB === 0) ? 0.0 : (invMassA === 0 ? 1.0 : massB / totalMass);
@@ -3863,31 +3258,13 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
 
         const massAdvantageA = massA / (massB + 1);
         const massAdvantageB = massB / (massA + 1);
-        const maxDmgPerTickA = getRammingDamageCap(DESTRUCTOR_CONFIG.shardHP, massAdvantageB);
-        const maxDmgPerTickB = getRammingDamageCap(DESTRUCTOR_CONFIG.shardHP, massAdvantageA);
         const brittleA = isBrittleEntity(A);
         const brittleB = isBrittleEntity(B);
-        const overrunDamageMin = DESTRUCTOR_CONFIG.shardHP * Math.max(0, Number(DESTRUCTOR_CONFIG.rammingOverrunDamageMin) || 1.05);
-        const overrunDamageMult = Math.max(1, Number(DESTRUCTOR_CONFIG.rammingOverrunDamageMult) || 1.75);
-        const hardWallDamageMin = DESTRUCTOR_CONFIG.shardHP * Math.max(0, Number(DESTRUCTOR_CONFIG.hardWallCrashDamageMin) || 1.15);
-        const hardWallDamageMult = Math.max(1, Number(DESTRUCTOR_CONFIG.hardWallCrashDamageMult) || 2.35);
-        const steelContactDamageFrac = Math.max(0.02, Number(DESTRUCTOR_CONFIG.crashContactSteelDamageFrac) || 0.28);
-
-        // Sprzężenie przekroju: wciśnięcie ściany wypycha przeciwległą wzdłuż osi zgniotu.
-        const sectionOn = (DESTRUCTOR_CONFIG.sectionCoupleEnabled | 0) === 1;
-        const sectionAlpha = Math.max(0, Number(DESTRUCTOR_CONFIG.sectionCoupleGain) || 0.45);
-        // Gracz/brittle/pęknięte/ring/wrak nie kwalifikują się na ofiarę banana ani
-        // sprzężenia przekroju — wykluczenia wchodzą do SELEKCJI ofiary (przy zbliżonych
-        // masach gracz vs frachtowiec ofiarą ma być frachtowiec, nie nikt).
-        const bendEligibleA = !(A.isPlayer || A._isPlayerShip || brittleA || A._hullBend?.locked || A.isRingSegment || A.isWreck);
-        const bendEligibleB = !(B.isPlayer || B._isPlayerShip || brittleB || B._hullBend?.locked || B.isRingSegment || B.isWreck);
-
-        // Sprzężenie działa tylko na OFIERZE zgniotu. Napompowanie deformacji po obu
-        // burtach taranującego (gracza) w kanale przecinanego wraku = losowe odbicia.
-        const sectionVictimA = bendEligibleA && (hardWallCrushA || overrunDamageA || (isDestruction && (!bendEligibleB || massA <= massB)));
-        const sectionVictimB = bendEligibleB && (hardWallCrushB || overrunDamageB || (isDestruction && (!bendEligibleA || massB < massA)));
-        const extA = (sectionOn && sectionVictimA) ? ensureColumnExtents(A.hexGrid) : null;
-        const extB = (sectionOn && sectionVictimB) ? ensureColumnExtents(B.hexGrid) : null;
+        // Jeden ciągły sufit obrażeń na heks na tick — ułamek jego HP. Zamiast
+        // kaskady progów (hardWall/overrun/steel) energia zderzenia po prostu
+        // rozkłada się w czasie: żeby wyparować dziób, trzeba w nim posiedzieć.
+        const contactDamageCapFrac = Math.max(0.01, Number(DESTRUCTOR_CONFIG.contactDamageCapFrac) || 0.25);
+        const contactDamageScale = Math.max(0, Number(DESTRUCTOR_CONFIG.contactDamageScale) || 0);
 
         let dirtyMinA = Number.POSITIVE_INFINITY;
         let dirtyMaxA = -1;
@@ -3924,31 +3301,6 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
               }
             }
 
-            // Sprzężenie przekroju A: dopchnij przeciwległą ścianę żebra na zewnątrz.
-            if (extA) {
-              const e = extA[sA.c | 0];
-              if (e && e.minShard !== e.maxShard) {
-                const far = (pushY >= 0) ? e.maxShard : e.minShard;
-                if (far && far.active && !far.isDebris && far !== sA) {
-                  far.applyDeformation(0, pushY * sectionAlpha, 1.0, true);
-                  const fDefSq = far.targetDeformation.x * far.targetDeformation.x + far.targetDeformation.y * far.targetDeformation.y;
-                  const fLimitSq = (maxCrushLimit * 0.9) * (maxCrushLimit * 0.9); // poniżej progu rwania → bulge, nie ruptura
-                  if (fDefSq > fLimitSq) {
-                    const fScale = Math.sqrt(fLimitSq / fDefSq);
-                    far.targetDeformation.x *= fScale;
-                    far.targetDeformation.y *= fScale;
-                    far.deformation.x *= fScale;
-                    far.deformation.y *= fScale;
-                  }
-                  const fi = Number(far.__meshIndex);
-                  if (Number.isFinite(fi)) {
-                    if (fi < dirtyMinA) dirtyMinA = fi;
-                    if (fi > dirtyMaxA) dirtyMaxA = fi;
-                  }
-                }
-              }
-            }
-
             const idxA = Number(sA.__meshIndex);
             if (Number.isFinite(idxA)) {
               if (idxA < dirtyMinA) dirtyMinA = idxA;
@@ -3964,22 +3316,10 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
             }
 
             if (doDamage) {
-              const kineticDmg = (rawCrushMagA * realRatioA * 0.18 * massAdvantageB) / Math.sqrt(contactsCount);
-              const brittleMult = brittleA ? 3.5 : 1.0;
-              const steelCrashA = !brittleA && (hardWallCrushA || overrunDamageA);
               const shardHpA = Math.max(1, Number(sA.maxHp) || DESTRUCTOR_CONFIG.shardHP);
-              const cap = steelCrashA
-                ? shardHpA * steelContactDamageFrac
-                : (hardWallCrushA
-                  ? Math.max(maxDmgPerTickA, hardWallDamageMin)
-                  : (brittleA ? DESTRUCTOR_CONFIG.shardHP * 0.75 : (overrunDamageA ? Math.max(maxDmgPerTickA, overrunDamageMin) : maxDmgPerTickA)));
-              let damage = kineticDmg * brittleMult;
-              if (steelCrashA) {
-                damage = Math.max(damage * 0.35, shardHpA * steelContactDamageFrac * 0.45);
-              } else {
-                if (hardWallCrushA) damage = Math.max(damage * hardWallDamageMult, hardWallDamageMin);
-                if (overrunDamageA && !brittleA) damage = Math.max(damage * overrunDamageMult, overrunDamageMin);
-              }
+              const kineticDmg = (rawCrushMagA * realRatioA * contactDamageScale) / Math.sqrt(contactsCount);
+              const damage = kineticDmg * (brittleA ? 3.5 : 1.0);
+              const cap = brittleA ? (shardHpA * 0.75) : (shardHpA * contactDamageCapFrac);
               sA.hp -= Math.min(cap, damage);
             }
 
@@ -4015,31 +3355,6 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
               }
             }
 
-            // Sprzężenie przekroju B: dopchnij przeciwległą ścianę żebra na zewnątrz.
-            if (extB) {
-              const e = extB[sB.c | 0];
-              if (e && e.minShard !== e.maxShard) {
-                const far = (pushY >= 0) ? e.maxShard : e.minShard;
-                if (far && far.active && !far.isDebris && far !== sB) {
-                  far.applyDeformation(0, pushY * sectionAlpha, 1.0, true);
-                  const fDefSq = far.targetDeformation.x * far.targetDeformation.x + far.targetDeformation.y * far.targetDeformation.y;
-                  const fLimitSq = (maxCrushLimit * 0.9) * (maxCrushLimit * 0.9); // poniżej progu rwania → bulge, nie ruptura
-                  if (fDefSq > fLimitSq) {
-                    const fScale = Math.sqrt(fLimitSq / fDefSq);
-                    far.targetDeformation.x *= fScale;
-                    far.targetDeformation.y *= fScale;
-                    far.deformation.x *= fScale;
-                    far.deformation.y *= fScale;
-                  }
-                  const fi = Number(far.__meshIndex);
-                  if (Number.isFinite(fi)) {
-                    if (fi < dirtyMinB) dirtyMinB = fi;
-                    if (fi > dirtyMaxB) dirtyMaxB = fi;
-                  }
-                }
-              }
-            }
-
             const idxB = Number(sB.__meshIndex);
             if (Number.isFinite(idxB)) {
               if (idxB < dirtyMinB) dirtyMinB = idxB;
@@ -4055,22 +3370,10 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
             }
 
             if (doDamage) {
-              const kineticDmg = (rawCrushMagB * realRatioB * 0.18 * massAdvantageA) / Math.sqrt(contactsCount);
-              const brittleMult = brittleB ? 3.5 : 1.0;
-              const steelCrashB = !brittleB && (hardWallCrushB || overrunDamageB);
               const shardHpB = Math.max(1, Number(sB.maxHp) || DESTRUCTOR_CONFIG.shardHP);
-              const cap = steelCrashB
-                ? shardHpB * steelContactDamageFrac
-                : (hardWallCrushB
-                  ? Math.max(maxDmgPerTickB, hardWallDamageMin)
-                  : (brittleB ? DESTRUCTOR_CONFIG.shardHP * 0.75 : (overrunDamageB ? Math.max(maxDmgPerTickB, overrunDamageMin) : maxDmgPerTickB)));
-              let damage = kineticDmg * brittleMult;
-              if (steelCrashB) {
-                damage = Math.max(damage * 0.35, shardHpB * steelContactDamageFrac * 0.45);
-              } else {
-                if (hardWallCrushB) damage = Math.max(damage * hardWallDamageMult, hardWallDamageMin);
-                if (overrunDamageB && !brittleB) damage = Math.max(damage * overrunDamageMult, overrunDamageMin);
-              }
+              const kineticDmg = (rawCrushMagB * realRatioB * contactDamageScale) / Math.sqrt(contactsCount);
+              const damage = kineticDmg * (brittleB ? 3.5 : 1.0);
+              const cap = brittleB ? (shardHpB * 0.75) : (shardHpB * contactDamageCapFrac);
               sB.hp -= Math.min(cap, damage);
             }
 
@@ -4079,53 +3382,6 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
               this._destroyVelB.y = getEntityVelY(B);
               this.destroyShard(B, sB, this._destroyVelB);
               if (!B.noSplit && this.splitQueue.indexOf(B) === -1) this.splitQueue.push(B);
-            }
-          }
-        }
-
-        if (doDamage && (hardWallCrushA || hardWallCrushB || overrunDamageA || overrunDamageB)) {
-          const frameTravel = Math.max(0, effectiveApproachSpeed * Math.max(1 / 240, Number(dt) || 0));
-          const stampRadiusMin = Math.max(12, Number(DESTRUCTOR_CONFIG.crashStampRadiusMin) || 72);
-          const stampRadiusMax = Math.max(stampRadiusMin, Number(DESTRUCTOR_CONFIG.crashStampRadiusMax) || 320);
-          const stampScale = Math.max(0, Number(DESTRUCTOR_CONFIG.crashStampFrameSpeedScale) || 0.36);
-          const stampRadius = Math.min(stampRadiusMax, stampRadiusMin + frameTravel * stampScale);
-          const stampDamage = DESTRUCTOR_CONFIG.shardHP * Math.max(0.1, Number(DESTRUCTOR_CONFIG.crashStampDamageMult) || 1.20);
-          const stampMax = Math.max(32, Number(DESTRUCTOR_CONFIG.crashStampMaxShards) || 384);
-
-          if (hardWallCrushA || overrunDamageA) {
-            applyCrashStampDamage(this, A, worldHitX, worldHitY, stampRadius, stampDamage, stampMax, crushNx, crushNy);
-          }
-          if (hardWallCrushB || overrunDamageB) {
-            applyCrashStampDamage(this, B, worldHitX, worldHitY, stampRadius, stampDamage, stampMax, -crushNx, -crushNy);
-          }
-        }
-
-        // === HULL BEND ("banan"): globalne gięcie ofiary głębokiego zgniotu ===
-        if (doDamage && (DESTRUCTOR_CONFIG.hullBendEnabled | 0) === 1) {
-          let bendVictim = null;
-          let bvDirX = 0, bvDirY = 0;
-          if ((hardWallCrushA || overrunDamageA) && bendEligibleA) { bendVictim = A; bvDirX = crushNx; bvDirY = crushNy; }
-          else if ((hardWallCrushB || overrunDamageB) && bendEligibleB) { bendVictim = B; bvDirX = -crushNx; bvDirY = -crushNy; }
-          else if (isDestruction) {
-            const pickA = bendEligibleA && (!bendEligibleB || massA <= massB);
-            const pickB = bendEligibleB && (!bendEligibleA || massB < massA);
-            if (pickA) { bendVictim = A; bvDirX = crushNx; bvDirY = crushNy; }
-            else if (pickB) { bendVictim = B; bvDirX = -crushNx; bvDirY = -crushNy; }
-          }
-
-          const bendPenOk = penetration > (HIT_RAD * Math.max(0.05, Number(DESTRUCTOR_CONFIG.hullBendMinPenetration) || 0.25));
-          if (bendVictim && bendPenOk && !bendVictim.isRingSegment && !bendVictim.isWreck) {
-            const gain = Math.max(0, Number(DESTRUCTOR_CONFIG.hullBendGain) || 0.0006);
-            accumulateHullBend(bendVictim, worldHitX, worldHitY, bvDirX, bvDirY, effectiveApproachSpeed * gain);
-            // Znacznik świeżej deformacji — auto-prostowanie NPC czeka aż walka ucichnie.
-            if (bendVictim._hullBend) bendVictim._hullBend._lastDeformTick = this._tick;
-
-            // Trzymaj rozłam w ryzach, dopóki banan nie wygnie się do progu krzywizny.
-            const splitCurv = Math.max(0.05, Number(DESTRUCTOR_CONFIG.hullBendSplitCurvature) || 0.34);
-            const bendState = bendVictim._hullBend;
-            if (bendState && Math.abs(bendState.curvature) < splitCurv && !bendVictim.noSplit) {
-              const holdTicks = Math.max(4, Number(DESTRUCTOR_CONFIG.splitCrashDeferTicks) || 8);
-              bendVictim._splitDeferUntilTick = Math.max(Number(bendVictim._splitDeferUntilTick) || 0, this._tick + holdTicks);
             }
           }
         }
@@ -4143,20 +3399,18 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         }
       }
 
+      // Korekta penetracji: pełna przy ścianie/ringu i przy głębokim zanurzeniu
+      // (inaczej kadłuby się zapadają), poza tym jeden stały ułamek.
       const deepPenetration = penetration > (HIT_RAD * 0.35);
-      let crushSep = 0.82;
-      if (massRatio > 5) crushSep = 0.75;
-      const overrunSep = Math.max(0.02, Math.min(1, Number(DESTRUCTOR_CONFIG.rammingOverrunSeparationPercent) || 0.16));
-
       const isHittingWallSep = (invMassA === 0 || invMassB === 0) || isRingCollision;
-      const sepPercent = isHittingWallSep
+      const sepPercent = (isHittingWallSep || deepPenetration)
         ? 1.0
-        : (overrunDominantRam ? overrunSep : (crushActive ? (deepPenetration ? 1.0 : crushSep) : 0.92));
+        : Math.max(0.05, Math.min(1, Number(DESTRUCTOR_CONFIG.separationPercent) || 0.9));
 
       if (penetration > slop) {
         const corr = Math.max(penetration - slop, 0) / (invMassA + invMassB) * sepPercent;
-        const sepNx = useCenterOverrunNormal ? centerNx : nx;
-        const sepNy = useCenterOverrunNormal ? centerNy : ny;
+        const sepNx = useCenterNormal ? centerNx : nx;
+        const sepNy = useCenterNormal ? centerNy : ny;
         addEntityPosition(A, sepNx * corr * invMassA, sepNy * corr * invMassA);
         addEntityPosition(B, -sepNx * corr * invMassB, -sepNy * corr * invMassB);
       }
@@ -4206,14 +3460,20 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
 
   recycleWreck(wreck) {
     if (!wreck || !wreck.isWreck || wreck._inPool) return;
+    // Rekord transportowy ma jedyną fizyczną kopię ładunku w tym manifeście.
+    // Wrak może wrócić do puli dopiero po atomowym odzysku całej partii.
+    if (Object.values(wreck._cargoManifest || {}).some(amount => (Number(amount) || 0) > 0)) return false;
     wreck.dead = true;
     wreck.isCollidable = false;
+    // Bez tego łup wyciekłby do następnego wraku biorącego ten obiekt z puli.
+    clearSalvage(wreck);
     wreck._wreckAge = 0;
     wreck._wreckSleepTimer = 0;
     wreck._wreckSleeping = false;
     if ((DESTRUCTOR_CONFIG.packedHexArena | 0) === 1) releaseHexGridArena(wreck);
     wreck._inPool = true;
     this._wreckPool.push(wreck);
+    return true;
   },
 
   processSplits(entities) {
@@ -4296,16 +3556,6 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         const loose = groups.slice(1);
 
         this.rebuildEntityGrid(entity, main);
-
-        // Kadłub pękł — banan wykonał zadanie. Zamrażamy krzywiznę (deskryptor zostaje,
-        // bo shardy mają wygięte pozycje i lattice-lookup potrzebuje inverse-mapy),
-        // ale koniec dalszego kręcenia wokół starego zawiasu.
-        const bendMain = entity._hullBend;
-        if (bendMain) {
-          bendMain.locked = true;
-          bendMain.targetCurvature = bendMain.curvature;
-          bendMain.appliedCurvature = bendMain.curvature;
-        }
 
         for (const group of loose) {
           // Asteroidy mają własny split rozmiarów w AsteroidField._destroy().
@@ -4542,13 +3792,6 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
       splitAngKick = dominantAxisSign * Math.min(0.035, Math.max(minSpin, newRadius / 2200));
     }
 
-    // Wraki dziedziczą krzywiznę banana jako rotację — połówki składają się dalej.
-    if (parent._hullBend && Math.abs(parent._hullBend.curvature) > 0.02) {
-      const b = parent._hullBend;
-      const sideSign = Math.sign(avgX - b.hingeX) || 1;
-      const spinGain = Math.max(0, Number(DESTRUCTOR_CONFIG.hullBendWreckSpin) || 0.6);
-      splitAngKick += b.curvature * sideSign * spinGain;
-    }
     splitAngKick = Math.max(-0.12, Math.min(0.12, splitAngKick));
 
     const cols = parent.hexGrid.cols || Math.ceil(parent.hexGrid.srcWidth / HEX_SPACING);
@@ -4601,28 +3844,10 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
     wreck._wreckAge = 0;
     wreck._wreckSleepTimer = 0;
     wreck._wreckSleeping = false;
+    wreck._cargoOrderId = null;
+    wreck._cargoWreckId = null;
+    wreck._cargoManifest = null;
     wreck.owner = parent.owner || parent;
-    // Wrak z pogiętego rodzica dziedziczy ZAMROŻONY deskryptor gięcia — jego shardy
-    // mają wygięte pozycje, a probeImpact/collideEntities muszą umieć odwzorować
-    // punkt fizyczny → komórka kratownicy (inaczej pociski przelatują przez wrak).
-    const parentBend = parent._hullBend;
-    if (parentBend && Math.abs(Number(parentBend.appliedCurvature) || 0) > 1e-4) {
-      const frozenCurv = Number(parentBend.appliedCurvature) || 0;
-      wreck._hullBend = {
-        hingeX: parentBend.hingeX,
-        hingeY: parentBend.hingeY,
-        halfLen: parentBend.halfLen,
-        sign: parentBend.sign,
-        curvature: frozenCurv,
-        targetCurvature: frozenCurv,
-        appliedCurvature: frozenCurv,
-        locked: true
-      };
-    } else {
-      wreck._hullBend = null;
-    }
-    wreck._bendRadiusBase = undefined;
-    wreck._bendStampCurv = 0;
     wreck.visual = {
       spriteScale: Math.max(scaleX, scaleY),
       spriteScaleX: scaleX,
@@ -4688,11 +3913,30 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
     rebuildNeighbors(wGrid);
     if ((DESTRUCTOR_CONFIG.packedHexArena | 0) === 1) rebuildHexGridArena(wreck, shards);
 
+    // Łup wędruje z rodzica na fragment: materiały proporcjonalnie do liczby
+    // komórek, broń za tym kawałkiem kadłuba, do którego była przykręcona.
+    // wGrid.map jest już kluczowane 'c,r', więc służy jako test przynależności.
+    transferSalvageToWreck(
+      parent,
+      wreck,
+      (cellKey) => wGrid.map[cellKey] !== undefined,
+      shards.length
+    );
+
+    // Rekord cargo wybiera dokładnie jeden fizyczny wrak jako nowego
+    // właściciela partii. Kolejne fragmenty kadłuba nie mogą skopiować ładunku.
+    if (parent.dead && parent._cargoOrderId && !parent._cargoWreck) {
+      wreck._cargoOrderId = parent._cargoOrderId;
+      wreck._cargoWreckId = `cargo-wreck:${parent._cargoOrderId}`;
+      parent._cargoWreck = wreck;
+    }
+
     if (Array.isArray(entities) && !entities.includes(wreck)) entities.push(wreck);
 
     if (typeof window !== 'undefined' && Array.isArray(window.wrecks) && !window.wrecks.includes(wreck)) {
       window.wrecks.push(wreck);
     }
+    return wreck;
   }
 };
 

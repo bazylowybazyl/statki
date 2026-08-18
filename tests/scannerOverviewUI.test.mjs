@@ -17,7 +17,7 @@ test('scanner overview model exposes selected contact details', () => {
   });
   assert.equal(model.rows[0].selected, true);
   assert.equal(model.rows[0].locked, true);
-  assert.equal(model.rows[0].distanceLabel, '1.2k');
+  assert.equal(model.rows[0].distanceLabel, '1.2 km');
 });
 
 test('scanner overview rows keep a stable key while distance changes', () => {

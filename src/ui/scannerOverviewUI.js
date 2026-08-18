@@ -1,3 +1,5 @@
+import { formatLocalDistance } from '../config/units.js';
+
 const STYLE_ID = 'scanner-overview-ui-style';
 const ROOT_ID = 'scanner-overview-ui-root';
 const STORAGE_KEY = 'statki.scannerOverview.layout.v1';
@@ -288,12 +290,7 @@ function contactMatchesFilters(contact, filters) {
 }
 
 function formatDistance(distance) {
-  const d = Math.max(0, finiteNumber(distance, 0));
-  if (d >= 1000) {
-    const value = d / 1000;
-    return `${value >= 10 ? Math.round(value) : value.toFixed(1).replace(/\.0$/, '')}k`;
-  }
-  return `${Math.round(d)}u`;
+  return formatLocalDistance(Math.max(0, finiteNumber(distance, 0)));
 }
 
 function classForTone(tone) {

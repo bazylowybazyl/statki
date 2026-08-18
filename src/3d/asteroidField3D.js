@@ -63,6 +63,9 @@ const ASTEROID_RAYCAST_MAX_RADIUS = 700;
 // że i tak nie było tego widać przy tej skali (jest milion u-niedaleko od kamery).
 const SPIN_MAX = 0;
 
+// Siła cienia asteroidy w passie shaftów (1.0 = umbra planety).
+const ASTEROID_SHAFT_STRENGTH = 0.5;
+
 export function segmentCircleHitInfo(x0, y0, x1, y1, cx, cy, radius) {
   const dx = x1 - x0;
   const dy = y1 - y0;
@@ -851,8 +854,10 @@ export class AsteroidField {
       const budget = 24;
       if (cache.length > budget) cache.length = budget;
     }
+    // Siła < 1: skała ma przygaszać mgławicę, nie robić w niej czarnej dziury
+    // jak planeta (kilkanaście skał obok siebie dawało czarne kałuże).
     for (let i = 0; i < cache.length; i++) {
-      if (!Core3D.pushShaftDiscWorld(cache[i].x, cache[i].y, cache[i].r)) break;
+      if (!Core3D.pushShaftDiscWorld(cache[i].x, cache[i].y, cache[i].r, ASTEROID_SHAFT_STRENGTH)) break;
     }
   }
 

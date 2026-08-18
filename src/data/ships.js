@@ -209,7 +209,17 @@ export const HULL_RENDER_PROFILES = {
   pirate_frigate: { id: 'pirate_frigate', length: 320, radius: 120 },
   pirate_destroyer: { id: 'pirate_destroyer', length: 600, radius: 170 },
   pirate_battleship: { id: 'pirate_battleship', length: 1200, radius: 220 },
-  capital_carrier: { id: 'capital_carrier', length: 1200, radius: 250 }
+  capital_carrier: { id: 'capital_carrier', length: 1200, radius: 250 },
+  // Frachtowce cywilne — sylwetki celowo inne niż okrętów bojowych, żeby
+  // transportu nie dało się pomylić z celem w walce. Rozmiary skalowane
+  // pojemnością ładowni (60 / 160 / 380 jednostek masy).
+  inter_station_shuttle: { id: 'inter_station_shuttle', length: 200, radius: 80 },
+  container_ship: { id: 'container_ship', length: 520, radius: 180 },
+  long_haul_freighter: { id: 'long_haul_freighter', length: 900, radius: 260 },
+  // Ogniwo między frachtowcem dalekiego zasięgu (900) a megafrachtowcem (4600).
+  // Bez niego nic w całej flocie nie mieści się w stanowisku klasy `capital`:
+  // frachtowiec wchodzi na `l`, a megafrachtowiec wymaga już `mega`.
+  heavy_freighter: { id: 'heavy_freighter', length: 3000, radius: 550 }
 };
 
 export const HULL_RENDER_PROFILE_ALIASES = {

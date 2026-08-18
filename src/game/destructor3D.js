@@ -6,8 +6,8 @@
  *  - broadphase sferyczny → bramka OBB SAT (15 osi zamiast 4),
  *  - narrowphase: iteracja po komórkach BRZEGOWYCH mniejszego ciała, okno kratownicy
  *    drugiego ciała, test kula–kula, redukcja kontaktów do wspólnej normalnej,
- *  - impuls sztywny + tryby crush: isDestruction / dominantRamming / overrun / hardWall
- *    z capami damage (getRammingDamageCap) i stemplem zgniotu (crash stamp),
+ *  - impuls sztywny: JEDNA regula na kazda predkosc (restytucja + deformacja
+ *    proporcjonalna do predkosci zblizania, sufit obrazen na komorke na tick),
  *  - deformacja: applyDeformation (kick + prędkość falowa), propagacja sprężysta
  *    CPU/GPU, pieczenie plastyczności powyżej yieldPoint,
  *  - sen/budzenie siatek, splitQueue → findIslands (BFS po sąsiadach) → wraki
@@ -40,47 +40,32 @@ export function createDestructor3DConfig(cellSize = 1) {
     recoverSpeed: 1.0,
     repairRate: 100,
 
+    // Model zderzen: jedna regula na kazda predkosc. Zadnych progow predkosci ani
+    // przewagi masy — ciezej i szybciej znaczy WIECEJ tego samego, nie inny tryb.
     restitution: 0.05,
-    friction: 0.5,
+    friction: 0.5,                            // µ — sufit impulsu stycznego
+    tangentImpulseScale: 0.8,                 // ile impulsu stycznego trafia w ciala
 
-    crashApproachSpeedThreshold: 15.0 * cs,   // 200 px/s
-    crushPenetrationMin: 0.30,
-    rammingCrushSpeedThreshold: 2.6 * cs,     // 35 px/s
-    rammingCrushMassRatio: 2.5,
-    rammingCrushScale: 0.70,
-    rammingDamageCapMin: 0.08,
-    rammingDamageCapMax: 1.40,
-    rammingDamageCapLogScale: 0.16,
-    rammingOverrunMassRatio: 8.0,
-    rammingOverrunImpulseScale: 0.18,
-    rammingOverrunSeparationPercent: 0.16,
-    rammingOverrunDamageMin: 1.05,
-    rammingOverrunDamageMult: 1.75,
-    hardWallCrashSpeedThreshold: 11.0 * cs,   // 150 px/s
-    hardWallCrashMassRatio: 2.5,
-    hardWallCrashImpulseScale: 0.08,
-    hardWallCrashNormalKeep: 0.04,
-    hardWallCrashTangentKeep: 0.55,
-    hardWallCrashCrushMult: 1.35,
-    hardWallCrashDamageMin: 1.15,
-    hardWallCrashDamageMult: 2.35,
-    crashStampRadiusMin: 5.3 * cs,            // 72 px
-    crashStampRadiusMax: 23.0 * cs,           // 320 px
-    crashStampFrameSpeedScale: 0.36,
-    crashStampMaxCells: 384,
-    crashStampDamageMult: 1.20,
-    crashStampDamageFrac: 0.18,
-    overrunTargetVelocityKeep: 0.12,
-    crushImpulseScale: 0.90,
+    crushMinSpeed: 0.9 * cs,                  // 12 px/s — podloga WYDAJNOSCIOWA
+    crushImpulseScale: 0.25,                  // predkosc zblizania -> energia zgniotu
+    crushDeformScale: 1.0,                    // energia zgniotu -> deformacja komorek
+    // Skala obrazen przelicza DLUGOSC zgniotu na HP, wiec musi byc odwrotnie
+    // proporcjonalna do jednostki dlugosci. Odniesienie z 2D: 0.18 HP na piksel,
+    // a 1 komorka = 13.5 px. Bez tego przelicznika komorki 3D dostawaly ~13x za malo
+    // (w starym kodzie maskowaly to minima obrazen hardWall/overrun).
+    contactDamageScale: 0.18 * 13.5 / cs,     // deformacja -> obrazenia komorki
+    contactDamageCapFrac: 1.5,                // BEZPIECZNIK obrazen komorki na tick (x HP)
     shearK: 0.06,
+
+    // Prog "szybkiej pary" — WYLACZNIE wydajnosc (pomijanie 2. iteracji kolizji).
+    fastPairSpeedThreshold: 15.0 * cs,        // 200 px/s
 
     collisionSearchRadius: 2,
     collisionIterations: 2,
     maxContacts: 48,
     contactRadiusScale: 0.82,
     cellHitRadiusFactor: 0.62,
-    separationPercent: 0.92,
-    crushSeparationPercent: 0.82,
+    separationPercent: 0.9,
     separationSlop: 0.01 * cs,
 
     applyDeformMaxInstant: 0.6 * cs,          // 8 px
@@ -90,8 +75,8 @@ export function createDestructor3DConfig(cellSize = 1) {
     splitCheckInterval: 12,
     splitMaxPerTick: 1,
     splitTimeBudgetMs: 1.5,
-    splitCrashDeferTicks: 8,
-    splitCrashSpeedThreshold: 10.4 * cs,      // 140 px/s
+    splitDeferTicks: 8,
+    splitDeferSpeedThreshold: 10.4 * cs,      // 140 px/s
     wreckSplitLinearResponse: 0.23,
     wreckSplitOutwardKick: 0.6 * cs,
     wreckSplitAngularResponse: 0.030,
@@ -196,14 +181,6 @@ function getSearchOffsets3D(radius) {
   arr = flat;
   SEARCH_OFFSETS_3D[r] = arr;
   return arr;
-}
-
-function getRammingDamageCap(cellHp, attackerMassAdvantage, cfg) {
-  const hp = Math.max(1, Number(cellHp) || 1);
-  const minFrac = Math.max(0.01, cfg.rammingDamageCapMin);
-  const maxFrac = Math.max(minFrac, cfg.rammingDamageCapMax);
-  const adv = Math.max(1, Number(attackerMassAdvantage) || 1);
-  return hp * Math.min(maxFrac, minFrac + Math.log2(adv) * cfg.rammingDamageCapLogScale);
 }
 
 function getRamMass(body) {
@@ -496,8 +473,8 @@ export const Destructor3D = {
 
           // Iteracje > 0: pomiń pary katastroficzne i bardzo ciężkie (port bramki z 2D).
           const cellSum = A.grid.activeCount + B.grid.activeCount;
-          const isCrashFrame = relSpeed > cfg.crashApproachSpeedThreshold;
-          if (it > 0 && (isCrashFrame || cellSum > 9000)) continue;
+          const isFastFrame = relSpeed > cfg.fastPairSpeedThreshold;
+          if (it > 0 && (isFastFrame || cellSum > 9000)) continue;
 
           if (!this._obbOverlap(A, B, margin)) continue;
           this.collideBodies(A, B, dt, doDamage, relSpeed);
@@ -723,21 +700,7 @@ export const Destructor3D = {
     const invMassB = B.static ? 0 : 1 / massB;
     const massRatio = Math.max(massA, massB) / Math.max(1, Math.min(massA, massB));
 
-    // ---- Tryby zderzeń (port bram z 2D) ----
     const penRef = (A.grid.cellSize + B.grid.cellSize) * 0.5 * cfg.cellHitRadiusFactor;
-    const deepCrushPenetration = penetration > penRef * cfg.crushPenetrationMin;
-    const dominantMassPair = massRatio >= cfg.rammingCrushMassRatio;
-    const directDominantRam = dominantMassPair && effectiveApproachSpeed > cfg.rammingCrushSpeedThreshold;
-    const scrapeDominantRam = dominantMassPair && deepCrushPenetration && impactSpeed > cfg.rammingCrushSpeedThreshold;
-    const overrunDominantRam = directDominantRam && massRatio >= cfg.rammingOverrunMassRatio;
-    const dominantRammingCrush = directDominantRam || scrapeDominantRam;
-    const hardWallCandidate = effectiveApproachSpeed > cfg.hardWallCrashSpeedThreshold;
-    const hardWallCrushA = hardWallCandidate && !A.static && (B.static || massB >= massA * cfg.hardWallCrashMassRatio);
-    const hardWallCrushB = hardWallCandidate && !B.static && (A.static || massA >= massB * cfg.hardWallCrashMassRatio);
-    const hardWallCrash = hardWallCrushA || hardWallCrushB;
-    const overrunDamageA = overrunDominantRam && massB > massA;
-    const overrunDamageB = overrunDominantRam && massA > massB;
-    const isDestruction = effectiveApproachSpeed > cfg.crashApproachSpeedThreshold;
 
     // ---- Impuls ----
     let bounceJ = 0;
@@ -751,11 +714,8 @@ export const Destructor3D = {
         (tqB.x * nX + tqB.y * nY + tqB.z * nZ);
 
       if (Number.isFinite(denom) && denom > 1e-9) {
-        const restitution = isDestruction ? 0 : cfg.restitution;
-        let j = (-(1 + restitution) * velAlongNormal) / denom;
-        if (hardWallCrash) j *= cfg.hardWallCrashImpulseScale;
-        else if (overrunDominantRam) j *= cfg.rammingOverrunImpulseScale;
-        else if (isDestruction) j *= 0.8;
+        // JEDEN impuls dla kazdej predkosci — bez progow, bez skalowania po masie.
+        const j = (-(1 + cfg.restitution) * velAlongNormal) / denom;
         bounceJ = Math.abs(j);
 
         this._applyImpulse(A, rA, nX * j, nY * j, nZ * j, invMassA);
@@ -779,7 +739,7 @@ export const Destructor3D = {
             let jt = -tLen / denomT;
             const maxF = bounceJ * cfg.friction;
             if (Math.abs(jt) > maxF) jt = -maxF;
-            jt *= overrunDominantRam ? 0.12 : (isDestruction ? 0.25 : 0.8);
+            jt *= cfg.tangentImpulseScale;
             this._applyImpulse(A, rA, tx * jt, ty * jt, tz * jt, invMassA);
             this._applyImpulse(B, rB, -tx * jt, -ty * jt, -tz * jt, invMassB);
           }
@@ -788,33 +748,27 @@ export const Destructor3D = {
     }
 
     // hard wall: wytrać prędkość zamiast odbijać (port dampEntityAgainstHardWall)
-    if (hardWallCrash) {
-      if (hardWallCrushA) this._dampAgainstWall(A, B, nX, nY, nZ, cfg.hardWallCrashNormalKeep, cfg.hardWallCrashTangentKeep);
-      if (hardWallCrushB) this._dampAgainstWall(B, A, -nX, -nY, -nZ, cfg.hardWallCrashNormalKeep, cfg.hardWallCrashTangentKeep);
-    }
-    if (overrunDominantRam) {
-      if (overrunDamageA) this._dampOverrunTarget(A, B, -nX, -nY, -nZ, cfg.overrunTargetVelocityKeep);
-      if (overrunDamageB) this._dampOverrunTarget(B, A, nX, nY, nZ, cfg.overrunTargetVelocityKeep);
-    }
-
     // ---- Zgniot (deformacja + damage przy kontaktach) ----
-    const crushActive = isDestruction || dominantRammingCrush || hardWallCrash;
-    if (crushActive && doDamage) {
+    // Liczy sie ZAWSZE, skalowany wprost predkoscia; jedyny prog to podloga wydajnosciowa.
+    const crushPass = doDamage && effectiveApproachSpeed > cfg.crushMinSpeed;
+    if (crushPass) {
       A._gpuForceAwakeFrames = Math.max(A._gpuForceAwakeFrames | 0, 16);
       B._gpuForceAwakeFrames = Math.max(B._gpuForceAwakeFrames | 0, 16);
 
-      // odrocz rozłam, aż zgniot się rozwinie (port splitCrashDefer)
-      if (impactSpeed > cfg.splitCrashSpeedThreshold) {
-        const deferUntil = this._tick + Math.max(4, cfg.splitCrashDeferTicks | 0);
+      // odrocz rozlam, az zgniot sie rozwinie
+      if (impactSpeed > cfg.splitDeferSpeedThreshold) {
+        const deferUntil = this._tick + Math.max(4, cfg.splitDeferTicks | 0);
         if (!A.noSplit) A._splitDeferUntilTick = Math.max(A._splitDeferUntilTick | 0, deferUntil);
         if (!B.noSplit) B._splitDeferUntilTick = Math.max(B._splitDeferUntilTick | 0, deferUntil);
       }
 
       const dtScale = dt * 60;
       const totalMass = massA + massB;
-      const impulse = totalMass > 0 ? impactSpeed * (massA * massB) / totalMass : 0;
-      const hardWallMult = hardWallCrash ? cfg.hardWallCrashCrushMult : 1;
-      const crushEnergy = impulse * cfg.crushImpulseScale * dtScale * hardWallMult;
+      // Skala zgniotu to PREDKOSC ZBLIZANIA, nie ped. Mnozenie przez mase zredukowana
+      // dawalo energie o rzedy wielkosci wieksze niz zaciskacz maxDeform — deformacja
+      // byla zawsze wysycona, wiec nie niosla informacji o sile uderzenia. Podzial
+      // miedzy ciala zalatwia realRatioA/B ponizej, liczone z mas.
+      const crushEnergy = impactSpeed * cfg.crushImpulseScale * dtScale;
 
       // siła świata + ścinanie styczne
       let wfx = nX * crushEnergy, wfy = nY * crushEnergy, wfz = nZ * crushEnergy;
@@ -833,7 +787,7 @@ export const Destructor3D = {
 
       const lfA = matVecT(this._refreshRot(A), wfx, wfy, wfz, this._s5);
       const lfB = matVecT(this._refreshRot(B), -wfx, -wfy, -wfz, this._s6);
-      const crushScale = (isDestruction || hardWallCrash) ? 1 : cfg.rammingCrushScale;
+      const crushScale = cfg.crushDeformScale;
 
       let cAx = lfA.x * realRatioA * 2 * crushScale;
       let cAy = lfA.y * realRatioA * 2 * crushScale;
@@ -857,35 +811,12 @@ export const Destructor3D = {
 
       const massAdvA = massA / (massB + 1);
       const massAdvB = massB / (massA + 1);
-      const capBaseA = getRammingDamageCap(cfg.cellHP, massAdvB, cfg);
-      const capBaseB = getRammingDamageCap(cfg.cellHP, massAdvA, cfg);
-      const overrunMin = cfg.cellHP * cfg.rammingOverrunDamageMin;
-      const hardWallMin = cfg.cellHP * cfg.hardWallCrashDamageMin;
       const sqrtContacts = Math.sqrt(contactsCount);
 
       for (let c = 0; c < contactsCount; c++) {
         const ct = contacts[c];
-        this._crushCell(
-          A, ct.cellA, stampA, cAx, cAy, cAz, massAdvB, magA, realRatioA, sqrtContacts,
-          doDamage, hardWallCrushA, overrunDamageA, capBaseA, hardWallMin, overrunMin, cfg
-        );
-        this._crushCell(
-          B, ct.cellB, stampB, cBx, cBy, cBz, massAdvA, magB, realRatioB, sqrtContacts,
-          doDamage, hardWallCrushB, overrunDamageB, capBaseB, hardWallMin, overrunMin, cfg
-        );
-      }
-
-      // stempel zgniotu — pole obrażeń przy ciężkim wjeździe (port applyCrashStampDamage)
-      if (hardWallCrushA || hardWallCrushB || overrunDamageA || overrunDamageB) {
-        const frameTravel = effectiveApproachSpeed * Math.max(1 / 240, dt);
-        const stampRadius = Math.min(cfg.crashStampRadiusMax, cfg.crashStampRadiusMin + frameTravel * cfg.crashStampFrameSpeedScale * 60);
-        const stampDamage = cfg.cellHP * cfg.crashStampDamageMult;
-        if (hardWallCrushA || overrunDamageA) {
-          this._crashStamp(A, hitX, hitY, hitZ, stampRadius, stampDamage, cfg.crashStampMaxCells, nX, nY, nZ);
-        }
-        if (hardWallCrushB || overrunDamageB) {
-          this._crashStamp(B, hitX, hitY, hitZ, stampRadius, stampDamage, cfg.crashStampMaxCells, -nX, -nY, -nZ);
-        }
+        this._crushCell(A, ct.cellA, stampA, cAx, cAy, cAz, massAdvB, magA, realRatioA, sqrtContacts, doDamage, cfg);
+        this._crushCell(B, ct.cellB, stampB, cBx, cBy, cBz, massAdvA, magB, realRatioB, sqrtContacts, doDamage, cfg);
       }
 
       A.grid.meshDirty = true;
@@ -895,10 +826,9 @@ export const Destructor3D = {
     // ---- Korekta separacji ----
     const slop = cfg.separationSlop;
     if (penetration > slop && (invMassA + invMassB) > 0) {
+      // Pelna korekta przy scianie i przy glebokim zanurzeniu, poza tym staly ulamek.
       const deepPen = penetration > penRef * 0.35;
-      let sepPercent = cfg.separationPercent;
-      if (overrunDominantRam) sepPercent = cfg.rammingOverrunSeparationPercent;
-      else if (crushActive) sepPercent = deepPen ? 1.0 : cfg.crushSeparationPercent;
+      const sepPercent = deepPen ? 1.0 : cfg.separationPercent;
       const corr = (penetration - slop) / (invMassA + invMassB) * sepPercent;
       A.pos.x += nX * corr * invMassA; A.pos.y += nY * corr * invMassA; A.pos.z += nZ * corr * invMassA;
       B.pos.x -= nX * corr * invMassB; B.pos.y -= nY * corr * invMassB; B.pos.z -= nZ * corr * invMassB;
@@ -915,38 +845,7 @@ export const Destructor3D = {
     body.angVel.x += dw.x; body.angVel.y += dw.y; body.angVel.z += dw.z;
   },
 
-  _dampAgainstWall(body, wall, nx, ny, nz, keepN, keepT) {
-    const rvx = body.vel.x - wall.vel.x;
-    const rvy = body.vel.y - wall.vel.y;
-    const rvz = body.vel.z - wall.vel.z;
-    const relN = rvx * nx + rvy * ny + rvz * nz;
-    if (relN >= 0) return; // nie wjeżdża w ścianę
-    const dN = relN * keepN - relN;
-    body.vel.x += dN * nx; body.vel.y += dN * ny; body.vel.z += dN * nz;
-    if (keepT >= 1) return;
-    const rvx2 = body.vel.x - wall.vel.x;
-    const rvy2 = body.vel.y - wall.vel.y;
-    const rvz2 = body.vel.z - wall.vel.z;
-    const relN2 = rvx2 * nx + rvy2 * ny + rvz2 * nz;
-    const tX = rvx2 - nx * relN2, tY = rvy2 - ny * relN2, tZ = rvz2 - nz * relN2;
-    const k = 1 - keepT;
-    body.vel.x -= tX * k; body.vel.y -= tY * k; body.vel.z -= tZ * k;
-  },
-
-  _dampOverrunTarget(target, rammer, dx, dy, dz, keep) {
-    // dx.. = kierunek taranowania (od rammera do celu)
-    const len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
-    const nx = dx / len, ny = dy / len, nz = dz / len;
-    const rammerN = rammer.vel.x * nx + rammer.vel.y * ny + rammer.vel.z * nz;
-    if (rammerN <= 0) return;
-    const targetN = target.vel.x * nx + target.vel.y * ny + target.vel.z * nz;
-    const maxN = rammerN * Math.max(0, Math.min(1, keep));
-    if (targetN <= maxN) return;
-    const dN = maxN - targetN;
-    target.vel.x += dN * nx; target.vel.y += dN * ny; target.vel.z += dN * nz;
-  },
-
-  _crushCell(body, cell, stamp, pushBaseX, pushBaseY, pushBaseZ, massAdvOther, rawMag, realRatio, sqrtContacts, doDamage, hardWall, overrun, capBase, hardWallMin, overrunMin, cfg) {
+  _crushCell(body, cell, stamp, pushBaseX, pushBaseY, pushBaseZ, massAdvOther, rawMag, realRatio, sqrtContacts, doDamage, cfg) {
     if (!cell || !cell.active || cell.__crushStamp === stamp) return;
     cell.__crushStamp = stamp;
 
@@ -970,16 +869,10 @@ export const Destructor3D = {
     cell.cvx += px * 1.2; cell.cvy += py * 1.2; cell.cvz += pz * 1.2;
 
     if (doDamage) {
-      const kinetic = (rawMag * realRatio * 0.18 * massAdvOther) / sqrtContacts;
-      let damage = kinetic;
-      let cap = capBase;
-      if (hardWall) {
-        damage = Math.max(damage * cfg.hardWallCrashDamageMult, hardWallMin);
-        cap = Math.max(capBase, hardWallMin);
-      } else if (overrun) {
-        damage = Math.max(damage * cfg.rammingOverrunDamageMult, overrunMin);
-        cap = Math.max(capBase, overrunMin);
-      }
+      // Jeden ciagly sufit obrazen na komorke na tick — ulamek jej HP. Zeby rozorac
+      // dziob, trzeba w nim posiedziec kilka tickow, a nie trafic raz.
+      const damage = (rawMag * realRatio * cfg.contactDamageScale) / sqrtContacts;
+      const cap = Math.max(1, cell.maxHp) * cfg.contactDamageCapFrac;
       cell.hp -= Math.min(cap, damage * cfg.inflictedDamageMult);
     }
 
@@ -987,55 +880,6 @@ export const Destructor3D = {
       this.destroyCell(body, cell);
       if (!body.noSplit && this.splitQueue.indexOf(body) === -1) this.splitQueue.push(body);
     }
-  },
-
-  // Pole obrażeń wokół punktu zgniotu (port applyCrashStampDamage).
-  _crashStamp(body, wx, wy, wz, radius, damagePerCell, maxCells, fnx, fny, fnz) {
-    const cfg = this.config;
-    const grid = body.grid;
-    const m = this._refreshRot(body);
-    const l = matVecT(m, wx - body.pos.x, wy - body.pos.y, wz - body.pos.z, this._s5);
-    const lf = matVecT(m, fnx, fny, fnz, this._s6);
-    const cs = grid.cellSize;
-    const rCells = Math.ceil(radius / cs) + 1;
-    const ci = Math.floor((l.x - grid.latticeMin.x) / cs);
-    const cj = Math.floor((l.y - grid.latticeMin.y) / cs);
-    const ck = Math.floor((l.z - grid.latticeMin.z) / cs);
-    const i0 = Math.max(0, ci - rCells), i1 = Math.min(grid.nx - 1, ci + rCells);
-    const j0 = Math.max(0, cj - rCells), j1 = Math.min(grid.ny - 1, cj + rCells);
-    const k0 = Math.max(0, ck - rCells), k1 = Math.min(grid.nz - 1, ck + rCells);
-    const rSq = radius * radius;
-    const invR = 1 / radius;
-    const deformBase = Math.min(cfg.maxDeform * 0.85, Math.max(cs * 0.7, radius * 0.32));
-    const dmgFrac = cfg.crashStampDamageFrac;
-    let destroyed = 0;
-
-    for (let k = k0; k <= k1; k++) {
-      for (let j = j0; j <= j1; j++) {
-        for (let i = i0; i <= i1; i++) {
-          const cell = grid.lattice.get(packKey(i, j, k));
-          if (!cell || !cell.active) continue;
-          const ddx = cell.gx - l.x, ddy = cell.gy - l.y, ddz = cell.gz - l.z;
-          const d2 = ddx * ddx + ddy * ddy + ddz * ddz;
-          if (d2 > rSq) continue;
-          const factor = Math.max(0, 1 - Math.sqrt(d2) * invR);
-          const influence = 0.35 + factor * 0.65;
-          this.applyDeformation(cell, lf.x * deformBase * influence, lf.y * deformBase * influence, lf.z * deformBase * influence, 1.0, true);
-          const capHp = Math.max(1, cell.maxHp);
-          cell.hp -= Math.min(capHp * dmgFrac, damagePerCell * dmgFrac * (0.55 + factor * 0.45));
-          if (cell.hp <= 0) {
-            this.destroyCell(body, cell);
-            destroyed++;
-            if (destroyed >= maxCells) {
-              if (!body.noSplit && this.splitQueue.indexOf(body) === -1) this.splitQueue.push(body);
-              return destroyed;
-            }
-          }
-        }
-      }
-    }
-    if (destroyed > 0 && !body.noSplit && this.splitQueue.indexOf(body) === -1) this.splitQueue.push(body);
-    return destroyed;
   },
 
   // --------------------------- DEFORMACJA / BROŃ ---------------------------
@@ -1721,4 +1565,4 @@ export const Destructor3D = {
   }
 };
 
-export { getSearchOffsets3D, getRammingDamageCap, quatToMat3 };
+export { getSearchOffsets3D, quatToMat3 };

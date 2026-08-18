@@ -141,11 +141,15 @@ export function applyPlayerThrusterVisualState(ship, target) {
   const manualTorqueInput = hasAssistTorque ? clampSym(target.manualTorque, 1) : clampSym(target.torque, 1);
   const torqueInput = hasAssistTorque ? clampSym(manualTorqueInput + (clampSym(target.assistTorque, 1)), 1) : manualTorqueInput;
   const turnMag = Math.abs(torqueInput);
+  const mainTorqueInput = Number.isFinite(Number(target.mainTorque))
+    ? clampSym(target.mainTorque, 1)
+    : torqueInput;
+  const mainTurnMag = Math.abs(mainTorqueInput);
 
   const mainThrusters = ship.visual.mainThrusters || [];
-  const mainTurnThrottle = turnMag > 1e-3 ? Math.min(0.78, 0.18 + (turnMag * 0.52)) : 0;
+  const mainTurnThrottle = mainTurnMag > 1e-3 ? Math.min(0.78, 0.18 + (mainTurnMag * 0.52)) : 0;
   const mainThrottle = Math.max(mainInput, mainTurnThrottle);
-  const mainGimbalAssistDeg = -26 * torqueInput;
+  const mainGimbalAssistDeg = -26 * mainTorqueInput;
 
   for (let i = 0; i < mainThrusters.length; i++) {
     const t = mainThrusters[i];
@@ -155,6 +159,10 @@ export function applyPlayerThrusterVisualState(ship, target) {
   }
 
   const sideThrusters = ship.visual.torqueThrusters || [];
+  const pureTurn = turnMag > 1e-3
+    && leftInput <= 1e-3
+    && rightInput <= 1e-3
+    && retroInput <= 1e-3;
   let leftNegArm = 0;
   let leftPosArm = 0;
   let rightNegArm = 0;
@@ -209,13 +217,13 @@ export function applyPlayerThrusterVisualState(ship, target) {
     if (torqueInput > 0) {
       if (isFront && isLeft) { throttle = Math.max(throttle, turnMag); turnWeight = 1.0; }
       else if (isCenter && isLeft) { throttle = Math.max(throttle, turnMag * 0.55); turnWeight = 0.55; }
-      else if (isRear && isRight) { throttle = Math.max(throttle, turnMag * 0.75); turnWeight = 0.75; }
+      else if (isRear && isRight) { throttle = Math.max(throttle, turnMag * (pureTurn ? 1 : 0.75)); turnWeight = 0.75; }
       else if (isCenter && isRight) { throttle = Math.max(throttle, turnMag * 0.35); turnWeight = 0.35; }
       else if (!mount && isLeft && isFront) { throttle = Math.max(throttle, turnMag); turnWeight = 0.8; }
     } else if (torqueInput < 0) {
       if (isRear && isLeft) { throttle = Math.max(throttle, turnMag); turnWeight = -1.0; }
       else if (isCenter && isLeft) { throttle = Math.max(throttle, turnMag * 0.35); turnWeight = -0.35; }
-      else if (isFront && isRight) { throttle = Math.max(throttle, turnMag * 0.75); turnWeight = -0.75; }
+      else if (isFront && isRight) { throttle = Math.max(throttle, turnMag * (pureTurn ? 1 : 0.75)); turnWeight = -0.75; }
       else if (isCenter && isRight) { throttle = Math.max(throttle, turnMag * 0.55); turnWeight = -0.55; }
       else if (!mount && isRight && isFront) { throttle = Math.max(throttle, turnMag); turnWeight = -0.8; }
     }
@@ -224,7 +232,7 @@ export function applyPlayerThrusterVisualState(ship, target) {
     }
 
     let sideGimbalAssist = 0;
-    if (turnMag > 1e-3) {
+    if (turnMag > 1e-3 && !pureTurn) {
       if (torqueInput > 0) {
         if (isFront || isCenter) sideGimbalAssist = isLeft ? -22 : 22;
         if (isRear) sideGimbalAssist = isRight ? -18 : 18;
@@ -269,7 +277,7 @@ export function applyPlayerThrusterVisualState(ship, target) {
 
 export function composeShipThrusterCommand(ship, assist = null) {
   const manual = ship.thrusterInput || {};
-  const command = ship.__thrusterCommand || (ship.__thrusterCommand = { main: 0, leftSide: 0, rightSide: 0, retro: 0, torque: 0, manualTorque: 0, assistTorque: 0 });
+  const command = ship.__thrusterCommand || (ship.__thrusterCommand = { main: 0, leftSide: 0, rightSide: 0, retro: 0, torque: 0, manualTorque: 0, assistTorque: 0, mainTorque: 0 });
 
   command.main = clamp01(Math.max(Number(manual.main) || 0, Number(assist?.main) || 0));
   command.leftSide = clamp01(Math.max(Number(manual.leftSide) || 0, Number(assist?.leftSide) || 0));
@@ -278,6 +286,9 @@ export function composeShipThrusterCommand(ship, assist = null) {
   command.manualTorque = assist?.suppressManualTorque ? 0 : clampSym(manual.torque, 1);
   command.assistTorque = clampSym(assist?.torque, 1);
   command.torque = clampSym(command.manualTorque + command.assistTorque, 1);
+  command.mainTorque = Number.isFinite(Number(assist?.mainTorque))
+    ? clampSym(assist.mainTorque, 1)
+    : command.torque;
 
   if (ship.destroyed) clearThrusterVisualState(ship);
   else applyPlayerThrusterVisualState(ship, command);

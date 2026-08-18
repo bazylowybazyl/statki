@@ -6,6 +6,7 @@
 
 import { drawCicHudRadarSurface } from './cicDisplay.js';
 import { CockpitUI } from './cockpitUI.js';
+import { formatNavigationDistance, getVelocityDisplay } from '../config/units.js';
 
 const CIC_MINI_RADAR_RANGES = Object.freeze([5000, 10000, 20000, 40000, 60000]);
 
@@ -171,6 +172,7 @@ export class HUDSystem {
             warpText: document.getElementById('warp-text'),
             
             speedVal: document.getElementById('val-speed'),
+            speedUnit: document.getElementById('val-speed-unit'),
             driveReadout: document.getElementById('drive-readout'),
             driveMode: document.getElementById('drive-mode'),
             driveGear: document.getElementById('drive-gear'),
@@ -464,10 +466,13 @@ export class HUDSystem {
             }
         }
 
-        const speed = Math.round(Math.hypot(ship.vel.x, ship.vel.y));
-        if (this.cache.speed !== speed) {
-            this.dom.speedVal.textContent = speed;
-            this.cache.speed = speed;
+        const speed = Math.hypot(ship.vel.x, ship.vel.y);
+        const speedDisplay = getVelocityDisplay(speed, { warp: sys.warpState === 'active' });
+        const speedKey = `${speedDisplay.value}:${speedDisplay.unit}`;
+        if (this.cache.speed !== speedKey) {
+            this.dom.speedVal.textContent = speedDisplay.value;
+            if (this.dom.speedUnit) this.dom.speedUnit.textContent = speedDisplay.unit.toUpperCase();
+            this.cache.speed = speedKey;
         }
 
         const driveModeLabel = String(sys.driveModeLabel || sys.driveMode || 'BOJOWY').toUpperCase();
@@ -520,7 +525,8 @@ export class HUDSystem {
             if (autoButton) autoButton.classList.toggle('active', driveAuto);
             this.cache.driveAuto = driveAuto;
         }
-        const driveMenuKey = `${sys.driveMode || ''}:${driveAuto ? 1 : 0}`;
+        const driveModesKey = window.shipDriveControls?.getState?.()?.availableModes?.join(',') || '';
+        const driveMenuKey = `${sys.driveMode || ''}:${driveAuto ? 1 : 0}:${driveModesKey}`;
         if (this.cache.driveMenuKey !== driveMenuKey) {
             this.cache.driveMenuKey = driveMenuKey;
             if (this.menuState === 'MODE') {
@@ -969,14 +975,28 @@ export class HUDSystem {
         if (state === 'MODE') {
             const drive = window.shipDriveControls?.getState?.() || {};
             const activeClass = (mode) => drive.mode === mode ? ' active' : '';
+            const availableModes = drive.availableModes?.length
+                ? drive.availableModes
+                : ['combat', 'maneuver', 'travel'];
+            const modeLabels = {
+                combat: 'BOJOWY',
+                maneuver: 'MANEWROWY',
+                travel: 'PODRÓŻ'
+            };
+            const modeButtons = availableModes.map((mode) => {
+                const limit = Number(drive.modeMaxSpeeds?.[mode]) || 0;
+                const limitLabel = limit >= 1000 ? `${Math.round(limit / 1000)}K` : String(Math.round(limit));
+                return `<div class="menu-btn${activeClass(mode)}" onclick="hudSystem.handleMenuAction('drive-${mode}')" data-mode="${mode}"><div class="key-hint">${limitLabel}</div><div class="label">${modeLabels[mode] || mode.toUpperCase()}</div></div>`;
+            }).join('');
+            const autoButton = availableModes.includes('travel')
+                ? `<div class="menu-btn${drive.auto ? ' active' : ''}" onclick="hudSystem.handleMenuAction('drive-auto')" data-mode="auto"><div class="key-hint">7</div><div class="label">AUTO ${drive.auto ? 'ON' : 'OFF'}</div></div>`
+                : '';
             return `
                 <div class="menu-header">DRIVE MODE / TRANSMISSION</div>
                 <div class="menu-grid">
                     <div class="menu-btn" onclick="hudSystem.handleMenuAction('close')"><div class="key-hint">8</div><div class="label">BACK</div></div>
-                    <div class="menu-btn${activeClass('combat')}" onclick="hudSystem.handleMenuAction('drive-combat')" data-mode="combat"><div class="key-hint">5K</div><div class="label">BOJOWY</div></div>
-                    <div class="menu-btn${activeClass('maneuver')}" onclick="hudSystem.handleMenuAction('drive-maneuver')" data-mode="maneuver"><div class="key-hint">2K</div><div class="label">MANEWROWY</div></div>
-                    <div class="menu-btn${activeClass('travel')}" onclick="hudSystem.handleMenuAction('drive-travel')" data-mode="travel"><div class="key-hint">20K</div><div class="label">PODRÓŻ</div></div>
-                    <div class="menu-btn${drive.auto ? ' active' : ''}" onclick="hudSystem.handleMenuAction('drive-auto')" data-mode="auto"><div class="key-hint">7</div><div class="label">AUTO ${drive.auto ? 'ON' : 'OFF'}</div></div>
+                    ${modeButtons}
+                    ${autoButton}
                 </div>
             `;
         } else if (state === 'COMM') {
@@ -1006,11 +1026,10 @@ export class HUDSystem {
                         .sort((a, b) => a.dist - b.dist)
                         .slice(0, 3);
                     stationsListHTML = sorted.map((st) => {
-                        const distAU = (st.dist / 3000).toFixed(2);
                         const stName = st.planet ? st.planet.name : (st.name || st.id || 'Station');
                         return `
                         <div class="term-row">
-                            <span class="term-target">[${String(st.id || 'N/A').toUpperCase()}] ${stName} - ${distAU} AU</span>
+                            <span class="term-target">[${String(st.id || 'N/A').toUpperCase()}] ${stName} - ${formatNavigationDistance(st.dist)}</span>
                             <button class="term-btn" onclick="hudSystem.handleMenuAction('terminal-connect', '${String(st.id || '')}')">CONNECT</button>
                         </div>`;
                     }).join('');

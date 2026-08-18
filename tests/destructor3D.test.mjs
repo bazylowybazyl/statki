@@ -103,10 +103,11 @@ test('kolizja czołowa: kontakty, zachowanie pędu, odbicie', () => {
   assert.ok(A.pos.x < B.pos.x, 'ciała zamieniły się miejscami (tunelowanie)');
 });
 
-test('taran z przewagą masy (overrun): deformacja i zniszczenia komórek', () => {
+// Taran ciężkim ciałem w lżejsze. Przewaga masy nie włącza już osobnego trybu
+// (overrun/hardWall zniknęły) — jest jedna reguła, a o skutku decyduje energia.
+function ramSweep(speedMultiplier) {
   const cfg = freshSystem();
-  const speed = cfg.crashApproachSpeedThreshold * 1.8;
-  // przewaga masy ~11× → tryb overrun/hardWall z capami rosnącymi log2 — jak w 2D
+  const speed = cfg.fastPairSpeedThreshold * speedMultiplier;
   const A = makeCubeBody({ size: 4.5, position: { x: -6, y: 0, z: 0 }, velocity: { x: speed, y: 0, z: 0 }, name: 'A', noSplit: true });
   const B = makeCubeBody({ size: 2, position: { x: 2, y: 0, z: 0 }, velocity: { x: 0, y: 0, z: 0 }, name: 'B', noSplit: true });
   const bodies = [A, B];
@@ -122,12 +123,23 @@ test('taran z przewagą masy (overrun): deformacja i zniszczenia komórek', () =
     Destructor3D.updateVisuals(dt, bodies);
     peakDef = Math.max(peakDef, maxDeformation(A), maxDeformation(B));
   }
+  Destructor3D.onDebris = null;
+  return { cfg, peakDef, destroyed: initialCells - totalActive(bodies), debris };
+}
+
+test('taran umiarkowany: wgniata komórki, ale ich nie rozrywa', () => {
+  const { cfg, peakDef, destroyed } = ramSweep(1.8);
 
   assert.ok(peakDef > cfg.cellSize * 0.05, `brak deformacji (peak=${peakDef})`);
-  const destroyed = initialCells - totalActive(bodies);
-  assert.ok(destroyed > 0, 'crash nie zniszczył żadnej komórki');
+  assert.equal(destroyed, 0, `umiarkowany taran ma wgniatać, nie rozrywać (zniszczono ${destroyed})`);
+});
+
+test('taran o dużej energii: rozrywa komórki i zgłasza je hookiem debris', () => {
+  const { cfg, peakDef, destroyed, debris } = ramSweep(60);
+
+  assert.ok(peakDef > cfg.cellSize * 0.05, `brak deformacji (peak=${peakDef})`);
+  assert.ok(destroyed > 0, 'taran o dużej energii nie zniszczył żadnej komórki');
   assert.equal(debris, destroyed, 'hook debris nie zgadza się z licznikiem zniszczeń');
-  Destructor3D.onDebris = null;
 });
 
 test('rozerwanie w pół: findIslands + processSplits tworzą wrak', () => {

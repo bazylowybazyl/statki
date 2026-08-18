@@ -1,0 +1,3122 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Laboratorium ruchu kosmicznego — 2000+ statków</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #070a0f;
+      --panel: rgba(12, 18, 27, 0.94);
+      --panel-2: rgba(18, 27, 39, 0.92);
+      --line: #263446;
+      --line-soft: rgba(125, 157, 190, 0.17);
+      --text: #e8f1fa;
+      --muted: #8ea3b9;
+      --cyan: #68e4ff;
+      --green: #71f6ad;
+      --yellow: #ffd166;
+      --orange: #ff9b54;
+      --red: #ff5d73;
+      --purple: #c79aff;
+      --van: #87d8ff;
+      --s: #72f1b8;
+      --m: #ffe17a;
+      --l: #ff9d70;
+      --capital: #d3a4ff;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 13px;
+    }
+
+    button, input, summary { font: inherit; }
+
+    button {
+      border: 1px solid #34465b;
+      border-radius: 6px;
+      background: #131d29;
+      color: var(--text);
+      padding: 7px 9px;
+      cursor: pointer;
+    }
+
+    button:hover { border-color: #5c7b9b; background: #192738; }
+    button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+    button.active, button.primary { border-color: var(--cyan); background: #153144; color: #dff9ff; }
+    button.danger { border-color: #713847; color: #ffdce2; }
+
+    #app, #world {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    #world {
+      display: block;
+      touch-action: none;
+      cursor: grab;
+    }
+
+    #world.dragging { cursor: grabbing; }
+    #world.obstacle-mode { cursor: crosshair; }
+
+    .topbar {
+      position: absolute;
+      z-index: 10;
+      top: 0;
+      left: 0;
+      right: 0;
+      min-height: 58px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 12px;
+      background: linear-gradient(180deg, rgba(7, 11, 17, 0.98), rgba(7, 11, 17, 0.82));
+      border-bottom: 1px solid var(--line);
+      backdrop-filter: blur(10px);
+    }
+
+    .brand {
+      min-width: 220px;
+      display: grid;
+      gap: 2px;
+    }
+
+    .brand strong {
+      letter-spacing: 0.04em;
+      font-size: 14px;
+      font-weight: 650;
+    }
+
+    .brand span { color: var(--muted); font-size: 11px; }
+
+    .metrics {
+      display: flex;
+      flex: 1;
+      align-items: stretch;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .metric {
+      min-width: 74px;
+      padding: 4px 8px;
+      border-left: 1px solid var(--line);
+    }
+
+    .metric b {
+      display: block;
+      font-size: 15px;
+      font-variant-numeric: tabular-nums;
+      line-height: 1.15;
+    }
+
+    .metric span {
+      display: block;
+      color: var(--muted);
+      font-size: 10px;
+      white-space: nowrap;
+    }
+
+    #perfMetric.good { color: var(--green); }
+    #perfMetric.warn { color: var(--yellow); }
+    #perfMetric.bad { color: var(--red); }
+
+    .top-actions {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .panel {
+      position: absolute;
+      z-index: 9;
+      right: 10px;
+      top: 68px;
+      bottom: 10px;
+      width: 336px;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--panel);
+      box-shadow: 0 18px 55px rgba(0, 0, 0, 0.38);
+      scrollbar-width: thin;
+    }
+
+    .panel h2, .panel h3 {
+      margin: 0;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-weight: 650;
+    }
+
+    .panel h2 { margin-bottom: 8px; color: #cdefff; }
+    .panel h3 { margin: 13px 0 7px; color: #adc0d3; }
+
+    .button-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+    }
+
+    .button-grid button { min-height: 34px; padding: 6px; }
+
+    .status-line {
+      min-height: 34px;
+      margin: 8px 0;
+      padding: 7px 9px;
+      border-left: 3px solid var(--cyan);
+      background: rgba(34, 60, 78, 0.42);
+      color: #d8f6ff;
+      line-height: 1.35;
+    }
+
+    .status-line.warn { border-color: var(--yellow); background: rgba(91, 70, 25, 0.35); color: #fff1b8; }
+    .status-line.bad { border-color: var(--red); background: rgba(100, 34, 48, 0.34); color: #ffd6de; }
+
+    .control {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 3px 8px;
+      margin: 8px 0;
+    }
+
+    .control label { color: #d4e0eb; }
+    .control output {
+      color: var(--cyan);
+      font-variant-numeric: tabular-nums;
+      min-width: 62px;
+      text-align: right;
+    }
+
+    .control input[type="range"] {
+      grid-column: 1 / -1;
+      width: 100%;
+      accent-color: #5cd8f6;
+      cursor: pointer;
+    }
+
+    .berth-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 5px;
+      margin-top: 7px;
+    }
+
+    .berth-grid .control {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      margin: 0;
+      padding: 5px 3px;
+      border: 1px solid var(--line-soft);
+      background: rgba(255,255,255,0.018);
+    }
+
+    .berth-grid label { font-size: 10px; }
+    .berth-grid output { min-width: 0; text-align: center; }
+    .berth-grid input[type="range"] { width: 100%; }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px 10px;
+      margin: 8px 0;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .legend span { display: inline-flex; align-items: center; gap: 4px; }
+    .swatch { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+
+    .wave-wrap {
+      position: fixed;
+      z-index: 11;
+      left: 12px;
+      bottom: 66px;
+      width: 370px;
+      margin: 0;
+      border: 1px solid var(--line);
+      background: rgba(8, 12, 18, 0.92);
+      padding: 6px;
+      box-shadow: 0 12px 34px rgba(0,0,0,0.28);
+      pointer-events: none;
+    }
+
+    .wave-wrap.hidden { display: none; }
+
+    .wave-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 4px;
+      color: #c9d8e6;
+      font-size: 10px;
+    }
+
+    #wave {
+      width: 100%;
+      height: 78px;
+      display: block;
+      image-rendering: pixelated;
+      background: #0a1018;
+    }
+
+    .perf-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 5px;
+      margin-top: 7px;
+    }
+
+    .perf-cell {
+      padding: 6px;
+      background: var(--panel-2);
+      border: 1px solid var(--line-soft);
+      text-align: center;
+    }
+
+    .perf-cell b { display: block; font-size: 12px; font-variant-numeric: tabular-nums; }
+    .perf-cell span { color: var(--muted); font-size: 9px; }
+
+    details {
+      margin-top: 12px;
+      border-top: 1px solid var(--line);
+      padding-top: 10px;
+    }
+
+    summary {
+      cursor: pointer;
+      color: #d6e8f7;
+      font-weight: 600;
+    }
+
+    .notes {
+      color: #b4c4d3;
+      font-size: 11px;
+      line-height: 1.48;
+    }
+
+    .notes h4 { margin: 12px 0 4px; color: #e3f4ff; font-size: 11px; }
+    .notes p { margin: 0; }
+    .notes code { color: #8eeeff; }
+
+    .map-help {
+      position: absolute;
+      z-index: 8;
+      left: 12px;
+      bottom: 12px;
+      max-width: 520px;
+      padding: 7px 10px;
+      border: 1px solid rgba(95, 123, 151, 0.34);
+      border-radius: 6px;
+      background: rgba(7, 11, 17, 0.78);
+      color: #9fb2c5;
+      font-size: 11px;
+      pointer-events: none;
+      backdrop-filter: blur(5px);
+    }
+
+    .map-help b { color: #d9e9f6; }
+
+    #toast {
+      position: absolute;
+      z-index: 20;
+      left: 50%;
+      bottom: 26px;
+      transform: translateX(-50%) translateY(18px);
+      padding: 8px 12px;
+      border: 1px solid #4d6c88;
+      border-radius: 6px;
+      background: rgba(14, 26, 38, 0.96);
+      color: #e8f7ff;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 150ms ease, transform 150ms ease;
+    }
+
+    #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0,0,0,0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    @media (max-width: 980px) {
+      .brand { min-width: 150px; }
+      .brand span { display: none; }
+      .metric:nth-child(n+5) { display: none; }
+      .panel { width: 310px; }
+    }
+
+    @media (max-width: 720px) {
+      .topbar { min-height: 52px; gap: 5px; padding: 5px; }
+      .brand { min-width: 110px; }
+      .brand strong { font-size: 11px; }
+      .metric { min-width: 54px; padding: 3px 5px; }
+      .metric b { font-size: 12px; }
+      .metric span { font-size: 8px; }
+      .metric:nth-child(n+4) { display: none; }
+      .top-actions button:not(#pauseButton) { display: none; }
+      .panel {
+        left: 6px;
+        right: 6px;
+        top: auto;
+        bottom: 6px;
+        width: auto;
+        max-height: 43vh;
+      }
+      .map-help { display: none; }
+      .wave-wrap { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <main id="app">
+    <canvas id="world" aria-label="Interaktywna mapa ruchu kosmicznego. Przeciągnij, aby przesunąć kamerę; użyj kółka, aby zmienić zoom."></canvas>
+
+    <header class="topbar">
+      <div class="brand">
+        <strong>RUCH KOSMICZNY / LAB</strong>
+        <span>SoA · 3 pasy · wyprzedzanie → lokalni agenci → flow · skala 1:1</span>
+      </div>
+      <div class="metrics" aria-live="polite">
+        <div class="metric"><b id="perfMetric">—</b><span>FPS / p95 klatki</span></div>
+        <div class="metric"><b id="shipMetric">—</b><span>statki łącznie</span></div>
+        <div class="metric"><b id="flowMetric">—</b><span>FLOW</span></div>
+        <div class="metric"><b id="agentMetric">—</b><span>AGENT / max</span></div>
+        <div class="metric"><b id="queueMetric">—</b><span>kolejki B / W / D</span></div>
+        <div class="metric"><b id="scaleMetric">—</b><span>pasy / wyprzedzenia</span></div>
+      </div>
+      <div class="top-actions">
+        <button id="benchButton" type="button">BENCH 60 s</button>
+        <button id="pauseButton" type="button">Pauza</button>
+      </div>
+    </header>
+
+    <aside class="panel" aria-label="Sterowanie laboratorium">
+      <h2>Scenariusze odbiorowe</h2>
+      <div class="button-grid">
+        <button type="button" data-preset="all" class="primary">Pełne demo</button>
+        <button type="button" data-preset="overtake">Wyprzedzanie</button>
+        <button type="button" data-preset="booster">1 · Booster</button>
+        <button type="button" data-preset="gate">2–3 · Warp + fala</button>
+        <button type="button" data-preset="dock">4–5 · Pełny dok</button>
+        <button type="button" data-preset="jam">6 · Przeszkoda w korku</button>
+        <button type="button" data-preset="dock-obstacle">6 · Wlot do doku</button>
+      </div>
+
+      <div id="systemStatus" class="status-line">Inicjalizacja symulacji…</div>
+
+      <h3>Kamera</h3>
+      <div class="button-grid">
+        <button type="button" data-view="overview">Cała mapa</button>
+        <button type="button" data-view="overtake">Ruch 3-pasmowy</button>
+        <button type="button" data-view="booster">Booster</button>
+        <button type="button" data-view="gate">Brama warp</button>
+        <button type="button" data-view="dock">Dok Kepler</button>
+      </div>
+
+      <h3>Przeszkody</h3>
+      <div class="button-grid">
+        <button id="obstacleButton" type="button">Dodaj klikiem</button>
+        <button id="clearObstaclesButton" type="button" class="danger">Usuń wszystkie</button>
+      </div>
+
+      <h3>Potok</h3>
+      <div class="control">
+        <label for="shipCount">Liczba statków</label>
+        <output id="shipCountOut" for="shipCount"></output>
+        <input id="shipCount" data-param="shipCount" data-format="int" type="range" min="500" max="5000" step="100">
+      </div>
+      <div class="control">
+        <label for="cruiseSpeed">Prędkość przelotowa</label>
+        <output id="cruiseSpeedOut" for="cruiseSpeed"></output>
+        <input id="cruiseSpeed" data-param="cruiseSpeed" data-format="speed" type="range" min="200" max="1600" step="50">
+      </div>
+      <div class="control">
+        <label for="minGap">Minimalny odstęp</label>
+        <output id="minGapOut" for="minGap"></output>
+        <input id="minGap" data-param="minGap" data-format="units" type="range" min="20" max="120" step="5">
+      </div>
+      <div class="control">
+        <label for="reactionTime">Czas reakcji</label>
+        <output id="reactionTimeOut" for="reactionTime"></output>
+        <input id="reactionTime" data-param="reactionTime" data-format="seconds1" type="range" min="0.2" max="2" step="0.1">
+      </div>
+      <div class="control">
+        <label for="overtakeThreshold">Próg wyprzedzania</label>
+        <output id="overtakeThresholdOut" for="overtakeThreshold"></output>
+        <input id="overtakeThreshold" data-param="overtakeThreshold" data-format="speed" type="range" min="10" max="180" step="5">
+      </div>
+      <div class="control">
+        <label for="brakeForce">Siła hamowania</label>
+        <output id="brakeForceOut" for="brakeForce"></output>
+        <input id="brakeForce" data-param="brakeForce" data-format="accel" type="range" min="100" max="1400" step="50">
+      </div>
+
+      <h3>Booster i warp</h3>
+      <div class="control">
+        <label for="boosterThroughput">Przepustowość boostera</label>
+        <output id="boosterThroughputOut" for="boosterThroughput"></output>
+        <input id="boosterThroughput" data-param="boosterThroughput" data-format="rate" type="range" min="0.5" max="5" step="0.1">
+      </div>
+      <div class="control">
+        <label for="boostMultiplier">Mnożnik prędkości</label>
+        <output id="boostMultiplierOut" for="boostMultiplier"></output>
+        <input id="boostMultiplier" data-param="boostMultiplier" data-format="multiplier" type="range" min="1" max="8" step="0.25">
+      </div>
+      <div class="control">
+        <label for="gateThroughput">Przepustowość bramy</label>
+        <output id="gateThroughputOut" for="gateThroughput"></output>
+        <input id="gateThroughput" data-param="gateThroughput" data-format="rate" type="range" min="0.5" max="5" step="0.1">
+      </div>
+
+      <h3>Dok i parkingi</h3>
+      <div class="control">
+        <label for="serviceTime">Czas obsługi stanowiska</label>
+        <output id="serviceTimeOut" for="serviceTime"></output>
+        <input id="serviceTime" data-param="serviceTime" data-format="seconds0" type="range" min="4" max="40" step="1">
+      </div>
+      <div class="berth-grid" aria-label="Liczba stanowisk według klasy">
+        <div class="control"><label for="berthVan">van</label><output id="berthVanOut"></output><input id="berthVan" data-berth="0" type="range" min="0" max="8" step="1"></div>
+        <div class="control"><label for="berthS">S</label><output id="berthSOut"></output><input id="berthS" data-berth="1" type="range" min="0" max="8" step="1"></div>
+        <div class="control"><label for="berthM">M</label><output id="berthMOut"></output><input id="berthM" data-berth="2" type="range" min="0" max="8" step="1"></div>
+        <div class="control"><label for="berthL">L</label><output id="berthLOut"></output><input id="berthL" data-berth="3" type="range" min="0" max="8" step="1"></div>
+        <div class="control"><label for="berthCapital">capital</label><output id="berthCapitalOut"></output><input id="berthCapital" data-berth="4" type="range" min="0" max="8" step="1"></div>
+      </div>
+      <div class="legend" aria-label="Klasy statków">
+        <span><i class="swatch" style="background:var(--van)"></i>van 1,28×</span>
+        <span><i class="swatch" style="background:var(--s)"></i>S 1,16×</span>
+        <span><i class="swatch" style="background:var(--m)"></i>M 1,02×</span>
+        <span><i class="swatch" style="background:var(--l)"></i>L 0,88×</span>
+        <span><i class="swatch" style="background:var(--capital)"></i>capital 0,72×</span>
+      </div>
+
+      <h3>Omijanie i czas</h3>
+      <div class="control">
+        <label for="avoidRadius">Promień omijania</label>
+        <output id="avoidRadiusOut" for="avoidRadius"></output>
+        <input id="avoidRadius" data-param="avoidRadius" data-format="units" type="range" min="100" max="1500" step="50">
+      </div>
+      <div class="control">
+        <label for="timeScale">Tempo symulacji</label>
+        <output id="timeScaleOut" for="timeScale"></output>
+        <input id="timeScale" data-param="timeScale" data-format="multiplier" type="range" min="0.25" max="4" step="0.25">
+      </div>
+
+      <div class="wave-wrap">
+        <div class="wave-title">
+          <span>FALA STOP-AND-GO · 55 000 j. przed warp</span>
+          <span>czas ↓</span>
+        </div>
+        <canvas id="wave" width="96" height="52" aria-label="Historia prędkości przed bramą warp. Czerwone pasma to fale zatrzymania propagujące się wstecz."></canvas>
+      </div>
+
+      <h3>Telemetria</h3>
+      <div class="perf-grid">
+        <div class="perf-cell"><b id="updatePerf">—</b><span>update p95</span></div>
+        <div class="perf-cell"><b id="renderPerf">—</b><span>render p95</span></div>
+        <div class="perf-cell"><b id="framePerf">—</b><span>frame p99</span></div>
+        <div class="perf-cell"><b id="dockedPerf">—</b><span>zaparkowane</span></div>
+        <div class="perf-cell"><b id="oldestPerf">—</b><span>najstarszy ticket</span></div>
+        <div class="perf-cell"><b id="invariantPerf">—</b><span>inwarianty</span></div>
+      </div>
+      <div id="benchResult" class="status-line">BENCH: 10 s rozgrzewki + 60 s pomiaru. Wynik pozostaje lokalny.</div>
+
+      <details>
+        <summary>Opis rozwiązania 8.1–8.8</summary>
+        <div class="notes">
+          <h4>8.1 Model ruchu</h4>
+          <p>Trasa ma trzy równoległe pasy, każdy jako osobno uporządkowana tablica identyfikatorów; stan leży w <code>Float32Array</code>/<code>Uint8Array</code>. Lider na własnym pasie to element <code>i−1</code>. Klasy mają trwałe mnożniki prędkości: van 1,28×, S 1,16×, M 1,02×, L 0,88×, capital 0,72×. Model IDM wyznacza przyspieszenie, a mała szybsza jednostka zmienia pas, jeśli zysk jest realny i ma bezpieczną lukę przed sobą oraz za sobą. Histereza zapobiega ping-pongowi.</p>
+
+          <h4>8.2 Potok kontra agent</h4>
+          <p>FLOW obejmuje trasę i pięć fizycznych kolejek doku. Statek staje się AGENTEM tylko po otrzymaniu konkretnego stanowiska albo przepustki na objazd. Wraca do FLOW dopiero przy bezpiecznej luce. Pula ma 256 rekordów; oczekujące i zaparkowane statki jej nie zajmują.</p>
+
+          <h4>8.3 Kolejkowanie i parkowanie</h4>
+          <p>Klasy mają rangi van…capital. M może użyć M/L/capital, nigdy van/S; wybierany jest najmniejszy zgodny slot. Scheduler porównuje głowy pięciu kolejek, stosuje FIFO, ograniczony bonus priorytetu i nieograniczone starzenie. Rezerwacja wskazuje konkretny slot. Wjazd biegnie lewym korytarzem, wyjazd prawym; slot zwalnia się dopiero po opuszczeniu kieszeni. Brak jakiegokolwiek zgodnego slotu powoduje jawne przekierowanie, nie wieczną kolejkę.</p>
+
+          <h4>8.4 Boostery i bramy</h4>
+          <p>Oba zasoby mają kubeł tokenów i wirtualną linię STOP. Booster dozuje wjazd, po czym zwiększa prędkość na długim odcinku: przy tym samym przepływie większa prędkość oznacza mniejszą gęstość za wylotem. Brama pracuje w cyklu zamknięta/otwarta; przekroczenie jej skalarnej pozycji zmienia mapowanie świata z wejścia na wyjście, czyli jest prawdziwym teleportem.</p>
+
+          <h4>8.5 Omijanie przeszkód</h4>
+          <p>Koło przecinające pas tworzy stop-line, dozowany bypass i punkty po bezpiecznej stronie przeszkody. Większość korka pozostaje FLOW; agentami są tylko statki aktualnie na objeździe. Agenci dokowi używają tego samego pola odpychania. Po usunięciu przeszkody nowe statki jadą prosto, istniejące kończą manewr, a korek rozładowuje się modelem podążania.</p>
+
+          <h4>8.6 Struktury danych i wydajność</h4>
+          <p>Pozycja, prędkość, przyspieszenie, klasa, pas, offset boczny, tryb i pozwolenia są strukturą SoA. Każdy z trzech pasów ma prealokowany <code>Int32Array</code>, więc lider nadal kosztuje O(1). Decyzje zmiany pasa są dozowane, a sama klatka FLOW ma koszt O(N); agenci O(A²) tylko dla separacji. Statki są batchowane w czterech grupach prędkości. Przycisk BENCH mierzy wynik na tej konkretnej maszynie.</p>
+
+          <h4>8.7 Co się nie udało / granice poligonu</h4>
+          <p>Objazd jest lokalny i nie jest pełnym planerem dla szczelnej ściany nakładających się przeszkód. Na ostrym węźle polilinii trzy wizualne pasy używają uproszczonej normalnej, więc ich odstęp może na moment zmienić się na zakręcie. Dok ma kompletne rezerwacje, kolejki i manewry, ale uproszczoną geometrię konfliktów. Canvas 2D batchuje wywołania, lecz nie jest sprzętowym instancingiem WebGL.</p>
+
+          <h4>8.8 Co przenieść do gry</h4>
+          <p>Gotowe do przeniesienia są: SoA pasa, wirtualne stop-line, tokeny zasobów, starzenie ticketów, najmniejsze zgodne stanowisko, granica FLOW↔AGENT i warunek bezpiecznego scalenia. Rusztowaniem demo są współrzędne trasy, okres bramy, waypointy parkingu, lokalny objazd koła i wartości domyślne — należy je wystroić na realnej geometrii gry.</p>
+        </div>
+      </details>
+    </aside>
+
+    <div class="map-help">
+      <b>Kamera:</b> przeciąganie / WASD / strzałki · kółko = zoom · <b>ruch:</b> trzy pasy, małe statki automatycznie wyprzedzają wolniejsze · <b>przeszkoda:</b> przycisk + klik, PPM usuwa · spacja = pauza
+    </div>
+    <div id="toast" role="status" aria-live="polite"></div>
+    <p id="canvasDescription" class="sr-only">Mapa o średnicy około siedmiuset tysięcy jednostek z trzema równoległymi pasami ruchu, wyprzedzaniem, trzema stacjami, boosterem, parą bram warp i parkingami klasowymi.</p>
+  </main>
+
+  <script>
+  (() => {
+    "use strict";
+
+    const MAX_SHIPS = 6000;
+    const MAX_AGENTS = 256;
+    const MAX_OBSTACLES = 12;
+    const MAX_BERTHS_PER_CLASS = 8;
+    const LANE_COUNT = 3;
+    const LANE_SPACING = 360;
+    const FIXED_DT = 1 / 60;
+    const MAX_SUBSTEPS = 8;
+    const AU = 42250;
+    const CLASS_NAMES = ["van", "S", "M", "L", "capital"];
+    const CLASS_COLORS = ["#87d8ff", "#72f1b8", "#ffe17a", "#ff9d70", "#d3a4ff"];
+    const SHIP_LENGTH = new Float32Array([18, 26, 38, 54, 82]);
+    const CLASS_SPEED_FACTOR = new Float32Array([1.28, 1.16, 1.02, 0.88, 0.72]);
+    const CLASS_HOME_LANE = new Uint8Array([2, 1, 1, 0, 0]);
+    const LANE_OFFSETS = new Float32Array([-LANE_SPACING, 0, LANE_SPACING]);
+    const MODE_INACTIVE = 0;
+    const MODE_FLOW = 1;
+    const MODE_DOCK_QUEUE = 2;
+    const MODE_AGENT = 3;
+    const MODE_DOCKED = 4;
+    const PERMIT_BOOSTER = 1;
+    const PERMIT_GATE = 2;
+    const AGENT_DETOUR = 1;
+    const AGENT_DOCK_IN = 2;
+    const AGENT_DOCK_OUT = 3;
+    const BERTH_DISABLED = 0;
+    const BERTH_FREE = 1;
+    const BERTH_RESERVED = 2;
+    const BERTH_OCCUPIED = 3;
+    const BERTH_READY = 4;
+    const BERTH_EXITING = 5;
+
+    const canvas = document.getElementById("world");
+    const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
+    const waveCanvas = document.getElementById("wave");
+    const waveCtx = waveCanvas.getContext("2d", { alpha: false });
+    const toastNode = document.getElementById("toast");
+    const statusNode = document.getElementById("systemStatus");
+    const benchResultNode = document.getElementById("benchResult");
+
+    const params = {
+      shipCount: 2400,
+      cruiseSpeed: 800,
+      minGap: 55,
+      reactionTime: 0.7,
+      brakeForce: 700,
+      accelForce: 360,
+      overtakeThreshold: 55,
+      boosterThroughput: 2.2,
+      boostMultiplier: 4.5,
+      gateThroughput: 2.8,
+      serviceTime: 14,
+      avoidRadius: 400,
+      timeScale: 1,
+      berths: [4, 3, 2, 1, 1]
+    };
+
+    const routeSegments = [];
+    const routeParts = [[], []];
+    let routeLength = 0;
+
+    function addRoutePoint(part, x, y) {
+      routeParts[part].push({ x, y });
+    }
+
+    function addRouteSegment(x0, y0, x1, y1) {
+      const dx = x1 - x0;
+      const dy = y1 - y0;
+      const length = Math.hypot(dx, dy);
+      routeSegments.push({
+        x0, y0, x1, y1,
+        tx: dx / length,
+        ty: dy / length,
+        s0: routeLength,
+        s1: routeLength + length,
+        length
+      });
+      routeLength += length;
+    }
+
+    addRoutePoint(0, -350000, 0);
+    addRoutePoint(0, -290000, 0);
+    addRouteSegment(-350000, 0, -290000, 0);
+    const boosterStartS = routeLength;
+    addRoutePoint(0, -190000, 0);
+    addRouteSegment(-290000, 0, -190000, 0);
+    const boosterEndS = routeLength;
+    addRoutePoint(0, -60000, 0);
+    addRouteSegment(-190000, 0, -60000, 0);
+    const gateS = routeLength;
+
+    addRoutePoint(1, 140000, 0);
+    addRoutePoint(1, 320000, 0);
+    addRouteSegment(140000, 0, 320000, 0);
+    const dockEntryS = gateS + 164000;
+    const dockMergeS = gateS + 176000;
+    addRoutePoint(1, 350000, -50000);
+    addRouteSegment(320000, 0, 350000, -50000);
+    addRoutePoint(1, 250000, -140000);
+    addRouteSegment(350000, -50000, 250000, -140000);
+    addRoutePoint(1, 0, -190000);
+    addRouteSegment(250000, -140000, 0, -190000);
+    addRoutePoint(1, -250000, -140000);
+    addRouteSegment(0, -190000, -250000, -140000);
+    addRoutePoint(1, -350000, -50000);
+    addRouteSegment(-250000, -140000, -350000, -50000);
+    addRoutePoint(1, -350000, 0);
+    addRouteSegment(-350000, -50000, -350000, 0);
+
+    const boostReleaseS = boosterEndS + 70000;
+    const stationKepler = { x: 312000, y: 2700, r: 120, name: "KEPLER", kind: "dok logistyczny" };
+    const stations = [
+      { x: -350000, y: 0, r: 120, name: "ATLAS", kind: "stacja źródłowa" },
+      stationKepler,
+      { x: 0, y: -190000, r: 120, name: "LYRA", kind: "węzeł tranzytowy" }
+    ];
+
+    const pos = new Float32Array(MAX_SHIPS);
+    const vel = new Float32Array(MAX_SHIPS);
+    const accel = new Float32Array(MAX_SHIPS);
+    const nextVel = new Float32Array(MAX_SHIPS);
+    const stopLine = new Float32Array(MAX_SHIPS);
+    const worldX = new Float32Array(MAX_SHIPS);
+    const worldY = new Float32Array(MAX_SHIPS);
+    const tangentX = new Float32Array(MAX_SHIPS);
+    const tangentY = new Float32Array(MAX_SHIPS);
+    const waitingSince = new Float32Array(MAX_SHIPS);
+    const lateralOffset = new Float32Array(MAX_SHIPS);
+    const speedFactor = new Float32Array(MAX_SHIPS);
+    const nextLaneDecision = new Float32Array(MAX_SHIPS);
+    const lastLaneChange = new Float32Array(MAX_SHIPS);
+    const shipClass = new Uint8Array(MAX_SHIPS);
+    const priority = new Uint8Array(MAX_SHIPS);
+    const mode = new Uint8Array(MAX_SHIPS);
+    const permits = new Uint8Array(MAX_SHIPS);
+    const wantsDock = new Uint8Array(MAX_SHIPS);
+    const segmentOf = new Uint8Array(MAX_SHIPS);
+    const laneOf = new Uint8Array(MAX_SHIPS);
+    const dockSlotOf = new Int16Array(MAX_SHIPS);
+    const agentOfShip = new Int16Array(MAX_SHIPS);
+    const laneOrders = [
+      new Int32Array(MAX_SHIPS),
+      new Int32Array(MAX_SHIPS),
+      new Int32Array(MAX_SHIPS)
+    ];
+    const laneCounts = new Int32Array(LANE_COUNT);
+    let flowCount = 0;
+
+    const dockQueues = [[], [], [], [], []];
+    const berths = [];
+    const agents = [];
+    const obstacles = [];
+
+    let seed = 0x6d2b79f5;
+    let simTime = 0;
+    let paused = false;
+    let obstaclePlacement = false;
+    let highlightedAgent = -1;
+    let maxAgentsSeen = 0;
+    let activeAgentCount = 0;
+    let dockRerouted = 0;
+    let droppedSubsteps = 0;
+    let invariantMessage = "OK";
+    let gateIsOpen = false;
+    let toastTimer = 0;
+    let waveAccumulator = 0;
+    let waveIsHidden = false;
+    let laneChangesTotal = 0;
+    let overtakesTotal = 0;
+    let laneDecisionAccumulator = 0;
+    let currentScenario = "all";
+
+    const resources = {
+      booster: { tokens: 0, queue: 0, passed: 0 },
+      gate: { tokens: 0, queue: 0, passed: 0, closedDuration: 4.5, cycleDuration: 14 },
+      dock: { queue: 0, oldest: 0 }
+    };
+
+    const dockGeometry = {
+      queueHeadX: 307300,
+      queueHeadY: 650,
+      queueClassDy: 185,
+      entryGateX: 308650,
+      entryGateY: 1530,
+      exitGateX: 315050,
+      exitGateY: 1530
+    };
+
+    const camera = { x: 0, y: -70000, zoom: 0.00125, targetX: 0, targetY: -70000, targetZoom: 0.00125 };
+    let cssWidth = 1;
+    let cssHeight = 1;
+    let dpr = 1;
+    let visibleWidth = 1;
+    let centerX = 0;
+    let centerY = 0;
+    let dragging = false;
+    let pointerStartX = 0;
+    let pointerStartY = 0;
+    let cameraStartX = 0;
+    let cameraStartY = 0;
+    const keys = new Set();
+
+    function random() {
+      seed |= 0;
+      seed = seed + 0x6d2b79f5 | 0;
+      let t = seed;
+      t = Math.imul(t ^ t >>> 15, t | 1);
+      t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    }
+
+    function clamp(value, min, max) {
+      return value < min ? min : value > max ? max : value;
+    }
+
+    function chooseClass() {
+      const r = random();
+      return r < 0.39 ? 0 : r < 0.69 ? 1 : r < 0.87 ? 2 : r < 0.97 ? 3 : 4;
+    }
+
+    function sampleRoute(s, out) {
+      s = clamp(s, 0, routeLength);
+      let segment = routeSegments[routeSegments.length - 1];
+      for (let i = 0; i < routeSegments.length; i++) {
+        if (s <= routeSegments[i].s1) {
+          segment = routeSegments[i];
+          break;
+        }
+      }
+      const t = clamp((s - segment.s0) / segment.length, 0, 1);
+      out[0] = segment.x0 + (segment.x1 - segment.x0) * t;
+      out[1] = segment.y0 + (segment.y1 - segment.y0) * t;
+      out[2] = segment.tx;
+      out[3] = segment.ty;
+      out[4] = routeSegments.indexOf(segment);
+      return out;
+    }
+
+    const routeSample = new Float64Array(5);
+
+    function updateShipWorld(id) {
+      let index = segmentOf[id];
+      if (index >= routeSegments.length) index = routeSegments.length - 1;
+      const s = pos[id];
+      while (index < routeSegments.length - 1 && s > routeSegments[index].s1) index++;
+      while (index > 0 && s < routeSegments[index].s0) index--;
+      segmentOf[id] = index;
+      const segment = routeSegments[index];
+      const t = clamp((s - segment.s0) / segment.length, 0, 1);
+      const offset = lateralOffset[id];
+      worldX[id] = segment.x0 + (segment.x1 - segment.x0) * t - segment.ty * offset;
+      worldY[id] = segment.y0 + (segment.y1 - segment.y0) * t + segment.tx * offset;
+      tangentX[id] = segment.tx;
+      tangentY[id] = segment.ty;
+    }
+
+    function pathProjection(x, y) {
+      let bestDistance = Infinity;
+      let bestS = 0;
+      let bestX = 0;
+      let bestY = 0;
+      let bestTX = 1;
+      let bestTY = 0;
+      for (let i = 0; i < routeSegments.length; i++) {
+        const segment = routeSegments[i];
+        const dx = segment.x1 - segment.x0;
+        const dy = segment.y1 - segment.y0;
+        const lenSq = dx * dx + dy * dy;
+        const t = clamp(((x - segment.x0) * dx + (y - segment.y0) * dy) / lenSq, 0, 1);
+        const px = segment.x0 + dx * t;
+        const py = segment.y0 + dy * t;
+        const distance = Math.hypot(x - px, y - py);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestS = segment.s0 + segment.length * t;
+          bestX = px;
+          bestY = py;
+          bestTX = segment.tx;
+          bestTY = segment.ty;
+        }
+      }
+      return { distance: bestDistance, s: bestS, x: bestX, y: bestY, tx: bestTX, ty: bestTY };
+    }
+
+    function createAgents() {
+      for (let i = 0; i < MAX_AGENTS; i++) {
+        agents.push({
+          active: false,
+          index: i,
+          shipId: -1,
+          kind: 0,
+          x: 0,
+          y: 0,
+          vx: 0,
+          vy: 0,
+          heading: 0,
+          maxSpeed: 0,
+          waypointX: new Float64Array(12),
+          waypointY: new Float64Array(12),
+          waypointCount: 0,
+          waypointIndex: 0,
+          slotId: -1,
+          obstacleId: -1,
+          side: 1,
+          mergeS: 0,
+          mergeLane: 1,
+          slotCleared: false,
+          waitingMerge: false
+        });
+      }
+    }
+
+    function makeBerths() {
+      berths.length = 0;
+      for (let c = 0; c < 5; c++) {
+        for (let i = 0; i < MAX_BERTHS_PER_CLASS; i++) {
+          const x = stationKepler.x - 980 + c * 490;
+          const y = stationKepler.y - 590 + i * 170;
+          berths.push({
+            id: berths.length,
+            classRank: c,
+            classIndex: i,
+            x,
+            y,
+            state: BERTH_DISABLED,
+            occupantId: -1,
+            serviceRemaining: 0,
+            retiring: false
+          });
+        }
+      }
+    }
+
+    createAgents();
+    makeBerths();
+
+    function getFreeAgent() {
+      for (let i = 0; i < agents.length; i++) {
+        if (!agents[i].active) return agents[i];
+      }
+      return null;
+    }
+
+    function activateAgent(agent, id, kind, x, y) {
+      agent.active = true;
+      agent.shipId = id;
+      agent.kind = kind;
+      agent.x = x;
+      agent.y = y;
+      agent.vx = 0;
+      agent.vy = 0;
+      agent.heading = 0;
+      agent.waypointCount = 0;
+      agent.waypointIndex = 0;
+      agent.slotId = -1;
+      agent.obstacleId = -1;
+      agent.side = id % 2 === 0 ? 1 : -1;
+      agent.mergeS = 0;
+      agent.mergeLane = CLASS_HOME_LANE[shipClass[id]];
+      agent.slotCleared = false;
+      agent.waitingMerge = false;
+      agentOfShip[id] = agent.index;
+      mode[id] = MODE_AGENT;
+      activeAgentCount++;
+      if (activeAgentCount > maxAgentsSeen) maxAgentsSeen = activeAgentCount;
+      if (highlightedAgent < 0 || kind === AGENT_DOCK_IN) highlightedAgent = agent.index;
+    }
+
+    function releaseAgent(agent) {
+      if (!agent.active) return;
+      agentOfShip[agent.shipId] = -1;
+      agent.active = false;
+      agent.shipId = -1;
+      activeAgentCount--;
+      if (highlightedAgent === agent.index) highlightedAgent = -1;
+    }
+
+    function appendWaypoint(agent, x, y) {
+      if (agent.waypointCount >= agent.waypointX.length) return;
+      agent.waypointX[agent.waypointCount] = x;
+      agent.waypointY[agent.waypointCount] = y;
+      agent.waypointCount++;
+    }
+
+    function distanceToSegmentSquared(px, py, ax, ay, bx, by) {
+      const dx = bx - ax;
+      const dy = by - ay;
+      const lenSq = dx * dx + dy * dy;
+      if (lenSq < 0.0001) {
+        const ex = px - ax;
+        const ey = py - ay;
+        return ex * ex + ey * ey;
+      }
+      const t = clamp(((px - ax) * dx + (py - ay) * dy) / lenSq, 0, 1);
+      const ex = px - (ax + dx * t);
+      const ey = py - (ay + dy * t);
+      return ex * ex + ey * ey;
+    }
+
+    function appendLegAvoiding(agent, fromX, fromY, toX, toY) {
+      let chosen = null;
+      let bestT = Infinity;
+      const dx = toX - fromX;
+      const dy = toY - fromY;
+      const lenSq = dx * dx + dy * dy;
+      for (let i = 0; i < obstacles.length; i++) {
+        const obstacle = obstacles[i];
+        if (!obstacle.active) continue;
+        const clearance = obstacle.radius + params.avoidRadius * 0.72 + SHIP_LENGTH[shipClass[agent.shipId]];
+        if (distanceToSegmentSquared(obstacle.x, obstacle.y, fromX, fromY, toX, toY) > clearance * clearance) continue;
+        const t = lenSq > 0 ? clamp(((obstacle.x - fromX) * dx + (obstacle.y - fromY) * dy) / lenSq, 0, 1) : 0;
+        if (t < bestT) {
+          bestT = t;
+          chosen = obstacle;
+        }
+      }
+      if (chosen) {
+        const length = Math.max(1, Math.hypot(dx, dy));
+        const nx = -dy / length;
+        const ny = dx / length;
+        let side = Math.sign((chosen.x - fromX) * nx + (chosen.y - fromY) * ny);
+        if (side === 0) side = agent.side;
+        side = -side;
+        const clearance = chosen.radius + params.avoidRadius + SHIP_LENGTH[shipClass[agent.shipId]];
+        appendWaypoint(agent, chosen.x + nx * side * clearance, chosen.y + ny * side * clearance);
+      }
+      appendWaypoint(agent, toX, toY);
+    }
+
+    function resetAgentPool() {
+      for (let i = 0; i < agents.length; i++) {
+        agents[i].active = false;
+        agents[i].shipId = -1;
+      }
+      agentOfShip.fill(-1);
+      activeAgentCount = 0;
+      highlightedAgent = -1;
+      maxAgentsSeen = 0;
+    }
+
+    function reconfigureBerths() {
+      for (let i = 0; i < berths.length; i++) {
+        const berth = berths[i];
+        const desired = berth.classIndex < params.berths[berth.classRank];
+        berth.retiring = !desired && berth.state !== BERTH_FREE && berth.state !== BERTH_DISABLED;
+        if (berth.state === BERTH_FREE || berth.state === BERTH_DISABLED) {
+          berth.state = desired ? BERTH_FREE : BERTH_DISABLED;
+          berth.retiring = false;
+        }
+      }
+    }
+
+    function configuredCompatible(classRank) {
+      for (let c = classRank; c < 5; c++) {
+        if (params.berths[c] > 0) return true;
+      }
+      return false;
+    }
+
+    function resetSimulation(keepObstacles) {
+      seed = 0x6d2b79f5;
+      simTime = 0;
+      flowCount = 0;
+      laneCounts.fill(0);
+      laneChangesTotal = 0;
+      overtakesTotal = 0;
+      laneDecisionAccumulator = 0;
+      dockRerouted = 0;
+      droppedSubsteps = 0;
+      mode.fill(MODE_INACTIVE);
+      permits.fill(0);
+      wantsDock.fill(0);
+      accel.fill(0);
+      waitingSince.fill(0);
+      lateralOffset.fill(0);
+      nextLaneDecision.fill(0);
+      lastLaneChange.fill(-10);
+      dockSlotOf.fill(-1);
+      segmentOf.fill(0);
+      for (let c = 0; c < 5; c++) dockQueues[c].length = 0;
+      resetAgentPool();
+      if (!keepObstacles) {
+        for (let i = 0; i < obstacles.length; i++) obstacles[i].active = false;
+      }
+      resources.booster.tokens = 0;
+      resources.booster.passed = 0;
+      resources.gate.tokens = 0;
+      resources.gate.passed = 0;
+
+      for (let i = 0; i < berths.length; i++) {
+        const berth = berths[i];
+        berth.state = berth.classIndex < params.berths[berth.classRank] ? BERTH_FREE : BERTH_DISABLED;
+        berth.occupantId = -1;
+        berth.serviceRemaining = 0;
+        berth.retiring = false;
+      }
+
+      const count = Math.round(params.shipCount);
+      for (let id = 0; id < count; id++) {
+        shipClass[id] = chooseClass();
+        speedFactor[id] = CLASS_SPEED_FACTOR[shipClass[id]] * (0.94 + random() * 0.12);
+        priority[id] = random() < 0.08 ? 2 : random() < 0.22 ? 1 : 0;
+        agentOfShip[id] = -1;
+        nextLaneDecision[id] = random() * 0.42;
+      }
+
+      let nextId = 0;
+      const initialQueueTarget = Math.min(42, Math.max(20, Math.floor(count * 0.017)));
+      for (let i = 0; i < initialQueueTarget; i++) {
+        const id = nextId++;
+        const c = i % 5;
+        shipClass[id] = c;
+        speedFactor[id] = CLASS_SPEED_FACTOR[c] * (0.94 + random() * 0.12);
+        mode[id] = MODE_DOCK_QUEUE;
+        waitingSince[id] = -(initialQueueTarget - i) * 0.35;
+        dockQueues[c].push(id);
+      }
+
+      for (let i = 0; i < berths.length && nextId < count; i++) {
+        const berth = berths[i];
+        if (berth.state !== BERTH_FREE) continue;
+        const id = nextId++;
+        shipClass[id] = berth.classRank;
+        speedFactor[id] = CLASS_SPEED_FACTOR[berth.classRank] * (0.94 + random() * 0.12);
+        mode[id] = MODE_DOCKED;
+        dockSlotOf[id] = berth.id;
+        berth.state = BERTH_OCCUPIED;
+        berth.occupantId = id;
+        berth.serviceRemaining = params.serviceTime * (0.18 + random() * 0.9);
+      }
+
+      const remaining = count - nextId;
+      const boosterClusterCount = Math.min(125, Math.floor(remaining * 0.052));
+      const gateClusterCount = Math.min(180, Math.floor(remaining * 0.074));
+      const clusterSpacing = params.minGap + 76;
+      const records = [];
+      const boosterLevels = Math.ceil(boosterClusterCount / LANE_COUNT);
+      const gateLevels = Math.ceil(gateClusterCount / LANE_COUNT);
+      const boosterMin = boosterStartS - boosterLevels * clusterSpacing - 100;
+      const gateMin = gateS - gateLevels * clusterSpacing - 100;
+
+      for (let i = 0; i < boosterClusterCount; i++) {
+        records.push({
+          s: boosterStartS - params.minGap - 30 - Math.floor(i / LANE_COUNT) * clusterSpacing,
+          lane: i % LANE_COUNT
+        });
+      }
+      for (let i = 0; i < gateClusterCount; i++) {
+        records.push({
+          s: gateS - params.minGap - 30 - Math.floor(i / LANE_COUNT) * clusterSpacing,
+          lane: i % LANE_COUNT
+        });
+      }
+
+      const uniformCount = remaining - boosterClusterCount - gateClusterCount;
+      const intervals = [
+        [1200, Math.max(1500, boosterMin - 1400)],
+        [boosterStartS + 1800, Math.max(boosterStartS + 1900, gateMin - 1400)],
+        [gateS + 1800, routeLength - 1800]
+      ];
+      let allowedLength = 0;
+      for (let i = 0; i < intervals.length; i++) allowedLength += Math.max(0, intervals[i][1] - intervals[i][0]);
+      const uniformPerLane = new Int32Array(LANE_COUNT);
+      for (let i = 0; i < uniformCount; i++) uniformPerLane[i % LANE_COUNT]++;
+      const uniformRank = new Int32Array(LANE_COUNT);
+      for (let i = 0; i < uniformCount; i++) {
+        const lane = i % LANE_COUNT;
+        const rank = uniformRank[lane]++;
+        let u = (rank + 0.28 + lane * 0.19) / Math.max(1, uniformPerLane[lane]) * allowedLength;
+        let mapped = intervals[0][0];
+        for (let j = 0; j < intervals.length; j++) {
+          const len = Math.max(0, intervals[j][1] - intervals[j][0]);
+          if (u <= len) {
+            mapped = intervals[j][0] + u;
+            break;
+          }
+          u -= len;
+        }
+        records.push({ s: mapped, lane });
+      }
+      records.sort((a, b) => b.s - a.s || a.lane - b.lane);
+
+      for (let i = 0; i < records.length && nextId < count; i++) {
+        const id = nextId++;
+        const s = clamp(records[i].s, 0, routeLength - 1);
+        const lane = records[i].lane;
+        pos[id] = s;
+        mode[id] = MODE_FLOW;
+        laneOf[id] = lane;
+        lateralOffset[id] = LANE_OFFSETS[lane];
+        wantsDock[id] = random() < 0.46 ? 1 : 0;
+        let speedRatio = 0.82 + random() * 0.16;
+        if (s <= boosterStartS && s >= boosterMin - 1000) {
+          speedRatio = clamp((boosterStartS - s) / Math.max(1, boosterStartS - boosterMin), 0.02, 0.62);
+        }
+        if (s <= gateS && s >= gateMin - 1000) {
+          const phase = ((gateS - s) / clusterSpacing) % 18;
+          speedRatio = phase < 7 ? 0.02 : phase < 11 ? 0.24 : 0.62;
+        }
+        vel[id] = params.cruiseSpeed * speedFactor[id] * speedRatio;
+        laneOrders[lane][laneCounts[lane]++] = id;
+        flowCount++;
+        updateShipWorld(id);
+      }
+
+      wavePixels.fill(0);
+      for (let i = 3; i < wavePixels.length; i += 4) wavePixels[i] = 255;
+      drawWavePixels();
+      updateQueueMetrics();
+      validateInvariants();
+      updateHud(true);
+      showToast("Symulacja zresetowana: " + count.toLocaleString("pl-PL") + " statków, deterministyczny seed.");
+    }
+
+    function removeFlowAt(lane, index, preserveCount) {
+      const order = laneOrders[lane];
+      const count = laneCounts[lane];
+      const id = order[index];
+      if (index < count - 1) order.copyWithin(index, index + 1, count);
+      laneCounts[lane]--;
+      if (!preserveCount) flowCount--;
+      return id;
+    }
+
+    function findInsertIndex(lane, s) {
+      const order = laneOrders[lane];
+      let low = 0;
+      let high = laneCounts[lane];
+      while (low < high) {
+        const mid = (low + high) >>> 1;
+        if (pos[order[mid]] > s) low = mid + 1;
+        else high = mid;
+      }
+      return low;
+    }
+
+    function laneGapInfo(id, lane, s) {
+      const order = laneOrders[lane];
+      const index = findInsertIndex(lane, s);
+      const count = laneCounts[lane];
+      const half = SHIP_LENGTH[shipClass[id]] * 0.5;
+      let leader = -1;
+      let follower = -1;
+      let frontGap = 1e9;
+      let backGap = 1e9;
+      if (index > 0) {
+        leader = order[index - 1];
+        frontGap = pos[leader] - s - half - SHIP_LENGTH[shipClass[leader]] * 0.5;
+      }
+      if (index < count) {
+        follower = order[index];
+        backGap = s - pos[follower] - half - SHIP_LENGTH[shipClass[follower]] * 0.5;
+      }
+      return { index, leader, follower, frontGap, backGap };
+    }
+
+    function canInsertAt(id, lane, s, speed) {
+      const gap = laneGapInfo(id, lane, s);
+      const v = Math.max(0, speed);
+      const leaderSpeed = gap.leader >= 0 ? vel[gap.leader] : v;
+      const followerSpeed = gap.follower >= 0 ? vel[gap.follower] : 0;
+      const frontNeed = params.minGap + v * params.reactionTime * 0.34 +
+        Math.max(0, (v * v - leaderSpeed * leaderSpeed) / Math.max(1, 2 * params.brakeForce)) + 28;
+      const backNeed = params.minGap + followerSpeed * params.reactionTime * 0.3 +
+        Math.max(0, (followerSpeed * followerSpeed - v * v) / Math.max(1, 2 * params.brakeForce)) + 28;
+      return gap.frontGap >= frontNeed && gap.backGap >= backNeed;
+    }
+
+    function insertFlow(id, lane, s, speed, preserveCount) {
+      if (!canInsertAt(id, lane, s, speed)) return false;
+      const order = laneOrders[lane];
+      const count = laneCounts[lane];
+      const index = findInsertIndex(lane, s);
+      if (index < count) order.copyWithin(index + 1, index, count);
+      order[index] = id;
+      laneCounts[lane]++;
+      if (!preserveCount) flowCount++;
+      pos[id] = s;
+      vel[id] = Math.max(0, speed);
+      accel[id] = 0;
+      permits[id] = 0;
+      mode[id] = MODE_FLOW;
+      laneOf[id] = lane;
+      segmentOf[id] = 0;
+      updateShipWorld(id);
+      return true;
+    }
+
+    function findHeadBehind(s, requiredPermitMask, dockOnly, laneMask) {
+      let best = null;
+      for (let lane = 0; lane < LANE_COUNT; lane++) {
+        if (laneMask !== undefined && !(laneMask & (1 << lane))) continue;
+        const order = laneOrders[lane];
+        const count = laneCounts[lane];
+        for (let i = 0; i < count; i++) {
+          const id = order[i];
+          if (pos[id] > s + 1) continue;
+          if (requiredPermitMask && (permits[id] & requiredPermitMask)) continue;
+          if (dockOnly && !wantsDock[id]) continue;
+          if (!best || pos[id] > best.s) best = { lane, index: i, id, s: pos[id] };
+          break;
+        }
+      }
+      return best;
+    }
+
+    function refillResources(dt) {
+      resources.booster.tokens = Math.min(1.25, resources.booster.tokens + params.boosterThroughput * dt);
+      const phase = simTime % resources.gate.cycleDuration;
+      gateIsOpen = phase >= resources.gate.closedDuration;
+      if (gateIsOpen) {
+        resources.gate.tokens = Math.min(1.4, resources.gate.tokens + params.gateThroughput * dt);
+      } else {
+        resources.gate.tokens = Math.min(resources.gate.tokens, 0.25);
+      }
+      for (let i = 0; i < obstacles.length; i++) {
+        const obstacle = obstacles[i];
+        if (!obstacle.active) continue;
+        obstacle.tokens = Math.min(1.2, obstacle.tokens + 2.6 * dt);
+      }
+    }
+
+    function grantResourcePermits() {
+      let ref = findHeadBehind(boosterStartS, PERMIT_BOOSTER, false);
+      if (ref && resources.booster.tokens >= 1) {
+        const id = ref.id;
+        if (boosterStartS - pos[id] <= params.minGap + SHIP_LENGTH[shipClass[id]] + 26) {
+          permits[id] |= PERMIT_BOOSTER;
+          resources.booster.tokens -= 1;
+          resources.booster.passed++;
+        }
+      }
+
+      ref = findHeadBehind(gateS, PERMIT_GATE, false);
+      if (ref && gateIsOpen && resources.gate.tokens >= 1) {
+        const id = ref.id;
+        if (gateS - pos[id] <= params.minGap + SHIP_LENGTH[shipClass[id]] + 26) {
+          permits[id] |= PERMIT_GATE;
+          resources.gate.tokens -= 1;
+          resources.gate.passed++;
+        }
+      }
+    }
+
+    function nearestStopForShip(id, s) {
+      let stop = Infinity;
+      if (s < boosterStartS && !(permits[id] & PERMIT_BOOSTER)) stop = boosterStartS;
+      if (s < gateS && !(permits[id] & PERMIT_GATE) && gateS < stop) stop = gateS;
+      if (wantsDock[id] && s < dockEntryS && dockEntryS < stop) stop = dockEntryS;
+      for (let i = 0; i < obstacles.length; i++) {
+        const obstacle = obstacles[i];
+        if (!obstacle.active || !(obstacle.laneMask & (1 << laneOf[id]))) continue;
+        if (s < obstacle.stopS && obstacle.stopS < stop) stop = obstacle.stopS;
+      }
+      return stop;
+    }
+
+    function freeSpeedFor(id, s) {
+      let speed = params.cruiseSpeed * speedFactor[id];
+      if (s >= boosterStartS && s <= boostReleaseS) speed *= params.boostMultiplier;
+      return speed;
+    }
+
+    function inLaneChangeLockZone(id) {
+      const s = pos[id];
+      if (permits[id]) return true;
+      if (s > boosterStartS - 46000 && s < boosterStartS + 1600) return true;
+      if (s > gateS - 62000 && s < gateS + 1800) return true;
+      if (wantsDock[id] && s > dockEntryS - 5200 && s < dockEntryS + 1000) return true;
+      for (let i = 0; i < obstacles.length; i++) {
+        const obstacle = obstacles[i];
+        if (!obstacle.active || !(obstacle.laneMask & (1 << laneOf[id]))) continue;
+        if (s > obstacle.stopS - 2500 && s < obstacle.mergeS + 800) return true;
+      }
+      return false;
+    }
+
+    function tryLaneChange(lane, index) {
+      const order = laneOrders[lane];
+      const id = order[index];
+      if (simTime < nextLaneDecision[id]) return false;
+      nextLaneDecision[id] = simTime + 0.18 + (id % 7) * 0.015;
+      if (simTime - lastLaneChange[id] < 2.0 || inLaneChangeLockZone(id)) return false;
+
+      const currentGap = laneGapInfo(id, lane, pos[id]);
+      const leader = currentGap.leader;
+      const ownFreeSpeed = freeSpeedFor(id, pos[id]);
+      const constrained = leader >= 0 && currentGap.frontGap < params.minGap + vel[id] * 1.9 &&
+        (ownFreeSpeed > freeSpeedFor(leader, pos[leader]) * 1.07 || vel[id] > vel[leader] + params.overtakeThreshold);
+      const homeLane = CLASS_HOME_LANE[shipClass[id]];
+      const returningHome = lastLaneChange[id] >= 0 && lane !== homeLane && simTime - lastLaneChange[id] > 4.0 &&
+        (leader < 0 || currentGap.frontGap > params.minGap + vel[id] * 2.8);
+      if (!constrained && !returningHome) return false;
+
+      let bestLane = -1;
+      let bestScore = -Infinity;
+      for (let target = 0; target < LANE_COUNT; target++) {
+        if (target === lane) continue;
+        if (Math.abs(target - lane) > 1 && !returningHome) continue;
+        if (returningHome && Math.abs(target - homeLane) >= Math.abs(lane - homeLane)) continue;
+        if (!canInsertAt(id, target, pos[id], vel[id])) continue;
+        const gap = laneGapInfo(id, target, pos[id]);
+        const targetLeaderSpeed = gap.leader >= 0 ? vel[gap.leader] : ownFreeSpeed;
+        const improvement = Math.min(gap.frontGap, params.minGap + vel[id] * 5) - Math.min(currentGap.frontGap, params.minGap + vel[id] * 5);
+        const speedGain = targetLeaderSpeed - (leader >= 0 ? vel[leader] : ownFreeSpeed);
+        const homeBonus = target === homeLane ? 180 : 0;
+        const score = improvement + speedGain * 0.7 + homeBonus;
+        if ((constrained && improvement > Math.max(150, vel[id] * 0.28) || returningHome) && score > bestScore) {
+          bestScore = score;
+          bestLane = target;
+        }
+      }
+
+      if (bestLane < 0) return false;
+      const s = pos[id];
+      const speed = vel[id];
+      removeFlowAt(lane, index, true);
+      if (!insertFlow(id, bestLane, s, speed, true)) {
+        insertFlow(id, lane, s, speed, true);
+        return false;
+      }
+      lastLaneChange[id] = simTime;
+      laneChangesTotal++;
+      if (constrained) overtakesTotal++;
+      return true;
+    }
+
+    function updateLaneChanges() {
+      let changes = 0;
+      for (let lane = 0; lane < LANE_COUNT && changes < 6; lane++) {
+        for (let i = 1; i < laneCounts[lane] && changes < 6; i++) {
+          if (tryLaneChange(lane, i)) {
+            changes++;
+            i = Math.max(0, i - 2);
+          }
+        }
+      }
+    }
+
+    function updateFlow(dt) {
+      const minGap = params.minGap;
+      const accelForce = params.accelForce;
+      const brake = params.brakeForce;
+      const reaction = Math.max(0.12, params.reactionTime);
+      const sqrtTerm = 2 * Math.sqrt(accelForce * brake);
+
+      for (let lane = 0; lane < LANE_COUNT; lane++) {
+        const order = laneOrders[lane];
+        const count = laneCounts[lane];
+        for (let i = 0; i < count; i++) {
+          const id = order[i];
+          const s = pos[id];
+          const freeSpeed = freeSpeedFor(id, s);
+
+          let gap = 1e9;
+          let leaderSpeed = freeSpeed;
+          if (i > 0) {
+            const leader = order[i - 1];
+            gap = pos[leader] - s - (SHIP_LENGTH[shipClass[id]] + SHIP_LENGTH[shipClass[leader]]) * 0.5;
+            leaderSpeed = vel[leader];
+          }
+
+          const stop = nearestStopForShip(id, s);
+          stopLine[id] = stop;
+          if (stop < Infinity) {
+            const stopGap = stop - s - SHIP_LENGTH[shipClass[id]] * 0.5;
+            if (stopGap < gap) {
+              gap = stopGap;
+              leaderSpeed = 0;
+            }
+          }
+
+          gap = Math.max(1, gap);
+          const v = vel[id];
+          const deltaV = v - leaderSpeed;
+          const desiredGap = minGap + v * reaction + Math.max(0, v * deltaV / Math.max(1, sqrtTerm));
+          const freeRatio = v / Math.max(1, freeSpeed);
+          const interaction = desiredGap / gap;
+          let command = accelForce * (1 - freeRatio * freeRatio * freeRatio * freeRatio - interaction * interaction);
+          command = clamp(command, -brake, accelForce);
+          const filter = Math.min(1, dt / reaction);
+          accel[id] += (command - accel[id]) * filter;
+          nextVel[id] = Math.max(0, v + accel[id] * dt);
+        }
+      }
+
+      for (let lane = 0; lane < LANE_COUNT; lane++) {
+        const order = laneOrders[lane];
+        const count = laneCounts[lane];
+        for (let i = 0; i < count; i++) {
+          const id = order[i];
+          const oldS = pos[id];
+          let nextS = oldS + nextVel[id] * dt;
+          if (i > 0) {
+            const leader = order[i - 1];
+            const cap = pos[leader] - minGap - (SHIP_LENGTH[shipClass[id]] + SHIP_LENGTH[shipClass[leader]]) * 0.5;
+            if (nextS > cap) nextS = Math.max(oldS, cap);
+          } else if (nextS > routeLength) {
+            nextS = routeLength;
+          }
+          const stop = stopLine[id];
+          if (stop < Infinity) {
+            const cap = stop - SHIP_LENGTH[shipClass[id]] * 0.5;
+            if (nextS > cap) nextS = Math.max(oldS, cap);
+          }
+          vel[id] = Math.max(0, (nextS - oldS) / dt);
+          pos[id] = nextS;
+          const targetOffset = LANE_OFFSETS[laneOf[id]];
+          const maxLateralStep = LANE_SPACING * dt / 0.48;
+          lateralOffset[id] += clamp(targetOffset - lateralOffset[id], -maxLateralStep, maxLateralStep);
+
+          if (pos[id] > boosterStartS + 120) permits[id] &= ~PERMIT_BOOSTER;
+          if (pos[id] > gateS + 120) permits[id] &= ~PERMIT_GATE;
+          updateShipWorld(id);
+        }
+      }
+      laneDecisionAccumulator += dt;
+      if (laneDecisionAccumulator >= 0.15) {
+        laneDecisionAccumulator -= 0.15;
+        updateLaneChanges();
+      }
+    }
+
+    function enqueueDockShip(id) {
+      mode[id] = MODE_DOCK_QUEUE;
+      waitingSince[id] = simTime;
+      permits[id] = 0;
+      dockQueues[shipClass[id]].push(id);
+    }
+
+    function processDockCapture() {
+      const ref = findHeadBehind(dockEntryS, 0, true);
+      if (!ref) return;
+      const id = ref.id;
+      if (dockEntryS - pos[id] > params.minGap + SHIP_LENGTH[shipClass[id]] + 25) return;
+      removeFlowAt(ref.lane, ref.index, false);
+      enqueueDockShip(id);
+    }
+
+    function spawnDetour(lane, index, obstacle) {
+      const agent = getFreeAgent();
+      if (!agent || obstacle.activeDetours >= 14) return false;
+      const id = laneOrders[lane][index];
+      const startX = worldX[id];
+      const startY = worldY[id];
+      activateAgent(agent, id, AGENT_DETOUR, startX, startY);
+      agent.maxSpeed = params.cruiseSpeed * 0.72;
+      agent.obstacleId = obstacle.id;
+      agent.side = obstacle.side;
+      agent.mergeS = obstacle.mergeS;
+      agent.mergeLane = lane;
+      obstacle.activeDetours++;
+
+      const clearance = obstacle.radius + params.avoidRadius + SHIP_LENGTH[shipClass[id]];
+      const nx = -obstacle.ty * obstacle.side;
+      const ny = obstacle.tx * obstacle.side;
+      appendWaypoint(agent,
+        obstacle.x - obstacle.tx * obstacle.radius * 0.55 + nx * clearance,
+        obstacle.y - obstacle.ty * obstacle.radius * 0.55 + ny * clearance);
+      appendWaypoint(agent,
+        obstacle.x + obstacle.tx * obstacle.radius * 0.55 + nx * clearance,
+        obstacle.y + obstacle.ty * obstacle.radius * 0.55 + ny * clearance);
+      sampleRoute(obstacle.mergeS, routeSample);
+      const mergeOffset = LANE_OFFSETS[agent.mergeLane];
+      appendWaypoint(agent, routeSample[0] - routeSample[3] * mergeOffset, routeSample[1] + routeSample[2] * mergeOffset);
+      removeFlowAt(lane, index, false);
+      return true;
+    }
+
+    function processObstacleTransfers() {
+      for (let i = 0; i < obstacles.length; i++) {
+        const obstacle = obstacles[i];
+        if (!obstacle.active || !obstacle.laneMask || obstacle.tokens < 1) continue;
+        const ref = findHeadBehind(obstacle.stopS, 0, false, obstacle.laneMask);
+        if (!ref) continue;
+        const id = ref.id;
+        if (obstacle.stopS - pos[id] > params.minGap + SHIP_LENGTH[shipClass[id]] + 24) continue;
+        if (spawnDetour(ref.lane, ref.index, obstacle)) obstacle.tokens -= 1;
+      }
+    }
+
+    function processRouteWrap() {
+      for (let lane = 0; lane < LANE_COUNT; lane++) {
+        if (laneCounts[lane] === 0) continue;
+        const id = laneOrders[lane][0];
+        if (pos[id] < routeLength - 0.5) continue;
+        let targetLane = lane;
+        if (!canInsertAt(id, targetLane, 0, Math.min(freeSpeedFor(id, 0), vel[id]))) {
+          targetLane = -1;
+          for (let candidate = 0; candidate < LANE_COUNT; candidate++) {
+            if (canInsertAt(id, candidate, 0, Math.min(freeSpeedFor(id, 0), vel[id]))) {
+              targetLane = candidate;
+              break;
+            }
+          }
+        }
+        if (targetLane < 0) continue;
+        removeFlowAt(lane, 0, false);
+        wantsDock[id] = random() < 0.46 ? 1 : 0;
+        lateralOffset[id] = LANE_OFFSETS[targetLane];
+        insertFlow(id, targetLane, 0, Math.min(freeSpeedFor(id, 0), vel[id]), false);
+      }
+    }
+
+    function bestFreeBerth(classRank) {
+      let best = null;
+      for (let i = 0; i < berths.length; i++) {
+        const berth = berths[i];
+        if (berth.state !== BERTH_FREE || berth.classRank < classRank) continue;
+        if (!best || berth.classRank < best.classRank || (berth.classRank === best.classRank && berth.id < best.id)) best = berth;
+      }
+      return best;
+    }
+
+    function queuePosition(classRank, index, out) {
+      const spacing = 62 + SHIP_LENGTH[classRank];
+      out[0] = dockGeometry.queueHeadX - index * spacing;
+      out[1] = dockGeometry.queueHeadY + classRank * dockGeometry.queueClassDy;
+      return out;
+    }
+
+    const queueSample = new Float64Array(2);
+
+    function spawnDockIn(id, berth, classRank) {
+      const agent = getFreeAgent();
+      if (!agent) return false;
+      queuePosition(classRank, 0, queueSample);
+      activateAgent(agent, id, AGENT_DOCK_IN, queueSample[0], queueSample[1]);
+      agent.maxSpeed = Math.min(520, params.cruiseSpeed * 0.62);
+      agent.slotId = berth.id;
+      berth.state = BERTH_RESERVED;
+      berth.occupantId = id;
+      dockSlotOf[id] = berth.id;
+
+      let fromX = agent.x;
+      let fromY = agent.y;
+      appendLegAvoiding(agent, fromX, fromY, dockGeometry.entryGateX, dockGeometry.entryGateY);
+      fromX = dockGeometry.entryGateX;
+      fromY = dockGeometry.entryGateY;
+      appendLegAvoiding(agent, fromX, fromY, berth.x - 230, berth.y);
+      appendWaypoint(agent, berth.x, berth.y);
+      return true;
+    }
+
+    function spawnDockOut(berth) {
+      const id = berth.occupantId;
+      const agent = getFreeAgent();
+      if (!agent || id < 0) return false;
+      activateAgent(agent, id, AGENT_DOCK_OUT, berth.x, berth.y);
+      agent.maxSpeed = Math.min(560, params.cruiseSpeed * 0.68);
+      agent.slotId = berth.id;
+      agent.mergeS = dockMergeS;
+      agent.mergeLane = CLASS_HOME_LANE[shipClass[id]];
+      berth.state = BERTH_EXITING;
+
+      appendLegAvoiding(agent, berth.x, berth.y, berth.x + 240, berth.y);
+      appendLegAvoiding(agent, berth.x + 240, berth.y, dockGeometry.exitGateX, dockGeometry.exitGateY);
+      sampleRoute(dockMergeS, routeSample);
+      const mergeOffset = LANE_OFFSETS[agent.mergeLane];
+      appendLegAvoiding(agent, dockGeometry.exitGateX, dockGeometry.exitGateY,
+        routeSample[0] - routeSample[3] * mergeOffset, routeSample[1] + routeSample[2] * mergeOffset);
+      return true;
+    }
+
+    function dispatchDock() {
+      let activeEntries = 0;
+      for (let i = 0; i < agents.length; i++) {
+        if (agents[i].active && agents[i].kind === AGENT_DOCK_IN) activeEntries++;
+      }
+
+      let guard = 0;
+      while (activeEntries < 3 && guard++ < 8) {
+        let bestClass = -1;
+        let bestId = -1;
+        let bestBerth = null;
+        let bestScore = -Infinity;
+
+        for (let c = 0; c < 5; c++) {
+          if (dockQueues[c].length === 0) continue;
+          const id = dockQueues[c][0];
+          const berth = bestFreeBerth(shipClass[id]);
+          if (!berth) continue;
+          const wait = simTime - waitingSince[id];
+          const score = wait + Math.min(8, priority[id] * 3.5) + c * 0.25;
+          if (score > bestScore) {
+            bestScore = score;
+            bestClass = c;
+            bestId = id;
+            bestBerth = berth;
+          }
+        }
+
+        if (bestId < 0 || !bestBerth) break;
+        if (!spawnDockIn(bestId, bestBerth, bestClass)) break;
+        dockQueues[bestClass].shift();
+        activeEntries++;
+      }
+    }
+
+    function processUnserviceableQueues() {
+      for (let c = 0; c < 5; c++) {
+        if (dockQueues[c].length === 0 || configuredCompatible(c)) continue;
+        const id = dockQueues[c][0];
+        if (simTime - waitingSince[id] < 2) continue;
+        const mergeLane = CLASS_HOME_LANE[shipClass[id]];
+        if (insertFlow(id, mergeLane, dockMergeS, freeSpeedFor(id, dockMergeS) * 0.45, false)) {
+          dockQueues[c].shift();
+          wantsDock[id] = 0;
+          dockRerouted++;
+        }
+      }
+    }
+
+    function updateDock(dt) {
+      let activeExits = 0;
+      for (let i = 0; i < agents.length; i++) {
+        if (agents[i].active && agents[i].kind === AGENT_DOCK_OUT) activeExits++;
+      }
+      for (let i = 0; i < berths.length; i++) {
+        const berth = berths[i];
+        if (berth.state === BERTH_OCCUPIED) {
+          berth.serviceRemaining -= dt;
+          if (berth.serviceRemaining <= 0) berth.state = BERTH_READY;
+        }
+        if (berth.state === BERTH_READY && activeExits < 3 && spawnDockOut(berth)) activeExits++;
+      }
+      processUnserviceableQueues();
+      dispatchDock();
+    }
+
+    function clearBerthAfterExit(berth) {
+      berth.occupantId = -1;
+      berth.serviceRemaining = 0;
+      const desired = berth.classIndex < params.berths[berth.classRank];
+      berth.state = desired ? BERTH_FREE : BERTH_DISABLED;
+      berth.retiring = false;
+    }
+
+    function completeAgent(agent) {
+      const id = agent.shipId;
+      if (agent.kind === AGENT_DOCK_IN) {
+        const berth = berths[agent.slotId];
+        berth.state = BERTH_OCCUPIED;
+        berth.occupantId = id;
+        berth.serviceRemaining = params.serviceTime * (0.78 + random() * 0.44);
+        mode[id] = MODE_DOCKED;
+        dockSlotOf[id] = berth.id;
+        releaseAgent(agent);
+        return true;
+      }
+
+      let mergeLane = agent.mergeLane;
+      const mergeSpeed = freeSpeedFor(id, agent.mergeS) * 0.55;
+      if (!canInsertAt(id, mergeLane, agent.mergeS, mergeSpeed)) {
+        mergeLane = -1;
+        for (let lane = 0; lane < LANE_COUNT; lane++) {
+          if (canInsertAt(id, lane, agent.mergeS, mergeSpeed)) {
+            mergeLane = lane;
+            break;
+          }
+        }
+      }
+      if (mergeLane < 0) {
+        agent.waitingMerge = true;
+        agent.vx *= 0.65;
+        agent.vy *= 0.65;
+        return false;
+      }
+
+      if (agent.kind === AGENT_DETOUR) {
+        const obstacle = obstacles[agent.obstacleId];
+        if (obstacle) obstacle.activeDetours = Math.max(0, obstacle.activeDetours - 1);
+      }
+      wantsDock[id] = 0;
+      lateralOffset[id] = LANE_OFFSETS[mergeLane];
+      insertFlow(id, mergeLane, agent.mergeS, mergeSpeed, false);
+      dockSlotOf[id] = -1;
+      releaseAgent(agent);
+      return true;
+    }
+
+    function updateAgents(dt) {
+      for (let i = 0; i < agents.length; i++) {
+        const agent = agents[i];
+        if (!agent.active) continue;
+
+        if (agent.waypointIndex >= agent.waypointCount) {
+          completeAgent(agent);
+          continue;
+        }
+
+        const targetX = agent.waypointX[agent.waypointIndex];
+        const targetY = agent.waypointY[agent.waypointIndex];
+        let dx = targetX - agent.x;
+        let dy = targetY - agent.y;
+        let distance = Math.hypot(dx, dy);
+        if (distance < Math.max(10, agent.maxSpeed * dt * 1.25)) {
+          agent.x = targetX;
+          agent.y = targetY;
+          agent.waypointIndex++;
+          if (agent.kind === AGENT_DOCK_OUT && agent.waypointIndex >= 1 && !agent.slotCleared) {
+            clearBerthAfterExit(berths[agent.slotId]);
+            agent.slotCleared = true;
+          }
+          if (agent.waypointIndex >= agent.waypointCount) {
+            completeAgent(agent);
+            continue;
+          }
+          dx = agent.waypointX[agent.waypointIndex] - agent.x;
+          dy = agent.waypointY[agent.waypointIndex] - agent.y;
+          distance = Math.hypot(dx, dy);
+        }
+
+        const invDistance = distance > 0.0001 ? 1 / distance : 0;
+        let desiredSpeed = agent.maxSpeed;
+        if (agent.waypointIndex === agent.waypointCount - 1) {
+          desiredSpeed = Math.min(desiredSpeed, Math.sqrt(2 * params.brakeForce * distance));
+        }
+        let desiredVX = dx * invDistance * desiredSpeed;
+        let desiredVY = dy * invDistance * desiredSpeed;
+
+        for (let o = 0; o < obstacles.length; o++) {
+          const obstacle = obstacles[o];
+          if (!obstacle.active) continue;
+          const ox = agent.x - obstacle.x;
+          const oy = agent.y - obstacle.y;
+          const od = Math.hypot(ox, oy);
+          const clearance = obstacle.radius + params.avoidRadius + SHIP_LENGTH[shipClass[agent.shipId]] * 0.6;
+          if (od < clearance * 1.35 && od > 0.01) {
+            const strength = clamp((clearance * 1.35 - od) / (clearance * 0.75), 0, 1);
+            const nx = ox / od;
+            const ny = oy / od;
+            desiredVX += nx * agent.maxSpeed * strength * 1.9 - ny * agent.side * agent.maxSpeed * strength * 0.35;
+            desiredVY += ny * agent.maxSpeed * strength * 1.9 + nx * agent.side * agent.maxSpeed * strength * 0.35;
+          }
+        }
+
+        for (let j = 0; j < agents.length; j++) {
+          if (j === i || !agents[j].active) continue;
+          const other = agents[j];
+          const sx = agent.x - other.x;
+          const sy = agent.y - other.y;
+          const sdSq = sx * sx + sy * sy;
+          if (sdSq > 1 && sdSq < 110 * 110) {
+            const sd = Math.sqrt(sdSq);
+            const strength = (110 - sd) / 110;
+            desiredVX += sx / sd * agent.maxSpeed * strength * 0.34;
+            desiredVY += sy / sd * agent.maxSpeed * strength * 0.34;
+          }
+        }
+
+        const tau = agent.kind === AGENT_DETOUR ? 0.36 : 0.5;
+        const blend = Math.min(1, dt / tau);
+        agent.vx += (desiredVX - agent.vx) * blend;
+        agent.vy += (desiredVY - agent.vy) * blend;
+        const speed = Math.hypot(agent.vx, agent.vy);
+        const max = agent.maxSpeed * 1.15;
+        if (speed > max) {
+          agent.vx *= max / speed;
+          agent.vy *= max / speed;
+        }
+        agent.x += agent.vx * dt;
+        agent.y += agent.vy * dt;
+        if (Math.abs(agent.vx) + Math.abs(agent.vy) > 0.1) agent.heading = Math.atan2(agent.vy, agent.vx);
+      }
+    }
+
+    function fixedStep(dt) {
+      simTime += dt;
+      refillResources(dt);
+      grantResourcePermits();
+      updateFlow(dt);
+      processDockCapture();
+      processObstacleTransfers();
+      processRouteWrap();
+      updateDock(dt);
+      updateAgents(dt);
+      waveAccumulator += dt;
+      if (waveAccumulator >= 0.22) {
+        waveAccumulator -= 0.22;
+        sampleWave();
+      }
+    }
+
+    function updateObstacleGeometry(obstacle) {
+      const projection = pathProjection(obstacle.x, obstacle.y);
+      obstacle.sCenter = projection.s;
+      obstacle.tx = projection.tx;
+      obstacle.ty = projection.ty;
+      const clearance = obstacle.radius + params.avoidRadius;
+      obstacle.stopS = clamp(projection.s - clearance * 1.25, 100, routeLength - 100);
+      obstacle.mergeS = clamp(projection.s + clearance * 1.35, 100, routeLength - 100);
+      const signedLateral = (obstacle.x - projection.x) * (-projection.ty) + (obstacle.y - projection.y) * projection.tx;
+      obstacle.laneMask = 0;
+      for (let lane = 0; lane < LANE_COUNT; lane++) {
+        if (Math.abs(signedLateral - LANE_OFFSETS[lane]) <= clearance) obstacle.laneMask |= 1 << lane;
+      }
+      obstacle.laneAffected = obstacle.laneMask !== 0;
+    }
+
+    function addObstacle(x, y, radius, name) {
+      let obstacle = null;
+      for (let i = 0; i < obstacles.length; i++) {
+        if (!obstacles[i].active && obstacles[i].activeDetours === 0) {
+          obstacle = obstacles[i];
+          break;
+        }
+      }
+      if (!obstacle && obstacles.length < MAX_OBSTACLES) {
+        obstacle = {
+          id: obstacles.length,
+          active: false,
+          x: 0,
+          y: 0,
+          radius: 0,
+          sCenter: 0,
+          stopS: 0,
+          mergeS: 0,
+          tx: 1,
+          ty: 0,
+          side: 1,
+          tokens: 0,
+          activeDetours: 0,
+          laneMask: 0,
+          laneAffected: false,
+          name: ""
+        };
+        obstacles.push(obstacle);
+      }
+      if (!obstacle) {
+        showToast("Limit " + MAX_OBSTACLES + " przeszkód. Usuń jedną, aby dodać następną.");
+        return null;
+      }
+      obstacle.active = true;
+      obstacle.x = x;
+      obstacle.y = y;
+      obstacle.radius = radius;
+      obstacle.tokens = 0;
+      obstacle.side = obstacle.id % 2 === 0 ? 1 : -1;
+      obstacle.name = name || "przeszkoda " + (obstacle.id + 1);
+      updateObstacleGeometry(obstacle);
+      showToast(obstacle.laneAffected ? "Przeszkoda przecina potok: uruchomiono dozowany objazd." : "Przeszkoda poza głównym pasem: reagują na nią lokalni agenci.");
+      return obstacle;
+    }
+
+    function clearObstacles() {
+      for (let i = 0; i < obstacles.length; i++) obstacles[i].active = false;
+      showToast("Przeszkody usunięte. Aktywni agenci bezpiecznie kończą rozpoczęte objazdy.");
+    }
+
+    function addJamObstacle() {
+      sampleRoute(gateS - 9000, routeSample);
+      addObstacle(routeSample[0], routeSample[1], 620, "przeszkoda w korku warp");
+    }
+
+    function addDockObstacle() {
+      addObstacle(309350, 1540, 330, "przeszkoda na wlocie do doku");
+    }
+
+    function removeNearestObstacle(worldPointX, worldPointY) {
+      let best = null;
+      let bestDistance = Infinity;
+      for (let i = 0; i < obstacles.length; i++) {
+        const obstacle = obstacles[i];
+        if (!obstacle.active) continue;
+        const distance = Math.hypot(obstacle.x - worldPointX, obstacle.y - worldPointY);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          best = obstacle;
+        }
+      }
+      if (best && bestDistance <= Math.max(best.radius * 2, 35 / camera.zoom)) {
+        best.active = false;
+        showToast("Usunięto " + best.name + ". Korek może się teraz naturalnie rozładować.");
+      }
+    }
+
+    function worldToScreenX(x) { return (x - camera.x) * camera.zoom + centerX; }
+    function worldToScreenY(y) { return (y - camera.y) * camera.zoom + centerY; }
+    function screenToWorldX(x) { return (x - centerX) / camera.zoom + camera.x; }
+    function screenToWorldY(y) { return (y - centerY) / camera.zoom + camera.y; }
+
+    function resizeCanvas() {
+      const rect = canvas.getBoundingClientRect();
+      cssWidth = Math.max(1, rect.width);
+      cssHeight = Math.max(1, rect.height);
+      dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+      canvas.width = Math.round(cssWidth * dpr);
+      canvas.height = Math.round(cssHeight * dpr);
+      visibleWidth = cssWidth > 720 ? Math.max(360, cssWidth - 356) : cssWidth;
+      centerX = visibleWidth * 0.5;
+      centerY = cssHeight * 0.5 + 18;
+    }
+
+    function setView(name, immediate) {
+      let x = 0;
+      let y = -65000;
+      let zoom = Math.max(0.00078, Math.min(0.00132, (visibleWidth - 70) / 740000));
+      if (name === "booster") {
+        x = -240000;
+        y = 0;
+        zoom = 0.0072;
+      } else if (name === "overtake") {
+        x = 230000;
+        y = 0;
+        zoom = 0.04;
+      } else if (name === "gate") {
+        x = -90000;
+        y = 0;
+        zoom = 0.0085;
+      } else if (name === "dock") {
+        x = 311000;
+        y = 1850;
+        zoom = 0.105;
+      }
+      camera.targetX = x;
+      camera.targetY = y;
+      camera.targetZoom = zoom;
+      if (immediate) {
+        camera.x = x;
+        camera.y = y;
+        camera.zoom = zoom;
+      }
+    }
+
+    function updateCamera(realDt) {
+      if (!dragging) {
+        const pan = 520 / camera.zoom * realDt;
+        let dx = 0;
+        let dy = 0;
+        if (keys.has("a") || keys.has("arrowleft")) dx -= pan;
+        if (keys.has("d") || keys.has("arrowright")) dx += pan;
+        if (keys.has("w") || keys.has("arrowup")) dy -= pan;
+        if (keys.has("s") || keys.has("arrowdown")) dy += pan;
+        if (dx || dy) {
+          camera.targetX += dx;
+          camera.targetY += dy;
+          camera.x = camera.targetX;
+          camera.y = camera.targetY;
+        } else {
+          const blend = 1 - Math.exp(-realDt * 9);
+          camera.x += (camera.targetX - camera.x) * blend;
+          camera.y += (camera.targetY - camera.y) * blend;
+          camera.zoom += (camera.targetZoom - camera.zoom) * blend;
+        }
+      }
+      const shouldHideWave = camera.zoom > 0.03;
+      if (shouldHideWave !== waveIsHidden) {
+        waveIsHidden = shouldHideWave;
+        waveCanvas.parentElement.classList.toggle("hidden", waveIsHidden);
+      }
+    }
+
+    function drawGrid() {
+      const desired = 115 / camera.zoom;
+      const power = Math.pow(10, Math.floor(Math.log10(desired)));
+      const ratio = desired / power;
+      const spacing = (ratio < 2 ? 2 : ratio < 5 ? 5 : 10) * power;
+      const left = screenToWorldX(0);
+      const right = screenToWorldX(visibleWidth);
+      const top = screenToWorldY(58);
+      const bottom = screenToWorldY(cssHeight);
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = "rgba(100, 135, 168, 0.095)";
+      ctx.beginPath();
+      for (let x = Math.floor(left / spacing) * spacing; x <= right; x += spacing) {
+        const sx = worldToScreenX(x);
+        ctx.moveTo(sx, 58);
+        ctx.lineTo(sx, cssHeight);
+      }
+      for (let y = Math.floor(top / spacing) * spacing; y <= bottom; y += spacing) {
+        const sy = worldToScreenY(y);
+        ctx.moveTo(0, sy);
+        ctx.lineTo(visibleWidth, sy);
+      }
+      ctx.stroke();
+    }
+
+    function drawRoute() {
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      for (let lane = 0; lane < LANE_COUNT; lane++) {
+        const offset = LANE_OFFSETS[lane];
+        for (let partIndex = 0; partIndex < routeParts.length; partIndex++) {
+          const part = routeParts[partIndex];
+          ctx.beginPath();
+          for (let i = 0; i < part.length; i++) {
+            let nx = 0;
+            let ny = 1;
+            const prev = part[Math.max(0, i - 1)];
+            const next = part[Math.min(part.length - 1, i + 1)];
+            const dx = next.x - prev.x;
+            const dy = next.y - prev.y;
+            const length = Math.max(1, Math.hypot(dx, dy));
+            nx = -dy / length;
+            ny = dx / length;
+            const sx = worldToScreenX(part[i].x + nx * offset);
+            const sy = worldToScreenY(part[i].y + ny * offset);
+            if (i === 0) ctx.moveTo(sx, sy);
+            else ctx.lineTo(sx, sy);
+          }
+          ctx.strokeStyle = lane === 1 ? "rgba(128, 166, 199, 0.42)" : "rgba(96, 128, 157, 0.27)";
+          ctx.lineWidth = lane === 1 ? 1.1 : 0.8;
+          ctx.stroke();
+        }
+      }
+
+      const ax = worldToScreenX(-60000);
+      const ay = worldToScreenY(0);
+      const bx = worldToScreenX(140000);
+      const by = worldToScreenY(0);
+      ctx.save();
+      ctx.setLineDash([6, 7]);
+      ctx.strokeStyle = "rgba(199,154,255,0.52)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(bx, by);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawWorldLabel(text, x, y, color, align) {
+      const sx = worldToScreenX(x);
+      const sy = worldToScreenY(y);
+      if (sx < -180 || sx > visibleWidth + 180 || sy < 45 || sy > cssHeight + 30) return;
+      ctx.font = "600 11px ui-sans-serif, system-ui, sans-serif";
+      ctx.textAlign = align || "center";
+      ctx.textBaseline = "middle";
+      const width = ctx.measureText(text).width + 12;
+      const boxX = align === "left" ? sx - 4 : align === "right" ? sx - width + 4 : sx - width * 0.5;
+      ctx.fillStyle = "rgba(5,9,14,0.82)";
+      ctx.fillRect(boxX, sy - 9, width, 18);
+      ctx.fillStyle = color || "#cfe7f7";
+      ctx.fillText(text, sx, sy);
+    }
+
+    function drawStation(station) {
+      const sx = worldToScreenX(station.x);
+      const sy = worldToScreenY(station.y);
+      if (sx < -80 || sx > visibleWidth + 80 || sy < 0 || sy > cssHeight) return;
+      const exactRadius = station.r * camera.zoom;
+      ctx.strokeStyle = "rgba(104,228,255,0.88)";
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      ctx.arc(sx, sy, Math.max(0.5, exactRadius), 0, Math.PI * 2);
+      ctx.stroke();
+      const marker = clamp(8 - Math.log10(Math.max(camera.zoom, 0.0001)), 7, 11);
+      ctx.strokeStyle = "rgba(104,228,255,0.42)";
+      ctx.beginPath();
+      ctx.arc(sx, sy, marker, 0, Math.PI * 2);
+      ctx.moveTo(sx - marker - 4, sy);
+      ctx.lineTo(sx + marker + 4, sy);
+      ctx.moveTo(sx, sy - marker - 4);
+      ctx.lineTo(sx, sy + marker + 4);
+      ctx.stroke();
+      drawWorldLabel(station.name + " · R=120 j.", station.x, station.y - 900 / Math.max(0.01, camera.zoom * 100), "#bcefff");
+    }
+
+    function drawBoosterAndGate() {
+      sampleRoute(boosterStartS, routeSample);
+      const startX = worldToScreenX(routeSample[0]);
+      const startY = worldToScreenY(routeSample[1]);
+      sampleRoute(boostReleaseS, routeSample);
+      const endX = worldToScreenX(routeSample[0]);
+      const endY = worldToScreenY(routeSample[1]);
+      ctx.strokeStyle = "rgba(113,246,173,0.72)";
+      ctx.lineWidth = clamp(220 * camera.zoom, 3, 12);
+      ctx.beginPath();
+      ctx.moveTo(startX, startY);
+      ctx.lineTo(endX, endY);
+      ctx.stroke();
+      ctx.strokeStyle = "#71f6ad";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(startX, startY - 13);
+      ctx.lineTo(startX, startY + 13);
+      ctx.stroke();
+      drawWorldLabel("BOOSTER · kolejka " + resources.booster.queue + " · " + params.boosterThroughput.toFixed(1) + "/s", -245000, -3600, "#8fffc3");
+
+      const inX = worldToScreenX(-60000);
+      const outX = worldToScreenX(140000);
+      const gy = worldToScreenY(0);
+      ctx.strokeStyle = gateIsOpen ? "#c79aff" : "#ff5d73";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(inX, gy - 18);
+      ctx.lineTo(inX, gy + 18);
+      ctx.moveTo(outX, gy - 18);
+      ctx.lineTo(outX, gy + 18);
+      ctx.stroke();
+      drawWorldLabel("WARP IN → +200 000 j. · " + (gateIsOpen ? "OTWARTA" : "ZAMKNIĘTA") + " · kolejka " + resources.gate.queue, -60000, -4400, gateIsOpen ? "#d7baff" : "#ff9aaa");
+      drawWorldLabel("WARP OUT · teleport +200 000 j.", 140000, -4400, "#d7baff");
+
+      const queueBars = [
+        { s: boosterStartS, count: resources.booster.queue, color: "rgba(113,246,173,0.78)" },
+        { s: gateS, count: resources.gate.queue, color: "rgba(199,154,255,0.8)" }
+      ];
+      for (let i = 0; i < queueBars.length; i++) {
+        sampleRoute(queueBars[i].s, routeSample);
+        const x = worldToScreenX(routeSample[0]);
+        const y = worldToScreenY(routeSample[1]);
+        const h = clamp(queueBars[i].count * 0.7, 4, 74);
+        ctx.fillStyle = queueBars[i].color;
+        ctx.fillRect(x - 3, y - h - 22, 6, h);
+      }
+    }
+
+    function drawTriangle(screenX, screenY, tx, ty, size) {
+      const nx = -ty;
+      const ny = tx;
+      ctx.moveTo(screenX + tx * size, screenY + ty * size);
+      ctx.lineTo(screenX - tx * size * 0.72 + nx * size * 0.56, screenY - ty * size * 0.72 + ny * size * 0.56);
+      ctx.lineTo(screenX - tx * size * 0.72 - nx * size * 0.56, screenY - ty * size * 0.72 - ny * size * 0.56);
+      ctx.closePath();
+    }
+
+    const speedColors = ["#ff5d73", "#ffd166", "#71f6ad", "#68e4ff"];
+
+    function speedBucket(id) {
+      const free = freeSpeedFor(id, pos[id]);
+      const ratio = vel[id] / Math.max(1, free);
+      return ratio < 0.08 ? 0 : ratio < 0.46 ? 1 : ratio < 0.82 ? 2 : 3;
+    }
+
+    function flowShipRenderSize(id) {
+      return clamp(2.25 + shipClass[id] * 0.82 + SHIP_LENGTH[shipClass[id]] * camera.zoom * 0.32, 2.3, 11);
+    }
+
+    function drawFlowShips() {
+      for (let classRank = 0; classRank < 5; classRank++) {
+        ctx.beginPath();
+        let hasPath = false;
+        for (let lane = 0; lane < LANE_COUNT; lane++) {
+          const order = laneOrders[lane];
+          for (let i = 0; i < laneCounts[lane]; i++) {
+            const id = order[i];
+            if (shipClass[id] !== classRank) continue;
+            const sx = worldToScreenX(worldX[id]);
+            const sy = worldToScreenY(worldY[id]);
+            if (sx < -10 || sx > visibleWidth + 10 || sy < 48 || sy > cssHeight + 10) continue;
+            const size = flowShipRenderSize(id);
+            drawTriangle(sx, sy, tangentX[id], tangentY[id], size);
+            hasPath = true;
+          }
+        }
+        if (hasPath) {
+          ctx.fillStyle = CLASS_COLORS[classRank];
+          ctx.fill();
+        }
+      }
+
+      for (let bucket = 0; bucket < 2; bucket++) {
+        ctx.beginPath();
+        let hasCongestion = false;
+        for (let lane = 0; lane < LANE_COUNT; lane++) {
+          const order = laneOrders[lane];
+          for (let i = 0; i < laneCounts[lane]; i++) {
+            const id = order[i];
+            if (speedBucket(id) !== bucket) continue;
+            const sx = worldToScreenX(worldX[id]);
+            const sy = worldToScreenY(worldY[id]);
+            if (sx < -12 || sx > visibleWidth + 12 || sy < 48 || sy > cssHeight + 12) continue;
+            drawTriangle(sx, sy, tangentX[id], tangentY[id], flowShipRenderSize(id) + 0.8);
+            hasCongestion = true;
+          }
+        }
+        if (hasCongestion) {
+          ctx.strokeStyle = speedColors[bucket];
+          ctx.lineWidth = bucket === 0 ? 1.4 : 1;
+          ctx.stroke();
+        }
+      }
+
+      ctx.beginPath();
+      let hasLaneChanges = false;
+      let laneChangeLabelId = -1;
+      for (let lane = 0; lane < LANE_COUNT; lane++) {
+        const order = laneOrders[lane];
+        for (let i = 0; i < laneCounts[lane]; i++) {
+          const id = order[i];
+          if (simTime - lastLaneChange[id] > 0.9) continue;
+          const sx = worldToScreenX(worldX[id]);
+          const sy = worldToScreenY(worldY[id]);
+          if (sx < -12 || sx > visibleWidth + 12 || sy < 48 || sy > cssHeight + 12) continue;
+          drawTriangle(sx, sy, tangentX[id], tangentY[id], flowShipRenderSize(id) + 1.25);
+          hasLaneChanges = true;
+          if (laneChangeLabelId < 0 && shipClass[id] <= 1) laneChangeLabelId = id;
+        }
+      }
+      if (hasLaneChanges) {
+        ctx.strokeStyle = "rgba(255,255,255,0.9)";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+      if (currentScenario === "overtake" && camera.zoom > 0.02 && laneChangeLabelId >= 0) {
+        drawWorldLabel(CLASS_NAMES[shipClass[laneChangeLabelId]] + " · WYPRZEDZA",
+          worldX[laneChangeLabelId], worldY[laneChangeLabelId] - 24 / camera.zoom, "#ffffff");
+      }
+    }
+
+    function drawObstacles() {
+      for (let i = 0; i < obstacles.length; i++) {
+        const obstacle = obstacles[i];
+        if (!obstacle.active) continue;
+        const sx = worldToScreenX(obstacle.x);
+        const sy = worldToScreenY(obstacle.y);
+        const radius = obstacle.radius * camera.zoom;
+        if (sx + radius < 0 || sx - radius > visibleWidth || sy + radius < 55 || sy - radius > cssHeight) continue;
+        ctx.fillStyle = "rgba(255,93,115,0.18)";
+        ctx.strokeStyle = "#ff5d73";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(sx, sy, Math.max(3, radius), 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        const avoid = (obstacle.radius + params.avoidRadius) * camera.zoom;
+        ctx.save();
+        ctx.setLineDash([4, 5]);
+        ctx.strokeStyle = "rgba(255,157,112,0.54)";
+        ctx.beginPath();
+        ctx.arc(sx, sy, Math.max(5, avoid), 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+        drawWorldLabel("OBJAZD · agentów " + obstacle.activeDetours, obstacle.x, obstacle.y - (obstacle.radius + params.avoidRadius + 110 / camera.zoom), "#ffb0bc");
+      }
+    }
+
+    function drawDock() {
+      const zoomEnough = camera.zoom > 0.012;
+      const branchStartX = worldToScreenX(304000);
+      const branchStartY = worldToScreenY(0);
+      const entryX = worldToScreenX(dockGeometry.queueHeadX);
+      const entryY = worldToScreenY(dockGeometry.queueHeadY + 2 * dockGeometry.queueClassDy);
+      ctx.strokeStyle = "rgba(104,228,255,0.36)";
+      ctx.lineWidth = clamp(85 * camera.zoom, 1, 8);
+      ctx.beginPath();
+      ctx.moveTo(branchStartX, branchStartY);
+      ctx.lineTo(entryX, entryY);
+      ctx.stroke();
+
+      if (!zoomEnough) {
+        drawWorldLabel("DOK KEPLER · " + resources.dock.queue + " oczekuje · kliknij „Dok Kepler”", stationKepler.x, stationKepler.y + 3400, "#8deeff");
+        return;
+      }
+
+      ctx.font = "500 10px ui-sans-serif, system-ui, sans-serif";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      for (let c = 0; c < 5; c++) {
+        const y = dockGeometry.queueHeadY + c * dockGeometry.queueClassDy;
+        const sx0 = worldToScreenX(dockGeometry.queueHeadX - 4700);
+        const sx1 = worldToScreenX(dockGeometry.queueHeadX + 160);
+        const sy = worldToScreenY(y);
+        ctx.strokeStyle = "rgba(126,155,182,0.28)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(sx0, sy);
+        ctx.lineTo(sx1, sy);
+        ctx.stroke();
+        ctx.fillStyle = CLASS_COLORS[c];
+        ctx.fillText(CLASS_NAMES[c] + " · " + dockQueues[c].length, sx0 + 3, sy - 9);
+
+        ctx.beginPath();
+        for (let q = 0; q < dockQueues[c].length; q++) {
+          const id = dockQueues[c][q];
+          queuePosition(c, q, queueSample);
+          const sx = worldToScreenX(queueSample[0]);
+          const qy = worldToScreenY(queueSample[1]);
+          if (sx < -10 || sx > visibleWidth + 10) continue;
+          drawTriangle(sx, qy, 1, 0, clamp(SHIP_LENGTH[shipClass[id]] * camera.zoom * 0.5, 2.2, 8));
+        }
+        ctx.fillStyle = CLASS_COLORS[c];
+        ctx.fill();
+      }
+
+      for (let i = 0; i < berths.length; i++) {
+        const berth = berths[i];
+        if (berth.state === BERTH_DISABLED) continue;
+        const sx = worldToScreenX(berth.x);
+        const sy = worldToScreenY(berth.y);
+        const w = clamp((85 + berth.classRank * 28) * camera.zoom, 7, 30);
+        const h = clamp((42 + berth.classRank * 12) * camera.zoom, 5, 17);
+        ctx.strokeStyle = berth.retiring ? "#ff9b54" : CLASS_COLORS[berth.classRank];
+        ctx.fillStyle = berth.state === BERTH_FREE ? "rgba(18,31,43,0.8)" : "rgba(104,228,255,0.16)";
+        ctx.lineWidth = berth.state === BERTH_RESERVED ? 2.5 : 1;
+        ctx.fillRect(sx - w, sy - h, w * 2, h * 2);
+        ctx.strokeRect(sx - w, sy - h, w * 2, h * 2);
+        if (berth.occupantId >= 0) {
+          const id = berth.occupantId;
+          ctx.beginPath();
+          drawTriangle(sx, sy, 1, 0, clamp(SHIP_LENGTH[shipClass[id]] * camera.zoom * 0.55, 3, 11));
+          ctx.fillStyle = CLASS_COLORS[shipClass[id]];
+          ctx.fill();
+        }
+        if (camera.zoom > 0.09) {
+          ctx.fillStyle = "#d6e4ef";
+          ctx.textAlign = "center";
+          ctx.font = "500 9px ui-sans-serif, system-ui, sans-serif";
+          ctx.fillText(CLASS_NAMES[berth.classRank] + "-" + (berth.classIndex + 1), sx, sy - h - 7);
+        }
+      }
+
+      ctx.strokeStyle = "rgba(113,246,173,0.54)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(worldToScreenX(dockGeometry.entryGateX), worldToScreenY(dockGeometry.entryGateY - 90));
+      ctx.lineTo(worldToScreenX(dockGeometry.entryGateX), worldToScreenY(dockGeometry.entryGateY + 90));
+      ctx.stroke();
+      ctx.strokeStyle = "rgba(199,154,255,0.54)";
+      ctx.beginPath();
+      ctx.moveTo(worldToScreenX(dockGeometry.exitGateX), worldToScreenY(dockGeometry.exitGateY - 90));
+      ctx.lineTo(worldToScreenX(dockGeometry.exitGateX), worldToScreenY(dockGeometry.exitGateY + 90));
+      ctx.stroke();
+      drawWorldLabel("WJAZD", dockGeometry.entryGateX, dockGeometry.entryGateY - 180, "#8fffc3");
+      drawWorldLabel("WYJAZD", dockGeometry.exitGateX, dockGeometry.exitGateY - 180, "#d7baff");
+    }
+
+    function drawAgents() {
+      for (let i = 0; i < agents.length; i++) {
+        const agent = agents[i];
+        if (!agent.active) continue;
+        const id = agent.shipId;
+        const sx = worldToScreenX(agent.x);
+        const sy = worldToScreenY(agent.y);
+        if (sx < -30 || sx > visibleWidth + 30 || sy < 40 || sy > cssHeight + 30) continue;
+
+        if (agent.index === highlightedAgent) {
+          ctx.strokeStyle = "rgba(255,255,255,0.62)";
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(sx, sy);
+          for (let w = agent.waypointIndex; w < agent.waypointCount; w++) {
+            ctx.lineTo(worldToScreenX(agent.waypointX[w]), worldToScreenY(agent.waypointY[w]));
+          }
+          ctx.stroke();
+        }
+
+        const speed = Math.hypot(agent.vx, agent.vy);
+        const tx = speed > 1 ? agent.vx / speed : Math.cos(agent.heading);
+        const ty = speed > 1 ? agent.vy / speed : Math.sin(agent.heading);
+        ctx.beginPath();
+        drawTriangle(sx, sy, tx, ty, clamp(SHIP_LENGTH[shipClass[id]] * camera.zoom * 0.6, 3.2, 12));
+        ctx.fillStyle = agent.kind === AGENT_DETOUR ? "#ff9d70" : CLASS_COLORS[shipClass[id]];
+        ctx.fill();
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        if (agent.index === highlightedAgent && camera.zoom > 0.035) {
+          let label = "#" + id + " · " + CLASS_NAMES[shipClass[id]];
+          if (agent.slotId >= 0) {
+            const berth = berths[agent.slotId];
+            label += " → " + CLASS_NAMES[berth.classRank] + "-" + (berth.classIndex + 1);
+          } else {
+            label += " · OBJAZD";
+          }
+          drawWorldLabel(label, agent.x, agent.y - 120 / camera.zoom, "#ffffff");
+        }
+      }
+    }
+
+    function drawScaleBar() {
+      const targetPx = 130;
+      const raw = targetPx / camera.zoom;
+      const power = Math.pow(10, Math.floor(Math.log10(raw)));
+      const ratio = raw / power;
+      const worldLength = (ratio < 2 ? 1 : ratio < 5 ? 2 : 5) * power;
+      const px = worldLength * camera.zoom;
+      const x = 18;
+      const y = cssHeight - 48;
+      ctx.strokeStyle = "#b9c9d8";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + px, y);
+      ctx.moveTo(x, y - 4);
+      ctx.lineTo(x, y + 4);
+      ctx.moveTo(x + px, y - 4);
+      ctx.lineTo(x + px, y + 4);
+      ctx.stroke();
+      ctx.fillStyle = "#b9c9d8";
+      ctx.font = "500 10px ui-sans-serif, system-ui, sans-serif";
+      ctx.textAlign = "left";
+      ctx.fillText(worldLength.toLocaleString("pl-PL") + " j. · " + (worldLength / AU).toFixed(2) + " AU", x, y - 8);
+    }
+
+    function drawMapAnnotations() {
+      ctx.fillStyle = "rgba(210,226,240,0.78)";
+      ctx.font = "500 10px ui-sans-serif, system-ui, sans-serif";
+      ctx.textAlign = "left";
+      ctx.fillText("ATLAS → KEPLER ≈ 662 000 j. · przelot konwencjonalny ≈ 13,8 min · R stacji = 120 j.", 14, 76);
+      if (camera.zoom < 0.003) {
+        ctx.fillStyle = "rgba(104,228,255,0.6)";
+        ctx.fillText("Elementy stacji mają rzeczywistą skalę; stałe krzyże są tylko markerami nawigacyjnymi.", 14, 92);
+      }
+    }
+
+    function render() {
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.fillStyle = "#070a0f";
+      ctx.fillRect(0, 0, cssWidth, cssHeight);
+      drawGrid();
+      drawRoute();
+      drawBoosterAndGate();
+      for (let i = 0; i < stations.length; i++) drawStation(stations[i]);
+      drawDock();
+      drawFlowShips();
+      drawObstacles();
+      drawAgents();
+      drawScaleBar();
+      drawMapAnnotations();
+    }
+
+    const WAVE_WIDTH = waveCanvas.width;
+    const WAVE_HEIGHT = waveCanvas.height;
+    const wavePixels = new Uint8ClampedArray(WAVE_WIDTH * WAVE_HEIGHT * 4);
+    const waveRow = new Float32Array(WAVE_WIDTH);
+    const waveImage = waveCtx.createImageData(WAVE_WIDTH, WAVE_HEIGHT);
+
+    function waveColor(ratio, out, offset) {
+      if (ratio < 0) {
+        out[offset] = 8; out[offset + 1] = 15; out[offset + 2] = 23; out[offset + 3] = 255;
+      } else if (ratio < 0.12) {
+        out[offset] = 255; out[offset + 1] = 70; out[offset + 2] = 92; out[offset + 3] = 255;
+      } else if (ratio < 0.55) {
+        out[offset] = 255; out[offset + 1] = 190; out[offset + 2] = 73; out[offset + 3] = 255;
+      } else if (ratio < 0.84) {
+        out[offset] = 94; out[offset + 1] = 218; out[offset + 2] = 159; out[offset + 3] = 255;
+      } else {
+        out[offset] = 76; out[offset + 1] = 201; out[offset + 2] = 236; out[offset + 3] = 255;
+      }
+    }
+
+    function sampleWave() {
+      waveRow.fill(-1);
+      const start = gateS - 55000;
+      for (let lane = 0; lane < LANE_COUNT; lane++) {
+        const order = laneOrders[lane];
+        for (let i = 0; i < laneCounts[lane]; i++) {
+          const id = order[i];
+          const s = pos[id];
+          if (s < start || s > gateS) continue;
+          const bin = clamp(Math.floor((s - start) / 55000 * WAVE_WIDTH), 0, WAVE_WIDTH - 1);
+          const ratio = vel[id] / Math.max(1, freeSpeedFor(id, s));
+          if (waveRow[bin] < 0 || ratio < waveRow[bin]) waveRow[bin] = ratio;
+        }
+      }
+      const rowBytes = WAVE_WIDTH * 4;
+      wavePixels.copyWithin(0, rowBytes);
+      const offset = (WAVE_HEIGHT - 1) * rowBytes;
+      for (let x = 0; x < WAVE_WIDTH; x++) waveColor(waveRow[x], wavePixels, offset + x * 4);
+      drawWavePixels();
+    }
+
+    function drawWavePixels() {
+      waveImage.data.set(wavePixels);
+      waveCtx.putImageData(waveImage, 0, 0);
+    }
+
+    const PERF_CAPACITY = 4096;
+    const frameSamples = new Float32Array(PERF_CAPACITY);
+    const updateSamples = new Float32Array(PERF_CAPACITY);
+    const renderSamples = new Float32Array(PERF_CAPACITY);
+    let perfIndex = 0;
+    let perfCount = 0;
+    let lastRaf = 0;
+    let accumulator = 0;
+    let lastHudTime = 0;
+    let lastInvariantTime = 0;
+
+    const benchmark = {
+      phase: "idle",
+      start: 0,
+      measureStart: 0,
+      frames: new Float32Array(7200),
+      updates: new Float32Array(7200),
+      renders: new Float32Array(7200),
+      count: 0,
+      result: null
+    };
+
+    function recordPerformance(frameMs, updateMs, renderMs) {
+      frameSamples[perfIndex] = frameMs;
+      updateSamples[perfIndex] = updateMs;
+      renderSamples[perfIndex] = renderMs;
+      perfIndex = (perfIndex + 1) % PERF_CAPACITY;
+      perfCount = Math.min(PERF_CAPACITY, perfCount + 1);
+
+      if (benchmark.phase === "measure" && benchmark.count < benchmark.frames.length) {
+        benchmark.frames[benchmark.count] = frameMs;
+        benchmark.updates[benchmark.count] = updateMs;
+        benchmark.renders[benchmark.count] = renderMs;
+        benchmark.count++;
+      }
+    }
+
+    function percentile(typed, count, p) {
+      if (!count) return 0;
+      const values = new Array(count);
+      for (let i = 0; i < count; i++) values[i] = typed[i];
+      values.sort((a, b) => a - b);
+      return values[Math.min(count - 1, Math.floor((count - 1) * p))];
+    }
+
+    function average(typed, count) {
+      if (!count) return 0;
+      let sum = 0;
+      for (let i = 0; i < count; i++) sum += typed[i];
+      return sum / count;
+    }
+
+    function updateBenchmark(now) {
+      if (benchmark.phase === "warmup") {
+        const remaining = Math.max(0, 10 - (now - benchmark.start) / 1000);
+        benchResultNode.textContent = "BENCH: rozgrzewka " + remaining.toFixed(1) + " s · nie zmieniaj karty ani rozmiaru okna.";
+        if (remaining <= 0) {
+          benchmark.phase = "measure";
+          benchmark.measureStart = now;
+          benchmark.count = 0;
+        }
+      } else if (benchmark.phase === "measure") {
+        const elapsed = (now - benchmark.measureStart) / 1000;
+        benchResultNode.textContent = "BENCH: pomiar " + Math.min(60, elapsed).toFixed(1) + " / 60 s · próbek " + benchmark.count;
+        if (elapsed >= 60) finishBenchmark();
+      }
+    }
+
+    function finishBenchmark() {
+      const count = benchmark.count;
+      const avgFrame = average(benchmark.frames, count);
+      const fps = avgFrame > 0 ? 1000 / avgFrame : 0;
+      const p95 = percentile(benchmark.frames, count, 0.95);
+      const p99 = percentile(benchmark.frames, count, 0.99);
+      const updateP95 = percentile(benchmark.updates, count, 0.95);
+      const renderP95 = percentile(benchmark.renders, count, 0.95);
+      const pass = params.shipCount >= 2000 && fps >= 59 && p95 <= 20 && p99 <= 33.4;
+      benchmark.result = { fps, p95, p99, updateP95, renderP95, count, pass };
+      benchmark.phase = "done";
+      benchResultNode.className = "status-line " + (pass ? "" : "warn");
+      benchResultNode.textContent =
+        "BENCH " + (pass ? "PASS" : "DO SPRAWDZENIA") + " · " + fps.toFixed(1) + " FPS · frame p95 " +
+        p95.toFixed(1) + " ms · p99 " + p99.toFixed(1) + " ms · update/render p95 " +
+        updateP95.toFixed(2) + "/" + renderP95.toFixed(2) + " ms · " + count + " próbek.";
+    }
+
+    function startBenchmark() {
+      benchmark.phase = "warmup";
+      benchmark.start = performance.now();
+      benchmark.count = 0;
+      benchmark.result = null;
+      benchResultNode.className = "status-line";
+      showToast("Benchmark rozpoczęty. Pomiar potrwa 70 sekund.");
+    }
+
+    function updateQueueMetrics() {
+      let boosterQueue = 0;
+      let gateQueue = 0;
+      const boosterWindow = 46000;
+      const gateWindow = 62000;
+      for (let lane = 0; lane < LANE_COUNT; lane++) {
+        const order = laneOrders[lane];
+        for (let i = 0; i < laneCounts[lane]; i++) {
+          const id = order[i];
+          const s = pos[id];
+          if (s <= boosterStartS && s >= boosterStartS - boosterWindow && vel[id] < freeSpeedFor(id, s) * 0.72) boosterQueue++;
+          if (s <= gateS && s >= gateS - gateWindow && vel[id] < freeSpeedFor(id, s) * 0.72) gateQueue++;
+        }
+      }
+      resources.booster.queue = boosterQueue;
+      resources.gate.queue = gateQueue;
+      let dockQueue = 0;
+      let oldest = 0;
+      for (let c = 0; c < 5; c++) {
+        dockQueue += dockQueues[c].length;
+        if (dockQueues[c].length) {
+          const id = dockQueues[c][0];
+          oldest = Math.max(oldest, simTime - waitingSince[id]);
+        }
+      }
+      resources.dock.queue = dockQueue;
+      resources.dock.oldest = oldest;
+    }
+
+    function countDocked() {
+      let count = 0;
+      for (let i = 0; i < berths.length; i++) {
+        if (berths[i].state === BERTH_OCCUPIED || berths[i].state === BERTH_READY) count++;
+      }
+      return count;
+    }
+
+    function countEnabledBerths() {
+      let count = 0;
+      for (let i = 0; i < berths.length; i++) if (berths[i].state !== BERTH_DISABLED) count++;
+      return count;
+    }
+
+    function countFreeBerths() {
+      let count = 0;
+      for (let i = 0; i < berths.length; i++) if (berths[i].state === BERTH_FREE) count++;
+      return count;
+    }
+
+    function countSideBySidePairs() {
+      let pairs = 0;
+      for (let lane = 0; lane < LANE_COUNT - 1; lane++) {
+        const a = laneOrders[lane];
+        const b = laneOrders[lane + 1];
+        let i = 0;
+        let j = 0;
+        while (i < laneCounts[lane] && j < laneCounts[lane + 1]) {
+          const delta = pos[a[i]] - pos[b[j]];
+          if (Math.abs(delta) < 150) {
+            pairs++;
+            i++;
+            j++;
+          } else if (delta > 0) {
+            i++;
+          } else {
+            j++;
+          }
+        }
+      }
+      return pairs;
+    }
+
+    function validateInvariants() {
+      let ok = true;
+      let message = "OK";
+      let countedFlow = 0;
+      for (let lane = 0; lane < LANE_COUNT && ok; lane++) {
+        const order = laneOrders[lane];
+        countedFlow += laneCounts[lane];
+        for (let i = 0; i < laneCounts[lane]; i++) {
+          const id = order[i];
+          if (laneOf[id] !== lane) {
+            ok = false;
+            message = "laneOf #" + id;
+            break;
+          }
+          if (i > 0 && pos[order[i - 1]] + 0.01 < pos[id]) {
+            ok = false;
+            message = "kolejność pasa " + lane;
+            break;
+          }
+        }
+      }
+      if (ok && countedFlow !== flowCount) {
+        ok = false;
+        message = "licznik FLOW";
+      }
+      if (ok) {
+        const seen = new Uint8Array(params.shipCount);
+        for (let lane = 0; lane < LANE_COUNT; lane++) {
+          const order = laneOrders[lane];
+          for (let i = 0; i < laneCounts[lane]; i++) seen[order[i]]++;
+        }
+        for (let c = 0; c < 5; c++) for (let q = 0; q < dockQueues[c].length; q++) seen[dockQueues[c][q]]++;
+        for (let i = 0; i < agents.length; i++) if (agents[i].active) seen[agents[i].shipId]++;
+        for (let i = 0; i < berths.length; i++) {
+          const berth = berths[i];
+          if ((berth.state === BERTH_OCCUPIED || berth.state === BERTH_READY) && berth.occupantId >= 0) seen[berth.occupantId]++;
+        }
+        for (let id = 0; id < params.shipCount; id++) {
+          if (seen[id] !== 1) {
+            ok = false;
+            message = "statek #" + id + " w " + seen[id] + " stanach";
+            break;
+          }
+        }
+      }
+      invariantMessage = ok ? "OK" : "BŁĄD: " + message;
+      return ok;
+    }
+
+    function formatValue(format, value) {
+      if (format === "int") return Math.round(value).toLocaleString("pl-PL");
+      if (format === "speed") return Math.round(value) + " j./s";
+      if (format === "units") return Math.round(value) + " j.";
+      if (format === "seconds1") return Number(value).toFixed(1) + " s";
+      if (format === "seconds0") return Math.round(value) + " s";
+      if (format === "accel") return Math.round(value) + " j./s²";
+      if (format === "rate") return Number(value).toFixed(1) + " statku/s";
+      if (format === "multiplier") return Number(value).toFixed(2).replace(/\.00$/, "") + "×";
+      return String(value);
+    }
+
+    function updateStatus() {
+      const docked = countDocked();
+      const enabled = countEnabledBerths();
+      const full = enabled > 0 && countFreeBerths() === 0;
+      if (currentScenario === "overtake") {
+        statusNode.className = "status-line";
+        statusNode.textContent = "WYPRZEDZANIE · " + countSideBySidePairs() + " par obok siebie · " + overtakesTotal +
+          " wyprzedzeń (" + (laneChangesTotal - overtakesTotal) + " powrotów) · prędkość swobodna van " + Math.round(params.cruiseSpeed * CLASS_SPEED_FACTOR[0]) +
+          ", capital " + Math.round(params.cruiseSpeed * CLASS_SPEED_FACTOR[4]) + " j./s · AGENTÓW " + activeAgentCount + ".";
+      } else if (full && resources.dock.queue > 0) {
+        statusNode.className = "status-line warn";
+        statusNode.textContent = "DOK PEŁNY · " + resources.dock.queue + " statków czeka na jawny sygnał zwolnienia slotu · najstarszy " +
+          resources.dock.oldest.toFixed(1) + " s · " + docked + " stoi, " + (enabled - docked) + " manewruje.";
+      } else if (!gateIsOpen && resources.gate.queue > 0) {
+        statusNode.className = "status-line warn";
+        statusNode.textContent = "BRAMA ZAMKNIĘTA · kolejka " + resources.gate.queue + " · fala hamowania propaguje się wstecz. Otwarcie za " +
+          Math.max(0, resources.gate.closedDuration - simTime % resources.gate.cycleDuration).toFixed(1) + " s.";
+      } else if (activeAgentCount > 0) {
+        statusNode.className = "status-line";
+        statusNode.textContent = "3 PASY · " + countSideBySidePairs() + " par obok siebie · " + overtakesTotal +
+          " wyprzedzeń · AGENTÓW " + activeAgentCount + " tylko w lokalnych manewrach.";
+      } else {
+        statusNode.className = "status-line";
+        statusNode.textContent = "3 PASY · " + countSideBySidePairs() + " par obok siebie · " + laneChangesTotal +
+          " zmian pasa · małe jednostki wyprzedzają wolniejsze bez opuszczania FLOW.";
+      }
+    }
+
+    function updateHud(force) {
+      const now = performance.now();
+      if (!force && now - lastHudTime < 250) return;
+      lastHudTime = now;
+      updateQueueMetrics();
+
+      const avgFrame = average(frameSamples, perfCount);
+      const fps = avgFrame > 0 ? 1000 / avgFrame : 0;
+      const frameP95 = percentile(frameSamples, perfCount, 0.95);
+      const frameP99 = percentile(frameSamples, perfCount, 0.99);
+      const updateP95 = percentile(updateSamples, perfCount, 0.95);
+      const renderP95 = percentile(renderSamples, perfCount, 0.95);
+
+      const perfNode = document.getElementById("perfMetric");
+      perfNode.textContent = (fps || 0).toFixed(0) + " / " + frameP95.toFixed(1) + " ms";
+      perfNode.className = fps >= 59 ? "good" : fps >= 45 ? "warn" : "bad";
+      document.getElementById("shipMetric").textContent = params.shipCount.toLocaleString("pl-PL");
+      document.getElementById("flowMetric").textContent = flowCount.toLocaleString("pl-PL");
+      document.getElementById("agentMetric").textContent = activeAgentCount + " / " + maxAgentsSeen;
+      document.getElementById("queueMetric").textContent = resources.booster.queue + " / " + resources.gate.queue + " / " + resources.dock.queue;
+      document.getElementById("scaleMetric").textContent = laneCounts[0] + "/" + laneCounts[1] + "/" + laneCounts[2] + " · W" + overtakesTotal;
+      document.getElementById("updatePerf").textContent = updateP95.toFixed(2) + " ms";
+      document.getElementById("renderPerf").textContent = renderP95.toFixed(2) + " ms";
+      document.getElementById("framePerf").textContent = frameP99.toFixed(1) + " ms";
+      document.getElementById("dockedPerf").textContent = countDocked() + " / " + countEnabledBerths();
+      document.getElementById("oldestPerf").textContent = resources.dock.oldest.toFixed(1) + " s";
+      document.getElementById("invariantPerf").textContent = invariantMessage;
+      updateStatus();
+    }
+
+    function frame(now) {
+      if (!lastRaf) lastRaf = now;
+      let realDt = Math.min(0.1, Math.max(0, (now - lastRaf) / 1000));
+      const frameMs = (now - lastRaf) || 16.67;
+      lastRaf = now;
+      updateCamera(realDt);
+
+      let updateMs = 0;
+      if (!paused) {
+        accumulator += realDt * params.timeScale;
+        const updateStart = performance.now();
+        let steps = 0;
+        while (accumulator >= FIXED_DT && steps < MAX_SUBSTEPS) {
+          fixedStep(FIXED_DT);
+          accumulator -= FIXED_DT;
+          steps++;
+        }
+        if (accumulator >= FIXED_DT) {
+          droppedSubsteps += Math.floor(accumulator / FIXED_DT);
+          accumulator %= FIXED_DT;
+        }
+        updateMs = performance.now() - updateStart;
+      }
+
+      const renderStart = performance.now();
+      render();
+      const renderMs = performance.now() - renderStart;
+      recordPerformance(frameMs, updateMs, renderMs);
+
+      if (now - lastInvariantTime > 2000) {
+        validateInvariants();
+        lastInvariantTime = now;
+      }
+      updateBenchmark(now);
+      updateHud(false);
+      requestAnimationFrame(frame);
+    }
+
+    function showToast(message) {
+      toastNode.textContent = message;
+      toastNode.classList.add("show");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toastNode.classList.remove("show"), 2800);
+    }
+
+    function applyPreset(name) {
+      currentScenario = name;
+      document.querySelectorAll("[data-preset]").forEach(button => {
+        button.classList.toggle("active", button.dataset.preset === name);
+      });
+      if (name === "all") {
+        params.boosterThroughput = 2.2;
+        params.gateThroughput = 2.8;
+        params.serviceTime = 14;
+        params.reactionTime = 0.7;
+        params.timeScale = 1;
+        clearObstacles();
+        resetSimulation(true);
+        setView("overview", false);
+      } else if (name === "overtake") {
+        params.overtakeThreshold = 45;
+        setView("overtake", false);
+        showToast("Wyprzedzanie: van/S są szybsze od L/capital; manewr wymaga bezpiecznej luki z przodu i z tyłu.");
+      } else if (name === "booster") {
+        params.boosterThroughput = 1.6;
+        params.boostMultiplier = 5.5;
+        setView("booster", false);
+        showToast("Booster: mniejsza przepustowość kondensuje wlot, mnożnik rozrzedza wylot.");
+      } else if (name === "gate") {
+        params.gateThroughput = 3.2;
+        params.reactionTime = 1.05;
+        setView("gate", false);
+        showToast("Brama: cykliczne zamknięcie wzbudza falę stop-and-go widoczną także na heatmapie.");
+      } else if (name === "dock") {
+        params.serviceTime = 26;
+        setView("dock", false);
+        showToast("Pełny dok: kolejki ruszają wyłącznie po zwolnieniu konkretnego zgodnego stanowiska.");
+      } else if (name === "jam") {
+        clearObstacles();
+        addJamObstacle();
+        setView("gate", false);
+      } else if (name === "dock-obstacle") {
+        clearObstacles();
+        addDockObstacle();
+        setView("dock", false);
+      }
+      syncControls();
+    }
+
+    function syncControls() {
+      const controls = document.querySelectorAll("[data-param]");
+      controls.forEach(input => {
+        const key = input.dataset.param;
+        input.value = params[key];
+        const output = document.getElementById(input.id + "Out");
+        if (output) output.textContent = formatValue(input.dataset.format, params[key]);
+      });
+      const berthControls = document.querySelectorAll("[data-berth]");
+      berthControls.forEach(input => {
+        const index = Number(input.dataset.berth);
+        input.value = params.berths[index];
+        const output = document.getElementById(input.id + "Out");
+        if (output) output.textContent = params.berths[index];
+      });
+    }
+
+    document.querySelectorAll("[data-param]").forEach(input => {
+      input.addEventListener("input", () => {
+        const key = input.dataset.param;
+        params[key] = Number(input.value);
+        const output = document.getElementById(input.id + "Out");
+        if (output) output.textContent = formatValue(input.dataset.format, params[key]);
+        if (key === "avoidRadius") {
+          for (let i = 0; i < obstacles.length; i++) if (obstacles[i].active) updateObstacleGeometry(obstacles[i]);
+        }
+      });
+      if (input.dataset.param === "shipCount") {
+        input.addEventListener("change", () => resetSimulation(true));
+      }
+    });
+
+    document.querySelectorAll("[data-berth]").forEach(input => {
+      input.addEventListener("input", () => {
+        const index = Number(input.dataset.berth);
+        params.berths[index] = Number(input.value);
+        document.getElementById(input.id + "Out").textContent = input.value;
+        reconfigureBerths();
+      });
+    });
+
+    document.querySelectorAll("[data-view]").forEach(button => {
+      button.addEventListener("click", () => setView(button.dataset.view, false));
+    });
+
+    document.querySelectorAll("[data-preset]").forEach(button => {
+      button.addEventListener("click", () => applyPreset(button.dataset.preset));
+    });
+
+    document.getElementById("pauseButton").addEventListener("click", () => {
+      paused = !paused;
+      document.getElementById("pauseButton").textContent = paused ? "Wznów" : "Pauza";
+      document.getElementById("pauseButton").classList.toggle("active", paused);
+    });
+    document.getElementById("benchButton").addEventListener("click", startBenchmark);
+    document.getElementById("obstacleButton").addEventListener("click", () => {
+      obstaclePlacement = !obstaclePlacement;
+      canvas.classList.toggle("obstacle-mode", obstaclePlacement);
+      document.getElementById("obstacleButton").classList.toggle("active", obstaclePlacement);
+      showToast(obstaclePlacement ? "Kliknij na mapie, aby wstawić przeszkodę. Esc anuluje." : "Tryb dodawania przeszkody wyłączony.");
+    });
+    document.getElementById("clearObstaclesButton").addEventListener("click", clearObstacles);
+
+    canvas.addEventListener("pointerdown", event => {
+      if (event.button !== 0) return;
+      if (obstaclePlacement) {
+        const rect = canvas.getBoundingClientRect();
+        const sx = event.clientX - rect.left;
+        const sy = event.clientY - rect.top;
+        const radius = clamp(28 / camera.zoom, 180, 900);
+        addObstacle(screenToWorldX(sx), screenToWorldY(sy), radius, "przeszkoda użytkownika");
+        obstaclePlacement = false;
+        canvas.classList.remove("obstacle-mode");
+        document.getElementById("obstacleButton").classList.remove("active");
+        return;
+      }
+      dragging = true;
+      canvas.classList.add("dragging");
+      pointerStartX = event.clientX;
+      pointerStartY = event.clientY;
+      cameraStartX = camera.x;
+      cameraStartY = camera.y;
+      canvas.setPointerCapture(event.pointerId);
+    });
+
+    canvas.addEventListener("pointermove", event => {
+      if (!dragging) return;
+      camera.x = cameraStartX - (event.clientX - pointerStartX) / camera.zoom;
+      camera.y = cameraStartY - (event.clientY - pointerStartY) / camera.zoom;
+      camera.targetX = camera.x;
+      camera.targetY = camera.y;
+    });
+
+    function endDrag(event) {
+      dragging = false;
+      canvas.classList.remove("dragging");
+      if (event && canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+    }
+
+    canvas.addEventListener("pointerup", endDrag);
+    canvas.addEventListener("pointercancel", endDrag);
+    canvas.addEventListener("wheel", event => {
+      event.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const sx = event.clientX - rect.left;
+      const sy = event.clientY - rect.top;
+      const beforeX = screenToWorldX(sx);
+      const beforeY = screenToWorldY(sy);
+      const factor = Math.exp(-event.deltaY * 0.00125);
+      camera.zoom = clamp(camera.zoom * factor, 0.00045, 1.2);
+      camera.targetZoom = camera.zoom;
+      const afterX = screenToWorldX(sx);
+      const afterY = screenToWorldY(sy);
+      camera.x += beforeX - afterX;
+      camera.y += beforeY - afterY;
+      camera.targetX = camera.x;
+      camera.targetY = camera.y;
+    }, { passive: false });
+
+    canvas.addEventListener("contextmenu", event => {
+      event.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      removeNearestObstacle(screenToWorldX(event.clientX - rect.left), screenToWorldY(event.clientY - rect.top));
+    });
+
+    window.addEventListener("keydown", event => {
+      const target = event.target;
+      if (target && (target.tagName === "INPUT" || target.tagName === "BUTTON" || target.tagName === "SUMMARY")) return;
+      const key = event.key.toLowerCase();
+      if (key === " ") {
+        event.preventDefault();
+        document.getElementById("pauseButton").click();
+      } else if (key === "escape") {
+        obstaclePlacement = false;
+        canvas.classList.remove("obstacle-mode");
+        document.getElementById("obstacleButton").classList.remove("active");
+      } else {
+        keys.add(key);
+      }
+    });
+    window.addEventListener("keyup", event => keys.delete(event.key.toLowerCase()));
+    window.addEventListener("resize", resizeCanvas);
+    document.addEventListener("visibilitychange", () => {
+      lastRaf = 0;
+      accumulator = 0;
+      if (document.hidden && (benchmark.phase === "warmup" || benchmark.phase === "measure")) {
+        benchmark.phase = "idle";
+        benchResultNode.className = "status-line warn";
+        benchResultNode.textContent = "BENCH anulowany: karta straciła aktywność. Uruchom ponownie.";
+      }
+    });
+
+    window.spaceTrafficDemo = {
+      getState() {
+        return {
+          ready: true,
+          total: params.shipCount,
+          flow: flowCount,
+          laneCounts: Array.from(laneCounts),
+          laneChanges: laneChangesTotal,
+          overtakes: overtakesTotal,
+          sideBySidePairs: countSideBySidePairs(),
+          agents: activeAgentCount,
+          maxAgents: maxAgentsSeen,
+          dockQueued: resources.dock.queue,
+          docked: countDocked(),
+          boosterQueue: resources.booster.queue,
+          gateQueue: resources.gate.queue,
+          gateOpen: gateIsOpen,
+          obstacles: obstacles.filter(obstacle => obstacle.active).length,
+          invariant: invariantMessage,
+          simTime,
+          droppedSubsteps,
+          benchmark: benchmark.result
+        };
+      },
+      setView,
+      applyPreset,
+      reset: () => resetSimulation(true),
+      addJamObstacle,
+      addDockObstacle,
+      clearObstacles,
+      validateInvariants
+    };
+
+    dockSlotOf.fill(-1);
+    agentOfShip.fill(-1);
+    resizeCanvas();
+    syncControls();
+    resetSimulation(false);
+    setView("overview", true);
+    window.__spaceTrafficDemoReady = true;
+    requestAnimationFrame(frame);
+  })();
+  </script>
+</body>
+</html>

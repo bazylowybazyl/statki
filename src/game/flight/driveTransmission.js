@@ -44,6 +44,32 @@ export const DRIVE_MODES = Object.freeze({
 
 export const DRIVE_MODE_ORDER = Object.freeze(['combat', 'maneuver', 'travel']);
 
+const DEFAULT_HULL_DRIVE_CONFIG = Object.freeze({
+  defaultMode: 'combat',
+  availableModes: DRIVE_MODE_ORDER,
+  defaultAuto: false,
+  maxSpeed: Object.freeze({})
+});
+
+// Tryby napędu są wyposażeniem kadłuba, a nie globalną cechą wszystkich
+// statków. Atlas zachowuje klasyczny napęd bojowy sprzed skrzyni (około 10k),
+// natomiast Bertha — w danych gry nadal nazywana megafreighterem — używa
+// napędu podróżnego jako podstawowego i nie ma napędu bojowego.
+export const HULL_DRIVE_CONFIGS = Object.freeze({
+  atlas: Object.freeze({
+    defaultMode: 'combat',
+    availableModes: Object.freeze(['combat', 'maneuver']),
+    defaultAuto: false,
+    maxSpeed: Object.freeze({ combat: 10000 })
+  }),
+  megafreighter: Object.freeze({
+    defaultMode: 'travel',
+    availableModes: Object.freeze(['travel', 'maneuver']),
+    defaultAuto: true,
+    maxSpeed: Object.freeze({})
+  })
+});
+
 // Limity bazowe należą do supercapitala. Mniejsze kadłuby dostają większą
 // obwiednię prędkości i wyraźnie mocniejsze sterowanie, ale nadal korzystają z
 // tego samego modelu fizyki i governora.
@@ -165,9 +191,51 @@ function resolveMode(modeId) {
   return DRIVE_MODES[modeId] || DRIVE_MODES.combat;
 }
 
+function normalizeDriveHullId(hullClass) {
+  const key = String(hullClass || '').toLowerCase();
+  if (key.includes('megafreighter') || key.includes('bertha')) return 'megafreighter';
+  if (key === 'atlas') return 'atlas';
+  return key;
+}
+
+function resolveHullDriveConfig(hullId) {
+  return HULL_DRIVE_CONFIGS[normalizeDriveHullId(hullId)] || DEFAULT_HULL_DRIVE_CONFIG;
+}
+
+function getConfiguredModeSpeedScale(hullId, hullClass, modeId) {
+  const config = resolveHullDriveConfig(hullId);
+  const override = Number(config.maxSpeed?.[modeId]);
+  const mode = resolveMode(modeId);
+  const baseMax = Number(mode.gears.at(-1)?.maxSpeed) || 1;
+  if (override > 0) return override / baseMax;
+  return getModeSpeedScale(hullClass, modeId);
+}
+
+function syncHullDriveConfig(state) {
+  const config = resolveHullDriveConfig(state.hullId);
+  state.availableModes = config.availableModes;
+  state.defaultMode = config.defaultMode;
+  state.defaultAuto = config.defaultAuto;
+  state.modeMaxSpeeds = state.modeMaxSpeeds || {};
+  for (const modeId of DRIVE_MODE_ORDER) {
+    const mode = DRIVE_MODES[modeId];
+    state.modeMaxSpeeds[modeId] = mode.gears.at(-1).maxSpeed
+      * getConfiguredModeSpeedScale(state.hullId, state.hullClass, modeId);
+  }
+  return config;
+}
+
+function resolveInitialMode(hullId, modeId) {
+  const config = resolveHullDriveConfig(hullId);
+  const requested = DRIVE_MODES[modeId]?.id;
+  return requested && config.availableModes.includes(requested)
+    ? requested
+    : config.defaultMode;
+}
+
 export function normalizeDriveHullClass(hullClass) {
   const key = String(hullClass || '').toLowerCase();
-  if (key.includes('megafreighter')) return 'megafreighter';
+  if (key.includes('megafreighter') || key.includes('bertha')) return 'megafreighter';
   if (key.includes('fighter') || key.includes('interceptor')) return 'fighter';
   if (key.includes('frigate')) return 'frigate';
   if (key.includes('destroyer')) return 'destroyer';
@@ -186,10 +254,10 @@ function getModeSpeedScale(hullClass, modeId) {
   return Math.max(0.1, Number(profile.speedScale?.[modeId]) || 1);
 }
 
-function selectTravelGearForSpeed(speed, hullClass) {
+function selectTravelGearForSpeed(speed, hullClass, hullId = hullClass) {
   const gears = DRIVE_MODES.travel.gears;
   const safeSpeed = Math.max(0, Number(speed) || 0);
-  const speedScale = getModeSpeedScale(hullClass, 'travel');
+  const speedScale = getConfiguredModeSpeedScale(hullId, hullClass, 'travel');
   for (let i = 0; i < gears.length; i++) {
     if (safeSpeed <= gears[i].maxSpeed * speedScale * 0.92) return i + 1;
   }
@@ -199,7 +267,7 @@ function selectTravelGearForSpeed(speed, hullClass) {
 function syncDerivedState(state, speed = 0) {
   const mode = resolveMode(state.mode);
   const hullProfile = resolveHullProfile(state.hullClass);
-  const speedScale = getModeSpeedScale(state.hullClass, mode.id);
+  const speedScale = getConfiguredModeSpeedScale(state.hullId, state.hullClass, mode.id);
   const gearIndex = clamp((state.gear | 0) - 1, 0, mode.gears.length - 1);
   const gear = mode.gears[gearIndex];
   const previousMax = gearIndex > 0 ? mode.gears[gearIndex - 1].maxSpeed * speedScale : 0;
@@ -229,11 +297,19 @@ function syncDerivedState(state, speed = 0) {
 }
 
 export function createDriveTransmission(options = {}) {
-  const mode = resolveMode(options.mode).id;
+  const hullId = normalizeDriveHullId(options.hullClass);
+  const hullClass = normalizeDriveHullClass(options.hullClass);
+  const hullConfig = resolveHullDriveConfig(hullId);
+  const mode = resolveInitialMode(hullId, options.mode);
   const state = {
     mode,
-    hullClass: normalizeDriveHullClass(options.hullClass),
-    auto: !!options.auto,
+    hullId,
+    hullClass,
+    availableModes: hullConfig.availableModes,
+    defaultMode: hullConfig.defaultMode,
+    defaultAuto: hullConfig.defaultAuto,
+    modeMaxSpeeds: {},
+    auto: options.auto == null ? hullConfig.defaultAuto : !!options.auto,
     gear: 1,
     gearCount: 1,
     speedLimit: 0,
@@ -260,26 +336,44 @@ export function createDriveTransmission(options = {}) {
     shiftCueIntensity: 0,
     shiftCueDanger: 0
   };
-  if (mode === 'travel') state.gear = selectTravelGearForSpeed(options.speed, state.hullClass);
+  syncHullDriveConfig(state);
+  if (mode === 'travel') state.gear = selectTravelGearForSpeed(options.speed, state.hullClass, state.hullId);
   return syncDerivedState(state, options.speed);
 }
 
 export function setDriveHullClass(state, hullClass, speed = 0) {
   if (!state) return false;
+  const nextHullId = normalizeDriveHullId(hullClass);
   const nextClass = normalizeDriveHullClass(hullClass);
-  const changed = state.hullClass !== nextClass;
+  const changed = state.hullId !== nextHullId || state.hullClass !== nextClass;
+  state.hullId = nextHullId;
   state.hullClass = nextClass;
-  if (state.mode === 'travel') state.gear = selectTravelGearForSpeed(speed, state.hullClass);
+  const config = syncHullDriveConfig(state);
+  if (!config.availableModes.includes(state.mode)) {
+    state.mode = config.defaultMode;
+    state.auto = config.defaultAuto;
+    state.shiftBoostTimer = 0;
+    state.shiftBoostMultiplier = 1;
+    state.shiftCooldown = 0.18;
+    state.lastShiftQuality = 'none';
+    state.shiftCueIntensity = 0;
+    state.shiftCueDanger = 0;
+  }
+  state.gear = state.mode === 'travel'
+    ? selectTravelGearForSpeed(speed, state.hullClass, state.hullId)
+    : 1;
   syncDerivedState(state, speed);
   return changed;
 }
 
 export function setDriveMode(state, modeId, speed = 0) {
   if (!state) return false;
-  const next = resolveMode(modeId);
+  const requested = DRIVE_MODES[modeId]?.id;
+  if (!requested || !state.availableModes?.includes(requested)) return false;
+  const next = DRIVE_MODES[requested];
   if (state.mode === next.id) return false;
   state.mode = next.id;
-  state.gear = next.id === 'travel' ? selectTravelGearForSpeed(speed, state.hullClass) : 1;
+  state.gear = next.id === 'travel' ? selectTravelGearForSpeed(speed, state.hullClass, state.hullId) : 1;
   state.shiftBoostTimer = 0;
   state.shiftBoostMultiplier = 1;
   state.shiftCooldown = 0.18;
@@ -291,10 +385,12 @@ export function setDriveMode(state, modeId, speed = 0) {
 }
 
 export function cycleDriveMode(state, direction = 1, speed = 0) {
-  const index = DRIVE_MODE_ORDER.indexOf(state?.mode);
+  if (!state) return null;
+  const modes = state.availableModes?.length ? state.availableModes : DRIVE_MODE_ORDER;
+  const index = modes.indexOf(state.mode);
   const current = index >= 0 ? index : 0;
-  const next = (current + (direction >= 0 ? 1 : -1) + DRIVE_MODE_ORDER.length) % DRIVE_MODE_ORDER.length;
-  setDriveMode(state, DRIVE_MODE_ORDER[next], speed);
+  const next = (current + (direction >= 0 ? 1 : -1) + modes.length) % modes.length;
+  setDriveMode(state, modes[next], speed);
   return state.mode;
 }
 
@@ -373,7 +469,7 @@ export function updateDriveTransmission(state, speed, throttle, dt) {
       shiftDriveUp(state, speedValue, true);
     } else if (throttleValue < 0.08 && state.gear > 1) {
       const previousLimit = DRIVE_MODES.travel.gears[state.gear - 2].maxSpeed
-        * getModeSpeedScale(state.hullClass, 'travel');
+        * getConfiguredModeSpeedScale(state.hullId, state.hullClass, 'travel');
       if (speedValue < previousLimit * 0.58) shiftDriveDown(state, speedValue, true);
     }
   }
