@@ -74,8 +74,110 @@ export const WAR_MODEL = Object.freeze({
    * zero strat po stronie broniącej się i zero wraków z jej kadłubów.
    */
   raiderGarrison: 55,
-  raiderRegenPerHour: 9
+  raiderRegenPerHour: 9,
+
+  /**
+   * Ile amunicji zjada JEDEN punkt siły w kampanii.
+   *
+   * To jest jedyne miejsce, w którym wojna kosztuje coś BIEŻĄCO. Okręt kupuje
+   * się raz; amunicja znika przy każdym starciu i musi płynąć bez przerwy,
+   * dopóki trwa wojna. Dzięki temu blokada amunicjowni jest realną bronią
+   * ekonomiczną — flota stoi w porcie mimo pełnego zapasu kadłubów.
+   *
+   * Proporcje odpowiadają temu, czym te okręty naprawdę strzelają (patrz
+   * `WARSHIP_CLASSES.build`): najwięcej kinetycznej, mniej flaku do osłony
+   * przeciwlotniczej, garść pocisków na cele ciężkie.
+   */
+  ammoPerPower: Object.freeze({
+    ammo_kinetic: 8,
+    flak_shell: 2,
+    // Pociski są drogie i produkuje się ich mało — flota strzela nimi do celów
+    // twardych, nie zamiast dział. Przy 1 rakiecie na punkt siły jedna kampania
+    // zjadała roczną produkcję amunicjowni.
+    missile_round: 0.5,
+    torpedo_round: 0.1
+  }),
+  /**
+   * Poniżej tego pokrycia zapotrzebowania wyprawa w ogóle nie wypływa.
+   *
+   * Nie zero, bo flota z połową amunicji nadal może uderzyć — tylko słabiej.
+   * Zero oznaczałoby, że jedna pusta skrzynia unieruchamia całą kampanię,
+   * a to jest tak samo nieprawdziwe jak dzisiejszy brak kosztu.
+   */
+  minAmmoRatio: 0.35
 });
+
+/** Ile amunicji potrzebuje flota o zadanej sile. */
+export function ammoForPower(power, config = WAR_MODEL) {
+  const sila = Math.max(0, Number(power) || 0);
+  const out = {};
+  for (const [id, perPower] of Object.entries(config.ammoPerPower || {})) {
+    const ile = perPower * sila;
+    if (ile > 0) out[id] = ile;
+  }
+  return out;
+}
+
+/**
+ * Zdejmuje amunicję z magazynu portu. Zwraca, JAKĄ CZĘŚĆ zapotrzebowania udało
+ * się pokryć — bo od tego zależy, czy wyprawa w ogóle ma sens.
+ *
+ * Bierze proporcjonalnie do dostępności każdej pozycji: flota bez torped nadal
+ * strzela z dział, tylko słabiej. Braki liczą się przez najgorzej zaopatrzoną
+ * pozycję, więc jeden pusty magazyn realnie osłabia całość.
+ */
+export function drawAmmo(econ, power, config = WAR_MODEL) {
+  const potrzeba = ammoForPower(power, config);
+  const ids = Object.keys(potrzeba);
+  if (!ids.length) return { ratio: 1, taken: {} };
+  if (!econ?.resources) return { ratio: 0, taken: {} };
+
+  // Pokrycie liczymy jako ŚREDNIĄ WAŻONĄ WARTOŚCIĄ, nie jako minimum po
+  // pozycjach. Minimum brzmi ostrożnie, a znaczy „jedna pusta skrzynia torped
+  // unieruchamia całą flotę" — zmierzone: 71 wypraw odwołanych z rzędu, zero
+  // bitew przez cztery godziny, bo torpedy rozeszły się po innych portach.
+  // Waga wartościowa mówi to, co trzeba: brak drogiej amunicji boli bardziej
+  // niż brak taniej, ale niczego nie blokuje na zero.
+  let waga = 0;
+  let pokryte = 0;
+  const taken = {};
+  for (const id of ids) {
+    const need = potrzeba[id];
+    if (!(need > 0)) continue;
+    const stan = Math.max(0, Number(econ.resources[id]) || 0);
+    const wziete = Math.min(stan, need);
+    const w = need * (RESOURCES[id]?.value || 1);
+    waga += w;
+    pokryte += w * (wziete / need);
+    if (wziete > 0) {
+      econ.resources[id] = stan - wziete;
+      taken[id] = wziete;
+    }
+  }
+  const ratio = waga > 0 ? Math.max(0, Math.min(1, pokryte / waga)) : 1;
+  return { ratio, taken, needed: potrzeba };
+}
+
+/**
+ * Zgłasza porcie zapotrzebowanie na amunicję.
+ *
+ * `stationWantsResource` widzi wyłącznie wsad receptur i zużycie bytowe, więc
+ * bez tego haka transport NIE WIE, że do portu wojennego trzeba wozić skrzynie —
+ * dokładnie ten sam problem, który miały stocznie z podzespołami.
+ */
+export function declareAmmoDemand(stations, config = WAR_MODEL) {
+  const ids = Object.keys(config.ammoPerPower || {});
+  if (!ids.length) return 0;
+  let ile = 0;
+  for (const station of stations || []) {
+    if (!station?.factionId) continue;
+    const juz = new Set(station.extraDemand || []);
+    for (const id of ids) juz.add(id);
+    station.extraDemand = [...juz];
+    ile++;
+  }
+  return ile;
+}
 
 /**
  * Ile złomu zostaje po zatopionym okręcie.
@@ -155,7 +257,9 @@ export function createWarState(options = {}) {
     log: [],
     stats: {
       launched: 0, battles: 0, attackerWins: 0, defenderWins: 0,
-      shipsLost: 0, scrapCreated: 0, byClass: {}
+      shipsLost: 0, scrapCreated: 0, byClass: {},
+      /** Wyprawy odwołane z braku amunicji i wartość spalonych skrzyń w CR. */
+      abortedNoAmmo: 0, ammoSpent: 0, defenderNoAmmo: 0
     }
   };
 }
@@ -332,17 +436,28 @@ export function tickWar(war, dt, options = {}) {
       const target = stations.find(s => s.id === campaign.targetId);
       if (!target?.factionId) continue;
 
-      const defense = defenseAt(shipyards, stations, campaign.targetId, war);
+      // Obrońca też pali amunicję — inaczej obrona byłaby darmowa i blokada
+      // portu nie miałaby żadnego skutku militarnego.
+      const surowaObrona = defenseAt(shipyards, stations, campaign.targetId, war);
+      const zapasObroncy = typeof options.getEconomy === 'function' && !isRaiderNest(target)
+        ? drawAmmo(options.getEconomy(target.id), surowaObrona, war.config)
+        : { ratio: 1, taken: {} };
+      if (zapasObroncy.ratio < war.config.minAmmoRatio) war.stats.defenderNoAmmo++;
+      const defense = surowaObrona * (0.5 + 0.5 * zapasObroncy.ratio);
+      war.stats.ammoSpent += Object.entries(zapasObroncy.taken)
+        .reduce((sum, [id, qty]) => sum + qty * (RESOURCES[id]?.value || 0), 0);
       const wynik = resolveBattle(campaign.ships, campaign.power, defense, rng);
 
       const attackerLost = shipsLost(campaign.ships, wynik.attackerLossRatio);
-      const zbite = defense * wynik.defenderLossRatio;
+      // Ginące okręty liczymy od SUROWEJ siły garnizonu: brak amunicji obniża
+      // celność, nie liczbę kadłubów stojących w porcie.
+      const zbite = surowaObrona * wynik.defenderLossRatio;
 
       let obronaStracona;
       if (isRaiderNest(target)) {
         // Kryjówka traci garnizon, nie okręty ze stoczni. Wraki liczymy po
         // sile — piraci latają zdobycznym, więc nie mają własnych klas.
-        war.garrisons.set(campaign.targetId, Math.max(0, defense - zbite));
+        war.garrisons.set(campaign.targetId, Math.max(0, surowaObrona - zbite));
         obronaStracona = { frigate: Math.max(1, Math.round(zbite)) };
       } else {
         obronaStracona = takeShips(shipyards, target.factionId, zbite).ships;
@@ -401,6 +516,21 @@ export function tickWar(war, dt, options = {}) {
     const wyprawa = takeShips(shipyards, attackerId, dostepne);
     if (wyprawa.power <= 0) continue;
 
+    // AMUNICJA. Flota bez skrzyń nie wypływa — i to jest ten moment, w którym
+    // logistyka zaczyna decydować o wojnie, a nie tylko ją obsługiwać.
+    const zaopatrzenie = typeof options.getEconomy === 'function'
+      ? drawAmmo(options.getEconomy(baza.id), wyprawa.power, war.config)
+      : { ratio: 1, taken: {} };
+    if (zaopatrzenie.ratio < war.config.minAmmoRatio) {
+      returnShips(shipyards, attackerId, wyprawa.ships);
+      war.stats.abortedNoAmmo++;
+      events.push({
+        type: 'no-ammo', attacker: attackerId, stationId: baza.id,
+        ratio: zaopatrzenie.ratio
+      });
+      continue;
+    }
+
     const trasa = network ? chooseRoute(network, baza.id, cel.station.id, { mass: 0, value: 0 }) : null;
     const course = registry ? launchCourse(registry, {
       kind: COURSE_KIND.WAR,
@@ -426,9 +556,15 @@ export function tickWar(war, dt, options = {}) {
       attacker: attackerId,
       targetId: cel.station.id,
       ships: wyprawa.ships,
-      power: wyprawa.power,
+      // Niedobór amunicji nie zabiera okrętów, tylko ich skuteczność: te same
+      // kadłuby biją się słabiej, bo oszczędzają ogień.
+      power: wyprawa.power * (0.5 + 0.5 * zaopatrzenie.ratio),
+      ammoRatio: zaopatrzenie.ratio,
+      ammoUsed: zaopatrzenie.taken,
       x: baza.x, y: baza.y
     });
+    war.stats.ammoSpent += Object.entries(zaopatrzenie.taken)
+      .reduce((sum, [id, qty]) => sum + qty * (RESOURCES[id]?.value || 0), 0);
     war.stats.launched++;
     events.push({
       type: 'campaign', attacker: attackerId, targetId: cel.station.id,

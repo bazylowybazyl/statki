@@ -41,6 +41,8 @@ export const CATEGORY = Object.freeze({
   FUEL: 'fuel',            // pręty paliwowe, paliwo fuzyjne
   CHEMICAL: 'chemical',    // polimery, chłodziwo
   COMPONENT: 'component',  // gotowe podzespoły okrętowe
+  WEAPON: 'weapon',        // lufy i emitery — to, co siada na podstawie
+  ORDNANCE: 'ordnance',    // amunicja, rakiety, torpedy — zużywa się przy każdym starciu
   SALVAGE: 'salvage'       // złom z wraków
 });
 
@@ -60,6 +62,18 @@ export const CATEGORY = Object.freeze({
 //   value    — bazowa cena skupu w CR za 1 sztukę. Marża rafinacji ~1.6x,
 //              montażu ~1.5x, więc przetwarzanie zawsze się opłaca.
 //   color    — kolor wiodący w UI (paski magazynów, ikony, CIC)
+//   capacityFactor — ile razy większy magazyn niż domyślny dla tego poziomu.
+//              Domyślnie 1. Istnieje, bo „sztuka" znaczy różne rzeczy: skrzynia
+//              naboi i torpeda są obie komponentem T2, ale port trzyma dziesiątki
+//              tysięcy skrzyń i kilkaset torped. Bez tego pola port celował
+//              w ten sam zapas jednych i drugich, czyli w setki tysięcy CR
+//              zamrożone w torpedach — i amunicja rozłaziła się po całym
+//              układzie zamiast trafiać tam, gdzie toczy się wojna.
+//              UWAGA: współczynnik działa w OBIE strony. Za duży magazyn
+//              sprawia, że producent nigdy nie przekracza progu nadwyżki
+//              (70% zapełnienia) i w ogóle nie wystawia towaru na sprzedaż —
+//              zmierzone przy ×6 dla amunicji kinetycznej: Wenus 57 tys. sztuk
+//              w magazynie i ZERO na rynku, a porty wojenne na zerze.
 //
 // value jest bazą — stacje mogą mieć własne mnożniki podaży/popytu.
 
@@ -213,6 +227,81 @@ export const RESOURCES = Object.freeze({
     tier: TIER.COMPONENT, category: CATEGORY.COMPONENT,
     label: 'Podtrzymywanie życia', short: 'LSS', unit: 'szt',
     mass: 3.0, value: 620, color: '#a3e635'
+  },
+
+  // ---------- T2: UZBROJENIE ----------
+  //
+  // Gospodarka handluje KLASAMI uzbrojenia, nie 38 modelami z `weapons.js`.
+  // Konkretna lufa (Tempest Ion Mk II, Grad Flak) to kwestia tego, co gracz
+  // kupi w doku — `weaponEconomy.js` przelicza model na te cztery pozycje.
+  //
+  // `weapon_mount` zostaje PODSTAWĄ: działo siada na niej, a nie zastępuje jej.
+  // Dlatego uzbrojony okręt potrzebuje obu rzeczy naraz.
+  gun_ballistic: {
+    tier: TIER.COMPONENT, category: CATEGORY.WEAPON,
+    label: 'Działo kinetyczne', short: 'Kin', unit: 'szt',
+    mass: 6.0, value: 440, color: '#fca5a5'
+  },
+  // Droższe w budowie od balistyki i tańsze w użyciu — nie je amunicji, tylko
+  // moc reaktora. To jest cała różnica między tymi dwiema szkołami.
+  gun_energy: {
+    tier: TIER.COMPONENT, category: CATEGORY.WEAPON,
+    label: 'Emiter energetyczny', short: 'Emi', unit: 'szt',
+    mass: 5.0, value: 720, color: '#67e8f9'
+  },
+  launcher_ordnance: {
+    tier: TIER.COMPONENT, category: CATEGORY.WEAPON,
+    label: 'Wyrzutnia', short: 'Wyr', unit: 'szt',
+    mass: 7.0, value: 500, color: '#fdba74'
+  },
+  pd_turret: {
+    tier: TIER.COMPONENT, category: CATEGORY.WEAPON,
+    label: 'Wieżyczka OP', short: 'OP', unit: 'szt',
+    mass: 4.0, value: 450, color: '#a5b4fc'
+  },
+  /**
+   * Myśliwiec — jedna maszyna, nie eskadra. Eskadra to `squadSize` sztuk
+   * (dziewięć, patrz `fighterSquadrons.js`), więc magazyn liczy pojedyncze
+   * kadłuby i dopiero hangar składa z nich klucz.
+   *
+   * Działka są INTEGRALNE: myśliwiec nie dźwiga wieżyczki OP z okrętu, tylko
+   * ma swoje własne, wliczone w cenę płatowca. Osobno kupuje się wyłącznie
+   * rakiety, bo te schodzą przy każdym wylocie.
+   */
+  fighter_craft: {
+    tier: TIER.COMPONENT, category: CATEGORY.WEAPON,
+    label: 'Myśliwiec', short: 'Myś', unit: 'szt',
+    mass: 3.0, value: 595, color: '#7cff91', capacityFactor: 1.5
+  },
+
+  // ---------- T2: AMUNICJA ----------
+  //
+  // Jedyny towar w grze zużywany PRZEZ SAMO STRZELANIE. Kadłuby i podzespoły
+  // kupuje się raz; amunicja musi płynąć bez przerwy, dopóki trwa wojna —
+  // i to ona zamienia wojnę z jednorazowego wydatku w stały strumień frachtu.
+  //
+  // Sztuką jest SKRZYNIA/ZASOBNIK, nie pojedynczy nabój: gatling wypuszcza
+  // 16 pocisków na sekundę i przy liczeniu po naboju magazyn portu znikałby
+  // w kilka minut. Ile strzałów daje sztuka — patrz `shotsPerAmmo` w weapons.js.
+  ammo_kinetic: {
+    tier: TIER.COMPONENT, category: CATEGORY.ORDNANCE,
+    label: 'Amunicja kinetyczna', short: 'Amk', unit: 'szt',
+    mass: 0.8, value: 12, color: '#d4d4d8', capacityFactor: 2
+  },
+  flak_shell: {
+    tier: TIER.COMPONENT, category: CATEGORY.ORDNANCE,
+    label: 'Pociski flak', short: 'Flk', unit: 'szt',
+    mass: 1.0, value: 36, color: '#fbbf24', capacityFactor: 1.5
+  },
+  missile_round: {
+    tier: TIER.COMPONENT, category: CATEGORY.ORDNANCE,
+    label: 'Rakieta', short: 'Rak', unit: 'szt',
+    mass: 2.0, value: 205, color: '#f472b6', capacityFactor: 0.8
+  },
+  torpedo_round: {
+    tier: TIER.COMPONENT, category: CATEGORY.ORDNANCE,
+    label: 'Torpeda', short: 'Trp', unit: 'szt',
+    mass: 6.0, value: 725, color: '#fb7185', capacityFactor: 0.25
   }
 });
 
@@ -378,6 +467,68 @@ export const RECIPES = Object.freeze({
   assemble_life_support: {
     label: 'Montaż podtrzymywania życia', building: 'factory', seconds: 95,
     in: { polymer: 1, oxygen: 1, avionics: 1 }, out: { life_support: 1 }
+  },
+
+  // ---------- ZBROJOWNIA: T1 → uzbrojenie ----------
+  assemble_gun_ballistic: {
+    label: 'Montaż działa kinetycznego', building: 'factory', seconds: 150,
+    in: { titan_alloy: 3, steel: 4, copper_wire: 2 }, out: { gun_ballistic: 1 }
+  },
+  // Układ scalony kosztuje 4 rudy krzemu, a krzem jest najciaśniejszym
+  // surowcem układu — dlatego elektronika wchodzi tu tylko tam, gdzie jest
+  // istotą wyrobu (celownik, zapalnik, głowica naprowadzająca). Reszta stoi
+  // na przewodzie i stali. Pierwsza wersja tych receptur zbiła pokrycie
+  // krzemu do 79%, czyli zagłodziłaby CAŁY układ, nie tylko zbrojownie.
+  assemble_gun_energy: {
+    label: 'Montaż emitera', building: 'factory', seconds: 190,
+    in: { optic_lens: 3, chips: 1, coolant: 2, copper_wire: 5 }, out: { gun_energy: 1 }
+  },
+  assemble_launcher: {
+    label: 'Montaż wyrzutni', building: 'factory', seconds: 160,
+    in: { hull_plate: 1, chips: 1, steel: 5 }, out: { launcher_ordnance: 1 }
+  },
+  assemble_pd_turret: {
+    label: 'Montaż wieżyczki OP', building: 'factory', seconds: 130,
+    in: { optic_lens: 2, copper_wire: 4, steel: 2 }, out: { pd_turret: 1 }
+  },
+  // Płatowiec jest LEKKI: tytan i elektronika, bez płyt pancernych i bez
+  // wielkiego silnika manewrowego. Myśliwiec za 660 CR wobec fregaty za 3950
+  // to właściwa proporcja — dziewięć maszyn kosztuje tyle co półtorej fregaty
+  // i ginie równie łatwo.
+  assemble_fighter_craft: {
+    label: 'Montaż myśliwca', building: 'factory', seconds: 170,
+    // BEZ płyty kadłuba: płatowiec jest lekki, stoi na stopie tytanu
+    // i tworzywie, nie na pancerzu. Wersja z płytą zjadała ~7,5 rudy żelaza
+    // na maszynę i zbiła pokrycie żelaza w całym układzie do 98%.
+    // Połowa elektroniki na optyce, nie na układach: krzem jest najciaśniejszym
+    // surowcem układu (przy dwóch chipach pokrycie spadało do 100,0%, czyli na
+    // styk), a surowy kryształ ma nadwyżkę u Wenus i Ceres.
+    in: { titan_alloy: 2, chips: 1, optic_lens: 1, copper_wire: 4, polymer: 2 },
+    out: { fighter_craft: 1 }
+  },
+
+  // ---------- AMUNICJOWNIA: T1 → amunicja ----------
+  //
+  // CELOWO tylko z rafinatów, bez ani jednego komponentu T2. Amunicja nie może
+  // konkurować o płyty i awionikę z budową okrętów — inaczej każda wojna
+  // zatrzymywałaby stocznie, zamiast je nakręcać.
+  assemble_ammo_kinetic: {
+    label: 'Elaboracja amunicji', building: 'factory', seconds: 60,
+    in: { steel: 2, polymer: 1 }, out: { ammo_kinetic: 6 }
+  },
+  assemble_flak_shell: {
+    label: 'Elaboracja pocisków flak', building: 'factory', seconds: 85,
+    in: { steel: 1, chips: 1, polymer: 1 }, out: { flak_shell: 4 }
+  },
+  assemble_missile_round: {
+    label: 'Montaż rakiet', building: 'factory', seconds: 120,
+    in: { chips: 1, copper_wire: 2, polymer: 2, steel: 2, fusion_fuel: 1 },
+    out: { missile_round: 2 }
+  },
+  assemble_torpedo_round: {
+    label: 'Montaż torped', building: 'factory', seconds: 210,
+    in: { chips: 2, copper_wire: 2, polymer: 3, steel: 4, fusion_fuel: 2 },
+    out: { torpedo_round: 1 }
   }
 });
 
@@ -466,6 +617,14 @@ export function getResourceValue(id, amount = 1) {
 }
 
 /** Ile jednostek cargoCap zajmie `amount` sztuk danego surowca. */
+/**
+ * Ile razy większy magazyn niż domyślny dla poziomu. Patrz `capacityFactor`.
+ */
+export function getResourceCapacityFactor(id) {
+  const factor = Number(RESOURCES[id]?.capacityFactor);
+  return Number.isFinite(factor) && factor > 0 ? factor : 1;
+}
+
 export function getResourceMass(id, amount = 1) {
   const def = RESOURCES[String(id || '')];
   if (!def) return 0;

@@ -1,11 +1,13 @@
 // Infrastructure UI Module - extracted from index.html
 // Accesses globals via window: stationUI, stations, Game, camera, clamp, worldToScreen, screenToWorld, planetOrbitRadii
 
-import { RESOURCES, RESOURCE_KEYS, TIER, CATEGORY, migrateResourceBag } from '../data/resources.js';
+import {
+  RESOURCES, RESOURCE_KEYS, TIER, CATEGORY, migrateResourceBag, getResourceCapacityFactor
+} from '../data/resources.js';
 import { isDerelict } from '../data/factions.js';
 
 // Bump przy każdej zmianie kluczy surowców — wymusza migrację magazynów w locie.
-const ECONOMY_SCHEMA_VERSION = 2;
+const ECONOMY_SCHEMA_VERSION = 3;
 
 const INFRASTRUCTURE_BUILDINGS = [
   { id: 'solar_array', name: 'Orbitalna Elektrownia Słoneczna', buildTime: 75, icon: 'solar', footprint: { w: 4, h: 4 } },
@@ -35,16 +37,31 @@ const INFRASTRUCTURE_BUILDINGS = [
 const ECONOMY_RESOURCE_KEYS = RESOURCE_KEYS;
 
 const ECONOMY_BASE_CAPACITY_BY_TIER = { [TIER.RAW]: 250, [TIER.REFINED]: 150, [TIER.COMPONENT]: 60 };
+// `capacityFactor` odróżnia skrzynię amunicji od torpedy — obie są komponentem
+// T2, ale port trzyma dziesiątki tysięcy jednych i kilkaset drugich. Bez tego
+// mnożnika gra liczyłaby magazyny inaczej niż demo i skrypt pomiarowy.
 const ECONOMY_BASE_CAPACITY = Object.fromEntries(
-  RESOURCE_KEYS.map(key => [key, ECONOMY_BASE_CAPACITY_BY_TIER[RESOURCES[key].tier] ?? 100])
+  RESOURCE_KEYS.map(key => [key,
+    (ECONOMY_BASE_CAPACITY_BY_TIER[RESOURCES[key].tier] ?? 100) * getResourceCapacityFactor(key)])
 );
 
 // Magazyny podnoszą pojemność wszystkiego, co należy do ich kategorii.
 const STORAGE_BONUS_CATEGORIES = {
-  storage_metal: { categories: [CATEGORY.ORE, CATEGORY.METAL, CATEGORY.SALVAGE], amount: 320 },
+  storage_metal: { categories: [CATEGORY.ORE, CATEGORY.METAL, CATEGORY.SALVAGE, CATEGORY.WEAPON], amount: 320 },
   storage_fuel: { categories: [CATEGORY.FUEL], amount: 240 },
   storage_gas: { categories: [CATEGORY.GAS, CATEGORY.VOLATILE], amount: 260 },
-  storage_plastics: { categories: [CATEGORY.CHEMICAL, CATEGORY.COMPONENT, CATEGORY.ELECTRONIC], amount: 180 }
+  // Uzbrojenie idzie do magazynu metalu (lufy to stal i tytan), amunicja do
+  // tworzyw (materiał miotający, polimery, elektronika zapalników). Bez tych
+  // dwóch dopisków żaden budynek nie podnosi pojemności broni i stacja gracza
+  // zostaje z bazowym składem, choć wszystko inne da się rozbudować.
+  //
+  // Osobny „skład amunicji" byłby czystszy, ale wymaga nowego budynku z kosztem
+  // i miejscem w szablonach stacji — do zrobienia, gdy uzbrojenie dostanie
+  // własny ekran w doku.
+  storage_plastics: {
+    categories: [CATEGORY.CHEMICAL, CATEGORY.COMPONENT, CATEGORY.ELECTRONIC, CATEGORY.ORDNANCE],
+    amount: 180
+  }
 };
 const ECONOMY_STORAGE_BONUS = Object.fromEntries(
   Object.entries(STORAGE_BONUS_CATEGORIES).map(([buildingId, spec]) => [

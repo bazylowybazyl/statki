@@ -48,7 +48,8 @@ import {
   summarizeConvoys
 } from './convoy.js';
 import {
-  marketSnapshot, findBestTrade, buyCargo, sellCargo, recordLoss, getAgent
+  marketSnapshot, findBestTrade, buyCargo, sellCargo, recordLoss, getAgent,
+  agentIsBusy, attachCourses, releaseCourse, caravanEscortCost, maintainCaravan
 } from './agentFleets.js';
 import {
   createPatrolRegistry, collectLevy, recordLaneLoss, planPatrols,
@@ -373,8 +374,14 @@ function syncBerths(director) {
 
   for (const course of getActiveCourses(director.registry)) {
     const stage = currentStage(course);
+    // Stanowisko należy się temu, kto ma w porcie sprawę: załadunek, rozładunek,
+    // obsługę. `EXTRACT` odpada, bo dzieje się w polu, a `HOLD` — bo z definicji
+    // jest CZEKANIEM przy węźle, nie postojem przy nabrzeżu. Bez tego drugiego
+    // warunku rejder piracki i łowca nagród, których postój to właśnie `HOLD`,
+    // cumowali w porcie swojego celu i zajmowali stanowiska frachtowcom.
     const wantsBerth = stage?.kind === STAGE_KIND.DWELL
       && stage.reason !== DWELL_REASON.EXTRACT
+      && stage.reason !== DWELL_REASON.HOLD
       && director.docks.has(stage.nodeId);
 
     if (!wantsBerth) {
@@ -574,7 +581,7 @@ function dispatchAgent(director, stations) {
   const { agents, registry, config } = director;
   if (!agents?.agents.length) return { ok: false, reason: 'brak agentów' };
 
-  const wolni = agents.agents.filter(agent => !agent.courseId);
+  const wolni = agents.agents.filter(agent => !agentIsBusy(agent));
   if (!wolni.length) return { ok: false, reason: 'wszyscy w drodze' };
   const agent = wolni[Math.floor(Math.random() * wolni.length)];
 
@@ -593,41 +600,94 @@ function dispatchAgent(director, stations) {
     return { ok: false, reason: 'towar zniknął albo brakło kapitału' };
   }
 
-  const course = launchCourse(registry, {
-    kind: COURSE_KIND.HAUL,
-    unitClass: agent.hullId,
-    factionId: opportunity.source.factionId ?? null,
-    stages: stagesFromRoute(route, opportunity.source.id, opportunity.target.id,
-      manoeuvrePoints(director, opportunity.source.id, opportunity.target.id)),
-    fuelCapacity: fuelCapacityFor(route),
-    originId: opportunity.source.id,
-    destinationId: opportunity.target.id,
-    payload: {
-      agentId: agent.id,
-      resourceId: opportunity.resourceId,
-      units: opportunity.units,
-      mass: opportunity.mass,
-      value: opportunity.sellPrice * opportunity.units,
-      unitPrice: opportunity.sellPrice,
-      mode: route.id
-    },
-    now: registry.clock
-  });
+  // Ładunek rozkłada się na frachtowce karawany. KURS ZOSTAJE ATOMEM — jeden
+  // statek, jeden manifest, jedno stanowisko w doku — a z grupy robi się konwój,
+  // bo to on niesie wspólny rzut na przechwyt i częściową stratę.
+  const statki = Math.max(1, Math.min(agent.ships || 1, opportunity.units));
+  const naStatek = Math.floor(opportunity.units / statki);
+  const reszta = opportunity.units - naStatek * statki;
+  const masaSztuki = opportunity.mass / Math.max(1, opportunity.units);
+  const punkty = manoeuvrePoints(director, opportunity.source.id, opportunity.target.id);
+  // Pusty dolot po towar, jeśli karawana stoi gdzie indziej. Leci NAPRAWDĘ,
+  // nie tylko w rachunku — inaczej frachtowce pojawiałyby się u nadawcy znikąd.
+  const dojazd = okazja.approach;
+  const kursy = [];
 
-  if (!course) {
-    // Kurs się nie zawiązał — towar wraca, inaczej wyparuje z gospodarki.
+  for (let i = 0; i < statki; i++) {
+    const units = naStatek + (i < reszta ? 1 : 0);
+    if (units <= 0) continue;
+    const course = launchCourse(registry, {
+      kind: COURSE_KIND.HAUL,
+      unitClass: agent.hullId,
+      factionId: opportunity.source.factionId ?? null,
+      stages: [
+        ...(dojazd?.legs || []).map(leg => travelStage(leg.from, leg.to, { ...leg })),
+        ...stagesFromRoute(route, opportunity.source.id, opportunity.target.id, punkty)
+      ],
+      // Zbiornik MUSI objąć oba odcinki. Liczony wyłącznie dla trasy z ładunkiem
+      // nie starczał na pusty dolot i kurs stawał bez paliwa na PIERWSZYM etapie:
+      // zmierzone w debugu — 13 z 18 kursów agentowych `stranded` na etapie 0,
+      // co zamrażało domy handlowe na zawsze (paliwo sprawdza się na wejściu
+      // w etap, więc statek nawet nie ruszał).
+      fuelCapacity: fuelCapacityFor(route) + (dojazd ? fuelCapacityFor(dojazd) : 0),
+      originId: opportunity.source.id,
+      destinationId: opportunity.target.id,
+      payload: {
+        agentId: agent.id,
+        resourceId: opportunity.resourceId,
+        units,
+        mass: units * masaSztuki,
+        value: opportunity.sellPrice * units,
+        unitPrice: opportunity.sellPrice,
+        mode: route.id
+      },
+      now: registry.clock
+    });
+    if (course) kursy.push(course);
+  }
+
+  if (!kursy.length) {
+    // Żaden kurs się nie zawiązał — towar wraca, inaczej wyparuje z gospodarki.
     sellCargo(agent, sourceEcon, opportunity.resourceId, opportunity.units, opportunity.buyPrice);
     return { ok: false, reason: 'plan kursu odrzucony' };
   }
 
-  agent.courseId = course.id;
+  // Gdyby część kursów odpadła, ich towar wraca na rynek. Inaczej agent
+  // zapłaciłby za ładunek, którego nikt nie wiezie.
+  const wyslane = kursy.reduce((sum, course) => sum + course.payload.units, 0);
+  if (wyslane < opportunity.units) {
+    sellCargo(agent, sourceEcon, opportunity.resourceId,
+      opportunity.units - wyslane, opportunity.buyPrice);
+  }
+
+  attachCourses(agent, kursy.map(course => course.id));
+  // Karawana leci razem Z DEFINICJI: to jeden właściciel i jeden towar, więc
+  // nie pytamy `shouldConvoy` — ta funkcja rozstrzyga, czy OBCYM kursom opłaca
+  // się zebrać w grupę. Osłona jest już wliczona w rachunek okazji.
+  if (kursy.length > 1) {
+    formConvoy(director.convoys, kursy, {
+      escortPower: agent.escortPower,
+      now: registry.clock
+    });
+  }
+  // Ochrona kosztuje co kurs. To jest ta pozycja, przez którą dom handlowy
+  // musi wozić drogo — na eskortę przy masówce nikogo nie stać.
+  const koszt = caravanEscortCost(agent, route.seconds);
+  if (koszt > 0) {
+    agent.capital -= koszt;
+    agent.ledger.spent += koszt;
+    agent.ledger.escorts = (agent.ledger.escorts || 0) + koszt;
+  }
+
   agent.ledger.trades++;
   agents.stats.hauls++;
   countOutbound(director, opportunity.source.id);
-  note(director, `AGENT ${agent.name}: ${opportunity.source.id}→${opportunity.target.id} `
-    + `${RESOURCES[opportunity.resourceId].label} ×${opportunity.units} `
-    + `(+${Math.round(okazja.profit.net)} CR)`);
-  return { ok: true, course, agent };
+  note(director, `${kursy.length > 1 ? 'KARAWANA' : 'AGENT'} ${agent.name}: `
+    + `${opportunity.source.id}→${opportunity.target.id} `
+    + `${RESOURCES[opportunity.resourceId].label} ×${wyslane}`
+    + (kursy.length > 1 ? ` w ${kursy.length} statkach (osłona ×${agent.escortPower})` : '')
+    + ` (+${Math.round(okazja.profit.net)} CR)`);
+  return { ok: true, course: kursy[0], courses: kursy, agent };
 }
 
 /** Stabilny hash identyfikatora — rozrzuca pozycje bez losowości między klatkami. */
@@ -1431,8 +1491,10 @@ function strikeCourse(director, course) {
   closeCourseResources(director, course, { lost: true });
   detachCourse(director.convoys, course.id);
   if (course.payload?.agentId && director.agents) {
+    // Przepada JEDEN frachtowiec z karawany, nie cała wyprawa — reszta grupy
+    // leci dalej i dom handlowy zwolni się dopiero, gdy wróci ostatni statek.
     recordLoss(director.agents, getAgent(director.agents, course.payload.agentId),
-      course.payload.value || 0);
+      course.payload.value || 0, course.id);
   }
   if (orderId) {
     // Kurs zniknął, więc order nie może dalej udawać `IN_TRANSIT`: taki duch
@@ -1571,7 +1633,17 @@ export function settleCourseEvents(director, events) {
         if (agent) {
           sellCargo(agent, econ, course.payload.resourceId,
             course.payload.units, course.payload.unitPrice);
-          agent.courseId = null;
+          // Karawana zwalnia się dopiero po ostatnim statku: wcześniejszy zakup
+          // szedłby z kapitału, który jeszcze leci w ładowniach.
+          //
+          // Wraz z ostatnim statkiem kupiec PRZENOSI SIĘ do portu, w którym
+          // wylądował. Bez tego agent był przykuty do portu macierzystego na
+          // zawsze i szukał okazji wyłącznie u siebie: zmierzone 6558 odmów
+          // „brak opłacalnej okazji" na 191 kursów, a jedna z ośmiu karawan
+          // nie wypłynęła ani razu przez całe 90 minut.
+          if (releaseCourse(agent, course.id)) {
+            agent.stationId = String(course.destinationId || agent.stationId);
+          }
           director.agents.stats.profit += Number(course.payload.value) || 0;
           director.stats.delivered++;
         }
@@ -1605,6 +1677,17 @@ export function settleCourseEvents(director, events) {
       settled++;
     } else if (event.type === 'stranded') {
       director.stats.stranded++;
+      // Unieruchomiony kurs czeka na tankowiec, ale dom handlowy nie może na
+      // niego czekać w nieskończoność — inaczej jedna pomyłka paliwowa zamraża
+      // kupca do końca biegu. Zwalniamy jego zajętość; gdy tankowiec kiedyś
+      // dotrze, utarg i tak wpłynie na konto właściciela.
+      if (course.payload?.agentId && director.agents) {
+        const agent = getAgent(director.agents, course.payload.agentId);
+        if (agent && releaseCourse(agent, course.id)) {
+          agent.stationId = String(currentStage(course)?.fromId || agent.stationId);
+        }
+        director.agents.stats.stranded = (director.agents.stats.stranded || 0) + 1;
+      }
       note(director, `bez paliwa: ${course.originId}→${course.destinationId}`);
       settled++;
     }
@@ -1661,6 +1744,13 @@ export function tickDirector(director, dt, stations) {
       if (bought) {
         director.companies.shipsById.set(bought.id, bought);
         note(director, `${company.name} kupuje jednostkę (${bought.vanClassId})`);
+      }
+    }
+    // To samo dla domów handlowych: bez odkupu każdy przechwyt trwale skraca
+    // karawanę i po kilku godzinach wszystkie schodzą do jednego statku.
+    for (const agent of director.agents?.agents || []) {
+      if (maintainCaravan(agent)) {
+        note(director, `${agent.name} odkupuje frachtowiec (${agent.ships}/${agent.targetShips})`);
       }
     }
   }

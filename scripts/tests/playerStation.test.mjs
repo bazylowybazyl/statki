@@ -141,7 +141,13 @@ export function run() {
 
   // Stacja gracza wytapia stal z rudy, więc rudy jej braknie — i to jest
   // powód, dla którego ktokolwiek do niej poleci.
-  for (let i = 0; i < 400; i++) {
+  //
+  // Cykli musi być tyle, żeby Ziemia zdążyła przekroczyć PRÓG NADWYŻKI: poniżej
+  // niego `resourcePrice` zgłasza `available: 0` i rynek nie widzi towaru, choć
+  // magazyn nie jest pusty. Przy 400 cyklach jej komponenty stawały na 62–68%
+  // zapełnienia, czyli tuż pod progiem, i cała migawka wychodziła bez ani jednej
+  // okazji. To fixture na ostrzu noża — dlatego z zapasem.
+  for (let i = 0; i < 600; i++) {
     runStationEconomy(gracz, graczEcon, 1, () => 0.5);
     runStationEconomy(ziemia, ziemiaEcon, 1, () => 0.5);
   }
@@ -150,6 +156,15 @@ export function run() {
   t.check('stacja gracza zgłasza czego jej brakuje', braki.length > 0);
   t.check('brakuje jej wsadu do produkcji',
     braki.some(d => ['iron_ore', 'titanium_ore', 'copper_ore'].includes(d.id)));
+
+  // Ziemia ma mieć CO SPRZEDAĆ. Poleganie na tym, że po N cyklach sama
+  // przekroczy próg nadwyżki, robi z tego testu miernik kalibracji przemysłu:
+  // pierwsza wersja (400 cykli) przestała działać po dodaniu zbrojowni, druga
+  // (600) po wpięciu poboru floty do runtime'u. Sprawdzamy tu RYNEK, więc
+  // zapas ustawiamy wprost.
+  for (const id of ['hull_plate', 'steel', 'avionics', 'gun_ballistic']) {
+    ziemiaEcon.resources[id] = ziemiaEcon.capacity[id] * 0.9;
+  }
 
   const rynek = snapshotMarket(stacje, econOf);
   t.check('nowa stacja jest w migawce rynku', rynek.has('przyczolek-gracza'));

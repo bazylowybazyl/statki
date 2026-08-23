@@ -14,6 +14,12 @@ let arena = null;
 let shardRefs = null;
 let nextBodyId = 1;
 let initializedShared = false;
+// Przepelnienie areny jest CICHE i kosztowne: cialo bez _packedBody wraca w
+// collideEntities do iteracji po WSZYSTKICH heksach zamiast po samym brzegu
+// (dla siatki 60x35 to ~2100 zamiast ~190 — 11x drozsza petla narrowphase).
+// Bez licznika nie da sie tego odroznic od "gra po prostu zwolnila".
+let overflowEvents = 0;
+let overflowBodies = 0;
 
 function supportsSharedArena() {
   return typeof SharedArrayBuffer === 'function' &&
@@ -62,6 +68,8 @@ export function attachHexGridToArena(entity, shards = entity?.hexGrid?.shards) {
           globalArena.release(rollbackIndex);
           shardRefs[rollbackIndex] = undefined;
         }
+        overflowEvents++;
+        if (!grid._packedArenaOverflow) overflowBodies++;
         grid._packedArenaOverflow = true;
         return null;
       }
@@ -86,7 +94,10 @@ export function attachHexGridToArena(entity, shards = entity?.hexGrid?.shards) {
   });
   rebuildHexBodyTopology(globalArena, body);
   grid._packedBody = body;
-  grid._packedArenaOverflow = false;
+  if (grid._packedArenaOverflow) {
+    grid._packedArenaOverflow = false;
+    overflowBodies = Math.max(0, overflowBodies - 1);
+  }
   return body;
 }
 
@@ -142,6 +153,12 @@ export function isPackedShardBoundary(shard) {
 
 export function releaseHexGridArena(entity) {
   const grid = entity?.hexGrid;
+  // Cialo, ktoremu nie udalo sie wejsc do areny, tez musi zejsc z licznika —
+  // inaczej "ile cial chodzi teraz w trybie wolnym" rosloby w nieskonczonosc.
+  if (grid?._packedArenaOverflow) {
+    grid._packedArenaOverflow = false;
+    overflowBodies = Math.max(0, overflowBodies - 1);
+  }
   const body = grid?._packedBody;
   if (!body || !arena) return 0;
   let released = 0;
@@ -170,7 +187,9 @@ export function getHexArenaStats() {
       highWaterMark: 0,
       bytes: 0,
       shared: false,
-      bodyCapacity: DEFAULT_BODY_CAPACITY
+      bodyCapacity: DEFAULT_BODY_CAPACITY,
+      overflowEvents: 0,
+      overflowBodies: 0
     };
   }
   return {
@@ -179,7 +198,9 @@ export function getHexArenaStats() {
     highWaterMark: arena.highWaterMark,
     bytes: arena.memoryBytes,
     shared: initializedShared,
-    bodyCapacity: DEFAULT_BODY_CAPACITY
+    bodyCapacity: DEFAULT_BODY_CAPACITY,
+    overflowEvents,
+    overflowBodies
   };
 }
 
@@ -188,5 +209,7 @@ export function resetHexArenaForTests(options = {}) {
   shardRefs = null;
   nextBodyId = 1;
   initializedShared = false;
+  overflowEvents = 0;
+  overflowBodies = 0;
   return getGlobalHexArena(options);
 }
