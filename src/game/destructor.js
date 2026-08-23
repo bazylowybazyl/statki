@@ -433,7 +433,24 @@ function getSearchOffsets(radius) {
       if (dc * dc + dr * dr <= r2) list.push(dc, dr);
     }
   }
-  arr = (r <= 127) ? new Int8Array(list) : new Int16Array(list);
+  // Kolejność offsetów decyduje o dwóch rzeczach naraz, bo pętla kontaktów w
+  // collideEntities przerywa na PIERWSZYM trafieniu:
+  //  - koszt: w porządku rastrowym (0,0) leżało dopiero na ~41. pozycji z 81 dla r=5,
+  //    więc każde trafienie płaciło połowę dysku zanim sprawdziło komórkę oczywistą;
+  //  - jakość: wybierany był heks o najmniejszym dc, nie najbliższy — normalne
+  //    kontaktu miały stały bias w stronę -c.
+  // Sortujemy metryką rzeczywistą (HEX_SPACING != HEX_HEIGHT), nie po indeksach.
+  const order = [];
+  for (let i = 0; i < list.length; i += 2) order.push(i);
+  const metric = (i) => {
+    const wx = list[i] * HEX_SPACING;
+    const wy = list[i + 1] * HEX_HEIGHT;
+    return wx * wx + wy * wy;
+  };
+  order.sort((a, b) => (metric(a) - metric(b)) || (list[a] - list[b]) || (list[a + 1] - list[b + 1]));
+  const sorted = [];
+  for (let i = 0; i < order.length; i++) sorted.push(list[order[i]], list[order[i] + 1]);
+  arr = (r <= 127) ? new Int8Array(sorted) : new Int16Array(sorted);
   SEARCH_OFFSETS_CACHE[r] = arr;
   return arr;
 }
@@ -908,14 +925,22 @@ function getShardVisualGridY(shard) {
   return shard.gridY + shard.deformation.y;
 }
 
+// Odświeżane raz na tick w DestructorSystem.update()/updateVisuals(). Wcześniej
+// każde z tych wywołań czytało config + robiło ?? i Number() — dwa razy na każdą
+// kandydacką komórkę w najgłębszej pętli narrowphase. Panel strojenia może to
+// zmieniać w locie, więc wartość nie może być zamrożona na stałe.
+let COLLISION_DEFORM_SCALE = Number(DESTRUCTOR_CONFIG.collisionDeformScale ?? 1.0);
+
+function refreshCollisionDeformScale() {
+  COLLISION_DEFORM_SCALE = Number(DESTRUCTOR_CONFIG.collisionDeformScale ?? 1.0);
+}
+
 function getShardCollisionGridX(shard) {
-  const cds = Number(DESTRUCTOR_CONFIG.collisionDeformScale ?? 1.0);
-  return shard.gridX + shard.deformation.x * cds;
+  return shard.gridX + shard.deformation.x * COLLISION_DEFORM_SCALE;
 }
 
 function getShardCollisionGridY(shard) {
-  const cds = Number(DESTRUCTOR_CONFIG.collisionDeformScale ?? 1.0);
-  return shard.gridY + shard.deformation.y * cds;
+  return shard.gridY + shard.deformation.y * COLLISION_DEFORM_SCALE;
 }
 
 function rebuildNeighbors(grid) {
@@ -1586,6 +1611,7 @@ export const DestructorSystem = {
     const tUpdate0 = nowMs();
     const list = Array.isArray(entities) ? entities : [];
     const step = Number.isFinite(dt) ? Math.max(0.0001, dt) : (1 / 120);
+    refreshCollisionDeformScale();
 
     // Praca wizualna (lerp deformacji, GPU soft body, elastyczność, erase cache)
     // wykonuje się raz na klatkę renderu w updateVisuals() — tu zostaje sama fizyka.
@@ -1634,6 +1660,7 @@ export const DestructorSystem = {
       ? entities
       : (Array.isArray(this._visualEntities) ? this._visualEntities : []);
     const step = Number.isFinite(dt) ? Math.min(0.1, Math.max(0.0001, dt)) : (1 / 60);
+    refreshCollisionDeformScale();
 
     const tDeform0 = nowMs();
     this.updateVisualDeformation(list, step);
@@ -1863,11 +1890,11 @@ export const DestructorSystem = {
 
           // True plasticity baking: once yield is exceeded, commit part of the offset to base grid.
           const yieldP = DESTRUCTOR_CONFIG.yieldPoint || 80;
-          const tdx = ax;
-          const tdy = ay;
-          const defLen = Math.sqrt(tdx * tdx + tdy * tdy);
-
-          if (defLen > yieldP) {
+          // defLen służy WYŁĄCZNIE do testu progu poniżej, a defSq jest już policzone.
+          // Bezwarunkowy pierwiastek kosztował tu jeden sqrt na heks na klatkę dla
+          // każdego obudzonego statku. defLen > yieldP <=> defSq > yieldP^2 (obie >= 0).
+          if (defSq > yieldP * yieldP) {
+            const defLen = Math.sqrt(defSq);
             const excess = defLen - yieldP;
             const ratio = excess / defLen;
             const tx = s.targetDeformation.x * ratio;
@@ -2015,7 +2042,11 @@ export const DestructorSystem = {
     return repairedAny;
   },
 
-  _probeImpactData(entity, worldX, worldY) {
+  // anyHit = wołający potrzebuje tylko odpowiedzi "czy cokolwiek trafia".
+  // Bez tego probeImpact() skanował wszystkie ~29 komórek szukając najbliższego
+  // heksa i wyrzucał wynik, zwracając boolean. Przy 5 sondach na hardpoint
+  // (isHardpointHexSupported) to się mnożyło przez liczbę hardpointów i encji.
+  _probeImpactData(entity, worldX, worldY, anyHit = false) {
     if (!entity?.hexGrid || !isHexEligible(entity)) return null;
 
     const angle = getEntityHexAngle(entity);
@@ -2065,6 +2096,9 @@ export const DestructorSystem = {
       if (d2 < hitRad * hitRad && d2 < bestD2) {
         bestD2 = d2;
         hitShard = shard;
+        // Offsety są posortowane rosnąco po odległości, więc pierwsze trafienie
+        // jest już najbliższe albo bardzo blisko niego.
+        if (anyHit) break;
       }
     }
 
@@ -2088,7 +2122,7 @@ export const DestructorSystem = {
   },
 
   probeImpact(entity, worldX, worldY) {
-    return !!this._probeImpactData(entity, worldX, worldY);
+    return !!this._probeImpactData(entity, worldX, worldY, true);
   },
 
   applyImpact(entity, worldX, worldY, damage = 0, bulletVel = { x: 0, y: 0 }, opts = null) {

@@ -61,9 +61,14 @@ export function findTradeOpportunities(quotes, options = {}) {
   const holdCapacity = Math.max(1, Number(options.holdCapacity) || 160);
   const minRatio = Number.isFinite(options.minMargin) ? options.minMargin : MIN_MARGIN_RATIO;
   const limit = Math.max(1, Math.floor(options.limit || 12));
+  // Ograniczenie do wskazanych portów nadania. Bez niego lista jest globalnym
+  // topem po zysku brutto — te same kilkanaście tłustych par dla wszystkich —
+  // i kupiec stojący gdzie indziej NIGDY nie widzi okazji u siebie pod nosem.
+  const sourceIds = options.sourceIds ? new Set([...options.sourceIds].map(String)) : null;
   const out = [];
 
   for (const [sourceId, source] of quotes) {
+    if (sourceIds && !sourceIds.has(String(sourceId))) continue;
     for (const [targetId, target] of quotes) {
       if (sourceId === targetId) continue;
       // Nikt nie wozi towaru wprost do frakcji, z którą jest w stanie wojny.
@@ -114,16 +119,24 @@ export function findTradeOpportunities(quotes, options = {}) {
  */
 export function netProfit(opportunity, route, options = {}) {
   if (!opportunity || !route) return null;
-  const cost = route.cost?.total ?? 0;
-  const risk = route.interceptChance ?? 0;
+  // `extraCost` to wydatek spoza trasy — dziś opłacenie eskorty. `risk`
+  // i `lossShare` pozwalają wołającemu podstawić SWOJE ryzyko zamiast ryzyka
+  // samotnego statku: karawana z osłoną jest trudniejsza do złapania i traci
+  // przy przechwycie tylko część składu, nie wszystko.
+  const cost = (route.cost?.total ?? 0) + Math.max(0, Number(options.extraCost) || 0);
+  const risk = Number.isFinite(options.risk) ? options.risk : (route.interceptChance ?? 0);
+  const lossShare = Number.isFinite(options.lossShare)
+    ? Math.max(0, Math.min(1, options.lossShare))
+    : 1;
   // Przy przechwycie przepada nie tylko marża, ale i towar, za który zapłacono.
   const stake = opportunity.buyPrice * opportunity.units;
-  const expectedLoss = risk * (stake + opportunity.gross);
+  const expectedLoss = risk * lossShare * (stake + opportunity.gross);
   const net = opportunity.gross - cost - expectedLoss;
 
   return {
     gross: opportunity.gross,
     routeCost: cost,
+    lossShare,
     expectedLoss,
     net,
     risk,

@@ -61,11 +61,55 @@ export const FLEET_DEMAND = Object.freeze({
   thruster: 0.021,
   weapon_mount: 0.021,
   reactor_core: 0.014,
-  life_support: 0.014
+  life_support: 0.014,
+
+});
+
+/**
+ * POBÓR MILITARNY — uzbrojenie i amunicja zużywane BIEŻĄCO.
+ *
+ * Osobno od `FLEET_DEMAND`, bo różni je moment zużycia, a nie tylko treść.
+ * Podzespoły z `FLEET_DEMAND` schodzą przy budowie i remoncie okrętu; te
+ * pozycje znikają przez samo utrzymywanie floty w gotowości: wymiana wystrzelanych
+ * luf, zapas skrzyń w garnizonach, ostrzał przy potyczkach z piratami.
+ *
+ * Dlatego to jedyna część planu, którą zjada TAKŻE `runStationEconomy` —
+ * reszta poboru floty pozostaje wielkością planistyczną (patrz `runLifeSupport`).
+ * Bez tego działa rosły do sufitu magazynu: zmierzone 10 080 luf na Ziemi,
+ * czyli pełny skład, przy zużyciu ~1000 sztuk przez wszystkie stocznie razem.
+ *
+ * Proporcje uzbrojenia policzone z `WARSHIP_CLASSES.build` ważonego doktryną
+ * floty (60% fregat, 24% niszczycieli, 13% krążowników, 3% nosicieli) — tą samą
+ * metodą co płyty kadłuba wyżej.
+ *
+ * Skala amunicji dobrana pomiarem: przy 0,35 skrzyni na cykl zapotrzebowanie
+ * na stal przebijało wydobycie żelaza (pokrycie 98%), czyli sama amunicja
+ * zagłodziłaby układ. Bieżący pobór ma być tłem — kampanie wojenne dochodzą
+ * PONAD to (`warDispatcher.ammoPerPower`) i są skokiem, nie tłem.
+ */
+export const MILITARY_UPKEEP = Object.freeze({
+  gun_ballistic: 0.0106,
+  gun_energy: 0.0034,
+  launcher_ordnance: 0.0012,
+  pd_turret: 0.0114,
+
+  ammo_kinetic: 0.20,
+  flak_shell: 0.05,
+  missile_round: 0.012,
+  torpedo_round: 0.0025,
+
+  // MYŚLIWCE. Jedyna pozycja, którą traci się szybciej, niż buduje: maszyna
+  // ma 80–150 HP i ginie od jednej salwy flaku. Dlatego ubytek jest tu wyższy
+  // niż udział nosicieli w doktrynie floty — klucz uzupełnia się po każdym
+  // większym starciu, a nie raz na budowę okrętu.
+  fighter_craft: 0.010
 });
 
 /** Popyt, który każda stacja generuje samym istnieniem: byt + utrzymanie floty. */
-const SYSTEM_DEMAND = Object.freeze({ ...STATION_UPKEEP, ...FLEET_DEMAND });
+const SYSTEM_DEMAND = Object.freeze({ ...STATION_UPKEEP, ...FLEET_DEMAND, ...MILITARY_UPKEEP });
+
+/** To, co stacja realnie zjada w każdym cyklu: byt plus gotowość bojowa. */
+const RUNTIME_UPKEEP = Object.freeze({ ...STATION_UPKEEP, ...MILITARY_UPKEEP });
 
 /** Ile jednostek surowca daje jeden cykl wydobywczy przy `rate` = 1.0. */
 const EXTRACTION_PER_CYCLE = 9;
@@ -112,7 +156,37 @@ export const INDUSTRY_ARCHETYPES = Object.freeze({
     capacity: 1.0, cost: { steel: 90, hull_plate: 28, chips: 20, optic_lens: 8 } },
   /** Przetop złomu. Jedyna receptura o wsadzie w 100% z wraków. */
   recycling: { label: 'Przetop złomu', recipes: ['recycle_scrap'],
-    capacity: 0.4, cost: { steel: 30, hull_plate: 6 } }
+    capacity: 0.4, cost: { steel: 30, hull_plate: 6 } },
+  /**
+   * Zbrojownia: lufy, emitery, wyrzutnie i wieżyczki OP.
+   *
+   * Osobna rola od `shipworks` celowo. Stocznia robi PODSTAWY uzbrojenia
+   * (`weapon_mount`) — czyli miejsce, w które coś się wkręca. Do tej pory na
+   * tym się kończyło i cały układ produkował uchwyty bez ani jednej lufy.
+   */
+  armory: { label: 'Zbrojownia',
+    recipes: ['assemble_gun_ballistic', 'assemble_gun_energy', 'assemble_launcher', 'assemble_pd_turret'],
+    capacity: 0.8, cost: { steel: 70, hull_plate: 20, chips: 12 } },
+  /**
+   * Amunicjownia: jedyny zakład, którego wyrób znika przez samo strzelanie.
+   *
+   * Wsad wyłącznie z rafinatów — amunicja nie może konkurować o płyty
+   * i awionikę z budową okrętów, bo wtedy każda wojna zatrzymywałaby stocznie.
+   */
+  munitions: { label: 'Amunicjownia',
+    recipes: ['assemble_ammo_kinetic', 'assemble_flak_shell', 'assemble_missile_round', 'assemble_torpedo_round'],
+    capacity: 0.9, cost: { steel: 50, hull_plate: 12, polymer: 10 } },
+  /**
+   * Zakład lotniczy: myśliwce.
+   *
+   * Osobno od stoczni, choć obie robią kadłuby — bo płatowiec buduje się
+   * inaczej niż okręt i, co ważniejsze, ROBI GO KTO INNY. Rozdzielenie tych ról
+   * między stacje sprawia, że nosiciel składany na Marsie potrzebuje maszyn
+   * z Ceres albo Jowisza: najdroższa jednostka w grze nie powstaje w całości
+   * w jednym miejscu i da się jej produkcję przerwać z zewnątrz.
+   */
+  aerospace: { label: 'Zakład lotniczy', recipes: ['assemble_fighter_craft'],
+    capacity: 0.6, cost: { steel: 80, hull_plate: 24, chips: 10, titan_alloy: 8 } }
 });
 
 /**
@@ -352,21 +426,28 @@ export const SYSTEM_INDUSTRY_SPEC = Object.freeze({
   // Kopalnia z hutą. Najbogatsze złoża tytanu, więc przerabia je u siebie.
   mercury: { capacity: 1.1, roles: ['foundry'], size: 0.8 },
   // Krzem i kryształ — stąd elektronika dla obu ośrodków montażowych.
-  venus: { capacity: 5.0, roles: ['foundry', 'electronics'], size: 1.1 },
+  // Doszła amunicjownia: ma stal u siebie i elektronikę pod zapalniki, ale
+  // polimer i paliwo fuzyjne musi ściągnąć od olbrzymów — więc elaboracja
+  // amunicji sama tworzy ruch przez cały układ.
+  venus: { capacity: 5.9, roles: ['foundry', 'electronics', 'munitions'], size: 1.1 },
   // Rdzeń przemysłowy. Nic nie wydobywa, żyje z przerobu i montażu.
   // Role okrętowe dają mu redundancję wobec Marsa.
-  earth: { capacity: 17.6, roles: ['foundry', 'electronics', 'shipworks', 'systems'], size: 2.2 },
+  earth: { capacity: 19.2, roles: ['foundry', 'electronics', 'shipworks', 'systems', 'armory'], size: 2.2 },
   // Druga stocznia układu. Jedyne miejsce przetopu złomu — tam trafiają wraki.
-  mars: { capacity: 14.4, roles: ['foundry', 'electronics', 'shipworks', 'systems', 'recycling'], size: 1.6 },
+  mars: { capacity: 15.2, roles: ['foundry', 'electronics', 'shipworks', 'systems', 'recycling', 'armory'], size: 1.6 },
   // Olbrzymy gazowe: paliwo, chłodziwo i byt dla całego układu zewnętrznego.
   // Stocznia Konsorcjum Zewnętrznego. Jowisz nie ma ani grama metalu, więc
   // stal, stop tytanu, układy, przewód i optykę musi ŚCIĄGNĄĆ z rdzenia —
   // i to jest sedno: zbrojenie olbrzymów gazowych tworzy najdłuższą trasę
   // towarową w układzie, dokładnie tam, gdzie warto stawiać piratów.
-  jupiter: { capacity: 9.5, roles: ['gasworks', 'volatiles', 'shipworks', 'systems'], size: 1.3 },
+  jupiter: { capacity: 10.1, roles: ['gasworks', 'volatiles', 'shipworks', 'systems', 'aerospace'], size: 1.3 },
   // Saturn i Uran wzbogacają uran — dwa osrodki zamiast jednego, bo pręty
   // paliwowe są wąskim gardłem stoczni.
-  saturn: { capacity: 6.4, roles: ['gasworks', 'volatiles', 'enrichment'], size: 1.1 },
+  // Druga amunicjownia po przeciwnej stronie układu: ma polimer i paliwo
+  // fuzyjne z własnych gazowni, a stal i układy sprowadza z rdzenia. Dwa
+  // ośrodki po przeciwnych stronach oznaczają, że blokada jednego nie rozbraja
+  // całej wojny — i że fracht amunicyjny płynie w obie strony.
+  saturn: { capacity: 7.3, roles: ['gasworks', 'volatiles', 'enrichment', 'munitions'], size: 1.1 },
   uranus: { capacity: 3.4, roles: ['gasworks', 'volatiles', 'enrichment'], size: 0.9 },
   // Opuszczony — brak załogi, brak produkcji.
   neptune: { capacity: 0, roles: [], size: 0 },
@@ -375,7 +456,9 @@ export const SYSTEM_INDUSTRY_SPEC = Object.freeze({
   // złożem (patrz PLANET_YIELD). Ceres składa okręty, Westa jest jej hutą.
   // Jako jedyna frakcja ma metal i stocznię w tym samym miejscu, więc jest
   // najodporniejsza na blokadę, ale brakuje jej lotnych i paliwa.
-  ceres: { capacity: 7.0, roles: ['foundry', 'electronics', 'shipworks', 'systems'], size: 1.0 },
+  // Liga Pasa robi myśliwce: ma własny metal i krzem, a jej ośrodki są małe
+  // i rozproszone — płatowce pasują jej lepiej niż wielkie kadłuby.
+  ceres: { capacity: 7.6, roles: ['foundry', 'electronics', 'shipworks', 'systems', 'aerospace'], size: 1.0 },
   vesta: { capacity: 2.0, roles: ['foundry'], size: 0.4 }
 });
 
@@ -720,14 +803,25 @@ function runRecipes(station, econ, cycles) {
   }
 }
 
-/** Zużycie bytowe — niezależne od produkcji. */
+/**
+ * Zużycie bytowe i gotowość bojowa — niezależne od produkcji.
+ *
+ * Bierze byt (`STATION_UPKEEP`) razem z poborem militarnym (`MILITARY_UPKEEP`),
+ * ale NIE bierze `FLEET_DEMAND`: podzespoły schodzą przy budowie okrętów
+ * w stoczni, a nie z samego stania w porcie.
+ *
+ * Próba zjadania tu całego `SYSTEM_DEMAND` została zmierzona i cofnięta:
+ * Merkury i Wenus, które podzespołów nie robią, schodziły na zero płyt,
+ * awioniki, rdzeni i silników naraz — transport nie ma jak wykarmić dziesięciu
+ * stacji komponentami, choć bilans globalny się domyka.
+ *
+ * Byt i gotowość zależą od WIELKOŚCI OSADY, nie od mocy fabryki: stacja może
+ * dostać kolejną rolę przemysłową i nie zacząć przez to oddychać szybciej.
+ */
 function runLifeSupport(station, econ, cycles) {
   const industry = getStationIndustry(station);
-  // Byt zależy od WIELKOŚCI OSADY, nie od mocy fabryki ani liczby linii.
-  // `size` jest osobnym wymiarem właśnie po to: stacja może dostać kolejną
-  // rolę przemysłową i nie zacząć nagle oddychać dwa razy szybciej.
   const scale = upkeepScale(industry) * cycles;
-  for (const [id, perCycle] of Object.entries(STATION_UPKEEP)) {
+  for (const [id, perCycle] of Object.entries(RUNTIME_UPKEEP)) {
     takeResource(econ, id, perCycle * scale);
   }
 }
@@ -817,7 +911,7 @@ export function getStationSurpluses(station, econ, limit = 6) {
  */
 export function stationWantsResource(station, resourceId) {
   const id = String(resourceId || '');
-  if (STATION_UPKEEP[id]) return true;
+  if (STATION_UPKEEP[id] || MILITARY_UPKEEP[id]) return true;
   // Popyt spoza receptur — dziś stocznia, jutro remonty i budowa.
   //
   // Bez tego konsument, który nie jest recepturą, jest dla warstwy transportu

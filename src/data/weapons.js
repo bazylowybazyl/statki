@@ -366,6 +366,151 @@ export const WEAPON_ICON_PATHS = {
 };
 
 // ===========================================================================
+// TYP RAŻENIA I AMUNICJA
+// ---------------------------------------------------------------------------
+// Podział na balistykę i energię nie jest kosmetyczny — to on decyduje, co
+// gospodarka musi produkować W SPOSÓB CIĄGŁY. Działo balistyczne bez skrzyń
+// amunicji jest złomem na podstawie, emiter energetyczny potrzebuje wyłącznie
+// mocy reaktora. Stąd bierze się różnica ról: energia jest droga w budowie
+// i tania w użyciu, balistyka odwrotnie.
+//
+// Klasyfikacja idzie po `category`, a nie po wpisie w każdej broni — 32 pozycje
+// przepisane ręcznie rozjechałyby się przy pierwszej nowej lufie.
+// ===========================================================================
+
+export const DAMAGE_TYPE = Object.freeze({
+  BALLISTIC: 'ballistic',
+  ENERGY: 'energy',
+  /** Hangary nie rażą — wypuszczają eskadry i mają własny łańcuch zaopatrzenia. */
+  CARRIER: 'carrier'
+});
+
+/** Identyfikatory amunicji są zarazem kluczami surowców w `resources.js`. */
+export const AMMO_TYPE = Object.freeze({
+  KINETIC: 'ammo_kinetic',
+  FLAK: 'flak_shell',
+  MISSILE: 'missile_round',
+  TORPEDO: 'torpedo_round'
+});
+
+/** Klasy handlowe uzbrojenia — tym gospodarka handluje zamiast 32 modelami. */
+export const WEAPON_GOOD = Object.freeze({
+  BALLISTIC: 'gun_ballistic',
+  ENERGY: 'gun_energy',
+  ORDNANCE: 'launcher_ordnance',
+  POINT_DEFENCE: 'pd_turret',
+  /** Hangar nie kupuje lufy, tylko maszyny — i to one są jego amunicją. */
+  SQUADRON: 'fighter_craft'
+});
+
+/**
+ * Profil kategorii. `shotsPerAmmo` mówi, ile strzałów daje JEDNA sztuka
+ * amunicji przy rozmiarze M — bo sztuką jest skrzynia/zasobnik, nie pojedynczy
+ * nabój. Gatling ma sypać seriami i nadal nie zjadać magazynu portu.
+ *
+ * Rakiety i torpedy są wyjątkiem z natury: tam jedna sztuka to jeden pocisk,
+ * więc `shotsPerAmmo` wynosi 1 niezależnie od rozmiaru wyrzutni.
+ */
+const CATEGORY_PROFILE = Object.freeze({
+  rail: { damage: DAMAGE_TYPE.BALLISTIC, ammo: AMMO_TYPE.KINETIC, shotsPerAmmo: 20, good: WEAPON_GOOD.BALLISTIC },
+  autocannon: { damage: DAMAGE_TYPE.BALLISTIC, ammo: AMMO_TYPE.KINETIC, shotsPerAmmo: 45, good: WEAPON_GOOD.BALLISTIC },
+  armata: { damage: DAMAGE_TYPE.BALLISTIC, ammo: AMMO_TYPE.KINETIC, shotsPerAmmo: 6, good: WEAPON_GOOD.BALLISTIC },
+  ciws: { damage: DAMAGE_TYPE.BALLISTIC, ammo: AMMO_TYPE.KINETIC, shotsPerAmmo: 60, good: WEAPON_GOOD.POINT_DEFENCE },
+  flak: { damage: DAMAGE_TYPE.BALLISTIC, ammo: AMMO_TYPE.FLAK, shotsPerAmmo: 8, good: WEAPON_GOOD.POINT_DEFENCE },
+  rocket: { damage: DAMAGE_TYPE.BALLISTIC, ammo: AMMO_TYPE.MISSILE, shotsPerAmmo: 1, good: WEAPON_GOOD.ORDNANCE },
+  torpedo: { damage: DAMAGE_TYPE.BALLISTIC, ammo: AMMO_TYPE.TORPEDO, shotsPerAmmo: 1, good: WEAPON_GOOD.ORDNANCE },
+  beam: { damage: DAMAGE_TYPE.ENERGY, ammo: null, shotsPerAmmo: 0, good: WEAPON_GOOD.ENERGY },
+  plasma: { damage: DAMAGE_TYPE.ENERGY, ammo: null, shotsPerAmmo: 0, good: WEAPON_GOOD.ENERGY },
+  superweapon: { damage: DAMAGE_TYPE.ENERGY, ammo: null, shotsPerAmmo: 0, good: WEAPON_GOOD.ENERGY },
+  // Hangar nie rani niczym własnym — wypuszcza maszyny. Jego „amunicją" są
+  // rakiety, które eskadra wystrzeliwuje przy wylocie (`missileAmmo`), ale
+  // liczy je `weaponEconomy.squadronRearmCost`, bo zależą od typu eskadry,
+  // a nie od samego gniazda.
+  hangar: { damage: DAMAGE_TYPE.CARRIER, ammo: null, shotsPerAmmo: 0, good: WEAPON_GOOD.SQUADRON }
+});
+
+/**
+ * Ile skrzyń amunicji zjada rozmiar. Większa lufa to nie tylko mocniejszy
+ * strzał, ale i grubszy nabój — bez tego składnika Capital strzelałby tak
+ * tanio jak fregata i wielkość przestałaby cokolwiek kosztować.
+ */
+const AMMO_SIZE_FACTOR = Object.freeze({ S: 0.5, M: 1, L: 2.5, Capital: 6 });
+
+/**
+ * To samo dla pocisków, ale znacznie płaszcze: rakieta JEST sztuką amunicji,
+ * więc rozmiar wyrzutni nie mnoży zużycia tak jak kaliber lufy. Rozróżniamy
+ * tylko lekkie pociski myśliwskie (pół sztuki) i głowice ciężkie klasy
+ * Capital, które zjadają kilka. Bez tego „Osa" — mikrorakieta odpalana
+ * sześćdziesiąt razy na minutę — kosztowałaby tyle co pocisk manewrujący.
+ *
+ * 0,2 dla S wzięło się z eskadr: przy 0,5 przezbrojenie klucza myśliwców
+ * kosztowało WIĘCEJ niż same maszyny, co znaczyłoby, że taniej stracić eskadrę
+ * niż ją uzupełnić.
+ */
+const ORDNANCE_SIZE_FACTOR = Object.freeze({ S: 0.2, M: 1, L: 1, Capital: 3 });
+
+function weaponDef(weaponOrId) {
+  if (weaponOrId && typeof weaponOrId === 'object') return weaponOrId;
+  return MASTER_WEAPONS[String(weaponOrId || '')] || null;
+}
+
+function profileOf(weaponOrId) {
+  const def = weaponDef(weaponOrId);
+  return def ? CATEGORY_PROFILE[def.category] || null : null;
+}
+
+/** `ballistic` | `energy` | `carrier`. Nieznana broń liczy się jak balistyczna. */
+export function weaponDamageType(weaponOrId) {
+  return profileOf(weaponOrId)?.damage || DAMAGE_TYPE.BALLISTIC;
+}
+
+export function isBallistic(weaponOrId) {
+  return weaponDamageType(weaponOrId) === DAMAGE_TYPE.BALLISTIC;
+}
+
+export function isEnergy(weaponOrId) {
+  return weaponDamageType(weaponOrId) === DAMAGE_TYPE.ENERGY;
+}
+
+/** Klucz surowca-amunicji albo `null`, gdy broń nie potrzebuje magazynu. */
+export function weaponAmmoType(weaponOrId) {
+  return profileOf(weaponOrId)?.ammo || null;
+}
+
+/** Klasa handlowa uzbrojenia — to nią handluje gospodarka. */
+export function weaponTradeGood(weaponOrId) {
+  return profileOf(weaponOrId)?.good || null;
+}
+
+/**
+ * Ile sztuk amunicji kosztuje jeden strzał. Salwy (`burstCount`) i wielolufowce
+ * (`barrelsPerShot`) zjadają tyle, ile naprawdę wypuszczają — inaczej „Grad
+ * Flak" z trzema pęknięciami byłby tak samo tani jak lekki kartacz.
+ */
+export function weaponAmmoPerShot(weaponOrId) {
+  const def = weaponDef(weaponOrId);
+  const profile = profileOf(def);
+  if (!def || !profile?.ammo) return 0;
+  const pociski = Math.max(1, Number(def.burstCount) || 1) * Math.max(1, Number(def.barrelsPerShot) || 1);
+  if (profile.shotsPerAmmo <= 1) return pociski * (ORDNANCE_SIZE_FACTOR[def.size] ?? 1);
+  const factor = AMMO_SIZE_FACTOR[def.size] ?? 1;
+  return (pociski * factor) / profile.shotsPerAmmo;
+}
+
+/** Ile sztuk amunicji zjada minuta ognia ciągłego — miara dla zaopatrzenia. */
+export function weaponAmmoPerMinute(weaponOrId) {
+  const def = weaponDef(weaponOrId);
+  if (!def) return 0;
+  const cooldown = Math.max(0.02, Number(def.cooldown) || 1);
+  return weaponAmmoPerShot(def) * (60 / cooldown);
+}
+
+/** Wszystkie bronie danego typu rażenia — do UI, testów i bilansu. */
+export function listWeaponsByDamageType(damageType) {
+  return Object.values(MASTER_WEAPONS).filter(def => weaponDamageType(def) === damageType);
+}
+
+// ===========================================================================
 // WEAPON SIZE CLASS (S / M / L / Capital)
 // ---------------------------------------------------------------------------
 // Used by the workshop / hardpoint editor to gate fitting: a weapon fits a

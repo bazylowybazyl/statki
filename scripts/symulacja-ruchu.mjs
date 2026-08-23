@@ -11,7 +11,9 @@
  *   node scripts/symulacja-ruchu.mjs 120 1 4         magazyny ×4 (stacje z halami)
  */
 
-import { RESOURCES, RESOURCE_KEYS, RECIPES, PLANET_YIELD, TIER } from '../src/data/resources.js';
+import {
+  RESOURCES, RESOURCE_KEYS, RECIPES, PLANET_YIELD, TIER, getResourceCapacityFactor
+} from '../src/data/resources.js';
 import { FACTION, getDefaultStationFaction } from '../src/data/factions.js';
 import { seedStationStock, getStationDeficits, STATION_INDUSTRY, systemHaulTonnage, resourcePrice, stationHaulTonnage } from '../src/game/stationEconomy.js';
 import { createFleetState } from '../src/game/cargoFleet.js';
@@ -20,7 +22,9 @@ import { buildTravelNetwork } from '../src/game/traffic/travelNetwork.js';
 import { createCourseRegistry } from '../src/game/traffic/courseRegistry.js';
 import { createDirector, tickDirector, directorSnapshot } from '../src/game/traffic/trafficDirector.js';
 import { patrolMultiplier } from '../src/game/traffic/patrols.js';
-import { createWarState, tickWar, summarizeWar } from '../src/game/traffic/warDispatcher.js';
+import {
+  createWarState, tickWar, summarizeWar, declareAmmoDemand
+} from '../src/game/traffic/warDispatcher.js';
 import { createScrapperState, tickScrappers, summarizeScrappers } from '../src/game/traffic/scrapperFleets.js';
 import { createPiracyState, registerNest, tickPiracy, summarizePiracy } from '../src/game/traffic/piracy.js';
 import {
@@ -32,7 +36,7 @@ import {
   createShipyardRegistry, registerShipyard, tickShipyards, summarizeShipyards
 } from '../src/game/traffic/shipyards.js';
 import {
-  createAgentRegistry, createAgent, registerAgent, summarizeAgents, AGENT_PROFILE
+  createAgentRegistry, buildMerchants, summarizeAgents
 } from '../src/game/traffic/agentFleets.js';
 
 const MINUTES = Number(process.argv[2]) || 60;
@@ -98,7 +102,8 @@ const CAPACITY_BY_TIER = { [TIER.RAW]: 250, [TIER.REFINED]: 150, [TIER.COMPONENT
 // tylko szybsze przelewanie się tego samego wiadra.
 const baseCapacity = Object.fromEntries(
   RESOURCE_KEYS.map(key =>
-    [key, (CAPACITY_BY_TIER[RESOURCES[key].tier] ?? 100) * CAPACITY_MUL * ECONOMY_SCALE])
+    [key, (CAPACITY_BY_TIER[RESOURCES[key].tier] ?? 100)
+      * getResourceCapacityFactor(key) * CAPACITY_MUL * ECONOMY_SCALE])
 );
 
 // Przeładunek każdej stacji w t/h — od tego, a nie od liczby mieszkańców,
@@ -149,22 +154,10 @@ const { companies: companyList, ships: totalShips } = buildCarriers(companies, h
   { factionOf: getDefaultStationFaction, shipsPerScale: systemHaulTonnage() / TONS_PER_SHIP_HOUR });
 
 // ---------- niezależni kupcy ----------
-// Ruch agentowy jest z natury rzadszy od frakcyjnego: agent czeka na marżę,
-// a nie na czyjś niedobór. Skaluje się wolniej niż gospodarka.
+// Domy handlowe (karawana kilku frachtowców z ochroną) plus samotne wilki.
+// Ta sama funkcja co w demie, żeby konsola i ekran pokazywały ten sam rynek.
 const agents = createAgentRegistry();
-const PROFILE_MIX = [AGENT_PROFILE.CAUTIOUS, AGENT_PROFILE.TRADER, AGENT_PROFILE.TRADER, AGENT_PROFILE.BOLD];
-const agentCount = Math.max(4, Math.round(6 * Math.sqrt(ECONOMY_SCALE)));
-for (let i = 0; i < agentCount; i++) {
-  const profile = PROFILE_MIX[i % PROFILE_MIX.length];
-  registerAgent(agents, createAgent({
-    name: `Kupiec ${i + 1}`,
-    profile,
-    capital: profile === AGENT_PROFILE.BOLD ? 120_000 : 45_000,
-    holdCapacity: profile === AGENT_PROFILE.BOLD ? 900 : 380,
-    hullId: profile === AGENT_PROFILE.BOLD ? 'heavy_freighter' : 'long_haul_freighter',
-    stationId: homePorts[i % homePorts.length]
-  }));
-}
+const merchants = buildMerchants(agents, homePorts, ECONOMY_SCALE);
 
 // ---------- stocznie ----------
 // KAŻDA frakcja ma stocznię, a od 2026-08-17 CZTERY potrafią też zrobić
@@ -188,6 +181,9 @@ for (const station of stations) {
 // ---------- wojna ----------
 // Odbiorca dla gotowych okrętów i jedyne źródło złomu w układzie.
 const war = createWarState();
+// Bez tego transport NIE WIE, że do portu wojennego trzeba wozić skrzynie —
+// `stationWantsResource` widzi tylko wsad receptur i zużycie bytowe.
+declareAmmoDemand(stations);
 // Zbieranie wraków NIE wymaga przemysłu — każda stacja z flotą to robi.
 const scrappers = createScrapperState();
 
@@ -234,7 +230,10 @@ for (let elapsed = 0; elapsed < totalSeconds; elapsed += STEP) {
   const t0 = process.hrtime.bigint();
   tickDirector(director, STEP, stations);
   tickShipyards(shipyards, STEP, { getEconomy: id => economies.get(String(id)) || null });
-  tickWar(war, STEP, { shipyards, stations, network, registry });
+  tickWar(war, STEP, {
+    shipyards, stations, network, registry,
+    getEconomy: id => economies.get(String(id)) || null
+  });
   tickPiracy(piracy, STEP, {
     stations, registry,
     getEconomy: id => economies.get(String(id)) || null,
@@ -283,6 +282,18 @@ for (const f of sy.factions.slice(0, 5)) {
 }
 const ag = summarizeAgents(agents);
 const wojna = summarizeWar(war);
+console.log(`  amunicja: odwołane z braku ${wojna.stats.abortedNoAmmo}, obrona bez zapasu `
+  + `${wojna.stats.defenderNoAmmo}, spalone za ${Math.round(wojna.stats.ammoSpent).toLocaleString('pl')} CR`);
+for (const id of ['mars', 'earth', 'venus', 'saturn', 'jupiter']) {
+  const e = economies.get(id);
+  if (!e) continue;
+  console.log(`    ${id.padEnd(8)} kin ${Math.round(e.resources.ammo_kinetic || 0).toString().padStart(6)}  `
+    + `flak ${Math.round(e.resources.flak_shell || 0).toString().padStart(5)}  `
+    + `rak ${Math.round(e.resources.missile_round || 0).toString().padStart(5)}  `
+    + `torp ${Math.round(e.resources.torpedo_round || 0).toString().padStart(5)}  `
+    + `| działa kin ${Math.round(e.resources.gun_ballistic || 0)}  ener ${Math.round(e.resources.gun_energy || 0)}`
+    + `  myśliwce ${Math.round(e.resources.fighter_craft || 0)}`);
+}
 console.log(`  wojna: ${wojna.stats.launched} wypraw, ${wojna.stats.battles} bitew `
   + `(atakujący wygrał ${wojna.stats.attackerWins}×), stracono ${wojna.stats.shipsLost} okrętów`);
 console.log(`    wraki: ${wojna.wrecks} sztuk, ${Math.round(wojna.stats.scrapCreated)} złomu `
@@ -311,10 +322,12 @@ console.log(`    nietknięte wraki na mapie: ${wojna.wrecks}`);
 if (wojna.stats.shipsLost) {
   console.log(`    zatopione wg klas: ${JSON.stringify(wojna.stats.byClass)}`);
 }
-console.log(`  agenci: ${ag.count} (${ag.busy} w drodze), kapitał ${ag.capital.toLocaleString('pl')} CR, `
+console.log(`  agenci: ${ag.count} (${ag.caravans} karawan / ${ag.hulls} kadłubów / osłona ${ag.escorts}, `
+  + `${ag.busy} w drodze), kapitał ${ag.capital.toLocaleString('pl')} CR, `
   + `kursy ${ag.stats.hauls}, straty ${ag.stats.losses}, bez okazji ${ag.stats.idle}`);
-for (const row of ag.rows.slice(0, 4)) {
-  console.log(`    ${row.name.padEnd(12)} ${row.profile.padEnd(9)} ${String(row.capital).padStart(8)} CR  `
+for (const row of ag.rows.slice(0, 6)) {
+  console.log(`    ${row.name.padEnd(24)} ${row.profile.padEnd(9)} ${String(row.capital).padStart(8)} CR  `
+    + `${row.ships > 1 ? `karawana ${row.ships}×/osł.${row.escorts}` : 'solo         '}  `
     + `kursy ${row.trades}  zysk ${row.zysk >= 0 ? '+' : ''}${row.zysk}`);
 }
 const pat = snap.patrols;

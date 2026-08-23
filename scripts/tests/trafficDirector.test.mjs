@@ -25,6 +25,9 @@ import {
   createFleetRegistry, createCompany, addShip, registerCompany, COMPANY_POLICY,
   assignShipToCourse, SHIP_STATE
 } from '../../src/game/traffic/transportCompanies.js';
+import {
+  createAgentRegistry, createAgent, registerAgent, AGENT_PROFILE, agentIsBusy
+} from '../../src/game/traffic/agentFleets.js';
 
 const CAPACITY_BY_TIER = { [TIER.RAW]: 250, [TIER.REFINED]: 150, [TIER.COMPONENT]: 60 };
 
@@ -438,6 +441,44 @@ export function run() {
     !pirateLoss.companies.shipsById.has(lossShip.id)
     && !lossCompany.ships.includes(lossShip));
   t.equal('strata jest policzona raz', pirateLoss.director.stats.lost, 1);
+
+  // ----------------------------------------------------------
+  t.section('Karawana kupiecka leci grupą, nie pojedynczo');
+
+  const kupcy = createAgentRegistry();
+  const dom = registerAgent(kupcy, createAgent({
+    name: 'Dom Testowy', profile: AGENT_PROFILE.TRADER, capital: 600_000,
+    holdCapacity: 900, hullId: 'heavy_freighter', ships: 4, escorts: 3,
+    stationId: 'mercury'
+  }));
+  const rynek = makeWorld({ directorOptions: { agents: kupcy, agentShare: 1 } });
+  // Wymuszony spread: pełny magazyn u nadawcy, pusty u odbiorcy. Bez niego
+  // wszystkie stacje startują z tym samym zapełnieniem, więc marża jest zerowa
+  // i test sprawdzałby wyłącznie to, że nic się nie dzieje.
+  rynek.economies.get('mercury').resources.iron_ore = rynek.economies.get('mercury').capacity.iron_ore;
+  rynek.economies.get('earth').resources.iron_ore = 0;
+  runFor(rynek, 900);
+
+  const kursyDomu = rynek.registry.courses.filter(course => course.payload?.agentId === dom.id);
+  t.check('dom handlowy wypłynął', kursyDomu.length > 0);
+  t.check('i to więcej niż jednym statkiem', kursyDomu.length > 1,
+    `(kursów: ${kursyDomu.length})`);
+  t.check('każdy statek wiezie realny ładunek',
+    kursyDomu.every(course => course.payload.units > 0));
+
+  const konwoje = new Set(kursyDomu.map(course => course.convoyId));
+  t.equal('cała grupa leci jednym konwojem', konwoje.size, 1);
+  t.check('konwój faktycznie się zawiązał', !!kursyDomu[0].convoyId);
+  t.check('kursy karawany są przypięte do domu handlowego',
+    dom.courseIds.length > 1 && agentIsBusy(dom));
+  t.check('ochrona została opłacona', dom.ledger.escorts > 0);
+
+  // Zbiornik MUSI objąć pusty dolot: to była realna usterka — kurs stawał
+  // `stranded` na etapie 0, bo paliwo liczono wyłącznie dla trasy z ładunkiem.
+  t.check('zbiornik pokrywa wszystkie etapy kursu',
+    kursyDomu.every(course =>
+      course.stages.reduce((suma, stage) => suma + (stage.fuel || 0), 0) <= course.fuelCapacity));
+  t.equal('żaden kurs kupca nie stanął bez paliwa', kupcy.stats.stranded || 0, 0);
 
   return t.results;
 }

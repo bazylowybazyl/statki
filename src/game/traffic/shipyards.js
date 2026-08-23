@@ -29,22 +29,49 @@ import { RESOURCES } from '../../data/resources.js';
  * `hull` odsyła do istniejących profili kadłubów z `ships.js` — nie wymyślamy
  * nowych sylwetek.
  */
+/**
+ * `build` zawiera PODSTAWY uzbrojenia (`weapon_mount`) ORAZ to, co się na nich
+ * montuje. Do 2026-08-20 był tam wyłącznie uchwyt — okręt schodził z pochylni
+ * bez ani jednej lufy, a cała gospodarka produkowała miejsca do wkręcania
+ * czegoś, czego nikt nie robił.
+ *
+ * Dobór dział mówi, do czego klasa służy: fregata ma jedno działo i wieżyczkę
+ * OP, krążownik pełny miks z wyrzutnią, a nosiciel prawie same wieżyczki —
+ * broni się myśliwcami, nie burtą.
+ */
 export const WARSHIP_CLASSES = Object.freeze({
   frigate: {
     id: 'frigate', label: 'fregata', hull: 'terran_frigate', power: 1, seconds: 600,
-    build: { hull_plate: 4, avionics: 1, thruster: 1, weapon_mount: 1 }
+    build: {
+      hull_plate: 4, avionics: 1, thruster: 1, weapon_mount: 1,
+      gun_ballistic: 1, pd_turret: 1
+    }
   },
   destroyer: {
     id: 'destroyer', label: 'niszczyciel', hull: 'terran_destroyer', power: 2.4, seconds: 1700,
-    build: { hull_plate: 12, avionics: 2, thruster: 2, weapon_mount: 3, reactor_core: 1 }
+    build: {
+      hull_plate: 12, avionics: 2, thruster: 2, weapon_mount: 3, reactor_core: 1,
+      gun_ballistic: 2, gun_energy: 1, pd_turret: 2
+    }
   },
   cruiser: {
     id: 'cruiser', label: 'krążownik', hull: 'terran_battleship', power: 5.5, seconds: 4600,
-    build: { hull_plate: 30, avionics: 6, thruster: 5, weapon_mount: 7, reactor_core: 3, life_support: 2 }
+    build: {
+      hull_plate: 30, avionics: 6, thruster: 5, weapon_mount: 7, reactor_core: 3, life_support: 2,
+      gun_ballistic: 4, gun_energy: 2, launcher_ordnance: 1, pd_turret: 4
+    }
   },
+  // Nosiciel schodzi z pochylni Z GRUPĄ LOTNICZĄ: dwie eskadry po dziewięć
+  // maszyn. To one są jego bronią — dział ma mniej niż krążownik. Bez tej
+  // pozycji nosiciel był najdroższym okrętem w grze, który nie miał czym
+  // walczyć, a myśliwce brały się znikąd.
   carrier: {
     id: 'carrier', label: 'nosiciel', hull: 'terran_carrier', power: 9, seconds: 8800,
-    build: { hull_plate: 60, avionics: 16, thruster: 9, weapon_mount: 7, reactor_core: 7, life_support: 14 }
+    build: {
+      hull_plate: 60, avionics: 16, thruster: 9, weapon_mount: 7, reactor_core: 7, life_support: 14,
+      gun_ballistic: 2, gun_energy: 1, launcher_ordnance: 2, pd_turret: 6,
+      fighter_craft: 18
+    }
   }
 });
 

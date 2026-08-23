@@ -32,6 +32,7 @@ import { run as runPlayerStation } from './tests/playerStation.test.mjs';
 import { run as runWarDispatcher } from './tests/warDispatcher.test.mjs';
 import { run as runScrapperFleets } from './tests/scrapperFleets.test.mjs';
 import { run as runPiracy } from './tests/piracy.test.mjs';
+import { run as runWeaponEconomy } from './tests/weaponEconomy.test.mjs';
 
 const GREEN = '\x1b[32m';
 const RED = '\x1b[31m';
@@ -61,7 +62,8 @@ const suites = [
   runPlayerStation,
   runWarDispatcher,
   runScrapperFleets,
-  runPiracy
+  runPiracy,
+  runWeaponEconomy
 ];
 const results = [];
 

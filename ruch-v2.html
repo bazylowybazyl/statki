@@ -111,10 +111,10 @@
   </div>
   <div id="legenda">
     <span style="color:#8fa3bd">klasa:</span>
-    <span><i style="background:#22d3ee"></i>S szutla 60t</span>
-    <span><i style="background:#818cf8"></i>M kontenerowiec 160t</span>
-    <span><i style="background:#e879f9"></i>L frachtowiec 380t</span>
-    <span><i style="background:#fb7185"></i>capital 900t</span>
+    <span><i style="background:#22c55e"></i>S szutla 60t</span>
+    <span><i style="background:#eab308"></i>M kontenerowiec 160t</span>
+    <span><i style="background:#f97316"></i>L frachtowiec 380t</span>
+    <span><i style="background:#dc2626"></i>capital 900t</span>
     <span><i style="background:#fecdd3"></i>mega 2400t</span>
     <span style="color:#8fa3bd;margin-left:10px">kupcy ✕:</span>
     <span><i style="background:#67e8f9"></i>ostrożny</span>
@@ -125,7 +125,8 @@
     <span><i style="background:transparent;border:2px solid #fbbf24"></i>warp</span>
     <span><i style="background:transparent;border:2px solid #4ade80"></i>brama</span>
     <span><i style="background:transparent;border:2px solid #facc15"></i>wydobycie</span>
-    <span><i style="background:#ef4444"></i>wrak</span>
+    <span><i style="background:#ef4444"></i>wrak transportu</span>
+    <span style="color:#ef4444">✕ wrak bojowy (czeka na holownik)</span>
     <span style="color:#45566d">kółko = zoom · przeciąganie = przesuwanie · klik w port, potem w dok = zbliż · dwuklik = całość</span>
   </div>
 </div>
@@ -197,12 +198,28 @@
   </section>
 
   <section>
+    <h2>Stocznie i wojna <span style="color:var(--dim);font-weight:400">— odbiorca komponentów</span></h2>
+    <div id="wojna"></div>
+  </section>
+
+  <section>
+    <h2>Piractwo <span style="color:var(--dim);font-weight:400">— łup, paser, przemyt, łowcy</span></h2>
+    <div id="piractwo"></div>
+    <p style="margin:8px 0 0;font-size:10px;color:var(--dim);line-height:1.35">
+      Łup staje się kredytami WYŁĄCZNIE przez przemytnika. Zdusisz przemyt —
+      kryjówka siedzi na stosie towaru i nie ma za co wysłać nikogo w pole.
+    </p>
+  </section>
+
+  <section>
     <h2>Niezależni kupcy <span style="color:var(--dim);font-weight:400">— lecą po marżę</span></h2>
     <table id="agenci"></table>
     <p style="margin:8px 0 0;font-size:10px;color:var(--dim);line-height:1.35">
       Agent płaci za towar z własnej kieszeni, więc ryzykuje nie tylko statkiem.
       Wybiera cel po zysku na sekundę, nie po cudzym niedoborze — i odmawia
-      trasy powyżej swojego progu ryzyka.
+      trasy powyżej swojego progu ryzyka. <b>Karawana</b> liczy to ryzyko jak
+      konwój: opłacona osłona zbija i szansę przechwytu, i wielkość straty,
+      więc stać ją na trasy, których samotny wilk nie tknie.
     </p>
   </section>
 
@@ -244,7 +261,9 @@
  * moduły ES — otwarta z dysku nie wczyta się.
  */
 
-import { RESOURCES, RESOURCE_KEYS, TIER } from './src/data/resources.js';
+import {
+  RESOURCES, RESOURCE_KEYS, TIER, getResourceCapacityFactor
+} from './src/data/resources.js';
 import { FACTION, getDefaultStationFaction, getFactionColor } from './src/data/factions.js';
 import {
   seedStationStock, getStationDeficits, stationWantsResource, STATION_INDUSTRY
@@ -267,8 +286,21 @@ import {
   createBubble, updateBubble, getActors, clearBubble
 } from './src/game/traffic/materializedFlight.js';
 import {
-  createAgentRegistry, createAgent, registerAgent, summarizeAgents, AGENT_PROFILE
+  createAgentRegistry, buildMerchants, summarizeAgents
 } from './src/game/traffic/agentFleets.js';
+import {
+  createShipyardRegistry, registerShipyard, tickShipyards, summarizeShipyards
+} from './src/game/traffic/shipyards.js';
+import {
+  createWarState, tickWar, summarizeWar, declareAmmoDemand
+} from './src/game/traffic/warDispatcher.js';
+import {
+  createScrapperState, tickScrappers, summarizeScrappers
+} from './src/game/traffic/scrapperFleets.js';
+import {
+  createPiracyState, registerNest, tickPiracy, summarizePiracy
+} from './src/game/traffic/piracy.js';
+import { patrolMultiplier } from './src/game/traffic/patrols.js';
 import { resourcePrice, systemHaulTonnage, stationHaulTonnage } from './src/game/stationEconomy.js';
 
 // ============================================================
@@ -281,6 +313,14 @@ const kuiper = BELT_DEFINITIONS.find(belt => belt.id === 'kuiper');
 const CAPACITY_BY_TIER = { [TIER.RAW]: 250, [TIER.REFINED]: 150, [TIER.COMPONENT]: 60 };
 
 let network, registry, fleet, director, stations, economies, docks, companies, agents;
+/**
+ * Górne piętra gospodarki. Do 2026-08-20 chodziły WYŁĄCZNIE w skrypcie headless,
+ * więc demo pokazywało transport bez jego konsekwencji: komponenty T2 nie miały
+ * odbiorcy, gotowe okręty nie miały gdzie zginąć, wraki nikt nie sprzątał,
+ * a łup po przechwycie parował zamiast finansować kolejne rejdy. Nie dało się
+ * stroić tego, czego nie widać.
+ */
+let shipyards, war, scrappers, piracy;
 let worldRadius = 1;
 
 /**
@@ -298,6 +338,12 @@ let shipCount = 0;
 // Przeładunek każdej stacji w t/h — od tego, a nie od liczby mieszkańców,
 // zależy wielkość portu. Merkury to mała kolonia z ogromną kopalnią.
 const PRZEŁADUNEK = stationHaulTonnage();
+
+/** Waga stoczni — te same liczby co w symulacji headless, żeby oba biegi zgadzały się. */
+const YARD_WEIGHT = {
+  mars: 2.0, earth: 1.2, jupiter: 1.1, ceres: 1.0, venus: 0.8,
+  mercury: 0.6, saturn: 0.6, uranus: 0.5, vesta: 0.4
+};
 
 function buildWorld(capacityMultiplier) {
   network = buildTravelNetwork({
@@ -338,11 +384,19 @@ function buildWorld(capacityMultiplier) {
   // Magazyn rośnie razem z przepływem — inaczej większa gospodarka to tylko
   // szybsze przelewanie się tego samego wiadra.
   const capacity = Object.fromEntries(RESOURCE_KEYS.map(key =>
-    [key, (CAPACITY_BY_TIER[RESOURCES[key].tier] ?? 100) * capacityMultiplier * ui.skala]));
+    [key, (CAPACITY_BY_TIER[RESOURCES[key].tier] ?? 100)
+      * getResourceCapacityFactor(key) * capacityMultiplier * ui.skala]));
 
   economies = new Map();
   stations = network.stations.map(node => {
-    const station = { id: node.id, name: node.label, factionId: getDefaultStationFaction(node.id) };
+    // Pozycja MUSI iść ze STACJĄ, nie tylko z węzłem sieci: wojna i złomiarze
+    // liczą odległości po `station.x/y`. Bez nich każdy dystans wychodzi zerowy
+    // i wszystko wygląda na opłacalne — zmierzone w symulacji: 112 wraków,
+    // 112 holowanych, ani jednego ciętego.
+    const station = {
+      id: node.id, name: node.label, factionId: getDefaultStationFaction(node.id),
+      x: node.x, y: node.y
+    };
     const econ = {
       resources: Object.fromEntries(RESOURCE_KEYS.map(key => [key, 0])),
       capacity: { ...capacity }
@@ -377,23 +431,39 @@ function buildWorld(capacityMultiplier) {
   carrierCount = roster.companies.length;
   shipCount = roster.ships;
 
-  // Niezależni kupcy. Ruch agentowy jest z natury rzadszy od frakcyjnego —
-  // agent czeka na marżę, a nie na czyjś niedobór — więc skaluje się wolniej.
+  // Niezależni kupcy: kilka DOMÓW HANDLOWYCH — karawana kilku dużych
+  // frachtowców z opłaconą ochroną — i długi ogon samotnych wilków. Ruch
+  // agentowy jest z natury rzadszy od frakcyjnego (agent czeka na marżę,
+  // a nie na czyjś niedobór), za to jednorazowo dużo cenniejszy.
   agents = createAgentRegistry();
-  const MIESZANKA = [AGENT_PROFILE.CAUTIOUS, AGENT_PROFILE.TRADER,
-    AGENT_PROFILE.TRADER, AGENT_PROFILE.BOLD];
-  const ilu = Math.max(4, Math.round(6 * Math.sqrt(ui.skala)));
-  for (let i = 0; i < ilu; i++) {
-    const profil = MIESZANKA[i % MIESZANKA.length];
-    const smialy = profil === AGENT_PROFILE.BOLD;
-    registerAgent(agents, createAgent({
-      name: `Kupiec ${i + 1}`,
-      profile: profil,
-      capital: smialy ? 120000 : 45000,
-      holdCapacity: smialy ? 900 : 380,
-      hullId: smialy ? 'heavy_freighter' : 'long_haul_freighter',
-      stationId: ports[i % ports.length]
-    }));
+  buildMerchants(agents, ports, ui.skala);
+
+  // ---------- stocznie, wojna, złom, piractwo ----------
+  // Cztery pętle, które domykają gospodarkę. Stocznia zjada komponenty T2
+  // (nadmiar 52 silników i 44 rdzeni na godzinę bez niej), wojna zużywa gotowe
+  // okręty i robi wraki, złomiarze je sprzątają, a piractwo zamienia łup
+  // w kredyty i wysyła za nie kolejne rejdy.
+  shipyards = createShipyardRegistry();
+  for (const station of stations) {
+    if (!station.factionId) continue;
+    registerShipyard(shipyards, {
+      // `station` przekazujemy CELOWO: stocznia dopisuje swoje zapotrzebowanie
+      // do `station.extraDemand` i dopiero wtedy transport w ogóle wie, że tu
+      // trzeba wozić podzespoły. Bez tego buduje wyłącznie ten, kto produkuje.
+      station,
+      stationId: station.id,
+      factionId: station.factionId,
+      weight: (YARD_WEIGHT[station.id] || 0.6) * Math.sqrt(ui.skala)
+    });
+  }
+  war = createWarState();
+  // Amunicja musi trafić na listę zakupów portów, inaczej wojna stanie
+  // z pustymi magazynami mimo działającej amunicjowni.
+  declareAmmoDemand(stations);
+  scrappers = createScrapperState();
+  piracy = createPiracyState();
+  for (const station of stations) {
+    if (station.factionId === FACTION.PIRATES) registerNest(piracy, station);
   }
 
   registry = createCourseRegistry({ keepHistory: false });
@@ -403,6 +473,9 @@ function buildWorld(capacityMultiplier) {
     companies,
     docks,
     agents,
+    // Bez tego przechwyt nadal działa, tylko ładunek paruje zamiast trafić
+    // do kryjówki — czyli tak, jak było, zanim piractwo dostało adres.
+    piracy,
     getEconomy: id => economies.get(String(id)) || null,
     piracyPressure: ui.presja,
     piracyEnabled: ui.piraci,
@@ -498,6 +571,30 @@ function step(dt) {
   const before = director.stats.lost;
   tickDirector(director, dt, stations);
 
+  // Górne piętra chodzą PO dyspozytorze, a przed bańką: kampania wojenna, rejd
+  // i holownik są zwykłymi kursami, więc mają się materializować w tej samej
+  // klatce, w której powstały.
+  tickShipyards(shipyards, dt, { getEconomy: id => economies.get(String(id)) || null });
+  tickWar(war, dt, {
+    shipyards, stations, network, registry,
+    getEconomy: id => economies.get(String(id)) || null
+  });
+  tickPiracy(piracy, dt, {
+    stations, registry,
+    getEconomy: id => economies.get(String(id)) || null,
+    // Ta sama danina frakcji chroni konwoje I dusi przemyt: siła kontroli to
+    // dokładnie to, o ile patrol zbija ryzyko na szlaku.
+    patrolStrength: (fromId, toId) =>
+      Math.max(0, (1 / Math.max(0.05, patrolMultiplier(director.patrols, fromId, toId))) - 1),
+    priceAt: (station, resourceId) => {
+      const econ = economies.get(String(station.id));
+      return econ ? (resourcePrice(station, econ, resourceId)?.bid || 0) : 0;
+    }
+  });
+  tickScrappers(scrappers, dt, {
+    war, stations, registry, getEconomy: id => economies.get(String(id)) || null
+  });
+
   // Warstwa 3 chodzi PO dyspozytorze: rekordy są już przesunięte, a encje
   // przejmują te, które gracz faktycznie ogląda. Bańka materializuje się tylko
   // przy zbliżeniu — z widoku całego układu i tak nie byłoby czego oglądać.
@@ -574,15 +671,15 @@ const worldY = screenY => camera.y + (screenY - view.cy) / px();
  * kolejka jest w jednym kolorze, wąskim gardłem jest klasa stanowisk, a nie
  * port jako całość.
  */
-// Odcienie rozjechane przez pół koła barw, nie w obrębie jednej rodziny:
-// pierwsza wersja (cyjan/błękit/indygo) czytała się jako „same niebieskie".
-// Pomarańcz, bursztyn, zieleń, żółć i czerwień są zajęte przez stany i wraki,
-// więc na klasy zostaje pasmo cyjan → barwinek → fuksja.
+// Ramp zielony → żółty → pomarańczowy → czerwony, rosnący z gabarytem —
+// świadomie te same rodziny barw co STATE_COLOR (obwódka) i wrak (#ef4444),
+// ale inne odcienie, żeby wypełnienie klasy dało się odróżnić od pierścienia
+// stanu na tej samej kropce.
 const CLASS_COLOR = {
-  s: '#22d3ee',        // szutle
-  m: '#818cf8',        // kontenerowce — najliczniejsze
-  l: '#e879f9',        // frachtowce dalekiego zasięgu
-  capital: '#fb7185',  // ciężkie frachtowce
+  s: '#22c55e',        // szutle
+  m: '#eab308',        // kontenerowce — najliczniejsze
+  l: '#f97316',        // frachtowce dalekiego zasięgu
+  capital: '#dc2626',  // ciężkie frachtowce
   mega: '#fecdd3'      // megafrachtowce
 };
 
@@ -723,6 +820,22 @@ function drawWorld() {
     if (age > 1 || !onScreen(wreck.x, wreck.y)) continue;
     ctx.fillStyle = `rgba(239,68,68,${(1 - age) * 0.9})`;
     ctx.beginPath(); ctx.arc(sx(wreck.x), sy(wreck.y), 3, 0, Math.PI * 2); ctx.fill();
+  }
+
+  // Wraki po bitwach ZOSTAJĄ, dopóki ktoś po nie nie przyleci — inaczej niż
+  // wraki transportu, które tylko gasną jako ślad. Bitwy toczą się przy
+  // kryjówkach na 52 i 68 AU, daleko od przemysłu, więc pobojowisko na mapie
+  // jest treścią: wojna daleko od domu zostawia swoje wraki.
+  for (const wreck of war.wrecks) {
+    if (!onScreen(wreck.x, wreck.y)) continue;
+    const wx = sx(wreck.x);
+    const wy = sy(wreck.y);
+    ctx.strokeStyle = wreck.claimed ? 'rgba(251,146,60,0.8)' : 'rgba(239,68,68,0.9)';
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    ctx.moveTo(wx - 3.5, wy - 3.5); ctx.lineTo(wx + 3.5, wy + 3.5);
+    ctx.moveTo(wx + 3.5, wy - 3.5); ctx.lineTo(wx - 3.5, wy + 3.5);
+    ctx.stroke();
   }
 
   // Kursy jako rekordy — kropki. Te, które przejęła warstwa 3, pomijamy tutaj
@@ -1013,6 +1126,107 @@ function ile(value) {
   return String(n);
 }
 
+/** Wiersz „etykieta … wartość" — wspólny dla wszystkich paneli tekstowych. */
+function wiersz(etykieta, wartosc, kolor) {
+  return `
+    <div style="display:flex;justify-content:space-between;font-size:11px;padding:1px 0">
+      <span style="color:var(--dim)">${etykieta}</span>
+      <span style="color:${kolor || 'var(--text)'}">${wartosc}</span>
+    </div>`;
+}
+
+/** Nagłówek drugiego stopnia wewnątrz panelu. */
+function podtytul(tekst) {
+  return `<div style="margin:9px 0 5px;font-size:10px;color:var(--dim);letter-spacing:.06em">${tekst}</div>`;
+}
+
+/**
+ * Stocznie, wojna i złom — czy komponenty T2 mają odbiorcę i co po nim zostaje.
+ *
+ * To jest panel, w którym widać, czy zbrojenie w ogóle rusza: stocznia bez
+ * dostaw stoi z pustymi pochylniami, a wtedy wojny nie ma czym prowadzić
+ * i nie ma skąd wziąć złomu.
+ */
+function drawWar() {
+  const yards = summarizeShipyards(shipyards);
+  const w = summarizeWar(war);
+  const z = summarizeScrappers(scrappers);
+  const godziny = Math.max(1 / 60, registry.clock / 3600);
+
+  document.getElementById('wojna').innerHTML =
+    wiersz('stocznie / na pochylniach', `${yards.yards} / ${yards.building}`)
+    + wiersz('zwodowane okręty', yards.stats.built, yards.stats.built ? 'var(--good)' : null)
+    + wiersz('zjedzone komponenty', `${Math.round(yards.stats.spent).toLocaleString('pl')} CR`)
+    + yards.factions.slice(0, 3).map(f => `
+      <div style="display:flex;justify-content:space-between;font-size:10px;padding:1px 0">
+        <span style="color:var(--dim)">${f.factionId}</span>
+        <span>gotowych ${f.ready} · siła ${f.power}</span>
+      </div>`).join('')
+    + podtytul('WOJNA')
+    + wiersz('wyprawy / bitwy', `${w.stats.launched} / ${w.stats.battles}`)
+    + wiersz('atakujący wygrał', `${w.stats.attackerWins}×`)
+    + wiersz('zatopione okręty', w.stats.shipsLost, w.stats.shipsLost ? 'var(--warn)' : null)
+    + podtytul('ZBROJENIE')
+    + wiersz('amunicja spalona', `${Math.round(w.stats.ammoSpent).toLocaleString('pl')} CR`,
+      w.stats.ammoSpent ? 'var(--warn)' : null)
+    + wiersz('wyprawy wstrzymane bez skrzyń', w.stats.abortedNoAmmo,
+      w.stats.abortedNoAmmo ? 'var(--bad)' : 'var(--good)')
+    + zapasUkladu()
+    + podtytul('ZŁOM')
+    + wiersz('wraki na mapie', w.wrecks, w.wrecks ? 'var(--bad)' : null)
+    + wiersz('holowniki w polu', z.active)
+    + wiersz('odzyskane (hol / cięcie)', `${z.stats.towed} / ${z.stats.cut}`)
+    + wiersz('złom', `${Math.round(z.stats.scrap)} szt · ${Math.round(z.stats.scrap / godziny)}/h`);
+}
+
+/**
+ * Zapas uzbrojenia i amunicji w całym układzie.
+ *
+ * Liczony po wszystkich portach, bo to wielkość systemowa: pojedyncza stacja
+ * może być pusta i nic to nie znaczy, dopóki sąsiadka ma pełny skład. Dopiero
+ * zero w całym układzie oznacza, że wojna stanie.
+ */
+function zapasUkladu() {
+  const suma = {};
+  for (const econ of economies.values()) {
+    for (const id of ['gun_ballistic', 'gun_energy', 'launcher_ordnance', 'pd_turret',
+      'ammo_kinetic', 'flak_shell', 'missile_round', 'torpedo_round', 'fighter_craft']) {
+      suma[id] = (suma[id] || 0) + (Number(econ.resources?.[id]) || 0);
+    }
+  }
+  const linia = (etykieta, ids) => wiersz(etykieta,
+    ids.map(id => `${RESOURCES[id].short} ${ile(suma[id])}`).join(' · '));
+  // Eskadra to dziewięć maszyn — pokazujemy oba, bo w magazynie leżą sztuki,
+  // a myśli się kluczami.
+  const klucze = Math.floor((suma.fighter_craft || 0) / 9);
+  return linia('działa', ['gun_ballistic', 'gun_energy'])
+    + linia('wyrzutnie / OP', ['launcher_ordnance', 'pd_turret'])
+    + linia('amunicja', ['ammo_kinetic', 'flak_shell'])
+    + linia('pociski', ['missile_round', 'torpedo_round'])
+    + wiersz('myśliwce', `${ile(suma.fighter_craft)} szt · ${klucze} eskadr`);
+}
+
+/** Piractwo jako gospodarka: łup → paser → przemytnik → rejd → łowca. */
+function drawPiracy() {
+  const p = summarizePiracy(piracy);
+  const kryjowki = p.nests.map(n => `
+      <div style="display:flex;justify-content:space-between;font-size:10px;padding:1px 0">
+        <span style="color:var(--dim)">${n.id}</span>
+        <span>${n.credits.toLocaleString('pl')} CR · łup ${n.lootValue.toLocaleString('pl')} CR</span>
+      </div>`).join('');
+
+  document.getElementById('piractwo').innerHTML =
+    wiersz('rejdy (w polu)', `${p.stats.raidsLaunched} (${p.raids})`, p.raids ? 'var(--bad)' : null)
+    + wiersz('zrabowane', `${Math.round(p.stats.lootValue).toLocaleString('pl')} CR`)
+    + wiersz('przemyt (wpadki)', `${p.stats.smugglesRun} (${p.stats.smugglesCaught})`)
+    + wiersz('utarg kryjówek', `${Math.round(p.stats.fencedValue).toLocaleString('pl')} CR`)
+    + wiersz('łowcy / ubici rejderzy', `${p.stats.huntsLaunched} / ${p.stats.raidsKilled}`,
+      p.stats.raidsKilled ? 'var(--good)' : null)
+    + wiersz('pula nagród frakcji', `${p.bounties.toLocaleString('pl')} CR`)
+    + podtytul('KRYJÓWKI')
+    + (kryjowki || '<div style="font-size:10px;color:var(--dim)">— brak kryjówek</div>');
+}
+
 /** Konwoje, patrole i to, ile osłona faktycznie ratuje. */
 function drawConvoysAndPatrols(snap) {
   const k = snap.convoys;
@@ -1020,20 +1234,13 @@ function drawConvoysAndPatrols(snap) {
   const uratowane = k.stats.shipsSaved;
   const stracone = k.stats.shipsLost;
 
-  const wiersz = (etykieta, wartosc, kolor) => `
-    <div style="display:flex;justify-content:space-between;font-size:11px;padding:1px 0">
-      <span style="color:var(--dim)">${etykieta}</span>
-      <span style="color:${kolor || 'var(--text)'}">${wartosc}</span>
-    </div>`;
-
   document.getElementById('konwoje').innerHTML =
     wiersz('grup w drodze', `${k.count} (${k.ships} jednostek)`)
     + wiersz('największa', k.largest)
     + wiersz('przechwyty konwojów', k.stats.intercepted, k.stats.intercepted ? 'var(--warn)' : null)
     + wiersz('stracone / URATOWANE', `${stracone} / ${uratowane}`,
       uratowane > stracone ? 'var(--good)' : 'var(--bad)')
-    + '<div style="margin:9px 0 5px;font-size:10px;color:var(--dim);letter-spacing:.06em">'
-    + 'PATROLE FRAKCYJNE</div>'
+    + podtytul('PATROLE FRAKCYJNE')
     + wiersz('pilnowanych szlaków', `${pat.count} (siła ${pat.totalStrength})`)
     + wiersz('ufundowane / rozwiązane', `${pat.stats.funded} / ${pat.stats.disbanded}`)
     + (pat.lanes.length
@@ -1050,7 +1257,8 @@ function drawAgents() {
   const raport = summarizeAgents(agents);
   document.getElementById('agenci').innerHTML =
     `<tr><td colspan="2" style="padding-bottom:6px;font-size:10px;color:var(--dim)">
-      ${raport.count} kupców, ${raport.busy} w drodze · kapitał rynku
+      ${raport.count} kupców (${raport.caravans} karawan, ${raport.hulls} kadłubów,
+      osłona ${raport.escorts}), ${raport.busy} w drodze · kapitał rynku
       ${Math.round(raport.capital).toLocaleString('pl')} CR · straty ${raport.stats.losses}
     </td></tr>`
     + raport.rows.slice(0, 6).map(row => `
@@ -1061,6 +1269,7 @@ function drawAgents() {
         <td class="stan" style="width:82px">${row.capital.toLocaleString('pl')} CR</td>
       </tr>
       <tr><td colspan="2" style="padding-bottom:5px;font-size:10px;color:var(--dim)">
+        ${row.ships > 1 ? `karawana ${row.ships}× · osłona ${row.escorts}` : 'solo'} ·
         ${row.profile} · kursy ${row.trades} ·
         <span style="color:${row.zysk >= 0 ? 'var(--good)' : 'var(--bad)'}">
           ${row.zysk >= 0 ? '+' : ''}${row.zysk.toLocaleString('pl')} CR</span>
@@ -1220,6 +1429,8 @@ function drawPanels() {
 
   drawWarehouses();
   drawConvoysAndPatrols(snap);
+  drawWar();
+  drawPiracy();
   drawAgents();
 
   // Komputer handlowy: agregat z warstwy rekordów, nie liczenie encji.

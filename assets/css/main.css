@@ -236,126 +236,6 @@
       pointer-events: none;
     }
 
-    #fleet-ui .side-panel-body {
-      max-height: 360px;
-      overflow-y: auto;
-      -ms-overflow-style: none;
-      scrollbar-width: none;
-    }
-
-    #fleet-ui .side-panel-body::-webkit-scrollbar {
-      display: none;
-    }
-
-    #fleet-list {
-      list-style: none;
-      margin: 0;
-      padding: 0;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-    }
-
-    .fleet-ship {
-      padding: 10px 12px;
-      background: linear-gradient(160deg, rgba(10, 26, 48, 0.82), rgba(12, 32, 58, 0.9));
-      border: 1px solid var(--fa-border);
-      border-radius: 12px;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35)
-    }
-
-    .fleet-ship-header {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-    }
-
-    .fleet-ship-name {
-      font-weight: 700;
-      font-size: 15px;
-      color: #f6fbff;
-      letter-spacing: 0.02em;
-    }
-
-    .fleet-ship-meta {
-      font-size: 11px;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: var(--fa-muted);
-    }
-
-    .fleet-stats {
-      font-size: 13px;
-      letter-spacing: 0.04em;
-      color: #dfe7ff;
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      align-items: center;
-    }
-
-    .fleet-fighters {
-      font-size: 13px;
-      font-weight: 700;
-      color: var(--fa-text);
-      text-shadow: 0 0 8px rgba(109, 220, 255, 0.45);
-      letter-spacing: 0.04em;
-    }
-
-    .fleet-hardpoints {
-      display: flex;
-      gap: 8px;
-      font-size: 11px;
-      color: #cde7ff;
-      flex-wrap: wrap;
-    }
-
-    .fleet-hardpoints span {
-      padding: 2px 8px;
-      border-radius: 999px;
-      background: rgba(99, 167, 238, 0.2);
-      border: 1px solid var(--fa-border);
-      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25);
-    }
-
-    .fleet-controls {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 6px;
-    }
-
-    .fleet-order-btn {
-      flex: 1 1 30%;
-      padding: 8px 9px;
-      border-radius: 10px;
-      border: 1px solid var(--fa-border);
-      background: linear-gradient(150deg, rgba(66, 142, 210, 0.25), rgba(55, 116, 186, 0.35));
-      color: var(--fa-text);
-      font-size: 11px;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      cursor: pointer;
-      transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease, transform 0.18s ease;
-      box-shadow: 0 10px 20px rgba(0, 0, 0, 0.22);
-    }
-
-    .fleet-order-btn:hover {
-      background: linear-gradient(150deg, rgba(96, 188, 255, 0.35), rgba(55, 116, 186, 0.45));
-      border-color: var(--fa-strong-border);
-      transform: translateY(-1px);
-    }
-
-    .fleet-order-btn.active {
-      background: linear-gradient(150deg, rgba(109, 220, 255, 0.4), rgba(58, 161, 255, 0.42));
-      border-color: var(--fa-strong-border);
-      color: #f1f7ff;
-      box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.35) inset, 0 12px 26px rgba(3, 92, 160, 0.35);
-    }
-
     #support-ui {
       width: 280px;
     }
@@ -1918,47 +1798,6 @@
       transform: translateY(0);
     }
 
-    .planet-radar {
-      position: fixed;
-      inset: 0;
-      pointer-events: none;
-      z-index: 78;
-      font-family: Inter, system-ui, Segoe UI, Roboto, Arial;
-    }
-
-    .planet-radar.hidden {
-      display: none !important;
-    }
-
-    .planet-radar-item {
-      position: absolute;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 0;
-      transform: translate(-50%, -50%);
-      color: #e2e8f8;
-      text-shadow: 0 2px 10px rgba(0, 0, 0, 0.55);
-    }
-
-    .planet-radar-label {
-      padding: 4px 10px;
-      border-radius: 999px;
-      background: rgba(26, 39, 68, 0.8);
-      border: 1px solid rgba(96, 132, 194, 0.6);
-      font-size: 11px;
-      letter-spacing: 0.14em;
-      text-transform: uppercase;
-      white-space: nowrap;
-    }
-
-    .planet-radar-item.pirate .planet-radar-label,
-    .planet-radar-label.pirate {
-      background: linear-gradient(150deg, rgba(140, 18, 18, 0.9), rgba(189, 42, 42, 0.9));
-      border-color: rgba(255, 124, 124, 0.75);
-      color: #ffecec;
-      box-shadow: 0 14px 24px rgba(255, 70, 70, 0.28);
-    }
 
     /* --- Styl widoku szczegółowego (Windows Explorer style) --- */
 
@@ -3050,77 +2889,6 @@
       border-bottom-color: var(--support-green);
     }
 
-    /* Fleet List */
-    .fleet-list {
-      display: flex;
-      flex-direction: column;
-      gap: 0;
-    }
-
-    .fleet-item {
-      background: transparent;
-      border: none;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-      border-radius: 0;
-      padding: 8px 12px;
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      transition: background 0.2s;
-    }
-
-    .fleet-item:hover {
-      background: rgba(255, 255, 255, 0.03);
-    }
-
-    .fleet-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-
-    .fleet-name {
-      font-size: 13px;
-      font-weight: 600;
-      color: #f1f5f9;
-      letter-spacing: 0.5px;
-    }
-
-    .fleet-type {
-      font-size: 9px;
-      text-transform: uppercase;
-      color: #64748b;
-      font-weight: 700;
-      letter-spacing: 0.5px;
-    }
-
-    .fleet-bars {
-      display: flex;
-      gap: 4px;
-      height: 3px;
-      margin-top: 4px;
-      opacity: 0.8;
-    }
-
-    .mini-bar {
-      flex: 1;
-      background: rgba(255, 255, 255, 0.08);
-      border-radius: 1px;
-      overflow: hidden;
-    }
-
-    .mini-fill {
-      height: 100%;
-      width: 100%;
-    }
-
-    .mini-fill.hp {
-      background: var(--hp-color);
-    }
-
-    .mini-fill.shield {
-      background: var(--shield-color);
-    }
 
     /* --- DOCK & HUD --- */
     .hud-dock {
@@ -4406,3 +4174,219 @@
       }
     }
 
+
+
+    /* ========================================= */
+    /* BOTTOM HUD LAYOUT FIXED */
+    /* ========================================= */
+
+    #hud-bottom-container {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: flex-end;
+      gap: 18px;
+      pointer-events: none;
+      z-index: 100;
+    }
+
+    #hud-center-dock {
+      position: relative;
+      pointer-events: auto;
+      flex-shrink: 0;
+    }
+
+    #left-wing {
+      position: relative;
+      width: 320px;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      align-items: flex-end;
+      gap: 15px;
+      padding-bottom: 10px;
+      pointer-events: auto;
+    }
+
+    #hud-radar-dock {
+      position: relative;
+      width: 320px;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      align-items: flex-start;
+      flex-shrink: 0;
+      padding-bottom: 10px;
+      pointer-events: none;
+    }
+
+    .hud-radar-shell {
+      position: relative;
+      width: 176px;
+      height: 176px;
+      box-sizing: border-box;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      overflow: hidden;
+      border: 1px solid rgba(56, 189, 248, 0.28);
+      border-radius: 6px;
+      background: rgba(4, 12, 24, 0.95);
+      box-shadow: inset 0 0 22px rgba(56, 189, 248, 0.08), 0 8px 26px rgba(0, 0, 0, 0.28);
+    }
+
+    .hud-radar-canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    .hud-radar-readout {
+      position: absolute;
+      top: 7px;
+      left: 10px;
+      right: 10px;
+      z-index: 1;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 9px;
+      line-height: 1;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: rgba(180, 226, 255, 0.86);
+      pointer-events: none;
+    }
+
+    .hud-radar-readout span {
+      min-width: 0;
+      white-space: nowrap;
+    }
+
+    .hud-radar-readout .hostile {
+      color: #ff8c8c;
+    }
+
+    .hud-radar-readout .asteroid {
+      color: #eeb763;
+    }
+
+    .hud-radar-readout .range {
+      color: #7dd3fc;
+    }
+
+    .hud-radar-controls {
+      width: 176px;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 3px;
+      margin-top: 5px;
+      pointer-events: auto;
+    }
+
+    .hud-radar-range-btn {
+      appearance: none;
+      min-width: 0;
+      height: 22px;
+      padding: 0;
+      border: 1px solid rgba(71, 108, 151, 0.58);
+      border-radius: 3px;
+      background: rgba(5, 14, 27, 0.92);
+      color: rgba(171, 198, 226, 0.82);
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 8px;
+      font-weight: 700;
+      letter-spacing: 0;
+      cursor: pointer;
+      touch-action: manipulation;
+      transition: border-color 0.12s ease, color 0.12s ease, background 0.12s ease;
+    }
+
+    .hud-radar-range-btn:hover {
+      border-color: rgba(125, 211, 252, 0.72);
+      color: #dff7ff;
+    }
+
+    .hud-radar-range-btn:focus-visible {
+      outline: 1px solid #7dd3fc;
+      outline-offset: 1px;
+    }
+
+    .hud-radar-range-btn.active {
+      border-color: #38bdf8;
+      background: rgba(14, 75, 106, 0.82);
+      color: #e8f8ff;
+      box-shadow: inset 0 0 0 1px rgba(125, 211, 252, 0.16), 0 0 7px rgba(56, 189, 248, 0.18);
+    }
+
+    .zp-tool-btn.active {
+      border-color: #5af !important;
+      background: #1a2a3a !important;
+      box-shadow: 0 0 6px rgba(85,170,255,0.3);
+    }
+    .zp-tool-btn:hover {
+      border-color: #445 !important;
+      background: #162030 !important;
+    }
+
+    .drive-readout {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      min-height: 14px;
+      font: 700 8px/1 Consolas, "Courier New", monospace;
+      letter-spacing: .08em;
+      color: #9fb4d4;
+      text-transform: uppercase;
+    }
+
+    .drive-readout .drive-mode {
+      color: #e7f4ff;
+    }
+
+    .drive-readout .drive-gear {
+      color: #7dd3fc;
+    }
+
+    .drive-rpm-track {
+      position: relative;
+      width: 100%;
+      height: 4px;
+      overflow: hidden;
+      border: 1px solid rgba(125, 211, 252, .2);
+      background: rgba(2, 8, 18, .88);
+    }
+
+    .drive-rpm-track::after {
+      content: '';
+      position: absolute;
+      inset: 0 4% 0 80%;
+      border-left: 1px solid rgba(134, 239, 172, .75);
+      border-right: 1px solid rgba(134, 239, 172, .75);
+      background: rgba(34, 197, 94, .14);
+    }
+
+    .drive-rpm-fill {
+      width: 0;
+      height: 100%;
+      background: linear-gradient(90deg, #38bdf8 0%, #a7f3d0 80%, #fb923c 100%);
+      box-shadow: 0 0 7px rgba(56, 189, 248, .7);
+      transition: width .08s linear, background .12s linear, box-shadow .12s linear;
+    }
+
+    .drive-readout.shift-boost .drive-gear {
+      color: #fff5a8;
+      text-shadow: 0 0 8px #facc15;
+    }
+
+    .menu-btn.active {
+      border-color: rgba(125, 211, 252, .8);
+      background: linear-gradient(180deg, rgba(14, 116, 144, .3), rgba(8, 47, 73, .2));
+      box-shadow: 0 0 16px rgba(56, 189, 248, .18), inset 0 -2px 0 rgba(125, 211, 252, .45);
+    }

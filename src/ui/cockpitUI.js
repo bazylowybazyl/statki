@@ -369,7 +369,7 @@ export class CockpitUI {
   }
 
   retireLegacyHud() {
-    for (const id of ['side-panels-container', 'right-panels-container', 'hud-bottom-container', 'hud-topbar', 'ui', 'planet-radar', 'hover-info']) {
+    for (const id of ['side-panels-container', 'right-panels-container', 'hud-bottom-container', 'hud-topbar', 'ui', 'hover-info']) {
       document.getElementById(id)?.remove();
     }
   }

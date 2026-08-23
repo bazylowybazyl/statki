@@ -87,9 +87,13 @@ export function run() {
   t.section('2a. Planowane saldo jest niezależne od bieżącego niedoboru');
   const earthNet = stationNetRates(earth);
   const mercuryNet = stationNetRates(mercury);
-  t.close('plan Ziemi wymaga 1326,272 rudy żelaza/h', earthNet.iron_ore * 3600, -1326.2719799661725, 1e-6);
-  t.close('plan Ziemi wymaga 669,045 rudy krzemu/h', earthNet.silicon_ore * 3600, -669.045218398312, 1e-6);
-  t.close('plan Merkurego eksportuje 1297,127 rudy żelaza/h', mercuryNet.iron_ore * 3600, 1297.1273263688697, 1e-6);
+  // Migawka kalibracji. Te liczby zmieniają się przy KAŻDEJ zmianie przemysłu
+  // — ostatnio 2026-08-20, gdy Ziemia i Mars dostały zbrojownie, a Wenus
+  // i Saturn amunicjownie. Rosnący apetyt Ziemi na rudę jest tu skutkiem
+  // zamierzonym: uzbrojenie to nowy, stały odbiorca metalu.
+  t.close('plan Ziemi wymaga 1374,920 rudy żelaza/h', earthNet.iron_ore * 3600, -1374.9201143235828, 1e-6);
+  t.close('plan Ziemi wymaga 751,742 rudy krzemu/h', earthNet.silicon_ore * 3600, -751.7420265995411, 1e-6);
+  t.close('plan Merkurego eksportuje 1335,342 rudy żelaza/h', mercuryNet.iron_ore * 3600, 1335.3424474153, 1e-6);
   t.close('plan Merkurego eksportuje 476,280 rudy krzemu/h', mercuryNet.silicon_ore * 3600, 476.28, 1e-6);
 
   const habitatNet = stationNetRates({ id: 'test-habitat', factionId: earth.factionId });

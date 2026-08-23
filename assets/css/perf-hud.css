@@ -1,0 +1,174 @@
+/* Panel wydajnosci (#perfPanel, #perfGraph).
+   Wyciagniete z inline <style> w index.html. */
+
+#perfPanel {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 900;
+  pointer-events: none;
+  background: rgba(5, 10, 20, 0.92);
+  padding: 12px 16px;
+  border-radius: 8px;
+  border: 1px solid #335;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.7);
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 12px;
+  color: #aab;
+  min-width: 240px;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  transition: opacity 0.25s ease;
+}
+
+#perfPanel.hidden {
+  opacity: 0;
+  visibility: hidden;
+}
+
+#perfPanel .perf-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: #667;
+  margin-bottom: 6px;
+}
+
+#perfPanel .perf-fps {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1;
+  margin-bottom: 4px;
+}
+
+#perfPanel .perf-fps.good {
+  color: #4f8;
+}
+
+#perfPanel .perf-fps.ok {
+  color: #fd4;
+}
+
+#perfPanel .perf-fps.bad {
+  color: #f44;
+}
+
+#perfPanel .perf-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 1px 0;
+}
+
+#perfPanel .perf-section-toggle {
+  cursor: pointer;
+  pointer-events: auto;
+  border-radius: 4px;
+}
+
+#perfPanel .perf-section-toggle:hover .perf-label,
+#perfPanel .perf-section-toggle:focus .perf-label {
+  color: #b9c6e8;
+}
+
+#perfPanel .perf-caret {
+  display: inline-block;
+  width: 10px;
+  color: #8fb5ff;
+  font-weight: 700;
+}
+
+#perfPanel .perf-collapsed {
+  display: none !important;
+}
+
+#perfPanel .perf-label {
+  color: #778;
+  white-space: nowrap;
+}
+
+#perfPanel .perf-val {
+  color: #bbc;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+#perfPanel .perf-bar-bg {
+  height: 3px;
+  background: #223;
+  border-radius: 2px;
+  margin: 2px 0;
+  overflow: hidden;
+}
+
+#perfPanel .perf-bar {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.25s ease;
+}
+
+#perfPanel .perf-sep {
+  border-top: 1px solid #223;
+  margin: 5px 0;
+}
+
+#perfPanel .perf-controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin: 8px 0 10px;
+  pointer-events: auto;
+}
+
+#perfPanel .perf-btn {
+  appearance: none;
+  border: 1px solid #2a3552;
+  border-radius: 6px;
+  background: linear-gradient(180deg, rgba(18, 26, 42, 0.96), rgba(10, 16, 28, 0.96));
+  color: #b9c6e8;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  padding: 5px 6px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+  pointer-events: auto;
+}
+
+#perfPanel .perf-btn:hover {
+  border-color: #4b6cb7;
+  color: #e5eeff;
+}
+
+#perfPanel .perf-btn.active {
+  border-color: #4af;
+  color: #dff5ff;
+  background: linear-gradient(180deg, rgba(22, 52, 78, 0.98), rgba(9, 27, 44, 0.98));
+  box-shadow: inset 0 0 0 1px rgba(96, 165, 250, 0.18);
+}
+
+#perfPanel .perf-btn.stop.active {
+  border-color: #f97316;
+  color: #fff1e8;
+  background: linear-gradient(180deg, rgba(86, 33, 12, 0.98), rgba(53, 18, 8, 0.98));
+  box-shadow: inset 0 0 0 1px rgba(249, 115, 22, 0.18);
+}
+
+#perfGraph {
+  margin-top: 6px;
+  display: block;
+}
+
+#perfPanel canvas,
+#perfPanel #perfGraph {
+  position: static !important;
+  inset: auto !important;
+  width: 240px !important;
+  height: 44px !important;
+  max-width: 100%;
+  z-index: auto !important;
+  pointer-events: none !important;
+}
