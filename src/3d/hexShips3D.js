@@ -14,6 +14,8 @@ import {
 } from '../game/shipLightRuntime.js';
 import { ShipLights3D } from './shipLights3D.js';
 import { allowsSolidArmorLod } from './hexLodPolicy.js';
+import { DrawCallStats } from './drawCallStats.js';
+import { HexBodyImpostorBatch, computeAverageBodyColor } from './hexBodyImpostorBatch.js';
 
 const HEX_VERTEX_SHADER = `
 attribute vec2 aGridPos;
@@ -271,6 +273,12 @@ const state = {
 };
 
 const HEX_LOD = Object.freeze({ FULL: 0, HYBRID: 1, IMPOSTOR: 2 });
+// Poniżej tego promienia ekranowego CIAŁA (nie heksa) wrak przestaje być
+// rysowany własnym wywołaniem i wpada do wspólnego batcha smug. Dotyczy tylko
+// wraków i fragmentów — żywe kadłuby mają swoją ścieżkę LOD. Histereza trzyma
+// przełączenie z dala od progu, żeby nie migotało przy powolnym zoomie.
+const WRECK_IMPOSTOR_PX = 12;
+const WRECK_IMPOSTOR_EXIT_MUL = 1.35;
 const HEX_LOD_FULL_PX = 1.25;
 const HEX_LOD_IMPOSTOR_PX = 0.45;
 const HEX_LOD_HYSTERESIS = 0.20;
@@ -1191,8 +1199,53 @@ function updateEntityMesh(entity, data, camX, camY, cameraZoom) {
   const ex = interpPose ? interpPose.x : getEntityPosX(entity);
   const ey = interpPose ? interpPose.y : getEntityPosY(entity);
   const entityAngle = interpPose ? interpPose.angle : (entity.angle || 0);
-  const screenRadiusPx = data.baseRadius * getEntityScale(entity) * Math.max(0.0001, cameraZoom) * (Core3D.pixelRatio || 1);
-  resolveHexLod(data, screenRadiusPx, state.lastTime, allowsSolidArmorLod(entity));
+  const entityScale = getEntityScale(entity);
+  const zoomPx = Math.max(0.0001, cameraZoom) * (Core3D.pixelRatio || 1);
+  const screenRadiusPx = data.baseRadius * entityScale * zoomPx;
+  const solidArmorAllowed = allowsSolidArmorLod(entity);
+
+  // Wrak z oddali: jedna smuga we wspólnym batchu zamiast własnego wywołania
+  // i zamiast pełnego przeliczenia macierzy wszystkich heksów.
+  if (!solidArmorAllowed) {
+    const bodyRadiusPx = Math.max(data.srcWidth, data.srcHeight) * 0.5 * entityScale * zoomPx;
+    const tuning = (typeof window !== 'undefined' && window.DevTuning) ? window.DevTuning : null;
+    const enterPx = Number.isFinite(Number(tuning?.wreckImpostorPx)) ? Number(tuning.wreckImpostorPx) : WRECK_IMPOSTOR_PX;
+    const exitPx = enterPx * WRECK_IMPOSTOR_EXIT_MUL;
+    const wasImpostor = data.batchedImpostor === true;
+    const isImpostor = wasImpostor ? (bodyRadiusPx < exitPx) : (bodyRadiusPx < enterPx);
+
+    if (isImpostor) {
+      if (data.impostorColor === undefined) {
+        data.impostorColor = computeAverageBodyColor(grid.visualImage || grid.armorImage || grid.cacheCanvas) || null;
+      }
+      if (data.impostorColor) {
+        if (data.mesh.visible) data.mesh.visible = false;
+        if (data.armorMesh.visible) data.armorMesh.visible = false;
+        // Powrót do pełnego detalu musi przeliczyć wszystko od zera — przez czas
+        // w batchu nie śledziliśmy meshDirty.
+        data.needsInstanceRefresh = true;
+        data.batchedImpostor = true;
+        const halfW = data.srcWidth * 0.5 * getEntityScaleX(entity);
+        const halfH = data.srcHeight * 0.5 * getEntityScaleY(entity);
+        HexBodyImpostorBatch.push({
+          x: ex,
+          y: -ey,
+          rot: usesBillboardOrientation(entity) ? entityAngle : -entityAngle,
+          halfW,
+          halfH,
+          color: data.impostorColor,
+          opacity: 1
+        });
+        DrawCallStats.addImpostor(1);
+        lodFrameStats.impostorBodies++;
+        lodFrameStats.totalStructuralHexes += shards.length;
+        return;
+      }
+    }
+    data.batchedImpostor = false;
+  }
+
+  resolveHexLod(data, screenRadiusPx, state.lastTime, solidArmorAllowed);
 
   // Upload tekstury pancerza = pełny texImage2D + regeneracja mipmap. W ostrzale
   // destroyShard ustawiał gpuTextureNeedsUpdate przy KAŻDYM heksie → kilka pełnych
@@ -1367,6 +1420,12 @@ function updateEntityMesh(entity, data, camX, camY, cameraZoom) {
   data.armorMesh.rotation.set(0, 0, renderRotation);
   data.armorMesh.scale.set(scaleX, -scaleY, 1);
 
+  // Jedno ciało = jedno wywolanie na siatke heksow i jedno na plyte pancerza —
+  // w praktyce widoczna jest jedna z nich naraz, ale w oknie przenikania LOD-u
+  // obie. Wraki liczymy osobno, bo to one narastaja przez cala bitwe.
+  const bodyDraws = (data.mesh.visible ? 1 : 0) + (data.armorMesh.visible ? 1 : 0);
+  if (bodyDraws > 0) DrawCallStats.addHexBody(bodyDraws, !allowsSolidArmorLod(entity));
+
   lodFrameStats.totalStructuralHexes += shards.length;
   if (data.lodMode === HEX_LOD.FULL) {
     lodFrameStats.fullBodies++;
@@ -1426,6 +1485,8 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
   const camX = Number(viewCamera?.x) || 0;
   const camY = Number(viewCamera?.y) || 0;
   const cameraZoom = Math.max(0.0001, Number(viewCamera?.zoom) || 1);
+  DrawCallStats.begin();
+  HexBodyImpostorBatch.begin();
   lodFrameStats.fullBodies = 0;
   lodFrameStats.hybridBodies = 0;
   lodFrameStats.impostorBodies = 0;
@@ -1559,6 +1620,8 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
     const eAngle = interpPose ? interpPose.angle : (entity.angle || 0);
     const scale = getEntityScale(entity);
     Weapon3DSystem.syncWeapons(entity, ex, ey, eAngle, scale);
+    const weaponContainer = Weapon3DSystem.containers?.get(entity);
+    if (weaponContainer) DrawCallStats.addWeapon(DrawCallStats.countRenderable(weaponContainer));
   }
   Weapon3DSystem.cleanupEntities(weaponActiveEntities);
   Weapon3DSystem.syncProjectiles((typeof window !== 'undefined' && Array.isArray(window.bullets)) ? window.bullets : []);
@@ -1574,6 +1637,8 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
     disposeMeshData(data);
     state.entityMeshes.delete(entity);
   }
+
+  HexBodyImpostorBatch.flush();
 
   vfxEntities.push(...visibleVfx);
   EngineVfxSystem.update(visibleVfx);

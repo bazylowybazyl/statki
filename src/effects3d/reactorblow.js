@@ -3,6 +3,7 @@ import { STATION_CHAIN_REACTOR_PROFILE } from "./reactorProfiles/stationChainPro
 import { STATION_CUT_REACTOR_PROFILE } from "./reactorProfiles/stationCutProfile.js";
 import { STATION_FINAL_REACTOR_PROFILE } from "./reactorProfiles/stationFinalProfile.js";
 
+import { ParticlePool } from "./particlePool.js";
 // --- BAZOWY SZUM GLSL ---
 const noiseChunk = `
     float hash(float n) { return fract(sin(n) * 43758.5453123); }
@@ -29,7 +30,6 @@ const noiseChunk = `
 class GPUInstancedParticleManager {
     constructor(scene, maxParticles, blendingType) {
         this.maxParticles = maxParticles;
-        this.activeIndex = 0; 
         
         const baseGeo = new THREE.PlaneGeometry(1, 1);
         const geo = new THREE.InstancedBufferGeometry();
@@ -44,7 +44,8 @@ class GPUInstancedParticleManager {
         geo.setAttribute('aStartPos', new THREE.InstancedBufferAttribute(this.startPos, 3));
         geo.setAttribute('aStartVel', new THREE.InstancedBufferAttribute(this.startVel, 3));
         geo.setAttribute('aData', new THREE.InstancedBufferAttribute(this.dataInfo, 4));
-        geo.instanceCount = maxParticles;
+        // Rzeczywiste instanceCount ustawia ParticlePool (0 gdy pula pusta).
+        geo.instanceCount = 0;
 
         this.material = new THREE.ShaderMaterial({
             uniforms: { uTime: { value: 0 } },
@@ -203,11 +204,18 @@ class GPUInstancedParticleManager {
         this.mesh.frustumCulled = false; 
         this.mesh.renderOrder = 1000; 
         scene.add(this.mesh);
+
+        this.pool = new ParticlePool({
+            mesh: this.mesh,
+            attributes: [geo.attributes.aStartPos, geo.attributes.aStartVel, geo.attributes.aData],
+            capacity: maxParticles,
+            timeUniform: this.material.uniforms.uTime,
+            name: 'reactorblow:1000'
+        });
     }
 
     spawn(x, y, z, vx, vy, vz, size, life, type, globalTime) {
-        let i = this.activeIndex;
-        this.activeIndex = (this.activeIndex + 1) % this.maxParticles;
+        const i = this.pool.next();
         let i3 = i * 3, i4 = i * 4;
         
         this.startPos[i3]=x; this.startPos[i3+1]=y; this.startPos[i3+2]=z;
@@ -218,10 +226,7 @@ class GPUInstancedParticleManager {
         this.dataInfo[i4+2] = size;         
         this.dataInfo[i4+3] = type;         
         
-        const geo = this.mesh.geometry;
-        geo.attributes.aStartPos.needsUpdate = true;
-        geo.attributes.aStartVel.needsUpdate = true;
-        geo.attributes.aData.needsUpdate = true;
+        this.pool.keepAlive(globalTime + life);
     }
 }
 
@@ -229,7 +234,6 @@ class GPUInstancedParticleManager {
 class GPUParticleManager {
     constructor(scene, maxParticles, blendingType) {
         this.maxParticles = maxParticles;
-        this.activeIndex = 0; 
         
         const baseGeo = new THREE.PlaneGeometry(1, 1);
         const geo = new THREE.InstancedBufferGeometry();
@@ -244,7 +248,8 @@ class GPUParticleManager {
         geo.setAttribute('aStartPos', new THREE.InstancedBufferAttribute(this.startPos, 3));
         geo.setAttribute('aStartVel', new THREE.InstancedBufferAttribute(this.startVel, 3));
         geo.setAttribute('aData', new THREE.InstancedBufferAttribute(this.dataInfo, 4));
-        geo.instanceCount = maxParticles;
+        // Rzeczywiste instanceCount ustawia ParticlePool (0 gdy pula pusta).
+        geo.instanceCount = 0;
 
         this.material = new THREE.ShaderMaterial({
             uniforms: { uTime: { value: 0 } },
@@ -319,11 +324,18 @@ class GPUParticleManager {
         this.mesh.frustumCulled = false; 
         this.mesh.renderOrder = 999; 
         scene.add(this.mesh);
+
+        this.pool = new ParticlePool({
+            mesh: this.mesh,
+            attributes: [geo.attributes.aStartPos, geo.attributes.aStartVel, geo.attributes.aData],
+            capacity: maxParticles,
+            timeUniform: this.material.uniforms.uTime,
+            name: 'reactorblow:999'
+        });
     }
 
     spawn(x, y, z, vx, vy, vz, size, life, type, globalTime) {
-        let i = this.activeIndex;
-        this.activeIndex = (this.activeIndex + 1) % this.maxParticles;
+        const i = this.pool.next();
         let i3 = i * 3, i4 = i * 4;
         
         this.startPos[i3]=x; this.startPos[i3+1]=y; this.startPos[i3+2]=z;
@@ -334,10 +346,7 @@ class GPUParticleManager {
         this.dataInfo[i4+2] = size;         
         this.dataInfo[i4+3] = type;         
         
-        const geo = this.mesh.geometry;
-        geo.attributes.aStartPos.needsUpdate = true;
-        geo.attributes.aStartVel.needsUpdate = true;
-        geo.attributes.aData.needsUpdate = true;
+        this.pool.keepAlive(globalTime + life);
     }
 }
 
@@ -380,6 +389,96 @@ export function createReactorBlowFactory(scene) {
             sparkLifeMax: 0.20,
             shockwave3D: null,
             heatHaze: null,
+        }),
+        // Tiery kadluba. Wczesniej KAZDY nie-mysliwiec dostawal profil `capital`,
+        // wiec fregata ginela z ta sama chmura 4000 iskier co superkapital — a to
+        // wlasnie fregaty i niszczyciele gina w bitwie masowo.
+        //   escort  — fregata / korweta / wahadlowiec (promien < 150)
+        //   cruiser — niszczyciel / frachtowiec kontenerowy (150-210)
+        //   capital — pancernik i wyzej (>= 210), bez zmian wzgledem oryginalu
+        escort: Object.freeze({
+            chargeTime: 0.30,
+            explosionDuration: 1.3,
+            chargeSizeMul: 2.2,
+            lightDistMul: 10.0,
+            lightChargeIntensity: 2.0,
+            lightExplodeIntensity: 7.0,
+            lightDropOff: 0.7,
+            flashSizeMul: 7.0,
+            flashLife: 0.6,
+            ringSizeMul: 9.0,
+            ringLife: 0.8,
+            smokeSizeMul: 10.0,
+            smokeLife: 0.9,
+            spikeCount: 22,
+            spikeSpeedMinMul: 10.0,
+            spikeSpeedMaxMul: 20.0,
+            spikeSizeMinMul: 0.30,
+            spikeSizeMaxMul: 0.60,
+            spikeLifeMin: 0.22,
+            spikeLifeMax: 0.38,
+            sparkDelay: 0.06,
+            sparkCount: 450,
+            sparkSpeedMinMul: 4.0,
+            sparkSpeedMaxMul: 13.0,
+            sparkSizeMinMul: 0.06,
+            sparkSizeMaxMul: 0.14,
+            sparkLifeMin: 0.8,
+            sparkLifeMax: 1.9,
+            shockwave3D: Object.freeze({
+                scaleMul: 5.0,
+                minScale: 70,
+                life: 0.7,
+                color: 0x33ccff,
+            }),
+            heatHaze: Object.freeze({
+                duration: 1.0,
+                startScaleMul: 1.6,
+                growthMul: 16.0,
+                strength: 3.2,
+            }),
+        }),
+        cruiser: Object.freeze({
+            chargeTime: 0.55,
+            explosionDuration: 2.1,
+            chargeSizeMul: 2.9,
+            lightDistMul: 15.0,
+            lightChargeIntensity: 3.0,
+            lightExplodeIntensity: 11.0,
+            lightDropOff: 1.1,
+            flashSizeMul: 9.5,
+            flashLife: 0.9,
+            ringSizeMul: 13.0,
+            ringLife: 1.15,
+            smokeSizeMul: 14.5,
+            smokeLife: 1.25,
+            spikeCount: 38,
+            spikeSpeedMinMul: 11.0,
+            spikeSpeedMaxMul: 22.0,
+            spikeSizeMinMul: 0.35,
+            spikeSizeMaxMul: 0.70,
+            spikeLifeMin: 0.26,
+            spikeLifeMax: 0.44,
+            sparkDelay: 0.08,
+            sparkCount: 1400,
+            sparkSpeedMinMul: 4.0,
+            sparkSpeedMaxMul: 14.0,
+            sparkSizeMinMul: 0.06,
+            sparkSizeMaxMul: 0.15,
+            sparkLifeMin: 1.1,
+            sparkLifeMax: 2.8,
+            shockwave3D: Object.freeze({
+                scaleMul: 6.3,
+                minScale: 105,
+                life: 0.9,
+                color: 0x33ccff,
+            }),
+            heatHaze: Object.freeze({
+                duration: 1.5,
+                startScaleMul: 1.8,
+                growthMul: 20.0,
+                strength: 4.5,
+            }),
         }),
         chain: STATION_CHAIN_REACTOR_PROFILE,
         cut: STATION_CUT_REACTOR_PROFILE,
@@ -472,11 +571,10 @@ export function createReactorBlowFactory(scene) {
                 light.intensity = Math.max(0, cfg.lightExplodeIntensity * (1.0 - expTime / Math.max(0.001, cfg.lightDropOff)));
 
                 if (!useShockwave3D && cfg.heatHaze && expTime < cfg.heatHaze.duration && typeof window !== 'undefined' && window.Core3D) {
-                    if (window.Core3D._lastHeatHazeFrame !== gt) {
-                        window.Core3D._lastHeatHazeFrame = gt;
-                        if (window.Core3D.beginHeatHazeFrame) window.Core3D.beginHeatHazeFrame();
-                    }
-
+                    // Bez beginHeatHazeFrame: overlay tickuje PO passie Core3D, wiec
+                    // kasowanie licznika tutaj wycinalo zafalowania od dysz, a wlasne
+                    // zrodlo i tak gasl najblizszy update silnikow. Licznik zeruje
+                    // teraz konsument.
                     const currentRadius = size * cfg.heatHaze.startScaleMul + (expTime * size * cfg.heatHaze.growthMul);
                     const distortionStrength = Math.max(0, 1.0 - (expTime / cfg.heatHaze.duration)) * cfg.heatHaze.strength;
                     window.Core3D.pushHeatHazeWorld(expX, expZ, -4, currentRadius, distortionStrength);

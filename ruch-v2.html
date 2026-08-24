@@ -185,6 +185,14 @@
       <label><span>odstęp wysyłek</span><span id="w-odstep">12 s</span></label>
       <input type="range" id="i-odstep" min="2" max="60" step="1" value="12">
     </div>
+    <div class="suwak">
+      <label><span>widoczność kolejki</span><span id="w-kolejka">0.60</span></label>
+      <input type="range" id="i-kolejka" min="0" max="100" step="5" value="60">
+      <p>Ile opóźnienia statek pochłania ZWALNIAJĄC W DRODZE. 1,0 — port chodzi
+         jak zegarek i kolejki nie widać. 0,0 — wszyscy przylatują na pełnej
+         i piętrzą się przy stacji. Pomiędzy wybierasz, jak soczyste są cele
+         dla piratów, bo kolejka to jedyne miejsce, gdzie konwój jest wolny.</p>
+    </div>
   </section>
 
   <section>
@@ -301,7 +309,9 @@ import {
   createPiracyState, registerNest, tickPiracy, summarizePiracy
 } from './src/game/traffic/piracy.js';
 import { patrolMultiplier } from './src/game/traffic/patrols.js';
-import { resourcePrice, systemHaulTonnage, stationHaulTonnage } from './src/game/stationEconomy.js';
+import {
+  resourcePrice, systemHaulTonnage, stationHaulTonnage, getStationIndustry, militaryScale
+} from './src/game/stationEconomy.js';
 
 // ============================================================
 // Świat
@@ -401,7 +411,9 @@ function buildWorld(capacityMultiplier) {
       resources: Object.fromEntries(RESOURCE_KEYS.map(key => [key, 0])),
       capacity: { ...capacity }
     };
-    seedStationStock(station, econ, 0.45);
+    // Księżyc startuje chudo — inaczej przez pierwsze godziny gry tylko
+    // eksportuje i nigdy nie staje się niczyim klientem.
+    seedStationStock(station, econ, node.moon ? 0.18 : 0.45);
     economies.set(station.id, econ);
     return station;
   });
@@ -446,6 +458,9 @@ function buildWorld(capacityMultiplier) {
   shipyards = createShipyardRegistry();
   for (const station of stations) {
     if (!station.factionId) continue;
+    // Pochylnie stoją tam, gdzie jest przemysł — księżyc-kopalnia nie składa
+    // krążowników, choć ma flagę i port.
+    if (militaryScale(getStationIndustry(station)) <= 0) continue;
     registerShipyard(shipyards, {
       // `station` przekazujemy CELOWO: stocznia dopisuje swoje zapotrzebowanie
       // do `station.extraDemand` i dopiero wtedy transport w ogóle wie, że tu
@@ -500,7 +515,7 @@ function buildWorld(capacityMultiplier) {
 
 const ui = {
   tempo: 20, magazyn: 4, presja: 1, piraci: true, skala: 60,
-  fuzja: 100, brama: 250, czas: 0.08, odstep: 12, pauza: false
+  fuzja: 100, brama: 250, czas: 0.08, odstep: 12, kolejka: 0.6, pauza: false
 };
 
 function applyEconomyKnobs() {
@@ -513,6 +528,7 @@ function applyEconomyKnobs() {
   director.config.piracyPressure = ui.presja;
   director.config.piracyEnabled = ui.piraci;
   director.config.dispatchInterval = ui.odstep;
+  director.portControl.config.absorbFraction = ui.kolejka;
 }
 
 function bindSlider(id, key, format, transform = value => value, onChange = applyEconomyKnobs) {
@@ -535,6 +551,7 @@ bindSlider('fuzja', 'fuzja', value => `${value} CR`);
 bindSlider('brama', 'brama', value => `${value} CR`);
 bindSlider('czas', 'czas', value => `${value.toFixed(2)} CR/s`, value => value / 100);
 bindSlider('odstep', 'odstep', value => `${value} s`);
+bindSlider('kolejka', 'kolejka', value => value.toFixed(2), value => value / 100);
 bindSlider('magazyn', 'magazyn', value => `×${value}`, value => value, () => {
   if (network) buildWorld(ui.magazyn);
 });
@@ -1166,6 +1183,19 @@ function drawWar() {
     + wiersz('wyprawy / bitwy', `${w.stats.launched} / ${w.stats.battles}`)
     + wiersz('atakujący wygrał', `${w.stats.attackerWins}×`)
     + wiersz('zatopione okręty', w.stats.shipsLost, w.stats.shipsLost ? 'var(--warn)' : null)
+    + podtytul('PORTY')
+    + wiersz('przy stanowiskach / w kolejce',
+      `${snap.ports.berthed} / ${snap.ports.waiting}`,
+      snap.ports.waiting ? 'var(--warn)' : 'var(--good)')
+    + wiersz('opóźnienie pochłonięte w drodze',
+      `${Math.round(snap.ports.stats.absorbedSeconds / 60)} min w ${snap.ports.stats.absorbed} kursach`)
+    + (snap.ports.ports.length
+      ? snap.ports.ports.slice(0, 4).map(p => `
+        <div style="display:flex;justify-content:space-between;font-size:10px;padding:1px 0">
+          <span style="color:var(--dim)">${p.stationId}</span>
+          <span>${p.berthed} przy nabrzeżu${p.waiting ? ` · <span style="color:var(--warn)">kolejka ${p.waiting}</span>` : ''}</span>
+        </div>`).join('')
+      : '<div style="font-size:10px;color:var(--dim)">— porty puste</div>')
     + podtytul('ZBROJENIE')
     + wiersz('amunicja spalona', `${Math.round(w.stats.ammoSpent).toLocaleString('pl')} CR`,
       w.stats.ammoSpent ? 'var(--warn)' : null)
@@ -1345,6 +1375,11 @@ function drawWarehouses() {
         <span style="color:${drogo ? 'var(--warn)' : 'var(--good)'}">
           ${cena ? (cena.market / odniesienie).toFixed(2) : '—'}× bazy</span>
       </div>
+      ${cena && cena.duressSeconds > 60 ? `
+      <div style="font-size:10px;color:var(--bad);margin-top:1px">
+        przyduszenie: brak od ${Math.round(cena.duressSeconds / 60)} min
+        → dopłata ×${cena.duress.toFixed(2)}
+      </div>` : ''}
     </td></tr>`;
   }).join('');
 }

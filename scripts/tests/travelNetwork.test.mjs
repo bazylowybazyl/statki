@@ -31,7 +31,22 @@ export function run() {
   // ----------------------------------------------------------
   t.section('Węzły');
 
-  t.equal('osiem stacji', network.stations.length, 8);
+  // Od 2026-08-24 świat ma też księżyce — osiem planet plus dwadzieścia dwa
+  // satelity. Rozdzielamy oba liczniki, bo mieszanie ich w jedną liczbę
+  // zamieniało tę asercję w licznik wszystkiego naraz.
+  t.equal('osiem planet', network.stations.filter(s => !s.moon).length, 8);
+  t.equal('dwadzieścia dwa księżyce', network.stations.filter(s => s.moon).length, 22);
+  t.check('każdy księżyc zna swoją planetę',
+    network.stations.filter(s => s.moon).every(s => !!getNode(network, s.parentId)));
+  t.check('księżyc trzyma się swojej planety, nie własnej orbity wokół Słońca',
+    network.stations.filter(s => s.moon).every(s => {
+      const parent = getNode(network, s.parentId);
+      // Porównanie z tolerancją: promień odtwarza się z sinusa i cosinusa,
+      // więc równość co do bitu nie zachodzi.
+      return Math.abs(Math.hypot(s.x - parent.x, s.y - parent.y) - s.moonOrbitRadius) < 1e-6;
+    }));
+  t.check('da się zbudować świat bez księżyców',
+    buildTravelNetwork({ angleFor: () => 0, moons: false }).stations.length === 8);
   t.equal('bramy tylko przy hubach', network.gates.length, DEFAULT_GATE_HUBS.length);
   t.check('Ziemia ma bramę', getNode(network, 'gate:earth')?.kind === NODE_KIND.GATE);
   t.check('Merkury nie ma bramy', getNode(network, 'gate:mercury') === null);

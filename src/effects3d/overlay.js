@@ -4,6 +4,7 @@ import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
 import { BLOOM_DEFAULTS } from "../3d/bloomConfig.js";
+import { flushParticlePools } from "./particlePool.js";
 
 const RestoreAlphaShader = {
   uniforms: {
@@ -287,6 +288,16 @@ export function initOverlay({
     stats.frameSkip = perf.frameSkip; stats.updateSkip = perf.updateSkip;
   }
 
+  // Niewidoczne dziecko nie generuje draw calla, więc nie jest powodem do
+  // odpalania całego kompozytora.
+  function sceneHasVisibleContent(target) {
+    const kids = target.children;
+    for (let i = 0; i < kids.length; i++) {
+      if (kids[i].visible !== false) return true;
+    }
+    return false;
+  }
+
   function tick(dt) {
     syncCamera();
     applyAdaptiveQuality();
@@ -314,7 +325,15 @@ export function initOverlay({
     }
 
     stats.activeEffects = effects.length;
-    const hasPersistentSceneContent = scene.children.length > 0;
+
+    // Pule cząstek GPU (reactorblow / yamato / supernova) wiszą w scenie od startu
+    // gry, więc `scene.children.length > 0` było prawdziwe ZAWSZE i composer —
+    // RenderPass + UnrealBloom (5 poziomów mipów) + ShaderPass — mielił każdą
+    // klatkę, także przy zerowej liczbie efektów. Flush zwraca, czy w pulach są
+    // jeszcze żywe cząstki, i chowa siatki, gdy ich nie ma.
+    const nowSec = (typeof performance !== "undefined") ? performance.now() / 1000 : 0;
+    const hasLivePools = flushParticlePools(nowSec);
+    const hasPersistentSceneContent = hasLivePools || sceneHasVisibleContent(scene);
     const hasRawContent = !!(rawScene && rawScene.children.length > 0);
     stats.rawObjects = rawScene ? rawScene.children.length : 0;
     if (effects.length === 0 && !hasPersistentSceneContent && !hasRawContent) {

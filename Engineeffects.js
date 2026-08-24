@@ -101,7 +101,7 @@ void main() {
 
 // --- TEKSTURY POMOCNICZE ---
 
-function makeFlareTexture() {
+export function makeFlareTexture() {
     // Anamorficzna flara - ostra pozioma linia
     const canvas = document.createElement('canvas');
     canvas.width = 256; canvas.height = 32;
@@ -133,7 +133,7 @@ function makeFlareTexture() {
     return new THREE.CanvasTexture(canvas);
 }
 
-function makeGlowTexture() {
+export function makeGlowTexture() {
     const canvas = document.createElement('canvas');
     canvas.width = 64; canvas.height = 64;
     const ctx = canvas.getContext('2d');
@@ -147,7 +147,7 @@ function makeGlowTexture() {
     return new THREE.CanvasTexture(canvas);
 }
 
-function makeRingTexture() {
+export function makeRingTexture() {
     const canvas = document.createElement('canvas');
     canvas.width = 64; canvas.height = 64;
     const ctx = canvas.getContext('2d');

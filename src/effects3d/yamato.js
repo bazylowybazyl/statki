@@ -1,5 +1,6 @@
 import * as THREE from "three";
 
+import { ParticlePool } from "./particlePool.js";
 // ─── GLSL noise ───────────────────────────────────────────────────────────────
 const noiseChunk = `
     float hash(float n) { return fract(sin(n) * 43758.5453123); }
@@ -34,8 +35,6 @@ const noiseChunk = `
 class GPUInstancedParticleManager {
     constructor(scene, maxParticles, blendingType) {
         this.maxParticles = maxParticles;
-        this.activeIndex  = 0;
-        this.dirty        = false;
 
         const baseGeo = new THREE.PlaneGeometry(1, 1);
         const geo     = new THREE.InstancedBufferGeometry();
@@ -50,7 +49,8 @@ class GPUInstancedParticleManager {
         geo.setAttribute("aStartPos", new THREE.InstancedBufferAttribute(this.startPos, 3));
         geo.setAttribute("aStartVel", new THREE.InstancedBufferAttribute(this.startVel, 3));
         geo.setAttribute("aData",     new THREE.InstancedBufferAttribute(this.dataInfo, 4));
-        geo.instanceCount = maxParticles;
+        // Rzeczywiste instanceCount ustawia ParticlePool (0 gdy pula pusta).
+        geo.instanceCount = 0;
 
         this.material = new THREE.ShaderMaterial({
             uniforms: { uTime: { value: 0 } },
@@ -307,11 +307,18 @@ class GPUInstancedParticleManager {
         this.mesh.frustumCulled = false;
         this.mesh.renderOrder   = 1000;
         scene.add(this.mesh);
+
+        this.pool = new ParticlePool({
+            mesh: this.mesh,
+            attributes: [geo.attributes.aStartPos, geo.attributes.aStartVel, geo.attributes.aData],
+            capacity: maxParticles,
+            timeUniform: this.material.uniforms.uTime,
+            name: 'yamato:1000'
+        });
     }
 
     spawn(x, y, z, vx, vy, vz, size, life, type, globalTime) {
-        let i   = this.activeIndex;
-        this.activeIndex = (this.activeIndex + 1) % this.maxParticles;
+        const i = this.pool.next();
         let i3  = i * 3, i4 = i * 4;
 
         this.startPos[i3]   = x;  this.startPos[i3+1] = y;  this.startPos[i3+2] = z;
@@ -321,18 +328,11 @@ class GPUInstancedParticleManager {
         this.dataInfo[i4+2] = size;
         this.dataInfo[i4+3] = type;
 
-        this.dirty = true;
+        this.pool.keepAlive(globalTime + life);
     }
 
     update(gt) {
         this.material.uniforms.uTime.value = gt;
-        if (this.dirty) {
-            const geo = this.mesh.geometry;
-            geo.attributes.aStartPos.needsUpdate = true;
-            geo.attributes.aStartVel.needsUpdate = true;
-            geo.attributes.aData.needsUpdate     = true;
-            this.dirty = false;
-        }
     }
 }
 
@@ -340,8 +340,6 @@ class GPUInstancedParticleManager {
 class GPUParticleManager {
     constructor(scene, maxParticles, blendingType) {
         this.maxParticles = maxParticles;
-        this.activeIndex  = 0;
-        this.dirty        = false;
 
         const baseGeo = new THREE.PlaneGeometry(1, 1);
         const geo     = new THREE.InstancedBufferGeometry();
@@ -356,7 +354,8 @@ class GPUParticleManager {
         geo.setAttribute("aStartPos", new THREE.InstancedBufferAttribute(this.startPos, 3));
         geo.setAttribute("aStartVel", new THREE.InstancedBufferAttribute(this.startVel, 3));
         geo.setAttribute("aData",     new THREE.InstancedBufferAttribute(this.dataInfo, 4));
-        geo.instanceCount = maxParticles;
+        // Rzeczywiste instanceCount ustawia ParticlePool (0 gdy pula pusta).
+        geo.instanceCount = 0;
 
         this.material = new THREE.ShaderMaterial({
             uniforms: { uTime: { value: 0 } },
@@ -435,11 +434,18 @@ class GPUParticleManager {
         this.mesh.frustumCulled = false;
         this.mesh.renderOrder   = 999;
         scene.add(this.mesh);
+
+        this.pool = new ParticlePool({
+            mesh: this.mesh,
+            attributes: [geo.attributes.aStartPos, geo.attributes.aStartVel, geo.attributes.aData],
+            capacity: maxParticles,
+            timeUniform: this.material.uniforms.uTime,
+            name: 'yamato:999'
+        });
     }
 
     spawn(x, y, z, vx, vy, vz, size, life, type, globalTime) {
-        let i   = this.activeIndex;
-        this.activeIndex = (this.activeIndex + 1) % this.maxParticles;
+        const i = this.pool.next();
         let i3  = i * 3, i4 = i * 4;
 
         this.startPos[i3]   = x;  this.startPos[i3+1] = y;  this.startPos[i3+2] = z;
@@ -449,18 +455,11 @@ class GPUParticleManager {
         this.dataInfo[i4+2] = size;
         this.dataInfo[i4+3] = type;
 
-        this.dirty = true;
+        this.pool.keepAlive(globalTime + life);
     }
 
     update(gt) {
         this.material.uniforms.uTime.value = gt;
-        if (this.dirty) {
-            const geo = this.mesh.geometry;
-            geo.attributes.aStartPos.needsUpdate = true;
-            geo.attributes.aStartVel.needsUpdate = true;
-            geo.attributes.aData.needsUpdate     = true;
-            this.dirty = false;
-        }
     }
 }
 

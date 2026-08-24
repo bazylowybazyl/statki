@@ -60,6 +60,88 @@ export const SYSTEM_MAP_PLANET_BY_ID = Object.freeze(Object.fromEntries(
   SYSTEM_MAP_PLANETS.map(planet => [planet.id, planet])
 ));
 
+/**
+ * KSIĘŻYCE — stacje na orbicie WOKÓŁ PLANETY, nie wokół Słońca.
+ *
+ * `orbitRadius` jest LOKALNY: liczony od planety macierzystej, w jednostkach
+ * świata. To jest cała różnica wobec `outposts`, które podają `orbitAU` wobec
+ * gwiazdy — księżyc musi jeździć razem ze swoją planetą, a nie zostać w tyle,
+ * gdy ta okrąży Słońce.
+ *
+ * Promienie mieszczą się w paśmie zmierzonym dla każdej planety: od zewnętrznej
+ * krawędzi pierścienia (Ziemia 37,8 tys., Mars 30 tys.) plus margines portu,
+ * do połowy dystansu do najbliższej planety — czyli tam, gdzie kończy się
+ * dominacja macierzystego świata. Odstęp między sąsiednimi księżycami nigdy nie
+ * schodzi poniżej 16 tys. j., bo tyle zajmują dwa porty z parkingami.
+ *
+ * `role` jest wskazówką projektową, nie mechaniką:
+ *   mine — kopalnia, wydobywa wg `PLANET_YIELD`
+ *   node — węzeł bez produkcji: depot, garnizon, aneks stoczni
+ *   empty — niczyj, bez załogi. To jest paliwo polityki: o rzecz NICZYJĄ da się
+ *           spierać bez wypowiadania wojny, a gracz ma gdzie postawić swoje.
+ */
+export const SYSTEM_MAP_MOONS = Object.freeze([
+  // --- Ziemia: jeden księżyc, wojskowo-przemysłowy ---
+  { id: 'luna', label: 'Luna', parentId: 'earth', orbitRadius: 96_000, angle: 0.42, role: 'node' },
+
+  // --- Mars: dwie bryłki, za małe na kopalnie ---
+  { id: 'fobos', label: 'Fobos', parentId: 'mars', orbitRadius: 58_000, angle: 2.10, role: 'node' },
+  { id: 'dejmos', label: 'Dejmos', parentId: 'mars', orbitRadius: 92_000, angle: 4.85, role: 'node' },
+
+  // --- Jowisz: cztery galileuszowe ---
+  { id: 'io', label: 'Io', parentId: 'jupiter', orbitRadius: 60_000, angle: 0.90, role: 'mine' },
+  { id: 'europa', label: 'Europa', parentId: 'jupiter', orbitRadius: 105_000, angle: 2.65, role: 'mine' },
+  { id: 'ganimedes', label: 'Ganimedes', parentId: 'jupiter', orbitRadius: 165_000, angle: 4.30, role: 'node' },
+  { id: 'kallisto', label: 'Kallisto', parentId: 'jupiter', orbitRadius: 250_000, angle: 5.70, role: 'node' },
+
+  // --- Saturn: siedem, w tym dwa martwe ---
+  { id: 'tytan', label: 'Tytan', parentId: 'saturn', orbitRadius: 70_000, angle: 0.30, role: 'mine' },
+  { id: 'enceladus', label: 'Enceladus', parentId: 'saturn', orbitRadius: 110_000, angle: 1.55, role: 'mine' },
+  { id: 'rhea', label: 'Rhea', parentId: 'saturn', orbitRadius: 150_000, angle: 2.80, role: 'mine' },
+  { id: 'tethys', label: 'Tethys', parentId: 'saturn', orbitRadius: 195_000, angle: 3.95, role: 'mine' },
+  { id: 'dione', label: 'Dione', parentId: 'saturn', orbitRadius: 245_000, angle: 5.10, role: 'empty' },
+  { id: 'japet', label: 'Japet', parentId: 'saturn', orbitRadius: 300_000, angle: 6.05, role: 'empty' },
+  { id: 'mimas', label: 'Mimas', parentId: 'saturn', orbitRadius: 360_000, angle: 0.95, role: 'node' },
+
+  // --- Uran: pięć ---
+  { id: 'titania', label: 'Titania', parentId: 'uranus', orbitRadius: 70_000, angle: 1.20, role: 'mine' },
+  { id: 'oberon', label: 'Oberon', parentId: 'uranus', orbitRadius: 115_000, angle: 2.75, role: 'mine' },
+  { id: 'ariel', label: 'Ariel', parentId: 'uranus', orbitRadius: 165_000, angle: 4.10, role: 'mine' },
+  { id: 'umbriel', label: 'Umbriel', parentId: 'uranus', orbitRadius: 225_000, angle: 5.35, role: 'empty' },
+  { id: 'miranda', label: 'Miranda', parentId: 'uranus', orbitRadius: 300_000, angle: 0.15, role: 'empty' },
+
+  // --- Neptun: układ opuszczony, więc i księżyce puste ---
+  { id: 'tryton', label: 'Tryton', parentId: 'neptune', orbitRadius: 80_000, angle: 3.40, role: 'mine' },
+  { id: 'proteus', label: 'Proteus', parentId: 'neptune', orbitRadius: 150_000, angle: 4.90, role: 'empty' },
+  { id: 'nereida', label: 'Nereida', parentId: 'neptune', orbitRadius: 280_000, angle: 1.80, role: 'empty' }
+].map(moon => Object.freeze(moon)));
+
+export const SYSTEM_MAP_MOON_BY_ID = Object.freeze(Object.fromEntries(
+  SYSTEM_MAP_MOONS.map(moon => [moon.id, moon])
+));
+
+/** Księżyce danej planety. */
+export function moonsOf(parentId, moons = SYSTEM_MAP_MOONS) {
+  const key = String(parentId || '').toLowerCase();
+  return moons.filter(moon => moon.parentId === key);
+}
+
+/**
+ * Pozycja księżyca w jednostkach świata — zawsze liczona OD PLANETY.
+ *
+ * `parent` to węzeł albo obiekt z `x`/`y`. Bez tego przeliczenia księżyc miałby
+ * współrzędne bezwzględne i odkleiłby się przy pierwszym obiegu planety.
+ */
+export function moonWorldPosition(moon, parent) {
+  if (!moon || !parent) return null;
+  const radius = Number(moon.orbitRadius) || 0;
+  const angle = Number(moon.angle) || 0;
+  return {
+    x: (Number(parent.x) || 0) + Math.cos(angle) * radius,
+    y: (Number(parent.y) || 0) + Math.sin(angle) * radius
+  };
+}
+
 function positive(value, fallback) {
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? number : fallback;

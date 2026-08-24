@@ -1,8 +1,8 @@
-import * as THREE from 'three';
 import { Core3D } from './core3d.js';
-import { createShortNeedleExhaust } from '../../Engineeffects.js';
+import { EngineExhaustBatch, createExhaustState } from './engineExhaustBatch.js';
 import { getEngineVfxClassScale } from './engineVfxScale.js';
 
+import { DrawCallStats } from './drawCallStats.js';
 function getEntityScale(entity) {
   if (entity?.visual && typeof entity.visual.spriteScale === 'number') return entity.visual.spriteScale;
   return 1.0;
@@ -234,35 +234,24 @@ function makeSlotKey(slots) {
   }).join('||');
 }
 
+// Dysza nie ma juz wlasnych obiektow w scenie — zostaje sam stan wygladzania,
+// ktory EngineExhaustBatch przepisuje na atrybuty instancji. Cala flota rysuje
+// sie czterema wywolaniami zamiast czterema NA DYSZE.
 function createEffects(slots) {
-  const group = new THREE.Group();
-  Core3D.scene.add(group);
-
   const exhausts = [];
   for (const slot of slots) {
-    const exhaust = createShortNeedleExhaust();
-    const fwd = resolveSlotForward(slot);
-    const nx = fwd.x;
-    const ny = fwd.y;
-    exhaust.group.rotation.z = Math.atan2(-ny, nx) - (Math.PI * 0.5);
-    group.add(exhaust.group);
-    exhausts.push({ instance: exhaust, slot, lastForwardX: nx, lastForwardY: ny });
+    exhausts.push({ state: createExhaustState(), slot });
   }
-
-  return { group, exhausts, slotKey: makeSlotKey(slots) };
+  return { exhausts, slotKey: makeSlotKey(slots) };
 }
 
-function updateEffects(entity, fxData, time) {
+function updateEffects(entity, fxData, dt) {
   const interpPose = getInterpolatedPose(entity);
   const ex = interpPose ? interpPose.x : (entity?.pos ? entity.pos.x : (entity?.x || 0));
   const ey = interpPose ? interpPose.y : (entity?.pos ? entity.pos.y : (entity?.y || 0));
   const angle = interpPose ? interpPose.angle : (entity?.angle || 0);
   const scale = getEntityScale(entity);
   const classScale = getEngineVfxClassScale(entity);
-
-  fxData.group.position.set(ex, -ey, 0);
-  fxData.group.rotation.z = -angle;
-  fxData.group.scale.set(scale, scale, 1);
 
   const sceneOriginY = -ey;
   const sceneAngle = -angle;
@@ -291,11 +280,7 @@ function updateEffects(entity, fxData, time) {
   for (const item of fxData.exhausts) {
     const slot = item.slot || {};
     const slotForward = resolveSlotForward(slot);
-    if (Math.abs(slotForward.x - item.lastForwardX) > 1e-4 || Math.abs(slotForward.y - item.lastForwardY) > 1e-4) {
-      item.instance.group.rotation.z = Math.atan2(-slotForward.y, slotForward.x) - (Math.PI * 0.5);
-      item.lastForwardX = slotForward.x;
-      item.lastForwardY = slotForward.y;
-    }
+    const nozzleRot = Math.atan2(-slotForward.y, slotForward.x) - (Math.PI * 0.5);
     const offset = slot.offset || { x: 0, y: 0 };
     const lx = slot.mode === 'normalized'
       ? (offset.x || 0) * halfL
@@ -328,24 +313,39 @@ function updateEffects(entity, fxData, time) {
       : Number(tune?.mainCurve ?? tune?.curve);
     const curve = Number.isFinite(curveVal) ? Math.max(0.2, Math.min(4.0, curveVal)) : 1.8;
 
-    item.instance.group.position.set(lx, ly, -5);
     // Pozycje dysz pozostają w przestrzeni kadłuba. Tylko sam płomień skaluje
     // się z klasą statku, a globalny tuner jest końcowym mnożnikiem.
     const slotScaleRaw = Number(slot?.source?.vfxScale);
     const slotScale = Number.isFinite(slotScaleRaw) && slotScaleRaw > 0 ? slotScaleRaw : 1;
     const effectScale = classScale * slotScale;
-    item.instance.group.scale.set(widthMul * effectScale, lengthMul * effectScale, 1);
-    if (item.instance.setCurve) item.instance.setCurve(curve);
-    if (item.instance.setThrottle) item.instance.setThrottle(slotThrottle);
+
+    const state = item.state;
+    state.curve = curve;
+    state.throttleTarget = slotThrottle;
     if (entity.isPlayer && typeof window !== 'undefined' && window.OPTIONS?.vfx) {
       const driveColorTemp = Number(window.shipDriveState?.engineColorTempK);
-      const colorTemp = Number.isFinite(driveColorTemp)
+      state.colorTempK = Number.isFinite(driveColorTemp)
         ? driveColorTemp
         : window.OPTIONS.vfx.colorTempK;
-      if (item.instance.setColorTemp) item.instance.setColorTemp(colorTemp);
-      if (item.instance.setBloomGain) item.instance.setBloomGain(window.OPTIONS.vfx.bloomGain);
+      state.bloomGain = window.OPTIONS.vfx.bloomGain;
     }
-    if (item.instance.update) item.instance.update(time);
+
+    // Rozwiniety lancuch transformacji, ktory wczesniej robila hierarchia
+    // Object3D: T(ex,-ey) . Rz(-angle) . S(scale) . T(lx,ly) . Rz(nozzleRot)
+    // . S(widthMul*effectScale, lengthMul*effectScale). Skala encji jest
+    // jednorodna, wiec przechodzi przez obrot i mozna ja zwinac do jednej
+    // pozycji, jednego kata i pary skal na instancje.
+    const nozzleWorldX = ex + (lx * scale) * cA - (ly * scale) * sA;
+    const nozzleWorldY = sceneOriginY + (lx * scale) * sA + (ly * scale) * cA;
+
+    EngineExhaustBatch.push(state, {
+      x: nozzleWorldX,
+      y: nozzleWorldY,
+      rot: sceneAngle + nozzleRot,
+      scaleX: scale * widthMul * effectScale,
+      scaleY: scale * lengthMul * effectScale,
+      dt
+    });
 
     if (slotThrottle > 0.06 && Core3D.pushHeatHazeWorld) {
       const localX = lx * scale;
@@ -382,21 +382,31 @@ function updateEffects(entity, fxData, time) {
 }
 
 function disposeEffects(fxData) {
-  if (Core3D.scene) {
-    Core3D.scene.remove(fxData.group);
-  }
+  // Brak obiektow w scenie — stan dyszy odchodzi razem z wpisem w mapie.
+  if (fxData?.exhausts) fxData.exhausts.length = 0;
 }
 
 export const EngineVfxSystem = {
   entityEffects: new Map(),
+  _lastUpdateSec: 0,
 
   update(entities = []) {
     if (!Core3D.isInitialized || !Core3D.scene) return;
 
-    if (Core3D.beginHeatHazeFrame) Core3D.beginHeatHazeFrame();
+    // Licznik zrodel kasuje pass w Core3D.render(); tutaj tylko dorzucamy.
 
     const activeEntities = new Set();
-    const time = (typeof performance !== 'undefined') ? performance.now() / 1000 : 0;
+    const now = (typeof performance !== 'undefined') ? performance.now() / 1000 : 0;
+    // UWAGA na zmiane zachowania: stary kod wolal `exhaust.update(time)`, gdzie
+    // `time` to bylo BEZWZGLEDNE performance.now()/1000, a funkcja oczekiwala
+    // `dt`. Skutki: wewnetrzne uTime rosnie o kilkanascie tysiecy na klatke
+    // (turbulencja i shock diamonds migotaly losowo zamiast plynac, a po dluzszej
+    // sesji float32 tracil precyzje), a heatAccumulator saturowal sie do 1.0 w
+    // pierwszej klatce (heat glow zawsze na maksa). Teraz leci prawdziwy dt.
+    const dt = this._lastUpdateSec > 0 ? Math.max(0, Math.min(0.1, now - this._lastUpdateSec)) : 1 / 60;
+    this._lastUpdateSec = now;
+
+    EngineExhaustBatch.begin();
 
     for (const entity of entities) {
       if (!entity || entity.dead) continue;
@@ -413,7 +423,7 @@ export const EngineVfxSystem = {
         this.entityEffects.set(entity, fxData);
       }
 
-      updateEffects(entity, fxData, time);
+      updateEffects(entity, fxData, dt);
     }
 
     for (const [entity, fxData] of this.entityEffects) {
@@ -422,6 +432,10 @@ export const EngineVfxSystem = {
         this.entityEffects.delete(entity);
       }
     }
+
+    EngineExhaustBatch.flush();
+    const batchStats = EngineExhaustBatch.getStats();
+    DrawCallStats.addEngine(batchStats.nozzles, batchStats.draws);
   },
 
   disposeAll() {
@@ -429,5 +443,7 @@ export const EngineVfxSystem = {
       disposeEffects(fxData);
     }
     this.entityEffects.clear();
+    this._lastUpdateSec = 0;
+    EngineExhaustBatch.dispose();
   }
 };

@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { Weapon3DSystem } from "../3d/weapon3DSystem.js";
 
+import { ParticlePool } from "./particlePool.js";
 const noiseChunk = `
     float hash(float n) { return fract(sin(n) * 43758.5453123); }
     float noise(vec3 x) {
@@ -25,7 +26,6 @@ const noiseChunk = `
 class NovaAdditiveParticleManager {
     constructor(scene, maxParticles) {
         this.maxParticles = maxParticles;
-        this.activeIndex = 0;
 
         const baseGeo = new THREE.PlaneGeometry(1, 1);
         const geo = new THREE.InstancedBufferGeometry();
@@ -40,7 +40,8 @@ class NovaAdditiveParticleManager {
         geo.setAttribute("aStartPos", new THREE.InstancedBufferAttribute(this.startPos, 3));
         geo.setAttribute("aStartVel", new THREE.InstancedBufferAttribute(this.startVel, 3));
         geo.setAttribute("aData", new THREE.InstancedBufferAttribute(this.dataInfo, 4));
-        geo.instanceCount = maxParticles;
+        // Rzeczywiste instanceCount ustawia ParticlePool (0 gdy pula pusta).
+        geo.instanceCount = 0;
 
         this.material = new THREE.ShaderMaterial({
             uniforms: { uTime: { value: 0 } },
@@ -214,11 +215,18 @@ class NovaAdditiveParticleManager {
         this.mesh.frustumCulled = false;
         this.mesh.renderOrder = 1000;
         scene.add(this.mesh);
+
+        this.pool = new ParticlePool({
+            mesh: this.mesh,
+            attributes: [geo.attributes.aStartPos, geo.attributes.aStartVel, geo.attributes.aData],
+            capacity: maxParticles,
+            timeUniform: this.material.uniforms.uTime,
+            name: 'supernova:1000'
+        });
     }
 
     spawn(x, y, z, vx, vy, vz, size, life, type, globalTime) {
-        const i = this.activeIndex;
-        this.activeIndex = (this.activeIndex + 1) % this.maxParticles;
+        const i = this.pool.next();
         const i3 = i * 3;
         const i4 = i * 4;
 
@@ -229,10 +237,7 @@ class NovaAdditiveParticleManager {
         this.dataInfo[i4 + 2] = size;
         this.dataInfo[i4 + 3] = type;
 
-        const geo = this.mesh.geometry;
-        geo.attributes.aStartPos.needsUpdate = true;
-        geo.attributes.aStartVel.needsUpdate = true;
-        geo.attributes.aData.needsUpdate = true;
+        this.pool.keepAlive(globalTime + life);
     }
 
     update(globalTime) {
@@ -240,6 +245,7 @@ class NovaAdditiveParticleManager {
     }
 
     dispose() {
+        this.pool.dispose();
         this.mesh.geometry.dispose();
         this.material.dispose();
         if (this.mesh.parent) this.mesh.parent.remove(this.mesh);
@@ -249,7 +255,6 @@ class NovaAdditiveParticleManager {
 class NovaDarkShockwaveManager {
     constructor(scene, maxParticles) {
         this.maxParticles = maxParticles;
-        this.activeIndex = 0;
 
         const baseGeo = new THREE.PlaneGeometry(1, 1);
         const geo = new THREE.InstancedBufferGeometry();
@@ -264,7 +269,8 @@ class NovaDarkShockwaveManager {
         geo.setAttribute("aStartPos", new THREE.InstancedBufferAttribute(this.startPos, 3));
         geo.setAttribute("aStartVel", new THREE.InstancedBufferAttribute(this.startVel, 3));
         geo.setAttribute("aData", new THREE.InstancedBufferAttribute(this.dataInfo, 4));
-        geo.instanceCount = maxParticles;
+        // Rzeczywiste instanceCount ustawia ParticlePool (0 gdy pula pusta).
+        geo.instanceCount = 0;
 
         this.material = new THREE.ShaderMaterial({
             uniforms: { uTime: { value: 0 } },
@@ -328,11 +334,18 @@ class NovaDarkShockwaveManager {
         this.mesh.frustumCulled = false;
         this.mesh.renderOrder = 999;
         scene.add(this.mesh);
+
+        this.pool = new ParticlePool({
+            mesh: this.mesh,
+            attributes: [geo.attributes.aStartPos, geo.attributes.aStartVel, geo.attributes.aData],
+            capacity: maxParticles,
+            timeUniform: this.material.uniforms.uTime,
+            name: 'supernova:999'
+        });
     }
 
     spawn(x, y, z, size, life, globalTime) {
-        const i = this.activeIndex;
-        this.activeIndex = (this.activeIndex + 1) % this.maxParticles;
+        const i = this.pool.next();
         const i3 = i * 3;
         const i4 = i * 4;
 
@@ -343,10 +356,7 @@ class NovaDarkShockwaveManager {
         this.dataInfo[i4 + 2] = size;
         this.dataInfo[i4 + 3] = 1;
 
-        const geo = this.mesh.geometry;
-        geo.attributes.aStartPos.needsUpdate = true;
-        geo.attributes.aStartVel.needsUpdate = true;
-        geo.attributes.aData.needsUpdate = true;
+        this.pool.keepAlive(globalTime + life);
     }
 
     update(globalTime) {
@@ -354,6 +364,7 @@ class NovaDarkShockwaveManager {
     }
 
     dispose() {
+        this.pool.dispose();
         this.mesh.geometry.dispose();
         this.material.dispose();
         if (this.mesh.parent) this.mesh.parent.remove(this.mesh);

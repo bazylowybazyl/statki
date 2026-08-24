@@ -36,6 +36,12 @@ export const FACTIONS = Object.freeze({
     color: '#38bdf8',
     accent: '#0ea5e9',
     homeStations: ['earth'],
+    // ROSZCZENIA — księżyce, nie stolice. Oddzielone od `homeStations` celowo:
+    // utrata roszczenia boli, utrata stolicy kończy frakcję, a polityka
+    // potrzebuje różnicy między jednym a drugim. Oberon to odległa placówka
+    // Ziemi przy Uranie — dokładnie taki punkt zapalny, jakiego w rdzeniu
+    // dotąd nie było.
+    claims: ['luna', 'oberon'],
     // UWAGA: `demands` i `supplies` NIE SĄ opisem. Czyta je `factionPriceProfile`
     // w stationEconomy.js i ustalają CENY LOKALNE (+15% za to, czego frakcja
     // chce, −15% za to, czego dostarcza). Na tych cenach żyją niezależni kupcy.
@@ -54,6 +60,9 @@ export const FACTIONS = Object.freeze({
     color: '#fb7185',
     accent: '#e11d48',
     homeStations: ['mars'],
+    // Fobos i Dejmos to zaplecze stoczni. Tryton — samotna placówka w martwym
+    // układzie Neptuna, najdalszy punkt obecności kogokolwiek.
+    claims: ['fobos', 'dejmos', 'tryton'],
     demands: ['scrap', 'hull_plate', 'titan_alloy', 'copper_wire', 'fuel_rods', 'coolant'],
     supplies: ['thruster', 'reactor_core', 'weapon_mount', 'avionics'],
     playerStartReputation: 5
@@ -67,6 +76,9 @@ export const FACTIONS = Object.freeze({
     color: '#fbbf24',
     accent: '#d97706',
     homeStations: ['mercury', 'venus'],
+    // Dwa lodowe księżyce Saturna w rękach potęgi z wnętrza układu. Woda
+    // i tlen dla rdzenia, wyrwane spod nosa Konsorcjum Zewnętrznemu.
+    claims: ['enceladus', 'tethys'],
     demands: ['oxygen', 'polymer', 'fusion_fuel', 'coolant'],
     supplies: ['iron_ore', 'copper_ore', 'silicon_ore', 'titanium_ore', 'raw_crystal', 'steel', 'chips'],
     playerStartReputation: 0
@@ -78,6 +90,8 @@ export const FACTIONS = Object.freeze({
     color: '#fbbf24',
     accent: '#f59e0b',
     homeStations: ['ceres', 'vesta'],
+    // Przyczółki Ligi przy dwóch olbrzymach: Europa u Jowisza, Ariel u Urana.
+    claims: ['europa', 'ariel'],
     demands: ['polymer', 'coolant', 'oxygen', 'hull_plate', 'life_support'],
     supplies: ['iron_ore', 'copper_ore', 'silicon_ore', 'titanium_ore', 'raw_crystal', 'ice'],
     playerStartReputation: 0
@@ -89,6 +103,9 @@ export const FACTIONS = Object.freeze({
     color: '#a78bfa',
     accent: '#8b5cf6',
     homeStations: ['jupiter', 'saturn', 'uranus'],
+    // Gospodarz układu zewnętrznego trzyma większość księżyców swoich planet —
+    // ale nie wszystkie, i to jest sedno: obcy siedzą mu na podwórku.
+    claims: ['io', 'ganimedes', 'kallisto', 'tytan', 'rhea', 'mimas', 'titania'],
     demands: ['steel', 'chips', 'hull_plate', 'fuel_rods', 'life_support'],
     supplies: ['helium3', 'methane', 'ammonia', 'fusion_fuel', 'polymer'],
     playerStartReputation: 0
@@ -102,6 +119,9 @@ export const FACTIONS = Object.freeze({
     // nie jest wroga (sprawdzone — zero par), więc bez pirackich baz dyspozytor
     // wojenny nie ma na kogo uderzyć, a wraki nie mają skąd się wziąć.
     homeStations: ['gniazdo-hildy', 'zlomowisko'],
+    // Piraci niczego nie posiadają poza kryjówkami — księżyce ich nie obchodzą,
+    // bo nie da się z nich nic wywieźć bez portu.
+    claims: [],
     // Piraci nic nie produkują — biorą. Handlują tylko łupem.
     demands: [],
     supplies: ['scrap'],
@@ -331,5 +351,27 @@ export function getDefaultStationFaction(stationId) {
   for (const id of FACTION_IDS) {
     if (FACTIONS[id].homeStations.includes(key)) return id;
   }
+  for (const id of FACTION_IDS) {
+    if ((FACTIONS[id].claims || []).includes(key)) return id;
+  }
   return null;
+}
+
+/**
+ * Czy to stolica frakcji, czy tylko jej roszczenie.
+ *
+ * Rozróżnienie istnieje dla polityki i wojny: zajęcie roszczenia jest
+ * incydentem, zajęcie stolicy — rozstrzygnięciem. Bez tego każdy konflikt
+ * musiałby od razu iść o wszystko.
+ */
+export function isHomeStation(factionId, stationId) {
+  const key = String(stationId || '').trim().toLowerCase();
+  return (FACTIONS[String(factionId || '')]?.homeStations || []).includes(key);
+}
+
+/** Wszystko, co frakcja posiada: stolice i roszczenia. */
+export function factionHoldings(factionId) {
+  const faction = FACTIONS[String(factionId || '')];
+  if (!faction) return [];
+  return [...faction.homeStations, ...(faction.claims || [])];
 }

@@ -24,6 +24,9 @@ import {
 import { RESOURCES, RESOURCE_KEYS, TIER, RECIPES, PLANET_YIELD } from '../../src/data/resources.js';
 import { getDefaultStationFaction } from '../../src/data/factions.js';
 import { createSuite, runIfMain } from './harness.mjs';
+import {
+  PRICE_MODEL, duressMultiplier, getDuress, updateDuress, resourcePrice
+} from '../../src/game/stationEconomy.js';
 
 // Odzwierciedla ECONOMY_BASE_CAPACITY_BY_TIER z infrastructureUI.js.
 const CAPACITY_BY_TIER = { [TIER.RAW]: 250, [TIER.REFINED]: 150, [TIER.COMPONENT]: 60 };
@@ -91,14 +94,20 @@ export function run() {
   // — ostatnio 2026-08-20, gdy Ziemia i Mars dostały zbrojownie, a Wenus
   // i Saturn amunicjownie. Rosnący apetyt Ziemi na rudę jest tu skutkiem
   // zamierzonym: uzbrojenie to nowy, stały odbiorca metalu.
-  t.close('plan Ziemi wymaga 1374,920 rudy żelaza/h', earthNet.iron_ore * 3600, -1374.9201143235828, 1e-6);
-  t.close('plan Ziemi wymaga 751,742 rudy krzemu/h', earthNet.silicon_ore * 3600, -751.7420265995411, 1e-6);
-  t.close('plan Merkurego eksportuje 1335,342 rudy żelaza/h', mercuryNet.iron_ore * 3600, 1335.3424474153, 1e-6);
+  t.close('plan Ziemi wymaga 1390,846 rudy żelaza/h', earthNet.iron_ore * 3600, -1390.8463520161451, 1e-6);
+  t.close('plan Ziemi wymaga 754,339 rudy krzemu/h', earthNet.silicon_ore * 3600, -754.3389223147897, 1e-6);
+  t.close('plan Merkurego eksportuje 1318,364 rudy żelaza/h', mercuryNet.iron_ore * 3600, 1318.3643796574736, 1e-6);
   t.close('plan Merkurego eksportuje 476,280 rudy krzemu/h', mercuryNet.silicon_ore * 3600, 476.28, 1e-6);
 
   const habitatNet = stationNetRates({ id: 'test-habitat', factionId: earth.factionId });
   t.close('plan bez przemysłu nadal obejmuje byt', habitatNet.oxygen, -STATION_UPKEEP.oxygen / ECONOMY_CYCLE_SECONDS);
-  t.close('plan bez przemysłu obejmuje też SYSTEM_DEMAND floty', habitatNet.hull_plate, -0.070 / ECONOMY_CYCLE_SECONDS);
+  // Zmiana modelu 2026-08-24: pobór militarny i flotowy skaluje się PRZEMYSŁEM,
+  // nie wielkością osady. Stacja bez ani jednej linii produkcyjnej nie utrzymuje
+  // floty — inaczej każda kopalnia księżycowa zamawiałaby emitery i torpedy,
+  // których nie ma jak użyć (zmierzone: 16 księżyców zgłaszało taki głód).
+  t.equal('plan bez przemysłu NIE utrzymuje floty', habitatNet.hull_plate || 0, 0);
+  t.check('ale ośrodek z przemysłem już tak',
+    stationNetRates({ id: 'earth', factionId: earth.factionId }).hull_plate !== 0);
 
   t.section('3. Bez dostaw Ziemia staje');
   const starved = makeStation('earth');
@@ -254,7 +263,9 @@ export function run() {
 
   let starving = [];
   for (const [id, { station, econ }] of linked) {
-    if (!STATION_INDUSTRY[id].capacity) continue;
+    // Kopalnia księżycowa nie ma fabryki, ale ma załogę — i tak samo może
+    // zostać bez tlenu. Ten sam warunek co w `buildIndustryMap`.
+    if (!STATION_INDUSTRY[id].capacity && !STATION_INDUSTRY[id].size) continue;
     // Zagłodzona = zero na czymś, co produkuje ktokolwiek inny w układzie.
     const dead = getStationDeficits(station, econ, 12)
       .filter(d => d.fill <= 0.001)
@@ -266,6 +277,62 @@ export function run() {
   t.check('przy działającym transporcie nikt nie głoduje na dostępnym towarze',
     starving.length === 0, `(${starving.join(' | ')})`);
 
+  t.section('11b. Przyduszenie — cena rośnie z DŁUGOŚCIĄ głodu');
+
+  // Samo zapełnienie nie odróżnia magazynu opróżnionego minutę temu od pustego
+  // od sześciu godzin, a to są dwie zupełnie różne sytuacje handlowe.
+  t.equal('świeży brak nie dopłaca', duressMultiplier(0), 1);
+  t.check('kwadrans głodu już podnosi cenę', duressMultiplier(900) > 1.4);
+  t.check('godzina podnosi mocniej', duressMultiplier(3600) > duressMultiplier(900));
+  t.check('ale krzywa się nasyca — doba nie kosztuje dziesięć razy tyle',
+    duressMultiplier(86400) <= 1 + PRICE_MODEL.duressBonus + 1e-9,
+    `(${duressMultiplier(86400).toFixed(2)}× przy suficie ${(1 + PRICE_MODEL.duressBonus).toFixed(2)}×)`);
+  t.check('druga godzina dokłada mniej niż pierwsza',
+    duressMultiplier(7200) - duressMultiplier(3600) < duressMultiplier(3600) - duressMultiplier(0));
+
+  const glodna = makeStation('earth');
+  const glodnyEcon = makeEcon();
+  for (const id of RESOURCE_KEYS) glodnyEcon.resources[id] = 0;
+
+  updateDuress(glodna, glodnyEcon, 600);
+  t.check('stacja liczy głód na tym, czego CHCE',
+    getDuress(glodnyEcon, 'iron_ore') === 600,
+    `(${getDuress(glodnyEcon, 'iron_ore')} s)`);
+  // Ziemia nie przerabia metanu ani nie zużywa go bytowo — brak metanu nie jest
+  // dla niej głodem. Bez tego filtra każdy port zgłaszałby przyduszenie na
+  // trzydziestu surowcach naraz i dopłata przestałaby cokolwiek znaczyć.
+  t.equal('a nie na tym, czego nie tyka', getDuress(glodnyEcon, 'methane'), 0);
+
+  updateDuress(glodna, glodnyEcon, 600);
+  t.equal('głód narasta', getDuress(glodnyEcon, 'iron_ore'), 1200);
+
+  const drogo = resourcePrice(glodna, glodnyEcon, 'iron_ore');
+  t.check('cena rośnie wraz z głodem', drogo.duress > 1);
+  t.equal('wycena podaje długość głodu', drogo.duressSeconds, 1200);
+
+  // Dostawa gasi głód szybciej, niż on narastał — ale nie natychmiast.
+  glodnyEcon.resources.iron_ore = glodnyEcon.capacity.iron_ore * 0.5;
+  updateDuress(glodna, glodnyEcon, 200);
+  const poDostawie = getDuress(glodnyEcon, 'iron_ore');
+  t.check('dostawa gasi głód', poDostawie < 1200, `(${poDostawie} s)`);
+  t.check('ale pamięć nie znika w jednej chwili', poDostawie > 0);
+  updateDuress(glodna, glodnyEcon, 600);
+  t.equal('po dłuższym dostatku głód znika zupełnie',
+    getDuress(glodnyEcon, 'iron_ore'), 0);
+
+  // Ta nierówność jest sednem: przy tym samym PUSTYM magazynie długi głód
+  // płaci wyraźnie więcej niż świeży.
+  const swiezy = makeEcon();
+  const dlugi = makeEcon();
+  for (const id of RESOURCE_KEYS) { swiezy.resources[id] = 0; dlugi.resources[id] = 0; }
+  updateDuress(glodna, dlugi, 7200);
+  const cenaSwieza = resourcePrice(glodna, swiezy, 'iron_ore');
+  const cenaDluga = resourcePrice(glodna, dlugi, 'iron_ore');
+  t.equal('oba magazyny są tak samo puste', cenaSwieza.fill, cenaDluga.fill);
+  t.check('ale przyduszony płaci wyraźnie więcej',
+    cenaDluga.bid > cenaSwieza.bid * 2,
+    `(${cenaDluga.bid.toFixed(1)} wobec ${cenaSwieza.bid.toFixed(1)} CR)`);
+
   t.section('12. Bilans podaży i popytu — analitycznie, nie symulacyjnie');
   // Symulacja mówi CZY coś się sypie, ta analiza mówi DLACZEGO i o ile.
   // Liczone na cykl ekonomiczny, dla całego układu naraz.
@@ -274,7 +341,11 @@ export function run() {
   const add = (map, id, amount) => { map[id] = (map[id] || 0) + amount; };
 
   for (const [id, industry] of Object.entries(STATION_INDUSTRY)) {
-    if (!industry.capacity) continue;
+    // MUSI zgadzać się z warunkiem w `buildIndustryMap`: stacja bez fabryki,
+    // ale z załogą, wydobywa i zjada byt. Pominięta tutaj, a liczona tam,
+    // dawała fałszywy niedobór — kopalnie księżycowe wnosiły popyt przez
+    // solver, a ich urobek nie wchodził do podaży.
+    if (!industry.capacity && !industry.size) continue;
     const planet = PLANET_YIELD[id];
     if (planet?.rate > 0) {
       const total = 9 * planet.rate; // EXTRACTION_PER_CYCLE × rate

@@ -72,8 +72,11 @@ function actorSize(unitClass) {
 function stageEndpoints(network, stage) {
   if (!stage) return { from: null, to: null };
   if (stage.kind === STAGE_KIND.DWELL) {
-    const at = stage.pos || getNode(network, stage.nodeId);
-    return { from: at, to: at };
+    const at = stage.pos || stage.entryPos || getNode(network, stage.nodeId);
+    // `fromPos` istnieje, gdy dyspozytor portu przydzielił miejsce i statek ma
+    // do niego DOLECIEĆ. Zwracanie tego samego punktu po obu stronach kazałoby
+    // encji pojawić się na stanowisku zamiast do niego podejść.
+    return { from: stage.fromPos || stage.entryPos || at, to: at };
   }
   return {
     from: stage.fromPos || getNode(network, stage.fromId),

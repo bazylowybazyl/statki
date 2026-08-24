@@ -132,16 +132,67 @@ export function travelStage(fromId, toId, options = {}) {
   };
 }
 
-/** Etap postoju w węźle. Obsługa, tankowanie, wydobycie, pochłanianie opóźnienia. */
-export function dwellStage(nodeId, seconds, reason = DWELL_REASON.SERVICE, pos = null) {
+/**
+ * Etap postoju w węźle. Obsługa, tankowanie, wydobycie, pochłanianie opóźnienia.
+ *
+ * `entryPos` to punkt, w którym kurs KOŃCZY dolot — brama wjazdowa do portu.
+ * `fromPos` i `moveSeconds` opisują dojście z tej bramy na przydzielone miejsce
+ * (stanowisko albo orbitę oczekiwania) i pozwalają interpolować je na mapie.
+ *
+ * Bez tego dojścia zmiana miejsca była SKOKIEM: postój ma jedną pozycję, więc
+ * podmiana `pos` w chwili zwolnienia doku przenosiła statek natychmiast. Widać
+ * to było wprost — statki teleportowały się z orbity oczekiwania do stanowiska.
+ */
+export function dwellStage(nodeId, seconds, reason = DWELL_REASON.SERVICE, pos = null, options = {}) {
   return {
     kind: STAGE_KIND.DWELL,
     nodeId: stableId(nodeId),
     pos: point(pos),
+    entryPos: point(options.entryPos),
+    fromPos: point(options.fromPos),
+    moveSeconds: nonNegative(options.moveSeconds),
     seconds: nonNegative(seconds),
     reason: String(reason),
     risk: reason === DWELL_REASON.HOLD ? 1 : 0
   };
+}
+
+/**
+ * Ustawia nowe miejsce postoju wraz z dojściem do niego.
+ *
+ * Wywołuje to dyspozytor portu: przy przydziale miejsca w kolejce i ponownie,
+ * gdy zwolni się stanowisko. Statek nie przeskakuje — leci z miejsca, w którym
+ * właśnie jest, przez `seconds` sekund.
+ */
+export function moveDwellTo(course, stage, pos, seconds = 0) {
+  if (!stage || stage.kind !== STAGE_KIND.DWELL) return false;
+  const cel = point(pos);
+  if (!cel) return false;
+  const skad = stage.pos || stage.entryPos;
+  stage.fromPos = skad ? { ...skad } : null;
+  stage.pos = cel;
+  stage.moveSeconds = nonNegative(seconds);
+  // Dojście liczy się od nowa, więc zegar postoju startuje od zera. Obsługa
+  // przy stanowisku i tak zaczyna się dopiero po dolocie.
+  if (course) course.stageElapsed = 0;
+  return true;
+}
+
+/**
+ * Wydłuża etap w locie — statek zwalnia, zamiast stać pod portem.
+ *
+ * To jest pochłanianie opóźnienia z SPEC-kolejkowania: czas dokłada się tam,
+ * gdzie nic nie kosztuje (otwarta przestrzeń), a nie tam, gdzie kosztuje
+ * najwięcej (tłok przy stanowiskach).
+ */
+export function extendStage(course, stage, extraSeconds) {
+  const dodatek = nonNegative(extraSeconds);
+  if (!course || !stage || dodatek <= 0) return 0;
+  stage.seconds = nonNegative(stage.seconds) + dodatek;
+  course.duration = nonNegative(course.duration) + dodatek;
+  course.remaining = Math.max(0, course.duration - course.elapsed);
+  course.eta = nonNegative(course.eta) + dodatek;
+  return dodatek;
 }
 
 function stageIsValid(stage) {
@@ -389,6 +440,14 @@ function advanceCourse(registry, course, dt, events) {
   // ozdobą: postój leciał dalej niezależnie od tego, czy jest gdzie stanąć.
   if (course.blocked) {
     course.holdSeconds = (course.holdSeconds || 0) + dt;
+    // Dojście na przydzielone miejsce biegnie MIMO wstrzymania: statek leci na
+    // swoją pozycję w kolejce i dopiero tam czeka. Zamrożenie całego etapu
+    // zostawiało go w bramie wjazdowej — wyglądało to jak zwis w połowie ruchu.
+    const czekajacy = currentStage(course);
+    const dojscie = nonNegative(czekajacy?.moveSeconds);
+    if (dojscie > 0 && course.stageElapsed < dojscie) {
+      course.stageElapsed = Math.min(dojscie, nonNegative(course.stageElapsed) + dt);
+    }
     return;
   }
 
