@@ -177,7 +177,7 @@ function cockpitMarkup() {
           </footer>
         </section>
 
-        <section class="hud-panel reserve-panel">
+        <section class="hud-panel reserve-panel" id="reservePanel">
           <header class="panel-head">
             <div class="panel-title"><strong>Wsparcie</strong><small>FLEET CALL-IN / REZERWA</small></div>
             <span class="panel-count" id="reserveCount">GOTOWOŚĆ</span>
@@ -186,6 +186,13 @@ function cockpitMarkup() {
             <button type="button" class="faction-tab active" data-faction="terra-nova" data-key="terran">TERRA NOVA</button>
             <button type="button" class="faction-tab" data-faction="pirates" data-key="pirate">PIRATES</button>
             <button type="button" class="faction-tab" data-faction="independent" data-key="independent">INDEPENDENT</button>
+            <button type="button" class="faction-tab line-tab" id="lineModeBtn" title="Masowy spawn: wybierz typ, przeciągnij LPM po mapie">LINIE</button>
+          </div>
+          <div class="line-bar" id="lineBar">
+            <label class="line-width-label" for="lineWidth">SZER.</label>
+            <input class="line-width-slider" type="range" id="lineWidth" min="25" max="100" step="5" value="100" title="Mniejsza szerokość = gęściej statki w linii">
+            <span class="line-width-value" id="lineWidthValue">100%</span>
+            <span class="line-hint" id="lineHint">Wybierz typ jednostki</span>
           </div>
           <div class="panel-body"><div class="reserve-grid" id="reserveGrid"></div></div>
         </section>
@@ -300,6 +307,11 @@ export class CockpitUI {
     this.drag = null;
     this.pendingDrag = null;
     this.supportTooltipTimer = null;
+    // Tryb LINIE — masowy spawn wzdluz przeciaganej linii. Sama mechanika
+    // (drag po canvasie, podglad, spawn) siedzi w index.html jako window.LineSpawn;
+    // tutaj trzymamy tylko stan przyciskow i zaznaczenie karty.
+    this.lineMode = false;
+    this.lineKey = null;
     this.logs = [];
     this.cache = Object.create(null);
     this.lastRadarDraw = 0;
@@ -344,6 +356,7 @@ export class CockpitUI {
   cacheElements() {
     const ids = [
       'app', 'leftStack', 'rightStack', 'unitList', 'activeCount', 'supportOrders', 'supportFactions', 'reserveGrid',
+      'reservePanel', 'lineModeBtn', 'lineBar', 'lineWidth', 'lineWidthValue', 'lineHint',
       'scannerFilters', 'contactRows', 'contactCount', 'selBody', 'selKind', 'screenBezel', 'consoleStatus',
       'consoleLog', 'termClock', 'termDate', 'termLoc', 'termComm', 'commNet', 'commBody', 'commClose', 'hotkeyGrid',
       'radarCanvas', 'radarRanges', 'rdTotal', 'rdHostile', 'rdAst', 'rdRange', 'speedCanvas', 'spValue', 'spSpeedUnit', 'spRpm', 'spMode',
@@ -384,6 +397,12 @@ export class CockpitUI {
       const button = event.target.closest('[data-order]');
       if (!button) return;
       this.setSupportOrder(button.dataset.order);
+    });
+    this.els.lineModeBtn?.addEventListener('click', () => this.toggleLineMode());
+    this.els.lineWidth?.addEventListener('input', () => {
+      const applied = window.LineSpawn?.setWidth?.(this.els.lineWidth.value);
+      if (Number.isFinite(applied)) this.els.lineWidth.value = String(applied);
+      this.updateLineHint();
     });
     this.els.scannerFilters?.addEventListener('click', event => {
       const button = event.target.closest('[data-filter]');
@@ -1047,7 +1066,15 @@ export class CockpitUI {
     this.supportFaction = normalized;
     window.CockpitSupport?.setFaction?.(normalized);
     for (const button of this.els.supportFactions?.querySelectorAll('[data-key]') || []) button.classList.toggle('active', button.dataset.key === normalized);
+    // Wybrany typ linii moze nie istniec w rosterze nowej frakcji
+    // (np. 'battleship' Terra Novy vs 'pirate_battleship' piratow).
+    if (this.lineMode && this.lineKey && !SUPPORT_FACTIONS[normalized].roster.some(i => i.key === this.lineKey)) {
+      const first = SUPPORT_FACTIONS[normalized].roster.find(i => window.LineSpawn?.supportsType?.(i.key));
+      this.lineKey = (first && window.LineSpawn?.setType?.(first.key)) ? first.key : null;
+      if (!this.lineKey) window.LineSpawn?.setType?.(null);
+    }
     this.renderSupportRoster();
+    this.updateLineHint();
   }
 
   setSupportOrder(order) {
@@ -1055,6 +1082,57 @@ export class CockpitUI {
     window.CockpitSupport?.setOrder?.(normalized);
     for (const button of this.els.supportOrders?.querySelectorAll('[data-order]') || []) button.classList.toggle('active', button.dataset.order === normalized);
     this.log(`Rozkaz skrzydła: ${normalized.toUpperCase()}`, 'orbit');
+  }
+
+  toggleLineMode() {
+    if (!window.LineSpawn) {
+      this.toast('Tryb LINIE niedostępny', 'bad');
+      return;
+    }
+    this.lineMode = window.LineSpawn.toggle() === true;
+    this.lineKey = this.lineMode ? (window.LineSpawn.getType?.() || null) : null;
+    // Domyślny wybór z toggle() może nie należeć do rosteru tej frakcji.
+    if (this.lineMode && !SUPPORT_FACTIONS[this.supportFaction]?.roster.some(i => i.key === this.lineKey)) {
+      this.lineKey = null;
+      window.LineSpawn.setType?.(null);
+    }
+    if (this.lineMode && !this.lineKey) {
+      const first = SUPPORT_FACTIONS[this.supportFaction]?.roster.find(i => window.LineSpawn.supportsType?.(i.key));
+      if (first) this.lineKey = window.LineSpawn.setType?.(first.key) ? first.key : null;
+    }
+    this.els.lineModeBtn?.classList.toggle('active', this.lineMode);
+    // Pasek suwaka to osobny wiersz siatki panelu — klasa przestawia
+    // grid-template-rows, zeby przy wylaczonym trybie nie zostawala pusta szpara.
+    this.els.reservePanel?.classList.toggle('line-on', this.lineMode);
+    this.cancelSupportDrag();
+    this.renderSupportRoster();
+    this.updateLineHint();
+    this.log(this.lineMode ? 'Tryb LINIE: ON — przeciągnij LPM po mapie' : 'Tryb LINIE: OFF', 'orbit');
+  }
+
+  selectLineType(key) {
+    if (window.LineSpawn?.setType?.(key) !== true) return;
+    this.lineKey = key;
+    for (const card of this.els.reserveGrid?.querySelectorAll('.reserve-card') || []) {
+      card.classList.toggle('line-selected', card.dataset.supportKey === key);
+    }
+    this.updateLineHint();
+  }
+
+  updateLineHint() {
+    const width = window.LineSpawn?.getWidth?.() ?? 100;
+    if (this.els.lineWidthValue) this.els.lineWidthValue.textContent = `${width}%`;
+    if (this.els.lineWidth && this.els.lineWidth.value !== String(width)) this.els.lineWidth.value = String(width);
+
+    const hint = this.els.lineHint;
+    if (!hint) return;
+    if (!this.lineKey) {
+      hint.textContent = 'Wybierz typ jednostki';
+      return;
+    }
+    const item = SUPPORT_FACTIONS[this.supportFaction]?.roster.find(i => i.key === this.lineKey);
+    const max = window.LineSpawn?.tierMax?.(this.lineKey) || 0;
+    hint.textContent = `${item?.name || this.lineKey}: ekran = ${max} szt.`;
   }
 
   renderSupportRoster() {
@@ -1081,8 +1159,21 @@ export class CockpitUI {
       card.querySelector('.reserve-role').textContent = item.role;
       card.querySelector('.reserve-count').textContent = item.count;
       card.title = `${item.name} · ${details.classLabel} · HP ${details.hp.toLocaleString('pl-PL')} · Shield ${details.shield.toLocaleString('pl-PL')} · Hardpointy ${details.hardpoints}`;
-      if (item.click) card.addEventListener('click', () => this.spawnSupport(item.key, null));
-      else card.addEventListener('pointerdown', event => this.prepareSupportDrag(event, item, card));
+      const lineable = window.LineSpawn?.supportsType?.(item.key) === true;
+      if (this.lineMode && lineable) {
+        // W trybie LINIE karta nie spawnuje ani nie startuje przeciagania —
+        // tylko wybiera typ, ktory potem ciagniemy po mapie.
+        card.classList.add('line-pick');
+        if (item.key === this.lineKey) card.classList.add('line-selected');
+        card.addEventListener('click', () => this.selectLineType(item.key));
+      } else if (this.lineMode) {
+        card.classList.add('line-blocked');
+        card.addEventListener('click', () => this.toast(`${item.name}: brak trybu LINIE`, 'warn'));
+      } else if (item.click) {
+        card.addEventListener('click', () => this.spawnSupport(item.key, null));
+      } else {
+        card.addEventListener('pointerdown', event => this.prepareSupportDrag(event, item, card));
+      }
       card.addEventListener('pointerenter', event => this.scheduleSupportTooltip(item, sprite, event));
       card.addEventListener('pointermove', event => this.positionSupportTooltip(event.clientX, event.clientY));
       card.addEventListener('pointerleave', () => this.hideSupportTooltip());

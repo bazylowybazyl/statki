@@ -54,6 +54,9 @@
           <div class="glass-btn" id="support-faction-pirate">Pirates</div>
           <div class="glass-btn" id="support-faction-independent">Independent</div>
         </div>
+        <div class="orders-row support-tools-row">
+          <div class="glass-btn" id="support-line-mode" title="Zaznacz typ statku na liscie, potem przeciagnij LPM po mapie">LINIE</div>
+        </div>
         <div class="support-roster" id="support-roster"></div>
         <div class="orders-row support-orders-row">
           <div class="glass-btn active" id="support-guard">Guard</div>
@@ -1000,7 +1003,8 @@
       drawSingleTargetingReticle,
       drawMultiTargetingFrame,
       drawMultiTargetingNode,
-      drawSubTargetingReticle
+      drawSubTargetingReticle,
+      drawSelectTargetingReticle
     } from "./src/ui/targetingReticles.js";
     import {
       FACTION,
@@ -1170,6 +1174,7 @@
     const supportFactionPirateBtn = document.getElementById('support-faction-pirate');
     const supportFactionIndependentBtn = document.getElementById('support-faction-independent');
     const supportRosterRoot = document.getElementById('support-roster');
+    const supportLineModeBtn = document.getElementById('support-line-mode');
     let carrierSpawnBtn = null;
     const shieldControlsRoot = document.getElementById('panel-shield');
     const energyShotBtn = document.getElementById('btn-energy-shot');
@@ -1195,6 +1200,45 @@
       'fighter',
       'carrier_fighter'
     ]);
+
+    // --- Tryb LINIE: masowe spawnowanie wzdluz przeciaganej linii (dev/sandbox) ---
+    // Kazdy klucz rostera dostaje "klase wagowa" jednostki; klasa okresla ile
+    // sztuk zmiesci sie na linii dlugosci calego ekranu (im ciezsza klasa, tym
+    // mniej sztuk — fregaty leca ciasno, kapitalki szeroko).
+    const SUPPORT_LINE_TIER_BY_KEY = Object.freeze({
+      frigate_pd: 'frigate',
+      frigate_laser: 'frigate',
+      destroyer: 'destroyer',
+      battleship: 'battleship',
+      pirate_battleship: 'battleship',
+      carrier: 'capital',
+      supercapital: 'capital',
+      atlas: 'capital',
+      megafreighter: 'capital'
+    });
+    const SUPPORT_LINE_TIER_MAX = Object.freeze({
+      frigate: 40,
+      destroyer: 20,
+      battleship: 10,
+      capital: 5
+    });
+    const LINE_SPAWN_MIN_DRAG_PX = 24;
+    // Suwak "szerokosc" = ile miejsca dostaje jeden statek. 100% to rozstaw
+    // bazowy (pelny ekran = tyle sztuk, ile mowi SUPPORT_LINE_TIER_MAX);
+    // mniejsza wartosc zageszcza linie, wiec na tej samej dlugosci miesci sie
+    // proporcjonalnie wiecej jednostek.
+    const LINE_SPAWN_WIDTH_MIN_PCT = 25;
+    const LineSpawnState = {
+      active: false,
+      selectedKey: null,
+      selectedBtn: null,
+      widthPct: 100,
+      dragging: false,
+      startScreen: null,
+      curScreen: null,
+      startWorld: null,
+      curWorld: null
+    };
 
     const SUPPORT_FACTION_MODES = Object.freeze({
       terran: 'friendly',
@@ -1250,11 +1294,37 @@
       return '<div class="icon-frigate"></div>';
     }
 
+    function selectLineSpawnCard(key, btn) {
+      LineSpawnState.selectedKey = key;
+      LineSpawnState.selectedBtn = btn || null;
+      // Podswietlenie karty dotyczy tylko starego panelu HUD. Kokpit (shadow DOM)
+      // rysuje wlasny roster i sam sobie zaznacza wybor — stad null-guard.
+      if (supportRosterRoot && supportRosterRoot.isConnected) {
+        supportRosterRoot.querySelectorAll('.support-card.line-selected').forEach(c => c.classList.remove('line-selected'));
+      }
+      if (btn) btn.classList.add('line-selected');
+    }
+
+    // Gdy tryb LINIE jest wlaczony, klikniecie karty statku zamiast spawnowac
+    // wybiera typ do przeciagania po mapie. Zwraca true, jesli klik zostal
+    // przechwycony (obsluzony) przez tryb LINIE.
+    function handleLineModeCardClick(key, btn) {
+      if (!LineSpawnState.active) return false;
+      if (btn.getAttribute('aria-disabled') === 'true') return true;
+      if (!SUPPORT_LINE_TIER_BY_KEY[key]) {
+        toast('Ten typ nie wspiera trybu LINIE');
+        return true;
+      }
+      selectLineSpawnCard(key, btn);
+      return true;
+    }
+
     function bindSupportSpawnButton(btn) {
       if (!btn) return;
       const key = btn.dataset.supportSpawn;
       if (SUPPORT_CLICK_TYPES.has(key)) {
         btn.addEventListener('click', () => {
+          if (handleLineModeCardClick(key, btn)) return;
           if (btn.getAttribute('aria-disabled') === 'true') return;
           const mode = getSupportSpawnMode();
           if (key === 'carrier_fighter') {
@@ -1269,11 +1339,13 @@
       } else if (isSupportDragKey(key)) {
         btn.addEventListener('mousedown', (event) => {
           if (event.button !== 0) return;
+          if (LineSpawnState.active) return;
           if (btn.getAttribute('aria-disabled') === 'true') return;
           beginSupportDrag(key, btn);
         });
         btn.addEventListener('click', (event) => {
           event.preventDefault();
+          handleLineModeCardClick(key, btn);
         });
       }
     }
@@ -1285,6 +1357,7 @@
       const frag = document.createDocumentFragment();
       supportRosterRoot.textContent = '';
       carrierSpawnBtn = null;
+      let reselectedBtn = null;
       for (const item of roster) {
         const card = document.createElement('div');
         card.className = 'support-card';
@@ -1297,9 +1370,23 @@
         `;
         if (item.key === 'carrier') carrierSpawnBtn = card;
         bindSupportSpawnButton(card);
+        if (LineSpawnState.active && item.key === LineSpawnState.selectedKey) {
+          card.classList.add('line-selected');
+          reselectedBtn = card;
+        }
         frag.appendChild(card);
       }
       supportRosterRoot.appendChild(frag);
+      // Wybrany typ moze nie istniec w rosterze nowej frakcji (np. 'battleship'
+      // Terra Novy vs 'pirate_battleship' piratow) — wtedy czyscimy wybor.
+      if (LineSpawnState.active) {
+        if (reselectedBtn) {
+          LineSpawnState.selectedBtn = reselectedBtn;
+        } else {
+          LineSpawnState.selectedKey = null;
+          LineSpawnState.selectedBtn = null;
+        }
+      }
     }
 
     function beginSupportDrag(key, btn) {
@@ -1328,6 +1415,133 @@
       mouse.left = false;
       mouse.click = false;
       return true;
+    }
+
+    function toggleLineSpawnMode(forceOn) {
+      const next = (typeof forceOn === 'boolean') ? forceOn : !LineSpawnState.active;
+      LineSpawnState.active = next;
+      LineSpawnState.dragging = false;
+      cancelLineSpawnDrag();
+      if (supportLineModeBtn) supportLineModeBtn.classList.toggle('active', next);
+      if (!next) {
+        LineSpawnState.selectedKey = null;
+        LineSpawnState.selectedBtn = null;
+        if (supportRosterRoot && supportRosterRoot.isConnected) {
+          supportRosterRoot.querySelectorAll('.support-card.line-selected').forEach(c => c.classList.remove('line-selected'));
+        }
+        return next;
+      }
+      // Wygodny domyslny wybor, zeby od razu dalo sie ciagnac linie.
+      if (!LineSpawnState.selectedKey) {
+        const faction = normalizeSupportFaction(SupportWing?.faction || 'terran');
+        const roster = SUPPORT_FACTION_ROSTERS[faction] || SUPPORT_FACTION_ROSTERS.terran;
+        const firstLineable = roster.find(item => SUPPORT_LINE_TIER_BY_KEY[item.key]);
+        if (firstLineable) {
+          const card = (supportRosterRoot && supportRosterRoot.isConnected)
+            ? supportRosterRoot.querySelector(`.support-card[data-support-spawn="${firstLineable.key}"]`)
+            : null;
+          selectLineSpawnCard(firstLineable.key, card);
+        }
+      }
+      toast('Tryb LINIE: przeciagnij LPM po mapie (wybierz typ na liscie)');
+      return next;
+    }
+
+    // API dla kokpitu (shadow DOM) — cala mechanika linii zyje tutaj, bo tu jest
+    // canvas, kamera i spawner. Kokpit tylko przelacza tryb i wybiera typ.
+    window.LineSpawn = {
+      toggle: (force) => toggleLineSpawnMode(force),
+      isActive: () => LineSpawnState.active,
+      setType: (key) => {
+        if (key == null) { selectLineSpawnCard(null, null); return true; }
+        if (!SUPPORT_LINE_TIER_BY_KEY[key]) return false;
+        selectLineSpawnCard(key, null);
+        return true;
+      },
+      getType: () => LineSpawnState.selectedKey,
+      supportsType: (key) => !!SUPPORT_LINE_TIER_BY_KEY[key],
+      tierMax: (key) => getLineSpawnEffectiveMax(key),
+      setWidth: (pct) => setLineSpawnWidth(pct),
+      getWidth: () => LineSpawnState.widthPct,
+      minWidth: () => LINE_SPAWN_WIDTH_MIN_PCT
+    };
+
+    function getLineSpawnTierMax(key) {
+      const tier = SUPPORT_LINE_TIER_BY_KEY[key];
+      return SUPPORT_LINE_TIER_MAX[tier] || 10;
+    }
+
+    // Ile sztuk zmiesci sie na linii dlugosci calego ekranu przy AKTUALNYM
+    // ustawieniu suwaka szerokosci.
+    function getLineSpawnEffectiveMax(key) {
+      const pct = clamp(Number(LineSpawnState.widthPct) || 100, LINE_SPAWN_WIDTH_MIN_PCT, 100);
+      return Math.max(1, Math.round(getLineSpawnTierMax(key) * (100 / pct)));
+    }
+
+    function setLineSpawnWidth(pct) {
+      const next = clamp(Math.round(Number(pct) || 100), LINE_SPAWN_WIDTH_MIN_PCT, 100);
+      LineSpawnState.widthPct = next;
+      return next;
+    }
+
+    function computeLineSpawnCount(key, dragLenPx) {
+      const screenW = Math.max(1, canvas.clientWidth || canvas.width || window.innerWidth || 1920);
+      const maxCount = getLineSpawnEffectiveMax(key);
+      const frac = clamp(dragLenPx / screenW, 0, 1);
+      return Math.max(1, Math.round(maxCount * frac));
+    }
+
+    function beginLineSpawnDrag(screenX, screenY) {
+      const rect = canvas.getBoundingClientRect();
+      const local = { x: screenX - rect.left, y: screenY - rect.top };
+      LineSpawnState.dragging = true;
+      LineSpawnState.startScreen = local;
+      LineSpawnState.curScreen = { ...local };
+      LineSpawnState.startWorld = screenToWorld(local.x, local.y);
+      LineSpawnState.curWorld = LineSpawnState.startWorld;
+    }
+
+    function updateLineSpawnDrag(screenX, screenY) {
+      if (!LineSpawnState.dragging) return;
+      const rect = canvas.getBoundingClientRect();
+      const local = { x: screenX - rect.left, y: screenY - rect.top };
+      LineSpawnState.curScreen = local;
+      LineSpawnState.curWorld = screenToWorld(local.x, local.y);
+    }
+
+    function cancelLineSpawnDrag() {
+      LineSpawnState.dragging = false;
+      LineSpawnState.startScreen = null;
+      LineSpawnState.curScreen = null;
+      LineSpawnState.startWorld = null;
+      LineSpawnState.curWorld = null;
+    }
+
+    function finishLineSpawnDrag(screenX, screenY) {
+      const key = LineSpawnState.selectedKey;
+      const startScreen = LineSpawnState.startScreen;
+      const startWorld = LineSpawnState.startWorld;
+      cancelLineSpawnDrag();
+      if (!key || !startScreen || !startWorld) return;
+
+      const rect = canvas.getBoundingClientRect();
+      const endScreen = { x: screenX - rect.left, y: screenY - rect.top };
+      const dragLenPx = Math.hypot(endScreen.x - startScreen.x, endScreen.y - startScreen.y);
+      if (dragLenPx < LINE_SPAWN_MIN_DRAG_PX) return;
+
+      const endWorld = screenToWorld(endScreen.x, endScreen.y);
+      const count = computeLineSpawnCount(key, dragLenPx);
+      const dx = endWorld.x - startWorld.x;
+      const dy = endWorld.y - startWorld.y;
+
+      const mode = getSupportSpawnMode();
+      for (let i = 0; i < count; i++) {
+        const t = count === 1 ? 0.5 : i / (count - 1);
+        const pos = { x: startWorld.x + dx * t, y: startWorld.y + dy * t };
+        spawnCallInShip(key, { spawnPos: pos, pos, mode, singleModule: true });
+      }
+      if (mode === 'friendly') setSupportOrder('guard', { force: true });
+      toast(`LINIA: ${count}x ${key}`);
     }
 
     function setupSidePanel(panelEl) {
@@ -7707,7 +7921,7 @@
     window.targetingMode = targetingMode;
 
     function setTargetingMode(nextMode) {
-      const next = Math.max(TARGETING_MODE.SINGLE, Math.min(TARGETING_MODE.SUB, Number(nextMode) || 0));
+      const next = Math.max(TARGETING_MODE.SINGLE, Math.min(TARGETING_MODE.SELECT, Number(nextMode) || 0));
       if (next === targetingMode.current) return;
       targetingMode.current = next;
       targetingMode.acquireTarget = null;
@@ -13601,6 +13815,11 @@
         return;
       }
 
+      if (targetingMode.current === TARGETING_MODE.SELECT) {
+        // TODO: podpiąć klikalne obiekty w świecie gry.
+        return;
+      }
+
       const entity = scan?.target;
       const subsystem = targetingMode.hoveredSubsystem || findTargetingHoveredSubsystem(entity);
       if (subsystem) {
@@ -15481,6 +15700,10 @@
     }
 
     canvas.addEventListener('mousemove', e => {
+      if (LineSpawnState.active && LineSpawnState.dragging) {
+        updateLineSpawnDrag(e.clientX, e.clientY);
+        return;
+      }
       const { m } = _getMouseForScreen(e.clientX);
       m.x = e.clientX; m.y = e.clientY;
       m.overCanvas = true;
@@ -15543,6 +15766,7 @@
 
 
     canvas.addEventListener('mouseleave', () => {
+      cancelLineSpawnDrag();
       mouse.overCanvas = false;
       mouse.left = false;
       mouse.right = false;
@@ -15562,6 +15786,11 @@
       Selection.rect = null;
     });
     canvas.addEventListener('mousedown', e => {
+      if (LineSpawnState.active && e.button === 0) {
+        if (LineSpawnState.selectedKey) beginLineSpawnDrag(e.clientX, e.clientY);
+        e.preventDefault();
+        return;
+      }
       if (e.button === 0) targetingMode.pointerConfirmArmed = false;
       // Split-screen: route clicks to the correct player's mouse
       if (splitScreenMode) {
@@ -15662,6 +15891,11 @@
       }
     });
     canvas.addEventListener('mouseup', e => {
+      if (LineSpawnState.active && e.button === 0) {
+        if (LineSpawnState.dragging) finishLineSpawnDrag(e.clientX, e.clientY);
+        e.preventDefault();
+        return;
+      }
       const targetingConfirmArmed = e.button === 0 && targetingMode.pointerConfirmArmed;
       if (e.button === 0) targetingMode.pointerConfirmArmed = false;
       // Split-screen: route releases to the correct player's mouse
@@ -15732,7 +15966,7 @@
       }
       if (e.button === 1) {
         if (targetingMode.wheelOpen) {
-          if (targetingMode.wheelHover >= TARGETING_MODE.SINGLE && targetingMode.wheelHover <= TARGETING_MODE.SUB) {
+          if (targetingMode.wheelHover >= TARGETING_MODE.SINGLE && targetingMode.wheelHover <= TARGETING_MODE.SELECT) {
             setTargetingMode(targetingMode.wheelHover);
           }
           targetingMode.wheelOpen = false;
@@ -17410,6 +17644,26 @@
       npc.hexGrid = null;
     }
 
+    // Dobor profilu wybuchu reaktora po wielkosci kadluba. Do tej pory kazdy
+    // nie-mysliwiec dostawal `capital`, czyli 4000 iskier i 3 s efektu — tyle samo
+    // dla fregaty (promien 120) co dla superkapitala (500). W bitwie gina glownie
+    // fregaty i niszczyciele, wiec to one generowaly wiekszosc kosztu.
+    // Progi wynikaja z src/data/ships.js: fregata 120, niszczyciel 170,
+    // pancernik 220, lotniskowiec 320, superkapital 500, megafrachtowiec 760.
+    const REACTOR_BLOW_PROFILE_BY_RADIUS = Object.freeze([
+      { minRadius: 210, profile: 'capital' },
+      { minRadius: 150, profile: 'cruiser' },
+      { minRadius: 0,   profile: 'escort'  }
+    ]);
+
+    function resolveReactorBlowProfile(npc) {
+      const radius = Number(npc?.radius) || 0;
+      for (const tier of REACTOR_BLOW_PROFILE_BY_RADIUS) {
+        if (radius >= tier.minRadius) return tier.profile;
+      }
+      return 'escort';
+    }
+
     function tryTriggerCriticalReactorBlow(npc, overkillDmg, aliveRatio, survivingShards, chainDepth) {
       if (isFighterNPC(npc)) {
         if (window.DEBUG_CRIT_BLOW) console.log('[CritBlow] skip fighter', npc?.type);
@@ -17445,7 +17699,7 @@
 
       const posX = npc.x, posY = npc.y;
       const size = (npc.radius || 40) * 1.5;
-      try { triggerReactorBlow3D(posX, posY, size * 1.8, { profile: 'capital' }); } catch (_) {}
+      try { triggerReactorBlow3D(posX, posY, size * 1.8, { profile: resolveReactorBlowProfile(npc) }); } catch (_) {}
 
       if (chainDepth === 0) {
         const aoeR = Math.max(700, (npc.radius || 40) * 6);
@@ -21269,6 +21523,50 @@
           ctx.restore();
         }
 
+        if (LineSpawnState.active && LineSpawnState.dragging && LineSpawnState.startScreen && LineSpawnState.curScreen) {
+          const p0 = LineSpawnState.startScreen;
+          const p1 = LineSpawnState.curScreen;
+          const dragLenPx = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+          const lineKey = LineSpawnState.selectedKey;
+          const previewCount = lineKey ? computeLineSpawnCount(lineKey, dragLenPx) : 0;
+          ctx.save();
+          ctx.strokeStyle = '#eeb763';
+          ctx.globalAlpha = 0.85;
+          ctx.lineWidth = 2;
+          ctx.setLineDash([8, 6]);
+          ctx.beginPath();
+          ctx.moveTo(p0.x, p0.y);
+          ctx.lineTo(p1.x, p1.y);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          if (dragLenPx >= LINE_SPAWN_MIN_DRAG_PX && previewCount > 0) {
+            ctx.fillStyle = '#eeb763';
+            for (let i = 0; i < previewCount; i++) {
+              const t = previewCount === 1 ? 0.5 : i / (previewCount - 1);
+              const px = p0.x + (p1.x - p0.x) * t;
+              const py = p0.y + (p1.y - p0.y) * t;
+              ctx.beginPath();
+              ctx.arc(px, py, 3, 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
+          const midX = (p0.x + p1.x) / 2;
+          const midY = (p0.y + p1.y) / 2;
+          const label = dragLenPx < LINE_SPAWN_MIN_DRAG_PX ? '...' : `${previewCount}x`;
+          ctx.font = 'bold 16px Consolas, monospace';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          const textW = ctx.measureText(label).width;
+          ctx.fillStyle = 'rgba(0,0,0,0.6)';
+          ctx.fillRect(midX - textW / 2 - 10, midY - 14, textW + 20, 28);
+          ctx.strokeStyle = '#eeb763';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(midX - textW / 2 - 10, midY - 14, textW + 20, 28);
+          ctx.fillStyle = '#eeb763';
+          ctx.fillText(label, midX, midY);
+          ctx.restore();
+        }
+
         if (!splitScreenMode) {
           // ======= STATEK =======
           const shipS = worldToScreen(interpPos.x, interpPos.y, cam);
@@ -21860,6 +22158,10 @@
         const hovered = scan?.target && canPlayerLockTarget(scan.target) ? scan.target : null;
         targetingMode.hoveredSubsystem = null;
 
+        if (targetingMode.current === TARGETING_MODE.SELECT) {
+          return;
+        }
+
         if (targetingMode.current === TARGETING_MODE.SINGLE) {
           if (hovered && hovered === targetingMode.acquireTarget) {
             targetingMode.acquireProgress = Math.min(1, targetingMode.acquireProgress + step / getTargetingLockDuration(hovered));
@@ -22111,15 +22413,19 @@
             0.95,
             visualScale
           );
-          const labelOffset = targetingMode.groupH * 0.5 + 18 * visualScale;
-          _targetingLabel(
-            count === 0 ? 'MULTI • PRZESUŃ NAD GRUPĘ' : (readyCount === count ? `MULTI • ${count} GOTOWYCH • LPM: LOCK` : `MULTI • NAMIAR ${readyCount}/${count}`),
-            targetingMode.groupX + Math.sin(targetingMode.groupAngle) * labelOffset,
-            targetingMode.groupY - Math.cos(targetingMode.groupAngle) * labelOffset,
-            frameColor,
-            'center',
-            visualScale
-          );
+          if (count > 0) {
+            const labelOffset = targetingMode.groupH * 0.5 + 18 * visualScale;
+            _targetingLabel(
+              readyCount === count ? `MULTI • ${count} GOTOWYCH • LPM: LOCK` : `MULTI • NAMIAR ${readyCount}/${count}`,
+              targetingMode.groupX + Math.sin(targetingMode.groupAngle) * labelOffset,
+              targetingMode.groupY - Math.cos(targetingMode.groupAngle) * labelOffset,
+              frameColor,
+              'center',
+              visualScale
+            );
+          }
+        } else if (targetingMode.current === TARGETING_MODE.SELECT) {
+          drawSelectTargetingReticle(ctx, cursor.x, cursor.y, 13 * visualScale, 0, visualScale);
         } else {
           const entity = targetingMode.subScanTarget;
           if (entity && isTargetAlive(entity)) {
@@ -22260,11 +22566,29 @@
           ctx.fillText('BROŃ 100%', lx, ly + 30);
         }
 
-        // Punkt centralny
+        // Środek koła — tryb SELECT
+        const selectR = 26;
+        const selectColor = TARGETING_MODE_COLORS[TARGETING_MODE.SELECT];
+        const isSelectHover = targetingMode.wheelHover === TARGETING_MODE.SELECT;
+        const isSelectCurrent = targetingMode.current === TARGETING_MODE.SELECT;
+
         ctx.beginPath();
-        ctx.arc(cx, cy, 4, 0, Math.PI * 2);
-        ctx.fillStyle = '#7dd3fc';
+        ctx.arc(cx, cy, selectR, 0, Math.PI * 2);
+        ctx.fillStyle = isSelectHover
+          ? `${selectColor}44`
+          : (isSelectCurrent ? 'rgba(40, 60, 100, 0.6)' : 'rgba(20, 30, 50, 0.4)');
         ctx.fill();
+        ctx.strokeStyle = isSelectHover ? selectColor : 'rgba(80, 120, 180, 0.3)';
+        ctx.lineWidth = isSelectHover ? 2 : 1;
+        ctx.stroke();
+
+        ctx.fillStyle = isSelectHover ? '#fff' : (isSelectCurrent ? selectColor : '#8899bb');
+        ctx.font = `bold ${isSelectHover ? 14 : 11}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(TARGETING_MODE_ICONS[TARGETING_MODE.SELECT], cx, cy - 6);
+        ctx.font = `${isSelectHover ? 9 : 8}px monospace`;
+        ctx.fillText(TARGETING_MODE_NAMES[TARGETING_MODE.SELECT], cx, cy + 8);
 
         ctx.restore();
       }
@@ -23726,6 +24050,9 @@
     }
     if (supportFactionIndependentBtn) {
       supportFactionIndependentBtn.addEventListener('click', () => setSupportFaction('independent', { force: true }));
+    }
+    if (supportLineModeBtn) {
+      supportLineModeBtn.addEventListener('click', () => toggleLineSpawnMode());
     }
     window.addEventListener('mouseup', (event) => {
       if (endSupportDrag(event)) {

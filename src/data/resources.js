@@ -366,7 +366,39 @@ export const PLANET_YIELD = Object.freeze({
   // Ceres jest lodowa i wodna, Westa zróżnicowana i bogata w metal — stąd
   // różne udziały. Razem dają Lidze stal i tytan bez oglądania się na rdzeń.
   ceres: { rate: 1.25, yields: { iron_ore: 0.30, silicon_ore: 0.22, ice: 0.28, raw_crystal: 0.20 } },
-  vesta: { rate: 1.05, yields: { iron_ore: 0.42, titanium_ore: 0.33, silicon_ore: 0.25 } }
+  vesta: { rate: 1.05, yields: { iron_ore: 0.42, titanium_ore: 0.33, silicon_ore: 0.25 } },
+
+  // ---------- KSIĘŻYCE-KOPALNIE ----------
+  //
+  // Wydobywają dokładnie to, co zjada rozrost mapy: lód na tlen, metan
+  // i amoniak na polimer i chłodziwo, metal na stal. Dwadzieścia dwa nowe porty
+  // to dwadzieścia dwa nowe rachunki za byt — kopalnie mają je opłacić.
+  //
+  // URANU TU NIE MA i to jest decyzja, nie przeoczenie: pozostaje wyłącznie
+  // w pasie Kuipera, żeby wyprawy górnicze miały sens. Pilnuje tego wprost
+  // `scripts/tests/stationEconomy.test.mjs` (sekcja bilansu).
+  //
+  // Księżyc nie powiela tego, co robi jego planeta w RAFINERII — daje surowiec,
+  // planeta go przerabia. Inaczej olbrzym gazowy staje się samowystarczalny
+  // i wypada z gospodarki, co już raz złapaliśmy na Saturnie.
+
+  // Jowisz — wulkaniczne Io i lodowa Europa.
+  io: { rate: 0.5, yields: { iron_ore: 0.34, titanium_ore: 0.30, copper_ore: 0.36 } },
+  europa: { rate: 0.480, yields: { ice: 1.0 } },
+
+  // Saturn — metan Tytana i lód reszty.
+  tytan: { rate: 0.540, yields: { methane: 0.62, ammonia: 0.38 } },
+  enceladus: { rate: 0.420, yields: { ice: 1.0 } },
+  rhea: { rate: 0.45, yields: { iron_ore: 0.40, silicon_ore: 0.30, ice: 0.30 } },
+  tethys: { rate: 0.360, yields: { ice: 1.0 } },
+
+  // Uran — lód i metal.
+  titania: { rate: 0.45, yields: { ice: 0.66, raw_crystal: 0.34 } },
+  oberon: { rate: 0.420, yields: { titanium_ore: 0.55, iron_ore: 0.45 } },
+  ariel: { rate: 0.360, yields: { ice: 1.0 } },
+
+  // Neptun — samotna placówka w martwym układzie.
+  tryton: { rate: 0.4, yields: { methane: 0.45, ammonia: 0.30, raw_crystal: 0.25 } }
 });
 
 /** Typ planety → jaki kolektor w ogóle wolno na niej postawić. */

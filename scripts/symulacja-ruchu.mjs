@@ -15,7 +15,10 @@ import {
   RESOURCES, RESOURCE_KEYS, RECIPES, PLANET_YIELD, TIER, getResourceCapacityFactor
 } from '../src/data/resources.js';
 import { FACTION, getDefaultStationFaction } from '../src/data/factions.js';
-import { seedStationStock, getStationDeficits, STATION_INDUSTRY, systemHaulTonnage, resourcePrice, stationHaulTonnage } from '../src/game/stationEconomy.js';
+import {
+  seedStationStock, getStationDeficits, STATION_INDUSTRY, systemHaulTonnage,
+  resourcePrice, stationHaulTonnage, getStationIndustry, militaryScale
+} from '../src/game/stationEconomy.js';
 import { createFleetState } from '../src/game/cargoFleet.js';
 import { BELT_DEFINITIONS, getOutermostBeltEdgeAu } from '../src/data/asteroidTypes.js';
 import { buildTravelNetwork } from '../src/game/traffic/travelNetwork.js';
@@ -123,7 +126,10 @@ const stations = network.stations.map(node => {
     resources: Object.fromEntries(RESOURCE_KEYS.map(key => [key, 0])),
     capacity: { ...baseCapacity }
   };
-  seedStationStock(station, econ, 0.45);
+  // Księżyc startuje CHUDO. Przy 45% zapełnienia jego skromny byt (0,3 skali)
+  // schodziłby do progu zamówień jedenaście godzin gry — przez cały ten czas
+  // kopalnia tylko eksportowałaby, nie będąc niczyim klientem.
+  seedStationStock(station, econ, node.moon ? 0.18 : 0.45);
   economies.set(station.id, econ);
   return station;
 });
@@ -171,6 +177,9 @@ const YARD_WEIGHT = {
 };
 for (const station of stations) {
   if (!station.factionId) continue;
+  // Stocznię ma ośrodek przemysłowy, nie każda skała z wiertłem. Bez tego
+  // warunku 22 księżyce dostawały pochylnie i układ miał 27 stoczni zamiast 9.
+  if (militaryScale(getStationIndustry(station)) <= 0) continue;
   registerShipyard(shipyards, {
     station,
     stationId: station.id, factionId: station.factionId,
@@ -374,6 +383,55 @@ for (const row of summarizeCompanies(companies)) {
 }
 console.log(`\n  puste przeloty razem: ${snap.stats.deadheads}, `
   + `odmowy z braku jednostki: ${snap.stats.noShip}`);
+
+console.log('\n=== PRZYDUSZENIE (dlugi glod = wyzsza cena) ===\n');
+{
+  const rows = [];
+  for (const st of stations) {
+    const econ = economies.get(st.id);
+    if (!econ?.duress) continue;
+    for (const [id, sek] of Object.entries(econ.duress)) {
+      if (sek < 60) continue;
+      const cena = resourcePrice(st, econ, id);
+      if (!cena) continue;
+      rows.push({ stacja: st.id, surowiec: RESOURCES[id].short, minut: Math.round(sek / 60),
+        mnoznik: cena.duress, cena: cena.bid, baza: RESOURCES[id].value });
+    }
+  }
+  rows.sort((a, b) => b.minut - a.minut);
+  console.log(`  pozycji przyduszonych: ${rows.length}`);
+  for (const r of rows.slice(0, 8)) {
+    console.log(`  ${r.stacja.padEnd(11)} ${r.surowiec.padEnd(5)} glod ${String(r.minut).padStart(4)} min  `
+      + `x${r.mnoznik.toFixed(2)} przyduszenia  skup ${r.cena.toFixed(1)} CR (baza ${r.baza})`);
+  }
+}
+
+console.log('\n=== KSIEZYCE ===\n');
+{
+  // Ile kursów w ogóle DOTKNĘŁO księżyców — bez tego nie wiadomo, czy są
+  // częścią gospodarki, czy tylko dekoracją z magazynem.
+  const idKsiezycow = new Set(network.stations.filter(n => n.moon).map(n => n.id));
+  let zNich = 0, doNich = 0;
+  for (const order of fleet.orders) {
+    if (idKsiezycow.has(order.sourceStationId)) zNich++;
+    if (idKsiezycow.has(order.targetStationId)) doNich++;
+  }
+  console.log(`  zlecen Z ksiezycow: ${zNich}, DO ksiezycow: ${doNich}, `
+    + `wszystkich zlecen: ${fleet.orders.length}`);
+}
+{
+  const ksiezyce = network.stations.filter(n => n.moon);
+  for (const node of ksiezyce) {
+    const econ = economies.get(node.id);
+    const st = stations.find(s => s.id === node.id);
+    if (!econ) { console.log(`  ${node.id.padEnd(11)} - brak gospodarki`); continue; }
+    const top = Object.entries(econ.resources)
+      .filter(([, v]) => v > 1).sort((a, b) => b[1] - a[1]).slice(0, 3)
+      .map(([k, v]) => `${RESOURCES[k].short} ${Math.round(v)}`).join(' ');
+    console.log(`  ${node.id.padEnd(11)} ${String(node.role).padEnd(6)} `
+      + `${String(st?.factionId || 'niczyj').padEnd(18)} ${top || '(pusto)'}`);
+  }
+}
 
 console.log('\n=== OBŁOŻENIE DOKÓW ===\n');
 for (const [stationId, layout] of docks) {

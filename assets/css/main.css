@@ -2859,6 +2859,25 @@
       box-shadow: none;
     }
 
+    #panel-support.support-command-panel .support-tools-row {
+      margin-top: 0;
+      padding: 0;
+      border-top: none;
+    }
+
+    #panel-support.support-command-panel #support-line-mode.active {
+      background: rgba(238, 183, 99, 0.18);
+      border-color: rgba(238, 183, 99, 0.65);
+      color: var(--support-amber);
+      box-shadow: 0 0 10px rgba(238, 183, 99, 0.35);
+    }
+
+    #panel-support.support-command-panel .support-card.line-selected {
+      background: rgba(238, 183, 99, 0.14);
+      border-color: rgba(238, 183, 99, 0.65);
+      box-shadow: inset 3px 0 0 rgba(238, 183, 99, 0.7);
+    }
+
     #panel-support.support-command-panel .icon-sc-hull,
     #panel-support.support-command-panel .icon-cap-center,
     #panel-support.support-command-panel .icon-bs-rect,

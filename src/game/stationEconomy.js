@@ -14,7 +14,9 @@
  * ani Three.js.
  */
 
-import { RECIPES, RESOURCES, PLANET_YIELD, rollPlanetYield, getResourceMass } from '../data/resources.js';
+import {
+  RECIPES, RESOURCES, RESOURCE_KEYS, PLANET_YIELD, rollPlanetYield, getResourceMass
+} from '../data/resources.js';
 import { normalizeFaction, isDerelict, getFaction, getFactionPriceMultiplier } from '../data/factions.js';
 
 // ============================================================
@@ -106,10 +108,10 @@ export const MILITARY_UPKEEP = Object.freeze({
 });
 
 /** Popyt, który każda stacja generuje samym istnieniem: byt + utrzymanie floty. */
-const SYSTEM_DEMAND = Object.freeze({ ...STATION_UPKEEP, ...FLEET_DEMAND, ...MILITARY_UPKEEP });
+// Pobór stacji liczy `systemDemandFor()` — byt skaluje się wielkością osady,
+// a wojsko przemysłem, więc nie da się tego trzymać w jednej zamrożonej mapie.
 
-/** To, co stacja realnie zjada w każdym cyklu: byt plus gotowość bojowa. */
-const RUNTIME_UPKEEP = Object.freeze({ ...STATION_UPKEEP, ...MILITARY_UPKEEP });
+
 
 /** Ile jednostek surowca daje jeden cykl wydobywczy przy `rate` = 1.0. */
 const EXTRACTION_PER_CYCLE = 9;
@@ -268,6 +270,41 @@ export function upkeepScale(industry) {
 }
 
 /**
+ * Skala poboru MILITARNEGO. Zero dla stacji bez przemysłu.
+ *
+ * Flota stacjonuje tam, gdzie jest co bronić i czym ją obsłużyć — przy hutach,
+ * stoczniach i zbrojowniach. Kopalnia księżycowa ma wiertło i dwunastu ludzi;
+ * naliczanie jej emiterów energetycznych, wyrzutni i TORPED tylko dlatego, że
+ * ma adres, dawało absurd: szesnaście księżyców zgłaszało głód na uzbrojeniu,
+ * którego nie miałyby jak użyć.
+ */
+export function militaryScale(industry) {
+  return (Number(industry?.capacity) || 0) > 0 ? upkeepScale(industry) : 0;
+}
+
+/**
+ * Pełny pobór stacji na cykl: byt razy wielkość osady, wojsko razy przemysł.
+ *
+ * Istnieje po to, żeby ten rachunek był w JEDNYM miejscu. Wcześniej mnożenie
+ * `SYSTEM_DEMAND × upkeepScale` stało w czterech kopiach — solverze, saldzie
+ * stacji, rachunku przeładunku i tempie na sekundę — i każda zmiana modelu
+ * wymagała trafienia we wszystkie cztery naraz.
+ */
+export function systemDemandFor(industry, extra = null) {
+  const out = {};
+  const byt = upkeepScale(industry);
+  const wojsko = militaryScale(industry);
+  for (const [id, perCycle] of Object.entries(STATION_UPKEEP)) out[id] = perCycle * byt;
+  for (const [id, perCycle] of Object.entries(MILITARY_UPKEEP)) {
+    if (wojsko > 0) out[id] = (out[id] || 0) + perCycle * wojsko;
+  }
+  for (const [id, perCycle] of Object.entries(extra || FLEET_DEMAND)) {
+    out[id] = (out[id] || 0) + perCycle * wojsko;
+  }
+  return out;
+}
+
+/**
  * Składa profil przemysłowy z ról.
  *
  * `capacity` to CAŁKOWITA moc przerobowa stacji, nie moc jednej linii. To
@@ -374,7 +411,12 @@ export function buildIndustryMap(spec) {
     const bump = (target, res, amount) => target.set(res, (target.get(res) || 0) + amount);
 
     for (const [id, industry] of map) {
-      if (!industry.capacity) continue;
+      // Stacja bez fabryki NADAL się liczy, jeśli ma załogę: kopalnia księżycowa
+      // niczego nie rafinuje, a mimo to wydobywa surowiec i zjada byt. Warunek
+      // na samej `capacity` czynił ją niewidzialną dla planu, choć w biegu
+      // istniała — czyli dokładnie ta rozbieżność plan/runtime, przez którą
+      // działa rosły do sufitu magazynu.
+      if (!industry.capacity && !industry.size) continue;
       const planet = PLANET_YIELD[id];
       if (planet?.rate > 0) {
         const total = EXTRACTION_PER_CYCLE * planet.rate;
@@ -389,8 +431,8 @@ export function buildIndustryMap(spec) {
           if (out > 0) bump(producers, res, 1);
         }
       }
-      for (const [res, perCycle] of Object.entries(SYSTEM_DEMAND)) {
-        bump(demand, res, perCycle * upkeepScale(industry));
+      for (const [res, amount] of Object.entries(systemDemandFor(industry))) {
+        bump(demand, res, amount);
       }
     }
 
@@ -459,7 +501,40 @@ export const SYSTEM_INDUSTRY_SPEC = Object.freeze({
   // Liga Pasa robi myśliwce: ma własny metal i krzem, a jej ośrodki są małe
   // i rozproszone — płatowce pasują jej lepiej niż wielkie kadłuby.
   ceres: { capacity: 7.6, roles: ['foundry', 'electronics', 'shipworks', 'systems', 'aerospace'], size: 1.0 },
-  vesta: { capacity: 2.0, roles: ['foundry'], size: 0.4 }
+  vesta: { capacity: 2.0, roles: ['foundry'], size: 0.4 },
+
+  // ---------- KSIĘŻYCE ----------
+  //
+  // Wszystkie mają `capacity: 0` — żaden nie rafinuje ani nie montuje. To jest
+  // sedno podziału ról: księżyc daje SUROWIEC, planeta go PRZERABIA, a rdzeń
+  // nadal dostarcza komponenty. Dzięki temu dochodzi ruch lokalny (1–3 minuty
+  // lotu), a długie trasy do rdzenia zostają nietknięte.
+  //
+  // `size` 0,3 to podłoga `upkeepScale` — mniejszej osady ten model nie
+  // rozróżnia, więc wpisujemy wprost tyle, ile naprawdę kosztuje.
+  //
+  // Księżyce PUSTE nie mają tu wpisu w ogóle: nie ma załogi, nie ma bytu,
+  // nie ma popytu. To działka do zajęcia, nie port.
+
+  // kopalnie — wydobycie wg PLANET_YIELD
+  io: { capacity: 0, roles: [], size: 0.3 },
+  europa: { capacity: 0, roles: [], size: 0.3 },
+  tytan: { capacity: 0, roles: [], size: 0.3 },
+  enceladus: { capacity: 0, roles: [], size: 0.3 },
+  rhea: { capacity: 0, roles: [], size: 0.3 },
+  tethys: { capacity: 0, roles: [], size: 0.3 },
+  titania: { capacity: 0, roles: [], size: 0.3 },
+  oberon: { capacity: 0, roles: [], size: 0.3 },
+  ariel: { capacity: 0, roles: [], size: 0.3 },
+  tryton: { capacity: 0, roles: [], size: 0.3 },
+
+  // węzły — depot, garnizon, aneks stoczni; nic nie wydobywają ani nie robią
+  luna: { capacity: 0, roles: [], size: 0.3 },
+  fobos: { capacity: 0, roles: [], size: 0.3 },
+  dejmos: { capacity: 0, roles: [], size: 0.3 },
+  ganimedes: { capacity: 0, roles: [], size: 0.3 },
+  kallisto: { capacity: 0, roles: [], size: 0.3 },
+  mimas: { capacity: 0, roles: [], size: 0.3 }
 });
 
 export const STATION_INDUSTRY = buildIndustryMap(SYSTEM_INDUSTRY_SPEC);
@@ -562,8 +637,8 @@ export function stationHaulTonnage(industryMap = STATION_INDUSTRY) {
       for (const [res, need] of Object.entries(recipe.in)) add(res, -need * batches);
       for (const [res, produced] of Object.entries(recipe.out)) add(res, produced * batches);
     }
-    for (const [res, perCycle] of Object.entries(SYSTEM_DEMAND)) {
-      add(res, -perCycle * upkeepScale(industry));
+    for (const [res, amount] of Object.entries(systemDemandFor(industry))) {
+      add(res, -amount);
     }
     netto[id] = local;
   }
@@ -618,8 +693,8 @@ export function systemHaulTonnage(industryMap = STATION_INDUSTRY) {
       for (const [res, need] of Object.entries(recipe.in)) add(res, -need * batches);
       for (const [res, out] of Object.entries(recipe.out)) add(res, out * batches);
     }
-    for (const [res, perCycleUse] of Object.entries(SYSTEM_DEMAND)) {
-      add(res, -perCycleUse * upkeepScale(industry));
+    for (const [res, amount] of Object.entries(systemDemandFor(industry))) {
+      add(res, -amount);
     }
     for (const [res, net] of Object.entries(local)) {
       if (net < 0) bump(res, -net);
@@ -673,8 +748,8 @@ export function getStationIndustry(station) {
  * To jest plan nominalny, a nie pomiar bieżącej produkcji: zakłada pełne
  * wykorzystanie wszystkich linii niezależnie od stanu magazynu i dostępności
  * wsadu. Wartość dodatnia oznacza nadwyżkę, ujemna — stały popyt, który
- * logistyka musi pokryć. `SYSTEM_DEMAND` obejmuje zarówno byt stacji, jak i
- * utrzymanie floty.
+ * logistyka musi pokryć. Pobór obejmuje byt stacji, gotowość bojową
+ * i utrzymanie floty — patrz `systemDemandFor`.
  *
  * @param {object} station stacja z `id`/`planet.id` i opcjonalnym profilem `industry`
  * @returns {Record<string, number>} saldo zasobu na sekundę przy economy scale = 1
@@ -701,9 +776,8 @@ export function stationNetRates(station) {
     for (const [id, produced] of Object.entries(recipe.out)) add(id, produced * batchesPerSecond);
   }
 
-  const demandScale = upkeepScale(industry) / ECONOMY_CYCLE_SECONDS;
-  for (const [id, perCycle] of Object.entries(SYSTEM_DEMAND)) {
-    add(id, -perCycle * demandScale);
+  for (const [id, amount] of Object.entries(systemDemandFor(industry))) {
+    add(id, -amount / ECONOMY_CYCLE_SECONDS);
   }
 
   return net;
@@ -810,7 +884,7 @@ function runRecipes(station, econ, cycles) {
  * ale NIE bierze `FLEET_DEMAND`: podzespoły schodzą przy budowie okrętów
  * w stoczni, a nie z samego stania w porcie.
  *
- * Próba zjadania tu całego `SYSTEM_DEMAND` została zmierzona i cofnięta:
+ * Próba zjadania tu także `FLEET_DEMAND` została zmierzona i cofnięta:
  * Merkury i Wenus, które podzespołów nie robią, schodziły na zero płyt,
  * awioniki, rdzeni i silników naraz — transport nie ma jak wykarmić dziesięciu
  * stacji komponentami, choć bilans globalny się domyka.
@@ -820,9 +894,12 @@ function runRecipes(station, econ, cycles) {
  */
 function runLifeSupport(station, econ, cycles) {
   const industry = getStationIndustry(station);
-  const scale = upkeepScale(industry) * cycles;
-  for (const [id, perCycle] of Object.entries(RUNTIME_UPKEEP)) {
-    takeResource(econ, id, perCycle * scale);
+  const kroki = Math.max(0, cycles);
+  // Byt idzie od wielkości osady, gotowość bojowa od przemysłu — `extra: {}`
+  // odcina `FLEET_DEMAND`, bo podzespoły schodzą w stoczni przy budowie okrętu,
+  // a nie z samego stania w porcie.
+  for (const [id, amount] of Object.entries(systemDemandFor(industry, {}))) {
+    takeResource(econ, id, amount * kroki);
   }
 }
 
@@ -837,7 +914,7 @@ function runLifeSupport(station, econ, cycles) {
  * Opuszczone stacje pomija — nie mają kto obsługiwać zakładów. Zostaje im
  * tylko to, co zostało w magazynach.
  */
-export function runStationEconomy(station, econ, cycles = 1, rng = Math.random) {
+export function runStationEconomy(station, econ, cycles = 1, rng = Math.random, options = {}) {
   if (!station || !econ || !econ.resources || isDerelict(station)) return false;
   const runs = Math.max(0, Number(cycles) || 0);
   if (runs <= 0) return false;
@@ -845,6 +922,18 @@ export function runStationEconomy(station, econ, cycles = 1, rng = Math.random) 
   runExtraction(station, econ, runs, rng);
   runRecipes(station, econ, runs);
   runLifeSupport(station, econ, runs);
+  // Po produkcji i zużyciu, czyli na stanie, który naprawdę zostaje w magazynie.
+  //
+  // `cycles` znaczy DWIE różne rzeczy zależnie od wołającego: w grze to liczba
+  // cykli, które faktycznie minęły, a w symulacji i demie — mnożnik
+  // przepustowości przy jednym cyklu czasu. Przyduszenie liczy się w sekundach
+  // gry, więc wołający może podać je wprost. Bez tego przy skali ×60 głód
+  // narastał sześćdziesiąt razy za szybko i każda stacja po kwadransie stała
+  // na maksymalnej dopłacie.
+  const sekundy = Number.isFinite(options.seconds)
+    ? Math.max(0, options.seconds)
+    : runs * ECONOMY_CYCLE_SECONDS;
+  updateDuress(station, econ, sekundy);
   return true;
 }
 
@@ -911,7 +1000,12 @@ export function getStationSurpluses(station, econ, limit = 6) {
  */
 export function stationWantsResource(station, resourceId) {
   const id = String(resourceId || '');
-  if (STATION_UPKEEP[id] || MILITARY_UPKEEP[id]) return true;
+  if (STATION_UPKEEP[id]) return true;
+  // Uzbrojenia i amunicji chce tylko ten, kto je NAPRAWDĘ zużywa. Kopalnia
+  // księżycowa ma wiertło i kilkunastu ludzi — zamawianie jej torped tylko
+  // dlatego, że figuruje w poborze militarnym, kazałoby transportowi wozić
+  // je na szesnaście skał, gdzie nie ma ich jak użyć.
+  if (MILITARY_UPKEEP[id]) return militaryScale(getStationIndustry(station)) > 0;
   // Popyt spoza receptur — dziś stocznia, jutro remonty i budowa.
   //
   // Bez tego konsument, który nie jest recepturą, jest dla warstwy transportu
@@ -961,8 +1055,78 @@ export const PRICE_MODEL = Object.freeze({
   spread: 0.12,
   /** Frakcja dopłaca za to, czego chce, i obniża cenę tego, czego ma w bród. */
   demandBonus: 0.15,
-  supplyDiscount: 0.15
+  supplyDiscount: 0.15,
+
+  // ---------- PRZYDUSZENIE ----------
+  //
+  // Samo zapełnienie nie wystarcza. Magazyn na zerze wygląda tak samo minutę
+  // po opróżnieniu i po sześciu godzinach bez dostawy, a to są dwie zupełnie
+  // różne sytuacje: pierwsza to wahnięcie, druga to stacja, która zaraz stanie.
+  // Bez tej składowej cena mówiła „brakuje", ale nigdy „brakuje OD DAWNA".
+  //
+  // Skutek jest handlowy, nie kosmetyczny: rosnąca cena ściąga niezależnych
+  // kupców tam, gdzie planista frakcyjny nie nadąża. Głód sam kupuje sobie
+  // transport.
+
+  /** Poniżej tego zapełnienia liczy się czas głodu. */
+  duressFill: 0.08,
+  /** Maksymalna dopłata za długi niedobór — dochodzi do mnożnika niedoboru. */
+  duressBonus: 1.6,
+  /** Po tylu sekundach głodu dopłata sięga ~63% maksimum. */
+  duressHalfLife: 1800,
+  /** Ile razy szybciej głód odpuszcza po dostawie, niż narastał. */
+  duressRelief: 3
 });
+
+/**
+ * Dopłata za DŁUGOŚĆ niedoboru. 1,0 świeżo po opróżnieniu, w granicy 2,6×.
+ *
+ * Krzywa nasycająca, nie liniowa: pierwsza godzina głodu ma podnieść cenę
+ * mocno, druga już niewiele. Inaczej stacja opuszczona na dobę wyceniałaby rudę
+ * na tysiące kredytów i cały rynek zwinąłby się do jednego kierunku.
+ */
+export function duressMultiplier(seconds) {
+  const czas = Math.max(0, Number(seconds) || 0);
+  if (czas <= 0) return 1;
+  return 1 + PRICE_MODEL.duressBonus * (1 - Math.exp(-czas / PRICE_MODEL.duressHalfLife));
+}
+
+/** Ile sekund dana stacja siedzi na zerze z tym surowcem. */
+export function getDuress(econ, resourceId) {
+  const value = Number(econ?.duress?.[String(resourceId || '')]);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+/**
+ * Nalicza i wygasza przyduszenie. Wołane z `runStationEconomy` po produkcji
+ * i zużyciu, czyli na świeżym stanie magazynu.
+ *
+ * Liczone WYŁĄCZNIE dla surowców, których stacja naprawdę chce. Kopalnia
+ * lodu nie jest „przyduszona brakiem torped" tylko dlatego, że ich nie ma —
+ * bez tego filtra każdy port zgłaszałby głód na trzydziestu surowcach naraz
+ * i dopłata przestałaby cokolwiek znaczyć.
+ */
+export function updateDuress(station, econ, seconds) {
+  const dt = Math.max(0, Number(seconds) || 0);
+  if (!econ?.resources || dt <= 0) return;
+  if (!econ.duress) econ.duress = {};
+
+  for (const id of RESOURCE_KEYS) {
+    const cap = capacityOf(econ, id);
+    if (cap <= 0) continue;
+    const fill = amountOf(econ, id) / cap;
+
+    if (fill <= PRICE_MODEL.duressFill && stationWantsResource(station, id)) {
+      econ.duress[id] = getDuress(econ, id) + dt;
+      continue;
+    }
+    const teraz = getDuress(econ, id);
+    if (teraz <= 0) continue;
+    const nowy = teraz - dt * PRICE_MODEL.duressRelief;
+    if (nowy <= 0) delete econ.duress[id];
+    else econ.duress[id] = nowy;
+  }
+}
 
 /** Mnożnik niedoboru: 1.8 przy pustym magazynie, 0.6 przy pełnym. */
 export function scarcityMultiplier(fill) {
@@ -1006,7 +1170,11 @@ export function resourcePrice(station, econ, resourceId, options = {}) {
 
   const scarcity = scarcityMultiplier(fill);
   const profile = factionPriceProfile(station?.factionId, resourceId);
-  const market = def.value * scarcity * profile;
+  // Trzeci składnik: JAK DŁUGO brakuje. Pusty magazyn minutę po opróżnieniu
+  // i pusty od sześciu godzin to nie jest ta sama cena.
+  const duressSeconds = getDuress(econ, resourceId);
+  const duress = duressMultiplier(duressSeconds);
+  const market = def.value * scarcity * profile * duress;
 
   const half = PRICE_MODEL.spread / 2;
   const reputationMul = options.reputation
@@ -1018,6 +1186,9 @@ export function resourcePrice(station, econ, resourceId, options = {}) {
     fill,
     scarcity,
     profile,
+    /** Mnożnik za długość głodu i ile sekund go już trwa. */
+    duress,
+    duressSeconds,
     market,
     /** Ile trzeba zapłacić, żeby kupić od stacji. */
     ask: market * (1 + half) * reputationMul,

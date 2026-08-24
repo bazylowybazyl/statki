@@ -1,17 +1,18 @@
 export const TARGETING_MODE = Object.freeze({
   SINGLE: 0,
   MULTI: 1,
-  SUB: 2
+  SUB: 2,
+  SELECT: 3
 });
 
-export const TARGETING_MODE_NAMES = Object.freeze(['SINGLE', 'MULTI', 'SUB']);
-export const TARGETING_MODE_COLORS = Object.freeze(['#ffb648', '#34e7ff', '#52ff9a']);
-export const TARGETING_MODE_ICONS = Object.freeze(['◇', '][', '⌁']);
+export const TARGETING_MODE_NAMES = Object.freeze(['SINGLE', 'MULTI', 'SUB', 'SELECT']);
+export const TARGETING_MODE_COLORS = Object.freeze(['#ffb648', '#34e7ff', '#52ff9a', '#ffffff']);
+export const TARGETING_MODE_ICONS = Object.freeze(['◇', '][', '⌁', '◈']);
 
 export function targetingModeFromWheelVector(dx, dy, deadzone = 25) {
   const x = Number(dx) || 0;
   const y = Number(dy) || 0;
-  if (Math.hypot(x, y) <= Math.max(0, Number(deadzone) || 0)) return -1;
+  if (Math.hypot(x, y) <= Math.max(0, Number(deadzone) || 0)) return TARGETING_MODE.SELECT;
 
   const deg = ((Math.atan2(y, x) * 180 / Math.PI) + 360) % 360;
   if (deg < 120) return TARGETING_MODE.MULTI;

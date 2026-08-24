@@ -1251,6 +1251,14 @@ export const Core3D = {
           if (dstDirs && srcDirs) dstDirs[i].set(srcDirs[i * 2], srcDirs[i * 2 + 1]);
         }
       }
+      // Kasujemy licznik przy KONSUMPCJI, nie u producenta. Wcześniej zerował go
+      // każdy, kto zamierzał coś dorzucić: EngineVfxSystem na starcie swojego
+      // update, a potem jeszcze reactorblow i rocketSystem3D z ticku overlaya —
+      // czyli już PO tym passie. Efekt: źródła z wybuchów i rakiet nigdy nie
+      // trafiały na ekran (kasował je najbliższy update silników), a zafalowania
+      // od dysz znikały na czas eksplozji. Teraz producenci tylko dorzucają, a
+      // pass zabiera wszystko, co uzbierało się od poprzedniej klatki.
+      this.heatHazeCount = 0;
     }
     if (dbgEnabled) recordRenderDbg('coreUberSetup', performance.now() - tPost0);
 
@@ -1511,6 +1519,8 @@ export const Core3D = {
     return true;
   },
 
+  // Zostawione dla zgodności — licznik kasuje teraz pass w render(). Wołanie
+  // tego z kodu producenta kasuje cudze źródła z tej klatki.
   beginHeatHazeFrame() { this.heatHazeCount = 0; },
   
   pushHeatHazeWorld(worldX, worldY, worldZ = -4, radiusWorld = 80, strength = 1.0, dirWorldX = 0, dirWorldY = 0) {

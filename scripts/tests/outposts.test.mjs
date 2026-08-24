@@ -44,7 +44,9 @@ export function run() {
   const trasa = chooseRoute(network, 'mars', 'belt-osada', { mass: 100, value: 5000 });
   t.check('da się do niego wytyczyć trasę', !!trasa);
   t.check('trasa ma sensowny dystans', trasa.distance > 0);
-  t.equal('liczba stacji rośnie o przyczółki', network.stations.length, 10);
+  // Przyczółki liczymy osobno od planet i księżyców — inaczej ta asercja
+  // pilnuje wyłącznie tego, ile ciał ma układ.
+  t.equal('liczba przyczółków', network.stations.filter(s => s.outpost && !s.moon).length, 2);
 
   // ----------------------------------------------------------
   t.section('Przyczółek nosi WŁASNY profil przemysłowy');

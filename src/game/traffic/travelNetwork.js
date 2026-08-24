@@ -19,7 +19,7 @@
  * Geometria pochodzi z `systemMap.js`, więc przestawienie orbit przelicza tu wszystko.
  */
 
-import { buildSystemMap } from '../../data/systemMap.js';
+import { buildSystemMap, SYSTEM_MAP_MOONS, moonWorldPosition } from '../../data/systemMap.js';
 
 // ============================================================
 // Napędy
@@ -200,6 +200,42 @@ export function buildTravelNetwork(options = {}) {
       // Przyczółek jest mniejszy od portu planetarnego — mniej stanowisk,
       // brak pierścienia, ale to nadal pełnoprawny rynek.
       berths: outpost.berths ?? 4,
+      hasGate: false,
+      outpost: true
+    });
+  }
+
+  // KSIĘŻYCE — po planetach, bo pozycję liczy się OD RODZICA.
+  //
+  // Dokładane jako pełnoprawne stacje: mają port, magazyn, frakcję i rynek,
+  // więc handel, doki, patrole i agenci obsługują je bez żadnej zmiany. Różni
+  // je tylko to, skąd biorą współrzędne — i `parentId`, dzięki któremu wiadomo,
+  // czyim są zapleczem.
+  const moons = options.moons === false ? [] : (options.moons || SYSTEM_MAP_MOONS);
+  for (const moon of moons) {
+    const parent = nodes.get(String(moon.parentId || ''));
+    if (!parent) continue;
+    const pos = moonWorldPosition(moon, parent);
+    const pusty = moon.role === 'empty' || derelict.has(moon.id);
+    add({
+      id: String(moon.id),
+      kind: NODE_KIND.STATION,
+      label: moon.label || moon.id,
+      x: pos.x,
+      y: pos.y,
+      // Orbita wokół GWIAZDY jest tu tylko informacyjna — księżyc trzyma się
+      // planety, a nie własnego toru wokół Słońca.
+      orbitRadius: parent.orbitRadius,
+      angle: parent.angle,
+      parentId: parent.id,
+      moon: true,
+      moonOrbitRadius: Number(moon.orbitRadius) || 0,
+      moonAngle: Number(moon.angle) || 0,
+      role: moon.role || 'node',
+      // Pusty księżyc nie ma załogi ani nabrzeży: to działka do zajęcia,
+      // nie port. Stąd zero stanowisk — dokładnie jak opuszczony Neptun.
+      derelict: pusty,
+      berths: pusty ? 0 : (moon.berths ?? 3),
       hasGate: false,
       outpost: true
     });

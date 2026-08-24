@@ -23,6 +23,7 @@ import { COURSE_KIND, launchCourse, travelStage } from './courseRegistry.js';
 import { chooseRoute } from './travelNetwork.js';
 import { areFactionsHostile, getFactionStance } from '../../data/factions.js';
 import { RESOURCES } from '../../data/resources.js';
+import { getStationIndustry, militaryScale } from '../stationEconomy.js';
 import { WARSHIP_CLASSES, takeShips, returnShips, fleetPower } from './shipyards.js';
 
 export const WAR_MODEL = Object.freeze({
@@ -171,6 +172,9 @@ export function declareAmmoDemand(stations, config = WAR_MODEL) {
   let ile = 0;
   for (const station of stations || []) {
     if (!station?.factionId) continue;
+    // Skrzynie wozi się tam, gdzie stacjonuje flota — czyli do ośrodków
+    // przemysłowych. Kopalnia bez fabryki nie ma czym strzelać ani czego bronić.
+    if (militaryScale(getStationIndustry(station)) <= 0) continue;
     const juz = new Set(station.extraDemand || []);
     for (const id of ids) juz.add(id);
     station.extraDemand = [...juz];

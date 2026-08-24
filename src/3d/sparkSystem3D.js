@@ -115,6 +115,15 @@ let iPositions, iVelocities, iStartTimes, iLifeTimes, iSizes;
 let idx = 0;
 let isDirty = false;
 let globalTime = 0;
+// Pula 20 000 iskier wisiala w scenie od startu gry z `frustumCulled = false`,
+// wiec karta liczyla vertex shader dla wszystkich slotow na kazda klatke, nawet
+// gdy nikt nie strzelal. Trzymamy high-water uzytych slotow, moment wygasniecia
+// najdluzszej iskry i zakres dotknietych indeksow — dzieki temu instanceCount
+// spada do 0, siatka znika ze sceny, a upload obejmuje tylko zapisany wycinek.
+let highWater = 0;
+let liveUntil = -Infinity;
+let dirtyLo = -1;
+let dirtyHi = -1;
 
 export const SparkSystem3D = {
   isInitialized: false,
@@ -137,7 +146,7 @@ export const SparkSystem3D = {
     geometry = new THREE.InstancedBufferGeometry();
     geometry.setAttribute('position', baseGeo.getAttribute('position'));
     geometry.setAttribute('uv', baseGeo.getAttribute('uv'));
-    geometry.instanceCount = MAX_SPARKS;
+    geometry.instanceCount = 0;
 
     iPositions  = new Float32Array(MAX_SPARKS * 3);
     iVelocities = new Float32Array(MAX_SPARKS * 3);
@@ -166,6 +175,7 @@ export const SparkSystem3D = {
     });
 
     mesh = new THREE.Mesh(geometry, material);
+    mesh.visible = false;
     mesh.frustumCulled = false;
     mesh.renderOrder = 900;
     mesh.layers.set(0);
@@ -188,9 +198,16 @@ export const SparkSystem3D = {
     iVelocities[i3 + 1] = 0;
     iVelocities[i3 + 2] = vy;
 
+    const clampedLife = THREE.MathUtils.clamp(Number.isFinite(life) ? life : 0.25, MIN_SPARK_LIFE, MAX_SPARK_LIFE);
     iStartTimes[i] = globalTime;
-    iLifeTimes[i]  = THREE.MathUtils.clamp(Number.isFinite(life) ? life : 0.25, MIN_SPARK_LIFE, MAX_SPARK_LIFE);
+    iLifeTimes[i]  = clampedLife;
     iSizes[i]      = THREE.MathUtils.clamp(size !== undefined ? size : 0.5, MIN_SPARK_SIZE, MAX_SPARK_SIZE);
+
+    if (i + 1 > highWater) highWater = i + 1;
+    if (dirtyLo < 0 || i < dirtyLo) dirtyLo = i;
+    if (i > dirtyHi) dirtyHi = i;
+    const diesAt = globalTime + clampedLife;
+    if (diesAt > liveUntil) liveUntil = diesAt;
 
     idx = (idx + 1) % MAX_SPARKS;
     isDirty = true;
@@ -216,12 +233,32 @@ export const SparkSystem3D = {
 
     if (isDirty) {
       const attrs = geometry.attributes;
-      attrs.iPosition.needsUpdate  = true;
-      attrs.iVelocity.needsUpdate  = true;
-      attrs.iStartTime.needsUpdate = true;
-      attrs.iLifeTime.needsUpdate  = true;
-      attrs.iSize.needsUpdate      = true;
+      const lo = dirtyLo;
+      const count = dirtyHi - lo + 1;
+      const list = [attrs.iPosition, attrs.iVelocity, attrs.iStartTime, attrs.iLifeTime, attrs.iSize];
+      for (const attr of list) {
+        const items = attr.itemSize || 1;
+        // Zakresy z klatek bez uploadu kumuluja sie (three czysci je dopiero po
+        // wgraniu) — po progu wracamy do pelnego bufora.
+        if (attr.updateRanges && attr.updateRanges.length >= 8) attr.clearUpdateRanges();
+        else if (attr.addUpdateRange) attr.addUpdateRange(lo * items, count * items);
+        attr.needsUpdate = true;
+      }
+      dirtyLo = -1;
+      dirtyHi = -1;
       isDirty = false;
+    }
+
+    const live = globalTime < liveUntil;
+    if (mesh.visible !== live) mesh.visible = live;
+    if (live) {
+      if (geometry.instanceCount !== highWater) geometry.instanceCount = highWater;
+    } else if (highWater !== 0) {
+      // Pusta pula wraca na start — kolejna seria zajmie tylko tyle slotow, ile
+      // naprawde potrzebuje, zamiast ciagnac stary high-water do konca sesji.
+      highWater = 0;
+      idx = 0;
+      geometry.instanceCount = 0;
     }
   },
 
@@ -286,6 +323,10 @@ export const SparkSystem3D = {
     idx = 0;
     isDirty = false;
     globalTime = 0;
+    highWater = 0;
+    liveUntil = -Infinity;
+    dirtyLo = -1;
+    dirtyHi = -1;
     this.isInitialized = false;
   }
 };

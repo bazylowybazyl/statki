@@ -216,6 +216,39 @@ export function drawMultiTargetingNode(drawCtx, x, y, radius, progress, base = '
   return ready;
 }
 
+export function drawSelectTargetingReticle(drawCtx, x, y, radius, progress, visualScale = 1) {
+  const scale = targetingVisualScale(visualScale);
+  radius = Math.max(0, Number(radius) || 0) / scale;
+  const p = clamp(progress, 0, 1);
+  const diamond = clamp(radius * 0.7, 8, 14);
+  const gap = diamond + 5;
+  const dash = clamp(radius * 0.55, 9, 20);
+
+  drawCtx.save();
+  drawCtx.translate(x, y);
+  drawCtx.scale(scale, scale);
+  drawCtx.globalAlpha = 0.45 + 0.2 * p;
+  drawCtx.strokeStyle = '#ffffff';
+  drawCtx.lineWidth = 1.5;
+  drawCtx.lineCap = 'square';
+  drawCtx.lineJoin = 'miter';
+
+  drawCtx.save();
+  drawCtx.rotate(Math.PI * 0.25);
+  drawCtx.strokeRect(-diamond, -diamond, diamond * 2, diamond * 2);
+  drawCtx.restore();
+
+  drawCtx.beginPath();
+  drawCtx.moveTo(-gap - dash, 0);
+  drawCtx.lineTo(-gap, 0);
+  drawCtx.moveTo(gap, 0);
+  drawCtx.lineTo(gap + dash, 0);
+  drawCtx.stroke();
+
+  drawCtx.restore();
+  return p >= 1;
+}
+
 export function drawSubTargetingReticle(drawCtx, x, y, radius, progress, base = '#ffb648', accent = '#ffd27a', visualScale = 1) {
   const scale = targetingVisualScale(visualScale);
   radius = Math.max(0, Number(radius) || 0) / scale;

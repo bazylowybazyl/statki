@@ -353,6 +353,10 @@ const PERF_PANEL_HTML = `
       id="perfDrawCallsShafts">--</span></div>
   <div class="perf-row"><span class="perf-label"> |- Ortho</span><span class="perf-val"
       id="perfDrawCallsOrtho">--</span></div>
+  <div class="perf-row"><span class="perf-label">   |- dysze/statki/wraki/bronie</span><span class="perf-val"
+      id="perfDrawCallsCategories">--</span></div>
+  <div class="perf-row"><span class="perf-label">   |- smugi (zwiniete ciala)</span><span class="perf-val"
+      id="perfDrawCallsImpostors">--</span></div>
   <div class="perf-row"><span class="perf-label"> |- FG</span><span class="perf-val"
       id="perfDrawCallsFg">--</span></div>
   <div class="perf-row"><span class="perf-label"> |- Bloom</span><span class="perf-val"
@@ -734,6 +738,8 @@ export const PerfHUD = {
       drawCallsPlanets: document.getElementById('perfDrawCallsPlanets'),
       drawCallsShafts: document.getElementById('perfDrawCallsShafts'),
       drawCallsOrtho: document.getElementById('perfDrawCallsOrtho'),
+      drawCallsCategories: document.getElementById('perfDrawCallsCategories'),
+      drawCallsImpostors: document.getElementById('perfDrawCallsImpostors'),
       drawCallsFg: document.getElementById('perfDrawCallsFg'),
       drawCallsBloom: document.getElementById('perfDrawCallsBloom'),
       drawCallsPost: document.getElementById('perfDrawCallsPost'),
@@ -1414,6 +1420,19 @@ export const PerfHUD = {
       if (e.drawCallsPlanets) e.drawCallsPlanets.textContent = formatDrawInfo(passes?.planets);
       if (e.drawCallsShafts) e.drawCallsShafts.textContent = formatDrawInfo(passes?.shafts);
       if (e.drawCallsOrtho) e.drawCallsOrtho.textContent = formatDrawInfo(passes?.ortho);
+      if (e.drawCallsCategories) {
+        // Rozbicie passa Ortho na to, co faktycznie da sie zbatchowac. Suma nie
+        // musi rownac sie licznikowi Ortho — poza tymi czterema kategoriami
+        // siedza tam jeszcze asteroidy, tarcze i pule czastek.
+        const cat = window.__drawCallStats;
+        e.drawCallsCategories.textContent = cat
+          ? `${cat.engineDraws} (${cat.engineNozzles} dysz) / ${cat.shipDraws} / ${cat.wreckDraws} / ${cat.weaponDraws}`
+          : '--';
+      }
+      if (e.drawCallsImpostors) {
+        const cat = window.__drawCallStats;
+        e.drawCallsImpostors.textContent = cat ? `${cat.impostorBodies} w 1 call` : '--';
+      }
       if (e.drawCallsFg) e.drawCallsFg.textContent = formatDrawInfo(passes?.fg);
       if (e.drawCallsBloom) e.drawCallsBloom.textContent = formatDrawInfo(passes?.bloom);
       if (e.drawCallsPost) e.drawCallsPost.textContent = formatDrawInfo(passes?.post);

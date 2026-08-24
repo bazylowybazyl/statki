@@ -793,13 +793,7 @@ class RocketSystem3D {
         }
         if (!this.heatHazeBursts.length) return;
 
-        const nowSec = performance.now() / 1000;
-        const lastStamp = Number(core._lastHeatHazeFrame) || -Infinity;
-        if (Math.abs(nowSec - lastStamp) > 0.003) {
-            core._lastHeatHazeFrame = nowSec;
-            core.beginHeatHazeFrame();
-        }
-
+        // Licznik zrodel kasuje pass w Core3D.render() — tutaj tylko dorzucamy.
         for (let i = 0; i < this.heatHazeBursts.length; i++) {
             const burst = this.heatHazeBursts[i];
             const t = THREE.MathUtils.clamp(burst.age / Math.max(0.001, burst.life), 0, 1);

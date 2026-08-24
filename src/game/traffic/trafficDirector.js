@@ -30,7 +30,7 @@ import { FACTION, areFactionsHostile, isDerelict } from '../../data/factions.js'
 import {
   COURSE_KIND, DWELL_REASON,
   launchCourse, advanceCourses, getActiveCourses, currentStage, stageProgress,
-  travelStage, dwellStage, wreckCourse, STAGE_KIND
+  travelStage, dwellStage, wreckCourse, STAGE_KIND, moveDwellTo, extendStage
 } from './courseRegistry.js';
 import { laneThreat, depositLoot, recordPirateLoss } from './piracy.js';
 import {
@@ -42,6 +42,11 @@ import {
   getShip, getCompany, maintainFleet
 } from './transportCompanies.js';
 import { findBerth, reserveBerth, releaseBerth } from './dockLayout.js';
+import {
+  createPortControl, registerPort, getPort, requestService, releaseService,
+  grantWaiting, holdingSlotPosition, estimateWait, absorbableDelay,
+  summarizePorts, needsService
+} from './portControl.js';
 import {
   createConvoyRegistry, formConvoy, convoyOf, detachCourse,
   convoyInterceptChance, resolveConvoyInterception, escortCost, shouldConvoy,
@@ -178,6 +183,13 @@ export function createDirector(network, registry, options = {}) {
     surplus: new Set(),
     /** `stacja` → ile kursów stoi tam na redzie, czekając na stanowisko. */
     portQueue: new Map(),
+    /**
+     * Kontrola ruchu przy stacjach: przydział stanowisk i miejsc w kolejce.
+     *
+     * Porty rejestrują się leniwie, przy pierwszym zgłoszeniu — dzięki temu
+     * stacja dołożona w trakcie biegu (stacja gracza) działa bez osobnego kroku.
+     */
+    portControl: createPortControl(options.portControl || {}),
     /** `stacja` → ile razy zabrakło tam jednostki do wywiezienia towaru. */
     shipShortage: new Map(),
     /** Konwoje: wiązanie kursów we wspólną pulę ryzyka. */
@@ -368,73 +380,125 @@ function rebalanceFleet(director) {
  * i przepustowość doku spada kilkukrotnie — to zmierzona pułapka z prototypu
  * pasowego, nie przypuszczenie.
  */
-function syncBerths(director) {
-  if (!director.docks?.size) return;
+/** Port rejestruje się przy pierwszym zgłoszeniu — stacja dołożona w trakcie
+ *  biegu (stacja gracza) działa bez osobnego kroku inicjalizacji. */
+function portOf(director, stationId) {
+  const istniejacy = getPort(director.portControl, stationId);
+  if (istniejacy) return istniejacy;
+  const layout = director.docks.get(stationId);
+  const node = getNode(director.network, stationId);
+  if (!layout || !node) return null;
+  return registerPort(director.portControl, stationId, layout, node);
+}
+
+/**
+ * KONTROLA RUCHU PRZY STACJACH.
+ *
+ * Zastąpiła `syncBerths`, które przydzielało stanowisko dopiero w chwili
+ * wejścia w postój i podmieniało pozycję kursu bez żadnego lotu. Na mapie
+ * wyglądało to tak, że wszystko zlatywało się do środka planety, było odbijane
+ * na jeden pierścień i teleportowało do doku, gdy ten się zwolnił.
+ *
+ * Teraz kolejność jest taka jak w prawdziwym porcie:
+ *   0. kto leci do zatłoczonej stacji, ZWALNIA W DRODZE (`absorbFraction`)
+ *   1. kto odszedł od nabrzeża, zwalnia stanowisko
+ *   2. zwolnione stanowiska dostają najdłużej czekający
+ *   3. przybywający dostają stanowisko albo miejsce w łuku oczekiwania
+ *
+ * Każda zmiana miejsca to LOT, nie podmiana współrzędnych: `moveDwellTo`
+ * zapisuje punkt wyjścia i czas dojścia, a `courseWorldPosition` interpoluje.
+ */
+function syncPorts(director) {
+  const { registry, portControl, docks } = director;
+  if (!docks?.size) return;
+  const now = registry.clock;
+  const config = portControl.config;
   director.portQueue.clear();
 
-  for (const course of getActiveCourses(director.registry)) {
-    const stage = currentStage(course);
-    // Stanowisko należy się temu, kto ma w porcie sprawę: załadunek, rozładunek,
-    // obsługę. `EXTRACT` odpada, bo dzieje się w polu, a `HOLD` — bo z definicji
-    // jest CZEKANIEM przy węźle, nie postojem przy nabrzeżu. Bez tego drugiego
-    // warunku rejder piracki i łowca nagród, których postój to właśnie `HOLD`,
-    // cumowali w porcie swojego celu i zajmowali stanowiska frachtowcom.
-    const wantsBerth = stage?.kind === STAGE_KIND.DWELL
-      && stage.reason !== DWELL_REASON.EXTRACT
-      && stage.reason !== DWELL_REASON.HOLD
-      && director.docks.has(stage.nodeId);
+  const aktywne = getActiveCourses(registry);
 
-    if (!wantsBerth) {
-      if (course.berthRef) {
-        releaseBerth(course.berthRef, director.registry.clock);
-        course.berthRef = null;
-        course.berthId = null;
+  // 0. Pochłanianie opóźnienia — jedyne miejsce, w którym kolejka kosztuje
+  //    czas TAM, GDZIE JEST TANI: w otwartej przestrzeni, a nie w tłoku.
+  for (const course of aktywne) {
+    if (course.absorbChecked) continue;
+    const stage = currentStage(course);
+    if (!stage || stage.kind !== STAGE_KIND.TRAVEL) continue;
+    if (!docks.has(stage.toId)) continue;
+    const zostalo = Math.max(0, stage.seconds - course.stageElapsed);
+    if (zostalo > config.assignHorizonSeconds) continue;
+
+    course.absorbChecked = true;
+    if (!portOf(director, stage.toId)) continue;
+    const pochlon = absorbableDelay(portControl,
+      estimateWait(portControl, stage.toId, course.unitClass, now));
+    if (pochlon > 1) {
+      extendStage(course, stage, pochlon);
+      portControl.stats.absorbed++;
+      portControl.stats.absorbedSeconds += pochlon;
+    }
+  }
+
+  // 1. Zwolnienie portu przez tych, którzy już odeszli.
+  for (const course of aktywne) {
+    const stage = currentStage(course);
+    if (needsService(stage, docks)) continue;
+    if (!course.portStationId) { course.blocked = false; continue; }
+    releaseService(portControl, course.id, now);
+    course.portStationId = null;
+    course.berthId = null;
+    course.berthRef = null;
+    course.holdSlot = null;
+    course.blocked = false;
+  }
+
+  // 2. Wpuszczanie z kolejki. FIFO po czasie oczekiwania — inaczej duży,
+  //    wolny frachtowiec nigdy nie wchodzi.
+  for (const stationId of docks.keys()) grantWaiting(portControl, stationId, now);
+
+  // 3. Przydział miejsc i dojścia.
+  for (const course of aktywne) {
+    const stage = currentStage(course);
+    if (!needsService(stage, docks)) continue;
+    const port = portOf(director, stage.nodeId);
+    if (!port) continue;
+
+    const przydzial = requestService(portControl, stage.nodeId, course, now, stage.seconds);
+    if (!przydzial) continue;
+    course.portStationId = stage.nodeId;
+
+    if (przydzial.berth) {
+      if (course.berthId !== przydzial.berthId) {
+        // Statek leci na stanowisko z bramy wjazdowej albo wprost z kolejki.
+        moveDwellTo(course, stage, { x: przydzial.berth.x, y: przydzial.berth.y },
+          config.approachSeconds);
+        course.berthId = przydzial.berthId;
+        course.berthRef = przydzial.berth;
+        course.holdSlot = null;
       }
       course.blocked = false;
       continue;
     }
-    if (course.berthRef) continue;
 
-    const layout = director.docks.get(stage.nodeId);
-    const pick = findBerth(layout, course.unitClass, director.registry.clock, { freeOnly: true });
-    if (!pick) {
-      // Port pełny: kurs STOI, a nie udaje, że się obsługuje. Stąd bierze się
-      // kolejka pod stacją — wcześniej stanowiska były ozdobą, bo postój leciał
-      // dalej niezależnie od tego, czy jest gdzie stanąć.
-      course.blocked = true;
-      director.portQueue.set(stage.nodeId, (director.portQueue.get(stage.nodeId) || 0) + 1);
-      if (!stage.pos) {
-        // Reda: każdy czekający dostaje WŁASNE miejsce.
-        //
-        // Kąt liczony z czasu startu układał je w jedną kupę, bo dyspozytor
-        // wystawia kursy paczkami — kilkanaście w tym samym ticku miało wtedy
-        // identyczny kąt. Hash identyfikatora daje stabilny, ale rozrzucony
-        // rozkład, a dwa pasma zapobiegają nakładaniu się przy dużej kolejce.
-        const node = getNode(director.network, stage.nodeId);
-        if (node) {
-          const seed = hashId(course.id);
-          const angle = (seed % 3600) / 3600 * Math.PI * 2;
-          const band = 1.02 + ((seed >> 12) % 5) * 0.045;
-          stage.pos = approachPoint(node, layout, angle, band);
-        }
-      }
-      continue;
+    if (course.holdSlot !== przydzial.slot) {
+      moveDwellTo(course, stage, holdingSlotPosition(portControl, port, przydzial.slot),
+        config.approachSeconds);
+      course.holdSlot = przydzial.slot;
     }
-    course.blocked = false;
-    reserveBerth(pick.berth, course.id, director.registry.clock + stage.seconds);
-    course.berthRef = pick.berth;
-    course.berthId = pick.berth.id;
-    // Statek stoi PRZY STANOWISKU, nie w środku planety.
-    stage.pos = { x: pick.berth.x, y: pick.berth.y };
+    course.blocked = true;
+    director.portQueue.set(stage.nodeId, (director.portQueue.get(stage.nodeId) || 0) + 1);
   }
 }
 
 /** Zwalnia stanowisko i jednostkę po zamknięciu kursu. */
 function closeCourseResources(director, course, options = {}) {
-  if (course.berthRef) {
-    releaseBerth(course.berthRef, director.registry.clock);
-    course.berthRef = null;
-  }
+  // Zwolnienie idzie przez dyspozytora portu, żeby razem ze stanowiskiem wróciło
+  // do puli także miejsce w kolejce — inaczej łuk oczekiwania zapełniłby się
+  // duchami kursów, których dawno nie ma.
+  releaseService(director.portControl, course.id, director.registry.clock);
+  course.berthRef = null;
+  course.berthId = null;
+  course.holdSlot = null;
+  course.portStationId = null;
   if (!director.companies || !course.payload?.shipId) return;
   const ship = getShip(director.companies, course.payload.shipId);
   if (!ship) return;
@@ -481,7 +545,12 @@ export function stagesFromRoute(route, originId, destinationId, options = {}) {
   const arrive = options.arrivePoint || null;
   const stages = [];
 
-  stages.push(dwellStage(originId, options.loadSeconds ?? LOAD_SECONDS, DWELL_REASON.LOAD, options.originBerthPos));
+  // Statek zaczyna kurs tam, gdzie stał — na orbicie postojowej portu, a nie
+  // w środku planety. Bez `entryPos` świeżo wystawiony kurs siedział przez
+  // jeden tick w punkcie zerowym stacji, zanim dyspozytor portu przydzielił mu
+  // stanowisko; przy dużym ruchu widać to było jako grudkę w środku globu.
+  stages.push(dwellStage(originId, options.loadSeconds ?? LOAD_SECONDS, DWELL_REASON.LOAD,
+    options.originBerthPos, { entryPos: options.originBerthPos || options.departPoint }));
   if (depart) {
     stages.push(travelStage(originId, originId, {
       mode: 'conventional',
@@ -505,16 +574,14 @@ export function stagesFromRoute(route, originId, destinationId, options = {}) {
     }));
   });
 
-  if (arrive) {
-    stages.push(travelStage(destinationId, destinationId, {
-      mode: 'conventional',
-      fromPos: arrive,
-      toPos: options.destinationPos,
-      seconds: MANOEUVRE_SECONDS,
-      risk: 0
-    }));
-  }
-  stages.push(dwellStage(destinationId, options.unloadSeconds ?? UNLOAD_SECONDS, DWELL_REASON.UNLOAD));
+  // Dolot KOŃCZY SIĘ na obrzeżu portu, a nie w środku planety. Miejsce —
+  // stanowisko albo orbita oczekiwania — przydziela dopiero dyspozytor portu,
+  // tuż przed przybyciem, i to on dokleja dojście.
+  //
+  // Wcześniej ostatni manewr celował w `destinationPos`, czyli w sam środek
+  // stacji: wszystko zlatywało się do jednego punktu i było stamtąd odbijane.
+  stages.push(dwellStage(destinationId, options.unloadSeconds ?? UNLOAD_SECONDS,
+    DWELL_REASON.UNLOAD, null, { entryPos: arrive }));
   return stages;
 }
 
@@ -1374,11 +1441,8 @@ export function dispatchMining(director, stations) {
       fromPos: index === 0 ? spot : null,
       toPos: index === inbound.legs.length - 1 ? back.arrivePoint : null
     })),
-    travelStage(best.station.id, best.station.id, {
-      mode: 'conventional', fromPos: back.arrivePoint, toPos: back.destinationPos,
-      seconds: MANOEUVRE_SECONDS, risk: 0
-    }),
-    dwellStage(best.station.id, UNLOAD_SECONDS, DWELL_REASON.UNLOAD)
+    dwellStage(best.station.id, UNLOAD_SECONDS, DWELL_REASON.UNLOAD, null,
+      { entryPos: back.arrivePoint })
   ];
 
   const course = launchCourse(registry, {
@@ -1707,7 +1771,7 @@ export function tickDirector(director, dt, stations) {
   settleCourseEvents(director, events);
 
   rollPiracy(director, dt);
-  syncBerths(director);
+  syncPorts(director);
   tickCooldowns(fleet, dt);
 
   // Gospodarka stacji chodzi własnym cyklem, niezależnie od tego, czy ktoś patrzy.
@@ -1717,7 +1781,10 @@ export function tickDirector(director, dt, stations) {
     const cycles = Math.max(0.01, config.economyScale);
     for (const station of stations) {
       const econ = director.getEconomy(station.id);
-      if (econ) runStationEconomy(station, econ, cycles);
+      // `cycles` to mnożnik przepustowości, a nie upływ czasu — jeden obrót tej
+      // pętli to zawsze JEDEN cykl gry, niezależnie od skali gospodarki.
+      if (econ) runStationEconomy(station, econ, cycles, undefined,
+        { seconds: ECONOMY_CYCLE_SECONDS });
     }
   }
 
@@ -1797,8 +1864,24 @@ export function courseWorldPosition(network, course) {
   if (stage.kind === STAGE_KIND.DWELL) {
     // Własna pozycja etapu wygrywa ze środkiem węzła: statek stoi przy swoim
     // stanowisku albo w swoim miejscu wydobycia, a nie w środku planety.
-    const at = stage.pos || getNode(network, stage.nodeId);
-    return at ? { x: at.x, y: at.y, moving: false, mode: null, blocked: !!course.blocked } : null;
+    const at = stage.pos || stage.entryPos || getNode(network, stage.nodeId);
+    if (!at) return null;
+    // DOJŚCIE. Zmiana miejsca w porcie — z bramy na kolejkę, z kolejki na
+    // stanowisko — jest lotem, nie podmianą współrzędnych. Bez tej interpolacji
+    // rekord przeskakiwał natychmiast i to był ten teleport do doku.
+    const ruch = Number(stage.moveSeconds) || 0;
+    const skad = stage.fromPos;
+    if (ruch > 0 && skad) {
+      const t = Math.max(0, Math.min(1, (Number(course.stageElapsed) || 0) / ruch));
+      if (t < 1) {
+        return {
+          x: skad.x + (at.x - skad.x) * t,
+          y: skad.y + (at.y - skad.y) * t,
+          moving: true, mode: 'conventional', blocked: !!course.blocked
+        };
+      }
+    }
+    return { x: at.x, y: at.y, moving: false, mode: null, blocked: !!course.blocked };
   }
 
   const from = stage.fromPos || getNode(network, stage.fromId);
@@ -1834,6 +1917,8 @@ export function directorSnapshot(director) {
     byMode,
     /** Ile kursów stoi na redzie, bo port nie ma wolnego stanowiska. */
     queued,
+    /** Kolejki per port plus ile opóźnienia pochłonięto zwalnianiem w drodze. */
+    ports: summarizePorts(director.portControl),
     convoys: summarizeConvoys(director.convoys),
     patrols: summarizePatrols(director.patrols),
     /** Ile jest obsługiwanych przy stanowiskach. */
