@@ -15,6 +15,8 @@
 import * as THREE from "three";
 import { RocketFireGPU, FlameSettings } from "./rocketFireGPU.js";
 import { RocketSmokeGPU } from "./rocketSmokeGPU.js";
+import { isEntityShieldBlocking } from "../../shieldSystem.js";
+import { shieldImpactClass } from "../data/weapons.js";
 
 /* ═══════════════════════════════════════════════════
    TUNABLES
@@ -381,6 +383,7 @@ class RocketSystem3D {
         r.fractalRingType = profile.fractalRingType;
         r.explosionStyle = profile.explosionStyle;
         r.didImpactDamage = false;
+        r.hitShield       = false;
         r.weaponDef       = weaponDef;
         r.closestTargetDist = Infinity;
         r.lastTargetDist = Infinity;
@@ -810,6 +813,19 @@ class RocketSystem3D {
         if (target._isPositionTarget) return;
 
         const dmg = r.damage || 60;
+
+        // Rakiety zdejmowały HP tarczy przez applyDamageTo*, ale nigdy nie
+        // rejestrowały trafienia — pole nie dostawało ani ripple, ani cząsteczek.
+        if (isEntityShieldBlocking(target) && typeof window !== "undefined" && window.registerShieldImpact) {
+            window.registerShieldImpact(
+                target, r.position.x, r.position.z, dmg, shieldImpactClass(r.weaponDef)
+            );
+            // Kula ognia na polu energetycznym to VFX trafienia w PANCERZ.
+            // Detonacja zostaje (obrażenia obszarowe, dźwięk), znika sam pokaz —
+            // zastępuje go bańka i cząsteczki w kolorze tarczy.
+            r.hitShield = true;
+        }
+
         const applyNpc    = window.applyDamageToNPC;
         const applyPlayer = window.applyDamageToPlayer;
 
@@ -887,6 +903,13 @@ class RocketSystem3D {
         const ez = r.position.z;
         const eS = WS * Math.max(0.1, Number(FlameSettings.explosionSize) || 1.0) * Math.max(0.25, r.explosionVisualScale || 1);
         this._applyBlastDamage(r, ex, ez);
+
+        // Trafienie w tarczę: obrażenia obszarowe policzone, ale kula ognia
+        // i dym nie mają czego oblepiać — pole ma własny zestaw efektów.
+        if (r.hitShield) {
+            r.hitShield = false;
+            return;
+        }
 
         const coreType = r.explosionCoreType || 3;
         const sparkType = r.explosionSparkType || 4;

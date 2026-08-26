@@ -18,8 +18,10 @@ import {
   setPackedShardActive
 } from './hexArenaBridge.js';
 
+const _ZERO_VEL = Object.freeze({ x: 0, y: 0 });
+
 export const DESTRUCTOR_CONFIG = {
-  gridDivisions: 9, //
+  gridDivisions: 5, //
   packedHexArena: 1,
   edgeCollision: 1,
   shardMass: 10.0, //
@@ -61,6 +63,27 @@ export const DESTRUCTOR_CONFIG = {
   //                                     przestawała mieć znaczenie dla zniszczeń, bo
   //                                     sufit wiązał zawsze. Ma ciąć tylko wystrzały
   //                                     numeryczne — resztę robi energia uderzenia.
+  // Ile kontaktow tworzy PELNA plame styku. Przy taranie 400-1500 u/s i kroku
+  // 1/120 kadluby zanurzaja sie w siebie o mniej niz jeden heks, wiec narrowphase
+  // znajduje 1 kontakt (budzet to 24-32, to NIE jest limit). Caly impuls dziala
+  // wtedy w jednym punkcie poza srodkiem masy i zamienia sie w moment obrotowy.
+  // Pomiar: fregata (10k) rozkrecana do 5.65 rad/s, pancernik (50k) do 1.44 —
+  // stosunek 3.9x, zgodny z modelem (16.8x odwrotnej bezwladnosci / 5x mniejszy
+  // impuls). Lekki kadlub koziolkuje i stacza sie z dziobu, zanim zdazy sie
+  // zemlec. Jeden kontakt to artefakt dyskretyzacji, nie fizyka — prawdziwy
+  // taran dziobem ma szeroki styk. Tlumimy wiec czlon KATOWY proporcjonalnie do
+  // jakosci probki; przy szerokim styku nic sie nie zmienia.
+  contactPatchFullCount: 4,
+
+  // Nadmiar obrazen ponad sufit heksa nie moze znikac. Bez tego jeden kontakt to
+  // zawsze DOKLADNIE jeden zniszczony heks i taran przy 1500 u/s robi to samo co
+  // przy 500 — predkosc przestaje cokolwiek znaczyc. Nadmiar idzie w promieniste
+  // rozejscie sie uszkodzen (ta sama sciezka co pociski), wiec szybszy taran
+  // wybija SZERSZA dziure, a nie glebsza w tej samej komorce.
+  ramOverkillMinDamage: 25.0,
+  ramOverkillRadiusScale: 1.6,
+  ramOverkillMaxRadius: 180.0,
+
   shearK: 0.06, //
 
   // Próg "szybkiej pary" — WYŁĄCZNIE wydajność: powyżej niego druga iteracja kolizji
@@ -251,6 +274,27 @@ function sumShardMass(shards) {
 function getShardHitRadius(shard) {
   const hitRadius = Number(shard?.hitRadius);
   return Number.isFinite(hitRadius) && hitRadius > 0 ? hitRadius : HIT_RAD;
+}
+
+function segmentCircleToi2D(x0, y0, x1, y1, cx, cy, radius) {
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const fx = x0 - cx;
+  const fy = y0 - cy;
+  const radiusSq = radius * radius;
+  if (fx * fx + fy * fy <= radiusSq) return 0;
+  const a = dx * dx + dy * dy;
+  if (a <= 1e-12) return -1;
+  const b = 2 * (fx * dx + fy * dy);
+  const c = fx * fx + fy * fy - radiusSq;
+  const discriminant = b * b - 4 * a * c;
+  if (discriminant < 0) return -1;
+  const root = Math.sqrt(discriminant);
+  const inv = 1 / (2 * a);
+  const near = (-b - root) * inv;
+  if (near >= 0 && near <= 1) return near;
+  const far = (-b + root) * inv;
+  return far >= 0 && far <= 1 ? far : -1;
 }
 
 function nowMs() {
@@ -1238,6 +1282,7 @@ class HexShard {
 }
 
 const _staticProbeResult = { hitShard: null, localX: 0, localY: 0, scale: 1, scaleX: 1, scaleY: 1, c: 1, s: 0, cx: 0, cy: 0, pX: 0, pY: 0, billboardOrientation: false };
+const _staticSweepResult = { hitShard: null, t: 0, worldX: 0, worldY: 0, projectileX: 0, projectileY: 0 };
 
 export const DestructorSystem = {
   splitQueue: [],
@@ -1270,6 +1315,39 @@ export const DestructorSystem = {
     lastSplitMs: 0,
     lastEraseMs: 0,
     lastContacts: 0
+  },
+
+  // Tracer TARANU. Istniejacy _liveCollisionDebug jest profilerem (czasy, liczby
+  // par) i nie pokazuje WARTOSCI fizycznych, a przy taranie fregaty vs Bellatora
+  // roznica siedzi wlasnie w liczbach: predkosc zblizania po impulsie, liczba
+  // kontaktow, glebokosc zgniotu. Wlaczenie: DestructorSystem.ramDebug.enabled = true
+  ramDebug: {
+    enabled: false,
+    intervalMs: 120,
+    _lastLogMs: 0,
+    // Loguj tylko pary, w ktorych bierze udzial gracz — inaczej bitwa zaleje konsole.
+    playerOnly: true
+  },
+
+  _dbgRam(A, B, info) {
+    const dbg = this.ramDebug;
+    if (!dbg?.enabled) return;
+    if (dbg.playerOnly && !(A?.isPlayer || B?.isPlayer || A?._isPlayerShip || B?._isPlayerShip)) return;
+    const now = nowMs();
+    if (now - dbg._lastLogMs < dbg.intervalMs) return;
+    dbg._lastLogMs = now;
+    const name = (e) => String(e?.type || e?.shipFrame || (e?.isPlayer ? 'PLAYER' : '?'));
+    console.log(
+      '[RAM] ' + name(A) + '(' + Math.round(info.massA) + ') vs ' + name(B) + '(' + Math.round(info.massB) + ')' +
+      ' | impact=' + info.impactSpeed.toFixed(1) +
+      ' approach=' + info.approachSpeed.toFixed(1) +
+      ' | kontakty=' + info.contactsCount +
+      ' | crushE=' + info.crushEnergy.toFixed(2) +
+      ' | ratioA=' + info.realRatioA.toFixed(3) + ' ratioB=' + info.realRatioB.toFixed(3) +
+      ' | zgniotA=' + info.rawCrushMagA.toFixed(2) + ' zgniotB=' + info.rawCrushMagB.toFixed(2) +
+      ' (limit ' + info.maxCrushLimit.toFixed(0) + ')' +
+      ' | angVelB=' + (Number(getEntityAngVel(B)) || 0).toFixed(3)
+    );
   },
 
   _liveCollisionDebug: {
@@ -2121,6 +2199,106 @@ export const DestructorSystem = {
     return _staticProbeResult;
   },
 
+  // Zwraca pierwszy AKTYWNY heks przecięty przez odcinek pocisku. Okrąg
+  // `entity.radius` jest tylko broadphase'em i zwykle zawiera dużo pustego miejsca
+  // przed dziobem/burtą. Punkt wejścia w ten okrąg nie może więc służyć jako punkt
+  // trafienia — szybki pocisk przeszedłby przez cały pozostały odcinek bez kolejnej
+  // sondy. Testujemy dokładnie heksy leżące w korytarzu ruchu i wybieramy najmniejsze t.
+  sweepImpact(entity, worldX0, worldY0, worldX1, worldY1, projectileRadius = 0) {
+    if (!entity?.hexGrid || !isHexEligible(entity)) return null;
+
+    const gridData = entity.hexGrid;
+    const cols = gridData.cols | 0;
+    const rows = gridData.rows | 0;
+    const grid = gridData.grid;
+    if (!grid || cols <= 0 || rows <= 0) return null;
+
+    const angle = getEntityHexAngle(entity);
+    const scaleX = Math.max(0.0001, getFinalScaleX(entity));
+    const scaleY = Math.max(0.0001, getFinalScaleY(entity));
+    const c = Math.cos(angle);
+    const s = Math.sin(angle);
+    const entityX = getEntityPosX(entity);
+    const entityY = getEntityPosY(entity);
+    const billboardOrientation = usesBillboardOrientation(entity);
+
+    const localX0 = worldDeltaToLocalX(worldX0 - entityX, worldY0 - entityY, scaleX, scaleY, c, s, billboardOrientation);
+    const localY0 = worldDeltaToLocalY(worldX0 - entityX, worldY0 - entityY, scaleX, scaleY, c, s, billboardOrientation);
+    const localX1 = worldDeltaToLocalX(worldX1 - entityX, worldY1 - entityY, scaleX, scaleY, c, s, billboardOrientation);
+    const localY1 = worldDeltaToLocalY(worldX1 - entityX, worldY1 - entityY, scaleX, scaleY, c, s, billboardOrientation);
+    const cx = gridData.srcWidth * 0.5;
+    const cy = gridData.srcHeight * 0.5;
+    const pX = gridData.pivot ? gridData.pivot.x : 0;
+    const pY = gridData.pivot ? gridData.pivot.y : 0;
+    const gridX0 = localX0 + cx + pX;
+    const gridY0 = localY0 + cy + pY;
+    const gridX1 = localX1 + cx + pX;
+    const gridY1 = localY1 + cy + pY;
+
+    // Ten sam zapas indeksów co punktowa sonda uwzględnia odkształcenie heksów.
+    // Promień pocisku przeliczamy konserwatywnie przez mniejszą skalę osi.
+    const searchR = Math.max(2, (DESTRUCTOR_CONFIG.collisionSearchRadius | 0) - 2);
+    const localProjectileRadius = Math.max(0, Number(projectileRadius) || 0) / Math.min(scaleX, scaleY);
+    const radiusCellsC = Math.ceil(localProjectileRadius / HEX_SPACING);
+    const radiusCellsR = Math.ceil(localProjectileRadius / HEX_HEIGHT);
+    const minC = Math.max(0, Math.floor(Math.min(gridX0, gridX1) / HEX_SPACING) - searchR - radiusCellsC);
+    const maxC = Math.min(cols - 1, Math.ceil(Math.max(gridX0, gridX1) / HEX_SPACING) + searchR + radiusCellsC);
+    const minR = Math.max(0, Math.floor(Math.min(gridY0, gridY1) / HEX_HEIGHT) - searchR - radiusCellsR);
+    const maxR = Math.min(rows - 1, Math.ceil(Math.max(gridY0, gridY1) / HEX_HEIGHT) + searchR + radiusCellsR);
+
+    let bestT = Infinity;
+    let hitShard = null;
+    for (let ir = minR; ir <= maxR; ir++) {
+      const rowOffset = ir * cols;
+      for (let ic = minC; ic <= maxC; ic++) {
+        const shard = grid[rowOffset + ic];
+        if (!shard || !shard.active || shard.isDebris) continue;
+        const hitRadius = getShardHitRadius(shard) * 2 + localProjectileRadius;
+        const t = segmentCircleToi2D(
+          gridX0,
+          gridY0,
+          gridX1,
+          gridY1,
+          getShardCollisionGridX(shard),
+          getShardCollisionGridY(shard),
+          hitRadius
+        );
+        if (t < 0 || t >= bestT) continue;
+        bestT = t;
+        hitShard = shard;
+      }
+    }
+
+    if (!hitShard) return null;
+    const projectileGridX = gridX0 + (gridX1 - gridX0) * bestT;
+    const projectileGridY = gridY0 + (gridY1 - gridY0) * bestT;
+    const shardGridX = getShardCollisionGridX(hitShard);
+    const shardGridY = getShardCollisionGridY(hitShard);
+    let normalX = projectileGridX - shardGridX;
+    let normalY = projectileGridY - shardGridY;
+    let normalLength = Math.hypot(normalX, normalY);
+    if (normalLength <= 1e-9) {
+      normalX = gridX0 - gridX1;
+      normalY = gridY0 - gridY1;
+      normalLength = Math.hypot(normalX, normalY) || 1;
+    }
+    const probeRadius = getShardHitRadius(hitShard) * 2 * 0.995;
+    const impactGridX = shardGridX + normalX * (probeRadius / normalLength);
+    const impactGridY = shardGridY + normalY * (probeRadius / normalLength);
+    const impactLocalX = impactGridX - cx - pX;
+    const impactLocalY = impactGridY - cy - pY;
+
+    _staticSweepResult.hitShard = hitShard;
+    _staticSweepResult.t = bestT;
+    // worldX/Y leżą minimalnie WEWNĄTRZ fizycznego heksa, żeby applyImpact()
+    // (punktowa sonda z ostrą granicą) zawsze trafił w ten sam pierwszy shard.
+    _staticSweepResult.worldX = entityX + localDeltaToWorldX(impactLocalX, impactLocalY, scaleX, scaleY, c, s, billboardOrientation);
+    _staticSweepResult.worldY = entityY + localDeltaToWorldY(impactLocalX, impactLocalY, scaleX, scaleY, c, s, billboardOrientation);
+    _staticSweepResult.projectileX = worldX0 + (worldX1 - worldX0) * bestT;
+    _staticSweepResult.projectileY = worldY0 + (worldY1 - worldY0) * bestT;
+    return _staticSweepResult;
+  },
+
   probeImpact(entity, worldX, worldY) {
     return !!this._probeImpactData(entity, worldX, worldY, true);
   },
@@ -2848,7 +3026,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         A.shield.regenTimer = A.shield.regenDelay || 3.0;
         // Visual impact on A's shield surface (punkt na obrysie tarczy)
         if (typeof window !== 'undefined' && window.registerShieldImpact) {
-          window.registerShieldImpact(A, ax - nx * radiusA, ay - ny * radiusA, dmg);
+          window.registerShieldImpact(A, ax - nx * radiusA, ay - ny * radiusA, dmg, 'shield');
         }
       }
 
@@ -2857,7 +3035,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         B.shield.val = Math.max(0, B.shield.val - dmg);
         B.shield.regenTimer = B.shield.regenDelay || 3.0;
         if (typeof window !== 'undefined' && window.registerShieldImpact) {
-          window.registerShieldImpact(B, bx + nx * radiusB, by + ny * radiusB, dmg);
+          window.registerShieldImpact(B, bx + nx * radiusB, by + ny * radiusB, dmg, 'shield');
         }
       }
 
@@ -3137,7 +3315,21 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
 
         const rnA = rAx * ny - rAy * nx;
         const rnB = rBx * ny - rBy * nx;
+        // Zdegenerowana plama styku (1 kontakt) daje falszywie duzy MOMENT, ale
+        // nie falszywy impuls normalny. Tlumimy wiec wylacznie to, co aplikujemy
+        // na predkosc katowa — MIANOWNIK zostaje pelny.
+        //
+        // Pierwsza wersja tlumila tez mianownik "dla spojnosci" i to byla regresja:
+        // przy pancerniku (50k, invMassB 2e-5) czlon katowy 3.3e-5 DOMINOWAL nad
+        // masowym, wiec jego przyciecie o 75% skracalo mianownik z 5.3e-5 do
+        // 2.9e-5 i niemal PODWAJALO impuls j. Kadlub dostawal dwa razy mocniejszy
+        // kop liniowy, odskakiwal, Atlas go doganial pod ciagiem i kopal znowu —
+        // drzenie ~60 Hz zamiast mielenia.
+        const patchFull = Math.max(1, Number(DESTRUCTOR_CONFIG.contactPatchFullCount) || 4);
+        const patchFactor = Math.min(1, contactsCount / patchFull);
         const denom = invMassA + invMassB + rnA * rnA * invIa + rnB * rnB * invIb;
+        const angInvIa = invIa * patchFactor;
+        const angInvIb = invIb * patchFactor;
 
         if (Number.isFinite(denom) && denom > 1e-8) {
           // JEDEN impuls dla każdej prędkości — bez progów, bez skalowania po masie.
@@ -3152,8 +3344,8 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
 
           addEntityVelocity(A, impulseX * invMassA, impulseY * invMassA);
           addEntityVelocity(B, -impulseX * invMassB, -impulseY * invMassB);
-          addEntityAngVel(A, rnA * j * invIa);
-          addEntityAngVel(B, -rnB * j * invIb);
+          addEntityAngVel(A, rnA * j * angInvIa);
+          addEntityAngVel(B, -rnB * j * angInvIb);
 
           let jt = -velTangent;
           const tDen = invMassA + invMassB + (rAx * ty - rAy * tx) ** 2 * invIa + (rBx * ty - rBy * tx) ** 2 * invIb;
@@ -3170,8 +3362,8 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
 
           addEntityVelocity(A, fX * invMassA, fY * invMassA);
           addEntityVelocity(B, -fX * invMassB, -fY * invMassB);
-          addEntityAngVel(A, (rAx * ty - rAy * tx) * jt * invIa);
-          addEntityAngVel(B, -(rBx * ty - rBy * tx) * jt * invIb);
+          addEntityAngVel(A, (rAx * ty - rAy * tx) * jt * angInvIa);
+          addEntityAngVel(B, -(rBx * ty - rBy * tx) * jt * angInvIb);
 
           // GPU collision sparks — scale with impact violence
         }
@@ -3274,6 +3466,20 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         const rawCrushMagA = Math.sqrt(crushDefAx * crushDefAx + crushDefAy * crushDefAy);
         const rawCrushMagB = Math.sqrt(crushDefBx * crushDefBx + crushDefBy * crushDefBy);
 
+        // Nadmiar obrazen ponad sufit heksa, zbierany przez wszystkie kontakty pary.
+        let overkillA = 0;
+        let overkillB = 0;
+
+        if (this.ramDebug?.enabled) {
+          this._dbgRam(A, B, {
+            massA, massB, impactSpeed,
+            approachSpeed: effectiveApproachSpeed,
+            contactsCount, crushEnergy,
+            realRatioA, realRatioB,
+            rawCrushMagA, rawCrushMagB, maxCrushLimit
+          });
+        }
+
         // Static reusable objects to avoid GC pressure
         const _clampA = this._clampResultA || (this._clampResultA = { x: 0, y: 0 });
         const _clampB = this._clampResultB || (this._clampResultB = { x: 0, y: 0 });
@@ -3355,6 +3561,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
               const damage = kineticDmg * (brittleA ? 3.5 : 1.0);
               const cap = brittleA ? (shardHpA * 0.75) : (shardHpA * contactDamageCapFrac);
               sA.hp -= Math.min(cap, damage);
+              if (damage > cap) overkillA += damage - cap;
             }
 
             if (sA.hp <= 0) {
@@ -3409,6 +3616,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
               const damage = kineticDmg * (brittleB ? 3.5 : 1.0);
               const cap = brittleB ? (shardHpB * 0.75) : (shardHpB * contactDamageCapFrac);
               sB.hp -= Math.min(cap, damage);
+              if (damage > cap) overkillB += damage - cap;
             }
 
             if (sB.hp <= 0) {
@@ -3417,6 +3625,25 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
               this.destroyShard(B, sB, this._destroyVelB);
               if (!B.noSplit && this.splitQueue.indexOf(B) === -1) this.splitQueue.push(B);
             }
+          }
+        }
+
+        // Szybszy taran = SZERSZA dziura. Nadmiar ponad sufit heksa idzie w
+        // promieniste rozejscie sie uszkodzen w srodku plamy styku — ta sama
+        // sciezka, ktorej uzywaja pociski. Bez tego jeden kontakt to zawsze
+        // dokladnie jeden zniszczony heks i predkosc powyzej ~500 u/s nie ma
+        // zadnego znaczenia dla zniszczen.
+        const overkillMin = Number(DESTRUCTOR_CONFIG.ramOverkillMinDamage) || 25;
+        if (overkillA > overkillMin || overkillB > overkillMin) {
+          const radiusScale = Number(DESTRUCTOR_CONFIG.ramOverkillRadiusScale) || 1.6;
+          const radiusMax = Number(DESTRUCTOR_CONFIG.ramOverkillMaxRadius) || 180;
+          if (overkillA > overkillMin && A.hexGrid) {
+            const rA = Math.min(radiusMax, Math.sqrt(overkillA) * radiusScale);
+            this.applyImpact(A, worldHitX, worldHitY, overkillA, _ZERO_VEL, { radius: rA });
+          }
+          if (overkillB > overkillMin && B.hexGrid) {
+            const rB = Math.min(radiusMax, Math.sqrt(overkillB) * radiusScale);
+            this.applyImpact(B, worldHitX, worldHitY, overkillB, _ZERO_VEL, { radius: rB });
           }
         }
 

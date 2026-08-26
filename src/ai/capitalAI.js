@@ -399,9 +399,9 @@ function initAutonomousWeapons(npc) {
   npc.__weaponFacingBias = undefined;
 }
 
-function getTargetScoreForWeapon(weapon, target, isRocket = false) {
+function getTargetScoreForWeapon(weapon, target, isRocket = false, knownKind = null) {
   if (!target) return -1;
-  const kind = isRocket ? 'rocket' : (window.getUnitKind?.(target) || 'other');
+  const kind = isRocket ? 'rocket' : (knownKind || window.getUnitKind?.(target) || 'other');
 
   const prefIndex = weapon.prefers.indexOf(kind);
   let score = 0;
@@ -422,6 +422,23 @@ function getNextWeaponScanInterval(scanProfile) {
   return 0.24 + Math.random() * 0.16;
 }
 
+const EMPTY_ROCKET_CANDIDATES = [];
+
+function getHostileRocketCandidates(npc) {
+  const factionBuffer = npc.friendly
+    ? window.__npcRocketThreats
+    : window.__playerRocketThreats;
+  return Array.isArray(factionBuffer) ? factionBuffer : (window.bullets || EMPTY_ROCKET_CANDIDATES);
+}
+
+function isHostileRocketCandidate(npc, bullet, sourceIsFactionBuffer) {
+  if (!bullet || bullet.life <= 0) return false;
+  if (bullet.type !== 'rocket' && bullet.type !== 'torpedo') return false;
+  if (sourceIsFactionBuffer) return true;
+  const myTeam = npc.friendly ? 'player' : 'npc';
+  return bullet.owner !== myTeam;
+}
+
 function buildShipScanCache(npc, dt, scanProfile = 'slow') {
   let caches = npc._shipScanCaches;
   if (!caches) caches = npc._shipScanCaches = Object.create(null);
@@ -433,8 +450,12 @@ function buildShipScanCache(npc, dt, scanProfile = 'slow') {
       x: 0,
       y: 0,
       enemies: [],
+      enemyDistSq: [],
+      enemyAngles: [],
+      enemyKinds: [],
       rockets: [],
-      maxRange: 0
+      maxRange: 0,
+      geometryId: 0
     };
   }
 
@@ -458,9 +479,14 @@ function buildShipScanCache(npc, dt, scanProfile = 'slow') {
   }
   if (!(maxRange > 0)) maxRange = 1000;
   cache.maxRange = maxRange;
+  const maxRangeSq = maxRange * maxRange;
 
   if (!npc.friendly && window.ship && !window.ship.dead) {
-    cache.enemies.push(window.ship);
+    const playerX = window.ship.pos?.x ?? window.ship.x ?? 0;
+    const playerY = window.ship.pos?.y ?? window.ship.y ?? 0;
+    const dx = playerX - npc.x;
+    const dy = playerY - npc.y;
+    if (dx * dx + dy * dy <= maxRangeSq) cache.enemies.push(window.ship);
   }
 
   if (window.queryAIGrid) {
@@ -473,6 +499,11 @@ function buildShipScanCache(npc, dt, scanProfile = 'slow') {
       if (enemy === window.ship) continue;
       if (npc.friendly && !enemy.isPirate) continue;
       if (!npc.friendly && enemy.friendly === false) continue;
+      const enemyX = enemy.pos?.x ?? enemy.x ?? 0;
+      const enemyY = enemy.pos?.y ?? enemy.y ?? 0;
+      const dx = enemyX - npc.x;
+      const dy = enemyY - npc.y;
+      if (dx * dx + dy * dy > maxRangeSq) continue;
       cache.enemies.push(enemy);
     }
   } else {
@@ -482,18 +513,23 @@ function buildShipScanCache(npc, dt, scanProfile = 'slow') {
       if (!enemy || enemy.dead || enemy === npc) continue;
       if (npc.friendly && !enemy.isPirate) continue;
       if (!npc.friendly && enemy.friendly === false) continue;
+      const enemyX = enemy.pos?.x ?? enemy.x ?? 0;
+      const enemyY = enemy.pos?.y ?? enemy.y ?? 0;
+      const dx = enemyX - npc.x;
+      const dy = enemyY - npc.y;
+      if (dx * dx + dy * dy > maxRangeSq) continue;
       cache.enemies.push(enemy);
     }
   }
 
-  if (needsRocketThreats && window.bullets) {
-    const myTeam = npc.friendly ? 'player' : 'npc';
-    for (let i = 0; i < window.bullets.length; i++) {
-      const b = window.bullets[i];
-      if (!b || b.owner === myTeam) continue;
-      if (b.type !== 'rocket' && b.type !== 'torpedo') continue;
+  if (needsRocketThreats) {
+    const rocketCandidates = getHostileRocketCandidates(npc);
+    const sourceIsFactionBuffer = rocketCandidates !== window.bullets;
+    for (let i = 0; i < rocketCandidates.length; i++) {
+      const b = rocketCandidates[i];
+      if (!isHostileRocketCandidate(npc, b, sourceIsFactionBuffer)) continue;
       const distSq = (b.x - npc.x) ** 2 + (b.y - npc.y) ** 2;
-      if (distSq > (maxRange * maxRange)) continue;
+      if (distSq > maxRangeSq) continue;
       cache.rockets.push(b);
     }
   }
@@ -502,6 +538,28 @@ function buildShipScanCache(npc, dt, scanProfile = 'slow') {
     ? (0.08 + Math.random() * 0.06)
     : (0.24 + Math.random() * 0.16);
   return cache;
+}
+
+function prepareShipScanGeometry(cache, npc, geometryId) {
+  if (cache.geometryId === geometryId) return;
+  cache.geometryId = geometryId;
+  const count = cache.enemies.length;
+  const enemyDistSq = cache.enemyDistSq || (cache.enemyDistSq = []);
+  const enemyAngles = cache.enemyAngles || (cache.enemyAngles = []);
+  const enemyKinds = cache.enemyKinds || (cache.enemyKinds = []);
+  enemyDistSq.length = count;
+  enemyAngles.length = count;
+  enemyKinds.length = count;
+  for (let i = 0; i < count; i++) {
+    const enemy = cache.enemies[i];
+    const tx = enemy.pos ? enemy.pos.x : enemy.x;
+    const ty = enemy.pos ? enemy.pos.y : enemy.y;
+    const dx = tx - npc.x;
+    const dy = ty - npc.y;
+    enemyDistSq[i] = dx * dx + dy * dy;
+    enemyAngles[i] = Math.atan2(dy, dx);
+    enemyKinds[i] = window.getUnitKind?.(enemy) || 'other';
+  }
 }
 
 function getSubsystemWorldPos(target, hp) {
@@ -587,6 +645,9 @@ function pickTargetSubsystem(weapon, target) {
 }
 
 const _leadAimScratch = { x: 0, y: 0 };
+const _leadOriginScratch = { x: 0, y: 0 };
+const _leadTargetScratch = { x: 0, y: 0, vx: 0, vy: 0 };
+let nextWeaponGeometryId = 1;
 
 function processAutonomousWeapons(npc, dt) {
   if (!npc) return;
@@ -596,7 +657,9 @@ function processAutonomousWeapons(npc, dt) {
   if (!npc.autoWeapons || npc.autoWeapons.length === 0) return;
 
   const tWeap0 = (typeof performance !== 'undefined') ? performance.now() : 0;
-  const scanCaches = Object.create(null);
+  let fastScanCache = null;
+  let slowScanCache = null;
+  const geometryId = nextWeaponGeometryId++;
 
   for (let wIdx = 0; wIdx < npc.autoWeapons.length; wIdx++) {
     const weapon = npc.autoWeapons[wIdx];
@@ -608,6 +671,9 @@ function processAutonomousWeapons(npc, dt) {
     if (weapon.visualAngle === undefined) weapon.visualAngle = restAngle;
 
     weapon.cd -= dt;
+    weapon._losRetryCd = Math.max(0, (weapon._losRetryCd || 0) - dt);
+    weapon._blockedTargetT = Math.max(0, (weapon._blockedTargetT || 0) - dt);
+    if (weapon._blockedTargetT <= 0) weapon._blockedTarget = null;
 
     if (weapon.ammo !== null && weapon.ammo <= 0) {
       let diff = window.wrapAngle(restAngle - weapon.visualAngle);
@@ -630,7 +696,10 @@ function processAutonomousWeapons(npc, dt) {
     if (mustRescan) {
       bestTarget = null;
       const scanProfile = weapon.scanProfile || 'slow';
-      const cache = scanCaches[scanProfile] || (scanCaches[scanProfile] = buildShipScanCache(npc, dt, scanProfile));
+      const cache = scanProfile === 'fast'
+        ? (fastScanCache || (fastScanCache = buildShipScanCache(npc, dt, 'fast')))
+        : (slowScanCache || (slowScanCache = buildShipScanCache(npc, dt, 'slow')));
+      prepareShipScanGeometry(cache, npc, geometryId);
 
       if (weapon.prefers.includes('rocket')) {
         for (let i = 0; i < cache.rockets.length; i++) {
@@ -646,28 +715,22 @@ function processAutonomousWeapons(npc, dt) {
         }
       }
 
-      // IN-PLACE FILTERING for enemies
-      const checkAndScoreTarget = (enemy) => {
-        const tx = enemy.pos ? enemy.pos.x : enemy.x;
-        const ty = enemy.pos ? enemy.pos.y : enemy.y;
-        const distSq = (tx - npc.x) ** 2 + (ty - npc.y) ** 2;
-        if (distSq > rangeSq) return;
-
-        const absTargetAngle = Math.atan2(ty - npc.y, tx - npc.x);
-        const angleDiff = Math.abs(window.wrapAngle(absTargetAngle - restAngle));
-
-        if (angleDiff > weapon.arc) return;
-        if (window.isLineOfFireBlocked?.(npc, enemy, range)) return;
-
-        const score = getTargetScoreForWeapon(weapon, enemy, false) - distSq * 0.001;
-        if (score > bestScore) {
-          bestScore = score;
-          bestTarget = enemy;
-        }
-      };
-
+      // Tani score wybiera cel; LOS sprawdzamy dopiero wtedy, gdy działo jest
+      // gotowe faktycznie wystrzelić.
       for (let i = 0; i < cache.enemies.length; i++) {
-        checkAndScoreTarget(cache.enemies[i]);
+        const candidate = cache.enemies[i];
+        if (candidate === weapon._blockedTarget && weapon._blockedTargetT > 0) continue;
+        const distSq = cache.enemyDistSq[i];
+        if (distSq > rangeSq) continue;
+
+        const absTargetAngle = cache.enemyAngles[i];
+        const angleDiff = Math.abs(window.wrapAngle(absTargetAngle - restAngle));
+        if (angleDiff > weapon.arc) continue;
+
+        const candidateScore = getTargetScoreForWeapon(weapon, candidate, false, cache.enemyKinds[i]) - distSq * 0.001;
+        if (candidateScore <= bestScore) continue;
+        bestScore = candidateScore;
+        bestTarget = candidate;
       }
 
       weapon.cachedTarget = bestTarget || null;
@@ -698,28 +761,45 @@ function processAutonomousWeapons(npc, dt) {
       }
 
       const speed = weapon.def.baseSpeed || 1000;
-      const subTarget = {
-        x: aimX, y: aimY,
-        vx: bestTarget.vx ?? bestTarget.vel?.x ?? 0,
-        vy: bestTarget.vy ?? bestTarget.vel?.y ?? 0
-      };
-
-      const lead = window.getLeadAim ? window.getLeadAim({ x: npc.x, y: npc.y }, subTarget, speed, _leadAimScratch) : { x: aimX, y: aimY };
+      _leadOriginScratch.x = npc.x;
+      _leadOriginScratch.y = npc.y;
+      _leadTargetScratch.x = aimX;
+      _leadTargetScratch.y = aimY;
+      _leadTargetScratch.vx = bestTarget.vx ?? bestTarget.vel?.x ?? 0;
+      _leadTargetScratch.vy = bestTarget.vy ?? bestTarget.vel?.y ?? 0;
+      _leadAimScratch.x = aimX;
+      _leadAimScratch.y = aimY;
+      const lead = window.getLeadAim
+        ? window.getLeadAim(_leadOriginScratch, _leadTargetScratch, speed, _leadAimScratch)
+        : _leadAimScratch;
       const aimAngle = Math.atan2(lead.y - npc.y, lead.x - npc.x);
 
       let diff = window.wrapAngle(aimAngle - weapon.visualAngle);
       weapon.visualAngle = window.wrapAngle(weapon.visualAngle + diff * 8 * dt);
 
-      if (weapon.cd <= 0) {
-        if (window.spawnBulletAdapter) {
-          window.spawnBulletAdapter(npc, bestTarget, weapon.def, {
-            type: weapon.type,
-            hp: weapon.hpOffset,
-            angleOverride: weapon.visualAngle
-          });
+      if (weapon.cd <= 0 && weapon._losRetryCd <= 0) {
+        const targetIsRocket = bestTarget.type === 'rocket' || bestTarget.type === 'torpedo';
+        const lineBlocked = !targetIsRocket
+          && window.isLineOfFireBlocked?.(npc, bestTarget, range) === true;
+        if (lineBlocked) {
+          // Nie miel LOS co 20 Hz: odrzuć zasłonięty cel na kilka decyzji i
+          // pozostaw działo gotowe, by mogło natychmiast wybrać czystą linię.
+          weapon._blockedTarget = bestTarget;
+          weapon._blockedTargetT = 0.18;
+          weapon._losRetryCd = 0.15;
+          weapon.cachedTarget = null;
+          weapon.scanCd = 0;
+        } else {
+          if (window.spawnBulletAdapter) {
+            window.spawnBulletAdapter(npc, bestTarget, weapon.def, {
+              type: weapon.type,
+              hp: weapon.hpOffset,
+              angleOverride: weapon.visualAngle
+            });
+          }
+          weapon.cd = weapon.def.cooldown || 2.0;
+          if (weapon.ammo !== null && weapon.ammo > 0) weapon.ammo -= 1;
         }
-        weapon.cd = weapon.def.cooldown || 2.0;
-        if (weapon.ammo !== null && weapon.ammo > 0) weapon.ammo -= 1;
       }
     } else {
       let diff = window.wrapAngle(restAngle - weapon.visualAngle);
@@ -754,17 +834,15 @@ export function aiFrigate(sim, npc, dt) {
     let bestScore = -Infinity;
     const pdRange = 1200;
 
-    if (window.bullets) {
-      const myTeam = npc.friendly ? 'player' : 'npc';
-      for (let i = 0; i < window.bullets.length; i++) {
-        const b = window.bullets[i];
-        if ((b.type === 'rocket' || b.type === 'torpedo') && b.owner !== myTeam) {
-          const d2 = (b.x - npc.x) ** 2 + (b.y - npc.y) ** 2;
-          if (d2 < pdRange * pdRange) {
-            const score = 2000 - d2 * 0.001;
-            if (score > bestScore) { bestScore = score; bestTarget = b; }
-          }
-        }
+    const rocketCandidates = getHostileRocketCandidates(npc);
+    const sourceIsFactionBuffer = rocketCandidates !== window.bullets;
+    for (let i = 0; i < rocketCandidates.length; i++) {
+      const b = rocketCandidates[i];
+      if (!isHostileRocketCandidate(npc, b, sourceIsFactionBuffer)) continue;
+      const d2 = (b.x - npc.x) ** 2 + (b.y - npc.y) ** 2;
+      if (d2 < pdRange * pdRange) {
+        const score = 2000 - d2 * 0.001;
+        if (score > bestScore) { bestScore = score; bestTarget = b; }
       }
     }
 
@@ -856,22 +934,22 @@ export function aiFrigate(sim, npc, dt) {
   // Unik przed nadlatującymi rakietami — nakładka na strafe.
   if (target && !target.dead) {
     npc._dodgeTimer = (npc._dodgeTimer || 0) - dt;
-    if (npc._dodgeTimer <= 0 && window.bullets) {
-      const myTeam = npc.friendly ? 'player' : 'npc';
-      for (let i = 0; i < window.bullets.length; i++) {
-        const b = window.bullets[i];
-        if ((b.type === 'rocket' || b.type === 'torpedo') && b.owner !== myTeam) {
-          const bdx = npc.x - b.x;
-          const bdy = npc.y - b.y;
-          const bd = Math.hypot(bdx, bdy);
-          if (bd < 800) {
-            const bAng = Math.atan2(b.vy || 0, b.vx || 0);
-            const toMe = Math.atan2(bdy, bdx);
-            if (Math.abs(window.wrapAngle(bAng - toMe)) < 0.5) {
-              npc._dodgeDir = (Math.random() > 0.5) ? 1 : -1;
-              npc._dodgeTimer = 0.5;
-              break;
-            }
+    if (npc._dodgeTimer <= 0) {
+      const rocketCandidates = getHostileRocketCandidates(npc);
+      const sourceIsFactionBuffer = rocketCandidates !== window.bullets;
+      for (let i = 0; i < rocketCandidates.length; i++) {
+        const b = rocketCandidates[i];
+        if (!isHostileRocketCandidate(npc, b, sourceIsFactionBuffer)) continue;
+        const bdx = npc.x - b.x;
+        const bdy = npc.y - b.y;
+        const bdSq = bdx * bdx + bdy * bdy;
+        if (bdSq < 800 * 800) {
+          const bAng = Math.atan2(b.vy || 0, b.vx || 0);
+          const toMe = Math.atan2(bdy, bdx);
+          if (Math.abs(window.wrapAngle(bAng - toMe)) < 0.5) {
+            npc._dodgeDir = (Math.random() > 0.5) ? 1 : -1;
+            npc._dodgeTimer = 0.5;
+            break;
           }
         }
       }

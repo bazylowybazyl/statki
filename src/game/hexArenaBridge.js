@@ -9,6 +9,7 @@ import {
 } from '../physics/hexArena.js';
 
 const DEFAULT_BODY_CAPACITY = 4096;
+const ARENA_GROWTH_FACTOR = 1.5;
 
 let arena = null;
 let shardRefs = null;
@@ -48,12 +49,33 @@ function isArenaShardAlive(globalArena, shard) {
   return Number.isInteger(index) && globalArena.isAlive(index, generation);
 }
 
+function ensureArenaSlots(globalArena, shards) {
+  let missing = 0;
+  for (let slot = 0; slot < shards.length; slot++) {
+    if (!isArenaShardAlive(globalArena, shards[slot])) missing++;
+  }
+  const required = globalArena.allocatedCount + missing;
+  if (required <= globalArena.capacity) return true;
+
+  const grownCapacity = Math.max(required, Math.ceil(globalArena.capacity * ARENA_GROWTH_FACTOR));
+  try {
+    globalArena.grow(grownCapacity);
+    shardRefs.length = globalArena.capacity;
+    return true;
+  } catch {
+    // Keep the existing rollback/fallback path below if the browser cannot
+    // reserve another contiguous arena buffer.
+    return false;
+  }
+}
+
 export function attachHexGridToArena(entity, shards = entity?.hexGrid?.shards) {
   const grid = entity?.hexGrid;
   if (!grid || !Array.isArray(shards) || shards.length === 0) return null;
   const globalArena = getGlobalHexArena();
   const previousBody = grid._packedBody;
   const bodyId = previousBody?.bodyId || allocateBodyId();
+  ensureArenaSlots(globalArena, shards);
   const members = new Uint32Array(shards.length);
   const newlyAllocated = [];
 

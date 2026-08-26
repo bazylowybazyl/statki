@@ -459,6 +459,24 @@ function profileOf(weaponOrId) {
   return def ? CATEGORY_PROFILE[def.category] || null : null;
 }
 
+/**
+ * Klasa trafienia w tarczę dla efektów cząsteczkowych (src/3d/shieldImpactFx.js):
+ * `pd` | `main` | `special`. Rolę niesie `mountType` — aux to broń defensywna,
+ * special/builtin to superciężkie. Jedyny dodatek: kaliber Capital na zaczepie
+ * głównym/rakietowym (torpeda oblężnicza) liczy się jak special, bo trafienie
+ * ma tę samą wagę co bateria klasy Yamato. Aux zostaje przy `pd` niezależnie od
+ * rozmiaru — zapora flak „Perun" to nadal ogień defensywny.
+ * Broń spoza katalogu (pociski spawnowane poza fireWeaponCore) → `main`.
+ */
+export function shieldImpactClass(weaponOrId) {
+  const def = weaponDef(weaponOrId);
+  const mount = def?.mountType;
+  if (mount === 'aux') return 'pd';
+  if (mount === 'special' || mount === 'special_missile' || mount === 'builtin') return 'special';
+  if (def?.size === 'Capital') return 'special';
+  return 'main';
+}
+
 /** `ballistic` | `energy` | `carrier`. Nieznana broń liczy się jak balistyczna. */
 export function weaponDamageType(weaponOrId) {
   return profileOf(weaponOrId)?.damage || DAMAGE_TYPE.BALLISTIC;

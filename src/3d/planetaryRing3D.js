@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { spatialCellKey } from '../game/spatialCellKey.js';
 import { Core3D } from './core3d.js';
 import { initHexBody, getHexStructuralState } from '../game/destructor.js';
 import { RingCityZoneGrid } from './ringCityZoneGrid.js';
@@ -921,6 +922,44 @@ const state = {
   querySerial: 0,
   visualZByKey: new Map()
 };
+const queryResponse = { buffer: state.queryResult, count: 0 };
+
+export function circleIntersectsRingAnnulus(
+  x,
+  y,
+  radius,
+  centerX,
+  centerY,
+  innerRadius,
+  outerRadius,
+  padding = 0
+) {
+  const dx = (Number(x) || 0) - (Number(centerX) || 0);
+  const dy = (Number(y) || 0) - (Number(centerY) || 0);
+  const distSq = dx * dx + dy * dy;
+  const pad = Math.max(0, Number(radius) || 0) + Math.max(0, Number(padding) || 0);
+  const outerReach = Math.max(0, Number(outerRadius) || 0) + pad;
+  if (distSq > outerReach * outerReach) return false;
+  const innerReach = Math.max(0, (Number(innerRadius) || 0) - pad);
+  return distSq >= innerReach * innerReach;
+}
+
+function queryTouchesAnyRing(x, y, radius) {
+  for (const [, ring] of state.rings) {
+    if (!ring?.segmentData?.length) continue;
+    if (circleIntersectsRingAnnulus(
+      x,
+      y,
+      radius,
+      ring.lastPlanetX,
+      ring.lastPlanetY,
+      ring.floorInnerRadius,
+      ring.floorOuterRadius,
+      1800
+    )) return true;
+  }
+  return false;
+}
 
 function normalizeAnglePositive(angle) {
   const twoPi = Math.PI * 2;
@@ -2256,7 +2295,7 @@ function getSpatialKey(x, y) {
   const cellSize = CONFIG.queryCellSize;
   const cx = Math.floor((Number(x) || 0) / cellSize);
   const cy = Math.floor((Number(y) || 0) / cellSize);
-  return `${cx},${cy}`;
+  return spatialCellKey(cx, cy);
 }
 
 let _lastEntityCountSig = -1;
@@ -2364,16 +2403,22 @@ function appendOnDemandRingTargets(x, y, radius = 0) {
 }
 
 function queryPotentialTargets(x, y, radius = 0) {
+  state.queryCount = 0;
+  queryResponse.count = 0;
+  // Most battles happen nowhere near Earth or Mars. Reject those bullets with
+  // two squared-distance checks instead of allocating cell-key strings and
+  // running hypot/atan2 against each ring on every 120 Hz physics step.
+  if (!queryTouchesAnyRing(x, y, radius)) return queryResponse;
+
   const cellSize = CONFIG.queryCellSize;
   const baseX = Math.floor((Number(x) || 0) / cellSize);
   const baseY = Math.floor((Number(y) || 0) / cellSize);
   const span = Math.max(1, Math.ceil((Number(radius) || 0) / cellSize) + 1);
 
-  state.queryCount = 0;
   nextQuerySerial();
   for (let ix = -span; ix <= span; ix++) {
     for (let iy = -span; iy <= span; iy++) {
-      const key = `${baseX + ix},${baseY + iy}`;
+      const key = spatialCellKey(baseX + ix, baseY + iy);
       const cell = state.queryCells.get(key);
       if (!cell) continue;
       for (let i = 0; i < cell.length; i++) {
@@ -2382,7 +2427,8 @@ function queryPotentialTargets(x, y, radius = 0) {
     }
   }
   appendOnDemandRingTargets(x, y, radius);
-  return { buffer: state.queryResult, count: state.queryCount };
+  queryResponse.count = state.queryCount;
+  return queryResponse;
 }
 
 function disposeRingCityVisualEntry(entry) {

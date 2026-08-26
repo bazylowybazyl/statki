@@ -14,6 +14,7 @@ const PERF_PANEL_HTML = `
   <div class="perf-row"><span class="perf-label">HexArena</span><span class="perf-val" id="perfHexArena">--</span></div>
   <div class="perf-row"><span class="perf-label">Hex LOD full/hybrid/far</span><span class="perf-val" id="perfHexLod">--</span></div>
   <div class="perf-row"><span class="perf-label">Physics worker</span><span class="perf-val" id="perfPhysicsWorker">--</span></div>
+  <div class="perf-row"><span class="perf-label">AI cadence actual/target</span><span class="perf-val" id="perfAiCadence">--</span></div>
   <div class="perf-row"><span class="perf-label">Untracked</span><span class="perf-val" id="perfFrameUntracked">--</span></div>
   <div class="perf-bar-bg">
     <div class="perf-bar" id="barFrameUntracked" style="width:0%;background:#64748b"></div>
@@ -311,6 +312,11 @@ const PERF_PANEL_HTML = `
     <div class="perf-bar" id="barRender2dPlayer" style="width:0%;background:#2dd4bf"></div>
   </div>
 
+  <div class="perf-row"><span class="perf-label"> |- R wiezyczki</span><span class="perf-val" id="perfRender2dTurret">--</span></div>
+  <div class="perf-bar-bg">
+    <div class="perf-bar" id="barRender2dTurret" style="width:0%;background:#93a6c4"></div>
+  </div>
+
   <div class="perf-row"><span class="perf-label"> |- R bullets</span><span class="perf-val" id="perfRender2dProjectiles">--</span></div>
   <div class="perf-bar-bg">
     <div class="perf-bar" id="barRender2dProjectiles" style="width:0%;background:#fb7185"></div>
@@ -341,6 +347,10 @@ const PERF_PANEL_HTML = `
       id="perfShards">--</span></div>
   <div class="perf-row"><span class="perf-label">Kontakty/klatka</span><span class="perf-val"
       id="perfContacts">--</span></div>
+  <div class="perf-row"><span class="perf-label">GPU (klatka)</span><span class="perf-val"
+      id="perfGpuFrame">--</span></div>
+  <div class="perf-row"><span class="perf-label">Obiekty sceny</span><span class="perf-val"
+      id="perfSceneObjects">--</span></div>
   <div class="perf-row"><span class="perf-label">Draw calls / Tris</span><span class="perf-val"
       id="perfDrawCalls">--</span></div>
   <div class="perf-row"><span class="perf-label"> |- Refraction</span><span class="perf-val"
@@ -353,7 +363,7 @@ const PERF_PANEL_HTML = `
       id="perfDrawCallsShafts">--</span></div>
   <div class="perf-row"><span class="perf-label"> |- Ortho</span><span class="perf-val"
       id="perfDrawCallsOrtho">--</span></div>
-  <div class="perf-row"><span class="perf-label">   |- dysze/statki/wraki/bronie</span><span class="perf-val"
+  <div class="perf-row"><span class="perf-label">   |- dysze/statki/wraki/blyski</span><span class="perf-val"
       id="perfDrawCallsCategories">--</span></div>
   <div class="perf-row"><span class="perf-label">   |- smugi (zwiniete ciala)</span><span class="perf-val"
       id="perfDrawCallsImpostors">--</span></div>
@@ -482,6 +492,7 @@ export const PerfHUD = {
       render2dWorldTime: 0,
       render2dNpcTime: 0,
       render2dPlayerTime: 0,
+      render2dTurretTime: 0,
       render2dProjectilesTime: 0,
       render2dVfxTime: 0,
       renderHudTime: 0,
@@ -493,7 +504,8 @@ export const PerfHUD = {
     vfxUpdateTime: 0,
     overlayFxTime: 0,
     contacts: 0,
-    physicsSteps: 0
+    physicsSteps: 0,
+    aiDecisionTicks: 0
   },
   display: {
     fps: 0,
@@ -591,6 +603,7 @@ export const PerfHUD = {
       render2dWorldTime: 0,
       render2dNpcTime: 0,
       render2dPlayerTime: 0,
+      render2dTurretTime: 0,
       render2dProjectilesTime: 0,
       render2dVfxTime: 0,
       renderHudTime: 0,
@@ -603,6 +616,7 @@ export const PerfHUD = {
     overlayFxTime: 0,
     contacts: 0,
     physicsSteps: 0,
+    aiDecisionHz: 0,
     entities: 0,
     shards: 0,
     bulletsCount: 0,
@@ -619,6 +633,7 @@ export const PerfHUD = {
   },
   els: null,
   graphCtx: null,
+  aiDecisionTargetHz: 0,
   collapsedSections: { physics: true, ai: true, render: false, render3dDraw: false },
   _sectionToggleBound: false,
   sectionRows: {
@@ -668,6 +683,7 @@ export const PerfHUD = {
       hexArena: document.getElementById('perfHexArena'),
       hexLod: document.getElementById('perfHexLod'),
       physicsWorker: document.getElementById('perfPhysicsWorker'),
+      aiCadence: document.getElementById('perfAiCadence'),
       frameUntracked: document.getElementById('perfFrameUntracked'),
       physics: document.getElementById('perfPhysics'),
       destructor: document.getElementById('perfDestructor'),
@@ -725,6 +741,7 @@ export const PerfHUD = {
       render2dWorld: document.getElementById('perfRender2dWorld'),
       render2dNpc: document.getElementById('perfRender2dNpc'),
       render2dPlayer: document.getElementById('perfRender2dPlayer'),
+      render2dTurret: document.getElementById('perfRender2dTurret'),
       render2dProjectiles: document.getElementById('perfRender2dProjectiles'),
       render2dVfx: document.getElementById('perfRender2dVfx'),
       renderHud: document.getElementById('perfRenderHud'),
@@ -732,6 +749,8 @@ export const PerfHUD = {
       overlayFx: document.getElementById('perfOverlayFx'),
       shards: document.getElementById('perfShards'),
       contacts: document.getElementById('perfContacts'),
+      gpuFrame: document.getElementById('perfGpuFrame'),
+      sceneObjects: document.getElementById('perfSceneObjects'),
       drawCalls: document.getElementById('perfDrawCalls'),
       drawCallsRefraction: document.getElementById('perfDrawCallsRefraction'),
       drawCallsBg: document.getElementById('perfDrawCallsBg'),
@@ -804,6 +823,7 @@ export const PerfHUD = {
       barRender2dWorld: document.getElementById('barRender2dWorld'),
       barRender2dNpc: document.getElementById('barRender2dNpc'),
       barRender2dPlayer: document.getElementById('barRender2dPlayer'),
+      barRender2dTurret: document.getElementById('barRender2dTurret'),
       barRender2dProjectiles: document.getElementById('barRender2dProjectiles'),
       barRender2dVfx: document.getElementById('barRender2dVfx'),
       barRenderHud: document.getElementById('barRenderHud'),
@@ -990,6 +1010,15 @@ export const PerfHUD = {
     this.accum.physicsSteps += 1;
   },
 
+  setAiDecisionTargetHz(hz) {
+    const value = Number(hz);
+    this.aiDecisionTargetHz = Number.isFinite(value) && value > 0 ? value : 0;
+  },
+
+  markAiDecisionTick() {
+    this.accum.aiDecisionTicks += 1;
+  },
+
   recordFrameTime(ms) {
     if (!Number.isFinite(ms) || ms < 0) return;
     this.accum.frameCount += 1;
@@ -1000,6 +1029,7 @@ export const PerfHUD = {
 
   flush(now) {
     if (now - this.lastFlush < this.updateInterval) return;
+    const flushSeconds = Math.max(0.001, (now - this.lastFlush) / 1000);
     const frames = Math.max(1, this.accum.frameCount);
     const avgFrame = this.accum.frameMs / frames;
     this.display.fps = Math.round(1000 / Math.max(0.001, avgFrame));
@@ -1111,6 +1141,7 @@ export const PerfHUD = {
     this.display.render2dWorldTime = this.accum.render2dWorldTime / frames;
     this.display.render2dNpcTime = this.accum.render2dNpcTime / frames;
     this.display.render2dPlayerTime = this.accum.render2dPlayerTime / frames;
+    this.display.render2dTurretTime = this.accum.render2dTurretTime / frames;
     this.display.render2dProjectilesTime = this.accum.render2dProjectilesTime / frames;
     this.display.render2dVfxTime = this.accum.render2dVfxTime / frames;
     this.display.renderHudTime = this.accum.renderHudTime / frames;
@@ -1123,6 +1154,7 @@ export const PerfHUD = {
     this.display.overlayFxTime = this.accum.overlayFxTime / frames;
     this.display.contacts = this.accum.contacts / frames;
     this.display.physicsSteps = this.accum.physicsSteps / frames;
+    this.display.aiDecisionHz = this.accum.aiDecisionTicks / flushSeconds;
 
     const counts = this.collectCounts();
     this.display.entities = counts.entities;
@@ -1284,6 +1316,9 @@ export const PerfHUD = {
         ? `${workerStats.mode} q=${workerStats.commandBacklog}/${workerStats.aiCommandBacklog}/${workerStats.eventBacklog} drop=${workerStats.commandDropped + workerStats.aiCommandDropped + workerStats.eventDropped}`
         : 'disabled';
     }
+    if (e.aiCadence) {
+      e.aiCadence.textContent = `${d.aiDecisionHz.toFixed(1)} / ${this.aiDecisionTargetHz.toFixed(0)} Hz`;
+    }
 
     setMs(e.frameUntracked, d.frameUntrackedTime);
     setMsWithStep(e.physics, d.physicsTime, d.physicsPerStep);
@@ -1342,6 +1377,7 @@ export const PerfHUD = {
     setMs(e.render2dWorld, d.render2dWorldTime);
     setMs(e.render2dNpc, d.render2dNpcTime);
     setMs(e.render2dPlayer, d.render2dPlayerTime);
+    setMs(e.render2dTurret, d.render2dTurretTime);
     setMs(e.render2dProjectiles, d.render2dProjectilesTime);
     setMs(e.render2dVfx, d.render2dVfxTime);
     setMs(e.renderHud, d.renderHudTime);
@@ -1404,6 +1440,7 @@ export const PerfHUD = {
     setBar(e.barRender2dWorld, d.render2dWorldTime);
     setBar(e.barRender2dNpc, d.render2dNpcTime);
     setBar(e.barRender2dPlayer, d.render2dPlayerTime);
+    setBar(e.barRender2dTurret, d.render2dTurretTime);
     setBar(e.barRender2dProjectiles, d.render2dProjectilesTime);
     setBar(e.barRender2dVfx, d.render2dVfxTime);
     setBar(e.barRenderHud, d.renderHudTime);
@@ -1419,6 +1456,36 @@ export const PerfHUD = {
       if (e.drawCallsBg) e.drawCallsBg.textContent = formatDrawInfo(passes?.bg);
       if (e.drawCallsPlanets) e.drawCallsPlanets.textContent = formatDrawInfo(passes?.planets);
       if (e.drawCallsShafts) e.drawCallsShafts.textContent = formatDrawInfo(passes?.shafts);
+      if (e.sceneObjects) {
+        // Kazdy `renderer.render(scene, …)` wola `scene.updateMatrixWorld()`, ktore
+        // przechodzi WSZYSTKIE dzieci — takze niewidoczne. W klatce jest ~8 takich
+        // wywolan, wiec obiekty zostawione w scenie "bo sa ukryte" kosztuja realnie,
+        // przy zerowej liczbie draw calli. Ta liczba ma byc plaska w czasie.
+        const scene = window.Core3D?.scene;
+        if (scene) {
+          let total = 0;
+          let hidden = 0;
+          scene.traverse((o) => { total++; if (o.visible === false) hidden++; });
+          e.sceneObjects.textContent = `${total} (${hidden} ukrytych)`;
+          e.sceneObjects.style.color = hidden > total * 0.35 ? '#fd4' : '';
+        } else {
+          e.sceneObjects.textContent = '--';
+        }
+      }
+      if (e.gpuFrame) {
+        // Czas GPU z EXT_disjoint_timer_query_webgl2. Jesli ta liczba dobija do
+        // czasu klatki, waskim gardlem jest karta i ciecie draw calli nic nie da.
+        const gpuMs = Number(window.Core3D?.gpuFrameMs);
+        if (!Number.isFinite(gpuMs) || gpuMs <= 0) {
+          e.gpuFrame.textContent = window.Core3D?._gpuTimerExt ? 'czekam...' : 'brak ext';
+          e.gpuFrame.style.color = '';
+        } else {
+          const frameMs = Number(d.frameP50) || 0;
+          e.gpuFrame.textContent = `${gpuMs.toFixed(2)} ms`;
+          e.gpuFrame.style.color = (frameMs > 0 && gpuMs > frameMs * 0.8) ? '#f44'
+            : (frameMs > 0 && gpuMs > frameMs * 0.5) ? '#fd4' : '';
+        }
+      }
       if (e.drawCallsOrtho) e.drawCallsOrtho.textContent = formatDrawInfo(passes?.ortho);
       if (e.drawCallsCategories) {
         // Rozbicie passa Ortho na to, co faktycznie da sie zbatchowac. Suma nie
@@ -1426,7 +1493,7 @@ export const PerfHUD = {
         // siedza tam jeszcze asteroidy, tarcze i pule czastek.
         const cat = window.__drawCallStats;
         e.drawCallsCategories.textContent = cat
-          ? `${cat.engineDraws} (${cat.engineNozzles} dysz) / ${cat.shipDraws} / ${cat.wreckDraws} / ${cat.weaponDraws}`
+          ? `${cat.engineDraws} (${cat.engineNozzles} dysz) / ${cat.shipDraws} / ${cat.wreckDraws} / ${cat.weaponDraws} (${cat.turret2DCount} wiez 2D)`
           : '--';
       }
       if (e.drawCallsImpostors) {
@@ -1542,6 +1609,7 @@ export const PerfHUD = {
     this.accum.render2dWorldTime = 0;
     this.accum.render2dNpcTime = 0;
     this.accum.render2dPlayerTime = 0;
+    this.accum.render2dTurretTime = 0;
     this.accum.render2dProjectilesTime = 0;
     this.accum.render2dVfxTime = 0;
     this.accum.renderHudTime = 0;
@@ -1554,6 +1622,7 @@ export const PerfHUD = {
     this.accum.overlayFxTime = 0;
     this.accum.contacts = 0;
     this.accum.physicsSteps = 0;
+    this.accum.aiDecisionTicks = 0;
   },
 
   refreshDebugButtons() {

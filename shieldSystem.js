@@ -427,7 +427,10 @@ export function resizeShieldSystem() {
   return true;
 }
 
-export function registerShieldImpact(rawEntity, worldX, worldY, damage = 0) {
+// fxClass — klasa trafienia dla efektów cząsteczkowych (src/3d/shieldImpactFx.js):
+// 'pd' broń defensywna | 'main' broń główna | 'special' broń special |
+// 'shield' zderzenie tarcza-tarcza. Nie wpływa na gameplay, tylko na wizual.
+export function registerShieldImpact(rawEntity, worldX, worldY, damage = 0, fxClass = 'main') {
   const entity = unwrapShieldEntity(rawEntity);
   const shield = ensureShield(entity?.shield);
   if (!shield) return false;
@@ -452,6 +455,7 @@ export function registerShieldImpact(rawEntity, worldX, worldY, damage = 0) {
     localAngle,
     gridAngle,
     intensity,
+    fxClass,
     life: 1.0,
     deformation,
     startTime: performance.now() / 1000

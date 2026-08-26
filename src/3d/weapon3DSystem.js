@@ -1,15 +1,23 @@
+// src/3d/weapon3DSystem.js
+//
+// Zakres po przebudowie 2026-08-26: pociski, wiązki, błyski wylotowe i wstrząs
+// kamery. Wieżyczki NIE są już siatkami Three — rysuje je kanwa 2D
+// (src/vfx/turret2D.js), bo modele 3D niosły po kilka oświetlanych draw calli
+// na broń i puchły w passie FG przy zbliżeniu na flotę.
+//
+// Ten moduł pyta Turret2D tylko o pozycję wylotu (`triggerShot`), żeby płomień
+// i początek wiązki trzymały się lufy.
+
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Core3D } from './core3d.js';
-import { CICDisplay } from '../ui/cicDisplay.js';
+import { DrawCallStats } from './drawCallStats.js';
+import { Turret2D, normalizeWeaponFxKey } from '../vfx/turret2D.js';
 import { getEntityWeaponTier, WEAPON_TIER_SCALE } from '../data/ships.js';
 
 const WEP_RESOURCES = {
-  mats: null,
   geos: null,
   bulletHeadTex: null,
   bulletStyles: null,
-  flashMats: null,
   bulletInstanceMats: null,
   beamFxMats: null,
 };
@@ -26,116 +34,8 @@ const MAX_CONTINUOUS_BEAM_VISUALS = 56;
 const BEAM_ENABLE_SPIRAL = false;
 const BEAM_ENABLE_IMPACT_LIGHT = false;
 
-const WEAPON_FX_PROFILE = {
-  vulcan_minigun: { key: 'vulcan', recoil: 3.0, shake: 2.0 },
-  helios_laser: { key: 'helios', recoil: 6.0, shake: 3.0 },
-  railgun_mk1: { key: 'tempest', recoil: 4.0, shake: 2.5 },
-  railgun_mk2: { key: 'tempest', recoil: 4.0, shake: 2.5 },
-  armata_mk1: { key: 'armata', recoil: 12.0, shake: 6.5 },
-  beam_continuous: { key: 'beam', recoil: 1.0, shake: 1.5 },
-  beam_pulse: { key: 'beam', recoil: 6.0, shake: 3.5 },
-  special_goliath_autocannon: { key: 'goliath', recoil: 20.0, shake: 10.0 },
-  special_plasma_gatling: { key: 'plasmaGatling', recoil: 15.0, shake: 8.0 },
-  special_valkyrie_railgun: { key: 'tempest', recoil: 20.0, shake: 12.0 },
-  special_yamato_cannon: { key: 'yamato', recoil: 60.0, shake: 20.0 },
-  tempest_ion_mk1: { key: 'tempest', recoil: 4.0, shake: 2.5 },
-  tempest_ion_mk2: { key: 'tempest', recoil: 4.0, shake: 2.5 },
-  heavy_autocannon: { key: 'autocannon', recoil: 8.0, shake: 4.0 },
-  ciws_mk1: { key: 'ciws', recoil: 1.5, shake: 1.0 },
-  laser_pd_mk1: { key: 'laserPD', recoil: 0.5, shake: 0.3 },
-  flak_s: { key: 'flak', recoil: 3.5, shake: 1.8 },
-  flak_m: { key: 'flak', recoil: 5.0, shake: 2.6 },
-  flak_l: { key: 'flak', recoil: 8.0, shake: 4.2 },
-  flak_capital: { key: 'flak', recoil: 14.0, shake: 7.5 },
-  missile_rack: { key: 'rocket', recoil: 4.0, shake: 2.0 },
-  fast_missile_rack: { key: 'rocket', recoil: 3.0, shake: 1.5 },
-  supernova_missile: { key: 'torpedo', recoil: 9.0, shake: 5.0 },
-  siege_torpedo: { key: 'torpedo', recoil: 6.0, shake: 3.0 },
-  siege_torpedo_mk2: { key: 'torpedo', recoil: 8.0, shake: 4.0 },
-  torpedo_salvo: { key: 'torpedo', recoil: 5.0, shake: 2.5 },
-  hexlance_siege: { key: 'hexlance', recoil: 30.0, shake: 15.0 },
-  siege_railgun: { key: 'siegeRail', recoil: 120.0, shake: 80.0 },
-};
-
-const WEAPON_3D_SCALE_BY_SIZE = Object.freeze({
-  Capital: 1.75,
-  L: 1.02,
-  M: 0.76,
-  S: 0.52
-});
-
-const WEAPON_3D_CATEGORY_TRIM = Object.freeze({
-  beam: 0.94,
-  ciws: 0.88,
-  flak: 0.92,
-  rocket: 0.82,
-  torpedo: 0.90,
-  default: 1.0
-});
-
-// LOD broni 3D: poniżej tego zooma wieżyczki mają po kilka pikseli, a w bitwie
-// potrafią nieść setki oświetlanych draw calli w passie FG. Chowamy całe
-// kontenery i pomijamy ich sync. Tuning: window.__weaponLodMinZoom.
-const WEAPON_LOD_MIN_ZOOM = 0.28;
-function getWeaponLodMinZoom() {
-  const z = (typeof window !== 'undefined') ? Number(window.__weaponLodMinZoom) : NaN;
-  return (Number.isFinite(z) && z >= 0) ? z : WEAPON_LOD_MIN_ZOOM;
-}
-
-function normalizeWeaponFxKey(weaponId) {
-  const id = String(weaponId || '').toLowerCase();
-  if (!id) return '';
-  if (id.includes('vulcan')) return 'vulcan';
-  if (id.includes('helios')) return 'helios';
-  if (id.includes('tempest') || id === 'railgun_mk1' || id === 'railgun_mk2') return 'tempest';
-  if (id.includes('armata') || id.includes('heavy_cannon')) return 'armata';
-  if (id.includes('beam_continuous') || id.includes('beam_pulse')) return 'beam';
-  if (id.includes('special_goliath')) return 'goliath';
-  if (id.includes('special_plasma')) return 'plasmaGatling';
-  if (id.includes('heavy_auto')) return 'autocannon';
-  if (id.includes('ciws')) return 'ciws';
-  if (id.includes('flak')) return 'flak';
-  if (id.includes('laser_pd')) return 'laserPD';
-  if (id.includes('fast_missile_rack')) return 'rocket';
-  if (id.includes('supernova_missile')) return 'torpedo';
-  if (id.includes('missile_rack')) return 'rocket';
-  if (id.includes('siege_torpedo')) return 'torpedo';
-  if (id.includes('torpedo_salvo')) return 'torpedo';
-  if (id.includes('hexlance')) return 'hexlance';
-  if (id.includes('siege_railgun')) return 'siegeRail';
-  if (id.includes('special_valkyrie')) return 'tempest';
-  if (id.includes('special_yamato')) return 'yamato';
-  return id;
-}
-
 function isFiniteNumber(value) {
   return Number.isFinite(Number(value));
-}
-
-function shouldRenderWeapon3D(def) {
-  if (!def) return false;
-  const mountType = String(def.mountType || '').toLowerCase();
-  if (mountType === 'hangar' || mountType === 'builtin') return false;
-  return true;
-}
-
-function getWeapon3DScale(size, category) {
-  const base = WEAPON_3D_SCALE_BY_SIZE[String(size || '').trim()] || WEAPON_3D_SCALE_BY_SIZE.M;
-  const trim = WEAPON_3D_CATEGORY_TRIM[String(category || '').toLowerCase()] || WEAPON_3D_CATEGORY_TRIM.default;
-  return base * trim;
-}
-
-function getEntityWeaponLocalScale(entity) {
-  const scaleXRaw = Number(entity?.__hardpointScaleX);
-  const scaleYRaw = Number(entity?.__hardpointScaleY);
-  const uniformRaw = Number(entity?.__hardpointScale);
-  const scaleX = Number.isFinite(scaleXRaw) && scaleXRaw > 0 ? scaleXRaw : null;
-  const scaleY = Number.isFinite(scaleYRaw) && scaleYRaw > 0 ? scaleYRaw : null;
-  const uniform = Number.isFinite(uniformRaw) && uniformRaw > 0 ? uniformRaw : 1;
-  return {
-    x: scaleX ?? uniform,
-    y: scaleY ?? uniform
-  };
 }
 
 function makeHeadTexture() {
@@ -172,101 +72,12 @@ const MUZZLE_HDR = Object.freeze({ outer: 2.5, inner: 4.0 });
 const BEAM_HDR = Object.freeze({ core: 4.0, glow: 2.4, spiral: 3.0 });
 
 function ensureWeaponResources() {
-  if (!WEP_RESOURCES.mats || !WEP_RESOURCES.geos || !WEP_RESOURCES.bulletStyles) {
-    // Turret details are painted/physical surfaces, never light emitters. Keeping
-    // them dark and Lambert-lit prevents the shared HDR bloom pass from treating
-    // weapon housings, lenses or feed strips as permanent lamps.
-    const makeTurretDetailMaterial = (color) => new THREE.MeshLambertMaterial({
-      color
-    });
-
-    WEP_RESOURCES.mats = {
-      // Lambert zamiast Standard: przy dziesiątkach świateł punktowych w scenie
-      // PBR płaci pełny GGX per światło per fragment; na wieżyczkach wielkości
-      // kilkudziesięciu pikseli różnica jest niewidoczna, a koszt ~5× mniejszy.
-      base: new THREE.MeshLambertMaterial({ color: 0x3a465b }),
-      barrel: new THREE.MeshLambertMaterial({ color: 0x5a6982 }),
-      armor: new THREE.MeshLambertMaterial({ color: 0x647596 }),
-      detailBlue: makeTurretDetailMaterial(0x293b4d),
-      detailCyan: makeTurretDetailMaterial(0x294248),
-      detailRed: makeTurretDetailMaterial(0x4a2c33),
-      detailAmber: makeTurretDetailMaterial(0x4b402d),
-    };
-
+  if (!WEP_RESOURCES.geos || !WEP_RESOURCES.bulletStyles) {
+    // Po przeniesieniu wieżyczek na kanwę 2D zostaje jedna geometria: płaski
+    // quad, z którego zbudowane są pociski, wiązki i błyski wylotowe.
     WEP_RESOURCES.geos = {
-      // Original shared
-      railBase: new THREE.BoxGeometry(18, 22, 6),
-      railBarrel: new THREE.BoxGeometry(38, 3, 3),
-      railDetail: new THREE.BoxGeometry(28, 1, 1),
-      armataBase: new THREE.BoxGeometry(20, 24, 8),
-      armataBarrel: new THREE.BoxGeometry(28, 7, 7),
-      autoBase: new THREE.CylinderGeometry(8, 8, 8, 16),
-      autoBarrel: new THREE.BoxGeometry(22, 4, 4),
-      ciwsBase: new THREE.BoxGeometry(10, 10, 5),
-      ciwsBarrel: new THREE.BoxGeometry(14, 3, 3),
-      defaultBase: new THREE.BoxGeometry(14, 18, 6),
-      barrelTube: new THREE.CylinderGeometry(1.15, 1.15, 24, 8),
-      planeUnit: new THREE.PlaneGeometry(1, 1),
-      // Goliath — shared barrel + brake
-      goliathBarrel: new THREE.CylinderGeometry(3.5, 4.5, 36, 10),
-      goliathHousing: new THREE.BoxGeometry(30, 28, 18),
-      // Plasma Gatling — shared barrel (no bulbs)
-      plasmaBarrel: new THREE.CylinderGeometry(3, 3.5, 18, 8),
-      plasmaHousing: new THREE.CylinderGeometry(14, 16, 14, 8),
-      // Beam Emitter — dish + crystal
-      beamDish: new THREE.CylinderGeometry(10, 10, 2, 12),
-      beamHousing: new THREE.BoxGeometry(18, 20, 10),
-      beamCrystal: new THREE.OctahedronGeometry(2.5, 0),
-      // Heavy Autocannon
-      heavyAutoHousing: new THREE.BoxGeometry(16, 14, 6),
-      heavyAutoBarrel: new THREE.CylinderGeometry(2.5, 3.5, 28, 8),
-      // CIWS — dome + single cluster barrel
-      ciwsDome: new THREE.SphereGeometry(6, 10, 8, 0, Math.PI * 2, 0, Math.PI * 0.5),
-      ciwsClusterBarrel: new THREE.CylinderGeometry(2.5, 2.5, 18, 8),
-      // Flak — krępa jaskółka: podstawa, jarzmo, 2 krótkie lufy z hamulcami,
-      // bębny amunicyjne po bokach. Wszystko merguje się w 1 mesh metalu.
-      flakBase: new THREE.CylinderGeometry(9, 11, 5, 8),
-      flakMantlet: new THREE.BoxGeometry(13, 16, 9),
-      flakBarrel: new THREE.CylinderGeometry(2.0, 2.6, 16, 8),
-      flakBrake: new THREE.CylinderGeometry(3.2, 3.2, 4, 8),
-      flakDrum: new THREE.CylinderGeometry(4.5, 4.5, 5, 10),
-      flakFeedCover: new THREE.BoxGeometry(3, 12, 1.6),
-      // Laser PD — non-emissive optical housing
-      laserPDLens: new THREE.CylinderGeometry(2.5, 2, 10, 8),
-      // Missile Rack — housing + front faceplate
-      missileHousing: new THREE.BoxGeometry(20, 18, 14),
-      missileFaceplate: new THREE.BoxGeometry(16, 14, 2),
-      // Siege Torpedo — housing + tube
-      torpedoHousing: new THREE.BoxGeometry(24, 26, 16),
-      torpedoTube: new THREE.CylinderGeometry(5, 5.5, 28, 10),
-      // Hexlance — hex housing + inner core + ring
-      hexHousing: new THREE.CylinderGeometry(16, 18, 10, 6),
-      hexCore: new THREE.CylinderGeometry(3, 3, 40, 6),
-      hexInnerCore: new THREE.CylinderGeometry(2, 2, 38, 6),
-      hexFrontRing: new THREE.TorusGeometry(12, 1.5, 6, 6),
-      // Siege Railgun — housing + rails + core
-      siegeHousing: new THREE.BoxGeometry(28, 26, 18),
-      siegeRailBar: new THREE.BoxGeometry(60, 4, 5),
-      siegeCore: new THREE.CylinderGeometry(1.5, 1.5, 58, 8),
+      planeUnit: new THREE.PlaneGeometry(1, 1)
     };
-    WEP_RESOURCES.geos.autoBase.rotateX(Math.PI / 2);
-    WEP_RESOURCES.geos.barrelTube.rotateZ(Math.PI * 0.5);
-    WEP_RESOURCES.geos.goliathBarrel.rotateZ(Math.PI * 0.5);
-    WEP_RESOURCES.geos.plasmaBarrel.rotateZ(Math.PI * 0.5);
-    WEP_RESOURCES.geos.plasmaHousing.rotateX(Math.PI / 2);
-    WEP_RESOURCES.geos.beamDish.rotateZ(Math.PI * 0.5);
-    WEP_RESOURCES.geos.heavyAutoBarrel.rotateZ(Math.PI * 0.5);
-    WEP_RESOURCES.geos.ciwsClusterBarrel.rotateZ(Math.PI * 0.5);
-    WEP_RESOURCES.geos.flakBase.rotateX(Math.PI / 2);
-    WEP_RESOURCES.geos.flakBarrel.rotateZ(Math.PI * 0.5);
-    WEP_RESOURCES.geos.flakBrake.rotateZ(Math.PI * 0.5);
-    WEP_RESOURCES.geos.flakDrum.rotateX(Math.PI / 2);
-    WEP_RESOURCES.geos.laserPDLens.rotateZ(Math.PI * 0.5);
-    WEP_RESOURCES.geos.torpedoTube.rotateZ(Math.PI * 0.5);
-    WEP_RESOURCES.geos.hexHousing.rotateX(Math.PI / 2);
-    WEP_RESOURCES.geos.hexCore.rotateZ(Math.PI * 0.5);
-    WEP_RESOURCES.geos.hexInnerCore.rotateZ(Math.PI * 0.5);
-    WEP_RESOURCES.geos.siegeCore.rotateZ(Math.PI * 0.5);
 
     WEP_RESOURCES.bulletHeadTex = makeHeadTexture();
 
@@ -293,7 +104,6 @@ function ensureWeaponResources() {
     };
   }
 
-  if (!WEP_RESOURCES.flashMats) WEP_RESOURCES.flashMats = new Map();
   ensureBulletInstances();
 }
 
@@ -376,912 +186,155 @@ function ensureBulletInstances() {
   Core3D.scene.add(bulletInstances.arcs);
 }
 
-function markMeshTree(root, value = true) {
-  root.traverse((obj) => {
-    if (!obj.isMesh) return;
-    obj.castShadow = value;
-    obj.receiveShadow = value;
-  });
-}
+// ── Błyski wylotowe ─────────────────────────────────────────────────────────
+//
+// Wieżyczki rysuje kanwa 2D (src/vfx/turret2D.js), ale sam płomień zostaje w
+// 3D, żeby dalej szedł przez HDR i bloom razem z pociskami i wiązkami.
+//
+// Wcześniej każdy błysk był dzieckiem siatki wieżyczki: 2 meshe na lufę, po
+// jednym materiale na barwę, setki obiektów w grafie sceny. Teraz cała scena ma
+// DWA InstancedMeshe — koszt nie rośnie z liczbą strzelających wież.
+const MUZZLE_MAX_INSTANCES = 192;
+const MUZZLE_BASE_SIZE = 11;
+const MUZZLE_DECAY = 14;
 
-function promoteWeaponOverlay(root, renderOrder = 60) {
-  root.renderOrder = renderOrder;
+const muzzleInstances = {
+  outer: null,
+  core: null,
+  active: [],
+  pool: [],
+  _prevCount: 0
+};
 
-  root.traverse((obj) => {
-    if (!obj.isMesh) return;
-    const mat = obj.material;
-    const materials = Array.isArray(mat) ? mat : [mat];
-    const isAdditiveFx = materials.some((material) => material?.blending === THREE.AdditiveBlending);
-    
-    obj.renderOrder = isAdditiveFx ? (renderOrder + 3) : renderOrder;
-    obj.frustumCulled = true;
-    
-    if (!mat) return;
-    for (const material of materials) {
-      if (!material) continue;
+const _muzzleColor = new THREE.Color();
 
-      // FIX: Światła i rdzenie mają włączony depthTest, wyłączony depthWrite
-      if (material.blending === THREE.AdditiveBlending) {
-        material.depthTest = true; // <--- KRYTYCZNA ZMIANA (było false)
-        material.depthWrite = false; // Nie zapisujemy do głębi, żeby nie ucinać innych świateł
-        material.transparent = true;
-        material.toneMapped = false;
-        if (!Number.isFinite(material.opacity)) material.opacity = 1;
-      } else {
-        material.depthTest = true;
-        material.depthWrite = true;
-        material.transparent = false;
-      }
-      material.needsUpdate = true;
-    }
-  });
-}
-
-function getMuzzleFlashMats(colorHex) {
+function ensureMuzzleInstances() {
+  if (muzzleInstances.outer || !Core3D.isInitialized || !Core3D.scene) return;
   ensureWeaponResources();
-  const key = String(colorHex || '#ffffff').toLowerCase();
-  const cached = WEP_RESOURCES.flashMats.get(key);
-  if (cached) return cached;
 
-  const base = new THREE.Color(key);
-  const outer = new THREE.MeshBasicMaterial({
-    color: base.multiplyScalar(MUZZLE_HDR.outer),
+  const makeMat = (opacity) => new THREE.MeshBasicMaterial({
+    color: 0xffffff,
     transparent: true,
-    opacity: 0.8,
+    opacity,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
     depthTest: false,
     side: THREE.DoubleSide,
-    toneMapped: false
+    toneMapped: false,
+    vertexColors: true
   });
-  const inner = new THREE.MeshBasicMaterial({
-    color: new THREE.Color(0xffffff).multiplyScalar(MUZZLE_HDR.inner),
-    transparent: true,
-    opacity: 1.0,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-    depthTest: false,
-    side: THREE.DoubleSide,
-    toneMapped: false
-  });
-  const mats = { outer, inner };
-  WEP_RESOURCES.flashMats.set(key, mats);
-  return mats;
+
+  const outer = new THREE.InstancedMesh(WEP_RESOURCES.geos.planeUnit, makeMat(0.8), MUZZLE_MAX_INSTANCES);
+  const core = new THREE.InstancedMesh(WEP_RESOURCES.geos.planeUnit, makeMat(1.0), MUZZLE_MAX_INSTANCES);
+  for (const mesh of [outer, core]) {
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.frustumCulled = false;
+    mesh.count = 0;
+  }
+  // Rdzeń nad poświatą, oba nad pociskami (te siedzą na 78–81).
+  outer.renderOrder = 82;
+  core.renderOrder = 83;
+
+  muzzleInstances.outer = outer;
+  muzzleInstances.core = core;
+  Core3D.scene.add(outer);
+  Core3D.scene.add(core);
 }
 
-function createMuzzleFlash(colorHex, baseScale = 11) {
-  const group = new THREE.Group();
-  const mats = getMuzzleFlashMats(colorHex);
-  // Merge 2 outer planes → 1 mesh (same material, different rotations)
-  const outerMerged = mergeTurretParts([
-    { geo: WEP_RESOURCES.geos.planeUnit, scale: new THREE.Vector3(baseScale, baseScale, 1) },
-    { geo: WEP_RESOURCES.geos.planeUnit, scale: new THREE.Vector3(baseScale * 0.9, baseScale * 0.9, 1), rotation: new THREE.Euler(Math.PI * 0.5, 0, 0) }
-  ], mats.outer);
-  const core = new THREE.Mesh(WEP_RESOURCES.geos.planeUnit, mats.inner);
-  core.scale.set(baseScale * 0.45, baseScale * 0.45, 1);
-  group.add(outerMerged, core);
-  group.visible = false;
-  group.userData.baseScale = new THREE.Vector3(1, 1, 1);
-  return group;
-}
-
-function cacheBasePosition(object3D) {
-  if (!object3D) return;
-  object3D.userData.basePosX = Number(object3D.position.x) || 0;
-  object3D.userData.basePosY = Number(object3D.position.y) || 0;
-  object3D.userData.basePosZ = Number(object3D.position.z) || 0;
-}
-
-function attachWeaponFxData(group, {
-  weaponId,
-  housing = null,
-  barrels = [],
-  muzzlePoints = [],
-  muzzleColor = '#ffffff',
-  recoil = null,
-  shake = null
-} = {}) {
-  if (!group) return;
-  const profile = WEAPON_FX_PROFILE[String(weaponId || '').toLowerCase()] || null;
-  const recoilStrength = Number.isFinite(recoil) ? recoil : (profile?.recoil ?? 3.0);
-  const shakeStrength = Number.isFinite(shake) ? shake : (profile?.shake ?? 1.8);
-  const weaponKey = profile?.key || normalizeWeaponFxKey(weaponId);
-
-  const barrelRoots = (Array.isArray(barrels) ? barrels : []).filter(Boolean);
-  const flashes = [];
-  const flashStates = [];
-  const points = [];
-
-  if (housing) cacheBasePosition(housing);
-  for (const barrel of barrelRoots) cacheBasePosition(barrel);
-
-  for (let i = 0; i < muzzlePoints.length; i++) {
-    const point = muzzlePoints[i];
-    if (!point) continue;
-    const p = point.clone ? point.clone() : new THREE.Vector3(point.x || 0, point.y || 0, point.z || 0);
-    points.push(p);
-    const flash = createMuzzleFlash(muzzleColor, 11);
-    flash.position.copy(p);
-    group.add(flash);
-    flashes.push(flash);
-    flashStates.push(0);
-  }
-
-  group.userData.weaponFx = {
-    weaponId: String(weaponId || ''),
-    weaponKey,
-    recoilStrength: Math.max(0.1, recoilStrength),
-    shakeStrength: Math.max(0, shakeStrength),
-    housing: housing || null,
-    barrels: barrelRoots,
-    muzzlePoints: points,
-    muzzleFlashes: flashes,
-    housingRecoil: 0,
-    barrelRecoil: new Array(Math.max(1, barrelRoots.length)).fill(0),
-    flashStates,
-    nextBarrel: 0
-  };
-}
-
-function triggerMeshShotFx(mesh, scale = 1) {
-  const fx = mesh?.userData?.weaponFx;
-  if (!fx) return;
-  const recoilKick = Math.max(0.1, fx.recoilStrength * Math.max(0.25, scale));
-  fx.housingRecoil = Math.min(fx.housingRecoil + recoilKick * 0.4, recoilKick * 3.0);
-
-  const barrelCount = Math.max(1, fx.barrelRecoil.length);
-  const barrelIndex = fx.nextBarrel % barrelCount;
-  fx.nextBarrel = (fx.nextBarrel + 1) % barrelCount;
-  fx.barrelRecoil[barrelIndex] = Math.max(fx.barrelRecoil[barrelIndex], recoilKick);
-
-  if (fx.flashStates.length > 0) {
-    const flashIndex = Math.min(fx.flashStates.length - 1, barrelIndex);
-    fx.flashStates[flashIndex] = 1.0;
-  }
-
-  if (mesh.userData.spinGroup) {
-    mesh.userData.spinBoost = Math.min(20, (mesh.userData.spinBoost || 0) + 8);
-  }
-}
-
-function updateMeshWeaponFx(mesh, dt) {
-  const fx = mesh?.userData?.weaponFx;
-  if (!fx || dt <= 0) return;
-
-  fx.housingRecoil = Math.max(0, fx.housingRecoil - fx.housingRecoil * 10 * dt);
-  for (let i = 0; i < fx.barrelRecoil.length; i++) {
-    fx.barrelRecoil[i] = Math.max(0, fx.barrelRecoil[i] - fx.barrelRecoil[i] * 15 * dt);
-  }
-
-  if (fx.housing) {
-    const baseX = Number(fx.housing.userData.basePosX) || 0;
-    fx.housing.position.x = baseX - fx.housingRecoil;
-  }
-
-  for (let i = 0; i < fx.barrels.length; i++) {
-    const barrel = fx.barrels[i];
-    if (!barrel) continue;
-    const recoil = fx.barrelRecoil[Math.min(i, fx.barrelRecoil.length - 1)] || 0;
-    const baseX = Number(barrel.userData.basePosX) || 0;
-    barrel.position.x = baseX - recoil;
-  }
-
-  for (let i = 0; i < fx.muzzleFlashes.length; i++) {
-    const flash = fx.muzzleFlashes[i];
-    if (!flash) continue;
-    const current = Math.max(0, (fx.flashStates[i] || 0) - (fx.flashStates[i] || 0) * 14 * dt);
-    fx.flashStates[i] = current;
-    flash.visible = current > 0.03;
-    if (flash.visible) {
-      const scale = 0.85 + current * 1.1;
-      flash.scale.set(scale, scale, 1);
+function spawnMuzzleFlash(x, y, angle, scale, colorHex) {
+  ensureMuzzleInstances();
+  if (!muzzleInstances.outer) return;
+  if (muzzleInstances.active.length >= MUZZLE_MAX_INSTANCES) {
+    // Pełna pula: nadpisujemy najstarszy błysk zamiast rosnąć w nieskończoność.
+    let oldest = 0;
+    for (let i = 1; i < muzzleInstances.active.length; i++) {
+      if (muzzleInstances.active[i].life < muzzleInstances.active[oldest].life) oldest = i;
     }
+    const reuse = muzzleInstances.active[oldest];
+    reuse.x = x; reuse.y = y; reuse.angle = angle;
+    reuse.size = MUZZLE_BASE_SIZE * (Number(scale) || 1);
+    reuse.life = 1;
+    _muzzleColor.set(colorHex || '#ffffff');
+    reuse.r = _muzzleColor.r; reuse.g = _muzzleColor.g; reuse.b = _muzzleColor.b;
+    return;
   }
-
-  if (mesh.userData.spinGroup) {
-    const spinBoost = Math.max(0, (mesh.userData.spinBoost || 0) - 18 * dt);
-    mesh.userData.spinBoost = spinBoost;
-    const spinSpeed = 7.5 + spinBoost;
-    mesh.userData.spinAngle = (mesh.userData.spinAngle || 0) + spinSpeed * dt;
-    mesh.userData.spinGroup.rotation.y = mesh.userData.spinAngle;
-  }
+  const flash = muzzleInstances.pool.pop() || { x: 0, y: 0, angle: 0, size: 1, life: 0, r: 1, g: 1, b: 1 };
+  flash.x = x;
+  flash.y = y;
+  flash.angle = angle;
+  flash.size = MUZZLE_BASE_SIZE * (Number(scale) || 1);
+  flash.life = 1;
+  _muzzleColor.set(colorHex || '#ffffff');
+  flash.r = _muzzleColor.r;
+  flash.g = _muzzleColor.g;
+  flash.b = _muzzleColor.b;
+  muzzleInstances.active.push(flash);
 }
 
-// ── Merge helper: combine primitives into single Mesh ──────────
-const _tmpMat4 = new THREE.Matrix4();
-const _tmpQuat = new THREE.Quaternion();
-const _tmpVec = new THREE.Vector3(1, 1, 1);
+const _muzzleMatrix = new THREE.Matrix4();
 
-function mergeTurretParts(parts, material) {
-  const geos = [];
-  for (const p of parts) {
-    const g = p.geo.clone();
-    _tmpQuat.identity();
-    if (p.rotation) _tmpQuat.setFromEuler(p.rotation);
-    _tmpVec.set(1, 1, 1);
-    if (p.scale) _tmpVec.copy(p.scale);
-    _tmpMat4.compose(p.position || new THREE.Vector3(), _tmpQuat, _tmpVec);
-    g.applyMatrix4(_tmpMat4);
-    geos.push(g);
-  }
+function updateMuzzleFlashes(dt) {
+  const outer = muzzleInstances.outer;
+  const core = muzzleInstances.core;
+  if (!outer || !core) return;
 
-  // Normalize index: convert all to non-indexed so mergeGeometries doesn't
-  // fail on mixed indexed / non-indexed inputs (e.g. ExtrudeGeometry vs BoxGeometry)
-  for (let i = 0; i < geos.length; i++) {
-    if (geos[i].index) {
-      const nonIndexed = geos[i].toNonIndexed();
-      geos[i].dispose();
-      geos[i] = nonIndexed;
+  const active = muzzleInstances.active;
+  const elements = _muzzleMatrix.elements;
+  let count = 0;
+
+  for (let i = active.length - 1; i >= 0; i--) {
+    const f = active[i];
+    f.life -= f.life * MUZZLE_DECAY * dt;
+    if (f.life <= 0.03) {
+      const last = active.pop();
+      if (i < active.length) active[i] = last;
+      muzzleInstances.pool.push(f);
+      continue;
     }
+
+    // Ta sama krzywa co przed przenosinami: płomień rozdmuchuje się
+    // z 0.85 do ~1.95 rozmiaru bazowego i gaśnie.
+    const grow = 0.85 + f.life * 1.1;
+    // Scena Three ma odwrócony Y względem świata gry, więc kąt też idzie na
+    // minus — tak samo jak w macierzach pocisków (atan2(-segY, segX)).
+    const cA = Math.cos(-f.angle);
+    const sA = Math.sin(-f.angle);
+    const wx = f.x;
+    const wy = -f.y;
+
+    const so = f.size * grow;
+    elements[0] = cA * so; elements[4] = -sA * so; elements[8] = 0; elements[12] = wx;
+    elements[1] = sA * so; elements[5] = cA * so;  elements[9] = 0; elements[13] = wy;
+    elements[2] = 0;       elements[6] = 0;        elements[10] = 1; elements[14] = 15.0;
+    elements[3] = 0;       elements[7] = 0;        elements[11] = 0; elements[15] = 1;
+    outer.setMatrixAt(count, _muzzleMatrix);
+    const fadeOuter = MUZZLE_HDR.outer * (0.35 + f.life * 0.65);
+    outer.setColorAt(count, _muzzleColor.setRGB(f.r * fadeOuter, f.g * fadeOuter, f.b * fadeOuter));
+
+    const sc = so * 0.45;
+    elements[0] = cA * sc; elements[4] = -sA * sc; elements[12] = wx;
+    elements[1] = sA * sc; elements[5] = cA * sc;  elements[13] = wy;
+    elements[14] = 15.01;
+    core.setMatrixAt(count, _muzzleMatrix);
+    const fadeCore = MUZZLE_HDR.inner * (0.35 + f.life * 0.65);
+    core.setColorAt(count, _muzzleColor.setRGB(fadeCore, fadeCore, fadeCore));
+
+    count++;
+    if (count >= MUZZLE_MAX_INSTANCES) break;
   }
 
-  // Normalize attributes: ensure all geometries share the same attribute set
-  if (geos.length > 1) {
-    // Find common attributes present in ALL geometries
-    const commonAttrs = new Set(Object.keys(geos[0].attributes));
-    for (let i = 1; i < geos.length; i++) {
-      const attrs = new Set(Object.keys(geos[i].attributes));
-      for (const a of commonAttrs) {
-        if (!attrs.has(a)) commonAttrs.delete(a);
-      }
-    }
-    // Remove attributes not present in all geometries
-    for (const g of geos) {
-      for (const attrName of Object.keys(g.attributes)) {
-        if (!commonAttrs.has(attrName)) {
-          g.deleteAttribute(attrName);
-        }
-      }
-    }
+  const prev = muzzleInstances._prevCount;
+  outer.count = count;
+  core.count = count;
+  if (count > 0 || prev > 0) {
+    outer.instanceMatrix.needsUpdate = true;
+    core.instanceMatrix.needsUpdate = true;
+    if (outer.instanceColor) outer.instanceColor.needsUpdate = true;
+    if (core.instanceColor) core.instanceColor.needsUpdate = true;
   }
-
-  const merged = mergeGeometries(geos, false);
-  for (const g of geos) g.dispose();
-
-  if (merged) {
-    return new THREE.Mesh(merged, material);
-  }
-
-  // Fallback: if merge still fails, return a group of individual meshes
-  console.warn('mergeTurretParts: mergeGeometries returned null, using fallback group');
-  const fallbackGroup = new THREE.Group();
-  for (const p of parts) {
-    const mesh = new THREE.Mesh(p.geo, material);
-    if (p.position) mesh.position.copy(p.position);
-    if (p.rotation) mesh.rotation.copy(p.rotation);
-    if (p.scale) mesh.scale.copy(p.scale);
-    fallbackGroup.add(mesh);
-  }
-  return fallbackGroup;
-}
-
-function buildVulcanTurret(sizeMult) {
-  const mats = WEP_RESOURCES.mats;
-  const geos = WEP_RESOURCES.geos;
-  const group = new THREE.Group();
-  // Merge housing into metal mesh
-  const housing = new THREE.Mesh(new THREE.BoxGeometry(26, 16, 14), mats.armor);
-  housing.position.set(5, 0, 8);
-  group.add(housing);
-  // Merge 6 barrel tubes → 1 mesh (skip spin — invisible at game zoom)
-  // barrelPivot was at (18,0,8) rotated z=-PI/2, barrels at y=12 + circular offsets
-  const barrelParts = [];
-  for (let i = 0; i < 6; i++) {
-    const angle = (i / 6) * Math.PI * 2;
-    // After parent rotation z=-PI/2: local (cx, 12, cz) → world offset (12, -cx, cz)
-    barrelParts.push({
-      geo: geos.barrelTube,
-      position: new THREE.Vector3(18 + 12, -(Math.cos(angle) * 3), 8 + Math.sin(angle) * 3),
-      rotation: new THREE.Euler(0, 0, -Math.PI * 0.5)
-    });
-  }
-  const barrelsMerged = mergeTurretParts(barrelParts, mats.barrel);
-  group.add(barrelsMerged);
-  // Matte barrel detail ring
-  const detailRing = new THREE.Mesh(new THREE.TorusGeometry(4, 0.75, 8, 20), mats.detailAmber);
-  detailRing.rotation.x = Math.PI * 0.5;
-  detailRing.position.set(26, 0, 8);
-  group.add(detailRing);
-  // 3 meshes instead of 8
-  attachWeaponFxData(group, {
-    weaponId: 'vulcan_minigun', housing, barrels: [],
-    muzzlePoints: [new THREE.Vector3(45, 0, 8)],
-    muzzleColor: '#ffaa00'
-  });
-  group.scale.setScalar(sizeMult);
-  markMeshTree(group, false);
-  return group;
-}
-
-function buildHeliosTurret(sizeMult) {
-  const mats = WEP_RESOURCES.mats;
-  const group = new THREE.Group();
-  // Merge housing + 2 barrel tubes → 1 metal mesh
-  const metal = mergeTurretParts([
-    { geo: new THREE.BoxGeometry(20, 22, 12), position: new THREE.Vector3(2, 0, 8) },
-    { geo: new THREE.BoxGeometry(35, 3, 4), position: new THREE.Vector3(29.5, 6, 8) },
-    { geo: new THREE.BoxGeometry(35, 3, 4), position: new THREE.Vector3(29.5, -6, 8) }
-  ], mats.armor);
-  group.add(metal);
-  // Merge two barrel inlays and the nose plate into one matte detail mesh
-  const detail = mergeTurretParts([
-    { geo: new THREE.BoxGeometry(30, 1.5, 4.2), position: new THREE.Vector3(29.5, 6, 8) },
-    { geo: new THREE.BoxGeometry(30, 1.5, 4.2), position: new THREE.Vector3(29.5, -6, 8) },
-    { geo: new THREE.BoxGeometry(4, 15, 5), position: new THREE.Vector3(43, 0, 8) }
-  ], mats.detailRed);
-  group.add(detail);
-  // 2 meshes instead of 5
-  attachWeaponFxData(group, {
-    weaponId: 'helios_laser', housing: metal, barrels: [],
-    muzzlePoints: [new THREE.Vector3(47, 6, 8), new THREE.Vector3(47, -6, 8)],
-    muzzleColor: '#ff003c'
-  });
-  group.scale.setScalar(sizeMult);
-  markMeshTree(group, false);
-  return group;
-}
-
-function buildArmataTurret(sizeMult) {
-  const mats = WEP_RESOURCES.mats;
-  const group = new THREE.Group();
-  const rotZ = new THREE.Euler(0, 0, -Math.PI * 0.5);
-  // Merge housing + rails → 1 metal mesh
-  // barrelPivot was at (14,0,9) rotated z=-PI/2: local y → world x
-  const metal = mergeTurretParts([
-    { geo: new THREE.BoxGeometry(26, 24, 16), position: new THREE.Vector3(3, 0, 9) },
-    { geo: new THREE.BoxGeometry(2, 35, 6), position: new THREE.Vector3(31.5, 6, 9), rotation: rotZ },
-    { geo: new THREE.BoxGeometry(2, 35, 6), position: new THREE.Vector3(31.5, -6, 9), rotation: rotZ }
-  ], mats.armor);
-  group.add(metal);
-  // Merge crystal and focus ring into one non-emissive detail mesh
-  const detail = mergeTurretParts([
-    { geo: new THREE.OctahedronGeometry(3, 1), position: new THREE.Vector3(19, 0, 9), rotation: rotZ },
-    { geo: new THREE.TorusGeometry(5, 1, 8, 16), position: new THREE.Vector3(49, 0, 9), rotation: new THREE.Euler(0, 0, -Math.PI * 0.5) }
-  ], mats.detailAmber);
-  group.add(detail);
-  // 2 meshes instead of 5
-  attachWeaponFxData(group, {
-    weaponId: 'armata_mk1', housing: metal, barrels: [],
-    muzzlePoints: [new THREE.Vector3(55, 0, 10)],
-    muzzleColor: '#ff5500', recoil: 15, shake: 8
-  });
-  group.scale.setScalar(sizeMult);
-  markMeshTree(group, false);
-  return group;
-}
-
-function buildBeamContinuousTurret(sizeMult) {
-  const mats = WEP_RESOURCES.mats;
-  const group = new THREE.Group();
-  const rotZ = new THREE.Euler(0, 0, -Math.PI * 0.5);
-  // Merge housing + rails → 1 metal mesh
-  const metal = mergeTurretParts([
-    { geo: new THREE.BoxGeometry(26, 24, 16), position: new THREE.Vector3(3, 0, 9) },
-    { geo: new THREE.BoxGeometry(2, 35, 6), position: new THREE.Vector3(32.5, 6, 9), rotation: rotZ },
-    { geo: new THREE.BoxGeometry(2, 35, 6), position: new THREE.Vector3(32.5, -6, 9), rotation: rotZ }
-  ], mats.armor);
-  group.add(metal);
-  // Merge crystal and focus ring into one non-emissive detail mesh
-  const detail = mergeTurretParts([
-    { geo: new THREE.OctahedronGeometry(3, 1), position: new THREE.Vector3(20, 0, 9), rotation: rotZ },
-    { geo: new THREE.TorusGeometry(5, 1, 8, 16), position: new THREE.Vector3(50, 0, 9), rotation: rotZ }
-  ], mats.detailCyan);
-  group.add(detail);
-  // 2 meshes instead of 4
-  attachWeaponFxData(group, {
-    weaponId: 'beam_continuous', housing: metal, barrels: [],
-    muzzlePoints: [new THREE.Vector3(55, 0, 10)],
-    muzzleColor: '#00ffcc', recoil: 1, shake: 1.5
-  });
-  group.scale.setScalar(sizeMult);
-  markMeshTree(group, false);
-  return group;
-}
-
-function buildBeamPulseTurret(sizeMult) {
-  const mats = WEP_RESOURCES.mats;
-  const group = new THREE.Group();
-  const rotZ = new THREE.Euler(0, 0, -Math.PI * 0.5);
-  const positions = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
-  // Merge housing + 4 barrel cylinders → 1 metal mesh
-  const metalParts = [
-    { geo: new THREE.BoxGeometry(20, 20, 15), position: new THREE.Vector3(5, 0, 10) }
-  ];
-  const detailParts = [];
-  const muzzlePoints = [];
-  for (const pos of positions) {
-    const yOff = pos[1] * 6;
-    const zOff = 10 + pos[0] * 4;
-    // pivot at (15, yOff, zOff) rotated z=-PI/2; barrel at local y=10 → world x+10
-    metalParts.push({ geo: new THREE.CylinderGeometry(1.5, 1.5, 20, 8), position: new THREE.Vector3(25, yOff, zOff), rotation: rotZ });
-    // matte muzzle cap at local y=18 → world x+18
-    detailParts.push({ geo: new THREE.CylinderGeometry(1.8, 1.8, 5, 8), position: new THREE.Vector3(33, yOff, zOff), rotation: rotZ });
-    muzzlePoints.push(new THREE.Vector3(38, yOff, zOff));
-  }
-  const metal = mergeTurretParts(metalParts, mats.armor);
-  group.add(metal);
-  const detail = mergeTurretParts(detailParts, mats.detailRed);
-  group.add(detail);
-  // 2 meshes instead of 9
-  attachWeaponFxData(group, {
-    weaponId: 'beam_pulse', housing: metal, barrels: [],
-    muzzlePoints, muzzleColor: '#ff003c', recoil: 6, shake: 3.5
-  });
-  group.scale.setScalar(sizeMult);
-  markMeshTree(group, false);
-  return group;
-}
-
-function buildTempestTurret(sizeMult, barrelCount = 1) {
-  const mats = WEP_RESOURCES.mats;
-  const group = new THREE.Group();
-  const rotZ = new THREE.Euler(0, 0, -Math.PI * 0.5);
-  // Merge housing + barrel cylinders → 1 metal mesh
-  // makeBarrel at (11, yOff, 8) rotated z=-PI/2, barrel at local y=10 → world x offset +10
-  const metalParts = [
-    { geo: new THREE.BoxGeometry(18, 16, 16), position: new THREE.Vector3(2, 0, 8) }
-  ];
-  if (barrelCount <= 1) {
-    metalParts.push({ geo: new THREE.CylinderGeometry(4, 5, 20, 12), position: new THREE.Vector3(21, 0, 8), rotation: rotZ });
-  } else {
-    metalParts.push({ geo: new THREE.CylinderGeometry(4, 5, 20, 12), position: new THREE.Vector3(21, -5, 8), rotation: rotZ });
-    metalParts.push({ geo: new THREE.CylinderGeometry(4, 5, 20, 12), position: new THREE.Vector3(21, 5, 8), rotation: rotZ });
-  }
-  const metal = mergeTurretParts(metalParts, mats.armor);
-  group.add(metal);
-  // Merge rings and muzzle insert into one non-emissive detail mesh
-  const detailParts = [
-    { geo: new THREE.CylinderGeometry(1.2, 1.2, 10, 8), position: new THREE.Vector3(34, 0, 8), rotation: rotZ }
-  ];
-  if (barrelCount <= 1) {
-    detailParts.push({ geo: new THREE.TorusGeometry(5, 1, 8, 16), position: new THREE.Vector3(27, 0, 8), rotation: rotZ });
-  } else {
-    detailParts.push({ geo: new THREE.TorusGeometry(5, 1, 8, 16), position: new THREE.Vector3(27, -5, 8), rotation: rotZ });
-    detailParts.push({ geo: new THREE.TorusGeometry(5, 1, 8, 16), position: new THREE.Vector3(27, 5, 8), rotation: rotZ });
-  }
-  const detail = mergeTurretParts(detailParts, mats.detailCyan);
-  group.add(detail);
-  // 2 meshes instead of 4-6
-  const muzzlePoints = barrelCount <= 1
-    ? [new THREE.Vector3(34, 0, 8)]
-    : [new THREE.Vector3(34, -5, 8), new THREE.Vector3(34, 5, 8)];
-  attachWeaponFxData(group, {
-    weaponId: barrelCount <= 1 ? 'railgun_mk1' : 'railgun_mk2',
-    housing: metal, barrels: [],
-    muzzlePoints, muzzleColor: '#00ccff'
-  });
-  group.scale.setScalar(sizeMult);
-  markMeshTree(group, false);
-  return group;
-}
-
-function buildYamatoTurret(sizeMult) {
-  const mats = WEP_RESOURCES.mats;
-  const group = new THREE.Group();
-
-  // Yamato turret shape (ExtrudeGeometry)
-  const turretShape = new THREE.Shape();
-  turretShape.moveTo(-11, -14);
-  turretShape.lineTo(11, -14);
-  turretShape.lineTo(17, 0);
-  turretShape.lineTo(7, 19);
-  turretShape.lineTo(-7, 19);
-  turretShape.lineTo(-17, 0);
-  turretShape.lineTo(-11, -14);
-  const extrudeSettings = { depth: 10, bevelEnabled: true, bevelSegments: 2, steps: 1, bevelSize: 0.75, bevelThickness: 0.75 };
-
-  const rotXHalf = new THREE.Euler(Math.PI / 2, 0, 0);
-  const rotHousing = new THREE.Euler(Math.PI / 2, 0, -Math.PI / 2);
-  const rotZ90 = new THREE.Euler(0, 0, Math.PI / 2);
-
-  // Merge all metal parts → 1 mesh
-  // barrelsGroup offset = (6, 0, 12)
-  const metalParts = [
-    { geo: new THREE.CylinderGeometry(16, 18, 6, 6), position: new THREE.Vector3(2, 0, 0), rotation: rotXHalf },
-    { geo: new THREE.ExtrudeGeometry(turretShape, extrudeSettings), position: new THREE.Vector3(-6, 0, 10), rotation: rotHousing },
-    { geo: new THREE.BoxGeometry(6, 24, 7), position: new THREE.Vector3(-2, 0, 8), rotation: rotXHalf }
-  ];
-
-  // 3 guns: at barrelsGroup (6,0,12) + gun offsets
-  const gunConfigs = [
-    { yOff: 7.5, scale: 0.9 },
-    { yOff: 0, scale: 1.0 },
-    { yOff: -7.5, scale: 0.9 }
-  ];
-  const detailParts = [];
-
-  for (const cfg of gunConfigs) {
-    const s = cfg.scale;
-    const gy = cfg.yOff;
-    // gun base at (5*s, 0, 0) offset by barrelsGroup (6, gy, 12)
-    metalParts.push({ geo: new THREE.BoxGeometry(12 * s, 6 * s, 4 * s), position: new THREE.Vector3(6 + 5 * s, gy, 12) });
-    // rails at (25*s, ±1.75*s, 0)
-    metalParts.push({ geo: new THREE.BoxGeometry(40 * s, 5 * s, 2 * s), position: new THREE.Vector3(6 + 25 * s, gy - 1.75 * s, 12) });
-    metalParts.push({ geo: new THREE.BoxGeometry(40 * s, 5 * s, 2 * s), position: new THREE.Vector3(6 + 25 * s, gy + 1.75 * s, 12) });
-    // matte inner rail
-    detailParts.push({ geo: new THREE.CylinderGeometry(0.75 * s, 0.75 * s, 38 * s, 8), position: new THREE.Vector3(6 + 26 * s, gy, 12), rotation: rotZ90 });
-  }
-
-  const metal = mergeTurretParts(metalParts, mats.armor);
-  group.add(metal);
-  const detail = mergeTurretParts(detailParts, mats.detailCyan);
-  group.add(detail);
-
-  // 2 meshes instead of 14
-  attachWeaponFxData(group, {
-    weaponId: 'special_yamato_cannon', housing: metal, barrels: [],
-    muzzlePoints: [
-      new THREE.Vector3(56, 7.5 * 0.9, 12),
-      new THREE.Vector3(58, 0, 12),
-      new THREE.Vector3(56, -7.5 * 0.9, 12)
-    ],
-    muzzleColor: '#00ffff', recoil: 60, shake: 25
-  });
-  group.scale.setScalar(sizeMult);
-  markMeshTree(group, false);
-  return group;
-}
-
-// ── NEW WEAPON BUILDERS (optimized: max 2-4 meshes each) ────────
-
-function buildGoliathTurret(sizeMult) {
-  const { mats, geos } = WEP_RESOURCES;
-  const group = new THREE.Group();
-  // Merge housing + 2 barrels → 1 metal mesh
-  const merged = mergeTurretParts([
-    { geo: geos.goliathHousing, position: new THREE.Vector3(4, 0, 10) },
-    { geo: geos.goliathBarrel, position: new THREE.Vector3(38, 7, 10) },
-    { geo: geos.goliathBarrel, position: new THREE.Vector3(38, -7, 10) }
-  ], mats.armor);
-  group.add(merged);
-  attachWeaponFxData(group, {
-    weaponId: 'special_goliath_autocannon', housing: merged, barrels: [],
-    muzzlePoints: [new THREE.Vector3(58, 7, 10), new THREE.Vector3(58, -7, 10)],
-    muzzleColor: '#ff6600', recoil: 20, shake: 10
-  });
-  group.scale.setScalar(sizeMult);
-  markMeshTree(group, false);
-  return group;
-}
-
-function buildPlasmaGatlingTurret(sizeMult) {
-  const { mats, geos } = WEP_RESOURCES;
-  const group = new THREE.Group();
-  // Merge housing (metal)
-  const housing = new THREE.Mesh(geos.plasmaHousing, mats.armor);
-  housing.position.set(2, 0, 8);
-  group.add(housing);
-  // Merge two conventionally lit barrels (skip spin — invisible at game zoom)
-  const barrels = mergeTurretParts([
-    { geo: geos.plasmaBarrel, position: new THREE.Vector3(25, 6, 8) },
-    { geo: geos.plasmaBarrel, position: new THREE.Vector3(25, -6, 8) }
-  ], mats.barrel);
-  group.add(barrels);
-  // 2 meshes instead of 3 (no spin overhead)
-  attachWeaponFxData(group, {
-    weaponId: 'special_plasma_gatling', housing, barrels: [],
-    muzzlePoints: [new THREE.Vector3(42, 0, 8)],
-    muzzleColor: '#00ffff', recoil: 15, shake: 8
-  });
-  group.scale.setScalar(sizeMult);
-  markMeshTree(group, false);
-  return group;
-}
-
-function buildBeamEmitterTurret(sizeMult) {
-  const { mats, geos } = WEP_RESOURCES;
-  const group = new THREE.Group();
-  // Merge housing + dish → 1 metal mesh
-  const metal = mergeTurretParts([
-    { geo: geos.beamHousing, position: new THREE.Vector3(0, 0, 7) },
-    { geo: geos.beamDish, position: new THREE.Vector3(32, 0, 7) }
-  ], mats.armor);
-  group.add(metal);
-  // Crystal-shaped matte optical detail (1 mesh)
-  const crystal = new THREE.Mesh(geos.beamCrystal, mats.detailCyan);
-  crystal.position.set(36, 0, 7);
-  group.add(crystal);
-  // 2 meshes instead of 3
-  attachWeaponFxData(group, {
-    weaponId: 'beam_continuous', housing: metal, barrels: [],
-    muzzlePoints: [new THREE.Vector3(48, 0, 7)],
-    muzzleColor: '#00ffcc', recoil: 1, shake: 1.5
-  });
-  group.scale.setScalar(sizeMult);
-  markMeshTree(group, false);
-  return group;
-}
-
-function buildHeavyAutocannonTurret(sizeMult) {
-  const { mats, geos } = WEP_RESOURCES;
-  const group = new THREE.Group();
-  // Merge base + housing + barrel → 1 metal mesh
-  const merged = mergeTurretParts([
-    { geo: geos.autoBase, position: new THREE.Vector3(2, 0, 6) },
-    { geo: geos.heavyAutoHousing, position: new THREE.Vector3(6, 0, 8) },
-    { geo: geos.heavyAutoBarrel, position: new THREE.Vector3(28, 0, 8) }
-  ], mats.armor);
-  group.add(merged);
-  attachWeaponFxData(group, {
-    weaponId: 'heavy_autocannon', housing: merged, barrels: [],
-    muzzlePoints: [new THREE.Vector3(42, 0, 8)],
-    muzzleColor: '#ffcc8a', recoil: 8, shake: 4
-  });
-  group.scale.setScalar(sizeMult);
-  markMeshTree(group, false);
-  return group;
-}
-
-function buildCIWSTurret(sizeMult) {
-  const { mats, geos } = WEP_RESOURCES;
-  const group = new THREE.Group();
-  // Merge base+dome+barrel → 1 metal mesh
-  const merged = mergeTurretParts([
-    { geo: geos.ciwsBase, position: new THREE.Vector3(0, 0, 0) },
-    { geo: geos.ciwsDome, position: new THREE.Vector3(0, 0, 3) },
-    { geo: geos.ciwsClusterBarrel, position: new THREE.Vector3(15, 0, 5) }
-  ], mats.armor);
-  group.add(merged);
-  attachWeaponFxData(group, {
-    weaponId: 'ciws_mk1', housing: merged, barrels: [],
-    muzzlePoints: [new THREE.Vector3(22, 0, 5)],
-    muzzleColor: '#8cffd0', recoil: 1.5, shake: 1
-  });
-  group.scale.setScalar(sizeMult);
-  markMeshTree(group, false);
-  return group;
-}
-
-function buildFlakTurret(sizeMult) {
-  const { mats, geos } = WEP_RESOURCES;
-  const group = new THREE.Group();
-  // Cały metal w jednym merge'u: podstawa + jarzmo + 2 lufy + 2 hamulce wylotowe
-  // + 2 bębny amunicyjne. Wieżyczka ma kilkanaście pikseli na ekranie w bitwie,
-  // więc płacimy za nią 1 draw call, a nie 7.
-  const metal = mergeTurretParts([
-    { geo: geos.flakBase, position: new THREE.Vector3(0, 0, 2.5) },
-    { geo: geos.flakMantlet, position: new THREE.Vector3(4, 0, 6) },
-    { geo: geos.flakBarrel, position: new THREE.Vector3(17, -3.5, 6) },
-    { geo: geos.flakBarrel, position: new THREE.Vector3(17, 3.5, 6) },
-    { geo: geos.flakBrake, position: new THREE.Vector3(26, -3.5, 6) },
-    { geo: geos.flakBrake, position: new THREE.Vector3(26, 3.5, 6) },
-    { geo: geos.flakDrum, position: new THREE.Vector3(-1, -8, 6) },
-    { geo: geos.flakDrum, position: new THREE.Vector3(-1, 8, 6) }
-  ], mats.armor);
-  group.add(metal);
-  // Pokrywa podajnika taśmy — matowy detal (osobny materiał = 2. draw call).
-  const feed = new THREE.Mesh(geos.flakFeedCover, mats.detailAmber);
-  feed.position.set(-1, 0, 10.5);
-  group.add(feed);
-
-  attachWeaponFxData(group, {
-    weaponId: 'flak_m', housing: metal, barrels: [],
-    muzzlePoints: [new THREE.Vector3(29, -3.5, 6), new THREE.Vector3(29, 3.5, 6)],
-    muzzleColor: '#ffc258', recoil: 5, shake: 2.6
-  });
-  group.scale.setScalar(sizeMult);
-  markMeshTree(group, false);
-  return group;
-}
-
-function buildLaserPDTurret(sizeMult) {
-  const { mats, geos } = WEP_RESOURCES;
-  const group = new THREE.Group();
-  // 1. Base (metal)
-  const base = new THREE.Mesh(geos.ciwsBase, mats.base);
-  base.position.set(0, 0, 2);
-  group.add(base);
-  // 2. Non-emissive lens housing (separate material, 1 draw call)
-  const lens = new THREE.Mesh(geos.laserPDLens, mats.detailBlue);
-  lens.position.set(13, 0, 5);
-  group.add(lens);
-  // Total: 2 meshes (different materials — can't merge further)
-  attachWeaponFxData(group, {
-    weaponId: 'laser_pd_mk1', housing: base, barrels: [],
-    muzzlePoints: [new THREE.Vector3(18, 0, 5)],
-    muzzleColor: '#6ec8ff', recoil: 0.5, shake: 0.3
-  });
-  group.scale.setScalar(sizeMult);
-  markMeshTree(group, false);
-  return group;
-}
-
-function buildMissileRackTurret(sizeMult) {
-  const { mats, geos } = WEP_RESOURCES;
-  const group = new THREE.Group();
-  const housing = new THREE.Mesh(geos.missileHousing, mats.armor);
-  housing.position.set(4, 0, 8);
-  group.add(housing);
-  const faceplate = new THREE.Mesh(geos.missileFaceplate, mats.detailAmber);
-  faceplate.position.set(14, 0, 8);
-  group.add(faceplate);
-  // 2 meshes (different materials)
-  attachWeaponFxData(group, {
-    weaponId: 'missile_rack', housing, barrels: [],
-    muzzlePoints: [
-      new THREE.Vector3(16, -5, 5), new THREE.Vector3(16, 0, 5), new THREE.Vector3(16, 5, 5),
-      new THREE.Vector3(16, -5, 11), new THREE.Vector3(16, 0, 11), new THREE.Vector3(16, 5, 11)
-    ],
-    muzzleColor: '#ffbb77', recoil: 4, shake: 2
-  });
-  group.scale.setScalar(sizeMult);
-  markMeshTree(group, false);
-  return group;
-}
-
-function buildSiegeTorpedoTurret(sizeMult) {
-  const { mats, geos } = WEP_RESOURCES;
-  const group = new THREE.Group();
-  // Merge housing + 2 tubes → 1 metal mesh
-  const merged = mergeTurretParts([
-    { geo: geos.torpedoHousing, position: new THREE.Vector3(0, 0, 9) },
-    { geo: geos.torpedoTube, position: new THREE.Vector3(12, 7, 9) },
-    { geo: geos.torpedoTube, position: new THREE.Vector3(12, -7, 9) }
-  ], mats.armor);
-  group.add(merged);
-  attachWeaponFxData(group, {
-    weaponId: 'siege_torpedo', housing: merged, barrels: [],
-    muzzlePoints: [new THREE.Vector3(30, 7, 9), new THREE.Vector3(30, -7, 9)],
-    muzzleColor: '#ff4444', recoil: 6, shake: 3
-  });
-  group.scale.setScalar(sizeMult);
-  markMeshTree(group, false);
-  return group;
-}
-
-function buildHexlanceTurret(sizeMult) {
-  const { mats, geos } = WEP_RESOURCES;
-  const group = new THREE.Group();
-  // Merge housing + core barrel → 1 metal mesh
-  const metal = mergeTurretParts([
-    { geo: geos.hexHousing, position: new THREE.Vector3(0, 0, 8) },
-    { geo: geos.hexCore, position: new THREE.Vector3(30, 0, 8) }
-  ], mats.armor);
-  group.add(metal);
-  // Merge inner core and front ring into one non-emissive detail mesh
-  const detail = mergeTurretParts([
-    { geo: geos.hexInnerCore, position: new THREE.Vector3(30, 0, 8) },
-    { geo: geos.hexFrontRing, position: new THREE.Vector3(42, 0, 8), rotation: new THREE.Euler(0, Math.PI * 0.5, 0) }
-  ], mats.detailBlue);
-  group.add(detail);
-  // 2 meshes instead of 4
-  attachWeaponFxData(group, {
-    weaponId: 'hexlance_siege', housing: metal, barrels: [],
-    muzzlePoints: [new THREE.Vector3(52, 0, 8)],
-    muzzleColor: '#d0eaff', recoil: 30, shake: 15
-  });
-  group.scale.setScalar(sizeMult);
-  markMeshTree(group, false);
-  return group;
-}
-
-function buildSiegeRailgunTurret(sizeMult) {
-  const { mats, geos } = WEP_RESOURCES;
-  const group = new THREE.Group();
-  // Merge housing + 2 rails → 1 metal mesh
-  const metal = mergeTurretParts([
-    { geo: geos.siegeHousing, position: new THREE.Vector3(0, 0, 10) },
-    { geo: geos.siegeRailBar, position: new THREE.Vector3(44, 5, 10) },
-    { geo: geos.siegeRailBar, position: new THREE.Vector3(44, -5, 10) }
-  ], mats.armor);
-  group.add(metal);
-  // Matte inner core (1 mesh)
-  const core = new THREE.Mesh(geos.siegeCore, mats.detailCyan);
-  core.position.set(44, 0, 10);
-  group.add(core);
-  // 2 meshes instead of 4
-  attachWeaponFxData(group, {
-    weaponId: 'siege_railgun', housing: metal, barrels: [],
-    muzzlePoints: [new THREE.Vector3(80, 0, 10)],
-    muzzleColor: '#aaffff', recoil: 120, shake: 80
-  });
-  group.scale.setScalar(sizeMult);
-  markMeshTree(group, false);
-  return group;
-}
-
-function createFallbackWeaponMesh(category, sizeMult) {
-  const group = new THREE.Group();
-  const mBase = WEP_RESOURCES.mats.base;
-  const mBarrel = WEP_RESOURCES.mats.barrel;
-  const mDetailBlue = WEP_RESOURCES.mats.detailBlue;
-  const mDetailRed = WEP_RESOURCES.mats.detailRed;
-
-  if (category === 'rail') {
-    // Merge base + two barrels into one metal mesh and one matte detail mesh
-    const metal = mergeTurretParts([
-      { geo: WEP_RESOURCES.geos.railBase, position: new THREE.Vector3(0, 0, 3) },
-      { geo: WEP_RESOURCES.geos.railBarrel, position: new THREE.Vector3(15, -5, 3) },
-      { geo: WEP_RESOURCES.geos.railBarrel, position: new THREE.Vector3(15, 5, 3) }
-    ], mBase);
-    const detail = mergeTurretParts([
-      { geo: WEP_RESOURCES.geos.railDetail, position: new THREE.Vector3(15, -5, 4.6) },
-      { geo: WEP_RESOURCES.geos.railDetail, position: new THREE.Vector3(15, 5, 4.6) }
-    ], mDetailBlue);
-    group.add(metal, detail);
-  } else if (category === 'armata' || category === 'plasma') {
-    // Merge base + barrel → 1 metal mesh
-    const metal = mergeTurretParts([
-      { geo: WEP_RESOURCES.geos.armataBase, position: new THREE.Vector3(0, 0, 4) },
-      { geo: WEP_RESOURCES.geos.armataBarrel, position: new THREE.Vector3(14, 0, 4) }
-    ], mBase);
-    const g = new THREE.Mesh(new THREE.BoxGeometry(20, 2, 8.2), category === 'plasma' ? mDetailBlue : mDetailRed);
-    g.position.set(16, 0, 4);
-    group.add(metal, g);
-  } else if (category === 'autocannon') {
-    const merged = mergeTurretParts([
-      { geo: WEP_RESOURCES.geos.autoBase, position: new THREE.Vector3(0, 0, 4) },
-      { geo: WEP_RESOURCES.geos.autoBarrel, position: new THREE.Vector3(11, 0, 4) }
-    ], mBase);
-    group.add(merged);
-  } else if (category === 'ciws' || category === 'beam') {
-    const merged = mergeTurretParts([
-      { geo: WEP_RESOURCES.geos.ciwsBase, position: new THREE.Vector3(0, 0, 2.5) },
-      { geo: WEP_RESOURCES.geos.ciwsBarrel, position: new THREE.Vector3(7, 0, 2.5) }
-    ], category === 'beam' ? mDetailBlue : mBarrel);
-    group.add(merged);
-  } else {
-    const base = new THREE.Mesh(WEP_RESOURCES.geos.defaultBase, mBase);
-    base.position.z = 3;
-    group.add(base);
-  }
-
-  group.scale.setScalar(sizeMult);
-  markMeshTree(group, false);
-  return group;
-}
-
-function createWeapon3DMesh(weaponId, category, size, tierScale = 1) {
-  ensureWeaponResources();
-  const safeTier = Number.isFinite(tierScale) && tierScale > 0 ? tierScale : 1;
-  // Ship-class tier shrinks the whole turret (and its child muzzle flash) so the
-  // same weapon looks small on a frigate and full-size on a capital ship.
-  const scaleMult = getWeapon3DScale(size, category) * safeTier;
-  const key = String(weaponId || '').toLowerCase();
-
-  let mesh;
-  if (key === 'vulcan_minigun') mesh = buildVulcanTurret(scaleMult);
-  else if (key === 'helios_laser') mesh = buildHeliosTurret(scaleMult);
-  else if (key === 'armata_mk1') mesh = buildArmataTurret(scaleMult);
-  else if (key === 'beam_continuous') mesh = buildBeamEmitterTurret(scaleMult);
-  else if (key === 'beam_pulse') mesh = buildBeamPulseTurret(scaleMult);
-  else if (key === 'special_goliath_autocannon') mesh = buildGoliathTurret(scaleMult);
-  else if (key === 'special_plasma_gatling') mesh = buildPlasmaGatlingTurret(scaleMult);
-  else if (key === 'special_valkyrie_railgun') mesh = buildTempestTurret(scaleMult, 2);
-  else if (key === 'special_yamato_cannon') mesh = buildYamatoTurret(scaleMult);
-  else if (key === 'railgun_mk1' || key === 'tempest_ion_mk1') mesh = buildTempestTurret(scaleMult, 1);
-  else if (key === 'railgun_mk2' || key === 'tempest_ion_mk2') mesh = buildTempestTurret(scaleMult, 2);
-  else if (key === 'heavy_autocannon') mesh = buildHeavyAutocannonTurret(scaleMult);
-  else if (key === 'ciws_mk1') mesh = buildCIWSTurret(scaleMult);
-  else if (key === 'laser_pd_mk1') mesh = buildLaserPDTurret(scaleMult);
-  else if (key.startsWith('flak')) mesh = buildFlakTurret(scaleMult);
-  else if (key === 'missile_rack' || key === 'fast_missile_rack') mesh = buildMissileRackTurret(scaleMult);
-  else if (key === 'supernova_missile') mesh = buildSiegeTorpedoTurret(scaleMult * 1.08);
-  else if (key === 'siege_torpedo' || key === 'siege_torpedo_mk2') mesh = buildSiegeTorpedoTurret(scaleMult);
-  else if (key === 'torpedo_salvo') mesh = buildMissileRackTurret(scaleMult);
-  else if (key === 'hexlance_siege') mesh = buildHexlanceTurret(scaleMult);
-  else if (key === 'siege_railgun') mesh = buildSiegeRailgunTurret(scaleMult);
-  // S/M/L family variants (e.g. tempest_ion_s, helios_lance_l, gatling_s) reuse the family turret.
-  else if (key.includes('tempest') || key.includes('railgun')) mesh = buildTempestTurret(scaleMult, key.includes('mk2') ? 2 : 1);
-  else if (key.includes('helios')) mesh = buildHeliosTurret(scaleMult);
-  else if (key.includes('vulcan') || key.includes('gatling')) mesh = buildVulcanTurret(scaleMult);
-  else if (key.includes('autocannon')) mesh = buildHeavyAutocannonTurret(scaleMult);
-  else if (key.includes('armata')) mesh = buildArmataTurret(scaleMult);
-  else if (key.includes('ciws')) mesh = buildCIWSTurret(scaleMult);
-  else mesh = createFallbackWeaponMesh(category, scaleMult);
-  if (!mesh.userData.weaponFx) {
-    attachWeaponFxData(mesh, {
-      weaponId: key,
-      housing: null,
-      barrels: [],
-      muzzlePoints: [new THREE.Vector3(18, 0, 6)],
-      muzzleColor: '#b8d7ff',
-      recoil: 2.0,
-      shake: 1.0
-    });
-  }
-  promoteWeaponOverlay(mesh);
-  return mesh;
+  muzzleInstances._prevCount = count;
+  // Dwa InstancedMeshe na calą scenę, niezależnie od liczby strzelających wież.
+  DrawCallStats.addWeapon(count > 0 ? 2 : 0);
 }
 
 function resolveBulletVisualStyle(bullet) {
@@ -1467,6 +520,7 @@ function createContinuousBeamVisual() {
     width: 5,
     targetWidth: 5,
     turretUid: null,
+    turretKey: null,
     dummy: new THREE.Object3D()
   };
 }
@@ -1664,25 +718,12 @@ function updateContinuousBeamVisual(data, dt, timeSec) {
   }
 }
 
-function clearWeaponMeshes(container) {
-  const meshes = container?.userData?.meshes;
-  if (!meshes) return;
-  for (const [, mesh] of meshes) {
-    container.remove(mesh);
-  }
-  meshes.clear();
-}
-
 export const Weapon3DSystem = {
-  containers: new Map(),
   _preloaded: false,
   _lastFxTimeSec: 0,
-  _matrixWorldFrame: 0,
   _cameraShakeMag: 0,
   _shotListenerBound: false,
   _shotListener: null,
-  _tmpShotPos: new THREE.Vector3(),
-  _tmpMuzzlePos: new THREE.Vector3(),
   _tmpProjectileColor: new THREE.Color(),
   _tmpBeamColor: new THREE.Color(),
   _pulseBeamPool: [],
@@ -1697,12 +738,8 @@ export const Weapon3DSystem = {
     
     this._ensureBeamVisuals();
     ensureBulletInstances();
-    
-    const commonColors = ['#ffaa00', '#ff003c', '#00ccff', '#ff5500', '#00ffcc', '#b8d7ff'];
-    for (const c of commonColors) {
-        getMuzzleFlashMats(c);
-    }
-    
+    ensureMuzzleInstances();
+
     const tempVisible = [];
     
     const prewarmContinuous = 12;
@@ -1769,80 +806,12 @@ export const Weapon3DSystem = {
     return data;
   },
 
-  _findClosestTurretUid(shotX, shotY) {
-    let bestUid = null;
-    let bestDistSq = Infinity;
-    const shotPos = this._tmpShotPos;
-    shotPos.set(shotX, -shotY, 0);
-
-    for (const [, container] of this.containers) {
-      const meshes = container?.userData?.meshes;
-      if (!meshes || meshes.size === 0) continue;
-
-      if (container.userData._lastMatrixFrame !== this._matrixWorldFrame) {
-        container.updateMatrixWorld(true);
-        container.userData._lastMatrixFrame = this._matrixWorldFrame;
-      }
-
-      for (const [uid, mesh] of meshes) {
-        const fx = mesh?.userData?.weaponFx;
-        if (!fx) continue;
-
-        const points = fx.muzzlePoints;
-        if (Array.isArray(points) && points.length > 0) {
-          for (let i = 0; i < points.length; i++) {
-            this._tmpMuzzlePos.copy(points[i]).applyMatrix4(mesh.matrixWorld);
-            const dx = this._tmpMuzzlePos.x - shotPos.x;
-            const dy = this._tmpMuzzlePos.y - shotPos.y;
-            const d2 = dx * dx + dy * dy;
-            if (d2 < bestDistSq) {
-              bestDistSq = d2;
-              bestUid = uid;
-            }
-          }
-        } else {
-          mesh.getWorldPosition(this._tmpMuzzlePos);
-          const dx = this._tmpMuzzlePos.x - shotPos.x;
-          const dy = this._tmpMuzzlePos.y - shotPos.y;
-          const d2 = dx * dx + dy * dy;
-          if (d2 < bestDistSq) {
-            bestDistSq = d2;
-            bestUid = uid;
-          }
-        }
-      }
-    }
-    return bestUid;
-  },
-
-  _resolveBeamMuzzleFromTurretUid(turretUid) {
-    if (!turretUid) return null;
-    const uidRaw = String(turretUid);
-    const barrelMatch = /:b(\d+)$/.exec(uidRaw);
-    const barrelIndex = barrelMatch ? Math.max(0, Number(barrelMatch[1]) || 0) : 0;
-    const meshUid = barrelMatch ? uidRaw.slice(0, barrelMatch.index) : uidRaw;
-
-    for (const [, container] of this.containers) {
-      const meshes = container?.userData?.meshes;
-      if (!meshes) continue;
-      const mesh = meshes.get(meshUid);
-      if (!mesh) continue;
-
-      if (container.userData._lastMatrixFrame !== this._matrixWorldFrame) {
-        container.updateMatrixWorld(true);
-        container.userData._lastMatrixFrame = this._matrixWorldFrame;
-      }
-      const fx = mesh.userData?.weaponFx;
-      const points = fx?.muzzlePoints;
-      if (Array.isArray(points) && points.length > 0) {
-        const pointIndex = Math.min(barrelIndex, points.length - 1);
-        this._tmpMuzzlePos.copy(points[pointIndex]).applyMatrix4(mesh.matrixWorld);
-      } else {
-        mesh.getWorldPosition(this._tmpMuzzlePos);
-      }
-      return { x: this._tmpMuzzlePos.x, y: -this._tmpMuzzlePos.y };
-    }
-    return null;
+  // Początek wiązki ciągłej trzyma się lufy, która ją wypuściła. Wieżyczki są
+  // teraz rekordami 2D, więc pytamy o nie Turret2D zamiast chodzić po grafie
+  // sceny. Klucz jest stabilny między klatkami, dopóki wieżyczka jest widoczna.
+  _resolveBeamMuzzleFromTurretKey(turretKey) {
+    if (!turretKey) return null;
+    return Turret2D.resolveMuzzle(turretKey);
   },
 
   _triggerBeamFx(detail) {
@@ -1911,6 +880,9 @@ export const Weapon3DSystem = {
         if (!c) return;
       }
       c.turretUid = emitterUid;
+      // Uchwyt do wieżyczki, z której wyszła wiązka — dzięki niemu początek
+      // wiązki jedzie z lufą, gdy okręt się obraca albo przemieszcza.
+      c.turretKey = Turret2D.findTurretKey(sx, sy, normalizeWeaponFxKey(detail?.weaponId));
 
       c.targetStartX = sx;
       c.targetStartY = sy;
@@ -1969,7 +941,7 @@ export const Weapon3DSystem = {
       const beam = this._continuousBeamActive[i];
       const prevTargetStartX = beam.targetStartX;
       const prevTargetStartY = beam.targetStartY;
-      const muzzle = this._resolveBeamMuzzleFromTurretUid(beam.turretUid);
+      const muzzle = this._resolveBeamMuzzleFromTurretKey(beam.turretKey);
       if (muzzle) {
         beam.targetStartX = muzzle.x;
         beam.targetStartY = muzzle.y;
@@ -1988,6 +960,7 @@ export const Weapon3DSystem = {
       if (beam.impactLight) beam.impactLight.visible = false;
       beam.active = false;
       beam.turretUid = null;
+      beam.turretKey = null;
       this._continuousBeamActive[i] = this._continuousBeamActive[this._continuousBeamActive.length - 1];
       this._continuousBeamActive.pop();
       this._continuousBeamPool.push(beam);
@@ -2014,67 +987,18 @@ export const Weapon3DSystem = {
     this._shotListenerBound = true;
   },
 
+  // Wystrzał: Turret2D wskazuje lufę (i dostaje odrzut), my dokładamy płomień
+  // i wstrząs kamery. Gdy żadna wieżyczka nie jest widoczna (kamera daleko,
+  // CIC otwarty), błysk po prostu nie powstaje — tak jak wcześniej przy LOD.
   _triggerShotByWorldPoint(weaponKey, shotX, shotY) {
-    let bestMesh = null;
-    let bestDistSq = Infinity;
-    const shotPos = this._tmpShotPos;
-    shotPos.set(shotX, -shotY, 0);
-
-    for (const [, container] of this.containers) {
-      // Ukryte kontenery (LOD/CIC) — recoil/flash i tak niewidoczne; nie skanuj.
-      if (!container?.visible) continue;
-      const meshes = container?.userData?.meshes;
-      if (!meshes || meshes.size === 0) continue;
-      if (container.userData._lastMatrixFrame !== this._matrixWorldFrame) {
-        container.updateMatrixWorld(true);
-        container.userData._lastMatrixFrame = this._matrixWorldFrame;
-      }
-      for (const [, mesh] of meshes) {
-        const fx = mesh?.userData?.weaponFx;
-        if (!fx) continue;
-        if (weaponKey && fx.weaponKey !== weaponKey) continue;
-
-        const points = fx.muzzlePoints;
-        if (Array.isArray(points) && points.length > 0) {
-          for (let i = 0; i < points.length; i++) {
-            this._tmpMuzzlePos.copy(points[i]).applyMatrix4(mesh.matrixWorld);
-            const dx = this._tmpMuzzlePos.x - shotPos.x;
-            const dy = this._tmpMuzzlePos.y - shotPos.y;
-            const d2 = dx * dx + dy * dy;
-            if (d2 < bestDistSq) {
-              bestDistSq = d2;
-              bestMesh = mesh;
-            }
-          }
-        } else {
-          mesh.getWorldPosition(this._tmpMuzzlePos);
-          const dx = this._tmpMuzzlePos.x - shotPos.x;
-          const dy = this._tmpMuzzlePos.y - shotPos.y;
-          const d2 = dx * dx + dy * dy;
-          if (d2 < bestDistSq) {
-            bestDistSq = d2;
-            bestMesh = mesh;
-          }
-        }
-      }
-    }
-
-    if (!bestMesh) return;
-    triggerMeshShotFx(bestMesh);
-    const fx = bestMesh.userData?.weaponFx;
-    const shake = Number(fx?.shakeStrength) || 0;
-    this._cameraShakeMag = Math.min(18, this._cameraShakeMag + shake);
+    const shot = Turret2D.triggerShot(weaponKey, shotX, shotY);
+    if (!shot) return;
+    spawnMuzzleFlash(shot.x, shot.y, shot.angle, shot.scale, shot.color);
+    this._cameraShakeMag = Math.min(18, this._cameraShakeMag + (Number(shot.shake) || 0));
   },
 
   _updateWeaponFx(dt) {
-    for (const [, container] of this.containers) {
-      if (!container?.visible) continue;
-      const meshes = container?.userData?.meshes;
-      if (!meshes) continue;
-      for (const [, mesh] of meshes) {
-        updateMeshWeaponFx(mesh, dt);
-      }
-    }
+    updateMuzzleFlashes(dt);
   },
 
   _updateCameraShake(dt) {
@@ -2097,246 +1021,6 @@ export const Weapon3DSystem = {
     return this._preloaded;
   },
 
-  syncWeapons(entity, shipEx, shipEy, shipAngle, shipScale) {
-    if (!this._preloaded) this._preloadShaders();
-
-    ensureWeaponResources();
-    this._ensureShotListener();
-
-    // Hide weapons when CIC (tactical overlay) is active
-    if (CICDisplay.active) {
-      const container = this.containers.get(entity);
-      if (container) container.visible = false;
-      return;
-    }
-
-    // LOD: przy oddalonej kamerze chowamy wieżyczki (subpikselowy detal) i
-    // pomijamy cały per-broniowy sync CPU. Nowe kontenery nie powstają, dopóki
-    // gracz nie przybliży kamery.
-    const camZoom = Number(Core3D.activeCam1?.zoom) || 1;
-    if (camZoom < getWeaponLodMinZoom()) {
-      const container = this.containers.get(entity);
-      if (container) container.visible = false;
-      return;
-    }
-
-    const wepDataList = [];
-
-    if (entity.autoWeapons) {
-      for (let i = 0; i < entity.autoWeapons.length; i++) {
-        const w = entity.autoWeapons[i];
-        const def = w?.def;
-        if (!shouldRenderWeapon3D(def) || !w.hpOffset || w.hpOffset.x == null || w.hpOffset.y == null) continue;
-        wepDataList.push({
-          uid: `npc_wep_${i}_${def.id || def.category || 'x'}`,
-          weaponId: def.id,
-          category: def.category,
-          size: def.size,
-          localX: Number(w.hpOffset.x) || 0,
-          localY: Number(w.hpOffset.y) || 0,
-          angle: w.visualAngle !== undefined ? w.visualAngle : shipAngle,
-          useHardpointScale: true
-        });
-      }
-    } else if (entity.isPlayer && entity.weapons) {
-      const interpTurretAngles = (typeof window !== 'undefined' && entity === window.ship && window.__interpShipTurretAngles)
-        ? window.__interpShipTurretAngles
-        : null;
-      const turret1Angle = Number.isFinite(interpTurretAngles?.turret1) ? interpTurretAngles.turret1 : (entity.turret?.angle || shipAngle);
-      const turret2Angle = Number.isFinite(interpTurretAngles?.turret2) ? interpTurretAngles.turret2 : (entity.turret2?.angle || shipAngle);
-      const turret3Angle = Number.isFinite(interpTurretAngles?.turret3) ? interpTurretAngles.turret3 : (entity.turret3?.angle || shipAngle);
-      const turret4Angle = Number.isFinite(interpTurretAngles?.turret4) ? interpTurretAngles.turret4 : (entity.turret4?.angle || shipAngle);
-      const ciwsInterpAngles = Array.isArray(interpTurretAngles?.ciws) ? interpTurretAngles.ciws : null;
-      const turrets = [
-        { t: entity.turret, ang: turret1Angle },
-        { t: entity.turret2, ang: turret2Angle },
-        { t: entity.turret3, ang: turret3Angle },
-        { t: entity.turret4, ang: turret4Angle }
-      ];
-
-      const mains = entity.weapons.main || [];
-      for (let i = 0; i < mains.length; i++) {
-        const loadout = mains[i];
-        const def = loadout?.weapon;
-        if (!shouldRenderWeapon3D(def)) continue;
-        const hp = loadout.hp?.pos || loadout.hp;
-        let bestIdx = 0;
-        let bestDist = Infinity;
-        for (let ti = 0; ti < turrets.length; ti++) {
-          const tur = turrets[ti];
-          const dx = (hp?.x || 0) - (tur.t?.offset?.x || 0);
-          const dy = (hp?.y || 0) - (tur.t?.offset?.y || 0);
-          const d2 = dx * dx + dy * dy;
-          if (d2 < bestDist) {
-            bestDist = d2;
-            bestIdx = ti;
-          }
-        }
-        const turret = turrets[bestIdx];
-        wepDataList.push({
-          uid: `p_main_${i}_${def.id || def.category || 'x'}`,
-          weaponId: def.id,
-          category: def.category,
-          size: def.size,
-          localX: hp?.x ?? turret.t?.offset?.x ?? 0,
-          localY: hp?.y ?? turret.t?.offset?.y ?? 0,
-          angle: turret.ang
-        });
-      }
-
-      const auxes = entity.weapons.aux || [];
-      for (let i = 0; i < auxes.length; i++) {
-        const loadout = auxes[i];
-        const def = loadout?.weapon;
-        if (!shouldRenderWeapon3D(def)) continue;
-        const c = entity.ciws?.[i];
-        const hp = loadout.hp?.pos || loadout.hp;
-        wepDataList.push({
-          uid: `p_aux_${i}_${def.id || def.category || 'x'}`,
-          weaponId: def.id,
-          category: def.category,
-          size: def.size,
-          localX: hp?.x ?? c?.offset?.x ?? 0,
-          localY: hp?.y ?? c?.offset?.y ?? 0,
-          angle: Number.isFinite(ciwsInterpAngles?.[i]) ? ciwsInterpAngles[i] : (c?.angle !== undefined ? c.angle : shipAngle)
-        });
-      }
-
-      const missiles = entity.weapons.missile || [];
-      for (let i = 0; i < missiles.length; i++) {
-        const loadout = missiles[i];
-        const def = loadout?.weapon;
-        if (!shouldRenderWeapon3D(def)) continue;
-        const hp = loadout.hp?.pos || loadout.hp;
-        let bestIdx = 0;
-        let bestDist = Infinity;
-        for (let ti = 0; ti < turrets.length; ti++) {
-          const tur = turrets[ti];
-          const dx = (hp?.x || 0) - (tur.t?.offset?.x || 0);
-          const dy = (hp?.y || 0) - (tur.t?.offset?.y || 0);
-          const d2 = dx * dx + dy * dy;
-          if (d2 < bestDist) {
-            bestDist = d2;
-            bestIdx = ti;
-          }
-        }
-        const turret = turrets[bestIdx];
-        wepDataList.push({
-          uid: `p_missile_${i}_${def.id || def.category || 'x'}`,
-          weaponId: def.id,
-          category: def.category,
-          size: def.size,
-          localX: hp?.x ?? 0,
-          localY: hp?.y ?? 0,
-          angle: turret.ang
-        });
-      }
-
-      const specials = entity.weapons.special || [];
-      for (let i = 0; i < specials.length; i++) {
-        const loadout = specials[i];
-        const def = loadout?.weapon;
-        if (!shouldRenderWeapon3D(def)) continue;
-        const hp = loadout.hp?.pos || loadout.hp;
-        let bestIdx = 0;
-        let bestDist = Infinity;
-        for (let ti = 0; ti < turrets.length; ti++) {
-          const tur = turrets[ti];
-          const dx = (hp?.x || 0) - (tur.t?.offset?.x || 0);
-          const dy = (hp?.y || 0) - (tur.t?.offset?.y || 0);
-          const d2 = dx * dx + dy * dy;
-          if (d2 < bestDist) {
-            bestDist = d2;
-            bestIdx = ti;
-          }
-        }
-        const turret = turrets[bestIdx];
-        wepDataList.push({
-          uid: `p_special_${i}_${def.id || def.category || 'x'}`,
-          weaponId: def.id,
-          category: def.category,
-          size: def.size,
-          localX: hp?.x ?? 0,
-          localY: hp?.y ?? 0,
-          angle: turret.ang
-        });
-      }
-    }
-
-    const hadContainer = this.containers.has(entity);
-    if (wepDataList.length === 0) {
-      if (hadContainer) this.disposeEntity(entity);
-      return;
-    }
-
-    let container = this.containers.get(entity);
-    if (!container) {
-      container = new THREE.Group();
-      container.userData.meshes = new Map();
-      container.userData.fgCategory = 'weapons';
-      container.renderOrder = 60;
-      container.userData.tiltX = 0;
-      container.userData.tiltY = 0;
-      Core3D.scene.add(container);
-      Core3D.enableForeground3D(container);
-      this.containers.set(entity, container);
-    }
-    container.visible = true;
-
-    // GTA-2 style: container obraca się z okrętem, brak tiltu perspektywicznego
-    container.rotation.x = 0;
-    container.rotation.y = 0;
-    container.rotation.z = -shipAngle;
-
-    container.position.set(shipEx, -shipEy, 0.0);
-
-    const currentMeshes = container.userData.meshes;
-    const usedUids = new Set();
-    const weaponLocalScale = getEntityWeaponLocalScale(entity);
-    const weaponTier = getEntityWeaponTier(entity);
-    const tierScale = (WEAPON_TIER_SCALE[weaponTier] || WEAPON_TIER_SCALE.Capital).turret;
-
-    for (const wData of wepDataList) {
-      usedUids.add(wData.uid);
-      let mesh = currentMeshes.get(wData.uid);
-      // Rebuild if missing or if the ship class (and thus weapon tier) changed.
-      if (mesh && mesh.userData.__weaponTier !== weaponTier) {
-        container.remove(mesh);
-        currentMeshes.delete(wData.uid);
-        mesh = null;
-      }
-      if (!mesh) {
-        mesh = createWeapon3DMesh(wData.weaponId, wData.category, wData.size, tierScale);
-        mesh.userData.__weaponTier = weaponTier;
-        container.add(mesh);
-        Core3D.enableForeground3D(mesh);
-        currentMeshes.set(wData.uid, mesh);
-      }
-
-      // Pozycje w lokalnych współrzędnych okrętu (container już obraca)
-      const positionScaleX = wData.useHardpointScale ? weaponLocalScale.x : shipScale;
-      const positionScaleY = wData.useHardpointScale ? weaponLocalScale.y : shipScale;
-      const lx = (Number(wData.localX) || 0) * positionScaleX;
-      const ly = (Number(wData.localY) || 0) * positionScaleY;
-      mesh.position.set(lx, -ly, 0);
-      // Kąt wieżyczki relatywny do okrętu
-      mesh.rotation.z = -(wData.angle - shipAngle);
-    }
-
-    for (const [uid, mesh] of currentMeshes.entries()) {
-      if (usedUids.has(uid)) continue;
-      container.remove(mesh);
-      currentMeshes.delete(uid);
-    }
-  },
-
-  cleanupEntities(activeEntities) {
-    if (!(activeEntities instanceof Set)) return;
-    for (const [entity] of this.containers) {
-      if (!activeEntities.has(entity)) this.disposeEntity(entity);
-    }
-  },
-
   syncProjectiles(bullets = []) {
     if (!Core3D.isInitialized || !Core3D.scene) return;
     ensureWeaponResources();
@@ -2348,7 +1032,6 @@ export const Weapon3DSystem = {
     const dt = this._lastFxTimeSec > 0 ? Math.max(0.001, Math.min(0.05, timeSec - this._lastFxTimeSec)) : (1 / 60);
     this._lastFxTimeSec = timeSec;
 
-    this._matrixWorldFrame++;
     this._updateWeaponFx(dt);
     this._updateBeamFx(dt, timeSec);
     this._updateCameraShake(dt);
@@ -2459,17 +1142,13 @@ export const Weapon3DSystem = {
     bulletInstances.arcs._prevCount = arcInstanceCount;
   },
 
-  disposeEntity(entity) {
-    const container = this.containers.get(entity);
-    if (!container) return;
-    clearWeaponMeshes(container);
-    if (container.parent) container.parent.remove(container);
-    this.containers.delete(entity);
-  },
-
   disposeAll() {
-    for (const [entity] of this.containers) {
-      this.disposeEntity(entity);
+    if (muzzleInstances.outer) {
+      muzzleInstances.active.length = 0;
+      muzzleInstances.pool.length = 0;
+      muzzleInstances.outer.count = 0;
+      muzzleInstances.core.count = 0;
+      muzzleInstances._prevCount = 0;
     }
     resetBulletInstanceCounts();
     if (bulletInstances.trails) bulletInstances.trails.instanceMatrix.needsUpdate = true;

@@ -52,6 +52,29 @@ test('HexArena reuses slots without accepting stale generations', () => {
   assert.equal(arena.hp[reused], 30);
 });
 
+test('HexArena grows without invalidating live indices or the free list', () => {
+  const arena = new HexArena({ capacity: 4, shared: false });
+  const first = arena.allocate(7, { hp: 31, c: 2, r: 3 });
+  const second = arena.allocate(8, { hp: 47, c: 4, r: 5 });
+  const firstGeneration = arena.generation[first];
+
+  assert.equal(arena.grow(9), true);
+  assert.equal(arena.capacity, 9);
+  assert.equal(arena.isAlive(first, firstGeneration), true);
+  assert.equal(arena.hp[first], 31);
+  assert.equal(arena.cellC[second], 4);
+
+  const allocated = [];
+  while (true) {
+    const index = arena.allocate(9, { hp: 1 });
+    if (index < 0) break;
+    allocated.push(index);
+  }
+  assert.equal(allocated.length, 7);
+  assert.equal(new Set([first, second, ...allocated]).size, 9);
+  assert.equal(arena.allocatedCount, 9);
+});
+
 test('boundary list stays exact after randomized topology changes', () => {
   const { arena, body } = buildBody(12, 10);
   assertBoundaryMatchesBruteForce(arena, body);
@@ -76,4 +99,9 @@ test('boundary list stays exact after randomized topology changes', () => {
 test('100k-capable arena stays within the structural CPU memory budget', () => {
   const bytes = estimateHexArenaBytes(131072);
   assert.ok(bytes <= 48 * 1024 * 1024, `${(bytes / 1024 / 1024).toFixed(2)} MiB`);
+});
+
+test('default battle arena stays within a 32 MiB structural memory budget', () => {
+  const bytes = estimateHexArenaBytes();
+  assert.ok(bytes <= 32 * 1024 * 1024, `${(bytes / 1024 / 1024).toFixed(2)} MiB`);
 });

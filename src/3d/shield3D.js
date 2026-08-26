@@ -8,6 +8,7 @@
 // ============================================================
 import * as THREE from 'three';
 import { Core3D } from './core3d.js';
+import { ShieldImpactFX } from './shieldImpactFx.js';
 import {
     getEntityShieldBaseRadius,
     getEntityShieldProfile,
@@ -661,6 +662,107 @@ function createHullShieldMaterial(profile) {
     });
 }
 
+// ── Barwa cząsteczek = barwa tarczy ─────────────────────────────────────────
+// Ta sama funkcja co lifeColor() w shaderze: pełne HP -> uColor, puste -> czerwień.
+// Efekty NIE mają własnej palety, żeby przyszłe kolory tarcz (frakcje, typy
+// generatorów) zadziałały bez dotykania tego pliku.
+const SHIELD_EMPTY_COLOR = new THREE.Color(1.0, 0.08, 0.04);
+const SHIELD_BREAK_COLOR = new THREE.Color(1.0, 0.35, 0.22);
+const _fxColor = new THREE.Color();
+
+function resolveShieldFxColor(u, shield) {
+    if (shield.state === 'breaking') return _fxColor.copy(SHIELD_BREAK_COLOR);
+    const life = clamp(Number(u.uLife.value) || 0, 0, 1);
+    return _fxColor.copy(SHIELD_EMPTY_COLOR).lerp(u.uColor.value, life);
+}
+
+function fxPowerFromHit(hit) {
+    const intensity = Number(hit?.intensity);
+    return Number.isFinite(intensity) ? intensity : 1.0;
+}
+
+// ── Emisja cząsteczek: tarcza-obrys ─────────────────────────────────────────
+// Punkt trafienia i normalna liczone w klatce profilu (r(θ) nie jest okręgiem,
+// więc normalna to gradient krzywej, nie kierunek promienia), potem obrót
+// o kąt kadłuba do współrzędnych świata gry.
+const FX_NORMAL_DELTA = 0.05;
+
+function emitHullImpactFx(entity, shield, profile, hullAngle, pose, scaleProgress, fresh, mesh, time, zoom) {
+    const color = resolveShieldFxColor(mesh.material.uniforms, shield);
+    const c = Math.cos(hullAngle);
+    const sn = Math.sin(hullAngle);
+    const meanR = (profile.maxR + profile.minR) * 0.5;
+    const vx = Number(entity.vx) || 0;
+    const vy = Number(entity.vy) || 0;
+
+    for (let i = 0; i < fresh.length; i++) {
+        const hit = fresh[i];
+        const a = hit.gridAngle !== null ? hit.gridAngle : (-(hit.localAngle || 0) - hullAngle);
+        const r = sampleShieldProfileRadius(profile, a) * scaleProgress;
+
+        // Skala efektu: promień w miejscu trafienia zmieszany ze średnią statku,
+        // żeby burta długiego kadłuba nie pryskała jak dziób.
+        const fxRadius = r * 0.7 + meanR * scaleProgress * 0.3;
+        const lod = ShieldImpactFX.lodScaleFor(fxRadius, zoom);
+        if (lod <= 0) continue;
+
+        const gx = Math.cos(a) * r;
+        const gy = Math.sin(a) * r;
+
+        const rm = sampleShieldProfileRadius(profile, a - FX_NORMAL_DELTA) * scaleProgress;
+        const rp = sampleShieldProfileRadius(profile, a + FX_NORMAL_DELTA) * scaleProgress;
+        let tx = Math.cos(a + FX_NORMAL_DELTA) * rp - Math.cos(a - FX_NORMAL_DELTA) * rm;
+        let ty = Math.sin(a + FX_NORMAL_DELTA) * rp - Math.sin(a - FX_NORMAL_DELTA) * rm;
+        const tl = Math.hypot(tx, ty) || 1;
+        tx /= tl; ty /= tl;
+        let ngx = ty;
+        let ngy = -tx;
+        if (ngx * gx + ngy * gy < 0) { ngx = -ngx; ngy = -ngy; }
+
+        ShieldImpactFX.emit({
+            x: pose.x + (gx * c - gy * sn),
+            y: pose.y + (gx * sn + gy * c),
+            nx: ngx * c - ngy * sn,
+            ny: ngx * sn + ngy * c,
+            radius: fxRadius,
+            preset: hit.fxClass,
+            color,
+            power: fxPowerFromHit(hit),
+            vx, vy,
+            lod,
+            time
+        });
+    }
+}
+
+// ── Emisja cząsteczek: kolista bańka ────────────────────────────────────────
+function emitSphereImpactFx(entity, shield, radius, pose, fresh, mesh, time, zoom) {
+    const lod = ShieldImpactFX.lodScaleFor(radius, zoom);
+    if (lod <= 0) return;
+    const color = resolveShieldFxColor(mesh.material.uniforms, shield);
+    const vx = Number(entity.vx) || 0;
+    const vy = Number(entity.vy) || 0;
+
+    for (let i = 0; i < fresh.length; i++) {
+        const hit = fresh[i];
+        // localAngle jest kątem w klatce y-w-górę; świat gry ma y w dół.
+        const nx = Math.cos(hit.localAngle || 0);
+        const ny = -Math.sin(hit.localAngle || 0);
+        ShieldImpactFX.emit({
+            x: pose.x + nx * radius,
+            y: pose.y + ny * radius,
+            nx, ny,
+            radius,
+            preset: hit.fxClass,
+            color,
+            power: fxPowerFromHit(hit),
+            vx, vy,
+            lod,
+            time
+        });
+    }
+}
+
 function pickHitSlot(hits, timeNow) {
     for (let i = 0; i < hits.length; i++) {
         const hit = hits[i];
@@ -746,9 +848,12 @@ function applyShieldStateUniforms(u, shield, time) {
 // ── Ring buffer trafień 3D (dłuższy niż impacts w shieldSystem) ──────────────
 function syncHitBuffer(entity, shield, time) {
     if (!state.hitBuffers.has(entity)) {
-        state.hitBuffers.set(entity, { hits: new Array(MAX_HITS).fill(null), seen: new Map() });
+        state.hitBuffers.set(entity, { hits: new Array(MAX_HITS).fill(null), seen: new Map(), fresh: [] });
     }
     const hb = state.hitBuffers.get(entity);
+    // `fresh` to trafienia zarejestrowane w TEJ klatce — tylko one wyrzucają
+    // cząsteczki (ring buffer żyje 1.5 s i odpaliłby je raz na klatkę).
+    hb.fresh.length = 0;
 
     // Detect new impacts by stable impact id; startTime alone can collide under multi-hit same-frame fire.
     const impacts = shield.impacts || [];
@@ -758,11 +863,15 @@ function syncHitBuffer(entity, shield, time) {
         if (key && !hb.seen.has(key)) {
             hb.seen.set(key, hitStartTime);
             const slot = pickHitSlot(hb.hits, time);
-            hb.hits[slot] = {
+            const record = {
                 localAngle: imp.localAngle || 0,
                 gridAngle: Number.isFinite(imp.gridAngle) ? imp.gridAngle : null,
-                startTime: hitStartTime
+                startTime: hitStartTime,
+                fxClass: imp.fxClass || 'main',
+                intensity: Number(imp.intensity) || 1
             };
+            hb.hits[slot] = record;
+            hb.fresh.push(record);
         }
     }
 
@@ -791,7 +900,7 @@ function resolveEntityPose(entity, interpPoseOverride) {
 }
 
 // ── Update: tarcza-obrys kadłuba ─────────────────────────────────────────────
-function updateHullShieldMesh(entity, mesh, shield, profile, time, interpPoseOverride) {
+function updateHullShieldMesh(entity, mesh, shield, profile, time, interpPoseOverride, zoom) {
     const pose = resolveEntityPose(entity, interpPoseOverride);
     // Gracz z interpolacją: spriteRotation gracza = 0, więc kąt interpolowany
     // można podstawić wprost.
@@ -822,10 +931,14 @@ function updateHullShieldMesh(entity, mesh, shield, profile, time, interpPoseOve
             u.uHitTime.value[i] = -999;
         }
     }
+
+    if (hb.fresh.length) {
+        emitHullImpactFx(entity, shield, profile, hullAngle, pose, scaleProgress, hb.fresh, mesh, time, zoom);
+    }
 }
 
 // ── Update: kolista bańka (oryginalna ścieżka) ───────────────────────────────
-function updateSphereShieldMesh(entity, mesh, shield, time, interpPoseOverride) {
+function updateSphereShieldMesh(entity, mesh, shield, time, interpPoseOverride, zoom) {
     // Uniform scale: sphere radius=1.8, shield covers the shared gameplay radius.
     const s = getEntityShieldBaseRadius(entity) / 1.8;
     // During activation, shield grows from center; during breaking, stays full size
@@ -860,12 +973,19 @@ function updateSphereShieldMesh(entity, mesh, shield, time, interpPoseOverride) 
             u.uHitTime.value[i] = -999;
         }
     }
+
+    if (hb.fresh.length) {
+        emitSphereImpactFx(entity, shield, s * 1.8 * scaleProgress, pose, hb.fresh, mesh, time, zoom);
+    }
 }
 
 // ── Per-frame update ─────────────────────────────────────────────────────────
 export function updateShields3D(dt, entities, interpPoseOverride = null) {
     if (!Core3D.isInitialized) return;
     const time = performance.now() / 1000;
+
+    ShieldImpactFX.init(Core3D.scene);
+    const zoom = Math.max(0.0001, Number(Core3D.activeCam1?.zoom) || 1);
 
     const activeEntities = new Set();
 
@@ -889,9 +1009,9 @@ export function updateShields3D(dt, entities, interpPoseOverride = null) {
         activeEntities.add(entity);
 
         if (kind === 'hull') {
-            updateHullShieldMesh(entity, mesh, shield, profile, time, interpPoseOverride);
+            updateHullShieldMesh(entity, mesh, shield, profile, time, interpPoseOverride, zoom);
         } else {
-            updateSphereShieldMesh(entity, mesh, shield, time, interpPoseOverride);
+            updateSphereShieldMesh(entity, mesh, shield, time, interpPoseOverride, zoom);
         }
     }
 
@@ -901,4 +1021,8 @@ export function updateShields3D(dt, entities, interpPoseOverride = null) {
             removeShieldMesh(entity, mesh);
         }
     }
+
+    // Cząsteczki żyją własnym życiem — także wtedy, gdy statek już zniknął
+    // z listy renderowanych (wstęga po ostatnim trafieniu ma dopalić).
+    ShieldImpactFX.update(time, zoom);
 }
