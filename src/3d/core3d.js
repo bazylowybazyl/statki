@@ -518,6 +518,16 @@ export const Core3D = {
   uberPass: null,
   bloomPass: null, bloomResolutionScale: BLOOM_DEFAULTS.resolutionScale, bloomBaseStrength: BLOOM_DEFAULTS.strength, bloomBaseThreshold: BLOOM_DEFAULTS.threshold,
   msaaSamples: 0,
+  // Zegar GPU. Timery per pass mierzą czas CPU wokół pracy asynchronicznej, więc
+  // gdy wąskim gardłem staje się karta, blokada wypada w losowym draw callu i
+  // rozmazuje się po wszystkich passach — trzy razy w tej sesji wyglądało to jak
+  // "wszystko nagle zwolniło 5x przy identycznej liczbie wywołań". To jest
+  // jedyny pomiar, który rozstrzyga CPU vs GPU.
+  gpuFrameMs: 0,
+  _gpuTimerExt: null,
+  _gpuQueryPool: null,
+  _gpuQueryPending: null,
+  _gpuQueryActive: null,
   perfToggles: { bloom: true, heatHaze: true, shadowShafts: true, threeShadows: true, bgPass: true, planetPass: true, orthoPass: true, fgPass: true, fgBuildings: true, fgStations: true, fgWeapons: true, fgShadows: true, enginePointLights: false },
   shadowShaftsQuality: 'medium',
   _shaftCfg: resolveShadowShaftsQuality('medium'),
@@ -835,6 +845,7 @@ export const Core3D = {
     this._postPasses = [this.sceneResolvePass, this.bloomPass, this.uberPass];
     this.planetHaloPass.uniforms.tPlanetHalo.value = this.planetHaloTarget.texture;
 
+    this._initGpuTimer();
     this._applyPassToggles();
     this._instrumentComposerPasses();
     this.isInitialized = true;
@@ -1083,10 +1094,77 @@ export const Core3D = {
     }
   },
 
+  _initGpuTimer() {
+    this._gpuQueryPool = [];
+    this._gpuQueryPending = [];
+    this._gpuQueryActive = null;
+    try {
+      const gl = this.renderer?.getContext?.();
+      if (gl && this.renderer.capabilities?.isWebGL2) {
+        this._gpuTimerExt = gl.getExtension('EXT_disjoint_timer_query_webgl2') || null;
+      }
+    } catch (_) {
+      this._gpuTimerExt = null;
+    }
+  },
+
+  _gpuTimerBegin() {
+    const ext = this._gpuTimerExt;
+    if (!ext || this._gpuQueryActive) return;
+    const gl = this.renderer.getContext();
+    // Więcej niż kilka zapytań w locie znaczy, że wyniki nie nadążają — wtedy
+    // odpuszczamy klatkę zamiast puchnąć w nieskończoność.
+    if (this._gpuQueryPending.length > 4) return;
+    const query = this._gpuQueryPool.pop() || gl.createQuery();
+    if (!query) return;
+    try {
+      gl.beginQuery(ext.TIME_ELAPSED_EXT, query);
+      this._gpuQueryActive = query;
+    } catch (_) {
+      this._gpuQueryPool.push(query);
+      this._gpuQueryActive = null;
+    }
+  },
+
+  _gpuTimerEnd() {
+    const ext = this._gpuTimerExt;
+    if (!ext || !this._gpuQueryActive) return;
+    const gl = this.renderer.getContext();
+    try {
+      gl.endQuery(ext.TIME_ELAPSED_EXT);
+      this._gpuQueryPending.push(this._gpuQueryActive);
+    } catch (_) { }
+    this._gpuQueryActive = null;
+  },
+
+  _gpuTimerPoll() {
+    const ext = this._gpuTimerExt;
+    if (!ext || !this._gpuQueryPending?.length) return;
+    const gl = this.renderer.getContext();
+    // Disjoint = sterownik przerwał pomiar (zmiana zegarów, przełączenie
+    // kontekstu). Wyniki z takiej klatki są śmieciem i trzeba je wyrzucić.
+    const disjoint = gl.getParameter(ext.GPU_DISJOINT_EXT);
+    if (disjoint) {
+      for (const q of this._gpuQueryPending) this._gpuQueryPool.push(q);
+      this._gpuQueryPending.length = 0;
+      return;
+    }
+    while (this._gpuQueryPending.length) {
+      const query = this._gpuQueryPending[0];
+      if (!gl.getQueryParameter(query, gl.QUERY_RESULT_AVAILABLE)) break;
+      const ns = gl.getQueryParameter(query, gl.QUERY_RESULT);
+      this.gpuFrameMs = Number(ns) / 1e6;
+      this._gpuQueryPending.shift();
+      this._gpuQueryPool.push(query);
+    }
+  },
+
   render() {
     if (!this.isInitialized) return;
     const dbgEnabled = typeof globalThis !== 'undefined' && typeof globalThis.__renderDbgRecord === 'function';
     const tRenderTotal0 = performance.now();
+    this._gpuTimerPoll();
+    this._gpuTimerBegin();
 
     // Toggles zmieniają się tylko z panelu/presetu — aplikuj przy zmianie,
     // nie co klatkę (w środku jest m.in. traverse całej sceny po światłach).
@@ -1349,6 +1427,7 @@ export const Core3D = {
       if (pass && pass.enabled !== false) pass.render(this.renderer, null, this.postTarget);
     }
     this.renderer.setRenderTarget(null);
+    this._gpuTimerEnd();
     this._finalizeRenderInfoBuckets();
     const composerMs = performance.now() - tComposer0;
     this.lastFramePerf = {

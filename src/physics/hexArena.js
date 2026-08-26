@@ -20,7 +20,11 @@ const SHORT_FIELDS = Object.freeze([
   'flags', 'edgeMask'
 ]);
 
-export const DEFAULT_HEX_ARENA_CAPACITY = 131072;
+// A 131k arena was only just large enough for ~480 mixed capital ships. When
+// one more large hull did not fit, the whole body fell back to the much slower
+// object narrowphase. 192k leaves useful battle headroom for a modest 7.8 MiB
+// increase while still allowing the arena to grow on unusually large setups.
+export const DEFAULT_HEX_ARENA_CAPACITY = 196608;
 export const HEX_NEIGHBOR_COUNT = 6;
 
 export const HEX_FLAGS = Object.freeze({
@@ -128,6 +132,38 @@ export class HexArena {
     this.allocatedCount = 0;
     this.highWaterMark = 0;
     this.revision = 1;
+  }
+
+  grow(minCapacity) {
+    const nextCapacity = positiveInt(minCapacity, this.capacity);
+    if (nextCapacity <= this.capacity) return false;
+
+    const oldCapacity = this.capacity;
+    const oldFreeHead = this.freeHead;
+    const oldViews = Object.create(null);
+    for (const name of [...FLOAT_FIELDS, ...INT_FIELDS, ...UINT_FIELDS, ...SHORT_FIELDS, 'neighbors']) {
+      oldViews[name] = this[name];
+    }
+
+    const nextLayout = createLayout(nextCapacity);
+    const nextBuffer = createBackingBuffer(nextLayout.byteLength, this.shared);
+    const nextViews = makeViews(nextBuffer, nextLayout);
+    for (const name of Object.keys(oldViews)) nextViews[name].set(oldViews[name]);
+
+    nextViews.boundarySlot.fill(-1, oldCapacity);
+    nextViews.neighbors.fill(-1, oldCapacity * HEX_NEIGHBOR_COUNT);
+    for (let index = oldCapacity; index < nextCapacity - 1; index++) {
+      nextViews.freeNext[index] = index + 1;
+    }
+    nextViews.freeNext[nextCapacity - 1] = oldFreeHead;
+
+    this.capacity = nextCapacity;
+    this.layout = nextLayout;
+    this.buffer = nextBuffer;
+    Object.assign(this, nextViews);
+    this.shared = typeof SharedArrayBuffer === 'function' && nextBuffer instanceof SharedArrayBuffer;
+    this.freeHead = oldCapacity;
+    return true;
   }
 
   allocate(bodyId, initial = null) {

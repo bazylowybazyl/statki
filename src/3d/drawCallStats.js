@@ -16,6 +16,9 @@ const frame = {
   shipDraws: 0,
   wreckDraws: 0,
   weaponDraws: 0,
+  // Wiezyczki nie sa juz siatkami 3D — rysuje je kanwa (src/vfx/turret2D.js).
+  // Licznik zostaje, zeby dalo sie porownac koszt przed i po przenosinach.
+  turret2DCount: 0,
   // Ciała zwiniete do wspolnego batcha smug — nie generuja wlasnych wywolan,
   // ale warto widziec, ile ich jest, zeby dobrac prog.
   impostorBodies: 0
@@ -29,6 +32,7 @@ export const DrawCallStats = {
     frame.shipDraws = 0;
     frame.wreckDraws = 0;
     frame.weaponDraws = 0;
+    frame.turret2DCount = 0;
     frame.impostorBodies = 0;
   },
 
@@ -44,6 +48,10 @@ export const DrawCallStats = {
 
   addWeapon(draws) {
     frame.weaponDraws += draws | 0;
+  },
+
+  setTurrets2D(count) {
+    frame.turret2DCount = count | 0;
   },
 
   addImpostor(bodies) {

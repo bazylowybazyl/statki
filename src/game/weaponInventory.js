@@ -146,3 +146,25 @@ export class WeaponInventory {
 export function createWeaponInventory(source = null) {
   return source instanceof WeaponInventory ? source : new WeaponInventory(source);
 }
+
+/**
+ * Uzupełnia wskazane typy broni do co najmniej `amount` sztuk każdego typu.
+ * Istniejącego większego zapasu nie zmniejsza. Zwraca liczbę zmienionych typów.
+ */
+export function fillWeaponInventory(inventory, weapons, amount = 1) {
+  if (!inventory || typeof inventory.count !== 'function' || typeof inventory.set !== 'function') return 0;
+  const targetAmount = Math.max(1, Math.floor(Number(amount) || 0));
+  const seen = new Set();
+  let changed = 0;
+
+  for (const entry of weapons || []) {
+    const id = String(typeof entry === 'string' ? entry : (entry?.id || ''));
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    if (inventory.count(id) >= targetAmount) continue;
+    inventory.set(id, targetAmount);
+    changed++;
+  }
+
+  return changed;
+}

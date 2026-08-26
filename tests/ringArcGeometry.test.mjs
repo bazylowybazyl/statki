@@ -6,6 +6,7 @@ import {
   buildRingGateDescriptors,
   buildGateRailTurnArcRanges,
   buildRingSolidArcRanges,
+  circleIntersectsRingAnnulus,
   computeGateReturnWallOuterRadius,
   shouldBuildDockRailsForBand
 } from '../src/3d/planetaryRing3D.js';
@@ -62,6 +63,15 @@ test('shouldBuildDockRailsForBand disables rails on residential-commercial ring'
   assert.equal(shouldBuildDockRailsForBand('inner'), false);
   assert.equal(shouldBuildDockRailsForBand('industrial'), false);
   assert.equal(shouldBuildDockRailsForBand('military'), true);
+});
+
+test('ring projectile broadphase rejects space outside the annulus without square roots', () => {
+  const args = [0, 0, 20, 1000, 1000, 400, 600, 30];
+  assert.equal(circleIntersectsRingAnnulus(...args), false);
+  assert.equal(circleIntersectsRingAnnulus(1500, 1000, 20, 1000, 1000, 400, 600, 30), true);
+  assert.equal(circleIntersectsRingAnnulus(1000, 1000, 20, 1000, 1000, 400, 600, 30), false);
+  assert.equal(circleIntersectsRingAnnulus(1630, 1000, 20, 1000, 1000, 400, 600, 30), true);
+  assert.equal(circleIntersectsRingAnnulus(1651, 1000, 20, 1000, 1000, 400, 600, 30), false);
 });
 
 test('gate descriptors quantize four equal defense openings to segment boundaries', () => {

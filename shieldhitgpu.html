@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GPGPU Niagara Ribbons - Shield Impact FX</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #020204;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: white;
+            user-select: none;
+            touch-action: none;
+        }
+        canvas { display: block; }
+        
+        #ui-layer {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            pointer-events: auto;
+            background: rgba(10, 15, 25, 0.85);
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #334455;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            backdrop-filter: blur(5px);
+            max-width: 320px;
+            z-index: 10;
+        }
+        .ui-title { font-size: 0.95rem; color: #88ccee; font-weight: bold; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 1px; }
+        .ui-subtitle { font-size: 0.7rem; color: #ffaa00; margin-bottom: 15px; font-style: italic; }
+        .ui-text { margin: 5px 0; font-size: 0.8rem; color: #aaa; }
+        .stat-val { color: #88ccee; font-weight: bold; }
+        
+        .slider-container { margin-top: 20px; display: flex; flex-direction: column; }
+        .slider-container label { font-size: 0.75rem; color: #ccc; margin-bottom: 5px; font-weight: bold; }
+        input[type=range] { width: 100%; cursor: pointer; margin-bottom: 15px; accent-color: #88ccee; }
+        
+        .color-row { display: flex; gap: 8px; margin-bottom: 15px; }
+        .color-row input[type=color] {
+            width: 100%; height: 30px; padding: 0; border: 1px solid #334455; border-radius: 4px; cursor: pointer; background: none;
+        }
+        .preset-row { display: flex; gap: 5px; margin-bottom: 15px; }
+        .preset-btn { 
+            flex: 1; background: #112233; color: #88ccee; border: 1px solid #334455; padding: 8px 5px; font-size: 0.7rem; cursor: pointer; border-radius: 3px; font-weight: bold; transition: 0.2s;
+        }
+        .preset-btn:hover, .preset-btn.active { background: #224466; color: white; border-color: #88ccee; }
+        
+        #instructions {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            pointer-events: none;
+            color: #556677;
+            font-size: 0.8rem;
+        }
+    </style>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+    <div id="ui-layer">
+        <div class="ui-title">100% GPGPU RIBBONS FX</div>
+        <div class="ui-subtitle">GPU Physics + History Trails</div>
+        <div class="ui-text">MAX TAILS: <span class="stat-val">2048</span></div>
+        <div class="ui-text">MAX SEGMENTS: <span class="stat-val">131 072</span></div>
+        <div class="ui-text">FPS: <span id="fps-counter" class="stat-val">60</span></div>
+        
+        <div class="slider-container">
+            <label>PRESETS:</label>
+            <div class="preset-row">
+                <button class="preset-btn active" id="btn-niagara">NIAGARA</button>
+                <button class="preset-btn" id="btn-magma">MAGMA</button>
+                <button class="preset-btn" id="btn-toxic">TOXIC</button>
+            </div>
+
+            <label>COLORS (HEAD / TAIL / SPARKS):</label>
+            <div class="color-row">
+                <input type="color" id="col-head" value="#b3f2ff" title="Head Color">
+                <input type="color" id="col-tail" value="#0040ff" title="Tail Color">
+                <input type="color" id="col-spark" value="#ffffff" title="Spark/Lightning Color">
+            </div>
+
+            <label for="count-slider">PARTICLES PER HIT: <span id="count-value" class="stat-val">150</span></label>
+            <input type="range" id="count-slider" min="10" max="1000" step="10" value="150">
+
+            <label for="life-slider">PARTICLE LIFETIME: <span id="life-value" class="stat-val">1.5</span>s</label>
+            <input type="range" id="life-slider" min="0.2" max="4.0" step="0.1" value="1.5">
+            
+            <label for="curl-slider">CURL NOISE FORCE: <span id="curl-value" class="stat-val">2.0</span></label>
+            <input type="range" id="curl-slider" min="0.0" max="5.0" step="0.1" value="2.0">
+            
+            <label for="length-slider">TRAIL LENGTH (SEGMENTS): <span id="length-value" class="stat-val">64</span></label>
+            <input type="range" id="length-slider" min="4" max="64" step="1" value="64" style="margin-bottom: 0;">
+        </div>
+    </div>
+    <div id="instructions">
+        LMB / TAP - Trigger Impact<br>
+        SCROLL - Smooth Zoom
+    </div>
+
+    <script id="computeShaderPosition" type="x-shader/x-compute">
+        uniform float uDelta;
+        uniform float uHitActive;
+        uniform vec3 uHitPos;
+        uniform float uSpawnCount;
+        uniform float uHitSeed;
+
+        float rand(vec2 co){ return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453); }
+        
+        void main() {
+            vec2 uv = gl_FragCoord.xy / resolution.xy;
+            float dx = 1.0 / resolution.x;
+            
+            if (uv.x < dx) {
+                // GŁOWA (Head). Przemieszczanie na podstawie Velocity.
+                vec4 tmpPos = texture2D(texturePosition, uv);
+                vec4 tmpVel = texture2D(textureVelocity, uv);
+                
+                vec3 pos = tmpPos.xyz;
+                float age = tmpPos.w;
+                
+                // SPAWN: Reset pozycji do punktu uderzenia
+                if (uHitActive > 0.0 && age > 1.0) {
+                    float r = rand(uv * uHitSeed);
+                    float threshold = uSpawnCount / resolution.y; 
+                    if (r < threshold) {
+                        pos = uHitPos;
+                        age = 0.0;
+                    }
+                }
+                
+                // Ruch
+                if (age <= 1.0) {
+                    pos += tmpVel.xyz * uDelta;
+                    age += uDelta / tmpVel.w; // w tempVel.w przechowujemy maxLife
+                } else {
+                    pos = vec3(9999.0); // Schowaj martwą cząsteczkę
+                }
+                
+                gl_FragColor = vec4(pos, age);
+            } else {
+                // OGON (Trail). Kopiujemy pozycję cząsteczki z poprzedniej klatki.
+                vec2 prevUV = vec2(uv.x - dx, uv.y);
+                vec4 pPrev = texture2D(texturePosition, prevUV);
+                gl_FragColor = pPrev;
+            }
+        }
+    </script>
+
+    <script id="computeShaderVelocity" type="x-shader/x-compute">
+        uniform float uTime;
+        uniform float uDelta;
+        uniform float uHitActive;
+        uniform vec3 uHitPos;
+        uniform float uSpawnCount;
+        uniform float uHitSeed;
+        
+        uniform float uMaxLife;
+        uniform float uCurlStrength;
+        
+        // --- Simplex Noise 3D ---
+        vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+        vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+        vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
+        vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+        float snoise(vec3 v) {
+            const vec2  C = vec2(1.0/6.0, 1.0/3.0) ;
+            const vec4  D = vec4(0.0, 0.5, 1.0, 2.0);
+            vec3 i  = floor(v + dot(v, C.yyy) );
+            vec3 x0 = v - i + dot(i, C.xxx) ;
+            vec3 g = step(x0.yzx, x0.xyz);
+            vec3 l = 1.0 - g;
+            vec3 i1 = min( g.xyz, l.zxy );
+            vec3 i2 = max( g.xyz, l.zxy );
+            vec3 x1 = x0 - i1 + C.xxx;
+            vec3 x2 = x0 - i2 + C.yyy; 
+            vec3 x3 = x0 - D.yyy;      
+            i = mod289(i); 
+            vec4 p = permute( permute( permute( i.z + vec4(0.0, i1.z, i2.z, 1.0 )) + i.y + vec4(0.0, i1.y, i2.y, 1.0 )) + i.x + vec4(0.0, i1.x, i2.x, 1.0 ));
+            float n_ = 0.142857142857; 
+            vec3  ns = n_ * D.wyz - D.xzx;
+            vec4 j = p - 49.0 * floor(p * ns.z * ns.z); 
+            vec4 x_ = floor(j * ns.z);
+            vec4 y_ = floor(j - 7.0 * x_ );    
+            vec4 x = x_ *ns.x + ns.yyyy;
+            vec4 y = y_ *ns.x + ns.yyyy;
+            vec4 h = 1.0 - abs(x) - abs(y);
+            vec4 b0 = vec4( x.xy, y.xy );
+            vec4 b1 = vec4( x.zw, y.zw );
+            vec4 s0 = floor(b0)*2.0 + 1.0;
+            vec4 s1 = floor(b1)*2.0 + 1.0;
+            vec4 sh = -step(h, vec4(0.0));
+            vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy ;
+            vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww ;
+            vec3 p0 = vec3(a0.xy,h.x);
+            vec3 p1 = vec3(a0.zw,h.y);
+            vec3 p2 = vec3(a1.xy,h.z);
+            vec3 p3 = vec3(a1.zw,h.w);
+            vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2, p2), dot(p3,p3)));
+            p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
+            vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+            m = m * m;
+            return 42.0 * dot( m*m, vec4( dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3) ) );
+        }
+
+        vec3 curlNoise( vec3 p ){
+            const float e = .1;
+            vec3 dx = vec3( e   , 0.0 , 0.0 ); vec3 dy = vec3( 0.0 , e   , 0.0 ); vec3 dz = vec3( 0.0 , 0.0 , e   );
+            vec3 p0 = vec3(snoise(p - dx), snoise(p - dy), snoise(p - dz));
+            vec3 p1 = vec3(snoise(p + dx), snoise(p + dy), snoise(p + dz));
+            float x = p1.z - p0.z - p1.y + p0.y; float y = p1.x - p0.x - p1.z + p0.z; float z = p1.y - p0.y - p1.x + p0.x;
+            return normalize( vec3( x , y , z ) );
+        }
+        
+        float rand(vec2 co){ return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453); }
+
+        void main() {
+            vec2 uv = gl_FragCoord.xy / resolution.xy;
+            float dx = 1.0 / resolution.x;
+            
+            if (uv.x < dx) {
+                vec4 tmpPos = texture2D(texturePosition, uv);
+                vec4 tmpVel = texture2D(textureVelocity, uv);
+                
+                vec3 pos = tmpPos.xyz;
+                float age = tmpPos.w; // wiek 0.0 -> 1.0
+                vec3 vel = tmpVel.xyz;
+                float maxLife = tmpVel.w;
+                
+                // 3 TYPY CZĄSTEK ZALEŻNE OD WSPÓŁRZĘDNEJ Y:
+                float typeId = uv.y; 
+                
+                // SPAWNING
+                if (uHitActive > 0.0 && age > 1.0) {
+                    float r = rand(uv * uHitSeed);
+                    float threshold = uSpawnCount / resolution.y; 
+                    
+                    if (r < threshold) {
+                        age = 0.0;
+                        pos = uHitPos;
+                        
+                        if (typeId >= 0.8) {
+                            // WYŁADOWANIA: Krótkie życie, 360 stopni na tarczy
+                            float angle = rand(uv + uHitSeed) * 6.28318;
+                            float speed = mix(80.0, 180.0, rand(uv * 2.0));
+                            vel.x = cos(angle) * speed;
+                            vel.y = sin(angle) * speed;
+                            vel.z = (rand(uv * 3.0) - 0.5) * 5.0;
+                            maxLife = uMaxLife * mix(0.1, 0.25, rand(uv * 4.0)); 
+                        } 
+                        else if (typeId >= 0.5) {
+                            // ISKRY: W stronę widza, krótki zasięg, mocna grawitacja
+                            float centerAngle = 4.71238; 
+                            float spread = 3.0; 
+                            float angle = centerAngle + (rand(uv + uHitSeed) - 0.5) * spread;
+                            
+                            float speed = mix(30.0, 70.0, rand(uv * 2.0));
+                            vel.x = cos(angle) * speed;
+                            vel.y = sin(angle) * speed;
+                            vel.z = (rand(uv * 3.0)) * 25.0; 
+                            
+                            maxLife = uMaxLife * mix(0.3, 0.8, rand(uv * 4.0));
+                        } 
+                        else {
+                            // MACKI: Grube ogony w tył
+                            float centerAngle = 4.71238;
+                            float spread = 2.5; 
+                            float angle = centerAngle + (rand(uv + uHitSeed) - 0.5) * spread;
+                            
+                            float speed = mix(35.0, 80.0, rand(uv * 2.0));
+                            vel.x = cos(angle) * speed;
+                            vel.y = sin(angle) * speed;
+                            vel.z = (rand(uv * 3.0) - 0.2) * 15.0;
+                            
+                            maxLife = uMaxLife * mix(0.6, 1.4, rand(uv * 4.0));
+                        }
+                    }
+                }
+                
+                // FIZYKA W ZALEŻNOŚCI OD TYPU
+                if (age >= 0.0 && age <= 1.0) {
+                    if (typeId >= 0.8) { 
+                        // Wyładowania
+                        vec3 noise = curlNoise(pos * 0.5 + vec3(0.0, uTime * 10.0, 0.0));
+                        vel += noise * 120.0 * uDelta;
+                        vel *= 0.85; 
+                    } 
+                    else if (typeId >= 0.5) { 
+                        // Iskry
+                        vel.y -= 45.0 * uDelta;
+                        vel *= 0.94;
+                    } 
+                    else { 
+                        // Macki
+                        vec3 noise = curlNoise(pos * 0.1 + vec3(0.0, uTime * 3.0, 0.0));
+                        vel += noise * (uCurlStrength * 20.0) * (1.0 - age) * uDelta;
+                        vel.y -= 15.0 * uDelta; // lekka grawitacja
+                        vel *= 0.96;
+                    }
+                }
+                
+                gl_FragColor = vec4(vel, maxLife);
+            } else {
+                gl_FragColor = texture2D(textureVelocity, uv);
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { GPUComputationRenderer } from 'three/addons/misc/GPUComputationRenderer.js';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+        let scene, camera, renderer, composer;
+        let gpuCompute;
+        let velVariable, posVariable;
+        let positionUniforms, velocityUniforms;
+        
+        // KONFIGURACJA SIATKI ŚLADÓW (Zoptymalizowana na 2048 dla stabilności i ładnego efektu)
+        const TRAIL_LENGTH = 64; 
+        const MAX_TRAILS = 2048; 
+        
+        let trailsMesh;
+        let globalTime = 0;
+        let lastTime = performance.now();
+        let frameCount = 0;
+        let lastFpsTime = performance.now();
+        const shieldLineY = 5;
+
+        // UI PARAMETRY
+        const params = {
+            tentacles: 150,
+            maxLife: 1.5,
+            curl: 2.0,
+            trailLength: 64,
+            colHead: new THREE.Color("#b3f2ff"),
+            colTail: new THREE.Color("#0040ff"),
+            colSpark: new THREE.Color("#ffffff")
+        };
+
+        // ZOOM KAMERY
+        let targetCamY = 0;
+        let targetCamZ = 60;
+        const baseCamY = 0;
+        const baseCamZ = 60;
+
+        function init() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 1000);
+            camera.position.set(0, baseCamY, baseCamZ);
+
+            renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1.3;
+            document.body.appendChild(renderer.domElement);
+
+            // POST PROCESSING (BLOOM)
+            const renderScene = new RenderPass(scene, camera);
+            const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 2.2, 0.6, 0.1);
+            composer = new EffectComposer(renderer);
+            composer.addPass(renderScene);
+            composer.addPass(bloomPass);
+
+            // Linia Tarczy
+            const shieldGeo = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(-200, shieldLineY, 0), new THREE.Vector3(200, shieldLineY, 0)
+            ]);
+            scene.add(new THREE.Line(shieldGeo, new THREE.LineBasicMaterial({ color: 0x0055ff, transparent: true, opacity: 0.3 })));
+
+            initComputeRenderer();
+            initGPUGeometry();
+            setupUI();
+
+            window.addEventListener('resize', onWindowResize);
+            window.addEventListener('mousedown', (e) => triggerImpact(e.clientX, e));
+            window.addEventListener('touchstart', (e) => {
+                if(e.touches.length > 0) triggerImpact(e.touches[0].clientX, e);
+            });
+            window.addEventListener('wheel', (e) => {
+                targetCamZ += e.deltaY * 0.05;
+                targetCamZ = THREE.MathUtils.clamp(targetCamZ, 10, 120);
+                const zoomRatio = 1.0 - (targetCamZ - 10) / 110.0; 
+                targetCamY = baseCamY + (shieldLineY * zoomRatio * 0.8);
+            });
+            
+            animate();
+        }
+
+        function initComputeRenderer() {
+            gpuCompute = new GPUComputationRenderer(TRAIL_LENGTH, MAX_TRAILS, renderer);
+            
+            if ( renderer.capabilities.isWebGL2 === false ) {
+                gpuCompute.setDataType( THREE.HalfFloatType );
+            }
+
+            const dtPosition = gpuCompute.createTexture();
+            const dtVelocity = gpuCompute.createTexture();
+
+            // Inicjalizacja tekstur
+            const posArr = dtPosition.image.data;
+            const velArr = dtVelocity.image.data;
+            for (let i = 0; i < posArr.length; i += 4) {
+                posArr[i] = 9999.0; posArr[i+1] = 9999.0; posArr[i+2] = 0.0; posArr[i+3] = 9.0; 
+                velArr[i] = 0; velArr[i+1] = 0; velArr[i+2] = 0; velArr[i+3] = 1.0; 
+            }
+
+            velVariable = gpuCompute.addVariable("textureVelocity", document.getElementById('computeShaderVelocity').textContent, dtVelocity);
+            posVariable = gpuCompute.addVariable("texturePosition", document.getElementById('computeShaderPosition').textContent, dtPosition);
+
+            // Zależności
+            gpuCompute.setVariableDependencies(velVariable, [posVariable, velVariable]);
+            gpuCompute.setVariableDependencies(posVariable, [posVariable, velVariable]);
+
+            positionUniforms = posVariable.material.uniforms;
+            velocityUniforms = velVariable.material.uniforms;
+
+            // Uniforms
+            positionUniforms['uDelta'] = { value: 0.0 };
+            positionUniforms['uHitActive'] = { value: 0.0 };
+            positionUniforms['uHitPos'] = { value: new THREE.Vector3() };
+            positionUniforms['uSpawnCount'] = { value: 0.0 };
+            positionUniforms['uHitSeed'] = { value: 0.0 };
+            
+            velocityUniforms['uTime'] = { value: 0.0 };
+            velocityUniforms['uDelta'] = { value: 0.0 };
+            velocityUniforms['uHitActive'] = { value: 0.0 };
+            velocityUniforms['uHitPos'] = { value: new THREE.Vector3() };
+            velocityUniforms['uSpawnCount'] = { value: 0.0 };
+            velocityUniforms['uHitSeed'] = { value: 0.0 };
+            velocityUniforms['uMaxLife'] = { value: params.maxLife };
+            velocityUniforms['uCurlStrength'] = { value: params.curl };
+
+            const error = gpuCompute.init();
+            if (error !== null) console.error(error);
+        }
+
+        function initGPUGeometry() {
+            const baseGeo = new THREE.PlaneGeometry(1, 1);
+            const geo = new THREE.InstancedBufferGeometry();
+            geo.index = baseGeo.index;
+            geo.setAttribute('position', baseGeo.attributes.position);
+            geo.setAttribute('uv', baseGeo.attributes.uv);
+            
+            const instances = (TRAIL_LENGTH - 1) * MAX_TRAILS;
+            geo.instanceCount = instances;
+
+            const instUvs = new Float32Array(instances * 2);
+            let idx = 0;
+            for (let y = 0; y < MAX_TRAILS; y++) {
+                for (let x = 0; x < TRAIL_LENGTH - 1; x++) {
+                    instUvs[idx++] = x / TRAIL_LENGTH;
+                    instUvs[idx++] = y / MAX_TRAILS;
+                }
+            }
+            geo.setAttribute('aInstUv', new THREE.InstancedBufferAttribute(instUvs, 2));
+
+            const material = new THREE.ShaderMaterial({
+                uniforms: {
+                    tPosition: { value: null },
+                    tResolution: { value: new THREE.Vector2(TRAIL_LENGTH, MAX_TRAILS) },
+                    uColorHead: { value: params.colHead },
+                    uColorTail: { value: params.colTail },
+                    uColorSpark: { value: params.colSpark },
+                    uTrailLimit: { value: params.trailLength / TRAIL_LENGTH }
+                },
+                vertexShader: `
+                    attribute vec2 aInstUv;
+                    uniform sampler2D tPosition;
+                    uniform vec2 tResolution;
+                    
+                    uniform vec3 uColorHead;
+                    uniform vec3 uColorTail;
+                    uniform vec3 uColorSpark;
+                    uniform float uTrailLimit;
+                    
+                    varying vec3 vColor;
+                    varying float vAlpha;
+                    varying vec2 vUv;
+                    
+                    float rand(vec2 co){ return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453); }
+
+                    void main() {
+                        vUv = uv;
+                        vec2 texDx = vec2(1.0 / tResolution.x, 0.0);
+                        
+                        vec2 headUv = vec2(0.0, aInstUv.y);
+                        vec4 headData = texture2D(tPosition, headUv);
+                        float headAge = headData.w;
+                        
+                        vec4 p1Data = texture2D(tPosition, aInstUv);
+                        vec4 p2Data = texture2D(tPosition, aInstUv + texDx);
+                        
+                        vec3 p1 = p1Data.xyz;
+                        vec3 p2 = p2Data.xyz;
+                        
+                        // Losowy limit długości dla KONKRETNEGO ogona (Zróżnicowanie długości na GPU)
+                        float randomLengthFactor = rand(vec2(aInstUv.y, 13.37));
+                        float individualLimit = uTrailLimit * mix(0.3, 1.0, randomLengthFactor);
+                        
+                        // Ucięcie reszty ogona za limitem
+                        if (aInstUv.x > individualLimit) {
+                            gl_Position = vec4(9999.0);
+                            return;
+                        }
+                        
+                        // Wiek dopasowany tak, żeby zwężał się idealnie na koniuszku limitu
+                        float localAge = headAge + (aInstUv.x / max(individualLimit, 0.01)) * 1.5; 
+                        
+                        if (headAge > 1.0 || localAge > 1.0 || headAge < 0.0) {
+                            gl_Position = vec4(9999.0);
+                            return;
+                        }
+
+                        // Rozpoznawanie typu na bazie aInstUv.y
+                        float typeId = aInstUv.y;
+                        
+                        // Kształt
+                        float widthFactor = pow(1.0 - min(localAge, 1.0), 1.5);
+                        vAlpha = pow(1.0 - min(localAge, 1.0), 2.0);
+                        
+                        float baseWidth;
+                        if (typeId >= 0.8) {
+                            // Wyładowania: Cienkie bazowo, ale z mocnym noise
+                            baseWidth = 0.08 + fract(aInstUv.y*30.0)*0.05; 
+                        } else if (typeId >= 0.5) {
+                            // Iskry
+                            baseWidth = 0.05 + fract(aInstUv.y*100.0)*0.05;
+                        } else {
+                            // Macki
+                            baseWidth = 0.2 + fract(aInstUv.y*50.0)*0.15;
+                        }
+                        
+                        float currentWidth = baseWidth * widthFactor;
+                        
+                        // Efekty Wizualne wg typu
+                        if (typeId >= 0.8) {
+                            // WYŁADOWANIA
+                            vColor = uColorSpark * 8.0; 
+                            
+                            // Migotanie (Flicker) - losowe zaniki napięcia
+                            float flicker = step(0.1, fract(localAge * 30.0 + aInstUv.y * 100.0));
+                            vAlpha *= flicker * 2.5; 
+                            
+                            // Poszarpany kształt prądu wzdłuż ogona
+                            currentWidth *= (0.2 + 0.8 * rand(vec2(aInstUv.x, aInstUv.y)));
+                            
+                        } else if (typeId >= 0.5) {
+                            // ISKRY
+                            vec3 cHead = uColorSpark * 5.0;
+                            vec3 cTail = uColorTail * 0.5;
+                            vColor = mix(cHead, cTail, localAge);
+                            vAlpha *= 0.8;
+                        } else {
+                            // MACKI
+                            vec3 cHead = uColorHead * 3.0;
+                            vec3 cTail = uColorTail * 1.5;
+                            vColor = mix(cHead, cTail, localAge);
+                        }
+                        
+                        // Billboardowanie ogona
+                        vec3 midPos = (p1 + p2) * 0.5;
+                        vec3 diffVec = p1 - p2; 
+                        
+                        vec4 mvPosition = modelViewMatrix * vec4(midPos, 1.0);
+                        vec3 viewDiff = (modelViewMatrix * vec4(diffVec, 0.0)).xyz;
+                        
+                        vec2 dir = normalize(viewDiff.xy);
+                        if (length(viewDiff.xy) < 0.0001) dir = vec2(0.0, 1.0);
+                        
+                        vec2 scaledOffset = position.xy;
+                        float len = length(diffVec);
+                        
+                        scaledOffset.x *= len; 
+                        scaledOffset.y *= currentWidth;
+                        
+                        vec2 rotatedOffset;
+                        rotatedOffset.x = scaledOffset.x * dir.x - scaledOffset.y * dir.y;
+                        rotatedOffset.y = scaledOffset.x * dir.y + scaledOffset.y * dir.x;
+                        
+                        mvPosition.xy += rotatedOffset;
+                        gl_Position = projectionMatrix * mvPosition;
+                    }
+                `,
+                fragmentShader: `
+                    varying vec3 vColor;
+                    varying float vAlpha;
+                    varying vec2 vUv;
+                    void main() {
+                        vec2 pt = vUv - vec2(0.5);
+                        float glow = max(0.0, 1.0 - pow(abs(pt.y) * 2.0, 2.0)); 
+                        gl_FragColor = vec4(vColor, glow * vAlpha);
+                    }
+                `,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
+                transparent: true
+            });
+
+            trailsMesh = new THREE.Mesh(geo, material);
+            trailsMesh.frustumCulled = false;
+            scene.add(trailsMesh);
+        }
+
+        function triggerImpact(clientX, e) {
+            if(e.target.closest('#ui-layer')) return;
+            
+            const mouseX = (clientX / window.innerWidth) * 2 - 1;
+            const v = new THREE.Vector3(mouseX, 0, 0.5);
+            v.unproject(camera);
+            
+            const hitX = mouseX * (camera.position.z * 0.85); 
+            const hitPos = new THREE.Vector3(hitX, shieldLineY, 0); 
+            const seed = Math.random() * 1000.0;
+            
+            velocityUniforms.uHitActive.value = 1.0;
+            velocityUniforms.uHitPos.value.copy(hitPos);
+            velocityUniforms.uSpawnCount.value = params.tentacles;
+            velocityUniforms.uHitSeed.value = seed;
+            
+            positionUniforms.uHitActive.value = 1.0;
+            positionUniforms.uHitPos.value.copy(hitPos);
+            positionUniforms.uSpawnCount.value = params.tentacles;
+            positionUniforms.uHitSeed.value = seed;
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function setupUI() {
+            const bindObj = (id, paramName, spanId) => {
+                document.getElementById(id).addEventListener('input', e => {
+                    if (typeof params[paramName] === 'number') {
+                        params[paramName] = parseFloat(e.target.value);
+                        if (spanId) document.getElementById(spanId).innerText = params[paramName] + (spanId === 'life-value' ? 's' : '');
+                        
+                        if (paramName === 'maxLife') velocityUniforms.uMaxLife.value = params[paramName];
+                        if (paramName === 'curl') velocityUniforms.uCurlStrength.value = params[paramName];
+                        if (paramName === 'trailLength' && trailsMesh) trailsMesh.material.uniforms.uTrailLimit.value = params[paramName] / TRAIL_LENGTH;
+                    } else { 
+                        params[paramName].set(e.target.value);
+                    }
+                });
+            };
+            
+            const setPreset = (id, btn, h, t, s) => {
+                document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                document.getElementById('col-head').value = h;
+                document.getElementById('col-tail').value = t;
+                document.getElementById('col-spark').value = s;
+                params.colHead.set(h); params.colTail.set(t); params.colSpark.set(s);
+            };
+
+            document.getElementById('btn-niagara').addEventListener('click', e => setPreset('btn-niagara', e.target, '#b3f2ff', '#0040ff', '#ffffff'));
+            document.getElementById('btn-magma').addEventListener('click', e => setPreset('btn-magma', e.target, '#ffea00', '#ff0000', '#ffaa00'));
+            document.getElementById('btn-toxic').addEventListener('click', e => setPreset('btn-toxic', e.target, '#b3ffb3', '#004d00', '#aaff00'));
+
+            bindObj('col-head', 'colHead');
+            bindObj('col-tail', 'colTail');
+            bindObj('col-spark', 'colSpark');
+            bindObj('count-slider', 'tentacles', 'count-value');
+            bindObj('life-slider', 'maxLife', 'life-value');
+            bindObj('curl-slider', 'curl', 'curl-value');
+            bindObj('length-slider', 'trailLength', 'length-value');
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const now = performance.now();
+            let delta = (now - lastTime) / 1000;
+            if(delta > 0.05) delta = 0.05; 
+            lastTime = now;
+            globalTime += delta;
+            
+            frameCount++;
+            if (now >= lastFpsTime + 1000) {
+                document.getElementById('fps-counter').innerText = frameCount;
+                frameCount = 0;
+                lastFpsTime = now;
+            }
+
+            // Płynna praca kamery
+            camera.position.z += (targetCamZ - camera.position.z) * 0.1;
+            camera.position.y += (targetCamY - camera.position.y) * 0.1;
+
+            // Aktualizacja zmiennych GPGPU
+            positionUniforms.uDelta.value = delta;
+            velocityUniforms.uTime.value = globalTime;
+            velocityUniforms.uDelta.value = delta;
+
+            gpuCompute.compute();
+
+            // Resetowanie flagi uderzenia - odpalamy efekt precyzyjnie tylko przez 1 klatkę!
+            if (velocityUniforms.uHitActive.value > 0.0) {
+                velocityUniforms.uHitActive.value = 0.0;
+                positionUniforms.uHitActive.value = 0.0;
+            }
+
+            if (trailsMesh) {
+                trailsMesh.material.uniforms.tPosition.value = gpuCompute.getCurrentRenderTarget(posVariable).texture;
+            }
+
+            composer.render();
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>

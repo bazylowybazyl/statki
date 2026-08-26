@@ -119,20 +119,20 @@ export function computeAverageBodyColor(source) {
   const height = source.naturalHeight || source.height || 0;
   if (!width || !height) return null;
 
-  let canvas = source;
-  if (!source.getContext) {
-    if (typeof document === 'undefined') return null;
-    canvas = document.createElement('canvas');
-    canvas.width = Math.min(32, width);
-    canvas.height = Math.min(32, height);
-    const c = canvas.getContext('2d', { willReadFrequently: true });
-    if (!c) return null;
-    try { c.drawImage(source, 0, 0, canvas.width, canvas.height); }
-    catch (_) { return null; }
-  }
-
+  // NIGDY nie wołamy getContext/getImageData na źródle. `grid.cacheCanvas` to
+  // ten sam canvas, z którego leci texImage2D pancerza — pobranie z niego
+  // kontekstu 2D z `willReadFrequently` (albo samo getImageData) każe
+  // przeglądarce przenieść backing store do pamięci CPU i od tej pory KAŻDY
+  // upload tekstury z tego canvasa jest wolny, na stałe. Kopiujemy do własnego
+  // bufora 32x32 i czytamy tylko jego.
+  if (typeof document === 'undefined') return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.min(32, width);
+  canvas.height = Math.min(32, height);
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) return null;
+  try { ctx.drawImage(source, 0, 0, canvas.width, canvas.height); }
+  catch (_) { return null; }
 
   let data;
   try { data = ctx.getImageData(0, 0, canvas.width, canvas.height).data; }

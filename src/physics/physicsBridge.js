@@ -1,5 +1,6 @@
 import { PhysicsKernel } from './physicsKernel.js';
 import { AiKernel } from './aiKernel.js';
+import { DEFAULT_HEX_ARENA_CAPACITY } from './hexArena.js';
 import { SpscFloat64Ring, TripleFloat32Buffer } from './sharedBuffers.js';
 import {
   BODY_SNAPSHOT_STRIDE,
@@ -49,7 +50,7 @@ export class PhysicsBridge {
     this.kernelOptions = {
       maxBodies: this.maxBodies,
       maxProjectiles: options.maxProjectiles || 65536,
-      hexCapacity: options.hexCapacity || 131072,
+      hexCapacity: options.hexCapacity || DEFAULT_HEX_ARENA_CAPACITY,
       scheduler: options.scheduler
     };
     this.worker = null;

@@ -830,7 +830,7 @@
     import { shouldZeroStabilizedAngularVelocity, updateHeadingStabilizer } from "./src/game/flight/stabilizer.js";
     import { DestructorSystem, initHexBody, isHexShips3DActive, setHexShips3DActive, getHexStructuralState, getHexArenaStats, disposeHexBody, DESTRUCTOR_CONFIG } from "./src/game/destructor.js";
     import { TowConstraintSystem } from "./src/game/towSystem.js";
-    import { createWeaponInventory } from "./src/game/weaponInventory.js";
+    import { createWeaponInventory, fillWeaponInventory } from "./src/game/weaponInventory.js";
     import {
       buildWarpRoutes,
       getWarpRoute as lookupWarpRoute,
@@ -885,7 +885,13 @@
       MEGAFREIGHTER_TRAIN_MODULES,
       MEGAFREIGHTER_YAW_ASSIST
     } from "./src/game/megafreighterTrain.js";
+    import { BulletSpatialGrid } from "./src/game/bulletSpatialGrid.js";
+    import { shouldRemoveProjectileAfterImpact, stepProjectileKinematics } from "./src/game/projectileTrajectory.js";
+    import { FixedStepCadence } from "./src/game/fixedStepCadence.js";
+    import { isFriendlyLineOfFireBlocked } from "./src/ai/lineOfFire.js";
     import { PhysicsBridge } from "./src/physics/physicsBridge.js";
+    import { segmentCircleToi } from "./src/physics/physicsKernel.js";
+    import { DEFAULT_HEX_ARENA_CAPACITY } from "./src/physics/hexArena.js";
     import { PerfHUD, mountPerfHudDom, setPerfHudWorldSource } from "./src/ui/perfHud.js";
     import {
       RenderLiveDebug,
@@ -894,6 +900,14 @@
       installLiveDebugConsoleApi
     } from "./src/ui/liveDebug.js";
     import { updateShields3D } from "./src/3d/shield3D.js";
+    import { ShieldImpactFX, SHIELD_IMPACT_PRESETS } from "./src/3d/shieldImpactFx.js";
+    // Konsolowe strojenie efektow trafien w tarcze — odpowiednik suwakow
+    // z prototypu shieldhitgpu.html. Presety sa zwyklymi obiektami, wiec
+    // ShieldFXPresets.main.count = [40, 60] dziala od razu, bez przeladowania.
+    // ShieldFX.qualityScale globalnie mnozy liczbe czastek (0 = wylaczone),
+    // ShieldFX.flash / ShieldFX.heatHaze wlaczaja banke i zafalowanie powietrza.
+    window.ShieldFX = ShieldImpactFX;
+    window.ShieldFXPresets = SHIELD_IMPACT_PRESETS;
     import { initWorld3D, attachPirateStation3D, updateWorld3D } from "./src/3d/world3d.js";
     import { destroyStation3D } from "./src/3d/stations3D.js";
     import { AsteroidField } from "./src/3d/asteroidField3D.js";
@@ -925,6 +939,7 @@
     import { InfrastructureUI } from "./src/ui/infrastructureUI.js";
     import { ZonePainterUI } from "./src/ui/zonePainterUI.js";
     import { CanvasVFX } from "./src/vfx/canvasParticleSystem.js";
+    import { Turret2D } from "./src/vfx/turret2D.js";
     import { FlakBurstVFX } from "./src/vfx/flakBurstVfx.js";
     import {
       FLAK_TUNING,
@@ -968,7 +983,7 @@
     import { initScannerOverviewUI } from "./src/ui/scannerOverviewUI.js";
     import { SpotterDroneSystem } from "./src/game/spotterDrone.js";
     import { WeaponController } from "./src/game/weaponController.js";
-    import { MASTER_WEAPONS, WEAPON_ICON_PATHS, WEAPON_SIZE_LABEL, getWeaponSizeRank, weaponFitsHardpointSize } from "./src/data/weapons.js";
+    import { MASTER_WEAPONS, WEAPON_ICON_PATHS, WEAPON_SIZE_LABEL, getWeaponSizeRank, weaponFitsHardpointSize, shieldImpactClass } from "./src/data/weapons.js";
     import {
       addHangarSquadronMount,
       getFighterSquadronDef,
@@ -2219,7 +2234,7 @@
     const DevTuning = window.DevTuning;
     const Dev = window.Dev = window.Dev || {};
     const physicsBridgeV2 = DevFlags.workerPhysicsV2
-      ? new PhysicsBridge({ maxBodies: 4096, maxProjectiles: 65536, hexCapacity: 131072 })
+      ? new PhysicsBridge({ maxBodies: 4096, maxProjectiles: 65536 })
       : null;
     window.PhysicsBridgeV2 = physicsBridgeV2;
     window.PhysicsBridgeV2Stats = () => physicsBridgeV2?.getStats?.() || { mode: 'disabled' };
@@ -2302,44 +2317,14 @@
     const len = v => Math.hypot(v.x, v.y);
     const norm = v => { const L = len(v); return L ? { x: v.x / L, y: v.y / L } : { x: 0, y: 0 }; };
     function isLineOfFireBlocked(shooter, target, weaponRange) {
-      const start = { x: shooter.x, y: shooter.y };
-      const targetX = target.pos ? target.pos.x : target.x;
-      const targetY = target.pos ? target.pos.y : target.y;
-      const distToTarget = Math.hypot(targetX - shooter.x, targetY - shooter.y);
-      if (!Number.isFinite(distToTarget) || distToTarget <= 0) return false;
-      const checkDist = Math.min(distToTarget, weaponRange || 1000);
-
-      const dx = (targetX - shooter.x) / distToTarget;
-      const dy = (targetY - shooter.y) / distToTarget;
-
-      const potentialVictims = [window.ship, ...npcs];
-
-      for (const victim of potentialVictims) {
-        if (victim === shooter || victim.dead) continue;
-
-        const isAlly = (shooter.friendly === victim.friendly) || (shooter.friendly && victim === window.ship);
-        if (!isAlly) continue;
-
-        const victimRadius = victim.radius ?? victim.r ?? 0;
-        const distToVictim = Math.hypot(victim.x - start.x, victim.y - start.y);
-        if (distToVictim > checkDist + victimRadius) continue;
-
-        const dot = (victim.x - start.x) * dx + (victim.y - start.y) * dy;
-        if (dot < 0) continue;
-
-        const closestX = start.x + dx * dot;
-        const closestY = start.y + dy * dot;
-
-        const distSq = (victim.x - closestX) ** 2 + (victim.y - closestY) ** 2;
-
-        const safeRadius = (victimRadius || 20) + 15;
-
-        if (distSq < safeRadius * safeRadius) {
-          return true;
-        }
-      }
-
-      return false;
+      return isFriendlyLineOfFireBlocked(
+        shooter,
+        target,
+        weaponRange,
+        window.queryAIGrid,
+        npcs,
+        window.ship
+      );
     }
     window.clampTurnAngle = clampTurnAngle;
     window.dist2 = dist2;
@@ -2701,11 +2686,14 @@
     }
 
     function applySeparationForces(npc, ax, ay) {
-      // Cache per klatkę: separacja jest liczona dla KAŻDEGO npc w KAŻDYM substepie
-      // (~3×/klatkę) — a pozycje między substepami zmieniają się pomijalnie. Liczymy
-      // raz na klatkę i reużywamy wektor (callerzy i tak zawsze wołają z ax=ay=0).
-      if (npc.__sepFrame === renderFrameId && npc.__sepVec) {
-        return { ax: npc.__sepVec.x + (ax || 0), ay: npc.__sepVec.y + (ay || 0) };
+      // Separacja jest decyzją AI, więc przeliczamy ją raz na tick AI (20 Hz),
+      // a pomiędzy decyzjami reużywamy ostatni wektor. Wynik również ma stały
+      // obiekt per NPC, żeby gorąca ścieżka nie produkowała śmieci dla GC.
+      if (npc.__sepDecisionTick === aiDecisionTickId && npc.__sepVec) {
+        const cachedResult = npc.__sepResult || (npc.__sepResult = { ax: 0, ay: 0 });
+        cachedResult.ax = npc.__sepVec.x + (ax || 0);
+        cachedResult.ay = npc.__sepVec.y + (ay || 0);
+        return cachedResult;
       }
       const tSep0 = (typeof performance !== 'undefined') ? performance.now() : 0;
       const myRadius = npc.radius || 20;
@@ -2933,12 +2921,15 @@
         window.__aiSepMs = (window.__aiSepMs || 0) + __sepDt;
       }
 
-      // Zapamiętaj czystą separację (base ax/ay = 0 u wszystkich callerów) na tę klatkę.
-      npc.__sepFrame = renderFrameId;
+      // Zapamiętaj czystą separację (base ax/ay = 0 u wszystkich callerów) na ten tick AI.
+      npc.__sepDecisionTick = aiDecisionTickId;
       if (npc.__sepVec) { npc.__sepVec.x = clamped.x; npc.__sepVec.y = clamped.y; }
       else npc.__sepVec = { x: clamped.x, y: clamped.y };
 
-      return { ax: clamped.x + (ax || 0), ay: clamped.y + (ay || 0) };
+      const result = npc.__sepResult || (npc.__sepResult = { ax: 0, ay: 0 });
+      result.ax = clamped.x + (ax || 0);
+      result.ay = clamped.y + (ay || 0);
+      return result;
     }
     window.applySeparationForces = applySeparationForces;
     function getCommandTargetPos(unit, cmd) {
@@ -5640,31 +5631,6 @@
       return canvas;
     }
 
-    const hullScaleDebugState = new Map();
-    function logHullScaleSnapshot(entity, label = 'ship') {
-      if (!entity) return;
-      const hullId = String(entity.activeHullId || entity.shipId || entity.shipFrame || entity.type || label || 'entity');
-      const visualScale = Math.max(0.0001, Number(entity?.visual?.spriteScale) || 1);
-      const sizeW = Math.max(0, Number(entity?.w) || 0);
-      const sizeH = Math.max(0, Number(entity?.h) || 0);
-      const spriteW = Math.max(0, Number(entity?.spriteW) || Number(entity?.renderSpriteImage?.width) || 0);
-      const spriteH = Math.max(0, Number(entity?.spriteH) || Number(entity?.renderSpriteImage?.height) || 0);
-      const rawRadius = Math.max(0, Number(entity?.hexGrid?.rawRadius) || 0);
-      const finalRadius = Math.max(0, Number(entity?.radius) || 0);
-      const sig = `${hullId}|${sizeW}x${sizeH}|${spriteW}x${spriteH}|${rawRadius.toFixed(1)}|${finalRadius.toFixed(1)}|${visualScale.toFixed(3)}`;
-      if (hullScaleDebugState.get(label) === sig) return;
-      hullScaleDebugState.set(label, sig);
-      console.info(`[HullScaleDBG:${label}]`, {
-        hullId,
-        hullSize: `${sizeW}x${sizeH}`,
-        spriteSize: `${spriteW}x${spriteH}`,
-        rawRadius: rawRadius.toFixed(1),
-        finalRadius: finalRadius.toFixed(1),
-        spriteScale: visualScale.toFixed(3)
-      });
-    }
-    window.logHullScaleSnapshot = logHullScaleSnapshot;
-
     ship.spriteReady = false;
     shipSprite.onload = () => {
       const activeHullKey = String(ship?.activeHullId || 'atlas').toLowerCase();
@@ -5707,7 +5673,6 @@
         const scaleNow = Math.max(0.0001, Number(ship?.visual?.spriteScale) || 1);
         ship.radius = ship.hexGrid.rawRadius * scaleNow;
       }
-      logHullScaleSnapshot(ship, 'player');
       if (typeof renderMechanic === 'function') renderMechanic();
       saveLoadout();
     };
@@ -8290,7 +8255,11 @@
               return `auto:${ownerId}:${weapon.id}:${Math.round(lx)}:${Math.round(ly)}`;
             })();
 
-          const shouldRenderBeam2D = !(weapon.render3dOnly && weapon.beamMode === 'continuous');
+          // Kazdy strzal wiazka dostaje wizual 3D w Weapon3DSystem._triggerBeamFx.
+          // Warunek gasil 2D TYLKO dla wiazek ciaglych, wiec beam_pulse lecial
+          // podwojnie: raz jako smuga na kanwie, raz jako plaszczyzna w scenie.
+          // Wiazki laser_pd ida osobna sciezka (ciwsStep) i nadal sa czysto 2D.
+          const shouldRenderBeam2D = !weapon.render3dOnly;
           if (shouldRenderBeam2D) {
             spawnLaserBeam(muzzleData.pos, { x: finalEndX, y: finalEndY }, weapon.size === 'L' ? 12 : 5, {
               life: weapon.duration || 0.12,
@@ -8332,6 +8301,20 @@
               }
             }
 
+            // Trafienie wiazka w tarcze: obrazenia szly przez applyDamageTo*,
+            // wiec pole nigdy nie dostawalo ani ripple, ani czasteczek.
+            // Bramka 0.1 s na cel dotyczy w praktyce wylacznie lasera ciaglego
+            // (20 Hz) — puls (0.65 s) i PD (0.18 s) i tak strzelaja rzadziej.
+            const beamShield = (hitEntity._realEntity || hitEntity)?.shield;
+            const beamBlockedByShield = !!beamShield && isEntityShieldBlocking(hitEntity);
+            if (allowDamage && beamBlockedByShield) {
+              const nowBeam = performance.now() / 1000;
+              if (nowBeam - (Number(beamShield._beamFxAt) || 0) >= 0.1) {
+                beamShield._beamFxAt = nowBeam;
+                registerShieldImpact(hitEntity, finalEndX, finalEndY, damage, shieldImpactClass(weapon));
+              }
+            }
+
             if (allowDamage) {
               if (hitType === 'player') applyPlayerDamage(damage);
               else if (hitType === 'npc' || hitType === 'wreck') {
@@ -8352,7 +8335,11 @@
               }
             }
 
-            impactFx('beam', weapon.vfxColor, 1.0, finalEndX, finalEndY);
+            // Tarcza ma wlasne VFX (ripple + czasteczki + banka) — VFX uderzenia
+            // broni jest efektem trafienia w PANCERZ i na polu wyglada obco.
+            if (!beamBlockedByShield) {
+              impactFx('beam', weapon.vfxColor, 1.0, finalEndX, finalEndY);
+            }
           }
         } else {
           // --- LOGIKA POCISKÓW I RAKIET ---
@@ -8891,7 +8878,6 @@
 
     // =============== Bullets & effects ===============
     window.CANVAS_WEAPON_VFX_ENABLED = true;
-    window.CANVAS_IMPACT_VFX_ENABLED = false;
     CanvasVFX.init();
     CanvasVFX.enabled = true;
     FlakBurstVFX.init();
@@ -8910,11 +8896,8 @@
 
     function spawnBulletImpactEffect(b, x, y, scale = 1.0) {
       const impactKey = resolveProjectileImpact3DKey(b);
-      if (CanvasVFX.enabled && window.CANVAS_IMPACT_VFX_ENABLED === true) {
-        const weaponSize = b.weaponSize || 'M';
-        const canvasImpactKey = CanvasVFX.resolveBulletVfxKey(b.vfxKey || b.weaponId || b.weaponName, b.type);
-        CanvasVFX.spawnWeaponImpact(canvasImpactKey, b.vfxColor || b.color, scale, x, y, weaponSize);
-      }
+      // Trafienia pociskow ida wylacznie przez overlay 3D ponizej. Kanwa 2D ma
+      // wlasna sciezke dla trafien wiazek (spawnWeaponImpactFromPreset).
 
       if (window.overlay3D) {
         const baseSize = 40 * scale;
@@ -9478,6 +9461,33 @@
     let mechanicHardpointFilter = 'all';
     let mechanicBatchMode = '1';
     let mechanicDragWeaponId = null;
+    const MECHANIC_DEV_WEAPON_STOCK = 99;
+
+    function isMechanicDevMode() {
+      try {
+        return new URLSearchParams(window.location.search).has('dev');
+      } catch {
+        return false;
+      }
+    }
+
+    function fillMechanicWeapons() {
+      // Podwójna blokada: przycisku nie ma poza ?dev, a wywołanie funkcji
+      // z konsoli także nie zmieni stanu zwykłej rozgrywki.
+      if (!isMechanicDevMode() || !Game.player) return 0;
+      const inventory = createWeaponInventory(Game.player.inventory);
+      Game.player.inventory = inventory;
+      const changed = fillWeaponInventory(
+        inventory,
+        Object.values(MASTER_WEAPONS),
+        MECHANIC_DEV_WEAPON_STOCK
+      );
+      mechanicWeaponFilter = 'all';
+      renderMechanic();
+      toast(`DEV: wszystkie bronie w magazynie (×${MECHANIC_DEV_WEAPON_STOCK})`);
+      return changed;
+    }
+
     function weaponMetaText(weapon) {
       if (!weapon) return '';
       const parts = [];
@@ -10738,6 +10748,7 @@
           <button class="mechanic-tab-btn" data-filter="aux">Bron dodatkowa</button>
           <button class="mechanic-tab-btn" data-filter="hangar">Hangary</button>
           <button class="mechanic-tab-btn" data-filter="special">Bron specjalna</button>
+          ${isMechanicDevMode() ? '<button class="mechanic-tab-btn" id="mechanic-fill-weapons" type="button">Fill weapons</button>' : ''}
         </div>
         <div id="mechanic-available" class="weapon-pool mechanic-list-scroll"></div>
       </div>
@@ -10787,6 +10798,7 @@
       initMechanicFilter('weapon-filter-tabs', () => mechanicWeaponFilter, (val) => { mechanicWeaponFilter = val; });
       initMechanicFilter('hp-filter-tabs', () => mechanicHardpointFilter, (val) => { mechanicHardpointFilter = val; });
       initMechanicBatchControls();
+      document.getElementById('mechanic-fill-weapons')?.addEventListener('click', fillMechanicWeapons);
       renderMechanic();
       updateMechanicCards();
     }
@@ -16900,15 +16912,24 @@
     // w ciwsStep, używany przez działka PD oraz przez intercept CIWS w
     // bulletsAndCollisionsStep (zamiast skanowania całej tablicy bullets per pocisk).
     const _pdEnemyRocketBuffer = [];
+    const _pdPlayerRocketBuffer = [];
+    // Capital AI czyta te same bufory zamiast skanować całą tablicę bullets
+    // osobno dla każdego statku i każdej baterii point-defence.
+    window.__npcRocketThreats = _pdEnemyRocketBuffer;
+    window.__playerRocketThreats = _pdPlayerRocketBuffer;
 
     function ciwsStep(dt) {
       _pdEnemyRocketBuffer.length = 0;
+      _pdPlayerRocketBuffer.length = 0;
       for (let bi = 0; bi < bullets.length; bi++) {
         const rb = bullets[bi];
         if (!rb || rb.life <= 0) continue;
-        if (rb.owner === 'player' || rb.owner === 'player2') continue;
         if (rb.type !== 'rocket' && rb.type !== 'torpedo') continue;
-        _pdEnemyRocketBuffer.push(rb);
+        if (rb.owner === 'player' || rb.owner === 'player2') {
+          _pdPlayerRocketBuffer.push(rb);
+        } else {
+          _pdEnemyRocketBuffer.push(rb);
+        }
       }
       const auxWeapons = Game.player.weapons?.[HP.AUX] || [];
       for (let i = 0; i < ship.ciws.length; i++) {
@@ -17021,7 +17042,7 @@
               });
               spawnPointDefenseLaserMuzzle(lMuz, lDir, baseVel);
               target.life = -1; // znika też z _pdEnemyRocketBuffer (checki life<=0)
-              bullets.splice(rIdx, 1);
+              removeBulletAt(rIdx);
             }
             gun.cd = fireInterval;
           } else {
@@ -17177,9 +17198,10 @@
       const radiusSq = radius * radius;
 
       // 1. Encje w zasięgu — z tej samej siatki, której używa główna pętla kolizji.
-      //    Komórka ma 4000 u, skan 3x3 pokrywa nawet 480 u promienia Peruna.
+      //    Encje zajmują wszystkie komórki pokryte kadłubem, więc promień wybuchu
+      //    może pytać tylko o komórki, których rzeczywiście dotyka.
       _flakCandidates.length = 0;
-      const count = SpatialGrid.getPotentialTargets(b.x, b.y);
+      const count = SpatialGrid.getPotentialTargets(b.x, b.y, radius);
       const buf = SpatialGrid._resultBuffer;
       for (let k = 0; k < count; k++) {
         const e = buf[k];
@@ -17208,9 +17230,11 @@
         }
       }
 
-      // 2. Rakiety i torpedy w chmurze odłamków — flak strąca je bez pardonu.
-      for (let k = 0; k < bullets.length; k++) {
-        const rb = bullets[k];
+      // 2. Rakiety i torpedy w chmurze odłamków — korzystamy z listy zagrożeń
+      // zbudowanej już raz przez CIWS, zamiast ponownie skanować wszystkie pociski.
+      const rocketThreats = shooterFriendly ? _pdEnemyRocketBuffer : _pdPlayerRocketBuffer;
+      for (let k = 0; k < rocketThreats.length; k++) {
+        const rb = rocketThreats[k];
         if (!rb || rb === b || rb.life <= 0) continue;
         if (rb.type !== 'rocket' && rb.type !== 'torpedo') continue;
         const rbFriendly = (rb.owner === 'player' || rb.owner === 'player2');
@@ -17915,55 +17939,9 @@
       }
       return dmg;
     }
-    // Optymalizacja 1: Prosty Spatial Grid (bez generowania GC)
-    const SpatialGrid = {
-      cellSize: 4000,
-      cellInv: 1 / 4000,
-      cells: new Map(),
-      _resultBuffer: [],
-      _resultCount: 0,
-
-      _hash(cx, cy) {
-        return (cx * 73856093) ^ (cy * 19349663);
-      },
-
-      clear() {
-        for (const cell of this.cells.values()) cell.length = 0;
-      },
-
-      insert(entity) {
-        const cx = Math.floor(entity.x * this.cellInv);
-        const cy = Math.floor(entity.y * this.cellInv);
-        const key = this._hash(cx, cy);
-        let cell = this.cells.get(key);
-        if (!cell) {
-          cell = [];
-          this.cells.set(key, cell);
-        }
-        cell.push(entity);
-      },
-
-      getPotentialTargets(x, y) {
-        const cx = Math.floor(x * this.cellInv);
-        const cy = Math.floor(y * this.cellInv);
-        this._resultCount = 0;
-
-        for (let i = -1; i <= 1; i++) {
-          for (let j = -1; j <= 1; j++) {
-            const key = this._hash(cx + i, cy + j);
-            const cell = this.cells.get(key);
-            if (!cell) continue;
-            const len = cell.length;
-            for (let k = 0; k < len; k++) {
-              this._resultBuffer[this._resultCount++] = cell[k];
-            }
-          }
-        }
-
-        if (this._resultBuffer.length > this._resultCount) this._resultBuffer.length = this._resultCount;
-        return this._resultCount;
-      }
-    };
+    // Mała komórka ogranicza liczbę kandydatów per pocisk. Duże okręty są
+    // wpisywane do wszystkich komórek pokrytych ich promieniem kolizji.
+    const SpatialGrid = new BulletSpatialGrid();
 
     const _ringNearEntitiesBuffer = [];
     const _ringNearSeen = new Set();
@@ -18131,6 +18109,20 @@
       return _ringHotEntitiesBuffer;
     }
 
+    // Klasa trafienia w tarcze dla efektow czasteczkowych. Pocisk niesie
+    // vfxKey = id broni, wiec normalnie pytamy katalog. Pociski spawnowane
+    // poza fireWeaponCore (CIWS, flak, rail platform) nie maja vfxKey —
+    // dla nich zostaje kategoria i kaliber.
+    function shieldFxClassForBullet(b) {
+      if (b?.vfxKey && MASTER_WEAPONS[b.vfxKey]) return shieldImpactClass(MASTER_WEAPONS[b.vfxKey]);
+      const cat = b?.type;
+      if (cat === 'ciws' || cat === 'flak') return 'pd';
+      if (cat === 'superweapon') return 'special';
+      if (b?.weaponSize === 'Capital') return 'special';
+      return 'main';
+    }
+    window.shieldFxClassForBullet = shieldFxClassForBullet;
+
     // Cache promieni kolizji pociskow per encja per krok: stan tarczy liczony RAZ
     // przy wstawianiu do SpatialGrid, a nie per pocisk x per kandydat (dziesiatki
     // tysiecy wywolan isEntityShieldBlocking na klatke w duzej bitwie).
@@ -18222,14 +18214,17 @@
       // Wcześniej addTiming + performance.now() leciały per pocisk per sekcja —
       // przy setkach pocisków sam pomiar kosztował ~1 ms/klatkę.
       let secMoveVfx = 0, secIntercept = 0, secNpcHit = 0, secAst = 0, secRing = 0, secMisc = 0;
+      // Przy otwartym HUD próbkujemy rozbicie sekcji. Całkowity czas `Pociski`
+      // nadal jest mierzony dokładnie, ale nie płacimy 12 odczytów zegara dla
+      // każdego pocisku w każdym podkroku fizyki.
+      const bulletProfileStride = !PerfHUD.visible ? 0 : (bullets.length >= 64 ? 8 : (bullets.length >= 16 ? 4 : 1));
+      const bulletProfileScale = bulletProfileStride || 1;
 
       for (let i = bullets.length - 1; i >= 0; i--) {
-        let tBulletSection0 = performance.now();
+        const profileBullet = bulletProfileStride > 0 && (i % bulletProfileStride) === 0;
+        let tBulletSection0 = profileBullet ? performance.now() : 0;
         const b = bullets[i];
-        b.px = b.x; b.py = b.y;
-        b.x += b.vx * dt; b.y += b.vy * dt;
-        b.life -= dt;
-        b.age = (b.age || 0) + dt;
+        stepProjectileKinematics(b, dt);
 
         // --- RUCH I EFEKTY WIZUALNE POCISKÓW ---
         const threeVisual = b.__renderedByThree === true;
@@ -18272,7 +18267,7 @@
           const trailVel = { x: -b.vx * 0.015, y: -b.vy * 0.015 };
           spawnParticle({ x: b.x, y: b.y }, trailVel, 0.18, '#ffdca8', 1.1, true);
         }
-        secMoveVfx += performance.now() - tBulletSection0;
+        if (profileBullet) secMoveVfx += (performance.now() - tBulletSection0) * bulletProfileScale;
 
         // --- FLAK: zapalnik czasowo-zbliżeniowy ---
         // Sprawdzany PRZED wygaśnięciem życia, bo pocisk na końcu zasięgu też
@@ -18287,7 +18282,7 @@
           if (b.flakAge >= (b.flakArmTime || 0) && b.flakFuseRadius > 0) {
             const fuseR = b.flakFuseRadius;
             const shooterFriendly = (b.owner === 'player' || b.owner === 'player2' || b.source?.friendly === true);
-            const nCount = SpatialGrid.getPotentialTargets(b.x, b.y);
+            const nCount = SpatialGrid.getPotentialTargets(b.x, b.y, fuseR);
             const nBuf = SpatialGrid._resultBuffer;
             for (let k = 0; k < nCount; k++) {
               const e = nBuf[k];
@@ -18308,7 +18303,7 @@
 
         if (b.life <= 0) { removeBulletAt(i); continue; }
 
-        tBulletSection0 = performance.now();
+        tBulletSection0 = profileBullet ? performance.now() : 0;
         // --- CIWS INTERCEPT RAKIET ---
         // Pocisk CIWS gracza vs rakiety/torpedy wroga — tylko z bufora rakiet
         // zbudowanego w ciwsStep (wcześniej O(pociski²): pełny skan bullets per CIWS).
@@ -18330,19 +18325,29 @@
             break;
           }
           if (intercepted) {
-            secIntercept += performance.now() - tBulletSection0;
+            if (profileBullet) secIntercept += (performance.now() - tBulletSection0) * bulletProfileScale;
             continue;
           }
         }
-        secIntercept += performance.now() - tBulletSection0;
+        if (profileBullet) secIntercept += (performance.now() - tBulletSection0) * bulletProfileScale;
 
-        tBulletSection0 = performance.now();
+        tBulletSection0 = profileBullet ? performance.now() : 0;
         // --- GLOWNA PETLA KOLIZJI ---
         let hitNPC = null;
         let didHitShield = false;
+        let didHitHex = false;
 
-        const targetsCount = SpatialGrid.getPotentialTargets(b.x, b.y);
+        const targetsCount = SpatialGrid.getPotentialTargetsAlongSegment(
+          b.px,
+          b.py,
+          b.x,
+          b.y,
+          Number(b.r) || 0
+        );
         const targetsBuffer = SpatialGrid._resultBuffer;
+        let hitT = Infinity;
+        let hitX = b.x;
+        let hitY = b.y;
 
         for (let k = 0; k < targetsCount; k++) {
           const npc = targetsBuffer[k];
@@ -18356,52 +18361,60 @@
           // if (!npc._isPlayerShip && npc.friendly === true && isPlayerBullet) continue;
           // if (!npc._isPlayerShip && npc.isPirate === true && b.owner === 'npc') continue;
 
-          // Najtańszy test pierwszy: kwadrat dystansu vs maksymalny możliwy promień
-          // (tarcza/kadłub, ostemplowane raz na krok w stampBulletCollisionRadii).
-          const dx = b.x - npc.x;
-          const dy = b.y - npc.y;
-          const distSq = dx * dx + dy * dy;
-          const maxR = (npc._blkMaxR || Number(npc.radius) || 0) + b.r;
-          if (distSq > maxR * maxR) continue;
-
-          const shieldR = npc._blkShieldR || 0;
-          if (shieldR > 0) {
-            // 1. SPRAWDZENIE TARCZY — kierunkowy promień profilu (tarcza-obrys
-            // dopasowana do kadłuba; dla encji bez profilu wraca do koła).
-            // Progres aktywacji ostemplowany raz na krok (stampBulletCollisionRadii).
-            const dirShieldR = getEntityShieldRadiusTowards(npc._realEntity || npc, b.x, b.y) * (npc._blkShieldProg || 0);
-            const hitThreshold = dirShieldR + b.r;
-            if (dirShieldR > 0 && distSq <= hitThreshold * hitThreshold) {
-              hitNPC = npc;
-              didHitShield = true;
-              break;
-            }
-            // Pocisk w obwiedni kadłuba, ale poza obrysem tarczy (np. tunelowanie
-            // szybkiego pocisku) -> kandydat na failsafe hexHit niżej.
-            const hullThreshold = (Number(npc.radius) || 0) + b.r;
-            if (distSq <= hullThreshold * hullThreshold) {
-              hitNPC = npc;
-              didHitShield = false;
-              break;
-            }
-          } else {
-            // Brak tarczy -> zwykła kolizja kołowa
-            const hullThreshold = (Number(npc.radius) || 0) + b.r;
-            if (distSq <= hullThreshold * hullThreshold) {
-              hitNPC = npc;
-              didHitShield = false;
-              break;
+          const bulletR = Number(b.r) || 0;
+          const hullR = (Number(npc.radius) || 0) + bulletR;
+          const hullBroadT = segmentCircleToi(b.px, b.py, b.x, b.y, npc.x, npc.y, hullR);
+          let hullT = hullBroadT;
+          let hullIsHex = false;
+          let hullImpactX = hullT >= 0 ? b.px + (b.x - b.px) * hullT : b.x;
+          let hullImpactY = hullT >= 0 ? b.py + (b.y - b.py) * hullT : b.y;
+          if (hullBroadT >= 0 && realNpc.hexGrid && typeof DestructorSystem.sweepImpact === 'function') {
+            const hexSweep = DestructorSystem.sweepImpact(realNpc, b.px, b.py, b.x, b.y, bulletR);
+            hullT = hexSweep ? hexSweep.t : -1;
+            hullIsHex = hullT >= 0;
+            if (hexSweep) {
+              hullImpactX = hexSweep.worldX;
+              hullImpactY = hexSweep.worldY;
             }
           }
+          const shieldR = npc._blkShieldR || 0;
+          let shieldT = -1;
+          if (shieldR > 0) {
+            const dirShieldR = getEntityShieldRadiusTowards(npc._realEntity || npc, b.x, b.y) * (npc._blkShieldProg || 0);
+            if (dirShieldR > 0) {
+              shieldT = segmentCircleToi(b.px, b.py, b.x, b.y, npc.x, npc.y, dirShieldR + bulletR);
+            }
+          }
+
+          let candidateT = hullT;
+          let candidateShield = false;
+          let candidateImpactX = hullImpactX;
+          let candidateImpactY = hullImpactY;
+          if (shieldT >= 0 && (candidateT < 0 || shieldT <= candidateT)) {
+            candidateT = shieldT;
+            candidateShield = true;
+            candidateImpactX = b.px + (b.x - b.px) * shieldT;
+            candidateImpactY = b.py + (b.y - b.py) * shieldT;
+          }
+          if (candidateT < 0 || candidateT >= hitT) continue;
+
+          hitT = candidateT;
+          hitNPC = npc;
+          didHitShield = candidateShield;
+          didHitHex = !candidateShield && hullIsHex;
+          hitX = candidateImpactX;
+          hitY = candidateImpactY;
         }
 
         if (hitNPC) {
           // Flak trafiony bezpośrednio (np. w tarczę, zanim zadziałał zapalnik)
           // i tak pęka — obrażenia rozchodzą się jako odłamki, nie jako trafienie.
           if (b.type === 'flak' && b.flakBurstRadius) {
+            b.x = hitX;
+            b.y = hitY;
             detonateFlakShell(b);
             removeBulletAt(i);
-            secNpcHit += performance.now() - tBulletSection0;
+            if (profileBullet) secNpcHit += (performance.now() - tBulletSection0) * bulletProfileScale;
             continue;
           }
           const _rawDmg = Number.isFinite(b.damage) ? b.damage : 0;
@@ -18417,12 +18430,18 @@
 
           // Czy trafiono w fizyczny kadłub?
           let hexHit = false;
-          if (hitNPC.hexGrid) {
+          if (didHitShield) {
+            // Swept shield hit is already definitive; probing the hex body here
+            // doubled the narrowphase cost of the common shielded-hit path.
+            hexHit = false;
+          } else if (didHitHex) {
+            hexHit = true;
+          } else if (hitNPC.hexGrid) {
             // Sprawdzamy kolizję z heksem, ale na razie bez zadawania obrażeń (damage=0),
             // żeby nie zranić statku pod tarczą.
             hexHit = (typeof DestructorSystem.probeImpact === 'function')
-              ? DestructorSystem.probeImpact(hitNPC, b.x, b.y)
-              : DestructorSystem.applyImpact(hitNPC, b.x, b.y, 0, { x: 0, y: 0 });
+              ? DestructorSystem.probeImpact(hitNPC, hitX, hitY)
+              : DestructorSystem.applyImpact(hitNPC, hitX, hitY, 0, { x: 0, y: 0 });
           } else {
             // Dla małych statków bez heksów, uznajemy że trafienie w ogóle (isHit) to trafienie w kadłub
             hexHit = true;
@@ -18432,7 +18451,7 @@
           if (shieldActive && (didHitShield || hexHit)) {
             // Jeśli tarcza działa ORAZ (trafiono w elipsę LUB trafiono w kadłub) -> TARCZA BLOKUJE
 
-            registerShieldImpact(hitNPC, b.x, b.y, npcDamage);
+            registerShieldImpact(hitNPC, hitX, hitY, npcDamage, shieldFxClassForBullet(b));
             if (window.AudioSys) AudioSys.playSound('shieldHit');
 
             // Odejmij HP tarczy
@@ -18442,7 +18461,7 @@
 
             // ZATRZYMAJ I USUN POCISK
             removeBulletAt(i);
-            secNpcHit += performance.now() - tBulletSection0;
+            if (profileBullet) secNpcHit += (performance.now() - tBulletSection0) * bulletProfileScale;
             continue;
 
           } else if (!shieldActive && hexHit) {
@@ -18450,7 +18469,7 @@
 
             // Ponów sprawdzenie heksa, tym razem z prawdziwym DMG (żeby odpadł kawałek)
             if (hitNPC.hexGrid) {
-              DestructorSystem.applyImpact(hitNPC, b.x, b.y, npcDamage, { x: b.vx, y: b.vy });
+              DestructorSystem.applyImpact(hitNPC._realEntity || hitNPC, hitX, hitY, npcDamage, { x: b.vx, y: b.vy });
             }
 
             // Routing obrażeń: gracz vs NPC
@@ -18461,26 +18480,21 @@
               applyDamageToNPC(hitNPC, npcDamage, b.type);
             }
 
-            spawnBulletImpactEffect(b, b.x, b.y, 1.0);
+            spawnBulletImpactEffect(b, hitX, hitY, 1.0);
 
-            if (b.type === 'rail') {
-              b.penetration = (b.penetration || 1) - 1;
-              if (b.penetration <= 0) removeBulletAt(i);
-            } else {
-              removeBulletAt(i);
-            }
-            secNpcHit += performance.now() - tBulletSection0;
+            if (shouldRemoveProjectileAfterImpact(b, !!hitNPC.hexGrid)) removeBulletAt(i);
+            if (profileBullet) secNpcHit += (performance.now() - tBulletSection0) * bulletProfileScale;
             continue;
           } else {
             // Pocisk minął wszystko (np. dziura we wraku, albo minął tarczę gdy była wyłączona)
             hitNPC = null;
-            secNpcHit += performance.now() - tBulletSection0;
+            if (profileBullet) secNpcHit += (performance.now() - tBulletSection0) * bulletProfileScale;
             continue;
           }
         }
-        secNpcHit += performance.now() - tBulletSection0;
+        if (profileBullet) secNpcHit += (performance.now() - tBulletSection0) * bulletProfileScale;
 
-        tBulletSection0 = performance.now();
+        tBulletSection0 = profileBullet ? performance.now() : 0;
         // --- KOLIZJE Z ASTEROIDAMI (swept hit -> lazy hex promotion) ---
         if (!hitNPC && window.asteroidField?.raycast && window.asteroidField?.applyDamageAt) {
           const segX0 = Number.isFinite(b.px) ? b.px : b.x;
@@ -18499,20 +18513,15 @@
             if (astResult?.hit || astResult?.destroyed) {
               spawnBulletImpactEffect(b, hitX, hitY, 0.9);
 
-              if (b.type === 'rail') {
-                b.penetration = (b.penetration || 1) - 1;
-                if (b.penetration <= 0) removeBulletAt(i);
-              } else {
-                removeBulletAt(i);
-              }
-              secAst += performance.now() - tBulletSection0;
+              if (shouldRemoveProjectileAfterImpact(b, true)) removeBulletAt(i);
+              if (profileBullet) secAst += (performance.now() - tBulletSection0) * bulletProfileScale;
               continue;
             }
           }
         }
-        secAst += performance.now() - tBulletSection0;
+        if (profileBullet) secAst += (performance.now() - tBulletSection0) * bulletProfileScale;
 
-        tBulletSection0 = performance.now();
+        tBulletSection0 = profileBullet ? performance.now() : 0;
         // --- KOLIZJE Z RINGIEM PLANETARNYM (swept hit, bez wrzucania ringu do glownego SpatialGrid) ---
         if (!hitNPC) {
           const segX0 = Number.isFinite(b.px) ? b.px : b.x;
@@ -18568,19 +18577,14 @@
 
             spawnBulletImpactEffect(b, ringHitX, ringHitY, 0.95);
 
-            if (b.type === 'rail') {
-              b.penetration = (b.penetration || 1) - 1;
-              if (b.penetration <= 0) removeBulletAt(i);
-            } else {
-              removeBulletAt(i);
-            }
-            secRing += performance.now() - tBulletSection0;
+            if (shouldRemoveProjectileAfterImpact(b, true)) removeBulletAt(i);
+            if (profileBullet) secRing += (performance.now() - tBulletSection0) * bulletProfileScale;
             continue;
           }
         }
-        secRing += performance.now() - tBulletSection0;
+        if (profileBullet) secRing += (performance.now() - tBulletSection0) * bulletProfileScale;
 
-        tBulletSection0 = performance.now();
+        tBulletSection0 = profileBullet ? performance.now() : 0;
         // --- KOLIZJE Z INNYMI OBIEKTAMI ---
         if (mercMission?.weaponPlatforms) {
           let hitPlatform = false;
@@ -18590,9 +18594,11 @@
               const pdy = p.y - b.y;
               const pr = p.radius + b.r;
               if (pdx * pdx + pdy * pdy >= pr * pr) continue;
+              const platShielded = isEntityShieldBlocking(p);
               applyDamageToPlatform(p, b.damage || 0);
               triggerMercAggro('platform_hit');
-              spawnBulletImpactEffect(b, b.x, b.y, 1.0);
+              if (platShielded) registerShieldImpact(p, b.x, b.y, b.damage || 0, shieldFxClassForBullet(b));
+              else spawnBulletImpactEffect(b, b.x, b.y, 1.0);
               removeBulletAt(i);
               hitPlatform = true;
               break;
@@ -18600,7 +18606,7 @@
           }
           // Pocisk zdjęty — nie sprawdzaj stacji tym samym (usuniętym) pociskiem.
           if (hitPlatform) {
-            secMisc += performance.now() - tBulletSection0;
+            if (profileBullet) secMisc += (performance.now() - tBulletSection0) * bulletProfileScale;
             continue;
           }
         }
@@ -18610,14 +18616,16 @@
             const sdy = st.y - b.y;
             const collisionR = (st.hitR || st.r) + b.r;
             if (sdx * sdx + sdy * sdy >= collisionR * collisionR) continue;
+            const stShielded = isEntityShieldBlocking(st);
             applyDamageToStation(st, b.damage || 0);
             if (mercMission?.station === st) triggerMercAggro('station_hit');
-            spawnBulletImpactEffect(b, b.x, b.y, 1.0);
+            if (stShielded) registerShieldImpact(st, b.x, b.y, b.damage || 0, shieldFxClassForBullet(b));
+            else spawnBulletImpactEffect(b, b.x, b.y, 1.0);
             removeBulletAt(i);
             break;
           }
         }
-        secMisc += performance.now() - tBulletSection0;
+        if (profileBullet) secMisc += (performance.now() - tBulletSection0) * bulletProfileScale;
       }
 
       PerfHUD.addTiming('bulletMoveVfxTime', secMoveVfx);
@@ -18667,20 +18675,22 @@
       window.__npcFireScanMs = (window.__npcFireScanMs || 0) + npcFireScanMs;
       window.__npcFireSpawnMs = (window.__npcFireSpawnMs || 0) + npcFireSpawnMs;
     }
-    // runBrains=false → przebieg CZYSTO RUCHOWY: bez mózgów, grida, koordynatora
-    // i spawnów. Decyzje AI liczą się raz na klatkę (brainDt = pełne dt klatki),
-    // ale INTEGRACJA zostaje w każdym podkroku — inaczej myśliwiec przy 3400 u/s
+    // Każdy NPC podejmuje decyzję 20 razy/s, ale flota jest rozłożona na fazy
+    // kolejnych podkroków. Dzięki temu 189 mózgów nie budzi się w jednej klatce.
+    // INTEGRACJA nadal działa w każdym podkroku — inaczej myśliwiec przy 3400 u/s
     // skakałby ~70 u naraz i pociski (16 u/podkrok) zaczęłyby go mijać.
-    function npcStep(dt, aiDbg = null, runBrains = true, brainDt = dt) {
+    function npcStep(dt, aiDbg = null, runAiMaintenance = true, brainDt = dt, brainPhase = 0, brainPhaseCount = 1) {
       const DESPAWN_RADIUS_SQ = NPC_DESPAWN_RADIUS * NPC_DESPAWN_RADIUS;
       const frameNorm = dt / BASE_FRAME_DT;
+      const phaseCount = Math.max(1, brainPhaseCount | 0);
+      const phase = Math.max(0, brainPhase | 0) % phaseCount;
       let layoutChanged = false;
-      if (runBrains) {
+      if (runAiMaintenance) {
         layoutChanged = pollNpcEditorLayoutCache(brainDt);
         // Odroczone starty myśliwców z hangarów NPC — dopisz do npcs PRZED budową
         // grida i pętlą AI (spawn w trakcie iteracji npcs[] byłby ryzykowny).
         flushCarrierSpawns(brainDt);
-        // Build AI spatial grid ONCE per frame for all subsequent AI queries
+        // Build AI spatial grid ONCE per 20 Hz cycle for all phased AI queries
         // (separation, weapon scan, target pick, dogfight neighbors).
         // Cost: ~0.05ms for 200 entities. Saves 50-90ms in O(N²) hot loops.
         const tAiGrid0 = performance.now();
@@ -18696,7 +18706,7 @@
       }
       let measuredAiMs = 0;
       for (const npc of npcs) {
-        if (runBrains && (layoutChanged || npc.__editorLayoutVersion !== npcHardpointRuntime.version)) {
+        if (runAiMaintenance && (layoutChanged || npc.__editorLayoutVersion !== npcHardpointRuntime.version)) {
           applyEditorLayoutToNpc(npc);
         }
         if (npc.hitFlash) npc.hitFlash = Math.max(0, npc.hitFlash - dt);
@@ -18788,8 +18798,9 @@
             continue;
           }
 
-          // 2. AI — tylko w przebiegu decyzyjnym, z pełnym dt klatki.
-          if (runBrains && npc.ai) {
+          // 2. AI — stabilny kubełek fazowy; każdy NPC trafia tu raz na 6 ticków.
+          const npcBrainDue = phaseCount === 1 || (sepUid(npc) % phaseCount) === phase;
+          if (npcBrainDue && npc.ai) {
             const tAi0 = performance.now();
             npc.ai(brainDt);
             const aiMs = performance.now() - tAi0;
@@ -19373,15 +19384,95 @@
 	const _p1ForceScratch = { localFx: 0, localFy: 0, localTorque: 0 };
 	const _p2ForceScratch = { localFx: 0, localFy: 0, localTorque: 0 };
     // =============== Fizyk ===============
-    // dt        — krok fizyki (PHYS_DT, 120 Hz): integracja, pociski, kolizje.
-    // runLogic  — czy w tym podkroku liczymy warstwę decyzyjną (AI, sensory, CIC,
-    //             prep destruktora, hardpointy). Prawda tylko w PIERWSZYM podkroku
-    //             klatki: te systemy nie zależą od kroku całkowania, a płaciliśmy
-    //             za nie ~2.9× na klatkę (im niższy fps, tym więcej podkroków —
-    //             spirala śmierci).
-    // logicDt   — sumaryczne dt tej klatki, żeby timery warstwy decyzyjnej szły
-    //             w tym samym tempie co dotąd.
-    function physicsStep(dt, runLogic = true, logicDt = dt) {
+    // dt           — krok fizyki (PHYS_DT, 120 Hz): integracja, pociski, kolizje.
+    // runFrameLogic — sensory/CIC/UI tylko w pierwszym podkroku klatki renderu.
+    // frameLogicDt  — suma podkroków tej klatki dla timerów warstwy ekranowej.
+    // runAiLogic    — grid, eskadry i misje na początku cyklu AI 20 Hz.
+    // aiLogicDt     — stałe 1/20 s, niezależne od odświeżania monitora.
+    // aiBrainPhase  — jedna z faz rozkładających mózgi NPC na kroki fizyki.
+    // Budżet heksów dla wraków.
+    //
+    // Arena heksów jest TWARDYM zasobem o stałej pojemności, a jej przepełnienie
+    // to nie degradacja liniowa tylko KLIF: narrowphase przestaje iterować po
+    // heksach brzegowych i przechodzi na wszystkie (patrz komentarz przy
+    // liczniku HexArena w perfHud.js). W dużej bitwie zmierzono 504 wraki
+    // × ~260 heksów = 130 320 z 131 072 slotów, arena 100%, przepełnienie x17,
+    // a `Kolizje` skoczyły z 3,66 do 7,39 ms.
+    //
+    // Wraki nie miały ŻADNEGO limitu — despawn wyzwalał się dopiero przy 50 km
+    // albo gdy wrak stracił wszystkie heksy. W bitwie wszystko leży w promieniu
+    // kilku kilometrów, więc debris rósł aż do wyczerpania areny.
+    //
+    // Zwalniamy od najdalszych od gracza: tych i tak nie widzi. Wraki holowane,
+    // cięte i wiozące ładunek są nietykalne — to zawartość gameplayowa, nie śmieć.
+    const WRECK_HEX_BUDGET_FRAC = 0.55;
+    const WRECK_HEX_RESERVE_FRAC = 0.08;
+    const WRECK_HEX_RESERVE_MIN = 8192;
+    const WRECK_BUDGET_CHECK_SEC = 0.5;
+    let _wreckBudgetTimer = 0;
+    const _wreckBudgetScratch = [];
+
+    function enforceWreckHexBudget() {
+      _wreckBudgetTimer -= PHYS_DT;
+      if (_wreckBudgetTimer > 0) return;
+      _wreckBudgetTimer = WRECK_BUDGET_CHECK_SEC;
+      if (!Array.isArray(wrecks) || wrecks.length === 0) return;
+
+      const arenaStats = getHexArenaStats?.();
+      const capacity = Math.max(1, Number(arenaStats?.capacity) || DEFAULT_HEX_ARENA_CAPACITY);
+
+      let total = 0;
+      for (let i = 0; i < wrecks.length; i++) {
+        total += Number(wrecks[i]?.hexGrid?.shards?.length) || 0;
+      }
+      // The old 55% cap ignored living ships. In a huge fleet they could
+      // already occupy most of the arena, leaving no room for the next hull.
+      // Estimate their packed footprint and keep an explicit spawn reserve.
+      const allocated = Math.max(0, Number(arenaStats?.allocated) || 0);
+      const packedWrecks = Math.min(total, allocated);
+      const livingHexes = Math.max(0, allocated - packedWrecks);
+      const reserve = Math.max(WRECK_HEX_RESERVE_MIN, Math.floor(capacity * WRECK_HEX_RESERVE_FRAC));
+      const availableAfterLiving = Math.max(0, capacity - livingHexes - reserve);
+      const budget = Math.min(Math.floor(capacity * WRECK_HEX_BUDGET_FRAC), availableAfterLiving);
+      if (total <= budget) return;
+
+      _wreckBudgetScratch.length = 0;
+      const px = ship?.pos?.x || 0;
+      const py = ship?.pos?.y || 0;
+      for (let i = 0; i < wrecks.length; i++) {
+        const w = wrecks[i];
+        if (!w) continue;
+        if (salvageState.towed === w || salvageState.cutting === w) continue;
+        if (!cargoBagIsEmpty(w._cargoManifest)) continue;
+        const hexes = Number(w.hexGrid?.shards?.length) || 0;
+        if (hexes <= 0) continue;
+        const dx = w.x - px;
+        const dy = w.y - py;
+        _wreckBudgetScratch.push({ w, hexes, distSq: dx * dx + dy * dy });
+      }
+      _wreckBudgetScratch.sort((a, b) => b.distSq - a.distSq);
+
+      const doomed = new Set();
+      for (let i = 0; i < _wreckBudgetScratch.length && total > budget; i++) {
+        const entry = _wreckBudgetScratch[i];
+        doomed.add(entry.w);
+        total -= entry.hexes;
+      }
+      if (doomed.size === 0) return;
+
+      for (let i = wrecks.length - 1; i >= 0; i--) {
+        const w = wrecks[i];
+        if (!doomed.has(w)) continue;
+        TowSystem.detachBody(w, 'wreck-budget');
+        if (DestructorSystem?.recycleWreck) DestructorSystem.recycleWreck(w);
+        wrecks.splice(i, 1);
+      }
+      if (window.DEBUG_WRECK_BUDGET) {
+        console.log('[WreckBudget] zwolniono ' + doomed.size + ' wrakow, heksy -> ' + total + '/' + budget);
+      }
+    }
+
+    function physicsStep(dt, runFrameLogic = true, frameLogicDt = dt, runAiLogic = runFrameLogic, aiLogicDt = frameLogicDt, aiBrainPhase = 0, aiBrainPhaseCount = 1) {
       const tPhysics0 = performance.now();
       PerfHUD.markPhysicsStep();
       let tPhysSection0 = performance.now();
@@ -19542,7 +19633,7 @@
       // Skan pod kursorem, fale radaru, drony, sensory i CIC — to warstwa
       // informacyjna, nie fizyka. Odświeżana raz na klatkę; wcześniej CIC
       // przeliczał się ~2.9× na klatkę (0.68 ms zamiast 0.24 ms).
-      if (runLogic) {
+      if (runFrameLogic) {
       // hover scanning
       let hover = null;
       let hoverType = null;
@@ -19636,7 +19727,7 @@
       if (scannerSelectedTarget && !isTargetAlive(scannerSelectedTarget)) {
         scannerSelectedTarget = null;
       }
-      scannerState.lockAnim += logicDt * SCANNER_LOCK_PULSE_SPEED;
+      scannerState.lockAnim += frameLogicDt * SCANNER_LOCK_PULSE_SPEED;
       const scannerUiEnabled = (scannerState.active || lockedTargets.length > 0 || scannerSelectedTarget) && !CICDisplay.active && !stationUI.open && !splitScreenMode;
       const radarUiEnabled = false;
       const scannerOverviewContacts = scannerUiEnabled ? getScannerOverviewContacts() : scannerContacts;
@@ -19658,7 +19749,7 @@
       });
       radarTargetingUI.update({
         enabled: radarUiEnabled,
-        dt: logicDt,
+        dt: frameLogicDt,
         deepScanDuration: RADAR_UI_DEEP_SCAN_DURATION,
         width: W,
         height: H,
@@ -19680,18 +19771,18 @@
       // update radar pings
       for (let i = radarPings.length - 1; i >= 0; i--) {
         const p = radarPings[i];
-        p.age += logicDt; if (p.age > p.life) radarPings.splice(i, 1);
+        p.age += frameLogicDt; if (p.age > p.life) radarPings.splice(i, 1);
       }
       for (let i = scannerRevealFx.length - 1; i >= 0; i--) {
         const fx = scannerRevealFx[i];
-        fx.age += logicDt;
+        fx.age += frameLogicDt;
         if (fx.age > fx.life || !isTargetAlive(fx.target)) scannerRevealFx.splice(i, 1);
       }
       // update scan waves
       for (let i = scanWaves.length - 1; i >= 0; i--) {
         const w = scanWaves[i];
-        w.age += logicDt;
-        w.r += w.speed * logicDt;
+        w.age += frameLogicDt;
+        w.r += w.speed * frameLogicDt;
         while (w.nextContact < w.contacts.length) {
           const contact = w.contacts[w.nextContact];
           if (!contact || !isTargetAlive(contact.target)) {
@@ -19728,14 +19819,14 @@
       }
 
       // === SPOTTER DRONES UPDATE ===
-      SpotterDroneSystem.update(logicDt, ship, npcs);
+      SpotterDroneSystem.update(frameLogicDt, ship, npcs);
 
       // === SENSOR SYSTEM UPDATE === (fog rendering disabled, sensors still update for CIC)
-      SensorSystem.update(logicDt, ship, npcs, Game.infrastructure, stations, gameTime);
+      SensorSystem.update(frameLogicDt, ship, npcs, Game.infrastructure, stations, gameTime);
 
       // === CIC UPDATE ===
-      CICDisplay.update(logicDt, ship, npcs, stations, SensorSystem);
-      } // koniec bloku runLogic (skan/sensory/CIC)
+      CICDisplay.update(frameLogicDt, ship, npcs, stations, SensorSystem);
+      } // koniec bloku runFrameLogic (skan/sensory/CIC)
 
       PerfHUD.addTiming('scanUiTime', performance.now() - tPreSection0);
       tPreSection0 = performance.now();
@@ -20252,6 +20343,7 @@
           _activeWrecksBuffer.push(w);
         }
       }
+      enforceWreckHexBudget();
       PerfHUD.addTiming('wreckPrepTime', performance.now() - tPreSection0);
       PerfHUD.addTiming('preAiTime', performance.now() - tPreAiTotal0);
 
@@ -20259,10 +20351,10 @@
       const tAiTotal0 = performance.now();
       let tAiSection0 = performance.now();
       // Eskadry, skrzydło wsparcia i kolejka startów to decyzje, nie fizyka —
-      // raz na klatkę, z sumarycznym dt.
+      // wspólny, deterministyczny tick AI 20 Hz.
       let aiSquadsMs = 0;
       let aiSupportWingMs = 0;
-      if (runLogic) {
+      if (runAiLogic) {
         SQUADS.forEach(s => s.update());
         aiSquadsMs = performance.now() - tAiSection0;
         PerfHUD.addTiming('aiSquadsTime', aiSquadsMs);
@@ -20271,25 +20363,23 @@
         tAiSection0 = performance.now();
         // Katapultowanie myśliwców z hangarów — kolejka opróżniana PRZED npcStep,
         // żeby nowe jednostki nie lądowały w npcs[] w trakcie pętli AI.
-        updateFighterLaunchQueue(logicDt);
-        updateSupportWing(logicDt);
+        updateFighterLaunchQueue(aiLogicDt);
+        updateSupportWing(aiLogicDt);
         aiSupportWingMs = performance.now() - tAiSection0;
         PerfHUD.addTiming('aiSupportWingTime', aiSupportWingMs);
         if (aiDbgEnabled) AILiveDebug.record('supportWing', aiSupportWingMs);
       }
 
       const tNpcStep0 = performance.now();
-      if (runLogic) {
-        // Reset per-frame AI subsection counters before npcStep populates them.
-        window.__aiSepMs = 0;
-        window.__aiWeaponScanMs = 0;
-        window.__aiTargetPickMs = 0;
-        window.__aiGridMs = 0;
-        window.__aiNpcEnemyBrainMs = 0;
-        window.__aiNpcFriendlyBrainMs = 0;
-      }
-      // Ruch NPC integrujemy w KAŻDYM podkroku; mózgi tylko w decyzyjnym.
-      npcStep(dt, aiDbgEnabled ? AILiveDebug : null, runLogic, logicDt);
+      // Każdy podkrok obsługuje jeden kubełek mózgów, więc liczniki zerujemy
+      // przed każdym npcStep. Grid/koordynator nadal odświeżają się tylko 20 Hz.
+      window.__aiSepMs = 0;
+      window.__aiWeaponScanMs = 0;
+      window.__aiTargetPickMs = 0;
+      window.__aiGridMs = 0;
+      window.__aiNpcEnemyBrainMs = 0;
+      window.__aiNpcFriendlyBrainMs = 0;
+      npcStep(dt, aiDbgEnabled ? AILiveDebug : null, runAiLogic, aiLogicDt, aiBrainPhase, aiBrainPhaseCount);
       const npcStepMs = performance.now() - tNpcStep0;
       // Ograniczenia holownicze rozwiązujemy po integracji wszystkich ruchomych
       // ciał, ale przed pociskami i destruktorem. Dzięki temu kontakt i damage
@@ -20298,31 +20388,37 @@
       // Sztywna kinematyka =o= składów megafreightera — po ruchu głowy
       // (statek gracza zintegrowany wyżej, NPC w npcStep), przed destruktorem.
       updateMegafreighterTrains(dt);
-      const aiNpcMeasuredMs = (window.__aiGridMs || 0) + (window.__aiNpcEnemyBrainMs || 0) + (window.__aiNpcFriendlyBrainMs || 0)
-        + (window.__aiSepMs || 0) + (window.__aiWeaponScanMs || 0) + (window.__aiTargetPickMs || 0);
+      const aiGridMs = window.__aiGridMs || 0;
+      const aiEnemyBrainMs = window.__aiNpcEnemyBrainMs || 0;
+      const aiFriendlyBrainMs = window.__aiNpcFriendlyBrainMs || 0;
+      const aiSeparationMs = window.__aiSepMs || 0;
+      const aiWeaponScanMs = window.__aiWeaponScanMs || 0;
+      const aiTargetPickMs = window.__aiTargetPickMs || 0;
+      const aiNpcMeasuredMs = aiGridMs + aiEnemyBrainMs + aiFriendlyBrainMs
+        + aiSeparationMs + aiWeaponScanMs + aiTargetPickMs;
       PerfHUD.addTiming('aiNpcStepTime', npcStepMs);
-      PerfHUD.addTiming('aiNpcGridTime', window.__aiGridMs || 0);
-      PerfHUD.addTiming('aiNpcEnemyBrainTime', window.__aiNpcEnemyBrainMs || 0);
-      PerfHUD.addTiming('aiNpcFriendlyBrainTime', window.__aiNpcFriendlyBrainMs || 0);
+      PerfHUD.addTiming('aiNpcGridTime', aiGridMs);
+      PerfHUD.addTiming('aiNpcEnemyBrainTime', aiEnemyBrainMs);
+      PerfHUD.addTiming('aiNpcFriendlyBrainTime', aiFriendlyBrainMs);
       PerfHUD.addTiming('aiNpcOtherTime', Math.max(0, npcStepMs - aiNpcMeasuredMs));
-      PerfHUD.addTiming('aiSeparationTime', window.__aiSepMs || 0);
-      PerfHUD.addTiming('aiWeaponScanTime', window.__aiWeaponScanMs || 0);
-      PerfHUD.addTiming('aiTargetPickTime', window.__aiTargetPickMs || 0);
+      PerfHUD.addTiming('aiSeparationTime', aiSeparationMs);
+      PerfHUD.addTiming('aiWeaponScanTime', aiWeaponScanMs);
+      PerfHUD.addTiming('aiTargetPickTime', aiTargetPickMs);
       if (aiDbgEnabled) {
         AILiveDebug.record('npcStep', npcStepMs);
         // Drain spatial-grid hot-path subtimings (set by applySeparationForces,
         // processAutonomousWeapons, aiPickBestTarget). Lets us see exactly where
         // AI time is going after the spatial grid optimization.
-        AILiveDebug.record('aiGrid', window.__aiGridMs || 0);
-        AILiveDebug.record('enemyBrain', window.__aiNpcEnemyBrainMs || 0);
-        AILiveDebug.record('friendlyBrain', window.__aiNpcFriendlyBrainMs || 0);
-        AILiveDebug.record('separationForces', window.__aiSepMs || 0);
-        AILiveDebug.record('weaponTargetScan', window.__aiWeaponScanMs || 0);
-        AILiveDebug.record('targetPick', window.__aiTargetPickMs || 0);
+        AILiveDebug.record('aiGrid', aiGridMs);
+        AILiveDebug.record('enemyBrain', aiEnemyBrainMs);
+        AILiveDebug.record('friendlyBrain', aiFriendlyBrainMs);
+        AILiveDebug.record('separationForces', aiSeparationMs);
+        AILiveDebug.record('weaponTargetScan', aiWeaponScanMs);
+        AILiveDebug.record('targetPick', aiTargetPickMs);
       }
       tAiSection0 = performance.now();
-      // Fale roju to logika misji (timery w sekundach) — raz na klatkę.
-      if (runLogic) pirateMissionStep(logicDt);
+      // Fale roju używają tego samego stałego rytmu co reszta decyzji AI.
+      if (runAiLogic) pirateMissionStep(aiLogicDt);
       const aiPirateMissionMs = performance.now() - tAiSection0;
       PerfHUD.addTiming('aiPirateMissionTime', aiPirateMissionMs);
       if (aiDbgEnabled) AILiveDebug.record('pirateMission', aiPirateMissionMs);
@@ -20532,9 +20628,16 @@
 
     // =============== Main loop ===============
     let lastTime = performance.now();
-    const PHYS_DT = 1 / 120;
+    const PHYS_HZ = 120;
+    const PHYS_DT = 1 / PHYS_HZ;
+    const AI_DECISION_TARGET_HZ = 20;
+    const aiDecisionCadence = new FixedStepCadence(PHYS_HZ, AI_DECISION_TARGET_HZ);
     let physicsTickId = 0;
+    let aiDecisionTickId = 0;
     let renderFrameId = 0; // id klatki rAF — używane przez cache prep destruktora
+    PerfHUD.setAiDecisionTargetHz(aiDecisionCadence.hz);
+    window.__aiDecisionHz = aiDecisionCadence.hz;
+    window.__aiDecisionTickId = aiDecisionTickId;
     let acc = 0;
     let vfxTime = 0;
     let prevState = null;
@@ -20587,21 +20690,36 @@
       acc += frame;
       vfxTime += frame;
       renderFrameId++;
-      window.__frameId = renderFrameId; // stempel klatki dla cache AI (separacja/omijanie)
+      window.__frameId = renderFrameId;
       let steps = 0;
       const bridgeStartTick = physicsTickId + 1;
-      // Warstwa decyzyjna (AI, sensory, CIC, skan) liczy się RAZ na klatkę, z dt
-      // równym sumie podkroków tej klatki. Liczbę podkroków znamy z góry, więc
-      // timery AI idą dokładnie w tym samym tempie co przy liczeniu per podkrok.
+      // Sensory/CIC/skan liczymy raz na klatkę renderu. AI ma osobny zegar:
+      // 120 Hz / 6 ticków = deterministyczne 20 Hz niezależne od rAF monitora.
       const plannedSteps = Math.min(10, Math.floor(acc / PHYS_DT));
-      const logicDt = Math.max(PHYS_DT, plannedSteps * PHYS_DT);
+      const frameLogicDt = Math.max(PHYS_DT, plannedSteps * PHYS_DT);
       while (acc >= PHYS_DT && steps < 10) {
         prevCameraState.x = camera.x;
         prevCameraState.y = camera.y;
         prevCameraState.zoom = camera.zoom;
         saveState();
-        physicsStep(PHYS_DT, steps === 0, logicDt);
-        physicsTickId++;
+        const nextPhysicsTickId = physicsTickId + 1;
+        const aiBrainPhase = aiDecisionCadence.phase(nextPhysicsTickId);
+        const runAiLogic = aiDecisionCadence.isDue(nextPhysicsTickId);
+        if (runAiLogic) {
+          aiDecisionTickId++;
+          window.__aiDecisionTickId = aiDecisionTickId;
+          PerfHUD.markAiDecisionTick();
+        }
+        physicsStep(
+          PHYS_DT,
+          steps === 0,
+          frameLogicDt,
+          runAiLogic,
+          aiDecisionCadence.dt,
+          aiBrainPhase,
+          aiDecisionCadence.intervalTicks
+        );
+        physicsTickId = nextPhysicsTickId;
         acc -= PHYS_DT; steps++;
       }
       if (steps > 0 && physicsBridgeV2) {
@@ -20996,7 +21114,6 @@
           applyEditorLayoutToNpc(npc);
           initHexBody(npc, (hexInit?.image || sprite.image));
           if (npc.hexGrid) npc.hexGrid.visualImage = sprite.image;
-          logHullScaleSnapshot(npc, `npc:${getNpcHullRenderProfileId(npc) || npc.type || 'unknown'}`);
           drawNPCPretty(ctx, npc, s);
           return;
         }
@@ -21726,6 +21843,15 @@
 
 
         PerfHUD.addTiming('render2dPlayerTime', performance.now() - tRender2dSection);
+        tRender2dSection = performance.now();
+
+        // === Turret Pass ===
+        // Wiezyczki siedza NAD kadlubem (WebGL jest juz przeblitowany na te
+        // kanwe) i POD pociskami logicznie, choc pociski lecą warstwe nizej —
+        // pocisk wychodzacy z lufy wynurza sie zza dziala, i o to chodzi.
+        Turret2D.draw(ctx, cam);
+
+        PerfHUD.addTiming('render2dTurretTime', performance.now() - tRender2dSection);
         tRender2dSection = performance.now();
 
         // === Projectile Pass ===
@@ -23164,7 +23290,6 @@
             const scaleNow = Math.max(0.0001, Number(ship?.visual?.spriteScale) || 1);
             ship.radius = ship.hexGrid.rawRadius * scaleNow;
           }
-          logHullScaleSnapshot(ship, 'player');
         }
       }
 
@@ -23872,7 +23997,6 @@
           const scaleNow = Math.max(0.0001, Number(player2Ship.visual?.spriteScale) || 1);
           player2Ship.radius = player2Ship.hexGrid.rawRadius * scaleNow;
         }
-        logHullScaleSnapshot(player2Ship, 'player2');
         if (invalidateHexShipEntity3D) invalidateHexShipEntity3D(player2Ship);
         console.log('[SplitScreen] P2 sprite loaded & hexBody initialized:', hullKey);
       };

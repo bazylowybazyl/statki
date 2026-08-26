@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const indexHtml = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+// PerfHUD ma teraz własny moduł; łączymy źródła aplikacji, bo część liczników
+// jest wywoływana w index.html, a markup i agregacja żyją w perfHud.js.
+const indexHtml = `${readFileSync(new URL('../index.html', import.meta.url), 'utf8')}\n${readFileSync(new URL('../src/ui/perfHud.js', import.meta.url), 'utf8')}`;
 const core3dJs = readFileSync(new URL('../src/3d/core3d.js', import.meta.url), 'utf8');
 const hexShips3dJs = readFileSync(new URL('../src/3d/hexShips3D.js', import.meta.url), 'utf8');
 const engineEffectsJs = readFileSync(new URL('../Engineeffects.js', import.meta.url), 'utf8');
@@ -78,6 +80,14 @@ const requiredDrawInfoElementIds = [
   'perfDrawCallsPost',
   'perfDrawCallsOther'
 ];
+
+test('PerfHUD exposes and resets the measured AI decision cadence', () => {
+  assert.ok(indexHtml.includes('id="perfAiCadence"'), 'perfAiCadence row is missing');
+  assert.ok(indexHtml.includes('aiDecisionTicks: 0'), 'AI decision accumulator is missing');
+  assert.ok(indexHtml.includes('markAiDecisionTick()'), 'AI decision marker is missing');
+  assert.ok(indexHtml.includes('this.display.aiDecisionHz = this.accum.aiDecisionTicks / flushSeconds'), 'actual AI Hz calculation is missing');
+  assert.ok(indexHtml.includes('this.accum.aiDecisionTicks = 0'), 'AI decision accumulator reset is missing');
+});
 
 test('PerfHUD exposes physics subsection counters in the panel', () => {
   const requiredElementIds = [

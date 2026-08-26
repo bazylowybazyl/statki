@@ -3,6 +3,7 @@ import { refreshHexBodyCache, DestructorSystem, isPackedShardBoundary } from '..
 import { Core3D } from './core3d.js';
 import { EngineVfxSystem } from './engineVfxSystem.js';
 import { Weapon3DSystem } from './weapon3DSystem.js';
+import { Turret2D } from '../vfx/turret2D.js';
 import {
   MAX_SHADER_SHIP_LIGHTS,
   NAV_LIGHT_CHASE,
@@ -268,7 +269,6 @@ const state = {
   navLightSprites: [],
   staleEntities: [],
   validEntitySet: new Set(),
-  weaponActiveEntities: new Set(),
   damageTintEnabled: true
 };
 
@@ -277,7 +277,7 @@ const HEX_LOD = Object.freeze({ FULL: 0, HYBRID: 1, IMPOSTOR: 2 });
 // rysowany własnym wywołaniem i wpada do wspólnego batcha smug. Dotyczy tylko
 // wraków i fragmentów — żywe kadłuby mają swoją ścieżkę LOD. Histereza trzyma
 // przełączenie z dala od progu, żeby nie migotało przy powolnym zoomie.
-const WRECK_IMPOSTOR_PX = 12;
+const WRECK_IMPOSTOR_PX = 15;
 const WRECK_IMPOSTOR_EXIT_MUL = 1.35;
 const HEX_LOD_FULL_PX = 1.25;
 const HEX_LOD_IMPOSTOR_PX = 0.45;
@@ -1500,14 +1500,12 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
   const visibleVfx = state.visibleVfxEntities;
   const stale = state.staleEntities;
   const validSet = state.validEntitySet;
-  const weaponActiveEntities = state.weaponActiveEntities;
   valid.length = 0;
   vfxEntities.length = 0;
   visibleHex.length = 0;
   visibleVfx.length = 0;
   stale.length = 0;
   validSet.clear();
-  weaponActiveEntities.clear();
   for (const entity of entities) {
     if (!entity || entity.dead) continue;
     valid.push(entity);
@@ -1519,7 +1517,6 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
       continue;
     }
     if (entity.hexGrid) validSet.add(entity);
-    weaponActiveEntities.add(entity);
 
     const visible = isEntityInCull(entity, cullInfo);
     if (!visible) {
@@ -1613,17 +1610,25 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
     }
   }
 
+  // Wieżyczki: zbieramy je do bufora 2D, rysuje je pętla renderu w index.html.
+  // Bufor MUSI powstać przed syncProjectiles — błyski wylotowe i początki
+  // wiązek szukają w nim lufy, z której padł strzał.
+  // Przelacznik "Bronie" w perf HUD gasi teraz wiezyczki 2D (wczesniej chowal
+  // kontenery siatek) — zostaje dzwignia do porownania kosztu w locie.
+  Turret2D.enabled = Core3D.perfToggles?.fgWeapons !== false;
+  Turret2D.beginFrame();
   for (const entity of visibleVfx) {
     const interpPose = getInterpolatedRenderPose(entity);
     const ex = interpPose ? interpPose.x : getEntityPosX(entity);
     const ey = interpPose ? interpPose.y : getEntityPosY(entity);
     const eAngle = interpPose ? interpPose.angle : (entity.angle || 0);
     const scale = getEntityScale(entity);
-    Weapon3DSystem.syncWeapons(entity, ex, ey, eAngle, scale);
-    const weaponContainer = Weapon3DSystem.containers?.get(entity);
-    if (weaponContainer) DrawCallStats.addWeapon(DrawCallStats.countRenderable(weaponContainer));
+    Turret2D.sync(entity, ex, ey, eAngle, scale);
   }
-  Weapon3DSystem.cleanupEntities(weaponActiveEntities);
+  DrawCallStats.setTurrets2D(Turret2D.frameCount);
+  // Wygaszanie odrzutu — raz na klatke, niezaleznie od liczby passow 2D
+  // (split-screen rysuje ten sam bufor dwa razy).
+  Turret2D.update();
   Weapon3DSystem.syncProjectiles((typeof window !== 'undefined' && Array.isArray(window.bullets)) ? window.bullets : []);
 
   GpuDebrisManager.updateTime(now * 0.001);
@@ -1741,6 +1746,7 @@ export function disposeHexShips3D() {
   GpuDebrisManager.dispose();
   EngineVfxSystem.disposeAll();
   Weapon3DSystem.disposeAll();
+  Turret2D.clear();
   ShipLights3D.dispose();
   state.navLightSprites.length = 0;
   state.frameId = 0;
