@@ -134,9 +134,10 @@ export function aiPickBestTarget(self, rangeLimit) {
   // hundreds of cells), and aiPickBestTarget is already throttled by
   // retargetTimer (1-1.5s/fighter), so a per-call iteration over npcs[] is
   // both simpler and faster than going through the shared result buffer.
-  const npcs = window.npcs || [];
-  for (let i = 0; i < npcs.length; i++) {
-    const u = npcs[i];
+  const pooledCandidates = window.getAIOpposingCandidates?.(self);
+  const candidates = Array.isArray(pooledCandidates) ? pooledCandidates : (window.npcs || []);
+  for (let i = 0; i < candidates.length; i++) {
+    const u = candidates[i];
     if (!isEnemyUnit(self, u)) continue;
 
     const ux = u.pos ? u.pos.x : u.x;

@@ -489,7 +489,26 @@ function buildShipScanCache(npc, dt, scanProfile = 'slow') {
     if (dx * dx + dy * dy <= maxRangeSq) cache.enemies.push(window.ship);
   }
 
-  if (window.queryAIGrid) {
+  // Długie zasięgi i tak zmuszają grid do ścieżki pełnej listy. Wtedy pula
+  // przeciwnej frakcji jest ściśle tańsza — w asymetrycznej bitwie 85 vs 3
+  // przyjazny okręt ogląda 3 kandydatów zamiast wszystkich 88 jednostek.
+  const factionPool = maxRange > 4800
+    ? (npc.friendly ? window.getAIPirateCandidates?.() : window.getAIFriendlyCandidates?.())
+    : null;
+  if (Array.isArray(factionPool)) {
+    for (let i = 0; i < factionPool.length; i++) {
+      const enemy = factionPool[i];
+      if (!enemy || enemy.dead || enemy === npc || enemy === window.ship) continue;
+      if (npc.friendly && !enemy.isPirate) continue;
+      if (!npc.friendly && enemy.friendly === false) continue;
+      const enemyX = enemy.pos?.x ?? enemy.x ?? 0;
+      const enemyY = enemy.pos?.y ?? enemy.y ?? 0;
+      const dx = enemyX - npc.x;
+      const dy = enemyY - npc.y;
+      if (dx * dx + dy * dy > maxRangeSq) continue;
+      cache.enemies.push(enemy);
+    }
+  } else if (window.queryAIGrid) {
     const query = window.queryAIGrid(npc.x, npc.y, maxRange);
     const buffer = query.buffer;
     const count = query.count;
@@ -660,6 +679,9 @@ function processAutonomousWeapons(npc, dt) {
   let fastScanCache = null;
   let slowScanCache = null;
   const geometryId = nextWeaponGeometryId++;
+  const losTargets = npc._weaponLosTargets || (npc._weaponLosTargets = []);
+  const losBlocked = npc._weaponLosBlocked || (npc._weaponLosBlocked = []);
+  let losCount = 0;
 
   for (let wIdx = 0; wIdx < npc.autoWeapons.length; wIdx++) {
     const weapon = npc.autoWeapons[wIdx];
@@ -779,8 +801,21 @@ function processAutonomousWeapons(npc, dt) {
 
       if (weapon.cd <= 0 && weapon._losRetryCd <= 0) {
         const targetIsRocket = bestTarget.type === 'rocket' || bestTarget.type === 'torpedo';
-        const lineBlocked = !targetIsRocket
-          && window.isLineOfFireBlocked?.(npc, bestTarget, range) === true;
+        let lineBlocked = false;
+        if (!targetIsRocket) {
+          let losIndex = -1;
+          for (let i = 0; i < losCount; i++) {
+            if (losTargets[i] === bestTarget) { losIndex = i; break; }
+          }
+          if (losIndex >= 0) {
+            lineBlocked = losBlocked[losIndex] === true;
+          } else {
+            lineBlocked = window.isLineOfFireBlocked?.(npc, bestTarget, range) === true;
+            losTargets[losCount] = bestTarget;
+            losBlocked[losCount] = lineBlocked;
+            losCount++;
+          }
+        }
         if (lineBlocked) {
           // Nie miel LOS co 20 Hz: odrzuć zasłonięty cel na kilka decyzji i
           // pozostaw działo gotowe, by mogło natychmiast wybrać czystą linię.
@@ -806,6 +841,9 @@ function processAutonomousWeapons(npc, dt) {
       weapon.visualAngle = window.wrapAngle(weapon.visualAngle + diff * 3 * dt);
     }
   }
+
+  losTargets.length = losCount;
+  losBlocked.length = losCount;
 
   if (typeof performance !== 'undefined') {
     window.__aiWeaponScanMs = (window.__aiWeaponScanMs || 0) + (performance.now() - tWeap0);

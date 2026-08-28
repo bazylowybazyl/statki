@@ -28,3 +28,12 @@ test('capital weapon scans reuse geometry and faction rocket buffers', () => {
 test('capital scan cache rejects out-of-range entities before per-weapon scans', () => {
   assert.ok(capitalAi.includes('if (dx * dx + dy * dy > maxRangeSq) continue;'));
 });
+
+test('capital weapon AI reuses faction pools and one LOS result per target', () => {
+  assert.ok(capitalAi.includes('window.getAIPirateCandidates?.()'));
+  assert.ok(capitalAi.includes('window.getAIFriendlyCandidates?.()'));
+  assert.ok(capitalAi.includes('losTargets[i] === bestTarget'));
+  assert.equal(capitalAi.match(/isLineOfFireBlocked/g)?.length, 1);
+  assert.ok(indexHtml.includes('window.getAIPirateCandidates?.()'));
+  assert.ok(indexHtml.includes('window.getAIFriendlyCandidates?.()'));
+});
