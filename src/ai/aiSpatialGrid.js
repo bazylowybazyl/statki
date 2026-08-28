@@ -1,8 +1,8 @@
-// AI spatial grid — zero-alloc per query, rebuilt once per frame.
+// AI spatial grid — zero-alloc per query, rebuilt once per 20 Hz AI cycle.
 // Cell size 600 covers most AI query radii in 1-2 cells lookup.
 //
 // USAGE CONTRACT:
-//   1. Call rebuildAIGrid(npcs, true) once at top of each AI step (npcStep).
+//   1. Call rebuildAIGrid(npcs, true) once at top of each 20 Hz AI cycle.
 //   2. Call queryAIGrid(x, y, radius) to get { buffer, count } of nearby entities.
 //   3. CALLER MUST consume the returned buffer immediately. The buffer is shared
 //      and reused on the next queryAIGrid call. NEVER call queryAIGrid recursively
@@ -21,21 +21,46 @@ const result = [];
 let resultCount = 0;
 const queryResponse = { buffer: result, count: 0 };
 let nextQueryId = 1;
+const activeCells = [];
+const activeEntities = [];
+const friendlyEntities = [];
+const nonFriendlyEntities = [];
+const pirateEntities = [];
+let factionPoolsReady = false;
+
+function registerInCell(entity, cx, cy) {
+  const key = spatialCellKey(cx, cy);
+  let arr = cells.get(key);
+  if (!arr) {
+    arr = [];
+    cells.set(key, arr);
+  }
+  if (arr.length === 0) activeCells.push(arr);
+  arr.push(entity);
+}
 
 export function rebuildAIGrid(entityList, includePlayer) {
-  // Clear cell arrays in place (don't realloc)
-  for (const arr of cells.values()) arr.length = 0;
+  // Czyścimy wyłącznie komórki aktywne w poprzednim cyklu. Jednostki mogą
+  // przemierzać cały układ, więc skanowanie wszystkich historycznych wpisów Map
+  // sprawiałoby, że koszt clear() rósł wraz z długością sesji.
+  for (let i = 0; i < activeCells.length; i++) activeCells[i].length = 0;
+  activeCells.length = 0;
+  activeEntities.length = 0;
+  friendlyEntities.length = 0;
+  nonFriendlyEntities.length = 0;
+  pirateEntities.length = 0;
 
   if (entityList && entityList.length) {
     for (let i = 0; i < entityList.length; i++) {
       const e = entityList[i];
       if (!e || e.dead) continue;
+      activeEntities.push(e);
+      if (e.friendly === true) friendlyEntities.push(e);
+      else nonFriendlyEntities.push(e);
+      if (e.isPirate === true) pirateEntities.push(e);
       const cx = Math.floor(e.x * INV_CELL);
       const cy = Math.floor(e.y * INV_CELL);
-      const key = spatialCellKey(cx, cy);
-      let arr = cells.get(key);
-      if (!arr) { arr = []; cells.set(key, arr); }
-      arr.push(e);
+      registerInCell(e, cx, cy);
     }
   }
 
@@ -45,11 +70,27 @@ export function rebuildAIGrid(entityList, includePlayer) {
     const sy = ship.pos?.y ?? ship.y ?? 0;
     const cx = Math.floor(sx * INV_CELL);
     const cy = Math.floor(sy * INV_CELL);
-    const key = spatialCellKey(cx, cy);
-    let arr = cells.get(key);
-    if (!arr) { arr = []; cells.set(key, arr); }
-    arr.push(ship);
+    registerInCell(ship, cx, cy);
   }
+  factionPoolsReady = true;
+}
+
+// Listy są własnością grida i pozostają ważne do następnego rebuildAIGrid().
+// Wywołujący nie może ich mutować. Dają szczególnie duży zysk w asymetrycznych
+// bitwach (np. 85 sojuszników kontra 3 wrogów), bo skanują tylko przeciwną stronę.
+export function getAIOpposingCandidates(entity) {
+  if (!factionPoolsReady) return null;
+  if (entity?.friendly === true) return nonFriendlyEntities;
+  if (entity?.friendly === false || entity?.isPirate === true) return friendlyEntities;
+  return activeEntities;
+}
+
+export function getAIFriendlyCandidates() {
+  return factionPoolsReady ? friendlyEntities : null;
+}
+
+export function getAIPirateCandidates() {
+  return factionPoolsReady ? pirateEntities : null;
 }
 
 // Returns shared result buffer + count. CALLER MUST consume immediately
@@ -73,7 +114,8 @@ export function queryAIGrid(x, y, radius) {
     // Full-list path: dump all populated cells. Caller will still range-check
     // each candidate, so the only cost vs. the targeted path is one extra
     // pass over irrelevant entities. Same complexity as the old O(N) scan.
-    for (const arr of cells.values()) {
+    for (let cellIndex = 0; cellIndex < activeCells.length; cellIndex++) {
+      const arr = activeCells[cellIndex];
       for (let i = 0; i < arr.length; i++) {
         const entity = arr[i];
         if (entity._aiGridQueryId === queryId) continue;
@@ -109,4 +151,7 @@ export function queryAIGrid(x, y, radius) {
 if (typeof window !== 'undefined') {
   window.rebuildAIGrid = rebuildAIGrid;
   window.queryAIGrid = queryAIGrid;
+  window.getAIOpposingCandidates = getAIOpposingCandidates;
+  window.getAIFriendlyCandidates = getAIFriendlyCandidates;
+  window.getAIPirateCandidates = getAIPirateCandidates;
 }

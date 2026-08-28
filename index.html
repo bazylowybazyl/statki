@@ -8704,10 +8704,17 @@
 
     function pickPirateEngageTarget(npc) {
       if (!npc?.isPirate || mercMission?.alertStage !== 'engage') return null;
-      const candidates = [ship, ...npcs.filter(n => n.friendly && !n.dead)];
       let best = null;
       let bestScore = -Infinity;
-      for (const target of candidates) {
+      if (ship && !ship.dead && !ship.destroyed) {
+        bestScore = pirateEngageScore(npc, ship);
+        best = ship;
+      }
+      const pooledFriendlies = window.getAIFriendlyCandidates?.();
+      const candidates = Array.isArray(pooledFriendlies) ? pooledFriendlies : npcs;
+      for (let i = 0; i < candidates.length; i++) {
+        const target = candidates[i];
+        if (!target || target.dead || target.friendly !== true) continue;
         const score = pirateEngageScore(npc, target);
         if (score > bestScore) {
           bestScore = score;
@@ -8733,14 +8740,27 @@
       let best = null;
       let maxScore = -Infinity;
 
-      const targets = npc.friendly
-        ? npcs.filter(n => n.isPirate && !n.dead)
-        : [ship, ...npcs.filter(n => n.friendly && !n.dead)];
+      if (!npc.friendly && ship && !ship.dead && !ship.destroyed) {
+        const dx = ship.pos.x - npc.x;
+        const dy = ship.pos.y - npc.y;
+        const distSq = dx * dx + dy * dy;
+        if (distSq <= 20000 * 20000) {
+          maxScore = -distSq + 2000000;
+          best = ship;
+        }
+      }
+      const pooledTargets = npc.friendly
+        ? window.getAIPirateCandidates?.()
+        : window.getAIFriendlyCandidates?.();
+      const targets = Array.isArray(pooledTargets) ? pooledTargets : npcs;
 
       // RADAR POKRYWAJACY CALA STACJE PIRACKA
       const RADAR_RANGE_SQ = 20000 * 20000;
 
-      for (const t of targets) {
+      for (let i = 0; i < targets.length; i++) {
+        const t = targets[i];
+        if (!t || t.dead) continue;
+        if (npc.friendly ? !t.isPirate : t.friendly !== true) continue;
         const tx = t.pos ? t.pos.x : t.x;
         const ty = t.pos ? t.pos.y : t.y;
         const distSq = (tx - npc.x) ** 2 + (ty - npc.y) ** 2;
@@ -19404,8 +19424,19 @@
     // kilku kilometrów, więc debris rósł aż do wyczerpania areny.
     //
     // Zwalniamy od najdalszych od gracza: tych i tak nie widzi. Wraki holowane,
-    // cięte i wiozące ładunek są nietykalne — to zawartość gameplayowa, nie śmieć.
-    const WRECK_HEX_BUDGET_FRAC = 0.55;
+    // cięte i wiożące ładunek są nietykalne — to zawartość gameplayowa, nie śmieć.
+    //
+    // UWAGA NA ROLĘ: to jest BARIERKA, nie regulator. Docelowo debris sprząta się
+    // sam — większość wraków ma wybuchać i znikać, a część statków ma rozpadać się
+    // całkowicie, nie zostawiając niczego. Ten limit ma NIGDY się nie odpalić przy
+    // normalnej grze; siedzi tu tylko dlatego, że przepełnienie areny to twardy
+    // klif (narrowphase przechodzi z heksów brzegowych na wszystkie), a nie
+    // stopniowy spadek. Bez niego awaria kolejki wybuchów objawia się jako
+    // niewytłumaczalne pół klatki na sekundę.
+    //
+    // Próg 0.80, a nie 0.55: przy 0.55 barierka zaczynała kasować wraki, które
+    // gracz jeszcze widzi, czyli robiła to, co ma teraz robić efekt wybuchu.
+    const WRECK_HEX_BUDGET_FRAC = 0.80;
     const WRECK_HEX_RESERVE_FRAC = 0.08;
     const WRECK_HEX_RESERVE_MIN = 8192;
     const WRECK_BUDGET_CHECK_SEC = 0.5;
