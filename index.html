@@ -1019,7 +1019,10 @@
       drawMultiTargetingFrame,
       drawMultiTargetingNode,
       drawSubTargetingReticle,
-      drawSelectTargetingReticle
+      drawSelectTargetingReticle,
+      drawTargetingSnapEcho,
+      drawTargetingLockRing,
+      TARGETING_READY_FX
     } from "./src/ui/targetingReticles.js";
     import {
       FACTION,
@@ -2685,6 +2688,26 @@
       return sepUid(npc) <= sepUid(other) ? 1.7 : 0.3; // remis → stały rozjazd
     }
 
+    // Realną ścianą między dwoma okrętami jest promień BLOKUJĄCY TARCZ, a nie
+    // suma promieni kadłubów. Gdy strefa separacji jest ciaśniejsza, AI celuje
+    // w punkt, do którego _resolveShieldCollision nigdy go nie wpuści: okręt
+    // dopycha się do granicy tarczy i o nią wibruje (zmierzone: ~55 Hz,
+    // prędkość skacząca 83..204 u/s przy nieruchomym dystansie).
+    // Czytamy dokładnie tę samą liczbę, na której operuje rezolwer tarcz
+    // (_shieldRadius, odświeżany co tick fizyki w _prepareBroadphase), żeby nie
+    // powstało drugie źródło prawdy, które znów się rozjedzie.
+    function shieldPairStandoff(a, b) {
+      const read = (e) => {
+        if (!e) return 0;
+        const cached = Number(e._shieldRadius);
+        if (Number.isFinite(cached) && cached > 0) return cached;
+        const progress = Number(getEntityShieldBlockingProgress(e)) || 0;
+        if (progress <= 0) return 0;
+        return (Number(getEntityShieldBaseRadius(e)) || 0) * progress;
+      };
+      return read(a) + read(b);
+    }
+
     function applySeparationForces(npc, ax, ay) {
       // Separacja jest decyzją AI, więc przeliczamy ją raz na tick AI (20 Hz),
       // a pomiędzy decyzjami reużywamy ostatni wektor. Wynik również ma stały
@@ -2762,32 +2785,40 @@
           continue;
         }
 
-        let safeDistance = myRadius + otherRadius;
         let strength = 0;
+        let sepMargin = 0;
         // Luz dla par z udziałem dużego okrętu — skalowany od sumy promieni,
         // żeby dwa battleshipy (radius 140) miały realny odstęp, a nie 36-70u.
         const bigPairMargin = Math.max(70, (myRadius + otherRadius) * 0.6);
 
         // 2) Sojusznicy trzymają odstęp, ale dużo mniejszy niż teraz.
         if (!enemy && myFighter && otherFighter) {
-          safeDistance += inCombat ? 22 : 46;
+          sepMargin = inCombat ? 22 : 46;
           strength = inCombat ? 8.0 : 12.0;
         }
         // 3) Sojusznicy duzi / mieszani — dla dwóch battleshipów (radius 140)
         //    margines 70 to ledwie 70u luzu, stąd obijanie; rozszerzamy.
         else if (!enemy) {
-          safeDistance += bigPairMargin;
+          sepMargin = bigPairMargin;
           strength = 12.0;
         }
         // 4) Kontakt z capitalami wroga — margines 36 był absurdalnie mały
         //    dla okrętów o promieniu 140.
         else if (myCapital || otherCapital) {
-          safeDistance += bigPairMargin;
+          sepMargin = bigPairMargin;
           strength = 13.0;
         }
         else {
           continue;
         }
+
+        // Margines liczymy PONAD tę ze ścian, która jest realnie twardsza:
+        // kadłub albo tarcza. Ten sam cykl graniczny co przy graczu zdarza się
+        // między dwoma osłoniętymi capitalami floty.
+        const safeDistance = Math.max(
+          myRadius + otherRadius,
+          shieldPairStandoff(npc, other)
+        ) + sepMargin;
 
         const bigPair = myCapital || otherCapital;
         const reach = bigPair ? (safeDistance + LOOKAHEAD_MAX) : safeDistance;
@@ -2836,17 +2867,25 @@
         const dy = npc.y - player.pos.y;
         const distSq = dx * dx + dy * dy;
 
-        let safeDistance = myRadius + (player.radius || 220);
         let strength = 0;
+        let sepMargin = 0;
 
         if (npc.friendly) {
           // Friendly fighter w walce może podejść bliżej do własnego capitala.
-          safeDistance += inCombat ? 40 : 140;
+          sepMargin = inCombat ? 40 : 140;
           strength = inCombat ? 10.0 : 28.0;
         } else {
-          safeDistance += 80;
+          sepMargin = 80;
           strength = 12.0;
         }
+
+        // Ta sama zasada co przy parach NPC: strefa separacji nie może być
+        // ciaśniejsza od promienia blokującego tarcz, bo wtedy AI dopycha się
+        // do ściany, przez którą nie przejdzie, i wpada w drżenie.
+        const safeDistance = Math.max(
+          myRadius + (player.radius || 220),
+          shieldPairStandoff(npc, player)
+        ) + sepMargin;
 
         const reach = safeDistance + LOOKAHEAD_MAX;
         const dist = Math.sqrt(distSq) || 1;
@@ -7859,6 +7898,10 @@
     const TARGETING_GROUP_RADIUS_PX = 190;
     const TARGETING_GROUP_PAD_PX = 44;
     const TARGETING_SUB_SCAN_TIME = 2.2;
+    // Kursor moze na moment zjechac z kadluba (statek leci, reka drgnie). Bez
+    // laski namiar wracal do zera dokladnie w chwili LPM i klik "nie lapal".
+    const TARGETING_ACQUIRE_GRACE = 0.28;
+    const TARGETING_ACQUIRE_DECAY = 0.55;
 
     const targetingMode = {
       current: TARGETING_MODE.SINGLE,
@@ -7868,6 +7911,9 @@
       rangeDraw: 0,
       acquireTarget: null,
       acquireProgress: 0,
+      acquireHold: 0,
+      acquireReadyFx: 0,
+      acquireReadyRef: null,
       groupAngle: 0,
       groupX: 0,
       groupY: 0,
@@ -7876,6 +7922,7 @@
       groupCandidates: [],
       groupPrevious: [],
       groupAcquisition: new WeakMap(),
+      groupReadyFx: new WeakMap(),
       subScanTarget: null,
       subScanProgress: 0,
       scannedTargets: new WeakSet(),
@@ -7891,6 +7938,9 @@
       targetingMode.current = next;
       targetingMode.acquireTarget = null;
       targetingMode.acquireProgress = 0;
+      targetingMode.acquireHold = 0;
+      targetingMode.acquireReadyFx = 0;
+      targetingMode.acquireReadyRef = null;
       targetingMode.groupCandidates.length = 0;
       targetingMode.groupPrevious.length = 0;
       if (next === TARGETING_MODE.MULTI) {
@@ -13820,11 +13870,35 @@
       return best;
     }
 
+    // Czy LPM ma teraz co zatwierdzic? Uzywane, zeby stacja pod kursorem nie
+    // przechwytywala kliku, gdy gracz wlasnie sklada namiar na okret.
+    function hasPendingTargetingConfirm(hoveredStation) {
+      if (!gameStarted) return false;
+      if (targetingMode.current === TARGETING_MODE.SINGLE) {
+        const target = targetingMode.acquireTarget;
+        // Stacja pod kursorem nadal otwiera swoj panel — LPM odbieramy jej tylko
+        // wtedy, gdy namierzany jest ktos inny (okret przelatujacy nad stacja).
+        if (!target || target === hoveredStation) return false;
+        return targetingMode.acquireProgress > 0;
+      }
+      if (targetingMode.current === TARGETING_MODE.MULTI) {
+        return targetingMode.groupCandidates.length > 0;
+      }
+      if (targetingMode.current === TARGETING_MODE.SUB) {
+        return !!(targetingMode.hoveredSubsystem || targetingMode.subScanTarget);
+      }
+      return false;
+    }
+
     function confirmTargetingSelection() {
       if (targetingMode.current === TARGETING_MODE.SINGLE) {
         const target = targetingMode.acquireTarget;
-        if (!target || targetingMode.acquireProgress < 1 || !canPlayerLockTarget(target)) {
-          pushZoneMessage('SINGLE: UTRZYMAJ CEL DO PEŁNEGO NAMIARU', 1.0);
+        if (!target || !canPlayerLockTarget(target)) {
+          pushZoneMessage('SINGLE: BRAK CELU POD KURSOREM', 1.0);
+          return;
+        }
+        if (targetingMode.acquireProgress < 1) {
+          pushZoneMessage(`SINGLE: NAMIAR ${Math.round(targetingMode.acquireProgress * 100)}% — UTRZYMAJ CEL`, 1.0);
           return;
         }
         setLockedTargetsExact([target]);
@@ -13834,12 +13908,21 @@
 
       if (targetingMode.current === TARGETING_MODE.MULTI) {
         const ready = [];
+        let best = 0;
         for (let i = 0; i < targetingMode.groupCandidates.length; i++) {
           const target = targetingMode.groupCandidates[i];
-          if (canPlayerLockTarget(target) && (targetingMode.groupAcquisition.get(target) || 0) >= 1) ready.push(target);
+          if (!canPlayerLockTarget(target)) continue;
+          const progress = targetingMode.groupAcquisition.get(target) || 0;
+          if (progress >= 1) ready.push(target);
+          else if (progress > best) best = progress;
         }
         if (!ready.length) {
-          pushZoneMessage('MULTI: BRAK GOTOWYCH CELÓW', 1.0);
+          pushZoneMessage(
+            targetingMode.groupCandidates.length
+              ? `MULTI: NAMIAR ${Math.round(best * 100)}% — UTRZYMAJ RAMKĘ NA SKUPISKU`
+              : 'MULTI: PRZESUŃ RAMKĘ NAD CELE',
+            1.0
+          );
           return;
         }
         setLockedTargetsExact(ready.slice(0, RADAR_UI_MAX_TARGETS));
@@ -15988,7 +16071,7 @@
           return;
         }
         mouse.left = false;
-        if (targetingConfirmArmed && !wasDragging && gameStarted && scan.target && scan.targetType === 'station') {
+        if (targetingConfirmArmed && !wasDragging && gameStarted && scan.target && scan.targetType === 'station' && !hasPendingTargetingConfirm(scan.target)) {
           mouse.click = true;
         } else if (targetingConfirmArmed && !wasDragging && gameStarted) {
           mouse.click = false;
@@ -22214,14 +22297,22 @@
 
       // --- Celowniki trybu ostrzału (firing reticles) ---
       // Draws the selected targeting system without changing weapon statistics.
+      // Animacje HUD-a licza sie w sekundach RZECZYWISTYCH — `gameTime` jest
+      // mnozony przez TIME_SCALE = 60 i rozpedzal kreskowanie do miga.
+      const uiAnimTime = () => performance.now() / 1000;
       function _targetingScreenRadius(target, zoom) {
         const radius = Math.max(12, getTargetRadius(target));
         const visualScale = targetingVisualScale(zoom);
         const profile = target?.capitalProfile;
+        // Kadlub rysuje sie na radius*lengthScale wzdluz osi, wiec celownik musi
+        // objac POLOWE tej dlugosci — inaczej duzy okret wystaje poza narozniki.
         const hullScale = profile
-          ? Math.max(Number(profile.lengthScale) || 1, Number(profile.widthScale) || 1) * 0.58
+          ? Math.max(1, Math.max(Number(profile.lengthScale) || 1, Number(profile.widthScale) || 1) * 0.62)
           : 1;
-        return clamp(radius * hullScale * zoom, 12 * visualScale, 180 * visualScale);
+        // Sufit MUSI byc w pikselach ekranu. Stare 180*visualScale mnozylo limit
+        // przez zoom drugi raz, wiec przy oddaleniu celownik capitala scinal sie
+        // do rozmiaru mniejszego niz sam statek.
+        return clamp(radius * hullScale * zoom, 14 * visualScale, 340);
       }
 
       function _targetingLabel(text, x, y, color, align = 'center', visualScale = 1) {
@@ -22309,22 +22400,101 @@
         return out;
       }
 
+      // Celownik ma WLASNY pick. Wczesniej brał hover ze `scan.target`, ktory
+      // wybiera najblizszy SRODEK sposrod npc/stacji/wrakow — duzy okret przegrywal
+      // z myśliwcem obok, a hitbox `radius+20` konczyl sie daleko przed dziobem
+      // kadluba (lengthScale siega 4.8). Stad "nie zawsze oznacza".
+      function _targetingHullHit(target, wx, wy, camRef) {
+        const radius = Math.max(12, getTargetRadius(target));
+        const profile = target?.capitalProfile;
+        const lengthScale = Math.max(1, Number(profile?.lengthScale) || 1);
+        const widthScale = Math.max(0.7, Number(profile?.widthScale) || 1);
+        // Stala tolerancja ~14 px ekranu przeliczona na swiat.
+        const margin = Math.max(8, 14 / Math.max(0.0001, Number(camRef?.zoom) || 1));
+        // radius*lengthScale to PELNA dlugosc kadluba, wiec polowa to *0.5.
+        // Podloga na `radius` gwarantuje, ze maly statek nie traci hitboxu.
+        const halfL = Math.max(radius, radius * lengthScale * 0.5) + margin;
+        const halfW = Math.max(radius, radius * widthScale * 0.5) + margin;
+        const dx = wx - getTargetX(target);
+        const dy = wy - getTargetY(target);
+        const reach = Math.max(halfL, halfW);
+        const flat = dx * dx + dy * dy;
+        if (flat > reach * reach) return -1; // tani odrzut przed trygonometria
+        const angle = (Number(target?.angle) || 0) + (Number(profile?.spriteRotation) || 0);
+        const ca = Math.cos(-angle);
+        const sa = Math.sin(-angle);
+        const lx = dx * ca - dy * sa;
+        const ly = dx * sa + dy * ca;
+        const nx = lx / halfL;
+        const ny = ly / halfW;
+        const score = nx * nx + ny * ny;
+        return score <= 1 ? score : -1;
+      }
+
+      function _pickTargetingHover(mouseWorld, camRef) {
+        let best = null;
+        let bestScore = Infinity;
+        // `bias` trzyma hierarchie: okret pod kursorem zawsze wygrywa ze stacja,
+        // nad ktora akurat leci, mimo ze stacja ma wiekszy promien.
+        const consider = (target, bias) => {
+          if (!target || target.__targetingSubsystem) return;
+          const hit = _targetingHullHit(target, mouseWorld.x, mouseWorld.y, camRef);
+          if (hit < 0) return;
+          const score = hit + bias;
+          if (score >= bestScore || !canPlayerLockTarget(target)) return;
+          bestScore = score;
+          best = target;
+        };
+        for (let i = 0; i < npcs.length; i++) consider(npcs[i], 0);
+        const platforms = mercMission?.weaponPlatforms;
+        if (Array.isArray(platforms)) {
+          for (let i = 0; i < platforms.length; i++) consider(platforms[i], 0);
+        }
+        for (let i = 0; i < stations.length; i++) consider(stations[i], 2);
+        return best;
+      }
+
       function _updateTargetingState(mouseRef, camRef, mouseWorld, dt) {
         const step = clamp(Number(dt) || 0, 0, 0.05);
         const visualScale = targetingVisualScale(camRef.zoom);
-        const hovered = scan?.target && canPlayerLockTarget(scan.target) ? scan.target : null;
+        const hovered = _pickTargetingHover(mouseWorld, camRef);
         targetingMode.hoveredSubsystem = null;
+        if (targetingMode.acquireReadyFx > 0) targetingMode.acquireReadyFx -= step;
 
         if (targetingMode.current === TARGETING_MODE.SELECT) {
           return;
         }
 
         if (targetingMode.current === TARGETING_MODE.SINGLE) {
+          const before = targetingMode.acquireProgress;
           if (hovered && hovered === targetingMode.acquireTarget) {
+            targetingMode.acquireHold = TARGETING_ACQUIRE_GRACE;
             targetingMode.acquireProgress = Math.min(1, targetingMode.acquireProgress + step / getTargetingLockDuration(hovered));
-          } else {
+          } else if (hovered) {
             targetingMode.acquireTarget = hovered;
             targetingMode.acquireProgress = 0;
+            targetingMode.acquireHold = TARGETING_ACQUIRE_GRACE;
+            targetingMode.acquireReadyRef = null;
+          } else if (targetingMode.acquireTarget && canPlayerLockTarget(targetingMode.acquireTarget)) {
+            // Laska + wygaszanie zamiast twardego resetu: krotkie zjechanie
+            // kursora nie kasuje namiaru, wiec LPM ma co zatwierdzic.
+            targetingMode.acquireHold -= step;
+            if (targetingMode.acquireHold <= 0) {
+              targetingMode.acquireProgress = Math.max(0, targetingMode.acquireProgress - step / TARGETING_ACQUIRE_DECAY);
+              if (targetingMode.acquireProgress <= 0) {
+                targetingMode.acquireTarget = null;
+                targetingMode.acquireReadyRef = null;
+              }
+            }
+          } else {
+            targetingMode.acquireTarget = null;
+            targetingMode.acquireProgress = 0;
+            targetingMode.acquireHold = 0;
+            targetingMode.acquireReadyRef = null;
+          }
+          if (before < 1 && targetingMode.acquireProgress >= 1 && targetingMode.acquireReadyRef !== targetingMode.acquireTarget) {
+            targetingMode.acquireReadyFx = TARGETING_READY_FX;
+            targetingMode.acquireReadyRef = targetingMode.acquireTarget;
           }
           return;
         }
@@ -22354,17 +22524,35 @@
         }
 
         const candidates = _collectTargetingGroup(mouseWorld, camRef);
-        for (let i = 0; i < targetingMode.groupPrevious.length; i++) {
-          const previous = targetingMode.groupPrevious[i];
-          if (!candidates.includes(previous)) targetingMode.groupAcquisition.set(previous, 0);
+        const tracked = targetingMode.groupPrevious;
+        const nextTracked = [];
+        // Cel, ktory wypadl ze skupiska, wygasa STOPNIOWO. Twardy reset do zera
+        // sprawial, ze drgniecie mysza kasowalo caly namiar grupy tuz przed LPM.
+        for (let i = 0; i < tracked.length; i++) {
+          const previous = tracked[i];
+          if (candidates.includes(previous)) continue;
+          const decayed = (targetingMode.groupAcquisition.get(previous) || 0) - step / TARGETING_ACQUIRE_DECAY;
+          if (decayed > 0 && canPlayerLockTarget(previous)) {
+            targetingMode.groupAcquisition.set(previous, decayed);
+            nextTracked.push(previous);
+          } else {
+            targetingMode.groupAcquisition.set(previous, 0);
+            targetingMode.groupReadyFx.set(previous, 0);
+          }
         }
-        targetingMode.groupPrevious.length = 0;
         for (let i = 0; i < candidates.length; i++) {
           const target = candidates[i];
           const progress = targetingMode.groupAcquisition.get(target) || 0;
-          targetingMode.groupAcquisition.set(target, Math.min(1, progress + step / getTargetingLockDuration(target)));
-          targetingMode.groupPrevious.push(target);
+          const next = Math.min(1, progress + step / getTargetingLockDuration(target));
+          targetingMode.groupAcquisition.set(target, next);
+          if (progress < 1 && next >= 1) targetingMode.groupReadyFx.set(target, TARGETING_READY_FX);
+          else {
+            const fx = targetingMode.groupReadyFx.get(target) || 0;
+            if (fx > 0) targetingMode.groupReadyFx.set(target, fx - step);
+          }
+          nextTracked.push(target);
         }
+        targetingMode.groupPrevious = nextTracked;
 
         let targetX = mouseRef.x;
         let targetY = mouseRef.y;
@@ -22465,7 +22653,8 @@
         ctx.shadowBlur = done ? 8 : 12;
         ctx.lineWidth = 1.5;
         ctx.setLineDash([2, 9]);
-        ctx.lineDashOffset = -gameTime * 20;
+        // Czas rzeczywisty: gameTime chodzi z TIME_SCALE = 60.
+        ctx.lineDashOffset = -uiAnimTime() * 20;
         ctx.beginPath();
         ctx.moveTo(rear, -halfHeight);
         ctx.lineTo(rear, halfHeight);
@@ -22490,7 +22679,7 @@
           ctx.fillStyle = '#34e7ff';
           ctx.fillRect(rear, -halfHeight, scanX - rear, halfHeight * 2);
         } else {
-          ctx.globalAlpha = 0.18 + 0.12 * Math.sin(gameTime * 4);
+          ctx.globalAlpha = 0.18 + 0.12 * Math.sin(uiAnimTime() * 4);
           ctx.strokeStyle = color;
           ctx.strokeRect(rear, -halfHeight, nose - rear, halfHeight * 2);
         }
@@ -22525,15 +22714,18 @@
             const target = lockedTargets[i];
             if (!isTargetAlive(target) || target.__targetingSubsystem) continue;
             const screen = worldToScreen(getTargetX(target), getTargetY(target), camRef);
-            drawSingleTargetingReticle(ctx, screen.x, screen.y, _targetingScreenRadius(target, camRef.zoom), 1, '#ff4d5e', '#ff8a94', visualScale);
+            const lockedRadius = _targetingScreenRadius(target, camRef.zoom);
+            drawSingleTargetingReticle(ctx, screen.x, screen.y, lockedRadius, 1, '#ff4d5e', '#ff8a94', visualScale);
+            drawTargetingLockRing(ctx, screen.x, screen.y, lockedRadius + 18 * visualScale, '#ff4d5e', visualScale);
           }
           const hovered = targetingMode.acquireTarget;
           if (hovered && !lockedTargets.includes(hovered)) {
             const screen = worldToScreen(getTargetX(hovered), getTargetY(hovered), camRef);
             const radius = _targetingScreenRadius(hovered, camRef.zoom);
             const ready = drawSingleTargetingReticle(ctx, screen.x, screen.y, radius, targetingMode.acquireProgress, '#ffb648', '#ffd27a', visualScale);
+            drawTargetingSnapEcho(ctx, screen.x, screen.y, radius + 14 * visualScale, targetingMode.acquireReadyFx, '#ffd27a', visualScale);
             _targetingLabel(
-              ready ? 'SINGLE • LPM: LOCK' : `SINGLE • NAMIAR ${Math.round(targetingMode.acquireProgress * 100)}%`,
+              ready ? '◂ SINGLE • LPM: LOCK ▸' : `SINGLE • NAMIAR ${Math.round(targetingMode.acquireProgress * 100)}%`,
               screen.x,
               screen.y + radius + 28 * visualScale,
               ready ? '#ffd27a' : '#ffb648',
@@ -22549,13 +22741,17 @@
             const target = targetingMode.groupCandidates[i];
             const progress = targetingMode.groupAcquisition.get(target) || 0;
             const screen = worldToScreen(getTargetX(target), getTargetY(target), camRef);
-            if (drawMultiTargetingNode(ctx, screen.x, screen.y, _targetingScreenRadius(target, camRef.zoom), progress, '#ffb648', '#ffd27a', visualScale)) readyCount++;
+            const nodeRadius = _targetingScreenRadius(target, camRef.zoom);
+            if (drawMultiTargetingNode(ctx, screen.x, screen.y, nodeRadius, progress, '#ffb648', '#ffd27a', visualScale)) readyCount++;
+            drawTargetingSnapEcho(ctx, screen.x, screen.y, nodeRadius + 10 * visualScale, targetingMode.groupReadyFx.get(target) || 0, '#ffd27a', visualScale);
           }
           for (let i = 0; i < lockedTargets.length; i++) {
             const target = lockedTargets[i];
             if (!isTargetAlive(target) || target.__targetingSubsystem || targetingMode.groupCandidates.includes(target)) continue;
             const screen = worldToScreen(getTargetX(target), getTargetY(target), camRef);
-            drawMultiTargetingNode(ctx, screen.x, screen.y, _targetingScreenRadius(target, camRef.zoom), 1, '#ff4d5e', '#ff8a94', visualScale);
+            const lockedRadius = _targetingScreenRadius(target, camRef.zoom);
+            drawMultiTargetingNode(ctx, screen.x, screen.y, lockedRadius, 1, '#ff4d5e', '#ff8a94', visualScale);
+            drawTargetingLockRing(ctx, screen.x, screen.y, lockedRadius + 12 * visualScale, '#ff4d5e', visualScale);
           }
           const count = targetingMode.groupCandidates.length;
           const frameColor = count > 0 && readyCount === count ? '#ffd27a' : '#34e7ff';
@@ -22573,7 +22769,7 @@
           if (count > 0) {
             const labelOffset = targetingMode.groupH * 0.5 + 18 * visualScale;
             _targetingLabel(
-              readyCount === count ? `MULTI • ${count} GOTOWYCH • LPM: LOCK` : `MULTI • NAMIAR ${readyCount}/${count}`,
+              readyCount === count ? `◂ MULTI • ${count} GOTOWYCH • LPM: LOCK ▸` : `MULTI • NAMIAR ${readyCount}/${count}`,
               targetingMode.groupX + Math.sin(targetingMode.groupAngle) * labelOffset,
               targetingMode.groupY - Math.cos(targetingMode.groupAngle) * labelOffset,
               frameColor,

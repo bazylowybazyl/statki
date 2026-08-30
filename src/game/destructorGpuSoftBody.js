@@ -461,13 +461,38 @@ export const DestructorGpuSoftBody = {
       data[base + 7] = (s?.active && !s?.isDebris) ? 1.0 : 0.0;
     }
 
-    // Mass-based damping: bigger ships get stronger damping so waves die faster
-    const massDampMul = 0.75 + 0.25 * Math.min(1.0, 200 / count);
-    const effectiveDamping = damping * massDampMul;
+    // Liczba iteracji musi być znana PRZED zapisem parametrów: shader nie zna
+    // dt, więc `def += vel` to przyrost NA ITERACJĘ, a nie na sekundę.
+    const forcedAwake = (Number(entity?._gpuForceAwakeFrames) || 0) > 0;
+    const crashShardThreshold = Math.max(256, Number(config?.gpuSoftBodyCrashShardThreshold) || 1200);
+    let GPU_ITERS = 3;
+    if (forcedAwake && count >= crashShardThreshold) {
+      GPU_ITERS = Math.max(1, Number(config?.gpuSoftBodyCrashIters) || 1);
+    } else if (forcedAwake && count >= Math.floor(crashShardThreshold * 0.6)) {
+      GPU_ITERS = 2;
+    }
 
-    this._paramsScratch[0] = Math.max(0, Number(k) || 0);
+    // Tłumienie zależne od rozmiaru kadłuba idzie do TEJ SAMEJ potęgi co bazowe
+    // (damping = base^f), inaczej mnożnik masy nie jest znormalizowany po dt
+    // i realne tłumienie zależy od fps.
+    const massDampMul = 0.75 + 0.25 * Math.min(1.0, 200 / count);
+    const dampingFrames = Math.max(0.0001, Number(this._dampingFrames) || 1);
+    const dispatchDamping = Math.max(0.05, Number(damping) || 0.92) * Math.pow(massDampMul, dampingFrames);
+
+    // Podział na sub-kroki. Wcześniej PEŁNE k i PEŁNY damping leciały GPU_ITERS
+    // razy, więc liczba iteracji zmieniała tempo symulacji zamiast dokładności:
+    // dla wielkiego kadłuba 0.744^3 = 0.41 tłumienia na dispatch — fala gasła
+    // do 1/e w ~3 klatkach i propagacja była niewidoczna. Do tego tryb crash
+    // schodził do 1 iteracji, czyli 3x wolniejsza fala dokładnie w chwili
+    // zderzenia. Teraz n iteracji z iterK/iterDamping daje ten sam wynik co
+    // jedna z k/dispatchDamping, a GPU_ITERS wpływa już tylko na dokładność.
+    const clampedK = Math.min(0.999, Math.max(0, Number(k) || 0));
+    const iterK = GPU_ITERS > 1 ? (1 - Math.pow(1 - clampedK, 1 / GPU_ITERS)) : clampedK;
+    const iterDamping = GPU_ITERS > 1 ? Math.pow(dispatchDamping, 1 / GPU_ITERS) : dispatchDamping;
+
+    this._paramsScratch[0] = iterK;
     this._paramsScratch[1] = Math.max(1, Number(config?.maxDeform) || 200);
-    this._paramsScratch[2] = Math.max(0.1, effectiveDamping);
+    this._paramsScratch[2] = Math.max(0.1, iterDamping);
     this._paramsScratch[3] = count;
     this._paramsScratch[4] = Number(config?.yieldPoint) || 50;
     this._paramsScratch[5] = Number(config?.tearThreshold) || 150;
@@ -485,14 +510,6 @@ export const DestructorGpuSoftBody = {
 
     const shardBytes = count * SHARD_STRIDE_BYTES;
     const workgroups = Math.ceil(count / WORKGROUP_SIZE);
-    const forcedAwake = (Number(entity?._gpuForceAwakeFrames) || 0) > 0;
-    const crashShardThreshold = Math.max(256, Number(config?.gpuSoftBodyCrashShardThreshold) || 1200);
-    let GPU_ITERS = 3;
-    if (forcedAwake && count >= crashShardThreshold) {
-      GPU_ITERS = Math.max(1, Number(config?.gpuSoftBodyCrashIters) || 1);
-    } else if (forcedAwake && count >= Math.floor(crashShardThreshold * 0.6)) {
-      GPU_ITERS = 2;
-    }
     const encoder = this.device.createCommandEncoder();
     for (let iter = 0; iter < GPU_ITERS; iter++) {
       if (iter > 0) {
@@ -639,15 +656,28 @@ export const DestructorGpuSoftBody = {
     const applyBudgetMs = Math.max(0.2, Math.min(2.5, Number(config?.gpuSoftBodyApplyBudgetMs) || 0.9));
     const applyStart = nowMs();
     let appliedThisTick = 0;
+
+    // NAJSTARSZY NAJPIERW. Wcześniej było pop(), czyli LIFO: aplikowany był
+    // najświeższy wynik, a starsze zostawały w kolejce i trafiały do siatki
+    // DOPÓŹNIEJ — stan deformacji cofał się w czasie. Encja może mieć więcej niż
+    // jeden wynik w locie (state.isComputing zwalnia się w _readback, zanim
+    // wynik zostanie zaaplikowany), więc kolejność ma znaczenie realne, nie
+    // teoretyczne. Kolejka jest ograniczona backpressure'em (~96 pozycji), więc
+    // koszt shift() jest pomijalny.
     while (this._resultsQueue.length > 0 && appliedThisTick < applyPerTick) {
       if (appliedThisTick > 0 && (nowMs() - applyStart) >= applyBudgetMs) break;
-      const nextRes = this._resultsQueue.pop();
+      const nextRes = this._resultsQueue.shift();
       if (!nextRes) break;
       this._applyResult(nextRes);
       appliedThisTick++;
     }
+
+    // Przy przepełnieniu wyrzucamy NAJSTARSZE, nie najnowsze. Poprzednie pop()
+    // robiło dokładnie odwrotnie: zostawiało najstarsze wpisy i kasowało świeże,
+    // więc pod obciążeniem kolejka na stałe podawała nieaktualne deformacje i
+    // nigdy nie nadganiała.
     while (this._resultsQueue.length > this._maxQueueLen) {
-      const dropped = this._resultsQueue.pop();
+      const dropped = this._resultsQueue.shift();
       if (dropped?.data) this._arrayPool.push(dropped.data);
     }
 
@@ -669,7 +699,10 @@ export const DestructorGpuSoftBody = {
     const step = Number.isFinite(dt) ? Math.max(0.0001, dt) : (1 / 120);
     const k = 1 - Math.exp(-tension * step * 120);
     const dampingBase = Math.min(0.999, Math.max(0.7, Number(config?.gpuPropagationDamping) || 0.92));
-    const damping = Math.pow(dampingBase, step * 60);
+    // Wykładnik normalizacji dt trzymamy osobno: _dispatch dokłada do niego
+    // mnożnik masowy, żeby oba człony tłumienia były w tej samej potędze.
+    this._dampingFrames = step * 60;
+    const damping = Math.pow(dampingBase, this._dampingFrames);
 
     const minShards = Math.max(16, Number(config.gpuSoftBodyMinShards) || 64);
     const hotThreshold = Math.max(0.02, Number(config?.gpuSoftBodyHotThreshold) || 0.06);
