@@ -2,10 +2,15 @@
 // i SUB (namiar na podzespol). Czysty canvas 2D — funkcje dostaja kontekst
 // i wspolrzedne ekranowe, nie znaja stanu gry.
 import { targetingVisualScale } from '../game/targetingModes.js';
-import { GameState } from '../game/gameState.js';
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const TARGETING_CORNERS = Object.freeze([[-1, -1], [1, -1], [1, 1], [-1, 1]]);
+
+// Animacje celownika chodza w czasie RZECZYWISTYM. GameState.gameTime biegnie
+// z TIME_SCALE = 60, wiec oddech i kreskowanie leciały 60x za szybko.
+const uiTime = () => performance.now() / 1000;
+
+export const TARGETING_READY_FX = 0.35;
 
 export function targetingStrokeGlass(drawCtx, color, width = 1.5, alpha = 1) {
   drawCtx.save();
@@ -47,7 +52,8 @@ export function drawSingleTargetingReticle(drawCtx, x, y, radius, progress, base
   const ready = p >= 1;
   const q = 1 - Math.pow(1 - p, 2.4);
   const color = ready ? accent : base;
-  const breath = ready ? (0.84 + 0.16 * Math.sin(GameState.gameTime * 6)) : 1;
+  const t = uiTime();
+  const breath = ready ? (0.84 + 0.16 * Math.sin(t * 6)) : 1;
   const outer = Math.max(24, radius + 12) + 24 * (1 - q);
   const inner = Math.max(9, outer * 0.38);
   const bevel = clamp(outer * 0.14, 3, 9);
@@ -55,21 +61,44 @@ export function drawSingleTargetingReticle(drawCtx, x, y, radius, progress, base
   drawCtx.save();
   drawCtx.translate(x, y);
   drawCtx.scale(scale, scale);
-  x = 0;
-  y = 0;
   drawCtx.lineCap = 'square';
   drawCtx.lineJoin = 'miter';
   drawCtx.globalAlpha = (0.5 + 0.5 * q) * breath;
   drawCtx.beginPath();
-  for (const [sx, sy] of TARGETING_CORNERS) traceTargetingCorner(drawCtx, x, y, sx, sy, outer, inner, bevel);
-  targetingStrokeGlass(drawCtx, color, ready ? 2.8 : 2.1);
+  for (const [sx, sy] of TARGETING_CORNERS) traceTargetingCorner(drawCtx, 0, 0, sx, sy, outer, inner, bevel);
+  targetingStrokeGlass(drawCtx, color, ready ? 3.4 : 2.1);
 
-  drawCtx.globalAlpha *= 0.62;
+  drawCtx.globalAlpha = (0.5 + 0.5 * q) * breath * 0.62;
   drawCtx.beginPath();
-  for (const [sx, sy] of TARGETING_CORNERS) traceTargetingCorner(drawCtx, x, y, sx, sy, outer + 9, inner + 6, bevel);
+  for (const [sx, sy] of TARGETING_CORNERS) traceTargetingCorner(drawCtx, 0, 0, sx, sy, outer + 9, inner + 6, bevel);
   drawCtx.strokeStyle = color;
   drawCtx.lineWidth = 1.1;
   drawCtx.stroke();
+
+  // READY = zamkniety pierscien + kreski ukosne. Sam skok odcienia bursztynu
+  // byl nieczytelny, wiec stan "mozna LPM" dostaje wlasny ksztalt.
+  if (ready) {
+    drawCtx.globalAlpha = 0.5 + 0.5 * Math.sin(t * 5);
+    drawCtx.strokeStyle = accent;
+    drawCtx.shadowColor = accent;
+    drawCtx.shadowBlur = 12;
+    drawCtx.lineWidth = 1.8;
+    drawCtx.beginPath();
+    drawCtx.arc(0, 0, outer + 5, 0, Math.PI * 2);
+    drawCtx.stroke();
+    drawCtx.globalAlpha = 0.95;
+    drawCtx.lineWidth = 2.6;
+    for (let i = 0; i < 4; i++) {
+      drawCtx.save();
+      drawCtx.rotate(i * Math.PI * 0.5 + Math.PI * 0.25);
+      drawCtx.beginPath();
+      drawCtx.moveTo(0, -outer - 1);
+      drawCtx.lineTo(0, -outer - 12);
+      drawCtx.stroke();
+      drawCtx.restore();
+    }
+    drawCtx.shadowBlur = 0;
+  }
 
   const axis = outer + 19;
   const ray = clamp(outer * 0.68, 22, 54);
@@ -78,7 +107,6 @@ export function drawSingleTargetingReticle(drawCtx, x, y, radius, progress, base
   drawCtx.lineWidth = 1.5;
   for (let i = 0; i < 4; i++) {
     drawCtx.save();
-    drawCtx.translate(x, y);
     drawCtx.rotate(i * Math.PI * 0.5);
     drawCtx.beginPath();
     drawCtx.moveTo(-5, -axis);
@@ -86,7 +114,7 @@ export function drawSingleTargetingReticle(drawCtx, x, y, radius, progress, base
     drawCtx.lineTo(5, -axis);
     drawCtx.stroke();
     drawCtx.setLineDash([2, 6]);
-    drawCtx.lineDashOffset = -GameState.gameTime * 18;
+    drawCtx.lineDashOffset = -t * 18;
     drawCtx.beginPath();
     drawCtx.moveTo(0, -axis - 9);
     drawCtx.lineTo(0, -axis - ray);
@@ -94,27 +122,98 @@ export function drawSingleTargetingReticle(drawCtx, x, y, radius, progress, base
     drawCtx.restore();
   }
 
+  // Centralny zamek z projektu: obrys diamentu, wypelniony rdzen i 4 szewrony.
   drawCtx.setLineDash([]);
   drawCtx.globalAlpha = (0.62 + 0.38 * q) * breath;
-  const diamond = ready ? 11 : 9;
+  const d = ready ? 5.5 : 4.5;
+  const d2 = d * 2;
   drawCtx.beginPath();
-  drawCtx.moveTo(x, y - diamond);
-  drawCtx.lineTo(x + diamond, y);
-  drawCtx.lineTo(x, y + diamond);
-  drawCtx.lineTo(x - diamond, y);
+  drawCtx.moveTo(0, -d2);
+  drawCtx.lineTo(d2, 0);
+  drawCtx.lineTo(0, d2);
+  drawCtx.lineTo(-d2, 0);
   drawCtx.closePath();
   targetingFillGlass(drawCtx, color, 0.16);
   targetingStrokeGlass(drawCtx, color, 1.5, 0.9);
   drawCtx.fillStyle = color;
   drawCtx.beginPath();
-  drawCtx.moveTo(x, y - 4.5);
-  drawCtx.lineTo(x + 4.5, y);
-  drawCtx.lineTo(x, y + 4.5);
-  drawCtx.lineTo(x - 4.5, y);
+  drawCtx.moveTo(0, -d);
+  drawCtx.lineTo(d, 0);
+  drawCtx.lineTo(0, d);
+  drawCtx.lineTo(-d, 0);
   drawCtx.closePath();
   drawCtx.fill();
+
+  // Szewrony skaluja sie z celem — na duzym kadlubie musza odjechac od srodka.
+  const chevron = clamp(outer * 0.42, 16, 60) + 7 * (1 - q);
+  drawCtx.strokeStyle = color;
+  drawCtx.lineWidth = 1.5;
+  for (let i = 0; i < 4; i++) {
+    drawCtx.save();
+    drawCtx.rotate(i * Math.PI * 0.5);
+    drawCtx.beginPath();
+    drawCtx.moveTo(-4, -chevron + 4);
+    drawCtx.lineTo(0, -chevron);
+    drawCtx.lineTo(4, -chevron + 4);
+    drawCtx.stroke();
+    drawCtx.restore();
+  }
   drawCtx.restore();
   return ready;
+}
+
+// "Snap" po zlozeniu namiaru — echo rozchodzace sie na zewnatrz celownika.
+export function drawTargetingSnapEcho(drawCtx, x, y, radius, fx, color = '#ffd27a', visualScale = 1, duration = TARGETING_READY_FX) {
+  if (!(fx > 0)) return;
+  const scale = targetingVisualScale(visualScale);
+  const r = Math.max(0, Number(radius) || 0) / scale;
+  const k = clamp(fx / Math.max(0.0001, duration), 0, 1);
+  drawCtx.save();
+  drawCtx.translate(x, y);
+  drawCtx.scale(scale, scale);
+  drawCtx.globalAlpha = k * 0.9;
+  drawCtx.strokeStyle = color;
+  drawCtx.shadowColor = color;
+  drawCtx.shadowBlur = 8;
+  drawCtx.lineWidth = 2;
+  drawCtx.beginPath();
+  drawCtx.arc(0, 0, r * (1 + (1 - k) * 0.7), 0, Math.PI * 2);
+  drawCtx.stroke();
+  drawCtx.restore();
+}
+
+// Cel ZATWIERDZONY: wolno obracany pierscien kreskowany + kreski osiowe.
+export function drawTargetingLockRing(drawCtx, x, y, radius, color = '#ff4d5e', visualScale = 1) {
+  const scale = targetingVisualScale(visualScale);
+  const r = Math.max(0, Number(radius) || 0) / scale;
+  const t = uiTime();
+  drawCtx.save();
+  drawCtx.translate(x, y);
+  drawCtx.scale(scale, scale);
+  drawCtx.strokeStyle = color;
+  drawCtx.shadowColor = color;
+  drawCtx.shadowBlur = 6;
+
+  drawCtx.save();
+  drawCtx.rotate(-t * 1.1);
+  drawCtx.globalAlpha = 0.55;
+  drawCtx.lineWidth = 1;
+  drawCtx.setLineDash([4, 10]);
+  drawCtx.beginPath();
+  drawCtx.arc(0, 0, r + 9, 0, Math.PI * 2);
+  drawCtx.stroke();
+  drawCtx.restore();
+
+  drawCtx.setLineDash([]);
+  drawCtx.globalAlpha = 0.8;
+  drawCtx.lineWidth = 1.4;
+  drawCtx.beginPath();
+  drawCtx.moveTo(0, -r - 5); drawCtx.lineTo(0, -r + 3);
+  drawCtx.moveTo(0, r - 3); drawCtx.lineTo(0, r + 5);
+  drawCtx.moveTo(-r - 5, 0); drawCtx.lineTo(-r + 3, 0);
+  drawCtx.moveTo(r - 3, 0); drawCtx.lineTo(r + 5, 0);
+  drawCtx.stroke();
+  drawCtx.restore();
 }
 
 export function drawMultiTargetingFrame(drawCtx, cx, cy, width, height, angle, color, alpha = 0.95, visualScale = 1) {
@@ -198,7 +297,12 @@ export function drawMultiTargetingNode(drawCtx, x, y, radius, progress, base = '
   const ready = p >= 1;
   const q = 1 - Math.pow(1 - p, 2.4);
   const color = ready ? accent : base;
-  const size = clamp(radius * 0.3, 4, 13) + 10 * (1 - q);
+  // Romb musi OBEJMOWAC cel. Stary sufit clamp(...,4,13) trzymal boks przy 13 px
+  // niezaleznie od klasy okretu, wiec krazownik dostawal ten sam znacznik co dron.
+  // Sufit ustawia juz _targetingScreenRadius (340 px ekranu), wiec tutaj romb
+  // ma po prostu isc za rozmiarem celu; kurczenie sie limituje tylko od dolu.
+  const size = Math.max(9, radius * 0.92) + (10 + Math.min(radius * 0.3, 60)) * (1 - q);
+  const t = uiTime();
   drawCtx.save();
   drawCtx.translate(x, y);
   drawCtx.scale(scale, scale);
@@ -207,10 +311,24 @@ export function drawMultiTargetingNode(drawCtx, x, y, radius, progress, base = '
   drawCtx.beginPath();
   drawCtx.rect(-size, -size, size * 2, size * 2);
   targetingFillGlass(drawCtx, color, ready ? 0.18 : 0.09);
-  targetingStrokeGlass(drawCtx, color, ready ? 2 : 1.5, 0.86);
+  targetingStrokeGlass(drawCtx, color, ready ? clamp(size * 0.06, 2.2, 5) : 1.5, 0.86);
   if (ready) {
+    // Gotowy kontakt: pelne naroza + pulsujacy rdzen — widac go z drugiego konca ramki.
+    const dot = clamp(size * 0.16, 3, 11);
     drawCtx.fillStyle = color;
-    drawCtx.fillRect(-2.5, -2.5, 5, 5);
+    drawCtx.globalAlpha = 0.75 + 0.25 * Math.sin(t * 5);
+    drawCtx.fillRect(-dot, -dot, dot * 2, dot * 2);
+    const notch = clamp(size * 0.34, 6, 34);
+    drawCtx.globalAlpha = 0.95;
+    drawCtx.strokeStyle = color;
+    drawCtx.lineWidth = clamp(size * 0.08, 2.4, 6);
+    drawCtx.beginPath();
+    for (const [sx, sy] of TARGETING_CORNERS) {
+      drawCtx.moveTo(sx * size, sy * size - sy * notch);
+      drawCtx.lineTo(sx * size, sy * size);
+      drawCtx.lineTo(sx * size - sx * notch, sy * size);
+    }
+    drawCtx.stroke();
   }
   drawCtx.restore();
   return ready;

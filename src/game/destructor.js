@@ -115,6 +115,13 @@ export const DESTRUCTOR_CONFIG = {
   wreckSplitMinAngularKick: 0.012, //
 
   shieldRestitution: 0.35,
+  // Poniżej tej prędkości zbliżania kontakt z tarczą to nie zderzenie, tylko
+  // OPIERANIE SIĘ o nią. Ciąg AI (~150 u/s²) daje na tick fizyki 1.25 u/s, a
+  // separacja przy suficie 560 u/s² — 4.7 u/s. Odbicie z restytucją wstrzykiwało
+  // tam energię 240 razy na sekundę i okręt wibrował na granicy tarczy. Poniżej
+  // progu gasimy samą składową zbliżania: tarcza dalej nie przepuszcza, ale nic
+  // nie odskakuje. Realny taran (setki u/s) odbija się normalnie.
+  shieldImpulseMinSpeed: 10.0,
   shieldCollisionDamageScale: 0.8,
   shieldSeparationPercent: 0.6,
   shieldSeparationSlop: 2.0,
@@ -508,6 +515,19 @@ function isHexEligible(entity) {
 
 function isBrittleEntity(entity) {
   return entity?.destructionMaterial === 'brittle' || entity?.noElasticity === true;
+}
+
+// Czy propagację tej encji prowadzi GPU. Warunki muszą odpowiadać bramkom
+// w DestructorGpuSoftBody.tick(), bo od tego zależy, kto jest właścicielem
+// pól __velX/__velY (wyjście solvera) i __collVelX/__collVelY (jego wejście).
+function isGpuSoftBodyOwned(entity, grid) {
+  if ((DESTRUCTOR_CONFIG.gpuSoftBody | 0) !== 1) return false;
+  if (!DestructorGpuSoftBody?.active) return false;
+  if (!entity || entity.isRingSegment) return false;
+  if (entity.noGpuSoftBody === true) return false;
+  if (isBrittleEntity(entity)) return false;
+  const count = grid?.shards?.length || 0;
+  return count >= Math.max(16, Number(DESTRUCTOR_CONFIG.gpuSoftBodyMinShards) || 64);
 }
 
 function markBrittleSettleRange(grid, minIndex, maxIndex) {
@@ -1153,19 +1173,33 @@ class HexShard {
     return changed;
   }
 
+  // bypassLimit dotyczy WYŁĄCZNIE celu deformacji. Zgniot z kolizji niesie
+  // fizyczną skalę uderzenia i targetDeformation musi ją dostać w całości —
+  // ale `deformation` to pole, które renderer wstawia wprost do instance
+  // matrix (hexShips3D: gridX + deformation). Wpisanie tam pełnego zgniotu
+  // teleportowało heks: taran fregaty w pancernik przy 300 u/s dawał push
+  // ~144 jednostek, czyli 19 szerokości komórki (HEX_SPACING = 7.5) w JEDNYM
+  // ticku fizyki. Natychmiastowy zapis jest więc ograniczony zawsze, a resztę
+  // drogi do celu dokłada lerp w updateVisualDeformation — blacha się wgniata
+  // zamiast skakać.
   applyDeformation(vecX, vecY, waveMult = 1.0, bypassLimit = false) {
     const MAX_INSTANT = 8.0;
     const magSq = vecX * vecX + vecY * vecY;
     let instX = vecX, instY = vecY;
+    let tgtX = vecX, tgtY = vecY;
 
-    if (!bypassLimit && magSq > MAX_INSTANT * MAX_INSTANT) {
+    if (magSq > MAX_INSTANT * MAX_INSTANT) {
       const mag = Math.sqrt(magSq);
       instX = (vecX / mag) * MAX_INSTANT;
       instY = (vecY / mag) * MAX_INSTANT;
+      if (!bypassLimit) {
+        tgtX = instX;
+        tgtY = instY;
+      }
     }
 
-    this.targetDeformation.x += instX;
-    this.targetDeformation.y += instY;
+    this.targetDeformation.x += tgtX;
+    this.targetDeformation.y += tgtY;
     this.deformation.x += instX;
     this.deformation.y += instY;
 
@@ -1472,6 +1506,9 @@ export const DestructorSystem = {
   _bpGatherStamp: 1,
   _splitStamp: 1,
   _shieldPairCooldown: new Map(),
+  // Ostatni tick fizyki, w którym para dostała impuls tarczy. Osobno od
+  // _shieldPairCooldown, bo tamten dławi wyłącznie obrażenia.
+  _shieldImpulseTick: new Map(),
   _shieldPairIdCounter: 1,
   _splitUniqueBuffer: [],
   _crushStampCounter: 0,
@@ -1784,6 +1821,12 @@ export const DestructorSystem = {
       }
       const shards = grid.shards;
       const len = shards.length;
+      // __collVel* to impuls kolizji CZEKAJĄCY na _dispatch (konsumuje go
+      // dopiero upload do GPU). Kasowanie go tutaj, w rytmie renderu, gubiło
+      // słabsze uderzenia, jeśli encja nie została w tej klatce wysłana na GPU.
+      // __velX/__velY są wyjściem solvera i shader snapuje je do zera przy tym
+      // samym progu 0.03, więc tam czyszczenie jest bezpieczne.
+      const gpuOwned = isGpuSoftBodyOwned(e, grid);
       let wakeHoldFrames = Number(grid.wakeHoldFrames) || 0;
       if (wakeHoldFrames > 0) {
         wakeHoldFrames = Math.max(0, wakeHoldFrames - framesPerTick);
@@ -1871,14 +1914,17 @@ export const DestructorSystem = {
         );
         const activityPeak = Math.max(absDiffX, absDiffY, velX, velY);
 
+        const pendingVel = gpuOwned
+          ? 0
+          : Math.abs(Number(s.__collVelX) || 0) + Math.abs(Number(s.__collVelY) || 0);
+
         if (restPeak <= snapThreshold) {
           const hadResidual =
             Math.abs(tdx) > 0.0001 || Math.abs(tdy) > 0.0001 ||
             Math.abs(dx) > 0.0001 || Math.abs(dy) > 0.0001 ||
             Math.abs(Number(s.__velX) || 0) > 0.0001 ||
             Math.abs(Number(s.__velY) || 0) > 0.0001 ||
-            Math.abs(Number(s.__collVelX) || 0) > 0.0001 ||
-            Math.abs(Number(s.__collVelY) || 0) > 0.0001;
+            pendingVel > 0.0001;
           if (hadResidual) {
             s.deformation.x = 0;
             s.deformation.y = 0;
@@ -1886,18 +1932,24 @@ export const DestructorSystem = {
             s.targetDeformation.y = 0;
             s.__velX = 0;
             s.__velY = 0;
-            s.__collVelX = 0;
-            s.__collVelY = 0;
+            if (!gpuOwned) {
+              s.__collVelX = 0;
+              s.__collVelY = 0;
+            }
             visualChanged = true;
             if (i < dirtyMin) dirtyMin = i;
             if (i > dirtyMax) dirtyMax = i;
           }
         } else {
-          if (activityPeak <= velThreshold && (velX > 0.0001 || velY > 0.0001)) {
+          const erasableVel =
+            Math.abs(Number(s.__velX) || 0) + Math.abs(Number(s.__velY) || 0) + pendingVel;
+          if (activityPeak <= velThreshold && erasableVel > 0.0001) {
             s.__velX = 0;
             s.__velY = 0;
-            s.__collVelX = 0;
-            s.__collVelY = 0;
+            if (!gpuOwned) {
+              s.__collVelX = 0;
+              s.__collVelY = 0;
+            }
             visualChanged = true;
             if (i < dirtyMin) dirtyMin = i;
             if (i > dirtyMax) dirtyMax = i;
@@ -2944,12 +2996,42 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
     const effectiveRatioA = effectiveMassA / Math.max(1, effectiveMassB);
     const effectiveRatioB = effectiveMassB / Math.max(1, effectiveMassA);
 
-    // Impulse (only if approaching)
+    // Klucz pary liczymy TUTAJ, bo potrzebuje go już impuls — nie tylko blok
+    // obrażeń niżej.
+    if (!A._shieldPairId) A._shieldPairId = this._shieldPairIdCounter++;
+    if (!B._shieldPairId) B._shieldPairId = this._shieldPairIdCounter++;
+    const pairKey = A._shieldPairId < B._shieldPairId
+      ? `${A._shieldPairId}|${B._shieldPairId}`
+      : `${B._shieldPairId}|${A._shieldPairId}`;
+
+    // Impuls (tylko przy zbliżaniu) — RAZ NA TICK FIZYKI na parę, nie raz na
+    // iterację kolizji. resolveCollisions woła ten rezolwer collisionIterations
+    // razy na tick, więc odbicie leciało 240x/s. Cooldown pary (0.16 s) tego nie
+    // dławił: jego sprawdzenie siedzi 50 linii niżej, WEWNĄTRZ bloku obrażeń,
+    // czyli już po nałożeniu impulsu i korekty pozycji.
     if (velAlongNormal < 0) {
-      const rest = DESTRUCTOR_CONFIG.shieldRestitution;
-      const j = (-(1 + rest) * velAlongNormal) / invMassSum;
-      addEntityVelocity(A, nx * j * invMassA, ny * j * invMassA);
-      addEntityVelocity(B, -nx * j * invMassB, -ny * j * invMassB);
+      const impulseTicks = this._shieldImpulseTick;
+      if (impulseTicks.get(pairKey) !== this._tick) {
+        impulseTicks.set(pairKey, this._tick);
+
+        // Poniżej progu to opieranie się o tarczę, nie zderzenie — restytucja
+        // schodzi do zera i impuls tylko gasi składową zbliżania (zderzenie
+        // idealnie plastyczne). Bez tego ciąg AI dopychającego się okrętu był
+        // zamieniany w energię odbicia i wracał jako drżenie.
+        const minBounce = Math.max(0, Number(DESTRUCTOR_CONFIG.shieldImpulseMinSpeed) || 0);
+        const rest = (-velAlongNormal) > minBounce
+          ? Math.max(0, Math.min(1, Number(DESTRUCTOR_CONFIG.shieldRestitution) || 0))
+          : 0;
+        const j = (-(1 + rest) * velAlongNormal) / invMassSum;
+        addEntityVelocity(A, nx * j * invMassA, ny * j * invMassA);
+        addEntityVelocity(B, -nx * j * invMassB, -ny * j * invMassB);
+
+        if (impulseTicks.size > 2048) {
+          for (const [key, tick] of impulseTicks) {
+            if ((this._tick - tick) > 4) impulseTicks.delete(key);
+          }
+        }
+      }
     }
 
     // Position correction (anti-penetration)
@@ -2993,11 +3075,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
     const damageStep = Math.max(0, impactStep - damageStepOffset);
 
     if (damageStep > 0) {
-      if (!A._shieldPairId) A._shieldPairId = this._shieldPairIdCounter++;
-      if (!B._shieldPairId) B._shieldPairId = this._shieldPairIdCounter++;
-      const pairIdA = A._shieldPairId;
-      const pairIdB = B._shieldPairId;
-      const pairKey = pairIdA < pairIdB ? `${pairIdA}|${pairIdB}` : `${pairIdB}|${pairIdA}`;
+      // pairKey policzony wyżej, razem z bramką impulsu.
       const pairCooldown = Math.max(0, Number(DESTRUCTOR_CONFIG.shieldCollisionCooldown) || 0.16);
       const shieldPairCooldown = this._shieldPairCooldown;
       const nowSec = nowMs() * 0.001;
@@ -3263,6 +3341,49 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
       nx *= invNormalLen;
       ny *= invNormalLen;
 
+      // Normalna ze środków mas — stabilna, nie zależy od tego, w którą komórkę
+      // siatki trafił narrowphase.
+      const centerDx = aX - bX;
+      const centerDy = aY - bY;
+      const centerLenSq = centerDx * centerDx + centerDy * centerDy;
+      let centerNx = nx;
+      let centerNy = ny;
+      if (centerLenSq > 1e-8) {
+        const invCenterLen = 1 / Math.sqrt(centerLenSq);
+        centerNx = centerDx * invCenterLen;
+        centerNy = centerDy * invCenterLen;
+      }
+
+      // JAKOŚĆ PRÓBKI STYKU decyduje, na ile ufamy normalnej kontaktu.
+      // Jeden kontakt na siatce heksów NIE niesie kierunku zderzenia: kolumny są
+      // przesunięte o pół wysokości heksa, więc narrowphase trafia na przemian
+      // w komórkę nad i pod linią styku, a normalna przeskakuje między dwoma
+      // kierunkami lustrzanymi. Pomiar przy taranie CZOŁOWYM (oba kadłuby w osi):
+      // kąt normalnej skakał -155° <-> +154°, 148 razy na 240 ticków, przy
+      // contactsCount = 1 — i szarpał ofiarę BOKIEM (135 zwrotów vy), mimo że
+      // zderzenie nie miało żadnej składowej bocznej.
+      // Mieszamy więc normalną styku ze stabilną normalną środków tą samą miarą
+      // (contactPatchFullCount), którą już tłumimy człon kątowy niżej. Przy
+      // szerokim styku (4+ kontaktów) nic się nie zmienia.
+      const patchFull = Math.max(1, Number(DESTRUCTOR_CONFIG.contactPatchFullCount) || 4);
+      const patchFactor = Math.min(1, contactsCount / patchFull);
+
+      if (patchFactor < 1) {
+        const blendNx = nx * patchFactor + centerNx * (1 - patchFactor);
+        const blendNy = ny * patchFactor + centerNy * (1 - patchFactor);
+        const blendLenSq = blendNx * blendNx + blendNy * blendNy;
+        // Gdy obie normalne są niemal przeciwne, mieszanka degeneruje się do
+        // zera — wtedy zostaje ta stabilna.
+        if (blendLenSq > 1e-6) {
+          const invBlend = 1 / Math.sqrt(blendLenSq);
+          nx = blendNx * invBlend;
+          ny = blendNy * invBlend;
+        } else {
+          nx = centerNx;
+          ny = centerNy;
+        }
+      }
+
       const rAx = worldHitX - aX;
       const rAy = worldHitY - aY;
       const rBx = worldHitX - bX;
@@ -3280,16 +3401,6 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
       const impactSpeed = Math.sqrt(dvx * dvx + dvy * dvy);
       const velAlongNormal = dvx * nx + dvy * ny;
       const approachSpeed = Math.max(0, -velAlongNormal);
-      const centerDx = aX - bX;
-      const centerDy = aY - bY;
-      const centerLenSq = centerDx * centerDx + centerDy * centerDy;
-      let centerNx = nx;
-      let centerNy = ny;
-      if (centerLenSq > 1e-8) {
-        const invCenterLen = 1 / Math.sqrt(centerLenSq);
-        centerNx = centerDx * invCenterLen;
-        centerNy = centerDy * invCenterLen;
-      }
       const centerApproachSpeed = Math.max(0, -(relVx * centerNx + relVy * centerNy));
       const effectiveApproachSpeed = Math.max(approachSpeed, centerApproachSpeed);
       const tx = -ny;
@@ -3299,10 +3410,11 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
       const invMassA = 1 / massA;
       const invMassB = 1 / massB;
       const slop = 0.01;
-      // Normalna ze środków mas jest stabilniejsza niż normalna pierwszego kontaktu
-      // (ta na pierwszej styczności heksów bywa diagonalna) — bierzemy ją, gdy daje
-      // większą prędkość zbliżania.
-      const useCenterNormal = centerApproachSpeed > approachSpeed;
+      // Dawny przełącznik useCenterNormal (centerApproachSpeed > approachSpeed)
+      // rozwiązywał ten sam problem, ale SKOKIEM: przy taranie obie prędkości są
+      // prawie równe, więc przełącznik sam migotał i podmieniał kierunek separacji
+      // co tick. Zastąpiony ciągłym mieszaniem po jakości styku wyżej — nx/ny są
+      // już zmieszane, więc cała reszta funkcji używa jednej, spójnej normalnej.
 
       let bounceForce = 0;
 
@@ -3325,8 +3437,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         // 2.9e-5 i niemal PODWAJALO impuls j. Kadlub dostawal dwa razy mocniejszy
         // kop liniowy, odskakiwal, Atlas go doganial pod ciagiem i kopal znowu —
         // drzenie ~60 Hz zamiast mielenia.
-        const patchFull = Math.max(1, Number(DESTRUCTOR_CONFIG.contactPatchFullCount) || 4);
-        const patchFactor = Math.min(1, contactsCount / patchFull);
+        // patchFull/patchFactor policzone wyzej, razem z mieszaniem normalnej.
         const denom = invMassA + invMassB + rnA * rnA * invIa + rnB * rnB * invIb;
         const angInvIa = invIa * patchFactor;
         const angInvIb = invIb * patchFactor;
@@ -3424,8 +3535,8 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         // załatwia realRatioA/B niżej, liczone z mas — masa nie znika z modelu.
         const crushEnergy = impactSpeed * (DESTRUCTOR_CONFIG.crushImpulseScale ?? 0.25) * dtScale;
 
-        const crushNx = useCenterNormal ? centerNx : nx;
-        const crushNy = useCenterNormal ? centerNy : ny;
+        const crushNx = nx;
+        const crushNy = ny;
         let wForceAx = crushNx * crushEnergy;
         let wForceAy = crushNy * crushEnergy;
         let wForceBx = -crushNx * crushEnergy;
@@ -3550,10 +3661,11 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
               dirtyMaxA = A.hexGrid.shards.length - 1;
             }
 
-            if (!brittleA) {
-              sA.__collVelX = (sA.__collVelX || 0) + (pushX * 1.2);
-              sA.__collVelY = (sA.__collVelY || 0) + (pushY * 1.2);
-            }
+            // Prędkość kontaktu dokłada już applyDeformation (vec * 1.5, z
+            // clampem MAX_VEL). Drugi dopisek *1.2 szedł PO tym clampie, więc
+            // sumarycznie heks dostawał 2.7x push i wychodził poza sufit —
+            // przy pushX = 144 dawało to __collVel ~333, a shader dopuszcza
+            // 180, czyli def += 180 w jednej iteracji. Jedno źródło impulsu.
 
             if (doDamage) {
               const shardHpA = Math.max(1, Number(sA.maxHp) || DESTRUCTOR_CONFIG.shardHP);
@@ -3605,10 +3717,8 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
               dirtyMaxB = B.hexGrid.shards.length - 1;
             }
 
-            if (!brittleB) {
-              sB.__collVelX = (sB.__collVelX || 0) + (pushX * 1.2);
-              sB.__collVelY = (sB.__collVelY || 0) + (pushY * 1.2);
-            }
+            // Patrz komentarz przy obiekcie A — impuls kontaktu wchodzi
+            // wyłącznie przez applyDeformation.
 
             if (doDamage) {
               const shardHpB = Math.max(1, Number(sB.maxHp) || DESTRUCTOR_CONFIG.shardHP);
@@ -3670,8 +3780,8 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
 
       if (penetration > slop) {
         const corr = Math.max(penetration - slop, 0) / (invMassA + invMassB) * sepPercent;
-        const sepNx = useCenterNormal ? centerNx : nx;
-        const sepNy = useCenterNormal ? centerNy : ny;
+        const sepNx = nx;
+        const sepNy = ny;
         addEntityPosition(A, sepNx * corr * invMassA, sepNy * corr * invMassA);
         addEntityPosition(B, -sepNx * corr * invMassB, -sepNy * corr * invMassB);
       }
