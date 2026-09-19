@@ -265,6 +265,8 @@ export const DestructorGpuSoftBody = {
   _droppedReadbacks: 0,
   _tickId: 0,
   _cleanupStamp: 1,
+  // Round-robin po liscie encji — patrz komentarz przy petli dispatchu w tick().
+  _dispatchCursor: 0,
   _arrayPool: [],
 
   _getFloatArray(size) {
@@ -396,10 +398,12 @@ export const DestructorGpuSoftBody = {
   },
 
   _isEntityHot(entity, sampleLimit, threshold) {
-    if ((Number(entity._gpuForceAwakeFrames) || 0) > 0) {
-      entity._gpuForceAwakeFrames--;
-      return true;
-    }
+    // TYLKO ODCZYT. Dekrement siedzial tu i byl jedynym w calym torze 2D, a ta
+    // funkcja jest wolana dopiero po komplecie bramek dispatchera — encje spoza
+    // budzetu, ponizej minShards, brittle i ring-segmenty nie wygaszaly flagi
+    // NIGDY. Wygasza ja teraz DestructorSystem.updateVisualDeformation, raz na
+    // klatke renderu, dla kazdej encji z listy.
+    if ((Number(entity._gpuForceAwakeFrames) || 0) > 0) return true;
 
     const shards = entity?.hexGrid?.shards;
     if (!Array.isArray(shards) || shards.length === 0) return false;
@@ -715,9 +719,20 @@ export const DestructorGpuSoftBody = {
     else if (queueRatio > 0.35) dispatchPerTick = Math.min(dispatchPerTick, 1);
     let dispatchesThisFrame = 0;
 
-    for (const entity of list) {
+    // ROUND-ROBIN. Petla startowala ZAWSZE od indeksu 0 i przerywala po 2-3
+    // dispatchach, wiec w bitwie caly budzet GPU brały te same pierwsze encje
+    // listy — pozostale gorące kadluby nie liczyly propagacji nigdy, niezaleznie
+    // od tego jak mocno oberwaly. Kursor obchodzi liste w kolko: kazda encja
+    // doczeka sie obslugi najpozniej po ceil(N / dispatchPerTick) klatkach.
+    const listLen = list.length;
+    let cursor = this._dispatchCursor | 0;
+    if (cursor < 0 || cursor >= listLen) cursor = 0;
+    let scanned = 0;
+
+    for (; scanned < listLen; scanned++) {
       if (dispatchPerTick <= 0) break;
       if (this._resultsQueue.length >= queueBackpressureLimit) break;
+      const entity = list[(cursor + scanned) % listLen];
       if (!entity?.hexGrid?.shards || entity.dead) continue;
       if (entity?.isRingSegment) continue;
       if (entity?.noGpuSoftBody === true || entity?.destructionMaterial === 'brittle') continue;
@@ -762,7 +777,16 @@ export const DestructorGpuSoftBody = {
       state.dispatchCooldown = Math.max(0, dispatchInterval - 1);
       dispatchesThisFrame++;
 
-      if (dispatchesThisFrame >= dispatchPerTick) break;
+      // scanned++ przed break: nastepna klatka ma ruszyc od encji ZA ta, ktora
+      // wlasnie dostala dispatch.
+      if (dispatchesThisFrame >= dispatchPerTick) {
+        scanned++;
+        break;
+      }
     }
+
+    // Pelny obchod listy (scanned === listLen) zostawia kursor tam gdzie byl —
+    // skoro nikogo nie pominelismy, punkt startu nie ma znaczenia.
+    this._dispatchCursor = listLen > 0 ? ((cursor + scanned) % listLen) : 0;
   }
 };

@@ -232,13 +232,52 @@ export function createCourseRegistry(options = {}) {
     /** Licznik zdarzeń zamkniętych kursów — do panelu i do strojenia. */
     tally: { done: 0, wrecked: 0, stranded: 0, launched: 0 }
   };
-  // Indeks runtime: te same obiekty, bez kopiowania. Kursy zakończone zostają
+  // Indeksy runtime: te same obiekty, bez kopiowania. Kursy zakończone zostają
   // w `courses` dla historii, ale nie obciążają gorącej pętli.
   Object.defineProperty(registry, 'active', {
     value: [], writable: true, configurable: true, enumerable: false
   });
+  // Wyszukiwanie po identyfikatorze. Do 2026-09-01 ten indeks NIE ISTNIAŁ,
+  // a mimo to trzy moduły go czytały (`registry?.byId?.get?.(id)` w piractwie,
+  // dyspozytorze wojennym i u złomiarzy) — zawsze spadając na `courses.find()`,
+  // czyli liniowe przejście po całej historii, co tick, dla każdej kampanii,
+  // rejdu, przemytu i holownika. Optional chaining sprawiło, że brak indeksu
+  // nigdy nie dał sygnału.
+  //
+  Object.defineProperty(registry, 'byId', {
+    value: new Map(), writable: true, configurable: true, enumerable: false
+  });
+  // KARENCJA DLA DOMKNIĘTYCH — dwie generacje identyfikatorów do usunięcia.
+  //
+  // Bez niej `keepHistory: false` zacierał WYNIK kursu: rekord znikał w chwili
+  // zamknięcia, a wołający dostawał `null`. Cała czwórka pytających — wojna,
+  // rejdy, przemyt i złomiarze — czyta to samo `if (course && course.status
+  // !== 'done')`, więc brak rekordu wpadał w gałąź „doleciał". Skutek:
+  // kampania rozbita po drodze i tak rozgrywała bitwę pod celem, a holownik
+  // zestrzelony w polu meldował udany odzysk.
+  //
+  // Wszyscy czterej pytają RAZ NA TICK, zaraz po `advanceCourses`. Dwie
+  // generacje dają każdemu pełny tick zapasu, a zużycie pamięci ogranicza się
+  // do kursów domkniętych w dwóch ostatnich krokach — więc tryb, który powstał
+  // po to, żeby nic nie rosło, nadal nic nie gromadzi.
+  Object.defineProperty(registry, 'closing', {
+    value: { current: new Set(), previous: new Set() },
+    writable: true, configurable: true, enumerable: false
+  });
   registry.keepHistory = options.keepHistory !== false;
   return registry;
+}
+
+/**
+ * Przesuwa karencję o jedną generację: to, co czekało na usunięcie od
+ * poprzedniego ticku, znika z indeksu naprawdę.
+ */
+function retireClosed(registry) {
+  const closing = registry.closing;
+  if (!closing) return;
+  for (const id of closing.previous) registry.byId.delete(id);
+  closing.previous = closing.current;
+  closing.current = new Set();
 }
 
 function nextCourseId(registry, kind) {
@@ -311,13 +350,20 @@ export function launchCourse(registry, spec = {}) {
 
   registry.courses.push(course);
   registry.active.push(course);
+  registry.byId.set(course.id, course);
   registry.tally.launched++;
   return course;
 }
 
+/**
+ * Kurs po identyfikatorze — jedyne miejsce, w którym wolno go szukać.
+ *
+ * Zwraca także kursy ZAMKNIĘTE, dopóki trzyma je historia. To jest istotne dla
+ * wołających, którzy pytają o wynik: kampania wojenna, rejd, przemyt i holownik
+ * sprawdzają po fakcie, czy kurs dotarł, czy został rozbity po drodze.
+ */
 export function getCourse(registry, courseId) {
-  const id = String(courseId || '');
-  return registry?.courses?.find(course => course.id === id) || null;
+  return registry?.byId?.get(String(courseId || '')) || null;
 }
 
 export function getActiveCourses(registry) {
@@ -355,6 +401,10 @@ function closeCourse(registry, course, status, reason, now) {
   if (!registry.keepHistory) {
     const historyIndex = registry.courses.indexOf(course);
     if (historyIndex >= 0) registry.courses.splice(historyIndex, 1);
+    // Z indeksu NIE usuwamy od razu — rekord musi przeżyć tyle, żeby pytający
+    // zdążył odczytać, czy kurs doleciał, czy został rozbity. Patrz karencja
+    // przy `createCourseRegistry`.
+    registry.closing.current.add(course.id);
   }
 }
 
@@ -506,6 +556,10 @@ export function advanceCourses(registry, dt, options = {}) {
   events.length = 0;
   if (delta <= 0) return events;
 
+  // Karencja przesuwa się RAZ NA TICK i przed jakimkolwiek zamknięciem, żeby
+  // to, co domknie się za chwilę, dostało pełną generację zapasu.
+  retireClosed(registry);
+
   for (let i = registry.active.length - 1; i >= 0; i--) {
     const course = registry.active[i];
     if (!course || course.status !== COURSE_STATUS.ACTIVE) {
@@ -554,6 +608,16 @@ export function refuelCourse(registry, course, amount = Infinity) {
   course.closedReason = null;
   course.remaining = Math.max(0, course.duration - course.elapsed);
   if (!registry.active.includes(course)) registry.active.push(course);
+  // Wznowienie musi przywrócić kurs WSZĘDZIE, skąd zdjęło go zamknięcie.
+  // Przy `keepHistory: false` dotankowany kurs znów lata, ale nie było go już
+  // ani w historii, ani w indeksie — czyli `getCourse` nie widziało żywego,
+  // aktywnego rekordu.
+  if (!registry.courses.includes(course)) registry.courses.push(course);
+  registry.byId.set(course.id, course);
+  // Kurs znów lata, więc nie wolno go usunąć z indeksu przy najbliższym
+  // przesunięciu karencji — wypisujemy go z obu generacji.
+  registry.closing.current.delete(course.id);
+  registry.closing.previous.delete(course.id);
   registry.tally.stranded = Math.max(0, registry.tally.stranded - 1);
   return true;
 }

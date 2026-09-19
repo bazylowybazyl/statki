@@ -240,6 +240,88 @@ export function run() {
   t.equal('podsumowanie: wrak', counts.wrecked, 1);
   t.check('eskorta leci dalej', escort.status === COURSE_STATUS.ACTIVE);
 
+  // ----------------------------------------------------------
+  t.section('Indeks po identyfikatorze');
+
+  // Ten indeks przez długi czas NIE ISTNIAŁ, a mimo to trzy moduły go czytały
+  // przez `registry?.byId?.get?.(id)` — optional chaining zamieniało brak
+  // struktury w cichy fallback na liniowe `courses.find()`. Test pilnuje samego
+  // istnienia indeksu, nie tylko wyniku wyszukiwania: bez tego ta sama usterka
+  // wraca niezauważona, bo wynik jest poprawny w obu wariantach.
+  t.check('rejestr ma mapę byId', war.byId instanceof Map);
+  t.check('indeks nie zaśmieca serializacji', !Object.keys(war).includes('byId'));
+  t.equal('indeks pokrywa się z historią', war.byId.size, war.courses.length);
+  t.equal('szuka po id bez przemiatania', getCourse(war, escort.id)?.id, escort.id);
+  t.equal('zestrzelony zostaje w indeksie', getCourse(war, victim.id)?.status, COURSE_STATUS.WRECKED);
+  t.equal('nieznane id to null', getCourse(war, 'nie-ma-takiego'), null);
+  t.equal('brak rejestru nie wywraca', getCourse(null, escort.id), null);
+
+  // ----------------------------------------------------------
+  t.section('Karencja: wynik kursu musi przeżyć jego zamknięcie');
+
+  // Bez karencji `keepHistory: false` ZACIERAŁ WYNIK. Wojna, rejdy, przemyt
+  // i złomiarze pytają tym samym wzorcem — „jeśli kurs nie jest już aktywny,
+  // sprawdź, czy status to `done`" — więc brak rekordu wpadał w gałąź
+  // „doleciał". Kampania rozbita przez piratów rozgrywała bitwę pod celem,
+  // a zestrzelony holownik meldował udany odzysk.
+  const ulotny = createCourseRegistry({ keepHistory: false });
+  const znikajacy = launchCourse(ulotny, {
+    kind: COURSE_KIND.WAR,
+    stages: [travelStage('mars', 'earth', { distance: 800_000, seconds: 1000, fuel: 10 })],
+    fuelCapacity: 50
+  });
+  t.equal('świeży kurs jest w indeksie', getCourse(ulotny, znikajacy.id)?.id, znikajacy.id);
+
+  advanceCourses(ulotny, 400);
+  wreckCourse(ulotny, znikajacy, 'pirate');
+  t.equal('rozbity wypada z historii', ulotny.courses.length, 0);
+  // To jest sedno poprawki: pytający dostaje ROZSTRZYGNIĘCIE, nie `null`.
+  const poZestrzeleniu = getCourse(ulotny, znikajacy.id);
+  t.equal('ale zostaje w indeksie na karencji', poZestrzeleniu?.id, znikajacy.id);
+  t.equal('z zachowanym wynikiem', poZestrzeleniu?.status, COURSE_STATUS.WRECKED);
+  t.check('konsument odróżnia rozbity od dolotu',
+    !!poZestrzeleniu && poZestrzeleniu.status !== COURSE_STATUS.DONE);
+
+  // Konsumenci pytają raz na tick, więc jeden pełny tick zapasu wystarcza —
+  // ale karencja MUSI się kończyć, inaczej indeks rośnie bez końca dokładnie
+  // w trybie, który powstał po to, żeby nic nie rosło.
+  advanceCourses(ulotny, 5);
+  t.equal('po jednym ticku nadal widoczny', getCourse(ulotny, znikajacy.id)?.id, znikajacy.id);
+  advanceCourses(ulotny, 5);
+  t.equal('po drugim znika z indeksu', getCourse(ulotny, znikajacy.id), null);
+  t.equal('i nic po nim nie zostaje', ulotny.byId.size, 0);
+
+  // Zamknięcie przez dolot działa tą samą drogą.
+  const dowieziony = launchCourse(ulotny, {
+    kind: COURSE_KIND.HAUL,
+    stages: [travelStage('mars', 'earth', { distance: 800_000, seconds: 100, fuel: 10 })],
+    fuelCapacity: 50
+  });
+  advanceCourses(ulotny, 100);
+  t.equal('dolot też zostawia rozstrzygnięcie',
+    getCourse(ulotny, dowieziony.id)?.status, COURSE_STATUS.DONE);
+
+  // Dotankowanie WZNAWIA kurs, więc musi go przywrócić wszędzie, skąd zdjęło go
+  // zamknięcie — i wypisać z karencji, żeby żywy rekord nie zniknął z indeksu
+  // przy najbliższym przesunięciu generacji.
+  const suchy = createCourseRegistry({ keepHistory: false });
+  const bezPaliwa = launchCourse(suchy, {
+    kind: COURSE_KIND.HAUL,
+    stages: [travelStage('mars', 'jupiter', { distance: 800_000, seconds: 1000, fuel: 90 })],
+    fuelCapacity: 90,
+    fuel: 5
+  });
+  advanceCourses(suchy, 10);
+  t.equal('stanął bez paliwa', bezPaliwa.status, COURSE_STATUS.STRANDED);
+  t.equal('unieruchomiony nadal do znalezienia', getCourse(suchy, bezPaliwa.id)?.id, bezPaliwa.id);
+  t.check('tankowiec wznawia', refuelCourse(suchy, bezPaliwa, 90) === true);
+  t.equal('wznowiony wraca do indeksu', getCourse(suchy, bezPaliwa.id)?.id, bezPaliwa.id);
+  t.equal('i do historii', suchy.courses.length, 1);
+  t.equal('bez duplikatu w aktywnych', getActiveCourses(suchy).length, 1);
+  advanceCourses(suchy, 5);
+  advanceCourses(suchy, 5);
+  t.equal('karencja nie zabiera wznowionego', getCourse(suchy, bezPaliwa.id)?.id, bezPaliwa.id);
+
   return t.results;
 }
 

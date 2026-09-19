@@ -8,15 +8,19 @@
 // patrzy z góry, więc wieżyczka i tak była płaską sylwetką — tutaj rysujemy ją
 // wprost.
 //
-// Sylwetki są wyprowadzone 1:1 z geometrii builderów 3D (te same offsety luf,
+// Sylwetki proceduralne są wyprowadzone z geometrii builderów 3D (te same offsety luf,
 // te same punkty wylotowe), żeby nie zmienić czytelności ani pozycji błysków.
 // Błyski wylotowe, pociski, wiązki i trafienia ZOSTAJĄ w 3D — ten moduł oddaje
 // im tylko pozycję wylotu przez `triggerShot`.
 //
 // Koszt rysowania: jedna macierz + 2–4 `fill(Path2D)` na wieżyczkę. Ścieżki są
 // budowane RAZ na sylwetkę i cache'owane; per klatkę nie powstaje żadna geometria.
+// Yamato w bliskim LOD używa współdzielonego atlasu (korpus + trzy lufy).
+// Zachowuje proceduralny fallback, daleki LOD i te same punkty wylotowe.
 
 import { getEntityWeaponTier, WEAPON_TIER_SCALE } from '../data/ships.js';
+import { YamatoSprite2D } from './yamatoSprite2D.js';
+import { mountedWeaponRenderAngle } from '../game/weaponAim.js';
 
 // Barwy odpowiadają materiałom Lambert z weapon3DSystem, rozjaśnione o ~1.6×,
 // bo na kanwie nie ma oświetlenia sceny, które je podbijało.
@@ -576,18 +580,6 @@ function entityLocalScale(entity) {
   };
 }
 
-function nearestTurretIndex(turretList, hpx, hpy) {
-  let bestIdx = 0;
-  let bestDist = Infinity;
-  for (let i = 0; i < turretList.length; i++) {
-    const dx = hpx - (turretList[i].t?.offset?.x || 0);
-    const dy = hpy - (turretList[i].t?.offset?.y || 0);
-    const d2 = dx * dx + dy * dy;
-    if (d2 < bestDist) { bestDist = d2; bestIdx = i; }
-  }
-  return bestIdx;
-}
-
 let lastFxTimeSec = 0;
 
 export const Turret2D = {
@@ -595,6 +587,18 @@ export const Turret2D = {
 
   /** Sylwetka dla danej broni — wystawione dla testów i podglądu w konsoli. */
   resolveSpec,
+
+  // Pure geometry lookup: usable by simulation even offscreen or with VFX off.
+  // The caller owns out; no render records, interpolation or recoil affect it.
+  writeMuzzleOffset(entity, def, barrelIndex, out) {
+    const spec = resolveSpec(def.id, def.category);
+    const tier = getEntityWeaponTier(entity);
+    const scale = weaponScale(def.size, def.category) * (WEAPON_TIER_SCALE[tier] || WEAPON_TIER_SCALE.Capital).turret;
+    const muzzle = spec.m[Math.max(0, barrelIndex | 0) % spec.m.length];
+    out.x = muzzle[0] * scale;
+    out.y = muzzle[1] * scale;
+    return out;
+  },
 
   beginFrame() {
     frameCount = 0;
@@ -625,8 +629,8 @@ export const Turret2D = {
     const sinA = Math.sin(shipAngle);
 
     const emit = (uid, def, localX, localY, angle, useHardpointScale) => {
-      const psx = useHardpointScale ? local.x : shipScale;
-      const psy = useHardpointScale ? local.y : shipScale;
+      const psx = useHardpointScale ? local.x : (entity.isPlayer ? 1 : shipScale);
+      const psy = useHardpointScale ? local.y : (entity.isPlayer ? 1 : shipScale);
       const lx = (Number(localX) || 0) * psx;
       const ly = (Number(localY) || 0) * psy;
       const wx = shipEx + lx * cosA - ly * sinA;
@@ -658,12 +662,8 @@ export const Turret2D = {
       ? window.__interpShipTurretAngles
       : null;
     const pick = (v, fallback) => (Number.isFinite(v) ? v : fallback);
-    const turretList = [
-      { t: entity.turret, ang: pick(interp?.turret1, entity.turret?.angle ?? shipAngle) },
-      { t: entity.turret2, ang: pick(interp?.turret2, entity.turret2?.angle ?? shipAngle) },
-      { t: entity.turret3, ang: pick(interp?.turret3, entity.turret3?.angle ?? shipAngle) },
-      { t: entity.turret4, ang: pick(interp?.turret4, entity.turret4?.angle ?? shipAngle) }
-    ];
+    const aimAlpha = (typeof window !== 'undefined' && Number.isFinite(window.__weaponAimAlpha))
+      ? window.__weaponAimAlpha : 1;
     const ciwsInterp = Array.isArray(interp?.ciws) ? interp.ciws : null;
 
     const emitTurretBound = (list, prefix) => {
@@ -671,15 +671,13 @@ export const Turret2D = {
         const def = list[i]?.weapon;
         if (!shouldRenderTurret(def)) continue;
         const hp = list[i].hp?.pos || list[i].hp;
-        const hpx = hp?.x ?? 0;
-        const hpy = hp?.y ?? 0;
-        const turret = turretList[nearestTurretIndex(turretList, hpx, hpy)];
+        if (!hp) continue;
         emit(
           `${prefix}_${i}_${def.id || def.category || 'x'}`,
           def,
-          hp?.x ?? turret.t?.offset?.x ?? 0,
-          hp?.y ?? turret.t?.offset?.y ?? 0,
-          turret.ang,
+          hp.x ?? 0,
+          hp.y ?? 0,
+          mountedWeaponRenderAngle(entity, list[i], aimAlpha),
           false
         );
       }
@@ -705,6 +703,7 @@ export const Turret2D = {
 
     emitTurretBound(entity.weapons.missile || [], 'p_missile');
     emitTurretBound(entity.weapons.special || [], 'p_special');
+    emitTurretBound(entity.weapons.special_missile || [], 'p_special_missile');
   },
 
   /**
@@ -840,7 +839,7 @@ export const Turret2D = {
 
   /**
    * Rysuje wszystkie wieżyczki zebrane w tej klatce.
-   * Jedna macierz + 2–4 `fill(Path2D)` na wieżyczkę, zero budowy ścieżek.
+   * Cache Path2D lub atlas Yamato; zero budowy ścieżek i obrazów per klatkę.
    */
   draw(ctx, cam) {
     if (!this.enabled || frameCount === 0 || !ctx) return 0;
@@ -890,6 +889,11 @@ export const Turret2D = {
 
       const barrelBack = st ? st.barrel : 0;
       const housingBack = st ? st.housing : 0;
+
+      if (spec === SPECS.yamato && YamatoSprite2D.draw(ctx, a, b, c, d, sx, sy, housingBack, barrelBack)) {
+        drawn++;
+        continue;
+      }
 
       for (let li = 0; li < layers.length; li++) {
         const layer = layers[li];

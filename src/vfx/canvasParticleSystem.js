@@ -1,5 +1,23 @@
 // src/vfx/canvasParticleSystem.js
 
+// Rzutowanie bez alokacji. window.worldToScreen oddaje SWIEZY obiekt na kazde
+// wywolanie, a ta warstwa wola je tysiace razy na klatke (budzet 4500 czastek
+// + 2 rzuty na pocisk). Kazdy scratch nalezy do jednej petli i nie przezywa
+// wywolania, ktore go uzywa — dlatego pocisk, potrzebujacy pozycji BIEZACEJ
+// i POPRZEDNIEJ naraz, dostaje dwa osobne.
+const _sScratch = { x: 0, y: 0 };
+const _prevScratch = { x: 0, y: 0 };
+const _pScratch = { x: 0, y: 0 };
+
+function projectInto(wx, wy, cam, out) {
+  const fn = (typeof window !== 'undefined') ? window.worldToScreenInto : null;
+  if (fn) return fn(wx, wy, cam, out);
+  const s = window.worldToScreen(wx, wy, cam);
+  out.x = s.x;
+  out.y = s.y;
+  return out;
+}
+
 export const CanvasVFX = {
   enabled: true,
   MAX_PARTICLES: 8000,
@@ -463,14 +481,21 @@ export const CanvasVFX = {
   drawParticles(ctx, cam) {
     ctx.save();
     let drawn = 0;
+    const vw = window.W || ctx.canvas.width;
+    const vh = window.H || ctx.canvas.height;
+    const s = _pScratch;
     for (const p of this.activeParticles) {
       if (p.flash || p.beam) continue;
-      if (drawn >= this.MAX_PARTICLES_DRAW) break;
-      drawn++;
-      const s = window.worldToScreen(p.pos.x, p.pos.y, cam);
-      if (s.x < -10 || s.x > window.W + 10 || s.y < -10 || s.y > window.H + 10) continue;
+      // ODRZUTY PRZED BUDZETEM. Wczesniej `drawn++` szlo przed testem kadru, wiec
+      // eksplozja poza ekranem wyczerpywala limit 4500 i wycinala czastki, ktore
+      // gracz naprawde widzi. Kolejnosc: najtanszy test (rozmiar) -> rzut -> kadr
+      // -> dopiero budzet.
       const size = p.size * cam.zoom;
       if (size < 0.8) continue;
+      projectInto(p.pos.x, p.pos.y, cam, s);
+      if (s.x < -10 || s.x > vw + 10 || s.y < -10 || s.y > vh + 10) continue;
+      if (drawn >= this.MAX_PARTICLES_DRAW) break;
+      drawn++;
       ctx.globalAlpha = Math.max(0, Math.min(1, 1 - p.age / p.life));
       ctx.fillStyle = p.color;
       ctx.fillRect(s.x - size * 0.5, s.y - size * 0.5, size, size);
@@ -481,12 +506,16 @@ export const CanvasVFX = {
   drawFlashes(ctx, cam) {
     ctx.save();
     let drawn = 0;
+    const vw = window.W || ctx.canvas.width;
+    const vh = window.H || ctx.canvas.height;
+    const s = _pScratch;
     for (const p of this.activeParticles) {
       if (!p.flash) continue;
+      // Patrz drawParticles: budzet konsumuja tylko blyski faktycznie rysowane.
+      projectInto(p.pos.x, p.pos.y, cam, s);
+      if (s.x < -50 || s.x > vw + 50 || s.y < -50 || s.y > vh + 50) continue;
       if (drawn >= this.MAX_PARTICLES_DRAW) break;
       drawn++;
-      const s = window.worldToScreen(p.pos.x, p.pos.y, cam);
-      if (s.x < -50 || s.x > window.W + 50 || s.y < -50 || s.y > window.H + 50) continue;
       const t = Math.max(0, Math.min(1, 1 - p.age / p.life));
       const size = p.size * cam.zoom;
       ctx.globalAlpha = t * 0.3;
@@ -503,10 +532,13 @@ export const CanvasVFX = {
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.globalCompositeOperation = 'lighter';
+    const vw = window.W || ctx.canvas.width;
+    const vh = window.H || ctx.canvas.height;
+    const s = _pScratch;
     for (const p of this.lightningParticles) {
       const t = 1 - (p.age / p.maxLife);
-      const s = window.worldToScreen(p.x, p.y, cam);
-      if (s.x < -50 || s.x > window.W + 50 || s.y < -50 || s.y > window.H + 50) continue;
+      projectInto(p.x, p.y, cam, s);
+      if (s.x < -50 || s.x > vw + 50 || s.y < -50 || s.y > vh + 50) continue;
       ctx.strokeStyle = `rgba(180, 240, 255, ${t * 0.8})`;
       ctx.lineWidth = (1 + Math.random()) * cam.zoom;
       const len = p.size * t * 2.0 * cam.zoom;
@@ -546,10 +578,25 @@ export const CanvasVFX = {
     const vfx = b.vfx;
     const rx = (typeof b.px === 'number') ? b.px + (b.x - b.px) * alpha : b.x;
     const ry = (typeof b.py === 'number') ? b.py + (b.y - b.py) * alpha : b.y;
-    const s = window.worldToScreen(rx, ry, cam);
-    const prevS = window.worldToScreen(b.px ?? rx, b.py ?? ry, cam);
+    const s = projectInto(rx, ry, cam, _sScratch);
+    const prevS = projectInto(b.px ?? rx, b.py ?? ry, cam, _prevScratch);
     const angle = Math.atan2(b.vy, b.vx);
     const lenPx = (vfx.len || 50) * cam.zoom;
+
+    // Pociski poza kadrem: petla rysujaca leci po WSZYSTKICH pociskach swiata,
+    // wiec strzelanina NPC vs NPC po drugiej stronie mapy placila tu za save/
+    // restore, gradienty i budowe sciezek. Kanwa i tak by je przycieła, ale
+    // dopiero na koncu potoku. AABB odcinka (prevS -> s) z zapasem na najgrubszy
+    // rysowany ksztalt: torpeda ma poswiate silnika okolo 68*zoom od srodka.
+    const _cullMargin = Math.max(64, lenPx + 80 * cam.zoom);
+    const _vw = window.W || ctx.canvas.width;
+    const _vh = window.H || ctx.canvas.height;
+    if (
+      Math.max(s.x, prevS.x) + _cullMargin < 0 ||
+      Math.max(s.y, prevS.y) + _cullMargin < 0 ||
+      Math.min(s.x, prevS.x) - _cullMargin > _vw ||
+      Math.min(s.y, prevS.y) - _cullMargin > _vh
+    ) return;
 
     if (b.type === 'torpedo') {
       ctx.save(); ctx.translate(s.x, s.y); ctx.rotate(angle);

@@ -19,7 +19,7 @@
  * samo widzi ją warstwa 3, gdy gracz jest w pobliżu.
  */
 
-import { COURSE_KIND, launchCourse, travelStage } from './courseRegistry.js';
+import { COURSE_KIND, launchCourse, travelStage, getCourse } from './courseRegistry.js';
 import { chooseRoute } from './travelNetwork.js';
 import { areFactionsHostile, getFactionStance } from '../../data/factions.js';
 import { RESOURCES } from '../../data/resources.js';
@@ -420,8 +420,7 @@ export function tickWar(war, dt, options = {}) {
   // 1. Kampanie w drodze — czy dotarły.
   for (let i = war.campaigns.length - 1; i >= 0; i--) {
     const campaign = war.campaigns[i];
-    const course = registry?.byId?.get?.(campaign.courseId)
-      || registry?.courses?.find(c => c.id === campaign.courseId);
+    const course = getCourse(registry, campaign.courseId);
 
     // Kurs zniknął z rejestru (dotarł albo został rozbity) — rozstrzygamy.
     if (!course || course.status !== 'active') {

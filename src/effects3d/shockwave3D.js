@@ -126,6 +126,10 @@ export class Shockwave3DManager {
         );
         wave.mesh.position.set(x, y, z);
         wave.mesh.scale.set(1, 1, 1);
+        // Core3D trzyma scene.matrixWorldAutoUpdate = false i przechodzi graf
+        // raz na klatke, na gorze render(). Fale ruszaja sie PO tym momencie
+        // (update() leci w srodku render()), wiec odswiezaja swoj wezel same.
+        wave.mesh.updateMatrixWorld();
         wave.mesh.material.uniforms.progress.value = 0;
         wave.mesh.material.uniforms.uColor.value.setHex(colorHex);
         wave.mesh.visible = true;
@@ -156,6 +160,9 @@ export class Shockwave3DManager {
                 scale * wave.axisScale.y,
                 scale * wave.axisScale.z
             );
+            // Patrz spawn(): reczny sync macierzy, bo update() chodzi juz po
+            // jedynym obchodzie grafu w Core3D.render().
+            wave.mesh.updateMatrixWorld();
         }
     }
 

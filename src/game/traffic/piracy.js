@@ -24,7 +24,9 @@
  * tę samą sieć, można go spotkać i zestrzelić.
  */
 
-import { COURSE_KIND, launchCourse, travelStage, dwellStage, DWELL_REASON } from './courseRegistry.js';
+import {
+  COURSE_KIND, launchCourse, travelStage, dwellStage, DWELL_REASON, getCourse
+} from './courseRegistry.js';
 import { RESOURCES } from '../../data/resources.js';
 
 export const PIRACY_MODEL = Object.freeze({
@@ -194,9 +196,7 @@ export function laneThreat(piracy, fromId, toId) {
 // Krok
 // ============================================================
 
-function courseById(registry, id) {
-  return registry?.byId?.get?.(id) || registry?.courses?.find(c => c.id === id) || null;
-}
+const courseById = getCourse;
 
 /** Kryjówki zamieniają kredyty na rejdy, ale tylko gdy mają na czym zarobić. */
 function launchRaids(piracy, options, events) {
