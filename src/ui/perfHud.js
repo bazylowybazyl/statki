@@ -13,6 +13,7 @@ const PERF_PANEL_HTML = `
   <div class="perf-row"><span class="perf-label">Frame p50 / p95</span><span class="perf-val" id="perfFramePercentiles">--</span></div>
   <div class="perf-row"><span class="perf-label">HexArena</span><span class="perf-val" id="perfHexArena">--</span></div>
   <div class="perf-row"><span class="perf-label">Hex LOD full/hybrid/far</span><span class="perf-val" id="perfHexLod">--</span></div>
+  <div class="perf-row"><span class="perf-label">Culling rys./odrzuc. (cienie)</span><span class="perf-val" id="perfCulling">--</span></div>
   <div class="perf-row"><span class="perf-label">Physics worker</span><span class="perf-val" id="perfPhysicsWorker">--</span></div>
   <div class="perf-row"><span class="perf-label">AI cadence actual/target</span><span class="perf-val" id="perfAiCadence">--</span></div>
   <div class="perf-row"><span class="perf-label">Untracked</span><span class="perf-val" id="perfFrameUntracked">--</span></div>
@@ -682,6 +683,7 @@ export const PerfHUD = {
       framePercentiles: document.getElementById('perfFramePercentiles'),
       hexArena: document.getElementById('perfHexArena'),
       hexLod: document.getElementById('perfHexLod'),
+      culling: document.getElementById('perfCulling'),
       physicsWorker: document.getElementById('perfPhysicsWorker'),
       aiCadence: document.getElementById('perfAiCadence'),
       frameUntracked: document.getElementById('perfFrameUntracked'),
@@ -1309,6 +1311,22 @@ export const PerfHUD = {
       e.hexLod.textContent = lod
         ? `${lod.fullBodies}/${lod.hybridBodies}/${lod.impostorBodies} | ${lod.fullHexes + lod.hybridHexes}/${lod.totalStructuralHexes}`
         : '--';
+    }
+    if (e.culling) {
+      // Odpowiedz na „czy odwrocenie kamery cokolwiek zdejmuje". Pierwsza liczba
+      // to encje, ktore przeszly pudlo widoku i dostaly pelna prace per-mesh;
+      // druga to odrzucone. Jesli przy odwroconej kamerze odrzutow jest ~0,
+      // pudlo jest za duze (OVERSCAN) albo bitwa dalej w nim siedzi.
+      // W nawiasie kandydaci na okludery shadow-shafts — ta petla ma WLASNY
+      // zasieg (halfView + 30k) i kamera jej nie zmniejsza.
+      const lod = window.__hexLodStats;
+      if (lod) {
+        const drawn = Math.max(0, (lod.entitiesIn | 0) - (lod.culled | 0));
+        e.culling.textContent = `${drawn}/${lod.culled | 0} z ${lod.entitiesIn | 0} (${lod.shaftCands | 0})`;
+        e.culling.style.color = (lod.entitiesIn > 40 && lod.culled === 0) ? '#fd4' : '';
+      } else {
+        e.culling.textContent = '--';
+      }
     }
     if (e.physicsWorker) {
       const workerStats = worldSource()?.physicsBridge?.getStats?.();

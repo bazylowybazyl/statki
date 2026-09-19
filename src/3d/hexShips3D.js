@@ -290,7 +290,15 @@ const lodFrameStats = {
   impostorBodies: 0,
   fullHexes: 0,
   hybridHexes: 0,
-  totalStructuralHexes: 0
+  totalStructuralHexes: 0,
+  // Bilans cullingu. Bez tego nie da sie odpowiedziec na pytanie „czy odwrocenie
+  // kamery cokolwiek zdejmuje" — reszta licznikow patrzy dopiero NA TO, co juz
+  // przeszlo przez bramke. `entitiesIn` to wejscie, `culled` to odrzuty pudlem
+  // widoku, `shaftCands` to kandydaci na okludery cieni (ta petla NIE uzywa
+  // pudla widoku, tylko wlasnego zasiegu, wiec kamera jej nie zmniejsza).
+  entitiesIn: 0,
+  culled: 0,
+  shaftCands: 0
 };
 
 const drawPerfScratch = {
@@ -1493,6 +1501,9 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
   lodFrameStats.fullHexes = 0;
   lodFrameStats.hybridHexes = 0;
   lodFrameStats.totalStructuralHexes = 0;
+  lodFrameStats.entitiesIn = 0;
+  lodFrameStats.culled = 0;
+  lodFrameStats.shaftCands = 0;
 
   const valid = state.validEntities;
   const vfxEntities = state.vfxEntities;
@@ -1508,6 +1519,7 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
   validSet.clear();
   for (const entity of entities) {
     if (!entity || entity.dead) continue;
+    lodFrameStats.entitiesIn++;
     valid.push(entity);
     const hideHexVisual = entity.hideHexVisual === true || entity.visual?.hideHexMesh === true;
     if (hideHexVisual) {
@@ -1520,6 +1532,7 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
 
     const visible = isEntityInCull(entity, cullInfo);
     if (!visible) {
+      lodFrameStats.culled++;
       const data = state.entityMeshes.get(entity);
       if (data?.mesh) data.mesh.visible = false;
       if (data?.armorMesh) data.armorMesh.visible = false;
@@ -1581,6 +1594,7 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
       if (Math.abs(ex - camX) > occluderReach || Math.abs(ey - camY) > occluderReach) continue;
       cands.push({ entity, grid, size, ex, ey, scaleX, scaleY });
     }
+    lodFrameStats.shaftCands = cands.length;
     if (cands.length > 1) cands.sort((a, b) => b.size - a.size);
     let registryFull = false;
     for (let i = 0; i < cands.length && !registryFull; i++) {

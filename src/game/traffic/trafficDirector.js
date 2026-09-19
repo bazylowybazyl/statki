@@ -28,9 +28,10 @@ import {
 } from '../stationEconomy.js';
 import { FACTION, areFactionsHostile, isDerelict } from '../../data/factions.js';
 import {
-  COURSE_KIND, DWELL_REASON,
+  COURSE_KIND, DWELL_REASON, COURSE_STATUS,
   launchCourse, advanceCourses, getActiveCourses, currentStage, stageProgress,
-  travelStage, dwellStage, wreckCourse, STAGE_KIND, moveDwellTo, extendStage
+  travelStage, dwellStage, wreckCourse, STAGE_KIND, moveDwellTo, extendStage,
+  getCourse
 } from './courseRegistry.js';
 import { laneThreat, depositLoot, recordPirateLoss } from './piracy.js';
 import {
@@ -1521,8 +1522,10 @@ function rollPiracy(director, dt) {
       // Przechwyt konwoju: część składu przepada, reszta ucieka.
       const wynik = resolveConvoyInterception(director.convoys, konwoj);
       for (const id of wynik.lost) {
-        const ofiara = active.find(entry => entry.id === id);
-        if (ofiara) strikeCourse(director, ofiara);
+        // Przez indeks, nie przez przemiatanie listy aktywnych: przy dużym
+        // konwoju to było skanowanie wszystkich kursów w locie RAZ NA OFIARĘ.
+        const ofiara = getCourse(registry, id);
+        if (ofiara?.status === COURSE_STATUS.ACTIVE) strikeCourse(director, ofiara);
       }
       note(director, `PRZECHWYT KONWOJU ${konwoj.fromId}→${konwoj.toId}: `
         + `przepadło ${wynik.lost.length}, uszło ${wynik.survived.length}`);

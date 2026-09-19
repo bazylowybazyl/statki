@@ -828,7 +828,7 @@
       rollingCells
     } from "./src/game/fighterClouds.js";
     import { shouldZeroStabilizedAngularVelocity, updateHeadingStabilizer } from "./src/game/flight/stabilizer.js";
-    import { DestructorSystem, initHexBody, isHexShips3DActive, setHexShips3DActive, getHexStructuralState, getHexArenaStats, disposeHexBody, DESTRUCTOR_CONFIG } from "./src/game/destructor.js";
+    import { DestructorSystem, initHexBody, isHexShips3DActive, setHexShips3DActive, getHexStructuralState, getHexArenaStats, disposeHexBody, DESTRUCTOR_CONFIG, getCollisionBoundsDebug, getBroadphaseDebugInfo } from "./src/game/destructor.js";
     import { TowConstraintSystem } from "./src/game/towSystem.js";
     import { createWeaponInventory, fillWeaponInventory } from "./src/game/weaponInventory.js";
     import {
@@ -983,6 +983,7 @@
     import { initScannerOverviewUI } from "./src/ui/scannerOverviewUI.js";
     import { SpotterDroneSystem } from "./src/game/spotterDrone.js";
     import { WeaponController } from "./src/game/weaponController.js";
+    import { getMountedWeaponAim } from "./src/game/weaponAim.js";
     import { MASTER_WEAPONS, WEAPON_ICON_PATHS, WEAPON_SIZE_LABEL, getWeaponSizeRank, weaponFitsHardpointSize, shieldImpactClass } from "./src/data/weapons.js";
     import {
       addHangarSquadronMount,
@@ -2222,7 +2223,11 @@
       usePlanetStations3D: true,
       disableCameraShake: false,
       globalShieldsOff: false,
-      workerPhysicsV2: new URLSearchParams(location.search).has('workerPhysicsV2')
+      workerPhysicsV2: new URLSearchParams(location.search).has('workerPhysicsV2'),
+      // Diagnostyka bramek kolizji - patrz drawCollisionBoundsDebug().
+      showCollisionBounds: false,
+      showBroadphaseGrid: false,
+      collisionBoundsLabels: true
     }, window.DevFlags || {});
     const DEFAULT_PIRATE_STATION_SCALE = 6;
     const DEFAULT_STATION_3D_SCALE = 2.70;
@@ -2230,7 +2235,9 @@
     window.DEFAULT_STATION_3D_SCALE = DEFAULT_STATION_3D_SCALE;
 
     window.DevTuning = Object.assign({
-      pirateStationScale: DEFAULT_PIRATE_STATION_SCALE
+      pirateStationScale: DEFAULT_PIRATE_STATION_SCALE,
+      // Sufit encji rysowanych przez overlay kolizji (chroni fps w duzej bitwie).
+      collisionBoundsLimit: 300
     }, window.DevTuning || {});
 
     const DevFlags = window.DevFlags;
@@ -7928,9 +7935,12 @@
       scannedTargets: new WeakSet(),
       subsystemTargets: new WeakMap(),
       hoveredSubsystem: null,
+      hoverBlocked: null,
       pointerConfirmArmed: false
     };
     window.targetingMode = targetingMode;
+    // Ostatnio ustawiony stan kursora systemowego — zapis do style tylko przy zmianie.
+    let _osCursorHidden = null;
 
     function setTargetingMode(nextMode) {
       const next = Math.max(TARGETING_MODE.SINGLE, Math.min(TARGETING_MODE.SELECT, Number(nextMode) || 0));
@@ -7998,13 +8008,6 @@
       let aimPoint;
       let effectiveTarget = target;
 
-      // Broń P1 korzysta z zatwierdzonych namiarów niezależnie od LPM.
-      // LPM obsługuje wyłącznie celownik; strzał uruchamiają klawisze broni.
-      if (isP1Ship && !isTargetAlive(effectiveTarget) && typeof lockedTargets !== 'undefined' && lockedTargets && lockedTargets.length > 0) {
-        // Wybieramy jeden z zatwierdzonych celów, gdy wywołanie broni nie wskazało konkretnego.
-        effectiveTarget = lockedTargets[Math.floor(Math.random() * lockedTargets.length)];
-      }
-
       if (isTargetAlive(effectiveTarget)) {
         aimPoint = (weapon.category === 'beam')
           ? scannerTargetPoint(effectiveTarget)
@@ -8027,7 +8030,11 @@
         };
       }
 
-      const baseAngle = Math.atan2(aimPoint.y - muzzleData.pos.y, aimPoint.x - muzzleData.pos.x);
+      // Cursor/lock steers the turret, never the projectile at the instant of firing.
+      // Keep aimPoint for the flak fuse and guided missile target.
+      const baseAngle = isPlayerShip
+        ? Math.atan2(muzzleData.dir.y, muzzleData.dir.x)
+        : Math.atan2(aimPoint.y - muzzleData.pos.y, aimPoint.x - muzzleData.pos.x);
 
       // FLAK: zapalnik nastawiamy raz na salwę, na dystans do punktu wyprzedzenia.
       // Pocisk ma pęknąć TAM, gdzie cel będzie, a nie tam, gdzie jest teraz.
@@ -8503,14 +8510,7 @@
     function _fireSpecialGroup(loadouts) {
       if (!loadouts.length) return false;
       let fired = false;
-      const mouseWorld = screenToWorld(mouse.x, mouse.y);
-      const shipAngle = ship.angle;
-      const c = Math.cos(shipAngle);
-      const s = Math.sin(shipAngle);
-      const shipVel = ship.vel || { x: ship.vx || 0, y: ship.vy || 0 };
-
-      // Build valid live target list for round-robin distribution
-      const liveTargets = (lockedTargets || []).filter(t => isTargetAlive(t));
+      if (!p1WeaponCtrl) return false;
 
       for (let i = 0; i < loadouts.length; i++) {
         const loadout = loadouts[i];
@@ -8524,23 +8524,10 @@
         const cdLeft = Math.max(0, Number(hp.specialCd) || 0);
         if (cdLeft > 0) continue;
 
-        const localX = Number(hpPos.x) || 0;
-        const localY = Number(hpPos.y) || 0;
-        const muzzleX = ship.pos.x + (localX * c - localY * s);
-        const muzzleY = ship.pos.y + (localX * s + localY * c);
-        const dx = mouseWorld.x - muzzleX;
-        const dy = mouseWorld.y - muzzleY;
-        const len = Math.hypot(dx, dy) || 1;
-
-        const muzzle = {
-          pos: { x: muzzleX, y: muzzleY },
-          dir: { x: dx / len, y: dy / len },
-          baseVel: { x: shipVel.x || 0, y: shipVel.y || 0 },
-          emitterUid: `special:${hp?.id || i}`
-        };
-
-        // Round-robin across live locked targets; fallback to null (mouse aim)
-        const target = liveTargets.length > 0 ? liveTargets[i % liveTargets.length] : null;
+        const aim = getMountedWeaponAim(ship, loadout);
+        const muzzle = p1WeaponCtrl.computeMountedMuzzle(loadout, aim.nextBarrel++);
+        muzzle.emitterUid = `special:${hp?.id || i}`;
+        const target = isTargetAlive(aim.target) ? aim.target : null;
 
         const cd = window.fireWeaponCore(ship, target, weapon.id, muzzle);
         hp.specialCd = Math.max(0.01, Number(cd) || Number(weapon.cooldown) || 0.25);
@@ -13870,6 +13857,41 @@
       return best;
     }
 
+    // Diagnostyka celownika — `__targetingDebug()` w konsoli przegladarki.
+    // Pokazuje dokladnie to, co widzi confirmTargetingSelection() w chwili LPM.
+    window.__targetingDebug = () => {
+      const cands = targetingMode.groupCandidates.map(t => ({
+        id: getRadarTargetUnitId(t),
+        type: String(t?.type || t?.__scannerContactType || '?'),
+        progress: Number((targetingMode.groupAcquisition.get(t) || 0).toFixed(3)),
+        lockTime: getTargetingLockDuration(t),
+        canLock: canPlayerLockTarget(t),
+        dist: Math.round(playerTargetDistance(t))
+      }));
+      return {
+        mode: TARGETING_MODE_NAMES[targetingMode.current],
+        lockRange: Math.round(getScannerSensors().lockRange),
+        candidates: cands.length,
+        ready: cands.filter(c => c.progress >= 1).length,
+        lockedTargets: lockedTargets.length,
+        lockedPrimary: lockedTarget ? getRadarTargetUnitId(lockedTarget) : null,
+        acquireTarget: targetingMode.acquireTarget ? getRadarTargetUnitId(targetingMode.acquireTarget) : null,
+        acquireProgress: Number(targetingMode.acquireProgress.toFixed(3)),
+        detail: cands
+      };
+    };
+
+    // Dlaczego kontakt pod kursorem nie da sie namierzyc — zamiast ciszy.
+    function _targetingBlockedReason(target) {
+      if (!target) return '';
+      if (!isValidLockedTarget(target)) return 'KONTAKT NEUTRALNY — BRAK NAMIARU';
+      if (!isPlayerLockTargetInRange(target)) {
+        const sensors = getScannerSensors();
+        return `POZA ZASIĘGIEM NAMIARU (${formatSensorRange(playerTargetDistance(target))}/${formatSensorRange(sensors.lockRange)})`;
+      }
+      return 'BRAK NAMIARU';
+    }
+
     // Czy LPM ma teraz co zatwierdzic? Uzywane, zeby stacja pod kursorem nie
     // przechwytywala kliku, gdy gracz wlasnie sklada namiar na okret.
     function hasPendingTargetingConfirm(hoveredStation) {
@@ -13894,7 +13916,11 @@
       if (targetingMode.current === TARGETING_MODE.SINGLE) {
         const target = targetingMode.acquireTarget;
         if (!target || !canPlayerLockTarget(target)) {
-          pushZoneMessage('SINGLE: BRAK CELU POD KURSOREM', 1.0);
+          const blocked = targetingMode.hoverBlocked;
+          pushZoneMessage(
+            blocked ? `SINGLE: ${_targetingBlockedReason(blocked)}` : 'SINGLE: BRAK CELU POD KURSOREM',
+            1.2
+          );
           return;
         }
         if (targetingMode.acquireProgress < 1) {
@@ -13925,8 +13951,22 @@
           );
           return;
         }
-        setLockedTargetsExact(ready.slice(0, RADAR_UI_MAX_TARGETS));
-        pushZoneMessage(`MULTI: LOCK x${Math.min(ready.length, RADAR_UI_MAX_TARGETS)}`, 1.1);
+        // Limit 8 obowiazuje dopiero TERAJ: z gotowych bierzemy te najblizsze
+        // kursorowi. Podczas akwizycji lista jest pelna, zeby namiar nie gasl
+        // przy przeskokach kolejnosci.
+        if (ready.length > RADAR_UI_MAX_TARGETS) {
+          const aim = screenToWorld(mouse.x, mouse.y);
+          ready.sort((a, b) => {
+            const adx = getTargetX(a) - aim.x;
+            const ady = getTargetY(a) - aim.y;
+            const bdx = getTargetX(b) - aim.x;
+            const bdy = getTargetY(b) - aim.y;
+            return (adx * adx + ady * ady) - (bdx * bdx + bdy * bdy);
+          });
+        }
+        const locking = ready.slice(0, RADAR_UI_MAX_TARGETS);
+        setLockedTargetsExact(locking);
+        pushZoneMessage(`MULTI: LOCK x${lockedTargets.length}`, 1.1);
         return;
       }
 
@@ -16854,45 +16894,6 @@
     rebuildHardpointsForFrame();
     loadLoadout();
 
-    function computeMainMuzzle(offset, angle, barIndex, barrelsPerShot) {
-      const spriteScale = ship.visual?.spriteScale || 1;
-      const forwardLen = Math.min((ship.h * spriteScale) * 0.40, 52 * spriteScale);
-      const gap = 10 * spriteScale;
-      const normalizedIndex = Math.min(barIndex, barrelsPerShot - 1);
-      const offsetFrac = barrelsPerShot === 1 ? 0 : (normalizedIndex / (barrelsPerShot - 1) - 0.5) * 2;
-      const lateralOffset = (gap * 0.5) * offsetFrac;
-      const a = angle;
-      const f = { x: Math.cos(a), y: Math.sin(a) };
-      const p = { x: -Math.sin(a), y: Math.cos(a) };
-      const off = rotate(offset, ship.angle);
-      const pos = {
-        x: ship.pos.x + off.x + f.x * forwardLen + p.x * lateralOffset,
-        y: ship.pos.y + off.y + f.y * forwardLen + p.y * lateralOffset
-      };
-      return {
-        pos,
-        dir: f,
-        baseVel: { x: ship.vel.x, y: ship.vel.y }
-      };
-    }
-
-    function getNearestTurretIndex(offset, turrets) {
-      if (!offset || !turrets.length) return -1;
-      let bestIndex = 0;
-      let bestDist = Infinity;
-      for (let i = 0; i < turrets.length; i++) {
-        const t = turrets[i];
-        const dx = offset.x - t.offset.x;
-        const dy = offset.y - t.offset.y;
-        const dist = dx * dx + dy * dy;
-        if (dist < bestDist) {
-          bestDist = dist;
-          bestIndex = i;
-        }
-      }
-      return bestIndex;
-    }
-
     function triggerRailVolley() {
       const mainWeapons = Game.player.weapons?.[HP.MAIN];
       if (!mainWeapons || !mainWeapons.length) return;
@@ -16921,7 +16922,7 @@
       const mainWeapons = Game.player.weapons?.[HP.MAIN] || [];
       if (!mainWeapons.length) return;
 
-      const turrets = [ship.turret, ship.turret2, ship.turret3, ship.turret4];
+      if (!p1WeaponCtrl) return;
       let maxCooldown = 0;
 
       for (let i = 0; i < mainWeapons.length; i++) {
@@ -16930,50 +16931,20 @@
         const weaponData = mainWeapons[i]?.weapon;
         if (!weaponData) continue;
 
-        const hpOffset = mainWeapons[i]?.hp?.pos;
-        const turretIndex = hpOffset ? getNearestTurretIndex(hpOffset, turrets) : (i % turrets.length);
-        const t = turrets[turretIndex];
-        const aimAngle = t?.angle ?? ship.angle;
-        const muzzleOffset = hpOffset || t?.offset;
+        if (!mainWeapons[i].hp) continue;
+        const aim = getMountedWeaponAim(ship, mainWeapons[i]);
 
         // Określamy liczbę luf na podstawie rozmiaru nowej broni
         const barrelsPerShot = Number.isFinite(Number(weaponData.barrelsPerShot))
           ? Math.max(1, Math.round(Number(weaponData.barrelsPerShot)))
           : (weaponData.size === 'L' ? 1 : 2);
-        const muzzle = computeMainMuzzle(muzzleOffset, aimAngle, barIndex, barrelsPerShot);
+        const muzzle = p1WeaponCtrl.computeMountedMuzzle(mainWeapons[i], barIndex);
         const baseEmitterUid = `p_main_${i}_${weaponData.id || 'x'}`;
         muzzle.emitterUid = barrelsPerShot > 1 ? `${baseEmitterUid}:b${barIndex}` : baseEmitterUid;
 
-        // Dystrybucja ognia po wielu celach (jeśli lockedTargets > 1)
-        let targetToPass = lockedTarget;
-        if (mainAutoFire && lockedTargets && lockedTargets.length > 0) {
-          targetToPass = selectLockedTargetInRangeForWeapon(weaponData, i);
-          if (!targetToPass) continue;
-        } else if (lockedTargets && lockedTargets.length > 1) {
-          const rng = weaponData.baseRange || weaponData.range || 1000;
-          const valid = [];
-          for (let j = 0; j < lockedTargets.length; j++) {
-            const lt = lockedTargets[j];
-            if (!isTargetAlive(lt)) continue;
-            const dx = getTargetX(lt) - ship.pos.x;
-            const dy = getTargetY(lt) - ship.pos.y;
-            if (dx * dx + dy * dy <= rng * rng) valid.push(lt);
-          }
-          if (valid.length > 0) {
-            targetToPass = valid[i % valid.length];
-          }
-        }
+        const targetToPass = isTargetAlive(aim.target) ? aim.target : null;
+        if (mainAutoFire && lockedTargets.length && !targetToPass) continue;
         const cd = window.fireWeaponCore(ship, targetToPass, weaponData.id, muzzle);
-
-        // Zarządzanie odrzutem wizualnym wieżyczki
-        const recoilKick = weaponData.category === 'beam' ? 6 : 12;
-        const recoilMax = 18;
-        if (t && Array.isArray(t.recoil)) {
-          const idx = barIndex % 2;
-          t.recoil[idx] = Math.min(t.recoil[idx] + recoilKick, recoilMax);
-        } else if (t) {
-          t.recoil = Math.min(t.recoil + recoilKick, recoilMax);
-        }
 
         // Efekty wizualne wystrzału (Muzzle flash) z lufy gracza
         if (weaponData.category !== 'beam') {
@@ -17219,11 +17190,8 @@
 
     // Salwa flaku z działka aux gracza.
     //
-    // Świadomie NIE idzie przez fireWeaponCore: tamta ścieżka dla statku gracza
-    // przejmuje celowanie z zatwierdzonych lockedTargets lub z kursora,
-    // co dla automatycznej obrony punktowej znaczyłoby, że działko przestaje
-    // strzelać do myśliwca nadlatującego na burtę. Jak fireCIWSGun — działko PD
-    // strzela do celu, który wybrał mu ciwsStep, i do niczego innego.
+    // Jak fireCIWSGun, automatyczna obrona punktowa zachowuje własny cel
+    // wybrany przez ciwsStep i własny zapalnik salwy.
     function fireFlakSalvo(gun, base, baseVel, target, wDef, fireInterval) {
       const profile = resolveFlakProfile(wDef);
       const dir = { x: Math.cos(gun.angle), y: Math.sin(gun.angle) };
@@ -19686,6 +19654,7 @@
       updatePlayerAttackCommand(dt);
 
       // rail queue/cd
+      if (p1WeaponCtrl) p1WeaponCtrl.updateAim(warp.state === 'active' ? 0 : dt);
       rail.cd[0] = Math.max(0, rail.cd[0] - dt);
       rail.cd[1] = Math.max(0, rail.cd[1] - dt);
       const requiredBarrels = Math.max(1, rail.barrelsPerShot || 2);
@@ -19944,63 +19913,6 @@
 
       PerfHUD.addTiming('scanUiTime', performance.now() - tPreSection0);
       tPreSection0 = performance.now();
-
-      // turret aim (poza warp active)
-      if (warp.state !== 'active') {
-        for (const t of [ship.turret, ship.turret2, ship.turret3, ship.turret4]) {
-          const off = rotate(t.offset, ship.angle);
-          const base = { x: ship.pos.x + off.x, y: ship.pos.y + off.y };
-          const aimPos = isTargetAlive(lockedTarget)
-            ? leadTarget(base, ship.vel, lockedTarget, RAIL_SPEED)
-            : mouseWorld;
-          let diffT = wrapAngle(Math.atan2(aimPos.y - base.y, aimPos.x - base.x) - t.angle);
-          let desiredVel = clamp(diffT * 6.5, -t.maxSpeed, t.maxSpeed);
-          const velDelta = desiredVel - t.angVel;
-          const maxDelta = t.maxAccel * dt;
-          t.angVel += clamp(velDelta, -maxDelta, maxDelta);
-          t.angVel *= Math.exp(-t.damping * dt);
-          t.angVel = clamp(t.angVel, -t.maxSpeed, t.maxSpeed);
-          t.angle = wrapAngle(t.angle + t.angVel * dt);
-        }
-      }
-      for (const t of [ship.turret, ship.turret2, ship.turret3, ship.turret4]) {
-        if (Array.isArray(t.recoil)) {
-          t.recoil[0] = Math.max(0, t.recoil[0] - t.recoilRecover * dt);
-          t.recoil[1] = Math.max(0, t.recoil[1] - t.recoilRecover * dt);
-        } else {
-          t.recoil = Math.max(0, t.recoil - t.recoilRecover * dt);
-        }
-      }
-
-      // === P2 turret aim & recoil ===
-      if (splitScreenMode && player2Ship && player2Ship.turret) {
-        const mouse2World = screenToWorld(mouse2.x, mouse2.y, camera2);
-        for (const t of [player2Ship.turret, player2Ship.turret2, player2Ship.turret3, player2Ship.turret4]) {
-          if (!t) continue;
-          const off = rotate(t.offset, player2Ship.angle);
-          const base = { x: player2Ship.pos.x + off.x, y: player2Ship.pos.y + off.y };
-          const aimPos = (lockedTarget2 && !lockedTarget2.dead)
-            ? leadTarget(base, player2Ship.vel, lockedTarget2, RAIL_SPEED)
-            : mouse2World;
-          let diffT = wrapAngle(Math.atan2(aimPos.y - base.y, aimPos.x - base.x) - t.angle);
-          let desiredVel = clamp(diffT * 6.5, -t.maxSpeed, t.maxSpeed);
-          const velDelta = desiredVel - t.angVel;
-          const maxDelta = t.maxAccel * dt;
-          t.angVel += clamp(velDelta, -maxDelta, maxDelta);
-          t.angVel *= Math.exp(-t.damping * dt);
-          t.angVel = clamp(t.angVel, -t.maxSpeed, t.maxSpeed);
-          t.angle = wrapAngle(t.angle + t.angVel * dt);
-        }
-        for (const t of [player2Ship.turret, player2Ship.turret2, player2Ship.turret3, player2Ship.turret4]) {
-          if (!t) continue;
-          if (Array.isArray(t.recoil)) {
-            t.recoil[0] = Math.max(0, t.recoil[0] - t.recoilRecover * dt);
-            t.recoil[1] = Math.max(0, t.recoil[1] - t.recoilRecover * dt);
-          } else {
-            t.recoil = Math.max(0, t.recoil - t.recoilRecover * dt);
-          }
-        }
-      }
 
       updatePlayerCommand(dt);
       updateEnginePower(dt);
@@ -20927,23 +20839,37 @@
     // Active camera for the current split-screen pass (used by draw helpers that can't take cam param)
     let _currentCam = camera;
 
+    // Viewport jest KONSUMOWANY NATYCHMIAST przez wolajacego (worldToScreenInto,
+    // screenToWorld, drawRangeRuler czytaja pola w nastepnej linii), wiec zamiast
+    // swiezego obiektu na kazde rzutowanie oddajemy jeden scratch. Kto chcialby
+    // przeniesc viewport przez kolejne wywolanie, musi skopiowac pola.
+    const _vpScratch = { x: 0, y: 0, w: 0, h: 0 };
+
     function getViewportForCamera(cam) {
-      const vpW = Math.max(1, Number(cam?.viewportW) || _wtsVpW || W);
-      const vpH = Math.max(1, Number(cam?.viewportH) || _wtsVpH || H);
-      const vpX = Number.isFinite(Number(cam?.viewportX)) ? Number(cam.viewportX) : _wtsVpOffX;
-      const vpY = Number.isFinite(Number(cam?.viewportY)) ? Number(cam.viewportY) : _wtsVpOffY;
-      return { x: vpX, y: vpY, w: vpW, h: vpH };
+      _vpScratch.w = Math.max(1, Number(cam?.viewportW) || _wtsVpW || W);
+      _vpScratch.h = Math.max(1, Number(cam?.viewportH) || _wtsVpH || H);
+      _vpScratch.x = Number.isFinite(Number(cam?.viewportX)) ? Number(cam.viewportX) : _wtsVpOffX;
+      _vpScratch.y = Number.isFinite(Number(cam?.viewportY)) ? Number(cam.viewportY) : _wtsVpOffY;
+      return _vpScratch;
     }
 
-    function worldToScreen(wx, wy, cam) {
+    // Wariant BEZ ALOKACJI, dla petli rzutujacych setki punktow na klatke
+    // (pociski, czastki, blyski). worldToScreen zostaje alokujacy, bo wielu
+    // wolajacych trzyma dwa wyniki naraz (pozycja i pozycja poprzednia) — wspolny
+    // scratch by ich popsul. Kto potrzebuje dwoch punktow, podaje dwa `out`.
+    function worldToScreenInto(wx, wy, cam, out) {
       const zoomNow = Math.max(0.0001, Number(cam?.zoom) || Number(camera.zoom) || 1);
       const camX = Number(cam?.x) || 0;
       const camY = Number(cam?.y) || 0;
       const vp = getViewportForCamera(cam);
-      return {
-        x: (wx - camX) * zoomNow + vp.x + vp.w / 2,
-        y: (wy - camY) * zoomNow + vp.y + vp.h / 2
-      };
+      out.x = (wx - camX) * zoomNow + vp.x + vp.w / 2;
+      out.y = (wy - camY) * zoomNow + vp.y + vp.h / 2;
+      return out;
+    }
+    window.worldToScreenInto = worldToScreenInto;
+
+    function worldToScreen(wx, wy, cam) {
+      return worldToScreenInto(wx, wy, cam, { x: 0, y: 0 });
     }
     window.worldToScreen = worldToScreen;
 
@@ -21003,6 +20929,167 @@
       });
       ctx.restore();
     }
+
+    // ========================================================================
+    // DIAGNOSTYKA BRAMEK KOLIZJI - DevFlags.showCollisionBounds
+    // ========================================================================
+    // Pytanie, na ktore ma odpowiadac: czy pudlo broadphase nie jest za duze
+    // albo za male. Dlatego rysujemy OBOK SIEBIE bramke i prawde:
+    //   CZERWONY  = OBB Z PADEM. To testuje entityObbsOverlap - to odrzuca pary.
+    //   ZIELONY   = obrys kadluba bez padu. Roznica = caly zapas na deformacje.
+    //   NIEBIESKI = okrag broadphase (_bpRadius) - sito PRZED testem OBB.
+    //   ZOLTY     = promien tarczy, gdy wystaje poza okrag broadphase.
+    // Dane ida przez getCollisionBoundsDebug -> refreshEntityObb, czyli te sama
+    // sciezke co produkcyjny test pary. Drugie, "podobne" liczenie ekstentow w
+    // warstwie rysowania pokazywaloby ladny prostokat i ukrywalo szukany blad.
+    const _colDbgInfo = {};
+    const _colDbgC = { x: 0, y: 0 };
+    const _colDbgQuad = [{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }];
+
+    function strokeObbPath(ctx, cam, cx, cy, ux, uy, vx, vy, eu, ev) {
+      const ax = ux * eu, ay = uy * eu;
+      const bx = vx * ev, by = vy * ev;
+      worldToScreenInto(cx - ax - bx, cy - ay - by, cam, _colDbgQuad[0]);
+      worldToScreenInto(cx + ax - bx, cy + ay - by, cam, _colDbgQuad[1]);
+      worldToScreenInto(cx + ax + bx, cy + ay + by, cam, _colDbgQuad[2]);
+      worldToScreenInto(cx - ax + bx, cy - ay + by, cam, _colDbgQuad[3]);
+      ctx.beginPath();
+      ctx.moveTo(_colDbgQuad[0].x, _colDbgQuad[0].y);
+      ctx.lineTo(_colDbgQuad[1].x, _colDbgQuad[1].y);
+      ctx.lineTo(_colDbgQuad[2].x, _colDbgQuad[2].y);
+      ctx.lineTo(_colDbgQuad[3].x, _colDbgQuad[3].y);
+      ctx.closePath();
+      ctx.stroke();
+    }
+
+    function drawCollisionBoundsDebug(ctx, cam) {
+      if (!DevFlags.showCollisionBounds) return;
+      const list = DestructorSystem?._visualEntities;
+      if (!Array.isArray(list) || list.length === 0) return;
+
+      const bp = getBroadphaseDebugInfo();
+      const zoom = Math.max(0.0001, Number(cam?.zoom) || 1);
+      const vp = getViewportForCamera(cam);
+      const vpX = vp.x, vpY = vp.y, vpW = vp.w, vpH = vp.h;
+      const limit = Math.max(1, Number(DevTuning.collisionBoundsLimit) || 300);
+      const showLabels = DevFlags.collisionBoundsLabels !== false;
+
+      ctx.save();
+      ctx.lineWidth = 1;
+      ctx.font = '10px monospace';
+      ctx.textBaseline = 'top';
+
+      // Siatka hasha broadphase - pokazuje, ile komorek zajmuje jedna encja.
+      if (DevFlags.showBroadphaseGrid) {
+        const cs = bp.cellSize;
+        const camX = Number(cam?.x) || 0;
+        const camY = Number(cam?.y) || 0;
+        const wx0 = camX - (vpW * 0.5) / zoom;
+        const wx1 = camX + (vpW * 0.5) / zoom;
+        const wy0 = camY - (vpH * 0.5) / zoom;
+        const wy1 = camY + (vpH * 0.5) / zoom;
+        // Powyzej ~200 linii siatka zamienia sie w szara plame - nie rysuj.
+        if (((wx1 - wx0) / cs) < 200 && ((wy1 - wy0) / cs) < 200) {
+          ctx.strokeStyle = 'rgba(90,110,160,0.28)';
+          ctx.beginPath();
+          for (let gx = Math.floor(wx0 / cs) * cs; gx <= wx1; gx += cs) {
+            worldToScreenInto(gx, wy0, cam, _colDbgC);
+            const gsx = _colDbgC.x;
+            ctx.moveTo(gsx, vpY);
+            ctx.lineTo(gsx, vpY + vpH);
+          }
+          for (let gy = Math.floor(wy0 / cs) * cs; gy <= wy1; gy += cs) {
+            worldToScreenInto(wx0, gy, cam, _colDbgC);
+            const gsy = _colDbgC.y;
+            ctx.moveTo(vpX, gsy);
+            ctx.lineTo(vpX + vpW, gsy);
+          }
+          ctx.stroke();
+        }
+      }
+
+      let shown = 0;
+      let ratioSum = 0;
+      let noHexCount = 0;
+
+      for (let i = 0; i < list.length && shown < limit; i++) {
+        const ent = list[i];
+        if (!ent || ent.dead) continue;
+        const info = getCollisionBoundsDebug(ent, _colDbgInfo);
+        if (!info.valid) continue;
+
+        // Kadrujemy po okregu opisanym na pudle Z PADEM - inaczej wypadlby
+        // z ekranu wlasnie ten margines, ktory chcemy zobaczyc.
+        worldToScreenInto(info.cx, info.cy, cam, _colDbgC);
+        const sx = _colDbgC.x, sy = _colDbgC.y;
+        const rPx = Math.max(Math.hypot(info.eu, info.ev), info.bpRadius) * zoom;
+        if (sx + rPx < vpX || sx - rPx > vpX + vpW) continue;
+        if (sy + rPx < vpY || sy - rPx > vpY + vpH) continue;
+
+        shown++;
+        ratioSum += info.areaRatio;
+        if (!info.hasActiveHex) noHexCount++;
+
+        // Okrag broadphase - pierwsze sito. Promien 0 = encja wypadla z
+        // broadphase w tej klatce (brak aktywnych heksow albo isCollidable).
+        if (info.bpRadius > 0) {
+          ctx.strokeStyle = 'rgba(90,160,255,0.55)';
+          ctx.beginPath();
+          ctx.arc(sx, sy, info.bpRadius * zoom, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        if (info.shieldRadius > info.bpRadius + 1) {
+          ctx.strokeStyle = 'rgba(240,200,60,0.5)';
+          ctx.beginPath();
+          ctx.arc(sx, sy, info.shieldRadius * zoom, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+
+        // Obrys kadluba BEZ padu - prawda o rozmiarze ciala.
+        ctx.strokeStyle = 'rgba(80,230,140,0.95)';
+        strokeObbPath(ctx, cam, info.cx, info.cy, info.ux, info.uy, info.vx, info.vy, info.euRaw, info.evRaw);
+
+        // OBB Z padem - bramka. Im wiekszy przerost, tym bardziej czerwony.
+        const over = Math.min(1, Math.max(0, (info.areaRatio - 1) / 5));
+        ctx.strokeStyle = 'rgba(255,' + Math.round(120 - 90 * over) + ',70,0.95)';
+        strokeObbPath(ctx, cam, info.cx, info.cy, info.ux, info.uy, info.vx, info.vy, info.eu, info.ev);
+
+        if (showLabels && rPx > 26) {
+          ctx.fillStyle = 'rgba(255,220,190,0.95)';
+          ctx.fillText('x' + info.areaRatio.toFixed(1) + ' pad' + Math.round(info.pad), sx + 4, sy + 4);
+        }
+      }
+
+      // Podsumowanie: liczba, ktorej nie da sie odczytac z samego obrazka.
+      // Ramka stoi z odsunieciem od lewej, bo panel AKTYWNE SKRZYDLO / WSPARCIE
+      // zajmuje lewy gorny rog kanwy i przy vpX+8 podsumowanie bylo niewidoczne.
+      const boxX = vpX + 360;
+      const avg = shown > 0 ? (ratioSum / shown) : 0;
+      ctx.fillStyle = 'rgba(10,14,24,0.82)';
+      ctx.fillRect(boxX, vpY + 8, 300, 84);
+      ctx.strokeStyle = 'rgba(120,150,210,0.6)';
+      ctx.strokeRect(boxX, vpY + 8, 300, 84);
+      ctx.fillStyle = '#dfe7ff';
+      ctx.fillText('czerwony=OBB z padem  zielony=kadlub  niebieski=bp', boxX + 8, vpY + 14);
+      ctx.fillText('pad ' + bp.pad.toFixed(1) + ' j. = maxDeform ' + bp.maxDeform + ' x ' + bp.deformScale + ' + ' + bp.hexSpacing + ' x 4', boxX + 8, vpY + 28);
+      ctx.fillStyle = avg > 2.5 ? '#ff8a5c' : '#9ff5b8';
+      ctx.fillText('pole pudla / pole kadluba: srednio x' + avg.toFixed(2) + '  (' + shown + ' encji)', boxX + 8, vpY + 42);
+      ctx.fillStyle = '#dfe7ff';
+      ctx.fillText('komorka hasha ' + bp.cellSize + ' j.   kontakty/klatka ' + bp.contacts, boxX + 8, vpY + 56);
+      ctx.fillText('encji w destruktorze ' + bp.entities + '   bez akt. heksow ' + noHexCount, boxX + 8, vpY + 70);
+      ctx.restore();
+    }
+
+    // Przelacznik z konsoli: ColBoundsDbg() wlacza, ColBoundsDbg(false) gasi,
+    // ColBoundsDbg(true, true) dokłada siatke hasha broadphase.
+    window.ColBoundsDbg = (on = true, grid = false) => {
+      DevFlags.showCollisionBounds = !!on;
+      DevFlags.showBroadphaseGrid = !!grid;
+      return {
+        showCollisionBounds: DevFlags.showCollisionBounds,
+        showBroadphaseGrid: DevFlags.showBroadphaseGrid
+      };
+    };
 
     function stationPortWorld(st, idx) {
       const off = st.ports[idx % st.ports.length];
@@ -21284,6 +21371,7 @@
         return;
       }
 
+      window.__weaponAimAlpha = alpha;
       // Interpolacja stanu
       const interpPos = {
         x: prevState.pos.x + (ship.pos.x - prevState.pos.x) * alpha,
@@ -21491,8 +21579,15 @@
         const viewHalfW = (W * 0.5) / zoomNow + cullExtra;
         const viewHalfH = (H * 0.5) / zoomNow + cullExtra;
 
-        // --- DODANO OVERSCAN DLA CULLINGU (Musi pasować do core3d.js!) ---
-        const OVERSCAN = 3.0;
+        // --- OVERSCAN DLA CULLINGU ---
+        // Mnoznik POLOWY wymiarow widoku, wiec 3.0 daje pudlo o DZIEWIECIU polach
+        // ekranu. Zeby cokolwiek wypadlo, cel musi byc dalej niz poltora ekranu —
+        // samo odwrocenie kamery w bok nie zdejmuje praktycznie nic. Ciala heksowe
+        // maja przy tym `frustumCulled = false` (createEntityMesh), wiec to pudlo
+        // jest JEDYNA bramka: co przez nie przejdzie, idzie do GL nawet spoza kadru.
+        // Strojenie na zywo: window.DevTuning.cullOverscan
+        const _overscanTune = Number(window.DevTuning?.cullOverscan);
+        const OVERSCAN = Number.isFinite(_overscanTune) && _overscanTune > 0 ? _overscanTune : 3.0;
         const cullHalfW = viewHalfW * OVERSCAN;
         const cullHalfH = viewHalfH * OVERSCAN;
 
@@ -21641,6 +21736,7 @@
         CanvasVFX.drawShockwaves(ctx, cam);
         drawFlyingHexDebris(ctx, cam);
         drawTowRopes(ctx, cam);
+        drawCollisionBoundsDebug(ctx, cam);
 
         if (!window.USE_STATION_3D) {
           for (const st of stations) {
@@ -22389,14 +22485,12 @@
           for (let i = 0; i < platforms.length; i++) addTarget(platforms[i]);
         }
 
-        out.sort((a, b) => {
-          const adx = getTargetX(a) - mouseWorld.x;
-          const ady = getTargetY(a) - mouseWorld.y;
-          const bdx = getTargetX(b) - mouseWorld.x;
-          const bdy = getTargetY(b) - mouseWorld.y;
-          return adx * adx + ady * ady - (bdx * bdx + bdy * bdy);
-        });
-        if (out.length > RADAR_UI_MAX_TARGETS) out.length = RADAR_UI_MAX_TARGETS;
+        // NIE obcinamy listy do RADAR_UI_MAX_TARGETS. Sortowanie po dystansie od
+        // kursora + `out.length = 8` sprawialo, ze w kotle powyzej 8 celow statki
+        // co klatke przeskakiwaly przez granice 8. miejsca. Kazde wypadniecie
+        // zaczynalo wygaszanie namiaru, wiec ZADEN cel nie zbieral ciagle
+        // wymaganych 1.2-2.6 s i `ready` bylo puste — MULTI nigdy nie lockowal.
+        // Limit 8 nalezy do MOMENTU ZATWIERDZENIA, nie do akwizycji.
         return out;
       }
 
@@ -22434,6 +22528,10 @@
       function _pickTargetingHover(mouseWorld, camRef) {
         let best = null;
         let bestScore = Infinity;
+        // Kontakt pod kursorem, ktorego NIE wolno namierzyc — zeby zamiast ciszy
+        // powiedziec graczowi dlaczego ("poza zasiegiem" / "nie jest celem").
+        let blocked = null;
+        let blockedScore = Infinity;
         // `bias` trzyma hierarchie: okret pod kursorem zawsze wygrywa ze stacja,
         // nad ktora akurat leci, mimo ze stacja ma wiekszy promien.
         const consider = (target, bias) => {
@@ -22441,7 +22539,14 @@
           const hit = _targetingHullHit(target, mouseWorld.x, mouseWorld.y, camRef);
           if (hit < 0) return;
           const score = hit + bias;
-          if (score >= bestScore || !canPlayerLockTarget(target)) return;
+          if (score >= bestScore) return;
+          if (!canPlayerLockTarget(target)) {
+            if (isTargetAlive(target) && score < blockedScore) {
+              blockedScore = score;
+              blocked = target;
+            }
+            return;
+          }
           bestScore = score;
           best = target;
         };
@@ -22451,8 +22556,10 @@
           for (let i = 0; i < platforms.length; i++) consider(platforms[i], 0);
         }
         for (let i = 0; i < stations.length; i++) consider(stations[i], 2);
+        targetingMode.hoverBlocked = best ? null : blocked;
         return best;
       }
+
 
       function _updateTargetingState(mouseRef, camRef, mouseWorld, dt) {
         const step = clamp(Number(dt) || 0, 0, 0.05);
@@ -22733,15 +22840,42 @@
               visualScale
             );
           } else if (!hovered) {
+            const blocked = targetingMode.hoverBlocked;
+            if (blocked && isTargetAlive(blocked)) {
+              const screen = worldToScreen(getTargetX(blocked), getTargetY(blocked), camRef);
+              const radius = _targetingScreenRadius(blocked, camRef.zoom);
+              ctx.save();
+              ctx.globalAlpha = 0.45;
+              drawSingleTargetingReticle(ctx, screen.x, screen.y, radius, 0, '#6f8b99', '#6f8b99', visualScale);
+              ctx.restore();
+              _targetingLabel(
+                _targetingBlockedReason(blocked),
+                screen.x,
+                screen.y + radius + 28 * visualScale,
+                '#8fb0bf',
+                'center',
+                visualScale
+              );
+            }
             drawSingleTargetingReticle(ctx, cursor.x, cursor.y, 13 * visualScale, 0, '#ffb648', '#ffd27a', visualScale);
           }
         } else if (targetingMode.current === TARGETING_MODE.MULTI) {
+          // Cel ZATWIERDZONY musi byc czerwony takze wtedy, gdy nadal siedzi w
+          // ramce. Wczesniej petla kandydatow malowala go na bursztynowo, a
+          // petla lockow go pomijala — po LPM nie zmienialo sie NIC na ekranie.
           let readyCount = 0;
+          let pendingCount = 0;
           for (let i = 0; i < targetingMode.groupCandidates.length; i++) {
             const target = targetingMode.groupCandidates[i];
-            const progress = targetingMode.groupAcquisition.get(target) || 0;
             const screen = worldToScreen(getTargetX(target), getTargetY(target), camRef);
             const nodeRadius = _targetingScreenRadius(target, camRef.zoom);
+            if (lockedTargets.includes(target)) {
+              drawMultiTargetingNode(ctx, screen.x, screen.y, nodeRadius, 1, '#ff4d5e', '#ff8a94', visualScale);
+              drawTargetingLockRing(ctx, screen.x, screen.y, nodeRadius + 12 * visualScale, '#ff4d5e', visualScale);
+              continue;
+            }
+            pendingCount++;
+            const progress = targetingMode.groupAcquisition.get(target) || 0;
             if (drawMultiTargetingNode(ctx, screen.x, screen.y, nodeRadius, progress, '#ffb648', '#ffd27a', visualScale)) readyCount++;
             drawTargetingSnapEcho(ctx, screen.x, screen.y, nodeRadius + 10 * visualScale, targetingMode.groupReadyFx.get(target) || 0, '#ffd27a', visualScale);
           }
@@ -22753,8 +22887,10 @@
             drawMultiTargetingNode(ctx, screen.x, screen.y, lockedRadius, 1, '#ff4d5e', '#ff8a94', visualScale);
             drawTargetingLockRing(ctx, screen.x, screen.y, lockedRadius + 12 * visualScale, '#ff4d5e', visualScale);
           }
-          const count = targetingMode.groupCandidates.length;
-          const frameColor = count > 0 && readyCount === count ? '#ffd27a' : '#34e7ff';
+          const allLocked = pendingCount === 0 && targetingMode.groupCandidates.length > 0;
+          const frameColor = allLocked
+            ? '#ff4d5e'
+            : (pendingCount > 0 && readyCount === pendingCount ? '#ffd27a' : '#34e7ff');
           drawMultiTargetingFrame(
             ctx,
             targetingMode.groupX,
@@ -22763,13 +22899,17 @@
             targetingMode.groupH,
             targetingMode.groupAngle,
             frameColor,
-            0.95,
+            allLocked ? 0.55 : 0.95,
             visualScale
           );
-          if (count > 0) {
+          if (targetingMode.groupCandidates.length > 0) {
             const labelOffset = targetingMode.groupH * 0.5 + 18 * visualScale;
+            let label;
+            if (allLocked) label = `MULTI • ${lockedTargets.length} × LOCK`;
+            else if (readyCount === pendingCount) label = `◂ MULTI • ${readyCount} GOTOWYCH • LPM: LOCK ▸`;
+            else label = `MULTI • NAMIAR ${readyCount}/${pendingCount}`;
             _targetingLabel(
-              readyCount === count ? `◂ MULTI • ${count} GOTOWYCH • LPM: LOCK ▸` : `MULTI • NAMIAR ${readyCount}/${count}`,
+              label,
               targetingMode.groupX + Math.sin(targetingMode.groupAngle) * labelOffset,
               targetingMode.groupY - Math.cos(targetingMode.groupAngle) * labelOffset,
               frameColor,
@@ -22835,6 +22975,19 @@
         ctx.textAlign = 'left';
         ctx.fillText(`${TARGETING_MODE_ICONS[targetingMode.current]} ${TARGETING_MODE_NAMES[targetingMode.current]} • BROŃ 100%`, clipX + 10, H - 10);
         ctx.restore();
+      }
+
+      // Kursor systemowy chowamy dokladnie tam, gdzie rysujemy wlasny celownik.
+      // Panel stacji, CIC, RTS, kolo trybow i menu maja dostac strzalke z powrotem.
+      const wantHiddenCursor = gameStarted
+        && !stationUI.open
+        && !targetingMode.wheelOpen
+        && !CICDisplay.active
+        && !isRtsModeActive()
+        && mouse.overCanvas;
+      if (wantHiddenCursor !== _osCursorHidden) {
+        _osCursorHidden = wantHiddenCursor;
+        canvas.style.cursor = wantHiddenCursor ? 'none' : '';
       }
 
       if (gameStarted && !stationUI.open && !targetingMode.wheelOpen) {

@@ -1163,8 +1163,15 @@ function podtytul(tekst) {
  * To jest panel, w którym widać, czy zbrojenie w ogóle rusza: stocznia bez
  * dostaw stoi z pustymi pochylniami, a wtedy wojny nie ma czym prowadzić
  * i nie ma skąd wziąć złomu.
+ *
+ * `snap` MUSI przyjść argumentem. Do 2026-09-01 ta funkcja czytała go wprost,
+ * licząc na zmienną z `drawPanels` — a że jest osobną funkcją modułową, była to
+ * niezwiązana nazwa i każde odświeżenie panelu rzucało `ReferenceError`. Łapał
+ * go `try` z pętli klatki, więc jedynym objawem było to, że WSZYSTKO poniżej
+ * tego wywołania nigdy się nie rysowało: piractwo, kupcy, komputer handlowy
+ * i dziennik stały puste przez cały bieg.
  */
-function drawWar() {
+function drawWar(snap) {
   const yards = summarizeShipyards(shipyards);
   const w = summarizeWar(war);
   const z = summarizeScrappers(scrappers);
@@ -1464,7 +1471,7 @@ function drawPanels() {
 
   drawWarehouses();
   drawConvoysAndPatrols(snap);
-  drawWar();
+  drawWar(snap);
   drawPiracy();
   drawAgents();
 

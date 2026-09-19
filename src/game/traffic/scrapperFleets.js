@@ -18,7 +18,9 @@
  * układu — i to samo z siebie rozkłada złomiarzy po mapie.
  */
 
-import { COURSE_KIND, launchCourse, travelStage, dwellStage, DWELL_REASON } from './courseRegistry.js';
+import {
+  COURSE_KIND, launchCourse, travelStage, dwellStage, DWELL_REASON, getCourse
+} from './courseRegistry.js';
 import { salvageManifest } from './warDispatcher.js';
 
 export const SCRAPPER_MODEL = Object.freeze({
@@ -203,8 +205,7 @@ export function tickScrappers(scrappers, dt, options = {}) {
 
   for (let i = scrappers.active.length - 1; i >= 0; i--) {
     const job = scrappers.active[i];
-    const course = registry?.byId?.get?.(job.courseId)
-      || registry?.courses?.find(c => c.id === job.courseId);
+    const course = getCourse(registry, job.courseId);
     if (course && course.status === 'active') continue;
 
     scrappers.active.splice(i, 1);

@@ -1,6 +1,14 @@
 // src/game/weaponController.js
 // Per-ship weapon controller for split-screen P1/P2 independence
 // Extracts firing logic from index.html into reusable instances
+import { getMountedWeaponAim, mountedWeaponBase, stepMountedWeaponAim } from './weaponAim.js';
+import { Turret2D } from '../vfx/turret2D.js';
+
+const AIM_GROUPS = ['main', 'missile', 'special', 'special_missile'];
+const EMPTY_WEAPONS = [];
+const _aimBase = { x: 0, y: 0 };
+const _aimPoint = { x: 0, y: 0 };
+const _muzzleOffset = { x: 0, y: 0 };
 
 // OPTYMALIZACJA: Pre-alokowany obiekt, używany wielokrotnie podczas wyliczania Muzzle.
 // Zabija to powstawanie setek tysięcy obiektów na sekundę dla Garbage Collectora.
@@ -106,6 +114,72 @@ export class WeaponController {
     return this.weapons[window.HP?.AUX || 'aux'] || [];
   }
 
+  updateAim(dt) {
+    const mouse = this.getMouseRef();
+    const mouseWorld = this.screenToWorldFn(mouse.x, mouse.y);
+    const ship = this.ship;
+    const targets = this.lockedTargets || EMPTY_WEAPONS;
+    const fallback = this.lockedTarget;
+    for (const group of AIM_GROUPS) {
+      const loadouts = this.weapons[group] || EMPTY_WEAPONS;
+      for (let i = 0; i < loadouts.length; i++) {
+        const loadout = loadouts[i];
+        if (!loadout?.weapon || !loadout.hp || loadout.hp.destroyed) continue;
+        const weapon = loadout.weapon;
+        const state = getMountedWeaponAim(ship, loadout);
+        const range = (weapon.baseRange || weapon.range || 1000) * (ship.modifiers?.range || 1);
+        // Stable round-robin assignment, shared by aiming and firing. No random
+        // target switch at the instant of a shot, and no temporary target arrays.
+        let count = 0;
+        for (let j = 0; j < targets.length; j++) {
+          const target = targets[j];
+          if (!targetIsAlive(target)) continue;
+          if (group === 'main' && Math.hypot(targetX(target) - ship.pos.x, targetY(target) - ship.pos.y) > range) continue;
+          count++;
+        }
+        state.target = targets.length === 0 && targetIsAlive(fallback) ? fallback : null;
+        if (count > 0) {
+          let ordinal = i % count;
+          for (let j = 0; j < targets.length; j++) {
+            const target = targets[j];
+            if (!targetIsAlive(target)) continue;
+            if (group === 'main' && Math.hypot(targetX(target) - ship.pos.x, targetY(target) - ship.pos.y) > range) continue;
+            if (ordinal-- === 0) { state.target = target; break; }
+          }
+        }
+        mountedWeaponBase(ship, loadout.hp, _aimBase);
+        let aimPoint = mouseWorld;
+        if (state.target) {
+          if (weapon.category !== 'beam' && typeof window.getLeadAim === 'function') {
+            aimPoint = window.getLeadAim(_aimBase, state.target,
+              (weapon.baseSpeed || 1000) * (ship.modifiers?.projectileSpeed || 1));
+          } else {
+            _aimPoint.x = targetX(state.target);
+            _aimPoint.y = targetY(state.target);
+            aimPoint = _aimPoint;
+          }
+        }
+        stepMountedWeaponAim(state, _aimBase, aimPoint, dt, ship.turret);
+      }
+    }
+  }
+
+  computeMountedMuzzle(loadout, barrelIndex = 0) {
+    const ship = this.ship;
+    const state = getMountedWeaponAim(ship, loadout);
+    mountedWeaponBase(ship, loadout.hp, _muzzleScratch.pos);
+    Turret2D.writeMuzzleOffset(ship, loadout.weapon, barrelIndex, _muzzleOffset);
+    const c = Math.cos(state.angle);
+    const s = Math.sin(state.angle);
+    _muzzleScratch.pos.x += _muzzleOffset.x * c - _muzzleOffset.y * s;
+    _muzzleScratch.pos.y += _muzzleOffset.x * s + _muzzleOffset.y * c;
+    _muzzleScratch.dir.x = c;
+    _muzzleScratch.dir.y = s;
+    _muzzleScratch.baseVel.x = ship.vel?.x || ship.vx || 0;
+    _muzzleScratch.baseVel.y = ship.vel?.y || ship.vy || 0;
+    return _muzzleScratch;
+  }
+
   // ==================== MAIN WEAPONS ====================
 
   triggerRailVolley() {
@@ -144,7 +218,6 @@ export class WeaponController {
     if (!mainWeapons.length) return;
 
     const ship = this.ship;
-    const turrets = [ship.turret, ship.turret2, ship.turret3, ship.turret4];
     let maxCooldown = 0;
 
     for (let i = 0; i < mainWeapons.length; i++) {
@@ -153,52 +226,21 @@ export class WeaponController {
       const weaponData = mainWeapons[i]?.weapon;
       if (!weaponData) continue;
 
-      const hpOffset = mainWeapons[i]?.hp?.pos;
-      const turretIndex = hpOffset ? this._getNearestTurretIndex(hpOffset, turrets) : (i % turrets.length);
-      const t = turrets[turretIndex];
-      const aimAngle = t?.angle ?? ship.angle;
-      const muzzleOffset = hpOffset || t?.offset;
+      if (!mainWeapons[i].hp) continue;
+      const aim = getMountedWeaponAim(ship, mainWeapons[i]);
 
       const barrelsPerShot = Number.isFinite(Number(weaponData.barrelsPerShot))
         ? Math.max(1, Math.round(Number(weaponData.barrelsPerShot)))
         : (weaponData.size === 'L' ? 1 : 2);
         
       // Zwraca wskaźnik na mutowalny obiekt _muzzleScratch
-      const muzzle = this._computeMainMuzzle(muzzleOffset, aimAngle, barIndex, barrelsPerShot);
+      const muzzle = this.computeMountedMuzzle(mainWeapons[i], barIndex);
       const baseEmitterUid = `${this.owner}_main_${i}_${weaponData.id || 'x'}`;
       muzzle.emitterUid = barrelsPerShot > 1 ? `${baseEmitterUid}:b${barIndex}` : baseEmitterUid;
 
-      let targetToPass = this.lockedTarget;
-      if (this.autoFire && this.lockedTargets && this.lockedTargets.length > 0) {
-        const rng = weaponData.baseRange || 1000;
-        const fmRangeScale = (this.owner === 'player' && typeof window.getFiringModeModifiers === 'function') ? (window.getFiringModeModifiers()?.rangeMul || 1.0) : 1.0;
-        const actualRng = rng * fmRangeScale;
-        
-        // OPTYMALIZACJA: Wyszukiwanie celu w locie (bez alokacji z filter)
-        let validTargets = [];
-        for(let j=0; j<this.lockedTargets.length; j++) {
-           const ltar = this.lockedTargets[j];
-           if (!targetIsLockable(ltar)) continue;
-           if (Math.hypot(targetX(ltar) - ship.pos.x, targetY(ltar) - ship.pos.y) <= actualRng) validTargets.push(ltar);
-        }
-        if (validTargets.length > 0) {
-            targetToPass = validTargets[Math.floor(Math.random() * validTargets.length)];
-        } else {
-            continue; // Cannot fire this individual weapon, out of range
-        }
-      }
-
+      const targetToPass = targetIsAlive(aim.target) ? aim.target : null;
+      if (this.autoFire && this.lockedTargets.length && !targetToPass) continue;
       const cd = window.fireWeaponCore(ship, targetToPass, weaponData.id, muzzle);
-
-      // Turret recoil
-      const recoilKick = weaponData.category === 'beam' ? 6 : 12;
-      const recoilMax = 18;
-      if (t && Array.isArray(t.recoil)) {
-        const idx = barIndex % 2;
-        t.recoil[idx] = Math.min(t.recoil[idx] + recoilKick, recoilMax);
-      } else if (t) {
-        t.recoil = Math.min(t.recoil + recoilKick, recoilMax);
-      }
 
       // Muzzle flash VFX
       const CanvasVFX = window.CanvasVFX;
@@ -234,7 +276,8 @@ export class WeaponController {
     if (!loadout) return;
 
     const ship = this.ship;
-    const target = targetIsLockable(this.lockedTarget) ? this.lockedTarget : null;
+    const aim = getMountedWeaponAim(ship, loadout);
+    const target = targetIsAlive(aim.target) ? aim.target : null;
     const weapon = loadout?.weapon;
     const hp = loadout?.hp;
     if (!weapon || !hp) return false;
@@ -242,7 +285,7 @@ export class WeaponController {
     if (!this._consumeMissileAmmo(loadout)) return;
     
     // Zwraca wskaźnik na mutowalny obiekt _muzzleScratch
-    const muzzle = this._computeMissileMuzzle(hp);
+    const muzzle = this.computeMountedMuzzle(loadout);
     muzzle.emitterUid = `${this.owner}_missile_${weapon.id || 'x'}_${hp.id || 'hp'}`;
     
     const cd = window.fireWeaponCore(ship, target, weapon.id, muzzle);
@@ -260,13 +303,6 @@ export class WeaponController {
     const ship = this.ship;
     let fired = false;
 
-    const target = targetIsLockable(this.lockedTarget) ? this.lockedTarget : null;
-    const mouseRef = this.getMouseRef();
-    const mouseWorld = this.screenToWorldFn(mouseRef.x, mouseRef.y);
-    const c = Math.cos(ship.angle);
-    const s = Math.sin(ship.angle);
-    const shipVel = ship.vel || { x: ship.vx || 0, y: ship.vy || 0 };
-
     const groups = [standardSpecials, specialMissiles];
     for (let g = 0; g < groups.length; g++) {
       const specials = groups[g];
@@ -283,21 +319,9 @@ export class WeaponController {
         const cdLeft = Math.max(0, Number(hp.specialCd) || 0);
         if (cdLeft > 0) continue;
 
-        const localX = Number(hpPos.x) || 0;
-        const localY = Number(hpPos.y) || 0;
-        const muzzleX = ship.pos.x + (localX * c - localY * s);
-        const muzzleY = ship.pos.y + (localX * s + localY * c);
-        const dx = mouseWorld.x - muzzleX;
-        const dy = mouseWorld.y - muzzleY;
-        const len = Math.hypot(dx, dy) || 1;
-
-        // Recycle the scratch object for special weapons too
-        _muzzleScratch.pos.x = muzzleX;
-        _muzzleScratch.pos.y = muzzleY;
-        _muzzleScratch.dir.x = dx / len;
-        _muzzleScratch.dir.y = dy / len;
-        _muzzleScratch.baseVel.x = shipVel.x || 0;
-        _muzzleScratch.baseVel.y = shipVel.y || 0;
+        const aim = getMountedWeaponAim(ship, loadout);
+        const target = targetIsAlive(aim.target) ? aim.target : null;
+        this.computeMountedMuzzle(loadout, aim.nextBarrel++);
         _muzzleScratch.emitterUid = `${this.owner}_${emitterPrefix}:${hp?.id || i}`;
 
         const cd = window.fireWeaponCore(ship, target, weapon.id, _muzzleScratch);
@@ -325,6 +349,7 @@ export class WeaponController {
     const ship = this.ship;
     if (!ship || ship.destroyed) return;
 
+    this.updateAim(window.warp?.state === 'active' ? 0 : dt);
     const mouseRef = this.getMouseRef();
     const warpBusy = window.warp?.isBusy?.() || false;
     const stationOpen = window.stationUI?.open || false;
@@ -440,45 +465,6 @@ export class WeaponController {
     return false;
   }
 
-  _getNearestTurretIndex(offset, turrets) {
-    if (!offset || !turrets.length) return -1;
-    let bestIndex = 0, bestDist = Infinity;
-    for (let i = 0; i < turrets.length; i++) {
-      const t = turrets[i];
-      if (!t?.offset) continue;
-      const dx = offset.x - t.offset.x;
-      const dy = offset.y - t.offset.y;
-      const dist = dx * dx + dy * dy;
-      if (dist < bestDist) { bestDist = dist; bestIndex = i; }
-    }
-    return bestIndex;
-  }
-
-  _computeMainMuzzle(offset, angle, barIndex, barrelsPerShot) {
-    const spriteScale = this.ship.visual?.spriteScale || 1;
-    const forwardLen = Math.min((this.ship.h * spriteScale) * 0.40, 52 * spriteScale);
-    const offsetFrac = barrelsPerShot === 1 ? 0 : (Math.min(barIndex, barrelsPerShot - 1) / (barrelsPerShot - 1) - 0.5) * 2;
-    const lateralOffset = (5 * spriteScale) * offsetFrac; // gap * 0.5 uproszczony
-    
-    const fX = Math.cos(angle);
-    const fY = Math.sin(angle);
-    
-    // Obrot offsetu
-    const c = Math.cos(this.ship.angle);
-    const s = Math.sin(this.ship.angle);
-    const offX = offset ? (offset.x * c - offset.y * s) : 0;
-    const offY = offset ? (offset.x * s + offset.y * c) : 0;
-    
-    _muzzleScratch.pos.x = this.ship.pos.x + offX + fX * forwardLen + (-fY) * lateralOffset;
-    _muzzleScratch.pos.y = this.ship.pos.y + offY + fY * forwardLen + fX * lateralOffset;
-    _muzzleScratch.dir.x = fX;
-    _muzzleScratch.dir.y = fY;
-    _muzzleScratch.baseVel.x = this.ship.vel.x;
-    _muzzleScratch.baseVel.y = this.ship.vel.y;
-    
-    return _muzzleScratch;
-  }
-
   _selectMissileLoadout(side) {
     const entries = this.missileWeapons;
     const available = entries.filter(e => {
@@ -519,20 +505,4 @@ export class WeaponController {
     return true;
   }
 
-  _computeMissileMuzzle(hp) {
-    const hpPos = hp?.pos || hp || { x: 0, y: 0 };
-    const localX = Number(hpPos.x) || 0;
-    const localY = Number(hpPos.y) || 0;
-    const c = Math.cos(this.ship.angle || 0);
-    const s = Math.sin(this.ship.angle || 0);
-    
-    _muzzleScratch.pos.x = this.ship.pos.x + (localX * c - localY * s);
-    _muzzleScratch.pos.y = this.ship.pos.y + (localX * s + localY * c);
-    _muzzleScratch.dir.x = c;
-    _muzzleScratch.dir.y = s;
-    _muzzleScratch.baseVel.x = this.ship.vel?.x || this.ship.vx || 0;
-    _muzzleScratch.baseVel.y = this.ship.vel?.y || this.ship.vy || 0;
-    
-    return _muzzleScratch;
-  }
 }

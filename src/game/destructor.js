@@ -94,6 +94,10 @@ export const DESTRUCTOR_CONFIG = {
   collisionSearchRadius: 5, //
   collisionIterations: 2, //
   broadphaseCellSize: 1200, //
+  // Zapas w KOMORKACH doliczany do zmierzonego dryfu heksow przy wyborze searchR.
+  // null = mechanizm WYLACZONY (searchR jak dotad). Liczba wlacza adaptacyjny
+  // sufit: nietkniety kadlub schodzi z dysku 49-81 komorek na ~13.
+  searchRDriftMargin: null,
   broadphaseMaxCandidates: 128, //
 
   splitForceThreshold: 50, //
@@ -772,7 +776,17 @@ function refreshEntityObb(entity, tick) {
   obb.vy = localDeltaToWorldY(0, 1, scaleX, scaleY, c, s, billboardOrientation) / scaleY;
 
   // Zapas na deformacje shardów (collision pos = gridX + deformation*cds) i hitRadius.
-  const pad = ((Number(DESTRUCTOR_CONFIG.maxDeform) || 100) * Math.max(1, Number(DESTRUCTOR_CONFIG.collisionDeformScale) || 1)) + HEX_SPACING * 4;
+  // Skladnik deformacyjny byl STALY i wymiarowany na maxDeform (100 x 1.15 = 115),
+  // czyli na teoretyczny clamp, nie na rzeczywistosc. Pomiar w bitwie 212 statkow:
+  // mediana najwiekszego dryfu na cialo 10.2 j., p99 22.0, maksimum 33.4, a 125 z
+  // 420 cial mialo dryf ZEROWY. Stad pudlo fregaty mialo 7.57x pole kadluba i
+  // bramka SAT praktycznie nic nie odrzucala (2-4 kontakty na klatke przy 12 ms
+  // w Kolizjach). Teraz skladnik idzie z pomiaru; sufit zostawia stara wartosc,
+  // wiec brak pomiaru (grid bez licznika) = dokladnie dawne zachowanie.
+  const deformCeil = (Number(DESTRUCTOR_CONFIG.maxDeform) || 100) * Math.max(1, Number(DESTRUCTOR_CONFIG.collisionDeformScale) || 1);
+  const driftRaw = Number(grid._maxHexDrift);
+  const driftPad = Number.isFinite(driftRaw) && driftRaw >= 0 ? Math.min(driftRaw, deformCeil) : deformCeil;
+  const pad = driftPad + HEX_SPACING * 4;
   obb.eu = (w * 0.5 + pad) * scaleX;
   obb.ev = (h * 0.5 + pad) * scaleY;
   obb.valid = true;
@@ -803,6 +817,78 @@ export function entityObbsOverlap(A, B, tick, margin = 0) {
   if (obbsSeparatedOnAxis(b.ux, b.uy, dx, dy, a, b, m)) return false;
   if (obbsSeparatedOnAxis(b.vx, b.vy, dx, dy, a, b, m)) return false;
   return true;
+}
+
+
+// ============================================================================
+// DIAGNOSTYKA BRAMEK KOLIZJI (DevFlags.showCollisionBounds)
+// ============================================================================
+// Overlay w index.html MUSI pokazywac to, co NAPRAWDE testuje broadphase, wiec
+// OBB bierzemy z refreshEntityObb — tej samej funkcji, z ktorej korzysta
+// entityObbsOverlap. Drugie, "podobne" liczenie ekstentow w warstwie rysowania
+// pokazywaloby ladny prostokat i ukrywalo dokladnie ten blad, ktorego szukamy.
+//
+// Tick jest sztuczny i rosnacy, bo refreshEntityObb cache'uje po `_destrObbTick`.
+// Encja, ktora w tej klatce nie trafila do zadnej pary, ma OBB z dowolnie starej
+// klatki — bez wymuszenia rysowalibysmy pudlo sprzed sekund.
+let _obbDebugTick = 0x40000000;
+
+export function getCollisionBoundsDebug(entity, out = {}) {
+  out.valid = false;
+  const grid = entity?.hexGrid;
+  const w = Number(grid?.srcWidth) || 0;
+  const h = Number(grid?.srcHeight) || 0;
+  if (w <= 0 || h <= 0) return out;
+
+  const obb = refreshEntityObb(entity, _obbDebugTick++);
+  if (!obb.valid) return out;
+
+  const scaleX = Math.max(0.0001, getFinalScaleX(entity));
+  const scaleY = Math.max(0.0001, getFinalScaleY(entity));
+  // Kopia wzoru z refreshEntityObb — gdy tam sie zmieni, tu tez trzeba.
+  const pad = obb.eu / scaleX - w * 0.5;
+
+  out.valid = true;
+  out.cx = obb.cx;
+  out.cy = obb.cy;
+  out.ux = obb.ux;
+  out.uy = obb.uy;
+  out.vx = obb.vx;
+  out.vy = obb.vy;
+  // Ekstenty Z PADEM — to jest bramka, ktora odrzuca (albo nie) pare.
+  out.eu = obb.eu;
+  out.ev = obb.ev;
+  // Ekstenty BEZ PADU — rzeczywisty obrys kadluba, do porownania na ekranie.
+  out.euRaw = w * 0.5 * scaleX;
+  out.evRaw = h * 0.5 * scaleY;
+  out.pad = pad;
+  out.padU = pad * scaleX;
+  out.padV = pad * scaleY;
+  out.drift = Number(grid._maxHexDrift) || 0;
+  // Ustawiane przez _prepareBroadphase; 0 gdy encja wypadla z broadphase.
+  out.bpRadius = Number(entity._bpRadius) || 0;
+  out.shieldRadius = Number(entity._shieldRadius) || 0;
+  out.hasActiveHex = entity._hasActiveHex !== false;
+  // Ile razy wieksze POLE zajmuje pudlo z padem. 1.0 = pad zerowy.
+  out.areaRatio = (out.eu * out.ev) / Math.max(1e-6, out.euRaw * out.evRaw);
+  return out;
+}
+
+export function getBroadphaseDebugInfo() {
+  const pad = ((Number(DESTRUCTOR_CONFIG.maxDeform) || 100) *
+    Math.max(1, Number(DESTRUCTOR_CONFIG.collisionDeformScale) || 1)) + HEX_SPACING * 4;
+  return {
+    cellSize: Math.max(300, Number(DESTRUCTOR_CONFIG.broadphaseCellSize) || 2400),
+    pad,
+    hexSpacing: HEX_SPACING,
+    maxDeform: Number(DESTRUCTOR_CONFIG.maxDeform) || 100,
+    deformScale: Number(DESTRUCTOR_CONFIG.collisionDeformScale) || 1,
+    // perf.lastContacts, nie _frameContacts: to drugie jest zerowane na poczatku
+    // KAZDEGO podkroku, wiec w fazie rysowania trzymaloby polowiczny stan. HUD
+    // ("Kontakty/klatka") czyta lastContacts — overlay ma pokazywac te sama liczbe.
+    contacts: Number(DestructorSystem?.perf?.lastContacts) || 0,
+    entities: Array.isArray(DestructorSystem?._visualEntities) ? DestructorSystem._visualEntities.length : 0
+  };
 }
 
 function getEntitySpriteRotation(entity) {
@@ -1005,6 +1091,51 @@ function getShardCollisionGridX(shard) {
 
 function getShardCollisionGridY(shard) {
   return shard.gridY + shard.deformation.y * COLLISION_DEFORM_SCALE;
+}
+
+// ============================================================================
+// DRYF HEKSOW = ADAPTACYJNY PAD OBB
+// ============================================================================
+// refreshEntityObb musi objac kazda pozycje kolizyjna heksa. Ta pozycja to
+// `gridX + deformation * COLLISION_DEFORM_SCALE` (getShardCollisionGridX), a
+// nominalne pudlo obejmuje tylko `origGridX`. Nadmiar ma wiec dwie skladowe:
+//   - dryf PLASTYCZNY  (gridX - origGridX), wypalany w simulateElasticity,
+//   - dryf SPREZYSTY   (deformation * cds).
+// Bierzemy `targetDeformation`, nie `deformation`: lerp w updateVisualDeformation
+// dopiero zmierza do celu i nigdy go nie przekracza, wiec cel jest gorna granica
+// tego, co heks osiagnie bez nowej kolizji. Sume modulow, nie modul sumy — obie
+// skladowe moga miec ten sam znak.
+function shardDriftBound(s) {
+  const dx = Math.abs(s.gridX - s.origGridX) + Math.abs(s.targetDeformation.x) * COLLISION_DEFORM_SCALE;
+  const dy = Math.abs(s.gridY - s.origGridY) + Math.abs(s.targetDeformation.y) * COLLISION_DEFORM_SCALE;
+  return dx > dy ? dx : dy;
+}
+
+// Wlascicielem licznika jest STRONA ROSNACA (kolizja), bo tylko ona wie, ze
+// dryf sie zwiekszyl, i nie ma zadnych bramek. Wygaszanie robi osobno
+// refreshMaxHexDrift z ungated petli updateVisualDeformation — gdyby to
+// wygaszanie siedzialo w simulateElasticity, licznik zostawalby zawyzony na
+// zawsze dla kadlubow >500 heksow, obslugiwanych przez GPU, brittle i ringow
+// (piec bramek). To ta sama pulapka, co _gpuForceAwakeFrames.
+function noteHexDrift(grid, shard) {
+  if (!grid || !shard) return;
+  const d = shardDriftBound(shard);
+  if (d > (Number(grid._maxHexDrift) || 0)) grid._maxHexDrift = d;
+}
+
+// Dokladny przelicz: pozwala licznikowi ZMALEC, gdy blacha sie wyprostowala.
+// O(aktywne heksy) — wolane round-robin, nie dla kazdego ciala co klatke.
+function refreshMaxHexDrift(grid) {
+  const shards = grid?.shards;
+  if (!Array.isArray(shards)) return;
+  let mx = 0;
+  for (let i = 0; i < shards.length; i++) {
+    const s = shards[i];
+    if (!s || !s.active || s.isDebris) continue;
+    const d = shardDriftBound(s);
+    if (d > mx) mx = d;
+  }
+  grid._maxHexDrift = mx;
 }
 
 function rebuildNeighbors(grid) {
@@ -1812,9 +1943,35 @@ export const DestructorSystem = {
     // usypiania/budzenia nie zależy od fps.
     const framesPerTick = Math.max(1, Math.round(dt * 120));
 
+    // Wygaszanie licznika dryfu: podbija go kolizja, ale nikt by go nie obnizyl,
+    // gdy blacha sie wyprostuje (repair) — a wtedy pudlo OBB zostaje zawyzone na
+    // stale. Przelicz jest O(heksy), wiec idzie round-robin: w kazdej klatce
+    // porcja cial, cale pole odswieza sie w DRIFT_REFRESH_FRAMES klatek. Miedzy
+    // przeliczami licznik moze byc tylko ZA WYSOKI (kolizja go podbija od razu),
+    // czyli pudlo bywa za duze — nigdy za male.
+    const DRIFT_REFRESH_FRAMES = 8;
+    const driftCursor = this._driftCursor = ((Number(this._driftCursor) || 0) + 1) % DRIFT_REFRESH_FRAMES;
+    let driftIndex = 0;
+
     for (const e of entities) {
       const grid = e?.hexGrid;
       if (!grid?.shards) continue;
+
+      if ((driftIndex++ % DRIFT_REFRESH_FRAMES) === driftCursor) refreshMaxHexDrift(grid);
+
+      // WYGASZANIE _gpuForceAwakeFrames NALEZY DO DESTRUKTORA, nie do solvera.
+      // Flage ustawia collideEntities i distributeStructuralDamage (16/30 klatek),
+      // a dekrementowal ja WYLACZNIE DestructorGpuSoftBody._isEntityHot — czyli
+      // kod, ktory: (a) w ogole nie startuje bez WebGPU, (b) zaczynal petle
+      // zawsze od indeksu 0 i przerywal po 2-3 dispatchach, (c) pomijal encje
+      // <64 heksow, brittle i ring-segmenty. Wszystko, czego nie dotknal,
+      // zostawalo "forced awake" NA ZAWSZE: siatka nigdy nie zasypiala, a w
+      // dispatcherze forcedAwake omija cooldown i backpressure kolejki, wiec te
+      // same pierwsze encje z listy dozywotnio zjadaly caly budzet GPU.
+      // Tutaj petla po encjach leci raz na klatke renderu i BEZ zadnych bramek.
+      const forceAwake = Number(e._gpuForceAwakeFrames) || 0;
+      if (forceAwake > 0) e._gpuForceAwakeFrames = forceAwake - 1;
+
       if (isBrittleEntity(e)) {
         settleBrittleVisualState(grid, sleepFramesLimit, framesPerTick);
         continue;
@@ -1833,7 +1990,7 @@ export const DestructorSystem = {
         grid.wakeHoldFrames = wakeHoldFrames;
       }
 
-      const gpuAwake = (Number(e._gpuForceAwakeFrames) || 0) > 0;
+      const gpuAwake = forceAwake > 0;
       const visualStartRaw = Number(grid.visualDirtyStart);
       const visualEndRaw = Number(grid.visualDirtyEnd);
       const hasVisualRange =
@@ -2611,6 +2768,10 @@ export const DestructorSystem = {
 			0.60,
 			false
 		);
+			// UWAGA: `grid` w tym zakresie to PLASKA TABLICA shardow (grid[rowBase + c]),
+			// a nie obiekt siatki. Licznik musi trafic na entity.hexGrid, inaczej
+			// zapis idzie na tablice i refreshEntityObb nigdy go nie zobaczy.
+			noteHexDrift(entity.hexGrid, shard);
 	} else {
   // 2) reszta pola uderzenia: seed do płynnej propagacji
   shard.targetDeformation.x += appliedDefX * 0.16;
@@ -3211,6 +3372,27 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
       const searchBoost = Math.min(isRingCollision ? 1 : (heavyPair ? 1 : 2), speedHexes);
       searchR = Math.min(searchRCap, searchR + searchBoost);
 
+      // ADAPTACYJNY SUFIT: przeszukujemy siatke HOLDERA, wiec zasieg musi objac
+      // dryf JEGO heksow (o tyle heks odjechal od swojej nominalnej komorki) plus
+      // promienie trafienia obu stron. Stale 4-6 bylo wymiarowane na teoretyczny
+      // maxDeform, a pomiar w bitwie 174 statkow daje dryf ZEROWY dla wiekszosci
+      // kadlubow. Dysk r=5 to 81 komorek na heks brzegowy, r=2 tylko 13.
+      // To sufit, nie wartosc: moze wylacznie ZMNIEJSZYC searchR, nigdy zwiekszyc,
+      // wiec przy braku licznika (_maxHexDrift undefined) zachowanie jest dawne.
+      // DOMYSLNIE WYLACZONE (searchRDriftMargin = null). Zmiana dotyka WYKRYWANIA
+      // kolizji: za ciasny skan gubi kontakt i kadluby zaczynaja sie przenikac,
+      // a tego nie udalo sie na razie zmierzyc w biegu. Wlaczanie do testow:
+      //   DESTRUCTOR_CONFIG.searchRDriftMargin = 3
+      // Metryka bezpieczenstwa to liczba kontaktow na klatke — jesli po wlaczeniu
+      // spada, margines jest za maly.
+      const marginCells = Number(DESTRUCTOR_CONFIG.searchRDriftMargin);
+      const holderDrift = Number(gridHolder.hexGrid?._maxHexDrift);
+      if (Number.isFinite(marginCells) && marginCells >= 0 &&
+          Number.isFinite(holderDrift) && holderDrift >= 0) {
+        const driftCells = Math.ceil(holderDrift / HEX_SPACING) + marginCells;
+        searchR = Math.min(searchR, Math.max(1, driftCells));
+      }
+
       const contacts = this._contactsBuf;
       // Budżet kontaktów jest wyłącznie sprawą wydajności — zależy od rozmiaru siatek
       // i od tego, czy para się ociera, a nie od przewagi masy.
@@ -3640,6 +3822,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
               sA.__collVelY = (sA.__collVelY || 0) + (pushY * 0.35);
             } else {
               sA.applyDeformation(pushX, pushY, 1.0, true);
+              noteHexDrift(A.hexGrid, sA);
 
               const defSqA = sA.targetDeformation.x * sA.targetDeformation.x + sA.targetDeformation.y * sA.targetDeformation.y;
               const hardLimitSq = maxCrushLimit * maxCrushLimit * 1.5;
@@ -3696,6 +3879,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
               sB.__collVelY = (sB.__collVelY || 0) + (pushY * 0.35);
             } else {
               sB.applyDeformation(pushX, pushY, 1.0, true);
+              noteHexDrift(B.hexGrid, sB);
 
               const defSqB = sB.targetDeformation.x * sB.targetDeformation.x + sB.targetDeformation.y * sB.targetDeformation.y;
               const hardLimitSqB = maxCrushLimit * maxCrushLimit * 1.5;
@@ -4424,6 +4608,9 @@ export function initHexBody(entity, image, isProjectile = false, massOverride = 
     wakeHoldFrames: DESTRUCTOR_CONFIG.elasticWakeFrames | 0,
     activeStructuralCount: shards.length,
     baseStructuralCount: shards.length,
+    // Najwiekszy dryf heksa poza nominalny obrys — zrodlo padu OBB.
+    // Swiezy kadlub ma 0, wiec pudlo startuje ciasno.
+    _maxHexDrift: 0,
     pivot: null
   };
 

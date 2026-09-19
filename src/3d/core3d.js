@@ -690,6 +690,17 @@ export const Core3D = {
 
     this.scene = new THREE.Scene();
     this.scene.background = null;
+    // Jedna scena obsluguje 6 RenderPassow + pre-pass halo + snapshot refrakcji,
+    // czyli do 11 wywolan renderer.render(scene, ...) na klatke. Kazde z nich
+    // robi scene.updateMatrixWorld(), a ten ZAWSZE schodzi do wszystkich dzieci
+    // (takze niewidocznych) i dla kazdego wezla z matrixAutoUpdate=true robi
+    // matrix.compose() + multiplyMatrices — nic sie nie cache'uje miedzy
+    // przejsciami. Przy ~1000 wezlow (2 na cialo heksowe, pule asteroid, miasto
+    // ringu) to byl caly rzad wielkosci pracy na darmo.
+    // Aktualizujemy wiec macierze RECZNIE, raz na klatke, na gorze render().
+    // Kto rusza transformem PO tym momencie (syncCamera -> shadowCatcher,
+    // Shockwave3DManager.update), odswieza swoje wezly sam.
+    this.scene.matrixWorldAutoUpdate = false;
 
     const sun = new THREE.DirectionalLight(0x8b79ff, 0.1);
     sun.position.set(30000, 20000, 45000);
@@ -868,6 +879,13 @@ export const Core3D = {
     this.refractionTarget = null;
     this.shockwave3DManager = null;
     this._shockwavePrevTime = 0;
+  },
+
+  // Reczna aktualizacja macierzy sceny. Wolana raz na klatke zamiast raz na
+  // kazde renderer.render(scene, ...) — patrz komentarz przy
+  // scene.matrixWorldAutoUpdate = false w init().
+  _syncSceneMatrices() {
+    if (this.scene) this.scene.updateMatrixWorld();
   },
 
   _applyPassToggles() {
@@ -1089,8 +1107,17 @@ export const Core3D = {
     this.cameraPersp.lookAt(camX, camY, 0);
 
     if (viewOffsetX === 0) {
-      if (this.shadowCatcher) this.shadowCatcher.position.set(camX, camY, -2);
-      if (this.shadowCatcherFg) this.shadowCatcherFg.position.set(camX, camY, -100);
+      // syncCamera leci WEWNATRZ kazdego passa, wiec te dwa wezly ruszaja sie
+      // po recznym scene.updateMatrixWorld() z gory render(). Odswiezamy je tu
+      // punktowo (2 wezly), zamiast przechodzic caly graf jeszcze raz.
+      if (this.shadowCatcher) {
+        this.shadowCatcher.position.set(camX, camY, -2);
+        this.shadowCatcher.updateMatrixWorld();
+      }
+      if (this.shadowCatcherFg) {
+        this.shadowCatcherFg.position.set(camX, camY, -100);
+        this.shadowCatcherFg.updateMatrixWorld();
+      }
     }
   },
 
@@ -1172,6 +1199,12 @@ export const Core3D = {
       this._applyPassToggles();
       this._passTogglesDirty = false;
     }
+
+    // JEDYNY obchod grafu na klatke (scene.matrixWorldAutoUpdate = false w init).
+    // Cale ustawianie transformow konczy sie przed ta linia: updateHexShips3D,
+    // updateShields3D, syncProjectiles, EngineVfxSystem i systemy planet/ringu
+    // chodza wczesniej w render() z index.html.
+    this._syncSceneMatrices();
 
     const t = this.perfToggles || {};
     const bloomOn = t.bloom !== false;
@@ -1454,6 +1487,8 @@ export const Core3D = {
   _renderDirect(dbgEnabled, tRenderTotal0) {
     const renderer = this.renderer;
     const isSplit = typeof window !== 'undefined' && window.splitScreenMode && this.activeCam2;
+
+    this._syncSceneMatrices();
 
     // ShaderMaterial outputuje wartosci sRGB bezposrednio - nie zmieniamy colorSpace.
     renderer.autoClear = false;
