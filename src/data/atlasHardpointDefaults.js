@@ -3,670 +3,274 @@ export const ATLAS_EDITOR_DEFAULTS = {
   "frontAxis": "+X",
   "hardpoints": [
     {
-      "id": "m_wdhxeu2",
+      "id": "m_scw11nw",
       "type": "main",
-      "x": -946,
-      "y": -554.41
+      "x": -254.21,
+      "y": -392.89
     },
     {
-      "id": "m_ofxjg40",
+      "id": "m_3ppbqwl",
       "type": "main",
-      "x": -727.82,
-      "y": -552.78
+      "x": -254.21,
+      "y": 392.89
     },
     {
-      "id": "m_9156ney",
+      "id": "m_d7zc4sn",
       "type": "main",
-      "x": -644.78,
-      "y": -499.05
+      "x": -381.32,
+      "y": -282.32
     },
     {
-      "id": "m_ssdqu4w",
+      "id": "m_12sf2ih",
       "type": "main",
-      "x": -560.11,
-      "y": -437.18
+      "x": -381.32,
+      "y": 282.32
     },
     {
-      "id": "m_y98clr2",
+      "id": "m_45aljrw",
       "type": "main",
-      "x": -112.35,
-      "y": -341.11
+      "x": -1068.62,
+      "y": -498.75
     },
     {
-      "id": "m_luzk7h1",
+      "id": "m_u1izrwb",
       "type": "main",
-      "x": 11.4,
-      "y": -337.86
+      "x": -1068.62,
+      "y": 498.75
     },
     {
-      "id": "m_eopatzb",
+      "id": "m_fbpli2w",
       "type": "main",
-      "x": 105.83,
-      "y": -336.23
+      "x": 541.38,
+      "y": -301.13
     },
     {
-      "id": "m_qkjfe4b",
+      "id": "m_wnmhmte",
       "type": "main",
-      "x": 226.32,
-      "y": -292.27
+      "x": 541.38,
+      "y": 301.13
     },
     {
-      "id": "m_fqmyuq4",
+      "id": "m_hbqth1t",
       "type": "main",
-      "x": 227.95,
-      "y": 259.7
+      "x": 983.9,
+      "y": -183.51
     },
     {
-      "id": "m_ovmh4d7",
+      "id": "m_o2wd7xb",
       "type": "main",
-      "x": 104.21,
-      "y": 318.32
+      "x": 983.9,
+      "y": 183.51
     },
     {
-      "id": "m_zadhr78",
+      "id": "m_g7dubln",
       "type": "main",
-      "x": 3.26,
-      "y": 324.83
+      "x": 1612.35,
+      "y": -141.15
     },
     {
-      "id": "m_398hij4",
+      "id": "m_faycpz4",
       "type": "main",
-      "x": -138.4,
-      "y": 331.34
+      "x": 1612.35,
+      "y": 141.15
     },
     {
-      "id": "m_k27xxbd",
+      "id": "m_34bj65q",
       "type": "main",
-      "x": 1484.95,
-      "y": -176.66
+      "x": -1414.64,
+      "y": -312.91
     },
     {
-      "id": "m_vm9fh5k",
+      "id": "m_ecn9awd",
       "type": "main",
-      "x": 1400.28,
-      "y": -196.2
+      "x": -1414.64,
+      "y": 312.91
     },
     {
-      "id": "m_wp0kv9q",
+      "id": "m_3gty7sy",
       "type": "main",
-      "x": 1312.35,
-      "y": -217.37
+      "x": -1480.54,
+      "y": -9.4
     },
     {
-      "id": "m_c7cdkqp",
-      "type": "main",
-      "x": 1312.35,
-      "y": -219
+      "id": "m_0i0p2k0",
+      "type": "special",
+      "x": -799.36,
+      "y": -349.55
     },
     {
-      "id": "m_2mbm5jp",
-      "type": "main",
-      "x": 1201.63,
-      "y": -238.54
+      "id": "m_lm5ij9b",
+      "type": "special",
+      "x": -799.36,
+      "y": 349.55
     },
     {
-      "id": "m_3uy2u4o",
-      "type": "main",
-      "x": 1483.32,
-      "y": 170.15
+      "id": "m_m5ccyux",
+      "type": "special",
+      "x": -1099.12,
+      "y": -299.61
     },
     {
-      "id": "m_3n2zezx",
-      "type": "main",
-      "x": 1390.51,
-      "y": 196.2
+      "id": "m_htg497z",
+      "type": "special",
+      "x": -1099.12,
+      "y": 299.61
     },
     {
-      "id": "m_ori481x",
-      "type": "main",
-      "x": 1310.73,
-      "y": 210.86
+      "id": "m_3msvxvv",
+      "type": "special",
+      "x": -549.56,
+      "y": -249.68
     },
     {
-      "id": "m_qrj7ofx",
-      "type": "main",
-      "x": 1217.92,
-      "y": 220.63
+      "id": "m_m1mhsv7",
+      "type": "special",
+      "x": -549.56,
+      "y": 249.68
     },
     {
-      "id": "m_pgbo9gu",
-      "type": "main",
-      "x": 1219.54,
-      "y": 220.63
-    },
-    {
-      "id": "m_nf8hvpp",
-      "type": "main",
-      "x": 893.9,
-      "y": 184.8
-    },
-    {
-      "id": "m_27ji5ts",
-      "type": "main",
-      "x": 841.79,
-      "y": 251.56
-    },
-    {
-      "id": "m_2xdh97d",
-      "type": "main",
-      "x": 840.17,
-      "y": 251.56
-    },
-    {
-      "id": "m_9vebobd",
-      "type": "main",
-      "x": 701.77,
-      "y": 262.96
-    },
-    {
-      "id": "m_flx32ln",
-      "type": "main",
-      "x": 900.41,
-      "y": -205.97
-    },
-    {
-      "id": "m_unb02ou",
-      "type": "main",
-      "x": 825.51,
-      "y": -289.01
-    },
-    {
-      "id": "m_nc9cewj",
-      "type": "main",
-      "x": 706.65,
-      "y": -305.29
-    },
-    {
-      "id": "m_f0y826v",
-      "type": "main",
-      "x": -563.37,
-      "y": 448.58
-    },
-    {
-      "id": "m_t9q6g83",
-      "type": "main",
-      "x": -646.41,
-      "y": 497.42
-    },
-    {
-      "id": "m_xh1jp8s",
-      "type": "main",
-      "x": -727.82,
-      "y": 534.87
-    },
-    {
-      "id": "m_3kpnvl0",
-      "type": "main",
-      "x": -827.14,
-      "y": 543.01
-    },
-    {
-      "id": "m_ibrw7q9",
-      "type": "main",
-      "x": -959.03,
-      "y": 541.39
-    },
-    {
-      "id": "m_zprrsbd",
-      "type": "main",
-      "x": -843.42,
-      "y": -549.53
-    },
-    {
-      "id": "m_amlbw2d",
-      "type": "missile",
-      "x": -946,
-      "y": -217.37
-    },
-    {
-      "id": "m_nd7tzfn",
-      "type": "missile",
-      "x": -944.37,
-      "y": -217.37
-    },
-    {
-      "id": "m_d2h371e",
-      "type": "missile",
-      "x": -889.01,
-      "y": -217.37
-    },
-    {
-      "id": "m_lz5hw98",
-      "type": "missile",
-      "x": -832.03,
-      "y": -217.37
-    },
-    {
-      "id": "m_18n9m9s",
-      "type": "missile",
-      "x": -775.04,
-      "y": -220.63
-    },
-    {
-      "id": "m_xoyefhf",
-      "type": "missile",
-      "x": -718.05,
-      "y": -219
-    },
-    {
-      "id": "m_u6ni1f6",
-      "type": "missile",
-      "x": -714.79,
-      "y": 207.6
-    },
-    {
-      "id": "m_8c6akd4",
-      "type": "missile",
-      "x": -775.04,
-      "y": 209.23
-    },
-    {
-      "id": "m_xtnd7xa",
-      "type": "missile",
-      "x": -828.77,
-      "y": 209.23
-    },
-    {
-      "id": "m_7naa0s9",
-      "type": "missile",
-      "x": -887.39,
-      "y": 209.23
-    },
-    {
-      "id": "m_xj43jcq",
-      "type": "missile",
-      "x": -946,
-      "y": 210.86
-    },
-    {
-      "id": "m_anf1g95",
+      "id": "m_semqdz5",
       "type": "aux",
-      "x": 1699.87,
-      "y": -90.37
+      "x": 1304,
+      "y": -207.02
     },
     {
-      "id": "m_kfy1qkv",
+      "id": "m_qd8ttnl",
       "type": "aux",
-      "x": 1701.5,
-      "y": 83.85
+      "x": 1304,
+      "y": 207.02
     },
     {
-      "id": "m_1ppanp3",
+      "id": "m_c8mzs7m",
       "type": "aux",
-      "x": 1512.63,
-      "y": 74.08
+      "x": 1704.16,
+      "y": -79.98
     },
     {
-      "id": "m_jd1ebqw",
+      "id": "m_puf65g2",
       "type": "aux",
-      "x": 1511,
-      "y": -85.48
+      "x": 1704.16,
+      "y": 79.98
     },
     {
-      "id": "m_p6xvky2",
+      "id": "m_gk5ag7d",
       "type": "aux",
-      "x": 1530.54,
-      "y": -197.83
+      "x": -1626.47,
+      "y": -223.5
     },
     {
-      "id": "m_kfpg711",
+      "id": "m_zia82fy",
       "type": "aux",
-      "x": 1533.79,
-      "y": 191.32
+      "x": -1626.47,
+      "y": 223.5
     },
     {
-      "id": "m_6pcjvzm",
+      "id": "m_9o8ebs4",
       "type": "aux",
-      "x": 1073,
-      "y": -261.33
+      "x": -927.4,
+      "y": -576.4
     },
     {
-      "id": "m_ik3z4kx",
+      "id": "m_w0aiify",
       "type": "aux",
-      "x": 1073,
-      "y": 249.93
+      "x": -927.4,
+      "y": 576.4
     },
     {
-      "id": "m_co7k75h",
+      "id": "m_ztuc5hv",
       "type": "aux",
-      "x": 885.76,
-      "y": -274.36
+      "x": 313.06,
+      "y": -322.31
     },
     {
-      "id": "m_fxisujr",
+      "id": "m_j34ed7j",
       "type": "aux",
-      "x": 900.41,
-      "y": 261.33
+      "x": 313.06,
+      "y": 322.31
     },
     {
-      "id": "m_cgjsujm",
+      "id": "m_8sadgwv",
       "type": "aux",
-      "x": 902.04,
-      "y": 261.33
+      "x": -616.69,
+      "y": -574.05
     },
     {
-      "id": "m_6m0lfea",
+      "id": "m_nmblzmt",
       "type": "aux",
-      "x": 903.67,
-      "y": 261.33
+      "x": -616.69,
+      "y": 574.05
     },
     {
-      "id": "m_8amuzt6",
+      "id": "m_4q22jvm",
       "type": "aux",
-      "x": 626.87,
-      "y": 287.38
+      "x": -127.11,
+      "y": -407.02
     },
     {
-      "id": "m_msn2ovb",
+      "id": "m_frcnqjx",
       "type": "aux",
-      "x": 439.62,
-      "y": 300.41
+      "x": -127.11,
+      "y": 407.02
     },
     {
-      "id": "m_6tb62z5",
-      "type": "aux",
-      "x": 630.12,
-      "y": -308.55
-    },
-    {
-      "id": "m_aik14cj",
-      "type": "aux",
-      "x": 439.62,
-      "y": -313.43
-    },
-    {
-      "id": "m_vaxga8y",
-      "type": "aux",
-      "x": 314.25,
-      "y": -323.2
-    },
-    {
-      "id": "m_quou84m",
-      "type": "aux",
-      "x": 315.88,
-      "y": 315.06
-    },
-    {
-      "id": "m_e49axhb",
-      "type": "aux",
-      "x": -149.8,
-      "y": -407.87
-    },
-    {
-      "id": "m_wrvg58l",
-      "type": "aux",
-      "x": -361.47,
-      "y": -388.33
-    },
-    {
-      "id": "m_g9t9i6i",
-      "type": "aux",
-      "x": -161.19,
-      "y": 402.99
-    },
-    {
-      "id": "m_5hz5t6j",
-      "type": "aux",
-      "x": -162.82,
-      "y": 402.99
-    },
-    {
-      "id": "m_s07am0b",
-      "type": "aux",
-      "x": -351.7,
-      "y": 373.68
-    },
-    {
-      "id": "m_6hwvfg9",
-      "type": "aux",
-      "x": -573.14,
-      "y": 523.48
-    },
-    {
-      "id": "m_0xq07l8",
-      "type": "aux",
-      "x": -644.78,
-      "y": -559.3
-    },
-    {
-      "id": "m_ggievt3",
-      "type": "aux",
-      "x": -649.66,
-      "y": 573.95
-    },
-    {
-      "id": "m_0ebugbm",
-      "type": "aux",
-      "x": -561.74,
-      "y": -500.68
-    },
-    {
-      "id": "m_fds3p7d",
-      "type": "aux",
-      "x": -924.83,
-      "y": 583.72
-    },
-    {
-      "id": "m_6nce3u0",
-      "type": "aux",
-      "x": -923.21,
-      "y": 583.72
-    },
-    {
-      "id": "m_evyl8tg",
-      "type": "aux",
-      "x": -895.53,
-      "y": -590.23
-    },
-    {
-      "id": "m_9mubps5",
-      "type": "aux",
-      "x": -1198.38,
-      "y": 430.67
-    },
-    {
-      "id": "m_g9k837o",
-      "type": "aux",
-      "x": -1203.26,
-      "y": -445.32
-    },
-    {
-      "id": "m_78u4dey",
-      "type": "aux",
-      "x": -1501.23,
-      "y": 401.36
-    },
-    {
-      "id": "m_pyvsnpw",
-      "type": "aux",
-      "x": -1564.73,
-      "y": -10.58
-    },
-    {
-      "id": "m_x7ukknt",
-      "type": "aux",
-      "x": -1512.63,
-      "y": -402.99
-    },
-    {
-      "id": "m_1d4lg9d",
-      "type": "aux",
-      "x": 571.51,
-      "y": -5.7
-    },
-    {
-      "id": "m_okcfpug",
-      "type": "aux",
-      "x": 270.29,
-      "y": 0.81
-    },
-    {
-      "id": "m_97gbcin",
-      "type": "aux",
-      "x": -556.85,
-      "y": -8.96
-    },
-    {
-      "id": "m_3rrwud7",
-      "type": "aux",
-      "x": -924.83,
-      "y": 0.81
-    },
-    {
-      "id": "m_rhw45vu",
+      "id": "m_zrm2gxm",
       "type": "hangar",
-      "x": 508.01,
-      "y": -404.62
+      "x": 506.07,
+      "y": 390.54
     },
     {
-      "id": "m_fisxu5z",
+      "id": "m_rs9o7t5",
       "type": "hangar",
-      "x": 182.36,
-      "y": -412.76
+      "x": 506.07,
+      "y": -390.54
     },
     {
-      "id": "m_cmwo4jc",
+      "id": "m_dynrpvy",
       "type": "hangar",
-      "x": -123.75,
-      "y": -446.95
+      "x": 183.6,
+      "y": 397.59
     },
     {
-      "id": "m_meqhivr",
+      "id": "m_umbnbzt",
       "type": "hangar",
-      "x": -122.12,
-      "y": 438.81
+      "x": 183.6,
+      "y": -397.59
     },
     {
-      "id": "m_x3zdxop",
+      "id": "m_hd2ctei",
       "type": "hangar",
-      "x": 180.73,
-      "y": 402.99
+      "x": -122.4,
+      "y": 451.71
     },
     {
-      "id": "m_tj93qe4",
+      "id": "m_t5ab9iv",
       "type": "hangar",
-      "x": 506.38,
-      "y": 394.85
+      "x": -122.4,
+      "y": -451.71
     },
     {
-      "id": "m_97j4bv3",
-      "type": "special",
-      "x": 1608.69,
-      "y": -145.73
+      "id": "m_wx4ubuz",
+      "type": "missile",
+      "x": 456.63,
+      "y": -2.35
     },
     {
-      "id": "m_on7o63d",
-      "type": "special",
-      "x": 1610.32,
-      "y": 135.96
+      "id": "m_lbh11g4",
+      "type": "missile",
+      "x": -1070.98,
+      "y": -7.05
     },
     {
-      "id": "m_qq59kbd",
-      "type": "special",
-      "x": 986.71,
-      "y": 178.29
-    },
-    {
-      "id": "m_1l6i2qq",
-      "type": "special",
-      "x": 986.71,
-      "y": -186.43
-    },
-    {
-      "id": "m_norvwup",
-      "type": "special",
-      "x": 540.57,
-      "y": -302.04
-    },
-    {
-      "id": "m_an1znq6",
-      "type": "special",
-      "x": 540.57,
-      "y": 295.52
-    },
-    {
-      "id": "m_1192bju",
-      "type": "special",
-      "x": -255.63,
-      "y": 388.33
-    },
-    {
-      "id": "m_f8lstfo",
-      "type": "special",
-      "x": -254,
-      "y": 388.33
-    },
-    {
-      "id": "m_dxnrk95",
-      "type": "special",
-      "x": -379.38,
-      "y": 274.36
-    },
-    {
-      "id": "m_z8k7fz4",
-      "type": "special",
-      "x": -254,
-      "y": -399.73
-    },
-    {
-      "id": "m_aihp1gz",
-      "type": "special",
-      "x": -379.38,
-      "y": -280.87
-    },
-    {
-      "id": "m_d5s1r9g",
-      "type": "special",
-      "x": -1068.12,
-      "y": -502.31
-    },
-    {
-      "id": "m_qu3o4qg",
-      "type": "special",
-      "x": -1068.12,
-      "y": 492.54
-    },
-    {
-      "id": "m_kdk7doo",
-      "type": "special",
-      "x": -1411.68,
-      "y": 311.81
-    },
-    {
-      "id": "m_mdwts4s",
-      "type": "special",
-      "x": -1414.93,
-      "y": -328.09
-    },
-    {
-      "id": "m_bwazwvg",
-      "type": "special",
-      "x": -1478.43,
-      "y": -12.21
-    },
-    {
-      "id": "m_yhalrda",
+      "id": "m_j34a3qw",
       "type": "special_missile",
-      "x": -319.13,
-      "y": -7.33
+      "x": -320.12,
+      "y": -7.05
     },
     {
-      "id": "m_r7wxe6h",
-      "type": "special_missile",
-      "x": -1068.12,
-      "y": -8.96
-    },
-    {
-      "id": "m_eoigtit",
-      "type": "special_missile",
-      "x": 459.16,
-      "y": -7.33
-    },
-    {
-      "id": "m_7xc0ppf",
+      "id": "m_rpo2vbp",
       "type": "builtin",
-      "x": 819,
-      "y": -4.07,
+      "x": 814.41,
+      "y": -2.35,
       "rot": 90
     }
   ],
@@ -674,9 +278,35 @@ export const ATLAS_EDITOR_DEFAULTS = {
   "engines": {
     "main": [
       {
-        "id": "m_qyrnz6r",
-        "x": -1632,
-        "y": 0,
+        "id": "m_2oq4era",
+        "x": -1501.74,
+        "y": -400.46,
+        "deg": 90,
+        "offsetX": 0,
+        "offsetY": 0,
+        "mount": "rear_left",
+        "gimbalMinDeg": -45,
+        "gimbalMaxDeg": 45,
+        "vfxLengthMin": 10,
+        "vfxLengthMax": 179
+      },
+      {
+        "id": "m_bbiqwgo",
+        "x": -1608.57,
+        "y": -225.44,
+        "deg": 90,
+        "offsetX": 0,
+        "offsetY": 0,
+        "mount": "rear_left",
+        "gimbalMinDeg": -45,
+        "gimbalMaxDeg": 45,
+        "vfxLengthMin": 10,
+        "vfxLengthMax": 179
+      },
+      {
+        "id": "m_histhbk",
+        "x": -1676.82,
+        "y": -5.93,
         "deg": 90,
         "offsetX": 0,
         "offsetY": 0,
@@ -687,35 +317,9 @@ export const ATLAS_EDITOR_DEFAULTS = {
         "vfxLengthMax": 179
       },
       {
-        "id": "m_fsrr5fa",
-        "x": -1584,
-        "y": -168,
-        "deg": 90,
-        "offsetX": 0,
-        "offsetY": 0,
-        "mount": "rear_left",
-        "gimbalMinDeg": -45,
-        "gimbalMaxDeg": 45,
-        "vfxLengthMin": 10,
-        "vfxLengthMax": 179
-      },
-      {
-        "id": "m_sf6mvyj",
-        "x": -1536,
-        "y": -312,
-        "deg": 90,
-        "offsetX": 0,
-        "offsetY": 0,
-        "mount": "rear_left",
-        "gimbalMinDeg": -45,
-        "gimbalMaxDeg": 45,
-        "vfxLengthMin": 10,
-        "vfxLengthMax": 179
-      },
-      {
-        "id": "m_bm8wkp2",
-        "x": -1584,
-        "y": 168,
+        "id": "m_obckzgc",
+        "x": -1498.76,
+        "y": 403.44,
         "deg": 90,
         "offsetX": 0,
         "offsetY": 0,
@@ -726,9 +330,9 @@ export const ATLAS_EDITOR_DEFAULTS = {
         "vfxLengthMax": 179
       },
       {
-        "id": "m_4q2copx",
-        "x": -1536,
-        "y": 312,
+        "id": "m_1qqu2c5",
+        "x": -1617.48,
+        "y": 219.51,
         "deg": 90,
         "offsetX": 0,
         "offsetY": 0,
@@ -741,39 +345,9 @@ export const ATLAS_EDITOR_DEFAULTS = {
     ],
     "side": [
       {
-        "id": "m_g6alsfg",
-        "x": -1427.96,
-        "y": -411.13,
-        "deg": 180,
-        "offsetX": 0,
-        "offsetY": 0,
-        "mount": "lower_left",
-        "gimbalMinDeg": -90,
-        "gimbalMaxDeg": 90,
-        "vfxWidthMin": 25,
-        "vfxWidthMax": 227,
-        "vfxLengthMin": 49,
-        "vfxLengthMax": 354
-      },
-      {
-        "id": "m_qbiiljb",
-        "x": 657.8,
-        "y": -376.94,
-        "deg": 180,
-        "offsetX": 0,
-        "offsetY": 0,
-        "mount": "upper_left",
-        "gimbalMinDeg": -90,
-        "gimbalMaxDeg": 90,
-        "vfxWidthMin": 25,
-        "vfxWidthMax": 227,
-        "vfxLengthMin": 49,
-        "vfxLengthMax": 354
-      },
-      {
-        "id": "m_bvurqtb",
-        "x": -1424.7,
-        "y": 411.13,
+        "id": "m_8q0i2dn",
+        "x": -1507.67,
+        "y": 450.9,
         "deg": 0,
         "offsetX": 0,
         "offsetY": 0,
@@ -786,13 +360,103 @@ export const ATLAS_EDITOR_DEFAULTS = {
         "vfxLengthMax": 354
       },
       {
-        "id": "m_c0p271b",
-        "x": 659.43,
-        "y": 368.79,
+        "id": "m_850396e",
+        "x": -1507.67,
+        "y": -450.9,
+        "deg": 180,
+        "offsetX": 0,
+        "offsetY": 0,
+        "mount": "lower_left",
+        "gimbalMinDeg": -90,
+        "gimbalMaxDeg": 90,
+        "vfxWidthMin": 25,
+        "vfxWidthMax": 227,
+        "vfxLengthMin": 49,
+        "vfxLengthMax": 354
+      },
+      {
+        "id": "m_sn11h93",
+        "x": -1374.11,
+        "y": 453.85,
+        "deg": 0,
+        "offsetX": 0,
+        "offsetY": 0,
+        "mount": "lower_right",
+        "gimbalMinDeg": -90,
+        "gimbalMaxDeg": 90,
+        "vfxWidthMin": 25,
+        "vfxWidthMax": 227,
+        "vfxLengthMin": 49,
+        "vfxLengthMax": 354
+      },
+      {
+        "id": "m_271br9e",
+        "x": -1374.11,
+        "y": -453.85,
+        "deg": 180,
+        "offsetX": 0,
+        "offsetY": 0,
+        "mount": "lower_left",
+        "gimbalMinDeg": -90,
+        "gimbalMaxDeg": 90,
+        "vfxWidthMin": 25,
+        "vfxWidthMax": 227,
+        "vfxLengthMin": 49,
+        "vfxLengthMax": 354
+      },
+      {
+        "id": "m_o8sfkqm",
+        "x": 1620.43,
+        "y": 189.86,
         "deg": 0,
         "offsetX": 0,
         "offsetY": 0,
         "mount": "upper_right",
+        "gimbalMinDeg": -90,
+        "gimbalMaxDeg": 90,
+        "vfxWidthMin": 25,
+        "vfxWidthMax": 227,
+        "vfxLengthMin": 49,
+        "vfxLengthMax": 354
+      },
+      {
+        "id": "m_jom7l5q",
+        "x": 1620.43,
+        "y": -189.86,
+        "deg": 180,
+        "offsetX": 0,
+        "offsetY": 0,
+        "mount": "upper_left",
+        "gimbalMinDeg": -90,
+        "gimbalMaxDeg": 90,
+        "vfxWidthMin": 25,
+        "vfxWidthMax": 227,
+        "vfxLengthMin": 49,
+        "vfxLengthMax": 354
+      },
+      {
+        "id": "m_rzcpqhv",
+        "x": 1513.6,
+        "y": 207.65,
+        "deg": 0,
+        "offsetX": 0,
+        "offsetY": 0,
+        "mount": "upper_right",
+        "gimbalMinDeg": -90,
+        "gimbalMaxDeg": 90,
+        "vfxWidthMin": 25,
+        "vfxWidthMax": 227,
+        "vfxLengthMin": 49,
+        "vfxLengthMax": 354
+      },
+      {
+        "id": "m_vuz8czo",
+        "x": 1513.6,
+        "y": -207.65,
+        "deg": 180,
+        "offsetX": 0,
+        "offsetY": 0,
+        "mount": "upper_left",
         "gimbalMinDeg": -90,
         "gimbalMaxDeg": 90,
         "vfxWidthMin": 25,
@@ -804,30 +468,52 @@ export const ATLAS_EDITOR_DEFAULTS = {
   },
   "lights": {
     "position": [
-      { "id": "m_tom9flp", "x": 1438.2, "y": 211.16, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_3jz83pv", "x": 1445.81, "y": -211.16, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_kahz8qw", "x": 979.73, "y": -279.65, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_p2fiv0j", "x": 979.73, "y": 264.43, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_mkli3e0", "x": 384.28, "y": -325.31, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_7d685m9", "x": 374.77, "y": 313.89, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_d3h1pzm", "x": -45.66, "y": -395.7, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_3sbo277", "x": -45.66, "y": 395.7, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_7ql8ryp", "x": -277.75, "y": -469.89, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_efptu8o", "x": -277.75, "y": 469.89, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_r5kgtdf", "x": -589.74, "y": -597.35, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_0hd7uou", "x": -589.74, "y": 597.35, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_uxpe7b5", "x": -783.78, "y": -585.93, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_1hvmk68", "x": -783.78, "y": 585.93, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_9tbelyo", "x": -1139.53, "y": -589.74, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_b6pp8aq", "x": -1139.53, "y": 589.74, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_zjoiq9s", "x": -1443.91, "y": -460.38, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_pdlef4g", "x": -1443.91, "y": 460.38, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_08wbv48", "x": -1712.15, "y": -55.17, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
-      { "id": "m_klmq7m3", "x": -1712.15, "y": 55.17, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" }
+      { "id": "m_wmwoiyp", "x": 1675.3, "y": -138.4, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_2i0kqnw", "x": 1675.3, "y": 138.4, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_82gv781", "x": 1447.11, "y": -208.58, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_ttpa8pb", "x": 1447.11, "y": 208.58, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_88me45z", "x": 1254.04, "y": -237.82, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_k0nhqs8", "x": 1254.04, "y": 237.82, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_nnw3m1l", "x": 1074.62, "y": -253.42, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_sx8t6ka", "x": 1074.62, "y": 253.42, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_v3529br", "x": 809.37, "y": -290.46, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_vnadezn", "x": 809.37, "y": 290.46, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_0gdcevi", "x": 663.09, "y": -370.38, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_sq61has", "x": 663.09, "y": 370.38, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_ofw970y", "x": 425.16, "y": -313.84, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_8jdx1kv", "x": 425.16, "y": 313.84, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_3fnvqao", "x": 251.59, "y": -220.28, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_7wbh7cb", "x": 251.59, "y": 220.28, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_a5l9296", "x": 91.66, "y": -382.07, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_190d1tk", "x": 91.66, "y": 382.07, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_vlln3df", "x": -35.1, "y": -391.83, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_m7vmqyb", "x": -35.1, "y": 391.83, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_bu12kkh", "x": -230.13, "y": -467.83, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_cdobdz5", "x": -230.13, "y": 467.83, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_kf7twde", "x": -378.36, "y": -372.33, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_clyc39d", "x": -378.36, "y": 372.33, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_hft3bxq", "x": -505.12, "y": -475.64, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_1suvgpg", "x": -505.12, "y": 475.64, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_sfo9rzq", "x": -692.36, "y": -578.96, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_0msxcow", "x": -692.36, "y": 578.96, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_4kllt8d", "x": -840.58, "y": -582.85, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_757dtfd", "x": -840.58, "y": 582.85, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_9e2hg75", "x": -1023.91, "y": -586.74, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_oxphrss", "x": -1023.91, "y": 586.74, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_j1dfxyf", "x": -1183.82, "y": -502.93, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_zr5vizg", "x": -1183.82, "y": 502.93, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_jc7qacw", "x": -1314.49, "y": -313.84, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_n858bwv", "x": -1314.49, "y": 313.84, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_4zt7rym", "x": -1425.67, "y": -409.37, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_z0xm4rd", "x": -1425.67, "y": 409.37, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_rqbhxde", "x": -1499.78, "y": -323.58, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_kq01949", "x": -1499.78, "y": 323.58, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_4f0zgth", "x": -1646.06, "y": -152.05, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_onpt963", "x": -1646.06, "y": 152.05, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" }
     ],
     "road": [
-      { "id": "m_vnnz8tv", "x": 1740.68, "y": -79.9, "color": "#ffffff", "power": 3, "radius": 14, "deg": 90, "range": 800, "coneDeg": 40 },
-      { "id": "m_9r7rlb7", "x": 1740.68, "y": 79.9, "color": "#ffffff", "power": 3, "radius": 14, "deg": 90, "range": 800, "coneDeg": 40 }
+      { "id": "m_ic8ahjt", "x": 1748.35, "y": -59.42, "color": "#ffffff", "power": 3, "radius": 14, "deg": 90, "range": 800, "coneDeg": 40 },
+      { "id": "m_5wddzqz", "x": 1748.35, "y": 59.42, "color": "#ffffff", "power": 3, "radius": 14, "deg": 90, "range": 800, "coneDeg": 40 }
     ]
   }
 };

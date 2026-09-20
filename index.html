@@ -2765,6 +2765,9 @@
         if (!other || other === npc || other.dead) continue;
         // Grid may include window.ship — skip here, handled by player block below.
         if (other === window.ship) continue;
+        // Once metal touches, the destructor owns the response. AI avoidance
+        // inside the crushed hull would add an independent repulsive force.
+        if (DestructorSystem.hasHullContact(npc, other)) continue;
 
         const enemy = window.isEnemyUnit
           ? window.isEnemyUnit(npc, other)
@@ -2868,7 +2871,8 @@
       }
 
       // --- Separacja od gracza / capitala ---
-      if (window.ship && !window.ship.destroyed && npc !== window.ship) {
+      if (window.ship && !window.ship.destroyed && npc !== window.ship &&
+          !DestructorSystem.hasHullContact(npc, window.ship)) {
         const player = window.ship;
         const dx = npc.x - player.pos.x;
         const dy = npc.y - player.pos.y;

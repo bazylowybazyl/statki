@@ -4,6 +4,7 @@
  */
 
 import { DestructorGpuSoftBody } from './destructorGpuSoftBody.js';
+import { getHexContactGrid, findHexContact, getHexShardDrift } from './hexContactGrid.js';
 import { areTowBodiesCollisionDisabled } from './towSystem.js';
 import { transferSalvageToWreck, clearSalvage } from './salvage.js';
 import { getEntityShieldBlockingRadius, getEntityShieldBlockingRadiusTowards } from '../../shieldSystem.js';
@@ -19,6 +20,7 @@ import {
 } from './hexArenaBridge.js';
 
 const _ZERO_VEL = Object.freeze({ x: 0, y: 0 });
+const DEFAULT_CONTACT_DAMAGE_SCALE = 0.18;
 
 export const DESTRUCTOR_CONFIG = {
   gridDivisions: 5, //
@@ -44,9 +46,9 @@ export const DESTRUCTOR_CONFIG = {
   elasticSleepSnapThreshold: 0.04, //
   elasticWakeFrames: 20,       // Force-awake po uderzeniu (zapobiega przedwczesnemu zasypianiu)
   // === MODEL ZDERZEŃ ===
-  // Jedna reguła na każdą prędkość: impuls z restytucji, deformacja wprost z impulsu,
-  // obrażenia z energii kinetycznej. Żadnych progów prędkości ani przewagi masy —
-  // ciężej i szybciej znaczy tylko WIĘCEJ tego samego, nie inny tryb.
+  // Impuls z restytucji, deformacja i uszkodzenia warstwy kontaktowej.
+  // Przy przewadze masy kadłub ustępuje płynnie ze wzrostem prędkości;
+  // nie przełączamy trybu kolizji na sztywnym progu masy lub prędkości.
   restitution: 0.05,                  // sprężystość odbicia (0 = zderzenie idealnie plastyczne)
   frictionCoeff: 0.5,                 // µ — sufit impulsu stycznego względem normalnego
   tangentImpulseScale: 0.8,           // ile impulsu stycznego faktycznie trafia w ciała
@@ -57,7 +59,8 @@ export const DESTRUCTOR_CONFIG = {
   //                                     (przy 0.25 pasmo 0-230 u/s rozdziela się na
   //                                     realne głębokości; wyżej materiał jest wysycony)
   crushDeformScale: 1.0,              // energia zgniotu → deformacja heksów
-  contactDamageScale: 0.18,           // deformacja → obrażenia heksa
+  contactDamageScale: DEFAULT_CONTACT_DAMAGE_SCALE, // deformacja → obrażenia heksa
+  ramYieldSpeed: 80.0,               // skala płynnego ustępowania lżejszego kadłuba (u/s)
   contactDamageCapFrac: 1.5,          // BEZPIECZNIK obrażeń heksa na tick (× jego HP).
   //                                     Nie jest regulatorem siły: przy 0.25 prędkość
   //                                     przestawała mieć znaczenie dla zniszczeń, bo
@@ -697,7 +700,8 @@ function getBroadphaseRadius(entity) {
       radius = Math.max(radius, Math.max(140, scaledGridRadius + 80));
     }
   }
-  return radius;
+  const drift = Math.max(0, Number(entity.hexGrid?._maxHexDrift) || 0);
+  return radius + drift * Math.SQRT2 * getFinalScale(entity);
 }
 
 function getShieldRadius(entity) {
@@ -748,10 +752,10 @@ function refreshEntityObb(entity, tick) {
   if (!obb) {
     obb = entity._destrObb = { cx: 0, cy: 0, ux: 1, uy: 0, vx: 0, vy: 1, eu: 0, ev: 0, valid: false };
   }
-  if (entity._destrObbTick === tick) return obb;
-  entity._destrObbTick = tick;
-
   const grid = entity.hexGrid;
+  if (entity._destrObbTick === tick && entity._destrObbRevision === grid?.meshRevision) return obb;
+  entity._destrObbTick = tick;
+  entity._destrObbRevision = grid?.meshRevision;
   const w = Number(grid?.srcWidth) || 0;
   const h = Number(grid?.srcHeight) || 0;
   if (w <= 0 || h <= 0) {
@@ -781,11 +785,11 @@ function refreshEntityObb(entity, tick) {
   // mediana najwiekszego dryfu na cialo 10.2 j., p99 22.0, maksimum 33.4, a 125 z
   // 420 cial mialo dryf ZEROWY. Stad pudlo fregaty mialo 7.57x pole kadluba i
   // bramka SAT praktycznie nic nie odrzucala (2-4 kontakty na klatke przy 12 ms
-  // w Kolizjach). Teraz skladnik idzie z pomiaru; sufit zostawia stara wartosc,
-  // wiec brak pomiaru (grid bez licznika) = dokladnie dawne zachowanie.
+  // w Kolizjach). Teraz skladnik idzie z pomiaru. Dryf plastyczny moze przekroczyc
+  // maxDeform, wiec tylko BRAK pomiaru korzysta ze starego sufitu jako fallbacku.
   const deformCeil = (Number(DESTRUCTOR_CONFIG.maxDeform) || 100) * Math.max(1, Number(DESTRUCTOR_CONFIG.collisionDeformScale) || 1);
   const driftRaw = Number(grid._maxHexDrift);
-  const driftPad = Number.isFinite(driftRaw) && driftRaw >= 0 ? Math.min(driftRaw, deformCeil) : deformCeil;
+  const driftPad = Number.isFinite(driftRaw) && driftRaw >= 0 ? driftRaw : deformCeil;
   const pad = driftPad + HEX_SPACING * 4;
   obb.eu = (w * 0.5 + pad) * scaleX;
   obb.ev = (h * 0.5 + pad) * scaleY;
@@ -915,6 +919,7 @@ function getEntityPosY(entity) {
 
 function setEntityPos(entity, x, y) {
   if (!entity) return;
+  entity._destrObbTick = -1;
   if (entity.pos && typeof entity.pos.x === 'number' && typeof entity.pos.y === 'number') {
     entity.pos.x = x;
     entity.pos.y = y;
@@ -1101,14 +1106,10 @@ function getShardCollisionGridY(shard) {
 // nominalne pudlo obejmuje tylko `origGridX`. Nadmiar ma wiec dwie skladowe:
 //   - dryf PLASTYCZNY  (gridX - origGridX), wypalany w simulateElasticity,
 //   - dryf SPREZYSTY   (deformation * cds).
-// Bierzemy `targetDeformation`, nie `deformation`: lerp w updateVisualDeformation
-// dopiero zmierza do celu i nigdy go nie przekracza, wiec cel jest gorna granica
-// tego, co heks osiagnie bez nowej kolizji. Sume modulow, nie modul sumy — obie
-// skladowe moga miec ten sam znak.
+// During relaxation/GPU readback current displacement may exceed the target.
+// Bounds must contain both, including accumulated plastic displacement.
 function shardDriftBound(s) {
-  const dx = Math.abs(s.gridX - s.origGridX) + Math.abs(s.targetDeformation.x) * COLLISION_DEFORM_SCALE;
-  const dy = Math.abs(s.gridY - s.origGridY) + Math.abs(s.targetDeformation.y) * COLLISION_DEFORM_SCALE;
-  return dx > dy ? dx : dy;
+  return getHexShardDrift(s, COLLISION_DEFORM_SCALE);
 }
 
 // Wlascicielem licznika jest STRONA ROSNACA (kolizja), bo tylko ona wie, ze
@@ -1469,6 +1470,35 @@ export const DestructorSystem = {
     normalY: 0,
     penetration: 0
   })),
+
+  _hullContactPairs: new WeakMap(),
+  _simulationTime: 0,
+
+  hasHullContact(A, B) {
+    const pair = this._hullContactPairs.get(A)?.get(B);
+    return !!pair && pair.until > this._simulationTime;
+  },
+
+  _recordHullContact(A, B) {
+    let pairsA = this._hullContactPairs.get(A);
+    let pair = pairsA?.get(B);
+    if (!pair) {
+      if (!pairsA) this._hullContactPairs.set(A, pairsA = new WeakMap());
+      let pairsB = this._hullContactPairs.get(B);
+      if (!pairsB) this._hullContactPairs.set(B, pairsB = new WeakMap());
+      pair = { until: 0, yieldPressure: 0 };
+      pairsA.set(B, pair);
+      pairsB.set(A, pair);
+    }
+    if (pair.until <= this._simulationTime) {
+      pair.yieldPressure = 0;
+      // Drop the cached AI avoidance vector immediately on physical contact.
+      A.__sepDecisionTick = -1;
+      B.__sepDecisionTick = -1;
+    }
+    pair.until = this._simulationTime + 0.1;
+    return pair;
+  },
 
   perf: {
     lastUpdateMs: 0,
@@ -1863,6 +1893,7 @@ export const DestructorSystem = {
     // wykonuje się raz na klatkę renderu w updateVisuals() — tu zostaje sama fizyka.
     this._visualEntities = list;
     this._tick++;
+    this._simulationTime += step;
 
     this._frameContacts = 0;
     const tCollision0 = nowMs();
@@ -2192,6 +2223,7 @@ export const DestructorSystem = {
             s._bakedOffY = (Number(s._bakedOffY) || 0) + ty;
             s.targetDeformation.x -= tx;
             s.targetDeformation.y -= ty;
+            noteHexDrift(grid, s);
             changed = true;
 
             const idxS = Number(s.__meshIndex);
@@ -2776,6 +2808,7 @@ export const DestructorSystem = {
   // 2) reszta pola uderzenia: seed do płynnej propagacji
   shard.targetDeformation.x += appliedDefX * 0.16;
   shard.targetDeformation.y += appliedDefY * 0.16;
+  noteHexDrift(entity.hexGrid, shard);
 }
 
 // 3) główna fala osiowa do propagacji
@@ -3327,6 +3360,8 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
       const collisionScaleGrid = Math.max(scaleGridX, scaleGridY);
       const massA = getEntityRammingMass(A);
       const massB = getEntityRammingMass(B);
+      const hullPair = !A.isRingSegment && !B.isRingSegment && !isBrittleEntity(A) && !isBrittleEntity(B);
+      const massContrast = (massA - massB) * (massA - massB) / (massA * massB);
       const angIter = getEntityHexAngle(iterator);
       const angGrid = getEntityHexAngle(gridHolder);
 
@@ -3385,7 +3420,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
       //   DESTRUCTOR_CONFIG.searchRDriftMargin = 3
       // Metryka bezpieczenstwa to liczba kontaktow na klatke — jesli po wlaczeniu
       // spada, margines jest za maly.
-      const marginCells = Number(DESTRUCTOR_CONFIG.searchRDriftMargin);
+      const marginCells = DESTRUCTOR_CONFIG.searchRDriftMargin;
       const holderDrift = Number(gridHolder.hexGrid?._maxHexDrift);
       if (Number.isFinite(marginCells) && marginCells >= 0 &&
           Number.isFinite(holderDrift) && holderDrift >= 0) {
@@ -3408,15 +3443,38 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         (DESTRUCTOR_CONFIG.edgeCollision | 0) === 1
         ? getPackedCollisionBody(iterator)
         : null;
-      const lenIter = packedIteratorBody?.boundaryCount > 0
+      const centerIx = ix - gx, centerIy = iy - gy;
+      const depthG = Math.min(
+        cxG - Math.abs(worldDeltaToLocalX(centerIx, centerIy, scaleGridX, scaleGridY, cosG, sinG, gridBillboardOrientation) + pGx),
+        cyG - Math.abs(worldDeltaToLocalY(centerIx, centerIy, scaleGridX, scaleGridY, cosG, sinG, gridBillboardOrientation) + pGy)
+      );
+      const depthI = Math.min(
+        cxI - Math.abs(worldDeltaToLocalX(-centerIx, -centerIy, scaleIterX, scaleIterY, cosI, sinI, iterBillboardOrientation) + pIx),
+        cyI - Math.abs(worldDeltaToLocalY(-centerIx, -centerIy, scaleIterX, scaleIterY, cosI, sinI, iterBillboardOrientation) + pIy)
+      );
+      const overlapDepth = Math.max(0, depthG, depthI);
+      // Boundary-only traversal is valid at the surface. During an overrun,
+      // interior cells also intersect metal (even if displaced edge cells miss).
+      // Keep the same contact budget and rotating cursor for this traversal.
+      const useBoundary = packedIteratorBody?.boundaryCount > 0 && !(hullPair && massContrast > 0 && overlapDepth > 0);
+      const lenIter = useBoundary
         ? packedIteratorBody.boundaryCount
         : shardsIter.length;
       const offsets = getSearchOffsets(searchR);
+      // Large deformation invalidates the original c/r lookup. Index current
+      // positions once per mesh revision instead of widening every search disk.
+      const contactGrid = holderDrift > HEX_SPACING * 2
+        ? getHexContactGrid(gridHolder.hexGrid, COLLISION_DEFORM_SCALE, HEX_SPACING * 2, HIT_RAD)
+        : null;
 
       if (!holderGrid || holderCols <= 0 || holderRows <= 0 || lenIter <= 0) return;
 
-      for (let i = 0; i < lenIter; i++) {
-        const sI = packedIteratorBody?.boundaryCount > 0
+      // Continue after the last sampled edge. Always restarting at zero starves
+      // the advancing bow when a deep overlap fills the small contact budget.
+      const startIndex = (iterator.hexGrid._contactCursor || 0) % lenIter;
+      for (let scanned = 0; scanned < lenIter; scanned++) {
+        const i = (startIndex + scanned) % lenIter;
+        const sI = useBoundary
           ? getPackedShardRef(packedIteratorBody.boundaryIndices[i])
           : shardsIter[i];
         if (!sI || !sI.active || sI.isDebris) continue;
@@ -3436,14 +3494,18 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         const approxC = Math.round(gridGx / HEX_SPACING);
         const approxR = Math.round(gridGy / HEX_HEIGHT);
 
-        if (approxC < -searchR || approxC >= holderCols + searchR || approxR < -searchR || approxR >= holderRows + searchR) continue;
+        if (!contactGrid && (approxC < -searchR || approxC >= holderCols + searchR || approxR < -searchR || approxR >= holderRows + searchR)) continue;
 
-        for (let oi = 0; oi < offsets.length; oi += 2) {
-          const gc = approxC + offsets[oi];
-          const gr = approxR + offsets[oi + 1];
-          if (gc < 0 || gr < 0 || gc >= holderCols || gr >= holderRows) continue;
-
-          const sG = holderGrid[gc + gr * holderCols];
+        for (let oi = 0; oi < (contactGrid ? 1 : offsets.length); oi += 2) {
+          let sG;
+          if (contactGrid) {
+            sG = findHexContact(contactGrid, gridGx, gridGy, scaleGridX, scaleGridY, hitRadI, HIT_RAD);
+          } else {
+            const gc = approxC + offsets[oi];
+            const gr = approxR + offsets[oi + 1];
+            if (gc < 0 || gr < 0 || gc >= holderCols || gr >= holderRows) continue;
+            sG = holderGrid[gc + gr * holderCols];
+          }
           if (!sG || !sG.active || sG.isDebris) continue;
 
           const relGx = (getShardCollisionGridX(sG) - cxG) - pGx;
@@ -3479,10 +3541,15 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
           contactsCount++;
           break;
         }
-        if (contactsCount >= maxContacts) break;
+        if (contactsCount >= maxContacts) {
+          iterator.hexGrid._contactCursor = (i + 1) % lenIter;
+          break;
+        }
       }
 
       if (contactsCount === 0) return;
+
+      const hullContact = hullPair ? this._recordHullContact(A, B) : null;
 
       this.wakeHexEntity(A, DESTRUCTOR_CONFIG.elasticWakeFrames | 0);
       this.wakeHexEntity(B, DESTRUCTOR_CONFIG.elasticWakeFrames | 0);
@@ -3566,6 +3633,23 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         }
       }
 
+      // Inside a hull, nearest-cell normals flip whenever a moving hex crosses
+      // a cell centre. Centre-to-centre approach also changes sign halfway
+      // through the victim. Neither describes the direction of a deep ram.
+      // Blend toward the actual travel direction only as a mass-dominant pair
+      // enters the other's hull bounds; surface contacts keep their normals.
+      const crushMinSpeed = Math.max(0, Number(DESTRUCTOR_CONFIG.crushMinSpeed) || 0);
+      const yieldSpeed = Math.max(1, Number(DESTRUCTOR_CONFIG.ramYieldSpeed) || 80);
+      if (hullPair && massContrast > 0 && relSpeed > crushMinSpeed) {
+        const depthWeight = Math.min(1, overlapDepth / (HEX_SPACING * 4));
+        const pressure = massContrast * ((relSpeed - crushMinSpeed) / yieldSpeed) ** 2;
+        const blend = depthWeight * pressure / (1 + pressure);
+        const bx = nx * (1 - blend) - (relVx / relSpeed) * blend;
+        const by = ny * (1 - blend) - (relVy / relSpeed) * blend;
+        const len = Math.hypot(bx, by);
+        if (len > 1e-6) { nx = bx / len; ny = by / len; }
+      }
+
       const rAx = worldHitX - aX;
       const rAy = worldHitY - aY;
       const rBx = worldHitX - bX;
@@ -3591,6 +3675,22 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
 
       const invMassA = 1 / massA;
       const invMassB = 1 / massB;
+      // A yielding hull must keep closing while its contact layer is crushed.
+      // A full rigid impulse immediately launches the lighter ship away, leaving
+      // only one tick of damage. Blend continuously with speed and mass contrast;
+      // rings and brittle bodies retain their existing rigid response.
+      const yieldApproach = Math.max(0, effectiveApproachSpeed - crushMinSpeed);
+      let ramPressure = hullPair ? massContrast * (yieldApproach / yieldSpeed) ** 2 : 0;
+      if (hullContact) {
+        // A contact layer that has yielded does not become rigid again as the
+        // ram slows down inside it. Reset this history only after separation.
+        ramPressure = Math.max(ramPressure, hullContact.yieldPressure);
+        hullContact.yieldPressure = ramPressure;
+      }
+      const ramYield = ramPressure / (1 + ramPressure);
+      // The compliant response is a rate calibrated at 120 Hz. Otherwise a
+      // smaller physics step pushes the target twice as often for equal damage.
+      const rigidShare = 1 - Math.pow(ramYield, Math.max(0, dt) * 120);
       const slop = 0.01;
       // Dawny przełącznik useCenterNormal (centerApproachSpeed > approachSpeed)
       // rozwiązywał ten sam problem, ale SKOKIEM: przy taranie obie prędkości są
@@ -3625,10 +3725,10 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         const angInvIb = invIb * patchFactor;
 
         if (Number.isFinite(denom) && denom > 1e-8) {
-          // JEDEN impuls dla każdej prędkości — bez progów, bez skalowania po masie.
-          // Energia zderzenia idzie w deformację i obrażenia niżej, nie w wyjątki tutaj.
+          // Equal and opposite impulses preserve momentum while the remaining
+          // approach is spent crushing the yielding contact layer below.
           const restitution = Math.max(0, Math.min(1, Number(DESTRUCTOR_CONFIG.restitution) || 0));
-          const j = (-(1 + restitution) * velAlongNormal) / denom;
+          const j = (-(1 + restitution) * velAlongNormal) / denom * rigidShare;
 
           bounceForce = Math.abs(j);
 
@@ -3683,7 +3783,6 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
       // Deformacja i obrażenia liczą się ZAWSZE, skalowane wprost impulsem — jedyny
       // próg to podłoga wydajnościowa: poniżej niej wgniecenie byłoby subpikselowe,
       // a pełna pętla kontaktów co tick dla ocierających się kadłubów kosztuje.
-      const crushMinSpeed = Math.max(0, Number(DESTRUCTOR_CONFIG.crushMinSpeed) || 0);
       const crushPass = doDamage && effectiveApproachSpeed > crushMinSpeed;
 
       if (crushPass) {
@@ -3798,6 +3897,15 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         // rozkłada się w czasie: żeby wyparować dziób, trzeba w nim posiedzieć.
         const contactDamageCapFrac = Math.max(0.01, Number(DESTRUCTOR_CONFIG.contactDamageCapFrac) || 0.25);
         const contactDamageScale = Math.max(0, Number(DESTRUCTOR_CONFIG.contactDamageScale) || 0);
+        // Damage from advancing through a cell is local work, not a fixed pool
+        // divided by the number of sampled contacts. A wider contact must not
+        // make every plate harder to crush. Each shard is still charged once.
+        const crushDamageTravel = effectiveApproachSpeed * dt * ramYield *
+          (contactDamageScale / DEFAULT_CONTACT_DAMAGE_SCALE);
+        const crushTravelA = crushDamageTravel * realRatioA;
+        const crushTravelB = crushDamageTravel * realRatioB;
+        const damageWidthA = 2 * Math.max(scaleAX, scaleAY);
+        const damageWidthB = 2 * Math.max(scaleBX, scaleBY);
 
         let dirtyMinA = Number.POSITIVE_INFINITY;
         let dirtyMaxA = -1;
@@ -3853,7 +3961,8 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
             if (doDamage) {
               const shardHpA = Math.max(1, Number(sA.maxHp) || DESTRUCTOR_CONFIG.shardHP);
               const kineticDmg = (rawCrushMagA * realRatioA * contactDamageScale) / Math.sqrt(contactsCount);
-              const damage = kineticDmg * (brittleA ? 3.5 : 1.0);
+              const crushDamage = shardHpA * crushTravelA / Math.max(1, getShardHitRadius(sA) * damageWidthA);
+              const damage = kineticDmg * (brittleA ? 3.5 : 1.0) + crushDamage;
               const cap = brittleA ? (shardHpA * 0.75) : (shardHpA * contactDamageCapFrac);
               sA.hp -= Math.min(cap, damage);
               if (damage > cap) overkillA += damage - cap;
@@ -3907,7 +4016,8 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
             if (doDamage) {
               const shardHpB = Math.max(1, Number(sB.maxHp) || DESTRUCTOR_CONFIG.shardHP);
               const kineticDmg = (rawCrushMagB * realRatioB * contactDamageScale) / Math.sqrt(contactsCount);
-              const damage = kineticDmg * (brittleB ? 3.5 : 1.0);
+              const crushDamage = shardHpB * crushTravelB / Math.max(1, getShardHitRadius(sB) * damageWidthB);
+              const damage = kineticDmg * (brittleB ? 3.5 : 1.0) + crushDamage;
               const cap = brittleB ? (shardHpB * 0.75) : (shardHpB * contactDamageCapFrac);
               sB.hp -= Math.min(cap, damage);
               if (damage > cap) overkillB += damage - cap;
@@ -3954,8 +4064,32 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         }
       }
 
-      // Korekta penetracji: pełna przy ścianie/ringu i przy głębokim zanurzeniu
-      // (inaczej kadłuby się zapadają), poza tym jeden stały ułamek.
+      // Correct rigid penetration; the yielding fraction is consumed by crush.
+      // Full correction here would eject the target even with a soft impulse.
+      // Contacts destroyed or moved apart by this very crush no longer support
+      // a correction. Reuse the bounded contact buffer, not another hull scan.
+      penetration = 0;
+      const cosA = iterator === A ? cosI : cosG, sinA = iterator === A ? sinI : sinG;
+      const cosB = iterator === B ? cosI : cosG, sinB = iterator === B ? sinI : sinG;
+      for (let i = 0; i < contactsCount; i++) {
+        const ct = contacts[i];
+        if (!ct.shardA.active || ct.shardA.isDebris || !ct.shardB.active || ct.shardB.isDebris) continue;
+        let remaining = ct.penetration;
+        if (crushPass) {
+          const laX = getShardCollisionGridX(ct.shardA) - A.hexGrid.srcWidth * 0.5 - (A.hexGrid.pivot?.x || 0);
+          const laY = getShardCollisionGridY(ct.shardA) - A.hexGrid.srcHeight * 0.5 - (A.hexGrid.pivot?.y || 0);
+          const lbX = getShardCollisionGridX(ct.shardB) - B.hexGrid.srcWidth * 0.5 - (B.hexGrid.pivot?.x || 0);
+          const lbY = getShardCollisionGridY(ct.shardB) - B.hexGrid.srcHeight * 0.5 - (B.hexGrid.pivot?.y || 0);
+          const wxA = aX + localDeltaToWorldX(laX, laY, scaleAX, scaleAY, cosA, sinA, usesBillboardOrientation(A));
+          const wyA = aY + localDeltaToWorldY(laX, laY, scaleAX, scaleAY, cosA, sinA, usesBillboardOrientation(A));
+          const wxB = bX + localDeltaToWorldX(lbX, lbY, scaleBX, scaleBY, cosB, sinB, usesBillboardOrientation(B));
+          const wyB = bY + localDeltaToWorldY(lbX, lbY, scaleBX, scaleBY, cosB, sinB, usesBillboardOrientation(B));
+          const radius = (getShardHitRadius(ct.shardA) * Math.max(scaleAX, scaleAY) +
+            getShardHitRadius(ct.shardB) * Math.max(scaleBX, scaleBY)) * 0.78;
+          remaining = Math.max(0, radius - Math.hypot(wxA - wxB, wyA - wyB));
+        }
+        if (remaining > penetration) penetration = remaining;
+      }
       const deepPenetration = penetration > (HIT_RAD * 0.35);
       const isHittingWallSep = (invMassA === 0 || invMassB === 0) || isRingCollision;
       const sepPercent = (isHittingWallSep || deepPenetration)
@@ -3963,7 +4097,8 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         : Math.max(0.05, Math.min(1, Number(DESTRUCTOR_CONFIG.separationPercent) || 0.9));
 
       if (penetration > slop) {
-        const corr = Math.max(penetration - slop, 0) / (invMassA + invMassB) * sepPercent;
+        const correctionRate = hullPair ? -Math.expm1(-12 * dt) : 1;
+        const corr = Math.max(penetration - slop, 0) / (invMassA + invMassB) * sepPercent * rigidShare * correctionRate;
         const sepNx = nx;
         const sepNy = ny;
         addEntityPosition(A, sepNx * corr * invMassA, sepNy * corr * invMassA);

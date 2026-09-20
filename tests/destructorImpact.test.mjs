@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { DestructorSystem } from '../src/game/destructor.js';
+import { DestructorSystem, DESTRUCTOR_CONFIG } from '../src/game/destructor.js';
 import { resolveShipAsteroidCollision } from '../src/game/asteroidDestructor.js';
 
-const HEX_R = 9;
+const HEX_R = DESTRUCTOR_CONFIG.gridDivisions;
 const HEX_SPACING = HEX_R * 1.5;
 const HEX_HEIGHT = Math.sqrt(3) * HEX_R;
 
@@ -13,9 +13,9 @@ function makeShard(c, r, index) {
     c,
     r,
     gridX: c * HEX_SPACING,
-    gridY: r * HEX_HEIGHT,
+    gridY: r * HEX_HEIGHT + (c & 1 ? HEX_HEIGHT * 0.5 : 0),
     origGridX: c * HEX_SPACING,
-    origGridY: r * HEX_HEIGHT,
+    origGridY: r * HEX_HEIGHT + (c & 1 ? HEX_HEIGHT * 0.5 : 0),
     deformation: { x: 0, y: 0 },
     targetDeformation: { x: 0, y: 0 },
     active: true,
@@ -211,11 +211,12 @@ function ringRam(speed) {
     x: 0, vx: speed, mass: 200000, rammingMass: 800000, cols: 120, rows: 80
   });
   const ring = makeFilledHexEntity({
-    x: 800, vx: 0, mass: 2500000, isRingSegment: true, noSplit: true, cols: 80, rows: 80
+    x: (120 + 80) * HEX_SPACING * 0.5 - HEX_SPACING,
+    vx: 0, mass: 2500000, isRingSegment: true, noSplit: true, cols: 80, rows: 80
   });
   const before = activeShardCount(ship);
   DestructorSystem.collideEntities(ship, ring, 1 / 120, true);
-  return { lost: before - activeShardCount(ship), dented: deformedShardCount(ship) };
+  return { ship, lost: before - activeShardCount(ship), dented: deformedShardCount(ship) };
 }
 
 test('destruction is graded by energy, not switched on by a threshold', () => {
@@ -229,12 +230,14 @@ test('destruction is graded by energy, not switched on by a threshold', () => {
   assert.ok(warp.lost > 0, 'uderzenie warpowe ma rozerwac kadlub na styku');
 });
 
-test('warp impact damage stays bounded to real contacts, not a radius stamp', () => {
-  // Stary crashStamp kasowal do 384 heksow w promieniu 320 u wokol punktu trafienia.
-  // Teraz gina wylacznie heksy, ktore faktycznie sie zetknely (budzet kontaktow).
-  const { lost } = ringRam(40000);
-
-  assert.ok(lost <= 96, `strata ma byc ograniczona do kontaktow, stracono ${lost} heksow`);
+test('warp overkill stays near the contact patch instead of erasing the whole hull', () => {
+  const { ship, lost } = ringRam(40000);
+  assert.ok(lost > 0 && lost < ship.hexGrid.shards.length * 0.05, `local breach, lost ${lost}`);
+  // Overflow damage intentionally reaches neighbors, but the remote half of
+  // the hull must survive even this extreme impact.
+  for (const shard of ship.hexGrid.shards) {
+    if (shard.c < ship.hexGrid.cols / 2) assert.ok(shard.active);
+  }
 });
 
 test('mass dominance changes how much, not which rules apply', () => {
@@ -247,7 +250,8 @@ test('mass dominance changes how much, not which rules apply', () => {
       x: 0, vx: 60, mass: 200000, rammingMass: 800000, cols: 120, rows: 80
     });
     const victim = makeFilledHexEntity({
-      x: 800, vx: 0, mass: victimMass, rammingMass: victimMass, cols: 60, rows: 28
+      x: (120 + 60) * HEX_SPACING * 0.5 - HEX_SPACING,
+      vx: 0, mass: victimMass, rammingMass: victimMass, cols: 60, rows: 28
     });
     DestructorSystem.collideEntities(atlas, victim, 1 / 60, true);
     let maxDef = 0;
