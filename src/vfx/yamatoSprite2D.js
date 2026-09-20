@@ -1,6 +1,6 @@
 // One shared atlas, sampled directly: no per-turret images or per-frame canvases.
 // Local +X points forward. Barrel tips match Turret2D's existing muzzle offsets.
-const ATLAS_URL = new URL('../../assets/weapons/yamato-atlas-v1.png', import.meta.url).href;
+const ATLAS_URL = new URL('../../assets/weapons/yamato-atlas-v2.png', import.meta.url).href;
 let atlas = null;
 let ready = false;
 

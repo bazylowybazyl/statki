@@ -1,4 +1,5 @@
 // src/game/destructorGpuSoftBody.js
+import { getHexShardDrift } from './hexContactGrid.js';
 
 const WORKGROUP_SIZE = 64;
 const SHARD_STRIDE_FLOATS = 8;
@@ -626,6 +627,10 @@ export const DestructorGpuSoftBody = {
 
       s.__velX = vx;
       s.__velY = vy;
+      // Propagation/baking can grow bounds between CPU impacts. Publish growth
+      // now instead of waiting up to eight render frames for the drift scan.
+      const drift = getHexShardDrift(s, this._collisionDeformScale ?? 1.15);
+      if (drift > (Number(grid._maxHexDrift) || 0)) grid._maxHexDrift = drift;
       if (Math.abs(oldVx - vx) > 0.03 || Math.abs(oldVy - vy) > 0.03) {
         anyChanges = true;
         if (i < dirtyMin) dirtyMin = i;
@@ -654,6 +659,7 @@ export const DestructorGpuSoftBody = {
   tick(entities, config, dt) {
     this._ensureInit();
     this._yieldPoint = Number(config?.yieldPoint) || 45;
+    this._collisionDeformScale = Number(config?.collisionDeformScale) || 1;
     this._tickId = (this._tickId + 1) | 0;
 
     const applyPerTick = Math.max(2, Math.min(32, Number(config?.gpuSoftBodyApplyPerTick) || 16));

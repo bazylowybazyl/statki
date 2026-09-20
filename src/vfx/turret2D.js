@@ -15,11 +15,14 @@
 //
 // Koszt rysowania: jedna macierz + 2–4 `fill(Path2D)` na wieżyczkę. Ścieżki są
 // budowane RAZ na sylwetkę i cache'owane; per klatkę nie powstaje żadna geometria.
-// Yamato w bliskim LOD używa współdzielonego atlasu (korpus + trzy lufy).
+// Yamato, Tempest i CIWS w bliskim LOD używają współdzielonych atlasów (korpus + lufy).
 // Zachowuje proceduralny fallback, daleki LOD i te same punkty wylotowe.
 
 import { getEntityWeaponTier, WEAPON_TIER_SCALE } from '../data/ships.js';
 import { YamatoSprite2D } from './yamatoSprite2D.js';
+import { TempestSprite2D } from './tempestSprite2D.js';
+import { CiwsSprite2D } from './ciwsSprite2D.js';
+import { LauncherSprite2D } from './launcherSprite2D.js';
 import { mountedWeaponRenderAngle } from '../game/weaponAim.js';
 
 // Barwy odpowiadają materiałom Lambert z weapon3DSystem, rozjaśnione o ~1.6×,
@@ -839,7 +842,7 @@ export const Turret2D = {
 
   /**
    * Rysuje wszystkie wieżyczki zebrane w tej klatce.
-   * Cache Path2D lub atlas Yamato; zero budowy ścieżek i obrazów per klatkę.
+   * Cache Path2D lub atlas broni; zero budowy ścieżek i obrazów per klatkę.
    */
   draw(ctx, cam) {
     if (!this.enabled || frameCount === 0 || !ctx) return 0;
@@ -890,7 +893,24 @@ export const Turret2D = {
       const barrelBack = st ? st.barrel : 0;
       const housingBack = st ? st.housing : 0;
 
+      if ((spec === SPECS.missileRack || spec === SPECS.siegeTorpedo || spec === SPECS.fbDefault)
+        && LauncherSprite2D.draw(ctx, rec.weaponId, a, b, c, d, sx, sy, housingBack, barrelBack)) {
+        drawn++;
+        continue;
+      }
+
+      if (spec === SPECS.ciws && CiwsSprite2D.draw(ctx, rec.weaponId, a, b, c, d, sx, sy, housingBack, barrelBack)) {
+        drawn++;
+        continue;
+      }
+
       if (spec === SPECS.yamato && YamatoSprite2D.draw(ctx, a, b, c, d, sx, sy, housingBack, barrelBack)) {
+        drawn++;
+        continue;
+      }
+
+      if ((spec === SPECS.tempest1 || spec === SPECS.tempest2)
+        && TempestSprite2D.draw(ctx, rec.weaponId, a, b, c, d, sx, sy, housingBack, barrelBack)) {
         drawn++;
         continue;
       }
