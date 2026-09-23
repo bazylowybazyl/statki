@@ -885,7 +885,7 @@ export const Weapon3DSystem = {
       c.turretUid = emitterUid;
       // Uchwyt do wieżyczki, z której wyszła wiązka — dzięki niemu początek
       // wiązki jedzie z lufą, gdy okręt się obraca albo przemieszcza.
-      c.turretKey = Turret2D.findTurretKey(sx, sy, normalizeWeaponFxKey(detail?.weaponId));
+      c.turretKey = Turret2D.findTurretKey(sx, sy, normalizeWeaponFxKey(detail?.weaponId), detail?.shooter || null);
 
       c.targetStartX = sx;
       c.targetStartY = sy;
@@ -982,7 +982,7 @@ export const Weapon3DSystem = {
       const beamMode = String(detail?.beamMode || detail?.beam?.mode || '').toLowerCase();
       const isContinuousBeam = isBeam && beamMode === 'continuous';
       if (!isContinuousBeam) {
-        this._triggerShotByWorldPoint(weaponKey, shotX, shotY);
+        this._triggerShotByWorldPoint(weaponKey, shotX, shotY, detail.shooter || null);
       }
       if (isBeam && detail?.beam) this._triggerBeamFx(detail);
     };
@@ -993,8 +993,10 @@ export const Weapon3DSystem = {
   // Wystrzał: Turret2D wskazuje lufę (i dostaje odrzut), my dokładamy płomień
   // i wstrząs kamery. Gdy żadna wieżyczka nie jest widoczna (kamera daleko,
   // CIC otwarty), błysk po prostu nie powstaje — tak jak wcześniej przy LOD.
-  _triggerShotByWorldPoint(weaponKey, shotX, shotY) {
-    const shot = Turret2D.triggerShot(weaponKey, shotX, shotY);
+  // Lufy szukamy tylko na kadłubie strzelca: strzał myśliwca (bez wieżyczek)
+  // nie zapala już cudzego CIWS-a i nie trzęsie kamerą.
+  _triggerShotByWorldPoint(weaponKey, shotX, shotY, shooter = null) {
+    const shot = Turret2D.triggerShot(weaponKey, shotX, shotY, shooter);
     if (!shot) return;
     // Armata, Yamato i Tempest Ion mają własne recepty z dema
     // (src/3d/muzzleFx3D.js). Gdy taka zadżiała, tani błysk

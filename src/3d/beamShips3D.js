@@ -12,6 +12,7 @@
  */
 
 import * as THREE from 'three';
+import { MetalDebrisPool } from './beamDebris3D.js';
 import { BEAM_TYPE } from '../game/beamBody3D.js';
 import { prepareSkinChunks, selectSkinChunk } from './beamSkinChunks3D.js';
 import { prepareSkinSurface, createSurfaceState, updateSurfaceState, writeTearRims } from './beamSkinSurface3D.js';
@@ -188,128 +189,6 @@ const BEAM_BASE_COLORS = {
   [BEAM_TYPE.BULKHEAD]: [0.25, 0.85, 0.80]
 };
 
-const DEBRIS_MAX = 6144;
-const DEBRIS_LIFE = 5.0;
-
-const DEBRIS_VERTEX_SHADER = `
-attribute vec3 aStart;
-attribute vec3 aVel;
-attribute vec4 aRot;
-attribute vec3 aInfo;
-attribute vec3 aColor;
-uniform float uTime;
-varying vec3 vColor;
-varying float vAlpha;
-varying vec3 vNormal;
-void main() {
-  float age = uTime - aInfo.x;
-  float life = max(0.4, aInfo.z);
-  if (age < 0.0 || age > life) {
-    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
-    vAlpha = 0.0; vColor = vec3(0.0); vNormal = vec3(0.0, 0.0, 1.0);
-    return;
-  }
-  float k = 0.6;
-  vec3 center = aStart + aVel * ((1.0 - exp(-k * age)) / k);
-  float ang = aRot.w * age;
-  vec3 ax = normalize(aRot.xyz + vec3(1e-6, 0.0, 0.0));
-  float c = cos(ang), s = sin(ang);
-  vec3 p = position * aInfo.y;
-  vec3 rotated = p * c + cross(ax, p) * s + ax * dot(ax, p) * (1.0 - c);
-  vec3 rn = normal * c + cross(ax, normal) * s + ax * dot(ax, normal) * (1.0 - c);
-  vAlpha = 1.0 - age / life;
-  vColor = aColor;
-  vNormal = normalize(normalMatrix * rn);
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(center + rotated, 1.0);
-}
-`;
-
-const DEBRIS_FRAGMENT_SHADER = `
-uniform vec3 uLightDirView;
-uniform float uAmbient;
-uniform float uDiffuse;
-varying vec3 vColor;
-varying float vAlpha;
-varying vec3 vNormal;
-void main() {
-  if (vAlpha <= 0.01) discard;
-  vec3 n = normalize(vNormal);
-  float ndl = max(0.0, dot(n, uLightDirView));
-  gl_FragColor = vec4(vColor * (uAmbient + ndl * uDiffuse), vAlpha);
-}
-`;
-
-class DebrisPool {
-  constructor(scene) {
-    this.geometry = new THREE.BoxGeometry(1, 1, 1);
-    this.currentIndex = 0;
-    this.lastSpawnTime = -Infinity;
-    this.startArr = new Float32Array(DEBRIS_MAX * 3);
-    this.velArr = new Float32Array(DEBRIS_MAX * 3);
-    this.rotArr = new Float32Array(DEBRIS_MAX * 4);
-    this.infoArr = new Float32Array(DEBRIS_MAX * 3);
-    this.colorArr = new Float32Array(DEBRIS_MAX * 3);
-    this.geometry.setAttribute('aStart', new THREE.InstancedBufferAttribute(this.startArr, 3));
-    this.geometry.setAttribute('aVel', new THREE.InstancedBufferAttribute(this.velArr, 3));
-    this.geometry.setAttribute('aRot', new THREE.InstancedBufferAttribute(this.rotArr, 4));
-    this.geometry.setAttribute('aInfo', new THREE.InstancedBufferAttribute(this.infoArr, 3));
-    this.geometry.setAttribute('aColor', new THREE.InstancedBufferAttribute(this.colorArr, 3));
-    this.material = new THREE.ShaderMaterial({
-      uniforms: {
-        uTime: { value: 0 },
-        uLightDirView: { value: new THREE.Vector3(0, 0, 1) },
-        uAmbient: { value: 0.35 },
-        uDiffuse: { value: 0.9 }
-      },
-      vertexShader: DEBRIS_VERTEX_SHADER,
-      fragmentShader: DEBRIS_FRAGMENT_SHADER,
-      transparent: true,
-      depthWrite: false
-    });
-    this.mesh = new THREE.InstancedMesh(this.geometry, this.material, DEBRIS_MAX);
-    this.mesh.count = 0;
-    this.mesh.frustumCulled = false;
-    scene.add(this.mesh);
-    this._dirty = false;
-  }
-
-  spawn(x, y, z, vx, vy, vz, r, g, b, scale, nowSec) {
-    const i = this.currentIndex;
-    this.startArr[i * 3] = x; this.startArr[i * 3 + 1] = y; this.startArr[i * 3 + 2] = z;
-    this.velArr[i * 3] = vx; this.velArr[i * 3 + 1] = vy; this.velArr[i * 3 + 2] = vz;
-    this.rotArr[i * 4] = Math.random() * 2 - 1;
-    this.rotArr[i * 4 + 1] = Math.random() * 2 - 1;
-    this.rotArr[i * 4 + 2] = Math.random() * 2 - 1;
-    this.rotArr[i * 4 + 3] = (Math.random() - 0.5) * 7;
-    this.infoArr[i * 3] = nowSec;
-    this.infoArr[i * 3 + 1] = scale;
-    this.infoArr[i * 3 + 2] = DEBRIS_LIFE * (0.6 + Math.random() * 0.4);
-    this.colorArr[i * 3] = r; this.colorArr[i * 3 + 1] = g; this.colorArr[i * 3 + 2] = b;
-    this.lastSpawnTime = nowSec;
-    this.currentIndex = (this.currentIndex + 1) % DEBRIS_MAX;
-    if (this.mesh.count < DEBRIS_MAX) this.mesh.count++;
-    this._dirty = true;
-  }
-
-  commit(nowSec) {
-    if (this.mesh.count > 0 && (nowSec - this.lastSpawnTime) > DEBRIS_LIFE + 0.5) {
-      this.mesh.count = 0;
-      this.currentIndex = 0;
-    }
-    if (!this._dirty) return;
-    for (const name of ['aStart', 'aVel', 'aRot', 'aInfo', 'aColor']) {
-      this.geometry.getAttribute(name).needsUpdate = true;
-    }
-    this._dirty = false;
-  }
-
-  dispose(scene) {
-    if (scene && this.mesh) scene.remove(this.mesh);
-    this.geometry?.dispose?.();
-    this.material?.dispose?.();
-  }
-}
-
 export const BeamShips3D = {
   scene: null,
   bodyData: new Map(),
@@ -327,14 +206,14 @@ export const BeamShips3D = {
 
   init(scene) {
     this.scene = scene;
-    if (!this.debris) this.debris = new DebrisPool(scene);
+    if (!this.debris) this.debris = new MetalDebrisPool(scene);
     return this;
   },
 
   setLightDir(x, y, z) { this.lightDirWorld.set(x, y, z).normalize(); },
 
-  spawnDebris(x, y, z, vx, vy, vz, r, g, b, scale) {
-    this.debris?.spawn(x, y, z, vx, vy, vz, r, g, b, scale, this._lastTimeSec);
+  spawnDebris(x, y, z, vx, vy, vz, r, g, b, scale, structural = false) {
+    this.debris?.spawn(x, y, z, vx, vy, vz, r, g, b, scale, this._lastTimeSec, structural);
   },
 
   _ensureSkinGeometries(skin) {

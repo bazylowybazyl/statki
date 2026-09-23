@@ -987,6 +987,13 @@ const LOW_POWER_THRESHOLD = 0.35; // poniżej tego HP obrys zaczyna pulsować
 const BOOT_AFTERGLOW = 0.42;      // s — dopalenie po domknięciu rozruchu
 const SWEEP_END = 1.2;            // pozycja czoła fali przy pełnym rozruchu
 const HIT_FX_LIFE = 1.1;          // s — po tylu sekundach łata już nic nie rysuje
+// LOD kopuły: promień tarczy NA EKRANIE poniżej tego progu = zero draw calla.
+// Ten sam próg i ta sama miara (promień × zoom) co ShieldImpactFX.lodScaleFor,
+// który poniżej 9 px nie emituje już cząstek. Tylko warunek widoczności —
+// syncHitBuffer/resolveHullFieldPhase muszą chodzić dalej co klatkę, inaczej
+// po przybliżeniu stare impakty wyszłyby jako „fresh”, a stary prevState
+// odpaliłby fałszywe dopalenie rozruchu.
+const SHIELD_DOME_MIN_PX = 9;
 
 function resolveHullFieldPhase(hb, shield, time) {
     const st = shield.state;
@@ -1065,10 +1072,14 @@ function updateHullShieldMesh(entity, mesh, shield, profile, time, interpPoseOve
 
     // Nic się nie dzieje -> mesh wypada z renderu. Pipeline jest związany
     // submisją, więc niewidzialna tarcza ma kosztować zero draw calli.
-    mesh.visible = phase.field > 0.002
+    // Tarcza mniejsza niż SHIELD_DOME_MIN_PX na ekranie też wypada (daleki zoom,
+    // mała jednostka) — puls lowPower trzymał dotąd widoczną każdą słabą tarczę.
+    const domeScreenPx = Math.max(1, profile.maxR) * zoom;
+    mesh.visible = domeScreenPx >= SHIELD_DOME_MIN_PX && (
+                   phase.field > 0.002
                 || u.uLowPower.value > 0.004
                 || liveHits > 0
-                || (Number(shield.energyShotTimer) || 0) > 0;
+                || (Number(shield.energyShotTimer) || 0) > 0);
 
     if (hb.fresh.length) {
         emitHullImpactFx(entity, shield, profile, hullAngle, pose, 1, hb.fresh, mesh, time, zoom);
@@ -1112,12 +1123,18 @@ function updateSphereShieldMesh(entity, mesh, shield, time, interpPoseOverride, 
         }
     }
 
+    // Bańka nie ma ukrywania w bezczynności (świeci stale), więc tu próg
+    // ekranowy to jedyne, co zdejmuje ją z renderu przy dalekim zoomie.
+    mesh.visible = s * 1.8 * scaleProgress * zoom >= SHIELD_DOME_MIN_PX;
+
     if (hb.fresh.length) {
         emitSphereImpactFx(entity, shield, s * 1.8 * scaleProgress, pose, hb.fresh, mesh, time, zoom);
     }
 }
 
 // ── Per-frame update ─────────────────────────────────────────────────────────
+const _activeShieldEntities = new Set();
+
 export function updateShields3D(dt, entities, interpPoseOverride = null) {
     if (!Core3D.isInitialized) return;
     const time = performance.now() / 1000;
@@ -1125,7 +1142,10 @@ export function updateShields3D(dt, entities, interpPoseOverride = null) {
     ShieldImpactFX.init(Core3D.scene);
     const zoom = Math.max(0.0001, Number(Core3D.activeCam1?.zoom) || 1);
 
-    const activeEntities = new Set();
+    // Wspólny Set zamiast nowego co klatkę (funkcja nie jest re-entrant).
+    const activeEntities = _activeShieldEntities;
+    activeEntities.clear();
+    let anyDomeVisible = false;
 
     for (const entity of entities) {
         const shield = entity?.shield;
@@ -1154,6 +1174,7 @@ export function updateShields3D(dt, entities, interpPoseOverride = null) {
         } else {
             updateSphereShieldMesh(entity, mesh, shield, time, interpPoseOverride, zoom);
         }
+        if (mesh.visible) anyDomeVisible = true;
     }
 
     // Cleanup dead shields
@@ -1166,4 +1187,10 @@ export function updateShields3D(dt, entities, interpPoseOverride = null) {
     // Cząsteczki żyją własnym życiem — także wtedy, gdy statek już zniknął
     // z listy renderowanych (wstęga po ostatnim trafieniu ma dopalić).
     ShieldImpactFX.update(time, zoom);
+
+    // Pass tarcz w Core3D (obchód grafu + resolve MSAA) ma sens tylko wtedy,
+    // gdy cokolwiek na tej warstwie jest widoczne — w spoczynku kopuły znikają.
+    if (typeof Core3D.setShieldLayerActive === 'function') {
+        Core3D.setShieldLayerActive(anyDomeVisible || ShieldImpactFX.hasVisibleContent());
+    }
 }

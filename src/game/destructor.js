@@ -8,7 +8,6 @@ import { getHexContactGrid, findHexContact, getHexShardDrift } from './hexContac
 import { areTowBodiesCollisionDisabled } from './towSystem.js';
 import { transferSalvageToWreck, clearSalvage } from './salvage.js';
 import { CollisionFX, impactEvent as _impactEvent, grindEvent as _grindEvent } from '../vfx/collisionFx.js';
-import { getEntityShieldBlockingRadius, getEntityShieldBlockingRadiusTowards } from '../../shieldSystem.js';
 import {
   attachHexGridToArena,
   getHexArenaStats as getPackedHexArenaStats,
@@ -127,28 +126,6 @@ export const DESTRUCTOR_CONFIG = {
   wreckSplitMaxAngularKick: 0.35,      // rad/s; heavy pieces peel away without spinning like confetti
   wreckSplitMaxFragments: 8,          // additional islands become pooled chips, not more physics bodies
 
-  shieldRestitution: 0.35,
-  // Poniżej tej prędkości zbliżania kontakt z tarczą to nie zderzenie, tylko
-  // OPIERANIE SIĘ o nią. Ciąg AI (~150 u/s²) daje na tick fizyki 1.25 u/s, a
-  // separacja przy suficie 560 u/s² — 4.7 u/s. Odbicie z restytucją wstrzykiwało
-  // tam energię 240 razy na sekundę i okręt wibrował na granicy tarczy. Poniżej
-  // progu gasimy samą składową zbliżania: tarcza dalej nie przepuszcza, ale nic
-  // nie odskakuje. Realny taran (setki u/s) odbija się normalnie.
-  shieldImpulseMinSpeed: 10.0,
-  shieldCollisionDamageScale: 0.8,
-  shieldSeparationPercent: 0.6,
-  shieldSeparationSlop: 2.0,
-  shieldCollisionCooldown: 0.16,
-  shieldCollisionDamageStepOffset: 1.5,
-  shieldRammingDamageStepOffset: 0.45,
-  shieldRammingDamageBoostMax: 4.0,
-  shieldRammingDamageBoostExp: 0.45,
-  shieldActivationDamageMult: 0.18,
-  shieldCapitalDominanceRatio: 3.0,
-  shieldCapitalDominanceHeavyDamageMult: 0.3,
-  shieldAuthorityShieldMaxExp: 0.35,
-  shieldAuthorityMassExp: 0.08,
-
   // === WARSTWA PREZENTACJI ZDERZEŃ (CollisionFX) ===
   // Nic tutaj nie wchodzi w model zderzeń: te liczby decydują wyłącznie o tym,
   // KIEDY leci zdarzenie i JAK MOCNO żarzy się blacha. Zerowanie któregokolwiek
@@ -219,27 +196,6 @@ export const DESTRUCTOR_CONFIG = {
 const STRESS_COLORS = Array.from({ length: 32 }, (_, i) => {
   const r = i / 31;
   return `rgba(255,${Math.floor(r * 100)},0,${(r * 0.6).toFixed(3)})`;
-});
-
-const SHIELD_AUTHORITY_BY_CLASS = Object.freeze({
-  atlas: 3.8,
-  supercapital: 3.8,
-  terran_supercapital: 3.8,
-  capital_carrier: 3.2,
-  carrier: 3.2,
-  terran_carrier: 3.2,
-  terran_battleship: 2.35,
-  pirate_battleship: 2.2,
-  battleship: 2.25,
-  terran_destroyer: 1.65,
-  pirate_destroyer: 1.55,
-  destroyer: 1.6,
-  terran_frigate: 1.15,
-  pirate_frigate: 1.1,
-  frigate: 1.1,
-  fighter: 0.8,
-  interceptor: 0.78,
-  default: 1.0
 });
 
 const HEX_R = DESTRUCTOR_CONFIG.gridDivisions;
@@ -775,10 +731,6 @@ function getBroadphaseRadius(entity) {
   return radius + drift * Math.SQRT2 * getFinalScale(entity);
 }
 
-function getShieldRadius(entity) {
-  return getEntityShieldBlockingRadius(entity);
-}
-
 function circleOverlapsEntityRect(worldX, worldY, worldRadius, entity, extraMargin = 0) {
   const grid = entity?.hexGrid;
   if (!grid) return true;
@@ -942,7 +894,6 @@ export function getCollisionBoundsDebug(entity, out = {}) {
   out.drift = Number(grid._maxHexDrift) || 0;
   // Ustawiane przez _prepareBroadphase; 0 gdy encja wypadla z broadphase.
   out.bpRadius = Number(entity._bpRadius) || 0;
-  out.shieldRadius = Number(entity._shieldRadius) || 0;
   out.hasActiveHex = entity._hasActiveHex !== false;
   // Ile razy wieksze POLE zajmuje pudlo z padem. 1.0 = pad zerowy.
   out.areaRatio = (out.eu * out.ev) / Math.max(1e-6, out.euRaw * out.evRaw);
@@ -1087,44 +1038,6 @@ function getEntityRammingMass(entity) {
     return Math.max(baseMass, rammingMass);
   }
   return baseMass;
-}
-
-function getShieldAuthorityKey(entity) {
-  const rawKey = String(
-    entity?.shipFrame ||
-    entity?.activeHullId ||
-    entity?.type ||
-    entity?.configureId ||
-    entity?.shipId ||
-    ''
-  ).trim().toLowerCase();
-
-  if (!rawKey) return 'default';
-  if (rawKey === 'frigate_pd' || rawKey === 'frigate_laser') return 'frigate';
-  if (rawKey === 'carrier') return 'terran_carrier';
-  if (rawKey === 'atlas_ii') return 'atlas';
-  if (rawKey === 'atlas') return 'atlas';
-  if (rawKey === 'supercapital') return 'terran_supercapital';
-
-  return rawKey;
-}
-
-export function getShieldAuthorityDebugInfo(entity) {
-  const key = getShieldAuthorityKey(entity);
-  const classMult = Number(SHIELD_AUTHORITY_BY_CLASS[key] ?? SHIELD_AUTHORITY_BY_CLASS.default) || 1.0;
-  return { key, classMult };
-}
-
-function getShieldAuthority(entity) {
-  const { classMult } = getShieldAuthorityDebugInfo(entity);
-  const shieldMax = Math.max(0, Number(entity?.shield?.max) || Number(entity?.shieldMax) || 0);
-  const mass = Math.max(1, getEntityMass(entity));
-  const shieldExp = Math.max(0, Number(DESTRUCTOR_CONFIG.shieldAuthorityShieldMaxExp) || 0);
-  const massExp = Math.max(0, Number(DESTRUCTOR_CONFIG.shieldAuthorityMassExp) || 0);
-  const shieldFactor = shieldMax > 0 ? Math.pow(Math.max(1, shieldMax / 1000), shieldExp) : 1.0;
-  const massFactor = Math.pow(Math.max(1, mass / 1000), massExp);
-
-  return classMult * shieldFactor * massFactor;
 }
 
 function worldToScreenFallback(wx, wy, cam, ctx) {
@@ -1924,11 +1837,6 @@ export const DestructorSystem = {
   _bpQueryStamp: 1,
   _bpGatherStamp: 1,
   _splitStamp: 1,
-  _shieldPairCooldown: new Map(),
-  // Ostatni tick fizyki, w którym para dostała impuls tarczy. Osobno od
-  // _shieldPairCooldown, bo tamten dławi wyłącznie obrażenia.
-  _shieldImpulseTick: new Map(),
-  _shieldPairIdCounter: 1,
   _splitUniqueBuffer: [],
   _crushStampCounter: 0,
   _crushStampA: 0,
@@ -1982,10 +1890,10 @@ export const DestructorSystem = {
       const speedExtension = Math.min(rawSpeed, cellSize);
       ent._frameSpeed = rawSpeed; // cache for swept collision
 
+      // Sito kolizji = sam kadłub. Tarcza nie jest ciałem fizycznym (blokuje
+      // ostrzał, nie kadłuby), więc nie poszerza promienia broadphase.
       const bpRadius = getBroadphaseRadius(ent);
-      const sr = getShieldRadius(ent);
-      ent._shieldRadius = sr;
-      ent._bpRadius = Math.max(bpRadius, sr);
+      ent._bpRadius = bpRadius;
 
       const radius = bpRadius + speedExtension;
       const minCx = Math.floor((x - radius) / cellSize);
@@ -3221,13 +3129,11 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
 
           if (iterIndex > 0 && (heavyPair || isFastFrame)) continue;
 
-          // Shield collision: check before hull narrowphase
-          const srA = A._shieldRadius || 0;
-          const srB = B._shieldRadius || 0;
-          if (srA > 0 || srB > 0) {
-            const shieldResult = this._resolveShieldCollision(A, B, srA, srB, dt);
-            if (shieldResult === 1) continue; // shield blocked — skip hull collision
-          }
+          // Tarcze NIE biorą udziału w zderzeniach (model „Star Wars", 2026-09-23):
+          // pole zatrzymuje ostrzał, ale kadłuby przechodzą przez nie i stykają
+          // się metalem. Dawny rezolwer tarcza-tarcza odbijał taranującego na
+          // obrysie pola i zamieniał taran w obrażenia tarczy — osłoniętego
+          // okrętu nie dało się zgnieść.
 
           if (bIsWreck && B._wreckSleeping) {
             // Budź TYLKO przy znaczącej prędkości względnej (nie przy wolnym przelocie obok)
@@ -3407,201 +3313,6 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
     } finally {
       if (dbgEnabled) this._dbgCollisionRecord('resolveCollisions', nowMs() - tResolve0);
     }
-  },
-
-  // Returns: 0 = NO_SHIELD, 1 = SHIELD_BLOCKED
-  _resolveShieldCollision(A, B, srA, srB, dt) {
-    if (srA <= 0 && srB <= 0) return 0;
-
-    const ax = getEntityPosX(A), ay = getEntityPosY(A);
-    const bx = getEntityPosX(B), by = getEntityPosY(B);
-    const dx = ax - bx, dy = ay - by;
-    const distSq = dx * dx + dy * dy;
-
-    // Effective collision radii: shield radius if shielded, hull radius otherwise.
-    // Tarcza-obrys: promień próbkowany kierunkowo wzdłuż linii środków
-    // (srA/srB to promienie obwiedni z broadphase — zostają jako fallback).
-    const dirA = srA > 0 ? getEntityShieldBlockingRadiusTowards(A, bx, by) : 0;
-    const dirB = srB > 0 ? getEntityShieldBlockingRadiusTowards(B, ax, ay) : 0;
-    const effSrA = srA > 0 ? (dirA > 0 ? dirA : srA) : 0;
-    const effSrB = srB > 0 ? (dirB > 0 ? dirB : srB) : 0;
-    const radiusA = effSrA > 0 ? effSrA : (Number(A._bpRadius) || 100);
-    const radiusB = effSrB > 0 ? effSrB : (Number(B._bpRadius) || 100);
-    const combined = radiusA + radiusB;
-
-    if (distSq >= combined * combined) return 0; // no overlap
-
-    const dist = Math.sqrt(distSq);
-    let nx, ny;
-    if (dist > 1e-6) { nx = dx / dist; ny = dy / dist; }
-    else { nx = 1; ny = 0; }
-
-    const penetration = combined - dist;
-
-    // Relative velocity along contact normal
-    const vAx = getEntityVelX(A), vAy = getEntityVelY(A);
-    const vBx = getEntityVelX(B), vBy = getEntityVelY(B);
-    const velAlongNormal = (vAx - vBx) * nx + (vAy - vBy) * ny;
-
-    const massA = getEntityRammingMass(A) || 100;
-    const massB = getEntityRammingMass(B) || 100;
-    const authorityA = srA > 0 ? getShieldAuthority(A) : 1.0;
-    const authorityB = srB > 0 ? getShieldAuthority(B) : 1.0;
-    const effectiveMassA = Math.max(1, massA * authorityA);
-    const effectiveMassB = Math.max(1, massB * authorityB);
-    const invMassA = 1 / effectiveMassA;
-    const invMassB = 1 / effectiveMassB;
-    const invMassSum = invMassA + invMassB;
-    const shieldStateA = String(A?.shield?.state || '').toLowerCase();
-    const shieldStateB = String(B?.shield?.state || '').toLowerCase();
-    const activatingA = srA > 0 && shieldStateA === 'activating';
-    const activatingB = srB > 0 && shieldStateB === 'activating';
-    const dominanceRatio = Math.max(1.25, Number(DESTRUCTOR_CONFIG.shieldCapitalDominanceRatio) || 3.0);
-    const heavyDamageMult = Math.max(0.05, Math.min(1, Number(DESTRUCTOR_CONFIG.shieldCapitalDominanceHeavyDamageMult) || 0.3));
-    const activationDamageMult = Math.max(0, Math.min(1, Number(DESTRUCTOR_CONFIG.shieldActivationDamageMult) || 0.18));
-    const effectiveRatioA = effectiveMassA / Math.max(1, effectiveMassB);
-    const effectiveRatioB = effectiveMassB / Math.max(1, effectiveMassA);
-
-    // Klucz pary liczymy TUTAJ, bo potrzebuje go już impuls — nie tylko blok
-    // obrażeń niżej.
-    if (!A._shieldPairId) A._shieldPairId = this._shieldPairIdCounter++;
-    if (!B._shieldPairId) B._shieldPairId = this._shieldPairIdCounter++;
-    const pairKey = A._shieldPairId < B._shieldPairId
-      ? `${A._shieldPairId}|${B._shieldPairId}`
-      : `${B._shieldPairId}|${A._shieldPairId}`;
-
-    // Impuls (tylko przy zbliżaniu) — RAZ NA TICK FIZYKI na parę, nie raz na
-    // iterację kolizji. resolveCollisions woła ten rezolwer collisionIterations
-    // razy na tick, więc odbicie leciało 240x/s. Cooldown pary (0.16 s) tego nie
-    // dławił: jego sprawdzenie siedzi 50 linii niżej, WEWNĄTRZ bloku obrażeń,
-    // czyli już po nałożeniu impulsu i korekty pozycji.
-    if (velAlongNormal < 0) {
-      const impulseTicks = this._shieldImpulseTick;
-      if (impulseTicks.get(pairKey) !== this._tick) {
-        impulseTicks.set(pairKey, this._tick);
-
-        // Poniżej progu to opieranie się o tarczę, nie zderzenie — restytucja
-        // schodzi do zera i impuls tylko gasi składową zbliżania (zderzenie
-        // idealnie plastyczne). Bez tego ciąg AI dopychającego się okrętu był
-        // zamieniany w energię odbicia i wracał jako drżenie.
-        const minBounce = Math.max(0, Number(DESTRUCTOR_CONFIG.shieldImpulseMinSpeed) || 0);
-        const rest = (-velAlongNormal) > minBounce
-          ? Math.max(0, Math.min(1, Number(DESTRUCTOR_CONFIG.shieldRestitution) || 0))
-          : 0;
-        const j = (-(1 + rest) * velAlongNormal) / invMassSum;
-        addEntityVelocity(A, nx * j * invMassA, ny * j * invMassA);
-        addEntityVelocity(B, -nx * j * invMassB, -ny * j * invMassB);
-
-        if (impulseTicks.size > 2048) {
-          for (const [key, tick] of impulseTicks) {
-            if ((this._tick - tick) > 4) impulseTicks.delete(key);
-          }
-        }
-      }
-    }
-
-    // Position correction (anti-penetration)
-    const slop = DESTRUCTOR_CONFIG.shieldSeparationSlop;
-    const percent = DESTRUCTOR_CONFIG.shieldSeparationPercent;
-    let corrWeightA = invMassA;
-    let corrWeightB = invMassB;
-
-    if (effectiveRatioA > dominanceRatio) {
-      corrWeightA *= 0.35;
-      corrWeightB *= 1.65;
-    } else if (effectiveRatioB > dominanceRatio) {
-      corrWeightA *= 1.65;
-      corrWeightB *= 0.35;
-    }
-
-    if (activatingA && !activatingB) {
-      corrWeightA *= 0.55;
-      corrWeightB *= 1.45;
-    } else if (activatingB && !activatingA) {
-      corrWeightA *= 1.45;
-      corrWeightB *= 0.55;
-    }
-
-    const corrWeightSum = Math.max(1e-6, corrWeightA + corrWeightB);
-    const corr = Math.max(0, penetration - slop) / corrWeightSum * percent;
-    if (corr > 0) {
-      addEntityPosition(A, nx * corr * corrWeightA, ny * corr * corrWeightA);
-      addEntityPosition(B, -nx * corr * corrWeightB, -ny * corr * corrWeightB);
-    }
-
-    // Shield damage only from actual closing speed, scaled to per-step distance.
-    // This avoids giant damage spikes from tiny touches and from already-separating overlaps.
-    const impactSpeed = Math.max(0, -velAlongNormal);
-    const impactStep = impactSpeed * Math.max(1 / 240, Number(dt) || 0);
-    const dominance = Math.max(effectiveRatioA, effectiveRatioB);
-    const dominantRammingShieldHit = dominance > dominanceRatio;
-    const baseStepOffset = Math.max(0, Number(DESTRUCTOR_CONFIG.shieldCollisionDamageStepOffset) || 1.5);
-    const ramStepOffset = Math.max(0, Number(DESTRUCTOR_CONFIG.shieldRammingDamageStepOffset) || 0.45);
-    const damageStepOffset = dominantRammingShieldHit ? Math.min(baseStepOffset, ramStepOffset) : baseStepOffset;
-    const damageStep = Math.max(0, impactStep - damageStepOffset);
-
-    if (damageStep > 0) {
-      // pairKey policzony wyżej, razem z bramką impulsu.
-      const pairCooldown = Math.max(0, Number(DESTRUCTOR_CONFIG.shieldCollisionCooldown) || 0.16);
-      const shieldPairCooldown = this._shieldPairCooldown;
-      const nowSec = nowMs() * 0.001;
-      const lastHitSec = Number(shieldPairCooldown.get(pairKey)) || -Infinity;
-      
-      if ((nowSec - lastHitSec) < pairCooldown) return 1;
-
-      const boostExp = Math.max(0, Number(DESTRUCTOR_CONFIG.shieldRammingDamageBoostExp) || 0.45);
-      const boostMax = Math.max(1, Number(DESTRUCTOR_CONFIG.shieldRammingDamageBoostMax) || 4.0);
-      const dominanceBoost = dominantRammingShieldHit
-        ? Math.min(boostMax, Math.pow(dominance / dominanceRatio, boostExp))
-        : 1;
-      const totalDamage = damageStep * damageStep * DESTRUCTOR_CONFIG.shieldCollisionDamageScale * 120 * dominanceBoost;
-      const totalEffectiveMass = effectiveMassA + effectiveMassB;
-      let dmgA = srB > 0 ? totalDamage * (effectiveMassB / totalEffectiveMass) : totalDamage;
-      let dmgB = srA > 0 ? totalDamage * (effectiveMassA / totalEffectiveMass) : totalDamage;
-
-      if (activatingA) dmgA *= activationDamageMult;
-      if (activatingB) dmgB *= activationDamageMult;
-      if (effectiveRatioA > dominanceRatio) dmgA *= heavyDamageMult;
-      else if (effectiveRatioB > dominanceRatio) dmgB *= heavyDamageMult;
-
-      if (srA > 0 && A.shield) {
-        const dmg = dmgA;
-        A.shield.val = Math.max(0, A.shield.val - dmg);
-        A.shield.regenTimer = A.shield.regenDelay || 3.0;
-        // Visual impact on A's shield surface (punkt na obrysie tarczy)
-        if (typeof window !== 'undefined' && window.registerShieldImpact) {
-          window.registerShieldImpact(A, ax - nx * radiusA, ay - ny * radiusA, dmg, 'shield');
-        }
-      }
-
-      if (srB > 0 && B.shield) {
-        const dmg = dmgB;
-        B.shield.val = Math.max(0, B.shield.val - dmg);
-        B.shield.regenTimer = B.shield.regenDelay || 3.0;
-        if (typeof window !== 'undefined' && window.registerShieldImpact) {
-          window.registerShieldImpact(B, bx + nx * radiusB, by + ny * radiusB, dmg, 'shield');
-        }
-      }
-
-      shieldPairCooldown.set(pairKey, nowSec);
-      if (shieldPairCooldown.size > 2048) {
-        for (const [key, stampSec] of shieldPairCooldown) {
-          if ((nowSec - stampSec) > pairCooldown * 8) shieldPairCooldown.delete(key);
-        }
-      }
-
-      // Play shield hit sound
-      if (typeof window !== 'undefined' && window.AudioSys) {
-        window.AudioSys.playSound('shieldHit');
-      }
-
-      // If a shield broke this frame, let hull collision happen next frame
-      if ((srA > 0 && A.shield.val <= 0) || (srB > 0 && B.shield.val <= 0)) {
-        return 0; // SHIELD_BROKE → fall through to hull collision
-      }
-    }
-
-    return 1; // SHIELD_BLOCKED
   },
 
   collideEntities(A, B, dt, doDamage) {

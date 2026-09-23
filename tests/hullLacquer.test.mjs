@@ -1,12 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import {
+  HULL_LACQUER_DEFAULTS,
   MAX_ENGINE_ZONES,
   bakeHullShapeField,
   boxBlur3,
   buildLacquerEnvPixels,
   computeEngineZones
 } from '../src/3d/hullLacquer.js';
+
+test('domyślny kafel obłoków odbić istnieje w public/', () => {
+  // Adres względny jak 'assets/nebula.png' — Vite serwuje public/ od korzenia.
+  const url = new URL('../public/' + HULL_LACQUER_DEFAULTS.skyUrl, import.meta.url);
+  assert.ok(existsSync(url), `brak pliku ${HULL_LACQUER_DEFAULTS.skyUrl}`);
+});
 
 // Kadłub testowy: prostokąt 96×32 w obrazie 128×64 (y obrazu rośnie w dół).
 const W = 128;

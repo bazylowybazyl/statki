@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Halo — ring planetarny (demo)</title>
+<style>
+  :root { --ink: #d6e2e8; --muted: #7d919b; --line: #9fc6d626; --panel: #070d13e6; --accent: #7cc9ff; --warn: #f0b060; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; color: var(--ink); font: 12px/1.35 "Segoe UI", system-ui, sans-serif; }
+  canvas#view { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; outline: none; }
+  #hud { position: fixed; left: 10px; top: 10px; padding: 8px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; font: 11px/1.45 ui-monospace, Consolas, monospace; min-width: 230px; pointer-events: none; white-space: pre; }
+  #hud b { color: var(--accent); font-weight: 600; }
+  #panel { position: fixed; right: 10px; top: 10px; bottom: 10px; width: 300px; overflow-y: auto; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+  #panel h1 { font-size: 13px; margin: 0 0 2px; letter-spacing: .06em; }
+  #panel .sub { color: var(--muted); margin-bottom: 8px; }
+  #panel h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 12px 0 6px; font-weight: 600; }
+  .row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+  .row label { flex: 0 0 92px; color: var(--muted); }
+  .row input[type=range] { flex: 1 1 auto; min-width: 0; }
+  .row output { flex: 0 0 48px; text-align: right; font-variant-numeric: tabular-nums; }
+  .btns { display: flex; flex-wrap: wrap; gap: 4px; }
+  button, select, input[type=number] { background: #0e1a24; color: var(--ink); border: 1px solid #2a4252; border-radius: 4px; padding: 4px 7px; font: inherit; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.on { background: #173247; border-color: var(--accent); color: #fff; }
+  .checks { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 8px; }
+  .checks label { display: flex; align-items: center; gap: 5px; }
+  .checks label.off { color: #50606a; }
+  #preset-name { color: var(--accent); margin-top: 4px; min-height: 16px; }
+  #loading { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); padding: 6px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+  #errors { position: fixed; left: 10px; bottom: 10px; max-width: 60vw; max-height: 40vh; overflow: auto; padding: 8px; background: #2a0b0bee; border: 1px solid #a33; border-radius: 6px; font: 11px ui-monospace, monospace; white-space: pre-wrap; display: none; }
+  .hint { color: var(--muted); font-size: 11px; margin-top: 6px; }
+  body.shot #hud, body.shot #panel, body.shot #loading { display: none; }
+  /* HUD lotu K-7 (jak w demie ECUMENE / K-7) */
+  #k7-hud { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); width: 560px; max-width: calc(100vw - 340px); padding: 9px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; display: none; font: 11px/1.45 ui-monospace, Consolas, monospace; }
+  #k7-hud.on { display: block; }
+  #k7-hud .top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+  #k7-hud .state { color: var(--accent); font-weight: 700; letter-spacing: .08em; font-size: 12px; }
+  #k7-hud .muted { color: var(--muted); }
+  #k7-hud .bar { height: 4px; background: #16242e; border-radius: 2px; margin: 5px 0 6px; overflow: hidden; }
+  #k7-hud .bar i { display: block; height: 100%; width: 0; background: var(--accent); }
+  #k7-hud .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px 10px; }
+  #k7-hud .grid b { color: var(--muted); font-weight: 400; margin-right: 4px; }
+  #k7-hud .fuel { height: 3px; background: #16242e; margin-top: 2px; }
+  #k7-hud .fuel i { display: block; height: 100%; background: #f0b060; }
+  #k7-hud .row2 { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 6px; }
+  #k7-hint { color: #c7d6dc; }
+  #k7-action { font-weight: 700; letter-spacing: .06em; border-color: var(--accent); }
+  #k7-keys { color: var(--muted); margin-top: 4px; font-size: 10px; }
+  #k7-notice { position: fixed; left: 50%; top: 16px; transform: translateX(-50%); padding: 6px 14px; background: #0a1822ee; border: 1px solid var(--accent); border-radius: 6px; font: 12px ui-monospace, Consolas, monospace; letter-spacing: .05em; opacity: 0; transition: opacity .4s; pointer-events: none; }
+  body.shot #k7-hud, body.shot #k7-notice { display: none; }
+</style>
+</head>
+<body>
+<canvas id="view" tabindex="0" aria-label="Ring Halo wokół Ziemi — demo"></canvas>
+<div id="hud">ładowanie…</div>
+<div id="k7-notice"></div>
+<div id="k7-hud">
+  <div class="top"><span class="state" id="k7-state">--</span><span class="muted" id="k7-service">--</span><span class="muted" id="k7-gate">--</span></div>
+  <div class="bar"><i id="k7-phase"></i></div>
+  <div class="grid">
+    <span><b>prędkość</b><span id="k7-speed">0</span></span>
+    <span><b>stanowisko</b><span id="k7-berth">--</span></span>
+    <span><b>paliwo</b><span id="k7-fuel">--</span><div class="fuel"><i id="k7-fuel-bar"></i></div></span>
+    <span class="muted" id="k7-mode">--</span>
+  </div>
+  <div class="row2"><span id="k7-hint">--</span><button id="k7-action">OBSŁUGA</button></div>
+  <div id="k7-keys">W/S ciąg · A/D obrót · Spacja hamulec · Shift dopalacz (poza halą) · E dokuj/oddokuj · T skok do tranzytu · kółko zoom · L wyjście z lotu</div>
+</div>
+<div id="panel">
+  <h1>RING HALO · ZIEMIA</h1>
+  <div class="sub">demo modułów src/3d/haloRing · M1–M5 · habitat w stronę kosmosu, port Kepler</div>
+
+  <h2>Kamera</h2>
+  <div class="btns">
+    <button id="cam-game">Kamera gry</button>
+    <button id="cam-flight" title="L">Lot K-7</button>
+    <button id="cam-cine">Kamera kinowa</button>
+  </div>
+  <div class="hint" id="cam-hint"></div>
+
+  <h2>Presety (1–9, C = wycieczka)</h2>
+  <div class="btns" id="presets"></div>
+  <div id="preset-name"></div>
+
+  <h2>Jakość</h2>
+  <div class="row"><label>Preset jakości</label>
+    <select id="quality">
+      <option value="low">Niska</option>
+      <option value="medium">Średnia</option>
+      <option value="high">Wysoka</option>
+      <option value="ultra">Ultra</option>
+    </select>
+  </div>
+
+  <h2>Słońce</h2>
+  <div class="row"><label>Azymut</label><input id="sun-az" type="range" min="-180" max="180" step="0.5"><output id="sun-az-o"></output></div>
+  <div class="row"><label>Wysokość</label><input id="sun-el" type="range" min="10" max="70" step="0.5"><output id="sun-el-o"></output></div>
+  <div class="row"><label>Animacja doby</label><input id="sun-anim" type="checkbox"><input id="sun-speed" type="range" min="0.2" max="12" step="0.1" value="2"><output id="sun-speed-o"></output></div>
+
+  <h2>Warstwy</h2>
+  <div class="checks" id="layers"></div>
+
+  <h2>Geometria</h2>
+  <div class="row"><label>Habitat</label>
+    <select id="g-facing">
+      <option value="outward">w stronę kosmosu</option>
+      <option value="inward">do planety (Halo)</option>
+    </select>
+  </div>
+  <div class="row"><label>Szerokość W</label><input id="g-w" type="range" min="3000" max="12000" step="100"><output id="g-w-o"></output></div>
+  <div class="row"><label>Wys. ścian</label><input id="g-wall" type="range" min="800" max="2100" step="10"><output id="g-wall-o"></output></div>
+  <div class="row"><label>floorTilt</label><input id="g-tilt" type="range" min="0" max="20" step="0.5"><output id="g-tilt-o"></output></div>
+  <div class="row"><label>Sektory</label><input id="g-sec" type="range" min="8" max="32" step="1"><output id="g-sec-o"></output></div>
+  <div class="row"><label>Seed</label><input id="g-seed" type="number" min="1" step="1" style="flex:1"></div>
+  <div class="btns"><button id="rebuild">Przebuduj</button></div>
+
+  <h2>Obraz</h2>
+  <div class="row"><label>Ekspozycja</label><input id="exposure" type="range" min="0.3" max="3" step="0.01"><output id="exposure-o"></output></div>
+
+  <div class="hint">
+    Gra: WASD / przeciąganie = przesuw, kółko = zoom, 0 = reset.<br>
+    Kino: LPM = rozglądanie, PPM = orbita, WASD/QE = lot, Shift = szybciej, kółko = FOV.
+  </div>
+</div>
+<div id="loading">Pieczenie map habitatu…</div>
+<div id="errors"></div>
+<script type="module" src="./halo_ring_demo.js"></script>
+</body>
+</html>

@@ -7,6 +7,7 @@ export const MAX_SHADER_SHIP_LIGHTS = 32;
 export const MAX_EXTERNAL_ROAD_SHADER_LIGHTS = 8;
 export const MAX_NAV_LIGHT_SPRITES = 512;
 const EPSILON = 1e-6;
+const LIGHT_KIND_LIST = Object.values(LIGHT_KINDS);
 
 // Wspólne parametry sekwencji świateł pozycyjnych ("pas startowy").
 // Z tych wartości korzystają DWA shadery: pętla lamp w kadłubie (hexShips3D)
@@ -86,9 +87,25 @@ export function getEntityLightScale(entity) {
   };
 }
 
+function getEntityLightSource(entity) {
+  return entity?.editorLights || entity?.visual?.lights || entity?.capitalProfile?.lights || entity?.profile?.lights;
+}
+
 export function getEntityLights(entity) {
-  const direct = entity?.editorLights || entity?.visual?.lights || entity?.capitalProfile?.lights || entity?.profile?.lights;
-  return normalizeLightsBlock(direct);
+  return normalizeLightsBlock(getEntityLightSource(entity));
+}
+
+// Tani test BEZ normalizacji: czy encja ma choć jeden marker lampy. Wraki,
+// asteroidy i większość NPC nie mają żadnych, a pełny payload (normalizacja
+// bloku + tablice + podpis-string) szedł dla nich co klatkę.
+export function hasEntityLightSource(entity) {
+  const source = getEntityLightSource(entity);
+  if (!source || typeof source !== 'object') return false;
+  for (let i = 0; i < LIGHT_KIND_LIST.length; i++) {
+    const markers = source[LIGHT_KIND_LIST[i]];
+    if (Array.isArray(markers) && markers.length > 0) return true;
+  }
+  return false;
 }
 
 function lightDirection(deg) {

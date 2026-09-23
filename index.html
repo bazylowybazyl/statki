@@ -2338,7 +2338,12 @@
       // Diagnostyka bramek kolizji - patrz drawCollisionBoundsDebug().
       showCollisionBounds: false,
       showBroadphaseGrid: false,
-      collisionBoundsLabels: true
+      collisionBoundsLabels: true,
+      // Kolorowe kropki slotów z edytora hardpointów na każdym NPC (overlay z
+      // czasów przed Turret2D). Domyślnie OFF: przy 150 okrętach to ~4000 kropek
+      // w trybie 'screen' co klatkę, bez cullingu, a uzbrojone sloty i tak
+      // zakrywają wieżyczki. Konsola: DevFlags.showNpcHardpoints = true
+      showNpcHardpoints: false
     }, window.DevFlags || {});
     const DEFAULT_PIRATE_STATION_SCALE = 6;
     const DEFAULT_STATION_3D_SCALE = 2.70;
@@ -2523,7 +2528,10 @@
         const lateral = (squadIndex - (squadCount - 1) * 0.5) * lateralSpacing;
         const forward = (SUPPORT_FORMATION.lead + lineIndex * SUPPORT_FORMATION.lineGap);
         const leaderLocal = { x: forward, y: lateral };
-        const leaderRotated = rotate(leaderLocal, leaderAng - Math.PI / 2);
+        // local.x = wzdłuż dziobu, local.y = na burty — ta sama konwencja co
+        // skrzydłowi niżej i gałąź capitali. Dawne `leaderAng - PI/2` obracało
+        // szyk o 90°: eskadry wisiały 1400 u z BOKU i ciągnęły się wzdłuż kadłuba.
+        const leaderRotated = rotate(leaderLocal, leaderAng);
 
         if (squadMateIndex === 0) {
           return { x: leaderPos.x + leaderRotated.x, y: leaderPos.y + leaderRotated.y };
@@ -2823,19 +2831,16 @@
       return sepUid(npc) <= sepUid(other) ? 1.7 : 0.3; // remis → stały rozjazd
     }
 
-    // Realną ścianą między dwoma okrętami jest promień BLOKUJĄCY TARCZ, a nie
-    // suma promieni kadłubów. Gdy strefa separacji jest ciaśniejsza, AI celuje
-    // w punkt, do którego _resolveShieldCollision nigdy go nie wpuści: okręt
-    // dopycha się do granicy tarczy i o nią wibruje (zmierzone: ~55 Hz,
-    // prędkość skacząca 83..204 u/s przy nieruchomym dystansie).
-    // Czytamy dokładnie tę samą liczbę, na której operuje rezolwer tarcz
-    // (_shieldRadius, odświeżany co tick fizyki w _prepareBroadphase), żeby nie
-    // powstało drugie źródło prawdy, które znów się rozjedzie.
+    // Odstęp AI liczony od promieni TARCZ, choć tarcza nie jest już ścianą:
+    // od 2026-09-23 kadłuby przechodzą przez pola i stykają się metalem
+    // (destruktor nie ma rezolwera tarcza-tarcza). Liczba zostaje, bo na niej
+    // strojono separację floty, ale niesie teraz inną rolę — bufor. Otarcie
+    // sojuszniczych kadłubów nie jest już amortyzowane przez tarcze, tylko
+    // idzie w zgniot; zawężenie odstępu do samych kadłubów zacisnęłoby szyki
+    // akurat wtedy, gdy kontakt zaczął kosztować pancerz.
     function shieldPairStandoff(a, b) {
       const read = (e) => {
         if (!e) return 0;
-        const cached = Number(e._shieldRadius);
-        if (Number.isFinite(cached) && cached > 0) return cached;
         const progress = Number(getEntityShieldBlockingProgress(e)) || 0;
         if (progress <= 0) return 0;
         return (Number(getEntityShieldBaseRadius(e)) || 0) * progress;
@@ -2950,9 +2955,9 @@
           continue;
         }
 
-        // Margines liczymy PONAD tę ze ścian, która jest realnie twardsza:
-        // kadłub albo tarcza. Ten sam cykl graniczny co przy graczu zdarza się
-        // między dwoma osłoniętymi capitalami floty.
+        // Margines liczymy PONAD większy z dwóch obrysów: kadłub albo tarcza.
+        // Tarcza nie jest ścianą (patrz shieldPairStandoff) — to bufor, żeby
+        // sojusznicze kadłuby nie ocierały się o siebie.
         const safeDistance = Math.max(
           myRadius + otherRadius,
           shieldPairStandoff(npc, other)
@@ -3018,9 +3023,9 @@
           strength = 12.0;
         }
 
-        // Ta sama zasada co przy parach NPC: strefa separacji nie może być
-        // ciaśniejsza od promienia blokującego tarcz, bo wtedy AI dopycha się
-        // do ściany, przez którą nie przejdzie, i wpada w drżenie.
+        // Ta sama zasada co przy parach NPC: odstęp od większego z obrysów
+        // (kadłub / tarcza). Tarcza gracza nie odbija już niczego — bufor
+        // trzyma cudze kadłuby z dala od jego pancerza.
         const safeDistance = Math.max(
           myRadius + (player.radius || 220),
           shieldPairStandoff(npc, player)
@@ -8295,10 +8300,55 @@
           const stationList = Array.isArray(window.stations) ? window.stations : null;
           const platformList = Array.isArray(mercCtx?.weaponPlatforms) ? mercCtx.weaponPlatforms : null;
           const wreckList = Array.isArray(window.wrecks) ? window.wrecks : null;
+          const getBeamTargetRadius = (pt) => {
+            let radius = Math.max(20, Number(pt?.hitR || pt?.radius || pt?.r) || 20);
+            if (pt?.hexGrid?.srcWidth && pt?.hexGrid?.srcHeight) {
+              const hexScale = Math.max(0.0001, pt.visual?.spriteScale || pt.capitalProfile?.spriteScale || pt.profile?.spriteScale || 1.0);
+              const halfW = (Number(pt.hexGrid.srcWidth) || 0) * 0.5 * hexScale;
+              const halfH = (Number(pt.hexGrid.srcHeight) || 0) * 0.5 * hexScale;
+              const hullRadius = Math.max(halfW, halfH) + Math.min(halfW, halfH) * 0.45;
+              if (Number.isFinite(hullRadius) && hullRadius > radius) radius = hullRadius;
+            }
+            return radius;
+          };
+          // Przy aktywnej tarczy test idzie po bańce, a nie po kadłubie.
+          const getBeamShieldCheckRadius = (pt) => {
+            let w = pt.w || (pt.radius * 2) || 40;
+            let h = pt.h || (pt.radius * 2) || 40;
+            if (pt.capitalProfile) {
+              w = Math.max(w, (pt.radius || 20) * (pt.capitalProfile.lengthScale || 3.2));
+              h = Math.max(h, (pt.radius || 20) * (pt.capitalProfile.widthScale || 1.2));
+            }
+            return Math.max(w, h) * 0.75;
+          };
+          // Prefiltr: pudełko kapsuły strzału (odcinek od lufy na pełen zasięg,
+          // poszerzony o promień celu). Dawniej KAŻDY strzał liczył promień i rzut
+          // dla wszystkich NPC, wraków, stacji i segmentów ringu — rój
+          // przechwytywaczy (laser PD co 0,18 s) robił setki takich przebiegów na
+          // sekundę. Promień jest zachowawczy (większy z kadłuba i tarczy) i liczony
+          // raz na klatkę na encję, więc dokładna pętla niżej widzi te same trafienia.
+          const beamEndX = muzzleData.pos.x + dirX * range;
+          const beamEndY = muzzleData.pos.y + dirY * range;
+          const beamMinX = Math.min(muzzleData.pos.x, beamEndX);
+          const beamMaxX = Math.max(muzzleData.pos.x, beamEndX);
+          const beamMinY = Math.min(muzzleData.pos.y, beamEndY);
+          const beamMaxY = Math.max(muzzleData.pos.y, beamEndY);
+          const beamFrameId = Number(window.__frameId);
+          const beamBoundCacheable = Number.isFinite(beamFrameId);
           const pushTarget = (obj) => {
             if (!obj || obj === shooter) return;
             if (obj.dead || obj.destroyed || obj.removed || obj._destroyed3D) return;
             if (obj.isCollidable === false) return;
+            let bound = obj.__beamBoundR;
+            if (!beamBoundCacheable || obj.__beamBoundFid !== beamFrameId || !(bound >= 0)) {
+              bound = Math.max(getBeamTargetRadius(obj), getBeamShieldCheckRadius(obj));
+              obj.__beamBoundR = bound;
+              obj.__beamBoundFid = beamFrameId;
+            }
+            // Obiekt bez x/y (NaN) przechodzi dalej — dokładny test odrzuca go jak dawniej.
+            const ox = obj.x;
+            const oy = obj.y;
+            if (ox < beamMinX - bound || ox > beamMaxX + bound || oy < beamMinY - bound || oy > beamMaxY + bound) return;
             targets.push(obj);
           };
 
@@ -8320,17 +8370,6 @@
           const beamHexSpacing = beamHexR * 1.5;
           const beamHexHeight = Math.sqrt(3) * beamHexR;
           const beamHitRadSq = Math.max(90, (beamHexR * 1.45) * (beamHexR * 1.45));
-          const getBeamTargetRadius = (pt) => {
-            let radius = Math.max(20, Number(pt?.hitR || pt?.radius || pt?.r) || 20);
-            if (pt?.hexGrid?.srcWidth && pt?.hexGrid?.srcHeight) {
-              const hexScale = Math.max(0.0001, pt.visual?.spriteScale || pt.capitalProfile?.spriteScale || pt.profile?.spriteScale || 1.0);
-              const halfW = (Number(pt.hexGrid.srcWidth) || 0) * 0.5 * hexScale;
-              const halfH = (Number(pt.hexGrid.srcHeight) || 0) * 0.5 * hexScale;
-              const hullRadius = Math.max(halfW, halfH) + Math.min(halfW, halfH) * 0.45;
-              if (Number.isFinite(hullRadius) && hullRadius > radius) radius = hullRadius;
-            }
-            return radius;
-          };
           const classifyHitEntity = (pt) => {
             if (pt === window.ship) return 'player';
             if (pt?.isRingSegment) return 'ring';
@@ -8344,17 +8383,8 @@
           for (const pt of targets) {
             if (!pt) continue;
             if (pt === shooter) continue;
-            let checkRadius = getBeamTargetRadius(pt);
             const hasShield = pt.shield && pt.shield.val > 0;
-            if (hasShield) {
-              let w = pt.w || (pt.radius * 2) || 40;
-              let h = pt.h || (pt.radius * 2) || 40;
-              if (pt.capitalProfile) {
-                w = Math.max(w, (pt.radius || 20) * (pt.capitalProfile.lengthScale || 3.2));
-                h = Math.max(h, (pt.radius || 20) * (pt.capitalProfile.widthScale || 1.2));
-              }
-              checkRadius = Math.max(w, h) * 0.75;
-            }
+            const checkRadius = hasShield ? getBeamShieldCheckRadius(pt) : getBeamTargetRadius(pt);
 
             const cx = pt.x;
             const cy = pt.y;
@@ -8663,6 +8693,10 @@
       window.dispatchEvent(new CustomEvent('game_weapon_fired', {
         detail: {
           weaponId: weapon.id,
+          // Weapon3DSystem szuka lufy (błysk, odrzut, wstrząs) tylko na kadłubie
+          // strzelca — inaczej strzał myśliwca trafiał w najbliższą wieżyczkę
+          // tego samego typu na dowolnym okręcie.
+          shooter,
           x: muzzleData.pos.x,
           y: muzzleData.pos.y,
           isBeam: weapon.category === 'beam',
@@ -9151,6 +9185,63 @@
       return 'default';
     }
 
+    // ── Bramka efektów trafień 3D ────────────────────────────────────────────
+    // spawnBulletImpactEffect woła fizyka (120 Hz) dla KAŻDEGO trafienia pocisku
+    // w bitwie — także kilka ekranów dalej i przy dalekim zoomie, gdzie błysk ma
+    // 1–3 px. Każdy efekt overlaya to kilkanaście–kilkadziesiąt draw calli i nowe
+    // materiały, a limit 96 efektów wyrzucał wtedy te, które BYŁO widać. Ta sama
+    // rodzina bramek co CanvasVFX.spawnProjectileImpact3D (kadr + cooldown per
+    // komórka), plus próg rozmiaru ekranowego i obie kamery split-screenu.
+    // Bez alokacji: klucz komórki cooldownu jest liczbą.
+    const IMPACT_FX_MARGIN_PX = 260;
+    const IMPACT_FX_MIN_PX = 3;      // bazowy rozmiar efektu na ekranie
+    const IMPACT_SPARK_MIN_PX = 2;   // rozrzut iskier na ekranie
+    const IMPACT_FX_CELL_PX = 24;    // komórka cooldownu ≈ 24 px ekranu (min. 60 j.)
+    const _impactFxLastMs = new Map();
+
+    function impactScreenPxForCamera(x, y, sizeWorld, cam, vpX, vpW) {
+      if (!cam) return 0;
+      const zoom = Math.max(0.0001, Number(cam.zoom) || 1);
+      const sx = (x - (Number(cam.x) || 0)) * zoom + vpX + vpW * 0.5;
+      const sy = (y - (Number(cam.y) || 0)) * zoom + H * 0.5;
+      const reach = IMPACT_FX_MARGIN_PX + sizeWorld * zoom;
+      if (sx < vpX - reach || sx > vpX + vpW + reach || sy < -reach || sy > H + reach) return 0;
+      return sizeWorld * zoom;
+    }
+
+    // Największy rozmiar ekranowy efektu wśród kamer, w których punkt jest
+    // w kadrze (z marginesem); 0 = poza kadrem wszędzie.
+    function impactFxScreenPx(x, y, sizeWorld) {
+      if (splitScreenMode && camera2) {
+        const halfW = Math.floor(W / 2);
+        return Math.max(
+          impactScreenPxForCamera(x, y, sizeWorld, camera, 0, halfW),
+          impactScreenPxForCamera(x, y, sizeWorld, camera2, halfW, W - halfW)
+        );
+      }
+      return impactScreenPxForCamera(x, y, sizeWorld, camera, 0, W);
+    }
+
+    // Skupiony ogień w jeden kadłub dawał dziesiątki nakładających się efektów
+    // w tym samym miejscu ekranu. Komórka rośnie z oddaleniem (stałe ~24 px).
+    function impactFxCooldownReady(kind, cooldownMs, x, y) {
+      if (!(cooldownMs > 0)) return true;
+      const zoom = Math.max(0.0001, Number(camera.zoom) || 1);
+      const cell = Math.max(60, IMPACT_FX_CELL_PX / zoom);
+      const key = (Math.round(x / cell) * 1048576 + Math.round(y / cell)) * 4 + kind;
+      const nowMs = performance.now();
+      const last = _impactFxLastMs.get(key);
+      if (last !== undefined && nowMs - last < cooldownMs) return false;
+      _impactFxLastMs.set(key, nowMs);
+      if (_impactFxLastMs.size > 2048) {
+        // Najdłuższy cooldown to 42 ms — starsze wpisy nic już nie blokują.
+        const threshold = nowMs - 100;
+        for (const [k, t] of _impactFxLastMs) if (t < threshold) _impactFxLastMs.delete(k);
+        if (_impactFxLastMs.size > 4096) _impactFxLastMs.clear();
+      }
+      return true;
+    }
+
     function spawnBulletImpactEffect(b, x, y, scale = 1.0) {
       const impactKey = resolveProjectileImpact3DKey(b);
       // Trafienia pociskow ida wylacznie przez overlay 3D ponizej. Kanwa 2D ma
@@ -9158,23 +9249,40 @@
 
       if (window.overlay3D) {
         const baseSize = 40 * scale;
+        // Rodzaj efektu: 0 yamato, 1 armata, 2 rail, 3 autocannon. Cooldowny jak
+        // w CanvasVFX.shouldSpawnProjectileImpact3D; yamato bez cooldownu.
+        let fxKind = 3;
+        let fxSize = baseSize;
+        let fxCooldownMs = 42;
         if (impactKey === 'yamato') {
-          if (window.triggerYamatoImpact3D) triggerYamatoImpact3D(x, y, baseSize * 2.4, b.color || b.vfxColor);
+          fxKind = 0; fxSize = baseSize * 2.4; fxCooldownMs = 0;
         } else if (b.type === 'plasma' || b.type === 'rocket' || b.type === 'torpedo' || b.type === 'armata') {
-          if (window.triggerArmataImpact3D) triggerArmataImpact3D(x, y, baseSize * 1.5);
+          fxKind = 1; fxSize = baseSize * 1.5; fxCooldownMs = 28;
         } else if (b.type === 'rail') {
-          if (window.triggerRailgunExplosion3D) triggerRailgunExplosion3D(x, y, baseSize * 1.2);
-        } else {
-          if (window.triggerAutocannonImpact3D) triggerAutocannonImpact3D(x, y, baseSize, b.color || b.vfxColor);
+          fxKind = 2; fxSize = baseSize * 1.2; fxCooldownMs = 8;
         }
-        // GPU sparks alongside 3D effects
+        if (impactFxScreenPx(x, y, fxSize) >= IMPACT_FX_MIN_PX && impactFxCooldownReady(fxKind, fxCooldownMs, x, y)) {
+          if (fxKind === 0) {
+            if (window.triggerYamatoImpact3D) triggerYamatoImpact3D(x, y, fxSize, b.color || b.vfxColor);
+          } else if (fxKind === 1) {
+            if (window.triggerArmataImpact3D) triggerArmataImpact3D(x, y, fxSize);
+          } else if (fxKind === 2) {
+            if (window.triggerRailgunExplosion3D) triggerRailgunExplosion3D(x, y, fxSize);
+          } else if (window.triggerAutocannonImpact3D) {
+            triggerAutocannonImpact3D(x, y, fxSize, b.color || b.vfxColor);
+          }
+        }
+        // GPU sparks alongside 3D effects — tylko gdy ich rozrzut (prędkość ×
+        // życie 0.3 s) jest na ekranie widoczny.
         const spark3D = SparkSystem3D;
         if (spark3D && spark3D.isInitialized) {
           const isHeavy = (b.weaponSize === 'L' || b.weaponSize === 'Capital');
-          const sparkCount = isHeavy ? Math.round(16 * scale) : Math.round(8 * scale);
           const sparkSpeed = isHeavy ? 400 * scale : 280 * scale;
-          const sparkSize = isHeavy ? 0.6 : 0.4;
-          spark3D.burst(x, y, sparkCount, sparkSpeed, 0.3, sparkSize);
+          if (impactFxScreenPx(x, y, sparkSpeed * 0.3) >= IMPACT_SPARK_MIN_PX) {
+            const sparkCount = isHeavy ? Math.round(16 * scale) : Math.round(8 * scale);
+            const sparkSize = isHeavy ? 0.6 : 0.4;
+            spark3D.burst(x, y, sparkCount, sparkSpeed, 0.3, sparkSize);
+          }
         }
       }
     }
@@ -16718,103 +16826,8 @@
       return npcs.filter(n => !n.friendly && !n.dead);
     }
     window.pickSquadTargets = pickSquadTargets;
-    window.spawnFighter = function () {
-      // 1. Sprawdź czy statek i hangar istnieją
-      if (!window.ship) return;
-
-      const hasHangar = Game.player.weapons && Game.player.weapons.hangar && Game.player.weapons.hangar.length > 0;
-      if (!hasHangar) {
-        if (typeof toast === 'function') toast('Brak modułu hangaru!');
-        return;
-      }
-
-      // 2. Definicja 2 Hangarów (Lewy i Prawy)
-      const halfW = (ship.w || 60) * 0.5;
-      const halfH = (ship.h || 120) * 0.1; // Lekko przesunięte do tyłu względem środka
-
-      const hangarSlots = [
-        { x: -halfW, y: halfH, side: -1 }, // Lewa burta
-        { x: halfW, y: halfH, side: 1 }  // Prawa burta
-      ];
-
-      const createdFighters = [];
-
-      // 3. PETLA: Generuj oba mysliwce natychmiast
-      for (const slot of hangarSlots) {
-
-        // Obliczanie pozycji w świecie (Rotacja)
-        const c = Math.cos(ship.angle);
-        const s = Math.sin(ship.angle);
-
-        const spawnX = ship.pos.x + (slot.x * c - slot.y * s);
-        const spawnY = ship.pos.y + (slot.x * s + slot.y * c);
-
-        // Stworzenie obiektu
-        const f = makeNPCBase({ x: spawnX, y: spawnY }, {
-          hp: 80,
-          accel: 350,
-          maxSpeed: 650,
-          turn: 7.0,
-          radius: 12
-        });
-
-        f.friendly = true;
-        f.mission = true;
-        f.fighter = true;
-        f.color = '#7cff91';
-
-        // Fizyka Wyrzutni (Wyrzut na boki)
-        const launchSpeed = 180; // Trochę mocniejszy wyrzut
-        // Wektor boczny (prostopadły do kadłuba)
-        const sideDirX = c;
-        const sideDirY = s;
-
-        f.vx = ship.vel.x + (sideDirX * launchSpeed * slot.side);
-        f.vy = ship.vel.y + (sideDirY * launchSpeed * slot.side);
-        f.angle = ship.angle;
-
-        // Uzbrojenie
-        f.gun = 'ciws_mk1';
-        f.msl = 'osa_micro_missile'; f.mslAmmo = 10;
-        f.gunCD = 0.5;
-
-        // Zarządzanie eskadrą
-        if (!window.SQUAD) window.SQUAD = { list: [], order: 'idle', targets: [] };
-
-        // WAŻNE: Pobieramy aktualną długość listy dla KAŻDEGO myśliwca z osobna,
-        // żeby zajęły różne miejsca w formacji
-        const idx = window.SQUAD.list.length;
-        f.formIndex = idx;
-
-        // Pozycja w formacji "V"
-        const row = Math.floor((idx + 1) / 2);
-        const formSide = (idx % 2 === 0) ? 1 : -1;
-        f.formationOffset = { x: -140 - (row * 50), y: formSide * (60 + row * 30) };
-
-        f.squad = { leader: ship, type: 'fighter' };
-
-        // AI
-        f.ai = (dt) => { if (window.runAdvancedFighterAI) window.runAdvancedFighterAI(f, dt); };
-
-        // Dodanie do gry
-        window.SQUAD.list.push(f);
-        npcs.push(f);
-        createdFighters.push(f);
-
-        // Efekt dymu przy wylocie
-        if (window.spawnParticle) {
-          for (let i = 0; i < 4; i++) {
-            window.spawnParticle(
-              { x: spawnX, y: spawnY },
-              { x: ship.vel.x + (Math.random() - 0.5) * 40, y: ship.vel.y + (Math.random() - 0.5) * 40 },
-              0.3, '#ffffff', 2 + Math.random() * 2, false
-            );
-          }
-        }
-      }
-
-      return createdFighters;
-    };
+    // window.spawnFighter jest niżej (start z wyrzutni hangarów). Stara wersja
+    // z tego miejsca (2 myśliwce na sztywnych 650 u/s) i tak była nadpisywana.
 
     // === WYRZUTNIE MYŚLIWCÓW ===================================================
     // Jeden hardpoint typu 'hangar' = jedna wyrzutnia. Myśliwce wychodzą BURTĄ
@@ -21102,6 +21115,9 @@
     // swiezego obiektu na kazde rzutowanie oddajemy jeden scratch. Kto chcialby
     // przeniesc viewport przez kolejne wywolanie, musi skopiowac pola.
     const _vpScratch = { x: 0, y: 0, w: 0, h: 0 };
+    // Pudła cullingu dla updateHexShips3D: halfW/H = rozgrzanie (OVERSCAN),
+    // drawHalfW/H = kadr. Jeden obiekt na całą grę zamiast literału co klatkę.
+    const _hexCullInfo = { x: 0, y: 0, halfW: 0, halfH: 0, drawHalfW: 0, drawHalfH: 0 };
 
     function getViewportForCamera(cam) {
       _vpScratch.w = Math.max(1, Number(cam?.viewportW) || _wtsVpW || W);
@@ -21130,6 +21146,114 @@
       return worldToScreenInto(wx, wy, cam, { x: 0, y: 0 });
     }
     window.worldToScreen = worldToScreen;
+
+    // Który fragment OBWODU okręgu (px ekranu) wpada w prostokąt [rx,rx+rw]×[ry,ry+rh].
+    // null = obwodu nie widać: okrąg w całości poza prostokątem ALBO prostokąt
+    // w całości wewnątrz koła. Duże okręgi HUD-u (zasięg broni 60k j., fala
+    // skanu 90k j.) przez większość gry nie przecinają kadru, a Skia kreskuje
+    // i obrysowuje cały łuk niezależnie od clipa — zasięg Hexlance to ~15,7 tys.
+    // kresek na klatkę przy KAŻDYM zoomie. Zwracany obiekt to scratch (albo `out`)
+    // — konsumować od razu.
+    const _circleArcScratch = { start: 0, end: Math.PI * 2 };
+    function circleArcInRect(cx, cy, r, rx, ry, rw, rh, out = _circleArcScratch) {
+      if (!(r > 0) || !Number.isFinite(cx) || !Number.isFinite(cy)) return null;
+      const x0 = rx, y0 = ry, x1 = rx + rw, y1 = ry + rh;
+      const nearX = Math.max(x0, Math.min(cx, x1)) - cx;
+      const nearY = Math.max(y0, Math.min(cy, y1)) - cy;
+      const nearSq = nearX * nearX + nearY * nearY;
+      if (nearSq > r * r) return null;
+      const farX = Math.max(Math.abs(x0 - cx), Math.abs(x1 - cx));
+      const farY = Math.max(Math.abs(y0 - cy), Math.abs(y1 - cy));
+      if (farX * farX + farY * farY < r * r) return null;
+      if (nearSq === 0) {
+        // Środek w prostokącie — promień jest wtedy nie większy niż przekątna kadru.
+        out.start = 0;
+        out.end = Math.PI * 2;
+        return out;
+      }
+      // Środek poza prostokątem: prostokąt widać pod kątem < π, więc wystarczy
+      // łuk między skrajnymi narożnikami (kąty względem kierunku na środek rect).
+      const ref = Math.atan2((y0 + y1) * 0.5 - cy, (x0 + x1) * 0.5 - cx);
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (let k = 0; k < 4; k++) {
+        const kx = (k & 1) ? x1 : x0;
+        const ky = (k & 2) ? y1 : y0;
+        let d = Math.atan2(ky - cy, kx - cx) - ref;
+        if (d > Math.PI) d -= Math.PI * 2;
+        else if (d <= -Math.PI) d += Math.PI * 2;
+        if (d < lo) lo = d;
+        if (d > hi) hi = d;
+      }
+      out.start = ref + lo;
+      out.end = ref + hi;
+      return out;
+    }
+
+    // Kreskowany łuk HUD-u: kreski krótsze niż ~3 px czytają się jak ciągła
+    // linia o połowie krycia, więc wtedy rysujemy linię ciągłą zamiast tysięcy
+    // mikroodcinków. Faza kreski liczona od kąta 0 pełnego okręgu — kreski nie
+    // pełzają, gdy rysowany jest tylko widoczny łuk. Wołający robi save/restore.
+    function strokeHudDashedArc(ctx, cx, cy, r, arc, dashOn, dashOff, alpha) {
+      if (dashOn < 3) {
+        ctx.globalAlpha = alpha * (dashOn / (dashOn + dashOff));
+        ctx.setLineDash([]);
+      } else {
+        ctx.globalAlpha = alpha;
+        ctx.setLineDash([dashOn, dashOff]);
+        const period = dashOn + dashOff;
+        ctx.lineDashOffset = ((arc.start * r) % period + period) % period;
+      }
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, arc.start, arc.end);
+      ctx.stroke();
+    }
+    const _hudCircleScreen = { x: 0, y: 0 };
+    const _hudMarkerScreen = { x: 0, y: 0 };
+
+    // Poświata znaczników HUD bez shadowBlur (rozmycie gaussowskie per obrys
+    // było najdroższą operacją warstwy HUD): szersza, półprzezroczysta linia pod
+    // spodem. Poniżej tego zoomu dawny blur miał < ~3 px — pomijamy ją całkiem.
+    const HUD_GLOW_MIN_ZOOM = 0.2;
+
+    function hudMarkerOffscreen(x, y, ext, vx, vy, vw, vh) {
+      return x + ext < vx || x - ext > vx + vw || y + ext < vy || y - ext > vy + vh;
+    }
+
+    // Stringi rgba() dla stałego zestawu tonów HUD — bez sklejania co klatkę.
+    const _hudRgbaCache = new Map();
+    function hudRgba(rgb, alpha) {
+      let byAlpha = _hudRgbaCache.get(rgb);
+      if (!byAlpha) { byAlpha = new Map(); _hudRgbaCache.set(rgb, byAlpha); }
+      let css = byAlpha.get(alpha);
+      if (css === undefined) { css = `rgba(${rgb},${alpha})`; byAlpha.set(alpha, css); }
+      return css;
+    }
+
+    // Pętla rysowania NPC w render(): lista i punkt ekranowy bez alokacji per klatka.
+    const _npcDrawList = [];
+    const _npcScreenScratch = { x: 0, y: 0 };
+
+    // Czy nakładkę 2D NPC (sprite myśliwca, kropki hardpointów, paski HP) w ogóle
+    // widać na kanwie. Zasięg kadłuba heksowego = srcWidth/srcHeight × większa ze
+    // skal, którymi hexShips3D skaluje siatkę (spriteScaleX/Y/spriteScale), z
+    // zapasem na paski HP.
+    function isNpcOverlayOnScreen(npc, s, zoom, viewW, viewH) {
+      let extent = Number(npc.radius) || 20;
+      const grid = npc.hexGrid;
+      if (grid) {
+        const v = npc.visual;
+        const renderScale = Math.max(Number(v?.spriteScaleX) || 0, Number(v?.spriteScaleY) || 0, Number(v?.spriteScale) || 0);
+        const scale = Math.max(0.0001, renderScale || npc.capitalProfile?.spriteScale || npc.profile?.spriteScale || 1.0);
+        const halfW = (Number(grid.srcWidth) || 0) * 0.5 * scale;
+        const halfH = (Number(grid.srcHeight) || 0) * 0.5 * scale;
+        extent = Math.max(extent, Math.hypot(halfW, halfH) * 1.25);
+      } else {
+        extent *= 1.3; // sprite myśliwca ma 2,4 promienia szerokości
+      }
+      const r = extent * zoom + 24;
+      return s.x + r >= 0 && s.y + r >= 0 && s.x - r <= viewW && s.y - r <= viewH;
+    }
 
     function drawTowRopes(ctx, cam) {
       if (TowSystem.size === 0) return;
@@ -21196,7 +21320,6 @@
     //   CZERWONY  = OBB Z PADEM. To testuje entityObbsOverlap - to odrzuca pary.
     //   ZIELONY   = obrys kadluba bez padu. Roznica = caly zapas na deformacje.
     //   NIEBIESKI = okrag broadphase (_bpRadius) - sito PRZED testem OBB.
-    //   ZOLTY     = promien tarczy, gdy wystaje poza okrag broadphase.
     // Dane ida przez getCollisionBoundsDebug -> refreshEntityObb, czyli te sama
     // sciezke co produkcyjny test pary. Drugie, "podobne" liczenie ekstentow w
     // warstwie rysowania pokazywaloby ladny prostokat i ukrywalo szukany blad.
@@ -21294,12 +21417,6 @@
           ctx.strokeStyle = 'rgba(90,160,255,0.55)';
           ctx.beginPath();
           ctx.arc(sx, sy, info.bpRadius * zoom, 0, Math.PI * 2);
-          ctx.stroke();
-        }
-        if (info.shieldRadius > info.bpRadius + 1) {
-          ctx.strokeStyle = 'rgba(240,200,60,0.5)';
-          ctx.beginPath();
-          ctx.arc(sx, sy, info.shieldRadius * zoom, 0, Math.PI * 2);
           ctx.stroke();
         }
 
@@ -21536,7 +21653,7 @@
       const statusSize = (npc.radius || 20) * _zoom;
 
       if (npc.hexGrid) {
-        drawNpcHardpointOverlay(ctx, npc, s);
+        if (DevFlags.showNpcHardpoints) drawNpcHardpointOverlay(ctx, npc, s);
         drawNpcStatusBars(ctx, npc, s, statusSize);
         return;
       }
@@ -21730,6 +21847,16 @@
         cam.x += (Math.random() * 2 - 1) * mag;
         cam.y += (Math.random() * 2 - 1) * mag;
       }
+      // Wstrząs od strzałów (Weapon3DSystem) rusza CAŁĄ klatką, jak camera.addShake.
+      // Dawniej dokładał go tylko Core3D.syncCamera: kadłuby i pociski 3D drgały,
+      // a wieżyczki, myśliwce i znaczniki z kanwy 2D stały w miejscu — warstwy
+      // się rozjeżdżały. Wartość jest z poprzedniej klatki (syncProjectiles liczy
+      // ją później), co przy losowym drganiu jest niezauważalne.
+      const weaponShake = window.__weapon3dCameraShake;
+      if (!DevFlags.disableCameraShake && weaponShake) {
+        cam.x += Number(weaponShake.x) || 0;
+        cam.y += Number(weaponShake.y) || 0;
+      }
 
       window.__splitCamera2 = (splitScreenMode && camera2 && player2Ship && !player2Ship.destroyed)
         ? { x: camera2.x, y: camera2.y, zoom: camera2.zoom }
@@ -21842,12 +21969,13 @@
         const viewHalfW = (W * 0.5) / zoomNow + cullExtra;
         const viewHalfH = (H * 0.5) / zoomNow + cullExtra;
 
-        // --- OVERSCAN DLA CULLINGU ---
+        // --- OVERSCAN = PUDLO ROZGRZANIA ---
         // Mnoznik POLOWY wymiarow widoku, wiec 3.0 daje pudlo o DZIEWIECIU polach
-        // ekranu. Zeby cokolwiek wypadlo, cel musi byc dalej niz poltora ekranu —
-        // samo odwrocenie kamery w bok nie zdejmuje praktycznie nic. Ciala heksowe
-        // maja przy tym `frustumCulled = false` (createEntityMesh), wiec to pudlo
-        // jest JEDYNA bramka: co przez nie przejdzie, idzie do GL nawet spoza kadru.
+        // ekranu. W nim hexShips3D tylko przygotowuje meshe zawczasu (emitery
+        // swiatel drogowych, ciaglosc dysz). Aktualizacja i draw call ida dla
+        // encji w pudle RYSOWANIA (drawHalfW/H = kadr; margines i realny rozmiar
+        // sprite'a dolicza isEntityInDrawBox) — meshe kadlubow maja
+        // `frustumCulled = false`, wiec bez tego ~8/9 wywolan trafialo poza kadr.
         // Strojenie na zywo: window.DevTuning.cullOverscan
         const _overscanTune = Number(window.DevTuning?.cullOverscan);
         const OVERSCAN = Number.isFinite(_overscanTune) && _overscanTune > 0 ? _overscanTune : 3.0;
@@ -21857,12 +21985,13 @@
         // Ring segments are now rendered as 3D SynthCity buildings/infrastructure.
         // Old hex segment rendering is disabled — segments still exist for collision only.
 
-        updateHexShips3D(cam, renderEntities, {
-          x: cullCamX,
-          y: cullCamY,
-          halfW: cullHalfW,
-          halfH: cullHalfH
-        });
+        _hexCullInfo.x = cullCamX;
+        _hexCullInfo.y = cullCamY;
+        _hexCullInfo.halfW = cullHalfW;
+        _hexCullInfo.halfH = cullHalfH;
+        _hexCullInfo.drawHalfW = viewHalfW;
+        _hexCullInfo.drawHalfH = viewHalfH;
+        updateHexShips3D(cam, renderEntities, _hexCullInfo);
       }
       const render3dHexMs = performance.now() - tRender3dSub;
       PerfHUD.addTiming('render3dHexUpdateTime', render3dHexMs);
@@ -22058,16 +22187,23 @@
         // Wraki renderowane przez hexShips3D
 
         // NPC (filtered by sensor visibility)
-        const npcDrawList = [];
+        const npcDrawList = _npcDrawList;
+        npcDrawList.length = 0;
         for (const npc of npcs) {
           if (!npc || npc.dead) continue;
           // Fog of War disabled — all NPCs visible
           npcDrawList.push(npc);
         }
         npcDrawList.sort((a, b) => (a.drawLayer || 0) - (b.drawLayer || 0));
+        const npcDrawZoom = Math.max(0.0001, Number(cam.zoom) || 1);
         for (const npc of npcDrawList) {
-          const s = worldToScreen(npc.x, npc.y, cam);
+          const s = worldToScreenInto(npc.x, npc.y, cam, _npcScreenScratch);
           npc.shadowFactor = 0;
+          // Kadr: pętla szła po WSZYSTKICH NPC świata. Myśliwce i nakładki
+          // kadłubów heksowych poza ekranem odpadają; NPC bez ciała heksowego
+          // przechodzą zawsze, bo drawNPCPretty robi im leniwie initHexBody,
+          // od którego zależą kolizje i obrażenia kadłuba także poza ekranem.
+          if ((npc.hexGrid || isFighterUnit(npc)) && !isNpcOverlayOnScreen(npc, s, npcDrawZoom, W, H)) continue;
           drawNPCPretty(ctx, npc, s);
         }
         PerfHUD.addTiming('render2dNpcTime', performance.now() - tRender2dSection);
@@ -22375,26 +22511,50 @@
           drawStabilizerHeadingMarker(ship, cam, interpPos, interpAngle);
         }
 
+        // Kadr bieżącej kamery (w split-screenie połówka). Pola kopiujemy od razu:
+        // _vpScratch nadpisuje każde worldToScreenInto.
+        const _hudVp = getViewportForCamera(cam);
+        const hudVpX = _hudVp.x, hudVpY = _hudVp.y, hudVpW = _hudVp.w, hudVpH = _hudVp.h;
+        const hudLineW = Math.max(1.5, 2.5 * Math.sqrt(cam.zoom));
+        const hudGlowOn = cam.zoom >= HUD_GLOW_MIN_ZOOM;
+
         if (scannerState.active && scanWaves.length) {
           for (const w of scanWaves) {
-            const center = worldToScreen(w.x, w.y, cam);
+            const center = worldToScreenInto(w.x, w.y, cam, _hudCircleScreen);
+            const cx = center.x;
+            const cy = center.y;
             const radius = Math.max(1, w.r * cam.zoom);
             const fade = clamp(1 - (w.r / Math.max(1, w.max)), 0, 1);
             ctx.save();
-            ctx.globalAlpha = 0.18 + 0.42 * fade;
             ctx.strokeStyle = 'rgba(110,217,255,0.9)';
-            ctx.lineWidth = Math.max(1.5, 2.5 * Math.sqrt(cam.zoom));
-            ctx.shadowBlur = 18 * cam.zoom;
-            ctx.shadowColor = 'rgba(110,217,255,0.45)';
-            ctx.setLineDash([18 * cam.zoom, 12 * cam.zoom]);
-            ctx.beginPath();
-            ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
-            ctx.stroke();
-            ctx.setLineDash([]);
-            ctx.globalAlpha = 0.22 + 0.35 * fade;
-            ctx.beginPath();
-            ctx.arc(center.x, center.y, Math.max(6, radius * 0.14), 0, Math.PI * 2);
-            ctx.stroke();
+            // Fala dochodzi do ~90k j. — przez większość życia jej obwód w ogóle
+            // nie przecina kadru, a pełny okrąg był kreskowany i rozmywany co klatkę.
+            const waveArc = circleArcInRect(cx, cy, radius, hudVpX, hudVpY, hudVpW, hudVpH);
+            if (waveArc) {
+              if (hudGlowOn) {
+                ctx.lineWidth = hudLineW * 3;
+                strokeHudDashedArc(ctx, cx, cy, radius, waveArc, 18 * cam.zoom, 12 * cam.zoom, (0.18 + 0.42 * fade) * 0.3);
+              }
+              ctx.lineWidth = hudLineW;
+              strokeHudDashedArc(ctx, cx, cy, radius, waveArc, 18 * cam.zoom, 12 * cam.zoom, 0.18 + 0.42 * fade);
+            }
+            const innerR = Math.max(6, radius * 0.14);
+            const innerArc = circleArcInRect(cx, cy, innerR, hudVpX, hudVpY, hudVpW, hudVpH);
+            if (innerArc) {
+              ctx.setLineDash([]);
+              if (hudGlowOn) {
+                ctx.globalAlpha = (0.22 + 0.35 * fade) * 0.3;
+                ctx.lineWidth = hudLineW * 3;
+                ctx.beginPath();
+                ctx.arc(cx, cy, innerR, innerArc.start, innerArc.end);
+                ctx.stroke();
+              }
+              ctx.globalAlpha = 0.22 + 0.35 * fade;
+              ctx.lineWidth = hudLineW;
+              ctx.beginPath();
+              ctx.arc(cx, cy, innerR, innerArc.start, innerArc.end);
+              ctx.stroke();
+            }
             ctx.restore();
 
             for (let j = w.nextContact; j < w.contacts.length; j++) {
@@ -22405,21 +22565,29 @@
               const acquire = clamp(1 - (revealIn / SCANNER_ACQUIRE_LEAD_TIME), 0, 1);
               if (acquire <= 0) continue;
               const obj = contact.target;
-              const s = worldToScreen(getTargetX(obj), getTargetY(obj), cam);
+              const s = worldToScreenInto(getTargetX(obj), getTargetY(obj), cam, _hudMarkerScreen);
               const baseRad = (getScanObjectRadius(obj) + 16) * cam.zoom;
               const rad = baseRad * (1.25 - 0.22 * acquire);
-              const tone = scannerToneRgb(contact.tone);
-              ctx.save();
-              ctx.globalAlpha = 0.25 + 0.55 * acquire;
-              ctx.strokeStyle = `rgba(${tone},0.95)`;
-              ctx.lineWidth = Math.max(1.5, 2.5 * Math.sqrt(cam.zoom));
-              ctx.shadowBlur = 16 * cam.zoom * acquire;
-              ctx.shadowColor = `rgba(${tone},0.45)`;
-              ctx.beginPath();
-              ctx.arc(s.x, s.y, rad, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * acquire);
-              ctx.stroke();
               const tick = Math.max(8, rad * 0.3);
               const gap = Math.max(6, rad * 0.5);
+              if (hudMarkerOffscreen(s.x, s.y, Math.max(rad, gap + tick) + hudLineW * 3, hudVpX, hudVpY, hudVpW, hudVpH)) continue;
+              const tone = scannerToneRgb(contact.tone);
+              const arcStart = -Math.PI / 2;
+              const arcEnd = -Math.PI / 2 + Math.PI * 2 * acquire;
+              ctx.save();
+              ctx.strokeStyle = hudRgba(tone, 0.95);
+              if (hudGlowOn) {
+                ctx.globalAlpha = (0.25 + 0.55 * acquire) * 0.3 * acquire;
+                ctx.lineWidth = hudLineW * 3;
+                ctx.beginPath();
+                ctx.arc(s.x, s.y, rad, arcStart, arcEnd);
+                ctx.stroke();
+              }
+              ctx.globalAlpha = 0.25 + 0.55 * acquire;
+              ctx.lineWidth = hudLineW;
+              ctx.beginPath();
+              ctx.arc(s.x, s.y, rad, arcStart, arcEnd);
+              ctx.stroke();
               ctx.globalAlpha *= 0.9;
               ctx.beginPath();
               ctx.moveTo(s.x - gap - tick, s.y - gap); ctx.lineTo(s.x - gap, s.y - gap);
@@ -22437,44 +22605,62 @@
         }
 
         if (radarPings.length || scannerRevealFx.length) {
+          const pingLineW = Math.max(1, 2 * Math.sqrt(cam.zoom));
           for (const p of radarPings) {
-            const s = worldToScreen(p.x, p.y, cam);
+            const s = worldToScreenInto(p.x, p.y, cam, _hudMarkerScreen);
             const t = clamp(p.age / Math.max(0.001, p.life), 0, 1);
             const rad = (24 + 44 * t) * cam.zoom;
+            if (hudMarkerOffscreen(s.x, s.y, rad + pingLineW * 3, hudVpX, hudVpY, hudVpW, hudVpH)) continue;
             ctx.save();
-            ctx.globalAlpha = 0.55 * (1 - t);
             ctx.strokeStyle = 'rgba(110,217,255,0.9)';
-            ctx.lineWidth = Math.max(1, 2 * Math.sqrt(cam.zoom));
-            ctx.shadowBlur = 12 * cam.zoom;
-            ctx.shadowColor = 'rgba(110,217,255,0.45)';
+            if (hudGlowOn) {
+              ctx.globalAlpha = 0.55 * (1 - t) * 0.3;
+              ctx.lineWidth = pingLineW * 3;
+              ctx.beginPath();
+              ctx.arc(s.x, s.y, rad, 0, Math.PI * 2);
+              ctx.stroke();
+            }
+            ctx.globalAlpha = 0.55 * (1 - t);
+            ctx.lineWidth = pingLineW;
             ctx.beginPath();
             ctx.arc(s.x, s.y, rad, 0, Math.PI * 2);
             ctx.stroke();
             ctx.restore();
           }
+          const revealLineW = Math.max(1.5, 2.4 * Math.sqrt(cam.zoom));
+          const revealFont = `${Math.max(10, 11 * Math.sqrt(cam.zoom)).toFixed(0)}px Consolas, monospace`;
           for (const fx of scannerRevealFx) {
             const obj = fx.target;
             if (!isTargetAlive(obj)) continue;
-            const s = worldToScreen(getTargetX(obj), getTargetY(obj), cam);
+            const s = worldToScreenInto(getTargetX(obj), getTargetY(obj), cam, _hudMarkerScreen);
             const t = clamp(fx.age / Math.max(0.001, fx.life), 0, 1);
-            const tone = scannerToneRgb(fx.contact?.tone);
             const baseRad = (getScanObjectRadius(obj) + 18) * cam.zoom;
             const rad = baseRad + (22 * t * cam.zoom);
+            // Etykieta stoi na prawo od okręgu — zapas ~280 px w tę stronę.
+            if (s.x + rad + 280 < hudVpX || s.x - rad - 8 > hudVpX + hudVpW
+              || s.y + rad + 24 < hudVpY || s.y - rad - 24 > hudVpY + hudVpH) continue;
+            const tone = scannerToneRgb(fx.contact?.tone);
             ctx.save();
+            ctx.strokeStyle = hudRgba(tone, 0.95);
+            ctx.fillStyle = hudRgba(tone, 0.95);
+            if (hudGlowOn) {
+              ctx.globalAlpha = 0.85 * (1 - t) * 0.3;
+              ctx.lineWidth = revealLineW * 3;
+              ctx.beginPath();
+              ctx.arc(s.x, s.y, rad, 0, Math.PI * 2);
+              ctx.stroke();
+            }
             ctx.globalAlpha = 0.85 * (1 - t);
-            ctx.strokeStyle = `rgba(${tone},0.95)`;
-            ctx.fillStyle = `rgba(${tone},0.95)`;
-            ctx.lineWidth = Math.max(1.5, 2.4 * Math.sqrt(cam.zoom));
-            ctx.shadowBlur = 18 * cam.zoom;
-            ctx.shadowColor = `rgba(${tone},0.45)`;
+            ctx.lineWidth = revealLineW;
             ctx.beginPath();
             ctx.arc(s.x, s.y, rad, 0, Math.PI * 2);
             ctx.stroke();
             if (t < 0.78) {
-              ctx.shadowBlur = 10 * cam.zoom;
-              ctx.font = `${Math.max(10, 11 * Math.sqrt(cam.zoom)).toFixed(0)}px Consolas, monospace`;
+              ctx.font = revealFont;
               ctx.textBaseline = 'middle';
-              ctx.fillText(scannerRevealSummary(fx.contact), s.x + rad + 10, s.y - Math.max(12, rad * 0.25));
+              // Podsumowanie (etykieta + masa) liczone raz na efekt, nie co klatkę.
+              if (fx._summary === undefined) fx._summary = scannerRevealSummary(fx.contact);
+              ctx.fillText(fx._summary, s.x + rad + 10, s.y - Math.max(12, rad * 0.25));
             }
             ctx.restore();
           }
@@ -22500,26 +22686,35 @@
           });
         }
         if (!radarUiActive && scannerState.active && scannerContacts.length) {
+          // Kontakty zostają na liście po impulsie (do śmierci celu), więc ta pętla
+          // chodzi co klatkę przez resztę sesji — poza kadrem nic nie rysujemy,
+          // a poświata idzie szerszą linią zamiast shadowBlur na każdy kontakt.
           for (const contact of scannerContacts) {
             const obj = contact.target;
             if (!isTargetAlive(obj)) continue;
-            const s = worldToScreen(getTargetX(obj), getTargetY(obj), cam);
+            const s = worldToScreenInto(getTargetX(obj), getTargetY(obj), cam, _hudMarkerScreen);
             const baseRad = (getScanObjectRadius(obj) + (contact.type === 'station' ? 20 : 12)) * cam.zoom;
+            const tick = Math.max(8, baseRad * 0.38);
+            const gap = Math.max(6, baseRad * 0.45);
+            if (hudMarkerOffscreen(s.x, s.y, Math.max(baseRad, gap + tick) + hudLineW * 3, hudVpX, hudVpY, hudVpW, hudVpH)) continue;
             const tone =
               contact.tone === 'hostile' ? '110,255,190' :
                 (contact.tone === 'resource' ? '238,183,99' : (contact.tone === 'friendly' ? '80,190,255' : '150,255,220'));
             ctx.save();
-            ctx.strokeStyle = `rgba(${tone},0.88)`;
-            ctx.lineWidth = Math.max(1.5, 2.5 * Math.sqrt(cam.zoom));
-            ctx.shadowBlur = 14 * cam.zoom;
-            ctx.shadowColor = `rgba(${tone},0.38)`;
-            ctx.setLineDash([10 * cam.zoom, 8 * cam.zoom]);
-            ctx.beginPath();
-            ctx.arc(s.x, s.y, baseRad, 0, Math.PI * 2);
-            ctx.stroke();
+            ctx.strokeStyle = hudRgba(tone, 0.88);
+            // Okrąg dużego okrętu przy zbliżeniu potrafi objąć cały kadr — wtedy
+            // circleArcInRect zwraca null i rysujemy same narożniki.
+            const ringArc = circleArcInRect(s.x, s.y, baseRad, hudVpX, hudVpY, hudVpW, hudVpH);
+            if (ringArc) {
+              if (hudGlowOn) {
+                ctx.lineWidth = hudLineW * 3;
+                strokeHudDashedArc(ctx, s.x, s.y, baseRad, ringArc, 10 * cam.zoom, 8 * cam.zoom, 0.3);
+              }
+              ctx.lineWidth = hudLineW;
+              strokeHudDashedArc(ctx, s.x, s.y, baseRad, ringArc, 10 * cam.zoom, 8 * cam.zoom, 1);
+            }
             ctx.setLineDash([]);
-            const tick = Math.max(8, baseRad * 0.38);
-            const gap = Math.max(6, baseRad * 0.45);
+            ctx.lineWidth = hudLineW;
             ctx.globalAlpha = 0.85;
             ctx.beginPath();
             ctx.moveTo(s.x - gap - tick, s.y - gap); ctx.lineTo(s.x - gap, s.y - gap);
@@ -22712,18 +22907,20 @@
         if (Number.isFinite(rangeMod) && rangeMod > 0) maxRange *= rangeMod;
         targetingMode.rangeDraw += (maxRange - targetingMode.rangeDraw) * 0.1;
 
-        const shipScreen = worldToScreen(shipRef.pos.x, shipRef.pos.y, camRef);
+        const shipScreen = worldToScreenInto(shipRef.pos.x, shipRef.pos.y, camRef, _hudCircleScreen);
+        const radiusPx = Math.max(1, targetingMode.rangeDraw) * camRef.zoom;
+        // Zasięg 60k j. (Hexlance) leży poza kadrem przy każdym zoomie — rysujemy
+        // tylko wtedy, gdy obwód faktycznie przecina ekran, i tylko ten łuk.
+        const arc = circleArcInRect(shipScreen.x, shipScreen.y, radiusPx, clipX, 0, clipW, H);
+        if (!arc) return;
+        const dashPx = 12 * camRef.zoom;
         ctx.save();
         ctx.beginPath();
         ctx.rect(clipX, 0, clipW, H);
         ctx.clip();
-        ctx.globalAlpha = 0.18;
         ctx.strokeStyle = color;
         ctx.lineWidth = 1;
-        ctx.setLineDash([12 * camRef.zoom, 12 * camRef.zoom]);
-        ctx.beginPath();
-        ctx.arc(shipScreen.x, shipScreen.y, Math.max(1, targetingMode.rangeDraw) * camRef.zoom, 0, Math.PI * 2);
-        ctx.stroke();
+        strokeHudDashedArc(ctx, shipScreen.x, shipScreen.y, radiusPx, arc, dashPx, dashPx, 0.18);
         ctx.restore();
       }
 

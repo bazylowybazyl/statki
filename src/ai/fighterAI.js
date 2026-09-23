@@ -143,6 +143,31 @@ export function steerFighter(npc, wantVx, wantVy, dt, turnDeg) {
   npc.vy = dirY * speed;
 }
 
+// --- KADENCJA DZIAŁKA -------------------------------------------------------
+// Mózg myśliwca odpala się co ~50 ms, więc broń, która skończyła przeładowanie
+// W TRAKCIE ticku, strzela dopiero w następnym. Dawniej to spóźnienie przepadało
+// (gunCD = cooldown liczone od chwili strzału), a realna kadencja zaokrąglała
+// się W GÓRĘ do wielokrotności ticku: ciws_mk1 (0,06 s) strzelał co 0,10 s,
+// czyli −40% DPS, laser PD −10%. Przenosimy resztę — ale tylko z ostatniego
+// ticku: broń gotowa dłużej (nie było do czego strzelać) liczy od zera.
+// Najwyżej jeden strzał na tick mózgu.
+export function nextGunCooldown(gunCD, cooldown, dt) {
+  return gunCD > -dt ? gunCD + cooldown : cooldown;
+}
+
+// --- ZEGAR SYMULACJI --------------------------------------------------------
+// Fazy kotła i orbita strażników liczyły się z performance.now(), który biegnie
+// też w pauzie: po odpauzowaniu punkt orbity strażnika przeskakiwał o cały czas
+// pauzy. Gra publikuje licznik ticków decyzji AI (20 Hz, stoi w pauzie);
+// bez niego (testy) bierzemy czas życia mózgu samego myśliwca.
+function aiSimTime(npc) {
+  const w = (typeof window !== 'undefined') ? window : null;
+  const tick = Number(w?.__aiDecisionTickId);
+  const hz = Number(w?.__aiDecisionHz);
+  if (Number.isFinite(tick) && hz > 0) return tick / hz;
+  return npc.__aiClock || 0;
+}
+
 function faceVelocity(npc) {
   if ((npc.vx * npc.vx + npc.vy * npc.vy) > 100) {
     npc.desiredAngle = Math.atan2(npc.vy, npc.vx);
@@ -194,7 +219,7 @@ function tryFireFighter(npc, target, dt) {
     if (dist < gunRange * 0.95 && diff < 0.75
         && !window.isLineOfFireBlocked?.(npc, target, gunRange)) {
       window.spawnBulletAdapter?.(npc, target, gunDef, { type: gunDef.category });
-      npc.gunCD = gunDef.cooldown || 0.2;
+      npc.gunCD = nextGunCooldown(npc.gunCD || 0, gunDef.cooldown || 0.2, dt);
     }
   }
 
@@ -302,9 +327,13 @@ export function resolveFighterTarget(npc, current, searchRange, env) {
     }
   }
 
-  if (!best && npc.friendly && window.pickSquadTargets) {
-    const squadTargets = window.pickSquadTargets();
-    if (Array.isArray(squadTargets) && squadTargets.length > 0) best = squadTargets[0];
+  // Przyjazny myśliwiec bez niczego w zasięgu szukania sięga dalej — ale
+  // najwyżej na długość smyczy, żeby cel nie wypadł z niej w następnym ticku.
+  // Dawniej brał pickSquadTargets()[0], czyli PIERWSZEGO wroga z npcs[] bez
+  // względu na odległość: smycz go zrzucała i co retarget myśliwiec robił jeden
+  // tick szarpnięcia w złą stronę.
+  if (!best && npc.friendly) {
+    best = pickScoredTarget(npc, searchRange * TARGET_LEASH_MUL);
   }
 
   if (!best) return current;
@@ -340,7 +369,9 @@ export function runAdvancedFighterAI(npc, dt) {
   const SEARCH_RANGE = (order === 'engage' || npc.isPirate) ? FIGHTER_LONG_SEARCH_RANGE : FIGHTER_GUARD_SEARCH_RANGE;
   const env = fighterEnvelope(npc);
 
-  npc.gunCD = Math.max(0, (npc.gunCD || 0) - dt);
+  npc.__aiClock = (npc.__aiClock || 0) + dt;
+  // Działko schodzi poniżej zera najwyżej o jeden tick — patrz nextGunCooldown.
+  npc.gunCD = Math.max(-dt, (npc.gunCD || 0) - dt);
   npc.mslCD = Math.max(0, (npc.mslCD || 0) - dt);
   npc.breakOffTimer = Math.max(0, (npc.breakOffTimer || 0) - dt);
   npc.targetCommitT = Math.max(0, (npc.targetCommitT || 0) - dt);
@@ -558,7 +589,7 @@ export function runAdvancedFighterAI(npc, dt) {
       const len = Math.hypot(dx, dy) || 1;
       const wantVx = (dx / len) * npc.maxSpeed;
       const wantVy = (dy / len) * npc.maxSpeed;
-      const timeNow = (typeof performance !== 'undefined' ? performance.now() : Date.now()) * 0.001;
+      const timeNow = aiSimTime(npc);
       const idNum = _npcIdNum(npc.id);
       const t = timeNow + (idNum % 17) * 0.13;
       const jrad = (4 * Math.PI / 180) * Math.sin(2 * Math.PI * 0.5 * t);
@@ -663,7 +694,7 @@ export function runAdvancedFighterAI(npc, dt) {
   let targetPos = null;
 
   if (isLeader && npc.isPirate && npc.guardStation) {
-    const time = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
+    const time = aiSimTime(npc);
     const radius = npc.guardOrbitRadius || 350;
     const speed = npc.guardOrbitSpeed || 0.3;
     const phase = npc.guardPhase || 0;

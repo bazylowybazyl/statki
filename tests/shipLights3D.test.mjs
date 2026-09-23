@@ -30,7 +30,9 @@ test('hull shader and billboard shader share the NAV_LIGHT_CHASE sequence', () =
 });
 
 test('hexShips3D feeds visible ships into the nav light billboard sync', () => {
-  assert.match(hexShipsSource, /buildPositionLightWorldSprites\(visibleHex/);
+  // drawHex = statki w pudle RYSOWANIA (kadr + margines); visibleHex to
+  // szersze pudło rozgrzania (9 ekranów), którego billboardy nie potrzebują.
+  assert.match(hexShipsSource, /buildPositionLightWorldSprites\(drawHex/);
   assert.match(hexShipsSource, /ShipLights3D\.sync\(state\.navLightSprites/);
   assert.match(hexShipsSource, /ShipLights3D\.dispose\(\)/);
 });

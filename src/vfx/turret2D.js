@@ -51,6 +51,17 @@ const CATEGORY_TRIM = Object.freeze({
 const TURRET_HIDE_PX = 2.0;
 const TURRET_BLOB_PX = 5.5;
 
+// Przypisanie strzału do wieżyczki, gdy wołający NIE poda strzelca: punkt
+// strzału musi leżeć przy lufie (dwa promienie sylwetki + zapas na ruch statku
+// między tickiem fizyki a interpolowaną pozą renderu). Bez limitu najbliższa
+// wieżyczka tego typu mogła stać na drugim końcu mapy.
+const OWNERLESS_SNAP_PAD = 60;
+
+function ownerlessSnapSq(rec) {
+  const reach = rec.spec.r * rec.scale * 2 + OWNERLESS_SNAP_PAD;
+  return reach * reach;
+}
+
 function tunable(name, fallback) {
   if (typeof window === 'undefined') return fallback;
   const v = Number(window.DevTuning?.[name]);
@@ -515,26 +526,25 @@ function getRecoilState(entity, uid) {
   return st;
 }
 
-function pushRecord(entity, uid, weaponId, category, size, wx, wy, ang, scale) {
+function pushRecord(entity, keys, info, wx, wy, ang, scale) {
   let rec = frameRecords[frameCount];
   if (!rec) {
     rec = { entity: null, uid: '', key: '', spec: null, fxKey: '', weaponId: '', wx: 0, wy: 0, ang: 0, scale: 1, state: null };
     frameRecords[frameCount] = rec;
   }
   frameCount++;
-  const profile = fxProfileFor(weaponId);
   rec.entity = entity;
-  rec.uid = uid;
-  rec.key = entitySerial(entity) + '|' + uid;
+  rec.uid = keys.uid;
+  rec.key = keys.key;
   recordsByKey.set(rec.key, rec);
-  rec.spec = resolveSpec(weaponId, category);
-  rec.fxKey = profile.key;
-  rec.weaponId = String(weaponId || '');
+  rec.spec = info.spec;
+  rec.fxKey = info.fxKey;
+  rec.weaponId = info.weaponId;
   rec.wx = wx;
   rec.wy = wy;
   rec.ang = ang;
   rec.scale = scale;
-  rec.state = getRecoilState(entity, uid);
+  rec.state = keys.state || (keys.state = getRecoilState(entity, keys.uid));
   return rec;
 }
 
@@ -557,15 +567,89 @@ function shouldRenderTurret(def) {
   return true;
 }
 
-function entityLocalScale(entity) {
+// ── Cache per broń i per slot ───────────────────────────────────────────────
+// sync() leci co klatkę dla każdej encji w pudle cullingu hexShips3D. Dawniej
+// KAŻDA wieżyczka składała uid (`npc_wep_3_…`) i klucz rekordu z konkatenacji,
+// a resolveSpec / fxProfileFor / weaponScale / shouldRenderTurret robiły
+// toLowerCase + serię includes — przy 200 okrętach ~15 000 stringów na klatkę,
+// także przy dalekim zoomie, gdzie draw() i tak wszystko chowa. Definicja broni
+// i slot są stabilne, więc liczymy to raz. WeakMap zamiast pól na obiektach
+// gry: loadout gracza jest zapisywany.
+const defInfoCache = new WeakMap();
+
+function getDefInfo(def) {
+  let info = defInfoCache.get(def);
+  if (info === undefined || info.id !== def.id || info.category !== def.category
+    || info.size !== def.size || info.mountType !== def.mountType) {
+    info = {
+      id: def.id,
+      category: def.category,
+      size: def.size,
+      mountType: def.mountType,
+      renders: shouldRenderTurret(def),
+      spec: resolveSpec(def.id, def.category),
+      fxKey: fxProfileFor(def.id).key,
+      weaponId: String(def.id || ''),
+      scale: weaponScale(def.size, def.category)
+    };
+    defInfoCache.set(def, info);
+  }
+  return info;
+}
+
+const slotKeyCache = new WeakMap();
+
+// uid slotu (`<prefix>_<indeks>_<id broni>`) i klucz rekordu `<serial>|<uid>` —
+// ten sam format co dawniej, bo po nim wiązka ciągła odnajduje swoją lufę.
+function getSlotKeys(slot, entity, prefix, index, def) {
+  let keys = slotKeyCache.get(slot);
+  if (keys === undefined || keys.entity !== entity || keys.index !== index
+    || keys.prefix !== prefix || keys.def !== def) {
+    const uid = `${prefix}_${index}_${def.id || def.category || 'x'}`;
+    keys = { entity, index, prefix, def, uid, key: entitySerial(entity) + '|' + uid, state: null };
+    slotKeyCache.set(slot, keys);
+  }
+  return keys;
+}
+
+// Parametry bieżącej encji dla emitTurret — moduł zamiast domknięcia tworzonego
+// w każdym sync().
+const _emit = { entity: null, localX: 1, localY: 1, tierScale: 1, cosA: 1, sinA: 0, shipEx: 0, shipEy: 0, shipScale: 1 };
+
+function writeEntityLocalScale(entity, out) {
   const sxRaw = Number(entity?.__hardpointScaleX);
   const syRaw = Number(entity?.__hardpointScaleY);
   const uniformRaw = Number(entity?.__hardpointScale);
   const uniform = Number.isFinite(uniformRaw) && uniformRaw > 0 ? uniformRaw : 1;
-  return {
-    x: Number.isFinite(sxRaw) && sxRaw > 0 ? sxRaw : uniform,
-    y: Number.isFinite(syRaw) && syRaw > 0 ? syRaw : uniform
-  };
+  out.localX = Number.isFinite(sxRaw) && sxRaw > 0 ? sxRaw : uniform;
+  out.localY = Number.isFinite(syRaw) && syRaw > 0 ? syRaw : uniform;
+}
+
+function emitTurret(slot, prefix, index, def, info, localX, localY, angle, useHardpointScale) {
+  const f = _emit;
+  const entity = f.entity;
+  const psx = useHardpointScale ? f.localX : (entity.isPlayer ? 1 : f.shipScale);
+  const psy = useHardpointScale ? f.localY : (entity.isPlayer ? 1 : f.shipScale);
+  const lx = (Number(localX) || 0) * psx;
+  const ly = (Number(localY) || 0) * psy;
+  const wx = f.shipEx + lx * f.cosA - ly * f.sinA;
+  const wy = f.shipEy + lx * f.sinA + ly * f.cosA;
+  pushRecord(entity, getSlotKeys(slot, entity, prefix, index, def), info, wx, wy, angle, info.scale * f.tierScale);
+}
+
+function emitPlayerTurretList(list, prefix, aimAlpha) {
+  const entity = _emit.entity;
+  for (let i = 0; i < list.length; i++) {
+    const slot = list[i];
+    const def = slot?.weapon;
+    if (!def) continue;
+    const info = getDefInfo(def);
+    if (!info.renders) continue;
+    const hp = slot.hp?.pos || slot.hp;
+    if (!hp) continue;
+    emitTurret(slot, prefix, i, def, info, hp.x ?? 0, hp.y ?? 0,
+      mountedWeaponRenderAngle(entity, slot, aimAlpha), false);
+  }
 }
 
 let lastFxTimeSec = 0;
@@ -610,31 +694,30 @@ export const Turret2D = {
     // moduł ma zostać czysty (test node importuje go bez przeglądarki).
     if (typeof window !== 'undefined' && window.CICDisplay?.active) return;
 
-    const local = entityLocalScale(entity);
+    const f = _emit;
+    f.entity = entity;
+    writeEntityLocalScale(entity, f);
     const tier = getEntityWeaponTier(entity);
-    const tierScale = (WEAPON_TIER_SCALE[tier] || WEAPON_TIER_SCALE.Capital).turret;
-    const cosA = Math.cos(shipAngle);
-    const sinA = Math.sin(shipAngle);
-
-    const emit = (uid, def, localX, localY, angle, useHardpointScale) => {
-      const psx = useHardpointScale ? local.x : (entity.isPlayer ? 1 : shipScale);
-      const psy = useHardpointScale ? local.y : (entity.isPlayer ? 1 : shipScale);
-      const lx = (Number(localX) || 0) * psx;
-      const ly = (Number(localY) || 0) * psy;
-      const wx = shipEx + lx * cosA - ly * sinA;
-      const wy = shipEy + lx * sinA + ly * cosA;
-      const scale = weaponScale(def.size, def.category) * tierScale;
-      pushRecord(entity, uid, def.id, def.category, def.size, wx, wy, angle, scale);
-    };
+    f.tierScale = (WEAPON_TIER_SCALE[tier] || WEAPON_TIER_SCALE.Capital).turret;
+    f.cosA = Math.cos(shipAngle);
+    f.sinA = Math.sin(shipAngle);
+    f.shipEx = shipEx;
+    f.shipEy = shipEy;
+    f.shipScale = shipScale;
 
     if (entity.autoWeapons) {
       for (let i = 0; i < entity.autoWeapons.length; i++) {
         const w = entity.autoWeapons[i];
         const def = w?.def;
-        if (!shouldRenderTurret(def) || !w.hpOffset || w.hpOffset.x == null || w.hpOffset.y == null) continue;
-        emit(
-          `npc_wep_${i}_${def.id || def.category || 'x'}`,
+        if (!def || !w.hpOffset || w.hpOffset.x == null || w.hpOffset.y == null) continue;
+        const info = getDefInfo(def);
+        if (!info.renders) continue;
+        emitTurret(
+          w,
+          'npc_wep',
+          i,
           def,
+          info,
           w.hpOffset.x,
           w.hpOffset.y,
           w.visualAngle !== undefined ? w.visualAngle : shipAngle,
@@ -649,49 +732,38 @@ export const Turret2D = {
     const interp = (typeof window !== 'undefined' && entity === window.ship && window.__interpShipTurretAngles)
       ? window.__interpShipTurretAngles
       : null;
-    const pick = (v, fallback) => (Number.isFinite(v) ? v : fallback);
     const aimAlpha = (typeof window !== 'undefined' && Number.isFinite(window.__weaponAimAlpha))
       ? window.__weaponAimAlpha : 1;
     const ciwsInterp = Array.isArray(interp?.ciws) ? interp.ciws : null;
 
-    const emitTurretBound = (list, prefix) => {
-      for (let i = 0; i < list.length; i++) {
-        const def = list[i]?.weapon;
-        if (!shouldRenderTurret(def)) continue;
-        const hp = list[i].hp?.pos || list[i].hp;
-        if (!hp) continue;
-        emit(
-          `${prefix}_${i}_${def.id || def.category || 'x'}`,
-          def,
-          hp.x ?? 0,
-          hp.y ?? 0,
-          mountedWeaponRenderAngle(entity, list[i], aimAlpha),
-          false
-        );
-      }
-    };
-
-    emitTurretBound(entity.weapons.main || [], 'p_main');
+    emitPlayerTurretList(entity.weapons.main || [], 'p_main', aimAlpha);
 
     const auxes = entity.weapons.aux || [];
     for (let i = 0; i < auxes.length; i++) {
-      const def = auxes[i]?.weapon;
-      if (!shouldRenderTurret(def)) continue;
+      const slot = auxes[i];
+      const def = slot?.weapon;
+      if (!def) continue;
+      const info = getDefInfo(def);
+      if (!info.renders) continue;
       const c = entity.ciws?.[i];
-      const hp = auxes[i].hp?.pos || auxes[i].hp;
-      emit(
-        `p_aux_${i}_${def.id || def.category || 'x'}`,
+      const hp = slot.hp?.pos || slot.hp;
+      const interpAngle = ciwsInterp?.[i];
+      emitTurret(
+        slot,
+        'p_aux',
+        i,
         def,
+        info,
         hp?.x ?? c?.offset?.x ?? 0,
         hp?.y ?? c?.offset?.y ?? 0,
-        pick(ciwsInterp?.[i], c?.angle !== undefined ? c.angle : shipAngle),
+        Number.isFinite(interpAngle) ? interpAngle : (c?.angle !== undefined ? c.angle : shipAngle),
         false
       );
     }
 
-    emitTurretBound(entity.weapons.missile || [], 'p_missile');
-    emitTurretBound(entity.weapons.special || [], 'p_special');
-    emitTurretBound(entity.weapons.special_missile || [], 'p_special_missile');
+    emitPlayerTurretList(entity.weapons.missile || [], 'p_missile', aimAlpha);
+    emitPlayerTurretList(entity.weapons.special || [], 'p_special', aimAlpha);
+    emitPlayerTurretList(entity.weapons.special_missile || [], 'p_special_missile', aimAlpha);
     // Grupy `builtin` i `hangar` celowo nie ma na liście — patrz shouldRenderTurret().
   },
 
@@ -699,8 +771,14 @@ export const Turret2D = {
    * Znajduje wieżyczkę, która oddała strzał (najbliższy punkt wylotowy do
    * podanego punktu w świecie), zadaje jej odrzut i zwraca dane dla błysku 3D.
    * Zwraca null, gdy żadna wieżyczka nie jest w tej klatce widoczna.
+   *
+   * `owner` = encja, która strzeliła — szukamy WYŁĄCZNIE na jej kadłubie.
+   * Myśliwiec nie ma wieżyczek, więc jego strzał nie dostaje cudzego błysku.
+   * Dawniej wygrywała najbliższa wieżyczka tego typu bez limitu odległości:
+   * dogfight 30 km dalej odpalał błyski i odrzut na CIWS-ach Atlasa, a każdy
+   * strzał dokładał wstrząs kamery.
    */
-  triggerShot(weaponKey, shotX, shotY) {
+  triggerShot(weaponKey, shotX, shotY, owner = null) {
     if (!this.enabled || frameCount === 0) return null;
 
     let best = null;
@@ -709,7 +787,9 @@ export const Turret2D = {
 
     for (let i = 0; i < frameCount; i++) {
       const rec = frameRecords[i];
+      if (owner && rec.entity !== owner) continue;
       if (weaponKey && rec.fxKey !== weaponKey) continue;
+      const limitSq = owner ? Infinity : ownerlessSnapSq(rec);
       const muzzles = rec.spec.m;
       const cosA = Math.cos(rec.ang);
       const sinA = Math.sin(rec.ang);
@@ -721,7 +801,7 @@ export const Turret2D = {
         const dx = wx - shotX;
         const dy = wy - shotY;
         const d2 = dx * dx + dy * dy;
-        if (d2 < bestDistSq) {
+        if (d2 < bestDistSq && d2 <= limitSq) {
           bestDistSq = d2;
           best = rec;
           bestMuzzle = m;
@@ -766,15 +846,19 @@ export const Turret2D = {
    * stabilny między klatkami (numer encji + uid hardpointu), więc wiązka ciągła
    * może po nim odnajdywać swoją lufę, dopóki wieżyczka jest widoczna.
    * Format: `<serial>|<uid>#<indeks lufy>`.
+   * `owner` jak w triggerShot: wiązka strzelca bez wieżyczek nie przykleja się
+   * do cudzej lufy.
    */
-  findTurretKey(x, y, weaponKey = '') {
+  findTurretKey(x, y, weaponKey = '', owner = null) {
     if (!this.enabled || frameCount === 0) return null;
     let bestKey = null;
     let bestDistSq = Infinity;
 
     for (let i = 0; i < frameCount; i++) {
       const rec = frameRecords[i];
+      if (owner && rec.entity !== owner) continue;
       if (weaponKey && rec.fxKey !== weaponKey) continue;
+      const limitSq = owner ? Infinity : ownerlessSnapSq(rec);
       const muzzles = rec.spec.m;
       const cosA = Math.cos(rec.ang);
       const sinA = Math.sin(rec.ang);
@@ -784,7 +868,7 @@ export const Turret2D = {
         const dx = rec.wx + mx * cosA - my * sinA - x;
         const dy = rec.wy + mx * sinA + my * cosA - y;
         const d2 = dx * dx + dy * dy;
-        if (d2 < bestDistSq) {
+        if (d2 < bestDistSq && d2 <= limitSq) {
           bestDistSq = d2;
           bestKey = rec.key + '#' + m;
         }

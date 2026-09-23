@@ -549,6 +549,14 @@ export const ShieldImpactFX = {
     },
 
     /**
+     * Czy wstęgi albo bańki są w tej klatce widoczne — shield3D zgłasza to do
+     * Core3D, który pomija pusty pass tarcz (obchód grafu + resolve MSAA).
+     */
+    hasVisibleContent() {
+        return !!((mesh && mesh.visible) || (flashMesh && flashMesh.visible));
+    },
+
+    /**
      * Ile cząstek trafienie w ogóle dostanie — z rozmiaru tarczy NA EKRANIE.
      * Jedna liczba załatwia oba wymagania: oddalona kamera i mały statek
      * dostają mniej, bo w obu przypadkach efektu i tak nie widać.

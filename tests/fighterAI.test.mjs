@@ -34,7 +34,7 @@ const { aiPickBestTarget } = await import('../src/ai/aiUtils.js');
 window.aiPickBestTarget = aiPickBestTarget;
 const restorePicker = () => { window.aiPickBestTarget = aiPickBestTarget; };
 
-const { runAdvancedFighterAI, steerFighter, fighterEnvelope, resolveFighterTarget } =
+const { runAdvancedFighterAI, steerFighter, fighterEnvelope, resolveFighterTarget, nextGunCooldown } =
   await import('../src/ai/fighterAI.js');
 
 function makeFighter(squadronId, overrides = {}) {
@@ -373,4 +373,113 @@ test('a fighter with no target flies formation on its leader and faces its trave
   assert.ok(Math.abs(window.wrapAngle(npc.desiredAngle - Math.atan2(npc.vy, npc.vx))) < 0.2,
     'kurs musi nadążać za wektorem prędkości, a nie zostać po walce');
   world.npcs = [];
+});
+
+// ---------------------------------------------------------------------------
+// Kadencja działka a rytm mózgu (20 Hz = tick 0,05 s)
+
+test('nextGunCooldown carries the late part of one brain tick, never more', () => {
+  const dt = 0.05;
+  // Broń gotowa 0,03 s przed tickiem: kolejne przeładowanie liczymy od chwili gotowości.
+  assert.ok(Math.abs(nextGunCooldown(-0.03, 0.06, dt) - 0.03) < 1e-12);
+  // Broń stała gotowa dłużej niż tick (nie było do czego strzelać) — liczy od zera.
+  assert.equal(nextGunCooldown(-dt, 0.06, dt), 0.06);
+  assert.equal(nextGunCooldown(-0.5, 0.06, dt), 0.06);
+});
+
+test('fighter gun fires at the weapon rate, not rounded up to the 20 Hz brain tick', () => {
+  const gunDef = MASTER_WEAPONS.ciws_mk1;
+  const npc = makeFighter('multirole', { mslAmmo: 0, gunCD: 0 });
+  const target = makeEnemyFighter(600, 0);
+  world.npcs = [npc, target];
+  npc.target = target;
+  npc.targetCommitT = 99;
+  npc.retargetTimer = 99;
+
+  let gunShots = 0;
+  const realAdapter = window.spawnBulletAdapter;
+  const realRandom = Math.random;
+  window.spawnBulletAdapter = (owner, t, def) => { if (def === gunDef) gunShots++; };
+  Math.random = () => 0.99; // bez losowego break-offu
+  try {
+    const dt = 0.05;
+    const seconds = 3;
+    for (let i = 0; i < seconds / dt; i++) {
+      runAdvancedFighterAI(npc, dt);
+      npc.x = 0; npc.y = 0; npc.angle = 0; // cel stale w stożku i zasięgu
+    }
+    const expected = seconds / gunDef.cooldown; // 50 dla 0,06 s
+    // Dawniej 30 (co 0,10 s): cooldown zaokrąglany w górę do wielokrotności ticku.
+    assert.ok(gunShots >= expected - 2 && gunShots <= expected + 1,
+      `ciws_mk1 powinien oddać ~${expected} strzałów w ${seconds} s, oddał ${gunShots}`);
+  } finally {
+    window.spawnBulletAdapter = realAdapter;
+    Math.random = realRandom;
+    world.npcs = [];
+  }
+});
+
+// Regresja: myśliwiec bez celu w zasięgu brał pickSquadTargets()[0], czyli
+// PIERWSZEGO wroga z npcs[] bez względu na odległość; smycz zrzucała go w
+// następnym ticku i co retarget był jeden tick szarpnięcia w złą stronę.
+test('a friendly fighter with nothing in range reaches only as far as its leash', () => {
+  const npc = makeFighter('multirole', { x: 0, y: 0 });
+  const env = fighterEnvelope(npc);
+  const farAway = makeEnemyFighter(60000, 0, { id: 401 });
+  const justOutside = makeEnemyFighter(18000, 0, { id: 402 });
+
+  world.npcs = [farAway, justOutside];
+  assert.equal(resolveFighterTarget(npc, null, 16000, env), justOutside,
+    'cel tuż za zasięgiem szukania, ale w smyczy');
+
+  world.npcs = [farAway];
+  assert.equal(resolveFighterTarget(npc, null, 16000, env), null,
+    'wróg daleko poza smyczą nie może zostać celem');
+  world.npcs = [];
+});
+
+// Regresja: orbita strażnika liczyła się z performance.now(), które biegnie też
+// w pauzie — po odpauzowaniu punkt orbity przeskakiwał o cały czas pauzy.
+test('pirate guard orbit follows AI decision ticks, not the wall clock', () => {
+  const station = { x: 0, y: 0 };
+  const npc = makeFighter('interceptor', {
+    id: 'pirate_guard', friendly: false, isPirate: true, type: 'interceptor',
+    guardStation: station, guardOrbitRadius: 350, guardOrbitSpeed: 0.3, guardPhase: 0.5,
+    retargetTimer: 99
+  });
+  npc.squad = { leader: npc };
+  world.npcs = [npc];
+
+  const placeOnOrbit = (tick) => {
+    const angle = 0.5 + (tick / 20) * 0.3;
+    npc.x = Math.cos(angle) * 350;
+    npc.y = Math.sin(angle) * 350;
+    return angle;
+  };
+  const expectTangent = (angle) => {
+    const err = window.wrapAngle(npc.desiredAngle - (angle + Math.PI / 2));
+    assert.ok(Math.abs(err) < 1e-9, `kurs styczny do orbity (błąd ${err})`);
+  };
+
+  try {
+    window.__aiDecisionHz = 20;
+    window.__aiDecisionTickId = 40;
+    const a40 = placeOnOrbit(40);
+    runAdvancedFighterAI(npc, 0.05);
+    expectTangent(a40);
+
+    // „Pauza”: licznik ticków stoi, więc punkt orbity też.
+    placeOnOrbit(40);
+    runAdvancedFighterAI(npc, 0.05);
+    expectTangent(a40);
+
+    window.__aiDecisionTickId = 60; // +1 s gry
+    const a60 = placeOnOrbit(60);
+    runAdvancedFighterAI(npc, 0.05);
+    expectTangent(a60);
+  } finally {
+    delete window.__aiDecisionHz;
+    delete window.__aiDecisionTickId;
+    world.npcs = [];
+  }
 });

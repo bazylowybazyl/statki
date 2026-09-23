@@ -14,7 +14,8 @@ import {
   buildPositionLightWorldSprites,
   buildRoadLightWorldEmitters,
   buildShipLightShaderPayload,
-  glslFloat
+  glslFloat,
+  hasEntityLightSource
 } from '../game/shipLightRuntime.js';
 import { ShipLights3D } from './shipLights3D.js';
 import { allowsSolidArmorLod } from './hexLodPolicy.js';
@@ -35,14 +36,17 @@ varying vec2 vSpriteUV;
 varying float vStress;
 varying vec2 vHeat;
 varying vec2 vWorldXY;
+varying vec2 vOriginXY;
 
 void main() {
   vStress = aStress;
   vHeat = aHeat;
   vSpriteUV = (aGridPos + position.xy) / uSpriteSize;
   vec4 localPos = instanceMatrix * vec4(position.xy, 0.0, 1.0);
-  // Pozycja w świecie dla lakieru (kierunek do oka pseudo-perspektywy).
+  // Pozycja w świecie dla lakieru (kierunek do oka pseudo-perspektywy)
+  // i środek statku (obłoki odbić przesuwają się z pozycją statku).
   vWorldXY = (modelMatrix * localPos).xy;
+  vOriginXY = modelMatrix[3].xy;
   vec4 mvPosition = modelViewMatrix * localPos;
   gl_Position = projectionMatrix * mvPosition;
 }
@@ -53,6 +57,7 @@ varying vec2 vSpriteUV;
 varying float vStress;
 varying vec2 vHeat;
 varying vec2 vWorldXY;
+varying vec2 vOriginXY;
 
 void main() {
   vStress = 0.0;
@@ -62,6 +67,7 @@ void main() {
   vHeat = vec2(0.0);
   vSpriteUV = uv;
   vWorldXY = (modelMatrix * vec4(position, 1.0)).xy;
+  vOriginXY = modelMatrix[3].xy;
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }
 `;
@@ -110,12 +116,15 @@ uniform vec4 uShipLightExtra[MAX_SHIP_LIGHTS];
 // Lakier (hullLacquer.js). uShapeMap: RG = normalna XY sprite'a, B = waga.
 uniform sampler2D uShapeMap;
 uniform sampler2D uLacquerEnv;
+uniform sampler2D uLacquerSky;
 uniform float uLacquerWeight;
 uniform float uLacquerGlint;
 uniform vec3 uLacquerEye;
 uniform vec4 uLacquerA;
 uniform vec4 uLacquerB;
 uniform vec4 uLacquerC;
+uniform vec4 uLacquerD;
+uniform vec4 uLacquerE;
 uniform int uEngineZoneCount;
 uniform vec4 uEngineZones[MAX_ENGINE_ZONES];
 
@@ -123,6 +132,7 @@ varying vec2 vSpriteUV;
 varying float vStress;
 varying vec2 vHeat;
 varying vec2 vWorldXY;
+varying vec2 vOriginXY;
 ${HEAT_RAMP_GLSL}
 void main() {
   if (vSpriteUV.x < -0.01 || vSpriteUV.x > 1.01 ||
@@ -209,6 +219,18 @@ void main() {
       vec4 envTex = texture2D(uLacquerEnv, envUV);
       vec3 env = (min(envTex.rgb * uLacquerA.z, vec3(uLacquerA.w)) + envTex.a * uLacquerB.x) * hemi;
       vec3 envBlur = min(textureLod(uLacquerEnv, envUV, uLacquerC.z).rgb * uLacquerA.z, vec3(uLacquerA.w)) * hemi;
+      // Bliskie obłoki zakotwiczone w świecie. Kamera jedzie za statkiem, więc
+      // daleki kosmos stoi w miejscu — ruch daje dopiero ta warstwa: pozycja
+      // statku × drift przesuwa odbicie po kadłubie przy locie, offset w kadłubie
+      // trzyma skalę 1:1, a R.xy/R.z wygina je na krzywiznach.
+      vec2 skyP = vOriginXY * uLacquerD.y + (vWorldXY - vOriginXY)
+        + R.xy * (uLacquerD.z / max(R.z, 0.05));
+      vec2 skyUV = skyP * uLacquerD.x;
+      float skyW = smoothstep(0.02, 0.3, R.z) * uLacquerE.z * uLacquerD.w;
+      vec3 skyTex = texture2D(uLacquerSky, skyUV).rgb;
+      float skyLum = dot(skyTex, vec3(0.2126, 0.7152, 0.0722));
+      env += skyTex * (skyW * (1.0 + uLacquerE.x * smoothstep(0.35, 0.8, skyLum)));
+      envBlur += textureLod(uLacquerSky, skyUV, uLacquerE.y).rgb * skyW;
       // Specular AA: gdzie normalna szybko zmienia się na ekranie, płat się
       // poszerza i ciemnieje (energia ~stała), zamiast migotać iskrami.
       vec3 dN = fwidth(N);
@@ -395,6 +417,9 @@ const state = {
   vfxEntities: [],
   visibleHexEntities: [],
   visibleVfxEntities: [],
+  // Podzbiory visible* w PUDLE RYSOWANIA (kadr + margines) — patrz isEntityInDrawBox.
+  drawHexEntities: [],
+  drawVfxEntities: [],
   roadLightEmitters: [],
   navLightSprites: [],
   staleEntities: [],
@@ -428,6 +453,9 @@ const lodFrameStats = {
   // pudla widoku, tylko wlasnego zasiegu, wiec kamera jej nie zmniejsza).
   entitiesIn: 0,
   culled: 0,
+  // W pudle rozgrzania, ale poza pudlem rysowania: mesh istnieje, nic sie nie
+  // liczy i nie rysuje (patrz isEntityInDrawBox).
+  warmOnly: 0,
   shaftCands: 0
 };
 
@@ -550,6 +578,40 @@ function isEntityInCull(entity, cull) {
   return (
     Math.abs(x - cull.x) <= cull.halfW + r &&
     Math.abs(y - cull.y) <= cull.halfH + r
+  );
+}
+
+// Pudło RYSOWANIA. Pudło z index.html (cull.halfW/halfH = 3× połowa widoku,
+// czyli 9 ekranów) zostaje pudłem ROZGRZANIA: mesh powstaje zawczasu, emitery
+// świateł drogowych i dysze trzymają ciągłość. Pełna aktualizacja mesha
+// (instancje, LOD, lampy, uniformy), draw call, billboardy świateł i wieżyczki
+// 2D idą tylko dla encji, które mogą być na ekranie — meshe kadłubów mają
+// frustumCulled=false, więc bez tego ~8/9 wywołań trafiało poza kadr.
+// Promień z wymiarów sprite'a × skala (entity.radius wraków jest w jednostkach
+// siatki), plus pivot i stały margines ekranowy na dryf/deformację.
+// Bez cull.drawHalfW (np. lot po mieście) — dawne zachowanie: rysuj całe pudło.
+const DRAW_BOX_MARGIN_PX = 96;
+
+function isEntityInDrawBox(entity, cull, cameraZoom) {
+  if (!cull || !Number.isFinite(cull.drawHalfW) || !Number.isFinite(cull.drawHalfH)) return true;
+  const x = getEntityPosX(entity);
+  const y = getEntityPosY(entity);
+  const grid = entity?.hexGrid;
+  let r;
+  if (grid) {
+    const sx = Math.abs(getEntityScaleX(entity)) || 1;
+    const sy = Math.abs(getEntityScaleY(entity)) || 1;
+    const pivotX = (Number(grid.pivot?.x) || 0) * sx;
+    const pivotY = (Number(grid.pivot?.y) || 0) * sy;
+    r = Math.hypot((Number(grid.srcWidth) || 0) * sx, (Number(grid.srcHeight) || 0) * sy) * 0.5
+      + Math.hypot(pivotX, pivotY);
+  } else {
+    r = Math.max(140, Number(entity?.radius) || Number(entity?.r) || 140);
+  }
+  r += DRAW_BOX_MARGIN_PX / Math.max(0.0001, cameraZoom);
+  return (
+    Math.abs(x - cull.x) <= cull.drawHalfW + r &&
+    Math.abs(y - cull.y) <= cull.drawHalfH + r
   );
 }
 
@@ -960,6 +1022,9 @@ function syncEntityLacquer(entity, data, grid, entityScale, zoomPx) {
     else out[i].set(0, 0, 0, 0);
   }
   uniforms.uEngineZoneCount.value = zones.length;
+  // Tablica 20 vec4 nie ma cache w setterze three — przy zerze stref shader jej
+  // nie czyta (pętla kończy się na uEngineZoneCount), więc nie wysyłamy jej co draw.
+  uniforms.uEngineZones.needsUpdate = zones.length > 0;
   data.zoneMainRef = main;
   data.zoneSideRef = side;
   data.zoneSrcW = data.srcWidth;
@@ -969,17 +1034,44 @@ function syncEntityLacquer(entity, data, grid, entityScale, zoomPx) {
   data.zoneMul = zoneMul;
 }
 
-function syncEntityLightUniforms(entity, data, grid, externalRoadLights = null) {
+// Lampy w shaderze kadłuba: poniżej tego promienia kadłuba na ekranie są
+// niewidoczne (billboardy ShipLights3D gasną już przy ~2,5 px), a payload —
+// normalizacja bloku lamp, tablice i podpis-string — szedł co klatkę dla
+// każdej encji w pudle cullingu.
+const SHIP_LIGHT_SHADER_MIN_PX = 4;
+const SHIP_LIGHTS_OFF_SIGNATURE = '__lights_off__';
+
+// Tablice lamp (3 × 32 vec4) wysyłane są przy KAŻDYM drawie kadłuba (materiał
+// per encja, setter tablic three nie ma cache). Przy zerze lamp shader ich nie
+// czyta — pętla kończy się na uShipLightCount — więc upload pomijamy.
+function setShipLightArraysUpload(uniforms, enabled) {
+  uniforms.uShipLightData.needsUpdate = enabled;
+  uniforms.uShipLightColor.needsUpdate = enabled;
+  uniforms.uShipLightExtra.needsUpdate = enabled;
+}
+
+function syncEntityLightUniforms(entity, data, grid, externalRoadLights = null, bodyRadiusPx = Infinity) {
   const uniforms = data?.mesh?.material?.uniforms;
   if (!uniforms?.uShipLightCount) return;
+  uniforms.uTime.value = state.lastTime * 0.001;
 
-  const payload = Array.isArray(externalRoadLights) && externalRoadLights.length
+  const hasExternalRoadLights = Array.isArray(externalRoadLights) && externalRoadLights.length > 0;
+  if (bodyRadiusPx < SHIP_LIGHT_SHADER_MIN_PX || (!hasExternalRoadLights && !hasEntityLightSource(entity))) {
+    if (data.lightSignature !== SHIP_LIGHTS_OFF_SIGNATURE) {
+      uniforms.uShipLightCount.value = 0;
+      setShipLightArraysUpload(uniforms, false);
+      data.lightSignature = SHIP_LIGHTS_OFF_SIGNATURE;
+    }
+    return;
+  }
+
+  const payload = hasExternalRoadLights
     ? buildCombinedShipLightShaderPayload(entity, grid, externalRoadLights, SHIP_LIGHT_TRANSFORM_OPTIONS)
     : buildShipLightShaderPayload(entity, grid, MAX_SHADER_SHIP_LIGHTS);
-  uniforms.uTime.value = state.lastTime * 0.001;
   if (payload.signature === data.lightSignature) return;
 
   uniforms.uShipLightCount.value = payload.count;
+  setShipLightArraysUpload(uniforms, payload.count > 0);
   const dataUniforms = uniforms.uShipLightData.value;
   const colorUniforms = uniforms.uShipLightColor.value;
   const extraUniforms = uniforms.uShipLightExtra.value;
@@ -1275,21 +1367,25 @@ function createEntityMesh(entity) {
       uBillboardLighting: { value: usesBillboardLighting(entity) ? 1 : 0 },
       uLodOpacity: { value: 1 },
       uTime: { value: 0 },
+      // needsUpdate:false = bez uploadu, dopóki count = 0 (patrz setShipLightArraysUpload).
       uShipLightCount: { value: 0 },
-      uShipLightData: { value: createLightUniformArray() },
-      uShipLightColor: { value: createLightUniformArray() },
-      uShipLightExtra: { value: createLightUniformArray() },
+      uShipLightData: { value: createLightUniformArray(), needsUpdate: false },
+      uShipLightColor: { value: createLightUniformArray(), needsUpdate: false },
+      uShipLightExtra: { value: createLightUniformArray(), needsUpdate: false },
       uShapeMap: shapeUniform,
       uLacquerWeight: { value: 0 },
       uLacquerGlint: { value: 1 },
       uEngineZoneCount: { value: 0 },
-      uEngineZones: { value: createEngineZoneArray() },
+      uEngineZones: { value: createEngineZoneArray(), needsUpdate: false },
       // Wspólne obiekty — strojenie lakieru to jeden zapis na klatkę dla wszystkich.
       uLacquerEnv: HullLacquer.uniforms.uLacquerEnv,
+      uLacquerSky: HullLacquer.uniforms.uLacquerSky,
       uLacquerEye: HullLacquer.uniforms.uLacquerEye,
       uLacquerA: HullLacquer.uniforms.uLacquerA,
       uLacquerB: HullLacquer.uniforms.uLacquerB,
-      uLacquerC: HullLacquer.uniforms.uLacquerC
+      uLacquerC: HullLacquer.uniforms.uLacquerC,
+      uLacquerD: HullLacquer.uniforms.uLacquerD,
+      uLacquerE: HullLacquer.uniforms.uLacquerE
     },
     vertexShader: HEX_VERTEX_SHADER,
     fragmentShader: HEX_FRAGMENT_SHADER,
@@ -1685,7 +1781,8 @@ function updateEntityMesh(entity, data, camX, camY, cameraZoom) {
   if (mesh.material.uniforms.uBillboardLighting) {
     mesh.material.uniforms.uBillboardLighting.value = usesBillboardLighting(entity) ? 1 : 0;
   }
-  syncEntityLightUniforms(entity, data, grid, state.roadLightEmitters);
+  const bodyRadiusPx = Math.max(data.srcWidth, data.srcHeight) * 0.5 * entityScale * zoomPx;
+  syncEntityLightUniforms(entity, data, grid, state.roadLightEmitters, bodyRadiusPx);
   syncEntityLacquer(entity, data, grid, entityScale, zoomPx);
   const renderRotation = usesBillboardOrientation(entity) ? entityAngle : -entityAngle;
   mesh.material.uniforms.uRotation.value = renderRotation;
@@ -1784,10 +1881,10 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
   // updateEntityMesh mogło pominąć 9 zapisów uniformów gdy nic się nie zmieniło.
   refreshTuneEpoch();
 
-  // Lakier: wspólne uniformy, tekstura otoczenia i kolejka pieczenia map
+  // Lakier: wspólne uniformy, tekstury odbić i kolejka pieczenia map
   // kształtu (jeden sprite na klatkę). Oko = cameraPersp, którą syncCamera
   // ustawia w każdym passie — trzymamy referencję do jej wektora pozycji.
-  HullLacquer.update(Core3D.scene, Core3D.cameraPersp?.position);
+  HullLacquer.update(Core3D.cameraPersp?.position);
 
   const camX = Number(viewCamera?.x) || 0;
   const camY = Number(viewCamera?.y) || 0;
@@ -1802,18 +1899,23 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
   lodFrameStats.totalStructuralHexes = 0;
   lodFrameStats.entitiesIn = 0;
   lodFrameStats.culled = 0;
+  lodFrameStats.warmOnly = 0;
   lodFrameStats.shaftCands = 0;
 
   const valid = state.validEntities;
   const vfxEntities = state.vfxEntities;
   const visibleHex = state.visibleHexEntities;
   const visibleVfx = state.visibleVfxEntities;
+  const drawHex = state.drawHexEntities;
+  const drawVfx = state.drawVfxEntities;
   const stale = state.staleEntities;
   const validSet = state.validEntitySet;
   valid.length = 0;
   vfxEntities.length = 0;
   visibleHex.length = 0;
   visibleVfx.length = 0;
+  drawHex.length = 0;
+  drawVfx.length = 0;
   stale.length = 0;
   validSet.clear();
   for (const entity of entities) {
@@ -1839,10 +1941,16 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
     }
 
     visibleVfx.push(entity);
+    const inDrawBox = isEntityInDrawBox(entity, cullInfo, cameraZoom);
+    if (inDrawBox) drawVfx.push(entity);
+    else lodFrameStats.warmOnly++;
     if (!entity.hexGrid) continue;
     visibleHex.push(entity);
+    if (inDrawBox) drawHex.push(entity);
   }
 
+  // Emitery świateł drogowych z CAŁEGO pudła rozgrzania: statek tuż poza
+  // kadrem może oświetlać kadłub, który w kadrze jest.
   SHIP_LIGHT_EMITTER_OPTIONS.out = state.roadLightEmitters;
   buildRoadLightWorldEmitters(visibleHex, SHIP_LIGHT_EMITTER_OPTIONS);
 
@@ -1853,17 +1961,34 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
   NAV_LIGHT_SPRITE_OPTIONS.zoom = cameraZoom;
   NAV_LIGHT_SPRITE_OPTIONS.haloScale = navBuild.haloScale;
   NAV_LIGHT_SPRITE_OPTIONS.minHaloWorld = navBuild.minHaloWorld;
-  buildPositionLightWorldSprites(visibleHex, NAV_LIGHT_SPRITE_OPTIONS);
+  buildPositionLightWorldSprites(drawHex, NAV_LIGHT_SPRITE_OPTIONS);
   ShipLights3D.sync(state.navLightSprites, now * 0.001);
 
   let hasRenderable = false;
-  for (const entity of visibleHex) {
+  const frameId = state.frameId;
+  for (const entity of drawHex) {
     let data = state.entityMeshes.get(entity);
     if (!data) data = createEntityMesh(entity);
     if (!data) continue;
 
+    // Powrót do pudła rysowania po przerwie: przez ten czas nie liczyliśmy
+    // instancji ani LOD-u, więc jedno pełne odświeżenie.
+    if (data.lastDrawFrame !== frameId - 1) data.needsInstanceRefresh = true;
     updateEntityMesh(entity, data, camX, camY, cameraZoom);
+    // updateEntityMesh potrafi przebudować dane encji — znacznik na aktualnych.
+    (state.entityMeshes.get(entity) || data).lastDrawFrame = frameId;
     hasRenderable = true;
+  }
+
+  // Pudło rozgrzania: mesh ma istnieć, zanim encja wejdzie w kadr (bez
+  // przycięcia na tworzeniu), ale nic tu nie liczymy i nie rysujemy.
+  for (const entity of visibleHex) {
+    let data = state.entityMeshes.get(entity);
+    if (data && data.lastDrawFrame === frameId) continue;
+    if (!data) data = createEntityMesh(entity);
+    if (!data) continue;
+    if (data.mesh?.visible) data.mesh.visible = false;
+    if (data.armorMesh?.visible) data.armorMesh.visible = false;
   }
 
   // Okludery shadow shafts: analityczne cienie kadłubów, liczone w shaderze
@@ -1930,7 +2055,9 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
   // kontenery siatek) — zostaje dzwignia do porownania kosztu w locie.
   Turret2D.enabled = Core3D.perfToggles?.fgWeapons !== false;
   Turret2D.beginFrame();
-  for (const entity of visibleVfx) {
+  // Tylko pudło rysowania — Turret2D.draw i tak odrzuca wieżyczki spoza kadru,
+  // a sync liczył je dla całych 9 ekranów.
+  for (const entity of drawVfx) {
     const interpPose = getInterpolatedRenderPose(entity);
     const ex = interpPose ? interpPose.x : getEntityPosX(entity);
     const ey = interpPose ? interpPose.y : getEntityPosY(entity);
