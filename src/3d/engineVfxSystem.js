@@ -388,6 +388,7 @@ function disposeEffects(fxData) {
 
 export const EngineVfxSystem = {
   entityEffects: new Map(),
+  _activeScratch: new Set(),
   _lastUpdateSec: 0,
 
   update(entities = []) {
@@ -395,7 +396,9 @@ export const EngineVfxSystem = {
 
     // Licznik zrodel kasuje pass w Core3D.render(); tutaj tylko dorzucamy.
 
-    const activeEntities = new Set();
+    // Wspólny Set zamiast nowego co klatkę (update nie jest re-entrant).
+    const activeEntities = this._activeScratch;
+    activeEntities.clear();
     const now = (typeof performance !== 'undefined') ? performance.now() / 1000 : 0;
     // UWAGA na zmiane zachowania: stary kod wolal `exhaust.update(time)`, gdzie
     // `time` to bylo BEZWZGLEDNE performance.now()/1000, a funkcja oczekiwala

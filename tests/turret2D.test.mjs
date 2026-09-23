@@ -71,3 +71,38 @@ test('Path2D geometry is compiled once per silhouette', () => {
 test('turret drawing is skipped while the CIC overlay is up', () => {
   assert.match(source, /window\.CICDisplay\?\.active/);
 });
+
+// Regresja: strzał myśliwca (bez wieżyczek) szukał najbliższej wieżyczki tego
+// samego typu na DOWOLNYM okręcie, bez limitu odległości — dogfight daleko od
+// kamery zapalał błyski i odrzut na CIWS-ach Atlasa i trząsł kamerą.
+test('a shot is attributed only to the turrets of the ship that fired it', () => {
+  const ciws = MASTER_WEAPONS.ciws_mk1;
+  const shipA = { autoWeapons: [{ def: ciws, hpOffset: { x: 10, y: 0 } }] };
+  const shipB = { autoWeapons: [{ def: ciws, hpOffset: { x: 10, y: 0 } }] };
+  const fighter = { fighter: true, type: 'fighter' };
+
+  try {
+    Turret2D.enabled = true;
+    Turret2D.beginFrame();
+    Turret2D.sync(shipA, 0, 0, 0, 1);
+    Turret2D.sync(shipB, 5000, 0, 0, 1);
+
+    assert.equal(Turret2D.triggerShot('ciws', 5005, 0, fighter), null,
+      'myśliwiec nie ma wieżyczek — żaden cudzy CIWS nie może dostać jego strzału');
+    assert.equal(Turret2D.findTurretKey(5005, 0, 'ciws', fighter), null);
+
+    // Strzał A oddany tuż przy B i tak należy do A.
+    const shotA = Turret2D.triggerShot('ciws', 5005, 0, shipA);
+    assert.ok(shotA && Math.hypot(shotA.x, shotA.y) < 200, 'błysk musi wyjść z lufy strzelca');
+    const keyA = Turret2D.findTurretKey(5005, 0, 'ciws', shipA);
+    const muzzleA = Turret2D.resolveMuzzle(keyA);
+    assert.ok(muzzleA && Math.hypot(muzzleA.x, muzzleA.y) < 200);
+
+    // Bez strzelca: tylko wieżyczka przy punkcie strzału, nie „najbliższa na mapie”.
+    assert.equal(Turret2D.triggerShot('ciws', 20000, 0), null, 'daleki strzał bez strzelca nie trafia w nic');
+    const nearB = Turret2D.triggerShot('ciws', 5010, 0);
+    assert.ok(nearB && Math.abs(nearB.x - 5000) < 200, 'strzał przy lufie B nadal znajduje B');
+  } finally {
+    Turret2D.clear();
+  }
+});

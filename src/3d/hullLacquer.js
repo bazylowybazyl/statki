@@ -11,8 +11,13 @@
 //    Kanał B = waga lakieru, która gaśnie do zera przy sylwetce — jasna
 //    obwódka czytała się jak włączona tarcza (tarcze są dziś niewidoczne,
 //    a tarcza-obrys świeci właśnie wzdłuż sylwetki);
-//  - OTOCZENIE = mgławica gry + rzadkie gwiazdy HDR (kanał alfa) w podwójnej
-//    paraboloidzie: zenit w środku tekstury, horyzont na okręgu;
+//  - DALEKI KOSMOS = ciemny gradient + rzadkie gwiazdy HDR (kanał alfa)
+//    w podwójnej paraboloidzie: zenit w środku tekstury, horyzont na okręgu.
+//    Jest w nieskończoności, więc zmienia się tylko przy obrocie statku;
+//  - BLISKIE OBŁOKI = osobny, bezszwowy kafel (nie tło gry!) zakotwiczony
+//    w świecie. Statek przelatuje pod nimi z paralaksą (skyDrift), więc
+//    odbicie sunie po kadłubie także przy locie prosto — bez tej warstwy
+//    kamera jadąca za statkiem sprawiała, że odbicie stało w miejscu;
 //  - WSPÓLNE UNIFORMY: ten sam obiekt siedzi we wszystkich materiałach
 //    kadłubów, więc strojenie to kilka przypisań na klatkę, bez pętli po statkach.
 // Shader: HEX_FRAGMENT_SHADER w hexShips3D.js (blok „LAKIER”).
@@ -22,9 +27,18 @@ export const HULL_LACQUER_DEFAULTS = Object.freeze({
   enabled: true,
   strength: 1.0,       // mnożnik całej warstwy
   f0: 0.05,            // Fresnel lakieru przy patrzeniu na wprost
-  nebGain: 10.0,       // wzmocnienie mgławicy w odbiciu (liniowo)
-  nebClamp: 0.9,       // sufit odbicia mgławicy — pod progiem bloomu (0,9)
+  nebGain: 10.0,       // wzmocnienie gradientu dalekiego kosmosu (liniowo)
+  nebClamp: 0.9,       // sufit odbicia dalekiego kosmosu — pod progiem bloomu (0,9)
   starMax: 40.0,       // HDR najjaśniejszej gwiazdy w odbiciu
+  // Bliskie obłoki (kafel zakotwiczony w świecie). Podmiana grafiki: skyUrl —
+  // dowolny bezszwowy obraz (ciemne tło, jaśniejsze obłoki), najlepiej 1024–2048 px.
+  skyUrl: 'assets/reflections/lacquer-sky.png',
+  skyTile: 9000,       // jednostki świata na jeden kafel
+  skyDrift: 0.25,      // ułamek prędkości statku, z jakim odbicie sunie po kadłubie
+  skyHeight: 700,      // siła wygięcia odbicia na krzywiznach kadłuba
+  skyGain: 8.0,        // jasność obłoków w odbiciu (× Fresnel ≈ 0,05 na płaskim)
+  skyCoreBoost: 2.0,   // dodatkowe podbicie najjaśniejszych włókien (HDR)
+  skyBlurLod: 5.0,     // poziom mip obłoków dla odbicia metalicznego
   sunRadiance: 150.0,  // słońce w odbiciu; × Fresnel ≈ 7 → bloom
   glintExp: 1500.0,    // ostrość odblasku słońca
   sheen: 3.0,          // miękki połysk wokół odblasku
@@ -53,7 +67,9 @@ export const MAX_ENGINE_ZONES = 20;
 const DEG = Math.PI / 180;
 // Maksimum gradientu rozmytej krawędzi = 1 / (sigma * sqrt(2π)).
 const EDGE_GAIN = 0.3989423;
-const NEBULA_PROBE_MS = 1000;
+// Czas wygaszania bliskich obłoków przy wejściu w warp i powrotu po nim —
+// przy prędkościach warpu kafel przewijałby się szybciej niż klatki.
+const SKY_WARP_FADE_S = 0.6;
 
 function clampNum(value, min, max, fallback) {
   const n = Number(value);
@@ -187,9 +203,9 @@ export function computeEngineZones(mainThrusters, sideThrusters, grid, options =
   return zones;
 }
 
-// Piksele otoczenia (RGBA8): RGB = bajty sRGB mgławicy (albo proceduralne
-// tło, dopóki mgławica się nie wczyta), A = gwiazdy (HDR = A × starMax
-// w shaderze). Gwiazdy deterministyczne — ta sama mapa przy każdym starcie.
+// Piksele dalekiego kosmosu (RGBA8): RGB = podany obraz sRGB albo, bez niego,
+// ciemny gradient; A = gwiazdy (HDR = A × starMax w shaderze). Gwiazdy są
+// deterministyczne — ta sama mapa przy każdym starcie.
 export function buildLacquerEnvPixels(srcRGBA, size, options = {}) {
   const starCount = Math.max(0, Math.round(clampNum(options.starCount, 0, 5000, 450)));
   const starMin = clampNum(options.starMin, 0, 100, 1.0);
@@ -314,44 +330,42 @@ function createEnvTexture(pixels, size) {
   return texture;
 }
 
-// Obraz tła z NebulaSystem (planet3d.assets.js). Szukamy tylko wśród dzieci
-// sceny, bez pełnego trawersu.
-function findNebulaImage(scene) {
-  const children = scene?.children;
-  if (!Array.isArray(children)) return null;
-  for (let i = 0; i < children.length; i++) {
-    const child = children[i];
-    if (child?.name !== 'Nebula') continue;
-    const image = child.material?.uniforms?.map?.value?.image || null;
-    return isImageReady(image) ? image : null;
-  }
-  return null;
-}
-
-function readNebulaPixels(image, size) {
-  const canvas = makeCanvas(size, size);
-  const ctx = canvas?.getContext('2d', { willReadFrequently: true });
-  if (!ctx) return null;
-  const { w, h } = imageSize(image);
-  // Środkowy kwadrat obrazu — bez spłaszczania proporcji.
-  const side = Math.min(w, h);
-  ctx.drawImage(image, (w - side) * 0.5, (h - side) * 0.5, side, side, 0, 0, size, size);
-  return ctx.getImageData(0, 0, size, size).data;
-}
-
 const flatShapeTexture = createShapeTexture(
   toHalfFloatData(new Float32Array([0, 0, 0, 1])), 1, 1
 );
+
+// Czarny kafel do czasu wczytania obłoków — warstwa bliska nic wtedy nie dodaje.
+const emptySkyTexture = (() => {
+  const texture = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.needsUpdate = true;
+  return texture;
+})();
+
+function configureSkyTexture(texture) {
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.magFilter = THREE.LinearFilter;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.generateMipmaps = true;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.needsUpdate = true;
+  return texture;
+}
 
 export const HullLacquer = {
   // Wspólne obiekty uniformów — hexShips3D wkłada TE SAME obiekty do każdego
   // materiału kadłuba (i płyty pancerza).
   uniforms: {
     uLacquerEnv: { value: null },
+    uLacquerSky: { value: emptySkyTexture },
     uLacquerEye: { value: new THREE.Vector3(0, 0, 1000) },
-    uLacquerA: { value: new THREE.Vector4(0, 0.05, 10, 0.9) },   // siła, F0, zysk mgławicy, sufit mgławicy
+    uLacquerA: { value: new THREE.Vector4(0, 0.05, 10, 0.9) },   // siła, F0, zysk dalekiego kosmosu, jego sufit
     uLacquerB: { value: new THREE.Vector4(40, 150, 1500, 3) },   // gwiazdy HDR, słońce, ostrość odblasku, połysk
-    uLacquerC: { value: new THREE.Vector4(60, 0.6, 3, 0) }       // ostrość połysku, metal, mip rozmycia, -
+    uLacquerC: { value: new THREE.Vector4(60, 0.6, 3, 0) },      // ostrość połysku, metal, mip rozmycia, -
+    uLacquerD: { value: new THREE.Vector4(1 / 9000, 0.25, 700, 8) }, // obłoki: 1/kafel, drift, wygięcie, jasność
+    uLacquerE: { value: new THREE.Vector4(2, 5, 1, 0) }          // obłoki: podbicie rdzeni, mip rozmycia, wygaszenie (warp), -
   },
   // Mapa „bez lakieru” (waga 0) dla kadłubów bez sprite'a i do czasu wypieczenia.
   flatShapeUniform: { value: flatShapeTexture },
@@ -359,8 +373,10 @@ export const HullLacquer = {
   _entries: new WeakMap(),
   _pending: [],
   _envTexture: null,
-  _envFromNebula: false,
-  _nextNebulaProbe: 0,
+  _skyTexture: null,
+  _skyUrl: null,
+  _skyFade: 1,
+  _lastUpdateMs: 0,
 
   getTuning() {
     if (typeof window === 'undefined') return HULL_LACQUER_DEFAULTS;
@@ -410,9 +426,12 @@ export const HullLacquer = {
   // oko pseudo-perspektywy nad środkiem kadru (fov gry), dzięki któremu płaskie
   // płyty odbijają różne kierunki nieba zamiast jednego punktu. Trzymamy
   // referencję do wektora kamery, bo syncCamera przestawia go w każdym passie.
-  update(scene, eyePosition) {
+  update(eyePosition) {
     const t = this.getTuning();
     const u = this.uniforms;
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const dt = this._lastUpdateMs > 0 ? Math.min(0.25, (now - this._lastUpdateMs) * 0.001) : 0;
+    this._lastUpdateMs = now;
     if (eyePosition && u.uLacquerEye.value !== eyePosition) u.uLacquerEye.value = eyePosition;
     u.uLacquerA.value.set(
       t.enabled !== false ? clampNum(t.strength, 0, 4, 1) : 0,
@@ -432,32 +451,67 @@ export const HullLacquer = {
       clampNum(t.envBlurLod, 0, 10, 3),
       0
     );
-    if (!(u.uLacquerA.value.x > 0)) return; // wyłączony: nic nie pieczemy
-    this._ensureEnv(scene);
+    // W warpie bliskie obłoki gasną: kafel przewijałby się szybciej niż klatki.
+    const warpActive = typeof window !== 'undefined' && window.warp?.state === 'active';
+    const fadeStep = dt / SKY_WARP_FADE_S;
+    this._skyFade = warpActive
+      ? Math.max(0, this._skyFade - fadeStep)
+      : Math.min(1, this._skyFade + fadeStep);
+    u.uLacquerD.value.set(
+      1 / clampNum(t.skyTile, 100, 1e7, 9000),
+      clampNum(t.skyDrift, 0, 4, 0.25),
+      clampNum(t.skyHeight, 0, 1e6, 700),
+      clampNum(t.skyGain, 0, 1000, 8)
+    );
+    u.uLacquerE.value.set(
+      clampNum(t.skyCoreBoost, 0, 100, 2),
+      clampNum(t.skyBlurLod, 0, 12, 5),
+      this._skyFade,
+      0
+    );
+    if (!(u.uLacquerA.value.x > 0)) return; // wyłączony: nic nie pieczemy ani nie ładujemy
+    this._ensureEnv();
+    this._ensureSky(typeof t.skyUrl === 'string' ? t.skyUrl : HULL_LACQUER_DEFAULTS.skyUrl);
     this._pumpBake();
   },
 
-  _ensureEnv(scene) {
-    if (!this._envTexture) {
-      this._setEnv(buildLacquerEnvPixels(null, ENV_MAP_SIZE, { starMax: HULL_LACQUER_DEFAULTS.starMax }));
-    }
-    if (this._envFromNebula) return;
-    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
-    if (now < this._nextNebulaProbe) return;
-    this._nextNebulaProbe = now + NEBULA_PROBE_MS;
-    const image = findNebulaImage(scene);
-    if (!image) return;
-    const src = readNebulaPixels(image, ENV_MAP_SIZE);
-    if (!src) return;
-    this._setEnv(buildLacquerEnvPixels(src, ENV_MAP_SIZE, { starMax: HULL_LACQUER_DEFAULTS.starMax }));
-    this._envFromNebula = true;
-  },
-
-  _setEnv(pixels) {
-    const texture = createEnvTexture(pixels, ENV_MAP_SIZE);
-    this._envTexture?.dispose?.();
+  _ensureEnv() {
+    if (this._envTexture) return;
+    const texture = createEnvTexture(
+      buildLacquerEnvPixels(null, ENV_MAP_SIZE, { starMax: HULL_LACQUER_DEFAULTS.starMax }),
+      ENV_MAP_SIZE
+    );
     this._envTexture = texture;
     this.uniforms.uLacquerEnv.value = texture;
+  },
+
+  // Kafel obłoków. Zmiana `skyUrl` w strojeniu podmienia grafikę w locie;
+  // do czasu wczytania warstwa bliska jest czarna (nic nie dodaje).
+  _ensureSky(url) {
+    if (url === this._skyUrl) return;
+    this._skyUrl = url;
+    if (!url) {
+      this._setSky(null);
+      return;
+    }
+    new THREE.TextureLoader().load(
+      url,
+      (texture) => {
+        if (this._skyUrl !== url) {
+          texture.dispose();
+          return;
+        }
+        this._setSky(configureSkyTexture(texture));
+      },
+      undefined,
+      (err) => console.warn('[HullLacquer] Nie wczytano obłoków odbić:', url, err)
+    );
+  },
+
+  _setSky(texture) {
+    if (this._skyTexture && this._skyTexture !== texture) this._skyTexture.dispose();
+    this._skyTexture = texture;
+    this.uniforms.uLacquerSky.value = texture || emptySkyTexture;
   },
 
   _pumpBake() {

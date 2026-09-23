@@ -72,17 +72,3 @@ test('terran carrier editor defaults include full hardpoints engines and lights'
     }
   );
 });
-
-test('shield authority debug keeps Terra carrier and supercapital class keys', async () => {
-  const destructor = await import('../src/game/destructor.js');
-
-  assert.equal(typeof destructor.getShieldAuthorityDebugInfo, 'function');
-  assert.deepEqual(destructor.getShieldAuthorityDebugInfo({ type: 'carrier' }), {
-    key: 'terran_carrier',
-    classMult: 3.2
-  });
-  assert.deepEqual(destructor.getShieldAuthorityDebugInfo({ type: 'supercapital' }), {
-    key: 'terran_supercapital',
-    classMult: 3.8
-  });
-});

@@ -1,0 +1,10 @@
+[
+ {"id": "k7_docked_z035", "js": "H.flight.start('docked', 0.35)"},
+ {"id": "k7_docked_z016", "js": "H.flight.start('docked', 0.16)"},
+ {"id": "k7_docked_z01", "js": "H.flight.start('docked', 0.1)"},
+ {"id": "port_side_z034", "js": "H.applyPreset(7); const a = (45 - 9) * Math.PI/180; H.setGame(Math.cos(a)*46500, Math.sin(a)*46500, 0.342)"},
+ {"id": "port_side_z02", "js": "H.applyPreset(7); const a = (45 - 7) * Math.PI/180; H.setGame(Math.cos(a)*48000, Math.sin(a)*48000, 0.2)"},
+ {"id": "port_z01", "js": "H.applyPreset(7); const a = (45 - 3) * Math.PI/180; H.setGame(Math.cos(a)*50000, Math.sin(a)*50000, 0.1)"},
+ {"id": "port_z0035", "js": "H.applyPreset(7); const a = Math.PI/4; H.setGame(Math.cos(a)*52000, Math.sin(a)*52000, 0.035)"},
+ {"id": "p9", "js": "H.applyPreset(9)"}
+]

@@ -29,17 +29,29 @@ test('lakier stoi po isGlowing i przed pętlą świateł', () => {
   assert.ok(lacquer < lights, 'lakier przed światłami');
 });
 
-test('oba vertex shadery kadłuba podają vWorldXY dla lakieru', () => {
+test('oba vertex shadery kadłuba podają vWorldXY i vOriginXY dla lakieru', () => {
   for (const name of ['HEX_VERTEX_SHADER', 'ARMOR_VERTEX_SHADER']) {
     const vertex = readShaderConst(name);
     assert.match(vertex, /varying\s+vec2\s+vWorldXY\s*;/, name);
     assert.match(vertex, /vWorldXY\s*=\s*\(modelMatrix\s*\*/, name);
+    // Środek statku — bez niego odbicie obłoków nie przesuwa się przy locie.
+    assert.match(vertex, /varying\s+vec2\s+vOriginXY\s*;/, name);
+    assert.match(vertex, /vOriginXY\s*=\s*modelMatrix\[3\]\.xy\s*;/, name);
   }
-  assert.match(readShaderConst('HEX_FRAGMENT_SHADER'), /varying\s+vec2\s+vWorldXY\s*;/);
+  const fragment = readShaderConst('HEX_FRAGMENT_SHADER');
+  assert.match(fragment, /varying\s+vec2\s+vWorldXY\s*;/);
+  assert.match(fragment, /varying\s+vec2\s+vOriginXY\s*;/);
+});
+
+test('obłoki odbić są zakotwiczone w świecie i przesuwają się z pozycją statku', () => {
+  const fragment = readShaderConst('HEX_FRAGMENT_SHADER');
+  // pozycja statku × drift + offset w kadłubie + wygięcie od R
+  assert.match(fragment, /vOriginXY\s*\*\s*uLacquerD\.y\s*\+\s*\(vWorldXY\s*-\s*vOriginXY\)/);
+  assert.match(fragment, /texture2D\(uLacquerSky,\s*skyUV\)/);
 });
 
 test('materiał kadłuba dostaje WSPÓLNE obiekty uniformów lakieru', () => {
-  for (const name of ['uLacquerEnv', 'uLacquerEye', 'uLacquerA', 'uLacquerB', 'uLacquerC']) {
+  for (const name of ['uLacquerEnv', 'uLacquerSky', 'uLacquerEye', 'uLacquerA', 'uLacquerB', 'uLacquerC', 'uLacquerD', 'uLacquerE']) {
     assert.match(source, new RegExp(name + ':\\s*HullLacquer\\.uniforms\\.' + name + '\\b'), name);
     assert.match(readShaderConst('HEX_FRAGMENT_SHADER'), new RegExp('uniform\\s+\\w+\\s+' + name + '\\s*;'), name);
   }

@@ -1,0 +1,4 @@
+[
+ {"id": "floor_test", "js": "H.flight.start('free', 0.3); H.flight.setPose(6200, 2600, -Math.PI/2); const a = H.flight.simulate(6, ['KeyW']); const g = H.flight.game; const f = g.frame; const w = { x: f.origin.x + g.player.x * f.tx + g.player.z * f.rx, y: f.origin.y + g.player.x * f.ty + g.player.z * f.ry }; window.__floorTest = { r: Math.hypot(w.x, w.y) - f.floorR, x: g.player.x, z: g.player.z, state: a.state }; console.error('FLOORTEST ' + JSON.stringify(window.__floorTest))"},
+ {"id": "p2_warn", "js": "H.applyPreset(2)"}
+]

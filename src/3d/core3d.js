@@ -8,6 +8,8 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { Shockwave3DManager } from '../effects3d/shockwave3D.js';
 
 const MAX_HEAT_HAZE_SOURCES = 24;
+// Zastępcze flagi warstw dla wolnej kamery (lot nad miastem): renderuj wszystko.
+const LAYERS_ALL_ACTIVE = Object.freeze({ planets: true, halo: true, ringPlanets: true, shields: true });
 const PLANET_RENDER_LAYER = 3;
 const PLANET_HALO_RENDER_LAYER = 5;
 const RING_PLANET_RENDER_LAYER = 6;
@@ -515,6 +517,12 @@ export const Core3D = {
   shaftDiscs: new Float32Array(SHAFT_DISC_CAP * 4), shaftDiscCount: 0,
   shaftHulls: new Float32Array(SHAFT_HULL_CAP * 6), shaftHullCount: 0,
   shaftRings: new Map(),
+  // Czy na warstwach planet / halo / ring-planet / tarcz jest w tej klatce coś
+  // widocznego. Pusty pass to i tak pełny obchód grafu sceny, a do celu MSAA
+  // także resolve + invalidate (three robi je na końcu KAŻDEGO render()).
+  // Flagi ustawiają właściciele: planet3d.assets.js (tym samym cullingiem, którym
+  // chowa planety) i shield3D.js — zachowawczo, w razie wątpliwości true.
+  layerActivity: { planets: true, halo: true, ringPlanets: true, shields: true },
   uberPass: null,
   bloomPass: null, bloomResolutionScale: BLOOM_DEFAULTS.resolutionScale, bloomBaseStrength: BLOOM_DEFAULTS.strength, bloomBaseThreshold: BLOOM_DEFAULTS.threshold,
   msaaSamples: 0,
@@ -683,6 +691,13 @@ export const Core3D = {
     this.renderer.toneMappingExposure = 1.0;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    // Słońce (planet3d.assets.js) ma castShadow + layers.enableAll, więc przy
+    // autoUpdate three przerysowywało mapę 4096² w KAŻDYM renderer.render(scene):
+    // halo ×2, bg, planets, ringPlanets, ortho, shields, fg (+3 w refrakcji) —
+    // za każdym razem pełny obchód grafu (renderObject) i clear mapy. Rzucający
+    // żyją tylko na warstwach ortho i FG (stacje), więc mapę odświeżamy ręcznie
+    // tuż przed tymi passami (render() i snapshot refrakcji).
+    this.renderer.shadowMap.autoUpdate = false;
     this.renderer.setClearColor(0x000000, 0);
     // Disable per-render auto-reset so renderer.info accumulates across all
     // passes — we manually reset once per frame at the start of the pass chain.
@@ -1098,9 +1113,11 @@ export const Core3D = {
     const targetZ = (h / 2) / Math.tan(fovRad) / zoom;
     this.cameraPersp.updateProjectionMatrix();
 
-    const shake = (typeof window !== 'undefined') ? window.__weapon3dCameraShake : null;
-    const camX = gameCamera.x + (Number(shake?.x) || 0);
-    const camY = -(gameCamera.y + (Number(shake?.y) || 0));
+    // Wstrząs od strzałów (window.__weapon3dCameraShake) jest już w gameCamera:
+    // render() w index.html dokłada go do `cam`. Dodawany TUTAJ ruszał tylko
+    // sceny Three, a kanwa 2D (wieżyczki, myśliwce) stała — warstwy się rozjeżdżały.
+    const camX = gameCamera.x;
+    const camY = -gameCamera.y;
 
     this.cameraOrtho.position.set(camX, camY, 150000);
     this.cameraPersp.position.set(camX, camY, targetZ);
@@ -1217,9 +1234,15 @@ export const Core3D = {
     const shaftCfg = this._shaftCfg || resolveShadowShaftsQuality(this.shadowShaftsQuality);
     let isSplit = false;
 
+    // Warstwy bez widocznej zawartości (flagi od właścicieli). Wolna kamera lotu
+    // nad miastem widzi scenę inaczej niż culling planet — tam rysujemy wszystko.
+    const layerActivity = freePerspective ? LAYERS_ALL_ACTIVE : this.layerActivity;
+
     // Pre-pass halo tylko gdy planety są w ogóle renderowane — wcześniej te
     // 2 przejścia sceny wykonywały się ZAWSZE, nawet na ultrafast bez planet.
-    if (t.planetPass !== false && this.planetHaloTarget && this.planetHaloPass && this.haloDepthMaskMaterial) {
+    // Ani gdy żadne ciało z poświatą nie jest w kadrze (bitwa w próżni): wtedy
+    // pomijany jest też quad halo w _scenePasses, więc stary target nie wycieka.
+    if (t.planetPass !== false && layerActivity.halo !== false && this.planetHaloTarget && this.planetHaloPass && this.haloDepthMaskMaterial) {
       const prevAutoClear = this.renderer.autoClear;
       const prevTarget = this.renderer.getRenderTarget();
       const prevClearAlpha = this.renderer.getClearAlpha();
@@ -1408,7 +1431,7 @@ export const Core3D = {
         const layers = [];
         if (t.bgPass !== false) layers.push({ layer: 1, ortho: false });
         if (t.orthoPass !== false) layers.push({ layer: 0, ortho: true });
-        if (t.orthoPass !== false) layers.push({ layer: SHIELD_RENDER_LAYER, ortho: true });
+        if (t.orthoPass !== false && layerActivity.shields !== false) layers.push({ layer: SHIELD_RENDER_LAYER, ortho: true });
 
         const renderRefractionViewport = (camData, vpX, vpY, vpW, vpH) => {
           this.renderer.setViewport(vpX, vpY, vpW, vpH);
@@ -1419,6 +1442,8 @@ export const Core3D = {
           for (const { layer, ortho } of layers) {
             const cam = ortho ? this.cameraOrtho : this.cameraPersp;
             cam.layers.set(layer);
+            // Mapa cienia z rzucającymi warstwy ortho (patrz autoUpdate w init()).
+            if (layer === 0) this.renderer.shadowMap.needsUpdate = true;
             this.renderer.render(this.scene, cam);
           }
         };
@@ -1453,8 +1478,16 @@ export const Core3D = {
 
     // Scena → composerTarget (MSAA, bez pośrednich resolve), potem jedyny
     // resolve klatki (sceneResolvePass sampluje composerTarget) i post bez MSAA.
+    const shadowMap = this.renderer.shadowMap;
     for (const pass of this._scenePasses) {
-      if (pass && pass.enabled !== false) pass.render(this.renderer, null, this.composerTarget);
+      if (!pass || pass.enabled === false) continue;
+      // Pusty pass (planety poza kadrem, zero widocznych tarcz) = zero pracy.
+      if (!this._scenePassHasContent(pass, layerActivity)) continue;
+      // Shadow mapa tylko przed passami z rzucającymi: ortho i FG (stacje →
+      // shadowCatcherFg). Pozostałe passy nie mają odbiorców w zasięgu kamery
+      // cienia, a three kasuje needsUpdate po pierwszym renderze mapy.
+      if (pass === this.renderPassOrtho || pass === this.renderPassFg) shadowMap.needsUpdate = true;
+      pass.render(this.renderer, null, this.composerTarget);
     }
     for (const pass of this._postPasses) {
       if (pass && pass.enabled !== false) pass.render(this.renderer, null, this.postTarget);
@@ -1575,6 +1608,36 @@ export const Core3D = {
 
   beginShaftDiscFrame() { this.shaftDiscCount = 0; },
 
+  // Planety: updatePlanets3D kasuje flagi na starcie, a każde ciało widoczne
+  // w kadrze zapala swoje warstwy (patrz layerActivity).
+  beginPlanetLayerFrame() {
+    const a = this.layerActivity;
+    a.planets = false;
+    a.halo = false;
+    a.ringPlanets = false;
+  },
+
+  markPlanetLayersActive(ringAnchored = false, withHalo = true) {
+    const a = this.layerActivity;
+    if (ringAnchored) {
+      a.ringPlanets = true;
+      return;
+    }
+    a.planets = true;
+    if (withHalo) a.halo = true;
+  },
+
+  setShieldLayerActive(active) { this.layerActivity.shields = !!active; },
+
+  // Pass sceny bez widocznej zawartości pomijamy w całości.
+  _scenePassHasContent(pass, activity) {
+    if (pass === this.renderPassPlanets) return activity.planets !== false;
+    if (pass === this.planetHaloPass) return activity.halo !== false;
+    if (pass === this.renderPassRingPlanets) return activity.ringPlanets !== false;
+    if (pass === this.renderPassShields) return activity.shields !== false;
+    return true;
+  },
+
   beginShaftHullFrame() { this.shaftHullCount = 0; },
 
   // Pasmo kadłuba jako analityczna kapsuła (odcinek [x1,y1]-[x2,y2] +
@@ -1640,6 +1703,9 @@ export const Core3D = {
   pushHeatHazeWorld(worldX, worldY, worldZ = -4, radiusWorld = 80, strength = 1.0, dirWorldX = 0, dirWorldY = 0) {
     if (!this.isInitialized || !this.heatHazeSources || !this.cameraOrtho) return false;
     if ((this.perfToggles?.heatHaze) === false) return false;
+    // Bufor źródeł pełny: nic już nie trafi do passu. Dysze wołają to dla każdej
+    // dyszy co klatkę, więc wychodzimy przed jakimkolwiek liczeniem.
+    if ((this.heatHazeCount | 0) >= (this.heatHazeMaxSources | 0)) return false;
 
     // Kierunek wydechu w przestrzeni sceny; (0,0) => zrodlo izotropowe (eksplozje).
     let dirX = Number(dirWorldX) || 0;
@@ -1647,63 +1713,64 @@ export const Core3D = {
     const dirLen = Math.sqrt(dirX * dirX + dirY * dirY);
     if (dirLen > 0.0001) { dirX /= dirLen; dirY /= dirLen; } else { dirX = 0; dirY = 0; }
 
-    const doPush = (u, v, rUv, amp) => {
-        // Smuga siega ~3.2 * rUv w dol wydechu — cullujemy z zapasem.
-        const reach = rUv * 3.4;
-        if (u < -reach || u > 1.0 + reach || v < -reach || v > 1.0 + reach) return;
-        const maxSources = this.heatHazeMaxSources | 0;
-        if (this.heatHazeCount >= maxSources) return;
-        const outBase = this.heatHazeCount * 4;
-        this.heatHazeSources[outBase + 0] = u;
-        this.heatHazeSources[outBase + 1] = v;
-        this.heatHazeSources[outBase + 2] = rUv;
-        this.heatHazeSources[outBase + 3] = amp;
-        if (this.heatHazeDirs) {
-            const dirBase = this.heatHazeCount * 2;
-            this.heatHazeDirs[dirBase + 0] = dirX;
-            this.heatHazeDirs[dirBase + 1] = dirY;
-        }
-        this.heatHazeCount++;
-    };
-
-    const mapToCamera = (camData, isSplit, isRightSide) => {
-        const zoom = Math.max(0.0001, camData.zoom || 1);
-        const camW = isSplit ? this.width / 2 : this.width;
-        const camH = this.height;
-        const halfW = camW / 2 / zoom;
-        const halfH = camH / 2 / zoom;
-
-        const left = camData.x - halfW;
-        const bottom = -(camData.y) - halfH;
-
-        const worldW = halfW * 2;
-        const worldH = halfH * 2;
-
-        let u = (worldX - left) / worldW;
-        const v = (worldY - bottom) / worldH;
-        // Promien w jednostkach osi v: shader koryguje os u przez uAspect,
-        // wiec mapowanie swiat->ekran jest izotropowe (takze w split-screen).
-        const rUv = radiusWorld / worldH;
-
-        const zoomNow = Math.max(0.0001, camW / worldW);
-        const ampZoomScale = Math.max(0.22, Math.min(1.0, zoomNow));
-        const ampScaled = strength * ampZoomScale;
-
-        if (isSplit) {
-            u = isRightSide ? (u * 0.5 + 0.5) : (u * 0.5);
-        }
-        doPush(u, v, rUv, ampScaled);
-    };
-
     const isSplit = typeof window !== 'undefined' && window.splitScreenMode && this.activeCam2;
     if (isSplit) {
-        mapToCamera(this.activeCam1, true, false);
-        mapToCamera(this.activeCam2, true, true);
+      this._pushHeatHazeForCamera(this.activeCam1, true, false, worldX, worldY, radiusWorld, strength, dirX, dirY);
+      this._pushHeatHazeForCamera(this.activeCam2, true, true, worldX, worldY, radiusWorld, strength, dirX, dirY);
     } else {
-        mapToCamera(this.activeCam1, false, false);
+      this._pushHeatHazeForCamera(this.activeCam1, false, false, worldX, worldY, radiusWorld, strength, dirX, dirY);
     }
-    
+
     return true;
+  },
+
+  // Metoda zamiast dwóch domknięć tworzonych przy każdym pushHeatHazeWorld.
+  _pushHeatHazeForCamera(camData, isSplit, isRightSide, worldX, worldY, radiusWorld, strength, dirX, dirY) {
+    const zoom = Math.max(0.0001, camData.zoom || 1);
+    const camW = isSplit ? this.width / 2 : this.width;
+    const camH = this.height;
+    const halfW = camW / 2 / zoom;
+    const halfH = camH / 2 / zoom;
+
+    const left = camData.x - halfW;
+    const bottom = -(camData.y) - halfH;
+
+    const worldW = halfW * 2;
+    const worldH = halfH * 2;
+
+    let u = (worldX - left) / worldW;
+    const v = (worldY - bottom) / worldH;
+    // Promien w jednostkach osi v: shader koryguje os u przez uAspect,
+    // wiec mapowanie swiat->ekran jest izotropowe (takze w split-screen).
+    const rUv = radiusWorld / worldH;
+    // Źródło o promieniu poniżej ~1,5 px nie zniekształca niczego widocznego,
+    // a zajmuje jeden z 24 slotów (daleki zoom, mała jednostka).
+    if (rUv * camH < 1.5) return;
+
+    const zoomNow = Math.max(0.0001, camW / worldW);
+    const ampZoomScale = Math.max(0.22, Math.min(1.0, zoomNow));
+    const amp = strength * ampZoomScale;
+
+    if (isSplit) {
+      u = isRightSide ? (u * 0.5 + 0.5) : (u * 0.5);
+    }
+
+    // Smuga siega ~3.2 * rUv w dol wydechu — cullujemy z zapasem.
+    const reach = rUv * 3.4;
+    if (u < -reach || u > 1.0 + reach || v < -reach || v > 1.0 + reach) return;
+    const maxSources = this.heatHazeMaxSources | 0;
+    if (this.heatHazeCount >= maxSources) return;
+    const outBase = this.heatHazeCount * 4;
+    this.heatHazeSources[outBase + 0] = u;
+    this.heatHazeSources[outBase + 1] = v;
+    this.heatHazeSources[outBase + 2] = rUv;
+    this.heatHazeSources[outBase + 3] = amp;
+    if (this.heatHazeDirs) {
+      const dirBase = this.heatHazeCount * 2;
+      this.heatHazeDirs[dirBase + 0] = dirX;
+      this.heatHazeDirs[dirBase + 1] = dirY;
+    }
+    this.heatHazeCount++;
   },
 
   pushGodRayWorld() { },

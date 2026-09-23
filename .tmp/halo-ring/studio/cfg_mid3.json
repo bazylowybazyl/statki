@@ -1,0 +1,11 @@
+[
+ {"id": "p1", "js": "H.applyPreset(1)"},
+ {"id": "p2", "js": "H.applyPreset(2)"},
+ {"id": "p3", "js": "H.applyPreset(3)"},
+ {"id": "p4", "js": "H.applyPreset(4)"},
+ {"id": "p5", "js": "H.applyPreset(5)"},
+ {"id": "p6", "js": "H.applyPreset(6)"},
+ {"id": "p7", "js": "H.applyPreset(7)"},
+ {"id": "p8", "js": "H.applyPreset(8)"},
+ {"id": "user_view", "js": "const f = H.ring.k7.frame; const v = h.v3; const pos = v(f.origin.x + f.rx*16000 + f.tx*-1500, f.origin.y + f.ry*16000 + f.ty*-1500, 3200); const tgt = v(f.origin.x + f.rx*800, f.origin.y + f.ry*800, -300); H.setCine({ pos, fwd: tgt.sub(pos).normalize(), up: v(0,0,1), fov: 40, sun: { azimuth: Math.atan2(f.ry, f.rx)/h.DEG - 75, elevation: 30 } })"}
+]

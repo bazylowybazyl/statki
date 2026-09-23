@@ -1,0 +1,87 @@
+[
+  {
+    "id": "ui_p1",
+    "ui": true,
+    "logs": []
+  },
+  {
+    "id": "m3_port_z02",
+    "preset": "7. Kamera gry (zoom 0,035)",
+    "mode": "game",
+    "calls": 16,
+    "triangles": 777904,
+    "tiles": 3,
+    "segments": 26,
+    "textureMB": 133,
+    "ms1440": 2.06,
+    "fps1440": 486,
+    "bakeMs": 2457,
+    "near": 2,
+    "hdr": {
+      "pixels": 129600,
+      "nanOrInf": 0,
+      "overBloomThreshold": 3,
+      "overFraction": 0.000023148148148148147,
+      "p50": 0.02166620559692383,
+      "p90": 0.1366683138400316,
+      "p99": 0.33450885003209113,
+      "p999": 0.6632176565527915,
+      "max": 10.249883906745909,
+      "histogram": {
+        "<=0.05": 78595,
+        "<=0.2": 46020,
+        "<=0.5": 4219,
+        "<=0.85": 763,
+        "<=0.9": 0,
+        "<=1.3": 0,
+        "<=2": 0,
+        "<=5": 2,
+        "<=12": 1,
+        "<=Infinity": 0
+      }
+    },
+    "gpu": "ANGLE (NVIDIA, NVIDIA GeForce RTX 5080 (0x00002C02) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "errors": [],
+    "logs": []
+  },
+  {
+    "id": "p9",
+    "preset": "9. Port Kepler — doki przypinane (M3)",
+    "mode": "cine",
+    "calls": 14,
+    "triangles": 979398,
+    "tiles": 28,
+    "segments": 179,
+    "textureMB": 133,
+    "ms1440": 2.83,
+    "fps1440": 353,
+    "bakeMs": 1810,
+    "near": 1613.4202800262553,
+    "hdr": {
+      "pixels": 129600,
+      "nanOrInf": 0,
+      "overBloomThreshold": 4,
+      "overFraction": 0.0000308641975308642,
+      "p50": 0.04275529455076903,
+      "p90": 0.13334604102671146,
+      "p99": 0.5115025201201439,
+      "p999": 0.6510526077985763,
+      "max": 7.069002044582367,
+      "histogram": {
+        "<=0.05": 80063,
+        "<=0.2": 42158,
+        "<=0.5": 6006,
+        "<=0.85": 1368,
+        "<=0.9": 1,
+        "<=1.3": 0,
+        "<=2": 2,
+        "<=5": 1,
+        "<=12": 1,
+        "<=Infinity": 0
+      }
+    },
+    "gpu": "ANGLE (NVIDIA, NVIDIA GeForce RTX 5080 (0x00002C02) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "errors": [],
+    "logs": []
+  }
+]

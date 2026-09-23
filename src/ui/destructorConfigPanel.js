@@ -111,21 +111,6 @@ const CONTROL_SECTIONS = [
       { key: 'shardHP', label: 'shard hp', min: 1, max: 500, step: 1 },
       { key: 'shardMass', label: 'shard mass', min: 0.1, max: 100, step: 0.1 }
     ]
-  },
-  {
-    title: 'Shield',
-    controls: [
-      { key: 'shieldRestitution', label: 'shield restitution', min: 0, max: 1.0, step: 0.01 },
-      { key: 'shieldCollisionDamageScale', label: 'collision damage', min: 0, max: 2.0, step: 0.01 },
-      { key: 'shieldSeparationPercent', label: 'separation percent', min: 0, max: 1.0, step: 0.01 },
-      { key: 'shieldSeparationSlop', label: 'separation slop', min: 0, max: 10.0, step: 0.1 },
-      { key: 'shieldCollisionCooldown', label: 'collision cooldown', min: 0, max: 1.0, step: 0.01 },
-      { key: 'shieldActivationDamageMult', label: 'activation damage', min: 0, max: 1.0, step: 0.01 },
-      { key: 'shieldCapitalDominanceRatio', label: 'capital dominance', min: 1.0, max: 8.0, step: 0.05 },
-      { key: 'shieldCapitalDominanceHeavyDamageMult', label: 'dominance heavy dmg', min: 0.01, max: 1.0, step: 0.01 },
-      { key: 'shieldAuthorityShieldMaxExp', label: 'authority shield exp', min: 0, max: 2.0, step: 0.01 },
-      { key: 'shieldAuthorityMassExp', label: 'authority mass exp', min: 0, max: 2.0, step: 0.01 }
-    ]
   }
 ];
 

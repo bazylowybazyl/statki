@@ -199,6 +199,7 @@
       <div><span>Zerwania łącznie</span><span id="st-broken">—</span></div>
       <div><span>Trójkąty skóry</span><span id="st-skin">—</span></div>
       <div><span>Krawędzie / wnętrze</span><span id="st-interior">—</span></div>
+      <div><span>Odłamki: blacha / profile</span><span id="st-debris">0 / 0</span></div>
       <div><span>Obiekty na starcie</span><span id="st-fleet">1 + 1</span></div>
       <div><span>Stress test</span><span id="st-benchmark">—</span></div>
       <div><span>Średni FPS próby</span><span id="st-average-fps">—</span></div>
@@ -289,6 +290,7 @@ BeamShips3D.setLightDir(0.35, 0.8, 0.5);
 
 // ============================== STAN ==============================
 let bodies = [];
+let simulationTime = 0;
 let cfg = null;
 let cellSize = 1;
 let stationStructure = null;
@@ -408,7 +410,7 @@ function rebuildBodies({ restructure = false, nextModels = models, fitView = fal
   }
 
   for (const b of bodies) b.dead = true;
-  BeamShips3D.sync([], camera, performance.now() * 0.001);
+  BeamShips3D.sync([], camera, simulationTime);
   bodies = [];
   if (nextStation !== stationStructure || nextRam !== ramStructure) {
     if (stationStructure?.skin) BeamShips3D.disposeSkinAssets(stationStructure.skin);
@@ -436,6 +438,9 @@ function rebuildBodies({ restructure = false, nextModels = models, fitView = fal
   stationBody = crashPairs[0].station;
   ramBody = crashPairs[0].ship;
   crashStarted = false;
+  simulationTime = 0;
+  BeamShips3D.debris?.reset();
+  BeamShips3D._lastTimeSec = 0;
   paused = false;
   piloting = true;
   clearFlightInput();
@@ -543,8 +548,9 @@ window.addEventListener('drop', e => {
 
 // ============================== DEBRIS ==============================
 DestructorBeams3D.onDebris = (body, node, wx, wy, wz, vx, vy, vz) => {
-  const scale = body.cellSize * (0.3 + Math.random() * 0.25);
-  BeamShips3D.spawnDebris(wx, wy, wz, vx, vy, vz, node.r, node.g, node.b, scale);
+  const scale = body.cellSize * (0.5 + Math.random() * 0.45);
+  const structural = !node.surface || (node.beamCount > node.localBeamCount && Math.random() < 0.4);
+  BeamShips3D.spawnDebris(wx, wy, wz, vx, vy, vz, node.r, node.g, node.b, scale, structural);
 };
 
 // ============================== UI ==============================
@@ -609,7 +615,7 @@ document.getElementById('btn-stress').addEventListener('click', async () => {
     document.getElementById('opt-scenario').value = String(pairCount);
     if (!rebuildBodies({ fitView: true })) return;
     const preparedPairs = crashPairs;
-    BeamShips3D.sync(bodies, camera, performance.now() * 0.001);
+    BeamShips3D.sync(bodies, camera, simulationTime);
     await renderer.compileAsync(scene, camera);
     if (preparedPairs !== crashPairs) return;
     startingStress = false;
@@ -737,7 +743,7 @@ function launchRam() {
   fitFleetView();
   const speed = val('sl-speed') || DEFAULT_CRASH_SPEED;
   // Pierwszy upload geometrii nie wchodzi w pomiar taranowania.
-  BeamShips3D.sync(bodies, camera, performance.now() * 0.001);
+  BeamShips3D.sync(bodies, camera, simulationTime);
   renderer.render(scene, camera);
   const launched = launchCrashPairs(DestructorBeams3D, crashPairs, speed);
   crashStarted = true;
@@ -819,6 +825,7 @@ function frame() {
       if (piloting && !initialModelsLoading && !startingStress) applyFlightControls(ramBody, flightInput, FIXED_DT, engineThrust, flightAssist);
       DestructorBeams3D.integrate(FIXED_DT, bodies);
       DestructorBeams3D.update(FIXED_DT, bodies);
+      simulationTime += FIXED_DT;
       if (measuring) {
         crashPerf.split = Math.max(crashPerf.split, DestructorBeams3D.perf.lastSplitMs);
         crashPerf.collision = Math.max(crashPerf.collision, DestructorBeams3D.perf.lastCollisionMs);
@@ -835,7 +842,7 @@ function frame() {
   if (measuring) crashPerf.physics = Math.max(crashPerf.physics, physicsMs);
 
   const syncStart = performance.now();
-  BeamShips3D.sync(bodies, camera, now * 0.001);
+  BeamShips3D.sync(bodies, camera, simulationTime);
   syncMs = performance.now() - syncStart;
   if (measuring) crashPerf.sync = Math.max(crashPerf.sync, syncMs);
   const followed = heavyShip ? stationBody : ramBody;
@@ -896,6 +903,8 @@ function updateStats() {
   set('st-broken', String(p.beamsBroken));
   set('st-skin', s.skinTriangles > 0 ? `${(s.skinTriangles / 1000).toFixed(1)}k` : '—');
   set('st-interior', `${(s.interiorTriangles / 1000).toFixed(1)}k`);
+  const debris = BeamShips3D.debris;
+  set('st-debris', `${debris?.batches[0].alive || 0} / ${debris?.batches[1].alive || 0}`);
   set('st-benchmark', benchmark.finished ? 'ZAKOŃCZONY' : benchmark.running ? (paused ? 'WSTRZYMANY' : `${(benchmark.wallMs / 1000).toFixed(1)} / 10 s`) : '—');
   set('st-average-fps', benchmark.frames ? benchmark.fps.toFixed(1) : '—');
   set('st-p95', benchmark.finished ? `${benchmark.p95.toFixed(1)} ms` : '—');
@@ -925,13 +934,14 @@ window.__demo = {
     for (let i = 0; i < steps; i++) {
       DestructorBeams3D.integrate(dt, bodies);
       DestructorBeams3D.update(dt, bodies);
+      simulationTime += dt;
     }
     pruneBodies();
   },
   render() {
     camera.updateMatrixWorld();
     camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
-    BeamShips3D.sync(bodies, camera, performance.now() * 0.001);
+    BeamShips3D.sync(bodies, camera, simulationTime);
     renderer.render(scene, camera);
     updateStats();
   }

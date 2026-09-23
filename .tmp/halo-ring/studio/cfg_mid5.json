@@ -1,0 +1,3 @@
+[
+ {"id": "dock_wall_test", "js": "H.flight.start('free', 0.3); H.flight.setPose(4700, 3200, 0); const a = H.flight.simulate(8, ['KeyW']); const g = H.flight.game; console.error('DOCKTEST ' + JSON.stringify({ x: g.player.x, z: g.player.z, hits: a.hits, last: g.collision.lastHit }))"}
+]

@@ -430,6 +430,36 @@ function isCircleVisibleInGameCamera(x, y, radius, cam, viewportWidth, viewportH
     return Math.abs(x - (Number(cam.x) || 0)) <= halfVpX &&
         Math.abs(y - (Number(cam.y) || 0)) <= halfVpY;
 }
+// Czy kula (księżyc, słońce) MOŻE być w kadrze — wyłącznie dla flag warstw
+// w Core3D (pomijanie pustych passów planet i halo), niczego nie chowa.
+// Zachowawczo: szeroki margines, a w split-screenie zawsze true (kamera persp
+// po syncCamera to kamera P2, patrz culling planet niżej).
+const BODY_ACTIVITY_NDC_PAD = 0.25;
+function isBodyLikelyOnScreen(gameX, gameY, visualZ, worldRadius, anchoredToRing, cam) {
+    if (!cam) return true;
+    if (window.splitScreenMode && Core3D.activeCam2) return true;
+    const r = Math.max(1, Number(worldRadius) || 1);
+    if (anchoredToRing) {
+        const zoom = Math.max(0.0001, Number(cam.zoom) || 1);
+        return isCircleVisibleInGameCamera(gameX, gameY, r * 1.25 + 160 / zoom, cam,
+            window.innerWidth || 1920, window.innerHeight || 1080);
+    }
+    const camera = Core3D.cameraPersp;
+    if (!camera) return true;
+    _planetCullCenter.set(gameX, -gameY, visualZ).project(camera);
+    _planetCullEdgeX.set(gameX + r, -gameY, visualZ).project(camera);
+    _planetCullEdgeY.set(gameX, -gameY + r, visualZ).project(camera);
+    const ndcRadiusX = Math.max(0.001, Math.abs(_planetCullEdgeX.x - _planetCullCenter.x));
+    const ndcRadiusY = Math.max(0.001, Math.abs(_planetCullEdgeY.y - _planetCullCenter.y));
+    const pad = BODY_ACTIVITY_NDC_PAD;
+    return !(
+        _planetCullCenter.x < (-1 - ndcRadiusX - pad) ||
+        _planetCullCenter.x > (1 + ndcRadiusX + pad) ||
+        _planetCullCenter.y < (-1 - ndcRadiusY - pad) ||
+        _planetCullCenter.y > (1 + ndcRadiusY + pad)
+    );
+}
+
 function loadTex(path) { const tex = textureLoader.load(path); if (Core3D.renderer) tex.anisotropy = Core3D.renderer.capabilities.getMaxAnisotropy(); return tex; }
 
 class DirectPlanet {
@@ -666,6 +696,8 @@ class DirectPlanet {
             return;
         }
         if (!this.group.visible) this.group.visible = true;
+        // Ta sama decyzja co chowanie grupy: planeta w kadrze = jej passy mają pracę.
+        if (typeof Core3D.markPlanetLayersActive === 'function') Core3D.markPlanetLayersActive(anchoredToRing, true);
 
         this.uniforms.uPlanetBloom.value = this.basePlanetBloom * ((window.DevVFX && window.DevVFX.planetBloomMultiplier !== undefined) ? window.DevVFX.planetBloomMultiplier : 1.0);
         if (window.SUN) {
@@ -756,7 +788,11 @@ class DirectMoon {
         if (!this.group || !this.parentData) return;
         const parentX = Number(this.parentData.x);
         const parentY = Number(this.parentData.y);
-        if (!Number.isFinite(parentX) || !Number.isFinite(parentY)) return;
+        if (!Number.isFinite(parentX) || !Number.isFinite(parentY)) {
+            // Bez pozycji nie wiemy, gdzie jest — zachowawczo pass zostaje.
+            if (typeof Core3D.markPlanetLayersActive === 'function') Core3D.markPlanetLayersActive(this.isRingAnchored, true);
+            return;
+        }
 
         const parentR = this.isRingAnchored
             ? resolveRingPlanetWorldRadius(this.parentData)
@@ -789,6 +825,14 @@ class DirectMoon {
                     this.halo.material.uniforms.sunPosition.value.set(window.SUN.x, -window.SUN.y, z);
                 }
             }
+            // Księżyc nie ma własnego cullingu (frustum robi three), więc flagę
+            // warstw liczymy osobno — z promieniem poświaty i szerokim marginesem.
+            if (typeof Core3D.markPlanetLayersActive === 'function'
+                && isBodyLikelyOnScreen(mx, my, z, scale * MOON_HALO_DEFAULTS.size, this.isRingAnchored, cam)) {
+                Core3D.markPlanetLayersActive(this.isRingAnchored, true);
+            }
+        } else if (typeof Core3D.markPlanetLayersActive === 'function') {
+            Core3D.markPlanetLayersActive(this.isRingAnchored, true);
         }
     }
     dispose() {
@@ -837,6 +881,12 @@ class DirectSun {
         const scale = (this.data.r3D || this.data.r || 200) * SUN_SIZE_MULTIPLIER;
         this.mesh.scale.set(scale, scale, scale);
         if (this.glow) { this.glow.scale.set(scale * 2.6, scale * 2.6, 1); this.glow.material.opacity = 0.6 + Math.sin(this.uniforms.uTime.value * 2.0) * 0.1; }
+        // Słońce nie ma cullingu w grze; flaga warstwy planet z promieniem
+        // poświaty (sprite 2,6× skali = 1,3× promienia), bez halo.
+        if (typeof Core3D.markPlanetLayersActive === 'function'
+            && isBodyLikelyOnScreen(this.data.x, this.data.y, -60000, scale * 1.3, false, cam)) {
+            Core3D.markPlanetLayersActive(false, false);
+        }
         
         // Zamiast pushGodRayWorld używamy uIsOcclusion, pushGodRayWorld wywoływane w core3d.js
         this.mesh.rotation.z -= 0.002 * dt;
@@ -898,6 +948,9 @@ window.initPlanets3D = function (planetList, sunData) {
 window.updatePlanets3D = function (dt, cam) {
     if (!Core3D.isInitialized || !cam) return;
     if (typeof Core3D.beginShaftDiscFrame === 'function') Core3D.beginShaftDiscFrame();
+    // Flagi warstw planet/halo/ring-planet: każde ciało w kadrze zapala swoje
+    // (Core3D pomija potem puste passy — patrz layerActivity).
+    if (typeof Core3D.beginPlanetLayerFrame === 'function') Core3D.beginPlanetLayerFrame();
     NebulaSystem.update(dt, cam); StarSystem.update(dt, cam, window.ship);
     if (window._entities) window._entities.forEach(ent => { if (ent.update) ent.update(dt, cam); });
 };
