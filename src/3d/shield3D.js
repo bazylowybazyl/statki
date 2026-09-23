@@ -309,6 +309,15 @@ ${SHIELD_UNIFORMS_GLSL}
 uniform float uRimStart;
 uniform float uRimIntensity;
 uniform float uFilmStrength;
+// ── Sterowanie widocznością (model "niewidzialne pole") ─────────────────────
+uniform float uFieldVisibility; // 0 = normalna praca (pole niewidoczne)
+uniform float uSweep;           // -1 = brak fali; 0..1.6 = czoło fali w vEdge
+uniform float uSweepWidth;
+uniform float uLowPower;        // 0..1 — ostrzeżenie o dogorywającej tarczy
+uniform float uHitOpacity;
+uniform float uHitGrow;
+uniform float uHitDecay;
+uniform float uHitCoreLife;
 
 varying vec3 vNormal;
 varying vec3 vViewDir;
@@ -349,9 +358,18 @@ void main(){
     vec2  cId   = hexCellId(faceUV);
     float flash = cellFlash(cId);
 
-    // ── Hit ring buffer: dystans planarny od punktu trafienia na obrysie ──────
+    // ── Ziarno pola: JEDEN szum na fragment deformuje krawędzie wszystkich łat.
+    //    Wspólny dla trafień (pole ma własną strukturę), więc pętla poniżej nie
+    //    woła snoise per slot — to 24 wywołania szumu mniej na piksel.
+    float fieldGrain = snoise(vObjPos * (uNoiseScale * 3.0) + vec3(uTime * 0.7));
+
+    // ── Trafienia: miękka łata wokół punktu ──────────────────────────────────
+    // NIE "patch": to słowo zarezerwowane w GLSL ES 3.00 (WebGL2), shader
+    // przestaje się kompilować. Tak samo sample/input/output/filter/half.
+    // (Bez backticków w komentarzach — cały shader to template string JS.)
+    float hitPatch = 0.0;
+    float core  = 0.0;
     float ringContrib = 0.0;
-    float hexHitBoost = 0.0;
 
     for (int i = 0; i < MAX_HITS; i++) {
         float ht      = uHitTime[i];
@@ -363,22 +381,28 @@ void main(){
 
         float dist = length(vObjPos.xy - uHitPos[i].xy);
 
-        float ringR      = min(elapsed * uHitRingSpeed, uHitMaxRadius);
-        float noiseD     = snoise(vObjPos * (uNoiseScale * 2.5) + vec3(elapsed*2.0)) * uHitRingWidth * 0.45;
-        float ring       = smoothstep(uHitRingWidth, 0.0, abs(dist + noiseD - ringR));
-        float fade       = 1.0 - smoothstep(uHitDuration*0.5, uHitDuration, elapsed);
-        float radialFade = 1.0 - smoothstep(uHitMaxRadius*0.75, uHitMaxRadius, ringR);
-        ringContrib     += ring * fade * radialFade * isActive;
+        // Łata rozpycha się w pierwszych ~100 ms, potem gaśnie wykładniczo.
+        float grow   = smoothstep(0.0, uHitGrow, elapsed);
+        float radius = uHitImpactRadius * (0.42 + 0.58 * grow);
+        float decay  = exp(-elapsed * uHitDecay) * (1.0 - smoothstep(uHitDuration*0.7, uHitDuration, elapsed));
 
-        float zone     = smoothstep(uHitImpactRadius, 0.0, dist);
-        float zoneFade = 1.0 - smoothstep(0.0, uHitDuration*0.35, elapsed);
-        hexHitBoost   += zone * zoneFade * isActive;
+        float d      = dist + fieldGrain * radius * 0.17;
+        float fall   = smoothstep(radius, radius * 0.10, d);
+        hitPatch    += fall * fall * decay * isActive;
+
+        // Jądro — krótki, bardzo jasny punkt styku.
+        core        += smoothstep(radius * 0.30, 0.0, dist)
+                     * (1.0 - smoothstep(0.0, uHitCoreLife, elapsed)) * isActive;
+
+        // Pierścień zamknięty w okolicy trafienia, nie przez całą tarczę.
+        float ringR  = elapsed * uHitRingSpeed;
+        float ring   = smoothstep(uHitRingWidth, 0.0, abs(d - ringR));
+        ringContrib += ring * (1.0 - smoothstep(uHitMaxRadius*0.55, uHitMaxRadius, ringR)) * decay * isActive;
     }
 
-    ringContrib = min(ringContrib, 2.0);
-    hexHitBoost = min(hexHitBoost, 1.0);
-
-    float energyBoost = uEnergyShot * 0.5;
+    hitPatch    = min(hitPatch, 1.6);
+    core        = min(core, 1.0);
+    ringContrib = min(ringContrib, 1.5);
 
     vec3 lColor = lifeColor(uLife);
     if (uIsBreaking > 0.5) {
@@ -390,26 +414,57 @@ void main(){
     float rim = smoothstep(uRimStart, 1.0, vEdge);
     float rimGlow = rim * rim * uRimIntensity;
 
-    // ── Film energetyczny na całej czaszy — tarcza ma widoczną "górę" ─────────
+    // ── Film energetyczny na całej czaszy ────────────────────────────────────
     float film = uFilmStrength * (0.55 + 0.45 * flowNoise);
 
-    float effectiveHexOpacity = (uHexOpacity + hexHitBoost * uHitIntensity) * uShowHex;
-    float intensity = hex * effectiveHexOpacity * (0.3 + fresnel*0.7) + fresnel*0.4 + flash * uShowHex;
-    intensity += energyBoost + rimGlow + film;
+    // ── WARSTWA POLA — widoczna tylko przy rozruchu, gaszeniu i pęknięciu ────
+    // uSweep < 0 => brak fali, całe pole zapalone (pęknięcie).
+    // uSweep >= 0 => zapalone jest to, co leży WEWNĄTRZ czoła (vEdge < uSweep):
+    //   rozruch  — czoło biegnie 0 -> 1.2 i pole rozlewa się na zewnątrz,
+    //   gaszenie — czoło wraca 1.2 -> 0 i pole zapada się do środka.
+    float lit = 1.0;
+    float sweepBand = 0.0;
+    if (uSweep >= 0.0) {
+        lit       = smoothstep(uSweep + uSweepWidth, uSweep - uSweepWidth, vEdge);
+        sweepBand = smoothstep(uSweepWidth, 0.0, abs(vEdge - uSweep)) * (0.75 + 0.25 * flowNoise);
+    }
+
+    float hexField = hex * uHexOpacity * uShowHex * (0.3 + fresnel*0.7) + flash * uShowHex;
+    float field    = (hexField + fresnel*0.4 + rimGlow + film) * lit;
+    field         += sweepBand * 1.9;
+    // Domknięcie: czoło dobija do obrysu i całość błyska krawędzią.
+    field         += rim * smoothstep(0.86, 1.04, uSweep) * (1.0 - smoothstep(1.04, 1.5, uSweep)) * 2.4;
+    field         *= uFieldVisibility;
+
+    // ── Ostrzeżenie: ledwo widoczny, pulsujący obrys przy niskim HP ──────────
+    float warn = rimGlow * uLowPower * (0.55 + 0.45 * sin(uTime * 4.6)) * 0.30;
+
+    // ── WARSTWA TRAFIENIA — jedyne światło podczas normalnej pracy ───────────
+    float local = hitPatch * (0.42 + fresnel*0.85 + flowNoise*0.35 + rim*0.5)
+                + core * 1.9
+                + ringContrib * 0.8;
+    local *= uHitIntensity;
+
+    float intensity = field + warn + local + uEnergyShot * 0.5;
 
     vec3 shieldColor = lColor * intensity * 2.0;
-    shieldColor += lColor * (flowNoise * (fresnel + rim * 0.6 + uFilmStrength) * uFlowIntensity);
-    shieldColor += lColor * ringContrib * uHitIntensity;
+    shieldColor += lColor * (flowNoise * (fresnel + rim*0.6 + uFilmStrength) * uFlowIntensity * lit * uFieldVisibility);
+    shieldColor += vec3(1.0) * core * 0.75; // jądro trafienia wybielone
 
+    float edgeVis  = max(uFieldVisibility, uIsBreaking);
     vec3 edgeColor = mix(uNoiseEdgeColor, lColor, 1.0 - uLife);
-    vec3 edgeGlow  = edgeColor * revealEdge * uNoiseEdgeIntensity;
+    vec3 edgeGlow  = edgeColor * revealEdge * uNoiseEdgeIntensity * edgeVis;
 
-    // Ringi trafień i rozbłysk strefy wliczone do alphy — inaczej ripple
-    // znika na górze czaszy, gdzie fresnel jest mały.
-    float alphaIntensity = intensity + ringContrib * uHitIntensity * 0.6 + hexHitBoost * 0.35;
-    float alpha = clamp(alphaIntensity*uOpacity*revealMask + revealEdge*uNoiseEdgeIntensity, 0.0, 1.0);
+    // Wystrzał energii z tarczy zapala ją całą — to zdarzenie, nie "normalna
+    // praca", więc wchodzi do alfy własnym kanałem (baza pola jest tu zerowa).
+    float alpha = clamp((field + warn) * uOpacity
+                      + local * uHitOpacity
+                      + uEnergyShot * 0.35
+                      + revealEdge * uNoiseEdgeIntensity * edgeVis, 0.0, 1.0);
+    alpha *= revealMask;
+    if (alpha < 0.002) discard;
 
-    gl_FragColor = vec4(shieldColor + edgeGlow, alpha);
+    gl_FragColor = vec4(shieldColor * revealMask + edgeGlow, alpha);
 }
 `;
 
@@ -639,19 +694,28 @@ function createHullShieldMaterial(profile) {
             // Hit ring buffer — dystanse w jednostkach świata
             uHitPos:              { value: hitPositions },
             uHitTime:             { value: hitTimes },
-            uHitRingSpeed:        { value: maxR * 0.85 },
-            uHitRingWidth:        { value: clamp(maxR * 0.06, 5, 26) },
-            uHitMaxRadius:        { value: maxR * 1.7 },
+            uHitRingSpeed:        { value: maxR * 0.55 },
+            uHitRingWidth:        { value: clamp(maxR * 0.045, 4, 18) },
+            uHitMaxRadius:        { value: maxR * 0.52 },
             uHitDuration:         { value: 1.5 },
             uHitIntensity:        { value: 1.0 },
-            uHitImpactRadius:     { value: maxR * 0.22 },
+            uHitImpactRadius:     { value: maxR * 0.26 },
             // Obramówka + film wnętrza
             uRimStart:            { value: 0.84 },
-            uRimIntensity:        { value: 1.5 },
-            uFilmStrength:        { value: 0.14 },
+            uRimIntensity:        { value: 1.8 },
+            uFilmStrength:        { value: 0.20 },
             // Game-specific
             uIsBreaking:          { value: 0.0 },
             uEnergyShot:          { value: 0.0 },
+            // Sterowanie widocznością (model "niewidzialne pole")
+            uFieldVisibility:     { value: 0.0 },
+            uSweep:               { value: -1.0 },
+            uSweepWidth:          { value: 0.17 },
+            uLowPower:            { value: 0.0 },
+            uHitOpacity:          { value: 0.90 },
+            uHitGrow:             { value: 0.10 },
+            uHitDecay:            { value: 3.4 },
+            uHitCoreLife:         { value: 0.16 },
         },
         vertexShader: HULL_SHIELD_VERTEX,
         fragmentShader: HULL_SHIELD_FRAGMENT,
@@ -803,6 +867,8 @@ function createHullShieldMesh(entity, profile) {
     mesh.userData.kind = 'hull';
     mesh.userData.geoKey = key;
     mesh.userData.profileRef = profile;
+    // Baza dla mnożnika ShieldFieldTuning.hitRadiusScale (zależy od rozmiaru kadłuba).
+    mesh.userData.baseHitRadius = material.uniforms.uHitImpactRadius.value;
     Core3D.enableShield3D(mesh);
     Core3D.scene.add(mesh);
     state.meshes.set(entity, mesh);
@@ -848,7 +914,11 @@ function applyShieldStateUniforms(u, shield, time) {
 // ── Ring buffer trafień 3D (dłuższy niż impacts w shieldSystem) ──────────────
 function syncHitBuffer(entity, shield, time) {
     if (!state.hitBuffers.has(entity)) {
-        state.hitBuffers.set(entity, { hits: new Array(MAX_HITS).fill(null), seen: new Map(), fresh: [] });
+        // prevState/bootAt: faza widoczności pola (rozruch -> dopalenie -> ciemność).
+        state.hitBuffers.set(entity, {
+            hits: new Array(MAX_HITS).fill(null), seen: new Map(), fresh: [],
+            prevState: null, bootAt: -999
+        });
     }
     const hb = state.hitBuffers.get(entity);
     // `fresh` to trafienia zarejestrowane w TEJ klatce — tylko one wyrzucają
@@ -899,6 +969,49 @@ function resolveEntityPose(entity, interpPoseOverride) {
     return { x: x || 0, y: y || 0, interpAngle };
 }
 
+// ── Faza widoczności pola ────────────────────────────────────────────────────
+// Model "niewidzialne pole": tarcza zdradza się tylko wtedy, gdy zmienia stan
+// (rozruch, gaszenie, pęknięcie) albo dogorywa. W normalnej pracy jedynym
+// światłem są łaty trafień, a mesh w ogóle wypada z renderu.
+// Strojenie na żywo z konsoli — odpowiednik ShieldFXPresets, tyle że dla samego
+// pola. Zwykły obiekt, więc ShieldFieldTuning.hitOpacity = 1.4 działa od razu.
+export const SHIELD_FIELD_TUNING = {
+    hitOpacity: 0.90,     // jak mocno świeci łata trafienia
+    hitDecay: 3.4,        // szybkość gaśnięcia łaty (większe = krócej)
+    hitRadiusScale: 1.0,  // mnożnik zasięgu łaty względem rozmiaru kadłuba
+    fieldOpacity: 0.30,   // siła pola przy rozruchu / gaszeniu / pęknięciu
+    lowPowerGain: 1.0     // 0 = brak ostrzegawczego pulsu przy niskim HP
+};
+
+const LOW_POWER_THRESHOLD = 0.35; // poniżej tego HP obrys zaczyna pulsować
+const BOOT_AFTERGLOW = 0.42;      // s — dopalenie po domknięciu rozruchu
+const SWEEP_END = 1.2;            // pozycja czoła fali przy pełnym rozruchu
+const HIT_FX_LIFE = 1.1;          // s — po tylu sekundach łata już nic nie rysuje
+
+function resolveHullFieldPhase(hb, shield, time) {
+    const st = shield.state;
+    const ap = clamp(Number(shield.activationProgress) || 0, 0, 1);
+
+    if (hb.prevState !== st) {
+        // Rozruch domknięty: pole dopala się jeszcze chwilę, a czoło fali
+        // wyjeżdża poza obrys — inaczej tarcza gasłaby skokiem w tej klatce.
+        if (st === 'active' && hb.prevState === 'activating') hb.bootAt = time;
+        hb.prevState = st;
+    }
+
+    // Rozruch: ap rośnie 0->1, czoło biegnie od środka na zewnątrz.
+    // Gaszenie: ap maleje 1->0, czoło wraca do środka i pole zapada się w sobie.
+    if (st === 'activating' || st === 'deactivating') return { field: 1, sweep: ap * SWEEP_END };
+    if (st === 'breaking') return { field: 1, sweep: -1 };
+
+    const since = time - (Number(hb.bootAt) || -999);
+    if (since >= 0 && since < BOOT_AFTERGLOW) {
+        const k = 1 - since / BOOT_AFTERGLOW;
+        return { field: k * k, sweep: SWEEP_END + (1 - k) * 0.5 };
+    }
+    return { field: 0, sweep: -1 };
+}
+
 // ── Update: tarcza-obrys kadłuba ─────────────────────────────────────────────
 function updateHullShieldMesh(entity, mesh, shield, profile, time, interpPoseOverride, zoom) {
     const pose = resolveEntityPose(entity, interpPoseOverride);
@@ -906,11 +1019,9 @@ function updateHullShieldMesh(entity, mesh, shield, profile, time, interpPoseOve
     // można podstawić wprost.
     const hullAngle = pose.interpAngle !== null ? pose.interpAngle : getShieldHullAngle(entity);
 
-    // During activation, shield grows from center; during breaking, stays full size
-    const ap = Math.max(0, Math.min(1, shield.activationProgress || 0));
-    const scaleProgress = shield.state === 'breaking' ? 1 : Math.max(0.02, ap);
-    mesh.scale.set(scaleProgress, scaleProgress, scaleProgress);
-
+    // Pole ma docelowy rozmiar od pierwszej klatki — rozruch pokazuje fala po
+    // powierzchni, nie rosnący mesh (ten dublowałby się z falą).
+    mesh.scale.set(1, 1, 1);
     mesh.position.set(pose.x, -pose.y, 1);
     mesh.rotation.set(0, 0, -hullAngle);
 
@@ -918,6 +1029,7 @@ function updateHullShieldMesh(entity, mesh, shield, profile, time, interpPoseOve
     applyShieldStateUniforms(u, shield, time);
 
     const hb = syncHitBuffer(entity, shield, time);
+    let liveHits = 0;
     for (let i = 0; i < MAX_HITS; i++) {
         const hit = hb.hits[i];
         if (hit && (time - hit.startTime) < HIT_DURATION) {
@@ -927,13 +1039,39 @@ function updateHullShieldMesh(entity, mesh, shield, profile, time, interpPoseOve
             const r = sampleShieldProfileRadius(profile, a);
             u.uHitPos.value[i].set(Math.cos(a) * r, -Math.sin(a) * r, 0);
             u.uHitTime.value[i] = hit.startTime;
+            if ((time - hit.startTime) < HIT_FX_LIFE) liveHits++;
         } else {
             u.uHitTime.value[i] = -999;
         }
     }
 
+    const phase = resolveHullFieldPhase(hb, shield, time);
+    u.uFieldVisibility.value = phase.field;
+    u.uSweep.value = phase.sweep;
+
+    // Agonia: poniżej progu HP obrys zaczyna pulsować, żeby dało się na oko
+    // odróżnić statek z osłoną od statku, któremu zaraz pęknie.
+    const life = clamp(Number(u.uLife.value) || 0, 0, 1);
+    const lowPower = (shield.state === 'active' || shield.state === 'activating')
+        ? clamp((LOW_POWER_THRESHOLD - life) / LOW_POWER_THRESHOLD, 0, 1)
+        : 0;
+    const tune = SHIELD_FIELD_TUNING;
+    u.uLowPower.value = lowPower * (Number(tune.lowPowerGain) || 0);
+    u.uHitOpacity.value = Number(tune.hitOpacity) || 0;
+    u.uHitDecay.value = Number(tune.hitDecay) || 0.001;
+    u.uOpacity.value = Number(tune.fieldOpacity) || 0;
+    u.uHitImpactRadius.value = (Number(mesh.userData.baseHitRadius) || u.uHitImpactRadius.value)
+                             * (Number(tune.hitRadiusScale) || 1);
+
+    // Nic się nie dzieje -> mesh wypada z renderu. Pipeline jest związany
+    // submisją, więc niewidzialna tarcza ma kosztować zero draw calli.
+    mesh.visible = phase.field > 0.002
+                || u.uLowPower.value > 0.004
+                || liveHits > 0
+                || (Number(shield.energyShotTimer) || 0) > 0;
+
     if (hb.fresh.length) {
-        emitHullImpactFx(entity, shield, profile, hullAngle, pose, scaleProgress, hb.fresh, mesh, time, zoom);
+        emitHullImpactFx(entity, shield, profile, hullAngle, pose, 1, hb.fresh, mesh, time, zoom);
     }
 }
 
@@ -991,7 +1129,10 @@ export function updateShields3D(dt, entities, interpPoseOverride = null) {
 
     for (const entity of entities) {
         const shield = entity?.shield;
-        if (!shield || !shield.max || shield.state === 'off' || isShieldSuppressed(entity)) continue;
+        if (!shield || !shield.max || shield.state === 'off') continue;
+        // 'deactivating' jest już suppressed (nie blokuje pocisków), ale pole
+        // ma jeszcze opaść falą — dopiero potem mesh znika.
+        if (isShieldSuppressed(entity) && shield.state !== 'deactivating') continue;
 
         // Statki z hexGrid: tarcza-obrys; reszta (stacje, budowle, myśliwce,
         // przyszłe generatory osłon obszarowych): kolista bańka.

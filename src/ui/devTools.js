@@ -219,6 +219,11 @@ const HTML = `
   <div class="row"><textarea id="cfgOut" readonly></textarea></div>
   <div class="small muted">Skopiuj JSON i wklej do kodu.</div>
 </div>
+<div class="group">
+  <div class="row"><strong>Zapis gry</strong> <span class="small muted">(localStorage)</span></div>
+  <div class="row"><button id="dt-reset-save-btn" class="dt-btn" style="width:100%;">Wyzeruj zapis i przeladuj</button></div>
+  <div class="small muted" id="dt-reset-save-status">To samo co index.html?reset - kasuje uklad gniazd z edytora, fit i ustawienia dev.</div>
+</div>
 <div class="small muted">F12 - pokaz/ukryj panel</div>
 `;
 
@@ -243,6 +248,47 @@ export function initDevTools() {
     const panel = document.getElementById('ring-color-tuner-panel');
     if (panel) panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
   });
+
+  // Zerowanie zapisu wiazemy od razu, z tego samego powodu co tuner kolorow wyzej:
+  // ma dzialac zwlaszcza wtedy, gdy gra wstala polamana i wireDevToolsLogic()
+  // przerwalo sie w polowie. Kasowanie jest nieodwracalne, wiec przycisk uzbraja
+  // sie na pierwsze klikniecie i rozbraja sam po 4 s.
+  const resetSaveBtn = container.querySelector('#dt-reset-save-btn');
+  const resetSaveStatus = container.querySelector('#dt-reset-save-status');
+  if (resetSaveBtn) {
+    const DISARM_MS = 4000;
+    const idleLabel = resetSaveBtn.textContent;
+    const idleHint = resetSaveStatus ? resetSaveStatus.textContent : '';
+    let armedAt = 0;
+    const disarm = () => {
+      armedAt = 0;
+      resetSaveBtn.textContent = idleLabel;
+      resetSaveBtn.style.borderColor = '';
+      resetSaveBtn.style.color = '';
+      if (resetSaveStatus) resetSaveStatus.textContent = idleHint;
+    };
+    resetSaveBtn.addEventListener('click', () => {
+      if (!armedAt || Date.now() - armedAt > DISARM_MS) {
+        armedAt = Date.now();
+        resetSaveBtn.textContent = 'Na pewno? Kliknij ponownie';
+        resetSaveBtn.style.borderColor = '#b4452f';
+        resetSaveBtn.style.color = '#ffb4a2';
+        if (resetSaveStatus) resetSaveStatus.textContent = 'Fit, hardpointy z edytora i ustawienia dev znikna bezpowrotnie.';
+        setTimeout(disarm, DISARM_MS);
+        return;
+      }
+      // hardResetGameSave zamyka zapisy na klucz, zeby beforeunload -> saveLoadout
+      // nie odtworzyl wlasnie skasowanego fitu, i dopiero wtedy przeladowuje.
+      if (typeof window.hardResetGameSave === 'function') {
+        window.hardResetGameSave('all');
+        return;
+      }
+      // Awaryjnie - gdy DevTools zyja na stronie bez skryptu zerujacego z <head>.
+      window.__SAVE_LOCKED = true;
+      try { localStorage.clear(); } catch { }
+      location.reload();
+    });
+  }
 
   // Obsługa F12
   window.addEventListener('keydown', (e) => {
@@ -426,6 +472,7 @@ function wireDevToolsLogic() {
     } catch { }
   }
   function saveLS() {
+    if (window.__SAVE_LOCKED) return;
     localStorage.setItem('devConfig', JSON.stringify(DevConfig));
     localStorage.setItem('devFlags', JSON.stringify(window.DevFlags || {}));
   }

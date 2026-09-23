@@ -1,0 +1,1447 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HUD — koncept: jeden klaster + kontekst</title>
+<style>
+/* Makieta konceptu HUD. Styl bierze z kokpitu gry (cockpit-ui.css):
+   ciemny neomorfizm, pomaranczowy zar, LED-y, zegar w stylu modulu PREDKOSC.
+   Wszystkie wymiary skaluja sie przez --u (1px przy 1080p). */
+:root {
+  --s: 1;
+  --u: calc(1px * var(--s));
+  --text: #dedede;
+  --muted: #8d8d8d;
+  --line: rgba(255, 255, 255, 0.10);
+  --line-o: rgba(255, 102, 0, 0.24);
+  --orange: #ff6600;
+  --amber: #ffb347;
+  --hp: #ff2d36;
+  --shield: #2f7dff;
+  --friendly: #22d36a;
+  --hostile: #ff4545;
+  --station: #ffb040;
+  --ast: #9aa6b0;
+  --good: #38e08a;
+  --warn: #ffb347;
+  --bad: #ff4545;
+  --info: #8fd0ff;
+  --mode: #e60000;
+  --mono: Consolas, "Cascadia Mono", "Courier New", monospace;
+  --sans: "Segoe UI", system-ui, sans-serif;
+  --fs-xs: max(10px, calc(10.5 * var(--u)));
+  --fs-s: max(11px, calc(12 * var(--u)));
+  --fs-m: max(12px, calc(13.5 * var(--u)));
+  --fs-l: max(14px, calc(16 * var(--u)));
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: #020306; color: var(--text); font-family: var(--mono); }
+button { font: inherit; color: inherit; }
+kbd { font-family: var(--mono); font-size: .92em; color: #c4c4c4; border: 1px solid #3a3a3a; border-bottom-width: 2px; border-radius: 3px; padding: 0 4px; background: rgba(0, 0, 0, .45); }
+#world { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; cursor: none; }
+body.alt #world { cursor: default; }
+#hud { position: fixed; inset: 0; pointer-events: none; }
+/* Bezpieczny obszar 16:9 — na ultrawide panele nie uciekaja w rogi ekranu. */
+.safe { position: absolute; top: 0; bottom: 0; left: max(0px, calc((100vw - 177.78vh) / 2)); right: max(0px, calc((100vw - 177.78vh) / 2)); }
+.alt-veil { position: absolute; inset: 0; opacity: 0; transition: opacity .25s; background: radial-gradient(ellipse at 50% 45%, transparent 35%, rgba(0, 0, 0, .42)); }
+body.alt .alt-veil { opacity: 1; }
+
+/* ---------- warstwa 1: dziennik ---------- */
+.feed { position: absolute; top: calc(16 * var(--u)); left: calc(18 * var(--u)); width: calc(440 * var(--u)); }
+.zone { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; font-size: var(--fs-s); letter-spacing: .16em; color: var(--amber); text-transform: uppercase; text-shadow: 0 1px 3px #000; }
+.zone i { width: 7px; height: 7px; border-radius: 50%; background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+.feed-line { font-size: var(--fs-s); line-height: 1.55; color: #bcbcbc; text-shadow: 0 1px 2px #000, 0 0 8px #000; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; animation: feedLife 16s linear forwards; }
+.feed-line .ts { margin-right: 6px; color: #6c6c6c; }
+.feed-line.ok { color: #7fe3a6; }
+.feed-line.bad { color: #ff8a8a; }
+.feed-line.orbit { color: #8cc8ff; }
+.feed-line.mission { color: #d7c4ff; }
+@keyframes feedLife { 0% { opacity: 0; transform: translateX(-6px); } 3% { opacity: 1; transform: none; } 72% { opacity: 1; } 100% { opacity: 0; } }
+
+/* ---------- warstwy 2/3: kolumny kontekstowe ---------- */
+.col { position: absolute; display: flex; flex-direction: column; gap: calc(10 * var(--u)); }
+.col.left { top: calc(128 * var(--u)); left: calc(18 * var(--u)); width: calc(300 * var(--u)); }
+.col.right { top: calc(16 * var(--u)); right: calc(18 * var(--u)); width: calc(330 * var(--u)); }
+.panel { position: relative; border: 1px solid var(--line); border-radius: calc(10 * var(--u)); background: linear-gradient(180deg, rgba(24, 24, 24, .84), rgba(8, 8, 8, .86)); box-shadow: 0 12px 34px rgba(0, 0, 0, .5), inset 0 1px 0 rgba(255, 255, 255, .05); backdrop-filter: blur(3px); animation: pin .34s cubic-bezier(.2, .8, .2, 1); }
+.col.left .panel { --from: -22px; }
+.col.right .panel { --from: 22px; }
+@keyframes pin { from { opacity: 0; transform: translateX(var(--from, 0)); } to { opacity: 1; transform: none; } }
+.hidden { display: none !important; }
+/* Bez Alt HUD jest przezroczysty dla myszy (celujesz). Z Alt — klikalny. */
+body.alt .panel, body.alt .wbar { pointer-events: auto; }
+.p-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: calc(7 * var(--u)) calc(10 * var(--u)); border-bottom: 1px solid var(--line-o); font-size: var(--fs-xs); letter-spacing: .12em; color: var(--muted); text-transform: uppercase; }
+.p-head b { color: #eee; }
+.lck { padding: 0 5px; border: 1px solid rgba(255, 154, 60, .5); border-radius: 3px; color: #ff9a3c; }
+.hint { padding: 0 calc(10 * var(--u)) calc(8 * var(--u)); font-size: var(--fs-xs); color: #727272; }
+body.alt .noalt { display: none; }
+.onlyalt { display: none !important; }
+body.alt .onlyalt { display: flex !important; }
+
+.t-body { display: grid; grid-template-columns: calc(96 * var(--u)) 1fr; gap: calc(10 * var(--u)); align-items: center; padding: calc(10 * var(--u)); }
+.t-sprite { display: grid; place-items: center; height: calc(62 * var(--u)); overflow: hidden; border: 1px solid rgba(255, 69, 69, .22); border-radius: 6px; background: radial-gradient(circle, rgba(255, 69, 69, .12), transparent 70%); }
+.t-sprite.st { border-color: rgba(255, 176, 64, .3); background: radial-gradient(circle, rgba(255, 176, 64, .12), transparent 70%); color: var(--station); font-size: calc(30 * var(--u)); }
+.t-sprite img { max-width: 94%; max-height: 92%; }
+.t-name { font-size: var(--fs-l); font-weight: 700; line-height: 1.15; color: #fff; }
+.t-cls { margin-top: 3px; font-size: var(--fs-xs); letter-spacing: .12em; color: var(--hostile); text-transform: uppercase; }
+.t-cls.st { color: var(--station); }
+.t-dist { margin-top: 4px; font-size: var(--fs-xs); color: var(--muted); }
+.bars { display: grid; gap: 6px; padding: 0 calc(10 * var(--u)) calc(9 * var(--u)); }
+.bar { display: grid; grid-template-columns: calc(58 * var(--u)) 1fr calc(38 * var(--u)); gap: 8px; align-items: center; font-size: var(--fs-xs); letter-spacing: .08em; color: var(--muted); }
+.bar .track { height: calc(6 * var(--u)); overflow: hidden; border-radius: 3px; background: rgba(255, 255, 255, .07); }
+.bar .fill { height: 100%; border-radius: 3px; background: var(--c); box-shadow: 0 0 8px var(--c); transition: width .25s; }
+.bar b { font-weight: 400; text-align: right; color: #ddd; }
+.actions { gap: 6px; padding: 0 calc(10 * var(--u)) calc(10 * var(--u)); }
+.pbtn { flex: 1; display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: calc(6 * var(--u)) calc(8 * var(--u)); border: 0; border-radius: 7px; background: linear-gradient(145deg, #202020, #141414); box-shadow: 3px 3px 6px #030303, -2px -2px 5px #262626; font-family: var(--sans); font-size: var(--fs-xs); font-weight: 700; letter-spacing: .06em; color: #ddd; text-transform: uppercase; white-space: nowrap; cursor: pointer; }
+.pbtn .led { flex: none; width: 14px; height: 3px; border-radius: 2px; background: #333; }
+.pbtn.on .led { background: var(--orange); box-shadow: 0 0 8px var(--orange); }
+.pbtn:active { transform: translateY(1px); box-shadow: inset 3px 3px 6px #030303, inset -2px -2px 5px #262626; }
+.locks { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
+.chip { padding: 3px 8px; border: 1px solid rgba(255, 154, 60, .35); border-radius: 4px; background: rgba(0, 0, 0, .55); font-size: var(--fs-xs); letter-spacing: .06em; color: #ffb27a; }
+
+.rows { padding: 4px calc(6 * var(--u)) 6px; }
+.row { display: grid; grid-template-columns: calc(40 * var(--u)) 1fr auto; gap: 8px; align-items: baseline; padding: 3px 5px; border-bottom: 1px solid rgba(255, 255, 255, .04); border-radius: 3px; font-size: var(--fs-s); color: #d2d2d2; }
+body.alt .row { cursor: pointer; }
+body.alt .row:hover { background: rgba(255, 102, 0, .08); }
+.row.sel { background: rgba(255, 154, 60, .10); box-shadow: inset 2px 0 0 #ff9a3c; }
+.ty { font-size: var(--fs-xs); font-weight: 700; letter-spacing: .1em; }
+.ty.h { color: var(--hostile); }
+.ty.f { color: var(--friendly); }
+.ty.s { color: var(--station); }
+.ty.a { color: var(--ast); }
+.row .d { font-size: var(--fs-xs); text-align: right; color: var(--muted); }
+.scan-timer { height: 2px; background: var(--info); box-shadow: 0 0 6px var(--info); transform-origin: left center; }
+.filters { display: flex; flex-wrap: wrap; gap: 4px; padding: 7px 8px 3px; }
+.fbtn { padding: 2px 7px; border: 1px solid rgba(255, 102, 0, .22); border-radius: 3px; background: rgba(0, 0, 0, .3); font-size: var(--fs-xs); letter-spacing: .06em; color: #9aa; text-transform: uppercase; cursor: pointer; }
+.fbtn.on { border-color: rgba(255, 102, 0, .6); background: rgba(255, 102, 0, .12); color: var(--orange); }
+
+.unit { display: grid; grid-template-columns: calc(44 * var(--u)) 1fr auto; gap: 9px; align-items: center; padding: calc(6 * var(--u)) calc(10 * var(--u)); border-bottom: 1px solid rgba(255, 255, 255, .04); }
+.unit img { width: 100%; height: calc(26 * var(--u)); object-fit: contain; }
+.u-name { font-size: var(--fs-s); color: #e2e2e2; }
+.u-role { font-size: var(--fs-xs); color: var(--muted); }
+.u-bars { display: grid; gap: 2px; margin-top: 4px; }
+.mb { height: 3px; overflow: hidden; border-radius: 2px; background: rgba(255, 255, 255, .08); }
+.mb i { display: block; height: 100%; background: var(--c); transition: width .3s; }
+.u-d { font-size: var(--fs-xs); color: var(--muted); }
+.order { color: var(--friendly); }
+.orders { gap: 6px; padding: calc(8 * var(--u)) calc(10 * var(--u)); }
+
+.rgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 8px; }
+.rcard { display: grid; grid-template-rows: calc(40 * var(--u)) auto auto; gap: 2px; padding: 6px; border: 1px solid rgba(255, 255, 255, .07); border-radius: 7px; background: linear-gradient(180deg, rgba(34, 34, 34, .8), rgba(12, 12, 12, .9)); cursor: grab; touch-action: none; }
+.rcard:hover { border-color: rgba(255, 102, 0, .45); }
+.rcard img { width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
+.rc-name { font-size: var(--fs-s); font-weight: 700; color: #eee; }
+.rc-role { display: flex; justify-content: space-between; font-size: var(--fs-xs); color: var(--muted); }
+.devnote { margin: 0 8px 8px; padding: 5px 8px; border: 1px dashed #333; border-radius: 5px; font-size: var(--fs-xs); color: #8a8a8a; }
+.drag-ghost { position: fixed; z-index: 60; display: flex; align-items: center; gap: 8px; padding: 5px 9px; border: 1px solid rgba(34, 211, 106, .55); border-radius: 6px; background: rgba(0, 0, 0, .7); color: #cfe; font-size: 12px; pointer-events: none; transform: translate(-50%, -50%); }
+.drag-ghost img { width: 54px; height: 30px; object-fit: contain; }
+
+/* ---------- warstwa 1: dol ekranu ---------- */
+/* Siatka 1fr / auto / 1fr: klaster zawsze dokladnie pod statkiem, niezaleznie od szerokosci paskow. */
+.bottom { position: absolute; left: 0; right: 0; bottom: calc(8 * var(--u)); height: calc(392 * var(--u)); display: grid; grid-template-columns: 1fr auto 1fr; align-items: end; column-gap: calc(26 * var(--u)); }
+#weapons { justify-self: end; }
+#abilities { justify-self: start; }
+.wbar { position: relative; display: flex; gap: calc(7 * var(--u)); margin-bottom: calc(8 * var(--u)); padding: calc(7 * var(--u)); border: 1px solid rgba(255, 255, 255, .07); border-radius: calc(12 * var(--u)); background: linear-gradient(180deg, rgba(22, 22, 22, .72), rgba(6, 6, 6, .84)); box-shadow: 0 10px 24px rgba(0, 0, 0, .55), inset 0 1px 0 rgba(255, 255, 255, .05); transition: opacity .5s; }
+body.calm:not(.alt) .wbar { opacity: .45; }
+.slot { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; width: calc(62 * var(--u)); height: calc(62 * var(--u)); padding: 0 3px calc(6 * var(--u)); overflow: hidden; border: 1px solid #000; border-top-color: #3a3a3a; border-radius: 8px; background: linear-gradient(180deg, #2a2a2a, #141414); box-shadow: 0 4px 6px rgba(0, 0, 0, .8), inset 0 1px 1px rgba(255, 255, 255, .14); color: #c4c4c4; cursor: pointer; }
+.slot .k { position: absolute; top: 4px; left: 6px; z-index: 2; font-size: var(--fs-xs); font-weight: 700; color: #8a8a8a; }
+.slot .au { position: absolute; top: 5px; right: 5px; z-index: 2; display: none; font-size: max(9px, calc(9 * var(--u))); font-weight: 700; color: var(--orange); }
+.slot.auto .au { display: block; }
+.slot.auto { border-bottom: 2px solid var(--orange); }
+.slot .ico { margin-bottom: calc(5 * var(--u)); font-family: "Segoe UI Symbol", var(--sans); font-size: calc(21 * var(--u)); line-height: 1; color: #d8d8d8; }
+.slot .nm { max-width: 100%; overflow: hidden; font-size: max(9.5px, calc(9.5 * var(--u))); font-weight: 700; letter-spacing: .04em; color: #9c9c9c; text-overflow: ellipsis; white-space: nowrap; }
+.slot .led { position: absolute; top: 3px; left: 50%; z-index: 2; width: 16px; height: 2px; margin-left: -8px; border-radius: 1px; background: #111; }
+.slot .mask { position: absolute; right: 0; bottom: 0; left: 0; z-index: 1; height: var(--cd, 0%); border-top: 1px solid rgba(255, 102, 0, .55); background: rgba(0, 0, 0, .68); }
+.slot .cdn { position: absolute; inset: 0; z-index: 3; display: grid; place-items: center; padding-bottom: 12px; font-size: var(--fs-m); font-weight: 700; color: var(--amber); text-shadow: 0 0 6px #000, 0 0 2px #000; }
+.slot.cool .led { background: var(--orange); box-shadow: 0 0 6px var(--orange); }
+.slot.flash { animation: rflash .55s ease-out; }
+@keyframes rflash { from { box-shadow: 0 0 0 1px var(--orange), 0 0 18px rgba(255, 102, 0, .65), inset 0 1px 1px rgba(255, 255, 255, .14); } }
+.slot.nudge { animation: nudge .25s; }
+@keyframes nudge { 30% { transform: translateX(-2px); } 60% { transform: translateX(2px); } }
+
+.cluster { position: relative; flex: none; width: calc(340 * var(--u)); height: calc(392 * var(--u)); pointer-events: auto; }
+#clc { position: absolute; top: 0; left: 0; width: calc(340 * var(--u)); height: calc(340 * var(--u)); cursor: crosshair; }
+.ro { position: absolute; top: calc(12 * var(--u)); display: flex; flex-direction: column; gap: 1px; font-variant-numeric: tabular-nums; text-shadow: 0 1px 3px #000, 0 0 10px #000; white-space: nowrap; pointer-events: none; transition: opacity .6s; }
+.ro small { font-size: var(--fs-xs); letter-spacing: .16em; }
+.ro b { font-size: var(--fs-l); color: #fff; }
+.ro.hp { right: calc(100% - 64 * var(--u)); align-items: flex-end; }
+.ro.hp small { color: #ff8a8f; }
+.ro.sh { left: calc(100% - 64 * var(--u)); align-items: flex-start; }
+.ro.sh small { color: #86b3ff; }
+.ro.calm { opacity: .5; }
+.ro.crit b { color: #ff6b6b; animation: critb .7s ease-in-out infinite; }
+@keyframes critb { 50% { opacity: .45; } }
+.radar-top { position: absolute; top: calc(66 * var(--u)); left: 50%; display: flex; gap: 10px; font-size: var(--fs-xs); letter-spacing: .1em; color: #8a8a8a; white-space: nowrap; pointer-events: none; transform: translateX(-50%); }
+.radar-top .hc { font-weight: 700; color: var(--hostile); }
+.radar-top .hc.none { font-weight: 400; color: #5f9a72; }
+.speed-plate { position: absolute; top: calc(330 * var(--u)); left: 50%; display: flex; align-items: baseline; gap: calc(8 * var(--u)); padding: calc(4 * var(--u)) calc(12 * var(--u)); border: 1px solid #1d1d1d; border-radius: calc(8 * var(--u)); background: #000; box-shadow: inset 0 0 14px rgba(255, 102, 0, .10), 0 4px 12px rgba(0, 0, 0, .6); white-space: nowrap; transform: translateX(-50%); }
+.mode-badge { align-self: center; padding: 1px 6px; border-radius: 3px; background: var(--mode); box-shadow: 0 0 10px var(--mode); font-size: var(--fs-s); font-weight: 800; color: #fff; transition: background .3s, box-shadow .3s; }
+.spd { min-width: 3.4ch; font-size: calc(26 * var(--u)); font-weight: 700; font-variant-numeric: tabular-nums; color: #fff; text-align: right; text-shadow: 0 0 10px rgba(255, 102, 0, .3); }
+.spd-unit { font-size: var(--fs-xs); letter-spacing: .08em; color: #9a9a9a; }
+.gear { padding-left: calc(8 * var(--u)); border-left: 1px solid #2a2a2a; font-size: var(--fs-xs); letter-spacing: .1em; color: #8a8a8a; }
+.gear b { font-size: var(--fs-m); color: #fff; }
+.telltales { position: absolute; bottom: calc(100% - 6 * var(--u)); left: 50%; display: flex; gap: calc(5 * var(--u)); pointer-events: none; transform: translateX(-50%); }
+.tt { padding: 1px 6px; border: 1px solid #252525; border-radius: 4px; background: rgba(0, 0, 0, .55); font-size: var(--fs-xs); font-weight: 700; letter-spacing: .08em; color: #3d3d3d; transition: all .2s; }
+.tt.on { border-color: color-mix(in srgb, var(--c) 55%, transparent); color: var(--c); text-shadow: 0 0 6px var(--c); box-shadow: 0 0 10px color-mix(in srgb, var(--c) 35%, transparent), inset 0 0 6px color-mix(in srgb, var(--c) 18%, transparent); }
+.tt.blink.on { animation: ttb .9s steps(2, jump-none) infinite; }
+@keyframes ttb { 50% { opacity: .35; } }
+.alerts { position: absolute; bottom: calc(100% + 24 * var(--u)); left: 50%; display: flex; flex-direction: column; align-items: center; gap: 4px; width: calc(600 * var(--u)); pointer-events: none; transform: translateX(-50%); }
+.al { padding: 3px 12px; border-right: 2px solid var(--c); border-left: 2px solid var(--c); border-radius: 4px; background: rgba(0, 0, 0, .6); font-size: var(--fs-m); font-weight: 700; letter-spacing: .12em; color: var(--c); text-shadow: 0 0 8px color-mix(in srgb, var(--c) 50%, transparent); text-transform: uppercase; white-space: nowrap; animation: alLife var(--dur, 2.4s) ease forwards; }
+@keyframes alLife { 0% { opacity: 0; transform: translateY(6px); } 8% { opacity: 1; transform: none; } 82% { opacity: 1; } 100% { opacity: 0; transform: translateY(-3px); } }
+
+.keyhints { position: absolute; right: calc(18 * var(--u)); bottom: calc(14 * var(--u)); display: flex; flex-direction: column; align-items: flex-end; gap: 5px; font-size: var(--fs-xs); letter-spacing: .06em; color: #7a7a7a; text-shadow: 0 1px 2px #000; }
+.keyhints kbd { margin-right: 6px; }
+
+/* PANEL CENTRALNY — wysuwa sie przy zmianie trybu (V) i chowa po 2 s. */
+.mode-panel { position: absolute; bottom: calc(100 * var(--u)); left: calc(50% + 190 * var(--u)); width: calc(250 * var(--u)); padding: calc(20 * var(--u)) calc(10 * var(--u)) calc(10 * var(--u)); border: 1px solid #222; border-radius: 10px; background: linear-gradient(180deg, rgba(32, 32, 32, .95), rgba(8, 8, 8, .97)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), 0 10px 26px rgba(0, 0, 0, .6); opacity: 0; pointer-events: none; transform: translateY(24px); transition: .32s cubic-bezier(.2, .8, .2, 1); }
+.mode-panel.show { opacity: 1; transform: none; }
+.mp-label { position: absolute; top: 6px; left: 9px; font-size: max(9px, calc(9 * var(--u))); letter-spacing: .14em; color: #777; }
+.mp-screen { position: relative; height: calc(30 * var(--u)); overflow: hidden; border: 1px solid #1a1a1a; border-radius: 8px; background: #000; box-shadow: inset 0 0 16px rgba(255, 102, 0, .1); font-family: var(--sans); }
+.mp-track { position: absolute; top: 0; bottom: 0; left: 0; display: flex; align-items: center; gap: 22px; transition: transform .3s cubic-bezier(.25, .8, .25, 1); }
+.mp-track span { font-size: 11px; font-weight: 600; letter-spacing: 1.5px; color: #555; opacity: .5; white-space: nowrap; transform: scale(.85); transition: .3s; }
+.mp-track span.on { color: #ddd; opacity: 1; text-shadow: 0 0 10px rgba(255, 255, 255, .5); transform: scale(1.15); }
+.mp-ind { position: absolute; bottom: 3px; left: 50%; width: 26px; height: 3px; margin-left: -13px; border-radius: 2px; background: var(--mode); box-shadow: 0 0 8px var(--mode); }
+.mp-dial-wrap { display: grid; place-items: center; padding-top: 10px; }
+.mp-dial { display: grid; place-items: center; width: calc(96 * var(--u)); height: calc(96 * var(--u)); border: 1px solid #222; border-radius: 50%; background: linear-gradient(145deg, #121212, #0d0d0d); box-shadow: inset 5px 5px 10px #040404, inset -5px -5px 10px #1a1a1a; }
+.mp-knob { position: relative; display: grid; place-items: center; width: 58%; height: 58%; border-radius: 50%; background: linear-gradient(145deg, #2a2a2a, #1a1a1a); box-shadow: 7px 7px 14px #030303, -7px -7px 14px #1f1f1f, inset 0 0 0 3px #111; transition: transform .45s cubic-bezier(.3, 1.4, .5, 1); }
+.mp-knob-ind { position: absolute; top: -6px; left: 50%; width: 4px; height: 10px; margin-left: -2px; border-radius: 2px; background: var(--mode); box-shadow: 0 0 8px var(--mode); }
+.mp-knob-pad { display: grid; place-items: center; width: 66%; height: 66%; border-radius: 50%; background: #0f0f0f; box-shadow: inset 2px 2px 4px rgba(0, 0, 0, .8), inset -2px -2px 4px rgba(255, 255, 255, .05); font-size: 11px; font-weight: 900; color: #333; }
+
+.alt-banner { position: absolute; top: calc(58 * var(--u)); left: 50%; display: none; padding: 4px 12px; border: 1px solid rgba(100, 220, 255, .5); border-radius: 4px; background: rgba(0, 0, 0, .55); font-size: var(--fs-s); letter-spacing: .14em; color: #64dcff; transform: translateX(-50%); }
+body.alt .alt-banner { display: block; }
+
+/* ---------- adnotacje makiety ---------- */
+.note { position: absolute; z-index: 30; display: none; width: max-content; max-width: calc(270 * var(--u)); padding: 4px 8px; border: 1px solid rgba(255, 224, 138, .55); border-radius: 5px; background: rgba(40, 34, 10, .93); box-shadow: 0 4px 14px rgba(0, 0, 0, .5); font-family: var(--sans); font-size: 12px; font-weight: 500; line-height: 1.35; letter-spacing: 0; color: #fff3c4; text-transform: none; text-shadow: none; white-space: normal; pointer-events: none; }
+.note b { display: block; font-weight: 700; color: #ffe08a; }
+body.annot .note { display: block; }
+/* ?still=1 — bez animacji wejścia/wygaszania (zrzuty ekranu). */
+body.still .al, body.still .feed-line, body.still .panel { animation: none; }
+body.still .mode-panel, body.still .mp-track, body.still .mp-knob { transition: none; }
+
+/* ---------- pasek makiety (nie jest czescia HUD) ---------- */
+.mock { position: fixed; top: 10px; left: 50%; z-index: 50; display: flex; align-items: center; gap: 6px; padding: 5px 8px; border: 1px dashed rgba(255, 230, 150, .35); border-radius: 8px; background: rgba(12, 12, 10, .88); font-family: var(--sans); font-size: 12px; color: #e8e2c8; transform: translateX(-50%); }
+.mock .tag { margin-right: 4px; font-weight: 700; letter-spacing: .12em; color: #ffe08a; }
+.mock button { padding: 3px 9px; border: 1px solid #3a3628; border-radius: 5px; background: #1b1a14; font-size: 12px; color: #e8e2c8; cursor: pointer; }
+.mock button.on { border-color: #ffe08a; background: #ffe08a; color: #1b1a14; }
+.mock .sep { width: 1px; height: 18px; background: #3a3628; }
+.mock .help { position: relative; padding: 3px 6px; color: #b9b39a; cursor: help; }
+.mock .help-pop { position: absolute; top: calc(100% + 8px); right: 0; display: none; width: 330px; padding: 8px 10px; border: 1px solid #3a3628; border-radius: 6px; background: rgba(12, 12, 10, .96); line-height: 1.6; color: #e8e2c8; }
+.mock .help:hover .help-pop, .mock .help:focus .help-pop { display: block; }
+</style>
+</head>
+<body class="annot">
+<canvas id="world"></canvas>
+
+<div id="hud">
+  <div class="alt-veil"></div>
+
+  <div class="safe">
+    <section class="feed">
+      <div class="zone"><i></i><span id="zoneName">Interplanetary Zone</span></div>
+      <div id="feedLines"></div>
+      <div class="note" style="left: calc(100% + 10px); top: 34px"><b>⑧ Dziennik</b>3–4 ostatnie wpisy, gasną po ~15 s. Pełny log w tablecie.</div>
+    </section>
+
+    <div class="col left">
+      <section class="panel hidden" id="wing">
+        <div class="p-head"><span><b>Skrzydło</b> · <span id="wingCount">0</span></span><span class="order" id="wingOrder">ESKORTA</span></div>
+        <div id="wingRows"></div>
+        <div class="orders onlyalt" id="orders">
+          <button type="button" class="pbtn on" data-order="ESKORTA">Eskorta<i class="led"></i></button>
+          <button type="button" class="pbtn" data-order="ATAK">Atak<i class="led"></i></button>
+          <button type="button" class="pbtn" data-order="STÓJ">Stój<i class="led"></i></button>
+        </div>
+        <div class="hint noalt"><kbd>Alt</kbd> rozkazy</div>
+        <div class="note" style="left: calc(100% + 10px); top: 6px"><b>⑪ Skrzydło</b>Tylko gdy masz przyzwane jednostki. Rozkazy pod Alt.</div>
+      </section>
+      <section class="panel hidden" id="reserve">
+        <div class="p-head"><span><b>Rezerwa</b> · Terra Nova</span><span>GOTOWOŚĆ</span></div>
+        <div class="rgrid" id="rgrid"></div>
+        <div class="devnote">Piraci · Niezależni · LINIE → tylko z <b>?dev</b></div>
+        <div class="note" style="left: calc(100% + 10px); top: 6px"><b>⑬ Rezerwa (Alt)</b>Przeciągnij kartę na mapę. Spawner frakcji wroga to narzędzie dev — znika z HUD gracza.</div>
+      </section>
+    </div>
+
+    <div class="col right">
+      <section class="panel hidden" id="target">
+        <div id="targetBody"></div>
+        <div class="note" style="right: calc(100% + 10px); top: 6px"><b>⑨ Karta celu</b>Pojawia się tylko, gdy jest cel. Zastępuje SELECTED OBJECT.</div>
+      </section>
+      <div class="locks hidden" id="locks"></div>
+      <section class="panel hidden" id="scan">
+        <div class="p-head"><span><b>Skan</b> · <span id="scanCount">0</span></span><span>X</span></div>
+        <div class="scan-timer" id="scanTimer"></div>
+        <div class="rows" id="scanRows"></div>
+        <div class="note" style="right: calc(100% + 10px); top: 6px"><b>⑩ Wyniki skanu</b>Po X na ~10 s, potem znika. Pełna lista: Alt albo Tab (CIC).</div>
+      </section>
+      <section class="panel hidden" id="overview">
+        <div class="p-head"><span><b>Overview</b></span><span id="ovCount">0</span></div>
+        <div class="filters" id="filters">
+          <button type="button" class="fbtn on" data-f="all">Wszystko</button>
+          <button type="button" class="fbtn" data-f="h">Wróg</button>
+          <button type="button" class="fbtn" data-f="f">Sojusz</button>
+          <button type="button" class="fbtn" data-f="s">Stacje</button>
+          <button type="button" class="fbtn" data-f="a">Zasoby</button>
+        </div>
+        <div class="rows" id="ovRows"></div>
+        <div class="note" style="right: calc(100% + 10px); top: 6px"><b>⑬ Overview (Alt)</b>Pełna lista kontaktów tylko na żądanie. Klik = wybór celu.</div>
+      </section>
+    </div>
+
+    <div class="keyhints">
+      <span><kbd>Tab</kbd>CIC / flota</span>
+      <span><kbd>Caps</kbd>Łączność</span>
+      <span><kbd>J</kbd>Misje</span>
+      <span><kbd>Alt</kbd>Panele</span>
+      <div class="note" style="right: 0; bottom: calc(100% + 8px)"><b>⑫ Reszta = klawisze</b>Zamiast 4 fizycznych przycisków i 4 ikon terminala.</div>
+    </div>
+  </div>
+
+  <div class="alt-banner">ALT · TRYB INTERFEJSU — wolna mysz, panele klikalne</div>
+
+  <div class="bottom">
+    <div class="wbar" id="weapons">
+      <div class="note" style="left: 0; bottom: calc(100% + 8px)"><b>⑥ Broń 1–6</b>Stany: gotowa / ładuje (liczba s) / AUTO. Nie wyszarzamy „auto-fire wył.” — dziś wygląda jak „niedostępna”.</div>
+    </div>
+
+    <div class="cluster" id="cluster">
+      <div class="alerts" id="alerts"></div>
+      <div class="telltales" id="telltales"></div>
+      <canvas id="clc"></canvas>
+      <div class="ro hp" id="roHp"><small>KADŁUB</small><b id="hpVal">0</b></div>
+      <div class="ro sh" id="roSh"><small>TARCZA</small><b id="shVal">0</b></div>
+      <div class="radar-top"><span class="hc" id="hostCount">—</span><span id="rangeLbl">20K</span></div>
+      <div class="speed-plate">
+        <span class="mode-badge" id="modeBadge">B</span>
+        <span class="spd" id="spd">0</span><span class="spd-unit" id="spdUnit">M/S</span>
+        <span class="gear">BIEG <b id="gear">1/5</b></span>
+      </div>
+      <div class="note" style="right: calc(100% + 12px); top: 96px"><b>① Klaster</b>Cały stan statku w jednym miejscu. Radar w środku, kółko myszy = zasięg.</div>
+      <div class="note" style="left: calc(100% + 12px); top: 58px"><b>② Kadłub ↖ / Tarcza ↗</b>Spływają od góry: luka na 12:00 rośnie z obrażeniami. Pełne = przygaszone.</div>
+      <div class="note" style="left: calc(100% + 12px); top: 176px"><b>③ Prędkość ↙ / Obroty ↘</b>Styl modułu PRĘDKOŚĆ. Zielone okno = moment zmiany biegu, kreska = limit biegu.</div>
+      <div class="note" style="right: calc(100% + 12px); top: -34px"><b>④ Kontrolki</b>Jak w aucie: świecą tylko włączone systemy.</div>
+      <div class="note" style="right: calc(100% + 12px); top: -92px"><b>⑤ Komunikaty</b>Tu wracają pushZoneMessage — dziś nie wyświetla się żaden.</div>
+    </div>
+
+    <div class="wbar" id="abilities">
+      <div class="note" style="right: 0; bottom: calc(100% + 8px)"><b>⑦ Umiejętności</b>Skan, naprawa, dron, sonda.</div>
+    </div>
+
+    <div class="mode-panel" id="modePanel">
+      <span class="mp-label">PANEL CENTRALNY / TRYB</span>
+      <div class="mp-screen" id="mpScreen">
+        <div class="mp-track" id="mpTrack"><span data-m="combat">BOJOWY</span><span data-m="maneuver">MANEWROWY</span><span data-m="travel">PODRÓŻ</span></div>
+        <div class="mp-ind"></div>
+      </div>
+      <div class="mp-dial-wrap"><div class="mp-dial"><div class="mp-knob" id="mpKnob"><div class="mp-knob-ind"></div><div class="mp-knob-pad">///</div></div></div></div>
+      <div class="note" style="left: 0; bottom: calc(100% + 8px)"><b>⑭ V — Panel centralny</b>Wysuwa się przy zmianie trybu i chowa po 2 s.</div>
+    </div>
+  </div>
+</div>
+
+<div class="mock">
+  <span class="tag">MAKIETA HUD</span>
+  <button type="button" data-sc="lot">Lot</button>
+  <button type="button" data-sc="combat">Walka</button>
+  <button type="button" data-sc="alt">Alt · panele</button>
+  <span class="sep"></span>
+  <button type="button" id="annotBtn">Adnotacje</button>
+  <span class="help" tabindex="0">Klawisze ▾
+    <span class="help-pop">
+      <kbd>1</kbd>–<kbd>6</kbd> broń · <kbd>X</kbd> skan · <kbd>R</kbd> naprawa · <kbd>F</kbd> dron · <kbd>N</kbd> sonda<br>
+      <kbd>T</kbd> cel · <kbd>V</kbd> tryb · <kbd>W</kbd>/<kbd>S</kbd> gaz · <kbd>Shift</kbd> boost · <kbd>9</kbd> warp<br>
+      <kbd>B</kbd> stabilizator · <kbd>C</kbd> tłumik · <kbd>7</kbd> skrzynia auto · <kbd>H</kbd> trafienie<br>
+      <kbd>Alt</kbd> tapnij = przełącz, przytrzymaj = podgląd<br>
+      Kółko myszy nad radarem = zasięg. Pod Alt: przeciągnij kartę z Rezerwy na mapę.
+    </span>
+  </span>
+</div>
+
+<script>
+'use strict';
+window.addEventListener('error', e => {
+  const d = document.createElement('div');
+  d.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:9999;padding:6px 10px;border-radius:4px;background:#b00;color:#fff;font:13px monospace';
+  d.textContent = `Błąd makiety: ${e.message} (linia ${e.lineno})`;
+  document.body.appendChild(d);
+});
+
+const TAU = Math.PI * 2;
+const $ = id => document.getElementById(id);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const smooth = (a, b, v) => { const t = clamp((v - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+const nf0 = new Intl.NumberFormat('pl-PL', { maximumFractionDigits: 0 });
+const nf1 = new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const fmtInt = n => nf0.format(Math.round(n));
+const fmtDist = u => (u >= 1000 ? `${nf1.format(u / 1000)} km` : `${Math.round(u)} m`);
+const fmtSpeed = v => (v >= 1000 ? { n: nf1.format(v / 1000), u: 'KM/S' } : { n: String(Math.round(v)), u: 'M/S' });
+const speedStr = v => { const s = fmtSpeed(v); return `${s.n} ${s.u}`; };
+
+// ---------- sprite'y z gry ----------
+const SRC = {
+  atlas: '../assets/capital_ship_rect_v1.png',
+  pdes: '../src/assets/ships/piratedestroyer.png',
+  prai: '../assets/pirate_raider.png',
+  tfri: '../src/assets/ships/terranfrigate.png',
+  tdes: '../src/assets/ships/terrandestroyer.png',
+  tbat: '../src/assets/ships/terranbattleship.png',
+  tcar: '../src/assets/ships/terrancarrier.png',
+  tsup: '../src/assets/ships/terransupercapital.png'
+};
+const IMG = {};
+for (const [key, src] of Object.entries(SRC)) { const img = new Image(); img.src = src; IMG[key] = img; }
+const imgReady = img => img && img.complete && img.naturalWidth > 0;
+
+// ---------- dane makiety ----------
+const MODES = {
+  combat: { label: 'BOJOWY', badge: 'B', color: '#e60000', max: 450, knob: -48 },
+  maneuver: { label: 'MANEWROWY', badge: 'M', color: '#ff7a00', max: 900, knob: 0 },
+  travel: { label: 'PODRÓŻ', badge: 'P', color: '#1e90ff', max: 10000, knob: 48 }
+};
+const MODE_ORDER = ['combat', 'maneuver', 'travel'];
+const WEAPONS = [
+  { key: '1', name: 'TEMPEST', full: 'Tempest Ion Mk I — główna', ico: '◆', cd: 0.9, fx: 'rail' },
+  { key: '2', name: 'VALKYRIE', full: 'Valkyrie Railgun — specjal', ico: '✦', cd: 6, fx: 'heavy' },
+  { key: '3', name: 'RAKIETY', full: 'Cruise Missile Rack', ico: '➤', cd: 3.4, fx: 'missile' },
+  { key: '4', name: 'HEXLANCE', full: 'Hexlance Siege Cannon — wbudowana', ico: '⌁', cd: 14, fx: 'lance' },
+  { key: '5', name: 'SUPERNOVA', full: 'Supernova Missile — spec. rakieta', ico: '◇', cd: 22, fx: 'nova' },
+  { key: '6', name: 'ENERGY', full: 'Energy Shot (+50%)', ico: 'ϟ', cd: 10, fx: 'energy' }
+];
+const ABILITIES = [
+  { key: 'X', name: 'SKAN', full: 'Skan aktywny', ico: '◎', cd: 8 },
+  { key: 'R', name: 'NAPRAWA', full: 'Naprawa kadłuba', ico: '✚', cd: 20 },
+  { key: 'F', name: 'DRON', full: 'Dron zwiadowczy', ico: '⌖', cd: 12 },
+  { key: 'N', name: 'SONDA', full: 'Sonda sensorowa', ico: '⟟', cd: 15 }
+];
+const TELLTALES = [
+  { id: 'auto', label: 'AUTO', color: '#8fd0ff', title: 'Skrzynia automatyczna [7]' },
+  { id: 'stab', label: 'STAB', color: '#60e8ff', title: 'Stabilizator kursu [B]' },
+  { id: 'damp', label: 'DAMP', color: '#b58cff', title: 'Tłumik grawitacyjny [C]' },
+  { id: 'boost', label: 'BOOST', color: '#ffb347', title: 'Dopalacz [Shift]' },
+  { id: 'warp', label: 'WARP', color: '#6fd3ff', title: 'Napęd warp [9]', blink: true }
+];
+const ENEMIES = [
+  { id: 'e1', name: 'Iron Skull Destroyer', cls: 'Niszczyciel · Piraci', img: 'pdes', w: 190, x: 3900, y: -1500, ph: 0, hp: 0.78, sh: 0.31 },
+  { id: 'e2', name: 'Pirate Raider', cls: 'Rajder · Piraci', img: 'prai', w: 120, x: 5200, y: 1100, ph: 1.7, hp: 1, sh: 0.8 },
+  { id: 'e3', name: 'Pirate Raider', cls: 'Rajder · Piraci', img: 'prai', w: 120, x: 2900, y: -3350, ph: 3.1, hp: 0.55, sh: 0 }
+];
+const ALLIES = [
+  { id: 'a1', base: 'Custos', name: 'Custos-1', role: 'Fregata PD', img: 'tfri', w: 86, x: -2700, y: -1050, ph: 0.4, hp: 0.92, sh: 0.7 },
+  { id: 'a2', base: 'Custos', name: 'Custos-2', role: 'Fregata PD', img: 'tfri', w: 86, x: -2300, y: 1350, ph: 2.2, hp: 1, sh: 0.45 },
+  { id: 'a3', base: 'Hasta', name: 'Hasta', role: 'Niszczyciel', img: 'tdes', w: 130, x: -3900, y: 250, ph: 4, hp: 0.62, sh: 0.2 }
+];
+const STATIONS = [{ id: 's1', kind: 'station', name: 'Ceres Hub', cls: 'Stacja · Terra Nova', x: -14000, y: -9500 }];
+const ASTEROIDS = [{ x: 9000, y: 7000 }, { x: 11800, y: -8200 }, { x: -7400, y: 12500 }, { x: 14200, y: 2500 }, { x: 12600, y: 6100 }];
+const ASTEROID_NAMES = ['C-12', 'M-7', 'S-3', 'C-40', 'X-2'];
+const RESERVE = [
+  { key: 'frigate', name: 'Custos', role: 'Fregata PD', count: '×50', img: 'tfri', w: 86 },
+  { key: 'destroyer', name: 'Hasta', role: 'Niszczyciel', count: '×5', img: 'tdes', w: 130 },
+  { key: 'battleship', name: 'Bellator', role: 'Pancernik', count: '×5', img: 'tbat', w: 170 },
+  { key: 'carrier', name: 'Citadella', role: 'Lotniskowiec', count: '×1', img: 'tcar', w: 180 },
+  { key: 'supercapital', name: 'Colossus', role: 'Supercapital', count: '×1', img: 'tsup', w: 230 },
+  { key: 'fighter', name: 'Fighter Wing', role: 'Myśliwce', count: '×200', img: 'tfri', w: 60 }
+];
+const RANGES = [5000, 10000, 20000, 40000, 60000];
+const ZOOM = 0.1; // px ekranu na jednostkę świata przy 1080p
+
+const st = {
+  scenario: 'combat', mode: 'combat', alt: false, altSticky: false,
+  hp: 1, sh: 1, hpShown: 1, shShown: 1, hpGhost: 1, shGhost: 1, hpHold: 0, shHold: 0, hpHit: 0, shHit: 0, calmT: 0,
+  hpMax: 12000, shMax: 18000,
+  speed: 0, throttle: 0.6, manualThrottle: false, gear: 1, gears: 5, rpm: 0.2, shipAng: 0,
+  tt: { auto: false, stab: true, damp: false, boost: false, warp: false },
+  targetOn: true, targetId: 'e1', wingOn: true, order: 'ESKORTA',
+  scanStart: -1, scanUntil: -1, range: 20000, filter: 'all',
+  nextHit: 1, shCritWarned: false, modePanelUntil: -1
+};
+const keys = {};
+const fx = [];
+const mouse = { x: 0, y: 0, moved: false };
+let now = 0;
+let simClock = 5 * 60 + 3;
+let VW = 0, VH = 0, DPR = 1, SC = 1, bg = null;
+
+const world = $('world');
+const wctx = world.getContext('2d');
+const clc = $('clc');
+const cctx = clc.getContext('2d');
+
+// ---------- geometria świata ----------
+function posOf(e) {
+  if (e.kind === 'station') return { x: e.x, y: e.y };
+  return { x: e.x + Math.sin(now * 0.21 + e.ph) * 140, y: e.y + Math.cos(now * 0.17 + e.ph) * 110 };
+}
+function shipScreen() { return { x: VW / 2, y: VH / 2 - 40 * SC }; }
+function toScreen(p) { const c = shipScreen(); return { x: c.x + p.x * ZOOM * SC, y: c.y + p.y * ZOOM * SC }; }
+function toWorld(x, y) { const c = shipScreen(); return { x: (x - c.x) / (ZOOM * SC), y: (y - c.y) / (ZOOM * SC) }; }
+function distOf(e) { const p = posOf(e); return Math.hypot(p.x, p.y); }
+function targetEntity() {
+  if (!st.targetOn) return null;
+  return ENEMIES.find(e => e.id === st.targetId) || STATIONS.find(s => s.id === st.targetId) || null;
+}
+const inCombat = () => st.scenario !== 'lot';
+
+// ---------- tło: mgławica + gwiazdy (raz, przy zmianie rozmiaru) ----------
+function rng(seed) {
+  return () => {
+    seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function buildBackground() {
+  const c = document.createElement('canvas');
+  c.width = world.width; c.height = world.height;
+  const g = c.getContext('2d');
+  const w = c.width, h = c.height, r = rng(7);
+  g.fillStyle = '#02040a'; g.fillRect(0, 0, w, h);
+  let gr = g.createRadialGradient(w * 0.62, h * 0.35, 0, w * 0.62, h * 0.35, w * 0.7);
+  gr.addColorStop(0, 'rgba(10,30,70,.55)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, w, h);
+  const pts = [[0.5, -0.08], [0.58, 0.18], [0.63, 0.42], [0.7, 0.62], [0.8, 0.82], [0.86, 1.08]];
+  const band = u => {
+    const f = u * (pts.length - 1), i = Math.min(pts.length - 2, Math.floor(f)), t = f - i;
+    return [lerp(pts[i][0], pts[i + 1][0], t) * w, lerp(pts[i][1], pts[i + 1][1], t) * h];
+  };
+  const blob = (x, y, rad, inner, outer) => {
+    const bg2 = g.createRadialGradient(x, y, 0, x, y, rad);
+    bg2.addColorStop(0, inner); bg2.addColorStop(1, outer);
+    g.fillStyle = bg2; g.beginPath(); g.arc(x, y, rad, 0, TAU); g.fill();
+  };
+  g.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < 420; i++) {
+    const [x, y] = band(r());
+    const hue = r();
+    const col = hue < 0.55 ? '20,90,210' : hue < 0.85 ? '40,150,255' : '120,220,255';
+    const a = 0.018 + r() * 0.03;
+    blob(x + (r() - 0.5) * w * 0.12, y + (r() - 0.5) * h * 0.06, (0.02 + r() * 0.07) * w, `rgba(${col},${a * 2})`, 'rgba(0,0,0,0)');
+  }
+  for (let i = 0; i < 140; i++) {
+    const [x, y] = band(r());
+    blob(x + (r() - 0.5) * w * 0.05, y + (r() - 0.5) * h * 0.03, (0.006 + r() * 0.02) * w, 'rgba(150,230,255,.10)', 'rgba(0,0,0,0)');
+  }
+  g.globalCompositeOperation = 'source-over';
+  for (let i = 0; i < 90; i++) {
+    const [x, y] = band(r());
+    blob(x + (r() - 0.5) * w * 0.14, y + (r() - 0.5) * h * 0.08, (0.01 + r() * 0.04) * w, 'rgba(1,3,8,.35)', 'rgba(1,3,8,0)');
+  }
+  gr = g.createRadialGradient(w * 0.25, h * 0.8, 0, w * 0.25, h * 0.8, w * 0.25);
+  gr.addColorStop(0, 'rgba(90,10,20,.10)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, w, h);
+  const stars = Math.round((w * h) / 2600);
+  for (let i = 0; i < stars; i++) {
+    const b = r();
+    const size = (b > 0.985 ? 1.6 : b > 0.9 ? 1 : 0.6) * DPR;
+    g.fillStyle = `rgba(${200 + r() * 55 | 0},${210 + r() * 45 | 0},255,${0.25 + b * 0.6})`;
+    g.fillRect(r() * w, r() * h, size, size);
+  }
+  for (let i = 0; i < 26; i++) {
+    const x = r() * w, y = r() * h, rad = (2 + r() * 4) * DPR * 3;
+    const sg = g.createRadialGradient(x, y, 0, x, y, rad);
+    sg.addColorStop(0, 'rgba(200,230,255,.9)'); sg.addColorStop(0.2, 'rgba(120,180,255,.35)'); sg.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = sg; g.beginPath(); g.arc(x, y, rad, 0, TAU); g.fill();
+  }
+  bg = c;
+}
+
+function resize() {
+  DPR = Math.min(2, window.devicePixelRatio || 1);
+  VW = window.innerWidth; VH = window.innerHeight;
+  SC = clamp(VH / 1080, 0.72, 1.5);
+  document.documentElement.style.setProperty('--s', SC.toFixed(4));
+  world.width = Math.round(VW * DPR); world.height = Math.round(VH * DPR);
+  const cs = 340 * SC;
+  clc.width = Math.round(cs * DPR); clc.height = Math.round(cs * DPR);
+  buildBackground();
+  if (!mouse.moved) { const p = toScreen(ENEMIES[0]); mouse.x = p.x; mouse.y = p.y; }
+  renderModePanel();
+}
+
+// ---------- komunikaty i dziennik ----------
+const alertsEl = $('alerts');
+const feedEl = $('feedLines');
+function stamp(sec) {
+  const s = Math.max(0, Math.floor(sec));
+  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+}
+function feed(text, tone = '', at = simClock) {
+  const el = document.createElement('div');
+  el.className = `feed-line ${tone}`.trim();
+  const ts = document.createElement('span');
+  ts.className = 'ts'; ts.textContent = `[${stamp(at)}]`;
+  el.append(ts, document.createTextNode(text));
+  feedEl.appendChild(el);
+  while (feedEl.children.length > 4) feedEl.firstElementChild.remove();
+  setTimeout(() => el.remove(), 16200);
+}
+function alertMsg(text, tone = 'info', dur = 2.4) {
+  const el = document.createElement('div');
+  el.className = 'al';
+  el.style.setProperty('--c', `var(--${tone})`);
+  el.style.setProperty('--dur', `${dur}s`);
+  el.textContent = text;
+  alertsEl.appendChild(el);
+  while (alertsEl.children.length > 2) alertsEl.firstElementChild.remove();
+  setTimeout(() => el.remove(), dur * 1000 + 60);
+}
+
+// ---------- budowa HUD ----------
+function buildSlots() {
+  const make = (def, parent, onUse) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'slot'; b.title = def.full;
+    b.innerHTML = `<span class="led"></span><span class="k">${def.key}</span><span class="au">AUTO</span><span class="ico">${def.ico}</span><span class="nm">${def.name}</span><span class="mask"></span><span class="cdn"></span>`;
+    b.addEventListener('pointerdown', e => { e.preventDefault(); onUse(def); });
+    parent.insertBefore(b, parent.querySelector('.note'));
+    def.el = b; def.cdn = b.querySelector('.cdn'); def.t = 0; def.q = -1; def.cdText = '';
+  };
+  WEAPONS.forEach(w => make(w, $('weapons'), fireWeapon));
+  ABILITIES.forEach(a => make(a, $('abilities'), useAbility));
+}
+function buildTelltales() {
+  const root = $('telltales');
+  for (const t of TELLTALES) {
+    const el = document.createElement('span');
+    el.className = `tt${t.blink ? ' blink' : ''}`;
+    el.style.setProperty('--c', t.color);
+    el.title = t.title; el.textContent = t.label;
+    root.appendChild(el);
+    t.el = el; t.on = null;
+  }
+}
+function renderReserve() {
+  $('rgrid').innerHTML = RESERVE.map((r, i) => `<div class="rcard" data-r="${i}" title="Przeciągnij na mapę"><img src="${SRC[r.img]}" alt=""><div class="rc-name">${r.name}</div><div class="rc-role"><span>${r.role}</span><span>${r.count}</span></div></div>`).join('');
+}
+
+function renderPanels() {
+  $('target').classList.toggle('hidden', !targetEntity());
+  $('locks').classList.toggle('hidden', !(inCombat() && st.targetOn && st.targetId !== 'e2'));
+  $('wing').classList.toggle('hidden', !st.wingOn);
+  $('scan').classList.toggle('hidden', st.alt || !(st.scanUntil > now));
+  $('overview').classList.toggle('hidden', !st.alt);
+  $('reserve').classList.toggle('hidden', !st.alt);
+}
+
+function renderTarget() {
+  const e = targetEntity();
+  const root = $('targetBody');
+  if (!e) { root.innerHTML = ''; renderPanels(); return; }
+  if (e.kind === 'station') {
+    root.innerHTML = `
+      <div class="p-head"><span><b>Wybrano</b> · stacja</span><span id="tDist"></span></div>
+      <div class="t-body"><div class="t-sprite st">⬢</div>
+        <div><div class="t-name">${e.name}</div><div class="t-cls st">${e.cls}</div><div class="t-dist">Hangar · Handel · Mechanik</div></div></div>
+      <div class="actions onlyalt"><button type="button" class="pbtn on" data-act="uplink">Uplink <kbd>Caps</kbd><i class="led"></i></button><button type="button" class="pbtn" data-act="approach">Podejdź<i class="led"></i></button></div>
+      <div class="hint noalt"><kbd>Caps</kbd> uplink · <kbd>Alt</kbd> akcje</div>`;
+  } else {
+    root.innerHTML = `
+      <div class="p-head"><span><b>Cel</b> · namierzony</span><span class="lck">LCK</span></div>
+      <div class="t-body"><div class="t-sprite"><img src="${SRC[e.img]}" alt=""></div>
+        <div><div class="t-name">${e.name}</div><div class="t-cls">${e.cls}</div><div class="t-dist" id="tDist"></div></div></div>
+      <div class="bars">
+        <div class="bar" style="--c: var(--hp)"><span>KADŁUB</span><div class="track"><div class="fill" id="tHp"></div></div><b id="tHpV"></b></div>
+        <div class="bar" style="--c: var(--shield)"><span>TARCZA</span><div class="track"><div class="fill" id="tSh"></div></div><b id="tShV"></b></div>
+      </div>
+      <div class="actions onlyalt"><button type="button" class="pbtn on" data-act="unlock">Zwolnij <kbd>T</kbd><i class="led"></i></button><button type="button" class="pbtn" data-act="approach">Podejdź<i class="led"></i></button><button type="button" class="pbtn" data-act="orbit">Orbita<i class="led"></i></button></div>
+      <div class="hint noalt"><kbd>T</kbd> zwolnij · <kbd>Alt</kbd> akcje</div>`;
+  }
+  liveTarget();
+  renderLocks();
+  renderPanels();
+}
+function liveTarget() {
+  const e = targetEntity();
+  if (!e) return;
+  const d = $('tDist');
+  if (e.kind === 'station') { if (d) d.textContent = fmtDist(distOf(e)); return; }
+  if (d) d.textContent = `${fmtDist(distOf(e))} · ${Math.round(160 + 40 * Math.sin(now * 0.3))} m/s · zbliża się`;
+  $('tHp').style.width = `${Math.round(e.hp * 100)}%`;
+  $('tHpV').textContent = `${Math.round(e.hp * 100)}%`;
+  $('tSh').style.width = `${Math.round(e.sh * 100)}%`;
+  $('tShV').textContent = `${Math.round(e.sh * 100)}%`;
+}
+function renderLocks() {
+  const e2 = ENEMIES[1];
+  $('locks').innerHTML = `<div class="chip">LCK · ${e2.name} · ${fmtDist(distOf(e2))}</div>`;
+}
+
+function contactsList() {
+  const list = [];
+  if (inCombat()) for (const e of ENEMIES) list.push({ ty: 'h', code: 'WRG', name: e.name, d: distOf(e), id: e.id });
+  if (st.wingOn) for (const a of ALLIES) list.push({ ty: 'f', code: 'SOJ', name: a.name, d: distOf(a), id: a.id });
+  for (const s of STATIONS) list.push({ ty: 's', code: 'STA', name: s.name, d: distOf(s), id: s.id });
+  ASTEROIDS.forEach((a, i) => list.push({ ty: 'a', code: 'AST', name: `Asteroida ${ASTEROID_NAMES[i]}`, d: Math.hypot(a.x, a.y), id: `ast${i}` }));
+  return list.sort((a, b) => a.d - b.d);
+}
+const rowHtml = c => `<div class="row${st.targetOn && c.id === st.targetId ? ' sel' : ''}" data-id="${c.id}"><span class="ty ${c.ty}">${c.code}</span><span>${c.name}</span><span class="d">${fmtDist(c.d)}</span></div>`;
+function renderScan() {
+  const list = contactsList();
+  $('scanCount').textContent = `${list.length} kontaktów`;
+  $('scanRows').innerHTML = list.slice(0, 6).map(rowHtml).join('')
+    + (list.length > 6 ? `<div class="hint" style="padding-top: 6px">+${list.length - 6} więcej · <kbd>Alt</kbd> pełna lista · <kbd>Tab</kbd> CIC</div>` : '');
+}
+function renderOverview() {
+  const all = contactsList();
+  const list = all.filter(c => st.filter === 'all' || c.ty === st.filter);
+  $('ovCount').textContent = `${all.length} kontaktów`;
+  $('ovRows').innerHTML = list.map(rowHtml).join('') || '<div class="hint" style="padding: 8px">Brak kontaktów.</div>';
+  for (const b of document.querySelectorAll('.fbtn')) b.classList.toggle('on', b.dataset.f === st.filter);
+}
+
+function renderWing() {
+  $('wingCount').textContent = `${ALLIES.length} jedn.`;
+  $('wingOrder').textContent = st.order;
+  $('wingRows').innerHTML = ALLIES.map(a => `
+    <div class="unit"><img src="${SRC[a.img]}" alt="">
+      <div><div class="u-name">${a.name}</div><div class="u-role">${a.role}</div>
+        <div class="u-bars"><div class="mb" style="--c: var(--hp)"><i style="width: ${Math.round(a.hp * 100)}%"></i></div><div class="mb" style="--c: var(--shield)"><i style="width: ${Math.round(a.sh * 100)}%"></i></div></div></div>
+      <span class="u-d" data-d="${a.id}">${fmtDist(distOf(a))}</span></div>`).join('');
+  for (const b of document.querySelectorAll('[data-order]')) b.classList.toggle('on', b.dataset.order === st.order);
+}
+function liveWing() {
+  for (const a of ALLIES) {
+    const el = document.querySelector(`[data-d="${a.id}"]`);
+    if (el) el.textContent = fmtDist(distOf(a));
+  }
+}
+
+function renderModePanel() {
+  const track = $('mpTrack');
+  for (const s of track.children) s.classList.toggle('on', s.dataset.m === st.mode);
+  const on = track.querySelector('.on');
+  const screen = $('mpScreen');
+  if (on && screen.clientWidth) {
+    const offset = screen.clientWidth / 2 - (on.offsetLeft + on.offsetWidth / 2);
+    track.style.transform = `translateX(${offset}px)`;
+  }
+  $('mpKnob').style.transform = `rotate(${MODES[st.mode].knob}deg)`;
+}
+function showModePanel() {
+  $('modePanel').classList.add('show');
+  st.modePanelUntil = now + 2.2;
+  requestAnimationFrame(renderModePanel);
+}
+
+// ---------- akcje ----------
+function syncGear() {
+  const frac = clamp(st.speed / MODES[st.mode].max, 0, 1);
+  st.gear = clamp(Math.floor(frac * st.gears * 0.9999) + 1, 1, st.gears);
+}
+function setMode(mode, announce) {
+  st.mode = mode;
+  const md = MODES[mode];
+  document.documentElement.style.setProperty('--mode', md.color);
+  st.speed = Math.min(st.speed, md.max);
+  syncGear();
+  renderModePanel();
+  if (announce) {
+    alertMsg(`Tryb ${md.label} · limit ${speedStr(md.max)}`, 'info', 2.4);
+    showModePanel();
+  }
+}
+function cycleMode() { setMode(MODE_ORDER[(MODE_ORDER.indexOf(st.mode) + 1) % MODE_ORDER.length], true); }
+
+function announceShift(gear) {
+  if (st.tt.auto) { alertMsg(`Bieg ${gear}/${st.gears} · auto`, 'info', 1.6); return; }
+  const r = Math.random();
+  if (r < 0.55) alertMsg(`Bieg ${gear}/${st.gears} · perfect boost`, 'good', 2.2);
+  else if (r < 0.8) alertMsg(`Bieg ${gear}/${st.gears} · boost`, 'good', 1.8);
+  else alertMsg(`Bieg ${gear}/${st.gears} · za późno`, 'warn', 1.8);
+}
+
+function damageEnemy(e, amount) {
+  if (!e) return;
+  if (e.sh > 0) e.sh = Math.max(0, e.sh - amount * 2);
+  else e.hp = Math.max(0.18, e.hp - amount);
+}
+function fireWeapon(w, auto = false) {
+  if (w.t > 0) {
+    if (!auto) { w.el.classList.remove('nudge'); void w.el.offsetWidth; w.el.classList.add('nudge'); }
+    return;
+  }
+  w.t = w.cd;
+  const target = inCombat() && st.targetOn ? ENEMIES.find(e => e.id === st.targetId) : null;
+  const to = target ? target.id : null;
+  const jitter = () => ({ jx: (Math.random() - 0.5) * 40, jy: (Math.random() - 0.5) * 24 });
+  if (w.fx === 'rail') fx.push({ type: 'beam', to, color: '#c4f1ff', width: 2, age: 0, dur: 0.22, ...jitter(), onEnd: () => damageEnemy(target, 0.01) });
+  else if (w.fx === 'heavy') fx.push({ type: 'beam', to, color: '#ffd9a8', width: 4.5, age: 0, dur: 0.38, ...jitter(), onEnd: () => damageEnemy(target, 0.05) });
+  else if (w.fx === 'lance') fx.push({ type: 'beam', to, color: '#c9a2ff', width: 8, age: 0, dur: 0.7, jx: 0, jy: 0, onEnd: () => damageEnemy(target, 0.12) });
+  else if (w.fx === 'missile') {
+    for (const side of [-1, 1]) fx.push({ type: 'missile', to, side, age: 0, dur: 1.1 + (side > 0 ? 0.15 : 0), onEnd: () => { damageEnemy(target, 0.02); fx.push({ type: 'boom', to, age: 0, dur: 0.45, big: false }); } });
+  } else if (w.fx === 'nova') {
+    fx.push({ type: 'missile', to, side: 0, big: true, age: 0, dur: 1.8, onEnd: () => { damageEnemy(target, 0.2); fx.push({ type: 'boom', to, age: 0, dur: 0.9, big: true }); } });
+  } else if (w.fx === 'energy') {
+    fx.push({ type: 'ring', age: 0, dur: 0.6 });
+    alertMsg('Energy shot · +50% następna salwa', 'info', 2);
+  }
+}
+function useAbility(a) {
+  if (a.t > 0) { a.el.classList.remove('nudge'); void a.el.offsetWidth; a.el.classList.add('nudge'); return; }
+  a.t = a.cd;
+  if (a.key === 'X') {
+    st.scanStart = now; st.scanUntil = now + 10;
+    fx.push({ type: 'ping', age: 0, dur: 1.4 });
+    const count = contactsList().length;
+    renderScan(); renderPanels();
+    alertMsg(`Skan · ${count} kontaktów`, 'info', 2);
+    feed(`Skan aktywny: ${count} kontaktów w zasięgu`, 'orbit');
+  } else if (a.key === 'R') {
+    const before = st.hp;
+    st.hp = Math.min(1, st.hp + 0.15);
+    alertMsg(`Naprawa · +${fmtInt((st.hp - before) * st.hpMax)} kadłuba`, 'good', 2);
+  } else if (a.key === 'F') {
+    alertMsg('Dron zwiadowczy wysłany', 'info', 1.8);
+    feed('Dron zwiadowczy: start z hangaru · H przełącza podgląd', 'orbit');
+  } else if (a.key === 'N') {
+    alertMsg('Sonda wystrzelona', 'info', 1.8);
+  }
+}
+function toggleTarget() {
+  if (!inCombat()) { alertMsg('Brak celu w zasięgu', 'warn', 1.6); return; }
+  st.targetOn = !st.targetOn;
+  if (st.targetOn && !ENEMIES.some(e => e.id === st.targetId)) st.targetId = 'e1';
+  const e = targetEntity();
+  alertMsg(st.targetOn ? `Cel namierzony · ${e ? e.name : ''}` : 'Cel zwolniony', st.targetOn ? 'warn' : 'info', 1.8);
+  renderTarget();
+}
+function selectContact(id) {
+  if (id.startsWith('e') || id.startsWith('s')) {
+    st.targetId = id; st.targetOn = true;
+    const e = targetEntity();
+    if (e) alertMsg(e.kind === 'station' ? `Wybrano · ${e.name}` : `Cel namierzony · ${e.name}`, e.kind === 'station' ? 'info' : 'warn', 1.6);
+    renderTarget(); renderOverview();
+  } else {
+    alertMsg('Kontakt oznaczony na mapie', 'info', 1.4);
+  }
+}
+function toggleTelltale(id, label) {
+  st.tt[id] = !st.tt[id];
+  alertMsg(`${label}: ${st.tt[id] ? 'wł.' : 'wył.'}`, st.tt[id] ? 'good' : 'info', 1.5);
+}
+function toggleWarp() {
+  if (st.mode !== 'travel') { alertMsg(`Warp niedostępny w trybie ${MODES[st.mode].label}`, 'warn', 2); return; }
+  st.tt.warp = !st.tt.warp;
+  alertMsg(st.tt.warp ? 'Warp · ładowanie' : 'Warp · przerwany', st.tt.warp ? 'info' : 'warn', 1.8);
+}
+function setAlt(on) {
+  st.alt = on;
+  document.body.classList.toggle('alt', on);
+  if (on) renderOverview();
+  renderPanels();
+}
+function setOrder(order) {
+  st.order = order;
+  renderWing();
+  feed(`Rozkaz skrzydła: ${order}`, 'ok');
+  alertMsg(`Skrzydło · ${order}`, 'good', 1.6);
+}
+
+// ---------- trafienia gracza ----------
+function enemyShot() {
+  const src = ENEMIES[Math.floor(Math.random() * ENEMIES.length)];
+  fx.push({ type: 'bolt', from: src.id, age: 0, dur: 0.45, la: Math.PI, onEnd: f => shipHit(0.04 + Math.random() * 0.05, f.la) });
+}
+function shipHit(d, la) {
+  const onShield = st.sh > 0.02;
+  if (onShield) { st.sh = Math.max(0, st.sh - d * 1.2); st.shHit = 0.32; st.shHold = 0.45; }
+  else { st.hp = Math.max(0.35, st.hp - d * 0.5); st.hpHit = 0.32; st.hpHold = 0.45; }
+  st.calmT = 0;
+  fx.push({ type: 'shield', hull: !onShield, ang: la, age: 0, dur: 0.38 });
+  if (st.sh < 0.25 && !st.shCritWarned) { st.shCritWarned = true; alertMsg('Tarcza krytyczna', 'bad', 2.6); }
+}
+
+// ---------- scenariusze ----------
+function setScenario(name) {
+  st.scenario = name;
+  const combat = name !== 'lot';
+  st.altSticky = name === 'alt';
+  st.speed = combat ? 250 : 7600;
+  setMode(combat ? 'combat' : 'travel', false);
+  st.targetOn = combat; st.targetId = 'e1';
+  st.wingOn = combat && ALLIES.length > 0;
+  st.hp = combat ? 0.86 : 1; st.sh = combat ? 0.64 : 1;
+  st.hpShown = st.hp; st.shShown = st.sh; st.hpGhost = st.hp; st.shGhost = combat ? 0.72 : 1; st.shHold = 0.8; st.hpHold = 0;
+  st.calmT = combat ? 0 : 10;
+  st.shCritWarned = false;
+  Object.assign(st.tt, { auto: !combat, stab: true, damp: false, boost: false, warp: false });
+  st.manualThrottle = false;
+  syncGear();
+  st.scanStart = combat ? now - 1.4 : -1;
+  st.scanUntil = combat ? now + 8.6 : -1;
+  const cds = combat ? [0, 3.4, 1.1, 9.5, 0, 0] : [0, 0, 0, 0, 0, 0];
+  WEAPONS.forEach((w, i) => { w.t = cds[i]; w.auto = combat && (i === 0 || i === 2); w.el.classList.toggle('auto', w.auto); });
+  const acds = combat ? [6.6, 0, 0, 11] : [0, 0, 0, 0];
+  ABILITIES.forEach((a, i) => { a.t = acds[i]; });
+  st.nextHit = 1;
+  fx.length = 0;
+  document.body.classList.toggle('calm', !combat);
+  for (const b of document.querySelectorAll('[data-sc]')) b.classList.toggle('on', b.dataset.sc === name);
+  feedEl.textContent = '';
+  alertsEl.textContent = '';
+  feed('NAWIGACJA — wejście: Interplanetary Zone', 'orbit', 4 * 60 + 9);
+  if (combat) {
+    feed('Wsparcie Terra Nova: przyzwano Custos ×2, Hasta', 'ok', 4 * 60 + 31);
+    feed('ALARM — piracka grupa w zasięgu sensorów', 'bad', 4 * 60 + 52);
+    feed('Misja: Oczyść szlak Ceres — 0/3 wrogów', 'mission', 5 * 60 + 1);
+  } else {
+    feed('Autopilot: kurs na Ceres Hub · 17,2 km', 'orbit', 4 * 60 + 14);
+  }
+  setAlt(st.altSticky);
+  renderTarget(); renderWing(); renderScan(); renderOverview(); renderPanels();
+  setTimeout(() => {
+    if (combat) alertMsg(`Bieg ${st.gear}/${st.gears} · perfect boost`, 'good', 4.5);
+    else alertMsg(`Tryb PODRÓŻ · limit ${speedStr(MODES.travel.max)}`, 'info', 4.5);
+  }, 250);
+}
+
+// ---------- symulacja ----------
+function step(dt) {
+  now += dt;
+  simClock += dt;
+  const combat = inCombat();
+  const md = MODES[st.mode];
+  if (keys.w) { st.throttle = clamp(st.throttle + dt * 0.45, 0, 1); st.manualThrottle = true; }
+  if (keys.s) { st.throttle = clamp(st.throttle - dt * 0.6, 0, 1); st.manualThrottle = true; }
+  let wanted = st.throttle * md.max;
+  if (!st.manualThrottle) wanted = md.max * (combat ? 0.55 + 0.38 * Math.sin(now * 0.21) : 0.74 + 0.2 * Math.sin(now * 0.12));
+  if (st.tt.boost) wanted = md.max * 1.05;
+  const acc = md.max * 0.28;
+  st.speed = Math.max(0, st.speed + clamp(wanted - st.speed, -acc * 1.5 * dt, acc * dt));
+  const frac = clamp(st.speed / md.max, 0, 1);
+  const gear = clamp(Math.floor(frac * st.gears * 0.9999) + 1, 1, st.gears);
+  st.rpm = 0.16 + clamp(frac * st.gears - (gear - 1), 0, 1) * 0.8;
+  if (gear > st.gear) announceShift(gear);
+  st.gear = gear;
+
+  if (combat) {
+    st.nextHit -= dt;
+    if (st.nextHit <= 0) {
+      st.nextHit = (st.sh < 0.15 ? 3.5 : 1.4) + Math.random() * 2.2;
+      enemyShot();
+    }
+    for (const e of ENEMIES) if (e.id !== st.targetId) e.sh = Math.min(1, e.sh + dt * 0.01);
+  } else {
+    st.hp = Math.min(1, st.hp + dt * 0.02);
+  }
+  if (st.sh > 0.4) st.shCritWarned = false;
+  st.sh = Math.min(1, st.sh + dt * (combat ? 0.018 : 0.05));
+
+  const blend = 1 - Math.exp(-dt * 12);
+  st.hpShown += (st.hp - st.hpShown) * blend;
+  st.shShown += (st.sh - st.shShown) * blend;
+  st.hpHold = Math.max(0, st.hpHold - dt);
+  st.shHold = Math.max(0, st.shHold - dt);
+  st.hpGhost = st.hp >= st.hpGhost ? st.hp : st.hpHold > 0 ? st.hpGhost : Math.max(st.hp, st.hpGhost - dt * 0.25);
+  st.shGhost = st.sh >= st.shGhost ? st.sh : st.shHold > 0 ? st.shGhost : Math.max(st.sh, st.shGhost - dt * 0.25);
+  st.hpHit = Math.max(0, st.hpHit - dt);
+  st.shHit = Math.max(0, st.shHit - dt);
+  st.calmT += dt;
+
+  for (const s of [...WEAPONS, ...ABILITIES]) {
+    if (s.t > 0) { s.t = Math.max(0, s.t - dt); if (s.t === 0) s.justReady = true; }
+  }
+  if (combat && st.targetOn) for (const w of WEAPONS) if (w.auto && w.t === 0) fireWeapon(w, true);
+
+  for (let i = fx.length - 1; i >= 0; i--) {
+    const f = fx[i];
+    f.age += dt;
+    if (f.age >= f.dur) { fx.splice(i, 1); if (f.onEnd) f.onEnd(f); }
+  }
+  if (st.scanUntil > 0 && now > st.scanUntil) { st.scanUntil = -1; renderPanels(); }
+  if (st.modePanelUntil > 0 && now > st.modePanelUntil) { st.modePanelUntil = -1; $('modePanel').classList.remove('show'); }
+}
+
+// ---------- rysowanie świata (warstwa 0) ----------
+function drawSprite(g, key, x, y, w, ang) {
+  const img = IMG[key];
+  g.save(); g.translate(x, y); g.rotate(ang);
+  if (imgReady(img)) {
+    const h = w * img.naturalHeight / img.naturalWidth;
+    g.drawImage(img, -w / 2, -h / 2, w, h);
+  } else {
+    g.fillStyle = '#56606a';
+    g.beginPath(); g.moveTo(w / 2, 0); g.lineTo(-w / 2, -w * 0.22); g.lineTo(-w / 2, w * 0.22); g.closePath(); g.fill();
+  }
+  g.restore();
+}
+function engineGlow(g, x, y, w, ang, strength) {
+  const bx = x - Math.cos(ang) * w * 0.5, by = y - Math.sin(ang) * w * 0.5;
+  const r = w * 0.16 * (0.9 + 0.1 * Math.sin(now * 37)) * (0.6 + 0.4 * strength);
+  const gr = g.createRadialGradient(bx, by, 0, bx, by, r);
+  gr.addColorStop(0, `rgba(255,240,220,${0.85 * strength})`);
+  gr.addColorStop(0.25, `rgba(255,150,70,${0.55 * strength})`);
+  gr.addColorStop(1, 'rgba(255,80,20,0)');
+  g.save(); g.globalCompositeOperation = 'lighter'; g.fillStyle = gr;
+  g.beginPath(); g.arc(bx, by, r, 0, TAU); g.fill(); g.restore();
+}
+function brackets(g, x, y, r, color, lw) {
+  const l = r * 0.38;
+  g.strokeStyle = color; g.lineWidth = lw; g.beginPath();
+  for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+    g.moveTo(x + sx * r, y + sy * (r - l)); g.lineTo(x + sx * r, y + sy * r); g.lineTo(x + sx * (r - l), y + sy * r);
+  }
+  g.stroke();
+}
+function worldLabel(g, text, x, y, color) {
+  g.font = `600 ${Math.round(12 * SC)}px Consolas, monospace`;
+  g.textAlign = 'center'; g.textBaseline = 'bottom';
+  const w = g.measureText(text).width;
+  g.fillStyle = 'rgba(0,0,0,.6)'; g.fillRect(x - w / 2 - 5, y - 15 * SC, w + 10, 17 * SC);
+  g.fillStyle = color; g.fillText(text, x, y);
+}
+function enemyScreen(id) {
+  const e = ENEMIES.find(en => en.id === id);
+  return e && e.sx != null ? { x: e.sx, y: e.sy } : { x: mouse.x, y: mouse.y };
+}
+function hullPoint(C, la) {
+  const ex = Math.cos(la) * 205 * SC, ey = Math.sin(la) * 100 * SC;
+  const ca = Math.cos(st.shipAng), sa = Math.sin(st.shipAng);
+  return { x: C.x + ex * ca - ey * sa, y: C.y + ex * sa + ey * ca };
+}
+function drawFx(g, C) {
+  const nose = { x: C.x + Math.cos(st.shipAng) * 175 * SC, y: C.y + Math.sin(st.shipAng) * 175 * SC };
+  const perp = { x: -Math.sin(st.shipAng), y: Math.cos(st.shipAng) };
+  g.save();
+  g.globalCompositeOperation = 'lighter';
+  g.lineCap = 'round';
+  for (const f of fx) {
+    const k = clamp(f.age / f.dur, 0, 1);
+    if (f.type === 'beam') {
+      const t = enemyScreen(f.to);
+      const tx = t.x + f.jx * SC, ty = t.y + f.jy * SC;
+      g.globalAlpha = 1 - k;
+      g.strokeStyle = f.color; g.lineWidth = f.width * SC; g.shadowColor = f.color; g.shadowBlur = 14;
+      g.beginPath(); g.moveTo(nose.x, nose.y); g.lineTo(tx, ty); g.stroke();
+      g.shadowBlur = 0;
+      const r = (6 + 16 * k) * SC * (f.width > 5 ? 2 : 1);
+      const gr = g.createRadialGradient(tx, ty, 0, tx, ty, r);
+      gr.addColorStop(0, f.color); gr.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = gr; g.beginPath(); g.arc(tx, ty, r, 0, TAU); g.fill();
+    } else if (f.type === 'bolt') {
+      const s = enemyScreen(f.from);
+      f.la = Math.atan2(s.y - C.y, s.x - C.x) - st.shipAng;
+      const hit = hullPoint(C, f.la);
+      const x = lerp(s.x, hit.x, k), y = lerp(s.y, hit.y, k);
+      const k0 = Math.max(0, k - 0.12);
+      g.globalAlpha = 1;
+      g.strokeStyle = 'rgba(255,90,70,.9)'; g.lineWidth = 3 * SC; g.shadowColor = '#ff4040'; g.shadowBlur = 12;
+      g.beginPath(); g.moveTo(lerp(s.x, hit.x, k0), lerp(s.y, hit.y, k0)); g.lineTo(x, y); g.stroke();
+      g.shadowBlur = 0;
+    } else if (f.type === 'missile') {
+      const t = enemyScreen(f.to);
+      const sx = C.x + perp.x * f.side * 50 * SC, sy = C.y + perp.y * f.side * 50 * SC;
+      const cx = C.x + Math.cos(st.shipAng) * 120 * SC + perp.x * f.side * 220 * SC;
+      const cy = C.y + Math.sin(st.shipAng) * 120 * SC + perp.y * f.side * 220 * SC;
+      const q = u => ({ x: (1 - u) * (1 - u) * sx + 2 * (1 - u) * u * cx + u * u * t.x, y: (1 - u) * (1 - u) * sy + 2 * (1 - u) * u * cy + u * u * t.y });
+      g.globalAlpha = 1;
+      g.lineWidth = (f.big ? 3.5 : 2) * SC; g.strokeStyle = f.big ? 'rgba(200,160,255,.55)' : 'rgba(255,170,90,.55)';
+      g.beginPath();
+      for (let i = 0; i <= 10; i++) { const p = q(Math.max(0, k - 0.25 + i * 0.025)); if (i) g.lineTo(p.x, p.y); else g.moveTo(p.x, p.y); }
+      g.stroke();
+      const p = q(k), r = (f.big ? 10 : 5) * SC;
+      const gr = g.createRadialGradient(p.x, p.y, 0, p.x, p.y, r);
+      gr.addColorStop(0, '#fff'); gr.addColorStop(0.4, f.big ? '#c9a2ff' : '#ffb070'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = gr; g.beginPath(); g.arc(p.x, p.y, r, 0, TAU); g.fill();
+    } else if (f.type === 'boom') {
+      const t = enemyScreen(f.to);
+      const r = (f.big ? 90 : 28) * SC * (0.3 + k);
+      const gr = g.createRadialGradient(t.x, t.y, 0, t.x, t.y, r);
+      gr.addColorStop(0, `rgba(255,240,200,${1 - k})`); gr.addColorStop(0.4, `rgba(255,140,50,${0.7 * (1 - k)})`); gr.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = gr; g.beginPath(); g.arc(t.x, t.y, r, 0, TAU); g.fill();
+    } else if (f.type === 'shield') {
+      g.save(); g.translate(C.x, C.y); g.rotate(st.shipAng);
+      g.globalAlpha = (1 - k) * (f.hull ? 0.6 : 1);
+      g.strokeStyle = f.hull ? 'rgba(255,120,60,.95)' : 'rgba(90,160,255,.95)';
+      g.shadowColor = f.hull ? '#ff6a3a' : '#3d8bff'; g.shadowBlur = 18; g.lineWidth = 3 * SC;
+      g.beginPath(); g.ellipse(0, 0, 205 * SC, 100 * SC, 0, f.ang - 0.55, f.ang + 0.55); g.stroke();
+      g.restore();
+    } else if (f.type === 'ring') {
+      g.globalAlpha = 1 - k; g.strokeStyle = 'rgba(110,217,255,.9)'; g.lineWidth = 3 * SC; g.shadowColor = '#6ed9ff'; g.shadowBlur = 14;
+      g.beginPath(); g.arc(C.x, C.y, (80 + 260 * k) * SC, 0, TAU); g.stroke(); g.shadowBlur = 0;
+    } else if (f.type === 'ping') {
+      g.globalAlpha = (1 - k) * 0.7; g.strokeStyle = 'rgba(110,217,255,.8)'; g.lineWidth = 2;
+      g.beginPath(); g.arc(C.x, C.y, 900 * SC * k, 0, TAU); g.stroke();
+    } else if (f.type === 'warpin') {
+      const p = toScreen({ x: f.x, y: f.y });
+      const r = (20 + 120 * k) * SC;
+      const gr = g.createRadialGradient(p.x, p.y, 0, p.x, p.y, r);
+      gr.addColorStop(0, `rgba(220,255,240,${1 - k})`); gr.addColorStop(0.5, `rgba(60,220,140,${0.5 * (1 - k)})`); gr.addColorStop(1, 'rgba(0,0,0,0)');
+      g.globalAlpha = 1; g.fillStyle = gr; g.beginPath(); g.arc(p.x, p.y, r, 0, TAU); g.fill();
+    }
+  }
+  g.restore();
+}
+function drawMarkers(g) {
+  g.save();
+  for (const e of ENEMIES) {
+    const r = e.w * SC * 0.5;
+    const isTarget = st.targetOn && e.id === st.targetId;
+    brackets(g, e.sx, e.sy, r, isTarget ? 'rgba(255,154,60,.95)' : 'rgba(255,69,69,.7)', isTarget ? 2 : 1.4);
+    if (isTarget) {
+      g.save(); g.translate(e.sx, e.sy); g.rotate(now * 0.6);
+      g.setLineDash([6, 8]); g.strokeStyle = 'rgba(255,154,60,.55)'; g.lineWidth = 1.2;
+      g.beginPath(); g.arc(0, 0, r * 1.25, 0, TAU); g.stroke(); g.restore();
+      worldLabel(g, `${e.name} · ${fmtDist(distOf(e))}`, e.sx, e.sy - r * 1.25 - 8, '#ffb27a');
+    } else if (e.id === 'e2' && st.targetOn) {
+      worldLabel(g, 'LCK', e.sx, e.sy - r - 8, '#ffb27a');
+    }
+  }
+  if (st.wingOn) for (const a of ALLIES) { const p = toScreen(posOf(a)); brackets(g, p.x, p.y, a.w * SC * 0.45, 'rgba(34,211,106,.45)', 1); }
+  g.restore();
+}
+function drawReticle(g) {
+  const x = mouse.x, y = mouse.y, s = SC;
+  g.save();
+  g.strokeStyle = st.alt ? 'rgba(170,170,170,.45)' : 'rgba(255,150,70,.95)';
+  g.fillStyle = g.strokeStyle;
+  g.lineWidth = 1.6; g.shadowColor = '#ff6600'; g.shadowBlur = st.alt ? 0 : 6;
+  g.beginPath(); g.arc(x, y, 13 * s, 0, TAU); g.stroke();
+  g.beginPath();
+  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { g.moveTo(x + dx * 17 * s, y + dy * 17 * s); g.lineTo(x + dx * 25 * s, y + dy * 25 * s); }
+  g.stroke();
+  g.beginPath(); g.arc(x, y, 1.8 * s, 0, TAU); g.fill();
+  g.restore();
+}
+function drawWorld() {
+  const g = wctx;
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  if (bg) g.drawImage(bg, 0, 0);
+  g.setTransform(DPR, 0, 0, DPR, 0, 0);
+  const C = shipScreen();
+  const lot = !inCombat();
+  st.shipAng = lot ? -0.5 + 0.02 * Math.sin(now * 0.3) : -0.1 + 0.04 * Math.sin(now * 0.23);
+  const spdFrac = clamp(st.speed / MODES[st.mode].max, 0, 1);
+  if (st.wingOn) {
+    for (const a of ALLIES) {
+      const p = toScreen(posOf(a));
+      const ang = st.shipAng + 0.06 * Math.sin(now * 0.4 + a.ph);
+      engineGlow(g, p.x, p.y, a.w * SC, ang, 0.5);
+      drawSprite(g, a.img, p.x, p.y, a.w * SC, ang);
+    }
+  }
+  if (!lot) {
+    for (const e of ENEMIES) {
+      const p = toScreen(posOf(e));
+      e.sx = p.x; e.sy = p.y;
+      const ang = Math.atan2(C.y - p.y, C.x - p.x) + 0.22 * Math.sin(now * 0.2 + e.ph);
+      engineGlow(g, p.x, p.y, e.w * SC, ang, 0.45);
+      drawSprite(g, e.img, p.x, p.y, e.w * SC, ang);
+    }
+  }
+  engineGlow(g, C.x, C.y, 380 * SC, st.shipAng, 0.5 + 0.5 * spdFrac);
+  drawSprite(g, 'atlas', C.x, C.y, 380 * SC, st.shipAng);
+  drawFx(g, C);
+  if (!lot) drawMarkers(g);
+  drawReticle(g);
+}
+
+// ---------- klaster: radar + 4 łuki ----------
+// Kąty "zegarowe": 0 = godz. 12, rosną zgodnie ze wskazówkami.
+const clockRad = d => (d - 90) * Math.PI / 180;
+function arcPath(g, cx, cy, r, d1, d2) { g.beginPath(); g.arc(cx, cy, r, clockRad(d1), clockRad(d2), false); }
+function tri(g, x, y, ang, size, color) {
+  g.save(); g.translate(x, y); g.rotate(ang);
+  g.beginPath(); g.moveTo(size, 0); g.lineTo(-size * 0.7, -size * 0.65); g.lineTo(-size * 0.7, size * 0.65); g.closePath();
+  g.fillStyle = color; g.fill(); g.restore();
+}
+function drawRadar(g, cx, cy, r) {
+  g.save();
+  const disk = g.createRadialGradient(cx, cy - r * 0.3, r * 0.05, cx, cy, r);
+  disk.addColorStop(0, '#17110a'); disk.addColorStop(1, '#070709');
+  g.beginPath(); g.arc(cx, cy, r, 0, TAU); g.fillStyle = disk; g.fill();
+  g.clip();
+  g.strokeStyle = 'rgba(255,140,60,.11)'; g.lineWidth = 1;
+  for (const f of [1 / 3, 2 / 3]) { g.beginPath(); g.arc(cx, cy, r * f, 0, TAU); g.stroke(); }
+  g.strokeStyle = 'rgba(255,140,60,.06)';
+  g.beginPath(); g.moveTo(cx - r, cy); g.lineTo(cx + r, cy); g.moveTo(cx, cy - r); g.lineTo(cx, cy + r); g.stroke();
+  if (g.createConicGradient) {
+    const sweep = g.createConicGradient((now * 1.1) % TAU, cx, cy);
+    sweep.addColorStop(0, 'rgba(255,120,40,0)'); sweep.addColorStop(0.8, 'rgba(255,120,40,0)'); sweep.addColorStop(1, 'rgba(255,120,40,.16)');
+    g.fillStyle = sweep; g.fillRect(cx - r, cy - r, r * 2, r * 2);
+  }
+  if (st.scanStart >= 0) {
+    const pa = (now - st.scanStart) / 1.3;
+    if (pa >= 0 && pa < 1) { g.beginPath(); g.arc(cx, cy, r * pa, 0, TAU); g.strokeStyle = `rgba(110,217,255,${(1 - pa) * 0.85})`; g.lineWidth = 2; g.stroke(); }
+  }
+  const sc = r / st.range;
+  for (const a of ASTEROIDS) { g.beginPath(); g.arc(cx + a.x * sc, cy + a.y * sc, 1.8, 0, TAU); g.fillStyle = 'rgba(154,166,176,.8)'; g.fill(); }
+  for (const s of STATIONS) { g.fillStyle = '#ffb040'; g.fillRect(cx + s.x * sc - 3, cy + s.y * sc - 3, 6, 6); }
+  if (st.wingOn) for (const a of ALLIES) { const p = posOf(a); tri(g, cx + p.x * sc, cy + p.y * sc, st.shipAng, 4, '#22d36a'); }
+  if (inCombat()) {
+    for (const e of ENEMIES) {
+      const p = posOf(e), px = cx + p.x * sc, py = cy + p.y * sc;
+      tri(g, px, py, Math.atan2(-p.y, -p.x), 4.5, '#ff4545');
+      if (st.targetOn && e.id === st.targetId) { g.beginPath(); g.arc(px, py, 7, 0, TAU); g.strokeStyle = '#ff9a3c'; g.lineWidth = 1.4; g.stroke(); }
+    }
+  }
+  tri(g, cx, cy, st.shipAng, 6.5, '#ffffff');
+  g.restore();
+  g.beginPath(); g.arc(cx, cy, r, 0, TAU); g.strokeStyle = 'rgba(255,102,0,.38)'; g.lineWidth = 1.5; g.stroke();
+}
+// Łuk życia: anchor = kotwica (dolny koniec), reverse = rośnie przeciwnie do wskazówek.
+function drawVital(g, cx, cy, R, anchor, span, reverse, v, ghost, color, rgb, ghostRgb, alpha, hit) {
+  const seg = f => (reverse ? [anchor - span * f, anchor] : [anchor, anchor + span * f]);
+  g.save();
+  g.lineCap = 'round'; g.lineWidth = 11;
+  let [a, b] = seg(1);
+  arcPath(g, cx, cy, R, a, b); g.strokeStyle = `rgba(${rgb},.13)`; g.stroke();
+  g.globalAlpha = alpha;
+  if (ghost > v + 0.002) { [a, b] = seg(ghost); arcPath(g, cx, cy, R, a, b); g.strokeStyle = `rgba(${ghostRgb},.5)`; g.stroke(); }
+  if (v > 0.002) {
+    [a, b] = seg(v);
+    arcPath(g, cx, cy, R, a, b);
+    g.strokeStyle = color; g.shadowColor = color; g.shadowBlur = 12 + hit * 40; g.stroke();
+    if (hit > 0) { g.shadowBlur = 0; g.lineWidth = 4; g.strokeStyle = `rgba(255,255,255,${Math.min(1, hit * 2.4)})`; arcPath(g, cx, cy, R, a, b); g.stroke(); }
+  }
+  g.restore();
+}
+// Łuk napędu w stylu modułu PRĘDKOŚĆ: cienki, z podziałką, pomarańczowy żar i biała kropka.
+function drawDrive(g, cx, cy, R, anchor, span, reverse, v, opt) {
+  const at = f => (reverse ? anchor - span * f : anchor + span * f);
+  const seg = f => (reverse ? [at(f), anchor] : [anchor, at(f)]);
+  g.save();
+  g.lineCap = 'round'; g.lineWidth = 7;
+  let [a, b] = seg(1);
+  arcPath(g, cx, cy, R, a, b); g.strokeStyle = 'rgba(255,255,255,.08)'; g.stroke();
+  const ticks = opt.ticks;
+  g.lineCap = 'butt'; g.strokeStyle = 'rgba(255,255,255,.30)';
+  for (let i = 0; i <= ticks; i++) {
+    const ang = clockRad(at(i / ticks)), major = i % 2 === 0;
+    const r1 = R - (major ? 18 : 14), r2 = R - 9;
+    g.lineWidth = major ? 1.6 : 1;
+    g.beginPath(); g.moveTo(cx + Math.cos(ang) * r1, cy + Math.sin(ang) * r1); g.lineTo(cx + Math.cos(ang) * r2, cy + Math.sin(ang) * r2); g.stroke();
+  }
+  let inWindow = false, over = false;
+  if (opt.window) {
+    const [w1, w2] = opt.window;
+    inWindow = v >= w1 && v <= w2; over = v > w2;
+    g.lineCap = 'round'; g.lineWidth = 3;
+    arcPath(g, cx, cy, R + 9, Math.min(at(w1), at(w2)), Math.max(at(w1), at(w2)));
+    g.strokeStyle = inWindow ? 'rgba(56,224,138,1)' : 'rgba(56,224,138,.35)';
+    g.shadowColor = '#38e08a'; g.shadowBlur = inWindow ? 12 : 0; g.stroke(); g.shadowBlur = 0;
+    arcPath(g, cx, cy, R + 9, Math.min(at(1), at(w2)), Math.max(at(1), at(w2)));
+    g.strokeStyle = over ? 'rgba(255,64,64,.95)' : 'rgba(255,64,64,.28)'; g.stroke();
+  }
+  if (v > 0.003) {
+    [a, b] = seg(v);
+    const grad = g.createLinearGradient(0, cy + R, 0, cy - 10);
+    const c1 = inWindow ? '#1fbf6a' : over ? '#ff2200' : '#ff3300';
+    const c2 = inWindow ? '#5dffa8' : over ? '#ff5a3a' : '#ff8a1a';
+    grad.addColorStop(0, c1); grad.addColorStop(1, c2);
+    g.lineCap = 'round'; g.lineWidth = 7; g.strokeStyle = grad;
+    g.shadowColor = inWindow ? '#38e08a' : '#ff6600'; g.shadowBlur = 14;
+    arcPath(g, cx, cy, R, a, b); g.stroke();
+    const tip = clockRad(at(v));
+    g.shadowBlur = 10; g.fillStyle = '#fff';
+    g.beginPath(); g.arc(cx + Math.cos(tip) * R, cy + Math.sin(tip) * R, 4.6, 0, TAU); g.fill();
+    g.shadowBlur = 0;
+  }
+  if (opt.notch != null) {
+    const ang = clockRad(at(opt.notch));
+    g.strokeStyle = 'rgba(255,255,255,.85)'; g.lineWidth = 2; g.lineCap = 'butt';
+    g.beginPath(); g.moveTo(cx + Math.cos(ang) * (R + 5), cy + Math.sin(ang) * (R + 5)); g.lineTo(cx + Math.cos(ang) * (R + 13), cy + Math.sin(ang) * (R + 13)); g.stroke();
+  }
+  g.restore();
+}
+function drawCluster() {
+  const g = cctx;
+  const k = clc.width / 340;
+  g.setTransform(k, 0, 0, k, 0, 0);
+  g.clearRect(0, 0, 340, 340);
+  const cx = 170, cy = 170, R = 150, RR = 118;
+  g.beginPath(); g.arc(cx, cy, R + 14, 0, TAU); g.arc(cx, cy, RR + 1, 0, TAU, true);
+  g.fillStyle = 'rgba(3,5,8,.64)'; g.fill();
+  g.beginPath(); g.arc(cx, cy, R + 14, 0, TAU); g.strokeStyle = 'rgba(255,255,255,.07)'; g.lineWidth = 1; g.stroke();
+  drawRadar(g, cx, cy, RR);
+  const calm = smooth(2, 4, st.calmT);
+  const pulse = v => (v < 0.25 ? 0.6 + 0.4 * Math.abs(Math.sin(now * 4.4)) : 1);
+  const hpAlpha = (st.hp > 0.985 ? lerp(1, 0.42, calm) : 1) * pulse(st.hp);
+  const shAlpha = (st.sh > 0.985 ? lerp(1, 0.42, calm) : 1) * pulse(st.sh);
+  // Kadłub: 9 -> 12 (lewa góra), Tarcza: 3 -> 12 (prawa góra). Luka na 12:00 rośnie z obrażeniami.
+  drawVital(g, cx, cy, R, 275, 75, false, st.hpShown, st.hpGhost, '#ff2d36', '255,45,54', '255,190,190', hpAlpha, st.hpHit);
+  drawVital(g, cx, cy, R, 85, 75, true, st.shShown, st.shGhost, '#2f7dff', '47,125,255', '190,210,255', shAlpha, st.shHit);
+  // Prędkość: 6 -> 9 (lewy dół), Obroty: 6 -> 3 (prawy dół).
+  const md = MODES[st.mode];
+  drawDrive(g, cx, cy, R, 190, 73, false, clamp(st.speed / md.max, 0, 1), { ticks: 6, notch: st.gear / st.gears });
+  drawDrive(g, cx, cy, R, 170, 73, true, st.rpm, { ticks: 8, window: [0.78, 0.9] });
+  g.font = '600 10px Consolas, monospace';
+  g.fillStyle = 'rgba(170,170,170,.55)'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  const label = (d, r, text) => { const a = clockRad(d); g.fillText(text, cx + Math.cos(a) * r, cy + Math.sin(a) * r); };
+  label(216, R + 25, 'PRĘDK.');
+  label(144, R + 25, 'OBROTY');
+}
+
+// ---------- DOM co klatkę (z cache) ----------
+const D = {};
+for (const id of ['hpVal', 'shVal', 'spd', 'spdUnit', 'gear', 'modeBadge', 'hostCount', 'rangeLbl', 'roHp', 'roSh', 'scanTimer']) D[id] = $(id);
+const cache = {};
+function put(key, el, value) { if (cache[key] !== value) { cache[key] = value; el.textContent = value; } }
+function flag(key, el, cls, on) { const id = `${key}:${cls}`; if (cache[id] !== on) { cache[id] = on; el.classList.toggle(cls, on); } }
+let liveAcc = 0;
+function updateDom(dt) {
+  put('hp', D.hpVal, fmtInt(st.hpShown * st.hpMax));
+  put('sh', D.shVal, fmtInt(st.shShown * st.shMax));
+  const sp = fmtSpeed(st.speed);
+  put('spd', D.spd, sp.n);
+  put('spu', D.spdUnit, sp.u);
+  put('gear', D.gear, `${st.gear}/${st.gears}`);
+  put('mb', D.modeBadge, MODES[st.mode].badge);
+  const hostiles = inCombat() ? ENEMIES.length : 0;
+  put('hc', D.hostCount, hostiles ? `WRÓG ${hostiles}` : 'CZYSTO');
+  flag('hc', D.hostCount, 'none', !hostiles);
+  put('rl', D.rangeLbl, `${st.range / 1000}K`);
+  flag('roHp', D.roHp, 'calm', st.hp > 0.985 && st.calmT > 3);
+  flag('roSh', D.roSh, 'calm', st.sh > 0.985 && st.calmT > 3);
+  flag('roSh', D.roSh, 'crit', st.sh < 0.25);
+  flag('roHp', D.roHp, 'crit', st.hp < 0.25);
+  for (const t of TELLTALES) { const on = !!st.tt[t.id]; if (t.on !== on) { t.on = on; t.el.classList.toggle('on', on); } }
+  for (const s of [...WEAPONS, ...ABILITIES]) {
+    const q = s.t > 0 ? Math.round((s.t / s.cd) * 100) : 0;
+    if (s.q !== q) { s.q = q; s.el.style.setProperty('--cd', `${q}%`); s.el.classList.toggle('cool', q > 0); }
+    const text = s.t > 1.5 ? String(Math.ceil(s.t)) : '';
+    if (s.cdText !== text) { s.cdText = text; s.cdn.textContent = text; }
+    if (s.justReady) { s.justReady = false; s.el.classList.remove('flash'); void s.el.offsetWidth; s.el.classList.add('flash'); }
+  }
+  if (st.scanUntil > 0) D.scanTimer.style.transform = `scaleX(${clamp((st.scanUntil - now) / 10, 0, 1).toFixed(3)})`;
+  liveAcc += dt;
+  if (liveAcc > 0.3) {
+    liveAcc = 0;
+    liveTarget(); liveWing();
+    if (st.alt) renderOverview();
+    if (inCombat() && st.targetOn) renderLocks();
+  }
+}
+
+// ---------- wejście ----------
+let altDownAt = 0;
+window.addEventListener('keydown', e => {
+  if (e.key === 'Alt') {
+    e.preventDefault();
+    if (!e.repeat) { altDownAt = performance.now(); setAlt(true); }
+    return;
+  }
+  if (e.repeat) return;
+  const k = e.key.toLowerCase();
+  if (e.key === 'Shift') { st.tt.boost = true; return; }
+  if (k === 'w' || k === 's') { keys[k] = true; return; }
+  const wi = '123456'.indexOf(k);
+  if (k.length === 1 && wi >= 0) { fireWeapon(WEAPONS[wi]); return; }
+  const ai = 'xrfn'.indexOf(k);
+  if (k.length === 1 && ai >= 0) { useAbility(ABILITIES[ai]); return; }
+  if (k === 't') toggleTarget();
+  else if (k === 'v') cycleMode();
+  else if (k === 'b') toggleTelltale('stab', 'Stabilizator');
+  else if (k === 'c') toggleTelltale('damp', 'Tłumik grawitacyjny');
+  else if (k === '7') toggleTelltale('auto', 'Skrzynia auto');
+  else if (k === '9') toggleWarp();
+  else if (k === 'h' && inCombat()) enemyShot();
+});
+window.addEventListener('keyup', e => {
+  if (e.key === 'Alt') {
+    e.preventDefault();
+    if (performance.now() - altDownAt < 250) st.altSticky = !st.altSticky;
+    setAlt(st.altSticky);
+    return;
+  }
+  if (e.key === 'Shift') st.tt.boost = false;
+  const k = e.key.toLowerCase();
+  if (k === 'w' || k === 's') keys[k] = false;
+});
+window.addEventListener('blur', () => { keys.w = keys.s = false; st.tt.boost = false; setAlt(st.altSticky); });
+window.addEventListener('pointermove', e => {
+  if (e.target === world && !st.alt) { mouse.x = e.clientX; mouse.y = e.clientY; mouse.moved = true; }
+});
+clc.addEventListener('wheel', e => {
+  e.preventDefault();
+  const i = RANGES.indexOf(st.range);
+  st.range = RANGES[clamp(i + (e.deltaY > 0 ? 1 : -1), 0, RANGES.length - 1)];
+}, { passive: false });
+
+$('target').addEventListener('pointerdown', e => {
+  const act = e.target.closest('[data-act]')?.dataset.act;
+  if (!act) return;
+  if (act === 'unlock') toggleTarget();
+  else if (act === 'uplink') { alertMsg(`Uplink · łączenie z ${targetEntity()?.name || 'stacją'}`, 'info', 2); feed('Uplink: handshake z [S1] Ceres Hub', 'orbit'); }
+  else alertMsg(act === 'orbit' ? 'Kurs: orbita wokół celu' : 'Kurs: podejście do celu', 'info', 1.8);
+});
+for (const id of ['scanRows', 'ovRows']) {
+  $(id).addEventListener('pointerdown', e => {
+    if (!st.alt) return;
+    const row = e.target.closest('[data-id]');
+    if (row) selectContact(row.dataset.id);
+  });
+}
+$('filters').addEventListener('pointerdown', e => {
+  const b = e.target.closest('[data-f]');
+  if (b) { st.filter = b.dataset.f; renderOverview(); }
+});
+$('orders').addEventListener('pointerdown', e => {
+  const b = e.target.closest('[data-order]');
+  if (b) setOrder(b.dataset.order);
+});
+
+// Przeciąganie wsparcia z Rezerwy na mapę.
+let drag = null;
+$('rgrid').addEventListener('pointerdown', e => {
+  const card = e.target.closest('[data-r]');
+  if (!card) return;
+  e.preventDefault();
+  const r = RESERVE[Number(card.dataset.r)];
+  const ghost = document.createElement('div');
+  ghost.className = 'drag-ghost';
+  ghost.innerHTML = `<img src="${SRC[r.img]}" alt=""><span>${r.name}</span>`;
+  document.body.appendChild(ghost);
+  drag = { r, ghost };
+  moveGhost(e);
+});
+function moveGhost(e) { if (drag) { drag.ghost.style.left = `${e.clientX}px`; drag.ghost.style.top = `${e.clientY}px`; } }
+window.addEventListener('pointermove', moveGhost);
+window.addEventListener('pointerup', e => {
+  if (!drag) return;
+  const { r, ghost } = drag;
+  drag = null; ghost.remove();
+  if (document.elementFromPoint(e.clientX, e.clientY) !== world) return;
+  const p = toWorld(e.clientX, e.clientY);
+  const n = ALLIES.filter(a => a.base === r.name).length + 1;
+  ALLIES.push({ id: `a${Date.now()}`, base: r.name, name: `${r.name}-${n}`, role: r.role, img: r.img, w: r.w, x: p.x, y: p.y, ph: Math.random() * 6, hp: 1, sh: 1 });
+  st.wingOn = true;
+  fx.push({ type: 'warpin', x: p.x, y: p.y, age: 0, dur: 0.8 });
+  feed(`Wsparcie Terra Nova: przyzwano ${r.name}`, 'ok');
+  alertMsg(`Wsparcie · ${r.name} w drodze`, 'good', 2);
+  renderWing(); renderPanels();
+});
+
+for (const b of document.querySelectorAll('[data-sc]')) b.addEventListener('click', () => setScenario(b.dataset.sc));
+$('annotBtn').addEventListener('click', () => {
+  document.body.classList.toggle('annot');
+  $('annotBtn').classList.toggle('on', document.body.classList.contains('annot'));
+});
+
+// ---------- start ----------
+const params = new URLSearchParams(location.search);
+if (params.get('annot') === '0') document.body.classList.remove('annot');
+if (params.get('still') === '1') document.body.classList.add('still');
+$('annotBtn').classList.toggle('on', document.body.classList.contains('annot'));
+buildSlots();
+buildTelltales();
+renderReserve();
+resize();
+window.addEventListener('resize', resize);
+setScenario(['lot', 'combat', 'alt'].includes(params.get('s')) ? params.get('s') : 'combat');
+if (params.get('peek') === 'mode') setTimeout(() => { cycleMode(); st.modePanelUntil = Infinity; }, 300);
+let lastFrame = performance.now();
+function frame(t) {
+  const dt = clamp((t - lastFrame) / 1000, 0, 0.05);
+  lastFrame = t;
+  step(dt);
+  drawWorld();
+  drawCluster();
+  updateDom(dt);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

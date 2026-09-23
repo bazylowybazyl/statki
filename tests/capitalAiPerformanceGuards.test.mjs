@@ -34,6 +34,9 @@ test('capital weapon AI reuses faction pools and one LOS result per target', () 
   assert.ok(capitalAi.includes('window.getAIFriendlyCandidates?.()'));
   assert.ok(capitalAi.includes('losTargets[i] === bestTarget'));
   assert.equal(capitalAi.match(/isLineOfFireBlocked/g)?.length, 1);
-  assert.ok(indexHtml.includes('window.getAIPirateCandidates?.()'));
+  // Wybór celu w index.html nie skanuje npcs[]: ścieżka ogólna czyta listę
+  // kontaktów strony z fleetAwareness (tylko widoczni wrogowie — taniej niż
+  // pula frakcji), misja piracka nadal bierze pulę sojuszników.
+  assert.ok(indexHtml.includes('return pickContactTarget(npc, {'));
   assert.ok(indexHtml.includes('window.getAIFriendlyCandidates?.()'));
 });

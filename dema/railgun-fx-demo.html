@@ -1,0 +1,2180 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Railgun kadłubowy — wystrzał i pocisk</title>
+<style>
+  :root {
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+
+    --void:  #05070b;
+    --edge:  #232b36;
+    --text:  #c9d2de;
+    --dim:   #79859a;
+    --arc:   #7cc4ff;
+    --hot:   #dbeeff;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; background: var(--void); overflow: hidden; }
+  body {
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    touch-action: none;
+  }
+  canvas { display: block; width: 100%; height: 100%; }
+
+  #screenflash {
+    position: fixed; inset: 0; pointer-events: none; opacity: 0;
+    background: radial-gradient(62% 52% at 50% 52%, rgba(226,242,255,.9), rgba(90,170,255,.28) 55%, transparent 76%);
+    mix-blend-mode: screen;
+  }
+
+  #panel {
+    position: fixed;
+    top: calc(12px + env(safe-area-inset-top, 0px));
+    right: 12px;
+    width: 268px;
+    max-height: calc(100dvh - 130px - env(safe-area-inset-top, 0px));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    background: rgba(12,16,22,.86);
+    border: 1px solid var(--edge);
+    border-radius: 10px;
+    backdrop-filter: blur(8px);
+    padding: 12px 13px 14px;
+    font-size: 12.5px;
+    line-height: 1.45;
+    z-index: 5;
+  }
+  #panel h1 { margin: 0 0 2px; font-size: 13px; font-weight: 600; letter-spacing: .2px; color: var(--hot); }
+  #panel .sub { margin: 0 0 12px; color: var(--dim); font-size: 11.5px; }
+
+  .grp { border-top: 1px solid var(--edge); padding-top: 9px; margin-top: 10px; }
+  .grp:first-of-type { border-top: 0; padding-top: 0; margin-top: 0; }
+  .grp > .gname { color: var(--dim); font-size: 11px; margin-bottom: 7px; }
+
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 7px 0; }
+  .row label { flex: 1 1 auto; }
+  .row .val {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 11px; color: var(--arc); min-width: 38px; text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  input[type=range] {
+    -webkit-appearance: none; appearance: none;
+    width: 100%; height: 18px; background: transparent; margin: 0 0 2px;
+  }
+  input[type=range]::-webkit-slider-runnable-track { height: 3px; background: #2c3441; border-radius: 2px; }
+  input[type=range]::-moz-range-track { height: 3px; background: #2c3441; border-radius: 2px; }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 14px; height: 14px; margin-top: -5.5px;
+    border-radius: 50%; background: var(--arc); border: 0; cursor: pointer;
+  }
+  input[type=range]::-moz-range-thumb {
+    width: 14px; height: 14px; border-radius: 50%; background: var(--arc); border: 0; cursor: pointer;
+  }
+  input[type=range]:focus-visible { outline: 2px solid var(--hot); outline-offset: 3px; }
+
+  .seg { display: flex; gap: 4px; }
+  .seg button {
+    flex: 1; padding: 6px 4px; font: inherit; font-size: 11.5px; color: var(--dim);
+    background: #161b23; border: 1px solid var(--edge); border-radius: 6px; cursor: pointer;
+  }
+  .seg button[aria-pressed="true"] { color: #05121c; background: var(--arc); border-color: var(--arc); font-weight: 600; }
+
+  .chk { display: flex; align-items: center; gap: 8px; margin: 7px 0; cursor: pointer; }
+  .chk input { accent-color: var(--arc); width: 15px; height: 15px; }
+
+  #readout {
+    position: fixed; left: 12px;
+    top: calc(12px + env(safe-area-inset-top, 0px));
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 11px; color: var(--dim); line-height: 1.6; z-index: 5;
+    font-variant-numeric: tabular-nums; pointer-events: none;
+  }
+  #readout b { color: var(--text); font-weight: 500; }
+  #charge {
+    margin-top: 4px; width: 128px; height: 4px; background: #1b222c;
+    border-radius: 2px; overflow: hidden;
+  }
+  #charge i { display: block; height: 100%; width: 0; background: var(--arc); }
+
+  #dock {
+    position: fixed; left: 0; right: 0;
+    bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+    display: flex; justify-content: center; align-items: center; gap: 8px;
+    flex-wrap: wrap; padding: 0 12px;
+    z-index: 5; pointer-events: none;
+  }
+  #dock > * { pointer-events: auto; }
+  #fire {
+    font: inherit; font-size: 14px; font-weight: 600; letter-spacing: .3px;
+    color: #04121c; background: linear-gradient(180deg, #d5f0ff, var(--arc));
+    border: 0; border-radius: 999px; padding: 13px 30px; cursor: pointer;
+    box-shadow: 0 0 0 1px rgba(160,220,255,.35), 0 10px 30px rgba(60,170,255,.22);
+  }
+  #fire:active { transform: translateY(1px); }
+  #fire[disabled] { opacity: .45; cursor: default; }
+  #dock .alt {
+    font: inherit; font-size: 12.5px; color: var(--text);
+    background: rgba(12,16,22,.86); border: 1px solid var(--edge); border-radius: 999px;
+    padding: 12px 15px; cursor: pointer;
+  }
+  .hint { position: fixed; left: 12px; bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+    font-size: 11px; color: #4d5766; z-index: 4; max-width: 38%; }
+  @media (max-width: 860px) {
+    #panel { width: auto; left: 12px; right: 12px; max-height: 40dvh; }
+    .hint { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) { #screenflash { display: none; } }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="screenflash"></div>
+
+<div id="readout">
+  <div>fps <b id="r-fps">—</b></div>
+  <div>cząstki <b id="r-part">0</b></div>
+  <div>pocisk <b id="r-slug">—</b></div>
+  <div id="charge"><i id="charge-bar"></i></div>
+</div>
+
+<div id="panel">
+  <h1>Railgun kadłubowy</h1>
+  <p class="sub">Szyny mają 350 jednostek — wieżyczka 3-lufowa obok to ta sama, co w demie wystrzału. Cel stoi 6 400 jednostek przed dziobem. Kadłub i łoże są placeholderem.</p>
+
+  <div class="grp">
+    <div class="gname">Kamera</div>
+    <div class="seg" id="cam">
+      <button data-cam="ship" aria-pressed="true">Statek</button>
+      <button data-cam="path" aria-pressed="false">Trasa</button>
+      <button data-cam="target" aria-pressed="false">Cel</button>
+    </div>
+    <label class="chk"><input type="checkbox" id="follow"> Kamera leci za pociskiem</label>
+    <label class="chk"><input type="checkbox" id="auto"> Ogień ciągły</label>
+  </div>
+
+  <div class="grp">
+    <div class="gname">Wystrzał</div>
+    <div class="row"><label for="s-int">Siła</label><span class="val" id="v-int">1.00</span></div>
+    <input type="range" id="s-int" min="0.2" max="2" step="0.05" value="1">
+    <div class="row"><label for="s-lance">Długość lancy plazmy</label><span class="val" id="v-lance">1.00</span></div>
+    <input type="range" id="s-lance" min="0.2" max="2.5" step="0.05" value="1">
+    <div class="row"><label for="s-spread">Rozrzut do przodu</label><span class="val" id="v-spread">0.10</span></div>
+    <input type="range" id="s-spread" min="0.01" max="0.45" step="0.01" value="0.1">
+    <div class="row"><label for="s-charge">Czas ładowania</label><span class="val" id="v-charge">1.40</span></div>
+    <input type="range" id="s-charge" min="0" max="4" step="0.1" value="1.4">
+    <div class="row"><label for="s-recoil">Odrzut statku</label><span class="val" id="v-recoil">1.00</span></div>
+    <input type="range" id="s-recoil" min="0" max="2.5" step="0.05" value="1">
+  </div>
+
+  <div class="grp">
+    <div class="gname">Pocisk</div>
+    <div class="row"><label for="s-speed">Prędkość</label><span class="val" id="v-speed">5200</span></div>
+    <input type="range" id="s-speed" min="1500" max="12000" step="100" value="5200">
+    <div class="row"><label for="s-topa">Jasność smugi</label><span class="val" id="v-topa">1.00</span></div>
+    <input type="range" id="s-topa" min="0" max="2" step="0.05" value="1">
+    <div class="row"><label for="s-tlife">Czas życia smugi (s)</label><span class="val" id="v-tlife">4.5</span></div>
+    <input type="range" id="s-tlife" min="1" max="12" step="0.5" value="4.5">
+    <div class="row"><label for="s-twidth">Szerokość smugi</label><span class="val" id="v-twidth">1.00</span></div>
+    <input type="range" id="s-twidth" min="0.3" max="3" step="0.05" value="1">
+    <div class="row"><label for="s-turb">Turbulencja smugi</label><span class="val" id="v-turb">0.45</span></div>
+    <input type="range" id="s-turb" min="0" max="1.5" step="0.05" value="0.45">
+  </div>
+
+  <div class="grp">
+    <div class="gname">Obraz</div>
+    <div class="row"><label for="s-flat">Spłaszczenie rozrzutu</label><span class="val" id="v-flat">0.25</span></div>
+    <input type="range" id="s-flat" min="0" max="1" step="0.01" value="0.25">
+    <div class="row"><label for="s-shake">Wstrząs kamery</label><span class="val" id="v-shake">1.00</span></div>
+    <input type="range" id="s-shake" min="0" max="2.5" step="0.05" value="1">
+    <div class="row"><label for="s-bloom">Bloom</label><span class="val" id="v-bloom">1.00</span></div>
+    <input type="range" id="s-bloom" min="0" max="2.5" step="0.05" value="1">
+    <div class="row"><label for="s-time">Spowolnienie</label><span class="val" id="v-time">1.00</span></div>
+    <input type="range" id="s-time" min="0.05" max="1" step="0.01" value="1">
+  </div>
+</div>
+
+<div id="dock">
+  <button id="fire">OGIEŃ</button>
+  <button id="b-ship" class="alt">Statek</button>
+  <button id="b-path" class="alt">Trasa</button>
+  <button id="b-target" class="alt">Cel</button>
+  <button id="toggle" class="alt">Panel</button>
+</div>
+<div class="hint">Spacja — ogień &nbsp;·&nbsp; 1 / 2 / 3 — kamera &nbsp;·&nbsp; F — lot za pociskiem &nbsp;·&nbsp; H — panel</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls }    from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer }   from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass }       from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass }  from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass }       from 'three/addons/postprocessing/OutputPass.js';
+
+/* ============================================================================
+   KONFIGURACJA
+   ========================================================================== */
+const CFG = {
+  intensity:  1.0,    // siła wystrzału
+  lance:      1.0,    // długość lancy plazmy z wylotu
+  spread:     0.10,   // półkąt stożka wylotowego w radianach — railgun sypie DO PRZODU
+  charge:     1.4,    // sekundy ładowania kondensatorów
+  recoil:     1.0,
+  speed:      5200,   // prędkość pocisku (jednostek/s)
+  trailOpacity: 1.0,  // jasność smugi
+  trailLife:  4.5,    // sekundy — tyle wisi ślad po przelocie
+  trailWidth: 1.0,
+  turbulence: 0.45,   // meandry i poszarpanie smugi z wiekiem
+  flatten:    0.25,
+  shake:      1.0,
+  bloom:      1.0,
+  timeScale:  1.0,
+  follow:     false,
+  autoFire:   false,
+};
+
+/* Skala świata. Punkt odniesienia:
+   kadłub 520, szyny railguna 350, lufa wieżyczki 3-lufowej 26 jednostek.
+   Jeśli u Ciebie działo jest innej wielkości — zmień FX_SCALE. */
+const FX_SCALE = 1.0;
+
+/* ============================================================================
+   NARZĘDZIA
+   ========================================================================== */
+const clamp01 = x => x < 0 ? 0 : x > 1 ? 1 : x;
+const lerp = (a, b, t) => a + (b - a) * t;
+const rand = (a, b) => a + Math.random() * (b - a);
+const randInt = (a, b) => Math.floor(rand(a, b + 1));
+function smoothstep(e0, e1, x) {
+  const t = clamp01((x - e0) / (e1 - e0 || 1e-6));
+  return t * t * (3 - 2 * t);
+}
+
+const _bx = new THREE.Vector3(), _by = new THREE.Vector3(), _bh = new THREE.Vector3();
+function makeBasis(dir) {
+  _bh.set(0, 1, 0);
+  if (Math.abs(dir.y) > 0.9) _bh.set(1, 0, 0);
+  _bx.crossVectors(_bh, dir).normalize();
+  _by.crossVectors(dir, _bx).normalize();
+}
+function coneDir(out, dir, spread, flat = 1) {
+  const theta = spread * Math.sqrt(Math.random());
+  const phi = Math.random() * Math.PI * 2;
+  const st = Math.sin(theta), ct = Math.cos(theta);
+  out.copy(dir).multiplyScalar(ct)
+     .addScaledVector(_bx, st * Math.cos(phi))
+     .addScaledVector(_by, st * Math.sin(phi));
+  if (flat !== 1) {
+    out.sub(dir);
+    out.y *= flat;
+    out.add(dir).normalize();
+  }
+  return out;
+}
+
+/* ============================================================================
+   TEKSTURY PROCEDURALNE
+   ========================================================================== */
+function canvasTex(size, draw) {
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = size;
+  draw(cv.getContext('2d'), size);
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.needsUpdate = true;
+  return t;
+}
+
+const TEX_GLOW = canvasTex(128, (ctx, s) => {
+  const g = ctx.createRadialGradient(s/2, s/2, 0, s/2, s/2, s/2);
+  g.addColorStop(0.00, 'rgba(255,255,255,1)');
+  g.addColorStop(0.18, 'rgba(255,255,255,0.78)');
+  g.addColorStop(0.42, 'rgba(255,255,255,0.28)');
+  g.addColorStop(0.72, 'rgba(255,255,255,0.07)');
+  g.addColorStop(1.00, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, s, s);
+});
+
+const TEX_FLARE = canvasTex(256, (ctx, s) => {
+  const c = s / 2;
+  const g = ctx.createRadialGradient(c, c, 0, c, c, c * 0.34);
+  g.addColorStop(0, 'rgba(255,255,255,0.95)');
+  g.addColorStop(0.5, 'rgba(255,255,255,0.22)');
+  g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, s, s);
+  ctx.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + 0.3;
+    const len = c * (i % 2 === 0 ? 0.98 : 0.6);
+    const w = s * (i % 2 === 0 ? 0.030 : 0.018);
+    ctx.save();
+    ctx.translate(c, c);
+    ctx.rotate(a);
+    const lg = ctx.createLinearGradient(0, 0, len, 0);
+    lg.addColorStop(0, 'rgba(255,255,255,0.85)');
+    lg.addColorStop(0.35, 'rgba(255,255,255,0.22)');
+    lg.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = lg;
+    ctx.beginPath();
+    ctx.moveTo(0, -w); ctx.lineTo(len, 0); ctx.lineTo(0, w);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+});
+
+// anamorficzny krzyż — skalowany osobno wzdłuż i w poprzek osi strzału
+const TEX_CROSS = canvasTex(256, (ctx, s) => {
+  const img = ctx.createImageData(s, s);
+  const d = img.data;
+  for (let y = 0; y < s; y++) {
+    const v = (y / (s - 1)) * 2 - 1;
+    for (let x = 0; x < s; x++) {
+      const u = (x / (s - 1)) * 2 - 1;
+      const horiz = Math.pow(clamp01(1 - Math.abs(v) / 0.13), 2.0) * Math.pow(clamp01(1 - Math.abs(u)), 1.15);
+      const vert  = Math.pow(clamp01(1 - Math.abs(u) / 0.20), 2.0) * Math.pow(clamp01(1 - Math.abs(v) / 0.55), 1.6);
+      const core  = Math.pow(clamp01(1 - Math.sqrt(u * u + v * v) / 0.30), 2.2);
+      const i = (y * s + x) * 4;
+      d[i] = d[i+1] = d[i+2] = 255;
+      d[i+3] = clamp01(horiz * 0.95 + vert * 0.4 + core) * 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+});
+
+// stożek: jasny u podstawy, rozmyty ku końcowi — lanca plazmy z wylotu
+const TEX_PLUME = canvasTex(128, (ctx, s) => {
+  const img = ctx.createImageData(s, s);
+  const d = img.data;
+  for (let y = 0; y < s; y++) {
+    const v = 1 - y / (s - 1);
+    const along = Math.pow(1 - v, 1.5);
+    const width = 0.18 + v * 0.82;
+    for (let x = 0; x < s; x++) {
+      const u = (x / (s - 1)) * 2 - 1;
+      const r = Math.abs(u) / width;
+      const across = Math.pow(clamp01(1 - r * r), 1.6);
+      const i = (y * s + x) * 4;
+      d[i] = d[i+1] = d[i+2] = 255;
+      d[i+3] = clamp01(along * across) * 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+});
+
+function valueNoise(seed) {
+  const p = new Uint8Array(256);
+  for (let i = 0; i < 256; i++) p[i] = i;
+  let s = seed >>> 0;
+  const rnd = () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
+  for (let i = 255; i > 0; i--) { const j = (rnd() * (i + 1)) | 0; const t = p[i]; p[i] = p[j]; p[j] = t; }
+  const perm = new Uint8Array(512);
+  for (let i = 0; i < 512; i++) perm[i] = p[i & 255];
+  const fade = t => t * t * t * (t * (t * 6 - 15) + 10);
+  const grad = (h, x, y) => { switch (h & 3) { case 0: return x + y; case 1: return -x + y; case 2: return x - y; default: return -x - y; } };
+  return (x, y) => {
+    const X = Math.floor(x) & 255, Y = Math.floor(y) & 255;
+    const xf = x - Math.floor(x), yf = y - Math.floor(y);
+    const u = fade(xf), v = fade(yf);
+    const aa = perm[perm[X] + Y], ab = perm[perm[X] + Y + 1];
+    const ba = perm[perm[X + 1] + Y], bb = perm[perm[X + 1] + Y + 1];
+    const x1 = lerp(grad(aa, xf, yf), grad(ba, xf - 1, yf), u);
+    const x2 = lerp(grad(ab, xf, yf - 1), grad(bb, xf - 1, yf - 1), u);
+    return lerp(x1, x2, v) * 0.5 + 0.5;
+  };
+}
+
+const TEX_PUFF = canvasTex(256, (ctx, s) => {
+  const n = valueNoise(20260921);
+  const fbm = (x, y) => {
+    let a = 0, amp = 0.5, f = 1;
+    for (let o = 0; o < 4; o++) { a += n(x * f, y * f) * amp; amp *= 0.5; f *= 2.05; }
+    return a / 0.9375;
+  };
+  const img = ctx.createImageData(s, s);
+  const d = img.data;
+  const c = (s - 1) / 2;
+  for (let y = 0; y < s; y++) {
+    for (let x = 0; x < s; x++) {
+      const dx = (x - c) / c, dy = (y - c) / c;
+      const r = Math.sqrt(dx * dx + dy * dy);
+      const nv = fbm(x / s * 3.2, y / s * 3.2);
+      let a = smoothstep(1.02, 0.15, r);
+      a *= 0.30 + 0.95 * nv;
+      a *= smoothstep(0.08, 0.42, 1.0 - r * 0.85 + (nv - 0.5) * 0.55);
+      const i = (y * s + x) * 4;
+      d[i] = d[i+1] = d[i+2] = 255;
+      d[i+3] = clamp01(a) * 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+});
+
+/* ============================================================================
+   SILNIK CZĄSTECZEK
+   Struct-of-arrays + instancing. Zero alokacji w pętli klatki.
+   ========================================================================== */
+class Pool {
+  constructor(capacity, fields) {
+    this.cap = capacity;
+    this.count = 0;
+    this.comps = fields;
+    this.keys = Object.keys(fields);
+    this.f = {};
+    for (const k of this.keys) this.f[k] = new Float32Array(capacity * fields[k]);
+  }
+  spawn() { return this.count < this.cap ? this.count++ : -1; }
+  kill(i) {
+    const last = --this.count;
+    if (i === last) return;
+    for (const k of this.keys) {
+      const c = this.comps[k], a = this.f[k];
+      for (let d = 0; d < c; d++) a[i * c + d] = a[last * c + d];
+    }
+  }
+}
+
+function instancedQuad(attrs, capacity, vertexShader, fragmentShader, uniforms, blending) {
+  const base = new THREE.PlaneGeometry(1, 1);
+  const geo = new THREE.InstancedBufferGeometry();
+  geo.index = base.index;
+  geo.setAttribute('position', base.attributes.position);
+  geo.setAttribute('uv', base.attributes.uv);
+  const bufs = {};
+  for (const [name, size] of attrs) {
+    const a = new THREE.InstancedBufferAttribute(new Float32Array(capacity * size), size);
+    a.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute(name, a);
+    bufs[name] = a;
+  }
+  geo.instanceCount = 0;
+  const mat = new THREE.ShaderMaterial({
+    uniforms, vertexShader, fragmentShader,
+    transparent: true, blending, depthTest: true, depthWrite: false,
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.frustumCulled = false;
+  return { geo, mat, mesh, bufs };
+}
+
+/* --- parametry spawnu (obiekt współdzielony, żeby nie śmiecić GC) --------- */
+const SP = {};
+function sp() {
+  SP.x = SP.y = SP.z = 0;
+  SP.vx = SP.vy = SP.vz = 0;
+  SP.life = 1; SP.drag = 1;
+  SP.s0 = 1; SP.s1 = 2;
+  SP.rot = 0; SP.vrot = 0;
+  SP.r0 = 1; SP.g0 = 1; SP.b0 = 1;
+  SP.r1 = 1; SP.g1 = 1; SP.b1 = 1;
+  SP.mix = 4;                 // szybkość przejścia koloru c0 -> c1 (1/s)
+  SP.alpha = 1; SP.fadeIn = 0.06; SP.fadeOut = 1.5;
+  SP.grow = 0.6;              // <1 = szybki rozrost na starcie
+  return SP;
+}
+
+/* --- bilboardy: dym, gazy, rdzeń rozbłysku, żagwie --------------------- */
+const BB_VERT = /* glsl */`
+  attribute vec3 iPos;
+  attribute vec3 iCol;
+  attribute vec3 iData;          // x: rozmiar, y: obrót, z: alfa
+  varying vec2 vUv;
+  varying vec3 vCol;
+  varying float vA;
+  void main() {
+    vUv = uv; vCol = iCol; vA = iData.z;
+    vec4 mv = viewMatrix * vec4(iPos, 1.0);
+    float c = cos(iData.y), s = sin(iData.y);
+    vec2 p = position.xy * iData.x;
+    mv.xy += vec2(p.x * c - p.y * s, p.x * s + p.y * c);
+    gl_Position = projectionMatrix * mv;
+  }`;
+const BB_FRAG = /* glsl */`
+  uniform sampler2D map;
+  varying vec2 vUv;
+  varying vec3 vCol;
+  varying float vA;
+  void main() {
+    vec4 t = texture2D(map, vUv);
+    float a = t.a * vA;
+    if (a < 0.002) discard;
+    gl_FragColor = vec4(vCol * t.rgb, a);
+  }`;
+
+class BillboardSystem {
+  constructor(scene, texture, blending, capacity, renderOrder = 1) {
+    this.p = new Pool(capacity, {
+      pos: 3, vel: 3, t: 2, drag: 1, size: 2, rot: 2, c0: 3, c1: 3, mix: 1, a: 3, grow: 1,
+    });
+    const q = instancedQuad(
+      [['iPos', 3], ['iCol', 3], ['iData', 3]], capacity,
+      BB_VERT, BB_FRAG, { map: { value: texture } }, blending
+    );
+    Object.assign(this, q);
+    this.mesh.renderOrder = renderOrder;
+    scene.add(this.mesh);
+  }
+  spawn(o) {
+    const i = this.p.spawn();
+    if (i < 0) return;
+    const f = this.p.f, i3 = i * 3, i2 = i * 2;
+    f.pos[i3] = o.x; f.pos[i3+1] = o.y; f.pos[i3+2] = o.z;
+    f.vel[i3] = o.vx; f.vel[i3+1] = o.vy; f.vel[i3+2] = o.vz;
+    f.t[i2] = 0; f.t[i2+1] = o.life;
+    f.drag[i] = o.drag;
+    f.size[i2] = o.s0; f.size[i2+1] = o.s1;
+    f.rot[i2] = o.rot; f.rot[i2+1] = o.vrot;
+    f.c0[i3] = o.r0; f.c0[i3+1] = o.g0; f.c0[i3+2] = o.b0;
+    f.c1[i3] = o.r1; f.c1[i3+1] = o.g1; f.c1[i3+2] = o.b1;
+    f.mix[i] = o.mix;
+    f.a[i3] = o.alpha; f.a[i3+1] = Math.max(0.002, o.fadeIn); f.a[i3+2] = o.fadeOut;
+    f.grow[i] = o.grow;
+  }
+  update(dt) {
+    const p = this.p, f = p.f;
+    for (let i = p.count - 1; i >= 0; i--) {
+      const i2 = i * 2, i3 = i * 3;
+      const age = f.t[i2] + dt;
+      if (age >= f.t[i2 + 1]) { p.kill(i); continue; }
+      f.t[i2] = age;
+      const d = Math.exp(-f.drag[i] * dt);
+      f.vel[i3] *= d; f.vel[i3+1] *= d; f.vel[i3+2] *= d;
+      f.pos[i3]   += f.vel[i3]   * dt;
+      f.pos[i3+1] += f.vel[i3+1] * dt;
+      f.pos[i3+2] += f.vel[i3+2] * dt;
+      f.rot[i2] += f.rot[i2 + 1] * dt;
+    }
+    const n = p.count;
+    const P = this.bufs.iPos.array, C = this.bufs.iCol.array, D = this.bufs.iData.array;
+    for (let i = 0; i < n; i++) {
+      const i2 = i * 2, i3 = i * 3;
+      const age = f.t[i2], life = f.t[i2 + 1];
+      const u = age / life;
+      const g = Math.pow(u, f.grow[i]);
+      const m = Math.min(1, age * f.mix[i]);
+      P[i3] = f.pos[i3]; P[i3+1] = f.pos[i3+1]; P[i3+2] = f.pos[i3+2];
+      C[i3]   = lerp(f.c0[i3],   f.c1[i3],   m);
+      C[i3+1] = lerp(f.c0[i3+1], f.c1[i3+1], m);
+      C[i3+2] = lerp(f.c0[i3+2], f.c1[i3+2], m);
+      D[i3]   = lerp(f.size[i2], f.size[i2 + 1], g);
+      D[i3+1] = f.rot[i2];
+      D[i3+2] = f.a[i3] * smoothstep(0, f.a[i3+1], u) * Math.pow(1 - u, f.a[i3+2]);
+    }
+    this.geo.instanceCount = n;
+    this.mesh.visible = n > 0;
+    if (n > 0) { this.bufs.iPos.needsUpdate = true; this.bufs.iCol.needsUpdate = true; this.bufs.iData.needsUpdate = true; }
+  }
+}
+
+/* --- kwady zorientowane -------------------------------------------------
+   Jedna klasa, trzy vertex shadery. Różni je wyłącznie sposób ustawienia
+   quada w świecie: wzdłuż lufy ku kamerze, wzdłuż lufy na ekranie, płasko
+   w płaszczyźnie gry.
+   ----------------------------------------------------------------------- */
+const ORIENT_HEAD = /* glsl */`
+  attribute vec3 iPos;
+  attribute vec3 iDir;
+  attribute vec3 iCol;
+  attribute vec3 iData;          // x: długość, y: szerokość, z: alfa
+  varying vec2 vUv;
+  varying vec3 vCol;
+  varying float vA;
+`;
+
+// (a) jęzor ognia — wzdłuż osi lufy, obracany ku kamerze
+const PLUME_VERT = ORIENT_HEAD + /* glsl */`
+  void main() {
+    vUv = uv; vCol = iCol; vA = iData.z;
+    vec3 axis = normalize(iDir);
+    vec3 toCam = normalize(cameraPosition - iPos);
+    vec3 side = cross(axis, toCam);
+    float l = length(side);
+    side = l > 1e-4 ? side / l : vec3(1.0, 0.0, 0.0);
+    vec3 world = iPos + axis * ((position.y + 0.5) * iData.x) + side * (position.x * iData.y);
+    gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
+  }`;
+
+// (b) krzyż rozbłysku — bilboard obrócony tak, by oś X leżała wzdłuż lufy NA EKRANIE
+const CROSS_VERT = ORIENT_HEAD + /* glsl */`
+  void main() {
+    vUv = uv; vCol = iCol; vA = iData.z;
+    vec4 mv = viewMatrix * vec4(iPos, 1.0);
+    vec2 a = (mat3(viewMatrix) * normalize(iDir)).xy;
+    float l = length(a);
+    a = l > 1e-4 ? a / l : vec2(1.0, 0.0);
+    vec2 pt = vec2(position.x * iData.x, position.y * iData.y);
+    mv.xy += vec2(pt.x * a.x - pt.y * a.y, pt.x * a.y + pt.y * a.x);
+    gl_Position = projectionMatrix * mv;
+  }`;
+
+// (c) rozlanie światła po pokładzie — leży płasko w płaszczyźnie gry i wybiega do przodu
+const WASH_VERT = ORIENT_HEAD + /* glsl */`
+  void main() {
+    vUv = uv; vCol = iCol; vA = iData.z;
+    vec3 f = vec3(iDir.x, 0.0, iDir.z);
+    float l = length(f);
+    f = l > 1e-4 ? f / l : vec3(0.0, 0.0, 1.0);
+    vec3 r = vec3(-f.z, 0.0, f.x);
+    vec3 world = iPos + f * ((position.y + 0.5) * iData.x) + r * (position.x * iData.y);
+    gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
+  }`;
+
+class OrientedQuadSystem {
+  constructor(scene, texture, capacity, vertexShader, renderOrder = 4, fadePow = 2.0, fadeIn = 0.10) {
+    this.fadePow = fadePow;
+    this.fadeIn = fadeIn;
+    this.p = new Pool(capacity, { pos: 3, dir: 3, t: 2, len: 2, wid: 2, col: 3, a: 1 });
+    const q = instancedQuad(
+      [['iPos', 3], ['iDir', 3], ['iCol', 3], ['iData', 3]], capacity,
+      vertexShader, BB_FRAG, { map: { value: texture } }, THREE.AdditiveBlending
+    );
+    Object.assign(this, q);
+    this.mesh.renderOrder = renderOrder;
+    scene.add(this.mesh);
+  }
+  spawn(pos, dir, life, l0, l1, w0, w1, col, alpha) {
+    const i = this.p.spawn();
+    if (i < 0) return;
+    const f = this.p.f, i3 = i * 3, i2 = i * 2;
+    f.pos[i3] = pos.x; f.pos[i3+1] = pos.y; f.pos[i3+2] = pos.z;
+    f.dir[i3] = dir.x; f.dir[i3+1] = dir.y; f.dir[i3+2] = dir.z;
+    f.t[i2] = 0; f.t[i2+1] = life;
+    f.len[i2] = l0; f.len[i2+1] = l1;
+    f.wid[i2] = w0; f.wid[i2+1] = w1;
+    f.col[i3] = col[0]; f.col[i3+1] = col[1]; f.col[i3+2] = col[2];
+    f.a[i] = alpha;
+  }
+  update(dt) {
+    const p = this.p, f = p.f;
+    for (let i = p.count - 1; i >= 0; i--) {
+      const i2 = i * 2;
+      const age = f.t[i2] + dt;
+      if (age >= f.t[i2 + 1]) { p.kill(i); continue; }
+      f.t[i2] = age;
+    }
+    const n = p.count;
+    const P = this.bufs.iPos.array, DIR = this.bufs.iDir.array,
+          C = this.bufs.iCol.array, D = this.bufs.iData.array;
+    for (let i = 0; i < n; i++) {
+      const i2 = i * 2, i3 = i * 3;
+      const u = f.t[i2] / f.t[i2 + 1];
+      const ease = 1 - Math.pow(1 - u, 2.4);      // szybkie wyrzucenie, wolne dojście
+      P[i3] = f.pos[i3]; P[i3+1] = f.pos[i3+1]; P[i3+2] = f.pos[i3+2];
+      DIR[i3] = f.dir[i3]; DIR[i3+1] = f.dir[i3+1]; DIR[i3+2] = f.dir[i3+2];
+      C[i3] = f.col[i3]; C[i3+1] = f.col[i3+1]; C[i3+2] = f.col[i3+2];
+      D[i3]   = lerp(f.len[i2], f.len[i2 + 1], ease);
+      D[i3+1] = lerp(f.wid[i2], f.wid[i2 + 1], ease);
+      D[i3+2] = f.a[i] * Math.pow(1 - u, this.fadePow) * smoothstep(0, this.fadeIn, u);
+    }
+    this.geo.instanceCount = n;
+    this.mesh.visible = n > 0;
+    if (n > 0) { this.bufs.iPos.needsUpdate = true; this.bufs.iDir.needsUpdate = true; this.bufs.iCol.needsUpdate = true; this.bufs.iData.needsUpdate = true; }
+  }
+}
+
+/* --- łuki elektryczne ----------------------------------------------------
+   Łamana między dwoma punktami, przesuwana szumem prostopadle do osi.
+   Kształt losuje się na nowo ~30 razy na sekundę, nie co klatkę — dzięki
+   temu łuk "trzeszczy" zamiast migotać biało.
+   ----------------------------------------------------------------------- */
+function hash3(a, b, c) {
+  let h = Math.imul(a | 0, 374761393) ^ Math.imul(b | 0, 668265263) ^ Math.imul(c | 0, 1442695041);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 2147483648 - 1;
+}
+
+const _aa = new THREE.Vector3(), _ab = new THREE.Vector3(), _ad = new THREE.Vector3();
+
+class ArcSystem {
+  constructor(scene, capacity = 48, segs = 11) {
+    this.segs = segs;
+    this.p = new Pool(capacity, { a: 3, b: 3, t: 2, col: 3, jit: 1, seed: 1 });
+    const verts = capacity * segs * 2;
+    const geo = new THREE.BufferGeometry();
+    this.posAttr = new THREE.BufferAttribute(new Float32Array(verts * 3), 3);
+    this.colAttr = new THREE.BufferAttribute(new Float32Array(verts * 3), 3);
+    this.posAttr.setUsage(THREE.DynamicDrawUsage);
+    this.colAttr.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute('position', this.posAttr);
+    geo.setAttribute('color', this.colAttr);
+    geo.setDrawRange(0, 0);
+    this.geo = geo;
+    this.lines = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({
+      vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    this.lines.frustumCulled = false;
+    this.lines.renderOrder = 5;
+    scene.add(this.lines);
+  }
+  spawn(a, b, life, jitter, col) {
+    const i = this.p.spawn();
+    if (i < 0) return;
+    const f = this.p.f, i3 = i * 3, i2 = i * 2;
+    f.a[i3] = a.x; f.a[i3+1] = a.y; f.a[i3+2] = a.z;
+    f.b[i3] = b.x; f.b[i3+1] = b.y; f.b[i3+2] = b.z;
+    f.t[i2] = 0; f.t[i2+1] = life;
+    f.col[i3] = col[0]; f.col[i3+1] = col[1]; f.col[i3+2] = col[2];
+    f.jit[i] = jitter;
+    f.seed[i] = (Math.random() * 65535) | 0;
+  }
+  update(dt, time) {
+    const p = this.p, f = p.f;
+    for (let i = p.count - 1; i >= 0; i--) {
+      const i2 = i * 2;
+      const age = f.t[i2] + dt;
+      if (age >= f.t[i2 + 1]) { p.kill(i); continue; }
+      f.t[i2] = age;
+    }
+    const n = p.count, segs = this.segs;
+    const P = this.posAttr.array, C = this.colAttr.array;
+    const step = Math.floor(time * 30);
+    let w = 0;
+    for (let i = 0; i < n; i++) {
+      const i2 = i * 2, i3 = i * 3;
+      const u = f.t[i2] / f.t[i2 + 1];
+      const seed = f.seed[i], jit = f.jit[i];
+      _aa.set(f.a[i3], f.a[i3+1], f.a[i3+2]);
+      _ab.set(f.b[i3], f.b[i3+1], f.b[i3+2]);
+      _ad.subVectors(_ab, _aa);
+      const len = _ad.length() || 1e-4;
+      _ad.divideScalar(len);
+      makeBasis(_ad);
+      const bright = Math.pow(1 - u, 1.1) * (0.55 + 0.45 * hash3(seed, 777, step));
+      let px = 0, py = 0, pz = 0, pb = 0;
+      for (let k = 0; k <= segs; k++) {
+        const t = k / segs;
+        const env = Math.sin(Math.PI * t);
+        const d1 = hash3(seed, k, step) * jit * env;
+        const d2 = hash3(seed, k + 91, step) * jit * env;
+        const x = _aa.x + _ad.x * len * t + _bx.x * d1 + _by.x * d2;
+        const y = _aa.y + _ad.y * len * t + _bx.y * d1 + _by.y * d2;
+        const z = _aa.z + _ad.z * len * t + _bx.z * d1 + _by.z * d2;
+        const bb = bright * (0.45 + 0.55 * env);
+        if (k > 0) {
+          P[w*3] = px; P[w*3+1] = py; P[w*3+2] = pz;
+          C[w*3] = f.col[i3] * pb; C[w*3+1] = f.col[i3+1] * pb; C[w*3+2] = f.col[i3+2] * pb;
+          w++;
+          P[w*3] = x; P[w*3+1] = y; P[w*3+2] = z;
+          C[w*3] = f.col[i3] * bb; C[w*3+1] = f.col[i3+1] * bb; C[w*3+2] = f.col[i3+2] * bb;
+          w++;
+        }
+        px = x; py = y; pz = z; pb = bb;
+      }
+    }
+    this.geo.setDrawRange(0, w);
+    this.lines.visible = w > 0;
+    if (w > 0) { this.posAttr.needsUpdate = true; this.colAttr.needsUpdate = true; }
+  }
+}
+
+/* --- iskry: smugi (LineSegments), głowa jasna, ogon wygaszony ----------- */
+class SparkSystem {
+  constructor(scene, capacity = 2000) {
+    this.cap = capacity;
+    // misc: [dł. smugi, faza migotania], cool: [docelowy mnożnik G, B]
+    this.p = new Pool(capacity, { pos: 3, vel: 3, t: 2, drag: 1, col: 3, misc: 2, cool: 2 });
+    const geo = new THREE.BufferGeometry();
+    this.posAttr = new THREE.BufferAttribute(new Float32Array(capacity * 6), 3);
+    this.colAttr = new THREE.BufferAttribute(new Float32Array(capacity * 6), 3);
+    this.posAttr.setUsage(THREE.DynamicDrawUsage);
+    this.colAttr.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute('position', this.posAttr);
+    geo.setAttribute('color', this.colAttr);
+    geo.setDrawRange(0, 0);
+    const mat = new THREE.LineBasicMaterial({
+      vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    this.lines = new THREE.LineSegments(geo, mat);
+    this.lines.frustumCulled = false;
+    this.lines.renderOrder = 5;
+    this.geo = geo;
+    scene.add(this.lines);
+  }
+  spawn(pos, vel, life, drag, streak, col, coolG = 0.32, coolB = 0.06) {
+    const i = this.p.spawn();
+    if (i < 0) return;
+    const f = this.p.f, i3 = i * 3, i2 = i * 2;
+    f.pos[i3] = pos.x; f.pos[i3+1] = pos.y; f.pos[i3+2] = pos.z;
+    f.vel[i3] = vel.x; f.vel[i3+1] = vel.y; f.vel[i3+2] = vel.z;
+    f.t[i2] = 0; f.t[i2+1] = life;
+    f.drag[i] = drag;
+    f.col[i3] = col[0]; f.col[i3+1] = col[1]; f.col[i3+2] = col[2];
+    f.misc[i2] = streak; f.misc[i2+1] = Math.random() * 6.28;
+    f.cool[i2] = coolG; f.cool[i2+1] = coolB;
+  }
+  update(dt, time) {
+    const p = this.p, f = p.f;
+    for (let i = p.count - 1; i >= 0; i--) {
+      const i2 = i * 2, i3 = i * 3;
+      const age = f.t[i2] + dt;
+      if (age >= f.t[i2 + 1]) { p.kill(i); continue; }
+      f.t[i2] = age;
+      const d = Math.exp(-f.drag[i] * dt);
+      f.vel[i3] *= d; f.vel[i3+1] *= d; f.vel[i3+2] *= d;
+      f.pos[i3]   += f.vel[i3]   * dt;
+      f.pos[i3+1] += f.vel[i3+1] * dt;
+      f.pos[i3+2] += f.vel[i3+2] * dt;
+    }
+    const n = p.count;
+    const P = this.posAttr.array, C = this.colAttr.array;
+    for (let i = 0; i < n; i++) {
+      const i2 = i * 2, i3 = i * 3, o = i * 6;
+      const u = f.t[i2] / f.t[i2 + 1];
+      const vx = f.vel[i3], vy = f.vel[i3+1], vz = f.vel[i3+2];
+      const sp2 = Math.sqrt(vx*vx + vy*vy + vz*vz) || 1e-6;
+      const len = Math.min(sp2 * 0.022, f.misc[i2]) * (0.35 + 0.65 * (1 - u));
+      P[o]   = f.pos[i3];     P[o+1] = f.pos[i3+1];     P[o+2] = f.pos[i3+2];
+      P[o+3] = f.pos[i3]   - vx / sp2 * len;
+      P[o+4] = f.pos[i3+1] - vy / sp2 * len;
+      P[o+5] = f.pos[i3+2] - vz / sp2 * len;
+      // stygnięcie: proch biało-żółty -> pomarańcz -> czerwień; jony zostają błękitne
+      const flick = 0.72 + 0.28 * Math.sin(time * 42 + f.misc[i2 + 1]);
+      const b = Math.pow(1 - u, 1.5) * flick;
+      const cool = smoothstep(0.1, 0.85, u);
+      C[o]   = f.col[i3]   * b;
+      C[o+1] = f.col[i3+1] * b * lerp(1, f.cool[i2], cool);
+      C[o+2] = f.col[i3+2] * b * lerp(1, f.cool[i2 + 1], cool);
+      C[o+3] = C[o+4] = C[o+5] = 0;   // ogon gaśnie do zera (blending additive)
+    }
+    this.geo.setDrawRange(0, n * 2);
+    this.lines.visible = n > 0;
+    if (n > 0) { this.posAttr.needsUpdate = true; this.colAttr.needsUpdate = true; }
+  }
+}
+
+/* --- błysk światła: realne oświetlenie wieży i pokładu ------------------ */
+class FlashLights {
+  constructor(scene, n = 4) {
+    this.slots = [];
+    for (let i = 0; i < n; i++) {
+      const l = new THREE.PointLight(0xffb070, 0, 400, 1.8);
+      l.visible = false;
+      scene.add(l);
+      this.slots.push({ l, t: 0, dur: 1, peak: 0 });
+    }
+    this.i = 0;
+  }
+  flash(pos, peak, dur, r = 1.0, g = 0.70, b = 0.42) {
+    const s = this.slots[this.i++ % this.slots.length];
+    s.l.position.copy(pos);
+    s.l.color.setRGB(r, g, b);
+    s.t = 0; s.dur = dur; s.peak = peak;
+    s.l.visible = true;
+  }
+  update(dt) {
+    for (const s of this.slots) {
+      if (!s.l.visible) continue;
+      s.t += dt;
+      if (s.t >= s.dur) { s.l.visible = false; s.l.intensity = 0; continue; }
+      const u = s.t / s.dur;
+      s.l.intensity = s.peak * Math.pow(1 - u, 2.2) * (0.82 + 0.36 * Math.random());
+    }
+  }
+}
+
+/* ============================================================================
+   ODŁAMKI — kozłujące bryły. Prawdziwe siatki, nie cząstki: przy widoku
+   z góry to one niosą skalę zniszczenia. Pula stała, nigdy nie rośnie.
+   ========================================================================== */
+class ChunkPool {
+  constructor(scene, n = 40) {
+    const geos = [
+      new THREE.BoxGeometry(1.0, 0.55, 1.5),
+      new THREE.BoxGeometry(0.45, 0.45, 2.4),
+      new THREE.TetrahedronGeometry(0.95),
+      new THREE.BoxGeometry(1.7, 0.22, 1.2),    // wyrwana płyta poszycia
+    ];
+    this.items = [];
+    for (let i = 0; i < n; i++) {
+      const mat = new THREE.MeshStandardMaterial({
+        color: 0x2b3038, metalness: 0.9, roughness: 0.5, emissive: 0xff4a10, emissiveIntensity: 0,
+      });
+      const m = new THREE.Mesh(geos[i % geos.length], mat);
+      m.visible = false;
+      m.frustumCulled = false;
+      scene.add(m);
+      this.items.push({
+        m, mat, vel: new THREE.Vector3(), spin: new THREE.Vector3(),
+        life: 0, age: 0, heat: 0, drag: 0.45, trail: 0, smokes: false,
+      });
+    }
+    this.rr = 0;
+  }
+  get count() { let c = 0; for (const it of this.items) if (it.life > 0) c++; return c; }
+  spawn(pos, vel, size, life, heat, smokes) {
+    let it = null;
+    for (const x of this.items) if (x.life <= 0) { it = x; break; }
+    if (!it) it = this.items[this.rr++ % this.items.length];   // nadpisz, nie alokuj
+    it.m.position.copy(pos);
+    it.m.rotation.set(rand(0, 6.283), rand(0, 6.283), rand(0, 6.283));
+    it.m.scale.setScalar(size);
+    it.vel.copy(vel);
+    it.spin.set(rand(-9, 9), rand(-9, 9), rand(-9, 9));
+    it.life = life; it.age = 0; it.heat = heat; it.trail = 0; it.smokes = smokes;
+    it.m.visible = true;
+  }
+  update(dt, fx) {
+    for (const it of this.items) {
+      if (it.life <= 0) continue;
+      it.age += dt;
+      if (it.age >= it.life) { it.life = 0; it.m.visible = false; it.mat.emissiveIntensity = 0; continue; }
+      const d = Math.exp(-it.drag * dt);
+      it.vel.multiplyScalar(d);
+      it.m.position.addScaledVector(it.vel, dt);
+      it.m.rotation.x += it.spin.x * dt;
+      it.m.rotation.y += it.spin.y * dt;
+      it.m.rotation.z += it.spin.z * dt;
+      it.heat *= Math.exp(-1.15 * dt);
+      const fade = Math.min(1, (it.life - it.age) * 2);        // znika miękko
+      it.mat.emissiveIntensity = it.heat * it.heat * 13 * fade;
+      if (it.smokes && it.heat > 0.32) {
+        it.trail -= dt;
+        if (it.trail <= 0) { it.trail = 0.11; fx.trailSmoke(it.m.position, it.heat); }
+      }
+    }
+  }
+  reset() {
+    for (const it of this.items) { it.life = 0; it.m.visible = false; it.mat.emissiveIntensity = 0; }
+  }
+}
+
+
+/* ============================================================================
+   SMUGA POCISKU — port WorldTrail z „capital_engine_vfx_v3".
+   Architektura bez zmian: segmenty żyją w przestrzeni świata, bufor jest
+   zapisywany TYLKO przy emisji i wygaszeniu, a GPU liczy dryf, rozszerzanie,
+   meandry, włókna i zanik. Jeden draw call na wszystkie pociski w locie.
+
+   Zmiany pod pocisk kinetyczny:
+    1. Próbkowanie po PRZEBYTEJ DRODZE z interpolacją wewnątrz klatki, nie po
+       czasie. Przy 5000 j/s próbki co 1/48 s leżałyby co ~100 jednostek.
+    2. Wzór wzdłuż smugi (szum, włókna, meandry) liczony od drogi, nie od czasu
+       narodzin. Cały 6-kilometrowy ślad powstaje w ~1 s — od czasu narodzin
+       włókna rozciągnęłyby się w proste kreski.
+    3. Najmłodsza część smugi jest NAJJAŚNIEJSZA, z rozżarzonym rdzeniem.
+       Przy dyszy silnika początek był celowo przygaszony; za pociskiem ma płonąć.
+    4. Wiele emiterów: każdy pocisk w locie dostaje własny slot żywej głowy.
+   ========================================================================== */
+const TRAIL_PATH_UNIT  = 220;   // ile jednostek drogi przypada na „sekundę" wzoru wzdłuż smugi
+const TRAIL_BASE_WIDTH = 30;    // szerokość bazowa, przed przewężeniem i rozszerzaniem z wiekiem
+const TRAIL_DRIFT      = 30;    // gaz w śladzie prawie stoi — lekko cofa się za pociskiem
+const TRAIL_UP = new THREE.Vector3(0, 1, 0);
+
+const TRAIL_NOISE_GLSL = /* glsl */`
+float hash21(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract(p.x*p.y);}
+float noise2(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(hash21(i),hash21(i+vec2(1,0)),f.x),mix(hash21(i+vec2(0,1)),hash21(i+vec2(1,1)),f.x),f.y);}
+float cloud(vec2 p){
+ #if QUALITY_NOISE == 0
+ return .5+.25*sin(p.x*2.1+p.y*3.7);
+ #elif QUALITY_NOISE == 1
+ return noise2(p);
+ #else
+ return .68*noise2(p)+.32*noise2(p*2.07+17.3);
+ #endif
+}
+`;
+
+const TRAIL_VERTEX = /* glsl */`
+attribute vec4 aA,aB,aVA,aVB,aSA,aSB;
+attribute vec2 aMeta,aPath;
+uniform float uTime,uLife,uTurbulence;
+varying vec2 vUv;
+varying float vAge,vEnergy,vSeed,vBirth,vPath;
+// Każdy koniec to zapisana pozycja i prędkość w świecie. Żadnej macierzy statku.
+vec3 endpoint(vec4 origin,vec4 velocity,vec4 sideWidth,float path){
+ float age=max(0.,uTime-origin.w);
+ float drift=min(age,.35)+max(age-.35,0.)*.26;
+ vec3 p=origin.xyz+velocity.xyz*drift;
+ float develop=smoothstep(.15,2.8,age);
+ float wobble=(sin(path*2.7+aMeta.x+age*.75)*.68+sin(path*6.1-aMeta.x-age*.9)*.28);
+ p+=sideWidth.xyz*wobble*sideWidth.w*uTurbulence*develop*.46;
+ p.y+=sin(path*3.8+aMeta.x+age*.6)*sideWidth.w*uTurbulence*develop*.24;
+ vec3 tangent=vec3(sideWidth.z,0.,-sideWidth.x);
+ vec3 faceSide=normalize(cross(tangent,normalize(cameraPosition-p))+vec3(.000001));
+ if(dot(faceSide,sideWidth.xyz)<0.)faceSide=-faceSide;
+ float neck=mix(.30,1.,smoothstep(0.,.62,age));
+ float width=sideWidth.w*neck*(1.+min(age*.16,2.1));
+ return p+faceSide*position.y*width;
+}
+void main(){
+ if(aMeta.y<0.){vUv=uv;vAge=0.;vEnergy=0.;vSeed=0.;vBirth=0.;vPath=0.;gl_Position=vec4(2.,2.,2.,1.);return;}
+ float t=uv.x;
+ vec3 p=mix(endpoint(aA,aVA,aSA,aPath.x),endpoint(aB,aVB,aSB,aPath.y),t);
+ vUv=uv;vBirth=mix(aA.w,aB.w,t);vAge=max(0.,uTime-vBirth);
+ vEnergy=mix(aVA.w,aVB.w,t);vSeed=aMeta.x;vPath=mix(aPath.x,aPath.y,t);
+ gl_Position=projectionMatrix*viewMatrix*vec4(p,1.);
+}`;
+
+const TRAIL_FRAGMENT = /* glsl */`
+uniform float uTime,uLife,uOpacity,uTurbulence,uHotAmt;
+uniform vec3 uTrailYoung,uTrailOld,uTrailAccent,uTrailHot;
+varying vec2 vUv;
+varying float vAge,vEnergy,vSeed,vBirth,vPath;
+${TRAIL_NOISE_GLSL}
+void main(){
+ float y=vUv.y*2.-1.,age=vAge;
+ float normalizedAge=clamp(age/uLife,0.,1.);
+ float fade=pow(1.-normalizedAge,1.3)*(1.-smoothstep(.75,1.,normalizedAge));
+ // pocisk: najmłodszy fragment najjaśniejszy (w silniku był przygaszony)
+ fade*=(1.+uHotAmt*exp(-age*5.))*uOpacity*pow(vEnergy,.75);
+ float n=cloud(vec2(vPath*3.2-uTime*.48,y*2.8+vSeed));
+ float w=y+(n-.5)*.16*uTurbulence*smoothstep(.1,1.5,age);
+ float diffuse=exp(-w*w*5.5);
+ float filament=exp(-pow((w-sin(vPath*7.5-uTime*.9+vSeed)*.17*uTurbulence)*10.,2.));
+ float filament2=exp(-pow((w+.25-sin(vPath*5.-uTime*.65+vSeed)*.12*uTurbulence)*15.,2.));
+ float center=exp(-w*w*40.)*exp(-age*.13);
+ float pulse=.94+.06*sin(vPath*15.+vSeed-uTime*1.2);
+ vec3 color=mix(uTrailYoung,uTrailOld,smoothstep(.12,.95,normalizedAge));
+ color*=diffuse*(.65+.35*n);
+ color+=uTrailAccent*(filament*.24+filament2*.13+center*.28)*exp(-age*.065);
+ // rozżarzony rdzeń tuż za pociskiem
+ color+=uTrailHot*exp(-w*w*70.)*exp(-age*7.);
+ color*=fade*pulse*(1.-smoothstep(.68,1.,abs(y)));
+ gl_FragColor=vec4(color,1.);
+}`;
+
+function makeTrailStrip() {
+  const geo = new THREE.InstancedBufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute([0,-1,0, 0,1,0, 1,-1,0, 1,1,0], 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute([0,0, 0,1, 1,0, 1,1], 2));
+  geo.setIndex([0, 2, 1, 2, 3, 1]);
+  return geo;
+}
+
+// Gęsta pula GPU + wygaszanie FIFO. Zamiana z ostatnim żywym segmentem,
+// kolejka chronologiczna na stałych ID, niezależnych od kolejności slotów.
+class SlugTrail {
+  constructor(scene, cfg, capacity = 6144, heads = 8, scale = 1) {
+    this.cfg = cfg;
+    this.S = scale;                     // skala świata właściciela — klasa nie sięga po globalne
+    this.capacity = capacity;
+    this.stride = 28;                   // [A 12][B 12][seed, emiter][drogaA, drogaB]
+    this.headCount = heads;
+    this.totalSlots = capacity + heads;
+    this.headValid = new Uint8Array(heads);
+    this.data = new Float32Array(this.totalSlots * this.stride);
+    this.buffer = new THREE.InstancedInterleavedBuffer(this.data, this.stride, 1);
+    this.buffer.setUsage(THREE.DynamicDrawUsage);
+    this.geometry = makeTrailStrip();
+    this.geometry.instanceCount = 0;
+    const fields = [['aA',4,0],['aVA',4,4],['aSA',4,8],['aB',4,12],['aVB',4,16],['aSB',4,20],['aMeta',2,24],['aPath',2,26]];
+    for (const [name, size, offset] of fields)
+      this.geometry.setAttribute(name, new THREE.InterleavedBufferAttribute(this.buffer, size, offset));
+    this.uniforms = {
+      uTime: { value: 0 }, uLife: { value: cfg.trailLife }, uTurbulence: { value: cfg.turbulence },
+      uOpacity: { value: cfg.trailOpacity }, uHotAmt: { value: 1.2 },
+      uTrailYoung:  { value: new THREE.Color().setRGB(0.22, 0.62, 1.25) },
+      uTrailOld:    { value: new THREE.Color().setRGB(0.07, 0.035, 0.30) },
+      uTrailAccent: { value: new THREE.Color().setRGB(0.55, 1.05, 1.70) },
+      uTrailHot:    { value: new THREE.Color().setRGB(1.10, 1.50, 2.00) },
+    };
+    this.material = new THREE.ShaderMaterial({
+      vertexShader: TRAIL_VERTEX, fragmentShader: TRAIL_FRAGMENT, uniforms: this.uniforms,
+      defines: { QUALITY_NOISE: 2 }, transparent: true, blending: THREE.AdditiveBlending,
+      depthWrite: false, depthTest: true, side: THREE.DoubleSide, forceSinglePass: true, toneMapped: false,
+    });
+    this.mesh = new THREE.Mesh(this.geometry, this.material);
+    this.mesh.frustumCulled = false;
+    this.mesh.renderOrder = 3;
+    this.mesh.name = 'SLUG_TRAILS__WORLD_SPACE';
+    scene.add(this.mesh);
+
+    this.previous = Array.from({ length: heads }, () => new Float32Array(13));
+    this.previousValid = new Uint8Array(heads);
+    this.em = Array.from({ length: heads }, () => ({ busy: false, acc: 0, path: 0, spacing: 40, seed: 0 }));
+    this.idToSlot = new Int32Array(capacity);
+    this.slotToId = new Int32Array(capacity);
+    this.queueTimes = new Float64Array(capacity);
+    this.dirtyFlags = new Uint8Array(this.totalSlots);
+    this.dirtySlots = new Uint32Array(this.totalSlots);
+    this.dirtyCount = 0;
+    this.active = 0; this.head = 0; this.tail = 0;
+    this.node = new Float32Array(13);
+    this._side = new THREE.Vector3();
+    this._p = new THREE.Vector3();
+    this.clear();
+  }
+
+  mark(slot) { if (!this.dirtyFlags[slot]) { this.dirtyFlags[slot] = 1; this.dirtySlots[this.dirtyCount++] = slot; } }
+
+  retire() {
+    if (!this.active) return;
+    const id = this.head, slot = this.idToSlot[id], last = this.active - 1, hc = this.headCount, st = this.stride;
+    if (slot !== last) {
+      this.data.copyWithin((slot + hc) * st, (last + hc) * st, (last + hc + 1) * st);
+      const moved = this.slotToId[last];
+      this.slotToId[slot] = moved; this.idToSlot[moved] = slot;
+      this.mark(slot + hc);
+    }
+    this.head = (this.head + 1) % this.capacity;
+    this.active--;
+  }
+  expire(time) {
+    const life = this.cfg.trailLife + 0.1;
+    while (this.active && time - this.queueTimes[this.head] > life) this.retire();
+  }
+
+  // węzeł: [pozycja, narodziny][prędkość dryfu, energia][bok, szerokość][droga]
+  makeNode(out, pos, time, dir, path) {
+    const S = this.S;
+    out[0] = pos.x; out[1] = pos.y; out[2] = pos.z; out[3] = time;
+    out[4] = -dir.x * TRAIL_DRIFT * S; out[5] = -dir.y * TRAIL_DRIFT * S; out[6] = -dir.z * TRAIL_DRIFT * S; out[7] = 1;
+    this._side.set(-dir.x, 0, -dir.z);
+    if (this._side.lengthSq() < 1e-6) this._side.set(0, 0, 1);
+    this._side.cross(TRAIL_UP).normalize();
+    out[8] = this._side.x; out[9] = this._side.y; out[10] = this._side.z;
+    out[11] = TRAIL_BASE_WIDTH * this.cfg.trailWidth * S;
+    out[12] = path / (TRAIL_PATH_UNIT * S);
+    return out;
+  }
+
+  acquire() {
+    for (let e = 0; e < this.headCount; e++) if (!this.em[e].busy) return e;
+    return -1;                          // wszystkie sloty zajęte: pocisk poleci bez smugi
+  }
+  begin(e, pos, time, dir, speed) {
+    const m = this.em[e];
+    m.busy = true; m.acc = 0;
+    m.path = Math.random() * 40 * TRAIL_PATH_UNIT;   // każdy ślad ma inny wzór
+    m.seed = Math.random() * 100;
+    m.spacing = Math.max(40 * this.S, speed / 160); // najwyżej ~160 próbek/s
+    this.makeNode(this.previous[e], pos, time, dir, m.path);
+    this.previousValid[e] = 1;
+  }
+  emit(e, node) {
+    const prev = this.previous[e];
+    if (this.previousValid[e]) {
+      if (this.active === this.capacity) this.retire();
+      const slot = this.active++, id = this.tail, base = (slot + this.headCount) * this.stride;
+      this.data.set(prev.subarray(0, 12), base);
+      this.data.set(node.subarray(0, 12), base + 12);
+      this.data[base + 24] = this.em[e].seed; this.data[base + 25] = e;
+      this.data[base + 26] = prev[12];      this.data[base + 27] = node[12];
+      this.slotToId[slot] = id; this.idToSlot[id] = slot; this.queueTimes[id] = node[3];
+      this.tail = (this.tail + 1) % this.capacity;
+      this.mark(slot + this.headCount);
+    }
+    prev.set(node);
+    this.previousValid[e] = 1;
+  }
+  hideHead(e) {
+    if (this.headValid[e]) { this.headValid[e] = 0; this.data[e * this.stride + 25] = -1; this.mark(e); }
+  }
+  updateHead(e, node) {
+    // Tylko głowa idzie za pociskiem. Historia zostaje nietknięta.
+    if (!this.previousValid[e]) { this.hideHead(e); return; }
+    const prev = this.previous[e], base = e * this.stride;
+    this.data.set(prev.subarray(0, 12), base);
+    this.data.set(node.subarray(0, 12), base + 12);
+    this.data[base + 24] = this.em[e].seed; this.data[base + 25] = e;
+    this.data[base + 26] = prev[12];      this.data[base + 27] = node[12];
+    this.headValid[e] = 1;
+    this.mark(e);
+  }
+
+  // przesuwa emiter po odcinku from->to; próbki co `spacing` jednostek drogi
+  advance(e, from, to, t0, t1, dir) {
+    const m = this.em[e];
+    const seg = from.distanceTo(to);
+    if (seg > 1e-6) {
+      let d = m.spacing - m.acc;
+      while (d <= seg) {
+        const f = d / seg;
+        this._p.lerpVectors(from, to, f);
+        this.emit(e, this.makeNode(this.node, this._p, t0 + (t1 - t0) * f, dir, m.path + d));
+        d += m.spacing;
+      }
+      m.acc = seg - (d - m.spacing);
+      m.path += seg;
+    }
+    this.updateHead(e, this.makeNode(this.node, to, t1, dir, m.path));
+  }
+  // domyka ślad dokładnie w punkcie końcowym (np. trafienia) i zwalnia emiter
+  end(e, pos, time, dir) {
+    const m = this.em[e];
+    if (this.previousValid[e] && m.acc > 1e-3) this.emit(e, this.makeNode(this.node, pos, time, dir, m.path));
+    this.previousValid[e] = 0;
+    this.hideHead(e);
+    m.busy = false;
+  }
+
+  prepare(time) {
+    const u = this.uniforms, c = this.cfg;
+    u.uTime.value = time; u.uLife.value = c.trailLife; u.uOpacity.value = c.trailOpacity;
+    u.uTurbulence.value = c.turbulence;
+    let heads = 0;
+    for (let e = 0; e < this.headCount; e++) heads += this.headValid[e];
+    this.geometry.instanceCount = this.active + this.headCount;
+    this.mesh.visible = c.trailOpacity > 0 && (this.active > 0 || heads > 0);
+    // zaległe zapisy trzymamy do momentu, aż siatka będzie widoczna
+    if (this.dirtyCount && this.mesh.visible) {
+      const idx = this.dirtySlots.subarray(0, this.dirtyCount);
+      idx.sort();
+      this.buffer.clearUpdateRanges();
+      let start = idx[0], end = start;
+      for (let i = 0; i < this.dirtyCount; i++) {
+        const slot = idx[i];
+        this.dirtyFlags[slot] = 0;
+        if (slot > end + 1) { this.buffer.addUpdateRange(start * this.stride, (end - start + 1) * this.stride); start = slot; }
+        end = slot;
+      }
+      this.buffer.addUpdateRange(start * this.stride, (end - start + 1) * this.stride);
+      this.buffer.needsUpdate = true;
+      this.dirtyCount = 0;
+    }
+  }
+  clear() {
+    this.active = 0; this.head = 0; this.tail = 0;
+    this.previousValid.fill(0); this.headValid.fill(0);
+    this.dirtyFlags.fill(0); this.dirtyCount = 0;
+    this.geometry.instanceCount = 0;
+    this.buffer.clearUpdateRanges();
+    for (const m of this.em) m.busy = false;
+    for (let i = 0; i < this.headCount; i++) { this.data[i * this.stride + 25] = -1; this.mark(i); }
+  }
+}
+
+/* ============================================================================
+   RAILGUN — wystrzał i pocisk.
+   Cała rzecz idzie DO PRZODU: stożki mają półkąt ~0.1 rad, nie ma kuli ognia
+   ani obłoku na boki. To, co widać najdłużej, to lanca plazmy i smuga pocisku.
+
+   API:
+       const fx = new RailgunFX(scene, CFG, FX_SCALE);
+       fx.charge(muzzle, dir, railL0, railL1, railR0, railR1, dt, u);  // ładowanie
+       fx.fire(muzzle, dir);                                           // wystrzał
+       fx.update(dt, time);
+   ========================================================================== */
+const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
+const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3();
+
+class RailgunFX {
+  constructor(scene, cfg, scale = 1) {
+    this.cfg = cfg;
+    this.S = scale;
+    this.planeY = 42;                   // pokład — po nim rozlewa się światło wystrzału
+    this.haze  = new BillboardSystem(scene, TEX_PUFF,  THREE.AdditiveBlending,  900, 1);
+    this.glow  = new BillboardSystem(scene, TEX_GLOW,  THREE.AdditiveBlending, 2400, 3);
+    this.star  = new BillboardSystem(scene, TEX_FLARE, THREE.AdditiveBlending,   64, 6);
+    this.wash  = new OrientedQuadSystem(scene, TEX_PLUME, 48,  WASH_VERT,  2, 1.7);
+    this.trail = new SlugTrail(scene, cfg, 6144, 8, scale);   // jeden draw na wszystkie pociski
+    this.lance = new OrientedQuadSystem(scene, TEX_PLUME, 96,  PLUME_VERT, 4, 2.0);
+    this.cross = new OrientedQuadSystem(scene, TEX_CROSS, 48,  CROSS_VERT, 6, 2.6);
+    this.spark = new SparkSystem(scene, 3200);
+    this.arcs  = new ArcSystem(scene, 72, 13);
+    this.chunks = new ChunkPool(scene, 28);
+    this.lights = new FlashLights(scene, 5);
+    // przy tej skali światło musi sięgać setki jednostek, nie kilkanaście
+    for (const sl of this.lights.slots) { sl.l.distance = 4000; sl.l.decay = 1.7; }
+    this.slugs = [];
+    this.onFire = null;
+    this.onImpact = null;
+    this._chargeT = 0;
+    this.collide = null;     // (from, to) -> t w [0,1] przy trafieniu, inaczej -1
+    this.now = 0;
+  }
+
+  /* ----------------------------------------------------------------------
+     ŁADOWANIE — energia biegnie szynami do wylotu, między szynami przeskakują
+     łuki. Im bliżej strzału, tym gęściej.
+     -------------------------------------------------------------------- */
+  charge(muzzle, dir, l0, l1, r0, r1, dt, u) {
+    const S = this.S, C = this.cfg;
+    makeBasis(dir);
+    let o;
+
+    // impulsy energii pędzące szynami ku wylotowi
+    const rate = (8 + 90 * u * u) * dt;
+    for (let k = 0, n = Math.round(rate) + (Math.random() < rate % 1 ? 1 : 0); k < n; k++) {
+      const left = Math.random() < 0.5;
+      const t = rand(0, 0.9);
+      _v1.lerpVectors(left ? l0 : r0, left ? l1 : r1, t);
+      _v2.copy(dir).multiplyScalar(rand(500, 1400) * S);
+      this.spark.spawn(_v1, _v2, rand(0.12, 0.3), 0.2, rand(40, 110) * S,
+                       [1.4, 2.6, 3.9], 1.05, 1.25);
+    }
+
+    // przeskoki między szynami
+    this._chargeT -= dt;
+    if (this._chargeT <= 0) {
+      this._chargeT = lerp(0.16, 0.02, u);
+      const t = Math.random();
+      _v1.lerpVectors(l0, l1, t);
+      _v2.lerpVectors(r0, r1, t);
+      this.arcs.spawn(_v1, _v2, rand(0.05, 0.16), rand(2, 10) * (0.3 + u) * S, [1.2 * u + 0.4, 2.3, 3.8]);
+    }
+
+    // narastająca poświata w wylocie
+    if (Math.random() < 22 * dt) {
+      o = sp();
+      o.x = muzzle.x; o.y = muzzle.y; o.z = muzzle.z;
+      o.life = 0.11; o.drag = 0;
+      o.s0 = (16 + 90 * u * u) * S; o.s1 = (12 + 70 * u * u) * S;
+      o.rot = rand(0, 6.283); o.vrot = rand(-2, 2);
+      o.r0 = 1.0 + 2.2 * u; o.g0 = 1.8 + 1.8 * u; o.b0 = 2.8 + 1.6 * u;
+      o.r1 = 0.3; o.g1 = 0.9; o.b1 = 1.8; o.mix = 9;
+      o.alpha = 0.3 + 0.6 * u; o.fadeIn = 0.02; o.fadeOut = 1.5; o.grow = 0.7;
+      this.star.spawn(o);
+    }
+  }
+
+  /* ----------------------------------------------------------------------
+     WYSTRZAŁ
+     -------------------------------------------------------------------- */
+  fire(muzzle, dir, power = 1) {
+    const S = this.S, C = this.cfg, FL = C.flatten;
+    const I = C.intensity * power;
+    const L = C.lance;
+    const SPR = C.spread;
+    makeBasis(dir);
+    let o;
+
+    // rdzeń
+    o = sp();
+    o.x = muzzle.x; o.y = muzzle.y; o.z = muzzle.z;
+    o.vx = dir.x * 220 * S; o.vy = dir.y * 220 * S; o.vz = dir.z * 220 * S;
+    o.life = 0.14; o.drag = 5;
+    o.s0 = 34 * S; o.s1 = (130 + 90 * I) * S;
+    o.r0 = 3.8; o.g0 = 4.1; o.b0 = 4.5;
+    o.r1 = 0.8; o.g1 = 1.9; o.b1 = 3.3; o.mix = 13;
+    o.alpha = 1; o.fadeIn = 0.004; o.fadeOut = 2.1; o.grow = 0.38;
+    this.glow.spawn(o);
+
+    // łuna
+    o = sp();
+    o.x = muzzle.x + dir.x * 60 * S; o.y = muzzle.y + dir.y * 60 * S; o.z = muzzle.z + dir.z * 60 * S;
+    o.vx = dir.x * 130 * S; o.vy = dir.y * 130 * S; o.vz = dir.z * 130 * S;
+    o.life = 0.40; o.drag = 3.4;
+    o.s0 = 70 * S; o.s1 = (280 + 190 * I) * S;
+    o.r0 = 1.0; o.g0 = 2.1; o.b0 = 3.5;
+    o.r1 = 0.10; o.g1 = 0.30; o.b1 = 0.85; o.mix = 4.5;
+    o.alpha = 0.7; o.fadeIn = 0.008; o.fadeOut = 1.9; o.grow = 0.48;
+    this.glow.spawn(o);
+
+    // flara
+    o = sp();
+    o.x = muzzle.x; o.y = muzzle.y; o.z = muzzle.z;
+    o.life = 0.18; o.drag = 6;
+    o.s0 = 130 * S; o.s1 = (380 + 220 * I) * S;
+    o.rot = rand(0, 6.283); o.vrot = rand(-0.8, 0.8);
+    o.r0 = 3.2; o.g0 = 3.6; o.b0 = 4.4;
+    o.r1 = 1.0; o.g1 = 2.0; o.b1 = 3.4; o.mix = 11;
+    o.alpha = 0.95; o.fadeIn = 0.005; o.fadeOut = 2.5; o.grow = 0.35;
+    this.star.spawn(o);
+
+    // krzyż wzdłuż osi — bardzo długi, wąski, anamorficzny
+    this.cross.spawn(muzzle, dir, 0.20, 240 * S, (880 + 520 * I) * L * S,
+                     55 * S, (95 + 55 * I) * S, [2.5, 3.2, 4.4], 1.0);
+
+    // LANCA PLAZMY — cztery warstwy, wszystkie do przodu
+    this.lance.spawn(muzzle, dir, 0.30, 140 * S, (600 + 340 * I) * L * S, 24 * S, 44 * S, [3.3, 3.9, 4.7], 1.0);
+    this.lance.spawn(muzzle, dir, 0.44, 100 * S, (410 + 250 * I) * L * S, 48 * S, 100 * S, [0.85, 2.1, 3.7], 0.85);
+    this.lance.spawn(muzzle, dir, 0.62, 70 * S, (250 + 160 * I) * L * S, 95 * S, 205 * S, [0.32, 0.85, 2.1], 0.45);
+    this.lance.spawn(muzzle, dir, 0.17, 45 * S, 160 * L * S, 115 * S, 250 * S, [2.4, 3.0, 4.2], 0.7);
+
+    // rozlanie światła po pokładzie
+    _v1.set(muzzle.x, this.planeY, muzzle.z);
+    this.wash.spawn(_v1, dir, 0.42, 160 * S, (680 + 320 * I) * L * S, 70 * S, (130 + 60 * I) * S, [0.5, 1.4, 2.8], 0.55);
+
+    // plazma wyrzucona przed wylot
+    for (let i = 0; i < 44; i++) {
+      coneDir(_v2, dir, SPR, FL);
+      const v = rand(260, 900) * S * (0.7 + 0.4 * I);
+      o = sp();
+      o.x = muzzle.x + _v2.x * rand(0, 60) * S;
+      o.y = muzzle.y + _v2.y * rand(0, 60) * S;
+      o.z = muzzle.z + _v2.z * rand(0, 60) * S;
+      o.vx = _v2.x * v; o.vy = _v2.y * v; o.vz = _v2.z * v;
+      o.life = rand(0.3, 0.85); o.drag = 1.6;
+      o.s0 = rand(10, 26) * S; o.s1 = rand(50, 130) * S;
+      o.rot = rand(0, 6.283); o.vrot = rand(-1.6, 1.6);
+      o.r0 = 2.2; o.g0 = 3.0; o.b0 = 4.2;
+      o.r1 = 0.22; o.g1 = 0.30; o.b1 = 0.85; o.mix = 3.4;
+      o.alpha = rand(0.4, 0.8); o.fadeIn = 0.02; o.fadeOut = 1.8; o.grow = 0.5;
+      this.glow.spawn(o);
+    }
+
+    // strugi jonów — długie smugi, wąski snop
+    for (let i = 0, n = Math.round(150 * I); i < n; i++) {
+      coneDir(_v2, dir, SPR * (Math.random() < 0.15 ? 2.4 : 0.8), FL);
+      const v = rand(500, 1900) * S * (0.7 + 0.4 * I);
+      _v3.copy(_v2).multiplyScalar(v);
+      _v1.copy(muzzle).addScaledVector(_v2, rand(0, 80) * S);
+      this.spark.spawn(_v1, _v3, rand(0.3, 0.9), rand(0.25, 0.7), rand(45, 150) * S,
+                       [1.7, 2.7, 3.9], 1.05, 1.2);
+    }
+
+    // płatki sabotu — odpadają wąskim stożkiem i kozłują
+    for (let i = 0, n = 4; i < n; i++) {
+      coneDir(_v2, dir, SPR * 2.6, FL);
+      const v = rand(160, 420) * S;
+      _v3.copy(_v2).multiplyScalar(v);
+      _v1.copy(muzzle).addScaledVector(_v2, rand(10, 40) * S);
+      this.chunks.spawn(_v1, _v3, rand(3.5, 6.5) * S, rand(2.5, 4.5), 1, true);
+    }
+
+    // łuki dogasające między szynami
+    for (let i = 0; i < 10; i++) {
+      coneDir(_v2, dir, 0.55, FL);
+      _v1.copy(muzzle).addScaledVector(_v2, rand(20, 90) * S);
+      this.arcs.spawn(muzzle, _v1, rand(0.12, 0.38), rand(6, 26) * S, [1.4, 2.5, 3.9]);
+    }
+
+    // mgła plazmowa — jedyne, co zostaje na dłużej; też dryfuje do przodu
+    for (let i = 0; i < 18; i++) {
+      coneDir(_v2, dir, SPR * 3.0, FL);
+      const v = rand(30, 150) * S;
+      o = sp();
+      o.x = muzzle.x + _v2.x * rand(0, 120) * S;
+      o.y = muzzle.y + _v2.y * rand(0, 120) * S;
+      o.z = muzzle.z + _v2.z * rand(0, 120) * S;
+      o.vx = _v2.x * v; o.vy = _v2.y * v; o.vz = _v2.z * v;
+      o.life = rand(1.1, 2.6); o.drag = 0.9;
+      o.s0 = rand(30, 70) * S; o.s1 = rand(130, 290) * S;
+      o.rot = rand(0, 6.283); o.vrot = rand(-0.4, 0.4);
+      o.r0 = 0.55; o.g0 = 1.25; o.b0 = 2.1;
+      o.r1 = 0.14; o.g1 = 0.09; o.b1 = 0.34; o.mix = 1.3;
+      o.alpha = rand(0.10, 0.24); o.fadeIn = 0.06; o.fadeOut = 1.5; o.grow = 0.45;
+      this.haze.spawn(o);
+    }
+
+    _v1.copy(muzzle).addScaledVector(dir, 120 * S);
+    this.lights.flash(_v1, 130000 * I * S * S, 0.34, 0.55, 0.85, 1.0);
+
+    this.launchSlug(muzzle, dir);
+    if (this.onFire) this.onFire(muzzle, dir, I);
+  }
+
+  /* ----------------------------------------------------------------------
+     POCISK
+     -------------------------------------------------------------------- */
+  launchSlug(pos, dir) {
+    const S = this.S, C = this.cfg;
+    const start = pos.clone().addScaledVector(dir, 20 * S);
+    const e = this.trail.acquire();
+    const slug = {
+      pos: start.clone(), last: start.clone(), dir: dir.clone(),
+      vel: dir.clone().multiplyScalar(C.speed * S),
+      age: 0, life: 14, sparkAcc: 0, dead: false, emitter: e,
+    };
+    // start liczony od czasu poprzedniej klatki — dokładnie tam zaczyna się
+    // pierwszy odcinek w update(), więc czasy narodzin są ciągłe
+    if (e >= 0) this.trail.begin(e, start, this.now, dir, C.speed * S);
+    this.slugs.push(slug);
+    return slug;
+  }
+
+  _slugFx(s, t0, t1) {
+    const S = this.S, C = this.cfg;
+    if (s.emitter >= 0) this.trail.advance(s.emitter, s.last, s.pos, t0, t1, s.dir);
+
+    // iskry ablacyjne zdzierane z pocisku — rozmieszczane po drodze, nie co klatkę
+    const seg = s.pos.distanceTo(s.last);
+    const step = 180 * S;
+    s.sparkAcc += seg;
+    while (s.sparkAcc >= step) {
+      s.sparkAcc -= step;
+      const f = seg > 1e-6 ? 1 - s.sparkAcc / seg : 1;
+      _v1.lerpVectors(s.last, s.pos, clamp01(f));
+      makeBasis(s.dir);
+      coneDir(_v2, s.dir, 1.9, C.flatten);
+      _v3.copy(_v2).multiplyScalar(rand(60, 260) * S).addScaledVector(s.dir, -rand(40, 200) * S);
+      this.spark.spawn(_v1, _v3, rand(0.25, 0.7), rand(0.5, 1.4), rand(15, 50) * S,
+                       [2.2, 2.8, 3.8], 1.0, 1.1);
+    }
+
+    // rozgrzany czubek — halo leci z prędkością pocisku, więc przy 5000 j/s
+    // nie rozsypuje się w szereg kropek
+    const o = sp();
+    o.x = s.pos.x; o.y = s.pos.y; o.z = s.pos.z;
+    o.vx = s.vel.x; o.vy = s.vel.y; o.vz = s.vel.z;
+    o.life = 0.05; o.drag = 0;
+    o.s0 = 40 * C.trailWidth * S; o.s1 = 32 * C.trailWidth * S;
+    o.r0 = 3.4; o.g0 = 3.8; o.b0 = 4.6;
+    o.r1 = 1.6; o.g1 = 2.5; o.b1 = 3.8; o.mix = 12;
+    o.alpha = 1; o.fadeIn = 0.01; o.fadeOut = 0.8; o.grow = 1;
+    this.glow.spawn(o);
+  }
+
+  /* ----------------------------------------------------------------------
+     TRAFIENIE
+     -------------------------------------------------------------------- */
+  impact(pos, dir, power = 1) {
+    const S = this.S, C = this.cfg, FL = C.flatten;
+    const I = C.intensity * power;
+    makeBasis(dir);
+    let o;
+
+    o = sp();
+    o.x = pos.x; o.y = pos.y; o.z = pos.z;
+    o.life = 0.16; o.drag = 5;
+    o.s0 = 30 * S; o.s1 = (180 + 120 * I) * S;
+    o.r0 = 4.0; o.g0 = 3.6; o.b0 = 3.0;
+    o.r1 = 2.4; o.g1 = 0.9; o.b1 = 0.3; o.mix = 11;
+    o.alpha = 1; o.fadeIn = 0.004; o.fadeOut = 2.0; o.grow = 0.4;
+    this.glow.spawn(o);
+
+    this.cross.spawn(pos, dir, 0.2, 150 * S, (500 + 300 * I) * S, 80 * S, (150 + 70 * I) * S, [3.0, 2.2, 1.4], 0.9);
+    this.lance.spawn(pos, dir, 0.35, 90 * S, (330 + 200 * I) * S, 50 * S, 150 * S, [2.8, 1.6, 0.7], 0.9);
+
+    // przebicie: materiał wyrzucany dalej w tę samą stronę + krótszy odprysk wstecz
+    for (let i = 0; i < 40; i++) {
+      coneDir(_v2, dir, 0.45, FL);
+      const v = rand(150, 700) * S;
+      o = sp();
+      o.x = pos.x; o.y = pos.y; o.z = pos.z;
+      o.vx = _v2.x * v; o.vy = _v2.y * v; o.vz = _v2.z * v;
+      o.life = rand(0.3, 0.9); o.drag = 1.8;
+      o.s0 = rand(8, 20) * S; o.s1 = rand(40, 110) * S;
+      o.rot = rand(0, 6.283); o.vrot = rand(-2, 2);
+      o.r0 = 2.8; o.g0 = 1.5; o.b0 = 0.55;
+      o.r1 = 0.45; o.g1 = 0.12; o.b1 = 0.03; o.mix = 3.2;
+      o.alpha = rand(0.45, 0.85); o.fadeIn = 0.02; o.fadeOut = 1.8; o.grow = 0.5;
+      this.glow.spawn(o);
+    }
+    for (let i = 0, n = Math.round(120 * I); i < n; i++) {
+      const back = Math.random() < 0.3;
+      coneDir(_v2, back ? _v5.copy(dir).negate() : dir, back ? 1.0 : 0.5, FL);
+      const v = (back ? rand(80, 400) : rand(200, 1000)) * S;
+      _v3.copy(_v2).multiplyScalar(v);
+      this.spark.spawn(pos, _v3, rand(0.3, 1.0), rand(0.5, 1.4), rand(20, 70) * S, [2.9, 2.2, 1.4]);
+    }
+    for (let i = 0; i < 6; i++) {
+      coneDir(_v2, dir, 0.8, FL);
+      _v3.copy(_v2).multiplyScalar(rand(60, 260) * S);
+      this.chunks.spawn(pos, _v3, rand(2.5, 6) * S, rand(3, 6), 1, true);
+    }
+    this.lights.flash(pos, 90000 * I * S * S, 0.3, 1.0, 0.65, 0.35);
+    if (this.onImpact) this.onImpact(pos, I);
+  }
+
+  // wołane przez pulę odłamków dla gorących płatków sabotu
+  trailSmoke(pos, heat) {
+    const S = this.S, o = sp();
+    o.x = pos.x; o.y = pos.y; o.z = pos.z;
+    o.life = rand(0.3, 0.8); o.drag = 1.2;
+    o.s0 = rand(3, 8) * S; o.s1 = rand(10, 26) * S;
+    o.r0 = 2.0 * heat; o.g0 = 1.9 * heat; o.b0 = 2.6 * heat;
+    o.r1 = 0.2; o.g1 = 0.16; o.b1 = 0.42; o.mix = 3;
+    o.alpha = rand(0.18, 0.4); o.fadeIn = 0.04; o.fadeOut = 1.5; o.grow = 0.6;
+    this.glow.spawn(o);
+  }
+
+  update(dt, time) {
+    const t0 = time - dt;
+    this.trail.expire(time);
+    for (let i = this.slugs.length - 1; i >= 0; i--) {
+      const s = this.slugs[i];
+      s.age += dt;
+      s.last.copy(s.pos);
+      s.pos.addScaledVector(s.vel, dt);
+      // test po ODCINKU, nie po punkcie — przy 12000 j/s i zacięciu klatki
+      // pocisk przeskakuje ponad 600 jednostek i przeleciałby przez cel
+      const hitT = this.collide ? this.collide(s.last, s.pos) : -1;
+      const t1 = hitT >= 0 ? t0 + dt * hitT : time;
+      if (hitT >= 0) s.pos.lerpVectors(s.last, s.pos, hitT);
+      this._slugFx(s, t0, t1);
+      if (hitT >= 0) { this.impact(s.pos, s.dir); s.dead = true; }
+      else if (s.age >= s.life) s.dead = true;
+      if (s.dead) {
+        if (s.emitter >= 0) this.trail.end(s.emitter, s.pos, t1, s.dir);   // historia gaśnie dalej sama
+        this.slugs.splice(i, 1);
+      }
+    }
+    this.now = time;
+    this.chunks.update(dt, this);
+    this.haze.update(dt);
+    this.glow.update(dt);
+    this.star.update(dt);
+    this.wash.update(dt);
+    this.lance.update(dt);
+    this.cross.update(dt);
+    this.spark.update(dt, time);
+    this.arcs.update(dt, time);
+    this.lights.update(dt);
+    this.trail.prepare(time);
+  }
+
+  get particles() {
+    return this.haze.p.count + this.glow.p.count + this.star.p.count + this.wash.p.count +
+           this.lance.p.count + this.cross.p.count +
+           this.spark.p.count + this.arcs.p.count + this.chunks.count;
+  }
+}
+
+/* ============================================================================
+   SCENA
+   ========================================================================== */
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.95;
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 4, 40000);
+camera.position.set(0, 760, 560);
+
+const controls = new OrbitControls(camera, canvas);
+controls.target.set(0, 0, 120);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.minDistance = 120;
+controls.maxDistance = 20000;
+controls.minPolarAngle = 0.02;
+controls.maxPolarAngle = Math.PI * 0.45;
+controls.update();
+
+const sky = new THREE.Mesh(
+  new THREE.SphereGeometry(16000, 24, 16),
+  new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false,
+    vertexShader: `varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+    fragmentShader: `
+      varying vec3 vP;
+      void main(){
+        vec3 n = normalize(vP);
+        float h = n.y * 0.5 + 0.5;
+        float side = n.z * 0.5 + 0.5;
+        vec3 c = mix(vec3(0.005,0.007,0.013), vec3(0.014,0.014,0.028), h);
+        c += vec3(0.010,0.016,0.030) * pow(side, 3.0);
+        gl_FragColor = vec4(c, 1.0);
+      }`,
+  })
+);
+sky.frustumCulled = false;
+// niebo i gwiazdy jadą z kamerą — przy tej skali kamera odlatuje o kilometry
+const skyRig = new THREE.Group();
+scene.add(skyRig);
+skyRig.add(sky);
+
+{
+  const N = 2400, pos = new Float32Array(N * 3), col = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    const u = Math.random() * 2 - 1, a = Math.random() * Math.PI * 2, r = Math.sqrt(1 - u * u), R = 12000;
+    pos[i*3] = Math.cos(a) * r * R; pos[i*3+1] = u * R; pos[i*3+2] = Math.sin(a) * r * R;
+    const b = Math.pow(Math.random(), 2.2) * 0.9 + 0.1, t = Math.random();
+    col[i*3] = b * lerp(0.75, 1.0, t); col[i*3+1] = b * 0.92; col[i*3+2] = b * lerp(1.0, 0.8, t);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  skyRig.add(new THREE.Points(g, new THREE.PointsMaterial({ size: 1.7, sizeAttenuation: false, vertexColors: true, transparent: true })));
+}
+
+scene.add(new THREE.AmbientLight(0x1b2432, 0.95));
+const key = new THREE.DirectionalLight(0xa8c0e4, 2.0);
+key.position.set(-300, 500, 200);
+scene.add(key);
+const rim = new THREE.DirectionalLight(0x3a4f7a, 1.0);
+rim.position.set(400, -100, -400);
+scene.add(rim);
+
+/* ============================================================================
+   PLACEHOLDER: okręt liniowy z railgunem wpuszczonym w kadłub.
+   Dziób w +Z. Szyny biegną rynną na grzbiecie — z góry widać je na całej długości.
+   ========================================================================== */
+const matHull  = new THREE.MeshStandardMaterial({ color: 0x4a515c, metalness: 0.85, roughness: 0.55 });
+const matDark  = new THREE.MeshStandardMaterial({ color: 0x252a31, metalness: 0.9, roughness: 0.42 });
+const matPlate = new THREE.MeshStandardMaterial({ color: 0x59616f, metalness: 0.8, roughness: 0.5 });
+
+const ship = new THREE.Group();
+scene.add(ship);
+
+function box(w, h, d, x, y, z, mat = matHull, parent = ship) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  m.position.set(x, y, z);
+  parent.add(m);
+  return m;
+}
+
+// kadłub
+box(130, 44, 440, 0, 22, 0);
+box(108, 40, 60, 0, 22, 248);
+box(78, 34, 52, 0, 21, 302);                    // dziób
+box(150, 48, 44, 0, 22, -240);                  // rufa
+box(40, 26, 54, 0, 46, 330, matDark);           // blok wylotowy railguna
+box(24, 16, 10, 0, 46, 358, matPlate);          // pierścień wylotu
+
+// rynna grzbietowa
+box(10, 14, 520, -27, 42, 60, matDark);
+box(10, 14, 520, 27, 42, 60, matDark);
+box(44, 4, 520, 0, 34, 60, matDark);
+// poprzeczne wręgi rynny
+for (let i = 0; i < 11; i++) box(52, 6, 5, 0, 40, -180 + i * 50, matPlate);
+
+// zamek
+box(64, 54, 80, 0, 40, -212, matPlate);
+box(30, 30, 20, 0, 58, -250, matDark);
+
+// nadbudówki — po bokach, żeby nie zasłaniać rynny z góry
+box(34, 30, 90, -46, 40, -120);
+box(34, 30, 90, 46, 40, -120);
+box(18, 16, 30, -46, 62, -130, matDark);
+box(18, 16, 30, 46, 62, -130, matDark);
+
+// SZYNY — 12 segmentów na stronę, każdy z własnym materiałem (sekwencja ładowania)
+const RAIL_Z0 = -175, RAIL_Z1 = 330, RAIL_N = 12;
+const RAIL_SEG = (RAIL_Z1 - RAIL_Z0) / RAIL_N;
+const railSegs = [];
+for (const sx of [-1, 1]) {
+  for (let k = 0; k < RAIL_N; k++) {
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0x0d1319, metalness: 0.85, roughness: 0.3, emissive: 0x3aa6ff, emissiveIntensity: 0,
+    });
+    const m = new THREE.Mesh(new THREE.BoxGeometry(7, 6, RAIL_SEG * 0.92), mat);
+    m.position.set(sx * 12, 40, RAIL_Z0 + (k + 0.5) * RAIL_SEG);
+    ship.add(m);
+    railSegs.push({ mat, k });
+  }
+}
+
+// banki kondensatorów wzdłuż burt
+const caps = [];
+for (const sx of [-1, 1]) {
+  for (let k = 0; k < 8; k++) {
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0x12181f, metalness: 0.8, roughness: 0.45, emissive: 0x1f7fff, emissiveIntensity: 0,
+    });
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(7, 7, 26, 12), mat);
+    m.rotation.z = Math.PI / 2;
+    m.position.set(sx * 46, 30, -140 + k * 46);
+    ship.add(m);
+    caps.push({ mat, k });
+  }
+}
+
+// silniki
+for (const sx of [-1.5, -0.5, 0.5, 1.5]) {
+  const bell = new THREE.Mesh(new THREE.CylinderGeometry(13, 17, 34, 16), matDark);
+  bell.geometry.rotateX(Math.PI / 2);
+  bell.position.set(sx * 34, 22, -278);
+  ship.add(bell);
+  const gm = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, depthWrite: false });
+  gm.color.setRGB(0.35, 1.0, 2.0);
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(14, 18), gm);
+  disc.position.set(sx * 34, 22, -296);
+  disc.rotation.y = Math.PI;
+  ship.add(disc);
+}
+
+// światła pozycyjne
+for (const sx of [-1, 1]) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(5, 5, 5),
+    new THREE.MeshStandardMaterial({ color: 0x0d1016, emissive: sx < 0 ? 0xff2020 : 0x20ff60, emissiveIntensity: 3 }));
+  m.position.set(sx * 40, 46, 250);
+  ship.add(m);
+}
+
+/* --- PUNKT ODNIESIENIA: wieżyczka 3-lufowa 1:1 z pierwszego dema ---------- */
+function scaleTurret(x, z, ry) {
+  const g = new THREE.Group();
+  g.position.set(x, 44, z);
+  g.rotation.y = ry;
+  ship.add(g);
+  const barb = new THREE.Mesh(new THREE.CylinderGeometry(15, 16.5, 6, 20), matDark);
+  barb.position.y = 1;
+  g.add(barb);
+  const yaw = new THREE.Group();
+  yaw.position.y = 4;
+  g.add(yaw);
+  box(26, 12, 22, 0, 8, -3, matHull, yaw);
+  box(24, 9, 10, 0, 8.5, 9, matHull, yaw);
+  box(28, 2.5, 20, 0, 14.4, -3, matDark, yaw);
+  for (const bx of [-7.2, 0, 7.2]) {
+    const tube = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.6, 26, 12), matDark);
+    tube.geometry.rotateX(Math.PI / 2);
+    tube.position.set(bx, 8.5, 13 + (bx === 0 ? 1.5 : 0));
+    yaw.add(tube);
+  }
+  return g;
+}
+scaleTurret(-46, 60, -0.35);
+scaleTurret(46, 170, 0.3);
+
+// punkt wylotu railguna — jedyne, czego potrzebuje efekt
+const muzzle = new THREE.Object3D();
+muzzle.position.set(0, 42, 366);
+ship.add(muzzle);
+
+/* --- cel: wrak w oddali ---------------------------------------------------- */
+const HULK_POS = new THREE.Vector3(0, 0, 6400);
+const HULK_R = 150;
+const hulk = new THREE.Group();
+hulk.position.copy(HULK_POS);
+hulk.rotation.set(0.12, 0.5, -0.08);
+scene.add(hulk);
+box(250, 80, 120, 0, 0, 0, matHull, hulk);
+box(120, 60, 90, 0, 10, 90, matDark, hulk);
+box(70, 40, 60, -90, 0, -70, matDark, hulk);
+box(200, 10, 10, 0, 45, 0, matPlate, hulk);
+const craterMat = new THREE.MeshStandardMaterial({ color: 0x120c08, emissive: 0xff5a18, emissiveIntensity: 0 });
+const crater = new THREE.Mesh(new THREE.SphereGeometry(26, 14, 10), craterMat);
+crater.visible = false;
+hulk.add(crater);
+
+/* ============================================================================
+   DZIAŁO: ładowanie -> wystrzał -> stygnięcie
+   ========================================================================== */
+const fx = new RailgunFX(scene, CFG, FX_SCALE);
+
+let shake = 0, screenFlash = 0;
+const shakeOff = new THREE.Vector3();
+const flashEl = document.getElementById('screenflash');
+fx.onFire = (pos, dir, I) => {
+  shake = Math.min(2.4, shake + 1.5 * CFG.shake * I);
+  screenFlash = Math.min(0.62, screenFlash + 0.45 * I);
+};
+fx.onImpact = (pos, I) => {
+  shake = Math.min(2.4, shake + 0.5 * CFG.shake * I);
+  screenFlash = Math.min(0.5, screenFlash + 0.2 * I);
+  crater.visible = true;
+  craterMat.emissiveIntensity = 14;
+  hulk.worldToLocal(crater.position.copy(pos));
+};
+
+// przecięcie odcinka a->b ze sferą celu; zwraca t w [0,1] punktu wejścia albo -1
+const _sa = new THREE.Vector3(), _sd = new THREE.Vector3();
+function segmentHitsSphere(a, b, c, r) {
+  _sd.subVectors(b, a);
+  _sa.subVectors(a, c);
+  const A = _sd.dot(_sd), B = 2 * _sa.dot(_sd), Cc = _sa.dot(_sa) - r * r;
+  if (Cc <= 0) return 0;                 // start już w środku
+  if (A < 1e-9) return -1;
+  const disc = B * B - 4 * A * Cc;
+  if (disc < 0) return -1;
+  const t = (-B - Math.sqrt(disc)) / (2 * A);
+  return t >= 0 && t <= 1 ? t : -1;
+}
+fx.collide = (a, b) => segmentHitsSphere(a, b, HULK_POS, HULK_R);
+
+const gun = { state: 'idle', t: 0, charge: 0, rec: 0, recV: 0, heat: 0, ventT: 0 };
+function triggerFire() {
+  if (gun.state !== 'idle') return;
+  gun.state = CFG.charge > 0.05 ? 'charge' : 'fire';
+  gun.t = 0;
+}
+
+const _mp = new THREE.Vector3(), _md = new THREE.Vector3();
+const _rl0 = new THREE.Vector3(), _rl1 = new THREE.Vector3();
+const _rr0 = new THREE.Vector3(), _rr1 = new THREE.Vector3();
+function railPoints() {
+  _rl0.set(-12, 40, RAIL_Z0).applyMatrix4(ship.matrixWorld);
+  _rl1.set(-12, 40, RAIL_Z1).applyMatrix4(ship.matrixWorld);
+  _rr0.set(12, 40, RAIL_Z0).applyMatrix4(ship.matrixWorld);
+  _rr1.set(12, 40, RAIL_Z1).applyMatrix4(ship.matrixWorld);
+}
+
+function updateGun(dt, time) {
+  muzzle.updateWorldMatrix(true, false);
+  muzzle.getWorldPosition(_mp);
+  muzzle.getWorldDirection(_md).normalize();
+  railPoints();
+
+  if (gun.state === 'charge') {
+    gun.t += dt;
+    const T = Math.max(0.05, CFG.charge);
+    gun.charge = clamp01(gun.t / T);
+    fx.charge(_mp, _md, _rl0, _rl1, _rr0, _rr1, dt, gun.charge);
+    if (gun.t >= T) { gun.state = 'fire'; gun.t = 0; }
+  }
+
+  if (gun.state === 'fire') {
+    fx.fire(_mp, _md);
+    gun.recV = -190 * CFG.recoil;       // okręt kopie do tyłu — to jest sygnał skali
+    gun.heat = 1;
+    gun.charge = 1;
+    gun.ventT = 2.6;
+    gun.state = 'cool';
+    gun.t = 0;
+  }
+
+  if (gun.state === 'cool') {
+    gun.t += dt;
+    gun.charge = Math.max(0, 1 - gun.t / 1.6);
+    if (gun.t > 2.2) { gun.state = 'idle'; gun.charge = 0; }
+  }
+
+  // szyny: rozgrzane do biała, stygną od wylotu w stronę zamka
+  gun.heat *= Math.exp(-0.5 * dt);
+  for (const r of railSegs) {
+    const chargeGlow = smoothstep(r.k / RAIL_N, r.k / RAIL_N + 0.25, gun.charge) * (gun.state === 'charge' ? 1 : 0);
+    const hot = clamp01(gun.heat * 1.25 - (RAIL_N - 1 - r.k) * 0.035);
+    r.mat.emissiveIntensity = chargeGlow * (3 + 7 * gun.charge) * (0.8 + 0.2 * Math.sin(time * 24 + r.k))
+                            + hot * hot * 26;
+  }
+  for (const c of caps) {
+    const on = smoothstep(c.k / 8, c.k / 8 + 0.22, gun.charge);
+    c.mat.emissiveIntensity = on * 5 * (0.75 + 0.25 * Math.sin(time * 15 + c.k * 1.7));
+  }
+  craterMat.emissiveIntensity *= Math.exp(-0.55 * dt);
+
+  // upust chłodziwa ze szczelin szyn po strzale
+  if (gun.ventT > 0) {
+    gun.ventT -= dt;
+    const p = clamp01(gun.ventT / 2.6);
+    if (Math.random() < 34 * p * dt) {
+      const t = Math.random();
+      const left = Math.random() < 0.5;
+      _v1.lerpVectors(left ? _rl0 : _rr0, left ? _rl1 : _rr1, t);
+      _v2.set(left ? -1 : 1, 0.25, 0).normalize().applyQuaternion(ship.quaternion);
+      const o = sp();
+      o.x = _v1.x; o.y = _v1.y; o.z = _v1.z;
+      const v = rand(30, 90) * p;
+      o.vx = _v2.x * v; o.vy = _v2.y * v; o.vz = _v2.z * v;
+      o.life = rand(0.5, 1.3); o.drag = 1.6;
+      o.s0 = rand(3, 8); o.s1 = rand(20, 46);
+      o.rot = rand(0, 6.283); o.vrot = rand(-1, 1);
+      o.r0 = 0.55; o.g0 = 0.85; o.b0 = 1.1;
+      o.r1 = 0.10; o.g1 = 0.14; o.b1 = 0.2; o.mix = 2.2;
+      o.alpha = rand(0.12, 0.3); o.fadeIn = 0.06; o.fadeOut = 1.6; o.grow = 0.5;
+      fx.haze.spawn(o);
+    }
+  }
+
+  // odrzut: ciężka sprężyna, długi powrót
+  gun.recV += (-14 * gun.rec - 3.2 * gun.recV) * dt;
+  gun.rec += gun.recV * dt;
+  const trembleAmp = gun.state === 'charge' ? gun.charge * gun.charge * 1.6 : 0;
+  ship.position.z = gun.rec + Math.sin(time * 70) * trembleAmp * 0.4;
+  ship.position.x = Math.sin(time * 53 + 1.1) * trembleAmp;
+  ship.updateMatrixWorld();
+
+}
+
+/* ============================================================================
+   POSTPROCESSING
+   ========================================================================== */
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.95, 0.8, 0.55);
+composer.addPass(bloom);
+composer.addPass(new OutputPass());
+
+/* ============================================================================
+   KAMERA
+   ========================================================================== */
+/* Presety liczone pod proporcje ekranu: na poziomym korytarz strzału biegnie
+   w poprzek kadru (strzał w prawo), na pionowym — w dół. Odległość dobierana
+   tak, żeby zadany odcinek zmieścił się w całości. */
+const CAM_TILT = 0.36;                       // ~20° od pionu: perspektywa „z góry"
+const CAM_SPAN = {                           // [środek w osi Z, długość do zmieszczenia]
+  ship:   () => [70, 900],
+  path:   () => [HULK_POS.z * 0.5 + 60, HULK_POS.z + 900],
+  target: () => [HULK_POS.z - 520, 2300],
+};
+let camMode = 'ship';
+let camAnim = null;
+let camUserMoved = false;
+let following = false, followHold = 0;
+const _cp = new THREE.Vector3(), _ct = new THREE.Vector3();
+
+function camOffsetDir(out) {
+  if (camera.aspect >= 1) return out.set(-Math.sin(CAM_TILT), Math.cos(CAM_TILT), 0);
+  return out.set(0, Math.cos(CAM_TILT), Math.sin(CAM_TILT));
+}
+function camPose(name, outPos, outTgt) {
+  const [cz, span] = CAM_SPAN[name]();
+  const halfV = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
+  const half = camera.aspect >= 1 ? halfV * camera.aspect : halfV;
+  const dist = (span * 0.5) / half * 1.06;
+  outTgt.set(0, 0, cz);
+  camOffsetDir(outPos).multiplyScalar(dist).add(outTgt);
+}
+function setCam(name, instant = false) {
+  camMode = name;
+  camUserMoved = false;
+  document.querySelectorAll('#cam button').forEach(b =>
+    b.setAttribute('aria-pressed', String(b.dataset.cam === name)));
+  camPose(name, _cp, _ct);
+  if (instant) {
+    camera.position.copy(_cp);
+    controls.target.copy(_ct);
+    camAnim = null;
+    return;
+  }
+  camAnim = {
+    p0: camera.position.clone(), t0: controls.target.clone(),
+    p1: _cp.clone(), t1: _ct.clone(), t: 0, dur: 1.2,
+  };
+}
+setCam('ship', true);
+
+/* ============================================================================
+   PANEL
+   ========================================================================== */
+function slider(id, outId, key, digits = 2) {
+  const el = document.getElementById(id), out = document.getElementById(outId);
+  const apply = () => { CFG[key] = parseFloat(el.value); out.textContent = CFG[key].toFixed(digits); };
+  el.addEventListener('input', apply);
+  apply();
+}
+slider('s-int', 'v-int', 'intensity', 2);
+slider('s-lance', 'v-lance', 'lance', 2);
+slider('s-spread', 'v-spread', 'spread', 2);
+slider('s-charge', 'v-charge', 'charge', 2);
+slider('s-recoil', 'v-recoil', 'recoil', 2);
+slider('s-speed', 'v-speed', 'speed', 0);
+slider('s-topa', 'v-topa', 'trailOpacity', 2);
+slider('s-tlife', 'v-tlife', 'trailLife', 1);
+slider('s-twidth', 'v-twidth', 'trailWidth', 2);
+slider('s-turb', 'v-turb', 'turbulence', 2);
+slider('s-flat', 'v-flat', 'flatten', 2);
+slider('s-shake', 'v-shake', 'shake', 2);
+slider('s-bloom', 'v-bloom', 'bloom', 2);
+slider('s-time', 'v-time', 'timeScale', 2);
+
+function checkbox(id, key) {
+  const el = document.getElementById(id);
+  el.addEventListener('change', () => { CFG[key] = el.checked; });
+  CFG[key] = el.checked;
+}
+checkbox('follow', 'follow');
+checkbox('auto', 'autoFire');
+
+document.querySelectorAll('#cam button').forEach(b =>
+  b.addEventListener('click', () => setCam(b.dataset.cam)));
+const btnFire = document.getElementById('fire');
+btnFire.addEventListener('click', triggerFire);
+document.getElementById('b-ship').addEventListener('click', () => setCam('ship'));
+document.getElementById('b-path').addEventListener('click', () => setCam('path'));
+document.getElementById('b-target').addEventListener('click', () => setCam('target'));
+const panel = document.getElementById('panel');
+document.getElementById('toggle').addEventListener('click', () => { panel.hidden = !panel.hidden; });
+
+window.addEventListener('keydown', e => {
+  if (e.code === 'Space') { e.preventDefault(); triggerFire(); }
+  if (e.key === '1') setCam('ship');
+  if (e.key === '2') setCam('path');
+  if (e.key === '3') setCam('target');
+  if (e.key === 'f' || e.key === 'F') {
+    const el = document.getElementById('follow');
+    el.checked = !el.checked; CFG.follow = el.checked;
+  }
+  if (e.key === 'h' || e.key === 'H') panel.hidden = !panel.hidden;
+});
+
+let downAt = 0, downX = 0, downY = 0;
+canvas.addEventListener('pointerdown', e => {
+  camAnim = null;                       // ręczny ruch kamerą przerywa przejście
+  downAt = performance.now(); downX = e.clientX; downY = e.clientY;
+});
+canvas.addEventListener('pointerup', e => {
+  const moved = Math.hypot(e.clientX - downX, e.clientY - downY);
+  if (moved < 9 && performance.now() - downAt < 400) triggerFire();
+  else camUserMoved = true;
+});
+
+function sizeTo() {
+  const w = canvas.clientWidth || window.innerWidth;
+  const h = canvas.clientHeight || window.innerHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h, false);
+  composer.setSize(w, h);
+  if (!camUserMoved && !following) setCam(camMode, true);
+}
+canvas.addEventListener('wheel', () => { camUserMoved = true; camAnim = null; }, { passive: true });
+window.addEventListener('resize', sizeTo);
+window.addEventListener('orientationchange', () => setTimeout(sizeTo, 120));
+sizeTo();
+
+/* ============================================================================
+   PĘTLA
+   ========================================================================== */
+const clock = new THREE.Clock();
+let time = 0, fpsT = 0, fpsN = 0, autoT = 2.5, fireBusy = false;
+const rFps = document.getElementById('r-fps');
+const rPart = document.getElementById('r-part');
+const rSlug = document.getElementById('r-slug');
+const chargeBar = document.getElementById('charge-bar');
+
+function frame() {
+  requestAnimationFrame(frame);
+  const raw = Math.min(clock.getDelta(), 1 / 20);
+  const dt = raw * CFG.timeScale;
+  time += dt;
+
+  if (CFG.autoFire && gun.state === 'idle') {
+    autoT -= dt;
+    if (autoT <= 0) { autoT = 3.2 + CFG.charge; triggerFire(); }
+  }
+
+  updateGun(dt, time);
+  fx.update(dt, time);
+
+  // --- kamera ---
+  camera.position.sub(shakeOff);
+  const slug = fx.slugs.find(s => !s.dead);
+  if (CFG.follow && slug) {
+    // sztywno nad pociskiem, z wyprzedzeniem w kierunku lotu — widać, dokąd leci
+    following = true; followHold = 1.3; camAnim = null;
+    _ct.copy(slug.pos).addScaledVector(slug.dir, 420);
+    camOffsetDir(_cp).multiplyScalar(1600).add(_ct);
+    controls.target.copy(_ct);
+    camera.position.copy(_cp);
+  } else if (following && followHold > 0) {
+    followHold -= raw;                  // chwila na trafienie, zanim kamera wróci
+  } else {
+    if (following) { following = false; setCam(camMode); }
+    if (camAnim) {
+      camAnim.t += raw;
+      const k = smoothstep(0, 1, Math.min(1, camAnim.t / camAnim.dur));
+      camera.position.lerpVectors(camAnim.p0, camAnim.p1, k);
+      controls.target.lerpVectors(camAnim.t0, camAnim.t1, k);
+      if (camAnim.t >= camAnim.dur) camAnim = null;
+    }
+  }
+  controls.update();
+  if (shake > 0.001) {
+    shake *= Math.exp(-5.5 * dt);
+    const s = shake * shake * 7;
+    shakeOff.set((Math.random() * 2 - 1) * s, (Math.random() * 2 - 1) * s * 0.15, (Math.random() * 2 - 1) * s);
+  } else if (shake !== 0) { shake = 0; shakeOff.set(0, 0, 0); }
+  camera.position.add(shakeOff);
+  skyRig.position.copy(camera.position);
+
+  if (screenFlash > 0.003) {
+    screenFlash *= Math.exp(-7.5 * dt);
+    flashEl.style.opacity = screenFlash.toFixed(3);
+  } else if (screenFlash !== 0) { screenFlash = 0; flashEl.style.opacity = '0'; }
+
+  bloom.strength = 0.95 * CFG.bloom;
+  bloom.enabled = CFG.bloom > 0.01;
+  composer.render();
+
+  const busy = gun.state !== 'idle';
+  if (busy !== fireBusy) { fireBusy = busy; btnFire.disabled = busy; }
+  chargeBar.style.width = (gun.charge * 100).toFixed(1) + '%';
+
+  fpsN++; fpsT += raw;
+  if (fpsT >= 0.4) {
+    rFps.textContent = String(Math.round(fpsN / fpsT));
+    rPart.textContent = String(fx.particles);
+    rSlug.textContent = slug ? Math.round(slug.pos.distanceTo(_mp)) + ' j' : '—';
+    fpsT = 0; fpsN = 0;
+  }
+}
+
+setTimeout(triggerFire, 900);
+frame();
+</script>
+</body>
+</html>

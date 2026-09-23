@@ -42,6 +42,69 @@ function targetY(target) {
   return Number(target?.worldY ?? target?.y) || 0;
 }
 
+/* ============================================================================
+   SALWA WIELOLUFOWA
+   `barrelsPerShot` z karty broni mówi, ile luf wypluwa JEDNO naciśnięcie.
+   Broń główna respektowała to od zawsze (`triggerRailVolley` układa kolejkę
+   z `shotGap`), ale zaczepy `special` strzelały z jednej lufy i cyklowały —
+   trzylufowa bateria Yamato oddawała pojedynczy strzał zamiast salwy.
+
+   Odstęp 85 ms to tryb 'ripple' z dema `muzzle-fx-3-lufy`. Salwowe 14 ms
+   wychodziło poniżej jednej klatki przy 60 fps, więc trzy lufy czytały się
+   jak jeden strzał. Na 85 ms każda dostaje własne 5 klatek — wychodzi
+   bum-bum-bum, a nie bum.
+
+   Do tego jitter: bez niego każda salwa ma identyczny rytm i po trzecim
+   strzale słychać metronom. Jitter jest mniejszy od odstępu, więc lufy
+   nigdy nie wyprzedzają się nawzajem.
+
+   UWAGA BALANSOWA: jedno naciśnięcie wypuszcza teraz tyle pocisków, ile luf,
+   więc obrażenia na strzał rosną `barrelsPerShot` razy przy tym samym
+   przeładowaniu. Dla broni na amunicję koszt nadąża sam (`weaponAmmoPerShot`
+   mnoży przez `barrelsPerShot`), ale Yamato jest w profilu `plasma`
+   (`ammo: null`), a `energyCost` nigdzie nie jest egzekwowane — ta salwa
+   nie kosztuje nic ponad dłuższy cooldown, jeśli się go nie podniesie.
+   ========================================================================== */
+export const SALVO_STEP = 0.085;
+export const SALVO_JITTER = 0.035;
+
+export function barrelsPerShotOf(weapon) {
+  const n = Math.round(Number(weapon?.barrelsPerShot));
+  return Number.isFinite(n) && n > 0 ? n : 1;
+}
+
+/** Kolejkuje lufy 1..n-1 na hardpoincie; lufę `start` odpala wołający od razu. */
+export function queueSalvoBarrels(hp, weaponId, start, barrels) {
+  if (!hp) return;
+  // Zawsze od zera: przeładowanie blokuje kolejne naciśnięcie w trakcie salwy,
+  // więc cokolwiek tu jeszcze wisi, jest resztką po przezbrojeniu zaczepu.
+  const queue = hp.salvo || (hp.salvo = []);
+  queue.length = 0;
+  if (barrels <= 1) return;
+  for (let b = 1; b < barrels; b++) {
+    queue.push({ t: b * SALVO_STEP + Math.random() * SALVO_JITTER, barrel: start + b, wid: weaponId });
+  }
+}
+
+/**
+ * Opróżnia kolejkę salwy hardpointu; `fire(barrelIndex)` oddaje strzał.
+ * Broń podmieniona w trakcie salwy kasuje resztę — inaczej pozostałe lufy
+ * wystrzeliłyby z nowego działa.
+ */
+export function drainSalvoQueue(hp, weaponId, dt, fire) {
+  const queue = hp?.salvo;
+  if (!queue || !queue.length) return;
+  let i = 0;
+  while (i < queue.length) {
+    const shot = queue[i];
+    if (shot.wid !== weaponId) { queue.splice(i, 1); continue; }
+    shot.t -= dt;
+    if (shot.t > 0) { i++; continue; }
+    queue.splice(i, 1);
+    fire(shot.barrel);
+  }
+}
+
 export class WeaponController {
   constructor({ ship, getMouseRef, getLockedTarget, setLockedTarget, getLockedTargets, owner, screenToWorldFn }) {
     this.ship = ship;
@@ -243,8 +306,12 @@ export class WeaponController {
       const cd = window.fireWeaponCore(ship, targetToPass, weaponData.id, muzzle);
 
       // Muzzle flash VFX
+      // Armata i Tempest Ion mają własny błysk 3D z dema
+      // (src/3d/muzzleFx3D.js) — kanwowy rozbłysk pod nim to druga
+      // warstwa tego samego efektu w tym samym punkcie.
       const CanvasVFX = window.CanvasVFX;
-      if (CanvasVFX && weaponData.category !== 'beam') {
+      const rich3D = window.MuzzleFX3D?.handles(weaponData.id) === true;
+      if (CanvasVFX && !rich3D && weaponData.category !== 'beam') {
         const isHeavy = (weaponData.size === 'L' || weaponData.size === 'Capital');
         const muzzleScale = isHeavy ? 1.8 : 1.0;
         if (weaponData.category === 'torpedo') {
@@ -295,6 +362,21 @@ export class WeaponController {
 
   // ==================== SPECIAL WEAPONS ====================
 
+  // Jeden strzał z jednej lufy zaczepu `special`. Cel i kąt liczymy
+  // W CHWILI STRZAŁU, nie kolejkowania — wieżyczka obraca się w trakcie salwy,
+  // a cel może w tym czasie zginąć.
+  fireSpecialBarrel(loadout, hp, slot, barrelIndex, emitterPrefix, multiBarrel) {
+    const ship = this.ship;
+    const weapon = loadout?.weapon;
+    if (!weapon || !ship || ship.dead) return 0;
+    const aim = getMountedWeaponAim(ship, loadout);
+    const target = targetIsAlive(aim.target) ? aim.target : null;
+    this.computeMountedMuzzle(loadout, barrelIndex);
+    const base = `${this.owner}_${emitterPrefix}:${hp?.id || slot}`;
+    _muzzleScratch.emitterUid = multiBarrel ? `${base}:b${barrelIndex}` : base;
+    return Number(window.fireWeaponCore(ship, target, weapon.id, _muzzleScratch)) || 0;
+  }
+
   tryFireSpecialWeapons() {
     const standardSpecials = this.specialWeapons;
     const specialMissiles = this.specialMissileWeapons;
@@ -319,13 +401,16 @@ export class WeaponController {
         const cdLeft = Math.max(0, Number(hp.specialCd) || 0);
         if (cdLeft > 0) continue;
 
+        // Salwa: `barrelsPerShot` luf na jedno naciśnięcie. Pierwsza idzie
+        // od razu, reszta z kolejki w `updateCooldowns`.
         const aim = getMountedWeaponAim(ship, loadout);
-        const target = targetIsAlive(aim.target) ? aim.target : null;
-        this.computeMountedMuzzle(loadout, aim.nextBarrel++);
-        _muzzleScratch.emitterUid = `${this.owner}_${emitterPrefix}:${hp?.id || i}`;
+        const barrels = barrelsPerShotOf(weapon);
+        const start = Number(aim.nextBarrel) || 0;
+        aim.nextBarrel = start + barrels;
 
-        const cd = window.fireWeaponCore(ship, target, weapon.id, _muzzleScratch);
-        hp.specialCd = Math.max(0.01, Number(cd) || Number(weapon.cooldown) || 0.25);
+        const cd = this.fireSpecialBarrel(loadout, hp, i, start, emitterPrefix, barrels > 1);
+        hp.specialCd = Math.max(0.01, cd || Number(weapon.cooldown) || 0.25);
+        queueSalvoBarrels(hp, weapon.id, start, barrels);
         fired = true;
       }
     }
@@ -424,9 +509,18 @@ export class WeaponController {
     const specialGroups = [this.specialWeapons, this.specialMissileWeapons];
     for (let g = 0; g < specialGroups.length; g++) {
       const specials = specialGroups[g];
+      const emitterPrefix = g === 0 ? 'special' : 'special_missile';
       for (let i = 0; i < specials.length; i++) {
-        const hp = specials[i]?.hp;
-        if (hp && typeof hp.specialCd === 'number') {
+        const loadout = specials[i];
+        const hp = loadout?.hp;
+        if (!hp) continue;
+        // Reszta salwy wielolufowej. Domknięcie powstaje TYLKO gdy kolejka
+        // coś trzyma — czyli przez ~30 ms po strzale, a nie co klatkę.
+        if (hp.salvo && hp.salvo.length) {
+          drainSalvoQueue(hp, loadout?.weapon?.id, dt,
+            (barrel) => this.fireSpecialBarrel(loadout, hp, i, barrel, emitterPrefix, true));
+        }
+        if (typeof hp.specialCd === 'number') {
           hp.specialCd = Math.max(0, hp.specialCd - dt);
         }
       }

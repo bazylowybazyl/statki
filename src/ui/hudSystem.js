@@ -866,12 +866,28 @@ export class HUDSystem {
         this.cockpit?.log?.(message, tone);
     }
 
+    /** Komunikat statku (pushZoneMessage) — linia nad klastrem w kokpicie. */
+    pushAlert(message, options = {}) {
+        this.cockpit?.pushAlert?.(message, options);
+    }
+
     logZone(label, zoneId = '') {
         this.cockpit?.logZone?.(label, zoneId);
     }
 
     onMissionUpdated(mission, event = 'updated') {
         this.cockpit?.onMissionUpdated?.(mission, event);
+    }
+
+    /** Klik w kafelek broni = to samo co naciśnięcie klawisza (jedna ścieżka wejścia). */
+    dispatchWeaponKey(key) {
+        const code = `Digit${key}`;
+        if (this.cockpit?.dispatchGameKey) {
+            this.cockpit.dispatchGameKey(code, key);
+            return;
+        }
+        window.dispatchEvent(new KeyboardEvent('keydown', { code, key, bubbles: true }));
+        requestAnimationFrame(() => window.dispatchEvent(new KeyboardEvent('keyup', { code, key, bubbles: true })));
     }
 
     renderSkillKeys() {
@@ -886,6 +902,9 @@ export class HUDSystem {
             if (entry.weaponType) {
                 keyEl.classList.add('glass-key-weapon');
                 keyEl.dataset.weaponType = entry.weaponType;
+                // Kafelki broni miały `cursor: pointer` i numer klawisza, ale ZERO
+                // obsługi kliknięcia — wyglądały jak przycisk, a były wskaźnikiem.
+                keyEl.addEventListener('click', () => this.dispatchWeaponKey(entry.key));
                 const icon = document.createElement('div');
                 icon.className = 'glass-key-weapon-icon';
                 icon.dataset.placeholder = entry.weaponType;
