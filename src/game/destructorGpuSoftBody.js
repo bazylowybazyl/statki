@@ -639,7 +639,9 @@ export const DestructorGpuSoftBody = {
 
       if (newHp <= 0 && s.hp > 0) {
         if (window.DestructorSystem) {
-          window.DestructorSystem.destroyShard(entity, s, { x: vx, y: vy });
+          // vx/vy are already stored on the shard in local hull coordinates.
+          // The destructor transforms them and adds the parent's motion once.
+          window.DestructorSystem.destroyShard(entity, s);
           if (!entity.noSplit && window.DestructorSystem.splitQueue.indexOf(entity) === -1) {
             window.DestructorSystem.splitQueue.push(entity);
           }

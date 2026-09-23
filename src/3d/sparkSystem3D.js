@@ -125,6 +125,55 @@ let liveUntil = -Infinity;
 let dirtyLo = -1;
 let dirtyHi = -1;
 
+// Aproksymacja krzywej Gaussa (od -1.0 do 1.0)
+function randomGaussian() {
+  return ((Math.random() + Math.random() + Math.random()) / 1.5) - 1.0;
+}
+
+// Kierunek glowny snopu: normalna + znos z poslizgu.
+const _mainDir = { x: 0, y: 0 };
+function grindMainDir(normalX, normalY, tangentX, tangentY, bounceRatio) {
+  let mDx = normalX * (bounceRatio + 0.1) + tangentX * (1.0 - bounceRatio);
+  let mDy = normalY * (bounceRatio + 0.1) + tangentY * (1.0 - bounceRatio);
+  const mLen = Math.hypot(mDx, mDy) || 1;
+  _mainDir.x = mDx / mLen;
+  _mainDir.y = mDy / mLen;
+  return _mainDir;
+}
+
+// JEDEN snop iskier w JEDNYM punkcie styku — wspolny trzon grindingBurst
+// (snop w centroidzie) i grindingSeam (snopy wzdluz szwu). Dobor predkosci,
+// zycia i rozmiaru czastki siedzi tylko tutaj, zeby obie sciezki nie rozjechaly
+// sie przy pierwszym strojeniu.
+function emitGrindCluster(x, y, normalX, normalY, tangentX, tangentY, count, visualEnergy, spreadRadius, baseVx, baseVy, bounceRatio) {
+  const mainDir = grindMainDir(normalX, normalY, tangentX, tangentY, bounceRatio);
+  const mDx = mainDir.x;
+  const mDy = mainDir.y;
+
+  for (let i = 0; i < count; i++) {
+    const weight = Math.pow(Math.random(), 2.0);
+    const scatterAmount = (1.0 - weight) * 2.0;
+
+    // Rozrzut na plaszczyznie 2D (Y w WebGL to tutaj fizycznie Z)
+    const pX = x + tangentX * randomGaussian() * spreadRadius + normalX * Math.random() * 20;
+    const pY = y + tangentY * randomGaussian() * spreadRadius + normalY * Math.random() * 20;
+
+    const dX = mDx + tangentX * randomGaussian() * scatterAmount + normalX * Math.abs(randomGaussian()) * scatterAmount;
+    const dY = mDy + tangentY * randomGaussian() * scatterAmount + normalY * Math.abs(randomGaussian()) * scatterAmount;
+    const dLen = Math.hypot(dX, dY) || 1;
+
+    const speed = 180 + (visualEnergy * 0.18) + (weight * visualEnergy * 0.28) + Math.random() * 260;
+
+    const vX = (dX / dLen) * speed + baseVx;
+    const vY = (dY / dLen) * speed + baseVy;
+
+    const lifeTime = 0.1 + (weight * 0.5) + Math.random() * 0.2;
+    const size = 0.18 + weight * 0.42;
+
+    SparkSystem3D.emit(pX, pY, vX, vY, lifeTime, size);
+  }
+}
+
 export const SparkSystem3D = {
   isInitialized: false,
 
@@ -262,7 +311,9 @@ export const SparkSystem3D = {
     }
   },
 
-  // Nowa funkcja dla tarcia i zderzen statkow
+  // Nowa funkcja dla tarcia i zderzen statkow.
+  // Jeden snop w jednym punkcie — zostaje jako fallback dla par, ktore nie
+  // niosa probek szwu (pointCount <= 1).
   grindingBurst(gameX, gameY, normalX, normalY, tangentX, tangentY, bounceForce, slideSpeed, baseVx, baseVy) {
     if (!this.isInitialized) return;
 
@@ -273,39 +324,74 @@ export const SparkSystem3D = {
 
     const count = Math.min(120, Math.floor(5 + totalEnergy * 0.15));
     const bounceRatio = Math.min(1.0, bounceForce / (totalEnergy + 0.001));
+    // Snop z jednego punktu musi udawac caly szew, stad rozrzut z ENERGII.
+    const spreadRadius = Math.min(180, visualEnergy * 0.28);
 
-    // Dynamiczny wektor glowny (normalna + lekki znos z poslizgu)
-    let mDx = normalX * (bounceRatio + 0.1) + tangentX * (1.0 - bounceRatio);
-    let mDy = normalY * (bounceRatio + 0.1) + tangentY * (1.0 - bounceRatio);
-    const mLen = Math.hypot(mDx, mDy) || 1;
-    mDx /= mLen;
-    mDy /= mLen;
+    emitGrindCluster(
+      gameX, gameY,
+      normalX, normalY,
+      tangentX, tangentY,
+      count, visualEnergy, spreadRadius,
+      baseVx, baseVy, bounceRatio
+    );
+  },
 
-    // Aproksymacja krzywej Gaussa (od -1.0 do 1.0)
-    const randomGaussian = () => ((Math.random() + Math.random() + Math.random()) / 1.5) - 1.0;
+  // Iskry wzdluz CALEGO szwu. `points` to Float32Array [x, y, nx, ny] x N —
+  // probki kontaktow rozlozone po plamie styku, kazda z wlasna normalna
+  // (na zakrzywionej burcie rozni sie od usrednionej).
+  //
+  // Budzet iskier jest TEN SAM co w grindingBurst — dzielimy go miedzy punkty,
+  // nie mnozymy przez ich liczbe. Otarcie burta w burte ma wygladac na dluzsze,
+  // nie na jasniejsze.
+  grindingSeam(points, pointCount, tangentX, tangentY, bounceForce, slideSpeed, baseVx, baseVy) {
+    if (!this.isInitialized) return;
 
-    for (let i = 0; i < count; i++) {
-      const spreadRadius = Math.min(180, visualEnergy * 0.28);
-      const weight = Math.pow(Math.random(), 2.0);
-      const scatterAmount = (1.0 - weight) * 2.0;
+    const available = points ? (points.length >> 2) : 0;
+    const n = Math.min(Math.max(0, pointCount | 0), available);
+    if (n <= 0) return;
+    if (n === 1) {
+      // Normalna kontaktu idzie z B do A; grindingBurst dostaje ja odwrocona
+      // (patrz wywolanie sprzed rozbicia na szew) — zachowujemy ten sam zwrot.
+      this.grindingBurst(
+        points[0], points[1],
+        -points[2], -points[3],
+        tangentX, tangentY,
+        bounceForce, slideSpeed, baseVx, baseVy
+      );
+      return;
+    }
 
-      // Rozrzut na plaszczyznie 2D (Y w WebGL to tutaj fizycznie Z)
-      const pX = gameX + tangentX * randomGaussian() * spreadRadius + normalX * Math.random() * 20;
-      const pY = gameY + tangentY * randomGaussian() * spreadRadius + normalY * Math.random() * 20;
+    const totalEnergy = bounceForce + Math.abs(slideSpeed) * 3.0;
+    if (totalEnergy < 15) return;
+    const visualEnergy = Math.min(totalEnergy, MAX_GRINDING_VISUAL_ENERGY);
 
-      let dX = mDx + tangentX * randomGaussian() * scatterAmount + normalX * Math.abs(randomGaussian()) * scatterAmount;
-      let dY = mDy + tangentY * randomGaussian() * scatterAmount + normalY * Math.abs(randomGaussian()) * scatterAmount;
-      const dLen = Math.hypot(dX, dY) || 1;
+    const count = Math.min(120, Math.floor(5 + totalEnergy * 0.15));
+    if (count <= 0) return;
+    const bounceRatio = Math.min(1.0, bounceForce / (totalEnergy + 0.001));
 
-      const speed = 180 + (visualEnergy * 0.18) + (weight * visualEnergy * 0.28) + Math.random() * 260;
+    // Rozrzut wzdluz stycznej = POLOWA odstepu miedzy sasiednimi punktami.
+    // Szew jest juz pokryty probkami, wiec kazdy snop ma tylko domknac luke do
+    // sasiada — rozrzut z energii (grindingBurst) rozmazalby je jeden na drugim.
+    const lastBase = (n - 1) * 4;
+    const seamLength = Math.hypot(points[lastBase] - points[0], points[lastBase + 1] - points[1]);
+    const spreadRadius = Math.max(4, (seamLength / (n - 1)) * 0.5);
 
-      const vX = (dX / dLen) * speed + baseVx;
-      const vY = (dY / dLen) * speed + baseVy;
+    let emitted = 0;
+    for (let p = 0; p < n; p++) {
+      const base = p * 4;
+      // Podzial przez skumulowany prog: suma udzialow to DOKLADNIE `count`,
+      // niezaleznie od reszty z dzielenia.
+      const share = Math.floor((count * (p + 1)) / n) - emitted;
+      if (share <= 0) continue;
+      emitted += share;
 
-      const lifeTime = 0.1 + (weight * 0.5) + Math.random() * 0.2;
-      const size = 0.18 + weight * 0.42;
-
-      this.emit(pX, pY, vX, vY, lifeTime, size);
+      emitGrindCluster(
+        points[base], points[base + 1],
+        -points[base + 2], -points[base + 3],
+        tangentX, tangentY,
+        share, visualEnergy, spreadRadius,
+        baseVx, baseVy, bounceRatio
+      );
     }
   },
 

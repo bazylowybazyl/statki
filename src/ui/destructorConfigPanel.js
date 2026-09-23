@@ -53,6 +53,32 @@ const CONTROL_SECTIONS = [
     ]
   },
   {
+    // WARSTWA PREZENTACJI — nic tutaj nie zmienia modelu zderzeń, tylko to,
+    // kiedy leci zdarzenie uderzenia i jak mocno żarzy się blacha.
+    // Sam żar gasi też przełącznik "damage tint" w DevTools (razem z glow stresu).
+    title: 'Efekty zderzeń (CollisionFX)',
+    controls: [
+      { key: 'impactMinSpeed', label: 'impact min speed', min: 0, max: 300, step: 1 },
+      { key: 'impactCooldown', label: 'impact cooldown s', min: 0, max: 8.0, step: 0.05 },
+      { key: 'seamSparkPoints', label: 'seam spark points', min: 0, max: 16, step: 1, integer: true },
+      // `heatGlowPeak` zastąpił dawny `heatTint` (1.6) pod NOWYM kluczem celowo:
+      // zapisany w localStorage stary suwak nie może przygasić żaru z powrotem.
+      { key: 'heatGlowPeak', label: 'heat glow peak (HDR)', min: 0, max: 16.0, step: 0.1 },
+      { key: 'heatDecay', label: 'heat decay 1/s', min: 0.02, max: 4.0, step: 0.01 },
+      { key: 'heatGain', label: 'heat gain (zgniot)', min: 0, max: 2.0, step: 0.01 },
+      { key: 'woundHeat', label: 'wound heat (brzeg)', min: 0, max: 1.0, step: 0.01 },
+      { key: 'woundHeatSpeed', label: 'wound white speed', min: 10, max: 600, step: 5 },
+      { key: 'woundHeatInherit', label: 'wound inherit', min: 0, max: 1.0, step: 0.01 },
+      { key: 'woundHeatRing2', label: 'wound ring 2', min: 0, max: 1.0, step: 0.01 },
+      { key: 'contactHeatRate', label: 'contact heat /s', min: 0, max: 12.0, step: 0.1 },
+      { key: 'contactHeatSpeed', label: 'contact heat speed', min: 10, max: 600, step: 5 },
+      { key: 'debrisHeatGlow', label: 'debris heat glow', min: 0, max: 4.0, step: 0.05 },
+      { key: 'debrisHeatFloor', label: 'debris heat floor', min: 0, max: 1.0, step: 0.01 },
+      { key: 'heatFromProjectiles', label: 'heat od pocisków', min: 0, max: 1, step: 1, integer: true },
+      { key: 'collisionFxDebug', label: 'log uderzeń', min: 0, max: 1, step: 1, integer: true }
+    ]
+  },
+  {
     title: 'Sleep / Wake',
     controls: [
       { key: 'elasticSleepFrames', label: 'sleep frames', min: 1, max: 120, step: 1, integer: true },

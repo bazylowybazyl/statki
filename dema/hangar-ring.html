@@ -1,0 +1,1790 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Dok K-7 — wcięcie pierścienia, trzy wloty</title>
+<style>
+  :root{
+    --void:#05070c;
+    --ink:#cfe9f5;
+    --ink-dim:#5d7a8c;
+    --phos:#7fe3ff;
+    --amber:#ffb45a;
+    --good:#4dff9e;
+    --bad:#ff5f45;
+    --line:rgba(127,227,255,.20);
+    --glass:rgba(7,13,19,.80);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;background:var(--void);overflow:hidden;
+    font-family:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+    color:var(--ink);-webkit-tap-highlight-color:transparent;
+  }
+  canvas#gl{display:block;width:100%;height:100%;touch-action:none}
+
+  #hud{position:fixed;inset:0;pointer-events:none;
+       padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+
+  .panel{
+    position:absolute;background:var(--glass);border:1px solid var(--line);
+    padding:9px 11px 10px;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+    box-shadow:0 0 0 1px rgba(0,0,0,.5), 0 12px 34px rgba(0,0,0,.55);
+  }
+  .panel h2{
+    margin:0 0 8px;font-size:10px;font-weight:600;letter-spacing:.24em;color:var(--phos);
+    text-shadow:0 0 12px rgba(127,227,255,.45);
+    border-bottom:1px solid var(--line);padding-bottom:6px;
+  }
+  .rows{display:grid;grid-template-columns:auto 1fr;gap:3px 16px;font-size:11px;letter-spacing:.1em}
+  .k{color:var(--ink-dim)}
+  .v{color:var(--ink);text-align:right;font-variant-numeric:tabular-nums}
+  .v.acc{color:var(--phos)} .v.good{color:var(--good)} .v.warn{color:var(--amber)} .v.bad{color:var(--bad)}
+
+  #dock{top:14px;left:14px;min-width:230px}
+  #opts{top:14px;right:14px;pointer-events:auto}
+  #opts label{display:flex;align-items:center;gap:8px;font-size:10.5px;letter-spacing:.1em;
+              color:var(--ink-dim);cursor:pointer;padding:3px 0;user-select:none}
+  #opts input{appearance:none;-webkit-appearance:none;width:26px;height:13px;margin:0;border:1px solid var(--line);
+              background:#0b1218;position:relative;cursor:pointer;flex:0 0 auto;transition:border-color .15s}
+  #opts input::after{content:"";position:absolute;top:1px;left:1px;width:9px;height:9px;background:var(--ink-dim);transition:.15s}
+  #opts input:checked{border-color:rgba(127,227,255,.55)}
+  #opts input:checked::after{left:14px;background:var(--phos);box-shadow:0 0 8px var(--phos)}
+  #opts label:has(input:checked){color:var(--ink)}
+
+  #keys{left:14px;bottom:14px;font-size:10.5px;letter-spacing:.08em;color:var(--ink-dim);line-height:1.7}
+  #keys b{color:var(--ink);font-weight:600}
+
+  #bar{margin-top:9px}
+  #barTrack{height:3px;background:rgba(127,227,255,.12);border:1px solid var(--line);}
+  #barFill{height:100%;background:var(--phos);box-shadow:0 0 10px var(--phos);width:0%}
+
+  #akcja{
+    position:absolute;left:50%;bottom:8%;transform:translateX(-50%);
+    pointer-events:auto;cursor:pointer;
+    background:var(--glass);border:1px solid rgba(127,227,255,.55);
+    color:var(--phos);font:600 13px/1 ui-monospace,monospace;letter-spacing:.28em;
+    padding:13px 30px;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+    box-shadow:0 0 0 1px rgba(0,0,0,.5), 0 0 26px rgba(127,227,255,.22);
+    opacity:0;visibility:hidden;transition:opacity .18s, transform .18s;
+  }
+  #akcja.on{opacity:1;visibility:visible}
+  #akcja:hover{background:rgba(127,227,255,.14)}
+  #akcja:active{transform:translateX(-50%) translateY(2px)}
+  #akcja.wy{border-color:rgba(255,180,90,.6);color:var(--amber);
+            box-shadow:0 0 0 1px rgba(0,0,0,.5), 0 0 26px rgba(255,180,90,.22)}
+  #akcja small{display:block;font-size:9px;letter-spacing:.2em;opacity:.55;margin-top:5px}
+
+  #flash{
+    position:absolute;left:50%;top:22%;transform:translate(-50%,-50%);
+    font-size:13px;letter-spacing:.42em;color:var(--amber);text-shadow:0 0 18px rgba(255,180,90,.6);
+    opacity:0;transition:opacity .25s;white-space:nowrap
+  }
+  #flash.on{opacity:1}
+
+  @media (max-width:560px){
+    .panel{padding:8px 9px}
+    #dock{min-width:186px}
+    .rows{font-size:10px;gap:2px 10px}
+    #keys{display:none}
+  }
+  @media (prefers-reduced-motion:reduce){ #flash{transition:none} }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+
+<div id="hud">
+  <div class="panel" id="dock">
+    <h2>DOK K-7 · WCIĘCIE PIERŚCIENIA</h2>
+    <div class="rows">
+      <div class="k">STATEK</div><div class="v acc" id="vShip">—</div>
+      <div class="k">STAN</div><div class="v acc" id="vState">NA ZEWNĄTRZ</div>
+      <div class="k">WLOT</div><div class="v" id="vGate">—</div>
+      <div class="k">PAS</div><div class="v" id="vLane">—</div>
+      <div class="k">OBSŁUGA</div><div class="v" id="vServ">—</div>
+      <div class="k">ZANIK DACHU</div><div class="v" id="vFade">0%</div>
+      <div class="k">PRĘDKOŚĆ</div><div class="v" id="vVel">0 m/s</div>
+      <div class="k">DO PROGU</div><div class="v" id="vDist">—</div>
+      <div class="k">KAMERA</div><div class="v" id="vCam">300 m</div>
+    </div>
+    <div id="bar"><div id="barTrack"><div id="barFill"></div></div></div>
+  </div>
+
+  <div class="panel" id="opts">
+    <h2>PODGLĄD</h2>
+    <label><input type="checkbox" id="tgFade" checked> zanik dachu</label>
+    <label><input type="checkbox" id="tgGhost" checked> obrys po zaniku</label>
+    <label><input type="checkbox" id="tgLights" checked> światła wnętrza</label>
+    <label><input type="checkbox" id="tgLook" checked> lookahead kamery</label>
+    <label><input type="checkbox" id="tgField" checked> pola siłowe</label>
+    <label><input type="checkbox" id="tgZones"> obrys i progi</label>
+  </div>
+
+  <div class="panel" id="keys">
+    <div><b>W / S</b> ciąg &nbsp; <b>A / D</b> obrót</div>
+    <div><b>SHIFT</b> dopalacz &nbsp; <b>SPACJA</b> hamowanie</div>
+    <div><b>KÓŁKO</b> zoom &nbsp; <b>0</b> zoom domyślny</div>
+    <div>wloty stoją otwarte — zielony pas w, bursztynowy wy</div>
+    <div>dotyk: przytrzymaj, statek leci do palca</div>
+  </div>
+
+  <button id="akcja">DOKUJ<small>KLIKNIJ ALBO E</small></button>
+  <div id="flash">PRÓG DOKU</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+"use strict";
+
+/* ═══════════════════════════════════════════════════════════════
+   KONFIGURACJA — wszystko, co warto kręcić, jest tutaj
+   ═══════════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════════
+   STATKI — wymiary i fizyka 1:1 Z GRY, nie na oko
+   ═══════════════════════════════════════════════════════════════
+   ATLAS. src/data/ships.js:
+     HULL_RENDER_PROFILES.atlas = { length: 3000, radius: 500 }
+     HULL_RENDER_WORLD_SCALE = 0.6
+   getHullRenderSize('atlas', 3747, 1677) — gra podaje wymiary sprite'a
+   (index.html:5563), więc szerokość bierze się z proporcji obrazka:
+     długość = 3000 × 0.6            = 1800 j.
+     szerokość = 1800 × 1677/3747    =  806 j.
+     promień  =  500 × 0.6           =  300 j.
+   Fizyka z SHIP_PHYSICS (src/game/flight/thrusterModel.js):
+     SPEED 600, TURN_ACCEL 10.0, MAX_TURN_SPEED 2.5,
+     LINEAR_FRICTION 0.996/klatkę, ANGULAR_FRICTION 0.92/klatkę, BOOST 2.5.
+   Tarcia są PER KLATKĘ przy 60 fps — tu przeliczone na ciągłe:
+     -ln(0.996)×60 = 0.2405 /s,  -ln(0.92)×60 = 5.005 /s.            */
+const STATKI = {
+  atlas: {
+    nazwa: 'ATLAS', klasa: 'supercapital',
+    sprite: 'assets/capital_ship_rect_v1.png',
+    len: 1800, beam: 806, promien: 300,
+    acc: 150, vmax: 600, vdock: 110, boost: 2.5,
+    dragOut: 0.2405, dragIn: 1.05, brake: 1.6,
+    turnAcc: 10.0, maxTurn: 2.5, angDrag: 5.005,
+    camOut: 3600, camIn: 2150, tiltOut: 1000, tiltIn: 500, look: 820
+  },
+  mysliwiec: {
+    nazwa: 'MYŚLIWIEC', klasa: 'lekki',
+    sprite: null,
+    len: 50, beam: 46, promien: 14,
+    acc: 320, vmax: 430, vdock: 70, boost: 1.75,
+    dragOut: 0.28, dragIn: 2.30, brake: 3.2,
+    turnAcc: 9.0, maxTurn: 2.35, angDrag: 6.0,
+    camOut: 340, camIn: 190, tiltOut: 96, tiltIn: 44, look: 150
+  }
+};
+const SHIP = STATKI.atlas;        // ← tu się przełącza statek
+
+const CFG = {
+  /* Skala całego doku. Dok narysowany był pod małe jednostki: przy 1.0
+     prześwit środkowy ma 580 j., a Atlas ma 806 j. szerokości — nie wchodzi
+     ŻADNĄ bramą, a jest dłuższy (1800) niż cała hala jest głęboka (1200).
+     3.0 wpuszcza Atlasa bramą, ale po ustawieniu stanowisk nie zostaje
+     koło zawrotne — a statek, który wjechał i nie może zawrócić, to nie
+     jest dok. 4.0 to najmniejsza okrągła liczba, przy której wychodzi
+     wszystko naraz: brama środkowa 2.88× szerokości kadłuba, boczne
+     1.95×, hala 2.7× dłuższa od statku i 2364 j. koła zawrotnego
+     w wolnej przestrzeni przed stanowiskami.                           */
+  DOCK_SCALE: 4.0,
+
+  /* ── obrys doku w rzucie z góry ──────────────────────────────
+     +Z = NA ZEWNĄTRZ pierścienia (stamtąd przylatują statki)
+     -Z = W STRONĘ ŚRODKA pierścienia
+     Dok siedzi we WCIĘCIU: czoło wystaje na zewnątrz, tył wchodzi
+     głębiej niż wewnętrzna ściana pierścienia — i to ten tył daje
+     miejsce na manewrowanie w hali.                                */
+  FACE_Z:      -220,   // płaszczyzna czoła (wlot środkowy)
+  FACE_HW:      320,   // połowa szerokości czoła
+  CHAMFER:      320,   // ścięcie narożnika — tu siedzą wloty boczne
+  BODY_HW:      640,   // połowa szerokości kadłuba za ścięciami
+  BACK_Z:     -1420,   // tylna ściana hali
+  CEIL_Y:       110,   // wysokość stropu
+
+  // wloty: prześwit to praktycznie cała krawędź, zostaje tylko węgar.
+  // Zamiast wrót stoi pole siłowe — przelatuje się przez nie bez czekania,
+  // bo przy dużym ruchu skrzydła wrót są wąskim gardłem.
+  JAMB:          30,   // ile ściany zostaje po bokach prześwitu
+  FIELD_BAND:    46,   // szerokość świetlnego progu pola na pokładzie
+  FIELD_GLOW:   420,   // z jakiej odległości pole reaguje na statek
+  NEON_STEP:    108,   // odstęp szewronów neonu przed wlotem
+  NEON_SIZE:     56,   // rozpiętość ramienia szewronu
+
+  // zanik dachu
+  FADE_START:     70,  // ile jednostek PRZED progiem zaczyna się zanik
+  FADE_DEPTH:    300,  // po ilu jednostkach dach znika całkowicie
+  FADE_LAG:      5.0,  // dociąganie wartości (1/s) — niżej = leniwiej
+  GHOST_ALPHA:  0.26,  // obrys stropu widoczny po zaniku
+
+  // kamera (GTA2: nad graczem, BEZ obrotu z kadłubem).
+  // Wysokości są PRZY STATKU (SHIP.camOut/camIn), bo kadr musi objąć kadłub:
+  // 190 j. nad Atlasem pokazywałoby 280 j. pola przy statku długim na 1800.
+  CAM_LERP:      4.2,  // dociąganie kamery do celu (1/s)
+  LOOKAHEAD:    0.40,
+  ZOOM_MIN:     0.40, ZOOM_MAX: 6.00, ZOOM_STEP: 0.0016, ZOOM_LERP: 10,
+
+  SHIP_Y: 14,
+  WALL_T: 16                        // połowa grubości ścian w kolizjach
+};
+
+/* Skala dotyka WYŁĄCZNIE doku — statek zostaje 1:1 z grą. Jedno miejsce,
+   więc nie da się przeskalować połowy budynku i zapomnieć o reszcie. */
+const K = CFG.DOCK_SCALE;
+['FACE_Z','FACE_HW','CHAMFER','BODY_HW','BACK_Z','CEIL_Y','JAMB','FIELD_BAND',
+ 'FIELD_GLOW','NEON_STEP','NEON_SIZE','FADE_START','FADE_DEPTH','WALL_T',
+ 'SHIP_Y'].forEach(k=>{ CFG[k] *= K; });
+
+// pierścień: pas modułów z wcięciem pod dok
+const RING = {X: 3000*K, Z_OUT: CFG.FACE_Z - CFG.CHAMFER, Z_IN: -960*K};
+
+/* ═══════════════════ pomocnicze ═══════════════════ */
+const clamp = (v,a,b)=>v<a?a:v>b?b:v;
+const clamp01 = v=>v<0?0:v>1?1:v;
+const lerp = (a,b,t)=>a+(b-a)*t;
+const smooth = (cur,tgt,rate,dt)=>cur+(tgt-cur)*(1-Math.exp(-rate*dt));
+const rnd = (a,b)=>a+Math.random()*(b-a);
+
+/* ═══════════════════════════════════════════════════════════════
+   OBRYS DOKU — jedno źródło prawdy
+   Wszystko (pokład, ściany, strop, kolizje, próg zaniku, obrys
+   w pierścieniu) liczy się z tej listy wierzchołków. Nic nie jest
+   wpisane drugi raz ręcznie, więc zmiana liczby w CFG przesuwa
+   cały dok razem z kolizjami.
+   ═══════════════════════════════════════════════════════════════ */
+const DOCK = (()=>{
+  const {FACE_Z, FACE_HW, CHAMFER, BODY_HW, BACK_Z} = CFG;
+  const CHZ = FACE_Z - CHAMFER;                    // gdzie kończy się ścięcie
+  const verts = [
+    [-FACE_HW, FACE_Z],   // 0 ─ lewy koniec czoła
+    [ FACE_HW, FACE_Z],   // 1 ─ prawy koniec czoła
+    [ BODY_HW, CHZ    ],  // 2 ─ koniec prawego ścięcia
+    [ BODY_HW, BACK_Z ],  // 3 ─ prawy tył
+    [-BODY_HW, BACK_Z ],  // 4 ─ lewy tył
+    [-BODY_HW, CHZ    ],  // 5 ─ koniec lewego ścięcia
+  ];
+  const mid = [0, (FACE_Z + BACK_Z)/2];            // punkt na pewno w środku
+
+  const edges = verts.map((a,i)=>{
+    const b = verts[(i+1) % verts.length];
+    const tx = b[0]-a[0], tz = b[1]-a[1], len = Math.hypot(tx,tz);
+    const ux = tx/len, uz = tz/len;
+    let nx = -uz, nz = ux;
+    const cx = (a[0]+b[0])/2, cz = (a[1]+b[1])/2;
+    // normalna ma wskazywać NA ZEWNĄTRZ — sprawdzamy względem środka
+    if ((cx-mid[0])*nx + (cz-mid[1])*nz < 0){ nx = -nx; nz = -nz; }
+    // obrót bryły tak, by jej lokalny +X leżał wzdłuż krawędzi
+    return {i, a, b, cx, cz, ux, uz, nx, nz, len, rotY: Math.atan2(-uz, ux)};
+  });
+
+  // wloty: środkowy w czole, boczne w ścięciach.
+  // hw = POŁOWA prześwitu = szerokość JEDNEGO pasa, bo każdy wlot dzieli się
+  // na wlot i wylot. Liczy się z długości krawędzi, więc prześwit rośnie razem
+  // z dokiem zamiast zostawać stałą z innej epoki.
+  const gates = [
+    {id:'L', edge:5, label:'L · LEWY'},
+    {id:'C', edge:0, label:'C · ŚRODKOWY'},
+    {id:'P', edge:1, label:'P · PRAWY'},
+  ].map(g=>{
+    const e = edges[g.edge];
+    return Object.assign({}, g, {
+      e, hw: e.len/2 - CFG.JAMB,
+      cx:e.cx, cz:e.cz, ux:e.ux, uz:e.uz, nx:e.nx, nz:e.nz, rotY:e.rotY,
+      // ruch prawostronny: wchodzący trzyma się swojej prawej burty.
+      // Prawa burta wchodzącego (leci wzdłuż -n) to w świecie (nz, -nx).
+      entrySign: (e.nz*e.ux - e.nx*e.uz) < 0 ? -1 : 1,
+      // Brama środkowa obsługuje capitale: każdy z dwóch pasów jest
+      // DWUKIERUNKOWY i przypisany do swojego stanowiska (lewy→2, prawy→3).
+      // Rozdzielanie ich na wlot i wylot zmusiłoby Atlasa do zawracania
+      // w hali, a cały sens tego układu jest taki, że robi tylko przód-tył.
+      dwukier: g.id === 'C',
+      glow: 0
+    });
+  });
+
+  // krawędzie czołowe = te z wlotem. TYLKO one liczą „jak głęboko jestem".
+  const front = gates.map(g=>g.e);
+  return {verts, edges, gates, front, mid};
+})();
+const CY = CFG.CEIL_Y;
+
+/* ═══════════════════════════════════════════════════════════════
+   ROZKŁAD POKŁADU — liczony ZE STATKU, nie wpisany na sztywno
+   ═══════════════════════════════════════════════════════════════
+   Stanowisko ma pomieścić kadłub, więc jego wymiary biorą się z SHIP.
+   Dzięki temu przełączenie statku albo skali przestawia cały pokład,
+   zamiast zostawiać prostokąty z poprzedniej epoki.                 */
+/* Klasy stanowisk 1:1 z gry — BERTH_CLASSES, src/game/traffic/dockLayout.js:37.
+   `len` biegnie w głąb stanowiska (kadłub stoi dziobem do ściany), `beam`
+   wzdłuż ściany. UWAGA: gra deklaruje capital jako 2000 × 720, a prawdziwa
+   szerokość Atlasa ze sprite'a to 806 j. — czyli klasa `capital` w grze jest
+   o 86 j. ZA WĄSKA. Tutaj stanowisko capitala liczę z kadłuba, nie z klasy. */
+const KLASY = {
+  s: {len:170, beam:140, label:'S'},
+  m: {len:380, beam:280, label:'M'},
+  l: {len:660, beam:400, label:'L'}
+};
+
+const LAYOUT = (()=>{
+  const bramaC = DOCK.gates.find(g=>g.id === 'C');
+  const pasX = bramaC.hw/2;                       // oś pasa bramy środkowej
+  const bays = [];
+
+  /* ── CAPITALE: stanowiska 2 i 3, dokładnie w osi dwóch pasów bramy
+     środkowej. Dzięki temu manewr to prosta linia: wlot prawym pasem →
+     stanowisko 3, lewym → 2. Żadnego zawracania, tylko przód-tył.      */
+  const capW = SHIP.beam*1.36, capD = SHIP.len*1.17;
+  const capZ = CFG.BACK_Z + 40 + capD/2;
+  bays.push({nr:'2', klasa:'capital', x:-pasX, z:capZ, w:capW, d:capD,
+             open:'front', dyst:true, sylwetka:{len:SHIP.len, beam:SHIP.beam}});
+  bays.push({nr:'3', klasa:'capital', x: pasX, z:capZ, w:capW, d:capD,
+             open:'front', dyst:true, sylwetka:{len:SHIP.len, beam:SHIP.beam}});
+  const capCzolo = capZ + capD/2;                 // przód stanowisk capitali
+
+  /* ── S / M / L przy burtach. Dziobem do ściany, otwarte do środka.
+     Pakowane od tyłu hali ku czołu: najpierw duże, potem coraz mniejsze —
+     inaczej L nie zmieściłoby się tam, gdzie ścięcie zabiera burtę.     */
+  const mix = ['l','l','m','m','m','s','s','s','s'];
+  // ile sztuk danej klasy przypada na JEDNĄ burtę — prawa numeruje dalej,
+  // od miejsca, w którym skończyła lewa
+  const naKlase = {s:0, m:0, l:0};
+  for (const id of mix) naKlase[id]++;
+  const przodBurty = RING.Z_OUT;                  // dalej zaczyna się ścięcie
+  [-1, 1].forEach(sg=>{
+    const licz = {s:0, m:0, l:0};
+    let z = CFG.BACK_Z + 40;
+    for (const id of mix){
+      const kl = KLASY[id];
+      const gleb = kl.len*1.18, szer = kl.beam*1.18;
+      if (z + szer > przodBurty) break;
+      licz[id]++;
+      bays.push({
+        nr: kl.label + (licz[id] + (sg<0 ? 0 : naKlase[id])),
+        klasa: id,
+        x: sg*(CFG.BODY_HW - gleb/2 - 8), z: z + szer/2,
+        w: gleb - 14, d: szer - 14,
+        open: sg<0 ? 'right' : 'left',
+        sylwetka: {len:kl.len, beam:kl.beam}
+      });
+      z += szer + 34;
+    }
+  });
+
+  /* ── PASY CAPITALI: środek doku należy teraz do nich. Dwa pasy od bramy
+     wprost do stanowisk, DWUKIERUNKOWE — każdy obsługuje swoje stanowisko
+     w obie strony, więc lewy pas to cały ruch stanowiska 2, prawy — 3.   */
+  const pasy = [-1, 1].map(sg=>({
+    x: sg*pasX, w: bramaC.hw - 20,
+    z0: capCzolo, z1: CFG.FACE_Z,                 // od czoła stanowisk do progu
+    nr: sg < 0 ? '2' : '3'
+  }));
+
+  return {bays, pasy, pasX, capW, capD, capZ, capCzolo, bramaC,
+          capitale: bays.filter(b=>b.klasa === 'capital'),
+          burtowe:  bays.filter(b=>b.klasa !== 'capital')};
+})();
+
+/* Jak głęboko statek wszedł w dok. Liczone WYŁĄCZNIE po krawędziach
+   czołowych — gdyby wchodziły też ściana tylna i boczne, to parkowanie
+   pod tylną ścianą wyglądałoby jak wyjeżdżanie na zewnątrz i dach
+   wracałby graczowi nad głowę. */
+function frontDepth(x, z){
+  let m = -Infinity;
+  for (const e of DOCK.front) m = Math.max(m, (x-e.cx)*e.nx + (z-e.cz)*e.nz);
+  return -m;                                   // >0 = za progiem, w środku
+}
+/* Który wlot jest najbliżej i jak daleko do jego progu (wzdłuż osi). */
+function nearestGate(x, z){
+  // start od pierwszego wlotu, nie od null: gdyby odległość kiedykolwiek
+  // wyszła NaN, porównanie jest fałszywe i „najbliższy" zostałby pusty,
+  // a HUD woła to co klatkę
+  let best = DOCK.gates[0], bd = Infinity;
+  for (const g of DOCK.gates){
+    const dx = x-g.cx, dz = z-g.cz;
+    const d = Math.hypot(dx, dz);
+    if (d < bd){ bd = d; best = g; }
+  }
+  const ax  = (x-best.cx)*best.nx + (z-best.cz)*best.nz;   // odległość wzdłuż normalnej
+  const off = (x-best.cx)*best.ux + (z-best.cz)*best.uz;   // ZNAKOWANE: który pas
+  return {gate:best, along:ax, off, side:Math.abs(off)};
+}
+
+/* ═══════════════════ scena ═══════════════════ */
+const canvas = document.getElementById('gl');
+const renderer = new THREE.WebGLRenderer({canvas, antialias:true, powerPreference:'high-performance'});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+if ('outputColorSpace' in renderer && THREE.SRGBColorSpace) renderer.outputColorSpace = THREE.SRGBColorSpace;
+else if ('outputEncoding' in renderer) renderer.outputEncoding = THREE.sRGBEncoding;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x04060a);
+
+const camera = new THREE.PerspectiveCamera(45, 1, 10*K, 14000*K);
+camera.up.set(0,0,-1);                  // -Z = "góra ekranu"
+
+/* ═══════════════════ tekstury proceduralne ═══════════════════ */
+function cv(w,h){ const c=document.createElement('canvas'); c.width=w; c.height=h; return c; }
+function tex(c,rx,ry){
+  const t=new THREE.CanvasTexture(c);
+  t.anisotropy = renderer.capabilities.getMaxAnisotropy ? renderer.capabilities.getMaxAnisotropy() : 4;
+  if(rx){ t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(rx,ry||rx); }
+  return t;
+}
+function noise(ctx,w,h,amt,alpha){
+  const img=ctx.getImageData(0,0,w,h), d=img.data;
+  for(let i=0;i<d.length;i+=4){
+    const n=(Math.random()-0.5)*amt;
+    d[i]=clamp(d[i]+n,0,255); d[i+1]=clamp(d[i+1]+n,0,255); d[i+2]=clamp(d[i+2]+n,0,255);
+    if(alpha!==undefined) d[i+3]=alpha;
+  }
+  ctx.putImageData(img,0,0);
+}
+
+/* Pokład hali. Tekstura kładzie się na obrys RAZ (bez kafelkowania),
+   więc malunek odpowiada realnym miejscom: dół obrazka = czoło doku,
+   góra = ściana tylna, i skala jest jednolita (DECK_S pikseli na jednostkę).
+
+   Układ: PĘTLA OBIEGOWA w środku hali, stanowiska prostokątne po obwodzie,
+   a przy każdym wlocie rozdzielone pasy — jeden w, jeden wy. Poprzednia
+   wersja prowadziła trzy korytarze zbiegające się w jeden punkt: przy
+   prawie pełnej szerokości wlotów one po prostu na siebie nachodziły
+   i szewrony robiły się kaszą. Pętla rozwiązuje to z definicji — jest
+   jedną zamkniętą figurą, więc nie ma czego z czym nakładać.            */
+const DECK_W = CFG.BODY_HW*2, DECK_D = CFG.FACE_Z - CFG.BACK_Z;
+const DECK_S = 1.2/K;        // dzielone przez skalę — kanwa ma zostać tej samej wagi
+
+function deckTexture(){
+  const S = DECK_S;
+  const W = Math.round(DECK_W*S), H = Math.round(DECK_D*S);
+  const c = cv(W,H), g = c.getContext('2d');
+  const px = x => (x + CFG.BODY_HW)*S;               // świat X → piksel
+  const py = z => H - (CFG.FACE_Z - z)*S;            // świat Z → piksel (czoło na dole)
+  const u  = v => v*S;                               // długość świata → piksele
+
+  g.fillStyle='#12161d'; g.fillRect(0,0,W,H);
+  g.lineCap='butt'; g.lineJoin='round';
+
+  // płyty pokładowe
+  g.strokeStyle='rgba(120,150,175,.04)'; g.lineWidth=1;
+  for(let x=-CFG.BODY_HW; x<=CFG.BODY_HW; x+=20*K){
+    g.beginPath(); g.moveTo(px(x),0); g.lineTo(px(x),H); g.stroke(); }
+  g.strokeStyle='rgba(120,150,175,.09)'; g.lineWidth=2;
+  for(let x=-CFG.BODY_HW; x<=CFG.BODY_HW; x+=80*K){
+    g.beginPath(); g.moveTo(px(x),0); g.lineTo(px(x),H); g.stroke(); }
+  for(let z=CFG.FACE_Z; z>=CFG.BACK_Z; z-=80*K){
+    g.beginPath(); g.moveTo(0,py(z)); g.lineTo(W,py(z)); g.stroke(); }
+
+  /* strzałka kierunku jazdy; kąt 0 = w prawo na kanwie */
+  function arrow(x, y, ang, len, wid, col){
+    g.save(); g.translate(x,y); g.rotate(ang); g.fillStyle=col;
+    g.beginPath();
+    g.moveTo(len/2,0); g.lineTo(-len/2,-wid/2); g.lineTo(-len/4,0); g.lineTo(-len/2,wid/2);
+    g.closePath(); g.fill(); g.restore();
+  }
+
+  /* SYLWETKA STATKU — placeholder na pokładzie. Pokazuje, co wchodzi
+     na dane stanowisko, w prawdziwych wymiarach klasy. Dziób na -Y
+     przed obrotem, czyli „w głąb stanowiska".                          */
+  function sylwetka(cx, cy, len, beam, ang, col){
+    const L=u(len), B=u(beam);
+    g.save(); g.translate(cx,cy); g.rotate(ang);
+    g.beginPath();
+    g.moveTo(0,-L/2);                       // dziób
+    g.lineTo(B*.34,-L*.24); g.lineTo(B*.5,  L*.06);
+    g.lineTo(B*.42, L*.34); g.lineTo(B*.2,  L*.5);
+    g.lineTo(-B*.2, L*.5);  g.lineTo(-B*.42,L*.34);
+    g.lineTo(-B*.5, L*.06); g.lineTo(-B*.34,-L*.24);
+    g.closePath();
+    g.fillStyle=col; g.fill();
+    g.strokeStyle=col.replace(/[\d.]+\)$/,'.5)'); g.lineWidth=Math.max(1,u(4*K)); g.stroke();
+    // skrzydła i dysze, żeby placeholder czytał się jak statek, nie plama
+    g.fillStyle=col.replace(/[\d.]+\)$/,'.42)');
+    g.fillRect(-B*.62, L*.02, B*.24, L*.2); g.fillRect(B*.38, L*.02, B*.24, L*.2);
+    g.fillRect(-B*.3,  L*.42, B*.6,  L*.1);
+    g.restore();
+  }
+
+  /* ── PASY CAPITALI — środek doku należy do nich ────────────────
+     Dwa pasy od bramy wprost na stanowiska 2 i 3, DWUKIERUNKOWE:
+     strzałki w obie strony, bo tym samym pasem się wchodzi i wychodzi. */
+  LAYOUT.pasy.forEach(p=>{
+    const x0=px(p.x-p.w/2), x1=px(p.x+p.w/2);
+    const yT=py(p.z0), yB=py(p.z1);
+    g.fillStyle='rgba(16,27,34,.80)'; g.fillRect(x0,yT,x1-x0,yB-yT);
+    g.strokeStyle='rgba(127,227,255,.26)'; g.lineWidth=u(6*K);
+    g.beginPath(); g.moveTo(x0,yT); g.lineTo(x0,yB); g.moveTo(x1,yT); g.lineTo(x1,yB); g.stroke();
+    // oś pasa
+    g.strokeStyle='rgba(255,180,90,.30)'; g.lineWidth=u(5*K);
+    g.setLineDash([u(70*K),u(60*K)]);
+    g.beginPath(); g.moveTo((x0+x1)/2,yT); g.lineTo((x0+x1)/2,yB); g.stroke();
+    g.setLineDash([]);
+    // strzałki: w lewej połowie pasa w głąb, w prawej na zewnątrz
+    const kol='rgba(127,227,255,.46)', L=u(SHIP.beam*.62), Wd=u(SHIP.beam*.42);
+    const ile = Math.max(2, Math.round((p.z1-p.z0)/(SHIP.len*.8)));
+    for(let i=0;i<ile;i++){
+      const z = p.z0 + (p.z1-p.z0)*(i+.5)/ile;
+      arrow(px(p.x - p.w*.24), py(z), -Math.PI/2, L, Wd, kol);   // w głąb doku
+      arrow(px(p.x + p.w*.24), py(z),  Math.PI/2, L, Wd, kol);   // ku bramie
+    }
+    // numer stanowiska na końcu pasa
+    g.save(); g.translate((x0+x1)/2, py(p.z0 + SHIP.len*.42));
+    g.fillStyle='rgba(127,227,255,.30)'; g.textAlign='center'; g.textBaseline='middle';
+    g.font='700 '+Math.round(u(SHIP.beam*.34))+'px ui-monospace,monospace';
+    g.fillText('\u2191 '+p.nr+' \u2191', 0, 0);
+    g.restore();
+  });
+
+  /* ── STANOWISKA ───────────────────────────────────────────────── */
+  LAYOUT.bays.forEach(b=>{
+    const cap = b.klasa === 'capital';
+    const x0=px(b.x-b.w/2), x1=px(b.x+b.w/2);
+    const yB=py(b.z-b.d/2), yF=py(b.z+b.d/2);        // yB = od tyłu doku (wyżej)
+    g.fillStyle = cap ? 'rgba(12,18,25,.82)' : 'rgba(9,13,18,.74)';
+    g.fillRect(x0,yB,x1-x0,yF-yB);
+
+    const boki = {
+      front: [[x0,yB,x1,yB],[x0,yB,x0,yF],[x1,yB,x1,yF]],
+      right: [[x0,yB,x1,yB],[x0,yF,x1,yF],[x0,yB,x0,yF]],
+      left:  [[x0,yB,x1,yB],[x0,yF,x1,yF],[x1,yB,x1,yF]],
+    }[b.open];
+    g.strokeStyle = cap ? 'rgba(255,180,90,.62)' : 'rgba(255,180,90,.44)';
+    g.lineWidth=u((cap?6:4.5)*K);
+    boki.forEach(q=>{ g.beginPath(); g.moveTo(q[0],q[1]); g.lineTo(q[2],q[3]); g.stroke(); });
+
+    // belka oporowa na ścianie stanowiska
+    const opor = {front:[x0+u(16*K),yB,x1-u(16*K),yB], right:[x0,yB+u(16*K),x0,yF-u(16*K)],
+                  left:[x1,yB+u(16*K),x1,yF-u(16*K)]}[b.open];
+    g.strokeStyle='rgba(255,180,90,.9)'; g.lineWidth=u((cap?14:10)*K);
+    g.beginPath(); g.moveTo(opor[0],opor[1]); g.lineTo(opor[2],opor[3]); g.stroke();
+
+    // linia wjazdu po otwartej stronie
+    g.strokeStyle='rgba(127,227,255,.40)'; g.lineWidth=u(5*K);
+    g.setLineDash([u(16*K),u(14*K)]);
+    const wjazd = {front:[x0,yF,x1,yF], right:[x1,yB,x1,yF], left:[x0,yB,x0,yF]}[b.open];
+    g.beginPath(); g.moveTo(wjazd[0],wjazd[1]); g.lineTo(wjazd[2],wjazd[3]); g.stroke();
+    g.setLineDash([]);
+
+    // PLACEHOLDER: sylwetka kadłuba, który tu wchodzi — dziobem do ściany
+    const kat = {front:Math.PI, right:-Math.PI/2, left:Math.PI/2}[b.open];
+    sylwetka((x0+x1)/2, (yB+yF)/2, b.sylwetka.len, b.sylwetka.beam, kat,
+             cap ? 'rgba(127,227,255,.20)' : 'rgba(127,227,255,.15)');
+
+    // oznaczenie stanowiska
+    const dl = Math.min(x1-x0, yF-yB);
+    g.fillStyle = cap ? 'rgba(255,180,90,.72)' : 'rgba(255,180,90,.55)';
+    g.textAlign='center'; g.textBaseline='middle';
+    g.font='700 '+Math.round(dl*(cap?.30:.34))+'px ui-monospace,monospace';
+    const etyk = cap ? (b.open==='front' ? {x:(x0+x1)/2, y:yB+dl*.30} : null) : null;
+    const poz = etyk || {x:(x0+x1)/2, y:(yB+yF)/2};
+    g.fillText(b.nr, poz.x, poz.y);
+    if (cap){
+      g.font='700 '+Math.round(dl*.09)+'px ui-monospace,monospace';
+      g.fillStyle='rgba(255,180,90,.40)';
+      g.fillText('CAPITAL \u00b7 '+Math.round(b.sylwetka.len)+'\u00d7'+Math.round(b.sylwetka.beam),
+                 poz.x, poz.y + dl*.20);
+    }
+  });
+
+  /* ── WLOTY: pasy i strzałki ───────────────────────────────────── */
+  DOCK.gates.forEach(gt=>{
+    // rozdzielacz na osi wlotu, od progu w głąb
+    g.strokeStyle='rgba(255,180,90,.55)'; g.lineWidth=u(7*K);
+    g.setLineDash([u(28*K),u(24*K)]);
+    g.beginPath(); g.moveTo(px(gt.cx), py(gt.cz));
+    g.lineTo(px(gt.cx - gt.nx*330*K), py(gt.cz - gt.nz*330*K)); g.stroke();
+    g.setLineDash([]);
+
+    // brama środkowa ma pasy dwukierunkowe (rysują się wyżej, razem z pasami
+    // capitali), więc tutaj tylko bramy boczne dostają wlot/wylot
+    if (gt.dwukier){
+      [-1,1].forEach(sgn=>{
+        const lx = gt.cx + gt.ux*sgn*gt.hw/2, lz = gt.cz + gt.uz*sgn*gt.hw/2;
+        g.save();
+        g.translate(px(lx - gt.nx*90*K), py(lz - gt.nz*90*K));
+        g.fillStyle='rgba(127,227,255,.34)';
+        g.font='700 '+Math.round(u(30*K))+'px ui-monospace,monospace';
+        g.textAlign='center'; g.textBaseline='middle';
+        g.fillText('\u21c5 DWUKIERUNKOWY', 0, 0);
+        g.restore();
+      });
+      return;
+    }
+
+    [[ gt.entrySign, -1, 'rgba(90,255,190,.62)', 'WLOT'],
+     [-gt.entrySign,  1, 'rgba(255,180,90,.62)', 'WYLOT']].forEach(q=>{
+      const sgn=q[0], dir=q[1], col=q[2], txt=q[3];
+      const lx = gt.cx + gt.ux*sgn*gt.hw/2, lz = gt.cz + gt.uz*sgn*gt.hw/2;
+      const ang = Math.atan2(gt.nz*dir, gt.nx*dir);
+      [70*K,160*K,250*K].forEach(d=>{
+        arrow(px(lx - gt.nx*d), py(lz - gt.nz*d), ang, u(66*K), u(46*K), col);
+      });
+      g.save();
+      g.translate(px(lx - gt.nx*105*K), py(lz - gt.nz*105*K));
+      g.fillStyle=col.replace(/[\d.]+\)$/,'.34)');
+      g.font='700 '+Math.round(u(26*K))+'px ui-monospace,monospace';
+      g.textAlign='center'; g.textBaseline='middle';
+      g.fillText(txt, 0, u(52*K));
+      g.restore();
+    });
+  });
+
+  /* ── nazwa doku na wolnym pokładzie przed stanowiskami capitali ── */
+  g.save(); g.translate(px(0), py(LAYOUT.capCzolo + SHIP.len*.5));
+  g.fillStyle='rgba(160,195,215,.13)';
+  g.textAlign='center'; g.textBaseline='middle';
+  g.font='700 '+Math.round(u(84*K))+'px ui-monospace,monospace';
+  g.fillText('DOK K-7', 0, -u(26*K));
+  g.font='700 '+Math.round(u(26*K))+'px ui-monospace,monospace';
+  g.fillText('STOCZNIA PIERŚCIENIOWA · SEKTOR 14', 0, u(46*K));
+  g.restore();
+
+  noise(g,W,H,14);
+  const t = tex(c);
+  // UV z ShapeGeometry to surowe współrzędne obrysu — mapujemy je 1:1
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  t.repeat.set(1/DECK_W, 1/DECK_D);
+  t.offset.set(0.5, CFG.FACE_Z/DECK_D);
+  return t;
+}
+
+/* pole siłowe w prześwicie — pasma energii przewijane wzdłuż pasa */
+function fieldTexture(){
+  const W=128,H=256,c=cv(W,H),g=c.getContext('2d');
+  g.fillStyle='#000'; g.fillRect(0,0,W,H);
+  for(let y=0;y<H;y+=6){
+    const a = .06 + .40*Math.pow(Math.abs(Math.sin(y*.045)),3);
+    g.fillStyle='rgba(255,255,255,'+a.toFixed(3)+')'; g.fillRect(0,y,W,3);
+  }
+  for(let x=0;x<W;x+=11){ g.fillStyle='rgba(255,255,255,.05)'; g.fillRect(x,0,2,H); }
+  const t=new THREE.CanvasTexture(c);
+  t.wrapS=t.wrapT=THREE.RepeatWrapping;
+  return t;
+}
+
+/* blacha kadłuba pierścienia */
+function hullTexture(){
+  const S=512,c=cv(S,S),g=c.getContext('2d');
+  g.fillStyle='#232a35'; g.fillRect(0,0,S,S);
+  g.strokeStyle='rgba(0,0,0,.35)'; g.lineWidth=3;
+  for(let i=0;i<=S;i+=64){ g.beginPath(); g.moveTo(i,0); g.lineTo(i,S); g.stroke();
+                            g.beginPath(); g.moveTo(0,i); g.lineTo(S,i); g.stroke(); }
+  g.fillStyle='rgba(255,255,255,.05)';
+  for(let i=0;i<70;i++) g.fillRect(rnd(0,S),rnd(0,S),rnd(8,44),rnd(3,10));
+  noise(g,S,S,22);
+  return tex(c,3,3);
+}
+
+/* planeta w tle (płaszczyzna daleko pod pierścieniem) */
+function planetTexture(){
+  const W=1024,H=1024,c=cv(W,H),g=c.getContext('2d');
+  const grad=g.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,'#0a1420'); grad.addColorStop(.45,'#1b2a33');
+  grad.addColorStop(.72,'#2f2a22'); grad.addColorStop(1,'#080c12');
+  g.fillStyle=grad; g.fillRect(0,0,W,H);
+  for(let i=0;i<26;i++){
+    const y=rnd(0,H), h=rnd(6,52);
+    g.fillStyle=`rgba(${rnd(60,140)|0},${rnd(70,130)|0},${rnd(70,120)|0},${rnd(.04,.14)})`;
+    g.beginPath(); g.ellipse(rnd(-100,W+100),y,rnd(160,520),h,0,0,7); g.fill();
+  }
+  noise(g,W,H,10);
+  return tex(c,2,2);
+}
+
+/* miękka plama — cień kontaktowy / poświata silnika */
+function blobTexture(rgb){
+  const S=128,c=cv(S,S),g=c.getContext('2d');
+  const gr=g.createRadialGradient(S/2,S/2,0,S/2,S/2,S/2);
+  gr.addColorStop(0,`rgba(${rgb},1)`); gr.addColorStop(.35,`rgba(${rgb},.45)`); gr.addColorStop(1,`rgba(${rgb},0)`);
+  g.fillStyle=gr; g.fillRect(0,0,S,S);
+  return new THREE.CanvasTexture(c);
+}
+
+/* ═══════════════════ materiały ═══════════════════ */
+const T_HULL = hullTexture();
+const M = {
+  hull:  new THREE.MeshStandardMaterial({map:T_HULL, color:0x8d97a6, roughness:.82, metalness:.55}),
+  deck:  new THREE.MeshStandardMaterial({map:deckTexture(), roughness:.92, metalness:.25}),
+  wall:  new THREE.MeshStandardMaterial({color:0x39424f, roughness:.85, metalness:.4}),
+  dark:  new THREE.MeshStandardMaterial({color:0x1b2029, roughness:.9, metalness:.3}),
+  ship:  new THREE.MeshStandardMaterial({color:0x99a4b3, roughness:.55, metalness:.75}),
+  shipDk:new THREE.MeshStandardMaterial({color:0x2b323d, roughness:.6, metalness:.7}),
+  glass: new THREE.MeshStandardMaterial({color:0x7fe3ff, emissive:0x1b5f7a, roughness:.25, metalness:.1}),
+  stripA:new THREE.MeshBasicMaterial({color:0xffb45a}),
+  stripB:new THREE.MeshBasicMaterial({color:0x7fe3ff}),
+};
+
+/* ═══════════════════ tło: planeta ═══════════════════ */
+{
+  const p = new THREE.Mesh(new THREE.PlaneGeometry(30000*K,30000*K), new THREE.MeshBasicMaterial({map:planetTexture()}));
+  p.rotation.x = -Math.PI/2; p.position.y = -2600*K;
+  scene.add(p);
+}
+
+/* ═══════════════════ światło ═══════════════════ */
+const sun = new THREE.DirectionalLight(0xa9cfff, 1.7);
+sun.position.set(-600, 900, 500); scene.add(sun);
+const rim = new THREE.DirectionalLight(0x3f6aa0, .55);
+rim.position.set(700, 300, -900); scene.add(rim);
+const skyOut = new THREE.HemisphereLight(0x27374f, 0x05070c, .40); scene.add(skyOut);
+const skyIn  = new THREE.HemisphereLight(0x58452e, 0x0b0d10, .00); scene.add(skyIn);
+
+const bayLights = [];
+[[0,-.86],[-.62,-.75],[.62,-.75],[0,-.6],[-.56,-.46],[.56,-.46]].forEach(([fx,fz])=>{
+  const l = new THREE.PointLight(0xffb45a, 0, 860*K, 2);
+  l.position.set(fx*CFG.BODY_HW, 96*K, CFG.FACE_Z + fz*(CFG.FACE_Z-CFG.BACK_Z)); scene.add(l); bayLights.push([l, 1.7]);
+});
+DOCK.gates.forEach(g=>{                       // zimne światło tuż za każdym progiem
+  const l = new THREE.PointLight(0x7fe3ff, 0, 460, 2);
+  l.position.set(g.cx - g.nx*110*K, 90*K, g.cz - g.nz*110*K); scene.add(l);
+  bayLights.push([l, 1.3]);
+});
+
+/* ═══════════════════ pierścień: pole modułów z wcięciem ═══════════════════ */
+{
+  // wcięcie = prostokąt obrysu doku z zapasem; ścięcia i tak wystają
+  // przed zewnętrzną ścianę pierścienia, więc wystarczy test po X
+  const NOTCH_HW = CFG.BODY_HW + 90;
+  const cells = [];
+  for(let x=-RING.X; x<=RING.X; x+=140*K){
+    for(let z=RING.Z_IN; z<=RING.Z_OUT-50*K; z+=130*K){
+      if (Math.abs(x) < NOTCH_HW) continue;
+      cells.push([x+rnd(-12,12)*K, z+rnd(-12,12)*K]);
+    }
+  }
+  const im = new THREE.InstancedMesh(new THREE.BoxGeometry(1,1,1), M.hull, cells.length);
+  const mtx = new THREE.Matrix4(), col = new THREE.Color();
+  cells.forEach(([x,z],i)=>{
+    const h = rnd(26,195)*K, w = rnd(70,128)*K, d = rnd(70,120)*K;
+    mtx.makeScale(w,h,d); mtx.setPosition(x, h/2, z);
+    im.setMatrixAt(i, mtx);
+    const s = rnd(.55,1.0); col.setRGB(s*.62, s*.68, s*.78);
+    im.setColorAt(i, col);
+  });
+  im.instanceMatrix.needsUpdate = true;
+  if (im.instanceColor) im.instanceColor.needsUpdate = true;
+  scene.add(im);
+
+  // rzędy świateł na modułach
+  const lm = new THREE.InstancedMesh(new THREE.BoxGeometry(1,1,1),
+             new THREE.MeshBasicMaterial({color:0x6f8fb0}), 360);
+  for(let i=0;i<360;i++){
+    let x,z;
+    do { x = rnd(-RING.X,RING.X); z = rnd(RING.Z_IN,RING.Z_OUT-60); }
+    while (Math.abs(x) < NOTCH_HW);
+    const h=rnd(30,190)*K;
+    mtx.makeScale(rnd(30,80)*K, 3*K, 3*K); mtx.setPosition(x, h, z);
+    lm.setMatrixAt(i, mtx);
+  }
+  lm.instanceMatrix.needsUpdate = true;
+  scene.add(lm);
+
+  // krawędzie pierścienia — dzięki nim widać, że dok siedzi we WCIĘCIU:
+  // czoło wystaje przed zewnętrzną burtę, tył wychodzi za wewnętrzną
+  [[RING.Z_OUT, 0xffb45a, 26*K], [RING.Z_IN, 0x7fe3ff, 18*K]].forEach(([z,c,h])=>{
+    [-1,1].forEach(s=>{
+      const len = RING.X - CFG.BODY_HW;
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(len, 7*K, 10*K),
+                   new THREE.MeshBasicMaterial({color:c}));
+      rail.position.set(s*(CFG.BODY_HW + len/2), h, z); scene.add(rail);
+      const kerb = new THREE.Mesh(new THREE.BoxGeometry(len, h, 34*K), M.dark);
+      kerb.position.set(s*(CFG.BODY_HW + len/2), h/2, z); scene.add(kerb);
+    });
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   BRYŁA DOKU
+   ═══════════════════════════════════════════════════════════════ */
+// obrys jako THREE.Shape. Shape żyje w płaszczyźnie XY, więc y = -z;
+// po obrocie -90° wokół X wraca dokładnie na swoje miejsce w świecie.
+function dockShape(verts){
+  const s = new THREE.Shape();
+  verts.forEach((v,i)=> i ? s.lineTo(v[0], -v[1]) : s.moveTo(v[0], -v[1]));
+  s.closePath();
+  return s;
+}
+const SHAPE = dockShape(DOCK.verts);
+
+// pokład
+{
+  const floor = new THREE.Mesh(new THREE.ShapeGeometry(SHAPE), M.deck);
+  floor.rotation.x = -Math.PI/2; floor.position.y = 0;
+  scene.add(floor);
+}
+
+/* ── ściany: każda krawędź obrysu minus prześwit wlotu ────────── */
+const walls = [];                                  // odcinki do kolizji
+function wallSeg(ax,az,bx,bz){ walls.push({ax,az,bx,bz}); }
+function wallMesh(ax,az,bx,bz, h, thick, mat){
+  const len = Math.hypot(bx-ax, bz-az);
+  if (len < 1) return null;
+  const m = new THREE.Mesh(new THREE.BoxGeometry(len, h, thick), mat);
+  m.position.set((ax+bx)/2, h/2, (az+bz)/2);
+  m.rotation.y = Math.atan2(-(bz-az)/len, (bx-ax)/len);
+  scene.add(m); return m;
+}
+function wall(ax,az,bx,bz, h, thick, mat){
+  wallSeg(ax,az,bx,bz);
+  return wallMesh(ax,az,bx,bz, h===undefined?CY:h, thick===undefined?34:thick, mat||M.wall);
+}
+
+DOCK.edges.forEach(e=>{
+  const g = DOCK.gates.find(x=>x.edge===e.i);
+  if (!g){ wall(e.a[0],e.a[1], e.b[0],e.b[1]); return; }
+  // dwa węgary po bokach prześwitu
+  wall(e.a[0],e.a[1], g.cx-g.ux*g.hw, g.cz-g.uz*g.hw);
+  wall(g.cx+g.ux*g.hw, g.cz+g.uz*g.hw, e.b[0],e.b[1]);
+});
+
+// zewnętrzna burta pierścienia po obu stronach wcięcia — nie da się
+// wlecieć w pole modułów
+[-1,1].forEach(s=>{
+  wallSeg(s*CFG.BODY_HW, RING.Z_OUT, s*RING.X, RING.Z_OUT);
+});
+
+/* ═══════════ WĄŻ PALIWOWY — lina Verleta zamknięta w rurze ═══════════
+   Verlet, nie sprężyny: trzymam pozycję i poprzednią pozycję, a kształt
+   wymuszam kilkoma przebiegami ograniczeń odległości. Nie wybucha przy
+   dużym kroku czasu i nie trzeba stroić sztywności — a po odłączeniu wąż
+   sam z siebie zachowuje się jak odrzucony przewód startowy, bo swobodny
+   koniec ma już prędkość z impulsu gazu.                               */
+const WAZ_N = 18, WAZ_BOK = 6, WAZ_R = 7*K, WAZ_G = -640*K/4;
+const _wt=new THREE.Vector3(), _wn=new THREE.Vector3(), _wb=new THREE.Vector3();
+const _wup=new THREE.Vector3(0,1,0);
+
+function nowyWaz(kolor){
+  const p=[], prev=[];
+  for (let i=0;i<WAZ_N;i++){ p.push(new THREE.Vector3()); prev.push(new THREE.Vector3()); }
+  const geo = new THREE.BufferGeometry();
+  const poz = new Float32Array(WAZ_N*WAZ_BOK*3);
+  const idx = [];
+  for (let i=0;i<WAZ_N-1;i++) for (let j=0;j<WAZ_BOK;j++){
+    const a=i*WAZ_BOK+j, b=i*WAZ_BOK+(j+1)%WAZ_BOK;
+    idx.push(a,b,a+WAZ_BOK, b,b+WAZ_BOK,a+WAZ_BOK);
+  }
+  geo.setAttribute('position', new THREE.BufferAttribute(poz,3));
+  geo.setIndex(idx);
+  const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+    color:kolor, roughness:.88, metalness:.12, side:THREE.DoubleSide}));
+  mesh.frustumCulled = false; scene.add(mesh);
+  // złączka na swobodnym końcu
+  const zlaczka = new THREE.Mesh(new THREE.BoxGeometry(WAZ_R*3.2, WAZ_R*3.2, WAZ_R*4),
+                  new THREE.MeshBasicMaterial({color:0x4dffc0}));
+  scene.add(zlaczka);
+  return {p, prev, geo, poz, mesh, zlaczka, przypiety:false, init:false};
+}
+
+function ustawWaz(w, a, b){                       // rozłóż punkty na prostej
+  for (let i=0;i<WAZ_N;i++){
+    const t=i/(WAZ_N-1);
+    w.p[i].lerpVectors(a,b,t); w.prev[i].copy(w.p[i]);
+  }
+  w.init = true;
+}
+
+function krokWaza(w, dt, kotwica, cel, dlugosc){
+  if (!w.init) ustawWaz(w, kotwica, cel);
+  const seg = dlugosc/(WAZ_N-1), tlum = 0.972, dy = WAZ_G*dt*dt;
+  for (let i=1;i<WAZ_N;i++){
+    if (i===WAZ_N-1 && w.przypiety) continue;
+    const p=w.p[i], q=w.prev[i];
+    const vx=(p.x-q.x)*tlum, vy=(p.y-q.y)*tlum, vz=(p.z-q.z)*tlum;
+    q.copy(p);
+    p.x+=vx; p.y+=vy+dy; p.z+=vz;
+    if (p.y < 12*K) p.y = 12*K;                   // pokład
+  }
+  for (let it=0; it<7; it++){
+    w.p[0].copy(kotwica);
+    if (w.przypiety) w.p[WAZ_N-1].copy(cel);
+    for (let i=0;i<WAZ_N-1;i++){
+      const a=w.p[i], b=w.p[i+1];
+      const dx=b.x-a.x, dy2=b.y-a.y, dz=b.z-a.z;
+      const d=Math.hypot(dx,dy2,dz)||1e-4;
+      const f=(d-seg)/d;
+      // koniec przypięty albo kotwica = punkt nieruchomy, cała poprawka idzie w sąsiada
+      const ra = (i===0) ? 0 : 1;
+      const rb = (i+1===WAZ_N-1 && w.przypiety) ? 0 : 1;
+      const sum = ra+rb; if (!sum) continue;
+      const ka = ra/sum, kb = rb/sum;
+      a.x+=dx*f*ka; a.y+=dy2*f*ka; a.z+=dz*f*ka;
+      b.x-=dx*f*kb; b.y-=dy2*f*kb; b.z-=dz*f*kb;
+    }
+  }
+  w.p[0].copy(kotwica);
+  if (w.przypiety) w.p[WAZ_N-1].copy(cel);
+  odswiezWaz(w);
+}
+
+function odswiezWaz(w){
+  const {p, poz} = w;
+  for (let i=0;i<WAZ_N;i++){
+    _wt.subVectors(p[Math.min(WAZ_N-1,i+1)], p[Math.max(0,i-1)]);
+    if (_wt.lengthSq()<1e-8) _wt.set(0,-1,0);
+    _wt.normalize();
+    _wn.crossVectors(_wt,_wup);
+    if (_wn.lengthSq()<1e-8) _wn.set(1,0,0);
+    _wn.normalize(); _wb.crossVectors(_wt,_wn).normalize();
+    const r = WAZ_R*(i===WAZ_N-1 ? 1.25 : (i===0 ? 1.4 : 1));
+    for (let j=0;j<WAZ_BOK;j++){
+      const a=j/WAZ_BOK*Math.PI*2, ox=Math.cos(a)*r, oy=Math.sin(a)*r, k=(i*WAZ_BOK+j)*3;
+      poz[k]  =p[i].x+_wn.x*ox+_wb.x*oy;
+      poz[k+1]=p[i].y+_wn.y*ox+_wb.y*oy;
+      poz[k+2]=p[i].z+_wn.z*ox+_wb.z*oy;
+    }
+  }
+  w.geo.attributes.position.needsUpdate = true;
+  w.geo.computeVertexNormals();
+  w.zlaczka.position.copy(p[WAZ_N-1]);
+}
+
+function impulsWaza(w, kx, ky, kz, moc){          // odrzut gazu przy rozłączeniu
+  for (let i=Math.floor(WAZ_N*0.55); i<WAZ_N; i++){
+    const t=(i-WAZ_N*0.55)/(WAZ_N*0.45);
+    w.prev[i].x -= kx*moc*t + rnd(-1,1)*moc*.25;
+    w.prev[i].y -= ky*moc*t;
+    w.prev[i].z -= kz*moc*t + rnd(-1,1)*moc*.25;
+  }
+}
+
+/* ── UPUST: obłok gazu przy złączce. Pula sprite'ów, bez alokacji ── */
+const PUFF_N = 64, puffy = [];
+{
+  const map = blobTexture('205,240,255');
+  for (let i=0;i<PUFF_N;i++){
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({
+      map, blending:THREE.AdditiveBlending, depthWrite:false, transparent:true, opacity:0}));
+    sp.visible=false; scene.add(sp);
+    puffy.push({sp, zyc:0, max:1, vx:0, vy:0, vz:0, r0:0});
+  }
+}
+let puffI = 0;
+function pyknij(x,y,z, kx,ky,kz, ile, moc){
+  for (let k=0;k<ile;k++){
+    const q = puffy[puffI = (puffI+1)%PUFF_N];
+    q.sp.position.set(x,y,z); q.sp.visible=true;
+    q.zyc = q.max = rnd(.45, 1.15);
+    q.vx = kx*moc + rnd(-1,1)*moc*.7;
+    q.vy = ky*moc + rnd(-.15,1)*moc*.7;
+    q.vz = kz*moc + rnd(-1,1)*moc*.7;
+    q.r0 = rnd(16,34)*K;
+    q.sp.scale.set(q.r0,q.r0,1);
+  }
+}
+
+/* ═══════ SUWNICE — obsługa stanowisk 2 i 3 ═══════════════════════════
+   Wzorzec z hali przemysłowej: CIENKIE mosty na torach podsuwnicowych,
+   a nie jedno grube ramię. Poprzednia wersja miała bom o średnicy 128 j.
+   przy kadłubie szerokim na 806 — rurę na 1/6 statku — i szafę wystającą
+   600 j. od ściany. Profile są teraz w proporcji ~1:39 rozpiętości, czyli
+   tak jak dźwigar suwnicy do szerokości hali.
+
+   Wszystko PARKUJE PRZY ŚCIANIE i wyjeżdża nad kadłub dopiero, kiedy
+   statek stanie na stanowisku — stąd wrażenie, że maszyna nie zawadza. */
+const SUW = {
+  tor:    {w: 5*K, h: 7*K},        // szyna toru podsuwnicowego
+  slup:   {a: 8*K},                // słup pod tor
+  most:   {w: 7*K, h: 11*K},       // dźwigar mostu — wąski i wysoki, jak profil I
+  wozek:  {a: 12*K, h: 9*K},       // wciągnik na moście
+  czolo:  {w: 11*K, h: 9*K, d: 16*K},
+  ciegno: 2*K,                     // linka wciągnika
+  hak:    12*K,
+  // Tor musi siedzieć na tyle nisko, żeby most Z WCIĄGNIKIEM zmieścił się
+  // pod stropem. Przy 0.80 szczyt wciągnika wychodził 8 j. NAD strop —
+  // z góry niewidoczne, ale bryła sterczałaby przez dach po jego zaniku.
+  yTor:   CY*0.74
+};
+const M_SUW = new THREE.MeshStandardMaterial({color:0xc2913f, roughness:.58, metalness:.72});
+const M_SUW_D = new THREE.MeshStandardMaterial({color:0x6d5a34, roughness:.7, metalness:.6});
+
+const dystrybutory = [];
+LAYOUT.capitale.forEach(b=>{
+  const grp = new THREE.Group();
+  grp.position.set(b.x, 0, 0); scene.add(grp);
+  const zSciana = b.z - b.d/2;                  // krawędź stanowiska przy ścianie
+  const zPrzod  = b.z + b.d/2;
+  const railX   = b.w*0.47;
+
+  // szafa sterownicza — płaska, PRZY ścianie (64 j. zamiast 600)
+  const szafa = new THREE.Mesh(
+    new THREE.BoxGeometry(b.w*0.42, CY*0.26, 16*K), M.wall);
+  szafa.position.set(0, CY*0.13, zSciana + 8*K); grp.add(szafa);
+  const status = new THREE.Mesh(new THREE.BoxGeometry(b.w*0.30, 9*K, 6*K),
+                 new THREE.MeshBasicMaterial({color:0xffb45a}));
+  status.position.set(0, CY*0.23, zSciana + 17*K); grp.add(status);
+
+  // tory podsuwnicowe wzdłuż stanowiska, na cienkich słupach
+  [-1,1].forEach(sx=>{
+    const dl = zPrzod - zSciana;
+    const tor = new THREE.Mesh(new THREE.BoxGeometry(SUW.tor.w, SUW.tor.h, dl), M_SUW);
+    tor.position.set(sx*railX, SUW.yTor, (zSciana+zPrzod)/2); grp.add(tor);
+    // belka podtorowa — cieńsza od toru, trzyma go na słupach
+    const belka = new THREE.Mesh(new THREE.BoxGeometry(SUW.slup.a*0.7, SUW.slup.a*0.7, dl), M_SUW_D);
+    belka.position.set(sx*railX, SUW.yTor - SUW.tor.h, (zSciana+zPrzod)/2); grp.add(belka);
+    for (let i=0;i<5;i++){
+      const z = zSciana + dl*(i+0.5)/5;
+      const slup = new THREE.Mesh(
+        new THREE.BoxGeometry(SUW.slup.a, SUW.yTor - SUW.tor.h, SUW.slup.a), M_SUW);
+      slup.position.set(sx*railX, (SUW.yTor - SUW.tor.h)/2, z); grp.add(slup);
+      // zastrzał, żeby słup nie był gołym patykiem
+      const zas = new THREE.Mesh(
+        new THREE.BoxGeometry(SUW.slup.a*0.5, SUW.slup.a*0.5, SUW.slup.a*3.4), M_SUW_D);
+      zas.position.set(sx*railX, SUW.yTor - SUW.slup.a*2.0, z);
+      zas.rotation.x = 0.52; grp.add(zas);
+    }
+  });
+
+  /* Trzy mosty: dwa z hakami cumowniczymi na burty, środkowy z głowicą
+     paliwową. Parkują jeden za drugim przy ścianie, w pracy rozjeżdżają
+     się nad kadłubem.                                                  */
+  const parkZ = [0.05, 0.11, 0.17].map(t => zSciana + b.d*t);
+  const pracaZ = [0.30, 0.55, 0.80].map(t => zSciana + b.d*t);
+  const wozekX = [-0.26, 0, 0.26].map(t => t*b.w);
+  const mosty = [0,1,2].map(i=>{
+    const paliwo = (i === 1);
+    const m = new THREE.Group(); grp.add(m);
+    const dzwigar = new THREE.Mesh(
+      new THREE.BoxGeometry(railX*2, SUW.most.h, SUW.most.w), M_SUW);
+    dzwigar.position.y = SUW.yTor + SUW.most.h/2 + SUW.tor.h/2; m.add(dzwigar);
+    [-1,1].forEach(sx=>{
+      const cz = new THREE.Mesh(
+        new THREE.BoxGeometry(SUW.czolo.w, SUW.czolo.h, SUW.czolo.d), M_SUW_D);
+      cz.position.set(sx*railX, SUW.yTor + SUW.czolo.h/2, 0); m.add(cz);
+    });
+    const wozek = new THREE.Mesh(
+      new THREE.BoxGeometry(SUW.wozek.a, SUW.wozek.h, SUW.wozek.a), M_SUW_D);
+    wozek.position.set(wozekX[i], SUW.yTor + SUW.most.h + SUW.wozek.h/2, 0); m.add(wozek);
+    const ciegno = new THREE.Mesh(
+      new THREE.BoxGeometry(SUW.ciegno, 1, SUW.ciegno), M_SUW_D);
+    ciegno.position.x = wozekX[i]; m.add(ciegno);
+    const hak = new THREE.Mesh(
+      new THREE.BoxGeometry(paliwo ? SUW.hak*1.15 : SUW.hak, SUW.hak*0.8, SUW.hak),
+      new THREE.MeshBasicMaterial({color: paliwo ? 0x4dffc0 : 0xffb45a}));
+    hak.position.x = wozekX[i]; m.add(hak);
+    return {g:m, ciegno, hak, paliwo, parkZ:parkZ[i], pracaZ:pracaZ[i]};
+  });
+
+  // dwa węże paliwowe z wózka środkowego mostu — jak przewody startowe
+  const weze = [-1,1].map(sx=>{
+    const w = nowyWaz(0x2f3a45);
+    w.bok = sx;
+    return w;
+  });
+
+  dystrybutory.push({
+    b, mosty, status, weze,
+    faza:'WOLNE', t:0,
+    jazda:0, hak:0, docisk:0, waz:0, przyp:false,
+    poza:{x:b.x, z:b.z - b.d/2 + SHIP.len/2 + 60*K}      // gdzie stoi zacumowany kadłub
+  });
+});
+
+/* ── NEON przed wlotami: >>> do środka, >>> na zewnątrz ───────────
+   Zamiast wystających z kadłuba lejków — wiszące w próżni szewrony.
+   Nic nie zawadza w locie, a z góry od razu widać, którym pasem się
+   wchodzi, a którym wychodzi.                                        */
+const guide = [];
+function chevronMesh(color, a){
+  const grp = new THREE.Group();
+  const mat = new THREE.MeshBasicMaterial({color});
+  [-1,1].forEach(s=>{
+    // ramię od wierzchołka (0,0,0) do (s*a, 0, -a); długość a*√2
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(a*Math.SQRT2, 6*K, 13*K), mat);
+    bar.position.set(s*a/2, 0, -a/2);
+    bar.rotation.y = Math.atan2(1, s);
+    grp.add(bar);
+  });
+  return {grp, mat};
+}
+DOCK.gates.forEach(g=>{
+  const base = new THREE.Group();
+  base.position.set(g.cx, 0, g.cz);
+  base.rotation.y = g.rotY;             // lokalny +X wzdłuż krawędzi, +Z na zewnątrz
+  scene.add(base);
+  [1,-1].forEach(s=>{
+    const wjazd = (s === g.entrySign);
+    const barwa = wjazd ? 0x4dffc0 : 0xffb45a;
+    for (let k=0;k<3;k++){
+      const ch = chevronMesh(barwa, CFG.NEON_SIZE);
+      ch.grp.position.set(s*g.hw/2, 56*K, 90*K + k*CFG.NEON_STEP);
+      if (wjazd) ch.grp.rotation.y = Math.PI;         // szewron wskazuje DO doku
+      base.add(ch.grp);
+      // fala biegnie zgodnie z ruchem: wlotem od najdalszego, wylotem od progu
+      guide.push({m:ch.mat, i: wjazd ? 2-k : k, base:new THREE.Color(barwa)});
+    }
+  });
+});
+
+/* ── listwy świetlne przy podstawie ścian hali ────────────────── */
+[[3,4],[2,3],[4,5]].forEach(([i0,i1])=>{
+  const a = DOCK.verts[i0], b = DOCK.verts[i1];
+  const len = Math.hypot(b[0]-a[0], b[1]-a[1]) - 40*K;
+  if (len <= 0) return;
+  const m = new THREE.Mesh(new THREE.BoxGeometry(len, 5*K, 8*K), M.stripA);
+  m.position.set((a[0]+b[0])/2, 7*K, (a[1]+b[1])/2);
+  m.rotation.y = Math.atan2(-(b[1]-a[1]), (b[0]-a[0]));
+  // wsuń listwę o grubość ściany do środka
+  const e = DOCK.edges.find(e=>e.i===i0);
+  if (e){ m.position.x -= e.nx*10*K; m.position.z -= e.nz*10*K; }
+  scene.add(m);
+});
+
+/* ── kontenery ładunkowe wzdłuż burt ──────────────────────────── */
+{
+  const n = 52, im = new THREE.InstancedMesh(new THREE.BoxGeometry(1,1,1), M.hull, n);
+  const mtx = new THREE.Matrix4(), col = new THREE.Color();
+  const pal = [0x7a4f2c, 0x2c4a5a, 0x4a4a52, 0x5c6b3a, 0x6b3540];
+  for(let i=0;i<n;i++){
+    const side = i%2 ? 1 : -1;
+    const x = side*rnd(455, 585)*K, z = rnd(CFG.BACK_Z+90*K, RING.Z_OUT-70*K);
+    const h = (Math.random()<.3 ? 60 : 30)*K;
+    mtx.makeScale(52*K, h, 34*K); mtx.setPosition(x, h/2, z);
+    im.setMatrixAt(i, mtx);
+    col.setHex(pal[i%pal.length]); im.setColorAt(i, col);
+  }
+  im.instanceMatrix.needsUpdate = true;
+  if (im.instanceColor) im.instanceColor.needsUpdate = true;
+  scene.add(im);
+}
+
+/* ═══════════════ POLE SIŁOWE — dwa pasy na każdy wlot ═══════════════
+   Skrzydła wrót przy dużym ruchu są wąskim gardłem, więc prześwit stoi
+   otwarty, a granicę trzyma pole, przez które się przelatuje. Zero kolizji.
+   Główny nośnik obrazu to PRÓG NA POKŁADZIE, nie pionowa kurtyna: kamera
+   patrzy z góry pod ~74°, więc pionowa płaszczyzna ściska się do kilkunastu
+   procent wysokości i sama z siebie nic nie mówi.                        */
+DOCK.gates.forEach(g=>{
+  const grp = new THREE.Group();
+  grp.position.set(g.cx, 0, g.cz);
+  grp.rotation.y = g.rotY;                      // lokalny +X wzdłuż krawędzi, +Z na zewnątrz
+  scene.add(grp);
+  g.lanes = [1,-1].map(s=>{
+    const wjazd = (s === g.entrySign);
+    const barwa = wjazd ? 0x4dffc0 : 0xffb45a;
+    const map = fieldTexture(); map.repeat.set(2, 1.5);
+    const mat = new THREE.MeshBasicMaterial({
+      map, color:barwa, transparent:true, opacity:.40,
+      blending:THREE.AdditiveBlending, depthWrite:false, side:THREE.DoubleSide});
+    const band = new THREE.Mesh(new THREE.PlaneGeometry(g.hw-8*K, CFG.FIELD_BAND), mat);
+    band.rotation.x = -Math.PI/2; band.position.set(s*g.hw/2, 1.4*K, 0);
+    grp.add(band);
+    const mat2 = mat.clone(); mat2.opacity = .18;   // mapa wspólna, więc przewijają się razem
+    const kurtyna = new THREE.Mesh(new THREE.PlaneGeometry(g.hw-8*K, CY-8*K), mat2);
+    kurtyna.position.set(s*g.hw/2, (CY-8*K)/2, 0);
+    grp.add(kurtyna);
+    // ramka prześwitu — trzyma kształt pola, gdy jest przygaszone
+    const ramka = new THREE.Mesh(new THREE.BoxGeometry(g.hw-8*K, 5*K, 7*K),
+                  new THREE.MeshBasicMaterial({color:barwa}));
+    ramka.position.set(s*g.hw/2, 3*K, 0); grp.add(ramka);
+    return {mat, mat2, wjazd, dir: wjazd ? -1 : 1};
+  });
+});
+
+/* ═══════════════════ POWŁOKA (strop) — to znika ═══════════════════ */
+const shell = new THREE.Group(); scene.add(shell);
+const shellMats = [];
+function shellMat(base){
+  const m = base.clone(); m.transparent = true; m.opacity = 1; shellMats.push(m); return m;
+}
+const T_ROOF = hullTexture(); T_ROOF.repeat.set(1/(260*K), 1/(260*K));
+const S_ROOF = shellMat(new THREE.MeshStandardMaterial({map:T_ROOF, color:0x7f8a99, roughness:.8, metalness:.6}));
+const S_WALL = shellMat(M.wall), S_HULL = shellMat(M.hull);
+
+// strop = ten sam obrys, wyciągnięty w górę
+{
+  const slab = new THREE.Mesh(new THREE.ExtrudeGeometry(SHAPE, {depth:14*K, bevelEnabled:false}), S_ROOF);
+  slab.rotation.x = -Math.PI/2; slab.position.y = CY + 2*K;
+  shell.add(slab);
+}
+function shellBox(w,h,d,x,y,z,mat,rotY){
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), mat);
+  m.position.set(x,y,z); if (rotY) m.rotation.y = rotY; shell.add(m); return m;
+}
+// dźwigary pod stropem
+for(let z=RING.Z_OUT-60*K; z>CFG.BACK_Z+50*K; z-=86*K){
+  shellBox(CFG.BODY_HW*2, 15*K, 16*K, 0, CY-9*K, z, S_WALL);
+}
+// greeble na dachu
+for(let i=0;i<30;i++){
+  const w=rnd(30,110)*K, h=rnd(12,46)*K, d=rnd(30,90)*K;
+  const x=rnd(-CFG.BODY_HW+60*K, CFG.BODY_HW-60*K), z=rnd(CFG.BACK_Z+70*K, RING.Z_OUT-40*K);
+  shellBox(w,h,d, x, CY+16*K+h/2, z, S_HULL);
+}
+
+/* obrys stropu, który pojawia się po zaniku */
+const ghostMat = new THREE.LineBasicMaterial({color:0x7fe3ff, transparent:true, opacity:0});
+const ghost = new THREE.Group(); scene.add(ghost);
+{
+  const pts = [];
+  DOCK.verts.forEach((v,i)=>{
+    const w = DOCK.verts[(i+1)%DOCK.verts.length];
+    pts.push(new THREE.Vector3(v[0], CY+2, v[1]), new THREE.Vector3(w[0], CY+2, w[1]));
+  });
+  for(let z=RING.Z_OUT-60*K; z>CFG.BACK_Z+50*K; z-=86*K){
+    pts.push(new THREE.Vector3(-CFG.BODY_HW, CY+2*K, z), new THREE.Vector3(CFG.BODY_HW, CY+2*K, z));
+  }
+  ghost.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), ghostMat));
+}
+
+/* ═══════════════════ podgląd: obrys i progi zaniku ═══════════════════ */
+const zones = new THREE.Group(); zones.visible = false; scene.add(zones);
+{
+  const ring = (poly, y, color)=>{
+    const pts = [];
+    poly.forEach((v,i)=>{
+      const w = poly[(i+1)%poly.length];
+      pts.push(new THREE.Vector3(v[0], y, v[1]), new THREE.Vector3(w[0], y, w[1]));
+    });
+    zones.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts),
+              new THREE.LineBasicMaterial({color})));
+  };
+  ring(DOCK.verts, 5*K, 0x2d5d72);                                     // sam obrys
+  // progi zaniku rysujemy TYLKO wzdłuż krawędzi czołowych, bo tylko one
+  // liczą się w frontDepth — ściana tylna i burty nie mają z tym nic wspólnego
+  DOCK.front.forEach(e=>{
+    [[-CFG.FADE_START, 0xffb45a], [CFG.FADE_DEPTH - CFG.FADE_START, 0x4dff9e]].forEach(([d,color])=>{
+      const ox = -e.nx*d, oz = -e.nz*d, ex = e.ux*120*K, ez = e.uz*120*K;
+      zones.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(e.a[0]+ox-ex, 5*K, e.a[1]+oz-ez),
+        new THREE.Vector3(e.b[0]+ox+ex, 5*K, e.b[1]+oz+ez)
+      ]), new THREE.LineBasicMaterial({color})));
+    });
+  });
+  // prześwity wlotów pionowo
+  DOCK.gates.forEach(g=>{
+    const pts = [];
+    [-1,1].forEach(s=>{
+      const x = g.cx + g.ux*s*g.hw, z = g.cz + g.uz*s*g.hw;
+      pts.push(new THREE.Vector3(x, 4*K, z), new THREE.Vector3(x, CY, z));
+    });
+    pts.push(new THREE.Vector3(g.cx-g.ux*g.hw, CY, g.cz-g.uz*g.hw),
+             new THREE.Vector3(g.cx+g.ux*g.hw, CY, g.cz+g.uz*g.hw));
+    zones.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts),
+              new THREE.LineBasicMaterial({color:0x7fe3ff})));
+  });
+}
+
+/* ═══════════════════ STATEK ═══════════════════ */
+const ship = new THREE.Group();
+if (SHIP.sprite){
+  /* Kadłub to płyta z tym samym PNG, którego używa gra, rozciągnięta na
+     PRAWDZIWE wymiary (SHIP.len × SHIP.beam). Obrót wypalam w geometrii
+     (rotateX/rotateY), a nie w Eulerze bryły — bo bryła i tak dostaje
+     rotation.y od kursu i rotation.z od przechyłu, a trzy kąty naraz
+     w kolejności XYZ dają co innego, niż się człowiekowi wydaje.        */
+  const geo = new THREE.PlaneGeometry(SHIP.len, SHIP.beam);
+  geo.rotateX(-Math.PI/2);          // połóż na płasko, dziób na +X
+  geo.rotateY(Math.PI/2);           // obróć dziób na -Z, czyli na kurs yaw=0
+  const mat = new THREE.MeshStandardMaterial({
+    color:0xffffff, roughness:.72, metalness:.28, transparent:true,
+    alphaTest:.06, side:THREE.DoubleSide });
+  new THREE.TextureLoader().load(SHIP.sprite, t=>{
+    if ('colorSpace' in t && THREE.SRGBColorSpace) t.colorSpace = THREE.SRGBColorSpace;
+    else if ('encoding' in t) t.encoding = THREE.sRGBEncoding;
+    t.anisotropy = renderer.capabilities.getMaxAnisotropy ? renderer.capabilities.getMaxAnisotropy() : 4;
+    mat.map = t; mat.needsUpdate = true;
+  }, undefined, ()=>{ mat.color.setHex(0x8e99a8); });   // bez pliku zostaje sama sylwetka
+  ship.add(new THREE.Mesh(geo, mat));
+} else {
+  const hull = new THREE.Mesh(new THREE.BoxGeometry(16,7,34), M.ship); ship.add(hull);
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(8.4,18,4), M.ship);
+  nose.rotation.set(-Math.PI/2, 0, Math.PI/4); nose.position.z = -25; ship.add(nose);
+  const cano = new THREE.Mesh(new THREE.BoxGeometry(8,4,11), M.glass);
+  cano.position.set(0,4.5,-9); ship.add(cano);
+  [-1,1].forEach(s=>{
+    const w = new THREE.Mesh(new THREE.BoxGeometry(20,3,15), M.shipDk);
+    w.position.set(s*16, -.5, 4); w.rotation.z = s*.12; ship.add(w);
+    const tip = new THREE.Mesh(new THREE.BoxGeometry(4,4,9), M.shipDk);
+    tip.position.set(s*25, 1, 2); ship.add(tip);
+    const eng = new THREE.Mesh(new THREE.CylinderGeometry(5,5.4,13,10), M.shipDk);
+    eng.rotation.x = Math.PI/2; eng.position.set(s*8.5, 0, 20); ship.add(eng);
+  });
+}
+
+/* Obrys kadłuba w prawdziwej skali — żeby na oko dało się sprawdzić, czy
+   1:1 naprawdę mieści się w bramie, zamiast zgadywać po sprite'cie. */
+{
+  const hx = SHIP.len/2, hz = SHIP.beam/2;
+  const pts = [[-hz,-hx],[hz,-hx],[hz,hx],[-hz,hx],[-hz,-hx]];
+  const v = [];
+  for (let i=0;i<4;i++){
+    v.push(new THREE.Vector3(pts[i][0], 2, pts[i][1]),
+           new THREE.Vector3(pts[i+1][0], 2, pts[i+1][1]));
+  }
+  ship.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(v),
+           new THREE.LineBasicMaterial({color:0x7fe3ff, transparent:true, opacity:.45})));
+}
+
+ship.position.set(0, CFG.SHIP_Y, Math.max(320, SHIP.len*1.1));
+scene.add(ship);
+
+const thrust = new THREE.Sprite(new THREE.SpriteMaterial({
+  map: blobTexture('130,230,255'), blending:THREE.AdditiveBlending, depthWrite:false, opacity:.9}));
+thrust.position.set(0, 0, SHIP.len*0.56); thrust.scale.set(SHIP.beam,SHIP.beam,1); ship.add(thrust);
+
+const contact = new THREE.Mesh(new THREE.PlaneGeometry(SHIP.len*1.5, SHIP.len*1.5),
+  new THREE.MeshBasicMaterial({map:blobTexture('0,0,0'), transparent:true, opacity:0, depthWrite:false}));
+contact.rotation.x = -Math.PI/2; contact.position.y = 1.5; scene.add(contact);
+
+/* ═══════════════ kolizje: KAPSUŁA kadłuba vs odcinek ściany ═══════════
+   Ściany to odcinki, nie prostopadłościany osiowe — inaczej ścięć pod 45°
+   nie da się opisać. Statek NIE jest okręgiem: Atlas ma 1800 × 806, więc
+   okrąg albo przepuściłby go przez bramę bokiem, albo nie wpuścił dziobem.
+   Kadłub to kapsuła: odcinek wzdłuż osi o promieniu połowy szerokości.
+   Bariera ma R + WALL_T, czyli ~467 j. przy Atlasie — statek robi najwyżej
+   30 j. na klatkę przy dt = 1/20, więc jej nie przeskoczy.               */
+const OS = {ax:0,az:0,bx:0,bz:0};                  // najbliższe punkty obu odcinków
+function najblizszeOdcinki(p1x,p1z,q1x,q1z, p2x,p2z,q2x,q2z, out){
+  const d1x=q1x-p1x, d1z=q1z-p1z, d2x=q2x-p2x, d2z=q2z-p2z;
+  const rx=p1x-p2x, rz=p1z-p2z;
+  const a=d1x*d1x+d1z*d1z, e=d2x*d2x+d2z*d2z, f=d2x*rx+d2z*rz;
+  let sv, tv;
+  if (a<=1e-9 && e<=1e-9){ sv=0; tv=0; }
+  else if (a<=1e-9){ sv=0; tv=clamp01(f/e); }
+  else {
+    const c=d1x*rx+d1z*rz;
+    if (e<=1e-9){ tv=0; sv=clamp01(-c/a); }
+    else {
+      const b=d1x*d2x+d1z*d2z, den=a*e-b*b;
+      sv = den>1e-9 ? clamp01((b*f-c*e)/den) : 0;
+      tv = (b*sv+f)/e;
+      if (tv<0){ tv=0; sv=clamp01(-c/a); }
+      else if (tv>1){ tv=1; sv=clamp01((b-c)/a); }
+    }
+  }
+  out.ax=p1x+d1x*sv; out.az=p1z+d1z*sv;
+  out.bx=p2x+d2x*tv; out.bz=p2z+d2z*tv;
+}
+const KADLUB = {
+  r: SHIP.beam/2,
+  half: Math.max(0, SHIP.len/2 - SHIP.beam/2)     // połowa osi kapsuły
+};
+function resolve(pos, vel, kurs){
+  // prześwity stoją otwarte — pole siłowe nic nie blokuje
+  const R = KADLUB.r + CFG.WALL_T;
+  const fx = Math.sin(kurs), fz = -Math.cos(kurs);
+  let p1x = pos.x + fx*KADLUB.half, p1z = pos.z + fz*KADLUB.half;
+  let q1x = pos.x - fx*KADLUB.half, q1z = pos.z - fz*KADLUB.half;
+  for (const w of walls){
+    najblizszeOdcinki(p1x,p1z,q1x,q1z, w.ax,w.az,w.bx,w.bz, OS);
+    let dx = OS.ax-OS.bx, dz = OS.az-OS.bz;
+    let d = Math.hypot(dx, dz);
+    if (d >= R) continue;
+    if (d < 1e-3){                                 // oś dokładnie na ścianie
+      const sp = Math.hypot(vel.x, vel.z) || 1;
+      dx = -vel.x/sp; dz = -vel.z/sp; d = 1e-3;
+    } else { dx /= d; dz /= d; }
+    const push = R-d;
+    pos.x += dx*push; pos.z += dz*push;
+    p1x += dx*push; p1z += dz*push; q1x += dx*push; q1z += dz*push;
+    const into = vel.x*dx + vel.z*dz;
+    if (into < 0){ vel.x -= dx*into*1.25; vel.z -= dz*into*1.25; }  // odbicie z tłumieniem
+  }
+}
+
+/* ═══════════════════ sterowanie ═══════════════════ */
+const keys = Object.create(null);
+addEventListener('keydown', e=>{
+  keys[e.code]=true;
+  if (e.code === 'Digit0' || e.code === 'Numpad0') zoomT = 1;
+  if (e.code === 'KeyE' && btn.dataset.akcja) zadanie = btn.dataset.akcja;
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].indexOf(e.code)>=0) e.preventDefault();
+});
+addEventListener('keyup', e=>{ keys[e.code]=false; });
+addEventListener('blur', ()=>{ for(const k in keys) keys[k]=false; touch.on=false; });
+
+const touch = {on:false, x:0, y:0};
+const ray = new THREE.Raycaster();
+const plane = new THREE.Plane(new THREE.Vector3(0,1,0), -CFG.SHIP_Y);
+const hit = new THREE.Vector3();
+function pt(e){ touch.x = (e.clientX/innerWidth)*2-1; touch.y = -(e.clientY/innerHeight)*2+1; }
+canvas.addEventListener('pointerdown', e=>{ touch.on=true; pt(e); canvas.setPointerCapture(e.pointerId); });
+canvas.addEventListener('pointermove', e=>{ if(touch.on) pt(e); });
+['pointerup','pointercancel'].forEach(t=>canvas.addEventListener(t, ()=>{ touch.on=false; }));
+
+// zoom kółkiem — mnożnik wysokości kamery, wygładzany osobno od reszty
+let zoomT = 1, zoomS = 1;
+canvas.addEventListener('wheel', e=>{
+  e.preventDefault();
+  zoomT = clamp(zoomT * Math.exp(e.deltaY * CFG.ZOOM_STEP), CFG.ZOOM_MIN, CFG.ZOOM_MAX);
+}, {passive:false});
+
+/* ═══════════════════ stan ═══════════════════ */
+const vel = new THREE.Vector3();
+let yaw = 0, yawV = 0, inside = 0, boostGlow = 0;
+const camAt = new THREE.Vector3(0, CFG.SHIP_Y, Math.max(320, SHIP.len*1.1));
+const _wk = new THREE.Vector3(), _wc = new THREE.Vector3();   // kotwica i cel węża
+const tmp = new THREE.Vector3();
+
+const ui = {
+  statek:document.getElementById('vShip'),
+  state:document.getElementById('vState'), gate:document.getElementById('vGate'),
+  lane:document.getElementById('vLane'), serv:document.getElementById('vServ'),
+  fade:document.getElementById('vFade'),
+  vel:document.getElementById('vVel'), dist:document.getElementById('vDist'),
+  cam:document.getElementById('vCam'),
+  bar:document.getElementById('barFill'), flash:document.getElementById('flash')
+};
+const tg = id=>document.getElementById(id).checked;
+document.getElementById('tgZones').addEventListener('change', e=>{ zones.visible = e.target.checked; });
+
+/* ═══════════════════════════════════════════════════════════════
+   SEKWENCJA DOKOWANIA — maszyna stanów
+   ═══════════════════════════════════════════════════════════════
+   Cztery postępy (jazda mostu / opuszczenie haka / docisk / wąż) są
+   WYLICZANE Z FAZY I CZASU, a nie dociągane osobno. Dzięki temu kolejność
+   jest wymuszona konstrukcyjnie: wąż nie ma jak podłączyć się wcześniej
+   niż docisk, bo w fazie DOCISK jego postęp to po prostu 0.
+
+   Dokowanie:    DOJAZD → OPUST → DOCISK → PODLACZANIE → ZADOKOWANY
+   Oddokowanie:  UPUST → ROZLACZANIE → ZWIJANIE → ODJAZD → WOLNE
+   Upust idzie PRZED rozłączeniem, bo najpierw zrzuca się ciśnienie,
+   a dopiero potem puszcza złączkę — inaczej wąż biłby pod ciśnieniem. */
+const CZAS = {
+  DOJAZD:2.4, OPUST:1.3, DOCISK:.55, PODLACZANIE:1.7,
+  UPUST:1.15, ROZLACZANIE:.45, ZWIJANIE:1.9, ODJAZD:2.6
+};
+const NASTEPNA = {
+  DOJAZD:'OPUST', OPUST:'DOCISK', DOCISK:'PODLACZANIE', PODLACZANIE:'ZADOKOWANY',
+  UPUST:'ROZLACZANIE', ROZLACZANIE:'ZWIJANIE', ZWIJANIE:'ODJAZD', ODJAZD:'WOLNE'
+};
+// fazy, w których kadłub jest trzymany przez suwnice
+const TRZYMA = {DOCISK:1, PODLACZANIE:1, ZADOKOWANY:1, UPUST:1, ROZLACZANIE:1, ZWIJANIE:1};
+const ss = t => { const u = clamp01(t); return u*u*(3-2*u); };
+
+function celeFazy(d){
+  const u = d.t;
+  switch (d.faza){
+    case 'DOJAZD':      return [ss(u/CZAS.DOJAZD), 0, 0, 0, false];
+    case 'OPUST':       return [1, ss(u/CZAS.OPUST), 0, 0, false];
+    case 'DOCISK':      return [1, 1, ss(u/CZAS.DOCISK), 0, false];
+    case 'PODLACZANIE': return [1, 1, 1, ss(u/CZAS.PODLACZANIE), true];
+    case 'ZADOKOWANY':  return [1, 1, 1, 1, true];
+    case 'UPUST':       return [1, 1, 1, 1, true];
+    case 'ROZLACZANIE': return [1, 1, 1, 1, false];
+    case 'ZWIJANIE':    { const t = ss(u/CZAS.ZWIJANIE); return [1, 1, 1-t, 1-t, false]; }
+    case 'ODJAZD':      { const t = u/CZAS.ODJAZD;
+                          return [1-ss((t-0.30)/0.70), 1-ss(t/0.35), 0, 0, false]; }
+    default:            return [0, 0, 0, 0, false];     // WOLNE, GOTOWY
+  }
+}
+
+function przejdz(d, faza){
+  d.faza = faza; d.t = 0;
+  if (faza === 'UPUST'){
+    // najpierw powietrze: obłok przy każdej złączce, zanim cokolwiek puści
+    d.weze.forEach(w=>{
+      const p = w.p[WAZ_N-1];
+      pyknij(p.x, p.y, p.z, w.bok, .35, 0, 9, 230*K/4);
+    });
+  }
+  if (faza === 'ROZLACZANIE'){
+    d.weze.forEach(w=>{
+      w.przypiety = false;
+      const p = w.p[WAZ_N-1];
+      pyknij(p.x, p.y, p.z, w.bok, .5, 0, 7, 340*K/4);
+      impulsWaza(w, w.bok*0.8, -0.25, 0, 26*K/4);     // odrzut w bok i lekko w dół
+    });
+  }
+}
+
+let zadanie = null;                       // 'dokuj' | 'oddokuj' — z przycisku albo klawisza
+const btn = document.getElementById('akcja');
+btn.addEventListener('click', ()=>{ if (btn.dataset.akcja) zadanie = btn.dataset.akcja; });
+
+/* ═══════════════════ pętla ═══════════════════ */
+ui.statek.textContent = SHIP.nazwa + '  ' + Math.round(SHIP.len) + '\u00d7' + Math.round(SHIP.beam);
+let last = performance.now(), hudT = 0, flashT = 0, prevState = 0;
+
+function frame(now){
+  requestAnimationFrame(frame);
+  const dt = Math.min((now-last)/1000, 1/20); last = now;
+  const t = now/1000;
+
+  /* --- wejście --- */
+  let thr = 0, turn = 0;
+  if (keys.KeyW || keys.ArrowUp) thr += 1;
+  if (keys.KeyS || keys.ArrowDown) thr -= .6;
+  if (keys.KeyA || keys.ArrowLeft) turn -= 1;
+  if (keys.KeyD || keys.ArrowRight) turn += 1;
+  const boost = (keys.ShiftLeft||keys.ShiftRight) ? CFG.BOOST : 1;
+
+  if (touch.on){
+    ray.setFromCamera({x:touch.x, y:touch.y}, camera);
+    if (ray.ray.intersectPlane(plane, hit)){
+      const dx = hit.x-ship.position.x, dz = hit.z-ship.position.z;
+      if (dx*dx+dz*dz > 400){
+        const want = Math.atan2(dx, -dz);              // ta sama konwencja co kurs
+        let diff = ((want-yaw+Math.PI)%(Math.PI*2)+Math.PI*2)%(Math.PI*2)-Math.PI;
+        turn = clamp(diff*2.2, -1, 1);
+        thr = clamp(1 - Math.abs(diff)/1.5, 0, 1);
+      }
+    }
+  }
+
+  /* --- lot ---
+     KURS: yaw = 0 → dziób na -Z (w głąb ekranu, ku dokowi),
+     rosnący yaw → skręt w PRAWO. Wektor ciągu to (sin yaw, -cos yaw).
+     UWAGA: obrót bryły to -yaw, nie +yaw. Dziób modelu leży na lokalnym
+     -Z, a Ry(+yaw) przenosi go na (-sin yaw, -cos yaw) — czyli LUSTRZANE
+     odbicie ciągu w X. Przy yaw = 0 obie wersje się pokrywają, więc błąd
+     widać dopiero po pierwszym skręcie: statek leci w drugą stronę, niż
+     patrzy. Stąd minus. */
+  // Obrót jak w grze: moment ciągły, tłumienie i twardy limit prędkości
+  // kątowej — nie wygładzanie do zadanej wartości.
+  yawV += turn*SHIP.turnAcc*dt;
+  yawV *= Math.exp(-SHIP.angDrag*dt);
+  yawV = clamp(yawV, -SHIP.maxTurn, SHIP.maxTurn);
+  yaw += yawV*dt;
+  const fx = Math.sin(yaw), fz = -Math.cos(yaw);
+
+  const a = SHIP.acc*thr*boost;
+  vel.x += fx*a*dt; vel.z += fz*a*dt;
+
+  const drag = lerp(SHIP.dragOut, SHIP.dragIn, inside) + ((keys.Space||0) ? SHIP.brake : 0);
+  const k = Math.exp(-drag*dt);
+  vel.x *= k; vel.z *= k;
+
+  const vmax = lerp(SHIP.vmax, SHIP.vdock*2.2, inside);
+  const sp = Math.hypot(vel.x, vel.z);
+  if (sp > vmax){ vel.x *= vmax/sp; vel.z *= vmax/sp; }
+
+  ship.position.x += vel.x*dt; ship.position.z += vel.z*dt;
+  const GRANICA = RING.X*0.8;
+  ship.position.x = clamp(ship.position.x, -GRANICA, GRANICA);
+  ship.position.z = clamp(ship.position.z, CFG.BACK_Z + SHIP.beam*.6, Math.abs(CFG.BACK_Z)*.7);
+  resolve(ship.position, vel, yaw);
+  ship.rotation.y = -yaw;                                       // patrz komentarz wyżej
+  ship.rotation.z = -yawV*.16;                                  // przechył w zakręcie
+
+  /* --- POLE SIŁOWE: jaśnieje, gdy ktoś podchodzi do prześwitu --- */
+  const polaOn = tg('tgField');
+  for (const g of DOCK.gates){
+    const dx = ship.position.x-g.cx, dz = ship.position.z-g.cz;
+    const along = Math.abs(dx*g.nx + dz*g.nz);
+    const side  = Math.abs(dx*g.ux + dz*g.uz);
+    const blisko = clamp01(1 - along/CFG.FIELD_GLOW) * (side < g.hw*1.5 ? 1 : .3);
+    g.glow = smooth(g.glow, blisko, 6, dt);
+    g.lanes.forEach(L=>{
+      L.mat.map.offset.y += L.dir * dt * .5;         // pasmo płynie w stronę jazdy
+      L.mat.visible  = polaOn;
+      L.mat2.visible = polaOn;
+      L.mat.opacity  = .30 + .45*g.glow;
+      L.mat2.opacity = .12 + .24*g.glow;
+    });
+  }
+
+  /* --- SEKWENCJA DOKOWANIA na stanowiskach 2 i 3 --- */
+  let obslugaNr = null, obslugaFaza = null, trzyma = null, przycisk = null;
+  for (const d of dystrybutory){
+    const naStanowisku = Math.abs(ship.position.x - d.b.x) < d.b.w*0.62
+                      && Math.abs(ship.position.z - d.b.z) < d.b.d*0.62;
+    const wolno = sp < SHIP.vdock*0.6;
+
+    d.t += dt;
+    if (d.faza === 'WOLNE'  && naStanowisku && wolno) przejdz(d, 'GOTOWY');
+    else if (d.faza === 'GOTOWY' && !(naStanowisku && wolno)) przejdz(d, 'WOLNE');
+    else if (d.faza === 'GOTOWY' && zadanie === 'dokuj'){ przejdz(d,'DOJAZD'); zadanie = null; }
+    else if (d.faza === 'ZADOKOWANY' && zadanie === 'oddokuj'){ przejdz(d,'UPUST'); zadanie = null; }
+    else if (CZAS[d.faza] && d.t >= CZAS[d.faza]) przejdz(d, NASTEPNA[d.faza]);
+
+    const cel = celeFazy(d);
+    d.jazda = cel[0]; d.hak = cel[1]; d.docisk = cel[2]; d.waz = cel[3]; d.przyp = cel[4];
+
+    // ── suwnice
+    d.mosty.forEach(m=>{
+      m.g.position.z = lerp(m.parkZ, m.pracaZ, d.jazda);
+      // docisk to ostatnie parę jednostek liny — stąd wrażenie dociskania
+      const dlugosc = SUW.yTor - CFG.SHIP_Y - SUW.hak*0.5;
+      const len = 6*K + d.hak*dlugosc + d.docisk*10*K;
+      m.ciegno.scale.y = len;
+      m.ciegno.position.y = SUW.yTor + SUW.most.h + SUW.wozek.h - len/2;
+      m.hak.position.y = SUW.yTor + SUW.most.h + SUW.wozek.h - len - SUW.hak*0.4;
+      const v = 0.3 + 0.7*Math.max(d.hak, d.docisk);
+      if (m.paliwo) m.hak.material.color.setRGB(0.30*v, v, 0.75*v);
+      else          m.hak.material.color.setRGB(v, 0.71*v, 0.35*v);
+    });
+    const st = d.faza === 'ZADOKOWANY' ? 1 : d.docisk;
+    d.status.material.color.setRGB(1-st*0.7, 0.71+st*0.29, 0.35+st*0.4);
+
+    // ── węże: kotwica na wózku środkowego mostu, cel na burcie kadłuba
+    const most = d.mosty[1];
+    const kx = Math.sin(yaw), kz = -Math.cos(yaw);       // oś kadłuba
+    d.weze.forEach(w=>{
+      _wk.set(d.b.x, SUW.yTor + SUW.most.h, most.g.position.z);
+      // złączka na burcie: w bok od osi kadłuba, lekko przed środkiem
+      const bx = -kz*w.bok*SHIP.beam*0.30, bz = kx*w.bok*SHIP.beam*0.30;
+      _wc.set(ship.position.x + bx + kx*SHIP.len*0.06, CFG.SHIP_Y + 26*K,
+              ship.position.z + bz + kz*SHIP.len*0.06);
+      w.przypiety = d.przyp;
+      if (d.przyp && d.faza === 'PODLACZANIE')          // wysuw: od wózka na burtę
+        _wc.lerpVectors(_wk, _wc, ss(d.waz));
+      const prosta = _wk.distanceTo(_wc);
+      // luz 1,35× prostej przy podłączonym, przy zwijaniu skraca się do ogryzka
+      const dl = lerp(SUW.hak*2.2, Math.max(prosta*1.35, SUW.hak*3), d.waz);
+      if (d.faza === 'WOLNE' || d.faza === 'GOTOWY') w.init = false;
+      const widac = d.faza !== 'WOLNE' && d.faza !== 'GOTOWY' && d.faza !== 'DOJAZD';
+      w.mesh.visible = widac; w.zlaczka.visible = widac;
+      if (widac) krokWaza(w, dt, _wk, _wc, dl);
+      const zv = 0.25 + 0.75*d.waz;
+      w.zlaczka.material.color.setRGB(0.30*zv, zv, 0.75*zv);
+    });
+
+    if (naStanowisku){ obslugaNr = d.b.nr; obslugaFaza = d.faza; }
+    if (TRZYMA[d.faza]) trzyma = d;
+    if (d.faza === 'GOTOWY') przycisk = 'dokuj';
+    else if (d.faza === 'ZADOKOWANY') przycisk = 'oddokuj';
+  }
+  zadanie = null;                                   // polecenie ważne jedną klatkę
+
+  /* Zacumowany kadłub trzymają suwnice — dociągam go do pozycji postojowej
+     i zeruję prędkość. Bez tego ciąg wyrywałby statek spod haków. */
+  if (trzyma){
+    ship.position.x = smooth(ship.position.x, trzyma.poza.x, 3.2, dt);
+    ship.position.z = smooth(ship.position.z, trzyma.poza.z, 3.2, dt);
+    let d2 = ((0 - yaw + Math.PI) % (Math.PI*2) + Math.PI*2) % (Math.PI*2) - Math.PI;
+    yaw += d2 * (1 - Math.exp(-3.2*dt));
+    vel.x *= Math.exp(-6*dt); vel.z *= Math.exp(-6*dt); yawV *= Math.exp(-6*dt);
+  }
+
+  /* --- UPUST: obłoki gazu --- */
+  for (const q of puffy){
+    if (q.zyc <= 0) continue;
+    q.zyc -= dt;
+    if (q.zyc <= 0){ q.sp.visible = false; continue; }
+    q.sp.position.x += q.vx*dt; q.sp.position.y += q.vy*dt; q.sp.position.z += q.vz*dt;
+    q.vx *= Math.exp(-2.4*dt); q.vy *= Math.exp(-2.4*dt); q.vz *= Math.exp(-2.4*dt);
+    const t = 1 - q.zyc/q.max;
+    const r = q.r0*(1 + t*3.4);
+    q.sp.scale.set(r, r, 1);
+    q.sp.material.opacity = (1-t)*(1-t)*0.7;
+  }
+
+  /* --- przycisk akcji --- */
+  if (przycisk !== btn.dataset.akcja){
+    btn.dataset.akcja = przycisk || '';
+    btn.classList.toggle('on', !!przycisk);
+    btn.classList.toggle('wy', przycisk === 'oddokuj');
+    if (przycisk) btn.innerHTML = (przycisk === 'dokuj' ? 'DOKUJ' : 'ODDOKUJ')
+                                + '<small>KLIKNIJ ALBO E</small>';
+  }
+
+  /* --- TRIGGER: ile statek jest „w środku" --- */
+  const depth = frontDepth(ship.position.x, ship.position.z) + CFG.FADE_START;
+  const raw = clamp01(depth / CFG.FADE_DEPTH);
+  inside = smooth(inside, raw, CFG.FADE_LAG, dt);
+
+  /* --- ZANIK DACHU --- */
+  const fadeOn = tg('tgFade');
+  const op = fadeOn ? 1-inside : 1;
+  for(const m of shellMats){
+    m.opacity = op;
+    m.depthWrite = op > .92;
+    m.visible = op > .003;
+  }
+  ghostMat.opacity = (fadeOn && tg('tgGhost')) ? inside*CFG.GHOST_ALPHA : 0;
+
+  /* --- przełączenie oświetlenia --- */
+  const li = tg('tgLights') ? inside : 0;
+  sun.intensity = lerp(1.7, .16, li);
+  rim.intensity = lerp(.55, .10, li);
+  skyOut.intensity = lerp(.40, .10, li);
+  skyIn.intensity  = lerp(.00, .62, li);
+  for(const [l, base] of bayLights) l.intensity = base*li;
+
+  /* --- światła sekwencyjne + latarnie --- */
+  const pulse = (1-Math.min(inside,1))*.85 + .15;
+  guide.forEach(({m, i, base})=>{
+    const w = Math.pow(Math.max(0, Math.cos((t*1.15 - i*0.22)*Math.PI*2)), 5);
+    const v = (.14 + .86*w) * pulse;
+    m.color.copy(base).multiplyScalar(v);           // zielony wlot, bursztynowy wylot
+  });
+
+  /* --- efekty statku --- */
+  boostGlow = smooth(boostGlow, thr>0 ? (.55+.45*boost*thr) : .12, 10, dt);
+  const s = boostGlow*(SHIP.beam*.75 + Math.sin(t*40)*SHIP.beam*.06);
+  thrust.scale.set(s, s, 1);
+  thrust.material.opacity = boostGlow*.85;
+  contact.position.set(ship.position.x, 1.5*K, ship.position.z);
+  contact.material.opacity = inside*.5;
+
+  /* --- KAMERA (GTA2: bez obrotu z kadłubem) --- */
+  zoomS = smooth(zoomS, zoomT, CFG.ZOOM_LERP, dt);
+  const la = tg('tgLook') ? CFG.LOOKAHEAD*(1-inside*.85) : 0;
+  tmp.set(ship.position.x + clamp(vel.x*la, -SHIP.look, SHIP.look),
+          CFG.SHIP_Y,
+          ship.position.z + clamp(vel.z*la, -SHIP.look, SHIP.look));
+  // BEZ klamry „trzymaj kadr w hali". Miała nie pokazywać pustki za ścianami,
+  // ale ograniczała kamerę mocniej, niż sięga statek: przy zoomie 1 zatrzymywała
+  // się 120 j. przed burtą i 145 j. przed ścianą tylną, a przy zoomie 3,2 chodziła
+  // po x tylko ±160 przy hali szerokiej na 1280 — czyli lock na środku. Kamera
+  // idzie teraz za statkiem wszędzie; dach i tak znika, więc widok na zewnątrz
+  // hali nie przeszkadza.
+  camAt.x = smooth(camAt.x, tmp.x, CFG.CAM_LERP, dt);
+  camAt.z = smooth(camAt.z, tmp.z, CFG.CAM_LERP, dt);
+
+  const H  = lerp(SHIP.camOut, SHIP.camIn, inside) * zoomS;
+  const TL = lerp(SHIP.tiltOut, SHIP.tiltIn, inside) * zoomS;
+  camera.position.set(camAt.x, CFG.SHIP_Y + H, camAt.z + TL);
+  camera.lookAt(camAt.x, CFG.SHIP_Y, camAt.z);
+
+  /* --- HUD --- */
+  hudT += dt;
+  if (hudT > .08){
+    hudT = 0;
+    const st = raw < .02 ? 0 : raw < .985 ? 1 : 2;
+    ui.state.textContent = ['NA ZEWNĄTRZ','PRÓG','WNĘTRZE'][st];
+    ui.state.className = 'v ' + ['acc','warn','good'][st];
+
+    const ng = nearestGate(ship.position.x, ship.position.z);
+    ui.gate.textContent = ng.gate.label;
+    ui.gate.className = 'v ' + (ng.side < ng.gate.hw ? 'good' : 'acc');
+
+    const wPasie = ng.side <= ng.gate.hw && Math.abs(ng.along) < 420;
+    const wlot = ng.off*ng.gate.entrySign >= 0;
+    ui.lane.textContent = wPasie ? (wlot ? 'WLOT' : 'WYLOT') : '—';
+    ui.lane.className = 'v ' + (wPasie ? (wlot ? 'good' : 'warn') : '');
+    const OPIS = {
+      GOTOWY:'GOTÓW DO DOKOWANIA', DOJAZD:'SUWNICE W DRODZE', OPUST:'OPUSZCZANIE HAKÓW',
+      DOCISK:'DOCISK', PODLACZANIE:'PODŁĄCZANIE PALIWA', ZADOKOWANY:'ZACUMOWANY · TANKOWANIE',
+      UPUST:'UPUST CIŚNIENIA', ROZLACZANIE:'ROZŁĄCZANIE', ZWIJANIE:'ZWIJANIE PRZEWODÓW',
+      ODJAZD:'SUWNICE DO ŚCIANY'
+    };
+    ui.serv.textContent = obslugaNr === null ? '—'
+      : (OPIS[obslugaFaza] || 'STANOWISKO ' + obslugaNr);
+    ui.serv.className = 'v ' + (obslugaFaza === 'ZADOKOWANY' ? 'good'
+      : (obslugaFaza && obslugaFaza !== 'WOLNE' && obslugaFaza !== 'GOTOWY') ? 'warn' : 'acc');
+    ui.fade.textContent = Math.round(inside*100)+'%';
+    ui.bar.style.width = (inside*100)+'%';
+    const over = sp > CFG.V_DOCK && raw > .05;
+    ui.vel.textContent = Math.round(sp)+' m/s';
+    ui.vel.className = 'v ' + (over ? 'bad' : '');
+    ui.dist.textContent = ng.along > 0 ? Math.round(ng.along)+' m' : 'ZA PROGIEM';
+    ui.cam.textContent = Math.round(H)+' m';
+
+    if (st !== prevState){
+      if (st === 1){ ui.flash.textContent = 'PRÓG · WLOT '+ng.gate.id; ui.flash.classList.add('on'); flashT = 1.4; }
+      if (st === 2){ ui.flash.textContent = 'DOK K-7 · POKŁAD WOLNY'; ui.flash.classList.add('on'); flashT = 1.8; }
+      prevState = st;
+    }
+  }
+  if (flashT > 0){ flashT -= dt; if (flashT <= 0) ui.flash.classList.remove('on'); }
+
+  renderer.render(scene, camera);
+}
+
+function resize(){
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w/h; camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+resize();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

@@ -201,6 +201,21 @@ export function releaseHexGridArena(entity) {
   return released;
 }
 
+// Call immediately before replacing a body's member list during a split.
+// Live cells keep their slots for transfer to the main body or a wreck.
+export function releaseInactiveHexShards(shards) {
+  if (!arena) return;
+  for (const shard of shards) {
+    if (shard.active && !shard.isDebris) continue;
+    if (!isArenaShardAlive(arena, shard)) continue;
+    const index = shard.__arenaIndex;
+    arena.release(index, shard.__arenaGeneration);
+    shardRefs[index] = undefined;
+    shard.__arenaIndex = -1;
+    shard.__arenaGeneration = 0;
+  }
+}
+
 export function getHexArenaStats() {
   if (!arena) {
     return {

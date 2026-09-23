@@ -5,6 +5,87 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Super Capital: Battle for Solar System - Aero HUD</title>
+  <!-- ZEROWANIE ZAPISU — musi stac PRZED modulami, bo one czytaja localStorage juz przy imporcie.
+       Ctrl+F5 czysci tylko cache HTTP, a "usuwanie ciastek" nie rusza localStorage, wiec stary
+       uklad hardpointow z edytora (hpEditor.v1) przezywal kazde odswiezenie i wygrywal z nowym
+       ukladem z src/data/hardpointEditorDefaults.js. Stad byl potrzebny tryb incognito.
+       Uzycie: index.html?reset (wszystko) | ?reset=ship | ?reset=hp | ?reset=loadout | ?reset=dev
+       Z konsoli: resetGameSave()  /  resetGameSave('hp') — potem F5. -->
+  <script>
+    (function () {
+      const SAVE_KEYS = {
+        // Co wisi na kadlubie: uklad gniazd z edytora + zapisany fit + strojenie dysz.
+        ship: ['hpEditor.v1', 'loadout', 'engineVfxTune.v1'],
+        // Panele deweloperskie, layouty HUD i ustawienia grafiki.
+        dev: [
+          'devConfig', 'devFlags', 'devBloomPanel', 'devRingColors',
+          'devDestructorConfig', 'devDestructorMassConfig',
+          'perfHudCollapsedSections', 'statki.scannerOverview.layout.v1',
+          'sc_shadow_shafts', 'sc_planet_quality', 'sc_hull_lacquer'
+        ]
+      };
+      const ALL_KEYS = [...SAVE_KEYS.ship, ...SAVE_KEYS.dev];
+
+      function keysForScope(scope) {
+        switch (String(scope || 'all').trim().toLowerCase()) {
+          case 'hp':
+          case 'hardpoints':
+          case 'gniazda': return ['hpEditor.v1'];
+          case 'loadout':
+          case 'fit': return ['loadout'];
+          case 'ship':
+          case 'statek':
+          case 'kadlub': return SAVE_KEYS.ship;
+          case 'dev':
+          case 'panele': return SAVE_KEYS.dev;
+          default: return ALL_KEYS;
+        }
+      }
+
+      function resetGameSave(scope) {
+        const wiped = [];
+        for (const key of keysForScope(scope)) {
+          try {
+            if (localStorage.getItem(key) === null) continue;
+            localStorage.removeItem(key);
+            wiped.push(key);
+          } catch { }
+        }
+        console.info('[reset] wyczyszczone:', wiped.length ? wiped.join(', ') : '(nic nie bylo zapisane)');
+        return wiped;
+      }
+
+      // Wyczyszczenie kluczy + reload to za malo: index.html wiesza
+      // `beforeunload -> saveLoadout`, wiec przy przeladowaniu `loadout` wrocilby
+      // zapisany ze stanu, ktory wciaz siedzi w pamiedzi. Dlatego przed reloadem
+      // zamykamy zapisy na klucz — `saveLoadout()` i devtoolsowe `saveLS()`
+      // sprawdzaja `window.__SAVE_LOCKED` i wychodza bez pisania.
+      function hardResetGameSave(scope) {
+        window.__SAVE_LOCKED = true;
+        const wiped = resetGameSave(scope);
+        location.reload();
+        return wiped;
+      }
+
+      window.__SAVE_LOCKED = false;
+      window.resetGameSave = resetGameSave;
+      window.hardResetGameSave = hardResetGameSave;
+      window.GAME_SAVE_KEYS = ALL_KEYS;
+
+      let params;
+      try { params = new URLSearchParams(location.search); } catch { return; }
+      if (!params.has('reset')) return;
+      resetGameSave(params.get('reset'));
+      // Parametr znika z adresu bez przeladowania: kolejne F5 startuje juz z czystego
+      // zapisu, zamiast kasowac go w kolko przy kazdym odswiezeniu.
+      params.delete('reset');
+      const query = params.toString();
+      try {
+        history.replaceState(null, '', location.pathname + (query ? '?' + query : '') + location.hash);
+      } catch { }
+    })();
+  </script>
+
   <link rel="stylesheet" href="assets/css/main.css">
   <link rel="stylesheet" href="assets/css/cockpit-ui-bridge.css">
   <link rel="stylesheet" href="assets/css/ring-city-flight.css">
@@ -246,6 +327,14 @@
               </div>
               <div style="margin-top:7px; font-size:10px; line-height:1.45; color:#6f8fb8;">
                 Cienie rzucane pod slonce przez planety, ksiezyce, ring, statki i asteroidy. High = najdluzsze smugi + wiecej statkow.
+              </div>
+              <div style="margin-top:12px; margin-bottom:8px; font-size:12px; color:#a2d9ff;">Lakier kadlubow</div>
+              <div class="menu-chip-group" aria-label="Lakier kadlubow">
+                <button class="menu-chip" data-lacquer="off">Off</button>
+                <button class="menu-chip" data-lacquer="on">On</button>
+              </div>
+              <div style="margin-top:7px; font-size:10px; line-height:1.45; color:#6f8fb8;">
+                Polysk kadlubow: odblask slonca i odbicie mglawicy. Koszt tylko po stronie karty graficznej.
               </div>
             </div>
 
@@ -709,6 +798,7 @@
     import * as THREE from "three";
     import { initStations3D, updateStations3D, detachPlanetStations3D, drawStations3D } from "./src/3d/stations3D.js";
     import { Core3D } from "./src/3d/core3d.js";
+    import { HullLacquer } from "./src/3d/hullLacquer.js";
     import { Destruction3D } from "./src/vfx/destruction3D.js";
     import { drawInfrastructureIcon, updateInfrastructureAnimations } from './src/buildings/infrastructureView.js';
     import { DestructorSystem, initHexBody } from "./src/game/destructor.js";
@@ -732,6 +822,8 @@
     window.Core3DPerf = (opts = {}) => (window.Core3D?.setPerfToggles ? window.Core3D.setPerfToggles(opts) : null);
     window.Core3DMsaa = (enabled = true, samples = 4) => (window.Core3D?.setMsaaEnabled ? window.Core3D.setMsaaEnabled(enabled, samples) : null);
     window.Core3DShaftQuality = (quality = 'medium') => (window.Core3D?.setShadowShaftsQuality ? window.Core3D.setShadowShaftsQuality(quality) : null);
+    // Lakier kadłubów: przełącznik z menu; strojenie na żywo w window.__hullLacquerTune.
+    window.Core3DLacquer = (enabled = true) => HullLacquer.setEnabled(enabled);
     window.Core3DPreset = (name = 'base') => {
       if (!window.Core3D) return null;
       const key = String(name || '').toLowerCase();
@@ -791,6 +883,10 @@
       npcHasPhysicalThrusters,
       syncNpcFlightState
     } from "./src/game/flight/npcFlight.js";
+    import { stepShipFlight, usesShipFlightModel } from "./src/game/flight/shipFlightModel.js";
+    import { describeFleetAwareness, pickContactTarget } from "./src/ai/fleetAwareness.js";
+    import { getFleetPhase } from "./src/ai/fleetCoordinator.js";
+    import { applyNpcCommandIntent } from "./src/ai/npcCommandPilot.js";
     import {
       buildNormalCommandMenuItems,
       buildRtsCommandMenuItems,
@@ -827,6 +923,7 @@
       stepRoll,
       rollingCells
     } from "./src/game/fighterClouds.js";
+    import { drawFighterSprite } from "./src/vfx/fighterSprite.js";
     import { shouldZeroStabilizedAngularVelocity, updateHeadingStabilizer } from "./src/game/flight/stabilizer.js";
     import { DestructorSystem, initHexBody, isHexShips3DActive, setHexShips3DActive, getHexStructuralState, getHexArenaStats, disposeHexBody, DESTRUCTOR_CONFIG, getCollisionBoundsDebug, getBroadphaseDebugInfo } from "./src/game/destructor.js";
     import { TowConstraintSystem } from "./src/game/towSystem.js";
@@ -899,7 +996,11 @@
       setLiveDebugPerfHud,
       installLiveDebugConsoleApi
     } from "./src/ui/liveDebug.js";
-    import { updateShields3D } from "./src/3d/shield3D.js";
+    import { updateShields3D, SHIELD_FIELD_TUNING } from "./src/3d/shield3D.js";
+    // Pole tarczy jest niewidoczne w normalnej pracy — widac je przy rozruchu,
+    // gaszeniu, peknieciu i lokalnie w miejscu trafienia. Te mnozniki stroja
+    // sile tych trzech chwil: ShieldFieldTuning.hitOpacity = 1.4 dziala od razu.
+    window.ShieldFieldTuning = SHIELD_FIELD_TUNING;
     import { ShieldImpactFX, SHIELD_IMPACT_PRESETS } from "./src/3d/shieldImpactFx.js";
     // Konsolowe strojenie efektow trafien w tarcze — odpowiednik suwakow
     // z prototypu shieldhitgpu.html. Presety sa zwyklymi obiektami, wiec
@@ -939,6 +1040,7 @@
     import { InfrastructureUI } from "./src/ui/infrastructureUI.js";
     import { ZonePainterUI } from "./src/ui/zonePainterUI.js";
     import { CanvasVFX } from "./src/vfx/canvasParticleSystem.js";
+    import { MuzzleFX3D } from "./src/3d/muzzleFx3D.js";
     import { Turret2D } from "./src/vfx/turret2D.js";
     import { FlakBurstVFX } from "./src/vfx/flakBurstVfx.js";
     import {
@@ -951,6 +1053,9 @@
     } from "./src/game/flakSystem.js";
     window.FlakBurstVFX = FlakBurstVFX;
     import { SparkSystem3D } from './src/3d/sparkSystem3D.js';
+    // Import z efektem ubocznym: podpina iskry tarcia pod zdarzenie 'grind'
+    // CollisionFX. Destructor nie woła już SparkSystem3D bezpośrednio.
+    import './src/vfx/collisionSparks.js';
     import { SensorSystem } from "./src/game/sensorSystem.js";
     window.SensorSystem = SensorSystem;
     window.SparkSystem3D = SparkSystem3D;
@@ -984,6 +1089,7 @@
     import { SpotterDroneSystem } from "./src/game/spotterDrone.js";
     import { WeaponController } from "./src/game/weaponController.js";
     import { getMountedWeaponAim } from "./src/game/weaponAim.js";
+    import { barrelsPerShotOf, queueSalvoBarrels, drainSalvoQueue } from "./src/game/weaponController.js";
     import { MASTER_WEAPONS, WEAPON_ICON_PATHS, WEAPON_SIZE_LABEL, getWeaponSizeRank, weaponFitsHardpointSize, shieldImpactClass } from "./src/data/weapons.js";
     import {
       addHangarSquadronMount,
@@ -1353,7 +1459,7 @@
           } else {
             spawnCallInShip(key, { mode });
           }
-          if (mode === 'friendly') setSupportOrder('guard', { force: true });
+          // Rozkaz skrzydła zostaje, jaki był (ATAK nie znika po przyzwaniu).
         });
       } else if (isSupportDragKey(key)) {
         btn.addEventListener('mousedown', (event) => {
@@ -1428,8 +1534,9 @@
       if (overCanvas) {
         const world = screenToWorld(x - rect.left, y - rect.top);
         const mode = getSupportSpawnMode();
+        // Rozkaz skrzydła zostaje, jaki był — dawniej każde przyzwanie
+        // przestawiało CAŁE skrzydło na ESKORTĘ i kasowało kliknięty ATAK.
         spawnCallInShip(key, { spawnPos: world, pos: world, mode });
-        if (mode === 'friendly') setSupportOrder('guard', { force: true });
       }
       mouse.left = false;
       mouse.click = false;
@@ -1559,7 +1666,6 @@
         const pos = { x: startWorld.x + dx * t, y: startWorld.y + dy * t };
         spawnCallInShip(key, { spawnPos: pos, pos, mode, singleModule: true });
       }
-      if (mode === 'friendly') setSupportOrder('guard', { force: true });
       toast(`LINIA: ${count}x ${key}`);
     }
 
@@ -2063,6 +2169,11 @@
       return !!mainMenuEl && !mainMenuEl.classList.contains('hidden');
     }
 
+    // Alt w kokpicie przełącza tryb interfejsu: wolna mysz + panele na żądanie.
+    function isHudPointerMode() {
+      return !!window.hudSystem?.cockpit?.pointerMode;
+    }
+
     // --- ZBIORCZA LISTA ELEMENTÓW HUD (Nowych i starych) ---
     function getGameUIElements() {
       return [
@@ -2535,6 +2646,19 @@
         const dist = Math.hypot(pushX, pushY) || 1;
         const dir = { x: pushX / dist, y: pushY / dist };
 
+        // Okręty z modelem lotu: ten sam pilot co w walce. Bez ogranicznika
+        // przeszkód — lider jest ZA nami, a pęd w jego stronę dławiłby ucieczkę.
+        if (usesShipFlightModel(npc) && window.capitalArriveTo) {
+          const escapeRange = Math.max(minSafeDist, (npc.radius || 30) * 3);
+          window.capitalArriveTo(npc, npc.x + dir.x * escapeRange, npc.y + dir.y * escapeRange, {
+            dt,
+            arrival: Math.max(70, (npc.radius || 30) + 35),
+            speedMode: 'combat',
+            noObstacleCap: true
+          });
+          return;
+        }
+
         if (npcHasPhysicalThrusters(npc)) {
           const escapeRange = Math.max(minSafeDist, (npc.radius || 30) * 3);
           const flight = executeNpcFlightCommand(npc, {
@@ -2575,11 +2699,15 @@
       // omijanie (łagodne dojście do slotu i USTĘPOWANIE graczowi z drogi).
       // Wcześniej formacja jechała komendą RTS z prędkością do ~940 u/s i pęd
       // ciężkiego okrętu przebijał słabą separację → wlatywał w gracza.
-      if (npcHasPhysicalThrusters(npc) && window.capitalArriveTo) {
+      // Slot jedzie razem z liderem, więc dopasowujemy jego prędkość; daleko od
+      // slotu (lider odleciał) okręt dogania go prędkością przelotu formacji.
+      if ((usesShipFlightModel(npc) || npcHasPhysicalThrusters(npc)) && window.capitalArriveTo) {
         window.capitalArriveTo(npc, slot.x, slot.y, {
           dt,
           arrival: Math.max(120, (npc.radius || 30) + 90),
-          combatSpeedMul: 0.9,
+          matchVx: Number(leader.vel?.x ?? leader.vx) || 0,
+          matchVy: Number(leader.vel?.y ?? leader.vy) || 0,
+          speedMode: dist > 3000 ? 'travel' : 'cruise',
           combatFacing: leader.angle
         });
         npc.forceTarget = null;
@@ -3027,8 +3155,28 @@
       };
     }
 
+    // Zależności pilota komend budowane leniwie: RTS_DEFAULT_ORBIT_RADIUS jest
+    // zadeklarowane niżej w skrypcie (odczyt przy ładowaniu = TDZ).
+    let _npcCommandPilotDeps = null;
+    function getNpcCommandPilotDeps() {
+      if (!_npcCommandPilotDeps) {
+        _npcCommandPilotDeps = {
+          getTargetPos: (unit, command) => getCommandTargetPos(unit, command),
+          pickTarget: (unit) => aiPickTarget(unit),
+          triggerRam: (unit, impulse) => triggerRamImpulse(unit, impulse, { effects: true, shakePower: 8 }),
+          defaultOrbitRadius: RTS_DEFAULT_ORBIT_RADIUS
+        };
+      }
+      return _npcCommandPilotDeps;
+    }
+
     function executeNpcCommand(npc, cmd, dt) {
       if (!cmd) return false;
+      // Okręty z modelem lotu: komenda to tylko intencja, a lot liczy
+      // stepShipFlight w npcStep — ta sama fizyka i pilot co w walce.
+      if (usesShipFlightModel(npc)) {
+        return applyNpcCommandIntent(npc, cmd, getNpcCommandPilotDeps());
+      }
       if (cmd.type === 'hold' && npcHasPhysicalThrusters(npc)) {
         const flight = executeNpcFlightCommand(npc, cmd, dt, {
           defaultArrival: cmd.arrival || Math.max(90, (npc.radius || 20) + 20),
@@ -3210,46 +3358,22 @@
         }
         npc.forceTarget = null;
         npc.target = target || null;
-      } else if (!target || npc.supportRetargetT <= 0) {
-        target = getSupportInheritedTarget(npc, searchRangeSq);
-
-        if (!target && window.aiPickBestTarget) {
-          target = window.aiPickBestTarget(npc, searchRange);
-        } else if (!target && window.aiPickTarget) {
-          target = window.aiPickTarget(npc);
-          if (target) {
-            const d2 = dist2(npc, target);
-            if (d2 > searchRangeSq) target = null;
-          }
-        }
-
-        if (order === 'engage' && !target && Array.isArray(npcs)) {
-          let best = null;
-          let bestD2 = Infinity;
-          for (const n of npcs) {
-            if (!n || n.dead) continue;
-            if (window.isEnemyUnit && !window.isEnemyUnit(npc, n)) continue;
-            const dx = n.x - npc.x;
-            const dy = n.y - npc.y;
-            const d2 = dx * dx + dy * dy;
-            if (d2 > searchRangeSq) continue;
-            if (d2 < bestD2) {
-              bestD2 = d2;
-              best = n;
-            }
-          }
-          target = best;
-        }
-
-        npc.forceTarget = target || null;
-        npc.target = target || null;
+      } else if (npc.supportRetargetT <= 0) {
+        // OKRĘTY: cel wybiera mózg bojowy z obrazu sytuacji floty (aiPickTarget →
+        // fleetAwareness: czujniki całej strony, smycz postawy ESKORTA/ATAK,
+        // pierwszeństwo dla celu namierzonego przez gracza). Ta warstwa decyduje
+        // już tylko: walka czy szyk. Dawniej sama szukała celu w 6 km (ESKORTA) /
+        // 14 km (ATAK) i co ~1 s NADPISYWAŁA forceTarget — rozkaz ataku RTS na cel
+        // dalszy niż 6 km był po sekundzie kasowany, a wroga z radaru nie widziała.
         npc.supportRetargetT = 0.7 + Math.random() * 0.4;
+        if (!target) target = window.aiPickTarget ? window.aiPickTarget(npc) : null;
+        if (target && target !== npc.forceTarget) npc.target = target;
       }
 
       // 3. Wykonanie AI
       // Gdy koordynator dał slot bitewny (flota zaangażowana), wchodzimy w tryb
       // bojowy NAWET bez bezpośredniego celu — mózg bojowy poleci do slotu w
-      // linii i tam sam namierzy wroga (retarget z RADAR 20000). Bez tego
+      // linii i tam sam namierzy wroga (obraz sytuacji floty). Bez tego
       // support wing orbitował gracza (guard), zamiast formować front.
       const hasBattleSlot = window.getBattleSlot ? !!window.getBattleSlot(npc) : false;
       if (target || hasBattleSlot) {
@@ -4489,9 +4613,18 @@
         setHardpointHangarSquadrons(hp, squadronMounts);
         return;
       }
-      // Odtwarzanie zapisanego fitu — broń została pobrana z ładowni przy
-      // pierwotnym montażu, więc drugi raz jej nie liczymy.
-      setHardpointMount(hp, entry.weaponId, { ammo: entry.ammo, maxAmmo: entry.maxAmmo, skipInventory: true });
+      // Zapisany fit jest źródłem prawdy dla tego, co WISI NA KADŁUBIE — ładownia
+      // ma tylko tego nie dublować. Wcześniej stało tu `skipInventory: true`, przez
+      // co sztuki zdjęte z ładowni przez automount przepadały razem ze starą tablicą
+      // hardpointów. Teraz montaż normalnie je pobiera, a gdy sztuki brakuje (broń
+      // kupiona albo zlootowana — ładownia nie jest zapisywana do localStorage),
+      // dokładamy ją i zaraz zdejmujemy montażem. Warunek `hp.mount !== weaponId`
+      // pilnuje, żeby odtworzenie TEGO SAMEGO działa nie wyprodukowało sztuki z niczego.
+      const inventory = Game.player?.inventory;
+      if (entry.weaponId && inventory && hp.mount !== entry.weaponId && !inventory.has(entry.weaponId)) {
+        inventory.give(entry.weaponId, 1);
+      }
+      setHardpointMount(hp, entry.weaponId, { ammo: entry.ammo, maxAmmo: entry.maxAmmo });
     }
 
     function tryPreserveMounts(previous) {
@@ -4514,6 +4647,9 @@
     }
 
     function saveLoadout() {
+      // Po klikniecu "Wyzeruj zapis" w DevTools zapis jest zamkniety na klucz, zeby
+      // `beforeunload` nie odtworzyl wlasnie wyczyszczonego `loadout` (patrz <head>).
+      if (window.__SAVE_LOCKED) return;
       try {
         syncPlayerHullSnapshot();
         const activeHullId = normalizePlayerHullId(PLAYER.activeHullId || ship.activeHullId || DEFAULT_PLAYER_HULL_ID);
@@ -4562,9 +4698,20 @@
               )
               : [];
             if ((!saved.mount || !WEAPONS[saved.mount]) && hangarSquadrons.length === 0) continue;
-            if (!savedByType.has(saved.type)) savedByType.set(saved.type, []);
-            savedByType.get(saved.type).push({ ...saved, hangarSquadrons });
+            // Broń mogła zmienić rodzaj gniazda już po zapisie — hexlance przeszedł
+            // ze `special` na `builtin` (2026-04-11). Kubełkujemy po AKTUALNYM
+            // mountType, nie po typie z zapisu: inaczej wpis ląduje na gnieździe
+            // special, setHardpointMount go odrzuca (mountType !== hp.type)
+            // i broń znika bez śladu, a gniazdo builtin zostaje puste.
+            const bucket = WEAPONS[saved.mount]?.mountType || saved.type;
+            if (!savedByType.has(bucket)) savedByType.set(bucket, []);
+            savedByType.get(bucket).push({ ...saved, hangarSquadrons });
           }
+          // Automount przed chwilą wyjął domyślny fit z ładowni, a my zaraz
+          // podmienimy całą tablicę hardpointów na `fresh`. Bez zwrotu te sztuki
+          // wyparowują — tak właśnie ginął hexlance przy zapisie bez gniazda
+          // built-in: nie było go ani na kadłubie, ani w magazynie.
+          reclaimMountedWeaponsToInventory();
           for (const hp of fresh) {
             const arr = savedByType.get(hp.type);
             if (arr && arr.length) {
@@ -4792,7 +4939,6 @@
       const sysData = {
         power: (enginePower?.current ?? 0) * 100,
         boost: (boost?.fuel ?? 0) / boostFuelMax * 100,
-        core: 100,
         warpState: warp?.state,
         warpCharge: warp?.charge ?? 0,
         warpMax: warp?.chargeTime ?? 1,
@@ -4806,7 +4952,8 @@
         driveShiftCueDanger: driveState.shiftCueDanger,
         driveAuto: driveState.auto,
         driveShiftBoost: driveState.shiftBoostTimer > 0,
-        driveSpeedLimit: driveState.speedLimit
+        driveSpeedLimit: driveState.speedLimit,
+        driveModeMaxSpeed: driveState.modeMaxSpeed
       };
       const nowMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
       const hudRadarRange = window.hudSystem?.getRadarRange?.() || HUD_RADAR_RANGE;
@@ -4833,9 +4980,24 @@
         locationName: zoneState.current?.label || 'UNKNOWN SECTOR',
         bannerMessage: zoneState.messages[0] || null,
         weaponHud: buildWeaponHudState(),
-        radar: hudRadarSnapshot
+        radar: hudRadarSnapshot,
+        // Karta celu i wyniki skanu w kokpicie (src/ui/cockpitUI.js).
+        target: scannerSelectedTarget || lockedTarget || null,
+        lockedTargets,
+        scanSerial: scannerState.burstSerial,
+        repairActive: playerRepairActive,
+        boostActive: boost?.state === 'active',
+        hangar: getHudHangarState()
       };
       window.hudSystem.update(ship, sysData, envData);
+    }
+
+    // Jeden obiekt na cały bieg — HUD czyta go co klatkę.
+    const hudHangarState = { mounted: 0, out: 0 };
+    function getHudHangarState() {
+      hudHangarState.mounted = Game.player?.weapons?.[HP.HANGAR]?.length || 0;
+      hudHangarState.out = SQUAD.list.length;
+      return hudHangarState;
     }
 
     function getHudWeaponByType(type) {
@@ -4857,24 +5019,29 @@
       return clamp(1 - (cdLeft / cdMax), 0, 1);
     }
 
+    // `ready` znaczy „naciśnięcie 4 coś zrobi", a NIE „superbroń jest naładowana".
+    // Kokpit wiąże z tym klasę `unavailable` (pointer-events: none), więc gdyby
+    // `ready` szło za `armed`, przycisk byłby martwy poza pięciosekundowym oknem
+    // po naładowaniu. Built-in nie ma auto-fire, więc nie ma czego przełączać.
     function getBuiltInWeaponHudState() {
       const builtins = Game.player?.weapons?.[HP.BUILTIN] || [];
       const hexlance = builtins.find(loadout => loadout?.weapon?.id === 'hexlance_siege')?.weapon || null;
       if (hexlance) {
         const sw = Superweapon?.superweaponState || null;
-        if (!sw) return { weapon: hexlance, charge: 1 };
+        if (!sw) return { weapon: hexlance, charge: 1, ready: true };
         if (sw.charging) {
-          return { weapon: hexlance, charge: clamp((Number(sw.chargeProgress) || 0) / Math.max(0.01, Number(sw.chargeTime) || 1), 0, 1) };
+          // W trakcie ładowania klawisz nic nie robi — tryFireSuperweapon odbija.
+          return { weapon: hexlance, charge: clamp((Number(sw.chargeProgress) || 0) / Math.max(0.01, Number(sw.chargeTime) || 1), 0, 1), ready: false };
         }
         if (sw.armed) {
-          return { weapon: hexlance, charge: 1, armed: true };
+          return { weapon: hexlance, charge: 1, armed: true, ready: true };
         }
         const cdLeft = Math.max(0, Number(sw.cooldown) || 0);
         const cdMax = Math.max(0.01, Number(sw.cooldownMax) || cdLeft || 1);
-        return { weapon: hexlance, charge: clamp(1 - (cdLeft / cdMax), 0, 1) };
+        return { weapon: hexlance, charge: clamp(1 - (cdLeft / cdMax), 0, 1), ready: cdLeft <= 0 && sw.queue?.length === 0 };
       }
       const fallbackWeapon = builtins.find(loadout => loadout?.weapon)?.weapon || null;
-      return { weapon: fallbackWeapon, charge: fallbackWeapon ? 1 : 0 };
+      return { weapon: fallbackWeapon, charge: fallbackWeapon ? 1 : 0, ready: !!fallbackWeapon };
     }
 
     const _combinedSpecialLoadouts = [];
@@ -4964,7 +5131,7 @@
         },
         builtin: {
           weapon: builtInHud.weapon,
-          enabled: !!builtInHud.armed,
+          enabled: !!builtInHud.ready,
           charge: builtInHud.charge
         },
         missile: {
@@ -6248,6 +6415,9 @@
         label,
         tone
       }];
+      // Kokpit pokazuje komunikaty w linii nad klastrem (stary baner i fallback
+      // na kanwie są wyłączone, odkąd istnieje window.hudSystem).
+      window.hudSystem?.pushAlert?.(text.trim(), { label, tone, duration });
     }
 
     function updateZoneMessages(dt) {
@@ -7943,8 +8113,13 @@
       pointerConfirmArmed: false
     };
     window.targetingMode = targetingMode;
-    // Ostatnio ustawiony stan kursora systemowego — zapis do style tylko przy zmianie.
-    let _osCursorHidden = null;
+    // Kursor systemowy: render() zbiera życzenia w klatce (_cursorRequest = hover
+    // stacji/opcji, _osCursorHidden = własny celownik), a na końcu zapisuje style
+    // tylko przy zmianie. Dawniej góra render() co klatkę nadpisywała 'default'
+    // i strzałka OS wisiała nad celownikiem.
+    let _osCursorHidden = false;
+    let _osCursorValue = null;
+    let _cursorRequest = '';
 
     function setTargetingMode(nextMode) {
       const next = Math.max(TARGETING_MODE.SINGLE, Math.min(TARGETING_MODE.SELECT, Number(nextMode) || 0));
@@ -8503,12 +8678,33 @@
     function updateSpecialWeaponCooldowns(dt) {
       const specials = getCombinedSpecialLoadouts(Game.player);
       for (let i = 0; i < specials.length; i++) {
-        const hp = specials[i]?.hp;
+        const loadout = specials[i];
+        const hp = loadout?.hp;
         if (!hp) continue;
+        // Reszta salwy wielolufowej. Domknięcie powstaje TYLKO gdy kolejka
+        // coś trzyma — czyli przez ~30 ms po strzale, a nie co klatkę.
+        if (hp.salvo && hp.salvo.length) {
+          drainSalvoQueue(hp, loadout?.weapon?.id, dt,
+            (barrel) => fireSpecialBarrel(loadout, hp, i, barrel, true));
+        }
         const current = Number(hp.specialCd) || 0;
         if (current <= 0) continue;
         hp.specialCd = Math.max(0, current - dt);
       }
+    }
+
+    // Jeden strzał z jednej lufy zaczepu `special`. Cel i kąt liczymy
+    // W CHWILI STRZAŁU, nie kolejkowania — wieżyczka obraca się w trakcie salwy,
+    // a cel może w tym czasie zginąć.
+    function fireSpecialBarrel(loadout, hp, slot, barrelIndex, multiBarrel) {
+      const weapon = loadout?.weapon;
+      if (!weapon || !p1WeaponCtrl || !ship || ship.dead) return 0;
+      const aim = getMountedWeaponAim(ship, loadout);
+      const target = isTargetAlive(aim.target) ? aim.target : null;
+      const muzzle = p1WeaponCtrl.computeMountedMuzzle(loadout, barrelIndex);
+      const base = `special:${hp?.id || slot}`;
+      muzzle.emitterUid = multiBarrel ? `${base}:b${barrelIndex}` : base;
+      return Number(window.fireWeaponCore(ship, target, weapon.id, muzzle)) || 0;
     }
 
     function _fireSpecialGroup(loadouts) {
@@ -8528,13 +8724,16 @@
         const cdLeft = Math.max(0, Number(hp.specialCd) || 0);
         if (cdLeft > 0) continue;
 
+        // Salwa: `barrelsPerShot` luf na jedno naciśnięcie. Pierwsza idzie
+        // od razu, reszta z kolejki w `updateSpecialWeaponCooldowns`.
         const aim = getMountedWeaponAim(ship, loadout);
-        const muzzle = p1WeaponCtrl.computeMountedMuzzle(loadout, aim.nextBarrel++);
-        muzzle.emitterUid = `special:${hp?.id || i}`;
-        const target = isTargetAlive(aim.target) ? aim.target : null;
+        const barrels = barrelsPerShotOf(weapon);
+        const start = Number(aim.nextBarrel) || 0;
+        aim.nextBarrel = start + barrels;
 
-        const cd = window.fireWeaponCore(ship, target, weapon.id, muzzle);
-        hp.specialCd = Math.max(0.01, Number(cd) || Number(weapon.cooldown) || 0.25);
+        const cd = fireSpecialBarrel(loadout, hp, i, start, barrels > 1);
+        hp.specialCd = Math.max(0.01, cd || Number(weapon.cooldown) || 0.25);
+        queueSalvoBarrels(hp, weapon.id, start, barrels);
         fired = true;
       }
       return fired;
@@ -8548,13 +8747,30 @@
       return _fireSpecialGroup(Game.player?.weapons?.[HP.SPECIAL_MISSILE] || []);
     }
 
+    // Hexlance jest DWUTAKTOWY: pierwsze 4 rozpoczyna ładowanie (1,2 s), dopiero
+    // drugie 4 — w pięciosekundowym oknie „armed" — wypuszcza salwę. Wszystkie
+    // odmowy niżej były wcześniej ciche, więc martwy klawisz, brak działa na
+    // kadłubie i przeładowanie wyglądały identycznie: jak nic. Każde wyjście ma
+    // teraz komunikat, tak jak klawisze 1/2/3/5.
     function tryFireMountedBuiltInWeapons() {
       const builtins = Game.player?.weapons?.[HP.BUILTIN] || [];
-      if (builtins.length === 0) return false;
+      const hasHexlance = builtins.some(loadout => loadout?.weapon?.id === 'hexlance_siege' && loadout?.hp);
+      if (!hasHexlance) {
+        pushZoneMessage('HEXLANCE: BRAK DZIAŁA NA KADŁUBIE', 2.0);
+        return false;
+      }
 
-      const hasHexlance = builtins.some(loadout => loadout?.weapon?.id === 'hexlance_siege');
-      if (!hasHexlance) return false;
-      return !!Superweapon.tryFireSuperweapon(ship);
+      const sw = Superweapon?.superweaponState || null;
+      const wasArmed = !!sw?.armed;
+      if (Superweapon.tryFireSuperweapon(ship)) {
+        pushZoneMessage(wasArmed ? 'HEXLANCE: OGNIA' : 'HEXLANCE: ŁADOWANIE — WCIŚNIJ 4 PONOWNIE', 1.8);
+        return true;
+      }
+
+      if (sw?.charging) pushZoneMessage('HEXLANCE: ŁADOWANIE…', 1.0);
+      else if (sw?.queue?.length) pushZoneMessage('HEXLANCE: SALWA W TOKU', 1.0);
+      else if (Number(sw?.cooldown) > 0) pushZoneMessage(`HEXLANCE: PRZEŁADOWANIE ${Number(sw.cooldown).toFixed(1)}s`, 1.2);
+      return false;
     }
 
 
@@ -8778,50 +8994,30 @@
       if (npc && npc.forceTarget && !npc.forceTarget.dead) {
         return npc.forceTarget;
       }
-      let best = null;
-      let maxScore = -Infinity;
-
-      if (!npc.friendly && ship && !ship.dead && !ship.destroyed) {
-        const dx = ship.pos.x - npc.x;
-        const dy = ship.pos.y - npc.y;
-        const distSq = dx * dx + dy * dy;
-        if (distSq <= 20000 * 20000) {
-          maxScore = -distSq + 2000000;
-          best = ship;
-        }
-      }
-      const pooledTargets = npc.friendly
-        ? window.getAIPirateCandidates?.()
-        : window.getAIFriendlyCandidates?.();
-      const targets = Array.isArray(pooledTargets) ? pooledTargets : npcs;
-
-      // RADAR POKRYWAJACY CALA STACJE PIRACKA
-      const RADAR_RANGE_SQ = 20000 * 20000;
-
-      for (let i = 0; i < targets.length; i++) {
-        const t = targets[i];
-        if (!t || t.dead) continue;
-        if (npc.friendly ? !t.isPirate : t.friendly !== true) continue;
-        const tx = t.pos ? t.pos.x : t.x;
-        const ty = t.pos ? t.pos.y : t.y;
-        const distSq = (tx - npc.x) ** 2 + (ty - npc.y) ** 2;
-
-        if (distSq > RADAR_RANGE_SQ) continue;
-
-        // Dystans dominuje (atak na najbliższego), a gracz i wrogie capitale są
-        // priorytetami RÓWNORZĘDNYMI. Dawny magnes +10M na gracza sprawiał, że
-        // CAŁA flota waliła w gracza zamiast rozdzielać się na wrogie okręty.
-        let score = -distSq;
-        if (t === ship || t.isCapitalShip) score += 2000000;
-
-        if (score > maxScore) {
-          maxScore = score;
-          best = t;
-        }
-      }
-      return best;
+      // Wspólny obraz sytuacji strony (src/ai/fleetAwareness.js): widoczne
+      // kontakty z czujników WSZYSTKICH okrętów strony (dla sojuszników także
+      // Atlasa, sond i dronów), ze smyczą postawy — ESKORTA bije tylko to, co
+      // blisko gracza; pirat z bazą broni stacji. Dawny „radar" 20 km od
+      // pojedynczego okrętu nie widział tego, co gracz miał na radarze.
+      // Skrzydło wsparcia bierze w pierwszej kolejności cel namierzony przez gracza.
+      return pickContactTarget(npc, {
+        player: ship,
+        priority: npc?.supportData ? lockedTarget : null
+      });
     }
     window.aiPickTarget = aiPickTarget;
+    // Konsola: FleetAIDebug() — co widzi każda strona (źródła czujników,
+    // widoczne kontakty, duchy) i w jakiej fazie jest jej flota
+    // (idle / advance / engage / search, dystans frontu od wroga).
+    window.FleetAIDebug = () => {
+      const phase = (side) => {
+        const st = getFleetPhase(side);
+        return st ? { phase: st.phase, members: st.members, threats: st.threats, frontDist: Math.round(st.frontDist) || null } : null;
+      };
+      const out = { awareness: describeFleetAwareness(), friendly: phase('friendly'), pirate: phase('pirate'), wingOrder: SupportWing?.order };
+      console.log(out);
+      return out;
+    };
 
     function applyRingFlightDevSpawn() {
       const params = new URLSearchParams(location.search);
@@ -9300,6 +9496,31 @@
         const used = getBagMass(PLAYER.cargo);
         const capacity = Number(getPlayerHullDef(PLAYER.activeHullId)?.cargoCap) || 0;
         return `${Math.round(used)} / ${Math.round(capacity)}`;
+      },
+      // Opis celu dla karty celu w kokpicie — te same nazwy i klasy co radar/skaner.
+      describeTarget(target) {
+        if (!target) return null;
+        const asteroid = isAsteroidTarget(target);
+        const station = !asteroid && isScannerStationContact(target, null);
+        const subsystem = target.__targetingSubsystem ? target : null;
+        const body = subsystem ? subsystem.ownerEntity : target;
+        const hp = Number(body?.hp ?? body?.hull?.val);
+        const shield = Number(body?.shield?.val);
+        let name = formatNpcName(target);
+        if (station) name = String(target.name || 'Stacja');
+        else if (asteroid) name = getRadarTargetUnitClass(target);
+        else if (subsystem) name = `${formatNpcName(body)} · ${subsystem.label || 'SUB'}`;
+        return {
+          name,
+          unitClass: getRadarTargetUnitClass(target),
+          kind: asteroid ? 'asteroid' : station ? 'station' : (body?.friendly ? 'friendly' : 'hostile'),
+          distance: Math.hypot(getTargetX(target) - ship.pos.x, getTargetY(target) - ship.pos.y),
+          hp: Number.isFinite(hp) ? hp : null,
+          hpMax: Number(body?.maxHp ?? body?.hull?.max) || 0,
+          shield: Number.isFinite(shield) ? shield : null,
+          shieldMax: Number(body?.shield?.max) || 0,
+          locked: lockedTargets.includes(target) || lockedTarget === target
+        };
       }
     });
 
@@ -10809,6 +11030,7 @@
           <button class="mechanic-tab-btn" data-filter="aux">Bron dodatkowa</button>
           <button class="mechanic-tab-btn" data-filter="hangar">Hangary</button>
           <button class="mechanic-tab-btn" data-filter="special">Bron specjalna</button>
+          <button class="mechanic-tab-btn" data-filter="builtin">Wbudowane</button>
           ${isMechanicDevMode() ? '<button class="mechanic-tab-btn" id="mechanic-fill-weapons" type="button">Fill weapons</button>' : ''}
         </div>
         <div id="mechanic-available" class="weapon-pool mechanic-list-scroll"></div>
@@ -10827,6 +11049,7 @@
           <button class="mechanic-tab-btn" data-filter="aux">Bron dodatkowa</button>
           <button class="mechanic-tab-btn" data-filter="hangar">Hangary</button>
           <button class="mechanic-tab-btn" data-filter="special">Bron specjalna</button>
+          <button class="mechanic-tab-btn" data-filter="builtin">Wbudowane</button>
         </div>
         <div class="mechanic-batch-row">
           <span class="mechanic-batch-label">Hardpointy:</span>
@@ -12383,7 +12606,9 @@
           : quality === 'early' ? ' · ZA WCZEŚNIEJ'
             : quality === 'late' ? ' · ZA PÓŹNO'
               : quality === 'auto' ? ' · AUTO' : '';
-      pushZoneMessage(`BIEG ${driveState.gear}/${driveState.gearCount}${suffix}`, 1.1);
+      const tone = quality === 'perfect' || quality === 'good' ? 'good'
+        : quality === 'early' || quality === 'late' ? 'warn' : 'status';
+      pushZoneMessage(`BIEG ${driveState.gear}/${driveState.gearCount}${suffix}`, 1.1, { tone });
     }
 
     function requestPlayerShiftUp() {
@@ -13385,7 +13610,9 @@
       active: false,
       lockAnim: 0,
       sweepTargets: new Set(),
-      autoInspectFirst: false
+      autoInspectFirst: false,
+      // Licznik impulsów X — kokpit pokazuje po nim wyniki skanu przez 10 s.
+      burstSerial: 0
     };
     let scannerSelectedTarget = null;
     let scannerPassiveContactsAt = Number.NEGATIVE_INFINITY;
@@ -13751,6 +13978,7 @@
       scannerState.lockAnim = 0;
       invalidateScannerPassiveContacts();
       if (scannerState.active) {
+        scannerState.burstSerial += 1;
         refreshScannerPassiveContacts(true);
         scanWaves.length = 0;
         triggerScanWave({ reset: true });
@@ -16951,7 +17179,10 @@
         const cd = window.fireWeaponCore(ship, targetToPass, weaponData.id, muzzle);
 
         // Efekty wizualne wystrzału (Muzzle flash) z lufy gracza
-        if (weaponData.category !== 'beam') {
+        // Armata i Tempest Ion mają własny błysk 3D z dema
+        // (src/3d/muzzleFx3D.js) — kanwowy rozbłysk pod nim to druga
+        // warstwa tego samego efektu w tym samym punkcie.
+        if (weaponData.category !== 'beam' && !MuzzleFX3D.handles(weaponData.id)) {
           const isHeavyWeapon = (weaponData.size === 'L' || weaponData.size === 'Capital');
           const muzzleScale = isHeavyWeapon ? 1.8 : 1.0;
           if (weaponData.category === 'torpedo') {
@@ -18862,6 +19093,10 @@
               npc.__npcFlightIntegrated = false;
               continue;
             }
+            if (usesShipFlightModel(npc)) {
+              stepShipFlight(npc, dt);
+              continue;
+            }
             npc.vx *= (npc.friction || 0.99);
             npc.vy *= (npc.friction || 0.99);
             npc.x += (npc.vx || 0) * dt;
@@ -18898,7 +19133,17 @@
             continue;
           }
 
-          // 3. Fizyka (Ruch)
+          // 3a. Okręty (fregata → superkapitał): pilot + integrator KAŻDY tick,
+          // według specyfikacji kadłuba. Mózg (wyżej, raz na 6 ticków) tylko
+          // ustawia intencję — nie całkuje ruchu, więc nie ma już dwóch
+          // integratorów na zmianę (pozycja szła 1,83× szybciej niż prędkość,
+          // a dwa sterowniki obrotu szarpały kadłubem).
+          if (usesShipFlightModel(npc)) {
+            stepShipFlight(npc, dt);
+            continue;
+          }
+
+          // 3. Fizyka (Ruch) — myśliwce i reszta bytów bez modelu lotu.
           // NaN recovery — if AI produced NaN velocity, reset to zero
           if (!Number.isFinite(npc.vx)) npc.vx = 0;
           if (!Number.isFinite(npc.vy)) npc.vy = 0;
@@ -20764,7 +21009,16 @@
       PerfHUD.addTiming('deformTime', performance.now() - tDestrVis0);
 
       const mWorld = screenToWorld(mouse.x, mouse.y);
+      // Okno „armed" trwa 5 s i gaśnie samo. Bez komunikatu przepalony ładunek
+      // wygląda dokładnie jak zepsuty klawisz — gracz czeka na strzał, którego
+      // już nie będzie. Salwa też zeruje `armed`, dlatego pustą kolejką
+      // odróżniamy wygaśnięcie od normalnego odpalenia.
+      const swArmedBeforeUpdate = !!Superweapon.superweaponState?.armed;
       Superweapon.updateSuperweapon(frame, ship, mWorld);
+      if (swArmedBeforeUpdate && !Superweapon.superweaponState?.armed
+        && !Superweapon.superweaponState?.queue?.length) {
+        pushZoneMessage('HEXLANCE: OKNO STRZAŁU MINĘŁO', 1.6);
+      }
 
       // >>> TO JEST KLUCZOWE - ODDZIELNA AKTUALIZACJA WIZUALIÓW <<<
       const tVfxUpdate0 = performance.now();
@@ -21287,23 +21541,26 @@
         return;
       }
 
-      if (npc.fighter) {
+      if (isFighterUnit(npc)) {
         const size = Math.max(4, (npc.radius || 12) * _zoom);
         ctx.save();
         ctx.translate(s.x, s.y);
-        ctx.rotate((npc.angle || 0) - Math.PI / 2);
-        ctx.fillStyle   = npc.friendly ? '#5cf' : '#f55';
-        ctx.strokeStyle = npc.friendly ? '#aef' : '#faa';
-        ctx.lineWidth = Math.max(0.5, _zoom * 0.8);
-        ctx.beginPath();
-        ctx.moveTo(0,           -size * 1.2);
-        ctx.lineTo( size * 0.7,  size * 0.6);
-        ctx.lineTo( size * 0.2,  size * 0.2);
-        ctx.lineTo(-size * 0.2,  size * 0.2);
-        ctx.lineTo(-size * 0.7,  size * 0.6);
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
+        ctx.rotate(npc.angle || 0);
+        if (!drawFighterSprite(ctx, npc.friendly, size)) {
+          ctx.fillStyle   = npc.friendly ? '#5cf' : '#f55';
+          ctx.strokeStyle = npc.friendly ? '#aef' : '#faa';
+          ctx.lineWidth = Math.max(0.5, _zoom * 0.8);
+          // Both sprite and fallback point along +X (the flight/fire heading).
+          ctx.beginPath();
+          ctx.moveTo( size * 1.2,  0);
+          ctx.lineTo(-size * 0.6,  size * 0.7);
+          ctx.lineTo(-size * 0.2,  size * 0.2);
+          ctx.lineTo(-size * 0.2, -size * 0.2);
+          ctx.lineTo(-size * 0.6, -size * 0.7);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+        }
         ctx.restore();
         drawNpcStatusBars(ctx, npc, s, size);
         return;
@@ -21341,7 +21598,7 @@
     function render(alpha, frameDt) {
       const tRenderProfile0 = performance.now();
       let tRenderProfileSection = tRenderProfile0;
-      canvas.style.cursor = keys['alt'] ? 'auto' : 'default';
+      _cursorRequest = '';
       ctx.clearRect(0, 0, W, H);
       const renderDbgEnabled = RenderLiveDebug.enabled;
       const tRenderStart = renderDbgEnabled ? performance.now() : 0;
@@ -21409,8 +21666,10 @@
         const centerX = W * 0.5;
         const centerY = H * 0.5;
         const zoomSafe = Math.max(0.1, camera.zoom || 1);
-        const mouseOffsetX = (splitScreenMode || keys['alt']) ? 0 : (mouse.x - centerX) * lookAheadFactor / zoomSafe;
-        const mouseOffsetY = (splitScreenMode || keys['alt']) ? 0 : (mouse.y - centerY) * lookAheadFactor / zoomSafe;
+        // Tryb interfejsu (Alt w kokpicie) = wolna mysz: kamera nie wychyla się za kursorem.
+        const freeMouse = splitScreenMode || isHudPointerMode();
+        const mouseOffsetX = freeMouse ? 0 : (mouse.x - centerX) * lookAheadFactor / zoomSafe;
+        const mouseOffsetY = freeMouse ? 0 : (mouse.y - centerY) * lookAheadFactor / zoomSafe;
 
         // Velocity-based camera lead — zawsze ~15% szerokości ekranu w world units,
         // niezależnie od zooma i prędkości hulla.
@@ -22224,7 +22483,7 @@
         // Stary hover-ring został usunięty; wizualizację celu prowadzi wyłącznie
         // aktywny celownik SINGLE/MULTI/SUB. Stacja nadal sygnalizuje klik kursorem.
         if (scan.target && scan.targetType === 'station' && mouse.overCanvas && !stationUI.open) {
-          canvas.style.cursor = 'pointer';
+          _cursorRequest = 'pointer';
         }
         const radarUiActive = false;
         if (radarUiActive) {
@@ -22983,16 +23242,14 @@
 
       // Kursor systemowy chowamy dokladnie tam, gdzie rysujemy wlasny celownik.
       // Panel stacji, CIC, RTS, kolo trybow i menu maja dostac strzalke z powrotem.
-      const wantHiddenCursor = gameStarted
+      // Tryb interfejsu (Alt) też oddaje strzałkę. Zapis do style — na końcu render().
+      _osCursorHidden = gameStarted
         && !stationUI.open
         && !targetingMode.wheelOpen
         && !CICDisplay.active
         && !isRtsModeActive()
+        && !isHudPointerMode()
         && mouse.overCanvas;
-      if (wantHiddenCursor !== _osCursorHidden) {
-        _osCursorHidden = wantHiddenCursor;
-        canvas.style.cursor = wantHiddenCursor ? 'none' : '';
-      }
 
       if (gameStarted && !stationUI.open && !targetingMode.wheelOpen) {
         if (splitScreenMode && camera2 && player2Ship) {
@@ -23188,24 +23445,11 @@
       }
       renderZoneMessages();
       renderMissionCompleteBanner();
-      if (keys['alt'] && !splitScreenMode) {
-        ctx.save();
-        const label = 'ALT  ·  WOLNA MYSZ';
-        ctx.font = 'bold 12px "Courier New", monospace';
-        const tw = ctx.measureText(label).width;
-        const px = 12, py = 6;
-        const rx = W / 2 - tw / 2 - px, ry = 14;
-        ctx.fillStyle = 'rgba(0,0,0,0.55)';
-        ctx.beginPath();
-        ctx.roundRect(rx, ry, tw + px * 2, 12 + py * 2, 4);
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(100,220,255,0.55)';
-        ctx.lineWidth = 1;
-        ctx.stroke();
-        ctx.fillStyle = 'rgba(100,220,255,0.9)';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(label, rx + px, ry + py + 6);
-        ctx.restore();
+      // Baner "ALT · TRYB INTERFEJSU" rysuje kokpit (DOM), a kursor ustawiamy raz na klatkę.
+      const nextCursor = _cursorRequest || (_osCursorHidden ? 'none' : 'default');
+      if (nextCursor !== _osCursorValue) {
+        _osCursorValue = nextCursor;
+        canvas.style.cursor = nextCursor;
       }
       PerfHUD.addTiming('renderUiTime', performance.now() - tRenderUi0);
       if (renderDbgEnabled) {
@@ -23368,7 +23612,7 @@
 
         const over = mouse.x > L && mouse.x < R && mouse.y > T && mouse.y < B;
         if (over) {
-          canvas.style.cursor = 'pointer';
+          _cursorRequest = 'pointer';
           if (mouse.click) {
             window.Nebula.setQuality(opt);
             mouse.click = false; // "zjedz" kliknięcie
@@ -24638,6 +24882,38 @@
       const saved = localStorage.getItem('sc_shadow_shafts');
       if (saved) applyShaftQuality(saved);
       updateShaftQualityUI();
+    });
+
+    // --- LAKIER KADLUBOW (hullLacquer.js) ---
+
+    function updateLacquerUI() {
+      const current = (window.OPTIONS && window.OPTIONS.hullLacquer) || 'on';
+      document.querySelectorAll('[data-lacquer]').forEach(btn => {
+        const isActive = (btn.dataset.lacquer === current);
+        btn.classList.toggle('active', isActive);
+        btn.setAttribute('aria-pressed', isActive);
+      });
+    }
+
+    function applyLacquer(mode) {
+      if (window.OPTIONS) window.OPTIONS.hullLacquer = mode;
+      if (typeof window.Core3DLacquer === 'function') window.Core3DLacquer(mode !== 'off');
+    }
+
+    document.querySelectorAll('[data-lacquer]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const mode = e.target.dataset.lacquer;
+        applyLacquer(mode);
+        localStorage.setItem('sc_hull_lacquer', mode);
+        updateLacquerUI();
+        console.log(`Lakier kadłubów: ${mode}`);
+      });
+    });
+
+    window.addEventListener('DOMContentLoaded', () => {
+      const saved = localStorage.getItem('sc_hull_lacquer');
+      if (saved) applyLacquer(saved);
+      updateLacquerUI();
     });
 
   </script>

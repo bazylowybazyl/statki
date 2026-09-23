@@ -9,6 +9,7 @@ const MAX_IMPACTS = 16;
 const DEFAULT_ENERGY_SHOT_DURATION = 0.5;
 const ACTIVATION_SPEED = 1.8;
 const BREAK_DURATION = 0.28;
+const DEACTIVATION_SPEED = 2.4;
 const IMPACT_DECAY = 2.4;
 const DEFAULT_SHIELD_DIMENSION = 40;
 export const SHIELD_RADIUS_MARGIN = 1.15;
@@ -391,9 +392,17 @@ export function setEntityShieldForcedOff(entity, forced = true) {
   entity._shieldForcedOff = !!forced;
   entity.shield.forceOff = !!forced;
   if (forced) {
-    entity.shield.state = 'off';
-    entity.shield.activationProgress = 0;
-    entity.shield.currentAlpha = 0;
+    const st = entity.shield;
+    // Gaszenie jest animowane: pole opada falą do środka (stan 'deactivating').
+    // Blokowanie pocisków ustaje NATYCHMIAST — isShieldSuppressed jest sprawdzane
+    // przed stanem, więc 'deactivating' jest czysto wizualny.
+    if (st.state !== 'off' && (Number(st.activationProgress) || 0) > 0.02) {
+      st.state = 'deactivating';
+    } else {
+      st.state = 'off';
+      st.activationProgress = 0;
+      st.currentAlpha = 0;
+    }
   }
   return true;
 }
@@ -402,7 +411,7 @@ export function getShieldBlockingProgress(shield) {
   const st = ensureShield(shield);
   if (!st) return 0;
   if ((Number(st.val) || 0) <= 0) return 0;
-  if (st.state === 'off' || st.state === 'breaking') return 0;
+  if (st.state === 'off' || st.state === 'breaking' || st.state === 'deactivating') return 0;
   const progress = clamp(st.activationProgress ?? (st.state === 'active' ? 1 : 0), 0, 1);
   if (progress < SHIELD_BLOCKING_ACTIVATION_THRESHOLD) return 0;
   return progress;
@@ -490,6 +499,19 @@ export function updateShieldFx(entity, dt) {
   const shield = ensureShield(entity?.shield);
   if (!shield) return;
   if (isShieldSuppressed(entity)) {
+    // Wygaszanie na życzenie dopala się mimo suppresji — inaczej pole znikałoby
+    // w jednej klatce i nie byłoby czego animować.
+    if (shield.state === 'deactivating') {
+      const fade = Math.max(0, Number(dt) || 0) * DEACTIVATION_SPEED;
+      shield.activationProgress = Math.max(0, (Number(shield.activationProgress) || 0) - fade);
+      shield.currentAlpha = shield.activationProgress;
+      if (shield.activationProgress <= 0.001) {
+        shield.state = 'off';
+        shield.activationProgress = 0;
+        shield.currentAlpha = 0;
+      }
+      return;
+    }
     shield.state = 'off';
     shield.activationProgress = 0;
     shield.currentAlpha = 0;
@@ -533,6 +555,18 @@ export function updateShieldFx(entity, dt) {
   }
 
   const chargedEnough = isShieldChargedEnoughToActivate(shield);
+
+  // Gracz cofnął wyłącznik w trakcie opadania — podnosimy pole z tego poziomu,
+  // na którym je złapaliśmy, zamiast startować rozruch od zera.
+  if (shield.state === 'deactivating') {
+    if (!chargedEnough) {
+      shield.state = 'off';
+      shield.activationProgress = 0;
+      shield.currentAlpha = 0;
+      return;
+    }
+    shield.state = 'activating';
+  }
 
   if (shield.state === 'off' || shield.state === 'breaking') {
     if (!chargedEnough) {

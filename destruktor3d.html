@@ -11,6 +11,7 @@
     color: #9fe8b8; font-family: 'Consolas', 'Courier New', monospace;
   }
   canvas { display: block; }
+  canvas:focus { outline: none; }
   #ui { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
   .panel {
     position: absolute;
@@ -25,7 +26,7 @@
   }
   #panel-left { top: 14px; left: 14px; width: 254px; max-height: calc(100% - 28px); overflow-y: auto; }
   #panel-stats { top: 14px; right: 14px; width: 232px; color: #7fc9ff; }
-  #panel-help { bottom: 14px; left: 50%; transform: translateX(-50%); color: #8aa3c0; white-space: nowrap; }
+  #panel-help { bottom: 14px; left: 310px; right: 14px; color: #8aa3c0; pointer-events: none; }
   h1 { font-size: 14px; margin: 0 0 8px 0; color: #6fb7ff; letter-spacing: 1px; }
   h2 { font-size: 11px; margin: 10px 0 4px 0; color: #57d78a; }
   .row { display: flex; justify-content: space-between; align-items: center; margin: 3px 0; gap: 8px; }
@@ -38,6 +39,8 @@
   }
   button:hover { background: #17325c; }
   button.wide { width: 100%; margin-top: 5px; }
+  .model-name { color: #ffd479; overflow-wrap: anywhere; margin: 3px 0; }
+  #sl-ship-size { min-width: 0; width: 90px; }
   #stats div { display: flex; justify-content: space-between; }
   #stats span:last-child { color: #ffd479; }
   .legend { margin-top: 8px; font-size: 10px; color: #8aa3c0; }
@@ -61,6 +64,47 @@
 <div id="ui">
   <div class="panel" id="panel-left">
     <h1>DESTRUKTOR 3D — BELKI</h1>
+    <h2>LOT</h2>
+    <button class="wide" id="btn-pilot" disabled>Pilotuj statek / wznów lot</button>
+    <div class="row"><label for="opt-camera">Kamera (V)</label><select id="opt-camera">
+      <option value="chase">Za statkiem</option><option value="orbit">Swobodna</option>
+    </select></div>
+    <div class="row"><label><input type="checkbox" id="cb-flight-assist" checked> Stabilizacja dryfu</label></div>
+    <div class="legend"><kbd>W/S</kbd> ciąg / wstecz · <kbd>A/D</kbd> skręt<br>
+      <kbd>↑/↓</kbd> dziób góra / dół · <kbd>Q/E</kbd> przechył<br>
+      <kbd>Spacja/Ctrl</kbd> góra / dół · <kbd>Z/C</kbd> w bok<br>
+      <kbd>Shift</kbd> dopalacz · <kbd>X</kbd> hamulec<br>
+      Przytrzymaj LPM i odchyl mysz, aby skręcać w widoku za statkiem. Kółko: odległość kamery.</div>
+
+    <button class="wide" id="btn-swap">⇄ Zamień: ciężki statek, lekka stacja</button>
+
+    <h2>STRESS TEST</h2>
+    <div class="row"><label for="opt-scenario">Scena</label><select id="opt-scenario">
+      <option value="1">1 statek + 1 stacja</option><option value="10">10 statków + 10 stacji</option>
+    </select></div>
+    <button class="wide" id="btn-stress" disabled>Stress test 10 + 10 — taran</button>
+    <div class="legend">10 równoczesnych par, 10 s pomiaru, potem pauza. Obowiązuje wybrana przewaga masy.</div>
+
+    <h2>MODELE GLB</h2>
+    <button class="wide" id="btn-load-ship">Wczytaj GLB statku…</button>
+    <input type="file" id="file-ship" accept=".glb" hidden>
+    <div class="model-name" id="model-ship" role="status">Statek: ładowanie venator.glb…</div>
+    <div class="row"><label for="opt-ship-forward">Dziób w modelu</label><select id="opt-ship-forward">
+      <option value="auto">auto: najdłuższa oś</option>
+      <option value="+x">+X</option><option value="-x">−X</option>
+      <option value="+y">+Y</option><option value="-y">−Y</option>
+      <option value="+z">+Z</option><option value="-z">−Z</option>
+    </select></div>
+    <div class="row"><label for="sl-ship-size">Rozmiar statku<br>(% stacji)</label><input type="range" id="sl-ship-size" min="15" max="140" step="1" value="42"><output id="o-ship-size">42</output></div>
+    <button class="wide" id="btn-ship-prototype">Przywróć statek prototypowy</button>
+    <button class="wide" id="btn-ship-default">Przywróć Venatora</button>
+    <button class="wide" id="btn-load-station">Wczytaj GLB stacji…</button>
+    <input type="file" id="file-station" accept=".glb" hidden>
+    <div class="model-name" id="model-station" role="status">Stacja: earth-station.glb</div>
+    <button class="wide" id="btn-station-default">Przywróć domyślną stację</button>
+    <div class="row"><label for="opt-drop-target">Upuszczony GLB zastępuje</label><select id="opt-drop-target">
+      <option value="ship">statek</option><option value="station">stację</option>
+    </select></div>
 
     <div class="row">
       <label>Rozdzielczość</label>
@@ -100,20 +144,24 @@
 
     <h2>MATERIAŁ</h2>
     <div class="row"><label>Sztywność ×</label><input type="range" id="sl-stiff" min="0.2" max="1.6" step="0.05" value="1"><output id="o-stiff">1</output></div>
-    <div class="row"><label>Wytrzymałość ×</label><input type="range" id="sl-break" min="0.2" max="3.0" step="0.1" value="1"><output id="o-break">1</output></div>
+    <div class="row"><label>Wytrzymałość ×</label><input type="range" id="sl-break" min="0.2" max="3.0" step="0.1" value="0.6"><output id="o-break">0.6</output></div>
     <div class="row"><label>Plastyczność</label><input type="range" id="sl-plastic" min="0" max="1" step="0.05" value="0.55"><output id="o-plastic">0.55</output></div>
     <div class="row"><label>Iteracje solvera</label><input type="range" id="sl-iters" min="1" max="8" step="1" value="3"><output id="o-iters">3</output></div>
     <div class="row"><label>Transfer zgniotu</label><input type="range" id="sl-crush" min="0.1" max="1" step="0.05" value="0.85"><output id="o-crush">0.85</output></div>
 
-    <h2>TARAN / BROŃ</h2>
-    <div class="row"><label>Masa tarana ×</label><input type="range" id="sl-ram" min="1" max="20" step="0.5" value="8"><output id="o-ram">8</output></div>
+    <h2>ZDERZENIE / BROŃ</h2>
+    <div class="legend" id="crash-mode-help">Ciężka stacja jest zakotwiczona. Statek rozbija się o jej kadłub.</div>
+    <div class="row"><label>Przewaga masy ×</label><input type="range" id="sl-mass-ratio" min="1" max="5" step="0.25" value="5"><output id="o-mass-ratio" style="width:65px">100 000</output></div>
+    <div class="row"><label>Prędkość zderzenia</label><input type="range" id="sl-speed" min="10" max="400" step="10" value="300"><output id="o-speed">300</output></div>
     <div class="row"><label>Ciąg silnika</label><input type="range" id="sl-thrust" min="10" max="200" step="5" value="70"><output id="o-thrust">70</output></div>
     <div class="row"><label>Obrażenia strzału</label><input type="range" id="sl-dmg" min="50" max="1500" step="25" value="450"><output id="o-dmg">450</output></div>
     <div class="row"><label>Promień strzału</label><input type="range" id="sl-radius" min="1" max="9" step="0.5" value="3"><output id="o-radius">3</output></div>
 
     <h2>WARSTWY</h2>
+    <div class="row"><label><input type="checkbox" id="cb-follow" checked> Swobodna kamera śledzi zderzenie</label></div>
     <div class="row"><label><input type="checkbox" id="cb-skin" checked> Skóra (mesh .glb)</label></div>
     <div class="row"><label><input type="checkbox" id="cb-ffd" checked> Wgniecenia skóry (FFD)</label></div>
+    <div class="row"><label><input type="checkbox" id="cb-interiors" checked> Krawędzie wyrw i wręgi</label></div>
     <div class="row"><label><input type="checkbox" id="cb-beams"> Podgląd belek</label></div>
     <div class="row"><label><input type="checkbox" id="cb-nodes"> Podgląd węzłów</label></div>
     <div class="legend">
@@ -121,7 +169,7 @@
       <div><i style="background:#40d9cc"></i>grodzie &nbsp; <i style="background:#e04040"></i>bliskie zerwania</div>
     </div>
 
-    <button class="wide" id="btn-launch">🚀 Wystrzel taran (T)</button>
+    <button class="wide" id="btn-launch" disabled>Rozbij statek o stację (T)</button>
     <button class="wide" id="btn-reset">↺ Reset sceny (R)</button>
   </div>
 
@@ -129,23 +177,43 @@
     <h1>TELEMETRIA</h1>
     <div id="stats">
       <div><span>FPS</span><span id="st-fps">—</span></div>
-      <div><span>Fizyka</span><span id="st-phys">—</span></div>
+      <div><span>Sterowanie</span><span id="st-flight">PILOT</span></div>
+      <div><span>Fizyka: krok 120 Hz</span><span id="st-phys">—</span></div>
       <div><span>&nbsp;&nbsp;solver</span><span id="st-solver">—</span></div>
       <div><span>&nbsp;&nbsp;kolizje</span><span id="st-col">—</span></div>
+      <div><span>Fizyka klatki (max)</span><span id="st-physics-peak">—</span></div>
+      <div><span>Rozpad (max)</span><span id="st-split">—</span></div>
+      <div><span>Aktualizacja 3D (max)</span><span id="st-sync">—</span></div>
+      <div><span>Render CPU (max)</span><span id="st-render-peak">—</span></div>
+      <div><span>Najdłuższa klatka próby</span><span id="st-frame-peak">—</span></div>
       <div><span>Kontakty</span><span id="st-contacts">—</span></div>
+      <div title="Liczba par ciał skierowanych do kolizji węzłów po odrzuceniu odległych sfer i AABB, względem wszystkich par rozważanych w kroku."><span>Pary: dokładne / wszystkie</span><span id="st-pairs">—</span></div>
+      <div><span>Odrzucone przez AABB</span><span id="st-aabb">—</span></div>
       <div><span>Ciała</span><span id="st-bodies">—</span></div>
+      <div><span>Oderwane sekcje</span><span id="st-wrecks">—</span></div>
+      <div><span>Prędkość statku</span><span id="st-speed">—</span></div>
+      <div><span>Stacja</span><span id="st-station">NIERUCHOMA</span></div>
+      <div><span>Cięższy obiekt</span><span id="st-heavy">STACJA</span></div>
       <div><span>Węzły</span><span id="st-nodes">—</span></div>
       <div><span>Belki całe</span><span id="st-beams">—</span></div>
-      <div><span>Belki zerwane</span><span id="st-broken">—</span></div>
+      <div><span>Zerwania łącznie</span><span id="st-broken">—</span></div>
       <div><span>Trójkąty skóry</span><span id="st-skin">—</span></div>
+      <div><span>Krawędzie / wnętrze</span><span id="st-interior">—</span></div>
+      <div><span>Obiekty na starcie</span><span id="st-fleet">1 + 1</span></div>
+      <div><span>Stress test</span><span id="st-benchmark">—</span></div>
+      <div><span>Średni FPS próby</span><span id="st-average-fps">—</span></div>
+      <div><span>Klatka p95</span><span id="st-p95">—</span></div>
+      <div><span>Tempo symulacji</span><span id="st-sim-rate">—</span></div>
+      <div><span>Pominięty czas sym.</span><span id="st-dropped">—</span></div>
+      <div title="Średni czas pracy CPU na klatkę; nie mierzy czasu wykonania shaderów na GPU."><span>CPU: fizyka / 3D / render Ø</span><span id="st-costs">—</span></div>
     </div>
   </div>
 
   <div class="panel" id="panel-help">
-    <kbd>W/S/A/D</kbd>+<kbd>Spacja/C</kbd> ciąg &nbsp;|&nbsp; <kbd>T</kbd> taran &nbsp;|&nbsp; <kbd>PPM</kbd> strzał
-    &nbsp;|&nbsp; <kbd>Shift+PPM</kbd> salwa &nbsp;|&nbsp; <kbd>N</kbd> napraw &nbsp;|&nbsp; <kbd>K</kbd> skóra
-    &nbsp;|&nbsp; <kbd>F</kbd> FFD &nbsp;|&nbsp; <kbd>B</kbd> belki &nbsp;|&nbsp; <kbd>P</kbd> pauza
-    &nbsp;|&nbsp; <kbd>R</kbd> reset &nbsp;|&nbsp; upuść <kbd>.glb</kbd>
+    <kbd>W/S</kbd> ciąg / wstecz &nbsp;|&nbsp; <kbd>A/D</kbd> skręt &nbsp;|&nbsp; <kbd>↑/↓</kbd> dziób góra / dół
+    &nbsp;|&nbsp; <kbd>Q/E</kbd> przechył &nbsp;|&nbsp; <kbd>X</kbd> hamulec &nbsp;|&nbsp; <kbd>Shift</kbd> dopalacz<br>
+    <kbd>Spacja/Ctrl</kbd> góra / dół &nbsp;|&nbsp; <kbd>Z/C</kbd> w bok &nbsp;|&nbsp; <kbd>V</kbd> kamera
+    &nbsp;|&nbsp; <kbd>PPM</kbd> strzał &nbsp;|&nbsp; <kbd>T</kbd> taran &nbsp;|&nbsp; <kbd>P</kbd> pauza &nbsp;|&nbsp; <kbd>R</kbd> reset
   </div>
 </div>
 
@@ -156,32 +224,42 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import {
-  voxelizeTriangles,
-  extractTrianglesFromObject3D,
-  extractSkinParts,
-  makeBoxTriangles,
-  concatTriangleSets
-} from './src/game/voxelBody3D.js';
+import { voxelizeTriangles } from './src/game/voxelBody3D.js';
 import { buildBeamStructure } from './src/game/beamBody3D.js';
+import { buildModelBeamStructure, disposeModelResources } from './src/3d/beamModel3D.js';
 import { DestructorBeams3D, createBeamConfig } from './src/game/destructorBeams3D.js';
 import { BeamShips3D } from './src/3d/beamShips3D.js';
+import {
+  CRASH_TARGET_SIZE, DEFAULT_CRASH_SPEED, CRASH_BREAK_MULTIPLIER, buildRamShipTriangles,
+  buildFallbackStationTris, createCrashFleet, launchCrashPairs, STRESS_PAIR_COUNT
+} from './src/game/beamCrashScene3D.js';
+import { BeamCrashBenchmark } from './src/game/beamCrashBenchmark.js';
+import { applyFlightControls, readFlightInput } from './src/game/beamFlightControls3D.js';
+import { BeamFlightCamera3D } from './src/3d/beamFlightCamera3D.js';
 
-const TARGET_SIZE = 120;
-const DEFAULT_GLB = './src/stations/earth-station.glb';
+const TARGET_SIZE = CRASH_TARGET_SIZE;
+const DEFAULT_GLB = new URL('./src/stations/earth-station.glb', import.meta.url).href;
+const DEFAULT_SHIP_GLB = new URL('./venator.glb', import.meta.url).href;
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 document.body.appendChild(renderer.domElement);
+renderer.domElement.tabIndex = 0;
+renderer.domElement.setAttribute('aria-label', 'Scena 3D — sterowanie statkiem');
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x04050a);
 
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.5, 12000);
-camera.position.set(TARGET_SIZE * 1.35, TARGET_SIZE * 0.85, TARGET_SIZE * 1.55);
+camera.position.set(TARGET_SIZE * 1.65, TARGET_SIZE * 1.45, TARGET_SIZE * 2.5);
 
 const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(TARGET_SIZE * 0.45, 0, 0);
+const followDelta = new THREE.Vector3();
+const followToggle = document.getElementById('cb-follow');
+const flightCamera = new BeamFlightCamera3D(camera);
+const cameraSelect = document.getElementById('opt-camera');
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
 controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: null };
@@ -215,11 +293,27 @@ let cfg = null;
 let cellSize = 1;
 let stationStructure = null;
 let ramStructure = null;
-let stationTris = null;
-let sourceModel = null;
+let models = { station: { root: null, label: 'bryła zapasowa' }, ship: { root: null, label: 'prototyp' } };
+const modelRequests = { station: 0, ship: 0 };
 let stationBody = null;
 let ramBody = null;
 let paused = false;
+let crashStarted = false;
+let heavyShip = false;
+let pairCount = 1;
+let crashPairs = [];
+let fleetBounds = null;
+let initialModelsLoading = true;
+let startingStress = false;
+let piloting = true;
+let cameraMode = 'chase';
+let flightAssist = true;
+let engineThrust = 70;
+const flightInput = {};
+const mouseStick = { pointerId: null, x: 0, y: 0, yaw: 0, pitch: 0 };
+const benchmark = new BeamCrashBenchmark(10000);
+let syncMs = 0, framePeakMs = 0;
+const crashPerf = { physics: 0, sync: 0, render: 0, split: 0, collision: 0, solver: 0 };
 
 const keys = Object.create(null);
 const toastEl = document.getElementById('toast');
@@ -233,30 +327,45 @@ function toast(msg, holdMs = 2600) {
 }
 
 function val(id) { return Number(document.getElementById(id).value); }
+function massRatio() { return Math.round(10 ** val('sl-mass-ratio')); }
+for (const [slider, output, value] of [
+  ['sl-speed', 'o-speed', DEFAULT_CRASH_SPEED],
+  ['sl-break', 'o-break', CRASH_BREAK_MULTIPLIER]
+]) {
+  document.getElementById(slider).value = String(value);
+  document.getElementById(output).textContent = String(value);
+}
+
+function updateCrashModeUi() {
+  document.getElementById('btn-swap').textContent = heavyShip
+    ? '⇄ Zamień: ciężka stacja, lekki statek' : '⇄ Zamień: ciężki statek, lekka stacja';
+  document.getElementById('crash-mode-help').textContent = heavyShip
+    ? 'Ciężki statek taranuje lekką, ruchomą stację. Jej sekcje mogą się odrywać.'
+    : 'Ciężka stacja jest zakotwiczona. Statek rozbija się o jej kadłub.';
+  document.getElementById('btn-launch').textContent = pairCount > 1 ? 'Taran wszystkich 10 par (T)' : heavyShip
+    ? 'Rozbij stację ciężkim statkiem (T)' : 'Rozbij statek o stację (T)';
+  document.getElementById('o-mass-ratio').textContent = massRatio().toLocaleString('pl-PL');
+  document.getElementById('st-station').textContent = heavyShip ? 'RUCHOMA' : 'NIERUCHOMA';
+  document.getElementById('st-heavy').textContent = heavyShip ? 'STATEK' : 'STACJA';
+  document.getElementById('st-fleet').textContent = `${pairCount} + ${pairCount}`;
+  document.getElementById('btn-stress').disabled = initialModelsLoading || startingStress;
+  document.getElementById('btn-launch').disabled = initialModelsLoading || startingStress;
+  document.getElementById('btn-pilot').disabled = initialModelsLoading || startingStress;
+  followToggle.disabled = pairCount > 1 || cameraMode === 'chase';
+}
+
+function fitFleetView() {
+  if (!fleetBounds) return;
+  const b = fleetBounds;
+  controls.target.set((b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2, (b.minZ + b.maxZ) / 2);
+  const radius = Math.hypot(b.maxX - b.minX, b.maxY - b.minY, b.maxZ - b.minZ) / 2;
+  const vertical = camera.fov * Math.PI / 360;
+  const angle = Math.min(vertical, Math.atan(Math.tan(vertical) * camera.aspect));
+  camera.position.set(1.2, 1.7, 2.3).normalize().multiplyScalar(radius / Math.sin(angle) * 1.08).add(controls.target);
+  controls.update();
+}
 
 // ============================== BUDOWA ==============================
-function buildRamShipTriangles(size) {
-  const L = size;
-  return concatTriangleSets([
-    { positions: makeBoxTriangles(L * 0.86, L * 0.24, L * 0.30, -L * 0.05, 0, 0), color: [0.55, 0.58, 0.66] },
-    { positions: makeBoxTriangles(L * 0.34, L * 0.15, L * 0.18, L * 0.48, 0, 0), color: [0.75, 0.44, 0.28] },
-    { positions: makeBoxTriangles(L * 0.40, L * 0.06, L * 0.72, -L * 0.18, 0.02 * L, 0), color: [0.36, 0.45, 0.58] },
-    { positions: makeBoxTriangles(L * 0.24, L * 0.14, L * 0.14, -L * 0.46, 0, L * 0.20), color: [0.30, 0.62, 0.86] },
-    { positions: makeBoxTriangles(L * 0.24, L * 0.14, L * 0.14, -L * 0.46, 0, -L * 0.20), color: [0.30, 0.62, 0.86] },
-    { positions: makeBoxTriangles(L * 0.30, L * 0.30, L * 0.10, -L * 0.02, L * 0.20, 0), color: [0.48, 0.52, 0.60] }
-  ]);
-}
-
-function buildFallbackStationTris() {
-  const S = TARGET_SIZE;
-  return concatTriangleSets([
-    { positions: makeBoxTriangles(S * 0.9, S * 0.34, S * 0.34, 0, 0, 0), color: [0.5, 0.54, 0.62] },
-    { positions: makeBoxTriangles(S * 0.3, S * 0.62, S * 0.62, 0, 0, 0), color: [0.42, 0.48, 0.6] },
-    { positions: makeBoxTriangles(S * 0.22, S * 0.22, S * 0.95, S * 0.25, 0, 0), color: [0.62, 0.5, 0.34] },
-    { positions: makeBoxTriangles(S * 0.22, S * 0.95, S * 0.22, -S * 0.25, 0, 0), color: [0.34, 0.56, 0.62] }
-  ]);
-}
-
 function applySlidersToConfig() {
   if (!cfg) return;
   cfg.globalStiffnessMul = val('sl-stiff');
@@ -266,59 +375,85 @@ function applySlidersToConfig() {
   cfg.crushTransfer = val('sl-crush');
 }
 
-function rebuildBodies({ restructure = false } = {}) {
+function rebuildBodies({ restructure = false, nextModels = models, fitView = false } = {}) {
   const res = val('opt-res') || 44;
   const shell = val('opt-shell');
   const frameStride = val('opt-frame');
   const bulkheadEvery = val('opt-bulkhead');
 
+  let nextStation = stationStructure, nextRam = ramStructure;
+  const nextCellSize = TARGET_SIZE / res;
   try {
     if (restructure || !stationStructure) {
-      cellSize = TARGET_SIZE / res;
-      cfg = createBeamConfig(cellSize);
-      applySlidersToConfig();
-      DestructorBeams3D.init(cfg);
-
-      if (stationStructure?.skin) BeamShips3D.disposeSkinAssets(stationStructure.skin);
-
-      // buildBeamStructure przesuwa wierzchołki skóry do środka masy, więc przy
-      // każdej przebudowie potrzebna jest świeża ekstrakcja z modelu.
-      const skinParts = sourceModel ? extractSkinParts(sourceModel) : null;
-
-      const vox = voxelizeTriangles(stationTris.positions, stationTris.colors, {
-        cellSize, shellLayers: shell, interiorMode: 'shell'
-      });
-      stationStructure = buildBeamStructure(vox, { skinParts, frameStride, bulkheadEvery });
-
-      const ramTris = buildRamShipTriangles(TARGET_SIZE * 0.42);
-      const ramVox = voxelizeTriangles(ramTris.positions, ramTris.colors, {
-        cellSize: cellSize * 0.9, shellLayers: Math.max(2, shell || 2), interiorMode: 'shell'
-      });
-      ramStructure = buildBeamStructure(ramVox, { frameStride, bulkheadEvery });
+      const build = (role, targetSize, cs, forwardAxis = null) => {
+        const options = { targetSize, cellSize: cs, shellLayers: shell, frameStride, bulkheadEvery, forwardAxis };
+        if (nextModels[role].root) return buildModelBeamStructure(nextModels[role].root, options);
+        const tris = role === 'ship' ? buildRamShipTriangles(targetSize) : buildFallbackStationTris();
+        return buildBeamStructure(voxelizeTriangles(tris.positions, tris.colors,
+          { cellSize: cs, shellLayers: role === 'ship' ? Math.max(2, shell || 2) : shell, interiorMode: 'shell' }),
+        { frameStride, bulkheadEvery });
+      };
+      nextStation = build('station', TARGET_SIZE, nextCellSize);
+      nextRam = build('ship', TARGET_SIZE * val('sl-ship-size') / 100, nextCellSize * 0.9, document.getElementById('opt-ship-forward').value);
+      // Zbuduj indeksy fragmentów przed startem próby, nie w klatce zderzenia.
+      if (nextStation.skin) BeamShips3D._ensureSkinGeometries(nextStation.skin);
+      if (nextRam.skin) BeamShips3D._ensureSkinGeometries(nextRam.skin);
     }
   } catch (err) {
     toast(`Błąd budowy konstrukcji: ${err.message}`, 5200);
     console.error(err);
-    return;
+    if (nextStation !== stationStructure && nextStation?.skin) BeamShips3D.disposeSkinAssets(nextStation.skin);
+    if (nextRam !== ramStructure && nextRam?.skin) BeamShips3D.disposeSkinAssets(nextRam.skin);
+    return false;
   }
 
   for (const b of bodies) b.dead = true;
   BeamShips3D.sync([], camera, performance.now() * 0.001);
   bodies = [];
+  if (nextStation !== stationStructure || nextRam !== ramStructure) {
+    if (stationStructure?.skin) BeamShips3D.disposeSkinAssets(stationStructure.skin);
+    if (ramStructure?.skin) BeamShips3D.disposeSkinAssets(ramStructure.skin);
+    stationStructure = nextStation;
+    ramStructure = nextRam;
+    cellSize = nextCellSize;
+    cfg = createBeamConfig(cellSize);
+    applySlidersToConfig();
+    DestructorBeams3D.init(cfg);
+  }
+  models = nextModels;
+  document.getElementById('model-ship').textContent = `Statek: ${models.ship.label}`;
+  document.getElementById('model-station').textContent = `Stacja: ${models.station.label}`;
   DestructorBeams3D.splitQueue.length = 0;
   DestructorBeams3D.perf.beamsBroken = 0;
 
   // Struktury są mutowane przez fizykę (pozycje, długości spoczynkowe), więc
   // każde ciało dostaje własną, głęboką kopię węzłów i belek.
-  stationBody = DestructorBeams3D.createBody(cloneStructure(stationStructure), {
-    name: 'stacja', position: { x: 0, y: 0, z: 0 }
-  });
-  ramBody = DestructorBeams3D.createBody(cloneStructure(ramStructure), {
-    name: 'taran',
-    position: { x: TARGET_SIZE * 1.7, y: TARGET_SIZE * 0.12, z: TARGET_SIZE * 0.3 },
-    rammingMassMult: val('sl-ram')
-  });
-  bodies.push(stationBody, ramBody);
+  cfg.maxWrecks = createBeamConfig(cellSize).maxWrecks * pairCount;
+  const fleet = createCrashFleet(DestructorBeams3D, stationStructure, ramStructure, { pairCount, heavyShip, massRatio: massRatio() });
+  bodies = fleet.bodies;
+  crashPairs = fleet.pairs;
+  fleetBounds = fleet.bounds;
+  stationBody = crashPairs[0].station;
+  ramBody = crashPairs[0].ship;
+  crashStarted = false;
+  paused = false;
+  piloting = true;
+  clearFlightInput();
+  framePeakMs = 0;
+  for (const key of Object.keys(crashPerf)) crashPerf[key] = 0;
+  benchmark.reset();
+  accumulator = 0;
+  grid.scale.setScalar(pairCount > 1 ? 3 : 1);
+  flightCamera.reset();
+  if (pairCount > 1) { setCameraMode('orbit'); fitFleetView(); }
+  else if (cameraMode === 'chase') setCameraMode('chase');
+  else if (fitView) fitFleetView();
+  else if (followToggle.checked) {
+    followDelta.set(TARGET_SIZE * 0.45, 0, 0).sub(controls.target);
+    camera.position.add(followDelta);
+    controls.target.add(followDelta);
+  }
+  updateCrashModeUi();
 
   const s = stationStructure.stats;
   toast(
@@ -326,85 +461,84 @@ function rebuildBodies({ restructure = false } = {}) {
     `(poszycie ${s.plating}, wręgi ${s.frames}, grodzie ${s.bulkheads})`,
     4200
   );
-}
-
-function cloneStructure(src) {
-  const nodes = src.nodes.map((n) => ({ ...n, beams: n.beams.slice() }));
-  const beams = src.beams.map((b) => ({ ...b }));
-  return { ...src, nodes, beams, invInertia: src.invInertia.slice() };
+  return true;
 }
 
 // ============================== MODEL ==============================
 const gltfLoader = new GLTFLoader();
 
-function prepareModel(root) {
-  const box = new THREE.Box3().setFromObject(root);
-  const size = new THREE.Vector3();
-  const center = new THREE.Vector3();
-  box.getSize(size);
-  box.getCenter(center);
-  const maxDim = Math.max(size.x, size.y, size.z) || 1;
-  const scale = TARGET_SIZE / maxDim;
-  root.position.set(-center.x * scale, -center.y * scale, -center.z * scale);
-  root.scale.setScalar(scale);
-  root.updateMatrixWorld(true);
-  return root;
+async function loadModel(role, label, parse) {
+  const request = ++modelRequests[role];
+  toast('Wczytywanie: ' + label + '…', 10000);
+  let root = null;
+  try {
+    root = (await parse()).scene;
+    if (request !== modelRequests[role]) { disposeModelResources(root); return; }
+    toast('Buduję konstrukcję: ' + label + '…', 10000);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    if (request !== modelRequests[role]) { disposeModelResources(root); return; }
+    const previous = models[role].root;
+    const nextModels = { ...models, [role]: { root, label } };
+    if (rebuildBodies({ restructure: true, nextModels })) disposeModelResources(previous);
+    else disposeModelResources(root);
+  } catch (err) {
+    disposeModelResources(root);
+    if (request !== modelRequests[role]) return;
+    console.error('[destruktor3d] import GLB:', err);
+    toast('Nie udało się wczytać ' + label + ': ' + err.message, 6000);
+  }
 }
 
-function adoptModel(root, label) {
-  prepareModel(root);
-  sourceModel = root;
-  let meshCount = 0;
-  root.traverse((o) => { if (o.isMesh) meshCount++; });
-  stationTris = extractTrianglesFromObject3D(root);
-  console.log(`[destruktor3d] model: meshy=${meshCount}, trójkąty=${(stationTris.positions.length / 9) | 0}`);
-  if (!stationTris.positions.length) {
-    console.warn('[destruktor3d] ekstrakcja dała 0 trójkątów — fallback');
-    toast('Model bez geometrii — używam zapasowej bryły', 4200);
-    stationTris = buildFallbackStationTris();
-    sourceModel = null;
-  }
-  toast(`Model: ${label}. Buduję konstrukcję…`, 3000);
-  setTimeout(() => rebuildBodies({ restructure: true }), 0);
+function loadModelFile(role, file) {
+  if (!file) return;
+  if (!/\.glb$/i.test(file.name)) { toast('Wybierz plik .glb', 3200); return; }
+  return loadModel(role, file.name, async () => gltfLoader.parseAsync(await file.arrayBuffer(), ''));
 }
 
 function loadDefaultModel() {
-  gltfLoader.load(
-    DEFAULT_GLB,
-    (gltf) => {
-      try { adoptModel(gltf.scene, 'earth-station.glb'); }
-      catch (err) {
-        console.error(err);
-        toast(`Błąd modelu: ${err.message}`, 5200);
-        stationTris = buildFallbackStationTris();
-        rebuildBodies({ restructure: true });
-      }
-    },
-    undefined,
-    (err) => {
-      console.error('[destruktor3d] GLB nie wczytany:', err);
-      toast('Brak earth-station.glb — zapasowa bryła', 4200);
-      stationTris = buildFallbackStationTris();
-      rebuildBodies({ restructure: true });
-    }
-  );
+  return loadModel('station', 'earth-station.glb', () => gltfLoader.loadAsync(DEFAULT_GLB));
 }
 
+function loadDefaultShip() {
+  return loadModel('ship', 'venator.glb', () => gltfLoader.loadAsync(DEFAULT_SHIP_GLB));
+}
+
+for (const role of ['ship', 'station']) {
+  const input = document.getElementById('file-' + role);
+  document.getElementById('btn-load-' + role).addEventListener('click', () => input.click());
+  input.addEventListener('change', () => {
+    const file = input.files?.[0];
+    input.value = '';
+    loadModelFile(role, file);
+  });
+}
+document.getElementById('btn-station-default').addEventListener('click', loadDefaultModel);
+document.getElementById('btn-ship-default').addEventListener('click', loadDefaultShip);
+document.getElementById('btn-ship-prototype').addEventListener('click', () => {
+  ++modelRequests.ship;
+  const previous = models.ship.root;
+  if (rebuildBodies({ restructure: true, nextModels: { ...models, ship: { root: null, label: 'prototyp' } } })) {
+    disposeModelResources(previous);
+  }
+});
+document.getElementById('opt-ship-forward').addEventListener('change', () => rebuildBodies({ restructure: true }));
+document.getElementById('sl-ship-size').addEventListener('input', e => {
+  document.getElementById('o-ship-size').textContent = e.target.value;
+});
+document.getElementById('sl-ship-size').addEventListener('change', () => rebuildBodies({ restructure: true }));
+
 const dropHint = document.getElementById('drop-hint');
-window.addEventListener('dragover', (e) => { e.preventDefault(); dropHint.style.display = 'flex'; });
-window.addEventListener('dragleave', (e) => { if (!e.relatedTarget) dropHint.style.display = 'none'; });
-window.addEventListener('drop', async (e) => {
+window.addEventListener('dragover', e => {
+  e.preventDefault();
+  dropHint.textContent = document.getElementById('opt-drop-target').value === 'ship'
+    ? 'Upuść GLB statku' : 'Upuść GLB stacji';
+  dropHint.style.display = 'flex';
+});
+window.addEventListener('dragleave', e => { if (!e.relatedTarget) dropHint.style.display = 'none'; });
+window.addEventListener('drop', e => {
   e.preventDefault();
   dropHint.style.display = 'none';
-  const file = e.dataTransfer?.files?.[0];
-  if (!file || !/\.(glb|gltf)$/i.test(file.name)) { toast('Tylko .glb/.gltf', 3200); return; }
-  try {
-    const buf = await file.arrayBuffer();
-    gltfLoader.parse(buf, '', (gltf) => adoptModel(gltf.scene, file.name),
-      (err) => toast(`Błąd parsowania: ${err?.message || err}`, 4200));
-  } catch (err) {
-    toast(`Błąd odczytu: ${err.message}`, 4200);
-  }
+  loadModelFile(document.getElementById('opt-drop-target').value, e.dataTransfer?.files?.[0]);
 });
 
 // ============================== DEBRIS ==============================
@@ -425,14 +559,24 @@ bindSlider('sl-break', 'o-break', applySlidersToConfig);
 bindSlider('sl-plastic', 'o-plastic', applySlidersToConfig);
 bindSlider('sl-iters', 'o-iters', applySlidersToConfig);
 bindSlider('sl-crush', 'o-crush', applySlidersToConfig);
-bindSlider('sl-ram', 'o-ram', (v) => { if (ramBody) ramBody.rammingMassMult = v; });
-bindSlider('sl-thrust', 'o-thrust', () => {});
+bindSlider('sl-speed', 'o-speed', () => {});
+document.getElementById('sl-mass-ratio').addEventListener('input', updateCrashModeUi);
+document.getElementById('sl-mass-ratio').addEventListener('change', () => {
+  if (stationStructure && ramStructure) rebuildBodies();
+});
+document.getElementById('btn-swap').addEventListener('click', () => {
+  heavyShip = !heavyShip;
+  updateCrashModeUi();
+  if (stationStructure && ramStructure) rebuildBodies();
+});
+bindSlider('sl-thrust', 'o-thrust', value => { engineThrust = value; });
 bindSlider('sl-dmg', 'o-dmg', () => {});
 bindSlider('sl-radius', 'o-radius', () => {});
 
 const toggles = [
   ['cb-skin', 'skinEnabled', 'Skóra'],
   ['cb-ffd', 'ffdEnabled', 'Wgniecenia skóry'],
+  ['cb-interiors', 'interiorsEnabled', 'Krawędzie wyrw i wręgi'],
   ['cb-beams', 'beamsEnabled', 'Podgląd belek'],
   ['cb-nodes', 'nodesEnabled', 'Podgląd węzłów']
 ];
@@ -450,8 +594,85 @@ for (const id of ['opt-frame', 'opt-bulkhead', 'opt-res', 'opt-shell']) {
 document.getElementById('btn-rebuild').addEventListener('click', () => rebuildBodies({ restructure: true }));
 document.getElementById('btn-reset').addEventListener('click', () => rebuildBodies({ restructure: false }));
 document.getElementById('btn-launch').addEventListener('click', launchRam);
+document.getElementById('opt-scenario').addEventListener('change', e => {
+  pairCount = Number(e.target.value);
+  rebuildBodies({ fitView: true });
+});
+document.getElementById('btn-stress').addEventListener('click', async () => {
+  if (initialModelsLoading || startingStress) return;
+  startingStress = true;
+  updateCrashModeUi();
+  toast('Przygotowuję 10 statków i 10 stacji…', 10000);
+  try {
+    await new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
+    pairCount = STRESS_PAIR_COUNT;
+    document.getElementById('opt-scenario').value = String(pairCount);
+    if (!rebuildBodies({ fitView: true })) return;
+    const preparedPairs = crashPairs;
+    BeamShips3D.sync(bodies, camera, performance.now() * 0.001);
+    await renderer.compileAsync(scene, camera);
+    if (preparedPairs !== crashPairs) return;
+    startingStress = false;
+    launchRam();
+  } catch (err) { toast(`Błąd stress testu: ${err.message}`, 6000); console.error(err); }
+  finally { startingStress = false; updateCrashModeUi(); }
+});
 
 // ============================== STEROWANIE ==============================
+function clearMouseStick() {
+  const id = mouseStick.pointerId;
+  mouseStick.pointerId = null;
+  mouseStick.yaw = mouseStick.pitch = 0;
+  if (id !== null && renderer.domElement.hasPointerCapture(id)) renderer.domElement.releasePointerCapture(id);
+}
+
+function clearFlightInput() {
+  for (const code in keys) keys[code] = false;
+  clearMouseStick();
+}
+
+function setCameraMode(mode) {
+  clearMouseStick();
+  cameraMode = mode;
+  cameraSelect.value = mode;
+  // OrbitControls nie może nadpisywać orientacji kamery podczas pilotowania.
+  controls.enabled = mode === 'orbit';
+  if (mode === 'chase') {
+    flightCamera.reset();
+    flightCamera.update(ramBody, ramStructure?.radius || 20, 0);
+  } else {
+    camera.up.set(0, 1, 0);
+    if (ramBody && !ramBody.dead) controls.target.copy(ramBody.pos);
+    controls.update();
+  }
+  followToggle.disabled = pairCount > 1 || mode === 'chase';
+}
+
+function pilotShip() {
+  if (initialModelsLoading || startingStress) return;
+  if (!ramBody || ramBody.dead) { toast('Statek zniszczony — R resetuje scenę'); return; }
+  if (benchmark.running) { benchmark.reset(); toast('Pomiar przerwany — przejmujesz pierwszy statek', 2600); }
+  else toast('Pilot: W/S ciąg, A/D skręt, mysz lub ↑/↓ zmieniają kierunek. X hamuje.', 3500);
+  piloting = true;
+  paused = false;
+  accumulator = 0;
+  lastFrame = performance.now();
+  clearFlightInput();
+  setCameraMode('chase');
+  renderer.domElement.focus({ preventScroll: true });
+  updateStats();
+}
+
+document.getElementById('btn-pilot').addEventListener('click', pilotShip);
+cameraSelect.addEventListener('change', e => {
+  setCameraMode(e.target.value);
+  renderer.domElement.focus({ preventScroll: true });
+});
+document.getElementById('cb-flight-assist').addEventListener('change', e => {
+  flightAssist = e.target.checked;
+  renderer.domElement.focus({ preventScroll: true });
+});
+
 function toggleCheckbox(id) {
   const cb = document.getElementById(id);
   cb.checked = !cb.checked;
@@ -459,10 +680,18 @@ function toggleCheckbox(id) {
 }
 
 window.addEventListener('keydown', (e) => {
+  if (e.target.closest('input, select, textarea, [contenteditable="true"]') || e.metaKey || e.altKey) return;
+  if (e.ctrlKey && !document.activeElement?.matches('canvas')) return;
+  const flightKey = /^(Key[WASDQEZCX]|Arrow(Up|Down|Left|Right)|Space|Control(Left|Right))$/.test(e.code);
+  if (flightKey) e.preventDefault();
+  if (e.ctrlKey && !flightKey) return;
+  if (flightKey && !piloting && !benchmark.running && !startingStress && !initialModelsLoading) pilotShip();
   keys[e.code] = true;
+  if (e.repeat) return;
   if (e.code === 'KeyT') launchRam();
   if (e.code === 'KeyR') rebuildBodies({ restructure: false });
-  if (e.code === 'KeyP') { paused = !paused; toast(paused ? 'PAUZA' : 'WZNOWIONO', 1200); }
+  if (e.code === 'KeyP') { paused = !paused; accumulator = 0; clearFlightInput(); updateStats(); toast(paused ? 'PAUZA — P lub przycisk Pilotuj wznawia lot' : 'WZNOWIONO', 1800); }
+  if (e.code === 'KeyV') setCameraMode(cameraMode === 'chase' ? 'orbit' : 'chase');
   if (e.code === 'KeyK') toggleCheckbox('cb-skin');
   if (e.code === 'KeyF') toggleCheckbox('cb-ffd');
   if (e.code === 'KeyB') toggleCheckbox('cb-beams');
@@ -472,20 +701,51 @@ window.addEventListener('keydown', (e) => {
   }
 });
 window.addEventListener('keyup', (e) => { keys[e.code] = false; });
+window.addEventListener('blur', clearFlightInput);
+document.addEventListener('visibilitychange', () => { if (document.hidden) clearFlightInput(); });
+document.addEventListener('focusin', e => { if (e.target.closest('input, select, textarea, [contenteditable="true"]')) clearFlightInput(); });
+
+renderer.domElement.addEventListener('pointerdown', e => {
+  renderer.domElement.focus({ preventScroll: true });
+  if (e.button !== 0 || cameraMode !== 'chase' || !piloting || paused) return;
+  mouseStick.pointerId = e.pointerId;
+  mouseStick.x = e.clientX; mouseStick.y = e.clientY;
+  mouseStick.yaw = mouseStick.pitch = 0;
+  renderer.domElement.setPointerCapture(e.pointerId);
+});
+renderer.domElement.addEventListener('pointermove', e => {
+  if (e.pointerId !== mouseStick.pointerId) return;
+  mouseStick.yaw = Math.max(-1, Math.min(1, (mouseStick.x - e.clientX) / 160));
+  mouseStick.pitch = Math.max(-1, Math.min(1, (mouseStick.y - e.clientY) / 160));
+});
+for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+  renderer.domElement.addEventListener(event, e => { if (e.pointerId === mouseStick.pointerId) clearMouseStick(); });
+}
+renderer.domElement.addEventListener('wheel', e => {
+  if (cameraMode !== 'chase') return;
+  e.preventDefault();
+  flightCamera.dolly(e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? window.innerHeight : 1));
+}, { passive: false });
 
 function launchRam() {
+  if (initialModelsLoading || startingStress) return;
+  if (crashStarted || ramBody?.dead) rebuildBodies();
   if (!ramBody || ramBody.dead || !stationBody || stationBody.dead) return;
-  const dx = stationBody.pos.x - ramBody.pos.x;
-  const dy = stationBody.pos.y - ramBody.pos.y;
-  const dz = stationBody.pos.z - ramBody.pos.z;
-  const len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
-  const speed = cfg.crushSpeedThreshold * 9;
-  ramBody.vel.x = (dx / len) * speed;
-  ramBody.vel.y = (dy / len) * speed;
-  ramBody.vel.z = (dz / len) * speed;
-  DestructorBeams3D.wake(ramBody, 60);
-  DestructorBeams3D.wake(stationBody, 60);
-  toast('Taran wystrzelony!', 1400);
+  piloting = false;
+  clearFlightInput();
+  setCameraMode('orbit');
+  fitFleetView();
+  const speed = val('sl-speed') || DEFAULT_CRASH_SPEED;
+  // Pierwszy upload geometrii nie wchodzi w pomiar taranowania.
+  BeamShips3D.sync(bodies, camera, performance.now() * 0.001);
+  renderer.render(scene, camera);
+  const launched = launchCrashPairs(DestructorBeams3D, crashPairs, speed);
+  crashStarted = true;
+  paused = false;
+  lastFrame = performance.now();
+  accumulator = 0;
+  if (pairCount > 1) benchmark.start();
+  toast(`${launched} ${launched === 1 ? 'taran' : 'taranów'}: ${speed}. T — powtórz próbę`, 2200);
 }
 
 const raycaster = new THREE.Raycaster();
@@ -531,31 +791,6 @@ let fpsFrames = 0;
 let fpsLast = performance.now();
 let fpsValue = 0;
 
-const camForward = new THREE.Vector3();
-const camRight = new THREE.Vector3();
-const UP = new THREE.Vector3(0, 1, 0);
-
-function applyThrust(h) {
-  if (!ramBody || ramBody.dead) return;
-  const thrust = val('sl-thrust');
-  camera.getWorldDirection(camForward);
-  camRight.crossVectors(camForward, UP).normalize();
-  let ax = 0, ay = 0, az = 0;
-  if (keys['KeyW']) { ax += camForward.x; ay += camForward.y; az += camForward.z; }
-  if (keys['KeyS']) { ax -= camForward.x; ay -= camForward.y; az -= camForward.z; }
-  if (keys['KeyD']) { ax += camRight.x; az += camRight.z; }
-  if (keys['KeyA']) { ax -= camRight.x; az -= camRight.z; }
-  if (keys['Space']) ay += 1;
-  if (keys['KeyC']) ay -= 1;
-  const len = Math.sqrt(ax * ax + ay * ay + az * az);
-  if (len < 1e-4) return;
-  const s = (thrust / len) * h;
-  ramBody.vel.x += ax * s;
-  ramBody.vel.y += ay * s;
-  ramBody.vel.z += az * s;
-  DestructorBeams3D.wake(ramBody, 8);
-}
-
 function pruneBodies() {
   let changed = false;
   for (const b of bodies) {
@@ -568,26 +803,64 @@ function frame() {
   requestAnimationFrame(frame);
   const now = performance.now();
   let dt = (now - lastFrame) / 1000;
+  const frameMs = dt * 1000;
   lastFrame = now;
+  const measuring = crashStarted && !paused && !benchmark.finished;
+  if (measuring) framePeakMs = Math.max(framePeakMs, frameMs);
   if (dt > 0.25) dt = 0.25;
+  readFlightInput(keys, mouseStick.yaw, mouseStick.pitch, flightInput);
 
+  const physicsStart = performance.now();
+  let simulatedMs = 0, droppedMs = !paused ? Math.max(0, frameMs - 250) : 0;
   if (!paused && cfg) {
     accumulator += dt;
     let steps = 0;
     while (accumulator >= FIXED_DT && steps < 5) {
-      applyThrust(FIXED_DT);
+      if (piloting && !initialModelsLoading && !startingStress) applyFlightControls(ramBody, flightInput, FIXED_DT, engineThrust, flightAssist);
       DestructorBeams3D.integrate(FIXED_DT, bodies);
       DestructorBeams3D.update(FIXED_DT, bodies);
+      if (measuring) {
+        crashPerf.split = Math.max(crashPerf.split, DestructorBeams3D.perf.lastSplitMs);
+        crashPerf.collision = Math.max(crashPerf.collision, DestructorBeams3D.perf.lastCollisionMs);
+        crashPerf.solver = Math.max(crashPerf.solver, DestructorBeams3D.perf.lastSolverMs);
+      }
       accumulator -= FIXED_DT;
+      simulatedMs += FIXED_DT * 1000;
       steps++;
     }
-    if (steps === 5) accumulator = 0;
+    if (steps === 5 && accumulator >= FIXED_DT) { droppedMs += accumulator * 1000; accumulator = 0; }
     pruneBodies();
   }
+  const physicsMs = performance.now() - physicsStart;
+  if (measuring) crashPerf.physics = Math.max(crashPerf.physics, physicsMs);
 
+  const syncStart = performance.now();
   BeamShips3D.sync(bodies, camera, now * 0.001);
-  controls.update();
+  syncMs = performance.now() - syncStart;
+  if (measuring) crashPerf.sync = Math.max(crashPerf.sync, syncMs);
+  const followed = heavyShip ? stationBody : ramBody;
+  if (cameraMode === 'chase') {
+    flightCamera.update(ramBody, ramStructure?.radius || 20, dt);
+  } else if (pairCount === 1 && crashStarted && followed && !followed.dead && followToggle.checked) {
+    followDelta.set(followed.pos.x, followed.pos.y, followed.pos.z)
+      .sub(controls.target).multiplyScalar(1 - Math.exp(-dt * 8));
+    camera.position.add(followDelta);
+    controls.target.add(followDelta);
+  }
+  if (cameraMode === 'orbit') controls.update();
+  const renderStart = performance.now();
   renderer.render(scene, camera);
+  const renderMs = performance.now() - renderStart;
+  if (measuring) crashPerf.render = Math.max(crashPerf.render, renderMs);
+  if (!paused && benchmark.running) {
+    benchmark.record(frameMs, simulatedMs, droppedMs, physicsMs, syncMs, renderMs);
+    if (benchmark.finished) {
+      paused = true;
+      clearFlightInput();
+      updateStats();
+      toast(`Stress test zakończony: ${benchmark.fps.toFixed(0)} FPS, tempo symulacji ${(benchmark.simulationRate * 100).toFixed(0)}%. T — powtórz, P — wznów`, 9000);
+    }
+  }
 
   fpsFrames++;
   if (now - fpsLast > 500) {
@@ -602,16 +875,33 @@ function updateStats() {
   const p = DestructorBeams3D.perf;
   const s = BeamShips3D.stats;
   const set = (id, v) => { document.getElementById(id).textContent = v; };
-  set('st-fps', String(fpsValue));
+  set('st-fps', paused ? 'PAUZA' : String(fpsValue));
+  set('st-flight', paused ? 'PAUZA (P)' : ramBody?.dead ? 'ZNISZCZONY — R' : piloting ? 'PILOT' : 'AUTOTARAN');
   set('st-phys', `${p.lastUpdateMs.toFixed(2)} ms`);
   set('st-solver', `${p.lastSolverMs.toFixed(2)} ms`);
   set('st-col', `${p.lastCollisionMs.toFixed(2)} ms`);
+  set('st-physics-peak', `${crashPerf.physics.toFixed(2)} ms`);
+  set('st-split', `${crashPerf.split.toFixed(2)} ms`);
+  set('st-sync', `${crashPerf.sync.toFixed(2)} ms`);
+  set('st-render-peak', `${crashPerf.render.toFixed(2)} ms`);
+  set('st-frame-peak', `${framePeakMs.toFixed(1)} ms`);
   set('st-contacts', String(p.contacts));
+  set('st-pairs', `${p.narrowphasePairs} / ${p.broadphasePairs}`);
+  set('st-aabb', String(p.aabbRejected));
   set('st-bodies', String(bodies.length));
+  set('st-wrecks', String(bodies.filter(b => b.isWreck && !b.dead).length));
+  set('st-speed', ramBody && !ramBody.dead ? Math.hypot(ramBody.vel.x, ramBody.vel.y, ramBody.vel.z).toFixed(1) : '—');
   set('st-nodes', String(s.nodes));
   set('st-beams', String(s.beams));
-  set('st-broken', String(s.brokenBeams));
+  set('st-broken', String(p.beamsBroken));
   set('st-skin', s.skinTriangles > 0 ? `${(s.skinTriangles / 1000).toFixed(1)}k` : '—');
+  set('st-interior', `${(s.interiorTriangles / 1000).toFixed(1)}k`);
+  set('st-benchmark', benchmark.finished ? 'ZAKOŃCZONY' : benchmark.running ? (paused ? 'WSTRZYMANY' : `${(benchmark.wallMs / 1000).toFixed(1)} / 10 s`) : '—');
+  set('st-average-fps', benchmark.frames ? benchmark.fps.toFixed(1) : '—');
+  set('st-p95', benchmark.finished ? `${benchmark.p95.toFixed(1)} ms` : '—');
+  set('st-sim-rate', benchmark.frames ? `${(benchmark.simulationRate * 100).toFixed(1)}%` : '—');
+  set('st-dropped', benchmark.frames ? `${(benchmark.droppedMs / 1000).toFixed(2)} s` : '—');
+  set('st-costs', benchmark.frames ? [benchmark.physicsMs, benchmark.syncMs, benchmark.renderMs].map(t => (t / benchmark.frames).toFixed(1)).join(' / ') + ' ms' : '—');
 }
 
 window.addEventListener('resize', () => {
@@ -623,8 +913,13 @@ window.addEventListener('resize', () => {
 // Hook diagnostyczny — sterowanie z konsoli, gdy pętla rAF stoi (karta w tle).
 window.__demo = {
   scene, camera, renderer, DestructorBeams3D, BeamShips3D,
+  crashPerf,
+  benchmark,
+  get pairs() { return crashPairs; },
   get bodies() { return bodies; },
   get structure() { return stationStructure; },
+  get ram() { return ramBody; },
+  launch: launchRam,
   rebuild: (opts) => rebuildBodies(opts),
   step(dt = 1 / 120, steps = 1) {
     for (let i = 0; i < steps; i++) {
@@ -642,8 +937,13 @@ window.__demo = {
   }
 };
 
-toast('Ładowanie modelu stacji…', 2400);
-loadDefaultModel();
+updateCrashModeUi();
+rebuildBodies({ restructure: true });
+toast('Ładowanie stacji i Venatora…', 2400);
+Promise.all([loadDefaultModel(), loadDefaultShip()]).finally(() => {
+  initialModelsLoading = false;
+  updateCrashModeUi();
+});
 frame();
 </script>
 </body>

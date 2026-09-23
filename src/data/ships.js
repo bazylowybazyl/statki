@@ -1,4 +1,5 @@
 import { FIGHTER_SQUADRON_DEFS } from './fighterSquadrons.js';
+import { flightTemplateStats } from './shipFlightSpecs.js';
 
 export const SHIP_SENSOR_PROFILES = {
   fighter_combat: { passiveRange: 8000, activeRange: 10000, lockRange: 8000, asteroidScanRange: 8000, scanWaveSpeed: 12000, role: 'combat' },
@@ -361,9 +362,7 @@ export const SUPPORT_SHIP_TEMPLATES = {
     sensors: { ...SHIP_SENSOR_PROFILES.frigate_combat },
     stats: {
       hp: 1200,
-      accel: 260,
-      maxSpeed: 420,
-      turn: 1.35,
+      ...flightTemplateStats('terran_frigate'),
       radius: 45,
       mass: 10000,
       rammingMass: 1000,
@@ -377,9 +376,7 @@ export const SUPPORT_SHIP_TEMPLATES = {
     sensors: { ...SHIP_SENSOR_PROFILES.frigate_combat },
     stats: {
       hp: 1800,
-      accel: 230,
-      maxSpeed: 380,
-      turn: 1.15,
+      ...flightTemplateStats('terran_frigate'),
       radius: 45,
       mass: 10000,
       rammingMass: 1200,
@@ -393,9 +390,7 @@ export const SUPPORT_SHIP_TEMPLATES = {
     sensors: { ...SHIP_SENSOR_PROFILES.destroyer_combat },
     stats: {
       hp: 4200,
-      accel: 150,
-      maxSpeed: 320,
-      turn: 0.82,
+      ...flightTemplateStats('terran_destroyer'),
       radius: 35,
       mass: 25000,
       rammingMass: 5000,
@@ -409,9 +404,7 @@ export const SUPPORT_SHIP_TEMPLATES = {
     sensors: { ...SHIP_SENSOR_PROFILES.battleship_combat },
     stats: {
       hp: 12000,
-      accel: 85,
-      maxSpeed: 240,
-      turn: 0.48,
+      ...flightTemplateStats('terran_battleship'),
       radius: 140,
       mass: 50000,
       rammingMass: 8000,
@@ -425,9 +418,7 @@ export const SUPPORT_SHIP_TEMPLATES = {
     sensors: { ...SHIP_SENSOR_PROFILES.battleship_combat },
     stats: {
       hp: 12000,
-      accel: 85,
-      maxSpeed: 240,
-      turn: 0.48,
+      ...flightTemplateStats('pirate_battleship'),
       radius: 140,
       mass: 50000,
       rammingMass: 8000,
@@ -455,9 +446,7 @@ export const CAPITAL_SHIP_TEMPLATES = {
     shield: 28000,
     shieldRegen: 260,
     shieldDelay: 6,
-    accel: 48,
-    maxSpeed: 190,
-    turn: 0.3,
+    ...flightTemplateStats('terran_carrier'),
     radius: 192,
     hardpoints: { large: 2, medium: 2 },
     formationOffset: { x: -820, y: 380 },
@@ -509,9 +498,7 @@ export const CAPITAL_SHIP_TEMPLATES = {
     shield: 52000,
     shieldRegen: 400,
     shieldDelay: 8,
-    accel: 24,
-    maxSpeed: 140,
-    turn: 0.16,
+    ...flightTemplateStats('terran_supercapital'),
     radius: 300,
     hardpoints: { large: 4, medium: 4 },
     formationOffset: { x: -1200, y: -500 },
@@ -553,9 +540,7 @@ export const CAPITAL_SHIP_TEMPLATES = {
     shield: 52000,
     shieldRegen: 400,
     shieldDelay: 8,
-    accel: 24,
-    maxSpeed: 140,
-    turn: 0.16,
+    ...flightTemplateStats('atlas'),
     radius: 300,
     hardpoints: { large: 4, medium: 4 },
     formationOffset: { x: -1200, y: -500 },

@@ -1,0 +1,1876 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Wystrzał działa kosmicznego — 3 lufy</title>
+<style>
+  :root {
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+
+    --void:   #05070b;
+    --steel:  #12161d;
+    --edge:   #232b36;
+    --text:   #c9d2de;
+    --dim:    #79859a;
+    --ember:  #ff8a3a;
+    --hot:    #ffd9a0;
+    --ion:    #35b6ff;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; background: var(--void); overflow: hidden; }
+  body {
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    touch-action: none;
+  }
+  canvas { display: block; width: 100%; height: 100%; }
+
+  #screenflash {
+    position: fixed; inset: 0; pointer-events: none; opacity: 0;
+    --fc1: rgba(255,214,160,.85);
+    --fc2: rgba(255,130,50,.25);
+    background: radial-gradient(62% 52% at 50% 52%, var(--fc1), var(--fc2) 55%, transparent 76%);
+    mix-blend-mode: screen;
+  }
+
+  /* --- panel kontrolny --- */
+  #panel {
+    position: fixed;
+    top: calc(12px + env(safe-area-inset-top, 0px));
+    right: 12px;
+    width: 268px;
+    max-height: calc(100dvh - 120px - env(safe-area-inset-top, 0px));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    background: rgba(12,16,22,.86);
+    border: 1px solid var(--edge);
+    border-radius: 10px;
+    backdrop-filter: blur(8px);
+    padding: 12px 13px 14px;
+    font-size: 12.5px;
+    line-height: 1.45;
+    z-index: 5;
+  }
+  #panel[hidden] { display: none; }
+  #panel h1 {
+    margin: 0 0 2px; font-size: 13px; font-weight: 600; letter-spacing: .2px; color: var(--hot);
+  }
+  #panel .sub { margin: 0 0 12px; color: var(--dim); font-size: 11.5px; }
+
+  .grp { border-top: 1px solid var(--edge); padding-top: 9px; margin-top: 10px; }
+  .grp:first-of-type { border-top: 0; padding-top: 0; margin-top: 0; }
+  .grp > .gname { color: var(--dim); font-size: 11px; margin-bottom: 7px; }
+
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 7px 0; }
+  .row label { flex: 1 1 auto; }
+  .row .val {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 11px; color: var(--ember); min-width: 34px; text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  input[type=range] {
+    -webkit-appearance: none; appearance: none;
+    width: 100%; height: 18px; background: transparent; margin: 0 0 2px;
+  }
+  input[type=range]::-webkit-slider-runnable-track { height: 3px; background: #2c3441; border-radius: 2px; }
+  input[type=range]::-moz-range-track { height: 3px; background: #2c3441; border-radius: 2px; }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 14px; height: 14px; margin-top: -5.5px;
+    border-radius: 50%; background: var(--ember); border: 0; cursor: pointer;
+  }
+  input[type=range]::-moz-range-thumb {
+    width: 14px; height: 14px; border-radius: 50%; background: var(--ember); border: 0; cursor: pointer;
+  }
+  input[type=range]:focus-visible { outline: 2px solid var(--hot); outline-offset: 3px; }
+
+  .seg { display: flex; gap: 4px; }
+  .seg button {
+    flex: 1; padding: 6px 4px; font: inherit; font-size: 11.5px; color: var(--dim);
+    background: #161b23; border: 1px solid var(--edge); border-radius: 6px; cursor: pointer;
+  }
+  .seg button[aria-pressed="true"] { color: #0a0d12; background: var(--ember); border-color: var(--ember); font-weight: 600; }
+
+  .chk { display: flex; align-items: center; gap: 8px; margin: 7px 0; cursor: pointer; }
+  .chk input { accent-color: var(--ember); width: 15px; height: 15px; }
+
+  #readout {
+    position: fixed; left: 12px;
+    top: calc(12px + env(safe-area-inset-top, 0px));
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 11px; color: var(--dim); line-height: 1.6; z-index: 5;
+    font-variant-numeric: tabular-nums; pointer-events: none;
+  }
+  #readout b { color: var(--text); font-weight: 500; }
+
+  #dock {
+    position: fixed; left: 0; right: 0;
+    bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+    display: flex; justify-content: center; align-items: center; gap: 10px;
+    z-index: 5; pointer-events: none;
+  }
+  #dock > * { pointer-events: auto; }
+  .fire {
+    font: inherit; font-size: 13.5px; font-weight: 600; letter-spacing: .3px;
+    color: #14090a; background: linear-gradient(180deg, #ffb066, var(--ember));
+    border: 0; border-radius: 999px; padding: 13px 26px; cursor: pointer;
+    box-shadow: 0 0 0 1px rgba(255,180,120,.35), 0 10px 30px rgba(255,120,40,.22);
+  }
+  .fire.ion {
+    color: #04121a; background: linear-gradient(180deg, #9fe6ff, var(--ion));
+    box-shadow: 0 0 0 1px rgba(150,225,255,.35), 0 10px 30px rgba(60,170,255,.22);
+  }
+  .fire:active { transform: translateY(1px); }
+  .fire[disabled] { opacity: .45; cursor: default; }
+  #toggle {
+    font: inherit; font-size: 12.5px; color: var(--text);
+    background: rgba(12,16,22,.86); border: 1px solid var(--edge); border-radius: 999px;
+    padding: 12px 16px; cursor: pointer;
+  }
+  .hint { position: fixed; left: 12px; bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+    font-size: 11px; color: #4d5766; z-index: 4; }
+  @media (max-width: 720px) {
+    #panel { width: auto; left: 12px; right: 12px; max-height: 42dvh; }
+    .hint { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) { #screenflash { display: none; } }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="screenflash"></div>
+
+<div id="readout">
+  <div>fps <b id="r-fps">—</b></div>
+  <div>cząstki <b id="r-part">0</b></div>
+</div>
+
+<div id="panel">
+  <h1>Wystrzał — armata i działo jonowe</h1>
+  <p class="sub">Kamera perspektywiczna od góry. Wieże i pociski to placeholdery — liczy się tylko punkt wylotu.</p>
+
+  <div class="grp">
+    <div class="gname">Armata — 3 lufy</div>
+    <div class="seg" id="mode">
+      <button data-mode="ripple" aria-pressed="true">Sekwencja</button>
+      <button data-mode="salvo" aria-pressed="false">Salwa</button>
+    </div>
+    <div class="row"><label for="s-int">Siła rozbłysku</label><span class="val" id="v-int">1.0</span></div>
+    <input type="range" id="s-int" min="0" max="2" step="0.05" value="1">
+    <div class="row"><label for="s-spark">Iskry</label><span class="val" id="v-spark">1.0</span></div>
+    <input type="range" id="s-spark" min="0" max="3" step="0.05" value="1">
+    <div class="row"><label for="s-smoke">Dym — gęstość</label><span class="val" id="v-smoke">1.0</span></div>
+    <input type="range" id="s-smoke" min="0" max="2.5" step="0.05" value="1">
+    <div class="row"><label for="s-slife">Dym — czas życia</label><span class="val" id="v-slife">0.8</span></div>
+    <input type="range" id="s-slife" min="0.2" max="3" step="0.05" value="0.8">
+    <div class="row"><label for="s-soot">Sadza → jasny dym</label><span class="val" id="v-soot">0.35</span></div>
+    <input type="range" id="s-soot" min="0" max="1" step="0.01" value="0.35">
+  </div>
+
+  <div class="grp">
+    <div class="gname">Działo jonowe</div>
+    <div class="row"><label for="s-ion">Siła wyładowania</label><span class="val" id="v-ion">1.0</span></div>
+    <input type="range" id="s-ion" min="0" max="2" step="0.05" value="1">
+    <div class="row"><label for="s-charge">Czas ładowania</label><span class="val" id="v-charge">0.60</span></div>
+    <input type="range" id="s-charge" min="0" max="2" step="0.05" value="0.6">
+    <div class="row"><label for="s-arc">Łuki elektryczne</label><span class="val" id="v-arc">1.0</span></div>
+    <input type="range" id="s-arc" min="0" max="2.5" step="0.05" value="1">
+    <div class="row"><label for="s-vapor">Opar jonowy</label><span class="val" id="v-vapor">1.0</span></div>
+    <input type="range" id="s-vapor" min="0" max="2.5" step="0.05" value="1">
+  </div>
+
+  <div class="grp">
+    <div class="gname">Wspólne</div>
+    <div class="row"><label for="s-flat">Spłaszczenie rozrzutu</label><span class="val" id="v-flat">0.25</span></div>
+    <input type="range" id="s-flat" min="0" max="1" step="0.01" value="0.25">
+    <div class="row"><label for="s-recoil">Odrzut</label><span class="val" id="v-recoil">1.0</span></div>
+    <input type="range" id="s-recoil" min="0" max="2.5" step="0.05" value="1">
+    <div class="row"><label for="s-shake">Wstrząs kamery</label><span class="val" id="v-shake">1.0</span></div>
+    <input type="range" id="s-shake" min="0" max="2.5" step="0.05" value="1">
+    <div class="row"><label for="s-bloom">Bloom</label><span class="val" id="v-bloom">1.0</span></div>
+    <input type="range" id="s-bloom" min="0" max="2.5" step="0.05" value="1">
+    <div class="row"><label for="s-time">Spowolnienie</label><span class="val" id="v-time">1.00</span></div>
+    <input type="range" id="s-time" min="0.05" max="1" step="0.01" value="1">
+    <label class="chk"><input type="checkbox" id="auto"> Ogień ciągły</label>
+    <label class="chk"><input type="checkbox" id="track" checked> Wieże się obracają</label>
+    <label class="chk"><input type="checkbox" id="proj" checked> Pokaż pociski</label>
+  </div>
+</div>
+
+<div id="dock">
+  <button id="fire-cannon" class="fire">Armata</button>
+  <button id="fire-ion" class="fire ion">Jonowe</button>
+  <button id="toggle">Panel</button>
+</div>
+<div class="hint">1 / 2 — wybór działa &nbsp;·&nbsp; spacja lub klik — ogień &nbsp;·&nbsp; przeciąganie — kamera &nbsp;·&nbsp; H — panel</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls }    from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer }   from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass }       from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass }  from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass }       from 'three/addons/postprocessing/OutputPass.js';
+
+/* ============================================================================
+   KONFIGURACJA — wszystko podpięte pod suwaki w panelu
+   ========================================================================== */
+const CFG = {
+  // armata
+  mode:       'ripple',   // 'ripple' = lufa po lufie, 'salvo' = wszystkie naraz
+  intensity:  1.0,        // siła rozbłysku
+  sparks:     1.0,
+  smoke:      1.0,
+  smokeLife:  0.8,
+  soot:       0.35,       // 0 = czarna sadza, 1 = jasny dym prochowy
+  // działo jonowe
+  ion:        1.0,        // siła wyładowania
+  ionCharge:  0.60,       // czas ładowania w sekundach (0 = strzał natychmiastowy)
+  ionArcs:    1.0,        // gęstość łuków elektrycznych
+  ionVapor:   1.0,        // gęstość oparu jonowego
+  // wspólne
+  flatten:    0.25,       // 0 = rozrzut tylko w płaszczyźnie gry, 1 = pełna kula
+  recoil:     1.0,
+  shake:      1.0,
+  bloom:      1.0,
+  timeScale:  1.0,
+  autoFire:   false,
+  projectiles:true,
+  turretIdle: true,
+};
+
+// Skala świata: lufa ma ~26 jednostek długości. Jeśli u Ciebie działo jest
+// mniejsze/większe — zmień FX_SCALE, wszystkie rozmiary i prędkości lecą z tego.
+const FX_SCALE = 1.0;
+
+/* ============================================================================
+   NARZĘDZIA
+   ========================================================================== */
+const clamp01 = x => x < 0 ? 0 : x > 1 ? 1 : x;
+const lerp = (a, b, t) => a + (b - a) * t;
+const rand = (a, b) => a + Math.random() * (b - a);
+const randInt = (a, b) => Math.floor(rand(a, b + 1));
+function smoothstep(e0, e1, x) {
+  const t = clamp01((x - e0) / (e1 - e0 || 1e-6));
+  return t * t * (3 - 2 * t);
+}
+
+// baza ortonormalna wokół kierunku (do stożków rozrzutu)
+const _bx = new THREE.Vector3(), _by = new THREE.Vector3(), _bh = new THREE.Vector3();
+function makeBasis(dir) {
+  _bh.set(0, 1, 0);
+  if (Math.abs(dir.y) > 0.9) _bh.set(1, 0, 0);
+  _bx.crossVectors(_bh, dir).normalize();
+  _by.crossVectors(dir, _bx).normalize();
+}
+// losowy kierunek w stożku o półkącie `spread` (radiany), wynik do out.
+// `flat` ścieśnia odchylenie w osi Y: przy widoku z góry rozrzut ma iść
+// w płaszczyźnie gry, a nie "w ekran", gdzie i tak skraca się do kropki.
+function coneDir(out, dir, spread, flat = 1) {
+  const theta = spread * Math.sqrt(Math.random());
+  const phi = Math.random() * Math.PI * 2;
+  const st = Math.sin(theta), ct = Math.cos(theta);
+  out.copy(dir).multiplyScalar(ct)
+     .addScaledVector(_bx, st * Math.cos(phi))
+     .addScaledVector(_by, st * Math.sin(phi));
+  if (flat !== 1) {
+    out.sub(dir);          // samo odchylenie od osi
+    out.y *= flat;         // oś strzału zostaje nietknięta
+    out.add(dir).normalize();
+  }
+  return out;
+}
+
+/* ============================================================================
+   TEKSTURY PROCEDURALNE — zero plików zewnętrznych
+   ========================================================================== */
+function canvasTex(size, draw) {
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = size;
+  draw(cv.getContext('2d'), size);
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.needsUpdate = true;
+  return t;
+}
+
+// miękka poświata (rdzeń rozbłysku, gazy, żagiew)
+const TEX_GLOW = canvasTex(128, (ctx, s) => {
+  const g = ctx.createRadialGradient(s/2, s/2, 0, s/2, s/2, s/2);
+  g.addColorStop(0.00, 'rgba(255,255,255,1)');
+  g.addColorStop(0.18, 'rgba(255,255,255,0.78)');
+  g.addColorStop(0.42, 'rgba(255,255,255,0.28)');
+  g.addColorStop(0.72, 'rgba(255,255,255,0.07)');
+  g.addColorStop(1.00, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, s, s);
+});
+
+// gwiazda/flara — ostre promienie prosto z wylotu
+const TEX_FLARE = canvasTex(256, (ctx, s) => {
+  const c = s / 2;
+  const g = ctx.createRadialGradient(c, c, 0, c, c, c * 0.34);
+  g.addColorStop(0, 'rgba(255,255,255,0.95)');
+  g.addColorStop(0.5, 'rgba(255,255,255,0.22)');
+  g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, s, s);
+  ctx.globalCompositeOperation = 'lighter';
+  const spikes = 6;
+  for (let i = 0; i < spikes; i++) {
+    const a = (i / spikes) * Math.PI * 2 + 0.3;
+    const len = c * (i % 2 === 0 ? 0.98 : 0.6);
+    const w = s * (i % 2 === 0 ? 0.030 : 0.018);
+    ctx.save();
+    ctx.translate(c, c);
+    ctx.rotate(a);
+    const lg = ctx.createLinearGradient(0, 0, len, 0);
+    lg.addColorStop(0, 'rgba(255,255,255,0.85)');
+    lg.addColorStop(0.35, 'rgba(255,255,255,0.22)');
+    lg.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = lg;
+    ctx.beginPath();
+    ctx.moveTo(0, -w); ctx.lineTo(len, 0); ctx.lineTo(0, w);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+});
+
+// anamorficzny krzyż rozbłysku — kwad skalowany osobno wzdłuż i w poprzek lufy
+const TEX_CROSS = canvasTex(256, (ctx, s) => {
+  const img = ctx.createImageData(s, s);
+  const d = img.data;
+  for (let y = 0; y < s; y++) {
+    const v = (y / (s - 1)) * 2 - 1;
+    for (let x = 0; x < s; x++) {
+      const u = (x / (s - 1)) * 2 - 1;
+      const horiz = Math.pow(clamp01(1 - Math.abs(v) / 0.15), 2.0) * Math.pow(clamp01(1 - Math.abs(u)), 1.3);
+      const vert  = Math.pow(clamp01(1 - Math.abs(u) / 0.24), 2.0) * Math.pow(clamp01(1 - Math.abs(v) / 0.60), 1.6);
+      const core  = Math.pow(clamp01(1 - Math.sqrt(u * u + v * v) / 0.32), 2.2);
+      const i = (y * s + x) * 4;
+      d[i] = d[i+1] = d[i+2] = 255;
+      d[i+3] = clamp01(horiz * 0.9 + vert * 0.5 + core) * 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+});
+
+// jęzor ognia z wylotu — jasny u podstawy (v=0), rozmyty ku końcowi
+const TEX_PLUME = canvasTex(128, (ctx, s) => {
+  const img = ctx.createImageData(s, s);
+  const d = img.data;
+  for (let y = 0; y < s; y++) {
+    const v = 1 - y / (s - 1);             // 0 = wylot lufy (uwzględnia flipY tekstury)
+    const along = Math.pow(1 - v, 1.5);
+    const width = 0.22 + v * 0.78;         // stożek się rozszerza
+    for (let x = 0; x < s; x++) {
+      const u = (x / (s - 1)) * 2 - 1;
+      const r = Math.abs(u) / width;
+      const across = Math.pow(clamp01(1 - r * r), 1.6);
+      const a = clamp01(along * across);
+      const i = (y * s + x) * 4;
+      d[i] = d[i+1] = d[i+2] = 255;
+      d[i+3] = a * 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+});
+
+// kłąb dymu — szum + maska promieniowa, poszarpane brzegi
+function valueNoise(seed) {
+  const p = new Uint8Array(256);
+  for (let i = 0; i < 256; i++) p[i] = i;
+  let s = seed >>> 0;
+  const rnd = () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
+  for (let i = 255; i > 0; i--) { const j = (rnd() * (i + 1)) | 0; const t = p[i]; p[i] = p[j]; p[j] = t; }
+  const perm = new Uint8Array(512);
+  for (let i = 0; i < 512; i++) perm[i] = p[i & 255];
+  const fade = t => t * t * t * (t * (t * 6 - 15) + 10);
+  const grad = (h, x, y) => { switch (h & 3) { case 0: return x + y; case 1: return -x + y; case 2: return x - y; default: return -x - y; } };
+  return (x, y) => {
+    const X = Math.floor(x) & 255, Y = Math.floor(y) & 255;
+    const xf = x - Math.floor(x), yf = y - Math.floor(y);
+    const u = fade(xf), v = fade(yf);
+    const aa = perm[perm[X] + Y], ab = perm[perm[X] + Y + 1];
+    const ba = perm[perm[X + 1] + Y], bb = perm[perm[X + 1] + Y + 1];
+    const x1 = lerp(grad(aa, xf, yf), grad(ba, xf - 1, yf), u);
+    const x2 = lerp(grad(ab, xf, yf - 1), grad(bb, xf - 1, yf - 1), u);
+    return lerp(x1, x2, v) * 0.5 + 0.5;
+  };
+}
+
+const TEX_SMOKE = canvasTex(256, (ctx, s) => {
+  const n = valueNoise(20260919);
+  const fbm = (x, y) => {
+    let a = 0, amp = 0.5, f = 1;
+    for (let o = 0; o < 4; o++) { a += n(x * f, y * f) * amp; amp *= 0.5; f *= 2.05; }
+    return a / 0.9375;
+  };
+  const img = ctx.createImageData(s, s);
+  const d = img.data;
+  const c = (s - 1) / 2;
+  for (let y = 0; y < s; y++) {
+    for (let x = 0; x < s; x++) {
+      const dx = (x - c) / c, dy = (y - c) / c;
+      const r = Math.sqrt(dx * dx + dy * dy);
+      const nv = fbm(x / s * 3.2, y / s * 3.2);
+      let a = smoothstep(1.02, 0.15, r);        // miękki spadek do brzegu
+      a *= 0.30 + 0.95 * nv;                    // kłębiasta struktura
+      a *= smoothstep(0.08, 0.42, 1.0 - r * 0.85 + (nv - 0.5) * 0.55); // poszarpanie
+      const i = (y * s + x) * 4;
+      d[i] = d[i+1] = d[i+2] = 255;
+      d[i+3] = clamp01(a) * 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+});
+
+/* ============================================================================
+   SILNIK CZĄSTECZEK
+   Struct-of-arrays + instancing. Zero alokacji w pętli klatki.
+   ========================================================================== */
+class Pool {
+  constructor(capacity, fields) {
+    this.cap = capacity;
+    this.count = 0;
+    this.comps = fields;
+    this.keys = Object.keys(fields);
+    this.f = {};
+    for (const k of this.keys) this.f[k] = new Float32Array(capacity * fields[k]);
+  }
+  spawn() { return this.count < this.cap ? this.count++ : -1; }
+  kill(i) {
+    const last = --this.count;
+    if (i === last) return;
+    for (const k of this.keys) {
+      const c = this.comps[k], a = this.f[k];
+      for (let d = 0; d < c; d++) a[i * c + d] = a[last * c + d];
+    }
+  }
+}
+
+function instancedQuad(attrs, capacity, vertexShader, fragmentShader, uniforms, blending) {
+  const base = new THREE.PlaneGeometry(1, 1);
+  const geo = new THREE.InstancedBufferGeometry();
+  geo.index = base.index;
+  geo.setAttribute('position', base.attributes.position);
+  geo.setAttribute('uv', base.attributes.uv);
+  const bufs = {};
+  for (const [name, size] of attrs) {
+    const a = new THREE.InstancedBufferAttribute(new Float32Array(capacity * size), size);
+    a.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute(name, a);
+    bufs[name] = a;
+  }
+  geo.instanceCount = 0;
+  const mat = new THREE.ShaderMaterial({
+    uniforms, vertexShader, fragmentShader,
+    transparent: true, blending, depthTest: true, depthWrite: false,
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.frustumCulled = false;
+  return { geo, mat, mesh, bufs };
+}
+
+/* --- parametry spawnu (obiekt współdzielony, żeby nie śmiecić GC) --------- */
+const SP = {};
+function sp() {
+  SP.x = SP.y = SP.z = 0;
+  SP.vx = SP.vy = SP.vz = 0;
+  SP.life = 1; SP.drag = 1;
+  SP.s0 = 1; SP.s1 = 2;
+  SP.rot = 0; SP.vrot = 0;
+  SP.r0 = 1; SP.g0 = 1; SP.b0 = 1;
+  SP.r1 = 1; SP.g1 = 1; SP.b1 = 1;
+  SP.mix = 4;                 // szybkość przejścia koloru c0 -> c1 (1/s)
+  SP.alpha = 1; SP.fadeIn = 0.06; SP.fadeOut = 1.5;
+  SP.grow = 0.6;              // <1 = szybki rozrost na starcie
+  return SP;
+}
+
+/* --- bilboardy: dym, gazy, rdzeń rozbłysku, żagwie --------------------- */
+const BB_VERT = /* glsl */`
+  attribute vec3 iPos;
+  attribute vec3 iCol;
+  attribute vec3 iData;          // x: rozmiar, y: obrót, z: alfa
+  varying vec2 vUv;
+  varying vec3 vCol;
+  varying float vA;
+  void main() {
+    vUv = uv; vCol = iCol; vA = iData.z;
+    vec4 mv = viewMatrix * vec4(iPos, 1.0);
+    float c = cos(iData.y), s = sin(iData.y);
+    vec2 p = position.xy * iData.x;
+    mv.xy += vec2(p.x * c - p.y * s, p.x * s + p.y * c);
+    gl_Position = projectionMatrix * mv;
+  }`;
+const BB_FRAG = /* glsl */`
+  uniform sampler2D map;
+  varying vec2 vUv;
+  varying vec3 vCol;
+  varying float vA;
+  void main() {
+    vec4 t = texture2D(map, vUv);
+    float a = t.a * vA;
+    if (a < 0.002) discard;
+    gl_FragColor = vec4(vCol * t.rgb, a);
+  }`;
+
+class BillboardSystem {
+  constructor(scene, texture, blending, capacity, renderOrder = 1) {
+    this.p = new Pool(capacity, {
+      pos: 3, vel: 3, t: 2, drag: 1, size: 2, rot: 2, c0: 3, c1: 3, mix: 1, a: 3, grow: 1,
+    });
+    const q = instancedQuad(
+      [['iPos', 3], ['iCol', 3], ['iData', 3]], capacity,
+      BB_VERT, BB_FRAG, { map: { value: texture } }, blending
+    );
+    Object.assign(this, q);
+    this.mesh.renderOrder = renderOrder;
+    scene.add(this.mesh);
+  }
+  spawn(o) {
+    const i = this.p.spawn();
+    if (i < 0) return;
+    const f = this.p.f, i3 = i * 3, i2 = i * 2;
+    f.pos[i3] = o.x; f.pos[i3+1] = o.y; f.pos[i3+2] = o.z;
+    f.vel[i3] = o.vx; f.vel[i3+1] = o.vy; f.vel[i3+2] = o.vz;
+    f.t[i2] = 0; f.t[i2+1] = o.life;
+    f.drag[i] = o.drag;
+    f.size[i2] = o.s0; f.size[i2+1] = o.s1;
+    f.rot[i2] = o.rot; f.rot[i2+1] = o.vrot;
+    f.c0[i3] = o.r0; f.c0[i3+1] = o.g0; f.c0[i3+2] = o.b0;
+    f.c1[i3] = o.r1; f.c1[i3+1] = o.g1; f.c1[i3+2] = o.b1;
+    f.mix[i] = o.mix;
+    f.a[i3] = o.alpha; f.a[i3+1] = Math.max(0.002, o.fadeIn); f.a[i3+2] = o.fadeOut;
+    f.grow[i] = o.grow;
+  }
+  update(dt) {
+    const p = this.p, f = p.f;
+    for (let i = p.count - 1; i >= 0; i--) {
+      const i2 = i * 2, i3 = i * 3;
+      const age = f.t[i2] + dt;
+      if (age >= f.t[i2 + 1]) { p.kill(i); continue; }
+      f.t[i2] = age;
+      const d = Math.exp(-f.drag[i] * dt);
+      f.vel[i3] *= d; f.vel[i3+1] *= d; f.vel[i3+2] *= d;
+      f.pos[i3]   += f.vel[i3]   * dt;
+      f.pos[i3+1] += f.vel[i3+1] * dt;
+      f.pos[i3+2] += f.vel[i3+2] * dt;
+      f.rot[i2] += f.rot[i2 + 1] * dt;
+    }
+    const n = p.count;
+    const P = this.bufs.iPos.array, C = this.bufs.iCol.array, D = this.bufs.iData.array;
+    for (let i = 0; i < n; i++) {
+      const i2 = i * 2, i3 = i * 3;
+      const age = f.t[i2], life = f.t[i2 + 1];
+      const u = age / life;
+      const g = Math.pow(u, f.grow[i]);
+      const m = Math.min(1, age * f.mix[i]);
+      P[i3] = f.pos[i3]; P[i3+1] = f.pos[i3+1]; P[i3+2] = f.pos[i3+2];
+      C[i3]   = lerp(f.c0[i3],   f.c1[i3],   m);
+      C[i3+1] = lerp(f.c0[i3+1], f.c1[i3+1], m);
+      C[i3+2] = lerp(f.c0[i3+2], f.c1[i3+2], m);
+      D[i3]   = lerp(f.size[i2], f.size[i2 + 1], g);
+      D[i3+1] = f.rot[i2];
+      D[i3+2] = f.a[i3] * smoothstep(0, f.a[i3+1], u) * Math.pow(1 - u, f.a[i3+2]);
+    }
+    this.geo.instanceCount = n;
+    this.mesh.visible = n > 0;
+    if (n > 0) { this.bufs.iPos.needsUpdate = true; this.bufs.iCol.needsUpdate = true; this.bufs.iData.needsUpdate = true; }
+  }
+}
+
+/* --- kwady zorientowane -------------------------------------------------
+   Jedna klasa, trzy vertex shadery. Różni je wyłącznie sposób ustawienia
+   quada w świecie: wzdłuż lufy ku kamerze, wzdłuż lufy na ekranie, płasko
+   w płaszczyźnie gry.
+   ----------------------------------------------------------------------- */
+const ORIENT_HEAD = /* glsl */`
+  attribute vec3 iPos;
+  attribute vec3 iDir;
+  attribute vec3 iCol;
+  attribute vec3 iData;          // x: długość, y: szerokość, z: alfa
+  varying vec2 vUv;
+  varying vec3 vCol;
+  varying float vA;
+`;
+
+// (a) jęzor ognia — wzdłuż osi lufy, obracany ku kamerze
+const PLUME_VERT = ORIENT_HEAD + /* glsl */`
+  void main() {
+    vUv = uv; vCol = iCol; vA = iData.z;
+    vec3 axis = normalize(iDir);
+    vec3 toCam = normalize(cameraPosition - iPos);
+    vec3 side = cross(axis, toCam);
+    float l = length(side);
+    side = l > 1e-4 ? side / l : vec3(1.0, 0.0, 0.0);
+    vec3 world = iPos + axis * ((position.y + 0.5) * iData.x) + side * (position.x * iData.y);
+    gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
+  }`;
+
+// (b) krzyż rozbłysku — bilboard obrócony tak, by oś X leżała wzdłuż lufy NA EKRANIE
+const CROSS_VERT = ORIENT_HEAD + /* glsl */`
+  void main() {
+    vUv = uv; vCol = iCol; vA = iData.z;
+    vec4 mv = viewMatrix * vec4(iPos, 1.0);
+    vec2 a = (mat3(viewMatrix) * normalize(iDir)).xy;
+    float l = length(a);
+    a = l > 1e-4 ? a / l : vec2(1.0, 0.0);
+    vec2 pt = vec2(position.x * iData.x, position.y * iData.y);
+    mv.xy += vec2(pt.x * a.x - pt.y * a.y, pt.x * a.y + pt.y * a.x);
+    gl_Position = projectionMatrix * mv;
+  }`;
+
+// (c) rozlanie światła po pokładzie — leży płasko w płaszczyźnie gry i wybiega do przodu
+const WASH_VERT = ORIENT_HEAD + /* glsl */`
+  void main() {
+    vUv = uv; vCol = iCol; vA = iData.z;
+    vec3 f = vec3(iDir.x, 0.0, iDir.z);
+    float l = length(f);
+    f = l > 1e-4 ? f / l : vec3(0.0, 0.0, 1.0);
+    vec3 r = vec3(-f.z, 0.0, f.x);
+    vec3 world = iPos + f * ((position.y + 0.5) * iData.x) + r * (position.x * iData.y);
+    gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
+  }`;
+
+class OrientedQuadSystem {
+  constructor(scene, texture, capacity, vertexShader, renderOrder = 4, fadePow = 2.0) {
+    this.fadePow = fadePow;
+    this.p = new Pool(capacity, { pos: 3, dir: 3, t: 2, len: 2, wid: 2, col: 3, a: 1 });
+    const q = instancedQuad(
+      [['iPos', 3], ['iDir', 3], ['iCol', 3], ['iData', 3]], capacity,
+      vertexShader, BB_FRAG, { map: { value: texture } }, THREE.AdditiveBlending
+    );
+    Object.assign(this, q);
+    this.mesh.renderOrder = renderOrder;
+    scene.add(this.mesh);
+  }
+  spawn(pos, dir, life, l0, l1, w0, w1, col, alpha) {
+    const i = this.p.spawn();
+    if (i < 0) return;
+    const f = this.p.f, i3 = i * 3, i2 = i * 2;
+    f.pos[i3] = pos.x; f.pos[i3+1] = pos.y; f.pos[i3+2] = pos.z;
+    f.dir[i3] = dir.x; f.dir[i3+1] = dir.y; f.dir[i3+2] = dir.z;
+    f.t[i2] = 0; f.t[i2+1] = life;
+    f.len[i2] = l0; f.len[i2+1] = l1;
+    f.wid[i2] = w0; f.wid[i2+1] = w1;
+    f.col[i3] = col[0]; f.col[i3+1] = col[1]; f.col[i3+2] = col[2];
+    f.a[i] = alpha;
+  }
+  update(dt) {
+    const p = this.p, f = p.f;
+    for (let i = p.count - 1; i >= 0; i--) {
+      const i2 = i * 2;
+      const age = f.t[i2] + dt;
+      if (age >= f.t[i2 + 1]) { p.kill(i); continue; }
+      f.t[i2] = age;
+    }
+    const n = p.count;
+    const P = this.bufs.iPos.array, DIR = this.bufs.iDir.array,
+          C = this.bufs.iCol.array, D = this.bufs.iData.array;
+    for (let i = 0; i < n; i++) {
+      const i2 = i * 2, i3 = i * 3;
+      const u = f.t[i2] / f.t[i2 + 1];
+      const ease = 1 - Math.pow(1 - u, 2.4);      // szybkie wyrzucenie, wolne dojście
+      P[i3] = f.pos[i3]; P[i3+1] = f.pos[i3+1]; P[i3+2] = f.pos[i3+2];
+      DIR[i3] = f.dir[i3]; DIR[i3+1] = f.dir[i3+1]; DIR[i3+2] = f.dir[i3+2];
+      C[i3] = f.col[i3]; C[i3+1] = f.col[i3+1]; C[i3+2] = f.col[i3+2];
+      D[i3]   = lerp(f.len[i2], f.len[i2 + 1], ease);
+      D[i3+1] = lerp(f.wid[i2], f.wid[i2 + 1], ease);
+      D[i3+2] = f.a[i] * Math.pow(1 - u, this.fadePow) * smoothstep(0, 0.10, u);
+    }
+    this.geo.instanceCount = n;
+    this.mesh.visible = n > 0;
+    if (n > 0) { this.bufs.iPos.needsUpdate = true; this.bufs.iDir.needsUpdate = true; this.bufs.iCol.needsUpdate = true; this.bufs.iData.needsUpdate = true; }
+  }
+}
+
+/* --- łuki elektryczne ----------------------------------------------------
+   Łamana między dwoma punktami, przesuwana szumem prostopadle do osi.
+   Kształt losuje się na nowo ~30 razy na sekundę, nie co klatkę — dzięki
+   temu łuk "trzeszczy" zamiast migotać biało.
+   ----------------------------------------------------------------------- */
+function hash3(a, b, c) {
+  let h = Math.imul(a | 0, 374761393) ^ Math.imul(b | 0, 668265263) ^ Math.imul(c | 0, 1442695041);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 2147483648 - 1;
+}
+
+const _aa = new THREE.Vector3(), _ab = new THREE.Vector3(), _ad = new THREE.Vector3();
+
+class ArcSystem {
+  constructor(scene, capacity = 48, segs = 11) {
+    this.segs = segs;
+    this.p = new Pool(capacity, { a: 3, b: 3, t: 2, col: 3, jit: 1, seed: 1 });
+    const verts = capacity * segs * 2;
+    const geo = new THREE.BufferGeometry();
+    this.posAttr = new THREE.BufferAttribute(new Float32Array(verts * 3), 3);
+    this.colAttr = new THREE.BufferAttribute(new Float32Array(verts * 3), 3);
+    this.posAttr.setUsage(THREE.DynamicDrawUsage);
+    this.colAttr.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute('position', this.posAttr);
+    geo.setAttribute('color', this.colAttr);
+    geo.setDrawRange(0, 0);
+    this.geo = geo;
+    this.lines = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({
+      vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    this.lines.frustumCulled = false;
+    this.lines.renderOrder = 5;
+    scene.add(this.lines);
+  }
+  spawn(a, b, life, jitter, col) {
+    const i = this.p.spawn();
+    if (i < 0) return;
+    const f = this.p.f, i3 = i * 3, i2 = i * 2;
+    f.a[i3] = a.x; f.a[i3+1] = a.y; f.a[i3+2] = a.z;
+    f.b[i3] = b.x; f.b[i3+1] = b.y; f.b[i3+2] = b.z;
+    f.t[i2] = 0; f.t[i2+1] = life;
+    f.col[i3] = col[0]; f.col[i3+1] = col[1]; f.col[i3+2] = col[2];
+    f.jit[i] = jitter;
+    f.seed[i] = (Math.random() * 65535) | 0;
+  }
+  update(dt, time) {
+    const p = this.p, f = p.f;
+    for (let i = p.count - 1; i >= 0; i--) {
+      const i2 = i * 2;
+      const age = f.t[i2] + dt;
+      if (age >= f.t[i2 + 1]) { p.kill(i); continue; }
+      f.t[i2] = age;
+    }
+    const n = p.count, segs = this.segs;
+    const P = this.posAttr.array, C = this.colAttr.array;
+    const step = Math.floor(time * 30);
+    let w = 0;
+    for (let i = 0; i < n; i++) {
+      const i2 = i * 2, i3 = i * 3;
+      const u = f.t[i2] / f.t[i2 + 1];
+      const seed = f.seed[i], jit = f.jit[i];
+      _aa.set(f.a[i3], f.a[i3+1], f.a[i3+2]);
+      _ab.set(f.b[i3], f.b[i3+1], f.b[i3+2]);
+      _ad.subVectors(_ab, _aa);
+      const len = _ad.length() || 1e-4;
+      _ad.divideScalar(len);
+      makeBasis(_ad);
+      const bright = Math.pow(1 - u, 1.1) * (0.55 + 0.45 * hash3(seed, 777, step));
+      let px = 0, py = 0, pz = 0, pb = 0;
+      for (let k = 0; k <= segs; k++) {
+        const t = k / segs;
+        const env = Math.sin(Math.PI * t);
+        const d1 = hash3(seed, k, step) * jit * env;
+        const d2 = hash3(seed, k + 91, step) * jit * env;
+        const x = _aa.x + _ad.x * len * t + _bx.x * d1 + _by.x * d2;
+        const y = _aa.y + _ad.y * len * t + _bx.y * d1 + _by.y * d2;
+        const z = _aa.z + _ad.z * len * t + _bx.z * d1 + _by.z * d2;
+        const bb = bright * (0.45 + 0.55 * env);
+        if (k > 0) {
+          P[w*3] = px; P[w*3+1] = py; P[w*3+2] = pz;
+          C[w*3] = f.col[i3] * pb; C[w*3+1] = f.col[i3+1] * pb; C[w*3+2] = f.col[i3+2] * pb;
+          w++;
+          P[w*3] = x; P[w*3+1] = y; P[w*3+2] = z;
+          C[w*3] = f.col[i3] * bb; C[w*3+1] = f.col[i3+1] * bb; C[w*3+2] = f.col[i3+2] * bb;
+          w++;
+        }
+        px = x; py = y; pz = z; pb = bb;
+      }
+    }
+    this.geo.setDrawRange(0, w);
+    this.lines.visible = w > 0;
+    if (w > 0) { this.posAttr.needsUpdate = true; this.colAttr.needsUpdate = true; }
+  }
+}
+
+/* --- iskry: smugi (LineSegments), głowa jasna, ogon wygaszony ----------- */
+class SparkSystem {
+  constructor(scene, capacity = 2000) {
+    this.cap = capacity;
+    // misc: [dł. smugi, faza migotania], cool: [docelowy mnożnik G, B]
+    this.p = new Pool(capacity, { pos: 3, vel: 3, t: 2, drag: 1, col: 3, misc: 2, cool: 2 });
+    const geo = new THREE.BufferGeometry();
+    this.posAttr = new THREE.BufferAttribute(new Float32Array(capacity * 6), 3);
+    this.colAttr = new THREE.BufferAttribute(new Float32Array(capacity * 6), 3);
+    this.posAttr.setUsage(THREE.DynamicDrawUsage);
+    this.colAttr.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute('position', this.posAttr);
+    geo.setAttribute('color', this.colAttr);
+    geo.setDrawRange(0, 0);
+    const mat = new THREE.LineBasicMaterial({
+      vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    this.lines = new THREE.LineSegments(geo, mat);
+    this.lines.frustumCulled = false;
+    this.lines.renderOrder = 5;
+    this.geo = geo;
+    scene.add(this.lines);
+  }
+  spawn(pos, vel, life, drag, streak, col, coolG = 0.32, coolB = 0.06) {
+    const i = this.p.spawn();
+    if (i < 0) return;
+    const f = this.p.f, i3 = i * 3, i2 = i * 2;
+    f.pos[i3] = pos.x; f.pos[i3+1] = pos.y; f.pos[i3+2] = pos.z;
+    f.vel[i3] = vel.x; f.vel[i3+1] = vel.y; f.vel[i3+2] = vel.z;
+    f.t[i2] = 0; f.t[i2+1] = life;
+    f.drag[i] = drag;
+    f.col[i3] = col[0]; f.col[i3+1] = col[1]; f.col[i3+2] = col[2];
+    f.misc[i2] = streak; f.misc[i2+1] = Math.random() * 6.28;
+    f.cool[i2] = coolG; f.cool[i2+1] = coolB;
+  }
+  update(dt, time) {
+    const p = this.p, f = p.f;
+    for (let i = p.count - 1; i >= 0; i--) {
+      const i2 = i * 2, i3 = i * 3;
+      const age = f.t[i2] + dt;
+      if (age >= f.t[i2 + 1]) { p.kill(i); continue; }
+      f.t[i2] = age;
+      const d = Math.exp(-f.drag[i] * dt);
+      f.vel[i3] *= d; f.vel[i3+1] *= d; f.vel[i3+2] *= d;
+      f.pos[i3]   += f.vel[i3]   * dt;
+      f.pos[i3+1] += f.vel[i3+1] * dt;
+      f.pos[i3+2] += f.vel[i3+2] * dt;
+    }
+    const n = p.count;
+    const P = this.posAttr.array, C = this.colAttr.array;
+    for (let i = 0; i < n; i++) {
+      const i2 = i * 2, i3 = i * 3, o = i * 6;
+      const u = f.t[i2] / f.t[i2 + 1];
+      const vx = f.vel[i3], vy = f.vel[i3+1], vz = f.vel[i3+2];
+      const sp2 = Math.sqrt(vx*vx + vy*vy + vz*vz) || 1e-6;
+      const len = Math.min(sp2 * 0.022, f.misc[i2]) * (0.35 + 0.65 * (1 - u));
+      P[o]   = f.pos[i3];     P[o+1] = f.pos[i3+1];     P[o+2] = f.pos[i3+2];
+      P[o+3] = f.pos[i3]   - vx / sp2 * len;
+      P[o+4] = f.pos[i3+1] - vy / sp2 * len;
+      P[o+5] = f.pos[i3+2] - vz / sp2 * len;
+      // stygnięcie: proch biało-żółty -> pomarańcz -> czerwień; jony zostają błękitne
+      const flick = 0.72 + 0.28 * Math.sin(time * 42 + f.misc[i2 + 1]);
+      const b = Math.pow(1 - u, 1.5) * flick;
+      const cool = smoothstep(0.1, 0.85, u);
+      C[o]   = f.col[i3]   * b;
+      C[o+1] = f.col[i3+1] * b * lerp(1, f.cool[i2], cool);
+      C[o+2] = f.col[i3+2] * b * lerp(1, f.cool[i2 + 1], cool);
+      C[o+3] = C[o+4] = C[o+5] = 0;   // ogon gaśnie do zera (blending additive)
+    }
+    this.geo.setDrawRange(0, n * 2);
+    this.lines.visible = n > 0;
+    if (n > 0) { this.posAttr.needsUpdate = true; this.colAttr.needsUpdate = true; }
+  }
+}
+
+/* --- błysk światła: realne oświetlenie wieży i pokładu ------------------ */
+class FlashLights {
+  constructor(scene, n = 4) {
+    this.slots = [];
+    for (let i = 0; i < n; i++) {
+      const l = new THREE.PointLight(0xffb070, 0, 400, 1.8);
+      l.visible = false;
+      scene.add(l);
+      this.slots.push({ l, t: 0, dur: 1, peak: 0 });
+    }
+    this.i = 0;
+  }
+  flash(pos, peak, dur, r = 1.0, g = 0.70, b = 0.42) {
+    const s = this.slots[this.i++ % this.slots.length];
+    s.l.position.copy(pos);
+    s.l.color.setRGB(r, g, b);
+    s.t = 0; s.dur = dur; s.peak = peak;
+    s.l.visible = true;
+  }
+  update(dt) {
+    for (const s of this.slots) {
+      if (!s.l.visible) continue;
+      s.t += dt;
+      if (s.t >= s.dur) { s.l.visible = false; s.l.intensity = 0; continue; }
+      const u = s.t / s.dur;
+      s.l.intensity = s.peak * Math.pow(1 - u, 2.2) * (0.82 + 0.36 * Math.random());
+    }
+  }
+}
+
+/* ============================================================================
+   EFEKTY WYSTRZAŁU — wspólny zestaw puli, dwie recepty.
+   API do wklejenia w silnik:
+       const fx = new MuzzleFX(scene, CFG, FX_SCALE);
+       fx.fireCannon(wylotPos, wylotDir);         // armata prochowa
+       fx.chargeIon(wylotPos, wylotDir, dt, u);   // co klatkę podczas ładowania, u = 0..1
+       fx.fireIon(wylotPos, wylotDir);            // wyładowanie jonowe
+       fx.update(dt, time);                        // co klatkę
+   ========================================================================== */
+const _d = new THREE.Vector3();
+const _v = new THREE.Vector3();
+const _q = new THREE.Vector3();
+const _r = new THREE.Vector3();
+
+class MuzzleFX {
+  constructor(scene, cfg, scale = 1) {
+    this.cfg = cfg;
+    this.S = scale;
+    this.deckY = 0.8;                 // płaszczyzna gry — po niej rozlewa się światło
+    this.smoke  = new BillboardSystem(scene, TEX_SMOKE, THREE.NormalBlending,   1500, 1);
+    this.vapor  = new BillboardSystem(scene, TEX_SMOKE, THREE.AdditiveBlending,  800, 2);
+    this.glow   = new BillboardSystem(scene, TEX_GLOW,  THREE.AdditiveBlending, 1200, 3);
+    this.star   = new BillboardSystem(scene, TEX_FLARE, THREE.AdditiveBlending,  128, 6);
+    this.wash   = new OrientedQuadSystem(scene, TEX_PLUME, 48, WASH_VERT,  2, 1.7);
+    this.plume  = new OrientedQuadSystem(scene, TEX_PLUME, 64, PLUME_VERT, 4, 2.0);
+    this.cross  = new OrientedQuadSystem(scene, TEX_CROSS, 64, CROSS_VERT, 6, 2.6);
+    this.spark  = new SparkSystem(scene, 2400);
+    this.arcs   = new ArcSystem(scene, 64, 11);
+    this.lights = new FlashLights(scene, 5);
+    this.onFire = null;               // callback(pos, dir, siła, rodzaj)
+    this._mote = 0;                   // budżet cząstek zbieranych podczas ładowania
+    this._arcT = 0;
+  }
+
+  /* ==========================================================================
+     ARMATA PROCHOWA — rozbłysk, gazy, iskry, dym
+     ======================================================================== */
+  fireCannon(pos, dir, power = 1) {
+    const S = this.S, C = this.cfg, FL = C.flatten;
+    const I = Math.max(0.0001, C.intensity) * power;
+    makeBasis(dir);
+    let o;
+
+    // rdzeń rozbłysku — krótki, przepalony
+    o = sp();
+    o.x = pos.x; o.y = pos.y; o.z = pos.z;
+    o.vx = dir.x * 7 * S; o.vy = dir.y * 7 * S; o.vz = dir.z * 7 * S;
+    o.life = 0.085; o.drag = 7;
+    o.s0 = 4 * S; o.s1 = (11 + 7 * I) * S;
+    o.r0 = 3.4; o.g0 = 2.7; o.b0 = 2.0;
+    o.r1 = 2.2; o.g1 = 0.85; o.b1 = 0.30; o.mix = 16;
+    o.alpha = 1; o.fadeIn = 0.004; o.fadeOut = 2.2; o.grow = 0.4;
+    this.glow.spawn(o);
+
+    // szeroka łuna
+    o = sp();
+    o.x = pos.x + dir.x * 3 * S; o.y = pos.y + dir.y * 3 * S; o.z = pos.z + dir.z * 3 * S;
+    o.life = 0.21; o.drag = 5;
+    o.s0 = 7 * S; o.s1 = (22 + 14 * I) * S;
+    o.r0 = 1.9; o.g0 = 0.95; o.b0 = 0.42;
+    o.r1 = 0.75; o.g1 = 0.22; o.b1 = 0.05; o.mix = 7;
+    o.alpha = 0.8; o.fadeIn = 0.01; o.fadeOut = 2.0; o.grow = 0.5;
+    this.glow.spawn(o);
+
+    // krzyż rozbłysku ustawiony wzdłuż lufy na ekranie
+    this.cross.spawn(pos, dir, 0.10, 14 * S, (40 + 24 * I) * S, 8 * S, (17 + 8 * I) * S, [2.9, 2.0, 1.2], 0.95);
+
+    // jęzory ognia
+    this.plume.spawn(pos, dir, 0.105, 5 * S, (26 + 16 * I) * S, 5 * S, 9.5 * S, [2.8, 1.6, 0.75], 1.0);
+    this.plume.spawn(pos, dir, 0.075, 4 * S, (12 + 5 * I) * S, 9 * S, 18 * S, [3.2, 2.4, 1.5], 0.85);
+
+    // rozlanie światła po pokładzie — zamiast pierścienia, który z góry widać z kantu
+    _q.set(pos.x, this.deckY, pos.z);
+    this.wash.spawn(_q, dir, 0.17, 12 * S, (44 + 22 * I) * S, 9 * S, (20 + 9 * I) * S, [1.5, 0.72, 0.28], 0.55);
+
+    // gorące gazy prochowe
+    for (let i = 0; i < 10; i++) {
+      coneDir(_d, dir, 0.55, FL);
+      const v = rand(14, 48) * S;
+      o = sp();
+      o.x = pos.x + _d.x * rand(0, 4) * S;
+      o.y = pos.y + _d.y * rand(0, 4) * S;
+      o.z = pos.z + _d.z * rand(0, 4) * S;
+      o.vx = _d.x * v; o.vy = _d.y * v; o.vz = _d.z * v;
+      o.life = rand(0.22, 0.52); o.drag = 3.4;
+      o.s0 = rand(2, 5) * S; o.s1 = rand(9, 19) * S * (0.8 + 0.4 * I);
+      o.rot = rand(0, 6.283); o.vrot = rand(-2.2, 2.2);
+      o.r0 = 2.5; o.g0 = 1.15; o.b0 = 0.40;
+      o.r1 = 0.55; o.g1 = 0.16; o.b1 = 0.04; o.mix = 4.5;
+      o.alpha = rand(0.45, 0.8); o.fadeIn = 0.02; o.fadeOut = 1.9; o.grow = 0.5;
+      this.glow.spawn(o);
+    }
+
+    // dym: gorący na starcie, stygnie do sadzy
+    const soot = lerp(0.045, 0.60, C.soot);
+    const cr = soot * 0.96, cg = soot * 0.97, cb = soot * 1.10;
+    for (let i = 0, n = Math.round(18 * C.smoke); i < n; i++) {
+      coneDir(_d, dir, 0.62, FL);
+      const v = rand(5, 26) * S;
+      o = sp();
+      o.x = pos.x + _d.x * rand(0, 6) * S;
+      o.y = pos.y + _d.y * rand(0, 6) * S;
+      o.z = pos.z + _d.z * rand(0, 6) * S;
+      o.vx = _d.x * v + _bx.x * rand(-4, 4) * S;
+      o.vy = _d.y * v + _bx.y * rand(-4, 4) * S;
+      o.vz = _d.z * v + _bx.z * rand(-4, 4) * S;
+      o.life = rand(1.6, 3.2) * C.smokeLife; o.drag = 1.15;
+      o.s0 = rand(3, 7) * S; o.s1 = rand(15, 32) * S;
+      o.rot = rand(0, 6.283); o.vrot = rand(-0.9, 0.9);
+      o.r0 = 1.7; o.g0 = 0.75; o.b0 = 0.30;
+      o.r1 = cr; o.g1 = cg; o.b1 = cb; o.mix = rand(2.2, 4.2);
+      o.alpha = rand(0.40, 0.70); o.fadeIn = 0.05; o.fadeOut = 1.35; o.grow = 0.45;
+      this.smoke.spawn(o);
+    }
+    // wielkie, wolne kłęby
+    for (let i = 0, n = Math.round(5 * C.smoke); i < n; i++) {
+      coneDir(_d, dir, 0.85, FL);
+      const v = rand(2, 10) * S;
+      o = sp();
+      o.x = pos.x + _d.x * rand(0, 9) * S;
+      o.y = pos.y + _d.y * rand(0, 9) * S;
+      o.z = pos.z + _d.z * rand(0, 9) * S;
+      o.vx = _d.x * v; o.vy = _d.y * v; o.vz = _d.z * v;
+      o.life = rand(2.6, 4.4) * C.smokeLife; o.drag = 0.85;
+      o.s0 = rand(8, 14) * S; o.s1 = rand(32, 52) * S;
+      o.rot = rand(0, 6.283); o.vrot = rand(-0.4, 0.4);
+      o.r0 = 1.1; o.g0 = 0.5; o.b0 = 0.22;
+      o.r1 = cr * 0.85; o.g1 = cg * 0.85; o.b1 = cb * 0.85; o.mix = 1.8;
+      o.alpha = rand(0.16, 0.30); o.fadeIn = 0.12; o.fadeOut = 1.6; o.grow = 0.5;
+      this.smoke.spawn(o);
+    }
+
+    // iskry
+    for (let i = 0, n = Math.round(70 * C.sparks); i < n; i++) {
+      const slow = Math.random() < 0.18;
+      coneDir(_d, dir, slow ? 0.85 : 0.30, FL);
+      const v = (slow ? rand(8, 45) : rand(40, 175)) * S * (0.75 + 0.35 * I);
+      _v.copy(_d).multiplyScalar(v);
+      _q.copy(pos).addScaledVector(_d, rand(0, 5) * S);
+      this.spark.spawn(_q, _v, rand(0.3, 1.0), rand(0.5, 1.4), rand(3, 9) * S, [2.8, 2.3, 1.6]);
+    }
+
+    // żagwie
+    for (let i = 0; i < 10; i++) {
+      coneDir(_d, dir, 0.7, FL);
+      const v = rand(10, 52) * S;
+      o = sp();
+      o.x = pos.x + _d.x * 3 * S; o.y = pos.y + _d.y * 3 * S; o.z = pos.z + _d.z * 3 * S;
+      o.vx = _d.x * v; o.vy = _d.y * v; o.vz = _d.z * v;
+      o.life = rand(0.8, 2.2); o.drag = 1.5;
+      o.s0 = rand(0.6, 1.2) * S; o.s1 = rand(0.9, 2.2) * S;
+      o.r0 = 2.4; o.g0 = 1.0; o.b0 = 0.35;
+      o.r1 = 1.0; o.g1 = 0.20; o.b1 = 0.04; o.mix = 1.6;
+      o.alpha = 0.9; o.fadeIn = 0.02; o.fadeOut = 1.2; o.grow = 1.0;
+      this.glow.spawn(o);
+    }
+
+    _q.copy(pos).addScaledVector(dir, 4 * S);
+    this.lights.flash(_q, 4500 * I * S * S, 0.14, 1.0, 0.70, 0.42);
+    if (this.onFire) this.onFire(pos, dir, I, 'cannon');
+  }
+
+  /* ==========================================================================
+     DZIAŁO JONOWE — faza ładowania.
+     Energia zbiega się DO wylotu: odwrotność wystrzału, i to jest cały trik.
+     ======================================================================== */
+  chargeIon(pos, dir, dt, u) {
+    const S = this.S, C = this.cfg, FL = C.flatten;
+    makeBasis(dir);
+    let o;
+
+    // motyle energii wpadające do emitera — tempo rośnie z ładowaniem
+    this._mote += (25 + 150 * u * u) * dt;
+    while (this._mote >= 1) {
+      this._mote -= 1;
+      const ang = Math.random() * Math.PI * 2;
+      const rad = rand(9, 26) * S;
+      const along = rand(-10, 16) * S;
+      const ry = Math.sin(ang) * FL;                  // dysk spłaszczony do płaszczyzny gry
+      const rx = Math.cos(ang);
+      _q.copy(pos)
+        .addScaledVector(_bx, rx * rad)
+        .addScaledVector(_by, ry * rad)
+        .addScaledVector(dir, along);
+      const life = rand(0.16, 0.30);
+      _v.subVectors(pos, _q).multiplyScalar(1.08 / life);
+      o = sp();
+      o.x = _q.x; o.y = _q.y; o.z = _q.z;
+      o.vx = _v.x; o.vy = _v.y; o.vz = _v.z;
+      o.life = life; o.drag = 0;
+      o.s0 = rand(1.4, 3.2) * S; o.s1 = rand(0.3, 0.9) * S;   // kurczy się wpadając
+      o.r0 = 0.5; o.g0 = 1.6; o.b0 = 2.8;
+      o.r1 = 1.6; o.g1 = 2.6; o.b1 = 3.6; o.mix = 5;
+      o.alpha = rand(0.5, 0.95); o.fadeIn = 0.06; o.fadeOut = 0.35; o.grow = 1.0;
+      this.glow.spawn(o);
+    }
+
+    // pulsujący rdzeń w emiterze
+    this._arcT -= dt;
+    if (this._arcT <= 0) {
+      this._arcT = 0.045;
+      o = sp();
+      o.x = pos.x; o.y = pos.y; o.z = pos.z;
+      o.life = 0.09; o.drag = 0;
+      o.s0 = (3 + 16 * u * u) * S; o.s1 = (2 + 12 * u * u) * S;
+      o.rot = rand(0, 6.283); o.vrot = rand(-3, 3);
+      o.r0 = 1.2 + 2.0 * u; o.g0 = 2.2 + 1.6 * u; o.b0 = 3.2 + 1.4 * u;
+      o.r1 = 0.4; o.g1 = 1.2; o.b1 = 2.2; o.mix = 10;
+      o.alpha = 0.35 + 0.6 * u; o.fadeIn = 0.02; o.fadeOut = 1.4; o.grow = 0.7;
+      this.star.spawn(o);
+    }
+  }
+
+  /* ==========================================================================
+     DZIAŁO JONOWE — wyładowanie.
+     Bez dymu: zimny rdzeń, długa smuga, łuki, świecący opar.
+     ======================================================================== */
+  fireIon(pos, dir, power = 1) {
+    const S = this.S, C = this.cfg, FL = C.flatten;
+    const I = Math.max(0.0001, C.ion) * power;
+    makeBasis(dir);
+    let o;
+
+    // rdzeń — biały, prawie bez barwy, bardzo krótki
+    o = sp();
+    o.x = pos.x; o.y = pos.y; o.z = pos.z;
+    o.vx = dir.x * 10 * S; o.vy = dir.y * 10 * S; o.vz = dir.z * 10 * S;
+    o.life = 0.10; o.drag = 8;
+    o.s0 = 5 * S; o.s1 = (12 + 8 * I) * S;
+    o.r0 = 3.2; o.g0 = 3.6; o.b0 = 4.2;
+    o.r1 = 0.5; o.g1 = 1.7; o.b1 = 3.0; o.mix = 18;
+    o.alpha = 1; o.fadeIn = 0.003; o.fadeOut = 2.0; o.grow = 0.38;
+    this.glow.spawn(o);
+
+    // chłodna łuna
+    o = sp();
+    o.x = pos.x + dir.x * 4 * S; o.y = pos.y + dir.y * 4 * S; o.z = pos.z + dir.z * 4 * S;
+    o.life = 0.30; o.drag = 4.2;
+    o.s0 = 8 * S; o.s1 = (26 + 18 * I) * S;
+    o.r0 = 0.85; o.g0 = 2.1; o.b0 = 3.4;
+    o.r1 = 0.10; o.g1 = 0.40; o.b1 = 1.10; o.mix = 5.5;
+    o.alpha = 0.8; o.fadeIn = 0.008; o.fadeOut = 1.8; o.grow = 0.5;
+    this.glow.spawn(o);
+
+    // krzyż — dłuższy i cieńszy niż u armaty; broń energetyczna czyta się ostrzej
+    this.cross.spawn(pos, dir, 0.13, 20 * S, (64 + 34 * I) * S, 6 * S, (12 + 6 * I) * S, [2.3, 3.1, 4.3], 1.0);
+
+    // smuga: cienki biały rdzeń + szersza błękitna otoczka + krótki rozbryzg
+    this.plume.spawn(pos, dir, 0.17, 12 * S, (72 + 38 * I) * S, 2.6 * S, 4.6 * S, [3.4, 3.9, 4.6], 1.0);
+    this.plume.spawn(pos, dir, 0.21, 9 * S, (48 + 26 * I) * S, 6.5 * S, 13 * S, [0.7, 1.9, 3.5], 0.8);
+    this.plume.spawn(pos, dir, 0.085, 4 * S, 15 * S, 10 * S, 21 * S, [1.8, 2.8, 4.0], 0.8);
+
+    // rozlanie po pokładzie — wąskie i długie
+    _q.set(pos.x, this.deckY, pos.z);
+    this.wash.spawn(_q, dir, 0.26, 16 * S, (86 + 34 * I) * S, 6 * S, (15 + 6 * I) * S, [0.45, 1.35, 2.6], 0.6);
+
+    // strugi jonów — wąski rozrzut, duża prędkość, długie smugi
+    for (let i = 0, n = Math.round(42 * C.sparks); i < n; i++) {
+      coneDir(_d, dir, Math.random() < 0.2 ? 0.34 : 0.07, FL);
+      const v = rand(160, 430) * S * (0.7 + 0.4 * I);
+      _v.copy(_d).multiplyScalar(v);
+      _q.copy(pos).addScaledVector(_d, rand(0, 7) * S);
+      this.spark.spawn(_q, _v, rand(0.25, 0.7), rand(0.3, 0.9), rand(10, 26) * S,
+                       [1.5, 2.6, 3.8], 1.05, 1.25);    // nie rudzieje — błękitnieje
+    }
+
+    // łuki elektryczne rozchodzące się od wylotu
+    for (let i = 0, n = Math.round(11 * C.ionArcs); i < n; i++) {
+      coneDir(_d, dir, rand(0.5, 1.6), FL);
+      _q.copy(pos).addScaledVector(_d, rand(7, 20) * S);
+      this.arcs.spawn(pos, _q, rand(0.14, 0.34), rand(0.8, 2.4) * S, [1.3, 2.6, 3.9]);
+    }
+
+    // opar jonowy — świeci sam z siebie, stygnie w fiolet. Żadnej sadzy.
+    for (let i = 0, n = Math.round(14 * C.ionVapor); i < n; i++) {
+      coneDir(_d, dir, 0.7, FL);
+      const v = rand(6, 26) * S;
+      o = sp();
+      o.x = pos.x + _d.x * rand(0, 8) * S;
+      o.y = pos.y + _d.y * rand(0, 8) * S;
+      o.z = pos.z + _d.z * rand(0, 8) * S;
+      o.vx = _d.x * v; o.vy = _d.y * v; o.vz = _d.z * v;
+      o.life = rand(1.0, 2.3); o.drag = 1.35;
+      o.s0 = rand(4, 8) * S; o.s1 = rand(17, 34) * S;
+      o.rot = rand(0, 6.283); o.vrot = rand(-0.7, 0.7);
+      o.r0 = 0.55; o.g0 = 1.45; o.b0 = 2.5;
+      o.r1 = 0.22; o.g1 = 0.10; o.b1 = 0.50; o.mix = 1.5;
+      o.alpha = rand(0.18, 0.36); o.fadeIn = 0.06; o.fadeOut = 1.5; o.grow = 0.45;
+      this.vapor.spawn(o);
+    }
+
+    // resztkowe iskrzenie przy wylocie
+    for (let i = 0; i < 8; i++) {
+      coneDir(_d, dir, 1.1, FL);
+      const v = rand(6, 30) * S;
+      o = sp();
+      o.x = pos.x + _d.x * 2 * S; o.y = pos.y + _d.y * 2 * S; o.z = pos.z + _d.z * 2 * S;
+      o.vx = _d.x * v; o.vy = _d.y * v; o.vz = _d.z * v;
+      o.life = rand(0.5, 1.4); o.drag = 1.6;
+      o.s0 = rand(0.5, 1.1) * S; o.s1 = rand(0.8, 1.9) * S;
+      o.r0 = 1.4; o.g0 = 2.4; o.b0 = 3.6;
+      o.r1 = 0.25; o.g1 = 0.55; o.b1 = 1.3; o.mix = 1.4;
+      o.alpha = 0.85; o.fadeIn = 0.02; o.fadeOut = 1.2; o.grow = 1.0;
+      this.glow.spawn(o);
+    }
+
+    _q.copy(pos).addScaledVector(dir, 5 * S);
+    this.lights.flash(_q, 5200 * I * S * S, 0.30, 0.42, 0.80, 1.0);
+    if (this.onFire) this.onFire(pos, dir, I, 'ion');
+  }
+
+  // zgodność wstecz
+  fire(pos, dir, power = 1) { this.fireCannon(pos, dir, power); }
+
+  update(dt, time) {
+    this.smoke.update(dt);
+    this.vapor.update(dt);
+    this.glow.update(dt);
+    this.star.update(dt);
+    this.wash.update(dt);
+    this.plume.update(dt);
+    this.cross.update(dt);
+    this.spark.update(dt, time);
+    this.arcs.update(dt, time);
+    this.lights.update(dt);
+  }
+
+  get particles() {
+    return this.smoke.p.count + this.vapor.p.count + this.glow.p.count + this.star.p.count +
+           this.wash.p.count + this.plume.p.count + this.cross.p.count +
+           this.spark.p.count + this.arcs.p.count;
+  }
+}
+
+/* ============================================================================
+   SCENA
+   ========================================================================== */
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.95;
+
+const scene = new THREE.Scene();
+
+const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.5, 6000);
+camera.position.set(0, 150, 96);      // widok z góry, perspektywa — jak w grze
+
+const controls = new OrbitControls(camera, canvas);
+controls.target.set(0, 2, 42);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.minDistance = 40;
+controls.maxDistance = 460;
+controls.minPolarAngle = 0.02;
+controls.maxPolarAngle = Math.PI * 0.42;   // nie da się zejść pod pokład
+controls.update();
+
+/* --- tło: gradient + gwiazdy --------------------------------------------- */
+const sky = new THREE.Mesh(
+  new THREE.SphereGeometry(3000, 24, 16),
+  new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false,
+    vertexShader: `varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+    fragmentShader: `
+      varying vec3 vP;
+      void main(){
+        vec3 n = normalize(vP);
+        float h = n.y * 0.5 + 0.5;
+        float side = n.x * 0.5 + 0.5;
+        vec3 c = mix(vec3(0.006,0.008,0.014), vec3(0.018,0.016,0.034), h);
+        c += vec3(0.020,0.008,0.028) * pow(side, 3.0);
+        gl_FragColor = vec4(c, 1.0);
+      }`,
+  })
+);
+sky.frustumCulled = false;
+scene.add(sky);
+
+{
+  const N = 1800, pos = new Float32Array(N * 3), col = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    const u = Math.random() * 2 - 1, a = Math.random() * Math.PI * 2, r = Math.sqrt(1 - u * u);
+    const R = 2200;
+    pos[i*3] = Math.cos(a) * r * R; pos[i*3+1] = u * R; pos[i*3+2] = Math.sin(a) * r * R;
+    const b = Math.pow(Math.random(), 2.2) * 0.9 + 0.1;
+    const t = Math.random();
+    col[i*3] = b * lerp(0.75, 1.0, t); col[i*3+1] = b * 0.92; col[i*3+2] = b * lerp(1.0, 0.8, t);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  scene.add(new THREE.Points(g, new THREE.PointsMaterial({ size: 1.7, sizeAttenuation: false, vertexColors: true, transparent: true })));
+}
+
+/* --- światła sceny -------------------------------------------------------- */
+scene.add(new THREE.AmbientLight(0x1b2432, 0.9));
+const key = new THREE.DirectionalLight(0xa8c0e4, 2.1);
+key.position.set(-70, 90, -50);
+scene.add(key);
+const rim = new THREE.DirectionalLight(0x3a4f7a, 1.1);
+rim.position.set(80, -10, 70);
+scene.add(rim);
+
+/* ============================================================================
+   PLACEHOLDER: pokład + wieża z 3 lufami
+   (u Ciebie to zastępuje własny model — liczy się tylko muzzle Object3D)
+   ========================================================================== */
+const matHull   = new THREE.MeshStandardMaterial({ color: 0x4a515c, metalness: 0.85, roughness: 0.55 });
+const matDark   = new THREE.MeshStandardMaterial({ color: 0x272c34, metalness: 0.9,  roughness: 0.42 });
+const matBarrel = new THREE.MeshStandardMaterial({ color: 0x343a44, metalness: 0.95, roughness: 0.35 });
+const matAccent = new THREE.MeshStandardMaterial({ color: 0x14181e, metalness: 0.6, roughness: 0.6, emissive: 0xff5a18, emissiveIntensity: 1.2 });
+
+function box(w, h, d, x, y, z, mat = matHull, parent = scene) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  m.position.set(x, y, z);
+  parent.add(m);
+  return m;
+}
+
+const CANNON_X = -52, ION_X = 52;
+
+// pokład okrętu — łapie błysk z luf i daje skalę
+box(240, 5, 260, 0, -2.5, 30, matHull);
+for (let i = -5; i <= 5; i++) box(2, 1.2, 260, i * 22, 0.3, 30, matDark);
+for (let i = 0; i < 8; i++) box(220, 1.0, 2, 0, 0.3, -60 + i * 40, matDark);
+box(30, 7, 18, 0, 3, -42, matDark);
+box(14, 18, 14, -100, 10, 96, matDark);
+box(14, 18, 14, 100, 10, 96, matDark);
+box(18, 9, 40, 0, 4, 60, matDark);
+for (let i = 0; i < 6; i++) {
+  const g = box(3, 3, 3, lerp(-105, 105, Math.random()), 1.8, lerp(-50, 130, Math.random()), matAccent);
+  g.material = new THREE.MeshStandardMaterial({ color: 0x0d1016, emissive: 0x2e6bff, emissiveIntensity: 2.5 });
+}
+
+// barbeta
+const barbette = new THREE.Mesh(new THREE.CylinderGeometry(15, 16.5, 6, 40), matDark);
+barbette.position.set(CANNON_X, 1, 0);
+scene.add(barbette);
+
+// --- obrót w poziomie
+const yaw = new THREE.Group();
+yaw.position.set(CANNON_X, 4, 0);
+scene.add(yaw);
+
+// kadłub wieży
+const housing = new THREE.Group();
+yaw.add(housing);
+box(26, 12, 22, 0, 8, -3, matHull, housing);                 // korpus
+box(24, 9, 10, 0, 8.5, 9, matHull, housing);                 // przód, węższy
+const face = box(22, 10.5, 6, 0, 8.5, 12.6, matDark, housing); // pancerz czołowy
+face.rotation.x = -0.18;
+box(28, 2.5, 20, 0, 14.4, -3, matDark, housing);             // dach
+box(5, 4, 5, -9, 16.6, -8, matDark, housing);                // peryskop
+box(2.2, 3.4, 2.2, -9, 19.4, -8, matAccent, housing);
+box(30, 3, 3, 0, 4, -10, matDark, housing);                  // wręgi
+box(3, 8, 20, -14.5, 8, -3, matDark, housing);
+box(3, 8, 20, 14.5, 8, -3, matDark, housing);
+
+// --- obrót w pionie (kołyska z lufami)
+const pitch = new THREE.Group();
+pitch.position.set(0, 8.5, 6);
+housing.add(pitch);
+
+const BARREL_LEN = 26;
+const barrels = [];
+const BX = [-7.2, 0, 7.2];
+for (let i = 0; i < 3; i++) {
+  const g = new THREE.Group();
+  g.position.set(BX[i], 0, i === 1 ? 1.5 : 0);   // środkowa lufa wysunięta
+  pitch.add(g);
+
+  const tube = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.6, BARREL_LEN, 20), matBarrel);
+  tube.geometry.rotateX(Math.PI / 2);            // oś +Z
+  tube.position.z = BARREL_LEN / 2;
+  g.add(tube);
+
+  // pierścienie wzmacniające
+  for (let k = 0; k < 3; k++) {
+    const r = new THREE.Mesh(new THREE.CylinderGeometry(1.75, 1.75, 1.1, 20), matDark);
+    r.geometry.rotateX(Math.PI / 2);
+    r.position.z = 4 + k * 6.5;
+    g.add(r);
+  }
+  // hamulec wylotowy
+  const brake = new THREE.Mesh(new THREE.CylinderGeometry(2.15, 1.95, 4.2, 20), matDark);
+  brake.geometry.rotateX(Math.PI / 2);
+  brake.position.z = BARREL_LEN - 1.6;
+  g.add(brake);
+  for (let k = 0; k < 4; k++) {
+    const slot = box(0.7, 4.6, 1.6, 0, 0, BARREL_LEN - 3.2 + k * 1.0, matBarrel, g);
+    slot.position.x = (k % 2 ? 1 : -1) * 2.0;
+  }
+
+  // rozgrzany wylot (świeci po strzale)
+  const hotMat = new THREE.MeshStandardMaterial({
+    color: 0x0a0a0c, metalness: 0.4, roughness: 0.8, emissive: 0xff5510, emissiveIntensity: 0,
+  });
+  const hot = new THREE.Mesh(new THREE.CylinderGeometry(1.0, 1.0, 1.4, 20), hotMat);
+  hot.geometry.rotateX(Math.PI / 2);
+  hot.position.z = BARREL_LEN + 0.2;
+  g.add(hot);
+
+  // punkt wylotu — TO jest jedyne, czego potrzebuje efekt
+  const muzzle = new THREE.Object3D();
+  muzzle.position.z = BARREL_LEN + 1.2;
+  g.add(muzzle);
+
+  barrels.push({ group: g, muzzle, hotMat, baseZ: g.position.z, rec: 0, recV: 0, heat: 0 });
+}
+
+/* ============================================================================
+   PLACEHOLDER: działo jonowe — cewki akceleratora + trójramienny emiter.
+   Inna sylwetka niż kanciasta armata, żeby broń dało się rozpoznać z góry.
+   ========================================================================== */
+const ion = {
+  yaw: new THREE.Group(),
+  pitch: new THREE.Group(),
+  muzzle: new THREE.Object3D(),
+  coils: [], caps: [], tips: [], prongs: [],
+  core: null, coreMat: null, hotMat: null,
+  state: 'idle', t: 0, charge: 0, rec: 0, recV: 0, arcT: 0,
+  basePitchY: 9, baseZ: 5,
+};
+ion.yaw.position.set(ION_X, 4, 0);
+scene.add(ion.yaw);
+{
+  const barb = new THREE.Mesh(new THREE.CylinderGeometry(13, 15, 6, 8), matDark);
+  barb.position.set(ION_X, 1, 0);
+  scene.add(barb);
+
+  const drum = new THREE.Mesh(new THREE.CylinderGeometry(11, 13, 13, 8), matHull);
+  drum.position.y = 8;
+  ion.yaw.add(drum);
+  const lid = new THREE.Mesh(new THREE.CylinderGeometry(8.5, 11, 2.4, 8), matDark);
+  lid.position.y = 15.2;
+  ion.yaw.add(lid);
+
+  // kondensatory — ładują się razem z cewkami
+  for (let k = 0; k < 4; k++) {
+    const a = (k / 4) * Math.PI * 2 + Math.PI / 4;
+    const m = new THREE.MeshStandardMaterial({ color: 0x10161d, metalness: 0.7, roughness: 0.5, emissive: 0x1e8cff, emissiveIntensity: 0 });
+    const rod = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 11, 10), m);
+    rod.position.set(Math.cos(a) * 11.5, 8, Math.sin(a) * 11.5);
+    ion.yaw.add(rod);
+    ion.caps.push(m);
+  }
+
+  ion.pitch.position.set(0, ion.basePitchY, ion.baseZ);
+  ion.yaw.add(ion.pitch);
+
+  const tube = new THREE.Mesh(new THREE.CylinderGeometry(2.3, 2.9, 26, 20), matBarrel);
+  tube.geometry.rotateX(Math.PI / 2);
+  tube.position.z = 13;
+  ion.pitch.add(tube);
+
+  // cewki akceleratora — zapalają się po kolei w stronę wylotu
+  for (let k = 0; k < 5; k++) {
+    const m = new THREE.MeshStandardMaterial({ color: 0x0c1218, metalness: 0.8, roughness: 0.35, emissive: 0x2aa8ff, emissiveIntensity: 0 });
+    const coil = new THREE.Mesh(new THREE.CylinderGeometry(3.9, 3.9, 1.8, 18), m);
+    coil.geometry.rotateX(Math.PI / 2);
+    coil.position.z = 4 + k * 4.7;
+    ion.pitch.add(coil);
+    ion.coils.push(m);
+  }
+
+  // trójramienny emiter
+  for (let k = 0; k < 3; k++) {
+    const g = new THREE.Group();
+    g.rotation.z = k * Math.PI * 2 / 3;
+    ion.pitch.add(g);
+    const prong = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.1, 11), matBarrel);
+    prong.position.set(0, 3.1, 30);
+    prong.rotation.x = -0.11;
+    g.add(prong);
+    const tipM = new THREE.MeshStandardMaterial({ color: 0x0a1016, metalness: 0.6, roughness: 0.5, emissive: 0x39c6ff, emissiveIntensity: 0 });
+    const tip = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.6, 1.7), tipM);
+    tip.position.set(0, 4.0, 35.0);
+    g.add(tip);
+    ion.tips.push(tipM);
+    const mark = new THREE.Object3D();
+    mark.position.copy(tip.position);
+    g.add(mark);
+    ion.prongs.push(mark);
+  }
+
+  ion.coreMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  ion.coreMat.color.setRGB(0.4, 1.4, 2.6);
+  ion.core = new THREE.Mesh(new THREE.SphereGeometry(1.5, 16, 12), ion.coreMat);
+  ion.core.position.z = 34;
+  ion.core.visible = false;
+  ion.pitch.add(ion.core);
+
+  ion.hotMat = new THREE.MeshStandardMaterial({ color: 0x0a0c10, metalness: 0.5, roughness: 0.6, emissive: 0x2ab4ff, emissiveIntensity: 0 });
+  const hot = new THREE.Mesh(new THREE.CylinderGeometry(2.05, 2.05, 1.6, 20), ion.hotMat);
+  hot.geometry.rotateX(Math.PI / 2);
+  hot.position.z = 26.3;
+  ion.pitch.add(hot);
+
+  ion.muzzle.position.z = 35.5;
+  ion.pitch.add(ion.muzzle);
+}
+const ionLight = new THREE.PointLight(0x4ab8ff, 0, 340, 1.8);
+ionLight.visible = false;
+scene.add(ionLight);
+
+/* ============================================================================
+   PLACEHOLDER: pociski
+   ========================================================================== */
+const projPool = [];
+{
+  const geo = new THREE.SphereGeometry(1.25, 14, 10);
+  for (let i = 0; i < 16; i++) {
+    const mat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    mat.color.setRGB(3.2, 2.4, 1.4);
+    const m = new THREE.Mesh(geo, mat);
+    m.scale.set(1, 1, 3.4);
+    m.visible = false;
+    scene.add(m);
+    projPool.push({ m, vel: new THREE.Vector3(), life: 0, trail: 0 });
+  }
+}
+function launchProjectile(pos, dir, kind = 'cannon') {
+  const p = projPool.find(p => p.life <= 0);
+  if (!p) return;
+  p.m.position.copy(pos).addScaledVector(dir, 3);
+  p.m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
+  p.kind = kind;
+  if (kind === 'ion') {
+    p.m.material.color.setRGB(1.6, 2.9, 4.2);
+    p.m.scale.set(0.8, 0.8, 7);
+    p.vel.copy(dir).multiplyScalar(430);
+  } else {
+    p.m.material.color.setRGB(3.2, 2.4, 1.4);
+    p.m.scale.set(1, 1, 3.4);
+    p.vel.copy(dir).multiplyScalar(300);
+  }
+  p.life = 4;
+  p.trail = 0;
+  p.m.visible = true;
+}
+
+/* ============================================================================
+   EFEKT + SPRZĘŻENIE ZWROTNE (odrzut, wstrząs, błysk ekranu)
+   ========================================================================== */
+const fx = new MuzzleFX(scene, CFG, FX_SCALE);
+
+let shake = 0;
+let screenFlash = 0;
+const flashEl = document.getElementById('screenflash');
+const shakeOff = new THREE.Vector3();
+
+fx.onFire = (pos, dir, I, kind) => {
+  shake = Math.min(1.8, shake + (kind === 'ion' ? 0.42 : 0.55) * CFG.shake * I);
+  screenFlash = Math.min(0.55, screenFlash + (kind === 'ion' ? 0.26 : 0.22) * I);
+  if (kind === 'ion') {
+    flashEl.style.setProperty('--fc1', 'rgba(195,238,255,.85)');
+    flashEl.style.setProperty('--fc2', 'rgba(60,160,255,.28)');
+  } else {
+    flashEl.style.setProperty('--fc1', 'rgba(255,214,160,.85)');
+    flashEl.style.setProperty('--fc2', 'rgba(255,130,50,.25)');
+  }
+};
+
+/* --- armata: kolejka luf -------------------------------------------------- */
+const queue = [];
+let autoT = 0, autoIonT = 1.2;
+let lastWeapon = 'cannon';
+
+function triggerCannon() {
+  lastWeapon = 'cannon';
+  const step = CFG.mode === 'salvo' ? 0.014 : 0.085;
+  for (let i = 0; i < 3; i++) queue.push({ t: i * step, b: i });
+}
+const _mp = new THREE.Vector3(), _md = new THREE.Vector3();
+function fireBarrel(i) {
+  const b = barrels[i];
+  b.muzzle.updateWorldMatrix(true, false);
+  b.muzzle.getWorldPosition(_mp);
+  b.muzzle.getWorldDirection(_md).normalize();
+  fx.fireCannon(_mp, _md);
+  b.recV = -46 * CFG.recoil;      // kopnięcie w tył
+  b.heat = 1;
+  if (CFG.projectiles) launchProjectile(_mp, _md, 'cannon');
+}
+
+/* --- działo jonowe: ładowanie -> wyładowanie -> stygnięcie ---------------- */
+const _ip = new THREE.Vector3(), _id = new THREE.Vector3();
+const _ia = new THREE.Vector3(), _ib = new THREE.Vector3();
+
+function triggerIon() {
+  lastWeapon = 'ion';
+  if (ion.state !== 'idle') return;
+  ion.state = CFG.ionCharge > 0.03 ? 'charge' : 'fire';
+  ion.t = 0;
+}
+function triggerSelected() {
+  if (lastWeapon === 'ion') triggerIon(); else triggerCannon();
+}
+
+function updateIon(dt, time) {
+  ion.muzzle.updateWorldMatrix(true, false);
+  ion.muzzle.getWorldPosition(_ip);
+  ion.muzzle.getWorldDirection(_id).normalize();
+
+  if (ion.state === 'charge') {
+    ion.t += dt;
+    const T = Math.max(0.03, CFG.ionCharge);
+    ion.charge = clamp01(ion.t / T);
+    fx.chargeIon(_ip, _id, dt, ion.charge);
+
+    // trzaskanie łuków między ramionami emitera, coraz częstsze
+    ion.arcT -= dt;
+    if (ion.arcT <= 0 && CFG.ionArcs > 0.02) {
+      ion.arcT = lerp(0.16, 0.035, ion.charge) / CFG.ionArcs;
+      const k1 = randInt(0, 2);
+      let k2 = randInt(0, 2);
+      if (k2 === k1) k2 = (k2 + 1) % 3;
+      ion.prongs[k1].getWorldPosition(_ia);
+      if (Math.random() < 0.45) ion.prongs[k2].getWorldPosition(_ib);
+      else _ib.copy(_ip);
+      fx.arcs.spawn(_ia, _ib, rand(0.05, 0.15), rand(0.3, 1.5) * (0.35 + ion.charge) * FX_SCALE,
+                    [0.5 + ion.charge, 2.2, 3.6]);
+    }
+    if (ion.t >= T) { ion.state = 'fire'; ion.t = 0; }
+  }
+
+  if (ion.state === 'fire') {
+    fx.fireIon(_ip, _id);
+    ion.recV = -26 * CFG.recoil;
+    ion.charge = 1;
+    if (CFG.projectiles) launchProjectile(_ip, _id, 'ion');
+    // łuki pełzające wstecz po lufie — energia schodzi z akceleratora
+    for (let k = 0, n = Math.round(5 * CFG.ionArcs); k < n; k++) {
+      const t = rand(0.2, 1.0);
+      _ia.copy(_ip).addScaledVector(_id, -t * 26 * FX_SCALE);
+      _ib.copy(_ip).addScaledVector(_id, -(t - rand(0.12, 0.3)) * 26 * FX_SCALE);
+      fx.arcs.spawn(_ia, _ib, rand(0.12, 0.30), rand(1.0, 3.0) * FX_SCALE, [0.9, 2.3, 3.8]);
+    }
+    ion.state = 'cool'; ion.t = 0;
+  }
+
+  if (ion.state === 'cool') {
+    ion.t += dt;
+    ion.charge = Math.max(0, 1 - ion.t / 1.2);
+    if (ion.t > 1.2) { ion.state = 'idle'; ion.charge = 0; }
+  }
+
+  // wizualizacja stanu naładowania
+  const u = ion.charge;
+  const nc = ion.coils.length;
+  for (let k = 0; k < nc; k++) {
+    const on = smoothstep(k / nc, k / nc + 0.24, u);
+    ion.coils[k].emissiveIntensity = on * (4 + 10 * u) * (0.75 + 0.25 * Math.sin(time * 26 + k * 1.7));
+  }
+  for (let k = 0; k < ion.caps.length; k++)
+    ion.caps[k].emissiveIntensity = u * 4.5 * (0.7 + 0.3 * Math.sin(time * 13 + k * 2.1));
+  for (const t of ion.tips) t.emissiveIntensity = u * u * 15;
+  ion.hotMat.emissiveIntensity = u * u * 20;
+
+  ion.core.visible = u > 0.015;
+  ion.core.scale.setScalar(0.25 + u * u * 2.4);
+  ion.coreMat.color.setRGB(0.4 + 2.8 * u * u, 1.4 + 1.9 * u * u, 2.6 + 1.6 * u * u);
+
+  ionLight.visible = u > 0.02;
+  ionLight.position.copy(_ip);
+  ionLight.intensity = u * u * 2600 * FX_SCALE * FX_SCALE;
+
+  // drżenie kołyski przy ładowaniu + odrzut po wyładowaniu
+  const sh = (ion.state === 'charge' ? u * u : 0) * 0.45;
+  ion.recV += (-260 * ion.rec - 22 * ion.recV) * dt;
+  ion.rec += ion.recV * dt;
+  ion.pitch.position.z = ion.baseZ + ion.rec;
+  ion.pitch.position.y = ion.basePitchY + Math.sin(time * 95) * sh;
+  ion.pitch.position.x = Math.sin(time * 77 + 1.3) * sh;
+}
+
+/* ============================================================================
+   POSTPROCESSING
+   ========================================================================== */
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.9, 0.72, 0.60);
+composer.addPass(bloom);
+composer.addPass(new OutputPass());
+
+/* ============================================================================
+   PANEL / STEROWANIE
+   ========================================================================== */
+function slider(id, outId, key, digits = 2) {
+  const el = document.getElementById(id), out = document.getElementById(outId);
+  const apply = () => { CFG[key] = parseFloat(el.value); out.textContent = CFG[key].toFixed(digits); };
+  el.addEventListener('input', apply);
+  apply();
+}
+slider('s-int', 'v-int', 'intensity', 2);
+slider('s-ion', 'v-ion', 'ion', 2);
+slider('s-charge', 'v-charge', 'ionCharge', 2);
+slider('s-arc', 'v-arc', 'ionArcs', 2);
+slider('s-vapor', 'v-vapor', 'ionVapor', 2);
+slider('s-flat', 'v-flat', 'flatten', 2);
+slider('s-spark', 'v-spark', 'sparks', 2);
+slider('s-recoil', 'v-recoil', 'recoil', 2);
+slider('s-shake', 'v-shake', 'shake', 2);
+slider('s-smoke', 'v-smoke', 'smoke', 2);
+slider('s-slife', 'v-slife', 'smokeLife', 2);
+slider('s-soot', 'v-soot', 'soot', 2);
+slider('s-bloom', 'v-bloom', 'bloom', 2);
+slider('s-time', 'v-time', 'timeScale', 2);
+
+function checkbox(id, key) {
+  const el = document.getElementById(id);
+  el.addEventListener('change', () => { CFG[key] = el.checked; });
+  CFG[key] = el.checked;
+}
+checkbox('auto', 'autoFire');
+checkbox('track', 'turretIdle');
+checkbox('proj', 'projectiles');
+
+document.querySelectorAll('#mode button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    CFG.mode = btn.dataset.mode;
+    document.querySelectorAll('#mode button').forEach(b =>
+      b.setAttribute('aria-pressed', String(b === btn)));
+  });
+});
+
+const btnCannon = document.getElementById('fire-cannon');
+const btnIon = document.getElementById('fire-ion');
+btnCannon.addEventListener('click', triggerCannon);
+btnIon.addEventListener('click', triggerIon);
+const panel = document.getElementById('panel');
+document.getElementById('toggle').addEventListener('click', () => { panel.hidden = !panel.hidden; });
+
+window.addEventListener('keydown', e => {
+  if (e.code === 'Space') { e.preventDefault(); triggerSelected(); }
+  if (e.key === '1') triggerCannon();
+  if (e.key === '2') triggerIon();
+  if (e.key === 'h' || e.key === 'H') panel.hidden = !panel.hidden;
+});
+
+// tap w planszę = ogień (ale nie po przeciągnięciu kamerą)
+let downAt = 0, downX = 0, downY = 0;
+canvas.addEventListener('pointerdown', e => { downAt = performance.now(); downX = e.clientX; downY = e.clientY; });
+canvas.addEventListener('pointerup', e => {
+  const moved = Math.hypot(e.clientX - downX, e.clientY - downY);
+  if (moved < 9 && performance.now() - downAt < 400) triggerSelected();
+});
+
+function sizeTo() {
+  const w = canvas.clientWidth || window.innerWidth;
+  const h = canvas.clientHeight || window.innerHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h, false);      // rozmiar CSS zostaje z arkusza stylów
+  composer.setSize(w, h);             // composer sam przelicza pixelRatio i pasy
+}
+window.addEventListener('resize', sizeTo);
+window.addEventListener('orientationchange', () => setTimeout(sizeTo, 120));
+sizeTo();
+
+/* ============================================================================
+   PĘTLA
+   ========================================================================== */
+const clock = new THREE.Clock();
+let time = 0, fpsT = 0, fpsN = 0, ionBusy = false;
+const rFps = document.getElementById('r-fps'), rPart = document.getElementById('r-part');
+
+function frame() {
+  requestAnimationFrame(frame);
+  const raw = Math.min(clock.getDelta(), 1 / 20);
+  const dt = raw * CFG.timeScale;
+  time += dt;
+
+  // ogień ciągły — oba działa w swoim rytmie
+  if (CFG.autoFire) {
+    autoT -= dt;
+    if (autoT <= 0) { triggerCannon(); autoT = CFG.mode === 'salvo' ? 1.8 : 1.5; }
+    autoIonT -= dt;
+    if (autoIonT <= 0) { triggerIon(); autoIonT = 2.6 + CFG.ionCharge; }
+  }
+  // leniwy obrót wież (przed strzałem — wylot ma być liczony z aktualnej pozy)
+  if (CFG.turretIdle) {
+    yaw.rotation.y = Math.sin(time * 0.21) * 0.55;
+    pitch.rotation.x = -(0.10 + Math.sin(time * 0.147) * 0.075);
+    ion.yaw.rotation.y = Math.sin(time * 0.17 + 2.1) * 0.45;
+    ion.pitch.rotation.x = -(0.08 + Math.sin(time * 0.131) * 0.05);
+  }
+
+  // kolejka opóźnień między lufami
+  for (let i = queue.length - 1; i >= 0; i--) {
+    queue[i].t -= dt;
+    if (queue[i].t <= 0) { fireBarrel(queue[i].b); queue.splice(i, 1); }
+  }
+
+  // odrzut (sprężyna tłumiona) + stygnięcie wylotów
+  for (const b of barrels) {
+    b.recV += (-300 * b.rec - 24 * b.recV) * dt;
+    b.rec += b.recV * dt;
+    b.group.position.z = b.baseZ + b.rec;
+    b.heat *= Math.exp(-2.2 * dt);
+    b.hotMat.emissiveIntensity = b.heat * 16;
+  }
+
+  updateIon(dt, time);
+
+  // pociski + ich smuga
+  for (const p of projPool) {
+    if (p.life <= 0) continue;
+    p.life -= dt;
+    if (p.life <= 0) { p.m.visible = false; continue; }
+    p.m.position.addScaledVector(p.vel, dt);
+    p.trail -= dt;
+    if (p.trail <= 0) {
+      p.trail = 0.012;
+      const o = sp();
+      o.x = p.m.position.x; o.y = p.m.position.y; o.z = p.m.position.z;
+      o.life = 0.28; o.drag = 2;
+      o.s0 = 3.4 * FX_SCALE; o.s1 = 0.4 * FX_SCALE;
+      if (p.kind === 'ion') {
+        o.r0 = 1.2; o.g0 = 2.4; o.b0 = 3.6;
+        o.r1 = 0.15; o.g1 = 0.45; o.b1 = 1.1; o.mix = 6;
+      } else {
+        o.r0 = 2.4; o.g0 = 1.4; o.b0 = 0.7;
+        o.r1 = 0.7; o.g1 = 0.22; o.b1 = 0.07; o.mix = 6;
+      }
+      o.alpha = 0.5; o.fadeIn = 0.004; o.fadeOut = 1.6; o.grow = 1;
+      fx.glow.spawn(o);
+    }
+  }
+
+  fx.update(dt, time);
+
+  // wstrząs kamery — offset zdejmowany przed update() kontrolek i nakładany po
+  camera.position.sub(shakeOff);
+  controls.update();
+  if (shake > 0.001) {
+    shake *= Math.exp(-7 * dt);
+    const s = shake * shake * 2.2;
+    shakeOff.set((Math.random() * 2 - 1) * s, (Math.random() * 2 - 1) * s * 0.15, (Math.random() * 2 - 1) * s);
+  } else if (shake !== 0) {
+    shake = 0; shakeOff.set(0, 0, 0);
+  }
+  camera.position.add(shakeOff);
+
+  // błysk na ekranie
+  if (screenFlash > 0.003) {
+    screenFlash *= Math.exp(-9 * dt);
+    flashEl.style.opacity = screenFlash.toFixed(3);
+  } else if (screenFlash !== 0) {
+    screenFlash = 0; flashEl.style.opacity = '0';
+  }
+
+  bloom.strength = 0.9 * CFG.bloom;
+  bloom.enabled = CFG.bloom > 0.01;
+  composer.render();
+
+  const busy = ion.state !== 'idle';
+  if (busy !== ionBusy) { ionBusy = busy; btnIon.disabled = busy; }
+
+  fpsN++; fpsT += raw;
+  if (fpsT >= 0.5) {
+    rFps.textContent = String(Math.round(fpsN / fpsT));
+    rPart.textContent = String(fx.particles);
+    fpsT = 0; fpsN = 0;
+  }
+}
+
+// pierwsza salwa na powitanie
+setTimeout(triggerCannon, 700);
+setTimeout(triggerIon, 1900);
+frame();
+</script>
+</body>
+</html>

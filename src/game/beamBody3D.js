@@ -18,6 +18,7 @@
  */
 
 import { packKey, invertSymmetric3, bindSkinToLattice } from './voxelBody3D.js';
+import { markOriginalBeamBridges } from './beamConnectivity3D.js';
 
 export const BEAM_TYPE = Object.freeze({
   PLATING: 0,   // poszycie: powłoka zewnętrzna, pęka pierwsza
@@ -68,14 +69,66 @@ function makeNode(cell, index, cellMassBase) {
     r: cell.r, g: cell.g, b: cell.b,
     beams: [],
     beamCount: 0,       // ile belek miał węzeł w nietkniętej konstrukcji
+    localBeamCount: 0,  // pierwotne mocowanie do poszycia; nie resetować po podziale
     platingCount: 0,    // ile z nich to poszycie (do progu „dziura w kadłubie")
     active: true,
-    __islandStamp: 0
+    __islandStamp: 0,
+    // Wszystkie pola gorącej ścieżki powstają od razu, bez zmiany układu
+    // obiektu podczas pierwszego kontaktu, hashowania lub zgniotu.
+    _hashNext: null,
+    _massStamp: 0,
+    _crushStamp: 0,
+    _crushDepth: 0
+  };
+}
+
+// Keep an explicit, consistent numeric layout for all cloned nodes and beams,
+// including fragments created after the first collision.
+export function cloneBeamNode(n) {
+  return {
+    id: n.id, ix: n.ix, iy: n.iy, iz: n.iz,
+    ox: n.ox, oy: n.oy, oz: n.oz,
+    x: n.x, y: n.y, z: n.z, px: n.px, py: n.py, pz: n.pz,
+    vx: n.vx, vy: n.vy, vz: n.vz,
+    mass: n.mass, invMass: n.invMass, hp: n.hp, maxHp: n.maxHp,
+    surface: n.surface, depth: n.depth, coverage: n.coverage,
+    r: n.r, g: n.g, b: n.b, beams: n.beams.slice(),
+    beamCount: n.beamCount, localBeamCount: n.localBeamCount, platingCount: n.platingCount, active: n.active,
+    __islandStamp: 0, _hashNext: null, _massStamp: 0, _crushStamp: 0, _crushDepth: 0
+  };
+}
+
+export function cloneBeam(beam, a = beam.a, b = beam.b) {
+  return {
+    a, b, rest: beam.rest, restBase: beam.restBase, type: beam.type,
+    stiffness: beam.stiffness, deform: beam.deform, break: beam.break,
+    broken: beam.broken, strain: beam.strain, fatigue: beam.fatigue || 0, restBridge: beam.restBridge
   };
 }
 
 function beamKey(a, b) {
   return a < b ? `${a}|${b}` : `${b}|${a}`;
+}
+
+// DDA od środka do środka komórki: sprawdza każdą komórkę przeciętą przez belkę.
+// Próbkowanie co jedną komórkę potrafi przeskoczyć wąską szczelinę po skosie.
+// Przy przejściu przez samą krawędź/narożnik przesuwamy wszystkie osie naraz.
+function staysInsideHull(a, b, isSolid) {
+  let x = a.ix, y = a.iy, z = a.iz;
+  const dx = b.ix - x, dy = b.iy - y, dz = b.iz - z;
+  const sx = Math.sign(dx), sy = Math.sign(dy), sz = Math.sign(dz);
+  const dtX = dx === 0 ? Infinity : 1 / Math.abs(dx);
+  const dtY = dy === 0 ? Infinity : 1 / Math.abs(dy);
+  const dtZ = dz === 0 ? Infinity : 1 / Math.abs(dz);
+  let tx = dtX * 0.5, ty = dtY * 0.5, tz = dtZ * 0.5;
+  while (x !== b.ix || y !== b.iy || z !== b.iz) {
+    const t = Math.min(tx, ty, tz) + 1e-10;
+    if (tx <= t) { x += sx; tx += dtX; }
+    if (ty <= t) { y += sy; ty += dtY; }
+    if (tz <= t) { z += sz; tz += dtZ; }
+    if (!isSolid(x, y, z)) return false;
+  }
+  return true;
 }
 
 /**
@@ -96,6 +149,12 @@ export function buildBeamStructure(vox, opts = {}) {
   const nodes = cells.map((c, i) => makeNode(c, i, cellMassBase));
   const lattice = new Map();
   for (const n of nodes) lattice.set(packKey(n.ix, n.iy, n.iz), n);
+  const isSolid = (x, y, z) => {
+    if (x < 0 || x >= vox.nx || y < 0 || y >= vox.ny || z < 0 || z >= vox.nz) return false;
+    // Starsze/ręczne wejście bez maski: nie wymyślaj wnętrza w brakujących komórkach.
+    return vox.solidMask ? vox.solidMask[x + y * vox.nx + z * vox.nx * vox.ny] !== 0
+      : lattice.has(packKey(x, y, z));
+  };
 
   const beams = [];
   const seen = new Set();
@@ -104,6 +163,9 @@ export function buildBeamStructure(vox, opts = {}) {
     if (a === b) return null;
     const key = beamKey(a.id, b.id);
     if (seen.has(key)) return null;
+    // Wręgi i grodzie wzmacniają bryłę, ale nie mogą tworzyć niewidocznych
+    // mostów między pokładami przez otwartą przestrzeń. Tylko podczas budowy.
+    if (type >= BEAM_TYPE.FRAME && !staysInsideHull(a, b, isSolid)) return null;
     seen.add(key);
     const dx = b.ox - a.ox, dy = b.oy - a.oy, dz = b.oz - a.oz;
     const rest = Math.sqrt(dx * dx + dy * dy + dz * dz);
@@ -119,12 +181,15 @@ export function buildBeamStructure(vox, opts = {}) {
       deform: preset.deform,
       break: preset.break,
       broken: false,
-      strain: 0
+      strain: 0,
+      fatigue: 0,
+      restBridge: false
     };
     const index = beams.length;
     beams.push(beam);
     a.beams.push(index);
     b.beams.push(index);
+    if (type < BEAM_TYPE.FRAME) { a.localBeamCount++; b.localBeamCount++; }
     if (type === BEAM_TYPE.PLATING) {
       a.platingCount++;
       b.platingCount++;
@@ -221,6 +286,7 @@ export function buildBeamStructure(vox, opts = {}) {
   }
 
   for (const node of nodes) node.beamCount = node.beams.length;
+  markOriginalBeamBridges(nodes, beams);
 
   // --- 4) Środek masy, tensor, promień ---
   let comX = 0, comY = 0, comZ = 0, mSum = 0;
@@ -292,11 +358,19 @@ export function buildBeamStructure(vox, opts = {}) {
     skin = {
       parts: skinParts,
       occupancy,
+      cellSize: cs,
+      latticeMin: { x: vox.origin.x - comX, y: vox.origin.y - comY, z: vox.origin.z - comZ },
+      supportEdges: new Uint32Array(beams.length * 2),
       dims: { x: vox.nx, y: vox.ny, z: vox.nz },
       vertexCount,
       triangleCount,
       unbound: bindInfo.unbound
     };
+    for (let i = 0; i < beams.length; i++) {
+      const a = nodes[beams[i].a], b = nodes[beams[i].b];
+      skin.supportEdges[i * 2] = a.ix + a.iy * vox.nx + a.iz * vox.nx * vox.ny;
+      skin.supportEdges[i * 2 + 1] = b.ix + b.iy * vox.nx + b.iz * vox.nx * vox.ny;
+    }
   }
 
   return {

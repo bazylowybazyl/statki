@@ -90,7 +90,9 @@ test('fighters outrun the capital hulls they escort', () => {
   const frigate = SUPPORT_SHIP_TEMPLATES.frigate_pd.stats;
 
   for (const def of Object.values(FIGHTER_SQUADRON_DEFS)) {
-    assert.ok(def.maxSpeed > frigate.maxSpeed * 3, `${def.id} musi być wyraźnie szybszy od fregaty`);
+    // Proporcja jak w Starsectorze (myśliwiec ~1,5-2× fregata). Dawne ×3 pochodziło
+    // z czasów fregaty „420 u/s", która realnie pełzała po ~110 u/s.
+    assert.ok(def.maxSpeed > frigate.maxSpeed * 1.6, `${def.id} musi być wyraźnie szybszy od fregaty`);
     assert.ok(def.maxSpeed >= playerCombatCap * 0.75,
       `${def.id} (${def.maxSpeed}) nie nadąży za graczem w trybie bojowym (${playerCombatCap})`);
     assert.ok(def.accel > 0, `${def.id} musi mieć przyspieszenie`);

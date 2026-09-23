@@ -66,15 +66,6 @@ function tunable(name, fallback) {
 // Grupa: { c: barwa, b: 1 gdy część cofa się z lufą, p: [części] }
 // X = przód wieżyczki, Y = bok. Jednostki lokalne, przed `sizeMult`.
 
-function hexPoly(radius, cx = 0, cy = 0) {
-  const pts = [];
-  for (let i = 0; i < 6; i++) {
-    const a = (i / 6) * Math.PI * 2;
-    pts.push([cx + Math.cos(a) * radius, cy + Math.sin(a) * radius]);
-  }
-  return pts;
-}
-
 function yamatoGun(s, gy, groups) {
   groups.barrel.p.push(['r', 6 + 5 * s, gy, 12 * s, 6 * s, 1]);
   groups.barrel.p.push(['r', 6 + 25 * s, gy, 40 * s, 8.5 * s, 2]);
@@ -241,16 +232,6 @@ const SPECS = {
     m: [[30, 7], [30, -7]]
   },
 
-  hexlance: {
-    r: 52,
-    g: [
-      { c: C.armor, b: 0, p: [['p', hexPoly(17)]] },
-      { c: C.barrel, b: 1, p: [['r', 30, 0, 40, 6, 2]] },
-      { c: C.detailBlue, b: 1, p: [['r', 30, 0, 38, 4, 1.5], ['ring', 42, 0, 13.5, 10.5]] }
-    ],
-    m: [[52, 0]]
-  },
-
   siegeRail: {
     r: 80,
     g: [
@@ -346,7 +327,6 @@ function resolveSpec(weaponId, category) {
   if (key === 'supernova_missile') return SPECS.siegeTorpedo;
   if (key === 'siege_torpedo' || key === 'siege_torpedo_mk2') return SPECS.siegeTorpedo;
   if (key === 'torpedo_salvo') return SPECS.missileRack;
-  if (key === 'hexlance_siege') return SPECS.hexlance;
   if (key === 'siege_railgun') return SPECS.siegeRail;
   // Warianty rodzinne S/M/L (tempest_ion_s, helios_lance_l, gatling_s …).
   if (key.includes('tempest') || key.includes('railgun')) return key.includes('mk2') ? SPECS.tempest2 : SPECS.tempest1;
@@ -394,7 +374,6 @@ const FX_PROFILE = {
   siege_torpedo: { key: 'torpedo', recoil: 6.0, shake: 3.0 },
   siege_torpedo_mk2: { key: 'torpedo', recoil: 8.0, shake: 4.0 },
   torpedo_salvo: { key: 'torpedo', recoil: 5.0, shake: 2.5 },
-  hexlance_siege: { key: 'hexlance', recoil: 30.0, shake: 15.0 },
   siege_railgun: { key: 'siegeRail', recoil: 120.0, shake: 80.0 }
 };
 
@@ -565,6 +544,12 @@ function weaponScale(size, category) {
   return base * trim;
 }
 
+// Hangary i broń BUILT-IN nie dostają wieżyczki — i to jest decyzja, nie brak.
+// Built-in (Hexlance) jest WTOPIONA W KADŁUB: lufa to centralny kil na spricie
+// Atlasa, więc dorysowanie sylwetki nałożyłoby działo na działo. `sync()` z tego
+// samego powodu nie wylicza grupy `builtin`, a błysk wylotowy i odrzut robi sobie
+// sama superweapon.js (getMuzzlePos + własne cząstki). Nie „naprawiać" tego przez
+// zdjęcie filtra — najpierw trzeba przesunąć hardpoint poza kil.
 function shouldRenderTurret(def) {
   if (!def) return false;
   const mountType = String(def.mountType || '').toLowerCase();
@@ -707,6 +692,7 @@ export const Turret2D = {
     emitTurretBound(entity.weapons.missile || [], 'p_missile');
     emitTurretBound(entity.weapons.special || [], 'p_special');
     emitTurretBound(entity.weapons.special_missile || [], 'p_special_missile');
+    // Grupy `builtin` i `hangar` celowo nie ma na liście — patrz shouldRenderTurret().
   },
 
   /**

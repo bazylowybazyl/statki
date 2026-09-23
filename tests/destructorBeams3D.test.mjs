@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { voxelizeTriangles, makeBoxTriangles } from '../src/game/voxelBody3D.js';
 import { buildBeamStructure, BEAM_TYPE } from '../src/game/beamBody3D.js';
 import { DestructorBeams3D, createBeamConfig } from '../src/game/destructorBeams3D.js';
+import { markOriginalBeamBridges } from '../src/game/beamConnectivity3D.js';
 
 const CS = 0.5;
 
@@ -172,6 +173,42 @@ test('zderzenie wgniata konstrukcję TRWALE (plastyczność belek)', () => {
   assert.ok(A.vel.x < cfg.crushSpeedThreshold, 'energia nie została pochłonięta przez zgniot');
 });
 
+test('przycięte zapytania kontaktów zgadzają się z pełnym przeglądem, także na granicach hasha', () => {
+  class CountingMap extends Map {
+    reads = 0;
+    get(key) { this.reads++; return super.get(key); }
+  }
+  for (const shift of [-0.501, -0.249, 0, 0.249, 0.501, 1.001]) {
+    fresh({ maxContacts: 10000, separationPercent: 0 });
+    const A = makeBody({ position: { x: shift, y: -shift * 0.4, z: shift * 0.7 },
+      quaternion: { x: 0, y: Math.sin(0.3), z: 0, w: Math.cos(0.3) } }, { w: 1, h: 1, d: 1 });
+    const B = makeBody({}, { w: 2, h: 2, d: 2 });
+    B._hash = new CountingMap();
+    const m = DestructorBeams3D._refreshRot(A);
+    const world = n => ({ x: m[0] * n.x + m[1] * n.y + m[2] * n.z + A.pos.x,
+      y: m[3] * n.x + m[4] * n.y + m[5] * n.z + A.pos.y,
+      z: m[6] * n.x + m[7] * n.y + m[8] * n.z + A.pos.z });
+    const expected = new Map();
+    const limit = (CS * 1.1) ** 2;
+    for (const a of A.nodes) {
+      const p = world(a);
+      let closest = limit;
+      for (const b of B.nodes) closest = Math.min(closest, (p.x - b.x) ** 2 + (p.y - b.y) ** 2 + (p.z - b.z) ** 2);
+      if (closest < limit) expected.set(a, closest);
+    }
+    const contactsBefore = DestructorBeams3D.perf.contacts;
+    DestructorBeams3D.collideBodies(A, B, 1 / 120, false);
+    assert.equal(DestructorBeams3D.perf.contacts - contactsBefore, expected.size);
+    for (let i = 0; i < A._contacts.length; i++) {
+      const a = A._contacts[i], b = B._contacts[i], p = world(a);
+      const d2 = (p.x - b.x) ** 2 + (p.y - b.y) ** 2 + (p.z - b.z) ** 2;
+      assert.ok(Math.abs(d2 - expected.get(a)) < 1e-10, 'najbliższy kontakt nie może zniknąć przez pruning');
+    }
+    assert.ok(B._hash.reads < A.nodes.length * 60 + B.nodes.length,
+      `zapytania nadal skanują 125 kubików: ${B._hash.reads}`);
+  }
+});
+
 test('applyImpact: uszkadza węzły i zrywa belki w rdzeniu trafienia', () => {
   fresh();
   const body = makeBody({ position: { x: 5, y: 0, z: 0 } });
@@ -213,6 +250,33 @@ test('gródź wytrzymuje trafienie, które przecina poszycie', () => {
   const bulkheadHitAndBroken = bulkheads.filter((b) => inRadius(b) && b.broken).length;
   assert.ok(platingBroken > 0, 'poszycie nie ucierpiało');
   assert.equal(bulkheadHitAndBroken, 0, 'gródź pękła od trafienia, które powinna wytrzymać');
+});
+
+test('przecięcie podpory rozdziela dwa pokłady bez belek przez otwartą szczelinę', () => {
+  for (const bulkheadEvery of [0, 2]) {
+    fresh();
+    // Przekrój U: dwa cienkie pokłady, połączone wyłącznie na lewym końcu.
+    const cells = [];
+    for (let ix = 1; ix <= 10; ix++) {
+      for (let iy = 2; iy <= 9; iy++) {
+        if (ix > 2 && iy > 3 && iy < 8) continue;
+        cells.push({ ix, iy, iz: 2, x: ix * CS, y: iy * CS, z: 2 * CS,
+          coverage: 1, surface: true, depth: 1, r: 0.5, g: 0.5, b: 0.5 });
+      }
+    }
+    const s = buildBeamStructure({ cells, nx: 13, ny: 12, nz: 5, cellSize: CS,
+      origin: { x: -CS / 2, y: -CS / 2, z: -CS / 2 } }, { frameStride: 1, bulkheadEvery });
+    const body = DestructorBeams3D.createBody(s);
+    assert.equal(DestructorBeams3D.findIslands(body).length, 1);
+    for (const node of body.nodes) if (node.ix <= 2) DestructorBeams3D.destroyNode(body, node);
+    const islands = DestructorBeams3D.findIslands(body);
+    assert.deepEqual(islands.map(g => g.length), [16, 16], `niewidoczna belka trzyma pokłady (grodzie: ${bulkheadEvery})`);
+    const bodies = [body];
+    DestructorBeams3D.splitQueue.push(body);
+    DestructorBeams3D.processSplits(bodies);
+    assert.equal(bodies.length, 2, 'każdy pokład powinien dostać niezależne ciało');
+    assert.equal(bodies.reduce((sum, b) => sum + b.activeNodes, 0), 32);
+  }
 });
 
 test('przecięcie: zerwanie belek w płaszczyźnie dzieli ciało na dwa wraki', () => {
@@ -278,9 +342,126 @@ test('repair przywraca długości spoczynkowe i zrasta belki', () => {
   assert.equal(body.beams[1].broken, false, 'belka się nie zrosła');
 });
 
+test('wyrwane mocowanie puszcza wręg nawet bez rozciągnięcia, a naprawa przywraca podparcie', () => {
+  for (const breakEnabled of [0, 1]) {
+    fresh({ breakEnabled });
+    const body = makeBody({}, { w: 8, h: 3, d: 3, shell: 2, bulkheadEvery: 4 });
+    const frame = body.beams.find(b => b.type >= BEAM_TYPE.FRAME && body.nodes[b.a].localBeamCount >= 4);
+    assert.ok(frame, 'brak wręgu z mocowaniem do poszycia');
+    const mount = body.nodes[frame.a];
+    const support = mount.beams.filter(i => body.beams[i].type < BEAM_TYPE.FRAME);
+    for (const i of support.slice(1)) body.beams[i].broken = true;
+    body.liveBeams = body.beams.filter(b => !b.broken).length;
+    DestructorBeams3D.solveSoftBody(1 / 120, [body]);
+    assert.equal(frame.broken, !!breakEnabled, 'wręg nie może wisieć na wyrwanym mocowaniu');
+    DestructorBeams3D.repair([body], 0.1);
+    assert.equal(body.liveBeams, body.beams.length, 'naprawa musi odświeżyć topologię mocowań i skóry');
+    DestructorBeams3D.solveSoftBody(1 / 120, [body]);
+    assert.equal(frame.broken, false, 'naprawione mocowanie użyło nieaktualnego podparcia');
+  }
+});
+
+test('ostatnia belka po rozdarciu usztywnionego kadłuba puszcza sekcję z zachowaniem ruchu', () => {
+  for (const originalStrut of [false, true]) {
+    fresh({ wreckOutwardKick: 0, wreckSpinResponse: 0 });
+    const body = makeBody({ velocity: { x: 12, y: 1, z: 0 } }, { w: 8, h: 3, d: 3, shell: 2, bulkheadEvery: 0 });
+    const bodies = [body];
+    const baselines = new Map(body.nodes.map(n => [`${n.ix},${n.iy},${n.iz}`, n.localBeamCount]));
+    const crossing = body.beams.filter(b => (body.nodes[b.a].ox > 0) !== (body.nodes[b.b].ox > 0));
+    assert.ok(crossing.length > 1);
+    const last = crossing[0];
+    for (const b of crossing.slice(1)) b.broken = true;
+    if (originalStrut) markOriginalBeamBridges(body.nodes, body.beams);
+    for (const n of body.nodes) if (n.ox > 0) n.vz = 4;
+    body.liveBeams = body.beams.filter(b => !b.broken).length;
+    body.structureDirty = true;
+    DestructorBeams3D.splitQueue.push(body);
+    DestructorBeams3D.processSplits(bodies);
+    assert.equal(last.broken, !originalStrut);
+    assert.equal(bodies.length, originalStrut ? 1 : 2, 'rozdarty kadłub nadal wisi na pojedynczej belce');
+    for (const b of bodies) for (const n of b.nodes) {
+      assert.equal(n.localBeamCount, baselines.get(`${n.ix},${n.iy},${n.iz}`), 'podział zresetował stan pierwotnego mocowania');
+    }
+    if (!originalStrut) {
+      assert.deepEqual(bodies.map(b => b.vel.z).sort((a, b) => a - b), [0, 4]);
+      for (const b of bodies) {
+        assert.equal(b.vel.x, 12); assert.equal(b.vel.y, 1);
+        assert.equal(DestructorBeams3D.findIslands(b).length, 1);
+      }
+    }
+  }
+});
+
 test('ciało zasypia po ustaniu ruchu', () => {
   fresh();
   const body = makeBody();
   for (let i = 0; i < 400; i++) DestructorBeams3D.solveSoftBody(1 / 120, [body]);
   assert.ok(body.isSleeping, 'konstrukcja nie zasnęła mimo bezruchu');
+});
+
+test('zgniot cofa dziób w głąb własnego kadłuba, a druga iteracja nie zgniata ponownie', () => {
+  fresh();
+  const ship = makeBody({ position: { x: -3.1 }, velocity: { x: 30 } });
+  const wall = makeBody({ static: true, massMultiplier: 100000 });
+  const front = ship.nodes.filter(n => n.ox > 1);
+  const before = front.reduce((sum, n) => sum + n.x, 0);
+  DestructorBeams3D.collideBodies(ship, wall, 1 / 120, true);
+  const after = front.reduce((sum, n) => sum + n.x, 0);
+  assert.ok(after < before, `dziób ma zgiąć się do tyłu: ${before} -> ${after}`);
+  const positions = ship.nodes.map(n => [n.x, n.y, n.z]);
+  DestructorBeams3D.collideBodies(ship, wall, 1 / 120, false);
+  assert.deepEqual(ship.nodes.map(n => [n.x, n.y, n.z]), positions);
+  assert.deepEqual(wall.pos, { x: 0, y: 0, z: 0 });
+  assert.equal(DestructorBeams3D.applyImpact(wall, 0, 0, 0, 10000), false);
+});
+
+test('hash obejmuje odsłonięte wnętrze i odświeża się po zgniocie w tym samym kroku', () => {
+  fresh();
+  const body = makeBody();
+  const interior = body.nodes.find(n => !n.surface);
+  assert.ok(interior);
+  for (const n of body.nodes) if (n !== interior) n.active = false;
+  const includes = hash => {
+    for (let node of hash.values()) for (; node; node = node._hashNext) if (node === interior) return true;
+    return false;
+  };
+  assert.ok(includes(DestructorBeams3D._refreshHash(body)));
+  interior.x += 50;
+  body._hashTick = -1;
+  DestructorBeams3D._updateRadius(body);
+  assert.ok(body.radius >= Math.hypot(interior.x, interior.y, interior.z));
+  assert.ok(includes(DestructorBeams3D._refreshHash(body)));
+});
+
+test('przeniesienie lokalnego ruchu fragmentu zachowuje prędkości świata i nadaje obrót', () => {
+  fresh();
+  const body = makeBody();
+  for (const n of body.nodes) { n.vx = 2 - n.y; n.vy = 3 + n.x; n.vz = 4; }
+  const before = body.nodes.map(n => [n.vx, n.vy, n.vz]);
+  DestructorBeams3D._transferFragmentMotion(body);
+  assert.ok(body.angVel.z > 0.5);
+  for (let i = 0; i < body.nodes.length; i++) {
+    const n = body.nodes[i], w = body.angVel, v = body.vel;
+    const after = [v.x + n.vx + w.y * n.z - w.z * n.y,
+      v.y + n.vy + w.z * n.x - w.x * n.z, v.z + n.vz + w.x * n.y - w.y * n.x];
+    after.forEach((value, axis) => assert.ok(Math.abs(value - before[i][axis]) < 1e-8));
+  }
+});
+
+test('wiele odciętych płyt przestrzega limitu fragmentów i poprawnie aktualizuje masę', () => {
+  fresh({ splitMaxFragments: 2, maxWrecks: 2, wreckOutwardKick: 0, wreckSpinResponse: 0 });
+  const body = makeBody({}, { w: 8, h: 3, d: 3, shell: 2, bulkheadEvery: 0 });
+  const bodies = [body];
+  for (const beam of body.beams) {
+    if (body.nodes[beam.a].ix !== body.nodes[beam.b].ix) beam.broken = true;
+  }
+  body.structureDirty = true;
+  DestructorBeams3D.splitQueue.push(body);
+  DestructorBeams3D.processSplits(bodies);
+  assert.equal(bodies.filter(b => b.isWreck).length, 2);
+  for (const b of bodies) {
+    assert.ok(Math.abs(b.mass - b.nodes.reduce((sum, n) => sum + n.mass, 0)) < 1e-8);
+    assert.equal(b.activeNodes, b.nodes.length);
+    assert.equal(DestructorBeams3D.findIslands(b).length, 1);
+  }
 });

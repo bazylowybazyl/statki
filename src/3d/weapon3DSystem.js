@@ -12,6 +12,9 @@ import * as THREE from 'three';
 import { Core3D } from './core3d.js';
 import { DrawCallStats } from './drawCallStats.js';
 import { Turret2D, normalizeWeaponFxKey } from '../vfx/turret2D.js';
+import { Fx3D } from './fxParticles3D.js';
+import { MuzzleFX3D } from './muzzleFx3D.js';
+import { BulletTrails } from './slugTrail3D.js';
 import { getEntityWeaponTier, WEAPON_TIER_SCALE } from '../data/ships.js';
 
 const WEP_RESOURCES = {
@@ -993,7 +996,12 @@ export const Weapon3DSystem = {
   _triggerShotByWorldPoint(weaponKey, shotX, shotY) {
     const shot = Turret2D.triggerShot(weaponKey, shotX, shotY);
     if (!shot) return;
-    spawnMuzzleFlash(shot.x, shot.y, shot.angle, shot.scale, shot.color);
+    // Armata, Yamato i Tempest Ion mają własne recepty z dema
+    // (src/3d/muzzleFx3D.js). Gdy taka zadżiała, tani błysk
+    // instancjonowany jest zbędny — siedziałby w środku
+    // rozbłysku jako druga, jaśniejsza plama.
+    const rich = MuzzleFX3D.fire(weaponKey, shot.x, shot.y, shot.angle, shot.scale);
+    if (!rich) spawnMuzzleFlash(shot.x, shot.y, shot.angle, shot.scale, shot.color);
     this._cameraShakeMag = Math.min(18, this._cameraShakeMag + (Number(shot.shake) || 0));
   },
 
@@ -1035,6 +1043,12 @@ export const Weapon3DSystem = {
     this._updateWeaponFx(dt);
     this._updateBeamFx(dt, timeSec);
     this._updateCameraShake(dt);
+    // Wspólny bank cząstek (błyski wylotowe + Hexlance) rusza
+    // DOKŁADNIE RAZ na klatkę renderu — stąd tutaj, a nie
+    // w każdym module efektu z osobna.
+    Fx3D.update(dt);
+    MuzzleFX3D.beginFrame();
+    BulletTrails.beginFrame();
 
     let instanceCount = 0;
     let arcInstanceCount = 0;
@@ -1065,6 +1079,9 @@ export const Weapon3DSystem = {
 
       const x = Number(bullet.x) || 0;
       const y = Number(bullet.y) || 0;
+      // Smuga świata dla wybranych stylów (Yamato). Musi iść stąd, bo tylko
+      // tutaj w jednym miejscu jest i styl pocisku, i jego bieżąca pozycja.
+      BulletTrails.track(bullet, style.key, x, y, Number(bullet.vx) || 0, Number(bullet.vy) || 0);
       const px = isFiniteNumber(bullet.px) ? Number(bullet.px) : (x - (Number(bullet.vx) || 0) * 0.016);
       const py = isFiniteNumber(bullet.py) ? Number(bullet.py) : (y - (Number(bullet.vy) || 0) * 0.016);
 
@@ -1119,6 +1136,10 @@ export const Weapon3DSystem = {
 
       instanceCount++;
     }
+
+    // Po pętli: pociski, których już nie ma w tablicy, oddają swój emiter
+    // smugi, a bufor GPU idzie na kartę. Historia gasnie dalej sama.
+    BulletTrails.endFrame();
 
     const prevCount = bulletInstances.trails.count || 0;
     bulletInstances.trails.count = instanceCount;

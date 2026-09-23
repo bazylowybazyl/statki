@@ -91,6 +91,18 @@ test('bulkheadEvery=0 wyłącza grodzie', () => {
   assert.equal(s.stats.bulkheads, 0);
 });
 
+test('wręgi nadal przechodzą przez zamknięte wnętrze pominięte w skorupie', () => {
+  const s = boxStructure({ w: 6, h: 6, d: 6, shell: 2, frameStride: 1 });
+  const occupied = new Set(s.nodes.map(n => `${n.ix},${n.iy},${n.iz}`));
+  const spansInterior = s.beams.some(b => {
+    if (b.type !== BEAM_TYPE.FRAME) return false;
+    const a = s.nodes[b.a], c = s.nodes[b.b];
+    const key = `${Math.round((a.ix + c.ix) / 2)},${Math.round((a.iy + c.iy) / 2)},${Math.round((a.iz + c.iz) / 2)}`;
+    return !occupied.has(key);
+  });
+  assert.ok(spansInterior, 'filtrowanie pustki nie może usuwać wzmocnień wewnątrz kadłuba');
+});
+
 test('brak zdublowanych belek', () => {
   const s = boxStructure({});
   const seen = new Set();

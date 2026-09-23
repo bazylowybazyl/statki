@@ -296,8 +296,16 @@ export function voxelizeTriangles(positions, colors, opts = {}) {
     }
   }
 
+  // Zachowaj obrys pełnej bryły, także wnętrze pominięte przez shellLayers.
+  // Generator belek musi odróżniać pusty środek kadłuba od szczelin NA ZEWNĄTRZ.
+  // Wykorzystujemy istniejący bufor wokselizacji, bez drugiej kopii wolumenu.
+  for (let id = 0; id < total; id++) {
+    occ[id] = (occ[id] === OCC_SURFACE || occ[id] === OCC_INTERIOR) ? 1 : 0;
+  }
+
   return {
     cells,
+    solidMask: occ, // ix + iy * nx + iz * nx * ny; 1 = powierzchnia lub zamknięte wnętrze
     nx, ny, nz,
     cellSize,
     origin: { x: originX, y: originY, z: originZ },

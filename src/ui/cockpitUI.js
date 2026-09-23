@@ -11,12 +11,19 @@ import pirateBattleshipSprite from '../assets/ships/piratebattleship.png';
 import atlasSprite from '../../assets/capital_ship_rect_v1.png';
 import megafreighterSprite from '../../assets/megafreighter.png';
 import { CAPITAL_SHIP_TEMPLATES, SUPPORT_SHIP_TEMPLATES } from '../data/ships.js';
+import { DRIVE_RPM_MAX, TRAVEL_SHIFT_RPM } from '../game/flight/driveTransmission.js';
 import {
   formatLocalDistance,
   formatNavigationDistance,
   formatVelocity,
   getVelocityDisplay
 } from '../config/units.js';
+
+// HUD „jeden klaster + kontekst” (makieta: dema/hud-koncept.html).
+// Warstwy: stałe (klaster, paski broni/umiejętności, komunikaty, kontrolki),
+// kontekstowe (karta celu, skrzydło, wyniki skanu — same się pokazują),
+// na żądanie (Alt przełącza tryb interfejsu: rezerwa, overview, panel centralny;
+// CapsLock = łączność, J = misje, Tab = CIC).
 
 const RADAR_RANGES = Object.freeze([5000, 10000, 20000, 40000, 60000]);
 const MODE_ORDER = Object.freeze(['combat', 'maneuver', 'travel']);
@@ -34,6 +41,8 @@ const STATION_TABS = Object.freeze([
   { id: 'infrastructure', label: 'INFRASTRUKTURA' }
 ]);
 
+// Rezerwa: Terra Nova to na razie zastępstwo docelowej rezerwy gracza (jednostki
+// zbudowane we własnej bazie). Piraci, Niezależni i tryb LINIE to spawner testowy — tylko z ?dev.
 const SUPPORT_FACTIONS = Object.freeze({
   terran: {
     label: 'Terra Nova', dataFaction: 'terra-nova', mode: 'friendly',
@@ -47,7 +56,7 @@ const SUPPORT_FACTIONS = Object.freeze({
     ]
   },
   pirate: {
-    label: 'Pirates', dataFaction: 'pirates', mode: 'pirate',
+    label: 'Piraci', dataFaction: 'pirates', mode: 'pirate', devOnly: true,
     roster: [
       { key: 'frigate_pd', name: 'Pirate Frigate', role: 'Fregata rajderska', count: '×50', icon: 'frigate' },
       { key: 'destroyer', name: 'Pirate Destroyer', role: 'Niszczyciel rajderski', count: '×5', icon: 'destroyer' },
@@ -55,24 +64,79 @@ const SUPPORT_FACTIONS = Object.freeze({
     ]
   },
   independent: {
-    label: 'Independent', dataFaction: 'independent', mode: 'dummy',
+    label: 'Niezależni', dataFaction: 'independent', mode: 'dummy', devOnly: true,
     roster: [
       { key: 'atlas', name: 'Atlas', role: 'Niezależny supercapital', count: '×1', icon: 'supercapital' },
       { key: 'megafreighter', name: 'Megafreighter', role: 'Jednostka użytkowa', count: '×1', icon: 'carrier' }
     ]
   }
 });
+const SUPPORT_ORDER_LABELS = Object.freeze({ guard: 'ESKORTA', engage: 'ATAK', hold: 'STÓJ' });
 
-const HOTKEYS = Object.freeze([
-  { key: '1', label: 'GŁÓWNA', icon: '◆', type: 'main', code: 'Digit1' },
-  { key: '2', label: 'SPECJAL', icon: '✦', type: 'special', code: 'Digit2' },
-  { key: '3', label: 'RAKIETY', icon: '➤', type: 'missile', code: 'Digit3' },
-  { key: '4', label: 'WBUDOWANA', icon: '⌁', type: 'builtin', code: 'Digit4' },
-  { key: '5', label: 'SPEC. MISS', icon: '◇', type: 'special_missile', code: 'Digit5' },
-  { key: '6', label: 'ENERGY SHOT', icon: 'ϟ', action: 'energy' },
-  { key: 'X', label: 'SKAN', icon: '◎', code: 'KeyX' },
-  { key: 'R', label: 'NAPRAWA', icon: '✚', code: 'KeyR' }
+// Pasek broni: te same klawisze 1–6 co dotąd; stan z buildWeaponHudState() w index.html.
+const WEAPON_SLOTS = Object.freeze([
+  { key: '1', type: 'main', label: 'GŁÓWNA', icon: '◆', code: 'Digit1' },
+  { key: '2', type: 'special', label: 'SPECJAL', icon: '✦', code: 'Digit2' },
+  { key: '3', type: 'missile', label: 'RAKIETY', icon: '➤', code: 'Digit3' },
+  { key: '4', type: 'builtin', label: 'WBUDOWANA', icon: '⌁', code: 'Digit4' },
+  { key: '5', type: 'special_missile', label: 'SPEC. RAK.', icon: '◇', code: 'Digit5' },
+  { key: '6', label: 'ENERGY', icon: 'ϟ', action: 'energy', title: 'Energy Shot [6] — +50% tarczy' }
 ]);
+const ABILITY_SLOTS = Object.freeze([
+  { key: 'X', id: 'scan', label: 'SKAN', icon: '◎', code: 'KeyX', title: 'Aktywny skan — impuls [X]' },
+  { key: 'F', id: 'salvo', label: 'SALWA', icon: '➶', code: 'KeyF', title: 'Salwa rakiet w stronę kursora [F]' },
+  { key: 'Z', id: 'hangar', label: 'MYŚLIWCE', icon: '▲', code: 'KeyZ', title: 'Start / powrót myśliwców [Z]' },
+  { key: 'R', id: 'repair', label: 'NAPRAWA', icon: '✚', code: 'KeyR', title: 'Naprawa kadłuba — wł./wył. [R]' }
+]);
+// Kontrolki jak w aucie: świecą tylko włączone systemy.
+const TELLTALES = Object.freeze([
+  { id: 'auto', label: 'AUTO', color: '#8fd0ff', title: 'Skrzynia automatyczna [7]' },
+  { id: 'stab', label: 'STAB', color: '#60e8ff', title: 'Stabilizator kursu [B]' },
+  { id: 'damp', label: 'DAMP', color: '#b58cff', title: 'Tłumik grawitacyjny [C]' },
+  { id: 'boost', label: 'BOOST', color: '#ffb347', title: 'Dopalacz / boost po zmianie biegu' },
+  { id: 'warp', label: 'WARP', color: '#6fd3ff', title: 'Napęd warp [9]' }
+]);
+const ALERT_TONES = Object.freeze({
+  status: 'info', info: 'info', orbit: 'info',
+  good: 'good', ok: 'good', reward: 'good',
+  warn: 'warn', warning: 'warn',
+  bad: 'bad', danger: 'bad', alert: 'bad'
+});
+
+// Okno zmiany biegu z tej samej tabeli, którą ocenia shiftDriveUp().
+const RPM_WINDOW = Object.freeze({
+  cue: TRAVEL_SHIFT_RPM.cueStart / DRIVE_RPM_MAX,
+  perfectStart: TRAVEL_SHIFT_RPM.greenFull / DRIVE_RPM_MAX,
+  perfectEnd: TRAVEL_SHIFT_RPM.redBlendStart / DRIVE_RPM_MAX,
+  late: TRAVEL_SHIFT_RPM.late / DRIVE_RPM_MAX
+});
+
+// Klaster w jednostkach projektowych (pole 340×340, skalowane przez --s).
+// Kąty "zegarowe": 0 = godz. 12, rosną zgodnie ze wskazówkami.
+// Góra = przetrwanie (kadłub ↖, tarcza ↗ — spływają od góry), dół = napęd (prędkość ↙, obroty ↘).
+const CLUSTER = Object.freeze({ box: 340, center: 170, ring: 150, radar: 118 });
+const CLUSTER_ARCS = Object.freeze({
+  hull: Object.freeze({ anchor: 275, span: 75, reverse: false }),
+  shield: Object.freeze({ anchor: 85, span: 75, reverse: true }),
+  speed: Object.freeze({ anchor: 190, span: 73, reverse: false }),
+  rpm: Object.freeze({ anchor: 170, span: 73, reverse: true })
+});
+const VITAL_STYLE = Object.freeze({
+  hull: Object.freeze({ color: '#ff2d36', track: 'rgba(255, 45, 54, 0.13)', ghost: 'rgba(255, 190, 190, 0.5)' }),
+  shield: Object.freeze({ color: '#2f7dff', track: 'rgba(47, 125, 255, 0.14)', ghost: 'rgba(190, 210, 255, 0.5)' })
+});
+const DRIVE_GLOW = Object.freeze({ normal: '#ff6600', cue: '#38e08a', danger: '#ff3a2a', warp: '#4fb8ff' });
+const READY_FLASH = Object.freeze([
+  { boxShadow: '0 0 0 1px #ff6600, 0 0 18px rgba(255, 102, 0, 0.65)' },
+  { boxShadow: '0 0 0 1px rgba(255, 102, 0, 0), 0 0 0 rgba(255, 102, 0, 0)' }
+]);
+const READY_FLASH_TIMING = Object.freeze({ duration: 550, easing: 'ease-out' });
+const SCAN_RESULTS_MS = 10000;
+const MODE_PANEL_MS = 2200;
+const FEED_LIVE = 4;
+const FEED_HISTORY = 16;
+const FEED_LIFE_MS = 16000;
+const TAU = Math.PI * 2;
 
 const SUPPORT_SPRITES = Object.freeze({
   terran: Object.freeze({
@@ -106,13 +170,25 @@ const SUPPORT_CLASS_META = Object.freeze({
   megafreighter: { label: 'Megafreighter', code: 'MF', hardpoints: 0 }
 });
 
+function perfNow() {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now();
+}
+
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, Number(value) || 0));
 }
 
-function mixRgb(from, to, amount) {
-  const t = clamp(amount, 0, 1);
-  return `rgb(${Math.round(from[0] + (to[0] - from[0]) * t)}, ${Math.round(from[1] + (to[1] - from[1]) * t)}, ${Math.round(from[2] + (to[2] - from[2]) * t)})`;
+function isDevMode() {
+  try {
+    return new URLSearchParams(window.location.search).has('dev');
+  } catch {
+    return false;
+  }
+}
+
+function isTypingTarget(target) {
+  const tag = target?.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || !!target?.isContentEditable;
 }
 
 function getEntityPosition(entity) {
@@ -125,6 +201,10 @@ function getEntityPosition(entity) {
 function getEntityLabel(entity, fallback = 'Kontakt') {
   const value = entity?.displayName || entity?.label || entity?.name || entity?.squadronName || entity?.id || entity?.type;
   return String(value || fallback);
+}
+
+function isEntityGone(entity) {
+  return !entity || entity.dead || entity.destroyed || entity._destroyed3D;
 }
 
 function getSupportDetails(item) {
@@ -147,132 +227,219 @@ function getSupportDetails(item) {
   };
 }
 
-function shipSilhouette(kind = 'frigate') {
-  const safe = ['fighter', 'frigate', 'destroyer', 'battleship', 'carrier', 'supercapital'].includes(kind)
-    ? kind
-    : 'frigate';
-  return `<span class="ship-silhouette ${safe}" aria-hidden="true"></span>`;
+// Sprite dla karty celu / skrzydła — najlepsze dopasowanie po typie kadłuba.
+function spriteForEntity(entity) {
+  const type = String(entity?.type || entity?.templateKey || '').toLowerCase();
+  const faction = String(entity?.faction || '').toLowerCase();
+  const pirate = !!entity?.isPirate || faction.includes('pira');
+  if (type.includes('megafreighter')) return megafreighterSprite;
+  if (type.includes('supercap') || type.includes('capital') || type.includes('atlas')) return pirate ? pirateBattleshipSprite : terranSupercapitalSprite;
+  if (type.includes('carrier')) return pirate ? pirateBattleshipSprite : terranCarrierSprite;
+  if (type.includes('battleship')) return pirate ? pirateBattleshipSprite : terranBattleshipSprite;
+  if (type.includes('destroyer')) return pirate ? pirateDestroyerSprite : terranDestroyerSprite;
+  if (type.includes('frigate') || type.includes('fighter') || type.includes('interceptor') || type.includes('corvette')) {
+    return pirate ? pirateFrigateSprite : terranFrigateSprite;
+  }
+  return null;
 }
 
-function cockpitMarkup() {
+function shortWeaponName(name, fallback) {
+  const first = String(name || '').trim().split(/\s+/)[0] || '';
+  return (first.length >= 3 ? first : fallback).toUpperCase();
+}
+
+function formatInt(value) {
+  return Math.round(Number(value) || 0).toLocaleString('pl-PL');
+}
+
+// Polska odmiana: 1 węzeł, 2–4 węzły, 5+ węzłów (12–14 też "węzłów").
+function plural(count, one, few, many) {
+  const n = Math.abs(Math.trunc(Number(count) || 0));
+  if (n === 1) return one;
+  const lastDigit = n % 10;
+  const lastTwo = n % 100;
+  return lastDigit >= 2 && lastDigit <= 4 && (lastTwo < 12 || lastTwo > 14) ? few : many;
+}
+
+function countLabel(count, one, few, many) {
+  return `${count} ${plural(count, one, few, many)}`;
+}
+
+const clockRad = deg => (deg - 90) * Math.PI / 180;
+
+function arcPath(ctx, cx, cy, radius, fromDeg, toDeg) {
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, clockRad(fromDeg), clockRad(toDeg), false);
+}
+
+function arcPoint(arc, fraction) {
+  return arc.reverse ? arc.anchor - arc.span * fraction : arc.anchor + arc.span * fraction;
+}
+
+function arcSegment(arc, fraction) {
+  const end = arcPoint(arc, fraction);
+  return arc.reverse ? [end, arc.anchor] : [arc.anchor, end];
+}
+
+function createVitalMotion() {
+  return { ready: false, shown: 1, ghost: 1, target: 1, hold: 0, hit: 0 };
+}
+
+// Pełne i spokojne łuki przygasają; poniżej 25% pulsują.
+function vitalAlpha(motion, calm, now) {
+  let alpha = motion.target > 0.985 ? 1 - 0.55 * calm : 1;
+  if (motion.target < 0.25) alpha *= 0.6 + 0.4 * Math.abs(Math.sin(now * 0.0044));
+  return alpha;
+}
+
+// Poświata bez shadowBlur (rozmycie gaussowskie co klatkę jest drogie):
+// dwa szersze, półprzezroczyste pociągnięcia pod właściwym łukiem.
+function strokeGlowArc(ctx, fromDeg, toDeg, width, style, alpha, glow = 1) {
+  const center = CLUSTER.center;
+  arcPath(ctx, center, center, CLUSTER.ring, fromDeg, toDeg);
+  ctx.strokeStyle = style;
+  if (glow > 0) {
+    ctx.globalAlpha = alpha * 0.16 * glow;
+    ctx.lineWidth = width + 12;
+    ctx.stroke();
+    ctx.globalAlpha = alpha * 0.32 * glow;
+    ctx.lineWidth = width + 5;
+    ctx.stroke();
+  }
+  ctx.globalAlpha = alpha;
+  ctx.lineWidth = width;
+  ctx.stroke();
+}
+
+function drawVitalArc(ctx, arc, motion, style, alpha) {
+  ctx.save();
+  ctx.lineCap = 'round';
+  if (motion.ghost > motion.shown + 0.002) {
+    const [from, to] = arcSegment(arc, motion.ghost);
+    arcPath(ctx, CLUSTER.center, CLUSTER.center, CLUSTER.ring, from, to);
+    ctx.globalAlpha = alpha;
+    ctx.lineWidth = 11;
+    ctx.strokeStyle = style.ghost;
+    ctx.stroke();
+  }
+  if (motion.shown > 0.002) {
+    const [from, to] = arcSegment(arc, motion.shown);
+    strokeGlowArc(ctx, from, to, 11, style.color, alpha, 1 + motion.hit * 2);
+    if (motion.hit > 0) {
+      ctx.globalAlpha = alpha * Math.min(1, motion.hit * 2.4);
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = '#ffffff';
+      arcPath(ctx, CLUSTER.center, CLUSTER.center, CLUSTER.ring, from, to);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
+function cockpitMarkup(devMode) {
+  const devControls = devMode ? `
+            <div class="faction-tabs" id="supportFactions">
+              <button type="button" class="faction-tab active" data-faction="terra-nova" data-key="terran">TERRA NOVA</button>
+              <button type="button" class="faction-tab" data-faction="pirates" data-key="pirate">PIRACI</button>
+              <button type="button" class="faction-tab" data-faction="independent" data-key="independent">NIEZALEŻNI</button>
+              <button type="button" class="faction-tab line-tab" id="lineModeBtn" title="Masowy spawn: wybierz typ, przeciągnij LPM po mapie">LINIE</button>
+            </div>
+            <div class="line-bar" id="lineBar">
+              <label class="line-width-label" for="lineWidth">SZER.</label>
+              <input class="line-width-slider" type="range" id="lineWidth" min="25" max="100" step="5" value="100" title="Mniejsza szerokość = gęściej statki w linii">
+              <span class="line-width-value" id="lineWidthValue">100%</span>
+              <span class="line-hint" id="lineHint">Wybierz typ jednostki</span>
+            </div>` : '';
   return `
     <link rel="stylesheet" href="${cockpitCssUrl}">
     <div class="app" id="app" data-mode="combat">
-      <div class="glass-vignette"></div>
-      <div class="glass-scanlines"></div>
-      <div class="map-overlay"><span class="map-caption">Mapa taktyczna / pole warp</span></div>
+      <div class="pointer-veil"></div>
       <div class="deploy-banner">WEKTOR ROZMIESZCZENIA — UPUŚĆ NA MAPĘ LUB RADAR, ABY ROZPOCZĄĆ WARP</div>
+      <div class="pointer-banner">ALT · TRYB INTERFEJSU — wolna mysz, panele klikalne</div>
 
-      <aside class="side-stack left-stack" id="leftStack">
-        <section class="hud-panel active-panel">
-          <header class="panel-head">
-            <div class="panel-title"><strong>Aktywne skrzydło</strong><small>PRZYZWANE / W POLU WALKI</small></div>
-            <span class="panel-count" id="activeCount">0 JEDN.</span>
-          </header>
-          <div class="panel-body unit-list" id="unitList"></div>
-          <footer class="panel-orders" id="supportOrders">
-            <button class="tech-button active" type="button" data-order="guard">ESKORTA</button>
-            <button class="tech-button" type="button" data-order="engage">ATAK</button>
-            <button class="tech-button" type="button" data-order="hold">STÓJ</button>
-          </footer>
+      <div class="safe-area">
+        <section class="feed" id="feed">
+          <div class="feed-zone"><i></i><span id="feedZone">Przestrzeń międzyplanetarna</span></div>
+          <div class="feed-lines" id="feedLines"></div>
         </section>
 
-        <section class="hud-panel reserve-panel" id="reservePanel">
-          <header class="panel-head">
-            <div class="panel-title"><strong>Wsparcie</strong><small>FLEET CALL-IN / REZERWA</small></div>
-            <span class="panel-count" id="reserveCount">GOTOWOŚĆ</span>
-          </header>
-          <div class="faction-tabs" id="supportFactions">
-            <button type="button" class="faction-tab active" data-faction="terra-nova" data-key="terran">TERRA NOVA</button>
-            <button type="button" class="faction-tab" data-faction="pirates" data-key="pirate">PIRATES</button>
-            <button type="button" class="faction-tab" data-faction="independent" data-key="independent">INDEPENDENT</button>
-            <button type="button" class="faction-tab line-tab" id="lineModeBtn" title="Masowy spawn: wybierz typ, przeciągnij LPM po mapie">LINIE</button>
-          </div>
-          <div class="line-bar" id="lineBar">
-            <label class="line-width-label" for="lineWidth">SZER.</label>
-            <input class="line-width-slider" type="range" id="lineWidth" min="25" max="100" step="5" value="100" title="Mniejsza szerokość = gęściej statki w linii">
-            <span class="line-width-value" id="lineWidthValue">100%</span>
-            <span class="line-hint" id="lineHint">Wybierz typ jednostki</span>
-          </div>
-          <div class="panel-body"><div class="reserve-grid" id="reserveGrid"></div></div>
-        </section>
-      </aside>
-
-      <aside class="side-stack right-stack" id="rightStack">
-        <section class="hud-panel overview-panel">
-          <header class="panel-head">
-            <div class="panel-title"><strong>Overview / Scanner</strong><small>KONTAKTY PASYWNE + AKTYWNE</small></div>
-            <span class="panel-count" id="contactCount">0 KONTAKTÓW</span>
-          </header>
-          <div class="scanner-filters" id="scannerFilters">
-            <button type="button" class="filter-button active" data-filter="all">WSZYSTKO</button>
-            <button type="button" class="filter-button" data-filter="hostile">WRÓG</button>
-            <button type="button" class="filter-button" data-filter="asteroid">ZASOBY</button>
-            <button type="button" class="filter-button" data-filter="station">STACJE</button>
-            <button type="button" class="filter-button" data-filter="friendly">SOJUSZ</button>
-          </div>
-          <div class="panel-body">
-            <div class="contact-table-head"><span>TYP</span><span>NAZWA</span><span class="dist-cell">DYST</span><span>LCK</span></div>
-            <div id="contactRows"></div>
-          </div>
-        </section>
-        <section class="hud-panel selected-panel">
-          <header class="panel-head"><div class="panel-title"><strong>Selected object</strong><small id="selKind">—</small></div></header>
-          <div id="selBody"><div class="sel-empty">Brak wybranego obiektu.</div></div>
-        </section>
-      </aside>
-
-      <section id="cockpit">
-        <div class="cockpit-shell"></div><div class="shell-accent l"></div><div class="shell-accent r"></div>
-        <div class="ck-left">
-          <section class="cockpit-module primary-module">
-            <span class="module-label">TERMINAL POKŁADOWY / UZBROJENIE</span>
-            <div class="primary-layout">
-              <div class="screen-bezel" id="screenBezel">
-                <div class="screen-glare"></div>
-                <div class="term-sidebar">
-                  <button type="button" class="nav-icon active" id="navLog" title="Dziennik pokładowy"><svg viewBox="0 0 24 24"><path d="M3 5h18v2H3zm0 6h18v2H3zm0 6h12v2H3z"/></svg></button>
-                  <button type="button" class="nav-icon" id="navMissions" title="Dziennik misji [J]"><svg viewBox="0 0 24 24"><path d="M6 2h9l4 4v16H6zm8 2v4h4M9 12h7M9 16h7"/></svg></button>
-                  <button type="button" class="nav-icon" id="navShip" title="Systemy"><svg viewBox="0 0 24 24"><path d="M12 8a4 4 0 100 8 4 4 0 000-8zm9 4c0 .5-.05 1-.14 1.5l2.11 1.65-2 3.46-2.49-1a8 8 0 01-2.6 1.5L15.5 22h-4l-.38-2.89a8 8 0 01-2.6-1.5l-2.49 1-2-3.46 2.11-1.65A8 8 0 016 12c0-.5.05-1 .14-1.5L4.03 8.85l2-3.46 2.49 1a8 8 0 012.6-1.5L11.5 2h4l.38 2.89a8 8 0 012.6 1.5l2.49-1 2 3.46-2.11 1.65c.09.5.14 1 .14 1.5z"/></svg></button>
-                  <button type="button" class="nav-icon" id="navComm" title="Uplink — łączność ze stacjami [CapsLock]"><svg viewBox="0 0 24 24"><path d="M1 9l2 2c4.97-4.97 13.03-4.97 18 0l2-2C16.93 2.93 7.08 2.93 1 9zm8 8l3 3 3-3c-1.65-1.66-4.34-1.66-6 0zm-4-4l2 2c2.76-2.76 7.24-2.76 10 0l2-2C15.14 9.14 8.87 9.14 5 13z"/></svg></button>
-                </div>
-                <div class="term-main"><div class="console-status" id="consoleStatus"></div><div class="console-log" id="consoleLog"></div></div>
-                <div class="term-widget"><div class="widget-header">Informacje</div><div class="clock-content"><div class="clock-time" id="termClock">00:00</div><div class="clock-date" id="termDate">—</div><div class="clock-loc" id="termLoc"><small>Pozycja</small>PRZESTRZEŃ MIĘDZYPLANETARNA</div></div></div>
-                <div class="term-comm" id="termComm"><div class="comm-head"><span class="comm-title">UPLINK TERMINAL v1.0</span><span class="comm-net" id="commNet">SKAN SIECI…</span><button type="button" class="term-btn" id="commClose">0 · ROZŁĄCZ</button></div><div class="comm-body" id="commBody"></div><div class="comm-foot"><span>CAPS / ESC — zamknij terminal</span><span>ŁĄCZE TAKTYCZNE</span></div></div>
-              </div>
-              <div class="hardware-panel" id="hotkeyGrid"></div>
-            </div>
+        <div class="hud-col left" id="leftCol">
+          <section class="hud-panel on-demand comm-panel" id="commPanel" hidden>
+            <header class="panel-head"><div class="panel-title"><strong>Łączność</strong><small>UPLINK / STACJE</small></div><span class="comm-net" id="commNet">SKAN SIECI…</span></header>
+            <div class="comm-body" id="commBody"></div>
+            <footer class="comm-foot"><span>CAPS / ESC — zamknij</span><button type="button" class="term-btn" id="commClose">Rozłącz</button></footer>
+          </section>
+          <section class="hud-panel context wing-panel" id="wingPanel" hidden>
+            <header class="panel-head"><div class="panel-title"><strong>Skrzydło</strong><small id="activeCount">0 JEDN.</small></div><span class="wing-order" id="wingOrder">ESKORTA</span></header>
+            <div class="unit-list" id="unitList"></div>
+            <footer class="panel-orders pointer-only" id="supportOrders">
+              <button class="tech-button active" type="button" data-order="guard">ESKORTA</button>
+              <button class="tech-button" type="button" data-order="engage">ATAK</button>
+              <button class="tech-button" type="button" data-order="hold">STÓJ</button>
+            </footer>
+            <div class="panel-hint no-pointer"><kbd>Alt</kbd> rozkazy skrzydła</div>
+          </section>
+          <section class="hud-panel pointer-only reserve-panel" id="reservePanel">
+            <header class="panel-head"><div class="panel-title"><strong>Rezerwa</strong><small id="reserveFaction">TERRA NOVA</small></div><span class="panel-count" id="reserveCount">${devMode ? 'DEV' : 'GOTOWOŚĆ'}</span></header>${devControls}
+            <div class="reserve-grid" id="reserveGrid"></div>
+            <div class="panel-hint">Przeciągnij kartę na mapę lub radar.</div>
           </section>
         </div>
-        <div id="radarPod" aria-label="CIC radar">
-          <svg id="radarVitals" class="radar-vitals" viewBox="0 0 320 320" aria-label="Stan statku" role="img">
-            <g class="vital-arc hp" id="vitalHp" data-span="32" data-value-id="vitalHpValue" transform="rotate(152.4 160 160)">
-              <circle class="arc-track" cx="160" cy="160" r="151" pathLength="100"></circle>
-              <circle class="arc-ghost" cx="160" cy="160" r="151" pathLength="100"></circle>
-              <circle class="arc-fill" cx="160" cy="160" r="151" pathLength="100"></circle>
-            </g>
-            <g class="vital-arc shield" id="vitalShield" data-span="32" data-value-id="vitalShieldValue" transform="rotate(272.4 160 160)">
-              <circle class="arc-track" cx="160" cy="160" r="151" pathLength="100"></circle>
-              <circle class="arc-ghost" cx="160" cy="160" r="151" pathLength="100"></circle>
-              <circle class="arc-fill" cx="160" cy="160" r="151" pathLength="100"></circle>
-            </g>
-            <g class="vital-arc core" id="vitalCore" data-span="32" data-value-id="vitalCoreValue" transform="rotate(32.4 160 160)">
-              <circle class="arc-track" cx="160" cy="160" r="151" pathLength="100"></circle>
-              <circle class="arc-ghost" cx="160" cy="160" r="151" pathLength="100"></circle>
-              <circle class="arc-fill" cx="160" cy="160" r="151" pathLength="100"></circle>
-            </g>
-          </svg>
-          <div class="radar-vital-readout hp"><span>HP</span><b id="vitalHpValue">100</b></div>
-          <div class="radar-vital-readout shield"><span>TARCZA</span><b id="vitalShieldValue">100</b></div>
-          <div class="radar-vital-readout core"><span>RDZEŃ</span><b id="vitalCoreValue">100</b></div>
-          <canvas id="radarCanvas" class="hud-radar-canvas"></canvas>
-          <div class="rp-readout hud-radar-readout"><span id="rdTotal" class="total">C:00</span><span class="h hostile" id="rdHostile">H:00</span><span id="rdAst" class="asteroid">A:00</span><span class="r range" id="rdRange">20K</span></div>
-          <div class="rp-ranges hud-radar-controls" id="radarRanges"></div>
+
+        <div class="hud-col right" id="rightCol">
+          <section class="hud-panel context target-panel" id="targetPanel" hidden><div id="targetBody"></div></section>
+          <div class="lock-chips" id="lockChips"></div>
+          <section class="hud-panel context scan-panel" id="scanPanel" hidden>
+            <header class="panel-head"><div class="panel-title"><strong>Skan</strong><small id="scanCount">0 KONTAKTÓW</small></div><span class="panel-count">X</span></header>
+            <div class="scan-timer" id="scanTimer"></div>
+            <div class="contact-rows" id="scanRows"></div>
+            <div class="panel-hint"><kbd>Alt</kbd> pełna lista · <kbd>Tab</kbd> CIC</div>
+          </section>
+          <section class="hud-panel pointer-only overview-panel" id="overviewPanel">
+            <header class="panel-head"><div class="panel-title"><strong>Overview</strong><small>KONTAKTY PASYWNE + AKTYWNE</small></div><span class="panel-count" id="contactCount">0 KONTAKTÓW</span></header>
+            <div class="scanner-filters" id="scannerFilters">
+              <button type="button" class="filter-button active" data-filter="all">WSZYSTKO</button>
+              <button type="button" class="filter-button" data-filter="hostile">WRÓG</button>
+              <button type="button" class="filter-button" data-filter="friendly">SOJUSZ</button>
+              <button type="button" class="filter-button" data-filter="station">STACJE</button>
+              <button type="button" class="filter-button" data-filter="asteroid">ZASOBY</button>
+            </div>
+            <div class="contact-rows" id="contactRows"></div>
+          </section>
         </div>
-        <div class="ck-right">
-          <section class="cockpit-module speed-module"><span class="module-label">NAPĘD / PRĘDKOŚĆ</span><div class="speed-layout"><div class="speed-stage"><canvas id="speedCanvas" aria-label="Prędkość i obroty napędu"></canvas><div class="gauge-readout speed-readout"><span class="gauge-label">PRĘDKOŚĆ</span><span class="gauge-number" id="spValue">0</span><span class="gauge-unit" id="spSpeedUnit">M/S</span></div><div class="gauge-readout rpm-readout"><span class="gauge-label">OBROTY</span><span class="gauge-number" id="spRpm">0.0</span><span class="gauge-unit">×1000 RPM</span></div><div class="drive-mode-badge" id="spMode">B</div><div class="speed-trip"><span>ODO</span><span class="trip-value" id="spOdo">0 m</span><span>TRIP</span><span class="trip-value" id="spTrip">0 m</span></div></div><div class="speed-bottom"><span>CIĄG <b id="thrPct">0%</b></span><span id="spState">REJS</span><span>LIMIT <b id="spLimit">0 m/s</b></span></div><div class="speed-pedals"><button type="button" class="pedal" id="thrPlus">W · Gaz</button><button type="button" class="pedal" id="thrMinus">S · Hamulec</button></div></div></section>
-          <section class="cockpit-module control-module"><span class="module-label">PANEL CENTRALNY / MODE</span><div class="console-layout"><div class="infotainment-screen"><div class="screen-content" id="modeTrack"><div class="menu-item active" data-mode="combat">BOJOWY</div><div class="menu-item" data-mode="maneuver">MANEWROWY</div><div class="menu-item" data-mode="travel">PODRÓŻ</div></div><div class="selection-indicator"></div></div><div class="controls-area"><div class="btn-group"><button type="button" class="physical-btn" id="pbComm"><span>Komunikacja</span><div class="led-indicator blue"></div></button><button type="button" class="physical-btn" id="pbMissions"><span>Misje</span><div class="led-indicator orange"></div></button></div><div class="center-console"><button type="button" class="shortcut-btn pos-t" id="scScan" title="[X]">Skan</button><button type="button" class="shortcut-btn pos-b" id="scLock" title="[T]">Cel</button><button type="button" class="shortcut-btn pos-l" id="scAuto" title="[7]">Auto</button><button type="button" class="shortcut-btn pos-r" id="scStab" title="[B]">Stab</button><div class="rotary-knob" id="rotaryKnob" title="Przeciągnij lub użyj kółka; V zmienia tryb"><div class="knob-indicator"></div><div class="knob-touchpad"><div class="knob-center-logo">///</div></div></div></div><div class="btn-group"><button type="button" class="physical-btn" id="pbShip"><span>Statek</span><div class="led-indicator green"></div></button><button type="button" class="physical-btn" id="pbMap" title="[TAB / M]"><span>CIC</span><div class="led-indicator red"></div></button></div></div></div></section>
+
+        <div class="key-hints">
+          <span><kbd>Tab</kbd>CIC / flota</span>
+          <span><kbd>Caps</kbd>Łączność</span>
+          <span><kbd>J</kbd>Misje</span>
+          <span><kbd>Alt</kbd>Panele</span>
         </div>
+      </div>
+
+      <section class="hud-bottom" id="hudBottom">
+        <div class="slot-bar weapons" id="weaponBar"></div>
+        <div class="cluster" id="cluster">
+          <div class="alert-line" id="alertLine"></div>
+          <div class="telltales" id="telltales"></div>
+          <canvas id="clusterCanvas" aria-hidden="true"></canvas>
+          <canvas id="radarCanvas" class="hud-radar-canvas" aria-label="Radar"></canvas>
+          <div class="vital-readout hp" id="roHp"><small>KADŁUB</small><b id="vitalHpValue">0</b></div>
+          <div class="vital-readout shield" id="roShield"><small>TARCZA</small><b id="vitalShieldValue">0</b></div>
+          <button type="button" class="radar-top" id="radarTop" title="Zasięg radaru — kliknij lub kółko myszy nad radarem"><span class="hostile" id="rdHostile">CZYSTO</span><span id="rdRange">20K</span></button>
+          <div class="drive-readout speed"><small>PRĘDKOŚĆ</small><span class="drive-value"><b id="spValue">0</b><span class="drive-unit" id="spSpeedUnit">M/S</span></span></div>
+          <div class="drive-readout rpm"><small>OBROTY</small><span class="drive-value"><b id="spRpm">0</b><span class="drive-unit">RPM</span></span><span class="gear-readout" id="spGearWrap" hidden>BIEG <b id="spGear">1/1</b></span></div>
+          <span class="mode-badge" id="spMode" title="Tryb napędu — V zmienia">B</span>
+        </div>
+        <div class="slot-bar abilities" id="abilityBar"></div>
+        <section class="cockpit-module mode-panel" id="modePanel">
+          <span class="module-label">PANEL CENTRALNY / TRYB</span>
+          <div class="infotainment-screen"><div class="screen-content" id="modeTrack"><div class="menu-item active" data-mode="combat">BOJOWY</div><div class="menu-item" data-mode="maneuver">MANEWROWY</div><div class="menu-item" data-mode="travel">PODRÓŻ</div></div><div class="selection-indicator"></div></div>
+          <div class="controls-area">
+            <div class="btn-group"><button type="button" class="physical-btn" id="pbComm" title="[CapsLock]"><span>Łączność</span><div class="led-indicator blue"></div></button><button type="button" class="physical-btn" id="pbMissions" title="[J]"><span>Misje</span><div class="led-indicator orange"></div></button></div>
+            <div class="center-console"><button type="button" class="shortcut-btn pos-t" id="scScan" title="[X]">Skan</button><button type="button" class="shortcut-btn pos-b" id="scLock" title="Namierz / zwolnij cel">Cel</button><button type="button" class="shortcut-btn pos-l" id="scAuto" title="[7]">Auto</button><button type="button" class="shortcut-btn pos-r" id="scStab" title="[B]">Stab</button><div class="rotary-knob" id="rotaryKnob" title="Przeciągnij lub użyj kółka; V zmienia tryb"><div class="knob-indicator"></div><div class="knob-touchpad"><div class="knob-center-logo">///</div></div></div></div>
+            <div class="btn-group"><button type="button" class="physical-btn" id="pbShip"><span>Statek</span><div class="led-indicator green"></div></button><button type="button" class="physical-btn" id="pbMap" title="[Tab / M]"><span>CIC</span><div class="led-indicator red"></div></button></div>
+          </div>
+        </section>
       </section>
 
       <section class="station-tablet" id="stationTablet" aria-hidden="true">
@@ -283,7 +450,7 @@ function cockpitMarkup() {
           <footer class="tablet-foot"><span id="tabletFootLeft">KREDYTY <b id="tabletCredits">0 CR</b></span><span id="tabletFootCenter">TERMINAL GOTOWY</span><span id="tabletFootRight">ŁADOWNIA <b id="tabletCargo">0 / 0</b></span></footer>
         </div>
       </section>
-      <div class="support-tooltip" id="supportTooltip" hidden></div><div class="drag-ghost" id="dragGhost"></div><div class="deployment-reticle" id="deployReticle"></div><div class="toast-stack" id="toastStack"></div>
+      <div class="support-tooltip" id="supportTooltip" hidden></div><div class="drag-ghost" id="dragGhost"></div><div class="deployment-reticle" id="deployReticle"></div>
     </div>`;
 }
 
@@ -292,7 +459,7 @@ export class CockpitUI {
     this.host = null;
     this.shadow = null;
     this.els = {};
-    this.startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    this.startedAt = perfNow();
     this.viewRange = 20000;
     this.radarModel = null;
     this.contactFilter = 'all';
@@ -316,15 +483,36 @@ export class CockpitUI {
     this.cache = Object.create(null);
     this.lastRadarDraw = 0;
     this.lastListRefresh = 0;
-    this.lastClockRefresh = 0;
-    this.lastSpeed = 0;
-    this.odometer = 0;
-    this.trip = 0;
-    this.vitalMotion = Object.create(null);
     this.lastUpdateAt = 0;
     this.lastRingFlightSync = 0;
     this.lastStationOpen = false;
     this.lastStationTab = 'hangar';
+    this.devMode = isDevMode();
+    // Alt = przełącznik trybu interfejsu (wolna mysz + panele na żądanie).
+    this.pointerMode = false;
+    this.altArmed = false;
+    this.scale = 1;
+    this.vitals = { hull: createVitalMotion(), shield: createVitalMotion() };
+    this.calmTime = 0;
+    this.drive = { speed: 0, limit: 1, rpm: 0, tone: 0, shiftWindow: false, warp: false };
+    this.clusterValues = new Float64Array(14);
+    this.clusterPrev = new Int32Array(14).fill(-1 << 30);
+    this.clusterForce = true;
+    this.clusterStatic = null;
+    this.gradients = null;
+    this.target = null;
+    this.lockedTargets = [];
+    this.targetEntity = null;
+    this.targetSignature = '';
+    this.targetRefs = null;
+    this.scanSerial = null;
+    this.scanUntil = 0;
+    this.modePanelUntil = 0;
+    this.ringFlightAvailable = null;
+    this.slots = [];
+    this.telltaleEls = [];
+    this.lastAlertText = '';
+    this.lastAlertAt = 0;
   }
 
   init() {
@@ -337,17 +525,19 @@ export class CockpitUI {
     }
     this.host = host;
     this.shadow = host.shadowRoot || host.attachShadow({ mode: 'open' });
-    this.shadow.innerHTML = cockpitMarkup();
+    this.shadow.innerHTML = cockpitMarkup(this.devMode);
     this.cacheElements();
     this.mountStationContent();
     this.retireLegacyHud();
-    this.buildHotkeys();
-    this.buildRadarRanges();
+    this.buildSlots();
+    this.buildTelltales();
     this.renderSupportRoster();
     this.bindControls();
-    this.updateClock(true);
+    this.bindPointerModeKey();
+    this.applyScale();
+    window.addEventListener('resize', () => this.applyScale());
     this.log('Inicjalizacja systemów kokpitu — OK', 'ok');
-    this.log('Łącze taktyczne gotowe. CapsLock otwiera terminal stacji.', 'orbit');
+    this.log('Alt przełącza tryb interfejsu. CapsLock otwiera łączność ze stacjami.', 'orbit');
     window.CockpitUI = this;
     window.cockpitUI = this;
     return this;
@@ -355,22 +545,22 @@ export class CockpitUI {
 
   cacheElements() {
     const ids = [
-      'app', 'leftStack', 'rightStack', 'unitList', 'activeCount', 'supportOrders', 'supportFactions', 'reserveGrid',
-      'reservePanel', 'lineModeBtn', 'lineBar', 'lineWidth', 'lineWidthValue', 'lineHint',
-      'scannerFilters', 'contactRows', 'contactCount', 'selBody', 'selKind', 'screenBezel', 'consoleStatus',
-      'consoleLog', 'termClock', 'termDate', 'termLoc', 'termComm', 'commNet', 'commBody', 'commClose', 'hotkeyGrid',
-      'radarCanvas', 'radarRanges', 'rdTotal', 'rdHostile', 'rdAst', 'rdRange', 'speedCanvas', 'spValue', 'spSpeedUnit', 'spRpm', 'spMode',
-      'spOdo', 'spTrip', 'thrPct', 'spState', 'spLimit', 'thrPlus', 'thrMinus', 'modeTrack', 'rotaryKnob',
-      'pbComm', 'pbMissions', 'pbShip', 'pbMap', 'scScan', 'scLock', 'scAuto', 'scStab', 'navComm',
-      'navMissions', 'navShip', 'navLog', 'stationTablet', 'tabletLabel', 'tabletTitle', 'tabletSub', 'tabletLinkText',
-      'tabletClose', 'stationTabsBar', 'tabletTabs', 'tabletTabTrack', 'tabPrev', 'tabNext', 'stationPane', 'missionPane',
-      'missionFilters', 'missionList', 'missionDetail', 'tabletCredits', 'tabletCargo', 'tabletFootLeft',
-      'tabletFootCenter', 'tabletFootRight', 'supportTooltip', 'dragGhost', 'deployReticle', 'toastStack',
-      'radarVitals', 'vitalHp', 'vitalShield', 'vitalCore', 'vitalHpValue', 'vitalShieldValue', 'vitalCoreValue'
+      'app', 'feed', 'feedZone', 'feedLines', 'leftCol', 'rightCol', 'commPanel', 'commNet', 'commBody', 'commClose',
+      'wingPanel', 'activeCount', 'wingOrder', 'unitList', 'supportOrders', 'reservePanel', 'reserveFaction', 'reserveCount',
+      'supportFactions', 'lineModeBtn', 'lineBar', 'lineWidth', 'lineWidthValue', 'lineHint', 'reserveGrid',
+      'targetPanel', 'targetBody', 'lockChips', 'scanPanel', 'scanCount', 'scanTimer', 'scanRows', 'overviewPanel',
+      'contactCount', 'scannerFilters', 'contactRows', 'hudBottom', 'weaponBar', 'abilityBar', 'cluster', 'alertLine',
+      'telltales', 'clusterCanvas', 'radarCanvas', 'roHp', 'roShield', 'vitalHpValue', 'vitalShieldValue', 'radarTop',
+      'rdHostile', 'rdRange', 'spMode', 'spValue', 'spSpeedUnit', 'spRpm', 'spGearWrap', 'spGear', 'modePanel', 'modeTrack',
+      'pbComm', 'pbMissions', 'pbShip', 'pbMap', 'scScan', 'scLock', 'scAuto', 'scStab', 'rotaryKnob',
+      'stationTablet', 'tabletLabel', 'tabletTitle', 'tabletSub', 'tabletLinkText', 'tabletClose', 'stationTabsBar',
+      'tabletTabs', 'tabletTabTrack', 'tabPrev', 'tabNext', 'stationPane', 'missionPane', 'missionFilters', 'missionList',
+      'missionDetail', 'tabletCredits', 'tabletCargo', 'tabletFootLeft', 'tabletFootCenter', 'tabletFootRight',
+      'supportTooltip', 'dragGhost', 'deployReticle'
     ];
     for (const id of ids) this.els[id] = this.shadow.getElementById(id);
     this.radarCtx = this.els.radarCanvas?.getContext('2d') || null;
-    this.speedCtx = this.els.speedCanvas?.getContext('2d') || null;
+    this.clusterCtx = this.els.clusterCanvas?.getContext('2d') || null;
   }
 
   mountStationContent() {
@@ -385,6 +575,18 @@ export class CockpitUI {
     for (const id of ['side-panels-container', 'right-panels-container', 'hud-bottom-container', 'hud-topbar', 'ui', 'hover-info']) {
       document.getElementById(id)?.remove();
     }
+  }
+
+  applyScale() {
+    if (!this.host) return;
+    const width = window.innerWidth || 1920;
+    const height = window.innerHeight || 1080;
+    // Skala od wysokości (1080p = 1), ale dolny rząd (broń + klaster + umiejętności
+    // + ściąga klawiszy) nie może wyjść poza szerokość ekranu.
+    this.scale = clamp(Math.min(height / 1080, width / 1380), 0.66, 1.6);
+    this.host.style.setProperty('--s', this.scale.toFixed(4));
+    this.clusterForce = true;
+    this.lastRadarDraw = 0;
   }
 
   bindControls() {
@@ -420,14 +622,13 @@ export class CockpitUI {
       const contact = contacts[Number(row.dataset.contactIndex)] || null;
       if (contact) this.selectContact(contact);
     });
-    this.els.selBody?.addEventListener('click', event => {
+    this.els.targetBody?.addEventListener('click', event => {
       const action = event.target.closest('[data-action]')?.dataset.action;
-      if (action === 'lock') this.lockSelectedContact();
-      if (action === 'uplink') this.openCommForStation(this.selectedContact?.entity);
+      if (action === 'lock') this.lockCurrentTarget();
+      if (action === 'uplink') this.openCommForStation(this.targetEntity);
     });
 
     this.els.pbComm?.addEventListener('click', () => this.toggleComm());
-    this.els.navComm?.addEventListener('click', () => this.toggleComm());
     this.els.commClose?.addEventListener('click', () => this.closeComm());
     this.els.commBody?.addEventListener('click', event => {
       const connect = event.target.closest('[data-connect]');
@@ -437,24 +638,24 @@ export class CockpitUI {
     });
 
     this.els.pbMissions?.addEventListener('click', () => this.toggleMissionJournal());
-    this.els.navMissions?.addEventListener('click', () => this.toggleMissionJournal());
     this.els.pbShip?.addEventListener('click', () => this.launchRingCityFlight());
-    this.els.navShip?.addEventListener('click', () => this.logShipStatus());
-    this.els.navLog?.addEventListener('click', () => this.closeComm());
     this.els.pbMap?.addEventListener('click', () => this.dispatchGameKey('KeyM', 'm'));
     this.els.scScan?.addEventListener('click', () => this.dispatchGameKey('KeyX', 'x'));
-    this.els.scLock?.addEventListener('click', () => this.lockSelectedContact());
+    this.els.scLock?.addEventListener('click', () => this.lockCurrentTarget());
     this.els.scAuto?.addEventListener('click', () => window.shipDriveControls?.toggleAuto?.());
     this.els.scStab?.addEventListener('click', () => this.dispatchGameKey('KeyB', 'b'));
-    this.bindHoldButton(this.els.thrPlus, 'KeyW', 'w', 'active-w');
-    this.bindHoldButton(this.els.thrMinus, 'KeyS', 's', 'active-s');
+    this.els.modeTrack?.addEventListener('click', event => {
+      const mode = event.target.closest('[data-mode]')?.dataset.mode;
+      if (mode) this.setDriveMode(mode);
+    });
     this.bindKnob();
 
-    this.els.radarRanges?.addEventListener('click', event => {
-      const button = event.target.closest('[data-radar-range]');
-      if (button) this.setRadarRange(Number(button.dataset.radarRange));
-    });
+    this.els.radarTop?.addEventListener('click', () => this.cycleRadarRange(1, true));
     this.els.radarCanvas?.addEventListener('click', event => this.selectRadarContact(event));
+    this.els.radarCanvas?.addEventListener('wheel', event => {
+      event.preventDefault();
+      this.cycleRadarRange(event.deltaY > 0 ? 1 : -1, false);
+    }, { passive: false });
 
     this.els.tabletClose?.addEventListener('click', () => this.closeTablet());
     this.els.tabletTabTrack?.addEventListener('click', event => {
@@ -486,6 +687,42 @@ export class CockpitUI {
     window.addEventListener('pointermove', event => this.updateSupportDrag(event), { passive: true });
     window.addEventListener('pointerup', event => this.finishSupportDrag(event), true);
     window.addEventListener('pointercancel', () => this.cancelSupportDrag(), true);
+  }
+
+  // Alt przełącza tryb tylko "czystym" tapnięciem lewego Alta: Alt+Tab, Alt+F4
+  // i AltGr (polskie znaki = ControlLeft + AltRight) nie ruszają trybu.
+  bindPointerModeKey() {
+    window.addEventListener('keydown', event => {
+      if (event.code === 'AltLeft') {
+        event.preventDefault();
+        if (!event.repeat) this.altArmed = !isTypingTarget(event.target) && !event.ctrlKey;
+        return;
+      }
+      if (event.altKey || event.code === 'AltRight') this.altArmed = false;
+    }, true);
+    window.addEventListener('keyup', event => {
+      if (event.code !== 'AltLeft') return;
+      event.preventDefault();
+      const armed = this.altArmed;
+      this.altArmed = false;
+      if (armed && !this.host?.hidden) this.setPointerMode(!this.pointerMode);
+    }, true);
+    window.addEventListener('pointerdown', () => { this.altArmed = false; }, true);
+    window.addEventListener('blur', () => { this.altArmed = false; });
+  }
+
+  setPointerMode(enabled) {
+    const next = !!enabled;
+    if (this.pointerMode === next) return;
+    this.pointerMode = next;
+    this.els.app?.classList.toggle('pointer', next);
+    if (!next) {
+      this.cancelSupportDrag();
+      this.hideSupportTooltip();
+    }
+    this.renderFeed();
+    this.renderContacts(true);
+    this.renderScanList(perfNow());
   }
 
   bindKnob() {
@@ -529,92 +766,124 @@ export class CockpitUI {
     }, { passive: false });
   }
 
-  bindHoldButton(button, code, key, activeClass) {
-    if (!button) return;
-    const down = event => {
-      event.preventDefault();
-      button.classList.add(activeClass);
-      window.dispatchEvent(new KeyboardEvent('keydown', { code, key, bubbles: true }));
-    };
-    const up = event => {
-      event.preventDefault();
-      button.classList.remove(activeClass);
-      window.dispatchEvent(new KeyboardEvent('keyup', { code, key, bubbles: true }));
-    };
-    button.addEventListener('pointerdown', down);
-    button.addEventListener('pointerup', up);
-    button.addEventListener('pointercancel', up);
-    button.addEventListener('pointerleave', event => { if (event.buttons) up(event); });
-  }
-
-  buildHotkeys() {
-    const root = this.els.hotkeyGrid;
-    if (!root) return;
-    root.textContent = '';
-    for (const definition of HOTKEYS) {
+  buildSlots() {
+    const make = (definition, root, kind) => {
+      if (!root) return;
       const button = document.createElement('button');
       button.type = 'button';
-      button.className = 'phys-btn';
-      button.dataset.hotkey = definition.key;
-      if (definition.type) button.dataset.weaponType = definition.type;
-      const key = document.createElement('span');
-      key.className = 'hk-key';
-      key.textContent = definition.key;
-      const icon = document.createElement('span');
-      icon.className = 'hk-ico';
-      icon.textContent = definition.icon;
-      const label = document.createElement('span');
-      label.className = 'hk-label';
-      label.textContent = definition.label;
-      const mask = document.createElement('span');
-      mask.className = 'cooldown-mask';
-      button.append(key, icon, label, mask);
-      button.addEventListener('click', () => {
-        if (definition.action === 'energy') window.triggerEnergyShot?.();
-        else if (definition.code) this.dispatchGameKey(definition.code, definition.key.toLowerCase());
-      });
+      button.className = 'slot';
+      button.title = definition.title || `${definition.label} [${definition.key}]`;
+      button.innerHTML = '<span class="slot-led"></span><span class="slot-key"></span><span class="slot-auto">AUTO</span><span class="slot-icon"></span><span class="slot-name"></span><span class="slot-mask"></span>';
+      button.querySelector('.slot-key').textContent = definition.key;
+      button.querySelector('.slot-icon').textContent = definition.icon;
+      const name = button.querySelector('.slot-name');
+      name.textContent = definition.label;
+      button.addEventListener('click', () => this.useSlot(definition));
       root.appendChild(button);
+      this.slots.push({ definition, kind, button, name, mask: button.querySelector('.slot-mask'), state: Object.create(null) });
+    };
+    for (const definition of WEAPON_SLOTS) make(definition, this.els.weaponBar, 'weapon');
+    for (const definition of ABILITY_SLOTS) make(definition, this.els.abilityBar, 'ability');
+  }
+
+  useSlot(definition) {
+    if (definition.action === 'energy') window.triggerEnergyShot?.();
+    else if (definition.code) this.dispatchGameKey(definition.code, definition.key.toLowerCase());
+  }
+
+  setSlotState(slot, key, value, apply) {
+    if (slot.state[key] === value) return;
+    slot.state[key] = value;
+    apply(value);
+  }
+
+  updateSlots(environment, now) {
+    const weaponHud = environment.weaponHud || null;
+    const hangar = environment.hangar || null;
+    for (const slot of this.slots) {
+      const definition = slot.definition;
+      let empty = false;
+      let charge = 1;
+      let auto = false;
+      let on = false;
+      let label = definition.label;
+      let title = definition.title || `${definition.label} [${definition.key}]`;
+      if (slot.kind === 'weapon' && definition.type) {
+        const state = weaponHud?.[definition.type];
+        const weapon = state?.weapon || null;
+        empty = !!weaponHud && !weapon;
+        charge = clamp(state?.charge ?? 1, 0, 1);
+        // Dla broni "enabled" = auto-fire (poza wbudowaną, gdzie to gotowość).
+        // Wyłączony auto-fire to NIE jest "niedostępna" — slot zostaje klikalny.
+        auto = !!weapon && definition.type !== 'builtin' && !!state?.enabled;
+        if (weapon?.name) {
+          label = shortWeaponName(weapon.name, definition.label);
+          title = `${definition.label} [${definition.key}] — ${weapon.name}${auto ? ' · auto-fire' : ''}`;
+        }
+      } else if (definition.id === 'repair') {
+        on = !!environment.repairActive;
+      } else if (definition.id === 'hangar') {
+        empty = !!hangar && !(Number(hangar.mounted) > 0);
+        on = Number(hangar?.out) > 0;
+      } else if (definition.id === 'scan') {
+        on = now < this.scanUntil;
+      }
+      const cooling = !empty && charge < 0.995;
+      this.setSlotState(slot, 'empty', empty, value => slot.button.classList.toggle('empty', value));
+      this.setSlotState(slot, 'auto', auto, value => slot.button.classList.toggle('auto', value));
+      this.setSlotState(slot, 'on', on, value => slot.button.classList.toggle('on', value));
+      this.setSlotState(slot, 'cool', cooling, value => slot.button.classList.toggle('cool', value));
+      this.setSlotState(slot, 'mask', cooling ? Math.round((1 - charge) * 100) : 0, value => { slot.mask.style.height = `${value}%`; });
+      this.setSlotState(slot, 'label', label, value => { slot.name.textContent = value; });
+      this.setSlotState(slot, 'title', title, value => { slot.button.title = value; });
+      if (slot.state.wasCooling && !cooling && !empty) slot.button.animate?.(READY_FLASH, READY_FLASH_TIMING);
+      slot.state.wasCooling = cooling;
     }
   }
 
-  updateHotkeys(weaponHud) {
-    if (!weaponHud || !this.els.hotkeyGrid) return;
-    for (const button of this.els.hotkeyGrid.querySelectorAll('[data-weapon-type]')) {
-      const state = weaponHud[button.dataset.weaponType];
-      const charge = clamp(state?.charge ?? 0, 0, 1);
-      button.classList.toggle('unavailable', state ? !state.enabled : false);
-      button.classList.toggle('cooling', charge < 0.995);
-      const mask = button.querySelector('.cooldown-mask');
-      if (mask) mask.style.height = `${Math.round((1 - charge) * 100)}%`;
-      const label = button.querySelector('.hk-label');
-      if (label && state?.weapon?.name) label.textContent = state.weapon.name;
-    }
-  }
-
-  buildRadarRanges() {
-    const root = this.els.radarRanges;
+  buildTelltales() {
+    const root = this.els.telltales;
     if (!root) return;
-    root.textContent = '';
-    for (const range of RADAR_RANGES) {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'range-button hud-radar-range-btn';
-      button.dataset.radarRange = String(range);
-      button.setAttribute('aria-pressed', range === this.viewRange ? 'true' : 'false');
-      button.textContent = `${range / 1000}K`;
-      button.classList.toggle('active', range === this.viewRange);
-      root.appendChild(button);
+    for (const definition of TELLTALES) {
+      const element = document.createElement('span');
+      element.className = 'telltale';
+      element.style.setProperty('--c', definition.color);
+      element.title = definition.title;
+      element.textContent = definition.label;
+      root.appendChild(element);
+      this.telltaleEls.push({ definition, element, on: null, blink: null });
     }
+  }
+
+  updateTelltales(systems, environment) {
+    const warpState = String(systems.warpState || 'idle');
+    for (const item of this.telltaleEls) {
+      let on = false;
+      let blink = false;
+      switch (item.definition.id) {
+        case 'auto': on = !!systems.driveAuto; break;
+        case 'stab': on = !!window.flightAssist?.stabilizer; break;
+        case 'damp': on = !!window.flightAssist?.damper; break;
+        case 'boost': on = !!environment.boostActive || !!systems.driveShiftBoost; break;
+        case 'warp': on = warpState === 'active' || warpState === 'charging'; blink = warpState === 'charging'; break;
+        default: break;
+      }
+      if (item.on !== on) { item.on = on; item.element.classList.toggle('on', on); }
+      if (item.blink !== blink) { item.blink = blink; item.element.classList.toggle('blink', blink); }
+    }
+  }
+
+  cycleRadarRange(direction, wrap) {
+    const index = Math.max(0, RADAR_RANGES.indexOf(this.viewRange));
+    let next = index + direction;
+    if (wrap) next = (next + RADAR_RANGES.length) % RADAR_RANGES.length;
+    this.setRadarRange(RADAR_RANGES[clamp(next, 0, RADAR_RANGES.length - 1)]);
   }
 
   setRadarRange(range) {
     if (!RADAR_RANGES.includes(range)) return;
     this.viewRange = range;
-    for (const button of this.els.radarRanges?.querySelectorAll('[data-radar-range]') || []) {
-      const active = Number(button.dataset.radarRange) === range;
-      button.classList.toggle('active', active);
-      button.setAttribute('aria-pressed', active ? 'true' : 'false');
-    }
+    if (this.els.rdRange) this.els.rdRange.textContent = `${range / 1000}K`;
     this.lastRadarDraw = 0;
   }
 
@@ -634,8 +903,11 @@ export class CockpitUI {
     const availableModes = state.availableModes?.length ? state.availableModes : MODE_ORDER;
     const modeCacheKey = `${mode}:${availableModes.join(',')}`;
     if (!force && this.cache.driveModeKey === modeCacheKey) return;
+    const previousMode = this.cache.driveMode;
     this.cache.driveModeKey = modeCacheKey;
     this.cache.driveMode = mode;
+    // Zmiana trybu (V, pokrętło, auto) wysuwa PANEL CENTRALNY na chwilę.
+    if (previousMode && previousMode !== mode) this.modePanelUntil = perfNow() + MODE_PANEL_MS;
     const meta = MODE_META[mode];
     this.els.app.dataset.mode = meta.uiMode;
     if (this.els.rotaryKnob) this.els.rotaryKnob.style.transform = `rotate(${meta.angle}deg)`;
@@ -645,6 +917,31 @@ export class CockpitUI {
     }
     if (this.els.scAuto) this.els.scAuto.hidden = !availableModes.includes('travel');
     if (this.els.spMode) this.els.spMode.textContent = meta.gear;
+    requestAnimationFrame(() => this.centerModeTrack());
+  }
+
+  // Aktywny tryb ląduje nad wskaźnikiem ekranu (jak przesuwne menu infotainment).
+  centerModeTrack() {
+    const track = this.els.modeTrack;
+    const active = track?.querySelector('.menu-item.active');
+    if (!track || !active || !track.offsetWidth) return;
+    const offset = track.offsetWidth / 2 - (active.offsetLeft + active.offsetWidth / 2);
+    track.style.transform = `translateX(${Math.round(offset)}px)`;
+  }
+
+  syncModePanel(now) {
+    const show = this.pointerMode || now < this.modePanelUntil;
+    if (this.cache.modePanelShow === show) return;
+    this.cache.modePanelShow = show;
+    this.els.modePanel?.classList.toggle('show', show);
+    if (show) requestAnimationFrame(() => this.centerModeTrack());
+  }
+
+  // "Pokazuj zmianę, nie stan": w podróży bez wrogów pasek broni przygasa.
+  syncCalmState(systems) {
+    const hostile = Number(this.radarModel?.counts?.hostile) || 0;
+    const calm = systems.driveMode === 'travel' && hostile === 0;
+    this.toggleCached('appCalm', this.els.app, 'calm', calm);
   }
 
   dispatchGameKey(code, key) {
@@ -654,283 +951,323 @@ export class CockpitUI {
 
   update(ship, systems = {}, environment = {}) {
     if (!this.host) return;
-    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const now = perfNow();
     const dt = this.lastUpdateAt > 0 ? clamp((now - this.lastUpdateAt) / 1000, 0, 0.2) : 0;
     this.lastUpdateAt = now;
     const menuVisible = !document.getElementById('main-menu')?.classList.contains('hidden');
-    this.host.toggleAttribute('hidden', menuVisible);
+    if (this.cache.menuVisible !== menuVisible) {
+      this.cache.menuVisible = menuVisible;
+      this.host.toggleAttribute('hidden', menuVisible);
+    }
     if (menuVisible) return;
 
     this.radarModel = environment.radar || this.radarModel;
-    this.updateVitals(ship, systems, dt);
-    this.updateSpeed(ship, systems, dt);
-    this.updateHotkeys(environment.weaponHud);
+    this.target = environment.target || null;
+    this.lockedTargets = Array.isArray(environment.lockedTargets) ? environment.lockedTargets : [];
+    this.updateScanSerial(environment.scanSerial, now);
+    this.updateVitals(ship, dt);
+    this.updateDrive(ship, systems);
+    this.updateSlots(environment, now);
+    this.updateTelltales(systems, environment);
     this.syncRingCityFlightButton();
     this.syncDriveMode();
-    this.updateConsoleStatus(systems, environment);
-    this.updateClock(now - this.lastClockRefresh > 1000, environment.locationName);
+    this.syncModePanel(now);
+    this.syncCalmState(systems);
+    this.updateLocation(environment.locationName);
     this.updateRadar(now);
+    this.drawCluster(now);
     this.syncTablet();
 
-    if (now - this.lastListRefresh > 450) {
+    if (now - this.lastListRefresh > 350) {
       this.lastListRefresh = now;
+      this.pruneFeed(now);
       this.renderActiveUnits();
+      this.renderTarget();
+      this.renderLockChips();
       this.renderContacts();
+      this.renderScanList(now);
       if (this.missionOpen) this.renderMissionJournal();
       if (this.commOpen) this.renderComm();
     }
   }
 
-  updateVitals(ship, systems, dt) {
+  updateVitals(ship, dt) {
     const hullMax = Math.max(1, Number(ship?.hull?.max) || 1);
     const hullVal = Math.max(0, Number(ship?.hull?.val) || 0);
     const shieldMax = Math.max(1, Number(ship?.shield?.max) || 1);
     const shieldVal = Math.max(0, Number(ship?.shield?.val) || 0);
-    this.setVital(this.els.vitalHp, hullVal / hullMax, Math.round(hullVal), dt);
-    this.setVital(this.els.vitalShield, shieldVal / shieldMax, Math.round(shieldVal), dt);
-    this.setVital(this.els.vitalCore, clamp((systems.core ?? 100) / 100, 0, 1), Math.round(systems.core ?? 100), dt);
+    this.calmTime += dt;
+    this.stepVital(this.vitals.hull, hullVal / hullMax, dt);
+    this.stepVital(this.vitals.shield, shieldVal / shieldMax, dt);
+    const hull = this.vitals.hull;
+    const shield = this.vitals.shield;
+    // Liczby odświeżamy ~8×/s — płynną zmianę pokazuje łuk, a zapis tekstu co klatkę to layout co klatkę.
+    const now = perfNow();
+    if (now - (this.cache.vitalTextAt || 0) > 120) {
+      this.cache.vitalTextAt = now;
+      const hullText = formatInt(hull.shown * hullMax);
+      const shieldText = formatInt(shield.shown * shieldMax);
+      if (this.cache.hullText !== hullText) { this.cache.hullText = hullText; this.els.vitalHpValue.textContent = hullText; }
+      if (this.cache.shieldText !== shieldText) { this.cache.shieldText = shieldText; this.els.vitalShieldValue.textContent = shieldText; }
+    }
+    const calm = this.calmTime > 3;
+    this.toggleCached('roHpCalm', this.els.roHp, 'calm', calm && hull.target > 0.985);
+    this.toggleCached('roShieldCalm', this.els.roShield, 'calm', calm && shield.target > 0.985);
+    this.toggleCached('roHpCrit', this.els.roHp, 'crit', hull.target < 0.25);
+    this.toggleCached('roShieldCrit', this.els.roShield, 'crit', shield.target < 0.25);
   }
 
-  setVital(root, ratio, value, dt = 0) {
-    if (!root) return;
+  stepVital(motion, ratio, dt) {
     const target = clamp(ratio, 0, 1);
-    const step = clamp(Number(dt) || 0, 0, 0.2);
-    const targetValue = Number(value) || 0;
-    let motion = this.vitalMotion[root.id];
-    if (!motion) {
-      motion = this.vitalMotion[root.id] = {
-        display: target,
-        ghost: target,
-        value: targetValue,
-        target,
-        hitTime: 0,
-        fillNode: root.querySelector('.arc-fill'),
-        ghostNode: root.querySelector('.arc-ghost'),
-        valueNode: this.els[root.dataset.valueId],
-        label: root.classList.contains('hp') ? 'HP' : root.classList.contains('shield') ? 'Tarcza' : 'Rdzeń',
-        drawnFill: -1,
-        drawnGhost: -1,
-        drawnValue: null,
-        ariaValue: null,
-        ariaPercent: null,
-        isCrit: null,
-        isHit: null
-      };
+    if (!motion.ready) {
+      motion.ready = true;
+      motion.shown = motion.ghost = motion.target = target;
+      return;
     }
-
-    if (target < motion.target - 0.0005) motion.hitTime = 0.32;
-    const displayRate = target < motion.display ? 15 : 7;
-    const ghostRate = target < motion.ghost ? 2.4 : 5.5;
-    const displayBlend = step > 0 ? 1 - Math.exp(-displayRate * step) : 1;
-    const ghostBlend = step > 0 ? 1 - Math.exp(-ghostRate * step) : 1;
-    motion.display += (target - motion.display) * displayBlend;
-    motion.ghost += (target - motion.ghost) * ghostBlend;
-    motion.value += (targetValue - motion.value) * displayBlend;
+    if (target < motion.target - 0.0005) {
+      motion.hit = 0.32;
+      motion.hold = 0.45;
+      this.calmTime = 0;
+    }
     motion.target = target;
-    motion.hitTime = Math.max(0, motion.hitTime - step);
-
-    if (Math.abs(target - motion.display) < 0.0005) motion.display = target;
-    if (Math.abs(target - motion.ghost) < 0.0005) motion.ghost = target;
-
-    const span = Number(root.dataset.span) || 30;
-    const fillLength = span * motion.display;
-    const ghostLength = span * motion.ghost;
-    if (motion.fillNode && Math.abs(fillLength - motion.drawnFill) > 0.001) {
-      motion.fillNode.style.strokeDasharray = `${fillLength.toFixed(3)} 100`;
-      motion.drawnFill = fillLength;
-    }
-    if (motion.ghostNode && Math.abs(ghostLength - motion.drawnGhost) > 0.001) {
-      motion.ghostNode.style.strokeDasharray = `${ghostLength.toFixed(3)} 100`;
-      motion.drawnGhost = ghostLength;
-    }
-
-    const drawnValue = Math.round(motion.value);
-    if (motion.valueNode && drawnValue !== motion.drawnValue) {
-      motion.valueNode.textContent = String(drawnValue);
-      motion.drawnValue = drawnValue;
-    }
-
-    const isCrit = target < 0.25;
-    const isHit = motion.hitTime > 0;
-    if (isCrit !== motion.isCrit) {
-      root.classList.toggle('crit', isCrit);
-      motion.isCrit = isCrit;
-    }
-    if (isHit !== motion.isHit) {
-      root.classList.toggle('hit', isHit);
-      motion.isHit = isHit;
-    }
-
-    const ariaValue = Math.round(targetValue);
-    const ariaPercent = Math.round(target * 100);
-    if (ariaValue !== motion.ariaValue || ariaPercent !== motion.ariaPercent) {
-      root.setAttribute('aria-label', `${motion.label}: ${ariaValue}, ${ariaPercent}%`);
-      motion.ariaValue = ariaValue;
-      motion.ariaPercent = ariaPercent;
-    }
+    const blend = dt > 0 ? 1 - Math.exp(-(target < motion.shown ? 15 : 7) * dt) : 1;
+    motion.shown += (target - motion.shown) * blend;
+    if (Math.abs(target - motion.shown) < 0.0005) motion.shown = target;
+    motion.hold = Math.max(0, motion.hold - dt);
+    if (target >= motion.ghost) motion.ghost = target;
+    else if (motion.hold <= 0) motion.ghost = Math.max(target, motion.ghost - dt * 0.25);
+    motion.hit = Math.max(0, motion.hit - dt);
   }
 
-  updateSpeed(ship, systems, dt) {
+  toggleCached(key, element, className, value) {
+    if (!element || this.cache[key] === value) return;
+    this.cache[key] = value;
+    element.classList.toggle(className, value);
+  }
+
+  updateDrive(ship, systems) {
     const speed = Math.hypot(Number(ship?.vel?.x) || 0, Number(ship?.vel?.y) || 0);
-    const rpm = clamp(systems.driveRpm, 0, 1);
-    const shiftCueIntensity = clamp(systems.driveShiftCueIntensity, 0, 1);
-    const shiftCueDanger = clamp(systems.driveShiftCueDanger, 0, 1);
-    this.odometer += speed * dt;
-    this.trip += speed * dt;
-    this.lastSpeed = speed;
     const warpActive = systems.warpState === 'active';
-    const speedDisplay = getVelocityDisplay(speed, { warp: warpActive });
-    if (this.els.spValue) this.els.spValue.textContent = speedDisplay.value;
-    if (this.els.spSpeedUnit) this.els.spSpeedUnit.textContent = speedDisplay.unit.toUpperCase();
-    if (this.els.spRpm) {
-      this.els.spRpm.textContent = (rpm * 8).toFixed(1);
-      const cueColor = [
-        52 + (239 - 52) * shiftCueDanger,
-        211 + (68 - 211) * shiftCueDanger,
-        153 + (68 - 153) * shiftCueDanger
-      ];
-      this.els.spRpm.style.color = mixRgb([255, 255, 255], cueColor, shiftCueIntensity * 0.9);
+    const now = perfNow();
+    if (now - (this.cache.speedTextAt || 0) > 90) {
+      this.cache.speedTextAt = now;
+      const speedDisplay = getVelocityDisplay(speed, { warp: warpActive });
+      const unit = String(speedDisplay.unit || '').toUpperCase();
+      if (this.cache.speedValue !== speedDisplay.value) { this.cache.speedValue = speedDisplay.value; this.els.spValue.textContent = speedDisplay.value; }
+      if (this.cache.speedUnit !== unit) { this.cache.speedUnit = unit; this.els.spSpeedUnit.textContent = unit; }
     }
-    if (this.els.spOdo) this.els.spOdo.textContent = formatLocalDistance(this.odometer);
-    if (this.els.spTrip) this.els.spTrip.textContent = formatLocalDistance(this.trip);
-    if (this.els.thrPct) this.els.thrPct.textContent = `${Math.round(clamp(systems.power, 0, 100))}%`;
-    const speedLimit = warpActive ? Number(systems.warpSpeed) || speed : Number(systems.driveSpeedLimit) || 0;
-    if (this.els.spLimit) this.els.spLimit.textContent = formatVelocity(speedLimit, { warp: warpActive });
-    if (this.els.spState) this.els.spState.textContent = systems.driveAuto ? 'AUTO' : systems.warpState === 'active' ? 'WARP' : 'REJS';
-    this.els.scAuto?.classList.toggle('on', !!systems.driveAuto);
-    this.drawSpeedGauge(
-      speed,
-      Number(systems.driveSpeedLimit) || Math.max(1, speed),
-      rpm,
-      shiftCueIntensity,
-      shiftCueDanger
-    );
+
+    const limit = Number(systems.driveSpeedLimit) || 0;
+    const modeMax = Math.max(1, Number(systems.driveModeMaxSpeed) || limit || speed || 1);
+    const gear = Math.max(1, Number(systems.driveGear) || 1);
+    const gearCount = Math.max(gear, Number(systems.driveGearCount) || 1);
+    const shiftWindow = systems.driveMode === 'travel' && gear < gearCount && !warpActive;
+    const cue = clamp(systems.driveShiftCueIntensity, 0, 1);
+    const danger = clamp(systems.driveShiftCueDanger, 0, 1);
+    const drive = this.drive;
+    drive.speed = warpActive ? 1 : clamp(speed / modeMax, 0, 1);
+    drive.limit = limit > 0 ? clamp(limit / modeMax, 0, 1) : 1;
+    drive.rpm = clamp(systems.driveRpm, 0, 1);
+    drive.tone = !shiftWindow ? 0 : danger > 0.35 ? 2 : cue > 0.35 ? 1 : 0;
+    drive.shiftWindow = shiftWindow;
+    drive.warp = warpActive;
+
+    // Obroty liczbowo przy łuku obrotów; kolor = podpowiedź zmiany biegu (zielony / czerwony).
+    if (this.cache.speedTextAt === now) {
+      const rpmText = formatInt(Math.round(drive.rpm * DRIVE_RPM_MAX / 50) * 50);
+      if (this.cache.rpmText !== rpmText) { this.cache.rpmText = rpmText; this.els.spRpm.textContent = rpmText; }
+    }
+    this.toggleCached('rpmCue', this.els.spRpm, 'cue', drive.tone === 1);
+    this.toggleCached('rpmDanger', this.els.spRpm, 'danger', drive.tone === 2);
+
+    const gearText = gearCount > 1 ? `${gear}/${gearCount}` : '';
+    if (this.cache.gearText !== gearText) {
+      this.cache.gearText = gearText;
+      this.els.spGear.textContent = gearText;
+      this.els.spGearWrap.hidden = !gearText;
+    }
   }
 
-  drawSpeedGauge(speed, limit, rpm, shiftCueIntensity = 0, shiftCueDanger = 0) {
-    const canvas = this.els.speedCanvas;
-    const ctx = this.speedCtx;
-    if (!canvas || !ctx) return;
-    const rect = canvas.getBoundingClientRect();
-    const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
-    const width = Math.max(1, Math.round(rect.width * dpr));
-    const height = Math.max(1, Math.round(rect.height * dpr));
-    if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
-    ctx.clearRect(0, 0, width, height);
-    const scale = Math.max(0.08, Math.min(height / 600, width / 1000));
-    const cx = width / 2;
-    const cy = height / 2;
-    this.drawDriveGaugeArc(ctx, cx - 240 * scale, cy, scale, false, speed, limit, false, 0);
-    this.drawDriveGaugeArc(ctx, cx + 240 * scale, cy, scale, true, rpm, 1, true, shiftCueIntensity, shiftCueDanger);
+  getGradients(ctx) {
+    if (this.gradients) return this.gradients;
+    const center = CLUSTER.center;
+    const radius = CLUSTER.ring;
+    const make = (bottom, top) => {
+      const gradient = ctx.createLinearGradient(0, center + radius, 0, center - 10);
+      gradient.addColorStop(0, bottom);
+      gradient.addColorStop(1, top);
+      return gradient;
+    };
+    this.gradients = {
+      normal: make('#ff3300', '#ff8a1a'),
+      cue: make('#1fbf6a', '#5dffa8'),
+      danger: make('#ff2200', '#ff5a3a'),
+      warp: make('#1c6cff', '#7fe3ff')
+    };
+    return this.gradients;
+  }
 
-    ctx.save();
-    ctx.strokeStyle = 'rgba(255,255,255,.14)';
-    ctx.lineWidth = Math.max(1, dpr * 0.7);
-    ctx.beginPath();
-    ctx.moveTo(cx - 74 * scale, cy - 170 * scale);
-    ctx.lineTo(cx - 42 * scale, cy - 184 * scale);
-    ctx.lineTo(cx + 42 * scale, cy - 184 * scale);
-    ctx.lineTo(cx + 74 * scale, cy - 170 * scale);
+  drawBand(ctx, arc, fromFraction, toFraction, color) {
+    const a = arcPoint(arc, fromFraction);
+    const b = arcPoint(arc, toFraction);
+    arcPath(ctx, CLUSTER.center, CLUSTER.center, CLUSTER.ring + 9, Math.min(a, b), Math.max(a, b));
+    ctx.strokeStyle = color;
     ctx.stroke();
-    ctx.restore();
   }
 
-  drawDriveGaugeArc(ctx, x, y, scale, flipped, value, maxValue, rpmGauge, shiftCueIntensity = 0, shiftCueDanger = 0) {
-    ctx.save();
-    ctx.translate(x, y);
-    if (flipped) ctx.scale(-1, 1);
-
-    const radius = 250 * scale;
-    const startAngle = Math.PI * 0.75;
-    const endAngle = Math.PI * 1.55;
-    const angleRange = endAngle - startAngle;
-    const progress = clamp(value / Math.max(0.0001, maxValue), 0, 1);
-    const currentAngle = endAngle - progress * angleRange;
-    const lineWidth = Math.max(2, 15 * scale);
-
+  // Warstwa statyczna klastra (podkładka, tory łuków, podziałka, podpisy):
+  // rysowana raz na rozmiar płótna, potem tylko drawImage.
+  buildClusterStatic(size) {
+    const layer = this.clusterStatic || (this.clusterStatic = document.createElement('canvas'));
+    layer.width = size;
+    layer.height = size;
+    const ctx = layer.getContext('2d');
+    const scale = size / CLUSTER.box;
+    const center = CLUSTER.center;
+    const radius = CLUSTER.ring;
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    ctx.clearRect(0, 0, CLUSTER.box, CLUSTER.box);
+    ctx.beginPath();
+    ctx.arc(center, center, radius + 14, 0, TAU);
+    ctx.arc(center, center, CLUSTER.radar + 1, 0, TAU, true);
+    ctx.fillStyle = 'rgba(3, 5, 8, 0.64)';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(center, center, radius + 14, 0, TAU);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.07)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
     ctx.lineCap = 'round';
-    ctx.lineWidth = lineWidth;
-    ctx.strokeStyle = 'rgba(255,255,255,.10)';
-    ctx.beginPath();
-    ctx.arc(0, 0, radius, startAngle, endAngle);
-    ctx.stroke();
-
-    const tickCount = rpmGauge ? 8 : 6;
+    for (const [arc, width, color] of [
+      [CLUSTER_ARCS.hull, 11, VITAL_STYLE.hull.track],
+      [CLUSTER_ARCS.shield, 11, VITAL_STYLE.shield.track],
+      [CLUSTER_ARCS.speed, 7, 'rgba(255, 255, 255, 0.08)'],
+      [CLUSTER_ARCS.rpm, 7, 'rgba(255, 255, 255, 0.08)']
+    ]) {
+      const [from, to] = arcSegment(arc, 1);
+      arcPath(ctx, center, center, radius, from, to);
+      ctx.lineWidth = width;
+      ctx.strokeStyle = color;
+      ctx.stroke();
+    }
     ctx.lineCap = 'butt';
-    ctx.strokeStyle = 'rgba(255,255,255,.38)';
-    ctx.lineWidth = Math.max(1, 3 * scale);
-    for (let index = 0; index <= tickCount; index += 1) {
-      const angle = startAngle + (index / tickCount) * angleRange;
-      ctx.beginPath();
-      ctx.moveTo(Math.cos(angle) * (radius - 16 * scale), Math.sin(angle) * (radius - 16 * scale));
-      ctx.lineTo(Math.cos(angle) * (radius + 6 * scale), Math.sin(angle) * (radius + 6 * scale));
-      ctx.stroke();
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+    for (const [arc, ticks] of [[CLUSTER_ARCS.speed, 6], [CLUSTER_ARCS.rpm, 8]]) {
+      for (let index = 0; index <= ticks; index += 1) {
+        const angle = clockRad(arcPoint(arc, index / ticks));
+        const major = index % 2 === 0;
+        const inner = radius - (major ? 18 : 14);
+        const outer = radius - 9;
+        ctx.lineWidth = major ? 1.6 : 1;
+        ctx.beginPath();
+        ctx.moveTo(center + Math.cos(angle) * inner, center + Math.sin(angle) * inner);
+        ctx.lineTo(center + Math.cos(angle) * outer, center + Math.sin(angle) * outer);
+        ctx.stroke();
+      }
     }
+  }
 
-    if (progress > 0.002) {
-      const hot = rpmGauge && progress > 0.82;
-      const cueAmount = rpmGauge ? clamp(shiftCueIntensity, 0, 1) : 0;
-      const cueDanger = clamp(shiftCueDanger, 0, 1);
-      const cueColor = [
-        52 + (239 - 52) * cueDanger,
-        211 + (68 - 211) * cueDanger,
-        153 + (68 - 153) * cueDanger
-      ];
-      const topColor = mixRgb(hot ? [255, 34, 0] : [255, 119, 0], cueColor, cueAmount);
-      const bottomColor = mixRgb(hot ? [255, 119, 0] : [255, 51, 0], cueColor, cueAmount);
-      const glowColor = mixRgb(hot ? [255, 34, 0] : [255, 102, 0], cueColor, cueAmount);
-      const gradient = ctx.createLinearGradient(0, -radius, 0, radius);
-      gradient.addColorStop(0, topColor);
-      gradient.addColorStop(1, bottomColor);
+  // Łuk napędu w stylu modułu PRĘDKOŚĆ: żar gradientu i biała kropka na końcu.
+  drawDriveArc(ctx, arc, value, options) {
+    const center = CLUSTER.center;
+    const radius = CLUSTER.ring;
+    ctx.save();
+    if (options.window) {
+      // Okno zmiany biegu: jasna zieleń = PERFECT, blada = BOOST, czerwień = ZA PÓŹNO.
       ctx.lineCap = 'round';
-      ctx.lineWidth = lineWidth;
-      ctx.strokeStyle = gradient;
-      ctx.shadowColor = glowColor;
-      ctx.shadowBlur = Math.max(3, 18 * scale);
-      ctx.beginPath();
-      ctx.arc(0, 0, radius, currentAngle, endAngle);
-      ctx.stroke();
-      ctx.shadowBlur = 0;
-
-      ctx.beginPath();
-      ctx.arc(Math.cos(currentAngle) * radius, Math.sin(currentAngle) * radius, Math.max(2, 9 * scale), 0, Math.PI * 2);
-      ctx.fillStyle = '#fff';
-      ctx.shadowColor = glowColor;
-      ctx.shadowBlur = Math.max(3, 12 * scale);
-      ctx.fill();
-      ctx.shadowBlur = 0;
+      ctx.lineWidth = 3;
+      const perfect = value >= RPM_WINDOW.perfectStart && value <= RPM_WINDOW.perfectEnd;
+      const good = value >= RPM_WINDOW.cue && value <= RPM_WINDOW.late;
+      this.drawBand(ctx, arc, RPM_WINDOW.cue, RPM_WINDOW.late, good ? 'rgba(56, 224, 138, 0.55)' : 'rgba(56, 224, 138, 0.22)');
+      this.drawBand(ctx, arc, RPM_WINDOW.perfectStart, RPM_WINDOW.perfectEnd, perfect ? '#5dffa8' : 'rgba(56, 224, 138, 0.5)');
+      this.drawBand(ctx, arc, RPM_WINDOW.late, 1, value > RPM_WINDOW.late ? 'rgba(255, 64, 64, 0.95)' : 'rgba(255, 64, 64, 0.28)');
     }
-
+    if (value > 0.003) {
+      const tone = options.warp ? 'warp' : options.tone === 1 ? 'cue' : options.tone === 2 ? 'danger' : 'normal';
+      const [from, to] = arcSegment(arc, value);
+      ctx.lineCap = 'round';
+      strokeGlowArc(ctx, from, to, 7, this.getGradients(ctx)[tone], 1);
+      const tip = clockRad(arcPoint(arc, value));
+      const tipX = center + Math.cos(tip) * radius;
+      const tipY = center + Math.sin(tip) * radius;
+      ctx.globalAlpha = 0.35;
+      ctx.fillStyle = DRIVE_GLOW[tone];
+      ctx.beginPath();
+      ctx.arc(tipX, tipY, 8.5, 0, TAU);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(tipX, tipY, 4.6, 0, TAU);
+      ctx.fill();
+    }
+    if (options.notch != null) {
+      const angle = clockRad(arcPoint(arc, options.notch));
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+      ctx.lineWidth = 2;
+      ctx.lineCap = 'butt';
+      ctx.beginPath();
+      ctx.moveTo(center + Math.cos(angle) * (radius + 5), center + Math.sin(angle) * (radius + 5));
+      ctx.lineTo(center + Math.cos(angle) * (radius + 13), center + Math.sin(angle) * (radius + 13));
+      ctx.stroke();
+    }
     ctx.restore();
   }
 
-  updateConsoleStatus(systems, environment) {
-    const mode = MODE_META[systems.driveMode]?.label || MODE_META[this.cache.driveMode]?.label || 'BOJOWY';
-    const damper = window.flightAssist?.damper ? 'WŁ' : 'WYŁ';
-    const stabilizer = window.flightAssist?.stabilizer ? 'WŁ' : 'WYŁ';
-    const html = `<span>TRYB <b>${mode}</b></span><span>AUTO <b>${systems.driveAuto ? 'WŁ' : 'WYŁ'}</b></span><span>DAMPER <b>${damper}</b></span><span>STAB <b>${stabilizer}</b></span>`;
-    if (this.cache.consoleStatus !== html && this.els.consoleStatus) {
-      this.cache.consoleStatus = html;
-      this.els.consoleStatus.innerHTML = html;
+  drawCluster(now) {
+    const canvas = this.els.clusterCanvas;
+    const ctx = this.clusterCtx;
+    if (!canvas || !ctx) return;
+    const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    const size = Math.max(1, Math.round(CLUSTER.box * this.scale * dpr));
+    if (canvas.width !== size || canvas.height !== size) {
+      canvas.width = size;
+      canvas.height = size;
+      this.buildClusterStatic(size);
+      this.clusterForce = true;
     }
-    const location = environment.locationName || 'Przestrzeń międzyplanetarna';
-    if (this.cache.location !== location && this.els.termLoc) {
-      this.cache.location = location;
-      this.els.termLoc.innerHTML = '<small>Pozycja</small>';
-      this.els.termLoc.appendChild(document.createTextNode(location.toUpperCase()));
+    const hull = this.vitals.hull;
+    const shield = this.vitals.shield;
+    const drive = this.drive;
+    const calm = clamp((this.calmTime - 2) / 2, 0, 1);
+    const hullAlpha = vitalAlpha(hull, calm, now);
+    const shieldAlpha = vitalAlpha(shield, calm, now);
+    // Rysujemy tylko przy zmianie — bez alokacji klucza co klatkę.
+    const values = this.clusterValues;
+    values[0] = hull.shown; values[1] = hull.ghost; values[2] = hull.hit; values[3] = hullAlpha;
+    values[4] = shield.shown; values[5] = shield.ghost; values[6] = shield.hit; values[7] = shieldAlpha;
+    values[8] = drive.speed; values[9] = drive.limit; values[10] = drive.rpm; values[11] = drive.tone;
+    values[12] = drive.shiftWindow ? 1 : 0; values[13] = drive.warp ? 1 : 0;
+    let changed = this.clusterForce;
+    const previous = this.clusterPrev;
+    for (let index = 0; index < values.length; index += 1) {
+      const quantized = Math.round(values[index] * 400);
+      if (quantized !== previous[index]) {
+        previous[index] = quantized;
+        changed = true;
+      }
     }
+    if (!changed) return;
+    this.clusterForce = false;
+
+    const scale = size / CLUSTER.box;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, size, size);
+    if (!this.clusterStatic || this.clusterStatic.width !== size) this.buildClusterStatic(size);
+    ctx.drawImage(this.clusterStatic, 0, 0);
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    drawVitalArc(ctx, CLUSTER_ARCS.hull, hull, VITAL_STYLE.hull, hullAlpha);
+    drawVitalArc(ctx, CLUSTER_ARCS.shield, shield, VITAL_STYLE.shield, shieldAlpha);
+    this.drawDriveArc(ctx, CLUSTER_ARCS.speed, drive.speed, { notch: drive.limit < 0.995 ? drive.limit : null, warp: drive.warp });
+    this.drawDriveArc(ctx, CLUSTER_ARCS.rpm, drive.rpm, { window: drive.shiftWindow, tone: drive.tone });
   }
 
-  updateClock(force = false, location = null) {
-    if (!force) return;
-    this.lastClockRefresh = typeof performance !== 'undefined' ? performance.now() : Date.now();
-    const now = new Date();
-    if (this.els.termClock) this.els.termClock.textContent = now.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
-    if (this.els.termDate) this.els.termDate.textContent = now.toLocaleDateString('pl-PL', { weekday: 'long', day: '2-digit', month: 'long' }).toUpperCase();
-    if (location && this.els.termLoc) {
-      this.els.termLoc.innerHTML = '<small>Pozycja</small>';
-      this.els.termLoc.appendChild(document.createTextNode(String(location).toUpperCase()));
-    }
+  updateLocation(locationName) {
+    const location = String(locationName || 'Przestrzeń międzyplanetarna');
+    if (this.cache.location === location || !this.els.feedZone) return;
+    this.cache.location = location;
+    this.els.feedZone.textContent = location;
   }
 
   updateRadar(now) {
@@ -938,17 +1275,40 @@ export class CockpitUI {
     if (!this.radarCtx || !this.els.radarCanvas || now - this.lastRadarDraw < drawIntervalMs) return;
     this.lastRadarDraw = now;
     const canvas = this.els.radarCanvas;
-    const rect = canvas.getBoundingClientRect();
+    // Rozmiar z tej samej skali co CSS (średnica radaru = 2 × 118 × --s) — bez
+    // getBoundingClientRect w pętli, który po zapisach DOM wymuszał layout.
     const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
-    const width = Math.max(1, Math.round(rect.width * dpr));
-    const height = Math.max(1, Math.round(rect.height * dpr));
+    const width = Math.max(1, Math.round(CLUSTER.radar * 2 * this.scale * dpr));
+    const height = width;
     if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
     drawCicHudRadarSurface(this.radarCtx, width, height, this.radarModel, { range: this.viewRange });
-    const counts = this.radarModel?.counts || {};
-    if (this.els.rdTotal) this.els.rdTotal.textContent = `C:${String(Number(counts.total) || 0).padStart(2, '0')}`;
-    if (this.els.rdHostile) this.els.rdHostile.textContent = `H:${String(Number(counts.hostile) || 0).padStart(2, '0')}`;
-    if (this.els.rdAst) this.els.rdAst.textContent = `A:${String(Number(counts.asteroid) || 0).padStart(2, '0')}`;
-    if (this.els.rdRange) this.els.rdRange.textContent = `${this.viewRange / 1000}K`;
+    const hostile = Number(this.radarModel?.counts?.hostile) || 0;
+    const hostileText = hostile > 0 ? `WRÓG ${hostile}` : 'CZYSTO';
+    if (this.cache.rdHostile !== hostileText && this.els.rdHostile) {
+      this.cache.rdHostile = hostileText;
+      this.els.rdHostile.textContent = hostileText;
+      this.els.rdHostile.classList.toggle('clear', hostile === 0);
+    }
+    const rangeText = `${this.viewRange / 1000}K`;
+    if (this.cache.rdRange !== rangeText && this.els.rdRange) {
+      this.cache.rdRange = rangeText;
+      this.els.rdRange.textContent = rangeText;
+    }
+  }
+
+  updateScanSerial(serial, now) {
+    const value = Number(serial) || 0;
+    if (this.scanSerial === null) {
+      this.scanSerial = value;
+      return;
+    }
+    if (value === this.scanSerial) return;
+    this.scanSerial = value;
+    this.scanUntil = now + SCAN_RESULTS_MS;
+    this.cache.scanKey = '';
+    this.els.scanTimer?.getAnimations?.().forEach(animation => animation.cancel());
+    this.els.scanTimer?.animate?.([{ transform: 'scaleX(1)' }, { transform: 'scaleX(0)' }], { duration: SCAN_RESULTS_MS, fill: 'forwards' });
+    this.renderScanList(now);
   }
 
   getOverviewContacts() {
@@ -974,74 +1334,81 @@ export class CockpitUI {
     return base;
   }
 
+  buildContactRow(contact, index) {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'contact-row';
+    row.dataset.contactIndex = String(index);
+    row.classList.toggle('selected', !!contact.entity && (this.targetEntity === contact.entity || this.selectedContact?.entity === contact.entity));
+    const code = document.createElement('span');
+    code.className = `tone-${contact.type}`;
+    code.textContent = contact.type === 'hostile' ? 'WRG' : contact.type === 'friendly' ? 'SOJ' : contact.type === 'station' ? 'STA' : 'AST';
+    const name = document.createElement('span');
+    name.className = 'contact-name';
+    name.textContent = contact.label;
+    const distance = document.createElement('span');
+    distance.className = 'dist-cell';
+    distance.textContent = formatLocalDistance(contact.distance);
+    const lock = document.createElement('span');
+    lock.className = 'lock-cell';
+    lock.textContent = contact.locked ? 'LCK' : '';
+    row.append(code, name, distance, lock);
+    return row;
+  }
+
   renderContacts(force = false) {
     const root = this.els.contactRows;
-    if (!root) return;
+    if (!root || (!this.pointerMode && !force)) return;
     const contacts = this.getOverviewContacts();
-    const visible = contacts.filter(contact => this.contactFilter === 'all' || contact.type === this.contactFilter).slice(0, 36);
+    const visible = contacts.filter(contact => this.contactFilter === 'all' || contact.type === this.contactFilter).slice(0, 40);
     const key = `${this.contactFilter}|${visible.map(c => `${c.type}:${c.label}:${Math.round(c.distance / 100)}:${c.locked ? 1 : 0}`).join('|')}`;
     if (!force && this.cache.contactsKey === key) return;
     this.cache.contactsKey = key;
     root.textContent = '';
-    const all = contacts;
-    for (const contact of visible) {
-      const row = document.createElement('button');
-      row.type = 'button';
-      row.className = 'contact-row';
-      row.dataset.contactIndex = String(all.indexOf(contact));
-      row.classList.toggle('selected', this.selectedContact?.entity === contact.entity);
-      const code = document.createElement('span');
-      code.className = `tone-${contact.type}`;
-      code.textContent = contact.type === 'hostile' ? 'WRG' : contact.type === 'friendly' ? 'SOJ' : contact.type === 'station' ? 'STA' : 'AST';
-      const name = document.createElement('span'); name.textContent = contact.label;
-      const distance = document.createElement('span'); distance.className = 'dist-cell'; distance.textContent = formatLocalDistance(contact.distance);
-      const lock = document.createElement('span'); lock.className = 'lock-cell'; lock.textContent = contact.locked ? 'LCK' : '–';
-      row.append(code, name, distance, lock);
-      root.appendChild(row);
+    for (const contact of visible) root.appendChild(this.buildContactRow(contact, contacts.indexOf(contact)));
+    if (!visible.length) {
+      const empty = document.createElement('div');
+      empty.className = 'panel-empty';
+      empty.textContent = 'Brak kontaktów w zasięgu.';
+      root.appendChild(empty);
     }
-    if (this.els.contactCount) this.els.contactCount.textContent = `${contacts.length} KONTAKTÓW`;
+    if (this.els.contactCount) this.els.contactCount.textContent = countLabel(contacts.length, 'KONTAKT', 'KONTAKTY', 'KONTAKTÓW');
+  }
+
+  // Wyniki skanu: pokazują się same po impulsie X i gasną po 10 s.
+  renderScanList(now) {
+    const panel = this.els.scanPanel;
+    if (!panel) return;
+    const visible = !this.pointerMode && now < this.scanUntil;
+    if (panel.hidden === visible) panel.hidden = !visible;
+    if (!visible) return;
+    const contacts = this.getOverviewContacts();
+    const rows = contacts.slice(0, 6);
+    const key = `${contacts.length}|${rows.map(c => `${c.type}:${c.label}:${Math.round(c.distance / 100)}`).join('|')}`;
+    if (this.cache.scanKey === key) return;
+    this.cache.scanKey = key;
+    this.els.scanCount.textContent = countLabel(contacts.length, 'KONTAKT', 'KONTAKTY', 'KONTAKTÓW');
+    const root = this.els.scanRows;
+    root.textContent = '';
+    rows.forEach((contact, index) => root.appendChild(this.buildContactRow(contact, index)));
+    if (contacts.length > rows.length) {
+      const more = document.createElement('div');
+      more.className = 'panel-empty';
+      more.textContent = `+${contacts.length - rows.length} więcej`;
+      root.appendChild(more);
+    }
   }
 
   selectContact(contact) {
     this.selectedContact = contact;
     window.CockpitBridge?.selectTarget?.(contact.entity);
-    this.renderSelectedContact();
     this.renderContacts(true);
   }
 
-  renderSelectedContact() {
-    const root = this.els.selBody;
-    const contact = this.selectedContact;
-    if (!root) return;
-    root.textContent = '';
-    if (!contact) {
-      const empty = document.createElement('div'); empty.className = 'sel-empty'; empty.textContent = 'Brak wybranego obiektu.'; root.appendChild(empty); return;
-    }
-    if (this.els.selKind) this.els.selKind.textContent = contact.type.toUpperCase();
-    const body = document.createElement('div'); body.className = 'sel-body';
-    const name = document.createElement('div'); name.className = `sel-name tone-${contact.type}`; name.textContent = contact.label;
-    const sub = document.createElement('div'); sub.className = 'sel-sub'; sub.textContent = `${contact.type} · ${formatLocalDistance(contact.distance)}`;
-    const entity = contact.entity;
-    const hull = Number(entity?.hp ?? entity?.hull?.val);
-    const shield = Number(entity?.shield?.val);
-    const grid = document.createElement('div'); grid.className = 'sel-grid';
-    const hullRow = document.createElement('span'); hullRow.textContent = 'KADŁUB '; const hullVal = document.createElement('b'); hullVal.textContent = Number.isFinite(hull) ? Math.round(hull) : '—'; hullRow.appendChild(hullVal);
-    const shieldRow = document.createElement('span'); shieldRow.textContent = 'TARCZA '; const shieldVal = document.createElement('b'); shieldVal.textContent = Number.isFinite(shield) ? Math.round(shield) : '—'; shieldRow.appendChild(shieldVal);
-    grid.append(hullRow, shieldRow);
-    const actions = document.createElement('div'); actions.className = 'sel-actions';
-    if (contact.type !== 'station' && contact.type !== 'asteroid') {
-      const lock = document.createElement('button'); lock.type = 'button'; lock.className = 'tech-button'; lock.dataset.action = 'lock'; lock.textContent = contact.locked ? 'NAMIERZONO' : 'NAMIERZ'; actions.appendChild(lock);
-    }
-    if (contact.type === 'station') {
-      const uplink = document.createElement('button'); uplink.type = 'button'; uplink.className = 'tech-button'; uplink.dataset.action = 'uplink'; uplink.textContent = 'POŁĄCZ · UPLINK'; actions.appendChild(uplink);
-    }
-    body.append(name, sub, grid, actions); root.appendChild(body);
-  }
-
-  lockSelectedContact() {
-    const entity = this.selectedContact?.entity;
+  lockCurrentTarget() {
+    const entity = this.target || this.selectedContact?.entity || null;
     if (entity) window.CockpitBridge?.toggleLock?.(entity);
-    else this.dispatchGameKey('KeyT', 't');
+    else this.pushAlert('Brak wybranego celu', { tone: 'warn', duration: 1.4 });
   }
 
   selectRadarContact(event) {
@@ -1050,22 +1417,211 @@ export class CockpitUI {
     const rect = this.els.radarCanvas.getBoundingClientRect();
     const nx = (event.clientX - rect.left) / Math.max(1, rect.width) - 0.5;
     const ny = (event.clientY - rect.top) / Math.max(1, rect.height) - 0.5;
+    // drawCicHudRadarSurface: zasięg = 0.475 szerokości płótna.
+    const worldToUnit = 0.475 / this.viewRange;
     let best = null;
     let bestScore = 0.004;
     for (const raw of contacts) {
-      const dx = (Number(raw.dx) || 0) / (this.viewRange * 2) - nx;
-      const dy = (Number(raw.dy) || 0) / (this.viewRange * 2) - ny;
+      const dx = (Number(raw.dx) || 0) * worldToUnit - nx;
+      const dy = (Number(raw.dy) || 0) * worldToUnit - ny;
       const score = dx * dx + dy * dy;
       if (score < bestScore) { bestScore = score; best = raw; }
     }
     if (best) this.selectContact({ entity: best.entity, type: best.isAsteroid ? 'asteroid' : best.friendly ? 'friendly' : 'hostile', label: getEntityLabel(best.entity, best.type), distance: Math.hypot(best.dx || 0, best.dy || 0), locked: !!best.locked, raw: best });
   }
 
+  describeTarget(target) {
+    const bridged = window.CockpitBridge?.describeTarget?.(target);
+    if (bridged) return bridged;
+    const pos = getEntityPosition(target);
+    const ship = window.ship;
+    const station = Array.isArray(window.stations) && window.stations.includes(target);
+    return {
+      name: getEntityLabel(target),
+      unitClass: station ? 'STACJA' : String(target?.type || 'KONTAKT').toUpperCase(),
+      kind: station ? 'station' : target?.friendly ? 'friendly' : 'hostile',
+      distance: ship?.pos ? Math.hypot(pos.x - ship.pos.x, pos.y - ship.pos.y) : 0,
+      hp: Number(target?.hp ?? target?.hull?.val),
+      hpMax: Number(target?.maxHp ?? target?.hull?.max) || 0,
+      shield: Number(target?.shield?.val),
+      shieldMax: Number(target?.shield?.max) || 0,
+      locked: this.lockedTargets.includes(target)
+    };
+  }
+
+  // Karta celu: tylko gdy gra ma wybrany lub namierzony cel.
+  renderTarget() {
+    const panel = this.els.targetPanel;
+    if (!panel) return;
+    const target = isEntityGone(this.target) ? null : this.target;
+    if (!target) {
+      if (this.targetEntity) {
+        this.targetEntity = null;
+        this.targetSignature = '';
+        this.targetRefs = null;
+        this.els.targetBody.textContent = '';
+      }
+      panel.hidden = true;
+      return;
+    }
+    const info = this.describeTarget(target);
+    const signature = `${info.kind}|${info.locked ? 1 : 0}|${info.name}|${info.unitClass}`;
+    if (target !== this.targetEntity || signature !== this.targetSignature) {
+      this.targetEntity = target;
+      this.targetSignature = signature;
+      this.buildTargetCard(target, info);
+    }
+    this.updateTargetLive(info);
+    panel.hidden = false;
+  }
+
+  buildTargetCard(target, info) {
+    const root = this.els.targetBody;
+    root.textContent = '';
+    const kind = info.kind || 'hostile';
+    const head = document.createElement('header');
+    head.className = 'panel-head';
+    const title = document.createElement('div');
+    title.className = 'panel-title';
+    const strong = document.createElement('strong');
+    strong.textContent = kind === 'station' ? 'Stacja' : kind === 'asteroid' ? 'Zasoby' : 'Cel';
+    const small = document.createElement('small');
+    small.textContent = info.locked ? 'NAMIERZONY' : 'WYBRANY';
+    title.append(strong, small);
+    head.appendChild(title);
+    if (info.locked) {
+      const badge = document.createElement('span');
+      badge.className = 'lock-badge';
+      badge.textContent = 'LCK';
+      head.appendChild(badge);
+    }
+
+    const main = document.createElement('div');
+    main.className = 'target-main';
+    const portrait = document.createElement('div');
+    portrait.className = `target-portrait tone-${kind}`;
+    const sprite = kind === 'station' || kind === 'asteroid' ? null : spriteForEntity(target);
+    if (sprite) {
+      const image = document.createElement('img');
+      image.src = sprite;
+      image.alt = '';
+      portrait.appendChild(image);
+    } else {
+      const glyph = document.createElement('span');
+      glyph.className = 'target-glyph';
+      glyph.textContent = kind === 'station' ? '⬢' : kind === 'asteroid' ? '◆' : '▲';
+      portrait.appendChild(glyph);
+    }
+    const infoBox = document.createElement('div');
+    infoBox.className = 'target-info';
+    const name = document.createElement('div');
+    name.className = 'target-name';
+    name.textContent = info.name;
+    const cls = document.createElement('div');
+    cls.className = `target-class tone-${kind}`;
+    const side = kind === 'hostile' ? 'WRÓG' : kind === 'friendly' ? 'SOJUSZNIK' : '';
+    cls.textContent = [info.unitClass, side].filter(Boolean).join(' · ');
+    const meta = document.createElement('div');
+    meta.className = 'target-meta';
+    infoBox.append(name, cls, meta);
+    main.append(portrait, infoBox);
+    root.append(head, main);
+
+    const refs = { meta, hullFill: null, hullText: null, shieldFill: null, shieldText: null };
+    const hasHull = Number.isFinite(info.hp) && info.hpMax > 0;
+    const hasShield = Number.isFinite(info.shield) && info.shieldMax > 0;
+    if (hasHull || hasShield) {
+      const bars = document.createElement('div');
+      bars.className = 'target-bars';
+      const makeBar = (label, color) => {
+        const row = document.createElement('div');
+        row.className = 'target-bar';
+        row.style.setProperty('--c', color);
+        const caption = document.createElement('span');
+        caption.textContent = label;
+        const track = document.createElement('div');
+        track.className = 'track';
+        const fill = document.createElement('div');
+        fill.className = 'fill';
+        track.appendChild(fill);
+        const value = document.createElement('b');
+        row.append(caption, track, value);
+        bars.appendChild(row);
+        return { fill, value };
+      };
+      if (hasHull) { const bar = makeBar('KADŁUB', '#ff2d36'); refs.hullFill = bar.fill; refs.hullText = bar.value; }
+      if (hasShield) { const bar = makeBar('TARCZA', '#2f7dff'); refs.shieldFill = bar.fill; refs.shieldText = bar.value; }
+      root.appendChild(bars);
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'target-actions pointer-only';
+    if (kind !== 'station' && kind !== 'asteroid') {
+      const lock = document.createElement('button');
+      lock.type = 'button';
+      lock.className = 'tech-button';
+      lock.dataset.action = 'lock';
+      lock.textContent = info.locked ? 'ZWOLNIJ' : 'NAMIERZ';
+      actions.appendChild(lock);
+    }
+    if (kind === 'station') {
+      const uplink = document.createElement('button');
+      uplink.type = 'button';
+      uplink.className = 'tech-button';
+      uplink.dataset.action = 'uplink';
+      uplink.textContent = 'POŁĄCZ · UPLINK';
+      actions.appendChild(uplink);
+    }
+    if (actions.children.length) root.appendChild(actions);
+    const hint = document.createElement('div');
+    hint.className = 'panel-hint no-pointer';
+    hint.innerHTML = kind === 'station' ? '<kbd>Alt</kbd> uplink · <kbd>Caps</kbd> łączność' : '<kbd>Alt</kbd> akcje celu';
+    root.appendChild(hint);
+    this.targetRefs = refs;
+  }
+
+  updateTargetLive(info) {
+    const refs = this.targetRefs;
+    if (!refs) return;
+    const meta = formatLocalDistance(info.distance);
+    if (refs.meta.textContent !== meta) refs.meta.textContent = meta;
+    const setBar = (fill, text, value, max) => {
+      if (!fill || !text) return;
+      const pct = Math.round(clamp(value / Math.max(1, max), 0, 1) * 100);
+      const width = `${pct}%`;
+      if (fill.style.width !== width) {
+        fill.style.width = width;
+        text.textContent = width;
+      }
+    };
+    setBar(refs.hullFill, refs.hullText, info.hp, info.hpMax);
+    setBar(refs.shieldFill, refs.shieldText, info.shield, info.shieldMax);
+  }
+
+  renderLockChips() {
+    const root = this.els.lockChips;
+    if (!root) return;
+    const others = this.lockedTargets.filter(target => target && target !== this.targetEntity && !isEntityGone(target)).slice(0, 3);
+    const described = others.map(target => this.describeTarget(target));
+    const key = described.map(info => `${info.name}:${Math.round(info.distance / 100)}`).join('|');
+    if (this.cache.lockKey === key) return;
+    this.cache.lockKey = key;
+    root.textContent = '';
+    for (const info of described) {
+      const chip = document.createElement('div');
+      chip.className = 'lock-chip';
+      chip.textContent = `LCK · ${info.name} · ${formatLocalDistance(info.distance)}`;
+      root.appendChild(chip);
+    }
+  }
+
   setSupportFaction(faction) {
-    const normalized = SUPPORT_FACTIONS[faction] ? faction : 'terran';
+    let normalized = SUPPORT_FACTIONS[faction] ? faction : 'terran';
+    if (SUPPORT_FACTIONS[normalized].devOnly && !this.devMode) normalized = 'terran';
     this.supportFaction = normalized;
     window.CockpitSupport?.setFaction?.(normalized);
     for (const button of this.els.supportFactions?.querySelectorAll('[data-key]') || []) button.classList.toggle('active', button.dataset.key === normalized);
+    if (this.els.reserveFaction) this.els.reserveFaction.textContent = SUPPORT_FACTIONS[normalized].label.toUpperCase();
     // Wybrany typ linii moze nie istniec w rosterze nowej frakcji
     // (np. 'battleship' Terra Novy vs 'pirate_battleship' piratow).
     if (this.lineMode && this.lineKey && !SUPPORT_FACTIONS[normalized].roster.some(i => i.key === this.lineKey)) {
@@ -1080,11 +1636,19 @@ export class CockpitUI {
   setSupportOrder(order) {
     const normalized = order === 'engage' ? 'engage' : order === 'hold' ? 'hold' : 'guard';
     window.CockpitSupport?.setOrder?.(normalized);
-    for (const button of this.els.supportOrders?.querySelectorAll('[data-order]') || []) button.classList.toggle('active', button.dataset.order === normalized);
-    this.log(`Rozkaz skrzydła: ${normalized.toUpperCase()}`, 'orbit');
+    this.syncSupportOrderButtons(normalized);
+    this.log(`Rozkaz skrzydła: ${SUPPORT_ORDER_LABELS[normalized]}`, 'orbit');
+  }
+
+  syncSupportOrderButtons(order) {
+    if (this.cache.supportOrder === order) return;
+    this.cache.supportOrder = order;
+    for (const button of this.els.supportOrders?.querySelectorAll('[data-order]') || []) button.classList.toggle('active', button.dataset.order === order);
+    if (this.els.wingOrder) this.els.wingOrder.textContent = SUPPORT_ORDER_LABELS[order] || 'ESKORTA';
   }
 
   toggleLineMode() {
+    if (!this.devMode) return;
     if (!window.LineSpawn) {
       this.toast('Tryb LINIE niedostępny', 'bad');
       return;
@@ -1101,8 +1665,7 @@ export class CockpitUI {
       if (first) this.lineKey = window.LineSpawn.setType?.(first.key) ? first.key : null;
     }
     this.els.lineModeBtn?.classList.toggle('active', this.lineMode);
-    // Pasek suwaka to osobny wiersz siatki panelu — klasa przestawia
-    // grid-template-rows, zeby przy wylaczonym trybie nie zostawala pusta szpara.
+    // Pasek suwaka to osobny wiersz panelu — klasa go pokazuje tylko w trybie LINIE.
     this.els.reservePanel?.classList.toggle('line-on', this.lineMode);
     this.cancelSupportDrag();
     this.renderSupportRoster();
@@ -1230,8 +1793,8 @@ export class CockpitUI {
   positionSupportTooltip(clientX, clientY) {
     const root = this.els.supportTooltip;
     if (!root || root.hidden) return;
-    const width = 270;
-    const height = 128;
+    const width = 290;
+    const height = 136;
     const left = clamp(clientX + 18, 8, Math.max(8, window.innerWidth - width - 8));
     const top = clamp(clientY - height / 2, 8, Math.max(8, window.innerHeight - height - 8));
     root.style.left = `${left}px`;
@@ -1323,38 +1886,55 @@ export class CockpitUI {
     const faction = SUPPORT_FACTIONS[this.supportFaction];
     const result = window.spawnCallInShip?.(key, { mode: faction.mode, ...(spawnPos ? { spawnPos, pos: spawnPos } : {}) });
     if (result) {
-      if (faction.mode === 'friendly') window.CockpitSupport?.setOrder?.('guard');
+      // Rozkaz skrzydła zostaje, jaki był — dawniej przyzwanie przestawiało całe
+      // skrzydło na ESKORTĘ i kasowało wcześniej kliknięty ATAK.
       this.toast(`${faction.label}: ${key} — call-in`, 'good');
       this.log(`Wsparcie ${faction.label}: przyzwano ${key}`, 'ok');
     }
   }
 
+  // Skrzydło: panel istnieje tylko wtedy, gdy są przyzwane jednostki.
   renderActiveUnits() {
     const root = this.els.unitList;
     if (!root) return;
     const support = Array.isArray(window.SupportWing?.units) ? window.SupportWing.units : [];
     const units = support.map(entry => entry?.npc).filter(unit => unit && !unit.dead);
-    const key = units.map(unit => `${unit.id || unit.type}:${Math.round(unit.hp || 0)}:${Math.round(unit.shield?.val || 0)}`).join('|');
+    const order = window.SupportWing?.order || 'guard';
+    this.syncSupportOrderButtons(order);
+    const shipPos = window.ship?.pos || null;
+    const key = units.map(unit => {
+      const pos = getEntityPosition(unit);
+      const distance = shipPos ? Math.round(Math.hypot(pos.x - shipPos.x, pos.y - shipPos.y) / 200) : 0;
+      return `${unit.id || unit.type}:${Math.round(unit.hp || 0)}:${Math.round(unit.shield?.val || 0)}:${distance}`;
+    }).join('|');
     if (this.cache.unitsKey === key) return;
     this.cache.unitsKey = key;
+    if (this.els.wingPanel) this.els.wingPanel.hidden = units.length === 0;
     root.textContent = '';
-    if (!units.length) {
-      const empty = document.createElement('div'); empty.className = 'unit-empty'; empty.textContent = 'Brak przyzwanych jednostek. Przeciągnij wsparcie na mapę lub radar.'; root.appendChild(empty);
-    }
-    for (const unit of units.slice(0, 24)) {
+    for (const unit of units.slice(0, 8)) {
       const card = document.createElement('div'); card.className = 'unit-card';
-      const portrait = document.createElement('span'); portrait.className = 'unit-portrait'; portrait.innerHTML = shipSilhouette(unit.fighter ? 'fighter' : String(unit.type || '').includes('destroyer') ? 'destroyer' : String(unit.type || '').includes('battleship') ? 'battleship' : 'frigate');
+      const portrait = document.createElement('span'); portrait.className = 'unit-portrait';
+      const sprite = spriteForEntity(unit) || terranFrigateSprite;
+      const image = document.createElement('img'); image.src = sprite; image.alt = ''; portrait.appendChild(image);
       const info = document.createElement('span'); info.className = 'unit-info';
       const name = document.createElement('span'); name.className = 'unit-name'; name.textContent = getEntityLabel(unit, 'Jednostka');
-      const meta = document.createElement('span'); meta.className = 'unit-meta'; meta.textContent = `${unit.type || 'wsparcie'} · ${window.SupportWing?.order || 'guard'}`;
+      const meta = document.createElement('span'); meta.className = 'unit-meta'; meta.textContent = String(unit.type || 'wsparcie').replace(/_/g, ' ');
       const bars = document.createElement('span'); bars.className = 'unit-bars';
       const hp = clamp((Number(unit.hp) || 0) / Math.max(1, Number(unit.maxHp) || 1), 0, 1);
       const sh = clamp((Number(unit.shield?.val) || 0) / Math.max(1, Number(unit.shield?.max) || 1), 0, 1);
-      bars.innerHTML = `<span class="micro-bar"><span style="--value:${Math.round(hp * 100)}%;--bar-color:#ff6600"></span></span><span class="micro-bar"><span style="--value:${Math.round(sh * 100)}%;--bar-color:#0088ff"></span></span>`;
+      bars.innerHTML = `<span class="micro-bar"><span style="--value:${Math.round(hp * 100)}%;--bar-color:#ff2d36"></span></span><span class="micro-bar"><span style="--value:${Math.round(sh * 100)}%;--bar-color:#2f7dff"></span></span>`;
       info.append(name, meta, bars);
       const distance = document.createElement('span'); distance.className = 'unit-distance';
-      const pos = getEntityPosition(unit); distance.textContent = window.ship?.pos ? formatLocalDistance(Math.hypot(pos.x - window.ship.pos.x, pos.y - window.ship.pos.y)) : '—';
-      card.append(portrait, info, distance); root.appendChild(card);
+      const pos = getEntityPosition(unit);
+      distance.textContent = shipPos ? formatLocalDistance(Math.hypot(pos.x - shipPos.x, pos.y - shipPos.y)) : '—';
+      card.append(portrait, info, distance);
+      root.appendChild(card);
+    }
+    if (units.length > 8) {
+      const more = document.createElement('div');
+      more.className = 'panel-empty';
+      more.textContent = `+${units.length - 8} jedn. · pełny skład w CIC`;
+      root.appendChild(more);
     }
     if (this.els.activeCount) this.els.activeCount.textContent = `${units.length} JEDN.`;
   }
@@ -1364,11 +1944,10 @@ export class CockpitUI {
     const open = force == null ? !this.commOpen : !!force;
     if (!open) { this.closeComm(); return false; }
     this.commOpen = true;
-    this.commBootUntil = (typeof performance !== 'undefined' ? performance.now() : Date.now()) + 1200;
+    this.commBootUntil = perfNow() + 1200;
     this.commDirectory = this.getStationDirectory();
-    this.els.screenBezel?.classList.add('comm-active');
+    if (this.els.commPanel) this.els.commPanel.hidden = false;
     this.els.pbComm?.classList.add('active');
-    this.els.navComm?.classList.add('active');
     this.renderComm();
     this.log('Uplink: skanowanie lokalnych węzłów stacji…', 'orbit');
     return true;
@@ -1378,10 +1957,8 @@ export class CockpitUI {
     if (!this.commOpen) return;
     this.commOpen = false;
     window.closeStationTerminal?.();
-    this.els.screenBezel?.classList.remove('comm-active');
+    if (this.els.commPanel) this.els.commPanel.hidden = true;
     this.els.pbComm?.classList.remove('active');
-    this.els.navComm?.classList.remove('active');
-    this.els.navLog?.classList.add('active');
     this.log('Uplink: połączenie zamknięte.', 'warn');
   }
 
@@ -1396,7 +1973,7 @@ export class CockpitUI {
 
   renderComm() {
     if (!this.commOpen || !this.els.commBody) return;
-    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const now = perfNow();
     const data = window.getStationTerminalUIData?.() || {};
     const root = this.els.commBody;
     root.textContent = '';
@@ -1417,7 +1994,7 @@ export class CockpitUI {
       }
       root.appendChild(grid); return;
     }
-    if (this.els.commNet) this.els.commNet.textContent = `${this.commDirectory.length} WĘZŁÓW`;
+    if (this.els.commNet) this.els.commNet.textContent = countLabel(this.commDirectory.length, 'WĘZEŁ', 'WĘZŁY', 'WĘZŁÓW');
     const intro = document.createElement('div'); intro.className = 'term-text'; intro.textContent = '> LOCAL NETWORK NODES FOUND:'; root.appendChild(intro);
     if (!this.commDirectory.length) {
       const empty = document.createElement('div'); empty.className = 'term-text'; empty.textContent = 'NO SIGNAL DETECTED'; root.appendChild(empty); return;
@@ -1474,6 +2051,7 @@ export class CockpitUI {
     this.els.tabletSub.textContent = 'ZSYNCHRONIZOWANO Z SYSTEMEM MISJI';
     this.els.tabletLinkText.textContent = 'ŁĄCZE TAKTYCZNE';
     this.els.pbMissions?.classList.add('active');
+    this.syncTabletOpenClass();
     this.renderMissionJournal();
     return true;
   }
@@ -1488,6 +2066,7 @@ export class CockpitUI {
     this.els.missionPane.hidden = true;
     this.els.stationPane.hidden = false;
     this.els.stationTabsBar.hidden = false;
+    this.syncTabletOpenClass();
   }
 
   getMissionSnapshot() {
@@ -1562,6 +2141,7 @@ export class CockpitUI {
       } else if (!this.missionOpen) {
         this.log('Terminal stacji zamknięty.', 'warn');
       }
+      this.syncTabletOpenClass();
     }
     if (!stationOpen) return;
     const station = stationUI.station;
@@ -1578,6 +2158,14 @@ export class CockpitUI {
     this.els.tabletCredits.textContent = `${Math.round(credits).toLocaleString('pl-PL')} CR`;
     this.els.tabletCargo.textContent = window.CockpitBridge?.getCargoLabel?.() || '—';
     this.els.tabletFootCenter.textContent = `MODUŁ ${activeTab.toUpperCase()}`;
+  }
+
+  // Otwarty tablet (stacja albo dziennik misji) chowa HUD lotu pod spodem.
+  syncTabletOpenClass() {
+    const open = !!(this.missionOpen || this.lastStationOpen);
+    if (this.cache.tabletOpen === open) return;
+    this.cache.tabletOpen = open;
+    this.els.app?.classList.toggle('tablet-open', open);
   }
 
   renderStationTabs(activeTab) {
@@ -1620,24 +2208,24 @@ export class CockpitUI {
     else window.closeStationUI?.();
   }
 
-  logShipStatus() {
-    const ship = window.ship;
-    if (!ship) return;
-    this.log(`STATEK — HP ${Math.round(ship.hull?.val || 0)}/${Math.round(ship.hull?.max || 0)} · TARCZA ${Math.round(ship.shield?.val || 0)}/${Math.round(ship.shield?.max || 0)}`, 'ok');
-  }
-
   syncRingCityFlightButton(force = false) {
     const button = this.els.pbShip;
     if (!button) return;
-    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const now = perfNow();
     if (!force && now - this.lastRingFlightSync < 250) return;
     this.lastRingFlightSync = now;
     const status = window.RingCityFlight?.getLaunchStatus?.() || {
       available: false,
       reason: 'Moduł lotu Ring City nie jest gotowy.'
     };
-    button.disabled = !status.available;
-    button.classList.toggle('ring-flight-ready', !!status.available);
+    const available = !!status.available;
+    // Pierścień w zasięgu to kontekst — mówimy o nim raz, zamiast trzymać stały przycisk na widoku.
+    if (available && this.ringFlightAvailable === false) {
+      this.pushAlert('Pierścień w zasięgu · Alt → Statek: lot po Ring City', { tone: 'info', duration: 3.2 });
+    }
+    this.ringFlightAvailable = available;
+    button.disabled = !available;
+    button.classList.toggle('ring-flight-ready', available);
     button.classList.toggle('ring-flight-loading', !!status.loading);
     button.title = status.reason || 'Eksperymentalny lot po Ring City';
     const label = button.querySelector('span');
@@ -1661,20 +2249,86 @@ export class CockpitUI {
     this.syncRingCityFlightButton(true);
   }
 
+  // Komunikaty statku (pushZoneMessage, toasty) — linia nad klastrem, max 2 naraz.
+  pushAlert(text, options = {}) {
+    const message = String(text || '').trim();
+    const root = this.els.alertLine;
+    if (!message || !root) return;
+    const rawTone = String(options.tone || 'status').toLowerCase();
+    // Wejście do strefy obsługuje dziennik (logZone) i nagłówek lokalizacji.
+    if (rawTone === 'sector') return;
+    if (options.label === 'APPROACH VECTOR') {
+      this.log(`NAWIGACJA — zbliżanie: ${message}`, 'orbit');
+      return;
+    }
+    const now = perfNow();
+    if (message === this.lastAlertText && now - this.lastAlertAt < 400) return;
+    this.lastAlertText = message;
+    this.lastAlertAt = now;
+    const tone = ALERT_TONES[rawTone] || 'info';
+    const seconds = clamp(Number(options.duration) || 2.2, 1.2, 6) + 0.8;
+    const item = document.createElement('div');
+    item.className = `alert-item ${tone}`;
+    item.style.setProperty('--dur', `${seconds.toFixed(2)}s`);
+    item.textContent = message;
+    root.appendChild(item);
+    while (root.children.length > 2) root.firstElementChild?.remove();
+    setTimeout(() => item.remove(), seconds * 1000 + 80);
+  }
+
+  createFeedLine(entry, live, now = perfNow()) {
+    const line = document.createElement('div');
+    line.className = `feed-line ${entry.tone || ''}${live ? ' live' : ''}`.trim();
+    line.dataset.at = String(entry.at);
+    if (live) line.style.animationDelay = `${-Math.max(0, now - entry.at)}ms`;
+    const time = document.createElement('span');
+    time.className = 'ts';
+    time.textContent = `[${entry.timestamp}]`;
+    line.append(time, document.createTextNode(entry.text));
+    return line;
+  }
+
+  // Poza trybem interfejsu: kilka świeżych wpisów, które same gasną.
+  // W trybie interfejsu (Alt): historia z przewijaniem.
+  renderFeed() {
+    const root = this.els.feedLines;
+    if (!root) return;
+    root.textContent = '';
+    const now = perfNow();
+    if (this.pointerMode) {
+      for (const entry of this.logs.slice(-FEED_HISTORY)) root.appendChild(this.createFeedLine(entry, false, now));
+      // Po zmianie klasy .pointer pudełko dostaje max-height dopiero w następnym layoucie.
+      requestAnimationFrame(() => { root.scrollTop = root.scrollHeight; });
+      return;
+    }
+    for (const entry of this.logs.slice(-FEED_LIVE)) {
+      if (now - entry.at < FEED_LIFE_MS) root.appendChild(this.createFeedLine(entry, true, now));
+    }
+  }
+
+  pruneFeed(now) {
+    const root = this.els.feedLines;
+    if (!root || this.pointerMode) return;
+    while (root.firstElementChild && now - Number(root.firstElementChild.dataset.at) > FEED_LIFE_MS) {
+      root.firstElementChild.remove();
+    }
+  }
+
   log(message, tone = '') {
     const text = String(message || '').trim();
     if (!text) return;
-    const elapsed = Math.floor(((typeof performance !== 'undefined' ? performance.now() : Date.now()) - this.startedAt) / 1000);
+    const now = perfNow();
+    const elapsed = Math.floor((now - this.startedAt) / 1000);
     const timestamp = `${String(Math.floor(elapsed / 60)).padStart(2, '0')}:${String(elapsed % 60).padStart(2, '0')}`;
-    this.logs.push({ text, tone, timestamp });
+    const entry = { text, tone, timestamp, at: now };
+    this.logs.push(entry);
     if (this.logs.length > 80) this.logs.splice(0, this.logs.length - 80);
-    const root = this.els.consoleLog;
+    const root = this.els.feedLines;
     if (!root) return;
-    const line = document.createElement('span'); line.className = `console-line ${tone}`.trim();
-    const time = document.createElement('span'); time.className = 'ts'; time.textContent = `[${timestamp}]`;
-    line.append(time, document.createTextNode(text)); root.appendChild(line);
-    while (root.children.length > 80) root.firstElementChild?.remove();
-    root.scrollTop = root.scrollHeight;
+    root.appendChild(this.createFeedLine(entry, !this.pointerMode, now));
+    const limit = this.pointerMode ? FEED_HISTORY : FEED_LIVE;
+    while (root.children.length > limit) root.firstElementChild?.remove();
+    if (this.pointerMode) root.scrollTop = root.scrollHeight;
   }
 
   logZone(label, zoneId = '') {
@@ -1695,10 +2349,6 @@ export class CockpitUI {
   }
 
   toast(message, tone = '') {
-    const root = this.els.toastStack;
-    if (!root) return;
-    const item = document.createElement('div'); item.className = `toast ${tone}`.trim(); item.textContent = String(message || ''); root.appendChild(item);
-    while (root.children.length > 4) root.firstElementChild?.remove();
-    setTimeout(() => item.remove(), 3100);
+    this.pushAlert(message, { tone: tone || 'info', duration: 2.6 });
   }
 }

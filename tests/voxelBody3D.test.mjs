@@ -132,6 +132,17 @@ test('voxelizeTriangles: kolory trójkątów trafiają do komórek powierzchni',
   assert.ok(Math.abs(surf.r - 0.9) < 1e-4, `zły kolor r: ${surf.r}`);
 });
 
+test('solidMask odróżnia pominięte wnętrze skorupy od zewnętrznej pustki', () => {
+  const full = voxelizeTriangles(offsetCubeTris(3), null, { cellSize: 0.5, shellLayers: 0 });
+  const shell = voxelizeTriangles(offsetCubeTris(3), null, { cellSize: 0.5, shellLayers: 1 });
+  const occupied = new Set(full.cells.map(c => c.ix + c.iy * full.nx + c.iz * full.nx * full.ny));
+  assert.ok(shell.cells.length < full.cells.length);
+  assert.equal(shell.solidMask.length, shell.nx * shell.ny * shell.nz);
+  for (let i = 0; i < shell.solidMask.length; i++) {
+    assert.equal(shell.solidMask[i], occupied.has(i) ? 1 : 0);
+  }
+});
+
 test('buildVoxelBody: recentrowanie do środka masy i sensowny tensor', () => {
   const vox = voxelizeTriangles(offsetCubeTris(2, 0.4), null, { cellSize: 0.5, shellLayers: 0 });
   const body = buildVoxelBody(vox, { cellMassBase: 10 });

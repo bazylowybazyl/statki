@@ -1,8 +1,11 @@
 ﻿import * as THREE from 'three';
-import { refreshHexBodyCache, DestructorSystem, isPackedShardBoundary } from '../game/destructor.js';
+import { refreshHexBodyCache, DestructorSystem, isPackedShardBoundary, DESTRUCTOR_CONFIG, shardHeatNow } from '../game/destructor.js';
 import { Core3D } from './core3d.js';
 import { EngineVfxSystem } from './engineVfxSystem.js';
 import { Weapon3DSystem } from './weapon3DSystem.js';
+import { Fx3D } from './fxParticles3D.js';
+import { RailgunFX3D } from './railgunFx3D.js';
+import { BulletTrails } from './slugTrail3D.js';
 import { Turret2D } from '../vfx/turret2D.js';
 import {
   MAX_SHADER_SHIP_LIGHTS,
@@ -17,20 +20,30 @@ import { ShipLights3D } from './shipLights3D.js';
 import { allowsSolidArmorLod } from './hexLodPolicy.js';
 import { DrawCallStats } from './drawCallStats.js';
 import { HexBodyImpostorBatch, computeAverageBodyColor } from './hexBodyImpostorBatch.js';
+import { HullLacquer, MAX_ENGINE_ZONES, computeEngineZones } from './hullLacquer.js';
 
 const HEX_VERTEX_SHADER = `
 attribute vec2 aGridPos;
 attribute float aStress;
+// aHeat = (szczyt żaru 0-1, znacznik czasu w sekundach). Zanik liczy fragment
+// z uTime — CPU nie chodzi po shardach, żeby wygaszać rozżarzenie.
+attribute vec2 aHeat;
 
 uniform vec2 uSpriteSize;
 
 varying vec2 vSpriteUV;
 varying float vStress;
+varying vec2 vHeat;
+varying vec2 vWorldXY;
 
 void main() {
   vStress = aStress;
+  vHeat = aHeat;
   vSpriteUV = (aGridPos + position.xy) / uSpriteSize;
-  vec4 mvPosition = modelViewMatrix * instanceMatrix * vec4(position.xy, 0.0, 1.0);
+  vec4 localPos = instanceMatrix * vec4(position.xy, 0.0, 1.0);
+  // Pozycja w świecie dla lakieru (kierunek do oka pseudo-perspektywy).
+  vWorldXY = (modelMatrix * localPos).xy;
+  vec4 mvPosition = modelViewMatrix * localPos;
   gl_Position = projectionMatrix * mvPosition;
 }
 `;
@@ -38,20 +51,42 @@ void main() {
 const ARMOR_VERTEX_SHADER = `
 varying vec2 vSpriteUV;
 varying float vStress;
+varying vec2 vHeat;
+varying vec2 vWorldXY;
 
 void main() {
   vStress = 0.0;
+  // Płyta pancerza to jeden quad na cały kadłub — nie ma na niej pojedynczego
+  // heksa, któremu można by przypisać żar. Rozżarzone heksy wnętrza renderują
+  // się nad nią osobno (patrz shouldRenderHybridShard).
+  vHeat = vec2(0.0);
   vSpriteUV = uv;
+  vWorldXY = (modelMatrix * vec4(position, 1.0)).xy;
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
+
+// Rampa temperatury żaru (ciało doskonale czarne w skrócie): wiśnia →
+// pomarańcz → żółć → biel. Wspólna dla kadłuba i odłamków, żeby ten sam metal
+// miał tę samą barwę w obu miejscach. Barwa jest znormalizowana (kanał ≤ 1) —
+// jasność dokłada wywołujący, bo kadłub i odłamki leżą w innych pasmach HDR.
+const HEAT_RAMP_GLSL = `
+vec3 heatRamp(float h) {
+  vec3 c = mix(vec3(0.55, 0.04, 0.01), vec3(1.0, 0.30, 0.04), smoothstep(0.0, 0.45, h));
+  c = mix(c, vec3(1.0, 0.70, 0.22), smoothstep(0.45, 0.75, h));
+  return mix(c, vec3(1.0, 0.93, 0.80), smoothstep(0.75, 1.0, h));
 }
 `;
 
 const HEX_FRAGMENT_SHADER = `
 #define MAX_SHIP_LIGHTS ${MAX_SHADER_SHIP_LIGHTS}
+#define MAX_ENGINE_ZONES ${MAX_ENGINE_ZONES}
 uniform sampler2D uSprite;
 uniform sampler2D uNormalMap;
 uniform int uHasNormalMap;
 uniform float uStressTint;
+uniform float uHeatDecay;
+uniform float uHeatPeak;
 uniform vec3 uLightDir;
 uniform float uRotation;
 uniform float uTerminatorStart;
@@ -72,10 +107,23 @@ uniform int uShipLightCount;
 uniform vec4 uShipLightData[MAX_SHIP_LIGHTS];
 uniform vec4 uShipLightColor[MAX_SHIP_LIGHTS];
 uniform vec4 uShipLightExtra[MAX_SHIP_LIGHTS];
+// Lakier (hullLacquer.js). uShapeMap: RG = normalna XY sprite'a, B = waga.
+uniform sampler2D uShapeMap;
+uniform sampler2D uLacquerEnv;
+uniform float uLacquerWeight;
+uniform float uLacquerGlint;
+uniform vec3 uLacquerEye;
+uniform vec4 uLacquerA;
+uniform vec4 uLacquerB;
+uniform vec4 uLacquerC;
+uniform int uEngineZoneCount;
+uniform vec4 uEngineZones[MAX_ENGINE_ZONES];
 
 varying vec2 vSpriteUV;
 varying float vStress;
-
+varying vec2 vHeat;
+varying vec2 vWorldXY;
+${HEAT_RAMP_GLSL}
 void main() {
   if (vSpriteUV.x < -0.01 || vSpriteUV.x > 1.01 ||
       vSpriteUV.y < -0.01 || vSpriteUV.y > 1.01) discard;
@@ -126,9 +174,55 @@ void main() {
   color += vec3(spec * uSpecularMul * litMask);
 
   float isGlowing = step(0.6, color.b) * step(color.r, 0.5);
-  vec3 finalColor = color + (color * isGlowing * 1.5); 
+  vec3 finalColor = color + (color * isGlowing * 1.5);
 
   vec2 fragPx = vSpriteUV * uSpriteSize;
+
+  // --- LAKIER: odbicie kosmosu + odblask słońca (hullLacquer.js) ---
+  // Stoi PO isGlowing: niebieskawe odbicie policzone przed nim podbiłoby cały
+  // kadłub ×2,5. Waga gaśnie przy sylwetce (jasna obwódka czytała się jak
+  // tarcza) i w strefach dysz — silniki zostają matowe.
+  float lacquerW = uLacquerWeight * uLacquerA.x;
+  if (lacquerW > 0.001) {
+    vec4 shape = texture2D(uShapeMap, vSpriteUV);
+    lacquerW *= shape.b;
+    for (int i = 0; i < MAX_ENGINE_ZONES; i++) {
+      if (i >= uEngineZoneCount) break;
+      vec4 zone = uEngineZones[i];
+      lacquerW *= smoothstep(zone.z, zone.z * 1.5, length(fragPx - zone.xy));
+    }
+    if (lacquerW > 0.001) {
+      vec3 coatN = uHasNormalMap == 1
+        ? localNormal
+        : vec3(shape.rg, sqrt(max(0.0, 1.0 - dot(shape.rg, shape.rg))));
+      vec3 N = normalize(vec3(coatN.x * c - coatN.y * s, coatN.x * s + coatN.y * c, coatN.z));
+      // Oko pseudo-perspektywy (Core3D.cameraPersp) zamiast stałego (0,0,1):
+      // płaska płyta odbija wtedy różne kierunki nieba, a nie jeden punkt.
+      vec3 V = normalize(uLacquerEye - vec3(vWorldXY, 0.0));
+      float NdotV = max(dot(N, V), 0.001);
+      vec3 R = 2.0 * NdotV * N - V;
+      float fresnel = uLacquerA.y + (1.0 - uLacquerA.y) * pow(1.0 - NdotV, 5.0);
+      // Podwójna paraboloida: zenit w środku tekstury, horyzont na okręgu.
+      // Dolna półkula (tło pod statkiem) gaśnie — z niej brała się obwódka.
+      vec2 envUV = 0.5 + 0.5 * R.xy / (1.0 + abs(R.z));
+      float hemi = smoothstep(-0.35, 0.15, R.z);
+      vec4 envTex = texture2D(uLacquerEnv, envUV);
+      vec3 env = (min(envTex.rgb * uLacquerA.z, vec3(uLacquerA.w)) + envTex.a * uLacquerB.x) * hemi;
+      vec3 envBlur = min(textureLod(uLacquerEnv, envUV, uLacquerC.z).rgb * uLacquerA.z, vec3(uLacquerA.w)) * hemi;
+      // Specular AA: gdzie normalna szybko zmienia się na ekranie, płat się
+      // poszerza i ciemnieje (energia ~stała), zamiast migotać iskrami.
+      vec3 dN = fwidth(N);
+      float nVar = dot(dN, dN);
+      float glintExp = uLacquerB.z / (1.0 + uLacquerB.z * nVar);
+      float sheenExp = uLacquerC.x / (1.0 + uLacquerC.x * nVar);
+      float RdotL = max(dot(R, uLightDir), 0.0);
+      float lobe = pow(RdotL, glintExp) * uLacquerB.y * (glintExp / uLacquerB.z) * uLacquerGlint
+        + pow(RdotL, sheenExp) * uLacquerB.w * (sheenExp / uLacquerC.x);
+      vec3 coat = fresnel * (env + lobe) + armor.rgb * envBlur * uLacquerC.y;
+      finalColor = finalColor * (1.0 - fresnel * lacquerW) + coat * lacquerW;
+    }
+  }
+
   for (int i = 0; i < MAX_SHIP_LIGHTS; i++) {
     if (i >= uShipLightCount) break;
     vec4 lightData = uShipLightData[i];
@@ -175,6 +269,16 @@ void main() {
   vec3 stressGlow = vec3(1.0, 0.25, 0.05) * stress * uStressTint * 3.5;
   finalColor += stressGlow;
 
+  // ŻAR brzegu rany i powierzchni tarcia. Kanał niezależny od stresu: gaśnie
+  // z własnym zegarem, więc blacha stygnie także wtedy, gdy siatka już śpi
+  // i po wypaleniu plastycznym (aStress jest wtedy zerowy).
+  // Jasność ~ 0.26h + 0.74h^4 (Stefan-Boltzmann w skrócie): świeży żar sięga
+  // uHeatPeak (8-12, przepalona biel z bloomem), h = 0.45 daje ~1.3 — nasycony
+  // pomarańcz tuż pod progiem bloomu — a wiśnia tli się długo nisko.
+  float heat = vHeat.x * exp(-max(0.0, uTime - vHeat.y) * uHeatDecay);
+  float heat2 = heat * heat;
+  finalColor += heatRamp(heat) * (uHeatPeak * (0.26 * heat + 0.74 * heat2 * heat2));
+
   gl_FragColor = vec4(finalColor, alpha);
 }
 `;
@@ -185,29 +289,42 @@ attribute vec2 aStartPos;
 attribute vec2 aStartVel;
 attribute vec3 aRotationData;
 attribute vec2 aTimeData;
+// Żar w chwili oderwania. Odłamek stygnie od SWOJEGO wieku — jest już poza
+// siatką, więc nie ma skąd wziąć znacznika czasu kadłuba.
+attribute float aHeat;
 
 uniform vec2 uSpriteSize;
 uniform float uTime;
 
 varying vec2 vSpriteUV;
 varying float vAlpha;
+varying float vAge;
+varying float vEdge;
+varying float vHeat;
 
 void main() {
   float age = uTime - aTimeData.x;
+  vAge = age;
+  vHeat = aHeat;
+  // Geometria odłamka to CircleGeometry(25, 6) — promień znormalizowany daje
+  // maskę urwanej krawędzi, na której zbiera się żar.
+  vEdge = length(position.xy) / 25.0;
 
-  if (age < 0.0 || age > 5.0) {
+  float lifetime = aTimeData.y;
+  if (age < 0.0 || lifetime <= 0.0 || age > lifetime) {
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
     return;
   }
 
-  float k = 0.6;
+  float k = 0.16;
   float distMul = (1.0 - exp(-k * age)) / k;
 
   vec2 currentPos = aStartPos + aStartVel * distMul;
   float currentAngle = aRotationData.x + aRotationData.y * age;
   float currentScale = aRotationData.z;
 
-  vAlpha = aTimeData.y - (age * 0.2);
+  // Keep the torn metal readable, then fade smoothly near the end of its life.
+  vAlpha = 1.0 - smoothstep(lifetime * 0.72, lifetime, age);
   if (vAlpha <= 0.01) {
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
     return;
@@ -233,10 +350,15 @@ uniform sampler2D uSprite;
 uniform vec3 uLightDir;
 uniform float uDayAmbient;
 uniform float uDayDiffuseMul;
+uniform float uHeatDecay;
+uniform float uHeatTint;
 
 varying vec2 vSpriteUV;
 varying float vAlpha;
-
+varying float vAge;
+varying float vEdge;
+varying float vHeat;
+${HEAT_RAMP_GLSL}
 void main() {
   if (vSpriteUV.x < -0.01 || vSpriteUV.x > 1.01 || vSpriteUV.y < -0.01 || vSpriteUV.y > 1.01) discard;
 
@@ -249,6 +371,14 @@ void main() {
   float lightMul = uDayAmbient + NdotL * uDayDiffuseMul;
 
   gl_FragColor = vec4(color.rgb * lightMul, color.a * vAlpha);
+
+  // Żar siedzi na URWANYCH KRAWĘDZIACH — środek płata zdążył oddać ciepło
+  // w blachę, brzeg nie miał komu. Jasność LINIOWA i niska (debrisHeatGlow ~1):
+  // odłamki zostają w paśmie barwy, bez białego szczytu — główny żar ma być
+  // na kadłubie, na brzegu wyrwy.
+  float edge = smoothstep(0.5, 1.0, vEdge);
+  float heat = vHeat * exp(-vAge * uHeatDecay);
+  gl_FragColor.rgb += heatRamp(heat) * heat * uHeatTint * (0.35 + 0.65 * edge);
 }
 `;
 
@@ -634,7 +764,7 @@ function isLegacyBoundaryShard(shard) {
   return false;
 }
 
-function shouldRenderHybridShard(shard) {
+function shouldRenderHybridShard(shard, nowSec = 0) {
   if (!shard?.active || shard.isDebris || shard.hp <= 0) return false;
   if (isPackedShardBoundary(shard) || isLegacyBoundaryShard(shard)) return true;
   if (Number(shard.hp) < (Number(shard.maxHp) || Number(shard.hp)) * 0.995) return true;
@@ -642,6 +772,9 @@ function shouldRenderHybridShard(shard) {
   const target = shard.targetDeformation;
   if (Math.abs(Number(deform?.x) || 0) + Math.abs(Number(deform?.y) || 0) > 0.08) return true;
   if (Math.abs(Number(target?.x) || 0) + Math.abs(Number(target?.y) || 0) > 0.08) return true;
+  // Rozżarzony heks WNĘTRZA musi zostać w instancjach, inaczej w trybie HYBRID
+  // żar znika pod płytą pancerza — a płyta nie ma jak go pokazać (vHeat = 0).
+  if (shardHeatNow(shard, nowSec) > 0.03) return true;
   return computeShardStress(shard) > 0.08;
 }
 
@@ -779,6 +912,63 @@ function createLightUniformArray() {
   return Array.from({ length: MAX_SHADER_SHIP_LIGHTS }, () => new THREE.Vector4());
 }
 
+function createEngineZoneArray() {
+  return Array.from({ length: MAX_ENGINE_ZONES }, () => new THREE.Vector4());
+}
+
+// Lakier nie dotyczy pierścienia ani asteroid (te wychodzą z shadera wcześniej).
+function allowsHullLacquer(entity) {
+  return entity?.isRingSegment !== true && !usesBillboardLighting(entity);
+}
+
+// Lakier per encja: waga, wygaszanie odblasku po rozmiarze kadłuba na ekranie
+// (flota z daleka to nie brokat) i strefy dysz. Strefy przeliczamy tylko przy
+// zmianie układu silników albo wymiarów siatki — jak sygnatura świateł.
+function syncEntityLacquer(entity, data, grid, entityScale, zoomPx) {
+  const uniforms = data.mesh.material.uniforms;
+  if (!uniforms.uLacquerWeight) return;
+  const tune = HullLacquer.getTuning();
+
+  let weight = allowsHullLacquer(entity) ? 1 : 0;
+  if (weight > 0 && (entity.isWreck === true || grid.isFragment === true)) {
+    weight = clamp(tune.wreckMul, 0, 1);
+  }
+  uniforms.uLacquerWeight.value = weight;
+
+  const bodyRadiusPx = Math.max(data.srcWidth, data.srcHeight) * 0.5 * entityScale * zoomPx;
+  const glintMin = clamp(tune.glintMinPx, 0, 10000);
+  const glintFull = Math.max(glintMin + 1, clamp(tune.glintFullPx, 0, 10000));
+  const g = clamp((bodyRadiusPx - glintMin) / (glintFull - glintMin), 0, 1);
+  uniforms.uLacquerGlint.value = g * g * (3 - 2 * g);
+
+  const main = entity.visual?.mainThrusters || null;
+  const side = entity.visual?.torqueThrusters || null;
+  // NaN z ręcznie podmienionego tuningu nie może psuć porównania (przeliczanie co klatkę).
+  const zoneMulRaw = Number(tune.engineZoneMul);
+  const zoneMul = Number.isFinite(zoneMulRaw) ? zoneMulRaw : 1;
+  if (
+    data.zoneMainRef === main && data.zoneSideRef === side &&
+    data.zoneSrcW === data.srcWidth && data.zoneSrcH === data.srcHeight &&
+    data.zonePivotX === data.pivotX && data.zonePivotY === data.pivotY &&
+    data.zoneMul === zoneMul
+  ) return;
+  const zones = computeEngineZones(main, side, grid, tune);
+  const out = uniforms.uEngineZones.value;
+  for (let i = 0; i < MAX_ENGINE_ZONES; i++) {
+    const zone = zones[i];
+    if (zone) out[i].set(zone.x, zone.y, zone.r, 0);
+    else out[i].set(0, 0, 0, 0);
+  }
+  uniforms.uEngineZoneCount.value = zones.length;
+  data.zoneMainRef = main;
+  data.zoneSideRef = side;
+  data.zoneSrcW = data.srcWidth;
+  data.zoneSrcH = data.srcHeight;
+  data.zonePivotX = data.pivotX;
+  data.zonePivotY = data.pivotY;
+  data.zoneMul = zoneMul;
+}
+
 function syncEntityLightUniforms(entity, data, grid, externalRoadLights = null) {
   const uniforms = data?.mesh?.material?.uniforms;
   if (!uniforms?.uShipLightCount) return;
@@ -836,6 +1026,7 @@ function disposeMeshData(data) {
   if (data.visualImageRef) releaseSharedVisualTexture(data.visualImageRef);
   else data.texture?.dispose?.();
   data.normalTexture?.dispose?.();
+  if (data.shapeImageRef) HullLacquer.releaseShapeUniform(data.shapeImageRef);
 }
 
 const GPU_DEBRIS_MAX = 10000;
@@ -850,7 +1041,7 @@ class GpuDebrisPool {
     this._dirtyMin = Infinity;
     this._dirtyMax = -1;
     this._dirtyWrapped = false;
-    this.lastSpawnTime = -Infinity;
+    this.lastExpiryTime = -Infinity;
     this.geometry = new THREE.CircleGeometry(25, 6);
 
     this.startPosArray = new Float32Array(GPU_DEBRIS_MAX * 2);
@@ -858,12 +1049,14 @@ class GpuDebrisPool {
     this.rotationArray = new Float32Array(GPU_DEBRIS_MAX * 3);
     this.timeArray = new Float32Array(GPU_DEBRIS_MAX * 2);
     this.gridPosArray = new Float32Array(GPU_DEBRIS_MAX * 2);
+    this.heatArray = new Float32Array(GPU_DEBRIS_MAX);
 
     this.geometry.setAttribute('aStartPos', new THREE.InstancedBufferAttribute(this.startPosArray, 2));
     this.geometry.setAttribute('aStartVel', new THREE.InstancedBufferAttribute(this.startVelArray, 2));
     this.geometry.setAttribute('aRotationData', new THREE.InstancedBufferAttribute(this.rotationArray, 3));
     this.geometry.setAttribute('aTimeData', new THREE.InstancedBufferAttribute(this.timeArray, 2));
     this.geometry.setAttribute('aGridPos', new THREE.InstancedBufferAttribute(this.gridPosArray, 2));
+    this.geometry.setAttribute('aHeat', new THREE.InstancedBufferAttribute(this.heatArray, 1));
 
     this.material = new THREE.ShaderMaterial({
       uniforms: {
@@ -872,7 +1065,9 @@ class GpuDebrisPool {
         uTime: { value: 0 },
         uLightDir: { value: new THREE.Vector3(0, 0, 1) },
         uDayAmbient: { value: SHIP_LIGHT_DEFAULTS.dayAmbient },
-        uDayDiffuseMul: { value: SHIP_LIGHT_DEFAULTS.dayDiffuseMul }
+        uDayDiffuseMul: { value: SHIP_LIGHT_DEFAULTS.dayDiffuseMul },
+        uHeatDecay: { value: DESTRUCTOR_CONFIG.heatDecay },
+        uHeatTint: { value: DESTRUCTOR_CONFIG.debrisHeatGlow }
       },
       vertexShader: DEBRIS_VERTEX_SHADER,
       fragmentShader: DEBRIS_FRAGMENT_SHADER,
@@ -900,16 +1095,29 @@ class GpuDebrisPool {
     this.rotationArray[i * 3 + 1] = angVel;
     this.rotationArray[i * 3 + 2] = scale * ((shard.radius || 20) / 25.0);
 
+    const worldRadius = Math.max(0, (shard.radius || 5) * scale);
+    const lifetime = 5 + 7 * Math.min(1, Math.max(0, (worldRadius - 5) / 15));
     this.timeArray[i * 2] = globalTime;
-    this.timeArray[i * 2 + 1] = 1.0;
+    this.timeArray[i * 2 + 1] = lifetime;
 
     // UV odłamka z pozycji siatki bez deformacji — poza spritem shader go odrzuci.
-    this.gridPosArray[i * 2] = shard.gridX || shard.origGridX || 0;
-    this.gridPosArray[i * 2 + 1] = shard.gridY || shard.origGridY || 0;
+    this.gridPosArray[i * 2] = shard.origGridX ?? shard.gridX ?? 0;
+    this.gridPosArray[i * 2 + 1] = shard.origGridY ?? shard.gridY ?? 0;
+
+    // Żar zabrany z kadłuba, wyliczony na moment oderwania (ta sama formuła co
+    // shardHeatNow w destructorze). PODŁOGA: metal urwany rozciąganiem przez
+    // solver GPU nie przeszedł przez strefę zgniotu i miałby zerowy żar — ma
+    // się świecić słabo, ale nie wcale.
+    const heatPeak = Number(shard.heat) || 0;
+    const heatAge = globalTime - (Number(shard.heatStamp) || 0);
+    const heatNow = heatPeak > 0 && heatAge > 0
+      ? heatPeak * Math.exp(-heatAge * (Number(DESTRUCTOR_CONFIG.heatDecay) || 0.45))
+      : heatPeak;
+    this.heatArray[i] = Math.max(Number(DESTRUCTOR_CONFIG.debrisHeatFloor) || 0, heatNow);
 
     if (i < this._dirtyMin) this._dirtyMin = i;
     if (i > this._dirtyMax) this._dirtyMax = i;
-    this.lastSpawnTime = globalTime;
+    this.lastExpiryTime = Math.max(this.lastExpiryTime, globalTime + lifetime);
 
     this.currentIndex = (this.currentIndex + 1) % GPU_DEBRIS_MAX;
     if (this.currentIndex === 0) this._dirtyWrapped = true;
@@ -931,6 +1139,7 @@ class GpuDebrisPool {
     apply('aRotationData', 3);
     apply('aTimeData', 2);
     apply('aGridPos', 2);
+    apply('aHeat', 1);
     this._dirtyMin = Infinity;
     this._dirtyMax = -1;
     this._dirtyWrapped = false;
@@ -947,6 +1156,8 @@ class GpuDebrisPool {
 const GpuDebrisManager = {
   pools: new Map(),
   globalTime: 0,
+  // Ustawiane z updateHexShips3D razem z uStressTint kadłubów (state.damageTintEnabled).
+  heatTintEnabled: true,
 
   spawn(shard, gridRef, wx, wy, vx, vy, drot, angle, scale) {
     const texKey = shard.img;
@@ -970,13 +1181,18 @@ const GpuDebrisManager = {
     const camera = typeof window !== 'undefined' ? window.camera : null;
     for (const pool of this.pools.values()) {
       pool.commit();
-      // Wszystkie odłamki wygasły (życie ≤ 5 s) → zeruj licznik instancji,
+      // All sizes have expired; a later small chip must not truncate a big one.
       // żeby pula po długiej bitwie nie mieliła na stałe 10k martwych slotów.
-      if (pool.mesh.count > 0 && (time - pool.lastSpawnTime) > 5.5) {
+      if (pool.mesh.count > 0 && time > pool.lastExpiryTime) {
         pool.mesh.count = 0;
         pool.currentIndex = 0;
       }
       pool.material.uniforms.uTime.value = time;
+      // Żar odłamków respektuje ten sam przełącznik co żar kadłuba.
+      pool.material.uniforms.uHeatDecay.value = Math.max(0, Number(DESTRUCTOR_CONFIG.heatDecay) || 0);
+      pool.material.uniforms.uHeatTint.value = this.heatTintEnabled
+        ? Math.max(0, Number(DESTRUCTOR_CONFIG.debrisHeatGlow) || 0)
+        : 0;
       if (sun && camera && pool.mesh.count > 0) {
         const dx = sun.x - camera.x;
         const dy = -(sun.y - camera.y);
@@ -1028,12 +1244,21 @@ function createEntityMesh(entity) {
     normalTexture = createManagedTexture(grid.normalMapImage, true);
   }
 
+  // Mapa kształtu lakieru jest wspólna dla wszystkich kadłubów z tym samym
+  // sprite'em (pieczona z jego alfy). Bez sprite'a albo bez lakieru — płaska.
+  const shapeImageRef = (visualImage && allowsHullLacquer(entity)) ? visualImage : null;
+  const shapeUniform = shapeImageRef
+    ? HullLacquer.acquireShapeUniform(shapeImageRef)
+    : HullLacquer.flatShapeUniform;
+
   const material = new THREE.ShaderMaterial({
     uniforms: {
       uSprite: { value: texture },
       uNormalMap: { value: normalTexture },
       uHasNormalMap: { value: normalTexture ? 1 : 0 },
       uStressTint: { value: 0.30 },
+      uHeatDecay: { value: DESTRUCTOR_CONFIG.heatDecay },
+      uHeatPeak: { value: DESTRUCTOR_CONFIG.heatGlowPeak },
       uLightDir: { value: new THREE.Vector3(0, 0, 1) },
       uRotation: { value: 0.0 },
       uSpriteSize: { value: new THREE.Vector2(grid.srcWidth || 1, grid.srcHeight || 1) },
@@ -1053,7 +1278,18 @@ function createEntityMesh(entity) {
       uShipLightCount: { value: 0 },
       uShipLightData: { value: createLightUniformArray() },
       uShipLightColor: { value: createLightUniformArray() },
-      uShipLightExtra: { value: createLightUniformArray() }
+      uShipLightExtra: { value: createLightUniformArray() },
+      uShapeMap: shapeUniform,
+      uLacquerWeight: { value: 0 },
+      uLacquerGlint: { value: 1 },
+      uEngineZoneCount: { value: 0 },
+      uEngineZones: { value: createEngineZoneArray() },
+      // Wspólne obiekty — strojenie lakieru to jeden zapis na klatkę dla wszystkich.
+      uLacquerEnv: HullLacquer.uniforms.uLacquerEnv,
+      uLacquerEye: HullLacquer.uniforms.uLacquerEye,
+      uLacquerA: HullLacquer.uniforms.uLacquerA,
+      uLacquerB: HullLacquer.uniforms.uLacquerB,
+      uLacquerC: HullLacquer.uniforms.uLacquerC
     },
     vertexShader: HEX_VERTEX_SHADER,
     fragmentShader: HEX_FRAGMENT_SHADER,
@@ -1083,6 +1319,10 @@ function createEntityMesh(entity) {
 
   const gridPosArray = new Float32Array(count * 2);
   const stressArray = new Float32Array(count);
+  // Żar startuje z POLA SHARDA, nie z zera: wrak odłączony w spawnWreckEntity
+  // dostaje te same obiekty shardów i nowy mesh, więc rozgrzana blacha nie może
+  // ostygnąć tylko dlatego, że zmieniła właściciela.
+  const heatArray = new Float32Array(count * 2);
   for (let i = 0; i < count; i++) {
     const shard = shards[i];
     if (typeof shard?.gridX === 'number' && typeof shard?.gridY === 'number') {
@@ -1098,11 +1338,15 @@ function createEntityMesh(entity) {
       gridPosArray[i * 2 + 1] = (shard?.ly || 0) + cy;
     }
     stressArray[i] = computeShardStress(shard);
+    heatArray[i * 2] = Number(shard?.heat) || 0;
+    heatArray[i * 2 + 1] = Number(shard?.heatStamp) || 0;
   }
 
   mesh.geometry.setAttribute('aGridPos', new THREE.InstancedBufferAttribute(gridPosArray, 2));
   mesh.geometry.setAttribute('aStress', new THREE.InstancedBufferAttribute(stressArray, 1));
   mesh.geometry.getAttribute('aStress').setUsage(THREE.DynamicDrawUsage);
+  mesh.geometry.setAttribute('aHeat', new THREE.InstancedBufferAttribute(heatArray, 2));
+  mesh.geometry.getAttribute('aHeat').setUsage(THREE.DynamicDrawUsage);
 
   // The armor layer reuses the exact same texture and lighting uniforms.  At
   // distance it replaces thousands of interior hex instances, while boundary,
@@ -1133,10 +1377,12 @@ function createEntityMesh(entity) {
     armorMesh,
     texture,
     visualImageRef: visualImage,
+    shapeImageRef,
     normalTexture,
     normalMapRef: grid.normalMapImage || null,
     gridPosAttr: mesh.geometry.getAttribute('aGridPos'),
     stressAttr: mesh.geometry.getAttribute('aStress'),
+    heatAttr: mesh.geometry.getAttribute('aHeat'),
     shardsRef: shards,
     shardCount: count,
     srcWidth: grid.srcWidth || 1,
@@ -1272,9 +1518,18 @@ function updateEntityMesh(entity, data, camX, camY, cameraZoom) {
     }
   }
 
+  // Zegar kadłuba. Zanik żaru i sekwencja świateł pozycyjnych liczą się w
+  // shaderze z uTime, więc musi jechać KAŻDEJ klatki i dla każdego mesha —
+  // syncEntityLightUniforms potrafi wyjść wcześniej. Płyta pancerza dzieli te
+  // same obiekty uniformów (spread w createEntityMesh kopiuje referencje), więc
+  // jeden zapis wystarczy na obie siatki.
+  const nowSec = state.lastTime * 0.001;
+  mesh.material.uniforms.uTime.value = nowSec;
+
   if (!!grid.meshDirty || data.needsInstanceRefresh) {
     const stressAttr = data.stressAttr;
     const gridPosAttr = data.gridPosAttr;
+    const heatAttr = data.heatAttr;
 
     const instanceArray = mesh.instanceMatrix.array;
     const cx = (grid.srcWidth || 0) * 0.5;
@@ -1322,12 +1577,16 @@ function updateEntityMesh(entity, data, camX, camY, cameraZoom) {
           gridPosAttr.array[i * 2] = Number(baseX) || 0;
           gridPosAttr.array[i * 2 + 1] = Number(baseY) || 0;
           stressAttr.array[i] = computeShardStress(shard);
+          heatAttr.array[i * 2] = Number(shard.heat) || 0;
+          heatAttr.array[i * 2 + 1] = Number(shard.heatStamp) || 0;
         } else {
           instanceArray[offset + 0] = 0.0;
           instanceArray[offset + 5] = 0.0;
           instanceArray[offset + 12] = 0.0;
           instanceArray[offset + 13] = 0.0;
           stressAttr.array[i] = 0;
+          heatAttr.array[i * 2] = 0;
+          heatAttr.array[i * 2 + 1] = 0;
         }
       }
     } else {
@@ -1338,7 +1597,7 @@ function updateEntityMesh(entity, data, camX, camY, cameraZoom) {
       if (data.instanceLodMode === HEX_LOD.HYBRID) {
         for (let shardIndex = 0; shardIndex < shards.length; shardIndex++) {
           const shard = shards[shardIndex];
-          if (!shouldRenderHybridShard(shard)) continue;
+          if (!shouldRenderHybridShard(shard, nowSec)) continue;
           const offset = writeIndex * 16;
           const deform = shard.deformation;
           const gx = shard.gridX + (deform ? deform.x : 0);
@@ -1354,6 +1613,8 @@ function updateEntityMesh(entity, data, camX, camY, cameraZoom) {
           gridPosAttr.array[writeIndex * 2] = Number(baseX) || 0;
           gridPosAttr.array[writeIndex * 2 + 1] = Number(baseY) || 0;
           stressAttr.array[writeIndex] = computeShardStress(shard);
+          heatAttr.array[writeIndex * 2] = Number(shard.heat) || 0;
+          heatAttr.array[writeIndex * 2 + 1] = Number(shard.heatStamp) || 0;
           writeIndex++;
         }
       }
@@ -1365,16 +1626,19 @@ function updateEntityMesh(entity, data, camX, camY, cameraZoom) {
       setAttrUpdateRange(mesh.instanceMatrix, 0, -1);
       setAttrUpdateRange(stressAttr, 0, -1);
       setAttrUpdateRange(gridPosAttr, 0, -1);
+      setAttrUpdateRange(heatAttr, 0, -1);
     } else {
       const count = Math.max(0, end - start + 1);
       setAttrUpdateRange(mesh.instanceMatrix, start * 16, count * 16);
       setAttrUpdateRange(stressAttr, start, count);
       setAttrUpdateRange(gridPosAttr, start * 2, count * 2);
+      setAttrUpdateRange(heatAttr, start * 2, count * 2);
     }
 
     mesh.instanceMatrix.needsUpdate = true;
     stressAttr.needsUpdate = true;
     gridPosAttr.needsUpdate = true;
+    heatAttr.needsUpdate = true;
     if (fullLod) data.renderedHexCount = mesh.count;
     data.needsInstanceRefresh = false;
     grid.meshDirty = false;
@@ -1412,10 +1676,17 @@ function updateEntityMesh(entity, data, camX, camY, cameraZoom) {
   }
 
   mesh.material.uniforms.uStressTint.value = state.damageTintEnabled ? 0.30 : 0.0;
+  // Żar chodzi pod tym samym przełącznikiem co glow stresu, ale jasność bierze
+  // z configu (suwak "heat glow peak" w panelu destruktora).
+  mesh.material.uniforms.uHeatDecay.value = Math.max(0, Number(DESTRUCTOR_CONFIG.heatDecay) || 0);
+  mesh.material.uniforms.uHeatPeak.value = state.damageTintEnabled
+    ? Math.max(0, Number(DESTRUCTOR_CONFIG.heatGlowPeak) || 0)
+    : 0.0;
   if (mesh.material.uniforms.uBillboardLighting) {
     mesh.material.uniforms.uBillboardLighting.value = usesBillboardLighting(entity) ? 1 : 0;
   }
   syncEntityLightUniforms(entity, data, grid, state.roadLightEmitters);
+  syncEntityLacquer(entity, data, grid, entityScale, zoomPx);
   const renderRotation = usesBillboardOrientation(entity) ? entityAngle : -entityAngle;
   mesh.material.uniforms.uRotation.value = renderRotation;
 
@@ -1452,9 +1723,26 @@ export function initHexShips3D({ canvas = null } = {}) {
   return true;
 }
 
+// Bank cząstek dem (błyski wylotowe armat i dział jonowych + Hexlance) ma
+// dziesięć własnych programów shaderowych. Bez kompilacji na ekranie
+// ładowania pierwszy strzał każdej rodziny broni gubi klatkę.
+function prewarmFx3D() {
+  if (!Fx3D.ensure() || !Core3D.renderer || !Core3D.cameraOrtho) return false;
+  const meshes = Fx3D.meshes;
+  for (const trail of [RailgunFX3D.prewarm(), BulletTrails.prewarm()]) {
+    if (trail) meshes.push(trail);
+  }
+  const prev = meshes.map((m) => m.visible);
+  for (const m of meshes) m.visible = true;
+  Core3D.renderer.compile(Core3D.scene, Core3D.cameraOrtho);
+  meshes.forEach((m, i) => { m.visible = prev[i]; });
+  return true;
+}
+
 export function prewarmHexShips3D({ canvas = null } = {}) {
   if (!Core3D.isInitialized) Core3D.init(canvas);
   Weapon3DSystem.prewarmShaders();
+  prewarmFx3D();
   return true;
 }
 
@@ -1464,10 +1752,16 @@ export function resizeHexShips3D(width, height) {
 
 export function setHexDamageTintEnabled(enabled) {
   state.damageTintEnabled = enabled !== false;
+  GpuDebrisManager.heatTintEnabled = state.damageTintEnabled;
   for (const [, data] of state.entityMeshes) {
     const uniforms = data?.mesh?.material?.uniforms;
     if (uniforms?.uStressTint) {
       uniforms.uStressTint.value = state.damageTintEnabled ? 0.30 : 0.0;
+    }
+    if (uniforms?.uHeatPeak) {
+      uniforms.uHeatPeak.value = state.damageTintEnabled
+        ? Math.max(0, Number(DESTRUCTOR_CONFIG.heatGlowPeak) || 0)
+        : 0.0;
     }
   }
   return state.damageTintEnabled;
@@ -1489,6 +1783,11 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
   // Raz na klatkę: aktualizujemy migawkę globalnego tuningu, by per-mesh
   // updateEntityMesh mogło pominąć 9 zapisów uniformów gdy nic się nie zmieniło.
   refreshTuneEpoch();
+
+  // Lakier: wspólne uniformy, tekstura otoczenia i kolejka pieczenia map
+  // kształtu (jeden sprite na klatkę). Oko = cameraPersp, którą syncCamera
+  // ustawia w każdym passie — trzymamy referencję do jej wektora pozycji.
+  HullLacquer.update(Core3D.scene, Core3D.cameraPersp?.position);
 
   const camX = Number(viewCamera?.x) || 0;
   const camY = Number(viewCamera?.y) || 0;
@@ -1645,6 +1944,7 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
   Turret2D.update();
   Weapon3DSystem.syncProjectiles((typeof window !== 'undefined' && Array.isArray(window.bullets)) ? window.bullets : []);
 
+  GpuDebrisManager.heatTintEnabled = state.damageTintEnabled;
   GpuDebrisManager.updateTime(now * 0.001);
   updateDebrisRendering();
 
@@ -1766,4 +2066,3 @@ export function disposeHexShips3D() {
   state.frameId = 0;
   state.hadRenderableLastFrame = false;
 }
-

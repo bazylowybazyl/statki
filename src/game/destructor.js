@@ -7,6 +7,7 @@ import { DestructorGpuSoftBody } from './destructorGpuSoftBody.js';
 import { getHexContactGrid, findHexContact, getHexShardDrift } from './hexContactGrid.js';
 import { areTowBodiesCollisionDisabled } from './towSystem.js';
 import { transferSalvageToWreck, clearSalvage } from './salvage.js';
+import { CollisionFX, impactEvent as _impactEvent, grindEvent as _grindEvent } from '../vfx/collisionFx.js';
 import { getEntityShieldBlockingRadius, getEntityShieldBlockingRadiusTowards } from '../../shieldSystem.js';
 import {
   attachHexGridToArena,
@@ -16,6 +17,7 @@ import {
   isPackedShardBoundary,
   rebuildHexGridArena,
   releaseHexGridArena,
+  releaseInactiveHexShards,
   setPackedShardActive
 } from './hexArenaBridge.js';
 
@@ -120,6 +122,10 @@ export const DESTRUCTOR_CONFIG = {
   wreckSplitOutwardKick: 0.010, //
   wreckSplitAngularResponse: 0.030, //
   wreckSplitMinAngularKick: 0.012, //
+  fractureImpactMemory: 0.6,           // seconds; retain the cut direction until the budgeted split check
+  wreckSplitImpactResponse: 0.16,      // fraction of local crush speed released at a fracture
+  wreckSplitMaxAngularKick: 0.35,      // rad/s; heavy pieces peel away without spinning like confetti
+  wreckSplitMaxFragments: 8,          // additional islands become pooled chips, not more physics bodies
 
   shieldRestitution: 0.35,
   // Poniżej tej prędkości zbliżania kontakt z tarczą to nie zderzenie, tylko
@@ -142,6 +148,71 @@ export const DESTRUCTOR_CONFIG = {
   shieldCapitalDominanceHeavyDamageMult: 0.3,
   shieldAuthorityShieldMaxExp: 0.35,
   shieldAuthorityMassExp: 0.08,
+
+  // === WARSTWA PREZENTACJI ZDERZEŃ (CollisionFX) ===
+  // Nic tutaj nie wchodzi w model zderzeń: te liczby decydują wyłącznie o tym,
+  // KIEDY leci zdarzenie i JAK MOCNO żarzy się blacha. Zerowanie któregokolwiek
+  // gasi efekt, nie zmienia fizyki.
+  //
+  // Zderzenie ma mieć moment. Strumień identycznych ticków 120 Hz nie niesie
+  // informacji "właśnie uderzyło" — stąd osobne zdarzenie pierwszego zetknięcia,
+  // z progiem prędkości i cooldownem na parę.
+  impactMinSpeed: 40.0,        // u/s; poniżej tego zbliżania zetknięcie to
+  //                              dosunięcie się burtą, nie uderzenie
+  impactCooldown: 1.5,         // s czasu SYMULACJI; odbicie i powrót w tym oknie
+  //                              to wciąż to samo zderzenie, nie drugie uderzenie
+  collisionFxDebug: 0,         // 1 = console.debug przy każdym onImpact
+
+  // Iskry lecą z K punktów rozłożonych po szwie zamiast z jednego snopu w
+  // centroidzie. Budżet iskier jest ten sam — dzielony, nie mnożony.
+  seamSparkPoints: 6,          // 0/1 = dawny pojedynczy snop
+
+  // === KANAŁ HEAT ===
+  // Rozżarzenie heksa żyje NIEZALEŻNIE od deformacji: strefa zgniotu stygnie
+  // przez kilka sekund także po tym, jak siatka zaśnie i po wypaleniu
+  // plastycznym (aStress jest wtedy zerowy). Zanik liczy shader z (heat,
+  // heatStamp) — CPU nie chodzi po shardach ani razu więcej niż dotąd.
+  //
+  // GDZIE ma świecić: na KADŁUBIE, na brzegu rany i na powierzchni tarcia.
+  // Pierwsza wersja grzała tylko heksy z bufora kontaktów — a te przy taranie
+  // giną w tym samym ticku i odlatują. Pomiar (taran w róg, 60 ticków): odłamki
+  // średnio 0.97, brzeg rany 0.41, dziób taranującego 0. Świeciły odłamki,
+  // a ocalała krawędź wyrwy była ledwie pomarańczowa. Stąd dwa źródła niżej:
+  // żar brzegu rany (przy każdym zniszczonym heksie) i żar styku (tarcie).
+  heatGain: 0.9,               // ułamek HP zdjęty w ticku → przyrost żaru (0-1)
+  heatDecay: 0.35,             // 1/s; biały ~1 s, pomarańcz do ~2.3 s, wiśnia do ~5 s
+  // Jasność BIAŁEGO żaru w HDR. Próg bloomu gry to 0.9 (bloomConfig.js), ACES
+  // odbarwia do bieli powyżej ~1.5, przepalony biały rdzeń leży w 8-12. Reszta rampy
+  // spada ~h^4 (Stefan-Boltzmann), więc stygnący metal schodzi POD próg i zostaje
+  // nasyconym pomarańczem/wiśnią zamiast szarej poświaty. Dawny `heatTint` (1.6)
+  // dawał szczyt ledwie nad progiem — stąd "pomarańczowy obwód" zamiast żaru.
+  heatGlowPeak: 9.0,           // 0 = kanał wyłączony
+
+  // ŻAR BRZEGU RANY. Kiedy heks ginie, jego OCALALI sąsiedzi stają się nową
+  // krawędzią wyrwy — to ona ma świecić, nie odlatujący kawałek. Pierścień 1
+  // dostaje pełną wartość, pierścień 2 ułamek (strefa wpływu ciepła).
+  woundHeat: 1.0,              // żar brzegu przy zniszczeniu w zderzeniu (0-1)
+  woundHeatSpeed: 150.0,       // u/s zbliżania, przy której brzeg jest biały;
+  //                              wolniejszy zgniot zostawia brzeg pomarańczowy
+  woundHeatInherit: 0.85,      // ile własnego żaru ginący heks oddaje brzegowi —
+  //                              tym żar idzie za frontem zgniotu i za rozdarciem
+  //                              GPU, które zaczyna się w gorącej strefie
+  woundHeatRing2: 0.55,        // pierścień 2 względem pierścienia 1
+
+  // ŻAR STYKU (tarcie i zgniot powierzchni). Liczony z prędkości względnej
+  // w punkcie styku, symetrycznie dla OBU kadłubów — dziób taranującego też
+  // się rozgrzewa. Działa także wtedy, gdy zbliżanie jest poniżej crushMinSpeed
+  // (czyste otarcie), bo to właśnie tarcie ma grzać.
+  contactHeatRate: 3.0,        // żar/s przy contactHeatSpeed
+  contactHeatSpeed: 120.0,     // u/s; poniżej tempo spada z KWADRATEM prędkości,
+  //                              więc powolne dosunięcie burtą nie świeci
+
+  // Odłamki świecą w paśmie BARWY (bez białego szczytu) — mają być tłem dla
+  // żaru na kadłubie, nie głównym aktorem.
+  debrisHeatGlow: 1.2,
+  debrisHeatFloor: 0.25,       // metal urwany ROZCIĄGANIEM (GPU tear) nie ma
+  //                              historii zgniotu — ma się żarzyć słabo, ale nie wcale
+  heatFromProjectiles: 0,      // 1 = trafienia pociskami też grzeją blachę
 };
 
 // Prekomputowane stringi koloru stresu — unikamy template literal per shard w drawShape()
@@ -1190,6 +1261,75 @@ export function refreshHexBodyCache(entity) {
   if (needsCacheRebuild || needsTextureRebuild || needsMeshRefresh2D) updateHexCache(entity);
 }
 
+// === ŻAR HEKSA (kanał heat) ===
+// Dwa pola na shardzie: `heat` (szczyt, 0-1) i `heatStamp` (sekundy). Zanik
+// liczy SHADER z tej pary, nie CPU — inaczej każde rozżarzenie kosztowałoby
+// pętlę po wszystkich shardach wszystkich encji co klatkę, a żar ma trwać
+// dokładnie wtedy, gdy siatka już śpi i nic jej nie odwiedza.
+//
+// Baza czasu musi być TA SAMA co w rendererze: hexShips3D zapisuje
+// uTime = state.lastTime * 0.001, gdzie lastTime to performance.now().
+function shardHeatNow(shard, nowSec) {
+  const peak = Number(shard?.heat) || 0;
+  if (peak <= 0) return 0;
+  const age = nowSec - (Number(shard.heatStamp) || 0);
+  if (age <= 0) return peak;
+  return peak * Math.exp(-age * (Number(DESTRUCTOR_CONFIG.heatDecay) || 0.45));
+}
+
+// Dokładanie żaru startuje od WARTOŚCI PO ZANIKU, nie od zapamiętanego szczytu —
+// inaczej długie tarcie trzymałoby heks w białym żarze bez końca.
+function addShardHeat(shard, amount, nowSec) {
+  if (!shard || !(amount > 0)) return;
+  const next = shardHeatNow(shard, nowSec) + amount;
+  shard.heat = next > 1 ? 1 : next;
+  shard.heatStamp = nowSec;
+}
+
+// PODNIESIENIE do poziomu (max), nie dodawanie. Brzeg rany ma temperaturę
+// wyrwy, a nie sumę tego, ilu sąsiadów zginęło obok — inaczej pierwszy heks
+// z trzema martwymi sąsiadami byłby "trzy razy biały". Zwraca true, gdy zapis
+// faktycznie nastąpił (do zakresu dirty).
+function raiseShardHeat(shard, value, nowSec) {
+  const peak = Number(shard.heat) || 0;
+  // Szczyt poniżej celu = wartość po zaniku też poniżej: bez exp().
+  if (peak >= value && shardHeatNow(shard, nowSec) >= value) return false;
+  shard.heat = value > 1 ? 1 : value;
+  shard.heatStamp = nowSec;
+  return true;
+}
+
+// Żar zmienia wyłącznie ATRYBUT RENDERU, nie geometrię. Zwykłe
+// markGridMeshDirtyRange podbija meshRevision, a ten unieważnia indeks
+// kontaktów i cache OBB — przy tarciu co tick przebudowywalibyśmy je bez
+// powodu. Tu tylko rozszerzamy zakres uploadu instancji; lerp deformacji
+// (visualDirty*) też nie ma czego robić. W trybie 2D żaru nie widać, a samo
+// meshDirty wymusiłoby przerysowanie cache płótna — więc tam nic.
+function markGridHeatDirtyRange(grid, minIndex, maxIndex) {
+  if (!grid || !HEX_SHIPS_3D_ACTIVE) return;
+  const count = Array.isArray(grid.shards) ? grid.shards.length : 0;
+  let start = minIndex | 0;
+  let end = maxIndex | 0;
+  if (count <= 0 || start < 0 || end < start || end >= count) {
+    grid.meshDirty = true;
+    grid.meshDirtyAll = true;
+    grid.meshDirtyStart = 0;
+    grid.meshDirtyEnd = Math.max(0, count - 1);
+    return;
+  }
+  grid.meshDirty = true;
+  if (grid.meshDirtyAll) return;
+  const curStart = Number(grid.meshDirtyStart);
+  const curEnd = Number(grid.meshDirtyEnd);
+  if (!Number.isFinite(curStart) || !Number.isFinite(curEnd) || curStart < 0 || curEnd < curStart) {
+    grid.meshDirtyStart = start;
+    grid.meshDirtyEnd = end;
+    return;
+  }
+  if (start < curStart) grid.meshDirtyStart = start;
+  if (end > curEnd) grid.meshDirtyEnd = end;
+}
+
 class HexShard {
   constructor(img, gridX, gridY, radius, c, r, color = null) {
     this.img = img;
@@ -1222,6 +1362,9 @@ class HexShard {
     this.scale = 1;
     this.__collVelX = 0;
     this.__collVelY = 0;
+    // Żar: szczyt i znacznik czasu (patrz shardHeatNow). Zanik liczy shader.
+    this.heat = 0;
+    this.heatStamp = 0;
     this.neighbors = [];
     this.verts = [];
 
@@ -1349,7 +1492,7 @@ class HexShard {
     }
   }
 
-  becomeDebris(impulseX, impulseY, parentEntity, scale = 1.0) {
+  becomeDebris(velocityX, velocityY, parentEntity, scale = 1.0) {
     if (this.isDebris) return;
     this.scale = scale;
     const px = getEntityPosX(parentEntity);
@@ -1372,8 +1515,8 @@ class HexShard {
     this.worldX = px + startWx;
     this.worldY = py + startWy;
 
-    let vx = getEntityVelX(parentEntity);
-    let vy = getEntityVelY(parentEntity);
+    let vx = velocityX;
+    let vy = velocityY;
     const angVel = getEntityAngVel(parentEntity);
     const rx = startWx;
     const ry = startWy;
@@ -1381,9 +1524,18 @@ class HexShard {
     vx += -angVel * ry;
     vy += angVel * rx;
 
-    this.dvx = vx + impulseX + this.deformation.x * 3;
-    this.dvy = vy + impulseY + this.deformation.y * 3;
-    this.drot = (Math.random() - 0.5) * 8;
+    // Contact input and solver output are local to the hull. Carry both into
+    // world-space debris, including when stress tears a hex after the impact.
+    // Deformation is a displacement, not a velocity; an old dent adds no kick.
+    const localVx = (Number(this.__collVelX) || 0) + (Number(this.__velX) || 0);
+    const localVy = (Number(this.__collVelY) || 0) + (Number(this.__velY) || 0);
+    const impulseWx = localDeltaToWorldX(localVx, localVy, scaleX, scaleY, c, s, billboardOrientation);
+    const impulseWy = localDeltaToWorldY(localVx, localVy, scaleX, scaleY, c, s, billboardOrientation);
+    this.dvx = vx + impulseWx;
+    this.dvy = vy + impulseWy;
+    const spinRadius = Math.max(1, this.radius * scale);
+    const contactSpin = (rx * impulseWy - ry * impulseWx) / (rx * rx + ry * ry + spinRadius * spinRadius);
+    this.drot = angVel + Math.max(-2.4, Math.min(2.4, contactSpin)) + (Math.random() - 0.5) * 0.4;
     this.angle = rotation;
     this.alpha = 1;
     this.isDebris = true;
@@ -1474,29 +1626,135 @@ export const DestructorSystem = {
   _hullContactPairs: new WeakMap(),
   _simulationTime: 0,
 
-  hasHullContact(A, B) {
-    const pair = this._hullContactPairs.get(A)?.get(B);
-    return !!pair && pair.until > this._simulationTime;
+  // Próbki szwu dla CollisionFX: [x, y, nx, ny] × K. Alokowane RAZ; rosną tylko
+  // wtedy, gdy ktoś podniesie seamSparkPoints w panelu deweloperskim.
+  _grindPoints: new Float32Array(8 * 4),
+
+  // Żar brzegu rany dla heksów ginących W TRAKCIE zgniotu (collideEntities,
+  // łącznie z rozejściem nadmiaru przez applyImpact). Poza zderzeniem 0 —
+  // pocisk zabijający zimny heks nie rozżarza wyrwy.
+  _woundHeatContext: 0,
+
+  // Heks właśnie zginął: jego OCALALI sąsiedzi są teraz krawędzią wyrwy.
+  // To ona ma świecić — odłamek odlatuje i znika, brzeg zostaje na kadłubie.
+  // Koszt: do 6 + 36 sąsiadów na zniszczony heks, bez pętli po siatce.
+  _heatWoundRim(entity, shard) {
+    const grid = entity.hexGrid;
+    const neighbors = shard.neighbors;
+    if (!grid || !neighbors || neighbors.length === 0) return;
+    const context = this._woundHeatContext;
+    // Zimne zabicie poza zderzeniem (np. pocisk) — nie ma czego rozprowadzać.
+    if (!(context > 0) && !((Number(shard.heat) || 0) > 0)) return;
+
+    const nowSec = nowMs() * 0.001;
+    const inherit = Math.max(0, Number(DESTRUCTOR_CONFIG.woundHeatInherit) || 0);
+    const rim = Math.min(1, Math.max(context, shardHeatNow(shard, nowSec) * inherit));
+    if (rim < 0.02) return;
+    const ring2 = rim * Math.max(0, Number(DESTRUCTOR_CONFIG.woundHeatRing2) || 0);
+
+    const shards = grid.shards;
+    let dirtyMin = Number.POSITIVE_INFINITY;
+    let dirtyMax = -1;
+
+    for (let i = 0; i < neighbors.length; i++) {
+      const n = neighbors[i];
+      if (!n || !n.active || n.isDebris) continue;
+      // Po podziale sąsiad mógł przejść do innej encji — piszemy tylko w swoją.
+      const nIdx = n.__meshIndex;
+      if (shards[nIdx] !== n) continue;
+      if (raiseShardHeat(n, rim, nowSec)) {
+        if (nIdx < dirtyMin) dirtyMin = nIdx;
+        if (nIdx > dirtyMax) dirtyMax = nIdx;
+      }
+      const outer = n.neighbors;
+      if (ring2 < 0.02 || !outer) continue;
+      for (let j = 0; j < outer.length; j++) {
+        const m = outer[j];
+        if (!m || m === shard || !m.active || m.isDebris) continue;
+        const mIdx = m.__meshIndex;
+        if (shards[mIdx] !== m) continue;
+        if (raiseShardHeat(m, ring2, nowSec)) {
+          if (mIdx < dirtyMin) dirtyMin = mIdx;
+          if (mIdx > dirtyMax) dirtyMax = mIdx;
+        }
+      }
+    }
+
+    if (dirtyMax >= 0) markGridHeatDirtyRange(grid, dirtyMin, dirtyMax);
   },
 
-  _recordHullContact(A, B) {
+  _recordFractureImpact(entity, wx, wy, vx, vy) {
+    const grid = entity.hexGrid;
+    const impact = grid._fractureImpact || (grid._fractureImpact = { x: 0, y: 0, vx: 0, vy: 0, time: 0 });
+    const angle = getEntityHexAngle(entity), c = Math.cos(angle), s = Math.sin(angle);
+    const sx = Math.max(0.0001, getFinalScaleX(entity)), sy = Math.max(0.0001, getFinalScaleY(entity));
+    const billboard = usesBillboardOrientation(entity);
+    // Store sprite-local coordinates so the remembered cut follows a turning hull.
+    impact.x = worldDeltaToLocalX(wx - getEntityPosX(entity), wy - getEntityPosY(entity), sx, sy, c, s, billboard) + grid.srcWidth * 0.5 + (grid.pivot?.x || 0);
+    impact.y = worldDeltaToLocalY(wx - getEntityPosX(entity), wy - getEntityPosY(entity), sx, sy, c, s, billboard) + grid.srcHeight * 0.5 + (grid.pivot?.y || 0);
+    impact.vx = worldDeltaToLocalX(vx, vy, sx, sy, c, s, billboard);
+    impact.vy = worldDeltaToLocalY(vx, vy, sx, sy, c, s, billboard);
+    impact.time = this._simulationTime;
+  },
+
+  _queueStretchedFracture(entity, shard) {
+    if (entity.noSplit || !entity.hexGrid._fractureImpact || this.splitQueue.indexOf(entity) !== -1) return;
+    const limit = HEX_HEIGHT + Math.max(HEX_HEIGHT * 1.5, Number(DESTRUCTOR_CONFIG.tearThreshold) || 34);
+    const x = getShardVisualGridX(shard), y = getShardVisualGridY(shard);
+    for (const neighbor of shard.neighbors) {
+      if (!neighbor.active || neighbor.isDebris) continue;
+      const dx = getShardVisualGridX(neighbor) - x, dy = getShardVisualGridY(neighbor) - y;
+      if (dx * dx + dy * dy > limit * limit) {
+        this.splitQueue.push(entity);
+        return;
+      }
+    }
+  },
+
+  hasHullContact(A, B) {
+    const pair = this._hullContactPairs.get(A)?.get(B);
+    // `hull` odróżnia rekordy par kadłub-kadłub od rekordów ringu i asteroid,
+    // które trafiają do tej samej mapy wyłącznie na potrzeby CollisionFX.
+    // AI ustępuje destructorowi tylko przy metalu o metal, jak dotąd.
+    return !!pair && pair.hull === true && pair.until > this._simulationTime;
+  },
+
+  // Rekord pary dla KAŻDEGO zetknięcia — także z ring segmentem i z asteroidą.
+  // `fresh` mówi, że para właśnie się zetknęła po separacji (okno 0.1 s); na tym
+  // stoi jednorazowe zdarzenie uderzenia. Historia ustępowania (yieldPressure)
+  // i zrzut wektora AI zostają wyłącznie w gałęzi kadłubowej niżej.
+  _pairRecord(A, B) {
     let pairsA = this._hullContactPairs.get(A);
     let pair = pairsA?.get(B);
     if (!pair) {
       if (!pairsA) this._hullContactPairs.set(A, pairsA = new WeakMap());
       let pairsB = this._hullContactPairs.get(B);
       if (!pairsB) this._hullContactPairs.set(B, pairsB = new WeakMap());
-      pair = { until: 0, yieldPressure: 0 };
+      pair = {
+        until: 0,
+        yieldPressure: 0,
+        hull: false,
+        fresh: false,
+        lastImpactTime: -Infinity,
+        lastImpactEnergy: 0
+      };
       pairsA.set(B, pair);
       pairsB.set(A, pair);
     }
-    if (pair.until <= this._simulationTime) {
+    pair.fresh = pair.until <= this._simulationTime;
+    pair.until = this._simulationTime + 0.1;
+    return pair;
+  },
+
+  _recordHullContact(A, B) {
+    const pair = this._pairRecord(A, B);
+    pair.hull = true;
+    if (pair.fresh) {
       pair.yieldPressure = 0;
       // Drop the cached AI avoidance vector immediately on physical contact.
       A.__sepDecisionTick = -1;
       B.__sepDecisionTick = -1;
     }
-    pair.until = this._simulationTime + 0.1;
     return pair;
   },
 
@@ -1675,8 +1933,6 @@ export const DestructorSystem = {
   _crushStampCounter: 0,
   _crushStampA: 0,
   _crushStampB: 0,
-  _destroyVelA: { x: 0, y: 0 },
-  _destroyVelB: { x: 0, y: 0 },
 
   wakeWreck(wreck) {
     if (!wreck?.isWreck) return;
@@ -2603,11 +2859,17 @@ export const DestructorSystem = {
         customRadius
       );
 
-      hitShard.hp -= Math.max(1, damage * 0.9);
+      const directDamage = Math.max(1, damage * 0.9);
+      hitShard.hp -= directDamage;
+      if ((DESTRUCTOR_CONFIG.heatFromProjectiles | 0) === 1) {
+        const shardHp = Math.max(1, Number(hitShard.maxHp) || DESTRUCTOR_CONFIG.shardHP);
+        const gain = Math.max(0, Number(DESTRUCTOR_CONFIG.heatGain) || 0);
+        addShardHeat(hitShard, Math.min(1, directDamage / shardHp) * gain, nowMs() * 0.001);
+      }
       const splitDamageThreshold = DESTRUCTOR_CONFIG.splitDamageThreshold ?? 200;
 
       if (hitShard.hp <= 0 && !hitShard.isDebris) {
-        this.destroyShard(entity, hitShard, { x: getEntityVelX(entity), y: getEntityVelY(entity) });
+        this.destroyShard(entity, hitShard);
         if (!entity.noSplit && damage >= splitDamageThreshold) this.splitQueue.push(entity);
       }
 
@@ -2690,7 +2952,7 @@ export const DestructorSystem = {
         }
 
         if (shard.hp <= 0 && !shard.isDebris) {
-          this.destroyShard(entity, shard, { x: getEntityVelX(entity) + forceX * 0.02, y: getEntityVelY(entity) + forceY * 0.02 });
+          this.destroyShard(entity, shard);
           anyDestroyed = true;
         }
       }
@@ -2719,6 +2981,12 @@ export const DestructorSystem = {
       const invRadius = 1 / radius;
       const currentBendingRadSq = radius * radius;
       const deformMul = DESTRUCTOR_CONFIG.deformMul;
+      // Żar od pocisków — domyślnie WYŁĄCZONY (heatFromProjectiles = 0). Kanał
+      // heat jest wymiarowany na strefę zgniotu; ostrzał ma własny język blizn.
+      const projectileHeatGain = (DESTRUCTOR_CONFIG.heatFromProjectiles | 0) === 1
+        ? Math.max(0, Number(DESTRUCTOR_CONFIG.heatGain) || 0)
+        : 0;
+      const heatNowSec = projectileHeatGain > 0 ? nowMs() * 0.001 : 0;
 
       let anyDestroyed = false;
       let anyMeshChange = false;
@@ -2841,11 +3109,15 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
               // Shards should wear down over time instead of evaporating in one frame.
               const frictionHeat = (Math.abs(appliedDefX) + Math.abs(appliedDefY)) * 0.05;
               shard.hp -= frictionHeat;
+              if (projectileHeatGain > 0) {
+                const shardHp = Math.max(1, Number(shard.maxHp) || DESTRUCTOR_CONFIG.shardHP);
+                addShardHeat(shard, Math.min(1, frictionHeat / shardHp) * projectileHeatGain, heatNowSec);
+              }
               if (!HEX_SHIPS_3D_ACTIVE && frictionHeat > 0.5) anyTextureChange = true;
 
               // Shard dies from friction, or from GPU stress tearing.
               if (shard.hp <= 0 && !shard.isDebris) {
-                this.destroyShard(entity, shard, { x: getEntityVelX(entity), y: getEntityVelY(entity) });
+                this.destroyShard(entity, shard);
                 anyDestroyed = true;
               }
             }
@@ -3549,7 +3821,10 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
 
       if (contactsCount === 0) return;
 
-      const hullContact = hullPair ? this._recordHullContact(A, B) : null;
+      // Rekord pary powstaje ZAWSZE — zdarzenie uderzenia musi działać także
+      // dla ringu i asteroid. Historia ustępowania zostaje kadłubowa.
+      const pairRecord = hullPair ? this._recordHullContact(A, B) : this._pairRecord(A, B);
+      const hullContact = hullPair ? pairRecord : null;
 
       this.wakeHexEntity(A, DESTRUCTOR_CONFIG.elasticWakeFrames | 0);
       this.wakeHexEntity(B, DESTRUCTOR_CONFIG.elasticWakeFrames | 0);
@@ -3762,22 +4037,154 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         }
       }
 
-      // === ISKRY PRZENIESIONE NA ZEWNATRZ ===
-      // Teraz zawsze sprawdzamy obcierki, niezaleznie od tego czy uderzenie bylo czolowe!
+      // === WARSTWA PREZENTACJI (CollisionFX) ===
+      // Iskry, a w przyszlosci shake/shockwave/dzwiek/slow-mo, wisza na tych
+      // dwoch zdarzeniach. Destructor nie zna juz SparkSystem3D.
+      // Tarcie sprawdzamy zawsze, niezaleznie od tego czy uderzenie bylo czolowe.
       const slideSpeed = velTangent;
-      const totalEnergy = bounceForce + Math.abs(slideSpeed) * 3.0;
+      const brittlePair = hullPair ? false : (isBrittleEntity(A) || isBrittleEntity(B));
+      const reducedMass = (massA * massB) / (massA + massB);
+      const impactEnergy = 0.5 * reducedMass * effectiveApproachSpeed * effectiveApproachSpeed;
 
-      if (totalEnergy > 15 && typeof window !== 'undefined' && window.SparkSystem3D?.isInitialized) {
-        const baseVx = vAx * 0.4;
-        const baseVy = vAy * 0.4;
-        window.SparkSystem3D.grindingBurst(
-          worldHitX, worldHitY,
-          -nx, -ny,
-          tx, ty,
-          bounceForce,
-          slideSpeed,
-          baseVx, baseVy
-        );
+      // Probki szwu. Jeden snop w usrednionym punkcie gubil cala geometrie styku:
+      // przy otarciu burta w burte iskry leca ze srodka 300-jednostkowego szwu.
+      // Bierzemy do K kontaktow rownomiernym krokiem, kazdy z WLASNA normalna —
+      // na zakrzywionej burcie rozni sie ona od usrednionej.
+      const seamTarget = Math.max(0, DESTRUCTOR_CONFIG.seamSparkPoints | 0);
+      let seamCount = 0;
+      if (seamTarget > 0) {
+        if (this._grindPoints.length < seamTarget * 4) this._grindPoints = new Float32Array(seamTarget * 4);
+        const seamPoints = this._grindPoints;
+        const stride = Math.max(1, Math.ceil(contactsCount / seamTarget));
+        for (let c = 0; c < contactsCount && seamCount < seamTarget; c += stride) {
+          const ct = contacts[c];
+          const base = seamCount * 4;
+          seamPoints[base] = (ct.worldAx + ct.worldBx) * 0.5;
+          seamPoints[base + 1] = (ct.worldAy + ct.worldBy) * 0.5;
+          const cnLen = Math.sqrt(ct.normalX * ct.normalX + ct.normalY * ct.normalY);
+          if (cnLen > 1e-6) {
+            seamPoints[base + 2] = ct.normalX / cnLen;
+            seamPoints[base + 3] = ct.normalY / cnLen;
+          } else {
+            seamPoints[base + 2] = nx;
+            seamPoints[base + 3] = ny;
+          }
+          seamCount++;
+        }
+      }
+
+      _grindEvent.A = A;
+      _grindEvent.B = B;
+      _grindEvent.x = worldHitX;
+      _grindEvent.y = worldHitY;
+      _grindEvent.nx = nx;
+      _grindEvent.ny = ny;
+      _grindEvent.tx = tx;
+      _grindEvent.ty = ty;
+      _grindEvent.approachSpeed = effectiveApproachSpeed;
+      _grindEvent.impactSpeed = impactSpeed;
+      _grindEvent.slideSpeed = slideSpeed;
+      _grindEvent.contactVelX = vAx;
+      _grindEvent.contactVelY = vAy;
+      _grindEvent.massA = massA;
+      _grindEvent.massB = massB;
+      _grindEvent.reducedMass = reducedMass;
+      _grindEvent.energy = impactEnergy;
+      _grindEvent.contactsCount = contactsCount;
+      _grindEvent.hullPair = hullPair;
+      _grindEvent.isRingCollision = isRingCollision;
+      _grindEvent.brittle = brittlePair;
+      _grindEvent.simTime = this._simulationTime;
+      _grindEvent.bounceForce = bounceForce;
+      _grindEvent.points = this._grindPoints;
+      _grindEvent.pointCount = seamCount;
+      CollisionFX.onGrind(_grindEvent);
+
+      // UDERZENIE: tylko przy pierwszym zetknieciu pary (pair.fresh), tylko z
+      // iteracji 0 (collisionIterations = 2 wolaloby to dwa razy na tick) i nie
+      // czesciej niz raz na impactCooldown — odbicie i powrot w tym oknie to
+      // wciaz TO SAMO zderzenie.
+      const impactMinSpeed = Math.max(0, Number(DESTRUCTOR_CONFIG.impactMinSpeed) || 0);
+      const impactCooldown = Math.max(0, Number(DESTRUCTOR_CONFIG.impactCooldown) || 0);
+      if (
+        doDamage &&
+        pairRecord.fresh &&
+        effectiveApproachSpeed >= impactMinSpeed &&
+        (this._simulationTime - pairRecord.lastImpactTime) >= impactCooldown
+      ) {
+        pairRecord.lastImpactTime = this._simulationTime;
+        pairRecord.lastImpactEnergy = impactEnergy;
+
+        _impactEvent.A = A;
+        _impactEvent.B = B;
+        _impactEvent.x = worldHitX;
+        _impactEvent.y = worldHitY;
+        _impactEvent.nx = nx;
+        _impactEvent.ny = ny;
+        _impactEvent.tx = tx;
+        _impactEvent.ty = ty;
+        _impactEvent.approachSpeed = effectiveApproachSpeed;
+        _impactEvent.impactSpeed = impactSpeed;
+        _impactEvent.slideSpeed = slideSpeed;
+        _impactEvent.contactVelX = vAx;
+        _impactEvent.contactVelY = vAy;
+        _impactEvent.massA = massA;
+        _impactEvent.massB = massB;
+        _impactEvent.reducedMass = reducedMass;
+        _impactEvent.energy = impactEnergy;
+        _impactEvent.contactsCount = contactsCount;
+        _impactEvent.hullPair = hullPair;
+        _impactEvent.isRingCollision = isRingCollision;
+        _impactEvent.brittle = brittlePair;
+        _impactEvent.simTime = this._simulationTime;
+
+        CollisionFX.debug = DESTRUCTOR_CONFIG.collisionFxDebug | 0;
+        CollisionFX.onImpact(_impactEvent);
+      }
+
+      // ŻAR STYKU: tarcie i zgniot rozgrzewają powierzchnię OBU kadłubów.
+      // Raz na tick (iteracja 0) i niezależnie od crushPass — czyste otarcie
+      // burtą, bez zbliżania, to właśnie ten przypadek, który ma świecić.
+      // Wyłącznie zapis atrybutu: nic tu nie dotyka pędu, deformacji ani HP.
+      if (doDamage) {
+        const heatRate = Math.max(0, Number(DESTRUCTOR_CONFIG.contactHeatRate) || 0);
+        const heatRef = Math.max(1, Number(DESTRUCTOR_CONFIG.contactHeatSpeed) || 120);
+        const rubRatio = impactSpeed / heatRef;
+        // Poniżej prędkości odniesienia tempo spada z kwadratem — dosunięcie się
+        // burtą przy kilku u/s nie ma prawa się żarzyć.
+        const contactHeat = heatRate * dt * (rubRatio < 1 ? rubRatio * rubRatio : rubRatio);
+        if (contactHeat > 0.0005) {
+          const heatNowSec = nowMs() * 0.001;
+          const shardsA = A.hexGrid.shards;
+          const shardsB = B.hexGrid.shards;
+          let heatMinA = Number.POSITIVE_INFINITY;
+          let heatMaxA = -1;
+          let heatMinB = Number.POSITIVE_INFINITY;
+          let heatMaxB = -1;
+          for (let c = 0; c < contactsCount; c++) {
+            const ct = contacts[c];
+            const hA = ct.shardA;
+            const hB = ct.shardB;
+            if (hA && hA.active && !hA.isDebris) {
+              addShardHeat(hA, contactHeat, heatNowSec);
+              const idx = hA.__meshIndex;
+              if (shardsA[idx] === hA) {
+                if (idx < heatMinA) heatMinA = idx;
+                if (idx > heatMaxA) heatMaxA = idx;
+              }
+            }
+            if (hB && hB.active && !hB.isDebris) {
+              addShardHeat(hB, contactHeat, heatNowSec);
+              const idx = hB.__meshIndex;
+              if (shardsB[idx] === hB) {
+                if (idx < heatMinB) heatMinB = idx;
+                if (idx > heatMaxB) heatMaxB = idx;
+              }
+            }
+          }
+          if (heatMaxA >= 0) markGridHeatDirtyRange(A.hexGrid, heatMinA, heatMaxA);
+          if (heatMaxB >= 0) markGridHeatDirtyRange(B.hexGrid, heatMinB, heatMaxB);
+        }
       }
 
       // Deformacja i obrażenia liczą się ZAWSZE, skalowane wprost impulsem — jedyny
@@ -3786,6 +4193,15 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
       const crushPass = doDamage && effectiveApproachSpeed > crushMinSpeed;
 
       if (crushPass) {
+        // Znacznik żaru w bazie czasu RENDERERA (performance.now), bo zanik
+        // liczy shader z uTime. Raz na wywołanie, nie raz na kontakt.
+        const nowSec = nowMs() * 0.001;
+        const heatGain = Math.max(0, Number(DESTRUCTOR_CONFIG.heatGain) || 0);
+        // Heksy ginące od tego miejsca do końca rozejścia nadmiaru (applyImpact)
+        // rozżarzają brzeg wyrwy — patrz _heatWoundRim. Szybszy taran = bielszy brzeg.
+        const woundSpeed = Math.max(1, Number(DESTRUCTOR_CONFIG.woundHeatSpeed) || 150);
+        this._woundHeatContext = Math.max(0, Number(DESTRUCTOR_CONFIG.woundHeat) || 0) *
+          Math.min(1, effectiveApproachSpeed / woundSpeed);
         const gpuAwakeFrames = heavyPair ? 12 : 16;
         A._gpuForceAwakeFrames = Math.max(Number(A._gpuForceAwakeFrames) || 0, gpuAwakeFrames);
         B._gpuForceAwakeFrames = Math.max(Number(B._gpuForceAwakeFrames) || 0, gpuAwakeFrames);
@@ -3848,6 +4264,11 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         const sumSq = (baseRatioA * baseRatioA) + (baseRatioB * baseRatioB);
         const realRatioA = (baseRatioA * baseRatioA) / sumSq;
         const realRatioB = (baseRatioB * baseRatioB) / sumSq;
+
+        if (hullPair && ramYield > 0.05) {
+          this._recordFractureImpact(A, worldHitX, worldHitY, nx * effectiveApproachSpeed * realRatioA, ny * effectiveApproachSpeed * realRatioA);
+          this._recordFractureImpact(B, worldHitX, worldHitY, -nx * effectiveApproachSpeed * realRatioB, -ny * effectiveApproachSpeed * realRatioB);
+        }
 
         let crushDefAx = forceAx * (realRatioA * 2) * crushScale;
         let crushDefAy = forceAy * (realRatioA * 2) * crushScale;
@@ -3966,13 +4387,16 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
               const cap = brittleA ? (shardHpA * 0.75) : (shardHpA * contactDamageCapFrac);
               sA.hp -= Math.min(cap, damage);
               if (damage > cap) overkillA += damage - cap;
+              // Żar PRZED testem hp — heks niszczony w tym ticku ma odlecieć
+              // rozgrzany, a nie zimny.
+              if (heatGain > 0) addShardHeat(sA, Math.min(1, damage / shardHpA) * heatGain, nowSec);
             }
 
             if (sA.hp <= 0) {
-              this._destroyVelA.x = getEntityVelX(A);
-              this._destroyVelA.y = getEntityVelY(A);
-              this.destroyShard(A, sA, this._destroyVelA);
+              this.destroyShard(A, sA);
               if (!A.noSplit && this.splitQueue.indexOf(A) === -1) this.splitQueue.push(A);
+            } else if (hullPair) {
+              this._queueStretchedFracture(A, sA);
             }
           }
 
@@ -4021,13 +4445,15 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
               const cap = brittleB ? (shardHpB * 0.75) : (shardHpB * contactDamageCapFrac);
               sB.hp -= Math.min(cap, damage);
               if (damage > cap) overkillB += damage - cap;
+              // Patrz komentarz przy obiekcie A.
+              if (heatGain > 0) addShardHeat(sB, Math.min(1, damage / shardHpB) * heatGain, nowSec);
             }
 
             if (sB.hp <= 0) {
-              this._destroyVelB.x = getEntityVelX(B);
-              this._destroyVelB.y = getEntityVelY(B);
-              this.destroyShard(B, sB, this._destroyVelB);
+              this.destroyShard(B, sB);
               if (!B.noSplit && this.splitQueue.indexOf(B) === -1) this.splitQueue.push(B);
+            } else if (hullPair) {
+              this._queueStretchedFracture(B, sB);
             }
           }
         }
@@ -4050,6 +4476,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
             this.applyImpact(B, worldHitX, worldHitY, overkillB, _ZERO_VEL, { radius: rB });
           }
         }
+        this._woundHeatContext = 0;
 
         if (A.hexGrid && dirtyMaxA >= 0 && Number.isFinite(dirtyMinA)) {
           if (brittleA) markBrittleTransient(A, 0, dirtyMinA, dirtyMaxA);
@@ -4105,10 +4532,15 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         addEntityPosition(B, -sepNx * corr * invMassB, -sepNy * corr * invMassB);
       }
     } finally {
+      // Wyjątek w środku zgniotu nie może zostawić kontekstu rany włączonego —
+      // następny pocisk rozżarzyłby wyrwę jak taran.
+      this._woundHeatContext = 0;
       if (dbgEnabled) this._dbgCollisionRecord('collideEntities', nowMs() - tCollide0);
     }
   },
 
+  // velVector optionally overrides the parent's world-space linear velocity.
+  // Rotation and local contact/solver motion are added once by becomeDebris.
   destroyShard(entity, shard, velVector) {
     if (!entity?.hexGrid || !shard || shard.isDebris) return;
     this.wakeHexEntity(entity, DESTRUCTOR_CONFIG.elasticWakeFrames | 0);
@@ -4126,12 +4558,15 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
       shard.active = false;
     } else {
       shard.becomeDebris(
-        (velVector?.x || 0) * 0.3 + shard.deformation.x * 2,
-        (velVector?.y || 0) * 0.3 + shard.deformation.y * 2,
+        velVector?.x ?? getEntityVelX(entity),
+        velVector?.y ?? getEntityVelY(entity),
         entity,
         scale
       );
     }
+
+    // Po oderwaniu (shard jest już nieaktywny, więc pętla pierścieni go pomija).
+    this._heatWoundRim(entity, shard);
 
     if (Number.isFinite(entity.hexGrid.activeStructuralCount)) {
       entity.hexGrid.activeStructuralCount = Math.max(0, entity.hexGrid.activeStructuralCount - 1);
@@ -4213,7 +4648,9 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
           continue;
         }
 
-        const groups = this.findIslands(entity.hexGrid);
+        const impact = entity.hexGrid._fractureImpact;
+        const freshImpact = impact && this._simulationTime - impact.time < DESTRUCTOR_CONFIG.fractureImpactMemory;
+        const groups = this.findIslands(entity.hexGrid, !!freshImpact);
         if (groups.length <= 1) continue;
 
         if (entity.isAsteroidHex) {
@@ -4245,22 +4682,30 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         const main = groups[0];
         const loose = groups.slice(1);
 
-        this.rebuildEntityGrid(entity, main);
-
+        let spawnedFragments = 0;
+        const maxFragments = Math.max(1, DESTRUCTOR_CONFIG.wreckSplitMaxFragments | 0);
+        // Detach chips while the original packed body still owns their slots.
+        // Rebuilding the main island first left stale boundary references and
+        // orphaned arena allocations when many small islands broke together.
         for (const group of loose) {
-          // Asteroidy mają własny split rozmiarów w AsteroidField._destroy().
-          // Nie twórz z odłączonych rogów trwałych wraków statkowych; zamień je
-          // w debris i usuń z fizycznej siatki rodzica.
-          if (entity.isAsteroidHex) {
-            for (const s of group) this.destroyShard(entity, s, { x: getEntityVelX(entity), y: getEntityVelY(entity) });
+          if (entity.isAsteroidHex || group.length < 3 || spawnedFragments >= maxFragments) {
+            for (const s of group) this.destroyShard(entity, s);
             continue;
           }
-          if (group.length < 3) {
-            for (const s of group) this.destroyShard(entity, s, { x: getEntityVelX(entity), y: getEntityVelY(entity) });
-            continue;
-          }
-          this.spawnWreckEntity(entity, group, entities);
+          spawnedFragments++;
         }
+        releaseInactiveHexShards(entity.hexGrid.shards);
+        this.rebuildEntityGrid(entity, main);
+        entity._splitRecoil = 0;
+        entity._collectSplitRecoil = true;
+        for (const group of loose) {
+          if (group[0].active && !group[0].isDebris) this.spawnWreckEntity(entity, group, entities);
+        }
+        entity._collectSplitRecoil = false;
+        // One bounded reaction for the retained part, after every loose part has
+        // inherited the same pre-fracture angular velocity.
+        addEntityAngVel(entity, Math.max(-0.18, Math.min(0.18, entity._splitRecoil)));
+        if (impact) impact.time = -Infinity;
         entity.hexGrid.activeStructuralCount = entity.hexGrid.shards.length;
         processedCount++;
       }
@@ -4269,13 +4714,15 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
     }
   },
 
-  findIslands(grid) {
+  findIslands(grid, breakStretchedBonds = false) {
     const cols = grid?.cols | 0;
     const rows = grid?.rows | 0;
     const cells = grid?.grid;
     if (!cells || cols <= 0 || rows <= 0) return [];
 
     const total = cols * rows;
+    const tearLength = HEX_HEIGHT + Math.max(HEX_HEIGHT * 1.5, Number(DESTRUCTOR_CONFIG.tearThreshold) || 34);
+    const tearLengthSq = tearLength * tearLength;
     let visited = grid._islandVisited;
 
     if (!(visited instanceof Uint8Array) || visited.length < total) {
@@ -4323,6 +4770,14 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
           const nIdx = nc + nr * cols;
           if (visited[nIdx]) continue;
           if (cells[nIdx] !== n) continue;
+
+          // Real tensile opening, measured after visible bending. Compression
+          // alone must not cut bonds or turn an intact plate into confetti.
+          if (breakStretchedBonds) {
+            const dx = getShardVisualGridX(n) - getShardVisualGridX(cur);
+            const dy = getShardVisualGridY(n) - getShardVisualGridY(cur);
+            if (dx * dx + dy * dy > tearLengthSq) continue;
+          }
 
           visited[nIdx] = 1;
           stack[stackSize++] = nIdx;
@@ -4401,6 +4856,8 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
     const cy = parent.hexGrid.srcHeight * 0.5;
     const relX = avgX - cx;
     const relY = avgY - cy;
+    const parentOffsetX = relX - (parent.hexGrid.pivot?.x || 0);
+    const parentOffsetY = relY - (parent.hexGrid.pivot?.y || 0);
 
     let maxD2 = 0;
     for (const s of shards) {
@@ -4416,8 +4873,8 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
     const s = Math.sin(ang);
     const billboardOrientation = usesBillboardOrientation(parent);
 
-    const worldX = getEntityPosX(parent) + localDeltaToWorldX(relX, relY, scaleX, scaleY, c, s, billboardOrientation);
-    const worldY = getEntityPosY(parent) + localDeltaToWorldY(relX, relY, scaleX, scaleY, c, s, billboardOrientation);
+    const worldX = getEntityPosX(parent) + localDeltaToWorldX(parentOffsetX, parentOffsetY, scaleX, scaleY, c, s, billboardOrientation);
+    const worldY = getEntityPosY(parent) + localDeltaToWorldY(parentOffsetX, parentOffsetY, scaleX, scaleY, c, s, billboardOrientation);
 
     const angVel = getEntityAngVel(parent);
     let wreckVx = getEntityVelX(parent);
@@ -4457,8 +4914,8 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
       wreckVy += localToWorldY(avgImpulseX, avgImpulseY) * splitLinearResponse;
     }
 
-    const radialWorldX = localToWorldX(relX, relY);
-    const radialWorldY = localToWorldY(relX, relY);
+    const radialWorldX = localToWorldX(parentOffsetX, parentOffsetY);
+    const radialWorldY = localToWorldY(parentOffsetX, parentOffsetY);
     const radialLen = Math.hypot(radialWorldX, radialWorldY);
     if (radialLen > 0.001) {
       const outwardKickMul = Math.max(0.002, Number(DESTRUCTOR_CONFIG.wreckSplitOutwardKick) || 0.010);
@@ -4474,7 +4931,27 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
       splitAngKick = (shardTorque / torqueDenom) * angResponse;
     }
 
-    if (Math.abs(splitAngKick) < 0.003 && radialLen > 0.001) {
+    const impact = parent.hexGrid._fractureImpact;
+    const impactAge = impact ? this._simulationTime - impact.time : Infinity;
+    const memory = Math.max(0.001, Number(DESTRUCTOR_CONFIG.fractureImpactMemory) || 0.6);
+    const freshImpact = impactAge >= 0 && impactAge < memory;
+    if (freshImpact) {
+      const armX = localToWorldX(impact.x - avgX, impact.y - avgY);
+      const armY = localToWorldY(impact.x - avgX, impact.y - avgY);
+      const impactVx = localToWorldX(impact.vx, impact.vy);
+      const impactVy = localToWorldY(impact.vx, impact.vy);
+      const radiusWorld = Math.max(1, newRadius * Math.max(scaleX, scaleY));
+      const proximity = radiusWorld / (radiusWorld + Math.hypot(armX, armY));
+      const response = Math.max(0, Number(DESTRUCTOR_CONFIG.wreckSplitImpactResponse) || 0) * proximity * (1 - impactAge / memory);
+      const speed = Math.hypot(impactVx, impactVy);
+      const gain = Math.min(response, 90 / Math.max(1, speed));
+      const kickX = impactVx * gain, kickY = impactVy * gain;
+      wreckVx += kickX;
+      wreckVy += kickY;
+      splitAngKick += (armX * kickY - armY * kickX) / Math.max(25, radiusWorld * radiusWorld * 0.5);
+    }
+
+    if (!freshImpact && Math.abs(splitAngKick) < 0.003 && radialLen > 0.001) {
       const dominantAxisSign = Math.abs(relX) >= Math.abs(relY)
         ? Math.sign(relX || 1)
         : -Math.sign(relY || 1);
@@ -4482,7 +4959,14 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
       splitAngKick = dominantAxisSign * Math.min(0.035, Math.max(minSpin, newRadius / 2200));
     }
 
-    splitAngKick = Math.max(-0.12, Math.min(0.12, splitAngKick));
+    const maxSpin = Math.max(0, Number(DESTRUCTOR_CONFIG.wreckSplitMaxAngularKick) || 0.35);
+    splitAngKick = Math.max(-maxSpin, Math.min(maxSpin, splitAngKick));
+    if (freshImpact && parent._collectSplitRecoil) {
+      const fragmentRadius = newRadius * Math.max(scaleX, scaleY);
+      const parentRadius = Math.max(fragmentRadius, Number(parent.radius) || Math.max(cx * scaleX, cy * scaleY));
+      parent._splitRecoil -= splitAngKick * sumShardMass(shards) * fragmentRadius * fragmentRadius /
+        Math.max(1, getEntityMass(parent) * parentRadius * parentRadius);
+    }
 
     const cols = parent.hexGrid.cols || Math.ceil(parent.hexGrid.srcWidth / HEX_SPACING);
     const rows = parent.hexGrid.rows || Math.ceil(parent.hexGrid.srcHeight / HEX_HEIGHT);
@@ -4507,6 +4991,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
     }
 
     wreck._inPool = false;
+    wreck._destrObbTick = -1;
     wreck.x = worldX;
     wreck.y = worldY;
     wreck.vx = wreckVx;
@@ -4548,6 +5033,8 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
     };
 
     const wGrid = wreck.hexGrid;
+    wGrid._fractureImpact = null;
+    wGrid._maxHexDrift = Number(parent.hexGrid._maxHexDrift) || 0;
     wGrid.shards = shards;
     wGrid.isFragment = true;
     wGrid.disableSolidArmorLod = true;
@@ -4798,7 +5285,13 @@ export function disposeHexBody(entity) {
 
 export { isPackedShardBoundary };
 
+// Żar heksa czyta renderer (hexShips3D) i wszystko, co chce wiedzieć, jak
+// gorąca jest blacha w tej chwili.
+export { shardHeatNow, addShardHeat };
+
 if (typeof window !== 'undefined') {
+  // Do debugowania z konsoli, jak window.DestructorSystem — nie ścieżka produkcyjna.
+  window.CollisionFX = CollisionFX;
   window.ColFuncDbgStart = (intervalMs = 1000) => DestructorSystem.setCollisionLiveDebug(true, intervalMs);
   window.ColFuncDbgStop = () => DestructorSystem.setCollisionLiveDebug(false);
   window.ColFuncDbgDump = () => DestructorSystem._dbgCollisionFlush(nowMs(), true);

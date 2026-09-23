@@ -1,0 +1,1591 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PlasmaEngineFX — demo wylotu silnika plazmowego</title>
+<style>
+  :root{
+    --bg:#04040a;
+    --panel:rgba(10,12,22,.78);
+    --line:rgba(140,160,255,.16);
+    --txt:#cfd6f5;
+    --dim:#7f88ad;
+    --acc:#ff6bea;
+    --acc2:#4fa8ff;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);overflow:hidden;
+    font-family:"Segoe UI",Roboto,system-ui,sans-serif;color:var(--txt)}
+  canvas{display:block;width:100%;height:100%}
+  #hud{
+    position:fixed;left:14px;top:12px;z-index:5;pointer-events:none;
+    font:11px/1.55 ui-monospace,Consolas,monospace;color:var(--dim);
+    text-shadow:0 0 10px #000;
+  }
+  #hud b{color:var(--acc);font-weight:600;letter-spacing:.08em}
+  #hud .st{color:#fff}
+  #ui{
+    position:fixed;right:12px;top:12px;bottom:12px;width:296px;z-index:6;
+    background:var(--panel);backdrop-filter:blur(14px);
+    border:1px solid var(--line);border-radius:10px;
+    display:flex;flex-direction:column;
+    box-shadow:0 18px 60px rgba(0,0,0,.6);
+    font-size:11px;
+  }
+  #ui.hidden{display:none}
+  #ui h1{
+    margin:0;padding:11px 13px 9px;font-size:11px;letter-spacing:.16em;
+    text-transform:uppercase;color:#fff;border-bottom:1px solid var(--line);
+    display:flex;justify-content:space-between;align-items:center;font-weight:600;
+  }
+  #ui h1 span{color:var(--dim);letter-spacing:0;text-transform:none;font-weight:400}
+  #ui .body{overflow-y:auto;padding:4px 13px 16px;flex:1}
+  #ui .body::-webkit-scrollbar{width:7px}
+  #ui .body::-webkit-scrollbar-thumb{background:rgba(120,140,220,.22);border-radius:4px}
+  .grp{margin-top:13px}
+  .grp>.t{
+    font-size:9.5px;letter-spacing:.17em;text-transform:uppercase;color:var(--acc2);
+    opacity:.85;margin-bottom:7px;border-bottom:1px solid rgba(80,120,220,.14);padding-bottom:4px;
+  }
+  .row{display:flex;align-items:center;gap:7px;margin:5px 0}
+  .row label{flex:1 1 auto;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .row .val{
+    flex:0 0 42px;text-align:right;font:10.5px ui-monospace,Consolas,monospace;color:#fff;
+  }
+  input[type=range]{
+    -webkit-appearance:none;appearance:none;width:100%;height:16px;background:transparent;cursor:pointer;margin:0;
+  }
+  input[type=range]::-webkit-slider-runnable-track{
+    height:3px;border-radius:3px;background:linear-gradient(90deg,#7a3bff,#ff6bea 55%,#4fa8ff);opacity:.55;
+  }
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none;width:11px;height:11px;margin-top:-4px;border-radius:50%;
+    background:#fff;box-shadow:0 0 8px rgba(255,107,234,.9);
+  }
+  input[type=range]::-moz-range-track{height:3px;border-radius:3px;background:#7a3bff;opacity:.6}
+  input[type=range]::-moz-range-thumb{width:11px;height:11px;border:0;border-radius:50%;background:#fff}
+  .slider{display:block;margin:1px 0 7px}
+  .btns{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 2px}
+  button{
+    flex:1 1 auto;min-width:64px;padding:7px 8px;border-radius:6px;cursor:pointer;
+    background:rgba(60,70,130,.28);border:1px solid var(--line);color:var(--txt);
+    font:10px/1 ui-monospace,Consolas,monospace;letter-spacing:.08em;text-transform:uppercase;
+    transition:.14s;
+  }
+  button:hover{background:rgba(110,130,240,.34);color:#fff;border-color:rgba(160,180,255,.4)}
+  button.on{background:linear-gradient(180deg,rgba(255,107,234,.35),rgba(120,60,255,.3));color:#fff;
+    border-color:rgba(255,120,240,.55);box-shadow:0 0 14px rgba(255,80,220,.25) inset}
+  button.big{padding:9px 8px;font-size:10.5px}
+  .bar{height:5px;border-radius:3px;background:rgba(255,255,255,.07);overflow:hidden;margin:7px 0 2px}
+  .bar>i{display:block;height:100%;width:0%;background:linear-gradient(90deg,#4fa8ff,#ff6bea 60%,#fff);
+    box-shadow:0 0 12px rgba(255,107,234,.8);transition:width .06s linear}
+  .note{color:#5f6786;font-size:9.5px;line-height:1.5;margin-top:10px}
+  kbd{background:rgba(255,255,255,.08);border:1px solid var(--line);border-radius:3px;
+      padding:0 3px;font:9.5px ui-monospace,monospace;color:#aab}
+  #err{position:fixed;inset:0;z-index:99;display:none;place-items:center;background:#05050c;
+      color:#ff8fd0;font:13px ui-monospace,monospace;padding:40px;text-align:center;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="hud">
+  <b>PLASMA ENGINE FX</b><br>
+  stan: <span class="st" id="hState">OFF</span> &nbsp; moc: <span class="st" id="hPow">0%</span><br>
+  <span id="hPerf">–</span>
+</div>
+
+<div id="ui">
+  <h1>Engine Console <span id="hQual">ULTRA</span></h1>
+  <div class="body" id="uiBody"></div>
+</div>
+
+<div id="err"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls }   from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer }  from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass }      from 'three/addons/postprocessing/RenderPass.js';
+import { ShaderPass }      from 'three/addons/postprocessing/ShaderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass }      from 'three/addons/postprocessing/OutputPass.js';
+
+window.addEventListener('error', e => {
+  const el = document.getElementById('err');
+  el.style.display = 'grid';
+  el.textContent = 'BŁĄD:\n\n' + (e.message || e) + '\n\n' + (e.filename || '') + ':' + (e.lineno || '');
+});
+
+/* ============================================================================
+   0. WSPÓLNY GLSL — simplex noise 3D (Ashima / Gustavson), prefiks pe_
+   ========================================================================== */
+const NOISE = /* glsl */`
+vec3 pe_mod289(vec3 x){ return x - floor(x*(1.0/289.0))*289.0; }
+vec4 pe_mod289(vec4 x){ return x - floor(x*(1.0/289.0))*289.0; }
+vec4 pe_permute(vec4 x){ return pe_mod289(((x*34.0)+1.0)*x); }
+vec4 pe_tis(vec4 r){ return 1.79284291400159 - 0.85373472095314 * r; }
+float pe_snoise(vec3 v){
+  const vec2 C = vec2(1.0/6.0, 1.0/3.0);
+  const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+  vec3 i  = floor(v + dot(v, C.yyy));
+  vec3 x0 = v - i + dot(i, C.xxx);
+  vec3 g = step(x0.yzx, x0.xyz);
+  vec3 l = 1.0 - g;
+  vec3 i1 = min(g.xyz, l.zxy);
+  vec3 i2 = max(g.xyz, l.zxy);
+  vec3 x1 = x0 - i1 + C.xxx;
+  vec3 x2 = x0 - i2 + C.yyy;
+  vec3 x3 = x0 - D.yyy;
+  i = pe_mod289(i);
+  vec4 p = pe_permute( pe_permute( pe_permute(
+             i.z + vec4(0.0, i1.z, i2.z, 1.0))
+           + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+           + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+  float n_ = 0.142857142857;
+  vec3 ns = n_ * D.wyz - D.xzx;
+  vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+  vec4 x_ = floor(j * ns.z);
+  vec4 y_ = floor(j - 7.0 * x_);
+  vec4 x = x_ * ns.x + ns.yyyy;
+  vec4 y = y_ * ns.x + ns.yyyy;
+  vec4 h = 1.0 - abs(x) - abs(y);
+  vec4 b0 = vec4(x.xy, y.xy);
+  vec4 b1 = vec4(x.zw, y.zw);
+  vec4 s0 = floor(b0)*2.0 + 1.0;
+  vec4 s1 = floor(b1)*2.0 + 1.0;
+  vec4 sh = -step(h, vec4(0.0));
+  vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy;
+  vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww;
+  vec3 p0 = vec3(a0.xy, h.x);
+  vec3 p1 = vec3(a0.zw, h.y);
+  vec3 p2 = vec3(a1.xy, h.z);
+  vec3 p3 = vec3(a1.zw, h.w);
+  vec4 norm = pe_tis(vec4(dot(p0,p0), dot(p1,p1), dot(p2,p2), dot(p3,p3)));
+  p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
+  vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+  m = m * m;
+  return 42.0 * dot(m*m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));
+}
+float pe_hash12(vec2 p){
+  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
+}`;
+
+/* ============================================================================
+   1. SHADER PLUME — raymarch objętościowy w układzie lokalnym silnika
+      Oś dyszy = +Z lokalne, promień dyszy = 1.0 jednostki.
+      Wszystkie warstwy (hot core / magenta body / blue sheath / ignition)
+      są całkowane wzdłuż promienia, dzięki czemu efekt wygląda tak samo
+      poprawnie z boku, z góry i pod dowolnym kątem (także w ORTHO).
+   ========================================================================== */
+const PLUME_VS = /* glsl */`
+varying vec3 vLocal;
+void main(){
+  vLocal = position;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}`;
+
+const PLUME_FS = NOISE + /* glsl */`
+precision highp float;
+
+varying vec3 vLocal;
+
+uniform float uTime;
+uniform float uLen;        // długość "ciała" plume w jednostkach (promień dyszy = 1)
+uniform float uWidth;      // mnożnik promienia
+uniform float uCore;       // intensywność białego rdzenia
+uniform float uBright;     // globalna jasność
+uniform float uTurb;       // amplituda turbulencji
+uniform float uFlow;       // prędkość przepływu plazmy
+uniform float uSheath;     // siła niebieskiej otoczki
+uniform float uDensity;    // gęstość / gain całki
+uniform float uAfterglow;  // 0..1 — poświata po wyłączeniu (fiolet/błękit, bez rdzenia)
+uniform float uPower;      // 0..1 moc silnika (kształt + barwa)
+uniform float uIgnite;     // impuls zapłonu (0..1+)
+uniform float uExtinct;    // samoprzesłanianie ośrodka
+
+uniform vec3  uCamPosL;    // pozycja kamery w przestrzeni lokalnej
+uniform vec3  uCamDirL;    // kierunek patrzenia kamery (ortho) w przestrzeni lokalnej
+uniform float uOrtho;
+uniform float uBoundR;     // ciasne granice marszu — promień
+uniform float uBoundZ0;
+uniform float uBoundZ1;
+uniform float uJitter;
+
+#ifndef PE_STEPS
+  #define PE_STEPS 48
+#endif
+#ifndef PE_OCT
+  #define PE_OCT 3
+#endif
+
+// ---- paleta: uniformy, przełączane presetami (wartości LINIOWE) ----------
+uniform vec3 uCoreWarm;   // rdzeń przy gardzieli
+uniform vec3 uCoreCold;   // rdzeń dalej
+uniform vec3 uBody0;      // tuż przy rdzeniu
+uniform vec3 uBody1;      // gorąca plazma
+uniform vec3 uBody2;      // główna plazma
+uniform vec3 uBody3;      // głęboka plazma
+uniform vec3 uOuter0;     // wewnętrzna otoczka
+uniform vec3 uOuter1;     // zewnętrzna otoczka
+
+// --------------------------------------------------------------------------
+// Pojedyncza próbka ośrodka: zwraca emisję (rgb) + gęstość (a)
+// --------------------------------------------------------------------------
+vec4 sampleMedium(vec3 p){
+  float L  = max(uLen, 0.001);
+  float s  = p.z / L;                       // 0 = wylot dyszy, 1 = koniec "ciała"
+  if (s > 1.32) return vec4(0.0);
+
+  float sc   = clamp(s, 0.0, 1.32);
+  float r    = length(p.xy);
+  // wewnątrz gardzieli (z<0) strumień gaśnie miękko w głąb dyszy
+  float inNoz = (s < 0.0) ? exp(p.z * 5.0) : 1.0;
+
+  // ---- obwiednia promienia: mały rozdmuch tuż za dyszą + zwężenie -------
+  float flare = 1.0 + 0.24 * (sc / (sc + 0.055)) * exp(-sc * 6.5);
+  float taper = 1.0 - 0.56 * smoothstep(0.08, 1.20, sc);
+  float Renv  = uWidth * flare * taper;
+
+  // ---- turbulencja: 3 skale, każda z własną prędkością w dół strumienia --
+  float tf = uTime * uFlow;
+  float expand = 1.0 / (0.55 + 0.95 * sc);         // struktury rosną w dół strumienia
+  // Im szybszy przepływ, tym dłuższe smugi. Bez tego przy dużym uFlow drobna
+  // oktawa przesuwa się o >1 cechę na klatkę i zaczyna stroboskopować.
+  // Znormalizowane tak, że dla domyślnego uFlow ~2.0 daje 1.0.
+  float fstr = 1.17 / (1.0 + uFlow * 0.085);
+  vec3 q1 = vec3(p.xy * expand * 1.45, (p.z - tf * 1.00) * (0.26 * fstr));
+  float n1 = pe_snoise(q1);
+  float n2 = 0.0;
+  float n3 = 0.0;
+  #if PE_OCT > 1
+    vec3 q2 = vec3(p.xy * expand * 3.40, (p.z - tf * 2.30) * (0.62 * fstr));
+    n2 = pe_snoise(q2);
+  #else
+    n2 = n1 * 0.6;
+  #endif
+  #if PE_OCT > 2
+    vec3 q3 = vec3(p.xy * expand * 7.60 + 17.3, (p.z - tf * 4.10) * (1.45 * fstr));
+    n3 = pe_snoise(q3);
+  #else
+    n3 = n2 * 0.6;
+  #endif
+
+  float tLow  = n1;
+  float tMid  = n1 * 0.55 + n2 * 0.45;
+  float tHigh = n1 * 0.26 + n2 * 0.34 + n3 * 0.40;
+
+  // strumień jest spójny przy gardzieli, rozchwiany dalej
+  float tAmp = uTurb * smoothstep(-0.02, 0.22, sc) * (1.0 + 0.45 * (1.0 - uPower));
+
+  // ---- znormalizowany promień, zaburzony turbulencją --------------------
+  float rq  = r / max(Renv, 1e-4);
+  float rqB = rq * (1.0 - 0.42 * tAmp * tMid);
+  float rqS = rq * (1.0 - 0.50 * tAmp * tLow);
+
+  // ---- zaniki osiowe ----------------------------------------------------
+  float tipN   = 0.17 * tAmp * tLow;
+  float eB = max(1.02 + tipN, 0.34);
+  float eS = max(1.30 + tipN * 1.4, 0.42);
+  float axBody = 1.0 - smoothstep(0.46, eB, sc);
+  float axShe  = 1.0 - smoothstep(0.34, eS, sc);
+  float axCore = pow(1.0 - smoothstep(0.008, 0.26, sc), 1.20);
+
+  // ---- MAGENTA PLASMA BODY ---------------------------------------------
+  float body = pow(max(0.0, 1.0 - rqB * rqB), 1.70) * axBody;
+  float mott = 0.72 + 0.56 * (tMid * 0.5 + 0.5);
+  body *= mix(0.98, mott, smoothstep(0.02, 0.30, sc));
+
+  // ---- HOT CORE ---------------------------------------------------------
+  float coreVis = smoothstep(0.14, 0.52, uPower);          // biały rdzeń dopiero od ~20% mocy
+  float Rc = uWidth * (0.18 + 0.27 * sc) * (0.70 + 0.42 * uPower);
+  float cr = r / max(Rc, 1e-4);
+  float core = exp(-cr * cr * 2.9) * axCore;
+  core *= 0.86 + 0.28 * (tHigh * 0.5 + 0.5);
+  // fluktuacje ciśnienia / diamenty Macha — bardzo delikatne
+  core *= 1.0 + 0.19 * sin(sc * 33.0 - uTime * uFlow * 5.0) * exp(-sc * 7.5);
+  core *= coreVis;
+
+  // ---- NOZZLE FLASH / IGNITION ZONE -------------------------------------
+  float ign = exp(-max(sc, 0.0) * 26.0) * (1.0 - smoothstep(0.35, 1.05, rq));
+  ign *= 0.85 + 0.30 * (tHigh * 0.5 + 0.5);
+
+  // ---- BLUE OUTER SHEATH (powłoka, nie wypełnienie) ---------------------
+  float d = (rqS - 0.88) / 0.26;
+  float shell = exp(-d * d);                                   // ostra krawędź
+  float skirt = exp(-pow(max(0.0, rqS - 0.34) / 0.66, 2.0)) * 0.46;  // aureola
+  float sheath = (shell + skirt) * axShe;
+  sheath *= 0.68 + 0.64 * (tLow * 0.5 + 0.5);
+  // otoczka jest cienka przy dyszy, grubsza dalej
+  sheath *= 0.45 + 0.75 * smoothstep(0.0, 0.35, sc);
+
+  // ---- barwy -------------------------------------------------------------
+  float rm = clamp(rqB, 0.0, 1.2);
+  vec3 bodyCol = mix(uBody0,  uBody1, smoothstep(0.00, 0.20, rm));
+  bodyCol      = mix(bodyCol, uBody2, smoothstep(0.12, 0.46, rm));
+  bodyCol      = mix(bodyCol, uBody3, smoothstep(0.38, 0.82, rm));
+  bodyCol      = mix(bodyCol, uOuter0, smoothstep(0.58, 1.34, sc * 0.74 + rm * 0.46));
+  // niska moc i poświata po wyłączeniu → chłodniej
+  bodyCol = mix(bodyCol, mix(uOuter0, uOuter1, 0.45), uAfterglow * 0.85 + (1.0 - uPower) * 0.18);
+
+  vec3 coreCol   = mix(uCoreWarm, uCoreCold, smoothstep(0.02, 0.26, sc));
+  vec3 sheathCol = mix(uOuter0, uOuter1, smoothstep(0.06, 0.70, sc));
+
+  // ---- emisja ------------------------------------------------------------
+  float noCore = 1.0 - uAfterglow;
+  // rdzeń "zjada" ciało na osi — dzięki temu magenta jest OTOCZKĄ bieli,
+  // a nie tłem, które biel i tak przepali
+  float hollow = 1.0 - 0.50 * exp(-cr * cr * 1.7) * coreVis;
+  vec3 e = vec3(0.0);
+  e += coreCol             * core   * (34.0 * uCore) * noCore;
+  e += vec3(1.0,0.90,0.80) * ign    * ((3.4 + 16.0 * uIgnite) * uCore) * noCore;
+  e += bodyCol             * body   * hollow * 1.35;
+  e += sheathCol           * sheath * (0.46 * uSheath);
+  e *= uBright * uDensity * inNoz;
+
+  float dens = (body * 0.55 + core * 1.10 + sheath * 0.22 + ign * 0.5) * inNoz;
+  return vec4(e, dens);
+}
+
+void main(){
+  // ---- promień w przestrzeni lokalnej (obsługa ortho i perspective) -----
+  vec3 ro, rd;
+  if (uOrtho > 0.5){
+    rd = normalize(uCamDirL);
+    ro = vLocal - rd * (uBoundZ1 * 4.0 + 40.0);
+  } else {
+    ro = uCamPosL;
+    rd = normalize(vLocal - ro);
+  }
+
+  // ---- ciasne granice: walec (oś Z) ∩ warstwa Z --------------------------
+  float t0 = 0.0;
+  float t1 = 1.0e9;
+
+  float a = dot(rd.xy, rd.xy);
+  float b = 2.0 * dot(ro.xy, rd.xy);
+  float c = dot(ro.xy, ro.xy) - uBoundR * uBoundR;
+  if (a < 1.0e-7){
+    if (c > 0.0) discard;
+  } else {
+    float disc = b * b - 4.0 * a * c;
+    if (disc < 0.0) discard;
+    float sq = sqrt(disc);
+    t0 = max(t0, (-b - sq) / (2.0 * a));
+    t1 = min(t1, (-b + sq) / (2.0 * a));
+  }
+  if (abs(rd.z) < 1.0e-7){
+    if (ro.z < uBoundZ0 || ro.z > uBoundZ1) discard;
+  } else {
+    float ta = (uBoundZ0 - ro.z) / rd.z;
+    float tb = (uBoundZ1 - ro.z) / rd.z;
+    t0 = max(t0, min(ta, tb));
+    t1 = min(t1, max(ta, tb));
+  }
+  t0 = max(t0, 0.0);
+  if (t1 <= t0) discard;
+
+  // ---- marsz --------------------------------------------------------------
+  float stepLen = (t1 - t0) / float(PE_STEPS);
+  float jit = pe_hash12(gl_FragCoord.xy + fract(uTime) * 91.7) * uJitter;
+  float t = t0 + stepLen * jit;
+
+  vec3  acc  = vec3(0.0);
+  float tr   = 1.0;
+
+  for (int i = 0; i < PE_STEPS; i++){
+    vec3 p = ro + rd * t;
+    vec4 m = sampleMedium(p);
+    acc += m.rgb * stepLen * tr;
+    tr  *= exp(-m.a * stepLen * uExtinct);
+    if (tr < 0.012) break;
+    t += stepLen;
+  }
+
+  gl_FragColor = vec4(max(acc, 0.0), 1.0);
+}`;
+
+/* ============================================================================
+   2. SHADER BILLBOARDU POŚWIATY (działa identycznie w perspective i ortho)
+   ========================================================================== */
+const GLOW_VS = /* glsl */`
+uniform float uSize;
+uniform float uStretch;
+varying vec2 vUv;
+void main(){
+  vUv = uv;
+  vec4 mv = modelViewMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+  mv.xy += vec2(position.x * uSize * uStretch, position.y * uSize);
+  gl_Position = projectionMatrix * mv;
+}`;
+
+const GLOW_FS = NOISE + /* glsl */`
+precision highp float;
+uniform vec3  uColor;
+uniform float uIntensity;
+uniform float uFalloff;
+uniform float uCoreBoost;
+uniform float uTime;
+uniform float uWobble;
+varying vec2 vUv;
+void main(){
+  vec2 uv = vUv - 0.5;
+  float d = length(uv) * 2.0;
+  float ang = atan(uv.y, uv.x);
+  // delikatne, wolno falujące zaburzenie krawędzi poświaty
+  float w = pe_snoise(vec3(cos(ang) * 1.6, sin(ang) * 1.6, uTime * 0.6)) * uWobble;
+  d *= 1.0 + w;
+  float f = max(0.0, 1.0 - d);
+  float a = pow(f, uFalloff) + uCoreBoost * pow(f, uFalloff * 4.5);
+  if (a < 0.0008) discard;
+  gl_FragColor = vec4(uColor * a * uIntensity, 1.0);
+}`;
+
+/* ============================================================================
+   3. CZĄSTKI — pozycja liczona proceduralnie w vertex shaderze
+   ========================================================================== */
+const PART_VS = /* glsl */`
+attribute vec3  aSeed;
+attribute float aPhase;
+uniform float uTime, uLife, uLen, uWidth, uEmit, uPower, uSizeK, uPixK, uOrtho, uFlow;
+uniform vec3  uPart0, uPart1, uPart2;
+varying float vA;
+varying vec3  vC;
+void main(){
+  float life = fract(uTime * uFlow / uLife + aPhase);
+  float gate = step(aPhase, uEmit);
+  float sp   = 0.70 + 0.60 * aSeed.z;
+  float z    = life * uLen * 1.20 * sp;
+  float ang  = aSeed.x * 6.28318 + life * 2.4 * (aSeed.z - 0.5);
+  float rad  = (0.16 + 0.80 * aSeed.y) * uWidth * (0.55 + 1.10 * life);
+  vec3 pos = vec3(cos(ang) * rad, sin(ang) * rad, z);
+  pos.xy += vec2(sin(life * 12.0 + aSeed.x * 31.0), cos(life * 9.5 + aSeed.y * 27.0))
+            * 0.09 * uWidth * life;
+
+  vec4 mv = modelViewMatrix * vec4(pos, 1.0);
+  gl_Position = projectionMatrix * mv;
+
+  float fade = smoothstep(0.0, 0.05, life) * (1.0 - smoothstep(0.30, 1.0, life));
+  vA = fade * gate * smoothstep(0.05, 0.4, uPower);
+  vC = mix(uPart0, mix(uPart1, uPart2, smoothstep(0.25, 0.9, life)),
+           smoothstep(0.015, 0.28, life));
+  float sz = (0.026 + 0.042 * aSeed.z) * (1.0 - 0.45 * life) * uWidth;
+  float szP = sz * uSizeK / max(-mv.z, 0.01);
+  gl_PointSize = clamp(mix(szP, sz * uPixK, uOrtho), 1.0, 42.0);
+}`;
+
+const PART_FS = /* glsl */`
+precision highp float;
+uniform float uGain;
+varying float vA;
+varying vec3  vC;
+void main(){
+  float d = length(gl_PointCoord - 0.5) * 2.0;
+  float a = pow(max(0.0, 1.0 - d), 2.3);
+  if (a * vA < 0.002) discard;
+  gl_FragColor = vec4(vC * a * vA * uGain, 1.0);
+}`;
+
+/* ============================================================================
+   4. WNĘTRZE DYSZY
+   ========================================================================== */
+const NOZ_VS = /* glsl */`
+varying float vT;
+varying vec3  vP;
+uniform float uZ0;
+void main(){
+  vP = position;
+  vT = clamp((position.z - uZ0) / max(-uZ0, 0.001), 0.0, 1.0);
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}`;
+
+const NOZ_FS = NOISE + /* glsl */`
+precision highp float;
+varying float vT;
+varying vec3  vP;
+uniform float uTime, uGlow, uFlow, uAfterglow;
+uniform vec3  uNozHot, uNozLip, uNozCool;
+void main(){
+  float g = mix(1.0, 0.22, vT);
+  vec3 c  = mix(uNozHot, uNozLip, smoothstep(0.10, 0.85, vT));
+  c = mix(c, uNozCool, uAfterglow);
+  float n = 0.80 + 0.35 * pe_snoise(vec3(vP.xy * 3.4, vP.z * 2.2 - uTime * uFlow * 2.2));
+  float v = g * n * uGlow;
+  if (v < 0.003) discard;
+  gl_FragColor = vec4(c * v, 1.0);
+}`;
+
+/* ============================================================================
+   5. MASKA ZAKŁÓCEŃ CIEPLNYCH (render do osobnego RT przez warstwę 3)
+   ========================================================================== */
+const DIST_VS = /* glsl */`
+varying vec3 vP;
+void main(){
+  vP = position;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}`;
+
+const DIST_FS = NOISE + /* glsl */`
+precision highp float;
+varying vec3 vP;
+uniform float uTime, uFlow, uPower, uLen, uWidth;
+void main(){
+  float s = clamp(vP.z / max(uLen, 0.001), 0.0, 1.0);
+  float r = length(vP.xy) / max(uWidth * 1.8, 0.001);
+  // najsilniej tuż za dyszą, w pierścieniu wokół strumienia
+  float mask = exp(-s * 2.4) * smoothstep(0.15, 0.55, r) * (1.0 - smoothstep(0.85, 1.25, r));
+  mask *= smoothstep(0.08, 0.45, uPower);
+  float t = uTime * uFlow;
+  float nx = pe_snoise(vec3(vP.xy * 2.2,        vP.z * 0.9 - t * 2.2));
+  float ny = pe_snoise(vec3(vP.xy * 2.2 + 31.7, vP.z * 0.9 - t * 2.2));
+  gl_FragColor = vec4(nx * 0.5 + 0.5, ny * 0.5 + 0.5, 0.0, mask);
+}`;
+
+const DIST_POST = {
+  uniforms: {
+    tDiffuse:  { value: null },
+    tDistort:  { value: null },
+    uStrength: { value: 0.0 }
+  },
+  vertexShader: /* glsl */`
+    varying vec2 vUv;
+    void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+  fragmentShader: /* glsl */`
+    precision highp float;
+    uniform sampler2D tDiffuse, tDistort;
+    uniform float uStrength;
+    varying vec2 vUv;
+    void main(){
+      vec4 d = texture2D(tDistort, vUv);
+      vec2 o = (d.rg * 2.0 - 1.0) * d.a * uStrength;
+      if (d.a < 0.002){ gl_FragColor = texture2D(tDiffuse, vUv); return; }
+      // mikroskopijna dyspersja — tylko tyle, żeby gorące powietrze "żyło"
+      float r = texture2D(tDiffuse, vUv + o * 0.82).r;
+      vec4  g = texture2D(tDiffuse, vUv + o);
+      float b = texture2D(tDiffuse, vUv + o * 1.22).b;
+      gl_FragColor = vec4(r, g.g, b, g.a);
+    }`
+};
+
+/* ============================================================================
+   6. KLASA PlasmaEngineFX
+   ========================================================================== */
+const QUALITY = {
+  ULTRA:  { steps: 64, oct: 3, particles: 900, jitter: 1.0, distort: true,  dpr: 2.0,  bloomRes: 1.0 },
+  HIGH:   { steps: 44, oct: 3, particles: 520, jitter: 1.0, distort: true,  dpr: 1.6,  bloomRes: 0.75 },
+  MEDIUM: { steps: 28, oct: 2, particles: 260, jitter: 1.0, distort: false, dpr: 1.25, bloomRes: 0.6 },
+  LOW:    { steps: 16, oct: 1, particles: 0,   jitter: 0.6, distort: false, dpr: 1.0,  bloomRes: 0.5 }
+};
+
+/* --------------------------------------------------------------------------
+   PALETY. Barwy podaje się w sRGB (hex) — THREE.Color z włączonym
+   ColorManagement konwertuje je na liniowe, czyli dokładnie to, czego
+   oczekują shadery. Plan pasm HDR jest wspólny dla wszystkich palet, więc
+   przełączenie barw nie psuje relacji rdzeń/ciało/otoczka.
+
+   Dwie reguły przy dorabianiu własnej palety:
+   1. `outer` decyduje o odczuwanym odcieniu CAŁEGO strumienia, nie tylko
+      krawędzi — jego "spódnica" pokrywa większość promienia i sumuje się
+      addytywnie z ciałem. Dwutonowo (magenta + błękit) działa tylko wtedy,
+      gdy tego chcesz; przy ciepłym ciele zimna otoczka daje brudny róż.
+   2. Barwy o wysokiej luminancji wypadają z pasma HDR do bieli. Zieleń
+      (waga 0,7152) musi być wyraźnie ciemniejsza niż magenta czy błękit,
+      żeby w ogóle została zielenią.
+   -------------------------------------------------------------------------- */
+const PALETTES = [
+  { name: 'Magenta',
+    core:[0xFFF0E0,0xFFF4FF], body:[0xFFB5FF,0xFF72ED,0xF34BFF,0xC936FF],
+    outer:[0x7C58FF,0x42A5FF], nozzle:[0xFFCC80,0xFF4DF2,0x7359FF],
+    glow:[0xFFF0E2,0xFF4FE4,0x4F8CFF], part:[0xFFF2FF,0xFF4DF2,0x5A8CFF],
+    light:[0xFF77EE,0x6A7DFF] },
+
+  { name: 'Ion Blue',
+    core:[0xEAF6FF,0xFFFFFF], body:[0xBFF0FF,0x6ED8FF,0x35B4FF,0x1E7BFF],
+    outer:[0x2A46FF,0x7E3BFF], nozzle:[0xCFE8FF,0x46B4FF,0x3A5BFF],
+    glow:[0xEAF7FF,0x4FB8FF,0x4258FF], part:[0xFFFFFF,0x6FD4FF,0x4060FF],
+    light:[0x66C4FF,0x4A6BFF] },
+
+  { name: 'Fusion Gold',
+    core:[0xFFF3D6,0xFFFFFF], body:[0xFFE3A8,0xFFB347,0xFF7A18,0xE03A0A],
+    outer:[0xC81E00,0xFF7A20], nozzle:[0xFFE0A0,0xFF8020,0xFF4020],
+    glow:[0xFFF0D0,0xFF8A2A,0xFF4A18], part:[0xFFF8E0,0xFFA030,0xFF4010],
+    light:[0xFFA542,0xFF5A22] },
+
+  { name: 'Antimatter',
+    core:[0xEAFFEE,0xFFFFFF], body:[0xAFFFA8,0x44E85A,0x0FBF3C,0x079060],
+    outer:[0x0A7A78,0x17BCD8], nozzle:[0xD4FFC8,0x2FD455,0x0A9A88],
+    glow:[0xE8FFEA,0x2ED45E,0x11A090], part:[0xEAFFEE,0x3CE070,0x14A894],
+    light:[0x35D96E,0x14A894] },
+
+  { name: 'Crimson',
+    core:[0xFFEDE8,0xFFF0F4], body:[0xFFC2C8,0xFF5D6E,0xFF1F3D,0xC2103F],
+    outer:[0x8E0A28,0xFF3355], nozzle:[0xFFD0C0,0xFF3350,0xA01838],
+    glow:[0xFFEAE6,0xFF3A5C,0xC01F40], part:[0xFFF0F0,0xFF4060,0xC02040],
+    light:[0xFF5570,0xC02848] },
+
+  { name: 'Arctic',
+    core:[0xFFFFFF,0xFFFFFF], body:[0xFFFFFF,0xDCEBFF,0xA8C8FF,0x6E9AE6],
+    outer:[0x4C74C8,0x8FD4FF], nozzle:[0xFFFFFF,0xC8DCFF,0x7FA8E0],
+    glow:[0xFFFFFF,0xBFD8FF,0x8FB8FF], part:[0xFFFFFF,0xD0E4FF,0x8FB0E0],
+    light:[0xCFE2FF,0x8FAEE0] }
+];
+
+const DIST_LAYER = 3;
+const BASE_LEN   = 10.0;   // długość "ciała" plume przy pełnej mocy, w promieniach dyszy
+// Zapas na NAJGORSZY przypadek, nie na domyślny: Plume Length 1,8 ×
+// Boost Power 3,0 (mnożnik długości 1 + 0,55·3 = 2,65) × zasięg otoczki 1,34.
+// Za mała wartość ścina ogon płaszczyzną — proxy jest duże, ale granice marszu
+// i tak są liczone analitycznie z AKTUALNych rozmiarów, więc nic to nie kosztuje.
+const MAX_LEN    = 70.0;
+const MAX_RAD    = 3.0;
+
+const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
+const _m1 = new THREE.Matrix4();
+const _q1 = new THREE.Quaternion();
+const _Z  = new THREE.Vector3(0, 0, 1);
+const _WHITE = new THREE.Color(0xffffff);
+
+const lerp  = (a, b, t) => a + (b - a) * t;
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+// wykładnicze dążenie niezależne od kroku czasu
+const approach = (cur, target, rate, dt) => cur + (target - cur) * (1 - Math.exp(-rate * dt));
+
+class PlasmaEngineFX {
+  constructor(opts = {}) {
+    this.root = new THREE.Group();
+    this.root.name = 'PlasmaEngineFX';
+
+    // ---- parametry sterowalne z zewnątrz (GUI) ----
+    this.params = {
+      coreBrightness: 1.00,
+      plumeLength:    1.00,
+      plumeWidth:     1.00,
+      turbulence:     1.00,
+      flowSpeed:      4.50,
+      blueSheath:     1.00,
+      flicker:        0.35,
+      particles:      0.35,
+      density:        1.00,
+      nozzleGlow:     1.00,
+      heatDistort:    0.80,
+      extinction:     0.28,
+      boostAmount:    1.00
+    };
+
+    // ---- kanały animacji (każdy z własną dynamiką!) ----
+    this.ch = {
+      power: 0, core: 0, len: 0, wid: 0, bright: 0,
+      sheath: 0, glow: 0, emit: 0, afterglow: 0, ignite: 0, boost: 0
+    };
+    this.boost = false;
+
+    this.state      = 'off';         // off | ignition | running | shutdown
+    this.throttle   = 0;             // zadana moc 0..1
+    this._stateT    = 0;
+    this._time      = 0;
+    this._flickMul  = 1;
+    this.quality    = 'ULTRA';
+
+    this._buildPlume();
+    this._buildGlows();
+    this._buildParticles();
+    this._buildDistortProxy();
+    this._buildLights();
+
+    this.setQuality(opts.quality || 'ULTRA');
+    this.setPalette(opts.palette || 0);
+  }
+
+  /* ---------------------------------------------------------------- plume */
+  _buildPlume() {
+    const g = new THREE.BoxGeometry(MAX_RAD * 2, MAX_RAD * 2, MAX_LEN + 1.0);
+    g.translate(0, 0, (MAX_LEN + 1.0) * 0.5 - 0.5);
+
+    this.plumeMat = new THREE.ShaderMaterial({
+      vertexShader: PLUME_VS,
+      fragmentShader: PLUME_FS,
+      uniforms: {
+        uTime:{value:0}, uLen:{value:BASE_LEN}, uWidth:{value:1}, uCore:{value:1},
+        uBright:{value:1}, uTurb:{value:1}, uFlow:{value:4.5}, uSheath:{value:1},
+        uDensity:{value:1}, uAfterglow:{value:0}, uPower:{value:0}, uIgnite:{value:0},
+        uExtinct:{value:0.28},
+        uCamPosL:{value:new THREE.Vector3()}, uCamDirL:{value:new THREE.Vector3(0,0,-1)},
+        uOrtho:{value:0}, uBoundR:{value:1.5}, uBoundZ0:{value:-0.5}, uBoundZ1:{value:12},
+        uJitter:{value:1},
+        uCoreWarm:{value:new THREE.Color(1,1,1)}, uCoreCold:{value:new THREE.Color(1,1,1)},
+        uBody0:{value:new THREE.Color()},  uBody1:{value:new THREE.Color()},
+        uBody2:{value:new THREE.Color()},  uBody3:{value:new THREE.Color()},
+        uOuter0:{value:new THREE.Color()}, uOuter1:{value:new THREE.Color()}
+      },
+      defines: { PE_STEPS: 48, PE_OCT: 3 },
+      transparent: true,
+      depthWrite: false,
+      depthTest: true,
+      side: THREE.BackSide,
+      blending: THREE.AdditiveBlending,
+      toneMapped: true
+    });
+
+    this.plume = new THREE.Mesh(g, this.plumeMat);
+    this.plume.frustumCulled = false;
+    this.plume.renderOrder = 20;
+    this.root.add(this.plume);
+  }
+
+  /* ----------------------------------------------------------- billboardy */
+  _makeGlow(cfg) {
+    const mat = new THREE.ShaderMaterial({
+      vertexShader: GLOW_VS,
+      fragmentShader: GLOW_FS,
+      uniforms: {
+        uSize:{value:cfg.size}, uStretch:{value:cfg.stretch || 1},
+        uColor:{value:new THREE.Color(cfg.color)}, uIntensity:{value:0},
+        uFalloff:{value:cfg.falloff}, uCoreBoost:{value:cfg.boost || 0},
+        uTime:{value:0}, uWobble:{value:cfg.wobble || 0}
+      },
+      transparent: true, depthWrite: false, depthTest: true,
+      blending: THREE.AdditiveBlending, side: THREE.DoubleSide
+    });
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
+    m.position.z = cfg.z;
+    m.frustumCulled = false;
+    m.renderOrder = cfg.order;
+    this.root.add(m);
+    return m;
+  }
+
+  _buildGlows() {
+    // D: soft glow sprite'y w okolicy dyszy — gorący rdzeń, magenta, błękit
+    this.glowHot  = this._makeGlow({ size:2.6,  z:0.10, color:0xfff0e2, falloff:3.2,
+                                     boost:1.0, order:22, wobble:0.05 });
+    this.glowMag  = this._makeGlow({ size:7.0,  z:0.90, color:0xff4fe4, falloff:2.5,
+                                     boost:0.35, order:21, wobble:0.10 });
+    this.glowBlue = this._makeGlow({ size:14.0, z:2.20, color:0x4f8cff, falloff:2.1,
+                                     boost:0.0, order:19, wobble:0.14 });
+  }
+
+  /* -------------------------------------------------------------- cząstki */
+  _buildParticles() {
+    const N = QUALITY.ULTRA.particles;
+    const g = new THREE.BufferGeometry();
+    const pos   = new Float32Array(N * 3);
+    const seed  = new Float32Array(N * 3);
+    const phase = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      seed[i*3+0] = Math.random();
+      seed[i*3+1] = Math.random();
+      seed[i*3+2] = Math.random();
+      phase[i]    = Math.random();
+    }
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('aSeed',    new THREE.BufferAttribute(seed, 3));
+    g.setAttribute('aPhase',   new THREE.BufferAttribute(phase, 1));
+    g.boundingSphere = new THREE.Sphere(new THREE.Vector3(0,0,MAX_LEN*0.5), MAX_LEN);
+
+    this.partMat = new THREE.ShaderMaterial({
+      vertexShader: PART_VS, fragmentShader: PART_FS,
+      uniforms: {
+        uTime:{value:0}, uLife:{value:1.0}, uLen:{value:BASE_LEN}, uWidth:{value:1},
+        uEmit:{value:0}, uPower:{value:0}, uSizeK:{value:600}, uPixK:{value:20},
+        uOrtho:{value:0}, uFlow:{value:1}, uGain:{value:3.0},
+        uPart0:{value:new THREE.Color()}, uPart1:{value:new THREE.Color()},
+        uPart2:{value:new THREE.Color()}
+      },
+      transparent: true, depthWrite: false, depthTest: true,
+      blending: THREE.AdditiveBlending
+    });
+
+    this.particles = new THREE.Points(g, this.partMat);
+    this.particles.frustumCulled = false;
+    this.particles.renderOrder = 23;
+    this.root.add(this.particles);
+  }
+
+  /* ------------------------------------------------------- proxy zakłóceń */
+  _buildDistortProxy() {
+    const g = new THREE.CylinderGeometry(2.6, 1.25, 7.0, 28, 1, true);
+    g.rotateX(Math.PI / 2);
+    g.translate(0, 0, 3.4);
+    this.distMat = new THREE.ShaderMaterial({
+      vertexShader: DIST_VS, fragmentShader: DIST_FS,
+      uniforms: { uTime:{value:0}, uFlow:{value:4.5}, uPower:{value:0},
+                  uLen:{value:BASE_LEN}, uWidth:{value:1} },
+      side: THREE.FrontSide, depthTest: false, depthWrite: false,
+      blending: THREE.NoBlending, transparent: false
+    });
+    this.distProxy = new THREE.Mesh(g, this.distMat);
+    this.distProxy.frustumCulled = false;
+    this.distProxy.layers.set(DIST_LAYER);
+    this.root.add(this.distProxy);
+  }
+
+  /* -------------------------------------------------------------- światła */
+  _buildLights() {
+    this.lightNear = new THREE.PointLight(0xff77ee, 0, 26, 2);
+    this.lightNear.position.set(0, 0, 0.6);
+    this.root.add(this.lightNear);
+
+    this._lightNearCol = new THREE.Color(0xff77ee);
+    this.lightFar = new THREE.PointLight(0x6a7dff, 0, 40, 2);
+    this.lightFar.position.set(0, 0, 5.0);
+    this.root.add(this.lightFar);
+  }
+
+  /* ============================================================ PUBLIC API */
+  setThrottle(v) {
+    this.throttle = clamp(v, 0, 1);
+    if (this.throttle > 0.02 && this.state === 'off') this.ignite();
+    if (this.throttle <= 0.02 && (this.state === 'running')) this.shutdown();
+  }
+
+  ignite() {
+    if (this.state === 'ignition' || this.state === 'running') return;
+    this.state = 'ignition';
+    this._stateT = 0;
+    if (this.throttle < 0.05) this.throttle = 0.85;
+  }
+
+  shutdown() {
+    if (this.state === 'off') return;
+    this.state = 'shutdown';
+    this._stateT = 0;
+  }
+
+  /** Przełącza paletę barw (indeks w PALETTES albo nazwa). */
+  setPalette(idx) {
+    if (typeof idx === 'string') {
+      const i = PALETTES.findIndex(p => p.name.toLowerCase() === idx.toLowerCase());
+      if (i >= 0) idx = i; else idx = 0;
+    }
+    const p = PALETTES[((idx % PALETTES.length) + PALETTES.length) % PALETTES.length];
+    this._palIdx = PALETTES.indexOf(p);
+    this.palette = p;
+
+    const U = this.plumeMat.uniforms;
+    U.uCoreWarm.value.setHex(p.core[0]);  U.uCoreCold.value.setHex(p.core[1]);
+    U.uBody0.value.setHex(p.body[0]);     U.uBody1.value.setHex(p.body[1]);
+    U.uBody2.value.setHex(p.body[2]);     U.uBody3.value.setHex(p.body[3]);
+    U.uOuter0.value.setHex(p.outer[0]);   U.uOuter1.value.setHex(p.outer[1]);
+
+    this.glowHot.material.uniforms.uColor.value.setHex(p.glow[0]);
+    this.glowMag.material.uniforms.uColor.value.setHex(p.glow[1]);
+    this.glowBlue.material.uniforms.uColor.value.setHex(p.glow[2]);
+
+    const pu = this.partMat.uniforms;
+    pu.uPart0.value.setHex(p.part[0]);
+    pu.uPart1.value.setHex(p.part[1]);
+    pu.uPart2.value.setHex(p.part[2]);
+
+    this._lightNearCol.setHex(p.light[0]);
+    this.lightFar.color.setHex(p.light[1]);
+
+    // dysza jest budowana przez scenę — może jeszcze nie być podpięta
+    if (this.nozzleGlowMat) {
+      const nu = this.nozzleGlowMat.uniforms;
+      nu.uNozHot.value.setHex(p.nozzle[0]);
+      nu.uNozLip.value.setHex(p.nozzle[1]);
+      nu.uNozCool.value.setHex(p.nozzle[2]);
+    }
+    if (this.throatMat) this.throatMat.uniforms.uColor.value.setHex(p.nozzle[0]);
+    return p;
+  }
+
+  /** Dopalacz: szybszy przepływ, dłuższy i węższy strumień, gorętszy rdzeń. */
+  setBoost(on) { this.boost = !!on; }
+
+  setQuality(q) {
+    const cfg = QUALITY[q] || QUALITY.HIGH;
+    this.quality = q;
+    this.plumeMat.defines.PE_STEPS = cfg.steps;
+    this.plumeMat.defines.PE_OCT   = cfg.oct;
+    this.plumeMat.uniforms.uJitter.value = cfg.jitter;
+    this.plumeMat.needsUpdate = true;
+    this._maxParticles = cfg.particles;
+    this.distProxy.visible = cfg.distort;
+    return cfg;
+  }
+
+  /** Obraca silnik tak, aby strumień leciał w podanym kierunku (world). */
+  setDirection(dir) {
+    _v1.copy(dir).normalize();
+    _q1.setFromUnitVectors(_Z, _v1);
+    this.root.quaternion.copy(_q1);
+  }
+
+  /** Jednolita skala — 1.0 = promień dyszy 1 jednostka świata. */
+  setScale(s) { this.root.scale.setScalar(s); }
+
+  get object() { return this.root; }
+
+  /* ========================================================= AKTUALIZACJA */
+  update(dt, camera, viewportH) {
+    this._time += dt;
+    this._stateT += dt;
+    const ch = this.ch, P = this.params, t = this._time;
+
+    /* --------- automat stanów: każdy kanał ma inną charakterystykę ------- */
+    let cmd = this.throttle;
+    ch.ignite = approach(ch.ignite, 0, 9.0, dt);
+
+    if (this.state === 'off') {
+      cmd = 0;
+      ch.afterglow = approach(ch.afterglow, 0, 5.0, dt);
+
+    } else if (this.state === 'ignition') {
+      const T = this._stateT;
+      ch.afterglow = 0;
+      if (T < 0.24) {
+        // 0–20%: rozświetla się wnętrze dyszy, jeszcze bez strumienia
+        cmd = 0.035 + 0.05 * (T / 0.24);
+        ch.glow = approach(ch.glow, 1.35 * (0.25 + T / 0.24), 14, dt);
+      } else {
+        if (ch.ignite < 0.05 && T < 0.34) ch.ignite = 1.0;   // błysk zapłonu
+        // 20–100%: rdzeń wystrzeliwuje, plume gwałtownie się wydłuża
+        const u = clamp((T - 0.24) / 0.62, 0, 1);
+        const e = 1 - Math.pow(1 - u, 2.6);
+        cmd = lerp(0.085, this.throttle, e);
+        if (T > 0.95) { this.state = 'running'; this._stateT = 0; }
+      }
+
+    } else if (this.state === 'running') {
+      ch.afterglow = approach(ch.afterglow, 0, 6.0, dt);
+
+    } else { // shutdown
+      cmd = 0;
+      ch.afterglow = approach(ch.afterglow, 1, 7.0, dt);
+      if (this._stateT > 1.5) { this.state = 'off'; }
+    }
+
+    // 'dying' = shutdown ORAZ off — inaczej po zgaśnięciu kanały wracałyby
+    // do wartości spoczynkowych i plume odrodziłby się jako stały kikut.
+    const dying = (this.state === 'shutdown' || this.state === 'off');
+
+    // --- moc: wolniejszy rozruch, szybsze zbicie ---
+    ch.power = approach(ch.power, cmd, dying ? 7.5 : 3.6, dt);
+
+    // --- rdzeń: reaguje najszybciej, gaśnie pierwszy ---
+    const coreTgt = Math.pow(clamp((cmd - 0.07) / 0.93, 0, 1), 0.75);
+    ch.core = approach(ch.core, dying ? 0 : coreTgt, dying ? 16 : 9, dt);
+
+    // --- długość: overshoot przy rozruchu, szybkie skracanie;
+    //     po zgaszeniu zostaje krótki kikut wiązany z dogasającą otoczką ---
+    const lenTgt = dying ? (0.22 * ch.sheath) : (0.16 + 0.84 * Math.pow(cmd, 0.72));
+    ch.len = approach(ch.len, lenTgt, dying ? 9 : 5.2, dt);
+
+    // --- szerokość: najwolniejsza, przy gaszeniu chwilowy "pyk" ---
+    let widTgt = 0.55 + 0.45 * Math.pow(cmd, 0.5);
+    if (dying) widTgt = (this._stateT < 0.22 && this.state === 'shutdown')
+                        ? ch.wid * 1.35 : 0.55 * ch.sheath;
+    ch.wid = approach(ch.wid, widTgt, dying ? 3.2 : 2.6, dt);
+
+    // --- jasność ---
+    ch.bright = approach(ch.bright, dying ? 0 : (0.30 + 0.70 * cmd), dying ? 3.0 : 6.0, dt);
+
+    // --- niebieska otoczka: zostaje najdłużej (afterglow) ---
+    ch.sheath = approach(ch.sheath, dying ? 0 : (0.45 + 0.55 * cmd), dying ? 1.9 : 3.4, dt);
+
+    // --- świecenie wnętrza dyszy ---
+    const glowTgt = dying ? 0 : (0.12 + 1.25 * Math.pow(cmd, 0.6));
+    if (!(this.state === 'ignition' && this._stateT < 0.24))
+      ch.glow = approach(ch.glow, glowTgt, dying ? 2.4 : 8, dt);
+
+    // --- emisja cząstek ---
+    ch.emit = approach(ch.emit, dying ? 0 : cmd, 6, dt);
+
+    // --- dopalacz: wchodzi szybko, schodzi wolniej; tylko przy realnej mocy
+    const boostOn = this.boost && !dying && cmd > 0.25;
+    ch.boost = approach(ch.boost, boostOn ? 1 : 0, boostOn ? 5.0 : 2.4, dt);
+
+    /* --------------------------- flicker / drżenie ciśnienia ------------- */
+    const unstable = P.flicker * (0.45 + 0.95 * (1 - ch.power)) * (ch.power > 0.01 ? 1 : 0);
+    const f = Math.sin(t * 37.3) * 0.5 + Math.sin(t * 91.7) * 0.28 + Math.sin(t * 13.1) * 0.22;
+    this._flickMul = 1 + unstable * 0.11 * f + ch.ignite * 0.9;
+
+    /* ----------------------------- uniformy plume ------------------------ */
+    const U = this.plumeMat.uniforms;
+    // B = siła dopalacza. Strumień przy dopalaniu jest SZYBSZY, dłuższy,
+    // nieco węższy i gorętszy — nie po prostu "większy".
+    const B = ch.boost * P.boostAmount;
+    const len   = BASE_LEN * P.plumeLength * Math.max(ch.len, 0.0001) * (1 + 0.55 * B);
+    const width = P.plumeWidth * Math.max(ch.wid, 0.0001) * (1 - 0.10 * Math.min(B, 1.4));
+    const flow  = P.flowSpeed * (0.45 + 0.80 * ch.power) * (1 + 1.70 * B);
+
+    U.uTime.value      = t;
+    U.uLen.value       = len;
+    U.uWidth.value     = width;
+    U.uCore.value      = P.coreBrightness * ch.core * this._flickMul * (1 + 0.30 * B);
+    U.uBright.value    = Math.max(ch.bright, ch.sheath * 0.60) * this._flickMul * (1 + 0.10 * B);
+    U.uTurb.value      = P.turbulence * (1 + 0.45 * B);
+    U.uFlow.value      = flow;
+    U.uSheath.value    = P.blueSheath * ch.sheath;
+    U.uDensity.value   = P.density;
+    U.uAfterglow.value = ch.afterglow;
+    U.uPower.value     = ch.power;
+    U.uIgnite.value    = ch.ignite;
+    U.uExtinct.value   = P.extinction;
+    // ciasne granice marszu (nie geometria!) — zwężają się razem z plume
+    U.uBoundR.value  = Math.min(MAX_RAD - 0.05, width * 1.45 + 0.20);
+    U.uBoundZ0.value = -0.45;
+    U.uBoundZ1.value = Math.min(MAX_LEN, len * 1.34 + 0.4);
+
+    const visible = ch.bright > 0.004 || ch.sheath > 0.004;
+    this.plume.visible = visible;
+
+    /* ---- kamera w przestrzeni lokalnej (poprawny raymarch w ortho) ------ */
+    this.root.updateMatrixWorld();
+    _m1.copy(this.plume.matrixWorld).invert();
+    camera.getWorldPosition(_v1).applyMatrix4(_m1);
+    U.uCamPosL.value.copy(_v1);
+    camera.getWorldDirection(_v2).transformDirection(_m1).normalize();
+    U.uCamDirL.value.copy(_v2);
+    const isOrtho = camera.isOrthographicCamera ? 1 : 0;
+    U.uOrtho.value = isOrtho;
+
+    /* ------------------------------ billboardy --------------------------- */
+    const scl = this.root.scale.x;
+    const gh = this.glowHot.material.uniforms;
+    gh.uTime.value = t;
+    gh.uSize.value = (0.80 + 0.50 * ch.power) * scl;      // ~średnica dyszy
+    gh.uIntensity.value = (0.95 * ch.core + 3.2 * ch.ignite + 0.28 * ch.glow)
+                          * this._flickMul * (1 - ch.afterglow * 0.85);
+
+    const gm = this.glowMag.material.uniforms;
+    gm.uTime.value = t;
+    gm.uSize.value = (2.3 + 1.7 * ch.power) * scl;
+    gm.uIntensity.value = (0.30 * ch.bright + 0.8 * ch.ignite) * this._flickMul
+                          * (1 - ch.afterglow * 0.35);
+    this.glowMag.position.z = 0.40 + 0.55 * ch.len;
+
+    const gb = this.glowBlue.material.uniforms;
+    gb.uTime.value = t;
+    gb.uSize.value = (4.0 + 3.4 * ch.power) * scl;
+    gb.uIntensity.value = 0.075 * ch.sheath * P.blueSheath * (0.5 + 0.5 * this._flickMul);
+    this.glowBlue.position.z = 0.9 + 1.5 * ch.len;
+
+    this.glowHot.visible  = gh.uIntensity.value > 0.004;
+    this.glowMag.visible  = gm.uIntensity.value > 0.004;
+    this.glowBlue.visible = gb.uIntensity.value > 0.004;
+
+    /* -------------------------------- cząstki ---------------------------- */
+    const pu = this.partMat.uniforms;
+    const count = Math.floor(this._maxParticles * P.particles);
+    this.particles.geometry.setDrawRange(0, count);
+    this.particles.visible = count > 0 && ch.emit > 0.01;
+    pu.uTime.value  = t;
+    pu.uLen.value   = len;
+    pu.uWidth.value = width;
+    pu.uEmit.value  = ch.emit;
+    pu.uPower.value = ch.power;
+    pu.uFlow.value  = (0.55 + 0.9 * ch.power) * (1 + 1.5 * B);
+    pu.uOrtho.value = isOrtho;
+    pu.uGain.value  = 0.95 * this._flickMul;
+    if (camera.isPerspectiveCamera) {
+      pu.uSizeK.value = viewportH / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) * 0.5));
+    } else {
+      pu.uPixK.value = viewportH / ((camera.top - camera.bottom) / camera.zoom) * scl;
+    }
+
+    /* ------------------------------- zakłócenia -------------------------- */
+    const du = this.distMat.uniforms;
+    du.uTime.value  = t;
+    du.uFlow.value  = P.flowSpeed * (1 + 1.2 * B);
+    du.uPower.value = ch.power * (1 + 0.5 * B);
+    du.uLen.value   = len;
+    du.uWidth.value = width;
+
+    /* -------------------------------- światła ---------------------------- */
+    this.lightNear.intensity = 55 * ch.bright * ch.power * this._flickMul * scl * scl * (1 + 0.5 * B);
+    this.lightNear.color.copy(this._lightNearCol).lerp(_WHITE, 0.45 * ch.core);
+    this.lightNear.distance = 24 * scl;
+    this.lightFar.intensity = 26 * ch.sheath * ch.power * scl * scl;
+    this.lightFar.distance = 44 * scl;
+    this.lightFar.position.z = 2.0 + 3.5 * ch.len;
+
+    /* ------------------------- świecenie wnętrza dyszy ------------------- */
+    if (this.nozzleGlowMat) {
+      const nu = this.nozzleGlowMat.uniforms;
+      nu.uTime.value = t;
+      nu.uGlow.value = ch.glow * P.nozzleGlow * this._flickMul;
+      nu.uFlow.value = P.flowSpeed;
+      nu.uAfterglow.value = ch.afterglow;
+      this.nozzleGlow.visible = nu.uGlow.value > 0.004;
+    }
+    if (this.throatMat) {
+      this.throatMat.uniforms.uIntensity.value =
+        (2.2 * ch.glow + 6.0 * ch.core + 9.0 * ch.ignite) * this._flickMul * (1 - ch.afterglow);
+      this.throatMat.uniforms.uTime.value = t;
+      this.throat.visible = this.throatMat.uniforms.uIntensity.value > 0.004;
+    }
+  }
+
+  /** Podpina świecące elementy dyszy zbudowane przez scenę. */
+  attachNozzle(glowMesh, glowMat, throatMesh, throatMat) {
+    this.nozzleGlow = glowMesh; this.nozzleGlowMat = glowMat;
+    this.throat = throatMesh;   this.throatMat = throatMat;
+    this.setPalette(this._palIdx);       // domknij paletę na dyszy
+  }
+
+  get distortionEnabled() { return this.distProxy.visible; }
+
+  dispose() {
+    this.root.traverse(o => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) o.material.dispose();
+    });
+  }
+}
+
+/* ============================================================================
+   7. SCENA DEMONSTRACYJNA
+   ========================================================================== */
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
+renderer.setClearColor(0x03030a, 1);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+renderer.autoClear = false;
+renderer.info.autoReset = false;
+
+const scene = new THREE.Scene();
+scene.fog = null;
+
+/* ------------------------------------------------------------ kamery ----- */
+const persp = new THREE.PerspectiveCamera(42, 1, 0.1, 4000);
+persp.position.set(-18.0, 3.8, 4.4);
+
+const ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 4000);
+ortho.position.set(0, 60, 4.4);
+ortho.up.set(0, 0, 1);
+ortho.lookAt(0, 0, 4.4);
+
+let activeCam = persp;
+
+const ctrlP = new OrbitControls(persp, canvas);
+ctrlP.enableDamping = true; ctrlP.dampingFactor = 0.07;
+ctrlP.target.set(0, 0, 4.4);
+ctrlP.minDistance = 4; ctrlP.maxDistance = 120;
+
+const ctrlO = new OrbitControls(ortho, canvas);
+ctrlO.enableDamping = true; ctrlO.dampingFactor = 0.07;
+ctrlO.target.set(0, 0, 4.4);
+ctrlO.enableRotate = false;               // widok z góry zostaje widokiem z góry
+ctrlO.enabled = false;
+ctrlO.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+
+const DEF_P = { pos: persp.position.clone(), tgt: ctrlP.target.clone() };
+
+/* ------------------------------------------------------------ światła ---- */
+scene.add(new THREE.AmbientLight(0x141a30, 1.1));
+const key = new THREE.DirectionalLight(0x9db2ff, 2.10);
+key.position.set(-9, 8, -4); scene.add(key);
+const rim = new THREE.DirectionalLight(0x4f6fe0, 1.10);
+rim.position.set(7, -4, -8); scene.add(rim);
+
+/* ------------------------------------------------------------ gwiazdy --- */
+(function stars() {
+  const N = 1400, pos = new Float32Array(N * 3), col = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    const r = 500 + Math.random() * 900;
+    const th = Math.random() * Math.PI * 2, ph = Math.acos(2 * Math.random() - 1);
+    pos[i*3]   = r * Math.sin(ph) * Math.cos(th);
+    pos[i*3+1] = r * Math.sin(ph) * Math.sin(th);
+    pos[i*3+2] = r * Math.cos(ph);
+    const w = 0.35 + Math.random() * 0.8, tint = Math.random();
+    col[i*3]   = w * (0.75 + 0.25 * tint);
+    col[i*3+1] = w * 0.85;
+    col[i*3+2] = w * (0.85 + 0.25 * (1 - tint));
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  const m = new THREE.PointsMaterial({ size: 1.6, sizeAttenuation: false,
+    vertexColors: true, transparent: true, depthWrite: false,
+    blending: THREE.AdditiveBlending });
+  scene.add(new THREE.Points(g, m));
+})();
+
+/* ------------------------------------------------------------ silnik ----- */
+const engine = new PlasmaEngineFX({ quality: 'ULTRA' });
+scene.add(engine.object);
+
+/* --------- prosty, celowo nieszczegółowy hardware dyszy ------------------ */
+const nozzleGroup = new THREE.Group();
+scene.add(nozzleGroup);
+
+const THROAT_Z = -2.05;
+const bellPts = [];
+for (let i = 0; i <= 26; i++) {
+  const u = i / 26;
+  bellPts.push(new THREE.Vector2(0.40 + 0.60 * Math.pow(u, 1.7), THROAT_Z + u * -THROAT_Z));
+}
+bellPts.push(new THREE.Vector2(1.06, 0.0));
+
+const bellGeo = new THREE.LatheGeometry(bellPts, 72);
+bellGeo.rotateX(Math.PI / 2);
+
+const bellMat = new THREE.MeshStandardMaterial({
+  color: 0x424a60, metalness: 0.92, roughness: 0.38,
+  side: THREE.DoubleSide, emissive: 0x120820, emissiveIntensity: 1.0
+});
+nozzleGroup.add(new THREE.Mesh(bellGeo, bellMat));
+
+// wewnętrzna świecąca powierzchnia
+const glowPts = bellPts.map(p => new THREE.Vector2(p.x * 0.975, p.y));
+const glowGeo = new THREE.LatheGeometry(glowPts, 72);
+glowGeo.rotateX(Math.PI / 2);
+const nozGlowMat = new THREE.ShaderMaterial({
+  vertexShader: NOZ_VS, fragmentShader: NOZ_FS,
+  uniforms: { uTime:{value:0}, uGlow:{value:0}, uFlow:{value:4.5},
+              uAfterglow:{value:0}, uZ0:{value:THROAT_Z},
+              uNozHot:{value:new THREE.Color()}, uNozLip:{value:new THREE.Color()},
+              uNozCool:{value:new THREE.Color()} },
+  side: THREE.BackSide, transparent: true, depthWrite: false,
+  blending: THREE.AdditiveBlending
+});
+const nozGlow = new THREE.Mesh(glowGeo, nozGlowMat);
+nozGlow.renderOrder = 15;
+nozzleGroup.add(nozGlow);
+
+// gorący biało-pomarańczowy środek (dysk w gardzieli)
+const throatMat = new THREE.ShaderMaterial({
+  vertexShader: GLOW_VS, fragmentShader: GLOW_FS,
+  uniforms: { uSize:{value:0.95}, uStretch:{value:1},
+              uColor:{value:new THREE.Color(0xffd9a8)}, uIntensity:{value:0},
+              uFalloff:{value:2.0}, uCoreBoost:{value:2.4},
+              uTime:{value:0}, uWobble:{value:0.07} },
+  transparent: true, depthWrite: false, depthTest: true,
+  blending: THREE.AdditiveBlending, side: THREE.DoubleSide
+});
+const throat = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), throatMat);
+throat.position.z = THROAT_Z + 0.08;
+throat.renderOrder = 16;
+throat.frustumCulled = false;
+nozzleGroup.add(throat);
+
+engine.attachNozzle(nozGlow, nozGlowMat, throat, throatMat);
+
+// pierścień wylotu
+const lipMat = new THREE.MeshStandardMaterial({ color: 0x3a4055, metalness: 1.0, roughness: 0.28 });
+const lip = new THREE.Mesh(new THREE.TorusGeometry(1.085, 0.055, 12, 80), lipMat);
+nozzleGroup.add(lip);
+
+// korpus + pierścienie chłodzenia
+const bodyMat = new THREE.MeshStandardMaterial({ color: 0x323a50, metalness: 0.82, roughness: 0.55 });
+const body = new THREE.Mesh(new THREE.CylinderGeometry(0.78, 0.55, 2.6, 28), bodyMat);
+body.rotateX(Math.PI / 2); body.position.z = THROAT_Z - 1.25;
+nozzleGroup.add(body);
+
+for (let i = 0; i < 3; i++) {
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.80 - i * 0.07, 0.045, 8, 40), lipMat);
+  ring.position.z = THROAT_Z - 0.45 - i * 0.75;
+  nozzleGroup.add(ring);
+}
+for (let i = 0; i < 6; i++) {
+  const a = (i / 6) * Math.PI * 2;
+  const s = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.075, 1.85), bodyMat);
+  s.position.set(Math.cos(a) * 0.86, Math.sin(a) * 0.86, THROAT_Z - 0.85);
+  nozzleGroup.add(s);
+}
+// blok kadłuba
+const hull = new THREE.Mesh(new THREE.BoxGeometry(3.1, 2.2, 2.4),
+  new THREE.MeshStandardMaterial({ color: 0x272e40, metalness: 0.7, roughness: 0.7 }));
+hull.position.z = THROAT_Z - 3.6;
+nozzleGroup.add(hull);
+
+/* ------------------------------------------------------- postprocessing -- */
+const rtParams = { type: THREE.HalfFloatType, samples: 4 };
+const composer = new EffectComposer(renderer,
+  new THREE.WebGLRenderTarget(1, 1, rtParams));
+const renderPass = new RenderPass(scene, persp);
+composer.addPass(renderPass);
+
+const distortPass = new ShaderPass(DIST_POST);
+composer.addPass(distortPass);
+
+const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.70, 0.22, 2.00);
+composer.addPass(bloom);
+
+composer.addPass(new OutputPass());
+
+let distortRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.UnsignedByteType });
+distortPass.uniforms.tDistort.value = distortRT.texture;
+
+/* ------------------------------------------------------------- rozmiar --- */
+let dprCap = 2.0;
+function resize() {
+  const w = Math.max(1, window.innerWidth), h = Math.max(1, window.innerHeight);
+  const dpr = Math.min(window.devicePixelRatio || 1, dprCap);
+  renderer.setPixelRatio(dpr);
+  renderer.setSize(w, h, false);
+  composer.setPixelRatio(dpr);
+  composer.setSize(w, h);
+
+  persp.aspect = w / h;
+  persp.updateProjectionMatrix();
+
+  const oh = 26, ow = oh * (w / h);
+  ortho.left = -ow / 2; ortho.right = ow / 2;
+  ortho.top = oh / 2;   ortho.bottom = -oh / 2;
+  ortho.updateProjectionMatrix();
+
+  const dw = Math.max(2, Math.floor(w * dpr * 0.5));
+  const dh = Math.max(2, Math.floor(h * dpr * 0.5));
+  distortRT.setSize(dw, dh);
+  const br = QUALITY[engine.quality].bloomRes;
+  bloom.setSize(w * dpr * br, h * dpr * br);
+}
+window.addEventListener('resize', resize);
+
+/* ============================================================================
+   8. GUI
+   ========================================================================== */
+const uiBody = document.getElementById('uiBody');
+const ui = document.getElementById('ui');
+const elState = document.getElementById('hState');
+const elPow   = document.getElementById('hPow');
+const elPerf  = document.getElementById('hPerf');
+const elQual  = document.getElementById('hQual');
+
+function group(title) {
+  const d = document.createElement('div'); d.className = 'grp';
+  const t = document.createElement('div'); t.className = 't'; t.textContent = title;
+  d.appendChild(t); uiBody.appendChild(d); return d;
+}
+function slider(parent, label, min, max, step, val, fmt, onChange) {
+  const row = document.createElement('div'); row.className = 'row';
+  const l = document.createElement('label'); l.textContent = label;
+  const v = document.createElement('div'); v.className = 'val';
+  row.appendChild(l); row.appendChild(v);
+  const inp = document.createElement('input');
+  inp.type = 'range'; inp.min = min; inp.max = max; inp.step = step; inp.value = val;
+  inp.className = 'slider';
+  const upd = () => { const x = parseFloat(inp.value); v.textContent = fmt(x); onChange(x); };
+  inp.addEventListener('input', upd);
+  parent.appendChild(row); parent.appendChild(inp);
+  upd();
+  return { input: inp, set: x => { inp.value = x; upd(); } };
+}
+function buttons(parent, defs) {
+  const w = document.createElement('div'); w.className = 'btns';
+  const made = defs.map(d => {
+    const b = document.createElement('button');
+    b.textContent = d.label; if (d.big) b.classList.add('big');
+    b.addEventListener('click', () => d.fn(b));
+    w.appendChild(b); return b;
+  });
+  parent.appendChild(w); return made;
+}
+
+const P = engine.params;
+const F2 = x => x.toFixed(2);
+const PC = x => Math.round(x * 100) + '%';
+
+/* --- sterowanie silnikiem --- */
+const gPower = group('Engine Control');
+const powerBar = document.createElement('div');
+powerBar.className = 'bar'; powerBar.innerHTML = '<i></i>';
+const powerFill = powerBar.querySelector('i');
+const sPower = slider(gPower, 'Engine Power', 0, 1, 0.01, 0.0, PC, v => engine.setThrottle(v));
+gPower.appendChild(powerBar);
+buttons(gPower, [
+  { label: 'Ignite',     big: true, fn: () => { engine.ignite(); sPower.set(Math.max(engine.throttle, 0.85)); } },
+  { label: 'Full Power', big: true, fn: () => { engine.ignite(); engine.throttle = 1; sPower.set(1); } },
+  { label: 'Shutdown',   big: true, fn: () => { engine.shutdown(); sPower.set(0); } }
+]);
+const boostBtn = buttons(gPower, [
+  { label: 'Boost', big: true, fn: b => {
+      engine.setBoost(!engine.boost);
+      if (engine.boost && engine.ch.power < 0.3) { engine.ignite(); engine.throttle = 1; sPower.set(1); }
+      b.classList.toggle('on', engine.boost);
+    } }
+])[0];
+slider(gPower, 'Boost Power', 0.0, 3.0, 0.01, P.boostAmount, F2, v => P.boostAmount = v);
+
+/* --- plume --- */
+const gP = group('Plume');
+slider(gP, 'Core Brightness', 0.2, 2.5, 0.01, P.coreBrightness, F2, v => P.coreBrightness = v);
+slider(gP, 'Plume Length',    0.4, 1.8, 0.01, P.plumeLength,    F2, v => P.plumeLength = v);
+slider(gP, 'Plume Width',     0.5, 1.7, 0.01, P.plumeWidth,     F2, v => P.plumeWidth = v);
+slider(gP, 'Turbulence',      0.0, 2.2, 0.01, P.turbulence,     F2, v => P.turbulence = v);
+slider(gP, 'Flow Speed',      0.0,16.0, 0.02, P.flowSpeed,      F2, v => P.flowSpeed = v);
+slider(gP, 'Blue Sheath',     0.0, 2.5, 0.01, P.blueSheath,     F2, v => P.blueSheath = v);
+slider(gP, 'Flicker',         0.0, 1.0, 0.01, P.flicker,        F2, v => P.flicker = v);
+slider(gP, 'Particle Amount', 0.0, 1.0, 0.01, P.particles,      F2, v => P.particles = v);
+slider(gP, 'Density',         0.3, 2.0, 0.01, P.density,        F2, v => P.density = v);
+slider(gP, 'Self Shadowing',  0.0, 1.0, 0.01, P.extinction,     F2, v => P.extinction = v);
+slider(gP, 'Nozzle Glow',     0.0, 2.0, 0.01, P.nozzleGlow,     F2, v => P.nozzleGlow = v);
+
+/* --- palety barw --- */
+const gPal = group('Palette');
+const palBtns = buttons(gPal, PALETTES.map((pal, i) => ({
+  label: pal.name,
+  fn: b => { engine.setPalette(i); palBtns.forEach(x => x.classList.remove('on')); b.classList.add('on'); }
+})));
+palBtns[0].classList.add('on');
+function cyclePalette(dir) {
+  const i = ((engine._palIdx + dir) % PALETTES.length + PALETTES.length) % PALETTES.length;
+  palBtns[i].click();
+}
+
+/* --- render --- */
+const gR = group('Render');
+slider(gR, 'Bloom Strength',  0.0, 3.0, 0.01, 0.70, F2, v => bloom.strength = v);
+slider(gR, 'Bloom Radius',    0.0, 1.2, 0.01, 0.22, F2, v => bloom.radius = v);
+slider(gR, 'Bloom Threshold', 0.3, 6.0, 0.01, 2.00, F2, v => bloom.threshold = v);
+slider(gR, 'Exposure',        0.3, 2.0, 0.01, 1.00, F2, v => renderer.toneMappingExposure = v);
+slider(gR, 'Heat Distortion', 0.0, 2.0, 0.01, P.heatDistort, F2, v => P.heatDistort = v);
+
+const toneModes = [
+  ['ACES', THREE.ACESFilmicToneMapping],
+  ['AgX', THREE.AgXToneMapping],
+  ['Neutral', THREE.NeutralToneMapping],
+  ['None', THREE.NoToneMapping]
+];
+const toneBtns = buttons(gR, toneModes.map(([n, m]) => ({
+  label: n, fn: b => { renderer.toneMapping = m; toneBtns.forEach(x => x.classList.remove('on')); b.classList.add('on'); }
+})));
+toneBtns[0].classList.add('on');
+
+/* --- jakość --- */
+const gQ = group('Quality');
+const qBtns = buttons(gQ, Object.keys(QUALITY).map(q => ({
+  label: q, fn: b => {
+    const cfg = engine.setQuality(q);
+    dprCap = cfg.dpr;
+    qBtns.forEach(x => x.classList.remove('on')); b.classList.add('on');
+    elQual.textContent = q;
+    resize();
+  }
+})));
+qBtns[0].classList.add('on');
+
+/* --- widok --- */
+const gV = group('View');
+let paused = false;
+const vBtns = buttons(gV, [
+  { label: 'Perspective', fn: b => setView('persp', b) },
+  { label: 'Top-Down',    fn: b => setView('top', b) }
+]);
+vBtns[0].classList.add('on');
+const pauseBtn = buttons(gV, [
+  { label: 'Pause', fn: b => { paused = !paused; b.classList.toggle('on', paused); b.textContent = paused ? 'Resume' : 'Pause'; } },
+  { label: 'Reset Cam', fn: () => {
+      persp.position.copy(DEF_P.pos); ctrlP.target.copy(DEF_P.tgt); ctrlP.update();
+      ortho.position.set(0, 60, 4.4); ortho.zoom = 1; ortho.updateProjectionMatrix();
+      ctrlO.target.set(0, 0, 4.4); ctrlO.update();
+    } }
+])[0];
+
+function setView(mode, btn) {
+  vBtns.forEach(x => x.classList.remove('on'));
+  if (btn) btn.classList.add('on');
+  if (mode === 'top') {
+    activeCam = ortho; ctrlP.enabled = false; ctrlO.enabled = true;
+  } else {
+    activeCam = persp; ctrlP.enabled = true; ctrlO.enabled = false;
+  }
+  renderPass.camera = activeCam;
+}
+
+const note = document.createElement('div');
+note.className = 'note';
+note.innerHTML =
+  '<kbd>Spacja</kbd> pauza &nbsp; <kbd>1</kbd> ignite &nbsp; <kbd>2</kbd> full &nbsp; ' +
+  '<kbd>0</kbd> shutdown &nbsp; <kbd>B</kbd> boost<br><kbd>T</kbd> top-down &nbsp; ' +
+  '<kbd>R</kbd> reset kamery &nbsp; <kbd>H</kbd> ukryj panel &nbsp; ' +
+  '<kbd>[</kbd><kbd>]</kbd> paleta<br><br>' +
+  'Przy dopalaczu smugi same się wydłużają wraz z prędkością — inaczej ' +
+  'drobna oktawa szumu zaczyna stroboskopować.<br><br>' +
+  'Plume liczony jest objętościowo (raymarch), więc wygląda tak samo poprawnie ' +
+  'z boku i z góry w kamerze ortograficznej.';
+uiBody.appendChild(note);
+
+window.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+  const k = e.key.toLowerCase();
+  if (k === ' ')  { e.preventDefault(); pauseBtn.click(); }
+  if (k === '1')  { engine.ignite(); sPower.set(Math.max(engine.throttle, 0.85)); }
+  if (k === '2')  { engine.ignite(); engine.throttle = 1; sPower.set(1); }
+  if (k === '0')  { engine.shutdown(); sPower.set(0); }
+  if (k === 't')  setView(activeCam === ortho ? 'persp' : 'top', vBtns[activeCam === ortho ? 0 : 1]);
+  if (k === 'r')  { persp.position.copy(DEF_P.pos); ctrlP.target.copy(DEF_P.tgt); ctrlP.update(); }
+  if (k === 'h')  ui.classList.toggle('hidden');
+  if (k === 'b')  boostBtn.click();
+  if (k === '[')  cyclePalette(-1);
+  if (k === ']')  cyclePalette(1);
+});
+
+/* ============================================================================
+   9. PĘTLA
+   ========================================================================== */
+resize();
+
+const clock = new THREE.Clock();
+let fpsT = 0, fpsN = 0, fpsShown = 0, msShown = 0;
+
+function frame() {
+  requestAnimationFrame(frame);
+  renderer.info.reset();
+  const raw = clock.getDelta();
+  const dt = paused ? 0 : Math.min(raw, 1 / 20);
+  const t0 = performance.now();
+
+  if (activeCam === persp) ctrlP.update(); else ctrlO.update();
+
+  engine.update(dt, activeCam, renderer.domElement.height);   // px framebuffera
+
+  // --- maska zakłóceń cieplnych do osobnego RT (warstwa 3) ---
+  const useDistort = engine.distortionEnabled && P.heatDistort > 0.001;
+  distortPass.enabled = useDistort;
+  if (useDistort) {
+    activeCam.layers.set(DIST_LAYER);
+    renderer.setRenderTarget(distortRT);
+    renderer.setClearColor(0x000000, 0);
+    renderer.clear(true, true, false);
+    renderer.render(scene, activeCam);
+    renderer.setRenderTarget(null);
+    renderer.setClearColor(0x03030a, 1);
+    activeCam.layers.set(0);
+    distortPass.uniforms.uStrength.value = 0.009 * P.heatDistort;
+  }
+
+  composer.render();
+
+  // --- HUD ---
+  const dtms = performance.now() - t0;
+  msShown = msShown * 0.92 + dtms * 0.08;
+  fpsN++; fpsT += raw;
+  if (fpsT > 0.4) { fpsShown = Math.round(fpsN / fpsT); fpsT = 0; fpsN = 0; }
+  elState.textContent = engine.state.toUpperCase();
+  elPow.textContent = Math.round(engine.ch.power * 100) + '%';
+  powerFill.style.width = (engine.ch.power * 100) + '%';
+  elPerf.textContent = `${fpsShown} fps · ${msShown.toFixed(1)} ms · ${renderer.info.render.calls} draw`;
+}
+
+frame();
+
+// start: silnik gaśnie, po chwili automatyczny zapłon pokazowy
+setTimeout(() => { engine.ignite(); engine.throttle = 0.92; sPower.set(0.92); }, 700);
+
+// udostępnij do konsoli (wygodne przy strojeniu)
+window.engine   = engine;
+window.THREE    = THREE;
+window.bloom    = bloom;
+window.composer = composer;
+window.renderer = renderer;
+window.scene    = scene;
+</script>
+</body>
+</html>

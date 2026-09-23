@@ -26,7 +26,10 @@ function getNextSensorSource() {
   return sensorSources[activeSourceCount++];
 }
 
-function getEntitySizeModifier(entity) {
+// Wykrywalność celu (mnożnik zasięgu czujnika). Eksportowane, bo ten sam
+// współczynnik liczy wspólny obraz sytuacji AI (src/ai/fleetAwareness.js) —
+// flota NPC i mgła wojny gracza widzą według jednej tabeli.
+export function getEntitySizeModifier(entity) {
   if (entity.isCapitalShip) return SENSOR_CONFIG.sizeModifiers.capital;
   const type = String(entity.type || '').toLowerCase();
   if (type in SENSOR_CONFIG.sizeModifiers) return SENSOR_CONFIG.sizeModifiers[type];

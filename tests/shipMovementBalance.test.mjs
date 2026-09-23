@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { CAPITAL_SHIP_TEMPLATES, SUPPORT_SHIP_TEMPLATES } from '../src/data/ships.js';
+import { SHIP_FLIGHT_SPECS } from '../src/data/shipFlightSpecs.js';
 import { applyNpcFlightControl } from '../src/game/flight/npcFlight.js';
 
 test('ship movement becomes heavier with every larger hull class', () => {
@@ -18,13 +19,22 @@ test('ship movement becomes heavier with every larger hull class', () => {
     assert.ok(ladder[i - 1].turn > ladder[i].turn, `turn step ${i}`);
   }
 
-  assert.deepEqual(
-    { accel: supercapital.accel, maxSpeed: supercapital.maxSpeed, turn: supercapital.turn },
-    { accel: 24, maxSpeed: 140, turn: 0.16 }
-  );
-  assert.equal(CAPITAL_SHIP_TEMPLATES.atlas.accel, supercapital.accel);
-  assert.equal(CAPITAL_SHIP_TEMPLATES.atlas.maxSpeed, supercapital.maxSpeed);
-  assert.equal(CAPITAL_SHIP_TEMPLATES.atlas.turn, supercapital.turn);
+  // Szablony nie trzymają własnej kopii prowadzenia — to lustro tabeli
+  // shipFlightSpecs.js, którą egzekwuje model lotu NPC.
+  const mirrors = [
+    [frigate, 'terran_frigate'],
+    [destroyer, 'terran_destroyer'],
+    [battleship, 'terran_battleship'],
+    [carrier, 'terran_carrier'],
+    [supercapital, 'terran_supercapital'],
+    [CAPITAL_SHIP_TEMPLATES.atlas, 'atlas']
+  ];
+  for (const [template, hullId] of mirrors) {
+    const spec = SHIP_FLIGHT_SPECS[hullId];
+    assert.equal(template.accel, spec.accel, `${hullId}: accel`);
+    assert.equal(template.maxSpeed, spec.maxSpeed, `${hullId}: maxSpeed`);
+    assert.ok(Math.abs(template.turn - spec.turnRate * Math.PI / 180) < 1e-9, `${hullId}: turn`);
+  }
 });
 
 function createPhysicalNpc({ accel, maxSpeed, turn }) {

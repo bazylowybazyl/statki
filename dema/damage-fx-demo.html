@@ -1,0 +1,2035 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Zniszczenia — hardpoint, silnik, rozszczelnienie</title>
+<style>
+  :root {
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+
+    --void:   #05070b;
+    --edge:   #232b36;
+    --text:   #c9d2de;
+    --dim:    #79859a;
+    --ember:  #ff8a3a;
+    --hot:    #ffd9a0;
+    --ice:    #7fd8ff;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; background: var(--void); overflow: hidden; }
+  body {
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    touch-action: none;
+  }
+  canvas { display: block; width: 100%; height: 100%; }
+
+  #screenflash {
+    position: fixed; inset: 0; pointer-events: none; opacity: 0;
+    --fc1: rgba(255,214,160,.85);
+    --fc2: rgba(255,130,50,.25);
+    background: radial-gradient(62% 52% at 50% 52%, var(--fc1), var(--fc2) 55%, transparent 76%);
+    mix-blend-mode: screen;
+  }
+
+  #panel {
+    position: fixed;
+    top: calc(12px + env(safe-area-inset-top, 0px));
+    right: 12px;
+    width: 268px;
+    max-height: calc(100dvh - 130px - env(safe-area-inset-top, 0px));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    background: rgba(12,16,22,.86);
+    border: 1px solid var(--edge);
+    border-radius: 10px;
+    backdrop-filter: blur(8px);
+    padding: 12px 13px 14px;
+    font-size: 12.5px;
+    line-height: 1.45;
+    z-index: 5;
+  }
+  #panel h1 { margin: 0 0 2px; font-size: 13px; font-weight: 600; letter-spacing: .2px; color: var(--hot); }
+  #panel .sub { margin: 0 0 12px; color: var(--dim); font-size: 11.5px; }
+
+  .grp { border-top: 1px solid var(--edge); padding-top: 9px; margin-top: 10px; }
+  .grp:first-of-type { border-top: 0; padding-top: 0; margin-top: 0; }
+  .grp > .gname { color: var(--dim); font-size: 11px; margin-bottom: 7px; }
+
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 7px 0; }
+  .row label { flex: 1 1 auto; }
+  .row .val {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 11px; color: var(--ember); min-width: 34px; text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  input[type=range] {
+    -webkit-appearance: none; appearance: none;
+    width: 100%; height: 18px; background: transparent; margin: 0 0 2px;
+  }
+  input[type=range]::-webkit-slider-runnable-track { height: 3px; background: #2c3441; border-radius: 2px; }
+  input[type=range]::-moz-range-track { height: 3px; background: #2c3441; border-radius: 2px; }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 14px; height: 14px; margin-top: -5.5px;
+    border-radius: 50%; background: var(--ember); border: 0; cursor: pointer;
+  }
+  input[type=range]::-moz-range-thumb {
+    width: 14px; height: 14px; border-radius: 50%; background: var(--ember); border: 0; cursor: pointer;
+  }
+  input[type=range]:focus-visible { outline: 2px solid var(--hot); outline-offset: 3px; }
+
+  .chk { display: flex; align-items: center; gap: 8px; margin: 7px 0; cursor: pointer; }
+  .chk input { accent-color: var(--ember); width: 15px; height: 15px; }
+
+  #readout {
+    position: fixed; left: 12px;
+    top: calc(12px + env(safe-area-inset-top, 0px));
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 11px; color: var(--dim); line-height: 1.6; z-index: 5;
+    font-variant-numeric: tabular-nums; pointer-events: none;
+  }
+  #readout b { color: var(--text); font-weight: 500; }
+
+  #dock {
+    position: fixed; left: 0; right: 0;
+    bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+    display: flex; justify-content: center; align-items: center; gap: 8px;
+    flex-wrap: wrap; padding: 0 12px;
+    z-index: 5; pointer-events: none;
+  }
+  #dock > * { pointer-events: auto; }
+  .fire {
+    font: inherit; font-size: 13px; font-weight: 600; letter-spacing: .2px;
+    color: #14090a; background: linear-gradient(180deg, #ffb066, var(--ember));
+    border: 0; border-radius: 999px; padding: 12px 20px; cursor: pointer;
+    box-shadow: 0 0 0 1px rgba(255,180,120,.35), 0 10px 30px rgba(255,120,40,.2);
+  }
+  .fire.cold {
+    color: #04121a; background: linear-gradient(180deg, #bfeeff, var(--ice));
+    box-shadow: 0 0 0 1px rgba(150,225,255,.35), 0 10px 30px rgba(60,170,255,.2);
+  }
+  .fire:active { transform: translateY(1px); }
+  #toggle, #reset {
+    font: inherit; font-size: 12.5px; color: var(--text);
+    background: rgba(12,16,22,.86); border: 1px solid var(--edge); border-radius: 999px;
+    padding: 12px 15px; cursor: pointer;
+  }
+  .hint { position: fixed; left: 12px; bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+    font-size: 11px; color: #4d5766; z-index: 4; max-width: 40%; }
+  @media (max-width: 860px) {
+    #panel { width: auto; left: 12px; right: 12px; max-height: 40dvh; }
+    .hint { display: none; }
+    .fire { padding: 11px 14px; font-size: 12px; }
+  }
+  @media (prefers-reduced-motion: reduce) { #screenflash { display: none; } }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="screenflash"></div>
+
+<div id="readout">
+  <div>fps <b id="r-fps">—</b></div>
+  <div>cząstki <b id="r-part">0</b></div>
+  <div>źródła <b id="r-src">0</b></div>
+</div>
+
+<div id="panel">
+  <h1>Zniszczenia kadłuba</h1>
+  <p class="sub">Kliknij element statku, żeby go zniszczyć. Hardpointy, silniki i płyty poszycia reagują różnie.</p>
+
+  <div class="grp">
+    <div class="gname">Wybuch</div>
+    <div class="row"><label for="s-int">Siła</label><span class="val" id="v-int">1.0</span></div>
+    <input type="range" id="s-int" min="0.2" max="2" step="0.05" value="1">
+    <div class="row"><label for="s-deb">Odłamki</label><span class="val" id="v-deb">1.0</span></div>
+    <input type="range" id="s-deb" min="0" max="2" step="0.05" value="1">
+    <div class="row"><label for="s-smoke">Dym</label><span class="val" id="v-smoke">1.0</span></div>
+    <input type="range" id="s-smoke" min="0" max="2.5" step="0.05" value="1">
+    <div class="row"><label for="s-fire">Ogień resztkowy</label><span class="val" id="v-fire">1.0</span></div>
+    <input type="range" id="s-fire" min="0" max="2.5" step="0.05" value="1">
+  </div>
+
+  <div class="grp">
+    <div class="gname">Dekompresja</div>
+    <div class="row"><label for="s-vent">Ciśnienie</label><span class="val" id="v-vent">1.0</span></div>
+    <input type="range" id="s-vent" min="0.2" max="2" step="0.05" value="1">
+    <div class="row"><label for="s-vtime">Czas upustu</label><span class="val" id="v-vtime">6.0</span></div>
+    <input type="range" id="s-vtime" min="1" max="16" step="0.5" value="6">
+    <div class="row"><label for="s-ice">Kryształki lodu</label><span class="val" id="v-ice">1.0</span></div>
+    <input type="range" id="s-ice" min="0" max="2.5" step="0.05" value="1">
+  </div>
+
+  <div class="grp">
+    <div class="gname">Obraz</div>
+    <div class="row"><label for="s-flat">Spłaszczenie rozrzutu</label><span class="val" id="v-flat">0.25</span></div>
+    <input type="range" id="s-flat" min="0" max="1" step="0.01" value="0.25">
+    <div class="row"><label for="s-shake">Wstrząs kamery</label><span class="val" id="v-shake">1.0</span></div>
+    <input type="range" id="s-shake" min="0" max="2.5" step="0.05" value="1">
+    <div class="row"><label for="s-bloom">Bloom</label><span class="val" id="v-bloom">1.0</span></div>
+    <input type="range" id="s-bloom" min="0" max="2.5" step="0.05" value="1">
+    <div class="row"><label for="s-time">Spowolnienie</label><span class="val" id="v-time">1.00</span></div>
+    <input type="range" id="s-time" min="0.05" max="1" step="0.01" value="1">
+    <label class="chk"><input type="checkbox" id="drift" checked> Statek dryfuje</label>
+    <label class="chk"><input type="checkbox" id="auto"> Ostrzał ciągły</label>
+  </div>
+</div>
+
+<div id="dock">
+  <button id="b-hp" class="fire">Hardpoint</button>
+  <button id="b-eng" class="fire">Silnik</button>
+  <button id="b-hull" class="fire cold">Poszycie</button>
+  <button id="reset">Napraw</button>
+  <button id="toggle">Panel</button>
+</div>
+<div class="hint">Klik w statek — trafienie w ten element &nbsp;·&nbsp; 1 / 2 / 3 — losowe trafienie &nbsp;·&nbsp; R — napraw &nbsp;·&nbsp; H — panel</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls }    from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer }   from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass }       from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass }  from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass }       from 'three/addons/postprocessing/OutputPass.js';
+
+/* ============================================================================
+   KONFIGURACJA
+   ========================================================================== */
+const CFG = {
+  intensity: 1.0,     // siła wybuchu
+  debris:    1.0,     // liczba odłamków
+  smoke:     1.0,
+  fire:      1.0,     // długość i gęstość ognia resztkowego
+  vent:      1.0,     // ciśnienie w kadłubie
+  ventTime:  6.0,     // ile sekund trwa upust powietrza
+  ice:       1.0,     // kryształki lodu w strudze
+  flatten:   0.25,    // 0 = rozrzut tylko w płaszczyźnie gry, 1 = pełna kula
+  shake:     1.0,
+  bloom:     1.0,
+  timeScale: 1.0,
+  drift:     true,
+  autoFire:  false,
+};
+
+// Skala świata: kadłub demo ma 120 jednostek długości.
+const FX_SCALE = 1.0;
+
+/* ============================================================================
+   NARZĘDZIA
+   ========================================================================== */
+const clamp01 = x => x < 0 ? 0 : x > 1 ? 1 : x;
+const lerp = (a, b, t) => a + (b - a) * t;
+const rand = (a, b) => a + Math.random() * (b - a);
+const randInt = (a, b) => Math.floor(rand(a, b + 1));
+function smoothstep(e0, e1, x) {
+  const t = clamp01((x - e0) / (e1 - e0 || 1e-6));
+  return t * t * (3 - 2 * t);
+}
+
+const _bx = new THREE.Vector3(), _by = new THREE.Vector3(), _bh = new THREE.Vector3();
+function makeBasis(dir) {
+  _bh.set(0, 1, 0);
+  if (Math.abs(dir.y) > 0.9) _bh.set(1, 0, 0);
+  _bx.crossVectors(_bh, dir).normalize();
+  _by.crossVectors(dir, _bx).normalize();
+}
+// losowy kierunek w stożku o półkącie `spread`; `flat` ścieśnia odchylenie w osi Y,
+// żeby przy widoku z góry rozrzut szedł w płaszczyźnie gry, a nie "w ekran"
+function coneDir(out, dir, spread, flat = 1) {
+  const theta = spread * Math.sqrt(Math.random());
+  const phi = Math.random() * Math.PI * 2;
+  const st = Math.sin(theta), ct = Math.cos(theta);
+  out.copy(dir).multiplyScalar(ct)
+     .addScaledVector(_bx, st * Math.cos(phi))
+     .addScaledVector(_by, st * Math.sin(phi));
+  if (flat !== 1) {
+    out.sub(dir);
+    out.y *= flat;
+    out.add(dir).normalize();
+  }
+  return out;
+}
+// migotanie ognia — dwa niewspółmierne sinusy czytają się jak szum, a kosztują nic
+const flicker = (t, seed) =>
+  0.55 + 0.45 * Math.sin(t * 13.7 + seed) * Math.sin(t * 7.31 + seed * 2.13);
+
+/* ============================================================================
+   TEKSTURY PROCEDURALNE
+   ========================================================================== */
+function canvasTex(size, draw) {
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = size;
+  draw(cv.getContext('2d'), size);
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.needsUpdate = true;
+  return t;
+}
+
+const TEX_GLOW = canvasTex(128, (ctx, s) => {
+  const g = ctx.createRadialGradient(s/2, s/2, 0, s/2, s/2, s/2);
+  g.addColorStop(0.00, 'rgba(255,255,255,1)');
+  g.addColorStop(0.18, 'rgba(255,255,255,0.78)');
+  g.addColorStop(0.42, 'rgba(255,255,255,0.28)');
+  g.addColorStop(0.72, 'rgba(255,255,255,0.07)');
+  g.addColorStop(1.00, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, s, s);
+});
+
+const TEX_FLARE = canvasTex(256, (ctx, s) => {
+  const c = s / 2;
+  const g = ctx.createRadialGradient(c, c, 0, c, c, c * 0.34);
+  g.addColorStop(0, 'rgba(255,255,255,0.95)');
+  g.addColorStop(0.5, 'rgba(255,255,255,0.22)');
+  g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, s, s);
+  ctx.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + 0.3;
+    const len = c * (i % 2 === 0 ? 0.98 : 0.6);
+    const w = s * (i % 2 === 0 ? 0.030 : 0.018);
+    ctx.save();
+    ctx.translate(c, c);
+    ctx.rotate(a);
+    const lg = ctx.createLinearGradient(0, 0, len, 0);
+    lg.addColorStop(0, 'rgba(255,255,255,0.85)');
+    lg.addColorStop(0.35, 'rgba(255,255,255,0.22)');
+    lg.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = lg;
+    ctx.beginPath();
+    ctx.moveTo(0, -w); ctx.lineTo(len, 0); ctx.lineTo(0, w);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+});
+
+// anamorficzny krzyż — kwad skalowany osobno wzdłuż i w poprzek osi wybuchu
+const TEX_CROSS = canvasTex(256, (ctx, s) => {
+  const img = ctx.createImageData(s, s);
+  const d = img.data;
+  for (let y = 0; y < s; y++) {
+    const v = (y / (s - 1)) * 2 - 1;
+    for (let x = 0; x < s; x++) {
+      const u = (x / (s - 1)) * 2 - 1;
+      const horiz = Math.pow(clamp01(1 - Math.abs(v) / 0.15), 2.0) * Math.pow(clamp01(1 - Math.abs(u)), 1.3);
+      const vert  = Math.pow(clamp01(1 - Math.abs(u) / 0.24), 2.0) * Math.pow(clamp01(1 - Math.abs(v) / 0.60), 1.6);
+      const core  = Math.pow(clamp01(1 - Math.sqrt(u * u + v * v) / 0.32), 2.2);
+      const i = (y * s + x) * 4;
+      d[i] = d[i+1] = d[i+2] = 255;
+      d[i+3] = clamp01(horiz * 0.9 + vert * 0.5 + core) * 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+});
+
+// stożek: jasny u podstawy (v=0), rozmyty ku końcowi — jęzor ognia i szyjka strugi
+const TEX_PLUME = canvasTex(128, (ctx, s) => {
+  const img = ctx.createImageData(s, s);
+  const d = img.data;
+  for (let y = 0; y < s; y++) {
+    const v = 1 - y / (s - 1);             // uwzględnia flipY tekstury
+    const along = Math.pow(1 - v, 1.5);
+    const width = 0.22 + v * 0.78;
+    for (let x = 0; x < s; x++) {
+      const u = (x / (s - 1)) * 2 - 1;
+      const r = Math.abs(u) / width;
+      const across = Math.pow(clamp01(1 - r * r), 1.6);
+      const i = (y * s + x) * 4;
+      d[i] = d[i+1] = d[i+2] = 255;
+      d[i+3] = clamp01(along * across) * 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+});
+
+function valueNoise(seed) {
+  const p = new Uint8Array(256);
+  for (let i = 0; i < 256; i++) p[i] = i;
+  let s = seed >>> 0;
+  const rnd = () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
+  for (let i = 255; i > 0; i--) { const j = (rnd() * (i + 1)) | 0; const t = p[i]; p[i] = p[j]; p[j] = t; }
+  const perm = new Uint8Array(512);
+  for (let i = 0; i < 512; i++) perm[i] = p[i & 255];
+  const fade = t => t * t * t * (t * (t * 6 - 15) + 10);
+  const grad = (h, x, y) => { switch (h & 3) { case 0: return x + y; case 1: return -x + y; case 2: return x - y; default: return -x - y; } };
+  return (x, y) => {
+    const X = Math.floor(x) & 255, Y = Math.floor(y) & 255;
+    const xf = x - Math.floor(x), yf = y - Math.floor(y);
+    const u = fade(xf), v = fade(yf);
+    const aa = perm[perm[X] + Y], ab = perm[perm[X] + Y + 1];
+    const ba = perm[perm[X + 1] + Y], bb = perm[perm[X + 1] + Y + 1];
+    const x1 = lerp(grad(aa, xf, yf), grad(ba, xf - 1, yf), u);
+    const x2 = lerp(grad(ab, xf, yf - 1), grad(bb, xf - 1, yf - 1), u);
+    return lerp(x1, x2, v) * 0.5 + 0.5;
+  };
+}
+
+// kłąb — dym, opar i mgła dekompresyjna korzystają z tej samej tekstury
+const TEX_PUFF = canvasTex(256, (ctx, s) => {
+  const n = valueNoise(20260920);
+  const fbm = (x, y) => {
+    let a = 0, amp = 0.5, f = 1;
+    for (let o = 0; o < 4; o++) { a += n(x * f, y * f) * amp; amp *= 0.5; f *= 2.05; }
+    return a / 0.9375;
+  };
+  const img = ctx.createImageData(s, s);
+  const d = img.data;
+  const c = (s - 1) / 2;
+  for (let y = 0; y < s; y++) {
+    for (let x = 0; x < s; x++) {
+      const dx = (x - c) / c, dy = (y - c) / c;
+      const r = Math.sqrt(dx * dx + dy * dy);
+      const nv = fbm(x / s * 3.2, y / s * 3.2);
+      let a = smoothstep(1.02, 0.15, r);
+      a *= 0.30 + 0.95 * nv;
+      a *= smoothstep(0.08, 0.42, 1.0 - r * 0.85 + (nv - 0.5) * 0.55);
+      const i = (y * s + x) * 4;
+      d[i] = d[i+1] = d[i+2] = 255;
+      d[i+3] = clamp01(a) * 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+});
+
+/* ============================================================================
+   SILNIK CZĄSTECZEK
+   Struct-of-arrays + instancing. Zero alokacji w pętli klatki.
+   ========================================================================== */
+class Pool {
+  constructor(capacity, fields) {
+    this.cap = capacity;
+    this.count = 0;
+    this.comps = fields;
+    this.keys = Object.keys(fields);
+    this.f = {};
+    for (const k of this.keys) this.f[k] = new Float32Array(capacity * fields[k]);
+  }
+  spawn() { return this.count < this.cap ? this.count++ : -1; }
+  kill(i) {
+    const last = --this.count;
+    if (i === last) return;
+    for (const k of this.keys) {
+      const c = this.comps[k], a = this.f[k];
+      for (let d = 0; d < c; d++) a[i * c + d] = a[last * c + d];
+    }
+  }
+}
+
+function instancedQuad(attrs, capacity, vertexShader, fragmentShader, uniforms, blending) {
+  const base = new THREE.PlaneGeometry(1, 1);
+  const geo = new THREE.InstancedBufferGeometry();
+  geo.index = base.index;
+  geo.setAttribute('position', base.attributes.position);
+  geo.setAttribute('uv', base.attributes.uv);
+  const bufs = {};
+  for (const [name, size] of attrs) {
+    const a = new THREE.InstancedBufferAttribute(new Float32Array(capacity * size), size);
+    a.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute(name, a);
+    bufs[name] = a;
+  }
+  geo.instanceCount = 0;
+  const mat = new THREE.ShaderMaterial({
+    uniforms, vertexShader, fragmentShader,
+    transparent: true, blending, depthTest: true, depthWrite: false,
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.frustumCulled = false;
+  return { geo, mat, mesh, bufs };
+}
+
+/* --- parametry spawnu (obiekt współdzielony, żeby nie śmiecić GC) --------- */
+const SP = {};
+function sp() {
+  SP.x = SP.y = SP.z = 0;
+  SP.vx = SP.vy = SP.vz = 0;
+  SP.life = 1; SP.drag = 1;
+  SP.s0 = 1; SP.s1 = 2;
+  SP.rot = 0; SP.vrot = 0;
+  SP.r0 = 1; SP.g0 = 1; SP.b0 = 1;
+  SP.r1 = 1; SP.g1 = 1; SP.b1 = 1;
+  SP.mix = 4;                 // szybkość przejścia koloru c0 -> c1 (1/s)
+  SP.alpha = 1; SP.fadeIn = 0.06; SP.fadeOut = 1.5;
+  SP.grow = 0.6;              // <1 = szybki rozrost na starcie
+  return SP;
+}
+
+/* --- bilboardy: dym, gazy, rdzeń rozbłysku, żagwie --------------------- */
+const BB_VERT = /* glsl */`
+  attribute vec3 iPos;
+  attribute vec3 iCol;
+  attribute vec3 iData;          // x: rozmiar, y: obrót, z: alfa
+  varying vec2 vUv;
+  varying vec3 vCol;
+  varying float vA;
+  void main() {
+    vUv = uv; vCol = iCol; vA = iData.z;
+    vec4 mv = viewMatrix * vec4(iPos, 1.0);
+    float c = cos(iData.y), s = sin(iData.y);
+    vec2 p = position.xy * iData.x;
+    mv.xy += vec2(p.x * c - p.y * s, p.x * s + p.y * c);
+    gl_Position = projectionMatrix * mv;
+  }`;
+const BB_FRAG = /* glsl */`
+  uniform sampler2D map;
+  varying vec2 vUv;
+  varying vec3 vCol;
+  varying float vA;
+  void main() {
+    vec4 t = texture2D(map, vUv);
+    float a = t.a * vA;
+    if (a < 0.002) discard;
+    gl_FragColor = vec4(vCol * t.rgb, a);
+  }`;
+
+class BillboardSystem {
+  constructor(scene, texture, blending, capacity, renderOrder = 1) {
+    this.p = new Pool(capacity, {
+      pos: 3, vel: 3, t: 2, drag: 1, size: 2, rot: 2, c0: 3, c1: 3, mix: 1, a: 3, grow: 1,
+    });
+    const q = instancedQuad(
+      [['iPos', 3], ['iCol', 3], ['iData', 3]], capacity,
+      BB_VERT, BB_FRAG, { map: { value: texture } }, blending
+    );
+    Object.assign(this, q);
+    this.mesh.renderOrder = renderOrder;
+    scene.add(this.mesh);
+  }
+  spawn(o) {
+    const i = this.p.spawn();
+    if (i < 0) return;
+    const f = this.p.f, i3 = i * 3, i2 = i * 2;
+    f.pos[i3] = o.x; f.pos[i3+1] = o.y; f.pos[i3+2] = o.z;
+    f.vel[i3] = o.vx; f.vel[i3+1] = o.vy; f.vel[i3+2] = o.vz;
+    f.t[i2] = 0; f.t[i2+1] = o.life;
+    f.drag[i] = o.drag;
+    f.size[i2] = o.s0; f.size[i2+1] = o.s1;
+    f.rot[i2] = o.rot; f.rot[i2+1] = o.vrot;
+    f.c0[i3] = o.r0; f.c0[i3+1] = o.g0; f.c0[i3+2] = o.b0;
+    f.c1[i3] = o.r1; f.c1[i3+1] = o.g1; f.c1[i3+2] = o.b1;
+    f.mix[i] = o.mix;
+    f.a[i3] = o.alpha; f.a[i3+1] = Math.max(0.002, o.fadeIn); f.a[i3+2] = o.fadeOut;
+    f.grow[i] = o.grow;
+  }
+  update(dt) {
+    const p = this.p, f = p.f;
+    for (let i = p.count - 1; i >= 0; i--) {
+      const i2 = i * 2, i3 = i * 3;
+      const age = f.t[i2] + dt;
+      if (age >= f.t[i2 + 1]) { p.kill(i); continue; }
+      f.t[i2] = age;
+      const d = Math.exp(-f.drag[i] * dt);
+      f.vel[i3] *= d; f.vel[i3+1] *= d; f.vel[i3+2] *= d;
+      f.pos[i3]   += f.vel[i3]   * dt;
+      f.pos[i3+1] += f.vel[i3+1] * dt;
+      f.pos[i3+2] += f.vel[i3+2] * dt;
+      f.rot[i2] += f.rot[i2 + 1] * dt;
+    }
+    const n = p.count;
+    const P = this.bufs.iPos.array, C = this.bufs.iCol.array, D = this.bufs.iData.array;
+    for (let i = 0; i < n; i++) {
+      const i2 = i * 2, i3 = i * 3;
+      const age = f.t[i2], life = f.t[i2 + 1];
+      const u = age / life;
+      const g = Math.pow(u, f.grow[i]);
+      const m = Math.min(1, age * f.mix[i]);
+      P[i3] = f.pos[i3]; P[i3+1] = f.pos[i3+1]; P[i3+2] = f.pos[i3+2];
+      C[i3]   = lerp(f.c0[i3],   f.c1[i3],   m);
+      C[i3+1] = lerp(f.c0[i3+1], f.c1[i3+1], m);
+      C[i3+2] = lerp(f.c0[i3+2], f.c1[i3+2], m);
+      D[i3]   = lerp(f.size[i2], f.size[i2 + 1], g);
+      D[i3+1] = f.rot[i2];
+      D[i3+2] = f.a[i3] * smoothstep(0, f.a[i3+1], u) * Math.pow(1 - u, f.a[i3+2]);
+    }
+    this.geo.instanceCount = n;
+    this.mesh.visible = n > 0;
+    if (n > 0) { this.bufs.iPos.needsUpdate = true; this.bufs.iCol.needsUpdate = true; this.bufs.iData.needsUpdate = true; }
+  }
+}
+
+/* --- kwady zorientowane -------------------------------------------------
+   Jedna klasa, trzy vertex shadery. Różni je wyłącznie sposób ustawienia
+   quada w świecie: wzdłuż lufy ku kamerze, wzdłuż lufy na ekranie, płasko
+   w płaszczyźnie gry.
+   ----------------------------------------------------------------------- */
+const ORIENT_HEAD = /* glsl */`
+  attribute vec3 iPos;
+  attribute vec3 iDir;
+  attribute vec3 iCol;
+  attribute vec3 iData;          // x: długość, y: szerokość, z: alfa
+  varying vec2 vUv;
+  varying vec3 vCol;
+  varying float vA;
+`;
+
+// (a) jęzor ognia — wzdłuż osi lufy, obracany ku kamerze
+const PLUME_VERT = ORIENT_HEAD + /* glsl */`
+  void main() {
+    vUv = uv; vCol = iCol; vA = iData.z;
+    vec3 axis = normalize(iDir);
+    vec3 toCam = normalize(cameraPosition - iPos);
+    vec3 side = cross(axis, toCam);
+    float l = length(side);
+    side = l > 1e-4 ? side / l : vec3(1.0, 0.0, 0.0);
+    vec3 world = iPos + axis * ((position.y + 0.5) * iData.x) + side * (position.x * iData.y);
+    gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
+  }`;
+
+// (b) krzyż rozbłysku — bilboard obrócony tak, by oś X leżała wzdłuż lufy NA EKRANIE
+const CROSS_VERT = ORIENT_HEAD + /* glsl */`
+  void main() {
+    vUv = uv; vCol = iCol; vA = iData.z;
+    vec4 mv = viewMatrix * vec4(iPos, 1.0);
+    vec2 a = (mat3(viewMatrix) * normalize(iDir)).xy;
+    float l = length(a);
+    a = l > 1e-4 ? a / l : vec2(1.0, 0.0);
+    vec2 pt = vec2(position.x * iData.x, position.y * iData.y);
+    mv.xy += vec2(pt.x * a.x - pt.y * a.y, pt.x * a.y + pt.y * a.x);
+    gl_Position = projectionMatrix * mv;
+  }`;
+
+// (c) rozlanie światła po pokładzie — leży płasko w płaszczyźnie gry i wybiega do przodu
+const WASH_VERT = ORIENT_HEAD + /* glsl */`
+  void main() {
+    vUv = uv; vCol = iCol; vA = iData.z;
+    vec3 f = vec3(iDir.x, 0.0, iDir.z);
+    float l = length(f);
+    f = l > 1e-4 ? f / l : vec3(0.0, 0.0, 1.0);
+    vec3 r = vec3(-f.z, 0.0, f.x);
+    vec3 world = iPos + f * ((position.y + 0.5) * iData.x) + r * (position.x * iData.y);
+    gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
+  }`;
+
+class OrientedQuadSystem {
+  constructor(scene, texture, capacity, vertexShader, renderOrder = 4, fadePow = 2.0) {
+    this.fadePow = fadePow;
+    this.p = new Pool(capacity, { pos: 3, dir: 3, t: 2, len: 2, wid: 2, col: 3, a: 1 });
+    const q = instancedQuad(
+      [['iPos', 3], ['iDir', 3], ['iCol', 3], ['iData', 3]], capacity,
+      vertexShader, BB_FRAG, { map: { value: texture } }, THREE.AdditiveBlending
+    );
+    Object.assign(this, q);
+    this.mesh.renderOrder = renderOrder;
+    scene.add(this.mesh);
+  }
+  spawn(pos, dir, life, l0, l1, w0, w1, col, alpha) {
+    const i = this.p.spawn();
+    if (i < 0) return;
+    const f = this.p.f, i3 = i * 3, i2 = i * 2;
+    f.pos[i3] = pos.x; f.pos[i3+1] = pos.y; f.pos[i3+2] = pos.z;
+    f.dir[i3] = dir.x; f.dir[i3+1] = dir.y; f.dir[i3+2] = dir.z;
+    f.t[i2] = 0; f.t[i2+1] = life;
+    f.len[i2] = l0; f.len[i2+1] = l1;
+    f.wid[i2] = w0; f.wid[i2+1] = w1;
+    f.col[i3] = col[0]; f.col[i3+1] = col[1]; f.col[i3+2] = col[2];
+    f.a[i] = alpha;
+  }
+  update(dt) {
+    const p = this.p, f = p.f;
+    for (let i = p.count - 1; i >= 0; i--) {
+      const i2 = i * 2;
+      const age = f.t[i2] + dt;
+      if (age >= f.t[i2 + 1]) { p.kill(i); continue; }
+      f.t[i2] = age;
+    }
+    const n = p.count;
+    const P = this.bufs.iPos.array, DIR = this.bufs.iDir.array,
+          C = this.bufs.iCol.array, D = this.bufs.iData.array;
+    for (let i = 0; i < n; i++) {
+      const i2 = i * 2, i3 = i * 3;
+      const u = f.t[i2] / f.t[i2 + 1];
+      const ease = 1 - Math.pow(1 - u, 2.4);      // szybkie wyrzucenie, wolne dojście
+      P[i3] = f.pos[i3]; P[i3+1] = f.pos[i3+1]; P[i3+2] = f.pos[i3+2];
+      DIR[i3] = f.dir[i3]; DIR[i3+1] = f.dir[i3+1]; DIR[i3+2] = f.dir[i3+2];
+      C[i3] = f.col[i3]; C[i3+1] = f.col[i3+1]; C[i3+2] = f.col[i3+2];
+      D[i3]   = lerp(f.len[i2], f.len[i2 + 1], ease);
+      D[i3+1] = lerp(f.wid[i2], f.wid[i2 + 1], ease);
+      D[i3+2] = f.a[i] * Math.pow(1 - u, this.fadePow) * smoothstep(0, 0.10, u);
+    }
+    this.geo.instanceCount = n;
+    this.mesh.visible = n > 0;
+    if (n > 0) { this.bufs.iPos.needsUpdate = true; this.bufs.iDir.needsUpdate = true; this.bufs.iCol.needsUpdate = true; this.bufs.iData.needsUpdate = true; }
+  }
+}
+
+/* --- łuki elektryczne ----------------------------------------------------
+   Łamana między dwoma punktami, przesuwana szumem prostopadle do osi.
+   Kształt losuje się na nowo ~30 razy na sekundę, nie co klatkę — dzięki
+   temu łuk "trzeszczy" zamiast migotać biało.
+   ----------------------------------------------------------------------- */
+function hash3(a, b, c) {
+  let h = Math.imul(a | 0, 374761393) ^ Math.imul(b | 0, 668265263) ^ Math.imul(c | 0, 1442695041);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 2147483648 - 1;
+}
+
+const _aa = new THREE.Vector3(), _ab = new THREE.Vector3(), _ad = new THREE.Vector3();
+
+class ArcSystem {
+  constructor(scene, capacity = 48, segs = 11) {
+    this.segs = segs;
+    this.p = new Pool(capacity, { a: 3, b: 3, t: 2, col: 3, jit: 1, seed: 1 });
+    const verts = capacity * segs * 2;
+    const geo = new THREE.BufferGeometry();
+    this.posAttr = new THREE.BufferAttribute(new Float32Array(verts * 3), 3);
+    this.colAttr = new THREE.BufferAttribute(new Float32Array(verts * 3), 3);
+    this.posAttr.setUsage(THREE.DynamicDrawUsage);
+    this.colAttr.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute('position', this.posAttr);
+    geo.setAttribute('color', this.colAttr);
+    geo.setDrawRange(0, 0);
+    this.geo = geo;
+    this.lines = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({
+      vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    this.lines.frustumCulled = false;
+    this.lines.renderOrder = 5;
+    scene.add(this.lines);
+  }
+  spawn(a, b, life, jitter, col) {
+    const i = this.p.spawn();
+    if (i < 0) return;
+    const f = this.p.f, i3 = i * 3, i2 = i * 2;
+    f.a[i3] = a.x; f.a[i3+1] = a.y; f.a[i3+2] = a.z;
+    f.b[i3] = b.x; f.b[i3+1] = b.y; f.b[i3+2] = b.z;
+    f.t[i2] = 0; f.t[i2+1] = life;
+    f.col[i3] = col[0]; f.col[i3+1] = col[1]; f.col[i3+2] = col[2];
+    f.jit[i] = jitter;
+    f.seed[i] = (Math.random() * 65535) | 0;
+  }
+  update(dt, time) {
+    const p = this.p, f = p.f;
+    for (let i = p.count - 1; i >= 0; i--) {
+      const i2 = i * 2;
+      const age = f.t[i2] + dt;
+      if (age >= f.t[i2 + 1]) { p.kill(i); continue; }
+      f.t[i2] = age;
+    }
+    const n = p.count, segs = this.segs;
+    const P = this.posAttr.array, C = this.colAttr.array;
+    const step = Math.floor(time * 30);
+    let w = 0;
+    for (let i = 0; i < n; i++) {
+      const i2 = i * 2, i3 = i * 3;
+      const u = f.t[i2] / f.t[i2 + 1];
+      const seed = f.seed[i], jit = f.jit[i];
+      _aa.set(f.a[i3], f.a[i3+1], f.a[i3+2]);
+      _ab.set(f.b[i3], f.b[i3+1], f.b[i3+2]);
+      _ad.subVectors(_ab, _aa);
+      const len = _ad.length() || 1e-4;
+      _ad.divideScalar(len);
+      makeBasis(_ad);
+      const bright = Math.pow(1 - u, 1.1) * (0.55 + 0.45 * hash3(seed, 777, step));
+      let px = 0, py = 0, pz = 0, pb = 0;
+      for (let k = 0; k <= segs; k++) {
+        const t = k / segs;
+        const env = Math.sin(Math.PI * t);
+        const d1 = hash3(seed, k, step) * jit * env;
+        const d2 = hash3(seed, k + 91, step) * jit * env;
+        const x = _aa.x + _ad.x * len * t + _bx.x * d1 + _by.x * d2;
+        const y = _aa.y + _ad.y * len * t + _bx.y * d1 + _by.y * d2;
+        const z = _aa.z + _ad.z * len * t + _bx.z * d1 + _by.z * d2;
+        const bb = bright * (0.45 + 0.55 * env);
+        if (k > 0) {
+          P[w*3] = px; P[w*3+1] = py; P[w*3+2] = pz;
+          C[w*3] = f.col[i3] * pb; C[w*3+1] = f.col[i3+1] * pb; C[w*3+2] = f.col[i3+2] * pb;
+          w++;
+          P[w*3] = x; P[w*3+1] = y; P[w*3+2] = z;
+          C[w*3] = f.col[i3] * bb; C[w*3+1] = f.col[i3+1] * bb; C[w*3+2] = f.col[i3+2] * bb;
+          w++;
+        }
+        px = x; py = y; pz = z; pb = bb;
+      }
+    }
+    this.geo.setDrawRange(0, w);
+    this.lines.visible = w > 0;
+    if (w > 0) { this.posAttr.needsUpdate = true; this.colAttr.needsUpdate = true; }
+  }
+}
+
+/* --- iskry: smugi (LineSegments), głowa jasna, ogon wygaszony ----------- */
+class SparkSystem {
+  constructor(scene, capacity = 2000) {
+    this.cap = capacity;
+    // misc: [dł. smugi, faza migotania], cool: [docelowy mnożnik G, B]
+    this.p = new Pool(capacity, { pos: 3, vel: 3, t: 2, drag: 1, col: 3, misc: 2, cool: 2 });
+    const geo = new THREE.BufferGeometry();
+    this.posAttr = new THREE.BufferAttribute(new Float32Array(capacity * 6), 3);
+    this.colAttr = new THREE.BufferAttribute(new Float32Array(capacity * 6), 3);
+    this.posAttr.setUsage(THREE.DynamicDrawUsage);
+    this.colAttr.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute('position', this.posAttr);
+    geo.setAttribute('color', this.colAttr);
+    geo.setDrawRange(0, 0);
+    const mat = new THREE.LineBasicMaterial({
+      vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    this.lines = new THREE.LineSegments(geo, mat);
+    this.lines.frustumCulled = false;
+    this.lines.renderOrder = 5;
+    this.geo = geo;
+    scene.add(this.lines);
+  }
+  spawn(pos, vel, life, drag, streak, col, coolG = 0.32, coolB = 0.06) {
+    const i = this.p.spawn();
+    if (i < 0) return;
+    const f = this.p.f, i3 = i * 3, i2 = i * 2;
+    f.pos[i3] = pos.x; f.pos[i3+1] = pos.y; f.pos[i3+2] = pos.z;
+    f.vel[i3] = vel.x; f.vel[i3+1] = vel.y; f.vel[i3+2] = vel.z;
+    f.t[i2] = 0; f.t[i2+1] = life;
+    f.drag[i] = drag;
+    f.col[i3] = col[0]; f.col[i3+1] = col[1]; f.col[i3+2] = col[2];
+    f.misc[i2] = streak; f.misc[i2+1] = Math.random() * 6.28;
+    f.cool[i2] = coolG; f.cool[i2+1] = coolB;
+  }
+  update(dt, time) {
+    const p = this.p, f = p.f;
+    for (let i = p.count - 1; i >= 0; i--) {
+      const i2 = i * 2, i3 = i * 3;
+      const age = f.t[i2] + dt;
+      if (age >= f.t[i2 + 1]) { p.kill(i); continue; }
+      f.t[i2] = age;
+      const d = Math.exp(-f.drag[i] * dt);
+      f.vel[i3] *= d; f.vel[i3+1] *= d; f.vel[i3+2] *= d;
+      f.pos[i3]   += f.vel[i3]   * dt;
+      f.pos[i3+1] += f.vel[i3+1] * dt;
+      f.pos[i3+2] += f.vel[i3+2] * dt;
+    }
+    const n = p.count;
+    const P = this.posAttr.array, C = this.colAttr.array;
+    for (let i = 0; i < n; i++) {
+      const i2 = i * 2, i3 = i * 3, o = i * 6;
+      const u = f.t[i2] / f.t[i2 + 1];
+      const vx = f.vel[i3], vy = f.vel[i3+1], vz = f.vel[i3+2];
+      const sp2 = Math.sqrt(vx*vx + vy*vy + vz*vz) || 1e-6;
+      const len = Math.min(sp2 * 0.022, f.misc[i2]) * (0.35 + 0.65 * (1 - u));
+      P[o]   = f.pos[i3];     P[o+1] = f.pos[i3+1];     P[o+2] = f.pos[i3+2];
+      P[o+3] = f.pos[i3]   - vx / sp2 * len;
+      P[o+4] = f.pos[i3+1] - vy / sp2 * len;
+      P[o+5] = f.pos[i3+2] - vz / sp2 * len;
+      // stygnięcie: proch biało-żółty -> pomarańcz -> czerwień; jony zostają błękitne
+      const flick = 0.72 + 0.28 * Math.sin(time * 42 + f.misc[i2 + 1]);
+      const b = Math.pow(1 - u, 1.5) * flick;
+      const cool = smoothstep(0.1, 0.85, u);
+      C[o]   = f.col[i3]   * b;
+      C[o+1] = f.col[i3+1] * b * lerp(1, f.cool[i2], cool);
+      C[o+2] = f.col[i3+2] * b * lerp(1, f.cool[i2 + 1], cool);
+      C[o+3] = C[o+4] = C[o+5] = 0;   // ogon gaśnie do zera (blending additive)
+    }
+    this.geo.setDrawRange(0, n * 2);
+    this.lines.visible = n > 0;
+    if (n > 0) { this.posAttr.needsUpdate = true; this.colAttr.needsUpdate = true; }
+  }
+}
+
+/* --- błysk światła: realne oświetlenie wieży i pokładu ------------------ */
+class FlashLights {
+  constructor(scene, n = 4) {
+    this.slots = [];
+    for (let i = 0; i < n; i++) {
+      const l = new THREE.PointLight(0xffb070, 0, 400, 1.8);
+      l.visible = false;
+      scene.add(l);
+      this.slots.push({ l, t: 0, dur: 1, peak: 0 });
+    }
+    this.i = 0;
+  }
+  flash(pos, peak, dur, r = 1.0, g = 0.70, b = 0.42) {
+    const s = this.slots[this.i++ % this.slots.length];
+    s.l.position.copy(pos);
+    s.l.color.setRGB(r, g, b);
+    s.t = 0; s.dur = dur; s.peak = peak;
+    s.l.visible = true;
+  }
+  update(dt) {
+    for (const s of this.slots) {
+      if (!s.l.visible) continue;
+      s.t += dt;
+      if (s.t >= s.dur) { s.l.visible = false; s.l.intensity = 0; continue; }
+      const u = s.t / s.dur;
+      s.l.intensity = s.peak * Math.pow(1 - u, 2.2) * (0.82 + 0.36 * Math.random());
+    }
+  }
+}
+
+
+/* ============================================================================
+   ODŁAMKI — kozłujące bryły. Prawdziwe siatki, nie cząstki: przy widoku
+   z góry to one niosą skalę zniszczenia. Pula stała, nigdy nie rośnie.
+   ========================================================================== */
+class ChunkPool {
+  constructor(scene, n = 40) {
+    const geos = [
+      new THREE.BoxGeometry(1.0, 0.55, 1.5),
+      new THREE.BoxGeometry(0.45, 0.45, 2.4),
+      new THREE.TetrahedronGeometry(0.95),
+      new THREE.BoxGeometry(1.7, 0.22, 1.2),    // wyrwana płyta poszycia
+    ];
+    this.items = [];
+    for (let i = 0; i < n; i++) {
+      const mat = new THREE.MeshStandardMaterial({
+        color: 0x2b3038, metalness: 0.9, roughness: 0.5, emissive: 0xff4a10, emissiveIntensity: 0,
+      });
+      const m = new THREE.Mesh(geos[i % geos.length], mat);
+      m.visible = false;
+      m.frustumCulled = false;
+      scene.add(m);
+      this.items.push({
+        m, mat, vel: new THREE.Vector3(), spin: new THREE.Vector3(),
+        life: 0, age: 0, heat: 0, drag: 0.45, trail: 0, smokes: false,
+      });
+    }
+    this.rr = 0;
+  }
+  get count() { let c = 0; for (const it of this.items) if (it.life > 0) c++; return c; }
+  spawn(pos, vel, size, life, heat, smokes) {
+    let it = null;
+    for (const x of this.items) if (x.life <= 0) { it = x; break; }
+    if (!it) it = this.items[this.rr++ % this.items.length];   // nadpisz, nie alokuj
+    it.m.position.copy(pos);
+    it.m.rotation.set(rand(0, 6.283), rand(0, 6.283), rand(0, 6.283));
+    it.m.scale.setScalar(size);
+    it.vel.copy(vel);
+    it.spin.set(rand(-9, 9), rand(-9, 9), rand(-9, 9));
+    it.life = life; it.age = 0; it.heat = heat; it.trail = 0; it.smokes = smokes;
+    it.m.visible = true;
+  }
+  update(dt, fx) {
+    for (const it of this.items) {
+      if (it.life <= 0) continue;
+      it.age += dt;
+      if (it.age >= it.life) { it.life = 0; it.m.visible = false; it.mat.emissiveIntensity = 0; continue; }
+      const d = Math.exp(-it.drag * dt);
+      it.vel.multiplyScalar(d);
+      it.m.position.addScaledVector(it.vel, dt);
+      it.m.rotation.x += it.spin.x * dt;
+      it.m.rotation.y += it.spin.y * dt;
+      it.m.rotation.z += it.spin.z * dt;
+      it.heat *= Math.exp(-1.15 * dt);
+      const fade = Math.min(1, (it.life - it.age) * 2);        // znika miękko
+      it.mat.emissiveIntensity = it.heat * it.heat * 13 * fade;
+      if (it.smokes && it.heat > 0.32) {
+        it.trail -= dt;
+        if (it.trail <= 0) { it.trail = 0.11; fx.trailSmoke(it.m.position, it.heat); }
+      }
+    }
+  }
+  reset() {
+    for (const it of this.items) { it.life = 0; it.m.visible = false; it.mat.emissiveIntensity = 0; }
+  }
+}
+
+/* ============================================================================
+   EFEKTY ZNISZCZEŃ
+   API:
+       const fx = new DamageFX(scene, CFG, FX_SCALE);
+       fx.hardpointBlast(pos, normal, anchor);       // urwany hardpoint
+       fx.engineBlast(pos, axis, anchor);            // rozerwany silnik
+       fx.hullBreach(pos, normal, tangent, anchor);  // rozszczelnienie + upust
+       fx.update(dt, time);
+
+   `anchor` to opcjonalny Object3D — pożar i upust trzymają się kadłuba,
+   kiedy statek się obraca albo leci. Cząstki zostają w świecie, więc smuga
+   ciągnie się za statkiem tak, jak powinna.
+   ========================================================================== */
+const _p1 = new THREE.Vector3(), _p2 = new THREE.Vector3(), _p3 = new THREE.Vector3();
+const _qt = new THREE.Quaternion();
+
+class DamageFX {
+  constructor(scene, cfg, scale = 1) {
+    this.cfg = cfg;
+    this.S = scale;
+    this.planeY = 8.2;                 // płaszczyzna, po której rozlewa się światło
+    this.smoke = new BillboardSystem(scene, TEX_PUFF,  THREE.NormalBlending,   1700, 1);
+    this.vapor = new BillboardSystem(scene, TEX_PUFF,  THREE.NormalBlending,   1300, 2);
+    this.glow  = new BillboardSystem(scene, TEX_GLOW,  THREE.AdditiveBlending, 1500, 3);
+    this.star  = new BillboardSystem(scene, TEX_FLARE, THREE.AdditiveBlending,   96, 6);
+    this.wash  = new OrientedQuadSystem(scene, TEX_PLUME, 64, WASH_VERT,  2, 1.7);
+    this.plume = new OrientedQuadSystem(scene, TEX_PLUME, 96, PLUME_VERT, 4, 2.0);
+    this.cross = new OrientedQuadSystem(scene, TEX_CROSS, 64, CROSS_VERT, 6, 2.6);
+    this.spark = new SparkSystem(scene, 2600);
+    this.arcs  = new ArcSystem(scene, 48, 11);
+    this.chunks = new ChunkPool(scene, 40);
+    this.lights = new FlashLights(scene, 6);
+    this.sources = [];      // trwałe: pożary i upusty powietrza
+    this.pops = [];         // opóźnione detonacje (amunicja, wtórne rozerwania)
+    this.onBlast = null;    // callback(pos, siła, rodzaj)
+  }
+
+  /* --- pomocnicze ------------------------------------------------------- */
+  _resolve(src) {                       // pozycja i kierunek źródła w świecie
+    if (src.obj) {
+      src.obj.getWorldPosition(src.pos);
+      src.obj.getWorldQuaternion(_qt);
+      src.dir.copy(src.local).applyQuaternion(_qt).normalize();
+    }
+  }
+  trailSmoke(pos, heat) {
+    const S = this.S, o = sp();
+    o.x = pos.x; o.y = pos.y; o.z = pos.z;
+    o.vx = rand(-2, 2) * S; o.vy = rand(-1, 1) * S; o.vz = rand(-2, 2) * S;
+    o.life = rand(0.7, 1.6); o.drag = 1.4;
+    o.s0 = rand(0.8, 1.8) * S; o.s1 = rand(4, 9) * S;
+    o.rot = rand(0, 6.283); o.vrot = rand(-1.2, 1.2);
+    o.r0 = 1.1 * heat; o.g0 = 0.42 * heat; o.b0 = 0.15 * heat;
+    o.r1 = 0.10; o.g1 = 0.10; o.b1 = 0.115; o.mix = 3.2;
+    o.alpha = rand(0.18, 0.34); o.fadeIn = 0.08; o.fadeOut = 1.5; o.grow = 0.5;
+    this.smoke.spawn(o);
+  }
+  addFire(pos, dir, life, power, obj = null, local = null, jet = false) {
+    if (this.sources.length > 48) this.sources.shift();     // twardy limit źródeł
+    this.sources.push({
+      kind: 'fire', obj, local: local ? local.clone() : dir.clone(),
+      pos: pos.clone(), dir: dir.clone(),
+      t: 0, life, power, jet, seed: rand(0, 100), accF: 0, accS: 0, accE: 0, arcT: rand(0.2, 0.8),
+    });
+  }
+  addVent(pos, dir, life, obj = null, local = null) {
+    if (this.sources.length > 48) this.sources.shift();
+    this.sources.push({
+      kind: 'vent', obj, local: local ? local.clone() : dir.clone(),
+      pos: pos.clone(), dir: dir.clone(),
+      t: 0, life, power: 1, seed: rand(0, 100), accV: 0, accI: 0, accD: 0,
+    });
+  }
+  addPop(delay, pos, power, obj = null, local = null) {
+    this.pops.push({ t: delay, pos: pos.clone(), power, obj, local: local ? local.clone() : null });
+  }
+  reset() {
+    this.sources.length = 0;
+    this.pops.length = 0;
+    this.chunks.reset();
+  }
+
+  /* ======================================================================
+     HARDPOINT — urwane stanowisko broni.
+     Tanie i częste: statek ma ich dużo, więc budżet jest mały, a rozpoznawalność
+     bierze się z odpalającej się amunicji, nie z wielkości kuli ognia.
+     ==================================================================== */
+  hardpointBlast(pos, normal, obj = null, local = null) {
+    const S = this.S, C = this.cfg, FL = C.flatten;
+    const I = C.intensity;
+    makeBasis(normal);
+    let o;
+
+    // rozbłysk
+    o = sp();
+    o.x = pos.x; o.y = pos.y; o.z = pos.z;
+    o.life = 0.09; o.drag = 6;
+    o.s0 = 3 * S; o.s1 = (12 + 8 * I) * S;
+    o.r0 = 3.4; o.g0 = 2.6; o.b0 = 1.8;
+    o.r1 = 2.2; o.g1 = 0.80; o.b1 = 0.25; o.mix = 15;
+    o.alpha = 1; o.fadeIn = 0.005; o.fadeOut = 2.2; o.grow = 0.4;
+    this.glow.spawn(o);
+
+    o = sp();
+    o.x = pos.x; o.y = pos.y; o.z = pos.z;
+    o.life = 0.16; o.drag = 5;
+    o.s0 = 8 * S; o.s1 = (24 + 12 * I) * S;
+    o.rot = rand(0, 6.283); o.vrot = rand(-1.5, 1.5);
+    o.r0 = 2.6; o.g0 = 1.8; o.b0 = 1.1;
+    o.r1 = 1.4; o.g1 = 0.5; o.b1 = 0.15; o.mix = 10;
+    o.alpha = 0.8; o.fadeIn = 0.006; o.fadeOut = 2.4; o.grow = 0.4;
+    this.star.spawn(o);
+
+    this.cross.spawn(pos, normal, 0.11, 12 * S, (28 + 16 * I) * S, 9 * S, (15 + 8 * I) * S, [2.8, 1.9, 1.1], 0.9);
+
+    _p1.set(pos.x, this.planeY, pos.z);
+    this.wash.spawn(_p1, normal, 0.20, 10 * S, (30 + 16 * I) * S, 10 * S, (17 + 8 * I) * S, [1.5, 0.7, 0.26], 0.5);
+
+    // kula ognia — pcha się na zewnątrz kadłuba
+    for (let i = 0; i < 12; i++) {
+      coneDir(_p2, normal, 1.15, FL);
+      const v = rand(10, 46) * S;
+      o = sp();
+      o.x = pos.x + _p2.x * rand(0, 3) * S;
+      o.y = pos.y + _p2.y * rand(0, 3) * S;
+      o.z = pos.z + _p2.z * rand(0, 3) * S;
+      o.vx = _p2.x * v; o.vy = _p2.y * v; o.vz = _p2.z * v;
+      o.life = rand(0.26, 0.62); o.drag = 3.0;
+      o.s0 = rand(2, 5) * S; o.s1 = rand(8, 19) * S * (0.8 + 0.4 * I);
+      o.rot = rand(0, 6.283); o.vrot = rand(-2, 2);
+      o.r0 = 2.5; o.g0 = 1.05; o.b0 = 0.32;
+      o.r1 = 0.45; o.g1 = 0.12; o.b1 = 0.03; o.mix = 4.2;
+      o.alpha = rand(0.5, 0.85); o.fadeIn = 0.02; o.fadeOut = 1.9; o.grow = 0.5;
+      this.glow.spawn(o);
+    }
+
+    // iskry
+    for (let i = 0, n = Math.round(55 * I); i < n; i++) {
+      coneDir(_p2, normal, 1.2, FL);
+      const v = rand(22, 150) * S;
+      _p3.copy(_p2).multiplyScalar(v);
+      _p1.copy(pos).addScaledVector(_p2, rand(0, 3) * S);
+      this.spark.spawn(_p1, _p3, rand(0.35, 1.2), rand(0.5, 1.5), rand(3, 9) * S, [2.8, 2.2, 1.5]);
+    }
+
+    // odłamki
+    for (let i = 0, n = Math.round(4 * C.debris); i < n; i++) {
+      coneDir(_p2, normal, 1.0, FL);
+      const v = rand(14, 52) * S;
+      _p3.copy(_p2).multiplyScalar(v);
+      _p1.copy(pos).addScaledVector(_p2, rand(1, 3) * S);
+      this.chunks.spawn(_p1, _p3, rand(0.5, 1.2) * S, rand(2.2, 4.5), rand(0.6, 1), true);
+    }
+
+    // dym
+    for (let i = 0, n = Math.round(10 * C.smoke); i < n; i++) {
+      coneDir(_p2, normal, 1.0, FL);
+      const v = rand(4, 20) * S;
+      o = sp();
+      o.x = pos.x + _p2.x * rand(0, 4) * S;
+      o.y = pos.y + _p2.y * rand(0, 4) * S;
+      o.z = pos.z + _p2.z * rand(0, 4) * S;
+      o.vx = _p2.x * v; o.vy = _p2.y * v; o.vz = _p2.z * v;
+      o.life = rand(1.8, 3.6); o.drag = 1.1;
+      o.s0 = rand(2, 5) * S; o.s1 = rand(13, 26) * S;
+      o.rot = rand(0, 6.283); o.vrot = rand(-0.8, 0.8);
+      o.r0 = 1.5; o.g0 = 0.62; o.b0 = 0.24;
+      o.r1 = 0.085; o.g1 = 0.085; o.b1 = 0.10; o.mix = 2.6;
+      o.alpha = rand(0.35, 0.62); o.fadeIn = 0.06; o.fadeOut = 1.4; o.grow = 0.45;
+      this.smoke.spawn(o);
+    }
+
+    // zerwane instalacje iskrzą
+    for (let i = 0; i < 4; i++) {
+      coneDir(_p2, normal, 1.4, FL);
+      _p1.copy(pos).addScaledVector(_p2, rand(3, 9) * S);
+      this.arcs.spawn(pos, _p1, rand(0.1, 0.3), rand(0.5, 1.8) * S, [1.6, 2.0, 2.6]);
+    }
+
+    _p1.copy(pos).addScaledVector(normal, 3 * S);
+    this.lights.flash(_p1, 3000 * I * S * S, 0.16, 1.0, 0.66, 0.36);
+
+    // odpalanie amunicji — to odróżnia stanowisko broni od zwykłego wybuchu
+    for (let i = 0, n = randInt(3, 6); i < n; i++)
+      this.addPop(rand(0.22, 1.9), pos, rand(0.25, 0.6), obj, local);
+
+    // pożar w gnieździe
+    this.addFire(pos, normal, rand(6, 9) * C.fire, 0.75, obj, local);
+
+    if (this.onBlast) this.onBlast(pos, 0.55 * I, 'hardpoint');
+  }
+
+  /* ======================================================================
+     SILNIK — utrata kontencji.
+     Kierunkowy: wszystko wychodzi dyszą, plus boczne rozerwanie osłony.
+     ==================================================================== */
+  engineBlast(pos, axis, obj = null, local = null) {
+    const S = this.S, C = this.cfg, FL = C.flatten;
+    const I = C.intensity;
+    makeBasis(axis);
+    let o;
+
+    // błysk utraty kontencji
+    o = sp();
+    o.x = pos.x; o.y = pos.y; o.z = pos.z;
+    o.life = 0.12; o.drag = 5;
+    o.s0 = 6 * S; o.s1 = (22 + 14 * I) * S;
+    o.r0 = 3.6; o.g0 = 2.8; o.b0 = 2.2;
+    o.r1 = 2.4; o.g1 = 0.9; o.b1 = 0.3; o.mix = 13;
+    o.alpha = 1; o.fadeIn = 0.005; o.fadeOut = 2.0; o.grow = 0.42;
+    this.glow.spawn(o);
+
+    o = sp();
+    o.x = pos.x; o.y = pos.y; o.z = pos.z;
+    o.life = 0.2; o.drag = 4;
+    o.s0 = 12 * S; o.s1 = (40 + 22 * I) * S;
+    o.rot = rand(0, 6.283); o.vrot = rand(-1.2, 1.2);
+    o.r0 = 2.8; o.g0 = 2.0; o.b0 = 1.4;
+    o.r1 = 1.5; o.g1 = 0.55; o.b1 = 0.18; o.mix = 8;
+    o.alpha = 0.9; o.fadeIn = 0.006; o.fadeOut = 2.2; o.grow = 0.4;
+    this.star.spawn(o);
+
+    this.cross.spawn(pos, axis, 0.14, 24 * S, (60 + 32 * I) * S, 12 * S, (22 + 10 * I) * S, [2.9, 2.0, 1.2], 1.0);
+
+    // wyrzut dyszą — to jest sylwetka tego wybuchu
+    this.plume.spawn(pos, axis, 0.42, 14 * S, (66 + 40 * I) * S, 7 * S, 15 * S, [2.6, 1.3, 0.5], 1.0);
+    this.plume.spawn(pos, axis, 0.26, 10 * S, (40 + 22 * I) * S, 11 * S, 24 * S, [3.0, 2.0, 1.0], 0.85);
+    this.plume.spawn(pos, axis, 0.11, 5 * S, 18 * S, 14 * S, 30 * S, [3.2, 2.4, 1.5], 0.8);
+
+    _p1.set(pos.x, this.planeY, pos.z);
+    this.wash.spawn(_p1, axis, 0.28, 18 * S, (70 + 30 * I) * S, 12 * S, (24 + 10 * I) * S, [1.6, 0.75, 0.28], 0.6);
+
+    // strumień płonącego paliwa
+    for (let i = 0; i < 18; i++) {
+      coneDir(_p2, axis, 0.42, FL);
+      const v = rand(30, 120) * S;
+      o = sp();
+      o.x = pos.x + _p2.x * rand(0, 6) * S;
+      o.y = pos.y + _p2.y * rand(0, 6) * S;
+      o.z = pos.z + _p2.z * rand(0, 6) * S;
+      o.vx = _p2.x * v; o.vy = _p2.y * v; o.vz = _p2.z * v;
+      o.life = rand(0.3, 0.8); o.drag = 2.4;
+      o.s0 = rand(3, 7) * S; o.s1 = rand(12, 26) * S;
+      o.rot = rand(0, 6.283); o.vrot = rand(-2, 2);
+      o.r0 = 2.8; o.g0 = 1.3; o.b0 = 0.42;
+      o.r1 = 0.5; o.g1 = 0.13; o.b1 = 0.03; o.mix = 3.6;
+      o.alpha = rand(0.5, 0.9); o.fadeIn = 0.02; o.fadeOut = 1.8; o.grow = 0.5;
+      this.glow.spawn(o);
+    }
+
+    // iskry: wąski snop dyszą + szeroki wieniec z rozerwanej osłony
+    for (let i = 0, n = Math.round(70 * I); i < n; i++) {
+      coneDir(_p2, axis, 0.3, FL);
+      const v = rand(60, 260) * S;
+      _p3.copy(_p2).multiplyScalar(v);
+      _p1.copy(pos).addScaledVector(_p2, rand(0, 6) * S);
+      this.spark.spawn(_p1, _p3, rand(0.3, 1.0), rand(0.4, 1.2), rand(5, 14) * S, [2.9, 2.3, 1.5]);
+    }
+    for (let i = 0, n = Math.round(34 * I); i < n; i++) {
+      coneDir(_p2, axis, 1.5, FL);
+      const v = rand(20, 90) * S;
+      _p3.copy(_p2).multiplyScalar(v);
+      this.spark.spawn(pos, _p3, rand(0.4, 1.1), rand(0.6, 1.6), rand(3, 8) * S, [2.7, 2.0, 1.3]);
+    }
+
+    // odłamki osłony
+    for (let i = 0, n = Math.round(7 * C.debris); i < n; i++) {
+      const back = Math.random() < 0.55;
+      coneDir(_p2, axis, back ? 0.5 : 1.6, FL);
+      const v = (back ? rand(40, 100) : rand(12, 44)) * S;
+      _p3.copy(_p2).multiplyScalar(v);
+      _p1.copy(pos).addScaledVector(_p2, rand(1, 4) * S);
+      this.chunks.spawn(_p1, _p3, rand(0.7, 1.6) * S, rand(2.5, 5.5), 1, true);
+    }
+
+    // ciężki dym
+    for (let i = 0, n = Math.round(20 * C.smoke); i < n; i++) {
+      coneDir(_p2, axis, 0.9, FL);
+      const v = rand(6, 34) * S;
+      o = sp();
+      o.x = pos.x + _p2.x * rand(0, 8) * S;
+      o.y = pos.y + _p2.y * rand(0, 8) * S;
+      o.z = pos.z + _p2.z * rand(0, 8) * S;
+      o.vx = _p2.x * v; o.vy = _p2.y * v; o.vz = _p2.z * v;
+      o.life = rand(2.4, 5.0); o.drag = 0.95;
+      o.s0 = rand(3, 7) * S; o.s1 = rand(20, 40) * S;
+      o.rot = rand(0, 6.283); o.vrot = rand(-0.6, 0.6);
+      o.r0 = 1.6; o.g0 = 0.66; o.b0 = 0.26;
+      o.r1 = 0.07; o.g1 = 0.07; o.b1 = 0.09; o.mix = 2.2;
+      o.alpha = rand(0.35, 0.6); o.fadeIn = 0.07; o.fadeOut = 1.35; o.grow = 0.45;
+      this.smoke.spawn(o);
+    }
+
+    for (let i = 0; i < 6; i++) {
+      coneDir(_p2, axis, 1.5, FL);
+      _p1.copy(pos).addScaledVector(_p2, rand(4, 14) * S);
+      this.arcs.spawn(pos, _p1, rand(0.12, 0.34), rand(0.8, 2.6) * S, [1.5, 2.1, 3.0]);
+    }
+
+    _p1.copy(pos).addScaledVector(axis, 6 * S);
+    this.lights.flash(_p1, 5200 * I * S * S, 0.22, 1.0, 0.62, 0.30);
+
+    // boczne rozerwanie osłony chwilę po głównym błysku
+    this.addPop(rand(0.10, 0.26), pos, rand(0.5, 0.9), obj, local);
+    this.addPop(rand(0.5, 1.4), pos, rand(0.3, 0.7), obj, local);
+
+    // wyrzut paliwa dyszą (krótki, gwałtowny) + długie dopalanie
+    this.addFire(pos, axis, 1.2, 1.7, obj, local, true);
+    this.addFire(pos, axis, rand(10, 15) * C.fire, 1.0, obj, local);
+
+    if (this.onBlast) this.onBlast(pos, 0.95 * I, 'engine');
+  }
+
+  /* ======================================================================
+     ROZSZCZELNIENIE KADŁUBA
+     Faza 1: wybuch poprzeczny — płyta idzie na zewnątrz po normalnej.
+     Faza 2: upust powietrza — struga z opadającym ciśnieniem.
+     ==================================================================== */
+  hullBreach(pos, normal, tangent, obj = null, local = null) {
+    const S = this.S, C = this.cfg, FL = C.flatten;
+    const I = C.intensity;
+    makeBasis(normal);
+    let o;
+
+    // ostry, płaski błysk
+    o = sp();
+    o.x = pos.x; o.y = pos.y; o.z = pos.z;
+    o.life = 0.07; o.drag = 7;
+    o.s0 = 3 * S; o.s1 = (10 + 6 * I) * S;
+    o.r0 = 3.2; o.g0 = 2.7; o.b0 = 2.1;
+    o.r1 = 1.8; o.g1 = 0.7; o.b1 = 0.24; o.mix = 18;
+    o.alpha = 1; o.fadeIn = 0.004; o.fadeOut = 2.4; o.grow = 0.4;
+    this.glow.spawn(o);
+
+    // krzyż szerszy niż dłuższy — poszycie rozrywa się w poprzek, nie wzdłuż
+    this.cross.spawn(pos, normal, 0.10, 10 * S, (14 + 7 * I) * S, 16 * S, (34 + 16 * I) * S, [2.6, 2.0, 1.4], 0.9);
+
+    _p1.set(pos.x, this.planeY, pos.z);
+    this.wash.spawn(_p1, normal, 0.16, 8 * S, (24 + 10 * I) * S, 12 * S, (20 + 8 * I) * S, [1.4, 0.8, 0.45], 0.45);
+
+    // atmosfera zapala się na moment i gaśnie — nie ma czym się palić dalej
+    for (let i = 0; i < 7; i++) {
+      coneDir(_p2, normal, 0.9, FL);
+      const v = rand(16, 60) * S;
+      o = sp();
+      o.x = pos.x + _p2.x * rand(0, 3) * S;
+      o.y = pos.y + _p2.y * rand(0, 3) * S;
+      o.z = pos.z + _p2.z * rand(0, 3) * S;
+      o.vx = _p2.x * v; o.vy = _p2.y * v; o.vz = _p2.z * v;
+      o.life = rand(0.16, 0.34); o.drag = 3.6;
+      o.s0 = rand(2, 4) * S; o.s1 = rand(8, 16) * S;
+      o.rot = rand(0, 6.283); o.vrot = rand(-2, 2);
+      o.r0 = 2.3; o.g0 = 1.0; o.b0 = 0.35;
+      o.r1 = 0.3; o.g1 = 0.08; o.b1 = 0.02; o.mix = 7;
+      o.alpha = rand(0.4, 0.7); o.fadeIn = 0.015; o.fadeOut = 2.4; o.grow = 0.45;
+      this.glow.spawn(o);
+    }
+
+    // iskry wzdłuż linii rozdarcia, a nie z jednego punktu
+    for (let i = 0, n = Math.round(46 * I); i < n; i++) {
+      const along = rand(-1, 1);
+      _p1.copy(pos).addScaledVector(tangent, along * 7 * S);
+      coneDir(_p2, normal, 0.8, FL);
+      const v = rand(25, 130) * S;
+      _p3.copy(_p2).multiplyScalar(v);
+      this.spark.spawn(_p1, _p3, rand(0.3, 0.9), rand(0.6, 1.6), rand(3, 8) * S, [2.7, 2.1, 1.4]);
+    }
+
+    // wyrwane płyty
+    for (let i = 0, n = Math.round(5 * C.debris); i < n; i++) {
+      const along = rand(-1, 1);
+      _p1.copy(pos).addScaledVector(tangent, along * 6 * S);
+      coneDir(_p2, normal, 0.55, FL);
+      const v = rand(26, 80) * S;
+      _p3.copy(_p2).multiplyScalar(v);
+      this.chunks.spawn(_p1, _p3, rand(0.6, 1.5) * S, rand(3, 6), rand(0.2, 0.55), false);
+    }
+
+    for (let i = 0; i < 3; i++) {
+      coneDir(_p2, normal, 1.2, FL);
+      _p1.copy(pos).addScaledVector(_p2, rand(3, 8) * S);
+      this.arcs.spawn(pos, _p1, rand(0.1, 0.26), rand(0.5, 1.6) * S, [1.4, 1.9, 2.6]);
+    }
+
+    _p1.copy(pos).addScaledVector(normal, 3 * S);
+    this.lights.flash(_p1, 2300 * I * S * S, 0.13, 1.0, 0.78, 0.55);
+
+    // i dopiero teraz to, co widać najdłużej
+    this.addVent(pos, normal, C.ventTime, obj, local);
+
+    if (this.onBlast) this.onBlast(pos, 0.6 * I, 'hull');
+  }
+
+  /* ======================================================================
+     ŹRÓDŁA CIĄGŁE
+     ==================================================================== */
+
+  // pożar w gnieździe / w dyszy — to on niesie stan uszkodzenia statku
+  _fireTick(s, dt, time) {
+    const S = this.S, C = this.cfg, FL = C.flatten;
+    const u = s.t / s.life;
+    const fade = Math.pow(1 - u, s.jet ? 1.9 : 0.7);
+    const fl = flicker(time, s.seed);
+    const I = s.power * fade * fl;
+    if (I <= 0.01) return;
+    let o;
+
+    // płomień
+    s.accF += (s.jet ? 95 : 30) * I * dt;
+    while (s.accF >= 1) {
+      s.accF -= 1;
+      coneDir(_p2, s.dir, s.jet ? 0.35 : 0.9, FL);
+      const v = (s.jet ? rand(45, 120) : rand(4, 17)) * S;
+      o = sp();
+      o.x = s.pos.x + _p2.x * rand(0, 2) * S;
+      o.y = s.pos.y + _p2.y * rand(0, 2) * S;
+      o.z = s.pos.z + _p2.z * rand(0, 2) * S;
+      o.vx = _p2.x * v; o.vy = _p2.y * v; o.vz = _p2.z * v;
+      o.life = rand(0.25, 0.7) * (s.jet ? 1.4 : 1);
+      o.drag = s.jet ? 2.2 : 2.8;
+      o.s0 = rand(1.2, 3.0) * S; o.s1 = rand(4, 11) * S * (s.jet ? 2.2 : 1);
+      o.rot = rand(0, 6.283); o.vrot = rand(-2.5, 2.5);
+      o.r0 = 2.4; o.g0 = 1.0; o.b0 = 0.3;
+      o.r1 = 0.45; o.g1 = 0.11; o.b1 = 0.025; o.mix = 4.5;
+      o.alpha = rand(0.45, 0.85); o.fadeIn = 0.03; o.fadeOut = 1.9; o.grow = 0.55;
+      this.glow.spawn(o);
+    }
+
+    // dym z pożaru — cienka smuga ciągnąca się za statkiem
+    s.accS += (s.jet ? 26 : 11) * I * C.smoke * dt;
+    while (s.accS >= 1) {
+      s.accS -= 1;
+      coneDir(_p2, s.dir, s.jet ? 0.5 : 1.0, FL);
+      const v = (s.jet ? rand(18, 50) : rand(3, 13)) * S;
+      o = sp();
+      o.x = s.pos.x + _p2.x * rand(0, 3) * S;
+      o.y = s.pos.y + _p2.y * rand(0, 3) * S;
+      o.z = s.pos.z + _p2.z * rand(0, 3) * S;
+      o.vx = _p2.x * v; o.vy = _p2.y * v; o.vz = _p2.z * v;
+      o.life = rand(2.2, 4.8); o.drag = 0.9;
+      o.s0 = rand(1.5, 4) * S; o.s1 = rand(12, 30) * S;
+      o.rot = rand(0, 6.283); o.vrot = rand(-0.5, 0.5);
+      o.r0 = 1.2; o.g0 = 0.48; o.b0 = 0.18;
+      o.r1 = 0.075; o.g1 = 0.075; o.b1 = 0.095; o.mix = 2.4;
+      o.alpha = rand(0.22, 0.45); o.fadeIn = 0.09; o.fadeOut = 1.45; o.grow = 0.45;
+      this.smoke.spawn(o);
+    }
+
+    // żagwie
+    s.accE += 5 * I * dt;
+    while (s.accE >= 1) {
+      s.accE -= 1;
+      coneDir(_p2, s.dir, 1.0, FL);
+      const v = rand(8, 38) * S;
+      o = sp();
+      o.x = s.pos.x; o.y = s.pos.y; o.z = s.pos.z;
+      o.vx = _p2.x * v; o.vy = _p2.y * v; o.vz = _p2.z * v;
+      o.life = rand(0.7, 2.0); o.drag = 1.4;
+      o.s0 = rand(0.4, 0.9) * S; o.s1 = rand(0.6, 1.5) * S;
+      o.r0 = 2.2; o.g0 = 0.9; o.b0 = 0.28;
+      o.r1 = 0.9; o.g1 = 0.18; o.b1 = 0.03; o.mix = 1.5;
+      o.alpha = 0.9; o.fadeIn = 0.02; o.fadeOut = 1.2; o.grow = 1.0;
+      this.glow.spawn(o);
+    }
+
+    // zwarcia w zerwanych instalacjach — tylko póki jest co zwierać
+    if (u < 0.45) {
+      s.arcT -= dt;
+      if (s.arcT <= 0) {
+        s.arcT = rand(0.25, 1.1);
+        coneDir(_p2, s.dir, 1.5, FL);
+        _p1.copy(s.pos).addScaledVector(_p2, rand(2, 7) * S);
+        this.arcs.spawn(s.pos, _p1, rand(0.08, 0.22), rand(0.4, 1.4) * S, [1.5, 2.0, 2.8]);
+      }
+    }
+
+    // nawroty ognia — pożar nie gaśnie gładko
+    if (Math.random() < 0.45 * dt * (1 - u)) {
+      o = sp();
+      o.x = s.pos.x; o.y = s.pos.y; o.z = s.pos.z;
+      o.life = 0.3; o.drag = 4;
+      o.s0 = 3 * S; o.s1 = rand(12, 22) * S;
+      o.r0 = 2.6; o.g0 = 1.2; o.b0 = 0.4;
+      o.r1 = 0.5; o.g1 = 0.13; o.b1 = 0.03; o.mix = 6;
+      o.alpha = 0.8; o.fadeIn = 0.01; o.fadeOut = 2.0; o.grow = 0.45;
+      this.glow.spawn(o);
+      for (let i = 0; i < 9; i++) {
+        coneDir(_p2, s.dir, 1.1, FL);
+        _p3.copy(_p2).multiplyScalar(rand(15, 70) * S);
+        this.spark.spawn(s.pos, _p3, rand(0.3, 0.8), rand(0.6, 1.5), rand(3, 7) * S, [2.7, 2.1, 1.4]);
+      }
+      this.lights.flash(s.pos, 700 * S * S, 0.18, 1.0, 0.6, 0.3);
+    }
+  }
+
+  // upust powietrza — ciśnienie opada, struga się rozszerza i sapie
+  _ventTick(s, dt, time) {
+    const S = this.S, C = this.cfg, FL = C.flatten;
+    const u = s.t / s.life;
+    let p = Math.pow(1 - u, 1.55) * C.vent;
+    p *= 0.72 + 0.28 * flicker(time * 0.9, s.seed);
+    if (u > 0.7) p *= 0.4 + 0.6 * flicker(time * 2.4, s.seed + 7);   // pod koniec przerywa
+    p = Math.max(0, p);
+    if (p < 0.012) return;
+    const pc = clamp01(p);
+    const spread = lerp(0.54, 0.085, pc);      // im mniej ciśnienia, tym szerszy i leniwszy stożek
+    const speed = (24 + 122 * p) * S;
+    let o;
+
+    // szyjka strugi — odtwarzana co klatkę, więc naturalnie faluje
+    this.plume.spawn(s.pos, s.dir, 0.08,
+      6 * S, (8 + 30 * p) * S * rand(0.85, 1.15),
+      (2.0 + 3.0 * p) * S, (5 + 7 * p) * S,
+      [0.42, 0.55, 0.75], 0.5 * pc);
+
+    // mgła — kryjąca materia, nie poświata: zwykły blending, nie additive
+    s.accV += (13 + 62 * p) * dt;
+    while (s.accV >= 1) {
+      s.accV -= 1;
+      coneDir(_p2, s.dir, spread, FL);
+      const v = speed * rand(0.55, 1.3);
+      o = sp();
+      o.x = s.pos.x + _p2.x * rand(0, 3) * S;
+      o.y = s.pos.y + _p2.y * rand(0, 3) * S;
+      o.z = s.pos.z + _p2.z * rand(0, 3) * S;
+      o.vx = _p2.x * v; o.vy = _p2.y * v; o.vz = _p2.z * v;
+      o.life = rand(0.8, 2.4); o.drag = 0.85;
+      o.s0 = rand(1.2, 3.2) * S; o.s1 = rand(10, 28) * S;
+      o.rot = rand(0, 6.283); o.vrot = rand(-0.9, 0.9);
+      const b = 0.55 + 0.45 * pc;
+      o.r0 = 0.80 * b; o.g0 = 0.90 * b; o.b0 = 1.00 * b;
+      o.r1 = 0.20; o.g1 = 0.25; o.b1 = 0.34; o.mix = 1.4;
+      o.alpha = rand(0.16, 0.36) * (0.45 + 0.55 * pc);
+      o.fadeIn = 0.05; o.fadeOut = 1.5; o.grow = 0.42;
+      this.vapor.spawn(o);
+    }
+
+    // kryształki lodu — para zamarza natychmiast i błyszczy w strudze
+    s.accI += 17 * p * C.ice * dt;
+    while (s.accI >= 1) {
+      s.accI -= 1;
+      coneDir(_p2, s.dir, spread * 0.8, FL);
+      const v = speed * rand(0.9, 1.6);
+      o = sp();
+      o.x = s.pos.x + _p2.x * rand(0, 4) * S;
+      o.y = s.pos.y + _p2.y * rand(0, 4) * S;
+      o.z = s.pos.z + _p2.z * rand(0, 4) * S;
+      o.vx = _p2.x * v; o.vy = _p2.y * v; o.vz = _p2.z * v;
+      o.life = rand(0.25, 0.9); o.drag = 0.35;
+      o.s0 = rand(0.35, 0.85) * S; o.s1 = rand(0.2, 0.5) * S;
+      o.r0 = 0.9; o.g0 = 1.4; o.b0 = 2.0;
+      o.r1 = 0.2; o.g1 = 0.34; o.b1 = 0.6; o.mix = 2.2;
+      o.alpha = rand(0.5, 1.0); o.fadeIn = 0.04; o.fadeOut = 1.6; o.grow = 1.0;
+      this.glow.spawn(o);
+    }
+
+    // wyssane szczątki — tylko póki ciśnienie ma siłę je unieść
+    if (p > 0.35) {
+      s.accD += 2.2 * p * C.debris * dt;
+      while (s.accD >= 1) {
+        s.accD -= 1;
+        coneDir(_p2, s.dir, spread * 1.2, FL);
+        _p3.copy(_p2).multiplyScalar(speed * rand(0.3, 0.7));
+        _p1.copy(s.pos).addScaledVector(_p2, rand(1, 3) * S);
+        this.chunks.spawn(_p1, _p3, rand(0.25, 0.6) * S, rand(2, 4), 0, false);
+      }
+    }
+  }
+
+  // odpalenie amunicji / wtórne rozerwanie — mały wybuch bez własnego pożaru
+  _popBlast(pos, dir, power) {
+    const S = this.S, C = this.cfg, FL = C.flatten;
+    const P = power * C.intensity;
+    makeBasis(dir);
+    _pb.copy(pos);
+    coneDir(_pd, dir, 1.4, FL);
+    _pb.addScaledVector(_pd, rand(0, 4) * S);
+    let o;
+
+    o = sp();
+    o.x = _pb.x; o.y = _pb.y; o.z = _pb.z;
+    o.life = 0.11; o.drag = 5;
+    o.s0 = 2 * S; o.s1 = (7 + 12 * P) * S;
+    o.r0 = 3.0; o.g0 = 2.2; o.b0 = 1.3;
+    o.r1 = 1.8; o.g1 = 0.6; o.b1 = 0.16; o.mix = 12;
+    o.alpha = 1; o.fadeIn = 0.005; o.fadeOut = 2.2; o.grow = 0.42;
+    this.glow.spawn(o);
+
+    for (let i = 0, n = Math.round(22 * P + 6); i < n; i++) {
+      coneDir(_p2, _pd, 1.5, FL);
+      _p3.copy(_p2).multiplyScalar(rand(20, 120) * S);
+      this.spark.spawn(_pb, _p3, rand(0.3, 0.9), rand(0.6, 1.5), rand(3, 8) * S, [2.8, 2.2, 1.5]);
+    }
+    for (let i = 0, n = Math.round(4 * C.smoke); i < n; i++) {
+      coneDir(_p2, _pd, 1.2, FL);
+      const v = rand(4, 22) * S;
+      o = sp();
+      o.x = _pb.x; o.y = _pb.y; o.z = _pb.z;
+      o.vx = _p2.x * v; o.vy = _p2.y * v; o.vz = _p2.z * v;
+      o.life = rand(1.2, 2.6); o.drag = 1.2;
+      o.s0 = rand(1.5, 3.5) * S; o.s1 = rand(8, 18) * S;
+      o.rot = rand(0, 6.283); o.vrot = rand(-1, 1);
+      o.r0 = 1.4; o.g0 = 0.55; o.b0 = 0.2;
+      o.r1 = 0.08; o.g1 = 0.08; o.b1 = 0.1; o.mix = 3;
+      o.alpha = rand(0.2, 0.42); o.fadeIn = 0.06; o.fadeOut = 1.5; o.grow = 0.5;
+      this.smoke.spawn(o);
+    }
+    if (Math.random() < 0.5 * C.debris) {
+      coneDir(_p2, _pd, 1.1, FL);
+      _p3.copy(_p2).multiplyScalar(rand(20, 60) * S);
+      this.chunks.spawn(_pb, _p3, rand(0.35, 0.8) * S, rand(2, 4), 0.8, true);
+    }
+    this.lights.flash(_pb, 1100 * P * S * S, 0.13, 1.0, 0.62, 0.3);
+    if (this.onBlast) this.onBlast(_pb, 0.22 * P, 'pop');
+  }
+
+  update(dt, time) {
+    // opóźnione detonacje
+    for (let i = this.pops.length - 1; i >= 0; i--) {
+      const q = this.pops[i];
+      q.t -= dt;
+      if (q.t > 0) continue;
+      this.pops.splice(i, 1);
+      if (q.obj) {
+        q.obj.getWorldPosition(_p1);
+        if (q.local) { q.obj.getWorldQuaternion(_qt); _p2.copy(q.local).applyQuaternion(_qt).normalize(); }
+        else _p2.set(0, 1, 0);
+      } else { _p1.copy(q.pos); _p2.set(0, 1, 0); }
+      this._popBlast(_p1, _p2, q.power);
+    }
+
+    // pożary i upusty
+    for (let i = this.sources.length - 1; i >= 0; i--) {
+      const s = this.sources[i];
+      s.t += dt;
+      if (s.t >= s.life) { this.sources.splice(i, 1); continue; }
+      this._resolve(s);
+      if (s.kind === 'fire') this._fireTick(s, dt, time);
+      else this._ventTick(s, dt, time);
+    }
+
+    this.chunks.update(dt, this);
+    this.smoke.update(dt);
+    this.vapor.update(dt);
+    this.glow.update(dt);
+    this.star.update(dt);
+    this.wash.update(dt);
+    this.plume.update(dt);
+    this.cross.update(dt);
+    this.spark.update(dt, time);
+    this.arcs.update(dt, time);
+    this.lights.update(dt);
+  }
+
+  get particles() {
+    return this.smoke.p.count + this.vapor.p.count + this.glow.p.count + this.star.p.count +
+           this.wash.p.count + this.plume.p.count + this.cross.p.count +
+           this.spark.p.count + this.arcs.p.count + this.chunks.count;
+  }
+}
+const _pb = new THREE.Vector3(), _pd = new THREE.Vector3();
+
+/* ============================================================================
+   SCENA
+   ========================================================================== */
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.95;
+
+const scene = new THREE.Scene();
+
+const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.5, 8000);
+camera.position.set(0, 200, 92);
+const controls = new OrbitControls(camera, canvas);
+controls.target.set(0, 2, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.minDistance = 50;
+controls.maxDistance = 620;
+controls.minPolarAngle = 0.02;
+controls.maxPolarAngle = Math.PI * 0.44;
+controls.update();
+
+const sky = new THREE.Mesh(
+  new THREE.SphereGeometry(4000, 24, 16),
+  new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false,
+    vertexShader: `varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+    fragmentShader: `
+      varying vec3 vP;
+      void main(){
+        vec3 n = normalize(vP);
+        float h = n.y * 0.5 + 0.5;
+        float side = n.x * 0.5 + 0.5;
+        vec3 c = mix(vec3(0.006,0.008,0.014), vec3(0.016,0.015,0.030), h);
+        c += vec3(0.018,0.007,0.026) * pow(side, 3.0);
+        gl_FragColor = vec4(c, 1.0);
+      }`,
+  })
+);
+sky.frustumCulled = false;
+scene.add(sky);
+
+{
+  const N = 2000, pos = new Float32Array(N * 3), col = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    const u = Math.random() * 2 - 1, a = Math.random() * Math.PI * 2, r = Math.sqrt(1 - u * u), R = 3000;
+    pos[i*3] = Math.cos(a) * r * R; pos[i*3+1] = u * R; pos[i*3+2] = Math.sin(a) * r * R;
+    const b = Math.pow(Math.random(), 2.2) * 0.9 + 0.1, t = Math.random();
+    col[i*3] = b * lerp(0.75, 1.0, t); col[i*3+1] = b * 0.92; col[i*3+2] = b * lerp(1.0, 0.8, t);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  scene.add(new THREE.Points(g, new THREE.PointsMaterial({ size: 1.7, sizeAttenuation: false, vertexColors: true, transparent: true })));
+}
+
+scene.add(new THREE.AmbientLight(0x1b2432, 0.9));
+const key = new THREE.DirectionalLight(0xa8c0e4, 2.0);
+key.position.set(-80, 110, 40);
+scene.add(key);
+const rim = new THREE.DirectionalLight(0x3a4f7a, 1.0);
+rim.position.set(90, -20, -70);
+scene.add(rim);
+
+/* ============================================================================
+   PLACEHOLDER: statek. Dziób w +Z, silniki w -Z, burty w ±X.
+   ========================================================================== */
+const matHull   = new THREE.MeshStandardMaterial({ color: 0x4a515c, metalness: 0.85, roughness: 0.55 });
+const matDark   = new THREE.MeshStandardMaterial({ color: 0x272c34, metalness: 0.9, roughness: 0.42 });
+const matPlate  = new THREE.MeshStandardMaterial({ color: 0x5a6270, metalness: 0.8, roughness: 0.5 });
+const matWreck  = new THREE.MeshStandardMaterial({ color: 0x14161a, metalness: 0.5, roughness: 0.9 });
+const matHole   = new THREE.MeshStandardMaterial({ color: 0x05070a, metalness: 0.1, roughness: 1.0 });
+
+const ship = new THREE.Group();
+scene.add(ship);
+
+function box(w, h, d, x, y, z, mat = matHull, parent = ship) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  m.position.set(x, y, z);
+  parent.add(m);
+  return m;
+}
+
+// kadłub
+box(34, 9, 108, 0, 4, 0);
+box(30, 8.5, 16, 0, 4, 60, matHull);          // przewężenie
+box(22, 8, 16, 0, 4, 74, matHull);            // dziób
+box(12, 7, 14, 0, 4, 87, matDark);
+box(36, 9, 18, 0, 4, -60, matHull);           // rufa
+// nadbudówka
+box(18, 11, 32, 0, 10, -16);
+box(11, 8, 13, 0, 17, -20, matDark);
+box(3, 9, 3, 0, 24, -20, matDark);
+// wzdłużne żebra pokładu
+box(2, 1.2, 100, -12, 9, 0, matDark);
+box(2, 1.2, 100, 12, 9, 0, matDark);
+for (let i = 0; i < 6; i++) box(30, 1.0, 2, 0, 9, -40 + i * 18, matDark);
+// światła pozycyjne
+for (const sx of [-1, 1]) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.6, 1.6),
+    new THREE.MeshStandardMaterial({ color: 0x0d1016, emissive: sx < 0 ? 0xff2020 : 0x20ff60, emissiveIntensity: 3 }));
+  m.position.set(sx * 16, 10, 82);
+  ship.add(m);
+}
+
+const targets = [];
+
+/* --- hardpointy: 6 stanowisk na burtach ---------------------------------- */
+const HP_Z = [36, 6, -26];
+for (const sx of [-1, 1]) {
+  for (const z of HP_Z) {
+    const g = new THREE.Group();
+    g.position.set(sx * 17, 9, z);
+    ship.add(g);
+
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(3.4, 3.8, 2.2, 14), matDark);
+    base.position.y = 1;
+    g.add(base);
+    const house = new THREE.Mesh(new THREE.BoxGeometry(5.5, 4.4, 6.2), matPlate);
+    house.position.y = 4;
+    g.add(house);
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 1.05, 11, 12), matDark);
+    barrel.geometry.rotateZ(Math.PI / 2);
+    barrel.position.set(sx * 5.5, 4.2, 0);
+    g.add(barrel);
+
+    const anchor = new THREE.Object3D();
+    anchor.position.set(sx * 3.5, 4, 0);
+    g.add(anchor);
+
+    const t = {
+      kind: 'hp', group: g, anchor, alive: true,
+      local: new THREE.Vector3(sx, 0.18, 0).normalize(),
+      tangent: new THREE.Vector3(0, 0, 1),
+      parts: [house, barrel], stub: base,
+    };
+    targets.push(t);
+    for (const m of [base, house, barrel]) m.userData.tid = targets.length - 1;
+  }
+}
+
+/* --- silniki: dwie dysze na rufie ---------------------------------------- */
+const engines = [];
+for (const sx of [-1, 1]) {
+  const g = new THREE.Group();
+  g.position.set(sx * 10.5, 4, -66);
+  ship.add(g);
+
+  const bell = new THREE.Mesh(new THREE.CylinderGeometry(4.6, 6.4, 13, 18), matDark);
+  bell.geometry.rotateX(Math.PI / 2);
+  g.add(bell);
+  const ring = new THREE.Mesh(new THREE.CylinderGeometry(6.8, 6.8, 1.6, 18), matPlate);
+  ring.geometry.rotateX(Math.PI / 2);
+  ring.position.z = 3;
+  g.add(ring);
+
+  const glowMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, depthWrite: false });
+  glowMat.color.setRGB(0.5, 1.5, 2.8);
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(5.4, 20), glowMat);
+  disc.position.z = -6.2;
+  disc.rotation.y = Math.PI;
+  g.add(disc);
+
+  const anchor = new THREE.Object3D();
+  anchor.position.z = -7;
+  g.add(anchor);
+
+  const t = {
+    kind: 'engine', group: g, anchor, alive: true,
+    local: new THREE.Vector3(0, 0, -1),
+    tangent: new THREE.Vector3(1, 0, 0),
+    parts: [], glowMat, disc, seed: rand(0, 10),
+  };
+  targets.push(t);
+  engines.push(t);
+  for (const m of [bell, ring, disc]) m.userData.tid = targets.length - 1;
+}
+
+/* --- płyty poszycia: cele rozszczelnienia -------------------------------- */
+const PLATE_Z = [46, 22, -4, -38];
+for (const sx of [-1, 1]) {
+  for (const z of PLATE_Z) {
+    const plate = new THREE.Mesh(new THREE.BoxGeometry(1.6, 7, 17), matPlate);
+    plate.position.set(sx * 17.4, 4, z);
+    ship.add(plate);
+    const hole = new THREE.Mesh(new THREE.BoxGeometry(2.6, 5.4, 14), matHole);
+    hole.position.set(sx * 16.6, 4, z);
+    hole.visible = false;
+    ship.add(hole);
+
+    const anchor = new THREE.Object3D();
+    anchor.position.set(sx * 18.2, 4, z);
+    ship.add(anchor);
+
+    const t = {
+      kind: 'hull', anchor, alive: true,
+      local: new THREE.Vector3(sx, 0.12, 0).normalize(),
+      tangent: new THREE.Vector3(0, 0, 1),
+      parts: [plate], hole,
+    };
+    targets.push(t);
+    plate.userData.tid = targets.length - 1;
+  }
+}
+
+/* ============================================================================
+   TRAFIENIA
+   ========================================================================== */
+const fx = new DamageFX(scene, CFG, FX_SCALE);
+
+let shake = 0, screenFlash = 0;
+const shakeOff = new THREE.Vector3();
+const flashEl = document.getElementById('screenflash');
+
+fx.onBlast = (pos, power, kind) => {
+  shake = Math.min(2.0, shake + power * CFG.shake);
+  screenFlash = Math.min(0.5, screenFlash + power * 0.34);
+  if (kind === 'hull') {
+    flashEl.style.setProperty('--fc1', 'rgba(225,240,255,.8)');
+    flashEl.style.setProperty('--fc2', 'rgba(140,190,255,.22)');
+  } else {
+    flashEl.style.setProperty('--fc1', 'rgba(255,214,160,.85)');
+    flashEl.style.setProperty('--fc2', 'rgba(255,130,50,.25)');
+  }
+};
+
+const _wp = new THREE.Vector3(), _wd = new THREE.Vector3(), _wt = new THREE.Vector3(), _wq = new THREE.Quaternion();
+
+function hit(t) {
+  if (!t || !t.alive) return;
+  t.alive = false;
+  t.anchor.updateWorldMatrix(true, false);
+  t.anchor.getWorldPosition(_wp);
+  t.anchor.getWorldQuaternion(_wq);
+  _wd.copy(t.local).applyQuaternion(_wq).normalize();
+  _wt.copy(t.tangent).applyQuaternion(_wq).normalize();
+
+  if (t.kind === 'hp') {
+    for (const m of t.parts) m.visible = false;
+    t.stub.material = matWreck;
+    fx.hardpointBlast(_wp, _wd, t.anchor, t.local);
+  } else if (t.kind === 'engine') {
+    t.disc.visible = false;
+    fx.engineBlast(_wp, _wd, t.anchor, t.local);
+  } else {
+    for (const m of t.parts) m.visible = false;
+    t.hole.visible = true;
+    fx.hullBreach(_wp, _wd, _wt, t.anchor, t.local);
+  }
+}
+function hitRandom(kind) {
+  const pool = targets.filter(t => t.alive && t.kind === kind);
+  if (!pool.length) return;
+  hit(pool[(Math.random() * pool.length) | 0]);
+}
+function repair() {
+  for (const t of targets) {
+    t.alive = true;
+    for (const m of t.parts) m.visible = true;
+    if (t.kind === 'hp') t.stub.material = matDark;
+    if (t.kind === 'engine') t.disc.visible = true;
+    if (t.hole) t.hole.visible = false;
+  }
+  fx.reset();
+}
+
+const raycaster = new THREE.Raycaster();
+const ndc = new THREE.Vector2();
+function pick(clientX, clientY) {
+  const r = canvas.getBoundingClientRect();
+  ndc.x = ((clientX - r.left) / r.width) * 2 - 1;
+  ndc.y = -((clientY - r.top) / r.height) * 2 + 1;
+  raycaster.setFromCamera(ndc, camera);
+  const hits = raycaster.intersectObjects(ship.children, true);
+  for (const h of hits) {
+    const tid = h.object.userData.tid;
+    if (tid !== undefined && targets[tid].alive) { hit(targets[tid]); return true; }
+  }
+  return false;
+}
+
+/* ============================================================================
+   POSTPROCESSING
+   ========================================================================== */
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.9, 0.72, 0.60);
+composer.addPass(bloom);
+composer.addPass(new OutputPass());
+
+/* ============================================================================
+   PANEL
+   ========================================================================== */
+function slider(id, outId, key, digits = 2) {
+  const el = document.getElementById(id), out = document.getElementById(outId);
+  const apply = () => { CFG[key] = parseFloat(el.value); out.textContent = CFG[key].toFixed(digits); };
+  el.addEventListener('input', apply);
+  apply();
+}
+slider('s-int', 'v-int', 'intensity', 2);
+slider('s-deb', 'v-deb', 'debris', 2);
+slider('s-smoke', 'v-smoke', 'smoke', 2);
+slider('s-fire', 'v-fire', 'fire', 2);
+slider('s-vent', 'v-vent', 'vent', 2);
+slider('s-vtime', 'v-vtime', 'ventTime', 1);
+slider('s-ice', 'v-ice', 'ice', 2);
+slider('s-flat', 'v-flat', 'flatten', 2);
+slider('s-shake', 'v-shake', 'shake', 2);
+slider('s-bloom', 'v-bloom', 'bloom', 2);
+slider('s-time', 'v-time', 'timeScale', 2);
+
+function checkbox(id, key) {
+  const el = document.getElementById(id);
+  el.addEventListener('change', () => { CFG[key] = el.checked; });
+  CFG[key] = el.checked;
+}
+checkbox('drift', 'drift');
+checkbox('auto', 'autoFire');
+
+document.getElementById('b-hp').addEventListener('click', () => hitRandom('hp'));
+document.getElementById('b-eng').addEventListener('click', () => hitRandom('engine'));
+document.getElementById('b-hull').addEventListener('click', () => hitRandom('hull'));
+document.getElementById('reset').addEventListener('click', repair);
+const panel = document.getElementById('panel');
+document.getElementById('toggle').addEventListener('click', () => { panel.hidden = !panel.hidden; });
+
+window.addEventListener('keydown', e => {
+  if (e.key === '1') hitRandom('hp');
+  if (e.key === '2') hitRandom('engine');
+  if (e.key === '3') hitRandom('hull');
+  if (e.key === 'r' || e.key === 'R') repair();
+  if (e.key === 'h' || e.key === 'H') panel.hidden = !panel.hidden;
+});
+
+let downAt = 0, downX = 0, downY = 0;
+canvas.addEventListener('pointerdown', e => { downAt = performance.now(); downX = e.clientX; downY = e.clientY; });
+canvas.addEventListener('pointerup', e => {
+  const moved = Math.hypot(e.clientX - downX, e.clientY - downY);
+  if (moved < 9 && performance.now() - downAt < 400) pick(e.clientX, e.clientY);
+});
+
+function sizeTo() {
+  const w = canvas.clientWidth || window.innerWidth;
+  const h = canvas.clientHeight || window.innerHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h, false);
+  composer.setSize(w, h);
+}
+window.addEventListener('resize', sizeTo);
+window.addEventListener('orientationchange', () => setTimeout(sizeTo, 120));
+sizeTo();
+
+/* ============================================================================
+   PĘTLA
+   ========================================================================== */
+const clock = new THREE.Clock();
+let time = 0, fpsT = 0, fpsN = 0, autoT = 2.0;
+const rFps = document.getElementById('r-fps');
+const rPart = document.getElementById('r-part');
+const rSrc = document.getElementById('r-src');
+const _ep = new THREE.Vector3(), _ed = new THREE.Vector3(), _eq = new THREE.Quaternion();
+
+function frame() {
+  requestAnimationFrame(frame);
+  const raw = Math.min(clock.getDelta(), 1 / 20);
+  const dt = raw * CFG.timeScale;
+  time += dt;
+
+  if (CFG.drift) {
+    ship.rotation.y += 0.055 * dt;
+    ship.position.x = Math.sin(time * 0.11) * 5;
+  }
+
+  if (CFG.autoFire) {
+    autoT -= dt;
+    if (autoT <= 0) {
+      autoT = rand(1.4, 3.0);
+      const pool = targets.filter(t => t.alive);
+      if (pool.length) {
+        hit(pool[(Math.random() * pool.length) | 0]);
+      } else {
+        autoT = 4.0;
+        setTimeout(repair, 2500);      // wszystko rozwalone — odbuduj i lecimy od nowa
+      }
+    }
+  }
+
+  // pióropusze pracujących silników
+  for (const e of engines) {
+    if (!e.alive) continue;
+    e.anchor.updateWorldMatrix(true, false);
+    e.anchor.getWorldPosition(_ep);
+    e.anchor.getWorldQuaternion(_eq);
+    _ed.copy(e.local).applyQuaternion(_eq).normalize();
+    const pulse = 0.86 + 0.14 * Math.sin(time * 21 + e.seed) * Math.sin(time * 13.3 + e.seed);
+    fx.plume.spawn(_ep, _ed, 0.07, 10, 30 * pulse, 4.4, 8.0, [0.45, 1.25, 2.4], 0.55);
+    fx.plume.spawn(_ep, _ed, 0.07, 5, 14 * pulse, 5.6, 9.5, [1.5, 2.3, 3.2], 0.45);
+    e.glowMat.color.setRGB(0.5 * pulse, 1.5 * pulse, 2.8 * pulse);
+  }
+
+  fx.update(dt, time);
+
+  camera.position.sub(shakeOff);
+  controls.update();
+  if (shake > 0.001) {
+    shake *= Math.exp(-6.5 * dt);
+    const s = shake * shake * 2.4;
+    shakeOff.set((Math.random() * 2 - 1) * s, (Math.random() * 2 - 1) * s * 0.15, (Math.random() * 2 - 1) * s);
+  } else if (shake !== 0) { shake = 0; shakeOff.set(0, 0, 0); }
+  camera.position.add(shakeOff);
+
+  if (screenFlash > 0.003) {
+    screenFlash *= Math.exp(-8.5 * dt);
+    flashEl.style.opacity = screenFlash.toFixed(3);
+  } else if (screenFlash !== 0) { screenFlash = 0; flashEl.style.opacity = '0'; }
+
+  bloom.strength = 0.9 * CFG.bloom;
+  bloom.enabled = CFG.bloom > 0.01;
+  composer.render();
+
+  fpsN++; fpsT += raw;
+  if (fpsT >= 0.5) {
+    rFps.textContent = String(Math.round(fpsN / fpsT));
+    rPart.textContent = String(fx.particles);
+    rSrc.textContent = String(fx.sources.length);
+    fpsT = 0; fpsN = 0;
+  }
+}
+
+setTimeout(() => hitRandom('hp'), 900);
+frame();
+</script>
+</body>
+</html>
