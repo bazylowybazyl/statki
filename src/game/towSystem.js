@@ -357,6 +357,16 @@ export class TowConstraintSystem {
     for (let i = this.constraints.length - 1; i >= 0; i--) this._removeAt(i, reason);
   }
 
+  /** Czy ciało wisi na którymkolwiek zaczepie (lina, sprzęg). O(zaczepy), bez alokacji. */
+  isAttached(body) {
+    if (!body) return false;
+    for (let i = 0; i < this.constraints.length; i++) {
+      const record = this.constraints[i];
+      if (record.bodyA === body || record.bodyB === body) return true;
+    }
+    return false;
+  }
+
   _removeAt(index, reason) {
     const record = this.constraints[index];
     if (!record) return;
