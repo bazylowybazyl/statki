@@ -203,3 +203,36 @@ odmrożenie na klatkę; zamrażanie idzie po 4 na klatkę, limit 1 500 zimnych (
 gracza, nigdy z ładunkiem). Kontakt spoczynkowy nie zeruje już licznika snu wraku, a martwe NPC misji
 wypadają z `npcs`. Pomiar w grze (PerfHUD: „Wraki gorące / śpiące / zimne”, Fizyka, Rysowanie) czeka
 na użytkownika; strojenie na żywo: `window.ColdWreckConfig` (np. `clearRadius`, `afterSec`).
+
+## 5. Stan wdrożenia — naprawy bitwy A–F (2026-09-24)
+
+Wdrożone wg `docs/BRIEF-bitwa-naprawy-2026-09-24.md`, commit na pakiet (A `0e6440f`, B `772af66`,
+C `6916e19`, D `db6e66e`, E `ebe5b4a`, F `a085029`). Weryfikacja: `npm test` + `node --test tests/`
+(te same 8 znanych faili co przed zmianami, żadnego nowego) + build samej gry. Pomiaru w grze
+jeszcze nie ma — liczby „po” poniżej to rachunek i testy syntetyczne.
+
+| Pakiet | Zrobione | Liczby |
+|---|---|---|
+| A | PD (aux) celuje tylko w rakiety/torpedy i myśliwce; kadłuby z PD CHIP (per kadłub, zakładka „Chipy” w MECHANIC, 900 CR, zwrot 50%), zawsze za rakietą i myśliwcem. NPC obsadzają najwyżej `SHIPS[rama].spec` gniazd na typ, równo po kącie. Pula wiązek pulse ≤ 96. | Działa w scenie z p. 2.1: **3 765 → 1 632** (aux 2 665 → 544, główne 1 052 → 1 040). NPC nie mają chipów, więc ich PD przestaje strzelać w kadłuby — znika zalew CIWS (~8 tys. żywych pocisków). |
+| B | Laser PD z celem od AI: test samego celu (tarcza, sweep heksów), bez skanu świata; jeden wizual (smuga 2D). Ogólna gałąź beam bez domknięć/tablic per strzał, liczbowy klucz cache ringu, uid emitera na hp. | 132 strzały wiązką przed/po refaktorze: 0 różnic. |
+| C | Szyna strzałów (`src/game/weaponShotBus.js`) zamiast `CustomEvent` per strzał (zostaje tylko superbroń); limit głosów audio (12/dźwięk, 40 ms, tłumienie 2 000–12 000 j.); indeks wieżyczek per encja w Turret2D. | — |
+| D | Stacje/platformy po AABB pocisków kroku; raycast asteroid z early-outem pasa i bez alokacji; smugi raz na klatkę (gęstość jak przy 60 fps/120 Hz, niezależna od `?physHz`); tarcza przed sweepem, sweep przycięty do t tarczy / najlepszego trafienia. | — |
+| E | `saveState` w miejscu; scratch wylotu, opcji strzału AI i punktu celowania; flak bez spreadu. | — |
+| F | `simulateElasticity` po liście heksów w ruchu (wynik bit w bit jak pełna iteracja); podpis świateł = FNV-1a; cache bloku lamp; payload świateł zewnętrznych tylko w zasięgu emiterów; `pushRaw` impostorów. | Benchmark syntetyczny sprężystości (30 kadłubów po 154 heksy, trafienie + budzenie co 20 klatek): 315 → 257 ms (−18%). |
+
+**Czego się spodziewać w PerfHUD (P, bitwa z „Tryb LINIE”, `?dev`):** największy spadek w `Pociski`
+(CIWS znika) i `AI` (mniej luf, PD bez skanu świata), dalej `B NPC hit`, `B VFX`, `B misc`, `B ast`,
+`Core render` (bez pulsów 3D PD), `U hex` (podpis liczbowy, mniej payloadów), `Deformacja`
+(umiarkowanie — patrz niżej) i krótszy ogon p95 (mniej GC).
+
+**Zostało / odchylenia od briefu:**
+- Lista aktywnych sprężystości NIE zeruje się przy uśpieniu siatki ani po `spawnWreckEntity`/
+  `recycleWreck` (brief, pułapka 8): uśpiona siatka może trzymać heksy w ruchu, a przeniesione heksy
+  niosą wgniecenia — zerowanie łamałoby zgodność z pełną iteracją. Zamiast tego pełny rescan przy
+  nowej tablicy `shards`. Zysk mniejszy niż w modelu, bo sprężyny zachowują sumę `targetDeformation`
+  i wgniecenie rozlewa się po całym małym kadłubie (prawie każdy heks zostaje „w ruchu” > 0,1).
+  Większy zysk wymagałby zmiany modelu (tłumienie/próg spoczynku) — to już zmiana fizyki.
+- Laser PD NPC trafiający rakietę nadal jej nie niszczy (tak było; szybka ścieżka traktuje pocisk
+  jako pudło). Rakiety przechwytuje CIWS i laser gracza.
+- Pula obiektów pocisków (opcjonalna w E) — nie robiona.
+- Poza zakresem briefu, bez zmian: A/B `?physHz=60` (p. 2.7, czeka na użytkownika) i drobne z p. 2.10.
