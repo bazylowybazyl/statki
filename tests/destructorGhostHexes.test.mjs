@@ -285,7 +285,10 @@ test('probe windows stay bounded when the drift counter is pathological', () => 
 
 test('game hit paths hand the found hex to applyImpact', () => {
   const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-  const beam = html.slice(html.indexOf('window.fireWeaponCore = function'), html.indexOf('// --- LOGIKA POCISKÓW I RAKIET ---'));
+  // Raymarch wiązki siedzi w pomocnikach modułowych tuż przed fireWeaponCore
+  // (resolveBeamWorldHit), obrażenia nadal w samym fireWeaponCore.
+  const beam = html.slice(html.indexOf('// --- Trafienia wiązek: pomocniki modułowe'), html.indexOf('// --- LOGIKA POCISKÓW I RAKIET ---'));
+  assert.ok(beam.includes('window.fireWeaponCore = function'), 'pomocniki wiązki muszą stać przed fireWeaponCore');
   assert.match(beam, /findBeamHexShard\(pt\.hexGrid, gridX, gridY, beamHitRadSq\)/);
   assert.doesNotMatch(beam, /for \(let dr = -1; dr <= 1; dr\+\+\)/, 'the fixed 3x3 window is back in the beam raymarch');
   assert.match(beam, /applyHexImpact\(hitEntity, finalEndX, finalEndY, damage, [^;]*beamHitShard\)/);

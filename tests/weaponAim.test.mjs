@@ -6,12 +6,16 @@ import { WeaponController } from '../src/game/weaponController.js';
 import { getMountedWeaponAim, mountedWeaponBase, mountedWeaponRenderAngle, stepMountedWeaponAim } from '../src/game/weaponAim.js';
 import { Turret2D } from '../src/vfx/turret2D.js';
 import { MASTER_WEAPONS } from '../src/data/weapons.js';
+import { createPdBeamHit, resolvePdBeamHit } from '../src/game/pdBeamFastPath.js';
+import { isPointDefenseWeapon } from '../src/ai/pointDefenseTargeting.js';
+import { spatialCellKey } from '../src/game/spatialCellKey.js';
 
 globalThis.window = {};
 const { getLeadAim } = await import('../src/ai/aiUtils.js');
 const close = (a, b, tolerance = 1e-7) => assert.ok(Math.abs(a - b) < tolerance, `${a} != ${b}`);
 const source = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-const coreStart = source.indexOf('    window.fireWeaponCore = function');
+// fireWeaponCore razem z pomocnikami trafień wiązek, które stoją tuż przed nim.
+const coreStart = source.indexOf('    // --- Trafienia wiązek: pomocniki modułowe');
 const coreEnd = source.indexOf('\n    function updateSpecialWeaponCooldowns', coreStart);
 assert.ok(coreStart >= 0 && coreEnd > coreStart);
 
@@ -186,6 +190,8 @@ function firingCore(ship, owner = 'player') {
     MASTER_WEAPONS, mouse: { x: -500, y: 900 }, targetingMode: { wheelOpen: false },
     isTargetAlive: target => !!target && !target.dead, scannerTargetPoint: target => target,
     isFlakWeapon: () => false, getPotentialPlanetaryRingTargets: null, DESTRUCTOR_CONFIG: {},
+    createPdBeamHit, resolvePdBeamHit, isPointDefenseWeapon, spatialCellKey,
+    getEntityShieldBlockingRadiusTowards: () => 0, findBeamHexShard: () => null, DestructorSystem: {},
     CustomEvent: class { constructor(type, data) { Object.assign(this, data); } },
     Math: Object.assign(Object.create(Math), { random: () => 0.5 })
   };

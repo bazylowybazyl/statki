@@ -860,7 +860,7 @@
     import { BELT_DEFINITIONS, getOutermostBeltEdgeAu } from './src/data/asteroidTypes.js';
     import { buildSystemMap, SYSTEM_MAP_CONSTANTS } from './src/data/systemMap.js';
     import { WORLD, setWorldSize } from './src/world/world.js';
-    import { initShieldSystem, updateShieldFx, registerShieldImpact, resizeShieldSystem, triggerEnergyShot as applyEnergyShot, isEntityShieldBlocking, isShieldChargedEnoughToActivate, setEntityShieldForcedOff, getEntityShieldBaseRadius, getEntityShieldBlockingProgress, getEntityShieldRadiusTowards } from './shieldSystem.js';
+    import { initShieldSystem, updateShieldFx, registerShieldImpact, resizeShieldSystem, triggerEnergyShot as applyEnergyShot, isEntityShieldBlocking, isShieldChargedEnoughToActivate, setEntityShieldForcedOff, getEntityShieldBaseRadius, getEntityShieldBlockingProgress, getEntityShieldRadiusTowards, getEntityShieldBlockingRadiusTowards } from './shieldSystem.js';
     // DODANO IMPORT SHIP_PHYSICS
     import { createShipEntity, applyPlayerInput, refreshShipGeometry, composeShipThrusterCommand, updateShipThrusterState, computeShipThrusterForces, SHIP_PHYSICS } from "./src/game/shipEntity.js";
     import {
@@ -940,6 +940,9 @@
       chipRemovalRefund
     } from "./src/game/shipChips.js";
     import { resolveNpcSpecFrameId, selectSpecSlots } from "./src/game/npcWeaponSpec.js";
+    import { isPointDefenseWeapon } from "./src/ai/pointDefenseTargeting.js";
+    import { createPdBeamHit, resolvePdBeamHit } from "./src/game/pdBeamFastPath.js";
+    import { spatialCellKey } from "./src/game/spatialCellKey.js";
     import {
       buildWarpRoutes,
       getWarpRoute as lookupWarpRoute,
@@ -8272,6 +8275,375 @@
       }
     }
 
+    // --- Trafienia wiązek: pomocniki modułowe (bez domknięć i tablic per strzał) ---
+    // Dawniej każda wiązka budowała 3 tablice, 4 domknięcia, obiekt na kandydata
+    // i tekstowy klucz cache ringu — przy tysiącach strzałów PD na sekundę główny
+    // strumień śmieci w bitwie (audyt 2026-09-24, p. 2.2 i 2.9). Bufory niżej są
+    // wspólne: strzał zużywa je synchronicznie i nic ich nie zatrzymuje.
+    function getBeamTargetRadius(pt) {
+      let radius = Math.max(20, Number(pt?.hitR || pt?.radius || pt?.r) || 20);
+      if (pt?.hexGrid?.srcWidth && pt?.hexGrid?.srcHeight) {
+        const hexScale = Math.max(0.0001, pt.visual?.spriteScale || pt.capitalProfile?.spriteScale || pt.profile?.spriteScale || 1.0);
+        const halfW = (Number(pt.hexGrid.srcWidth) || 0) * 0.5 * hexScale;
+        const halfH = (Number(pt.hexGrid.srcHeight) || 0) * 0.5 * hexScale;
+        const hullRadius = Math.max(halfW, halfH) + Math.min(halfW, halfH) * 0.45;
+        if (Number.isFinite(hullRadius) && hullRadius > radius) radius = hullRadius;
+      }
+      return radius;
+    }
+
+    // Przy aktywnej tarczy test idzie po bańce, a nie po kadłubie.
+    function getBeamShieldCheckRadius(pt) {
+      let w = pt.w || (pt.radius * 2) || 40;
+      let h = pt.h || (pt.radius * 2) || 40;
+      if (pt.capitalProfile) {
+        w = Math.max(w, (pt.radius || 20) * (pt.capitalProfile.lengthScale || 3.2));
+        h = Math.max(h, (pt.radius || 20) * (pt.capitalProfile.widthScale || 1.2));
+      }
+      return Math.max(w, h) * 0.75;
+    }
+
+    function classifyBeamHitEntity(pt, stationList, platformList, wreckList) {
+      if (pt === window.ship) return 'player';
+      if (pt?.isRingSegment) return 'ring';
+      if (stationList && stationList.includes(pt)) return 'station';
+      if (platformList && platformList.includes(pt)) return 'platform';
+      if (wreckList && wreckList.includes(pt)) return 'wreck';
+      if (pt?.hp !== undefined && pt?.maxHp !== undefined) return 'npc';
+      return 'world';
+    }
+
+    const EMPTY_BEAM_RING_TARGETS = Object.freeze([]);
+    const _beamTargets = [];
+    const _beamHitPool = [];
+    const _beamHits = [];
+    const _beamRingRankPool = [];
+    const _beamRingRank = [];
+    const _beamWorldHit = { dist: 0, entity: null, kind: null, shard: null };
+    const _pdBeamHit = createPdBeamHit();
+    const _beam2dEnd = { x: 0, y: 0 };
+    const _beam2dOpts = { life: 0.12, colorOuter: null, colorInner: '#ffffff', glowColor: null, glowBlur: 20 };
+    // Dane wiązki dla zdarzenia strzału — jeden obiekt: słuchacze czytają go
+    // synchronicznie i niczego z niego nie zatrzymują (Weapon3DSystem kopiuje liczby).
+    const _beamEventScratch = { startX: 0, startY: 0, endX: 0, endY: 0, width: 5, mode: 'pulse', emitterUid: null };
+    const PD_BEAM_DEPS = {
+      shieldBlockingRadiusTowards: getEntityShieldBlockingRadiusTowards,
+      sweepImpact: (entity, x0, y0, x1, y1, radius) => DestructorSystem.sweepImpact(entity, x0, y0, x1, y1, radius),
+      hullRadius: getBeamTargetRadius,
+      get playerShip() { return window.ship; }
+    };
+
+    function compareBeamHitEnter(a, b) { return a.tEnter - b.tEnter; }
+    function compareBeamRingRank(a, b) { return (a.t - b.t) || (a.d2 - b.d2); }
+
+    // Prefiltr: pudełko kapsuły strzału (odcinek od lufy na pełen zasięg,
+    // poszerzony o promień celu). Dawniej KAŻDY strzał liczył promień i rzut
+    // dla wszystkich NPC, wraków, stacji i segmentów ringu — rój
+    // przechwytywaczy (laser PD co 0,18 s) robił setki takich przebiegów na
+    // sekundę. Promień jest zachowawczy (większy z kadłuba i tarczy) i liczony
+    // raz na klatkę na encję, więc dokładna pętla niżej widzi te same trafienia.
+    function pushBeamTarget(obj, shooter, frameId, boundCacheable, minX, maxX, minY, maxY) {
+      if (!obj || obj === shooter) return;
+      if (obj.dead || obj.destroyed || obj.removed || obj._destroyed3D) return;
+      if (obj.isCollidable === false) return;
+      let bound = obj.__beamBoundR;
+      if (!boundCacheable || obj.__beamBoundFid !== frameId || !(bound >= 0)) {
+        bound = Math.max(getBeamTargetRadius(obj), getBeamShieldCheckRadius(obj));
+        obj.__beamBoundR = bound;
+        obj.__beamBoundFid = frameId;
+      }
+      // Obiekt bez x/y (NaN) przechodzi dalej — dokładny test odrzuca go jak dawniej.
+      const ox = obj.x;
+      const oy = obj.y;
+      if (ox < minX - bound || ox > maxX + bound || oy < minY - bound || oy > maxY + bound) return;
+      _beamTargets.push(obj);
+    }
+
+    // --- FIX: Detekcja pierścieni planetarnych dla lasera ---
+    // Segmenty ringu wzdłuż wiązki, z cache. Klucz liczbowy: komórka lufy (120 u)
+    // i kierunek (1/12) — ten sam podział co dawny klucz tekstowy, bez stringa
+    // per strzał. Emitera w kluczu nie ma: lufy z tej samej komórki w tym samym
+    // kierunku dostają ten sam zestaw (i tak jest nadmiarowy — dokładny test jest
+    // dalej); wpis pamięta zasięg i limit, więc inna broń go przelicza.
+    function getBeamRingTargets(muzzleX, muzzleY, dirX, dirY, range, continuous) {
+      const now = (typeof performance !== 'undefined') ? performance.now() / 1000 : 0;
+      const cache = window.__beamRingTargetCache || (window.__beamRingTargetCache = new Map());
+      const key = spatialCellKey(Math.round((Number(muzzleX) || 0) / 120), Math.round((Number(muzzleY) || 0) / 120)) * 625
+        + (Math.round(dirX * 12) + 12) * 25 + (Math.round(dirY * 12) + 12);
+      const ttl = continuous ? 0.14 : 0.06;
+      const maxRingTargets = continuous ? 42 : 128;
+      let entry = cache.get(key);
+      if (entry && (now - entry.t) <= ttl && entry.range === range && entry.maxTargets === maxRingTargets) {
+        return entry.targets;
+      }
+      const ringQueryFn = getPotentialPlanetaryRingTargets;
+      if (!ringQueryFn) return EMPTY_BEAM_RING_TARGETS;
+      if (!entry) {
+        entry = { t: 0, range: 0, maxTargets: 0, targets: [] };
+        cache.set(key, entry);
+      }
+      const ringTargets = entry.targets;
+      ringTargets.length = 0;
+      const midX = muzzleX + dirX * (range / 2);
+      const midY = muzzleY + dirY * (range / 2);
+      // Pobieramy heksy pierścienia z obszaru wzdłuż linii strzału lasera
+      const query = ringQueryFn(midX, midY, (range / 2) + 1800);
+      let rankCount = 0;
+      for (let k = 0; k < query.count; k++) {
+        const seg = query.buffer[k];
+        if (!seg || seg.dead || seg.isCollidable === false) continue;
+        const sx = Number(seg.x) || 0;
+        const sy = Number(seg.y) || 0;
+        const fx = sx - muzzleX;
+        const fy = sy - muzzleY;
+        const tProj = fx * dirX + fy * dirY;
+        if (tProj < -200 || tProj > range + 200) continue;
+        const closestX = muzzleX + dirX * tProj;
+        const closestY = muzzleY + dirY * tProj;
+        const dx = sx - closestX;
+        const dy = sy - closestY;
+        let segRadius = Math.max(80, Number(seg.radius) || 120);
+        if (seg.hexGrid?.srcWidth && seg.hexGrid?.srcHeight) {
+          const segScale = Math.max(0.0001, seg.visual?.spriteScale || seg.capitalProfile?.spriteScale || seg.profile?.spriteScale || 1.0);
+          const segHalfW = (Number(seg.hexGrid.srcWidth) || 0) * 0.5 * segScale;
+          const segHalfH = (Number(seg.hexGrid.srcHeight) || 0) * 0.5 * segScale;
+          const segHullRadius = Math.max(segHalfW, segHalfH) + Math.min(segHalfW, segHalfH) * 0.45;
+          if (Number.isFinite(segHullRadius) && segHullRadius > segRadius) segRadius = segHullRadius;
+        }
+        const lane = segRadius + 260;
+        if (dx * dx + dy * dy > lane * lane) continue;
+        let rank = _beamRingRankPool[rankCount];
+        if (!rank) rank = _beamRingRankPool[rankCount] = { seg: null, d2: 0, t: 0 };
+        rank.seg = seg;
+        rank.d2 = dx * dx + dy * dy;
+        rank.t = tProj;
+        _beamRingRank[rankCount] = rank;
+        rankCount++;
+      }
+      _beamRingRank.length = rankCount;
+      if (rankCount > 1) _beamRingRank.sort(compareBeamRingRank);
+      for (let k = 0; k < rankCount && ringTargets.length < maxRingTargets; k++) {
+        ringTargets.push(_beamRingRank[k].seg);
+      }
+      for (let k = 0; k < rankCount; k++) _beamRingRank[k].seg = null;
+      _beamRingRank.length = 0;
+      entry.t = now;
+      entry.range = range;
+      entry.maxTargets = maxRingTargets;
+      if (cache.size > 512) {
+        for (const [k, v] of cache) {
+          if (!v || (now - Number(v.t || 0)) > 0.6) cache.delete(k);
+        }
+      }
+      return ringTargets;
+    }
+
+    // Ogólna ścieżka wiązki: pierwszy obiekt świata na linii strzału (gracz, NPC,
+    // stacje, platformy, wraki, segmenty ringu). Wynik w `out`.
+    function resolveBeamWorldHit(shooter, weapon, muzzleX, muzzleY, dirX, dirY, range, out) {
+      let hitDist = range;
+      let hitEntity = null;
+      let hitType = null;
+      let beamHitShard = null;
+
+      const mercCtx = window.mercMission || (typeof mercMission !== 'undefined' ? mercMission : null);
+      const ringTargets = getBeamRingTargets(muzzleX, muzzleY, dirX, dirY, range, weapon.beamMode === 'continuous');
+
+      const stationList = Array.isArray(window.stations) ? window.stations : null;
+      const platformList = Array.isArray(mercCtx?.weaponPlatforms) ? mercCtx.weaponPlatforms : null;
+      const wreckList = Array.isArray(window.wrecks) ? window.wrecks : null;
+      const beamEndX = muzzleX + dirX * range;
+      const beamEndY = muzzleY + dirY * range;
+      const beamMinX = Math.min(muzzleX, beamEndX);
+      const beamMaxX = Math.max(muzzleX, beamEndX);
+      const beamMinY = Math.min(muzzleY, beamEndY);
+      const beamMaxY = Math.max(muzzleY, beamEndY);
+      const beamFrameId = Number(window.__frameId);
+      const beamBoundCacheable = Number.isFinite(beamFrameId);
+
+      _beamTargets.length = 0;
+      const playerShip = window.ship;
+      if (playerShip && playerShip !== shooter) {
+        pushBeamTarget(playerShip, shooter, beamFrameId, beamBoundCacheable, beamMinX, beamMaxX, beamMinY, beamMaxY);
+      }
+      const npcList = window.npcs;
+      if (npcList) {
+        for (let k = 0; k < npcList.length; k++) {
+          const npc = npcList[k];
+          if (!npc || npc === shooter || npc.dead) continue;
+          pushBeamTarget(npc, shooter, beamFrameId, beamBoundCacheable, beamMinX, beamMaxX, beamMinY, beamMaxY);
+        }
+      }
+      if (stationList) {
+        for (let k = 0; k < stationList.length; k++) {
+          pushBeamTarget(stationList[k], shooter, beamFrameId, beamBoundCacheable, beamMinX, beamMaxX, beamMinY, beamMaxY);
+        }
+      }
+      if (platformList) {
+        for (let k = 0; k < platformList.length; k++) {
+          pushBeamTarget(platformList[k], shooter, beamFrameId, beamBoundCacheable, beamMinX, beamMaxX, beamMinY, beamMaxY);
+        }
+      }
+      if (wreckList) {
+        for (let k = 0; k < wreckList.length; k++) {
+          pushBeamTarget(wreckList[k], shooter, beamFrameId, beamBoundCacheable, beamMinX, beamMaxX, beamMinY, beamMaxY);
+        }
+      }
+      for (let k = 0; k < ringTargets.length; k++) {
+        pushBeamTarget(ringTargets[k], shooter, beamFrameId, beamBoundCacheable, beamMinX, beamMaxX, beamMinY, beamMaxY);
+      }
+
+      const beamCfg = DESTRUCTOR_CONFIG;
+      const beamHexR = Math.max(2, Number(beamCfg?.gridDivisions) || 10);
+      const beamHitRadSq = Math.max(90, (beamHexR * 1.45) * (beamHexR * 1.45));
+
+      let hitCount = 0;
+      for (let k = 0; k < _beamTargets.length; k++) {
+        const pt = _beamTargets[k];
+        if (!pt) continue;
+        if (pt === shooter) continue;
+        const hasShield = pt.shield && pt.shield.val > 0;
+        const checkRadius = hasShield ? getBeamShieldCheckRadius(pt) : getBeamTargetRadius(pt);
+
+        const cx = pt.x;
+        const cy = pt.y;
+        const fx = cx - muzzleX;
+        const fy = cy - muzzleY;
+        const t = fx * dirX + fy * dirY;
+        if (t < -checkRadius || t > hitDist + checkRadius) continue;
+
+        const closestX = muzzleX + dirX * t;
+        const closestY = muzzleY + dirY * t;
+        const distToCenterSq = (cx - closestX) ** 2 + (cy - closestY) ** 2;
+
+        if (distToCenterSq <= checkRadius * checkRadius) {
+          const distInside = Math.sqrt(checkRadius * checkRadius - distToCenterSq);
+          const tEnter = Math.max(0, t - distInside);
+          const tExit = t + distInside;
+          if (tEnter < hitDist) {
+            let rec = _beamHitPool[hitCount];
+            if (!rec) rec = _beamHitPool[hitCount] = { entity: null, tEnter: 0, tExit: 0, hasShield: false };
+            rec.entity = pt;
+            rec.tEnter = tEnter;
+            rec.tExit = tExit;
+            rec.hasShield = hasShield;
+            _beamHits[hitCount] = rec;
+            hitCount++;
+          }
+        }
+      }
+      _beamHits.length = hitCount;
+      if (hitCount > 1) _beamHits.sort(compareBeamHitEnter);
+
+      for (let h = 0; h < hitCount; h++) {
+        const hit = _beamHits[h];
+        if (hit.tEnter > hitDist) break;
+        const pt = hit.entity;
+
+        if (hit.hasShield) {
+          hitDist = hit.tEnter;
+          hitEntity = pt;
+          hitType = classifyBeamHitEntity(pt, stationList, platformList, wreckList);
+          break;
+        }
+
+        if (
+          pt.hexGrid &&
+          pt.hexGrid.grid &&
+          Number.isFinite(pt.hexGrid.cols) &&
+          Number.isFinite(pt.hexGrid.rows) &&
+          pt.hexGrid.cols > 0 &&
+          pt.hexGrid.rows > 0
+        ) {
+          const step = Math.max(4, Math.min(12, beamHexR * 0.9));
+          let foundHex = false;
+
+          // Zamiast niszczyć statek testem, robimy bezpieczną analizę pikselową (Safe Raymarch)
+          const scale = Math.max(0.0001, pt.visual?.spriteScale || pt.capitalProfile?.spriteScale || pt.profile?.spriteScale || 1.0);
+          let rRot = 0;
+          if (pt.visual && pt.visual.spriteRotation) rRot = pt.visual.spriteRotation;
+          else if (pt.capitalProfile && pt.capitalProfile.spriteRotation) rRot = pt.capitalProfile.spriteRotation;
+
+          const angle = (pt.angle || 0) + rRot;
+          const cosA = Math.cos(angle);
+          const sinA = Math.sin(angle);
+
+          const ptX = pt.pos ? pt.pos.x : pt.x;
+          const ptY = pt.pos ? pt.pos.y : pt.y;
+          const gridCx = pt.hexGrid.srcWidth * 0.5;
+          const gridCy = pt.hexGrid.srcHeight * 0.5;
+          const pX = pt.hexGrid.pivot ? pt.hexGrid.pivot.x : 0;
+          const pY = pt.hexGrid.pivot ? pt.hexGrid.pivot.y : 0;
+
+          for (let testT = hit.tEnter; testT <= hit.tExit; testT += step) {
+            if (testT > hitDist) break;
+            const testX = muzzleX + dirX * testT;
+            const testY = muzzleY + dirY * testT;
+
+            const dx = testX - ptX;
+            const dy = testY - ptY;
+            const localX = (dx * cosA + dy * sinA) / scale;
+            const localY = (-dx * sinA + dy * cosA) / scale;
+            const gridX = localX + gridCx + pX;
+            const gridY = localY + gridCy + pY;
+
+            // Okno 3×3 komórek + zmierzony dryf wgniecionych heksów — samo
+            // 3×3 nie widziało heksów wypchniętych z komórek i wiązka
+            // przelatywała przez wgniecenie („heksy-duchy”).
+            const beamShard = findBeamHexShard(pt.hexGrid, gridX, gridY, beamHitRadSq);
+            let hexHit = !!beamShard;
+            if (!hexHit && pt?.isRingSegment && DestructorSystem && typeof DestructorSystem.probeImpact === 'function') {
+              hexHit = DestructorSystem.probeImpact(pt, testX, testY);
+            }
+            if (hexHit) {
+              hitDist = testT;
+              hitEntity = pt;
+              hitType = classifyBeamHitEntity(pt, stationList, platformList, wreckList);
+              beamHitShard = beamShard;
+              foundHex = true;
+              break;
+            }
+          }
+          if (foundHex) break;
+        } else {
+          hitDist = hit.tEnter;
+          hitEntity = pt;
+          hitType = classifyBeamHitEntity(pt, stationList, platformList, wreckList);
+          break;
+        }
+      }
+
+      // Bufory nie trzymają encji do następnego strzału.
+      for (let h = 0; h < hitCount; h++) _beamHitPool[h].entity = null;
+      _beamHits.length = 0;
+      _beamTargets.length = 0;
+
+      out.dist = hitDist;
+      out.entity = hitEntity;
+      out.kind = hitType;
+      out.shard = beamHitShard;
+      return out;
+    }
+
+    // Uid emitera wiązki, gdy wołający go nie podał (np. gracz bez hardpointu):
+    // pozycja lufy w klatce strzelca. NPC podają uid z hardpointu
+    // (spawnBulletAdapter trzyma go na hp), więc string per strzał zostaje tylko tu.
+    function computeAutoBeamEmitterUid(shooter, weapon, muzzleData) {
+      const sx = shooter?.pos?.x ?? shooter?.x ?? 0;
+      const sy = shooter?.pos?.y ?? shooter?.y ?? 0;
+      const sa = Number(shooter?.angle) || 0;
+      const dxLocal = (muzzleData.pos.x - sx);
+      const dyLocal = (muzzleData.pos.y - sy);
+      const cLocal = Math.cos(sa);
+      const sLocal = Math.sin(sa);
+      const lx = dxLocal * cLocal + dyLocal * sLocal;
+      const ly = -dxLocal * sLocal + dyLocal * cLocal;
+      const ownerId = (shooter === window.ship)
+        ? 'player'
+        : String(shooter?.id ?? shooter?.uid ?? shooter?._id ?? shooter?.npcId ?? 'npc');
+      return `auto:${ownerId}:${weapon.id}:${Math.round(lx)}:${Math.round(ly)}`;
+    }
+
     // ============================================================================
     // NOWY RDZEŃ STRZELANIA (Obsługuje Gracza i NPC)
     // ============================================================================
@@ -8340,300 +8712,52 @@
         const dirY = Math.sin(finalAngle);
 
         if (weapon.category === 'beam') {
-          let hitDist = range;
-          let hitEntity = null;
-          let hitType = null;
-          // Heks trafiony przez raymarch — applyImpact bierze go wprost, zamiast
+          // PD z celem od AI (processAutonomousWeapons → spawnBulletAdapter):
+          // test samego celu, bez skanu świata (src/game/pdBeamFastPath.js).
+          // Linię ognia na sojuszników AI sprawdziło przed strzałem.
+          const pdBeam = isPointDefenseWeapon(weapon);
+          const beamHit = (pdBeam && muzzleData.pdTarget)
+            ? resolvePdBeamHit(_pdBeamHit, muzzleData.pos.x, muzzleData.pos.y, dirX, dirY, range, muzzleData.pdTarget, PD_BEAM_DEPS)
+            : resolveBeamWorldHit(shooter, weapon, muzzleData.pos.x, muzzleData.pos.y, dirX, dirY, range, _beamWorldHit);
+          const hitDist = beamHit.dist;
+          const hitEntity = beamHit.entity;
+          const hitType = beamHit.kind;
+          // Heks trafiony przez raymarch/sweep — applyImpact bierze go wprost, zamiast
           // szukać od nowa sondą o innym promieniu (brzegowe trafienia ginęły).
-          let beamHitShard = null;
-
-          const targets = [];
+          const beamHitShard = beamHit.shard;
           const mercCtx = window.mercMission || (typeof mercMission !== 'undefined' ? mercMission : null);
-
-          // --- FIX: Detekcja pierścieni planetarnych dla lasera ---
-          let ringTargets = [];
-          const ringCacheNow = (typeof performance !== 'undefined') ? performance.now() / 1000 : 0;
-          const ringCache = window.__beamRingTargetCache || (window.__beamRingTargetCache = new Map());
-          const ringCacheEmitter = String(muzzleData?.emitterUid ?? weapon.id ?? 'beam');
-          const ringCacheKey = `${ringCacheEmitter}:${Math.round((Number(muzzleData?.pos?.x) || 0) / 120)}:${Math.round((Number(muzzleData?.pos?.y) || 0) / 120)}:${Math.round(dirX * 12)}:${Math.round(dirY * 12)}`;
-          const ringCacheTtl = (weapon.beamMode === 'continuous') ? 0.14 : 0.06;
-          const ringCachedEntry = ringCache.get(ringCacheKey);
-          const ringQueryFn = getPotentialPlanetaryRingTargets;
-          if (ringCachedEntry && (ringCacheNow - ringCachedEntry.t) <= ringCacheTtl && Array.isArray(ringCachedEntry.targets)) {
-            ringTargets = ringCachedEntry.targets;
-          } else if (ringQueryFn) {
-            const midX = muzzleData.pos.x + dirX * (range / 2);
-            const midY = muzzleData.pos.y + dirY * (range / 2);
-            // Pobieramy heksy pierścienia z obszaru wzdłuż linii strzału lasera
-            const query = ringQueryFn(midX, midY, (range / 2) + 1800);
-            const maxRingTargets = (weapon.beamMode === 'continuous') ? 42 : 128;
-            const rankedRing = [];
-            for (let k = 0; k < query.count; k++) {
-              const seg = query.buffer[k];
-              if (!seg || seg.dead || seg.isCollidable === false) continue;
-              const sx = Number(seg.x) || 0;
-              const sy = Number(seg.y) || 0;
-              const fx = sx - muzzleData.pos.x;
-              const fy = sy - muzzleData.pos.y;
-              const tProj = fx * dirX + fy * dirY;
-              if (tProj < -200 || tProj > range + 200) continue;
-              const closestX = muzzleData.pos.x + dirX * tProj;
-              const closestY = muzzleData.pos.y + dirY * tProj;
-              const dx = sx - closestX;
-              const dy = sy - closestY;
-              let segRadius = Math.max(80, Number(seg.radius) || 120);
-              if (seg.hexGrid?.srcWidth && seg.hexGrid?.srcHeight) {
-                const segScale = Math.max(0.0001, seg.visual?.spriteScale || seg.capitalProfile?.spriteScale || seg.profile?.spriteScale || 1.0);
-                const segHalfW = (Number(seg.hexGrid.srcWidth) || 0) * 0.5 * segScale;
-                const segHalfH = (Number(seg.hexGrid.srcHeight) || 0) * 0.5 * segScale;
-                const segHullRadius = Math.max(segHalfW, segHalfH) + Math.min(segHalfW, segHalfH) * 0.45;
-                if (Number.isFinite(segHullRadius) && segHullRadius > segRadius) segRadius = segHullRadius;
-              }
-              const lane = segRadius + 260;
-              if (dx * dx + dy * dy > lane * lane) continue;
-              rankedRing.push({ seg, d2: dx * dx + dy * dy, t: tProj });
-            }
-            rankedRing.sort((a, b) => (a.t - b.t) || (a.d2 - b.d2));
-            for (let k = 0; k < rankedRing.length && ringTargets.length < maxRingTargets; k++) {
-              ringTargets.push(rankedRing[k].seg);
-            }
-            ringCache.set(ringCacheKey, { t: ringCacheNow, targets: ringTargets });
-            if (ringCache.size > 512) {
-              for (const [k, v] of ringCache) {
-                if (!v || (ringCacheNow - Number(v.t || 0)) > 0.6) ringCache.delete(k);
-              }
-            }
-          }
-
-          const stationList = Array.isArray(window.stations) ? window.stations : null;
-          const platformList = Array.isArray(mercCtx?.weaponPlatforms) ? mercCtx.weaponPlatforms : null;
-          const wreckList = Array.isArray(window.wrecks) ? window.wrecks : null;
-          const getBeamTargetRadius = (pt) => {
-            let radius = Math.max(20, Number(pt?.hitR || pt?.radius || pt?.r) || 20);
-            if (pt?.hexGrid?.srcWidth && pt?.hexGrid?.srcHeight) {
-              const hexScale = Math.max(0.0001, pt.visual?.spriteScale || pt.capitalProfile?.spriteScale || pt.profile?.spriteScale || 1.0);
-              const halfW = (Number(pt.hexGrid.srcWidth) || 0) * 0.5 * hexScale;
-              const halfH = (Number(pt.hexGrid.srcHeight) || 0) * 0.5 * hexScale;
-              const hullRadius = Math.max(halfW, halfH) + Math.min(halfW, halfH) * 0.45;
-              if (Number.isFinite(hullRadius) && hullRadius > radius) radius = hullRadius;
-            }
-            return radius;
-          };
-          // Przy aktywnej tarczy test idzie po bańce, a nie po kadłubie.
-          const getBeamShieldCheckRadius = (pt) => {
-            let w = pt.w || (pt.radius * 2) || 40;
-            let h = pt.h || (pt.radius * 2) || 40;
-            if (pt.capitalProfile) {
-              w = Math.max(w, (pt.radius || 20) * (pt.capitalProfile.lengthScale || 3.2));
-              h = Math.max(h, (pt.radius || 20) * (pt.capitalProfile.widthScale || 1.2));
-            }
-            return Math.max(w, h) * 0.75;
-          };
-          // Prefiltr: pudełko kapsuły strzału (odcinek od lufy na pełen zasięg,
-          // poszerzony o promień celu). Dawniej KAŻDY strzał liczył promień i rzut
-          // dla wszystkich NPC, wraków, stacji i segmentów ringu — rój
-          // przechwytywaczy (laser PD co 0,18 s) robił setki takich przebiegów na
-          // sekundę. Promień jest zachowawczy (większy z kadłuba i tarczy) i liczony
-          // raz na klatkę na encję, więc dokładna pętla niżej widzi te same trafienia.
-          const beamEndX = muzzleData.pos.x + dirX * range;
-          const beamEndY = muzzleData.pos.y + dirY * range;
-          const beamMinX = Math.min(muzzleData.pos.x, beamEndX);
-          const beamMaxX = Math.max(muzzleData.pos.x, beamEndX);
-          const beamMinY = Math.min(muzzleData.pos.y, beamEndY);
-          const beamMaxY = Math.max(muzzleData.pos.y, beamEndY);
-          const beamFrameId = Number(window.__frameId);
-          const beamBoundCacheable = Number.isFinite(beamFrameId);
-          const pushTarget = (obj) => {
-            if (!obj || obj === shooter) return;
-            if (obj.dead || obj.destroyed || obj.removed || obj._destroyed3D) return;
-            if (obj.isCollidable === false) return;
-            let bound = obj.__beamBoundR;
-            if (!beamBoundCacheable || obj.__beamBoundFid !== beamFrameId || !(bound >= 0)) {
-              bound = Math.max(getBeamTargetRadius(obj), getBeamShieldCheckRadius(obj));
-              obj.__beamBoundR = bound;
-              obj.__beamBoundFid = beamFrameId;
-            }
-            // Obiekt bez x/y (NaN) przechodzi dalej — dokładny test odrzuca go jak dawniej.
-            const ox = obj.x;
-            const oy = obj.y;
-            if (ox < beamMinX - bound || ox > beamMaxX + bound || oy < beamMinY - bound || oy > beamMaxY + bound) return;
-            targets.push(obj);
-          };
-
-          if (window.ship && window.ship !== shooter) pushTarget(window.ship);
-          if (window.npcs) {
-            for (const npc of window.npcs) {
-              if (!npc || npc === shooter || npc.dead) continue;
-              pushTarget(npc);
-            }
-          }
-          if (stationList) for (const station of stationList) pushTarget(station);
-          if (platformList) for (const platform of platformList) pushTarget(platform);
-          if (wreckList) for (const wreck of wreckList) pushTarget(wreck);
-          for (const ringSeg of ringTargets) pushTarget(ringSeg);
-
-          let potentialHits = [];
-          const beamCfg = DESTRUCTOR_CONFIG;
-          const beamHexR = Math.max(2, Number(beamCfg?.gridDivisions) || 10);
-          const beamHitRadSq = Math.max(90, (beamHexR * 1.45) * (beamHexR * 1.45));
-          const classifyHitEntity = (pt) => {
-            if (pt === window.ship) return 'player';
-            if (pt?.isRingSegment) return 'ring';
-            if (stationList && stationList.includes(pt)) return 'station';
-            if (platformList && platformList.includes(pt)) return 'platform';
-            if (wreckList && wreckList.includes(pt)) return 'wreck';
-            if (pt?.hp !== undefined && pt?.maxHp !== undefined) return 'npc';
-            return 'world';
-          };
-
-          for (const pt of targets) {
-            if (!pt) continue;
-            if (pt === shooter) continue;
-            const hasShield = pt.shield && pt.shield.val > 0;
-            const checkRadius = hasShield ? getBeamShieldCheckRadius(pt) : getBeamTargetRadius(pt);
-
-            const cx = pt.x;
-            const cy = pt.y;
-            const fx = cx - muzzleData.pos.x;
-            const fy = cy - muzzleData.pos.y;
-            const t = fx * dirX + fy * dirY;
-            if (t < -checkRadius || t > hitDist + checkRadius) continue;
-
-            const closestX = muzzleData.pos.x + dirX * t;
-            const closestY = muzzleData.pos.y + dirY * t;
-            const distToCenterSq = (cx - closestX) ** 2 + (cy - closestY) ** 2;
-
-            if (distToCenterSq <= checkRadius * checkRadius) {
-              const distInside = Math.sqrt(checkRadius * checkRadius - distToCenterSq);
-              const tEnter = Math.max(0, t - distInside);
-              const tExit = t + distInside;
-              if (tEnter < hitDist) potentialHits.push({ entity: pt, tEnter, tExit, hasShield });
-            }
-          }
-
-          potentialHits.sort((a, b) => a.tEnter - b.tEnter);
-
-          for (const hit of potentialHits) {
-            if (hit.tEnter > hitDist) break;
-            const pt = hit.entity;
-
-            if (hit.hasShield) {
-              hitDist = hit.tEnter;
-              hitEntity = pt;
-              hitType = classifyHitEntity(pt);
-              break;
-            }
-
-            if (
-              pt.hexGrid &&
-              pt.hexGrid.grid &&
-              Number.isFinite(pt.hexGrid.cols) &&
-              Number.isFinite(pt.hexGrid.rows) &&
-              pt.hexGrid.cols > 0 &&
-              pt.hexGrid.rows > 0
-            ) {
-              const step = Math.max(4, Math.min(12, beamHexR * 0.9));
-              let foundHex = false;
-
-              // Zamiast niszczyć statek testem, robimy bezpieczną analizę pikselową (Safe Raymarch)
-              const scale = Math.max(0.0001, pt.visual?.spriteScale || pt.capitalProfile?.spriteScale || pt.profile?.spriteScale || 1.0);
-              let rRot = 0;
-              if (pt.visual && pt.visual.spriteRotation) rRot = pt.visual.spriteRotation;
-              else if (pt.capitalProfile && pt.capitalProfile.spriteRotation) rRot = pt.capitalProfile.spriteRotation;
-
-              const angle = (pt.angle || 0) + rRot;
-              const cosA = Math.cos(angle);
-              const sinA = Math.sin(angle);
-
-              const ptX = pt.pos ? pt.pos.x : pt.x;
-              const ptY = pt.pos ? pt.pos.y : pt.y;
-              const gridCx = pt.hexGrid.srcWidth * 0.5;
-              const gridCy = pt.hexGrid.srcHeight * 0.5;
-              const pX = pt.hexGrid.pivot ? pt.hexGrid.pivot.x : 0;
-              const pY = pt.hexGrid.pivot ? pt.hexGrid.pivot.y : 0;
-
-              for (let testT = hit.tEnter; testT <= hit.tExit; testT += step) {
-                if (testT > hitDist) break;
-                const testX = muzzleData.pos.x + dirX * testT;
-                const testY = muzzleData.pos.y + dirY * testT;
-
-                const dx = testX - ptX;
-                const dy = testY - ptY;
-                const localX = (dx * cosA + dy * sinA) / scale;
-                const localY = (-dx * sinA + dy * cosA) / scale;
-                const gridX = localX + gridCx + pX;
-                const gridY = localY + gridCy + pY;
-
-                // Okno 3×3 komórek + zmierzony dryf wgniecionych heksów — samo
-                // 3×3 nie widziało heksów wypchniętych z komórek i wiązka
-                // przelatywała przez wgniecenie („heksy-duchy”).
-                const beamShard = findBeamHexShard(pt.hexGrid, gridX, gridY, beamHitRadSq);
-                let hexHit = !!beamShard;
-                if (!hexHit && pt?.isRingSegment && DestructorSystem && typeof DestructorSystem.probeImpact === 'function') {
-                  hexHit = DestructorSystem.probeImpact(pt, testX, testY);
-                }
-                if (hexHit) {
-                  hitDist = testT;
-                  hitEntity = pt;
-                  hitType = classifyHitEntity(pt);
-                  beamHitShard = beamShard;
-                  foundHex = true;
-                  break;
-                }
-              }
-              if (foundHex) break;
-            } else {
-              hitDist = hit.tEnter;
-              hitEntity = pt;
-              hitType = classifyHitEntity(pt);
-              break;
-            }
-          }
 
           const finalEndX = muzzleData.pos.x + dirX * hitDist;
           const finalEndY = muzzleData.pos.y + dirY * hitDist;
-          const emitterUid = (muzzleData?.emitterUid != null)
-            ? String(muzzleData.emitterUid)
-            : (() => {
-              const sx = shooter?.pos?.x ?? shooter?.x ?? 0;
-              const sy = shooter?.pos?.y ?? shooter?.y ?? 0;
-              const sa = Number(shooter?.angle) || 0;
-              const dxLocal = (muzzleData.pos.x - sx);
-              const dyLocal = (muzzleData.pos.y - sy);
-              const cLocal = Math.cos(sa);
-              const sLocal = Math.sin(sa);
-              const lx = dxLocal * cLocal + dyLocal * sLocal;
-              const ly = -dxLocal * sLocal + dyLocal * cLocal;
-              const ownerId = (shooter === window.ship)
-                ? 'player'
-                : String(shooter?.id ?? shooter?.uid ?? shooter?._id ?? shooter?.npcId ?? 'npc');
-              return `auto:${ownerId}:${weapon.id}:${Math.round(lx)}:${Math.round(ly)}`;
-            })();
 
-          // Kazdy strzal wiazka dostaje wizual 3D w Weapon3DSystem._triggerBeamFx.
+          // Kazdy strzal wiazka broni glownej dostaje wizual 3D w Weapon3DSystem._triggerBeamFx.
           // Warunek gasil 2D TYLKO dla wiazek ciaglych, wiec beam_pulse lecial
           // podwojnie: raz jako smuga na kanwie, raz jako plaszczyzna w scenie.
-          // Wiazki laser_pd ida osobna sciezka (ciwsStep) i nadal sa czysto 2D.
+          // Wiazki PD (klasa aux) maja JEDEN wizual — tania smuge 2D, bez pulsu 3D
+          // (tysiace strzalow na sekunde to byly tysiace grup meshy w scenie).
           const shouldRenderBeam2D = !weapon.render3dOnly;
           if (shouldRenderBeam2D) {
-            spawnLaserBeam(muzzleData.pos, { x: finalEndX, y: finalEndY }, weapon.size === 'L' ? 12 : 5, {
-              life: weapon.duration || 0.12,
-              colorOuter: weapon.vfxColor,
-              colorInner: '#ffffff',
-              glowColor: weapon.vfxColor,
-              glowBlur: 20
-            });
+            _beam2dEnd.x = finalEndX;
+            _beam2dEnd.y = finalEndY;
+            _beam2dOpts.life = weapon.duration || 0.12;
+            _beam2dOpts.colorOuter = weapon.vfxColor;
+            _beam2dOpts.glowColor = weapon.vfxColor;
+            spawnLaserBeam(muzzleData.pos, _beam2dEnd, weapon.size === 'L' ? 12 : 5, _beam2dOpts);
           }
 
-          beamEventData = {
-            startX: muzzleData.pos.x,
-            startY: muzzleData.pos.y,
-            endX: finalEndX,
-            endY: finalEndY,
-            width: weapon.size === 'L' ? 12 : 5,
-            mode: weapon.beamMode || 'pulse',
-            emitterUid
-          };
+          if (!pdBeam) {
+            const eventBeam = _beamEventScratch;
+            eventBeam.startX = muzzleData.pos.x;
+            eventBeam.startY = muzzleData.pos.y;
+            eventBeam.endX = finalEndX;
+            eventBeam.endY = finalEndY;
+            eventBeam.width = weapon.size === 'L' ? 12 : 5;
+            eventBeam.mode = weapon.beamMode || 'pulse';
+            eventBeam.emitterUid = (muzzleData?.emitterUid != null)
+              ? String(muzzleData.emitterUid)
+              : computeAutoBeamEmitterUid(shooter, weapon, muzzleData);
+            beamEventData = eventBeam;
+          }
 
           if (hitEntity) {
             const applyPlayerDamage = window.applyDamageToPlayer || applyDamageToPlayer;
@@ -8978,12 +9102,26 @@
         pos: muzzlePos,
         dir: muzzleDir,
         baseVel: opts.originVel || { x: owner.vx || 0, y: owner.vy || 0 },
-        emitterUid: opts.hp?.id != null
-          ? `npc:${owner?.id ?? owner?.uid ?? owner?._id ?? owner?.npcId ?? 'x'}:${opts.hp.id}`
-          : null
+        emitterUid: opts.hp?.id != null ? getNpcEmitterUid(owner, opts.hp) : null,
+        // PD: cel wybrany przez AI (processAutonomousWeapons) — wiązka testuje
+        // tylko jego, bez skanu świata (fireWeaponCore → resolvePdBeamHit).
+        pdTarget: opts.pdTarget || null
       };
       window.fireWeaponCore(owner, target, weaponDef.id, muzzle);
     };
+
+    // Uid emitera (wiązka ciągła trzyma się po nim swojej lufy). Liczony raz na
+    // parę okręt/gniazdo i trzymany na hp — dawniej string składany przy KAŻDYM
+    // strzale. Na hp tylko wartości proste: gniazda bywają serializowane.
+    function getNpcEmitterUid(owner, hp) {
+      const ownerKey = owner?.id ?? owner?.uid ?? owner?._id ?? owner?.npcId ?? 'x';
+      if (hp.__emitterUid == null || hp.__emitterUidOwner !== ownerKey || hp.__emitterUidHp !== hp.id) {
+        hp.__emitterUid = `npc:${ownerKey}:${hp.id}`;
+        hp.__emitterUidOwner = ownerKey;
+        hp.__emitterUidHp = hp.id;
+      }
+      return hp.__emitterUid;
+    }
 
     // --- HELPER: Tłumacz typów dla AI (AI Space Port) ---
     function getUnitKind(npc) {

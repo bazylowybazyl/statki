@@ -16,8 +16,12 @@ export { PD_CHIP_ID };
 // PD sięga 5 200 u (flak_capital), czyli kary do ~27 000. Milion to zapas.
 export const PD_HULL_SCORE = -1e6;
 
+// Wołane przy każdym strzale wiązką (fireWeaponCore) — katalog ma 'aux' małymi
+// literami, więc najpierw tanie porównanie, dopiero potem normalizacja.
 export function isPointDefenseWeapon(def) {
-  return String(def?.mountType || '').toLowerCase() === 'aux';
+  const mount = def?.mountType;
+  if (mount === 'aux') return true;
+  return typeof mount === 'string' && mount.toLowerCase() === 'aux';
 }
 
 // `kind` jak z getUnitKind (index.html) albo 'rocket' dla pocisku.
