@@ -25,8 +25,9 @@ test('main-mount beam weapons are flagged render3dOnly', () => {
   for (const [id, def] of Object.entries(MASTER_WEAPONS)) {
     if (def.category !== 'beam') continue;
     const mountType = String(def.mountType || '').toLowerCase();
-    // laser_pd_mk1 (aux) strzela przez ciwsStep — nie dotyka fireWeaponCore
-    // i nie emituje game_weapon_fired, więc jego wiązka 2D nie ma duplikatu.
+    // laser_pd_mk1 (aux): gracz strzela nim przez ciwsStep, NPC przez
+    // fireWeaponCore — tam klasa PD dostaje tylko smugę 2D, bez pulsu 3D
+    // (test niżej), więc duplikatu też nie ma.
     if (mountType === 'aux') continue;
     assert.equal(def.render3dOnly, true, `${id}: wiązka bez render3dOnly poleci 2D i 3D naraz`);
     checked++;
@@ -39,6 +40,9 @@ test('point-defence laser keeps its canvas-only beam path', () => {
   assert.match(html, /function firePointDefenseLaser\(/);
   assert.match(html, /spawnLaserBeam\(muzzle, beamEnd, LASER_PD_BEAM_WIDTH/);
   assert.equal(MASTER_WEAPONS.laser_pd_mk1?.render3dOnly, undefined);
+  // NPC-owy laser PD w fireWeaponCore: smuga 2D tak, wizual pulse 3D nie.
+  assert.match(html, /const pdBeam = isPointDefenseWeapon\(weapon\);/);
+  assert.match(html, /if \(!pdBeam\) \{\s*const eventBeam = _beamEventScratch;/);
 });
 
 // Trafienia pocisków obsługuje overlay 3D; gałąź 2D była za flagą zabitą na

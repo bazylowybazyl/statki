@@ -942,7 +942,9 @@ export function processAutonomousWeapons(npc, dt) {
             window.spawnBulletAdapter(npc, bestTarget, weapon.def, {
               type: weapon.type,
               hp: weapon.hpOffset,
-              angleOverride: weapon.visualAngle
+              angleOverride: weapon.visualAngle,
+              // PD: cel wybrany i sprawdzony (LOS) — wiązka testuje tylko jego.
+              pdTarget: weapon.pd ? bestTarget : null
             });
           }
           weapon.cd = weapon.def.cooldown || 2.0;

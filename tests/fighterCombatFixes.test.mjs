@@ -51,14 +51,20 @@ test('support-wing fighter squads use the same bow/beam frame as their wingmen',
   assert.match(slot, /rotate\(leaderLocal, leaderAng\)/);
 });
 
+// Pomocniki wiązki są funkcjami modułowymi (bez domknięć per strzał — pakiet B
+// napraw po audycie bitwy 2026-09-24); sens prefiltra bez zmian.
 test('beam targets are prefiltered by the shot capsule before the exact test', () => {
-  const radiusAt = html.indexOf('const getBeamTargetRadius = (pt) =>');
-  const pushAt = html.indexOf('const pushTarget = (obj) =>');
+  const radiusAt = html.indexOf('function getBeamTargetRadius(pt) {');
+  const pushAt = html.indexOf('function pushBeamTarget(obj, shooter, frameId, boundCacheable, minX, maxX, minY, maxY) {');
   assert.ok(radiusAt > 0 && pushAt > radiusAt, 'promień celu musi istnieć przed prefiltrem');
-  const push = html.slice(pushAt, html.indexOf('targets.push(obj);', pushAt));
+  const push = html.slice(pushAt, html.indexOf('_beamTargets.push(obj);', pushAt));
   assert.match(push, /Math\.max\(getBeamTargetRadius\(obj\), getBeamShieldCheckRadius\(obj\)\)/,
     'promień prefiltru musi obejmować i kadłub, i bańkę tarczy');
-  assert.match(push, /ox < beamMinX - bound/);
+  assert.match(push, /ox < minX - bound/);
+  // Dokładna pętla idzie po liście z prefiltra.
+  const world = sliceFunction(html, 'function resolveBeamWorldHit(shooter, weapon, muzzleX, muzzleY, dirX, dirY, range, out) {');
+  assert.match(world, /pushBeamTarget\(npc, shooter, beamFrameId/);
+  assert.match(world, /const pt = _beamTargets\[k\];/);
 });
 
 // ---------------------------------------------------------------------------
