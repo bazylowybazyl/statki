@@ -927,6 +927,7 @@
     import { compensateStrafeYaw, resolveShipTurnCapability, strafeUsableForCapability } from "./src/game/flight/headingControl.js";
     import { DestructorSystem, initHexBody, isHexShips3DActive, setHexShips3DActive, getHexStructuralState, getHexArenaStats, disposeHexBody, DESTRUCTOR_CONFIG, getCollisionBoundsDebug, getBroadphaseDebugInfo, findBeamHexShard } from "./src/game/destructor.js";
     import { TowConstraintSystem } from "./src/game/towSystem.js";
+    import { createColdWreckSystem, THAW_RESULT } from "./src/game/coldWrecks.js";
     import { createWeaponInventory, fillWeaponInventory } from "./src/game/weaponInventory.js";
     import { CHIPS, CHIP_ORDER, PD_CHIP_ID } from "./src/data/chips.js";
     import {
@@ -1032,7 +1033,9 @@
       resizeHexShips3D,
       drawHexShips3D,
       invalidateHexShipEntity3D,
-      prewarmHexShipVisual
+      prewarmHexShipVisual,
+      isColdFreezeVisuallySafe,
+      captureColdWreckImpostor
     } from "./src/3d/hexShips3D.js";
     import { initOverlay as initOverlay3D } from "./src/effects3d/overlay.js";
     import { createRailgunExplosionFactory } from "./src/effects3d/railgunExplosion.js";
@@ -1314,7 +1317,7 @@
     // Panel wydajnosci ma własny DOM i własny CSS (assets/css/perf-hud.css).
     // Stan świata dostaje przez provider — moduł nie zna zmiennych tego skryptu.
     mountPerfHudDom();
-    setPerfHudWorldSource(() => ({ ship, npcs, wrecks, bullets, physicsBridge: physicsBridgeV2 }));
+    setPerfHudWorldSource(() => ({ ship, npcs, wrecks, coldWrecks, bullets, physicsBridge: physicsBridgeV2 }));
     PerfHUD.init();
 
     setLiveDebugPerfHud(PerfHUD);
@@ -6730,6 +6733,11 @@
     const wrecks = [];
     window.wrecks = wrecks;
     publishGameState({ wrecks });
+    // Zimne wraki („tło”, src/game/coldWrecks.js): poza wrecks i wszystkimi
+    // listami fizyki/renderu, bez hexGrid; rysowane tylko jako smugi.
+    const coldWrecks = [];
+    window.coldWrecks = coldWrecks;
+    publishGameState({ coldWrecks });
     // === SQUAD SYSTEM ===
     const SQUADS = [];
     window.SQUADS = SQUADS;
@@ -9860,7 +9868,8 @@
       } else if (type === 'wreck') {
         const info = describeSalvage(target);
         if (title) title.textContent = info?.label ? `Wrak: ${info.label}` : 'Wrak';
-        if (subtitle) subtitle.textContent = 'ODZYSK MOŻLIWY';
+        // Zimny = „tło” pola wraków; holowanie albo cięcie go wybudza.
+        if (subtitle) subtitle.textContent = target.isCold ? 'ODZYSK MOŻLIWY · ZIMNY' : 'ODZYSK MOŻLIWY';
         if (content) {
           if (!info || (!info.materials.length && !info.weaponCount)) {
             const row = document.createElement('div');
@@ -12333,6 +12342,14 @@
         pushZoneMessage('SALVAGE: NIC DO WYCIĘCIA', 1.4);
         return;
       }
+      // Zimny wrak nie ma siatki do cięcia — najpierw odmrożenie (najwyżej
+      // jedno na klatkę; z kolejki cięcie ruszy klatkę później).
+      if (wreck.isCold) {
+        if (thawWreck(wreck, 'salvage', startFieldSalvage) === THAW_RESULT.FAILED) {
+          pushZoneMessage('SALVAGE: WRAKU NIE DA SIĘ PODJĄĆ', 1.4);
+        }
+        return;
+      }
       if (salvageState.towed === wreck) {
         pushZoneMessage('SALVAGE: WRAK NA HOLU — ODEPNIJ ALBO ODDAJ W DOKU', 1.6);
         return;
@@ -12452,6 +12469,14 @@
         pushZoneMessage('HOL: JUŻ HOLUJESZ WRAK', 1.4);
         return;
       }
+      // Holownik „wyciąga” zimny wrak z tła: odmrożenie, potem zaczep (z kolejki
+      // odmrożeń — klatkę później, tym samym wywołaniem).
+      if (wreck.isCold) {
+        if (thawWreck(wreck, 'tow', startWreckTow) === THAW_RESULT.FAILED) {
+          pushZoneMessage('HOL: WRAKU NIE DA SIĘ PODJĄĆ', 1.4);
+        }
+        return;
+      }
       if (salvageState.cutting === wreck) stopFieldSalvage();
 
       const restLength = (Number(ship.radius) || 220) + (Number(wreck.radius) || 200) + 260;
@@ -12503,6 +12528,9 @@
       const list = Array.isArray(window.wrecks) ? window.wrecks : null;
       const idx = list ? list.indexOf(wreck) : -1;
       if (idx >= 0) list.splice(idx, 1);
+      // Zimny wrak żyje tylko w coldWrecks — pula nie może wydać obiektu,
+      // który nadal tam wisi.
+      coldWreckSystem.forget(wreck);
       DestructorSystem?.recycleWreck?.(wreck);
     }
 
@@ -15169,20 +15197,24 @@
 
     // Wraki są celem rozkazów tylko dla odzysku łupu, więc trafiamy w nie
     // dopiero gdy w punkcie nie ma żywego wroga.
+    // Zimne wraki (coldWrecks) też są celami: rozkaz albo holowanie wybudza je
+    // przez thawWreck. Wrak zimny rozpoznaje się po `wreck.isCold`.
     function pickWreckTargetAtWorld(worldPoint) {
-      const list = Array.isArray(window.wrecks) ? window.wrecks : null;
-      if (!list) return null;
       let best = null;
       let bestDistSq = Infinity;
-      for (const wreck of list) {
-        if (!wreck || wreck.dead) continue;
-        const dx = (wreck.x ?? wreck.pos?.x ?? 0) - worldPoint.x;
-        const dy = (wreck.y ?? wreck.pos?.y ?? 0) - worldPoint.y;
-        const distSq = dx * dx + dy * dy;
-        const hitR = (Number(wreck.radius) || 120) + 60;
-        if (distSq <= hitR * hitR && distSq < bestDistSq) {
-          bestDistSq = distSq;
-          best = wreck;
+      for (let pass = 0; pass < 2; pass++) {
+        const list = pass === 0 ? window.wrecks : coldWrecks;
+        if (!Array.isArray(list)) continue;
+        for (const wreck of list) {
+          if (!wreck || wreck.dead) continue;
+          const dx = (wreck.x ?? wreck.pos?.x ?? 0) - worldPoint.x;
+          const dy = (wreck.y ?? wreck.pos?.y ?? 0) - worldPoint.y;
+          const distSq = dx * dx + dy * dy;
+          const hitR = (Number(wreck.radius) || 120) + 60;
+          if (distSq <= hitR * hitR && distSq < bestDistSq) {
+            bestDistSq = distSq;
+            best = wreck;
+          }
         }
       }
       return best;
@@ -15705,6 +15737,8 @@
         else startWreckTow(liveTarget);
         return;
       }
+      // Rozkaz na zimny wrak (podejście, orbita, taran, skan) wybudza go.
+      if (liveTarget?.isCold) thawWreckForOrder(liveTarget, action);
       if (action === 'attack') {
         setPlayerAttackTarget(liveTarget);
         return;
@@ -15771,6 +15805,10 @@
     function executeRtsWorldCommandAction(action, point, targetEntity, opts = {}) {
       const liveTarget = isCommandEntityAlive(targetEntity) ? targetEntity : null;
       const enemyTarget = isValidLockedTarget(liveTarget) ? liveTarget : pickEnemyTargetAtWorld(point);
+      // Rozkaz RTS na zimny wrak wybudza go (ruch w punkt i HOLD — nie).
+      if (liveTarget?.isCold && !isMovePlacementAction(action) && action !== 'hold') {
+        thawWreckForOrder(liveTarget, action);
+      }
       if (isMovePlacementAction(action)) {
         const faceAngle = Number.isFinite(ship?.angle) ? ship.angle : 0;
         issueMoveOrder(point, { faceAngle });
@@ -20198,6 +20236,114 @@
       }
     }
 
+    // ============================================================
+    // ZIMNE WRAKI (src/game/coldWrecks.js, brief docs/BRIEF-zimne-wraki.md)
+    // Uśpiony od dawna wrak, do którego nic się nie odwołuje i przy którym nic
+    // się nie rusza, wychodzi ze wszystkich list (pętla wraków, siatka pocisków,
+    // destruktor, 3D) i zostaje smugą. Wraca WYŁĄCZNIE jawnie: holowanie,
+    // cięcie, rozkaz na wrak, konsola (window.thawWreck).
+    // ============================================================
+    // Pętla wraków kasuje gorący/śpiący wrak dalej niż tyle od gracza. Zimnych
+    // ta reguła nie dotyczy — pole wraków przetrwa odlot gracza.
+    const WRECK_DESPAWN_DIST = 50000;
+    let _coldRefMarkStamp = 0;
+
+    function markColdRef(entity) {
+      if (entity && entity.isWreck === true) entity._coldRefStamp = _coldRefMarkStamp;
+    }
+
+    // Raz na skan (i na klatkę z kolejką zamrożeń): stempluje wraki, do których
+    // coś się odwołuje — odzysk, locki, kursor, menu, rozkazy, liny, ładunek.
+    // O(NPC + liny), bez alokacji.
+    function markColdWreckReferences(stamp) {
+      _coldRefMarkStamp = stamp;
+      markColdRef(salvageState.cutting);
+      markColdRef(salvageState.towed);
+      markColdRef(lockedTarget);
+      markColdRef(lockedTarget2);
+      for (let i = 0; i < lockedTargets.length; i++) markColdRef(lockedTargets[i]);
+      markColdRef(scan.target);
+      markColdRef(scannerSelectedTarget);
+      if (worldCommandMenu.open) markColdRef(worldCommandMenu.targetEntity);
+      markColdRef(playerAttackState.target);
+      markColdRef(ship?.command?.targetEntity);
+      for (let i = 0; i < npcs.length; i++) {
+        const npc = npcs[i];
+        if (!npc) continue;
+        if (!npc.dead) {
+          // Rozkaz RTS / wymuszony cel na wrak.
+          markColdRef(npc.command?.targetEntity);
+          markColdRef(npc.forceTarget);
+        }
+        // Wrak w locie transferu ładunku (rodzic jeszcze trzyma referencję).
+        markColdRef(npc._cargoWreck);
+      }
+      const ropes = TowSystem.constraints;
+      for (let i = 0; i < ropes.length; i++) {
+        markColdRef(ropes[i].bodyA);
+        markColdRef(ropes[i].bodyB);
+      }
+    }
+
+    // Tanie odwołania sprawdzane wprost przy każdym kandydacie.
+    function isColdWreckReferencedDirect(wreck) {
+      if (TowSystem.isAttached(wreck)) return true;
+      if (wreck._cargoOrderId) {
+        const order = getShipmentOrder(cargoFleet, wreck._cargoOrderId);
+        // Partia jeszcze nie „leży” we wraku — transfer w toku.
+        if (order && order.status !== SHIPMENT_STATUS.WRECK && order.status !== SHIPMENT_STATUS.RECOVERED) return true;
+      }
+      return false;
+    }
+
+    const coldWreckSystem = createColdWreckSystem({
+      wrecks,
+      coldWrecks,
+      // Lista destruktora z klatki (żywe okręty, gracz, gorące wraki) — i tak
+      // budowana raz na klatkę; śpiące wraki odfiltrowuje moduł.
+      getAwakeBodies: () => _cachedDynamicDestructibles || wrecks,
+      markReferences: markColdWreckReferences,
+      isReferenced: isColdWreckReferencedDirect,
+      isVisuallySafe: (w) => (isColdFreezeVisuallySafe ? isColdFreezeVisuallySafe(w) : true),
+      getPlayerPos: () => ship?.pos || null,
+      getFrameId: () => renderFrameId,
+      onBeforeFreeze(w) {
+        // Asekuracyjnie: holowany/cięty nie przejdzie warunków, ale lina ani
+        // cięcie nie mogą trzymać wraku bez siatki.
+        if (salvageState.towed === w) releaseWreckTow();
+        if (salvageState.cutting === w) stopFieldSalvage();
+        TowSystem.detachBody(w, 'wreck-cold');
+        // Smuga (kolor z meshu, póki jest) PRZED zwolnieniem meshy.
+        if (captureColdWreckImpostor) captureColdWreckImpostor(w, w._coldSnapshot);
+        if (invalidateHexShipEntity3D) invalidateHexShipEntity3D(w);
+      },
+      onThawed(w, reason) {
+        if (window.DEBUG_COLD_WRECKS) console.log('[ColdWrecks] odmrożony (' + reason + ')', w);
+      }
+    });
+
+    /**
+     * Jawne wybudzenie zimnego wraku (holowanie, cięcie, rozkaz, konsola).
+     * Najwyżej jedno na klatkę — reszta czeka, `onReady(wreck)` wykona akcję,
+     * gdy wrak wróci do `wrecks`. Zwraca THAW_RESULT ('thawed'|'queued'|'failed').
+     */
+    function thawWreck(wreck, reason = 'dev', onReady = null) {
+      return coldWreckSystem.thaw(wreck, reason, onReady);
+    }
+    window.thawWreck = thawWreck;
+    // Konsola dev: wymuszone zamrożenie (z pominięciem warunków) i liczniki.
+    window.freezeWreck = (wreck) => coldWreckSystem.freeze(wreck);
+    window.ColdWreckStats = coldWreckSystem.stats;
+
+    // Rozkaz na zimny wrak go budzi. Wyjątek: wrak dalej niż WRECK_DESPAWN_DIST
+    // od gracza — odmrożony, zniknąłby w najbliższym kroku pętli wraków, a
+    // podejście/orbita potrzebują tylko jego pozycji.
+    function thawWreckForOrder(wreck, reason) {
+      if (!wreck?.isCold) return;
+      if (salvageDistanceToShip(wreck) > WRECK_DESPAWN_DIST) return;
+      thawWreck(wreck, 'rozkaz:' + reason);
+    }
+
     function physicsStep(dt, runFrameLogic = true, frameLogicDt = dt, runAiLogic = runFrameLogic, aiLogicDt = frameLogicDt, aiBrainPhase = 0, aiBrainPhaseCount = 1) {
       const tPhysics0 = performance.now();
       PerfHUD.markPhysicsStep();
@@ -20408,18 +20554,23 @@
           }
         }
         // Wraki na końcu — nie mają przejmować kursora nad żywym celem.
-        if (Array.isArray(window.wrecks)) {
-          for (const wreck of window.wrecks) {
-            if (!wreck || wreck.dead || !hasSalvage(wreck)) continue;
+        // Zimne (coldWrecks) też: kursor ich nie budzi, dopiero rozkaz/holowanie.
+        for (let pass = 0; pass < 2; pass++) {
+          const wreckList = pass === 0 ? window.wrecks : coldWrecks;
+          if (!Array.isArray(wreckList)) continue;
+          for (const wreck of wreckList) {
+            if (!wreck || wreck.dead) continue;
             const radius = (Number(wreck.radius) || 120) + 40;
             const dx = (wreck.x ?? 0) - mouseWorld.x;
             const dy = (wreck.y ?? 0) - mouseWorld.y;
             const distSq = dx * dx + dy * dy;
-            if (distSq <= radius * radius && distSq < bestDistSq) {
-              bestDistSq = distSq;
-              hover = wreck;
-              hoverType = 'wreck';
-            }
+            // Odległość przed hasSalvage — ten alokuje (Object.values), a pole
+            // wraków to setki kandydatów na klatkę.
+            if (distSq > radius * radius || distSq >= bestDistSq) continue;
+            if (!hasSalvage(wreck)) continue;
+            bestDistSq = distSq;
+            hover = wreck;
+            hoverType = 'wreck';
           }
         }
       }
@@ -20986,6 +21137,11 @@
 
       updateFlyingHexDebris(dt);
 
+      // Zimne wraki: odmrożenia z kolejki, skan co 0,5 s, zamrażanie w budżecie
+      // klatki. PRZED pętlą wraków — zamrożony wrak nie trafia już do buforów
+      // ani list destruktora tej klatki.
+      if (runFrameLogic) coldWreckSystem.step(frameLogicDt);
+
       // Aktualizacja wraków — podział na aktywne i śpiące
       _activeWrecksBuffer.length = 0;
       _sleepingWrecksBuffer.length = 0;
@@ -21042,14 +21198,17 @@
           w._wreckSleepTimer = 0;
           w._wreckSleeping = false;
         }
+        // Nieprzerwany sen w sekundach czasu gry — warunek zamrożenia (coldWrecks.js).
+        w._wreckSleptSec = w._wreckSleeping ? (Number(w._wreckSleptSec) || 0) + dt : 0;
 
         // Despawn jeśli wrak nie ma już heksów lub jest bardzo daleko
         const distToPlayer = Math.hypot(w.x - ship.pos.x, w.y - ship.pos.y);
         const hasHexesLeft = w.hexGrid && w.hexGrid.activeStructuralCount > 0;
         const ownsShipmentCargo = !cargoBagIsEmpty(w._cargoManifest);
 
-        // Usuń tylko jeśli: brak heksów LUB ekstremalna odległość (50km)
-        if ((!hasHexesLeft || distToPlayer > 50000) && !ownsShipmentCargo) {
+        // Usuń tylko jeśli: brak heksów LUB ekstremalna odległość (50 km).
+        // Zimnych (coldWrecks) ta pętla nie widzi — pole przetrwa odlot gracza.
+        if ((!hasHexesLeft || distToPlayer > WRECK_DESPAWN_DIST) && !ownsShipmentCargo) {
           // Wrak wraca do puli obiektów — lina i cięcie muszą go puścić PRZED
           // recyklingiem, inaczej trzymałyby referencję do cudzego wraku.
           if (salvageState.towed === w) releaseWreckTow('HOL: WRAK PRZEPADŁ');
@@ -22503,7 +22662,9 @@
         // EngineVfxSystem / ShipLights3D w updateHexShips3D), okna i wyrzut.
         applyBridgeHulkVisuals(renderEntities, bridgeSimTime);
         BridgeFx3D.update(renderEntities, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose });
-        updateHexShips3D(cam, renderEntities, _hexCullInfo);
+        // Zimne wraki nie są w renderEntities (brak meshy, świateł, cieni) —
+        // tylko smugi z batcha.
+        updateHexShips3D(cam, renderEntities, _hexCullInfo, coldWrecks);
       }
       const render3dHexMs = performance.now() - tRender3dSub;
       PerfHUD.addTiming('render3dHexUpdateTime', render3dHexMs);
