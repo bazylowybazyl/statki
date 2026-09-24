@@ -164,20 +164,28 @@ export const HexBodyImpostorBatch = {
    *   opacity  0..1 (przenikanie na progu)
    */
   push(p) {
+    return this.pushRaw(p.x, p.y, p.rot, p.halfW, p.halfH, p.color.r, p.color.g, p.color.b, p.opacity);
+  },
+
+  /**
+   * To samo co push, bez obiektu — dla pętli po setkach ciał co klatkę
+   * (zimne wraki). false = batch pełny albo jeszcze niezbudowany.
+   */
+  pushRaw(x, y, rot, halfW, halfH, r, g, b, opacity) {
     if (!ensureBuilt()) return false;
     if (count >= MAX_IMPOSTORS) return false;
     const i = count++;
     const i2 = i * 2;
     const i3 = i * 3;
-    arrays.aPos[i2] = p.x;
-    arrays.aPos[i2 + 1] = p.y;
-    arrays.aRot[i] = p.rot;
-    arrays.aSize[i2] = p.halfW;
-    arrays.aSize[i2 + 1] = p.halfH;
-    arrays.aColor[i3] = p.color.r;
-    arrays.aColor[i3 + 1] = p.color.g;
-    arrays.aColor[i3 + 2] = p.color.b;
-    arrays.aOpacity[i] = p.opacity;
+    arrays.aPos[i2] = x;
+    arrays.aPos[i2 + 1] = y;
+    arrays.aRot[i] = rot;
+    arrays.aSize[i2] = halfW;
+    arrays.aSize[i2 + 1] = halfH;
+    arrays.aColor[i3] = r;
+    arrays.aColor[i3 + 1] = g;
+    arrays.aColor[i3 + 2] = b;
+    arrays.aOpacity[i] = opacity;
     return true;
   },
 

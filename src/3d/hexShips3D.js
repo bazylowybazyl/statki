@@ -21,6 +21,8 @@ import { ShipLights3D } from './shipLights3D.js';
 import { allowsSolidArmorLod } from './hexLodPolicy.js';
 import { DrawCallStats } from './drawCallStats.js';
 import { HexBodyImpostorBatch, computeAverageBodyColor } from './hexBodyImpostorBatch.js';
+import { prepareColdWreckImpostor, pushColdWreckImpostors } from './coldWreckImpostors.js';
+import { COLD_WRECK_CONFIG } from '../game/coldWrecks.js';
 import { HullLacquer, MAX_ENGINE_ZONES, computeEngineZones } from './hullLacquer.js';
 import { HULL_SDF_OCCLUDER_FLOATS, HullShadowSdf, packHullShaftOccluder } from './hullShadowSdf.js';
 
@@ -407,6 +409,10 @@ void main() {
 
 const state = {
   entityMeshes: new Map(),
+  // Pudło kadru i zoom z ostatniego updateHexShips3D — pytanie „czy zamrożenie
+  // wraku będzie widać” (isColdFreezeVisuallySafe) pada między klatkami.
+  lastCull: null,
+  lastCameraZoom: 1,
   dummy: new THREE.Object3D(),
   maxVisibleEntities: 18,
   midDistanceWorld: 2400,
@@ -460,7 +466,9 @@ const lodFrameStats = {
   shaftCands: 0,
   // Kadłuby zgłoszone do passa cieni i pieczenia ich SDF w tej klatce.
   shaftHulls: 0,
-  shaftBakes: 0
+  shaftBakes: 0,
+  // Smugi zimnych wraków w batchu (bez meshy, patrz coldWreckImpostors.js).
+  coldImpostors: 0
 };
 
 // Bufor okludera jednego kadłuba (packHullShaftOccluder -> pushShaftHullSdf).
@@ -1817,7 +1825,8 @@ export function isHexDamageTintEnabled() {
   return state.damageTintEnabled !== false;
 }
 
-export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
+// coldWrecks: zimne wraki (src/game/coldWrecks.js) — tylko smugi z batcha.
+export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, coldWrecks = null) {
   if (!Core3D.isInitialized) return;
 
   const now = performance.now();
@@ -1838,6 +1847,8 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
   const camX = Number(viewCamera?.x) || 0;
   const camY = Number(viewCamera?.y) || 0;
   const cameraZoom = Math.max(0.0001, Number(viewCamera?.zoom) || 1);
+  state.lastCull = cullInfo;
+  state.lastCameraZoom = cameraZoom;
   DrawCallStats.begin();
   HexBodyImpostorBatch.begin();
   lodFrameStats.fullBodies = 0;
@@ -1852,6 +1863,7 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
   lodFrameStats.shaftCands = 0;
   lodFrameStats.shaftHulls = 0;
   lodFrameStats.shaftBakes = 0;
+  lodFrameStats.coldImpostors = 0;
 
   const valid = state.validEntities;
   const vfxEntities = state.vfxEntities;
@@ -2040,6 +2052,15 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
     state.entityMeshes.delete(entity);
   }
 
+  // Zimne wraki: sama smuga, po gorących (te mają pierwszeństwo w batchu).
+  // Nie są okluderami cieni, źródłami świateł, rekordami Turret2D ani encjami
+  // VFX — dlatego nie idą przez listę `entities`.
+  if (Array.isArray(coldWrecks) && coldWrecks.length > 0) {
+    const pushed = pushColdWreckImpostors(HexBodyImpostorBatch, coldWrecks, cullInfo, COLD_WRECK_CONFIG.impostorOpacity);
+    if (pushed > 0) DrawCallStats.addImpostor(pushed);
+    lodFrameStats.coldImpostors = pushed;
+  }
+
   HexBodyImpostorBatch.flush();
 
   vfxEntities.push(...visibleVfx);
@@ -2151,6 +2172,67 @@ export function invalidateHexShipEntity3D(entity) {
   disposeMeshData(data);
   state.entityMeshes.delete(entity);
   return true;
+}
+
+// === ZIMNE WRAKI (src/game/coldWrecks.js) ===
+
+function getWreckImpostorEnterPx() {
+  const tuning = (typeof window !== 'undefined' && window.DevTuning) ? window.DevTuning : null;
+  return Number.isFinite(Number(tuning?.wreckImpostorPx)) ? Number(tuning.wreckImpostorPx) : WRECK_IMPOSTOR_PX;
+}
+
+/**
+ * Czy zamrożenie wraku przejdzie niezauważone: wrak jest poza pudłem
+ * rysowania ostatniej klatki albo już leży w batchu smug (to samo kryterium
+ * co updateEntityMesh), więc zamiana heksów na smugę nie przeskoczy obrazem.
+ */
+export function isColdFreezeVisuallySafe(entity) {
+  const cull = state.lastCull;
+  if (!entity || !cull) return true;
+  if (!isEntityInDrawBox(entity, cull, state.lastCameraZoom)) return true;
+  const data = state.entityMeshes.get(entity);
+  if (data) return data.batchedImpostor === true;
+  // W kadrze, ale bez meshu (dopiero wszedł): policz jak updateEntityMesh.
+  const grid = entity.hexGrid;
+  if (!grid) return true;
+  const ext = getGridActiveExtent(grid, state.lastTime);
+  const zoomPx = Math.max(0.0001, state.lastCameraZoom) * (Core3D.pixelRatio || 1);
+  const bodyRadiusPx = Math.max(ext.halfW * Math.abs(getEntityScaleX(entity)), ext.halfH * Math.abs(getEntityScaleY(entity))) * zoomPx;
+  return bodyRadiusPx < getWreckImpostorEnterPx();
+}
+
+// Kolor smugi per obraz kadłuba — ta sama średnia co data.impostorColor
+// gorącego wraku (computeAverageBodyColor na visualImage/armorImage).
+const coldImpostorColorBySource = new WeakMap();
+
+/**
+ * Przy zamrażaniu, PRZED invalidateHexShipEntity3D: kolor (z meshu, póki
+ * istnieje) i gotowa smuga na zrzucie (`snapshot.color`, `snapshot.impostor`).
+ */
+export function captureColdWreckImpostor(entity, snapshot) {
+  if (!entity || !snapshot?.extent) return false;
+  let color = state.entityMeshes.get(entity)?.impostorColor || null;
+  if (!color) {
+    const source = snapshot.visualImage || snapshot.armorImage || entity.hexGrid?.cacheCanvas || null;
+    if (source) {
+      color = coldImpostorColorBySource.get(source);
+      if (color === undefined) {
+        color = computeAverageBodyColor(source) || null;
+        coldImpostorColorBySource.set(source, color);
+      }
+    }
+  }
+  if (color) snapshot.color = { r: color.r, g: color.g, b: color.b };
+  const angle = Number(entity.angle) || 0;
+  const rot = usesBillboardOrientation(entity) ? angle : -angle;
+  return !!prepareColdWreckImpostor(
+    snapshot,
+    getEntityPosX(entity),
+    getEntityPosY(entity),
+    rot,
+    getEntityScaleX(entity),
+    getEntityScaleY(entity)
+  );
 }
 
 export function disposeHexShips3D() {
