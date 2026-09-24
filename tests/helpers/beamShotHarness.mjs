@@ -48,14 +48,18 @@ export function createBeamHarness({ html = readIndexHtml(), extraScope = {} } = 
     __frameId: 1,
     getLeadAim: (from, target) => ({ x: target.x, y: target.y }),
     spawnWeaponImpactFromPreset: (type, color, scale, x, y) => log.push(['impactFx', type, r1(x), r1(y)]),
+    // Stary kontrakt (przed szyną strzałów): zdarzenie DOM per strzał.
     dispatchEvent(ev) {
-      const d = ev.detail || {};
-      const b = d.beam;
-      log.push(['event', ev.type, d.weaponId, d.isBeam, d.beamMode,
-        b ? [r1(b.startX), r1(b.startY), r1(b.endX), r1(b.endY), b.width, b.mode, b.emitterUid] : null]);
+      logShot(ev.detail || {});
       return true;
     }
   };
+
+  function logShot(d) {
+    const b = d.beam;
+    log.push(['event', 'game_weapon_fired', d.weaponId, d.isBeam, d.beamMode,
+      b ? [r1(b.startX), r1(b.startY), r1(b.endX), r1(b.endY), b.width, b.mode, b.emitterUid] : null]);
+  }
 
   class FakeCustomEvent {
     constructor(type, init) { this.type = type; this.detail = init?.detail; }
@@ -98,6 +102,10 @@ export function createBeamHarness({ html = readIndexHtml(), extraScope = {} } = 
     markPlayerDamage: () => {},
     performance: { now: () => clock },
     CustomEvent: FakeCustomEvent,
+    // Szyna strzałów (src/game/weaponShotBus.js) — ten sam wpis w logu co zdarzenie.
+    WeaponShotBus: {
+      emit: (weaponId, shooter, x, y, isBeam, beamMode, beam) => logShot({ weaponId, shooter, x, y, isBeam, beamMode, beam })
+    },
     ...extraScope
   };
 

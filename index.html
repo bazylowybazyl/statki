@@ -944,6 +944,8 @@
     import { isPointDefenseWeapon } from "./src/ai/pointDefenseTargeting.js";
     import { createPdBeamHit, resolvePdBeamHit } from "./src/game/pdBeamFastPath.js";
     import { spatialCellKey } from "./src/game/spatialCellKey.js";
+    import { WeaponShotBus } from "./src/game/weaponShotBus.js";
+    import { createVoiceLimiter } from "./src/game/audioVoiceLimiter.js";
     import {
       buildWarpRoutes,
       getWarpRoute as lookupWarpRoute,
@@ -1905,62 +1907,74 @@
     };
     window.AudioSys = AudioSys;
     // --- CENTRALA DZWIEKOWA UZBROJENIA ---
-    window.addEventListener('game_weapon_fired', (e) => {
-      if (!window.AudioSys || !window.AudioSys.isInit) return;
-
-      const { weaponId, x, y } = e.detail;
+    // Strzały z rdzenia broni przychodzą szyną (src/game/weaponShotBus.js — bez
+    // zdarzenia DOM i obiektu per strzał); superbroń nadal wysyła rzadkie
+    // CustomEvent('game_weapon_fired'). Obie drogi prowadzą do tej funkcji.
+    function onWeaponShotAudio(detail) {
+      if (!detail || !window.AudioSys || !window.AudioSys.isInit) return;
+      const x = detail.x;
+      const y = detail.y;
 
       // Tutaj decydujemy jaki dźwięk grać w zależności od ID broni
-      switch (weaponId) {
+      switch (detail.weaponId) {
         case 'hexlance':
           // Odtwórz dźwięk superbroni (z lekką wariacją tonu)
-          playDynamicSound('sfx_hexlance', { pitchVar: 0.1, volume: 0.6 });
+          playDynamicSound('sfx_hexlance', x, y, 0.1, 0.6);
           break;
 
         case 'railgun_mk1':
         case 'railgun_mk2':
-          playDynamicSound('sfx_railgun', { pitchVar: 0.2, volume: 0.05 });
+          playDynamicSound('sfx_railgun', x, y, 0.2, 0.05);
           break;
 
         case 'vulcan_minigun':
-          playDynamicSound('sfx_railgun', { pitchVar: 0.35, volume: 0.035 });
+          playDynamicSound('sfx_railgun', x, y, 0.35, 0.035);
           break;
 
         case 'helios_laser':
-          playDynamicSound('sfx_railgun', { pitchVar: 0.12, volume: 0.045 });
+          playDynamicSound('sfx_railgun', x, y, 0.12, 0.045);
           break;
 
         case 'main_cannon':
           // (Przyszłość) Tu dodasz dźwięk dla Main Cannon
-          // playDynamicSound('sfx_maincannon', { pitchVar: 0.2, volume: 0.6 });
+          // playDynamicSound('sfx_maincannon', x, y, 0.2, 0.6);
           break;
 
         case 'nuclear_missile':
           // (Przyszłość) Inna superbroń
-          // playDynamicSound('sfx_nuke_launch', { volume: 1.0 });
+          // playDynamicSound('sfx_nuke_launch', x, y, 0, 1.0);
           break;
       }
-    });
+    }
+    WeaponShotBus.on(onWeaponShotAudio);
+    window.addEventListener('game_weapon_fired', (e) => onWeaponShotAudio(e.detail));
+
+    // Limit głosów per dźwięk + tłumienie odległością od kamery
+    // (src/game/audioVoiceLimiter.js). Bez tego każdy railgun w bitwie tworzył
+    // BufferSource + Gain — setki źródeł na sekundę, także 12 km od kamery.
+    const shotVoiceLimiter = createVoiceLimiter();
 
     // Helper do ładniejszego odtwarzania dźwięków (z wariacją)
-    function playDynamicSound(soundKey, opts = {}) {
+    function playDynamicSound(soundKey, x, y, pitchVar = 0, volume = 1.0) {
       const ctx = window.AudioSys.ctx;
       const buffer = window.AudioSys.sounds[soundKey];
       if (!ctx || !buffer) return;
 
+      // Losowa wariacja tonu (żeby seria nie brzmiała sztucznie)
+      const rate = pitchVar ? 1.0 + (Math.random() - 0.5) * 2 * pitchVar : 1.0;
+      const dist = (Number.isFinite(x) && Number.isFinite(y)) ? Math.hypot(x - camera.x, y - camera.y) : 0;
+      const durationMs = (Number(buffer.duration) || 0) / rate * 1000;
+      const voiceVolume = shotVoiceLimiter.admit(soundKey, performance.now(), volume, dist, durationMs);
+      if (voiceVolume <= 0) return;
+
       const source = ctx.createBufferSource();
       source.buffer = buffer;
-
-      // Losowa wariacja tonu (żeby seria nie brzmiała sztucznie)
-      if (opts.pitchVar) {
-        const detune = (Math.random() - 0.5) * 2 * opts.pitchVar;
-        source.playbackRate.value = 1.0 + detune;
-      }
+      if (rate !== 1.0) source.playbackRate.value = rate;
 
       const gainNode = ctx.createGain();
       // Ustaw głośność (bazując na opcjach gry + opcjach wywołania)
       const gameSfxVol = (typeof OPTIONS !== 'undefined') ? OPTIONS.audio.sfx : 1.0;
-      gainNode.gain.value = (opts.volume || 1.0) * gameSfxVol;
+      gainNode.gain.value = voiceVolume * gameSfxVol;
 
       source.connect(gainNode);
       gainNode.connect(window.AudioSys.masterGain);
@@ -8905,21 +8919,20 @@
         }
       }
 
-      // 4. Efekty wizualne wystrzału i dźwięk
-      window.dispatchEvent(new CustomEvent('game_weapon_fired', {
-        detail: {
-          weaponId: weapon.id,
-          // Weapon3DSystem szuka lufy (błysk, odrzut, wstrząs) tylko na kadłubie
-          // strzelca — inaczej strzał myśliwca trafiał w najbliższą wieżyczkę
-          // tego samego typu na dowolnym okręcie.
-          shooter,
-          x: muzzleData.pos.x,
-          y: muzzleData.pos.y,
-          isBeam: weapon.category === 'beam',
-          beamMode: weapon.beamMode || null,
-          beam: beamEventData
-        }
-      }));
+      // 4. Efekty wizualne wystrzału i dźwięk — szyna strzałów zamiast zdarzenia
+      // DOM per strzał (src/game/weaponShotBus.js; słuchacze: audio i Weapon3DSystem).
+      // Weapon3DSystem szuka lufy (błysk, odrzut, wstrząs) tylko na kadłubie
+      // strzelca — inaczej strzał myśliwca trafiał w najbliższą wieżyczkę
+      // tego samego typu na dowolnym okręcie.
+      WeaponShotBus.emit(
+        weapon.id,
+        shooter,
+        muzzleData.pos.x,
+        muzzleData.pos.y,
+        weapon.category === 'beam',
+        weapon.beamMode || null,
+        beamEventData
+      );
 
       // Zwracamy obliczony czas przeładowania
       return cd;

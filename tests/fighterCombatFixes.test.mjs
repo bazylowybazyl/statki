@@ -23,8 +23,11 @@ function sliceFunction(source, header) {
 }
 
 test('weapon-fired events carry the shooter and the 3D listener looks only at its turrets', () => {
-  const dispatch = html.slice(html.indexOf("window.dispatchEvent(new CustomEvent('game_weapon_fired'"));
-  assert.match(dispatch.slice(0, 600), /\n\s*shooter,\n/, 'detail musi nieść strzelca');
+  // Strzały z rdzenia broni idą szyną (src/game/weaponShotBus.js) — strzelec
+  // jest drugim argumentem emit i ląduje w detail.shooter.
+  const emitAt = html.indexOf('WeaponShotBus.emit(');
+  assert.ok(emitAt > 0, 'fireWeaponCore musi nadawać szyną strzałów');
+  assert.match(html.slice(emitAt, emitAt + 200), /WeaponShotBus\.emit\(\s*weapon\.id,\s*shooter,/, 'detail musi nieść strzelca');
 
   assert.match(weapon3D, /_triggerShotByWorldPoint\(weaponKey, shotX, shotY, detail\.shooter/);
   assert.match(weapon3D, /Turret2D\.triggerShot\(weaponKey, shotX, shotY, shooter\)/);

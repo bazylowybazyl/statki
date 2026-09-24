@@ -16,6 +16,7 @@ import { Fx3D } from './fxParticles3D.js';
 import { MuzzleFX3D } from './muzzleFx3D.js';
 import { BulletTrails } from './slugTrail3D.js';
 import { getEntityWeaponTier, WEAPON_TIER_SCALE } from '../data/ships.js';
+import { WeaponShotBus } from '../game/weaponShotBus.js';
 
 const WEP_RESOURCES = {
   geos: null,
@@ -755,6 +756,7 @@ export const Weapon3DSystem = {
   _cameraShakeMag: 0,
   _shotListenerBound: false,
   _shotListener: null,
+  _shotBusListener: null,
   _tmpProjectileColor: new THREE.Color(),
   _tmpBeamColor: new THREE.Color(),
   _pulseBeamPool: [],
@@ -1009,23 +1011,32 @@ export const Weapon3DSystem = {
     }
   },
 
+  // Strzały z fireWeaponCore przychodzą szyną (src/game/weaponShotBus.js): jeden
+  // obiekt detail wielokrotnego użytku, bez zdarzenia DOM per strzał. Rzadki
+  // strzał superbroni nadal idzie przez CustomEvent('game_weapon_fired') — oba
+  // źródła trafiają do tej samej obsługi. `detail` czytamy tylko synchronicznie
+  // (liczby i klucze kopiujemy do własnych wizuali).
+  _handleShotDetail(detail) {
+    if (!detail) return;
+    const weaponKey = normalizeWeaponFxKey(detail.weaponId);
+    const shotX = Number(detail.x);
+    const shotY = Number(detail.y);
+    if (!weaponKey || !Number.isFinite(shotX) || !Number.isFinite(shotY)) return;
+    const isBeam = detail?.isBeam === true;
+    const beamMode = String(detail?.beamMode || detail?.beam?.mode || '').toLowerCase();
+    const isContinuousBeam = isBeam && beamMode === 'continuous';
+    if (!isContinuousBeam) {
+      this._triggerShotByWorldPoint(weaponKey, shotX, shotY, detail.shooter || null);
+    }
+    if (isBeam && detail?.beam) this._triggerBeamFx(detail);
+  },
+
   _ensureShotListener() {
     if (typeof window === 'undefined' || this._shotListenerBound) return;
-    this._shotListener = (event) => {
-      const detail = event?.detail || {};
-      const weaponKey = normalizeWeaponFxKey(detail.weaponId);
-      const shotX = Number(detail.x);
-      const shotY = Number(detail.y);
-      if (!weaponKey || !Number.isFinite(shotX) || !Number.isFinite(shotY)) return;
-      const isBeam = detail?.isBeam === true;
-      const beamMode = String(detail?.beamMode || detail?.beam?.mode || '').toLowerCase();
-      const isContinuousBeam = isBeam && beamMode === 'continuous';
-      if (!isContinuousBeam) {
-        this._triggerShotByWorldPoint(weaponKey, shotX, shotY, detail.shooter || null);
-      }
-      if (isBeam && detail?.beam) this._triggerBeamFx(detail);
-    };
+    this._shotListener = (event) => this._handleShotDetail(event?.detail);
+    this._shotBusListener = (detail) => this._handleShotDetail(detail);
     window.addEventListener('game_weapon_fired', this._shotListener);
+    WeaponShotBus.on(this._shotBusListener);
     this._shotListenerBound = true;
   },
 
@@ -1248,7 +1259,9 @@ export const Weapon3DSystem = {
     if (typeof window !== 'undefined' && this._shotListenerBound && this._shotListener) {
       window.removeEventListener('game_weapon_fired', this._shotListener);
     }
+    if (this._shotBusListener) WeaponShotBus.off(this._shotBusListener);
     this._shotListener = null;
+    this._shotBusListener = null;
     this._shotListenerBound = false;
   }
 };

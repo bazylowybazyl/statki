@@ -193,6 +193,11 @@ function firingCore(ship, owner = 'player') {
     createPdBeamHit, resolvePdBeamHit, isPointDefenseWeapon, spatialCellKey,
     getEntityShieldBlockingRadiusTowards: () => 0, findBeamHexShard: () => null, DestructorSystem: {},
     CustomEvent: class { constructor(type, data) { Object.assign(this, data); } },
+    // Rdzeń nadaje szyną strzałów; detail.beam to obiekt wspólny — kopiujemy.
+    WeaponShotBus: {
+      emit: (weaponId, shooter, x, y, isBeam, beamMode, beam) =>
+        events.push({ detail: { weaponId, shooter, x, y, isBeam, beamMode, beam: beam ? { ...beam } : null } })
+    },
     Math: Object.assign(Object.create(Math), { random: () => 0.5 })
   };
   vm.runInNewContext(source.slice(coreStart, coreEnd), context);
