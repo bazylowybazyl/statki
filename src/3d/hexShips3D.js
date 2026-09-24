@@ -14,8 +14,11 @@ import {
   buildPositionLightWorldSprites,
   buildRoadLightWorldEmitters,
   buildShipLightShaderPayload,
+  computeRoadEmitterReach,
+  createRoadEmitterReach,
   glslFloat,
-  hasEntityLightSource
+  hasEntityLightSource,
+  roadEmittersMayReach
 } from '../game/shipLightRuntime.js';
 import { ShipLights3D } from './shipLights3D.js';
 import { allowsSolidArmorLod } from './hexLodPolicy.js';
@@ -428,6 +431,8 @@ const state = {
   drawHexEntities: [],
   drawVfxEntities: [],
   roadLightEmitters: [],
+  // Pudło zasięgu emiterów drogowych klatki (computeRoadEmitterReach).
+  roadLightReach: createRoadEmitterReach(),
   navLightSprites: [],
   staleEntities: [],
   validEntitySet: new Set(),
@@ -987,7 +992,12 @@ function syncEntityLightUniforms(entity, data, grid, externalRoadLights = null, 
   if (!uniforms?.uShipLightCount) return;
   uniforms.uTime.value = state.lastTime * 0.001;
 
-  const hasExternalRoadLights = Array.isArray(externalRoadLights) && externalRoadLights.length > 0;
+  // Emitery drogowe liczą się tylko, gdy któryś może sięgnąć pudła encji —
+  // dawniej jeden emiter gdziekolwiek w pudle rozgrzania (np. reflektory gracza)
+  // wymuszał pełny payload z pętlą po emiterach dla KAŻDEGO kadłuba i wraku.
+  const hasExternalRoadLights = Array.isArray(externalRoadLights) && externalRoadLights.length > 0
+    && bodyRadiusPx >= SHIP_LIGHT_SHADER_MIN_PX
+    && roadEmittersMayReach(state.roadLightReach, entity, grid, SHIP_LIGHT_TRANSFORM_OPTIONS);
   if (bodyRadiusPx < SHIP_LIGHT_SHADER_MIN_PX || (!hasExternalRoadLights && !hasEntityLightSource(entity))) {
     if (data.lightSignature !== SHIP_LIGHTS_OFF_SIGNATURE) {
       uniforms.uShipLightCount.value = 0;
@@ -1534,15 +1544,19 @@ function updateEntityMesh(entity, data, camX, camY, cameraZoom) {
         const offY = -extent.cy * lodScaleY;
         const cosRot = Math.cos(rot);
         const sinRot = Math.sin(rot);
-        HexBodyImpostorBatch.push({
-          x: ex + offX * cosRot - offY * sinRot,
-          y: -ey + offX * sinRot + offY * cosRot,
+        // Skalary zamiast obiektu per wrak per klatkę.
+        const impostorColor = data.impostorColor;
+        HexBodyImpostorBatch.pushRaw(
+          ex + offX * cosRot - offY * sinRot,
+          -ey + offX * sinRot + offY * cosRot,
           rot,
           halfW,
           halfH,
-          color: data.impostorColor,
-          opacity: 1
-        });
+          impostorColor.r,
+          impostorColor.g,
+          impostorColor.b,
+          1
+        );
         DrawCallStats.addImpostor(1);
         lodFrameStats.impostorBodies++;
         lodFrameStats.totalStructuralHexes += shards.length;
@@ -1916,6 +1930,7 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
   // kadrem może oświetlać kadłub, który w kadrze jest.
   SHIP_LIGHT_EMITTER_OPTIONS.out = state.roadLightEmitters;
   buildRoadLightWorldEmitters(visibleHex, SHIP_LIGHT_EMITTER_OPTIONS);
+  computeRoadEmitterReach(state.roadLightEmitters, state.roadLightReach);
 
   // Światła pozycyjne jako addytywne billboardy na warstwie FG (po
   // shadowShaftsPass): świecą HDR-owo pod bloom i przebijają cień planety.

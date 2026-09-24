@@ -108,6 +108,9 @@ export const DESTRUCTOR_CONFIG = {
   // Przebiegi poprawkowe (2.+) tylko dla par z ciałem ruszonym przez kontakt.
   // Wynik identyczny z pełnym przebiegiem; 0 = pełny przebieg (do porównań).
   collisionRefineMovedOnly: 1,
+  // Sprężystość CPU tylko po liście heksów w ruchu (simulateElasticity).
+  // Wynik identyczny z pełną iteracją; 0 = każdy heks co klatkę (do porównań).
+  elasticActiveList: 1,
   broadphaseCellSize: 1200, //
   // Zapas w KOMORKACH doliczany do zmierzonego dryfu heksow przy wyborze searchR.
   // null = mechanizm WYLACZONY (searchR jak dotad). Liczba wlacza adaptacyjny
@@ -1230,6 +1233,95 @@ function noteHexDrift(grid, shard) {
   if (!grid || !shard) return;
   const d = shardDriftBound(shard);
   if (d > (Number(grid._maxHexDrift) || 0)) grid._maxHexDrift = d;
+}
+
+// ── Lista aktywnych heksów sprężystości ────────────────────────────────────
+// simulateElasticity przechodził WSZYSTKIE heksy obudzonej siatki (≤ 500)
+// z 6 sąsiadami co klatkę, a w bitwie każdy ostrzelany okręt jest budzony na
+// 20 klatek. Pętla robi coś tylko dla heksa „w ruchu” (|targetDeformation|²
+// ≥ 0,01, także NaN, albo nad progiem plastyczności) oraz dla heksa, którego
+// sąsiad do przodu jest w ruchu — reszta to pewne no-opy.
+//
+// Znaczniki per siatka (Uint8Array po indeksie tablicy shards): heks w ruchu
+// znaczy siebie i wszystkich sąsiadów. Pętla idzie jak dawniej rosnąco po
+// indeksie, ale wchodzi tylko w oznaczone; po każdym heksie i każdej parze
+// heksy dalej w ruchu znaczą się na nowo (dalej w tym przebiegu albo na
+// następny). Oznaczenie z zapasem daje co najwyżej no-op, więc wynik jest
+// identyczny z pełną iteracją (test: tests/elasticActiveList.test.mjs).
+//
+// Znaczniki PRZEŻYWAJĄ uśpienie siatki, własność GPU i stan > 500 heksów:
+// uśpiona siatka może trzymać heksy w ruchu (sen liczy się z aktywności
+// wizualnej), a po obudzeniu pełna pętla znów by je przetwarzała.
+// Zapisy targetDeformation spoza pętli: kolizje i uszkodzenia —
+// noteElasticShard obok noteHexDrift; naprawa i wynik GPU — pełny rescan
+// (grid._elasticRescan). Nowa tablica shards (split, wrak z puli, odtworzenie
+// z zimnego) — też pełny rescan, bo przeniesione heksy niosą swoje wgniecenia.
+const ELASTIC_REST_SQ = 0.01;
+
+function isElasticShardMoving(s, yieldSq) {
+  const x = s.targetDeformation.x;
+  const y = s.targetDeformation.y;
+  const d = x * x + y * y;
+  return !(d < ELASTIC_REST_SQ) || d > yieldSq;
+}
+
+function fillElasticMarks(grid, marks) {
+  marks.fill(1);
+  grid._elasticMarkCount = marks.length;
+}
+
+function markElasticAround(grid, marks, s) {
+  const shards = grid.shards;
+  const idx = s.__meshIndex;
+  if (!(idx >= 0 && idx < marks.length) || shards[idx] !== s) {
+    // Heks spoza tej tablicy albo zły indeks (np. współdzielony przez wrak):
+    // bez pewności co znaczyć — znaczymy całą siatkę (= dawna pełna pętla).
+    fillElasticMarks(grid, marks);
+    return;
+  }
+  if (marks[idx] === 0) { marks[idx] = 1; grid._elasticMarkCount++; }
+  const neighbors = s.neighbors;
+  for (let k = 0; k < neighbors.length; k++) {
+    const n = neighbors[k];
+    if (!n) continue;
+    const ni = n.__meshIndex;
+    if (!(ni >= 0 && ni < marks.length) || shards[ni] !== n) {
+      fillElasticMarks(grid, marks);
+      return;
+    }
+    if (marks[ni] === 0) { marks[ni] = 1; grid._elasticMarkCount++; }
+  }
+}
+
+// Zapis targetDeformation spoza simulateElasticity (kolizja, uszkodzenie).
+function noteElasticShard(grid, shard) {
+  if (!grid || !shard) return;
+  const marks = grid._elasticMarks;
+  if (!marks || grid._elasticShardsRef !== grid.shards || marks.length !== grid.shards.length) {
+    grid._elasticRescan = true;
+    return;
+  }
+  markElasticAround(grid, marks, shard);
+}
+
+// Znaczniki gotowe do przebiegu; pełny rescan, gdy tablica shards jest nowa
+// albo ktoś zgłosił zapis hurtowy (naprawa, GPU).
+function prepareElasticMarks(grid, yieldSq) {
+  const shards = grid.shards;
+  const len = shards.length;
+  let marks = grid._elasticMarks;
+  if (marks && marks.length === len && grid._elasticShardsRef === shards && !grid._elasticRescan) return marks;
+  if (!marks || marks.length !== len) marks = grid._elasticMarks = new Uint8Array(len);
+  else marks.fill(0);
+  grid._elasticMarkCount = 0;
+  grid._elasticShardsRef = shards;
+  grid._elasticRescan = false;
+  for (let i = 0; i < len; i++) {
+    const shard = shards[i];
+    if (!shard || !shard.active || shard.isDebris) continue;
+    if (isElasticShardMoving(shard, yieldSq)) markElasticAround(grid, marks, shard);
+  }
+  return marks;
 }
 
 // Dokladny przelicz: pozwala licznikowi ZMALEC, gdy blacha sie wyprostowala.
@@ -2534,6 +2626,10 @@ export const DestructorSystem = {
       if (tension <= 0) return;
 
       const k = 1 - Math.exp(-tension * dt * 60);
+      // Próg pieczenia jak w pętli niżej (yieldP), do testu „heks w ruchu”.
+      const elasticYieldP = DESTRUCTOR_CONFIG.yieldPoint || 80;
+      const elasticYieldSq = elasticYieldP * elasticYieldP;
+      const elasticListMode = (DESTRUCTOR_CONFIG.elasticActiveList | 0) === 1;
       // Opcje dla asynchronicznego GPU
       const useGpu = (DESTRUCTOR_CONFIG.gpuSoftBody | 0) === 1;
       const gpuMin = DESTRUCTOR_CONFIG.gpuSoftBodyMinShards || 64;
@@ -2550,12 +2646,23 @@ export const DestructorSystem = {
         if (useGpu && DestructorGpuSoftBody && DestructorGpuSoftBody.active && shardCount >= gpuMin) continue; // This ship is currently simulated asynchronously on GPU.
         if (e?.isRingSegment) continue; // Always skip rings in CPU elasticity loop
 
+        // Tylko heksy z listy aktywnych (patrz prepareElasticMarks) — pusta
+        // lista = cała siatka w spoczynku, pętla byłaby samymi no-opami.
+        const marks = prepareElasticMarks(grid, elasticYieldSq);
+        if (!elasticListMode) fillElasticMarks(grid, marks);
+        if (grid._elasticMarkCount === 0) continue;
+
         // -------------------------------------------------------------
         let changed = false;
         let dirtyMin = Number.POSITIVE_INFINITY;
         let dirtyMax = -1;
 
-        for (const s of grid.shards) {
+        const shards = grid.shards;
+        for (let si = 0; si < shards.length; si++) {
+          if (marks[si] === 0) continue;
+          marks[si] = 0;
+          grid._elasticMarkCount--;
+          const s = shards[si];
           if (!s.active || s.isDebris) continue;
 
           const ax = s.targetDeformation.x;
@@ -2645,7 +2752,11 @@ export const DestructorSystem = {
             s.targetDeformation.y += day;
             n.targetDeformation.x += dbx;
             n.targetDeformation.y += dby;
+            // Sąsiad dalej w ruchu: on i jego sąsiedzi zostają na liście (ci
+            // dalej w tablicy jeszcze w tym przebiegu, reszta w następnym).
+            if (isElasticShardMoving(n, elasticYieldSq)) markElasticAround(grid, marks, n);
           }
+          if (isElasticShardMoving(s, elasticYieldSq)) markElasticAround(grid, marks, s);
         }
 
         if (changed) {
@@ -2706,6 +2817,8 @@ export const DestructorSystem = {
 
       if (anyFix) {
         e._gpuRepairStamp = ((Number(e._gpuRepairStamp) || 0) + 1) | 0;
+        // Naprawa przepisuje targetDeformation hurtem — lista aktywnych od nowa.
+        e.hexGrid._elasticRescan = true;
         this.wakeHexEntity(e, DESTRUCTOR_CONFIG.elasticWakeFrames | 0);
         if (dirtyMax >= 0 && Number.isFinite(dirtyMin)) markGridMeshDirtyRange(e.hexGrid, dirtyMin, dirtyMax);
         else markGridMeshDirtyAll(e.hexGrid);
@@ -3211,11 +3324,13 @@ export const DestructorSystem = {
 			// a nie obiekt siatki. Licznik musi trafic na entity.hexGrid, inaczej
 			// zapis idzie na tablice i refreshEntityObb nigdy go nie zobaczy.
 			noteHexDrift(entity.hexGrid, shard);
+			noteElasticShard(entity.hexGrid, shard);
 	} else {
   // 2) reszta pola uderzenia: seed do płynnej propagacji
   shard.targetDeformation.x += appliedDefX * 0.16;
   shard.targetDeformation.y += appliedDefY * 0.16;
   noteHexDrift(entity.hexGrid, shard);
+  noteElasticShard(entity.hexGrid, shard);
 }
 
 // 3) główna fala osiowa do propagacji
@@ -4360,6 +4475,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
             } else {
               sA.applyDeformation(pushX, pushY, 1.0, true);
               noteHexDrift(A.hexGrid, sA);
+              noteElasticShard(A.hexGrid, sA);
 
               const defSqA = sA.targetDeformation.x * sA.targetDeformation.x + sA.targetDeformation.y * sA.targetDeformation.y;
               const hardLimitSq = maxCrushLimit * maxCrushLimit * 1.5;
@@ -4421,6 +4537,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
             } else {
               sB.applyDeformation(pushX, pushY, 1.0, true);
               noteHexDrift(B.hexGrid, sB);
+              noteElasticShard(B.hexGrid, sB);
 
               const defSqB = sB.targetDeformation.x * sB.targetDeformation.x + sB.targetDeformation.y * sB.targetDeformation.y;
               const hardLimitSqB = maxCrushLimit * maxCrushLimit * 1.5;
