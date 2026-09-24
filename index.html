@@ -928,6 +928,7 @@
     import { DestructorSystem, initHexBody, isHexShips3DActive, setHexShips3DActive, getHexStructuralState, getHexArenaStats, disposeHexBody, DESTRUCTOR_CONFIG, getCollisionBoundsDebug, getBroadphaseDebugInfo, findBeamHexShard } from "./src/game/destructor.js";
     import { TowConstraintSystem } from "./src/game/towSystem.js";
     import { createColdWreckSystem, THAW_RESULT } from "./src/game/coldWrecks.js";
+    import { purgeFinishedNpcs } from "./src/game/npcListPurge.js";
     import { createWeaponInventory, fillWeaponInventory } from "./src/game/weaponInventory.js";
     import { CHIPS, CHIP_ORDER, PD_CHIP_ID } from "./src/data/chips.js";
     import {
@@ -18506,6 +18507,23 @@
       npc.hexGrid = null;
     }
 
+    // Martwy NPC misji, po którym wrak już powstał (ciało heksowe zwolnione
+    // przez releaseNpcHexBody). Nic go nie ożywi — odradzają się tylko cywile
+    // (gałąź respawnTimer w npcStep), a frachtowce ładunku sprząta ich rekord.
+    function isFinishedMissionNpc(npc) {
+      return npc.dead === true
+        && npc.mission === true
+        && npc !== ship
+        && !npc.isCargoVan
+        && !npc.hexGrid
+        && !isBridgeHulk(npc);
+    }
+
+    // SQUADS i SupportWing same odfiltrowują martwych; zaznaczenie RTS nie.
+    function forgetPurgedNpc(npc) {
+      Selection.units.delete(npc);
+    }
+
     // Dobor profilu wybuchu reaktora po wielkosci kadluba. Do tej pory kazdy
     // nie-mysliwiec dostawal `capital`, czyli 4000 iskier i 3 s efektu — tyle samo
     // dla fregaty (promien 120) co dla superkapitala (500). W bitwie gina glownie
@@ -21369,6 +21387,10 @@
       enforceWreckHexBudget();
       PerfHUD.addTiming('wreckPrepTime', performance.now() - tPreSection0);
       PerfHUD.addTiming('preAiTime', performance.now() - tPreAiTotal0);
+
+      // Martwe NPC misji (wrak już powstał) wypadają z npcs — raz na klatkę,
+      // przed AI i poza każdą pętlą po npcs (src/game/npcListPurge.js).
+      if (runFrameLogic) purgeFinishedNpcs(npcs, isFinishedMissionNpc, forgetPurgedNpc);
 
       const aiDbgEnabled = AILiveDebug.enabled;
       const tAiTotal0 = performance.now();
