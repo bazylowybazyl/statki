@@ -5006,6 +5006,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
     wreck._inPool = false;
     wreck.isCold = false;
     wreck._coldSnapshot = null;
+    wreck._coldUnsupported = false;
     wreck._wreckSleptSec = 0;
     // Świeży fragment właśnie oderwało trafienie albo zgniot.
     wreck._lastImpactMs = this._simulationTime * 1000;
