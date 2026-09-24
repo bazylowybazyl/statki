@@ -768,6 +768,7 @@ function pickTargetSubsystem(weapon, target) {
 
 const _leadAimScratch = { x: 0, y: 0 };
 const _leadOriginScratch = { x: 0, y: 0 };
+const _spawnOpts = { type: null, hp: null, angleOverride: 0, pdTarget: null };
 const _leadTargetScratch = { x: 0, y: 0, vx: 0, vy: 0 };
 let nextWeaponGeometryId = 1;
 
@@ -939,13 +940,16 @@ export function processAutonomousWeapons(npc, dt) {
           weapon.scanCd = 0;
         } else {
           if (window.spawnBulletAdapter) {
-            window.spawnBulletAdapter(npc, bestTarget, weapon.def, {
-              type: weapon.type,
-              hp: weapon.hpOffset,
-              angleOverride: weapon.visualAngle,
-              // PD: cel wybrany i sprawdzony (LOS) — wiązka testuje tylko jego.
-              pdTarget: weapon.pd ? bestTarget : null
-            });
+            // Opcje strzału — jeden obiekt na moduł (adapter czyta je od razu).
+            const opts = _spawnOpts;
+            opts.type = weapon.type;
+            opts.hp = weapon.hpOffset;
+            opts.angleOverride = weapon.visualAngle;
+            // PD: cel wybrany i sprawdzony (LOS) — wiązka testuje tylko jego.
+            opts.pdTarget = weapon.pd ? bestTarget : null;
+            window.spawnBulletAdapter(npc, bestTarget, weapon.def, opts);
+            opts.hp = null;
+            opts.pdTarget = null;
           }
           weapon.cd = weapon.def.cooldown || 2.0;
           if (weapon.ammo !== null && weapon.ammo > 0) weapon.ammo -= 1;

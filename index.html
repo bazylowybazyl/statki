@@ -4375,6 +4375,22 @@
       };
     }
 
+    // Warianty bez obiektu — wołane przy każdym strzale NPC (spawnBulletAdapter).
+    // Te same reguły co getEntityHardpointScale.
+    function getEntityHardpointScaleX(entity) {
+      const scaleXRaw = Number(entity?.__hardpointScaleX);
+      if (Number.isFinite(scaleXRaw) && scaleXRaw > 0) return scaleXRaw;
+      const uniformRaw = Number(entity?.__hardpointScale);
+      return (Number.isFinite(uniformRaw) && uniformRaw > 0) ? uniformRaw : 1;
+    }
+
+    function getEntityHardpointScaleY(entity) {
+      const scaleYRaw = Number(entity?.__hardpointScaleY);
+      if (Number.isFinite(scaleYRaw) && scaleYRaw > 0) return scaleYRaw;
+      const uniformRaw = Number(entity?.__hardpointScale);
+      return (Number.isFinite(uniformRaw) && uniformRaw > 0) ? uniformRaw : 1;
+    }
+
     function getEntityHardpointLocalPos(entity, hp) {
       if (!hp) return null;
       if (hp.pos && Number.isFinite(hp.pos.x) && Number.isFinite(hp.pos.y)) {
@@ -8339,6 +8355,7 @@
     const _beamWorldHit = { dist: 0, entity: null, kind: null, shard: null };
     const _pdBeamHit = createPdBeamHit();
     const _beam2dEnd = { x: 0, y: 0 };
+    const _fireAimPoint = { x: 0, y: 0 };
     const _beam2dOpts = { life: 0.12, colorOuter: null, colorInner: '#ffffff', glowColor: null, glowBlur: 20 };
     // Dane wiązki dla zdarzenia strzału — jeden obiekt: słuchacze czytają go
     // synchronicznie i niczego z niego nie zatrzymują (Weapon3DSystem kopiuje liczby).
@@ -8682,30 +8699,30 @@
       const burstCount = weapon.burstCount || 1;
       const spreadRad = weapon.spread || 0;
 
-      // 2. Celowanie
-      let aimPoint;
+      // 2. Celowanie. Punkt celowania to obiekt wielokrotnego użytku — czytany
+      // tylko tutaj (kąt strzału NPC, zapalnik flaku); getLeadAim ma własny.
+      let aimPoint = _fireAimPoint;
       let effectiveTarget = target;
 
       if (isTargetAlive(effectiveTarget)) {
-        aimPoint = (weapon.category === 'beam')
-          ? scannerTargetPoint(effectiveTarget)
-          : window.getLeadAim(muzzleData.pos, effectiveTarget, speed);
+        if (weapon.category === 'beam') {
+          aimPoint.x = getTargetX(effectiveTarget);
+          aimPoint.y = getTargetY(effectiveTarget);
+        } else {
+          aimPoint = window.getLeadAim(muzzleData.pos, effectiveTarget, speed);
+        }
       } else if (isPlayerShip && !targetingMode.wheelOpen) {
         // Tryb celownika nie zmienia balistyki: gracz zawsze strzela dokładnie
         // według pełnych parametrów zamontowanej broni.
         const _mouseRef = isP2Ship ? window.mouse2 : mouse;
         const _camRef = isP2Ship ? (window.camera2 || undefined) : undefined;
         const mouseWorld = window.screenToWorld(_mouseRef.x, _mouseRef.y, _camRef);
-        aimPoint = {
-          x: mouseWorld.x,
-          y: mouseWorld.y
-        };
+        aimPoint.x = mouseWorld.x;
+        aimPoint.y = mouseWorld.y;
       } else {
         // Strzał w ciemno (przed siebie)
-        aimPoint = {
-          x: muzzleData.pos.x + muzzleData.dir.x * range,
-          y: muzzleData.pos.y + muzzleData.dir.y * range
-        };
+        aimPoint.x = muzzleData.pos.x + muzzleData.dir.x * range;
+        aimPoint.y = muzzleData.pos.y + muzzleData.dir.y * range;
       }
 
       // Cursor/lock steers the turret, never the projectile at the instant of firing.
@@ -8877,7 +8894,7 @@
               rocketTarget, damage, weapon, colorTheme
             );
           } else {
-            window.bullets.push({
+            const bullet = {
               x: muzzleData.pos.x,
               y: muzzleData.pos.y,
               vx: dirX * speed + (muzzleData.baseVel?.x || 0) * 0.2,
@@ -8902,21 +8919,22 @@
               homingDelay: weapon.homingDelay || 0,
               vfxKey: weapon.id,
               forceCanvas: !!weapon.forceCanvas,  // tells weapon3DSystem to skip 3D bullet render
-              lockOwner: isP2Ship ? 'player2' : (isP1Ship ? 'player' : null),
-
-              // --- FLAK: dane zapalnika (obsługa w bulletsAndCollisionsStep) ---
-              ...(flakProfile ? {
-                flakAge: 0,
-                // Każdy pocisk salwy dostaje inny jitter — ściana pęknięć układa
-                // się warstwami w głąb zamiast w jedną płaską linię.
-                flakFuseTime: flakFuseTime(flakAimDist, speed, (Math.random() * 2 - 1)),
-                flakFuseRadius: flakProfile.fuseRadius,
-                flakArmTime: flakProfile.armTime,
-                flakBurstRadius: flakProfile.burstRadius,
-                flakFalloff: flakProfile.falloff,
-                flakHullFactor: flakProfile.hullFactor
-              } : null)
-            });
+              lockOwner: isP2Ship ? 'player2' : (isP1Ship ? 'player' : null)
+            };
+            // --- FLAK: dane zapalnika (obsługa w bulletsAndCollisionsStep) ---
+            // Zwykłe przypisania zamiast spreadu obiektu tymczasowego per pocisk.
+            if (flakProfile) {
+              bullet.flakAge = 0;
+              // Każdy pocisk salwy dostaje inny jitter — ściana pęknięć układa
+              // się warstwami w głąb zamiast w jedną płaską linię.
+              bullet.flakFuseTime = flakFuseTime(flakAimDist, speed, (Math.random() * 2 - 1));
+              bullet.flakFuseRadius = flakProfile.fuseRadius;
+              bullet.flakArmTime = flakProfile.armTime;
+              bullet.flakBurstRadius = flakProfile.burstRadius;
+              bullet.flakFalloff = flakProfile.falloff;
+              bullet.flakHullFactor = flakProfile.hullFactor;
+            }
+            window.bullets.push(bullet);
           }
         }
       }
@@ -9095,35 +9113,52 @@
       }
     }
 
+    // Wylot strzału NPC — obiekty wielokrotnego użytku (dawniej 3–4 obiekty na
+    // strzał). fireWeaponCore czyta je synchronicznie i niczego nie zatrzymuje:
+    // pociski i rakiety 3D kopiują liczby, wiązki kopiują do własnych buforów.
+    const _adapterMuzzlePos = { x: 0, y: 0 };
+    const _adapterMuzzleDir = { x: 1, y: 0 };
+    const _adapterBaseVel = { x: 0, y: 0 };
+    const _adapterMuzzle = { pos: _adapterMuzzlePos, dir: _adapterMuzzleDir, baseVel: _adapterBaseVel, emitterUid: null, pdTarget: null };
+
     // Pomocniczy Wrapper dla AI (TERAZ OBSŁUGUJE HARDPOINTY NPC!)
     window.spawnBulletAdapter = function (owner, target, weaponDef, opts = {}) {
-      let muzzlePos = { x: owner.x, y: owner.y };
-      let muzzleDir = { x: Math.cos(owner.angle || 0), y: Math.sin(owner.angle || 0) };
+      const muzzlePos = _adapterMuzzlePos;
+      const muzzleDir = _adapterMuzzleDir;
+      muzzlePos.x = owner.x;
+      muzzlePos.y = owner.y;
+      muzzleDir.x = Math.cos(owner.angle || 0);
+      muzzleDir.y = Math.sin(owner.angle || 0);
 
       // Odczyt koordynatów lufy prosto z edytora!
       if (opts.hp && opts.hp.x !== undefined) {
         const angle = (owner.angle || 0) + (Number(owner.capitalProfile?.spriteRotation) || 0);
         const c = Math.cos(angle);
         const s = Math.sin(angle);
-        const hpScale = getEntityHardpointScale(owner);
-        const hpX = opts.hp.x * hpScale.x;
-        const hpY = opts.hp.y * hpScale.y;
+        const hpX = opts.hp.x * getEntityHardpointScaleX(owner);
+        const hpY = opts.hp.y * getEntityHardpointScaleY(owner);
         muzzlePos.x = owner.x + (hpX * c - hpY * s);
         muzzlePos.y = owner.y + (hpX * s + hpY * c);
       } else if (opts.origin) {
-        muzzlePos = opts.origin;
+        muzzlePos.x = opts.origin.x;
+        muzzlePos.y = opts.origin.y;
       }
 
-      const muzzle = {
-        pos: muzzlePos,
-        dir: muzzleDir,
-        baseVel: opts.originVel || { x: owner.vx || 0, y: owner.vy || 0 },
-        emitterUid: opts.hp?.id != null ? getNpcEmitterUid(owner, opts.hp) : null,
-        // PD: cel wybrany przez AI (processAutonomousWeapons) — wiązka testuje
-        // tylko jego, bez skanu świata (fireWeaponCore → resolvePdBeamHit).
-        pdTarget: opts.pdTarget || null
-      };
+      const muzzle = _adapterMuzzle;
+      if (opts.originVel) {
+        muzzle.baseVel = opts.originVel;
+      } else {
+        _adapterBaseVel.x = owner.vx || 0;
+        _adapterBaseVel.y = owner.vy || 0;
+        muzzle.baseVel = _adapterBaseVel;
+      }
+      muzzle.emitterUid = opts.hp?.id != null ? getNpcEmitterUid(owner, opts.hp) : null;
+      // PD: cel wybrany przez AI (processAutonomousWeapons) — wiązka testuje
+      // tylko jego, bez skanu świata (fireWeaponCore → resolvePdBeamHit).
+      muzzle.pdTarget = opts.pdTarget || null;
       window.fireWeaponCore(owner, target, weaponDef.id, muzzle);
+      muzzle.pdTarget = null;
+      muzzle.baseVel = _adapterBaseVel;
     };
 
     // Uid emitera (wiązka ciągła trzyma się po nim swojej lufy). Liczony raz na
@@ -21829,7 +21864,25 @@
     let prevState = null;
     let prevCameraState = { x: camera.x, y: camera.y, zoom: camera.zoom };
     let firstFrameResolver = null;
-    function saveState() { prevState = { pos: { ...ship.pos }, angle: ship.angle, turretAngle: ship.turret.angle, turretAngle2: ship.turret2.angle, turretAngle3: ship.turret3.angle, turretAngle4: ship.turret4.angle, ciwsAngles: ship.ciws.map(c => c.angle) }; if (splitScreenMode && player2Ship) saveState2(); }
+    // Stan z poprzedniego kroku do interpolacji renderu. Jeden obiekt na całą grę,
+    // nadpisywany co krok — dawniej 3 obiekty + tablica w KAŻDYM kroku fizyki.
+    function saveState() {
+      if (!prevState) {
+        prevState = { pos: { x: 0, y: 0 }, angle: 0, turretAngle: 0, turretAngle2: 0, turretAngle3: 0, turretAngle4: 0, ciwsAngles: [] };
+      }
+      prevState.pos.x = ship.pos.x;
+      prevState.pos.y = ship.pos.y;
+      prevState.angle = ship.angle;
+      prevState.turretAngle = ship.turret.angle;
+      prevState.turretAngle2 = ship.turret2.angle;
+      prevState.turretAngle3 = ship.turret3.angle;
+      prevState.turretAngle4 = ship.turret4.angle;
+      const ciws = ship.ciws;
+      const ciwsAngles = prevState.ciwsAngles;
+      ciwsAngles.length = ciws.length;
+      for (let i = 0; i < ciws.length; i++) ciwsAngles[i] = ciws[i].angle;
+      if (splitScreenMode && player2Ship) saveState2();
+    }
     saveState();
     function loop(now) {
       const frameStartMs = performance.now();
@@ -22637,10 +22690,10 @@
     let prevState2 = null;
     function saveState2() {
       if (!player2Ship) return;
-      prevState2 = {
-        pos: { ...player2Ship.pos },
-        angle: player2Ship.angle
-      };
+      if (!prevState2) prevState2 = { pos: { x: 0, y: 0 }, angle: 0 };
+      prevState2.pos.x = player2Ship.pos.x;
+      prevState2.pos.y = player2Ship.pos.y;
+      prevState2.angle = player2Ship.angle;
     }
     // ============== END SPLIT SCREEN RENDER ==============
 

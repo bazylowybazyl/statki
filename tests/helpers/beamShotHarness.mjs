@@ -6,7 +6,7 @@
 // (szybka ścieżka PD nie może skanować świata).
 
 import { MASTER_WEAPONS, shieldImpactClass } from '../../src/data/weapons.js';
-import { isTargetAlive, targetPoint as scannerTargetPoint } from '../../src/game/scannerTargeting.js';
+import { isTargetAlive, targetPoint as scannerTargetPoint, getTargetX, getTargetY } from '../../src/game/scannerTargeting.js';
 import { DestructorSystem, DESTRUCTOR_CONFIG, findBeamHexShard } from '../../src/game/destructor.js';
 import { isEntityShieldBlocking, getEntityShieldBlockingRadiusTowards } from '../../shieldSystem.js';
 import { spatialCellKey } from '../../src/game/spatialCellKey.js';
@@ -70,6 +70,8 @@ export function createBeamHarness({ html = readIndexHtml(), extraScope = {} } = 
     MASTER_WEAPONS,
     isTargetAlive,
     scannerTargetPoint,
+    getTargetX,
+    getTargetY,
     targetingMode: { wheelOpen: false },
     mouse: { x: 0, y: 0 },
     isFlakWeapon: () => false,
