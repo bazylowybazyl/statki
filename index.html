@@ -20487,9 +20487,11 @@
       return coldWreckSystem.thaw(wreck, reason, onReady);
     }
     window.thawWreck = thawWreck;
-    // Konsola dev: wymuszone zamrożenie (z pominięciem warunków) i liczniki.
+    // Konsola dev: wymuszone zamrożenie (z pominięciem warunków), liczniki
+    // i strojenie na żywo (np. ColdWreckConfig.clearRadius = 1200).
     window.freezeWreck = (wreck) => coldWreckSystem.freeze(wreck);
     window.ColdWreckStats = coldWreckSystem.stats;
+    window.ColdWreckConfig = coldWreckSystem.config;
 
     // Rozkaz na zimny wrak go budzi. Wyjątek: wrak dalej niż WRECK_DESPAWN_DIST
     // od gracza — odmrożony, zniknąłby w najbliższym kroku pętli wraków, a
