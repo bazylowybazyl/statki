@@ -512,6 +512,35 @@ function entitySerial(entity) {
 // Indeks klucz → rekord, przebudowywany co klatkę razem z buforem rekordów.
 const recordsByKey = new Map();
 
+// Indeks encja → jej rekordy tej klatki. triggerShot/findTurretKey z podanym
+// strzelcem przechodzą tylko jego wieżyczki zamiast wszystkich na ekranie
+// (strzał w bitwie był O(wieżyczki w kadrze)). Tablice rekordów są z puli
+// i żyją między klatkami — beginFrame zeruje tylko ich długość.
+const recordsByEntity = new Map();
+const entityRecordLists = [];
+let entityRecordListCount = 0;
+
+function resetEntityRecordIndex() {
+  for (let i = 0; i < entityRecordListCount; i++) entityRecordLists[i].length = 0;
+  entityRecordListCount = 0;
+  recordsByEntity.clear();
+}
+
+function indexRecordForEntity(entity, rec) {
+  let list = recordsByEntity.get(entity);
+  if (!list) {
+    list = entityRecordLists[entityRecordListCount];
+    if (!list) list = entityRecordLists[entityRecordListCount] = [];
+    entityRecordListCount++;
+    recordsByEntity.set(entity, list);
+  }
+  list.push(rec);
+}
+
+// Wynik triggerShot — jeden obiekt, ważny do następnego wywołania (wołający
+// czyta go od razu: błysk, odrzut, wstrząs).
+const _shotResult = { x: 0, y: 0, angle: 0, scale: 1, color: '#b8d7ff', shake: 0 };
+
 function getRecoilState(entity, uid) {
   let perEntity = recoilByEntity.get(entity);
   if (!perEntity) {
@@ -537,6 +566,7 @@ function pushRecord(entity, keys, info, wx, wy, ang, scale) {
   rec.uid = keys.uid;
   rec.key = keys.key;
   recordsByKey.set(rec.key, rec);
+  indexRecordForEntity(entity, rec);
   rec.spec = info.spec;
   rec.fxKey = info.fxKey;
   rec.weaponId = info.weaponId;
@@ -675,6 +705,7 @@ export const Turret2D = {
   beginFrame() {
     frameCount = 0;
     recordsByKey.clear();
+    resetEntityRecordIndex();
     const timeSec = (typeof performance !== 'undefined') ? performance.now() / 1000 : 0;
     const dt = lastFxTimeSec > 0 ? Math.max(0.001, Math.min(0.05, timeSec - lastFxTimeSec)) : (1 / 60);
     lastFxTimeSec = timeSec;
@@ -785,8 +816,12 @@ export const Turret2D = {
     let bestDistSq = Infinity;
     let bestMuzzle = 0;
 
-    for (let i = 0; i < frameCount; i++) {
-      const rec = frameRecords[i];
+    // Ze strzelcem: tylko jego rekordy (indeks per encja); bez — wszystkie.
+    const records = owner ? recordsByEntity.get(owner) : frameRecords;
+    if (!records) return null;
+    const count = owner ? records.length : frameCount;
+    for (let i = 0; i < count; i++) {
+      const rec = records[i];
       if (owner && rec.entity !== owner) continue;
       if (weaponKey && rec.fxKey !== weaponKey) continue;
       const limitSq = owner ? Infinity : ownerlessSnapSq(rec);
@@ -831,14 +866,14 @@ export const Turret2D = {
     const mx = muzzles[idx][0] * best.scale + forward;
     const my = muzzles[idx][1] * best.scale;
 
-    return {
-      x: best.wx + mx * cosA - my * sinA,
-      y: best.wy + mx * sinA + my * cosA,
-      angle: best.ang,
-      scale: best.scale,
-      color: MUZZLE_COLOR[profile.key] || '#b8d7ff',
-      shake: Math.max(0, profile.shake)
-    };
+    const out = _shotResult;
+    out.x = best.wx + mx * cosA - my * sinA;
+    out.y = best.wy + mx * sinA + my * cosA;
+    out.angle = best.ang;
+    out.scale = best.scale;
+    out.color = MUZZLE_COLOR[profile.key] || '#b8d7ff';
+    out.shake = Math.max(0, profile.shake);
+    return out;
   },
 
   /**
@@ -854,8 +889,11 @@ export const Turret2D = {
     let bestKey = null;
     let bestDistSq = Infinity;
 
-    for (let i = 0; i < frameCount; i++) {
-      const rec = frameRecords[i];
+    const records = owner ? recordsByEntity.get(owner) : frameRecords;
+    if (!records) return null;
+    const count = owner ? records.length : frameCount;
+    for (let i = 0; i < count; i++) {
+      const rec = records[i];
       if (owner && rec.entity !== owner) continue;
       if (weaponKey && rec.fxKey !== weaponKey) continue;
       const limitSq = owner ? Infinity : ownerlessSnapSq(rec);
@@ -1009,6 +1047,7 @@ export const Turret2D = {
     frameCount = 0;
     frameRecords.length = 0;
     recordsByKey.clear();
+    resetEntityRecordIndex();
   }
 };
 
