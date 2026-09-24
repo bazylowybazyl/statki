@@ -180,10 +180,10 @@ test('broń główna: ścieżka ogólna i wizual 3D bez zmian', () => {
 test('AI podaje cel PD, adapter przekazuje go do fireWeaponCore', async () => {
   const { readFileSync } = await import('node:fs');
   const ai = readFileSync(new URL('../src/ai/capitalAI.js', import.meta.url), 'utf8');
-  assert.match(ai, /pdTarget: weapon\.pd \? bestTarget : null/);
+  assert.match(ai, /opts\.pdTarget = weapon\.pd \? bestTarget : null;/);
   const adapter = html.slice(html.indexOf('window.spawnBulletAdapter = function'), html.indexOf('function getNpcEmitterUid('));
-  assert.match(adapter, /pdTarget: opts\.pdTarget \|\| null/);
-  assert.match(adapter, /emitterUid: opts\.hp\?\.id != null \? getNpcEmitterUid\(owner, opts\.hp\) : null/);
+  assert.match(adapter, /muzzle\.pdTarget = opts\.pdTarget \|\| null;/);
+  assert.match(adapter, /muzzle\.emitterUid = opts\.hp\?\.id != null \? getNpcEmitterUid\(owner, opts\.hp\) : null;/);
   const fire = sliceFunction(html, 'window.fireWeaponCore = function (shooter, target, weaponId, muzzleData) {');
   assert.match(fire, /\(pdBeam && muzzleData\.pdTarget\)\s*\?\s*resolvePdBeamHit\(/);
 });

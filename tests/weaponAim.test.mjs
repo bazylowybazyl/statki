@@ -189,6 +189,7 @@ function firingCore(ship, owner = 'player') {
     },
     MASTER_WEAPONS, mouse: { x: -500, y: 900 }, targetingMode: { wheelOpen: false },
     isTargetAlive: target => !!target && !target.dead, scannerTargetPoint: target => target,
+    getTargetX: target => target.x, getTargetY: target => target.y,
     isFlakWeapon: () => false, getPotentialPlanetaryRingTargets: null, DESTRUCTOR_CONFIG: {},
     createPdBeamHit, resolvePdBeamHit, isPointDefenseWeapon, spatialCellKey,
     getEntityShieldBlockingRadiusTowards: () => 0, findBeamHexShard: () => null, DestructorSystem: {},
