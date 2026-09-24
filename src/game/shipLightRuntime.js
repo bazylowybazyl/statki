@@ -9,6 +9,32 @@ export const MAX_NAV_LIGHT_SPRITES = 512;
 const EPSILON = 1e-6;
 const LIGHT_KIND_LIST = Object.values(LIGHT_KINDS);
 
+// Podpis payloadu świateł jako liczba (FNV-1a 32-bit), nie `join('|')` —
+// podpis liczy się dla każdej encji w każdej klatce, a string na ~300 części
+// (Atlas: 22 lampy) był jednym z głównych kosztów „U hex”. Liczby mieszamy po
+// bitach Float64 (bez alokacji), stringi po kodach znaków. Kolizje są pomijalne:
+// podpis porównujemy tylko z poprzednim podpisem tej samej encji.
+const FNV_OFFSET_BASIS = 0x811c9dc5;
+const FNV_PRIME = 0x01000193;
+const _hashF64 = new Float64Array(1);
+const _hashU32 = new Uint32Array(_hashF64.buffer);
+
+function hashMixNumber(hash, value) {
+  _hashF64[0] = Number(value);
+  hash = Math.imul(hash ^ _hashU32[0], FNV_PRIME);
+  return Math.imul(hash ^ _hashU32[1], FNV_PRIME);
+}
+
+function hashMixString(hash, value) {
+  const str = typeof value === 'string' ? value : String(value ?? '');
+  hash = Math.imul(hash ^ str.length, FNV_PRIME);
+  for (let i = 0; i < str.length; i++) hash = Math.imul(hash ^ str.charCodeAt(i), FNV_PRIME);
+  return hash;
+}
+
+// Znacznik sekcji świateł zewnętrznych w podpisie (dawne 'external' w join).
+const HASH_EXTERNAL_SECTION = 0x45585452;
+
 // Wspólne parametry sekwencji świateł pozycyjnych ("pas startowy").
 // Z tych wartości korzystają DWA shadery: pętla lamp w kadłubie (hexShips3D)
 // i billboardy blasku (shipLights3D) — muszą pulsować w idealnej synchronizacji,
@@ -91,8 +117,27 @@ function getEntityLightSource(entity) {
   return entity?.editorLights || entity?.visual?.lights || entity?.capitalProfile?.lights || entity?.profile?.lights;
 }
 
+// Znormalizowany blok lamp per obiekt źródłowy. getEntityLights leci 2–3 razy
+// per encja per klatkę (emitery, billboardy, payload shadera), a normalizacja
+// budowała blok, tablice i obiekt na każdy marker. Źródła (`editorLights`
+// z npcHardpointRuntime / shipBridge / index.html) są podmieniane całościowo,
+// nigdy edytowane w miejscu, więc nowe źródło = nowy klucz = nowa normalizacja.
+// Wynik jest tylko do odczytu (wspólny dla wszystkich wywołań).
+const normalizedLightsCache = new WeakMap();
+const EMPTY_LIGHTS_BLOCK = Object.freeze({
+  [LIGHT_KINDS.POSITION]: Object.freeze([]),
+  [LIGHT_KINDS.ROAD]: Object.freeze([])
+});
+
 export function getEntityLights(entity) {
-  return normalizeLightsBlock(getEntityLightSource(entity));
+  const source = getEntityLightSource(entity);
+  if (!source || typeof source !== 'object') return EMPTY_LIGHTS_BLOCK;
+  let block = normalizedLightsCache.get(source);
+  if (block === undefined) {
+    block = normalizeLightsBlock(source);
+    normalizedLightsCache.set(source, block);
+  }
+  return block;
 }
 
 // Tani test BEZ normalizacji: czy encja ma choć jeden marker lampy. Wraki,
@@ -280,36 +325,35 @@ export function buildShipLightShaderPayload(entity, grid, maxLights = MAX_SHADER
   pushKind(LIGHT_KINDS.POSITION);
   pushKind(LIGHT_KINDS.ROAD);
 
-  const signatureParts = [
-    Number(grid?.srcWidth) || 1,
-    Number(grid?.srcHeight) || 1,
-    Number(grid?.pivot?.x) || 0,
-    Number(grid?.pivot?.y) || 0,
-    scale.x,
-    scale.y
-  ];
-  for (const light of out) {
-    signatureParts.push(
-      light.id,
-      light.kind,
-      light.pos.x,
-      light.pos.y,
-      light.color.r,
-      light.color.g,
-      light.color.b,
-      light.radiusPx,
-      light.power,
-      light.dir.x,
-      light.dir.y,
-      light.rangePx,
-      light.coneDeg
-    );
+  // Te same składniki co dawny podpis tekstowy, w tej samej kolejności.
+  let hash = FNV_OFFSET_BASIS;
+  hash = hashMixNumber(hash, Number(grid?.srcWidth) || 1);
+  hash = hashMixNumber(hash, Number(grid?.srcHeight) || 1);
+  hash = hashMixNumber(hash, Number(grid?.pivot?.x) || 0);
+  hash = hashMixNumber(hash, Number(grid?.pivot?.y) || 0);
+  hash = hashMixNumber(hash, scale.x);
+  hash = hashMixNumber(hash, scale.y);
+  for (let i = 0; i < out.length; i++) {
+    const light = out[i];
+    hash = hashMixString(hash, light.id);
+    hash = hashMixString(hash, light.kind);
+    hash = hashMixNumber(hash, light.pos.x);
+    hash = hashMixNumber(hash, light.pos.y);
+    hash = hashMixNumber(hash, light.color.r);
+    hash = hashMixNumber(hash, light.color.g);
+    hash = hashMixNumber(hash, light.color.b);
+    hash = hashMixNumber(hash, light.radiusPx);
+    hash = hashMixNumber(hash, light.power);
+    hash = hashMixNumber(hash, light.dir.x);
+    hash = hashMixNumber(hash, light.dir.y);
+    hash = hashMixNumber(hash, light.rangePx);
+    hash = hashMixNumber(hash, light.coneDeg);
   }
 
   return {
     count: out.length,
     lights: out,
-    signature: signatureParts.join('|')
+    signature: hash >>> 0
   };
 }
 
@@ -448,6 +492,49 @@ export function buildPositionLightWorldSprites(entities, options = {}) {
   return out;
 }
 
+// Pudło zasięgu wszystkich emiterów drogowych klatki. Cel poza nim nie dostanie
+// światła z żadnego emitera (roadEmitterAffectsTarget), więc payload świateł
+// zewnętrznych można pominąć bez pętli po emiterach. Z testu stożka:
+// |P − E| ≤ range·(1 + tan φ) + R·(2 + tan φ), φ = połowa kąta stożka, R = promień celu.
+export function createRoadEmitterReach() {
+  return { count: 0, minX: 0, maxX: 0, minY: 0, maxY: 0, tanMax: 0 };
+}
+
+export function computeRoadEmitterReach(emitters, out) {
+  out.count = 0;
+  out.minX = Infinity;
+  out.maxX = -Infinity;
+  out.minY = Infinity;
+  out.maxY = -Infinity;
+  out.tanMax = 0;
+  const list = Array.isArray(emitters) ? emitters : [];
+  for (let i = 0; i < list.length; i++) {
+    const emitter = list[i];
+    if (!emitter) continue;
+    const range = Math.max(1, Number(emitter.rangeWorld) || 1);
+    const tan = Math.tan(clamp(emitter.coneDeg, 8, 160, 40) * Math.PI / 360);
+    const reach = range * (1 + tan);
+    const x = Number(emitter.x) || 0;
+    const y = Number(emitter.y) || 0;
+    if (x - reach < out.minX) out.minX = x - reach;
+    if (x + reach > out.maxX) out.maxX = x + reach;
+    if (y - reach < out.minY) out.minY = y - reach;
+    if (y + reach > out.maxY) out.maxY = y + reach;
+    if (tan > out.tanMax) out.tanMax = tan;
+    out.count++;
+  }
+  return out;
+}
+
+export function roadEmittersMayReach(reach, entity, grid, options = {}) {
+  if (!reach || reach.count === 0) return false;
+  const pos = getEntityPosition(entity, options);
+  const radius = getEntityRadiusWorld(entity, grid, getEntitySpriteScale(entity, options), options);
+  const inflate = radius * (2 + reach.tanMax);
+  return pos.x >= reach.minX - inflate && pos.x <= reach.maxX + inflate
+    && pos.y >= reach.minY - inflate && pos.y <= reach.maxY + inflate;
+}
+
 function roadEmitterAffectsTarget(emitter, entity, grid, options = {}) {
   const targetPos = getEntityPosition(entity, options);
   const targetScale = getEntitySpriteScale(entity, options);
@@ -514,24 +601,22 @@ export function buildCombinedShipLightShaderPayload(entity, grid, externalRoadLi
     Number(options?.maxExternalRoadLights) || MAX_EXTERNAL_ROAD_SHADER_LIGHTS,
     maxLights - payload.count
   ));
-  const signatureParts = [payload.signature, 'external'];
+  let hash = Math.imul((payload.signature | 0) ^ HASH_EXTERNAL_SECTION, FNV_PRIME);
   for (let i = 0; i < candidates.length && i < externalLimit; i++) {
     const light = candidates[i].light;
     payload.lights.push(light);
-    signatureParts.push(
-      light.id,
-      light.pos.x,
-      light.pos.y,
-      light.dir.x,
-      light.dir.y,
-      light.rangePx,
-      light.radiusPx,
-      light.power,
-      light.coneDeg
-    );
+    hash = hashMixString(hash, light.id);
+    hash = hashMixNumber(hash, light.pos.x);
+    hash = hashMixNumber(hash, light.pos.y);
+    hash = hashMixNumber(hash, light.dir.x);
+    hash = hashMixNumber(hash, light.dir.y);
+    hash = hashMixNumber(hash, light.rangePx);
+    hash = hashMixNumber(hash, light.radiusPx);
+    hash = hashMixNumber(hash, light.power);
+    hash = hashMixNumber(hash, light.coneDeg);
   }
 
   payload.count = payload.lights.length;
-  payload.signature = signatureParts.join('|');
+  payload.signature = hash >>> 0;
   return payload;
 }

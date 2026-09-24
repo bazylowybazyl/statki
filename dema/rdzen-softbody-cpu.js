@@ -265,6 +265,8 @@ export function createCpuSoftBody(options = {}) {
       if (Math.abs(s.targetDeformation.x - tx) > 0.001 || Math.abs(s.targetDeformation.y - ty) > 0.001) {
         s.targetDeformation.x = s.targetDeformation.x * 0.35 + tx * 0.65;
         s.targetDeformation.y = s.targetDeformation.y * 0.35 + ty * 0.65;
+        // Jak _applyResult: lista aktywnych sprężystości CPU od nowa.
+        if (entity.hexGrid) entity.hexGrid._elasticRescan = true;
         touch(i);
       }
       const stx = s.targetDeformation.x, sty = s.targetDeformation.y;

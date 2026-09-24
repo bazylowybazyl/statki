@@ -8,8 +8,12 @@ import {
   buildPositionLightWorldSprites,
   buildRoadLightWorldEmitters,
   buildShipLightShaderPayload,
+  computeRoadEmitterReach,
+  createRoadEmitterReach,
+  getEntityLights,
   glslFloat,
-  hexToRgb01
+  hexToRgb01,
+  roadEmittersMayReach
 } from '../src/game/shipLightRuntime.js';
 import { ATLAS_EDITOR_DEFAULTS } from '../src/data/atlasHardpointDefaults.js';
 
@@ -38,7 +42,88 @@ test('editor lights are packed into sprite grid coordinates for shader use', () 
   assert.equal(payload.lights[1].kind, 'road');
   assert.deepEqual(payload.lights[1].dir, { x: 1, y: 0 });
   assert.equal(payload.lights[1].rangePx, 1600);
-  assert.ok(payload.signature.includes('2|0.5'));
+  // Podpis jest liczbą (hash) — skala hardpointu nadal w nim siedzi.
+  assert.equal(typeof payload.signature, 'number');
+  const rescaled = buildShipLightShaderPayload({ ...entity, __hardpointScaleY: 0.6 }, grid);
+  assert.notEqual(rescaled.signature, payload.signature, 'zmiana skali musi zmienić podpis');
+});
+
+// Podpis liczbowy (FNV-1a) zamiast join('|') — pakiet F napraw po audycie bitwy.
+test('podpis świateł: ten sam blok → ten sam hash, zmiana lampy → inny', () => {
+  const lights = {
+    position: [{ id: 'p1', x: 10, y: -20, color: '#ff2b2b', power: 0.8, radius: 4 }],
+    road: [{ id: 'r1', x: -30, y: 40, color: '#ffffff', power: 3, radius: 14, deg: 90, range: 800, coneDeg: 40 }]
+  };
+  const grid = { srcWidth: 200, srcHeight: 100, pivot: { x: 5, y: -3 } };
+  const a = buildShipLightShaderPayload({ editorLights: lights }, grid).signature;
+  const b = buildShipLightShaderPayload({ editorLights: structuredClone(lights) }, grid).signature;
+  assert.equal(a, b, 'ten sam blok (także kopia) → ten sam podpis');
+  assert.ok(Number.isInteger(a) && a >= 0 && a <= 0xffffffff);
+
+  const moved = structuredClone(lights);
+  moved.position[0].x = 11;
+  assert.notEqual(buildShipLightShaderPayload({ editorLights: moved }, grid).signature, a, 'przesunięta lampa');
+  const recolored = structuredClone(lights);
+  recolored.road[0].color = '#ffeeee';
+  assert.notEqual(buildShipLightShaderPayload({ editorLights: recolored }, grid).signature, a, 'inny kolor');
+  const renamed = structuredClone(lights);
+  renamed.road[0].id = 'r2';
+  assert.notEqual(buildShipLightShaderPayload({ editorLights: renamed }, grid).signature, a, 'inne id');
+  assert.notEqual(buildShipLightShaderPayload({ editorLights: lights }, { ...grid, srcWidth: 201 }).signature, a, 'inna siatka');
+});
+
+test('podpis z emiterem zewnętrznym różni się od podpisu bazowego i zależy od emitera', () => {
+  const entity = { x: 0, y: 0, radius: 40, editorLights: { position: [{ id: 'p', x: 0, y: 0 }], road: [] } };
+  const grid = { srcWidth: 100, srcHeight: 100 };
+  const emitter = { owner: {}, ownerId: 'ally', id: 'road0', x: -100, y: 0, dir: { x: 1, y: 0 }, rangeWorld: 400, coneDeg: 40, radiusWorld: 10, power: 3 };
+  const base = buildShipLightShaderPayload(entity, grid).signature;
+  const combined = buildCombinedShipLightShaderPayload(entity, grid, [emitter]);
+  assert.equal(combined.count, 2);
+  assert.notEqual(combined.signature, base);
+  const again = buildCombinedShipLightShaderPayload(entity, grid, [{ ...emitter }]).signature;
+  assert.equal(again, combined.signature);
+  const shifted = buildCombinedShipLightShaderPayload(entity, grid, [{ ...emitter, x: -120 }]).signature;
+  assert.notEqual(shifted, combined.signature);
+});
+
+test('blok lamp jest normalizowany raz na obiekt źródłowy', () => {
+  const lights = { position: [{ id: 'p', x: 1, y: 2 }], road: [] };
+  const a = getEntityLights({ editorLights: lights });
+  const b = getEntityLights({ editorLights: lights });
+  assert.equal(a, b, 'to samo źródło → ten sam blok');
+  assert.notEqual(getEntityLights({ editorLights: { ...lights } }), a, 'nowe źródło → nowa normalizacja');
+  const empty = getEntityLights({});
+  assert.equal(getEntityLights(null), empty, 'brak źródła → wspólny pusty blok');
+  assert.ok(Object.isFrozen(empty) && empty.position.length === 0 && empty.road.length === 0);
+});
+
+test('pudło zasięgu emiterów jest zachowawcze: nie wycina celu, który emiter oświetla', () => {
+  let seed = 99;
+  const rnd = () => { seed = (Math.imul(seed, 1103515245) + 12345) >>> 0; return seed / 4294967296; };
+  const emitters = [];
+  for (let i = 0; i < 6; i++) {
+    const a = rnd() * Math.PI * 2;
+    emitters.push({
+      owner: {}, x: rnd() * 4000 - 2000, y: rnd() * 4000 - 2000,
+      dir: { x: Math.cos(a), y: Math.sin(a) }, rangeWorld: 100 + rnd() * 1500, coneDeg: 8 + rnd() * 150,
+      radiusWorld: 10, power: 3
+    });
+  }
+  const reach = computeRoadEmitterReach(emitters, createRoadEmitterReach());
+  assert.equal(reach.count, 6);
+  let reached = 0;
+  for (let k = 0; k < 3000; k++) {
+    const target = { x: rnd() * 30000 - 15000, y: rnd() * 30000 - 15000, radius: 10 + rnd() * 400, editorLights: null };
+    const lit = buildCombinedShipLightShaderPayload(target, { srcWidth: 100, srcHeight: 100 }, emitters).count > 0;
+    const may = roadEmittersMayReach(reach, target, { srcWidth: 100, srcHeight: 100 });
+    if (lit) {
+      reached++;
+      assert.ok(may, `cel oświetlony, a pudło go wycięło: ${JSON.stringify(target)}`);
+    }
+  }
+  assert.ok(reached > 20, `za mało oświetlonych celów w próbie: ${reached}`);
+  assert.equal(roadEmittersMayReach(reach, { x: 1e7, y: 1e7, radius: 50 }, null), false, 'daleki cel — bez payloadu');
+  assert.equal(roadEmittersMayReach(computeRoadEmitterReach([], createRoadEmitterReach()), { x: 0, y: 0, radius: 50 }, null), false);
 });
 
 test('shader payload clamps to the max supported light count with position lights first', () => {
