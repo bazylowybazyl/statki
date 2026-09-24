@@ -249,6 +249,11 @@ const WRECK_SLEEP_ANGULAR_SPEED = 0.03;
 const WRECK_SLEEP_SETTLE_TIME = 1.4;
 const WRECK_WAKE_REL_SPEED = 70.0;
 const WRECK_WAKE_OVERLAP_PAD = HEX_SPACING * 1.5;
+// Kontakt budzi wrak tylko wtedy, gdy faktycznie go ruszył (patrz
+// _wreckContactWakes): tyle zmiany prędkości albo przesunięcia w jednym kontakcie.
+// Spoczynkowy styk (wrak pod zaparkowanym okrętem) zostaje poniżej obu progów.
+const WRECK_CONTACT_WAKE_DV = 2.0;
+const WRECK_CONTACT_WAKE_DP = 0.5;
 
 function sampleHexMaskProfile(alphaData, width, height, centerX, centerY, radius, alphaThreshold, sampleThreshold) {
   let centerAlpha = 0;
@@ -2012,6 +2017,24 @@ export const DestructorSystem = {
     wreck._wreckSleepTimer = 0;
   },
 
+  // Czy kontakt w collideEntities ma obudzić wrak (px..w = stan wraku sprzed
+  // kontaktu). Szybka para albo ruchome ciało obok (ten sam próg co sen wraku
+  // w pętli wraków) — tak; poza tym tylko gdy kontakt naprawdę ruszył wrak.
+  // Styk dwóch ciał w spoczynku nie zeruje licznika snu.
+  _wreckContactWakes(wreck, other, relSpeed, px, py, vx, vy, w) {
+    if (relSpeed >= WRECK_WAKE_REL_SPEED) return true;
+    const ovx = getEntityVelX(other);
+    const ovy = getEntityVelY(other);
+    if (ovx * ovx + ovy * ovy >= WRECK_SLEEP_LINEAR_SPEED * WRECK_SLEEP_LINEAR_SPEED) return true;
+    const dvx = getEntityVelX(wreck) - vx;
+    const dvy = getEntityVelY(wreck) - vy;
+    if (dvx * dvx + dvy * dvy >= WRECK_CONTACT_WAKE_DV * WRECK_CONTACT_WAKE_DV) return true;
+    if (Math.abs(getEntityAngVel(wreck) - w) >= WRECK_SLEEP_ANGULAR_SPEED) return true;
+    const dx = getEntityPosX(wreck) - px;
+    const dy = getEntityPosY(wreck) - py;
+    return dx * dx + dy * dy >= WRECK_CONTACT_WAKE_DP * WRECK_CONTACT_WAKE_DP;
+  },
+
   _prepareBroadphase(entities) {
     const dbgEnabled = this._liveCollisionDebug?.enabled === true;
     const tBroadphase0 = dbgEnabled ? nowMs() : 0;
@@ -2957,7 +2980,11 @@ export const DestructorSystem = {
       const damageScale = Math.max(0.35, damage / 80);
       markRingSegmentHot(entity, 1500, 15000);
       this.wakeHexEntity(entity, DESTRUCTOR_CONFIG.elasticWakeFrames | 0);
-      if (entity.isWreck) this.wakeWreck(entity);
+      if (entity.isWreck) {
+        this.wakeWreck(entity);
+        // Czas symulacji (nie zegar ściany) — pauza nie „odlicza” ciszy po trafieniu.
+        entity._lastImpactMs = this._simulationTime * 1000;
+      }
 
       const customRadius = opts?.radius || DESTRUCTOR_CONFIG.bendingRadius;
 
@@ -3572,8 +3599,23 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
     const tCollide0 = dbgEnabled ? nowMs() : 0;
 
     try {
-      if (A?.isWreck) this.wakeWreck(A);
-      if (B?.isWreck) this.wakeWreck(B);
+      // Wrak budzimy dopiero PO znalezieniu kontaktu i tylko, gdy kontakt coś
+      // zmienia (_wreckContactWakes, na końcu). Bezwarunkowe wakeWreck w tym
+      // miejscu zerowało licznik snu każdej parze z nachodzącymi OBB, także bez
+      // styku — wrak pod zaparkowanym okrętem nigdy nie zasypiał, więc nie mógł
+      // też przejść w stan zimny.
+      const aWreck = A?.isWreck === true;
+      const bWreck = B?.isWreck === true;
+      const aPreX = aWreck ? getEntityPosX(A) : 0;
+      const aPreY = aWreck ? getEntityPosY(A) : 0;
+      const aPreVx = aWreck ? getEntityVelX(A) : 0;
+      const aPreVy = aWreck ? getEntityVelY(A) : 0;
+      const aPreW = aWreck ? getEntityAngVel(A) : 0;
+      const bPreX = bWreck ? getEntityPosX(B) : 0;
+      const bPreY = bWreck ? getEntityPosY(B) : 0;
+      const bPreVx = bWreck ? getEntityVelX(B) : 0;
+      const bPreVy = bWreck ? getEntityVelY(B) : 0;
+      const bPreW = bWreck ? getEntityAngVel(B) : 0;
 
       let iterator = A;
       let gridHolder = B;
@@ -4497,6 +4539,17 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         addEntityPosition(A, sepNx * corr * invMassA, sepNy * corr * invMassA);
         addEntityPosition(B, -sepNx * corr * invMassB, -sepNy * corr * invMassB);
       }
+
+      // Kontakt, który ruszył wrak, budzi go i liczy się jako trafienie
+      // (zimne wraki: warunek „od ostatniego kontaktu minęło…”).
+      if (aWreck && this._wreckContactWakes(A, B, relSpeed, aPreX, aPreY, aPreVx, aPreVy, aPreW)) {
+        this.wakeWreck(A);
+        A._lastImpactMs = this._simulationTime * 1000;
+      }
+      if (bWreck && this._wreckContactWakes(B, A, relSpeed, bPreX, bPreY, bPreVx, bPreVy, bPreW)) {
+        this.wakeWreck(B);
+        B._lastImpactMs = this._simulationTime * 1000;
+      }
     } finally {
       // Wyjątek w środku zgniotu nie może zostawić kontekstu rany włączonego —
       // następny pocisk rozżarzyłby wyrwę jak taran.
@@ -4561,7 +4614,11 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
     wreck._wreckAge = 0;
     wreck._wreckSleepTimer = 0;
     wreck._wreckSleeping = false;
+    // Zimny wrak (hexGrid === null) też tu trafia — releaseHexGridArena to
+    // toleruje, a spawnWreckEntity da mu nową skorupę siatki przy wydaniu z puli.
     if ((DESTRUCTOR_CONFIG.packedHexArena | 0) === 1) releaseHexGridArena(wreck);
+    wreck.isCold = false;
+    wreck._coldSnapshot = null;
     wreck._inPool = true;
     this._wreckPool.push(wreck);
     return true;
@@ -4940,23 +4997,18 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
     let wreck = this._wreckPool.pop();
 
     if (!wreck) {
-      const canvas = document.createElement('canvas');
-      wreck = {
-        hexGrid: {
-          map: {},
-          grid: [],
-          cacheCanvas: canvas,
-          cacheCtx: canvas.getContext('2d', { willReadFrequently: true }),
-          pivot: { x: 0, y: 0 },
-          _pendingEraseQueue: [],
-          meshDirtyAll: false,
-          meshDirtyStart: -1,
-          meshDirtyEnd: -1
-        }
-      };
+      wreck = { hexGrid: createWreckGridShell() };
+    } else if (!wreck.hexGrid) {
+      // Zimny wrak wyrzucony limitem MAX_COLD_WRECKS wrócił do puli bez siatki.
+      wreck.hexGrid = createWreckGridShell();
     }
 
     wreck._inPool = false;
+    wreck.isCold = false;
+    wreck._coldSnapshot = null;
+    wreck._wreckSleptSec = 0;
+    // Świeży fragment właśnie oderwało trafienie albo zgniot.
+    wreck._lastImpactMs = this._simulationTime * 1000;
     wreck._destrObbTick = -1;
     wreck.x = worldX;
     wreck.y = worldY;
@@ -5014,6 +5066,11 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
     wGrid.srcHeight = parent.hexGrid.srcHeight;
     wGrid.armorImage = parent.hexGrid.armorImage || null;
     wGrid.visualImage = parent.hexGrid.visualImage || null;
+    // Fragment żyje na komórkach szablonu rodzica (te same c/r, src, cols/rows),
+    // więc dziedziczy jego klucz — z niego zimny wrak odtwarza siatkę.
+    wGrid.hexTemplate = parent.hexGrid.hexTemplate || null;
+    wGrid.templateImage = parent.hexGrid.templateImage || null;
+    wGrid.templateAlpha = parent.hexGrid.templateAlpha;
 
     if (!HEX_SHIPS_3D_ACTIVE) {
       wGrid.cacheDirty = true;
@@ -5181,6 +5238,49 @@ function fillPristineHexCache(template, shards, cacheCtx) {
   cacheCtx.drawImage(canvas, 0, 0);
 }
 
+// Profil komórki szablonu: pokrycie maską wyznacza HP, masę i promień trafienia
+// heksa. initHexBody i odtworzenie zimnego wraku liczą to tym samym kodem, więc
+// odtworzony heks jest fizycznie tym samym heksem.
+function applyTemplateCellProfile(shard, cell) {
+  const coverage = Math.max(0.18, Math.min(1, Number(cell.coverage) || 1));
+  const radialCoverage = Math.max(0.22, Math.min(1, Number(cell.radialCoverage) || coverage));
+  const physicalScale = Math.max(0.30, Math.min(1, coverage * 0.82 + radialCoverage * 0.18));
+
+  shard.coverage = coverage;
+  shard.edgeMask = cell.edgeMask;
+  shard.maxHp = DESTRUCTOR_CONFIG.shardHP * physicalScale;
+  shard.hp = shard.maxHp;
+  shard.mass = DESTRUCTOR_CONFIG.shardMass * physicalScale;
+  shard.hitRadius = HIT_RAD * Math.max(0.42, Math.min(1, radialCoverage * 1.04));
+}
+
+// Indeks komórki szablonu po `c + ro * cols` (-1 = komórka poza maską).
+// Liczony raz na szablon, przy pierwszym zrzucie albo odtworzeniu.
+function getTemplateCellIndex(template) {
+  let index = template.cellIndex;
+  if (index) return index;
+  index = new Int32Array(template.cols * template.rows).fill(-1);
+  const cells = template.cells;
+  for (let i = 0; i < cells.length; i++) index[cells[i].c + cells[i].ro * template.cols] = i;
+  template.cellIndex = index;
+  return index;
+}
+
+function createWreckGridShell() {
+  const canvas = document.createElement('canvas');
+  return {
+    map: {},
+    grid: [],
+    cacheCanvas: canvas,
+    cacheCtx: canvas.getContext('2d', { willReadFrequently: true }),
+    pivot: { x: 0, y: 0 },
+    _pendingEraseQueue: [],
+    meshDirtyAll: false,
+    meshDirtyStart: -1,
+    meshDirtyEnd: -1
+  };
+}
+
 export function initHexBody(entity, image, isProjectile = false, massOverride = null, alphaCutoff = 40) {
   if (!entity || !image?.width || !isHexEligible(entity)) return;
 
@@ -5213,16 +5313,7 @@ export function initHexBody(entity, image, isProjectile = false, massOverride = 
     const ro = cell.ro;
 
     const shard = new HexShard(isProjectile ? null : src, x, y, r, c, ro, isProjectile ? '#ffcc00' : null);
-    const coverage = Math.max(0.18, Math.min(1, Number(cell.coverage) || 1));
-    const radialCoverage = Math.max(0.22, Math.min(1, Number(cell.radialCoverage) || coverage));
-    const physicalScale = Math.max(0.30, Math.min(1, coverage * 0.82 + radialCoverage * 0.18));
-
-    shard.coverage = coverage;
-    shard.edgeMask = cell.edgeMask;
-    shard.maxHp = DESTRUCTOR_CONFIG.shardHP * physicalScale;
-    shard.hp = shard.maxHp;
-    shard.mass = DESTRUCTOR_CONFIG.shardMass * physicalScale;
-    shard.hitRadius = HIT_RAD * Math.max(0.42, Math.min(1, radialCoverage * 1.04));
+    applyTemplateCellProfile(shard, cell);
     shard.__meshIndex = shards.length;
     shard.lx = x - cx;
     shard.ly = y - cy;
@@ -5279,7 +5370,12 @@ export function initHexBody(entity, image, isProjectile = false, massOverride = 
     // Najwiekszy dryf heksa poza nominalny obrys — zrodlo padu OBB.
     // Swiezy kadlub ma 0, wiec pudlo startuje ciasno.
     _maxHexDrift: 0,
-    pivot: null
+    pivot: null,
+    // Klucz szablonu (getHexBodyTemplate) — z niego zimny wrak odtwarza siatkę
+    // (captureHexBodySnapshot / initHexBodyFromSnapshot). Fragmenty go dziedziczą.
+    hexTemplate: isProjectile ? null : template,
+    templateImage: isProjectile ? null : image,
+    templateAlpha: alphaThreshold
   };
 
   rebuildNeighbors(entity.hexGrid);
@@ -5292,6 +5388,238 @@ export function initHexBody(entity, image, isProjectile = false, massOverride = 
   else if (!Number.isFinite(entity.mass) || entity.mass <= 0) {
     entity.mass = Math.max(10, sumShardMass(shards));
   }
+}
+
+// === ZIMNY WRAK: ZRZUT I ODTWORZENIE SIATKI ===
+// Zimny wrak (src/game/coldWrecks.js) nie ma hexGrid — heksy wracają do areny,
+// a stan siatki żyje w zwartym zrzucie po komórkach szablonu. Zrzut robimy PRZED
+// zwolnieniem areny i KOPIUJEMY liczby do własnych tablic: slot areny dostanie po
+// zwolnieniu inny heks. Deformacja sprężysta (deformation/targetDeformation) nie
+// przeżywa zamrożenia — zamarza tylko wrak uśpiony od dawna, więc i tak wygasła.
+// Zostaje trwały kształt (_bakedOffX/Y, a z nim gridX/gridY), HP i maska żywych.
+//
+// null = siatka nie leży na komórkach szablonu (np. awaryjny wrak z
+// createWreckage bez destruktora albo kula-pocisk) — takiego wraku nie zamrażamy.
+export function captureHexBodySnapshot(entity) {
+  const grid = entity?.hexGrid;
+  const template = grid?.hexTemplate;
+  const shards = grid?.shards;
+  if (!template || !Array.isArray(shards) || shards.length === 0) return null;
+  const cols = template.cols;
+  const rows = template.rows;
+  if ((grid.cols | 0) !== cols || (grid.rows | 0) !== rows) return null;
+  if ((Number(grid.srcWidth) || 0) !== template.w || (Number(grid.srcHeight) || 0) !== template.h) return null;
+
+  let live = 0;
+  for (let i = 0; i < shards.length; i++) {
+    const s = shards[i];
+    if (s && s.active && !s.isDebris) live++;
+  }
+  if (live === 0) return null;
+
+  const cellIndex = getTemplateCellIndex(template);
+  const cells = new Uint32Array(live);
+  const hp = new Float32Array(live);
+  const maxHp = new Float32Array(live);
+  const bakedX = new Float32Array(live);
+  const bakedY = new Float32Array(live);
+
+  // Zasięg AKTYWNYCH heksów w układzie mesha — ten sam wzór co
+  // getGridActiveExtent w hexShips3D.js, więc smuga zimnego wraku pokrywa się
+  // ze smugą, którą rysował jeszcze jako gorący.
+  const pivotX = Number(grid.pivot?.x) || 0;
+  const pivotY = Number(grid.pivot?.y) || 0;
+  const offX = template.w * 0.5 + pivotX;
+  const offY = template.h * 0.5 + pivotY;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  let k = 0;
+  for (let i = 0; i < shards.length; i++) {
+    const s = shards[i];
+    if (!s || !s.active || s.isDebris) continue;
+    const c = s.c | 0;
+    const r = s.r | 0;
+    if (c < 0 || r < 0 || c >= cols || r >= rows) return null;
+    const key = c + r * cols;
+    if (cellIndex[key] < 0) return null;
+    cells[k] = key;
+    hp[k] = Number(s.hp) || 0;
+    maxHp[k] = Number(s.maxHp) || 0;
+    bakedX[k] = Number(s._bakedOffX) || 0;
+    bakedY[k] = Number(s._bakedOffY) || 0;
+    const x = (Number(s.gridX) || 0) - offX;
+    const y = (Number(s.gridY) || 0) - offY;
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+    k++;
+  }
+  const pad = Math.max(2, Number(shards[0]?.radius) || 20);
+  const storedActive = Number(grid.activeStructuralCount);
+
+  return {
+    version: 1,
+    // Klucz szablonu = to, czym kluczuje getHexBodyTemplate. `template` i obrazy
+    // to referencje, nie dane do JSON.
+    // AGENT: zrzut zimnego wraku do zapisu świata — obrazy przez id typu kadłuba,
+    // typed arrays jako tablice/base64; `template` odtwarza getHexBodyTemplate.
+    template,
+    templateImage: grid.templateImage || null,
+    templateAlpha: grid.templateAlpha,
+    srcWidth: template.w,
+    srcHeight: template.h,
+    hexRadius: Number(shards[0]?.radius) || DESTRUCTOR_CONFIG.gridDivisions,
+    cols,
+    rows,
+    armorImage: grid.armorImage || null,
+    visualImage: grid.visualImage || null,
+    normalMapImage: grid.normalMapImage || null,
+    pivot: grid.pivot ? { x: pivotX, y: pivotY } : null,
+    isFragment: grid.isFragment === true,
+    disableSolidArmorLod: grid.disableSolidArmorLod === true,
+    activeStructuralCount: Number.isFinite(storedActive) ? storedActive : live,
+    baseStructuralCount: Number(grid.baseStructuralCount) || live,
+    maxHexDrift: Number(grid._maxHexDrift) || 0,
+    rawRadius: Number.isFinite(Number(grid.rawRadius)) ? Number(grid.rawRadius) : null,
+    x: getEntityPosX(entity),
+    y: getEntityPosY(entity),
+    angle: getEntityAngle(entity),
+    radius: Number(entity.radius) || 0,
+    scaleX: getFinalScaleX(entity),
+    scaleY: getFinalScaleY(entity),
+    // Żywe heksy w kolejności siatki: klucz komórki (c + r·cols), HP, trwałe wgniecenie.
+    cells,
+    hp,
+    maxHp,
+    bakedX,
+    bakedY,
+    // Smuga (px sprite'a względem pivota), kolor dopisuje renderer przy zamrażaniu.
+    extent: {
+      halfW: (maxX - minX) * 0.5 + pad,
+      halfH: (maxY - minY) * 0.5 + pad,
+      cx: (minX + maxX) * 0.5,
+      cy: (minY + maxY) * 0.5
+    },
+    color: null
+  };
+}
+
+// Odtwarza hexGrid ze zrzutu: te same komórki szablonu, te same HexShard i ten
+// sam profil komórki co initHexBody, to samo wpięcie w arenę; sąsiedzi jak w
+// initHexBody. `image` = obraz szablonu, potrzebny tylko gdy zrzut nie niesie
+// referencji do szablonu (np. po wczytaniu z zapisu). Fragment zachowuje
+// srcWidth/srcHeight rodzica (to wymiary szablonu) — próbkuje jego teksturę.
+export function initHexBodyFromSnapshot(entity, image, snapshot) {
+  if (!entity || !snapshot?.cells) return false;
+  const r = Number(snapshot.hexRadius) || DESTRUCTOR_CONFIG.gridDivisions;
+  let template = snapshot.template || null;
+  if (!template) {
+    const source = image || snapshot.templateImage;
+    if (!source) return false;
+    const alphaThreshold = Math.max(0, Math.min(255, Number(snapshot.templateAlpha) || 40));
+    const alphaSampleThreshold = Math.max(8, Math.min(255, alphaThreshold * 0.75));
+    template = getHexBodyTemplate(source, snapshot.srcWidth, snapshot.srcHeight, r, Math.sqrt(3) * r, alphaThreshold, alphaSampleThreshold);
+  }
+  if (!template || template.cols !== snapshot.cols || template.rows !== snapshot.rows) return false;
+
+  const cellIndex = getTemplateCellIndex(template);
+  const src = template.src;
+  const cols = template.cols;
+  const rows = template.rows;
+  const w = template.w;
+  const h = template.h;
+  const cx = w * 0.5;
+  const cy = h * 0.5;
+  const shards = [];
+  const map = {};
+  const gridCells = new Array(cols * rows);
+
+  for (let i = 0; i < snapshot.cells.length; i++) {
+    const key = snapshot.cells[i];
+    const ci = key < cellIndex.length ? cellIndex[key] : -1;
+    if (ci < 0) continue;
+    const cell = template.cells[ci];
+    const shard = new HexShard(src, cell.x, cell.y, r, cell.c, cell.ro, null);
+    applyTemplateCellProfile(shard, cell);
+    shard.maxHp = snapshot.maxHp[i];
+    shard.hp = snapshot.hp[i];
+    const bx = snapshot.bakedX[i];
+    const by = snapshot.bakedY[i];
+    // Niezmiennik obu ścieżek wypalania (CPU i GPU): gridX = origGridX + _bakedOffX.
+    shard.gridX = cell.x + bx;
+    shard.gridY = cell.y + by;
+    shard._bakedOffX = bx;
+    shard._bakedOffY = by;
+    shard.lx = cell.x - cx;
+    shard.ly = cell.y - cy;
+    shard.origLx = shard.lx;
+    shard.origLy = shard.ly;
+    shard.__meshIndex = shards.length;
+    shards.push(shard);
+    map[cell.c + ',' + cell.ro] = shard;
+    gridCells[key] = shard;
+  }
+  if (!shards.length) return false;
+
+  const cacheCanvas = document.createElement('canvas');
+  cacheCanvas.width = w;
+  cacheCanvas.height = h;
+  const cacheCtx = cacheCanvas.getContext('2d', { willReadFrequently: true });
+  const storedActive = Number(snapshot.activeStructuralCount);
+
+  const grid = {
+    shards,
+    map,
+    grid: gridCells,
+    cols,
+    rows,
+    srcWidth: w,
+    srcHeight: h,
+    armorImage: snapshot.armorImage || src,
+    visualImage: snapshot.visualImage || null,
+    cacheCanvas,
+    cacheCtx,
+    _pendingEraseQueue: [],
+    // 2D rysuje kanwę cache od zera z heksów; 3D bierze teksturę z visualImage/armorImage.
+    cacheDirty: !HEX_SHIPS_3D_ACTIVE,
+    textureDirty: !HEX_SHIPS_3D_ACTIVE,
+    meshDirty: false,
+    meshDirtyAll: false,
+    meshDirtyStart: -1,
+    meshDirtyEnd: -1,
+    meshRevision: 0,
+    visualDirtyAll: false,
+    visualDirtyStart: -1,
+    visualDirtyEnd: -1,
+    gpuTextureNeedsUpdate: false,
+    isFragment: snapshot.isFragment === true,
+    disableSolidArmorLod: snapshot.disableSolidArmorLod === true,
+    isSleeping: false,
+    sleepFrames: 0,
+    wakeHoldFrames: DESTRUCTOR_CONFIG.elasticWakeFrames | 0,
+    activeStructuralCount: Number.isFinite(storedActive)
+      ? Math.max(0, Math.min(shards.length, storedActive))
+      : shards.length,
+    baseStructuralCount: Math.max(shards.length, Number(snapshot.baseStructuralCount) || 0),
+    _maxHexDrift: Number(snapshot.maxHexDrift) || 0,
+    _fractureImpact: null,
+    pivot: snapshot.pivot ? { x: snapshot.pivot.x, y: snapshot.pivot.y } : null,
+    hexTemplate: template,
+    templateImage: snapshot.templateImage || image || null,
+    templateAlpha: snapshot.templateAlpha
+  };
+  if (snapshot.normalMapImage) grid.normalMapImage = snapshot.normalMapImage;
+  if (Number.isFinite(snapshot.rawRadius)) grid.rawRadius = snapshot.rawRadius;
+
+  entity.hexGrid = grid;
+  markGridMeshDirtyAll(grid);
+  rebuildNeighbors(grid);
+  if ((DESTRUCTOR_CONFIG.packedHexArena | 0) === 1) attachHexGridToArena(entity, shards);
+  entity._destrObbTick = -1;
+  return true;
 }
 
 export function getHexStructuralState(entity) {
