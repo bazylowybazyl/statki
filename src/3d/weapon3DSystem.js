@@ -34,6 +34,11 @@ const bulletInstances = {
 };
 const BEAM_SPIRAL_SEGMENTS = 48;
 const MAX_CONTINUOUS_BEAM_VISUALS = 56;
+// Sufit wizuali wiązki pulsacyjnej (Group + 2 Mesh + 2 materiały każdy, życie
+// 0,15 s). Bez niego pula rosła na stałe: przy tysiącach strzałów PD na sekundę
+// to było 450–1 100 aktywnych grup i ~2 000 draw calli. Po zapełnieniu
+// recykling najstarszej aktywnej (jak MAX_CONTINUOUS_BEAM_VISUALS).
+export const MAX_PULSE_BEAM_VISUALS = 96;
 const BEAM_ENABLE_SPIRAL = false;
 const BEAM_ENABLE_IMPACT_LIGHT = false;
 
@@ -815,6 +820,17 @@ export const Weapon3DSystem = {
   _acquirePulseBeam() {
     if (!Core3D.isInitialized || !Core3D.scene) return null;
     let data = this._pulseBeamPool.pop();
+    if (!data && this._pulseBeamActive.length >= MAX_PULSE_BEAM_VISUALS) {
+      // Pula pełna: przejmij najstarszą aktywną (najmniej życia). Zostaje na
+      // liście aktywnych — wołający nadpisze jej pozycję i życie.
+      const active = this._pulseBeamActive;
+      let oldest = active[0] || null;
+      for (let i = 1; i < active.length; i++) {
+        if (active[i].life < oldest.life) oldest = active[i];
+      }
+      if (oldest) oldest.group.visible = true;
+      return oldest;
+    }
     if (!data) data = createPulseBeamVisual();
     if (!data) return null;
     data.group.visible = true;

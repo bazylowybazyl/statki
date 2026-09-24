@@ -8,6 +8,7 @@ import {
 } from './capitalAiTuning.js';
 import { getBattleSlot } from './fleetCoordinator.js';
 import { AWARENESS_CONFIG } from './fleetAwareness.js';
+import { PD_CHIP_ID, PD_HULL_SCORE, isPointDefenseWeapon } from './pointDefenseTargeting.js';
 import {
   flightSpeedLimit,
   flightTurnTime,
@@ -473,6 +474,9 @@ function initAutonomousWeapons(npc) {
           mountAngle: baseAngle,
           arc: arc,
           prefers: prefers,
+          // Obrona punktowa (gniazdo aux): kadłub spoza `prefers` to brak celu,
+          // chyba że okręt ma PD CHIP (getTargetScoreForWeapon).
+          pd: isPointDefenseWeapon(def),
           scanProfile
         });
       }
@@ -487,7 +491,7 @@ function initAutonomousWeapons(npc) {
   npc.__weaponFacingBias = undefined;
 }
 
-function getTargetScoreForWeapon(weapon, target, isRocket = false, knownKind = null) {
+function getTargetScoreForWeapon(weapon, target, isRocket = false, knownKind = null, pdHullsAllowed = false) {
   if (!target) return -1;
   const kind = isRocket ? 'rocket' : (knownKind || window.getUnitKind?.(target) || 'other');
 
@@ -497,9 +501,20 @@ function getTargetScoreForWeapon(weapon, target, isRocket = false, knownKind = n
   if (prefIndex !== -1) {
     score += (10 - prefIndex) * 100;
   } else {
+    // PD: cel spoza `prefers` (kadłub) to ODRZUCENIE, nie wynik 0 — inaczej
+    // lufy PD mieliły kadłuby za 20% obrażeń i zalewały bitwę pociskami.
+    // Z PD CHIP-em kadłub wolno, ale zawsze za rakietą i myśliwcem.
+    if (weapon.pd) return pdHullsAllowed ? PD_HULL_SCORE : -Infinity;
     if (weapon.type === 'rail' && kind === 'fighter') score -= 500;
   }
   return score;
+}
+
+// Czy PD bez chipa może trzymać ten cel: pocisk (rakieta/torpeda) albo myśliwiec.
+function isPdTargetWithoutChip(target) {
+  if (!target) return false;
+  if (isProjectileTarget(target)) return true;
+  return window.getUnitKind?.(target) === 'fighter';
 }
 
 const SUBSYSTEM_PRIORITY = ['main', 'missile', 'aux', 'special', 'hangar'];
@@ -756,7 +771,8 @@ const _leadOriginScratch = { x: 0, y: 0 };
 const _leadTargetScratch = { x: 0, y: 0, vx: 0, vy: 0 };
 let nextWeaponGeometryId = 1;
 
-function processAutonomousWeapons(npc, dt) {
+// Eksport dla testów (tests/pointDefenseTargeting.test.mjs); gra woła przez mózgi.
+export function processAutonomousWeapons(npc, dt) {
   if (!npc) return;
   // Carrier: wypuszczanie eskadr z hangarów (early-return wewnątrz dla nie-carrierów).
   if (window.updateNpcHangars) window.updateNpcHangars(npc, dt);
@@ -770,6 +786,8 @@ function processAutonomousWeapons(npc, dt) {
   const losTargets = npc._weaponLosTargets || (npc._weaponLosTargets = []);
   const losBlocked = npc._weaponLosBlocked || (npc._weaponLosBlocked = []);
   let losCount = 0;
+  // PD CHIP to cecha okrętu, nie działa — pytamy raz na wywołanie.
+  const pdHullsAllowed = window.hasShipChip?.(npc, PD_CHIP_ID) === true;
 
   for (let wIdx = 0; wIdx < npc.autoWeapons.length; wIdx++) {
     const weapon = npc.autoWeapons[wIdx];
@@ -801,7 +819,10 @@ function processAutonomousWeapons(npc, dt) {
       weapon.scanCd <= 0 ||
       !bestTarget ||
       bestTarget.dead ||
-      (bestTarget.x == null && bestTarget.pos?.x == null);
+      (bestTarget.x == null && bestTarget.pos?.x == null) ||
+      // Cel sprzed zmiany reguł (albo sprzed zdjęcia chipa) może być kadłubem —
+      // PD bez chipa nie trzyma go ani jednej decyzji dłużej.
+      (weapon.pd && !pdHullsAllowed && !isPdTargetWithoutChip(bestTarget));
 
     if (mustRescan) {
       bestTarget = null;
@@ -833,11 +854,15 @@ function processAutonomousWeapons(npc, dt) {
         const distSq = cache.enemyDistSq[i];
         if (distSq > rangeSq) continue;
 
+        const candidateKind = cache.enemyKinds[i];
+        // PD bez chipa: z okrętów tylko myśliwce (rakiety zebrała pętla wyżej).
+        if (weapon.pd && !pdHullsAllowed && candidateKind !== 'fighter') continue;
+
         const absTargetAngle = cache.enemyAngles[i];
         const angleDiff = Math.abs(window.wrapAngle(absTargetAngle - restAngle));
         if (angleDiff > weapon.arc) continue;
 
-        const candidateScore = getTargetScoreForWeapon(weapon, candidate, false, cache.enemyKinds[i]) - distSq * 0.001;
+        const candidateScore = getTargetScoreForWeapon(weapon, candidate, false, candidateKind, pdHullsAllowed) - distSq * 0.001;
         if (candidateScore <= bestScore) continue;
         bestScore = candidateScore;
         bestTarget = candidate;

@@ -928,6 +928,17 @@
     import { DestructorSystem, initHexBody, isHexShips3DActive, setHexShips3DActive, getHexStructuralState, getHexArenaStats, disposeHexBody, DESTRUCTOR_CONFIG, getCollisionBoundsDebug, getBroadphaseDebugInfo, findBeamHexShard } from "./src/game/destructor.js";
     import { TowConstraintSystem } from "./src/game/towSystem.js";
     import { createWeaponInventory, fillWeaponInventory } from "./src/game/weaponInventory.js";
+    import { CHIPS, CHIP_ORDER, PD_CHIP_ID } from "./src/data/chips.js";
+    import {
+      chipListHas,
+      hullHasChip,
+      normalizeHullChips,
+      serializeHullChips,
+      installHullChip,
+      removeHullChip,
+      chipRemovalRefund
+    } from "./src/game/shipChips.js";
+    import { resolveNpcSpecFrameId, selectSpecSlots } from "./src/game/npcWeaponSpec.js";
     import {
       buildWarpRoutes,
       getWarpRoute as lookupWarpRoute,
@@ -4728,6 +4739,7 @@
           activeHullId,
           ownedHullIds: [...getPlayerOwnedHullIds()],
           shipFrame: activeHullDef?.shipFrame || Game.player.shipFrame || DEFAULT_PLAYER_HULL_ID,
+          hullChips: serializeHullChips(PLAYER.hullChips),
           hardpoints: Game.player.hardpoints.map(h => ({
             id: h.id,
             type: h.type,
@@ -4747,6 +4759,10 @@
         const data = JSON.parse(raw);
         const loadedOwned = Array.isArray(data?.ownedHullIds) ? data.ownedHullIds : [];
         for (const hullId of loadedOwned) ensurePlayerOwnsHull(hullId);
+        // Zapis sprzed chipów nie ma pola — wtedy brak chipów.
+        PLAYER.hullChips = normalizeHullChips(data?.hullChips, {
+          isValidHull: (hullId) => !!PLAYER_HULL_CATALOG[hullId]
+        });
         const requestedHull = normalizePlayerHullId(data?.activeHullId || PLAYER.activeHullId || DEFAULT_PLAYER_HULL_ID);
         ensurePlayerOwnsHull(requestedHull);
         applyPlayerHullProfile(requestedHull, { preserveDamageRatio: true, syncVisuals: true, persist: false });
@@ -8910,13 +8926,24 @@
         missile: 'missile_rack'
       };
 
-      // Przypisz fizyczne bronie do pustych hardpointów
+      // Layout z edytora (także 'hpEditor.v1') to pozycje wizualne — bywa ich
+      // 3–10× więcej niż spec ramy. Broń dostaje najwyżej SHIPS[rama].spec[typ]
+      // gniazd, rozłożonych po kącie wokół kadłuba (src/game/npcWeaponSpec.js).
+      // Reszta zostaje PUSTA (hp.mount = null): Turret2D, AI i integralność
+      // hardpointów widzą tylko broń, która naprawdę jest.
+      const specFrameId = resolveNpcSpecFrameId(npc, SHIPS);
+      const armedSlots = selectSpecSlots(npc.editorHardpoints, specFrameId ? SHIPS[specFrameId].spec : null, Object.keys(loadout));
+
+      // Przypisz fizyczne bronie do wybranych hardpointów
       for (const hp of npc.editorHardpoints) {
         const weaponId = loadout[hp.type];
-        if (weaponId && MASTER_WEAPONS[weaponId]) {
-          hp.mount = weaponId;
-          npc.weapons[hp.type].push({ hp: hp, weapon: MASTER_WEAPONS[weaponId] });
+        if (!weaponId || !MASTER_WEAPONS[weaponId]) continue;
+        if (!armedSlots.has(hp)) {
+          hp.mount = null;
+          continue;
         }
+        hp.mount = weaponId;
+        npc.weapons[hp.type].push({ hp: hp, weapon: MASTER_WEAPONS[weaponId] });
       }
     }
 
@@ -10216,6 +10243,11 @@
     function renderAvailableWeapons(root) {
       if (!root) return;
       root.innerHTML = '';
+      // Zakładka „Chipy” zajmuje lewą kartę zamiast magazynu broni.
+      if (mechanicWeaponFilter === 'chips') {
+        renderMechanicChips(root);
+        return;
+      }
       const inventory = Game.player?.inventory || new Set();
       const filter = mechanicWeaponFilter;
       const weapons = [...inventory]
@@ -10262,6 +10294,124 @@
         empty.textContent = filter === 'all' ? 'Pusty magazyn.' : 'Brak broni w wybranej kategorii.';
         root.appendChild(empty);
       }
+    }
+
+    // Nagłówek lewej karty warsztatu: magazyn broni albo chipy.
+    const MECHANIC_LEFT_CARD_TEXT = {
+      weapons: {
+        title: 'Magazyn broni',
+        badge: 'Loadout',
+        desc: 'Przeciagnij bron na slot po prawej stronie.'
+      },
+      chips: {
+        title: 'Chipy',
+        badge: 'Kadłub',
+        desc: 'Chip działa na kadłubie, na którym go zainstalujesz. Bez PD CHIP obrona punktowa '
+          + '(CIWS, laser PD, flak) strzela tylko do rakiet, torped i myśliwców — w kadłuby nie celuje.'
+      }
+    };
+
+    function syncMechanicLeftCardHeader() {
+      const text = mechanicWeaponFilter === 'chips' ? MECHANIC_LEFT_CARD_TEXT.chips : MECHANIC_LEFT_CARD_TEXT.weapons;
+      const title = document.getElementById('mechanic-left-title');
+      if (title && title.textContent !== text.title) title.textContent = text.title;
+      const badge = document.getElementById('mechanic-left-badge');
+      if (badge && badge.textContent !== text.badge) badge.textContent = text.badge;
+      const desc = document.getElementById('mechanic-left-desc');
+      if (desc && desc.textContent !== text.desc) desc.textContent = text.desc;
+    }
+
+    // Zakładka „Chipy”: katalog (src/data/chips.js) dla AKTYWNEGO kadłuba — chip
+    // jest per kadłub, jak loadout. Instalacja kosztuje CR (z ?dev za darmo),
+    // zdjęcie zwraca 50% ceny (CHIP_REMOVE_REFUND); w ?dev zdjęcie nic nie zwraca,
+    // żeby darmowa instalacja nie drukowała kredytów.
+    function renderMechanicChips(root) {
+      const hullId = PLAYER.activeHullId;
+      const hullName = getPlayerHullDef(hullId)?.name || hullId;
+      const devFree = isMechanicDevMode();
+
+      const header = document.createElement('div');
+      header.className = 'list-group-header';
+      header.textContent = `Kadłub: ${hullName}`;
+      root.appendChild(header);
+
+      for (const chipId of CHIP_ORDER) {
+        const def = CHIPS[chipId];
+        if (!def) continue;
+        const installed = hullHasChip(PLAYER.hullChips, hullId, chipId);
+        const row = document.createElement('div');
+        row.className = installed ? 'mechanic-chip-row installed' : 'mechanic-chip-row';
+        row.dataset.chipId = chipId;
+
+        const head = document.createElement('div');
+        head.className = 'mechanic-chip-head';
+        const name = document.createElement('span');
+        name.className = 'weapon-row-name';
+        name.textContent = def.name;
+        const status = document.createElement('span');
+        status.className = installed ? 'mechanic-chip-status installed' : 'mechanic-chip-status';
+        status.textContent = installed ? 'Zainstalowany' : 'Dostępny';
+        head.append(name, status);
+
+        const desc = document.createElement('div');
+        desc.className = 'card-desc';
+        desc.textContent = def.desc;
+
+        const actions = document.createElement('div');
+        actions.className = 'card-actions';
+        const price = document.createElement('span');
+        price.className = 'card-price';
+        price.textContent = devFree ? `${def.cost} CR (DEV: 0)` : `${def.cost} CR`;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        if (installed) {
+          const refund = chipRemovalRefund(def, { freeInstall: devFree });
+          btn.dataset.chipAction = 'remove';
+          btn.textContent = refund > 0 ? `Zdejmij (+${refund} CR)` : 'Zdejmij';
+          btn.addEventListener('click', () => removeMechanicChip(chipId));
+        } else {
+          const cost = devFree ? 0 : (Number(def.cost) || 0);
+          btn.dataset.chipAction = 'install';
+          btn.dataset.cost = String(cost);
+          btn.textContent = 'Zainstaluj';
+          btn.disabled = PLAYER.credits < cost;
+          btn.addEventListener('click', () => installMechanicChip(chipId));
+        }
+        actions.append(price, btn);
+        row.append(head, desc, actions);
+        root.appendChild(row);
+      }
+    }
+
+    function installMechanicChip(chipId) {
+      const def = CHIPS[chipId];
+      const hullId = PLAYER.activeHullId;
+      if (!def || hullHasChip(PLAYER.hullChips, hullId, chipId)) return false;
+      const cost = isMechanicDevMode() ? 0 : (Number(def.cost) || 0);
+      if (PLAYER.credits < cost) {
+        toast('Za mało kredytów');
+        return false;
+      }
+      PLAYER.credits -= cost;
+      installHullChip(PLAYER.hullChips, hullId, chipId);
+      saveLoadout();
+      toast(`Zainstalowano: ${def.name}`);
+      renderMechanic();
+      updateStationOverlay(stationUI.tab, stationUI.station);
+      return true;
+    }
+
+    function removeMechanicChip(chipId) {
+      const def = CHIPS[chipId];
+      const hullId = PLAYER.activeHullId;
+      if (!def || !removeHullChip(PLAYER.hullChips, hullId, chipId)) return false;
+      const refund = chipRemovalRefund(def, { freeInstall: isMechanicDevMode() });
+      PLAYER.credits += refund;
+      saveLoadout();
+      toast(refund > 0 ? `Zdjęto: ${def.name} (+${refund} CR)` : `Zdjęto: ${def.name}`);
+      renderMechanic();
+      updateStationOverlay(stationUI.tab, stationUI.station);
+      return true;
     }
 
     function mechanicHangarMountNames(hp) {
@@ -10416,6 +10566,7 @@
     }
     function renderMechanic() {
       setMechanicFilterActive('weapon-filter-tabs', mechanicWeaponFilter);
+      syncMechanicLeftCardHeader();
       setMechanicFilterActive('hp-filter-tabs', mechanicHardpointFilter);
       setMechanicBatchActive(mechanicBatchMode);
       renderAvailableWeapons(document.getElementById('mechanic-available'));
@@ -10497,12 +10648,26 @@
       // Per-hull weapon loadouts: { [hullId]: [{ id, type, mount, ammo, maxAmmo }] }.
       // Each owned ship remembers its own fitting across hull switches.
       hullLoadouts: {},
+      // Chipy per kadłub: { [hullId]: string[] } (katalog: src/data/chips.js).
+      // Zapis w 'loadout' (saveLoadout/loadLoadout); brak pola = brak chipów.
+      hullChips: {},
       ownedHulls: new Set([
         DEFAULT_PLAYER_HULL_ID,
         normalizePlayerHullId(persistedActiveHull),
         ...persistedOwnedHulls.map(normalizePlayerHullId)
       ])
     };
+
+    // Chip okrętu (src/data/chips.js). Gracz: PLAYER.hullChips[aktywny kadłub],
+    // NPC: opcjonalne entity.chips (Set albo tablica). Pytają o to pętle broni —
+    // AI PD przy każdej decyzji, ciwsStep co krok — więc zero alokacji.
+    function hasShipChip(entity, chipId) {
+      if (!entity || !chipId) return false;
+      if (entity === ship) return hullHasChip(PLAYER.hullChips, PLAYER.activeHullId, chipId);
+      return chipListHas(entity.chips, chipId);
+    }
+    window.hasShipChip = hasShipChip;
+
     const BLUEPRINTS = {
       upgrades: [
         { id: 'rail_cooler', name: 'Chłodzenie raila', cost: 600, apply() { rail.heatCap *= 1.25; rail.coolRate *= 1.15; } },
@@ -11194,10 +11359,10 @@
       pane.innerHTML = `
       <div class="station-card-aero mechanic-station-card mechanic-list-panel">
         <div class="card-header">
-          <div class="card-title">Magazyn broni</div>
-          <span class="card-badge">Loadout</span>
+          <div class="card-title" id="mechanic-left-title">Magazyn broni</div>
+          <span class="card-badge" id="mechanic-left-badge">Loadout</span>
         </div>
-        <p class="card-desc">Przeciagnij bron na slot po prawej stronie.</p>
+        <p class="card-desc" id="mechanic-left-desc">Przeciagnij bron na slot po prawej stronie.</p>
         <div class="mechanic-tabs" id="weapon-filter-tabs">
           <button class="mechanic-tab-btn" data-filter="all">Wszystkie</button>
           <button class="mechanic-tab-btn" data-filter="main">Bron glowna</button>
@@ -11206,6 +11371,7 @@
           <button class="mechanic-tab-btn" data-filter="hangar">Hangary</button>
           <button class="mechanic-tab-btn" data-filter="special">Bron specjalna</button>
           <button class="mechanic-tab-btn" data-filter="builtin">Wbudowane</button>
+          <button class="mechanic-tab-btn" data-filter="chips">Chipy</button>
           ${isMechanicDevMode() ? '<button class="mechanic-tab-btn" id="mechanic-fill-weapons" type="button">Fill weapons</button>' : ''}
         </div>
         <div id="mechanic-available" class="weapon-pool mechanic-list-scroll"></div>
@@ -11449,7 +11615,13 @@
     }
 
     function updateMechanicCards() {
-      // placeholder – repair moved to hangar tab
+      // Naprawa przeniesiona do hangaru. Tu tylko przyciski „Zainstaluj” chipów
+      // idą za stanem kredytów (jak przyciski rynku w hangarze).
+      const pane = stationOverlayDom.panels.mechanic;
+      if (!pane) return;
+      for (const btn of pane.querySelectorAll('button[data-chip-action="install"]')) {
+        btn.disabled = PLAYER.credits < (Number(btn.dataset.cost) || 0);
+      }
     }
     function renderStationOverlay(tab, station) {
       if (!stationOverlayState.built) initStationOverlay();
@@ -17421,6 +17593,8 @@
         }
       }
       const auxWeapons = Game.player.weapons?.[HP.AUX] || [];
+      // Bez PD CHIP-a obrona punktowa gracza strzela tylko do rakiet i myśliwców.
+      const pdHullsAllowed = hasShipChip(ship, PD_CHIP_ID);
       for (let i = 0; i < ship.ciws.length; i++) {
         if (i >= auxWeapons.length) break;
         const loadout = auxWeapons[i];
@@ -17454,12 +17628,11 @@
           if (d2 < bestDistSq) { bestDistSq = d2; target = rb; }
         }
 
-        // Priorytet 2: myśliwce i statki NPC.
-        // Flak przeszukuje dwuetapowo: najpierw SAME myśliwce, bo pancerz okrętu
-        // zjada mu ~85% odłamków. Bez tego bateria o zasięgu 5 km wybierałaby
-        // najbliższego pirata — zwykle wielki kadłub — i marnowała salwę,
-        // podczas gdy klucz myśliwców wchodziłby na burtę bez przeszkód.
-        if (!target && isFlak) {
+        // Priorytet 2: myśliwce. Każde PD szuka najpierw SAMYCH myśliwców —
+        // flakowi pancerz okrętu zjada ~85% odłamków, a CIWS/laser robi
+        // w kadłub 20% obrażeń, więc klucz myśliwców wchodzący na burtę jest
+        // zawsze ważniejszy niż najbliższy kadłub.
+        if (!target) {
           for (const npc of npcs) {
             if (npc.dead || npc.friendly || !npc.isPirate) continue;
             if (!isFighterNPC(npc)) continue;
@@ -17468,7 +17641,8 @@
             if (d2 < bestDistSq) { bestDistSq = d2; target = npc; }
           }
         }
-        if (!target) {
+        // Priorytet 3: dowolny piracki kadłub — tylko z PD CHIP-em.
+        if (!target && pdHullsAllowed) {
           for (const npc of npcs) {
             if (npc.dead || npc.friendly || !npc.isPirate) continue;
             const ddx = npc.x - base.x, ddy = npc.y - base.y;
