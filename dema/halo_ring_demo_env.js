@@ -491,6 +491,11 @@ export function createGameBackground(renderer, { starsZ }) {
   };
 }
 
+// Tekstura sprite'a kadłuba gracza (tryb lotu: frachtowce jak NPC).
+export function loadShipTexture(path, renderer) {
+  return loadTex(path, renderer, true);
+}
+
 export function createAtlasSprite(renderer) {
   const tex = loadTex('/assets/capital_ship_rect_v1.png', renderer, true);
   const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false });

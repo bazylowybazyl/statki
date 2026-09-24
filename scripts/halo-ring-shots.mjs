@@ -99,7 +99,25 @@ const SHOTS = [
   { id: 'transit_t01', q: { preset: 10 } },
   { id: 'transit_flight_z035', q: { cam: 'flight', k7: 'transit', zoom: 0.35 } },
   { id: 'transit_flight_z015', q: { cam: 'flight', k7: 'transit', zoom: 0.15 } },
-  { id: 'transit_game_z005', q: { cam: 'game', preset: 7, zoom: 0.05, ...atA(47000, 270) } }
+  { id: 'transit_game_z005', q: { cam: 'game', preset: 7, zoom: 0.05, ...atA(47000, 270) } },
+  // otwarte zatoki ze stanowiskami K-7 i kadłuby gracza jak NPC (2026-09-23)
+  { id: 'bay_cont_z035', q: { cam: 'flight', k7: 'docked', hull: 'container_ship', zoom: 0.35 } },
+  { id: 'bay_cont_z1', q: { cam: 'flight', k7: 'docked', hull: 'container_ship', zoom: 1.0 } },
+  { id: 'bay_mega_z02', q: { cam: 'flight', k7: 'docked', hull: 'megafreighter', zoom: 0.2 } },
+  { id: 'bay_long_z06', q: { cam: 'flight', k7: 'docked', hull: 'long_haul_freighter', zoom: 0.6 } },
+  { id: 'bay_shuttle_z2', q: { cam: 'flight', k7: 'docked', hull: 'inter_station_shuttle', zoom: 2.0 } },
+  { id: 'bay_free_z03', q: { cam: 'flight', k7: 'free', hull: 'container_ship', zoom: 0.3 } },
+  // megabudowle z ECUMENE (2026-09-24): ujęcie od frontu, noc, kamera gry
+  { id: 'lm0_gate', q: { landmark: 0 } },
+  { id: 'lm1_terrace', q: { landmark: 1 } },
+  { id: 'lm2_crown', q: { landmark: 2 } },
+  { id: 'lm4_bridge', q: { landmark: 4 } },
+  { id: 'lm6_glass_gate', q: { landmark: 6 } },
+  { id: 'lm2_night', q: { landmark: 2, night: 1 } },
+  { id: 'lm0_game_z045', q: { landmark: 0, cam: 'game', zoom: 0.45 } },
+  { id: 'lm2_game_z02', q: { landmark: 2, cam: 'game', zoom: 0.2 } },
+  { id: 'lm1_game_z1', q: { landmark: 1, cam: 'game', zoom: 1.0 } },
+  { id: 'lm5_game_night_z045', q: { landmark: 5, cam: 'game', zoom: 0.45, night: 1 } }
 ];
 // zestawy: --set flip (obrót habitatu), domyślnie wszystko
 const SETS = {
@@ -115,9 +133,13 @@ const SETS = {
   mid: ['p9', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8', 'k7_docked_z1', 'k7_docked_z035', 'mid_k7_z016', 'mid_k7_z01',
     'k7_free_gate_z05', 'mid_port_side_z02', 'mid_port_side_z034', 'mid_port_z01', 'm3_port_z0035',
     'city_garden_z034', 'city_heph_z034', 'city_heph_z089', 'mid_roof_z1', 'mid_roof_z03', 'ui_k7'],
+  bays: ['p9', 'p2', 'p6', 'p8', 'k7_docked_z1', 'k7_docked_z035', 'mid_k7_z016', 'mid_k7_z01', 'bay_cont_z035', 'bay_cont_z1',
+    'bay_mega_z02', 'bay_long_z06', 'bay_shuttle_z2', 'bay_free_z03', 'transit_flight_z035', 'mid_port_side_z02', 'mid_port_z01'],
   zones: ['p9', 'transit_t01', 'transit_flight_z035', 'transit_flight_z015', 'transit_game_z005', 'p2', 'p3', 'p5', 'p6', 'p8',
     'k7_docked_z1', 'k7_docked_z035', 'mid_k7_z016', 'mid_k7_z01', 'mid_port_side_z02', 'mid_port_z01', 'm3_port_z0035',
-    'city_garden_z034', 'city_heph_z034', 'city_heph_z089']
+    'city_garden_z034', 'city_heph_z034', 'city_heph_z089'],
+  landmarks: ['lm0_gate', 'lm1_terrace', 'lm2_crown', 'lm4_bridge', 'lm6_glass_gate', 'lm2_night', 'lm0_game_z045', 'lm2_game_z02',
+    'lm1_game_z1', 'lm5_game_night_z045', 'p6', 'p9', 'm4_city_z1', 'k7_docked_z035']
 };
 
 const only = args.only ? new Set(args.only.split(',')) : (args.set && SETS[args.set] ? new Set(SETS[args.set]) : null);

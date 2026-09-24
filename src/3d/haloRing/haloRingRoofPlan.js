@@ -15,7 +15,9 @@
 // Instancje są przypisane do segmentów (jak pasy konstrukcji), a pozycja to
 // (segment, przesunięcie wzdłuż w skali floorMid, dr = r − floorMid, z) —
 // shader liczy ją względem kamery (RTE), więc nie drży przy żadnym zoomie.
-import { HALO_PORT, HALO_ROOF, HALO_STATION_ANGLE, HALO_TAU, HALO_TRANSIT, haloPortSites, haloTransitAngles } from './haloRingConfig.js';
+import { HALO_PORT, HALO_ROOF, HALO_STATION_ANGLE, HALO_TAU, HALO_TRANSIT, haloTransitAngles } from './haloRingConfig.js';
+import { HALO_BAY, haloBayLayouts } from './haloPortBays.js';
+import { haloLandmarkParts, haloLandmarkSegment } from './haloRingLandmarks.js';
 
 // ---- hasz: bit w bit jak haloLowbias/haloHashI w haloRingGLSL.js ----------
 export function haloLowbias(x) {
@@ -41,11 +43,18 @@ export const HALO_LIGHT_STRIDE = 8;
 export const HALO_TRAIN_STRIDE = 8;
 
 // Materiał = paleta + 32 × rodzaj emisji (dekoduje shader megastruktury).
+// 13–23 zajmują miasto i przemysł (haloRingCity.js); 24–28 — megabudowle
+// (haloRingLandmarks.js): kamień, mosiądz, pasy świetlne, ramy fasad ciepłej
+// i chłodnej (okna ciepłe / chłodne).
 export const HALO_MAT = Object.freeze({
   roofLight: 0, roofMid: 1, dark: 2, white: 3, rust: 4, truss: 5, hazard: 6, glass: 7,
-  bayFloor: 8, tunnel: 9, containerA: 10, containerB: 11, containerC: 12
+  bayFloor: 8, tunnel: 9, containerA: 10, containerB: 11, containerC: 12,
+  gardenRoof: 14, stone: 24, brass: 25, lamp: 26, facadeWarm: 27, facadeCool: 28
 });
-export const HALO_EMIT = Object.freeze({ none: 0, windowsWarm: 1, windowsCool: 2, blueStrip: 3, sodium: 4, bay: 5 });
+// bay = pokład ze znaczeniami (tunel tranzytu), deck = pokład zatoki bez znaczeń
+// (stanowiska rysuje render kompleksu K-7), tylko nocna poświata ścian;
+// facade = fasada megabudowli (kondygnacje, szkło w ramach, okna nocą)
+export const HALO_EMIT = Object.freeze({ none: 0, windowsWarm: 1, windowsCool: 2, blueStrip: 3, sodium: 4, bay: 5, deck: 6, facade: 7 });
 export const HALO_LIGHT_COLOR = Object.freeze({ white: 0, red: 1, blue: 2, warm: 3, green: 4 });
 export const HALO_LIGHT_MODE = Object.freeze({ strobe: 0, steady: 1, pulse: 2, chase: 3 });
 
@@ -163,6 +172,14 @@ function quatMul(a, b) {
   ];
 }
 const Q_ID = [0, 0, 0, 1];
+// obrót wektora kwaternionem (jak qrot w shaderze megastruktury)
+function qrot(q, v) {
+  const [x, y, z, w] = q;
+  const tx = 2 * (y * v[2] - z * v[1]);
+  const ty = 2 * (z * v[0] - x * v[2]);
+  const tz = 2 * (x * v[1] - y * v[0]);
+  return [v[0] + w * tx + (y * tz - z * ty), v[1] + w * ty + (z * tx - x * tz), v[2] + w * tz + (x * ty - y * tx)];
+}
 // oś cylindra/tuby (lokalnie Z) w kierunek (dx wzdłuż, dy promieniowo, dz)
 function quatAxis(dx, dy, dz) {
   const len = Math.hypot(dx, dy, dz) || 1;
@@ -179,7 +196,9 @@ function quatAxis(dx, dy, dz) {
   return [ax / s, ay / s, 0, s * 0.5];
 }
 
-export function buildHaloRoofPlan(layout, domain) {
+// options.landmarks — megabudowle (buildHaloLandmarkPlan): bryły w zestawie
+// punktów orientacyjnych (BG, bez zaniku z odległością), jak doki.
+export function buildHaloRoofPlan(layout, domain, options = {}) {
   const R = HALO_ROOF;
   const sigma = layout.sigma;
   const floorMid = layout.radii.floorMid;
@@ -239,6 +258,22 @@ export function buildHaloRoofPlan(layout, domain) {
     b.rMax = Math.max(b.rMax, r + ext);
     b.zMin = Math.min(b.zMin, z - ext);
     b.zMax = Math.max(b.zMax, z + 2 * ext);
+    if (q !== Q_ID) {
+      // bryła obrócona (np. budynek stojący na podłodze, góra = promień):
+      // wysoka wieża sięga dalej niż pół przekątnej od podstawy — narożniki
+      for (const cx of [-0.5, 0.5]) {
+        for (const cy of [-0.5, 0.5]) {
+          for (const cz of [0, 1]) {
+            const v = qrot(q, [cx * sx, cy * sy, cz * sz]);
+            const rc = Math.hypot(rr + v[1], x + v[0]);
+            b.rMin = Math.min(b.rMin, rc);
+            b.rMax = Math.max(b.rMax, rc);
+            b.zMin = Math.min(b.zMin, z + v[2]);
+            b.zMax = Math.max(b.zMax, z + v[2]);
+          }
+        }
+      }
+    }
   }
   function light(seg, thF, rF, x, y, z, size, phase, color, mode, set = 'detail') {
     const rr = rF + y;
@@ -249,19 +284,23 @@ export function buildHaloRoofPlan(layout, domain) {
     (set === 'landmark' ? landmarkLights : lights)[seg].data.push(seg, along * floorMid, r - floorMid, z, size, phase, color, mode);
   }
 
-  // Doki transportowe (decyzja 2026-09-23): wpięte w podłogę na środku
-  // wstęgi, w płaszczyźnie gry — nie dotykają dachu ani krawędzi ścian.
+  // Otwarte zatoki (decyzja 2026-09-23): wpięte w podłogę na środku wstęgi,
+  // w płaszczyźnie gry — nie dotykają dachu ani krawędzi ścian. Stanowiska
+  // w standardzie K-7 (haloPortBays.js) rysuje render kompleksu K-7; tu bryła
+  // zatoki. lanes / spines — pasy MEGA i grzbiety (światła, suwnice).
   const docks = [];
   const portOn = sigma > 0 && layout.flightLevel !== 'roof';
   if (portOn) {
     const P = HALO_PORT;
-    const depth = layout.wallHeight + P.reach;
-    for (const site of haloPortSites(floorMid)) {
-      if (site.kind !== 'dock') continue;
-      docks.push({
-        index: site.index, theta: site.theta, frameR: floorMid + PORT_PAD_H, depth, length: P.dockLength,
-        berthY: P.berthStart + (depth - P.berthStart) * 0.5, berthZ: P.deckTop + 70
-      });
+    for (const bay of haloBayLayouts(layout)) {
+      const mega = bay.berths[0];
+      const dock = {
+        index: bay.index, complex: bay.complex, id: bay.id, theta: bay.theta, frameR: floorMid + PORT_PAD_H,
+        depth: bay.depth, length: P.dockLength, hallSide: bay.hallSide,
+        lanes: bay.lanes.map((v) => v.x), berthIds: bay.lanes.map((v) => v.berthId), spines: bay.spines.map((v) => v.x),
+        berthY: mega.z - bay.floorZ
+      };
+      docks.push(dock);
     }
   }
 
@@ -397,8 +436,9 @@ export function buildHaloRoofPlan(layout, domain) {
   // ---- port: zatoki wpięte w podłogę habitatu --------------------------
   // Układ zatoki: x wzdłuż ringu, y od podłogi (promieniowo na zewnątrz),
   // z świata (płaszczyzna gry z = 0 na środku wstęgi). Tył zatoki w kołnierzu
-  // na podłodze (terminal z oknami), zaplecze w wąwozie habitatu pod górną
-  // ścianą, stanowisko okrętu poza krawędzią ścian (widać je z kamery gry).
+  // na podłodze (terminal z oknami), pokład od ściany tylnej do wylotu poza
+  // krawędzią ścian (widać go z kamery gry). Pokład bez znaczeń: stanowiska
+  // K-7 (pas MEGA i grzebień L/M/S) rysuje render kompleksu.
   for (const dock of docks) {
     const P = HALO_PORT;
     const seg = Math.floor(dock.theta / segAngle) % segCount;
@@ -410,75 +450,80 @@ export function buildHaloRoofPlan(layout, domain) {
     const zD = P.deckTop;                     // wierzch pokładu
     const zB = zD - 60;                       // spód pokładu
     const zW = P.wallTop;
-    const yB = P.berthStart;
     const cW = P.collar;
     const cD = P.collarDepth;
     const zBase = Math.round(P.plugZMin * 0.75);
     const box = (x, y0, y1, z0, z1, sx, mat) => push(L, HALO_PRIM.box, seg, th, rF, x, (y0 + y1) * 0.5, z0, sx, y1 - y0, z1 - z0, mat);
-    // pokład zatoki (znaczenia stanowisk w shaderze) i ściany
-    box(0, P.backWall, D, zB, zD, len - 2 * P.sideWall, HALO_MAT.bayFloor + 32 * HALO_EMIT.bay);
-    box(0, 0, P.backWall, zB, zW, len, HALO_MAT.roofLight + 32 * HALO_EMIT.windowsCool);
+    // bryły prostopadłe do promienia na środku zatoki, a podłoga pod ich końcami
+    // opada (krzywizna ringu: x²/2R — przy zatoce 6 800 j. ~140 j.): części
+    // stykające się z podłogą sięgają głębiej, żeby końce nie wisiały nad terenem
+    const sink = (x) => (x * x) / (2 * rF) + 20;
+    const sinkAll = sink(len * 0.5 + cW);
+    // pokład zatoki (tylko nocna poświata ścian) i ściany
+    box(0, P.backWall, D, zB, zD, len - 2 * P.sideWall, HALO_MAT.bayFloor + 32 * HALO_EMIT.deck);
+    box(0, -sinkAll, P.backWall, zB, zW, len, HALO_MAT.roofLight + 32 * HALO_EMIT.windowsCool);
     for (const sd of [-1, 1]) {
-      box(sd * (len - P.sideWall) * 0.5, 0, D, zB, zW, P.sideWall, HALO_MAT.roofLight + 32 * HALO_EMIT.windowsCool);
+      box(sd * (len - P.sideWall) * 0.5, -sink(len * 0.5), D, zB, zW, P.sideWall, HALO_MAT.roofLight + 32 * HALO_EMIT.windowsCool);
       // listwy: górą ściany od strony zatoki i przy wylocie (błękit)
       box(sd * (len * 0.5 - P.sideWall - 3), P.backWall, D, zW - 30, zW - 22, 6, HALO_MAT.dark + 32 * HALO_EMIT.blueStrip);
       box(sd * (len * 0.5 - P.sideWall - 6), D - 60, D, zW - 8, zW, 12, HALO_MAT.dark + 32 * HALO_EMIT.blueStrip);
       // bieżnia suwnic na ścianie
-      box(sd * (len - P.sideWall) * 0.5, yB - 100, D - 40, zW, zW + 12, 40, HALO_MAT.truss);
+      box(sd * (len - P.sideWall) * 0.5, 700, D - 40, zW, zW + 12, 40, HALO_MAT.truss);
     }
     box(0, P.backWall + 3, P.backWall + 9, zW - 30, zW - 22, len - 2 * P.sideWall, HALO_MAT.dark + 32 * HALO_EMIT.blueStrip);
     // próg wylotu pod poziomem pokładu (bez stropu — okręt wchodzi płaszczyzną gry)
     box(0, D - 40, D, zB - 70, zB, len, HALO_MAT.dark + 32 * HALO_EMIT.blueStrip);
-    // suwnice: dwa mosty nad stanowiskiem, profil ≤ 1/20 rozpiętości
-    const span = len - 2 * P.sideWall;
-    for (const yb of [0.3, 0.7]) {
-      const y = yB + (D - yB) * yb;
-      box(0, y - P.gantryProfile * 0.5, y + P.gantryProfile * 0.5, zW + 12, zW + 12 + P.gantryProfile, span, HALO_MAT.hazard);
-      const xt = (haloHashI(dock.index, Math.round(yb * 100), 41) - 0.5) * span * 0.6;
-      box(xt, y - 60, y + 60, zW - 20, zW + 12, 90, HALO_MAT.dark);
-      push(L, HALO_PRIM.cylinder, seg, th, rF, xt, y, zD + 110, 6, 6, zW - 20 - (zD + 110), HALO_MAT.truss);
-    }
-    // zaplecze w wąwozie habitatu: kontenery, zbiorniki paliwa, sterownia
-    const yYard = P.backWall + 160;
-    for (let k = 0; k < 22; k++) {
-      const x = (k - 10.5) * 60;
-      if (Math.abs(x) < 150) continue;
-      const stack = 1 + Math.floor(haloHashI(dock.index * 31 + k, 7, 39) * 3);
-      const pal = [HALO_MAT.containerA, HALO_MAT.containerB, HALO_MAT.containerC, HALO_MAT.white][Math.floor(haloHashI(dock.index * 31 + k, 8, 38) * 4)];
-      push(L, HALO_PRIM.box, seg, th, rF, x, yYard, zD, 52, 16, 16 * stack, pal);
-      push(L, HALO_PRIM.box, seg, th, rF, x, yYard + 26, zD, 52, 16, 16 * (1 + ((stack + k) % 3)), pal === HALO_MAT.white ? HALO_MAT.containerB : HALO_MAT.white);
-    }
-    for (const sd of [-1, 1]) {
-      for (const k of [0, 1, 2]) {
-        push(L, HALO_PRIM.cylinder, seg, th, rF, sd * (len * 0.5 - P.sideWall - 110 - k * 170), yYard + 420, zD, 130, 130, 180, HALO_MAT.white + 32 * HALO_EMIT.sodium);
+    // suwnice pasów MEGA (jak suwnice stanowisk capital K-7): most nad pasem
+    // od bieżni na ścianie bocznej do nogi na grzbiecie serwisowym, nad
+    // płaszczyzną gry, profil ≤ 1/20 rozpiętości; wózek zaparkowany przy
+    // ścianie. Grzebień pośrodku bez mostów (czytelny w kamerze gry).
+    dock.lanes.forEach((lx, k) => {
+      const sdl = Math.sign(lx) || 1;
+      const xWall = sdl * (len * 0.5 - P.sideWall * 0.5);
+      const xSpine = dock.spines[k];
+      const span = Math.abs(xWall - xSpine);
+      for (const yb of HALO_BAY.gantryAt) {
+        const y = D * yb;
+        box((xWall + xSpine) * 0.5, y - P.gantryProfile * 0.5, y + P.gantryProfile * 0.5, zW + 12, zW + 12 + P.gantryProfile, span, HALO_MAT.hazard);
+        box(xSpine, y - 40, y + 40, zD, zW + 12 + P.gantryProfile, 60, HALO_MAT.dark);
+        box(xWall - sdl * 70, y - 60, y + 60, zW - 20, zW + 12, 90, HALO_MAT.dark);
       }
-    }
-    push(L, HALO_PRIM.box, seg, th, rF, 0, yB - 260, zD, 260, 160, 200, HALO_MAT.glass + 32 * HALO_EMIT.windowsCool);
+    });
+    // sterownia na ścianie tylnej (przeszklenie ku zatoce)
+    box(0, P.backWall - 20, P.backWall + 60, zW - 10, zW + 90, 520, HALO_MAT.glass + 32 * HALO_EMIT.windowsCool);
     // kołnierz na podłodze: słupy, nadproże i podstawa-terminal z pasami okien
     const cx = len * 0.5 + cW * 0.5;
     for (const sd of [-1, 1]) {
-      box(sd * cx, -60, cD, zBase, zW + 80, cW, HALO_MAT.roofMid);
+      box(sd * cx, -60 - sink(len * 0.5 + cW), cD, zBase, zW + 80, cW, HALO_MAT.roofMid);
       box(sd * (len * 0.5 + 8), cD - 4, cD + 4, zBase + 60, zW + 60, 10, HALO_MAT.dark + 32 * HALO_EMIT.blueStrip);
     }
     box(0, -60, cD, zW, zW + 80, len, HALO_MAT.roofMid);
-    box(0, -60, cD, zBase, zB, len, HALO_MAT.dark);
+    box(0, -60 - sink(len * 0.5), cD, zBase, zB, len, HALO_MAT.dark);
     for (let row = 0; row < 5; row++) {
       const zr = zB - 110 - row * 115;
       if (zr < zBase + 60) break;
       box(0, cD, cD + 6, zr, zr + 20, len - 240, HALO_MAT.glass + 32 * HALO_EMIT.windowsWarm);
     }
     // klin nośny pod pokładem: schodkami od podłogi ku wylotowi zatoki
-    const steps = [[0, 700, zBase], [700, 1400, Math.round(zBase * 0.66)], [1400, 2100, Math.round(zBase * 0.38)]];
+    const steps = [[-sink(len * 0.5 - 150), 900, zBase], [900, 1800, Math.round(zBase * 0.66)], [1800, 2700, Math.round(zBase * 0.38)]];
     for (const [y0, y1, z0] of steps) {
       box(0, y0, y1, z0, zB, len - 300, HALO_MAT.roofMid);
       for (const sd of [-1, 1]) box(sd * (len * 0.5 - 150 - 3), y0, y1 - 20, z0 + 30, z0 + 38, 6, HALO_MAT.dark + 32 * HALO_EMIT.blueStrip);
     }
-    // światła: stroboskopy przy wylocie, czerwone na kołnierzu, reflektory na ścianach
+    // światła: stroboskopy przy wylocie, czerwone na kołnierzu, reflektory na
+    // ścianach, nawigacja wylotu (zielone po prawej +x, czerwone po lewej) i
+    // biały bieg wzdłuż krawędzi pasa MEGA na progu
     for (const sd of [-1, 1]) {
       light(seg, th, rF, sd * len * 0.5, D, zW + 6, 3.4, 0.25 * (sd + 1), HALO_LIGHT_COLOR.white, HALO_LIGHT_MODE.strobe, L);
       light(seg, th, rF, sd * (len * 0.5 + cW), cD, zW + 86, 3.0, 0.3, HALO_LIGHT_COLOR.red, HALO_LIGHT_MODE.pulse, L);
       for (let k = 1; k <= 3; k++) {
-        light(seg, th, rF, sd * (len * 0.5 - P.sideWall * 0.5), yB + (D - yB) * k / 4, zW + 6, 2.6, 0, HALO_LIGHT_COLOR.warm, HALO_LIGHT_MODE.steady, L);
+        light(seg, th, rF, sd * (len * 0.5 - P.sideWall * 0.5), D * k / 4, zW + 6, 2.6, 0, HALO_LIGHT_COLOR.warm, HALO_LIGHT_MODE.steady, L);
+      }
+      light(seg, th, rF, sd * (len * 0.5 - P.sideWall * 0.5), D - 20, zW + 20, 3.0, 0, sd > 0 ? HALO_LIGHT_COLOR.green : HALO_LIGHT_COLOR.red, HALO_LIGHT_MODE.steady, L);
+      for (const lx of dock.lanes) {
+        for (let k = 0; k < 4; k++) {
+          light(seg, th, rF, lx + sd * 600, D - 30 - k * 260, zD + 4, 2.2, k * 0.14, HALO_LIGHT_COLOR.white, HALO_LIGHT_MODE.chase, L);
+        }
       }
     }
   }
@@ -557,6 +602,44 @@ export function buildHaloRoofPlan(layout, domain) {
     }
   }
 
+  // ---- megabudowle miast (ECUMENE, haloRingLandmarks.js) -----------------
+  // Budowla stoi na placu w podłodze habitatu: góra = normalna podłogi (ku
+  // powietrzu), w poprzek = styczna podłogi (ku górnej ścianie, front),
+  // skręt yaw wokół góry. Prymityw ma z w górę, więc kwaternion stawia go
+  // na podłodze — okna, dach i fazki w shaderze liczą się w jego osiach.
+  const landmarks = Array.isArray(options.landmarks) ? options.landmarks : [];
+  if (landmarks.length) {
+    const LM_MAT = { stone: HALO_MAT.stone, brass: HALO_MAT.brass, lamp: HALO_MAT.lamp, dark: HALO_MAT.roofMid, garden: HALO_MAT.gardenRoof };
+    const LM_COLOR = { white: HALO_LIGHT_COLOR.white, red: HALO_LIGHT_COLOR.red, blue: HALO_LIGHT_COLOR.blue, warm: HALO_LIGHT_COLOR.warm, green: HALO_LIGHT_COLOR.green };
+    const LM_MODE = { strobe: HALO_LIGHT_MODE.strobe, steady: HALO_LIGHT_MODE.steady, pulse: HALO_LIGHT_MODE.pulse, chase: HALO_LIGHT_MODE.chase };
+    const n = layout.floor.normal;
+    const qUp = quatAxis(0, n.r, n.z);
+    for (const lm of landmarks) {
+      const seg = haloLandmarkSegment(lm, segCount);
+      const rF = layout.floorRadiusAtT(lm.t) + n.r * lm.plazaH;
+      const zF = layout.floorZAtT(lm.t) + n.z * lm.plazaH;
+      // wariant Halo (góra ku osi): obrót właściwy odwróciłby front ku −z —
+      // dodatkowe pół obrotu wokół góry trzyma front po stronie górnej ściany
+      const yaw = lm.yaw + (layout.sigma < 0 ? Math.PI : 0);
+      const sh = Math.sin(yaw * 0.5);
+      const q = quatMul([0, n.r * sh, n.z * sh, Math.cos(yaw * 0.5)], qUp);
+      const facade = (lm.warm ? HALO_MAT.facadeWarm : HALO_MAT.facadeCool) + 32 * HALO_EMIT.facade;
+      const { boxes, lights: lamps } = haloLandmarkParts(lm);
+      for (const b of boxes) {
+        const qb = b.fixed ? qUp : q;
+        // lokalnie prymitywu: x wzdłuż, −y w poprzek (y → −styczna), z w górę
+        const off = qrot(qb, [b.a, -b.q, b.u0]);
+        push('landmark', HALO_PRIM.box, seg, lm.theta, rF, off[0], off[1], zF + off[2], b.sa, b.sq, b.su,
+          b.mat === 'facade' ? facade : (LM_MAT[b.mat] ?? HALO_MAT.stone), qb);
+      }
+      for (const l of lamps) {
+        const off = qrot(q, [l.a, -l.q, l.u]);
+        light(seg, lm.theta, rF, off[0], off[1], zF + off[2], l.size, l.phase,
+          LM_COLOR[l.color] ?? HALO_LIGHT_COLOR.warm, LM_MODE[l.mode] ?? HALO_LIGHT_MODE.steady, 'landmark');
+      }
+    }
+  }
+
   // ---- kolej: pociągi (bez segmentów — jeżdżą dookoła) ------------------
   const trains = [];
   const L = layout.circumference;
@@ -613,6 +696,7 @@ export function buildHaloRoofPlan(layout, domain) {
     trainCount: trains.length / HALO_TRAIN_STRIDE,
     docks,
     transits,
+    landmarks,
     detailBounds: segBounds.slice(0, segCount),
     landmarkBounds: segBounds.slice(segCount)
   };

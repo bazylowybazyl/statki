@@ -54,11 +54,23 @@ export function k7FuelPortInBerth(berth, port) {
 }
 
 // ---------------------------------------------------------------------------
-// Układ hali (DockLayout z K-7, te same liczby).
+// Układ hali (DockLayout z K-7). Od 2026-09-23 CZTERY stanowiska capital
+// (decyzja użytkownika: port K-7 zastępuje dok ruchu v2 — stacja z ringiem ma
+// tam 4 capital): hala szersza o dwa stanowiska (3600 → 5220), brama główna
+// szersza (1500 → 3200), żeby każde stanowisko miało własny pas z bramy G-01.
+// Grzebienie boczne, bramy logistyczne, pasy i obsługa — jak w K-7.
+export const K7_CAPITAL_X = Object.freeze([-810, 810, -2430, 2430]);   // C-01..C-04
+// Stanowiska grzebieni bocznych K-7 (pole, rozstaw, największy kadłub) — ten
+// sam standard mają otwarte zatoki portu (haloPortBays.js).
+export const K7_BANK_SLOTS = Object.freeze({
+  L: Object.freeze({ size: 'L', padLength: 1000, padBeam: 660, pitch: 760, maxLength: 850, maxBeam: 500 }),
+  M: Object.freeze({ size: 'M', padLength: 620, padBeam: 380, pitch: 440, maxLength: 500, maxBeam: 260 }),
+  S: Object.freeze({ size: 'S', padLength: 400, padBeam: 250, pitch: 300, maxLength: 300, maxBeam: 180 })
+});
 export function createK7Layout() {
   const l = {
     id: 'K-7', height: 720, wallHeight: 620, wallThickness: 88,
-    halfWidth: 3600, frontHalfWidth: 1500, backZ: 250, bodyEndZ: 6000, frontZ: 7400, apronDepth: 1180
+    halfWidth: 5220, frontHalfWidth: 3200, backZ: 250, bodyEndZ: 6000, frontZ: 7400, apronDepth: 1180
   };
   l.footprint = [[-l.frontHalfWidth, l.frontZ], [l.frontHalfWidth, l.frontZ], [l.halfWidth, l.bodyEndZ],
     [l.halfWidth, l.backZ], [-l.halfWidth, l.backZ], [-l.halfWidth, l.bodyEndZ]];
@@ -82,32 +94,32 @@ export function createK7Layout() {
     const jamb = i === 0 ? 110 : 135;
     return { ...e, id: ['G-01', 'G-02', 'G-03'][i], name: ['GLOWNY / CAPITAL', 'WSCHOD / LOGISTYKA', 'ZACHOD / LOGISTYKA'][i], jamb, clearWidth: e.length - 2 * jamb, edge };
   });
-  l.berths = [
-    { id: 'C-01', size: 'CAPITAL', x: -810, z: 1900, width: 1330, length: 2380, padLength: 2380, padBeam: 1330, angle: -Math.PI / 2, maxLength: 2050, maxBeam: 1030, occupied: 'player' },
-    { id: 'C-02', size: 'CAPITAL', x: 810, z: 1900, width: 1330, length: 2380, padLength: 2380, padBeam: 1330, angle: -Math.PI / 2, maxLength: 2050, maxBeam: 1030, occupied: null }
-  ];
+  l.berths = K7_CAPITAL_X.map((x, i) => ({
+    id: 'C-0' + (i + 1), size: 'CAPITAL', x, z: 1900, width: 1330, length: 2380, padLength: 2380, padBeam: 1330,
+    angle: -Math.PI / 2, maxLength: 2050, maxBeam: 1030, occupied: i === 0 ? 'player' : null
+  }));
   // Grzebień jednej głębokości: każde boczne stanowisko cofa się z własnej alei.
+  // Stanowiska wolne — zaparkowanych NPC z dema ECUMENE nie ma (2026-09-24:
+  // statki i ruch z osobnego systemu, zajętość przyjdzie z ruchu v2).
   l.sideBankSpec = [
-    { size: 'L', count: 2, padLength: 1000, padBeam: 660, pitch: 760, maxLength: 850, maxBeam: 500, hulls: ['terran_battleship', 'long_haul_freighter'] },
-    { size: 'M', count: 4, padLength: 620, padBeam: 380, pitch: 440, maxLength: 500, maxBeam: 260, hulls: ['container_ship', 'terran_destroyer', 'pirate_destroyer', 'container_ship'] },
-    { size: 'S', count: 6, padLength: 400, padBeam: 250, pitch: 300, maxLength: 300, maxBeam: 180, hulls: ['inter_station_shuttle', 'terran_frigate', 'inter_station_shuttle', 'corvus', 'inter_station_shuttle', 'terran_frigate'] }
+    { ...K7_BANK_SLOTS.L, count: 2 },
+    { ...K7_BANK_SLOTS.M, count: 4 },
+    { ...K7_BANK_SLOTS.S, count: 6 }
   ];
   l.sideBanks = [];
   for (const side of [-1, 1]) {
     const bankId = side < 0 ? 'W' : 'E';
-    const bank = { id: bankId, side, aisleX: side * 2100, aisleWidth: 720, z0: 650, z1: l.bodyEndZ - 130, berthIds: [] };
+    const bank = { id: bankId, side, aisleX: side * (l.halfWidth - 1500), aisleWidth: 720, z0: 650, z1: l.bodyEndZ - 130, berthIds: [] };
     let cursor = 650;
     for (const spec of l.sideBankSpec) {
       for (let i = 0; i < spec.count; i++) {
         const id = bankId + '-' + spec.size + String(i + 1).padStart(2, '0');
         const x = side * (l.halfWidth - 200 - spec.padLength / 2);
         const z = cursor + spec.padBeam / 2;
-        const occupied = (spec.size === 'L' && (side < 0 ? i === 0 : i === 1)) || (spec.size === 'M' && (side < 0 ? i === 1 : i === 2))
-          || (spec.size === 'S' && (side < 0 ? i === 1 || i === 4 : i === 0 || i === 3));
         const b = {
           id, size: spec.size, bankId, side, x, z, width: spec.padLength, length: spec.padBeam,
           padLength: spec.padLength, padBeam: spec.padBeam, angle: side < 0 ? Math.PI : 0,
-          maxLength: spec.maxLength, maxBeam: spec.maxBeam, hull: spec.hulls[i], occupied: occupied ? 'npc-' + id : null,
+          maxLength: spec.maxLength, maxBeam: spec.maxBeam, occupied: null,
           approach: { heading: side < 0 ? Math.PI : 0, from: { x: bank.aisleX, z }, to: { x, z }, width: spec.padBeam - 35 },
           servicePoint: { x: side * (l.halfWidth - 93), z: z - spec.padBeam * 0.28 }
         };
@@ -131,7 +143,7 @@ export function createK7Layout() {
     reserved: b.occupied === 'player' ? 'player' : null
   }));
   l.spawnPoint = { x: l.berths[0].x, z: l.berths[0].z, angle: l.berths[0].angle, berthId: 'C-01' };
-  l.capacity = { CAPITAL: 2, L: 4, M: 8, S: 12, total: l.berths.length };
+  l.capacity = { CAPITAL: K7_CAPITAL_X.length, L: 4, M: 8, S: 12, total: l.berths.length };
   l.halfWidthAt = (z) => (z <= l.bodyEndZ ? l.halfWidth : mix(l.halfWidth, l.frontHalfWidth, clamp((z - l.bodyEndZ) / (l.frontZ - l.bodyEndZ), 0, 1)));
   return l;
 }
@@ -288,11 +300,17 @@ export class K7CollisionWorld {
     this.items.push(item);
     return item;
   }
+  // przedmiot ruchomy: po zmianie punktów wielokąta przeliczyć obwiednię;
+  // off = true wyłącza przedmiot (np. statek systemu ruchu poza kadrem rozgrywki)
+  refresh(item, off = false) {
+    polyBounds(item.polygon, item.bounds);
+    item.off = off;
+  }
   test(poly, record = false) {
     const bounds = polyBounds(poly, this._bounds);
     for (let i = 0; i < this.items.length; i++) {
       const c = this.items[i];
-      if (c.y1 < K7_HEIGHTS.hullBottom || c.y0 > K7_HEIGHTS.hullTop) continue;
+      if (c.off || c.y1 < K7_HEIGHTS.hullBottom || c.y0 > K7_HEIGHTS.hullTop) continue;
       if (boxesOverlap(bounds, c.bounds) && k7ConvexOverlap(poly, c.polygon)) {
         if (record) { this.hits++; this.lastHit = c.id; }
         return c.id;
@@ -328,7 +346,7 @@ export function k7SolidList(l) {
   add('OPERATIONS CORE', 0, 159, 583, 309, 318, 370, 'dark');
   for (const bank of l.sideBanks) {
     const side = bank.side;
-    for (let k = 0; k < 4; k++) add('CARGO ' + bank.id + '/' + k, side * (2300 + k * 290), 61, 420, 222, 122, 200, k % 3 ? 'orange' : 'teal');
+    for (let k = 0; k < 4; k++) add('CARGO ' + bank.id + '/' + k, side * (l.halfWidth - 1300 + k * 290), 61, 420, 222, 122, 200, k % 3 ? 'orange' : 'teal');
     for (const id of bank.berthIds) {
       const b = l.berths.find((v) => v.id === id);
       add('SERVICE ' + id, b.servicePoint.x, 79, b.servicePoint.z, 60, 158, 78, 'dark');
@@ -340,21 +358,6 @@ export function k7SolidList(l) {
   return out;
 }
 
-// Kadłub zaparkowanego statku NPC (ośmiokąt w skali kadłuba z K-7).
-export const K7_HULL_LENGTHS = Object.freeze({
-  terran_battleship: 624, long_haul_freighter: 540, container_ship: 312, terran_destroyer: 288,
-  pirate_destroyer: 360, inter_station_shuttle: 120, terran_frigate: 192, corvus: 216
-});
-export function k7ParkedShipShape(berth) {
-  const len = K7_HULL_LENGTHS[berth.hull] || 300;
-  // wymiary jak getHullRenderSize bez sprite'a: h = długość / 1,6, w = min(h, 0,48 · długość)
-  const beam = Math.min(Math.max(64, Math.round(len / 1.6)), len * 0.48);
-  const shape = [[-0.49, -0.23], [-0.3, -0.49], [0.21, -0.34], [0.5, -0.07], [0.5, 0.07], [0.21, 0.34], [-0.3, 0.49], [-0.49, 0.23]].map(([x, z]) => [x * len, z * beam]);
-  const c = Math.cos(berth.angle);
-  const s = Math.sin(berth.angle);
-  return { length: len, beam, shape, polygon: shape.map(([x, z]) => ({ x: berth.x + x * c - z * s, z: berth.z + x * s + z * c })) };
-}
-
 export function buildK7Collision(l) {
   const col = new K7CollisionWorld();
   for (const s of k7SolidList(l)) col.addBox(s.id, s.x, s.z, s.w, s.d, s.angle, s.y - s.h / 2, s.y + s.h / 2);
@@ -363,8 +366,6 @@ export function buildK7Collision(l) {
       // nogi suwnic i piedestały paliwowe
       for (const side of [-1, 1]) for (const z of [b.z - 1110, b.z + 1110]) col.addBox('CRANE LEG ' + b.id, b.x + side * 615, z, 92, 98, 0, 0, 468);
       for (const a of b.serviceAnchors) col.addBox('FUEL PEDESTAL ' + b.id + '/' + a.side, a.x, a.z, 120, 140, 0, 0, 278);
-    } else if (b.occupied) {
-      col.addPolygon(b.occupied, k7ParkedShipShape(b).polygon, 35, 106);
     }
   }
   return col;
@@ -372,11 +373,16 @@ export function buildK7Collision(l) {
 
 // ---------------------------------------------------------------------------
 // Referencyjny model lotu z dema K-7 (120 Hz). Interfejs: pos, vel, angle,
-// angVel, input — przy porcie do gry zastąpić napędem gry.
+// angVel, input — przy porcie do gry zastąpić napędem gry. Kadłub dowolny
+// (outline = obwiednia jak K7_ATLAS_COLLISION, tune = przyspieszenie,
+// prędkości poza / w porcie, obrót); domyślnie Atlas z liczbami K-7.
+export const K7_FLIGHT_TUNE = Object.freeze({ acc: 150, speed: 660, speedIn: 210, turn: 0.46, turnIn: 0.28, torque: 0.98 });
 export class K7FlightModel {
-  constructor(collision, spawn, size = K7_ATLAS) {
+  constructor(collision, spawn, size = K7_ATLAS, outline = K7_ATLAS_COLLISION, tune = K7_FLIGHT_TUNE) {
     this.collision = collision;
     this.size = size;
+    this.outline = outline;
+    this.tune = { ...K7_FLIGHT_TUNE, ...(tune || {}) };
     this.x = spawn.x;
     this.z = spawn.z;
     this.vx = 0;
@@ -389,11 +395,11 @@ export class K7FlightModel {
     this.time = 0;
     this.lastCollisionAt = -99;
     this.input = { main: 0, retro: 0, torque: 0, brake: 0, boost: 0 };
-    this._hull = k7MakeHullBuffer();
+    this._hull = k7MakeHullBuffer(outline.length);
     this.onNotice = null;
   }
   polygon(x = this.x, z = this.z, angle = this.angle) {
-    return k7TransformHull(K7_ATLAS_COLLISION, this.size.w, this.size.h, x, z, angle, this._hull);
+    return k7TransformHull(this.outline, this.size.w, this.size.h, x, z, angle, this._hull);
   }
   // inside ∈ [0,1]: 1 = w hali (niższe limity, większy opór)
   step(dt, inside) {
@@ -404,21 +410,22 @@ export class K7FlightModel {
       this.thrust = 0;
       return;
     }
+    const T = this.tune;
     const drive = (input.main - input.retro * 0.78) * (this.fuel > 0 ? 1 : 0);
     const boost = input.boost && inside < 0.2 ? 2.35 : 1;
     this.thrust = approach(this.thrust, Math.max(0, drive) * boost, 7, dt);
-    const acc = 150 * boost;
+    const acc = T.acc * boost;
     this.vx += Math.cos(this.angle) * drive * acc * dt;
     this.vz += Math.sin(this.angle) * drive * acc * dt;
     const drag = mix(0.18, 0.48, inside) + input.brake * 3.3;
     this.vx *= Math.exp(-drag * dt);
     this.vz *= Math.exp(-drag * dt);
     const speed = Math.hypot(this.vx, this.vz);
-    const limit = mix(660 * boost, 210, inside);
+    const limit = mix(T.speed * boost, T.speedIn, inside);
     if (speed > limit) { this.vx *= limit / speed; this.vz *= limit / speed; }
-    this.angVel += input.torque * 0.98 * dt;
+    this.angVel += input.torque * T.torque * dt;
     this.angVel *= Math.exp(-(2.6 + input.brake * 3) * dt);
-    const maxTurn = mix(0.46, 0.28, inside);
+    const maxTurn = mix(T.turn, T.turnIn, inside);
     this.angVel = clamp(this.angVel, -maxTurn, maxTurn);
     const a = this.angle + this.angVel * dt;
     const nx = this.x + this.vx * dt;

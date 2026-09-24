@@ -30,8 +30,12 @@ Poprzeczka: grafika na poziomie referencji. Nie kolejne demo z pudełek.
 | Port (2026-09-23) | sektor portowy zostaje pod kątem stacji Ziemi. Docelowo stacje orbitalne znikną z orbit planet (przeniesione w deep space), a **ring z portem zastąpi stację** — port ma więc pełnić rolę stacji: doki dla okrętów liniowych (Atlas 1800 × 806 j.), czytelne z kamery gry |
 | Dolna ściana od środka | najwięcej widać jej z kamery gry → dostaje wystrój w M3 (konstrukcja, poziomy, okna, światła, wyloty tuneli), szklane tarasy z ogrodami w M4 |
 | Kierunek wizualny | zaakceptowany po zrzutach obrotu (2026-09-23) — M3 rusza |
-| Dok gameplayowy | **K-7 z dema ECUMENE** (`orbital_ring_gameplay_hub_v3.html`) — wygląd i rozgrywka zostają: hala 26 stanowisk, suwnice, węże od rufy, sekwencje dokowania; przy kącie stacji. Doki transportowe (M3) zostają obok |
-| Strefy wokół doków (2026-09-23) | dok wbity w ziemię generuje wokół siebie **pas fabryczny**, który przechodzi w **domy**, a dopiero dalej w to, co ma sektor (nie park tuż przy doku) |
+| Dok gameplayowy | **K-7 z dema ECUMENE** (`orbital_ring_gameplay_hub_v3.html`) — wygląd i rozgrywka zostają: suwnice, węże od rufy, sekwencje dokowania. Od 2026-09-23 **4 stanowiska capital** (28 stanowisk; hala szersza o dwa) |
+| Port Ziemi (2026-09-23) | K-7 zastępuje dok „teoretyczny” ruchu v2: **4 kompleksy co 90°** (jak 4 doki stacji z ringiem w ruchu v2) — w każdym **3 doki: K-7 pośrodku i po jednej otwartej zatoce z każdej strony** (2026-09-24; zatoki ze stanowiskami w standardzie K-7: 2 pasy MEGA + 4 L, 4 M, 4 S). 224 stanowiska; symulacja ruchu v2 przy gospodarce ×60: kolejka na redzie 0 (teoretyczny port: 260). Planety bez ringu i zatłoczone (Merkury) — w przyszłości megadok zamiast ringu |
+| Kadłuby gracza (2026-09-23) | gracz lata frachtowcami i innymi statkami jak NPC — dokuje na każdym stanowisku, na którym kadłub się mieści (hala K-7 i otwarte zatoki); demo: klawisz V, `?hull=` |
+| Ruch statków (2026-09-24) | **ring nie udaje życia**: bez ruchu zastępczego (frachtowce wokół ringu, okręty liniowe w zatokach), bez zaparkowanych statków NPC i bez nocnych świateł aut na ulicach miast — statki i ruch wdrażane osobno (system ruchu v2 przez adapter `haloPortTraffic.js`). Pociągi maglevu na dachu zostają |
+| Landmarki (2026-09-24) | ring dopracowujemy rzeczami „pożyczonymi” z innych dem (ECUMENE `orbital_ring_gameplay_hub_v3.html`, `orbital_ring_demo_2.html`). Pierwsze: **megabudowle ECUMENE** (9: brama, tarasy, iglica, most) jako punkty orientacyjne sektorów miast — w dolnej połowie wstęgi (w kamerze gry front ku kamerze, nie przecinają płaszczyzny lotu), na placu w podłodze |
+| Strefy wokół doków (2026-09-23) | dok wbity w ziemię generuje wokół siebie **pas fabryczny**, który przechodzi w **domy**, a dopiero dalej w to, co ma sektor (nie park tuż przy doku). Przemysł **tylko wokół doków** — bez sektorów przemysłowych. **Góry sektora przy brzegach wstęgi (u góry i u dołu) mogą stać obok doków — nie muszą**; nad dokiem teren niski (w kamerze gry zasłoniłby dok) |
 | Tranzyty przez ring (2026-09-23) | jak w K-7 z ECUMENE: **4 tunele co 90°** (±45° i ±135° od K-7) przez płytę podłogi z kadłubem — ring w płaszczyźnie gry jest przeszkodą, a tędy się przez niego przelatuje |
 | Płaszczyzna gry i doki (2026-09-23, poprawka) | **doki NA ŚRODKU wstęgi, wpięte w podłogę habitatu** — nie na dachu i bez wsporników-balkonów. Płaszczyzna gry przecina ring w połowie szerokości (`flightLevel: 0.5`): gameplay „na środku ringu”, górna połowa wstęgi nad statkami (FG), dolna pod nimi |
 | Dzielnica przemysłowa | nie „same kwadraty”: zestaw 7 rodzajów zakładów (hala szedowa, zbiorniki, silosy, kotłownia z kominem, chłodnia, rafineria, kontenery) |
@@ -182,11 +186,13 @@ Wymagane, bo w tej skali mapy cieni nie działają:
 
 Mapa ringu (domyślnie, do strojenia): 16 sektorów po 22,5° (≈ 17 000 j. długości podłogi każdy).
 Przejścia płynne — biomy mieszają się na ~⅓ sektora, morza i rzeki przechodzą przez granice.
+Dziś (2026-09-24, `HALO_SECTOR_MIX`): krajobraz 7, miasto-ogród 5, szkło 4, przemysłowych 0 (§1).
 
 - **Krajobraz jak Halo** — 5 sektorów: morza, pasma górskie rosnące ku osi (do ~60% wysokości ścian,
   śnieg na szczytach), lasy, pustynia, lodowiec; chmury z cieniem na ziemi.
 - **Miasto-ogród** — 5 sektorów: tarasy schodzące do jezior, parki, wieże, mosty nad rzekami, arterie ze światłami.
-- **Megastruktura przemysłowa** — 3 sektory habitatu (stocznie, huty, zakłady) + ZAWSZE: dach,
+- **Megastruktura przemysłowa** — ~~3 sektory habitatu (stocznie, huty, zakłady)~~ → od 2026-09-23
+  przemysł tylko w pasie wokół doków (§1) + ZAWSZE: dach,
   kadłub, spód, kratownice wzdłuż krawędzi (ref. 4).
 - **Szklane habitaty** — 3 sektory arkologii + na wewnętrznych stronach obu ścian, we wszystkich
   sektorach miejskich, wielopoziomowe szklane tarasy z ogrodami i światłem wnętrz (dolna ściana
@@ -198,8 +204,9 @@ Dach i kadłub: ciemny metal z liniami paneli, anizotropowy połysk, pasy świat
 ref. 1–2, sodowy pomarańcz w przemyśle jak ref. 4), migające światła pozycyjne, maglev na dachu,
 radiatory, anteny, zbiorniki, doki z oświetlonymi zatokami.
 
-Życie: statki na pasach do doków (instancje + świecące dysze), kilka dużych frachtowców, ruch
-świateł na arteriach miast.
+~~Życie: statki na pasach do doków (instancje + świecące dysze), kilka dużych frachtowców, ruch
+świateł na arteriach miast.~~ → od 2026-09-24 ring nie udaje życia (§1): statki i ruch wdrażane
+osobno; pociągi maglevu na dachu zostają.
 
 ## 8. Technika (rekomendacje — wolno lepiej, byle §5, §9 i §10 trzymały)
 

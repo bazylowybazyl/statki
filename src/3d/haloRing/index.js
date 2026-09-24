@@ -16,7 +16,7 @@
 // Moduł nie tworzy renderera ani canvasu (AGENTS.md): renderer dostaje od
 // hosta wyłącznie do upieczenia map (render-to-texture).
 import * as THREE from 'three';
-import { HALO_DEFAULT_LAYER, HALO_FG, HALO_QUALITY, resolveHaloQuality } from './haloRingConfig.js';
+import { HALO_DEFAULT_LAYER, HALO_FG, HALO_QUALITY, haloPortComplexAngles, resolveHaloQuality } from './haloRingConfig.js';
 import { createHaloRingLayout } from './haloRingLayout.js';
 import { applyLayoutToUniforms, applyRoofPlanUniforms, createHaloUniforms } from './haloRingUniforms.js';
 import { HaloWorldMaps } from './haloRingWorldGen.js';
@@ -25,11 +25,12 @@ import { HaloTerrain } from './haloRingTerrain.js';
 import { HaloStructure } from './haloRingStructure.js';
 import { HaloAirShell, HaloClouds } from './haloRingAtmosphere.js';
 import { buildHaloRoofPlan } from './haloRingRoofPlan.js';
+import { buildHaloLandmarkPlan } from './haloRingLandmarks.js';
 import { HaloMegastructure } from './haloRingMegastructure.js';
 import { HaloCity } from './haloRingCity.js';
-import { HaloTraffic } from './haloRingTraffic.js';
 import { HaloPortK7 } from './haloPortK7.js';
-import { createK7Layout } from './haloPortK7Layout.js';
+import { createK7Layout, k7Frame } from './haloPortK7Layout.js';
+import { haloBayLayouts } from './haloPortBays.js';
 
 export { createHaloRingLayout, computeHaloRingLayout } from './haloRingLayout.js';
 export { HALO_QUALITY } from './haloRingConfig.js';
@@ -37,6 +38,7 @@ export { HALO_QUALITY } from './haloRingConfig.js';
 const _inv = new THREE.Matrix4();
 const _camWorld = new THREE.Vector3();
 const _proj = new THREE.Matrix4();
+const _floorTmp = {};
 
 export function createHaloRing(options = {}) {
   const renderer = options.renderer;
@@ -53,14 +55,24 @@ export function createHaloRing(options = {}) {
   const camLocal = new THREE.Vector3();
   let parts = null;
   let layout = null;
+  let sigmaOut = true;
   let uniforms = null;
 
   function build() {
     layout = createHaloRingLayout(state.options);
+    sigmaOut = layout.sigma > 0;
     const quality = HALO_QUALITY[state.qualityKey];
     if (!uniforms) uniforms = createHaloUniforms(layout);
     else applyLayoutToUniforms(uniforms, layout);
     const maps = new HaloWorldMaps(renderer, layout, quality);
+    // Megabudowle z ECUMENE (landmarki miast, 2026-09-24): miejsca z mapy
+    // wysokości sprzed placów, potem plac w mapach (płasko, bez zabudowy
+    // i lasu) i bryły w megastrukturze (punkty orientacyjne, BG).
+    const Wf = layout.floor.length;
+    const landmarks = state.options.landmarks === false ? [] : buildHaloLandmarkPlan(layout, {
+      heightAt: maps.cpu ? (theta, t) => maps.heightAtUV(theta / (Math.PI * 2), t / Wf) : null
+    });
+    maps.setLandmarks(landmarks);
     const detail = parts?.detail || new HaloDetailTextures(renderer);
     const terrain = new HaloTerrain({ layout, uniforms, maps, detail, quality });
     const domain = {
@@ -76,22 +88,47 @@ export function createHaloRing(options = {}) {
     const clouds = new HaloClouds({ layout, uniforms, surfaceUniforms: terrain.surfaceUniforms, domain, quality });
     const shell = new HaloAirShell({ layout, uniforms, surfaceUniforms: terrain.surfaceUniforms, domain, quality });
     // M3: dach, kratownice, kolej, port — plan w czystym JS, render instancjami
-    const plan = buildHaloRoofPlan(layout, domain);
+    const plan = buildHaloRoofPlan(layout, domain, { landmarks });
     applyRoofPlanUniforms(uniforms, plan);
     const mega = new HaloMegastructure({ layout, uniforms, surfaceUniforms: terrain.surfaceUniforms, domain, plan });
     // M4: budynki i drzewa na podłodze — z tych samych reguł co mapa miasta w terenie
     const city = new HaloCity({ layout, uniforms, surfaceUniforms: terrain.surfaceUniforms, quality });
-    // M5: ruch statków (wokół ringu i do doków)
-    const traffic = new HaloTraffic({ layout, uniforms, plan });
-    group.add(terrain.mesh, structure.mesh, clouds.mesh, shell.mesh, mega.group, city.group, traffic.mesh);
+    // Ruchu statków ring nie udaje (decyzja użytkownika 2026-09-24: statki i ruch
+    // wdrażane osobno) — port wystawia stanowiska (k7Halls, bays) i adapter
+    // do ruchu v2 (haloPortTraffic.js), statki rysuje system ruchu.
+    group.add(terrain.mesh, structure.mesh, clouds.mesh, shell.mesh, mega.group, city.group);
     if (structureTop) group.add(structureTop.mesh);
-    // Port Kepler: K-7 — dok gameplayowy przy kącie stacji (habitat na zewnątrz)
-    let k7 = null;
-    if (layout.sigma > 0 && state.options.k7 !== false) {
-      k7 = new HaloPortK7({ ringLayout: layout, uniforms, layout: state.k7Layout || (state.k7Layout = createK7Layout()) });
-      group.add(k7.root);
+    // Port Ziemi: 4 kompleksy co 90° — hala K-7 i jej 2 otwarte zatoki
+    // (stanowiska w standardzie K-7; bryła zatok w megastrukturze). Układy
+    // stanowisk (stan zajętości) przeżywają przebudowę ringu: hala 0 i zatoki
+    // trzyma `state`. Kompleks obcinany w całości, gdy poza kadrem.
+    const k7Halls = [];
+    if (layout.sigma > 0 && layout.flightLevel !== 'roof' && state.options.k7 !== false) {
+      if (!state.bayLayouts) state.bayLayouts = haloBayLayouts(layout);
+      else for (const bay of state.bayLayouts) bay.frame = k7Frame(layout, bay.theta);
+      if (!state.hallLayouts) {
+        state.hallLayouts = haloPortComplexAngles().map((angle, i) => {
+          const l = i === 0 ? (state.k7Layout || (state.k7Layout = createK7Layout())) : createK7Layout();
+          if (i > 0) {
+            const c01 = l.berths[0];
+            c01.occupied = null;
+            c01.reserved = null;
+          }
+          return l;
+        });
+      }
+      haloPortComplexAngles().forEach((angle, i) => {
+        const hallLayout = state.hallLayouts[i];
+        const bays = state.bayLayouts.filter((b) => b.complex === i);
+        const hall = new HaloPortK7({ ringLayout: layout, uniforms, layout: hallLayout, angle, index: i, bays });
+        hall.update(0, {});
+        hall.setBerthLamps();
+        group.add(hall.root);
+        k7Halls.push(hall);
+      });
     }
-    parts = { maps, detail, terrain, structure, structureTop, clouds, shell, mega, city, traffic, k7, plan, domain, quality };
+    const k7 = k7Halls[0] || null;
+    parts = { maps, detail, terrain, structure, structureTop, clouds, shell, mega, city, k7, k7Halls, plan, domain, quality };
     applyLayers();
     applySun();
   }
@@ -108,11 +145,9 @@ export function createHaloRing(options = {}) {
     parts.mega.dispose();
     group.remove(parts.city.group);
     parts.city.dispose();
-    group.remove(parts.traffic.mesh);
-    parts.traffic.dispose();
-    if (parts.k7) {
-      group.remove(parts.k7.root);
-      parts.k7.dispose();
+    for (const hall of parts.k7Halls || []) {
+      group.remove(hall.root);
+      hall.dispose();
     }
     parts.maps.dispose();
     if (!keepDetail) parts.detail.dispose();
@@ -133,9 +168,57 @@ export function createHaloRing(options = {}) {
     for (const m of parts.mega.bgMeshes) m.layers.set(pick('mega'));
     for (const m of parts.mega.fgMeshes) m.layers.set(fgOr('mega'));
     for (const m of parts.city.meshes) m.layers.set(pick('city'));
-    parts.traffic.mesh.layers.set(pick('traffic'));
     // K-7: pokład i ściany pod statkami (BG), suwnice, węże i dach nad nimi (FG)
-    parts.k7?.setLayers(pick('k7'), Number.isFinite(map.fg) ? map.fg : pick('k7'));
+    for (const hall of parts.k7Halls || []) hall.setLayers(pick('k7'), Number.isFinite(map.fg) ? map.fg : pick('k7'));
+  }
+
+  // Kompleksy portu (hala K-7 + zatoki) poza zasięgiem wzroku bez draw calli:
+  // za horyzontem wypukłej podłogi (kamera przy wstędze), za planetą albo
+  // mniejsze niż ~3 px. Obwiednia kompleksu: hall.bounds (układ ringu).
+  const _hallC = new THREE.Vector3();
+  const _hallS = new THREE.Sphere();
+  function cullHalls(pixelAngle) {
+    const halls = parts.k7Halls;
+    if (!halls?.length) return;
+    const Rf = layout.radii.floorMid;
+    const Rc = Math.hypot(camLocal.x, camLocal.y);
+    const nearBand = Math.abs(camLocal.z - layout.z.floorMid) < layout.width;
+    const horizon = Math.acos(Math.min(1, Rf / Math.max(Rc, Rf + 1))) + Math.acos(Rf / (Rf + 9000)) + 0.05;
+    const camTh = Math.atan2(camLocal.y, camLocal.x);
+    const pc = uniforms.uPlanet.value;
+    for (const hall of halls) {
+      const B = hall.bounds;
+      _hallC.set(B.x, B.y, B.z);
+      let vis = true;
+      if (sigmaOut && nearBand) {
+        let d = Math.atan2(B.y, B.x) - camTh;
+        d -= Math.PI * 2 * Math.round(d / (Math.PI * 2));
+        if (Math.abs(d) > horizon + B.r / Rf) vis = false;
+      }
+      const dist = _hallC.distanceTo(camLocal);
+      if (vis && pixelAngle > 0 && 2 * B.r / Math.max(dist, 1) / pixelAngle < 3) vis = false;
+      if (vis) {
+        // odcinek kamera → hala przecina planetę?
+        const dx = _hallC.x - camLocal.x;
+        const dy = _hallC.y - camLocal.y;
+        const dz = _hallC.z - camLocal.z;
+        const len = Math.hypot(dx, dy, dz) || 1;
+        const ox = pc.x - camLocal.x;
+        const oy = pc.y - camLocal.y;
+        const oz = pc.z - camLocal.z;
+        const t = (ox * dx + oy * dy + oz * dz) / len;
+        if (t > 0 && t < len - B.r) {
+          const d2 = ox * ox + oy * oy + oz * oz - t * t;
+          if (d2 < (pc.w - 500) * (pc.w - 500)) vis = false;
+        }
+      }
+      if (vis) {
+        _hallS.center.copy(_hallC);
+        _hallS.radius = B.r;
+        vis = frustum.intersectsSphere(_hallS);
+      }
+      hall.root.visible = vis;
+    }
   }
 
   function applySun() {
@@ -207,6 +290,7 @@ export function createHaloRing(options = {}) {
         parts.mega.update(frustum, camLocal);
       }
       if (parts.city.group.visible) parts.city.update(camLocal, pixelAngle, frustum);
+      cullHalls(pixelAngle);
     },
 
     setSun(azimuth, elevation) {
@@ -256,7 +340,7 @@ export function createHaloRing(options = {}) {
 
     // Wysokość terenu (CPU, niska rozdzielczość) — dynamiczny near kamery.
     terrainHeightAt(x, y, z) {
-      const f = layout.worldToFloor(x, y, z);
+      const f = layout.worldToFloor(x, y, z, _floorTmp);
       return parts.maps.heightAtUV(f.u, f.v);
     },
 
@@ -278,8 +362,16 @@ export function createHaloRing(options = {}) {
     get mapsReady() { return parts.maps.ready; },
 
     // Port K-7 (dok gameplayowy): render + układ hali (dane dla rozgrywki hosta).
+    // k7 = hala gracza (kompleks 0), k7Halls = wszystkie 4 (każda z zatokami
+    // swojego kompleksu: hall.bays), bays = 8 otwartych zatok (układy
+    // stanowisk z ramkami, kolejność jak plan.docks).
     get k7() { return parts.k7; },
+    get k7Halls() { return parts.k7Halls || []; },
     get k7Layout() { return state.k7Layout || null; },
+    get bays() { return state.bayLayouts || []; },
+    get plan() { return parts.plan; },
+    // Megabudowle (haloRingLandmarks.js): nazwa, sektor, kąt, t podłogi, plac.
+    get landmarks() { return parts.plan.landmarks || []; },
 
     dispose() {
       disposeParts(false);

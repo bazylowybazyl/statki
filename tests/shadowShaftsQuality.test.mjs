@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 const coreSource = readFileSync(new URL('../src/3d/core3d.js', import.meta.url), 'utf8');
 const planetSource = readFileSync(new URL('../src/3d/planet3d.assets.js', import.meta.url), 'utf8');
 const shipsSource = readFileSync(new URL('../src/3d/hexShips3D.js', import.meta.url), 'utf8');
+const hullSdfSource = readFileSync(new URL('../src/3d/hullShadowSdf.js', import.meta.url), 'utf8');
 const ringSource = readFileSync(new URL('../src/3d/planetaryRing3D.js', import.meta.url), 'utf8');
 const asteroidSource = readFileSync(new URL('../src/3d/asteroidField3D.js', import.meta.url), 'utf8');
 const gameSource = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
@@ -16,13 +17,17 @@ test('shadow shafts are fully analytic — screen-space mask is gone', () => {
   for (const relic of ['uOcclusionMap', 'occlusionTarget', 'occlusionWhiteMaterial', 'OCCLUSION_RENDER_LAYER', 'OCCLUSION_ORTHO_RENDER_LAYER', 'OCCLUSION_SPRITE', 'NUM_SAMPLES', 'createSeparableBlurMaterial']) {
     assert.ok(!coreSource.includes(relic), `mask relic still present in core3d.js: ${relic}`);
   }
-  // Trzy rodziny analitycznych okluderow w shaderze passa.
-  for (const uniformName of ['uDiscs', 'uHulls', 'uHullMeta', 'uRings', 'uSunWorld', 'uCamCenter', 'uViewWorldSize', 'uSunActive']) {
+  // Trzy rodziny analitycznych okluderow w shaderze passa: dyski, kadluby
+  // (pole odleglosci sylwetki) i pierscienie.
+  for (const uniformName of ['uDiscs', 'uHullA', 'uHullM', 'uHullC', 'uHullSdf', 'uHullSteps', 'uRings', 'uSunWorld', 'uCamCenter', 'uViewWorldSize', 'uSunActive']) {
     assert.ok(coreSource.includes(uniformName), `shafts shader missing uniform ${uniformName}`);
   }
   assert.match(coreSource, /const SHAFT_DISC_CAP = 48;/);
-  assert.match(coreSource, /const SHAFT_HULL_CAP = 48;/);
+  assert.match(coreSource, /const SHAFT_HULL_CAP = HULL_SDF_SHAFT_CAP;/);
+  assert.match(hullSdfSource, /export const HULL_SDF_SHAFT_CAP = 32;/);
   assert.match(coreSource, /const SHAFT_RING_CAP = 2;/);
+  // Blok GLSL kadlubow wstrzykiwany przed main passa.
+  assert.match(coreSource, /\$\{HULL_SDF_SHADOW_GLSL\}/);
 });
 
 test('quality levels map to shaft lengths and capsule budget', () => {
@@ -31,7 +36,12 @@ test('quality levels map to shaft lengths and capsule budget', () => {
   for (const level of ['off:', 'low:', 'medium:', 'high:']) {
     assert.ok(cfgBlock.includes(level), `missing quality level ${level}`);
   }
-  assert.match(cfgBlock, /high:\s*\{\s*enabled:\s*true,\s*discLenMul:\s*30,\s*capsuleLenMul:\s*16,\s*capsuleBudget:\s*32/);
+  assert.match(cfgBlock, /high:\s*\{\s*enabled:\s*true,\s*discLenMul:\s*7,\s*capsuleLenMul:\s*4,\s*capsuleBudget:\s*32,\s*hullSteps:\s*32/);
+  // Kroki marszu po SDF kadluba — tylko uniform, bez rekompilacji.
+  for (const level of ['off', 'low', 'medium', 'high']) {
+    assert.match(cfgBlock, new RegExp(`${level}:[^\\n]*hullSteps:\\s*\\d+`), `missing hullSteps for ${level}`);
+  }
+  assert.match(coreSource, /uShafts\.uHullSteps\.value = Math\.max\(1, Math\.min\(HULL_SDF_MAX_STEPS, Number\(shaftCfg\.hullSteps\) \|\| 24\)\);/);
   assert.match(coreSource, /setShadowShaftsQuality\(level = 'medium'\)/);
   assert.match(coreSource, /shadowShaftsQuality: this\.shadowShaftsQuality \|\| 'medium'/);
 });
@@ -66,11 +76,14 @@ test('shields render after the shafts pass, in ortho, without clearing depth', (
 });
 
 test('analytic occluders skip interiors so surfaces keep their own lighting', () => {
-  // Dyski: wnetrze tarczy = oswietlenie planety; kadluby: wnetrze elipsy
-  // (qc <= 0) = terminator w shaderze heksow; ring na powierzchni planety =
-  // uRingShadow* w shaderze planety (bez podwojnego liczenia w passie).
+  // Dyski: wnetrze tarczy = oswietlenie planety; kadluby: piksel NA wlasnym
+  // kadlubie (SDF < progu) = jego wlasne oswietlenie w shaderze heksow;
+  // ring na powierzchni planety = uRingShadow* w shaderze planety (bez
+  // podwojnego liczenia w passie).
   assert.match(coreSource, /if \(along <= exitDist\) continue;/);
-  assert.match(coreSource, /if \(dot\(fromHull, fromHull\) <= capR \* capR\) continue;/);
+  // Pomijany CALY statek, nie jedna jego czesc — lancuch kapsul pomijal
+  // tylko wnetrze tej samej kapsuly i kazda cienila kadlub pod sasiednia.
+  assert.match(hullSdfSource, /if \(t <= 0\.0 && hullSdfDist\(q, layer, distScale\) < wMin\) continue;/);
   assert.match(coreSource, /if \(!insideDisc\) \{/);
 });
 
@@ -82,42 +95,49 @@ test('planets and moons push analytic discs every frame', () => {
 });
 
 test('ships push size-sorted hull silhouettes from the hex update loop', () => {
-  assert.match(coreSource, /pushShaftHullWorld\(x1, y1, x2, y2, radius, span\)/);
+  assert.match(coreSource, /pushShaftHullSdf\(packed, offset = 0\)/);
   assert.match(shipsSource, /Core3D\.beginShaftHullFrame\(\);/);
-  assert.match(shipsSource, /Core3D\.pushShaftHullWorld\(/);
+  assert.match(shipsSource, /Core3D\.pushShaftHullSdf\(shaftOccluderScratch, 0\)/);
   assert.match(shipsSource, /cands\.sort\(\(a, b\) => b\.size - a\.size\)/);
   // Ring-segmenty pomijane — pierscien ma wlasny okrag-okluder.
   assert.match(shipsSource, /entity\.isRingSegment\) continue;/);
-  // Budzet kadlubow wg jakosci tnie upload w render().
+  // Budzet kadlubow wg jakosci: hexShips3D staje na nim (nie piecze
+  // sylwetek, ktorych pass nie wezmie), render() tnie na wszelki wypadek.
+  assert.match(coreSource, /getShaftHullBudget\(\) \{/);
+  assert.match(shipsSource, /pushed < shaftHullBudget/);
   assert.match(coreSource, /shaftCfg\.capsuleBudget/);
+  // Obrot i skala okludera = mesh kadluba (rotation.z = -kat, billboard +kat).
+  assert.match(shipsSource, /const rot = usesBillboardOrientation\(c\.entity\) \? rawAng : -rawAng;/);
+  assert.match(shipsSource, /const renderRotation = usesBillboardOrientation\(entity\) \? entityAngle : -entityAngle;/);
 });
 
-test('hull occluder is a band chain fitted to the hex outline, not one blob', () => {
-  // Jedna brylа na caly statek (kapsula z bboxa albo elipsa) jest przy waskim
-  // ogonie duzo szersza niz kadlub — widac wtedy jej obrys jako "jajo",
-  // z ktorego dopiero wychodzi cien. Stad pasma o LOKALNYM promieniu.
-  assert.ok(!shipsSource.includes('const capR = Math.max(6, halfWid * 0.9)'),
-    'sprite-bbox capsule occluder is back');
-  assert.match(shipsSource, /function buildHullSegments\(grid, shards, sx, sy\)/);
-  assert.match(shipsSource, /const HULL_SHAFT_SEGMENTS = 4;/);
-  assert.match(coreSource, /const HULL_SHAFT_BANDS = 4;/);
-  // Granice pasm z programowania dynamicznego po profilu szerokosci —
-  // rowne pasma topily waski ogon w jednym grubym promieniu.
-  assert.match(shipsSource, /function splitProfileIntoBands\(slots, bandCount\)/);
-  assert.match(shipsSource, /cost\[i\]\[j\] = \(hi - lo\) \* \(j - i \+ 1\) - sum;/);
-  // Promien pasma = LOKALNA polowa szerokosci + promien heksa.
-  assert.match(shipsSource, /const r = Math\.max\(\(bMaxV - bMinV\) \* 0\.5 \+ hexR, 1\);/);
-  // Pasma cache'owane po tablicy shardow i skali — nie liczone co klatke
-  // ani per kierunek slonca (ksztalt od slonca nie zalezy).
-  assert.match(shipsSource, /entity\._shaftHullSegments = \{ shards, count: shards\.length, sx, sy, hull \}/);
+test('hull occluder is the silhouette distance field, not a capsule chain', () => {
+  // Kapsuly nie opisza kolcow, widelca dziobu ani prostokatnej rufy: krotkie
+  // pasma zwijaly sie do okregow wystajacych poza kadlub (Atlas: 131 j. za
+  // rufa), a promien z najszerszego punktu zostawial pas swiatla przy burcie.
+  for (const relic of ['buildHullSegments', 'splitProfileIntoBands', 'HULL_SHAFT_SEGMENTS', '_shaftHullSegments']) {
+    assert.ok(!shipsSource.includes(relic), `capsule relic back in hexShips3D.js: ${relic}`);
+  }
+  assert.ok(!coreSource.includes('HULL_SHAFT_BANDS'), 'capsule band count back in core3d.js');
+  assert.ok(shipsSource.includes('HullShadowSdf.acquire(c.grid, now)'), 'hexShips3D must acquire the hull SDF layer');
+  // Sylwetka = aktywne heksy ∩ alfa sprite'a (dziury po trafieniach + brak
+  // szczeliny od heksow brzegowych wystajacych poza rysowana krawedz).
+  assert.ok(hullSdfSource.includes('return !!s && s.active !== false && s.isDebris !== true;'));
+  assert.ok(hullSdfSource.includes('sampleAlphaMap(alphaMap, sx * invW, sy * invH) < HULL_SDF_ALPHA_INSIDE'));
+  // Wraki ida z puli: warstwa wazna tylko dla tej samej tablicy heksow.
+  assert.ok(hullSdfSource.includes('const sameShape = entry.layer >= 0 && entry.shardsRef === shards &&'));
+  // Brzeg prostokata SDF musi byc dalej niz najszerszy polcien.
+  const margin = Number(hullSdfSource.match(/HULL_SDF_MARGIN_TEXELS = (\d+);/)?.[1]);
+  const soft = Number(hullSdfSource.match(/HULL_SDF_SOFT_TEXELS = (\d+);/)?.[1]);
+  const range = Number(hullSdfSource.match(/HULL_SDF_RANGE_TEXELS = (\d+);/)?.[1]);
+  assert.ok(soft < margin && margin <= range, 'soft < margin <= range');
 });
 
 test('hull shaft starts at the hull edge and only dims the scene', () => {
-  // Wnetrze kapsuly pomijane — smuga zaczyna sie na krawedzi pasma, czyli
-  // na burcie, a nie na obrysie jakiejs wiekszej bryly.
-  assert.match(coreSource, /if \(dot\(fromHull, fromHull\) <= capR \* capR\) continue;/);
-  // Polcien ciasny (bylo 0.25 + 0.7 — pas rozlewal sie do ~2x szerokosci).
-  assert.match(coreSource, /float soft = capR \* \(0\.12 \+ 0\.35 \* fallT\);/);
+  // Marsz po SDF od piksela do slonca: promien wchodzacy w kadlub tuz za
+  // burta daje pelny cien, polcien rosnie z dystansem od statku.
+  assert.ok(hullSdfSource.includes('float w = max(softMax * clamp(t / span, 0.0, 1.0), wMin);'));
+  assert.ok(coreSource.includes('shadow = max(shadow, hullSdfShadow(worldP, d, sunDist) * ${HULL_SHADOW_STRENGTH.toFixed(2)});'));
   // Statek/asteroida tylko przygaszaja; umbra do czerni zostaje planetom.
   assert.match(coreSource, /const HULL_SHADOW_STRENGTH = 0\.55;/);
   assert.match(coreSource, /shadow = max\(shadow, edge \* fall \* max\(disc\.w, 0\.0\)\);/);

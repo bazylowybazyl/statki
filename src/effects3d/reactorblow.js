@@ -362,10 +362,6 @@ export function createReactorBlowFactory(scene) {
             chargeTime: 0.05,
             explosionDuration: 0.2,
             chargeSizeMul: 1.5,
-            lightDistMul: 4.0,
-            lightChargeIntensity: 1.0,
-            lightExplodeIntensity: 2.0,
-            lightDropOff: 0.15,
             flashSizeMul: 4.0,
             flashLife: 0.15,
             ringSizeMul: 0.0,
@@ -400,10 +396,6 @@ export function createReactorBlowFactory(scene) {
             chargeTime: 0.30,
             explosionDuration: 1.3,
             chargeSizeMul: 2.2,
-            lightDistMul: 10.0,
-            lightChargeIntensity: 2.0,
-            lightExplodeIntensity: 7.0,
-            lightDropOff: 0.7,
             flashSizeMul: 7.0,
             flashLife: 0.6,
             ringSizeMul: 9.0,
@@ -442,10 +434,6 @@ export function createReactorBlowFactory(scene) {
             chargeTime: 0.55,
             explosionDuration: 2.1,
             chargeSizeMul: 2.9,
-            lightDistMul: 15.0,
-            lightChargeIntensity: 3.0,
-            lightExplodeIntensity: 11.0,
-            lightDropOff: 1.1,
             flashSizeMul: 9.5,
             flashLife: 0.9,
             ringSizeMul: 13.0,
@@ -486,10 +474,6 @@ export function createReactorBlowFactory(scene) {
             chargeTime: 0.8,
             explosionDuration: 3.0,
             chargeSizeMul: 3.5,
-            lightDistMul: 20.0,
-            lightChargeIntensity: 4.0,
-            lightExplodeIntensity: 15.0,
-            lightDropOff: 1.5,
             flashSizeMul: 12.0,
             flashLife: 1.2,
             ringSizeMul: 17.0,
@@ -534,11 +518,10 @@ export function createReactorBlowFactory(scene) {
 
         const cfg = PROFILE_CONFIGS[profile] || PROFILE_CONFIGS.capital;
 
-        const lightDist = size * cfg.lightDistMul;
-        const light = new THREE.PointLight(0x00ffff, 0, lightDist);
-        light.position.set(x, size * 0.5, y);
-        scene.add(light);
-
+        // Bez PointLight: scena overlaya ma tylko materiały nieoświetlane
+        // (Sprite/Basic/Shader), więc światło nic nie rozjaśniało, a zmieniało
+        // numPointLights w kluczu programu — każdy materiał trafienia utworzony
+        // w trakcie wybuchu kompilował nowy wariant shadera (przycięcia w bitwie).
         const CHARGE_TIME = cfg.chargeTime;
         const EXPLOSION_DURATION = cfg.explosionDuration;
 
@@ -564,11 +547,8 @@ export function createReactorBlowFactory(scene) {
             fireParticleSystem.material.uniforms.uTime.value = gt;
             smokeParticleSystem.material.uniforms.uTime.value = gt;
 
-            if (phase === 'CHARGE') {
-                light.intensity = (time / Math.max(0.001, CHARGE_TIME)) * cfg.lightChargeIntensity;
-            } else {
+            if (phase !== 'CHARGE') {
                 const expTime = time - CHARGE_TIME;
-                light.intensity = Math.max(0, cfg.lightExplodeIntensity * (1.0 - expTime / Math.max(0.001, cfg.lightDropOff)));
 
                 if (!useShockwave3D && cfg.heatHaze && expTime < cfg.heatHaze.duration && typeof window !== 'undefined' && window.Core3D) {
                     // Bez beginHeatHazeFrame: overlay tickuje PO passie Core3D, wiec
@@ -577,7 +557,8 @@ export function createReactorBlowFactory(scene) {
                     // teraz konsument.
                     const currentRadius = size * cfg.heatHaze.startScaleMul + (expTime * size * cfg.heatHaze.growthMul);
                     const distortionStrength = Math.max(0, 1.0 - (expTime / cfg.heatHaze.duration)) * cfg.heatHaze.strength;
-                    window.Core3D.pushHeatHazeWorld(expX, expZ, -4, currentRadius, distortionStrength);
+                    // Core3D oczekuje współrzędnych SCENY (y3d = -yGry), jak fala niżej.
+                    window.Core3D.pushHeatHazeWorld(expX, -expZ, -4, currentRadius, distortionStrength);
                 }
             }
 
@@ -645,7 +626,6 @@ export function createReactorBlowFactory(scene) {
             if (disposed) return;
             disposed = true;
             if (group.parent) group.parent.remove(group);
-            if (light.parent) light.parent.remove(light);
         }
 
         // DODANO: important: true

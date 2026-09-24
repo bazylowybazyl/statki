@@ -265,6 +265,8 @@ export const DestructorGpuSoftBody = {
   _maxQueueLen: 96,
   _droppedReadbacks: 0,
   _tickId: 0,
+  // Czas gry czekający na następny krok solvera (zegar gpuSoftBodyHz w tick()).
+  _solverAcc: 0,
   _cleanupStamp: 1,
   // Round-robin po liscie encji — patrz komentarz przy petli dispatchu w tick().
   _dispatchCursor: 0,
@@ -551,6 +553,17 @@ export const DestructorGpuSoftBody = {
     }
   },
 
+  // AGENT: TODO (2026-09-24, zależność od FPS, która została po zegarze
+  // gpuSoftBodyHz). Mieszanie `target = 0.35·target + 0.65·wynik` i nadpisanie
+  // __velX/Y liczą wynik GPU względem stanu z CHWILI ODCZYTU, więc ~65% zmian CPU
+  // zrobionych, gdy dispatch był w locie (trafienia w tym oknie), przepada. Okno to
+  // 1–2 klatki renderu, czyli w czasie gry krótsze przy wyższym FPS. Pomiar (demo
+  // rdzenia, Bellator, beam_continuous 20 s, WebGPU): heksów przesuniętych >10 px
+  // 283 przy 60 FPS vs 381 przy 144. Prototyp „przyrostu” (target += 0.65·(wynik −
+  // wysłane), __vel += wynik − wysłane; wysłane = kopia state.shardData i __vel
+  // z _dispatch) zrównuje 60 i 144 FPS (~450 oba), ALE przy 60 FPS wgniecenia
+  // rosną (283 → 450, >40 px: 6 → 35) — obecne strojenie opiera się na tej
+  // utracie. Decyzja o przestrojeniu należy do usera.
   _applyResult(res) {
     const { entity, count, data, shardsRef, repairStamp } = res;
     this._debugAppliedCount = (this._debugAppliedCount || 0) + 1;
@@ -662,7 +675,6 @@ export const DestructorGpuSoftBody = {
     this._ensureInit();
     this._yieldPoint = Number(config?.yieldPoint) || 45;
     this._collisionDeformScale = Number(config?.collisionDeformScale) || 1;
-    this._tickId = (this._tickId + 1) | 0;
 
     const applyPerTick = Math.max(2, Math.min(32, Number(config?.gpuSoftBodyApplyPerTick) || 16));
     const applyBudgetMs = Math.max(0.2, Math.min(2.5, Number(config?.gpuSoftBodyApplyBudgetMs) || 0.9));
@@ -708,7 +720,37 @@ export const DestructorGpuSoftBody = {
     const tension = Number(config.softBodyTension) || 0.15;
     if (tension <= 0) return;
 
-    const step = Number.isFinite(dt) ? Math.max(0.0001, dt) : (1 / 120);
+    // ZEGAR SOLVERA W CZASIE GRY. Kernel całkuje `def += vel` na iterację, bez
+    // dt, a dispatch szedł raz na klatkę renderu: przy 144 FPS 2,4× więcej
+    // iteracji na sekundę gry niż przy 60, więc wgniecenia od tych samych
+    // trafień rosły szybciej, fala biegła szybciej, a heksy szybciej wypadały
+    // z okien sond. Cały dispatcher (k, tłumienie, iteracje, interwały, cooldowny)
+    // jest strojony przy 60 FPS, więc przy szybszych klatkach krok idzie co
+    // 1/gpuSoftBodyHz s czasu gry, a reszta czasu przechodzi na następną klatkę.
+    // Klatka co najmniej tak długa jak krok = jeden krok z całym zaległym czasem,
+    // czyli przy ≤ 60 FPS dokładnie dawne zachowanie. gpuSoftBodyHz = 0 → dispatch
+    // co klatkę jak dawniej (do porównań). Wyniki z GPU wyżej: co klatkę, bez zmian.
+    const frameDt = Number.isFinite(dt) ? Math.max(0, dt) : (1 / 120);
+    const solverHz = Number(config?.gpuSoftBodyHz ?? 60);
+    let step = frameDt;
+    if (solverHz > 0) {
+      const solverDt = 1 / solverHz;
+      const acc = (Number(this._solverAcc) || 0) + frameDt;
+      if (frameDt >= solverDt * 0.9) {
+        step = acc;
+        this._solverAcc = 0;
+      } else if (acc >= solverDt * 0.9) {
+        // Próg 0,9: klatki ~16,5 ms przy „60 FPS” nie mogą przeskakiwać kroku.
+        step = solverDt;
+        this._solverAcc = acc - solverDt;
+      } else {
+        this._solverAcc = acc;
+        return;
+      }
+    }
+    step = Math.max(0.0001, step);
+    this._tickId = (this._tickId + 1) | 0;
+
     const k = 1 - Math.exp(-tension * step * 120);
     const dampingBase = Math.min(0.999, Math.max(0.7, Number(config?.gpuPropagationDamping) || 0.92));
     // Wykładnik normalizacji dt trzymamy osobno: _dispatch dokłada do niego

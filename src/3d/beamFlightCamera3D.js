@@ -9,6 +9,7 @@ export class BeamFlightCamera3D {
     this.offset = new Vector3();
     this.target = new Vector3();
     this.zoom = 1;
+    this.aimDistance = 0;
     this.needsSnap = true;
   }
 
@@ -23,10 +24,10 @@ export class BeamFlightCamera3D {
     else this.rotation.slerp(this.bodyRotation, 1 - Math.exp(-7 * dt));
     this.needsSnap = false;
     const size = Math.max(10, radius);
-    this.offset.set(-size * 3.8 * this.zoom, size * 1.25 * this.zoom, 0).applyQuaternion(this.rotation);
+    this.offset.set(-size * 3.8 * this.zoom, size * (this.aimDistance ? 0.75 : 1.25) * this.zoom, 0).applyQuaternion(this.rotation);
     this.camera.position.copy(body.pos).add(this.offset);
     this.camera.up.set(0, 1, 0).applyQuaternion(this.rotation);
-    this.target.set(size * 1.5, 0, 0).applyQuaternion(this.rotation).add(body.pos);
+    this.target.set(this.aimDistance || size * 1.5, 0, 0).applyQuaternion(this.rotation).add(body.pos);
     this.camera.lookAt(this.target);
   }
 }

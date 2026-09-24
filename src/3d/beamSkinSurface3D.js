@@ -121,6 +121,7 @@ export function prepareSkinSurface(skin) {
 export function createSurfaceState(skin) {
   return { nodes: null, beams: null, activeNodes: -1, liveBeams: -1,
     alive: new Uint8Array(skin.occupancy.length), edges: new Uint8Array(skin.supportEdges.length / 2),
+    exposed: new Uint8Array(skin.occupancy.length),
     links: new Uint8Array(skin.occupancy.length * 4),
     parts: skin._surface.map(p => ({ visible: new Uint8Array(p.groups.length), indices: EMPTY_INDICES, count: 0 })) };
 }
@@ -129,7 +130,7 @@ export function updateSurfaceState(body, state) {
   if (state.nodes === body.nodes && state.beams === body.beams && state.activeNodes === body.activeNodes && state.liveBeams === body.liveBeams) return false;
   const d = body.skin.dims, total = state.alive.length;
   const cell = n => n.ix + n.iy * d.x + n.iz * d.x * d.y;
-  state.alive.fill(0); state.links.fill(0); state.edges.fill(0);
+  state.alive.fill(0); state.links.fill(0); state.edges.fill(0); state.exposed.fill(0);
   let edgeCount = 0;
   for (const n of body.nodes) if (n.active) state.alive[cell(n)] = 1;
   for (const beam of body.beams) {
@@ -156,6 +157,7 @@ export function updateSurfaceState(body, state) {
       if (visible) for (const edge of group.edges) if (!state.edges[edge]) { visible = false; break; }
       part.visible[g] = visible ? 1 : 0;
       if (visible) part.count += group.indices.length;
+      else for (const anchor of group.anchors) state.exposed[anchor] = 1;
     }
     // A small wreck gets only its own indices, not a full copy of the GLB.
     // Capacity grows only on repair; ordinary deformation keeps the buffers.

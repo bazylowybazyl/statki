@@ -157,10 +157,13 @@ test('sektory pokrywają 360° bez dziur i zakładek, port leży pod kątem stac
     }
     const port = layout.sectors[layout.sectorIndexAt(HALO_STATION_ANGLE)];
     assert.ok(port.port, 'sektor pod kątem stacji ma port');
+    // przemysł tylko wokół doków (poprawka użytkownika 2026-09-23): żadnego sektora przemysłowego
+    assert.ok(layout.sectors.every((s) => s.type !== 'industrial'), `sektor przemysłowy przy ${count} sektorach`);
+    assert.equal(port.type, 'landscape', 'sektor portu: krajobraz (góry wokół doków)');
   }
   const plan = createHaloRingLayout({ sectorCount: 16 }).sectors;
   const counts = plan.reduce((acc, s) => ({ ...acc, [s.type]: (acc[s.type] || 0) + 1 }), {});
-  assert.deepEqual(counts, { industrial: 3, garden: 5, landscape: 5, glass: 3 });
+  assert.deepEqual(counts, { landscape: 7, garden: 5, glass: 4 });
 });
 
 test('ten sam seed = ten sam ring; inny seed = inny', () => {

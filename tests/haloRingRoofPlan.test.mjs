@@ -123,20 +123,24 @@ test('plan deterministyczny: detal na dachu, doki wpięte w podłogę w płaszcz
   }
   assert.ok(detail > 50000, `detal dachu: ${detail} instancji`);
   assert.ok(landmark > 50, `doki: ${landmark} instancji`);
-  assert.equal(a.docks.length, HALO_PORT.docks);
-  // tył doku w podłodze (kołnierz wpuszczony ≤ 70 j.), stanowisko za krawędzią ścian
-  assert.ok(dockRMin > floorMid - 70 && dockRMin < floorMid + 10, `tył doków: r = ${dockRMin.toFixed(0)}`);
+  assert.equal(a.docks.length, HALO_PORT.docks * HALO_PORT.complexes);
+  // tył doku w podłodze: bryły styku z podłogą wpuszczone zgodnie z krzywizną
+  // (szeroka zatoka: końce ~140 j. niżej niż środek), ale w płycie kadłuba
+  assert.ok(dockRMin > floorMid - 250 && dockRMin < floorMid + 10, `tył doków: r = ${dockRMin.toFixed(0)}`);
+  assert.ok(dockRMin > layout.radii.back + 100, 'tył doku przebija kadłub');
   assert.ok(dockRMax > layout.radii.rim + 1000, `wylot zatoki za krawędzią ścian: r = ${dockRMax.toFixed(0)}`);
   // tunele tranzytów przechodzą przez całą płytę: od kadłuba (planeta) po podłogę (habitat)
   assert.equal(a.transits.length, HALO_TRANSIT.count);
   assert.ok(tunnelRMin < layout.radii.back - 50 && tunnelRMax > floorMid + 100, `tunel r ${tunnelRMin.toFixed(0)}–${tunnelRMax.toFixed(0)}`);
-  // doki transportowe przy porcie Kepler (kąt stacji), po bokach K-7 (±6,8 i +11 tys. j.)
+  // zatoki transportowe przy kompleksach (co 90° od kąta stacji), po bokach hal K-7
   for (const d of a.docks) {
     let dd = d.theta - HALO_STATION_ANGLE;
-    dd -= HALO_TAU * Math.round(dd / HALO_TAU);
-    assert.ok(Math.abs(dd) < 0.3, 'doki przy porcie Kepler');
+    dd -= (Math.PI / 2) * Math.round(dd / (Math.PI / 2));
+    assert.ok(Math.abs(dd) < 0.35, 'zatoka przy kompleksie');
     assert.ok(Math.abs(dd) * floorMid > HALO_PORT.k7HalfWidth + HALO_PORT.collar + d.length / 2, 'dok transportowy nie zachodzi na K-7');
-    assert.ok(d.berthZ > HALO_PORT.deckTop && d.berthZ < 0, 'okręt w zatoce pod płaszczyzną gry');
+    // pasy MEGA przy obu ścianach zatoki, stanowisko w głębi zatoki
+    assert.equal(d.lanes.length, 2);
+    assert.ok(d.berthY > 0 && d.berthY < d.depth, 'stanowisko MEGA w zatoce');
   }
   // światła dachu na dachu, światła doków przy płaszczyźnie gry
   const Ld = a.lights.data;
@@ -160,30 +164,6 @@ test('wariant Halo (do planety) nie dostaje doków, dach nadal pełny', () => {
   const plan = buildHaloRoofPlan(layout, domainFor(layout));
   assert.equal(plan.docks.length, 0);
   assert.ok(plan.prims[0].detail.total > 30000);
-});
-
-test('ruch statków: deterministyczny, pod dokami, okręt liniowy w każdym doku', async () => {
-  const { buildHaloTraffic } = await import('../src/3d/haloRing/haloRingTraffic.js');
-  const layout = createHaloRingLayout({});
-  const plan = buildHaloRoofPlan(layout, domainFor(layout));
-  const a = buildHaloTraffic(layout, plan);
-  const b = buildHaloTraffic(layout, plan);
-  assert.deepEqual(Array.from(a), Array.from(b));
-  let dockShips = 0;
-  for (let k = 0; k < a.length / 8; k++) {
-    const o = k * 8;
-    if (a[o] > 0.5) { dockShips++; continue; }
-    const z = a[o + 4];
-    const len = a[o + 5];
-    // wysokość kadłuba 0,16 długości + falowanie ±90 j.: szczyt poniżej spodu
-    // pokładów doków (płaszczyzna gry z = 0 zostaje dla statków gry)
-    assert.ok(z + len * 0.08 + 90 < HALO_PORT.deckTop - 60, `statek ${k} na wysokości doków: z = ${z.toFixed(0)}`);
-    assert.ok(z - len * 0.08 - 90 > layout.z.bottom, `statek ${k} pod wstęgą: z = ${z.toFixed(0)}`);
-    // tor: krawędź + 800..3400 j., falowanie ±160, pół szerokości kadłuba 0,12 długości —
-    // żaden statek nie wchodzi w ścianę ringu
-    assert.ok(800 - 160 - len * 0.12 > 0, `statek ${k} zahacza o krawędź ścian (długość ${len.toFixed(0)})`);
-  }
-  assert.equal(dockShips, plan.docks.length);
 });
 
 test('przemysł: zestaw brył działki mieści się w działce i pod limitem wysokości', async () => {

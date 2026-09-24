@@ -11,8 +11,22 @@ import { resolveWorldUnitsPerAu } from '../config/units.js';
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const smoothstep01 = (t) => { const x = clamp(t, 0, 1); return x * x * (3 - 2 * x); };
 
-const warpBlackHoleFX = new WarpBlackHole({ zIndex: 45, mode: 'offscreen' });
-warpBlackHoleFX.setEnabled(false);
+// Soczewka ma własny kontekst WebGL (trzeci obok Core3D i overlaya). Powstaje
+// dopiero przy pierwszym ładowaniu skoku w strefie z efektem — wcześniej
+// tworzył go sam import i kontekst wisiał całą sesję, nawet bez jednego skoku.
+let warpBlackHoleFX = null;
+let warpBlackHoleUnavailable = false;
+function ensureWarpBlackHole() {
+  if (warpBlackHoleFX || warpBlackHoleUnavailable) return warpBlackHoleFX;
+  try {
+    warpBlackHoleFX = new WarpBlackHole({ zIndex: 45, mode: 'offscreen' });
+    warpBlackHoleFX.setEnabled(false);
+  } catch (err) {
+    warpBlackHoleUnavailable = true;
+    console.warn('[warpLens] brak WebGL — soczewka skoku wyłączona', err);
+  }
+  return warpBlackHoleFX;
+}
 let warpLensMode = 'background';
 let warpLensSource = null;
 
@@ -71,22 +85,26 @@ export function configureWarpLensSource() {
   }
 }
 
-if (warpBlackHoleFX) {
-  window.setWarpLensMode = function (mode) {
-    const next = mode === 'full' ? 'full' : 'background';
-    if (warpLensMode !== next) {
-      warpLensMode = next;
-      warpLensSource = null;
-      configureWarpLensSource();
-    }
-  };
-  window.addEventListener('resize', configureWarpLensSource);
-}
+window.setWarpLensMode = function (mode) {
+  const next = mode === 'full' ? 'full' : 'background';
+  if (warpLensMode !== next) {
+    warpLensMode = next;
+    warpLensSource = null;
+    configureWarpLensSource();
+  }
+};
+window.addEventListener('resize', configureWarpLensSource);
 
 export function renderWarpLensPass(cam, interpPos, interpAngle) {
-  if (!warpBlackHoleFX) return;
   const { ctx, canvas, camera, ship, warp, zoneState } = GameState;
   if (!ctx || !canvas || !camera || !ship || !warp) return;
+  const zoneAllowsWarpLens = zoneState?.current?.wormholeVfx ?? false;
+  if (!warpBlackHoleFX) {
+    // Kontekst i shader powstają już w fazie ładowania skoku, żeby ich koszt
+    // nie wypadł na pierwszą klatkę widocznej soczewki.
+    if (!zoneAllowsWarpLens || (warp.state !== 'charging' && warp.state !== 'active')) return;
+    if (!ensureWarpBlackHole()) return;
+  }
   const isWarpActive = (warp.state === 'active');
   const entryProgress = isWarpActive ? clamp(warp.entryProgress, 0, 1) : 0;
   const warpIntensity = isWarpActive ? smoothstep01(entryProgress) : 0;
@@ -101,7 +119,6 @@ export function renderWarpLensPass(cam, interpPos, interpAngle) {
     configureWarpLensSource();
   }
 
-  const zoneAllowsWarpLens = zoneState?.current?.wormholeVfx ?? false;
   const shouldRenderWarpLens = isWarpActive && warpIntensity > 0.001 && zoneAllowsWarpLens;
   warpBlackHoleFX.setEnabled(shouldRenderWarpLens && !!warpLensSource);
 

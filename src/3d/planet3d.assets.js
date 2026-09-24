@@ -460,7 +460,17 @@ function isBodyLikelyOnScreen(gameX, gameY, visualZ, worldRadius, anchoredToRing
     );
 }
 
-function loadTex(path) { const tex = textureLoader.load(path); if (Core3D.renderer) tex.anisotropy = Core3D.renderer.capabilities.getMaxAnisotropy(); return tex; }
+// Osiem tekstur planet ma 8192×4096. Wgrywały się przy pierwszym pojawieniu
+// planety w kadrze: synchroniczne dekodowanie JPEG + upload + mipmapy w jednej
+// klatce (Ziemia: pięć naraz). Teraz dekodowanie idzie poza wątkiem gry
+// (img.decode()) zaraz po pobraniu, a upload — w wolnej chwili z kolejki Core3D.
+function prewarmLoadedTexture(texture) {
+    const img = texture?.image;
+    const decoding = (img && typeof img.decode === 'function') ? img.decode() : null;
+    if (decoding) decoding.catch(() => {}).then(() => Core3D.queueTextureUpload(texture));
+    else Core3D.queueTextureUpload(texture);
+}
+function loadTex(path) { const tex = textureLoader.load(path, prewarmLoadedTexture); if (Core3D.renderer) tex.anisotropy = Core3D.renderer.capabilities.getMaxAnisotropy(); return tex; }
 
 class DirectPlanet {
     constructor(data) {

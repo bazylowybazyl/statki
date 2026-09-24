@@ -45,7 +45,9 @@ test('raw layer renders after the composer, with its own depth clear', () => {
 test('an empty raw scene does not keep the overlay awake', () => {
   const tickSlice = overlayJs.slice(overlayJs.indexOf('function tick(dt)'), overlayJs.indexOf('function spawn('));
   // Wczesne wyjście musi uwzględniać rakiety, inaczej znikają gdy nie ma efektów.
-  assert.match(tickSlice, /const hasRawContent = !!\(rawScene && rawScene\.children\.length > 0\)/);
+  // Siatki rakiet wiszą w rawScene stale i chowają się, gdy są puste — liczy
+  // się widoczność, nie liczba dzieci.
+  assert.match(tickSlice, /const hasRawContent = !!\(rawScene && sceneHasVisibleContent\(rawScene\)\)/);
   assert.match(tickSlice, /if \(effects\.length === 0 && !hasPersistentSceneContent && !hasRawContent\)/);
 });
 

@@ -803,47 +803,85 @@ export function initScannerOverviewUI(opts = {}) {
     }
   }
 
+  // Panel szczegółów: strukturę (tytuł, wiersze, przyciski akcji) budujemy tylko
+  // przy ZMIANIE celu, a wartości aktualizujemy w miejscu. render() leci co
+  // klatkę — dawniej każdy przebieg wyrzucał i tworzył od nowa przyciski, więc
+  // mousedown trafiał w przycisk, którego przy mouseup nie było już w DOM, i
+  // `click` nie odpalał (LOCK/SCAN/APPROACH/ORBIT/JUMP w praktyce nie działały).
+  let detailBuiltFor; // undefined = nic; null = stan "SELECT CONTACT"; obiekt = cel
+  let detailTitleEl = null;
+  let detailGridEl = null;
+  const detailLineEls = [];
+
+  function setTextIfChanged(el, value) {
+    const text = String(value ?? '');
+    if (el.textContent !== text) el.textContent = text;
+  }
+
   function renderDetails(target) {
-    detailBody.textContent = '';
     if (!target) {
-      detailCount.textContent = 'NO TARGET';
-      const empty = document.createElement('div');
-      empty.className = 'scanner-empty';
-      empty.textContent = 'SELECT CONTACT';
-      detailBody.appendChild(empty);
+      setTextIfChanged(detailCount, 'NO TARGET');
+      if (detailBuiltFor !== null) {
+        detailBody.textContent = '';
+        const empty = document.createElement('div');
+        empty.className = 'scanner-empty';
+        empty.textContent = 'SELECT CONTACT';
+        detailBody.appendChild(empty);
+        detailBuiltFor = null;
+        detailTitleEl = null;
+        detailGridEl = null;
+        detailLineEls.length = 0;
+      }
       return;
     }
 
     const detail = opts.getDetails?.(target) || { title: 'CONTACT', rows: [] };
-    detailCount.textContent = opts.isLocked?.(target) ? 'LOCKED' : 'SELECTED';
-    const title = document.createElement('div');
-    title.className = 'detail-title';
-    title.textContent = detail.title || 'CONTACT';
-    detailBody.appendChild(title);
+    setTextIfChanged(detailCount, opts.isLocked?.(target) ? 'LOCKED' : 'SELECTED');
 
-    const grid = document.createElement('div');
-    grid.className = 'detail-grid';
-    for (const row of detail.rows || []) {
+    if (detailBuiltFor !== target) {
+      detailBody.textContent = '';
+      detailTitleEl = document.createElement('div');
+      detailTitleEl.className = 'detail-title';
+      detailBody.appendChild(detailTitleEl);
+
+      detailGridEl = document.createElement('div');
+      detailGridEl.className = 'detail-grid';
+      detailBody.appendChild(detailGridEl);
+      detailLineEls.length = 0;
+
+      const actions = document.createElement('div');
+      actions.className = 'scanner-actions';
+      for (const action of ['lock', 'scan', 'approach', 'orbit', 'jump']) {
+        const btn = makeButton(action.toUpperCase());
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (action === 'lock') opts.onToggleLock?.(target);
+          else opts.onAction?.(action, target);
+          render();
+        });
+        actions.appendChild(btn);
+      }
+      detailBody.appendChild(actions);
+      detailBuiltFor = target;
+    }
+
+    setTextIfChanged(detailTitleEl, detail.title || 'CONTACT');
+    const rows = detail.rows || [];
+    while (detailLineEls.length < rows.length) {
       const line = document.createElement('div');
       line.className = 'detail-row';
-      line.innerHTML = `<span>${row.name}</span><strong>${row.amount}</strong>`;
-      grid.appendChild(line);
+      line.__name = document.createElement('span');
+      line.__amount = document.createElement('strong');
+      line.appendChild(line.__name);
+      line.appendChild(line.__amount);
+      detailGridEl.appendChild(line);
+      detailLineEls.push(line);
     }
-    detailBody.appendChild(grid);
-
-    const actions = document.createElement('div');
-    actions.className = 'scanner-actions';
-    for (const action of ['lock', 'scan', 'approach', 'orbit', 'jump']) {
-      const btn = makeButton(action.toUpperCase());
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (action === 'lock') opts.onToggleLock?.(target);
-        else opts.onAction?.(action, target);
-        render();
-      });
-      actions.appendChild(btn);
+    while (detailLineEls.length > rows.length) detailLineEls.pop().remove();
+    for (let i = 0; i < rows.length; i++) {
+      setTextIfChanged(detailLineEls[i].__name, rows[i].name);
+      setTextIfChanged(detailLineEls[i].__amount, rows[i].amount);
     }
-    detailBody.appendChild(actions);
   }
 
   function renderLockedTargetLog(runtime) {
@@ -968,6 +1006,9 @@ export function initScannerOverviewUI(opts = {}) {
       if (runtime.selectedTarget !== undefined) selectedTarget = runtime.selectedTarget;
       root.classList.toggle('hidden', runtime.enabled === false);
       root.classList.toggle('floating', layout.mode === 'floating');
+      // Schowany panel nie potrzebuje modelu ani DOM-u (liczył się co klatkę).
+      // Po ponownym włączeniu pierwszy update i tak renderuje całość.
+      if (runtime.enabled === false) return;
       render();
     },
     setEnabled(enabled) {

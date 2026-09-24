@@ -115,7 +115,9 @@ test('manual chevron steering still brakes if current spin cannot stop on the li
   });
 
   assert.ok(result.manualActive, 'D should still move the chevron');
-  assert.ok(result.targetAngle > Math.PI / 2, 'manual input advances the line');
+  // Linia idzie naprzód aż do punktu zatrzymania — tu ponad 180° przed dziób,
+  // więc liczy się uchyb niezawinięty (zawinięta targetAngle wypada „z tyłu").
+  assert.ok(result.headingError > Math.PI / 2 - 55 * Math.PI / 180, 'manual input advances the line');
   assert.ok(result.torque <= -0.75, 'stabilizer should brake even while D is held if release-now overshoot is likely');
 });
 

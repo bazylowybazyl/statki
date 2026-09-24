@@ -8,6 +8,7 @@ import { getHexContactGrid, findHexContact, getHexShardDrift } from './hexContac
 import { areTowBodiesCollisionDisabled } from './towSystem.js';
 import { transferSalvageToWreck, clearSalvage } from './salvage.js';
 import { CollisionFX, impactEvent as _impactEvent, grindEvent as _grindEvent } from '../vfx/collisionFx.js';
+import { ticksAt120 } from './stepDecay.js';
 import {
   attachHexGridToArena,
   getHexArenaStats as getPackedHexArenaStats,
@@ -96,7 +97,17 @@ export const DESTRUCTOR_CONFIG = {
 
   collisionDeformScale: 1.15, //
   collisionSearchRadius: 5, //
+  // Sufit dryfu (px siatki), który pokrywają okna sond trafień: probeImpact,
+  // sweepImpact i raymarch wiązki (findBeamHexShard). Sondy szukają heksów po
+  // komórkach POCZĄTKOWYCH, a wgnieciony heks stoi o `_maxHexDrift` dalej —
+  // bez zapasu był „duchem”: pocisk i wiązka przelatywały przez wgniecenie.
+  // 120 ≈ maxDeform × collisionDeformScale (dalej heks jest już urwany), więc
+  // sufit tnie tylko koszt przy dryfie patologicznym. 0 = dawne okna bez zapasu.
+  probeDriftCap: 120,
   collisionIterations: 2, //
+  // Przebiegi poprawkowe (2.+) tylko dla par z ciałem ruszonym przez kontakt.
+  // Wynik identyczny z pełnym przebiegiem; 0 = pełny przebieg (do porównań).
+  collisionRefineMovedOnly: 1,
   broadphaseCellSize: 1200, //
   // Zapas w KOMORKACH doliczany do zmierzonego dryfu heksow przy wyborze searchR.
   // null = mechanizm WYLACZONY (searchR jak dotad). Liczba wlacza adaptacyjny
@@ -113,6 +124,11 @@ export const DESTRUCTOR_CONFIG = {
   splitDeferSpeedThreshold: 140, //
 
   gpuSoftBody: 1, //
+  // Kroki solvera sprężyn GPU na sekundę CZASU GRY (DestructorGpuSoftBody.tick).
+  // Kernel całkuje prędkość na iterację bez dt, więc dispatch co klatkę renderu
+  // wgniatał przy 144 FPS 2,4× szybciej niż przy 60. Poniżej tej częstotliwości
+  // klatek: krok na klatkę jak dawniej. 0 = zawsze dispatch co klatkę.
+  gpuSoftBodyHz: 60,
   gpuSoftBodyMinShards: 64, //
   gpuSoftBodyCrashShardThreshold: 1200, //
   gpuSoftBodyCrashIters: 1, //
@@ -518,13 +534,19 @@ function getSearchOffsets(radius) {
       if (dc * dc + dr * dr <= r2) list.push(dc, dr);
     }
   }
-  // Kolejność offsetów decyduje o dwóch rzeczach naraz, bo pętla kontaktów w
-  // collideEntities przerywa na PIERWSZYM trafieniu:
-  //  - koszt: w porządku rastrowym (0,0) leżało dopiero na ~41. pozycji z 81 dla r=5,
-  //    więc każde trafienie płaciło połowę dysku zanim sprawdziło komórkę oczywistą;
-  //  - jakość: wybierany był heks o najmniejszym dc, nie najbliższy — normalne
-  //    kontaktu miały stały bias w stronę -c.
-  // Sortujemy metryką rzeczywistą (HEX_SPACING != HEX_HEIGHT), nie po indeksach.
+  arr = sortSearchOffsets(list, r);
+  SEARCH_OFFSETS_CACHE[r] = arr;
+  return arr;
+}
+
+// Kolejność offsetów decyduje o dwóch rzeczach naraz, bo pętla kontaktów w
+// collideEntities przerywa na PIERWSZYM trafieniu:
+//  - koszt: w porządku rastrowym (0,0) leżało dopiero na ~41. pozycji z 81 dla r=5,
+//    więc każde trafienie płaciło połowę dysku zanim sprawdziło komórkę oczywistą;
+//  - jakość: wybierany był heks o najmniejszym dc, nie najbliższy — normalne
+//    kontaktu miały stały bias w stronę -c.
+// Sortujemy metryką rzeczywistą (HEX_SPACING != HEX_HEIGHT), nie po indeksach.
+function sortSearchOffsets(list, extent) {
   const order = [];
   for (let i = 0; i < list.length; i += 2) order.push(i);
   const metric = (i) => {
@@ -535,9 +557,106 @@ function getSearchOffsets(radius) {
   order.sort((a, b) => (metric(a) - metric(b)) || (list[a] - list[b]) || (list[a + 1] - list[b + 1]));
   const sorted = [];
   for (let i = 0; i < order.length; i++) sorted.push(list[order[i]], list[order[i] + 1]);
-  arr = (r <= 127) ? new Int8Array(sorted) : new Int16Array(sorted);
-  SEARCH_OFFSETS_CACHE[r] = arr;
+  return (extent <= 127) ? new Int8Array(sorted) : new Int16Array(sorted);
+}
+
+// OKNO SONDY PUNKTOWEJ Z ZAPASEM NA DRYF. Komórka (dc, dr) wchodzi do okna,
+// gdy heks z niej MOŻE stać w promieniu sondy od punktu: jego spoczynkowy
+// środek leży najwyżej o komórkę od środka komórki punktu na każdej osi
+// (zaokrąglenie punktu + przesunięcie nieparzystych kolumn), a pozycja
+// kolizyjna odjeżdża od spoczynkowej najwyżej o `drift` na oś — tak liczy
+// getHexShardDrift. Dysk searchR zostaje w oknie: dla drift = 0 warunek daje
+// kwadrat 5×5, który mieści się w dysku searchR = 3, więc nietknięty kadłub
+// ma bajt w bajt dawne okno. Kwant dryfu 2 px ogranicza liczbę tablic w cache.
+const PROBE_OFFSETS_CACHE = new Map();
+const PROBE_DRIFT_QUANTUM = 2;
+const PROBE_MAX_HIT_RADIUS = HIT_RAD * 2; // getShardHitRadius <= HIT_RAD, sonda liczy ×2
+
+function getProbeSearchOffsets(searchR, drift) {
+  const r = Math.max(0, searchR | 0);
+  const q = drift > 0 ? Math.ceil(drift / PROBE_DRIFT_QUANTUM) : 0;
+  const key = r * 4096 + q;
+  let arr = PROBE_OFFSETS_CACHE.get(key);
+  if (arr) return arr;
+  const d = q * PROBE_DRIFT_QUANTUM;
+  const extC = Math.max(r, 1 + Math.floor((PROBE_MAX_HIT_RADIUS + d) / HEX_SPACING));
+  const extR = Math.max(r, 1 + Math.floor((PROBE_MAX_HIT_RADIUS + d) / HEX_HEIGHT));
+  const r2 = r * r;
+  const reach2 = PROBE_MAX_HIT_RADIUS * PROBE_MAX_HIT_RADIUS;
+  const list = [];
+  for (let dc = -extC; dc <= extC; dc++) {
+    const gx = Math.max(0, (Math.abs(dc) - 1) * HEX_SPACING - d);
+    for (let dr = -extR; dr <= extR; dr++) {
+      const gy = Math.max(0, (Math.abs(dr) - 1) * HEX_HEIGHT - d);
+      if (dc * dc + dr * dr <= r2 || gx * gx + gy * gy < reach2) list.push(dc, dr);
+    }
+  }
+  arr = sortSearchOffsets(list, Math.max(extC, extR));
+  PROBE_OFFSETS_CACHE.set(key, arr);
   return arr;
+}
+
+// Dryf heksów (px siatki), który okna sond trafień muszą pokryć: zmierzony
+// `_maxHexDrift` przycięty sufitem probeDriftCap. Brak pomiaru = 0 (dawne okna).
+export function getHexProbeDrift(grid) {
+  const drift = Number(grid?._maxHexDrift);
+  if (!(drift > 0)) return 0;
+  const cap = Number(DESTRUCTOR_CONFIG.probeDriftCap);
+  if (!(cap > 0)) return 0;
+  return drift < cap ? drift : cap;
+}
+
+// Punkt raymarchu wiązki (index.html, fireWeaponCore): najbliższy żywy heks,
+// którego pozycja WIZUALNA (gridX + deformation) leży bliżej niż √hitRadSq od
+// punktu siatki. Dawne okno 3×3 nie rosło z dryfem i wiązka przelatywała przez
+// wgniecenie: heks z okna odjechał, a heks, który stoi w tym miejscu, należy do
+// komórki spoza okna. Zasięg okna wprost z układu initHexBody: środek heksa
+// (c, r) to (c·HEX_SPACING, r·HEX_HEIGHT + pół wiersza w kolumnach
+// nieparzystych) plus dryf ≤ `drift` na oś. Przy dryfie 0 to dawne 3×3
+// i nieparzyste kolumny wiersza niżej. Najbliższy, a nie pierwszy w porządku
+// rastrowym, bo zwrócony heks idzie do applyImpact.
+export function findBeamHexShard(grid, gridX, gridY, hitRadSq) {
+  const cells = grid?.grid;
+  const cols = grid?.cols | 0;
+  const rows = grid?.rows | 0;
+  if (!cells || cols <= 0 || rows <= 0 || !(hitRadSq > 0)) return null;
+  const reach = Math.sqrt(hitRadSq) + getHexProbeDrift(grid);
+  const extC = Math.floor(reach / HEX_SPACING + 0.5);
+  const rowsUp = Math.floor(reach / HEX_HEIGHT + 0.5);
+  // Kolumny nieparzyste leżą pół wiersza niżej, więc sięgają o wiersz dalej w dół.
+  const rowsDownOdd = Math.floor(reach / HEX_HEIGHT + 1);
+  const approxC = Math.round(gridX / HEX_SPACING);
+  const approxR = Math.round(gridY / HEX_HEIGHT);
+  const c0 = Math.max(0, approxC - extC);
+  const c1 = Math.min(cols - 1, approxC + extC);
+  const r1 = Math.min(rows - 1, approxR + rowsUp);
+  let best = null;
+  let bestD2 = hitRadSq;
+  for (let r = Math.max(0, approxR - rowsDownOdd); r <= r1; r++) {
+    const rowBase = r * cols;
+    const oddOnly = r < approxR - rowsUp;
+    for (let c = c0; c <= c1; c++) {
+      if (oddOnly && (c & 1) === 0) continue;
+      const shard = cells[rowBase + c];
+      if (!shard || !shard.active || shard.isDebris) continue;
+      const dx = shard.gridX + (shard.deformation?.x || 0) - gridX;
+      const dy = shard.gridY + (shard.deformation?.y || 0) - gridY;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < bestD2) {
+        bestD2 = d2;
+        best = shard;
+      }
+    }
+  }
+  return best;
+}
+
+// Heks podany przez wołającego (sweepImpact, raymarch wiązki) jest wciąż żywy
+// i należy do TEJ siatki — po splicie heks mógł przejść do wraku.
+function isLiveGridShard(grid, shard) {
+  if (!shard || !shard.active || shard.isDebris) return false;
+  const shards = grid?.shards;
+  return Array.isArray(shards) && shards[shard.__meshIndex] === shard;
 }
 
 function isHexEligible(entity) {
@@ -1243,6 +1362,26 @@ function markGridHeatDirtyRange(grid, minIndex, maxIndex) {
   if (end > curEnd) grid.meshDirtyEnd = end;
 }
 
+// Wierzchołki i „strzępy” heksa są tylko czytane (_traceHexPath), a strzępów
+// nikt nigdy nie ustawia — wspólne, zamrożone tablice zamiast 13 obiektów na
+// heks (kadłub capitala to tysiące heksów, flota — dziesiątki tysięcy). Zapis
+// do nich rzuci błędem zamiast po cichu przestawić wszystkie heksy naraz.
+const HEX_ZERO_FRAYS = Object.freeze(Array.from({ length: 6 }, () => Object.freeze({ x: 0, y: 0 })));
+const _sharedHexVerts = new Map();
+function getSharedHexVerts(radius) {
+  let verts = _sharedHexVerts.get(radius);
+  if (!verts) {
+    const list = [];
+    for (let i = 0; i < 6; i++) {
+      const a = i * Math.PI / 3;
+      list.push(Object.freeze({ x: Math.cos(a) * radius, y: Math.sin(a) * radius }));
+    }
+    verts = Object.freeze(list);
+    _sharedHexVerts.set(radius, verts);
+  }
+  return verts;
+}
+
 class HexShard {
   constructor(img, gridX, gridY, radius, c, r, color = null) {
     this.img = img;
@@ -1264,7 +1403,7 @@ class HexShard {
     this.hitRadius = HIT_RAD;
     this.deformation = { x: 0, y: 0 };
     this.targetDeformation = { x: 0, y: 0 };
-    this.frays = Array.from({ length: 6 }, () => ({ x: 0, y: 0 }));
+    this.frays = HEX_ZERO_FRAYS;
     this.worldX = 0;
     this.worldY = 0;
     this.dvx = 0;
@@ -1279,12 +1418,7 @@ class HexShard {
     this.heat = 0;
     this.heatStamp = 0;
     this.neighbors = [];
-    this.verts = [];
-
-    for (let i = 0; i < 6; i++) {
-      const a = i * Math.PI / 3;
-      this.verts.push({ x: Math.cos(a) * radius, y: Math.sin(a) * radius });
-    }
+    this.verts = getSharedHexVerts(radius);
 
     this.lx = 0;
     this.ly = 0;
@@ -1515,10 +1649,33 @@ class HexShard {
 const _staticProbeResult = { hitShard: null, localX: 0, localY: 0, scale: 1, scaleX: 1, scaleY: 1, c: 1, s: 0, cx: 0, cy: 0, pX: 0, pY: 0, billboardOrientation: false };
 const _staticSweepResult = { hitShard: null, t: 0, worldX: 0, worldY: 0, projectileX: 0, projectileY: 0 };
 
+// Czy któreś z ciał ruszonych w tym kroku (lista z resolveCollisions) jest
+// w zasięgu testu odległości pary: ten sam wzór co w pętli kandydatów
+// (ar + querySpeedA + br + min(frameSpeedB, 2·br)), więc odrzucenie tutaj
+// odrzuca dokładnie te pary, które odpadłyby tam.
+function isNearCollisionMoved(ax, ay, reachA, list) {
+  for (let t = 0; t < list.length; t++) {
+    const T = list[t];
+    if (!T || T.dead) continue;
+    const tr = Number(T._bpRadius) || 100;
+    const rs = reachA + tr + Math.min(Number(T._frameSpeed) || 0, tr * 2);
+    const dx = ax - getEntityPosX(T);
+    const dy = ay - getEntityPosY(T);
+    if (dx * dx + dy * dy <= rs * rs) return true;
+  }
+  return false;
+}
+
 export const DestructorSystem = {
   splitQueue: [],
   _tick: 0,
+  _stepDt: 1 / 120,
   _frameContacts: 0,
+  // Ciała przesunięte przez kontakt w bieżącym / poprzednim przebiegu kolizji
+  // (resolveCollisions). Przebiegi poprawkowe liczą tylko pary z takim ciałem.
+  _collIterStamp: 0,
+  _collMovedCur: [],
+  _collMovedSpare: [],
   // Lista encji z ostatniego kroku fizyki — updateVisuals() (render rate) korzysta z niej,
   // gdy wywołanie nie dostarcza własnej listy.
   _visualEntities: null,
@@ -1842,6 +1999,13 @@ export const DestructorSystem = {
   _crushStampA: 0,
   _crushStampB: 0,
 
+  // Ciało ruszone kontaktem w przebiegu `stamp` (raz na przebieg na liście).
+  _markCollisionMoved(entity, stamp) {
+    if (!entity || entity._collMovedStamp === stamp) return;
+    entity._collMovedStamp = stamp;
+    this._collMovedCur.push(entity);
+  },
+
   wakeWreck(wreck) {
     if (!wreck?.isWreck) return;
     wreck._wreckSleeping = false;
@@ -2057,6 +2221,9 @@ export const DestructorSystem = {
     // wykonuje się raz na klatkę renderu w updateVisuals() — tu zostaje sama fizyka.
     this._visualEntities = list;
     this._tick++;
+    // Liczniki w krokach (split, odroczenie splitu) są strojone przy 1/120 s —
+    // przy innym kroku fizyki (?physHz) przeliczamy je przez ticksAt120.
+    this._stepDt = step;
     this._simulationTime += step;
 
     this._frameContacts = 0;
@@ -2072,7 +2239,7 @@ export const DestructorSystem = {
 
 
     const tAfterCollision = nowMs();
-    const splitInterval = Math.max(1, DESTRUCTOR_CONFIG.splitCheckInterval | 0);
+    const splitInterval = ticksAt120(Math.max(1, DESTRUCTOR_CONFIG.splitCheckInterval | 0), step);
     if (this._tick % splitInterval === 0 && this.splitQueue.length > 0) this.processSplits(list);
     const tUpdateEnd = nowMs();
 
@@ -2164,8 +2331,11 @@ export const DestructorSystem = {
       // dispatcherze forcedAwake omija cooldown i backpressure kolejki, wiec te
       // same pierwsze encje z listy dozywotnio zjadaly caly budzet GPU.
       // Tutaj petla po encjach leci raz na klatke renderu i BEZ zadnych bramek.
+      // Licznik jest w klatkach 60 Hz (16/30 = 0,27/0,5 s) i schodzi o dt·60 —
+      // dekrement o 1 na klatke skracal okno przy 144 FPS 2,4 raza (solver GPU
+      // liczy kroki w czasie gry, patrz gpuSoftBodyHz).
       const forceAwake = Number(e._gpuForceAwakeFrames) || 0;
-      if (forceAwake > 0) e._gpuForceAwakeFrames = forceAwake - 1;
+      if (forceAwake > 0) e._gpuForceAwakeFrames = Math.max(0, forceAwake - dt * 60);
 
       if (isBrittleEntity(e)) {
         settleBrittleVisualState(grid, sleepFramesLimit, framesPerTick);
@@ -2529,7 +2699,9 @@ export const DestructorSystem = {
   // Bez tego probeImpact() skanował wszystkie ~29 komórek szukając najbliższego
   // heksa i wyrzucał wynik, zwracając boolean. Przy 5 sondach na hardpoint
   // (isHardpointHexSupported) to się mnożyło przez liczbę hardpointów i encji.
-  _probeImpactData(entity, worldX, worldY, anyHit = false) {
+  // knownShard = heks już trafiony przez wołającego (sprawdzony isLiveGridShard):
+  // liczymy tylko układ lokalny punktu, bez ponownego szukania.
+  _probeImpactData(entity, worldX, worldY, anyHit = false, knownShard = null) {
     if (!entity?.hexGrid || !isHexEligible(entity)) return null;
 
     const angle = getEntityHexAngle(entity);
@@ -2556,32 +2728,46 @@ export const DestructorSystem = {
 
     if (!grid || cols <= 0 || rows <= 0) return null;
 
-    const approxC = Math.round(gridX / HEX_SPACING);
-    const approxR = Math.round(gridY / HEX_HEIGHT);
-    const searchR = Math.max(2, (DESTRUCTOR_CONFIG.collisionSearchRadius | 0) - 2);
-    const offsets = getSearchOffsets(searchR);
-
     let hitShard = null;
-    let bestD2 = Infinity;
+    if (knownShard) {
+      // Heks wołającego musi stać przy punkcie trafienia W TYM układzie:
+      // promień sondy plus różnica pozycji wizualnej (raymarch wiązki) i
+      // kolizyjnej (× collisionDeformScale). Inna geometria u wołającego
+      // (np. obiekt billboardowy) = szukamy tak, jakby heksa nie podał.
+      const dx = getShardCollisionGridX(knownShard) - gridX;
+      const dy = getShardCollisionGridY(knownShard) - gridY;
+      const reach = PROBE_MAX_HIT_RADIUS + 0.5 + Math.abs(COLLISION_DEFORM_SCALE - 1) *
+        (Math.abs(knownShard.deformation.x) + Math.abs(knownShard.deformation.y));
+      if (dx * dx + dy * dy <= reach * reach) hitShard = knownShard;
+    }
+    if (!hitShard) {
+      const approxC = Math.round(gridX / HEX_SPACING);
+      const approxR = Math.round(gridY / HEX_HEIGHT);
+      const searchR = Math.max(2, (DESTRUCTOR_CONFIG.collisionSearchRadius | 0) - 2);
+      // Siatka jest indeksowana komórką POCZĄTKOWĄ heksa, więc okno obejmuje
+      // też zmierzony dryf — inaczej heks wgnieciony poza okno jest „duchem”.
+      const offsets = getProbeSearchOffsets(searchR, getHexProbeDrift(entity.hexGrid));
+      let bestD2 = Infinity;
 
-    for (let oi = 0; oi < offsets.length; oi += 2) {
-      const ic = approxC + offsets[oi];
-      const ir = approxR + offsets[oi + 1];
-      if (ic < 0 || ir < 0 || ic >= cols || ir >= rows) continue;
-      const shard = grid[ic + ir * cols];
-      if (!shard || !shard.active || shard.isDebris) continue;
+      for (let oi = 0; oi < offsets.length; oi += 2) {
+        const ic = approxC + offsets[oi];
+        const ir = approxR + offsets[oi + 1];
+        if (ic < 0 || ir < 0 || ic >= cols || ir >= rows) continue;
+        const shard = grid[ic + ir * cols];
+        if (!shard || !shard.active || shard.isDebris) continue;
 
-      const sx = getShardCollisionGridX(shard);
-      const sy = getShardCollisionGridY(shard);
-      const d2 = (sx - gridX) ** 2 + (sy - gridY) ** 2;
-      const hitRad = getShardHitRadius(shard) * 2;
+        const sx = getShardCollisionGridX(shard);
+        const sy = getShardCollisionGridY(shard);
+        const d2 = (sx - gridX) ** 2 + (sy - gridY) ** 2;
+        const hitRad = getShardHitRadius(shard) * 2;
 
-      if (d2 < hitRad * hitRad && d2 < bestD2) {
-        bestD2 = d2;
-        hitShard = shard;
-        // Offsety są posortowane rosnąco po odległości, więc pierwsze trafienie
-        // jest już najbliższe albo bardzo blisko niego.
-        if (anyHit) break;
+        if (d2 < hitRad * hitRad && d2 < bestD2) {
+          bestD2 = d2;
+          hitShard = shard;
+          // Offsety są posortowane rosnąco po odległości, więc pierwsze trafienie
+          // jest już najbliższe albo bardzo blisko niego.
+          if (anyHit) break;
+        }
       }
     }
 
@@ -2640,17 +2826,33 @@ export const DestructorSystem = {
     const gridX1 = localX1 + cx + pX;
     const gridY1 = localY1 + cy + pY;
 
-    // Ten sam zapas indeksów co punktowa sonda uwzględnia odkształcenie heksów.
+    // Pudło komórek wprost z geometrii. Heks trafia, gdy jego pozycja
+    // kolizyjna leży bliżej toru niż 2 × hitRadius (≤ 2 × HIT_RAD) + promień
+    // pocisku; ta pozycja odjeżdża od spoczynkowej najwyżej o zmierzony dryf na
+    // oś, a spoczynkowa leży najwyżej pół komórki od środka komórki. Dawny stały
+    // zapas (collisionSearchRadius − 2 komórki) był z jednej strony za duży dla
+    // nietkniętego kadłuba (~2× więcej komórek), a z drugiej nie obejmował
+    // wgnieceń głębszych niż ~9 px — stąd „heksy-duchy”.
     // Promień pocisku przeliczamy konserwatywnie przez mniejszą skalę osi.
-    const searchR = Math.max(2, (DESTRUCTOR_CONFIG.collisionSearchRadius | 0) - 2);
     const localProjectileRadius = Math.max(0, Number(projectileRadius) || 0) / Math.min(scaleX, scaleY);
-    const radiusCellsC = Math.ceil(localProjectileRadius / HEX_SPACING);
-    const radiusCellsR = Math.ceil(localProjectileRadius / HEX_HEIGHT);
-    const minC = Math.max(0, Math.floor(Math.min(gridX0, gridX1) / HEX_SPACING) - searchR - radiusCellsC);
-    const maxC = Math.min(cols - 1, Math.ceil(Math.max(gridX0, gridX1) / HEX_SPACING) + searchR + radiusCellsC);
-    const minR = Math.max(0, Math.floor(Math.min(gridY0, gridY1) / HEX_HEIGHT) - searchR - radiusCellsR);
-    const maxR = Math.min(rows - 1, Math.ceil(Math.max(gridY0, gridY1) / HEX_HEIGHT) + searchR + radiusCellsR);
+    const hitReach = PROBE_MAX_HIT_RADIUS + localProjectileRadius;
+    const cellReach = hitReach + getHexProbeDrift(gridData) + 0.01;
+    const segMinX = Math.min(gridX0, gridX1);
+    const segMaxX = Math.max(gridX0, gridX1);
+    const segMinY = Math.min(gridY0, gridY1);
+    const segMaxY = Math.max(gridY0, gridY1);
+    const minC = Math.max(0, Math.ceil((segMinX - cellReach) / HEX_SPACING - 0.5));
+    const maxC = Math.min(cols - 1, Math.floor((segMaxX + cellReach) / HEX_SPACING + 0.5));
+    const minR = Math.max(0, Math.ceil((segMinY - cellReach) / HEX_HEIGHT - 0.5));
+    const maxR = Math.min(rows - 1, Math.floor((segMaxY + cellReach) / HEX_HEIGHT + 0.5));
 
+    // Większość heksów w pudle stoi przy swoich komórkach, daleko od toru —
+    // odrzuca je prostokąt toru poszerzony o zasięg trafienia, zanim policzymy
+    // przecięcie z okręgiem.
+    const bbMinX = segMinX - hitReach;
+    const bbMaxX = segMaxX + hitReach;
+    const bbMinY = segMinY - hitReach;
+    const bbMaxY = segMaxY + hitReach;
     let bestT = Infinity;
     let hitShard = null;
     for (let ir = minR; ir <= maxR; ir++) {
@@ -2658,16 +2860,12 @@ export const DestructorSystem = {
       for (let ic = minC; ic <= maxC; ic++) {
         const shard = grid[rowOffset + ic];
         if (!shard || !shard.active || shard.isDebris) continue;
+        const sx = getShardCollisionGridX(shard);
+        if (sx < bbMinX || sx > bbMaxX) continue;
+        const sy = getShardCollisionGridY(shard);
+        if (sy < bbMinY || sy > bbMaxY) continue;
         const hitRadius = getShardHitRadius(shard) * 2 + localProjectileRadius;
-        const t = segmentCircleToi2D(
-          gridX0,
-          gridY0,
-          gridX1,
-          gridY1,
-          getShardCollisionGridX(shard),
-          getShardCollisionGridY(shard),
-          hitRadius
-        );
+        const t = segmentCircleToi2D(gridX0, gridY0, gridX1, gridY1, sx, sy, hitRadius);
         if (t < 0 || t >= bestT) continue;
         bestT = t;
         hitShard = shard;
@@ -2708,12 +2906,18 @@ export const DestructorSystem = {
     return !!this._probeImpactData(entity, worldX, worldY, true);
   },
 
+  // opts.shard = heks już trafiony przez wołającego w tym punkcie (sweepImpact
+  // pocisku, raymarch wiązki). Ponowne szukanie sondą gubiło trafienia: sonda
+  // ma inny promień (2 × hitRadius, na brzegu kadłuba ~5,5 px) niż raymarch
+  // wiązki (~9,5 px) i patrzy w inne okno komórek niż sweep. Martwy heks albo
+  // heks z innej siatki (split) = zwykła sonda jak bez opts.shard.
   applyImpact(entity, worldX, worldY, damage = 0, bulletVel = { x: 0, y: 0 }, opts = null) {
     const dbgEnabled = this._liveCollisionDebug?.enabled === true;
     const tImpact0 = dbgEnabled ? nowMs() : 0;
 
     try {
-      const probe = this._probeImpactData(entity, worldX, worldY);
+      const knownShard = isLiveGridShard(entity?.hexGrid, opts?.shard) ? opts.shard : null;
+      const probe = this._probeImpactData(entity, worldX, worldY, false, knownShard);
       if (!probe) return false;
 
       const { hitShard, localX, localY, scaleX, scaleY, c, s, cx, cy, pX, pY } = probe;
@@ -3054,9 +3258,28 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
     const dbgEnabled = this._liveCollisionDebug?.enabled === true;
     const tResolve0 = dbgEnabled ? nowMs() : 0;
 
+    // Przebieg poprawkowy (iterIndex > 0) liczy tylko pary z ciałem, które
+    // przesunął kontakt w poprzednim przebiegu albo wcześniej w tym. Para dwóch
+    // nieruszonych ciał ma stan identyczny jak w poprzednim przebiegu, który
+    // nie znalazł w niej kontaktu (inaczej oba byłyby ruszone) — wynik byłby
+    // ten sam. Pełny przebieg robił zapytanie broadphase dla KAŻDEGO ciała,
+    // zwykle dla 0–1 kontaktu na krok. Kolejność i role par (niższy indeks
+    // jako A) zostają jak w pełnym przebiegu, więc wynik jest identyczny.
+    const prevStamp = this._collIterStamp;
+    let stamp = (prevStamp + 1) | 0;
+    if (stamp <= 0) stamp = 1;
+    this._collIterStamp = stamp;
+    const prevMoved = this._collMovedCur;
+    const curMoved = this._collMovedSpare;
+    curMoved.length = 0;
+    this._collMovedSpare = prevMoved;
+    this._collMovedCur = curMoved;
+    const refine = iterIndex > 0 && (DESTRUCTOR_CONFIG.collisionRefineMovedOnly | 0) === 1;
+
     try {
       const len = entities.length;
       if (len <= 1) return;
+      if (refine && prevMoved.length === 0) return;
       if (!broadphasePrepared) this._prepareBroadphase(entities);
 
       for (let i = 0; i < len; i++) {
@@ -3077,6 +3300,13 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
 
         const speedA = speedAMag * (1 / 60);
         const querySpeedA = Math.min(speedA, ar * 2);
+        let aMoved = true;
+        if (refine) {
+          aMoved = A._collMovedStamp === prevStamp || A._collMovedStamp === stamp;
+          if (!aMoved
+            && !isNearCollisionMoved(ax, ay, ar + querySpeedA, prevMoved)
+            && !isNearCollisionMoved(ax, ay, ar + querySpeedA, curMoved)) continue;
+        }
         const queryCount = this._queryBroadphase(ax, ay, Math.max(80, ar + querySpeedA));
 
         let queryStamp = (this._bpQueryStamp + 1) | 0;
@@ -3094,6 +3324,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
 
           B._destrBpSeen = queryStamp;
           if ((B._destrBpIndex | 0) <= i) continue;
+          if (!aMoved && B._collMovedStamp !== prevStamp && B._collMovedStamp !== stamp) continue;
           if (skipRingPairs && B.isRingSegment) continue;
           if (A.isRingSegment && B.isRingSegment) continue;
 
@@ -3185,6 +3416,10 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
             if (A.isRingSegment || B.isRingSegment) this._liveCollisionDebug.ringPairs++;
           }
 
+          // Kontakt (i tylko on) zmienia stan pary: collideEntities bez kontaktu
+          // wraca przed jakimkolwiek zapisem, więc przyrost licznika = ruszone ciała.
+          const contactsBefore = this._frameContacts;
+
           // Swept collision: if closing speed is high relative to object sizes,
           // substep along trajectory to prevent tunneling.
           const closingSpeed = Math.sqrt(relVx * relVx + relVy * relVy) * dt;
@@ -3241,6 +3476,10 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
           } else {
             this.collideEntities(A, B, dt, doDamage);
           }
+          if (this._frameContacts !== contactsBefore) {
+            this._markCollisionMoved(A, stamp);
+            this._markCollisionMoved(B, stamp);
+          }
         }
       }
 
@@ -3259,6 +3498,14 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         const ay = getEntityPosY(A);
         const velAx = getEntityVelX(A);
         const velAy = getEntityVelY(A);
+
+        // Przebieg poprawkowy: nieruszone ciało bez ruszonego sąsiada w zasięgu
+        // toru (|v|·dt + ar od pozycji) dałoby ten sam wynik co poprzednio.
+        if (refine && A._collMovedStamp !== prevStamp && A._collMovedStamp !== stamp) {
+          const sweepReach = Math.sqrt(velAx * velAx + velAy * velAy) * dt + ar;
+          if (!isNearCollisionMoved(ax, ay, sweepReach, prevMoved)
+            && !isNearCollisionMoved(ax, ay, sweepReach, curMoved)) continue;
+        }
 
         // Sample points along trajectory
         const steps = Math.min(8, Math.ceil(frameSpeed / ar));
@@ -3299,7 +3546,12 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
             if (sdx * sdx + sdy * sdy < (ar + br) * (ar + br)) {
               // Temporarily position A at sample point for collision
               setEntityPos(A, sampleX + corrAx, sampleY + corrAy);
+              const sweepContactsBefore = this._frameContacts;
               this.collideEntities(A, B, dt / steps, doDamage);
+              if (this._frameContacts !== sweepContactsBefore) {
+                this._markCollisionMoved(A, stamp);
+                this._markCollisionMoved(B, stamp);
+              }
               // Zachowaj separację, którą collideEntities nałożyło na A,
               // przywracając pozycję końca klatki.
               corrAx = getEntityPosX(A) - sampleX;
@@ -3919,7 +4171,10 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
 
         const splitDeferSpeed = Math.max(40, Number(DESTRUCTOR_CONFIG.splitDeferSpeedThreshold) || 140);
         if (impactSpeed > splitDeferSpeed || heavyPair) {
-          const deferTicks = Math.max(4, Number(DESTRUCTOR_CONFIG.splitDeferTicks) || 8) + (heavyPair ? 2 : 0);
+          const deferTicks = ticksAt120(
+            Math.max(4, Number(DESTRUCTOR_CONFIG.splitDeferTicks) || 8) + (heavyPair ? 2 : 0),
+            this._stepDt
+          );
           const deferUntilTick = this._tick + deferTicks;
           if (!A.noSplit && this.splitQueue.indexOf(A) === -1) {
             A._splitDeferUntilTick = Math.max(Number(A._splitDeferUntilTick) || 0, deferUntilTick);
@@ -4828,13 +5083,22 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
   }
 };
 
-export function initHexBody(entity, image, isProjectile = false, massOverride = null, alphaCutoff = 40) {
-  if (!entity || !image?.width || !isHexEligible(entity)) return;
+// Szablon ciała heksowego per obraz. Próbkowanie maski (getImageData całego
+// sprite'a + profil KAŻDEJ komórki) i pierwsze wypełnienie kanwy cache (clip +
+// drawImage na KAŻDY heks) zależą tylko od obrazka i parametrów siatki, a flota
+// tych samych kadłubów liczyła to od zera dla każdego statku — przy wejściu
+// floty w kadr kilkanaście razy w jednej klatce. Obraz pancerza (src) jest
+// tylko czytany, więc też jest wspólny, a z nim pula odłamków GPU kluczowana
+// tym obrazem (dotąd osobna pula na każdy uszkodzony statek, nigdy nie
+// zwalniana). Klucz = obiekt obrazka: źródła kadłubów, asteroid i pasm
+// pierścienia są tworzone raz i nie są przerysowywane.
+const _hexBodyTemplates = new WeakMap();
 
-  const w = Math.ceil(image.width / 2) * 2;
-  const h = Math.ceil(image.height / 2) * 2;
-  const r = DESTRUCTOR_CONFIG.gridDivisions;
-  const hexHeight = Math.sqrt(3) * r;
+function getHexBodyTemplate(image, w, h, r, hexHeight, alphaThreshold, alphaSampleThreshold) {
+  const key = w + 'x' + h + '|' + r + '|' + alphaThreshold;
+  let byKey = _hexBodyTemplates.get(image);
+  const cached = byKey ? byKey.get(key) : null;
+  if (cached) return cached;
 
   const src = document.createElement('canvas');
   src.width = w;
@@ -4846,20 +5110,15 @@ export function initHexBody(entity, image, isProjectile = false, massOverride = 
     srcCtx.drawImage(image, 0, 0, w, h);
     data = srcCtx.getImageData(0, 0, w, h).data;
   } catch {
-    return;
+    return null;
   }
 
-  const shards = [];
-  const map = {};
   const cols = Math.ceil(w / (r * 1.5));
   const rows = Math.ceil(h / hexHeight);
-  const grid = new Array(cols * rows);
   const cx = w * 0.5;
   const cy = h * 0.5;
+  const cells = [];
   let rawRadiusSq = 0;
-
-  const alphaThreshold = Math.max(0, Math.min(255, Number(alphaCutoff) || 40));
-  const alphaSampleThreshold = Math.max(8, Math.min(255, alphaThreshold * 0.75));
 
   for (let c = 0; c < cols; c++) {
     for (let ro = 0; ro < rows; ro++) {
@@ -4874,33 +5133,109 @@ export function initHexBody(entity, image, isProjectile = false, massOverride = 
       const maskProfile = sampleHexMaskProfile(data, w, h, x, y, r, alphaThreshold, alphaSampleThreshold);
       if (!maskProfile.keep) continue;
 
-      const shard = new HexShard(isProjectile ? null : src, x, y, r, c, ro, isProjectile ? '#ffcc00' : null);
-      const coverage = Math.max(0.18, Math.min(1, Number(maskProfile.coverage) || 1));
-      const radialCoverage = Math.max(0.22, Math.min(1, Number(maskProfile.radialCoverage) || coverage));
-      const physicalScale = Math.max(0.30, Math.min(1, coverage * 0.82 + radialCoverage * 0.18));
-
-      shard.coverage = coverage;
-      shard.edgeMask = maskProfile.edgeMask;
-      shard.maxHp = DESTRUCTOR_CONFIG.shardHP * physicalScale;
-      shard.hp = shard.maxHp;
-      shard.mass = DESTRUCTOR_CONFIG.shardMass * physicalScale;
-      shard.hitRadius = HIT_RAD * Math.max(0.42, Math.min(1, radialCoverage * 1.04));
-      shard.__meshIndex = shards.length;
-      shard.lx = x - cx;
-      shard.ly = y - cy;
-      shard.origLx = shard.lx;
-      shard.origLy = shard.ly;
-
-      const d2 = shard.lx * shard.lx + shard.ly * shard.ly;
+      cells.push({
+        c,
+        ro,
+        x,
+        y,
+        coverage: maskProfile.coverage,
+        radialCoverage: maskProfile.radialCoverage,
+        edgeMask: maskProfile.edgeMask
+      });
+      const lx = x - cx;
+      const ly = y - cy;
+      const d2 = lx * lx + ly * ly;
       if (d2 > rawRadiusSq) rawRadiusSq = d2;
-
-      shards.push(shard);
-      map[c + ',' + ro] = shard;
-      grid[c + ro * cols] = shard;
     }
   }
 
+  const template = { w, h, cols, rows, cells, rawRadiusSq, src, pristineCache: null, uses: 0 };
+  if (!byKey) {
+    byKey = new Map();
+    _hexBodyTemplates.set(image, byKey);
+  }
+  byKey.set(key, template);
+  return template;
+}
+
+// Świeży kadłub = zawsze ten sam obraz w cache. Pierwsze użycie szablonu rysuje
+// heksy wprost (jednorazowe obrazki nie płacą za dodatkową kanwę), drugie
+// zapisuje wzorzec, kolejne kopiują go jednym drawImage. Wzorzec jest
+// programowy (willReadFrequently) jak kanwy encji — kopia bez odczytu z GPU.
+function fillPristineHexCache(template, shards, cacheCtx) {
+  template.uses++;
+  if (template.pristineCache) {
+    cacheCtx.drawImage(template.pristineCache, 0, 0);
+    return;
+  }
+  if (template.uses < 2) {
+    for (const s of shards) s.drawShape(cacheCtx);
+    return;
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = template.w;
+  canvas.height = template.h;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  for (const s of shards) s.drawShape(ctx);
+  template.pristineCache = canvas;
+  cacheCtx.drawImage(canvas, 0, 0);
+}
+
+export function initHexBody(entity, image, isProjectile = false, massOverride = null, alphaCutoff = 40) {
+  if (!entity || !image?.width || !isHexEligible(entity)) return;
+
+  const w = Math.ceil(image.width / 2) * 2;
+  const h = Math.ceil(image.height / 2) * 2;
+  const r = DESTRUCTOR_CONFIG.gridDivisions;
+  const hexHeight = Math.sqrt(3) * r;
+
+  const alphaThreshold = Math.max(0, Math.min(255, Number(alphaCutoff) || 40));
+  const alphaSampleThreshold = Math.max(8, Math.min(255, alphaThreshold * 0.75));
+
+  const template = getHexBodyTemplate(image, w, h, r, hexHeight, alphaThreshold, alphaSampleThreshold);
+  if (!template) return;
+  const src = template.src;
+
+  const shards = [];
+  const map = {};
+  const cols = template.cols;
+  const rows = template.rows;
+  const grid = new Array(cols * rows);
+  const cx = w * 0.5;
+  const cy = h * 0.5;
+  const cells = template.cells;
+
+  for (let i = 0; i < cells.length; i++) {
+    const cell = cells[i];
+    const x = cell.x;
+    const y = cell.y;
+    const c = cell.c;
+    const ro = cell.ro;
+
+    const shard = new HexShard(isProjectile ? null : src, x, y, r, c, ro, isProjectile ? '#ffcc00' : null);
+    const coverage = Math.max(0.18, Math.min(1, Number(cell.coverage) || 1));
+    const radialCoverage = Math.max(0.22, Math.min(1, Number(cell.radialCoverage) || coverage));
+    const physicalScale = Math.max(0.30, Math.min(1, coverage * 0.82 + radialCoverage * 0.18));
+
+    shard.coverage = coverage;
+    shard.edgeMask = cell.edgeMask;
+    shard.maxHp = DESTRUCTOR_CONFIG.shardHP * physicalScale;
+    shard.hp = shard.maxHp;
+    shard.mass = DESTRUCTOR_CONFIG.shardMass * physicalScale;
+    shard.hitRadius = HIT_RAD * Math.max(0.42, Math.min(1, radialCoverage * 1.04));
+    shard.__meshIndex = shards.length;
+    shard.lx = x - cx;
+    shard.ly = y - cy;
+    shard.origLx = shard.lx;
+    shard.origLy = shard.ly;
+
+    shards.push(shard);
+    map[c + ',' + ro] = shard;
+    grid[c + ro * cols] = shard;
+  }
+
   if (!shards.length) return;
+  const rawRadiusSq = template.rawRadiusSq;
 
   const cacheCanvas = document.createElement('canvas');
   cacheCanvas.width = w;
@@ -4908,7 +5243,7 @@ export function initHexBody(entity, image, isProjectile = false, massOverride = 
   const cacheCtx = cacheCanvas.getContext('2d', { willReadFrequently: true });
 
   if (isProjectile) cacheCtx.drawImage(image, 0, 0, w, h);
-  else for (const s of shards) s.drawShape(cacheCtx);
+  else fillPristineHexCache(template, shards, cacheCtx);
 
   entity.hexGrid = {
     shards,

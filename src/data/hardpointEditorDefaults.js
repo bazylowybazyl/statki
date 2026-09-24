@@ -1074,186 +1074,403 @@ export const SHIP_EDITOR_DEFAULTS = {
     "frontAxis": "+X",
     "hardpoints": [
         {
-            "id": "m_cm9slek",
+            "id": "m_qngdp3t",
             "type": "main",
-            "x": -199.77,
-            "y": -117.03
+            "x": 205.49,
+            "y": -44.3
         },
         {
-            "id": "m_cdv35bw",
+            "id": "m_56dx85d",
             "type": "main",
-            "x": -203.5,
-            "y": 116.28
+            "x": 205.49,
+            "y": 44.3
         },
         {
-            "id": "m_1ctgrjc",
+            "id": "m_y53yonc",
             "type": "main",
-            "x": 213.93,
-            "y": 38.02
+            "x": -120.05,
+            "y": -65.79
         },
         {
-            "id": "m_0t1kcnn",
+            "id": "m_wzi594e",
             "type": "main",
-            "x": 175.92,
-            "y": 62.61
+            "x": -120.05,
+            "y": 65.79
         },
         {
-            "id": "m_ubpz3e8",
-            "type": "main",
-            "x": 207.97,
-            "y": -46.22
-        },
-        {
-            "id": "m_ocyvyxn",
-            "type": "main",
-            "x": 163.25,
-            "y": -66.34
-        },
-        {
-            "id": "m_aj7fahy",
-            "type": "main",
-            "x": 130,
-            "y": 0
-        },
-        {
-            "id": "m_bm97ty7",
-            "type": "main",
-            "x": 110,
-            "y": 0
-        },
-        {
-            "id": "m_9c1y8z7",
-            "type": "main",
-            "x": 90,
-            "y": 0
-        },
-        {
-            "id": "m_rrxhmfp",
+            "id": "m_jm8y8qy",
             "type": "aux",
-            "x": 240,
-            "y": -40
+            "x": 287.79,
+            "y": -31.19
         },
         {
-            "id": "m_f35yql6",
+            "id": "m_d9dim3v",
             "type": "aux",
-            "x": 240,
-            "y": 40
+            "x": 287.79,
+            "y": 31.19
         },
         {
-            "id": "m_f2gzefh",
+            "id": "m_c3fdef2",
             "type": "aux",
-            "x": 120,
-            "y": -70
+            "x": -191.34,
+            "y": -135.51
         },
         {
-            "id": "m_rzualys",
+            "id": "m_befuqf3",
             "type": "aux",
-            "x": 120,
-            "y": 70
-        },
-        {
-            "id": "m_8u2yku9",
-            "type": "aux",
-            "x": 20,
-            "y": -60
-        },
-        {
-            "id": "m_9nlh23f",
-            "type": "aux",
-            "x": 20,
-            "y": 60
-        },
-        {
-            "id": "m_48y9rcu",
-            "type": "aux",
-            "x": -20,
-            "y": -60
-        },
-        {
-            "id": "m_kb19ule",
-            "type": "aux",
-            "x": -20,
-            "y": 60
-        },
-        {
-            "id": "m_hr1jm4g",
-            "type": "aux",
-            "x": -50,
-            "y": -60
-        },
-        {
-            "id": "m_g7bm07q",
-            "type": "aux",
-            "x": -50,
-            "y": 60
-        },
-        {
-            "id": "m_10gcian",
-            "type": "aux",
-            "x": -80,
-            "y": -60
-        },
-        {
-            "id": "m_7wdnb37",
-            "type": "aux",
-            "x": -80,
-            "y": 60
-        },
-        {
-            "id": "m_qjca9g4",
-            "type": "aux",
-            "x": -260,
-            "y": -130
-        },
-        {
-            "id": "m_eajaage",
-            "type": "aux",
-            "x": -260,
-            "y": 130
-        },
-        {
-            "id": "m_nlq7ld0",
-            "type": "aux",
-            "x": -310,
-            "y": 0
+            "x": -191.34,
+            "y": 135.51
         }
     ],
     "cores": [],
     "engines": {
         "main": [
             {
-                "id": "m_y4mc84p",
-                "x": -990,
-                "y": -350,
+                "id": "m_ulmfpuu",
+                "x": -299.85,
+                "y": -131.84,
                 "deg": 90,
                 "offsetX": 0,
-                "offsetY": 0
+                "offsetY": 0,
+                "mount": "rear_left",
+                "gimbalMinDeg": -45,
+                "gimbalMaxDeg": 45,
+                "vfxLengthMin": 10,
+                "vfxLengthMax": 179
             },
             {
-                "id": "m_jred6j8",
-                "x": -990,
-                "y": 360,
+                "id": "m_fw1lnzj",
+                "x": -299.85,
+                "y": 131.84,
                 "deg": 90,
                 "offsetX": 0,
-                "offsetY": 0
+                "offsetY": 0,
+                "mount": "rear_right",
+                "gimbalMinDeg": -45,
+                "gimbalMaxDeg": 45,
+                "vfxLengthMin": 10,
+                "vfxLengthMax": 179
+            },
+            {
+                "id": "m_19hn1vz",
+                "x": -304.05,
+                "y": -67.89,
+                "deg": 90,
+                "offsetX": 0,
+                "offsetY": 0,
+                "mount": "rear_left",
+                "gimbalMinDeg": -45,
+                "gimbalMaxDeg": 45,
+                "vfxLengthMin": 10,
+                "vfxLengthMax": 179
+            },
+            {
+                "id": "m_phncvnn",
+                "x": -304.05,
+                "y": 67.89,
+                "deg": 90,
+                "offsetX": 0,
+                "offsetY": 0,
+                "mount": "rear_right",
+                "gimbalMinDeg": -45,
+                "gimbalMaxDeg": 45,
+                "vfxLengthMin": 10,
+                "vfxLengthMax": 179
             }
         ],
         "side": [
             {
-                "id": "m_9x86ohy",
-                "x": 440,
-                "y": -300,
-                "deg": 180,
-                "offsetX": 90,
-                "offsetY": 0
+                "id": "m_kpn4bdn",
+                "x": -218.84,
+                "y": 165.22,
+                "deg": 0,
+                "offsetX": 0,
+                "offsetY": 0,
+                "mount": "lower_right",
+                "gimbalMinDeg": -90,
+                "gimbalMaxDeg": 90,
+                "vfxWidthMin": 1,
+                "vfxWidthMax": 100,
+                "vfxLengthMin": 49,
+                "vfxLengthMax": 354
             },
             {
-                "id": "m_u59faf5",
-                "x": 440,
-                "y": 300,
+                "id": "m_q4uvx1h",
+                "x": -218.84,
+                "y": -165.22,
+                "deg": 180,
+                "offsetX": 0,
+                "offsetY": 0,
+                "mount": "lower_left",
+                "gimbalMinDeg": -90,
+                "gimbalMaxDeg": 90,
+                "vfxWidthMin": 1,
+                "vfxWidthMax": 100,
+                "vfxLengthMin": 49,
+                "vfxLengthMax": 354
+            },
+            {
+                "id": "m_q56wq4p",
+                "x": 134.34,
+                "y": 80.71,
                 "deg": 0,
-                "offsetX": 90,
-                "offsetY": 0
+                "offsetX": 0,
+                "offsetY": 0,
+                "mount": "upper_right",
+                "gimbalMinDeg": -90,
+                "gimbalMaxDeg": 90,
+                "vfxWidthMin": 1,
+                "vfxWidthMax": 100,
+                "vfxLengthMin": 49,
+                "vfxLengthMax": 354
+            },
+            {
+                "id": "m_e2fagcu",
+                "x": 134.34,
+                "y": -80.71,
+                "deg": 180,
+                "offsetX": 0,
+                "offsetY": 0,
+                "mount": "upper_left",
+                "gimbalMinDeg": -90,
+                "gimbalMaxDeg": 90,
+                "vfxWidthMin": 1,
+                "vfxWidthMax": 100,
+                "vfxLengthMin": 49,
+                "vfxLengthMax": 354
+            }
+        ]
+    },
+    "lights": {
+        "position": [
+            {
+                "id": "m_49q186m",
+                "x": 252.43,
+                "y": -37.38,
+                "color": "#ff2b2b",
+                "power": 0.8,
+                "radius": 4,
+                "sequenceGroup": "edge"
+            },
+            {
+                "id": "m_xdidt2s",
+                "x": 252.43,
+                "y": 37.38,
+                "color": "#ff2b2b",
+                "power": 0.8,
+                "radius": 4,
+                "sequenceGroup": "edge"
+            },
+            {
+                "id": "m_66r3y05",
+                "x": 170.09,
+                "y": -68.79,
+                "color": "#ff2b2b",
+                "power": 0.8,
+                "radius": 4,
+                "sequenceGroup": "edge"
+            },
+            {
+                "id": "m_m84jdmb",
+                "x": 170.09,
+                "y": 68.79,
+                "color": "#ff2b2b",
+                "power": 0.8,
+                "radius": 4,
+                "sequenceGroup": "edge"
+            },
+            {
+                "id": "m_zt43m9s",
+                "x": 101.84,
+                "y": -53.63,
+                "color": "#ff2b2b",
+                "power": 0.8,
+                "radius": 4,
+                "sequenceGroup": "edge"
+            },
+            {
+                "id": "m_b4hyyu4",
+                "x": 101.84,
+                "y": 53.63,
+                "color": "#ff2b2b",
+                "power": 0.8,
+                "radius": 4,
+                "sequenceGroup": "edge"
+            },
+            {
+                "id": "m_roi1os8",
+                "x": 33.58,
+                "y": -60.13,
+                "color": "#ff2b2b",
+                "power": 0.8,
+                "radius": 4,
+                "sequenceGroup": "edge"
+            },
+            {
+                "id": "m_6xkl1ar",
+                "x": 33.58,
+                "y": 60.13,
+                "color": "#ff2b2b",
+                "power": 0.8,
+                "radius": 4,
+                "sequenceGroup": "edge"
+            },
+            {
+                "id": "m_sm4kpmq",
+                "x": -20.58,
+                "y": -60.13,
+                "color": "#ff2b2b",
+                "power": 0.8,
+                "radius": 4,
+                "sequenceGroup": "edge"
+            },
+            {
+                "id": "m_iny6hrj",
+                "x": -20.58,
+                "y": 60.13,
+                "color": "#ff2b2b",
+                "power": 0.8,
+                "radius": 4,
+                "sequenceGroup": "edge"
+            },
+            {
+                "id": "m_0m0gn0j",
+                "x": -76.92,
+                "y": -64.46,
+                "color": "#ff2b2b",
+                "power": 0.8,
+                "radius": 4,
+                "sequenceGroup": "edge"
+            },
+            {
+                "id": "m_3l7ftim",
+                "x": -76.92,
+                "y": 64.46,
+                "color": "#ff2b2b",
+                "power": 0.8,
+                "radius": 4,
+                "sequenceGroup": "edge"
+            },
+            {
+                "id": "m_rq9ko1q",
+                "x": -135.42,
+                "y": -101.3,
+                "color": "#ff2b2b",
+                "power": 0.8,
+                "radius": 4,
+                "sequenceGroup": "edge"
+            },
+            {
+                "id": "m_g5q7kva",
+                "x": -135.42,
+                "y": 101.3,
+                "color": "#ff2b2b",
+                "power": 0.8,
+                "radius": 4,
+                "sequenceGroup": "edge"
+            },
+            {
+                "id": "m_b0ht29b",
+                "x": -180.92,
+                "y": -159.8,
+                "color": "#ff2b2b",
+                "power": 0.8,
+                "radius": 4,
+                "sequenceGroup": "edge"
+            },
+            {
+                "id": "m_1wiswq0",
+                "x": -180.92,
+                "y": 159.8,
+                "color": "#ff2b2b",
+                "power": 0.8,
+                "radius": 4,
+                "sequenceGroup": "edge"
+            },
+            {
+                "id": "m_8ljy6of",
+                "x": -240.51,
+                "y": -161.97,
+                "color": "#ff2b2b",
+                "power": 0.8,
+                "radius": 4,
+                "sequenceGroup": "edge"
+            },
+            {
+                "id": "m_y0t6fnz",
+                "x": -240.51,
+                "y": 161.97,
+                "color": "#ff2b2b",
+                "power": 0.8,
+                "radius": 4,
+                "sequenceGroup": "edge"
+            },
+            {
+                "id": "m_6jvjm1c",
+                "x": -269.76,
+                "y": -105.63,
+                "color": "#ff2b2b",
+                "power": 0.8,
+                "radius": 4,
+                "sequenceGroup": "edge"
+            },
+            {
+                "id": "m_rplbugc",
+                "x": -269.76,
+                "y": 105.63,
+                "color": "#ff2b2b",
+                "power": 0.8,
+                "radius": 4,
+                "sequenceGroup": "edge"
+            },
+            {
+                "id": "m_gopk3qw",
+                "x": -305.51,
+                "y": -21.13,
+                "color": "#ff2b2b",
+                "power": 0.8,
+                "radius": 4,
+                "sequenceGroup": "edge"
+            },
+            {
+                "id": "m_dkvd17u",
+                "x": -305.51,
+                "y": 21.13,
+                "color": "#ff2b2b",
+                "power": 0.8,
+                "radius": 4,
+                "sequenceGroup": "edge"
+            },
+            {
+                "id": "m_rhc0vwh",
+                "x": -305.51,
+                "y": -22.21,
+                "color": "#ff2b2b",
+                "power": 0.8,
+                "radius": 4,
+                "sequenceGroup": "edge"
+            },
+            {
+                "id": "m_p71glg5",
+                "x": -305.51,
+                "y": 22.21,
+                "color": "#ff2b2b",
+                "power": 0.8,
+                "radius": 4,
+                "sequenceGroup": "edge"
+            }
+        ],
+        "road": [
+            {
+                "id": "m_707tuzy",
+                "x": 255.68,
+                "y": -0.54,
+                "color": "#ffffff",
+                "power": 3,
+                "radius": 14,
+                "deg": 90,
+                "range": 800,
+                "coneDeg": 40
             }
         ]
     }
@@ -1263,148 +1480,34 @@ export const SHIP_EDITOR_DEFAULTS = {
     "frontAxis": "+X",
     "hardpoints": [
         {
-            "id": "m_jstprd9",
-            "type": "main",
-            "x": -380,
-            "y": -210
-        },
-        {
             "id": "m_0jo4azc",
             "type": "main",
             "x": -380,
             "y": 210
         },
         {
-            "id": "m_7pp7dqg",
+            "id": "m_6pivdza",
             "type": "main",
-            "x": 620,
-            "y": -150
+            "x": -373.18,
+            "y": -209.82
         },
         {
-            "id": "m_7cllyw4",
+            "id": "m_xymuo8v",
             "type": "main",
-            "x": 610,
-            "y": 170
+            "x": -374.63,
+            "y": -209.82
         },
         {
-            "id": "m_jx5zi17",
+            "id": "m_jqe0atg",
             "type": "aux",
-            "x": 770,
-            "y": -110
+            "x": 588.09,
+            "y": -180.78
         },
         {
-            "id": "m_14pjz04",
+            "id": "m_1fby8k4",
             "type": "aux",
-            "x": 770,
-            "y": 110
-        },
-        {
-            "id": "m_oi0waep",
-            "type": "aux",
-            "x": 710,
-            "y": -140
-        },
-        {
-            "id": "m_9k7jfm0",
-            "type": "aux",
-            "x": 710,
-            "y": 140
-        },
-        {
-            "id": "m_wfdvcel",
-            "type": "aux",
-            "x": 660,
-            "y": -170
-        },
-        {
-            "id": "m_yhzf74h",
-            "type": "aux",
-            "x": 660,
-            "y": 170
-        },
-        {
-            "id": "m_9vgslj9",
-            "type": "aux",
-            "x": 450,
-            "y": -240
-        },
-        {
-            "id": "m_9aqolqy",
-            "type": "aux",
-            "x": 450,
-            "y": 240
-        },
-        {
-            "id": "m_5x9mbqn",
-            "type": "aux",
-            "x": 300,
-            "y": -140
-        },
-        {
-            "id": "m_qu0h15r",
-            "type": "aux",
-            "x": 300,
-            "y": 140
-        },
-        {
-            "id": "m_lopffev",
-            "type": "aux",
-            "x": 100,
-            "y": -200
-        },
-        {
-            "id": "m_cturvpo",
-            "type": "aux",
-            "x": 100,
-            "y": 200
-        },
-        {
-            "id": "m_vimal8n",
-            "type": "aux",
-            "x": -40,
-            "y": -200
-        },
-        {
-            "id": "m_wh5sr6o",
-            "type": "aux",
-            "x": -40,
-            "y": 200
-        },
-        {
-            "id": "m_sak07cc",
-            "type": "aux",
-            "x": -230,
-            "y": -200
-        },
-        {
-            "id": "m_aqbz7jy",
-            "type": "aux",
-            "x": -230,
-            "y": 200
-        },
-        {
-            "id": "m_0n1udkv",
-            "type": "aux",
-            "x": -680,
-            "y": -290
-        },
-        {
-            "id": "m_4u9rt9d",
-            "type": "aux",
-            "x": -680,
-            "y": 290
-        },
-        {
-            "id": "m_0ioixun",
-            "type": "aux",
-            "x": -680,
-            "y": 400
-        },
-        {
-            "id": "m_hgurjs5",
-            "type": "aux",
-            "x": -430,
-            "y": 0
+            "x": 593.9,
+            "y": 156.1
         }
     ],
     "cores": [],
@@ -1429,22 +1532,113 @@ export const SHIP_EDITOR_DEFAULTS = {
         ],
         "side": [
             {
-                "id": "m_toxwhc0",
-                "x": 410,
-                "y": -260,
-                "deg": 180,
-                "offsetX": 90,
-                "offsetY": 0
+                "id": "m_j6fxamu",
+                "x": 408.03,
+                "y": 286.78,
+                "deg": 0,
+                "offsetX": 0,
+                "offsetY": 0,
+                "mount": "upper_right",
+                "gimbalMinDeg": -90,
+                "gimbalMaxDeg": 90,
+                "vfxWidthMin": 1,
+                "vfxWidthMax": 100,
+                "vfxLengthMin": 49,
+                "vfxLengthMax": 354
             },
             {
-                "id": "m_rzxujkq",
-                "x": 410,
-                "y": 260,
-                "deg": 0,
-                "offsetX": 90,
-                "offsetY": 0
+                "id": "m_p4q78q9",
+                "x": 408.03,
+                "y": -286.78,
+                "deg": 180,
+                "offsetX": 0,
+                "offsetY": 0,
+                "mount": "upper_left",
+                "gimbalMinDeg": -90,
+                "gimbalMaxDeg": 90,
+                "vfxWidthMin": 1,
+                "vfxWidthMax": 100,
+                "vfxLengthMin": 49,
+                "vfxLengthMax": 354
             }
         ]
+    },
+    "lights": {
+        "position": [
+            {
+                "id": "m_0jnh65j",
+                "x": 961.27,
+                "y": -89.3,
+                "color": "#ff2b2b",
+                "power": 0.8,
+                "radius": 4,
+                "sequenceGroup": "edge"
+            },
+            {
+                "id": "m_0kiql97",
+                "x": 961.27,
+                "y": 89.3,
+                "color": "#ff2b2b",
+                "power": 0.8,
+                "radius": 4,
+                "sequenceGroup": "edge"
+            },
+            {
+                "id": "m_u1hhdsp",
+                "x": 492.25,
+                "y": -275.17,
+                "color": "#ff2b2b",
+                "power": 0.8,
+                "radius": 4,
+                "sequenceGroup": "edge"
+            },
+            {
+                "id": "m_qgnp2di",
+                "x": 492.25,
+                "y": 275.17,
+                "color": "#ff2b2b",
+                "power": 0.8,
+                "radius": 4,
+                "sequenceGroup": "edge"
+            },
+            {
+                "id": "m_572tux5",
+                "x": -18.88,
+                "y": -247.58,
+                "color": "#ff2b2b",
+                "power": 0.8,
+                "radius": 4,
+                "sequenceGroup": "edge"
+            },
+            {
+                "id": "m_qx1kezr",
+                "x": -18.88,
+                "y": 247.58,
+                "color": "#ff2b2b",
+                "power": 0.8,
+                "radius": 4,
+                "sequenceGroup": "edge"
+            },
+            {
+                "id": "m_lz2q6p5",
+                "x": -699.9,
+                "y": -317.28,
+                "color": "#ff2b2b",
+                "power": 0.8,
+                "radius": 4,
+                "sequenceGroup": "edge"
+            },
+            {
+                "id": "m_g8uschf",
+                "x": -701.35,
+                "y": 468.29,
+                "color": "#ff2b2b",
+                "power": 0.8,
+                "radius": 4,
+                "sequenceGroup": "edge"
+            }
+        ],
+        "road": []
     }
 },
     "pirate_battleship": {

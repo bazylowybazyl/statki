@@ -71,7 +71,14 @@ test('breaking supports tears the skin before any node dies or body splits and c
       }
     }
     assert.ok(sd.ribs.mesh.count > 0);
-    assert.equal(sd.ribs.mesh.count, sd.ribs.members.filter(i => !f.body.beams[i].broken).length);
+    const cell = n => n.ix + n.iy * sd.dims.x + n.iz * sd.dims.x * sd.dims.y;
+    const exposed = sd.ribs.members.filter(i => {
+      const beam = f.body.beams[i];
+      return !beam.broken && (sd.surface.exposed[cell(f.body.nodes[beam.a])] || sd.surface.exposed[cell(f.body.nodes[beam.b])]);
+    });
+    assert.equal(sd.ribs.mesh.count, exposed.length);
+    assert.ok(sd.ribs.mesh.count < sd.ribs.members.filter(i => !f.body.beams[i].broken).length,
+      'one cut must not reveal every reinforcement in the model');
   } finally { cleanup(f); }
 });
 
@@ -93,6 +100,30 @@ test('movement reuses surface buffers; repair restores topology and removes torn
     assert.equal(sd.triangleCount, f.structure.skin.triangleCount);
     assert.equal(sd.rims.count, 0);
     assert.equal(sd.rims.mesh.visible, false);
+    assert.equal(sd.ribs.mesh.count, 0, 'repair hides the exposed reinforcement again');
+  } finally { cleanup(f); }
+});
+
+test('small dents are continuous in the GPU field and leave distant skin samples unchanged', () => {
+  const f = fixture();
+  try {
+    R.sync([f.body], f.camera, 0);
+    const sd = R.bodyData.get(f.body).skin, n = f.body.nodes[0], remote = f.body.nodes.at(-1);
+    const cell = n => (n.ix + n.iy * sd.dims.x + n.iz * sd.dims.x * sd.dims.y) * 4;
+    const index = cell(n), far = cell(remote), buffer = sd.data;
+    let previous = 0;
+    for (let i = 1; i <= 20; i++) {
+      const dent = f.body.cellSize * i * 0.002;
+      n.x = n.ox + dent; f.body.meshDirty = true;
+      R.sync([f.body], f.camera, i / 120);
+      const decoded = THREE.DataUtils.fromHalfFloat(sd.data[index]) * sd.deformScale;
+      assert.ok(decoded > previous, 'the motion must not wait for an 8-bit quantization step');
+      assert.ok(Math.abs(decoded - dent) < f.body.cellSize * 0.0001);
+      assert.equal(sd.data[far], 0); assert.equal(sd.data[far + 1], 0); assert.equal(sd.data[far + 2], 0);
+      assert.equal(sd.data, buffer);
+      previous = decoded;
+    }
+    assert.equal(sd.texture.type, THREE.HalfFloatType);
   } finally { cleanup(f); }
 });
 

@@ -16,10 +16,12 @@
 import * as THREE from 'three';
 import { HALO_GLSL_COMMON, HALO_GLSL_NOISE, HALO_GLSL_PORTSITES } from './haloRingGLSL.js';
 import { HALO_SECTOR_TYPES, HALO_TERRAIN } from './haloRingConfig.js';
-import { haloPortSiteUniforms, haloPortZoneUniforms } from './haloRingUniforms.js';
+import { haloPortTileUniforms } from './haloRingUniforms.js';
+import { HALO_LANDMARK } from './haloRingLandmarks.js';
 
 const MAX_SECTORS = 32;
 const RIVERS = 3;
+const MAX_LANDMARKS = HALO_LANDMARK.maxCount;
 
 const BAKE_VERTEX = /* glsl */`
 varying vec2 vUv;
@@ -45,8 +47,29 @@ uniform vec3 uRiverM2[${RIVERS}];
 uniform vec3 uRiverM3[${RIVERS}];
 uniform vec4 uRegion;       // u0, v0, u1, v1 pieczonego plastra
 uniform float uSeaDepth;
+uniform float uLandmarkCount;
+uniform vec4 uLandmarkA[${MAX_LANDMARKS}];   // s srodka, pol-dlugosc plyty wzdluz, t srodka, pol-szerokosc w poprzek
+uniform vec4 uLandmarkB[${MAX_LANDMARKS}];   // wysokosc placu, trawnik, rampa, -
 varying vec2 vUv;
 ${HALO_GLSL_PORTSITES}
+
+// Place pod megabudowlami (haloRingLandmarks.js): x = waga placu (1 na plycie
+// i trawniku, rampa do terenu), y = rdzen pod plyta (ukryty pod kamienna
+// plyta: bez drzew i detalu), z = wysokosc placu, w = obrzeze plyty.
+vec4 haloLandmarkPlaza(float s, float t, float L) {
+  vec4 best = vec4(0.0);
+  for (int i = 0; i < ${MAX_LANDMARKS}; i++) {
+    if (float(i) >= uLandmarkCount) break;
+    vec4 A = uLandmarkA[i];
+    vec4 B = uLandmarkB[i];
+    float ds = s - A.x;
+    ds -= L * floor(ds / L + 0.5);
+    float d = max(abs(ds) - A.y, abs(t - A.z) - A.w);
+    float w = 1.0 - smoothstep(B.y, B.y + B.z, d);
+    if (w > best.x) best = vec4(w, 1.0 - smoothstep(-70.0, -40.0, d), B.x, 1.0 - smoothstep(0.0, 80.0, d));
+  }
+  return best;
+}
 
 vec3 cylP(float s, float t, float scale) {
   float th = s / uGeo.x * HALO_TAU;
@@ -123,17 +146,20 @@ HaloWorld haloWorldAt(float s, float t) {
   int io = int(mod(ko, uSectorCount));
   vec4 typeW = typeOneHot(uSectorType[ik]) * wk + typeOneHot(uSectorType[io]) * wo;
   vec4 cl = uSectorClimate[ik] * wk + uSectorClimate[io] * wo;
-  float portW = uSectorPort[ik] * wk + uSectorPort[io] * wo;
-  float portPad = portW * (1.0 - smoothstep(0.18, 0.3, abs(f - 0.5))) * step(0.5, uSectorPort[ik]);
-  // --- strefy wokol dokow i tranzytow (poprawka uzytkownika 2026-09-23): plyta
-  // -> pas fabryczny -> domy -> sektor jak byl; granice zafalowane szumem
-  float zWarp = fbm3(cylP(s, t, 1700.0) + 13.0, 3) * 700.0;
-  vec2 pz = haloPortZones(s, t, L, zWarp);
+  // --- strefy wokol dokow (poprawki uzytkownika 2026-09-23): plyta doku ->
+  // pas fabryczny (przemysl TYLKO wokol dokow) -> osady tam, gdzie nie ma gor
+  // -> sektor jak byl; granice zafalowane szumem. Gory sektora przy brzegach
+  // wstegi (scianach) moga zostac tuz obok dokow — nie musza.
+  float zWarp = fbm3(cylP(s, t, 1700.0) + 13.0, 3) * 520.0;
+  vec4 pz = haloPortZones(s, t, L, zWarp);
   float zInd = pz.x;
-  float zRes = max(pz.y - pz.x, 0.0);
-  float zAll = pz.y;
-  typeW = typeW * (1.0 - zAll) + vec4(0.0, zRes, zInd, 0.0);
-  cl.y *= 1.0 - zAll;
+  // nad dokiem (strona kamery gry) teren niski: bez gor, pas fabryczny i osady
+  float zShield = pz.w;
+  float zNear = max(zInd, zShield);
+  typeW = typeW * (1.0 - zInd) + vec4(0.0, 0.0, zInd, 0.0);
+  // plac pod megabudowla: plasko, lad, bez rzek, zabudowy i lasu
+  vec4 lmP = haloLandmarkPlaza(s, t, L);
+  float lmW = lmP.x;
 
   // --- kontynenty i morza (zawinieta domena, okresowa na walcu)
   vec3 q = cylP(s, t, 14000.0);
@@ -143,7 +169,8 @@ HaloWorld haloWorldAt(float s, float t) {
   float wallZone = 1.0 - smoothstep(0.0, 0.27, min(v, 1.0 - v));
   float mountAmt = cl.y;
   float e = cont - thr + wallZone * mountAmt * 0.32;
-  e = mix(e, max(e, 0.22), zAll);   // w strefie portu lad, nie morze
+  e = mix(e, max(e, 0.22), zNear);  // pod pasem fabrycznym i nad dokiem lad, nie morze
+  e = mix(e, max(e, 0.3), lmW);
   float coast = smoothstep(-0.015, 0.015, e);
   float seaH = -8.0 - uSeaDepth * smoothstep(0.0, 0.3, -e);
 
@@ -152,7 +179,10 @@ HaloWorld haloWorldAt(float s, float t) {
   float rid = ridged3(cylP(s, t, 3600.0) + warp * 0.45, 6);
   float ranges = smoothstep(0.42, 0.8, fbm3(cylP(s, t, 11000.0) + 5.0, 3) + 0.5);
   float mMask = clamp(wallZone * 0.95 + ranges * 0.5, 0.0, 1.0) * mountAmt;
-  float mountains = pow(max(rid, 0.0), 1.7) * mMask * hMax * 1.35;
+  float mountains = pow(max(rid, 0.0), 1.7) * mMask * hMax * 1.35 * (1.0 - zShield);
+  // osady przy porcie tylko tam, gdzie teren sektora nie ma gor
+  float zRes = pz.y * (1.0 - zInd) * (1.0 - smoothstep(0.1, 0.28, mountains / max(hMax, 1.0)));
+  typeW = typeW * (1.0 - zRes) + vec4(0.0, zRes, 0.0, 0.0);
   float hills = (fbm3(cylP(s, t, 1500.0) + 2.0, 4) * 0.5 + 0.5) * (14.0 + 55.0 * mountAmt);
   float landBase = 3.0 + 60.0 * smoothstep(0.0, 0.5, e);
   float landH = landBase + hills * smoothstep(0.0, 0.12, e) + mountains * smoothstep(-0.05, 0.25, e + wallZone * 0.3);
@@ -185,10 +215,10 @@ HaloWorld haloWorldAt(float s, float t) {
   float hGlass = mix(seaH * 0.4, 5.0 + hills * 0.25, coast);
 
   float h = typeW.x * hLand + typeW.y * hGarden + typeW.z * hInd + typeW.w * hGlass;
-  h = mix(h, 7.0, portPad);
-  // doki wpiete w podloge (K-7 + transportowe): plaska plyta bez zabudowy
+  // doki wpiete w podloge (K-7 + zatoki) i portale tranzytow: plaska plyta bez zabudowy
   float dockPad = haloPortPad(s, t, L, 0.0, 300.0);
   h = mix(h, 7.0, dockPad);
+  h = mix(h, lmP.z, lmW);
 
   // --- rzeki: meandry okresowe (parametry z layoutu), zanikaja w gorach
   float uu = s / L;
@@ -202,7 +232,7 @@ HaloWorld haloWorldAt(float s, float t) {
     float halfW = ra.y * (0.5 + 0.5 * (haloGnoise3(cylP(s, 0.0, 9000.0) + float(i) * 7.3) * 0.5 + 0.5));
     rd = min(rd, abs(v - vc) * Wf - halfW);
   }
-  float riverW = clamp(typeW.x + typeW.y + typeW.w * 0.7, 0.0, 1.0) * (1.0 - desert * 0.85) * (1.0 - portPad) * (1.0 - dockPad) * (1.0 - zInd);
+  float riverW = clamp(typeW.x + typeW.y + typeW.w * 0.7, 0.0, 1.0) * (1.0 - desert * 0.85) * (1.0 - dockPad) * (1.0 - zInd) * (1.0 - lmW);
   float fadeHigh = 1.0 - smoothstep(150.0, 320.0, h);
   float bankT = smoothstep(0.0, 110.0, max(rd, 0.0));
   float riverH = rd < 0.0 ? (-5.0 - 6.0 * clamp(-rd / 30.0, 0.0, 1.0)) : mix(1.2, h, bankT);
@@ -221,16 +251,22 @@ HaloWorld haloWorldAt(float s, float t) {
   float dry = smoothstep(-3.0, 3.0, h) * smoothstep(-10.0, 25.0, rd);
   float urban = (typeW.y * smoothstep(0.34, 0.5, cityN)
     + typeW.z * 0.95
-    + typeW.w * smoothstep(0.38, 0.55, cityN) * 0.75
-    + portW * 0.4) * dry * (1.0 - smoothstep(110.0, 260.0, h));
-  // pas fabryczny gesty, w pasie domow male parki (miasto-ogrod gestsze niz zwykle)
+    + typeW.w * smoothstep(0.38, 0.55, cityN) * 0.75) * dry * (1.0 - smoothstep(110.0, 260.0, h));
+  // pas fabryczny gesty, osady w dolinach gestsze niz zwykle miasto-ogrod
   urban = max(urban, (zInd * 0.95 + zRes * smoothstep(0.16, 0.3, cityN)) * dry * (1.0 - smoothstep(110.0, 260.0, h)));
-  urban = clamp(urban, 0.0, 1.0) * (1.0 - dockPad);
-  forest *= (1.0 - urban * 0.9) * (1.0 - dockPad) * (1.0 - zInd);
+  urban = clamp(urban, 0.0, 1.0) * (1.0 - dockPad) * (1.0 - lmW);
+  forest *= (1.0 - urban * 0.9) * (1.0 - dockPad) * (1.0 - zInd) * (1.0 - lmW);
   float exN = fbm3(cylP(s, t, 4800.0) + 91.0, 3);
-  // płyta doku: goły metal z liniami (fartuch portu), bez zabudowy i lasu
-  float exposed = max(typeW.z * smoothstep(0.22, 0.36, exN) * (1.0 - portPad) * dry * (1.0 - dockPad), dockPad);
+  // plyta doku: goly metal z liniami (fartuch portu), bez zabudowy i lasu;
+  // pod plyta placu megabudowli rdzen (bez drzew i detalu), obrzeze splaszczone
+  float exposed = max(typeW.z * smoothstep(0.22, 0.36, exN) * dry * (1.0 - dockPad), dockPad);
+  exposed = max(exposed, max(lmP.y, lmP.w * 0.3));
   float rock = clamp(smoothstep(230.0, 540.0, h) * 0.75 + desert * smoothstep(40.0, 110.0, h) * 0.8, 0.0, 1.0);
+
+  // pod plyta placu i tuz za nia bez drzew (drzewa miasta rosna z wagi
+  // ogrodu, a nie wolno im przebic plyty): waga ogrodu -> szklo, sam koniec
+  // (wysokosc, zabudowa, las policzone wyzej)
+  typeW = mix(typeW, vec4(0.0, 0.0, 0.0, 1.0), smoothstep(0.6, 0.8, lmP.w) * lmW);
 
   W.h = h;
   W.riverDist = clamp(rd, -200.0, 600.0);
@@ -343,8 +379,13 @@ export class HaloWorldMaps {
       uRiverM3: { value: m3 },
       uRegion: { value: new THREE.Vector4(0, 0, 1, 1) },
       uSeaDepth: { value: HALO_TERRAIN.seaDepth },
-      uPortSites: { value: haloPortSiteUniforms(layout) },
-      uPortZones: { value: haloPortZoneUniforms(layout) }
+      uLandmarkCount: { value: 0 },
+      uLandmarkA: { value: Array.from({ length: MAX_LANDMARKS }, () => new THREE.Vector4()) },
+      uLandmarkB: { value: Array.from({ length: MAX_LANDMARKS }, () => new THREE.Vector4(0, 0, 1, 0)) },
+      ...(() => {
+        const t = haloPortTileUniforms(layout);
+        return { uPortTile: { value: t.tile }, uPortRects: { value: t.rects }, uPortZones: { value: t.zones } };
+      })()
     };
   }
 
@@ -438,6 +479,26 @@ export class HaloWorldMaps {
     const heights = new Float32Array(w * h);
     for (let i = 0; i < w * h; i++) heights[i] = data[i * 4];
     this.cpu = { w, h, heights };
+  }
+
+  // Place pod megabudowlami (buildHaloLandmarkPlan — miejsca wybrane z mapy
+  // sprzed placów): uniformy bake'u, ponowny bake mapy niskiej i odczyt CPU
+  // (wysokość placu dla lotu i kamery); pełna mapa dopieka się już z placami.
+  setLandmarks(list) {
+    const n = Math.min(Array.isArray(list) ? list.length : 0, MAX_LANDMARKS);
+    const u = this.uniforms;
+    for (let i = 0; i < MAX_LANDMARKS; i++) {
+      const lm = i < n ? list[i] : null;
+      u.uLandmarkA.value[i].set(lm ? lm.s : 0, lm ? lm.plaza.halfA : 0, lm ? lm.t : 0, lm ? lm.plaza.halfQ : 0);
+      u.uLandmarkB.value[i].set(lm ? lm.plazaH : 0, lm ? lm.plaza.lawn : 0, lm ? lm.plaza.ramp : 1, 0);
+    }
+    const changed = u.uLandmarkCount.value !== n || n > 0;
+    u.uLandmarkCount.value = n;
+    if (!changed || !this.low) return;
+    this._bakeRegion(this.low, 0, 1);
+    this._readbackCpu();
+    if (this.pending) this.pending.nextSlice = 0;
+    this.version++;
   }
 
   heightAtUV(u, v) {

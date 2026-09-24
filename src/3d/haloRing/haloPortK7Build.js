@@ -6,15 +6,20 @@
 // Wynik: listy instancji (prostopadłościan / walec / torus) w trzech zestawach
 // — `bg` (pod statkami), `fg` (nad statkami: suwnice, węże, dach) — z kodem
 // materiału i indeksem grupy ruchomej; płaskie wielokąty (pokład, fartuchy,
-// dach, kadłuby NPC); napisy na pokładzie; definicje węży i grup.
+// dach); napisy na pokładzie; definicje węży i grup. Statków NPC scena nie ma
+// (2026-09-24: statki i ruch z osobnego systemu).
+//
+// Kompleks = hala K-7 + jej otwarte zatoki (haloPortBays.js): stanowiska zatok
+// w tym samym standardzie (pola, pasy, napisy, lampki stanu) nagrywane w
+// układzie huba hali przez przejście ramek — te same instancje i draw calle.
 import {
   K7_ABOVE_SCALE,
   K7_HEIGHTS,
   k7CollarPosts,
   k7HeightToZ,
-  k7ParkedShipShape,
   k7SolidList
 } from './haloPortK7Layout.js';
+import { baySolidList, haloXfPoint } from './haloPortBays.js';
 
 export const K7_MAT = Object.freeze({
   steel: 0, dark: 1, pale: 2, yellow: 3, orange: 4, teal: 5, floor: 6, rail: 7, black: 8, hose: 9,
@@ -67,9 +72,25 @@ class Recorder {
     this.mode = 'abs';
     this.dx = 0;
     this.dz = 0;
+    // przejście ramki (zatoka → hub hali): X = ox + x·c − z·s, Z = oz + x·s + z·c
+    this.xf = null;
+    this._qxf = [0, 0, 0, 1];
+  }
+  setFrame(xf) {
+    this.xf = xf;
+    if (xf) this._qxf = qAxis(0, 1, 0, -xf.phi);
   }
   _push(kind, cx, cy, cz, vs, sx, sy, sz, mat, q) {
-    this.sets[this.set][kind].push(cx + this.dx, cy, cz + this.dz, vs, sx, sy, sz, mat, q[0], q[1], q[2], q[3], this.group, 0, 0, 0);
+    let x = cx + this.dx;
+    let z = cz + this.dz;
+    if (this.xf) {
+      const t = this.xf;
+      const X = t.ox + x * t.c - z * t.s;
+      z = t.oz + x * t.s + z * t.c;
+      x = X;
+      q = quatMul(this._qxf, q);
+    }
+    this.sets[this.set][kind].push(x, cy, z, vs, sx, sy, sz, mat, q[0], q[1], q[2], q[3], this.group, 0, 0, 0);
   }
   _range(y, h) {
     if (this.mode === 'lin') return [y * K7_ABOVE_SCALE, h * K7_ABOVE_SCALE];
@@ -182,55 +203,8 @@ export function buildK7Scene(layout, ringInfo = {}) {
 
   // ---- pokład: stanowiska, pasy, strzałki (K-7 buildDeck)
   const stripe = (x, z, w, d, mat) => f.box(x, 1.5, z, w, 1.5, d, mat);
-  for (const b of l.berths) {
-    const hw = b.width / 2;
-    const hl = b.length / 2;
-    const capital = b.size === 'CAPITAL';
-    f.box(b.x, 0.8, b.z, b.width, 1.4, b.length, M.deckPad);
-    for (const side of [-1, 1]) {
-      stripe(b.x + side * hw, b.z, 5, b.length, M.paint);
-      stripe(b.x, b.z + side * hl, b.width, 5, M.paint);
-      const count = capital ? 10 : Math.max(3, Math.floor(b.length / 90));
-      for (let j = 0; j < count; j++) stripe(b.x + side * (hw + 15), b.z - hl + 24 + j * (b.length - 48) / (count - 1), 22, 8, M.yellow);
-    }
-    const dx = Math.cos(b.angle);
-    const dz = Math.sin(b.angle);
-    const nx = -dz;
-    const nz = dx;
-    const place = (along, across) => ({ x: b.x + dx * along + nx * across, z: b.z + dz * along + nz * across });
-    for (let q = -b.padLength * 0.37; q < b.padLength * 0.37; q += capital ? 190 : 95) {
-      const p = place(q, 0);
-      f.box(p.x, 2, p.z, capital ? 65 : 35, 1.5, 4, M.paintCold, -b.angle);
-    }
-    const cx = b.capture.halfWidth;
-    const cz = b.capture.halfLength;
-    for (const sx of [-1, 1]) {
-      for (const sz of [-1, 1]) {
-        stripe(b.x + sx * cx, b.z + sz * (cz - 12), 4, 24, M.paintCold);
-        stripe(b.x + sx * (cx - 12), b.z + sz * cz, 24, 4, M.paintCold);
-      }
-    }
-    const depth = capital ? 135 : b.size === 'L' ? 108 : b.size === 'M' ? 80 : 58;
-    const aft = place(-b.padLength / 2 + (capital ? 180 : depth * 0.85 + 24), 0);
-    label(labels, b.id, aft.x, aft.z, b.padBeam * 0.76, depth, b.id === 'C-01' ? '#9ecdd0' : '#cbb992',
-      capital ? 'ATLAS / REVERSIBLE' : b.size + ' / ' + (b.occupied ? 'OCCUPIED' : 'AVAILABLE'), -(b.angle + Math.PI / 2));
-    const stop = place(b.padLength / 2 - (capital ? 120 : 52), 0);
-    label(labels, 'STOP', stop.x, stop.z, Math.min(250, b.padBeam * 0.63), capital ? 58 : 33, '#778685', '', -(b.angle + Math.PI / 2));
-    // lampka stanu stanowiska (kolor zmienia automat dokowania)
-    const statusPoint = place(-b.padLength / 2 + 18, 0);
-    lamps.push({ berthId: b.id, index: f.sets.bg.box.length / 16 });
-    f.box(statusPoint.x, 4, statusPoint.z, 7, 3, b.padBeam * 0.69, b.occupied ? M.warm : M.green, -b.angle);
-    if (b.approach) {
-      const tail = place(-b.padLength / 2 - 65, 0);
-      directionArrow(f, tail.x, tail.z, b.angle, Math.min(110, b.padBeam * 0.43), M.paintCold);
-      for (const sign of [-1, 1]) {
-        const startX = b.approach.from.x;
-        const endX = tail.x;
-        const n = Math.max(1, Math.ceil(Math.abs(endX - startX) / 120));
-        for (let j = 0; j <= n; j++) stripe(mix(startX, endX, j / n), b.z + sign * (b.padBeam / 2 - 15), 44, 3, M.paintCold);
-      }
-    }
-  }
+  const hubLabel = (text, x, z, width, depth, color, small, rotation) => label(labels, text, x, z, width, depth, color, small, rotation);
+  recordBerths(f, hubLabel, lamps, l.berths);
   for (const lane of l.lanes) {
     for (const side of [-1, 1]) for (let z = 3230; z < l.frontZ + l.apronDepth - 70; z += 155) stripe(lane.x + side * 510, z, 8, 74, M.paintCold);
     for (let z = 3380; z < l.frontZ + l.apronDepth - 80; z += 670) {
@@ -238,7 +212,7 @@ export function buildK7Scene(layout, ringInfo = {}) {
       for (const side of [-1, 1]) f.box(lane.x + side * 563, 8, z, 23, 6, 75, M.cyan);
     }
   }
-  label(labels, 'K-7', 0, l.frontZ - 1210, 940, 330, '#687d83', 'CENTRAL HUB / 26 BERTHS');
+  label(labels, 'K-7', 0, l.frontZ - 1210, 940, 330, '#687d83', 'CENTRAL HUB / ' + l.berths.length + ' BERTHS');
   label(labels, 'CLEAR MANOEUVRING AREA', 0, l.frontZ - 720, 1910, 68, '#99a6a2');
   for (const bank of l.sideBanks) {
     const z = (bank.z0 + bank.z1) / 2;
@@ -251,10 +225,16 @@ export function buildK7Scene(layout, ringInfo = {}) {
     for (let zz = bank.z0; zz < bank.z1; zz += 40) f.box(x, 22, zz, 83, 3, 7, M.rail);
     for (const off of [-56, 56]) stripe(x + off, z, 4, length, M.paint);
   }
-  for (const x of [-1655, 1655, 0]) {
-    const length = x === 0 ? 3030 : 3560;
-    const z = x === 0 ? 2260 : 2500;
-    const w = x === 0 ? 130 : 82;
+  // listwy między stanowiskami kapitalnymi (środkowa szersza) i na zewnątrz skrajnych
+  const capXs = l.berths.filter((b) => b.size === 'CAPITAL').map((b) => b.x).sort((a, b) => a - b);
+  const dividers = [capXs[0] - 845];
+  for (let i = 0; i + 1 < capXs.length; i++) dividers.push((capXs[i] + capXs[i + 1]) / 2);
+  dividers.push(capXs[capXs.length - 1] + 845);
+  for (const x of dividers) {
+    const inner = Math.abs(x) < 1;
+    const length = inner ? 3030 : 3560;
+    const z = inner ? 2260 : 2500;
+    const w = inner ? 130 : 82;
     f.box(x, 6, z, w, 12, length, M.dark);
     for (let zz = z - length / 2 + 12; zz < z + length / 2; zz += 24) f.box(x, 13, zz, w - 10, 3, 4, M.rail);
   }
@@ -268,7 +248,7 @@ export function buildK7Scene(layout, ringInfo = {}) {
   for (const bank of l.sideBanks) {
     const side = bank.side;
     for (let k = 0; k < 4; k++) {
-      const x = side * (2300 + k * 290);
+      const x = side * (l.halfWidth - 1300 + k * 290);
       const z = 420;
       f.box(x, 126, z, 232, 9, 208, M.dark);
       for (let i = 0; i < 6; i++) f.box(x - 84 + i * 33, 64, z + 104, 8, 107, 8, M.steel);
@@ -328,33 +308,6 @@ export function buildK7Scene(layout, ringInfo = {}) {
     for (const a of b.serviceAnchors) hoses.push(buildHose(f, b, a, addGroup));
   }
 
-  // ---- zaparkowane statki NPC (proceduralDockShip)
-  for (const b of l.berths) {
-    if (b.size === 'CAPITAL' || !b.occupied) continue;
-    const ship = k7ParkedShipShape(b);
-    const len = ship.length;
-    const w = ship.beam;
-    const c = Math.cos(b.angle);
-    const s = Math.sin(b.angle);
-    const local = (px, pz) => [b.x + px * c - pz * s, b.z + px * s + pz * c];
-    plates.push({ points: ship.shape.map(([px, pz]) => local(px, pz)), z0: k7HeightToZ(35), z1: k7HeightToZ(73), mat: M.pale, set: 'bg' });
-    const rot = -b.angle;
-    const bx = (px, pz) => local(px, pz);
-    let p = bx(-len * 0.05, 0);
-    f.box(p[0], 87, p[1], len * 0.59, 32, w * 0.33, M.dark, rot);
-    p = bx(len * 0.19, 0);
-    f.box(p[0], 94, p[1], len * 0.13, 16, w * 0.29, M.glass, rot);
-    for (const side of [-1, 1]) {
-      p = bx(-len * 0.37, side * w * 0.29);
-      f.box(p[0], 60, p[1], len * 0.22, 35, w * 0.2, M.dark, rot);
-      p = bx(-len * 0.484, side * w * 0.29);
-      f.box(p[0], 62, p[1], 9, 21, w * 0.15, M.cyan, rot);
-      for (let j = 0; j < 5; j++) {
-        p = bx(-len * 0.29 + j * len * 0.1, side * w * 0.27);
-        f.box(p[0], 76, p[1], len * 0.06, 6, w * 0.21, b.hull === 'container_ship' ? M.orange : M.steel, rot);
-      }
-    }
-  }
 
   // ---- dach (K-7 buildRoof) — osobny zestaw, zanika przy statku w hali
   f.set = 'roof';
@@ -390,7 +343,148 @@ export function buildK7Scene(layout, ringInfo = {}) {
   // ---- przypięcie do ringu: most do krawędzi dachu, zastrzały, tunele do habitatu
   buildHabitatPlug(f, plates, labels, l, ringInfo);
 
+  // ---- otwarte zatoki kompleksu (stanowiska w standardzie K-7)
+  for (const bay of ringInfo.bays || []) buildBay(f, plates, labels, lamps, bay.layout, bay.xf);
+
   return { sets: f.sets, plates, labels, groups, hoses, lamps, cranes };
+}
+
+// Stanowiska (pola, obrysy, podziałka, znaczniki pola STOP, napisy, lampka
+// stanu, strzałka i pasy podejścia) — wspólne dla hali i zatok. `lab` rysuje
+// napis w układzie, w którym leżą stanowiska (hub hali albo zatoka).
+function recordBerths(f, lab, lamps, berths) {
+  const M = K7_MAT;
+  const stripe = (x, z, w, d, mat) => f.box(x, 1.5, z, w, 1.5, d, mat);
+  for (const b of berths) {
+    const hw = b.width / 2;
+    const hl = b.length / 2;
+    const capital = b.size === 'CAPITAL';
+    const big = capital || b.size === 'MEGA';
+    f.box(b.x, 0.8, b.z, b.width, 1.4, b.length, M.deckPad);
+    for (const side of [-1, 1]) {
+      stripe(b.x + side * hw, b.z, 5, b.length, M.paint);
+      stripe(b.x, b.z + side * hl, b.width, 5, M.paint);
+      const count = big ? Math.round(b.length / 240) : Math.max(3, Math.floor(b.length / 90));
+      for (let j = 0; j < count; j++) stripe(b.x + side * (hw + 15), b.z - hl + 24 + j * (b.length - 48) / (count - 1), 22, 8, M.yellow);
+    }
+    const dx = Math.cos(b.angle);
+    const dz = Math.sin(b.angle);
+    const nx = -dz;
+    const nz = dx;
+    const place = (along, across) => ({ x: b.x + dx * along + nx * across, z: b.z + dz * along + nz * across });
+    for (let q = -b.padLength * 0.37; q < b.padLength * 0.37; q += big ? 190 : 95) {
+      const p = place(q, 0);
+      f.box(p.x, 2, p.z, big ? 65 : 35, 1.5, 4, M.paintCold, -b.angle);
+    }
+    const cx = b.capture.halfWidth;
+    const cz = b.capture.halfLength;
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        stripe(b.x + sx * cx, b.z + sz * (cz - 12), 4, 24, M.paintCold);
+        stripe(b.x + sx * (cx - 12), b.z + sz * cz, 24, 4, M.paintCold);
+      }
+    }
+    const depth = b.size === 'MEGA' ? 150 : capital ? 135 : b.size === 'L' ? 108 : b.size === 'M' ? 80 : 58;
+    const aft = place(-b.padLength / 2 + (big ? 180 : depth * 0.85 + 24), 0);
+    const small = b.size === 'MEGA' ? 'MEGA / FREIGHT TRAIN' : capital ? 'ATLAS / REVERSIBLE' : b.size + ' / ' + (b.occupied ? 'OCCUPIED' : 'AVAILABLE');
+    lab(b.id, aft.x, aft.z, b.padBeam * 0.76, depth, b.id === 'C-01' ? '#9ecdd0' : '#cbb992', small, -(b.angle + Math.PI / 2));
+    const stop = place(b.padLength / 2 - (big ? 120 : 52), 0);
+    lab('STOP', stop.x, stop.z, Math.min(250, b.padBeam * 0.63), big ? 58 : 33, '#778685', '', -(b.angle + Math.PI / 2));
+    // lampka stanu stanowiska (kolor zmienia automat dokowania)
+    const statusPoint = place(-b.padLength / 2 + 18, 0);
+    lamps.push({ berthId: b.id, index: f.sets.bg.box.length / 16 });
+    f.box(statusPoint.x, 4, statusPoint.z, 7, 3, b.padBeam * 0.69, b.occupied ? M.warm : M.green, -b.angle);
+    // podejście z alei (stanowiska grzebieni: kurs wzdłuż x)
+    if (b.approach && Math.abs(dx) > 0.5) {
+      const tail = place(-b.padLength / 2 - 65, 0);
+      directionArrow(f, tail.x, tail.z, b.angle, Math.min(110, b.padBeam * 0.43), M.paintCold);
+      for (const sign of [-1, 1]) {
+        const startX = b.approach.from.x;
+        const endX = tail.x;
+        const n = Math.max(1, Math.ceil(Math.abs(endX - startX) / 120));
+        for (let j = 0; j <= n; j++) stripe(mix(startX, endX, j / n), b.z + sign * (b.padBeam / 2 - 15), 44, 3, M.paintCold);
+      }
+    }
+  }
+}
+
+// Otwarta zatoka (haloPortBays.js) nagrywana w układzie zatoki i przenoszona
+// do huba hali (xf): stanowiska jak w K-7, dwa pasy MEGA z szynami,
+// oznakowaniem wjazdu i słupkami paliwowymi, podwójny grzebień z aleją
+// pośrodku, grzbiety serwisowe (listwa, słupki obsługi, pachołki, rurociąg)
+// między grzebieniem a pasami, napisy zatoki. Bryła
+// zatoki (pokład, ściany, kołnierz, klin, suwnice) jest w megastrukturze ringu.
+function buildBay(f, plates, labels, lamps, bay, xf) {
+  const M = K7_MAT;
+  const q = {};
+  const lab = (text, x, z, width, depth, color, small, rotation = 0) => {
+    haloXfPoint(xf, x, z, q);
+    label(labels, text, q.x, q.z, width, depth, color, small, rotation - xf.phi);
+  };
+  const stripe = (x, z, w, d, mat) => f.box(x, 1.5, z, w, 1.5, d, mat);
+  f.setFrame(xf);
+  recordBerths(f, lab, lamps, bay.berths);
+  // pasy MEGA: szyny wzdłuż pasa, wjazd od wylotu, słupki paliwowe przy dziobie
+  bay.lanes.forEach((lane, k) => {
+    const mega = bay.berths.find((b) => b.id === lane.berthId);
+    const r0 = mega.z - mega.length / 2;
+    const r1 = bay.openZ - 30;
+    for (const side of [-1, 1]) {
+      const x = lane.x + side * (lane.width / 2 - 40);
+      f.box(x, 16, (r0 + r1) * 0.5, 60, 32, r1 - r0, M.dark);
+      f.box(x, 34, (r0 + r1) * 0.5, 40, 6, r1 - r0 - 30, M.yellow);
+      for (let z = bay.openZ - 60; z > bay.openZ - 520; z -= 155) stripe(lane.x + side * (lane.width / 2 - 110), z, 8, 74, M.paintCold);
+      // słupki paliwowe przed dziobem (między ścianą tylną a polem)
+      const px = lane.x + side * 400;
+      const pz = bay.backZ + 70;
+      f.box(px, 35, pz, 117, 70, 110, M.dark);
+      f.box(px, 116, pz, 75, 168, 70, M.yellow);
+      f.box(px, 173, pz + 36, 18, 14, 5, M.green);
+    }
+    arrow(f, lane.x, bay.openZ - 150, 150, M.paintCold, true);
+    lab(bay.tag + ' / MEGA ' + (k + 1), lane.x, bay.openZ - 60, 900, 90, '#9caaa7', 'OPEN BAY / FREIGHT TRAIN LANE');
+  });
+  // grzbiety serwisowe: listwa z szynami, rurociąg, słupki obsługi i pachołki przy nosach pól
+  for (const sp of bay.spines) {
+    const len = sp.z1 - sp.z0;
+    const zc = (sp.z0 + sp.z1) / 2;
+    f.box(sp.x, 10, zc, sp.width, 20, len, M.dark);
+    for (let z = sp.z0 + 20; z < sp.z1; z += 40) f.box(sp.x, 22, z, sp.width - 12, 3, 7, M.rail);
+    for (const off of [-48, 48]) stripe(sp.x + off, zc, 4, len, M.paint);
+    for (let row = 0; row < 3; row++) {
+      const y = 160 + row * 76;
+      const x = sp.x + sp.side * 42;
+      f.cyl(x, y, zc, 16, len - 80, M.copper, [Math.PI / 2, 0, 0]);
+      for (let z = sp.z0 + 60; z < sp.z1 - 40; z += 190) {
+        f.box(x + sp.side * 24, y, z, 12, 46, 38, M.black);
+        f.ring(x, y, z, 19, 3, M.rail);
+      }
+    }
+  }
+  for (const s of baySolidList(bay)) if (s.id.startsWith('SERVICE')) f.box(s.x, s.y, s.z, s.w, s.h, s.d, M[s.mat], -s.angle);
+  for (const b of bay.berths) {
+    if (!b.servicePoint) continue;
+    const sd = b.side;
+    const x = b.servicePoint.x;
+    const z = b.servicePoint.z;
+    f.box(x - sd * 34, 94, z, 10, 105, 60, M.pale);
+    f.box(x - sd * 41, 117, z, 5, 21, 36, M.glass);
+    f.box(x - sd * 45, 68, z, 7, 12, 15, M.green);
+    f.cyl(x, 175, z, 21, 36, M.yellow, [Math.PI / 2, 0, 0]);
+    for (const off of [-b.length * 0.35, b.length * 0.35]) {
+      const bx = sd * (Math.abs(b.x) + b.width / 2 + 16);
+      f.cyl(bx, 36, b.z + off, 13, 70, M.steel);
+      f.cyl(bx, 73, b.z + off, 19, 8, M.yellow);
+    }
+  }
+  // aleja pośrodku: listwy i strzałki ku podłodze, napisy
+  const a = bay.aisle;
+  for (const side of [-1, 1]) for (let z = a.z0 + 40; z < a.z1 - 40; z += 155) stripe(a.x + side * (a.width / 2), z, 5, 68, M.paintCold);
+  for (let z = a.z1 - 420; z > a.z0 + 200; z -= 660) directionArrow(f, a.x, z, -Math.PI / 2, 105, M.paintCold);
+  lab(bay.tag + ' / 4L 4M 4S', a.x, a.z1 - 60, 820, 84, '#aab7ad', 'OPEN BAY / KEEP CLEAR');
+  // napis zatoki na pokładzie przy ścianie tylnej
+  lab(bay.id, a.x, bay.backZ + 170, 760, 200, '#687d83', 'OPEN BAY / ' + bay.berths.length + ' BERTHS');
+  f.setFrame(null);
 }
 
 function arrow(f, x, z, length, mat, inward = true) {
@@ -570,9 +664,20 @@ function buildHabitatPlug(f, plates, labels, l, ring) {
     const y1 = yW(z1w);
     f.box(x, (y0 + y1) * 0.5, zc, w, y1 - y0, d, mat);
   };
+  // hub jest styczny do podłogi na środku hali, a podłoga pod krawędziami
+  // opada (krzywizna ringu x²/2R: ~380 j. przy słupach) — bryły styku
+  // z podłogą sięgają do niej, żeby końce kołnierza nie wisiały nad terenem
+  const R = ring.floorR || 42259;
+  const floorAt = (x) => floorZ - (x * x) / (2 * R) - 20;
+  const toFloor = (x, zc, d) => {
+    const top = zc + d * 0.5;
+    const bot = Math.min(zc - d * 0.5, floorAt(Math.abs(x)));
+    return [(top + bot) * 0.5, top - bot];
+  };
   // słupy po bokach hali (także przeszkody lotu — k7SolidList)
   for (const p of posts) {
-    boxW(p.x, zLow, zTop, p.z, p.w, p.d, M.dark);
+    const [pzc, pd] = toFloor(Math.abs(p.x) + p.w * 0.5, p.z, p.d);
+    boxW(p.x, zLow, zTop, pzc, p.w, pd, M.dark);
     boxW(p.x, zLow + 40, zTop - 40, p.z + p.d * 0.5 + 4, p.w - 60, 8, M.steel);
     boxW(p.x - p.side * (p.w * 0.5 - 24), zLow + 80, zTop - 60, p.z + p.d * 0.5 + 10, 14, 8, M.cyan);
     boxW(p.x + p.side * (p.w * 0.5 - 18), zLow, zTop, p.z + p.d * 0.5 + 6, 22, 10, M.yellow);
@@ -580,7 +685,10 @@ function buildHabitatPlug(f, plates, labels, l, ring) {
   // nadproże nad dachem hali i podstawa-terminal pod kadłubem
   boxW(0, 290, zTop, floorZ + 90, 2 * x1, 340, M.dark);
   boxW(0, 300, zTop - 12, face + 4, 2 * x1 - 120, 8, M.steel);
-  boxW(0, zLow, zHall, floorZ + 90, 2 * x1, 340, M.dark);
+  {
+    const [bzc, bd] = toFloor(x1, floorZ + 90, 340);
+    boxW(0, zLow, zHall, bzc, 2 * x1, bd, M.dark);
+  }
   // okna terminalu: pasy ciepłego światła co ~120 j. + słupki
   for (let row = 0; row < 7; row++) {
     const z0 = zHall - 120 - row * 122;

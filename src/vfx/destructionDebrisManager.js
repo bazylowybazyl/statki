@@ -58,12 +58,17 @@ export class DebrisManager {
     _remove({ mesh, scene }) {
         scene.remove(mesh);
         mesh.traverse(child => {
-            if (child.geometry)  child.geometry.dispose();
+            // Zasoby szablonu GLB (stations3D oznacza je przy wczytaniu) są wspólne
+            // dla wszystkich stacji z tego modelu — dispose zwalniał ich bufory GPU
+            // i programy, więc pozostałe stacje przeładowywały 68–177k trójkątów.
+            if (child.geometry && !child.geometry.userData?.__sharedTemplateAsset) child.geometry.dispose();
             if (child.material) {
                 const mats = Array.isArray(child.material)
                     ? child.material
                     : [child.material];
-                for (const m of mats) m.dispose();
+                for (const m of mats) {
+                    if (m && !m.userData?.__sharedTemplateAsset) m.dispose();
+                }
             }
         });
     }

@@ -77,9 +77,34 @@ export function initOverlay({
     };
   }
 
+  // Chwilowe modyfikatory bloomu od efektów (supernowa: podbicie, Yamato:
+  // przygaszenie), liczone CO KLATKĘ od bazy (DevVFX / BLOOM_DEFAULTS). Efekty
+  // nie zapisują już bazy i nie odtwarzają jej na końcu — dawniej dwa niezależne
+  // „zapisz/przywróć” na tej samej konfiguracji (w dodatku w DevVFX, czyli
+  // w zapisie tunera) przy nałożeniu Yamato i supernowej zostawiały bloom
+  // zepsuty do końca sesji. Pola modyfikatora (wszystkie opcjonalne):
+  //   strengthAdd / radiusAdd — dodatek (z kilku efektów bierzemy największy),
+  //   threshold — próg (bierzemy najniższy), strengthCap — sufit siły (najniższy).
+  const bloomModifiers = new Map();
+
   function applyOverlayBloomConfig() {
     if (!bloomPass) return null;
     const cfg = getOverlayBloomConfig();
+    if (bloomModifiers.size > 0) {
+      let strengthAdd = 0;
+      let radiusAdd = 0;
+      let threshold = cfg.threshold;
+      let strengthCap = Infinity;
+      for (const mod of bloomModifiers.values()) {
+        if (mod.strengthAdd > strengthAdd) strengthAdd = mod.strengthAdd;
+        if (mod.radiusAdd > radiusAdd) radiusAdd = mod.radiusAdd;
+        if (Number.isFinite(mod.threshold) && mod.threshold < threshold) threshold = mod.threshold;
+        if (Number.isFinite(mod.strengthCap) && mod.strengthCap < strengthCap) strengthCap = mod.strengthCap;
+      }
+      cfg.strength = Math.min(cfg.strength + strengthAdd, strengthCap);
+      cfg.radius += radiusAdd;
+      cfg.threshold = Math.max(0, threshold);
+    }
     bloomPass.strength = cfg.strength;
     bloomPass.radius = cfg.radius;
     bloomPass.threshold = cfg.threshold;
@@ -230,6 +255,34 @@ export function initOverlay({
     }
   }
 
+  // Poziomy jakości (0 = pełna). Zmiana skali = composer.setSize, czyli
+  // realokacja 13 render targetów (2 kompozytora + 11 bloomu). Presja liczy się
+  // z czasu renderu PRZY bieżącej skali, więc bez histerezy poziom skakał
+  // w dół i z powrotem co kilka klatek — każdy skok to przycięcie.
+  const QUALITY_TIERS = Object.freeze([
+    Object.freeze({ above: -Infinity, scale: 0.84, frameSkip: 1, updateSkip: 1, bloom: true,  maxEffects: 96 }),
+    Object.freeze({ above: 0.45, scale: 0.76, frameSkip: 1, updateSkip: 1, bloom: true,  maxEffects: 92 }),
+    Object.freeze({ above: 0.72, scale: 0.68, frameSkip: 2, updateSkip: 1, bloom: false, maxEffects: 82 }),
+    Object.freeze({ above: 1.0,  scale: 0.58, frameSkip: 2, updateSkip: 2, bloom: false, maxEffects: 72 }),
+    Object.freeze({ above: 1.4,  scale: 0.5,  frameSkip: 2, updateSkip: 2, bloom: false, maxEffects: 62 }),
+    Object.freeze({ above: 1.9,  scale: 0.42, frameSkip: 3, updateSkip: 3, bloom: false, maxEffects: 52 }),
+    Object.freeze({ above: 2.6,  scale: 0.34, frameSkip: 4, updateSkip: 4, bloom: false, maxEffects: 40 })
+  ]);
+  // Pogorszenie od razu (chroni klatkę w szczycie bitwy); poprawa o jeden
+  // poziom dopiero, gdy presja przez TIER_UPGRADE_HOLD_MS trzyma się wyraźnie
+  // (TIER_UPGRADE_MARGIN) poniżej progu bieżącego poziomu.
+  const TIER_UPGRADE_HOLD_MS = 1500;
+  const TIER_UPGRADE_MARGIN = 0.75;
+  let qualityTier = 0;
+  let tierUpgradeSinceMs = -1;
+
+  function tierForPressure(pressure) {
+    for (let i = QUALITY_TIERS.length - 1; i > 0; i--) {
+      if (pressure > QUALITY_TIERS[i].above) return i;
+    }
+    return 0;
+  }
+
   function applyAdaptiveQuality() {
     if (!adaptiveQuality || !composer) {
       perf.frameSkip = 1; perf.updateSkip = 1; stats.maxEffects = 96; stats.renderScale = renderScale;
@@ -237,21 +290,37 @@ export function initOverlay({
       return;
     }
     const active = effects.length;
-    const hasPersistentSceneContent = scene.children.length > 0;
-    const persistentOnly = active === 0 && hasPersistentSceneContent;
     const prevRenderMs = Number(stats.lastRenderMs) || 0;
     const pressure = Math.max(active / 70, prevRenderMs / 6.5);
+    const nowMs = (typeof performance !== "undefined") ? performance.now() : 0;
 
-    let targetScale = 0.84, targetFrameSkip = 1, targetUpdateSkip = 1, targetBloom = true, targetMaxEffects = 96;
+    const wantedTier = tierForPressure(pressure);
+    if (wantedTier > qualityTier) {
+      qualityTier = wantedTier;
+      tierUpgradeSinceMs = -1;
+    } else if (qualityTier > 0 && pressure < QUALITY_TIERS[qualityTier].above * TIER_UPGRADE_MARGIN) {
+      if (tierUpgradeSinceMs < 0) {
+        tierUpgradeSinceMs = nowMs;
+      } else if (nowMs - tierUpgradeSinceMs >= TIER_UPGRADE_HOLD_MS) {
+        qualityTier--;
+        tierUpgradeSinceMs = nowMs; // kolejny krok znów po pełnym czasie
+      }
+    } else {
+      tierUpgradeSinceMs = -1;
+    }
+    stats.qualityTier = qualityTier;
 
-    if (pressure > 2.6) { targetScale = 0.34; targetFrameSkip = 4; targetUpdateSkip = 4; targetBloom = false; targetMaxEffects = 40; }
-    else if (pressure > 1.9) { targetScale = 0.42; targetFrameSkip = 3; targetUpdateSkip = 3; targetBloom = false; targetMaxEffects = 52; }
-    else if (pressure > 1.4) { targetScale = 0.5; targetFrameSkip = 2; targetUpdateSkip = 2; targetBloom = false; targetMaxEffects = 62; }
-    else if (pressure > 1.0) { targetScale = 0.58; targetFrameSkip = 2; targetUpdateSkip = 2; targetBloom = false; targetMaxEffects = 72; }
-    else if (pressure > 0.72) { targetScale = 0.68; targetFrameSkip = 2; targetUpdateSkip = 1; targetBloom = false; targetMaxEffects = 82; }
-    else if (pressure > 0.45) { targetScale = 0.76; targetFrameSkip = 1; targetUpdateSkip = 1; targetBloom = true; targetMaxEffects = 92; }
+    const tier = QUALITY_TIERS[qualityTier];
+    const targetScale = tier.scale;
+    const targetBloom = tier.bloom;
+    const targetMaxEffects = tier.maxEffects;
+    let targetFrameSkip = tier.frameSkip;
+    let targetUpdateSkip = tier.updateSkip;
 
-    if (persistentOnly) { targetFrameSkip = 1; targetUpdateSkip = 1; targetScale = Math.max(targetScale, 0.76); }
+    // Same pule w scenie (lista efektów pusta): bez pomijania klatek, żeby
+    // dogasające cząstki nie klatkowały. Skali już NIE podbijamy — chwilowo
+    // pusta lista w środku bitwy przełączała rozmiar kompozytora tam i z powrotem.
+    if (active === 0) { targetFrameSkip = 1; targetUpdateSkip = 1; }
 
     if (effects.length > targetMaxEffects) {
       const overflow = effects.length - targetMaxEffects;
@@ -334,7 +403,9 @@ export function initOverlay({
     const nowSec = (typeof performance !== "undefined") ? performance.now() / 1000 : 0;
     const hasLivePools = flushParticlePools(nowSec);
     const hasPersistentSceneContent = hasLivePools || sceneHasVisibleContent(scene);
-    const hasRawContent = !!(rawScene && rawScene.children.length > 0);
+    // Siatki rakiet wiszą w rawScene od startu i chowają się, gdy są puste —
+    // liczba dzieci była > 0 zawsze, więc warstwa raw rysowała się co klatkę.
+    const hasRawContent = !!(rawScene && sceneHasVisibleContent(rawScene));
     stats.rawObjects = rawScene ? rawScene.children.length : 0;
     if (effects.length === 0 && !hasPersistentSceneContent && !hasRawContent) {
       renderer.clear();
@@ -435,6 +506,14 @@ export function initOverlay({
         if (next.threshold != null) bloom.overlayThreshold = Number(next.threshold);
       }
       return applyOverlayBloomConfig();
-    }
+    },
+    // Dla efektów: modyfikator żyje pod własnym kluczem, obiekt można mutować
+    // co klatkę (czytany przy każdym ticku). Zdejmowanie = clearBloomModifier.
+    setBloomModifier: (key, modifier) => {
+      if (key == null) return;
+      if (modifier && typeof modifier === "object") bloomModifiers.set(key, modifier);
+      else bloomModifiers.delete(key);
+    },
+    clearBloomModifier: (key) => { bloomModifiers.delete(key); }
   };
 }

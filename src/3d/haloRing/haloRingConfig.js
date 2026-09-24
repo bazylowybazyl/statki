@@ -50,34 +50,40 @@ export const HALO_LIMITS = Object.freeze({
 // gry, a Three odwraca y → w płaszczyźnie XY sceny to −45°.
 export const HALO_STATION_ANGLE = -Math.PI * 0.25;
 
+// Typ 'industrial' zostaje jako kanał map terenu (pas fabryczny wokół doków),
+// ale żaden sektor nie jest już przemysłowy (poprawka użytkownika 2026-09-23:
+// strefy przemysłowe TYLKO wokół doków).
 export const HALO_SECTOR_TYPES = Object.freeze(['landscape', 'garden', 'industrial', 'glass']);
 
-// Plan 16 sektorów (5 krajobraz, 5 miasto-ogród, 3 przemysł, 3 szkło).
-// Sektor 0 leży pod kątem stacji Ziemi i niesie port. `climate` steruje
+// Plan 16 sektorów (7 krajobraz, 5 miasto-ogród, 4 szkło). Sektor 0 leży pod
+// kątem stacji Ziemi i niesie port (kompleks gracza): krajobraz z górami przy
+// brzegach wstęgi (mogą stać obok pasa fabrycznego doków). `climate` steruje
 // generatorem: sea = udział morza, mount = góry, temp/moist = biom.
 export const HALO_SECTOR_PLAN_16 = Object.freeze([
-  { type: 'industrial', name: 'PORT KEPLER', port: true, climate: { sea: 0.08, mount: 0.1, temp: 0.55, moist: 0.4 } },
+  { type: 'landscape', name: 'PORT KEPLER', biome: 'port', port: true, climate: { sea: 0.14, mount: 0.7, temp: 0.52, moist: 0.62 } },
   { type: 'garden', name: 'VESPER', climate: { sea: 0.28, mount: 0.25, temp: 0.62, moist: 0.7 } },
   { type: 'landscape', name: 'PELAGIC', biome: 'sea', climate: { sea: 0.62, mount: 0.35, temp: 0.66, moist: 0.8 } },
   { type: 'landscape', name: 'ALPINE', biome: 'alpine', climate: { sea: 0.2, mount: 1.0, temp: 0.35, moist: 0.65 } },
   { type: 'glass', name: 'EDEN', climate: { sea: 0.2, mount: 0.15, temp: 0.6, moist: 0.6 } },
   { type: 'garden', name: 'MERIDIAN', climate: { sea: 0.24, mount: 0.3, temp: 0.58, moist: 0.62 } },
   { type: 'landscape', name: 'DUNE', biome: 'desert', climate: { sea: 0.1, mount: 0.55, temp: 0.92, moist: 0.08 } },
-  { type: 'industrial', name: 'HEPHAESTUS', climate: { sea: 0.06, mount: 0.2, temp: 0.6, moist: 0.3 } },
+  { type: 'landscape', name: 'HEPHAESTUS', biome: 'alpine', climate: { sea: 0.08, mount: 0.9, temp: 0.62, moist: 0.3 } },
   { type: 'garden', name: 'AURELIA', climate: { sea: 0.3, mount: 0.2, temp: 0.64, moist: 0.72 } },
   { type: 'landscape', name: 'BOREAS', biome: 'glacier', climate: { sea: 0.25, mount: 0.8, temp: 0.05, moist: 0.55 } },
   { type: 'glass', name: 'HALCYON', climate: { sea: 0.26, mount: 0.1, temp: 0.55, moist: 0.6 } },
   { type: 'garden', name: 'SYLVA', climate: { sea: 0.22, mount: 0.35, temp: 0.5, moist: 0.8 } },
   { type: 'landscape', name: 'TAIGA', biome: 'forest', climate: { sea: 0.3, mount: 0.45, temp: 0.4, moist: 0.9 } },
-  { type: 'industrial', name: 'DAEDALUS', climate: { sea: 0.1, mount: 0.1, temp: 0.55, moist: 0.35 } },
+  { type: 'glass', name: 'DAEDALUS', climate: { sea: 0.14, mount: 0.35, temp: 0.56, moist: 0.5 } },
   { type: 'garden', name: 'HELIX', climate: { sea: 0.2, mount: 0.2, temp: 0.6, moist: 0.66 } },
   { type: 'glass', name: 'AXIOM', climate: { sea: 0.18, mount: 0.12, temp: 0.62, moist: 0.55 } }
 ]);
 
 // Proporcje typów przy innej liczbie sektorów (suwak „sektory”).
-export const HALO_SECTOR_MIX = Object.freeze({ landscape: 5, garden: 5, industrial: 3, glass: 3 });
+export const HALO_SECTOR_MIX = Object.freeze({ landscape: 7, garden: 5, industrial: 0, glass: 4 });
 export const HALO_LANDSCAPE_BIOMES = Object.freeze(['sea', 'alpine', 'desert', 'glacier', 'forest']);
 export const HALO_BIOME_CLIMATE = Object.freeze({
+  // sektor portu: krajobraz z górami przy brzegach wstęgi (pas fabryczny tylko przy dokach)
+  port: { sea: 0.14, mount: 0.7, temp: 0.52, moist: 0.62 },
   sea: { sea: 0.62, mount: 0.35, temp: 0.66, moist: 0.8 },
   alpine: { sea: 0.2, mount: 1.0, temp: 0.35, moist: 0.65 },
   desert: { sea: 0.1, mount: 0.55, temp: 0.92, moist: 0.08 },
@@ -196,30 +202,44 @@ export const HALO_ROOF = Object.freeze({
 // Każdy dok siedzi w kołnierzu na podłodze (terminal z oknami), pod pokładem
 // ma klin nośny do podłogi; zatoka wychodzi przez otwarty bok habitatu poza
 // krawędź ścian, żeby stanowisko było widać z kamery gry spod górnej ściany.
+// Zatoki mają stanowiska w standardzie K-7 (haloPortBays.js) — gracz lata
+// frachtowcami jak NPC i dokuje także poza halą (poprawka użytkownika
+// 2026-09-23). Kompleks = K-7 pośrodku i po jednej zatoce z każdej strony
+// (poprawka graficzna 2026-09-24: 3 doki zamiast 4); zatoki powiększone, żeby
+// nie stracić stanowisk: 2 pasy MEGA przy ścianach + podwójny grzebień
+// 2 L / 2 M / 2 S z każdej strony alei = 14 stanowisk (dawniej 3 × 7).
 export const HALO_PORT = Object.freeze({
-  docks: 3,
-  // doki transportowe po bokach K-7 (dok gameplayowy przy kącie stacji,
-  // haloPortK7Layout.js): przesunięcia wzdłuż PODŁOGI [j. łuku na floorMid]
-  dockOffsets: Object.freeze([-6800, 6800, 11000]),
-  k7HalfWidth: 3600,      // pół szerokości hali K-7 (createK7Layout().halfWidth)
-  dockLength: 3200,       // wzdłuż ringu (Atlas 1800 × 806 j. + manewr)
-  reach: 1500,            // zatoka poza krawędzią ścian (głębokość = ściana + reach)
-  berthStart: 1350,       // od podłogi: dalej stanowisko okrętu, bliżej zaplecze
+  // Port Ziemi = 4 KOMPLEKSY co 90° (decyzja użytkownika 2026-09-23, jak
+  // 4 doki stacji z ringiem w ruchu v2): w każdym hala K-7 (4 stanowiska
+  // capital) i 2 otwarte zatoki po bokach (w każdej 2 pasy MEGA + 12 stanowisk
+  // grzebienia). Pojemność sprawdzana symulacją ruchu v2 (kolejka na redzie).
+  complexes: 4,
+  docks: 2,               // zatok w kompleksie (po jednej z każdej strony K-7)
+  // zatoki po bokach K-7: przesunięcia od środka kompleksu wzdłuż PODŁOGI [j. łuku na floorMid]
+  dockOffsets: Object.freeze([-9700, 9700]),
+  k7HalfWidth: 5220,      // pół szerokości hali K-7 (createK7Layout().halfWidth, 4 × capital)
+  // wzdłuż ringu: wnętrze 5800 (pas MEGA 1300 + grzbiet 150 + stanowiska 1000 +
+  // aleja 900 + stanowiska 1000 + grzbiet 150 + pas MEGA 1300) + ściany
+  dockLength: 6160,
+  bayDepth: 3400,         // od podłogi do wylotu (pas MEGA: megafrachtowiec 2760 j. dziobem do podłogi)
   backWall: 160,
   sideWall: 180,
-  deckTop: -130,          // wierzch pokładu zatoki (z świata; statki na z = 0)
+  deckTop: -116,          // wierzch pokładu zatoki = pokład K-7 (z świata; statki na z = 0)
   wallTop: 140,           // górna krawędź ścian zatoki
   collar: 320,            // kołnierz na podłodze wokół doku (każda strona)
   collarDepth: 240,       // wysunięcie kołnierza z podłogi
   plugZMin: -1250,        // spód podstawy doku (klin + terminal) — z świata
   plugZMax: 420,          // wierzch kołnierza
   gantryProfile: 60,      // ≤ 1/20 rozpiętości mostu (hangar-dock-demo)
-  // strefy wokół doku na podłodze (poprawka użytkownika 2026-09-23: dok wbity
-  // w ziemię generuje wokół siebie przemysł, który dalej przechodzi w domy):
-  // odległość od płyty doku [j.] — do zoneInd pas fabryczny, do zoneRes zabudowa
-  // mieszkalna, dalej sektor jak był
-  zoneInd: 1300,
-  zoneRes: 3300
+  // strefy wokół doku na podłodze (poprawki użytkownika 2026-09-23: dok wbity
+  // w ziemię generuje wokół siebie przemysł — TYLKO wokół doków — dalej domy;
+  // góry sektora przy brzegach wstęgi mogą zostać obok doków, nie muszą):
+  // odległość od płyty doku [j.] — do zoneInd pas fabryczny, do zoneRes
+  // osady (tylko tam, gdzie teren sektora nie ma gór), dalej sektor jak był.
+  // W poprzek wstęgi strefy są węższe (×0,6), żeby przy ścianach było
+  // miejsce na góry.
+  zoneInd: 1000,
+  zoneRes: 2800
 });
 
 // Tranzyty przez ring (jak w K-7 z ECUMENE: 4 osie co 90°, K-7 w połowie
@@ -237,7 +257,9 @@ export const HALO_TRANSIT = Object.freeze({
   ceiling: 250,             // spód stropu tunelu
   portalZ: Object.freeze([-700, 420]),   // nadproże ≤ 420: kamera gry przy zoomie 3,2 wisi 535 j. nad z = 0
   apron: 450,               // płyta bez zabudowy wokół portalu
-  zoneInd: 550,             // wąski pas techniczny wokół płyty
+  // bez stref: przemysł tylko wokół doków (poprawka użytkownika 2026-09-23),
+  // wokół portalu teren sektora
+  zoneInd: 0,
   zoneRes: 0
 });
 
@@ -248,25 +270,54 @@ export function haloTransitAngles() {
   return Array.from({ length: T.count }, (_, i) => wrap(HALO_STATION_ANGLE + T.phase + i * HALO_TAU / T.count));
 }
 
-// Miejsca na podłodze: K-7 przy kącie stacji, doki transportowe i portale
-// tranzytów. Z tego samego opisu biorą się: płaska płyta bez zabudowy i strefy
-// wokół niej (mapy terenu: pas fabryczny → domy), przejaśnienie w chmurach,
-// kawałki miasta, bryły doków i ruch okrętów liniowych.
-// theta — kąt środka, halfS — pół-rozpiętość płyty wzdłuż łuku na floorMid,
-// zMin/zMax — zakres z świata płyty, zoneInd/zoneRes — zasięg stref od płyty.
-export function haloPortSites(floorMid) {
+// Kąty środków kompleksów portowych (hala K-7 w środku; pierwszy przy kącie stacji).
+export function haloPortComplexAngles() {
+  const wrap = (a) => ((a % HALO_TAU) + HALO_TAU) % HALO_TAU;
+  return Array.from({ length: HALO_PORT.complexes }, (_, i) => wrap(HALO_STATION_ANGLE + i * HALO_TAU / HALO_PORT.complexes));
+}
+
+// Szablon jednego kompleksu i tranzytu (powtarza się co 2π / liczba): prostokąty
+// płyt względem środka kompleksu — z tego samego szablonu biorą się miejsca
+// (CPU) i uniformy GLSL (4 prostokąty zamiast 16 miejsc na piksel).
+export function haloPortTemplate(floorMid) {
   const P = HALO_PORT;
   const T = HALO_TRANSIT;
-  const wrap = (a) => ((a % HALO_TAU) + HALO_TAU) % HALO_TAU;
   const R = Math.max(1, Number(floorMid) || 42252);
   const zone = { zoneInd: P.zoneInd, zoneRes: P.zoneRes };
-  const sites = [{ kind: 'k7', index: 0, theta: wrap(HALO_STATION_ANGLE), halfS: P.k7HalfWidth + P.collar + 120, zMin: P.plugZMin, zMax: P.plugZMax, ...zone }];
+  const period = HALO_TAU * R / P.complexes;
+  const rects = [{ kind: 'k7', index: 0, ds: 0, halfS: P.k7HalfWidth + P.collar + 120, zMin: P.plugZMin, zMax: P.plugZMax, ...zone }];
   for (let k = 0; k < P.docks; k++) {
-    sites.push({ kind: 'dock', index: k, theta: wrap(HALO_STATION_ANGLE + P.dockOffsets[k] / R), halfS: P.dockLength * 0.5 + P.collar, zMin: P.plugZMin, zMax: P.plugZMax, ...zone });
+    rects.push({ kind: 'dock', index: k, ds: P.dockOffsets[k], halfS: P.dockLength * 0.5 + P.collar, zMin: P.plugZMin, zMax: P.plugZMax, ...zone });
   }
+  // tranzyty w połowie między kompleksami (ta sama liczba co kompleksów)
+  const transitDs = (T.phase / (HALO_TAU / P.complexes)) * period;
+  rects.push({ kind: 'transit', index: 0, ds: transitDs, halfS: T.halfWidth + T.wall + T.frame + T.apron,
+    zMin: T.portalZ[0] - 200, zMax: T.portalZ[1] + 200, zoneInd: T.zoneInd, zoneRes: T.zoneRes });
+  return { period, count: P.complexes, theta0: haloPortComplexAngles()[0], rects };
+}
+
+// Miejsca na podłodze: 4 kompleksy (hala K-7 + 2 zatoki) i 4 portale
+// tranzytów. Z tego samego opisu biorą się: płaska płyta bez zabudowy
+// i strefy wokół niej (mapy terenu: pas fabryczny → domy), przejaśnienie
+// w chmurach, kawałki miasta i bryły doków.
+// theta — kąt środka, halfS — pół-rozpiętość płyty wzdłuż łuku na floorMid,
+// zMin/zMax — zakres z świata płyty, zoneInd/zoneRes — zasięg stref od płyty,
+// complex — numer kompleksu (0 = przy kącie stacji, hala gracza).
+export function haloPortSites(floorMid) {
+  const R = Math.max(1, Number(floorMid) || 42252);
+  const wrap = (a) => ((a % HALO_TAU) + HALO_TAU) % HALO_TAU;
+  const tpl = haloPortTemplate(R);
+  const sites = [];
+  const complexes = haloPortComplexAngles();
+  complexes.forEach((center, c) => {
+    for (const r of tpl.rects) {
+      if (r.kind === 'transit') continue;
+      sites.push({ ...r, complex: c, index: r.kind === 'dock' ? c * HALO_PORT.docks + r.index : c, theta: wrap(center + r.ds / R) });
+    }
+  });
   haloTransitAngles().forEach((theta, i) => {
-    sites.push({ kind: 'transit', index: i, theta, halfS: T.halfWidth + T.wall + T.frame + T.apron,
-      zMin: T.portalZ[0] - 200, zMax: T.portalZ[1] + 200, zoneInd: T.zoneInd, zoneRes: T.zoneRes });
+    const r = tpl.rects[tpl.rects.length - 1];
+    sites.push({ ...r, index: i, complex: -1, theta });
   });
   return sites;
 }

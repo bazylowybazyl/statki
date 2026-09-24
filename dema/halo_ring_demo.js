@@ -14,7 +14,8 @@ import {
   createEarth,
   createGameBackground,
   createPost,
-  createSky
+  createSky,
+  loadShipTexture
 } from './halo_ring_demo_env.js';
 
 const DEG = Math.PI / 180;
@@ -99,14 +100,19 @@ const gameBg = createGameBackground(renderer, { starsZ: -(state.geometry.width +
 scene.add(gameBg.group);
 const atlas = createAtlasSprite(renderer);
 scene.add(atlas);
-// Atlas gracza w porcie K-7 (tryb „Lot K-7”; poza nim zadokowany na C-01)
+// Statek gracza w porcie Ziemi (tryb „Lot”; poza nim zadokowany): Atlas albo
+// frachtowiec jak NPC (klawisz V, ?hull=container_ship) — sprite podmienia tryb lotu
 const playerAtlas = createAtlasSprite(renderer);
 scene.add(playerAtlas);
 let k7Flight = null;
 function ensureK7Flight() {
   if (!ring.k7) { k7Flight = null; playerAtlas.visible = false; return null; }
   if (!k7Flight) {
-    k7Flight = new K7FlightDemo({ ring, scene, atlas: playerAtlas, layers: DEMO_LAYERS, $: (id) => document.getElementById(id) });
+    k7Flight = new K7FlightDemo({
+      ring, scene, atlas: playerAtlas, layers: DEMO_LAYERS, $: (id) => document.getElementById(id),
+      loadTexture: (path) => loadShipTexture(path, renderer),
+      daylightAt: (x, y) => sunVisAt(x, y, 0)
+    });
     k7Flight.active = false;
   }
   playerAtlas.visible = true;
@@ -237,19 +243,22 @@ function localUp(p) {
   const w = THREE.MathUtils.smoothstep(dBand, 3000, 16000);
   return habitatUp.multiplyScalar(1 - w).add(new THREE.Vector3(0, 0, w)).normalize();
 }
-// Odległość do bryły portu K-7 (prostopadłościan w układzie huba) — K-7
-// wychodzi poza obwiednię ringu, więc bez tego near przycinał jego dach.
+// Odległość do brył hal K-7 (prostopadłościany w układach hubów) — hale
+// wychodzą poza obwiednię ringu, więc bez tego near przycinał ich dachy.
 function k7Distance(p) {
-  const f = ring.k7?.frame;
-  if (!f) return Infinity;
-  const dx = p.x - f.origin.x;
-  const dy = p.y - f.origin.y;
-  const hx = dx * f.tx + dy * f.ty;
-  const hz = dx * f.rx + dy * f.ry;
-  const ox = Math.max(Math.abs(hx) - 4300, 0);
-  const oz = Math.max(f.floorZ - 150 - hz, 0, hz - 8700);
-  const oy = Math.max(-1300 - p.z, 0, p.z - 420);
-  return Math.max(1, Math.hypot(ox, oy, oz));
+  let best = Infinity;
+  for (const hall of ring.k7Halls) {
+    const f = hall.frame;
+    const dx = p.x - f.origin.x;
+    const dy = p.y - f.origin.y;
+    const hx = dx * f.tx + dy * f.ty;
+    const hz = dx * f.rx + dy * f.ry;
+    const ox = Math.max(Math.abs(hx) - (hall.layout.halfWidth + 700), 0);
+    const oz = Math.max(f.floorZ - 150 - hz, 0, hz - 8700);
+    const oy = Math.max(-1300 - p.z, 0, p.z - 420);
+    best = Math.min(best, Math.max(1, Math.hypot(ox, oy, oz)));
+  }
+  return best;
 }
 function syncCineCamera() {
   const p = cine.pos;
@@ -564,6 +573,57 @@ PRESETS_OUTWARD.push({
 });
 const presetList = () => (ring.layout.sigma > 0 ? PRESETS_OUTWARD : PRESETS_INWARD);
 
+// Megabudowle z ECUMENE (M, Shift+M wstecz): kolejna budowla — w kamerze
+// kinowej ujęcie od frontu (od strony górnej ściany, skąd patrzy kamera gry),
+// w kamerze gry nad budowlą (fasada +z patrzy w kamerę); noc = słońce po
+// drugiej stronie ringu.
+let landmarkIndex = -1;
+function landmarkView(index, { mode = 'cine', night = false, zoom = 0.45 } = {}) {
+  const list = ring.landmarks || [];
+  if (!list.length) return null;
+  const lm = list[((index % list.length) + list.length) % list.length];
+  const L = ring.layout;
+  const th = lm.theta;
+  const f = frameAt(th);
+  const sun = night ? { azimuth: th / DEG + 150, elevation: 25 } : { azimuth: th / DEG - 30, elevation: 38 };
+  const name = `M. ${lm.name} (${lm.sectorName})`;
+  if (mode === 'game') {
+    const r = L.floorRadiusAtT(lm.t) + L.sigma * (lm.plazaH + lm.h * 0.45);
+    return { mode: 'game', game: { x: Math.cos(th) * r, y: -Math.sin(th) * r, zoom }, sun, name, lm };
+  }
+  const base = L.floorPoint(lm.s, lm.t, lm.plazaH, {});
+  const p0 = new THREE.Vector3(base.x, base.y, base.z);
+  const H = lm.h + 60;
+  const tgt = p0.clone().addScaledVector(f.up, H * 0.42);
+  const dist = H * 1.2 + lm.d * 0.5 + 300;
+  // nad dachami otoczenia (szklane wieże sięgają ~300 j.)
+  const pos = p0.clone().addScaledVector(f.z, dist).addScaledVector(f.up, H * 0.3 + 120).addScaledVector(f.along, dist * 0.35);
+  pos.z = Math.min(pos.z, L.z.topIn - 200);
+  return { mode: 'cine', pos, fwd: tgt.sub(pos).normalize(), up: f.up.clone(), fov: 55, sun, name, lm };
+}
+function applyLandmark(index, opts) {
+  const cfg = landmarkView(index, opts);
+  if (!cfg) return null;
+  tour.active = false;
+  state.sun.azimuth = ((cfg.sun.azimuth + 540) % 360) - 180;
+  state.sun.elevation = cfg.sun.elevation;
+  applySun();
+  if (cfg.mode === 'game') {
+    setMode('game');
+    Object.assign(gameCam, cfg.game);
+  } else {
+    setMode('cine');
+    cine.pos.copy(cfg.pos);
+    cine.fwd.copy(cfg.fwd).normalize();
+    cine.up.copy(cfg.up).normalize();
+    cine.fov = cfg.fov;
+  }
+  state.presetName = cfg.name;
+  syncUi();
+  const lm = cfg.lm;
+  return { name: lm.name, sector: lm.sectorName, theta: lm.theta, t: lm.t, z: lm.z, plazaH: lm.plazaH, h: lm.h };
+}
+
 function applyPreset(index, { instant = true } = {}) {
   const preset = presetList()[index];
   if (!preset) return;
@@ -715,10 +775,15 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'Digit0' && state.mode === 'flight') gameCam.zoom = 1;
   if (e.code === 'KeyL' && !e.repeat) setMode(state.mode === 'flight' ? 'game' : 'flight');
   if (e.code === 'KeyE' && !e.repeat && state.mode === 'flight') k7Flight?.action();
+  if (e.code === 'KeyV' && !e.repeat && state.mode === 'flight') k7Flight?.cycleHull();
   if (e.code === 'KeyT' && !e.repeat && state.mode === 'flight') k7Flight?.jumpToTransit();
   if (e.code === 'KeyT' && !e.repeat && state.mode !== 'flight') {
     const i = presetList().findIndex((p) => p.key === 'T');
     if (i >= 0) { tour.active = false; applyPreset(i); }
+  }
+  if (e.code === 'KeyM' && !e.repeat && state.mode !== 'flight') {
+    landmarkIndex += e.shiftKey ? -1 : 1;
+    applyLandmark(landmarkIndex, { mode: state.mode === 'game' ? 'game' : 'cine' });
   }
   if (state.mode === 'flight' && ['Space', 'KeyW', 'KeyS', 'KeyA', 'KeyD'].includes(e.code)) e.preventDefault();
 });
@@ -829,9 +894,12 @@ function prepareFrame(dt) {
   }
   updateTour(dt);
   updateControls(dt);
+  // hale bez trybu lotu: światła hal, dzień/noc (z trybem lotu hale
+  // aktualizuje on — suwnice, dachy, lampki stanowisk hal i zatok)
+  if (!k7Flight) {
+    for (const hall of ring.k7Halls) hall.update(dt, { daylight: sunVisAt(hall.frame.origin.x, hall.frame.origin.y, 0) });
+  }
   if (k7Flight) {
-    const f = ring.k7?.frame;
-    if (f) k7Flight.daylight = sunVisAt(f.origin.x, f.origin.y, 0);
     k7Flight.update(dt, state.mode === 'flight' ? keys : null);
     if (state.mode === 'flight') k7Flight.followCamera(gameCam, dt);
   }
@@ -919,7 +987,7 @@ function syncUi() {
   $('preset-name').textContent = state.presetName;
   $('quality').value = state.quality;
   $('cam-hint').textContent = state.mode === 'game' ? 'Replika Core3D: BG persp (ring) → Ziemia ortho → świat ortho → FG (K-7)'
-    : state.mode === 'flight' ? 'Atlas w porcie K-7 · W/S/A/D, Spacja, Shift, E dokowanie, L wyjście' : 'Jedno słońce dla planety i ringu';
+    : state.mode === 'flight' ? 'Port Ziemi (K-7 i zatoki) · W/S/A/D, Spacja, Shift, E dokowanie, V kadłub, L wyjście' : 'Jedno słońce dla planety i ringu';
 }
 uiSync.push(bindRange('sun-az', () => state.sun.azimuth, (v) => { state.sun.azimuth = v; applySun(); }, (v) => `${v.toFixed(1)}°`));
 uiSync.push(bindRange('sun-el', () => state.sun.elevation, (v) => { state.sun.elevation = v; applySun(); }, (v) => `${v.toFixed(1)}°`));
@@ -994,7 +1062,6 @@ function applyLayers() {
   ring.setVisible('shell', state.layers.atmosphere);
   ring.setVisible('mega', state.layers.mega);
   ring.setVisible('city', state.layers.city);
-  ring.setVisible('traffic', state.layers.ships);
   post.state.bloomOn = state.layers.bloom;
 }
 applyLayers();
@@ -1077,6 +1144,14 @@ window.__halo = {
     syncUi();
   },
   helpers: { frameAt, floorPoint, dirAt, habitatUp, sectorCenter, findPeak, v3: (x, y, z) => new THREE.Vector3(x, y, z), DEG },
+  // megabudowla i (opts: mode 'cine' | 'game', night, zoom) → opis i ujęcie
+  landmark(i = 0, opts = {}) {
+    landmarkIndex = i;
+    return applyLandmark(i, opts);
+  },
+  get landmarks() {
+    return (ring.landmarks || []).map((lm) => ({ name: lm.name, sector: lm.sectorName, kind: lm.kind, theta: lm.theta, t: lm.t, z: lm.z, plazaH: lm.plazaH, h: lm.h }));
+  },
   // Lot K-7 do zrzutów i testów: stan startowy, sekwencje, pozycja statku
   flight: {
     get game() { return k7Flight; },
@@ -1095,6 +1170,16 @@ window.__halo = {
     },
     action() { return k7Flight.action(); },
     transit() { return k7Flight.jumpToTransit(); },
+    // kadłub gracza ('atlas', 'megafreighter', 'heavy_freighter', 'long_haul_freighter',
+    // 'container_ship', 'inter_station_shuttle'), stan startowy 'docked' | 'free'
+    hull(id, mode = 'docked') { const r = k7Flight.setHull(id, mode); k7Flight.camInit = false; return r; },
+    // przed stanowisko (etykieta: 'Z02-M02', 'C-03', 'K7-2 C-01') / na pole STOP
+    berth(label) { return k7Flight.jumpToBerth(label); },
+    place(label) { return k7Flight.placeOnBerth(label); },
+    get berthState() {
+      const d = k7Flight.docking;
+      return { state: d.state, berth: d.entry?.label ?? null, detail: d.detail, candidate: d.state === 'FREE' ? d.candidate()?.entry.label ?? null : null };
+    },
     // symulacja t sekund (stały krok) bez renderu
     simulate(seconds, input = null) {
       const n = Math.round(seconds * 120);
@@ -1125,7 +1210,9 @@ ensureK7Flight();
 const startPreset = Math.max(1, Math.min(presetList().length, Number(params.get('preset')) || 8));
 applyPreset(startPreset - 1);
 if (params.get('cam') === 'flight' && k7Flight) {
+  if (params.has('hull')) k7Flight.hullId = params.get('hull') in { atlas: 1, megafreighter: 1, heavy_freighter: 1, long_haul_freighter: 1, container_ship: 1, inter_station_shuttle: 1 } ? params.get('hull') : 'atlas';
   k7Flight.reset(params.get('k7') === 'free' || params.get('k7') === 'transit' ? 'free' : 'docked');
+  if (params.has('berth')) k7Flight.jumpToBerth(params.get('berth'));
   if (params.get('k7') === 'transit') k7Flight.jumpToTransit();
   setMode('flight');
   if (params.has('zoom')) gameCam.zoom = Number(params.get('zoom'));
@@ -1135,6 +1222,15 @@ if (params.get('cam') === 'game') {
   if (params.has('zoom')) gameCam.zoom = Number(params.get('zoom'));
   if (params.has('x')) gameCam.x = Number(params.get('x'));
   if (params.has('y')) gameCam.y = Number(params.get('y'));
+}
+// ?landmark=i (&cam=game&zoom=…, &night=1): megabudowla do zrzutów
+if (params.has('landmark')) {
+  landmarkIndex = Number(params.get('landmark')) || 0;
+  applyLandmark(landmarkIndex, {
+    mode: params.get('cam') === 'game' ? 'game' : 'cine',
+    night: params.get('night') === '1',
+    zoom: params.has('zoom') ? Number(params.get('zoom')) : 0.45
+  });
 }
 if (params.has('az')) state.sun.azimuth = Number(params.get('az'));
 if (params.has('el')) state.sun.elevation = Number(params.get('el'));

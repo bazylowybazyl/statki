@@ -52,7 +52,7 @@ test('split skins stay attached to their nodes and large dents fit the deformati
     R.sync(bodies, camera, 0);
     const skin = R.bodyData.get(body).skin;
     const texel = (node.ix + node.iy * skin.dims.x + node.iz * skin.dims.x * skin.dims.y) * 4;
-    const decoded = (skin.data[texel] - 128) / 127 * skin.deformScale;
+    const decoded = THREE.DataUtils.fromHalfFloat(skin.data[texel]) * skin.deformScale;
     assert.ok(Math.abs(decoded - 20) < 0.2, `large dent clipped: ${decoded}`);
   } finally {
     R.sync([], camera, 0);

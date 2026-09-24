@@ -359,43 +359,58 @@ float haloIGN(vec2 fc) {
 // Shader NIE używa modelMatrix do translacji: host liczy uCamLocal i uRefRel
 // w układzie lokalnym ringu (odwrotność matrixWorld grupy), a obrót grupy
 // wchodzi przez mat3(modelMatrix) w haloProjectRel().
-// Miejsca na podlodze (K-7, doki transportowe, portale tranzytow): plyta bez
-// zabudowy w mapach terenu, strefy wokol niej (pas fabryczny -> domy) i
-// przejasnienie w chmurach. Miejsce = (srodek s na floorMid, pol-rozpietosc s,
-// t0, t1); t1 <= t0 = brak miejsca. Strefa = (zasieg przemyslu, zasieg domow).
+// Miejsca na podlodze: kompleksy portowe (hala K-7 + 2 zatoki) i portale
+// tranzytow powtarzaja sie co okres wzdluz ringu — shader zna tylko szablon
+// jednego okresu (4 prostokaty w tablicy na 5), nie liczy wszystkich 16 miejsc
+// na piksel.
+// Plyta bez zabudowy, strefy wokol niej (pas fabryczny -> domy) i
+// przejasnienie w chmurach. Prostokat = (przesuniecie od srodka kompleksu,
+// pol-rozpietosc s, t0, t1); strefa = (zasieg przemyslu, zasieg domow).
 export const HALO_GLSL_PORTSITES = /* glsl */`
-uniform vec4 uPortSites[8];
-uniform vec4 uPortZones[8];
+uniform vec4 uPortTile;       // s srodka kompleksu 0 [j. na floorMid], okres [j.], liczba (0 = brak), -
+uniform vec4 uPortRects[5];
+uniform vec4 uPortZones[5];
+float haloPortDS(vec4 R, float sAbs) {
+  float d = sAbs - uPortTile.x - R.x;
+  return d - uPortTile.y * floor(d / uPortTile.y + 0.5);
+}
 float haloPortPad(float sAbs, float t, float L, float grow, float soft) {
   float m = 0.0;
-  for (int i = 0; i < 8; i++) {
-    vec4 P = uPortSites[i];
-    if (P.w > P.z) {
-      float ds = sAbs - P.x;
-      ds -= L * floor(ds / L + 0.5);
-      float a = 1.0 - smoothstep(P.y + grow, P.y + grow + soft, abs(ds));
-      float b = (1.0 - smoothstep(0.0, soft, P.z - grow - t)) * (1.0 - smoothstep(0.0, soft, t - P.w - grow));
-      m = max(m, a * b);
+  if (uPortTile.z > 0.5) {
+    for (int i = 0; i < 5; i++) {
+      vec4 P = uPortRects[i];
+      if (P.y > 0.5) {
+        float ds = haloPortDS(P, sAbs);
+        float a = 1.0 - smoothstep(P.y + grow, P.y + grow + soft, abs(ds));
+        float b = (1.0 - smoothstep(0.0, soft, P.z - grow - t)) * (1.0 - smoothstep(0.0, soft, t - P.w - grow));
+        m = max(m, a * b);
+      }
     }
   }
   return m;
 }
-// Wagi stref wokol plyt: x = pas fabryczny, y = fabryczny + mieszkalny
-// (odleglosc od prostokata plyty, krawedz zafalowana przez warp).
-vec2 haloPortZones(float sAbs, float t, float L, float warp) {
-  vec2 w = vec2(0.0);
-  for (int i = 0; i < 8; i++) {
-    vec4 P = uPortSites[i];
-    vec4 Z = uPortZones[i];
-    if (P.w > P.z) {
-      float ds = sAbs - P.x;
-      ds -= L * floor(ds / L + 0.5);
+// Wagi stref wokol plyt dokow: x = pas fabryczny, y = osady (do zoneRes);
+// odleglosc od prostokata plyty, w poprzek wstegi liczona x 1/0,6 (pas
+// wezszy ku scianom, zeby przy brzegach wstegi mogly zostac gory sektora),
+// krawedz zafalowana przez warp. Tranzyty bez stref. z = 0.
+// w = oslona: nad plyta (od jej gornej krawedzi do gornej sciany, w pasie
+// plyty wzdluz ringu) teren zostaje niski — w kamerze gry wszystko nad
+// plaszczyzna gry lezy blizej kamery i zaslonilby dok (doki i tranzyty).
+vec4 haloPortZones(float sAbs, float t, float L, float warp) {
+  vec4 w = vec4(0.0);
+  if (uPortTile.z > 0.5) {
+    for (int i = 0; i < 5; i++) {
+      vec4 P = uPortRects[i];
+      vec4 Z = uPortZones[i];
+      if (P.y < 0.5) Z = vec4(0.0);          // pusty prostokat szablonu
+      float ds = haloPortDS(P, sAbs);
       float dx = max(abs(ds) - P.y, 0.0);
-      float dy = max(max(P.z - t, t - P.w), 0.0);
+      float dy = max(max(P.z - t, t - P.w), 0.0) / 0.6;
       float d = max(length(vec2(dx, dy)) + warp, 0.0);
       float ind = Z.x > 1.0 ? 1.0 - smoothstep(Z.x * 0.72, Z.x * 1.2, d) : 0.0;
       float res = Z.y > 1.0 ? 1.0 - smoothstep(Z.y * 0.8, Z.y * 1.2, d) : 0.0;
-      w = max(w, vec2(ind, max(ind, res)));
+      float shield = Z.w > 0.5 ? (1.0 - smoothstep(P.y + 150.0, P.y + 750.0, abs(ds))) * smoothstep(P.w - 450.0, P.w, t) : 0.0;
+      w = max(w, vec4(ind, res, 0.0, shield));
     }
   }
   return w;

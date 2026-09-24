@@ -928,12 +928,28 @@ function _registerRootCleanup(rootObject, worldTime, opts, extra = 0.8) {
     _debrisMgr.register(rootObject, _scene, expiry);
 }
 
+function _cloneOwnedMaterial(mat) {
+    if (!mat?.clone) return mat;
+    const copy = mat.clone();
+    if (copy.userData) delete copy.userData.__sharedTemplateAsset;
+    return copy;
+}
+
 function _beginRootFade(rootObject, worldTime, opts) {
     const duration = Math.max(0.08, Math.min(0.12, opts.flashFadeDuration ?? 0.10));
     const flashColor = (opts.flashColor instanceof THREE.Color ? opts.flashColor : new THREE.Color(opts.flashColor ?? 0xffffff)).clone();
     const entries = [];
     rootObject.traverse(child => {
         if (!child.isMesh) return;
+        // Kopia przy zapisie: stacje ze SkeletonUtils.clone współdzielą materiały
+        // z szablonem GLB. Wygaszanie ich na miejscu (opacity → 0, transparent,
+        // depthWrite off, emisja) zostawiało krycie 0 WSZYSTKIM stacjom z tego
+        // samego modelu — także tworzonym później. Niszczony obiekt dostaje
+        // własne klony; flaga zasobu szablonu nie przechodzi na klon (klon ma
+        // zostać zwolniony razem z odłamkami).
+        child.material = Array.isArray(child.material)
+            ? child.material.map(_cloneOwnedMaterial)
+            : _cloneOwnedMaterial(child.material);
         const mats = Array.isArray(child.material) ? child.material : [child.material];
         const snapshots = [];
         for (const mat of mats) {

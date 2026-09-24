@@ -2,7 +2,7 @@
 // samych obiektów { value }, więc jedna aktualizacja na klatkę obsługuje
 // teren, chmury, konstrukcję i powłokę powietrza.
 import * as THREE from 'three';
-import { HALO_ATMOSPHERE, HALO_LIGHT, HALO_ROOF, HALO_TRANSIT, haloPortSites, haloTransitAngles } from './haloRingConfig.js';
+import { HALO_ATMOSPHERE, HALO_LIGHT, HALO_ROOF, HALO_TRANSIT, haloPortTemplate, haloTransitAngles } from './haloRingConfig.js';
 
 const srgbToLinear = (c) => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
 
@@ -13,35 +13,36 @@ export function linearColor(hex) {
   return new THREE.Vector3(srgbToLinear(r), srgbToLinear(g), srgbToLinear(b));
 }
 
-// Miejsca na podłodze (K-7, doki transportowe, portale tranzytów) jako
-// 8 × vec4 dla GLSL haloPortPad/haloPortZones: (środek s, pół-rozpiętość s,
-// t0, t1) i strefy (zasięg przemysłu, zasięg domów). Tylko habitat na
-// zewnątrz z płaszczyzną gry na podłodze (flightLevel liczbowy).
-export const HALO_PORT_SITE_SLOTS = 8;
+// Miejsca na podłodze jako szablon jednego okresu (haloPortTemplate): kafel
+// (s środka kompleksu 0, okres, liczba) + 5 slotów prostokątów (przesunięcie od środka
+// kompleksu, pół-rozpiętość s, t0, t1) i ich strefy (zasięg przemysłu, osad, osłona nad płytą).
+// Zajęte 4 (K-7, 2 zatoki, tranzyt); pusty slot ma pół-rozpiętość 0 i shader go pomija.
+// Tylko habitat na zewnątrz z płaszczyzną gry na podłodze (flightLevel liczbowy).
+export const HALO_PORT_RECTS = 5;
 export function portSitesActive(layout) {
   return layout.sigma > 0 && layout.flightLevel !== 'roof';
 }
-const slots = (out) => out || Array.from({ length: HALO_PORT_SITE_SLOTS }, () => new THREE.Vector4());
-export function haloPortSiteUniforms(layout, out = null) {
-  const list = slots(out);
-  for (const v of list) v.set(0, 0, 1, 0);
-  if (!portSitesActive(layout)) return list;
+export function haloPortTileUniforms(layout, out = null) {
+  const o = out || {
+    tile: new THREE.Vector4(),
+    rects: Array.from({ length: HALO_PORT_RECTS }, () => new THREE.Vector4()),
+    zones: Array.from({ length: HALO_PORT_RECTS }, () => new THREE.Vector4())
+  };
+  o.tile.set(0, 1, 0, 0);
+  for (const v of o.rects) v.set(0, 0, 1, 0);
+  for (const v of o.zones) v.set(0, 0, 0, 0);
+  if (!portSitesActive(layout)) return o;
   const fm = layout.radii.floorMid;
   const tz = layout.floor.tangent.z;
   const tAt = (z) => (z - layout.z.botIn) / tz;
-  haloPortSites(fm).slice(0, HALO_PORT_SITE_SLOTS).forEach((site, i) => {
-    list[i].set(site.theta * fm, site.halfS, tAt(site.zMin) - 150, tAt(site.zMax) + 250);
+  const tpl = haloPortTemplate(fm);
+  o.tile.set(tpl.theta0 * fm, tpl.period, tpl.count, 0);
+  tpl.rects.slice(0, HALO_PORT_RECTS).forEach((r, i) => {
+    o.rects[i].set(r.ds, r.halfS, tAt(r.zMin) - 150, tAt(r.zMax) + 250);
+    // w = 1: osłona nad płytą (teren niski od płyty do górnej ściany)
+    o.zones[i].set(r.zoneInd || 0, r.zoneRes || 0, 0, 1);
   });
-  return list;
-}
-export function haloPortZoneUniforms(layout, out = null) {
-  const list = slots(out);
-  for (const v of list) v.set(0, 0, 0, 0);
-  if (!portSitesActive(layout)) return list;
-  haloPortSites(layout.radii.floorMid).slice(0, HALO_PORT_SITE_SLOTS).forEach((site, i) => {
-    list[i].set(site.zoneInd || 0, site.zoneRes || 0, 0, 0);
-  });
-  return list;
+  return o;
 }
 // Tranzyty: (kąt pierwszej osi, krok, liczba, pół-szerokość wycięcia) i z wycięcia.
 export function haloTransitUniforms(layout, outA = new THREE.Vector4(), outZ = new THREE.Vector4()) {
@@ -97,8 +98,9 @@ export function createHaloUniforms(layout) {
     uRoofSector: { value: new THREE.Vector4() },   // komórka startu sektora 0, komórek na sektor, sektorów, —
     uSectorClass: { value: new Array(32).fill(0) }, // 0 krajobraz, 1 miasto, 2 przemysł, 3 port
     uPortDocks: { value: new THREE.Vector4() },    // kąt doku 0, krok, liczba, pół-rozpiętość [rad]
-    uPortSites: { value: haloPortSiteUniforms(layout) },
-    uPortZones: { value: haloPortZoneUniforms(layout) },
+    uPortTile: { value: new THREE.Vector4() },
+    uPortRects: { value: Array.from({ length: HALO_PORT_RECTS }, () => new THREE.Vector4()) },
+    uPortZones: { value: Array.from({ length: HALO_PORT_RECTS }, () => new THREE.Vector4()) },
     uTransit: { value: new THREE.Vector4(0, 1, 0, 0) },
     uTransitZ: { value: new THREE.Vector4() },
     // górna połowa wstęgi w FG (HALO_FG): x widoczność od powiększenia,
@@ -120,8 +122,7 @@ export function applyLayoutToUniforms(u, layout) {
   u.uFloorLine.value.set(r.floorBottom, z.botIn, layout.floor.tangent.r, layout.floor.tangent.z);
   u.uFloorDims.value.set(layout.circumference, layout.floor.length, r.floorMid, layout.wallHeight);
   u.uPlanet.value.set(0, 0, layout.planetCenterZ, layout.planetRadius);
-  if (u.uPortSites) haloPortSiteUniforms(layout, u.uPortSites.value);
-  if (u.uPortZones) haloPortZoneUniforms(layout, u.uPortZones.value);
+  if (u.uPortTile) haloPortTileUniforms(layout, { tile: u.uPortTile.value, rects: u.uPortRects.value, zones: u.uPortZones.value });
   if (u.uTransit) haloTransitUniforms(layout, u.uTransit.value, u.uTransitZ.value);
   u.uHabitat.value.set(layout.sigma, r.back, r.min, r.max);
   u.uCloudParams.value.w = HALO_ATMOSPHERE.cloudCoverBias[layout.facing] ?? 0;

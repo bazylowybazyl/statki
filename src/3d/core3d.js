@@ -6,6 +6,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { BLOOM_DEFAULTS } from './bloomConfig.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { Shockwave3DManager } from '../effects3d/shockwave3D.js';
+import { HULL_SDF_MAX_STEPS, HULL_SDF_OCCLUDER_FLOATS, HULL_SDF_SHADOW_GLSL, HULL_SDF_SHAFT_CAP } from './hullShadowSdf.js';
 
 const MAX_HEAT_HAZE_SOURCES = 24;
 // Zastępcze flagi warstw dla wolnej kamery (lot nad miastem): renderuj wszystko.
@@ -25,26 +26,27 @@ const SHIELD_RENDER_LAYER = 7;
 // downresie+blurze (cień statku znikał z oddaleniem) i kosztowała
 // 4 dodatkowe przejścia sceny na viewport + 2 blury.
 const SHAFT_DISC_CAP = 48;      // planety + księżyce + największe asteroidy
-const SHAFT_HULL_CAP = 48;      // pasma kadłubów (3 kapsuły na statek)
-const HULL_SHAFT_BANDS = 4;     // musi zgadzać się z HULL_SHAFT_SEGMENTS w hexShips3D
+// Kadłuby: pole odległości sylwetki (hullShadowSdf.js), jeden wpis na statek.
+const SHAFT_HULL_CAP = HULL_SDF_SHAFT_CAP;
 const SHAFT_RING_CAP = 2;       // ring city (Ziemia, Mars)
 // Siła cienia kadłuba: planeta gasi scenę do czerni (umbra), statek ma tylko
 // przygaszać — pełna siła robiła z każdego okrętu czarną kałużę na mgławicy.
 const HULL_SHADOW_STRENGTH = 0.55;
 
 // Poziomy jakości shadow shafts — po przejściu na pełną analitykę jedyne
-// różnice to długość smug i budżet kadłubów-okluderów (koszt = ALU w jednym
-// fullscreen passie, więc nawet Low wygląda poprawnie na każdym zoomie).
+// różnice to długość smug, budżet kadłubów-okluderów i liczba kroków marszu
+// po SDF kadłuba (koszt = ALU i próbki w jednym fullscreen passie, zero
+// rekompilacji, więc nawet Low wygląda poprawnie na każdym zoomie).
 // discLenMul liczony w PROMIENIACH tarczy, capsuleLenMul w DŁUGOŚCIACH
-// kadłuba (nazwy kluczy zostają — sam okluder statku to dziś elipsa
-// sylwetki, nie kapsuła). Poprzednie wartości (18 R / 10 kadłubów na medium)
-// dawały smugi ciągnące się przez pół sektora — 400u fregata rzucała cień
-// na 4000u.
+// kadłuba, capsuleBudget w kadłubach (nazwy kluczy zostają — okluder statku
+// to dziś pole odległości sylwetki, nie kapsuła). Poprzednie wartości
+// (18 R / 10 kadłubów na medium) dawały smugi ciągnące się przez pół
+// sektora — 400u fregata rzucała cień na 4000u.
 export const SHADOW_SHAFTS_QUALITY = {
-  off: { enabled: false, discLenMul: 3.5, capsuleLenMul: 2, capsuleBudget: 12 },
-  low: { enabled: true, discLenMul: 3.5, capsuleLenMul: 2, capsuleBudget: 12 },
-  medium: { enabled: true, discLenMul: 5, capsuleLenMul: 3, capsuleBudget: 24 },
-  high: { enabled: true, discLenMul: 7, capsuleLenMul: 4, capsuleBudget: 32 }
+  off: { enabled: false, discLenMul: 3.5, capsuleLenMul: 2, capsuleBudget: 12, hullSteps: 16 },
+  low: { enabled: true, discLenMul: 3.5, capsuleLenMul: 2, capsuleBudget: 12, hullSteps: 16 },
+  medium: { enabled: true, discLenMul: 5, capsuleLenMul: 3, capsuleBudget: 24, hullSteps: 24 },
+  high: { enabled: true, discLenMul: 7, capsuleLenMul: 4, capsuleBudget: 32, hullSteps: 32 }
 };
 
 export function resolveShadowShaftsQuality(level) {
@@ -70,10 +72,14 @@ function createShadowShaftsShader() {
       uDiscs: { value: Array.from({ length: SHAFT_DISC_CAP }, () => new THREE.Vector4(0, 0, 0, 0)) },
       uHullLenMul: { value: 3.0 },
       uHullCount: { value: 0 },
-      // uHulls[i]:    xy/zw = końcówki odcinka pasma kadłuba
-      // uHullMeta[i]: x = promień pasma, y = długość kadłuba (zasięg smugi)
-      uHulls: { value: Array.from({ length: SHAFT_HULL_CAP }, () => new THREE.Vector4(0, 0, 0, 0)) },
-      uHullMeta: { value: Array.from({ length: SHAFT_HULL_CAP }, () => new THREE.Vector4(0, 1, 0, 0)) },
+      uHullSteps: { value: 24 },
+      // Kadłuby: tablica warstw SDF (ustawiana w render() — klon tekstury
+      // z UniformsUtils nie dostawałby aktualizacji warstw) i A/M/C na statek,
+      // układ jak w HULL_SDF_SHADOW_GLSL (hullShadowSdf.js).
+      uHullSdf: { value: null },
+      uHullA: { value: Array.from({ length: SHAFT_HULL_CAP }, () => new THREE.Vector4(0, 0, 0, 0)) },
+      uHullM: { value: Array.from({ length: SHAFT_HULL_CAP }, () => new THREE.Vector4(0, 0, 0, 0)) },
+      uHullC: { value: Array.from({ length: SHAFT_HULL_CAP }, () => new THREE.Vector4(0, 0, 0, 0)) },
       uRingCount: { value: 0 },
       // uRings[i]: xy = środek (three-space), z = promień pasma, w = zasięg cienia
       uRings: { value: Array.from({ length: SHAFT_RING_CAP }, () => new THREE.Vector4(0, 0, 0, 0)) }
@@ -91,13 +97,10 @@ function createShadowShaftsShader() {
       uniform float uDiscLenMul;
       uniform int uDiscCount;
       uniform vec4 uDiscs[${SHAFT_DISC_CAP}];
-      uniform float uHullLenMul;
-      uniform int uHullCount;
-      uniform vec4 uHulls[${SHAFT_HULL_CAP}];
-      uniform vec4 uHullMeta[${SHAFT_HULL_CAP}];
       uniform int uRingCount;
       uniform vec4 uRings[${SHAFT_RING_CAP}];
       varying vec2 vUv;
+${HULL_SDF_SHADOW_GLSL}
 
       void main() {
         if (uSunActive == 0) {
@@ -157,55 +160,14 @@ function createShadowShaftsShader() {
           shadow = max(shadow, edge * fall * max(disc.w, 0.0));
         }
 
-        // ── Kadluby statkow: lancuch kapsul po obrysie ───────────────────
-        // hull.xy/zw = koncowki odcinka, meta.x = promien pasma, meta.y =
-        // dlugosc kadluba (zasieg smugi). Kazdy statek zglasza kilka pasm
-        // o promieniu z LOKALNEJ szerokosci kadluba, wiec brzeg cienia lezy
-        // na burcie — jedna bryla na caly statek (kapsula z bboxa / elipsa)
-        // byla przy dziobie i rufie duzo szersza niz kadlub i to jej obrys
-        // widac bylo jako "jajo", z ktorego dopiero wychodzil cien.
-        // Wnetrze pomijane: dzien/noc kadluba robi terminator w hexShips3D.
-        for (int i = 0; i < ${SHAFT_HULL_CAP}; i++) {
-          if (i >= uHullCount) break;
-          vec4 seg = uHulls[i];
-          vec4 meta = uHullMeta[i];
-          float capR = meta.x;
-          if (capR <= 0.0) continue;
-          vec2 pa = seg.xy - worldP;
-          vec2 pb = seg.zw - worldP;
-          float alongA = dot(pa, d);
-          float alongB = dot(pb, d);
-          if (alongA <= 0.0 && alongB <= 0.0) continue;
-          // najblizsze podejscie promienia (worldP -> slonce) do odcinka
-          float perpA = d.x * pa.y - d.y * pa.x;
-          float perpB = d.x * pb.y - d.y * pb.x;
-          float perpMin;
-          float alongHit;
-          if (perpA * perpB < 0.0) {
-            float s = perpA / (perpA - perpB);
-            perpMin = 0.0;
-            alongHit = mix(alongA, alongB, s);
-          } else if (abs(perpA) < abs(perpB)) {
-            perpMin = abs(perpA);
-            alongHit = alongA;
-          } else {
-            perpMin = abs(perpB);
-            alongHit = alongB;
-          }
-          if (perpMin > capR * 1.6) continue;
-          if (alongHit <= 0.0 || alongHit >= sunDist) continue;
-          vec2 ab = seg.zw - seg.xy;
-          float segLen2 = max(dot(ab, ab), 0.0001);
-          float h = clamp(dot(worldP - seg.xy, ab) / segLen2, 0.0, 1.0);
-          vec2 fromHull = worldP - (seg.xy + ab * h);
-          if (dot(fromHull, fromHull) <= capR * capR) continue;
-          float fallT = clamp(alongHit / max(meta.y * uHullLenMul, 1.0), 0.0, 1.0);
-          float fall = 1.0 - smoothstep(0.2, 1.0, fallT);
-          float soft = capR * (0.12 + 0.35 * fallT);
-          float edge = 1.0 - smoothstep(max(capR - soft * 0.5, 0.0), capR + soft, perpMin);
-          // Statek nie robi czarnej dziury jak planeta — smuga tylko przygasza.
-          shadow = max(shadow, edge * fall * ${HULL_SHADOW_STRENGTH.toFixed(2)});
-        }
+        // ── Kadluby statkow: pole odleglosci sylwetki ───────────────────
+        // hullSdfShadow (hullShadowSdf.js) idzie po SDF kadluba promieniem
+        // do slonca, wiec smuga zaczyna sie na burcie i obejmuje kolce oraz
+        // rozwidlenia. Piksele na WLASNYM kadlubie sa pomijane — lancuch
+        // kapsul pomijal tylko wnetrze tej samej kapsuly i kazda rzucala cien
+        // na kadlub pod sasiednia.
+        // Statek nie robi czarnej dziury jak planeta — smuga tylko przygasza.
+        shadow = max(shadow, hullSdfShadow(worldP, d, sunDist) * ${HULL_SHADOW_STRENGTH.toFixed(2)});
 
         // ── Pierscienie (ring city wokol planety) ────────────────────────
         // Piksele wewnatrz tarczy planety pomijamy: pas cienia ringu na
@@ -515,7 +477,8 @@ export const Core3D = {
   // dyski (planet3d.assets + asteroidField3D), kapsuły (hexShips3D),
   // pierścienie (planetaryRing3D — Map po kluczu ringu, bez begin/reset).
   shaftDiscs: new Float32Array(SHAFT_DISC_CAP * 4), shaftDiscCount: 0,
-  shaftHulls: new Float32Array(SHAFT_HULL_CAP * 6), shaftHullCount: 0,
+  shaftHulls: new Float32Array(SHAFT_HULL_CAP * HULL_SDF_OCCLUDER_FLOATS), shaftHullCount: 0,
+  shaftHullTexture: null,
   shaftRings: new Map(),
   // Czy na warstwach planet / halo / ring-planet / tarcz jest w tej klatce coś
   // widocznego. Pusty pass to i tak pełny obchód grafu sceny, a do celu MSAA
@@ -1328,6 +1291,7 @@ export const Core3D = {
         }
         uShafts.uDiscLenMul.value = Math.max(1, Number(shaftCfg.discLenMul) || 5);
         uShafts.uHullLenMul.value = Math.max(1, Number(shaftCfg.capsuleLenMul) || 3);
+        uShafts.uHullSteps.value = Math.max(1, Math.min(HULL_SDF_MAX_STEPS, Number(shaftCfg.hullSteps) || 24));
 
         const discCount = Math.min(this.shaftDiscCount | 0, SHAFT_DISC_CAP);
         uShafts.uDiscCount.value = discCount;
@@ -1337,19 +1301,24 @@ export const Core3D = {
           discVals[i].set(this.shaftDiscs[base], this.shaftDiscs[base + 1], this.shaftDiscs[base + 2], this.shaftDiscs[base + 3]);
         }
 
-        // Budżet wg jakości liczony w STATKACH (capsuleBudget), a rejestr
-        // trzyma pasma — stąd ×HULL_SHAFT_BANDS. hexShips3D pushuje od
-        // największych kadłubów, więc obcięcie zostawia najistotniejsze cienie.
-        const shipBudget = Math.max(0, Number(shaftCfg.capsuleBudget) || SHAFT_HULL_CAP);
-        const hullBudget = Math.min(shipBudget * HULL_SHAFT_BANDS, SHAFT_HULL_CAP);
-        const hullCount = Math.min(this.shaftHullCount | 0, hullBudget);
+        // Kadłuby: hexShips3D zgłasza od największych i sam staje na budżecie
+        // jakości (getShaftHullBudget), min() tylko na wszelki wypadek. Bez
+        // tablicy warstw nie ma czego próbkować — pusta tablica czytałaby się
+        // jako „wszędzie kadłub” i zaciemniała cały prostokąt statku.
+        const hullCount = this.shaftHullTexture
+          ? Math.min(this.shaftHullCount | 0, Math.max(0, Number(shaftCfg.capsuleBudget) || SHAFT_HULL_CAP), SHAFT_HULL_CAP)
+          : 0;
         uShafts.uHullCount.value = hullCount;
-        const hullVals = uShafts.uHulls.value;
-        const hullMeta = uShafts.uHullMeta.value;
+        uShafts.uHullSdf.value = this.shaftHullTexture;
+        const hulls = this.shaftHulls;
+        const hullA = uShafts.uHullA.value;
+        const hullM = uShafts.uHullM.value;
+        const hullC = uShafts.uHullC.value;
         for (let i = 0; i < hullCount; i++) {
-          const base = i * 6;
-          hullVals[i].set(this.shaftHulls[base], this.shaftHulls[base + 1], this.shaftHulls[base + 2], this.shaftHulls[base + 3]);
-          hullMeta[i].set(this.shaftHulls[base + 4], this.shaftHulls[base + 5], 0, 0);
+          const base = i * HULL_SDF_OCCLUDER_FLOATS;
+          hullA[i].set(hulls[base], hulls[base + 1], hulls[base + 2], hulls[base + 3]);
+          hullM[i].set(hulls[base + 4], hulls[base + 5], hulls[base + 6], hulls[base + 7]);
+          hullC[i].set(hulls[base + 8], hulls[base + 9], hulls[base + 10], hulls[base + 11]);
         }
 
         let ringCount = 0;
@@ -1640,26 +1609,32 @@ export const Core3D = {
 
   beginShaftHullFrame() { this.shaftHullCount = 0; },
 
-  // Pasmo kadłuba jako analityczna kapsuła (odcinek [x1,y1]-[x2,y2] +
-  // promień, współrzędne GRY, y w dół), span = długość całego kadłuba
-  // (zasięg smugi, wspólny dla pasm jednego statku). hexShips3D liczy pasma
-  // z heksów raz na kadłub i pushuje co klatkę — selekcja od największych
-  // statków, budżet tnie render() wg jakości.
-  pushShaftHullWorld(x1, y1, x2, y2, radius, span) {
-    const r = Number(radius) || 0;
-    if (!(r > 0) || !this.shaftHulls) return false;
+  // Ile kadłubów przyjmie pass shaftów w tej klatce. hexShips3D staje na
+  // tej liczbie — nie ma sensu piec sylwetek, których pass i tak nie weźmie
+  // (ani żadnych, gdy shafty są wyłączone albo leci wolna kamera).
+  getShaftHullBudget() {
+    const t = this.perfToggles || {};
+    if (t.shadowShafts === false || this.isFreePerspectiveCamera()) return 0;
+    const cfg = this._shaftCfg || resolveShadowShaftsQuality(this.shadowShaftsQuality);
+    if (cfg.enabled === false) return 0;
+    return Math.max(0, Math.min(SHAFT_HULL_CAP, Number(cfg.capsuleBudget) || SHAFT_HULL_CAP));
+  },
+
+  // Kadłub jako okluder SDF: HULL_SDF_OCCLUDER_FLOATS liczb z
+  // packHullShaftOccluder (hullShadowSdf.js), już w three-space. hexShips3D
+  // zgłasza co klatkę od największych statków; false = rejestr pełny.
+  pushShaftHullSdf(packed, offset = 0) {
     const i = this.shaftHullCount | 0;
-    if (i >= SHAFT_HULL_CAP) return false;
-    const base = i * 6;
-    this.shaftHulls[base] = Number(x1) || 0;
-    this.shaftHulls[base + 1] = -(Number(y1) || 0);
-    this.shaftHulls[base + 2] = Number(x2) || 0;
-    this.shaftHulls[base + 3] = -(Number(y2) || 0);
-    this.shaftHulls[base + 4] = r;
-    this.shaftHulls[base + 5] = Math.max(1, Number(span) || (r * 4));
+    if (i >= SHAFT_HULL_CAP || !packed || !this.shaftHulls) return false;
+    const base = i * HULL_SDF_OCCLUDER_FLOATS;
+    for (let k = 0; k < HULL_SDF_OCCLUDER_FLOATS; k++) this.shaftHulls[base + k] = packed[offset + k];
     this.shaftHullCount = i + 1;
     return true;
   },
+
+  // Tablica warstw SDF kadłubów (HullShadowSdf.texture) — przypisywana do
+  // uniformu w render(), bo materiał passa trzyma klony uniformów.
+  setShaftHullSdfTexture(texture) { this.shaftHullTexture = texture || null; },
 
   // Pierścień (ring city) jako analityczny okrąg-okluder. Rejestrowany po
   // kluczu ringu (bez begin/reset — ring aktualizuje swój wpis co klatkę,
@@ -1694,6 +1669,53 @@ export const Core3D = {
     this.shaftDiscs[base + 3] = Number.isFinite(s) ? Math.max(0, Math.min(1, s)) : 1;
     this.shaftDiscCount = i + 1;
     return true;
+  },
+
+  // Wgrywanie tekstur w tle: po jednej w wolnej chwili (requestIdleCallback),
+  // zamiast przy pierwszym renderze obiektu w kadrze. Planety 8192×4096 dawały
+  // w tej klatce upload 128 MB + mipmapy (Ziemia: pięć takich naraz). Jeśli
+  // obiekt wejdzie w kadr wcześniej, three wgra teksturę samo, jak dotąd —
+  // initTexture na wgranej teksturze tylko ją wiąże.
+  _textureUploadQueue: [],
+  _textureUploadScheduled: false,
+  queueTextureUpload(texture) {
+    if (!texture || texture.isRenderTargetTexture) return;
+    if (this._textureUploadQueue.includes(texture)) return;
+    this._textureUploadQueue.push(texture);
+    // Zwolniona przed uploadem = wypada z kolejki (initTexture wgrałoby ją
+    // ponownie i zostawiło w VRAM bez właściciela).
+    texture.addEventListener('dispose', this._onQueuedTextureDispose);
+    this._scheduleTextureUpload();
+  },
+  _onQueuedTextureDispose(event) {
+    const texture = event.target;
+    texture.removeEventListener('dispose', Core3D._onQueuedTextureDispose);
+    const queue = Core3D._textureUploadQueue;
+    const idx = queue.indexOf(texture);
+    if (idx >= 0) queue.splice(idx, 1);
+  },
+  _scheduleTextureUpload() {
+    if (this._textureUploadScheduled || this._textureUploadQueue.length === 0) return;
+    this._textureUploadScheduled = true;
+    const run = () => this._pumpTextureUpload();
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 2000 });
+    else setTimeout(run, 100);
+  },
+  _pumpTextureUpload() {
+    this._textureUploadScheduled = false;
+    const texture = this._textureUploadQueue.shift();
+    if (texture) {
+      texture.removeEventListener('dispose', this._onQueuedTextureDispose);
+      const image = texture.image;
+      if (this.renderer && image && image.complete !== false) {
+        try {
+          this.renderer.initTexture(texture);
+        } catch (err) {
+          console.warn('[Core3D] Wstępny upload tekstury nie wyszedł — wgra się przy renderze:', err);
+        }
+      }
+    }
+    this._scheduleTextureUpload();
   },
 
   // Zostawione dla zgodności — licznik kasuje teraz pass w render(). Wołanie

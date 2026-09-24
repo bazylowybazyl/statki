@@ -74,6 +74,30 @@ const BULLET_HDR = Object.freeze({ trail: 2.6, core: 5.0, arc: 3.2 });
 const MUZZLE_HDR = Object.freeze({ outer: 2.5, inner: 4.0 });
 const BEAM_HDR = Object.freeze({ core: 4.0, glow: 2.4, spiral: 3.0 });
 
+// Barwy HDR stylu pocisku liczone raz na styl. Color.set('#rrggbb') to
+// parsowanie stringa regexem — szło 2× na pocisk na klatkę.
+const BULLET_ARC_HDR_COLOR = new THREE.Color(0x9bf5ff).multiplyScalar(BULLET_HDR.arc);
+function getBulletStyleHdr(style) {
+  let hdr = style.__hdr;
+  if (!hdr) {
+    hdr = style.__hdr = {
+      trail: new THREE.Color(style.trailColor).multiplyScalar(BULLET_HDR.trail),
+      core: new THREE.Color(style.color).multiplyScalar(BULLET_HDR.core)
+    };
+  }
+  return hdr;
+}
+
+// Wysyła na GPU tylko [0, count) instancji zamiast całego bufora — pełne
+// bufory pocisków (2000 slotów) szły co klatkę nawet przy jednym pocisku.
+// Zakres zastępuje poprzedni: instancje ≥ count i tak nie są rysowane.
+function uploadInstancePrefix(attr, count, itemSize) {
+  if (!attr || count <= 0) return;
+  attr.clearUpdateRanges();
+  attr.addUpdateRange(0, count * itemSize);
+  attr.needsUpdate = true;
+}
+
 function ensureWeaponResources() {
   if (!WEP_RESOURCES.geos || !WEP_RESOURCES.bulletStyles) {
     // Po przeniesieniu wieżyczek na kanwę 2D zostaje jedna geometria: płaski
@@ -326,15 +350,14 @@ function updateMuzzleFlashes(dt) {
     if (count >= MUZZLE_MAX_INSTANCES) break;
   }
 
-  const prev = muzzleInstances._prevCount;
   outer.count = count;
   core.count = count;
-  if (count > 0 || prev > 0) {
-    outer.instanceMatrix.needsUpdate = true;
-    core.instanceMatrix.needsUpdate = true;
-    if (outer.instanceColor) outer.instanceColor.needsUpdate = true;
-    if (core.instanceColor) core.instanceColor.needsUpdate = true;
-  }
+  outer.visible = count > 0;
+  core.visible = count > 0;
+  uploadInstancePrefix(outer.instanceMatrix, count, 16);
+  uploadInstancePrefix(core.instanceMatrix, count, 16);
+  uploadInstancePrefix(outer.instanceColor, count, 3);
+  uploadInstancePrefix(core.instanceColor, count, 3);
   muzzleInstances._prevCount = count;
   // Dwa InstancedMeshe na calą scenę, niezależnie od liczby strzelających wież.
   DrawCallStats.addWeapon(count > 0 ? 2 : 0);
@@ -1055,7 +1078,6 @@ export const Weapon3DSystem = {
     let instanceCount = 0;
     let arcInstanceCount = 0;
     const dummy = bulletInstances.dummy;
-    const colorObj = this._tmpProjectileColor;
     const matrixElements = dummy.matrix.elements;
     
     const setMatrix = (x, y, z, rot, scaleX, scaleY) => {
@@ -1107,13 +1129,14 @@ export const Weapon3DSystem = {
       const trailLen = Math.max(minLen, segLen * style.stretch);
       const coreLen = Math.max(minLen * 0.55, segLen * 0.7);
 
+      const styleHdr = getBulletStyleHdr(style);
       setMatrix(cx, -cy, style.z, angle, trailLen, style.trailWidth * wScale);
       bulletInstances.trails.setMatrixAt(instanceCount, dummy.matrix);
-      bulletInstances.trails.setColorAt(instanceCount, colorObj.set(style.trailColor).multiplyScalar(BULLET_HDR.trail));
+      bulletInstances.trails.setColorAt(instanceCount, styleHdr.trail);
 
       setMatrix(x, -y, style.z + 0.01, angle, coreLen, style.coreWidth * wScale);
       bulletInstances.cores.setMatrixAt(instanceCount, dummy.matrix);
-      bulletInstances.cores.setColorAt(instanceCount, colorObj.set(style.color).multiplyScalar(BULLET_HDR.core));
+      bulletInstances.cores.setColorAt(instanceCount, styleHdr.core);
 
       // No round "head" blob — projectiles render as a clean straight line
       // (soft trail glow + bright core). The head instance buffer stays empty.
@@ -1127,12 +1150,12 @@ export const Weapon3DSystem = {
 
         setMatrix(x + jitterX, -y + jitterY, style.z + 0.04, angle + Math.PI * 0.5, arcLen, arcWidth);
         bulletInstances.arcs.setMatrixAt(arcInstanceCount, dummy.matrix);
-        bulletInstances.arcs.setColorAt(arcInstanceCount, colorObj.set(0x9bf5ff).multiplyScalar(BULLET_HDR.arc));
+        bulletInstances.arcs.setColorAt(arcInstanceCount, BULLET_ARC_HDR_COLOR);
         arcInstanceCount++;
 
         setMatrix(x - jitterX, -y - jitterY, style.z + 0.04, angle - Math.PI * 0.5, arcLen * 0.75, arcWidth * 0.75);
         bulletInstances.arcs.setMatrixAt(arcInstanceCount, dummy.matrix);
-        bulletInstances.arcs.setColorAt(arcInstanceCount, colorObj.set(0x9bf5ff).multiplyScalar(BULLET_HDR.arc));
+        bulletInstances.arcs.setColorAt(arcInstanceCount, BULLET_ARC_HDR_COLOR);
         arcInstanceCount++;
       }
 
@@ -1143,26 +1166,23 @@ export const Weapon3DSystem = {
     // smugi, a bufor GPU idzie na kartę. Historia gasnie dalej sama.
     BulletTrails.endFrame();
 
-    const prevCount = bulletInstances.trails.count || 0;
     bulletInstances.trails.count = instanceCount;
     bulletInstances.cores.count = instanceCount;
     bulletInstances.heads.count = 0; // head blob removed — clean-line projectiles
     bulletInstances.arcs.count = arcInstanceCount;
+    // InstancedMesh z count = 0 nadal przechodzi setProgram i upload uniformów
+    // (three pomija dopiero samo gl.draw*), więc puste pule po prostu chowamy.
+    bulletInstances.trails.visible = instanceCount > 0;
+    bulletInstances.cores.visible = instanceCount > 0;
+    bulletInstances.heads.visible = false;
+    bulletInstances.arcs.visible = arcInstanceCount > 0;
 
-    // Skip GPU buffer upload when nothing to render
-    if (instanceCount > 0 || prevCount > 0) {
-      bulletInstances.trails.instanceMatrix.needsUpdate = true;
-      bulletInstances.cores.instanceMatrix.needsUpdate = true;
-      bulletInstances.heads.instanceMatrix.needsUpdate = true;
-      if (bulletInstances.trails.instanceColor) bulletInstances.trails.instanceColor.needsUpdate = true;
-      if (bulletInstances.cores.instanceColor) bulletInstances.cores.instanceColor.needsUpdate = true;
-      if (bulletInstances.heads.instanceColor) bulletInstances.heads.instanceColor.needsUpdate = true;
-    }
-    if (arcInstanceCount > 0 || (bulletInstances.arcs._prevCount || 0) > 0) {
-      bulletInstances.arcs.instanceMatrix.needsUpdate = true;
-      if (bulletInstances.arcs.instanceColor) bulletInstances.arcs.instanceColor.needsUpdate = true;
-    }
-    bulletInstances.arcs._prevCount = arcInstanceCount;
+    uploadInstancePrefix(bulletInstances.trails.instanceMatrix, instanceCount, 16);
+    uploadInstancePrefix(bulletInstances.cores.instanceMatrix, instanceCount, 16);
+    uploadInstancePrefix(bulletInstances.trails.instanceColor, instanceCount, 3);
+    uploadInstancePrefix(bulletInstances.cores.instanceColor, instanceCount, 3);
+    uploadInstancePrefix(bulletInstances.arcs.instanceMatrix, arcInstanceCount, 16);
+    uploadInstancePrefix(bulletInstances.arcs.instanceColor, arcInstanceCount, 3);
   },
 
   disposeAll() {

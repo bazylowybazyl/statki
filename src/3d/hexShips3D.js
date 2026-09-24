@@ -22,6 +22,7 @@ import { allowsSolidArmorLod } from './hexLodPolicy.js';
 import { DrawCallStats } from './drawCallStats.js';
 import { HexBodyImpostorBatch, computeAverageBodyColor } from './hexBodyImpostorBatch.js';
 import { HullLacquer, MAX_ENGINE_ZONES, computeEngineZones } from './hullLacquer.js';
+import { HULL_SDF_OCCLUDER_FLOATS, HullShadowSdf, packHullShaftOccluder } from './hullShadowSdf.js';
 
 const HEX_VERTEX_SHADER = `
 attribute vec2 aGridPos;
@@ -456,8 +457,14 @@ const lodFrameStats = {
   // W pudle rozgrzania, ale poza pudlem rysowania: mesh istnieje, nic sie nie
   // liczy i nie rysuje (patrz isEntityInDrawBox).
   warmOnly: 0,
-  shaftCands: 0
+  shaftCands: 0,
+  // Kadłuby zgłoszone do passa cieni i pieczenia ich SDF w tej klatce.
+  shaftHulls: 0,
+  shaftBakes: 0
 };
+
+// Bufor okludera jednego kadłuba (packHullShaftOccluder -> pushShaftHullSdf).
+const shaftOccluderScratch = new Float32Array(HULL_SDF_OCCLUDER_FLOATS);
 
 const drawPerfScratch = {
   coreCallMs: 0,
@@ -624,144 +631,61 @@ function getInterpolatedRenderPose(entity) {
   return pose;
 }
 
-// ── Sylwetka kadłuba dla shadow shafts ──────────────────────────────────────
-// Okluder statku to ŁAŃCUCH 3 KAPSUŁ o promieniach z LOKALNEJ szerokości
-// kadłuba — nie jedna bryła na cały statek. Jedna kapsuła z bboxa sprite'a
-// dawała "pigułkę", a jedna elipsa "przezroczyste jajo": przy wąskiej rufie
-// i dziobie obie są dużo szersze od kadłuba, więc cień startował na ich
-// krawędzi, kilkadziesiąt jednostek OBOK burty. Trzy pasma wzdłuż kadłuba
-// (rufa / śródokręcie / dziób) trzymają promień przy realnej szerokości,
-// więc smuga wychodzi spod samego pancerza.
-const HULL_SHAFT_SEGMENTS = 4;   // musi zgadzać się z HULL_SHAFT_BANDS w core3d
-const HULL_SHAFT_SLOTS = 24;     // rozdzielczość profilu szerokości
+// Rzeczywisty zasięg AKTYWNYCH heksów w układzie lokalnym mesha (piksele
+// sprite'a, względem pivota — jak translacje instancji). Fragment dziedziczy
+// srcWidth/srcHeight rodzica (musi: próbkuje jego teksturę), więc rozmiar
+// liczony z src dawał promień CAŁEGO kadłuba: fragmenty dużych okrętów nigdy
+// nie wchodziły do batcha smug, te z małych rysowały smugę wielkości statku,
+// a przy selekcji cieni drobnica wypychała żywe okręty z 12 slotów.
+// Cache na siatce: po meshRevision, a przy deformacji najwyżej co 250 ms.
+const ACTIVE_EXTENT_REFRESH_MS = 250;
 
-// Podział profilu na pasma programowaniem dynamicznym: minimalizujemy pole
-// NADMIARU (promień pasma minus realna szerokość w każdym plasterku), więc
-// granice same wypadają tam, gdzie kadłub zmienia szerokość — wąski ogon
-// dostaje własne, cienkie pasmo zamiast tonąć w jednym grubym.
-function splitProfileIntoBands(slots, bandCount) {
-  const n = slots.length;
-  const cost = [];
-  for (let i = 0; i < n; i++) {
-    cost.push(new Float64Array(n));
-    let lo = Infinity, hi = -Infinity, sum = 0;
-    for (let j = i; j < n; j++) {
-      lo = Math.min(lo, slots[j].vMin);
-      hi = Math.max(hi, slots[j].vMax);
-      sum += slots[j].vMax - slots[j].vMin;
-      cost[i][j] = (hi - lo) * (j - i + 1) - sum;
-    }
+function getGridActiveExtent(grid, nowMs) {
+  const shards = grid?.shards;
+  let ext = grid.__activeExtent;
+  if (!ext) {
+    ext = grid.__activeExtent = { rev: -1, shardsRef: null, at: -Infinity, halfW: 0, halfH: 0, cx: 0, cy: 0 };
   }
-  const best = [];
-  const cut = [];
-  for (let b = 0; b < bandCount; b++) {
-    best.push(new Float64Array(n).fill(Infinity));
-    cut.push(new Int32Array(n).fill(-1));
-  }
-  for (let j = 0; j < n; j++) best[0][j] = cost[0][j];
-  for (let b = 1; b < bandCount; b++) {
-    for (let j = b; j < n; j++) {
-      for (let k = b - 1; k < j; k++) {
-        const c = best[b - 1][k] + cost[k + 1][j];
-        if (c < best[b][j]) { best[b][j] = c; cut[b][j] = k; }
-      }
-    }
-  }
-  let bands = Math.min(bandCount, n) - 1;
-  const ranges = [];
-  let end = n - 1;
-  while (bands >= 0 && end >= 0) {
-    const start = bands === 0 ? 0 : cut[bands][end] + 1;
-    ranges.unshift([start, end]);
-    end = start - 1;
-    bands--;
-  }
-  return ranges;
-}
+  const rev = Number(grid.meshRevision) || 0;
+  if (ext.shardsRef === shards && (ext.rev === rev || nowMs - ext.at < ACTIVE_EXTENT_REFRESH_MS)) return ext;
 
-function buildHullSegments(grid, shards, sx, sy) {
-  const srcHalfW = (Number(grid.srcWidth) || 0) * 0.5;
-  const srcHalfH = (Number(grid.srcHeight) || 0) * 0.5;
   const pivotX = Number(grid?.pivot?.x) || 0;
   const pivotY = Number(grid?.pivot?.y) || 0;
-  const hexR = (Number(shards[0]?.radius) || 6) * Math.max(sx, sy);
-
-  // Klatka lokalna = ta sama co instance matrix heksów, czyli offset
-  // względem POZYCJI encji (pivot grida już w środku).
-  const us = new Float64Array(shards.length);
-  const vs = new Float64Array(shards.length);
-  let n = 0;
-  let uMin = Infinity, uMax = -Infinity;
-  for (let i = 0; i < shards.length; i++) {
-    const s = shards[i];
-    if (!s) continue;
-    const lx = (typeof s.gridX === 'number') ? (s.gridX - srcHalfW) : (Number(s.lx) || 0);
-    const ly = (typeof s.gridY === 'number') ? (s.gridY - srcHalfH) : (Number(s.ly) || 0);
-    const u = (lx - pivotX) * sx;
-    const v = (ly - pivotY) * sy;
-    if (!Number.isFinite(u) || !Number.isFinite(v)) continue;
-    us[n] = u;
-    vs[n] = v;
-    n++;
-    if (u < uMin) uMin = u;
-    if (u > uMax) uMax = u;
-  }
-  if (n === 0 || uMin > uMax) return null;
-
-  // Profil szerokości: plasterki wzdłuż kadłuba (puste pomijamy — kadłub po
-  // rozerwaniu bywa nieciągły).
-  const hullLen = Math.max(uMax - uMin, 1);
-  const slotLen = hullLen / HULL_SHAFT_SLOTS;
-  const raw = [];
-  for (let s = 0; s < HULL_SHAFT_SLOTS; s++) raw.push({ uMin: Infinity, uMax: -Infinity, vMin: Infinity, vMax: -Infinity });
-  for (let i = 0; i < n; i++) {
-    const u = us[i];
-    const v = vs[i];
-    let idx = Math.floor((u - uMin) / slotLen);
-    if (idx < 0) idx = 0;
-    if (idx >= HULL_SHAFT_SLOTS) idx = HULL_SHAFT_SLOTS - 1;
-    const slot = raw[idx];
-    if (u < slot.uMin) slot.uMin = u;
-    if (u > slot.uMax) slot.uMax = u;
-    if (v < slot.vMin) slot.vMin = v;
-    if (v > slot.vMax) slot.vMax = v;
-  }
-  const slots = raw.filter((s) => s.uMin <= s.uMax);
-  if (!slots.length) return null;
-
-  const segs = [];
-  for (const [from, to] of splitProfileIntoBands(slots, HULL_SHAFT_SEGMENTS)) {
-    let bMinU = Infinity, bMaxU = -Infinity, bMinV = Infinity, bMaxV = -Infinity;
-    for (let s = from; s <= to; s++) {
-      const slot = slots[s];
-      if (slot.uMin < bMinU) bMinU = slot.uMin;
-      if (slot.uMax > bMaxU) bMaxU = slot.uMax;
-      if (slot.vMin < bMinV) bMinV = slot.vMin;
-      if (slot.vMax > bMaxV) bMaxV = slot.vMax;
+  const offX = (Number(grid.srcWidth) || 0) * 0.5 + pivotX;
+  const offY = (Number(grid.srcHeight) || 0) * 0.5 + pivotY;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  if (Array.isArray(shards)) {
+    for (let i = 0; i < shards.length; i++) {
+      const s = shards[i];
+      if (!s || !s.active || s.isDebris) continue;
+      const x = (Number(s.gridX) || 0) - offX;
+      const y = (Number(s.gridY) || 0) - offY;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
     }
-    if (bMinU > bMaxU) continue;
-    const vc = (bMinV + bMaxV) * 0.5;
-    const r = Math.max((bMaxV - bMinV) * 0.5 + hexR, 1);
-    // Czapy kapsuły wchodzą do środka pasma, żeby nie wystawały przed dziób
-    // ani za rufę; pasmo krótsze od średnicy zwija się do samego okręgu.
-    const half = Math.max((bMaxU - bMinU) * 0.5 + hexR - r, 0);
-    const uc = (bMinU + bMaxU) * 0.5;
-    segs.push({ u0: uc - half, u1: uc + half, vc, r });
   }
-  if (!segs.length) return null;
-  return { segs, span: hullLen };
-}
-
-function getHullSegments(entity, grid, sx, sy) {
-  const shards = grid?.shards;
-  if (!Array.isArray(shards) || shards.length === 0) return null;
-  const cache = entity._shaftHullSegments;
-  if (cache && cache.shards === shards && cache.count === shards.length && cache.sx === sx && cache.sy === sy) {
-    return cache.hull;
+  if (maxX < minX) {
+    // Brak aktywnych heksów — zachowawczo cały sprite (środek = -pivot).
+    ext.halfW = (Number(grid.srcWidth) || 0) * 0.5;
+    ext.halfH = (Number(grid.srcHeight) || 0) * 0.5;
+    ext.cx = -pivotX;
+    ext.cy = -pivotY;
+  } else {
+    const pad = Math.max(2, Number(shards[0]?.radius) || 20);
+    ext.halfW = (maxX - minX) * 0.5 + pad;
+    ext.halfH = (maxY - minY) * 0.5 + pad;
+    ext.cx = (minX + maxX) * 0.5;
+    ext.cy = (minY + maxY) * 0.5;
   }
-  const hull = buildHullSegments(grid, shards, sx, sy);
-  entity._shaftHullSegments = { shards, count: shards.length, sx, sy, hull };
-  return hull;
+  ext.rev = rev;
+  ext.shardsRef = shards;
+  ext.at = nowMs;
+  return ext;
 }
 
 function getEntityLightPosition(entity) {
@@ -1473,6 +1397,8 @@ function createEntityMesh(entity) {
     armorMesh,
     texture,
     visualImageRef: visualImage,
+    // Źródło tekstury, gdy sprite'a brak (fragmenty asteroid) — patrz needsRebuild.
+    armorImageRef: visualImage ? null : (grid.armorImage || null),
     shapeImageRef,
     normalTexture,
     normalMapRef: grid.normalMapImage || null,
@@ -1504,7 +1430,11 @@ function updateEntityMesh(entity, data, camX, camY, cameraZoom) {
   if (!entity?.hexGrid || !data?.mesh) return;
   const grid = entity.hexGrid;
   const shards = grid.shards;
-  const mesh = data.mesh;
+  // `let`: po przebudowie niżej mesh MUSI wskazywać nowy obiekt. Dawniej reszta
+  // funkcji pisała do starego, już zwolnionego mesha (count, uniformy, pozycja),
+  // a flagi czyściła w nowych danych — nowy kadłub zostawał z macierzami
+  // jednostkowymi (wszystkie heksy w środku) aż do pełnego odświeżenia.
+  let mesh = data.mesh;
   const pivotX = Number(grid?.pivot?.x) || 0;
   const pivotY = Number(grid?.pivot?.y) || 0;
 
@@ -1513,13 +1443,21 @@ function updateEntityMesh(entity, data, camX, camY, cameraZoom) {
     data.srcWidth !== (grid.srcWidth || 1) ||
     data.srcHeight !== (grid.srcHeight || 1) ||
     data.visualImageRef !== (grid.visualImage || null) ||
+    // Bez sprite'a tekstura idzie z armorImage — wrak z puli dostający siatkę
+    // innego typu (fragment innej asteroidy) zachowywał starą teksturę.
+    (!grid.visualImage && data.armorImageRef !== (grid.armorImage || null)) ||
     data.normalMapRef !== (grid.normalMapImage || null);
 
   if (needsRebuild) {
-    disposeMeshData(data);
+    // Najpierw nowe dane, dopiero potem zwolnienie starych: przy tym samym
+    // sprite'cie współdzielona tekstura i mapa kształtu lakieru nie spadają do
+    // zera referencji (inaczej ponowny upload tekstury z mipmapami i pieczenie).
+    const previous = data;
     state.entityMeshes.delete(entity);
     data = createEntityMesh(entity);
+    disposeMeshData(previous);
     if (!data) return;
+    mesh = data.mesh;
   } else if (data.shardsRef !== shards) {
     const gridPosAttr = data.mesh.geometry.getAttribute('aGridPos');
     const cx = (grid.srcWidth || 0) * 0.5;
@@ -1557,7 +1495,11 @@ function updateEntityMesh(entity, data, camX, camY, cameraZoom) {
   // Wrak z oddali: jedna smuga we wspólnym batchu zamiast własnego wywołania
   // i zamiast pełnego przeliczenia macierzy wszystkich heksów.
   if (!solidArmorAllowed) {
-    const bodyRadiusPx = Math.max(data.srcWidth, data.srcHeight) * 0.5 * entityScale * zoomPx;
+    // Zasięg AKTYWNYCH heksów, nie sprite'a (fragment ma src rodzica).
+    const lodScaleX = getEntityScaleX(entity);
+    const lodScaleY = getEntityScaleY(entity);
+    const extent = getGridActiveExtent(grid, state.lastTime);
+    const bodyRadiusPx = Math.max(extent.halfW * Math.abs(lodScaleX), extent.halfH * Math.abs(lodScaleY)) * zoomPx;
     const tuning = (typeof window !== 'undefined' && window.DevTuning) ? window.DevTuning : null;
     const enterPx = Number.isFinite(Number(tuning?.wreckImpostorPx)) ? Number(tuning.wreckImpostorPx) : WRECK_IMPOSTOR_PX;
     const exitPx = enterPx * WRECK_IMPOSTOR_EXIT_MUL;
@@ -1575,12 +1517,19 @@ function updateEntityMesh(entity, data, camX, camY, cameraZoom) {
         // w batchu nie śledziliśmy meshDirty.
         data.needsInstanceRefresh = true;
         data.batchedImpostor = true;
-        const halfW = data.srcWidth * 0.5 * getEntityScaleX(entity);
-        const halfH = data.srcHeight * 0.5 * getEntityScaleY(entity);
+        const halfW = extent.halfW * lodScaleX;
+        const halfH = extent.halfH * lodScaleY;
+        // Środek smugi = środek aktywnych heksów, przeniesiony tym samym
+        // przekształceniem co mesh: T(ex, -ey) · Rz(rot) · S(sx, -sy).
+        const rot = usesBillboardOrientation(entity) ? entityAngle : -entityAngle;
+        const offX = extent.cx * lodScaleX;
+        const offY = -extent.cy * lodScaleY;
+        const cosRot = Math.cos(rot);
+        const sinRot = Math.sin(rot);
         HexBodyImpostorBatch.push({
-          x: ex,
-          y: -ey,
-          rot: usesBillboardOrientation(entity) ? entityAngle : -entityAngle,
+          x: ex + offX * cosRot - offY * sinRot,
+          y: -ey + offX * sinRot + offY * cosRot,
+          rot,
           halfW,
           halfH,
           color: data.impostorColor,
@@ -1901,6 +1850,8 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
   lodFrameStats.culled = 0;
   lodFrameStats.warmOnly = 0;
   lodFrameStats.shaftCands = 0;
+  lodFrameStats.shaftHulls = 0;
+  lodFrameStats.shaftBakes = 0;
 
   const valid = state.validEntities;
   const vfxEntities = state.vfxEntities;
@@ -1991,14 +1942,18 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
     if (data.armorMesh?.visible) data.armorMesh.visible = false;
   }
 
-  // Okludery shadow shafts: analityczne cienie kadłubów, liczone w shaderze
-  // passa (działają na każdym zoomie, także dla statków tuż poza kadrem).
-  // Kształt = elipsa wpisana w obrys (buildHullEllipse) — shader przecina
-  // z nią promień do słońca, więc smuga zaczyna się DOKŁADNIE na krawędzi
-  // kadłuba pod każdym kątem. Selekcja od największych; ring-segmenty
-  // pomijamy — pierścień ma własny okluder (setShaftRingOccluder).
+  // Okludery shadow shafts: sylwetka kadłuba jako pole odległości
+  // (hullShadowSdf.js). Shader passa idzie po nim promieniem do słońca, więc
+  // smuga zaczyna się na burcie, obejmuje kolce i rozwidlenia, a kadłub nie
+  // rzuca cienia sam na siebie. Działa na każdym zoomie, także dla statków
+  // tuż poza kadrem. Selekcja od największych — dostają warstwę i pieczenie
+  // pierwsze; ring-segmenty pomijamy, pierścień ma własny okluder
+  // (setShaftRingOccluder).
   if (typeof Core3D.beginShaftHullFrame === 'function') Core3D.beginShaftHullFrame();
-  if (typeof Core3D.pushShaftHullWorld === 'function') {
+  const shaftHullBudget = typeof Core3D.getShaftHullBudget === 'function' ? Core3D.getShaftHullBudget() : 0;
+  if (shaftHullBudget > 0) {
+    HullShadowSdf.beginFrame(frameId);
+    Core3D.setShaftHullSdfTexture(HullShadowSdf.ensureTexture());
     const halfView = Math.max(window.innerWidth || 1920, window.innerHeight || 1080) * 0.5 / cameraZoom;
     const occluderReach = halfView + 30000;
     const cands = state.shaftHullCandidates || (state.shaftHullCandidates = []);
@@ -2009,8 +1964,15 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
       const grid = entity.hexGrid;
       const scaleX = Math.abs(getEntityScaleX(entity)) || 1;
       const scaleY = Math.abs(getEntityScaleY(entity)) || 1;
-      const w = (Number(grid.srcWidth) || 0) * scaleX;
-      const h = (Number(grid.srcHeight) || 0) * scaleY;
+      let w = (Number(grid.srcWidth) || 0) * scaleX;
+      let h = (Number(grid.srcHeight) || 0) * scaleY;
+      if (entity.isWreck === true || grid.isFragment === true) {
+        // Wrak/fragment: rozmiar z aktywnych heksów — src to sprite rodzica,
+        // więc drobnica sortowała się jak cały okręt i zabierała mu slot cienia.
+        const ext = getGridActiveExtent(grid, now);
+        w = ext.halfW * 2 * scaleX;
+        h = ext.halfH * 2 * scaleY;
+      }
       const size = Math.max(w, h);
       if (size < 40) continue; // drobnica nie rzuca sensownego cienia
       const ex = getEntityPosX(entity);
@@ -2020,32 +1982,26 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
     }
     lodFrameStats.shaftCands = cands.length;
     if (cands.length > 1) cands.sort((a, b) => b.size - a.size);
-    let registryFull = false;
-    for (let i = 0; i < cands.length && !registryFull; i++) {
+    let pushed = 0;
+    for (let i = 0; i < cands.length && pushed < shaftHullBudget; i++) {
       const c = cands[i];
-      const hull = getHullSegments(c.entity, c.grid, c.scaleX, c.scaleY);
-      if (!hull) continue;
+      // null = sylwetka czeka na pieczenie (budżet klatki) — cień od następnej.
+      const occ = HullShadowSdf.acquire(c.grid, now);
+      if (!occ) continue;
       const interpPose = getInterpolatedRenderPose(c.entity);
       const px = interpPose ? interpPose.x : c.ex;
       const py = interpPose ? interpPose.y : c.ey;
       const rawAng = interpPose ? interpPose.angle : (c.entity.angle || 0);
-      // Ten sam znak obrotu co render heksów (uRotation = -angle, scale.y < 0
-      // → w koordach gry obrót o +angle; billboardy mają go odwrócony).
-      const ang = usesBillboardOrientation(c.entity) ? -rawAng : rawAng;
-      const cosA = Math.cos(ang);
-      const sinA = Math.sin(ang);
-      for (const seg of hull.segs) {
-        const x1 = px + seg.u0 * cosA - seg.vc * sinA;
-        const y1 = py + seg.u0 * sinA + seg.vc * cosA;
-        const x2 = px + seg.u1 * cosA - seg.vc * sinA;
-        const y2 = py + seg.u1 * sinA + seg.vc * cosA;
-        // pushShaftHullWorld zwraca false po zapełnieniu rejestru — koniec.
-        if (!Core3D.pushShaftHullWorld(x1, y1, x2, y2, seg.r, hull.span)) {
-          registryFull = true;
-          break;
-        }
-      }
+      // rotation.z mesha kadłuba (updateEntityMesh): -kąt, billboard +kąt.
+      const rot = usesBillboardOrientation(c.entity) ? rawAng : -rawAng;
+      packHullShaftOccluder(shaftOccluderScratch, 0, px, py, rot,
+        getEntityScaleX(c.entity), getEntityScaleY(c.entity), occ.layout, occ.layer);
+      // pushShaftHullSdf zwraca false po zapełnieniu rejestru — koniec.
+      if (!Core3D.pushShaftHullSdf(shaftOccluderScratch, 0)) break;
+      pushed++;
     }
+    lodFrameStats.shaftHulls = pushed;
+    lodFrameStats.shaftBakes = HullShadowSdf.stats.bakes;
   }
 
   // Wieżyczki: zbieramy je do bufora 2D, rysuje je pętla renderu w index.html.
@@ -2172,6 +2128,22 @@ export function drawHexShips3D(ctx, width, height) {
   publishDrawPerfScratch();
 }
 
+// Kadłuby NPC: tekstura sprite'a i mapa kształtu lakieru powstawały przy
+// pierwszym meshu danego typu w kadrze (upload + ~10 ms pieczenia w tej
+// klatce), a po śmierci ostatniego statku typu były zwalniane — następna
+// flota płaciła znowu. Rozgrzanie przy inicjalizacji ciała heksowego (NPC
+// dostają je przy spawnie, także poza kadrem) trzyma stałą referencję: upload
+// idzie w wolnej chwili z kolejki Core3D, lakier w kolejce pieczenia, oba
+// zostają na resztę sesji (jeden egzemplarz na typ kadłuba).
+const prewarmedHullImages = new WeakSet();
+export function prewarmHexShipVisual(image) {
+  if (!image || prewarmedHullImages.has(image) || !Core3D.isInitialized) return false;
+  prewarmedHullImages.add(image);
+  Core3D.queueTextureUpload(acquireSharedVisualTexture(image));
+  HullLacquer.acquireShapeUniform(image);
+  return true;
+}
+
 export function invalidateHexShipEntity3D(entity) {
   if (!entity) return false;
   const data = state.entityMeshes.get(entity);
@@ -2189,6 +2161,7 @@ export function disposeHexShips3D() {
   Weapon3DSystem.disposeAll();
   Turret2D.clear();
   ShipLights3D.dispose();
+  HullShadowSdf.reset();
   state.navLightSprites.length = 0;
   state.frameId = 0;
   state.hadRenderableLastFrame = false;
