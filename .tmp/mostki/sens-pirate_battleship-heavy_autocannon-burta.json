@@ -1,0 +1,610 @@
+[
+ {
+  "hullKey": "pirate_battleship",
+  "weaponId": "heavy_autocannon",
+  "dir": "burta",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 1,
+  "killFrac": 0.25,
+  "bridgeHexes": [
+   112
+  ],
+  "hexTotal": 2267,
+  "damagePerShot": 28,
+  "interval": 0.5,
+  "bridge": {
+   "shots": 658,
+   "time": 329,
+   "damage": 18424,
+   "alive": 0.9126599029554477
+  },
+  "pool": {
+   "shots": 429,
+   "time": 214.5,
+   "damage": 12012,
+   "alive": 0.9435377150419056,
+   "cause": "pool"
+  },
+  "shots": 658,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 0,
+  "probeRescued": 0,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "pirate_battleship",
+  "weaponId": "heavy_autocannon",
+  "dir": "burta",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 1,
+  "killFrac": 0.35,
+  "bridgeHexes": [
+   112
+  ],
+  "hexTotal": 2267,
+  "damagePerShot": 28,
+  "interval": 0.5,
+  "bridge": {
+   "shots": 706,
+   "time": 353,
+   "damage": 19768,
+   "alive": 0.9069254521393912
+  },
+  "pool": {
+   "shots": 429,
+   "time": 214.5,
+   "damage": 12012,
+   "alive": 0.9435377150419056,
+   "cause": "pool"
+  },
+  "shots": 706,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 0,
+  "probeRescued": 0,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "pirate_battleship",
+  "weaponId": "heavy_autocannon",
+  "dir": "burta",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 1,
+  "killFrac": 0.45,
+  "bridgeHexes": [
+   112
+  ],
+  "hexTotal": 2267,
+  "damagePerShot": 28,
+  "interval": 0.5,
+  "bridge": {
+   "shots": 744,
+   "time": 372,
+   "damage": 20832,
+   "alive": 0.9020732245258051
+  },
+  "pool": {
+   "shots": 429,
+   "time": 214.5,
+   "damage": 12012,
+   "alive": 0.9435377150419056,
+   "cause": "pool"
+  },
+  "shots": 744,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 0,
+  "probeRescued": 0,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "pirate_battleship",
+  "weaponId": "heavy_autocannon",
+  "dir": "burta",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 1,
+  "killFrac": 0.6,
+  "bridgeHexes": [
+   112
+  ],
+  "hexTotal": 2267,
+  "damagePerShot": 28,
+  "interval": 0.5,
+  "bridge": {
+   "shots": 803,
+   "time": 401.5,
+   "damage": 22484,
+   "alive": 0.894133215703573
+  },
+  "pool": {
+   "shots": 429,
+   "time": 214.5,
+   "damage": 12012,
+   "alive": 0.9435377150419056,
+   "cause": "pool"
+  },
+  "shots": 803,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 0,
+  "probeRescued": 0,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "pirate_battleship",
+  "weaponId": "heavy_autocannon",
+  "dir": "burta",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 1.5,
+  "killFrac": 0.25,
+  "bridgeHexes": [
+   112
+  ],
+  "hexTotal": 2267,
+  "damagePerShot": 28,
+  "interval": 0.5,
+  "bridge": {
+   "shots": 707,
+   "time": 353.5,
+   "damage": 19796,
+   "alive": 0.9122187913542126
+  },
+  "pool": {
+   "shots": 429,
+   "time": 214.5,
+   "damage": 12012,
+   "alive": 0.9435377150419056,
+   "cause": "pool"
+  },
+  "shots": 707,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 0,
+  "probeRescued": 0,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "pirate_battleship",
+  "weaponId": "heavy_autocannon",
+  "dir": "burta",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 1.5,
+  "killFrac": 0.35,
+  "bridgeHexes": [
+   112
+  ],
+  "hexTotal": 2267,
+  "damagePerShot": 28,
+  "interval": 0.5,
+  "bridge": {
+   "shots": 767,
+   "time": 383.5,
+   "damage": 21476,
+   "alive": 0.9064843405381562
+  },
+  "pool": {
+   "shots": 429,
+   "time": 214.5,
+   "damage": 12012,
+   "alive": 0.9435377150419056,
+   "cause": "pool"
+  },
+  "shots": 767,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 0,
+  "probeRescued": 0,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "pirate_battleship",
+  "weaponId": "heavy_autocannon",
+  "dir": "burta",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 1.5,
+  "killFrac": 0.45,
+  "bridgeHexes": [
+   112
+  ],
+  "hexTotal": 2267,
+  "damagePerShot": 28,
+  "interval": 0.5,
+  "bridge": {
+   "shots": 832,
+   "time": 416,
+   "damage": 23296,
+   "alive": 0.9016321129245699
+  },
+  "pool": {
+   "shots": 429,
+   "time": 214.5,
+   "damage": 12012,
+   "alive": 0.9435377150419056,
+   "cause": "pool"
+  },
+  "shots": 832,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 0,
+  "probeRescued": 0,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "pirate_battleship",
+  "weaponId": "heavy_autocannon",
+  "dir": "burta",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 1.5,
+  "killFrac": 0.6,
+  "bridgeHexes": [
+   112
+  ],
+  "hexTotal": 2267,
+  "damagePerShot": 28,
+  "interval": 0.5,
+  "bridge": {
+   "shots": 933,
+   "time": 466.5,
+   "damage": 26124,
+   "alive": 0.8932509925011027
+  },
+  "pool": {
+   "shots": 429,
+   "time": 214.5,
+   "damage": 12012,
+   "alive": 0.9435377150419056,
+   "cause": "pool"
+  },
+  "shots": 933,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 0,
+  "probeRescued": 0,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "pirate_battleship",
+  "weaponId": "heavy_autocannon",
+  "dir": "burta",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 2,
+  "killFrac": 0.25,
+  "bridgeHexes": [
+   112
+  ],
+  "hexTotal": 2267,
+  "damagePerShot": 28,
+  "interval": 0.5,
+  "bridge": {
+   "shots": 753,
+   "time": 376.5,
+   "damage": 21084,
+   "alive": 0.9117776797529775
+  },
+  "pool": {
+   "shots": 429,
+   "time": 214.5,
+   "damage": 12012,
+   "alive": 0.9435377150419056,
+   "cause": "pool"
+  },
+  "shots": 753,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 0,
+  "probeRescued": 0,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "pirate_battleship",
+  "weaponId": "heavy_autocannon",
+  "dir": "burta",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 2,
+  "killFrac": 0.35,
+  "bridgeHexes": [
+   112
+  ],
+  "hexTotal": 2267,
+  "damagePerShot": 28,
+  "interval": 0.5,
+  "bridge": {
+   "shots": 841,
+   "time": 420.5,
+   "damage": 23548,
+   "alive": 0.9064843405381562
+  },
+  "pool": {
+   "shots": 429,
+   "time": 214.5,
+   "damage": 12012,
+   "alive": 0.9435377150419056,
+   "cause": "pool"
+  },
+  "shots": 841,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 0,
+  "probeRescued": 0,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "pirate_battleship",
+  "weaponId": "heavy_autocannon",
+  "dir": "burta",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 2,
+  "killFrac": 0.45,
+  "bridgeHexes": [
+   112
+  ],
+  "hexTotal": 2267,
+  "damagePerShot": 28,
+  "interval": 0.5,
+  "bridge": {
+   "shots": 917,
+   "time": 458.5,
+   "damage": 25676,
+   "alive": 0.9016321129245699
+  },
+  "pool": {
+   "shots": 429,
+   "time": 214.5,
+   "damage": 12012,
+   "alive": 0.9435377150419056,
+   "cause": "pool"
+  },
+  "shots": 917,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 0,
+  "probeRescued": 0,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "pirate_battleship",
+  "weaponId": "heavy_autocannon",
+  "dir": "burta",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 2,
+  "killFrac": 0.6,
+  "bridgeHexes": [
+   112
+  ],
+  "hexTotal": 2267,
+  "damagePerShot": 28,
+  "interval": 0.5,
+  "bridge": {
+   "shots": 1047,
+   "time": 523.5,
+   "damage": 29316,
+   "alive": 0.8928098808998677
+  },
+  "pool": {
+   "shots": 429,
+   "time": 214.5,
+   "damage": 12012,
+   "alive": 0.9435377150419056,
+   "cause": "pool"
+  },
+  "shots": 1047,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 0,
+  "probeRescued": 0,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "pirate_battleship",
+  "weaponId": "heavy_autocannon",
+  "dir": "burta",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 3,
+  "killFrac": 0.25,
+  "bridgeHexes": [
+   112
+  ],
+  "hexTotal": 2267,
+  "damagePerShot": 28,
+  "interval": 0.5,
+  "bridge": {
+   "shots": 849,
+   "time": 424.5,
+   "damage": 23772,
+   "alive": 0.9113365681517424
+  },
+  "pool": {
+   "shots": 429,
+   "time": 214.5,
+   "damage": 12012,
+   "alive": 0.9435377150419056,
+   "cause": "pool"
+  },
+  "shots": 849,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 0,
+  "probeRescued": 0,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "pirate_battleship",
+  "weaponId": "heavy_autocannon",
+  "dir": "burta",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 3,
+  "killFrac": 0.35,
+  "bridgeHexes": [
+   112
+  ],
+  "hexTotal": 2267,
+  "damagePerShot": 28,
+  "interval": 0.5,
+  "bridge": {
+   "shots": 966,
+   "time": 483,
+   "damage": 27048,
+   "alive": 0.906043228936921
+  },
+  "pool": {
+   "shots": 429,
+   "time": 214.5,
+   "damage": 12012,
+   "alive": 0.9435377150419056,
+   "cause": "pool"
+  },
+  "shots": 966,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 0,
+  "probeRescued": 0,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "pirate_battleship",
+  "weaponId": "heavy_autocannon",
+  "dir": "burta",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 3,
+  "killFrac": 0.45,
+  "bridgeHexes": [
+   112
+  ],
+  "hexTotal": 2267,
+  "damagePerShot": 28,
+  "interval": 0.5,
+  "bridge": {
+   "shots": 1080,
+   "time": 540,
+   "damage": 30240,
+   "alive": 0.9007498897220997
+  },
+  "pool": {
+   "shots": 429,
+   "time": 214.5,
+   "damage": 12012,
+   "alive": 0.9435377150419056,
+   "cause": "pool"
+  },
+  "shots": 1080,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 0,
+  "probeRescued": 0,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "pirate_battleship",
+  "weaponId": "heavy_autocannon",
+  "dir": "burta",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 3,
+  "killFrac": 0.6,
+  "bridgeHexes": [
+   112
+  ],
+  "hexTotal": 2267,
+  "damagePerShot": 28,
+  "interval": 0.5,
+  "bridge": {
+   "shots": 1250,
+   "time": 625,
+   "damage": 35000,
+   "alive": 0.8923687692986325
+  },
+  "pool": {
+   "shots": 429,
+   "time": 214.5,
+   "damage": 12012,
+   "alive": 0.9435377150419056,
+   "cause": "pool"
+  },
+  "shots": 1250,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 0,
+  "probeRescued": 0,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ }
+]

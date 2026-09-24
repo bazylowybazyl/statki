@@ -68,18 +68,21 @@ export function resolveFlightLevel(value) {
   return clamp(n, HALO_LIMITS.flightLevel[0], HALO_LIMITS.flightLevel[1]);
 }
 
-// Plan sektorów dla dowolnej liczby: proporcje 5:5:3:3, bez dwóch takich
-// samych typów obok siebie, deterministycznie z seeda. Dla 16 — plan ręczny.
+// Plan sektorów dla dowolnej liczby: proporcje z HALO_SECTOR_MIX (od
+// 2026-09-23 bez sektorów przemysłowych — przemysł tylko wokół doków), bez
+// dwóch takich samych typów obok siebie, deterministycznie z seeda. Sektor 0
+// (port) to krajobraz górski. Dla 16 — plan ręczny.
 export function buildHaloSectorPlan(count, seed) {
   const n = Math.round(clamp(Number(count) || 16, HALO_LIMITS.sectorCount[0], HALO_LIMITS.sectorCount[1]));
   const rand = mulberry32(hashSeed(seed, 0x51c7));
   if (n === 16) {
     return HALO_SECTOR_PLAN_16.map((entry, index) => jitterClimate({ ...entry, index }, rand));
   }
-  const total = HALO_SECTOR_MIX.landscape + HALO_SECTOR_MIX.garden + HALO_SECTOR_MIX.industrial + HALO_SECTOR_MIX.glass;
+  const kinds = Object.keys(HALO_SECTOR_MIX).filter((type) => HALO_SECTOR_MIX[type] > 0);
+  const total = kinds.reduce((sum, type) => sum + HALO_SECTOR_MIX[type], 0);
   const counts = {};
   let assigned = 0;
-  for (const type of Object.keys(HALO_SECTOR_MIX)) {
+  for (const type of kinds) {
     counts[type] = Math.max(1, Math.round(n * HALO_SECTOR_MIX[type] / total));
     assigned += counts[type];
   }
@@ -88,8 +91,8 @@ export function buildHaloSectorPlan(count, seed) {
   while (assigned < n) { const k = counts.landscape <= counts.garden ? 'landscape' : 'garden'; counts[k]++; assigned++; }
   // Zachłannie: zawsze typ z największą resztą, inny niż poprzedni (a na
   // końcu także inny niż pierwszy — ring jest cykliczny).
-  const types = ['industrial'];
-  counts.industrial--;
+  const types = ['landscape'];
+  counts.landscape--;
   while (types.length < n) {
     const prev = types[types.length - 1];
     const last = types.length === n - 1;
@@ -107,23 +110,23 @@ export function buildHaloSectorPlan(count, seed) {
   }
   // Gdy zachłanny wybór utknie (szew cyklu), przeplot: posortowany multizbiór
   // na pozycje parzyste, potem nieparzyste — poprawny przy max ≤ n/2 —
-  // i obrót tak, żeby przemysł (port) wypadł na indeksie 0.
+  // i obrót tak, żeby krajobraz (port) wypadł na indeksie 0.
   const valid = (arr) => arr.every((type, i) => type !== arr[(i + 1) % n]);
   if (!valid(types)) {
-    const total = { landscape: 0, garden: 0, industrial: 0, glass: 0 };
-    for (const type of types) total[type]++;
+    const total = {};
+    for (const type of types) total[type] = (total[type] || 0) + 1;
     const multiset = Object.keys(total).sort((a, b) => total[b] - total[a]).flatMap((type) => Array(total[type]).fill(type));
     const order = [];
     for (let i = 0; i < n; i += 2) order.push(i);
     for (let i = 1; i < n; i += 2) order.push(i);
     const woven = new Array(n);
     order.forEach((pos, k) => { woven[pos] = multiset[k]; });
-    const shift = woven.indexOf('industrial');
+    const shift = woven.indexOf('landscape');
     types.splice(0, n, ...woven.slice(shift), ...woven.slice(0, shift));
   }
   let biomeIndex = 0;
   const plan = types.map((type, index) => {
-    if (index === 0) return { type, name: 'PORT', port: true, climate: { ...HALO_TYPE_CLIMATE.industrial } };
+    if (index === 0) return { type, name: 'PORT', biome: 'port', port: true, climate: { ...HALO_BIOME_CLIMATE.port } };
     if (type === 'landscape') {
       const biome = HALO_LANDSCAPE_BIOMES[biomeIndex++ % HALO_LANDSCAPE_BIOMES.length];
       return { type, name: biome.toUpperCase(), biome, climate: { ...HALO_BIOME_CLIMATE[biome] } };

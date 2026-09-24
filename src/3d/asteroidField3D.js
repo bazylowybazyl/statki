@@ -44,7 +44,7 @@ import {
 import { getAsteroidRammingMass, getCollisionMass, getMass, getHardness, getMaxHp } from '../data/asteroidPhysics.js';
 import { COLLISION_CONFIG } from '../data/asteroidPhysics.js';
 import { AsteroidDestructor, resolveShipAsteroidCollision } from '../game/asteroidDestructor.js';
-import { DestructorSystem, getHexStructuralState, initHexBody } from '../game/destructor.js';
+import { DestructorSystem, disposeHexBody, getHexStructuralState, initHexBody } from '../game/destructor.js';
 import {
   buildAsteroidHexEntityModel,
   initializeAsteroidHexIntegrity,
@@ -57,6 +57,11 @@ import {
 const Z_BASE = -120;
 const Z_JITTER = 60;        // ±30 wokół Z_BASE
 const ASTEROID_RAYCAST_MAX_RADIUS = 700;
+// Heks-asteroida wraca do instancji po tylu ms bez statku w pobliżu (patrz
+// _canDemoteHexAsteroid); sprawdzane co HEX_ASTEROID_DEMOTE_CHECK_MS.
+const HEX_ASTEROID_IDLE_MS = 8000;
+const HEX_ASTEROID_DEMOTE_CHECK_MS = 500;
+const _singleCamProbe = [null];
 // Spin wyłączony - przy 500k asteroid każda obracająca się asteroida triggeruje
 // re-upload bufora instanceMatrix pool'a (~600KB/pula). To ~20MB/klatkę przy
 // gęstym pasie, czyli ostry FPS drop. Asteroidy w kosmosie obracają się tak wolno
@@ -215,6 +220,9 @@ class AsteroidPool {
     for (let i = 0; i < capacity; i++) this.mesh.setMatrixAt(i, hidden);
     this.mesh.instanceMatrix.needsUpdate = true;
     this.dirty = false;
+    // Zakres slotów zmienionych od ostatniego flush() — upload tylko tego wycinka.
+    this._dirtyMin = Infinity;
+    this._dirtyMax = -1;
     // GPU rysuje tylko sloty [0, watermark) - nieużyty margines pojemności
     // nie przechodzi przez vertex shader. Watermark rośnie w allocate().
     this.watermark = 0;
@@ -234,10 +242,16 @@ class AsteroidPool {
     return idx;
   }
 
+  _markDirty(idx) {
+    this.dirty = true;
+    if (idx < this._dirtyMin) this._dirtyMin = idx;
+    if (idx > this._dirtyMax) this._dirtyMax = idx;
+  }
+
   release(idx) {
     if (idx < 0 || idx >= this.capacity) return;
     this.mesh.setMatrixAt(idx, hideMatrix());
-    this.dirty = true;
+    this._markDirty(idx);
     this.activeCount--;
     this.free[this.freeTop++] = idx;
   }
@@ -245,7 +259,7 @@ class AsteroidPool {
   hide(idx) {
     if (idx < 0 || idx >= this.capacity) return;
     this.mesh.setMatrixAt(idx, hideMatrix());
-    this.dirty = true;
+    this._markDirty(idx);
   }
 
   writeMatrix(idx, x, y, z, rotZ, scale) {
@@ -255,14 +269,23 @@ class AsteroidPool {
     _POS.set(x, y, z);
     _MAT.compose(_POS, _QUAT, _SCALE);
     this.mesh.setMatrixAt(idx, _MAT);
-    this.dirty = true;
+    this._markDirty(idx);
   }
 
   flush() {
-    if (this.dirty) {
-      this.mesh.instanceMatrix.needsUpdate = true;
-      this.dirty = false;
+    if (!this.dirty) return;
+    const attr = this.mesh.instanceMatrix;
+    // Wycinek [min, max] zamiast całej puli: bez zakresu three wysyła cały
+    // bufor (do ~8 MB przy 125k slotów), a promocja/degradacja/zniszczenie
+    // jednej skały brudzi 1–3 sloty. Zakresy z kilku flush() w jednej klatce
+    // kumulują się; three kasuje je sam po uploadzie.
+    if (this._dirtyMax >= this._dirtyMin && typeof attr.addUpdateRange === 'function') {
+      attr.addUpdateRange(this._dirtyMin * 16, (this._dirtyMax - this._dirtyMin + 1) * 16);
     }
+    attr.needsUpdate = true;
+    this.dirty = false;
+    this._dirtyMin = Infinity;
+    this._dirtyMax = -1;
   }
 
   dispose() {
@@ -443,6 +466,8 @@ export class AsteroidField {
     this.maxActiveHexAsteroids = Math.max(8, Number(opts.maxActiveHexAsteroids) || 96);
     this._activeHexEntityBuffer = [];
     this._activeHexRemoveBuffer = [];
+    this._hexDemoteBuffer = [];
+    this._nextHexDemoteCheckMs = 0;
     /** Lista zdarzeń debris z ostatniej klatki - do konsumpcji przez systemy VFX. */
     this.debrisEvents = [];
     /** Set asteroid z vel != 0 (popchnięte, dryfują). Per-frame update tylko tych. */
@@ -452,6 +477,8 @@ export class AsteroidField {
     this._splitsThisFrame = [];
     /** Radialne pasma pasów (minR/maxR od Słońca) mierzone przy spawnie. */
     this._beltRadialBounds = new Map();
+    /** Te same pasma jako tablica — pętla bez iteratora w gorącej ścieżce kolizji. */
+    this._beltBandList = [];
     this._poolsVisible = true;
 
     this._initPools();
@@ -537,10 +564,112 @@ export class AsteroidField {
     asteroid._instancedHidden = false;
   }
 
-  _promoteAsteroidToHex(asteroid, reason = 'near') {
+  /**
+   * Ciało heksowe asteroidy schodzi z areny razem z encją. Dawniej zniszczone
+   * i porzucone heks-asteroidy dostawały tylko dead=true — a setPackedShardActive
+   * przełącza flagi, nie zwalnia slotów — więc ich heksy (tysiące przy dużej
+   * skali) zostawały w arenie 131 072 do końca sesji. Idempotentne.
+   */
+  _retireHexEntity(entity) {
+    if (!entity) return;
+    entity.dead = true;
+    entity.isCollidable = false;
+    disposeHexBody(entity);
+  }
+
+  /**
+   * Czy punkt (z promieniem) może być w kadrze którejś kamery gracza. Promocja
+   * od NPC i degradacja nie mają dziać się na oczach gracza. Bez danych
+   * o kamerze albo w split-screenie bez drugiej kamery — zachowawczo true.
+   */
+  _isNearView(x, y, radiusWorld = 0, marginPx = 240) {
+    if (typeof window === 'undefined') return true;
+    const vw = Math.max(1, Number(window.innerWidth) || 1920);
+    const vh = Math.max(1, Number(window.innerHeight) || 1080);
+    const split = !!window.splitScreenMode;
+    if (split && !window.camera2) return true;
+    const cams = split ? [window.camera, window.camera2] : _singleCamProbe;
+    if (!split) cams[0] = window.camera;
+    for (let i = 0; i < cams.length; i++) {
+      const cam = cams[i];
+      const cx = Number(cam?.x);
+      const cy = Number(cam?.y);
+      if (!Number.isFinite(cx) || !Number.isFinite(cy)) return true;
+      const zoom = Math.max(0.0001, Number(cam.zoom) || 1);
+      const halfW = (split ? vw * 0.25 : vw * 0.5) / zoom + radiusWorld + marginPx / zoom;
+      const halfH = vh * 0.5 / zoom + radiusWorld + marginPx / zoom;
+      if (Math.abs(x - cx) <= halfW && Math.abs(y - cy) <= halfH) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Degradacja z powrotem do instancji: tylko nietknięta (bez utraty heksów),
+   * stojąca asteroida, przy której od HEX_ASTEROID_IDLE_MS nie było statku,
+   * i poza kadrem. Uszkodzonych nie ruszamy — instancja nie ma jak pokazać
+   * ubytków. Bez tego budżet 96 zapełniał się raz na sesję (promocje od
+   * każdego NPC przelatującego przez pas) i skały przy graczu nie dostawały
+   * już heksów.
+   */
+  _canDemoteHexAsteroid(entity, nowMs) {
+    const asteroid = entity?.asteroidRef;
+    if (!asteroid || !asteroid.alive || entity.dead || !entity.hexGrid) return false;
+    const lastNear = Math.max(Number(entity.__shipNearMs) || 0, Number(entity.__promotedAtMs) || 0);
+    if (nowMs - lastNear < HEX_ASTEROID_IDLE_MS) return false;
+    const vx = Number(entity.vx) || 0;
+    const vy = Number(entity.vy) || 0;
+    if (vx * vx + vy * vy > 1) return false;
+    const structural = getHexStructuralState(entity);
+    if (!structural || structural.active < structural.total) return false;
+    return !this._isNearView(asteroid.worldX, asteroid.worldY, asteroid.scale);
+  }
+
+  _demoteHexAsteroid(entity) {
+    const asteroid = entity?.asteroidRef;
+    this._retireHexEntity(entity);
+    this.activeHexAsteroids.delete(entity);
+    if (!asteroid) return;
+    this.activeHexById.delete(asteroid.id);
+    if (asteroid.hexEntity === entity) asteroid.hexEntity = null;
+    asteroid._hexPromoted = false;
+    asteroid.vx = 0;
+    asteroid.vy = 0;
+    this._showAsteroidInstance(asteroid);
+  }
+
+  _demoteIdleHexAsteroids(nowMs) {
+    if (this.activeHexAsteroids.size === 0 || nowMs < this._nextHexDemoteCheckMs) return;
+    this._nextHexDemoteCheckMs = nowMs + HEX_ASTEROID_DEMOTE_CHECK_MS;
+    const demote = this._hexDemoteBuffer;
+    demote.length = 0;
+    for (const entity of this.activeHexAsteroids) {
+      if (this._canDemoteHexAsteroid(entity, nowMs)) demote.push(entity);
+    }
+    for (let i = 0; i < demote.length; i++) this._demoteHexAsteroid(demote[i]);
+    demote.length = 0;
+  }
+
+  // Pełny budżet przy promocji dla GRACZA: zwalniamy najdawniej odwiedzoną
+  // bezczynną asteroidę od razu, zamiast odmawiać heksów skale przy dziobie.
+  _evictIdleHexAsteroid(nowMs) {
+    let best = null;
+    let bestNear = Infinity;
+    for (const entity of this.activeHexAsteroids) {
+      if (!this._canDemoteHexAsteroid(entity, nowMs)) continue;
+      const lastNear = Math.max(Number(entity.__shipNearMs) || 0, Number(entity.__promotedAtMs) || 0);
+      if (lastNear < bestNear) { bestNear = lastNear; best = entity; }
+    }
+    if (!best) return false;
+    this._demoteHexAsteroid(best);
+    return true;
+  }
+
+  _promoteAsteroidToHex(asteroid, reason = 'near', forPlayer = false) {
     if (!asteroid || !asteroid.alive) return null;
     if (asteroid.hexEntity?.hexGrid) return asteroid.hexEntity;
-    if (this.activeHexAsteroids.size >= this.maxActiveHexAsteroids) return null;
+    if (this.activeHexAsteroids.size >= this.maxActiveHexAsteroids) {
+      if (!forPlayer || !this._evictIdleHexAsteroid(performance.now())) return null;
+    }
 
     const image = this._getAsteroidImage(asteroid);
     if (!image) return null;
@@ -562,6 +691,9 @@ export class AsteroidField {
     entity.hexGrid.wakeHoldFrames = 30;
     asteroid.hexEntity = entity;
     asteroid._hexPromoted = true;
+    // Zegar bezczynności dla degradacji (_canDemoteHexAsteroid).
+    entity.__promotedAtMs = performance.now();
+    entity.__shipNearMs = entity.__promotedAtMs;
 
     this.activeHexAsteroids.add(entity);
     this.activeHexById.set(asteroid.id, entity);
@@ -623,7 +755,17 @@ export class AsteroidField {
     for (let i = 0; i < remove.length; i++) {
       const entity = remove[i];
       const asteroid = entity?.asteroidRef;
-      if (asteroid?.hexEntity === entity) asteroid.hexEntity = null;
+      // Zwolnienie slotów areny (idempotentne — _destroy mógł już to zrobić).
+      this._retireHexEntity(entity);
+      if (asteroid?.hexEntity === entity) {
+        asteroid.hexEntity = null;
+        // Żywa skała, której encja heksowa odpadła (np. bez siatki), wisiała
+        // dotąd jako ukryta instancja — niewidoczna i nietykalna dla promocji.
+        if (asteroid.alive) {
+          asteroid._hexPromoted = false;
+          this._showAsteroidInstance(asteroid);
+        }
+      }
       this.activeHexAsteroids.delete(entity);
       if (entity?.asteroidId != null) this.activeHexById.delete(entity.asteroidId);
     }
@@ -725,7 +867,9 @@ export class AsteroidField {
     const key = beltId || 'belt';
     const band = this._beltRadialBounds.get(key);
     if (!band) {
-      this._beltRadialBounds.set(key, { minR: r, maxR: r });
+      const created = { minR: r, maxR: r };
+      this._beltRadialBounds.set(key, created);
+      this._beltBandList.push(created);
     } else {
       if (r < band.minR) band.minR = r;
       if (r > band.maxR) band.maxR = r;
@@ -774,6 +918,7 @@ export class AsteroidField {
     this._updatePoolRenderVisibility();
     this._pushShaftOccluders();
     this._syncActiveHexAsteroidsFromEntities();
+    this._demoteIdleHexAsteroids(performance.now());
     this._updateActiveHexAsteroids(dt);
     this._resolveActiveAsteroidImpacts();
     // Destruktor zawsze updateuje (przewija burstFramesLeft aktywnych hex bodies).
@@ -1143,8 +1288,7 @@ export class AsteroidField {
     asteroid.alive = false;
     const hexEntity = asteroid.hexEntity;
     if (hexEntity) {
-      hexEntity.dead = true;
-      hexEntity.isCollidable = false;
+      this._retireHexEntity(hexEntity);
       this.activeHexAsteroids.delete(hexEntity);
       this.activeHexById.delete(asteroid.id);
       asteroid.hexEntity = null;
@@ -1310,27 +1454,65 @@ export class AsteroidField {
    * @param {object} ship - { pos, vel, mass?, radius?, hp? }
    * @returns {Array} lista kolizji rozstrzygniętych w tej klatce
    */
-  checkShipCollisions(ship) {
+  /**
+   * Czy punkt leży w radialnym paśmie któregoś pasa (± margines). Wszystkie
+   * asteroidy przechodzą przez _spawn, który te pasma aktualizuje. Bez danych
+   * o pasmach — zachowawczo true.
+   */
+  _isNearAnyBelt(x, y, margin) {
+    const bands = this._beltBandList;
+    if (!bands || bands.length === 0) return true;
+    const dist = Math.hypot(x - this.sunX, y - this.sunY);
+    for (let i = 0; i < bands.length; i++) {
+      const band = bands[i];
+      if (dist >= band.minR - margin && dist <= band.maxR + margin) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Kolizje statku z asteroidami. Woła to physicsStep (120 Hz) z prawdziwym dt —
+   * dawniej leciało z render(): raz na klatkę (tunelowanie zależne od fps),
+   * z dt wpisanym na sztywno 1/60 i PO wyliczeniu interpolacji statku.
+   */
+  checkShipCollisions(ship, dt = 1 / 60) {
     if (!ship || !ship.pos) return null;
     const sx = ship.pos.x;
     const sy = ship.pos.y;
     const shipR = ship.radius || 30;
     // Promień zapytania: statek + max scale (BIG=1500u)
     const queryR = shipR + 1500;
+    // Statek daleko od wszystkich pasów: w hashu nic nie ma, a to leci co
+    // podkrok dla każdego NPC (lookup + domknięcie). Margines jak przy
+    // chowaniu pul: zapytanie + dryf popchniętych asteroid i BIG splitów.
+    if (!this._isNearAnyBelt(sx, sy, queryR + 9000)) return null;
 
     let collisions = null;
+    const nowMs = performance.now();
+    const isPlayerShip = ship.isPlayer === true
+      || (typeof window !== 'undefined' && (ship === window.ship || ship === window.player2Ship));
     this.spatial.forEachInRadius(sx, sy, queryR, (asteroid) => {
       if (!asteroid.alive) return;
-      if (asteroid.hexEntity?.hexGrid) return;
 
       const dxNear = sx - asteroid.worldX;
       const dyNear = sy - asteroid.worldY;
       const asteroidR = asteroid.scale * COLLISION_CONFIG.collisionRadiusFactor;
       const promoteR = shipR + asteroidR + 180;
-      if (dxNear * dxNear + dyNear * dyNear <= promoteR * promoteR) {
-        const promotedEntity = this._promoteAsteroidToHex(asteroid, 'ship-near');
-        if (promotedEntity?.hexGrid && ship?.hexGrid) {
-          DestructorSystem.collideEntities(ship, promotedEntity, 1 / 60, true);
+      const withinPromote = dxNear * dxNear + dyNear * dyNear <= promoteR * promoteR;
+      const hexEntity = asteroid.hexEntity;
+      if (hexEntity?.hexGrid) {
+        // Już heksowa (kolizje prowadzi destruktor) — tylko zegar bezczynności.
+        if (withinPromote) hexEntity.__shipNearMs = nowMs;
+        return;
+      }
+      if (withinPromote) {
+        // Promocja od NPC tylko przy kadrze: poza nim wystarcza kolizja kołowa
+        // niżej, a każda promocja to getImageData całej tekstury i slot z budżetu.
+        if (isPlayerShip || this._isNearView(asteroid.worldX, asteroid.worldY, asteroid.scale)) {
+          const promotedEntity = this._promoteAsteroidToHex(asteroid, 'ship-near', isPlayerShip);
+          if (promotedEntity?.hexGrid && ship?.hexGrid) {
+            DestructorSystem.collideEntities(ship, promotedEntity, dt, true);
+          }
         }
       }
 

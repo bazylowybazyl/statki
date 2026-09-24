@@ -1,34 +1,41 @@
-// Tryb „Lot K-7” dema ringu: rozgrywka doku gameplayowego z dema ECUMENE
-// (orbital_ring_gameplay_hub_v3.html) na nowym ringu. Atlas lata w płaszczyźnie
-// gry (z = 0), kamera gry podąża za nim, E = dokuj / oddokuj, W/S ciąg,
-// A/D obrót, Spacja hamulec, Shift dopalacz (poza halą).
+// Tryb „Lot” dema ringu: rozgrywka portu Ziemi (hale K-7 z dema ECUMENE,
+// orbital_ring_gameplay_hub_v3.html, i otwarte zatoki obok nich) na nowym
+// ringu. Statek lata w płaszczyźnie gry (z = 0), kamera gry podąża za nim,
+// E = dokuj / oddokuj, W/S ciąg, A/D obrót, Spacja hamulec, Shift dopalacz
+// (poza portem), V = zmiana kadłuba, T = skok przed tranzyt.
 //
-// Model lotu i automat dokowania: haloPortK7Layout.js (czysta logika z K-7).
-// Render hali: ring.k7 (haloPortK7.js). Tu tylko klej: stały krok 120 Hz,
-// wejście, kamera, HUD, sprite i kadłub Atlasa, płomienie dysz.
+// Kadłuby jak NPC ruchu v2 (haloPortHulls.js: Atlas, megafrachtowiec, ciężki
+// frachtowiec, frachtowiec dalekiego zasięgu, kontenerowiec, prom) — gracz
+// dokuje na każdym stanowisku, na którym kadłub się mieści: capital hal K-7
+// (suwnica, węże), grzebienie hal, pasy MEGA i grzebienie otwartych zatok
+// (mocowanie magnetyczne). Automat: haloPortDocking.js; model lotu i kolizje:
+// haloPortK7Layout.js. Tu klej: stały krok 120 Hz, wejście, kamera, HUD,
+// sprite i kadłub statku, płomienie dysz. Statków NPC i ruchu tu nie ma —
+// wdrażane osobno (2026-09-24).
 //
-// Hala jest wpięta w podłogę habitatu na środku wstęgi (płaszczyzna gry
-// przecina ring przez środek): podłoga i kadłub poza halą to przeszkoda —
-// przez ring prowadzą tylko 4 tranzyty (tunele w płycie, jak w K-7 z ECUMENE;
-// klawisz T = skok przed najbliższy). Górna ściana ringu nad wąwozem habitatu
-// dostaje wycięcia nad graczem (ring.setCutaway) — jak dach hali K-7.
+// Hale i zatoki są wpięte w podłogę habitatu na środku wstęgi (płaszczyzna gry
+// przecina ring przez środek): podłoga z terenem (góry!) i kadłub to przeszkoda
+// — przez ring prowadzą tylko 4 tranzyty. Górna ściana ringu nad wąwozem
+// habitatu dostaje wycięcia nad graczem (ring.setCutaway) — jak dach hali K-7.
 import * as THREE from 'three';
 import {
-  K7_ATLAS,
-  K7_ATLAS_COLLISION,
-  K7Docking,
   K7FlightModel,
   K7RoofFade,
-  buildK7Collision,
   k7HeadingToWorld,
   k7HeightToZ,
   k7HubToWorld,
   k7WorldToHub
 } from '../src/3d/haloRing/haloPortK7Layout.js';
-import { HALO_PORT, HALO_TRANSIT, haloPortSites, haloTransitAngles } from '../src/3d/haloRing/haloRingConfig.js';
+import { HALO_TRANSIT, haloTransitAngles } from '../src/3d/haloRing/haloRingConfig.js';
+import { bayLaneOf, haloXfPoint } from '../src/3d/haloRing/haloPortBays.js';
+import { HALO_PLAYER_HULLS, HALO_PLAYER_HULL_ORDER } from '../src/3d/haloRing/haloPortHulls.js';
+import { PortDocking, buildPortCollision, createPortRegistry } from '../src/3d/haloRing/haloPortDocking.js';
 
 const STEP = 1 / 120;
 const STATES = { DOCKED: 'ZADOKOWANY', DOCKING: 'DOKOWANIE', UNDOCKING: 'ODDOKOWANIE', FREE: 'LOT RĘCZNY' };
+const SIZE_RANK = { S: 0, M: 1, L: 2, CAPITAL: 3, MEGA: 4 };
+// stanowisko startowe kadłuba (kompleks gracza), gdy wolne
+const SPAWN = { atlas: 'C-01', heavy_freighter: 'C-02', megafreighter: 'Z02-MG2' };
 
 function flameTexture() {
   const c = document.createElement('canvas');
@@ -50,42 +57,43 @@ function flameTexture() {
   return new THREE.CanvasTexture(c);
 }
 
-// Kadłub Atlasa do kamery kinowej: wytłoczona obwiednia (ciemna burta pod
-// sprite'em) — w kamerze gry widać ją tylko jako lekką grubość przy brzegach.
-function atlasHull(layerBg) {
+// Kadłub pod sprite'em do kamery kinowej: wytłoczona obwiednia (ciemna burta)
+// — w kamerze gry widać ją tylko jako lekką grubość przy brzegach.
+function hullGeometry(hull) {
   const shape = new THREE.Shape();
-  K7_ATLAS_COLLISION.forEach(([u, v], i) => {
-    const x = u * K7_ATLAS.w;
-    const y = v * K7_ATLAS.h;
+  hull.outline.forEach(([u, v], i) => {
+    const x = u * hull.w;
+    const y = v * hull.h;
     if (i) shape.lineTo(x, y); else shape.moveTo(x, y);
   });
-  const depth = -k7HeightToZ(48);
+  const depth = -k7HeightToZ(48) * Math.min(1, Math.max(0.35, hull.h / 806));
   const g = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false });
   g.translate(0, 0, -depth - 1);
-  const m = new THREE.MeshBasicMaterial({ color: 0x0b1116 });
-  const mesh = new THREE.Mesh(g, m);
-  mesh.layers.set(layerBg);
-  mesh.frustumCulled = false;
-  return mesh;
+  return g;
 }
 
 export class K7FlightDemo {
-  constructor({ ring, scene, atlas, layers, $ }) {
+  constructor({ ring, scene, atlas, layers, $, loadTexture = null, daylightAt = null }) {
     this.ring = ring;
     this.$ = $;
     this.atlas = atlas;
+    this.loadTexture = loadTexture;
+    this.daylightAt = daylightAt;
+    this.textures = new Map();
     this.layout = ring.k7Layout;
     this.frame = ring.k7.frame;
     this.transitAngles = haloTransitAngles();
-    this.collision = buildK7Collision(this.layout);
-    this._addDockWalls();
-    this._addTransitWalls();
-    this.player = new K7FlightModel(this.collision, this.layout.spawnPoint);
-    this.docking = new K7Docking(this.layout, this.player);
-    const fp = this.layout.footprint.map(([x, z]) => ({ x, z }));
-    this.roof = new K7RoofFade(fp);
-    this.player.onNotice = (t) => this.notice(t);
-    this.docking.onNotice = (t) => this.notice(t);
+    this.registry = createPortRegistry({
+      halls: ring.k7Halls.map((h) => ({ index: h.index, frame: h.frame, layout: h.layout })),
+      bays: ring.bays,
+      frame: this.frame
+    });
+    this.collision = buildPortCollision({ registry: this.registry, frame: this.frame, ringLayout: ring.layout });
+    // czynnik „w porcie” (niższe limity lotu) i zanik dachu hal
+    this.hallFades = this.registry.halls.map((o) => new K7RoofFade(this._footprintHub(o)));
+    this.bayFades = this.registry.bays.map((o) => new K7RoofFade(this._footprintHub(o)));
+    this.roof = { fade: 0 };
+    this.inside = 0;
     this.accumulator = 0;
     this.active = false;
     this.keys = null;
@@ -93,79 +101,41 @@ export class K7FlightDemo {
     this.camInit = false;
     this._w = {};
     this._h = {};
+    this._q = {};
+    this.shipWorld = { x: 0, y: 0, heading: 0 };
     // kadłub pod sprite'em + płomienie dysz (świat ortho jak statki gry)
-    this.hull = atlasHull(layers.bg);
+    this.hull = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({ color: 0x0b1116 }));
+    this.hull.layers.set(layers.bg);
+    this.hull.frustumCulled = false;
     scene.add(this.hull);
     const tex = flameTexture();
-    this.flames = [-53, 0, 53].map((z) => {
+    this.flames = Array.from({ length: 4 }, () => {
       const mat = new THREE.MeshBasicMaterial({ map: tex, color: 0x9fe6ff, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
       const mesh = new THREE.Mesh(new THREE.PlaneGeometry(390, 64), mat);
       mesh.layers.set(layers.world);
       mesh.frustumCulled = false;
-      mesh.userData.offset = z;
       scene.add(mesh);
       return mesh;
     });
-    this.roof.update(this.player.polygon(), 0, true);
-    // płyta podłogi z kadłubem poza halą i tranzytami: środek statku poza
-    // pasem [kadłub − pół statku, podłoga + pół statku]
-    this.floorLimit = this.frame.floorR + K7_ATLAS.w * 0.5 + 60;
-    this.backLimit = this.ring.layout.radii.back - K7_ATLAS.w * 0.5 - 60;
-    this.hallHalf = this.layout.halfWidth + 600;
-    this.syncVisual();
+    this.hullId = 'atlas';
+    // sprite'y wszystkich kadłubów od razu (bez pustej klatki przy zmianie kadłuba)
+    if (this.loadTexture) {
+      for (const h of Object.values(HALO_PLAYER_HULLS)) {
+        if (h.id !== 'atlas' && !this.textures.has(h.sprite)) this.textures.set(h.sprite, this.loadTexture(h.sprite));
+      }
+    }
+    this.reset('docked');
     this._bindHud();
   }
 
-  // Ściany boczne i kołnierze zatok doków transportowych (obok K-7) jako
-  // przeszkody lotu — prostokąty obrócone o różnicę kątów doku i huba.
-  _addDockWalls() {
-    const L = this.ring.layout;
-    const f = this.frame;
-    const P = HALO_PORT;
-    const rF = f.floorR;
-    const D = L.wallHeight + P.reach;
-    const tmp = {};
-    for (const site of haloPortSites(L.radii.floorMid)) {
-      if (site.kind !== 'dock') continue;
-      const c = Math.cos(site.theta);
-      const s = Math.sin(site.theta);
-      const toHub = (xd, yd) => k7WorldToHub(f, rF * c - xd * s + yd * c, rF * s + xd * c + yd * s, tmp);
-      const ang = Math.atan2(-s * f.rx + c * f.ry, -s * f.tx + c * f.ty);
-      for (const sd of [-1, 1]) {
-        const tag = `DOK ${site.index + 1} ${sd < 0 ? 'W' : 'E'}`;
-        let h = toHub(sd * (P.dockLength - P.sideWall) * 0.5, D * 0.5);
-        this.collision.addBox(tag, h.x, h.z, P.sideWall, D, ang, -80, 460);
-        h = toHub(sd * (P.dockLength + P.collar) * 0.5, P.collarDepth * 0.5 - 30);
-        this.collision.addBox(tag + ' / KOŁNIERZ', h.x, h.z, P.collar, P.collarDepth + 60, ang, -80, 460);
-      }
-    }
+  // ---- świat kolizji (układ huba hali gracza): hale, zatoki, tranzyty —
+  // buildPortCollision (haloPortDocking.js). Statków NPC ring nie udaje.
+  _footprintHub(o) {
+    const q = {};
+    return o.layout.footprint.map(([x, z]) => { haloXfPoint(o.xf, x, z, q); return { x: q.x, z: q.z }; });
   }
 
-  // Tunele tranzytów: ściany i słupy portali (obu wylotów) jako przeszkody.
-  _addTransitWalls() {
-    const f = this.frame;
-    const T = HALO_TRANSIT;
-    const rF = f.floorR;
-    const slab = rF - this.ring.layout.radii.back;
-    const tmp = {};
-    this.transitAngles.forEach((theta, i) => {
-      const c = Math.cos(theta);
-      const s = Math.sin(theta);
-      const toHub = (xd, yd) => k7WorldToHub(f, (rF + yd) * c - xd * s, (rF + yd) * s + xd * c, tmp);
-      const ang = Math.atan2(-s * f.rx + c * f.ry, -s * f.tx + c * f.ty);
-      const id = 'T-' + String(i + 1).padStart(2, '0');
-      for (const sd of [-1, 1]) {
-        let h = toHub(sd * (T.halfWidth + T.wall * 0.5), (30 - slab - 40) * 0.5);
-        this.collision.addBox(id + ' ŚCIANA', h.x, h.z, T.wall, slab + 70, ang, -80, 460);
-        for (const [y0, y1] of [[-60, 150], [-slab - 150, -slab + 60]]) {
-          h = toHub(sd * (T.halfWidth + T.wall + T.frame * 0.5), (y0 + y1) * 0.5);
-          this.collision.addBox(id + ' PORTAL', h.x, h.z, T.frame, y1 - y0, ang, -80, 460);
-        }
-      }
-    });
-  }
-
-  // Środek statku w korytarzu tranzytu (płyta przecięta tunelem)?
+  // Środek punktu w korytarzu tranzytu (płyta przecięta tunelem)?
   _inTransit(wx, wy) {
     const th = Math.atan2(wy, wx);
     const R = this.ring.layout.radii.floorMid;
@@ -176,6 +146,134 @@ export class K7FlightDemo {
       if (Math.abs(d) * R < half) return true;
     }
     return false;
+  }
+
+  // ---- kadłub gracza --------------------------------------------------------
+  get hullSpec() { return HALO_PLAYER_HULLS[this.hullId]; }
+
+  setHull(id, mode = 'docked') {
+    if (!HALO_PLAYER_HULLS[id]) return this.hullId;
+    this.hullId = id;
+    this.reset(mode);
+    this.notice(`KADŁUB: ${this.hullSpec.name.toUpperCase()} / KLASA ${this.hullSpec.cls}`);
+    return id;
+  }
+
+  cycleHull() {
+    const i = HALO_PLAYER_HULL_ORDER.indexOf(this.hullId);
+    return this.setHull(HALO_PLAYER_HULL_ORDER[(i + 1) % HALO_PLAYER_HULL_ORDER.length], this.docking?.state === 'FREE' ? 'free' : 'docked');
+  }
+
+  _applyHullVisual() {
+    const h = this.hullSpec;
+    if (this.atlas) {
+      this.atlas.scale.set(h.w / 1800, h.h / 806, 1);
+      if (this.loadTexture && h.id !== 'atlas') {
+        if (!this.textures.has(h.sprite)) this.textures.set(h.sprite, this.loadTexture(h.sprite));
+        if (!this._atlasMap) this._atlasMap = this.atlas.material.map;
+        this.atlas.material.map = this.textures.get(h.sprite);
+      } else if (this._atlasMap) {
+        this.atlas.material.map = this._atlasMap;
+      }
+      this.atlas.material.needsUpdate = true;
+    }
+    this.hull.geometry.dispose();
+    this.hull.geometry = hullGeometry(h);
+  }
+
+  // Stanowisko startowe kadłuba w kompleksie gracza: wskazane w SPAWN albo
+  // najmniejsze wolne pasujące (zatoki przed halą, zatoka Z-02 przed innymi).
+  _spawnEntry() {
+    const h = this.hullSpec;
+    const d = this.docking;
+    const pick = SPAWN[h.id];
+    const all = this.registry.entries.filter((e) => e.complex === 0 && d.fits(e) && !d.taken(e.berth));
+    const named = all.find((e) => e.label === pick);
+    if (named) return named;
+    const score = (e) => SIZE_RANK[e.berth.size] * 10 + (e.kind === 'bay' ? 0 : 5) + (e.owner.layout.id === 'Z-02' ? 0 : 1);
+    all.sort((a, b) => score(a) - score(b));
+    return all[0] || null;
+  }
+
+  // Pozycja przed stanowiskiem (lot ręczny): capital K-7 na pasie przed G-01,
+  // grzebienie K-7 przed bramą boczną, pas MEGA i aleja zatoki nad wylotem.
+  _approachPose(e) {
+    const b = e.berth;
+    const l = e.owner.layout;
+    const h = this.hullSpec;
+    let x;
+    let z;
+    let angle = -Math.PI / 2;
+    if (e.kind === 'k7') {
+      if (b.size === 'CAPITAL') { x = b.x; z = l.frontZ + l.apronDepth - 150; } else {
+        const g = l.gates.find((v) => v.id === (b.side < 0 ? 'G-03' : 'G-02'));
+        x = g.x + g.nx * (600 + h.w * 0.5);
+        z = g.z + g.nz * (600 + h.w * 0.5);
+        angle = Math.atan2(-g.nz, -g.nx);
+      }
+    } else if (b.size === 'MEGA') { x = bayLaneOf(l, b).x; z = l.openZ + 300 + h.w * 0.5; } else { x = l.aisle.x; z = l.openZ + 250 + h.w * 0.5; }
+    const q = haloXfPoint(e.owner.xf, x, z, {});
+    return { x: q.x, z: q.z, angle: angle + e.owner.xf.phi };
+  }
+
+  // stan startowy do zrzutów: 'docked' | 'free' (przed stanowiskiem startowym)
+  reset(mode = 'docked') {
+    for (const e of this.registry.entries) {
+      const b = e.berth;
+      if (b.occupied === 'player') b.occupied = null;
+      if (b.reserved === 'player') b.reserved = null;
+    }
+    for (const o of this.registry.owners) {
+      for (const lane of o.layout.lanes || []) if (lane.reserved === 'player') lane.reserved = null;
+      if (o.poses) for (const pose of o.poses.values()) Object.assign(pose, { bridge: 0, trolley: 0, lower: 0, clamp: 0, extension: 0, lock: 0, flow: 0, vent: 0 });
+    }
+    const h = this.hullSpec;
+    this.player = new K7FlightModel(this.collision, { x: 0, z: 0, angle: 0 }, { w: h.w, h: h.h }, h.outline, h.tune);
+    this.player.onNotice = (t) => this.notice(t);
+    this.docking = new PortDocking(this.registry, this.player, h);
+    this.docking.onNotice = (t) => this.notice(t);
+    const e = this._spawnEntry();
+    if (e && mode !== 'free') this.docking.dockAt(e);
+    else if (e) {
+      const pose = this._approachPose(e);
+      this.player.x = pose.x;
+      this.player.z = pose.z;
+      this.player.angle = pose.angle;
+      this.player.locked = false;
+    }
+    this.spawn = e;
+    this._applyHullVisual();
+    this._updateFades(0, true);
+    this.camInit = false;
+  }
+
+  // Skok przed stanowisko (etykieta, np. 'Z02-M02' albo 'K7-2 C-03') — zrzuty, testy.
+  jumpToBerth(label) {
+    const e = this.registry.entries.find((v) => v.label === label);
+    if (!e) return false;
+    if (this.docking.state !== 'FREE') this.reset('free');
+    const pose = this._approachPose(e);
+    const p = this.player;
+    p.x = pose.x; p.z = pose.z; p.angle = pose.angle;
+    p.vx = p.vz = p.angVel = 0;
+    p.locked = false;
+    this.camInit = false;
+    this._updateFades(0, true);
+    return true;
+  }
+
+  // Ustawienie na polu STOP stanowiska (dziobem do stanowiska, bez prędkości) — testy.
+  placeOnBerth(label) {
+    const e = this.registry.entries.find((v) => v.label === label);
+    if (!e) return false;
+    if (this.docking.state !== 'FREE') this.reset('free');
+    const p = this.player;
+    p.x = e.x; p.z = e.z; p.angle = e.angle;
+    p.vx = p.vz = p.angVel = 0;
+    p.locked = false;
+    this.camInit = false;
+    this._updateFades(0, true);
+    return true;
   }
 
   // Skok przed wylot najbliższego tranzytu (strona habitatu), dziobem do tunelu.
@@ -192,7 +290,7 @@ export class K7FlightDemo {
       if (Math.abs(d) < bd) { bd = Math.abs(d); best = a; }
     }
     if (this.docking.state !== 'FREE') this.reset('free');
-    const r = f.floorR + 1500;
+    const r = f.floorR + 1500 + this.hullSpec.w * 0.4;
     const hub = k7WorldToHub(f, Math.cos(best) * r, Math.sin(best) * r, {});
     const dx = -Math.cos(best);
     const dy = -Math.sin(best);
@@ -207,49 +305,101 @@ export class K7FlightDemo {
     return idx;
   }
 
-  // Płyta podłogi z kadłubem — dopychanie promieniowe na bliższą stronę, bez odbicia.
-  _floorConstraint() {
+  // Podłoga z terenem (góry, pas fabryczny, płyty portu) i kadłub ringu:
+  // wierzchołki kadłuba nie wchodzą w płytę [kadłub ringu, teren] — dopychanie
+  // promieniowe na stronę środka statku (habitat albo planeta), bez odbicia.
+  // Tunel tranzytu otwiera płytę (wierzchołki w korytarzu pomijane).
+  _groundConstraint() {
     const p = this.player;
-    if (Math.abs(p.x) < this.hallHalf && p.z > 0) return;
-    const w = k7HubToWorld(this.frame, p.x, p.z, this._w);
-    const r = Math.hypot(w.x, w.y);
-    if (r >= this.floorLimit || r <= this.backLimit) return;
-    if (this._inTransit(w.x, w.y)) return;
-    const target = r - this.backLimit < this.floorLimit - r ? this.backLimit : this.floorLimit;
-    const ux = w.x / r;
-    const uy = w.y / r;
     const f = this.frame;
-    const k = target / r;
-    const hub = k7WorldToHub(f, w.x * k, w.y * k, this._h);
+    const L = this.ring.layout;
+    const back = L.radii.back;
+    const fm = L.radii.floorMid;
+    const c = k7HubToWorld(f, p.x, p.z, this._w);
+    const rc = Math.hypot(c.x, c.y);
+    const habitat = rc > (back + fm) * 0.5;
+    const poly = p.polygon();
+    let push = 0;
+    for (let i = 0; i < poly.length; i++) {
+      const w = k7HubToWorld(f, poly[i].x, poly[i].z, this._h);
+      const r = Math.hypot(w.x, w.y);
+      if (r > fm + 1400 || r < back - 400) continue;
+      if (this._inTransit(w.x, w.y)) continue;
+      if (habitat) {
+        const g = fm + Math.max(7, this.ring.terrainHeightAt(w.x, w.y, 0) || 0) + 14;
+        if (r < g && g - r > push) push = g - r;
+      } else {
+        const g = back - 14;
+        if (r > g && g - r < push) push = g - r;
+      }
+    }
+    if (push === 0) return;
+    const ux = c.x / rc;
+    const uy = c.y / rc;
+    const hub = k7WorldToHub(f, c.x + ux * push, c.y + uy * push, this._h);
     p.x = hub.x;
     p.z = hub.z;
     // prędkość w głąb płyty (składowa promieniowa w układzie huba) zerowana
     const rx = ux * f.tx + uy * f.ty;
     const rz = ux * f.rx + uy * f.ry;
     const vr = p.vx * rx + p.vz * rz;
-    const into = target > r ? vr < 0 : vr > 0;
-    if (into) { p.vx -= vr * rx; p.vz -= vr * rz; }
+    if (push > 0 ? vr < 0 : vr > 0) { p.vx -= vr * rx; p.vz -= vr * rz; }
   }
 
-  // Wycięcia górnej ściany ringu (kamera gry): nad halą, gdy dach hali znika
-  // (gracz w środku), i koło nad statkiem, gdy leci pod górną ścianą.
+  // Zanik dachów hal i czynnik „w porcie” (hale i zatoki) — tylko w pobliżu statku.
+  _updateFades(dt, instant = false) {
+    const hull = this.player.polygon();
+    const p = this.player;
+    let inside = 0;
+    let roof = 0;
+    this.hallIndex = -1;
+    this.bayIndex = -1;
+    this.registry.halls.forEach((o, i) => {
+      const f = this.hallFades[i];
+      const c = f.footprint[0];
+      if (Math.hypot(p.x - c.x, p.z - c.z) > 16000 && f.fade < 0.001) { f.fade = 0; return; }
+      f.update(hull, dt, instant);
+      if (f.fade > roof) { roof = f.fade; this.hallIndex = i; }
+    });
+    let bayIn = 0;
+    this.registry.bays.forEach((o, i) => {
+      const f = this.bayFades[i];
+      const c = f.footprint[0];
+      if (Math.hypot(p.x - c.x, p.z - c.z) > 9000 && f.fade < 0.001) { f.fade = 0; return; }
+      f.update(hull, dt, instant);
+      if (f.fade > bayIn) { bayIn = f.fade; this.bayIndex = i; }
+    });
+    inside = Math.max(roof, bayIn);
+    this.roof.fade = roof;
+    this.bayFade = bayIn;
+    this.inside = inside;
+  }
+
+  // Wycięcia górnej ściany ringu (kamera gry): nad halą (gdy dach hali znika)
+  // albo nad zatoką, w której jest statek, i koło nad statkiem pod górną ścianą.
   _cutaways() {
     const ring = this.ring;
     if (!ring.setCutaway) return;
     if (!this.active) { ring.setCutaway(0, null); ring.setCutaway(1, null); return; }
-    const f = this.frame;
-    const l = this.layout;
-    const z0 = f.floorZ - 100;
-    const z1 = f.rimZ + 800;
-    const c = k7HubToWorld(f, 0, (z0 + z1) * 0.5, this._h);
-    ring.setCutaway(0, { x: c.x, y: c.y, angle: Math.atan2(f.ty, f.tx), a: l.halfWidth + 600, b: (z1 - z0) * 0.5, strength: this.roof.fade });
+    const inHall = this.roof.fade >= this.bayFade && this.hallIndex >= 0;
+    if (inHall || this.bayIndex >= 0) {
+      const o = inHall ? this.registry.halls[this.hallIndex] : this.registry.bays[this.bayIndex];
+      const f = o.frame;
+      const l = o.layout;
+      const z0 = f.floorZ - 100;
+      const z1 = inHall ? f.rimZ + 800 : l.openZ + 200;
+      const half = (inHall ? l.halfWidth : l.halfWidth + 400) + 600;
+      const c = k7HubToWorld(f, 0, (z0 + z1) * 0.5, this._h);
+      ring.setCutaway(0, { x: c.x, y: c.y, angle: Math.atan2(f.ty, f.tx), a: half, b: (z1 - z0) * 0.5, strength: inHall ? this.roof.fade : this.bayFade });
+    } else ring.setCutaway(0, null);
     const s = this.shipWorld;
     const r = Math.hypot(s.x, s.y);
     const rim = ring.layout.radii.rim;
     const back = ring.layout.radii.back;
     // pod górną ścianą: wąwóz habitatu, tunel tranzytu i pas tuż za kadłubem
     const under = Math.min(1, Math.max(0, (rim + 1300 - r) / 700)) * Math.min(1, Math.max(0, (r - (back - 1500)) / 700));
-    ring.setCutaway(1, { x: s.x, y: s.y, a: 1350, b: 1350, strength: under });
+    const rad = Math.max(1350, this.hullSpec.w * 0.75);
+    ring.setCutaway(1, { x: s.x, y: s.y, a: rad, b: rad, strength: under });
   }
 
   _bindHud() {
@@ -275,35 +425,6 @@ export class K7FlightDemo {
 
   action() { return this.docking.action(); }
 
-  // stan startowy do zrzutów: 'docked' | 'free' (na pasie przed C-01)
-  reset(mode = 'docked') {
-    const l = this.layout;
-    for (const b of l.berths) {
-      if (b.size === 'CAPITAL') { b.occupied = b.id === 'C-01' ? 'player' : null; b.reserved = b.id === 'C-01' ? 'player' : null; }
-    }
-    for (const lane of l.lanes) lane.reserved = lane.berthId === 'C-01' ? 'player' : null;
-    this.player = new K7FlightModel(this.collision, l.spawnPoint);
-    this.player.onNotice = (t) => this.notice(t);
-    this.docking = new K7Docking(l, this.player);
-    this.docking.onNotice = (t) => this.notice(t);
-    if (mode === 'free') {
-      this.docking.update(0);
-      this.docking.state = 'FREE';
-      this.docking.berth = null;
-      for (const pose of this.docking.poses.values()) Object.assign(pose, { bridge: 0, trolley: 0, lower: 0, clamp: 0, extension: 0, lock: 0, flow: 0, vent: 0 });
-      l.berths[0].occupied = null;
-      l.berths[0].reserved = null;
-      l.lanes[0].reserved = null;
-      this.player.locked = false;
-      // przed bramą główną G-01, dziobem do hali, na pasie C-01
-      this.player.x = l.berths[0].x;
-      this.player.z = l.frontZ + l.apronDepth - 150;
-      this.player.angle = -Math.PI / 2;
-    }
-    this.roof.update(this.player.polygon(), 0, true);
-    this.camInit = false;
-  }
-
   // Stały krok 120 Hz (jak K-7), maks. 14 kroków na klatkę.
   update(dt, keys) {
     const p = this.player;
@@ -319,23 +440,26 @@ export class K7FlightDemo {
     let n = 0;
     while (this.accumulator >= STEP && n < 14) {
       this.docking.update(STEP);
-      p.step(STEP, this.roof.fade);
-      this._floorConstraint();
+      p.step(STEP, this.inside);
+      this._groundConstraint();
       this.accumulator -= STEP;
       n++;
     }
     if (n === 14) this.accumulator = 0;
-    this.roof.update(p.polygon(), dt);
-    this.syncVisual();
+    this._updateFades(dt);
+    this.syncVisual(dt);
   }
 
-  // Sprite i kadłub Atlasa w świecie, płomienie dysz, render hali.
-  syncVisual() {
+  // Sprite i kadłub statku w świecie, płomienie dysz, render hal (pozy, dachy, lampki).
+  syncVisual(dt = 0) {
     const p = this.player;
+    const h = this.hullSpec;
     const w = k7HubToWorld(this.frame, p.x, p.z, this._w);
     const heading = k7HeadingToWorld(this.frame, p.angle);
-    this.shipWorld = { x: w.x, y: w.y, heading };
-    if (this.active) {
+    this.shipWorld.x = w.x;
+    this.shipWorld.y = w.y;
+    this.shipWorld.heading = heading;
+    if (this.active && this.atlas) {
       this.atlas.position.set(w.x, w.y, 0);
       this.atlas.rotation.set(0, 0, heading);
       this.atlas.updateMatrixWorld();
@@ -347,31 +471,38 @@ export class K7FlightDemo {
     const thrust = p.locked ? 0 : p.thrust;
     const c = Math.cos(heading);
     const s = Math.sin(heading);
+    const E = h.engines;
+    const size = h.h / 806;
     for (let i = 0; i < this.flames.length; i++) {
       const f = this.flames[i];
       const k = Math.max(0, thrust);
-      f.visible = this.active && k > 0.015;
-      const sx = 0.3 + k * (0.85 + 0.07 * Math.sin(performance.now() * 0.032 + i));
-      f.scale.set(sx, 1, 1);
-      const lx = -K7_ATLAS.w * 0.463 - 195 * sx;
-      const ly = f.userData.offset;
+      const used = i < E.z.length;
+      f.visible = this.active && used && k > 0.015;
+      if (!f.visible) continue;
+      const sx = (0.3 + k * (0.85 + 0.07 * Math.sin(performance.now() * 0.032 + i))) * size;
+      f.scale.set(sx, size, 1);
+      const lx = -h.w * E.stern - 195 * sx;
+      const ly = E.z[i] * h.h;
       f.position.set(w.x + lx * c - ly * s, w.y + lx * s + ly * c, 1);
       f.rotation.set(0, 0, heading + Math.PI);
       f.material.opacity = Math.min(1, k);
       f.updateMatrixWorld();
     }
-    const k7 = this.ring.k7;
-    if (k7) {
-      k7.update(0, { poses: this.docking.poses, roofFade: this.active ? this.roof.fade : 0, daylight: this.daylight ?? 1 });
-      k7.setBerthLamps(this.layout);
-    }
+    // hale: suwnice (pozy automatu), dach nad statkiem w hali, światła dnia i nocy, lampki stanowisk
+    this.ring.k7Halls.forEach((hall, i) => {
+      const o = this.registry.halls[i];
+      const fr = hall.frame;
+      const day = this.daylightAt ? this.daylightAt(fr.origin.x, fr.origin.y) : 1;
+      hall.update(dt, { poses: o.poses, roofFade: this.active ? this.hallFades[i].fade : 0, daylight: day });
+      hall.setBerthLamps();
+    });
     this._cutaways();
   }
 
   // Kamera gry podąża za statkiem z wyprzedzeniem (K-7 GameplayCamera, bez przechyłu).
   followCamera(gameCam, dt) {
     const p = this.player;
-    const inside = this.roof.fade;
+    const inside = this.inside;
     let lx = p.vx * 0.4 * (1 - inside * 0.85);
     let lz = p.vz * 0.4 * (1 - inside * 0.85);
     const len = Math.hypot(lx, lz);
@@ -397,26 +528,27 @@ export class K7FlightDemo {
     const $ = this.$;
     const p = this.player;
     const d = this.docking;
+    const h = this.hullSpec;
     const c = d.state === 'FREE' ? d.candidate() : null;
     const speed = Math.hypot(p.vx, p.vz);
     $('k7-state').textContent = STATES[d.state];
     $('k7-service').textContent = d.detail;
     $('k7-phase').style.width = `${(d.progress * 100).toFixed(1)}%`;
     $('k7-speed').textContent = Math.round(speed);
-    $('k7-berth').textContent = d.berth?.id || (c && c.distance < 1800 ? c.berth.id : '--');
+    $('k7-berth').textContent = d.entry?.label || (c && c.distance < 1800 ? c.entry.label : '--');
     $('k7-fuel').textContent = `${p.fuel.toFixed(0)}%`;
     $('k7-fuel-bar').style.width = `${p.fuel.toFixed(1)}%`;
-    $('k7-mode').textContent = p.locked ? 'NAPĘD ZABLOKOWANY' : this.roof.fade > 0.5 ? 'MANEWRY PORTOWE · LIMIT 210' : 'LOT SWOBODNY';
-    const l = this.layout;
-    const gateDist = Math.hypot(p.x, p.z - l.frontZ);
-    $('k7-gate').textContent = `brama G-01: ${(gateDist / 1000).toFixed(1)} km`;
+    $('k7-mode').textContent = p.locked ? 'NAPĘD ZABLOKOWANY' : this.inside > 0.5 ? `MANEWRY PORTOWE · LIMIT ${h.tune.speedIn}` : 'LOT SWOBODNY';
+    const near = c ? `wolne ${c.entry.label} · ${(c.distance / 1000).toFixed(1)} km` : 'brak wolnego stanowiska';
+    $('k7-gate').textContent = `${h.name} [${h.cls}] · ${near}`;
     let action = '';
     let hint = '';
-    if (d.state === 'DOCKED') { action = 'ODDOKUJ (E)'; hint = 'E: odłącz obsługę. Potem S: wycofaj po swoim pasie.'; }
+    if (d.state === 'DOCKED') { action = 'ODDOKUJ (E)'; hint = 'E: odłącz obsługę. Potem S: wycofaj z pola stanowiska.'; }
     else if (d.state === 'FREE') {
-      if (c?.ok) { action = `DOKUJ ${c.berth.id} (E)`; hint = 'Pozycja, prędkość i kierunek prawidłowe.'; }
-      else if (this.roof.fade > 0.65) hint = c && c.distance < 1750 ? `${c.reason} / ${c.berth.id}` : 'S: wylot tyłem. W: podejście dziobem do stanowiska.';
-      else hint = 'Powrót: główna brama K-7. Na stanowisku wyhamuj i naciśnij E.';
+      if (c?.ok) { action = `DOKUJ ${c.entry.label} (E)`; hint = 'Pozycja, prędkość i kierunek prawidłowe.'; }
+      else if (c && c.distance < 1750) hint = `${c.reason} / ${c.entry.label}`;
+      else if (this.inside > 0.65) hint = 'S: wylot tyłem. W: podejście dziobem do stanowiska.';
+      else hint = 'Wolne stanowisko w hali K-7 albo w otwartej zatoce: dziobem na pole, wyhamuj, E. V: inny kadłub.';
     } else hint = 'Sekwencja mechaniczna — sterowanie wróci po odsunięciu urządzeń.';
     $('k7-hint').textContent = hint;
     const btn = $('k7-action');

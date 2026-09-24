@@ -1,0 +1,610 @@
+[
+ {
+  "hullKey": "battleship",
+  "weaponId": "beam_pulse",
+  "dir": "burta",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 1,
+  "killFrac": 0.25,
+  "bridgeHexes": [
+   102
+  ],
+  "hexTotal": 2923,
+  "damagePerShot": 45,
+  "interval": 0.65,
+  "bridge": {
+   "shots": 242,
+   "time": 157.3,
+   "damage": 10890,
+   "alive": 0.7403352719808416
+  },
+  "pool": {
+   "shots": 265,
+   "time": 172.25,
+   "damage": 11925,
+   "alive": 0.7365720150530277,
+   "cause": "pool"
+  },
+  "shots": 265,
+  "misses": 0,
+  "hardpointsLost": 2,
+  "ceilingDamage": 0,
+  "probeMisses": 2,
+  "probeRescued": 2,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "mostek"
+ },
+ {
+  "hullKey": "battleship",
+  "weaponId": "beam_pulse",
+  "dir": "burta",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 1,
+  "killFrac": 0.35,
+  "bridgeHexes": [
+   102
+  ],
+  "hexTotal": 2923,
+  "damagePerShot": 45,
+  "interval": 0.65,
+  "bridge": {
+   "shots": 242,
+   "time": 157.3,
+   "damage": 10890,
+   "alive": 0.7403352719808416
+  },
+  "pool": {
+   "shots": 265,
+   "time": 172.25,
+   "damage": 11925,
+   "alive": 0.7365720150530277,
+   "cause": "pool"
+  },
+  "shots": 265,
+  "misses": 0,
+  "hardpointsLost": 2,
+  "ceilingDamage": 0,
+  "probeMisses": 2,
+  "probeRescued": 2,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "mostek"
+ },
+ {
+  "hullKey": "battleship",
+  "weaponId": "beam_pulse",
+  "dir": "burta",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 1,
+  "killFrac": 0.45,
+  "bridgeHexes": [
+   102
+  ],
+  "hexTotal": 2923,
+  "damagePerShot": 45,
+  "interval": 0.65,
+  "bridge": {
+   "shots": 242,
+   "time": 157.3,
+   "damage": 10890,
+   "alive": 0.7403352719808416
+  },
+  "pool": {
+   "shots": 265,
+   "time": 172.25,
+   "damage": 11925,
+   "alive": 0.7365720150530277,
+   "cause": "pool"
+  },
+  "shots": 265,
+  "misses": 0,
+  "hardpointsLost": 2,
+  "ceilingDamage": 0,
+  "probeMisses": 2,
+  "probeRescued": 2,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "mostek"
+ },
+ {
+  "hullKey": "battleship",
+  "weaponId": "beam_pulse",
+  "dir": "burta",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 1,
+  "killFrac": 0.6,
+  "bridgeHexes": [
+   102
+  ],
+  "hexTotal": 2923,
+  "damagePerShot": 45,
+  "interval": 0.65,
+  "bridge": {
+   "shots": 351,
+   "time": 228.15,
+   "damage": 15795,
+   "alive": 0.721861101607937
+  },
+  "pool": {
+   "shots": 265,
+   "time": 172.25,
+   "damage": 11925,
+   "alive": 0.7365720150530277,
+   "cause": "pool"
+  },
+  "shots": 351,
+  "misses": 0,
+  "hardpointsLost": 2,
+  "ceilingDamage": 0,
+  "probeMisses": 2,
+  "probeRescued": 2,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "battleship",
+  "weaponId": "beam_pulse",
+  "dir": "burta",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 1.5,
+  "killFrac": 0.25,
+  "bridgeHexes": [
+   102
+  ],
+  "hexTotal": 2923,
+  "damagePerShot": 45,
+  "interval": 0.65,
+  "bridge": {
+   "shots": 258,
+   "time": 167.70000000000002,
+   "damage": 11610,
+   "alive": 0.7399931577146767
+  },
+  "pool": {
+   "shots": 265,
+   "time": 172.25,
+   "damage": 11925,
+   "alive": 0.738966814916182,
+   "cause": "pool"
+  },
+  "shots": 265,
+  "misses": 0,
+  "hardpointsLost": 2,
+  "ceilingDamage": 0,
+  "probeMisses": 2,
+  "probeRescued": 2,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "mostek"
+ },
+ {
+  "hullKey": "battleship",
+  "weaponId": "beam_pulse",
+  "dir": "burta",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 1.5,
+  "killFrac": 0.35,
+  "bridgeHexes": [
+   102
+  ],
+  "hexTotal": 2923,
+  "damagePerShot": 45,
+  "interval": 0.65,
+  "bridge": {
+   "shots": 258,
+   "time": 167.70000000000002,
+   "damage": 11610,
+   "alive": 0.7399931577146767
+  },
+  "pool": {
+   "shots": 265,
+   "time": 172.25,
+   "damage": 11925,
+   "alive": 0.738966814916182,
+   "cause": "pool"
+  },
+  "shots": 265,
+  "misses": 0,
+  "hardpointsLost": 2,
+  "ceilingDamage": 0,
+  "probeMisses": 2,
+  "probeRescued": 2,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "mostek"
+ },
+ {
+  "hullKey": "battleship",
+  "weaponId": "beam_pulse",
+  "dir": "burta",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 1.5,
+  "killFrac": 0.45,
+  "bridgeHexes": [
+   102
+  ],
+  "hexTotal": 2923,
+  "damagePerShot": 45,
+  "interval": 0.65,
+  "bridge": {
+   "shots": 258,
+   "time": 167.70000000000002,
+   "damage": 11610,
+   "alive": 0.7399931577146767
+  },
+  "pool": {
+   "shots": 265,
+   "time": 172.25,
+   "damage": 11925,
+   "alive": 0.738966814916182,
+   "cause": "pool"
+  },
+  "shots": 265,
+  "misses": 0,
+  "hardpointsLost": 2,
+  "ceilingDamage": 0,
+  "probeMisses": 2,
+  "probeRescued": 2,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "mostek"
+ },
+ {
+  "hullKey": "battleship",
+  "weaponId": "beam_pulse",
+  "dir": "burta",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 1.5,
+  "killFrac": 0.6,
+  "bridgeHexes": [
+   102
+  ],
+  "hexTotal": 2923,
+  "damagePerShot": 45,
+  "interval": 0.65,
+  "bridge": {
+   "shots": 367,
+   "time": 238.55,
+   "damage": 16515,
+   "alive": 0.7215189873417721
+  },
+  "pool": {
+   "shots": 265,
+   "time": 172.25,
+   "damage": 11925,
+   "alive": 0.7386247006500171,
+   "cause": "pool"
+  },
+  "shots": 367,
+  "misses": 0,
+  "hardpointsLost": 2,
+  "ceilingDamage": 0,
+  "probeMisses": 2,
+  "probeRescued": 2,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "battleship",
+  "weaponId": "beam_pulse",
+  "dir": "burta",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 2,
+  "killFrac": 0.25,
+  "bridgeHexes": [
+   102
+  ],
+  "hexTotal": 2923,
+  "damagePerShot": 45,
+  "interval": 0.65,
+  "bridge": {
+   "shots": 272,
+   "time": 176.8,
+   "damage": 12240,
+   "alive": 0.7399931577146767
+  },
+  "pool": {
+   "shots": 267,
+   "time": 173.55,
+   "damage": 12015,
+   "alive": 0.9586041737940472,
+   "cause": "pool"
+  },
+  "shots": 272,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 2,
+  "probeRescued": 2,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "battleship",
+  "weaponId": "beam_pulse",
+  "dir": "burta",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 2,
+  "killFrac": 0.35,
+  "bridgeHexes": [
+   102
+  ],
+  "hexTotal": 2923,
+  "damagePerShot": 45,
+  "interval": 0.65,
+  "bridge": {
+   "shots": 272,
+   "time": 176.8,
+   "damage": 12240,
+   "alive": 0.7399931577146767
+  },
+  "pool": {
+   "shots": 267,
+   "time": 173.55,
+   "damage": 12015,
+   "alive": 0.9586041737940472,
+   "cause": "pool"
+  },
+  "shots": 272,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 2,
+  "probeRescued": 2,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "battleship",
+  "weaponId": "beam_pulse",
+  "dir": "burta",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 2,
+  "killFrac": 0.45,
+  "bridgeHexes": [
+   102
+  ],
+  "hexTotal": 2923,
+  "damagePerShot": 45,
+  "interval": 0.65,
+  "bridge": {
+   "shots": 272,
+   "time": 176.8,
+   "damage": 12240,
+   "alive": 0.7399931577146767
+  },
+  "pool": {
+   "shots": 267,
+   "time": 173.55,
+   "damage": 12015,
+   "alive": 0.9586041737940472,
+   "cause": "pool"
+  },
+  "shots": 272,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 2,
+  "probeRescued": 2,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "battleship",
+  "weaponId": "beam_pulse",
+  "dir": "burta",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 2,
+  "killFrac": 0.6,
+  "bridgeHexes": [
+   102
+  ],
+  "hexTotal": 2923,
+  "damagePerShot": 45,
+  "interval": 0.65,
+  "bridge": {
+   "shots": 384,
+   "time": 249.60000000000002,
+   "damage": 17280,
+   "alive": 0.7215189873417721
+  },
+  "pool": {
+   "shots": 267,
+   "time": 173.55,
+   "damage": 12015,
+   "alive": 0.9586041737940472,
+   "cause": "pool"
+  },
+  "shots": 384,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 2,
+  "probeRescued": 2,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "battleship",
+  "weaponId": "beam_pulse",
+  "dir": "burta",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 3,
+  "killFrac": 0.25,
+  "bridgeHexes": [
+   102
+  ],
+  "hexTotal": 2923,
+  "damagePerShot": 45,
+  "interval": 0.65,
+  "bridge": {
+   "shots": 322,
+   "time": 209.3,
+   "damage": 14490,
+   "alive": 0.7396510434485118
+  },
+  "pool": {
+   "shots": 267,
+   "time": 173.55,
+   "damage": 12015,
+   "alive": 0.9637358877865208,
+   "cause": "pool"
+  },
+  "shots": 322,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 3,
+  "probeRescued": 3,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "battleship",
+  "weaponId": "beam_pulse",
+  "dir": "burta",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 3,
+  "killFrac": 0.35,
+  "bridgeHexes": [
+   102
+  ],
+  "hexTotal": 2923,
+  "damagePerShot": 45,
+  "interval": 0.65,
+  "bridge": {
+   "shots": 322,
+   "time": 209.3,
+   "damage": 14490,
+   "alive": 0.7396510434485118
+  },
+  "pool": {
+   "shots": 267,
+   "time": 173.55,
+   "damage": 12015,
+   "alive": 0.9637358877865208,
+   "cause": "pool"
+  },
+  "shots": 322,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 3,
+  "probeRescued": 3,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "battleship",
+  "weaponId": "beam_pulse",
+  "dir": "burta",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 3,
+  "killFrac": 0.45,
+  "bridgeHexes": [
+   102
+  ],
+  "hexTotal": 2923,
+  "damagePerShot": 45,
+  "interval": 0.65,
+  "bridge": {
+   "shots": 322,
+   "time": 209.3,
+   "damage": 14490,
+   "alive": 0.7396510434485118
+  },
+  "pool": {
+   "shots": 267,
+   "time": 173.55,
+   "damage": 12015,
+   "alive": 0.9637358877865208,
+   "cause": "pool"
+  },
+  "shots": 322,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 3,
+  "probeRescued": 3,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "battleship",
+  "weaponId": "beam_pulse",
+  "dir": "burta",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 3,
+  "killFrac": 0.6,
+  "bridgeHexes": [
+   102
+  ],
+  "hexTotal": 2923,
+  "damagePerShot": 45,
+  "interval": 0.65,
+  "bridge": {
+   "shots": 440,
+   "time": 286,
+   "damage": 19800,
+   "alive": 0.7204926445432774
+  },
+  "pool": {
+   "shots": 267,
+   "time": 173.55,
+   "damage": 12015,
+   "alive": 0.9637358877865208,
+   "cause": "pool"
+  },
+  "shots": 440,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 3,
+  "probeRescued": 3,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ }
+]

@@ -2,8 +2,16 @@
 // Heading target and assist torque for ship stabilizer mode.
 
 import { SHIP_PHYSICS } from './thrusterModel.js';
+import {
+  HEADING_THRUSTER_LAG,
+  computeHeadingTorqueCommand,
+  computeTurnStoppingAngle
+} from './headingControl.js';
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, Number(value) || 0));
+
+// Najdalej, jak strzałka może wyprzedzić dziób przy trzymanym A/D.
+export const STABILIZER_MAX_ARROW_LEAD = (170 * Math.PI) / 180;
 
 export function wrapAngle(angle) {
   let a = Number(angle) || 0;
@@ -50,6 +58,8 @@ export function updateHeadingStabilizer(state, ship, dt, options = {}) {
   if (!enabled) {
     s.enabled = false;
     s.targetAngle = angle;
+    s.targetOffset = 0;
+    s.lastAngle = angle;
     return writeOutput(s, {
       active: false,
       manualActive: false,
@@ -66,6 +76,21 @@ export function updateHeadingStabilizer(state, ship, dt, options = {}) {
   }
   s.enabled = true;
 
+  // Strzałka jako przesunięcie względem dziobu, BEZ zawijania do ±180°.
+  // Zawinięta strzałka po przejechaniu 180° wskazywała „na skróty" w drugą
+  // stronę i statek zawracał. s.targetAngle zostaje kanoniczną strzałką dla
+  // HUD i dla zmian z zewnątrz (setFlightStabilizerEnabled).
+  let offset = Number(s.targetOffset);
+  const lastAngle = Number(s.lastAngle);
+  if (!Number.isFinite(offset) || !Number.isFinite(lastAngle)) {
+    offset = wrapAngle(Number(s.targetAngle) - angle);
+  } else {
+    offset -= wrapAngle(angle - lastAngle);
+    if (Math.abs(wrapAngle(angle + offset - Number(s.targetAngle))) > 1e-6) {
+      offset = wrapAngle(Number(s.targetAngle) - angle);
+    }
+  }
+
   const physics = options.physics || SHIP_PHYSICS;
   const manualDeadzone = Math.max(0, Math.min(0.5, Number(options.manualDeadzone) || 0.08));
   const manualTorque = clamp(options.manualTorque, -1, 1);
@@ -80,71 +105,67 @@ export function updateHeadingStabilizer(state, ship, dt, options = {}) {
       Number(options.targetTurnRate) || Math.max(1.4, Number(physics?.MAX_TURN_SPEED) || SHIP_PHYSICS.MAX_TURN_SPEED)
     );
     targetRate = manualNorm * targetTurnRate;
-    s.targetAngle = wrapAngle((Number(s.targetAngle) || 0) + targetRate * clampedDt);
+    // Strzałka biegnie dużo szybciej niż ciężki kadłub się obraca — nie dalej
+    // niż STABILIZER_MAX_ARROW_LEAD przed dziób, żeby kierunek obrotu był
+    // zawsze jednoznaczny (dalej niż 180° nie odróżnisz prawo od lewo).
+    const next = offset + targetRate * clampedDt;
+    offset = Math.abs(next) > STABILIZER_MAX_ARROW_LEAD && Math.abs(next) > Math.abs(offset)
+      ? Math.sign(next) * Math.max(Math.abs(offset), STABILIZER_MAX_ARROW_LEAD)
+      : next;
   }
 
-  const targetAngle = wrapAngle(s.targetAngle);
-  s.targetAngle = targetAngle;
-  const headingError = wrapAngle(targetAngle - angle);
-  const headingKp = Math.max(0, Number(options.headingKp) || 2.2);
-  const headingKd = Math.max(0, Number(options.headingKd) || 1.2);
+  // Prawdziwa zdolność obrotu statku (resolveShipTurnCapability z index.html).
+  // Bez niej — stary szacunek; dawna stała 0,85 rad/s² była ~23× za optymistyczna
+  // dla Atlasa, więc stabilizator hamował za późno i kiwał się wokół strzałki.
+  const capability = options.turnCapability || null;
+  const turnAccel = Math.max(1e-3, Number(capability?.accel) || Number(options.brakeAccel) || 0.85);
+  const maxTurnRate = Math.max(0.02, Number(capability?.maxRate) || Number(physics?.MAX_TURN_SPEED) || SHIP_PHYSICS.MAX_TURN_SPEED);
+  const lagTime = Number.isFinite(Number(capability?.lag)) ? Number(capability.lag) : HEADING_THRUSTER_LAG;
   const maxAssist = Math.max(0, Number(options.maxAssist) || 1);
-  const brakeAccel = Math.max(0.1, Number(options.brakeAccel) || 0.85);
-  let desiredRate = targetRate;
-  if (manualActive && Math.abs(targetRate) > 1e-4) {
-    const headingSign = Math.sign(headingError);
-    const targetSign = Math.sign(targetRate);
-    const remainingAngle = Math.abs(headingError);
-    if (headingSign !== 0 && headingSign === targetSign && remainingAngle > 1e-4) {
-      const stopBufferAngle = clamp(options.stopBufferAngle ?? 0.035, 0, 0.35);
-      const safeAngle = Math.max(0, remainingAngle - stopBufferAngle);
-      const safeRateFactor = clamp(options.safeRateFactor ?? 0.78, 0.35, 1.15);
-      const safeRate = Math.sqrt(2 * brakeAccel * safeAngle) * safeRateFactor;
-      const minTrackRate = Math.min(Math.abs(targetRate), Math.max(0, Number(options.minTrackRate) || 0.12));
-      desiredRate = targetSign * Math.max(minTrackRate, Math.min(Math.abs(targetRate), safeRate));
+
+  // Strzałka nie może stać bliżej niż punkt, w którym statek i tak wyhamuje
+  // obrót — inaczej przestrzelenie jest pewne i regulator wraca, przestrzeliwuje
+  // w drugą stronę itd. Gdy gracz puścił klawisz (albo trzyma go w tę samą
+  // stronę), strzałkę przesuwamy do punktu zatrzymania: manewr kończy się jednym
+  // ruchem, a strzałka pokazuje, gdzie statek się zatrzyma. Klawisz w przeciwną
+  // stronę jej nie dotyczy — wtedy gracz sam chce zawrócić.
+  if (Math.abs(omega) > 1e-4) {
+    const turnSign = Math.sign(omega);
+    const manualAgainst = manualActive && Math.sign(targetRate) === -turnSign;
+    if (!manualAgainst && offset * turnSign >= 0) {
+      // Punkt zatrzymania przy PEŁNYM hamowaniu (zapas 1.0). Regulator planuje
+      // z zapasem 0,8, więc taki cel jest dla niego „na styk" i hamuje pełnym
+      // momentem. Z tym samym zapasem po obu stronach powstawał punkt stały:
+      // zero momentu i strzałka jadąca razem ze statkiem bez końca.
+      const stopOffset = turnSign * computeTurnStoppingAngle(omega, turnAccel * Math.min(1, maxAssist), lagTime, 1);
+      if ((offset - stopOffset) * turnSign < 0) offset = stopOffset;
     }
   }
-  const relativeOmega = omega - desiredRate;
-  let torque = clamp((headingError * headingKp) - (relativeOmega * headingKd), -maxAssist, maxAssist);
 
-  let predictiveBrake = false;
-  let stoppingAngle = 0;
-  if (maxAssist > 0) {
-    const remainingAngle = Math.abs(headingError);
-    const absRelativeOmega = Math.abs(relativeOmega);
-    const headingSign = Math.sign(headingError);
-    const relativeOmegaSign = Math.sign(relativeOmega);
-    const movingTowardTarget = headingSign !== 0 && relativeOmegaSign === headingSign;
-    stoppingAngle = (absRelativeOmega * absRelativeOmega) / (2 * brakeAccel);
-
-    if (movingTowardTarget && absRelativeOmega > 0.025) {
-      const leadFactor = clamp(options.brakeLeadFactor ?? 0.78, 0.35, 1.35);
-      const triggerAngle = Math.max(0.025, remainingAngle * leadFactor);
-      if (stoppingAngle >= triggerAngle) {
-        predictiveBrake = true;
-        const maxTurnSpeed = Math.max(0.2, Number(physics?.MAX_TURN_SPEED) || SHIP_PHYSICS.MAX_TURN_SPEED);
-        const overshootRatio = stoppingAngle / Math.max(triggerAngle, 0.025);
-        const minBrakeStrength = Math.min(0.82, maxAssist);
-        const brakeStrength = clamp(
-          0.82 + ((overshootRatio - 1) * 0.38) + (absRelativeOmega / maxTurnSpeed) * 0.18,
-          minBrakeStrength,
-          maxAssist
-        );
-        torque = -relativeOmegaSign * Math.max(Math.abs(torque), brakeStrength);
-      }
-    }
-  }
+  s.targetOffset = offset;
+  s.lastAngle = angle;
+  const targetAngle = wrapAngle(angle + offset);
+  s.targetAngle = targetAngle;
+  const headingError = offset;
+  const control = computeHeadingTorqueCommand({
+    headingError,
+    omega,
+    turnAccel,
+    maxTurnRate,
+    lagTime,
+    torqueLimit: maxAssist
+  });
 
   return writeOutput(s, {
     active: true,
     manualActive,
     targetAngle,
     headingError,
-    torque,
+    torque: control.torque,
     targetRate,
-    desiredRate,
-    predictiveBrake,
-    stoppingAngle,
+    desiredRate: control.desiredOmega,
+    predictiveBrake: control.braking,
+    stoppingAngle: control.stoppingAngle,
   });
 }
 

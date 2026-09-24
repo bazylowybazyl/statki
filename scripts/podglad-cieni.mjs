@@ -1,31 +1,30 @@
-// Podgląd offline shadow shafts: rasteryzuje TĘ SAMĄ matematykę co pass
-// i zapisuje PNG (podglad-cieni.png). buildHullSegments wycinane z żywego
-// hexShips3D.js, pętla cienia przepisana 1:1 z GLSL w core3d.js.
+// Podgląd offline shadow shafts kadłubów: rasteryzuje TĘ SAMĄ matematykę co
+// pass i zapisuje PNG (podglad-cieni.png). Pieczenie SDF i marsz promienia
+// z src/3d/hullShadowSdf.js (traceHullShadowCpu = lustro GLSL z passa).
 //
 //   node scripts/podglad-cieni.mjs
 //
-// Sylwetka testowa celowo jest "trudna": szeroki środek + wąska rufa i dziób
-// — na takim kadłubie widać, czy okluder nie jest szerszy od statku (cień
-// wychodzący z "jaja" zamiast spod burty).
-import { readFileSync, writeFileSync } from 'node:fs';
+// Sylwetka testowa celowo jest "trudna": szeroki środek, wąska rufa, ostry
+// dziób, boczne kolce i rozwidlony dziób — cień ma startować spod burty,
+// obejmować kolce, przepuszczać światło przez widelec, a kadłub nie może
+// rzucać cienia sam na siebie.
+import { writeFileSync } from 'node:fs';
 import zlib from 'node:zlib';
+import {
+  HULL_SDF_LAYER_SIZE,
+  HULL_SDF_OCCLUDER_FLOATS,
+  bakeHullSdfLayer,
+  packHullShaftOccluder,
+  traceHullShadowCpu
+} from '../src/3d/hullShadowSdf.js';
 
 var CRC_TABLE = null;
 
-const shipsSrc = readFileSync('src/3d/hexShips3D.js', 'utf8');
-const block = shipsSrc.slice(
-  shipsSrc.indexOf('const HULL_SHAFT_SEGMENTS'),
-  shipsSrc.indexOf('function getHullSegments')
-);
-const H = await import('data:text/javascript;base64,' + Buffer.from(
-  block + '\nexport { buildHullSegments, HULL_SHAFT_SEGMENTS };'
-).toString('base64'));
+const HULL_STRENGTH = 0.55;   // HULL_SHADOW_STRENGTH w core3d.js
+const HULL_LEN_MUL = 3.0;     // medium
+const HULL_STEPS = 24;        // medium
 
-const coreSrc = readFileSync('src/3d/core3d.js', 'utf8');
-const HULL_STRENGTH = Number(coreSrc.match(/const HULL_SHADOW_STRENGTH = ([\d.]+);/)[1]);
-const HULL_LEN_MUL = 3.0;   // medium
-
-// ── Sylwetka testowa: szeroki środek, wąska rufa, ostry dziób ──────────────
+// ── Sylwetka testowa ───────────────────────────────────────────────────────
 const SRC_W = 600, SRC_H = 220, HEX = 6;
 function halfWidthAt(t) {
   if (t < 0.18) return 22;                     // rufa: wąski ogon
@@ -33,77 +32,38 @@ function halfWidthAt(t) {
   if (t < 0.62) return SRC_H * 0.5;            // śródokręcie: pełna szerokość
   return Math.max(10, SRC_H * 0.5 * (1 - (t - 0.62) / 0.38)); // dziób
 }
+// u, v względem środka sprite'a
+function hullMask(u, v) {
+  const t = (u + SRC_W * 0.5) / SRC_W;
+  if (t < 0 || t > 1) return false;
+  if (t > 0.82 && Math.abs(v) < 8) return false;                        // widelec dziobu
+  if (Math.abs(u - 20) < 8 && Math.abs(v) < SRC_H * 0.5 + 18) return true;  // kolce burtowe
+  return Math.abs(v) <= halfWidthAt(t);
+}
+
 const shards = [];
-for (let gx = 0; gx <= SRC_W; gx += HEX * 1.5) {
-  const half = halfWidthAt(gx / SRC_W);
-  for (let gy = SRC_H * 0.5 - half; gy <= SRC_H * 0.5 + half; gy += HEX * 1.5) {
-    shards.push({ gridX: gx, gridY: gy, radius: HEX });
+const hexH = Math.sqrt(3) * HEX;
+for (let c = 0; c * HEX * 1.5 <= SRC_W + 40; c++) {
+  for (let ro = 0; ro * hexH <= SRC_H + 60; ro++) {
+    const gx = c * HEX * 1.5 - 20;
+    const gy = ro * hexH + (c % 2 ? hexH * 0.5 : 0) - 30;
+    if (hullMask(gx - SRC_W * 0.5, gy - SRC_H * 0.5)) shards.push({ gridX: gx, gridY: gy, radius: HEX, active: true });
   }
 }
 const grid = { srcWidth: SRC_W, srcHeight: SRC_H, pivot: { x: 0, y: 0 }, shards };
-const hull = H.buildHullSegments(grid, shards, 1, 1);
-console.log('pasma kadłuba:', hull.segs.map(s => ({
-  u: `${s.u0.toFixed(0)}..${s.u1.toFixed(0)}`, vc: s.vc.toFixed(1), r: s.r.toFixed(1)
-})), 'span:', hull.span.toFixed(0));
-
-function worldSegments(px, py, ang) {
-  const cosA = Math.cos(ang), sinA = Math.sin(ang);
-  return hull.segs.map(seg => ({
-    x1: px + seg.u0 * cosA - seg.vc * sinA,
-    y1: py + seg.u0 * sinA + seg.vc * cosA,
-    x2: px + seg.u1 * cosA - seg.vc * sinA,
-    y2: py + seg.u1 * sinA + seg.vc * cosA,
-    r: seg.r,
-    span: hull.span
-  }));
-}
-
-// ── Pętla cienia (1:1 z GLSL: hull loop w createShadowShaftsShader) ─────────
-function shadowAt(px, py, seg, sunX, sunY) {
-  let dx = sunX - px, dy = sunY - py;
-  const sunDist = Math.hypot(dx, dy);
-  if (sunDist < 1) return 0;
-  dx /= sunDist; dy /= sunDist;
-
-  const paX = seg.x1 - px, paY = seg.y1 - py;
-  const pbX = seg.x2 - px, pbY = seg.y2 - py;
-  const alongA = paX * dx + paY * dy;
-  const alongB = pbX * dx + pbY * dy;
-  if (alongA <= 0 && alongB <= 0) return 0;
-
-  const perpA = dx * paY - dy * paX;
-  const perpB = dx * pbY - dy * pbX;
-  let perpMin, alongHit;
-  if (perpA * perpB < 0) {
-    const s = perpA / (perpA - perpB);
-    perpMin = 0;
-    alongHit = alongA + (alongB - alongA) * s;
-  } else if (Math.abs(perpA) < Math.abs(perpB)) {
-    perpMin = Math.abs(perpA); alongHit = alongA;
-  } else {
-    perpMin = Math.abs(perpB); alongHit = alongB;
+// Alfa „sprite'a” z tej samej sylwetki — w grze maskę heksów przycina alfa
+// obrazu kadłuba (bez niej brzeg SDF to ząbki kół opisanych na heksach).
+const alpha = { data: new Uint8Array(SRC_W * SRC_H), w: SRC_W, h: SRC_H };
+for (let y = 0; y < SRC_H; y++) {
+  for (let x = 0; x < SRC_W; x++) {
+    alpha.data[y * SRC_W + x] = hullMask(x + 0.5 - SRC_W * 0.5, y + 0.5 - SRC_H * 0.5) ? 255 : 0;
   }
-  if (perpMin > seg.r * 1.6) return 0;
-  if (alongHit <= 0 || alongHit >= sunDist) return 0;
-
-  const abX = seg.x2 - seg.x1, abY = seg.y2 - seg.y1;
-  const segLen2 = Math.max(abX * abX + abY * abY, 0.0001);
-  const h = Math.min(Math.max(((px - seg.x1) * abX + (py - seg.y1) * abY) / segLen2, 0), 1);
-  const fx = px - (seg.x1 + abX * h), fy = py - (seg.y1 + abY * h);
-  if (fx * fx + fy * fy <= seg.r * seg.r) return 0;
-
-  const fallT = Math.min(Math.max(alongHit / Math.max(seg.span * HULL_LEN_MUL, 1), 0), 1);
-  const fall = 1 - smoothstep(0.2, 1.0, fallT);
-  const soft = seg.r * (0.12 + 0.35 * fallT);
-  const edge = 1 - smoothstep(Math.max(seg.r - soft * 0.5, 0), seg.r + soft, perpMin);
-  return edge * fall * HULL_STRENGTH;
 }
-function smoothstep(e0, e1, x) {
-  const t = Math.min(Math.max((x - e0) / (e1 - e0), 0), 1);
-  return t * t * (3 - 2 * t);
-}
+const layer = new Uint8Array(HULL_SDF_LAYER_SIZE * HULL_SDF_LAYER_SIZE);
+const layout = bakeHullSdfLayer(grid, alpha, layer, 0, {});
+console.log('heksów:', shards.length, 'siatka SDF:', `${layout.gw}×${layout.gh}`, 'teksel:', layout.texel.toFixed(2), 'px');
 
-// ── Rasteryzacja: cztery orientacje kadłuba, jedno słońce ──────────────────
+// ── Scena: cztery orientacje kadłuba, jedno słońce (współrzędne gry, y w dół)
 const W = 1200, HGT = 760, SCALE = 0.42;
 const SUN = { x: 60000, y: -60000 };
 const ships = [
@@ -112,29 +72,32 @@ const ships = [
   { x: -450, y: 400, ang: -Math.PI * 0.25 },
   { x: 450, y: 400, ang: Math.PI * 0.5 }
 ];
+// Okludery jak w hexShips3D: rotation.z mesha = -kąt, skala 1.
+const packed = new Float32Array(ships.length * HULL_SDF_OCCLUDER_FLOATS);
+ships.forEach((s, i) => packHullShaftOccluder(packed, i * HULL_SDF_OCCLUDER_FLOATS, s.x, s.y, -s.ang, 1, 1, layout, 0));
 
-function hullMask(u, v) {
-  const t = (u + SRC_W * 0.5) / SRC_W;
-  if (t < 0 || t > 1) return false;
-  return Math.abs(v) <= halfWidthAt(t);
-}
-
-const segs = ships.flatMap(s => worldSegments(s.x, s.y, s.ang));
 const px = Buffer.alloc(W * HGT * 3);
 for (let y = 0; y < HGT; y++) {
   for (let x = 0; x < W; x++) {
     const wx = (x - W / 2) / SCALE;
     const wy = (y - HGT / 2) / SCALE;
+    // pass liczy w three-space (y w górę)
+    let dx = SUN.x - wx, dy = -SUN.y + wy;
+    const sunDist = Math.hypot(dx, dy);
+    dx /= sunDist; dy /= sunDist;
     let s = 0;
-    for (const seg of segs) s = Math.max(s, shadowAt(wx, wy, seg, SUN.x, SUN.y));
+    for (let i = 0; i < ships.length; i++) {
+      s = Math.max(s, traceHullShadowCpu(wx, -wy, dx, dy, sunDist, packed, i * HULL_SDF_OCCLUDER_FLOATS, layer,
+        { steps: HULL_STEPS, lenMul: HULL_LEN_MUL }) * HULL_STRENGTH);
+    }
     let r = 70, g = 84, b = 110;
     r = r * (1 - s) + r * 0.06 * s;
     g = g * (1 - s) + g * 0.10 * s;
     b = b * (1 - s) + b * 0.16 * s;
     for (const sh of ships) {
-      const dx = wx - sh.x, dy = wy - sh.y;
+      const ddx = wx - sh.x, ddy = wy - sh.y;
       const c = Math.cos(-sh.ang), sn = Math.sin(-sh.ang);
-      if (hullMask(dx * c - dy * sn, dx * sn + dy * c)) { r = 205; g = 210; b = 215; }
+      if (hullMask(ddx * c - ddy * sn, ddx * sn + ddy * c)) { r = 205; g = 210; b = 215; }
     }
     const o = (y * W + x) * 3;
     px[o] = r; px[o + 1] = g; px[o + 2] = b;

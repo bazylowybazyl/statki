@@ -1,0 +1,2774 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ORBITAL RING — Habitat Megastructure Demo</title>
+<style>
+  :root{
+    --hud-bg: rgba(6,10,16,0.62);
+    --hud-border: rgba(120,190,255,0.28);
+    --hud-text: #cfe6ff;
+    --hud-dim: #6f8fb0;
+    --accent: #6fd3ff;
+    --accent2: #ffb35c;
+  }
+  html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#02040a;font-family:"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;color:var(--hud-text);}
+  canvas{display:block;}
+  #app{position:fixed;inset:0;}
+  .panel{position:fixed;background:var(--hud-bg);border:1px solid var(--hud-border);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);border-radius:6px;font-size:12px;letter-spacing:0.03em;box-shadow:0 0 0 1px rgba(0,0,0,0.4), 0 0 24px rgba(40,120,200,0.12) inset;}
+  #hud{left:14px;top:14px;padding:10px 14px;min-width:210px;line-height:1.55;pointer-events:none;}
+  #hud .title{font-size:11px;color:var(--accent);letter-spacing:0.22em;text-transform:uppercase;margin-bottom:4px;}
+  #hud .row{display:flex;justify-content:space-between;gap:16px;}
+  #hud .row span:first-child{color:var(--hud-dim);}
+  #hud .row b{font-weight:600;color:#fff;font-variant-numeric:tabular-nums;}
+  #hud .preset{margin-top:6px;padding-top:6px;border-top:1px solid rgba(120,190,255,0.18);color:var(--accent2);font-weight:600;letter-spacing:0.08em;}
+  #gui{right:14px;top:14px;width:236px;padding:10px 12px 12px;}
+  #gui .title{font-size:11px;color:var(--accent);letter-spacing:0.22em;text-transform:uppercase;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;}
+  #gui .title button{background:none;border:1px solid var(--hud-border);color:var(--hud-text);font-size:10px;border-radius:3px;padding:2px 6px;cursor:pointer;}
+  #gui label{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:3px 0;color:var(--hud-text);}
+  #gui label span{color:var(--hud-dim);letter-spacing:0.05em;font-size:11px;text-transform:uppercase;}
+  #gui input[type=checkbox]{accent-color:var(--accent);width:14px;height:14px;cursor:pointer;}
+  #gui input[type=range]{width:118px;accent-color:var(--accent);cursor:pointer;}
+  #gui select,#gui input[type=text]{background:rgba(10,20,34,0.9);border:1px solid var(--hud-border);color:var(--hud-text);font-size:11px;padding:2px 4px;border-radius:3px;width:118px;}
+  #gui .val{width:34px;text-align:right;color:#fff;font-variant-numeric:tabular-nums;font-size:11px;}
+  #gui .sep{height:1px;background:rgba(120,190,255,0.16);margin:6px 0;}
+  #gui.collapsed .body{display:none;}
+  #help{left:14px;bottom:14px;padding:8px 12px;line-height:1.5;font-size:11px;color:var(--hud-dim);max-width:520px;}
+  #help b{color:var(--hud-text);font-weight:600;}
+  #loading{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#02040a;z-index:50;transition:opacity 0.8s ease;}
+  #loading .ring{width:64px;height:64px;border-radius:50%;border:2px solid rgba(111,211,255,0.15);border-top-color:var(--accent);animation:spin 1.1s linear infinite;margin-bottom:18px;}
+  #loading .txt{font-size:12px;letter-spacing:0.3em;text-transform:uppercase;color:var(--accent);}
+  #loading .sub{font-size:11px;color:var(--hud-dim);margin-top:8px;letter-spacing:0.1em;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  #cine{position:fixed;left:50%;top:18px;transform:translateX(-50%);padding:5px 14px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:var(--accent2);display:none;}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<div id="hud" class="panel">
+  <div class="title">Orbital Ring // Telemetry</div>
+  <div class="row"><span>FPS</span><b id="h-fps">--</b></div>
+  <div class="row"><span>Draw calls</span><b id="h-calls">--</b></div>
+  <div class="row"><span>Triangles</span><b id="h-tris">--</b></div>
+  <div class="row"><span>Visible ships</span><b id="h-ships">--</b></div>
+  <div class="row"><span>Instances</span><b id="h-inst">--</b></div>
+  <div class="preset" id="h-preset">CINEMATIC HERO VIEW</div>
+</div>
+
+<div id="cine" class="panel">Cinematic mode — press C to exit</div>
+
+<div id="gui" class="panel">
+  <div class="title"><span>Settings</span><button id="gui-toggle">hide</button></div>
+  <div class="body">
+    <label><span>Bloom</span><input type="checkbox" id="g-bloom" checked></label>
+    <label><span>City lights</span><input type="checkbox" id="g-lights" checked></label>
+    <label><span>Ships</span><input type="checkbox" id="g-ships" checked></label>
+    <label><span>Biodomes</span><input type="checkbox" id="g-domes" checked></label>
+    <label><span>Greenery</span><input type="checkbox" id="g-green" checked></label>
+    <label><span>Ring rotation</span><input type="checkbox" id="g-rot" checked></label>
+    <div class="sep"></div>
+    <label><span>Time scale</span><input type="range" id="g-time" min="0" max="4" step="0.05" value="1"><span class="val" id="v-time">1.00</span></label>
+    <label><span>Exposure</span><input type="range" id="g-exp" min="0.3" max="2.5" step="0.05" value="1.05"><span class="val" id="v-exp">1.05</span></label>
+    <label><span>Bloom str.</span><input type="range" id="g-bstr" min="0" max="2" step="0.05" value="0.55"><span class="val" id="v-bstr">0.55</span></label>
+    <div class="sep"></div>
+    <label><span>Quality</span><select id="g-quality"><option value="0">LOW</option><option value="1">MEDIUM</option><option value="2" selected>HIGH</option><option value="3">ULTRA</option></select></label>
+    <label><span>World seed</span><input type="text" id="g-seed" value="1337"></label>
+    <label><span></span><button id="g-regen" style="width:118px;background:rgba(111,211,255,0.12);border:1px solid var(--hud-border);color:var(--accent);padding:4px;border-radius:3px;cursor:pointer;font-size:11px;letter-spacing:0.1em;">REGENERATE</button></label>
+  </div>
+</div>
+
+<div id="help" class="panel">
+  <b>1</b> mega scale &nbsp;<b>2</b> sector &nbsp;<b>3</b> low altitude &nbsp;<b>4</b> biodome &nbsp;<b>5</b> spaceport &nbsp;<b>6</b> understructure &nbsp;<b>7</b> long horizon &nbsp;<b>8</b> hero &nbsp;<b>C</b> cinematic &nbsp;<b>R</b> reset<br>
+  <b>LMB</b> orbit &nbsp;<b>RMB</b> pan &nbsp;<b>Wheel</b> zoom &nbsp;<b>WASD</b> fly &nbsp;<b>Q/E</b> down/up &nbsp;<b>Shift</b> fast &nbsp;<b>H</b> toggle UI
+</div>
+
+<div id="loading"><div class="ring"></div><div class="txt">Assembling megastructure</div><div class="sub" id="loading-sub">generating world</div></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+/* =====================================================================
+   WORLD CONFIGURATION
+   ===================================================================== */
+const urlParams = new URLSearchParams(location.search);
+const WORLD_SEED = Number.isFinite(parseInt(urlParams.get('seed'))) ? parseInt(urlParams.get('seed')) : 1337;
+
+const RING = {
+  R: 8000,          // radius of the habitat floor (units)
+  W: 1800,          // habitat width (lateral, along the ring axis)
+  T: 460,           // structural thickness below the floor
+  WALL_H: 260,      // height of the atmosphere retention walls
+  WALL_T: 90,       // thickness of the side walls
+  SEGMENTS: 384,    // logical construction segments
+  SECTORS: 12,      // macro sectors
+};
+RING.CIRC = Math.PI * 2 * RING.R;
+RING.SECTOR_LEN = RING.CIRC / RING.SECTORS;
+RING.SECTOR_ANG = Math.PI * 2 / RING.SECTORS;
+
+const QUALITY_PRESETS = [
+  { name: 'LOW',    pixelRatio: 0.75, shadow: 1024, bloomRes: 0.5, instFrac: 0.4, treeFrac: 0.3, shipFrac: 0.5, shadows: false },
+  { name: 'MEDIUM', pixelRatio: 1.0,  shadow: 2048, bloomRes: 0.5, instFrac: 0.7, treeFrac: 0.6, shipFrac: 0.75, shadows: true },
+  { name: 'HIGH',   pixelRatio: Math.min(window.devicePixelRatio, 1.5), shadow: 2048, bloomRes: 0.5, instFrac: 1.0, treeFrac: 1.0, shipFrac: 1.0, shadows: true },
+  { name: 'ULTRA',  pixelRatio: Math.min(window.devicePixelRatio, 2.0), shadow: 4096, bloomRes: 1.0, instFrac: 1.0, treeFrac: 1.0, shipFrac: 1.0, shadows: true },
+];
+
+const settings = {
+  bloom: true, cityLights: true, ships: true, domes: true, greenery: true, rotation: true,
+  timeScale: 1.0, exposure: 1.05, bloomStrength: 0.55, quality: 2,
+};
+
+/* =====================================================================
+   SEEDED RANDOM + NOISE
+   ===================================================================== */
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+class Rng {
+  constructor(seed) { this.f = mulberry32(seed >>> 0); }
+  next() { return this.f(); }
+  range(a, b) { return a + (b - a) * this.f(); }
+  int(a, b) { return Math.floor(this.range(a, b + 1)); }
+  pick(arr) { return arr[Math.floor(this.f() * arr.length) % arr.length]; }
+  chance(p) { return this.f() < p; }
+  gauss() { const u = 1 - this.f(), v = this.f(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
+}
+const rootRng = new Rng(WORLD_SEED);
+function subRng(tag) { // deterministic sub generator per subsystem
+  let h = WORLD_SEED ^ 0x9E3779B9;
+  for (let i = 0; i < tag.length; i++) { h = Math.imul(h ^ tag.charCodeAt(i), 0x01000193); h ^= h >>> 13; }
+  return new Rng(h >>> 0);
+}
+
+// hash-based value noise (2D), deterministic per seed
+const NOISE_PERM = new Uint8Array(512);
+{
+  const r = subRng('noise');
+  const p = [];
+  for (let i = 0; i < 256; i++) p.push(i);
+  for (let i = 255; i > 0; i--) { const j = Math.floor(r.next() * (i + 1)); [p[i], p[j]] = [p[j], p[i]]; }
+  for (let i = 0; i < 512; i++) NOISE_PERM[i] = p[i & 255];
+}
+function hash2(ix, iy) { return NOISE_PERM[(NOISE_PERM[ix & 255] + iy) & 255] / 255; }
+function fade(t) { return t * t * (3 - 2 * t); }
+function vnoise(x, y) {
+  const ix = Math.floor(x), iy = Math.floor(y);
+  const fx = x - ix, fy = y - iy;
+  const a = hash2(ix, iy), b = hash2(ix + 1, iy), c = hash2(ix, iy + 1), d = hash2(ix + 1, iy + 1);
+  const ux = fade(fx), uy = fade(fy);
+  return a + (b - a) * ux + (c - a) * uy + (a - b - c + d) * ux * uy;
+}
+function fbm(x, y, oct = 4, lac = 2.0, gain = 0.5) {
+  let s = 0, a = 1, n = 0;
+  for (let i = 0; i < oct; i++) { s += a * vnoise(x, y); n += a; x *= lac; y *= lac; a *= gain; }
+  return s / n;
+}
+function hash1(n) { // deterministic float hash of an integer-ish number
+  let x = Math.sin(n * 12.9898 + WORLD_SEED * 0.001) * 43758.5453;
+  return x - Math.floor(x);
+}
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+const TAU = Math.PI * 2;
+function wrapAngle(a) { a = a % TAU; if (a < 0) a += TAU; return a; }
+function angDist(a, b) { let d = wrapAngle(a - b); if (d > Math.PI) d -= TAU; return Math.abs(d); }
+
+/* =====================================================================
+   RING FRAME MATH
+   Ring axis = world Y. Floor at radius R, lateral offset u along Y,
+   height h measured towards the axis (habitat "up").
+   ===================================================================== */
+const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3(), _v4 = new THREE.Vector3();
+const _q1 = new THREE.Quaternion(), _m1 = new THREE.Matrix4(), _m2 = new THREE.Matrix4();
+
+function ringPos(theta, u, h, out = new THREE.Vector3()) {
+  const r = RING.R - h;
+  return out.set(Math.cos(theta) * r, u, Math.sin(theta) * r);
+}
+function ringUp(theta, out = new THREE.Vector3()) { return out.set(-Math.cos(theta), 0, -Math.sin(theta)); }
+function ringTangent(theta, out = new THREE.Vector3()) { return out.set(-Math.sin(theta), 0, Math.cos(theta)); }
+const RING_LATERAL = new THREE.Vector3(0, 1, 0);
+
+// Builds a matrix whose local Y = habitat up, local X = ring tangent (rotated by yaw around up)
+function frameMatrix(theta, u, h, yaw, scale, out = new THREE.Matrix4()) {
+  const up = ringUp(theta, _v1);
+  const tan = ringTangent(theta, _v2);
+  const lat = _v3.copy(RING_LATERAL);
+  if (yaw) {
+    const c = Math.cos(yaw), s = Math.sin(yaw);
+    // rotate tangent & lateral around up
+    _v4.copy(tan).multiplyScalar(c).addScaledVector(lat, s);
+    lat.multiplyScalar(c).addScaledVector(tan, -s);
+    tan.copy(_v4);
+  }
+  // right-handed basis: X = tan, Y = up, Z = -lat  (tan x up = -lat)
+  out.makeBasis(tan, up, lat.multiplyScalar(-1));
+  if (scale) {
+    const sx = scale.x !== undefined ? scale.x : scale, sy = scale.y !== undefined ? scale.y : scale, sz = scale.z !== undefined ? scale.z : scale;
+    const e = out.elements;
+    e[0] *= sx; e[1] *= sx; e[2] *= sx;
+    e[4] *= sy; e[5] *= sy; e[6] *= sy;
+    e[8] *= sz; e[9] *= sz; e[10] *= sz;
+  }
+  const p = ringPos(theta, u, h, _v4);
+  out.setPosition(p);
+  return out;
+}
+// convert ring-arc distance (units along the circumference) to angle
+const sToTheta = (s) => s / RING.R;
+
+/* =====================================================================
+   RENDERER / SCENE
+   ===================================================================== */
+let renderer, scene, camera, controls, composer, bloomPass, renderPass, outputPass;
+let ringRoot;          // everything attached to the ring (rotates)
+let sunLight, fillLight, hemiLight;
+const SUN_DIR = new THREE.Vector3(1.0, 0.36, 0.18).normalize();  // direction TOWARDS the sun (world space)
+const clock = new THREE.Clock();
+let simTime = 0;
+
+function initRenderer() {
+  renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance', logarithmicDepthBuffer: true });
+  renderer.setPixelRatio(QUALITY_PRESETS[settings.quality].pixelRatio);
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = settings.exposure;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  document.getElementById('app').appendChild(renderer.domElement);
+}
+
+function initScene() {
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x02040a);
+  camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 2, 120000);
+  camera.position.set(RING.R + 3000, 2500, 6000);
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.06;
+  controls.screenSpacePanning = true;
+  controls.minDistance = 5;
+  controls.maxDistance = 80000;
+  controls.zoomSpeed = 1.2;
+  controls.rotateSpeed = 0.55;
+  controls.panSpeed = 0.8;
+  controls.target.set(RING.R, 0, 0);
+  ringRoot = new THREE.Group();
+  scene.add(ringRoot);
+  createBackground();
+}
+
+function createBackground() {
+  // simple dark gradient dome + extremely sparse faint stars (intentionally minimal)
+  const geo = new THREE.SphereGeometry(100000, 24, 16);
+  const mat = new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false, depthTest: false,
+    uniforms: {},
+    vertexShader: `varying vec3 vDir; void main(){ vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); gl_Position.z = gl_Position.w; }`,
+    fragmentShader: `varying vec3 vDir;
+      void main(){
+        float up = vDir.y*0.5+0.5;
+        vec3 top = vec3(0.012,0.022,0.045);
+        vec3 bot = vec3(0.004,0.006,0.012);
+        vec3 col = mix(bot, top, smoothstep(0.1,0.9,up));
+        float band = exp(-abs(vDir.y)*6.0) * 0.012;
+        col += vec3(0.05,0.08,0.12)*band;
+        gl_FragColor = vec4(col,1.0);
+      }`
+  });
+  const sky = new THREE.Mesh(geo, mat);
+  sky.renderOrder = -100;
+  sky.frustumCulled = false;
+  scene.add(sky);
+
+  const r = subRng('stars');
+  const N = 700;
+  const pos = new Float32Array(N * 3), col = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    const t = r.next() * TAU, p = Math.acos(r.range(-1, 1));
+    const d = 90000;
+    pos[i * 3] = Math.sin(p) * Math.cos(t) * d; pos[i * 3 + 1] = Math.cos(p) * d; pos[i * 3 + 2] = Math.sin(p) * Math.sin(t) * d;
+    const b = r.range(0.15, 0.55);
+    col[i * 3] = b; col[i * 3 + 1] = b * r.range(0.9, 1.0); col[i * 3 + 2] = b * r.range(0.95, 1.15);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  const stars = new THREE.Points(g, new THREE.PointsMaterial({ size: 1.6, sizeAttenuation: false, vertexColors: true, transparent: true, opacity: 0.55, depthWrite: false }));
+  stars.frustumCulled = false;
+  scene.add(stars);
+}
+
+/* =====================================================================
+   DISTRICT LAYOUT — macro sectors, zoning function, zone map texture
+   ===================================================================== */
+const Z = { WATER: 0, PARK: 1, FOREST: 2, FARM: 3, MEADOW: 4, RESIDENTIAL: 5, CITY: 6, CORE: 7, INDUSTRIAL: 8, PORT: 9, TECH: 10, PLAZA: 11, BEACH: 12 };
+const ZONE_URBAN = new Set([Z.RESIDENTIAL, Z.CITY, Z.CORE, Z.INDUSTRIAL, Z.PORT, Z.TECH]);
+
+const WORLD = { sectors: [], domes: [], ports: [], zoneMap: null, hero: {} };
+
+const SECTOR_DEFS = [
+  { id: 1,  name: 'METROPOLIS CORE',     layout: 'metropolis',  port: 'large',  domes: 1 },
+  { id: 2,  name: 'CENTRAL PARK CITY',   layout: 'parkcity',    port: 'medium', domes: 1 },
+  { id: 3,  name: 'FOREST & LAKES',      layout: 'forest',      port: 'medium', domes: 1 },
+  { id: 4,  name: 'RESIDENTIAL BELT',    layout: 'residential', port: 'medium', domes: 0 },
+  { id: 5,  name: 'BIODOME GARDENS',     layout: 'biodomes',    port: 'medium', domes: 5 },
+  { id: 6,  name: 'AGRICULTURE',         layout: 'farms',       port: 'medium', domes: 1 },
+  { id: 7,  name: 'HEAVY INDUSTRY',      layout: 'industry',    port: 'large',  domes: 0 },
+  { id: 8,  name: 'ORBITAL PORT',        layout: 'port',        port: 'huge',   domes: 0 },
+  { id: 9,  name: 'TECH DISTRICT',       layout: 'tech',        port: 'medium', domes: 1 },
+  { id: 10, name: 'GREAT RESERVOIR',     layout: 'reservoir',   port: 'large',  domes: 1 },
+  { id: 11, name: 'SHIPYARDS',           layout: 'shipyard',    port: 'huge',   domes: 0 },
+  { id: 12, name: 'GREEN ESTATES',       layout: 'luxury',      port: 'medium', domes: 3 },
+];
+
+function sectorIndexAt(s) {
+  // sector k is centred on s = k * SECTOR_LEN
+  let k = Math.floor((s + RING.SECTOR_LEN * 0.5) / RING.SECTOR_LEN);
+  return ((k % RING.SECTORS) + RING.SECTORS) % RING.SECTORS;
+}
+function sectorLocal(s, k) {
+  let ls = s - k * RING.SECTOR_LEN + RING.SECTOR_LEN * 0.5;
+  if (ls < 0) ls += RING.CIRC;
+  if (ls >= RING.CIRC) ls -= RING.CIRC;
+  return ls;
+}
+
+function createDistrictLayout() {
+  const rng = subRng('layout');
+  const HW = RING.W * 0.5;
+  for (let k = 0; k < RING.SECTORS; k++) {
+    const def = SECTOR_DEFS[k];
+    const sec = {
+      k, def, s0: k * RING.SECTOR_LEN, theta0: k * RING.SECTOR_ANG,
+      seed: rng.next() * 1000, noiseOff: [rng.range(0, 1000), rng.range(0, 1000)],
+      rotFarm: rng.range(-0.3, 0.3), blobs: [], lakes: [],
+    };
+    // secondary feature blobs (parks in cities, towns in forests, lakes)
+    const nb = rng.int(3, 6);
+    for (let i = 0; i < nb; i++) sec.blobs.push({ x: rng.range(400, RING.SECTOR_LEN - 400), y: rng.range(-HW + 300, HW - 300), r: rng.range(120, 420), kind: rng.next() });
+    const nl = rng.int(2, 4);
+    for (let i = 0; i < nl; i++) sec.lakes.push({ x: rng.range(500, RING.SECTOR_LEN - 500), y: rng.range(-HW + 350, HW - 350), r: rng.range(160, 460), e: rng.range(0.7, 1.8) });
+    WORLD.sectors.push(sec);
+  }
+  placeBiodomes(rng);
+  placeSpaceports(rng);
+}
+
+const DOME_TYPES = ['FOREST', 'TROPICAL', 'BOTANICAL', 'RECREATION', 'WILDERNESS', 'AQUATIC'];
+function placeBiodomes(rng) {
+  const HW = RING.W * 0.5;
+  for (const sec of WORLD.sectors) {
+    const n = sec.def.domes;
+    for (let i = 0; i < n; i++) {
+      let r, ls, u, type, sunk;
+      if (sec.def.layout === 'biodomes') {
+        // a grand row of domes: the two central ones are enormous landmarks
+        const frac = (i + 0.5) / n;
+        ls = 380 + frac * (RING.SECTOR_LEN - 760);
+        u = (i % 2 === 0 ? -1 : 1) * rng.range(120, 380);
+        r = (i === 2) ? 620 : (i === 1 || i === 3) ? rng.range(320, 420) : rng.range(180, 260);
+        type = DOME_TYPES[i % DOME_TYPES.length];
+        sunk = rng.range(0.12, 0.3);
+      } else if (sec.def.layout === 'reservoir') {
+        ls = RING.SECTOR_LEN * 0.5; u = 0; r = 380; type = 'AQUATIC'; sunk = 0.25;
+      } else if (sec.def.layout === 'luxury') {
+        ls = 600 + i * 1300 + rng.range(-150, 150); u = rng.range(-500, 500); r = rng.range(170, 300); type = rng.pick(['BOTANICAL', 'RECREATION', 'TROPICAL']); sunk = rng.range(0.15, 0.3);
+      } else if (sec.def.layout === 'parkcity') {
+        ls = RING.SECTOR_LEN * 0.5 + 700; u = 0; r = 260; type = 'RECREATION'; sunk = 0.2;
+      } else if (sec.def.layout === 'metropolis') {
+        ls = RING.SECTOR_LEN * 0.72; u = 520; r = 240; type = 'BOTANICAL'; sunk = 0.2;
+      } else if (sec.def.layout === 'tech') {
+        ls = RING.SECTOR_LEN * 0.35; u = -420; r = 300; type = 'BOTANICAL'; sunk = 0.18;
+      } else {
+        ls = rng.range(700, RING.SECTOR_LEN - 700); u = rng.range(-450, 450); r = rng.range(150, 280); type = rng.pick(DOME_TYPES); sunk = rng.range(0.15, 0.3);
+      }
+      u = clamp(u, -HW + r + 60, HW - r - 60);
+      const s = sec.s0 - RING.SECTOR_LEN * 0.5 + ls;
+      WORLD.domes.push({ sector: sec.k, s: ((s % RING.CIRC) + RING.CIRC) % RING.CIRC, theta: wrapAngle(sToTheta(s)), u, r, type, sunk, seed: rng.next(), hasHill: rng.chance(0.5), hasWaterfall: type === 'TROPICAL' || type === 'WILDERNESS' });
+    }
+  }
+  // biggest dome = hero landmark
+  WORLD.hero.dome = WORLD.domes.reduce((a, b) => (b.r > a.r ? b : a), WORLD.domes[0]);
+}
+
+function placeSpaceports(rng) {
+  const HW = RING.W * 0.5;
+  for (const sec of WORLD.sectors) {
+    const size = sec.def.port;
+    const side = (sec.k % 2 === 0) ? 1 : -1;
+    const ls = (size === 'huge') ? RING.SECTOR_LEN * 0.5 : rng.range(RING.SECTOR_LEN * 0.3, RING.SECTOR_LEN * 0.7);
+    const s = sec.s0 - RING.SECTOR_LEN * 0.5 + ls;
+    const scale = size === 'huge' ? 1.0 : size === 'large' ? 0.68 : 0.45;
+    const port = {
+      sector: sec.k, size, scale, side,
+      s: ((s % RING.CIRC) + RING.CIRC) % RING.CIRC, theta: wrapAngle(sToTheta(s)),
+      uEdge: side * (HW + RING.WALL_T),           // lateral position of the ring edge
+      len: 1500 * scale + 500,                     // extent along the ring
+      reach: 900 * scale + 400,                    // how far it sticks out laterally
+      h: (size === 'huge') ? -60 : rng.range(-220, 40),
+      seed: rng.next(), berths: [],
+    };
+    // surface apron (terminals / landing pads on the habitat next to the wall)
+    port.apron = { hw: port.len * 0.5, depth: 260 * scale + 160 };
+    WORLD.ports.push(port);
+  }
+  WORLD.hero.port = WORLD.ports.find(p => p.size === 'huge');
+}
+
+/* ---------- zoning function: returns {t: type, d: density 0..1, e: extra 0..1} ---------- */
+const _z = { t: 0, d: 0, e: 0 };
+function setZ(t, d, e) { _z.t = t; _z.d = d; _z.e = e === undefined ? 0 : e; return _z; }
+
+function inDome(s, u) {
+  for (let i = 0; i < WORLD.domes.length; i++) {
+    const d = WORLD.domes[i];
+    let ds = s - d.s; if (ds > RING.CIRC * 0.5) ds -= RING.CIRC; if (ds < -RING.CIRC * 0.5) ds += RING.CIRC;
+    const du = u - d.u;
+    const r2 = ds * ds + du * du;
+    const rr = d.r * 0.93;
+    if (r2 < rr * rr) { _domeHit.d = d; _domeHit.dist = Math.sqrt(r2) / rr; _domeHit.ds = ds; _domeHit.du = du; return true; }
+  }
+  return false;
+}
+const _domeHit = { d: null, dist: 0, ds: 0, du: 0 };
+
+function domeInterior(s, u) {
+  const d = _domeHit.d, q = _domeHit.dist, ds = _domeHit.ds, du = _domeHit.du;
+  const n = fbm((s + d.seed * 500) * 0.012, (u + d.seed * 300) * 0.012, 3);
+  switch (d.type) {
+    case 'FOREST':     return q < 0.24 ? setZ(Z.WATER, 0, 0.6) : setZ(Z.FOREST, 0.9, 0.8 + n * 0.2);
+    case 'TROPICAL':   return (n > 0.58 || q < 0.15) ? setZ(Z.WATER, 0, 0.5) : setZ(Z.FOREST, 1.0, 1.0);
+    case 'BOTANICAL':  return q < 0.14 ? setZ(Z.PLAZA, 0.3, 0.5) : (Math.abs(ds) < 18 || Math.abs(du) < 18) ? setZ(Z.PLAZA, 0.2, 0.3) : setZ(Z.PARK, 0.7, 0.7 + n * 0.3);
+    case 'RECREATION': return (n > 0.62) ? setZ(Z.WATER, 0, 0.4) : q < 0.2 ? setZ(Z.PLAZA, 0.3, 0.4) : setZ(Z.PARK, 0.5, 0.6 + n * 0.4);
+    case 'WILDERNESS': return n > 0.66 ? setZ(Z.WATER, 0, 0.5) : n > 0.42 ? setZ(Z.FOREST, 0.85, 0.9) : setZ(Z.MEADOW, 0.2, 0.6);
+    case 'AQUATIC':    return (n > 0.6 && q > 0.2) ? setZ(Z.PARK, 0.4, 0.8) : (n > 0.55 && q > 0.2) ? setZ(Z.BEACH, 0, 0.3) : setZ(Z.WATER, 0, 0.9);
+  }
+  return setZ(Z.PARK, 0.5, 0.5);
+}
+
+function lakeField(sec, ls, u, thresh, scale) {
+  // returns a signed "wetness" value; >0 = water
+  let best = -1;
+  for (const l of sec.lakes) {
+    const dx = (ls - l.x) / (l.r * l.e), dy = (u - l.y) / l.r;
+    const dd = Math.sqrt(dx * dx + dy * dy);
+    const n = fbm((ls + sec.noiseOff[0]) * scale, (u + sec.noiseOff[1]) * scale, 3);
+    const v = 1.0 - dd + (n - 0.5) * 0.7;
+    if (v > best) best = v;
+  }
+  return best - thresh;
+}
+function blobField(sec, ls, u) {
+  let best = -1e9, bk = 0;
+  for (const b of sec.blobs) {
+    const dx = ls - b.x, dy = u - b.y;
+    const v = b.r - Math.sqrt(dx * dx + dy * dy);
+    if (v > best) { best = v; bk = b.kind; }
+  }
+  return { v: best, kind: bk };
+}
+
+function zoneAt(s, u) {
+  const HW = RING.W * 0.5;
+  s = ((s % RING.CIRC) + RING.CIRC) % RING.CIRC;
+  const k = sectorIndexAt(s);
+  const sec = WORLD.sectors[k];
+  const ls = sectorLocal(s, k);
+  const au = Math.abs(u);
+  // technical strip along the walls
+  if (au > HW - 55) return setZ(Z.PLAZA, 0.25, 0.2);
+  // biodome interiors override everything
+  if (inDome(s, u)) return domeInterior(s, u);
+  // spaceport aprons (terminals on the habitat surface next to the wall)
+  for (const p of WORLD.ports) {
+    if (p.sector !== k) continue;
+    let ds = s - p.s; if (ds > RING.CIRC * 0.5) ds -= RING.CIRC; if (ds < -RING.CIRC * 0.5) ds += RING.CIRC;
+    if (Math.abs(ds) < p.apron.hw && (p.side > 0 ? u > HW - p.apron.depth : u < -HW + p.apron.depth)) {
+      const inner = (p.side > 0 ? HW - u : HW + u);
+      return (inner < p.apron.depth * 0.45) ? setZ(Z.PORT, 0.9, 0.7) : setZ(Z.PORT, 0.55, 0.3);
+    }
+  }
+  // green separation belt between sectors
+  if (ls < 110 || ls > RING.SECTOR_LEN - 110) return setZ(Z.PARK, 0.4, 0.55 + 0.3 * fbm(s * 0.02, u * 0.02, 2));
+
+  const nx = (ls + sec.noiseOff[0]), ny = (u + sec.noiseOff[1]);
+  const n1 = fbm(nx * 0.0025, ny * 0.0025, 4);       // large scale
+  const n2 = fbm(nx * 0.01, ny * 0.01, 3);           // medium scale
+  const cx = ls - RING.SECTOR_LEN * 0.5;             // centred local coordinate
+  const blob = blobField(sec, ls, u);
+
+  switch (sec.def.layout) {
+    case 'metropolis': {
+      const core = Math.exp(-(cx * cx) / (2 * 900 * 900) - (u * u) / (2 * 520 * 520));
+      if (lakeField(sec, ls, u, 0.72, 0.004) > 0 && core < 0.5) return setZ(Z.WATER, 0, 0.5);
+      if (blob.v > 0 && blob.kind < 0.5 && core < 0.55) return setZ(Z.PARK, 0.5, 0.6 + n2 * 0.3);
+      if (Math.abs(u) < 70 && Math.abs(cx) < 1500) return setZ(Z.PLAZA, 0.5, 0.6); // grand central boulevard
+      if (core > 0.62) return setZ(Z.CORE, 0.8 + core * 0.2, n2);
+      if (core > 0.28) return setZ(Z.CITY, 0.6 + core * 0.4, n2);
+      if (n1 > 0.62) return setZ(Z.PARK, 0.4, 0.5 + n2 * 0.4);
+      return setZ(Z.RESIDENTIAL, 0.5 + n2 * 0.4, n2);
+    }
+    case 'parkcity': {
+      const inPark = Math.abs(cx) < 1100 && Math.abs(u) < 560;
+      if (inPark) {
+        const edge = Math.min(1100 - Math.abs(cx), 560 - Math.abs(u));
+        const lakeD = Math.sqrt((cx * cx) / (560 * 560) + (u * u) / (260 * 260)) + (n2 - 0.5) * 0.4;
+        if (lakeD < 0.6) return setZ(Z.WATER, 0, clamp(1.2 - lakeD * 1.5, 0.3, 1));
+        if (lakeD < 0.66) return setZ(Z.BEACH, 0, 0.3);
+        if (lakeField(sec, ls, u, 0.6, 0.004) > 0 && edge > 80) return setZ(Z.WATER, 0, 0.7);
+        if (n2 > 0.6) return setZ(Z.FOREST, 0.7, 0.8);
+        return setZ(Z.PARK, 0.6, 0.6 + n2 * 0.4);
+      }
+      const ringDist = Math.max(Math.abs(cx) - 1100, Math.abs(u) - 560);
+      if (ringDist < 260) return setZ(Z.CORE, 0.85, n2);
+      if (ringDist < 700) return setZ(Z.CITY, 0.7, n2);
+      if (blob.v > 0 && blob.kind < 0.4) return setZ(Z.PARK, 0.4, 0.6);
+      return setZ(Z.RESIDENTIAL, 0.55, n2);
+    }
+    case 'forest': {
+      const wet = lakeField(sec, ls, u, 0.38, 0.003);
+      if (wet > 0) return setZ(Z.WATER, 0, clamp(0.4 + wet * 2.0, 0.3, 1));
+      if (wet > -0.05) return setZ(Z.BEACH, 0, 0.3);
+      if (blob.v > 0 && blob.kind > 0.6) return setZ(Z.RESIDENTIAL, 0.45, n2); // small lakeside towns
+      if (n1 > 0.58) return setZ(Z.MEADOW, 0.2, 0.5 + n2 * 0.5);
+      return setZ(Z.FOREST, 0.75 + n2 * 0.25, 0.7 + n1 * 0.3);
+    }
+    case 'residential': {
+      if (Math.abs(u) < 60) return setZ(Z.PLAZA, 0.4, 0.5);
+      if (lakeField(sec, ls, u, 0.75, 0.005) > 0) return setZ(Z.WATER, 0, 0.5);
+      if (blob.v > 0) return blob.kind < 0.5 ? setZ(Z.PARK, 0.45, 0.6 + n2 * 0.3) : setZ(Z.CITY, 0.6, n2);
+      if (n2 > 0.66) return setZ(Z.PARK, 0.3, 0.5 + n2 * 0.4);
+      return setZ(Z.RESIDENTIAL, 0.55 + n1 * 0.4, n2);
+    }
+    case 'biodomes': {
+      if (n2 > 0.63) return setZ(Z.FOREST, 0.6, 0.8);
+      if (Math.abs(u) < 40) return setZ(Z.PLAZA, 0.4, 0.5);
+      if (blob.v > 0 && blob.kind > 0.5) return setZ(Z.RESIDENTIAL, 0.35, n2); // visitor villages
+      return setZ(Z.MEADOW, 0.25, 0.55 + n1 * 0.4);
+    }
+    case 'farms': {
+      if (Math.abs(u) < 50) return setZ(Z.PLAZA, 0.3, 0.4);
+      if (lakeField(sec, ls, u, 0.7, 0.004) > 0) return setZ(Z.WATER, 0, 0.6);
+      if (blob.v > 0 && blob.kind > 0.55) return setZ(Z.INDUSTRIAL, 0.4, 0.2); // hydroponic halls
+      if (blob.v > 0) return setZ(Z.RESIDENTIAL, 0.35, n2);
+      if (n1 > 0.63) return setZ(Z.FOREST, 0.5, 0.7);
+      return setZ(Z.FARM, 0.6, n2);
+    }
+    case 'industry': {
+      if (blob.v > 0 && blob.kind < 0.3) return setZ(Z.PARK, 0.3, 0.5);
+      if (lakeField(sec, ls, u, 0.8, 0.005) > 0) return setZ(Z.WATER, 0, 0.3);
+      if (n2 > 0.64) return setZ(Z.CITY, 0.55, n2);     // worker housing
+      if (Math.abs(u) < 80) return setZ(Z.PLAZA, 0.5, 0.6);
+      return setZ(Z.INDUSTRIAL, 0.6 + n1 * 0.4, n2);
+    }
+    case 'port': {
+      if (Math.abs(cx) < 1300 && Math.abs(u) < 640) return setZ(Z.PORT, 0.7 + n2 * 0.3, 0.4 + n1 * 0.5);
+      if (blob.v > 0 && blob.kind < 0.35) return setZ(Z.PARK, 0.35, 0.5);
+      if (n1 > 0.6) return setZ(Z.CITY, 0.6, n2);
+      return setZ(Z.INDUSTRIAL, 0.5, n2);
+    }
+    case 'tech': {
+      const canal = Math.abs(u - 150 * Math.sin(ls * 0.0025)) < 70;
+      if (canal) return setZ(Z.WATER, 0, 0.6);
+      if (blob.v > 0 && blob.kind < 0.5) return setZ(Z.PARK, 0.5, 0.7);
+      if (n2 > 0.55) return setZ(Z.TECH, 0.7 + n2 * 0.3, n1);
+      if (n1 > 0.5) return setZ(Z.CITY, 0.65, n2);
+      return setZ(Z.PARK, 0.4, 0.5 + n2 * 0.4);
+    }
+    case 'reservoir': {
+      const ell = Math.sqrt((cx * cx) / (1500 * 1500) + (u * u) / (620 * 620));
+      const shore = 1.0 - ell + (n1 - 0.5) * 0.5;
+      if (shore > 0.04) {
+        const isl = fbm(nx * 0.006, ny * 0.006, 3);
+        if (isl > 0.68 && shore > 0.25) return setZ(Z.FOREST, 0.7, 0.8);     // islands
+        return setZ(Z.WATER, 0, clamp(shore * 2.0, 0.3, 1));
+      }
+      if (shore > -0.04) return setZ(Z.BEACH, 0, 0.3);
+      if (shore > -0.25 && n2 > 0.5) return setZ(Z.RESIDENTIAL, 0.4, n2);   // marinas & lakeside towns
+      if (n2 > 0.55) return setZ(Z.FOREST, 0.7, 0.8);
+      return setZ(Z.PARK, 0.4, 0.5 + n1 * 0.4);
+    }
+    case 'shipyard': {
+      if (Math.abs(u) < 90) return setZ(Z.PLAZA, 0.5, 0.6);
+      if (blob.v > 0 && blob.kind < 0.3) return setZ(Z.PARK, 0.3, 0.5);
+      if (n2 > 0.6) return setZ(Z.CITY, 0.5, n2);
+      return setZ(Z.INDUSTRIAL, 0.7 + n1 * 0.3, n2);
+    }
+    case 'luxury': {
+      if (lakeField(sec, ls, u, 0.5, 0.0035) > 0) return setZ(Z.WATER, 0, 0.7);
+      if (blob.v > 0 && blob.kind > 0.5) return setZ(Z.RESIDENTIAL, 0.25, n2); // villas
+      if (n2 > 0.6) return setZ(Z.FOREST, 0.6, 0.8);
+      if (n1 > 0.5) return setZ(Z.PARK, 0.5, 0.7);
+      return setZ(Z.MEADOW, 0.2, 0.6 + n2 * 0.3);
+    }
+  }
+  return setZ(Z.PARK, 0.5, 0.5);
+}
+
+/* ---------- zone map texture (RGBA: type, density, extra) ---------- */
+const ZONE_MAP_W = 4096, ZONE_MAP_H = 192;
+function createZoneMap() {
+  const data = new Uint8Array(ZONE_MAP_W * ZONE_MAP_H * 4);
+  for (let y = 0; y < ZONE_MAP_H; y++) {
+    const u = ((y + 0.5) / ZONE_MAP_H - 0.5) * RING.W;
+    for (let x = 0; x < ZONE_MAP_W; x++) {
+      const s = (x + 0.5) / ZONE_MAP_W * RING.CIRC;
+      const z = zoneAt(s, u);
+      const i = (y * ZONE_MAP_W + x) * 4;
+      data[i] = z.t * 16 + 8;
+      data[i + 1] = Math.round(clamp(z.d, 0, 1) * 255);
+      data[i + 2] = Math.round(clamp(z.e, 0, 1) * 255);
+      data[i + 3] = 255;
+    }
+  }
+  const tex = new THREE.DataTexture(data, ZONE_MAP_W, ZONE_MAP_H, THREE.RGBAFormat);
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.generateMipmaps = false;
+  tex.needsUpdate = true;
+  WORLD.zoneMap = tex;
+  return tex;
+}
+
+/* =====================================================================
+   GEOMETRY HELPERS — profile strips extruded around the ring
+   ===================================================================== */
+function ringStrip(u0, h0, u1, h1, nU, nH, segments, opts = {}) {
+  const across = opts.across || 1;
+  const repU = opts.repU || 1, repV = opts.repV || 1;
+  const cols = segments + 1, rows = across + 1;
+  const pos = new Float32Array(cols * rows * 3), nor = new Float32Array(cols * rows * 3), uv = new Float32Array(cols * rows * 2);
+  const nlen = Math.hypot(nU, nH) || 1; nU /= nlen; nH /= nlen;
+  const p = new THREE.Vector3(), up = new THREE.Vector3();
+  for (let i = 0; i < cols; i++) {
+    const theta = (i / segments) * TAU;
+    ringUp(theta, up);
+    for (let j = 0; j < rows; j++) {
+      const t = j / across;
+      const u = lerp(u0, u1, t), h = lerp(h0, h1, t);
+      ringPos(theta, u, h, p);
+      const idx = i * rows + j;
+      pos[idx * 3] = p.x; pos[idx * 3 + 1] = p.y; pos[idx * 3 + 2] = p.z;
+      nor[idx * 3] = up.x * nH; nor[idx * 3 + 1] = nU; nor[idx * 3 + 2] = up.z * nH;
+      uv[idx * 2] = (i / segments) * repU; uv[idx * 2 + 1] = t * repV;
+    }
+  }
+  const idxArr = [];
+  for (let i = 0; i < segments; i++) for (let j = 0; j < across; j++) {
+    const a = i * rows + j, b = a + 1, c = a + rows, d = c + 1;
+    idxArr.push(a, c, b, b, c, d);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  geo.setIndex(idxArr);
+  // fix winding so that faces point along the requested normal
+  const a = new THREE.Vector3().fromArray(pos, 0), b = new THREE.Vector3().fromArray(pos, rows * 3), c = new THREE.Vector3().fromArray(pos, 3);
+  const fn = _v1.subVectors(b, a).cross(_v2.subVectors(c, a));
+  const dn = _v3.fromArray(nor, 0);
+  if (fn.dot(dn) < 0) {
+    const ind = geo.getIndex().array;
+    for (let i = 0; i < ind.length; i += 3) { const t = ind[i + 1]; ind[i + 1] = ind[i + 2]; ind[i + 2] = t; }
+  }
+  return geo;
+}
+
+/* =====================================================================
+   SHARED GLSL SNIPPETS
+   ===================================================================== */
+const GLSL_NOISE = /* glsl */`
+  float hash12(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+  vec2 hash22(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973)); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.xx + p3.yz) * p3.zy); }
+  float vnoise(vec2 p){ vec2 i = floor(p); vec2 f = fract(p); f = f*f*(3.0-2.0*f);
+    float a = hash12(i), b = hash12(i+vec2(1,0)), c = hash12(i+vec2(0,1)), d = hash12(i+vec2(1,1));
+    return mix(mix(a,b,f.x), mix(c,d,f.x), f.y); }
+  float fbm3(vec2 p){ return (vnoise(p)*0.5 + vnoise(p*2.03)*0.25 + vnoise(p*4.07)*0.125) / 0.875; }
+`;
+
+/* =====================================================================
+   HABITAT SURFACE — the inhabited inner face of the ring
+   ===================================================================== */
+const surfaceUniforms = {
+  uZone: { value: null }, uSun: { value: SUN_DIR.clone() }, uTime: { value: 0 }, uLights: { value: 1 },
+  uCirc: { value: RING.CIRC }, uW: { value: RING.W }, uCell: { value: RING.CIRC / Math.round(RING.CIRC / 56) }, uSunColor: { value: new THREE.Color(1.0, 0.93, 0.82).multiplyScalar(2.2) },
+  uAmbient: { value: new THREE.Color(0.08, 0.10, 0.15) }, uHazeColor: { value: new THREE.Color(0.30, 0.42, 0.60) },
+};
+
+const SURFACE_VERT = /* glsl */`
+  #include <common>
+  #include <shadowmap_pars_vertex>
+  #include <logdepthbuf_pars_vertex>
+  varying vec3 vWorldPos; varying vec3 vWorldNormal; varying vec2 vRing;
+  uniform float uCirc; uniform float uW;
+  void main(){
+    vec3 objectNormal = normal;
+    #include <defaultnormal_vertex>
+    vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+    vWorldPos = worldPosition.xyz;
+    vWorldNormal = normalize(mat3(modelMatrix) * normal);
+    vRing = vec2(uv.x * uCirc, (uv.y - 0.5) * uW);
+    vec4 mvPosition = viewMatrix * worldPosition;
+    gl_Position = projectionMatrix * mvPosition;
+    #include <logdepthbuf_vertex>
+    #include <shadowmap_vertex>
+  }
+`;
+
+const SURFACE_FRAG = /* glsl */`
+  #include <common>
+  #include <packing>
+  #include <lights_pars_begin>
+  #include <shadowmap_pars_fragment>
+  #include <logdepthbuf_pars_fragment>
+  ${GLSL_NOISE}
+  uniform sampler2D uZone; uniform vec3 uSun; uniform float uTime; uniform float uLights;
+  uniform float uCirc; uniform float uW; uniform float uCell; uniform vec3 uSunColor; uniform vec3 uAmbient; uniform vec3 uHazeColor;
+  varying vec3 vWorldPos; varying vec3 vWorldNormal; varying vec2 vRing;
+
+  // anti-aliased line mask: returns 1 inside |x| < w
+  float lineAA(float x, float w){ float fw = fwidth(x); return 1.0 - smoothstep(w - fw, w + fw, abs(x)); }
+  float gridRoad(vec2 p, float cell, float w){
+    vec2 f = fract(p / cell) * cell; f = min(f, cell - f);
+    return max(lineAA(f.x, w), lineAA(f.y, w));
+  }
+
+  void main(){
+    #include <logdepthbuf_fragment>
+    vec2 ring = vRing;                       // (s along ring, u lateral) in world units
+    // jitter the zone lookup to break texel edges
+    vec2 jit = (hash22(floor(ring / 5.0)) - 0.5) * 9.0;
+    vec2 zuv = vec2((ring.x + jit.x) / uCirc, (ring.y + jit.y) / uW + 0.5);
+    vec4 zm = texture2D(uZone, zuv);
+    float type = floor(zm.r * 255.0 / 16.0);
+    float dens = zm.g; float extra = zm.b;
+
+    vec3 N = normalize(vWorldNormal);
+    vec3 L = normalize(uSun);
+    vec3 V = normalize(cameraPosition - vWorldPos);
+    float dist = length(cameraPosition - vWorldPos);
+    float farBoost = 1.0 + 3.0 * smoothstep(2500.0, 16000.0, dist);
+    float ndl = dot(N, L);
+    float day = clamp(ndl, 0.0, 1.0);
+    float night = smoothstep(0.16, -0.06, ndl) * uLights;
+
+    // ---------------- base albedo per zone ----------------
+    vec3 albedo = vec3(0.2);
+    vec3 emissive = vec3(0.0);
+    float rough = 0.9; float specMask = 0.0;
+    vec2 cellId = floor(ring / uCell);
+    float cellHash = hash12(cellId);
+    float n1 = fbm3(ring * 0.01);
+    float n2 = vnoise(ring * 0.15);
+    float isUrban = 0.0;
+
+    if (type < 0.5) {                       // WATER
+      vec3 deep = vec3(0.008, 0.035, 0.07), shallow = vec3(0.03, 0.15, 0.19);
+      albedo = mix(shallow, deep, smoothstep(0.2, 1.0, extra));
+      specMask = 1.0; rough = 0.08;
+    } else if (type < 1.5) {                // PARK
+      albedo = mix(vec3(0.075, 0.17, 0.045), vec3(0.14, 0.24, 0.07), n1) * (0.85 + 0.3 * n2);
+      float path = gridRoad(ring + vec2(n1 * 40.0, 0.0), 180.0, 2.2);
+      albedo = mix(albedo, vec3(0.32, 0.29, 0.24), path * 0.8);
+    } else if (type < 2.5) {                // FOREST
+      float can = vnoise(ring * 0.35) * 0.5 + vnoise(ring * 0.9) * 0.5;
+      albedo = mix(vec3(0.02, 0.07, 0.02), vec3(0.06, 0.15, 0.045), can) * (0.7 + 0.5 * n1);
+    } else if (type < 3.5) {                // FARM
+      vec2 fid = floor((ring + vec2(0.0, 30.0)) / vec2(150.0, 95.0));
+      float fh = hash12(fid + 7.0);
+      vec3 c1 = vec3(0.22, 0.24, 0.07), c2 = vec3(0.10, 0.20, 0.05), c3 = vec3(0.30, 0.21, 0.09), c4 = vec3(0.16, 0.26, 0.09);
+      albedo = fh < 0.25 ? c1 : fh < 0.5 ? c2 : fh < 0.75 ? c3 : c4;
+      float rows = 0.85 + 0.15 * sin(ring.y * 2.2 + fh * 10.0);
+      albedo *= rows;
+      float fb = gridRoad(ring + vec2(0.0, 30.0), 150.0, 3.0); // field boundary tracks
+      albedo = mix(albedo, vec3(0.28, 0.25, 0.2), fb * 0.7);
+    } else if (type < 4.5) {                // MEADOW
+      albedo = mix(vec3(0.15, 0.22, 0.06), vec3(0.24, 0.27, 0.10), n1) * (0.85 + 0.3 * n2);
+    } else if (type < 5.5) {                // RESIDENTIAL
+      isUrban = 1.0;
+      vec2 sc = floor(ring / 14.0); float sh = hash12(sc + 3.0);
+      albedo = mix(vec3(0.30, 0.27, 0.24), vec3(0.42, 0.36, 0.30), sh) * (0.75 + 0.25 * n2);
+      albedo = mix(albedo, vec3(0.12, 0.2, 0.08), smoothstep(0.55, 0.8, vnoise(ring * 0.08)) * 0.6); // gardens between houses
+    } else if (type < 6.5) {                // CITY
+      isUrban = 1.0;
+      albedo = mix(vec3(0.20, 0.20, 0.21), vec3(0.34, 0.33, 0.32), cellHash) * (0.8 + 0.2 * n2);
+    } else if (type < 7.5) {                // CORE
+      isUrban = 1.0;
+      albedo = mix(vec3(0.13, 0.14, 0.17), vec3(0.24, 0.25, 0.28), cellHash) * (0.8 + 0.2 * n2);
+    } else if (type < 8.5) {                // INDUSTRIAL
+      isUrban = 1.0;
+      albedo = mix(vec3(0.17, 0.15, 0.13), vec3(0.28, 0.26, 0.23), cellHash) * (0.8 + 0.2 * n2);
+      float stripe = step(0.92, fract(ring.x / uCell)) * step(0.5, hash12(cellId + 11.0));
+      albedo = mix(albedo, vec3(0.6, 0.45, 0.05), stripe * 0.5);
+    } else if (type < 9.5) {                // PORT
+      isUrban = 1.0;
+      albedo = vec3(0.30, 0.31, 0.32) * (0.85 + 0.2 * n2);
+      // landing pads: rings in every 3rd cell
+      float padCell = uCell * 3.0; vec2 padId = floor(ring / padCell); vec2 pc = (fract(ring / padCell) - 0.5) * padCell;
+      float pr = length(pc);
+      float padMask = 1.0 - step(0.5, mod(padId.x + 2.0 * padId.y, 3.0));
+      float padRing = padMask * (lineAA(pr - 52.0, 2.5) + lineAA(pr - 30.0, 1.5) + lineAA(pr - 8.0, 3.0));
+      albedo = mix(albedo, vec3(0.65, 0.6, 0.2), clamp(padRing, 0.0, 1.0) * 0.8);
+      emissive += vec3(0.9, 0.35, 0.1) * clamp(padRing, 0.0, 1.0) * (0.4 + 0.6 * night) * uLights * padMask;
+      float lanes = lineAA(fract(ring.y / 40.0) - 0.5, 0.02) * (1.0 - padMask);
+      albedo = mix(albedo, vec3(0.6, 0.6, 0.55), lanes * 0.5);
+    } else if (type < 10.5) {               // TECH
+      isUrban = 1.0;
+      albedo = mix(vec3(0.12, 0.15, 0.20), vec3(0.22, 0.26, 0.32), cellHash) * (0.85 + 0.2 * n2);
+      float glowLine = gridRoad(ring, uCell, 1.2) * step(0.6, hash12(cellId + 21.0));
+      emissive += vec3(0.1, 0.6, 0.9) * glowLine * (0.3 + 0.7 * night) * uLights;
+    } else if (type < 11.5) {               // PLAZA
+      albedo = vec3(0.36, 0.36, 0.35) * (0.85 + 0.2 * n2);
+      float pav = gridRoad(ring, 28.0, 0.8);
+      albedo *= 1.0 - pav * 0.25;
+    } else {                                // BEACH
+      albedo = vec3(0.48, 0.42, 0.29) * (0.9 + 0.2 * n2);
+    }
+
+    // ---------------- roads & block structure in urban zones ----------------
+    float road = gridRoad(ring, uCell, 5.0) * isUrban;
+    float roadCenter = gridRoad(ring, uCell, 0.35) * isUrban;
+    albedo = mix(albedo, vec3(0.05, 0.05, 0.055), road);
+    albedo = mix(albedo, vec3(0.5, 0.45, 0.25), roadCenter * 0.6);
+
+    // main arterial highways along the ring (u = +-280) and cross highways
+    float hw = lineAA(abs(ring.y) - 280.0, 20.0);
+    float hwLane = lineAA(abs(ring.y) - 280.0, 0.6) + lineAA(abs(abs(ring.y) - 280.0) - 10.0, 0.5);
+    float crossHw = max(lineAA(fract(ring.x / 1600.0) * 1600.0 - 800.0, 14.0), 0.0);
+    float isWater = 1.0 - step(0.5, type);
+    vec3 hwCol = mix(vec3(0.06, 0.06, 0.065), vec3(0.22, 0.22, 0.24), isWater); // bridges over water
+    albedo = mix(albedo, hwCol, max(hw, crossHw));
+    albedo = mix(albedo, vec3(0.55, 0.5, 0.3), clamp(hwLane, 0.0, 1.0) * hw * 0.7);
+    // central maglev track
+    float rail = lineAA(ring.y, 9.0);
+    float railLine = lineAA(abs(ring.y) - 3.5, 0.5);
+    albedo = mix(albedo, vec3(0.18, 0.19, 0.21), rail);
+    albedo = mix(albedo, vec3(0.45, 0.47, 0.5), railLine * rail);
+
+    // ---------------- city lights (emissive, night side) ----------------
+    float lightsOn = uLights * (0.06 + 0.94 * night);
+    if (isUrban > 0.5) {
+      float warm = hash12(cellId + 1.0);
+      vec3 winCol = mix(vec3(1.0, 0.80, 0.55), vec3(0.70, 0.85, 1.0), step(0.55, warm));
+      if (type > 7.5 && type < 8.5) winCol = mix(vec3(1.0, 0.65, 0.3), vec3(0.9, 0.9, 0.8), warm);
+      if (type > 9.5 && type < 10.5) winCol = vec3(0.6, 0.85, 1.0);
+      float mid = fbm3(ring * 0.006 + 7.0);
+      float fine = vnoise(ring * 0.5) * 0.5 + hash12(floor(ring / 4.0)) * 0.5;
+      float sparkle = step(0.965, hash12(floor(ring / 7.0) + 3.0));
+      float blockGlow = dens * (0.25 + 0.75 * cellHash) * (0.35 + 0.65 * mid) * (0.4 + 0.6 * fine);
+      float intensity = (type > 6.5 && type < 7.5) ? 0.8 : (type > 9.5 && type < 10.5) ? 0.6 : 0.4;
+      emissive += winCol * (blockGlow * intensity * farBoost + sparkle * 0.9 * dens * (0.5 + 0.5 * mid)) * lightsOn * (1.0 - road);
+      // street lights along roads
+      emissive += vec3(1.0, 0.75, 0.4) * road * 0.14 * lightsOn;
+    }
+    // highway traffic: moving light streaks
+    float traffic1 = step(0.82, fract(ring.x / 30.0 - uTime * 2.2 + hash12(vec2(floor(ring.y / 8.0), 1.0)))) ;
+    float traffic2 = step(0.82, fract(-ring.x / 30.0 - uTime * 2.4 + hash12(vec2(floor(ring.y / 8.0), 9.0))));
+    float lane1 = lineAA(abs(ring.y) - 288.0, 4.0), lane2 = lineAA(abs(ring.y) - 272.0, 4.0);
+    emissive += (vec3(1.0, 0.9, 0.7) * traffic1 * lane1 + vec3(1.0, 0.25, 0.1) * traffic2 * lane2) * 0.9 * uLights * (0.35 + 0.65 * night);
+    emissive += vec3(1.0, 0.8, 0.5) * hw * 0.10 * lightsOn;
+    emissive += vec3(1.0, 0.8, 0.5) * crossHw * 0.10 * lightsOn;
+    // maglev: cyan pulses
+    float mag = step(0.9, fract(ring.x / 120.0 - uTime * 1.5)) * lineAA(ring.y, 6.0);
+    emissive += vec3(0.3, 0.8, 1.0) * mag * 1.5 * uLights;
+
+    // ---------------- lighting ----------------
+    float shadow = 1.0;
+    #if defined(USE_SHADOWMAP) && NUM_DIR_LIGHT_SHADOWS > 0
+      DirectionalLightShadow dls = directionalLightShadows[0];
+      shadow = getShadow(directionalShadowMap[0], dls.shadowMapSize, dls.shadowIntensity, dls.shadowBias, dls.shadowRadius, vDirectionalShadowCoord[0]);
+    #endif
+    vec3 diffuse = albedo * (uSunColor * day * shadow + uAmbient * (1.0 + 0.5 * night));
+    // water specular + animated ripple normal
+    if (specMask > 0.5) {
+      vec2 rip = vec2(vnoise(ring * 0.08 + uTime * 0.15), vnoise(ring * 0.08 - uTime * 0.12 + 40.0)) - 0.5;
+      vec3 Nw = normalize(N + vec3(rip.x, 0.0, rip.y) * 0.08);
+      vec3 H = normalize(L + V);
+      float spec = pow(max(dot(Nw, H), 0.0), 220.0) * 3.0 * day * shadow;
+      float fres = pow(1.0 - max(dot(Nw, V), 0.0), 4.0);
+      diffuse += uSunColor * spec * 0.35 + vec3(0.05, 0.08, 0.14) * fres * 0.6;
+      // city reflections at night
+      diffuse += vec3(0.4, 0.35, 0.3) * fres * 0.15 * night * uLights;
+    }
+    vec3 col = diffuse + emissive;
+
+    // ---------------- atmospheric haze ----------------
+    float grazing = 1.0 - clamp(dot(N, V), 0.0, 1.0);
+    float haze = 1.0 - exp(-dist * (0.00009 + 0.00012 * grazing));
+    haze = clamp(haze, 0.0, 0.42);
+    vec3 hazeCol = uHazeColor * 0.75 * (0.2 + 0.8 * day) + vec3(0.06, 0.05, 0.05) * night;
+    col = mix(col, hazeCol, haze);
+    gl_FragColor = vec4(col, 1.0);
+  }
+`;
+
+let surfaceMaterial;
+function createHabitatSurface() {
+  surfaceUniforms.uZone.value = WORLD.zoneMap;
+  surfaceMaterial = new THREE.ShaderMaterial({
+    uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.lights, surfaceUniforms]),
+    vertexShader: SURFACE_VERT, fragmentShader: SURFACE_FRAG, lights: true, side: THREE.FrontSide,
+  });
+  // merge keeps clones; keep references to what we animate
+  surfaceUniforms.uTime = surfaceMaterial.uniforms.uTime;
+  surfaceUniforms.uLights = surfaceMaterial.uniforms.uLights;
+  surfaceUniforms.uSun = surfaceMaterial.uniforms.uSun;
+  surfaceMaterial.uniforms.uZone.value = WORLD.zoneMap;
+
+  const HW = RING.W * 0.5;
+  const floor = ringStrip(-HW, 0, HW, 0, 0, 1, 1024, { across: 6 });
+  const mesh = new THREE.Mesh(floor, surfaceMaterial);
+  mesh.receiveShadow = true;
+  mesh.frustumCulled = false;
+  ringRoot.add(mesh);
+
+  createAtmosphereFilm();
+  return mesh;
+}
+
+/* thin luminous film over the habitat — reads as atmosphere from far away */
+function createAtmosphereFilm() {
+  const HW = RING.W * 0.5;
+  const geo = ringStrip(-HW - 10, RING.WALL_H * 0.85, HW + 10, RING.WALL_H * 0.85, 0, 1, 512, { across: 4 });
+  const mat = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
+    uniforms: { uSun: surfaceUniforms.uSun, uW: { value: RING.W } },
+    vertexShader: /* glsl */`
+      #include <common>
+      #include <logdepthbuf_pars_vertex>
+      varying vec3 vN; varying vec3 vWP; varying float vEdge;
+      uniform float uW;
+      void main(){ vN = normalize(mat3(modelMatrix) * normal); vec4 wp = modelMatrix * vec4(position,1.0); vWP = wp.xyz;
+        vEdge = 1.0 - smoothstep(0.0, 0.15, min(uv.y, 1.0 - uv.y));
+        gl_Position = projectionMatrix * viewMatrix * wp;
+        #include <logdepthbuf_vertex>
+      }`,
+    fragmentShader: /* glsl */`
+      #include <common>
+      #include <logdepthbuf_pars_fragment>
+      varying vec3 vN; varying vec3 vWP; varying float vEdge; uniform vec3 uSun;
+      void main(){
+        #include <logdepthbuf_fragment>
+        vec3 V = normalize(cameraPosition - vWP);
+        float graz = 1.0 - abs(dot(normalize(vN), V));
+        float day = clamp(dot(normalize(vN), normalize(uSun)) + 0.15, 0.0, 1.0);
+        float dist = length(cameraPosition - vWP);
+        float far = smoothstep(800.0, 6000.0, dist);
+        float a = (pow(graz, 3.0) * 0.16 + 0.01) * (0.35 + 0.65 * day) * far;
+        a += vEdge * 0.02 * far;
+        vec3 col = mix(vec3(0.12, 0.2, 0.35), vec3(0.45, 0.6, 0.85), day);
+        gl_FragColor = vec4(col * a, a);
+      }`
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.frustumCulled = false;
+  mesh.renderOrder = 20;
+  ringRoot.add(mesh);
+}
+
+/* =====================================================================
+   PROCEDURAL PANEL TEXTURES (hull / walls)
+   ===================================================================== */
+function makePanelTextures(kind, size = 1024) {
+  const rng = subRng('tex_' + kind);
+  const c = document.createElement('canvas'); c.width = c.height = size;
+  const ctx = c.getContext('2d');
+  const e = document.createElement('canvas'); e.width = e.height = size;
+  const ectx = e.getContext('2d');
+  const r = document.createElement('canvas'); r.width = r.height = size;
+  const rctx = r.getContext('2d');
+  const base = kind === 'hull' ? [78, 82, 88] : kind === 'wall' ? [92, 96, 104] : [70, 72, 78];
+  ctx.fillStyle = `rgb(${base[0]},${base[1]},${base[2]})`; ctx.fillRect(0, 0, size, size);
+  ectx.fillStyle = '#000'; ectx.fillRect(0, 0, size, size);
+  rctx.fillStyle = 'rgb(0,170,110)'; rctx.fillRect(0, 0, size, size); // G=roughness, B=metalness
+  // recursive panel subdivision
+  const panels = [];
+  (function split(x, y, w, h, depth) {
+    const minS = kind === 'hull' ? 70 : 40;
+    if ((w < minS * 2 && h < minS * 2) || depth > 6 || (depth > 2 && rng.chance(0.28))) { panels.push([x, y, w, h]); return; }
+    if (w > h || (w === h && rng.chance(0.5))) { const t = rng.range(0.3, 0.7); split(x, y, Math.floor(w * t), h, depth + 1); split(x + Math.floor(w * t), y, w - Math.floor(w * t), h, depth + 1); }
+    else { const t = rng.range(0.3, 0.7); split(x, y, w, Math.floor(h * t), depth + 1); split(x, y + Math.floor(h * t), w, h - Math.floor(h * t), depth + 1); }
+  })(0, 0, size, size, 0);
+  for (const [x, y, w, h] of panels) {
+    const v = rng.range(-14, 14);
+    const tint = rng.chance(0.08) ? [rng.range(-6, 4), rng.range(-4, 4), rng.range(2, 12)] : [0, 0, 0];
+    ctx.fillStyle = `rgb(${base[0] + v + tint[0]},${base[1] + v + tint[1]},${base[2] + v + tint[2]})`;
+    ctx.fillRect(x, y, w, h);
+    // grime gradient along one edge
+    const g = ctx.createLinearGradient(x, y, x, y + h);
+    g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, `rgba(10,8,6,${rng.range(0.05, 0.3)})`);
+    ctx.fillStyle = g; ctx.fillRect(x, y, w, h);
+    // seams
+    ctx.strokeStyle = 'rgba(12,14,18,0.85)'; ctx.lineWidth = rng.chance(0.3) ? 3 : 1.5;
+    ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+    // roughness variation
+    rctx.fillStyle = `rgb(0,${Math.round(clamp(150 + v * 3 + rng.range(-20, 20), 90, 230))},${Math.round(clamp(105 + rng.range(-30, 30), 60, 160))})`;
+    rctx.fillRect(x, y, w, h);
+    // rivets / bolts
+    if (w > 60 && h > 60 && rng.chance(0.6)) {
+      ctx.fillStyle = 'rgba(20,22,26,0.7)';
+      for (let i = 0; i < 4; i++) { const px = i % 2 ? x + w - 8 : x + 8, py = i < 2 ? y + 8 : y + h - 8; ctx.beginPath(); ctx.arc(px, py, 2, 0, TAU); ctx.fill(); }
+    }
+    // vents & hatches
+    if (w > 90 && h > 50 && rng.chance(0.18)) {
+      ctx.fillStyle = 'rgba(8,9,12,0.9)';
+      const vx = x + rng.range(10, w - 40), vy = y + rng.range(10, h - 24);
+      for (let i = 0; i < 4; i++) ctx.fillRect(vx, vy + i * 5, 30, 2);
+    }
+    // warning stripes
+    if (kind !== 'wall' && w > 120 && h > 30 && rng.chance(0.05)) {
+      ctx.save(); ctx.beginPath(); ctx.rect(x + 6, y + h - 14, w - 12, 8); ctx.clip();
+      for (let i = -20; i < w; i += 16) { ctx.fillStyle = (i / 16) % 2 ? 'rgba(220,170,20,0.8)' : 'rgba(20,20,20,0.9)'; ctx.beginPath(); ctx.moveTo(x + i, y + h - 14); ctx.lineTo(x + i + 8, y + h - 14); ctx.lineTo(x + i, y + h - 6); ctx.lineTo(x + i - 8, y + h - 6); ctx.fill(); }
+      ctx.restore();
+    }
+    // emissive elements
+    if (kind === 'wall') {
+      // rows of windows (the walls are inhabited too)
+      if (rng.chance(0.55) && w > 40) {
+        const rows = Math.max(1, Math.floor(h / 22));
+        for (let ry = 0; ry < rows; ry++) {
+          const yy = y + 8 + ry * 22;
+          for (let xx = x + 6; xx < x + w - 8; xx += 9) {
+            if (rng.chance(0.55)) { const warm = rng.chance(0.6); ectx.fillStyle = warm ? `rgba(255,${190 + rng.int(0, 40)},${120 + rng.int(0, 60)},${rng.range(0.5, 1)})` : `rgba(${150 + rng.int(0, 60)},${200 + rng.int(0, 40)},255,${rng.range(0.4, 0.9)})`; ectx.fillRect(xx, yy, 5, 8); }
+          }
+        }
+      }
+    } else {
+      if (rng.chance(0.14)) { ectx.fillStyle = rng.chance(0.5) ? 'rgb(255,60,30)' : rng.chance(0.5) ? 'rgb(120,220,255)' : 'rgb(255,220,160)'; ectx.fillRect(x + rng.range(4, w - 8), y + rng.range(4, h - 8), 4, 4); }
+      if (w > 80 && h > 80 && rng.chance(0.12)) { ectx.fillStyle = 'rgba(90,180,255,0.9)'; ectx.fillRect(x + 10, y + h / 2 - 1, w - 20, 2); }
+    }
+  }
+  // fine grain
+  const img = ctx.getImageData(0, 0, size, size); const d = img.data;
+  for (let i = 0; i < d.length; i += 4) { const n = (rng.next() - 0.5) * 10; d[i] += n; d[i + 1] += n; d[i + 2] += n; }
+  ctx.putImageData(img, 0, 0);
+  const mk = (cv, srgb) => { const t = new THREE.CanvasTexture(cv); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8; if (srgb) t.colorSpace = THREE.SRGBColorSpace; return t; };
+  return { map: mk(c, true), emissiveMap: mk(e, true), roughnessMap: mk(r, false) };
+}
+
+// injects world-space large-scale tint variation to break tiling (used on hull/wall standard materials)
+function addWorldVariation(mat, strength = 0.25, scale = 0.0015) {
+  mat.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWPos;')
+      .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWPos;\n' + GLSL_NOISE)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        float wv = fbm3(vWPos.xz * ${scale.toFixed(6)} + vWPos.y * ${(scale * 0.7).toFixed(6)});
+        diffuseColor.rgb *= 1.0 + (wv - 0.5) * ${(strength * 2).toFixed(3)};
+        diffuseColor.rgb *= vec3(1.0, 1.0, 1.0 + (wv - 0.5) * 0.12);`);
+  };
+  mat.customProgramCacheKey = () => 'worldvar_' + strength + '_' + scale;
+}
+
+let hullMaterial, wallMaterial;
+function createRingStructure() {
+  const HW = RING.W * 0.5, T = RING.T, WH = RING.WALL_H, WT = RING.WALL_T;
+  const hullTex = makePanelTextures('hull');
+  const wallTex = makePanelTextures('wall');
+  hullMaterial = new THREE.MeshStandardMaterial({ map: hullTex.map, emissiveMap: hullTex.emissiveMap, emissive: new THREE.Color(1, 1, 1), emissiveIntensity: 1.4, roughnessMap: hullTex.roughnessMap, metalnessMap: hullTex.roughnessMap, roughness: 1.0, metalness: 1.0, color: 0xbfc4cc });
+  wallMaterial = new THREE.MeshStandardMaterial({ map: wallTex.map, emissiveMap: wallTex.emissiveMap, emissive: new THREE.Color(1, 1, 1), emissiveIntensity: 1.6, roughnessMap: wallTex.roughnessMap, metalnessMap: wallTex.roughnessMap, roughness: 1.0, metalness: 1.0, color: 0xc8ccd2 });
+  addWorldVariation(hullMaterial, 0.22, 0.0012);
+  addWorldVariation(wallMaterial, 0.18, 0.002);
+
+  const SEG = 768;
+  const hullParts = [], wallParts = [];
+  const circPanels = RING.CIRC / 420;   // texture repeats along the ring
+  // outer hull bottom (faces away from the axis)
+  hullParts.push(ringStrip(-HW - WT, -T, HW + WT, -T, 0, -1, SEG, { across: 4, repU: circPanels, repV: (RING.W + 2 * WT) / 420 }));
+  // outer lateral faces of the ring
+  hullParts.push(ringStrip(HW + WT, -T, HW + WT, WH, 1, 0, SEG, { across: 2, repU: circPanels, repV: (T + WH) / 420 }));
+  hullParts.push(ringStrip(-HW - WT, -T, -HW - WT, WH, -1, 0, SEG, { across: 2, repU: circPanels, repV: (T + WH) / 420 }));
+  // wall tops
+  hullParts.push(ringStrip(HW, WH, HW + WT, WH, 0, 1, SEG, { repU: circPanels, repV: 0.25 }));
+  hullParts.push(ringStrip(-HW - WT, WH, -HW, WH, 0, 1, SEG, { repU: circPanels, repV: 0.25 }));
+  // inner faces of the atmosphere walls (visible from the habitat)
+  const wallRep = RING.CIRC / 300;
+  wallParts.push(ringStrip(HW, 0, HW, WH, -1, 0, SEG, { across: 2, repU: wallRep, repV: WH / 300 }));
+  wallParts.push(ringStrip(-HW, 0, -HW, WH, 1, 0, SEG, { across: 2, repU: wallRep, repV: WH / 300 }));
+  // underside technical deck (a second inner hull layer visible between ribs)
+  hullParts.push(ringStrip(-HW - WT + 40, -T + 140, HW + WT - 40, -T + 140, 0, -1, SEG, { across: 2, repU: circPanels * 1.5, repV: 3 }));
+
+  const hullGeo = BufferGeometryUtils.mergeGeometries(hullParts, false);
+  const wallGeo = BufferGeometryUtils.mergeGeometries(wallParts, false);
+  const hull = new THREE.Mesh(hullGeo, hullMaterial);
+  hull.receiveShadow = true; hull.castShadow = true; hull.frustumCulled = false;
+  const walls = new THREE.Mesh(wallGeo, wallMaterial);
+  walls.receiveShadow = true; walls.castShadow = true; walls.frustumCulled = false;
+  ringRoot.add(hull, walls);
+  createStructuralDetails();
+}
+
+/* =====================================================================
+   STRUCTURAL DETAILS — ribs, trusses, conduits, radiators, hangars,
+   antennas, service modules, navigation lights
+   ===================================================================== */
+const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1);
+const UNIT_BOX_BASE = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0); // base at y=0
+const UNIT_CYL = new THREE.CylinderGeometry(0.5, 0.5, 1, 8).translate(0, 0.5, 0);
+const UNIT_QUAD = new THREE.PlaneGeometry(1, 1);
+let structMaterial, pipeMaterial, radiatorMaterial, quadMaterial, darkMetalMaterial;
+const STRUCT = { instanced: [] };   // registry: { mesh, fullCount, kind }
+let navLightData = { pos: [], col: [], phase: [], size: [] };
+
+function registerInstanced(mesh, kind) { STRUCT.instanced.push({ mesh, fullCount: mesh.count, kind }); return mesh; }
+
+// place a unit box: centre at (theta,u,h), extents sx (tangent), sy (up), sz (lateral)
+function placeBox(inst, i, theta, u, h, yaw, sx, sy, sz) {
+  frameMatrix(theta, u, h, yaw, { x: sx, y: sy, z: sz }, _m1);
+  inst.setMatrixAt(i, _m1);
+}
+// place a geometry whose local +Y should point along a local direction (tan, up, lat)
+const Y_AXIS = new THREE.Vector3(0, 1, 0);
+const _pa = new THREE.Vector3(), _pb = new THREE.Vector3(), _pc = new THREE.Vector3(), _ps = new THREE.Vector3();
+function placeAlong(inst, i, theta, u, h, dTan, dUp, dLat, len, thick, thick2) {
+  const tan = ringTangent(theta, _pa), up = ringUp(theta, _pb);
+  _pc.set(0, 0, 0).addScaledVector(tan, dTan).addScaledVector(up, dUp).addScaledVector(RING_LATERAL, dLat).normalize();
+  _q1.setFromUnitVectors(Y_AXIS, _pc);
+  ringPos(theta, u, h, _ps);
+  _m1.compose(_ps, _q1, _v4.set(thick, len, thick2 === undefined ? thick : thick2));
+  inst.setMatrixAt(i, _m1);
+}
+function addNavLight(theta, u, h, color, size, phase) {
+  ringPos(theta, u, h, _v1);
+  navLightData.pos.push(_v1.x, _v1.y, _v1.z);
+  navLightData.col.push(color.r, color.g, color.b);
+  navLightData.phase.push(phase);
+  navLightData.size.push(size);
+}
+const COL_RED = new THREE.Color(1.0, 0.12, 0.05), COL_GREEN = new THREE.Color(0.1, 1.0, 0.3), COL_WHITE = new THREE.Color(1.0, 0.95, 0.85), COL_CYAN = new THREE.Color(0.4, 0.85, 1.0), COL_AMBER = new THREE.Color(1.0, 0.6, 0.15);
+
+function createStructuralMaterials() {
+  const tex = makePanelTextures('struct', 512);
+  structMaterial = new THREE.MeshStandardMaterial({ map: tex.map, roughnessMap: tex.roughnessMap, metalnessMap: tex.roughnessMap, roughness: 1, metalness: 1, color: 0xaeb4bc });
+  darkMetalMaterial = new THREE.MeshStandardMaterial({ color: 0x585c66, roughness: 0.55, metalness: 0.6 });
+  pipeMaterial = new THREE.MeshStandardMaterial({ color: 0x7a7e88, roughness: 0.45, metalness: 0.75 });
+  radiatorMaterial = new THREE.MeshStandardMaterial({ color: 0x2c2e33, roughness: 0.85, metalness: 0.3, emissive: new THREE.Color(0.55, 0.08, 0.02), emissiveIntensity: 0.1 });
+  quadMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, toneMapped: true });
+}
+
+function createStructuralDetails() {
+  createStructuralMaterials();
+  const rng = subRng('structure');
+  const HW = RING.W * 0.5, T = RING.T, WH = RING.WALL_H, WT = RING.WALL_T;
+  const NSEG = RING.SEGMENTS;
+  const segAng = TAU / NSEG;
+  const segLen = RING.CIRC / NSEG;
+
+  /* ---- main ribs: one per construction segment, wrapping under and up the sides ---- */
+  const ribs = new THREE.InstancedMesh(UNIT_BOX, structMaterial, NSEG * 3);
+  for (let i = 0; i < NSEG; i++) {
+    const th = i * segAng;
+    const big = (i % 8 === 0);
+    const w = big ? 70 : 34;
+    placeBox(ribs, i * 3, th, 0, -T - 70, 0, w, big ? 200 : 140, RING.W + 2 * WT + 150);
+    placeBox(ribs, i * 3 + 1, th, HW + WT + 45, (WH - T) * 0.5, 0, w, T + WH + 70, 90);
+    placeBox(ribs, i * 3 + 2, th, -HW - WT - 45, (WH - T) * 0.5, 0, w, T + WH + 70, 90);
+  }
+  ribs.castShadow = true; ribs.receiveShadow = true;
+  ribs.instanceMatrix.needsUpdate = true;
+  ringRoot.add(registerInstanced(ribs, 'struct'));
+
+  /* ---- diagonal trusses between ribs (under the hull) ---- */
+  const stations = [-660, -220, 220, 660];
+  const truss = new THREE.InstancedMesh(UNIT_BOX, darkMetalMaterial, NSEG * stations.length * 2);
+  let ti = 0;
+  const span = 300, tlen = Math.hypot(segLen, span);
+  for (let i = 0; i < NSEG; i++) {
+    const th = (i + 0.5) * segAng;
+    for (const st of stations) {
+      placeBox(truss, ti++, th, st, -T - 175, Math.atan2(span, segLen), tlen, 12, 12);
+      placeBox(truss, ti++, th, st, -T - 175, -Math.atan2(span, segLen), tlen, 12, 12);
+    }
+  }
+  truss.instanceMatrix.needsUpdate = true;
+  ringRoot.add(registerInstanced(truss, 'struct'));
+
+  /* ---- longitudinal conduits, rails and spine beams (thin tori) ---- */
+  const torus = (radius, tube, radial, tubular, u, mat) => {
+    const g = new THREE.TorusGeometry(radius, tube, radial, tubular);
+    const m = new THREE.Mesh(g, mat);
+    m.rotation.x = Math.PI * 0.5; m.position.y = u; m.frustumCulled = false;
+    ringRoot.add(m);
+    return m;
+  };
+  for (const u of [-700, -350, 0, 350, 700]) torus(RING.R + T + 95, 13, 8, 1024, u, pipeMaterial);
+  for (const u of [-520, 520]) torus(RING.R + T + 120, 8, 6, 1024, u, pipeMaterial);
+  // square-section spine beams
+  const beamMat = structMaterial;
+  for (const u of [-800, 800]) torus(RING.R + T + 250, 42, 4, 1024, u, beamMat);
+  // outer side pipes
+  for (const u of [HW + WT + 60, -HW - WT - 60]) torus(RING.R - (WH - T) * 0.5 + 60, 20, 8, 1024, u, pipeMaterial);
+  // transport rails on top of the walls (+ emissive guide lines)
+  const railMat = new THREE.MeshStandardMaterial({ color: 0x9ea4ad, roughness: 0.4, metalness: 0.8 });
+  const guideMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.35, 0.8, 1.0).multiplyScalar(1.0) });
+  for (const u of [HW + WT * 0.5, -HW - WT * 0.5]) { torus(RING.R - WH - 6, 5, 6, 1024, u, railMat); torus(RING.R - WH - 12, 1.6, 4, 1024, u, guideMat); }
+
+  /* ---- radiator arrays ---- */
+  const nClusters = NSEG / 3;
+  const rad = new THREE.InstancedMesh(UNIT_BOX, radiatorMaterial, nClusters * 7);
+  let ri = 0;
+  for (let c = 0; c < nClusters; c++) {
+    const th = (c * 3 + 1.5) * segAng;
+    const u = (c % 2 === 0) ? 470 : -470;
+    const hgt = 130 + 60 * hash1(c);
+    for (let f = 0; f < 7; f++) placeBox(rad, ri++, th + ((f - 3) * 17) / RING.R, u, -T - 340 - hgt * 0.5 + 60, 0, 2.5, hgt, 120);
+  }
+  rad.instanceMatrix.needsUpdate = true;
+  ringRoot.add(registerInstanced(rad, 'struct'));
+  // radiator mounting spars
+  const spars = new THREE.InstancedMesh(UNIT_BOX, darkMetalMaterial, nClusters * 2);
+  for (let c = 0; c < nClusters; c++) {
+    const th = (c * 3 + 1.5) * segAng, u = (c % 2 === 0) ? 470 : -470;
+    placeBox(spars, c * 2, th, u, -T - 240, 0, 14, 140, 14);
+    placeBox(spars, c * 2 + 1, th, u, -T - 310, 0, 130, 8, 130);
+  }
+  spars.instanceMatrix.needsUpdate = true;
+  ringRoot.add(registerInstanced(spars, 'struct'));
+
+  /* ---- hangar bays & service modules on the underside ---- */
+  const nHangar = NSEG / 6;
+  const hangars = new THREE.InstancedMesh(UNIT_BOX, structMaterial, nHangar);
+  const doors = new THREE.InstancedMesh(UNIT_QUAD, quadMaterial, nHangar * 2);
+  const doorCol = new THREE.Color();
+  for (let i = 0; i < nHangar; i++) {
+    const th = (i * 6 + 3) * segAng;
+    const u = (i % 3 - 1) * 380;
+    const w = 90 + 60 * hash1(i + 50), d = 120 + 40 * hash1(i + 90), hh = 55;
+    placeBox(hangars, i, th, u, -T - hh * 0.5 - 2, 0, w, hh, d);
+    // glowing doors on both tangent faces
+    for (let side = 0; side < 2; side++) {
+      const sgn = side ? 1 : -1;
+      const dth = th + (sgn * (w * 0.5 + 0.6)) / RING.R;
+      // quad normal must face along the tangent: rotate the unit quad (normal +Z) so that Z -> tangent
+      const tan = ringTangent(dth, _v1).multiplyScalar(sgn), up = ringUp(dth, _v2);
+      const lat = _v3.crossVectors(up, tan);
+      _m1.makeBasis(lat, up, tan);
+      const e = _m1.elements; e[0] *= d * 0.7; e[1] *= d * 0.7; e[2] *= d * 0.7; e[4] *= hh * 0.6; e[5] *= hh * 0.6; e[6] *= hh * 0.6;
+      _m1.setPosition(ringPos(dth, u, -T - hh * 0.5 - 2, _v4));
+      doors.setMatrixAt(i * 2 + side, _m1);
+      doorCol.setRGB(1.0, 0.72, 0.4).multiplyScalar(1.4 + hash1(i * 3 + side));
+      doors.setColorAt(i * 2 + side, doorCol);
+    }
+    addNavLight(th, u + d * 0.5 + 8, -T - hh - 6, COL_RED, 9, hash1(i));
+    addNavLight(th, u - d * 0.5 - 8, -T - hh - 6, COL_GREEN, 9, hash1(i + 1));
+  }
+  hangars.instanceMatrix.needsUpdate = true; doors.instanceMatrix.needsUpdate = true; doors.instanceColor.needsUpdate = true;
+  hangars.castShadow = true;
+  ringRoot.add(registerInstanced(hangars, 'struct'), registerInstanced(doors, 'struct'));
+
+  const nMod = 900;
+  const mods = new THREE.InstancedMesh(UNIT_BOX, structMaterial, nMod);
+  const modCol = new THREE.Color();
+  for (let i = 0; i < nMod; i++) {
+    const th = rng.next() * TAU;
+    const u = rng.range(-HW - WT + 60, HW + WT - 60);
+    const sx = rng.range(18, 60), sy = rng.range(14, 40), sz = rng.range(18, 60);
+    const onSide = rng.chance(0.25);
+    if (onSide) placeBox(mods, i, th, (rng.chance(0.5) ? 1 : -1) * (HW + WT + sz * 0.5), rng.range(-T + 40, WH - 40), 0, sx, sy, sz);
+    else placeBox(mods, i, th, u, -T - sy * 0.5 - rng.range(0, 60), rng.chance(0.3) ? Math.PI * 0.5 : 0, sx, sy, sz);
+    modCol.setHSL(0.58, rng.range(0, 0.12), rng.range(0.35, 0.7));
+    mods.setColorAt(i, modCol);
+  }
+  mods.instanceMatrix.needsUpdate = true; mods.instanceColor.needsUpdate = true;
+  ringRoot.add(registerInstanced(mods, 'struct'));
+
+  /* ---- antennas & masts ---- */
+  const nAnt = 420;
+  const ants = new THREE.InstancedMesh(UNIT_CYL, darkMetalMaterial, nAnt);
+  for (let i = 0; i < nAnt; i++) {
+    const th = rng.next() * TAU;
+    const len = rng.range(50, 170);
+    const mode = rng.next();
+    if (mode < 0.45) { // pointing down from the hull
+      const u = rng.range(-HW, HW);
+      placeAlong(ants, i, th, u, -T - 2, 0, -1, 0, len, rng.range(2, 5));
+      addNavLight(th, u, -T - len, COL_RED, 8, rng.next());
+    } else if (mode < 0.85) { // lateral, from the outer side faces
+      const side = rng.chance(0.5) ? 1 : -1;
+      const h = rng.range(-T + 60, WH - 20);
+      placeAlong(ants, i, th, side * (HW + WT), h, 0, 0, side, len, rng.range(2, 5));
+      addNavLight(th, side * (HW + WT + len), h, side > 0 ? COL_GREEN : COL_RED, 8, rng.next());
+    } else { // masts on top of the walls
+      const side = rng.chance(0.5) ? 1 : -1;
+      placeAlong(ants, i, th, side * (HW + WT * 0.5), WH, 0, 1, 0, len * 0.8, rng.range(2, 4));
+      addNavLight(th, side * (HW + WT * 0.5), WH + len * 0.8, COL_WHITE, 7, rng.next());
+    }
+  }
+  ants.instanceMatrix.needsUpdate = true;
+  ringRoot.add(registerInstanced(ants, 'struct'));
+
+  /* ---- navigation lights along the edges ---- */
+  for (let i = 0; i < NSEG; i++) {
+    const th = i * segAng;
+    addNavLight(th, HW + WT + 8, -T - 4, COL_GREEN, 10, (i * 0.13) % 1);
+    addNavLight(th, -HW - WT - 8, -T - 4, COL_RED, 10, (i * 0.13 + 0.5) % 1);
+    if (i % 2 === 0) { addNavLight(th, HW + WT * 0.5, WH + 5, COL_WHITE, 7, (i * 0.07) % 1); addNavLight(th, -HW - WT * 0.5, WH + 5, COL_WHITE, 7, (i * 0.07 + 0.3) % 1); }
+    if (i % 8 === 0) { addNavLight(th, 0, -T - 175, COL_AMBER, 12, hash1(i)); }
+  }
+}
+
+/* ---- blinking navigation light points ---- */
+let navLights, navLightMaterial;
+function createNavLights() {
+  const n = navLightData.phase.length;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(navLightData.pos, 3));
+  g.setAttribute('ncol', new THREE.Float32BufferAttribute(navLightData.col, 3));
+  g.setAttribute('phase', new THREE.Float32BufferAttribute(navLightData.phase, 1));
+  g.setAttribute('psize', new THREE.Float32BufferAttribute(navLightData.size, 1));
+  navLightMaterial = new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 }, uScale: { value: window.innerHeight * 0.5 } },
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    vertexShader: /* glsl */`
+      #include <common>
+      #include <logdepthbuf_pars_vertex>
+      attribute float phase; attribute float psize; attribute vec3 ncol;
+      uniform float uTime; uniform float uScale;
+      varying vec3 vCol; varying float vBlink; varying float vFade;
+      void main(){
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        float blink = 0.35 + 0.65 * step(0.5, fract(uTime * 0.9 + phase * 4.0));
+        blink = mix(1.0, blink, step(0.25, phase));
+        vBlink = blink; vCol = ncol;
+        float ps = psize * uScale / max(-mv.z, 1.0);
+        vFade = clamp(ps / 5.0, 0.15, 1.0) * smoothstep(45000.0, 7000.0, -mv.z);
+        gl_PointSize = clamp(ps, 1.2, 28.0) * (0.8 + 0.2 * blink);
+        gl_Position = projectionMatrix * mv;
+        #include <logdepthbuf_vertex>
+      }`,
+    fragmentShader: /* glsl */`
+      #include <common>
+      #include <logdepthbuf_pars_fragment>
+      varying vec3 vCol; varying float vBlink; varying float vFade;
+      void main(){
+        #include <logdepthbuf_fragment>
+        vec2 d = gl_PointCoord - 0.5; float r = length(d) * 2.0;
+        float a = smoothstep(1.0, 0.15, r) * vFade;
+        gl_FragColor = vec4(vCol * (1.4 + 1.2 * vBlink) * a, a);
+      }`
+  });
+  navLights = new THREE.Points(g, navLightMaterial);
+  navLights.frustumCulled = false;
+  ringRoot.add(navLights);
+  return n;
+}
+
+/* =====================================================================
+   BUILDINGS — instanced procedural architecture with window lights
+   ===================================================================== */
+const buildingUniforms = { uSunDir: { value: SUN_DIR.clone() }, uLights: { value: 1 }, uTime: { value: 0 } };
+let buildingMaterial, tankMaterial, treeMaterial;
+const CELL = RING.CIRC / Math.round(RING.CIRC / 56);   // matches the road grid in the surface shader
+const CELLS_S = Math.round(RING.CIRC / 56);
+const CELLS_U = Math.floor(RING.W / CELL);
+const CITY = { meshes: [], trees: [], totalBuildings: 0, totalTrees: 0 };
+
+function createBuildingMaterial() {
+  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6, metalness: 0.25, emissive: 0x000000 });
+  mat.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, buildingUniforms);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>
+        attribute vec3 aSize; attribute float aSeed; attribute float aKind;
+        varying vec3 vLocal; varying vec3 vSize; varying float vSeed; varying float vKind; varying vec3 vObjN; varying vec3 vUpW;`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        vLocal = position; vSize = aSize; vSeed = aSeed; vKind = aKind; vObjN = normal;
+        #ifdef USE_INSTANCING
+          vUpW = normalize((modelMatrix * instanceMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
+        #else
+          vUpW = normalize((modelMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
+        #endif`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+        uniform vec3 uSunDir; uniform float uLights; uniform float uTime;
+        varying vec3 vLocal; varying vec3 vSize; varying float vSeed; varying float vKind; varying vec3 vObjN; varying vec3 vUpW;
+        #define KIND(k) (abs(vKind - (k)) < 0.5)
+        ${GLSL_NOISE}`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        {
+          float hWorld = vLocal.y * vSize.y;
+          float ao = 0.5 + 0.5 * smoothstep(0.0, 22.0, hWorld);
+          diffuseColor.rgb *= ao;
+          if (vObjN.y > 0.5) {
+            float rp = step(0.72, hash12(floor(vLocal.xz * vSize.xz / 5.0) + vSeed * 10.0));
+            diffuseColor.rgb *= (0.78 - 0.3 * rp);
+          } else if (vKind < 7.5 && !KIND(6.0)) {
+            // facade banding (floors) & slight panel variation
+            float hc = (abs(vObjN.x) > abs(vObjN.z)) ? vLocal.z * vSize.z : vLocal.x * vSize.x;
+            float band = 0.9 + 0.1 * step(0.5, fract(hWorld / 4.0));
+            float panel = 0.92 + 0.08 * hash12(floor(vec2(hc, hWorld) / 6.0) + vSeed);
+            diffuseColor.rgb *= band * panel;
+          }
+        }`)
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+        {
+          float night = smoothstep(0.16, -0.06, dot(normalize(vUpW), normalize(uSunDir)));
+          float lightsOn = uLights * (0.05 + 0.95 * night);
+          float hWorld = vLocal.y * vSize.y;
+          if (abs(vObjN.y) < 0.5 && vKind < 6.5) {
+            bool xFace = abs(vObjN.x) > abs(vObjN.z);
+            float hc = xFace ? vLocal.z * vSize.z : vLocal.x * vSize.x;
+            float faceId = xFace ? (vObjN.x > 0.0 ? 0.0 : 1.0) : (vObjN.z > 0.0 ? 2.0 : 3.0);
+            float floorH = (KIND(2.0) || KIND(5.0)) ? 4.0 : (KIND(3.0) || KIND(4.0)) ? 7.0 : 3.4;
+            float colW = (KIND(3.0) || KIND(4.0)) ? 6.0 : 3.0;
+            float fy = hWorld / floorH; float fx = hc / colW;
+            vec2 wid = vec2(floor(fx), floor(fy)); vec2 wf = vec2(fract(fx), fract(fy));
+            float winMask = step(0.22, wf.x) * step(wf.x, 0.78) * step(0.25, wf.y) * step(wf.y, 0.72);
+            float thr = 0.55 + 0.3 * (1.0 - night);
+            float lit = step(thr, hash12(wid + vSeed * 97.0 + faceId * 7.0));
+            float warmSel = hash12(vec2(vSeed * 31.0 + faceId, vKind));
+            vec3 wc = mix(vec3(1.0, 0.78, 0.5), vec3(0.66, 0.84, 1.0), step(0.62, warmSel));
+            if (KIND(5.0)) wc = vec3(0.45, 0.85, 1.0);
+            if (KIND(3.0) || KIND(4.0)) wc = vec3(1.0, 0.62, 0.28);
+            if (KIND(6.0)) wc = vec3(1.0, 0.9, 0.7);
+            float inten = (KIND(2.0)) ? 1.0 : (KIND(5.0)) ? 1.2 : (KIND(1.0)) ? 0.8 : (KIND(0.0)) ? 0.6 : 0.7;
+            float fw = fwidth(fx) + fwidth(fy);
+            float farBlend = smoothstep(0.3, 1.4, fw);
+            float avgLit = 0.28 * (1.0 - thr) * 2.2;
+            float w = mix(winMask * lit, avgLit * (0.6 + 0.6 * hash12(floor(wid / 3.0) + vSeed)), farBlend);
+            totalEmissiveRadiance += wc * w * inten * lightsOn;
+            // lit entrance / ground floor strip
+            totalEmissiveRadiance += vec3(1.0, 0.85, 0.6) * step(hWorld, 1.2) * 0.35 * lightsOn * (1.0 - farBlend);
+          }
+          if (KIND(7.0)) {   // hydroponic halls: glowing grow lights along the roof & sides
+            float g = 0.5 + 0.5 * step(0.5, fract(vLocal.x * vSize.x / 4.0));
+            totalEmissiveRadiance += vec3(1.0, 0.45, 0.85) * g * 0.55 * (0.3 + 0.7 * night) * uLights;
+          }
+          if (KIND(8.0)) {   // tanks: warning ring near the top
+            float ringMask = step(0.9, vLocal.y) * step(vLocal.y, 0.94);
+            totalEmissiveRadiance += vec3(1.0, 0.35, 0.05) * ringMask * 1.2 * uLights;
+          }
+          if (KIND(3.0) && vObjN.y > 0.5) { // industrial roofs: vents & flood lights
+            float v = step(0.85, hash12(floor(vLocal.xz * vSize.xz / 9.0) + vSeed * 3.0));
+            totalEmissiveRadiance += vec3(1.0, 0.8, 0.5) * v * 0.6 * lightsOn;
+          }
+          if ((KIND(2.0) || KIND(5.0)) && vObjN.y > 0.5) { // roof beacons
+            float blink = step(0.5, fract(uTime * 0.7 + vSeed * 5.0));
+            float c = 1.0 - smoothstep(0.08, 0.14, length(vLocal.xz));
+            totalEmissiveRadiance += vec3(1.0, 0.12, 0.05) * blink * c * 3.0 * uLights;
+          }
+        }`);
+  };
+  mat.customProgramCacheKey = () => 'ring_building_v1';
+  return mat;
+}
+
+function createTreeGeometry() {
+  const canopy = new THREE.ConeGeometry(0.5, 0.75, 6, 1).translate(0, 0.62, 0);
+  const canopy2 = new THREE.ConeGeometry(0.36, 0.5, 6, 1).translate(0, 0.85, 0);
+  const trunk = new THREE.CylinderGeometry(0.05, 0.07, 0.3, 5).translate(0, 0.15, 0);
+  const merged = BufferGeometryUtils.mergeGeometries([canopy, canopy2, trunk].map(g => g.toNonIndexed()), false);
+  // bake a simple darkening towards the trunk into a color attribute
+  const pos = merged.getAttribute('position');
+  const col = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++) { const y = pos.getY(i); const v = y < 0.31 ? 0.35 : 0.55 + 0.6 * y; col[i * 3] = v; col[i * 3 + 1] = v; col[i * 3 + 2] = v; }
+  merged.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  merged.computeVertexNormals();
+  return merged;
+}
+
+// mirrors the landing-pad rule from the surface shader
+function isPadCell(s, u) {
+  const pc = CELL * 3;
+  const ix = Math.floor(s / pc), iy = Math.floor(u / pc);
+  return (((ix + 2 * iy) % 3) + 3) % 3 === 0;
+}
+function onHighway(s, u, halfW = 0) {
+  const au = Math.abs(u);
+  if (Math.abs(au - 280) < 24 + halfW) return true;
+  if (au < 12 + halfW) return true;
+  const cs = ((s % 1600) + 1600) % 1600;
+  if (Math.abs(cs - 800) < 18 + halfW) return true;
+  return false;
+}
+
+function createCityDistricts() {
+  buildingMaterial = createBuildingMaterial();
+  tankMaterial = buildingMaterial;
+  treeMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0.0, vertexColors: true });
+  const treeGeo = createTreeGeometry();
+  const rng = subRng('city');
+  const HW = RING.W * 0.5;
+  const uOffset = -CELL * CELLS_U * 0.5;   // centre the lateral grid
+
+  // per-sector accumulators
+  const acc = WORLD.sectors.map(() => ({ box: [], cyl: [], tree: [] }));
+  const col = new THREE.Color();
+  const tmpM = new THREE.Matrix4();
+  const addBuilding = (list, s, u, yaw, w, h, d, kind, color, isCyl) => {
+    const theta = sToTheta(s);
+    frameMatrix(theta, u, 0, yaw, { x: w, y: h, z: d }, tmpM);
+    list.push({ m: Array.from(tmpM.elements), size: [w, h, d], kind, color: [color.r, color.g, color.b], seed: rng.next() });
+  };
+  const addTree = (list, s, u, h, scale, hue) => {
+    const theta = sToTheta(s);
+    frameMatrix(theta, u, h, rng.next() * TAU, { x: scale * 0.9, y: scale, z: scale * 0.9 }, tmpM);
+    list.push({ m: Array.from(tmpM.elements), color: hue });
+  };
+  const greens = [new THREE.Color(0.10, 0.30, 0.08), new THREE.Color(0.14, 0.34, 0.10), new THREE.Color(0.07, 0.24, 0.07), new THREE.Color(0.20, 0.36, 0.09), new THREE.Color(0.32, 0.30, 0.10)];
+
+  for (let i = 0; i < CELLS_S; i++) {
+    const s0 = i * CELL;
+    const sc = s0 + CELL * 0.5;
+    const k = sectorIndexAt(sc);
+    const sec = WORLD.sectors[k];
+    const a = acc[k];
+    for (let j = 0; j < CELLS_U; j++) {
+      const u0 = uOffset + j * CELL;
+      const uc = u0 + CELL * 0.5;
+      if (Math.abs(uc) > HW - 70) continue;
+      const z = zoneAt(sc, uc);
+      const type = z.t, dens = z.d;
+      const hv = rng.next();
+      const inner = CELL * 0.5 - 6;   // usable half-extent inside the road grid
+      const blockedByRoad = onHighway(sc, uc, inner);
+      const inDomeNow = inDome(sc, uc);
+      const domeType = inDomeNow ? _domeHit.d.type : null;
+
+      /* ---------- trees ---------- */
+      let nTrees = 0, treeScale = [7, 13], hueSet = greens;
+      if (type === Z.FOREST) { nTrees = 7 + Math.floor(rng.next() * 3); treeScale = [8, 15]; }
+      else if (type === Z.PARK) { nTrees = 2 + Math.floor(rng.next() * 3); treeScale = [7, 12]; }
+      else if (type === Z.MEADOW) { nTrees = rng.chance(0.3) ? 1 : 0; }
+      else if (type === Z.RESIDENTIAL) { nTrees = rng.chance(0.7) ? 1 : 0; if (rng.chance(0.4)) nTrees++; }
+      else if (type === Z.CITY || type === Z.TECH) { nTrees = rng.chance(0.25) ? 1 : 0; }
+      else if (type === Z.BEACH) { nTrees = rng.chance(0.35) ? 1 : 0; treeScale = [9, 14]; }
+      else if (type === Z.FARM) { nTrees = rng.chance(0.08) ? 2 : 0; }
+      if (domeType === 'TROPICAL') { treeScale = [12, 20]; }
+      for (let t = 0; t < nTrees; t++) {
+        const ts = (type === Z.FOREST || type === Z.PARK || type === Z.MEADOW || type === Z.BEACH) ? sc + rng.range(-CELL * 0.5, CELL * 0.5) : sc + rng.range(-inner, inner);
+        const tu = (type === Z.FOREST || type === Z.PARK || type === Z.MEADOW || type === Z.BEACH) ? uc + rng.range(-CELL * 0.5, CELL * 0.5) : uc + (rng.chance(0.5) ? -inner + 2 : inner - 2);
+        if (type === Z.RESIDENTIAL || type === Z.CITY || type === Z.TECH) { if (onHighway(ts, tu, 3)) continue; }
+        const hue = (domeType === 'TROPICAL') ? greens[3] : rng.pick(greens);
+        addTree(a.tree, ts, tu, 0, rng.range(treeScale[0], treeScale[1]), [hue.r * rng.range(0.85, 1.15), hue.g * rng.range(0.85, 1.15), hue.b * rng.range(0.85, 1.15)]);
+      }
+
+      /* ---------- buildings ---------- */
+      if (blockedByRoad || inDomeNow && type !== Z.PLAZA) continue;
+      const list = a.box;
+      switch (type) {
+        case Z.RESIDENTIAL: {
+          const n = 3 + (rng.chance(0.5) ? 1 : 0);
+          for (let b = 0; b < n; b++) {
+            const bx = (b % 2 ? 1 : -1) * inner * 0.5, bz = (b < 2 ? 1 : -1) * inner * 0.5;
+            const w = rng.range(8, 15), d = rng.range(8, 15), h = rng.range(4, 11);
+            col.setHSL(rng.range(0.05, 0.12), rng.range(0.05, 0.25), rng.range(0.45, 0.72));
+            addBuilding(list, sc + bx + rng.range(-3, 3), uc + bz + rng.range(-3, 3), rng.range(-0.15, 0.15), w, h, d, 0, col);
+          }
+          break;
+        }
+        case Z.CITY: {
+          if (hv < dens * 0.45) {
+            const w = rng.range(18, 28), d = rng.range(18, 28), h = rng.range(40, 120) * (0.6 + dens * 0.6);
+            col.setHSL(rng.range(0.55, 0.62), rng.range(0.03, 0.12), rng.range(0.35, 0.6));
+            addBuilding(list, sc + rng.range(-6, 6), uc + rng.range(-6, 6), rng.range(-0.1, 0.1), w, h, d, 2, col);
+          } else {
+            const split = rng.chance(0.5);
+            for (let b = 0; b < 2; b++) {
+              const off = (b ? 1 : -1) * inner * 0.5;
+              const w = split ? inner * 0.95 : rng.range(14, 22), d = split ? rng.range(14, 22) : inner * 0.95;
+              const h = rng.range(16, 48) * (0.6 + dens * 0.6);
+              col.setHSL(rng.range(0.55, 0.65), rng.range(0.02, 0.1), rng.range(0.4, 0.65));
+              addBuilding(list, split ? sc : sc + off, split ? uc + off : uc, 0, w, h, d, 1, col);
+            }
+          }
+          break;
+        }
+        case Z.CORE: {
+          if (hv < 0.62) {
+            const superTower = dens > 0.95 && rng.chance(0.12);
+            const w = superTower ? rng.range(30, 40) : rng.range(22, 32), d = superTower ? rng.range(30, 40) : rng.range(22, 32);
+            const h = superTower ? rng.range(400, 560) : rng.range(120, 340);
+            col.setHSL(rng.range(0.55, 0.64), rng.range(0.05, 0.18), rng.range(0.28, 0.5));
+            addBuilding(list, sc + rng.range(-5, 5), uc + rng.range(-5, 5), rng.range(-0.08, 0.08), w, h, d, 2, col);
+            if (superTower) { // crown spire
+              addBuilding(a.cyl, sc, uc, 0, 6, h + 80, 6, 8, col);
+            }
+          } else {
+            for (let b = 0; b < 2; b++) {
+              const off = (b ? 1 : -1) * inner * 0.5;
+              const w = rng.range(16, 22), d = inner * 0.95, h = rng.range(60, 150);
+              col.setHSL(rng.range(0.55, 0.64), rng.range(0.05, 0.15), rng.range(0.3, 0.55));
+              addBuilding(list, sc + off, uc, 0, w, h, d, 2, col);
+            }
+          }
+          break;
+        }
+        case Z.INDUSTRIAL: {
+          if (sec.def.layout === 'farms') { // hydroponic halls
+            const w = rng.range(18, 24), h = rng.range(6, 9);
+            col.setRGB(0.75, 0.78, 0.82);
+            addBuilding(list, sc, uc, 0, w, h, inner * 1.9, 7, col);
+            break;
+          }
+          if (hv < 0.45) {
+            const w = inner * rng.range(1.5, 1.9), d = inner * rng.range(1.5, 1.9), h = rng.range(14, 30);
+            col.setHSL(rng.range(0.05, 0.6), rng.range(0.02, 0.08), rng.range(0.3, 0.5));
+            addBuilding(list, sc, uc, 0, w, h, d, 3, col);
+            if (rng.chance(0.35)) addBuilding(a.cyl, sc + rng.range(-inner * 0.6, inner * 0.6), uc + rng.range(-inner * 0.6, inner * 0.6), 0, 3.5, rng.range(40, 75), 3.5, 8, col.setRGB(0.5, 0.5, 0.52)); // chimney
+          } else if (hv < 0.8) {
+            for (let b = 0; b < 2; b++) {
+              const off = (b ? 1 : -1) * inner * 0.5;
+              col.setHSL(0.08, rng.range(0.03, 0.1), rng.range(0.35, 0.55));
+              addBuilding(list, sc, uc + off, 0, inner * 1.9, rng.range(8, 14), inner * 0.85, 4, col);
+            }
+          } else {
+            const n = 2 + Math.floor(rng.next() * 3);
+            for (let b = 0; b < n; b++) {
+              const r = rng.range(6, 11);
+              col.setRGB(0.55, 0.56, 0.58);
+              addBuilding(a.cyl, sc + rng.range(-inner * 0.6, inner * 0.6), uc + rng.range(-inner * 0.6, inner * 0.6), 0, r * 2, rng.range(10, 26), r * 2, 8, col, true);
+            }
+          }
+          break;
+        }
+        case Z.PORT: {
+          if (isPadCell(sc, uc)) break;
+          if (hv < 0.4) { col.setRGB(0.55, 0.58, 0.62); addBuilding(list, sc, uc, 0, inner * 1.9, rng.range(10, 20), inner * 1.9, 6, col); }
+          else if (hv < 0.65) { col.setRGB(0.5, 0.52, 0.55); addBuilding(list, sc, uc, 0, inner * 1.9, rng.range(7, 12), inner * 0.9, 4, col); }
+          else if (hv < 0.72) { col.setRGB(0.6, 0.6, 0.62); addBuilding(a.cyl, sc, uc, 0, 8, rng.range(60, 110), 8, 8, col); } // control masts
+          break;
+        }
+        case Z.TECH: {
+          if (hv < 0.32 * dens + 0.05) {
+            const w = rng.range(14, 22), d = rng.range(14, 22), h = rng.range(140, 420);
+            col.setHSL(rng.range(0.55, 0.6), rng.range(0.15, 0.3), rng.range(0.3, 0.5));
+            addBuilding(list, sc + rng.range(-8, 8), uc + rng.range(-8, 8), rng.range(-0.2, 0.2), w, h, d, 5, col);
+          } else if (hv < 0.6) {
+            col.setHSL(rng.range(0.55, 0.6), rng.range(0.1, 0.25), rng.range(0.35, 0.55));
+            addBuilding(list, sc, uc, 0, rng.range(28, 40), rng.range(30, 90), rng.range(28, 40), 5, col);
+          }
+          break;
+        }
+        case Z.PARK: case Z.MEADOW: {
+          if (hv < 0.035) { col.setRGB(0.7, 0.68, 0.6); addBuilding(list, sc + rng.range(-10, 10), uc + rng.range(-10, 10), rng.next(), rng.range(8, 12), rng.range(4, 6), rng.range(8, 12), 0, col); }
+          break;
+        }
+        case Z.PLAZA: {
+          if (!inDomeNow && hv < 0.08) { col.setRGB(0.6, 0.62, 0.66); addBuilding(list, sc, uc, 0, rng.range(10, 16), rng.range(5, 9), rng.range(10, 16), 1, col); }
+          if (inDomeNow && domeType === 'BOTANICAL' && hv < 0.25 && _domeHit.dist < 0.12) { col.setRGB(0.8, 0.8, 0.85); addBuilding(list, sc, uc, 0, rng.range(14, 22), rng.range(10, 24), rng.range(14, 22), 1, col); }
+          break;
+        }
+        case Z.FARM: {
+          if (hv < 0.05) { col.setRGB(0.6, 0.5, 0.4); addBuilding(list, sc + rng.range(-10, 10), uc + rng.range(-10, 10), rng.next(), rng.range(10, 16), rng.range(5, 8), rng.range(10, 16), 0, col); }
+          if (hv > 0.97) { col.setRGB(0.7, 0.7, 0.72); addBuilding(a.cyl, sc, uc, 0, 12, rng.range(18, 30), 12, 8, col, true); } // silos
+          break;
+        }
+        default: break;
+      }
+    }
+  }
+
+  /* ---------- build instanced meshes per sector (shuffled so quality thinning stays uniform) ---------- */
+  const build = (items, geo, mat, kind) => {
+    if (items.length === 0) return null;
+    const idx = items.map((_, i) => i);
+    for (let i = idx.length - 1; i > 0; i--) { const j = Math.floor(rng.next() * (i + 1)); [idx[i], idx[j]] = [idx[j], idx[i]]; }
+    const mesh = new THREE.InstancedMesh(geo, mat, items.length);
+    const size = new Float32Array(items.length * 3), seed = new Float32Array(items.length), kindArr = new Float32Array(items.length);
+    const c = new THREE.Color();
+    for (let n = 0; n < idx.length; n++) {
+      const it = items[idx[n]];
+      tmpM.fromArray(it.m);
+      mesh.setMatrixAt(n, tmpM);
+      c.setRGB(it.color[0], it.color[1], it.color[2]);
+      mesh.setColorAt(n, c);
+      if (it.size) { size[n * 3] = it.size[0]; size[n * 3 + 1] = it.size[1]; size[n * 3 + 2] = it.size[2]; seed[n] = it.seed; kindArr[n] = it.kind; }
+    }
+    if (kind === 'building') {
+      mesh.geometry = geo.clone();
+      mesh.geometry.setAttribute('aSize', new THREE.InstancedBufferAttribute(size, 3));
+      mesh.geometry.setAttribute('aSeed', new THREE.InstancedBufferAttribute(seed, 1));
+      mesh.geometry.setAttribute('aKind', new THREE.InstancedBufferAttribute(kindArr, 1));
+      mesh.castShadow = true; mesh.receiveShadow = true;
+    } else {
+      mesh.receiveShadow = true;
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.instanceColor.needsUpdate = true;
+    mesh.computeBoundingSphere();
+    ringRoot.add(mesh);
+    return mesh;
+  };
+  for (let k = 0; k < WORLD.sectors.length; k++) {
+    const a = acc[k];
+    const mb = build(a.box, UNIT_BOX_BASE, buildingMaterial, 'building');
+    const mc = build(a.cyl, UNIT_CYL, tankMaterial, 'building');
+    const mt = build(a.tree, treeGeo, treeMaterial, 'tree');
+    if (mb) { CITY.meshes.push({ mesh: mb, fullCount: mb.count }); CITY.totalBuildings += mb.count; }
+    if (mc) { CITY.meshes.push({ mesh: mc, fullCount: mc.count }); CITY.totalBuildings += mc.count; }
+    if (mt) { CITY.trees.push({ mesh: mt, fullCount: mt.count }); CITY.totalTrees += mt.count; }
+  }
+}
+
+/* =====================================================================
+   INSTANCE BUILDER — collects matrices, builds one InstancedMesh
+   ===================================================================== */
+class InstanceBuilder {
+  constructor(geo, mat) { this.geo = geo; this.mat = mat; this.items = []; }
+  add(matrix, color) { this.items.push({ m: Array.from(matrix.elements), c: color ? [color.r, color.g, color.b] : null }); }
+  build(opts = {}) {
+    if (this.items.length === 0) return null;
+    const mesh = new THREE.InstancedMesh(this.geo, this.mat, this.items.length);
+    const m = new THREE.Matrix4(), c = new THREE.Color();
+    let anyColor = false;
+    for (let i = 0; i < this.items.length; i++) {
+      m.fromArray(this.items[i].m); mesh.setMatrixAt(i, m);
+      if (this.items[i].c) { anyColor = true; c.setRGB(...this.items[i].c); mesh.setColorAt(i, c); }
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    if (anyColor) mesh.instanceColor.needsUpdate = true;
+    mesh.castShadow = !!opts.castShadow; mesh.receiveShadow = opts.receiveShadow !== false;
+    mesh.computeBoundingSphere();
+    ringRoot.add(mesh);
+    return registerInstanced(mesh, opts.kind || 'struct');
+  }
+}
+
+/* =====================================================================
+   BIODOMES
+   ===================================================================== */
+const DOMES = { group: null, glassMaterials: [] };
+const UNIT_TORUS = new THREE.TorusGeometry(1, 0.011, 6, 96);
+const UNIT_SPHERE = new THREE.SphereGeometry(1, 24, 16);
+
+function createDomeGlassMaterial(tint) {
+  return new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, side: THREE.DoubleSide,
+    uniforms: { uSun: surfaceUniforms.uSun, uLights: surfaceUniforms.uLights, uTime: surfaceUniforms.uTime, uTint: { value: tint } },
+    vertexShader: /* glsl */`
+      #include <common>
+      #include <logdepthbuf_pars_vertex>
+      varying vec3 vN; varying vec3 vWP; varying vec3 vUp; varying float vH;
+      void main(){
+        vN = normalize(mat3(modelMatrix) * normal);
+        vUp = normalize(mat3(modelMatrix) * vec3(0.0, 1.0, 0.0));
+        vec4 wp = modelMatrix * vec4(position, 1.0); vWP = wp.xyz; vH = position.y;
+        gl_Position = projectionMatrix * viewMatrix * wp;
+        #include <logdepthbuf_vertex>
+      }`,
+    fragmentShader: /* glsl */`
+      #include <common>
+      #include <logdepthbuf_pars_fragment>
+      varying vec3 vN; varying vec3 vWP; varying vec3 vUp; varying float vH;
+      uniform vec3 uSun; uniform float uLights; uniform float uTime; uniform vec3 uTint;
+      void main(){
+        #include <logdepthbuf_fragment>
+        vec3 N = normalize(vN); if (!gl_FrontFacing) N = -N;
+        vec3 V = normalize(cameraPosition - vWP);
+        vec3 L = normalize(uSun);
+        float fres = pow(1.0 - clamp(dot(N, V), 0.0, 1.0), 3.0);
+        float day = clamp(dot(N, L) * 0.5 + 0.5, 0.0, 1.0);
+        float night = smoothstep(0.16, -0.06, dot(vUp, L));
+        vec3 R = reflect(-L, N);
+        float spec = pow(max(dot(R, V), 0.0), 160.0) * 2.5;
+        float bandGlow = 0.5 + 0.5 * sin(vH * 0.02 + uTime * 0.3);
+        vec3 col = uTint * (0.12 + 0.55 * fres) * (0.25 + 0.75 * day);
+        col += vec3(1.0, 0.95, 0.85) * spec;
+        col += vec3(1.0, 0.82, 0.58) * (0.22 + 0.08 * bandGlow) * night * uLights * (1.0 - 0.6 * fres);
+        float alpha = 0.15 + 0.5 * fres + spec * 0.4 + 0.12 * night * uLights;
+        gl_FragColor = vec4(col, clamp(alpha, 0.0, 0.85));
+      }`
+  });
+}
+
+function createBiodomes() {
+  const group = new THREE.Group();
+  DOMES.group = group;
+  ringRoot.add(group);
+  const rng = subRng('domes');
+  const ribMat = new THREE.MeshStandardMaterial({ color: 0xc9ced6, roughness: 0.4, metalness: 0.8 });
+  const frameMat = new THREE.LineBasicMaterial({ color: 0x9fb4c8, transparent: true, opacity: 0.45 });
+  const hillMat = new THREE.MeshStandardMaterial({ color: 0x2f5a25, roughness: 0.95, metalness: 0 });
+  const rockMat = new THREE.MeshStandardMaterial({ color: 0x6a655c, roughness: 0.9, metalness: 0.05 });
+  const fallMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.8, 0.95, 1.2), transparent: true, opacity: 0.75, side: THREE.DoubleSide, depthWrite: false });
+  const ribs = new InstanceBuilder(UNIT_TORUS, ribMat);
+  const tunnels = new InstanceBuilder(UNIT_BOX, structMaterial);
+  const hills = new InstanceBuilder(UNIT_SPHERE, hillMat);
+  const rocks = new InstanceBuilder(UNIT_SPHERE, rockMat);
+  const towers = new InstanceBuilder(UNIT_CYL, darkMetalMaterial);
+  const falls = new InstanceBuilder(UNIT_QUAD, fallMat);
+  const tints = { FOREST: new THREE.Color(0.55, 0.78, 0.95), TROPICAL: new THREE.Color(0.55, 0.85, 0.85), BOTANICAL: new THREE.Color(0.7, 0.8, 0.95), RECREATION: new THREE.Color(0.65, 0.8, 1.0), WILDERNESS: new THREE.Color(0.5, 0.75, 0.9), AQUATIC: new THREE.Color(0.45, 0.8, 1.0) };
+  const rot = new THREE.Matrix4(), local = new THREE.Matrix4(), frame = new THREE.Matrix4();
+
+  for (const d of WORLD.domes) {
+    const r = d.r, sunk = d.sunk;
+    const cut = Math.acos(sunk);   // sphere angle where the dome meets the floor
+    // glass shell
+    const glassGeo = new THREE.SphereGeometry(r, 72, 40, 0, TAU, 0, cut);
+    const glass = new THREE.Mesh(glassGeo, createDomeGlassMaterial(tints[d.type] || tints.FOREST));
+    frameMatrix(d.theta, d.u, -r * sunk, 0, null, frame);
+    glass.matrixAutoUpdate = false; glass.matrix.copy(frame); glass.renderOrder = 15;
+    group.add(glass);
+    DOMES.glassMaterials.push(glass.material);
+    // geodesic frame lines
+    const wire = new THREE.LineSegments(new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(r * 1.004, r > 350 ? 4 : 3)), frameMat);
+    wire.matrixAutoUpdate = false; wire.matrix.copy(frame);
+    group.add(wire);
+    // structural ribs: meridians + parallels
+    const nMer = r > 350 ? 8 : 6;
+    for (let i = 0; i < nMer; i++) {
+      rot.makeRotationY((i / nMer) * Math.PI);
+      local.copy(frame).multiply(rot).scale(_v1.set(r * 1.006, r * 1.006, r * 1.006));
+      ribs.add(local, null);
+    }
+    for (const phi of [0.25, 0.5, 0.72]) {
+      const rr = r * Math.cos(phi * Math.PI * 0.5) * 1.006, hy = r * Math.sin(phi * Math.PI * 0.5);
+      rot.makeRotationX(Math.PI * 0.5).setPosition(0, hy, 0);
+      local.copy(frame).multiply(rot).scale(_v1.set(rr, rr, rr));
+      ribs.add(local, null);
+    }
+    // base ring at floor level
+    const baseR = r * Math.sqrt(1 - sunk * sunk);
+    frameMatrix(d.theta, d.u, 1.5, 0, null, local);
+    rot.makeRotationX(Math.PI * 0.5);
+    local.multiply(rot).scale(_v1.set(baseR, baseR, baseR));
+    ribs.add(local, null);
+    const baseTube = new THREE.Mesh(new THREE.TorusGeometry(baseR, 5 + r * 0.008, 8, 128), structMaterial);
+    frameMatrix(d.theta, d.u, 3, 0, null, baseTube.matrix); baseTube.matrix.multiply(rot); baseTube.matrixAutoUpdate = false; baseTube.castShadow = true;
+    group.add(baseTube);
+    // entrance tunnels
+    const nT = 2 + (r > 300 ? 2 : 0);
+    for (let i = 0; i < nT; i++) {
+      const ang = (i / nT) * TAU + rng.range(-0.3, 0.3);
+      const ds = Math.cos(ang) * (baseR + 20), du = Math.sin(ang) * (baseR + 20);
+      frameMatrix(d.theta + ds / RING.R, d.u + du, 8, -ang, { x: 70, y: 16, z: 22 }, local);
+      tunnels.add(local, null);
+    }
+    // interior: hills, rocks, waterfall, lookout tower, lamps
+    if (d.hasHill) {
+      const hs = r * rng.range(0.28, 0.42);
+      const ds = rng.range(-0.3, 0.3) * r, du = rng.range(-0.3, 0.3) * r;
+      frameMatrix(d.theta + ds / RING.R, d.u + du, -hs * 0.08, rng.next() * TAU, { x: hs, y: hs * 0.45, z: hs * 0.8 }, local);
+      hills.add(local, null);
+      frameMatrix(d.theta + (ds + hs * 0.35) / RING.R, d.u + du - hs * 0.2, -hs * 0.06, rng.next(), { x: hs * 0.45, y: hs * 0.32, z: hs * 0.4 }, local);
+      rocks.add(local, null);
+      if (d.hasWaterfall) {
+        // thin cascading sheet on the hill side
+        const fh = hs * 0.4;
+        frameMatrix(d.theta + (ds + hs * 0.55) / RING.R, d.u + du - hs * 0.1, fh * 0.45, Math.PI * 0.5, null, local);
+        const e = local.elements; const sx = hs * 0.16, sy = fh; e[0] *= sx; e[1] *= sx; e[2] *= sx; e[4] *= sy; e[5] *= sy; e[6] *= sy;
+        falls.add(local, null);
+        addNavLight(d.theta + (ds + hs * 0.55) / RING.R, d.u + du - hs * 0.1, 4, COL_CYAN, 6, 0.1);
+      }
+    }
+    if (d.type === 'RECREATION' || d.type === 'BOTANICAL') {
+      const ds = rng.range(-0.35, 0.35) * r, du = rng.range(-0.35, 0.35) * r;
+      const th = r * 0.42;
+      frameMatrix(d.theta + ds / RING.R, d.u + du, 0, 0, { x: 5, y: th, z: 5 }, local); towers.add(local, null);
+      frameMatrix(d.theta + ds / RING.R, d.u + du, th, 0, { x: 26, y: 6, z: 26 }, local); tunnels.add(local, null);
+      addNavLight(d.theta + ds / RING.R, d.u + du, th + 8, COL_WHITE, 7, rng.next());
+    }
+    // interior lamps (soft warm points) and rim lights
+    const nl = Math.floor(r / 12);
+    for (let i = 0; i < nl; i++) {
+      const rr = Math.sqrt(rng.next()) * baseR * 0.9, ang = rng.next() * TAU;
+      addNavLight(d.theta + (Math.cos(ang) * rr) / RING.R, d.u + Math.sin(ang) * rr, rng.range(3, 12), rng.chance(0.7) ? new THREE.Color(1.0, 0.8, 0.55) : COL_CYAN, 5, 0.05);
+    }
+    const nr = Math.max(8, Math.floor(baseR / 40));
+    for (let i = 0; i < nr; i++) { const ang = (i / nr) * TAU; addNavLight(d.theta + (Math.cos(ang) * (baseR + 6)) / RING.R, d.u + Math.sin(ang) * (baseR + 6), 6, COL_CYAN, 6, 0.05); }
+    addNavLight(d.theta, d.u, r * (1 - sunk) + 6, COL_RED, 9, rng.next());
+  }
+  ribs.build({ kind: 'dome' }); tunnels.build({ kind: 'dome', castShadow: true }); hills.build({ kind: 'dome', castShadow: true });
+  rocks.build({ kind: 'dome' }); towers.build({ kind: 'dome' }); falls.build({ kind: 'dome' });
+}
+
+/* =====================================================================
+   SPACEPORTS & DOCKS
+   ===================================================================== */
+const PORTS = { berths: [], pads: [] };
+function createSpaceports() {
+  const rng = subRng('ports');
+  const HW = RING.W * 0.5, WT = RING.WALL_T, T = RING.T, WH = RING.WALL_H;
+  const boxes = new InstanceBuilder(UNIT_BOX, structMaterial);
+  const dark = new InstanceBuilder(UNIT_BOX, darkMetalMaterial);
+  const cyls = new InstanceBuilder(UNIT_CYL, darkMetalMaterial);
+  const quads = new InstanceBuilder(UNIT_QUAD, quadMaterial);
+  const m = new THREE.Matrix4(), col = new THREE.Color();
+  const lateralQuad = (theta, u, h, w, hgt, side, color) => {   // quad facing laterally outward
+    const tan = ringTangent(theta, _v1), up = ringUp(theta, _v2), lat = _v3.copy(RING_LATERAL).multiplyScalar(side);
+    m.makeBasis(tan, up, lat);
+    const e = m.elements; e[0] *= w; e[1] *= w; e[2] *= w; e[4] *= hgt; e[5] *= hgt; e[6] *= hgt;
+    m.setPosition(ringPos(theta, u, h, _v4));
+    quads.add(m, color);
+  };
+  const upQuad = (theta, u, h, w, d, color) => {   // quad facing up (floodlights, pads)
+    frameMatrix(theta, u, h, 0, null, m);
+    const rot = _m2.makeRotationX(-Math.PI * 0.5);
+    m.multiply(rot);
+    const e = m.elements; e[0] *= w; e[1] *= w; e[2] *= w; e[4] *= d; e[5] *= d; e[6] *= d;
+    quads.add(m, color);
+  };
+
+  for (const p of WORLD.ports) {
+    const sc = p.scale, side = p.side, th = p.theta, h0 = p.h;
+    const L = p.len, D = p.reach * 0.55, A = p.reach * 0.45;
+    const uPlat = p.uEdge + side * (D * 0.5 + 24);
+    // main platform + lower service deck
+    frameMatrix(th, uPlat, h0, 0, { x: L, y: 50 + 30 * sc, z: D }, m); boxes.add(m, null);
+    frameMatrix(th, uPlat, h0 - 120 * sc - 40, 0, { x: L * 0.7, y: 40, z: D * 0.7 }, m); dark.add(m, null);
+    // trusses between deck levels + connection bridges to the ring wall
+    for (let i = -2; i <= 2; i++) {
+      frameMatrix(th + (i * L * 0.2) / RING.R, uPlat, h0 - 60 * sc - 20, 0, { x: 18, y: 120 * sc + 40, z: 18 }, m); dark.add(m, null);
+      frameMatrix(th + (i * L * 0.2) / RING.R, p.uEdge + side * 14, h0 + 10, 0, { x: 40, y: 30, z: 40 }, m); boxes.add(m, null);
+    }
+    // docking arms with berth clamps and lights
+    const nArms = Math.round(3 + 4 * sc);
+    for (let i = 0; i < nArms; i++) {
+      const sOff = -L * 0.5 + (i + 0.5) * (L / nArms);
+      const ath = th + sOff / RING.R;
+      const uArm = p.uEdge + side * (D + 24) + side * A * 0.5;
+      const armLen = A * rng.range(0.8, 1.15);
+      frameMatrix(ath, p.uEdge + side * (D + 24) + side * armLen * 0.5, h0 + 20, 0, { x: 26 * (0.6 + sc), y: 18, z: armLen }, m); boxes.add(m, null);
+      for (const f of [0.45, 0.85]) {
+        const uc = p.uEdge + side * (D + 24) + side * armLen * f;
+        frameMatrix(ath, uc, h0 + 34, 0, { x: 14, y: 40, z: 14 }, m); dark.add(m, null);
+        PORTS.berths.push({ theta: ath, u: uc + (i % 2 ? 1 : -1) * 0, h: h0 + 90 + 40 * sc, side, size: f > 0.6 ? 'large' : 'medium', port: p, sOff: (i % 2 ? 1 : -1) * 30 });
+      }
+      const tipU = p.uEdge + side * (D + 24 + armLen);
+      addNavLight(ath, tipU, h0 + 20, i % 2 ? COL_RED : COL_GREEN, 10, rng.next());
+      addNavLight(ath, tipU, h0 + 20 + 10, COL_WHITE, 7, 0.05);
+      for (let q = 0; q < 6; q++) addNavLight(ath, p.uEdge + side * (D + 24 + armLen * q / 6), h0 + 30, COL_AMBER, 5, 0.05);
+      // small hangar quads along the arm (side faces)
+      lateralQuad(ath + (12 / RING.R), p.uEdge + side * (D + 24 + armLen * 0.2), h0 + 20, 22 * (0.6 + sc), 9, side, col.setRGB(1.2, 0.9, 0.6));
+    }
+    // control towers
+    const nTow = 2 + (p.size === 'huge' ? 1 : 0);
+    for (let i = 0; i < nTow; i++) {
+      const sOff = (i - (nTow - 1) * 0.5) * L * 0.3, tth = th + sOff / RING.R;
+      const tu = uPlat + side * rng.range(-D * 0.25, D * 0.25);
+      const hgt = (150 + 130 * sc) * rng.range(0.8, 1.1);
+      frameMatrix(tth, tu, h0 + 25, 0, { x: 12 + 6 * sc, y: hgt, z: 12 + 6 * sc }, m); cyls.add(m, null);
+      frameMatrix(tth, tu, h0 + 25 + hgt, 0, { x: 44 + 20 * sc, y: 14, z: 44 + 20 * sc }, m); boxes.add(m, null);
+      lateralQuad(tth, tu + side * (22 + 10 * sc) + side * 0.5, h0 + 25 + hgt, 38 + 16 * sc, 6, side, col.setRGB(0.6, 0.9, 1.3));
+      lateralQuad(tth, tu - side * (22 + 10 * sc) - side * 0.5, h0 + 25 + hgt, 38 + 16 * sc, 6, -side, col.setRGB(0.6, 0.9, 1.3));
+      addNavLight(tth, tu, h0 + 25 + hgt + 10, COL_WHITE, 9, rng.next());
+      addNavLight(tth, tu, h0 + 25 + hgt + 20, COL_RED, 9, rng.next());
+    }
+    // hangars on the platform with glowing doors, fuel tanks, cargo stacks
+    const nH = Math.round(3 + 3 * sc);
+    for (let i = 0; i < nH; i++) {
+      const sOff = -L * 0.42 + (i + 0.5) * (L * 0.84 / nH), hth = th + sOff / RING.R;
+      const hu = uPlat + side * rng.range(-D * 0.2, D * 0.15);
+      const w = (60 + 40 * sc) * rng.range(0.8, 1.1), hh = (30 + 20 * sc) * rng.range(0.8, 1.2), dd = (50 + 30 * sc) * rng.range(0.8, 1.2);
+      frameMatrix(hth, hu, h0 + 25 + hh * 0.5, 0, { x: w, y: hh, z: dd }, m); boxes.add(m, null);
+      lateralQuad(hth, hu + side * (dd * 0.5 + 0.6), h0 + 25 + hh * 0.5, w * 0.7, hh * 0.6, side, col.setRGB(1.3, 0.95, 0.65));
+      addNavLight(hth, hu, h0 + 25 + hh + 4, COL_RED, 7, rng.next());
+    }
+    const nTanks = Math.round(2 + 4 * sc);
+    for (let i = 0; i < nTanks; i++) {
+      const tth = th + rng.range(-L * 0.45, L * 0.45) / RING.R, tu = uPlat + side * rng.range(-D * 0.3, D * 0.3);
+      const rr = 10 + 12 * sc;
+      frameMatrix(tth, tu, h0 + 25, 0, { x: rr * 2, y: rr * 2.5, z: rr * 2 }, m); cyls.add(m, col.setRGB(0.75, 0.75, 0.78));
+    }
+    const nCargo = Math.round(8 + 14 * sc);
+    for (let i = 0; i < nCargo; i++) {
+      const cth = th + rng.range(-L * 0.48, L * 0.48) / RING.R, cu = uPlat + side * rng.range(-D * 0.4, D * 0.4);
+      frameMatrix(cth, cu, h0 + 25 + 6, rng.chance(0.5) ? 0 : Math.PI * 0.5, { x: 12 + rng.range(0, 14), y: 12, z: 8 + rng.range(0, 6) }, m);
+      col.setHSL(rng.pick([0.02, 0.08, 0.55, 0.6, 0.35]), 0.6, 0.35); dark.add(m, col);
+    }
+    // antenna masts & floodlights & apron pads
+    const nMast = Math.round(3 + 4 * sc);
+    for (let i = 0; i < nMast; i++) {
+      const mth = th + rng.range(-L * 0.45, L * 0.45) / RING.R, mu = uPlat + side * rng.range(-D * 0.45, D * 0.45);
+      const len = rng.range(60, 140) * (0.6 + sc * 0.6);
+      frameMatrix(mth, mu, h0 + 25, 0, { x: 3, y: len, z: 3 }, m); cyls.add(m, null);
+      addNavLight(mth, mu, h0 + 25 + len, COL_RED, 7, rng.next());
+    }
+    const nFlood = Math.round(10 + 16 * sc);
+    for (let i = 0; i < nFlood; i++) {
+      const fth = th + rng.range(-L * 0.48, L * 0.48) / RING.R, fu = uPlat + side * rng.range(-D * 0.45, D * 0.45);
+      upQuad(fth, fu, h0 + 25.3 + 15 * sc, 10, 10, col.setRGB(1.0, 0.85, 0.6).multiplyScalar(1.6));
+    }
+    // glowing edge strips along the platform rim and under the arms
+    lateralQuad(th, uPlat + side * (D * 0.5 + 0.8), h0 + 12, L * 0.96, 4, side, col.setRGB(1.0, 0.65, 0.25));
+    lateralQuad(th, uPlat + side * (D * 0.5 + 0.8), h0 - 12, L * 0.96, 3, side, col.setRGB(0.5, 0.85, 1.0));
+    for (const off of [-0.5, 0.5]) {
+      const eth = th + (off * L) / RING.R;
+      const tan = ringTangent(eth, _v1).multiplyScalar(off > 0 ? 1 : -1), up = ringUp(eth, _v2), lat = _v3.crossVectors(up, tan);
+      m.makeBasis(lat, up, tan); const e = m.elements; e[0] *= D * 0.96; e[1] *= D * 0.96; e[2] *= D * 0.96; e[4] *= 4; e[5] *= 4; e[6] *= 4;
+      m.setPosition(ringPos(eth, uPlat, h0 + 12, _v4)); quads.add(m, col.setRGB(1.0, 0.65, 0.25));
+    }
+    // edge lights along the platform perimeter
+    const nEdge = Math.floor(L / 60);
+    for (let i = 0; i <= nEdge; i++) {
+      const eth = th + (-L * 0.5 + i * (L / nEdge)) / RING.R;
+      addNavLight(eth, uPlat + side * D * 0.5, h0 + 30, COL_WHITE, 6, 0.05);
+      addNavLight(eth, uPlat - side * D * 0.5, h0 + 30, COL_AMBER, 6, 0.05);
+    }
+    // shipyard gantries on the huge ports
+    if (p.size === 'huge') {
+      for (let g = 0; g < 3; g++) {
+        const gth = th + ((g - 1) * L * 0.3) / RING.R;
+        const gu = uPlat + side * (D * 0.5 + A * 0.55);
+        const span = A * 0.8, gh = 140 + 60 * sc;
+        frameMatrix(gth, gu - span * 0.5, h0 + 20 + gh * 0.5, 0, { x: 24, y: gh, z: 24 }, m); boxes.add(m, null);
+        frameMatrix(gth, gu + span * 0.5, h0 + 20 + gh * 0.5, 0, { x: 24, y: gh, z: 24 }, m); boxes.add(m, null);
+        frameMatrix(gth, gu, h0 + 20 + gh, 0, { x: 30, y: 26, z: span + 24 }, m); boxes.add(m, null);
+        for (let q = 0; q < 5; q++) addNavLight(gth, gu - span * 0.5 + q * span / 4, h0 + 20 + gh + 16, q % 2 ? COL_RED : COL_WHITE, 7, rng.next());
+        PORTS.berths.push({ theta: gth, u: gu, h: h0 + 20 + gh * 0.45, side, size: 'large', port: p, sOff: 0, gantry: true });
+      }
+    }
+    // apron lights on the habitat side (terminal glow)
+    const nAp = 12;
+    for (let i = 0; i < nAp; i++) {
+      const ath = th + rng.range(-p.apron.hw, p.apron.hw) / RING.R;
+      addNavLight(ath, side * (HW - rng.range(20, p.apron.depth * 0.5)), 6, COL_AMBER, 6, 0.05);
+    }
+  }
+  boxes.build({ kind: 'port', castShadow: true }); dark.build({ kind: 'port' }); cyls.build({ kind: 'port' }); quads.build({ kind: 'port', receiveShadow: false });
+}
+
+/* =====================================================================
+   SHIPS — procedural hulls, instanced, with routes and engine glow
+   ===================================================================== */
+const SHIPS = { classes: {}, list: [], trailMesh: null, visible: 0 };
+const SHIP_COUNTS = { small: 240, medium: 36, large: 8 };
+
+function shipHullGeometry(cls) {
+  const parts = [];
+  const box = (w, h, d, x, y, z) => parts.push(new THREE.BoxGeometry(w, h, d).translate(x, y, z));
+  const cyl = (r1, r2, len, x, y, z, rotX = Math.PI * 0.5) => { const g = new THREE.CylinderGeometry(r1, r2, len, 8); g.rotateX(rotX); g.translate(x, y, z); parts.push(g); };
+  const cone = (r, len, x, y, z) => { const g = new THREE.ConeGeometry(r, len, 8); g.rotateX(Math.PI * 0.5); g.translate(x, y, z); parts.push(g); };
+  if (cls === 'small') {
+    box(0.22, 0.11, 0.7, 0, 0, -0.05);
+    cone(0.11, 0.35, 0, 0, 0.47);
+    box(0.7, 0.03, 0.22, 0, -0.01, -0.2);        // wings
+    box(0.05, 0.16, 0.2, 0, 0.08, -0.32);        // fin
+    box(0.09, 0.06, 0.16, 0, 0.07, 0.15);        // canopy
+    cyl(0.05, 0.05, 0.22, 0.09, 0, -0.42); cyl(0.05, 0.05, 0.22, -0.09, 0, -0.42);
+  } else if (cls === 'medium') {
+    box(0.3, 0.22, 0.9, 0, 0, 0);
+    box(0.44, 0.3, 0.42, 0, 0, -0.15);           // cargo section
+    cone(0.13, 0.3, 0, 0.02, 0.6);
+    box(0.12, 0.14, 0.16, 0, 0.2, 0.2);          // bridge
+    box(0.9, 0.04, 0.2, 0, -0.02, -0.25);        // outriggers
+    for (const sx of [-0.28, -0.1, 0.1, 0.28]) cyl(0.06, 0.07, 0.3, sx, -0.02, -0.55);
+    box(0.02, 0.3, 0.02, 0.1, 0.3, 0.1);         // antenna
+  } else {
+    box(0.26, 0.3, 1.0, 0, 0, 0);                // central spine
+    box(0.42, 0.22, 0.5, 0, -0.02, -0.15);       // engineering block
+    box(0.34, 0.4, 0.3, 0, 0.02, 0.15);          // midship block
+    cone(0.17, 0.4, 0, 0, 0.7);
+    box(0.14, 0.18, 0.22, 0, 0.28, 0.05);        // bridge tower
+    box(0.05, 0.12, 0.1, 0, 0.42, 0.05);
+    box(0.7, 0.06, 0.26, 0, 0.06, -0.3);         // pylons
+    box(0.7, 0.06, 0.26, 0, -0.12, 0.2);
+    for (const sx of [-0.3, -0.15, 0, 0.15, 0.3]) cyl(0.07, 0.08, 0.32, sx, -0.02, -0.55);
+    for (const sx of [-0.18, 0.18]) cyl(0.05, 0.05, 0.9, sx, 0.0, -0.05, Math.PI * 0.5); // side conduits
+    box(0.02, 0.4, 0.02, -0.08, 0.5, -0.1);
+  }
+  const g = BufferGeometryUtils.mergeGeometries(parts.map(p => p.toNonIndexed()), false);
+  g.computeVertexNormals();
+  return g;
+}
+function shipGlowGeometry(cls) {
+  const parts = [];
+  const engines = cls === 'small' ? [[0.09, 0, -0.53, 0.05], [-0.09, 0, -0.53, 0.05]]
+    : cls === 'medium' ? [[-0.28, -0.02, -0.7, 0.065], [-0.1, -0.02, -0.7, 0.065], [0.1, -0.02, -0.7, 0.065], [0.28, -0.02, -0.7, 0.065]]
+    : [[-0.3, -0.02, -0.71, 0.075], [-0.15, -0.02, -0.71, 0.075], [0, -0.02, -0.71, 0.075], [0.15, -0.02, -0.71, 0.075], [0.3, -0.02, -0.71, 0.075]];
+  for (const [x, y, z, r] of engines) {
+    const s = new THREE.SphereGeometry(r * 1.05, 8, 6).translate(x, y, z);
+    const sc = s.getAttribute('position').count; const c = new Float32Array(sc * 3); c.fill(1.0); s.setAttribute('color', new THREE.BufferAttribute(c, 3));
+    parts.push(s);
+    const plumeLen = cls === 'small' ? 0.45 : 0.6;
+    const p = new THREE.ConeGeometry(r * 0.9, plumeLen, 8, 1, true); p.rotateX(-Math.PI * 0.5); p.translate(x, y, z - plumeLen * 0.5);
+    const pc = p.getAttribute('position'); const col = new Float32Array(pc.count * 3);
+    for (let i = 0; i < pc.count; i++) { const zz = pc.getZ(i); const t = clamp((zz - (z - plumeLen)) / plumeLen, 0, 1); const v = t * t; col[i * 3] = v; col[i * 3 + 1] = v; col[i * 3 + 2] = v; }
+    p.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    parts.push(p);
+  }
+  return BufferGeometryUtils.mergeGeometries(parts.map(p => p.toNonIndexed()), false);
+}
+
+function createShips() {
+  const rng = subRng('ships');
+  const hullMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.45, metalness: 0.6 });
+  const glowMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.55, 0.8, 1.0).multiplyScalar(1.4), vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+  const HW = RING.W * 0.5, WT = RING.WALL_T, T = RING.T;
+  const palette = [new THREE.Color(0.75, 0.77, 0.8), new THREE.Color(0.55, 0.58, 0.62), new THREE.Color(0.8, 0.5, 0.2), new THREE.Color(0.35, 0.4, 0.5), new THREE.Color(0.7, 0.2, 0.15), new THREE.Color(0.85, 0.85, 0.8)];
+  for (const cls of ['small', 'medium', 'large']) {
+    const n = SHIP_COUNTS[cls];
+    const hull = new THREE.InstancedMesh(shipHullGeometry(cls), hullMat, n);
+    const glow = new THREE.InstancedMesh(shipGlowGeometry(cls), glowMat, n);
+    hull.frustumCulled = false; glow.frustumCulled = false;
+    hull.castShadow = cls !== 'small';
+    const c = new THREE.Color();
+    for (let i = 0; i < n; i++) { c.copy(rng.pick(palette)).multiplyScalar(rng.range(0.8, 1.1)); hull.setColorAt(i, c); }
+    hull.instanceColor.needsUpdate = true;
+    ringRoot.add(hull, glow);
+    SHIPS.classes[cls] = { hull, glow, n };
+  }
+  // trails: stretched additive quads behind fast ships
+  const trailGeo = new THREE.PlaneGeometry(1, 1);
+  const tp = trailGeo.getAttribute('position'); const tc = new Float32Array(tp.count * 3);
+  for (let i = 0; i < tp.count; i++) { const v = clamp(tp.getX(i) + 0.5, 0, 1); tc[i * 3] = v; tc[i * 3 + 1] = v; tc[i * 3 + 2] = v; }
+  trailGeo.setAttribute('color', new THREE.BufferAttribute(tc, 3));
+  const trailMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.5, 0.75, 1.0).multiplyScalar(0.7), vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+  const totalShips = SHIP_COUNTS.small + SHIP_COUNTS.medium + SHIP_COUNTS.large;
+  SHIPS.trailMesh = new THREE.InstancedMesh(trailGeo, trailMat, totalShips);
+  SHIPS.trailMesh.frustumCulled = false;
+  ringRoot.add(SHIPS.trailMesh);
+
+  /* ---------- routes ---------- */
+  const berths = PORTS.berths;
+  const mkRing = (cls, idx, opts) => ({
+    cls, idx, kind: 'ring', theta: rng.next() * TAU, dir: rng.chance(0.5) ? 1 : -1,
+    u: opts.u, h: opts.h, speed: opts.speed, wobble: rng.range(0, TAU), wobbleAmp: opts.wobbleAmp || 0, scale: opts.scale, trail: opts.trail || 0, prev: new THREE.Vector3(), pos: new THREE.Vector3(),
+  });
+  const mkHover = (cls, idx, port, scale) => ({
+    cls, idx, kind: 'hover', port, ang: rng.next() * TAU, radius: rng.range(200, 600) * (0.5 + port.scale), rate: rng.range(0.05, 0.12) * (rng.chance(0.5) ? 1 : -1),
+    h: port.h + rng.range(80, 300), scale, trail: 0, prev: new THREE.Vector3(), pos: new THREE.Vector3(),
+  });
+  const mkTransfer = (cls, idx, scale, speed) => {
+    const a = rng.pick(berths), b = rng.pick(berths);
+    return { cls, idx, kind: 'transfer', from: a, to: b, state: 'DOCKED', t: rng.range(0, 30), timer: rng.range(4, 40), speed, scale, trail: 1, cur: { theta: a.theta, u: a.u, h: a.h }, cruiseU: 0, prev: new THREE.Vector3(), pos: new THREE.Vector3() };
+  };
+  let idx = 0;
+  // small ships
+  for (let i = 0; i < SHIP_COUNTS.small; i++) {
+    const s = rng.range(13, 22);
+    let ship;
+    if (i < 100) ship = mkRing('small', i, { u: rng.range(-720, 720), h: rng.range(60, 260), speed: rng.range(90, 220), wobbleAmp: rng.range(20, 90), scale: s, trail: rng.chance(0.5) ? 1 : 0 });
+    else if (i < 160) ship = mkRing('small', i, { u: rng.range(-HW, HW), h: rng.range(400, 1600), speed: rng.range(200, 520), wobbleAmp: rng.range(0, 40), scale: s, trail: 1 });
+    else if (i < 200) ship = mkRing('small', i, { u: (rng.chance(0.5) ? 1 : -1) * rng.range(HW + WT + 150, HW + WT + 900), h: rng.range(-T - 500, 200), speed: rng.range(250, 600), wobbleAmp: 20, scale: s, trail: 1 });
+    else ship = mkHover('small', i, rng.pick(WORLD.ports), s);
+    SHIPS.list.push(ship);
+  }
+  for (let i = 0; i < SHIP_COUNTS.medium; i++) {
+    const s = rng.range(55, 120);
+    let ship;
+    if (i < 20) ship = mkTransfer('medium', i, s, rng.range(180, 360));
+    else if (i < 30) ship = mkRing('medium', i, { u: (rng.chance(0.5) ? 1 : -1) * rng.range(HW + WT + 400, HW + WT + 1400), h: rng.range(-300, 600), speed: rng.range(150, 300), wobbleAmp: 30, scale: s, trail: 1 });
+    else ship = mkRing('medium', i, { u: rng.range(-600, 600), h: rng.range(-T - 300, -T - 900), speed: rng.range(120, 240), wobbleAmp: 10, scale: s, trail: 1 });
+    SHIPS.list.push(ship);
+  }
+  const largeBerths = berths.filter(b => b.size === 'large' && (b.port.size === 'huge' || b.port.size === 'large'));
+  for (let i = 0; i < SHIP_COUNTS.large; i++) {
+    const s = rng.range(320, 620);
+    let ship;
+    if (i < 3 && largeBerths.length) { const b = largeBerths[(i * 7) % largeBerths.length]; ship = { cls: 'large', idx: i, kind: 'docked', berth: b, scale: s, trail: 0, prev: new THREE.Vector3(), pos: new THREE.Vector3() }; }
+    else if (i < 6) ship = mkRing('large', i, { u: (rng.chance(0.5) ? 1 : -1) * rng.range(HW + WT + 900, HW + WT + 2200), h: rng.range(-400, 800), speed: rng.range(60, 140), wobbleAmp: 0, scale: s, trail: 1 });
+    else ship = mkTransfer('large', i, s, rng.range(80, 150));
+    SHIPS.list.push(ship);
+  }
+}
+
+const _sf = new THREE.Vector3(), _sr = new THREE.Vector3(), _su = new THREE.Vector3(), _sp = new THREE.Vector3(), _sq = new THREE.Vector3();
+const _frustum = new THREE.Frustum(), _projView = new THREE.Matrix4(), _gm = new THREE.Matrix4();
+function shipRingPos(theta, u, h, out) { return ringPos(theta, u, h, out); }
+
+function updateShips(dt) {
+  const t = simTime;
+  const HW = RING.W * 0.5, WT = RING.WALL_T;
+  const visible = settings.ships;
+  let vis = 0;
+  _projView.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+  _frustum.setFromProjectionMatrix(_projView);
+  const worldToRing = _m2.copy(ringRoot.matrixWorld).invert();
+  let trailIdx = 0;
+  for (const s of SHIPS.list) {
+    // ----- advance route -----
+    if (s.kind === 'ring') {
+      s.theta = wrapAngle(s.theta + (s.dir * s.speed * dt) / (RING.R - s.h));
+      const wob = Math.sin(t * 0.25 + s.wobble) * s.wobbleAmp;
+      shipRingPos(s.theta, s.u + wob, s.h + Math.cos(t * 0.2 + s.wobble) * s.wobbleAmp * 0.4, s.pos);
+    } else if (s.kind === 'hover') {
+      s.ang += s.rate * dt;
+      const p = s.port;
+      const uCentre = p.uEdge + p.side * (p.reach * 0.6);
+      shipRingPos(p.theta + (Math.cos(s.ang) * s.radius) / RING.R, uCentre + Math.sin(s.ang) * s.radius * 0.5, s.h + Math.sin(s.ang * 2.0) * 30, s.pos);
+    } else if (s.kind === 'docked') {
+      const b = s.berth;
+      shipRingPos(b.theta + (b.sOff || 0) / RING.R, b.u, b.h + (b.gantry ? 0 : 20), s.pos);
+    } else if (s.kind === 'transfer') {
+      updateTransfer(s, dt);
+      shipRingPos(s.cur.theta, s.cur.u, s.cur.h, s.pos);
+    }
+    // ----- orientation -----
+    _sf.subVectors(s.pos, s.prev);
+    const moving = _sf.lengthSq() > 1e-6;
+    if (!moving) {
+      if (s.kind === 'docked') ringTangent(s.berth.theta, _sf); else if (s.kind === 'ring') ringTangent(s.theta, _sf).multiplyScalar(s.dir); else ringTangent(0, _sf);
+    }
+    _sf.normalize();
+    const th = Math.atan2(s.pos.z, s.pos.x);
+    ringUp(th, _su);
+    _sr.crossVectors(_su, _sf);
+    if (_sr.lengthSq() < 1e-6) _sr.set(1, 0, 0); else _sr.normalize();
+    _su.crossVectors(_sf, _sr).normalize();
+    const cls = SHIPS.classes[s.cls];
+    const sc = visible ? s.scale : 0.0001;
+    _m1.makeBasis(_sr, _su, _sf);
+    const e = _m1.elements;
+    e[0] *= sc; e[1] *= sc; e[2] *= sc; e[4] *= sc; e[5] *= sc; e[6] *= sc; e[8] *= sc; e[9] *= sc; e[10] *= sc;
+    _m1.setPosition(s.pos);
+    cls.hull.setMatrixAt(s.idx, _m1);
+    // engine glow: scaled by throttle state and shrunk with distance (keeps bloom sane at mega scale)
+    let k = 1.0;
+    if (s.kind === 'docked') k = 0.12; else if (s.kind === 'hover') k = 0.55;
+    else if (s.kind === 'transfer') k = (s.state === 'CRUISE') ? 1.0 : (s.state === 'DOCKED') ? 0.12 : 0.6;
+    _sp.copy(s.pos).applyMatrix4(ringRoot.matrixWorld);
+    const camDist = _sp.distanceTo(camera.position);
+    k *= clamp(7000 / Math.max(camDist, 1), 0.2, 1.0);
+    if (!visible) k = 0.0001;
+    _gm.copy(_m1);
+    const ge = _gm.elements; ge[0] *= k; ge[1] *= k; ge[2] *= k; ge[4] *= k; ge[5] *= k; ge[6] *= k; ge[8] *= k; ge[9] *= k; ge[10] *= k;
+    _v4.copy(s.pos).addScaledVector(_sf, -0.53 * (1 - k) * sc);
+    _gm.setPosition(_v4);
+    cls.glow.setMatrixAt(s.idx, _gm);
+    // trail
+    let trailLen = 0;
+    if (s.trail && visible && moving) {
+      const v = (s.kind === 'ring') ? s.speed : (s.kind === 'transfer' && s.state === 'CRUISE') ? s.speed : 0;
+      trailLen = v * 0.7 + s.scale * 1.2;
+    }
+    if (trailLen > 0) {
+      // axis-aligned billboard: X along velocity, Y perpendicular to both velocity and view
+      _sp.copy(s.pos).applyMatrix4(ringRoot.matrixWorld);         // world pos
+      _sq.subVectors(camera.position, _sp).normalize();
+      _sq.applyMatrix4(worldToRing).sub(_v4.set(0, 0, 0).applyMatrix4(worldToRing)).normalize(); // view dir into ring space (rotation only)
+      _sr.crossVectors(_sf, _sq).normalize();
+      _su.crossVectors(_sr, _sf).normalize();
+      _m1.makeBasis(_sf, _sr, _su);
+      const w = s.scale * 0.22;
+      const ee = _m1.elements;
+      ee[0] *= trailLen; ee[1] *= trailLen; ee[2] *= trailLen; ee[4] *= w; ee[5] *= w; ee[6] *= w;
+      _v4.copy(s.pos).addScaledVector(_sf, -trailLen * 0.5 - s.scale * 0.55);
+      _m1.setPosition(_v4);
+      SHIPS.trailMesh.setMatrixAt(trailIdx++, _m1);
+    }
+    s.prev.copy(s.pos);
+    // visibility (ships are children of ringRoot)
+    if (visible) { _sp.copy(s.pos).applyMatrix4(ringRoot.matrixWorld); if (_frustum.containsPoint(_sp)) vis++; }
+  }
+  // hide unused trail slots
+  for (let i = trailIdx; i < SHIPS.trailMesh.count; i++) { _m1.makeScale(0, 0, 0); SHIPS.trailMesh.setMatrixAt(i, _m1); }
+  for (const cls of Object.values(SHIPS.classes)) { cls.hull.instanceMatrix.needsUpdate = true; cls.glow.instanceMatrix.needsUpdate = true; }
+  SHIPS.trailMesh.instanceMatrix.needsUpdate = true;
+  SHIPS.visible = vis;
+}
+
+function updateTransfer(s, dt) {
+  const HW = RING.W * 0.5, WT = RING.WALL_T;
+  const cruiseH = 350 + s.scale * 0.8;
+  const cruiseU = (b) => b.side * (HW + WT + 700 + s.scale * 1.5);
+  switch (s.state) {
+    case 'DOCKED':
+      s.timer -= dt;
+      s.cur.theta = s.from.theta; s.cur.u = s.from.u; s.cur.h = s.from.h + 20;
+      if (s.timer <= 0) {
+        // choose a new destination different from current
+        let tries = 0; do { s.to = PORTS.berths[Math.floor(hash1(s.idx * 13 + simTime) * PORTS.berths.length) % PORTS.berths.length]; tries++; } while (s.to === s.from && tries < 5);
+        s.state = 'DEPART'; s.t = 0; s.depTime = 14;
+        s.start = { theta: s.cur.theta, u: s.cur.u, h: s.cur.h };
+        s.goal = { theta: s.from.theta + (s.from.side * 0.0), u: cruiseU(s.from), h: s.from.h + cruiseH };
+      }
+      break;
+    case 'DEPART': {
+      s.t += dt / s.depTime;
+      const k = smoothstep(0, 1, Math.min(s.t, 1));
+      s.cur.theta = s.start.theta; s.cur.u = lerp(s.start.u, s.goal.u, k); s.cur.h = lerp(s.start.h, s.goal.h, k * k);
+      if (s.t >= 1) { s.state = 'CRUISE'; s.cruiseU = s.goal.u; s.cruiseH = s.goal.h; let d = wrapAngle(s.to.theta - s.cur.theta); if (d > Math.PI) d -= TAU; s.dir = d >= 0 ? 1 : -1; s.remaining = Math.abs(d); }
+      break;
+    }
+    case 'CRUISE': {
+      const dth = (s.speed * dt) / RING.R;
+      s.remaining -= dth;
+      s.cur.theta = wrapAngle(s.cur.theta + s.dir * dth);
+      // drift laterally towards the destination side while cruising
+      const targetU = cruiseU(s.to);
+      s.cur.u = lerp(s.cur.u, targetU, Math.min(1, dt * 0.15));
+      s.cur.h = s.cruiseH + Math.sin(simTime * 0.3 + s.idx) * 15;
+      if (s.remaining <= 0) { s.state = 'APPROACH'; s.t = 0; s.appTime = 16; s.start = { theta: s.to.theta, u: s.cur.u, h: s.cur.h }; s.cur.theta = s.to.theta; }
+      break;
+    }
+    case 'APPROACH': {
+      s.t += dt / s.appTime;
+      const k = smoothstep(0, 1, Math.min(s.t, 1));
+      s.cur.theta = s.to.theta; s.cur.u = lerp(s.start.u, s.to.u, k); s.cur.h = lerp(s.start.h, s.to.h + 20, k);
+      if (s.t >= 1) { s.state = 'DOCKED'; s.from = s.to; s.timer = 8 + hash1(s.idx + simTime) * 40; }
+      break;
+    }
+  }
+}
+
+/* =====================================================================
+   LIGHTING
+   ===================================================================== */
+function createLighting() {
+  sunLight = new THREE.DirectionalLight(0xfff1dc, 2.2);
+  sunLight.position.copy(SUN_DIR).multiplyScalar(8000);
+  sunLight.castShadow = true;
+  const q = QUALITY_PRESETS[settings.quality];
+  sunLight.shadow.mapSize.set(q.shadow, q.shadow);
+  sunLight.shadow.camera.near = 50; sunLight.shadow.camera.far = 20000;
+  sunLight.shadow.bias = -0.0004; sunLight.shadow.normalBias = 3.0;
+  sunLight.shadow.radius = 2;
+  scene.add(sunLight); scene.add(sunLight.target);
+  fillLight = new THREE.DirectionalLight(0x6a8cc8, 0.18);
+  fillLight.position.copy(SUN_DIR).multiplyScalar(-8000);
+  scene.add(fillLight);
+  hemiLight = new THREE.HemisphereLight(0x8090b0, 0x1a1c26, 0.15);
+  scene.add(hemiLight);
+  // soft environment reflections for metals (dim)
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+  scene.environmentIntensity = 0.1;
+  pmrem.dispose();
+}
+
+// keep the shadow frustum tight around whatever the camera is looking at
+const _shadowTarget = new THREE.Vector3();
+function updateShadowFrustum() {
+  _shadowTarget.copy(controls.target);
+  const dist = camera.position.distanceTo(controls.target);
+  const ext = clamp(dist * 1.3, 500, 7000);
+  sunLight.position.copy(_shadowTarget).addScaledVector(SUN_DIR, 9000);
+  sunLight.target.position.copy(_shadowTarget);
+  sunLight.target.updateMatrixWorld();
+  const c = sunLight.shadow.camera;
+  if (Math.abs(c.right - ext) > 1) { c.left = -ext; c.right = ext; c.top = ext; c.bottom = -ext; c.updateProjectionMatrix(); }
+  sunLight.shadow.needsUpdate = true;
+}
+
+/* =====================================================================
+   POST PROCESSING
+   ===================================================================== */
+function createPostProcessing() {
+  const q = QUALITY_PRESETS[settings.quality];
+  composer = new EffectComposer(renderer);
+  renderPass = new RenderPass(scene, camera);
+  composer.addPass(renderPass);
+  bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth * q.bloomRes, window.innerHeight * q.bloomRes), settings.bloomStrength, 0.5, 0.82);
+  composer.addPass(bloomPass);
+  outputPass = new OutputPass();
+  composer.addPass(outputPass);
+}
+
+/* =====================================================================
+   CAMERA SYSTEM — presets, transitions, cinematic, free-fly
+   ===================================================================== */
+const CAM = {
+  presets: [], current: 7, transition: null, cinematic: false, cineT: 0, cineCurvePos: null, cineCurveTgt: null, cineSpeed: 1, cineLen: 1,
+  keys: {}, ringLocked: true, lastInteract: 0,
+};
+const _ringToWorld = new THREE.Matrix4(), _worldToRing = new THREE.Matrix4();
+const _cp = new THREE.Vector3(), _ct = new THREE.Vector3(), _cu = new THREE.Vector3();
+
+// a preset is stored in ring coordinates: position (theta,u,h), target (theta,u,h), up mode, fov
+function P(theta, u, h) { return { theta, u, h }; }
+function ringToWorld(rc, out) { ringPos(rc.theta, rc.u, rc.h, out); return out.applyMatrix4(ringRoot.matrixWorld); }
+function upVectorFor(rc, mode, out) {
+  if (mode === 'world') return out.set(0, 1, 0);
+  ringUp(rc.theta, out);
+  if (mode === 'down') out.multiplyScalar(-1);
+  out.transformDirection(ringRoot.matrixWorld);
+  // far from the ring blend towards world up
+  const far = smoothstep(-1500, -6000, rc.h);
+  out.lerp(_v4.set(0, 1, 0), far).normalize();
+  return out;
+}
+
+function setupCameraPresets() {
+  const R = RING.R, HW = RING.W * 0.5, WT = RING.WALL_T, T = RING.T;
+  const sec = (k) => WORLD.sectors[k].theta0;
+  const dome = WORLD.hero.dome, port = WORLD.hero.port;
+  const heroTheta = sec(0);
+  CAM.presets = [
+    { name: 'MEGA SCALE VIEW', pos: P(0.81, 9800, -6800), tgt: P(0, 0, R), up: 'world', fov: 50 },
+    { name: 'SECTOR VIEW', pos: P(sec(1) - 4200 / R, -200, 2800), tgt: P(sec(1) + 2600 / R, 0, 0), up: 'ring', fov: 55 },
+    { name: 'LOW ALTITUDE SURFACE VIEW', pos: P(heroTheta - 1500 / R, 180, 150), tgt: P(heroTheta - 400 / R, 60, 70), up: 'ring', fov: 64 },
+    { name: 'BIODOME VIEW', pos: P(dome.theta - (dome.r * 2.9) / R, dome.u + dome.r * 0.9, dome.r * 0.75), tgt: P(dome.theta, dome.u, dome.r * 0.3), up: 'ring', fov: 50 },
+    { name: 'SPACEPORT VIEW', pos: P(port.theta - 1900 / R, port.uEdge + port.side * 2000, 800), tgt: P(port.theta + 300 / R, port.uEdge + port.side * 650, port.h + 40), up: 'ring', fov: 55 },
+    { name: 'UNDERSTRUCTURE VIEW', pos: P(sec(0) + 200 / R, -700, -T - 680), tgt: P(sec(0) + 2800 / R, 150, -T - 200), up: 'down', fov: 60 },
+    { name: 'LONG HORIZON VIEW', pos: P(sec(9) - 2400 / R, -320, 320), tgt: P(sec(9) + 4200 / R, 120, 780), up: 'ring', fov: 58 },
+    { name: 'CINEMATIC HERO VIEW', pos: P(heroTheta - 3200 / R, -1450, 1500), tgt: P(heroTheta + 2600 / R, 60, 320), up: 'ring', fov: 52 },
+  ];
+  setupCinematicRoute();
+}
+
+function setupCinematicRoute() {
+  const R = RING.R, T = RING.T;
+  const sec = (k) => WORLD.sectors[k].s0;
+  const dome = WORLD.hero.dome, port = WORLD.hero.port;
+  const lake = WORLD.sectors[2];   // forest & lakes
+  // waypoints in (s, u, h) space; targets likewise
+  const wp = [
+    [sec(0) - 2600, -1400, 1500,    sec(0) + 2600, 60, 320],       // hero start
+    [sec(0) - 200, -350, 260,       sec(0) + 2200, 0, 120],        // dive over the metropolis
+    [sec(0) + 2300, 250, 180,       sec(0) + 4200, 100, 200],      // low over the core
+    [sec(1) + 300, -150, 900,       sec(1) + 2500, 0, 60],         // central park city
+    [sec(2) - 600, 500, 260,        sec(2) + 1800, -200, 40],      // forest & lakes, low
+    [sec(2) + 2200, -600, 180,      sec(3) + 800, 200, 120],       // lakeside
+    [sec(3) + 1200, 300, 1500,      sec(4) + 800, 0, 300],         // rise towards the biodome gardens
+    [dome.s - dome.r * 2.2, dome.u - dome.r * 1.6, dome.r * 0.7,    dome.s, dome.u, dome.r * 0.35],   // biodome pass
+    [dome.s + dome.r * 1.6, dome.u + dome.r * 1.2, dome.r * 0.5,    dome.s + 2000, dome.u, 100],
+    [sec(5) + 1500, 100, 2600,      sec(6) + 1500, 0, 200],        // over agriculture → industry
+    [sec(6) + 1500, -300, 700,      sec(7), 0, 300],
+    [port.s - 2500, port.uEdge + port.side * 2400, 1200,  port.s, port.uEdge + port.side * 800, port.h + 60],  // spaceport
+    [port.s + 1200, port.uEdge + port.side * 1900, 300,   port.s + 2500, port.uEdge + port.side * 300, port.h + 100],
+    [sec(8) + 800, -2600, -T - 900,  sec(8) + 3000, -300, -T - 200],   // dive under the ring
+    [sec(9) + 200, -500, -T - 650,   sec(9) + 2800, 150, -T - 250],   // along the understructure
+    [sec(10) - 400, 1800, -T - 1000, sec(10) + 1500, 0, -T - 100],
+    [sec(10) + 2000, 9000, -6000,    sec(11), 0, 0],                 // pull away
+    [sec(11) + 1500, 20000, -12000,  sec(11) + 3000, 0, 1500],      // mega view
+    [RING.CIRC + sec(0) - 6500, 4500, -1500,  RING.CIRC + sec(0) + 1500, 0, 300],  // approach the hero sector again
+    [RING.CIRC + sec(0) - 2600, -1400, 1500,  RING.CIRC + sec(0) + 2600, 60, 320], // loop closes here
+  ];
+  const posPts = wp.map(w => new THREE.Vector3(w[0], w[1], w[2]));
+  const tgtPts = wp.map(w => new THREE.Vector3(w[3], w[4], w[5]));
+  CAM.cineCurvePos = new THREE.CatmullRomCurve3(posPts, false, 'centripetal', 0.5);
+  CAM.cineCurveTgt = new THREE.CatmullRomCurve3(tgtPts, false, 'centripetal', 0.5);
+  CAM.cineCurvePos.arcLengthDivisions = 4000; CAM.cineCurveTgt.arcLengthDivisions = 4000;
+  CAM.cineLen = CAM.cineCurvePos.getLength();
+  CAM.cineSpeed = 420;   // units per second along the route
+}
+
+function syncControlsUp() {
+  controls._quat.setFromUnitVectors(camera.up, Y_AXIS);
+  controls._quatInverse.copy(controls._quat).invert();
+}
+
+function setCameraPreset(index, instant = false) {
+  const p = CAM.presets[index];
+  if (!p) return;
+  CAM.current = index;
+  CAM.cinematic = false;
+  document.getElementById('cine').style.display = 'none';
+  document.getElementById('h-preset').textContent = p.name;
+  if (instant) {
+    ringToWorld(p.pos, camera.position);
+    ringToWorld(p.tgt, controls.target);
+    upVectorFor(p.pos, p.up, camera.up);
+    camera.fov = p.fov; camera.updateProjectionMatrix();
+    syncControlsUp(); controls.update();
+    return;
+  }
+  // capture the start in ring coordinates so the transition stays glued to the (rotating) ring
+  _worldToRing.copy(ringRoot.matrixWorld).invert();
+  const sp = camera.position.clone().applyMatrix4(_worldToRing), st = controls.target.clone().applyMatrix4(_worldToRing);
+  const su = camera.up.clone().transformDirection(_worldToRing);
+  const dist = sp.distanceTo(ringPos(p.pos.theta, p.pos.u, p.pos.h, new THREE.Vector3()));
+  CAM.transition = { t: 0, dur: clamp(1.5 + dist / 12000, 1.6, 3.2), sp, st, su, fovA: camera.fov, preset: p };
+  controls.enabled = false;
+}
+
+function updateCameraTransition(dt) {
+  const tr = CAM.transition;
+  if (!tr) return false;
+  tr.t += dt / tr.dur;
+  const k = tr.t >= 1 ? 1 : (tr.t * tr.t * (3 - 2 * tr.t));
+  const p = tr.preset;
+  // end points (ring space)
+  const ep = ringPos(p.pos.theta, p.pos.u, p.pos.h, _v1), et = ringPos(p.tgt.theta, p.tgt.u, p.tgt.h, _v2);
+  _cp.copy(tr.sp).lerp(ep, k).applyMatrix4(ringRoot.matrixWorld);
+  _ct.copy(tr.st).lerp(et, k).applyMatrix4(ringRoot.matrixWorld);
+  const eu = upVectorFor(p.pos, p.up, _v3);
+  _cu.copy(tr.su).transformDirection(ringRoot.matrixWorld).lerp(eu, k).normalize();
+  camera.position.copy(_cp); controls.target.copy(_ct); camera.up.copy(_cu);
+  camera.fov = lerp(tr.fovA, p.fov, k); camera.updateProjectionMatrix();
+  syncControlsUp();
+  camera.lookAt(controls.target);
+  if (tr.t >= 1) { CAM.transition = null; controls.enabled = true; controls.update(); }
+  return true;
+}
+
+function startCinematic() {
+  CAM.cinematic = true;
+  CAM.transition = null;
+  CAM.cineT = 0;
+  CAM.cineBlend = 0;           // blend-in from the current camera
+  CAM.cineFrom = { pos: camera.position.clone(), tgt: controls.target.clone(), up: camera.up.clone(), fov: camera.fov };
+  controls.enabled = false;
+  document.getElementById('cine').style.display = 'block';
+  document.getElementById('h-preset').textContent = 'CINEMATIC FLIGHT';
+}
+function stopCinematic() {
+  CAM.cinematic = false;
+  controls.enabled = true;
+  document.getElementById('cine').style.display = 'none';
+  document.getElementById('h-preset').textContent = 'MANUAL CAMERA';
+  syncControlsUp(); controls.update();
+}
+
+const _cineP = new THREE.Vector3(), _cineT = new THREE.Vector3();
+function cinePoint(curve, t, out) {
+  const p = curve.getPointAt(t, _v4);
+  ringPos(p.x / RING.R, p.y, p.z, out);
+  return out.applyMatrix4(ringRoot.matrixWorld);
+}
+function updateCinematicCamera(dt) {
+  if (!CAM.cinematic) return;
+  // fly faster when far from the ring, slower close to the surface
+  const pr0 = CAM.cineCurvePos.getPointAt(CAM.cineT, _v4);
+  const farK = smoothstep(-600, -7000, pr0.z) + smoothstep(600, 3000, pr0.z) * 0.6;
+  const speed = CAM.cineSpeed * (1.0 + 5.0 * farK);
+  CAM.cineT += (speed * dt) / CAM.cineLen;
+  if (CAM.cineT >= 1) CAM.cineT -= 1;
+  cinePoint(CAM.cineCurvePos, CAM.cineT, _cineP);
+  cinePoint(CAM.cineCurveTgt, CAM.cineT, _cineT);
+  const pr = CAM.cineCurvePos.getPointAt(CAM.cineT, _v4);
+  const rc = { theta: pr.x / RING.R, u: pr.y, h: pr.z };
+  upVectorFor(rc, 'ring', _cu);
+  const fovTarget = 52 + 10 * smoothstep(-1000, -8000, rc.h);
+  if (CAM.cineBlend < 1) {
+    CAM.cineBlend = Math.min(1, CAM.cineBlend + dt / 2.5);
+    const k = smoothstep(0, 1, CAM.cineBlend);
+    camera.position.copy(CAM.cineFrom.pos).lerp(_cineP, k);
+    controls.target.copy(CAM.cineFrom.tgt).lerp(_cineT, k);
+    camera.up.copy(CAM.cineFrom.up).lerp(_cu, k).normalize();
+    camera.fov = lerp(CAM.cineFrom.fov, fovTarget, k);
+  } else {
+    // slight smoothing to hide curve parametrisation noise
+    camera.position.lerp(_cineP, Math.min(1, dt * 6));
+    controls.target.lerp(_cineT, Math.min(1, dt * 6));
+    camera.up.lerp(_cu, Math.min(1, dt * 3)).normalize();
+    camera.fov = lerp(camera.fov, fovTarget, Math.min(1, dt * 2));
+  }
+  camera.updateProjectionMatrix();
+  camera.lookAt(controls.target);
+}
+
+/* ---- free-fly (WASD / QE / Shift) on top of OrbitControls ---- */
+const _fwd = new THREE.Vector3(), _right = new THREE.Vector3(), _move = new THREE.Vector3();
+function updateFreeFly(dt) {
+  if (CAM.transition || CAM.cinematic) return;
+  const k = CAM.keys;
+  const any = k.w || k.a || k.s || k.d || k.q || k.e;
+  if (!any) return;
+  const dist = camera.position.distanceTo(controls.target);
+  let speed = clamp(dist * 0.6, 40, 20000) * (k.shift ? 4 : 1);
+  camera.getWorldDirection(_fwd);
+  _right.crossVectors(_fwd, camera.up).normalize();
+  _move.set(0, 0, 0);
+  if (k.w) _move.add(_fwd); if (k.s) _move.sub(_fwd);
+  if (k.d) _move.add(_right); if (k.a) _move.sub(_right);
+  if (k.e) _move.add(camera.up); if (k.q) _move.sub(camera.up);
+  if (_move.lengthSq() === 0) return;
+  _move.normalize().multiplyScalar(speed * dt);
+  camera.position.add(_move); controls.target.add(_move);
+}
+
+/* ---- keep the camera glued to the rotating ring ---- */
+function rotateCameraWithRing(dAngle) {
+  if (dAngle === 0) return;
+  camera.position.applyAxisAngle(Y_AXIS, dAngle);
+  controls.target.applyAxisAngle(Y_AXIS, dAngle);
+  camera.up.applyAxisAngle(Y_AXIS, dAngle).normalize();
+  if (CAM.cineFrom) { CAM.cineFrom.pos.applyAxisAngle(Y_AXIS, dAngle); CAM.cineFrom.tgt.applyAxisAngle(Y_AXIS, dAngle); CAM.cineFrom.up.applyAxisAngle(Y_AXIS, dAngle); }
+  syncControlsUp();
+}
+
+function setupInput() {
+  window.addEventListener('keydown', (e) => {
+    if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return;
+    const key = e.key.toLowerCase();
+    if (key >= '1' && key <= '8') { setCameraPreset(parseInt(key) - 1); return; }
+    if (key === 'c') { if (CAM.cinematic) stopCinematic(); else startCinematic(); return; }
+    if (key === 'r') { setCameraPreset(7); return; }
+    if (key === 'h') { toggleUI(); return; }
+    if (['w', 'a', 's', 'd', 'q', 'e'].includes(key)) { CAM.keys[key] = true; if (CAM.cinematic) stopCinematic(); }
+    if (key === 'shift') CAM.keys.shift = true;
+  });
+  window.addEventListener('keyup', (e) => {
+    const key = e.key.toLowerCase();
+    if (['w', 'a', 's', 'd', 'q', 'e'].includes(key)) CAM.keys[key] = false;
+    if (key === 'shift') CAM.keys.shift = false;
+  });
+  renderer.domElement.addEventListener('pointerdown', () => {
+    if (CAM.cinematic) stopCinematic();
+    if (CAM.transition) { CAM.transition = null; controls.enabled = true; controls.update(); }
+    document.getElementById('h-preset').textContent = 'MANUAL CAMERA';
+  });
+  renderer.domElement.addEventListener('wheel', () => { if (CAM.cinematic) stopCinematic(); }, { passive: true });
+}
+
+/* =====================================================================
+   HUD & GUI
+   ===================================================================== */
+const HUD = { fps: 0, frames: 0, acc: 0, els: {} };
+function createHUD() {
+  for (const id of ['h-fps', 'h-calls', 'h-tris', 'h-ships', 'h-inst', 'h-preset']) HUD.els[id] = document.getElementById(id);
+  // capture scene statistics right after the main scene pass (before bloom passes reset them)
+  const origRender = renderPass.render.bind(renderPass);
+  renderPass.render = (...args) => { origRender(...args); HUD.calls = renderer.info.render.calls; HUD.tris = renderer.info.render.triangles; };
+}
+function updateHUD(rawDt) {
+  HUD.frames++; HUD.acc += rawDt;
+  if (HUD.acc >= 0.5) {
+    HUD.fps = Math.round(HUD.frames / HUD.acc); HUD.frames = 0; HUD.acc = 0;
+    HUD.els['h-fps'].textContent = HUD.fps;
+    HUD.els['h-calls'].textContent = HUD.calls || 0;
+    HUD.els['h-tris'].textContent = ((HUD.tris || 0) / 1e6).toFixed(2) + ' M';
+    HUD.els['h-ships'].textContent = settings.ships ? SHIPS.visible : 0;
+    let inst = 0;
+    for (const e of CITY.meshes) inst += e.mesh.count;
+    for (const e of CITY.trees) inst += e.mesh.visible ? e.mesh.count : 0;
+    for (const e of STRUCT.instanced) inst += e.mesh.visible ? e.mesh.count : 0;
+    HUD.els['h-inst'].textContent = (inst / 1000).toFixed(1) + ' k';
+  }
+}
+let uiVisible = true;
+function toggleUI() {
+  uiVisible = !uiVisible;
+  for (const id of ['hud', 'gui', 'help']) document.getElementById(id).style.display = uiVisible ? '' : 'none';
+}
+
+function createGUI() {
+  const $ = (id) => document.getElementById(id);
+  const bind = (id, key, cb) => { const el = $(id); el.checked = settings[key]; el.addEventListener('change', () => { settings[key] = el.checked; if (cb) cb(); }); };
+  bind('g-bloom', 'bloom', () => { bloomPass.enabled = settings.bloom; });
+  bind('g-lights', 'cityLights', () => { const v = settings.cityLights ? 1 : 0; surfaceUniforms.uLights.value = v; buildingUniforms.uLights.value = v; });
+  bind('g-ships', 'ships', () => { SHIPS.trailMesh.visible = settings.ships; });
+  bind('g-domes', 'domes', () => { DOMES.group.visible = settings.domes; for (const e of STRUCT.instanced) if (e.kind === 'dome') e.mesh.visible = settings.domes; });
+  bind('g-green', 'greenery', () => { for (const e of CITY.trees) e.mesh.visible = settings.greenery; });
+  bind('g-rot', 'rotation');
+  const slider = (id, valId, key, fmt, cb) => {
+    const el = $(id), v = $(valId);
+    el.value = settings[key]; v.textContent = fmt(settings[key]);
+    el.addEventListener('input', () => { settings[key] = parseFloat(el.value); v.textContent = fmt(settings[key]); if (cb) cb(); });
+  };
+  slider('g-time', 'v-time', 'timeScale', (x) => x.toFixed(2));
+  slider('g-exp', 'v-exp', 'exposure', (x) => x.toFixed(2), () => { renderer.toneMappingExposure = settings.exposure; });
+  slider('g-bstr', 'v-bstr', 'bloomStrength', (x) => x.toFixed(2), () => { bloomPass.strength = settings.bloomStrength; });
+  const q = $('g-quality'); q.value = String(settings.quality);
+  q.addEventListener('change', () => { settings.quality = parseInt(q.value); applyQuality(); });
+  $('g-seed').value = String(WORLD_SEED);
+  $('g-regen').addEventListener('click', () => {
+    const s = parseInt($('g-seed').value);
+    const url = new URL(location.href); url.searchParams.set('seed', Number.isFinite(s) ? s : 1337); location.href = url.toString();
+  });
+  $('g-seed').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('g-regen').click(); });
+  $('gui-toggle').addEventListener('click', () => { const g = $('gui'); g.classList.toggle('collapsed'); $('gui-toggle').textContent = g.classList.contains('collapsed') ? 'show' : 'hide'; });
+}
+
+function applyQuality() {
+  const q = QUALITY_PRESETS[settings.quality];
+  renderer.setPixelRatio(q.pixelRatio);
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  composer.setPixelRatio(q.pixelRatio);
+  composer.setSize(window.innerWidth, window.innerHeight);
+  bloomPass.resolution.set(window.innerWidth * q.bloomRes, window.innerHeight * q.bloomRes);
+  bloomPass.setSize(window.innerWidth * q.bloomRes, window.innerHeight * q.bloomRes);
+  if (sunLight.shadow.mapSize.x !== q.shadow) {
+    sunLight.shadow.mapSize.set(q.shadow, q.shadow);
+    if (sunLight.shadow.map) { sunLight.shadow.map.dispose(); sunLight.shadow.map = null; }
+  }
+  if (renderer.shadowMap.enabled !== q.shadows) {
+    renderer.shadowMap.enabled = q.shadows;
+    scene.traverse((o) => { if (o.material) { const mats = Array.isArray(o.material) ? o.material : [o.material]; for (const mt of mats) mt.needsUpdate = true; } });
+  }
+  for (const e of CITY.meshes) e.mesh.count = Math.max(1, Math.floor(e.fullCount * q.instFrac));
+  for (const e of CITY.trees) e.mesh.count = Math.max(1, Math.floor(e.fullCount * q.treeFrac));
+  for (const cls of Object.values(SHIPS.classes)) { cls.hull.count = Math.max(1, Math.floor(cls.n * q.shipFrac)); cls.glow.count = cls.hull.count; }
+}
+
+/* =====================================================================
+   SIMULATION & MAIN LOOP
+   ===================================================================== */
+const ROT_SPEED = TAU / 900;   // one revolution every 15 minutes (before time scale)
+function updateSimulation(dt) {
+  surfaceUniforms.uTime.value = simTime;
+  buildingUniforms.uTime.value = simTime;
+  navLightMaterial.uniforms.uTime.value = simTime;
+  if (settings.rotation) {
+    const d = ROT_SPEED * dt;
+    ringRoot.rotation.y += d;
+    ringRoot.updateMatrixWorld(true);
+    rotateCameraWithRing(d);
+  }
+  updateShips(dt);
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  const rawDt = Math.min(clock.getDelta(), 0.1);
+  const dt = rawDt * settings.timeScale;
+  simTime += dt;
+  updateSimulation(dt);
+  if (!updateCameraTransition(rawDt)) {
+    updateCinematicCamera(rawDt);
+    updateFreeFly(rawDt);
+  }
+  if (controls.enabled) controls.update();
+  updateShadowFrustum();
+  composer.render();
+  updateHUD(rawDt);
+}
+
+function onResize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+  renderer.setSize(w, h); composer.setSize(w, h);
+  const q = QUALITY_PRESETS[settings.quality];
+  bloomPass.setSize(w * q.bloomRes, h * q.bloomRes);
+  navLightMaterial.uniforms.uScale.value = h * 0.5;
+}
+
+/* =====================================================================
+   BOOT
+   ===================================================================== */
+const nextFrame = () => new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
+async function init() {
+  const sub = document.getElementById('loading-sub');
+  const step = async (txt, fn) => { sub.textContent = txt; await nextFrame(); fn(); };
+  initRenderer();
+  initScene();
+  await step('planning districts', () => { createDistrictLayout(); });
+  await step('zoning 50 km of habitat', () => { createZoneMap(); });
+  await step('forging the megastructure', () => { createHabitatSurface(); createRingStructure(); });
+  await step('raising cities', () => { createCityDistricts(); });
+  await step('growing biodomes', () => { createBiodomes(); });
+  await step('building spaceports', () => { createSpaceports(); });
+  await step('launching ships', () => { createShips(); createNavLights(); });
+  await step('lighting the ring', () => { createLighting(); createPostProcessing(); });
+  createHUD(); createGUI(); setupInput();
+  setupCameraPresets();
+  applyQuality();
+  window.addEventListener('resize', onResize);
+  ringRoot.updateMatrixWorld(true);
+  setCameraPreset(7, true);
+  const ld = document.getElementById('loading');
+  ld.style.opacity = '0'; setTimeout(() => ld.remove(), 900);
+  clock.start();
+  animate();
+}
+init().catch(err => {
+  console.error(err);
+  const sub = document.getElementById('loading-sub');
+  if (sub) { sub.textContent = 'ERROR: ' + err.message; sub.style.color = '#ff6a5c'; }
+});
+</script>
+</body>
+</html>

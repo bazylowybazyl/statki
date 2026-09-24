@@ -15,12 +15,20 @@ import * as THREE from "three";
 /* ── World scale (must match rocketFireGPU.js) ── */
 const WS = 0.1;
 
-/** Ustaw zakres uploadu atrybutu (nowe i stare API three). */
+/**
+ * Dołóż zakres uploadu atrybutu (nowe i stare API three). Zakresy KUMULUJEMY —
+ * three kasuje je sam po uploadzie; dawny clearUpdateRanges() gubił zakres
+ * z klatki bez renderu overlaya (frameSkip). Sufit: jeden zakres na całość.
+ */
 function applyAttrRange(attr, start, count) {
     if (!attr) return;
-    if (typeof attr.clearUpdateRanges === 'function') {
-        attr.clearUpdateRanges();
-        attr.addUpdateRange(start, count);
+    if (typeof attr.addUpdateRange === 'function') {
+        if (Array.isArray(attr.updateRanges) && attr.updateRanges.length >= 64) {
+            attr.clearUpdateRanges();
+            attr.addUpdateRange(0, attr.array.length);
+        } else {
+            attr.addUpdateRange(start, count);
+        }
     } else {
         if (!attr.updateRange) attr.updateRange = { offset: 0, count: -1 };
         attr.updateRange.offset = start;
@@ -41,7 +49,6 @@ export class RocketSmokeGPU {
         // Dirty-span spawnów między commitami + znak wodny żywych cząstek.
         this._dirtyMin = Infinity;
         this._dirtyMax = -1;
-        this._dirtyWrapped = false;
         this.highWater = 0;
         this._lastSpawnTime = -Infinity;
         this._maxLifeSeen = 0;
@@ -171,6 +178,8 @@ export class RocketSmokeGPU {
         this.points = new THREE.Points(geo, this.material);
         this.points.frustumCulled = false;
         this.points.renderOrder = 999;
+        // Pusta pula = niewidoczna (overlay pomija wtedy warstwę raw).
+        this.points.visible = false;
         scene.add(this.points);
     }
 
@@ -192,25 +201,33 @@ export class RocketSmokeGPU {
         // na klatkę przy dymiącej rakiecie). Dirty-span + commit() raz na klatkę.
         if (i < this._dirtyMin) this._dirtyMin = i;
         if (i > this._dirtyMax) this._dirtyMax = i;
-        if (this.activeIndex === 0) this._dirtyWrapped = true;
+        // Zawinięcie ring-bufora: domknięty wycinek jako osobny zakres zamiast
+        // pełnego uploadu 200k cząstek (~8 MB).
+        if (this.activeIndex === 0) this._pushDirtySpan();
         if (i + 1 > this.highWater) this.highWater = i + 1;
         this._lastSpawnTime = this._time;
         if (life > this._maxLifeSeen) this._maxLifeSeen = life;
     }
 
     /** Wyślij na GPU zakres zespawnowany od ostatniego commit(). Raz na klatkę. */
-    commit() {
-        if (this._dirtyMax < this._dirtyMin && !this._dirtyWrapped) return;
+    /** Wycinek [min, max] zespawnowany od ostatniego wypchnięcia → zakresy atrybutów. */
+    _pushDirtySpan() {
+        if (this._dirtyMax < this._dirtyMin) return;
         const geo = this.points.geometry;
-        const start = this._dirtyWrapped ? 0 : this._dirtyMin;
-        const count = this._dirtyWrapped ? this.maxParticles : (this._dirtyMax - this._dirtyMin + 1);
+        const start = this._dirtyMin;
+        const count = this._dirtyMax - this._dirtyMin + 1;
         applyAttrRange(geo.attributes.aStartPos, start * 3, count * 3);
         applyAttrRange(geo.attributes.aStartVel, start * 3, count * 3);
         applyAttrRange(geo.attributes.aData, start * 4, count * 4);
-        geo.setDrawRange(0, this.highWater);
         this._dirtyMin = Infinity;
         this._dirtyMax = -1;
-        this._dirtyWrapped = false;
+    }
+
+    commit() {
+        if (this._dirtyMax < this._dirtyMin) return;
+        this._pushDirtySpan();
+        this.points.geometry.setDrawRange(0, this.highWater);
+        this.points.visible = this.highWater > 0;
     }
 
     /** Update shader time uniform. Call once per frame BEFORE spawn(). */
@@ -223,6 +240,7 @@ export class RocketSmokeGPU {
             this.activeIndex = 0;
             this._maxLifeSeen = 0;
             this.points.geometry.setDrawRange(0, 0);
+            this.points.visible = false;
         }
     }
 

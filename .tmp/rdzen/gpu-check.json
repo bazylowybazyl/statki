@@ -1,0 +1,384 @@
+{
+  "seconds": 20,
+  "rows": [
+    {
+      "weaponId": "beam_continuous",
+      "mode": "gpu@60",
+      "solver": "gpu",
+      "simSec": 20,
+      "wallSec": 6.8,
+      "solverPerSec": 30,
+      "simTime": 20.541666666666142,
+      "hits": 361,
+      "damage": 2888,
+      "hexTotal": 2920,
+      "hexAlive": 2860,
+      "maxDrift": 53.2,
+      "core": {
+        "state": "nominal",
+        "integrity": 1,
+        "dead": 0
+      },
+      "hexesLost": 60,
+      "reached": {}
+    },
+    {
+      "weaponId": "beam_continuous",
+      "mode": "gpu@60 czekaj",
+      "solver": "gpu",
+      "simSec": 20,
+      "wallSec": 6.7,
+      "solverPerSec": 30,
+      "simTime": 20.516666666666143,
+      "hits": 361,
+      "damage": 2888,
+      "hexTotal": 2920,
+      "hexAlive": 2858,
+      "maxDrift": 54.4,
+      "core": {
+        "state": "nominal",
+        "integrity": 1,
+        "dead": 0
+      },
+      "hexesLost": 62,
+      "reached": {}
+    },
+    {
+      "weaponId": "beam_continuous",
+      "mode": "cpu@60",
+      "solver": "cpu",
+      "simSec": 20.02,
+      "wallSec": 7.2,
+      "solverPerSec": 30,
+      "simTime": 20.166666666666163,
+      "hits": 362,
+      "damage": 2896,
+      "hexTotal": 2920,
+      "hexAlive": 2860,
+      "maxDrift": 58.2,
+      "core": {
+        "state": "nominal",
+        "integrity": 1,
+        "dead": 0
+      },
+      "hexesLost": 60,
+      "reached": {}
+    },
+    {
+      "weaponId": "beam_continuous",
+      "mode": "gpu@144 czekaj",
+      "solver": "gpu",
+      "simSec": 20,
+      "wallSec": 15.3,
+      "solverPerSec": 30,
+      "simTime": 20.308333333332822,
+      "hits": 361,
+      "damage": 2888,
+      "hexTotal": 2920,
+      "hexAlive": 2865,
+      "maxDrift": 58,
+      "core": {
+        "state": "nominal",
+        "integrity": 1,
+        "dead": 0
+      },
+      "hexesLost": 55,
+      "reached": {}
+    },
+    {
+      "weaponId": "beam_continuous",
+      "mode": "cpu@144",
+      "solver": "cpu",
+      "simSec": 20.03,
+      "wallSec": 15.6,
+      "solverPerSec": 30,
+      "simTime": 20.191666666666162,
+      "hits": 362,
+      "damage": 2896,
+      "hexTotal": 2920,
+      "hexAlive": 2857,
+      "maxDrift": 43.4,
+      "core": {
+        "state": "nominal",
+        "integrity": 1,
+        "dead": 0
+      },
+      "hexesLost": 63,
+      "reached": {}
+    },
+    {
+      "weaponId": "beam_continuous",
+      "mode": "gpu@60 czekaj, sprzed poprawki",
+      "solver": "gpu",
+      "simSec": 20,
+      "wallSec": 6.7,
+      "solverPerSec": 26.6,
+      "simTime": 20.29999999999949,
+      "hits": 142,
+      "damage": 1136,
+      "hexTotal": 2920,
+      "hexAlive": 2916,
+      "maxDrift": 69.3,
+      "core": {
+        "state": "nominal",
+        "integrity": 0.934,
+        "dead": 0
+      },
+      "hexesLost": 4,
+      "reached": {}
+    },
+    {
+      "weaponId": "heavy_autocannon",
+      "mode": "gpu@60",
+      "solver": "gpu",
+      "simSec": 20,
+      "wallSec": 6.6,
+      "solverPerSec": 28.9,
+      "simTime": 20.316666666666155,
+      "hits": 40,
+      "damage": 1120,
+      "hexTotal": 2920,
+      "hexAlive": 2907,
+      "maxDrift": 2.7,
+      "core": {
+        "state": "nominal",
+        "integrity": 1,
+        "dead": 0
+      },
+      "hexesLost": 13,
+      "reached": {}
+    },
+    {
+      "weaponId": "heavy_autocannon",
+      "mode": "gpu@60 czekaj",
+      "solver": "gpu",
+      "simSec": 20,
+      "wallSec": 6.6,
+      "solverPerSec": 28.9,
+      "simTime": 20.316666666666155,
+      "hits": 40,
+      "damage": 1120,
+      "hexTotal": 2920,
+      "hexAlive": 2909,
+      "maxDrift": 3.7,
+      "core": {
+        "state": "nominal",
+        "integrity": 1,
+        "dead": 0
+      },
+      "hexesLost": 11,
+      "reached": {}
+    },
+    {
+      "weaponId": "heavy_autocannon",
+      "mode": "cpu@60",
+      "solver": "cpu",
+      "simSec": 20.03,
+      "wallSec": 7.1,
+      "solverPerSec": 29.1,
+      "simTime": 20.174999999999496,
+      "hits": 40,
+      "damage": 1120,
+      "hexTotal": 2920,
+      "hexAlive": 2908,
+      "maxDrift": 3.6,
+      "core": {
+        "state": "nominal",
+        "integrity": 1,
+        "dead": 0
+      },
+      "hexesLost": 12,
+      "reached": {}
+    },
+    {
+      "weaponId": "heavy_autocannon",
+      "mode": "gpu@144 czekaj",
+      "solver": "gpu",
+      "simSec": 20,
+      "wallSec": 15,
+      "solverPerSec": 29.2,
+      "simTime": 20.308333333332822,
+      "hits": 40,
+      "damage": 1120,
+      "hexTotal": 2920,
+      "hexAlive": 2908,
+      "maxDrift": 3.2,
+      "core": {
+        "state": "nominal",
+        "integrity": 1,
+        "dead": 0
+      },
+      "hexesLost": 12,
+      "reached": {}
+    },
+    {
+      "weaponId": "heavy_autocannon",
+      "mode": "cpu@144",
+      "solver": "cpu",
+      "simSec": 20.03,
+      "wallSec": 15.4,
+      "solverPerSec": 29.2,
+      "simTime": 20.174999999999496,
+      "hits": 40,
+      "damage": 1120,
+      "hexTotal": 2920,
+      "hexAlive": 2907,
+      "maxDrift": 1,
+      "core": {
+        "state": "nominal",
+        "integrity": 1,
+        "dead": 0
+      },
+      "hexesLost": 13,
+      "reached": {}
+    },
+    {
+      "weaponId": "heavy_autocannon",
+      "mode": "gpu@60 czekaj, sprzed poprawki",
+      "solver": "gpu",
+      "simSec": 20.01,
+      "wallSec": 6.7,
+      "solverPerSec": 29.2,
+      "simTime": 20.316666666666155,
+      "hits": 40,
+      "damage": 1120,
+      "hexTotal": 2920,
+      "hexAlive": 2907,
+      "maxDrift": 2.2,
+      "core": {
+        "state": "nominal",
+        "integrity": 1,
+        "dead": 0
+      },
+      "hexesLost": 13,
+      "reached": {}
+    },
+    {
+      "weaponId": "special_valkyrie_railgun",
+      "mode": "gpu@60",
+      "solver": "gpu",
+      "simSec": 20,
+      "wallSec": 6.2,
+      "solverPerSec": 6.8,
+      "simTime": 20.308333333332822,
+      "hits": 7,
+      "damage": 3500,
+      "hexTotal": 2920,
+      "hexAlive": 2895,
+      "maxDrift": 54.7,
+      "core": {
+        "state": "nominal",
+        "integrity": 1,
+        "dead": 0
+      },
+      "hexesLost": 25,
+      "reached": {}
+    },
+    {
+      "weaponId": "special_valkyrie_railgun",
+      "mode": "gpu@60 czekaj",
+      "solver": "gpu",
+      "simSec": 20,
+      "wallSec": 6.3,
+      "solverPerSec": 8.4,
+      "simTime": 20.308333333332822,
+      "hits": 7,
+      "damage": 3500,
+      "hexTotal": 2920,
+      "hexAlive": 2896,
+      "maxDrift": 81.7,
+      "core": {
+        "state": "nominal",
+        "integrity": 1,
+        "dead": 0
+      },
+      "hexesLost": 24,
+      "reached": {}
+    },
+    {
+      "weaponId": "special_valkyrie_railgun",
+      "mode": "cpu@60",
+      "solver": "cpu",
+      "simSec": 20.03,
+      "wallSec": 6.3,
+      "solverPerSec": 6.8,
+      "simTime": 20.174999999999496,
+      "hits": 7,
+      "damage": 3500,
+      "hexTotal": 2920,
+      "hexAlive": 2893,
+      "maxDrift": 45.6,
+      "core": {
+        "state": "nominal",
+        "integrity": 1,
+        "dead": 0
+      },
+      "hexesLost": 27,
+      "reached": {}
+    },
+    {
+      "weaponId": "special_valkyrie_railgun",
+      "mode": "gpu@144 czekaj",
+      "solver": "gpu",
+      "simSec": 20.1,
+      "wallSec": 14.6,
+      "solverPerSec": 6.4,
+      "simTime": 20.41666666666615,
+      "hits": 7,
+      "damage": 3500,
+      "hexTotal": 2920,
+      "hexAlive": 2889,
+      "maxDrift": 47.6,
+      "core": {
+        "state": "nominal",
+        "integrity": 1,
+        "dead": 0
+      },
+      "hexesLost": 31,
+      "reached": {}
+    },
+    {
+      "weaponId": "special_valkyrie_railgun",
+      "mode": "cpu@144",
+      "solver": "cpu",
+      "simSec": 20.05,
+      "wallSec": 14.8,
+      "solverPerSec": 6.4,
+      "simTime": 20.208333333332828,
+      "hits": 7,
+      "damage": 3500,
+      "hexTotal": 2920,
+      "hexAlive": 2899,
+      "maxDrift": 47.4,
+      "core": {
+        "state": "nominal",
+        "integrity": 1,
+        "dead": 0
+      },
+      "hexesLost": 21,
+      "reached": {}
+    },
+    {
+      "weaponId": "special_valkyrie_railgun",
+      "mode": "gpu@60 czekaj, sprzed poprawki",
+      "solver": "gpu",
+      "simSec": 20.11,
+      "wallSec": 6.2,
+      "solverPerSec": 7.2,
+      "simTime": 20.41666666666615,
+      "hits": 7,
+      "damage": 3500,
+      "hexTotal": 2920,
+      "hexAlive": 2896,
+      "maxDrift": 50.7,
+      "core": {
+        "state": "nominal",
+        "integrity": 1,
+        "dead": 0
+      },
+      "hexesLost": 24,
+      "reached": {}
+    }
+  ],
+  "logs": []
+}

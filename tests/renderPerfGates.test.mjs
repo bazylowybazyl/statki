@@ -133,3 +133,71 @@ test('shield3D: próg kopuły = próg cząstek ShieldImpactFX (9 px)', async () 
   const src = readFileSync(new URL('../src/3d/shieldImpactFx.js', import.meta.url), 'utf8');
   assert.match(src, /if \(px < 9\) return 0;/);
 });
+
+test('stary panel skanera i radar: bez modelu kontaktów, gdy kokpit go chowa / radar wyłączony', () => {
+  assert.match(indexHtml, /const legacyScannerPanelVisible = !window\.hudSystem\?\.cockpit;/);
+  assert.match(indexHtml, /const scannerUiEnabled = legacyScannerPanelVisible && /);
+  assert.match(indexHtml, /const _radarTargets = radarUiEnabled \? lockedTargets\.filter\(/);
+  assert.match(indexHtml, /if \(radarUiEnabled && scannerState\.active\) \{/);
+});
+
+// ── Druga tura audytu (2026-09-23): przycięcia i stałe koszty w spoczynku ──
+
+const readSrc = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
+
+test('wybuchy overlaya bez PointLight (scena bez materiałów oświetlanych, światło zmieniało klucz programu)', () => {
+  for (const path of ['src/effects3d/reactorblow.js', 'src/effects3d/supernovaMissileBlow.js', 'src/effects3d/yamato.js']) {
+    assert.doesNotMatch(readSrc(path), /new THREE\.PointLight/, path);
+  }
+});
+
+test('martwe: bez regl z unpkg, soczewka warpu tworzy kontekst WebGL dopiero przy skoku', () => {
+  assert.doesNotMatch(indexHtml, /unpkg\.com\/regl/);
+  const lens = readSrc('src/vfx/warpLensPass.js');
+  assert.match(lens, /let warpBlackHoleFX = null;/);
+  assert.doesNotMatch(lens, /^const warpBlackHoleFX = new WarpBlackHole/m);
+  assert.match(lens, /warp\.state !== 'charging' && warp\.state !== 'active'\)\) return;\s*if \(!ensureWarpBlackHole\(\)\) return;/);
+});
+
+test('warstwa raw rakiet i pule odłamków paneli: puste siatki są niewidoczne', () => {
+  assert.match(readSrc('src/effects3d/rocketFireGPU.js'), /this\.mesh\.visible = this\.highWater > 0;/);
+  assert.match(readSrc('src/effects3d/rocketSmokeGPU.js'), /this\.points\.visible = this\.highWater > 0;/);
+  assert.match(readSrc('src/effects3d/rocketSystem3D.js'), /this\.mesh\.visible = this\.activeRockets > 0;/);
+  const shards = readSrc('src/vfx/panelShardManager.js');
+  assert.match(shards, /if \(this\.activeCount === 0\) return;/);
+  assert.match(shards, /this\.mesh\.count = 0;\s*this\.mesh\.visible = false;/);
+});
+
+test('pociski 3D: barwy HDR raz na styl, upload tylko zajętego wycinka', () => {
+  const w3d = readSrc('src/3d/weapon3DSystem.js');
+  assert.doesNotMatch(w3d, /colorObj\.set\(style\./);
+  assert.match(w3d, /setColorAt\(instanceCount, styleHdr\.core\)/);
+  assert.match(w3d, /uploadInstancePrefix\(bulletInstances\.trails\.instanceMatrix, instanceCount, 16\)/);
+  assert.doesNotMatch(w3d, /bulletInstances\.heads\.instanceMatrix\.needsUpdate = true;\s*if \(bulletInstances\.trails\.instanceColor\)/);
+});
+
+test('overlay: adaptacja jakości z histerezą, pusta lista efektów nie zmienia skali', () => {
+  const overlay = readSrc('src/effects3d/overlay.js');
+  assert.match(overlay, /const TIER_UPGRADE_HOLD_MS = 1500;/);
+  assert.doesNotMatch(overlay, /Math\.max\(targetScale, 0\.76\)/);
+});
+
+test('CIC: bez renderu świata 3D pod planszą', () => {
+  assert.match(indexHtml, /const skipWorld3D = CICDisplay\.active && !!ship;/);
+  assert.match(indexHtml, /if \(skipWorld3D\) \{\s*ctx\.clearRect\(0, 0, W, H\);\s*Core3D\.beginHeatHazeFrame\(\);\s*\} else if \(drawHexShips3D\)/);
+});
+
+test('spawn floty: budżet initHexBody na klatkę + rozgrzanie tekstury i lakieru typu kadłuba', () => {
+  // Reset raz na klatkę — przed pętlą split-screen, nie w passie NPC.
+  assert.match(indexHtml, /beginHexInitBudgetFrame\(\);\s*for \(let _sp = 0; _sp < _splitPassCount; _sp\+\+\)/);
+  assert.equal(indexHtml.match(/beginHexInitBudgetFrame\(\);/g)?.length, 1);
+  assert.match(indexHtml, /&& hexInitBudgetAllows\(\)\) \{/);
+  assert.match(indexHtml, /npc\.hexGrid\.visualImage = sprite\.image;\s*prewarmHexShipVisual\(sprite\.image\);/);
+  assert.match(hexShips, /export function prewarmHexShipVisual\(image\)/);
+});
+
+test('tekstury planet: dekodowanie po pobraniu i upload z kolejki Core3D', () => {
+  assert.match(core3d, /queueTextureUpload\(texture\) \{/);
+  assert.match(core3d, /this\.renderer\.initTexture\(texture\);/);
+  assert.match(readSrc('src/3d/planet3d.assets.js'), /textureLoader\.load\(path, prewarmLoadedTexture\)/);
+});

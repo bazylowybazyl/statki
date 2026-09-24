@@ -104,8 +104,17 @@ class InstancedShardPool {
         this.mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
         this.mesh.frustumCulled = false;
         this.mesh.renderOrder = 65;
+        // Pusta pula: niewidoczna i count = 0. Wcześniej 8 pul rysowało pełne
+        // pojemności (5160 instancji w zerowej skali) w każdym passie FG, także
+        // bez jednego odłamka w grze.
+        this.mesh.count = 0;
+        this.mesh.visible = false;
         group.add(this.mesh);
 
+        this.activeCount = 0;
+        // Najwyższy zajęty indeks + 1 od ostatniego opróżnienia puli. Wolne sloty
+        // idą ze stosu od zera, więc zajęte skupiają się na początku bufora.
+        this.highWater = 0;
         this.active = new Uint8Array(capacity);
         this.age = new Float32Array(capacity);
         this.life = new Float32Array(capacity);
@@ -141,6 +150,10 @@ class InstancedShardPool {
         if (this.freeTop <= 0) return false;
         const idx = this.free[--this.freeTop];
         this.active[idx] = 1;
+        this.activeCount++;
+        if (idx + 1 > this.highWater) this.highWater = idx + 1;
+        this.mesh.count = this.highWater;
+        this.mesh.visible = true;
         this.age[idx] = 0;
         this.life[idx] = config.life;
         this.drag[idx] = config.drag;
@@ -162,8 +175,9 @@ class InstancedShardPool {
     }
 
     update(dt) {
+        if (this.activeCount === 0) return;
         let dirty = false;
-        for (let i = 0; i < this.capacity; i++) {
+        for (let i = 0; i < this.highWater; i++) {
             if (!this.active[i]) continue;
             dirty = true;
 
@@ -172,6 +186,7 @@ class InstancedShardPool {
             const life = this.life[i];
             if (nextAge >= life) {
                 this.active[i] = 0;
+                this.activeCount--;
                 this.free[this.freeTop++] = i;
                 this._writeInactive(i);
                 continue;
@@ -201,6 +216,11 @@ class InstancedShardPool {
         if (dirty) {
             this.mesh.instanceMatrix.needsUpdate = true;
             this.mesh.instanceColor.needsUpdate = true;
+        }
+        if (this.activeCount === 0) {
+            this.highWater = 0;
+            this.mesh.count = 0;
+            this.mesh.visible = false;
         }
     }
 
@@ -280,11 +300,13 @@ export class PanelShardManager {
             );
             if (Core3D?.enableForeground3D) Core3D.enableForeground3D(this._emissivePools[kind].mesh);
         }
+        // Stała lista zamiast Object.values() dwa razy na klatkę.
+        this._allPools = [...Object.values(this._solidPools), ...Object.values(this._emissivePools)];
     }
 
     update(dt) {
-        for (const pool of Object.values(this._solidPools)) pool.update(dt);
-        for (const pool of Object.values(this._emissivePools)) pool.update(dt);
+        const pools = this._allPools;
+        for (let i = 0; i < pools.length; i++) pools[i].update(dt);
     }
 
     disposeAll() {

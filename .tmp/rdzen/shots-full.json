@@ -1,0 +1,1630 @@
+{
+  "hulls": {
+    "png": "01-trzy-kadluby-komory.png",
+    "counts": [
+      {
+        "label": "Bellator",
+        "hexes": 2920
+      },
+      {
+        "label": "Iron Skull",
+        "hexes": 2261
+      },
+      {
+        "label": "Atlas",
+        "hexes": 10838
+      }
+    ]
+  },
+  "02-bellator-komora": {
+    "png": "02-bellator-komora.png"
+  },
+  "03-ironskull-komora": {
+    "png": "03-ironskull-komora.png"
+  },
+  "04-atlas-komora": {
+    "png": "04-atlas-komora.png"
+  },
+  "nominal": {
+    "png": "05-nominalny-zblizenie.png",
+    "hdr": {
+      "pixels": 25281,
+      "nan": 0,
+      "max": 0.753430078125,
+      "p50": 0.21003271484375,
+      "p99": 0.5724505859375,
+      "p999": 0.679275146484375,
+      "over09": 0,
+      "band": 3842,
+      "white": 0,
+      "hist": [
+        {
+          "from": 0,
+          "to": 0.1,
+          "count": 5217
+        },
+        {
+          "from": 0.1,
+          "to": 0.4,
+          "count": 16222
+        },
+        {
+          "from": 0.4,
+          "to": 0.9,
+          "count": 3842
+        },
+        {
+          "from": 0.9,
+          "to": 1.3,
+          "count": 0
+        },
+        {
+          "from": 1.3,
+          "to": 2,
+          "count": 0
+        },
+        {
+          "from": 2,
+          "to": 4,
+          "count": 0
+        },
+        {
+          "from": 4,
+          "to": 8,
+          "count": 0
+        },
+        {
+          "from": 8,
+          "to": 12,
+          "count": 0
+        },
+        {
+          "from": 12,
+          "to": "∞",
+          "count": 0
+        }
+      ]
+    }
+  },
+  "exposed": {
+    "fire": {
+      "seconds": 186.4,
+      "state": "exposed",
+      "summary": {
+        "simTime": 187.16,
+        "ships": [
+          {
+            "label": "Bellator",
+            "dead": false,
+            "wreck": false,
+            "hp": 12000,
+            "cores": [
+              {
+                "id": "bellator_A",
+                "state": "exposed",
+                "label": "ODSŁONIĘTY",
+                "classId": "capital",
+                "integrity": 0.9685512146730783,
+                "chamber": 32,
+                "alive": 31,
+                "dead": 1,
+                "elsewhere": 0,
+                "meltdownRemaining": 0,
+                "meltdownDuration": 0,
+                "cause": null,
+                "chainDepth": 0,
+                "severed": false,
+                "invalid": null,
+                "probeMisses": 0
+              }
+            ]
+          }
+        ],
+        "destructibles": 1,
+        "hits": 63,
+        "softBody": "gpu",
+        "log": [
+          "  0.00s  scena: Bellator — Bellator 2920 heksów",
+          "187.12s  Bellator/bellator_A: ODSŁONIĘTY"
+        ]
+      }
+    },
+    "png": "06-odsloniety-valkyrie.png",
+    "hdr": {
+      "pixels": 25281,
+      "nan": 0,
+      "max": 0.840844921875,
+      "p50": 0.21175966796874998,
+      "p99": 0.5550681640625,
+      "p999": 0.7061732421874999,
+      "over09": 0,
+      "band": 3435,
+      "white": 0,
+      "hist": [
+        {
+          "from": 0,
+          "to": 0.1,
+          "count": 6334
+        },
+        {
+          "from": 0.1,
+          "to": 0.4,
+          "count": 15512
+        },
+        {
+          "from": 0.4,
+          "to": 0.9,
+          "count": 3435
+        },
+        {
+          "from": 0.9,
+          "to": 1.3,
+          "count": 0
+        },
+        {
+          "from": 1.3,
+          "to": 2,
+          "count": 0
+        },
+        {
+          "from": 2,
+          "to": 4,
+          "count": 0
+        },
+        {
+          "from": 4,
+          "to": 8,
+          "count": 0
+        },
+        {
+          "from": 8,
+          "to": 12,
+          "count": 0
+        },
+        {
+          "from": 12,
+          "to": "∞",
+          "count": 0
+        }
+      ]
+    }
+  },
+  "critical": {
+    "fire": {
+      "seconds": 18,
+      "state": "critical",
+      "summary": {
+        "simTime": 205.26,
+        "ships": [
+          {
+            "label": "Bellator",
+            "dead": false,
+            "wreck": false,
+            "hp": 12000,
+            "cores": [
+              {
+                "id": "bellator_A",
+                "state": "critical",
+                "label": "KRYTYCZNY",
+                "classId": "capital",
+                "integrity": 0.5926662531601241,
+                "chamber": 32,
+                "alive": 19,
+                "dead": 13,
+                "elsewhere": 0,
+                "meltdownRemaining": 0,
+                "meltdownDuration": 0,
+                "cause": null,
+                "chainDepth": 0,
+                "severed": false,
+                "invalid": null,
+                "probeMisses": 0
+              }
+            ]
+          }
+        ],
+        "destructibles": 1,
+        "hits": 69,
+        "softBody": "gpu",
+        "log": [
+          "  0.00s  scena: Bellator — Bellator 2920 heksów",
+          "187.12s  Bellator/bellator_A: ODSŁONIĘTY",
+          "205.22s  Bellator/bellator_A: KRYTYCZNY"
+        ]
+      }
+    },
+    "png": "07-krytyczny.png",
+    "hdr": {
+      "pixels": 25281,
+      "nan": 0,
+      "max": 9.327903125,
+      "p50": 0.26483876953124996,
+      "p99": 1.06090859375,
+      "p999": 9.2736765625,
+      "over09": 462,
+      "band": 6417,
+      "white": 75,
+      "hist": [
+        {
+          "from": 0,
+          "to": 0.1,
+          "count": 7489
+        },
+        {
+          "from": 0.1,
+          "to": 0.4,
+          "count": 11282
+        },
+        {
+          "from": 0.4,
+          "to": 0.9,
+          "count": 6048
+        },
+        {
+          "from": 0.9,
+          "to": 1.3,
+          "count": 369
+        },
+        {
+          "from": 1.3,
+          "to": 2,
+          "count": 11
+        },
+        {
+          "from": 2,
+          "to": 4,
+          "count": 7
+        },
+        {
+          "from": 4,
+          "to": 8,
+          "count": 6
+        },
+        {
+          "from": 8,
+          "to": 12,
+          "count": 69
+        },
+        {
+          "from": 12,
+          "to": "∞",
+          "count": 0
+        }
+      ]
+    }
+  },
+  "meltdown": {
+    "fire": {
+      "seconds": 17.9,
+      "state": "meltdown",
+      "summary": {
+        "simTime": 223.26,
+        "ships": [
+          {
+            "label": "Bellator",
+            "dead": false,
+            "wreck": false,
+            "hp": 12000,
+            "cores": [
+              {
+                "id": "bellator_A",
+                "state": "meltdown",
+                "label": "STOPIENIE",
+                "classId": "capital",
+                "integrity": 0.270150496611339,
+                "chamber": 32,
+                "alive": 9,
+                "dead": 23,
+                "elsewhere": 0,
+                "meltdownRemaining": 3.475,
+                "meltdownDuration": 3.5,
+                "cause": "containment",
+                "chainDepth": 0,
+                "severed": false,
+                "invalid": null,
+                "probeMisses": 0
+              }
+            ]
+          }
+        ],
+        "destructibles": 1,
+        "hits": 75,
+        "softBody": "gpu",
+        "log": [
+          "  0.00s  scena: Bellator — Bellator 2920 heksów",
+          "187.12s  Bellator/bellator_A: ODSŁONIĘTY",
+          "205.22s  Bellator/bellator_A: KRYTYCZNY",
+          "223.22s  Bellator/bellator_A: STOPIENIE (containment) — odliczanie 3.5 s"
+        ]
+      }
+    },
+    "png": "08-stopienie-polowa.png",
+    "hdr": {
+      "pixels": 42025,
+      "nan": 0,
+      "max": 10.948493749999999,
+      "p50": 0.3084244018554687,
+      "p99": 9.248260937500001,
+      "p999": 10.8808671875,
+      "over09": 776,
+      "band": 13994,
+      "white": 599,
+      "hist": [
+        {
+          "from": 0,
+          "to": 0.1,
+          "count": 8943
+        },
+        {
+          "from": 0.1,
+          "to": 0.4,
+          "count": 18392
+        },
+        {
+          "from": 0.4,
+          "to": 0.9,
+          "count": 13914
+        },
+        {
+          "from": 0.9,
+          "to": 1.3,
+          "count": 80
+        },
+        {
+          "from": 1.3,
+          "to": 2,
+          "count": 16
+        },
+        {
+          "from": 2,
+          "to": 4,
+          "count": 44
+        },
+        {
+          "from": 4,
+          "to": 8,
+          "count": 66
+        },
+        {
+          "from": 8,
+          "to": 12,
+          "count": 570
+        },
+        {
+          "from": 12,
+          "to": "∞",
+          "count": 0
+        }
+      ]
+    }
+  },
+  "meltdownEnd": {
+    "png": "09-stopienie-koniec.png",
+    "hdr": {
+      "pixels": 62500,
+      "nan": 0,
+      "max": 18.251687500000003,
+      "p50": 0.2607609375,
+      "p99": 11.2139125,
+      "p999": 18.205878124999998,
+      "over09": 2919,
+      "band": 18270,
+      "white": 1569,
+      "hist": [
+        {
+          "from": 0,
+          "to": 0.1,
+          "count": 14026
+        },
+        {
+          "from": 0.1,
+          "to": 0.4,
+          "count": 28411
+        },
+        {
+          "from": 0.4,
+          "to": 0.9,
+          "count": 17144
+        },
+        {
+          "from": 0.9,
+          "to": 1.3,
+          "count": 1126
+        },
+        {
+          "from": 1.3,
+          "to": 2,
+          "count": 37
+        },
+        {
+          "from": 2,
+          "to": 4,
+          "count": 101
+        },
+        {
+          "from": 4,
+          "to": 8,
+          "count": 165
+        },
+        {
+          "from": 8,
+          "to": 12,
+          "count": 1291
+        },
+        {
+          "from": 12,
+          "to": "∞",
+          "count": 199
+        }
+      ]
+    }
+  },
+  "detonation": {
+    "png": "10-detonacja.png",
+    "summary": {
+      "simTime": 227.73,
+      "ships": [
+        {
+          "label": "Bellator (zniszczony)",
+          "dead": true,
+          "wreck": false,
+          "hp": 12000,
+          "cores": [
+            {
+              "id": "bellator_A",
+              "state": "detonated",
+              "label": "DETONACJA",
+              "classId": "capital",
+              "integrity": 0.24520859338575182,
+              "chamber": 32,
+              "alive": 8,
+              "dead": 24,
+              "elsewhere": 0,
+              "meltdownRemaining": 0,
+              "meltdownDuration": 3.5,
+              "cause": "containment",
+              "chainDepth": 0,
+              "severed": false,
+              "invalid": null,
+              "probeMisses": 0
+            }
+          ]
+        }
+      ],
+      "destructibles": 5,
+      "hits": 75,
+      "softBody": "gpu",
+      "log": [
+        "  0.00s  scena: Bellator — Bellator 2920 heksów",
+        "187.12s  Bellator/bellator_A: ODSŁONIĘTY",
+        "205.22s  Bellator/bellator_A: KRYTYCZNY",
+        "223.22s  Bellator/bellator_A: STOPIENIE (containment) — odliczanie 3.5 s",
+        "226.75s  DETONACJA Bellator (zniszczony)/bellator_A [capital] — AoE 1963 j. / 5400 HP, fala 785 j., łańcuch 0, dotkniętych 0, fragmentów 5"
+      ]
+    }
+  },
+  "aftermath": {
+    "png": "11-po-detonacji.png"
+  },
+  "12-ironskull-odsloniety": {
+    "png": "12-ironskull-odsloniety.png",
+    "hdr": {
+      "pixels": 30625,
+      "nan": 0,
+      "max": 10.023743749999998,
+      "p50": 0.04404355468749999,
+      "p99": 0.6048404296875,
+      "p999": 9.924220312500001,
+      "over09": 156,
+      "band": 2290,
+      "white": 124,
+      "hist": [
+        {
+          "from": 0,
+          "to": 0.1,
+          "count": 22714
+        },
+        {
+          "from": 0.1,
+          "to": 0.4,
+          "count": 5468
+        },
+        {
+          "from": 0.4,
+          "to": 0.9,
+          "count": 2287
+        },
+        {
+          "from": 0.9,
+          "to": 1.3,
+          "count": 3
+        },
+        {
+          "from": 1.3,
+          "to": 2,
+          "count": 5
+        },
+        {
+          "from": 2,
+          "to": 4,
+          "count": 4
+        },
+        {
+          "from": 4,
+          "to": 8,
+          "count": 24
+        },
+        {
+          "from": 8,
+          "to": 12,
+          "count": 120
+        },
+        {
+          "from": 12,
+          "to": "∞",
+          "count": 0
+        }
+      ]
+    },
+    "core": {
+      "id": "skull_A",
+      "state": "critical",
+      "label": "KRYTYCZNY",
+      "classId": "capital",
+      "integrity": 0.5588235294117647,
+      "chamber": 34,
+      "alive": 19,
+      "dead": 15,
+      "elsewhere": 0,
+      "meltdownRemaining": 0,
+      "meltdownDuration": 0,
+      "cause": null,
+      "chainDepth": 0,
+      "severed": false,
+      "invalid": null,
+      "probeMisses": 0
+    }
+  },
+  "13-atlas-odsloniety": {
+    "png": "13-atlas-odsloniety.png",
+    "hdr": {
+      "pixels": 32400,
+      "nan": 0,
+      "max": 9.50259375,
+      "p50": 0.0276723876953125,
+      "p99": 0.6568818359374999,
+      "p999": 9.4529078125,
+      "over09": 154,
+      "band": 2148,
+      "white": 120,
+      "hist": [
+        {
+          "from": 0,
+          "to": 0.1,
+          "count": 26359
+        },
+        {
+          "from": 0.1,
+          "to": 0.4,
+          "count": 3745
+        },
+        {
+          "from": 0.4,
+          "to": 0.9,
+          "count": 2142
+        },
+        {
+          "from": 0.9,
+          "to": 1.3,
+          "count": 6
+        },
+        {
+          "from": 1.3,
+          "to": 2,
+          "count": 8
+        },
+        {
+          "from": 2,
+          "to": 4,
+          "count": 16
+        },
+        {
+          "from": 4,
+          "to": 8,
+          "count": 7
+        },
+        {
+          "from": 8,
+          "to": 12,
+          "count": 117
+        },
+        {
+          "from": 12,
+          "to": "∞",
+          "count": 0
+        }
+      ]
+    },
+    "core": {
+      "id": "atlas_A",
+      "state": "critical",
+      "label": "KRYTYCZNY",
+      "classId": "capital",
+      "integrity": 0.5555555555555556,
+      "chamber": 36,
+      "alive": 20,
+      "dead": 16,
+      "elsewhere": 0,
+      "meltdownRemaining": 0,
+      "meltdownDuration": 0,
+      "cause": null,
+      "chainDepth": 0,
+      "severed": false,
+      "invalid": null,
+      "probeMisses": 0
+    }
+  },
+  "atlasAlarm": {
+    "png": "14-atlas-alarm-gracza.png"
+  },
+  "formationStart": {
+    "png": "15-formacja-start.png"
+  },
+  "formationBlast": {
+    "png": "16-formacja-wybuch-A.png",
+    "summary": {
+      "simTime": 4.76,
+      "ships": [
+        {
+          "label": "Bellator A",
+          "dead": false,
+          "wreck": false,
+          "hp": 12000,
+          "cores": [
+            {
+              "id": "bellator_A",
+              "state": "meltdown",
+              "label": "STOPIENIE",
+              "classId": "capital",
+              "integrity": 1,
+              "chamber": 32,
+              "alive": 32,
+              "dead": 0,
+              "elsewhere": 0,
+              "meltdownRemaining": 0.42500000000000837,
+              "meltdownDuration": 3.5,
+              "cause": "wymuszone",
+              "chainDepth": 0,
+              "severed": false,
+              "invalid": null,
+              "probeMisses": 0
+            }
+          ]
+        },
+        {
+          "label": "Bellator B",
+          "dead": false,
+          "wreck": false,
+          "hp": 12000,
+          "cores": [
+            {
+              "id": "bellator_A",
+              "state": "nominal",
+              "label": "NOMINALNY",
+              "classId": "capital",
+              "integrity": 1,
+              "chamber": 32,
+              "alive": 32,
+              "dead": 0,
+              "elsewhere": 0,
+              "meltdownRemaining": 0,
+              "meltdownDuration": 0,
+              "cause": null,
+              "chainDepth": 0,
+              "severed": false,
+              "invalid": null,
+              "probeMisses": 0
+            }
+          ]
+        },
+        {
+          "label": "Iron Skull C",
+          "dead": false,
+          "wreck": false,
+          "hp": 12000,
+          "cores": [
+            {
+              "id": "skull_A",
+              "state": "nominal",
+              "label": "NOMINALNY",
+              "classId": "capital",
+              "integrity": 1,
+              "chamber": 34,
+              "alive": 34,
+              "dead": 0,
+              "elsewhere": 0,
+              "meltdownRemaining": 0,
+              "meltdownDuration": 0,
+              "cause": null,
+              "chainDepth": 0,
+              "severed": false,
+              "invalid": null,
+              "probeMisses": 0
+            }
+          ]
+        },
+        {
+          "label": "Iron Skull D",
+          "dead": false,
+          "wreck": false,
+          "hp": 12000,
+          "cores": [
+            {
+              "id": "skull_A",
+              "state": "nominal",
+              "label": "NOMINALNY",
+              "classId": "capital",
+              "integrity": 1,
+              "chamber": 34,
+              "alive": 34,
+              "dead": 0,
+              "elsewhere": 0,
+              "meltdownRemaining": 0,
+              "meltdownDuration": 0,
+              "cause": null,
+              "chainDepth": 0,
+              "severed": false,
+              "invalid": null,
+              "probeMisses": 0
+            }
+          ]
+        }
+      ],
+      "destructibles": 4,
+      "hits": 0,
+      "softBody": "gpu",
+      "log": [
+        "  0.00s  scena: Formacja — Bellator A 2920 heksów, Bellator B 2920 heksów, Iron Skull C 2261 heksów, Iron Skull D 2261 heksów",
+        "  1.67s  Bellator A/bellator_A: STOPIENIE (wymuszone) — odliczanie 3.5 s"
+      ]
+    }
+  },
+  "formationChain": {
+    "png": "17-formacja-lancuch.png",
+    "summary": {
+      "simTime": 5.67,
+      "ships": [
+        {
+          "label": "Bellator A (zniszczony)",
+          "dead": true,
+          "wreck": false,
+          "hp": 12000,
+          "cores": [
+            {
+              "id": "bellator_A",
+              "state": "detonated",
+              "label": "DETONACJA",
+              "classId": "capital",
+              "integrity": 1,
+              "chamber": 32,
+              "alive": 32,
+              "dead": 0,
+              "elsewhere": 0,
+              "meltdownRemaining": 0,
+              "meltdownDuration": 3.5,
+              "cause": "wymuszone",
+              "chainDepth": 0,
+              "severed": false,
+              "invalid": null,
+              "probeMisses": 0
+            }
+          ]
+        },
+        {
+          "label": "Bellator B",
+          "dead": false,
+          "wreck": false,
+          "hp": 8106.152055385854,
+          "cores": [
+            {
+              "id": "bellator_A",
+              "state": "meltdown",
+              "label": "STOPIENIE",
+              "classId": "capital",
+              "integrity": 0.1295102441356841,
+              "chamber": 32,
+              "alive": 32,
+              "dead": 0,
+              "elsewhere": 0,
+              "meltdownRemaining": 3.0750000000000015,
+              "meltdownDuration": 3.5,
+              "cause": "chain",
+              "chainDepth": 1,
+              "severed": false,
+              "invalid": null,
+              "probeMisses": 0
+            }
+          ]
+        },
+        {
+          "label": "Iron Skull C",
+          "dead": false,
+          "wreck": false,
+          "hp": 7989.620902728126,
+          "cores": [
+            {
+              "id": "skull_A",
+              "state": "critical",
+              "label": "KRYTYCZNY",
+              "classId": "capital",
+              "integrity": 0.5181598289474815,
+              "chamber": 34,
+              "alive": 34,
+              "dead": 0,
+              "elsewhere": 0,
+              "meltdownRemaining": 0,
+              "meltdownDuration": 0,
+              "cause": null,
+              "chainDepth": 0,
+              "severed": false,
+              "invalid": null,
+              "probeMisses": 0
+            }
+          ]
+        },
+        {
+          "label": "Iron Skull D",
+          "dead": false,
+          "wreck": false,
+          "hp": 7989.620902728126,
+          "cores": [
+            {
+              "id": "skull_A",
+              "state": "critical",
+              "label": "KRYTYCZNY",
+              "classId": "capital",
+              "integrity": 0.5181598289474815,
+              "chamber": 34,
+              "alive": 34,
+              "dead": 0,
+              "elsewhere": 0,
+              "meltdownRemaining": 0,
+              "meltdownDuration": 0,
+              "cause": null,
+              "chainDepth": 0,
+              "severed": false,
+              "invalid": null,
+              "probeMisses": 0
+            }
+          ]
+        }
+      ],
+      "destructibles": 8,
+      "hits": 0,
+      "softBody": "gpu",
+      "log": [
+        "  0.00s  scena: Formacja — Bellator A 2920 heksów, Bellator B 2920 heksów, Iron Skull C 2261 heksów, Iron Skull D 2261 heksów",
+        "  1.67s  Bellator A/bellator_A: STOPIENIE (wymuszone) — odliczanie 3.5 s",
+        "  5.20s  DETONACJA Bellator A (zniszczony)/bellator_A [capital] — AoE 1963 j. / 5400 HP, fala 785 j., łańcuch 0, dotkniętych 3, fragmentów 5",
+        "  5.23s  Bellator B/bellator_A: KRYTYCZNY",
+        "  5.23s  Bellator B/bellator_A: STOPIENIE (chain, łańcuch 1) — odliczanie 3.5 s",
+        "  5.23s  Iron Skull C/skull_A: KRYTYCZNY",
+        "  5.23s  Iron Skull D/skull_A: KRYTYCZNY"
+      ]
+    }
+  },
+  "formationEnd": {
+    "png": "18-formacja-koniec.png",
+    "summary": {
+      "simTime": 10.64,
+      "ships": [
+        {
+          "label": "Bellator A (zniszczony)",
+          "dead": true,
+          "wreck": false,
+          "hp": 12000,
+          "cores": [
+            {
+              "id": "bellator_A",
+              "state": "detonated",
+              "label": "DETONACJA",
+              "classId": "capital",
+              "integrity": 1,
+              "chamber": 32,
+              "alive": 32,
+              "dead": 0,
+              "elsewhere": 0,
+              "meltdownRemaining": 0,
+              "meltdownDuration": 3.5,
+              "cause": "wymuszone",
+              "chainDepth": 0,
+              "severed": false,
+              "invalid": null,
+              "probeMisses": 0
+            }
+          ]
+        },
+        {
+          "label": "Bellator B (zniszczony)",
+          "dead": true,
+          "wreck": false,
+          "hp": 8106.152055385854,
+          "cores": [
+            {
+              "id": "bellator_A",
+              "state": "detonated",
+              "label": "DETONACJA",
+              "classId": "capital",
+              "integrity": 0.12951022691439992,
+              "chamber": 32,
+              "alive": 32,
+              "dead": 0,
+              "elsewhere": 0,
+              "meltdownRemaining": 0,
+              "meltdownDuration": 3.5,
+              "cause": "chain",
+              "chainDepth": 1,
+              "severed": false,
+              "invalid": null,
+              "probeMisses": 0
+            }
+          ]
+        },
+        {
+          "label": "Iron Skull C",
+          "dead": false,
+          "wreck": false,
+          "hp": 5655.377243286312,
+          "cores": [
+            {
+              "id": "skull_A",
+              "state": "critical",
+              "label": "KRYTYCZNY",
+              "classId": "capital",
+              "integrity": 0.5181598289474815,
+              "chamber": 34,
+              "alive": 34,
+              "dead": 0,
+              "elsewhere": 0,
+              "meltdownRemaining": 0,
+              "meltdownDuration": 0,
+              "cause": null,
+              "chainDepth": 0,
+              "severed": false,
+              "invalid": null,
+              "probeMisses": 0
+            }
+          ]
+        },
+        {
+          "label": "Iron Skull D",
+          "dead": false,
+          "wreck": false,
+          "hp": 5628.8254137551285,
+          "cores": [
+            {
+              "id": "skull_A",
+              "state": "critical",
+              "label": "KRYTYCZNY",
+              "classId": "capital",
+              "integrity": 0.5181598289474815,
+              "chamber": 34,
+              "alive": 34,
+              "dead": 0,
+              "elsewhere": 0,
+              "meltdownRemaining": 0,
+              "meltdownDuration": 0,
+              "cause": null,
+              "chainDepth": 0,
+              "severed": false,
+              "invalid": null,
+              "probeMisses": 0
+            }
+          ]
+        }
+      ],
+      "destructibles": 25,
+      "hits": 0,
+      "softBody": "gpu",
+      "log": [
+        "  0.00s  scena: Formacja — Bellator A 2920 heksów, Bellator B 2920 heksów, Iron Skull C 2261 heksów, Iron Skull D 2261 heksów",
+        "  1.67s  Bellator A/bellator_A: STOPIENIE (wymuszone) — odliczanie 3.5 s",
+        "  5.20s  DETONACJA Bellator A (zniszczony)/bellator_A [capital] — AoE 1963 j. / 5400 HP, fala 785 j., łańcuch 0, dotkniętych 3, fragmentów 5",
+        "  5.23s  Bellator B/bellator_A: KRYTYCZNY",
+        "  5.23s  Bellator B/bellator_A: STOPIENIE (chain, łańcuch 1) — odliczanie 3.5 s",
+        "  5.23s  Iron Skull C/skull_A: KRYTYCZNY",
+        "  5.23s  Iron Skull D/skull_A: KRYTYCZNY",
+        "  8.75s  DETONACJA Bellator B (zniszczony)/bellator_A [capital] — AoE 1963 j. / 3240 HP, fala 785 j., łańcuch 1, dotkniętych 2, fragmentów 5"
+      ]
+    }
+  },
+  "bands": [
+    {
+      "hull": "battleship",
+      "state": "exposed",
+      "coreState": "exposed",
+      "integrity": 0.75,
+      "dead": 8,
+      "pixels": 25281,
+      "nan": 0,
+      "max": 9.10805625,
+      "p50": 0.27526220703125,
+      "p99": 0.737241796875,
+      "p999": 9.0269984375,
+      "over09": 88,
+      "band": 6933,
+      "white": 76,
+      "hist": {
+        "0-0.1": 4149,
+        "0.1-0.4": 14111,
+        "0.4-0.9": 6933,
+        "0.9-1.3": 0,
+        "1.3-2": 8,
+        "2-4": 0,
+        "4-8": 12,
+        "8-12": 68,
+        "12-∞": 0
+      }
+    },
+    {
+      "hull": "battleship",
+      "state": "critical",
+      "coreState": "critical",
+      "integrity": 0.531,
+      "dead": 15,
+      "pixels": 25281,
+      "nan": 0,
+      "max": 9.542695312500001,
+      "p50": 0.31413046874999995,
+      "p99": 0.8994396484375,
+      "p999": 9.500771874999998,
+      "over09": 250,
+      "band": 9431,
+      "white": 96,
+      "hist": {
+        "0-0.1": 2656,
+        "0.1-0.4": 13082,
+        "0.4-0.9": 9293,
+        "0.9-1.3": 138,
+        "1.3-2": 0,
+        "2-4": 0,
+        "4-8": 24,
+        "8-12": 88,
+        "12-∞": 0
+      }
+    },
+    {
+      "hull": "battleship",
+      "state": "meltdown-50",
+      "coreState": "meltdown",
+      "integrity": 0.531,
+      "dead": 15,
+      "pixels": 42025,
+      "nan": 0,
+      "max": 10.412220312499999,
+      "p50": 0.30219843750000003,
+      "p99": 9.5742046875,
+      "p999": 10.349617187499998,
+      "over09": 2063,
+      "band": 14693,
+      "white": 673,
+      "hist": {
+        "0-0.1": 5560,
+        "0.1-0.4": 20991,
+        "0.4-0.9": 13411,
+        "0.9-1.3": 1282,
+        "1.3-2": 31,
+        "2-4": 51,
+        "4-8": 76,
+        "8-12": 623,
+        "12-∞": 0
+      }
+    },
+    {
+      "hull": "battleship",
+      "state": "meltdown-90",
+      "coreState": "meltdown",
+      "integrity": 0.531,
+      "dead": 15,
+      "pixels": 62500,
+      "nan": 0,
+      "max": 11.745853124999998,
+      "p50": 0.252583251953125,
+      "p99": 11.400418749999998,
+      "p999": 11.64638125,
+      "over09": 7364,
+      "band": 16429,
+      "white": 2332,
+      "hist": {
+        "0-0.1": 11572,
+        "0.1-0.4": 31092,
+        "0.4-0.9": 12472,
+        "0.9-1.3": 3957,
+        "1.3-2": 777,
+        "2-4": 159,
+        "4-8": 280,
+        "8-12": 2191,
+        "12-∞": 0
+      }
+    },
+    {
+      "hull": "battleship",
+      "state": "meltdown-90 bez wyrzutów",
+      "coreState": "meltdown",
+      "integrity": 0.531,
+      "dead": 15,
+      "pixels": 62500,
+      "nan": 0,
+      "max": 11.4350625,
+      "p50": 0.181800390625,
+      "p99": 11.268496875,
+      "p999": 11.379175,
+      "over09": 4060,
+      "band": 15919,
+      "white": 856,
+      "hist": {
+        "0-0.1": 19957,
+        "0.1-0.4": 25649,
+        "0.4-0.9": 12834,
+        "0.9-1.3": 3085,
+        "1.3-2": 28,
+        "2-4": 43,
+        "4-8": 92,
+        "8-12": 812,
+        "12-∞": 0
+      }
+    },
+    {
+      "hull": "battleship",
+      "state": "meltdown-90 bez żaru",
+      "coreState": "meltdown",
+      "integrity": 0.531,
+      "dead": 15,
+      "pixels": 62500,
+      "nan": 0,
+      "max": 10.214471875000001,
+      "p50": 0.22726293945312498,
+      "p99": 9.72621875,
+      "p999": 10.0465,
+      "over09": 5668,
+      "band": 14088,
+      "white": 1465,
+      "hist": {
+        "0-0.1": 12498,
+        "0.1-0.4": 33684,
+        "0.4-0.9": 10650,
+        "0.9-1.3": 3438,
+        "1.3-2": 561,
+        "2-4": 113,
+        "4-8": 191,
+        "8-12": 1365,
+        "12-∞": 0
+      }
+    },
+    {
+      "hull": "pirate_battleship",
+      "state": "exposed",
+      "coreState": "exposed",
+      "integrity": 0.735,
+      "dead": 9,
+      "pixels": 25921,
+      "nan": 0,
+      "max": 8.5254328125,
+      "p50": 0.05905561523437499,
+      "p99": 0.44310856933593745,
+      "p999": 8.45814375,
+      "over09": 68,
+      "band": 609,
+      "white": 52,
+      "hist": {
+        "0-0.1": 16377,
+        "0.1-0.4": 8867,
+        "0.4-0.9": 609,
+        "0.9-1.3": 0,
+        "1.3-2": 0,
+        "2-4": 8,
+        "4-8": 8,
+        "8-12": 52,
+        "12-∞": 0
+      }
+    },
+    {
+      "hull": "pirate_battleship",
+      "state": "critical",
+      "coreState": "critical",
+      "integrity": 0.5,
+      "dead": 17,
+      "pixels": 25921,
+      "nan": 0,
+      "max": 9.47656875,
+      "p50": 0.12168647460937501,
+      "p99": 0.6431078125,
+      "p999": 9.404296875,
+      "over09": 112,
+      "band": 6677,
+      "white": 89,
+      "hist": {
+        "0-0.1": 11204,
+        "0.1-0.4": 7928,
+        "0.4-0.9": 6677,
+        "0.9-1.3": 0,
+        "1.3-2": 0,
+        "2-4": 16,
+        "4-8": 8,
+        "8-12": 88,
+        "12-∞": 0
+      }
+    },
+    {
+      "hull": "pirate_battleship",
+      "state": "meltdown-50",
+      "coreState": "meltdown",
+      "integrity": 0.5,
+      "dead": 17,
+      "pixels": 42849,
+      "nan": 0,
+      "max": 10.1086328125,
+      "p50": 0.10067825927734377,
+      "p99": 9.461529687499999,
+      "p999": 10.0563640625,
+      "over09": 1405,
+      "band": 9249,
+      "white": 1143,
+      "hist": {
+        "0-0.1": 21322,
+        "0.1-0.4": 10939,
+        "0.4-0.9": 9183,
+        "0.9-1.3": 66,
+        "1.3-2": 35,
+        "2-4": 91,
+        "4-8": 138,
+        "8-12": 1075,
+        "12-∞": 0
+      }
+    },
+    {
+      "hull": "pirate_battleship",
+      "state": "meltdown-90",
+      "coreState": "meltdown",
+      "integrity": 0.5,
+      "dead": 17,
+      "pixels": 64009,
+      "nan": 0,
+      "max": 19.693065625000003,
+      "p50": 0.11784783935546875,
+      "p99": 10.7736078125,
+      "p999": 18.299184375,
+      "over09": 3494,
+      "band": 8506,
+      "white": 2558,
+      "hist": {
+        "0-0.1": 27682,
+        "0.1-0.4": 24922,
+        "0.4-0.9": 7911,
+        "0.9-1.3": 595,
+        "1.3-2": 72,
+        "2-4": 152,
+        "4-8": 267,
+        "8-12": 2199,
+        "12-∞": 209
+      }
+    },
+    {
+      "hull": "pirate_battleship",
+      "state": "meltdown-90 bez wyrzutów",
+      "coreState": "meltdown",
+      "integrity": 0.5,
+      "dead": 17,
+      "pixels": 64009,
+      "nan": 0,
+      "max": 10.719678125,
+      "p50": 0.047042242431640624,
+      "p99": 8.10209765625,
+      "p999": 10.669634375000001,
+      "over09": 813,
+      "band": 8955,
+      "white": 686,
+      "hist": {
+        "0-0.1": 47294,
+        "0.1-0.4": 6972,
+        "0.4-0.9": 8930,
+        "0.9-1.3": 25,
+        "1.3-2": 32,
+        "2-4": 40,
+        "4-8": 68,
+        "8-12": 648,
+        "12-∞": 0
+      }
+    },
+    {
+      "hull": "pirate_battleship",
+      "state": "meltdown-90 bez żaru",
+      "coreState": "meltdown",
+      "integrity": 0.5,
+      "dead": 17,
+      "pixels": 64009,
+      "nan": 0,
+      "max": 17.823290625,
+      "p50": 0.1139435791015625,
+      "p99": 9.2270109375,
+      "p999": 16.45860625,
+      "over09": 2729,
+      "band": 5505,
+      "white": 1929,
+      "hist": {
+        "0-0.1": 28397,
+        "0.1-0.4": 27894,
+        "0.4-0.9": 4989,
+        "0.9-1.3": 516,
+        "1.3-2": 62,
+        "2-4": 121,
+        "4-8": 230,
+        "8-12": 1696,
+        "12-∞": 104
+      }
+    },
+    {
+      "hull": "atlas",
+      "state": "exposed",
+      "coreState": "exposed",
+      "integrity": 0.75,
+      "dead": 9,
+      "pixels": 27225,
+      "nan": 0,
+      "max": 8.742596874999998,
+      "p50": 0.03657559204101562,
+      "p99": 0.4259794921875,
+      "p999": 8.6678125,
+      "over09": 80,
+      "band": 525,
+      "white": 68,
+      "hist": {
+        "0-0.1": 19607,
+        "0.1-0.4": 7013,
+        "0.4-0.9": 525,
+        "0.9-1.3": 0,
+        "1.3-2": 4,
+        "2-4": 0,
+        "4-8": 16,
+        "8-12": 60,
+        "12-∞": 0
+      }
+    },
+    {
+      "hull": "atlas",
+      "state": "critical",
+      "coreState": "critical",
+      "integrity": 0.528,
+      "dead": 17,
+      "pixels": 27225,
+      "nan": 0,
+      "max": 9.3112078125,
+      "p50": 0.09408772583007811,
+      "p99": 0.47202744140624997,
+      "p999": 9.2564984375,
+      "over09": 112,
+      "band": 977,
+      "white": 88,
+      "hist": {
+        "0-0.1": 15302,
+        "0.1-0.4": 10834,
+        "0.4-0.9": 977,
+        "0.9-1.3": 0,
+        "1.3-2": 0,
+        "2-4": 16,
+        "4-8": 8,
+        "8-12": 88,
+        "12-∞": 0
+      }
+    },
+    {
+      "hull": "atlas",
+      "state": "meltdown-50",
+      "coreState": "meltdown",
+      "integrity": 0.528,
+      "dead": 17,
+      "pixels": 45369,
+      "nan": 0,
+      "max": 10.03715625,
+      "p50": 0.05361896362304688,
+      "p99": 9.393731249999998,
+      "p999": 9.954559375,
+      "over09": 1530,
+      "band": 8560,
+      "white": 1291,
+      "hist": {
+        "0-0.1": 29458,
+        "0.1-0.4": 5846,
+        "0.4-0.9": 8535,
+        "0.9-1.3": 25,
+        "1.3-2": 42,
+        "2-4": 97,
+        "4-8": 164,
+        "8-12": 1202,
+        "12-∞": 0
+      }
+    },
+    {
+      "hull": "atlas",
+      "state": "meltdown-90",
+      "coreState": "meltdown",
+      "integrity": 0.528,
+      "dead": 17,
+      "pixels": 67600,
+      "nan": 0,
+      "max": 19.934609374999997,
+      "p50": 0.075908056640625,
+      "p99": 10.836757812499998,
+      "p999": 19.219281249999998,
+      "over09": 8427,
+      "band": 7049,
+      "white": 2901,
+      "hist": {
+        "0-0.1": 40040,
+        "0.1-0.4": 16230,
+        "0.4-0.9": 2903,
+        "0.9-1.3": 4146,
+        "1.3-2": 1035,
+        "2-4": 186,
+        "4-8": 293,
+        "8-12": 2587,
+        "12-∞": 180
+      }
+    },
+    {
+      "hull": "atlas",
+      "state": "meltdown-90 bez wyrzutów",
+      "coreState": "meltdown",
+      "integrity": 0.528,
+      "dead": 17,
+      "pixels": 67600,
+      "nan": 0,
+      "max": 10.82838125,
+      "p50": 0.031124008178710937,
+      "p99": 9.68894375,
+      "p999": 10.7882,
+      "over09": 6388,
+      "band": 9000,
+      "white": 733,
+      "hist": {
+        "0-0.1": 56224,
+        "0.1-0.4": 1526,
+        "0.4-0.9": 3462,
+        "0.9-1.3": 5538,
+        "1.3-2": 26,
+        "2-4": 36,
+        "4-8": 72,
+        "8-12": 716,
+        "12-∞": 0
+      }
+    },
+    {
+      "hull": "atlas",
+      "state": "meltdown-90 bez żaru",
+      "coreState": "meltdown",
+      "integrity": 0.528,
+      "dead": 17,
+      "pixels": 67600,
+      "nan": 0,
+      "max": 12.902646874999999,
+      "p50": 0.0739620849609375,
+      "p99": 9.735665625,
+      "p999": 10.179803125,
+      "over09": 7379,
+      "band": 5359,
+      "white": 2258,
+      "hist": {
+        "0-0.1": 40884,
+        "0.1-0.4": 18267,
+        "0.4-0.9": 1070,
+        "0.9-1.3": 4289,
+        "1.3-2": 517,
+        "2-4": 165,
+        "4-8": 288,
+        "8-12": 2117,
+        "12-∞": 3
+      }
+    }
+  ],
+  "perf": [
+    {
+      "count": 1,
+      "baseline": {
+        "frames": 1539,
+        "frameMsAvg": 0.65,
+        "frameMsP95": 1.04,
+        "frameMsMax": 2.14,
+        "jsMsAvg": 0.51,
+        "jsMsMax": 2.04,
+        "core3dMsAvg": 0.37,
+        "overlayMsAvg": 0,
+        "overlayMsMax": 0,
+        "callsAvg": 19,
+        "callsMax": 19,
+        "overlayCallsMax": 0,
+        "trisMax": 17540
+      },
+      "during": {
+        "frames": 5440,
+        "frameMsAvg": 0.74,
+        "frameMsP95": 1.15,
+        "frameMsMax": 118.76,
+        "jsMsAvg": 0.6,
+        "jsMsMax": 118.17,
+        "core3dMsAvg": 0.43,
+        "overlayMsAvg": 0.1,
+        "overlayMsMax": 89.25,
+        "callsAvg": 24,
+        "callsMax": 32,
+        "overlayCallsMax": 1,
+        "trisMax": 36574
+      }
+    },
+    {
+      "count": 3,
+      "baseline": {
+        "frames": 1251,
+        "frameMsAvg": 0.8,
+        "frameMsP95": 1.38,
+        "frameMsMax": 7.15,
+        "jsMsAvg": 0.62,
+        "jsMsMax": 2.13,
+        "core3dMsAvg": 0.45,
+        "overlayMsAvg": 0,
+        "overlayMsMax": 0,
+        "callsAvg": 21,
+        "callsMax": 21,
+        "overlayCallsMax": 0,
+        "trisMax": 52580
+      },
+      "during": {
+        "frames": 3573,
+        "frameMsAvg": 1.12,
+        "frameMsP95": 1.8,
+        "frameMsMax": 100.25,
+        "jsMsAvg": 0.91,
+        "jsMsMax": 98.57,
+        "core3dMsAvg": 0.34,
+        "overlayMsAvg": 0.07,
+        "overlayMsMax": 18.9,
+        "callsAvg": 42,
+        "callsMax": 72,
+        "overlayCallsMax": 1,
+        "trisMax": 152218
+      }
+    },
+    {
+      "count": 6,
+      "baseline": {
+        "frames": 1300,
+        "frameMsAvg": 0.77,
+        "frameMsP95": 1.32,
+        "frameMsMax": 5.25,
+        "jsMsAvg": 0.61,
+        "jsMsMax": 3.15,
+        "core3dMsAvg": 0.42,
+        "overlayMsAvg": 0,
+        "overlayMsMax": 0,
+        "callsAvg": 30,
+        "callsMax": 30,
+        "overlayCallsMax": 0,
+        "trisMax": 10904
+      },
+      "during": {
+        "frames": 2262,
+        "frameMsAvg": 1.77,
+        "frameMsP95": 2.64,
+        "frameMsMax": 59.05,
+        "jsMsAvg": 1.52,
+        "jsMsMax": 54.91,
+        "core3dMsAvg": 0.39,
+        "overlayMsAvg": 0.07,
+        "overlayMsMax": 19.28,
+        "callsAvg": 56,
+        "callsMax": 111,
+        "overlayCallsMax": 1,
+        "trisMax": 285870
+      }
+    }
+  ]
+}

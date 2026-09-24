@@ -371,49 +371,31 @@ class NovaDarkShockwaveManager {
     }
 }
 
-// Module-level bloom boost tracking for concurrent explosions
-let _activeNovaCount = 0;
-let _savedBloomStrength = null;
-let _savedBloomRadius = null;
-let _savedBloomThreshold = null;
+// Podbicie bloomu jako modyfikator overlaya pod kluczem PER WYBUCH — overlay
+// liczy bloom co klatkę od bazy, więc nie ma już zapisywania i odtwarzania
+// bazy. Dawniej moduł trzymał jedną zapisaną bazę: licznik nie przekraczał 1
+// (_boostBloom wychodził przed inkrementem), a przy nałożeniu z przygaszeniem
+// Yamato bloom zostawał zepsuty do końca sesji.
+let _novaBloomSerial = 0;
 
 function _boostBloom() {
-    if (_activeNovaCount > 0) return; // already boosted
     const overlay = typeof window !== 'undefined' && window.overlay3D;
-    if (overlay?.getBloomConfig) {
-        const cfg = overlay.getBloomConfig();
-        _savedBloomStrength = cfg.strength;
-        _savedBloomRadius = cfg.radius;
-        _savedBloomThreshold = cfg.threshold;
-    }
-    _activeNovaCount++;
+    if (!overlay?.setBloomModifier) return null;
+    const lease = { key: `nova:${++_novaBloomSerial}`, modifier: { strengthAdd: 2.5, radiusAdd: 0.3, threshold: 0.05 } };
+    overlay.setBloomModifier(lease.key, lease.modifier);
+    return lease;
 }
 
-function _updateBloom(expTime) {
-    const overlay = typeof window !== 'undefined' && window.overlay3D;
-    if (!overlay?.setBloomConfig || _savedBloomStrength == null) return;
+function _updateBloom(lease, expTime) {
+    if (!lease) return;
     const t = Math.max(0, 1.0 - expTime / 1.8);
-    overlay.setBloomConfig({
-        strength: _savedBloomStrength + t * 2.5,
-        radius: (_savedBloomRadius ?? 0.5) + t * 0.3,
-        threshold: 0.05
-    });
+    lease.modifier.strengthAdd = t * 2.5;
+    lease.modifier.radiusAdd = t * 0.3;
 }
 
-function _restoreBloom() {
-    _activeNovaCount = Math.max(0, _activeNovaCount - 1);
-    if (_activeNovaCount > 0) return; // other explosions still active
-    const overlay = typeof window !== 'undefined' && window.overlay3D;
-    if (overlay?.setBloomConfig && _savedBloomStrength != null) {
-        overlay.setBloomConfig({
-            strength: _savedBloomStrength,
-            radius: _savedBloomRadius,
-            threshold: _savedBloomThreshold
-        });
-    }
-    _savedBloomStrength = null;
-    _savedBloomRadius = null;
-    _savedBloomThreshold = null;
+function _restoreBloom(lease) {
+    if (!lease || typeof window === 'undefined') return;
+    window.overlay3D?.clearBloomModifier?.(lease.key);
 }
 
 export function createSupernovaMissileBlowFactory(scene) {
@@ -428,9 +410,8 @@ export function createSupernovaMissileBlowFactory(scene) {
         group.position.set(x, 0, y);
         scene.add(group);
 
-        const light = new THREE.PointLight(0xff66ee, 0, size * 18);
-        light.position.set(0, size * 0.45, 0);
-        group.add(light);
+        // Bez PointLight — scena overlaya nie ma materiałów oświetlanych, a światło
+        // zmieniało klucz programu materiałów tworzonych w trakcie wybuchu.
 
         const expX = x;
         const expY = 5;
@@ -439,7 +420,6 @@ export function createSupernovaMissileBlowFactory(scene) {
         let sparksSpawned = false;
         let sparkBatchesLeft = 0;         // OPTIMIZATION: stagger 3000 sparks across frames
         let disposed = false;
-        let _lastLightIntensity = -1;      // OPTIMIZATION: avoid redundant light writes
 
         // --- Fix #3: Screen shake ---
         if (Weapon3DSystem?._cameraShakeMag !== undefined) {
@@ -447,7 +427,7 @@ export function createSupernovaMissileBlowFactory(scene) {
         }
 
         // --- Fix #2: Bloom burst ---
-        _boostBloom();
+        const bloomLease = _boostBloom();
 
         // --- Fix #4: Explosion Core (type 3) — expanding orange/red fireball ---
         for (let i = 0; i < 6; i++) {
@@ -514,7 +494,7 @@ export function createSupernovaMissileBlowFactory(scene) {
 
             // --- Fix #2: Update bloom boost ---
             if (expTime < 1.8) {
-                _updateBloom(expTime);
+                _updateBloom(bloomLease, expTime);
             }
 
             if (!sparksSpawned && expTime >= 1.0) {
@@ -526,21 +506,13 @@ export function createSupernovaMissileBlowFactory(scene) {
                 sparkBatchesLeft--;
             }
 
-            // OPTIMIZATION: only write light intensity when changed (quantized to 0.25 steps)
-            const newIntensity = Math.max(0, 12.0 * (1.0 - expTime / 1.5));
-            const quantized = Math.round(newIntensity * 4) / 4;
-            if (quantized !== _lastLightIntensity) {
-                light.intensity = quantized;
-                _lastLightIntensity = quantized;
-            }
-
             if (expTime > 4.6) dispose();
         }
 
         function dispose() {
             if (disposed) return;
             disposed = true;
-            _restoreBloom();
+            _restoreBloom(bloomLease);
             if (group.parent) group.parent.remove(group);
         }
 

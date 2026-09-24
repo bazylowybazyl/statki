@@ -238,6 +238,8 @@ class RocketSystem3D {
         this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
         this.mesh.frustumCulled = false;
         this.mesh.renderOrder = 1002;
+        // Widoczna tylko z żywą rakietą — overlay pomija pustą warstwę raw.
+        this.mesh.visible = false;
         overlayScene.add(this.mesh);
 
         /* ── Rocket data pool ── */
@@ -328,6 +330,7 @@ class RocketSystem3D {
 
         r.active = true;
         this.activeRockets++;
+        this.mesh.visible = true;
         // Game coords → overlay: X stays, game-Y → overlay-Z, height=0
         r.position.set(gameX, 0, gameY);
 
@@ -761,6 +764,7 @@ class RocketSystem3D {
         }
 
         if (matricesUpdated) this.mesh.instanceMatrix.needsUpdate = true;
+        this.mesh.visible = this.activeRockets > 0;
 
         // Jeden upload zakresów na klatkę zamiast pełnych buforów per spawn.
         this.fireGPU.commit();
@@ -803,7 +807,8 @@ class RocketSystem3D {
             const easeOut = 1.0 - Math.pow(1.0 - t, 3.0);
             const radius = THREE.MathUtils.lerp(burst.radiusStart, burst.radiusEnd, easeOut);
             const amp = Math.max(0, burst.strength * Math.pow(1.0 - t, 1.4));
-            if (amp > 0.001) core.pushHeatHazeWorld(burst.x, burst.z, -4, radius, amp);
+            // burst.z = Y gry (płaszczyzna XZ overlaya); Core3D chce y3d = -yGry.
+            if (amp > 0.001) core.pushHeatHazeWorld(burst.x, -burst.z, -4, radius, amp);
         }
     }
 

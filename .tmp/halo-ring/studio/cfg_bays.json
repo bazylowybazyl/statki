@@ -1,0 +1,15 @@
+[
+ {"id": "cx_atlas_z01", "js": "H.flight.start('docked', 0.1)"},
+ {"id": "bay_cont_z035", "js": "H.flight.start('docked', 0.35); H.flight.hull('container_ship', 'docked')"},
+ {"id": "bay_cont_z08", "js": "H.flight.start('docked', 0.8); H.flight.hull('container_ship', 'docked')"},
+ {"id": "bay_mega_z02", "js": "H.flight.start('docked', 0.2); H.flight.hull('megafreighter', 'docked')"},
+ {"id": "bay_long_z05", "js": "H.flight.start('docked', 0.5); H.flight.hull('long_haul_freighter', 'docked')"},
+ {"id": "bay_shuttle_z15", "js": "H.flight.start('docked', 1.5); H.flight.hull('inter_station_shuttle', 'docked')"},
+ {"id": "bay_heavy_free_z016", "js": "H.flight.start('docked', 0.16); H.flight.hull('heavy_freighter', 'free')"},
+ {"id": "p9", "js": "H.applyPreset(9)"},
+ {"id": "mnt_west", "js": "const f = H.ring.k7Halls[0].frame; const v = h.v3; const R = H.ring.layout.radii.floorMid; const th = f.angle - 26000 / R; const th2 = f.angle - 4000 / R; const pos = v(Math.cos(th) * (R + 3200), Math.sin(th) * (R + 3200), 1900); const tgt = v(Math.cos(th2) * (R + 700), Math.sin(th2) * (R + 700), -400); H.setCine({ pos, fwd: tgt.sub(pos).normalize(), up: v(Math.cos(th), Math.sin(th), 0.25).normalize(), fov: 52, sun: { azimuth: f.angle / h.DEG - 40, elevation: 38 } })"},
+ {"id": "mnt_east", "js": "const f = H.ring.k7Halls[0].frame; const v = h.v3; const R = H.ring.layout.radii.floorMid; const th = f.angle + 34000 / R; const th2 = f.angle + 12000 / R; const pos = v(Math.cos(th) * (R + 3600), Math.sin(th) * (R + 3600), -1200); const tgt = v(Math.cos(th2) * (R + 600), Math.sin(th2) * (R + 600), 300); H.setCine({ pos, fwd: tgt.sub(pos).normalize(), up: v(Math.cos(th), Math.sin(th), -0.2).normalize(), fov: 55, sun: { azimuth: f.angle / h.DEG + 30, elevation: 42 } })"},
+ {"id": "mnt_above", "js": "const f = H.ring.k7Halls[0].frame; const v = h.v3; const pos = v(f.origin.x + f.rx * 30000 + f.tx * 2500, f.origin.y + f.ry * 30000 + f.ty * 2500, 15000); const tgt = v(f.origin.x + f.rx * 800 + f.tx * 2500, f.origin.y + f.ry * 800 + f.ty * 2500, -300); H.setCine({ pos, fwd: tgt.sub(pos).normalize(), up: v(0, 0, 1), fov: 50, sun: { azimuth: f.angle / h.DEG - 30, elevation: 40 } })"},
+ {"id": "cx2_cine", "js": "const h7 = H.ring.k7Halls[1]; const f = h7.frame; const v = h.v3; const pos = v(f.origin.x + f.rx*24000 + f.tx*-2000, f.origin.y + f.ry*24000 + f.ty*-2000, 9000); const tgt = v(f.origin.x + f.rx*1200 + f.tx*2500, f.origin.y + f.ry*1200 + f.ty*2500, -600); H.setCine({ pos, fwd: tgt.sub(pos).normalize(), up: v(0,0,1), fov: 46, sun: { azimuth: Math.atan2(f.ry, f.rx)/h.DEG - 30, elevation: 40 } })"},
+ {"id": "p8", "js": "H.applyPreset(8)"}
+]

@@ -17,8 +17,8 @@ import { BEAM_TYPE } from '../game/beamBody3D.js';
 import { prepareSkinChunks, selectSkinChunk } from './beamSkinChunks3D.js';
 import { prepareSkinSurface, createSurfaceState, updateSurfaceState, writeTearRims } from './beamSkinSurface3D.js';
 
-const FIELD_ALIVE = 255;
-const FIELD_NEVER = 128;
+const FIELD_ALIVE = THREE.DataUtils.toHalfFloat(1);
+const FIELD_NEVER = THREE.DataUtils.toHalfFloat(0.5);
 const FIELD_GONE = 0;
 
 const SKIN_VERTEX_SHADER = `
@@ -52,7 +52,7 @@ void main() {
   vDent = 0.0;
   if (uFfd > 0.5) {
     vec4 anchor = texture(uField, aCellUV);
-    vec3 anchorDisp = (anchor.rgb * 255.0 - 128.0) / 127.0;
+    vec3 anchorDisp = anchor.rgb;
     vec3 anchorCell = floor(aCellUV * uDims);
     vec4 links = floor(texture(uLinks, aCellUV) * 255.0 + 0.5);
     vec3 f = (position - uLatticeMin) / uCellSize - 0.5;
@@ -72,7 +72,7 @@ void main() {
       }
       // A lost support inherits its own panel's anchor, never the origin
       // or a node across a broken connection.
-      disp += (connected && t.a > 0.75 ? (t.rgb * 255.0 - 128.0) / 127.0 : anchorDisp) * w;
+      disp += (connected && t.a > 0.75 ? t.rgb : anchorDisp) * w;
     }
     pos += disp * uDeformScale;
     vDent = length(disp * uDeformScale) / uCellSize;
@@ -298,18 +298,19 @@ export const BeamShips3D = {
     const texels = dims.x * dims.y * dims.z;
 
     if (!skin._baseField) {
-      const base = new Uint8Array(texels * 4);
+      const base = new Uint16Array(texels * 4);
       for (let i = 0; i < texels; i++) {
-        base[i * 4] = 128; base[i * 4 + 1] = 128; base[i * 4 + 2] = 128;
         base[i * 4 + 3] = skin.occupancy[i] ? FIELD_GONE : FIELD_NEVER;
       }
       skin._baseField = base;
     }
 
-    const data = new Uint8Array(texels * 4);
+    // Half floats preserve sub-cell motion. The old 8-bit field snapped at
+    // cellSize * 8 / 127, hiding gradual dents until they jumped to the next bin.
+    const data = new Uint16Array(texels * 4);
     const texture = new THREE.Data3DTexture(data, dims.x, dims.y, dims.z);
     texture.format = THREE.RGBAFormat;
-    texture.type = THREE.UnsignedByteType;
+    texture.type = THREE.HalfFloatType;
     texture.minFilter = THREE.NearestFilter;
     texture.magFilter = THREE.NearestFilter;
     texture.wrapS = THREE.ClampToEdgeWrapping;
@@ -473,6 +474,12 @@ export const BeamShips3D = {
     for (const index of ribs.members) {
       const beam = body.beams[index], a = body.nodes[beam.a], b = body.nodes[beam.b];
       if (beam.broken || !a.active || !b.active) continue;
+      const dims = sd.dims, exposed = sd.surface.exposed;
+      const ca = a.ix + a.iy * dims.x + a.iz * dims.x * dims.y;
+      const cb = b.ix + b.iy * dims.x + b.iz * dims.x * dims.y;
+      // An impact exposes nearby structure, not every virtual reinforcement
+      // in the asset. Some of those sit outside the authored GLB surface.
+      if (!exposed[ca] && !exposed[cb]) continue;
       ribDirection.set(b.x - a.x, b.y - a.y, b.z - a.z);
       const length = ribDirection.length();
       if (length < 1e-5 || length > beam.restBase * 1.7) continue;
@@ -517,9 +524,9 @@ export const BeamShips3D = {
       if (vx < -1) vx = -1; else if (vx > 1) vx = 1;
       if (vy < -1) vy = -1; else if (vy > 1) vy = 1;
       if (vz < -1) vz = -1; else if (vz > 1) vz = 1;
-      data[o] = Math.round(vx * 127 + 128);
-      data[o + 1] = Math.round(vy * 127 + 128);
-      data[o + 2] = Math.round(vz * 127 + 128);
+      data[o] = THREE.DataUtils.toHalfFloat(vx);
+      data[o + 1] = THREE.DataUtils.toHalfFloat(vy);
+      data[o + 2] = THREE.DataUtils.toHalfFloat(vz);
       data[o + 3] = FIELD_ALIVE;
     }
     sd.texture.needsUpdate = true;

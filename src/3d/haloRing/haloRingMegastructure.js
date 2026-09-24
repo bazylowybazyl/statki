@@ -166,7 +166,14 @@ vec3 palette(float pal, float seed) {
   if (pal < 20.5) return vec3(0.290, 0.292, 0.290);       // zbiornik
   if (pal < 21.5) return vec3(0.230, 0.230, 0.220);       // silos
   if (pal < 22.5) return vec3(0.160, 0.120, 0.080);       // kontenery
-  return vec3(0.120, 0.130, 0.140);                       // rury, stal gladka
+  if (pal < 23.5) return vec3(0.120, 0.130, 0.140);       // rury, stal gladka
+  // megabudowle (haloRingLandmarks.js)
+  if (pal < 24.5) return vec3(0.310, 0.290, 0.255);       // kamien (podium, zebra, plyty)
+  if (pal < 25.5) return vec3(0.300, 0.220, 0.105);       // mosiadz (szprosy, maszty)
+  if (pal < 26.5) return vec3(0.300, 0.280, 0.240);       // pas swietlny (swieci)
+  if (pal < 27.5) return vec3(0.270, 0.235, 0.190);       // rama fasady cieplej (piaskowiec)
+  if (pal < 28.5) return vec3(0.170, 0.200, 0.235);       // rama fasady chlodnej (stal)
+  return vec3(0.120, 0.130, 0.140);
 }
 
 void main() {
@@ -192,7 +199,8 @@ void main() {
   float emitK = floor((matI + 0.5) / 32.0);
   float pal = matI - 32.0 * emitK;
   vec3 base = palette(pal, vSeed);
-  base *= 0.85 + 0.3 * vSeed;
+  // megabudowle: jedna barwa na budowle (czesci nie rozjezdzaja sie w laty)
+  base *= pal > 23.5 ? 0.96 + 0.08 * vSeed : 0.85 + 0.3 * vSeed;
   bool top = lN.z > 0.5;
   if (top && pal > 13.5 && pal < 14.5) base = vec3(0.040, 0.070, 0.028) * (0.8 + 0.4 * vSeed);   // dach-ogrod
   if (top && pal > 14.5 && pal < 15.5) base = vec3(0.160, 0.105, 0.080);                            // dachowka
@@ -263,6 +271,7 @@ void main() {
   }
 
   vec3 emit = vec3(0.0);
+  float facadeGlass = 0.0;
   vec3 L = uSunDir;
   vec3 sunVis = haloSunVisibility(p + N * 2.0, L);
   // „góra” bryły: w powietrzu habitatu kierunek mieszkańców, poza nim +Z
@@ -300,7 +309,7 @@ void main() {
     float lamp = top ? (1.0 - smoothstep(0.0, 2.5 + fw, min(edgeD3.x, edgeD3.y))) * step(0.72, fract(fuv.x / 14.0 + vSeed)) : 0.0;
     emit += vec3(${f3(HALO_HDR.windowSodium)}) * lamp * night;
   } else if (emitType > 4.5 && emitType < 5.5 && top) {
-    // poklad zatoki: obrys stanowiska okretu liniowego, pasy, plamy reflektorow
+    // podloga tunelu tranzytu (poklady zatok maja typ 6): obrys, pasy, plamy reflektorow
     vec2 q = vLocal.xy;
     vec2 berth = abs(q) - vec2(1000.0, 460.0);
     float outline = 1.0 - smoothstep(3.0, 6.0 + fw, abs(max(berth.x, berth.y)));
@@ -317,8 +326,63 @@ void main() {
     float lampK = 0.5 + 0.8 * haloHash12(vec2(px, sign(q.y)) + vSeed * 13.0);
     float post = exp(-dot(q - lampP, q - lampP) / (2.0 * 45.0 * 45.0)) * lampK;
     emit += vec3(0.9, 0.62, 0.34) * (wallWash * 0.22 + post * 0.3) * night + vec3(${f3(HALO_HDR.stripBlue)}) * outline * 0.25 * night;
+  } else if (emitType > 5.5 && emitType < 6.5 && top) {
+    // poklad otwartej zatoki: bez znaczen (stanowiska K-7 rysuje render
+    // kompleksu), noca poswiata reflektorow scian bocznych i tylnej
+    vec2 q = vLocal.xy;
+    vec2 hb = 0.5 * vSize.xy;
+    float wallWash = exp(-(hb.x - abs(q.x)) / 220.0) * 0.55 + exp(-(q.y + hb.y) / 260.0) * 0.6;
+    emit += vec3(0.9, 0.62, 0.34) * wallWash * 0.24 * night;
+  } else if (emitType > 6.5 && emitType < 7.5 && side) {
+    // fasada megabudowli (ECUMENE): kondygnacje 4,5 j., przesla 5 j., szklo
+    // w ramach (cieplej: braz, chlodnej: stal), pas stropu co 12 kondygnacji.
+    // Swiatla nocne w trzech skalach: okno -> grupa 3 x 3 okien (zapalona
+    // lub nie) -> pas 12 kondygnacji; kazda skala to srednia poprzedniej,
+    // wiec z daleka wieza nie zlewa sie w jednolita tafle ani nie migocze
+    float faceId = abs(lN.x) > 0.5 ? (lN.x > 0.0 ? 1.0 : 2.0) : (lN.y > 0.0 ? 3.0 : 4.0);
+    bool coolF = pal > 27.5 && pal < 28.5;
+    vec2 fc = vec2(fuv.x / 5.0, vLocal.z / 4.5);
+    vec2 cid = floor(fc);
+    vec2 cf = fract(fc);
+    vec2 fwc = max(vec2(fwidth(fc.x), fwidth(fc.y)), vec2(1e-4));
+    float fwm = max(fwc.x, fwc.y);
+    float farA = smoothstep(0.35, 0.85, fwm);
+    float farB = smoothstep(0.35, 0.85, fwm / 3.0);
+    float gx = smoothstep(0.16 - fwc.x, 0.16 + fwc.x, cf.x) * (1.0 - smoothstep(0.84 - fwc.x, 0.84 + fwc.x, cf.x));
+    float gy = smoothstep(0.24 - fwc.y, 0.24 + fwc.y, cf.y) * (1.0 - smoothstep(0.86 - fwc.y, 0.86 + fwc.y, cf.y));
+    float bz = vLocal.z / 54.0;
+    float fwb = max(fwidth(bz), 1e-4);
+    float slab = (1.0 - smoothstep(0.03 - fwb, 0.03 + fwb, abs(fract(bz + 0.5) - 0.5))) * (1.0 - smoothstep(0.2, 0.6, fwb));
+    float glaz = mix(gx * gy, 0.42, farA) * (1.0 - slab);
+    vec3 glassTint = coolF ? vec3(0.32, 0.41, 0.45) : vec3(0.46, 0.38, 0.30);
+    albedo = mix(base * 1.15, base * glassTint * 0.55, glaz);
+    albedo = mix(albedo, albedo * 1.6 + 0.02, bevel * 0.6);
+    facadeGlass = glaz;
+    // aktywnosc pasa 12 kondygnacji -> grupy 3 x 3 okien -> okna
+    float band = floor(cid.y / 12.0);
+    float bAct = 0.12 + 0.4 * haloHash12(vec2(band, faceId * 7.3 + vSeed * 13.0));
+    vec2 gid = floor(cid / 3.0);
+    float gOn = step(haloHash12(gid + vec2(faceId * 17.3, vSeed * 23.0)), bAct);
+    float pOn = mix(0.06, 0.8, gOn);
+    float on = step(haloHash12(cid + vec2(faceId * 31.7, vSeed * 57.0)), pOn);
+    float fl13 = cid.y - 13.0 * floor((cid.y + 0.5) / 13.0);
+    float lum = mix(0.5, 0.7, step(fl13, 7.5)) + 0.25 * haloHash12(cid + vec2(3.3, faceId));
+    vec2 gf = fract(cid / 3.0 + cf / 3.0);
+    vec2 fwg = fwc / 3.0;
+    float ggx = smoothstep(0.08 - fwg.x, 0.08 + fwg.x, gf.x) * (1.0 - smoothstep(0.92 - fwg.x, 0.92 + fwg.x, gf.x));
+    float ggy = smoothstep(0.1 - fwg.y, 0.1 + fwg.y, gf.y) * (1.0 - smoothstep(0.9 - fwg.y, 0.9 + fwg.y, gf.y));
+    float litA = on * lum * gx * gy;
+    float litB = pOn * 0.302 / 0.67 * ggx * ggy;
+    float litC = (bAct * 0.8 + (1.0 - bAct) * 0.06) * 0.302;
+    float lit = mix(mix(litA, litB, farA), litC, farB) * (1.0 - slab);
+    vec3 wcol = coolF ? vec3(${f3(HALO_HDR.windowCool)}) : vec3(${f3(HALO_HDR.windowWarm)});
+    emit += wcol * lit * night * 0.95 * uLayers.y * uNightLights;
   }
-  if (vSize.z > 150.0 && side) {
+  if (pal > 25.5 && pal < 26.5) {
+    // pas swietlny megabudowli (korona, wejscie): cieply, noca pelny
+    emit += vec3(1.25, 0.98, 0.58) * mix(0.35, 1.0, night) * uLayers.y * uNightLights;
+  }
+  if (vSize.z > 150.0 && side && pal < 23.5) {
     // wielkie bryly (doki): zebra poziome co 60 j. i pilastry co 120 j.
     float ribZ = 1.0 - smoothstep(1.5, 1.5 + fw, abs(fract(vLocal.z / 60.0) - 0.5) * 60.0 - 27.0);
     float pil = 1.0 - smoothstep(3.0, 3.0 + fw, abs(fract(fuv.x / 120.0) - 0.5) * 120.0 - 54.0);
@@ -341,10 +405,12 @@ void main() {
   float NdV = max(dot(N, V), 1e-3);
   vec3 H = normalize(L + V);
   float rough = pal > 6.5 && pal < 7.5 ? 0.12 : (pal > 12.5 ? 0.25 : 0.45);
+  if (pal > 23.5 && pal < 24.5) rough = 0.55;                 // kamien
+  rough = mix(rough, 0.12, facadeGlass);                      // szklo fasady
   float a2 = rough * rough;
   float NdH = max(dot(N, H), 0.0);
   float dd = NdH * NdH * (a2 - 1.0) + 1.0;
-  vec3 F0 = vec3(pal > 6.5 && pal < 7.5 ? 0.08 : 0.05);
+  vec3 F0 = vec3(mix(pal > 6.5 && pal < 7.5 ? 0.08 : 0.05, 0.08, facadeGlass));
   vec3 Fs = F0 + (1.0 - F0) * pow(1.0 - max(dot(H, V), 0.0), 5.0);
   vec3 spec = Fs * min(a2 / (HALO_PI * dd * dd) * 0.25 / NdV, 6.0) * NdL;
   vec3 amb = haloPlanetshine(p, N) + vec3(uNightAmbient);
@@ -360,7 +426,7 @@ void main() {
       ? mix(vec3(0.18, 0.25, 0.36), vec3(0.05, 0.10, 0.21), clamp(up, 0.0, 1.0)) * haloLuma(haloSunVisibility(p + upW * 600.0, L)) * max(dot(upW, L) + 0.3, 0.0)
       : vec3(0.004, 0.005, 0.008);
     skyR = mix(skyR, vec3(0.03, 0.035, 0.03), smoothstep(0.05, -0.2, up));
-    float glassK = pal > 6.5 && pal < 7.5 ? 1.0 : 0.25;
+    float glassK = max(pal > 6.5 && pal < 7.5 ? 1.0 : 0.25, facadeGlass);
     float Fr = 0.04 + 0.96 * pow(1.0 - NdV, 5.0);
     color += skyR * mix(0.08, 1.0, Fr) * glassK * (side ? 1.0 : 0.6);
   }

@@ -1,0 +1,890 @@
+[
+  {
+    "hull": "atlas",
+    "grid": {
+      "w": 1800,
+      "h": 806,
+      "scale": {
+        "x": 0.4804,
+        "y": 0.4806
+      }
+    },
+    "centroidPng": {
+      "x": -221.04125992361614,
+      "y": -3.6450212387897567
+    },
+    "maxDepth": 285.2,
+    "maxDepthAtPng": {
+      "x": -807.6866666666666,
+      "y": -4.161290322580645
+    },
+    "bestFree": [
+      {
+        "png": {
+          "x": 66.6,
+          "y": 18.7
+        },
+        "grid": {
+          "x": 32,
+          "y": 9
+        },
+        "depth": 195,
+        "toCentroid": 138.6,
+        "nearestHardpoint": {
+          "d": 186.2,
+          "type": "special_missile",
+          "png": {
+            "x": -320.12,
+            "y": -7.05
+          }
+        },
+        "nearestEngine": {
+          "d": 701,
+          "png": {
+            "x": 1513.6,
+            "y": 207.65
+          }
+        }
+      },
+      {
+        "png": {
+          "x": -749.4,
+          "y": 2.1
+        },
+        "grid": {
+          "x": -360,
+          "y": 1
+        },
+        "depth": 264.3,
+        "toCentroid": 253.8,
+        "nearestHardpoint": {
+          "d": 152.9,
+          "type": "special",
+          "png": {
+            "x": -549.56,
+            "y": 249.68
+          }
+        },
+        "nearestEngine": {
+          "d": 370.4,
+          "png": {
+            "x": -1374.11,
+            "y": 453.85
+          }
+        }
+      },
+      {
+        "png": {
+          "x": -50,
+          "y": -131.1
+        },
+        "grid": {
+          "x": -24,
+          "y": -63
+        },
+        "depth": 151.8,
+        "toCentroid": 102.5,
+        "nearestHardpoint": {
+          "d": 137.7,
+          "type": "aux",
+          "png": {
+            "x": -127.11,
+            "y": -407.02
+          }
+        },
+        "nearestEngine": {
+          "d": 654.7,
+          "png": {
+            "x": -1374.11,
+            "y": -453.85
+          }
+        }
+      },
+      {
+        "png": {
+          "x": -83.3,
+          "y": 135.2
+        },
+        "grid": {
+          "x": -40,
+          "y": 65
+        },
+        "depth": 148,
+        "toCentroid": 94,
+        "nearestHardpoint": {
+          "d": 132.3,
+          "type": "aux",
+          "png": {
+            "x": -127.11,
+            "y": 407.02
+          }
+        },
+        "nearestEngine": {
+          "d": 638.7,
+          "png": {
+            "x": -1374.11,
+            "y": 453.85
+          }
+        }
+      },
+      {
+        "png": {
+          "x": 224.8,
+          "y": -89.5
+        },
+        "grid": {
+          "x": 108,
+          "y": -43
+        },
+        "depth": 146.2,
+        "toCentroid": 218.1,
+        "nearestHardpoint": {
+          "d": 119,
+          "type": "missile",
+          "png": {
+            "x": 456.63,
+            "y": -2.35
+          }
+        },
+        "nearestEngine": {
+          "d": 621.7,
+          "png": {
+            "x": 1513.6,
+            "y": -207.65
+          }
+        }
+      },
+      {
+        "png": {
+          "x": -1274,
+          "y": 118.6
+        },
+        "grid": {
+          "x": -612,
+          "y": 57
+        },
+        "depth": 111.1,
+        "toCentroid": 509.2,
+        "nearestHardpoint": {
+          "d": 114.7,
+          "type": "missile",
+          "png": {
+            "x": -1070.98,
+            "y": -7.05
+          }
+        },
+        "nearestEngine": {
+          "d": 168.2,
+          "png": {
+            "x": -1374.11,
+            "y": 453.85
+          }
+        }
+      }
+    ],
+    "candidates": [
+      {
+        "id": "atlas_A",
+        "label": "A: grzbiet między bankami ogniw (najgłębiej)",
+        "png": {
+          "x": -830,
+          "y": 0
+        },
+        "grid": {
+          "x": -398.7,
+          "y": 0
+        },
+        "depth": 275.2,
+        "toCentroid": 292.5,
+        "nearestHardpoint": {
+          "d": 115.8,
+          "type": "missile",
+          "png": {
+            "x": -1070.98,
+            "y": -7.05
+          }
+        },
+        "nearestEngine": {
+          "d": 340.4,
+          "png": {
+            "x": -1374.11,
+            "y": 453.85
+          }
+        },
+        "rGrid": 26.9
+      },
+      {
+        "id": "atlas_B",
+        "label": "B: grzbiet przed wieżą (bliżej śr. masy)",
+        "png": {
+          "x": 70,
+          "y": 0
+        },
+        "grid": {
+          "x": 33.6,
+          "y": 0
+        },
+        "depth": 202.4,
+        "toCentroid": 139.8,
+        "nearestHardpoint": {
+          "d": 185.7,
+          "type": "missile",
+          "png": {
+            "x": 456.63,
+            "y": -2.35
+          }
+        },
+        "nearestEngine": {
+          "d": 700.6,
+          "png": {
+            "x": 1513.6,
+            "y": 207.65
+          }
+        },
+        "rGrid": 25
+      },
+      {
+        "id": "atlas_C_L",
+        "label": "C: para w bankach ogniw",
+        "png": {
+          "x": -830,
+          "y": -180
+        },
+        "grid": {
+          "x": -398.7,
+          "y": -86.5
+        },
+        "depth": 212,
+        "toCentroid": 304.6,
+        "nearestHardpoint": {
+          "d": 82.8,
+          "type": "special",
+          "png": {
+            "x": -799.36,
+            "y": -349.55
+          }
+        },
+        "nearestEngine": {
+          "d": 292.6,
+          "png": {
+            "x": -1374.11,
+            "y": -453.85
+          }
+        },
+        "rGrid": 21.1
+      },
+      {
+        "id": "atlas_C_R",
+        "label": "C: para w bankach ogniw",
+        "png": {
+          "x": -830,
+          "y": 180
+        },
+        "grid": {
+          "x": -398.7,
+          "y": 86.5
+        },
+        "depth": 209,
+        "toCentroid": 305.6,
+        "nearestHardpoint": {
+          "d": 82.8,
+          "type": "special",
+          "png": {
+            "x": -799.36,
+            "y": 349.55
+          }
+        },
+        "nearestEngine": {
+          "d": 292.6,
+          "png": {
+            "x": -1374.11,
+            "y": 453.85
+          }
+        },
+        "rGrid": 21.1
+      }
+    ]
+  },
+  {
+    "hull": "battleship",
+    "grid": {
+      "w": 624,
+      "h": 385,
+      "scale": {
+        "x": 0.5389,
+        "y": 0.5392
+      }
+    },
+    "centroidPng": {
+      "x": -27.757455266852663,
+      "y": 0.7075515141769012
+    },
+    "maxDepth": 118.6,
+    "maxDepthAtPng": {
+      "x": -309.91346153846155,
+      "y": 4.636363636363637
+    },
+    "bestFree": [
+      {
+        "png": {
+          "x": -326.6,
+          "y": -0.9
+        },
+        "grid": {
+          "x": -176,
+          "y": -0.5
+        },
+        "depth": 113.9,
+        "toCentroid": 161,
+        "nearestHardpoint": {
+          "d": 93.1,
+          "type": "missile",
+          "png": {
+            "x": -190.29,
+            "y": 105.16
+          }
+        },
+        "nearestEngine": {
+          "d": 134.6,
+          "png": {
+            "x": -552.05,
+            "y": -108.23
+          }
+        }
+      },
+      {
+        "png": {
+          "x": -66.8,
+          "y": -0.9
+        },
+        "grid": {
+          "x": -36,
+          "y": -0.5
+        },
+        "depth": 78.3,
+        "toCentroid": 21.1,
+        "nearestHardpoint": {
+          "d": 87.3,
+          "type": "missile",
+          "png": {
+            "x": 60.37,
+            "y": 99.39
+          }
+        },
+        "nearestEngine": {
+          "d": 256.9,
+          "png": {
+            "x": -493.47,
+            "y": -213.47
+          }
+        }
+      },
+      {
+        "png": {
+          "x": 222.7,
+          "y": -52.9
+        },
+        "grid": {
+          "x": 120,
+          "y": -28.5
+        },
+        "depth": 60,
+        "toCentroid": 138,
+        "nearestHardpoint": {
+          "d": 73.3,
+          "type": "aux",
+          "png": {
+            "x": 225.42,
+            "y": 83.09
+          }
+        },
+        "nearestEngine": {
+          "d": 395.5,
+          "png": {
+            "x": -493.47,
+            "y": -213.47
+          }
+        }
+      },
+      {
+        "png": {
+          "x": -222.7,
+          "y": -208.6
+        },
+        "grid": {
+          "x": -120,
+          "y": -112.5
+        },
+        "depth": 42,
+        "toCentroid": 154.2,
+        "nearestHardpoint": {
+          "d": 53.4,
+          "type": "aux",
+          "png": {
+            "x": -318.87,
+            "y": -232.49
+          }
+        },
+        "nearestEngine": {
+          "d": 145.9,
+          "png": {
+            "x": -493.47,
+            "y": -213.47
+          }
+        }
+      },
+      {
+        "png": {
+          "x": 282.1,
+          "y": 162.3
+        },
+        "grid": {
+          "x": 152,
+          "y": 87.5
+        },
+        "depth": 52,
+        "toCentroid": 188.3,
+        "nearestHardpoint": {
+          "d": 52.5,
+          "type": "aux",
+          "png": {
+            "x": 225.42,
+            "y": 83.09
+          }
+        },
+        "nearestEngine": {
+          "d": 418.8,
+          "png": {
+            "x": -493.47,
+            "y": 213.47
+          }
+        }
+      },
+      {
+        "png": {
+          "x": -386,
+          "y": -164.1
+        },
+        "grid": {
+          "x": -208,
+          "y": -88.5
+        },
+        "depth": 44.1,
+        "toCentroid": 212.5,
+        "nearestHardpoint": {
+          "d": 51.6,
+          "type": "aux",
+          "png": {
+            "x": -318.87,
+            "y": -232.49
+          }
+        },
+        "nearestEngine": {
+          "d": 63.7,
+          "png": {
+            "x": -493.47,
+            "y": -213.47
+          }
+        }
+      }
+    ],
+    "candidates": [
+      {
+        "id": "bellator_A",
+        "label": "A: blok rufowy (najgłębiej)",
+        "png": {
+          "x": -320,
+          "y": 0
+        },
+        "grid": {
+          "x": -172.4,
+          "y": 0
+        },
+        "depth": 116.1,
+        "toCentroid": 157.5,
+        "nearestHardpoint": {
+          "d": 90,
+          "type": "missile",
+          "png": {
+            "x": -190.29,
+            "y": 105.16
+          }
+        },
+        "nearestEngine": {
+          "d": 138,
+          "png": {
+            "x": -552.05,
+            "y": -108.23
+          }
+        },
+        "rGrid": 25.9
+      },
+      {
+        "id": "bellator_B",
+        "label": "B: właz grzbietu między toroidami",
+        "png": {
+          "x": -219,
+          "y": -5
+        },
+        "grid": {
+          "x": -118,
+          "y": -2.7
+        },
+        "depth": 87.1,
+        "toCentroid": 103.1,
+        "nearestHardpoint": {
+          "d": 58.8,
+          "type": "missile",
+          "png": {
+            "x": -190.29,
+            "y": -110.17
+          }
+        },
+        "nearestEngine": {
+          "d": 185.8,
+          "png": {
+            "x": -493.47,
+            "y": -213.47
+          }
+        },
+        "rGrid": 23.7
+      },
+      {
+        "id": "bellator_C_L",
+        "label": "C: para toroidów (pod wyrzutniami, płytko — odradzane)",
+        "png": {
+          "x": -192,
+          "y": -112
+        },
+        "grid": {
+          "x": -103.5,
+          "y": -60.4
+        },
+        "depth": 29.7,
+        "toCentroid": 107.4,
+        "nearestHardpoint": {
+          "d": 1.4,
+          "type": "missile",
+          "png": {
+            "x": -190.29,
+            "y": -110.17
+          }
+        },
+        "nearestEngine": {
+          "d": 171.4,
+          "png": {
+            "x": -493.47,
+            "y": -213.47
+          }
+        },
+        "rGrid": 21.6
+      },
+      {
+        "id": "bellator_C_R",
+        "label": "C: para toroidów (pod wyrzutniami, płytko — odradzane)",
+        "png": {
+          "x": -192,
+          "y": 112
+        },
+        "grid": {
+          "x": -103.5,
+          "y": 60.4
+        },
+        "depth": 33.5,
+        "toCentroid": 106.9,
+        "nearestHardpoint": {
+          "d": 3.8,
+          "type": "missile",
+          "png": {
+            "x": -190.29,
+            "y": 105.16
+          }
+        },
+        "nearestEngine": {
+          "d": 171.4,
+          "png": {
+            "x": -493.47,
+            "y": 213.47
+          }
+        },
+        "rGrid": 21.6
+      }
+    ]
+  },
+  {
+    "hull": "pirate_battleship",
+    "grid": {
+      "w": 720,
+      "h": 393,
+      "scale": {
+        "x": 0.6218,
+        "y": 0.6218
+      }
+    },
+    "centroidPng": {
+      "x": -32.230912209544776,
+      "y": 0.13779637264963793
+    },
+    "maxDepth": 124,
+    "maxDepthAtPng": {
+      "x": -196.21666666666667,
+      "y": 0.8040712468193384
+    },
+    "bestFree": [
+      {
+        "png": {
+          "x": 77.2,
+          "y": -0.8
+        },
+        "grid": {
+          "x": 48,
+          "y": -0.5
+        },
+        "depth": 98.5,
+        "toCentroid": 68,
+        "nearestHardpoint": {
+          "d": 90.3,
+          "type": "aux",
+          "png": {
+            "x": 41.31,
+            "y": -141.5
+          }
+        },
+        "nearestEngine": {
+          "d": 333,
+          "png": {
+            "x": -437.92,
+            "y": 145.85
+          }
+        }
+      },
+      {
+        "png": {
+          "x": -225.2,
+          "y": 5.6
+        },
+        "grid": {
+          "x": -140,
+          "y": 3.5
+        },
+        "depth": 106,
+        "toCentroid": 120,
+        "nearestHardpoint": {
+          "d": 82.2,
+          "type": "special",
+          "png": {
+            "x": -143.97,
+            "y": 109.85
+          }
+        },
+        "nearestEngine": {
+          "d": 150.3,
+          "png": {
+            "x": -459.66,
+            "y": 64.11
+          }
+        }
+      },
+      {
+        "png": {
+          "x": -70.8,
+          "y": -0.8
+        },
+        "grid": {
+          "x": -44,
+          "y": -0.5
+        },
+        "depth": 100,
+        "toCentroid": 24,
+        "nearestHardpoint": {
+          "d": 79.9,
+          "type": "special",
+          "png": {
+            "x": -145.47,
+            "y": -105.35
+          }
+        },
+        "nearestEngine": {
+          "d": 243.4,
+          "png": {
+            "x": -457.41,
+            "y": -61.86
+          }
+        }
+      },
+      {
+        "png": {
+          "x": -263.8,
+          "y": -135.9
+        },
+        "grid": {
+          "x": -164,
+          "y": -84.5
+        },
+        "depth": 50.6,
+        "toCentroid": 167,
+        "nearestHardpoint": {
+          "d": 65.3,
+          "type": "main",
+          "png": {
+            "x": -164.35,
+            "y": -169.62
+          }
+        },
+        "nearestEngine": {
+          "d": 110.3,
+          "png": {
+            "x": -440.92,
+            "y": -143.6
+          }
+        }
+      },
+      {
+        "png": {
+          "x": -341,
+          "y": 95.7
+        },
+        "grid": {
+          "x": -212,
+          "y": 59.5
+        },
+        "depth": 49,
+        "toCentroid": 200.9,
+        "nearestHardpoint": {
+          "d": 60,
+          "type": "aux",
+          "png": {
+            "x": -362.97,
+            "y": 1.76
+          }
+        },
+        "nearestEngine": {
+          "d": 67.9,
+          "png": {
+            "x": -437.92,
+            "y": 145.85
+          }
+        }
+      },
+      {
+        "png": {
+          "x": -231.6,
+          "y": 198.6
+        },
+        "grid": {
+          "x": -144,
+          "y": 123.5
+        },
+        "depth": 35.1,
+        "toCentroid": 174.9,
+        "nearestHardpoint": {
+          "d": 45.5,
+          "type": "main",
+          "png": {
+            "x": -164.35,
+            "y": 169.62
+          }
+        },
+        "nearestEngine": {
+          "d": 132.4,
+          "png": {
+            "x": -437.92,
+            "y": 145.85
+          }
+        }
+      }
+    ],
+    "candidates": [
+      {
+        "id": "skull_A",
+        "label": "A: kopuła i kratka rufowa (najgłębiej)",
+        "png": {
+          "x": -205,
+          "y": 0
+        },
+        "grid": {
+          "x": -127.5,
+          "y": 0
+        },
+        "depth": 119,
+        "toCentroid": 107.4,
+        "nearestHardpoint": {
+          "d": 75.2,
+          "type": "special",
+          "png": {
+            "x": -145.47,
+            "y": -105.35
+          }
+        },
+        "nearestEngine": {
+          "d": 161.6,
+          "png": {
+            "x": -457.41,
+            "y": -61.86
+          }
+        },
+        "rGrid": 26.1
+      },
+      {
+        "id": "skull_B",
+        "label": "B: płyta z czaszką (przy śr. masy)",
+        "png": {
+          "x": -80,
+          "y": 0
+        },
+        "grid": {
+          "x": -49.7,
+          "y": 0
+        },
+        "depth": 100,
+        "toCentroid": 29.7,
+        "nearestHardpoint": {
+          "d": 77.1,
+          "type": "special",
+          "png": {
+            "x": -145.47,
+            "y": -105.35
+          }
+        },
+        "nearestEngine": {
+          "d": 237.8,
+          "png": {
+            "x": -457.41,
+            "y": -61.86
+          }
+        },
+        "rGrid": 24.9
+      },
+      {
+        "id": "skull_C",
+        "label": "C: śródokręcie pod napisem",
+        "png": {
+          "x": 40,
+          "y": 10
+        },
+        "grid": {
+          "x": 24.9,
+          "y": 6.2
+        },
+        "depth": 91.1,
+        "toCentroid": 45.3,
+        "nearestHardpoint": {
+          "d": 81.8,
+          "type": "aux",
+          "png": {
+            "x": 41.31,
+            "y": 141.5
+          }
+        },
+        "nearestEngine": {
+          "d": 308.9,
+          "png": {
+            "x": -437.92,
+            "y": 145.85
+          }
+        },
+        "rGrid": 24.9
+      }
+    ]
+  }
+]

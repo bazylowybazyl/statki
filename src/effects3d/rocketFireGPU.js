@@ -37,12 +37,22 @@ export const FlameSettings = {
 const OVERLAY_HDR_COMP = 0.24;
 const OVERLAY_ALPHA_COMP = 0.82;
 
-/** Ustaw zakres uploadu atrybutu (nowe i stare API three). */
+/**
+ * Dołóż zakres uploadu atrybutu (nowe i stare API three). Zakresy KUMULUJEMY —
+ * three kasuje je sam po uploadzie. Dawny clearUpdateRanges() gubił zakres
+ * z klatki, w której overlay nie renderował (frameSkip pod obciążeniem), więc
+ * cząstki zespawnowane w tej klatce nigdy nie trafiały na GPU. Sufit na wypadek
+ * długiej przerwy w renderze: wtedy jeden zakres na cały bufor.
+ */
 function applyAttrRange(attr, start, count) {
     if (!attr) return;
-    if (typeof attr.clearUpdateRanges === 'function') {
-        attr.clearUpdateRanges();
-        attr.addUpdateRange(start, count);
+    if (typeof attr.addUpdateRange === 'function') {
+        if (Array.isArray(attr.updateRanges) && attr.updateRanges.length >= 64) {
+            attr.clearUpdateRanges();
+            attr.addUpdateRange(0, attr.array.length);
+        } else {
+            attr.addUpdateRange(start, count);
+        }
     } else {
         if (!attr.updateRange) attr.updateRange = { offset: 0, count: -1 };
         attr.updateRange.offset = start;
@@ -63,7 +73,6 @@ export class RocketFireGPU {
         // Dirty-span spawnów między commitami + znak wodny żywych instancji.
         this._dirtyMin = Infinity;
         this._dirtyMax = -1;
-        this._dirtyWrapped = false;
         this.highWater = 0;
         this._lastSpawnTime = -Infinity;
         this._maxLifeSeen = 0;
@@ -341,6 +350,9 @@ export class RocketFireGPU {
         this.mesh = new THREE.Mesh(geo, this.material);
         this.mesh.frustumCulled = false;
         this.mesh.renderOrder = 1000;
+        // Pusta pula = niewidoczna: overlay pomija warstwę raw, gdy nic w niej
+        // nie jest widoczne (bez tego rysował ją co klatkę, także bez rakiet).
+        this.mesh.visible = false;
         scene.add(this.mesh);
     }
 
@@ -366,25 +378,33 @@ export class RocketFireGPU {
         // a upload zakresu robi commit() raz na klatkę.
         if (i < this._dirtyMin) this._dirtyMin = i;
         if (i > this._dirtyMax) this._dirtyMax = i;
-        if (this.activeIndex === 0) this._dirtyWrapped = true;
+        // Zawinięcie ring-bufora: domknięty wycinek (do końca bufora) idzie jako
+        // osobny zakres, a zapis od zera zbiera nowy — zamiast pełnego uploadu
+        // 300k cząstek (~12 MB) przy każdym obrocie pierścienia.
+        if (this.activeIndex === 0) this._pushDirtySpan();
         if (i + 1 > this.highWater) this.highWater = i + 1;
         this._lastSpawnTime = this._time;
         if (life > this._maxLifeSeen) this._maxLifeSeen = life;
     }
 
-    /** Wyślij na GPU zakres zespawnowany od ostatniego commit(). Raz na klatkę. */
-    commit() {
-        if (this._dirtyMax < this._dirtyMin && !this._dirtyWrapped) return;
+    /** Wycinek [min, max] zespawnowany od ostatniego wypchnięcia → zakresy atrybutów. */
+    _pushDirtySpan() {
+        if (this._dirtyMax < this._dirtyMin) return;
         const geo = this.mesh.geometry;
-        const start = this._dirtyWrapped ? 0 : this._dirtyMin;
-        const count = this._dirtyWrapped ? this.maxParticles : (this._dirtyMax - this._dirtyMin + 1);
+        const start = this._dirtyMin;
+        const count = this._dirtyMax - this._dirtyMin + 1;
         applyAttrRange(geo.attributes.aStartPos, start * 3, count * 3);
         applyAttrRange(geo.attributes.aStartVel, start * 3, count * 3);
         applyAttrRange(geo.attributes.aData, start * 4, count * 4);
-        geo.instanceCount = this.highWater;
         this._dirtyMin = Infinity;
         this._dirtyMax = -1;
-        this._dirtyWrapped = false;
+    }
+
+    /** Wyślij na GPU zakres zespawnowany od ostatniego commit(). Raz na klatkę. */
+    commit() {
+        this._pushDirtySpan();
+        this.mesh.geometry.instanceCount = this.highWater;
+        this.mesh.visible = this.highWater > 0;
     }
 
     /** Update shader time uniform. Call once per frame BEFORE any spawn() calls. */
@@ -398,6 +418,7 @@ export class RocketFireGPU {
             this.activeIndex = 0;
             this._maxLifeSeen = 0;
             this.mesh.geometry.instanceCount = 0;
+            this.mesh.visible = false;
         }
     }
 

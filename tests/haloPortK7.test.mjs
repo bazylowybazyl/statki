@@ -23,13 +23,26 @@ import {
 } from '../src/3d/haloRing/haloPortK7Layout.js';
 import { buildK7Scene } from '../src/3d/haloRing/haloPortK7Build.js';
 
-test('układ K-7 jak w demie ECUMENE: 26 stanowisk, 3 bramy, pojemność', () => {
+test('układ K-7: 28 stanowisk (4 capital jak dok stacji z ringiem w ruchu v2), 3 bramy', () => {
   const l = createK7Layout();
-  assert.equal(l.berths.length, 26);
-  assert.deepEqual(l.capacity, { CAPITAL: 2, L: 4, M: 8, S: 12, total: 26 });
+  assert.equal(l.berths.length, 28);
+  assert.deepEqual(l.capacity, { CAPITAL: 4, L: 4, M: 8, S: 12, total: 28 });
   assert.equal(l.gates.length, 3);
   const g1 = l.gates.find((g) => g.id === 'G-01');
   assert.ok(g1.clearWidth > K7_ATLAS.h + 1000, `brama główna ${g1.clearWidth} j.`);
+  // każde stanowisko capital ma własny pas, który mieści się w bramie G-01
+  const caps = l.berths.filter((b) => b.size === 'CAPITAL');
+  assert.equal(l.lanes.length, caps.length);
+  for (const lane of l.lanes) {
+    assert.ok(Math.abs(lane.x) + lane.width / 2 <= g1.clearWidth / 2, `pas ${lane.id} poza bramą G-01`);
+  }
+  // stanowiska capital nie zachodzą na siebie ani na aleje grzebieni bocznych
+  const pads = caps.map((b) => [b.x - b.width / 2, b.x + b.width / 2]).sort((a, b) => a[0] - b[0]);
+  for (let i = 0; i + 1 < pads.length; i++) assert.ok(pads[i][1] < pads[i + 1][0], 'stanowiska capital zachodzą na siebie');
+  for (const bank of l.sideBanks) {
+    const aisle = [bank.aisleX - bank.aisleWidth / 2, bank.aisleX + bank.aisleWidth / 2];
+    for (const p of pads) assert.ok(p[1] < aisle[0] || p[0] > aisle[1], `aleja ${bank.id} na stanowisku capital`);
+  }
   const c01 = l.berths[0];
   assert.equal(c01.id, 'C-01');
   assert.ok(c01.maxLength >= K7_ATLAS.w && c01.maxBeam >= K7_ATLAS.h, 'Atlas mieści się na C-01');
@@ -138,10 +151,17 @@ test('osadzenie na ringu: K-7 wpięty w podłogę na środku wstęgi, przed orbi
     a -= 2 * Math.PI * Math.round(a / (2 * Math.PI));
     assert.ok(Math.abs(a) * ring.radii.floorMid > l.halfWidth + HALO_PORT.collar + 100 + d.length / 2 + HALO_PORT.collar, `dok transportowy ${d.index} koliduje z K-7`);
   }
-  // płyta portu w mapach terenu obejmuje kołnierz K-7, doki i portale tranzytów (miejsca rozłączne)
+  // płyty w mapach terenu: 4 kompleksy (K-7 + 3 zatoki) i 4 portale tranzytów, rozłączne
   const sites = haloPortSites(ring.radii.floorMid);
-  assert.equal(sites.length, 1 + HALO_PORT.docks + HALO_TRANSIT.count);
-  assert.ok(sites.length <= 8, 'GLSL ma 8 miejsc (uPortSites[8])');
+  assert.equal(sites.length, HALO_PORT.complexes * (1 + HALO_PORT.docks) + HALO_TRANSIT.count);
+  assert.equal(sites.filter((s) => s.kind === 'k7').length, HALO_PORT.complexes);
+  // kompleksy co 90°, pierwszy przy kącie stacji (hala gracza)
+  const k7s = sites.filter((s) => s.kind === 'k7');
+  for (let i = 0; i < k7s.length; i++) {
+    let d = k7s[i].theta - HALO_STATION_ANGLE - i * Math.PI / 2;
+    d -= 2 * Math.PI * Math.round(d / (2 * Math.PI));
+    assert.ok(Math.abs(d) < 1e-9, `kompleks ${i}`);
+  }
   // tranzyty jak w ECUMENE: 4 osie co 90°, K-7 w połowie między parą
   const ta = haloTransitAngles();
   for (let i = 0; i < ta.length; i++) {
@@ -199,5 +219,6 @@ test('scena K-7: nic nad kamerą gry przy zoomie 3,2, pokład pod płaszczyzną 
   // kamera persp gry przy zoomie 3,2 wisi ~535 j. nad z = 0 (near 100)
   assert.ok(top < 435, `najwyższy punkt K-7 z = ${top.toFixed(0)} (${where})`);
   assert.ok(k7HeightToZ(0) < -100, 'pokład hali pod płaszczyzną lotu');
-  assert.ok(s.labels.length > 50 && s.hoses.length === 4 && s.cranes.length === 2);
+  assert.ok(s.labels.length > 50 && s.hoses.length === 8 && s.cranes.length === 4);
+  assert.ok(s.groups.length + 1 <= 40, `grupy ruchome ${s.groups.length} (MAX_GROUPS 40)`);
 });

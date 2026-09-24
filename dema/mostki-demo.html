@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mostki — kill przez mostek (demo)</title>
+<style>
+  :root { --ink: #d6e2e8; --muted: #7d919b; --line: #9fc6d626; --panel: #070d13e6; --accent: #7cc9ff; --warn: #f0b060; --bad: #ff6b5e; --good: #7be3a0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; color: var(--ink); font: 12px/1.35 "Segoe UI", system-ui, sans-serif; }
+  canvas#c { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; outline: none; cursor: crosshair; }
+  canvas#webgl-layer { position: fixed; left: -99999px; top: 0; }
+  #panel { position: fixed; right: 10px; top: 10px; bottom: 10px; width: 318px; overflow-y: auto; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+  #panel h1 { font-size: 13px; margin: 0 0 2px; letter-spacing: .06em; }
+  #panel .sub { color: var(--muted); margin-bottom: 6px; }
+  #panel h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 12px 0 6px; font-weight: 600; }
+  .row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+  .row label { flex: 0 0 96px; color: var(--muted); }
+  .row input[type=range] { flex: 1 1 auto; min-width: 0; }
+  .row output { flex: 0 0 52px; text-align: right; font-variant-numeric: tabular-nums; }
+  .btns { display: flex; flex-wrap: wrap; gap: 4px; }
+  button, select, input[type=number], textarea { background: #0e1a24; color: var(--ink); border: 1px solid #2a4252; border-radius: 4px; padding: 4px 7px; font: inherit; }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.on { background: #173247; border-color: var(--accent); color: #fff; }
+  select { width: 100%; }
+  input[type=number] { width: 70px; }
+  .checks { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 8px; }
+  .checks label { display: flex; align-items: center; gap: 5px; }
+  .hint { color: var(--muted); font-size: 11px; margin-top: 4px; }
+  .warn { color: var(--warn); }
+  textarea { width: 100%; height: 150px; font: 11px/1.35 ui-monospace, Consolas, monospace; resize: vertical; }
+  #edit-fields { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px 6px; }
+  #edit-fields label { display: flex; flex-direction: column; color: var(--muted); font-size: 11px; }
+  #edit-fields input { width: 100%; }
+  #issues { font-size: 11px; margin-top: 4px; }
+  #bench-out { font: 11px/1.3 ui-monospace, Consolas, monospace; max-height: 280px; overflow: auto; white-space: pre; border: 1px solid var(--line); border-radius: 4px; padding: 4px; margin-top: 6px; display: none; }
+  #bench-progress { height: 4px; background: #16242e; border-radius: 2px; overflow: hidden; margin-top: 4px; }
+  #bench-progress i { display: block; height: 100%; width: 0; background: var(--accent); }
+  #errors { position: fixed; left: 10px; bottom: 10px; max-width: 60vw; max-height: 40vh; overflow: auto; padding: 8px; background: #2a0b0bee; border: 1px solid #a33; border-radius: 6px; font: 11px ui-monospace, monospace; white-space: pre-wrap; display: none; }
+  #loading { position: fixed; left: 50%; top: 45%; transform: translate(-50%, -50%); padding: 8px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+  body.shot #panel, body.shot #loading { display: none; }
+  body.nohud #panel { display: none; }
+</style>
+</head>
+<body>
+<canvas id="c" tabindex="0" aria-label="Demo mostków: kadłuby, ostrzał, strefy mostków"></canvas>
+<canvas id="webgl-layer"></canvas>
+<div id="loading">ładowanie kadłubów…</div>
+<div id="errors"></div>
+
+<div id="panel">
+  <h1>MOSTKI — kill przez mostek</h1>
+  <div class="sub">Zniszczenie mostka = utrata dowodzenia: okręt gaśnie i dryfuje, bez wybuchu reaktora.</div>
+
+  <h2>Kadłub</h2>
+  <div class="btns" id="hull-btns">
+    <button data-hull="atlas">Atlas <kbd>1</kbd></button>
+    <button data-hull="battleship">Bellator <kbd>2</kbd></button>
+    <button data-hull="pirate_battleship">Iron Skull <kbd>3</kbd></button>
+    <button data-hull="all">Wszystkie <kbd>4</kbd></button>
+  </div>
+  <div class="row" style="margin-top:6px"><label for="atlas-variant">Mostek Atlasa</label>
+    <select id="atlas-variant"></select></div>
+
+  <h2>Parametry mostka</h2>
+  <div class="row"><label for="armor">Pancerz ×</label><input id="armor" type="range" min="0.5" max="6" step="0.25"><output id="armor-out"></output></div>
+  <div class="row"><label for="killfrac">Próg (killFrac)</label><input id="killfrac" type="range" min="0.1" max="1" step="0.05"><output id="killfrac-out"></output></div>
+  <div class="hint">Mostek pada, gdy zniszczone zostanie ≥ killFrac jego heksów (integralność ≤ 1 − killFrac). Zmiana = reset kadłubów.</div>
+
+  <h2>Broń i działo</h2>
+  <div class="row"><label for="weapon">Broń <kbd>[ ]</kbd></label><select id="weapon"></select></div>
+  <div class="btns" id="gun-btns">
+    <button data-dir="dziob">z dziobu</button>
+    <button data-dir="skos">skos 45°</button>
+    <button data-dir="burta">z burty</button>
+    <button data-dir="rufa">z rufy</button>
+  </div>
+  <div class="btns" style="margin-top:4px">
+    <button id="lock-btn">Lock na mostek <kbd>T</kbd></button>
+    <button id="auto-btn">Ogień ciągły <kbd>F</kbd></button>
+  </div>
+  <div class="hint">LPM — strzał w kursor; PPM (przeciągnij) — przestaw działo; kółko — zoom; środkowy przycisk — przesuń widok.</div>
+
+  <h2>Cel</h2>
+  <div class="row"><label for="spin">Obrót °/s</label><input id="spin" type="range" min="-12" max="12" step="0.5"><output id="spin-out"></output></div>
+  <div class="row"><label for="drift">Dryf j./s</label><input id="drift" type="range" min="0" max="300" step="10"><output id="drift-out"></output></div>
+  <div class="checks">
+    <label><input type="checkbox" id="shield"> Tarcza (wł.)</label>
+    <label><input type="checkbox" id="returnfire" checked> Ogień zwrotny</label>
+  </div>
+
+  <h2>Czas</h2>
+  <div class="btns" id="time-btns">
+    <button id="pause-btn">Pauza <kbd>Spacja</kbd></button>
+    <button data-scale="1">1×</button>
+    <button data-scale="0.25">0,25×</button>
+    <button data-scale="0.1">0,1×</button>
+    <button id="reset-btn">Reset <kbd>R</kbd></button>
+  </div>
+
+  <h2>Nakładki</h2>
+  <div class="checks" id="overlay-checks">
+    <label><input type="checkbox" data-ov="grid"> Siatka heksów <kbd>G</kbd></label>
+    <label><input type="checkbox" data-ov="zone" checked> Strefa <kbd>Z</kbd></label>
+    <label><input type="checkbox" data-ov="bridgeHexes"> Heksy mostka <kbd>B</kbd></label>
+    <label><input type="checkbox" data-ov="hardpoints"> Hardpointy <kbd>H</kbd></label>
+    <label><input type="checkbox" data-ov="info" checked> Stan i integralność</label>
+    <label><input type="checkbox" data-ov="aim" checked> Linia ognia</label>
+  </div>
+
+  <h2>Model trafień</h2>
+  <div class="checks">
+    <label title="Gdy sonda applyImpact nie znajdzie heksa, który znalazł detektor trafienia (wiązka: brzeg kadłuba; seria: wgnieciony heks), uderzenie idzie w ten heks. Bez tego — gra dziś."><input type="checkbox" id="fixprobe" checked> Poprawka sondy</label>
+  </div>
+  <div class="row"><label for="poolmul" title="Eksperyment balansu: ile obrażeń trafienia w kadłub schodzi z puli HP. Gra: 1.">Pula HP ×</label><input id="poolmul" type="range" min="0.1" max="1" step="0.05"><output id="poolmul-out"></output></div>
+      <div class="hint">Gra: ×1 — pula HP zwykle zabija przed mostkiem (poza ostrzałem od rufy). ×0,5 — wyścig wyrównany (benchmark).</div>
+
+  <h2>Edytor strefy <kbd>E</kbd></h2>
+  <div class="btns"><button id="edit-btn">Edycja strefy</button><select id="edit-bridge" style="flex:1"></select></div>
+  <div id="edit-fields" style="margin-top:6px">
+    <label>x (PNG)<input type="number" id="ed-x" step="1"></label>
+    <label>y (PNG)<input type="number" id="ed-y" step="1"></label>
+    <label>obrót °<input type="number" id="ed-rot" step="1"></label>
+    <label>szer. (PNG)<input type="number" id="ed-w" step="1" min="4"></label>
+    <label>wys. (PNG)<input type="number" id="ed-h" step="1" min="4"></label>
+    <label>heksów<input type="text" id="ed-count" readonly></label>
+  </div>
+  <div id="issues"></div>
+  <div class="hint">W trybie edycji: przeciągnij środek (przesuw), róg (rozmiar), uchwyt nad strefą (obrót). Współrzędne w przestrzeni PNG sprite'a — jak w hardpointEditorDefaults.</div>
+  <div class="btns" style="margin-top:4px">
+    <button id="export-btn">Eksport JSON</button>
+    <button id="copy-btn">Kopiuj</button>
+    <button id="proposal-btn">Propozycje</button>
+  </div>
+  <textarea id="export-out" spellcheck="false" style="margin-top:4px"></textarea>
+
+  <h2>Benchmark (bez renderu)</h2>
+  <div class="btns">
+    <button id="bench-quick">Szybki: bieżący kadłub, broń</button>
+    <button id="bench-full">Pełny</button>
+    <button id="bench-save">Pobierz JSON</button>
+  </div>
+  <div id="bench-progress"><i></i></div>
+  <div id="bench-out"></div>
+</div>
+
+<script type="module" src="./mostki-demo.js"></script>
+</body>
+</html>

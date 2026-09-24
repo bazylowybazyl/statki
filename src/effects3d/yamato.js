@@ -487,10 +487,8 @@ export function createYamatoImpactFactory(scene) {
         // ── Bloom (0.3 podczas efektu, przywracany po zakończeniu) ──────────
         const bloomLease = acquireYamatoBloomSuppression();
 
-        // ── Światło ─────────────────────────────────────────────────────────
-        const light = new THREE.PointLight(0x66ccff, 0, size * 5);
-        light.position.set(eX, size * 0.3, eZ);
-        scene.add(light);
+        // Bez PointLight — scena overlaya nie ma materiałów oświetlanych, a światło
+        // zmieniało klucz programu materiałów tworzonych w trakcie wybuchu.
 
         // ── Wstrząs kamery ────────────────────────────────────────────────────
         if (typeof window !== "undefined" && window.camera?.addShake &&
@@ -508,7 +506,10 @@ export function createYamatoImpactFactory(scene) {
         // ── 3D shockwave ─────────────────────────────────────────────────────
         const sw3d = (typeof window !== "undefined") ? window.trigger3DShockwave : null;
         if (typeof sw3d === "function") {
-            sw3d(eX, 0, -eZ, Math.max(60, size * 1.3 * q), 0.5, 0x44aaff);
+            // Scena Core3D: XY gry z y3d = -yGry, z = 0 (jak reactorblow i rakiety).
+            // Dawniej (eX, 0, -eZ) kładło falę na y=0 i z=-yGry — niewidoczna,
+            // a mimo to włączała snapshot refrakcji (3 rendery sceny co 2. klatkę).
+            sw3d(eX, -eZ, 0, Math.max(60, size * 1.3 * q), 0.5, 0x44aaff);
         }
 
         const initTime = performance.now() / 1000;
@@ -601,9 +602,6 @@ export function createYamatoImpactFactory(scene) {
             fireSystem.update(gt);
             smokeSystem.update(gt);
 
-            // światło zanika po 0.4 s
-            light.intensity = Math.max(0, 8 * (1 - time / 0.4));
-
             // ── wtórne łańcuchowe mini-wybuchy ──────────────────────────────
             while (secIdx < 4 && time >= secDelays[secIdx]) {
                 const si    = secIdx++;
@@ -648,7 +646,6 @@ export function createYamatoImpactFactory(scene) {
             if (disposed) return;
             disposed = true;
             if (group.parent) group.parent.remove(group);
-            if (light.parent)  light.parent.remove(light);
             releaseYamatoBloomSuppression(bloomLease);
         }
 
@@ -657,30 +654,22 @@ export function createYamatoImpactFactory(scene) {
 }
 
 // ─── Bloom suppression: redukuje do 0.3 podczas efektu ───────────────────────
+// Modyfikator overlaya (sufit siły) pod kluczem per efekt — overlay liczy bloom
+// co klatkę od bazy. Dawny „zapisz bazę → ustaw 0.3 → przywróć bazę” gryzł się
+// z identycznym mechanizmem supernowej i przy nałożeniu zostawiał bloom zepsuty.
+const YAMATO_BLOOM_SUPPRESSION = Object.freeze({ strengthCap: 0.3 });
+let _yamatoBloomLeaseSerial = 0;
+
 function acquireYamatoBloomSuppression() {
     if (typeof window === "undefined") return null;
     const overlay = window.overlay3D;
-    if (!overlay?.getBloomConfig || !overlay?.setBloomConfig) return null;
-
-    const state = (window.__yamatoBloomSuppression =
-        window.__yamatoBloomSuppression || { count: 0, previous: null });
-
-    if (state.count === 0) {
-        state.previous = overlay.getBloomConfig();
-        overlay.setBloomConfig({ strength: 0.3 });
-    }
-    state.count += 1;
-    return state;
+    if (!overlay?.setBloomModifier) return null;
+    const lease = `yamato:${++_yamatoBloomLeaseSerial}`;
+    overlay.setBloomModifier(lease, YAMATO_BLOOM_SUPPRESSION);
+    return lease;
 }
 
-function releaseYamatoBloomSuppression(state) {
-    if (!state || typeof window === "undefined") return;
-    const overlay = window.overlay3D;
-    if (!overlay?.setBloomConfig) return;
-
-    state.count = Math.max(0, state.count - 1);
-    if (state.count === 0 && state.previous) {
-        overlay.setBloomConfig(state.previous);
-        state.previous = null;
-    }
+function releaseYamatoBloomSuppression(lease) {
+    if (!lease || typeof window === "undefined") return;
+    window.overlay3D?.clearBloomModifier?.(lease);
 }

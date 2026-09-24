@@ -1,0 +1,610 @@
+[
+ {
+  "hullKey": "pirate_battleship",
+  "weaponId": "armata_mk1",
+  "dir": "skos",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 1,
+  "killFrac": 0.25,
+  "bridgeHexes": [
+   112
+  ],
+  "hexTotal": 2267,
+  "damagePerShot": 150,
+  "interval": 2.5,
+  "bridge": {
+   "shots": 113,
+   "time": 282.5,
+   "damage": 16950,
+   "alive": 0.9501543890604323
+  },
+  "pool": {
+   "shots": 80,
+   "time": 200,
+   "damage": 12000,
+   "alive": 0.964711071901191,
+   "cause": "pool"
+  },
+  "shots": 113,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 0,
+  "probeRescued": 0,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "pirate_battleship",
+  "weaponId": "armata_mk1",
+  "dir": "skos",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 1,
+  "killFrac": 0.35,
+  "bridgeHexes": [
+   112
+  ],
+  "hexTotal": 2267,
+  "damagePerShot": 150,
+  "interval": 2.5,
+  "bridge": {
+   "shots": 125,
+   "time": 312.5,
+   "damage": 18750,
+   "alive": 0.9448610498456109
+  },
+  "pool": {
+   "shots": 80,
+   "time": 200,
+   "damage": 12000,
+   "alive": 0.964711071901191,
+   "cause": "pool"
+  },
+  "shots": 125,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 0,
+  "probeRescued": 0,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "pirate_battleship",
+  "weaponId": "armata_mk1",
+  "dir": "skos",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 1,
+  "killFrac": 0.45,
+  "bridgeHexes": [
+   112
+  ],
+  "hexTotal": 2267,
+  "damagePerShot": 150,
+  "interval": 2.5,
+  "bridge": {
+   "shots": 136,
+   "time": 340,
+   "damage": 20400,
+   "alive": 0.9400088222320248
+  },
+  "pool": {
+   "shots": 80,
+   "time": 200,
+   "damage": 12000,
+   "alive": 0.964711071901191,
+   "cause": "pool"
+  },
+  "shots": 136,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 0,
+  "probeRescued": 0,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "pirate_battleship",
+  "weaponId": "armata_mk1",
+  "dir": "skos",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 1,
+  "killFrac": 0.6,
+  "bridgeHexes": [
+   112
+  ],
+  "hexTotal": 2267,
+  "damagePerShot": 150,
+  "interval": 2.5,
+  "bridge": {
+   "shots": 285,
+   "time": 712.5,
+   "damage": 42750,
+   "alive": 0.8742831936479929
+  },
+  "pool": {
+   "shots": 80,
+   "time": 200,
+   "damage": 12000,
+   "alive": 0.964711071901191,
+   "cause": "pool"
+  },
+  "shots": 285,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 0,
+  "probeRescued": 0,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "pirate_battleship",
+  "weaponId": "armata_mk1",
+  "dir": "skos",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 1.5,
+  "killFrac": 0.25,
+  "bridgeHexes": [
+   112
+  ],
+  "hexTotal": 2267,
+  "damagePerShot": 150,
+  "interval": 2.5,
+  "bridge": {
+   "shots": 113,
+   "time": 282.5,
+   "damage": 16950,
+   "alive": 0.9501543890604323
+  },
+  "pool": {
+   "shots": 80,
+   "time": 200,
+   "damage": 12000,
+   "alive": 0.964711071901191,
+   "cause": "pool"
+  },
+  "shots": 113,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 0,
+  "probeRescued": 0,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "pirate_battleship",
+  "weaponId": "armata_mk1",
+  "dir": "skos",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 1.5,
+  "killFrac": 0.35,
+  "bridgeHexes": [
+   112
+  ],
+  "hexTotal": 2267,
+  "damagePerShot": 150,
+  "interval": 2.5,
+  "bridge": {
+   "shots": 125,
+   "time": 312.5,
+   "damage": 18750,
+   "alive": 0.9448610498456109
+  },
+  "pool": {
+   "shots": 80,
+   "time": 200,
+   "damage": 12000,
+   "alive": 0.964711071901191,
+   "cause": "pool"
+  },
+  "shots": 125,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 0,
+  "probeRescued": 0,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "pirate_battleship",
+  "weaponId": "armata_mk1",
+  "dir": "skos",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 1.5,
+  "killFrac": 0.45,
+  "bridgeHexes": [
+   112
+  ],
+  "hexTotal": 2267,
+  "damagePerShot": 150,
+  "interval": 2.5,
+  "bridge": {
+   "shots": 136,
+   "time": 340,
+   "damage": 20400,
+   "alive": 0.9400088222320248
+  },
+  "pool": {
+   "shots": 80,
+   "time": 200,
+   "damage": 12000,
+   "alive": 0.964711071901191,
+   "cause": "pool"
+  },
+  "shots": 136,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 0,
+  "probeRescued": 0,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "pirate_battleship",
+  "weaponId": "armata_mk1",
+  "dir": "skos",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 1.5,
+  "killFrac": 0.6,
+  "bridgeHexes": [
+   112
+  ],
+  "hexTotal": 2267,
+  "damagePerShot": 150,
+  "interval": 2.5,
+  "bridge": {
+   "shots": 285,
+   "time": 712.5,
+   "damage": 42750,
+   "alive": 0.8742831936479929
+  },
+  "pool": {
+   "shots": 80,
+   "time": 200,
+   "damage": 12000,
+   "alive": 0.964711071901191,
+   "cause": "pool"
+  },
+  "shots": 285,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 0,
+  "probeRescued": 0,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "pirate_battleship",
+  "weaponId": "armata_mk1",
+  "dir": "skos",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 2,
+  "killFrac": 0.25,
+  "bridgeHexes": [
+   112
+  ],
+  "hexTotal": 2267,
+  "damagePerShot": 150,
+  "interval": 2.5,
+  "bridge": {
+   "shots": 141,
+   "time": 352.5,
+   "damage": 21150,
+   "alive": 0.9501543890604323
+  },
+  "pool": {
+   "shots": 80,
+   "time": 200,
+   "damage": 12000,
+   "alive": 0.9655932951036612,
+   "cause": "pool"
+  },
+  "shots": 141,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 0,
+  "probeRescued": 0,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "pirate_battleship",
+  "weaponId": "armata_mk1",
+  "dir": "skos",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 2,
+  "killFrac": 0.35,
+  "bridgeHexes": [
+   112
+  ],
+  "hexTotal": 2267,
+  "damagePerShot": 150,
+  "interval": 2.5,
+  "bridge": {
+   "shots": 166,
+   "time": 415,
+   "damage": 24900,
+   "alive": 0.9448610498456109
+  },
+  "pool": {
+   "shots": 80,
+   "time": 200,
+   "damage": 12000,
+   "alive": 0.9655932951036612,
+   "cause": "pool"
+  },
+  "shots": 166,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 0,
+  "probeRescued": 0,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "pirate_battleship",
+  "weaponId": "armata_mk1",
+  "dir": "skos",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 2,
+  "killFrac": 0.45,
+  "bridgeHexes": [
+   112
+  ],
+  "hexTotal": 2267,
+  "damagePerShot": 150,
+  "interval": 2.5,
+  "bridge": {
+   "shots": 189,
+   "time": 472.5,
+   "damage": 28350,
+   "alive": 0.9400088222320248
+  },
+  "pool": {
+   "shots": 80,
+   "time": 200,
+   "damage": 12000,
+   "alive": 0.9655932951036612,
+   "cause": "pool"
+  },
+  "shots": 189,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 0,
+  "probeRescued": 0,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "pirate_battleship",
+  "weaponId": "armata_mk1",
+  "dir": "skos",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 2,
+  "killFrac": 0.6,
+  "bridgeHexes": [
+   112
+  ],
+  "hexTotal": 2267,
+  "damagePerShot": 150,
+  "interval": 2.5,
+  "bridge": {
+   "shots": 371,
+   "time": 927.5,
+   "damage": 55650,
+   "alive": 0.8663431848257609
+  },
+  "pool": {
+   "shots": 80,
+   "time": 200,
+   "damage": 12000,
+   "alive": 0.9655932951036612,
+   "cause": "pool"
+  },
+  "shots": 371,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 0,
+  "probeRescued": 0,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "pirate_battleship",
+  "weaponId": "armata_mk1",
+  "dir": "skos",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 3,
+  "killFrac": 0.25,
+  "bridgeHexes": [
+   112
+  ],
+  "hexTotal": 2267,
+  "damagePerShot": 150,
+  "interval": 2.5,
+  "bridge": {
+   "shots": 141,
+   "time": 352.5,
+   "damage": 21150,
+   "alive": 0.9501543890604323
+  },
+  "pool": {
+   "shots": 80,
+   "time": 200,
+   "damage": 12000,
+   "alive": 0.9655932951036612,
+   "cause": "pool"
+  },
+  "shots": 141,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 0,
+  "probeRescued": 0,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "pirate_battleship",
+  "weaponId": "armata_mk1",
+  "dir": "skos",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 3,
+  "killFrac": 0.35,
+  "bridgeHexes": [
+   112
+  ],
+  "hexTotal": 2267,
+  "damagePerShot": 150,
+  "interval": 2.5,
+  "bridge": {
+   "shots": 166,
+   "time": 415,
+   "damage": 24900,
+   "alive": 0.9448610498456109
+  },
+  "pool": {
+   "shots": 80,
+   "time": 200,
+   "damage": 12000,
+   "alive": 0.9655932951036612,
+   "cause": "pool"
+  },
+  "shots": 166,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 0,
+  "probeRescued": 0,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "pirate_battleship",
+  "weaponId": "armata_mk1",
+  "dir": "skos",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 3,
+  "killFrac": 0.45,
+  "bridgeHexes": [
+   112
+  ],
+  "hexTotal": 2267,
+  "damagePerShot": 150,
+  "interval": 2.5,
+  "bridge": {
+   "shots": 189,
+   "time": 472.5,
+   "damage": 28350,
+   "alive": 0.9400088222320248
+  },
+  "pool": {
+   "shots": 80,
+   "time": 200,
+   "damage": 12000,
+   "alive": 0.9655932951036612,
+   "cause": "pool"
+  },
+  "shots": 189,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 0,
+  "probeRescued": 0,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ },
+ {
+  "hullKey": "pirate_battleship",
+  "weaponId": "armata_mk1",
+  "dir": "skos",
+  "mode": "bridge",
+  "variant": null,
+  "aim": "breach",
+  "armorMul": 3,
+  "killFrac": 0.6,
+  "bridgeHexes": [
+   112
+  ],
+  "hexTotal": 2267,
+  "damagePerShot": 150,
+  "interval": 2.5,
+  "bridge": {
+   "shots": 371,
+   "time": 927.5,
+   "damage": 55650,
+   "alive": 0.8663431848257609
+  },
+  "pool": {
+   "shots": 80,
+   "time": 200,
+   "damage": 12000,
+   "alive": 0.9655932951036612,
+   "cause": "pool"
+  },
+  "shots": 371,
+  "misses": 0,
+  "hardpointsLost": 0,
+  "ceilingDamage": 0,
+  "probeMisses": 0,
+  "probeRescued": 0,
+  "fixHitProbe": true,
+  "poolHitMul": 1,
+  "first": "pula"
+ }
+]

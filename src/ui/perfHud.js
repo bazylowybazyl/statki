@@ -635,6 +635,7 @@ export const PerfHUD = {
   els: null,
   graphCtx: null,
   aiDecisionTargetHz: 0,
+  physicsHz: 120,
   collapsedSections: { physics: true, ai: true, render: false, render3dDraw: false },
   _sectionToggleBound: false,
   sectionRows: {
@@ -1017,6 +1018,12 @@ export const PerfHUD = {
     this.aiDecisionTargetHz = Number.isFinite(value) && value > 0 ? value : 0;
   },
 
+  // Krok fizyki (?physHz). Wiersz „Fizyka” dopisuje go, gdy nie jest domyślne 120.
+  setPhysicsHz(hz) {
+    const value = Number(hz);
+    this.physicsHz = Number.isFinite(value) && value > 0 ? value : 120;
+  },
+
   markAiDecisionTick() {
     this.accum.aiDecisionTicks += 1;
   },
@@ -1340,6 +1347,7 @@ export const PerfHUD = {
 
     setMs(e.frameUntracked, d.frameUntrackedTime);
     setMsWithStep(e.physics, d.physicsTime, d.physicsPerStep);
+    if (e.physics && this.physicsHz !== 120) e.physics.textContent += ` @${this.physicsHz}Hz`;
     setMs(e.destructor, d.destructorTime);
     setMs(e.collisions, d.collisionTime);
     setMs(e.deform, d.deformTime);

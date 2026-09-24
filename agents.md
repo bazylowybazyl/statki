@@ -54,6 +54,11 @@
 - Sterowanie i fizyka gracza: `shipEntity.js`.
 - Destrukcja i kolizje heksów: `destructor.js`.
 
+### Mostki (zniszczenie mostka = kill)
+- `src/game/shipBridge.js` (strefy heksów, integralność, oś czasu), `src/game/shipBridgeRuntime.js` (klej gry), `src/3d/bridgeFx3D.js` (okna, wyrzut atmosfery). Opis: `docs/PORT-mostki.md`.
+- Utrata dowodzenia robi z NPC hulka (`isBridgeHulk`): `npcStep` pomija AI i model lotu, `applyDamageToNPC` i sufit heksów go nie ruszają, po `BRIDGE_KILL_TIMELINE.sequenceEnd` `finishBridgeKill` robi wrak BEZ losowego wybuchu reaktora. Nowe ścieżki śmierci / AI / celowania muszą to respektować.
+- AI celowo nie celuje w mostki (za szybko zabijałoby gracza) — tylko przyszli „bossowie”.
+
 ### Pociski, kolizje, efekty
 - Tablice `bullets`, `particles`.
 - `bulletsAndCollisionsStep(dt)` — ruch, trafienia, eksplozje, applyImpact.
@@ -86,6 +91,7 @@
    - Nie duplikuj postprocessingu w innych modułach.
    - Passy planet (warstwa 3), halo (5), ring-planet (6) i tarcz (7) są pomijane, gdy nikt nie zgłosi na nich widocznej zawartości (`Core3D.layerActivity`). Dodając obiekt na te warstwy, zgłaszaj go co klatkę (`Core3D.markPlanetLayersActive` / `Core3D.setShieldLayerActive`) — inaczej zniknie.
    - Shadow mapa słońca ma `autoUpdate = false`; odświeża się tylko przed passami ortho i FG. Nowy rzucający cień na innej warstwie wymaga `shadowMap.needsUpdate` przed jej passem.
+   - Cień kadłubów w passie shadow shafts = pole odległości sylwetki (`src/3d/hullShadowSdf.js`: warstwa tablicy tekstur na kształt, pieczenie z budżetem w `updateHexShips3D`). Okluder statku zgłaszaj przez `Core3D.pushShaftHullSdf` z danymi z `packHullShaftOccluder` (to samo przekształcenie co mesh kadłuba). Zmieniając `HULL_SDF_SHADOW_GLSL`, zmień też lustro `traceHullShadowCpu` — na nim stoją testy.
 
 2. **Moduły 3D (`world3d.js`, `stations3D.js`, `hexShips3D.js`)**
    - Używaj `Core3D.scene` i `Core3D.camera`.
@@ -94,6 +100,9 @@
 3. **Destruction + ship integration**
    - Zachowaj spójność osi/rotacji między `shipEntity.js` i `destructor.js`.
    - Unikaj alokacji w gorących pętlach (kolizje, spatial queries, contact buffers).
+   - Krok fizyki `PHYS_HZ` domyślnie 120 Hz (`?physHz=60` do testów A/B). Nowe stałe „na krok” (mnożniki tłumienia, liczniki w tickach) tylko przez `stepDecay120` / `ticksAt120` z `src/game/stepDecay.js` — inaczej zmiana kroku zmienia zachowanie gry.
+   - `hexGrid.grid` jest indeksowana komórką POCZĄTKOWĄ heksa, a wgnieciony heks stoi do `_maxHexDrift` px dalej. Szukanie heksów w oknie komórek (sondy trafień, raymarch wiązki) musi doliczyć `getHexProbeDrift(grid)` — inaczej heksy-duchy: pocisk przelatuje przez wgniecenie. Trafienie, które zna heks, podaje go do `applyImpact(..., { shard })` (w `index.html`: `applyHexImpact`), zamiast szukać drugi raz.
+   - Solver sprężyn GPU kroczy w czasie gry (`gpuSoftBodyHz` = 60), nie w klatkach renderu; liczniki dispatchera są w krokach 60 Hz.
 
 4. **Wydajność**
    - Bez nowych alokacji per-frame tam, gdzie da się użyć pooli/buforów.

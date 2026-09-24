@@ -764,6 +764,9 @@ export const DestructorBeams3D = {
     let hitAny = false;
     let killed = 0;
     const push = cfg.impactPush * Math.min(3, damage / 200) * cfg.cellSize;
+    const fraction = Math.max(0, Math.min(1, opts?.damageFraction ?? 1));
+    const breakProgress = Math.max(0, Math.min(1, opts?.breakProgress ?? 1));
+    const impulseTime = opts?.impulseTime || 0;
 
     for (const n of body.nodes) {
       if (!n.active) continue;
@@ -773,10 +776,22 @@ export const DestructorBeams3D = {
       hitAny = true;
       const falloff = 1 - Math.sqrt(d2) / radius;
       const influence = falloff * falloff * (3 - 2 * falloff);
-      n.hp -= damage * 0.5 * influence;
-      n.x += dir.x * push * influence;
-      n.y += dir.y * push * influence;
-      n.z += dir.z * push * influence;
+      n.hp -= damage * 0.5 * influence * fraction;
+      if (impulseTime > 0) {
+        // Pressure changes velocity; the solver moves and buckles the metal
+        // over subsequent steps instead of teleporting it at detonation.
+        const length = Math.sqrt(d2);
+        const radial = length > 1e-6 ? 0.7 / length : 0;
+        const vx = dx * radial + dir.x * (radial ? 0.3 : 1);
+        const vy = dy * radial + dir.y * (radial ? 0.3 : 1);
+        const vz = dz * radial + dir.z * (radial ? 0.3 : 1);
+        const kick = push * influence * fraction / impulseTime;
+        n.vx += vx * kick; n.vy += vy * kick; n.vz += vz * kick;
+      } else {
+        n.x += dir.x * push * influence * fraction;
+        n.y += dir.y * push * influence * fraction;
+        n.z += dir.z * push * influence * fraction;
+      }
       if (n.hp <= 0) { this.destroyNode(body, n); killed++; }
     }
 
@@ -795,7 +810,7 @@ export const DestructorBeams3D = {
       // Gródź i wręg wytrzymują trafienie, które przecina poszycie na wylot.
       const resist = (beam.type === BEAM_TYPE.BULKHEAD) ? 380
         : (beam.type === BEAM_TYPE.FRAME) ? 260 : 90;
-      if (damage < resist) continue;
+      if (damage * breakProgress < resist) continue;
       beam.broken = true;
       body.structureDirty = true;
       this.perf.beamsBroken++;

@@ -39,17 +39,17 @@ export function cloneBeamStructure(src) {
 }
 
 export function createCrashBodies(system, stationStructure, ramStructure, options = {}) {
-  const { heavyShip = false, rammingMassMult = 1 } = options;
+  const { heavyShip = false, rammingMassMult = 1, combat = false } = options;
   const massRatio = Math.max(1, Number(options.massRatio) || STATION_MASS_RATIO);
   const station = system.createBody(cloneBeamStructure(stationStructure), {
-    name: 'stacja', static: !heavyShip, noSplit: !heavyShip,
-    massMultiplier: heavyShip ? 1 : massRatio * ramStructure.mass / stationStructure.mass
+    name: 'stacja', static: !heavyShip && !combat, noSplit: !heavyShip && !combat,
+    massMultiplier: heavyShip || combat ? 1 : massRatio * ramStructure.mass / stationStructure.mass
   });
   const ship = system.createBody(cloneBeamStructure(ramStructure), {
     name: 'statek',
     position: { x: station.radius + ramStructure.radius + CRASH_TARGET_SIZE * 0.45, y: 0, z: 0 },
     quaternion: { x: 0, y: 1, z: 0, w: 0 },
-    massMultiplier: heavyShip ? massRatio * stationStructure.mass / ramStructure.mass : 1,
+    massMultiplier: heavyShip && !combat ? massRatio * stationStructure.mass / ramStructure.mass : 1,
     rammingMassMult
   });
   return [station, ship];

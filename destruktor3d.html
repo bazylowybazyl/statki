@@ -24,9 +24,21 @@
     font-size: 11px;
     line-height: 1.5;
   }
-  #panel-left { top: 14px; left: 14px; width: 254px; max-height: calc(100% - 28px); overflow-y: auto; }
-  #panel-stats { top: 14px; right: 14px; width: 232px; color: #7fc9ff; }
+  #panel-left { top: 50px; left: 14px; width: 254px; max-height: calc(100% - 80px); overflow-y: auto; }
+  #panel-stats { top: 50px; right: 14px; width: 232px; max-height: calc(100% - 80px); overflow-y: auto; color: #7fc9ff; }
+  #hud-controls { position: absolute; top: 12px; left: 14px; right: 14px; display: flex; justify-content: space-between; }
+  #hud-controls button { pointer-events: auto; }
+  .panel.folded { display: none; }
+  @media (max-width: 1000px) {
+    #panel-left:not(.open), #panel-stats:not(.open) { display: none; }
+    #panel-help { left: 14px !important; font-size: 10px; }
+  }
   #panel-help { bottom: 14px; left: 310px; right: 14px; color: #8aa3c0; pointer-events: none; }
+  #aim { position: absolute; width: 24px; height: 24px; border: 1px solid #6fe5ff; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; }
+  #aim::before, #aim::after { content: ''; position: absolute; background: #bbf5ff; }
+  #aim::before { width: 8px; height: 1px; left: 8px; top: 12px; }
+  #aim::after { width: 1px; height: 8px; left: 12px; top: 8px; }
+  #aim.hit { border-color: #ffb35e; box-shadow: 0 0 12px #ffb35e; }
   h1 { font-size: 14px; margin: 0 0 8px 0; color: #6fb7ff; letter-spacing: 1px; }
   h2 { font-size: 11px; margin: 10px 0 4px 0; color: #57d78a; }
   .row { display: flex; justify-content: space-between; align-items: center; margin: 3px 0; gap: 8px; }
@@ -62,19 +74,26 @@
 <body>
 
 <div id="ui">
+  <div id="hud-controls"><button id="btn-settings">Ustawienia / myśliwiec</button><button id="btn-telemetry">Telemetria</button></div>
   <div class="panel" id="panel-left">
     <h1>DESTRUKTOR 3D — BELKI</h1>
     <h2>LOT</h2>
+    <button class="wide" id="btn-fighter" disabled>Myśliwiec — lot i uzbrojenie</button>
     <button class="wide" id="btn-pilot" disabled>Pilotuj statek / wznów lot</button>
     <div class="row"><label for="opt-camera">Kamera (V)</label><select id="opt-camera">
       <option value="chase">Za statkiem</option><option value="orbit">Swobodna</option>
     </select></div>
     <div class="row"><label><input type="checkbox" id="cb-flight-assist" checked> Stabilizacja dryfu</label></div>
+    <div class="row"><label><input type="checkbox" id="cb-mouse-flight" checked> Sterowanie myszą</label></div>
     <div class="legend"><kbd>W/S</kbd> ciąg / wstecz · <kbd>A/D</kbd> skręt<br>
       <kbd>↑/↓</kbd> dziób góra / dół · <kbd>Q/E</kbd> przechył<br>
       <kbd>Spacja/Ctrl</kbd> góra / dół · <kbd>Z/C</kbd> w bok<br>
       <kbd>Shift</kbd> dopalacz · <kbd>X</kbd> hamulec<br>
-      Przytrzymaj LPM i odchyl mysz, aby skręcać w widoku za statkiem. Kółko: odległość kamery.</div>
+      Mysz kieruje dziobem w widoku za statkiem. Kółko: odległość kamery. Wyłącz sterowanie myszą, żeby latać samą klawiaturą.</div>
+
+    <h2>UZBROJENIE</h2>
+    <div class="legend"><kbd>LPM</kbd> laser · przytrzymaj: 18 strzałów/s<br><kbd>PPM</kbd> rakiety · przytrzymaj: salwy co 0,67 s<br>Celownik pokazuje kierunek dział. Rakiety lecą prosto i wybuchają przy trafieniu. Amunicja testowa: bez limitu.</div>
+    <button class="wide" id="btn-fire-test" disabled>Próba ostrzału — 10 s</button>
 
     <button class="wide" id="btn-swap">⇄ Zamień: ciężki statek, lekka stacja</button>
 
@@ -88,14 +107,14 @@
     <h2>MODELE GLB</h2>
     <button class="wide" id="btn-load-ship">Wczytaj GLB statku…</button>
     <input type="file" id="file-ship" accept=".glb" hidden>
-    <div class="model-name" id="model-ship" role="status">Statek: ładowanie venator.glb…</div>
+    <div class="model-name" id="model-ship" role="status">Statek: myśliwiec testowy</div>
     <div class="row"><label for="opt-ship-forward">Dziób w modelu</label><select id="opt-ship-forward">
       <option value="auto">auto: najdłuższa oś</option>
       <option value="+x">+X</option><option value="-x">−X</option>
       <option value="+y">+Y</option><option value="-y">−Y</option>
       <option value="+z">+Z</option><option value="-z">−Z</option>
     </select></div>
-    <div class="row"><label for="sl-ship-size">Rozmiar statku<br>(% stacji)</label><input type="range" id="sl-ship-size" min="15" max="140" step="1" value="42"><output id="o-ship-size">42</output></div>
+    <div class="row"><label for="sl-ship-size">Rozmiar statku<br>(% stacji)</label><input type="range" id="sl-ship-size" min="6" max="140" step="1" value="12"><output id="o-ship-size">12</output></div>
     <button class="wide" id="btn-ship-prototype">Przywróć statek prototypowy</button>
     <button class="wide" id="btn-ship-default">Przywróć Venatora</button>
     <button class="wide" id="btn-load-station">Wczytaj GLB stacji…</button>
@@ -154,8 +173,8 @@
     <div class="row"><label>Przewaga masy ×</label><input type="range" id="sl-mass-ratio" min="1" max="5" step="0.25" value="5"><output id="o-mass-ratio" style="width:65px">100 000</output></div>
     <div class="row"><label>Prędkość zderzenia</label><input type="range" id="sl-speed" min="10" max="400" step="10" value="300"><output id="o-speed">300</output></div>
     <div class="row"><label>Ciąg silnika</label><input type="range" id="sl-thrust" min="10" max="200" step="5" value="70"><output id="o-thrust">70</output></div>
-    <div class="row"><label>Obrażenia strzału</label><input type="range" id="sl-dmg" min="50" max="1500" step="25" value="450"><output id="o-dmg">450</output></div>
-    <div class="row"><label>Promień strzału</label><input type="range" id="sl-radius" min="1" max="9" step="0.5" value="3"><output id="o-radius">3</output></div>
+    <div class="row"><label>Siła uzbrojenia</label><input type="range" id="sl-dmg" min="50" max="1500" step="25" value="450"><output id="o-dmg">450</output></div>
+    <div class="row"><label>Promień eksplozji</label><input type="range" id="sl-radius" min="1" max="9" step="0.5" value="3"><output id="o-radius">3</output></div>
 
     <h2>WARSTWY</h2>
     <div class="row"><label><input type="checkbox" id="cb-follow" checked> Swobodna kamera śledzi zderzenie</label></div>
@@ -200,6 +219,10 @@
       <div><span>Trójkąty skóry</span><span id="st-skin">—</span></div>
       <div><span>Krawędzie / wnętrze</span><span id="st-interior">—</span></div>
       <div><span>Odłamki: blacha / profile</span><span id="st-debris">0 / 0</span></div>
+      <div><span>Wystrzelono: laser / rakiety</span><span id="st-shots">0 / 0</span></div>
+      <div><span>Trafienia: laser / rakiety</span><span id="st-hits">0 / 0</span></div>
+      <div><span>Pociski w locie</span><span id="st-projectiles">0</span></div>
+      <div><span>Broń CPU / max klatki</span><span id="st-weapons">0 / 0 ms</span></div>
       <div><span>Obiekty na starcie</span><span id="st-fleet">1 + 1</span></div>
       <div><span>Stress test</span><span id="st-benchmark">—</span></div>
       <div><span>Średni FPS próby</span><span id="st-average-fps">—</span></div>
@@ -214,10 +237,11 @@
     <kbd>W/S</kbd> ciąg / wstecz &nbsp;|&nbsp; <kbd>A/D</kbd> skręt &nbsp;|&nbsp; <kbd>↑/↓</kbd> dziób góra / dół
     &nbsp;|&nbsp; <kbd>Q/E</kbd> przechył &nbsp;|&nbsp; <kbd>X</kbd> hamulec &nbsp;|&nbsp; <kbd>Shift</kbd> dopalacz<br>
     <kbd>Spacja/Ctrl</kbd> góra / dół &nbsp;|&nbsp; <kbd>Z/C</kbd> w bok &nbsp;|&nbsp; <kbd>V</kbd> kamera
-    &nbsp;|&nbsp; <kbd>PPM</kbd> strzał &nbsp;|&nbsp; <kbd>T</kbd> taran &nbsp;|&nbsp; <kbd>P</kbd> pauza &nbsp;|&nbsp; <kbd>R</kbd> reset
+    &nbsp;|&nbsp; <kbd>LPM</kbd> laser &nbsp;|&nbsp; <kbd>PPM</kbd> rakiety &nbsp;|&nbsp; <kbd>T</kbd> taran &nbsp;|&nbsp; <kbd>P</kbd> pauza &nbsp;|&nbsp; <kbd>R</kbd> reset
   </div>
 </div>
 
+<div id="aim" aria-hidden="true"></div>
 <div id="toast"></div>
 <div id="drop-hint"><span>Upuść plik .glb — zostanie zamieniony w konstrukcję</span></div>
 
@@ -237,6 +261,9 @@ import {
 import { BeamCrashBenchmark } from './src/game/beamCrashBenchmark.js';
 import { applyFlightControls, readFlightInput } from './src/game/beamFlightControls3D.js';
 import { BeamFlightCamera3D } from './src/3d/beamFlightCamera3D.js';
+import { BeamWeapons3D } from './src/game/beamWeapons3D.js';
+import { BeamWeaponsVisual3D } from './src/3d/beamWeaponsVisual3D.js';
+import { createBeamFighterModel } from './src/3d/beamFighter3D.js';
 
 const TARGET_SIZE = CRASH_TARGET_SIZE;
 const DEFAULT_GLB = new URL('./src/stations/earth-station.glb', import.meta.url).href;
@@ -263,7 +290,7 @@ const flightCamera = new BeamFlightCamera3D(camera);
 const cameraSelect = document.getElementById('opt-camera');
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
-controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: null };
+controls.mouseButtons = { LEFT: null, MIDDLE: THREE.MOUSE.ROTATE, RIGHT: null };
 window.addEventListener('contextmenu', (e) => e.preventDefault());
 
 {
@@ -287,6 +314,13 @@ scene.add(grid);
 
 BeamShips3D.init(scene);
 BeamShips3D.setLightDir(0.35, 0.8, 0.5);
+const weapons = new BeamWeapons3D(DestructorBeams3D);
+const weaponVisuals = new BeamWeaponsVisual3D(scene, weapons);
+const weaponInput = { laser: false, missile: false };
+let weaponDamage = 450, weaponRadius = 3, weaponMs = 0, weaponPeakMs = 0;
+let combatMode = true, fireTest = false;
+const aimEl = document.getElementById('aim'), aimPoint = new THREE.Vector3();
+let previousHits = 0, hitUntil = 0;
 
 // ============================== STAN ==============================
 let bodies = [];
@@ -295,7 +329,7 @@ let cfg = null;
 let cellSize = 1;
 let stationStructure = null;
 let ramStructure = null;
-let models = { station: { root: null, label: 'bryła zapasowa' }, ship: { root: null, label: 'prototyp' } };
+let models = { station: { root: null, label: 'bryła zapasowa' }, ship: { root: createBeamFighterModel(), label: 'myśliwiec testowy' } };
 const modelRequests = { station: 0, ship: 0 };
 let stationBody = null;
 let ramBody = null;
@@ -313,6 +347,7 @@ let flightAssist = true;
 let engineThrust = 70;
 const flightInput = {};
 const mouseStick = { pointerId: null, x: 0, y: 0, yaw: 0, pitch: 0 };
+let mouseFlight = true;
 const benchmark = new BeamCrashBenchmark(10000);
 let syncMs = 0, framePeakMs = 0;
 const crashPerf = { physics: 0, sync: 0, render: 0, split: 0, collision: 0, solver: 0 };
@@ -341,18 +376,22 @@ for (const [slider, output, value] of [
 function updateCrashModeUi() {
   document.getElementById('btn-swap').textContent = heavyShip
     ? '⇄ Zamień: ciężka stacja, lekki statek' : '⇄ Zamień: ciężki statek, lekka stacja';
-  document.getElementById('crash-mode-help').textContent = heavyShip
+  document.getElementById('crash-mode-help').textContent = combatMode
+    ? 'Poligon: naturalne masy, stacja podatna na ostrzał. Oderwane sekcje odlatują. Zamiana mas włącza tryb taranowania.' : heavyShip
     ? 'Ciężki statek taranuje lekką, ruchomą stację. Jej sekcje mogą się odrywać.'
     : 'Ciężka stacja jest zakotwiczona. Statek rozbija się o jej kadłub.';
   document.getElementById('btn-launch').textContent = pairCount > 1 ? 'Taran wszystkich 10 par (T)' : heavyShip
     ? 'Rozbij stację ciężkim statkiem (T)' : 'Rozbij statek o stację (T)';
-  document.getElementById('o-mass-ratio').textContent = massRatio().toLocaleString('pl-PL');
-  document.getElementById('st-station').textContent = heavyShip ? 'RUCHOMA' : 'NIERUCHOMA';
-  document.getElementById('st-heavy').textContent = heavyShip ? 'STATEK' : 'STACJA';
+  document.getElementById('sl-mass-ratio').disabled = combatMode;
+  document.getElementById('o-mass-ratio').textContent = combatMode ? 'naturalna' : massRatio().toLocaleString('pl-PL');
+  document.getElementById('st-station').textContent = heavyShip || combatMode ? 'RUCHOMA' : 'NIERUCHOMA';
+  document.getElementById('st-heavy').textContent = combatMode ? 'NATURALNE MASY' : heavyShip ? 'STATEK' : 'STACJA';
   document.getElementById('st-fleet').textContent = `${pairCount} + ${pairCount}`;
   document.getElementById('btn-stress').disabled = initialModelsLoading || startingStress;
   document.getElementById('btn-launch').disabled = initialModelsLoading || startingStress;
   document.getElementById('btn-pilot').disabled = initialModelsLoading || startingStress;
+  document.getElementById('btn-fighter').disabled = initialModelsLoading || startingStress;
+  document.getElementById('btn-fire-test').disabled = initialModelsLoading || startingStress;
   followToggle.disabled = pairCount > 1 || cameraMode === 'chase';
 }
 
@@ -396,7 +435,8 @@ function rebuildBodies({ restructure = false, nextModels = models, fitView = fal
         { frameStride, bulkheadEvery });
       };
       nextStation = build('station', TARGET_SIZE, nextCellSize);
-      nextRam = build('ship', TARGET_SIZE * val('sl-ship-size') / 100, nextCellSize * 0.9, document.getElementById('opt-ship-forward').value);
+      const shipSize = TARGET_SIZE * val('sl-ship-size') / 100;
+      nextRam = build('ship', shipSize, Math.min(nextCellSize * 0.9, shipSize / 18), document.getElementById('opt-ship-forward').value);
       // Zbuduj indeksy fragmentów przed startem próby, nie w klatce zderzenia.
       if (nextStation.skin) BeamShips3D._ensureSkinGeometries(nextStation.skin);
       if (nextRam.skin) BeamShips3D._ensureSkinGeometries(nextRam.skin);
@@ -431,13 +471,16 @@ function rebuildBodies({ restructure = false, nextModels = models, fitView = fal
   // Struktury są mutowane przez fizykę (pozycje, długości spoczynkowe), więc
   // każde ciało dostaje własną, głęboką kopię węzłów i belek.
   cfg.maxWrecks = createBeamConfig(cellSize).maxWrecks * pairCount;
-  const fleet = createCrashFleet(DestructorBeams3D, stationStructure, ramStructure, { pairCount, heavyShip, massRatio: massRatio() });
+  const fleet = createCrashFleet(DestructorBeams3D, stationStructure, ramStructure, { pairCount, heavyShip, combat: combatMode, massRatio: massRatio() });
   bodies = fleet.bodies;
   crashPairs = fleet.pairs;
   fleetBounds = fleet.bounds;
   stationBody = crashPairs[0].station;
   ramBody = crashPairs[0].ship;
   crashStarted = false;
+  fireTest = false;
+  weapons.reset(); weaponVisuals.sync();
+  weaponMs = weaponPeakMs = previousHits = hitUntil = 0;
   simulationTime = 0;
   BeamShips3D.debris?.reset();
   BeamShips3D._lastTimeSec = 0;
@@ -505,8 +548,47 @@ function loadDefaultModel() {
 }
 
 function loadDefaultShip() {
+  combatMode = false;
+  document.getElementById('opt-ship-forward').value = 'auto';
+  document.getElementById('sl-ship-size').value = '42';
+  document.getElementById('o-ship-size').textContent = '42';
   return loadModel('ship', 'venator.glb', () => gltfLoader.loadAsync(DEFAULT_SHIP_GLB));
 }
+
+function selectFighter() {
+  if (initialModelsLoading || startingStress) return false;
+  ++modelRequests.ship;
+  combatMode = true; heavyShip = false; pairCount = 1;
+  document.getElementById('opt-scenario').value = '1';
+  document.getElementById('sl-ship-size').value = '12';
+  document.getElementById('o-ship-size').textContent = '12';
+  document.getElementById('opt-ship-forward').value = '+x';
+  const previous = models.ship.root, fighter = createBeamFighterModel();
+  if (!rebuildBodies({ restructure: true, nextModels: { ...models, ship: { root: fighter, label: 'myśliwiec testowy' } } })) {
+    disposeModelResources(fighter); return false;
+  }
+  disposeModelResources(previous);
+  setCameraMode('chase');
+  renderer.domElement.focus({ preventScroll: true });
+  toast('Myśliwiec: mysz kieruje lotem, LPM laser, PPM rakiety. W — ciąg, X — hamulec.', 4200);
+  return true;
+}
+document.getElementById('btn-fighter').addEventListener('click', selectFighter);
+document.getElementById('btn-fire-test').addEventListener('click', async () => {
+  if (!selectFighter()) return;
+  startingStress = true; updateCrashModeUi();
+  try {
+    const preparedPairs = crashPairs;
+    BeamShips3D.sync(bodies, camera, simulationTime);
+    await renderer.compileAsync(scene, camera);
+    if (preparedPairs !== crashPairs) return;
+    clearFlightInput();
+    fireTest = true; piloting = false; paused = false;
+    benchmark.start(); lastFrame = performance.now(); accumulator = 0;
+    toast('Próba ostrzału: laser + rakiety przez 10 s, potem pauza.', 2400);
+  } catch (err) { toast(`Błąd próby ostrzału: ${err.message}`, 6000); console.error(err); }
+  finally { startingStress = false; updateCrashModeUi(); }
+});
 
 for (const role of ['ship', 'station']) {
   const input = document.getElementById('file-' + role);
@@ -521,6 +603,7 @@ document.getElementById('btn-station-default').addEventListener('click', loadDef
 document.getElementById('btn-ship-default').addEventListener('click', loadDefaultShip);
 document.getElementById('btn-ship-prototype').addEventListener('click', () => {
   ++modelRequests.ship;
+  combatMode = false;
   const previous = models.ship.root;
   if (rebuildBodies({ restructure: true, nextModels: { ...models, ship: { root: null, label: 'prototyp' } } })) {
     disposeModelResources(previous);
@@ -571,13 +654,14 @@ document.getElementById('sl-mass-ratio').addEventListener('change', () => {
   if (stationStructure && ramStructure) rebuildBodies();
 });
 document.getElementById('btn-swap').addEventListener('click', () => {
+  combatMode = false;
   heavyShip = !heavyShip;
   updateCrashModeUi();
   if (stationStructure && ramStructure) rebuildBodies();
 });
 bindSlider('sl-thrust', 'o-thrust', value => { engineThrust = value; });
-bindSlider('sl-dmg', 'o-dmg', () => {});
-bindSlider('sl-radius', 'o-radius', () => {});
+bindSlider('sl-dmg', 'o-dmg', value => { weaponDamage = value; });
+bindSlider('sl-radius', 'o-radius', value => { weaponRadius = value; });
 
 const toggles = [
   ['cb-skin', 'skinEnabled', 'Skóra'],
@@ -634,16 +718,18 @@ function clearMouseStick() {
 
 function clearFlightInput() {
   for (const code in keys) keys[code] = false;
+  weaponInput.laser = weaponInput.missile = false;
   clearMouseStick();
 }
 
 function setCameraMode(mode) {
-  clearMouseStick();
+  clearFlightInput();
   cameraMode = mode;
   cameraSelect.value = mode;
   // OrbitControls nie może nadpisywać orientacji kamery podczas pilotowania.
   controls.enabled = mode === 'orbit';
   if (mode === 'chase') {
+    flightCamera.aimDistance = combatMode ? 450 : 0;
     flightCamera.reset();
     flightCamera.update(ramBody, ramStructure?.radius || 20, 0);
   } else {
@@ -658,7 +744,8 @@ function pilotShip() {
   if (initialModelsLoading || startingStress) return;
   if (!ramBody || ramBody.dead) { toast('Statek zniszczony — R resetuje scenę'); return; }
   if (benchmark.running) { benchmark.reset(); toast('Pomiar przerwany — przejmujesz pierwszy statek', 2600); }
-  else toast('Pilot: W/S ciąg, A/D skręt, mysz lub ↑/↓ zmieniają kierunek. X hamuje.', 3500);
+  else toast('Pilot: W/S ciąg, mysz / A/D / ↑/↓ kierunek, LPM laser, PPM rakiety. X hamuje.', 3500);
+  fireTest = false;
   piloting = true;
   paused = false;
   accumulator = 0;
@@ -678,6 +765,21 @@ document.getElementById('cb-flight-assist').addEventListener('change', e => {
   flightAssist = e.target.checked;
   renderer.domElement.focus({ preventScroll: true });
 });
+document.getElementById('cb-mouse-flight').addEventListener('change', e => {
+  mouseFlight = e.target.checked; clearMouseStick();
+  renderer.domElement.focus({ preventScroll: true });
+});
+for (const [button, panel] of [['btn-settings', 'panel-left'], ['btn-telemetry', 'panel-stats']]) {
+  document.getElementById(button).addEventListener('click', () => {
+    const el = document.getElementById(panel);
+    if (window.innerWidth <= 1000) {
+      const open = !el.classList.contains('open');
+      document.getElementById('panel-left').classList.remove('open');
+      document.getElementById('panel-stats').classList.remove('open');
+      el.classList.toggle('open', open);
+    } else el.classList.toggle('folded');
+  });
+}
 
 function toggleCheckbox(id) {
   const cb = document.getElementById(id);
@@ -711,22 +813,32 @@ window.addEventListener('blur', clearFlightInput);
 document.addEventListener('visibilitychange', () => { if (document.hidden) clearFlightInput(); });
 document.addEventListener('focusin', e => { if (e.target.closest('input, select, textarea, [contenteditable="true"]')) clearFlightInput(); });
 
-renderer.domElement.addEventListener('pointerdown', e => {
+// Mouse events also report the second button while the first is held.
+// Pointerdown alone would prevent firing rockets during a laser burst.
+renderer.domElement.addEventListener('mousedown', e => {
   renderer.domElement.focus({ preventScroll: true });
-  if (e.button !== 0 || cameraMode !== 'chase' || !piloting || paused) return;
-  mouseStick.pointerId = e.pointerId;
-  mouseStick.x = e.clientX; mouseStick.y = e.clientY;
-  mouseStick.yaw = mouseStick.pitch = 0;
-  renderer.domElement.setPointerCapture(e.pointerId);
+  if ((e.button !== 0 && e.button !== 2) || paused || initialModelsLoading || startingStress || fireTest || !ramBody || ramBody.dead) return;
+  if (e.button === 0) weaponInput.laser = true;
+  else weaponInput.missile = true;
+  // A short click still fires once, even between two fixed physics steps.
+  weapons.triggers(0, ramBody, e.button === 0, e.button === 2, weaponDamage, weaponRadius);
 });
 renderer.domElement.addEventListener('pointermove', e => {
-  if (e.pointerId !== mouseStick.pointerId) return;
-  mouseStick.yaw = Math.max(-1, Math.min(1, (mouseStick.x - e.clientX) / 160));
-  mouseStick.pitch = Math.max(-1, Math.min(1, (mouseStick.y - e.clientY) / 160));
+  if (!mouseFlight || cameraMode !== 'chase' || !piloting || paused) return;
+  const steer = n => Math.abs(n) < 0.08 ? 0 : Math.sign(n) * Math.min(1, (Math.abs(n) - 0.08) / 0.7);
+  mouseStick.yaw = steer(1 - 2 * e.clientX / window.innerWidth);
+  mouseStick.pitch = steer(1 - 2 * e.clientY / window.innerHeight);
 });
-for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) {
-  renderer.domElement.addEventListener(event, e => { if (e.pointerId === mouseStick.pointerId) clearMouseStick(); });
-}
+window.addEventListener('mouseup', e => {
+  if (e.button === 0) weaponInput.laser = false;
+  if (e.button === 2) weaponInput.missile = false;
+});
+for (const event of ['pointercancel', 'lostpointercapture']) renderer.domElement.addEventListener(event, () => {
+  weaponInput.laser = weaponInput.missile = false;
+});
+renderer.domElement.addEventListener('pointerleave', () => {
+  clearMouseStick(); weaponInput.laser = weaponInput.missile = false;
+});
 renderer.domElement.addEventListener('wheel', e => {
   if (cameraMode !== 'chase') return;
   e.preventDefault();
@@ -754,41 +866,6 @@ function launchRam() {
   toast(`${launched} ${launched === 1 ? 'taran' : 'taranów'}: ${speed}. T — powtórz próbę`, 2200);
 }
 
-const raycaster = new THREE.Raycaster();
-const mouseNdc = new THREE.Vector2();
-renderer.domElement.addEventListener('pointerdown', (e) => {
-  if (e.button !== 2 || !cfg) return;
-  mouseNdc.set((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
-  raycaster.setFromCamera(mouseNdc, camera);
-  const o = raycaster.ray.origin;
-  const d = raycaster.ray.direction;
-
-  let best = null, bestBody = null;
-  for (const body of bodies) {
-    if (body.dead) continue;
-    const hit = DestructorBeams3D.raycastBody(body, o.x, o.y, o.z, d.x, d.y, d.z, 8000);
-    if (hit && (!best || hit.t < best.t)) { best = hit; bestBody = body; }
-  }
-  if (!best) return;
-
-  const dmg = val('sl-dmg');
-  const radius = val('sl-radius') * cfg.cellSize;
-  const speed = 30 * cfg.cellSize;
-  const shots = e.shiftKey ? 5 : 1;
-  for (let s = 0; s < shots; s++) {
-    const j = e.shiftKey ? radius * 1.5 : 0;
-    DestructorBeams3D.applyImpact(
-      bestBody,
-      best.x + (Math.random() - 0.5) * j,
-      best.y + (Math.random() - 0.5) * j,
-      best.z + (Math.random() - 0.5) * j,
-      dmg,
-      { x: d.x * speed, y: d.y * speed, z: d.z * speed },
-      { radius }
-    );
-  }
-});
-
 // ============================== PĘTLA ==============================
 const FIXED_DT = 1 / 120;
 let accumulator = 0;
@@ -811,12 +888,13 @@ function frame() {
   let dt = (now - lastFrame) / 1000;
   const frameMs = dt * 1000;
   lastFrame = now;
-  const measuring = crashStarted && !paused && !benchmark.finished;
+  const measuring = (crashStarted || fireTest || weapons.stats.lasers > 0 || weapons.stats.missiles > 0) && !paused && !benchmark.finished;
   if (measuring) framePeakMs = Math.max(framePeakMs, frameMs);
   if (dt > 0.25) dt = 0.25;
   readFlightInput(keys, mouseStick.yaw, mouseStick.pitch, flightInput);
 
   const physicsStart = performance.now();
+  weaponMs = 0;
   let simulatedMs = 0, droppedMs = !paused ? Math.max(0, frameMs - 250) : 0;
   if (!paused && cfg) {
     accumulator += dt;
@@ -824,6 +902,10 @@ function frame() {
     while (accumulator >= FIXED_DT && steps < 5) {
       if (piloting && !initialModelsLoading && !startingStress) applyFlightControls(ramBody, flightInput, FIXED_DT, engineThrust, flightAssist);
       DestructorBeams3D.integrate(FIXED_DT, bodies);
+      const weaponStart = performance.now();
+      weapons.triggers(FIXED_DT, ramBody, weaponInput.laser || fireTest, weaponInput.missile || fireTest, weaponDamage, weaponRadius);
+      weapons.update(FIXED_DT, bodies);
+      weaponMs += performance.now() - weaponStart;
       DestructorBeams3D.update(FIXED_DT, bodies);
       simulationTime += FIXED_DT;
       if (measuring) {
@@ -839,10 +921,12 @@ function frame() {
     pruneBodies();
   }
   const physicsMs = performance.now() - physicsStart;
+  weaponPeakMs = Math.max(weaponPeakMs, weaponMs);
   if (measuring) crashPerf.physics = Math.max(crashPerf.physics, physicsMs);
 
   const syncStart = performance.now();
   BeamShips3D.sync(bodies, camera, simulationTime);
+  weaponVisuals.sync();
   syncMs = performance.now() - syncStart;
   if (measuring) crashPerf.sync = Math.max(crashPerf.sync, syncMs);
   const followed = heavyShip ? stationBody : ramBody;
@@ -857,6 +941,14 @@ function frame() {
   if (cameraMode === 'orbit') controls.update();
   const renderStart = performance.now();
   renderer.render(scene, camera);
+  aimEl.hidden = cameraMode !== 'chase' || !ramBody || ramBody.dead;
+  if (!aimEl.hidden) {
+    aimPoint.set(450, 0, 0).applyQuaternion(ramBody.quat).add(ramBody.pos).project(camera);
+    aimEl.style.left = `${(aimPoint.x * 0.5 + 0.5) * window.innerWidth}px`;
+    aimEl.style.top = `${(-aimPoint.y * 0.5 + 0.5) * window.innerHeight}px`;
+    if (weapons.stats.hits !== previousHits) { hitUntil = simulationTime + 0.12; previousHits = weapons.stats.hits; }
+    aimEl.classList.toggle('hit', simulationTime < hitUntil);
+  }
   const renderMs = performance.now() - renderStart;
   if (measuring) crashPerf.render = Math.max(crashPerf.render, renderMs);
   if (!paused && benchmark.running) {
@@ -865,7 +957,8 @@ function frame() {
       paused = true;
       clearFlightInput();
       updateStats();
-      toast(`Stress test zakończony: ${benchmark.fps.toFixed(0)} FPS, tempo symulacji ${(benchmark.simulationRate * 100).toFixed(0)}%. T — powtórz, P — wznów`, 9000);
+      toast(`${fireTest ? 'Próba ostrzału' : 'Stress test'}: ${benchmark.fps.toFixed(0)} FPS, tempo symulacji ${(benchmark.simulationRate * 100).toFixed(0)}%. P — wznów`, 9000);
+      fireTest = false;
     }
   }
 
@@ -883,7 +976,7 @@ function updateStats() {
   const s = BeamShips3D.stats;
   const set = (id, v) => { document.getElementById(id).textContent = v; };
   set('st-fps', paused ? 'PAUZA' : String(fpsValue));
-  set('st-flight', paused ? 'PAUZA (P)' : ramBody?.dead ? 'ZNISZCZONY — R' : piloting ? 'PILOT' : 'AUTOTARAN');
+  set('st-flight', paused ? 'PAUZA (P)' : ramBody?.dead ? 'ZNISZCZONY — R' : fireTest ? 'PRÓBA OSTRZAŁU' : piloting ? 'PILOT' : 'AUTOTARAN');
   set('st-phys', `${p.lastUpdateMs.toFixed(2)} ms`);
   set('st-solver', `${p.lastSolverMs.toFixed(2)} ms`);
   set('st-col', `${p.lastCollisionMs.toFixed(2)} ms`);
@@ -905,6 +998,10 @@ function updateStats() {
   set('st-interior', `${(s.interiorTriangles / 1000).toFixed(1)}k`);
   const debris = BeamShips3D.debris;
   set('st-debris', `${debris?.batches[0].alive || 0} / ${debris?.batches[1].alive || 0}`);
+  set('st-shots', `${weapons.stats.lasers} / ${weapons.stats.missiles}`);
+  set('st-hits', `${weapons.stats.laserHits} / ${weapons.stats.missileHits}`);
+  set('st-projectiles', String(weapons.stats.active));
+  set('st-weapons', `${weaponMs.toFixed(2)} / ${weaponPeakMs.toFixed(2)} ms`);
   set('st-benchmark', benchmark.finished ? 'ZAKOŃCZONY' : benchmark.running ? (paused ? 'WSTRZYMANY' : `${(benchmark.wallMs / 1000).toFixed(1)} / 10 s`) : '—');
   set('st-average-fps', benchmark.frames ? benchmark.fps.toFixed(1) : '—');
   set('st-p95', benchmark.finished ? `${benchmark.p95.toFixed(1)} ms` : '—');
@@ -921,7 +1018,7 @@ window.addEventListener('resize', () => {
 
 // Hook diagnostyczny — sterowanie z konsoli, gdy pętla rAF stoi (karta w tle).
 window.__demo = {
-  scene, camera, renderer, DestructorBeams3D, BeamShips3D,
+  scene, camera, renderer, DestructorBeams3D, BeamShips3D, weapons,
   crashPerf,
   benchmark,
   get pairs() { return crashPairs; },
@@ -933,6 +1030,7 @@ window.__demo = {
   step(dt = 1 / 120, steps = 1) {
     for (let i = 0; i < steps; i++) {
       DestructorBeams3D.integrate(dt, bodies);
+      weapons.update(dt, bodies);
       DestructorBeams3D.update(dt, bodies);
       simulationTime += dt;
     }
@@ -942,6 +1040,7 @@ window.__demo = {
     camera.updateMatrixWorld();
     camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
     BeamShips3D.sync(bodies, camera, simulationTime);
+    weaponVisuals.sync();
     renderer.render(scene, camera);
     updateStats();
   }
@@ -949,8 +1048,8 @@ window.__demo = {
 
 updateCrashModeUi();
 rebuildBodies({ restructure: true });
-toast('Ładowanie stacji i Venatora…', 2400);
-Promise.all([loadDefaultModel(), loadDefaultShip()]).finally(() => {
+toast('Ładowanie stacji i myśliwca…', 2400);
+loadDefaultModel().finally(() => {
   initialModelsLoading = false;
   updateCrashModeUi();
 });

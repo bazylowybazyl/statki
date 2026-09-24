@@ -73,10 +73,16 @@ function getTemplate(stationId, path) {
         o.castShadow = true;
         o.receiveShadow = false;
         o.frustumCulled = true;
+        // Zasób szablonu: SkeletonUtils.clone współdzieli geometrię i materiały
+        // między wszystkimi stacjami z tego modelu — destrukcja nie może ich
+        // modyfikować ani zwalniać (Destruction3D klonuje materiały przed
+        // wygaszaniem, DebrisManager pomija dispose oznaczonych zasobów).
+        if (o.geometry) o.geometry.userData.__sharedTemplateAsset = true;
 
         const materials = Array.isArray(o.material) ? o.material : [o.material];
         for (const m of materials) {
           if (!m) continue;
+          m.userData.__sharedTemplateAsset = true;
           if (m.map) m.map.anisotropy = maxAnisotropy;
 
           m.roughness = 0.4;

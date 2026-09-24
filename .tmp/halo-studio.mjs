@@ -57,8 +57,16 @@ for (let i = 0; i < 600 && !ready; i++) { await sleep(200); try { ready = await 
 if (!ready) { console.log('TIMEOUT', logs); process.exit(1); }
 for (const shot of cfg) {
   logs.length = 0;
+  if (shot.dump) {
+    try {
+      const val = await ev(`(() => { const H = window.__halo; const h = H.helpers; ${shot.dump} })()`);
+      writeFileSync(join(outDir, `${shot.id}.json`), JSON.stringify(val));
+      console.log(shot.id, 'dump ok');
+    } catch (e) { console.log(shot.id, 'ERR', String(e).slice(0, 400)); }
+    continue;
+  }
   try {
-    const info = await ev(`(() => { const H = window.__halo; const h = H.helpers; ${shot.js}; H.renderFrames(4); const hdr = H.measureHDR(240); return { preset: H.stats().preset, max: hdr.max, nan: hdr.nanOrInf }; })()`);
+    const info = await ev(`(() => { const H = window.__halo; const h = H.helpers; ${shot.js}; H.renderFrames(4); const hdr = H.measureHDR(240); const st = H.stats(); return { preset: st.preset, max: +hdr.max.toFixed(2), nan: hdr.nanOrInf, calls: st.calls, tris: st.triangles, ms: st.ms ?? st.frameMs ?? null, fl: H.flight.game ? H.flight.berthState : null }; })()`);
     const png = await send('Page.captureScreenshot', { format: 'png' });
     writeFileSync(join(outDir, `${shot.id}.png`), Buffer.from(png.data, 'base64'));
     console.log(shot.id, JSON.stringify(info), logs.length ? logs.slice(0, 3) : '');

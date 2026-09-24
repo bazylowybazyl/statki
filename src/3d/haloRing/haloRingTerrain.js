@@ -531,10 +531,10 @@ void main() {
   float blockB = 0.3 + 0.7 * haloHash12(bid * 3.1 + 5.0);
   blockB *= blockB;
   float lotDensity = mix(win, 0.3, max(winAA, farCity)) * blockB * (1.0 - park);
+  // glowne ulice jasniejsze od bocznych (latarnie, bez ruchu - swiatla aut
+  // usuniete 2026-09-24: ruch wdrazany osobno)
   float artery = 1.0 - aaStep(0.018, abs(fract(bid.y * 0.3334 + bf.y * 0.3334 + 0.02) - 0.5), fw.y * 0.34);
-  vec2 tp = haloPat(5, sRel);
-  float traffic = step(0.55, fract(tp.y - uTime * 0.9 + bid.y * 0.37)) * artery;
-  vec3 cityLight = lampCol * (lotDensity * (1.0 - street) * 0.32 + street * 0.2 + traffic * 0.9 * (1.0 - farCity) + artery * 0.12 * farCity);
+  vec3 cityLight = lampCol * (lotDensity * (1.0 - street) * 0.32 + street * 0.2 + artery * 0.12);
   emit += cityLight * cityMask * on * uLayers.y * uNightLights;
   color += emit;
 

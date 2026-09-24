@@ -14,8 +14,10 @@ import * as THREE from 'three';
 import { HALO_GLSL_COMMON, HALO_GLSL_LIGHT, HALO_GLSL_NOISE } from './haloRingGLSL.js';
 import { K7_ABOVE_SCALE, K7_HEIGHTS, k7Frame, k7HeightToZ, k7Phase } from './haloPortK7Layout.js';
 import { K7_INSTANCE_STRIDE, K7_MAT, buildK7Scene } from './haloPortK7Build.js';
+import { haloFrameToFrame, haloXfPoint } from './haloPortBays.js';
 
-const MAX_GROUPS = 20;
+const MAX_GROUPS = 40;   // 4 suwnice × 6 grup + 8 złączek + grupa 0
+const MAX_LAMPS = 10;    // lampy hali (4) + po trzy nad każdą z 2 zatok kompleksu (pasy MEGA, grzebień)
 const f3 = (a) => a.map((x) => x.toFixed(4)).join(', ');
 const srgb = (hex) => {
   const c = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
@@ -42,6 +44,7 @@ uniform mat4 uHub;                 // hub (z odwzorowaną wysokością) → ukł
 uniform vec3 uGroupEmit[${MAX_GROUPS}];
 uniform float uRoofOpacity;
 uniform vec4 uHallLights;          // x: moc lamp hali, y: moc dnia (0..1), z: czas
+uniform vec4 uLamps[${MAX_LAMPS}];        // lampy hali i zatok: xyz w hubie, w: 0 brak, 1 ciepla, 2 zimna
 varying vec3 vRing;
 varying vec3 vHub;
 varying vec3 vHubN;
@@ -88,16 +91,18 @@ float k7Plates(vec2 uv, bool deck, float fw, out float highlight) {
   float base = deck ? mix(0.11, 0.17, v) : mix(0.42, 0.56, v);
   return base * (1.0 - seam * 0.55 * detail) * (1.0 - bolt * 0.5 * detail) * (1.0 - stain * 0.25);
 }
-// Dwie lampy hali (K-7 miało PointLighty nad stanowiskami kapitalnymi).
+// Lampy hali nad stanowiskami kapitalnymi (K-7 miało PointLighty; 4 stanowiska
+// od 2026-09-23), na zewnątrz od osi stanowiska o 310 j. jak w K-7, i po trzy
+// nad każdą otwartą zatoką kompleksu (dwa pasy MEGA, grzebień).
 vec3 k7HallLight(vec3 hubP, vec3 N) {
   vec3 acc = vec3(0.0);
-  for (int i = 0; i < 2; i++) {
-    vec3 lp = vec3(i == 0 ? -1120.0 : 1120.0, ${k7HeightToZ(390).toFixed(1)}, 1930.0);
-    vec3 dv = lp - hubP;
+  for (int i = 0; i < ${MAX_LAMPS}; i++) {
+    vec4 Lp = uLamps[i];
+    vec3 dv = Lp.xyz - hubP;
     float d = length(dv);
     float fall = 1.0 / (1.0 + (d / 520.0) * (d / 520.0));
-    float win = 1.0 - smoothstep(1500.0, 2450.0, d);
-    vec3 col = i == 0 ? vec3(1.0, 0.78, 0.55) : vec3(0.66, 0.85, 0.92);
+    float win = (1.0 - smoothstep(1500.0, 2450.0, d)) * step(0.5, Lp.w);
+    vec3 col = Lp.w < 1.5 ? vec3(1.0, 0.78, 0.55) : vec3(0.66, 0.85, 0.92);
     // N w ukladzie huba: y = gora
     acc += col * fall * win * max(dot(N, dv / max(d, 1.0)), 0.0);
   }
@@ -327,7 +332,7 @@ function makeUnitCylinder() {
   return g;
 }
 
-function makeInstanced(base, data) {
+function makeInstanced(base, data, sphere) {
   const geo = new THREE.InstancedBufferGeometry();
   geo.index = base.index;
   geo.setAttribute('position', base.getAttribute('position'));
@@ -339,10 +344,31 @@ function makeInstanced(base, data) {
   geo.setAttribute('iQ', new THREE.InterleavedBufferAttribute(buf, 4, 8));
   geo.setAttribute('iC', new THREE.InterleavedBufferAttribute(buf, 4, 12));
   geo.instanceCount = arr.length / K7_INSTANCE_STRIDE;
-  // cała hala z kołnierzem i klinem (układ huba): obcinanie całego K-7
+  // cały kompleks (hala z kołnierzem i klinem, zatoki; układ huba): obcinanie
   // przez three, gdy jest poza kadrem
-  geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, -450, 4400), 6300);
+  geo.boundingSphere = sphere.clone();
   return { geo, arr, buf };
+}
+
+// Obwiednia kompleksu w układzie huba z nagranych instancji (środki + zapas na bryły).
+function complexSphere(sets) {
+  let x0 = Infinity; let x1 = -Infinity; let z0 = Infinity; let z1 = -Infinity;
+  for (const set of Object.values(sets)) {
+    for (const data of Object.values(set)) {
+      for (let i = 0; i < data.length; i += K7_INSTANCE_STRIDE) {
+        const x = data[i];
+        const z = data[i + 2];
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (z < z0) z0 = z;
+        if (z > z1) z1 = z;
+      }
+    }
+  }
+  const cx = (x0 + x1) / 2;
+  const cz = (z0 + z1) / 2;
+  const r = Math.hypot(x1 - x0, z1 - z0) / 2 + 1400;
+  return new THREE.Sphere(new THREE.Vector3(cx, -450, cz), r);
 }
 
 // Wypukłe wielokąty wytłoczone w pionie (y = z świata), jedna geometria na zestaw.
@@ -489,12 +515,20 @@ function makeLabelMesh(labels, atlas) {
 
 // ---------------------------------------------------------------------------
 export class HaloPortK7 {
-  constructor({ ringLayout, uniforms, layout }) {
+  // angle — kąt kompleksu (hala K-7 w środku); index 0 = hala gracza przy kącie
+  // stacji; bays — otwarte zatoki kompleksu (haloBayLayouts z ramkami)
+  constructor({ ringLayout, uniforms, layout, angle, index = 0, bays = [] }) {
     this.layout = layout;
-    this.frame = k7Frame(ringLayout);
+    this.index = index;
+    this.frame = k7Frame(ringLayout, angle);
     const fr = this.frame;
+    // zatoki w układzie huba hali (przejście ramek) i indeks stanowisk (lampki)
+    this.bays = bays.map((b) => ({ layout: b, xf: haloFrameToFrame(b.frame, fr) }));
+    this.berthMap = new Map();
+    for (const b of layout.berths) this.berthMap.set(b.id, b);
+    for (const bay of this.bays) for (const b of bay.layout.berths) this.berthMap.set(b.id, b);
     this.root = new THREE.Group();
-    this.root.name = 'K-7 / Central Hub (port Kepler)';
+    this.root.name = `K-7 / Central Hub (kompleks ${index + 1})`;
     // hub (x wzdłuż, y = z świata, z promieniowo na zewnątrz) → układ ringu
     const hubM = new THREE.Matrix4().makeBasis(
       new THREE.Vector3(fr.tx, fr.ty, 0),
@@ -505,9 +539,30 @@ export class HaloPortK7 {
     this.root.matrix.copy(hubM);
     this.hubMatrix = hubM;
 
-    const scene = buildK7Scene(layout, { floorZ: fr.floorZ, rimZ: fr.rimZ });
+    const scene = buildK7Scene(layout, { floorZ: fr.floorZ, rimZ: fr.rimZ, floorR: fr.floorR, bays: this.bays });
     this.scene = scene;
     this.groups = scene.groups;
+    this.sphere = complexSphere(scene.sets);
+    // obwiednia w układzie ringu (obcinanie całego kompleksu w index.js)
+    const sc = this.sphere.center;
+    this.bounds = { x: fr.origin.x + sc.x * fr.tx + sc.z * fr.rx, y: fr.origin.y + sc.x * fr.ty + sc.z * fr.ry, z: sc.y, r: this.sphere.radius };
+    // lampy: 4 nad stanowiskami capital hali + po trzy nad każdą zatoką
+    const lamps = Array.from({ length: MAX_LAMPS }, () => new THREE.Vector4(0, 0, 0, 0));
+    const ly = k7HeightToZ(390);
+    [-1120, 1120, -2740, 2740].forEach((x, i) => lamps[i].set(x, ly, 1930, i === 0 || i === 3 ? 1 : 2));
+    const q = {};
+    let li = 4;
+    for (const { layout: bl, xf } of this.bays) {
+      const zc = (bl.backZ + bl.openZ) * 0.5;
+      for (const lane of bl.lanes) {
+        if (li >= MAX_LAMPS) break;
+        haloXfPoint(xf, lane.x, zc, q);
+        lamps[li++].set(q.x, ly, q.z, 1);
+      }
+      if (li >= MAX_LAMPS) break;
+      haloXfPoint(xf, bl.aisle.x, zc + 200, q);
+      lamps[li++].set(q.x, ly, q.z, 2);
+    }
     const groupMats = Array.from({ length: MAX_GROUPS }, () => new THREE.Matrix4());
     const groupEmit = Array.from({ length: MAX_GROUPS }, () => new THREE.Vector3(1.2, 0.7, 0.28));
     this.k7Uniforms = {
@@ -515,7 +570,8 @@ export class HaloPortK7 {
       uGroup: { value: groupMats },
       uGroupEmit: { value: groupEmit },
       uRoofOpacity: { value: 1 },
-      uHallLights: { value: new THREE.Vector4(0.22, 1, 0, 0) }
+      uHallLights: { value: new THREE.Vector4(0.22, 1, 0, 0) },
+      uLamps: { value: lamps }
     };
     this.roofUniforms = { ...this.k7Uniforms, uRoofOpacity: { value: 1 } };
     const common = { ...uniforms, ...this.k7Uniforms };
@@ -547,7 +603,7 @@ export class HaloPortK7 {
       for (const kind of ['box', 'cyl', 'torus']) {
         const data = scene.sets[setName][kind];
         if (!data.length) continue;
-        const inst = makeInstanced(bases[kind], data);
+        const inst = makeInstanced(bases[kind], data, this.sphere);
         const material = setName === 'bg' ? this.matBg : setName === 'fg' ? this.matFg : this.matRoof;
         const mesh = new THREE.Mesh(inst.geo, material);
         mesh.name = `K7_${setName}_${kind}`;
@@ -558,7 +614,7 @@ export class HaloPortK7 {
         if (setName === 'roof') mesh.renderOrder = 20;
       }
     }
-    // pokład, fartuchy, most, kadłuby NPC / dach
+    // pokład, fartuchy, most / dach
     const plateMat = (uni, opts = {}) => {
       const m = new THREE.ShaderMaterial({ name: 'K7Plates', uniforms: uni, vertexShader: K7_PLATE_VERTEX, fragmentShader: K7_PLATE_FRAGMENT, ...opts });
       this.materials.push(m);
@@ -803,13 +859,15 @@ export class HaloPortK7 {
     }
   }
 
-  // lampki stanowisk: stan z automatu dokowania (occupied / reserved / free)
-  setBerthLamps(layout) {
+  // lampki stanowisk hali i zatok: stan z automatu dokowania (occupied /
+  // reserved / free) — obiekty stanowisk są wspólne z logiką lotu
+  setBerthLamps() {
     const inst = this.instances.bg_box;
     if (!inst) return;
     let changed = false;
     for (const lamp of this.scene.lamps) {
-      const b = layout.berths.find((v) => v.id === lamp.berthId);
+      const b = this.berthMap.get(lamp.berthId);
+      if (!b) continue;
       const state = b.occupied ? 'o' : b.reserved ? 'r' : 'f';
       if (this._lampState.get(lamp.berthId) === state) continue;
       this._lampState.set(lamp.berthId, state);

@@ -1,0 +1,162 @@
+{
+  "seconds": 20,
+  "rows": [
+    {
+      "weaponId": "special_valkyrie_railgun",
+      "mode": "gpu@60",
+      "solver": "gpu",
+      "simSec": 241.02,
+      "wallSec": 67.5,
+      "simTime": 241.71666666661116,
+      "hits": 81,
+      "damage": 40500,
+      "hexTotal": 2920,
+      "hexAlive": 2677,
+      "maxDrift": 72.5,
+      "core": {
+        "state": "meltdown",
+        "integrity": 0.244,
+        "dead": 24
+      },
+      "hexesLost": 243,
+      "reached": {
+        "exposed": {
+          "hits": 65,
+          "t": 193,
+          "hexesLost": 195,
+          "hexAlive": 2725
+        },
+        "critical": {
+          "hits": 75,
+          "t": 223,
+          "hexesLost": 225,
+          "hexAlive": 2695
+        },
+        "meltdown": {
+          "hits": 81,
+          "t": 241,
+          "hexesLost": 243,
+          "hexAlive": 2677
+        }
+      }
+    },
+    {
+      "weaponId": "special_valkyrie_railgun",
+      "mode": "cpu@60",
+      "solver": "cpu",
+      "simSec": 193.03,
+      "wallSec": 57.5,
+      "simTime": 193.21666666665527,
+      "hits": 65,
+      "damage": 32500,
+      "hexTotal": 2704,
+      "hexAlive": 2682,
+      "maxDrift": 50.3,
+      "core": {
+        "state": "meltdown",
+        "integrity": 0.248,
+        "dead": 24
+      },
+      "hexesLost": 22,
+      "reached": {
+        "exposed": {
+          "hits": 52,
+          "t": 154,
+          "hexesLost": -19,
+          "hexAlive": 2723
+        },
+        "critical": {
+          "hits": 62,
+          "t": 184,
+          "hexesLost": 12,
+          "hexAlive": 2692
+        },
+        "meltdown": {
+          "hits": 65,
+          "t": 193,
+          "hexesLost": 22,
+          "hexAlive": 2682
+        }
+      }
+    },
+    {
+      "weaponId": "special_yamato_cannon",
+      "mode": "gpu@60",
+      "solver": "gpu",
+      "simSec": 161,
+      "wallSec": 48.2,
+      "simTime": 161.31666666668428,
+      "hits": 99,
+      "damage": 84150,
+      "hexTotal": 2857,
+      "hexAlive": 2680,
+      "maxDrift": 59.3,
+      "core": {
+        "state": "meltdown",
+        "integrity": 0.292,
+        "dead": 22
+      },
+      "hexesLost": 177,
+      "reached": {
+        "exposed": {
+          "hits": 72,
+          "t": 116,
+          "hexesLost": 122,
+          "hexAlive": 2735
+        },
+        "critical": {
+          "hits": 90,
+          "t": 146,
+          "hexesLost": 161,
+          "hexAlive": 2696
+        },
+        "meltdown": {
+          "hits": 99,
+          "t": 161,
+          "hexesLost": 177,
+          "hexAlive": 2680
+        }
+      }
+    },
+    {
+      "weaponId": "special_yamato_cannon",
+      "mode": "cpu@60",
+      "solver": "cpu",
+      "simSec": 91.01,
+      "wallSec": 28.7,
+      "simTime": 91.16666666668529,
+      "hits": 57,
+      "damage": 48450,
+      "hexTotal": 2762,
+      "hexAlive": 2704,
+      "maxDrift": 52,
+      "core": {
+        "state": "meltdown",
+        "integrity": 0.289,
+        "dead": 22
+      },
+      "hexesLost": 58,
+      "reached": {
+        "exposed": {
+          "hits": 48,
+          "t": 76,
+          "hexesLost": 21,
+          "hexAlive": 2741
+        },
+        "critical": {
+          "hits": 54,
+          "t": 86,
+          "hexesLost": 51,
+          "hexAlive": 2711
+        },
+        "meltdown": {
+          "hits": 57,
+          "t": 91,
+          "hexesLost": 58,
+          "hexAlive": 2704
+        }
+      }
+    }
+  ],
+  "logs": []
+}

@@ -27,20 +27,78 @@ const MC = {
   arrowSize: 13,
   arrowCapitalMult: 1.35,
   stackSpacing: 28,
+  // Limity strzałek: w dużej bitwie każdy wróg poza kadrem dawał strzałkę
+  // z etykietą, a stos przy krawędzi rósł w głąb ekranu. Najbliższe wygrywają,
+  // nadmiar na krawędzi pokazuje licznik „+N”.
+  maxArrows: 24,
+  maxArrowsPerEdgeSlot: 3,
   pulseFreq: 2.4,
   font: '10px monospace',
   fontSmall: '9px monospace',
 };
 
 // ── Pomocnicze: zaciśnij punkt do krawędzi ekranu ──────────────────────────
-function clampToEdge(sx, sy, dx, dy, W, H, margin) {
+function clampToEdgeInto(sx, sy, dx, dy, W, H, margin, out) {
   const left = margin, right = W - margin, top = margin, bottom = H - margin;
   let t = Infinity;
   if (dx > 0) t = Math.min(t, (right  - sx) / dx);
   else if (dx < 0) t = Math.min(t, (left   - sx) / dx);
   if (dy > 0) t = Math.min(t, (bottom - sy) / dy);
   else if (dy < 0) t = Math.min(t, (top    - sy) / dy);
-  return { x: sx + dx * t, y: sy + dy * t };
+  out.x = sx + dx * t;
+  out.y = sy + dy * t;
+  return out;
+}
+
+// Grupowanie strzałek przy tym samym odcinku krawędzi (klucz liczbowy, bez
+// sklejania stringów na kontakt).
+function edgeBucketKey(ex, ey, H) {
+  const m = MC.edgeMargin, sp = MC.stackSpacing;
+  if (ey <= m + 2)     return Math.round(ex / sp) * 4;
+  if (ey >= H - m - 2) return Math.round(ex / sp) * 4 + 1;
+  if (ex <= m + 2)     return Math.round(ey / sp) * 4 + 2;
+  return Math.round(ey / sp) * 4 + 3;
+}
+
+// Pule rekordów — draw() przechodzi co klatkę po wszystkich wrogich kontaktach,
+// więc świeże obiekty na kontakt to setki alokacji na klatkę w dużej bitwie.
+const _contactPool = [];
+let _contactPoolUsed = 0;
+function acquireContact() {
+  let c = _contactPool[_contactPoolUsed];
+  if (!c) {
+    c = { x: 0, y: 0, radius: 0, awareness: 0, isGhost: false, isCapital: false, isStation: false, type: '', sx: 0, sy: 0, dist: 0 };
+    _contactPool.push(c);
+  }
+  _contactPoolUsed++;
+  return c;
+}
+const _bucketPool = [];
+let _bucketPoolUsed = 0;
+function acquireBucket(ex, ey, onTopBot, color) {
+  let b = _bucketPool[_bucketPoolUsed];
+  if (!b) { b = { x: 0, y: 0, onTopBot: false, color: '', count: 0, drawn: 0, hidden: 0 }; _bucketPool.push(b); }
+  _bucketPoolUsed++;
+  b.x = ex; b.y = ey; b.onTopBot = onTopBot; b.color = color;
+  b.count = 0; b.drawn = 0; b.hidden = 0;
+  return b;
+}
+const _contacts = [];
+const _onscreen = [];
+const _offscreen = [];
+const _edgeBuckets = new Map();
+const _edgePt = { x: 0, y: 0 };
+
+// Najpierw „żywe” kontakty, potem duchy; w obrębie — bliższe pierwsze.
+function compareOffscreenContacts(a, b) {
+  if (a.isGhost !== b.isGhost) return a.isGhost ? 1 : -1;
+  return a.dist - b.dist;
+}
+
+function contactColor(c) {
+  return c.isStation ? MC.colors.station
+       : c.isGhost  ? MC.colors.ghost
+       : MC.colors.hostile;
 }
 
 // ── Klamry celownicze (4 rogi L-kształtne) ────────────────────────────────
@@ -70,7 +128,7 @@ function drawStationIcon(ctx, cx, cy) {
 }
 
 // ── Strzałka NATO-style (fill + stroke, podwójny chevron dla capitala) ───
-function drawArrow(ctx, x, y, angle, size, color, variant) {
+function drawArrow(ctx, x, y, angle, size, color, variant, glowAlpha = 0) {
   // variant: 'ship' | 'capital' | 'station' | 'ghost'
   ctx.save();
   ctx.translate(x, y);
@@ -78,34 +136,45 @@ function drawArrow(ctx, x, y, angle, size, color, variant) {
 
   const s = variant === 'capital' ? size * MC.arrowCapitalMult : size;
 
-  ctx.fillStyle = color + '55';     // ~33% alpha fill
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 1.6;
   ctx.lineJoin = 'round';
-
+  ctx.beginPath();
   if (variant === 'station') {
     // Romb + krzyż — wyróżnia stację
-    ctx.beginPath();
     ctx.moveTo(s, 0);
     ctx.lineTo(0, s * 0.85);
     ctx.lineTo(-s, 0);
     ctx.lineTo(0, -s * 0.85);
-    ctx.closePath();
-    ctx.fill(); ctx.stroke();
+  } else {
+    // Chevron podstawowy — bardziej strzeliste proporcje
+    ctx.moveTo(s, 0);
+    ctx.lineTo(-s * 0.6,  s * 0.7);
+    ctx.lineTo(-s * 0.25, 0);
+    ctx.lineTo(-s * 0.6, -s * 0.7);
+  }
+  ctx.closePath();
+
+  // Poświata szerszą, półprzezroczystą linią zamiast shadowBlur — rozmycie
+  // cienia szło osobno na każdy fill i stroke każdej strzałki.
+  if (glowAlpha > 0) {
+    const prevAlpha = ctx.globalAlpha;
+    ctx.globalAlpha = prevAlpha * glowAlpha;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 5;
+    ctx.stroke();
+    ctx.globalAlpha = prevAlpha;
+  }
+
+  ctx.fillStyle = color + '55';     // ~33% alpha fill
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.6;
+  ctx.fill(); ctx.stroke();
+
+  if (variant === 'station') {
     ctx.beginPath();
     ctx.moveTo(-s * 0.5, 0); ctx.lineTo(s * 0.5, 0);
     ctx.moveTo(0, -s * 0.45); ctx.lineTo(0, s * 0.45);
     ctx.stroke();
   } else {
-    // Chevron podstawowy — bardziej strzeliste proporcje
-    ctx.beginPath();
-    ctx.moveTo(s, 0);
-    ctx.lineTo(-s * 0.6,  s * 0.7);
-    ctx.lineTo(-s * 0.25, 0);
-    ctx.lineTo(-s * 0.6, -s * 0.7);
-    ctx.closePath();
-    ctx.fill(); ctx.stroke();
-
     // Capital: drugi chevron z tyłu (podwójny wskaźnik)
     if (variant === 'capital') {
       const off = -s * 0.75;
@@ -195,7 +264,9 @@ export const ContactMarkers = {
 
     // ── ZBIERZ KONTAKTY ─────────────────────────────────────────────────
 
-    const contacts = [];
+    _contactPoolUsed = 0;
+    const contacts = _contacts;
+    contacts.length = 0;
 
     // 1. Żywe NPC (wrogie + wykryte)
     const npcs = window.npcs;
@@ -206,30 +277,30 @@ export const ContactMarkers = {
         if (aw < MC.minAwareness) continue;
         // Pomijamy myśliwce — zaśmiecają UI (capital nigdy nie jest fighter, safe check)
         if (!npc.isCapitalShip && isFighterClass(npc.type)) continue;
-        contacts.push({
-          x: npc.x, y: npc.y,
-          radius: npc.radius || npc.r || 14,
-          awareness: aw,
-          isGhost: false,
-          isCapital: !!npc.isCapitalShip,
-          isStation: false,
-          type: npc.type || '',
-        });
+        const c = acquireContact();
+        c.x = npc.x; c.y = npc.y;
+        c.radius = npc.radius || npc.r || 14;
+        c.awareness = aw;
+        c.isGhost = false;
+        c.isCapital = !!npc.isCapitalShip;
+        c.isStation = false;
+        c.type = npc.type || '';
+        contacts.push(c);
       }
     }
 
     // 2. Ghost kontakty (ostatnia znana pozycja)
     for (const [, g] of SensorSystem.getGhosts()) {
       if (!g.isCapital && isFighterClass(g.type)) continue;
-      contacts.push({
-        x: g.x, y: g.y,
-        radius: g.radius || 14,
-        awareness: AWARENESS.GHOST,
-        isGhost: true,
-        isCapital: !!g.isCapital,
-        isStation: false,
-        type: g.type || '',
-      });
+      const c = acquireContact();
+      c.x = g.x; c.y = g.y;
+      c.radius = g.radius || 14;
+      c.awareness = AWARENESS.GHOST;
+      c.isGhost = true;
+      c.isCapital = !!g.isCapital;
+      c.isStation = false;
+      c.type = g.type || '';
+      contacts.push(c);
     }
 
     // 3. Stacja piracka (nie jest w tablicy npcs)
@@ -245,15 +316,15 @@ export const ContactMarkers = {
         if (d < effectiveRange)        bestAw = Math.max(bestAw, AWARENESS.DETECTED);
       }
       if (bestAw >= MC.minAwareness) {
-        contacts.push({
-          x: st.x, y: st.y,
-          radius: st.r || st.baseR || 120,
-          awareness: bestAw,
-          isGhost: false,
-          isCapital: false,
-          isStation: true,
-          type: 'station',
-        });
+        const c = acquireContact();
+        c.x = st.x; c.y = st.y;
+        c.radius = st.r || st.baseR || 120;
+        c.awareness = bestAw;
+        c.isGhost = false;
+        c.isCapital = false;
+        c.isStation = true;
+        c.type = 'station';
+        contacts.push(c);
       }
     }
 
@@ -262,16 +333,25 @@ export const ContactMarkers = {
     // ── PODZIEL NA EKRANIE / POZA EKRANEM ───────────────────────────────
 
     const thresh = MC.onscreenThreshold;
-    const onscreen  = [];
-    const offscreen = [];
+    const onscreen  = _onscreen;
+    const offscreen = _offscreen;
+    onscreen.length = 0;
+    offscreen.length = 0;
 
     for (const c of contacts) {
       const scr = wts(c.x, c.y, camera);
-      c._scr = scr;
+      c.sx = scr.x;
+      c.sy = scr.y;
       const inBounds = scr.x > thresh && scr.x < W - thresh
                     && scr.y > thresh && scr.y < H - thresh;
-      (inBounds ? onscreen : offscreen).push(c);
+      if (inBounds) {
+        if (drawOnscreen) onscreen.push(c);
+      } else {
+        c.dist = Math.hypot(c.x - shipX, c.y - shipY);
+        offscreen.push(c);
+      }
     }
+    if (!onscreen.length && !offscreen.length) return;
 
     ctx.save();
     ctx.resetTransform();
@@ -280,7 +360,7 @@ export const ContactMarkers = {
 
     if (drawOnscreen) {
       for (const c of onscreen) {
-        const { x: cx, y: cy } = c._scr;
+        const cx = c.sx, cy = c.sy;
         const alpha = c.isGhost ? MC.ghostAlpha : 1.0;
         const color = c.isStation ? MC.colors.station
                     : c.isGhost  ? MC.colors.ghost
@@ -327,44 +407,42 @@ export const ContactMarkers = {
 
     // ── RYSUJ STRZAŁKI NA KRAWĘDZI EKRANU ───────────────────────────────
 
-    const shipScr = wts(shipX, shipY, camera);
-    const edgeBuckets = new Map();
+    if (offscreen.length) {
+      // Kolejność = priorytet przy limicie: najbliższe żywe kontakty dostają
+      // strzałki pierwsze, dalekie duchy odpadają jako pierwsze.
+      offscreen.sort(compareOffscreenContacts);
+      const shipScr = wts(shipX, shipY, camera);
+      const edgeBuckets = _edgeBuckets;
+      edgeBuckets.clear();
+      _bucketPoolUsed = 0;
+      let drawn = 0;
+      const glowAlpha = 0.28 + 0.12 * pulse;
 
-    for (const c of offscreen) {
-      const { x: csx, y: csy } = c._scr;
-      const dx = csx - shipScr.x;
-      const dy = csy - shipScr.y;
-      if (dx === 0 && dy === 0) continue;
-      const angle = Math.atan2(dy, dx);
-      const edgePt = clampToEdge(shipScr.x, shipScr.y, dx, dy, W, H, MC.edgeMargin);
-
-      // Klucz bucketu — grupowanie przy tej samej krawędzi
-      let key;
-      if (edgePt.y <= MC.edgeMargin + 2)          key = 't' + Math.round(edgePt.x / MC.stackSpacing);
-      else if (edgePt.y >= H - MC.edgeMargin - 2) key = 'b' + Math.round(edgePt.x / MC.stackSpacing);
-      else if (edgePt.x <= MC.edgeMargin + 2)     key = 'l' + Math.round(edgePt.y / MC.stackSpacing);
-      else                                          key = 'r' + Math.round(edgePt.y / MC.stackSpacing);
-
-      if (!edgeBuckets.has(key)) edgeBuckets.set(key, []);
-      edgeBuckets.get(key).push({ c, edgePt, angle });
-    }
-
-    for (const [, group] of edgeBuckets) {
-      // Sortuj po dystansie (bliższe = pierwsze)
-      group.sort((a, b) =>
-        Math.hypot(a.c.x - shipX, a.c.y - shipY) -
-        Math.hypot(b.c.x - shipX, b.c.y - shipY)
-      );
-
-      for (let i = 0; i < group.length; i++) {
-        const { c, edgePt, angle } = group[i];
-        const alpha = c.isGhost ? MC.ghostAlpha : 1.0;
-        const color = c.isStation ? MC.colors.station
-                    : c.isGhost  ? MC.colors.ghost
-                    : MC.colors.hostile;
-
-        // Przesunięcie stosu: prostopadle do krawędzi
+      for (let k = 0; k < offscreen.length; k++) {
+        const c = offscreen[k];
+        const dx = c.sx - shipScr.x;
+        const dy = c.sy - shipScr.y;
+        if (dx === 0 && dy === 0) continue;
+        const edgePt = clampToEdgeInto(shipScr.x, shipScr.y, dx, dy, W, H, MC.edgeMargin, _edgePt);
         const onTopBot = edgePt.y <= MC.edgeMargin + 3 || edgePt.y >= H - MC.edgeMargin - 3;
+        const color = contactColor(c);
+
+        const key = edgeBucketKey(edgePt.x, edgePt.y, H);
+        let bucket = edgeBuckets.get(key);
+        if (!bucket) {
+          bucket = acquireBucket(edgePt.x, edgePt.y, onTopBot, color);
+          edgeBuckets.set(key, bucket);
+        }
+        const i = bucket.count++;
+        if (i >= MC.maxArrowsPerEdgeSlot || drawn >= MC.maxArrows) {
+          bucket.hidden++;
+          continue;
+        }
+        drawn++;
+        bucket.drawn++;
+
+        const angle = Math.atan2(dy, dx);
+        // Przesunięcie stosu: wzdłuż krawędzi
         const ax = edgePt.x + (onTopBot ? i * MC.stackSpacing : 0);
         const ay = edgePt.y + (onTopBot ? 0 : i * MC.stackSpacing);
 
@@ -374,18 +452,12 @@ export const ContactMarkers = {
                       : 'ship';
 
         ctx.save();
-        ctx.globalAlpha = alpha;
+        ctx.globalAlpha = c.isGhost ? MC.ghostAlpha : 1.0;
         if (c.isGhost) ctx.setLineDash([4, 3]);
 
-        if (!c.isGhost) {
-          ctx.shadowColor = color;
-          ctx.shadowBlur = 5 + 3 * pulse;
-        }
-
-        drawArrow(ctx, ax, ay, angle, MC.arrowSize, color, variant);
+        drawArrow(ctx, ax, ay, angle, MC.arrowSize, color, variant, c.isGhost ? 0 : glowAlpha);
 
         ctx.setLineDash([]);
-        ctx.shadowBlur = 0;
         ctx.font = MC.fontSmall;
 
         // Label: typ + dystans, przesunięty prostopadle od strzałki
@@ -399,6 +471,17 @@ export const ContactMarkers = {
         drawStackedLabel(ctx, lines, lx, ly, color, lx > ax ? 'left' : 'right');
 
         ctx.restore();
+      }
+
+      // Nadmiar przy krawędzi: licznik w miejscu następnej strzałki stosu.
+      // Kontakty bez żadnej strzałki na swoim odcinku (limit globalny) to
+      // najdalsze — przy 24 bliższych zagrożeniach ich nie pokazujemy.
+      ctx.font = MC.fontSmall;
+      for (const bucket of edgeBuckets.values()) {
+        if (bucket.hidden <= 0 || bucket.drawn <= 0) continue;
+        const lx = bucket.x + (bucket.onTopBot ? bucket.drawn * MC.stackSpacing : 0);
+        const ly = bucket.y + (bucket.onTopBot ? 0 : bucket.drawn * MC.stackSpacing) - 6;
+        drawLabel(ctx, '+' + bucket.hidden, lx, ly, bucket.color, 'center');
       }
     }
 

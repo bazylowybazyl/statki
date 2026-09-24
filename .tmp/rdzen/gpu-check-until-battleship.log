@@ -1,0 +1,2 @@
+  → exposed: 50 tr / 148.1 s / -173 heksów · critical: 59 tr / 175.1 s / -198 heksów · meltdown: 65 tr / 193.1 s / -213 heksów
+special_valkyrie_railgun   gpu@60                          solver=gpu  kroków/s   6.8  sim 193.1 s  trafień    65  heksów - 213  dryf max  50.5  komora meltdown 28% (23 martwych)  [54.7 s]

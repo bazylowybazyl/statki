@@ -1,0 +1,10 @@
+[
+ {"id": "p9", "js": "H.applyPreset(9)"},
+ {"id": "cx_top", "js": "const f = H.ring.k7Halls[0].frame; const v = h.v3; const R = H.ring.layout.radii.floorMid; const th = f.angle; const pos = v(Math.cos(th) * (R + 17000), Math.sin(th) * (R + 17000), 9500); const tgt = v(Math.cos(th) * (R + 300), Math.sin(th) * (R + 300), 200); H.setCine({ pos, fwd: tgt.sub(pos).normalize(), up: v(0, 0, 1), fov: 62, sun: { azimuth: f.angle / h.DEG - 20, elevation: 45 } })"},
+ {"id": "corner_k7", "js": "const f = H.ring.k7Halls[0].frame; const v = h.v3; const R = H.ring.layout.radii.floorMid; const th = f.angle - 5900 / R; const pos = v(Math.cos(th) * (R + 3200), Math.sin(th) * (R + 3200), -2600); const tgt = v(Math.cos(th) * (R + 100), Math.sin(th) * (R + 100), -500); H.setCine({ pos, fwd: tgt.sub(pos).normalize(), up: v(-Math.sin(th), Math.cos(th), 0), fov: 60, sun: { azimuth: f.angle / h.DEG - 60, elevation: 50 } })"},
+ {"id": "corner_bay", "js": "const b = H.ring.bays[1]; const f = b.frame; const v = h.v3; const R = H.ring.layout.radii.floorMid; const th = b.theta + 3300 / R; const pos = v(Math.cos(th) * (R + 3000), Math.sin(th) * (R + 3000), -2600); const tgt = v(Math.cos(th) * (R + 100), Math.sin(th) * (R + 100), -500); H.setCine({ pos, fwd: tgt.sub(pos).normalize(), up: v(-Math.sin(th), Math.cos(th), 0), fov: 60, sun: { azimuth: b.theta / h.DEG - 60, elevation: 50 } })"},
+ {"id": "g_atlas_z01", "js": "H.flight.start('docked', 0.1)"},
+ {"id": "g_cont_z03", "js": "H.flight.start('docked', 0.3); H.flight.hull('container_ship', 'docked')"},
+ {"id": "g_mega_z018", "js": "H.flight.start('docked', 0.18); H.flight.hull('megafreighter', 'docked')"},
+ {"id": "g_bay_z07", "js": "H.flight.start('docked', 0.7); H.flight.hull('long_haul_freighter', 'docked')"}
+]

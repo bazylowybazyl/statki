@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rdzeń statku — demo</title>
+<style>
+  :root { --ink: #d6e2e8; --muted: #7d919b; --line: #9fc6d626; --panel: #070d13e6; --accent: #7cc9ff; --warn: #f0b060; --bad: #ff5a52; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #050505; overflow: hidden; color: var(--ink); font: 12px/1.35 "Segoe UI", system-ui, sans-serif; }
+  #root { position: fixed; inset: 0; overflow: hidden; background: #050505; }
+  #webgl-layer { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; }
+  #c { position: absolute; inset: 0; z-index: 1; outline: none; cursor: crosshair; }
+  #hud { position: fixed; left: 10px; top: 10px; z-index: 40; padding: 8px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; font: 11px/1.45 ui-monospace, Consolas, monospace; min-width: 300px; max-width: 420px; pointer-events: none; white-space: pre; }
+  #hud b { color: var(--accent); font-weight: 600; }
+  #hud .bad { color: var(--bad); }
+  #hud .warn { color: var(--warn); }
+  #log { position: fixed; left: 10px; bottom: 10px; z-index: 40; width: 460px; max-height: 32vh; overflow: hidden; padding: 6px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; font: 11px/1.45 ui-monospace, Consolas, monospace; pointer-events: none; }
+  #log div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #alarm { position: fixed; left: 50%; top: 14px; transform: translateX(-50%); z-index: 45; padding: 8px 18px; border: 1px solid var(--bad); border-radius: 6px; background: #2a0808e8; color: #ffd6d0; font: 700 15px/1.3 ui-monospace, Consolas, monospace; letter-spacing: .06em; display: none; text-align: center; pointer-events: none; }
+  #alarm.player { font-size: 20px; padding: 12px 26px; border-width: 2px; }
+  #alarm .sub { font-size: 11px; font-weight: 400; letter-spacing: .02em; color: #f3b6ae; }
+  #panel { position: fixed; right: 10px; top: 10px; bottom: 10px; z-index: 40; width: 320px; overflow-y: auto; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+  #panel h1 { font-size: 13px; margin: 0 0 2px; letter-spacing: .06em; }
+  #panel .sub { color: var(--muted); margin-bottom: 8px; }
+  #panel h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 12px 0 6px; font-weight: 600; }
+  .row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+  .row label { flex: 0 0 96px; color: var(--muted); }
+  .row input[type=range] { flex: 1 1 auto; min-width: 0; }
+  .row output { flex: 0 0 52px; text-align: right; font-variant-numeric: tabular-nums; }
+  .row select { flex: 1 1 auto; min-width: 0; }
+  .btns { display: flex; flex-wrap: wrap; gap: 4px; }
+  button, select, input[type=number] { background: #0e1a24; color: var(--ink); border: 1px solid #2a4252; border-radius: 4px; padding: 4px 7px; font: inherit; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.on { background: #173247; border-color: var(--accent); color: #fff; }
+  button.danger { border-color: #6a2a2a; }
+  .checks { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 8px; }
+  .checks label { display: flex; align-items: center; gap: 5px; }
+  textarea { width: 100%; height: 120px; background: #050b10; color: #cfe; border: 1px solid #2a4252; border-radius: 4px; font: 11px ui-monospace, Consolas, monospace; resize: vertical; }
+  .hint { color: var(--muted); font-size: 11px; margin-top: 6px; }
+  #bench { font: 10.5px/1.35 ui-monospace, Consolas, monospace; white-space: pre; overflow-x: auto; max-height: 240px; }
+  #errors { position: fixed; left: 50%; bottom: 10px; transform: translateX(-50%); z-index: 60; max-width: 60vw; max-height: 40vh; overflow: auto; padding: 8px; background: #2a0b0bee; border: 1px solid #a33; border-radius: 6px; font: 11px ui-monospace, monospace; white-space: pre-wrap; display: none; }
+  #loading { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 70; padding: 10px 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+  body.shot #panel, body.shot #log, body.shot #hud { display: none; }
+  body.shot.hud #hud { display: block; }
+</style>
+</head>
+<body>
+<div id="root">
+  <canvas id="webgl-layer"></canvas>
+  <canvas id="c" tabindex="0" aria-label="Demo rdzenia statku"></canvas>
+</div>
+<div id="hud">ładowanie…</div>
+<div id="alarm"></div>
+<div id="log"></div>
+<div id="loading">Ładowanie kadłubów…</div>
+<div id="errors"></div>
+<div id="panel">
+  <h1>RDZEŃ STATKU — DEMO</h1>
+  <div class="sub">Reaktor w kadłubie heksowym: odsłonięcie → krytyczny → stopienie → detonacja. Prawdziwy destruktor, Core3D i reactorblow.js.</div>
+
+  <h2>Scena</h2>
+  <div class="row"><label for="scene">Układ</label><select id="scene">
+    <option value="battleship">Bellator</option>
+    <option value="pirate_battleship">Iron Skull</option>
+    <option value="atlas">Atlas (gracz)</option>
+    <option value="trio">Trzy obok siebie</option>
+    <option value="formation">Formacja (łańcuch, AoE)</option>
+  </select></div>
+  <div class="row"><label for="candidate">Rdzeń celu</label><select id="candidate"></select></div>
+  <div class="row"><label for="target">Cel (T)</label><select id="target"></select></div>
+  <div class="btns">
+    <button id="btn-reset" title="R">Reset (R)</button>
+    <button id="btn-pause" title="Spacja">Pauza (spacja)</button>
+    <button id="btn-melt" class="danger">Wymuś stopienie</button>
+    <button id="btn-blow" class="danger">Detonuj teraz</button>
+  </div>
+  <div class="row"><label for="timescale">Czas</label><input id="timescale" type="range" min="0.05" max="1" step="0.05" value="1"><output id="timescale-out">1,00×</output></div>
+  <div class="row"><label for="rot">Obrót celu</label><input id="rot" type="range" min="-8" max="8" step="0.5" value="0"><output id="rot-out">0°/s</output></div>
+  <div class="row"><label for="drift">Dryf celu</label><input id="drift" type="range" min="0" max="200" step="5" value="0"><output id="drift-out">0 j/s</output></div>
+
+  <h2>Broń</h2>
+  <div class="row"><label for="weapon">Działo (1–9)</label><select id="weapon"></select></div>
+  <div class="checks">
+    <label><input type="checkbox" id="lock"> lock na rdzeń (L)</label>
+    <label><input type="checkbox" id="autofire"> ogień ciągły (F)</label>
+    <label><input type="checkbox" id="shields"> tarcze włączone</label>
+    <label><input type="checkbox" id="gun-follow" checked> działo przy celu</label>
+  </div>
+  <div class="hint">LPM — strzał w kursor · G — postaw działo pod kursorem · kółko — zoom · środkowy / WSAD — przesuw</div>
+
+  <h2>Rdzeń — model</h2>
+  <div class="row"><label for="killmode">Warunek killa</label><select id="killmode">
+    <option value="containment">próg osłony komory</option>
+    <option value="probe">sonda punktu (jak dziś)</option>
+  </select></div>
+  <div class="row"><label for="killfrac">Próg osłony</label><input id="killfrac" type="range" min="0.05" max="0.8" step="0.05" value="0.3"><output id="killfrac-out">30%</output></div>
+  <div class="row"><label for="meltmul">Odliczanie ×</label><input id="meltmul" type="range" min="0.25" max="2" step="0.05" value="1"><output id="meltmul-out">1,00×</output></div>
+  <div class="row"><label for="chain">Łańcuch (głęb.)</label><input id="chain" type="range" min="0" max="3" step="1" value="1"><output id="chain-out">1</output></div>
+  <div class="checks">
+    <label><input type="checkbox" id="attr-det" checked> wyniszczenie przy KRYT. = detonacja</label>
+    <label><input type="checkbox" id="hp-off"> pula HP wyłączona (test rdzenia)</label>
+    <label title="A/B: okna sond trafień i solver sprężyn jak przed poprawką heksów-duchów (probeDriftCap 0, gpuSoftBodyHz 0)"><input type="checkbox" id="legacy-probes"> okna sond sprzed poprawki (A/B)</label>
+    <label><input type="checkbox" id="cpu-soft"> solver CPU (lustro)</label>
+  </div>
+
+  <h2>Nakładki</h2>
+  <div class="checks">
+    <label><input type="checkbox" id="ov-grid"> siatka heksów</label>
+    <label><input type="checkbox" id="ov-chamber" checked> komora</label>
+    <label><input type="checkbox" id="ov-probe" checked> punkty sondy</label>
+    <label><input type="checkbox" id="ov-state" checked> stan / osłona</label>
+    <label><input type="checkbox" id="ov-hp"> hardpointy / dysze</label>
+    <label><input type="checkbox" id="ov-cands"> kandydaci A/B/C</label>
+    <label><input type="checkbox" id="ov-bugs"> błędy integracji</label>
+    <label><input type="checkbox" id="ov-blast"> promień AoE</label>
+  </div>
+
+  <h2>Edytor rdzenia (E)</h2>
+  <div class="checks"><label><input type="checkbox" id="edit"> tryb edycji (klik = wybór, przeciągnij = ruch)</label></div>
+  <div class="row"><label for="ed-r">r (px PNG)</label><input id="ed-r" type="range" min="10" max="140" step="1" value="48"><output id="ed-r-out">48</output></div>
+  <div class="row"><label for="ed-armor">armorMul</label><input id="ed-armor" type="range" min="0.5" max="6" step="0.25" value="3"><output id="ed-armor-out">3,00</output></div>
+  <div class="row"><label for="ed-profile">Profil</label><select id="ed-profile">
+    <option value="">auto (promień kadłuba)</option>
+    <option value="escort">escort</option>
+    <option value="cruiser">cruiser</option>
+    <option value="capital">capital</option>
+  </select></div>
+  <div class="btns">
+    <button id="ed-apply">Zastosuj (przebuduj)</button>
+    <button id="ed-add">+ rdzeń</button>
+    <button id="ed-del">− rdzeń</button>
+    <button id="ed-export">Eksport JSON</button>
+  </div>
+  <textarea id="ed-json" spellcheck="false" placeholder="eksport cores[] w przestrzeni PNG"></textarea>
+
+  <h2>Benchmark (szybki, w przeglądarce)</h2>
+  <div class="btns"><button id="bench-run">Bieżący kadłub × broń × 4 kierunki</button></div>
+  <div id="bench" class="hint">Pełna macierz: node dema/rdzen-bench-node.js → .tmp/rdzen/</div>
+</div>
+<script type="module" src="./rdzen-demo.js"></script>
+</body>
+</html>
