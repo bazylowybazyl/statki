@@ -304,9 +304,10 @@ export function sampleShieldProfileRadius(profile, gridAngle) {
 // Kierunek świata (dx, dy — y w dół) -> kąt w klatce profilu.
 export function shieldGridAngleTowards(rawEntity, worldX, worldY) {
   const entity = unwrapShieldEntity(rawEntity);
-  const pos = getEntityPos(entity);
-  const dx = (Number(worldX) || 0) - pos.x;
-  const dy = (Number(worldY) || 0) - pos.y;
+  // Pozycja jako dwie liczby, nie obiekt — to idzie per kandydat per pocisk
+  // per krok fizyki (getEntityShieldRadiusTowards w pętli pocisków).
+  const dx = (Number(worldX) || 0) - getEntityPosX(entity);
+  const dy = (Number(worldY) || 0) - getEntityPosY(entity);
   const a = getShieldHullAngle(entity);
   const c = Math.cos(a);
   const s = Math.sin(a);
@@ -421,11 +422,16 @@ export function isShieldBlocking(shield) {
   return getShieldBlockingProgress(shield) > 0;
 }
 
-function getEntityPos(entity) {
-  if (!entity) return { x: 0, y: 0 };
-  const x = Number.isFinite(entity.x) ? entity.x : Number(entity?.pos?.x) || 0;
-  const y = Number.isFinite(entity.y) ? entity.y : Number(entity?.pos?.y) || 0;
-  return { x, y };
+// Pozycja encji jako dwie liczby — bez obiektu {x,y} (gorące ścieżki: pociski,
+// trafienia w tarczę).
+function getEntityPosX(entity) {
+  if (!entity) return 0;
+  return Number.isFinite(entity.x) ? entity.x : Number(entity?.pos?.x) || 0;
+}
+
+function getEntityPosY(entity) {
+  if (!entity) return 0;
+  return Number.isFinite(entity.y) ? entity.y : Number(entity?.pos?.y) || 0;
 }
 
 export function initShieldSystem() {
@@ -444,9 +450,8 @@ export function registerShieldImpact(rawEntity, worldX, worldY, damage = 0, fxCl
   const shield = ensureShield(entity?.shield);
   if (!shield) return false;
 
-  const pos = getEntityPos(entity);
-  const dx = (Number(worldX) || 0) - pos.x;
-  const dy = (Number(worldY) || 0) - pos.y;
+  const dx = (Number(worldX) || 0) - getEntityPosX(entity);
+  const dy = (Number(worldY) || 0) - getEntityPosY(entity);
   const localAngle = Math.atan2(-dy, dx);
 
   // Kąt w klatce profilu (dla tarczy-obrysu w 3D).

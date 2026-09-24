@@ -947,6 +947,7 @@
     import { spatialCellKey } from "./src/game/spatialCellKey.js";
     import { WeaponShotBus } from "./src/game/weaponShotBus.js";
     import { createVoiceLimiter } from "./src/game/audioVoiceLimiter.js";
+    import { createBulletStepBounds, computeBulletStepBounds, filterCirclesTouchingBounds, stationCollisionRadius, platformCollisionRadius } from "./src/game/bulletStepFilters.js";
     import {
       buildWarpRoutes,
       getWarpRoute as lookupWarpRoute,
@@ -19040,7 +19041,56 @@
       bullets.pop();
     }
 
-    function bulletsAndCollisionsStep(dt) {
+    // Smugi pocisków 2D — raz na klatkę renderu (pierwszy krok fizyki klatki),
+    // nie w każdym kroku: dawniej KAŻDY krok 120 Hz spawnował je dla każdego
+    // pocisku z 2–3 obiektami {x,y}. Gęstość jak dotąd przy 60 fps i 120 Hz: jedna
+    // porcja cząstek na 1/120 s drogi pocisku, rozłożona wzdłuż drogi tej klatki
+    // (frameLogicDt) — więc nie zależy od ?physHz ani od liczby kroków.
+    const BULLET_TRAIL_HZ = 120;
+    const BULLET_TRAIL_MAX_PER_FRAME = 4;
+    function bulletTrailCount(frameDt) {
+      return Math.max(1, Math.min(BULLET_TRAIL_MAX_PER_FRAME, Math.round((Number(frameDt) || 0) * BULLET_TRAIL_HZ)));
+    }
+
+    // Porcje idą w przód od pozycji po pierwszym kroku klatki — tam, gdzie pocisk
+    // będzie w kolejnych krokach tej klatki (ślad kończy się przy pocisku).
+    function spawnBulletTrail(b, count, frameDt) {
+      const stepT = frameDt / count;
+      const autocannon = b.type === 'autocannon';
+      const isTorpedo = b.type === 'torpedo';
+      // Use bullet's actual color when available (e.g. cyan #7ef0ff for osa_micro_missile),
+      // fall back to type-default for legacy bullets without explicit color.
+      const trailColor = isTorpedo ? '#ff6644' : (b.color || '#8cff8c');
+      for (let k = 0; k < count; k++) {
+        const px = b.x + b.vx * stepT * k;
+        const py = b.y + b.vy * stepT * k;
+        if (autocannon) {
+          CanvasVFX.spawnParticleXY(px, py, -b.vx * 0.015, -b.vy * 0.015, 0.18, '#ffdca8', 1.1, true);
+          continue;
+        }
+        CanvasVFX.spawnParticleXY(
+          px + (Math.random() - 0.5) * 3, py + (Math.random() - 0.5) * 3,
+          -b.vx * 0.02 + (Math.random() - 0.5) * 10, -b.vy * 0.02 + (Math.random() - 0.5) * 10,
+          isTorpedo ? 0.5 : 0.28, trailColor, isTorpedo ? 2.0 : 1.0, false
+        );
+        // Extra engine glow for torpedoes
+        if (isTorpedo) {
+          CanvasVFX.spawnParticleXY(px, py, (Math.random() - 0.5) * 20, (Math.random() - 0.5) * 20, 0.3, '#ffaa33', 1.5, false);
+        }
+        // Bright additive head glow for canvas-only fighter missiles.
+        if (b.forceCanvas) {
+          CanvasVFX.spawnParticleXY(px, py, 0, 0, 0.12, b.color || '#7ef0ff', 1.6, true);
+        }
+      }
+    }
+
+    // Stacje i platformy, których okrąg przecina pudło pocisków kroku
+    // (src/game/bulletStepFilters.js) — liczone raz na krok, nie per pocisk.
+    const _bulletStepBounds = createBulletStepBounds();
+    const _bulletStepStations = [];
+    const _bulletStepPlatforms = [];
+
+    function bulletsAndCollisionsStep(dt, emitTrails = true, trailDt = dt) {
       const tBulletGrid0 = performance.now();
       // 1. Budowa SpatialGrid
       SpatialGrid.clear();
@@ -19107,6 +19157,16 @@
       }
       PerfHUD.addTiming('bulletGridTime', performance.now() - tBulletGrid0);
 
+      // Smugi tylko w pierwszym kroku klatki (emitTrails), porcje wg frameLogicDt.
+      const trailCount = emitTrails ? bulletTrailCount(trailDt) : 0;
+      // Stacje/platformy w zasięgu chmury pocisków — raz na krok zamiast pętli
+      // po wszystkich stacjach dla każdego pocisku.
+      computeBulletStepBounds(bullets, dt, _bulletStepBounds);
+      const stepStationCount = filterCirclesTouchingBounds(stations, _bulletStepBounds, stationCollisionRadius, _bulletStepStations);
+      const stepPlatformCount = mercMission?.weaponPlatforms
+        ? filterCirclesTouchingBounds(mercMission.weaponPlatforms, _bulletStepBounds, platformCollisionRadius, _bulletStepPlatforms)
+        : 0;
+
       // Sekcje mierzone lokalnymi akumulatorami i raportowane RAZ po pętli.
       // Wcześniej addTiming + performance.now() leciały per pocisk per sekcja —
       // przy setkach pocisków sam pomiar kosztował ~1 ms/klatkę.
@@ -19126,20 +19186,7 @@
         // --- RUCH I EFEKTY WIZUALNE POCISKÓW ---
         const threeVisual = b.__renderedByThree === true;
         if (!threeVisual && (b.type === 'plasma' || b.type === 'rocket' || b.type === 'torpedo')) {
-          const isTorpedo = b.type === 'torpedo';
-          // Use bullet's actual color when available (e.g. cyan #7ef0ff for osa_micro_missile),
-          // fall back to type-default for legacy bullets without explicit color.
-          const trailColor = isTorpedo ? '#ff6644' : (b.color || '#8cff8c');
-          const trailVel = { x: -b.vx * 0.02 + (Math.random() - 0.5) * 10, y: -b.vy * 0.02 + (Math.random() - 0.5) * 10 };
-          spawnParticle({ x: b.x + (Math.random() - 0.5) * 3, y: b.y + (Math.random() - 0.5) * 3 }, trailVel, isTorpedo ? 0.5 : 0.28, trailColor, isTorpedo ? 2.0 : 1.0, false);
-          // Extra engine glow for torpedoes
-          if (isTorpedo) {
-            spawnParticle({ x: b.x, y: b.y }, { x: (Math.random() - 0.5) * 20, y: (Math.random() - 0.5) * 20 }, 0.3, '#ffaa33', 1.5, false);
-          }
-          // Bright additive head glow for canvas-only fighter missiles — cheap (one extra particle/frame).
-          if (b.forceCanvas) {
-            spawnParticle({ x: b.x, y: b.y }, { x: 0, y: 0 }, 0.12, b.color || '#7ef0ff', 1.6, true);
-          }
+          if (trailCount > 0) spawnBulletTrail(b, trailCount, trailDt);
 
           if ((b.type === 'rocket' || b.type === 'torpedo') && b.homingDelay <= 0) {
             let target = b.target;
@@ -19161,8 +19208,7 @@
             }
           }
         } else if (!threeVisual && b.type === 'autocannon') {
-          const trailVel = { x: -b.vx * 0.015, y: -b.vy * 0.015 };
-          spawnParticle({ x: b.x, y: b.y }, trailVel, 0.18, '#ffdca8', 1.1, true);
+          if (trailCount > 0) spawnBulletTrail(b, trailCount, trailDt);
         }
         if (profileBullet) secMoveVfx += (performance.now() - tBulletSection0) * bulletProfileScale;
 
@@ -19263,28 +19309,41 @@
           const bulletR = Number(b.r) || 0;
           const hullR = (Number(npc.radius) || 0) + bulletR;
           const hullBroadT = segmentCircleToi(b.px, b.py, b.x, b.y, npc.x, npc.y, hullR);
-          let hullT = hullBroadT;
-          let hullIsHex = false;
-          let hullShard = null;
-          let hullImpactX = hullT >= 0 ? b.px + (b.x - b.px) * hullT : b.x;
-          let hullImpactY = hullT >= 0 ? b.py + (b.y - b.py) * hullT : b.y;
-          if (hullBroadT >= 0 && realNpc.hexGrid && typeof DestructorSystem.sweepImpact === 'function') {
-            const hexSweep = DestructorSystem.sweepImpact(realNpc, b.px, b.py, b.x, b.y, bulletR);
-            hullT = hexSweep ? hexSweep.t : -1;
-            hullIsHex = hullT >= 0;
-            if (hexSweep) {
-              hullImpactX = hexSweep.worldX;
-              hullImpactY = hexSweep.worldY;
-              // Wynik sweepa jest statyczny — następny kandydat go nadpisze.
-              hullShard = hexSweep.hitShard;
-            }
-          }
+          // Tarcza najpierw — tani test, a jej t przycina sweep po heksach niżej.
           const shieldR = npc._blkShieldR || 0;
           let shieldT = -1;
           if (shieldR > 0) {
             const dirShieldR = getEntityShieldRadiusTowards(npc._realEntity || npc, b.x, b.y) * (npc._blkShieldProg || 0);
             if (dirShieldR > 0) {
               shieldT = segmentCircleToi(b.px, b.py, b.x, b.y, npc.x, npc.y, dirShieldR + bulletR);
+            }
+          }
+          let hullT = hullBroadT;
+          let hullIsHex = false;
+          let hullShard = null;
+          let hullImpactX = hullT >= 0 ? b.px + (b.x - b.px) * hullT : b.x;
+          let hullImpactY = hullT >= 0 ? b.py + (b.y - b.py) * hullT : b.y;
+          if (hullBroadT >= 0 && realNpc.hexGrid && typeof DestructorSystem.sweepImpact === 'function') {
+            // Heks wygrywa tylko PRZED wejściem w tarczę (remis → tarcza) i przed
+            // najlepszym trafieniem poprzednich kandydatów, więc sweep idzie tylko
+            // po odcinku [0, sweepLimit]. Wynik jak przy pełnym sweepie, a przy
+            // tarczy w górze odcinek kończy się zwykle przed kadłubem (puste pudło).
+            let sweepLimit = hitT < 1 ? hitT : 1;
+            if (shieldT >= 0 && shieldT < sweepLimit) sweepLimit = shieldT;
+            let hexSweep = null;
+            if (sweepLimit >= 1) {
+              hexSweep = DestructorSystem.sweepImpact(realNpc, b.px, b.py, b.x, b.y, bulletR);
+            } else if (sweepLimit > 0) {
+              hexSweep = DestructorSystem.sweepImpact(realNpc, b.px, b.py,
+                b.px + (b.x - b.px) * sweepLimit, b.py + (b.y - b.py) * sweepLimit, bulletR);
+            }
+            hullT = hexSweep ? (sweepLimit >= 1 ? hexSweep.t : hexSweep.t * sweepLimit) : -1;
+            hullIsHex = hullT >= 0;
+            if (hexSweep) {
+              hullImpactX = hexSweep.worldX;
+              hullImpactY = hexSweep.worldY;
+              // Wynik sweepa jest statyczny — następny kandydat go nadpisze.
+              hullShard = hexSweep.hitShard;
             }
           }
 
@@ -19491,9 +19550,10 @@
 
         tBulletSection0 = profileBullet ? performance.now() : 0;
         // --- KOLIZJE Z INNYMI OBIEKTAMI ---
-        if (mercMission?.weaponPlatforms) {
+        if (stepPlatformCount > 0) {
           let hitPlatform = false;
-          for (const p of mercMission.weaponPlatforms) {
+          for (let pi = 0; pi < stepPlatformCount; pi++) {
+            const p = _bulletStepPlatforms[pi];
             if (p && !p.destroyed && b.source !== p) {
               const pdx = p.x - b.x;
               const pdy = p.y - b.y;
@@ -19515,7 +19575,8 @@
             continue;
           }
         }
-        for (const st of stations) {
+        for (let si = 0; si < stepStationCount; si++) {
+          const st = _bulletStepStations[si];
           if (st.hp && !st._destroyed3D && b.source !== st) {
             const sdx = st.x - b.x;
             const sdy = st.y - b.y;
@@ -21517,7 +21578,7 @@
       ciwsStep(dt);
       PerfHUD.addTiming('ciwsTime', performance.now() - tPhysSection0);
       tPhysSection0 = performance.now();
-      bulletsAndCollisionsStep(dt);
+      bulletsAndCollisionsStep(dt, runFrameLogic, frameLogicDt);
       tPhysSection0 = performance.now();
       window.__npcFireScanMs = 0;
       window.__npcFireSpawnMs = 0;

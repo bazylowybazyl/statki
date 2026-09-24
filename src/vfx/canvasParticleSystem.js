@@ -100,6 +100,12 @@ export const CanvasVFX = {
   },
 
   spawnParticle(pos, vel, life, color, size, flash) {
+    CanvasVFX.spawnParticleXY(pos.x, pos.y, vel.x, vel.y, life, color, size, flash);
+  },
+
+  // Wariant bez obiektów {x,y} — smugi pocisków idą setkami na klatkę, a każde
+  // wywołanie spawnParticle budowało dwa obiekty tylko po to, by je skopiować.
+  spawnParticleXY(x, y, vx, vy, life, color, size, flash) {
     const p = CanvasVFX.particlePool[CanvasVFX.nextParticleIndex];
     if (p.active) {
       const idx = p._activeIdx;
@@ -108,7 +114,7 @@ export const CanvasVFX = {
       last._activeIdx = idx;
       CanvasVFX.activeParticles.pop();
     }
-    p.pos.x = pos.x; p.pos.y = pos.y; p.vel.x = vel.x; p.vel.y = vel.y;
+    p.pos.x = x; p.pos.y = y; p.vel.x = vx; p.vel.y = vy;
     p.life = life; p.age = 0; p.color = color || '#ffb677'; p.size = size || 2;
     p.flash = !!flash; p.beam = false; p.alpha = 1; p.fadeWithLife = true;
     p.colorOuter = null; p.colorInner = null; p.glowColor = null; p.glowBlur = 0;
