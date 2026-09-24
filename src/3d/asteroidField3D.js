@@ -57,6 +57,29 @@ import {
 const Z_BASE = -120;
 const Z_JITTER = 60;        // ±30 wokół Z_BASE
 const ASTEROID_RAYCAST_MAX_RADIUS = 700;
+// Margines pasa: dryf popchniętych asteroid i BIG splitów poza pasmo radialne.
+// Wspólny dla chowania pul, kolizji statków i raycastu pocisków.
+const BELT_DRIFT_MARGIN = 9000;
+
+// Stan raycastu dla modułowego callbacku (bez domknięcia per wywołanie).
+// raycast nie jest wielowejściowy — callback nie woła niczego, co by go użyło.
+const _rayState = { x0: 0, y0: 0, x1: 0, y1: 0, extra: 0, radiusFactor: 1, bestT: Infinity, bestHitT: Infinity, best: null };
+const _rayHitScratch = { entryT: 0, closestT: 0, distSq: 0 };
+// Wynik raycastu — jeden obiekt, ważny do następnego wywołania (wołający
+// w pętli pocisków czyta go od razu).
+const _rayResult = { asteroid: null, t: 0, hitT: 0 };
+
+function raycastVisit(a) {
+  if (!a.alive) return;
+  const st = _rayState;
+  const r = a.scale * st.radiusFactor + st.extra;
+  if (!segmentCircleHitInfoInto(_rayHitScratch, st.x0, st.y0, st.x1, st.y1, a.worldX, a.worldY, r)) return;
+  if (_rayHitScratch.entryT < st.bestT) {
+    st.bestT = _rayHitScratch.entryT;
+    st.bestHitT = _rayHitScratch.closestT;
+    st.best = a;
+  }
+}
 // Heks-asteroida wraca do instancji po tylu ms bez statku w pobliżu (patrz
 // _canDemoteHexAsteroid); sprawdzane co HEX_ASTEROID_DEMOTE_CHECK_MS.
 const HEX_ASTEROID_IDLE_MS = 8000;
@@ -71,11 +94,13 @@ const SPIN_MAX = 0;
 // Siła cienia asteroidy w passie shaftów (1.0 = umbra planety).
 const ASTEROID_SHAFT_STRENGTH = 0.5;
 
-export function segmentCircleHitInfo(x0, y0, x1, y1, cx, cy, radius) {
+// Wariant bez alokacji: wynik w `out`, zwraca true przy trafieniu (raycast
+// pocisków woła to per kandydat per pocisk per krok).
+export function segmentCircleHitInfoInto(out, x0, y0, x1, y1, cx, cy, radius) {
   const dx = x1 - x0;
   const dy = y1 - y0;
   const len2 = dx * dx + dy * dy;
-  if (len2 < 1e-6) return null;
+  if (len2 < 1e-6) return false;
 
   const r = Math.max(0, Number(radius) || 0);
   const ex = cx - x0;
@@ -87,7 +112,7 @@ export function segmentCircleHitInfo(x0, y0, x1, y1, cx, cy, radius) {
   const ddy = cy - py;
   const distSq = ddx * ddx + ddy * ddy;
   const rSq = r * r;
-  if (distSq > rSq) return null;
+  if (distSq > rSq) return false;
 
   const fx = x0 - cx;
   const fy = y0 - cy;
@@ -107,7 +132,15 @@ export function segmentCircleHitInfo(x0, y0, x1, y1, cx, cy, radius) {
     }
   }
 
-  return { entryT, closestT, distSq };
+  out.entryT = entryT;
+  out.closestT = closestT;
+  out.distSq = distSq;
+  return true;
+}
+
+export function segmentCircleHitInfo(x0, y0, x1, y1, cx, cy, radius) {
+  const out = { entryT: 0, closestT: 0, distSq: 0 };
+  return segmentCircleHitInfoInto(out, x0, y0, x1, y1, cx, cy, radius) ? out : null;
 }
 
 // Reusable scratchpads
@@ -895,7 +928,7 @@ export class AsteroidField {
       if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
       const zoom = Math.max(0.0001, Number(probe?.zoom) || 1);
       // Zasięg widoku + margines na dryf popchniętych asteroid i BIG splity.
-      const reach = (Math.max(vw, vh) * 0.5) / zoom + 9000;
+      const reach = (Math.max(vw, vh) * 0.5) / zoom + BELT_DRIFT_MARGIN;
       const dist = Math.hypot(px - this.sunX, py - this.sunY);
       for (const band of this._beltRadialBounds.values()) {
         if (dist >= band.minR - reach && dist <= band.maxR + reach) { visible = true; break; }
@@ -1059,28 +1092,33 @@ export class AsteroidField {
     const dx = x1 - x0, dy = y1 - y0;
     const len2 = dx * dx + dy * dy;
     if (len2 < 1e-6) return null;
-    let bestT = Infinity;
-    let bestHitT = Infinity;
-    let best = null;
-    // DDA: dla każdej komórki przeciętej przez linię testujemy asteroidy w niej.
+    // Zapytanie o promieniu wokół środka odcinka (nie DDA) — kandydaci z komórek
+    // hasha, trafienie = najmniejsze wejście w okrąg kolizji.
     const radiusFactor = COLLISION_CONFIG.collisionRadiusFactor;
     const extra = Math.max(0, Number(extraRadius) || 0);
     const midX = (x0 + x1) * 0.5;
     const midY = (y0 + y1) * 0.5;
     const halfLen = Math.sqrt(len2) * 0.5;
     const queryR = halfLen + ASTEROID_RAYCAST_MAX_RADIUS + extra;
+    // Pocisk daleko od wszystkich pasów: w hashu i tak nic nie ma, a to leci per
+    // pocisk per krok fizyki (jak w checkShipCollisions).
+    if (!this._isNearAnyBelt(midX, midY, queryR + BELT_DRIFT_MARGIN)) return null;
 
-    this.spatial.forEachInRadius(midX, midY, queryR, (a) => {
-      if (!a.alive) return;
-      const r = a.scale * radiusFactor + extra;
-      const hit = segmentCircleHitInfo(x0, y0, x1, y1, a.worldX, a.worldY, r);
-      if (hit && hit.entryT < bestT) {
-        bestT = hit.entryT;
-        bestHitT = hit.closestT;
-        best = a;
-      }
-    });
-    return best ? { asteroid: best, t: bestT, hitT: bestHitT } : null;
+    const st = _rayState;
+    st.x0 = x0; st.y0 = y0; st.x1 = x1; st.y1 = y1;
+    st.extra = extra;
+    st.radiusFactor = radiusFactor;
+    st.bestT = Infinity;
+    st.bestHitT = Infinity;
+    st.best = null;
+    this.spatial.forEachInRadius(midX, midY, queryR, raycastVisit);
+    const best = st.best;
+    st.best = null;
+    if (!best) return null;
+    _rayResult.asteroid = best;
+    _rayResult.t = st.bestT;
+    _rayResult.hitT = st.bestHitT;
+    return _rayResult;
   }
 
   /** Liczba aktywnych asteroid. */
@@ -1485,7 +1523,7 @@ export class AsteroidField {
     // Statek daleko od wszystkich pasów: w hashu nic nie ma, a to leci co
     // podkrok dla każdego NPC (lookup + domknięcie). Margines jak przy
     // chowaniu pul: zapytanie + dryf popchniętych asteroid i BIG splitów.
-    if (!this._isNearAnyBelt(sx, sy, queryR + 9000)) return null;
+    if (!this._isNearAnyBelt(sx, sy, queryR + BELT_DRIFT_MARGIN)) return null;
 
     let collisions = null;
     const nowMs = performance.now();
