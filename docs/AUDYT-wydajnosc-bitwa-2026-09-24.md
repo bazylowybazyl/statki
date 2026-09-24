@@ -190,3 +190,16 @@ obiektów na sekundę → major GC = klatki 50–80 ms.
 
 Kolejność wg zysk/ryzyko: 1 → 2 → 3 → 4. Krok 1 nie zmienia fizyki ani wyglądu bitwy z perspektywy
 gracza (znika tylko bezużyteczny ostrzał CIWS w kadłuby), krok 2 wymaga testu A/B tarana i CIWS.
+
+## 4. Zimne wraki (stan wdrożenia 2026-09-24)
+
+Wdrożone wg `docs/BRIEF-zimne-wraki.md` (etap 1): wrak uśpiony ≥ 20 s (czas gry), bez odwołań
+(hol, cięcie, locki, kursor, rozkazy, liny, ładunek w locie), poza kadrem albo już jako smuga i bez
+obudzonego ciała w 2 500 j. przechodzi w stan zimny (`src/game/coldWrecks.js`): wypada z `wrecks`,
+siatki pocisków, list destruktora, `renderEntities` i areny heksów (`hexGrid = null`, zrzut po
+komórkach szablonu), a rysuje go tylko batch smug (`src/3d/coldWreckImpostors.js`, krycie 0,7).
+Wraca wyłącznie jawnie — holowanie, cięcie, rozkaz na wrak, `window.thawWreck` — najwyżej jedno
+odmrożenie na klatkę; zamrażanie idzie po 4 na klatkę, limit 1 500 zimnych (nadmiar: najdalszy od
+gracza, nigdy z ładunkiem). Kontakt spoczynkowy nie zeruje już licznika snu wraku, a martwe NPC misji
+wypadają z `npcs`. Pomiar w grze (PerfHUD: „Wraki gorące / śpiące / zimne”, Fizyka, Rysowanie) czeka
+na użytkownika; strojenie na żywo: `window.ColdWreckConfig` (np. `clearRadius`, `afterSec`).
