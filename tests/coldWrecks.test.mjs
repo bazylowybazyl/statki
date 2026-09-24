@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   DestructorSystem as D,
   DESTRUCTOR_CONFIG,
@@ -10,6 +11,8 @@ import {
 import { resetHexArenaForTests } from '../src/game/hexArenaBridge.js';
 import { TowConstraintSystem } from '../src/game/towSystem.js';
 import { createColdWreckSystem, COLD_WRECK_CONFIG, THAW_RESULT } from '../src/game/coldWrecks.js';
+import { SHIPMENT_STATUS } from '../src/game/cargoFleet.js';
+import { readIndexHtml, sliceFunction, loadIndexFunction } from './helpers/indexSource.mjs';
 
 // Zimne wraki na prawdziwym destruktorze i arenie heksów. Atrapą jest tylko
 // raster (kanwa, getImageData) i to, czego moduł pyta grę (odwołania, kadr,
@@ -309,6 +312,27 @@ test('thawWreck: najwyżej jedno odmrożenie na klatkę, reszta w kolejce z wywo
   assert.equal(ready.length, 3);
 });
 
+test('getFrameId: budżet odmrożeń na klatkę rAF, także dla wywołań z UI między krokami', () => {
+  resetHexArenaForTests({ capacity: 8192 });
+  const a = makeSleepyWreck(SMALL_IMAGE, 0, 0);
+  const b = makeSleepyWreck(SMALL_IMAGE, 5000, 0);
+  const c = makeSleepyWreck(SMALL_IMAGE, 9000, 0);
+  const wrecks = [a, b, c];
+  const coldWrecks = [];
+  let frame = 7;
+  const system = makeSystem(wrecks, coldWrecks, { getFrameId: () => frame });
+  for (const w of [a, b, c]) system.freeze(w);
+  assert.equal(system.thaw(a, 'ui'), THAW_RESULT.THAWED);
+  assert.equal(system.thaw(b, 'ui'), THAW_RESULT.QUEUED, 'ta sama klatka');
+  frame++;
+  assert.equal(system.thaw(c, 'ui'), THAW_RESULT.THAWED, 'nowa klatka bez step() — nowy budżet');
+  system.step(1 / 60); // ta sama klatka co c: kolejka czeka
+  assert.equal(b.isCold, true);
+  frame++;
+  system.step(1 / 60);
+  assert.equal(b.isCold, false);
+});
+
 test('MAX_COLD_WRECKS: wyrzuca najdalszego od gracza, nigdy wraka z ładunkiem; pula wydaje go jako nowy wrak', () => {
   resetHexArenaForTests({ capacity: 16384 });
   const near = makeSleepyWreck(SMALL_IMAGE, 100, 0);
@@ -419,4 +443,98 @@ test('zrzut odrzuca siatkę spoza szablonu (awaryjny wrak) — takiego nie zamra
   assert.equal(system.freeze(w), false);
   assert.ok(wrecks.includes(w) && w.hexGrid);
   assert.equal(DESTRUCTOR_CONFIG.packedHexArena, 1);
+});
+
+test('index.html: odwołania do wraku (odzysk, locki, kursor, menu, rozkazy, liny, ładunek) blokują zamrożenie', () => {
+  const src = readIndexHtml();
+  const scope = { _coldRefMarkStamp: 0 };
+  scope.markColdRef = loadIndexFunction(src, 'function markColdRef(entity)', 'markColdRef', scope);
+  const mark = loadIndexFunction(src, 'function markColdWreckReferences(stamp)', 'markColdWreckReferences', scope);
+  const w = () => ({ isWreck: true });
+  const refs = {
+    cutting: w(), towed: w(), locked: w(), locked2: w(), multi: w(), hover: w(), selected: w(),
+    menu: w(), attack: w(), playerCmd: w(), npcCmd: w(), npcForce: w(), cargo: w(), ropeA: w()
+  };
+  const idle = w();
+  const deadNpcCmd = w();
+  const menuClosed = w();
+  Object.assign(scope, {
+    salvageState: { cutting: refs.cutting, towed: refs.towed },
+    lockedTarget: refs.locked,
+    lockedTarget2: refs.locked2,
+    lockedTargets: [refs.multi, { isWreck: false }],
+    scan: { target: refs.hover },
+    scannerSelectedTarget: refs.selected,
+    worldCommandMenu: { open: true, targetEntity: refs.menu },
+    playerAttackState: { target: refs.attack },
+    ship: { command: { targetEntity: refs.playerCmd } },
+    npcs: [
+      { command: { targetEntity: refs.npcCmd }, forceTarget: refs.npcForce },
+      { dead: true, command: { targetEntity: deadNpcCmd }, _cargoWreck: refs.cargo }
+    ],
+    TowSystem: { constraints: [{ bodyA: refs.ropeA, bodyB: { isWreck: false } }] }
+  });
+  mark(7);
+  for (const [name, ref] of Object.entries(refs)) assert.equal(ref._coldRefStamp, 7, name);
+  assert.equal(idle._coldRefStamp, undefined);
+  assert.equal(deadNpcCmd._coldRefStamp, undefined, 'rozkaz martwego NPC nie trzyma wraku');
+
+  scope.worldCommandMenu = { open: false, targetEntity: menuClosed };
+  mark(8);
+  assert.equal(menuClosed._coldRefStamp, undefined, 'zamknięte menu nie trzyma wraku');
+  assert.equal(refs.cutting._coldRefStamp, 8);
+
+  // Wprost: lina i ładunek w locie (partia jeszcze nie leży we wraku).
+  const orders = new Map([
+    ['o-transit', { status: SHIPMENT_STATUS.IN_TRANSIT }],
+    ['o-wreck', { status: SHIPMENT_STATUS.WRECK }]
+  ]);
+  const roped = w();
+  const direct = loadIndexFunction(src, 'function isColdWreckReferencedDirect(wreck)', 'isColdWreckReferencedDirect', {
+    TowSystem: { isAttached: (b) => b === roped },
+    getShipmentOrder: (_fleet, id) => orders.get(id),
+    cargoFleet: {},
+    SHIPMENT_STATUS
+  });
+  assert.equal(direct(roped), true);
+  assert.equal(direct({ isWreck: true, _cargoOrderId: 'o-transit' }), true, 'transfer w toku');
+  assert.equal(direct({ isWreck: true, _cargoOrderId: 'o-wreck' }), false, 'ładunek leżący we wraku nie blokuje');
+  assert.equal(direct(idle), false);
+});
+
+test('index.html: wpięcie — krok przed pętlą wraków, sen w sekundach, jawne budzenie, smugi, PerfHUD', () => {
+  const src = readIndexHtml();
+  const physics = sliceFunction(src, 'function physicsStep(');
+  const stepAt = physics.indexOf('if (runFrameLogic) coldWreckSystem.step(frameLogicDt);');
+  const loopAt = physics.indexOf('// Aktualizacja wraków — podział na aktywne i śpiące');
+  assert.ok(stepAt > 0 && stepAt < loopAt, 'krok zimnych raz na klatkę, przed pętlą wraków');
+  assert.match(physics, /w\._wreckSleptSec = w\._wreckSleeping \? \(Number\(w\._wreckSleptSec\) \|\| 0\) \+ dt : 0;/);
+  assert.match(physics, /distToPlayer > WRECK_DESPAWN_DIST/);
+
+  for (const header of ['function startWreckTow(wreck)', 'function startFieldSalvage(wreck)']) {
+    assert.match(sliceFunction(src, header), /if \(wreck\.isCold\) \{\s*if \(thawWreck\(wreck, '\w+', start\w+\) === THAW_RESULT\.FAILED\)/, header);
+  }
+  // sliceFunction łapie `{` z domyślnego `opts = {}` — tu tniemy do następnej funkcji.
+  const untilNextFunction = (header) => {
+    const start = src.indexOf(header);
+    assert.ok(start >= 0, header);
+    return src.slice(start, src.indexOf('\n    function ', start + header.length));
+  };
+  assert.match(untilNextFunction('function executeNormalWorldCommandAction('), /if \(liveTarget\?\.isCold\) thawWreckForOrder\(liveTarget, action\);/);
+  assert.match(untilNextFunction('function executeRtsWorldCommandAction('), /thawWreckForOrder\(liveTarget, action\);/);
+  assert.match(sliceFunction(src, 'function pickWreckTargetAtWorld(worldPoint)'), /pass === 0 \? window\.wrecks : coldWrecks/);
+  assert.match(src, /const wreckList = pass === 0 \? window\.wrecks : coldWrecks;/, 'hover widzi zimne');
+  assert.match(sliceFunction(src, 'function removeWreckFromWorld(wreck)'), /coldWreckSystem\.forget\(wreck\);\s*DestructorSystem\?\.recycleWreck\?\.\(wreck\);/);
+
+  const freezeHook = src.slice(src.indexOf('onBeforeFreeze(w) {'), src.indexOf('onThawed(w, reason) {'));
+  assert.ok(freezeHook.indexOf('captureColdWreckImpostor') < freezeHook.indexOf('invalidateHexShipEntity3D(w)'),
+    'smuga zapisana, zanim meshe znikną');
+  assert.match(freezeHook, /TowSystem\.detachBody\(w, 'wreck-cold'\)/);
+
+  assert.match(src, /updateHexShips3D\(cam, renderEntities, _hexCullInfo, coldWrecks\);/);
+  assert.match(src, /for \(const w of wrecks\) if \(w && !w\.dead\) renderEntities\.push\(w\);/, 'renderEntities tylko z wrecks');
+  assert.match(src, /setPerfHudWorldSource\(\(\) => \(\{ ship, npcs, wrecks, coldWrecks, bullets/);
+  const hud = readFileSync(new URL('../src/ui/perfHud.js', import.meta.url), 'utf8');
+  assert.match(hud, /Wraki gorące \/ śpiące \/ zimne/);
+  assert.match(hud, /coldWreckCount: Array\.isArray\(coldWrecks\) \? coldWrecks\.length : 0/);
 });

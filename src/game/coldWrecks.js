@@ -124,6 +124,8 @@ export function buildColdWreckSummary(wreck, snapshot) {
  * @param {(w: object, reason: string) => void} [options.onThawed]
  * @param {(w: object) => void} [options.onEvicted]
  * @param {(w: object) => unknown} [options.recycle]  domyślnie DestructorSystem.recycleWreck
+ * @param {() => number} [options.getFrameId]  id klatki rAF: budżety liczone na klatkę
+ *        także dla thaw() wołanego z UI między klatkami; bez niego — na wywołanie step()
  * @param {object} [options.config]  nadpisania COLD_WRECK_CONFIG
  */
 export function createColdWreckSystem(options = {}) {
@@ -147,6 +149,7 @@ export function createColdWreckSystem(options = {}) {
   const recycle = typeof options.recycle === 'function'
     ? options.recycle
     : (w) => DestructorSystem.recycleWreck(w);
+  const getFrameId = typeof options.getFrameId === 'function' ? options.getFrameId : null;
 
   const freezeQueue = [];
   const thawQueue = [];
@@ -154,6 +157,20 @@ export function createColdWreckSystem(options = {}) {
   let refStamp = 0;
   let freezesThisFrame = 0;
   let thawsThisFrame = 0;
+  let budgetFrameId = null;
+
+  // Nowa klatka = nowe budżety. Bez getFrameId zeruje je każde step().
+  function syncFrameBudget(force) {
+    if (getFrameId) {
+      const id = getFrameId();
+      if (id === budgetFrameId) return;
+      budgetFrameId = id;
+    } else if (!force) {
+      return;
+    }
+    freezesThisFrame = 0;
+    thawsThisFrame = 0;
+  }
   const stats = {
     frozen: 0,
     thawed: 0,
@@ -318,6 +335,7 @@ export function createColdWreckSystem(options = {}) {
       return THAW_RESULT.THAWED;
     }
     if (typeof onReady === 'function') w._coldThawCallback = onReady;
+    syncFrameBudget(false);
     if (thawsThisFrame >= config.thawPerFrame) {
       if (!w._coldThawQueued) {
         w._coldThawQueued = true;
@@ -370,8 +388,7 @@ export function createColdWreckSystem(options = {}) {
    * wraków — zamrożony wrak nie trafia już do buforów tej klatki).
    */
   function step(frameDt) {
-    freezesThisFrame = 0;
-    thawsThisFrame = 0;
+    syncFrameBudget(true);
     const simMs = getSimTimeMs();
 
     // Najpierw odmrożenia z kolejki — rozkaz gracza przed porządkami.

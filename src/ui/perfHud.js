@@ -378,6 +378,8 @@ const PERF_PANEL_HTML = `
       id="perfDrawCallsOther">--</span></div>
   <div class="perf-row"><span class="perf-label">Pociski / NPC</span><span class="perf-val"
       id="perfCounts">--</span></div>
+  <div class="perf-row"><span class="perf-label">Wraki gorące / śpiące / zimne</span><span class="perf-val"
+      id="perfWrecks">--</span></div>
   <div class="perf-row"><span class="perf-label">Enemy / Ally</span><span class="perf-val"
       id="perfNpcTeams">--</span></div>
   <div class="perf-row"><span class="perf-label">PointLighty</span><span class="perf-val"
@@ -622,6 +624,9 @@ export const PerfHUD = {
     shards: 0,
     bulletsCount: 0,
     npcCount: 0,
+    hotWreckCount: 0,
+    sleepingWreckCount: 0,
+    coldWreckCount: 0,
     fighterCount: 0,
     enemyNpcCount: 0,
     friendlyNpcCount: 0,
@@ -767,6 +772,7 @@ export const PerfHUD = {
       drawCallsPost: document.getElementById('perfDrawCallsPost'),
       drawCallsOther: document.getElementById('perfDrawCallsOther'),
       counts: document.getElementById('perfCounts'),
+      wrecks: document.getElementById('perfWrecks'),
       npcTeams: document.getElementById('perfNpcTeams'),
       pointLights: document.getElementById('perfPointLights'),
       barFrameUntracked: document.getElementById('barFrameUntracked'),
@@ -1171,6 +1177,9 @@ export const PerfHUD = {
     this.display.sleepingShards = counts.sleepingShards;
     this.display.bulletsCount = counts.bulletsCount;
     this.display.npcCount = counts.npcCount;
+    this.display.hotWreckCount = counts.hotWreckCount;
+    this.display.sleepingWreckCount = counts.sleepingWreckCount;
+    this.display.coldWreckCount = counts.coldWreckCount;
     this.display.fighterCount = counts.fighterCount;
     this.display.enemyNpcCount = counts.enemyNpcCount;
     this.display.friendlyNpcCount = counts.friendlyNpcCount;
@@ -1189,17 +1198,22 @@ export const PerfHUD = {
   },
 
   collectCounts() {
-    const { ship = null, npcs = [], wrecks = [], bullets = [] } = worldSource() || {};
+    const { ship = null, npcs = [], wrecks = [], coldWrecks = [], bullets = [] } = worldSource() || {};
     let entitiesCount = 0;
     let activeShards = 0;
     let sleepingShards = 0;
+    let hotWreckCount = 0;
+    let sleepingWreckCount = 0;
     const all = [];
     if (ship && ship.hexGrid && !ship.dead) all.push(ship);
     for (const npc of npcs) {
       if (npc && npc.hexGrid && !npc.dead) all.push(npc);
     }
     for (const w of wrecks) {
-      if (w && w.hexGrid && !w.dead) all.push(w);
+      if (!w || w.dead) continue;
+      if (w._wreckSleeping) sleepingWreckCount++;
+      else hotWreckCount++;
+      if (w.hexGrid) all.push(w);
     }
     entitiesCount = all.length;
     for (const e of all) {
@@ -1254,6 +1268,10 @@ export const PerfHUD = {
       sleepingShards,
       bulletsCount: Array.isArray(bullets) ? bullets.length : 0,
       npcCount,
+      hotWreckCount,
+      sleepingWreckCount,
+      // Zimne (src/game/coldWrecks.js): poza wszystkimi listami, tylko smuga.
+      coldWreckCount: Array.isArray(coldWrecks) ? coldWrecks.length : 0,
       fighterCount,
       enemyNpcCount,
       friendlyNpcCount,
@@ -1534,6 +1552,7 @@ export const PerfHUD = {
     if (e.npcTeams) e.npcTeams.textContent = `${d.enemyNpcCount} / ${d.friendlyNpcCount} (F ${d.enemyFighterCount}/${d.friendlyFighterCount})`;
     if (e.pointLights) e.pointLights.textContent = `${d.visiblePointLightCount}/${d.pointLightCount} (eng ${d.visibleEnginePointLightCount}/${d.enginePointLightCount})`;
     if (e.counts) e.counts.textContent = `${d.bulletsCount} / ${d.npcCount} (${d.fighterCount} myśl.)`;
+    if (e.wrecks) e.wrecks.textContent = `${d.hotWreckCount} / ${d.sleepingWreckCount} / ${d.coldWreckCount}`;
     this.applySectionCollapse();
   },
 
