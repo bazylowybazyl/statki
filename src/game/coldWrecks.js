@@ -158,6 +158,8 @@ export function createColdWreckSystem(options = {}) {
   let freezesThisFrame = 0;
   let thawsThisFrame = 0;
   let budgetFrameId = null;
+  // Rośnie przy każdej zmianie zbioru zimnych — UI (pola wraków) przebudowuje się po nim.
+  let version = 0;
 
   // Nowa klatka = nowe budżety. Bez getFrameId zeruje je każde step().
   function syncFrameBudget(force) {
@@ -272,6 +274,7 @@ export function createColdWreckSystem(options = {}) {
     wrecks.splice(index, 1);
     coldWrecks.push(w);
     stats.frozen++;
+    version++;
     freezesThisFrame++;
     return true;
   }
@@ -315,6 +318,7 @@ export function createColdWreckSystem(options = {}) {
     DestructorSystem.wakeHexEntity(w, DESTRUCTOR_CONFIG.elasticWakeFrames | 0);
     if (!wrecks.includes(w)) wrecks.push(w);
     stats.thawed++;
+    version++;
     if (onThawed) onThawed(w, reason);
     const callback = w._coldThawCallback;
     w._coldThawCallback = null;
@@ -376,6 +380,7 @@ export function createColdWreckSystem(options = {}) {
       w.isCold = false;
       recycle(w);
       stats.evicted++;
+      version++;
       evicted++;
       excess--;
       if (onEvicted) onEvicted(w);
@@ -416,7 +421,10 @@ export function createColdWreckSystem(options = {}) {
     w._coldThawQueued = false;
     w._coldThawCallback = null;
     const removed = removeCold(w);
-    if (removed) w.isCold = false;
+    if (removed) {
+      w.isCold = false;
+      version++;
+    }
     return removed;
   }
 
@@ -433,6 +441,7 @@ export function createColdWreckSystem(options = {}) {
     },
     enforceColdLimit,
     get freezeQueueLength() { return freezeQueue.length; },
-    get thawQueueLength() { return thawQueue.length; }
+    get thawQueueLength() { return thawQueue.length; },
+    get version() { return version; }
   };
 }

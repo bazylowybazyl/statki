@@ -929,6 +929,7 @@
     import { TowConstraintSystem } from "./src/game/towSystem.js";
     import { createColdWreckSystem, THAW_RESULT } from "./src/game/coldWrecks.js";
     import { purgeFinishedNpcs } from "./src/game/npcListPurge.js";
+    import { buildWreckFields } from "./src/game/wreckFields.js";
     import { createWeaponInventory, fillWeaponInventory } from "./src/game/weaponInventory.js";
     import { CHIPS, CHIP_ORDER, PD_CHIP_ID } from "./src/data/chips.js";
     import {
@@ -15626,7 +15627,7 @@
         sy,
         worldPoint,
         targetEntity,
-        buildRtsCommandMenuItems({ selectedCount })
+        buildRtsCommandMenuItems({ selectedCount, targetEntity })
       );
       return true;
     }
@@ -15955,6 +15956,12 @@
     }
 
     function executeRtsWorldCommandAction(action, point, targetEntity, opts = {}) {
+      // Odzysk z menu RTS (SALVAGE, TOW / WYCIĄGNIJ) wykonuje statek gracza — ta
+      // sama ścieżka co w trybie normalnym, z odmrożeniem zimnego wraku.
+      if (action === 'salvage' || action === 'tow') {
+        executeNormalWorldCommandAction(action, point, targetEntity, opts);
+        return;
+      }
       const liveTarget = isCommandEntityAlive(targetEntity) ? targetEntity : null;
       const enemyTarget = isValidLockedTarget(liveTarget) ? liveTarget : pickEnemyTargetAtWorld(point);
       // Rozkaz RTS na zimny wrak wybudza go (ruch w punkt i HOLD — nie).
@@ -20506,6 +20513,20 @@
     window.ColdWreckStats = coldWreckSystem.stats;
     window.ColdWreckConfig = coldWreckSystem.config;
 
+    // Pola zimnych wraków (src/game/wreckFields.js) dla CIC: przebudowa tylko po
+    // zmianie zbioru zimnych (coldWreckSystem.version), najwyżej co 0,5 s.
+    const coldWreckFields = [];
+    window.coldWreckFields = coldWreckFields;
+    let _coldFieldsVersion = -1;
+    let _coldFieldsTimer = 0;
+    function refreshColdWreckFields(dt) {
+      _coldFieldsTimer -= dt;
+      if (coldWreckSystem.version === _coldFieldsVersion || _coldFieldsTimer > 0) return;
+      _coldFieldsTimer = 0.5;
+      _coldFieldsVersion = coldWreckSystem.version;
+      buildWreckFields(coldWrecks, coldWreckFields);
+    }
+
     // Rozkaz na zimny wrak go budzi. Wyjątek: wrak dalej niż WRECK_DESPAWN_DIST
     // od gracza — odmrożony, zniknąłby w najbliższym kroku pętli wraków, a
     // podejście/orbita potrzebują tylko jego pozycji.
@@ -21312,6 +21333,7 @@
       // klatki. PRZED pętlą wraków — zamrożony wrak nie trafia już do buforów
       // ani list destruktora tej klatki.
       if (runFrameLogic) coldWreckSystem.step(frameLogicDt);
+      if (runFrameLogic) refreshColdWreckFields(frameLogicDt);
 
       // Aktualizacja wraków — podział na aktywne i śpiące
       _activeWrecksBuffer.length = 0;

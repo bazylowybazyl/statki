@@ -69,18 +69,31 @@ function smoothstep01(value) {
   return t * t * (3 - 2 * t);
 }
 
+// Zimny wrak (src/game/coldWrecks.js) leży w polu jako „tło” — hol go
+// wyciąga: odmrożenie (thawWreck) i zaczep liny w jednej akcji.
+function wreckActionItems(targetEntity) {
+  return WRECK_ACTIONS.map(([action, label]) => ({
+    action,
+    label: targetEntity?.isCold && action === 'tow' ? 'WYCIĄGNIJ (HOL)' : label
+  }));
+}
+
 export function buildNormalCommandMenuItems({ targetEntity = null } = {}) {
   const base = (targetEntity ? NORMAL_TARGET_ACTIONS : NORMAL_EMPTY_ACTIONS).map(menuItem);
-  if (targetEntity?.isWreck) return [...WRECK_ACTIONS.map(menuItem), ...base];
+  if (targetEntity?.isWreck) return [...wreckActionItems(targetEntity), ...base];
   return base;
 }
 
-export function buildRtsCommandMenuItems({ selectedCount = 0 } = {}) {
+// Akcje wraku na KOŃCU listy RTS — pierwsza pozycja (MOVE) prowadzi
+// przeciąganie PPM i musi zostać na miejscu. Wykonuje je statek gracza.
+export function buildRtsCommandMenuItems({ selectedCount = 0, targetEntity = null } = {}) {
   const formation = Number(selectedCount) > 1;
-  return [
+  const items = [
     { action: formation ? 'move-formation' : 'move', label: formation ? 'MOVE FORMATION' : 'MOVE' },
     ...RTS_ACTIONS.map(menuItem)
   ];
+  if (targetEntity?.isWreck) items.push(...wreckActionItems(targetEntity));
+  return items;
 }
 
 export function buildOrbitRangeMenuItems({ currentRange = null } = {}) {

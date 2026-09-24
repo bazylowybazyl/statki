@@ -7,6 +7,7 @@ import {
   formatPhysicalVelocityKmS,
   resolveWorldUnitsPerAu
 } from '../config/units.js';
+import { drawWreckFieldMarkers } from './wreckFieldMarkers.js';
 
 // =============================================================================
 // CIC — COMBAT INFORMATION CENTER
@@ -1485,6 +1486,18 @@ export const CICDisplay = {
       ctx.stroke();
       ctx.globalAlpha = 1;
     }
+
+    // === POLA WRAKÓW (zimne wraki: src/game/wreckFields.js) ===
+    drawWreckFieldMarkers(ctx, window.coldWreckFields, {
+      toScreen,
+      zoom: cicZoom,
+      W,
+      H,
+      shipX: ship.pos.x,
+      shipY: ship.pos.y,
+      isSystemScale,
+      formatDistance: formatLocalDistance
+    });
 
     // === DRONES ON CIC ===
     if (window.SpotterDroneSystem) {
