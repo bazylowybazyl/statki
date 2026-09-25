@@ -19,6 +19,13 @@ const RING_PLANET_RENDER_LAYER = 6;
 // statku/planety mnożył ją razem z kadłubem i przecinał poświatę ciemnym
 // pasem. Warstwa 0 zostaje w cieniu, tarcza świeci również w cieniu.
 const SHIELD_RENDER_LAYER = 7;
+// Emisja świata ortho (dysze, pociski, błyski wylotowe, wiązki, iskry, żar
+// Fx3D): ten sam pass co tarcze — po shaftach, w ortho, z głębią kadłubów.
+// Siedziały na warstwie 0, więc mnożenie shaftów gasiło je razem z kadłubem:
+// dysza HDR 2,4 × umbra 0,06 = 0,14 < próg bloomu 0,9 — w cieniu Ziemi
+// silniki i pociski traciły poświatę. Źródło światła nie dostaje cienia.
+const ORTHO_EMISSIVE_RENDER_LAYER = 8;
+const EMISSIVE_PASS_LAYERS = Object.freeze([SHIELD_RENDER_LAYER, ORTHO_EMISSIVE_RENDER_LAYER]);
 // Shadow shafts: WSZYSTKIE okludery są analityczne (dyski / kapsuły /
 // pierścienie w world-space, liczone per piksel w shaderze passa). Maska
 // screen-space odeszła w całości: nie obejmowała okluderów poza kadrem
@@ -32,6 +39,25 @@ const SHAFT_RING_CAP = 2;       // ring city (Ziemia, Mars)
 // Siła cienia kadłuba: planeta gasi scenę do czerni (umbra), statek ma tylko
 // przygaszać — pełna siła robiła z każdego okrętu czarną kałużę na mgławicy.
 const HULL_SHADOW_STRENGTH = 0.55;
+// Mnożnik sceny w pełnej umbrze — chłodny granat zamiast czystej czerni.
+const SHAFT_UMBRA_TINT = '0.06, 0.10, 0.16';
+// Cień ma dwie warstwy (dwa quady w jednym render() passa shaftów):
+//  * POWIERZCHNIE — piksele, do których pass ortho zapisał głębię (kadłuby):
+//    pełny cień, planeta gasi do umbry. Tu cień ma sens fizyczny.
+//  * TŁO — mgławica, gwiazdy, planety, poświaty: z cienia planety i ringu
+//    tylko część. Cień nie sięga tła w nieskończoności; smuga na tle to efekt
+//    „wolumetryczny” (jak promienie w mgle) — ma czytać się z daleka, ale nie
+//    może gasić całego kadru, gdy kamera siedzi w cieniu Ziemi (umbra ma
+//    2R ≈ 75 600 j., kadr przy zoomie 1 to ~1 900 j.). Pełna siła na tle
+//    robiła z mgławicy granatową czerń na cały ekran.
+// disc 0,7: mnożnik tła w umbrze ~0,37 zamiast ~0,1. Mnożenie idzie przed
+// ACES + sRGB, więc percepcyjnie to ~połowa jasności półtonów (0,6 czytało
+// się już słabo jako smuga z daleka, 1,0 = dawna czerń).
+// ring: 0 — pas ringu zaciemniał tło w szczelinie planeta–ring po DZIENNEJ
+// stronie (razem z poświatą atmosfery); cień ringu dostają tylko kadłuby.
+// Cień kadłuba na tle zostaje bez zmian (HULL_SHADOW_STRENGTH już przygasza).
+// Strojenie na żywo: Core3D.shadowShaftsPass.uniforms.uVolumeDisc.value.
+export const SHAFT_VOLUME_STRENGTH = Object.freeze({ disc: 0.7, ring: 0.0 });
 
 // Poziomy jakości shadow shafts — po przejściu na pełną analitykę jedyne
 // różnice to długość smug, budżet kadłubów-okluderów i liczba kroków marszu
@@ -67,9 +93,15 @@ function createShadowShaftsShader() {
       uCamCenter2: { value: new THREE.Vector2(0, 0) },
       uViewWorldSize: { value: new THREE.Vector2(1, 1) },
       uViewWorldSize2: { value: new THREE.Vector2(1, 1) },
+      // Odległość kamery persp od płaszczyzny gry (x: widok 1, y: widok 2) —
+      // rzut tarcz ciał leżących za płaszczyzną (uDiscDepth > 0).
+      uPerspDist: { value: new THREE.Vector2(1, 1) },
       uDiscLenMul: { value: 5.0 },
       uDiscCount: { value: 0 },
       uDiscs: { value: Array.from({ length: SHAFT_DISC_CAP }, () => new THREE.Vector4(0, 0, 0, 0)) },
+      uDiscDepth: { value: new Float32Array(SHAFT_DISC_CAP) },
+      uVolumeDisc: { value: SHAFT_VOLUME_STRENGTH.disc },
+      uVolumeRing: { value: SHAFT_VOLUME_STRENGTH.ring },
       uHullLenMul: { value: 3.0 },
       uHullCount: { value: 0 },
       uHullSteps: { value: 24 },
@@ -84,7 +116,20 @@ function createShadowShaftsShader() {
       // uRings[i]: xy = środek (three-space), z = promień pasma, w = zasięg cienia
       uRings: { value: Array.from({ length: SHAFT_RING_CAP }, () => new THREE.Vector4(0, 0, 0, 0)) }
     },
-    vertexShader: `precision highp float; varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    // Oba quady leżą na dalekiej płaszczyźnie, a test głębi dzieli ekran
+    // rozłącznie: pass ortho czyści głębię na starcie, więc zostaje w niej
+    // tylko to, co zapisały kadłuby (piszą głębię i odrzucają przezroczyste
+    // piksele sprite'a). Tło ma 1.0 → przechodzi LEQUAL (quad tła), kadłub
+    // ~0,375 → przechodzi GREATER (quad powierzchni, SHAFT_SURFACE). Każdy
+    // piksel liczy shader raz, jak przy jednym quadzie.
+    vertexShader: `
+      precision highp float;
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = vec4(position.xy, 0.9999, 1.0);
+      }
+    `,
     fragmentShader: `
       precision highp float;
       uniform int uSunActive;
@@ -94,9 +139,13 @@ function createShadowShaftsShader() {
       uniform vec2 uCamCenter2;
       uniform vec2 uViewWorldSize;
       uniform vec2 uViewWorldSize2;
+      uniform vec2 uPerspDist;
       uniform float uDiscLenMul;
       uniform int uDiscCount;
       uniform vec4 uDiscs[${SHAFT_DISC_CAP}];
+      uniform float uDiscDepth[${SHAFT_DISC_CAP}];
+      uniform float uVolumeDisc;
+      uniform float uVolumeRing;
       uniform int uRingCount;
       uniform vec4 uRings[${SHAFT_RING_CAP}];
       varying vec2 vUv;
@@ -114,6 +163,7 @@ ${HULL_SDF_SHADOW_GLSL}
           : vUv;
         vec2 camC = rightHalf ? uCamCenter2 : uCamCenter;
         vec2 viewWS = rightHalf ? uViewWorldSize2 : uViewWorldSize;
+        float perspDist = rightHalf ? uPerspDist.y : uPerspDist.x;
         vec2 worldP = camC + (localUv - 0.5) * viewWS;
 
         // Kierunek do slonca liczony PER PIKSEL (nie per kamera) — poprawna
@@ -126,7 +176,7 @@ ${HULL_SDF_SHADOW_GLSL}
         }
         vec2 d = toSun / sunDist;
 
-        float shadow = 0.0;
+        float discShadow = 0.0;
         bool insideDisc = false;
 
         // ── Dyski: planety, ksiezyce, najwieksze asteroidy ───────────────
@@ -137,13 +187,24 @@ ${HULL_SDF_SHADOW_GLSL}
         for (int i = 0; i < ${SHAFT_DISC_CAP}; i++) {
           if (i >= uDiscCount) break;
           vec4 disc = uDiscs[i];
+          vec2 center = disc.xy;
           float discR = disc.z;
           if (discR <= 0.0) continue;
-          vec2 axis = disc.xy - uSunWorld;
+          // Planety tla (kamera persp, z = -50 000) widac w innym miejscu
+          // i w innej skali niz ich pozycja na plaszczyznie gry: tarcza idzie
+          // tam, gdzie planete WIDAC (paralaksa rzutu). Bez tego cien Jowisza
+          // zaczynal sie na okregu 2-30x wiekszym od widocznej planety.
+          float depth = uDiscDepth[i];
+          if (depth > 0.0) {
+            float s = perspDist / (perspDist + depth);
+            center = camC + (center - camC) * s;
+            discR *= s;
+          }
+          vec2 axis = center - uSunWorld;
           float axisLen = length(axis);
           if (axisLen < 1.0) continue;
           axis /= axisLen;
-          vec2 rel = worldP - disc.xy;
+          vec2 rel = worldP - center;
           if (dot(rel, rel) < discR * discR) insideDisc = true;
           float along = dot(rel, axis);
           if (along <= 0.0) continue;
@@ -157,7 +218,7 @@ ${HULL_SDF_SHADOW_GLSL}
           // zamiast być smugą.
           float soft = discR * (0.04 + 0.14 * fallT);
           float edge = 1.0 - smoothstep(discR - soft, discR + soft, perp);
-          shadow = max(shadow, edge * fall * max(disc.w, 0.0));
+          discShadow = max(discShadow, edge * fall * max(disc.w, 0.0));
         }
 
         // ── Kadluby statkow: pole odleglosci sylwetki ───────────────────
@@ -167,12 +228,13 @@ ${HULL_SDF_SHADOW_GLSL}
         // kapsul pomijal tylko wnetrze tej samej kapsuly i kazda rzucala cien
         // na kadlub pod sasiednia.
         // Statek nie robi czarnej dziury jak planeta — smuga tylko przygasza.
-        shadow = max(shadow, hullSdfShadow(worldP, d, sunDist) * ${HULL_SHADOW_STRENGTH.toFixed(2)});
+        float hullShadow = hullSdfShadow(worldP, d, sunDist) * ${HULL_SHADOW_STRENGTH.toFixed(2)};
 
         // ── Pierscienie (ring city wokol planety) ────────────────────────
         // Piksele wewnatrz tarczy planety pomijamy: pas cienia ringu na
         // POWIERZCHNI rysuje analityczny term w shaderze planety (uRingShadow*)
         // — bez tego pas bylby liczony podwojnie.
+        float ringShadow = 0.0;
         if (!insideDisc) {
           for (int i = 0; i < ${SHAFT_RING_CAP}; i++) {
             if (i >= uRingCount) break;
@@ -189,14 +251,20 @@ ${HULL_SDF_SHADOW_GLSL}
             float tHit = (c2 < 0.0) ? (-b_ + sq) : (-b_ - sq);
             if (tHit <= 0.0 || tHit >= sunDist) continue;
             float ringShade = (1.0 - smoothstep(0.0, max(ring.w, 1.0), tHit)) * 0.85;
-            shadow = max(shadow, ringShade);
+            ringShadow = max(ringShadow, ringShade);
           }
         }
 
-        float rawShadow = clamp(shadow, 0.0, 1.0);
         // Pass może wyłącznie przyciemniać piksele pod smugą. Dodawanie stałej
         // poświaty tutaj robiło pełnoekranową szarą mgłę niezależną od pozycji.
-        gl_FragColor = vec4(mix(vec3(1.0), vec3(0.06, 0.10, 0.16), rawShadow), 1.0);
+      #ifdef SHAFT_SURFACE
+        // Kadlub: pelny cien — planeta gasi do umbry.
+        float shadowAmt = clamp(max(max(discShadow, hullShadow), ringShadow), 0.0, 1.0);
+      #else
+        // Tlo: czesc cienia planety/ringu (SHAFT_VOLUME_STRENGTH), cien kadluba bez zmian.
+        float shadowAmt = clamp(max(max(discShadow * uVolumeDisc, hullShadow), ringShadow * uVolumeRing), 0.0, 1.0);
+      #endif
+        gl_FragColor = vec4(mix(vec3(1.0), vec3(${SHAFT_UMBRA_TINT}), shadowAmt), 1.0);
       }
     `
   };
@@ -274,6 +342,97 @@ class FullScreenBlendPass extends Pass {
     this.material.dispose();
     this.fsQuad.dispose();
   }
+}
+
+// Shadow shafts: dwa quady mnożące scenę w JEDNYM renderer.render() — każde
+// render() do celu MSAA kończy się resolve, drugi FullScreenQuad kosztowałby
+// drugi. Test głębi dzieli piksele rozłącznie (early-Z odrzuca resztę przed
+// shaderem): quad tła (LEQUAL) — część cienia planety, quad powierzchni
+// (GREATER, piksele kadłubów) — pełny cień. Oba materiały dzielą uniformy,
+// więc render() w Core3D wypełnia je raz (przez `material.uniforms`).
+class ShadowShaftsPass extends Pass {
+  constructor() {
+    super();
+    this.needsSwap = false;
+    const shader = createShadowShaftsShader();
+    this.uniforms = THREE.UniformsUtils.clone(shader.uniforms);
+    const makeMaterial = (surface) => {
+      const material = new THREE.ShaderMaterial({
+        name: surface ? 'ShadowShaftsSurface' : 'ShadowShaftsVolume',
+        uniforms: this.uniforms,
+        vertexShader: shader.vertexShader,
+        fragmentShader: shader.fragmentShader,
+        defines: surface ? { SHAFT_SURFACE: 1 } : {},
+        depthTest: true,
+        depthFunc: surface ? THREE.GreaterDepth : THREE.LessEqualDepth,
+        depthWrite: false,
+        transparent: true
+      });
+      Object.assign(material, BLEND_MULTIPLY_SCENE);
+      return material;
+    };
+    this.material = makeMaterial(false);
+    this.surfaceMaterial = makeMaterial(true);
+    // Trójkąt pokrywający ekran — ten sam co w FullScreenQuad.
+    this._geometry = new THREE.BufferGeometry();
+    this._geometry.setAttribute('position', new THREE.Float32BufferAttribute([-1, 3, 0, -1, -1, 0, 3, -1, 0], 3));
+    this._geometry.setAttribute('uv', new THREE.Float32BufferAttribute([0, 2, 0, 0, 2, 0], 2));
+    const volumeQuad = new THREE.Mesh(this._geometry, this.material);
+    const surfaceQuad = new THREE.Mesh(this._geometry, this.surfaceMaterial);
+    volumeQuad.frustumCulled = false;
+    surfaceQuad.frustumCulled = false;
+    volumeQuad.renderOrder = 0;
+    surfaceQuad.renderOrder = 1;
+    this._scene = new THREE.Scene();
+    this._scene.add(volumeQuad, surfaceQuad);
+    this._camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  }
+
+  render(renderer, writeBuffer, readBuffer) {
+    const oldAutoClear = renderer.autoClear;
+    renderer.autoClear = false;
+    renderer.setRenderTarget(this.renderToScreen ? null : readBuffer);
+    renderer.render(this._scene, this._camera);
+    renderer.autoClear = oldAutoClear;
+  }
+
+  dispose() {
+    this.material.dispose();
+    this.surfaceMaterial.dispose();
+    this._geometry.dispose();
+  }
+}
+
+// Kamera passa widzi jedną warstwę albo kilka (pass emisji: tarcze + emisja
+// ortho w jednym obchodzie grafu).
+function setCameraLayers(camera, layerSpec) {
+  if (Array.isArray(layerSpec)) {
+    camera.layers.disableAll();
+    for (let i = 0; i < layerSpec.length; i++) camera.layers.enable(layerSpec[i]);
+  } else {
+    camera.layers.set(layerSpec);
+  }
+}
+
+// Czy obiekt (albo coś pod nim) coś w tej klatce narysuje: widoczny mesh /
+// linia / punkty z niezerową liczbą instancji i zakresem rysowania. Światła
+// pomijane — nie są zawartością warstwy.
+function hasVisibleDrawable(object) {
+  if (!object || object.visible === false) return false;
+  if (object.isMesh || object.isLine || object.isPoints || object.isSprite) {
+    if (object.isInstancedMesh) return object.count > 0;
+    const geometry = object.geometry;
+    if (geometry) {
+      if (geometry.isInstancedBufferGeometry && geometry.instanceCount === 0) return false;
+      if (geometry.drawRange && geometry.drawRange.count === 0) return false;
+    }
+    return true;
+  }
+  const children = object.children;
+  for (let i = 0; i < children.length; i++) {
+    if (hasVisibleDrawable(children[i])) return true;
+  }
+  return false;
 }
 
 const UberPostShader = {
@@ -419,7 +578,7 @@ function makeSplitScreenRenderPass(pass, layerId, isOrtho, doClearColor, doClear
           // KLUCZ: Przekazujemy halfW, aby aspekt kamery wynosiĹ‚ (halfW / th)
           Core3D.syncCamera(Core3D.activeCam1, halfW, th, 0);
           this.camera = Core3D.getPassCamera(isOrtho);
-          this.camera.layers.set(layerId);
+          setCameraLayers(this.camera, layerId);
           renderer.render(this.scene, this.camera);
 
           // GRACZ 2 (Prawa poĹ‚Ăłwka)
@@ -434,7 +593,7 @@ function makeSplitScreenRenderPass(pass, layerId, isOrtho, doClearColor, doClear
 
           Core3D.syncCamera(Core3D.activeCam2, halfW, th, halfW);
           this.camera = Core3D.getPassCamera(isOrtho);
-          this.camera.layers.set(layerId);
+          setCameraLayers(this.camera, layerId);
           renderer.render(this.scene, this.camera);
 
           renderer.setScissorTest(false);
@@ -451,7 +610,7 @@ function makeSplitScreenRenderPass(pass, layerId, isOrtho, doClearColor, doClear
           }
           Core3D.syncCamera(Core3D.activeCam1, tw, th, 0);
           this.camera = Core3D.getPassCamera(isOrtho);
-          this.camera.layers.set(layerId);
+          setCameraLayers(this.camera, layerId);
           renderer.render(this.scene, this.camera);
       }
       renderer.setClearColor(oldCol, oldAlpha);
@@ -470,13 +629,14 @@ export const Core3D = {
   _refractionValid: false, _refractionFlip: false,
   planetHaloTarget: null, haloDepthMaskMaterial: null,
 
-  renderPassBg: null, renderPassPlanets: null, planetHaloPass: null, renderPassRingPlanets: null, renderPassOrtho: null, renderPassShields: null, renderPassFg: null,
+  renderPassBg: null, renderPassPlanets: null, planetHaloPass: null, renderPassRingPlanets: null, renderPassOrtho: null, renderPassEmissive: null, renderPassFg: null,
   heatHazeSources: null, heatHazeDirs: null, heatHazeCount: 0, heatHazeMaxSources: MAX_HEAT_HAZE_SOURCES, _heatHazeWorldScratch: new THREE.Vector3(),
   shadowShaftsPass: null,
   // Analityczne okludery shaftów, zgłaszane co klatkę przez systemy gry:
   // dyski (planet3d.assets + asteroidField3D), kapsuły (hexShips3D),
   // pierścienie (planetaryRing3D — Map po kluczu ringu, bez begin/reset).
-  shaftDiscs: new Float32Array(SHAFT_DISC_CAP * 4), shaftDiscCount: 0,
+  // shaftDiscDepth: głębokość ciała ZA płaszczyzną gry (planety tła w persp.).
+  shaftDiscs: new Float32Array(SHAFT_DISC_CAP * 4), shaftDiscDepth: new Float32Array(SHAFT_DISC_CAP), shaftDiscCount: 0,
   shaftHulls: new Float32Array(SHAFT_HULL_CAP * HULL_SDF_OCCLUDER_FLOATS), shaftHullCount: 0,
   shaftHullTexture: null,
   shaftRings: new Map(),
@@ -486,6 +646,14 @@ export const Core3D = {
   // Flagi ustawiają właściciele: planet3d.assets.js (tym samym cullingiem, którym
   // chowa planety) i shield3D.js — zachowawczo, w razie wątpliwości true.
   layerActivity: { planets: true, halo: true, ringPlanets: true, shields: true },
+  // Emisja ortho (enableOrthoEmissive3D) nie zgłasza się co klatkę: Core3D sam
+  // sprawdza zarejestrowane korzenie (widoczność, liczba instancji) na starcie
+  // render() — pass emisji rusza, gdy tarcze LUB emisja mają co narysować.
+  // Słabe referencje: pula wiązek zwalniana przy restarcie gry nie zostaje
+  // w pamięci, a mesh odpięty i dopięty z powrotem dalej jest śledzony.
+  _orthoEmissiveRoots: new Set(),
+  _orthoEmissiveRegistered: new WeakSet(),
+  _orthoEmissiveActive: false,
   uberPass: null,
   bloomPass: null, bloomResolutionScale: BLOOM_DEFAULTS.resolutionScale, bloomBaseStrength: BLOOM_DEFAULTS.strength, bloomBaseThreshold: BLOOM_DEFAULTS.threshold,
   msaaSamples: 0,
@@ -625,7 +793,7 @@ export const Core3D = {
     this._wrapRenderInfoPass(this.renderPassRingPlanets, 'planets');
     this._wrapRenderInfoPass(this.shadowShaftsPass, 'shafts');
     this._wrapRenderInfoPass(this.renderPassOrtho, 'ortho');
-    this._wrapRenderInfoPass(this.renderPassShields, 'ortho');
+    this._wrapRenderInfoPass(this.renderPassEmissive, 'ortho');
     this._wrapRenderInfoPass(this.renderPassFg, 'fg');
     this._wrapRenderInfoPass(this.bloomPass, 'bloom');
     this._wrapRenderInfoPass(this.uberPass, 'post');
@@ -771,19 +939,20 @@ export const Core3D = {
     makeSplitScreenRenderPass(this.renderPassRingPlanets, RING_PLANET_RENDER_LAYER, true, false);
     this.renderPassOrtho = new RenderPass(this.scene, this.cameraOrtho);
     makeSplitScreenRenderPass(this.renderPassOrtho, 0, true, false);
-    // Tarcze: ta sama kamera ortho co świat, ale BEZ czyszczenia głębi —
-    // pass dokłada się do bufora zostawionego przez renderPassOrtho, więc
-    // tarcza dalej testuje głębię względem kadłubów zamiast kłaść się na
-    // wszystkim.
-    this.renderPassShields = new RenderPass(this.scene, this.cameraOrtho);
-    makeSplitScreenRenderPass(this.renderPassShields, SHIELD_RENDER_LAYER, true, false, false);
+    // Emisja ortho (tarcze + dysze, pociski, błyski, wiązki, iskry): ta sama
+    // kamera ortho co świat, ale BEZ czyszczenia głębi — pass dokłada się do
+    // bufora zostawionego przez renderPassOrtho, więc tarcza i płomień dyszy
+    // (z = -5, pod kadłubem) dalej testują głębię względem kadłubów zamiast
+    // kłaść się na wszystkim. Jeden obchód grafu na obie warstwy.
+    this.renderPassEmissive = new RenderPass(this.scene, this.cameraOrtho);
+    makeSplitScreenRenderPass(this.renderPassEmissive, EMISSIVE_PASS_LAYERS, true, false, false);
     this.renderPassFg = new RenderPass(this.scene, this.cameraPersp);
     makeSplitScreenRenderPass(this.renderPassFg, 2, false, false);
 
     this.heatHazeSources = new Float32Array(this.heatHazeMaxSources * 4);
     this.heatHazeDirs = new Float32Array(this.heatHazeMaxSources * 2);
 
-    this.shadowShaftsPass = new FullScreenBlendPass(createShadowShaftsShader(), BLEND_MULTIPLY_SCENE);
+    this.shadowShaftsPass = new ShadowShaftsPass();
 
     // Earth and Mars use an orthographic planet pass so their projected centre
     // and radius stay locked to the gameplay ring at every zoom level. The pass
@@ -794,15 +963,15 @@ export const Core3D = {
     // quady blendowane sprzętowo (nie ShaderPassy czytające tDiffuse) — w całej
     // klatce jest więc dokładnie jeden resolve MSAA: composerTarget → postTarget.
     //
-    // shadowShaftsPass PO świecie ortho (statki/ring PRZYJMUJĄ cień),
-    // ale PRZED FG: bronie, muzzle flashe i inne emisje rysują się już na
-    // ocienionej scenie, więc świecą też W cieniu i bloom przez niego przebija.
-    // (Na samym końcu pass gasił wszystko, łącznie z laserami.)
+    // shadowShaftsPass PO świecie ortho (kadłuby PRZYJMUJĄ cień),
+    // ale PRZED emisją i FG: dysze, pociski, muzzle flashe, tarcze i emisje FG
+    // rysują się już na ocienionej scenie, więc świecą też W cieniu i bloom
+    // przez niego przebija. (Na samym końcu pass gasił wszystko, łącznie
+    // z laserami; na warstwie 0 gasił dysze i pociski.)
     //
-    // Tarcze idą razem z FG (po shaftach), bo to emisja, nie oświetlona
-    // powierzchnia — cień kadłuba przecinał wcześniej bańkę ciemnym pasem.
-    // Własny pass zamiast warstwy FG, bo tarcza musi zostać w projekcji
-    // ortho (kopuła/sfera w perspektywie rozjeżdżałaby się z kadłubem).
+    // Emisja ortho ma własny pass zamiast warstwy FG, bo musi zostać w
+    // projekcji ortho (kopuła tarczy / płomień w perspektywie rozjeżdżałyby
+    // się z kadłubem) i testować głębię kadłubów.
     this._scenePasses = [
       this.renderPassBg,
       this.renderPassPlanets,
@@ -810,7 +979,7 @@ export const Core3D = {
       this.renderPassRingPlanets,
       this.renderPassOrtho,
       this.shadowShaftsPass,
-      this.renderPassShields,
+      this.renderPassEmissive,
       this.renderPassFg
     ];
 
@@ -873,7 +1042,7 @@ export const Core3D = {
     if (this.planetHaloPass) this.planetHaloPass.enabled = t.planetPass !== false;
     if (this.renderPassRingPlanets) this.renderPassRingPlanets.enabled = t.planetPass !== false;
     if (this.renderPassOrtho) this.renderPassOrtho.enabled = t.orthoPass !== false;
-    if (this.renderPassShields) this.renderPassShields.enabled = t.orthoPass !== false;
+    if (this.renderPassEmissive) this.renderPassEmissive.enabled = t.orthoPass !== false;
     if (this.renderPassFg) this.renderPassFg.enabled = t.fgPass !== false;
     if (this.bloomPass) this.bloomPass.enabled = t.bloom !== false;
     if (this.shadowShaftsPass) this.shadowShaftsPass.enabled = t.shadowShafts !== false;
@@ -992,6 +1161,32 @@ export const Core3D = {
   enableRingPlanet3D(object3d) { if (object3d) object3d.traverse((child) => { child.layers.set(RING_PLANET_RENDER_LAYER); }); },
   enableForeground3D(object3d) { if (object3d) object3d.traverse((child) => { child.layers.set(2); }); },
   enableShield3D(object3d) { if (object3d) object3d.traverse((child) => { child.layers.set(SHIELD_RENDER_LAYER); }); },
+  // Emisja w świecie ortho (dysze, pociski, błyski, wiązki, iskry): pass PO
+  // shaftach, więc cień nie mnoży źródeł światła i bloom działa w cieniu.
+  // Światła (np. PointLight trafienia wiązki) zostają na swojej warstwie —
+  // mają dalej oświetlać kadłuby w passie ortho. Korzeń trafia do rejestru,
+  // z którego render() sam ustala, czy pass emisji ma pracę (bez zgłaszania).
+  enableOrthoEmissive3D(object3d) {
+    if (!object3d) return;
+    object3d.traverse((child) => { if (!child.isLight) child.layers.set(ORTHO_EMISSIVE_RENDER_LAYER); });
+    if (this._orthoEmissiveRegistered.has(object3d)) return;
+    this._orthoEmissiveRegistered.add(object3d);
+    this._orthoEmissiveRoots.add(typeof WeakRef === 'function' ? new WeakRef(object3d) : { deref: () => object3d });
+  },
+
+  // Czy coś z rejestru emisji ortho jest w scenie i ma co narysować. Wołane
+  // raz na klatkę — kilkadziesiąt korzeni, wyjście przy pierwszym trafieniu.
+  _hasOrthoEmissiveContent() {
+    for (const ref of this._orthoEmissiveRoots) {
+      const root = ref.deref();
+      if (!root) {
+        this._orthoEmissiveRoots.delete(ref);
+        continue;
+      }
+      if (root.parent && hasVisibleDrawable(root)) return true;
+    }
+    return false;
+  },
 
   isFreePerspectiveCamera(cameraData = this.activeCam1) {
     return cameraData?.mode === 'free3d' && cameraData?.position && cameraData?.quaternion;
@@ -1200,6 +1395,8 @@ export const Core3D = {
     // Warstwy bez widocznej zawartości (flagi od właścicieli). Wolna kamera lotu
     // nad miastem widzi scenę inaczej niż culling planet — tam rysujemy wszystko.
     const layerActivity = freePerspective ? LAYERS_ALL_ACTIVE : this.layerActivity;
+    // Emisja ortho: raz na klatkę, z rejestru (pass emisji i snapshot refrakcji).
+    this._orthoEmissiveActive = this._hasOrthoEmissiveContent();
 
     // Pre-pass halo tylko gdy planety są w ogóle renderowane — wcześniej te
     // 2 przejścia sceny wykonywały się ZAWSZE, nawet na ultrafast bez planet.
@@ -1289,6 +1486,12 @@ export const Core3D = {
           uShafts.uCamCenter2.value.copy(uShafts.uCamCenter.value);
           uShafts.uViewWorldSize2.value.copy(uShafts.uViewWorldSize.value);
         }
+        // Odległość kamery persp od płaszczyzny gry — ta sama co w syncCamera
+        // ((h/2)/tan(fov/2)/zoom, h = wysokość bufora), przy której z = 0
+        // wygląda jak w ortho. Z niej rzut tarcz planet tła (uDiscDepth).
+        const perspTan = Math.tan(THREE.MathUtils.degToRad(this.cameraPersp.fov * 0.5)) || 1;
+        const bufH = Number(this.composerTarget?.height) || this.height;
+        uShafts.uPerspDist.value.set(bufH * 0.5 / perspTan / zoom1, bufH * 0.5 / perspTan / zoom2);
         uShafts.uDiscLenMul.value = Math.max(1, Number(shaftCfg.discLenMul) || 5);
         uShafts.uHullLenMul.value = Math.max(1, Number(shaftCfg.capsuleLenMul) || 3);
         uShafts.uHullSteps.value = Math.max(1, Math.min(HULL_SDF_MAX_STEPS, Number(shaftCfg.hullSteps) || 24));
@@ -1296,9 +1499,11 @@ export const Core3D = {
         const discCount = Math.min(this.shaftDiscCount | 0, SHAFT_DISC_CAP);
         uShafts.uDiscCount.value = discCount;
         const discVals = uShafts.uDiscs.value;
+        const discDepth = uShafts.uDiscDepth.value;
         for (let i = 0; i < discCount; i++) {
           const base = i * 4;
           discVals[i].set(this.shaftDiscs[base], this.shaftDiscs[base + 1], this.shaftDiscs[base + 2], this.shaftDiscs[base + 3]);
+          discDepth[i] = this.shaftDiscDepth[i];
         }
 
         // Kadłuby: hexShips3D zgłasza od największych i sam staje na budżecie
@@ -1400,7 +1605,9 @@ export const Core3D = {
         const layers = [];
         if (t.bgPass !== false) layers.push({ layer: 1, ortho: false });
         if (t.orthoPass !== false) layers.push({ layer: 0, ortho: true });
-        if (t.orthoPass !== false && layerActivity.shields !== false) layers.push({ layer: SHIELD_RENDER_LAYER, ortho: true });
+        if (t.orthoPass !== false && (layerActivity.shields !== false || this._orthoEmissiveActive)) {
+          layers.push({ layer: EMISSIVE_PASS_LAYERS, ortho: true });
+        }
 
         const renderRefractionViewport = (camData, vpX, vpY, vpW, vpH) => {
           this.renderer.setViewport(vpX, vpY, vpW, vpH);
@@ -1410,7 +1617,7 @@ export const Core3D = {
           this.syncCamera(camData, vpW, vpH, vpX);
           for (const { layer, ortho } of layers) {
             const cam = ortho ? this.cameraOrtho : this.cameraPersp;
-            cam.layers.set(layer);
+            setCameraLayers(cam, layer);
             // Mapa cienia z rzucającymi warstwy ortho (patrz autoUpdate w init()).
             if (layer === 0) this.renderer.shadowMap.needsUpdate = true;
             this.renderer.render(this.scene, cam);
@@ -1504,7 +1711,7 @@ export const Core3D = {
     if (t.planetPass !== false) layers.push({ layer: PLANET_RENDER_LAYER, ortho: false });
     if (t.planetPass !== false) layers.push({ layer: RING_PLANET_RENDER_LAYER, ortho: true });
     layers.push({ layer: 0, ortho: true }); // ortho always
-    layers.push({ layer: SHIELD_RENDER_LAYER, ortho: true });
+    layers.push({ layer: EMISSIVE_PASS_LAYERS, ortho: true });
     if (t.fgPass !== false) layers.push({ layer: 2, ortho: false });
 
     const renderLayers = (camData, vpX, vpY, vpW, vpH) => {
@@ -1516,7 +1723,7 @@ export const Core3D = {
 
       for (const { layer, ortho } of layers) {
         const cam = ortho ? this.cameraOrtho : this.cameraPersp;
-        cam.layers.set(layer);
+        setCameraLayers(cam, layer);
         renderer.render(this.scene, cam);
       }
     };
@@ -1603,7 +1810,7 @@ export const Core3D = {
     if (pass === this.renderPassPlanets) return activity.planets !== false;
     if (pass === this.planetHaloPass) return activity.halo !== false;
     if (pass === this.renderPassRingPlanets) return activity.ringPlanets !== false;
-    if (pass === this.renderPassShields) return activity.shields !== false;
+    if (pass === this.renderPassEmissive) return activity.shields !== false || this._orthoEmissiveActive;
     return true;
   },
 
@@ -1656,7 +1863,10 @@ export const Core3D = {
   // okluder shaftów — zgłaszana co klatkę, także gdy ciało jest poza ekranem
   // (cień musi istnieć niezależnie od kadru i zoomu). strength < 1 dla ciał,
   // które mają tylko przygaszać scenę zamiast robić umbrę (asteroidy).
-  pushShaftDiscWorld(worldX, worldY, radius, strength = 1) {
+  // depth > 0: ciało leży TYLE jednostek za płaszczyzną gry i rysuje je
+  // kamera persp (planety tła, z = -50 000) — shader rzutuje tarczę tam,
+  // gdzie ciało widać. 0 = ciało na płaszczyźnie (ortho: Ziemia, Mars).
+  pushShaftDiscWorld(worldX, worldY, radius, strength = 1, depth = 0) {
     const r = Number(radius) || 0;
     if (!(r > 0) || !this.shaftDiscs) return false;
     const i = this.shaftDiscCount | 0;
@@ -1667,6 +1877,7 @@ export const Core3D = {
     this.shaftDiscs[base + 2] = r;
     const s = Number(strength);
     this.shaftDiscs[base + 3] = Number.isFinite(s) ? Math.max(0, Math.min(1, s)) : 1;
+    this.shaftDiscDepth[i] = Math.max(0, Number(depth) || 0);
     this.shaftDiscCount = i + 1;
     return true;
   },

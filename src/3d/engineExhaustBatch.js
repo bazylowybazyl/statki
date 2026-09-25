@@ -302,7 +302,13 @@ function ensureBuilt() {
   ring = makeGlowLayer(makeRingTexture(), 0xffaa00, Z_RING, 2);
   flare = makeGlowLayer(makeFlareTexture(), 0x88ccff, Z_FLARE, 3);
 
-  for (const layer of [flame, glow, ring, flare]) Core3D.scene.add(layer.mesh);
+  // Płomień to źródło światła, nie oświetlona powierzchnia: warstwa emisji
+  // Core3D (po shadow shafts). Na warstwie 0 umbra planety mnożyła HDR dyszy
+  // (2,4 × 0,06) pod próg bloomu i w cieniu Ziemi silniki gasły.
+  for (const layer of [flame, glow, ring, flare]) {
+    Core3D.scene.add(layer.mesh);
+    Core3D.enableOrthoEmissive3D(layer.mesh);
+  }
   return true;
 }
 

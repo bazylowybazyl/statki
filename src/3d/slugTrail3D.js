@@ -387,6 +387,8 @@ export const BulletTrails = {
     // nigdy by nie zgasła, więc bank musi ruszyć PRZED nią.
     if (!this.available || !Fx3D.ensure()) return null;
     this._trail = new SlugTrail(Core3D.scene, this.cfg, 1024, 6, BULLET_TRAIL_SCALE, 'BULLET_SLUG_TRAILS');
+    // Smuga świeci — warstwa emisji Core3D (po shadow shafts), nie cień planety.
+    Core3D.enableOrthoEmissive3D(this._trail.mesh);
     const u = this._trail.uniforms;
     u.uHotAmt.value = BULLET_TRAIL_HOT;
     u.uTrailYoung.value.setRGB(0.30, 0.95, 1.15);
