@@ -78,7 +78,6 @@ export function createBeamHarness({ html = readIndexHtml(), extraScope = {} } = 
     resolveFlakProfile: () => null,
     flakFuseTime: () => 0,
     FLAK_TUNING: {},
-    getPotentialPlanetaryRingTargets: () => ({ count: world.ring.length, buffer: world.ring }),
     mercMission: null,
     DESTRUCTOR_CONFIG,
     findBeamHexShard,

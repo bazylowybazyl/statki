@@ -30,6 +30,7 @@
 
 import * as THREE from 'three';
 import { BELT_DEFINITIONS } from '../data/asteroidTypes.js';
+import { SUN_SHADOW_GLSL, attachSunShadowUniforms, applySunShadowToBuiltinMaterial } from './sunShadowMask.js';
 
 export const CHUNK_SIZE = 9000;
 // Tło musi leżeć wyraźnie za warstwą gameplayu. Przy poprzednim Z_NEAR=520
@@ -677,6 +678,7 @@ const ROCK_FRAGMENT = /* glsl */`
   varying vec3 vObjPos;
   varying vec3 vTint;
   varying float vDepth;
+  ${SUN_SHADOW_GLSL}
   void main() {
     // Triplanar w object space — brak UV, brak szwów.
     vec3 bw = abs(normalize(vNormalObj));
@@ -697,6 +699,8 @@ const ROCK_FRAGMENT = /* glsl */`
     float fogT = smoothstep(uFogRange.x, uFogRange.y, vDepth);
     col = mix(col, uFogColor, fogT * 0.42);
     col *= mix(1.0, 0.68, fogT);
+    // Smuga cienia na tle (maska Core3D, sunShadowMask.js) — jak na mgławicy.
+    col = sunShaftBackdrop(col);
     // Płynny fade alfą (screen-door dither dawał widoczną szachownicę na
     // każdej skale podczas wygaszania). Alfa w composerze jest bezpieczna —
     // "czarna zasłona" była NaN-em w vertex colors, nie alfą.
@@ -778,7 +782,7 @@ export class AsteroidBeltBackdrop {
     this.rockMaterial = new THREE.ShaderMaterial({
       vertexShader: ROCK_VERTEX,
       fragmentShader: ROCK_FRAGMENT,
-      uniforms: {
+      uniforms: attachSunShadowUniforms({
         uTex: { value: this.rockTexture },
         uSunDir: { value: new THREE.Vector3(30000, 20000, 45000).normalize() },
         uSunColor: { value: new THREE.Vector3(0.78, 0.73, 0.66) },
@@ -788,7 +792,7 @@ export class AsteroidBeltBackdrop {
         // się jako zamglone sylwetki, nie ostre bryły.
         uFogRange: { value: new THREE.Vector2(BACKDROP_Z_NEAR - 20, GIANT_Z_FAR + 400) },
         uFade: { value: 0 },
-      },
+      }),
       // Transparent dla płynnego fade'u całej warstwy. depthWrite sterowane
       // dynamicznie w update(): przy pełnej widoczności skały piszą depth
       // (poprawne przesłanianie brył między sobą), podczas fade'u nie.
@@ -834,6 +838,7 @@ export class AsteroidBeltBackdrop {
       blending: THREE.AdditiveBlending,
       opacity: 0,
     });
+    applySunShadowToBuiltinMaterial(this.dustMaterial, 'backdrop');
     this.dustMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), this.dustMaterial, DUST_CAPACITY);
     this.dustMesh.count = 0;
     this.dustMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);

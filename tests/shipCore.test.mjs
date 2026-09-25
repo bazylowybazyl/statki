@@ -22,12 +22,29 @@ import {
   applyCoreBreakup,
   probeCoreSupport,
   applyBlastCoreShock,
+  forceCoreMeltdown,
+  chooseCoreDetonationVariant,
+  applyVariantToBlast,
+  applyCoreDetonation,
+  createCoreJet,
+  stepCoreJet,
+  createPlasmaOrb,
+  stepPlasmaOrbs,
+  planSecondaryBlasts,
+  rollSecondaryBlasts,
+  locateShard,
+  CORE_DETONATION_VARIANTS,
+  CORE_VARIANT_IDS,
+  CORE_SECONDARY_PROFILES,
   CORE_STATE,
   CORE_KILL_MODE,
   CORE_PROBE_CONFIG,
   CORE_CLASS_PROFILES
 } from '../src/game/shipCore.js';
 import { makeDestructorHull } from './helpers/destructorHull.mjs';
+import { BRIDGE_LAYOUT_PROPOSALS, bridgeZoneDistance, bridgeZoneMargin, normalizeBridgeList, validateBridgeLayout } from '../src/game/shipBridge.js';
+import { getHullRenderSize, getWeaponTierForHull } from '../src/data/ships.js';
+import { HULLS as DEMO_HULLS } from '../dema/rdzen-hulls-data.js';
 
 const CAPITAL = CORE_CLASS_PROFILES.capital;
 
@@ -153,7 +170,9 @@ test('przejścia: KRYTYCZNY pod criticalFrac, STOPIENIE pod killFrac, DETONACJA 
   const det = events.filter((ev) => ev.type === 'detonate');
   assert.equal(det.length, 1);
   assert.equal(core.state, CORE_STATE.DETONATED);
-  assert.equal(det[0].blast.reactorProfile, 'capital');
+  // profil klasy; wariant może go zmniejszyć albo wyłączyć (wyrzut, kula)
+  assert.equal(det[0].blast.baseReactorProfile, 'capital');
+  assert.ok(CORE_VARIANT_IDS.includes(det[0].variant));
 });
 
 test('detonacja ZAWSZE: każdy kill rdzeniem kończy się dokładnie jedną detonacją (bez losowania)', () => {
@@ -451,4 +470,261 @@ test('KRYTYCZNY bez dziury: osłona pod criticalFrac przez fale, zanim zginie pi
   for (const s of core.chamber) s.hp = s.maxHp * (CAPITAL.killFrac - 0.05);
   run(e, 0.2, { time0: 0.2 });
   assert.equal(core.state, CORE_STATE.MELTDOWN);
+});
+
+// ---------------------------------------------------------------------------
+// Warianty detonacji
+// ---------------------------------------------------------------------------
+
+function sideOf(core, s, nx, ny) {
+  return ((s.gridX - core.gridX) * nx + (s.gridY - core.gridY) * ny) >= 0 ? 1 : -1;
+}
+
+test('wariant: wymuszenie z opcji i configu, losowanie powtarzalne i zgodne z wagami klasy', () => {
+  const { core } = coredHull();
+  core.config = { ...core.config, detonationVariant: 'jet' };
+  assert.equal(chooseCoreDetonationVariant(core), 'jet');
+  assert.equal(chooseCoreDetonationVariant(core, { force: 'orb' }), 'orb');
+  core.config = { ...core.config, detonationVariant: null };
+  assert.equal(chooseCoreDetonationVariant(core, { seed: 77 }), chooseCoreDetonationVariant(core, { seed: 77 }));
+  const counts = Object.fromEntries(CORE_VARIANT_IDS.map((id) => [id, 0]));
+  for (let s = 1; s <= 600; s++) counts[chooseCoreDetonationVariant(core, { seed: s * 7919 })]++;
+  for (const id of CORE_VARIANT_IDS) assert.ok(counts[id] > 30, `${id} w 600 losowaniach: ${counts[id]}`);
+  const escort = { ...core, classId: 'escort' };
+  for (let s = 1; s <= 300; s++) {
+    const v = chooseCoreDetonationVariant(escort, { seed: s * 104729 });
+    assert.ok(v !== 'orb' && v !== 'thirds', `eskorta bez kuli i trójpodziału (${v})`);
+  }
+});
+
+test('zdarzenie detonacji niesie wariant i wybuch przeskalowany wariantem (reszta energii w base*)', () => {
+  const { e, core } = coredHull([{ id: 'r', x: 0, y: 0, r: 40, armorMul: 3 }], { config: { detonationVariant: 'hole' } });
+  const base = computeCoreBlast(core);
+  forceCoreMeltdown(core, 0);
+  const events = run(e, core.meltdownDuration + 0.2);
+  const det = events.find((ev) => ev.type === 'detonate');
+  assert.ok(det, 'detonacja');
+  assert.equal(det.variant, 'hole');
+  assert.ok(Math.abs(det.blast.aoeDamage - base.aoeDamage * CORE_DETONATION_VARIANTS.hole.aoeMul) < 1e-6);
+  assert.ok(Math.abs(det.blast.baseAoeDamage - base.aoeDamage) < 1e-6);
+});
+
+test('przełamanie: dwa wraki po dwóch stronach szczeliny, odchodzą od niej i rozchylają się', () => {
+  withCanvasDocument(() => {
+    const { e, core } = coredHull([{ id: 'r', x: 0, y: 0, r: 30 }], {}, { noSplit: false });
+    const plan = planCoreBreakup(core, { mode: 'halves', seed: 5 });
+    assert.equal(plan.mode, 'halves');
+    assert.equal(plan.groups.length, 2);
+    const n0 = plan.groupDirs[0];
+    for (const [gi, group] of plan.groups.entries()) {
+      const want = gi === 0 ? 1 : -1;
+      for (const s of group) assert.equal(sideOf(core, s, n0.x, n0.y), want, 'heks po swojej stronie szczeliny');
+    }
+    assert.ok(Math.abs(plan.craterRadius - core.gridR * CAPITAL.craterMul * CORE_DETONATION_VARIANTS.halves.craterMul) < 1e-9);
+    assert.equal(plan.cuts.length, 1);
+    const res = applyCoreDetonation(core, plan, [e], { seed: 9 });
+    assert.equal(res.wrecks.length, 2);
+    assert.ok(res.keptHost === null);
+    // prędkość każdej połowy ma składową od szczeliny (świat = siatka, kąt 0)
+    for (const [gi, w] of res.wrecks.entries()) {
+      const nd = plan.groupDirs[gi];
+      assert.ok(w.vx * nd.x + w.vy * nd.y > 0, 'połowa odchodzi od szczeliny');
+    }
+    assert.ok(Math.sign(res.wrecks[0].angVel) !== Math.sign(res.wrecks[1].angVel), 'przeciwne obroty');
+  });
+});
+
+test('rozerwanie na trzy: trzy wraki z trzech sektorów między pęknięciami', () => {
+  withCanvasDocument(() => {
+    const { e, core } = coredHull([{ id: 'r', x: 0, y: 0, r: 30 }], {}, { noSplit: false });
+    const plan = planCoreBreakup(core, { mode: 'thirds', seed: 12 });
+    assert.equal(plan.cuts.length, 3);
+    assert.equal(plan.groups.length, 3);
+    const res = applyCoreDetonation(core, plan, [e], { seed: 4 });
+    assert.equal(res.wrecks.length, 3);
+  });
+});
+
+test('wyrwa: duży poszarpany krater, kadłub zostaje jednym kawałkiem', () => {
+  withCanvasDocument(() => {
+    const { e, core } = coredHull([{ id: 'r', x: 0, y: 0, r: 30 }], {}, { noSplit: false });
+    const shatter = planCoreBreakup(core, { mode: 'shatter', seed: 2 });
+    const plan = planCoreBreakup(core, { mode: 'hole', seed: 2 });
+    assert.equal(plan.keepHost, true);
+    assert.equal(plan.groups.length, 0);
+    assert.ok(plan.vaporize.length > shatter.vaporize.length * 1.5, `wyrwa większa od krateru rozprysku (${plan.vaporize.length} vs ${shatter.vaporize.length})`);
+    const Rmax = plan.craterRadius * 1.36;
+    for (const s of plan.vaporize) {
+      assert.ok(Math.hypot(s.gridX - core.gridX, s.gridY - core.gridY) <= Rmax + 1e-6, 'w obrysie poszarpanego krateru');
+    }
+    const aliveBefore = e.hexGrid.shards.filter((s) => s.active && !s.isDebris).length;
+    const res = applyCoreDetonation(core, plan, [e], { seed: 1 });
+    assert.equal(res.wrecks.length, 0);
+    assert.ok(res.keptHost === e);
+    const aliveAfter = e.hexGrid.shards.filter((s) => s.active && !s.isDebris).length;
+    assert.equal(aliveBefore - aliveAfter, plan.vaporize.length);
+    assert.ok(aliveAfter > aliveBefore * 0.5, 'kadłub zostaje');
+    assert.ok(plan.edgeShards.length > 10, 'brzeg wyrwy do rozżarzenia');
+  });
+});
+
+test('wyrzut: kierunek losowy (tryb wound — przez wyrwę), kanał do krawędzi, odrzut w przeciwną stronę', () => {
+  withCanvasDocument(() => {
+    const { e, core } = coredHull([{ id: 'r', x: 0, y: 0, r: 40, armorMul: 3 }], {}, { noSplit: false });
+    // wyrwa komory od strony +X (jak kanał wykopany z dziobu)
+    for (const s of core.chamber) if (localOf(e, s).x > core.gridR * 0.4) DestructorSystem.destroyShard(e, s);
+    run(e, 0.2);
+    assert.ok(core.deadCount > 0);
+    // domyślnie losowo: kierunki z różnych ziaren rozchodzą się po całym kole
+    const angles = [];
+    for (let seed = 1; seed <= 16; seed++) {
+      const p = planCoreBreakup(core, { mode: 'jet', seed });
+      assert.ok(Math.abs(Math.hypot(p.dirGridX, p.dirGridY) - 1) < 1e-9);
+      angles.push(Math.atan2(p.dirGridY, p.dirGridX));
+    }
+    assert.ok(angles.some((a) => Math.cos(a) < -0.5), 'bywa też od strony przeciwnej do wyrwy');
+    assert.ok(angles.some((a) => Math.abs(Math.sin(a)) > 0.8), 'i w bok');
+    // tryb 'wound' zostaje: strumień przez wyrwę (+X)
+    const wound = planCoreBreakup(core, { mode: 'jet', seed: 21, exit: 'wound' });
+    assert.ok(wound.dirGridX > Math.cos(0.5), `wound: strumień przez wyrwę (+X), jest ${wound.dirGridX.toFixed(2)}`);
+    const plan = planCoreBreakup(core, { mode: 'jet', seed: 21 });
+    // kanał: przed rdzeniem w paśmie 0,7 × półszerokości nie zostaje nic żywego
+    const half = core.gridR * 0.55 * 0.8 * 0.85;
+    for (const s of e.hexGrid.shards) {
+      if (!s.active || s.isDebris || plan.vaporize.includes(s)) continue;
+      const dx = s.gridX - core.gridX;
+      const dy = s.gridY - core.gridY;
+      const t = dx * plan.dirGridX + dy * plan.dirGridY;
+      const d = Math.abs(-dx * plan.dirGridY + dy * plan.dirGridX);
+      assert.ok(!(t > 0 && d < half), 'kanał wypalony do krawędzi');
+    }
+    const res = applyCoreDetonation(core, plan, [e], { seed: 3 });
+    assert.ok(res.keptHost === e);
+    assert.ok(res.recoil && res.recoil.x * plan.dirGridX + res.recoil.y * plan.dirGridY < 0, 'odrzut przeciwnie do strumienia');
+    assert.ok(e.vx * plan.dirGridX + e.vy * plan.dirGridY < 0, 'kadłub pchnięty wstecz');
+  });
+});
+
+test('strumień plazmy: bije w pierwszy kadłub na linii (krater + pula HP), gospodarza pomija, gaśnie', () => {
+  const { e, core } = coredHull([{ id: 'r', x: 0, y: 0, r: 40, armorMul: 3 }]);
+  const target = hull({ x: 700, y: 0 });
+  const blast = applyVariantToBlast(computeCoreBlast(core), 'jet');
+  const jet = createCoreJet(core, { dirGridX: 1, dirGridY: 0 }, blast);
+  const hitsOn = new Map();
+  const hooks = { hullDamage: (ent, dmg) => hitsOn.set(ent, (hitsOn.get(ent) || 0) + dmg) };
+  const aliveBefore = target.hexGrid.shards.filter((s) => s.active && !s.isDebris).length;
+  let alive = true;
+  let steps = 0;
+  while (alive && steps < 1000) { alive = stepCoreJet(jet, 1 / 120, [e, target], { hooks, time: steps / 120 }); steps++; }
+  assert.equal(jet.done, true);
+  assert.ok(Math.abs(steps / 120 - jet.duration) < 0.02, 'gaśnie po czasie trwania');
+  assert.ok((hitsOn.get(target) || 0) > 0, 'pula HP celu dostała');
+  assert.equal(hitsOn.get(e) || 0, 0, 'gospodarz pominięty');
+  const aliveAfter = target.hexGrid.shards.filter((s) => s.active && !s.isDebris).length;
+  assert.ok(aliveAfter < aliveBefore, 'krater w celu');
+  assert.ok(target.__coreChain && target.__coreChain.depth === 1, 'trafiony oznaczony do łańcucha');
+});
+
+test('kula plazmy: topi własny kadłub i cel na drodze (żar brzegu), wybucha po zapalniku liczonym od wyjścia — raz', () => {
+  const alive = (ent) => ent.hexGrid.shards.filter((s) => s.active && !s.isDebris).length;
+  const { e, core } = coredHull([{ id: 'r', x: 0, y: 0, r: 40, armorMul: 3 }]);
+  const blast = applyVariantToBlast(computeCoreBlast(core), 'orb');
+  const plan = planCoreBreakup(core, { mode: 'orb', seed: 4 });
+  assert.equal(plan.cuts.length, 0, 'kula nie dostaje kanału z planu — topi go sama');
+  const target = hull({ x: 620, y: 0 });
+  const orb = createPlasmaOrb(core, { dirGridX: 1, dirGridY: 0 }, blast, { seed: 2 });
+  assert.ok(orb.vx > 200, 'wyrzut w zadanym kierunku');
+  assert.ok(orb.blast.aoeRadius < blast.baseAoeRadius && orb.blast.aoeDamage < blast.baseAoeDamage);
+  const hostBefore = alive(e);
+  const targetBefore = alive(target);
+  const dmg = new Map();
+  const hooks = { hullDamage: (ent, d) => dmg.set(ent, (dmg.get(ent) || 0) + d), blocksHexes: () => false };
+  const events = [];
+  let t = 0;
+  let vOut = 0;
+  for (let i = 0; i < 3000 && !orb.detonated; i++) {
+    t += 1 / 120;
+    stepPlasmaOrbs([orb], 1 / 120, [e, target], { events, time: t, hooks });
+    if (orb.left && !vOut) vOut = Math.hypot(orb.vx, orb.vy);
+  }
+  assert.equal(events.length, 1);
+  // encje porównujemy przez === — assert.equal na kadłubie liczy różnicę tysięcy heksów
+  assert.ok(events[0].hit === null, 'bez tarczy nie ma zetknięcia — przelatuje, topiąc');
+  assert.ok(orb.left && Math.abs(orb.flight - orb.fuse) < 0.02, 'zapalnik od wyjścia z kadłuba');
+  assert.ok(hostBefore - alive(e) > 20, `wytopiony kanał wyjścia w gospodarzu (${hostBefore - alive(e)})`);
+  assert.ok(targetBefore - alive(target) > 20, `wytopiony kanał w celu (${targetBefore - alive(target)})`);
+  assert.ok((dmg.get(target) || 0) > 0, 'pula HP celu dostała');
+  assert.equal(dmg.get(e) || 0, 0, 'gospodarz nie dostaje z puli');
+  assert.ok(target.hexGrid.shards.some((s) => s.active && !s.isDebris && (s.heat || 0) > 0.5), 'brzeg kanału rozżarzony');
+  assert.ok(Math.hypot(orb.vx, orb.vy) < vOut * 0.97, 'grzęźnie w celu (własny kadłub nie hamuje)');
+  assert.ok(target.__coreChain && target.__coreChain.depth === 1, 'topiony oznaczony do łańcucha');
+  stepPlasmaOrbs([orb], 1 / 120, [e, target], { events, hooks });
+  assert.equal(events.length, 1, 'jeden wybuch');
+  // tarcza trzyma plazmę: wybuch na celu, heksy celu nietknięte
+  const { e: e2, core: core2 } = coredHull([{ id: 'r', x: 0, y: 0, r: 40, armorMul: 3 }]);
+  const shielded = hull({ x: 620, y: 0 });
+  const before2 = alive(shielded);
+  const orb2 = createPlasmaOrb(core2, { dirGridX: 1, dirGridY: 0 }, applyVariantToBlast(computeCoreBlast(core2), 'orb'), { seed: 2 });
+  const ev3 = [];
+  for (let i = 0; i < 3000 && !orb2.detonated; i++) stepPlasmaOrbs([orb2], 1 / 120, [e2, shielded], { events: ev3, hooks: { blocksHexes: (ent) => ent === shielded } });
+  assert.equal(ev3.length, 1);
+  assert.ok(ev3[0].hit === shielded, 'wybuch na tarczy');
+  assert.equal(alive(shielded), before2);
+  // bez celów: zapalnik po wyjściu z kadłuba
+  const lone = createPlasmaOrb(core, { dirGridX: 0, dirGridY: 1 }, blast, { seed: 5 });
+  const ev2 = [];
+  let steps = 0;
+  let exitAt = -1;
+  while (!lone.detonated && steps < 3000) {
+    stepPlasmaOrbs([lone], 1 / 120, [e], { events: ev2 });
+    steps++;
+    if (lone.left && exitAt < 0) exitAt = steps;
+  }
+  assert.equal(ev2.length, 1);
+  assert.ok(ev2[0].hit === null);
+  assert.ok(exitAt > 0 && Math.abs((steps - exitAt + 1) / 120 - lone.fuse) < 0.02, 'po zapalniku od wyjścia');
+  DestructorSystem.splitQueue = [];
+});
+
+test('wybuchy wtórne: żywe heksy kawałków, opóźnienia w zakresie klasy, posortowane', () => {
+  const { e } = coredHull();
+  const items = planSecondaryBlasts([e], { count: 5, classId: 'capital', seed: 3 });
+  assert.equal(items.length, 5);
+  const P = CORE_SECONDARY_PROFILES.capital;
+  let prev = -1;
+  for (const it of items) {
+    assert.ok(it.entity === e);
+    assert.ok(it.shard.active && !it.shard.isDebris && it.shard.hp > 0);
+    assert.ok(it.delay >= P.delayMin && it.delay <= P.delayMax);
+    assert.ok(it.delay >= prev);
+    prev = it.delay;
+  }
+  assert.equal(rollSecondaryBlasts('jet', 'escort', () => 0.99), 0);
+  const n = rollSecondaryBlasts('hole', 'capital', () => 0);
+  assert.ok(n >= P.countMin && n <= P.countMax);
+  const loc = locateShard(items[0].shard, [e], {});
+  assert.ok(loc.entity === e);
+});
+
+// Reaktor przy środku masy, poza mostkami (docs/PORT-rdzen.md § 3). Komora (koło r)
+// ma stać ≥ bridgeZoneMargin od każdej strefy KAŻDEGO wariantu — heks należy albo
+// do komory, albo do mostka. Po dopisaniu rdzeni do hardpointEditorDefaults ten sam
+// układ sprawdza test mostków (validateBridgeLayout, sam punkt rdzenia).
+test('rdzenie dema: komora poza strefami mostków we wszystkich wariantach', () => {
+  for (const def of Object.values(DEMO_HULLS)) {
+    const entry = BRIDGE_LAYOUT_PROPOSALS[def.editorKey];
+    assert.ok(entry, `${def.id}: kadłub bez propozycji mostków — test nieaktualny`);
+    const size = getHullRenderSize(def.renderProfile, def.pngWidth, def.pngHeight);
+    const margin = bridgeZoneMargin(size.w / def.pngWidth, getWeaponTierForHull(def.renderProfile));
+    for (const [variant, list] of Object.entries(entry.variants)) {
+      for (const core of def.cores) {
+        for (const z of normalizeBridgeList(list)) {
+          const gap = bridgeZoneDistance(z, core.x, core.y) - core.r;
+          assert.ok(gap >= margin, `${def.id}/${core.id} ↔ ${variant}/${z.id}: brzeg komory ${gap.toFixed(1)} px PNG od mostka (min ${margin.toFixed(1)})`);
+        }
+      }
+      const issues = validateBridgeLayout(list, { cores: def.cores }, { margin }).filter((i) => i.kind === 'core');
+      assert.deepEqual(issues, [], `${def.id}/${variant}`);
+    }
+  }
 });

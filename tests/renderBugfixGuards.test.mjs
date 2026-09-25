@@ -38,10 +38,22 @@ test('kolizje statek-asteroida w physicsStep z prawdziwym dt, nie w render()', (
   assert.match(field, /DestructorSystem\.collideEntities\(ship, promotedEntity, dt, true\)/);
 });
 
-test('fala Yamato w osi sceny (y3d = -yGry), haze reaktora i rakiet też', () => {
-  assert.match(read('src/effects3d/yamato.js'), /sw3d\(eX, -eZ, 0,/);
+// Fala z refrakcją (window.trigger3DShockwave) zostaje wyłącznie dla rakiet
+// supernova (decyzja 2026-09-24): Yamato, wybuchy reaktorów i rozpad stacji jej
+// nie odpalają. Zapas heatHaze w reactorblow zostaje w kodzie (profile go
+// wyłączają) — pilnujemy, żeby po włączeniu był w osi sceny, jak u rakiet.
+const code = (path) => read(path).replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
+
+test('haze reaktora i rakiet w osi sceny (y3d = -yGry); fala z refrakcją tylko dla supernovy', () => {
   assert.match(read('src/effects3d/reactorblow.js'), /pushHeatHazeWorld\(expX, -expZ, -4,/);
   assert.match(read('src/effects3d/rocketSystem3D.js'), /pushHeatHazeWorld\(burst\.x, -burst\.z, -4,/);
+  assert.doesNotMatch(code('src/effects3d/yamato.js'), /trigger3DShockwave|sw3d\(/, 'Yamato bez fali');
+  assert.doesNotMatch(code('src/effects3d/reactorblow.js'), /shockwave3D: \{|heatHaze: \{/, 'wybuchy reaktorów bez fali i haze');
+  for (const f of ['stationChainProfile', 'stationCutProfile', 'stationFinalProfile']) {
+    assert.doesNotMatch(code(`src/effects3d/reactorProfiles/${f}.js`), /shockwave3D: \{|heatHaze: \{/, f);
+  }
+  assert.match(indexHtml, /Destruction3D\.init\(\{[\s\S]{0,400}?shockwaveManager: null,/, 'rozpad stacji bez fali');
+  assert.match(code('src/effects3d/rocketSystem3D.js'), /explosionStyle === "supernova"\) \{\s*const triggerShockwave = window\.trigger3DShockwave;/);
 });
 
 test('bloom overlaya: efekty tylko przez modyfikatory, bez zapisu/przywracania bazy', () => {

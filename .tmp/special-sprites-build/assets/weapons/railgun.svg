@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="180" height="120" viewBox="0 0 180 120">
+  <defs>
+    <linearGradient id="rail-barrel" x1="0%" y1="50%" x2="100%" y2="50%">
+      <stop offset="0%" stop-color="#b0d4ff" />
+      <stop offset="60%" stop-color="#6fa8ff" />
+      <stop offset="100%" stop-color="#3b7aff" />
+    </linearGradient>
+    <radialGradient id="rail-core" cx="30%" cy="50%" r="70%">
+      <stop offset="0%" stop-color="#1e2d50" />
+      <stop offset="100%" stop-color="#0e1424" />
+    </radialGradient>
+    <linearGradient id="rail-glow" x1="0%" y1="50%" x2="100%" y2="50%">
+      <stop offset="0%" stop-color="#00ccff" />
+      <stop offset="100%" stop-color="#0066ff" />
+    </linearGradient>
+  </defs>
+  <!-- Housing -->
+  <rect x="8" y="42" width="72" height="36" rx="10" fill="url(#rail-core)" stroke="#1a2844" stroke-width="3" />
+  <!-- Barrel rails (twin) -->
+  <rect x="76" y="48" width="80" height="6" rx="3" fill="url(#rail-barrel)" stroke="#1a2844" stroke-width="2" />
+  <rect x="76" y="66" width="80" height="6" rx="3" fill="url(#rail-barrel)" stroke="#1a2844" stroke-width="2" />
+  <!-- Rail gap glow -->
+  <rect x="80" y="56" width="72" height="8" rx="2" fill="url(#rail-glow)" opacity="0.35" />
+  <!-- Muzzle flash -->
+  <path d="M156 52 L174 60 L156 68 Z" fill="#00ccff" opacity="0.7" />
+  <!-- Coils -->
+  <rect x="86" y="46" width="4" height="28" rx="1" fill="#3c5a8a" opacity="0.6" />
+  <rect x="100" y="46" width="4" height="28" rx="1" fill="#3c5a8a" opacity="0.6" />
+  <rect x="114" y="46" width="4" height="28" rx="1" fill="#3c5a8a" opacity="0.6" />
+  <!-- Power cell -->
+  <rect x="16" y="48" width="22" height="24" rx="5" fill="#162440" stroke="#2a4472" stroke-width="1.5" />
+  <circle cx="27" cy="60" r="5" fill="#00aaff" opacity="0.8" />
+  <!-- Top mount -->
+  <rect x="44" y="36" width="16" height="10" rx="3" fill="#1e2d50" stroke="#2a4472" stroke-width="1" />
+</svg>

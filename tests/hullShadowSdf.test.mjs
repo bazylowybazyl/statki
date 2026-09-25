@@ -306,6 +306,67 @@ test('warstwy: wspólna dla świeżej floty, własna po trafieniu, nowa dla wrak
   assert.equal(layers.size, HULL_SDF_LAYER_COUNT, 'każda warstwa ma jednego właściciela');
 });
 
+test('kadłub bez aktywnego heksa: bez cienia (także z szablonu), bez wyjątku, bez pieczenia co klatkę', () => {
+  HullShadowSdf.reset();
+  const image = { width: 420, height: 160, id: 'hulk' };
+  const fleet = makeGrid(420, 160, forkHull);
+  const hulk = makeGrid(420, 160, forkHull);
+  fleet.armorImage = image;
+  hulk.armorImage = image;
+  const strip = (grid, from, to) => {
+    for (let i = from; i < to; i++) {
+      grid.shards[i].active = false;
+      grid.shards[i].isDebris = true;
+    }
+    grid.activeStructuralCount -= to - from;
+  };
+  // Wyniki acquire porównujemy przez ===: assert.equal na wpisie z tablicą
+  // heksów rozwija ją w komunikacie porażki (OOM).
+  HullShadowSdf.beginFrame(1);
+  const tpl = HullShadowSdf.acquire(fleet, 0);
+  assert.ok(tpl && tpl.layer >= 0, 'szablon floty');
+  strip(hulk, 0, 60);
+  HullShadowSdf.beginFrame(2);
+  const own = HullShadowSdf.acquire(hulk, 0);
+  assert.ok(own && own.layer >= 0 && own !== tpl, 'własna warstwa po poważnym trafieniu');
+  const ownLayer = own.layer;
+
+  // Ostatni heks zniszczony, stara sylwetka dojrzała do pieczenia. Tu acquire
+  // rzucał TypeError: pieczenie oddało warstwę, a _touch sięgał po layers[-1].
+  strip(hulk, 60, hulk.shards.length);
+  HullShadowSdf.beginFrame(3);
+  assert.ok(HullShadowSdf.acquire(hulk, 5000) === null, 'pusty kadłub nie rzuca cienia');
+  assert.ok(HullShadowSdf.layers[ownLayer].owner === null, 'warstwa wraca do puli');
+  assert.ok(HullShadowSdf.acquire(fleet, 5000) === tpl, 'szablon zostaje dla reszty floty');
+
+  const bake = HullShadowSdf._bake;
+  let bakeCalls = 0;
+  HullShadowSdf._bake = function (...args) {
+    bakeCalls++;
+    return bake.apply(this, args);
+  };
+  try {
+    for (let f = 4; f < 9; f++) {
+      HullShadowSdf.beginFrame(f);
+      assert.ok(HullShadowSdf.acquire(hulk, f * 5000) === null, `klatka ${f}: bez cienia szablonu`);
+    }
+    assert.equal(bakeCalls, 0, 'pusty kadłub nie piecze się co klatkę');
+  } finally {
+    HullShadowSdf._bake = bake;
+  }
+
+  // Heksy wracają (nowa liczba aktywnych): sylwetka piecze się od razu.
+  for (let i = 60; i < hulk.shards.length; i++) {
+    hulk.shards[i].active = true;
+    hulk.shards[i].isDebris = false;
+  }
+  hulk.activeStructuralCount = hulk.shards.length - 60;
+  HullShadowSdf.beginFrame(9);
+  const back = HullShadowSdf.acquire(hulk, 50000);
+  assert.ok(back && back.layer >= 0 && back !== tpl, 'cień wraca z własnej warstwy');
+  assert.equal(HullShadowSdf.stats.bakes, 1);
+});
+
 test('GLSL: stałe z kropką, bez backticków, próbkowanie jawnym LOD', () => {
   assert.match(HULL_SDF_SHADOW_GLSL, /uniform sampler2DArray uHullSdf;/);
   assert.match(HULL_SDF_SHADOW_GLSL, /textureLod\(uHullSdf, vec3\(uv, layer\), 0\.0\)/);

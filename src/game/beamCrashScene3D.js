@@ -1,5 +1,5 @@
 import { makeBoxTriangles, concatTriangleSets } from './voxelBody3D.js';
-import { cloneBeamNode, cloneBeam } from './beamBody3D.js';
+import { defineLazyViews } from './beamStore3D.js';
 
 export const CRASH_TARGET_SIZE = 120;
 export const STATION_MASS_RATIO = 100000;
@@ -29,13 +29,15 @@ export function buildFallbackStationTris() {
   ]);
 }
 
+// Każde ciało dostaje własne magazyny węzłów i belek (fizyka je mutuje) i własne widoki.
 export function cloneBeamStructure(src) {
-  return {
+  // Widoki `nodes` / `beams` kopii powstają dopiero na żądanie (defineLazyViews).
+  return defineLazyViews({
     ...src,
-    nodes: src.nodes.map(cloneBeamNode),
-    beams: src.beams.map(b => cloneBeam(b)),
+    nodeStore: src.nodeStore.clone(),
+    beamStore: src.beamStore.clone(),
     invInertia: src.invInertia.slice()
-  };
+  });
 }
 
 export function createCrashBodies(system, stationStructure, ramStructure, options = {}) {

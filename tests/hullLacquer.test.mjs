@@ -109,3 +109,13 @@ test('otoczenie: RGB z mgławicy, gwiazdy tylko w alfie i deterministyczne', () 
   const empty = buildLacquerEnvPixels(null, size, { starCount: 0 });
   for (let i = 3; i < empty.length; i += 4) assert.equal(empty[i], 0);
 });
+
+test('gwiazdy: normalizacja alfy stała, niezależna od wyłączenia w strojeniu', () => {
+  // starMax 0 w strojeniu wyłącza gwiazdy w shaderze; mapa musi dalej mieć
+  // zróżnicowaną jasność, żeby ponowne włączenie nie dało samych pełnych kropek.
+  assert.equal(HULL_LACQUER_DEFAULTS.starMax, 0);
+  const px = buildLacquerEnvPixels(null, 128, { starCount: 200 });
+  const levels = new Set();
+  for (let i = 3; i < px.length; i += 4) if (px[i] > 0) levels.add(px[i]);
+  assert.ok(levels.size > 10, `za mało poziomów jasności gwiazd: ${levels.size}`);
+});

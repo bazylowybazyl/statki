@@ -12,6 +12,7 @@ import {
   CORE_STATE_LABEL,
   CORE_PROBE_CONFIG
 } from '../src/game/shipCore.js';
+import { BRIDGE_LAYOUT_PROPOSALS, bridgeZoneCorners, normalizeBridgeList } from '../src/game/shipBridge.js';
 import { HULLS, expandCandidate } from './rdzen-hulls-data.js';
 
 const HEX_R = DESTRUCTOR_CONFIG.gridDivisions;
@@ -176,6 +177,44 @@ function markerWorld(entity, marker, layout, out) {
   return localToWorld(entity, _l.x, _l.y, out);
 }
 
+// Strefy mostków z BRIDGE_LAYOUT_PROPOSALS (src/game/shipBridge.js, druga
+// sesja): domyślny wariant ciągłą linią, pozostałe przerywaną. Reaktor stoi
+// poza wszystkimi (docs/PORT-rdzen.md § 3).
+function drawBridges(ctx, view, entity) {
+  const def = HULLS[entity.__hullId];
+  const entry = def ? BRIDGE_LAYOUT_PROPOSALS[def.editorKey] : null;
+  if (!entry || !entity.hexGrid) return;
+  const layout = entity.__coreLayout || computeCoreLayout(entity.__pngWidth, entity.__pngHeight, entity.hexGrid);
+  const s = { x: 0, y: 0 };
+  const corners = [];
+  const drawn = new Set();
+  const variants = Object.keys(entry.variants).sort((a, b) => (b === entry.defaultVariant) - (a === entry.defaultVariant));
+  ctx.font = '11px ui-monospace, Consolas, monospace';
+  for (const variant of variants) {
+    const isDefault = variant === entry.defaultVariant;
+    for (const z of normalizeBridgeList(entry.variants[variant])) {
+      const key = `${z.x},${z.y},${z.w},${z.h},${z.rot}`;
+      if (drawn.has(key)) continue; // ta sama strefa w kilku wariantach
+      drawn.add(key);
+      bridgeZoneCorners(z, corners);
+      ctx.beginPath();
+      for (let k = 0; k < corners.length; k += 2) {
+        markerWorld(entity, { x: corners[k], y: corners[k + 1] }, layout, _w);
+        worldToScreen(view, _w.x, _w.y, s);
+        if (k === 0) ctx.moveTo(s.x, s.y); else ctx.lineTo(s.x, s.y);
+      }
+      ctx.closePath();
+      ctx.setLineDash(isDefault ? [] : [6, 5]);
+      ctx.lineWidth = isDefault ? 1.5 : 1;
+      ctx.strokeStyle = isDefault ? 'rgba(255,90,230,0.85)' : 'rgba(255,90,230,0.45)';
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = isDefault ? 'rgba(255,150,240,0.95)' : 'rgba(255,150,240,0.6)';
+      ctx.fillText(isDefault ? (z.label || z.id) : `${z.label || z.id} (wariant ${variant})`, s.x + 4, s.y - 4);
+    }
+  }
+}
+
 function drawHardpoints(ctx, view, entity) {
   const cfg = SHIP_EDITOR_DEFAULTS.ships[editorKeyFor(entity)];
   if (!cfg || !entity.hexGrid) return;
@@ -279,11 +318,12 @@ function drawRockets(ctx, view, rockets) {
 /**
  * @param view { camX, camY, zoom, W, H }
  * @param world { ships, destructibles, cores, gun, aim, rockets, editor }
- * @param opts  { grid, chamber, probe, state, hp, cands, bugs, blast, lock, weaponName }
+ * @param opts  { grid, bridges, chamber, probe, state, hp, cands, bugs, blast, lock, weaponName }
  */
 export function drawOverlays2D(ctx, view, world, opts) {
   ctx.save();
   if (opts.grid) for (const e of world.destructibles) drawGrid(ctx, view, e);
+  if (opts.bridges) for (const e of world.ships) drawBridges(ctx, view, e);
   if (opts.hp) for (const e of world.ships) drawHardpoints(ctx, view, e);
   if (opts.cands) for (const e of world.ships) drawCandidates(ctx, view, e);
   if (opts.bugs) for (const e of world.ships) drawBugGhosts(ctx, view, e);

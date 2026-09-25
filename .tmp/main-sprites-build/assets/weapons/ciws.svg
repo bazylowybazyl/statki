@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="180" height="120" viewBox="0 0 180 120">
+  <defs>
+    <radialGradient id="ciws-dome" cx="40%" cy="40%" r="60%">
+      <stop offset="0%" stop-color="#2a3a58" />
+      <stop offset="100%" stop-color="#141e30" />
+    </radialGradient>
+    <linearGradient id="ciws-barrel" x1="0%" y1="50%" x2="100%" y2="50%">
+      <stop offset="0%" stop-color="#8cffd0" />
+      <stop offset="100%" stop-color="#40c090" />
+    </linearGradient>
+  </defs>
+  <!-- Turret dome -->
+  <ellipse cx="50" cy="62" rx="38" ry="30" fill="url(#ciws-dome)" stroke="#0e1424" stroke-width="3" />
+  <!-- Multi-barrel cluster -->
+  <rect x="82" y="50" width="60" height="4" rx="2" fill="url(#ciws-barrel)" opacity="0.9" />
+  <rect x="82" y="58" width="60" height="4" rx="2" fill="url(#ciws-barrel)" opacity="0.9" />
+  <rect x="82" y="66" width="60" height="4" rx="2" fill="url(#ciws-barrel)" opacity="0.9" />
+  <!-- Barrel housing -->
+  <rect x="74" y="46" width="14" height="28" rx="4" fill="#1e2d50" stroke="#2a4472" stroke-width="1.5" />
+  <!-- Muzzle flash dots -->
+  <circle cx="148" cy="52" r="4" fill="#8cffd0" opacity="0.6" />
+  <circle cx="148" cy="60" r="4" fill="#8cffd0" opacity="0.6" />
+  <circle cx="148" cy="68" r="4" fill="#8cffd0" opacity="0.6" />
+  <!-- Sensor dish -->
+  <rect x="32" y="36" width="12" height="8" rx="2" fill="#3a5070" stroke="#2a4472" stroke-width="1" />
+  <circle cx="38" cy="40" r="2" fill="#8cffd0" opacity="0.7" />
+  <!-- Base plate -->
+  <rect x="22" y="86" width="56" height="8" rx="3" fill="#1a2844" stroke="#0e1424" stroke-width="2" />
+</svg>

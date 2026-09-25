@@ -11,8 +11,7 @@ const CONTROLS = [
   { key: 'playerRammingMass', label: 'Taran gracza', min: 10, max: 20000000, step: 1000 },
   { key: 'npcBattleshipMass', label: 'NPC battleship', min: 10, max: 20000000, step: 1000 },
   { key: 'npcDestroyerMass', label: 'NPC destroyer', min: 10, max: 20000000, step: 1000 },
-  { key: 'npcCapitalMass', label: 'NPC capital', min: 10, max: 20000000, step: 1000 },
-  { key: 'ringMass', label: 'Ring planetarny', min: 10, max: 50000000, step: 1000 }
+  { key: 'npcCapitalMass', label: 'NPC capital', min: 10, max: 20000000, step: 1000 }
 ];
 
 const SHIP_DEFAULTS = {
@@ -20,8 +19,7 @@ const SHIP_DEFAULTS = {
   playerRammingMass: Math.round(Number(CAPITAL_SHIP_TEMPLATES?.supercapital?.rammingMass) || 800000),
   npcBattleshipMass: Math.round(Number(SUPPORT_SHIP_TEMPLATES?.battleship?.stats?.mass) || 50000),
   npcDestroyerMass: Math.round(Number(SUPPORT_SHIP_TEMPLATES?.destroyer?.stats?.mass) || 25000),
-  npcCapitalMass: Math.round(Number(CAPITAL_SHIP_TEMPLATES?.carrier?.mass) || 100000),
-  ringMass: 2500000
+  npcCapitalMass: Math.round(Number(CAPITAL_SHIP_TEMPLATES?.carrier?.mass) || 100000)
 };
 
 let defaults = { ...SHIP_DEFAULTS };
@@ -69,13 +67,6 @@ function loadSavedState() {
   }
 }
 
-function getRingEntities() {
-  const fn = window.__planetaryRingsDebug?.entities;
-  if (typeof fn !== 'function') return [];
-  const list = fn();
-  return Array.isArray(list) ? list : [];
-}
-
 function classifyNpcMassKey(npc) {
   if (!npc || npc.dead || npc.isPlayer) return null;
   const type = String(npc.type || '').toLowerCase();
@@ -103,9 +94,6 @@ function resolveDefaultsFromRuntime() {
   const playerRammingMass = Number(player?.rammingMass);
   if (Number.isFinite(playerMass) && playerMass > 0) next.playerMass = Math.round(playerMass);
   if (Number.isFinite(playerRammingMass) && playerRammingMass > 0) next.playerRammingMass = Math.round(playerRammingMass);
-
-  const ringMass = Number(getRingEntities().find(e => e && e.isRingSegment && !e.dead)?.mass);
-  if (Number.isFinite(ringMass) && ringMass > 0) next.ringMass = Math.round(ringMass);
 
   return next;
 }
@@ -143,7 +131,7 @@ function applyRammingMassToEntity(entity, mass, stamp) {
 function applyMassOverridesNow() {
   const cfg = readCurrentState();
   const version = state.version;
-  const summary = { player: 0, npc: 0, ring: 0 };
+  const summary = { player: 0, npc: 0 };
 
   const player = window.ship;
   if (player) {
@@ -160,12 +148,6 @@ function applyMassOverridesNow() {
     const key = classifyNpcMassKey(npc);
     if (!key) continue;
     if (applyMassToEntity(npc, cfg[key], `v${version}:${key}`)) summary.npc++;
-  }
-
-  const ringEntities = getRingEntities();
-  for (const seg of ringEntities) {
-    if (!seg?.isRingSegment) continue;
-    if (applyMassToEntity(seg, cfg.ringMass, `v${version}:ring`)) summary.ring++;
   }
 
   syncGlobal();

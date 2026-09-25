@@ -1,3 +1,6 @@
+import { migratePirateSpriteLayout } from '../data/pirateSpriteMigration.js';
+import { buildEntityEngineFx } from '../data/engineFx.js';
+
 const DEFAULT_HP = Object.freeze({
   MAIN: 'main',
   MISSILE: 'missile',
@@ -195,7 +198,8 @@ function cloneShipsMap(ships) {
 function mergeShipsDefaults(defaultShips, loadedShips) {
   const merged = cloneShipsMap(defaultShips);
   if (!loadedShips || typeof loadedShips !== 'object') return merged;
-  for (const [shipId, shipCfg] of Object.entries(loadedShips)) {
+  for (const [shipId, savedCfg] of Object.entries(loadedShips)) {
+    const shipCfg = migratePirateSpriteLayout(shipId, savedCfg);
     if (!shipCfg || typeof shipCfg !== 'object') continue;
     const base = merged[shipId] && typeof merged[shipId] === 'object' ? merged[shipId] : {};
     merged[shipId] = {
@@ -307,6 +311,7 @@ export function createNpcHardpointRuntime({
       if (npc.visual) {
         delete npc.visual.mainThrusters;
         delete npc.visual.torqueThrusters;
+        delete npc.visual.engineFx;
       }
       npc.__editorEngineScaleX = 1;
       npc.__editorEngineScaleY = 1;
@@ -378,6 +383,9 @@ export function createNpcHardpointRuntime({
       }
       if (mainThrusters.length) {
         npc.visual.mainThrusters = mainThrusters;
+        // Rozmiar i palety silników tego kadłuba (edytor: blok engineFx) —
+        // dysza w pikselach PNG przez tę samą skalę co pozycje markerów.
+        npc.visual.engineFx = buildEntityEngineFx(editorShipId, cfg.engineFx, (hpScaleX + hpScaleY) * 0.5);
         const mainEngine = mainThrusters[0];
         npc.engines.main = Object.assign({}, npc.engines.main || {}, {
           vfxOffset: { x: mainEngine.offset.x, y: mainEngine.offset.y },

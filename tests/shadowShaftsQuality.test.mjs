@@ -6,7 +6,7 @@ const coreSource = readFileSync(new URL('../src/3d/core3d.js', import.meta.url),
 const planetSource = readFileSync(new URL('../src/3d/planet3d.assets.js', import.meta.url), 'utf8');
 const shipsSource = readFileSync(new URL('../src/3d/hexShips3D.js', import.meta.url), 'utf8');
 const hullSdfSource = readFileSync(new URL('../src/3d/hullShadowSdf.js', import.meta.url), 'utf8');
-const ringSource = readFileSync(new URL('../src/3d/planetaryRing3D.js', import.meta.url), 'utf8');
+const ringSource = readFileSync(new URL('../src/3d/haloRing/haloRingGame.js', import.meta.url), 'utf8');
 const asteroidSource = readFileSync(new URL('../src/3d/asteroidField3D.js', import.meta.url), 'utf8');
 const gameSource = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 
@@ -46,27 +46,36 @@ test('quality levels map to shaft lengths and capsule budget', () => {
   assert.match(coreSource, /shadowShaftsQuality: this\.shadowShaftsQuality \|\| 'medium'/);
 });
 
-test('shafts pass shades the ortho world but not FG emissives', () => {
+test('shafts write a sun-visibility mask before the scene instead of multiplying it', () => {
+  // Dawniej quad mnozyl GOTOWY obraz po warstwie 0: bron i dysze (warstwa 0)
+  // spadaly w umbrze pod prog bloomu, a ring dostawal drugi cien.
   const scenePassList = coreSource.match(/_scenePasses\s*=\s*\[([\s\S]*?)\]/)?.[1] || '';
-  const shaftsIndex = scenePassList.indexOf('this.shadowShaftsPass');
-  const fgIndex = scenePassList.indexOf('this.renderPassFg');
-  const ringIndex = scenePassList.indexOf('this.renderPassRingPlanets');
-  const orthoIndex = scenePassList.indexOf('this.renderPassOrtho');
-  assert.ok(shaftsIndex >= 0, 'shadow shafts pass missing from scene chain');
-  assert.ok(shaftsIndex > ringIndex && shaftsIndex > orthoIndex,
-    'shadow shafts must run after ring-planet and ortho world passes');
-  assert.ok(shaftsIndex < fgIndex,
-    'shadow shafts must run BEFORE the FG pass so weapon emissives stay lit in shadow');
-  assert.match(coreSource, /new FullScreenBlendPass\(createShadowShaftsShader\(\), BLEND_MULTIPLY_SCENE\)/);
+  assert.ok(scenePassList.length > 0, 'scene pass chain missing');
+  assert.ok(!scenePassList.includes('this.shadowShaftsPass'), 'shafts pass must not blend into the scene buffer');
+  assert.ok(!coreSource.includes('BLEND_MULTIPLY_SCENE'), 'full-screen multiply blend is back');
+  assert.match(coreSource, /new FullScreenBlendPass\(createShadowShaftsShader\(\), \{ blending: THREE\.NoBlending \}\)/);
+  // Maska: RGBA8 bez MSAA, rozmiar bufora sceny (teksel 1:1 z gl_FragCoord).
+  assert.match(coreSource, /this\.sunShadowTarget = new THREE\.WebGLRenderTarget\(/);
+  assert.match(coreSource, /if \(this\.sunShadowTarget\) this\.sunShadowTarget\.setSize\(bufW, bufH\);/);
+  // Wyjscie shadera = maska (R powierzchnia, G tlo), bez sluzby 1 = "nic".
+  assert.match(coreSource, /gl_FragColor = vec4\(surfaceOut, backdropOut, 0\.0, 1\.0\);/);
+  assert.ok(!coreSource.includes('mix(vec3(1.0), vec3(0.06, 0.10, 0.16), rawShadow)'), 'old image multiply output is back');
+  // Kolejnosc w render(): maska PRZED pre-passem halo (atmosfery ja czytaja)
+  // i przed lancuchem passow sceny.
+  const renderAt = coreSource.indexOf('\n  render() {');
+  const maskAt = coreSource.indexOf('this._renderSunShadowMask(', renderAt);
+  const haloAt = coreSource.indexOf('renderPlanetHaloViewport(this.activeCam1', renderAt);
+  const chainAt = coreSource.indexOf('for (const pass of this._scenePasses)', renderAt);
+  assert.ok(renderAt >= 0 && maskAt > renderAt, 'render() must build the sun shadow mask');
+  assert.ok(maskAt < haloAt && maskAt < chainAt, 'mask must be ready before halo pre-pass and scene passes');
+  // Snapshot refrakcji ma polowe rozdzielczosci — skala teksela idzie za celem.
+  assert.match(coreSource, /this\._setSunShadowTexelFor\(this\.refractionTarget\);/);
 });
 
-test('shields render after the shafts pass, in ortho, without clearing depth', () => {
+test('shields render in ortho without clearing depth and never read the mask', () => {
   const shieldSource = readFileSync(new URL('../src/3d/shield3D.js', import.meta.url), 'utf8');
-  const scenePassList = coreSource.match(/_scenePasses\s*=\s*\[([\s\S]*?)\]/)?.[1] || '';
-  const shaftsIndex = scenePassList.indexOf('this.shadowShaftsPass');
-  const shieldIndex = scenePassList.indexOf('this.renderPassShields');
-  assert.ok(shieldIndex > shaftsIndex,
-    'shield pass must run AFTER shadow shafts — shield glow is emissive, not a lit surface');
+  // Tarcza to emisja, nie oswietlona powierzchnia.
+  assert.ok(!/sunShadow|SUN_SHADOW_GLSL/.test(shieldSource), 'shield glow must not be dimmed by the sun shadow mask');
   // Kamera ortho (jak swiat) + BEZ czyszczenia glebi (test glebi wzgledem kadlubow).
   assert.match(coreSource, /makeSplitScreenRenderPass\(this\.renderPassShields,\s*SHIELD_RENDER_LAYER,\s*true,\s*false,\s*false\)/);
   assert.match(coreSource, /new RenderPass\(this\.scene, this\.cameraOrtho\)/);
@@ -125,7 +134,8 @@ test('hull occluder is the silhouette distance field, not a capsule chain', () =
   assert.ok(hullSdfSource.includes('return !!s && s.active !== false && s.isDebris !== true;'));
   assert.ok(hullSdfSource.includes('sampleAlphaMap(alphaMap, sx * invW, sy * invH) < HULL_SDF_ALPHA_INSIDE'));
   // Wraki ida z puli: warstwa wazna tylko dla tej samej tablicy heksow.
-  assert.ok(hullSdfSource.includes('const sameShape = entry.layer >= 0 && entry.shardsRef === shards &&'));
+  assert.ok(hullSdfSource.includes('return entry.shardsRef === grid.shards &&'));
+  assert.ok(hullSdfSource.includes('const sameShape = entry.layer >= 0 && sameGridAs(entry, grid);'));
   // Brzeg prostokata SDF musi byc dalej niz najszerszy polcien.
   const margin = Number(hullSdfSource.match(/HULL_SDF_MARGIN_TEXELS = (\d+);/)?.[1]);
   const soft = Number(hullSdfSource.match(/HULL_SDF_SOFT_TEXELS = (\d+);/)?.[1]);
@@ -148,14 +158,18 @@ test('hull shaft starts at the hull edge and only dims the scene', () => {
 test('planetary rings register analytic circle occluders', () => {
   assert.match(coreSource, /setShaftRingOccluder\(key, cx, cy, radius, reach\)/);
   assert.match(coreSource, /removeShaftRingOccluder\(key\)/);
-  assert.match(ringSource, /Core3D\.setShaftRingOccluder\(this\.key, this\.lastPlanetX, this\.lastPlanetY, ringMid, ringMid \* 1\.15\);/);
-  assert.match(ringSource, /Core3D\.removeShaftRingOccluder\(this\.key\);/);
-  // Rejestracja przed dystansowym gate'em — cien dziala przy schowanych wizualiach.
-  const updateFrom = ringSource.indexOf('updateFromPlanet(planet, dt, viewCamera = null)');
-  const registerAt = ringSource.indexOf('Core3D.setShaftRingOccluder(this.key');
-  const gateAt = ringSource.indexOf('Ring root distance gate');
-  assert.ok(updateFrom >= 0 && registerAt > updateFrom && gateAt > registerAt,
-    'ring occluder must be registered before the visual distance gate');
+  // Ring „Halo” (haloRingGame.js): środek obwiedni, zasięg ×1,15 jak dawny ring;
+  // rejestracja co klatkę PRZED zbudowaniem ringu i testem kadru — cień działa
+  // także przy ringu poza kadrem albo jeszcze niezbudowanym (Mars).
+  assert.match(ringSource, /Core3D\.setShaftRingOccluder\?\.\(e\.occluderKey, e\.place\.x, e\.place\.y, ringMid, ringMid \* HALO_GAME\.occluderReachMul\);/);
+  assert.match(ringSource, /occluderReachMul: 1\.15/);
+  assert.match(ringSource, /Core3D\.removeShaftRingOccluder\?\.\(e\.occluderKey\);/);
+  const updateFrom = ringSource.indexOf('update(dt, cam, opts = {}) {');
+  const registerAt = ringSource.indexOf('Core3D.setShaftRingOccluder?.(e.occluderKey');
+  const buildAt = ringSource.indexOf('this._ensureRing(e);', updateFrom);
+  const gateAt = ringSource.indexOf('const inView =', updateFrom);
+  assert.ok(updateFrom >= 0 && registerAt > updateFrom && buildAt > registerAt && gateAt > registerAt,
+    'ring occluder must be registered before the ring is built and before the view gate');
 });
 
 test('large asteroids push analytic discs with throttled selection', () => {
@@ -175,4 +189,92 @@ test('escape menu exposes off/low/medium/high shadow shafts option', () => {
   // Presety: fast -> low, ultrafast -> off, base -> zapisany poziom.
   assert.match(gameSource, /setShadowShaftsQuality\?\.\('low'\)/);
   assert.match(gameSource, /setShadowShaftsQuality\?\.\('off'\)/);
+});
+
+test('sun shadow mask module shares uniform objects and keeps the backdrop tint', async () => {
+  const mask = await import('../src/3d/sunShadowMask.js');
+  const uniforms = mask.attachSunShadowUniforms({ own: { value: 1 } });
+  // TE SAME obiekty co w module — Core3D ustawia je raz na klatke dla wszystkich.
+  assert.equal(uniforms.uSunShadowMap, mask.sunShadowUniforms.uSunShadowMap);
+  assert.equal(uniforms.uSunShadowTexel, mask.sunShadowUniforms.uSunShadowTexel);
+  assert.equal(uniforms.uSunShadowOn, mask.sunShadowUniforms.uSunShadowOn);
+  assert.equal(uniforms.uSunShadowFill, mask.sunShadowUniforms.uSunShadowFill);
+  assert.equal(uniforms.own.value, 1);
+  assert.deepEqual([...mask.SUN_SHAFT_BACKDROP_TINT], [0.06, 0.10, 0.16]);
+  // Otoczenie w pelnym cieniu: widoczny cien, ale nie czarna kaluza (dawniej ×0,06).
+  assert.equal(mask.SUN_SHADOW_FILL, 0.4);
+  assert.equal(mask.sunShadowUniforms.uSunShadowFill.value, mask.SUN_SHADOW_FILL);
+  assert.match(mask.SUN_SHADOW_GLSL, /float sunFill\(float vis\) \{\s*return mix\(uSunShadowFill, 1\.0, vis\);/);
+  // Odczyt po gl_FragCoord i wylaczenie uniformem (bez slonca / shafty Off).
+  assert.match(mask.SUN_SHADOW_GLSL, /gl_FragCoord\.xy \* uSunShadowTexel/);
+  assert.match(mask.SUN_SHADOW_GLSL, /if \(uSunShadowOn < 0\.5\) return vec2\(0\.0\);/);
+  assert.match(mask.SUN_SHADOW_GLSL, /float sunVisibility\(\)/);
+  assert.match(mask.SUN_SHADOW_GLSL, /vec3 sunShaftBackdrop\(vec3 color\)/);
+  assert.match(mask.SUN_SHADOW_GLSL, /vec3\(0\.0600000, 0\.100000, 0\.160000\)/);
+  // Wbudowane materialy: wstrzykniecie w onBeforeCompile, osobny klucz programu.
+  const fakeMaterial = {};
+  mask.applySunShadowToBuiltinMaterial(fakeMaterial, 'direct');
+  const shader = { uniforms: {}, fragmentShader: 'void main() {\n#include <lights_fragment_end>\n#include <opaque_fragment>\n}' };
+  fakeMaterial.onBeforeCompile(shader);
+  assert.equal(shader.uniforms.uSunShadowOn, mask.sunShadowUniforms.uSunShadowOn);
+  assert.match(shader.fragmentShader, /reflectedLight\.directDiffuse \*= sunVisD;/);
+  assert.doesNotMatch(shader.fragmentShader, /sunShaftBackdrop\(gl_FragColor/);
+  assert.equal(fakeMaterial.customProgramCacheKey(), 'sunShadow:direct');
+});
+
+test('lit surfaces lose the sun term and dim fill; lights, glow and heat stay', () => {
+  const hullFragment = shipsSource.match(/const HEX_FRAGMENT_SHADER = `([\s\S]*?)`;/)?.[1] || '';
+  const debrisFragment = shipsSource.match(/const DEBRIS_FRAGMENT_SHADER = `([\s\S]*?)`;/)?.[1] || '';
+  assert.ok(hullFragment && debrisFragment, 'hull shaders missing');
+  assert.match(hullFragment, /\$\{SUN_SHADOW_GLSL\}/);
+  assert.match(hullFragment, /float lightMul = uDayAmbient \* sunFill\(sunVis\) \+ dayDiffuse \* uDayDiffuseMul \* sunVis;/);
+  assert.match(hullFragment, /color \+= vec3\(spec \* uSpecularMul \* litMask \* sunVis\);/);
+  // Glow z koloru w pelnym sloncu — niebieskie elementy nie gasna w cieniu.
+  assert.match(hullFragment, /float isGlowing = step\(0\.6, sunlitColor\.b\) \* step\(sunlitColor\.r, 0\.5\);/);
+  // Odblask slonca w lakierze gasnie, odbicie nieba zostaje.
+  assert.match(hullFragment, /float lobe = \(pow\(RdotL, glintExp\)[\s\S]*?\(sheenExp \/ uLacquerC\.x\)\) \* sunVis;/);
+  // Swiatla statku, stres i zar NIE widza maski.
+  const lightsLoop = hullFragment.slice(hullFragment.indexOf('for (int i = 0; i < MAX_SHIP_LIGHTS'));
+  assert.ok(lightsLoop.length > 0 && !/sunVis/.test(lightsLoop), 'ship lights, stress and heat must ignore the mask');
+  assert.match(debrisFragment, /float lightMul = uDayAmbient \* sunFill\(sunVis\) \+ NdotL \* uDayDiffuseMul \* sunVis;/);
+  // Wspolne obiekty uniformow w materialach kadluba i odlamkow.
+  assert.ok((shipsSource.match(/\.\.\.sunShadowUniforms/g) || []).length >= 2, 'hull and debris materials must share mask uniforms');
+
+  const impostorSource = readFileSync(new URL('../src/3d/hexBodyImpostorBatch.js', import.meta.url), 'utf8');
+  assert.match(impostorSource, /sunShadeUnlit\(vColor/);
+  assert.match(impostorSource, /uniforms: \{ \.\.\.sunShadowUniforms \}/);
+
+  const bridgeSource = readFileSync(new URL('../src/3d/bridge3D.js', import.meta.url), 'utf8');
+  assert.match(bridgeSource, /float hullLight = uB3Light\.x \* sunFill\(sunVis\) \+ \(vB3Hull\.x - uB3Light\.x\) \* sunVis;/);
+  assert.match(bridgeSource, /float dif = max\(0\.0, NdotL\) \* uB3Light\.y \* sh \* sunVis;/);
+  assert.match(bridgeSource, /float dark = \(1\.0 - sh\) \* uB3Shadow\.y \* sunVisibility\(\) \+ \(1\.0 - ao\);/);
+});
+
+test('emitters and the Halo ring never read the sun shadow mask', () => {
+  const read = (rel) => readFileSync(new URL(`../src/3d/${rel}`, import.meta.url), 'utf8');
+  // Emisja swieci w cieniu jak poza nim — to one maja rozswietlac umbre.
+  for (const rel of ['weapon3DSystem.js', 'mainExhaust3D.js', 'warpPlume3D.js', 'engineExhaustBatch.js',
+    'fxParticles3D.js', 'railgunFx3D.js', 'slugTrail3D.js', 'muzzleFx3D.js', 'shipLights3D.js',
+    'shieldImpactFx.js', 'bridgeFx3D.js']) {
+    assert.ok(!/sunShadowUniforms|SUN_SHADOW_GLSL|sunVisibility/.test(read(rel)), `${rel} must not read the sun shadow mask`);
+  }
+  // Ring ma wlasny model slonca (zacmienie + cien scian, slonce 49°).
+  const ringFiles = ['haloRingGLSL.js', 'haloRingGame.js', 'index.js', 'haloRingTerrain.js', 'haloRingCity.js', 'haloRingMegastructure.js'];
+  for (const rel of ringFiles) {
+    assert.ok(!/sunShadowUniforms|SUN_SHADOW_GLSL|sunVisibility/.test(read(`haloRing/${rel}`)), `haloRing/${rel} must keep its own sun model`);
+  }
+  // Okrag ringu tylko w kanale tla — powierzchnia (R) konczy sie na kadlubach.
+  assert.match(coreSource, /float surfaceShadow = shadow;[\s\S]*if \(!insideDisc\) \{[\s\S]*float backdropOut = clamp\(shadow, 0\.0, 1\.0\) \* uShaftGain;/);
+});
+
+test('backdrop keeps the long shaft; ring-anchored bodies get eclipses', () => {
+  assert.match(planetSource, /gl_FragColor = vec4\(sunShaftBackdrop\(color \* boost\), 1\.0\);/);
+  assert.match(planetSource, /finalColor = sunShaftBackdrop\(finalColor\);/);
+  const beltSource = readFileSync(new URL('../src/3d/asteroidBeltBackdrop3D.js', import.meta.url), 'utf8');
+  assert.match(beltSource, /col = sunShaftBackdrop\(col\);/);
+  assert.match(beltSource, /applySunShadowToBuiltinMaterial\(this\.dustMaterial, 'backdrop'\);/);
+  // Planety tla (perspektywa, z = -50 000) nie czytaja maski liczonej w plaszczyznie gry.
+  assert.match(planetSource, /uSunShadowRecv: \{ value: this\.isRingAnchored \? 1\.0 : 0\.0 \}/);
+  assert.match(planetSource, /mixFactor \*= sunVisP;/);
+  assert.match(planetSource, /if \(this\.isRingAnchored\) applySunShadowToBuiltinMaterial\(material, 'direct'\);/);
 });

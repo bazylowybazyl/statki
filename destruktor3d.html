@@ -27,7 +27,12 @@
   #panel-left { top: 50px; left: 14px; width: 254px; max-height: calc(100% - 80px); overflow-y: auto; }
   #panel-stats { top: 50px; right: 14px; width: 232px; max-height: calc(100% - 80px); overflow-y: auto; color: #7fc9ff; }
   #hud-controls { position: absolute; top: 12px; left: 14px; right: 14px; display: flex; justify-content: space-between; }
-  #hud-controls button { pointer-events: auto; }
+  #hud-controls button, #hud-controls a { pointer-events: auto; }
+  a.mode-link {
+    background: #0d1930; color: #cfe4ff; border: 1px solid #2b4a77; border-radius: 4px;
+    font-family: inherit; font-size: 11px; padding: 3px 8px; text-decoration: none;
+  }
+  a.mode-link:hover { background: #17325c; }
   .panel.folded { display: none; }
   @media (max-width: 1000px) {
     #panel-left:not(.open), #panel-stats:not(.open) { display: none; }
@@ -74,7 +79,7 @@
 <body>
 
 <div id="ui">
-  <div id="hud-controls"><button id="btn-settings">Ustawienia / myśliwiec</button><button id="btn-telemetry">Telemetria</button></div>
+  <div id="hud-controls"><button id="btn-settings">Ustawienia / myśliwiec</button><a class="mode-link" href="./destruktor2d.html">Tryb 2D — statki ze sprite'ów gry →</a><button id="btn-telemetry">Telemetria</button></div>
   <div class="panel" id="panel-left">
     <h1>DESTRUKTOR 3D — BELKI</h1>
     <h2>LOT</h2>

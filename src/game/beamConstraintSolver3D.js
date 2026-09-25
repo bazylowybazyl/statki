@@ -1,7 +1,7 @@
 // Scratch buffers keep the repeated Gauss–Seidel projection numeric and contiguous.
 // Float64 preserves JS-number precision and the original constraint order.
 export function beamSolverScratch(body) {
-  const nc = body.nodes.length, bc = body.beams.length;
+  const nc = body.nodeStore.count, bc = body.beamStore.count;
   let s = body._solverScratch;
   if (!s || s.weights.length < nc || s.rest.length < bc) {
     s = body._solverScratch = {
@@ -15,67 +15,80 @@ export function beamSolverScratch(body) {
 }
 
 export function refreshBeamMounts(body, scratch, cfg) {
-  if (scratch.mountNodes === body.nodes && scratch.mountBeams === body.beams &&
+  const nodes = body.nodeStore, beams = body.beamStore;
+  if (scratch.mountNodes === nodes && scratch.mountBeams === beams &&
       scratch.mountLive === body.liveBeams && scratch.mountActive === body.activeNodes &&
       scratch.mountRatio === cfg.mountMinSupportRatio) return;
   const support = scratch.localSupport, failed = scratch.mountFailed;
+  const active = nodes.active, a = beams.a, b = beams.b, broken = beams.broken, type = beams.type;
   support.fill(0); failed.fill(0);
-  for (const beam of body.beams) if (!beam.broken && beam.type < 2 && body.nodes[beam.a].active && body.nodes[beam.b].active) {
-    support[beam.a]++; support[beam.b]++;
+  for (let e = 0; e < beams.count; e++) {
+    if (!broken[e] && type[e] < 2 && active[a[e]] && active[b[e]]) { support[a[e]]++; support[b[e]]++; }
   }
-  for (let i = 0; i < body.nodes.length; i++) {
-    const base = body.nodes[i].localBeamCount || 0;
+  const ratio = cfg.mountMinSupportRatio ?? 0.3, base = nodes.localBeamCount;
+  for (let i = 0; i < nodes.count; i++) {
     // A reinforcement cannot hang on an attachment patch that has been torn
     // out. Originally sparse mounts remain valid until physically overstressed.
-    failed[i] = base >= 4 && support[i] < base * (cfg.mountMinSupportRatio ?? 0.3) ? 1 : 0;
+    failed[i] = base[i] >= 4 && support[i] < base[i] * ratio ? 1 : 0;
   }
-  scratch.mountNodes = body.nodes; scratch.mountBeams = body.beams;
+  scratch.mountNodes = nodes; scratch.mountBeams = beams;
   scratch.mountLive = body.liveBeams; scratch.mountActive = body.activeNodes;
   scratch.mountRatio = cfg.mountMinSupportRatio;
 }
 
-export function prepareBeamConstraints(s, beams, cfg, dt, plasticRate, stepScaleSq) {
+/**
+ * Pomiar belek przed rzutowaniem: zmęczenie, zerwania, plastyczność, wagi więzów.
+ * `list` = indeksy belek kroku (solver lokalny) albo null = wszystkie belki magazynu.
+ */
+export function prepareBeamConstraints(s, beams, list, listCount, cfg, dt, plasticRate, stepScaleSq) {
   const p = s.positions, w = s.weights, active = s.active;
+  const ea = beams.a, eb = beams.b, broken = beams.broken, type = beams.type;
+  const restArr = beams.rest, restBase = beams.restBase, deform = beams.deform, brk = beams.brk;
+  const strainArr = beams.strain, fatigue = beams.fatigue, stiffnessArr = beams.stiffness;
   const breakOn = (cfg.breakEnabled | 0) === 1;
   const stiffMul = cfg.globalStiffnessMul, breakMul = cfg.globalBreakMul;
-  let count = 0, broken = 0;
+  const total = list ? listCount : beams.count;
+  let count = 0, brokenNow = 0;
   s.deformed = false;
   // Damage is measured before ANY projection, using the same beam order.
-  for (const beam of beams) {
-    if (beam.broken || !active[beam.a] || !active[beam.b]) continue;
-    if (breakOn && beam.type >= 2 && (s.mountFailed[beam.a] || s.mountFailed[beam.b])) {
-      beam.broken = true; broken++; continue;
+  for (let k = 0; k < total; k++) {
+    const e = list ? list[k] : k;
+    const a = ea[e], b = eb[e];
+    if (broken[e] || !active[a] || !active[b]) continue;
+    if (breakOn && type[e] >= 2 && (s.mountFailed[a] || s.mountFailed[b])) {
+      broken[e] = 1; brokenNow++; continue;
     }
-    const ia = beam.a * 3, ib = beam.b * 3;
+    const ia = a * 3, ib = b * 3;
     const dx = p[ib] - p[ia], dy = p[ib + 1] - p[ia + 1], dz = p[ib + 2] - p[ia + 2];
     const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    const C = len - beam.rest, strain = C / beam.rest, absStrain = Math.abs(strain);
-    beam.strain = strain;
+    const rest = restArr[e];
+    const C = len - rest, strain = C / rest, absStrain = Math.abs(strain);
+    strainArr[e] = strain;
     if (breakOn) {
-      const limit = beam.break * breakMul;
-      if (absStrain > beam.deform) beam.fatigue = (beam.fatigue || 0) +
-        (absStrain - beam.deform) / limit * cfg.plasticFatigue * dt * 60;
-      if (Math.max(absStrain, Math.abs(len - beam.restBase) / beam.restBase) > limit || beam.fatigue >= 1) {
-        beam.broken = true;
-        broken++;
+      const limit = brk[e] * breakMul;
+      if (absStrain > deform[e]) fatigue[e] = (fatigue[e] || 0) +
+        (absStrain - deform[e]) / limit * cfg.plasticFatigue * dt * 60;
+      if (Math.max(absStrain, Math.abs(len - restBase[e]) / restBase[e]) > limit || fatigue[e] >= 1) {
+        broken[e] = 1;
+        brokenNow++;
         continue;
       }
     }
-    if (absStrain > beam.deform) {
-      const over = C - Math.sign(C) * beam.deform * beam.rest;
-      beam.rest = Math.max(beam.restBase * (1 - cfg.maxRestDrift),
-        Math.min(beam.restBase * (1 + cfg.maxRestDrift), beam.rest + over * plasticRate));
+    if (absStrain > deform[e]) {
+      const over = C - Math.sign(C) * deform[e] * rest;
+      restArr[e] = Math.max(restBase[e] * (1 - cfg.maxRestDrift),
+        Math.min(restBase[e] * (1 + cfg.maxRestDrift), rest + over * plasticRate));
       s.deformed = true;
     }
-    const wsum = w[beam.a] + w[beam.b];
+    const wsum = w[a] + w[b];
     if (wsum <= 0) continue;
-    const stiffness = Math.min(1, beam.stiffness * stiffMul);
-    const k = stiffness / (stiffness + (1 - stiffness) / stepScaleSq);
-    s.a[count] = beam.a; s.b[count] = beam.b;
-    s.rest[count] = beam.rest; s.factor[count++] = k / wsum;
+    const stiffness = Math.min(1, stiffnessArr[e] * stiffMul);
+    const kk = stiffness / (stiffness + (1 - stiffness) / stepScaleSq);
+    s.a[count] = a; s.b[count] = b;
+    s.rest[count] = restArr[e]; s.factor[count++] = kk / wsum;
   }
   s.count = count;
-  return broken;
+  return brokenNow;
 }
 
 export function projectBeamConstraints(s, count, iterations) {

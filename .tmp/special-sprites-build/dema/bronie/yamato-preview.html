@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Uzbrojenie — podgląd sprite’ów</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; color: #dbe7ef; background: #090e14; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 30px; max-width: 1500px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; gap: 20px; }
+    .eyebrow { color: #7babb9; font-size: 11px; letter-spacing: .2em; }
+    h1 { margin: 8px 0 6px; font-size: 32px; font-weight: 550; letter-spacing: -.04em; }
+    p { color: #92a4b4; font-size: 13px; line-height: 1.6; }
+    a { color: #83dce5; text-decoration: none; }
+    .controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 18px 0 24px; }
+    button, select { background: #18232e; border: 1px solid #344554; padding: 10px 15px; border-radius: 6px; color: #dbe7ef; cursor: pointer; font: inherit; font-size: 13px; }
+    button:hover { border-color: #87dce4; }
+    button.primary { background: #91e2e8; color: #10282e; border-color: #91e2e8; font-weight: 650; }
+    label { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #b6c6d1; }
+    input { accent-color: #91e2e8; }
+    .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    article { overflow: hidden; border: 1px solid #293642; border-radius: 10px; background: #101820; }
+    .caption { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; font-size: 14px; border-bottom: 1px solid #293642; }
+    .caption span { font-size: 11px; color: #7e95a6; }
+    .new { border-color: #50727c; }
+    .new .caption { color: #a4f0f1; }
+    canvas { display: block; width: 100%; height: 420px; }
+    .note { padding: 0 20px; font-size: 12px; }
+    footer { display: flex; justify-content: space-between; gap: 20px; margin-top: 16px; font-size: 12px; color: #718798; }
+    #status { color: #89b3a2; }
+    @media (max-width: 800px) { body { padding: 18px; } .panels { grid-template-columns: 1fr; } canvas { height: 340px; } header { align-items: start; } }
+  </style>
+  <script type="module" crossorigin src="/assets/yamato-preview-CoXYV-uD.js"></script>
+</head>
+<body>
+  <header>
+    <div><div class="eyebrow">SUPER CAPITAL / UZBROJENIE</div><h1 id="weapon-title">Bateria Yamato</h1><p>Porównaj wygląd na kadłubie. Obróć wieżyczkę i sprawdź odrzut.</p></div>
+    <a href="../../index.html">Otwórz grę ↗</a>
+  </header>
+  <div class="controls">
+    <label>Broń <select id="weapon" aria-label="Broń">
+      <option value="special_yamato_cannon">Yamato · 3 lufy</option>
+      <option value="special_goliath_autocannon">Goliath · 2 lufy</option>
+      <option value="special_plasma_gatling">Ion Plasma Gatling</option>
+      <option value="special_valkyrie_railgun">Valkyrie · 2 lufy</option>
+      <option value="siege_railgun">Mjolnir · akcelerator oblężniczy</option>
+      <option value="tempest_ion_s">Tempest Ion · Lekki S · 1 lufa</option>
+      <option value="railgun_mk1">Tempest Ion · Mk I M · 1 lufa</option>
+      <option value="railgun_mk2">Tempest Ion · Mk II M · 2 lufy</option>
+      <option value="tempest_ion_l">Tempest Ion · Ciężki L · 1 lufa</option>
+      <option value="ciws_mk1">CIWS · Mk I S</option>
+      <option value="ciws_mk2">CIWS · Mk II M</option>
+      <option value="missile_rack">Cruise Missile Rack · M</option>
+      <option value="fast_missile_rack">Fast Missile Rack · S</option>
+      <option value="osa_micro_missile">Osa Mk I · S</option>
+      <option value="supernova_missile">Supernova · Capital</option>
+    </select></label>
+    <button id="fire" class="primary">Oddaj strzał</button>
+    <label><input type="checkbox" id="auto"> Seria</label>
+    <label><input type="checkbox" id="rotate"> Obrót</label>
+    <label>Kąt <input id="angle" type="range" min="-180" max="180" step="0.1" value="-20" aria-label="Kąt wieżyczki"></label>
+    <label>Widok <select id="zoom" aria-label="Widok"><option value="2.5">Zbliżenie</option><option value="0.85">Cały statek</option><option value="0.05">Daleko</option><option value="0.015">Mapa</option></select></label>
+    <label><input type="checkbox" id="deck" checked> Na kadłubie</label>
+  </div>
+  <div class="panels">
+    <article><div class="caption">Dotychczasowe 2D <span>KSZTAŁTY</span></div><canvas id="before" aria-label="Dotychczasowa sylwetka broni"></canvas><p class="note">Obecna sylwetka i dotychczasowy odrzut.</p></article>
+    <article class="new"><div class="caption">Nowy sprite <span id="variant-label">YAMATO</span></div><canvas id="after" aria-label="Nowy sprite broni"></canvas><p class="note">Stalowy korpus, ruchome lufy i pancerz bez hardpointów.</p></article>
+  </div>
+  <footer><span>Oba podglądy używają renderera wieżyczek z gry. Tutaj sprawdzisz wygląd i odrzut; efekty strzału zobaczysz w grze.</span><span id="status" role="status">Ładowanie…</span></footer>
+</body>
+</html>

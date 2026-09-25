@@ -1,0 +1,236 @@
+{
+ "size": [
+  1600,
+  900
+ ],
+ "scenes": {
+  "bellator": {
+   "shots": [
+    "bellator_1_caly_zblizenie",
+    "bellator_0_szczeliny_zblizenie",
+    "bellator_1_caly_kadlub",
+    "bellator_2_uszkodzony_zblizenie",
+    "bellator_2_uszkodzony_kadlub",
+    "bellator_3_hulk_t0.3",
+    "bellator_3_hulk_t1.5",
+    "bellator_3_hulk_t1.5_kadlub",
+    "bellator_4_wrak_t4.5",
+    "bellator_4_wrak_t4.5_kadlub"
+   ],
+   "hdr": {
+    "bellator_okna": {
+     "rect": {
+      "x": 400,
+      "y": 225,
+      "w": 800,
+      "h": 450
+     },
+     "pixels": 360000,
+     "windowPixels": 2781,
+     "windowPixelsOver09": 316,
+     "maxWithWindows": 1.4014167785644531,
+     "p50": 0.413112074136734,
+     "p90": 0.9216723442077637,
+     "p99": 1.3617185354232788,
+     "surfacePixelsOver09": 9,
+     "surfaceMax": 1.584202527999878
+    },
+    "bellator_powierzchnia": {
+     "rect": {
+      "x": 400,
+      "y": 225,
+      "w": 800,
+      "h": 450
+     },
+     "pixels": 360000,
+     "nanOrInf": 0,
+     "over09": 325,
+     "overFraction": 0.0009027777777777777,
+     "p50": 0.124950439453125,
+     "p90": 0.38339580078124996,
+     "p99": 0.6462901367187499,
+     "p999": 0.87097421875,
+     "max": 1.5842025390624999,
+     "histogram": {
+      "<=0.05": 91550,
+      "<=0.2": 138402,
+      "<=0.4": 97135,
+      "<=0.9": 32588,
+      "<=1.3": 244,
+      "<=2": 81,
+      "<=4": 0,
+      "<=8": 0,
+      "<=12": 0,
+      "<=Infinity": 0
+     }
+    }
+   },
+   "evals": {
+    "uszkodzenie": {
+     "shots": 370,
+     "integrity": 0.794,
+     "dead": false,
+     "commandLost": false
+    },
+    "utrata dowodzenia": {
+     "shots": 85,
+     "commandLost": true,
+     "bridgeDead": true
+    },
+    "model": {
+     "stats": {
+      "records": 2,
+      "visible": 1,
+      "instances": [
+       1,
+       0,
+       0,
+       0
+      ],
+      "receivers": 1,
+      "emitters": 0,
+      "drawCalls": 2,
+      "cpuMs": 0,
+      "rowsUsed": 1,
+      "rowUploads": 87,
+      "flashes": 7,
+      "lastMs": 0
+     },
+     "records": [
+      {
+       "kind": "bellator",
+       "host": "Bellator",
+       "isWreck": false,
+       "row": -1,
+       "cells": 231,
+       "block": [
+        21,
+        11
+       ],
+       "anyDead": 0,
+       "moved": 0,
+       "powerLostAt": -1,
+       "emitters": 39
+      },
+      {
+       "kind": "bellator",
+       "host": "wrak",
+       "isWreck": true,
+       "row": 1,
+       "cells": 231,
+       "block": [
+        21,
+        11
+       ],
+       "anyDead": 1,
+       "moved": 0,
+       "powerLostAt": -1,
+       "emitters": 39
+      }
+     ]
+    }
+   },
+   "stats": {
+    "bellator": {
+     "time": 13.291666666666552,
+     "shots": 455,
+     "hullHits": 455,
+     "probeMisses": 0,
+     "windows": 0,
+     "calls": 22,
+     "errors": [],
+     "targets": [
+      {
+       "key": "battleship",
+       "hp": 10933,
+       "hexes": {
+        "active": 2799,
+        "total": 2920,
+        "ratio": 0.9585616438356165
+       },
+       "dead": true,
+       "cause": "bridge",
+       "commandLost": false,
+       "bridges": []
+      }
+     ]
+    }
+   }
+  }
+ },
+ "logs": [],
+ "gpu": {
+  "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 5080 (0x00002C02) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+  "timer": true
+ },
+ "boot": {
+  "time": 1.824999999999996,
+  "shots": 0,
+  "hullHits": 0,
+  "probeMisses": 0,
+  "windows": 0,
+  "calls": 33,
+  "errors": [],
+  "targets": [
+   {
+    "key": "battleship",
+    "hp": 12000,
+    "hexes": {
+     "active": 2920,
+     "total": 2920,
+     "ratio": 1
+    },
+    "dead": false,
+    "cause": null,
+    "commandLost": false,
+    "bridges": [
+     {
+      "id": "mostek",
+      "total": 102,
+      "alive": 102,
+      "integrity": 1,
+      "dead": false
+     }
+    ]
+   }
+  ]
+ },
+ "boot3d": {
+  "stats": {
+   "records": 1,
+   "visible": 1,
+   "instances": [
+    1,
+    0,
+    0,
+    0
+   ],
+   "receivers": 1,
+   "emitters": 38,
+   "drawCalls": 3,
+   "cpuMs": 0,
+   "rowsUsed": 1,
+   "rowUploads": 1,
+   "flashes": 0,
+   "lastMs": 0
+  },
+  "records": [
+   {
+    "kind": "bellator",
+    "host": "Bellator",
+    "isWreck": false,
+    "row": 0,
+    "cells": 231,
+    "block": [
+     21,
+     11
+    ],
+    "anyDead": 0,
+    "moved": 0,
+    "powerLostAt": -1,
+    "emitters": 39
+   }
+  ]
+ },
+ "finalErrors": []
+}

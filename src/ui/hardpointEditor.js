@@ -8,8 +8,21 @@ import pirateDestroyerImg from '../assets/ships/piratedestroyer.png';
 import pirateBattleshipImg from '../assets/ships/piratebattleship.png';
 import { composeShipThrusterCommand, updateShipThrusterState } from '../game/shipEntity.js';
 import { SHIP_EDITOR_DEFAULTS } from '../data/hardpointEditorDefaults.js';
+import { migratePirateSpriteLayout } from '../data/pirateSpriteMigration.js';
 import { WEAPON_SIZES, WEAPON_SIZE_LABEL } from '../data/weapons.js';
 import { getWeaponTierForHull, resolveHullRenderProfileId } from '../data/ships.js';
+import {
+  MAIN_EXHAUST_PALETTES,
+  WARP_PLASMA_PALETTES,
+  WARP_PLUME_BASE_LEN,
+  WARP_PLUME_BOOST_LEN,
+  buildEntityEngineFx,
+  mainExhaustExtentR,
+  normalizeEngineFxShipKey,
+  paletteColor,
+  resolveEngineFx,
+  sanitizeEngineFx
+} from '../data/engineFx.js';
 import {
   LIGHT_DEFAULTS,
   LIGHT_KINDS,
@@ -60,7 +73,7 @@ function migrateEditorShipsMap(input) {
     const key = normalizeEditorShipId(rawKey);
     if (!key) continue;
     if (!out[key] || (!shipDataHasContent(out[key]) && shipDataHasContent(value))) {
-      out[key] = value;
+      out[key] = migratePirateSpriteLayout(key, value);
     }
   }
   return out;
@@ -192,6 +205,8 @@ const state = {
   mouseScreen: null,
   vfxTestEnabled: false,
   vfxThreePreview: true,
+  // Podgląd plazmy WARP na dyszach MAIN (tylko na czas edycji, bez zapisu).
+  vfxWarpTest: false,
   vfxTune: { ...VFX_TUNE_DEFAULTS },
   vfxKeys: {},
   pausedByEditor: false,
@@ -426,7 +441,109 @@ function applyVfxTuneToGame(save = true) {
 }
 
 function isEnginePreviewActive() {
-  return !!(state.vfxTestEnabled || state.tool === 'engine_main' || state.tool === 'engine_side');
+  return !!(state.vfxTestEnabled || state.vfxWarpTest || state.tool === 'engine_main' || state.tool === 'engine_side');
+}
+
+/* ============================================================================
+   SILNIKI MAIN / WARP — rozmiar i palety PER STATEK (blok `engineFx` danych
+   statku). Wcześniej Main W / Main L były jednym globalnym mnożnikiem dla całej
+   floty (engineVfxTune.v1). Blok siedzi pod id kadłuba (tryb Current Ship
+   pisze do kadłuba gracza), więc gra, runtime NPC i eksport JSON czytają go
+   razem z markerami. Dysza jest w pikselach PNG — tych samych co markery.
+   ========================================================================== */
+function engineFxShipKey() {
+  return normalizeEngineFxShipKey(resolveEditorShipId(state.shipId));
+}
+
+function getShipEngineFx() {
+  const key = engineFxShipKey();
+  const data = state.ships[key];
+  return resolveEngineFx(key, data?.engineFx || null);
+}
+
+// Piksele PNG → piksele sprite'a na płótnie edytora. Tryb Current Ship rysuje
+// kanwę renderu kadłuba (skala render/PNG, jak `__hardpointScaleX` gracza).
+function getEditorFxUnitScale() {
+  if (normalizeEditorShipId(state.shipId) !== CURRENT_SHIP_ID) return 1;
+  const ship = (typeof window !== 'undefined') ? window.ship : null;
+  const sx = Number(ship?.__hardpointScaleX);
+  const sy = Number(ship?.__hardpointScaleY);
+  if (sx > 0 && sy > 0) return (sx + sy) * 0.5;
+  if (sx > 0) return sx;
+  if (sy > 0) return sy;
+  return 1;
+}
+
+function getPlayerHpScale() {
+  const ship = (typeof window !== 'undefined') ? window.ship : null;
+  const sx = Number(ship?.__hardpointScaleX);
+  const sy = Number(ship?.__hardpointScaleY);
+  if (sx > 0 && sy > 0) return (sx + sy) * 0.5;
+  return sx > 0 ? sx : (sy > 0 ? sy : 1);
+}
+
+// Zmiana od razu na statku gracza, jeśli to jego kadłub (NPC łapią ją same:
+// runtime układu NPC odpytuje hpEditor.v1 i przelicza układ po zmianie).
+function applyEngineFxToPlayerShip() {
+  const ship = (typeof window !== 'undefined') ? window.ship : null;
+  if (!ship?.visual || !Array.isArray(ship.visual.mainThrusters) || !ship.visual.mainThrusters.length) return;
+  const key = engineFxShipKey();
+  if (normalizeEngineFxShipKey(getCurrentRuntimeShipId()) !== key) return;
+  const fx = buildEntityEngineFx(key, state.ships[key]?.engineFx || null, getPlayerHpScale());
+  if (_savedOriginalEngines) _savedOriginalEngines.engineFx = fx;
+  else ship.visual.engineFx = fx;
+}
+
+function setShipEngineFx(patch) {
+  const key = engineFxShipKey();
+  const data = ensureShipData(key);
+  data.engineFx = sanitizeEngineFx({ ...(data.engineFx || {}), ...patch });
+  if (!data.engineFx) delete data.engineFx;
+  _lastFxSyncKey = '';
+  applyEngineFxToPlayerShip();
+  persist();
+  syncEngineFxControls();
+  scheduleDraw();
+}
+
+function resetShipEngineFx() {
+  const key = engineFxShipKey();
+  const data = state.ships[key];
+  if (data) delete data.engineFx;
+  _lastFxSyncKey = '';
+  applyEngineFxToPlayerShip();
+  persist();
+  syncEngineFxControls();
+  scheduleDraw();
+}
+
+function syncEngineFxControls() {
+  const c = runtime.controls;
+  if (!c?.fxNozzle) return;
+  const fx = getShipEngineFx();
+  const def = getShipDef(resolveEditorShipId(state.shipId));
+  c.fxTitle.textContent = `Silniki ${def?.label || engineFxShipKey()}`;
+  c.fxNozzle.value = Number.isFinite(fx.mainNozzle) ? String(fx.mainNozzle) : '';
+  c.fxMainLen.value = String(fx.mainLength);
+  c.fxMainWid.value = String(fx.mainWidth);
+  c.fxMainPal.value = fx.mainPalette;
+  c.fxWarpLen.value = String(fx.warpLength);
+  c.fxWarpPal.value = fx.warpPalette;
+  c.fxWarpTest.checked = !!state.vfxWarpTest;
+  const stored = !!state.ships[engineFxShipKey()]?.engineFx;
+  c.fxReset.disabled = !stored;
+  c.fxReset.title = stored ? 'Usuń zapisane rozmiary tego statku — wróć do dopasowanych w kodzie' : 'Statek ma rozmiary domyślne';
+}
+
+// Liniowe HDR palety → CSS (jak kafelki palet w demie wydechu).
+function hdrToCss(c, alpha = 1) {
+  const ch = (v) => Math.round(255 * Math.sqrt(1 - Math.exp(-0.9 * Math.max(0, v))));
+  return `rgba(${ch(c[0])},${ch(c[1])},${ch(c[2])},${alpha})`;
+}
+
+function hexToCss(hex, alpha = 1) {
+  const v = Number(hex) >>> 0;
+  return `rgba(${(v >> 16) & 255},${(v >> 8) & 255},${v & 255},${alpha})`;
 }
 
 function updateEditorBackdrop() {
@@ -452,6 +569,10 @@ function ensureStyle() {
   #${ROOT_ID} .hp-c input[type=number],#${ROOT_ID} .hp-c select{background:#091122;color:#fff;border:1px solid #2d4264;border-radius:6px;padding:3px 6px}
   #${ROOT_ID} .hp-c input[type=color]{width:38px;height:28px;background:#091122;border:1px solid #2d4264;border-radius:6px;padding:2px}
   #${ROOT_ID} .hp-c input[type=checkbox]{transform:translateY(1px)}
+  #${ROOT_ID} .hp-c.hp-fx{border-color:#3b5f8c;background:#0b1830}
+  #${ROOT_ID} .hp-c .hp-fx-title{color:#7ae4ff;font-weight:600;opacity:1}
+  #${ROOT_ID} .hp-c.hp-fx button{padding:3px 8px}
+  #${ROOT_ID} .hp-c.hp-fx button:disabled{opacity:.45;cursor:default}
   #${ROOT_ID} .hp-editor-top button{background:#102244;border:1px solid #35588b;color:#fff;border-radius:7px;padding:6px 10px;cursor:pointer}
   #${ROOT_ID} .hp-editor-top button:hover{background:#1a3159}
   #${ROOT_ID} .hp-editor-body{display:flex;flex:1;min-height:0}
@@ -510,12 +631,10 @@ function createRoot() {
       <div class="hp-c"><label>Zoom</label><input id="hp-zoom" type="range" min="0.2" max="4" step="0.05" value="1"></div>
       <div class="hp-c"><label>Test VFX (WSAD+QE+Shift)</label><input id="hp-vfx-test" type="checkbox"></div>
       <div class="hp-c"><label>Podgląd 3D VFX</label><input id="hp-vfx-three" type="checkbox" checked></div>
-      <div class="hp-c"><label>Main W</label><input id="hp-vfx-main-w" type="number" min="0.05" step="0.05" value="2.26" style="width:66px;"></div>
-      <div class="hp-c"><label>Main L</label><input id="hp-vfx-main-l" type="number" min="0.05" step="0.05" value="2.37" style="width:66px;"></div>
+      <div class="hp-c hp-fx" title="Rozmiar i barwa silników MAIN tego statku (nie całej floty). Dysza = średnica wylotu w pikselach sprite'a — kółko na dyszach w podglądzie."><label id="hp-fx-title" class="hp-fx-title">Silniki</label><label>MAIN dysza</label><input id="hp-fx-nozzle" type="number" min="2" max="800" step="1" style="width:62px;"><label>dł.</label><input id="hp-fx-main-len" type="number" min="0.1" max="5" step="0.05" style="width:58px;"><label>szer.</label><input id="hp-fx-main-wid" type="number" min="0.1" max="5" step="0.05" style="width:58px;"><select id="hp-fx-main-pal" style="width:118px;"></select></div>
+      <div class="hp-c hp-fx" title="Plazma skoku (warp) z tych samych dysz MAIN — długość i paleta tego statku. Test pokazuje ją na statku gracza (tryb Current Ship)."><label>WARP dł.</label><input id="hp-fx-warp-len" type="number" min="0.1" max="5" step="0.05" style="width:58px;"><select id="hp-fx-warp-pal" style="width:108px;"></select><label>test</label><input id="hp-fx-warp-test" type="checkbox"><button id="hp-fx-reset">domyślne</button></div>
       <div class="hp-c"><label>Side W</label><input id="hp-vfx-side-w" type="number" min="0.05" step="0.05" value="1.00" style="width:66px;"></div>
       <div class="hp-c"><label>Side L</label><input id="hp-vfx-side-l" type="number" min="0.05" step="0.05" value="0.98" style="width:66px;"></div>
-      <div class="hp-c"><label>Main L min</label><input id="hp-main-lmin" type="number" min="1" step="1" value="10" style="width:66px;"></div>
-      <div class="hp-c"><label>Main L max</label><input id="hp-main-lmax" type="number" min="1" step="1" value="179" style="width:66px;"></div>
       <div class="hp-c"><label>Side W min</label><input id="hp-side-wmin" type="number" min="1" step="1" value="25" style="width:66px;"></div>
       <div class="hp-c"><label>Side W max</label><input id="hp-side-wmax" type="number" min="1" step="1" value="227" style="width:66px;"></div>
       <div class="hp-c"><label>Side L min</label><input id="hp-side-lmin" type="number" min="1" step="1" value="49" style="width:66px;"></div>
@@ -572,12 +691,17 @@ function createRoot() {
     zoom: root.querySelector('#hp-zoom'),
     vfxTest: root.querySelector('#hp-vfx-test'),
     vfxThree: root.querySelector('#hp-vfx-three'),
-    vfxMainW: root.querySelector('#hp-vfx-main-w'),
-    vfxMainL: root.querySelector('#hp-vfx-main-l'),
+    fxTitle: root.querySelector('#hp-fx-title'),
+    fxNozzle: root.querySelector('#hp-fx-nozzle'),
+    fxMainLen: root.querySelector('#hp-fx-main-len'),
+    fxMainWid: root.querySelector('#hp-fx-main-wid'),
+    fxMainPal: root.querySelector('#hp-fx-main-pal'),
+    fxWarpLen: root.querySelector('#hp-fx-warp-len'),
+    fxWarpPal: root.querySelector('#hp-fx-warp-pal'),
+    fxWarpTest: root.querySelector('#hp-fx-warp-test'),
+    fxReset: root.querySelector('#hp-fx-reset'),
     vfxSideW: root.querySelector('#hp-vfx-side-w'),
     vfxSideL: root.querySelector('#hp-vfx-side-l'),
-    mainLMin: root.querySelector('#hp-main-lmin'),
-    mainLMax: root.querySelector('#hp-main-lmax'),
     sideWMin: root.querySelector('#hp-side-wmin'),
     sideWMax: root.querySelector('#hp-side-wmax'),
     sideLMin: root.querySelector('#hp-side-lmin'),
@@ -604,12 +728,18 @@ function createRoot() {
 }
 
 function fillSelects() {
-  const { ship, hardpointSize } = runtime.controls;
+  const { ship, hardpointSize, fxMainPal, fxWarpPal } = runtime.controls;
   ship.innerHTML = getShipSelectDefs().map((s) => `<option value="${s.id}">${s.label}</option>`).join('');
   if (hardpointSize) {
     const opts = ['<option value="auto">Auto (klasa)</option>']
       .concat(WEAPON_SIZES.map((s) => `<option value="${s}">${s}</option>`));
     hardpointSize.innerHTML = opts.join('');
+  }
+  if (fxMainPal && !fxMainPal.options.length) {
+    fxMainPal.innerHTML = MAIN_EXHAUST_PALETTES.map((p) => `<option value="${p.id}">${p.name}</option>`).join('');
+  }
+  if (fxWarpPal && !fxWarpPal.options.length) {
+    fxWarpPal.innerHTML = WARP_PLASMA_PALETTES.map((p) => `<option value="${p.id}">${p.name}</option>`).join('');
   }
   refreshEngineMountSelect();
 }
@@ -951,6 +1081,8 @@ function bindControls() {
   c.ship.addEventListener('change', () => {
     state.shipId = normalizeEditorShipId(c.ship.value);
     ensureShipData(state.shipId);
+    _lastFxSyncKey = '';
+    syncEngineFxControls();
     persist();
     scheduleDraw();
   });
@@ -1072,8 +1204,27 @@ function bindControls() {
     persist();
     scheduleDraw();
   };
-  c.vfxMainW.addEventListener('input', () => updateVfxTuneValue('mainW', c.vfxMainW.value));
-  c.vfxMainL.addEventListener('input', () => updateVfxTuneValue('mainL', c.vfxMainL.value));
+  // Silniki MAIN / WARP tego statku (blok engineFx) — pusta albo błędna
+  // wartość nie nadpisuje zapisu (sanitizeEngineFx ją odrzuca).
+  const onFxNumber = (el, field) => el.addEventListener('input', () => {
+    const v = Number(el.value);
+    if (!Number.isFinite(v) || v <= 0) return;
+    setShipEngineFx({ [field]: v });
+  });
+  onFxNumber(c.fxNozzle, 'mainNozzle');
+  onFxNumber(c.fxMainLen, 'mainLength');
+  onFxNumber(c.fxMainWid, 'mainWidth');
+  onFxNumber(c.fxWarpLen, 'warpLength');
+  c.fxMainPal.addEventListener('change', () => setShipEngineFx({ mainPalette: c.fxMainPal.value }));
+  c.fxWarpPal.addEventListener('change', () => setShipEngineFx({ warpPalette: c.fxWarpPal.value }));
+  c.fxWarpTest.addEventListener('change', () => {
+    state.vfxWarpTest = !!c.fxWarpTest.checked;
+    applyWarpPreviewFlag();
+    updateEditorBackdrop();
+    refreshVfxLoop();
+    scheduleDraw();
+  });
+  c.fxReset.addEventListener('click', resetShipEngineFx);
   c.vfxSideW.addEventListener('input', () => updateVfxTuneValue('sideW', c.vfxSideW.value));
   c.vfxSideL.addEventListener('input', () => updateVfxTuneValue('sideL', c.vfxSideL.value));
   const clampRange = (value, fallback = 1) => {
@@ -1081,28 +1232,14 @@ function bindControls() {
     if (!Number.isFinite(v) || v <= 0) return fallback;
     return v;
   };
+  // Zakresy min/max zostały tylko dla dysz SIDE — długość strugi MAIN idzie
+  // z bloku engineFx statku (mainNozzle × mainLength).
   const syncEngineRangeControls = () => {
-    c.mainLMin.value = String(state.mainVfxLengthMin);
-    c.mainLMax.value = String(state.mainVfxLengthMax);
     c.sideWMin.value = String(state.sideVfxWidthMin);
     c.sideWMax.value = String(state.sideVfxWidthMax);
     c.sideLMin.value = String(state.sideVfxLengthMin);
     c.sideLMax.value = String(state.sideVfxLengthMax);
   };
-  c.mainLMin.addEventListener('input', () => {
-    state.mainVfxLengthMin = clampRange(c.mainLMin.value, 10);
-    if (state.mainVfxLengthMax < state.mainVfxLengthMin) state.mainVfxLengthMax = state.mainVfxLengthMin;
-    syncEngineRangeControls();
-    persist();
-    scheduleDraw();
-  });
-  c.mainLMax.addEventListener('input', () => {
-    state.mainVfxLengthMax = clampRange(c.mainLMax.value, 179);
-    if (state.mainVfxLengthMax < state.mainVfxLengthMin) state.mainVfxLengthMin = state.mainVfxLengthMax;
-    syncEngineRangeControls();
-    persist();
-    scheduleDraw();
-  });
   c.sideWMin.addEventListener('input', () => {
     state.sideVfxWidthMin = clampRange(c.sideWMin.value, 25);
     if (state.sideVfxWidthMax < state.sideVfxWidthMin) state.sideVfxWidthMax = state.sideVfxWidthMin;
@@ -1248,6 +1385,14 @@ function isVfxTestKey(code) {
     || code === 'ShiftLeft' || code === 'ShiftRight';
 }
 
+// Test WARP: plazma na dyszach MAIN statku gracza (EngineVfxSystem czyta flagę).
+function applyWarpPreviewFlag() {
+  const ship = (typeof window !== 'undefined') ? window.ship : null;
+  if (!ship) return;
+  if (state.visible && state.vfxWarpTest) ship.__warpPreview = true;
+  else delete ship.__warpPreview;
+}
+
 function applyVfxOverride() {
   if (!state.visible) return;
   if (!isEnginePreviewActive()) return;
@@ -1255,6 +1400,9 @@ function applyVfxOverride() {
   if (!ship) return;
   const keys = state.vfxKeys;
   const boost = !!(keys.ShiftLeft || keys.ShiftRight);
+  // Shift w teście = dopalacz strugi MAIN (jak Shift w strefie planety).
+  if (boost) ship.__editorBoost = true;
+  else delete ship.__editorBoost;
   const boostMul = boost ? 1.35 : 1.0;
   const mainPressed = !!(keys.KeyW || keys.KeyS);
   const main = mainPressed ? Math.min(1, 1.0 * boostMul) : 0;
@@ -1296,7 +1444,9 @@ function clearVfxOverride() {
   ship.thrusterInput.leftSide = 0;
   ship.thrusterInput.rightSide = 0;
   ship.thrusterInput.torque = 0;
+  delete ship.__editorBoost;
   runtime.vfxLoopAt = 0;
+  applyWarpPreviewFlag();
   restoreOriginalEngines();
 }
 
@@ -1305,6 +1455,22 @@ function clearVfxOverride() {
 // so EngineVfxSystem renders real 3D VFX in the editor preview.
 let _savedOriginalEngines = null;
 let _lastSyncKey = '';
+// Podpis ostatnio wgranego do podglądu bloku engineFx (kadłub|skala|zapis).
+let _lastFxSyncKey = '';
+
+// Rozmiar i palety silników edytowanego kadłuba na statku podglądu — w tej
+// samej skali co markery podglądu (Current Ship: piksele renderu, inaczej PNG).
+function syncEditorEngineFxToShip(ship, hasMainMarkers) {
+  const key = engineFxShipKey();
+  const stored = state.ships[key]?.engineFx || null;
+  const unit = getEditorFxUnitScale();
+  const fxKey = `${key}|${unit}|${hasMainMarkers ? 1 : 0}|${stored ? JSON.stringify(stored) : ''}`;
+  if (fxKey === _lastFxSyncKey) return;
+  _lastFxSyncKey = fxKey;
+  if (hasMainMarkers) ship.visual.engineFx = buildEntityEngineFx(key, stored, unit);
+  else if (_savedOriginalEngines?.engineFx) ship.visual.engineFx = _savedOriginalEngines.engineFx;
+  else delete ship.visual.engineFx;
+}
 
 function _buildSyncKey(mainMarkers, sideMarkers) {
   // Build a compact hash so we skip sync when nothing changed
@@ -1356,18 +1522,20 @@ function syncEditorEnginesToShip() {
   const mainMarkers = data.engines.main || [];
   const sideMarkers = data.engines.side || [];
 
-  // Dirty check — skip if nothing changed since last sync
-  const syncKey = _buildSyncKey(mainMarkers, sideMarkers);
-  if (syncKey === _lastSyncKey) return;
-  _lastSyncKey = syncKey;
-
   // Save original data once (for restore on editor close)
   if (!_savedOriginalEngines) {
     _savedOriginalEngines = {
       mainThrusters: ship.visual.mainThrusters ? JSON.parse(JSON.stringify(ship.visual.mainThrusters)) : null,
-      torqueThrusters: ship.visual.torqueThrusters ? JSON.parse(JSON.stringify(ship.visual.torqueThrusters)) : null
+      torqueThrusters: ship.visual.torqueThrusters ? JSON.parse(JSON.stringify(ship.visual.torqueThrusters)) : null,
+      engineFx: ship.visual.engineFx || null
     };
   }
+  syncEditorEngineFxToShip(ship, mainMarkers.length > 0);
+
+  // Dirty check — skip if nothing changed since last sync
+  const syncKey = _buildSyncKey(mainMarkers, sideMarkers);
+  if (syncKey === _lastSyncKey) return;
+  _lastSyncKey = syncKey;
 
   // Convert editor markers → mainThrusters format
   // Editor marker: { x, y, deg, offsetX, offsetY }
@@ -1421,8 +1589,11 @@ function restoreOriginalEngines() {
   if (_savedOriginalEngines.torqueThrusters) {
     ship.visual.torqueThrusters = _savedOriginalEngines.torqueThrusters;
   }
+  if (_savedOriginalEngines.engineFx) ship.visual.engineFx = _savedOriginalEngines.engineFx;
+  else delete ship.visual.engineFx;
   _savedOriginalEngines = null;
   _lastSyncKey = '';
+  _lastFxSyncKey = '';
 }
 
 function refreshVfxLoop() {
@@ -2018,6 +2189,94 @@ function getVfxPreviewThrottle() {
   return { main, side, boost };
 }
 
+// Podgląd dyszy MAIN na płótnie edytora: kółko wylotu (rozmiar z bloku
+// engineFx statku) i przybliżenie strugi z palety — te same proporcje co
+// w grze (mainExhaustExtentR). Z włączonym testem WARP — plazma zamiast strugi.
+const _pc = [0, 0, 0];
+function drawMainNozzlePreview(ctx, p, rad, power, fx, boost, time, seed) {
+  const scale = getDrawScale();
+  const unit = getEditorFxUnitScale();
+  const nozzlePx = Number.isFinite(fx.mainNozzle) ? fx.mainNozzle : 60;
+  const R = Math.max(1.5, nozzlePx * 0.5 * unit * scale);
+  ctx.save();
+  ctx.translate(p.x, p.y);
+  ctx.rotate(rad);
+
+  ctx.strokeStyle = 'rgba(122,228,255,0.9)';
+  ctx.lineWidth = 1.3;
+  ctx.setLineDash([4, 3]);
+  ctx.beginPath();
+  ctx.arc(0, 0, R, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.globalCompositeOperation = 'lighter';
+  // Szerokości jak w shaderach gry (przybliżenie): plazma — ciało ~0,9R przy
+  // dyszy, zwęża się do ~0,45R, otoczka ~1,1R; struga — rdzeń ~0,25R przy
+  // dyszy, rozszerza się do ~0,8R, ogon ~0,8R. Barwy addytywne, półprzejrzyste.
+  const lobe = (halfStart, halfMax, atMax, len) => {
+    ctx.beginPath();
+    ctx.moveTo(halfStart, 0);
+    ctx.bezierCurveTo(halfMax, len * atMax * 0.6, halfMax, len * atMax * 1.4, 0, len);
+    ctx.bezierCurveTo(-halfMax, len * atMax * 1.4, -halfMax, len * atMax * 0.6, -halfStart, 0);
+    ctx.closePath();
+    ctx.fill();
+  };
+  if (state.vfxWarpTest) {
+    const wpal = WARP_PLASMA_PALETTES.find((w) => w.id === fx.warpPalette) || WARP_PLASMA_PALETTES[0];
+    const len = WARP_PLUME_BASE_LEN * fx.warpLength * (1 + WARP_PLUME_BOOST_LEN) * R;
+    const flick = 0.94 + 0.06 * Math.sin(time * 37 + seed);
+    const sheath = ctx.createLinearGradient(0, 0, 0, len * 1.3);
+    sheath.addColorStop(0, hexToCss(wpal.outer[0], 0.12));
+    sheath.addColorStop(0.5, hexToCss(wpal.outer[1], 0.1));
+    sheath.addColorStop(1, hexToCss(wpal.outer[1], 0));
+    ctx.fillStyle = sheath;
+    lobe(R * 0.9, R * 1.1, 0.3, len * 1.3);
+    const body = ctx.createLinearGradient(0, 0, 0, len);
+    body.addColorStop(0, hexToCss(wpal.body[1], 0.42 * flick));
+    body.addColorStop(0.35, hexToCss(wpal.body[2], 0.26));
+    body.addColorStop(0.8, hexToCss(wpal.body[3], 0.1));
+    body.addColorStop(1, hexToCss(wpal.body[3], 0));
+    ctx.fillStyle = body;
+    lobe(R * 0.6, R * 0.85, 0.2, len);
+    const core = ctx.createLinearGradient(0, 0, 0, len * 0.28);
+    core.addColorStop(0, hexToCss(wpal.core[0], 0.95));
+    core.addColorStop(1, hexToCss(wpal.core[1], 0));
+    ctx.fillStyle = core;
+    lobe(R * 0.3, R * 0.32, 0.25, len * 0.28);
+    ctx.restore();
+    return;
+  }
+  if (power <= 0.02) {
+    ctx.restore();
+    return;
+  }
+  const pal = MAIN_EXHAUST_PALETTES.find((m) => m.id === fx.mainPalette) || MAIN_EXHAUST_PALETTES[0];
+  const k = boost ? Math.max(power, 1) * 1.5 : power;
+  const ext = mainExhaustExtentR(k, fx.mainLength, fx.mainWidth);
+  const flick = 0.9 + 0.1 * Math.sin(time * 13.7 + seed) * Math.sin(time * 7.31 + seed * 2.13);
+  const alpha = Math.min(1, 0.35 + 0.65 * Math.min(k, 1));
+  const W = Number(fx.mainWidth) > 0 ? Number(fx.mainWidth) : 1;
+  // ogon — długi, przygaszony
+  const tailLen = ext.tail * R;
+  const tail = ctx.createLinearGradient(0, 0, 0, tailLen);
+  tail.addColorStop(0, hdrToCss(paletteColor(pal, 0.45, 0.2, _pc), 0.2 * alpha));
+  tail.addColorStop(0.6, hdrToCss(paletteColor(pal, 0.3, 0.7, _pc), 0.1 * alpha));
+  tail.addColorStop(1, hdrToCss(paletteColor(pal, 0.2, 1, _pc), 0));
+  ctx.fillStyle = tail;
+  lobe(R * 0.3 * W, R * 0.8 * W, 0.45, tailLen);
+  // rdzeń — jasny, krótszy
+  const coreLen = ext.core * R * flick;
+  const core = ctx.createLinearGradient(0, 0, 0, coreLen);
+  core.addColorStop(0, hdrToCss(paletteColor(pal, 1, 0, _pc), 0.9 * alpha));
+  core.addColorStop(0.25, hdrToCss(paletteColor(pal, 0.7, 0.15, _pc), 0.55 * alpha));
+  core.addColorStop(0.7, hdrToCss(paletteColor(pal, 0.4, 0.5, _pc), 0.22 * alpha));
+  core.addColorStop(1, hdrToCss(paletteColor(pal, 0.2, 0.8, _pc), 0));
+  ctx.fillStyle = core;
+  lobe(R * 0.25 * W, R * 0.75 * W, 0.5, coreLen);
+  ctx.restore();
+}
+
 function drawEngineVfxPreview(ctx) {
   if (!isEnginePreviewActive()) return;
   const data = ensureShipData(state.shipId);
@@ -2027,6 +2286,7 @@ function drawEngineVfxPreview(ctx) {
   const mainSources = Array.isArray(ship?.visual?.mainThrusters) ? ship.visual.mainThrusters : [];
   const sideSources = Array.isArray(ship?.visual?.torqueThrusters) ? ship.visual.torqueThrusters : [];
   const time = performance.now() * 0.001;
+  const engineFx = getShipEngineFx();
   const drawJet = (marker, source, fallbackPower, kind) => {
     if (!marker) return;
     const baseX = Number.isFinite(Number(source?.offset?.x))
@@ -2038,31 +2298,23 @@ function drawEngineVfxPreview(ctx) {
     const p = localToScreen(baseX, baseY);
     const powerRaw = Number(source?.__throttle);
     const power = Number.isFinite(powerRaw) ? clamp01(powerRaw) : clamp01(fallbackPower);
-    if (power <= 0.02) return;
-
     const deg = Number.isFinite(Number(source?.nozzleDeg)) ? Number(source.nozzleDeg) : (Number(marker.deg) || 0);
     const rad = deg * Math.PI / 180;
-    const widthTune = kind === 'main'
-      ? Math.max(0.05, Number(state.vfxTune?.mainW) || VFX_TUNE_DEFAULTS.mainW)
-      : Math.max(0.05, Number(state.vfxTune?.sideW) || VFX_TUNE_DEFAULTS.sideW);
-    const lengthTune = kind === 'main'
-      ? Math.max(0.05, Number(state.vfxTune?.mainL) || VFX_TUNE_DEFAULTS.mainL)
-      : Math.max(0.05, Number(state.vfxTune?.sideL) || VFX_TUNE_DEFAULTS.sideL);
+    if (kind === 'main') {
+      drawMainNozzlePreview(ctx, p, rad, power, engineFx, throttle.boost, time, baseX * 0.011 + baseY * 0.009);
+      return;
+    }
+    if (power <= 0.02) return;
+    // Dalej tylko dysze SIDE (stary płomień, globalny tuner sideW/sideL).
+    const widthTune = Math.max(0.05, Number(state.vfxTune?.sideW) || VFX_TUNE_DEFAULTS.sideW);
+    const lengthTune = Math.max(0.05, Number(state.vfxTune?.sideL) || VFX_TUNE_DEFAULTS.sideL);
     const boostAmp = throttle.boost ? 1 : 0;
     const flicker = 0.92 + Math.sin(time * 21 + baseX * 0.011 + baseY * 0.009) * 0.08;
 
-    const lengthMinLocal = kind === 'main'
-      ? Math.max(10, Number(marker.vfxLengthMin) || 10)
-      : Math.max(24, Number(marker.vfxLengthMin) || 49);
-    const lengthMaxLocal = kind === 'main'
-      ? Math.max(lengthMinLocal, Number(marker.vfxLengthMax) || 179)
-      : Math.max(lengthMinLocal, Number(marker.vfxLengthMax) || 354);
-    const widthMinLocal = kind === 'side'
-      ? Math.max(8, Number(marker.vfxWidthMin) || 25)
-      : Math.max(12, lengthMinLocal * 0.34);
-    const widthMaxLocal = kind === 'side'
-      ? Math.max(widthMinLocal, Number(marker.vfxWidthMax) || 227)
-      : Math.max(widthMinLocal, Math.min(lengthMaxLocal * 0.55, 120));
+    const lengthMinLocal = Math.max(24, Number(marker.vfxLengthMin) || 49);
+    const lengthMaxLocal = Math.max(lengthMinLocal, Number(marker.vfxLengthMax) || 354);
+    const widthMinLocal = Math.max(8, Number(marker.vfxWidthMin) || 25);
+    const widthMaxLocal = Math.max(widthMinLocal, Number(marker.vfxWidthMax) || 227);
 
     const plumeLength = Math.max(
       12,
@@ -2463,9 +2715,12 @@ function buildSingleShipExportData(shipId) {
   const resolvedShipId = resolveEditorShipId(shipId);
   const def = getShipDef(resolvedShipId) || { id: resolvedShipId, label: resolvedShipId };
   const data = ensureShipData(shipId);
+  // Rozmiary silników siedzą pod kadłubem (tryb Current Ship pisze do niego).
+  const engineFx = sanitizeEngineFx(state.ships[normalizeEngineFxShipKey(def.id)]?.engineFx);
   const ships = {
     [def.id]: {
       label: def.label,
+      ...(data.spriteRevision ? { spriteRevision: data.spriteRevision } : {}),
       frontAxis: '+X',
       hardpoints: data.hardpoints.map((m) => compactMarker(m, 'hardpoint')),
       cores: data.cores.map((m) => compactMarker(m, 'core')),
@@ -2473,6 +2728,7 @@ function buildSingleShipExportData(shipId) {
         main: data.engines.main.map((m) => compactMarker(m, 'engine')),
         side: data.engines.side.map((m) => compactMarker(m, 'engine'))
       },
+      ...(engineFx ? { engineFx } : {}),
       lights: compactLights(data.lights)
     }
   };
@@ -2488,8 +2744,10 @@ function buildExportData() {
   const ships = {};
   for (const def of SHIP_DEFS) {
     const data = ensureShipData(def.id);
+    const engineFx = sanitizeEngineFx(data.engineFx);
     ships[def.id] = {
       label: def.label,
+      ...(data.spriteRevision ? { spriteRevision: data.spriteRevision } : {}),
       frontAxis: '+X',
       hardpoints: data.hardpoints.map((m) => compactMarker(m, 'hardpoint')),
       cores: data.cores.map((m) => compactMarker(m, 'core')),
@@ -2497,6 +2755,7 @@ function buildExportData() {
         main: data.engines.main.map((m) => compactMarker(m, 'engine')),
         side: data.engines.side.map((m) => compactMarker(m, 'engine'))
       },
+      ...(engineFx ? { engineFx } : {}),
       lights: compactLights(data.lights)
     };
   }
@@ -2585,8 +2844,14 @@ function normalizeImportedShip(raw) {
   }
 
   const lights = normalizeLightsBlock(raw?.lights, markerId);
+  const engineFx = sanitizeEngineFx(raw?.engineFx);
 
-  return { hardpoints, cores, engines, lights, __bootstrapped: true };
+  return {
+    hardpoints, cores, engines, lights,
+    ...(engineFx ? { engineFx } : {}),
+    ...(raw?.spriteRevision ? { spriteRevision: raw.spriteRevision } : {}),
+    __bootstrapped: true
+  };
 }
 
 function applyImportedConfigObject(parsed, applyToGame = true) {
@@ -2601,7 +2866,7 @@ function applyImportedConfigObject(parsed, applyToGame = true) {
   for (const def of SHIP_DEFS) {
     const shipRaw = shipsBlock[def.id] || (def.id === 'atlas' ? shipsBlock.player : null);
     if (!shipRaw || typeof shipRaw !== 'object') continue;
-    state.ships[def.id] = normalizeImportedShip(shipRaw);
+    state.ships[def.id] = normalizeImportedShip(migratePirateSpriteLayout(def.id, shipRaw));
     updated++;
   }
 
@@ -2648,6 +2913,7 @@ function updateStatsAndPreview() {
   const resolvedShipId = resolveEditorShipId(selectedShipId);
   const selectedDef = getShipDef(resolvedShipId) || { id: resolvedShipId, label: resolvedShipId };
   const data = ensureShipData(selectedShipId);
+  const engineFx = getShipEngineFx();
   const brush = PALETTE_ITEMS.find((p) => p.id === activePaletteId());
   const keys = state.vfxKeys || {};
   const keyState = ['W', 'A', 'S', 'D', 'Q', 'E', 'Shift']
@@ -2668,12 +2934,14 @@ function updateStatsAndPreview() {
     <div>Silniki SIDE: ${data.engines.side.length}</div>
     <div>Swiatla pozycyjne: ${data.lights.position.length}</div>
     <div>Swiatla drogowe: ${data.lights.road.length}</div>
-    <div>Min/Max: MainL ${state.mainVfxLengthMin}-${state.mainVfxLengthMax}, SideW ${state.sideVfxWidthMin}-${state.sideVfxWidthMax}, SideL ${state.sideVfxLengthMin}-${state.sideVfxLengthMax}</div>
+    <div>Min/Max SIDE: W ${state.sideVfxWidthMin}-${state.sideVfxWidthMax}, L ${state.sideVfxLengthMin}-${state.sideVfxLengthMax}</div>
     <div>Canvas: ${Math.round(runtime.cssW)} x ${Math.round(runtime.cssH)}</div>
     <div>Mysz local: ${mouseLabel}</div>
     <div>VFX test: ${isEnginePreviewActive() ? 'ON' : 'OFF'} (${keyState})</div>
     <div>Podgląd 3D VFX: ${state.vfxThreePreview ? 'ON' : 'OFF'}</div>
-    <div>Tune MAIN ${state.vfxTune.mainW}/${state.vfxTune.mainL} | SIDE ${state.vfxTune.sideW}/${state.vfxTune.sideL}</div>
+    <div>MAIN (ten statek): dysza ${Number.isFinite(engineFx.mainNozzle) ? engineFx.mainNozzle : '-'} px, dł. ${engineFx.mainLength}, szer. ${engineFx.mainWidth}, ${engineFx.mainPalette}${state.ships[engineFxShipKey()]?.engineFx ? '' : ' (domyślne)'}</div>
+    <div>WARP: dł. ${engineFx.warpLength}, ${engineFx.warpPalette}${state.vfxWarpTest ? ' — TEST' : ''}</div>
+    <div>Tune SIDE (globalnie) ${state.vfxTune.sideW}/${state.vfxTune.sideL}</div>
   `;
   runtime.controls.preview.value = JSON.stringify(buildSingleShipExportData(selectedShipId), null, 2);
 }
@@ -2824,12 +3092,9 @@ function syncControlsFromState() {
   c.zoom.value = String(state.zoom);
   c.vfxTest.checked = !!state.vfxTestEnabled;
   c.vfxThree.checked = !!state.vfxThreePreview;
-  c.vfxMainW.value = String(state.vfxTune.mainW ?? VFX_TUNE_DEFAULTS.mainW);
-  c.vfxMainL.value = String(state.vfxTune.mainL ?? VFX_TUNE_DEFAULTS.mainL);
   c.vfxSideW.value = String(state.vfxTune.sideW ?? VFX_TUNE_DEFAULTS.sideW);
   c.vfxSideL.value = String(state.vfxTune.sideL ?? VFX_TUNE_DEFAULTS.sideL);
-  c.mainLMin.value = String(state.mainVfxLengthMin);
-  c.mainLMax.value = String(state.mainVfxLengthMax);
+  syncEngineFxControls();
   c.sideWMin.value = String(state.sideVfxWidthMin);
   c.sideWMax.value = String(state.sideVfxWidthMax);
   c.sideLMin.value = String(state.sideVfxLengthMin);
@@ -2850,6 +3115,7 @@ export function openHardpointEditor() {
   state.visible = true;
   runtime.root.classList.add('open');
   ensureShipData(state.shipId);
+  applyWarpPreviewFlag();
   applyVfxTuneToGame(false);
   updateEditorBackdrop();
   ensureSprite(state.shipId).finally(() => scheduleDraw());

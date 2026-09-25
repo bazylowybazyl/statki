@@ -1,0 +1,1501 @@
+{
+ "size": [
+  1600,
+  900
+ ],
+ "scenes": {
+  "custos": {
+   "shots": [
+    "custos_1_caly_zblizenie",
+    "custos_0_szczeliny_zblizenie",
+    "custos_1_caly_kadlub",
+    "custos_2_uszkodzony_zblizenie",
+    "custos_2_uszkodzony_kadlub",
+    "custos_3_hulk_t0.3",
+    "custos_3_hulk_t1.5",
+    "custos_3_hulk_t1.5_kadlub",
+    "custos_4_wrak_t4.5",
+    "custos_4_wrak_t4.5_kadlub"
+   ],
+   "hdr": {
+    "custos_okna": {
+     "rect": {
+      "x": 400,
+      "y": 225,
+      "w": 800,
+      "h": 450
+     },
+     "pixels": 360000,
+     "windowPixels": 1220,
+     "windowPixelsOver09": 208,
+     "maxWithWindows": 1.4710605144500732,
+     "p50": 0.38565316796302795,
+     "p90": 1.0880216360092163,
+     "p99": 1.462612271308899,
+     "surfacePixelsOver09": 0,
+     "surfaceMax": 0.816864550113678
+    },
+    "custos_powierzchnia": {
+     "rect": {
+      "x": 400,
+      "y": 225,
+      "w": 800,
+      "h": 450
+     },
+     "pixels": 360000,
+     "nanOrInf": 0,
+     "over09": 208,
+     "overFraction": 0.0005777777777777778,
+     "p50": 0.09068470458984375,
+     "p90": 0.26174677734375,
+     "p99": 0.5088335449218749,
+     "p999": 0.7366806640624999,
+     "max": 1.471060546875,
+     "histogram": {
+      "<=0.05": 128295,
+      "<=0.2": 139144,
+      "<=0.4": 80453,
+      "<=0.9": 11900,
+      "<=1.3": 179,
+      "<=2": 29,
+      "<=4": 0,
+      "<=8": 0,
+      "<=12": 0,
+      "<=Infinity": 0
+     }
+    }
+   },
+   "evals": {
+    "uszkodzenie": {
+     "shots": 125,
+     "integrity": 0.7,
+     "dead": false,
+     "commandLost": false
+    },
+    "utrata dowodzenia": {
+     "shots": 0,
+     "commandLost": true,
+     "bridgeDead": true
+    },
+    "model": {
+     "stats": {
+      "records": 2,
+      "visible": 1,
+      "instances": [
+       0,
+       0,
+       0,
+       0,
+       1,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0
+      ],
+      "receivers": 1,
+      "emitters": 0,
+      "drawCalls": 2,
+      "cpuMs": 0,
+      "rowsUsed": 1,
+      "rowUploads": 37,
+      "flashes": 13,
+      "lastMs": 0
+     },
+     "records": [
+      {
+       "kind": "bellator",
+       "host": "Bellator",
+       "isWreck": false,
+       "row": -1,
+       "cells": 231,
+       "block": [
+        21,
+        11
+       ],
+       "anyDead": 0,
+       "moved": 0,
+       "powerLostAt": -1,
+       "emitters": 39
+      },
+      {
+       "kind": "custos",
+       "host": "wrak",
+       "isWreck": true,
+       "row": 1,
+       "cells": 63,
+       "block": [
+        9,
+        7
+       ],
+       "anyDead": 1,
+       "moved": 0,
+       "powerLostAt": -1,
+       "emitters": 18
+      }
+     ]
+    }
+   },
+   "stats": {
+    "custos": {
+     "time": 7.78333333333351,
+     "shots": 125,
+     "hullHits": 125,
+     "probeMisses": 0,
+     "windows": 0,
+     "calls": 22,
+     "errors": [],
+     "targets": [
+      {
+       "key": "frigate",
+       "hp": 800,
+       "hexes": {
+        "active": 90,
+        "total": 133,
+        "ratio": 0.6766917293233082
+       },
+       "dead": true,
+       "cause": "bridge",
+       "commandLost": false,
+       "bridges": []
+      }
+     ]
+    }
+   }
+  },
+  "hasta": {
+   "shots": [
+    "hasta_1_caly_zblizenie",
+    "hasta_0_szczeliny_zblizenie",
+    "hasta_1_caly_kadlub",
+    "hasta_2_uszkodzony_zblizenie",
+    "hasta_2_uszkodzony_kadlub",
+    "hasta_3_hulk_t0.3",
+    "hasta_3_hulk_t1.5",
+    "hasta_3_hulk_t1.5_kadlub",
+    "hasta_4_wrak_t4.5",
+    "hasta_4_wrak_t4.5_kadlub"
+   ],
+   "hdr": {
+    "hasta_okna": {
+     "rect": {
+      "x": 400,
+      "y": 225,
+      "w": 800,
+      "h": 450
+     },
+     "pixels": 360000,
+     "windowPixels": 2156,
+     "windowPixelsOver09": 495,
+     "maxWithWindows": 1.5741945505142212,
+     "p50": 0.4430440068244934,
+     "p90": 1.1705310344696045,
+     "p99": 1.5655386447906494,
+     "surfacePixelsOver09": 0,
+     "surfaceMax": 0.8364915251731873
+    },
+    "hasta_powierzchnia": {
+     "rect": {
+      "x": 400,
+      "y": 225,
+      "w": 800,
+      "h": 450
+     },
+     "pixels": 360000,
+     "nanOrInf": 0,
+     "over09": 495,
+     "overFraction": 0.001375,
+     "p50": 0.11906805419921875,
+     "p90": 0.30227695312499997,
+     "p99": 0.513329736328125,
+     "p999": 1.03834111328125,
+     "max": 1.57419453125,
+     "histogram": {
+      "<=0.05": 92148,
+      "<=0.2": 142593,
+      "<=0.4": 109753,
+      "<=0.9": 15011,
+      "<=1.3": 347,
+      "<=2": 148,
+      "<=4": 0,
+      "<=8": 0,
+      "<=12": 0,
+      "<=Infinity": 0
+     }
+    }
+   },
+   "evals": {
+    "uszkodzenie": {
+     "shots": 160,
+     "integrity": 0.786,
+     "dead": false,
+     "commandLost": false
+    },
+    "utrata dowodzenia": {
+     "shots": 17,
+     "commandLost": true,
+     "bridgeDead": true
+    },
+    "model": {
+     "stats": {
+      "records": 3,
+      "visible": 1,
+      "instances": [
+       0,
+       0,
+       0,
+       0,
+       0,
+       1,
+       0,
+       0,
+       0,
+       0,
+       0
+      ],
+      "receivers": 1,
+      "emitters": 0,
+      "drawCalls": 2,
+      "cpuMs": 0,
+      "rowsUsed": 1,
+      "rowUploads": 80,
+      "flashes": 23,
+      "lastMs": 0
+     },
+     "records": [
+      {
+       "kind": "bellator",
+       "host": "Bellator",
+       "isWreck": false,
+       "row": -1,
+       "cells": 231,
+       "block": [
+        21,
+        11
+       ],
+       "anyDead": 0,
+       "moved": 0,
+       "powerLostAt": -1,
+       "emitters": 39
+      },
+      {
+       "kind": "custos",
+       "host": "wrak",
+       "isWreck": true,
+       "row": -1,
+       "cells": 63,
+       "block": [
+        9,
+        7
+       ],
+       "anyDead": 1,
+       "moved": 0,
+       "powerLostAt": -1,
+       "emitters": 18
+      },
+      {
+       "kind": "hasta",
+       "host": "wrak",
+       "isWreck": true,
+       "row": 0,
+       "cells": 108,
+       "block": [
+        12,
+        9
+       ],
+       "anyDead": 1,
+       "moved": 0,
+       "powerLostAt": -1,
+       "emitters": 32
+      }
+     ]
+    }
+   },
+   "stats": {
+    "hasta": {
+     "time": 8.658333333333482,
+     "shots": 177,
+     "hullHits": 177,
+     "probeMisses": 0,
+     "windows": 0,
+     "calls": 22,
+     "errors": [],
+     "targets": [
+      {
+       "key": "destroyer",
+       "hp": 3076,
+       "hexes": {
+        "active": 309,
+        "total": 356,
+        "ratio": 0.8679775280898876
+       },
+       "dead": true,
+       "cause": "bridge",
+       "commandLost": false,
+       "bridges": []
+      }
+     ]
+    }
+   }
+  },
+  "citadella": {
+   "shots": [
+    "citadella_1_caly_zblizenie",
+    "citadella_0_szczeliny_zblizenie",
+    "citadella_1_caly_kadlub",
+    "citadella_2_uszkodzony_zblizenie",
+    "citadella_2_uszkodzony_kadlub",
+    "citadella_3_hulk_t0.3",
+    "citadella_3_hulk_t1.5",
+    "citadella_3_hulk_t1.5_kadlub",
+    "citadella_4_wrak_t4.5",
+    "citadella_4_wrak_t4.5_kadlub"
+   ],
+   "hdr": {
+    "citadella_okna": {
+     "rect": {
+      "x": 400,
+      "y": 225,
+      "w": 800,
+      "h": 450
+     },
+     "pixels": 360000,
+     "windowPixels": 2450,
+     "windowPixelsOver09": 385,
+     "maxWithWindows": 1.337087869644165,
+     "p50": 0.4842882454395294,
+     "p90": 1.0337657928466797,
+     "p99": 1.3337390422821045,
+     "surfacePixelsOver09": 0,
+     "surfaceMax": 0.8395224809646606
+    },
+    "citadella_powierzchnia": {
+     "rect": {
+      "x": 400,
+      "y": 225,
+      "w": 800,
+      "h": 450
+     },
+     "pixels": 360000,
+     "nanOrInf": 0,
+     "over09": 385,
+     "overFraction": 0.0010694444444444445,
+     "p50": 0.31108798828125,
+     "p90": 0.43037919921874995,
+     "p99": 0.7071814453124999,
+     "p999": 0.92687109375,
+     "max": 1.3370878906249999,
+     "histogram": {
+      "<=0.05": 10524,
+      "<=0.2": 107957,
+      "<=0.4": 168387,
+      "<=0.9": 72747,
+      "<=1.3": 347,
+      "<=2": 38,
+      "<=4": 0,
+      "<=8": 0,
+      "<=12": 0,
+      "<=Infinity": 0
+     }
+    }
+   },
+   "evals": {
+    "uszkodzenie": {
+     "shots": 523,
+     "integrity": 0.844,
+     "dead": false,
+     "commandLost": false
+    },
+    "utrata dowodzenia": [
+     {
+      "key": "terran_carrier",
+      "hp": 39102,
+      "hexes": {
+       "active": 5510,
+       "total": 5692,
+       "ratio": 0.9680252986647927
+      },
+      "dead": true,
+      "cause": "bridge",
+      "commandLost": true,
+      "bridges": [
+       {
+        "id": "mostek",
+        "total": 96,
+        "alive": 61,
+        "integrity": 0.635,
+        "dead": true
+       }
+      ]
+     }
+    ],
+    "model": {
+     "stats": {
+      "records": 4,
+      "visible": 1,
+      "instances": [
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       1,
+       0,
+       0,
+       0,
+       0
+      ],
+      "receivers": 0,
+      "emitters": 0,
+      "drawCalls": 1,
+      "cpuMs": 0,
+      "rowsUsed": 1,
+      "rowUploads": 152,
+      "flashes": 27,
+      "lastMs": 0
+     },
+     "records": [
+      {
+       "kind": "bellator",
+       "host": "Bellator",
+       "isWreck": false,
+       "row": -1,
+       "cells": 231,
+       "block": [
+        21,
+        11
+       ],
+       "anyDead": 0,
+       "moved": 0,
+       "powerLostAt": -1,
+       "emitters": 39
+      },
+      {
+       "kind": "custos",
+       "host": "wrak",
+       "isWreck": true,
+       "row": -1,
+       "cells": 63,
+       "block": [
+        9,
+        7
+       ],
+       "anyDead": 1,
+       "moved": 0,
+       "powerLostAt": -1,
+       "emitters": 18
+      },
+      {
+       "kind": "hasta",
+       "host": "wrak",
+       "isWreck": true,
+       "row": -1,
+       "cells": 108,
+       "block": [
+        12,
+        9
+       ],
+       "anyDead": 1,
+       "moved": 0,
+       "powerLostAt": -1,
+       "emitters": 32
+      },
+      {
+       "kind": "citadella",
+       "host": "wrak",
+       "isWreck": true,
+       "row": 1,
+       "cells": 216,
+       "block": [
+        12,
+        18
+       ],
+       "anyDead": 1,
+       "moved": 0,
+       "powerLostAt": -1,
+       "emitters": 40
+      }
+     ]
+    }
+   },
+   "stats": {
+    "citadella": {
+     "time": 14.466666666666486,
+     "shots": 523,
+     "hullHits": 523,
+     "probeMisses": 0,
+     "windows": 0,
+     "calls": 22,
+     "errors": [],
+     "targets": [
+      {
+       "key": "terran_carrier",
+       "hp": 39102,
+       "hexes": {
+        "active": 5510,
+        "total": 5692,
+        "ratio": 0.9680252986647927
+       },
+       "dead": true,
+       "cause": "bridge",
+       "commandLost": false,
+       "bridges": []
+      }
+     ]
+    }
+   }
+  },
+  "colossus": {
+   "shots": [
+    "colossus_1_caly_zblizenie",
+    "colossus_0_szczeliny_zblizenie",
+    "colossus_1_caly_kadlub",
+    "colossus_2_uszkodzony_zblizenie",
+    "colossus_2_uszkodzony_kadlub",
+    "colossus_3_hulk_t0.3",
+    "colossus_3_hulk_t1.5",
+    "colossus_3_hulk_t1.5_kadlub",
+    "colossus_4_wrak_t4.5",
+    "colossus_4_wrak_t4.5_kadlub"
+   ],
+   "hdr": {
+    "colossus_okna": {
+     "rect": {
+      "x": 400,
+      "y": 225,
+      "w": 800,
+      "h": 450
+     },
+     "pixels": 360000,
+     "windowPixels": 4170,
+     "windowPixelsOver09": 423,
+     "maxWithWindows": 1.5306437015533447,
+     "p50": 0.26443877816200256,
+     "p90": 0.9043018817901611,
+     "p99": 1.4041427373886108,
+     "surfacePixelsOver09": 0,
+     "surfaceMax": 0.8183925747871399
+    },
+    "colossus_powierzchnia": {
+     "rect": {
+      "x": 400,
+      "y": 225,
+      "w": 800,
+      "h": 450
+     },
+     "pixels": 360000,
+     "nanOrInf": 0,
+     "over09": 423,
+     "overFraction": 0.001175,
+     "p50": 0.1562520751953125,
+     "p90": 0.259083984375,
+     "p99": 0.5538115234375,
+     "p999": 0.947944140625,
+     "max": 1.53064375,
+     "histogram": {
+      "<=0.05": 65243,
+      "<=0.2": 207292,
+      "<=0.4": 73989,
+      "<=0.9": 13053,
+      "<=1.3": 328,
+      "<=2": 95,
+      "<=4": 0,
+      "<=8": 0,
+      "<=12": 0,
+      "<=Infinity": 0
+     }
+    }
+   },
+   "evals": {
+    "uszkodzenie": {
+     "shots": 415,
+     "integrity": 0.9,
+     "dead": false,
+     "commandLost": false
+    },
+    "utrata dowodzenia": [
+     {
+      "key": "terran_supercapital",
+      "hp": 76193,
+      "hexes": {
+       "active": 10985,
+       "total": 11545,
+       "ratio": 0.9514941533131226
+      },
+      "dead": true,
+      "cause": "bridge",
+      "commandLost": true,
+      "bridges": [
+       {
+        "id": "mostek",
+        "total": 559,
+        "alive": 358,
+        "integrity": 0.64,
+        "dead": true
+       }
+      ]
+     }
+    ],
+    "model": {
+     "stats": {
+      "records": 5,
+      "visible": 1,
+      "instances": [
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       1,
+       0,
+       0,
+       0
+      ],
+      "receivers": 1,
+      "emitters": 0,
+      "drawCalls": 2,
+      "cpuMs": 0,
+      "rowsUsed": 2,
+      "rowUploads": 244,
+      "flashes": 57,
+      "lastMs": 0
+     },
+     "records": [
+      {
+       "kind": "bellator",
+       "host": "Bellator",
+       "isWreck": false,
+       "row": -1,
+       "cells": 231,
+       "block": [
+        21,
+        11
+       ],
+       "anyDead": 0,
+       "moved": 0,
+       "powerLostAt": -1,
+       "emitters": 39
+      },
+      {
+       "kind": "custos",
+       "host": "wrak",
+       "isWreck": true,
+       "row": -1,
+       "cells": 63,
+       "block": [
+        9,
+        7
+       ],
+       "anyDead": 1,
+       "moved": 0,
+       "powerLostAt": -1,
+       "emitters": 18
+      },
+      {
+       "kind": "hasta",
+       "host": "wrak",
+       "isWreck": true,
+       "row": -1,
+       "cells": 108,
+       "block": [
+        12,
+        9
+       ],
+       "anyDead": 1,
+       "moved": 0,
+       "powerLostAt": -1,
+       "emitters": 32
+      },
+      {
+       "kind": "citadella",
+       "host": "wrak",
+       "isWreck": true,
+       "row": -1,
+       "cells": 216,
+       "block": [
+        12,
+        18
+       ],
+       "anyDead": 1,
+       "moved": 0,
+       "powerLostAt": -1,
+       "emitters": 40
+      },
+      {
+       "kind": "colossus",
+       "host": "wrak",
+       "isWreck": true,
+       "row": 2,
+       "cells": 893,
+       "block": [
+        47,
+        19
+       ],
+       "anyDead": 1,
+       "moved": 0,
+       "powerLostAt": -1,
+       "emitters": 158
+      }
+     ]
+    }
+   },
+   "stats": {
+    "colossus": {
+     "time": 12.666666666666588,
+     "shots": 415,
+     "hullHits": 415,
+     "probeMisses": 0,
+     "windows": 0,
+     "calls": 22,
+     "errors": [],
+     "targets": [
+      {
+       "key": "terran_supercapital",
+       "hp": 76193,
+       "hexes": {
+        "active": 10985,
+        "total": 11545,
+        "ratio": 0.9514941533131226
+       },
+       "dead": true,
+       "cause": "bridge",
+       "commandLost": false,
+       "bridges": []
+      }
+     ]
+    }
+   }
+  },
+  "pirate_frigate": {
+   "shots": [
+    "pirate_frigate_1_caly_zblizenie",
+    "pirate_frigate_0_szczeliny_zblizenie",
+    "pirate_frigate_1_caly_kadlub",
+    "pirate_frigate_2_uszkodzony_zblizenie",
+    "pirate_frigate_2_uszkodzony_kadlub",
+    "pirate_frigate_3_hulk_t0.3",
+    "pirate_frigate_3_hulk_t1.5",
+    "pirate_frigate_3_hulk_t1.5_kadlub",
+    "pirate_frigate_4_wrak_t4.5",
+    "pirate_frigate_4_wrak_t4.5_kadlub"
+   ],
+   "hdr": {
+    "pirate_frigate_okna": {
+     "rect": {
+      "x": 400,
+      "y": 225,
+      "w": 800,
+      "h": 450
+     },
+     "pixels": 360000,
+     "windowPixels": 0,
+     "windowPixelsOver09": 0,
+     "maxWithWindows": 0,
+     "p50": 0,
+     "p90": 0,
+     "p99": 0,
+     "surfacePixelsOver09": 3892,
+     "surfaceMax": 7.624133586883545
+    },
+    "pirate_frigate_powierzchnia": {
+     "rect": {
+      "x": 400,
+      "y": 225,
+      "w": 800,
+      "h": 450
+     },
+     "pixels": 360000,
+     "nanOrInf": 0,
+     "over09": 3892,
+     "overFraction": 0.010811111111111112,
+     "p50": 0.02191855773925781,
+     "p90": 0.10775335693359375,
+     "p99": 1.0455705078125002,
+     "p999": 5.937694531249999,
+     "max": 7.62413359375,
+     "histogram": {
+      "<=0.05": 269588,
+      "<=0.2": 74612,
+      "<=0.4": 8684,
+      "<=0.9": 3224,
+      "<=1.3": 748,
+      "<=2": 932,
+      "<=4": 1218,
+      "<=8": 994,
+      "<=12": 0,
+      "<=Infinity": 0
+     }
+    }
+   },
+   "evals": {
+    "uszkodzenie": {
+     "shots": 137,
+     "integrity": 0.667,
+     "dead": false,
+     "commandLost": false
+    },
+    "utrata dowodzenia": {
+     "shots": 1,
+     "commandLost": true,
+     "bridgeDead": true
+    },
+    "model": {
+     "stats": {
+      "records": 5,
+      "visible": 1,
+      "instances": [
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       1,
+       0,
+       0
+      ],
+      "receivers": 1,
+      "emitters": 0,
+      "drawCalls": 2,
+      "cpuMs": 0,
+      "rowsUsed": 1,
+      "rowUploads": 283,
+      "flashes": 68,
+      "lastMs": 0
+     },
+     "records": [
+      {
+       "kind": "pirate_frigate",
+       "host": "wrak",
+       "isWreck": true,
+       "row": 0,
+       "cells": 49,
+       "block": [
+        7,
+        7
+       ],
+       "anyDead": 1,
+       "moved": 0,
+       "powerLostAt": -1,
+       "emitters": 21
+      },
+      {
+       "kind": "custos",
+       "host": "wrak",
+       "isWreck": true,
+       "row": -1,
+       "cells": 63,
+       "block": [
+        9,
+        7
+       ],
+       "anyDead": 1,
+       "moved": 0,
+       "powerLostAt": -1,
+       "emitters": 18
+      },
+      {
+       "kind": "hasta",
+       "host": "wrak",
+       "isWreck": true,
+       "row": -1,
+       "cells": 108,
+       "block": [
+        12,
+        9
+       ],
+       "anyDead": 1,
+       "moved": 0,
+       "powerLostAt": -1,
+       "emitters": 32
+      },
+      {
+       "kind": "citadella",
+       "host": "wrak",
+       "isWreck": true,
+       "row": -1,
+       "cells": 216,
+       "block": [
+        12,
+        18
+       ],
+       "anyDead": 1,
+       "moved": 0,
+       "powerLostAt": -1,
+       "emitters": 40
+      },
+      {
+       "kind": "colossus",
+       "host": "wrak",
+       "isWreck": true,
+       "row": -1,
+       "cells": 893,
+       "block": [
+        47,
+        19
+       ],
+       "anyDead": 1,
+       "moved": 0,
+       "powerLostAt": -1,
+       "emitters": 158
+      }
+     ]
+    }
+   },
+   "stats": {
+    "pirate_frigate": {
+     "time": 8.000000000000187,
+     "shots": 138,
+     "hullHits": 138,
+     "probeMisses": 0,
+     "windows": 0,
+     "calls": 24,
+     "errors": [],
+     "targets": [
+      {
+       "key": "pirate_frigate",
+       "hp": 657,
+       "hexes": {
+        "active": 86,
+        "total": 136,
+        "ratio": 0.6323529411764706
+       },
+       "dead": true,
+       "cause": "bridge",
+       "commandLost": false,
+       "bridges": []
+      }
+     ]
+    }
+   }
+  },
+  "pirate_destroyer": {
+   "shots": [
+    "pirate_destroyer_1_caly_zblizenie",
+    "pirate_destroyer_0_szczeliny_zblizenie",
+    "pirate_destroyer_1_caly_kadlub",
+    "pirate_destroyer_2_uszkodzony_zblizenie",
+    "pirate_destroyer_2_uszkodzony_kadlub",
+    "pirate_destroyer_3_hulk_t0.3",
+    "pirate_destroyer_3_hulk_t1.5",
+    "pirate_destroyer_3_hulk_t1.5_kadlub",
+    "pirate_destroyer_4_wrak_t4.5",
+    "pirate_destroyer_4_wrak_t4.5_kadlub"
+   ],
+   "hdr": {
+    "pirate_destroyer_okna": {
+     "rect": {
+      "x": 400,
+      "y": 225,
+      "w": 800,
+      "h": 450
+     },
+     "pixels": 360000,
+     "windowPixels": 1093,
+     "windowPixelsOver09": 0,
+     "maxWithWindows": 0.8097779750823975,
+     "p50": 0.2835099697113037,
+     "p90": 0.5982070565223694,
+     "p99": 0.8094022870063782,
+     "surfacePixelsOver09": 1191,
+     "surfaceMax": 6.621975898742676
+    },
+    "pirate_destroyer_powierzchnia": {
+     "rect": {
+      "x": 400,
+      "y": 225,
+      "w": 800,
+      "h": 450
+     },
+     "pixels": 360000,
+     "nanOrInf": 0,
+     "over09": 1191,
+     "overFraction": 0.0033083333333333333,
+     "p50": 0.020592643737792966,
+     "p90": 0.0949756103515625,
+     "p99": 0.39648623046875,
+     "p999": 3.926383203125,
+     "max": 6.62197578125,
+     "histogram": {
+      "<=0.05": 284382,
+      "<=0.2": 63318,
+      "<=0.4": 8785,
+      "<=0.9": 2324,
+      "<=1.3": 211,
+      "<=2": 237,
+      "<=4": 399,
+      "<=8": 344,
+      "<=12": 0,
+      "<=Infinity": 0
+     }
+    }
+   },
+   "evals": {
+    "uszkodzenie": {
+     "shots": 264,
+     "integrity": 0.786,
+     "dead": false,
+     "commandLost": false
+    },
+    "utrata dowodzenia": {
+     "shots": 0,
+     "commandLost": true,
+     "bridgeDead": true
+    },
+    "model": {
+     "stats": {
+      "records": 5,
+      "visible": 1,
+      "instances": [
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       1,
+       0
+      ],
+      "receivers": 1,
+      "emitters": 0,
+      "drawCalls": 2,
+      "cpuMs": 0,
+      "rowsUsed": 1,
+      "rowUploads": 345,
+      "flashes": 74,
+      "lastMs": 0
+     },
+     "records": [
+      {
+       "kind": "pirate_frigate",
+       "host": "wrak",
+       "isWreck": true,
+       "row": -1,
+       "cells": 49,
+       "block": [
+        7,
+        7
+       ],
+       "anyDead": 1,
+       "moved": 0,
+       "powerLostAt": -1,
+       "emitters": 21
+      },
+      {
+       "kind": "pirate_destroyer",
+       "host": "wrak",
+       "isWreck": true,
+       "row": 1,
+       "cells": 108,
+       "block": [
+        12,
+        9
+       ],
+       "anyDead": 1,
+       "moved": 0,
+       "powerLostAt": -1,
+       "emitters": 20
+      },
+      {
+       "kind": "hasta",
+       "host": "wrak",
+       "isWreck": true,
+       "row": -1,
+       "cells": 108,
+       "block": [
+        12,
+        9
+       ],
+       "anyDead": 1,
+       "moved": 0,
+       "powerLostAt": -1,
+       "emitters": 32
+      },
+      {
+       "kind": "citadella",
+       "host": "wrak",
+       "isWreck": true,
+       "row": -1,
+       "cells": 216,
+       "block": [
+        12,
+        18
+       ],
+       "anyDead": 1,
+       "moved": 0,
+       "powerLostAt": -1,
+       "emitters": 40
+      },
+      {
+       "kind": "colossus",
+       "host": "wrak",
+       "isWreck": true,
+       "row": -1,
+       "cells": 893,
+       "block": [
+        47,
+        19
+       ],
+       "anyDead": 1,
+       "moved": 0,
+       "powerLostAt": -1,
+       "emitters": 158
+      }
+     ]
+    }
+   },
+   "stats": {
+    "pirate_destroyer": {
+     "time": 10.100000000000067,
+     "shots": 264,
+     "hullHits": 264,
+     "probeMisses": 0,
+     "windows": 0,
+     "calls": 22,
+     "errors": [],
+     "targets": [
+      {
+       "key": "pirate_destroyer",
+       "hp": 2693,
+       "hexes": {
+        "active": 446,
+        "total": 552,
+        "ratio": 0.8079710144927537
+       },
+       "dead": true,
+       "cause": "bridge",
+       "commandLost": false,
+       "bridges": []
+      }
+     ]
+    }
+   }
+  },
+  "megafreighter": {
+   "shots": [
+    "megafreighter_1_caly_zblizenie",
+    "megafreighter_0_szczeliny_zblizenie",
+    "megafreighter_1_caly_kadlub",
+    "megafreighter_2_uszkodzony_zblizenie",
+    "megafreighter_2_uszkodzony_kadlub",
+    "megafreighter_3_hulk_t0.3",
+    "megafreighter_3_hulk_t1.5",
+    "megafreighter_3_hulk_t1.5_kadlub",
+    "megafreighter_4_wrak_t4.5",
+    "megafreighter_4_wrak_t4.5_kadlub"
+   ],
+   "hdr": {
+    "megafreighter_okna": {
+     "rect": {
+      "x": 400,
+      "y": 225,
+      "w": 800,
+      "h": 450
+     },
+     "pixels": 360000,
+     "windowPixels": 3002,
+     "windowPixelsOver09": 286,
+     "maxWithWindows": 1.3314913511276245,
+     "p50": 0.2981656789779663,
+     "p90": 0.8747000694274902,
+     "p99": 1.2145757675170898,
+     "surfacePixelsOver09": 0,
+     "surfaceMax": 0.5443418025970459
+    },
+    "megafreighter_powierzchnia": {
+     "rect": {
+      "x": 400,
+      "y": 225,
+      "w": 800,
+      "h": 450
+     },
+     "pixels": 360000,
+     "nanOrInf": 0,
+     "over09": 286,
+     "overFraction": 0.0007944444444444444,
+     "p50": 0.027385568237304685,
+     "p90": 0.1069973876953125,
+     "p99": 0.323540185546875,
+     "p999": 0.8354713867187499,
+     "max": 1.3314913085937499,
+     "histogram": {
+      "<=0.05": 289428,
+      "<=0.2": 63273,
+      "<=0.4": 5254,
+      "<=0.9": 1759,
+      "<=1.3": 279,
+      "<=2": 7,
+      "<=4": 0,
+      "<=8": 0,
+      "<=12": 0,
+      "<=Infinity": 0
+     }
+    }
+   },
+   "evals": {
+    "uszkodzenie": {
+     "shots": 1311,
+     "integrity": 0.9,
+     "dead": false,
+     "commandLost": false
+    },
+    "utrata dowodzenia": [
+     {
+      "key": "megafreighter",
+      "hp": 137941,
+      "hexes": {
+       "active": 27353,
+       "total": 29261,
+       "ratio": 0.9347937527767335
+      },
+      "dead": true,
+      "cause": "bridge",
+      "commandLost": true,
+      "bridges": [
+       {
+        "id": "mostek",
+        "total": 1984,
+        "alive": 1188,
+        "integrity": 0.599,
+        "dead": true
+       }
+      ]
+     }
+    ],
+    "model": {
+     "stats": {
+      "records": 4,
+      "visible": 1,
+      "instances": [
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       0,
+       1
+      ],
+      "receivers": 1,
+      "emitters": 0,
+      "drawCalls": 2,
+      "cpuMs": 0,
+      "rowsUsed": 4,
+      "rowUploads": 741,
+      "flashes": 74,
+      "lastMs": 0
+     },
+     "records": [
+      {
+       "kind": "pirate_frigate",
+       "host": "wrak",
+       "isWreck": true,
+       "row": -1,
+       "cells": 49,
+       "block": [
+        7,
+        7
+       ],
+       "anyDead": 1,
+       "moved": 0,
+       "powerLostAt": -1,
+       "emitters": 21
+      },
+      {
+       "kind": "pirate_destroyer",
+       "host": "wrak",
+       "isWreck": true,
+       "row": -1,
+       "cells": 108,
+       "block": [
+        12,
+        9
+       ],
+       "anyDead": 1,
+       "moved": 0,
+       "powerLostAt": -1,
+       "emitters": 20
+      },
+      {
+       "kind": "megafreighter",
+       "host": "wrak",
+       "isWreck": true,
+       "row": 2,
+       "cells": 2430,
+       "block": [
+        54,
+        45
+       ],
+       "anyDead": 1,
+       "moved": 0,
+       "powerLostAt": -1,
+       "emitters": 82
+      },
+      {
+       "kind": "colossus",
+       "host": "wrak",
+       "isWreck": true,
+       "row": -1,
+       "cells": 893,
+       "block": [
+        47,
+        19
+       ],
+       "anyDead": 1,
+       "moved": 0,
+       "powerLostAt": -1,
+       "emitters": 158
+      }
+     ]
+    }
+   },
+   "stats": {
+    "megafreighter": {
+     "time": 27.599999999999074,
+     "shots": 1311,
+     "hullHits": 1311,
+     "probeMisses": 0,
+     "windows": 0,
+     "calls": 22,
+     "errors": [],
+     "targets": [
+      {
+       "key": "megafreighter",
+       "hp": 137941,
+       "hexes": {
+        "active": 27353,
+        "total": 29261,
+        "ratio": 0.9347937527767335
+       },
+       "dead": true,
+       "cause": "bridge",
+       "commandLost": false,
+       "bridges": []
+      }
+     ]
+    }
+   }
+  },
+  "free3d": {
+   "shots": [
+    "bellator_5_free3d_rufa",
+    "bellator_5_free3d_dziob",
+    "ironskull_5_free3d_rufa",
+    "ironskull_5_free3d_dziob",
+    "atlas_5_free3d_rufa",
+    "atlas_5_free3d_dziob",
+    "custos_5_free3d_rufa",
+    "custos_5_free3d_dziob",
+    "hasta_5_free3d_rufa",
+    "hasta_5_free3d_dziob",
+    "citadella_5_free3d_rufa",
+    "citadella_5_free3d_dziob",
+    "colossus_5_free3d_rufa",
+    "colossus_5_free3d_dziob",
+    "pirate_frigate_5_free3d_rufa",
+    "pirate_frigate_5_free3d_dziob",
+    "pirate_destroyer_5_free3d_rufa",
+    "pirate_destroyer_5_free3d_dziob",
+    "megafreighter_5_free3d_rufa",
+    "megafreighter_5_free3d_dziob"
+   ],
+   "hdr": {},
+   "evals": {},
+   "stats": {}
+  }
+ },
+ "logs": [],
+ "gpu": {
+  "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 5080 (0x00002C02) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+  "timer": true
+ },
+ "boot": {
+  "time": 1.8083333333333294,
+  "shots": 0,
+  "hullHits": 0,
+  "probeMisses": 0,
+  "windows": 0,
+  "calls": 30,
+  "errors": [],
+  "targets": [
+   {
+    "key": "battleship",
+    "hp": 12000,
+    "hexes": {
+     "active": 2920,
+     "total": 2920,
+     "ratio": 1
+    },
+    "dead": false,
+    "cause": null,
+    "commandLost": false,
+    "bridges": [
+     {
+      "id": "mostek",
+      "total": 102,
+      "alive": 102,
+      "integrity": 1,
+      "dead": false
+     }
+    ]
+   }
+  ]
+ },
+ "boot3d": {
+  "stats": {
+   "records": 1,
+   "visible": 1,
+   "instances": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "receivers": 1,
+   "emitters": 38,
+   "drawCalls": 3,
+   "cpuMs": 0,
+   "rowsUsed": 1,
+   "rowUploads": 1,
+   "flashes": 0,
+   "lastMs": 0
+  },
+  "records": [
+   {
+    "kind": "bellator",
+    "host": "Bellator",
+    "isWreck": false,
+    "row": 0,
+    "cells": 231,
+    "block": [
+     21,
+     11
+    ],
+    "anyDead": 0,
+    "moved": 0,
+    "powerLostAt": -1,
+    "emitters": 39
+   }
+  ]
+ },
+ "finalErrors": []
+}

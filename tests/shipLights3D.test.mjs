@@ -7,16 +7,19 @@ const hexShipsSource = readFileSync(new URL('../src/3d/hexShips3D.js', import.me
 const coreSource = readFileSync(new URL('../src/3d/core3d.js', import.meta.url), 'utf8');
 
 test('nav light billboards render on the FG layer with additive HDR blending', () => {
-  // Warstwa 2 = renderPassFg, rysowany PO shadowShaftsPass — dzięki temu
-  // światła pozycyjne przebijają cień planety, tak jak lasery.
+  // Warstwa 2 = renderPassFg, addytywnie i HDR — przebijają cień planety.
   assert.match(shipLightsSource, /layers\.set\(2\)/);
   assert.match(shipLightsSource, /THREE\.AdditiveBlending/);
   assert.match(shipLightsSource, /depthTest:\s*false/);
 });
 
-test('FG pass stays after the shadow shafts multiply pass', () => {
-  const order = coreSource.match(/this\.shadowShaftsPass,[\s\S]{0,120}this\.renderPassFg/);
-  assert.ok(order, 'renderPassFg must run after shadowShaftsPass so FG emitters pierce the shadow');
+test('nav lights are emitters: the sun shadow mask never dims them', () => {
+  // Cień słońca to maska czytana przez oświetlane powierzchnie; quad mnożący
+  // gotowy obraz (dawniej przed FG) gasił emisję warstwy 0 pod progiem bloomu.
+  assert.ok(!/sunShadowUniforms|SUN_SHADOW_GLSL|sunVisibility/.test(shipLightsSource));
+  const scenePassList = coreSource.match(/_scenePasses\s*=\s*\[([\s\S]*?)\]/)?.[1] || '';
+  assert.ok(scenePassList.includes('this.renderPassFg'), 'FG pass missing from the scene chain');
+  assert.ok(!scenePassList.includes('this.shadowShaftsPass'), 'no image-multiply shadow pass in the scene chain');
 });
 
 test('hull shader and billboard shader share the NAV_LIGHT_CHASE sequence', () => {

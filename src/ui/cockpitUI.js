@@ -2214,9 +2214,11 @@ export class CockpitUI {
     const now = perfNow();
     if (!force && now - this.lastRingFlightSync < 250) return;
     this.lastRingFlightSync = now;
+    // Dawny lot po Ring City odszedł z portem ringu „Halo” (2026-09-25);
+    // wolny lot nad nowym ringiem (kamera kinowa dema) — osobny krok.
     const status = window.RingCityFlight?.getLaunchStatus?.() || {
       available: false,
-      reason: 'Moduł lotu Ring City nie jest gotowy.'
+      reason: 'Lot nad ringiem „Halo”: w przygotowaniu.'
     };
     const available = !!status.available;
     // Pierścień w zasięgu to kontekst — mówimy o nim raz, zamiast trzymać stały przycisk na widoku.

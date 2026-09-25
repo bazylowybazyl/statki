@@ -163,8 +163,9 @@ test('bryły: na placu w podłodze, w górę mieszkańców, w zestawie punktów 
       for (const c of cs) {
         const alt = c.r - floorR;
         assert.ok(alt >= lm.plazaH - HALO_LANDMARK.plinthDepth - 1, `${lm.name}: pod fundamentem (${alt.toFixed(0)})`);
-        assert.ok(Math.abs(c.along) <= lm.plaza.halfA + 1, `${lm.name}: poza płytą wzdłuż (${c.along.toFixed(0)})`);
-        assert.ok(Math.abs(c.z - lm.z) <= lm.plaza.halfQ + 1, `${lm.name}: poza płytą w poprzek (${(c.z - lm.z).toFixed(0)})`);
+        // płyta placu i płaski trawnik wokół niej (pawilony parku)
+        assert.ok(Math.abs(c.along) <= lm.plaza.halfA + lm.plaza.lawn + 1, `${lm.name}: poza placem wzdłuż (${c.along.toFixed(0)})`);
+        assert.ok(Math.abs(c.z - lm.z) <= lm.plaza.halfQ + lm.plaza.lawn + 1, `${lm.name}: poza placem w poprzek (${(c.z - lm.z).toFixed(0)})`);
         assert.ok(c.z < 0, `${lm.name}: bryła nad płaszczyzną gry`);
         top = Math.max(top, alt);
       }
@@ -187,6 +188,39 @@ test('bryły: na placu w podłodze, w górę mieszkańców, w zestawie punktów 
       if (floorMid + Lm[o + 2] - layout.floorRadiusAtT(lm.t) > lm.plazaH + lm.h * 0.6) beacon = true;
     }
     assert.ok(beacon, `${lm.name}: brak światła przeszkodowego`);
+  }
+});
+
+test('park wokół budowli: trawnik z pawilonami, park w dolnej połowie wstęgi, staw tylko przy niskim terenie', () => {
+  const layout = createHaloRingLayout({});
+  const P = HALO_LANDMARK;
+  const tz = layout.floor.tangent.z;
+  const tTop = (-P.planeGap - layout.z.botIn) / tz;
+  // płasko 20 j. (≤ pondMaxGround): każda budowla ma staw
+  const low = buildHaloLandmarkPlan(layout);
+  // teren 60 j.: plac nad poziomem stawów — bez stawu
+  const high = buildHaloLandmarkPlan(layout, { heightAt: () => 60 });
+  assert.ok(high.every((lm) => lm.pond === null), 'staw na wysokim terenie');
+  for (const lm of low) {
+    const pl = lm.plaza;
+    // park obejmuje plac, trawnik i rampę; nie sięga płaszczyzny gry ani ściany
+    assert.ok(lm.park.halfA >= pl.halfA + pl.lawn + pl.ramp, `${lm.name}: park wzdłuż ${lm.park.halfA}`);
+    assert.ok(lm.park.halfQ >= pl.halfQ + pl.lawn + pl.ramp, `${lm.name}: park w poprzek ${lm.park.halfQ}`);
+    assert.ok(lm.t + lm.park.halfQ <= tTop + 1 && lm.t - lm.park.halfQ >= P.wallGap - 1, `${lm.name}: park poza dolną połową`);
+    // staw: w parku, poza trawnikiem placu, po stronie przeciwnej do pawilonów
+    assert.ok(lm.pond, `${lm.name}: brak stawu na niskim terenie`);
+    const { da, dq, ra, rb } = lm.pond;
+    assert.ok(Math.abs(da) - ra >= pl.halfA + pl.lawn, `${lm.name}: staw na trawniku`);
+    assert.ok(Math.abs(da) + ra <= lm.park.halfA && Math.abs(dq) + rb <= lm.park.halfQ, `${lm.name}: staw poza parkiem`);
+    // pawilony: 3, na płaskim trawniku (poza płytą, w pasie trawnika)
+    assert.equal(lm.pavilions.length, 3);
+    for (const p of lm.pavilions) {
+      const outA = Math.abs(p.a) - pl.halfA;
+      const outQ = Math.abs(p.q) - pl.halfQ;
+      assert.ok(Math.max(outA, outQ) > 14 && Math.max(outA, outQ) < pl.lawn - 14, `${lm.name}: pawilon (${p.a.toFixed(0)}, ${p.q.toFixed(0)}) poza trawnikiem`);
+    }
+    const pondSide = Math.sign(da);
+    assert.ok(lm.pavilions.filter((p) => Math.abs(p.a) > pl.halfA).every((p) => Math.sign(p.a) === -pondSide), `${lm.name}: pawilony po stronie stawu`);
   }
 });
 

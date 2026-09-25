@@ -6,6 +6,8 @@ import { Weapon3DSystem } from './weapon3DSystem.js';
 import { Fx3D } from './fxParticles3D.js';
 import { RailgunFX3D } from './railgunFx3D.js';
 import { BulletTrails } from './slugTrail3D.js';
+import { MainExhaust3D } from './mainExhaust3D.js';
+import { WarpPlume3D } from './warpPlume3D.js';
 import { Turret2D } from '../vfx/turret2D.js';
 import {
   MAX_SHADER_SHIP_LIGHTS,
@@ -28,6 +30,7 @@ import { prepareColdWreckImpostor, pushColdWreckImpostors } from './coldWreckImp
 import { COLD_WRECK_CONFIG } from '../game/coldWrecks.js';
 import { HullLacquer, MAX_ENGINE_ZONES, computeEngineZones } from './hullLacquer.js';
 import { HULL_SDF_OCCLUDER_FLOATS, HullShadowSdf, packHullShaftOccluder } from './hullShadowSdf.js';
+import { SUN_SHADOW_GLSL, sunShadowUniforms } from './sunShadowMask.js';
 
 const HEX_VERTEX_SHADER = `
 attribute vec2 aGridPos;
@@ -125,7 +128,6 @@ uniform sampler2D uLacquerEnv;
 uniform sampler2D uLacquerSky;
 uniform float uLacquerWeight;
 uniform float uLacquerGlint;
-uniform vec3 uLacquerEye;
 uniform vec4 uLacquerA;
 uniform vec4 uLacquerB;
 uniform vec4 uLacquerC;
@@ -140,6 +142,7 @@ varying vec2 vHeat;
 varying vec2 vWorldXY;
 varying vec2 vOriginXY;
 ${HEAT_RAMP_GLSL}
+${SUN_SHADOW_GLSL}
 void main() {
   if (vSpriteUV.x < -0.01 || vSpriteUV.x > 1.01 ||
       vSpriteUV.y < -0.01 || vSpriteUV.y > 1.01) discard;
@@ -157,7 +160,7 @@ void main() {
   }
 
   if (uBillboardLighting == 1) {
-      gl_FragColor = vec4(color, alpha);
+      gl_FragColor = vec4(sunShadeUnlit(color), alpha);
       return;
   }
 
@@ -180,17 +183,26 @@ void main() {
 
   float NdotL = dot(worldNormal, uLightDir);
   float dayDiffuse = max(0.0, NdotL);
-  float lightMul = uDayAmbient + dayDiffuse * uDayDiffuseMul;
+  // Cień planety albo innego kadłuba (maska Core3D, sunShadowMask.js) gasi
+  // słońce: rozproszone, połysk i odblask lakieru, a otoczenie przygasa do
+  // uSunShadowFill. Światła statku, glow, stres i żar ran świecą w cieniu
+  // jak poza nim.
+  float sunVis = sunVisibility();
+  vec3 sunlitColor = color * (uDayAmbient + dayDiffuse * uDayDiffuseMul);
+  float lightMul = uDayAmbient * sunFill(sunVis) + dayDiffuse * uDayDiffuseMul * sunVis;
   color *= lightMul;
 
   vec3 viewDir = vec3(0.0, 0.0, 1.0);
   vec3 halfVector = normalize(uLightDir + viewDir);
   float spec = pow(max(dot(worldNormal, halfVector), 0.0), 32.0);
   float litMask = smoothstep(-0.02, 0.08, NdotL);
-  color += vec3(spec * uSpecularMul * litMask);
+  color += vec3(spec * uSpecularMul * litMask * sunVis);
+  sunlitColor += vec3(spec * uSpecularMul * litMask);
 
-  float isGlowing = step(0.6, color.b) * step(color.r, 0.5);
-  vec3 finalColor = color + (color * isGlowing * 1.5);
+  // Glow (niebieskie elementy sprite'a) liczony z koloru w PEŁNYM słońcu —
+  // bez cienia sunlitColor == color, więc poza cieniem nic się nie zmienia.
+  float isGlowing = step(0.6, sunlitColor.b) * step(sunlitColor.r, 0.5);
+  vec3 finalColor = color + (sunlitColor * isGlowing * 1.5);
 
   vec2 fragPx = vSpriteUV * uSpriteSize;
 
@@ -212,11 +224,11 @@ void main() {
         ? localNormal
         : vec3(shape.rg, sqrt(max(0.0, 1.0 - dot(shape.rg, shape.rg))));
       vec3 N = normalize(vec3(coatN.x * c - coatN.y * s, coatN.x * s + coatN.y * c, coatN.z));
-      // Oko pseudo-perspektywy (Core3D.cameraPersp) zamiast stałego (0,0,1):
-      // płaska płyta odbija wtedy różne kierunki nieba, a nie jeden punkt.
-      vec3 V = normalize(uLacquerEye - vec3(vWorldXY, 0.0));
-      float NdotV = max(dot(N, V), 0.001);
-      vec3 R = 2.0 * NdotV * N - V;
+      // Patrzymy prosto z góry, jak kamera ortho — kierunek NIE zależy od kamery.
+      // Oko pseudo-perspektywy jechało z look-aheadem i zoomem kamery, więc odblask
+      // słońca pływał po kadłubie. Zmienność na płaskich płytach dają obłoki niżej.
+      float NdotV = max(N.z, 0.001);
+      vec3 R = vec3(2.0 * NdotV * N.xy, 2.0 * NdotV * N.z - 1.0);
       float fresnel = uLacquerA.y + (1.0 - uLacquerA.y) * pow(1.0 - NdotV, 5.0);
       // Podwójna paraboloida: zenit w środku tekstury, horyzont na okręgu.
       // Dolna półkula (tło pod statkiem) gaśnie — z niej brała się obwódka.
@@ -243,9 +255,15 @@ void main() {
       float nVar = dot(dN, dN);
       float glintExp = uLacquerB.z / (1.0 + uLacquerB.z * nVar);
       float sheenExp = uLacquerC.x / (1.0 + uLacquerC.x * nVar);
-      float RdotL = max(dot(R, uLightDir), 0.0);
-      float lobe = pow(RdotL, glintExp) * uLacquerB.y * (glintExp / uLacquerB.z) * uLacquerGlint
-        + pow(RdotL, sheenExp) * uLacquerB.w * (sheenExp / uLacquerC.x);
+      // „Słońce odblasków”: azymut prawdziwego słońca, podniesione o uLacquerC.w
+      // (rad). Słońce gry leży w płaszczyźnie, więc przy widoku z góry odblask
+      // wymagałby pochylenia ~45°, a tyle jest tylko na wygaszonej krawędzi.
+      // Odblask zależy wyłącznie od położenia statku względem słońca i obrotu.
+      vec2 sunXY = uLightDir.xy / max(length(uLightDir.xy), 1e-4);
+      vec3 glintL = vec3(sunXY * cos(uLacquerC.w), sin(uLacquerC.w));
+      float RdotL = max(dot(R, glintL), 0.0);
+      float lobe = (pow(RdotL, glintExp) * uLacquerB.y * (glintExp / uLacquerB.z) * uLacquerGlint
+        + pow(RdotL, sheenExp) * uLacquerB.w * (sheenExp / uLacquerC.x)) * sunVis;
       vec3 coat = fresnel * (env + lobe) + armor.rgb * envBlur * uLacquerC.y;
       finalColor = finalColor * (1.0 - fresnel * lacquerW) + coat * lacquerW;
     }
@@ -387,6 +405,7 @@ varying float vAge;
 varying float vEdge;
 varying float vHeat;
 ${HEAT_RAMP_GLSL}
+${SUN_SHADOW_GLSL}
 void main() {
   if (vSpriteUV.x < -0.01 || vSpriteUV.x > 1.01 || vSpriteUV.y < -0.01 || vSpriteUV.y > 1.01) discard;
 
@@ -396,7 +415,9 @@ void main() {
   vec2 p = vSpriteUV * 2.0 - 1.0;
   vec3 normal = normalize(vec3(p.x * 0.45, -p.y * 0.45, 1.0));
   float NdotL = max(0.0, dot(normal, uLightDir));
-  float lightMul = uDayAmbient + NdotL * uDayDiffuseMul;
+  // Cień (maska Core3D) gasi słońce i przygasza otoczenie — żar krawędzi niżej zostaje.
+  float sunVis = sunVisibility();
+  float lightMul = uDayAmbient * sunFill(sunVis) + NdotL * uDayDiffuseMul * sunVis;
 
   gl_FragColor = vec4(color.rgb * lightMul, color.a * vAlpha);
 
@@ -1101,7 +1122,8 @@ class GpuDebrisPool {
         uDayAmbient: { value: SHIP_LIGHT_DEFAULTS.dayAmbient },
         uDayDiffuseMul: { value: SHIP_LIGHT_DEFAULTS.dayDiffuseMul },
         uHeatDecay: { value: DESTRUCTOR_CONFIG.heatDecay },
-        uHeatTint: { value: DESTRUCTOR_CONFIG.debrisHeatGlow }
+        uHeatTint: { value: DESTRUCTOR_CONFIG.debrisHeatGlow },
+        ...sunShadowUniforms
       },
       vertexShader: DEBRIS_VERTEX_SHADER,
       fragmentShader: DEBRIS_FRAGMENT_SHADER,
@@ -1322,12 +1344,13 @@ function createEntityMesh(entity) {
       // Wspólne obiekty — strojenie lakieru to jeden zapis na klatkę dla wszystkich.
       uLacquerEnv: HullLacquer.uniforms.uLacquerEnv,
       uLacquerSky: HullLacquer.uniforms.uLacquerSky,
-      uLacquerEye: HullLacquer.uniforms.uLacquerEye,
       uLacquerA: HullLacquer.uniforms.uLacquerA,
       uLacquerB: HullLacquer.uniforms.uLacquerB,
       uLacquerC: HullLacquer.uniforms.uLacquerC,
       uLacquerD: HullLacquer.uniforms.uLacquerD,
-      uLacquerE: HullLacquer.uniforms.uLacquerE
+      uLacquerE: HullLacquer.uniforms.uLacquerE,
+      // Maska widoczności słońca — wspólne obiekty z Core3D (sunShadowMask.js).
+      ...sunShadowUniforms
     },
     vertexShader: HEX_VERTEX_SHADER,
     fragmentShader: HEX_FRAGMENT_SHADER,
@@ -1797,9 +1820,12 @@ export function initHexShips3D({ canvas = null } = {}) {
 function prewarmFx3D() {
   if (!Fx3D.ensure() || !Core3D.renderer || !Core3D.cameraOrtho) return false;
   const meshes = Fx3D.meshes;
-  for (const trail of [RailgunFX3D.prewarm(), BulletTrails.prewarm()]) {
+  for (const trail of [RailgunFX3D.prewarm(), BulletTrails.prewarm(), MainExhaust3D.prewarm()]) {
     if (trail) meshes.push(trail);
   }
+  // Plazma warpa: raymarch to najcięższy program w grze — bez tego pierwszy
+  // skok gubi klatki na kompilacji. Instancja zostaje w puli.
+  meshes.push(...WarpPlume3D.prewarm());
   const prev = meshes.map((m) => m.visible);
   for (const m of meshes) m.visible = true;
   Core3D.renderer.compile(Core3D.scene, Core3D.cameraOrtho);
@@ -1854,9 +1880,9 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
   refreshTuneEpoch();
 
   // Lakier: wspólne uniformy, tekstury odbić i kolejka pieczenia map
-  // kształtu (jeden sprite na klatkę). Oko = cameraPersp, którą syncCamera
-  // ustawia w każdym passie — trzymamy referencję do jej wektora pozycji.
-  HullLacquer.update(Core3D.cameraPersp?.position);
+  // kształtu (jeden sprite na klatkę). Nic z kamery — odbicia zależą tylko od
+  // położenia i obrotu statku.
+  HullLacquer.update();
 
   const camX = Number(viewCamera?.x) || 0;
   const camY = Number(viewCamera?.y) || 0;
@@ -1932,8 +1958,8 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
   buildRoadLightWorldEmitters(visibleHex, SHIP_LIGHT_EMITTER_OPTIONS);
   computeRoadEmitterReach(state.roadLightEmitters, state.roadLightReach);
 
-  // Światła pozycyjne jako addytywne billboardy na warstwie FG (po
-  // shadowShaftsPass): świecą HDR-owo pod bloom i przebijają cień planety.
+  // Światła pozycyjne jako addytywne billboardy na warstwie FG: emisja, maski
+  // cienia nie czytają — świecą HDR-owo pod bloom także w cieniu planety.
   const navBuild = ShipLights3D.getSpriteBuildParams(cameraZoom);
   NAV_LIGHT_SPRITE_OPTIONS.out = state.navLightSprites;
   NAV_LIGHT_SPRITE_OPTIONS.zoom = cameraZoom;

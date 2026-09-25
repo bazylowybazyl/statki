@@ -16,9 +16,16 @@
 // `makeBasis` (oś pomocnicza +Z), `coneDir` (spłaszczenie w Z) i WASH_VERT
 // (kwad leży w XY). Bilboardy view-space i kwady „wzdłuż osi ku kamerze"
 // działają bez zmian — są niezależne od konwencji.
+//
+// PRECYZJA (świat przy 5–10 mln j.): pule trzymają pozycje świata w Float64Array
+// (float32 ma tam krok 0,5 j. — wolna cząstka stałaby w miejscu albo skakała),
+// a do GPU idą pozycje WZGLĘDEM początku przy kamerze (sceneOrigin.js), który
+// niesie mesh.position każdego systemu. Shadery: `modelViewMatrix * …`, nie
+// `viewMatrix * świat` — inaczej efekty drgają ~1 px względem kadłubów.
 
 import * as THREE from 'three';
 import { Core3D } from './core3d.js';
+import { sceneOriginNearCamera } from './sceneOrigin.js';
 
 /* ============================================================================
    WARSTWY Z I KOLEJNOŚĆ RYSOWANIA
@@ -243,14 +250,21 @@ function makeTextures() {
 /* ============================================================================
    PULE I INSTANCING
    ========================================================================== */
+// Początek układu tej klatki (scena: x, −y świata), ustawiany w Fx3D.update.
+const ORIGIN = { x: 0, y: 0 };
+
 class Pool {
-  constructor(capacity, fields) {
+  // `doubles` — pola z pozycją świata, trzymane w Float64Array.
+  constructor(capacity, fields, doubles = null) {
     this.cap = capacity;
     this.count = 0;
     this.comps = fields;
     this.keys = Object.keys(fields);
     this.f = {};
-    for (const k of this.keys) this.f[k] = new Float32Array(capacity * fields[k]);
+    for (const k of this.keys) {
+      const n = capacity * fields[k];
+      this.f[k] = doubles && doubles.includes(k) ? new Float64Array(n) : new Float32Array(n);
+    }
   }
   spawn() { return this.count < this.cap ? this.count++ : -1; }
   kill(i) {
@@ -319,7 +333,7 @@ const BB_VERT = /* glsl */`
   varying float vA;
   void main() {
     vUv = uv; vCol = iCol; vA = iData.z;
-    vec4 mv = viewMatrix * vec4(iPos, 1.0);
+    vec4 mv = modelViewMatrix * vec4(iPos, 1.0);   // iPos względem mesh.position
     float c = cos(iData.y), s = sin(iData.y);
     vec2 p = position.xy * iData.x;
     mv.xy += vec2(p.x * c - p.y * s, p.x * s + p.y * c);
@@ -341,7 +355,7 @@ class BillboardSystem {
   constructor(scene, texture, blending, capacity, renderOrder = 1) {
     this.p = new Pool(capacity, {
       pos: 3, vel: 3, t: 2, drag: 1, size: 2, rot: 2, c0: 3, c1: 3, mix: 1, a: 3, grow: 1
-    });
+    }, ['pos']);
     const q = instancedQuad(
       [['iPos', 3], ['iCol', 3], ['iData', 3]], capacity,
       BB_VERT, BB_FRAG, { map: { value: texture } }, blending
@@ -389,6 +403,9 @@ class BillboardSystem {
     const P = this.bufs.iPos.array;
     const C = this.bufs.iCol.array;
     const D = this.bufs.iData.array;
+    const ox = ORIGIN.x;
+    const oy = ORIGIN.y;
+    this.mesh.position.set(ox, oy, 0);
     for (let i = 0; i < n; i++) {
       const i2 = i * 2;
       const i3 = i * 3;
@@ -397,7 +414,7 @@ class BillboardSystem {
       const u = age / life;
       const g = Math.pow(u, f.grow[i]);
       const m = Math.min(1, age * f.mix[i]);
-      P[i3] = f.pos[i3]; P[i3 + 1] = f.pos[i3 + 1]; P[i3 + 2] = f.pos[i3 + 2];
+      P[i3] = f.pos[i3] - ox; P[i3 + 1] = f.pos[i3 + 1] - oy; P[i3 + 2] = f.pos[i3 + 2];
       C[i3] = lerp(f.c0[i3], f.c1[i3], m);
       C[i3 + 1] = lerp(f.c0[i3 + 1], f.c1[i3 + 1], m);
       C[i3 + 2] = lerp(f.c0[i3 + 2], f.c1[i3 + 2], m);
@@ -432,24 +449,26 @@ const ORIENT_HEAD = /* glsl */`
   varying float vA;
 `;
 
-// (a) jęzor ognia — wzdłuż osi lufy, obracany ku kamerze
+// (a) jęzor ognia — wzdłuż osi lufy, obracany ku kamerze. iPos jest względem
+// mesh.position (początek przy kamerze): kierunek do kamery od punktu świata,
+// różnica dużych liczb najpierw (dokładna), ±0,5 j. float32 nic tu nie znaczy.
 const PLUME_VERT = ORIENT_HEAD + /* glsl */`
   void main() {
     vUv = uv; vCol = iCol; vA = iData.z;
     vec3 axis = normalize(iDir);
-    vec3 toCam = normalize(cameraPosition - iPos);
+    vec3 toCam = normalize((cameraPosition - modelMatrix[3].xyz) - iPos);
     vec3 side = cross(axis, toCam);
     float l = length(side);
     side = l > 1e-4 ? side / l : vec3(1.0, 0.0, 0.0);
-    vec3 world = iPos + axis * ((position.y + 0.5) * iData.x) + side * (position.x * iData.y);
-    gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
+    vec3 p = iPos + axis * ((position.y + 0.5) * iData.x) + side * (position.x * iData.y);
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
   }`;
 
 // (b) krzyż rozbłysku — bilboard obrócony tak, by oś X leżała wzdłuż lufy NA EKRANIE
 const CROSS_VERT = ORIENT_HEAD + /* glsl */`
   void main() {
     vUv = uv; vCol = iCol; vA = iData.z;
-    vec4 mv = viewMatrix * vec4(iPos, 1.0);
+    vec4 mv = modelViewMatrix * vec4(iPos, 1.0);
     vec2 a = (mat3(viewMatrix) * normalize(iDir)).xy;
     float l = length(a);
     a = l > 1e-4 ? a / l : vec2(1.0, 0.0);
@@ -467,15 +486,15 @@ const WASH_VERT = ORIENT_HEAD + /* glsl */`
     float l = length(f);
     f = l > 1e-4 ? f / l : vec3(1.0, 0.0, 0.0);
     vec3 r = vec3(-f.y, f.x, 0.0);
-    vec3 world = iPos + f * ((position.y + 0.5) * iData.x) + r * (position.x * iData.y);
-    gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
+    vec3 p = iPos + f * ((position.y + 0.5) * iData.x) + r * (position.x * iData.y);
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
   }`;
 
 class OrientedQuadSystem {
   constructor(scene, texture, capacity, vertexShader, renderOrder = 4, fadePow = 2.0, fadeIn = 0.10) {
     this.fadePow = fadePow;
     this.fadeIn = fadeIn;
-    this.p = new Pool(capacity, { pos: 3, dir: 3, t: 2, len: 2, wid: 2, col: 3, a: 1 });
+    this.p = new Pool(capacity, { pos: 3, dir: 3, t: 2, len: 2, wid: 2, col: 3, a: 1 }, ['pos']);
     const q = instancedQuad(
       [['iPos', 3], ['iDir', 3], ['iCol', 3], ['iData', 3]], capacity,
       vertexShader, BB_FRAG, { map: { value: texture } }, THREE.AdditiveBlending
@@ -513,12 +532,15 @@ class OrientedQuadSystem {
     const DIR = this.bufs.iDir.array;
     const C = this.bufs.iCol.array;
     const D = this.bufs.iData.array;
+    const ox = ORIGIN.x;
+    const oy = ORIGIN.y;
+    this.mesh.position.set(ox, oy, 0);
     for (let i = 0; i < n; i++) {
       const i2 = i * 2;
       const i3 = i * 3;
       const u = f.t[i2] / f.t[i2 + 1];
       const ease = 1 - Math.pow(1 - u, 2.4);      // szybkie wyrzucenie, wolne dojście
-      P[i3] = f.pos[i3]; P[i3 + 1] = f.pos[i3 + 1]; P[i3 + 2] = f.pos[i3 + 2];
+      P[i3] = f.pos[i3] - ox; P[i3 + 1] = f.pos[i3 + 1] - oy; P[i3 + 2] = f.pos[i3 + 2];
       DIR[i3] = f.dir[i3]; DIR[i3 + 1] = f.dir[i3 + 1]; DIR[i3 + 2] = f.dir[i3 + 2];
       C[i3] = f.col[i3]; C[i3 + 1] = f.col[i3 + 1]; C[i3 + 2] = f.col[i3 + 2];
       D[i3] = lerp(f.len[i2], f.len[i2 + 1], ease);
@@ -558,7 +580,7 @@ const _ad = new THREE.Vector3();
 class ArcSystem {
   constructor(scene, capacity = 48, segs = 11, renderOrder = 5) {
     this.segs = segs;
-    this.p = new Pool(capacity, { a: 3, b: 3, t: 2, col: 3, jit: 1, seed: 1 });
+    this.p = new Pool(capacity, { a: 3, b: 3, t: 2, col: 3, jit: 1, seed: 1 }, ['a', 'b']);
     const verts = capacity * segs * 2;
     const geo = new THREE.BufferGeometry();
     this.posAttr = new THREE.BufferAttribute(new Float32Array(verts * 3), 3);
@@ -606,6 +628,9 @@ class ArcSystem {
     const P = this.posAttr.array;
     const C = this.colAttr.array;
     const step = Math.floor(time * 30);
+    const ox = ORIGIN.x;
+    const oy = ORIGIN.y;
+    this.lines.position.set(ox, oy, 0);
     let w = 0;
     for (let i = 0; i < n; i++) {
       const i2 = i * 2;
@@ -613,8 +638,9 @@ class ArcSystem {
       const u = f.t[i2] / f.t[i2 + 1];
       const seed = f.seed[i];
       const jit = f.jit[i];
-      _aa.set(f.a[i3], f.a[i3 + 1], f.a[i3 + 2]);
-      _ab.set(f.b[i3], f.b[i3 + 1], f.b[i3 + 2]);
+      // Końce względem początku przy kamerze — cała łamana w małych liczbach.
+      _aa.set(f.a[i3] - ox, f.a[i3 + 1] - oy, f.a[i3 + 2]);
+      _ab.set(f.b[i3] - ox, f.b[i3 + 1] - oy, f.b[i3 + 2]);
       _ad.subVectors(_ab, _aa);
       const len = _ad.length() || 1e-4;
       _ad.divideScalar(len);
@@ -658,7 +684,7 @@ class SparkSystem {
   constructor(scene, capacity = 2000, renderOrder = 5) {
     this.cap = capacity;
     // misc: [dł. smugi, faza migotania], cool: [docelowy mnożnik G, B]
-    this.p = new Pool(capacity, { pos: 3, vel: 3, t: 2, drag: 1, col: 3, misc: 2, cool: 2 });
+    this.p = new Pool(capacity, { pos: 3, vel: 3, t: 2, drag: 1, col: 3, misc: 2, cool: 2 }, ['pos']);
     const geo = new THREE.BufferGeometry();
     this.posAttr = new THREE.BufferAttribute(new Float32Array(capacity * 6), 3);
     this.colAttr = new THREE.BufferAttribute(new Float32Array(capacity * 6), 3);
@@ -710,6 +736,9 @@ class SparkSystem {
     const n = p.count;
     const P = this.posAttr.array;
     const C = this.colAttr.array;
+    const ox = ORIGIN.x;
+    const oy = ORIGIN.y;
+    this.lines.position.set(ox, oy, 0);
     for (let i = 0; i < n; i++) {
       const i2 = i * 2;
       const i3 = i * 3;
@@ -720,10 +749,13 @@ class SparkSystem {
       const vz = f.vel[i3 + 2];
       const sp2 = Math.sqrt(vx * vx + vy * vy + vz * vz) || 1e-6;
       const len = Math.min(sp2 * 0.022, f.misc[i2]) * (0.35 + 0.65 * (1 - u));
-      P[o] = f.pos[i3]; P[o + 1] = f.pos[i3 + 1]; P[o + 2] = f.pos[i3 + 2];
-      P[o + 3] = f.pos[i3] - vx / sp2 * len;
-      P[o + 4] = f.pos[i3 + 1] - vy / sp2 * len;
-      P[o + 5] = f.pos[i3 + 2] - vz / sp2 * len;
+      const px = f.pos[i3] - ox;
+      const py = f.pos[i3 + 1] - oy;
+      const pz = f.pos[i3 + 2];
+      P[o] = px; P[o + 1] = py; P[o + 2] = pz;
+      P[o + 3] = px - vx / sp2 * len;
+      P[o + 4] = py - vy / sp2 * len;
+      P[o + 5] = pz - vz / sp2 * len;
       // stygnięcie: proch biało-żółty -> pomarańcz -> czerwień; jony zostają błękitne
       const flick = 0.72 + 0.28 * Math.sin(time * 42 + f.misc[i2 + 1]);
       const b = Math.pow(1 - u, 1.5) * flick;
@@ -808,6 +840,8 @@ export const Fx3D = {
   // Wołane DOKŁADNIE RAZ na klatkę renderu (Weapon3DSystem.syncProjectiles).
   update(dt) {
     if (!this.glow) return;
+    // Wołane z updateHexShips3D po Core3D.syncCamera — kamera tej klatki.
+    sceneOriginNearCamera(ORIGIN);
     const step = Math.min(Math.max(0, Number(dt) || 0), 0.1);
     this.time += step;
     this.lastDt = step;

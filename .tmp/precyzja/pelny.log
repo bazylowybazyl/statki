@@ -1,0 +1,99 @@
+przypięte do HEAD (oba warianty): src/3d/engineVfxSystem.js
+[31m(!) Failed to run dependency scan. Skipping dependency pre-bundling. Error: failed to resolve rollupOptions.input value: "AISPACE.html".
+    at resolvePath (file:///C:/Users/Szymon/Documents/GitHub/statki/node_modules/vite/dist/node/chunks/config.js:31428:29)
+    at async Promise.all (index 1)
+    at async computeEntries (file:///C:/Users/Szymon/Documents/GitHub/statki/node_modules/vite/dist/node/chunks/config.js:31432:49)
+    at async scan (file:///C:/Users/Szymon/Documents/GitHub/statki/node_modules/vite/dist/node/chunks/config.js:31367:19)
+    at async file:///C:/Users/Szymon/Documents/GitHub/statki/node_modules/vite/dist/node/chunks/config.js:34110:15[39m
+
+=== wariant przed: /.tmp/precyzja/przed/fxParticles3D.przed.js, /.tmp/precyzja/przed/bridgeFx3D.przed.js, /.tmp/precyzja/pin/engineVfxSystem.head.js, /.tmp/precyzja/przed/shipLights3D.przed.js, /.tmp/precyzja/przed/hexBodyImpostorBatch.przed.js, /.tmp/precyzja/przed/engineExhaustBatch.przed.js
+przypadek               siatki inst.   maska   RMS px   max px   skok px   dryf px/kl.       drżenie RMS / max   mesh.position
+lights_0_z1.8               1    42    7182    0.244    0.366     0.074  -0.0174,-0.0202     0.028 / 0.049    [0,0]
+lights_7M_z1.8              1    42    6819    1.185    1.885     1.362  -0.0204,-0.1038     0.692 / 1.333    [0,0]
+lights_7M_z0.9              1    42     768    0.504    0.876     0.631  -0.0360,-0.0238     0.315 / 0.538    [0,0]
+lights_9.9M_z1.8            1    42    6378    1.201    1.877     1.627  -0.0260,-0.0813     0.916 / 1.325    [0,0]
+lights_7M_z2                1    42    8936    0.985    1.621     1.022  -0.0461,-0.0789     0.528 / 0.902    [0,0]
+windows_0_z1.8              1    18    2046    0.229    0.352     0.116  -0.0140,-0.0203     0.047 / 0.102    [0,0]
+windows_7M_z1.8             1    18    1726    1.290    1.695     1.095  -0.1174,-0.0387     0.632 / 0.973    [0,0]
+windows_7M_z0.9             1    18     482    0.618    0.758     0.579  -0.0554,-0.0159     0.328 / 0.522    [0,0]
+windows_9.9M_z1.8           1    18    1719    1.671    2.452     1.450  -0.1459,-0.0382     0.955 / 1.719    [0,0]
+windows_7M_z2               1    18    2569    0.814    1.244     1.013  -0.0685,0.0002      0.524 / 0.791    [0,0]
+exhaust_0_z1.8              4     4   70125    0.181    0.279     0.267  -0.0033,-0.0132     0.133 / 0.210    [0,0]
+exhaust_7M_z1.8             4     4   73098    0.985    1.331     1.331  -0.0663,0.0583      0.571 / 1.267    [0,0]
+exhaust_7M_z0.9             4     4   31142    0.439    0.768     0.643  -0.0107,0.0389      0.241 / 0.387    [0,0]
+exhaust_9.9M_z1.8           4     4   71407    1.179    1.947     2.184  0.0343,0.0530       1.030 / 1.563    [0,0]
+exhaust_7M_z2               4     4   81909    0.631    1.044     1.102  0.0074,0.0206       0.599 / 0.982    [0,0]
+impostor_0_z1.8             1     1   36198    0.139    0.535     0.535  0.0000,0.0003       0.139 / 0.535    [0,0]
+impostor_7M_z1.8            1     1   36207    0.464    0.763     0.943  0.0007,0.0226       0.416 / 0.625    [0,0]
+impostor_7M_z0.9            1     1   25092    0.322    0.551     0.575  0.0048,0.0255       0.219 / 0.329    [0,0]
+impostor_9.9M_z1.8          1     1   36170    0.975    1.585     2.255  -0.0157,-0.0108     0.960 / 1.434    [0,0]
+impostor_7M_z2              1     1   36788    0.788    1.208     1.255  0.0497,0.0303       0.583 / 0.953    [0,0]
+fx_0_z1.8                   9    21   15901    0.005    0.008     0.007  -0.0003,0.0001      0.003 / 0.005    [0,0] pos64=false
+fx_7M_z1.8                  9    21   13974    0.535    0.821     0.823  0.0405,0.0007       0.389 / 0.502    [0,0] pos64=false
+fx_7M_z0.9                  9    21    3781    0.289    0.405     0.439  0.0199,0.0024       0.225 / 0.324    [0,0] pos64=false
+fx_9.9M_z1.8                9    21   13839    0.901    1.428     1.317  -0.0653,0.0296      0.622 / 1.144    [0,0] pos64=false
+fx_7M_z2                    9    21   17073    0.032    0.065     0.064  -0.0011,-0.0016     0.027 / 0.046    [0,0] pos64=false
+[31m(!) Failed to run dependency scan. Skipping dependency pre-bundling. Error: failed to resolve rollupOptions.input value: "AISPACE.html".
+    at resolvePath (file:///C:/Users/Szymon/Documents/GitHub/statki/node_modules/vite/dist/node/chunks/config.js:31428:29)
+    at async Promise.all (index 1)
+    at async computeEntries (file:///C:/Users/Szymon/Documents/GitHub/statki/node_modules/vite/dist/node/chunks/config.js:31432:49)
+    at async scan (file:///C:/Users/Szymon/Documents/GitHub/statki/node_modules/vite/dist/node/chunks/config.js:31367:19)
+    at async file:///C:/Users/Szymon/Documents/GitHub/statki/node_modules/vite/dist/node/chunks/config.js:34110:15[39m
+
+=== wariant po: /src/3d/fxParticles3D.js, /src/3d/bridgeFx3D.js, /src/3d/sceneOrigin.js, /.tmp/precyzja/pin/engineVfxSystem.head.js, /src/3d/shipLights3D.js, /src/3d/hexBodyImpostorBatch.js, /src/3d/engineExhaustBatch.js
+przypadek               siatki inst.   maska   RMS px   max px   skok px   dryf px/kl.       drżenie RMS / max   mesh.position
+lights_0_z1.8               1    42     550    0.219    0.359     0.030  -0.0170,-0.0171     0.004 / 0.007    [-178.32,210.8]
+lights_7M_z1.8              1    42     512    0.221    0.359     0.030  -0.0172,-0.0172     0.003 / 0.005    [7075060.45,-6289520.71]
+lights_7M_z0.9              1    42     289    0.122    0.196     0.017  -0.0095,-0.0095     0.003 / 0.005    [7075137.21,-6289530.64]
+lights_9.9M_z1.8            1    42     512    0.221    0.359     0.030  -0.0172,-0.0172     0.003 / 0.005    [9874706.98,-8289520.6]
+lights_7M_z2                1    42     623    0.244    0.399     0.032  -0.0187,-0.0192     0.004 / 0.007    [7075060.45,-6289520.71]
+windows_0_z1.8              1    18    2046    0.229    0.352     0.116  -0.0140,-0.0203     0.047 / 0.102    [-155.99,-0.47]
+windows_7M_z1.8             1    18    2034    0.229    0.352     0.116  -0.0140,-0.0203     0.047 / 0.102    [7075082.78,-6289731.98]
+windows_7M_z0.9             1    18     507    0.170    0.268     0.129  -0.0085,-0.0151     0.063 / 0.113    [7075082.78,-6289731.98]
+windows_9.9M_z1.8           1    18    2034    0.229    0.352     0.116  -0.0140,-0.0203     0.047 / 0.102    [9874729.31,-8289731.87]
+windows_7M_z2               1    18    1193    0.224    0.371     0.067  -0.0183,-0.0163     0.021 / 0.036    [7075082.78,-6289731.98]
+exhaust_0_z1.8              4     4   71202    0.052    0.186     0.186  0.0002,0.0004       0.051 / 0.185    [-281.69,86.73]
+exhaust_7M_z1.8             4     4   69147    0.077    0.107     0.106  -0.0035,-0.0043     0.059 / 0.100    [7074957.08,-6289644.78]
+exhaust_7M_z0.9             4     4   31021    0.147    0.202     0.202  0.0084,0.0062       0.113 / 0.191    [7074957.08,-6289644.78]
+exhaust_9.9M_z1.8           4     4   70717    0.080    0.110     0.110  0.0030,-0.0048      0.061 / 0.104    [9874603.61,-8289644.67]
+exhaust_7M_z2               4     4   83277    0.064    0.088     0.089  -0.0044,0.0012      0.049 / 0.084    [7074941.29,-6289673.15]
+impostor_0_z1.8             1     1   36198    0.139    0.535     0.535  0.0000,0.0003       0.139 / 0.535    [157.38,0.31]
+impostor_7M_z1.8            1     1   36198    0.000    0.000     0.000  0.0000,0.0000       0.000 / 0.000    [7075396.14,-6289731.2]
+impostor_7M_z0.9            1     1   25086    0.000    0.000     0.000  0.0000,0.0000       0.000 / 0.000    [7075396.14,-6289731.2]
+impostor_9.9M_z1.8          1     1   36198    0.000    0.000     0.000  0.0000,0.0000       0.000 / 0.000    [9875042.68,-8289731.09]
+impostor_7M_z2              1     1   36754    0.000    0.000     0.000  0.0000,0.0000       0.000 / 0.000    [7075396.14,-6289731.2]
+fx_0_z1.8                   9    21   14821    0.002    0.005     0.004  -0.0002,0.0000      0.002 / 0.004    [30,20] pos64=true
+fx_7M_z1.8                  9    21   14122    0.003    0.004     0.004  -0.0001,0.0002      0.002 / 0.004    [7075268.77,-6289711.51] pos64=true
+fx_7M_z0.9                  9    21    4192    0.003    0.004     0.004  0.0002,0.0000       0.002 / 0.004    [7075268.77,-6289711.51] pos64=true
+fx_9.9M_z1.8                9    21   14185    0.003    0.004     0.004  -0.0002,0.0002      0.002 / 0.004    [9874915.3,-8289711.4] pos64=true
+fx_7M_z2                    9    21   17381    0.007    0.009     0.009  -0.0001,0.0005      0.005 / 0.009    [7075268.77,-6289711.51] pos64=true
+
+(px ekranu)             przesunięcie RMS / max          drżenie bez dryfu RMS / max
+przypadek               przed            po               przed            po
+lights_0_z1.8           0.244 / 0.366    0.219 / 0.359    0.028 / 0.049    0.004 / 0.007    
+lights_7M_z1.8          1.185 / 1.885    0.221 / 0.359    0.692 / 1.333    0.003 / 0.005    
+lights_7M_z0.9          0.504 / 0.876    0.122 / 0.196    0.315 / 0.538    0.003 / 0.005    
+lights_9.9M_z1.8        1.201 / 1.877    0.221 / 0.359    0.916 / 1.325    0.003 / 0.005    
+lights_7M_z2            0.985 / 1.621    0.244 / 0.399    0.528 / 0.902    0.004 / 0.007    
+windows_0_z1.8          0.229 / 0.352    0.229 / 0.352    0.047 / 0.102    0.047 / 0.102    
+windows_7M_z1.8         1.290 / 1.695    0.229 / 0.352    0.632 / 0.973    0.047 / 0.102    
+windows_7M_z0.9         0.618 / 0.758    0.170 / 0.268    0.328 / 0.522    0.063 / 0.113    
+windows_9.9M_z1.8       1.671 / 2.452    0.229 / 0.352    0.955 / 1.719    0.047 / 0.102    
+windows_7M_z2           0.814 / 1.244    0.224 / 0.371    0.524 / 0.791    0.021 / 0.036    
+exhaust_0_z1.8          0.181 / 0.279    0.052 / 0.186    0.133 / 0.210    0.051 / 0.185    
+exhaust_7M_z1.8         0.985 / 1.331    0.077 / 0.107    0.571 / 1.267    0.059 / 0.100    
+exhaust_7M_z0.9         0.439 / 0.768    0.147 / 0.202    0.241 / 0.387    0.113 / 0.191    
+exhaust_9.9M_z1.8       1.179 / 1.947    0.080 / 0.110    1.030 / 1.563    0.061 / 0.104    
+exhaust_7M_z2           0.631 / 1.044    0.064 / 0.088    0.599 / 0.982    0.049 / 0.084    
+impostor_0_z1.8         0.139 / 0.535    0.139 / 0.535    0.139 / 0.535    0.139 / 0.535    
+impostor_7M_z1.8        0.464 / 0.763    0.000 / 0.000    0.416 / 0.625    0.000 / 0.000    
+impostor_7M_z0.9        0.322 / 0.551    0.000 / 0.000    0.219 / 0.329    0.000 / 0.000    
+impostor_9.9M_z1.8      0.975 / 1.585    0.000 / 0.000    0.960 / 1.434    0.000 / 0.000    
+impostor_7M_z2          0.788 / 1.208    0.000 / 0.000    0.583 / 0.953    0.000 / 0.000    
+fx_0_z1.8               0.005 / 0.008    0.002 / 0.005    0.003 / 0.005    0.002 / 0.004    
+fx_7M_z1.8              0.535 / 0.821    0.003 / 0.004    0.389 / 0.502    0.002 / 0.004    
+fx_7M_z0.9              0.289 / 0.405    0.003 / 0.004    0.225 / 0.324    0.002 / 0.004    
+fx_9.9M_z1.8            0.901 / 1.428    0.003 / 0.004    0.622 / 1.144    0.002 / 0.004    
+fx_7M_z2                0.032 / 0.065    0.007 / 0.009    0.027 / 0.046    0.005 / 0.009    
+logi błędów: 0 → C:\Users\Szymon\Documents\GitHub\statki\.tmp\precyzja\drzenie\drzenie.json
+exit 0

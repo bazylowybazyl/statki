@@ -1,0 +1,321 @@
+{
+ "size": [
+  1600,
+  900
+ ],
+ "scenes": {
+  "atlas": {
+   "shots": [
+    "atlas_1_caly_zblizenie",
+    "atlas_0_szczeliny_zblizenie",
+    "atlas_1_caly_kadlub",
+    "atlas_1_zapasowy_zblizenie",
+    "atlas_2_uszkodzony_zblizenie",
+    "atlas_2_uszkodzony_kadlub",
+    "atlas_2b_rufowy_padl_zapasowy_dowodzi",
+    "atlas_3_hulk_t0.3",
+    "atlas_3_hulk_t1.5",
+    "atlas_3_hulk_t1.5_kadlub",
+    "atlas_4_wrak_t4.5",
+    "atlas_4_wrak_t4.5_kadlub"
+   ],
+   "hdr": {
+    "atlas_okna": {
+     "rect": {
+      "x": 400,
+      "y": 225,
+      "w": 800,
+      "h": 450
+     },
+     "pixels": 360000,
+     "windowPixels": 4237,
+     "windowPixelsOver09": 128,
+     "maxWithWindows": 1.4239236116409302,
+     "p50": 0.31748244166374207,
+     "p90": 0.5303404331207275,
+     "p99": 1.1296939849853516,
+     "surfacePixelsOver09": 3,
+     "surfaceMax": 1.0310171842575073
+    },
+    "atlas_powierzchnia": {
+     "rect": {
+      "x": 400,
+      "y": 225,
+      "w": 800,
+      "h": 450
+     },
+     "pixels": 360000,
+     "nanOrInf": 0,
+     "over09": 131,
+     "overFraction": 0.0003638888888888889,
+     "p50": 0.02518273010253906,
+     "p90": 0.06657446899414063,
+     "p99": 0.29453059082031247,
+     "p999": 0.6003731445312499,
+     "max": 1.4239236328124998,
+     "histogram": {
+      "<=0.05": 296744,
+      "<=0.2": 56420,
+      "<=0.4": 5189,
+      "<=0.9": 1516,
+      "<=1.3": 111,
+      "<=2": 20,
+      "<=4": 0,
+      "<=8": 0,
+      "<=12": 0,
+      "<=Infinity": 0
+     }
+    }
+   },
+   "evals": {
+    "uszkodzenie": {
+     "shots": 271,
+     "integrity": 0.845,
+     "dead": false,
+     "commandLost": false
+    },
+    "rufowy padł": [
+     {
+      "key": "atlas",
+      "hp": 11231,
+      "hexes": {
+       "active": 10537,
+       "total": 10838,
+       "ratio": 0.9722273482192286
+      },
+      "dead": false,
+      "cause": null,
+      "commandLost": false,
+      "bridges": [
+       {
+        "id": "mostek_rufowy",
+        "total": 148,
+        "alive": 95,
+        "integrity": 0.642,
+        "dead": true
+       },
+       {
+        "id": "mostek_zapasowy",
+        "total": 56,
+        "alive": 56,
+        "integrity": 1,
+        "dead": false
+       }
+      ]
+     }
+    ],
+    "utrata dowodzenia": [
+     {
+      "key": "atlas",
+      "hp": 11179,
+      "hexes": {
+       "active": 10516,
+       "total": 10838,
+       "ratio": 0.9702897213508027
+      },
+      "dead": true,
+      "cause": "bridge",
+      "commandLost": true,
+      "bridges": [
+       {
+        "id": "mostek_rufowy",
+        "total": 148,
+        "alive": 95,
+        "integrity": 0.642,
+        "dead": true
+       },
+       {
+        "id": "mostek_zapasowy",
+        "total": 56,
+        "alive": 35,
+        "integrity": 0.625,
+        "dead": true
+       }
+      ]
+     }
+    ],
+    "model": {
+     "stats": {
+      "records": 3,
+      "visible": 2,
+      "instances": [
+       0,
+       0,
+       1,
+       1
+      ],
+      "receivers": 1,
+      "emitters": 0,
+      "drawCalls": 3,
+      "cpuMs": 0,
+      "rowsUsed": 2,
+      "rowUploads": 17,
+      "flashes": 11,
+      "lastMs": 0
+     },
+     "records": [
+      {
+       "kind": "bellator",
+       "host": "Bellator",
+       "isWreck": false,
+       "row": -1,
+       "cells": 231,
+       "block": [
+        21,
+        11
+       ],
+       "anyDead": 0,
+       "moved": 0,
+       "powerLostAt": -1,
+       "emitters": 39
+      },
+      {
+       "kind": "atlas_main",
+       "host": "wrak",
+       "isWreck": true,
+       "row": 1,
+       "cells": 370,
+       "block": [
+        37,
+        10
+       ],
+       "anyDead": 1,
+       "moved": 0,
+       "powerLostAt": -1,
+       "emitters": 79
+      },
+      {
+       "kind": "atlas_backup",
+       "host": "wrak",
+       "isWreck": true,
+       "row": 2,
+       "cells": 180,
+       "block": [
+        20,
+        9
+       ],
+       "anyDead": 1,
+       "moved": 0,
+       "powerLostAt": -1,
+       "emitters": 29
+      }
+     ]
+    }
+   },
+   "stats": {
+    "atlas": {
+     "time": 11.91666666666663,
+     "shots": 271,
+     "hullHits": 271,
+     "probeMisses": 0,
+     "windows": 0,
+     "calls": 23,
+     "errors": [],
+     "targets": [
+      {
+       "key": "atlas",
+       "hp": 11179,
+       "hexes": {
+        "active": 10516,
+        "total": 10838,
+        "ratio": 0.9702897213508027
+       },
+       "dead": true,
+       "cause": "bridge",
+       "commandLost": false,
+       "bridges": []
+      }
+     ]
+    }
+   }
+  },
+  "free3d": {
+   "shots": [
+    "bellator_5_free3d_rufa",
+    "bellator_5_free3d_dziob",
+    "ironskull_5_free3d_rufa",
+    "ironskull_5_free3d_dziob",
+    "atlas_5_free3d_rufa",
+    "atlas_5_free3d_dziob"
+   ],
+   "hdr": {},
+   "evals": {},
+   "stats": {}
+  }
+ },
+ "logs": [],
+ "gpu": {
+  "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 5080 (0x00002C02) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+  "timer": true
+ },
+ "boot": {
+  "time": 1.8166666666666627,
+  "shots": 0,
+  "hullHits": 0,
+  "probeMisses": 0,
+  "windows": 0,
+  "calls": 33,
+  "errors": [],
+  "targets": [
+   {
+    "key": "battleship",
+    "hp": 12000,
+    "hexes": {
+     "active": 2920,
+     "total": 2920,
+     "ratio": 1
+    },
+    "dead": false,
+    "cause": null,
+    "commandLost": false,
+    "bridges": [
+     {
+      "id": "mostek",
+      "total": 102,
+      "alive": 102,
+      "integrity": 1,
+      "dead": false
+     }
+    ]
+   }
+  ]
+ },
+ "boot3d": {
+  "stats": {
+   "records": 1,
+   "visible": 1,
+   "instances": [
+    1,
+    0,
+    0,
+    0
+   ],
+   "receivers": 1,
+   "emitters": 38,
+   "drawCalls": 3,
+   "cpuMs": 0,
+   "rowsUsed": 1,
+   "rowUploads": 1,
+   "flashes": 0,
+   "lastMs": 0
+  },
+  "records": [
+   {
+    "kind": "bellator",
+    "host": "Bellator",
+    "isWreck": false,
+    "row": 0,
+    "cells": 231,
+    "block": [
+     21,
+     11
+    ],
+    "anyDead": 0,
+    "moved": 0,
+    "powerLostAt": -1,
+    "emitters": 39
+   }
+  ]
+ },
+ "finalErrors": []
+}

@@ -6,7 +6,7 @@
 // Fx3D (fxParticles3D.js), bez nowych pul.
 //
 // OKNA: jeden InstancedMesh (jedno wywołanie rysowania na wszystkie okręty),
-// warstwa 2 (FG, po shadowShaftsPass) jak światła pozycyjne — okna świecą też
+// warstwa 2 (FG, bez maski cieni) jak światła pozycyjne — okna świecą też
 // w cieniu planety. Rdzeń okna tuż nad progiem bloomu (0,9), poświata pod nim:
 // świecą drobne punkty, nie sylwetka (zakaz obwódki: memory hull-lacquer).
 // Z oddali okna gasną (długość okna na ekranie < ~1 px), żeby statek nie
@@ -19,6 +19,7 @@
 
 import * as THREE from 'three';
 import { Fx3D, FX_PLANE_Z, coneDir, makeBasis, sp } from './fxParticles3D.js';
+import { sceneOriginNearCamera } from './sceneOrigin.js';
 import {
   BRIDGE_KILL_TIMELINE,
   bridgeGridToWorld,
@@ -96,6 +97,7 @@ function smooth01(e0, e1, x) {
 
 const _w = { x: 0, y: 0 };
 const _w2 = { x: 0, y: 0 };
+const _origin = { x: 0, y: 0 };
 const _pos = new THREE.Vector3();
 const _dir = new THREE.Vector3();
 const _d = new THREE.Vector3();
@@ -107,6 +109,24 @@ function hullFxScale(entity) {
   const s = Math.max(Number(entity.visual?.spriteScaleX) || Number(entity.visual?.spriteScale) || 1, 0.0001);
   const len = Math.max(g.srcWidth, g.srcHeight) * s;
   return Math.sqrt(Math.max(0.2, len / 624));
+}
+
+export { hullFxScale as bridgeHullFxScale };
+
+/**
+ * Krótki błysk pomieszczenia (świat gry, Y w dół) — okno gaśnie, bo heks pod
+ * nim zginął. Wspólny dla szczelin okien i okien modelu 3D (bridge3D.js).
+ */
+export function spawnBridgeRoomFlash(x, y, col, S) {
+  if (!Fx3D.ensure()) return;
+  const o = sp();
+  o.x = x; o.y = -y; o.z = FX_PLANE_Z;
+  o.life = 0.16; o.drag = 4;
+  o.s0 = 3 * S; o.s1 = 12 * S;
+  o.r0 = col[0] * 5; o.g0 = col[1] * 5; o.b0 = col[2] * 5;
+  o.r1 = col[0] * 0.6; o.g1 = col[1] * 0.4; o.b1 = col[2] * 0.3; o.mix = 10;
+  o.alpha = 0.9; o.fadeIn = 0.004; o.fadeOut = 2.0; o.grow = 0.4;
+  Fx3D.glow.spawn(o);
 }
 
 export const BridgeFx3D = {
@@ -165,6 +185,8 @@ export const BridgeFx3D = {
    *   zoom   — piksele ekranu na jednostkę świata (kamera gry),
    *   poseOf — (encja) => {x, y, angle} | null: poza renderu, gdy kadłub jest
    *            rysowany z interpolacją (gracz); null = poza fizyczna.
+   *   camera — kamera gry tej klatki (początek układu instancji, jak w
+   *            Bridge3D); bez niej Core3D.activeCam1.
    */
   update(entities, opts = {}) {
     if (!this.mesh) return;
@@ -175,6 +197,11 @@ export const BridgeFx3D = {
     const T = BRIDGE_FX_TUNE;
     this.material.uniforms.uCoreGain.value = T.coreGain;
     this.material.uniforms.uHaloGain.value = T.haloGain;
+    // Szczeliny względem początku przy kamerze (sceneOrigin.js): duży kawałek
+    // w mesh.position (modelViewMatrix w double), w instancjach małe liczby —
+    // okna nie drgają względem kadłuba przy 5–10 mln j.
+    const org = sceneOriginNearCamera(_origin, opts.camera || undefined);
+    this.mesh.position.set(org.x, org.y, 0);
     const m = this.mesh.instanceMatrix.array;
     const P = this.params;
     const C = this.colors;
@@ -198,6 +225,9 @@ export const BridgeFx3D = {
         if (this._emitVent(entity, bridge, age, dt, pose)) vents++;
       }
 
+      // Kadłub z modelem 3D mostka (bridge3D.js) ma okna na modelu — szczeliny
+      // byłyby podwójnymi oknami. Wyrzut atmosfery (wyżej) zostaje tutaj.
+      if (st.model3D === true) continue;
       const win = st.windows;
       if (!win || !win.count) continue;
       if (!win.lit) win.lit = new Uint8Array(win.count).fill(1);
@@ -255,7 +285,7 @@ export const BridgeFx3D = {
         m[o] = c * scaleX; m[o + 1] = sn * scaleX; m[o + 2] = 0; m[o + 3] = 0;
         m[o + 4] = -sn * scaleY; m[o + 5] = c * scaleY; m[o + 6] = 0; m[o + 7] = 0;
         m[o + 8] = 0; m[o + 9] = 0; m[o + 10] = 1; m[o + 11] = 0;
-        m[o + 12] = _w.x; m[o + 13] = -_w.y; m[o + 14] = WINDOW_Z; m[o + 15] = 1;
+        m[o + 12] = _w.x - org.x; m[o + 13] = -_w.y - org.y; m[o + 14] = WINDOW_Z; m[o + 15] = 1;
         const col = win.colorsLinear[win.bridge[i]] || win.colorsLinear[0];
         P[n * 4] = I; P[n * 4 + 1] = halfLen; P[n * 4 + 2] = halfWid; P[n * 4 + 3] = halo;
         C[n * 3] = col[0]; C[n * 3 + 1] = col[1]; C[n * 3 + 2] = col[2];
@@ -282,15 +312,7 @@ export const BridgeFx3D = {
   },
 
   _roomFlash(x, y, col, S) {
-    if (!Fx3D.ensure()) return;
-    const o = sp();
-    o.x = x; o.y = -y; o.z = FX_PLANE_Z;
-    o.life = 0.16; o.drag = 4;
-    o.s0 = 3 * S; o.s1 = 12 * S;
-    o.r0 = col[0] * 5; o.g0 = col[1] * 5; o.b0 = col[2] * 5;
-    o.r1 = col[0] * 0.6; o.g1 = col[1] * 0.4; o.b1 = col[2] * 0.3; o.mix = 10;
-    o.alpha = 0.9; o.fadeIn = 0.004; o.fadeOut = 2.0; o.grow = 0.4;
-    Fx3D.glow.spawn(o);
+    spawnBridgeRoomFlash(x, y, col, S);
   },
 
   // Jedna klatka strumienia z wyrwy mostka. Gaz idzie tunelem ostrzału od

@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Destruktor 2D — statki na belkach</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    overflow: hidden; background: #04050a;
+    color: #9fe8b8; font-family: 'Consolas', 'Courier New', monospace;
+  }
+  canvas { display: block; }
+  canvas:focus { outline: none; }
+  #ui { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
+  .panel {
+    position: absolute;
+    background: rgba(6, 10, 18, 0.84);
+    border: 1px solid #1d3a5f;
+    border-radius: 8px;
+    padding: 12px 14px;
+    backdrop-filter: blur(3px);
+    pointer-events: auto;
+    font-size: 11px;
+    line-height: 1.5;
+  }
+  #panel-left { top: 50px; left: 14px; width: 262px; max-height: calc(100% - 80px); overflow-y: auto; }
+  #panel-stats { top: 50px; right: 14px; width: 240px; max-height: calc(100% - 80px); overflow-y: auto; color: #7fc9ff; }
+  #hud-controls { position: absolute; top: 12px; left: 14px; right: 14px; display: flex; justify-content: space-between; gap: 8px; }
+  #hud-controls button, #hud-controls a { pointer-events: auto; }
+  .panel.folded { display: none; }
+  @media (max-width: 1000px) {
+    #panel-left:not(.open), #panel-stats:not(.open) { display: none; }
+    #panel-help { left: 14px !important; font-size: 10px; }
+  }
+  #panel-help { bottom: 14px; left: 318px; right: 14px; color: #8aa3c0; pointer-events: none; }
+  h1 { font-size: 14px; margin: 0 0 8px 0; color: #6fb7ff; letter-spacing: 1px; }
+  h2 { font-size: 11px; margin: 10px 0 4px 0; color: #57d78a; }
+  .row { display: flex; justify-content: space-between; align-items: center; margin: 3px 0; gap: 8px; }
+  .row label { flex: 1; color: #b7cdd9; }
+  .row output { width: 58px; text-align: right; color: #ffd479; }
+  input[type=range] { flex: 1.3; min-width: 0; accent-color: #2f81f7; height: 14px; }
+  select, button, a.mode-link {
+    background: #0d1930; color: #cfe4ff; border: 1px solid #2b4a77;
+    border-radius: 4px; font-family: inherit; font-size: 11px; padding: 3px 8px; cursor: pointer;
+    text-decoration: none;
+  }
+  select { max-width: 150px; }
+  button:hover, a.mode-link:hover { background: #17325c; }
+  button.wide { width: 100%; margin-top: 5px; }
+  #stats div { display: flex; justify-content: space-between; gap: 8px; }
+  #stats span:last-child { color: #ffd479; text-align: right; }
+  .legend { margin-top: 6px; font-size: 10px; color: #8aa3c0; }
+  #toast {
+    position: absolute; top: 46%; left: 50%; transform: translate(-50%, -50%);
+    background: rgba(10, 22, 44, 0.92); border: 1px solid #2f81f7;
+    padding: 14px 26px; border-radius: 8px; font-size: 13px; color: #cfe4ff;
+    pointer-events: none; opacity: 0; transition: opacity 0.25s; z-index: 30; max-width: 70vw; text-align: center;
+  }
+  kbd { background: #14243d; border: 1px solid #2b4a77; border-radius: 3px; padding: 0 4px; color: #ffd479; }
+</style>
+</head>
+<body>
+
+<div id="ui">
+  <div id="hud-controls">
+    <button id="btn-settings">Ustawienia</button>
+    <a class="mode-link" href="./destruktor3d.html">← Tryb 3D (GLB)</a>
+    <button id="btn-telemetry">Telemetria</button>
+  </div>
+  <div class="panel" id="panel-left">
+    <h1>DESTRUKTOR 2D — STATKI NA BELKACH</h1>
+    <div class="legend">Atlas i kukła zbudowane ze sprite'ów gry, w wymiarach z gry (Atlas 1800 × 806 j.): komórka pokryta alfą = węzeł, belki jak w trybie 3D. Ruch tylko w płaszczyźnie gry.</div>
+
+    <h2>LOT — ATLAS</h2>
+    <div class="legend"><kbd>W/S</kbd> ciąg / wstecz · <kbd>A/D</kbd> obrót · <kbd>Q/E</kbd> w bok<br>
+      <kbd>Shift</kbd> dopalacz · <kbd>X</kbd> hamulec · <kbd>LPM</kbd> laser · <kbd>PPM</kbd> rakiety</div>
+    <div class="row"><label><input type="checkbox" id="cb-assist" checked> Stabilizacja dryfu i obrotu</label></div>
+
+    <h2>KUKŁA</h2>
+    <div class="row"><label for="opt-dummy">Kadłub</label><select id="opt-dummy">
+      <option value="atlas" selected>Atlas (kopia)</option>
+      <option value="pirate_battleship">Pancernik piracki</option>
+      <option value="terran_battleship">Pancernik Terran</option>
+      <option value="terran_carrier">Lotniskowiec Terran</option>
+      <option value="pirate_destroyer">Niszczyciel piracki</option>
+      <option value="long_haul_freighter">Frachtowiec daleki</option>
+    </select></div>
+    <div class="row"><label for="opt-pose">Ustawienie</label><select id="opt-pose">
+      <option value="90" selected>burtą (90°)</option>
+      <option value="135">skos (135°)</option>
+      <option value="180">dziobem w dziób</option>
+      <option value="0">rufą do Atlasa</option>
+    </select></div>
+    <div class="row"><label for="opt-mass">Masa kukły ×</label><select id="opt-mass">
+      <option value="0.25">0,25</option><option value="0.5">0,5</option>
+      <option value="1" selected>1 (naturalna)</option>
+      <option value="2">2</option><option value="4">4</option><option value="8">8</option>
+    </select></div>
+    <button class="wide" id="btn-reset">↺ Nowa kukła, Atlas na starcie (R)</button>
+
+    <h2>TARAN</h2>
+    <div class="row"><label>Prędkość [j./s]</label><input type="range" id="sl-speed" min="50" max="4000" step="50" value="800"><output id="o-speed">800</output></div>
+    <button class="wide" id="btn-ram">Taran w kukłę (T)</button>
+    <div class="legend">T zawsze zaczyna od nowej sceny, więc próby są powtarzalne. Można też wlecieć ręcznie.</div>
+
+    <h2>TEMPO</h2>
+    <div class="row"><label>Tempo symulacji</label><input type="range" id="sl-time" min="0.05" max="1" step="0.05" value="1"><output id="o-time">1</output></div>
+    <div class="legend"><kbd>Z</kbd> przełącza zwolnione tempo ×0,2 · <kbd>P</kbd> pauza</div>
+
+    <h2>KONSTRUKCJA</h2>
+    <div class="row"><label for="opt-res">Siatka Atlasa</label><select id="opt-res">
+      <option value="90">90 komórek (20 j.)</option>
+      <option value="120" selected>120 komórek (15 j.)</option>
+      <option value="160">160 komórek (11 j.)</option>
+      <option value="240">240 (7,5 j. jak heksy gry)</option>
+    </select></div>
+    <div class="row"><label for="opt-frame">Wręgi co N węzłów</label><select id="opt-frame">
+      <option value="1">1 (gęsto)</option>
+      <option value="2" selected>2</option>
+      <option value="4">4 (rzadko)</option>
+      <option value="0">brak wręgów</option>
+    </select></div>
+    <div class="row"><label for="opt-bulkhead">Gródź co N kolumn</label><select id="opt-bulkhead">
+      <option value="5">5 (gęsto)</option>
+      <option value="8" selected>8</option>
+      <option value="14">14 (rzadko)</option>
+      <option value="0">brak grodzi</option>
+    </select></div>
+
+    <div class="row"><label><input type="checkbox" id="cb-local" checked> Solver lokalny (tylko obszar w ruchu)</label></div>
+    <div class="legend">Wyłączony = pełny solver: każde trafienie przelicza cały kadłub. Zmiana resetuje scenę.</div>
+
+    <h2>MATERIAŁ</h2>
+    <div class="row"><label>Opór zgniotu</label><input type="range" id="sl-yield" min="0" max="2000000" step="50000" value="300000"><output id="o-yield">300k</output></div>
+    <div class="legend">Granica plastyczności: siła zgniotu na długość frontu styku. 0 = dawne prawo z dema 3D (miękkie, zależne od siatki).</div>
+    <div class="row"><label>Sztywność ×</label><input type="range" id="sl-stiff" min="0.2" max="1.6" step="0.05" value="1"><output id="o-stiff">1</output></div>
+    <div class="row"><label>Wytrzymałość ×</label><input type="range" id="sl-break" min="0.2" max="3.0" step="0.1" value="0.6"><output id="o-break">0.6</output></div>
+    <div class="row"><label>Plastyczność</label><input type="range" id="sl-plastic" min="0" max="1" step="0.05" value="0.55"><output id="o-plastic">0.55</output></div>
+    <div class="row"><label>Iteracje solvera</label><input type="range" id="sl-iters" min="1" max="8" step="1" value="3"><output id="o-iters">3</output></div>
+    <div class="row"><label>Transfer zgniotu</label><input type="range" id="sl-crush" min="0.1" max="1" step="0.05" value="0.85"><output id="o-crush">0.85</output></div>
+
+    <h2>BROŃ</h2>
+    <div class="row"><label>Siła uzbrojenia</label><input type="range" id="sl-dmg" min="50" max="1500" step="25" value="450"><output id="o-dmg">450</output></div>
+    <div class="row"><label>Promień eksplozji [komórki]</label><input type="range" id="sl-radius" min="1" max="9" step="0.5" value="3"><output id="o-radius">3</output></div>
+
+    <h2>WIDOK</h2>
+    <div class="row"><label for="opt-follow">Kamera (V)</label><select id="opt-follow">
+      <option value="atlas" selected>za Atlasem</option>
+      <option value="dummy">za kukłą</option>
+      <option value="pair">oba kadłuby</option>
+      <option value="free">swobodna</option>
+    </select></div>
+    <div class="row"><label><input type="checkbox" id="cb-skin" checked> Sprite (skóra)</label></div>
+    <div class="row"><label><input type="checkbox" id="cb-beams"> Podgląd belek</label></div>
+    <div class="row"><label><input type="checkbox" id="cb-nodes"> Podgląd węzłów</label></div>
+    <div class="legend">Kółko: przybliżenie · środkowy przycisk: przesuwanie widoku (kamera swobodna) · <kbd>B</kbd> belki · <kbd>K</kbd> sprite · <kbd>N</kbd> naprawa</div>
+  </div>
+
+  <div class="panel" id="panel-stats">
+    <h1>TELEMETRIA</h1>
+    <div id="stats">
+      <div><span>FPS</span><span id="st-fps">—</span></div>
+      <div><span>Stan</span><span id="st-state">—</span></div>
+      <div><span>Fizyka: krok 120 Hz</span><span id="st-phys">—</span></div>
+      <div><span>&nbsp;&nbsp;solver</span><span id="st-solver">—</span></div>
+      <div><span>&nbsp;&nbsp;kolizje</span><span id="st-col">—</span></div>
+      <div><span>&nbsp;&nbsp;rozpady</span><span id="st-split">—</span></div>
+      <div><span>Fizyka klatki (max)</span><span id="st-physics-peak">—</span></div>
+      <div><span>Tempo symulacji</span><span id="st-sim-rate">—</span></div>
+      <div><span>Kontakty</span><span id="st-contacts">—</span></div>
+      <div title="Czas, w którym kadłuby się stykają i wciąż zbliżają szybciej niż próg zgniotu."><span>Czas zgniatania</span><span id="st-contact-time">—</span></div>
+      <div><span>Prędkość Atlasa</span><span id="st-speed">—</span></div>
+      <div><span>Prędkość kukły</span><span id="st-dummy-speed">—</span></div>
+      <div><span>Prędkość zbliżania</span><span id="st-closing">—</span></div>
+      <div><span>Atlas: węzły</span><span id="st-atlas-nodes">—</span></div>
+      <div><span>Kukła: węzły</span><span id="st-dummy-nodes">—</span></div>
+      <div><span>Ciała / odłamy</span><span id="st-bodies">—</span></div>
+      <div><span>Węzły / belki całe</span><span id="st-lattice">—</span></div>
+      <div title="Węzły liczone przez solver lokalny w tym kroku (trafione, zgniatane, w ruchu). Reszta kadłuba śpi."><span>Obszar aktywny</span><span id="st-region">—</span></div>
+      <div><span>Zerwania łącznie</span><span id="st-broken">—</span></div>
+      <div><span>Odłamki: blacha / profile</span><span id="st-debris">0 / 0</span></div>
+      <div><span>Trafienia: laser / rakiety</span><span id="st-hits">0 / 0</span></div>
+    </div>
+  </div>
+
+  <div class="panel" id="panel-help">
+    <kbd>W/S</kbd> ciąg &nbsp;|&nbsp; <kbd>A/D</kbd> obrót &nbsp;|&nbsp; <kbd>Q/E</kbd> w bok &nbsp;|&nbsp; <kbd>Shift</kbd> dopalacz &nbsp;|&nbsp; <kbd>X</kbd> hamulec
+    &nbsp;|&nbsp; <kbd>LPM</kbd> laser &nbsp;|&nbsp; <kbd>PPM</kbd> rakiety<br>
+    <kbd>T</kbd> taran w kukłę &nbsp;|&nbsp; <kbd>R</kbd> reset &nbsp;|&nbsp; <kbd>Z</kbd> zwolnione tempo &nbsp;|&nbsp; <kbd>P</kbd> pauza &nbsp;|&nbsp; <kbd>V</kbd> kamera &nbsp;|&nbsp; <kbd>B</kbd> belki
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { DestructorBeams3D, createBeamConfig } from './src/game/destructorBeams3D.js';
+import { BeamShips3D } from './src/3d/beamShips3D.js';
+import { buildSpriteBeamStructure } from './src/game/beamSprite2D.js';
+import { cloneBeamStructure } from './src/game/beamCrashScene3D.js';
+import {
+  applyPlanarFlightControls, readPlanarFlightInput, setPlanarHeading, PLANAR_FLIGHT_DEFAULTS
+} from './src/game/beamFlightControls2D.js';
+import { BeamWeapons3D } from './src/game/beamWeapons3D.js';
+import { BeamWeaponsVisual3D } from './src/3d/beamWeaponsVisual3D.js';
+import { getHullRenderSize } from './src/data/ships.js';
+
+const D = DestructorBeams3D;
+const asset = (path) => new URL(path, import.meta.url).href;
+// Te same pliki i rozmiary co w grze (HULL_SPRITE_PATHS_BY_ID, getHullRenderSize).
+const HULLS = {
+  atlas: { label: 'Atlas', src: asset('./assets/capital_ship_rect_v1.png') },
+  pirate_battleship: { label: 'pancernik piracki', src: asset('./src/assets/ships/piratebattleship.png') },
+  terran_battleship: { label: 'pancernik Terran', src: asset('./src/assets/ships/terranbattleship.png') },
+  terran_carrier: { label: 'lotniskowiec Terran', src: asset('./src/assets/ships/terrancarrier.png') },
+  pirate_destroyer: { label: 'niszczyciel piracki', src: asset('./src/assets/ships/piratedestroyer.png') },
+  long_haul_freighter: { label: 'frachtowiec daleki', src: asset('./assets/long_haul_freighter.png') }
+};
+const ATLAS_MASS = 800000;              // SHIP_PHYSICS.PLAYER_MASS w grze
+const DUMMY_TINT = [1.0, 0.8, 0.74];    // kukła-Atlas odróżnia się od gracza
+const DUMMY_GAP = 420;                  // odstęp dziobu od kukły na starcie
+const FIXED_DT = 1 / 120;
+
+// ============================== SCENA ==============================
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setClearColor(0x04050a, 1);
+document.body.appendChild(renderer.domElement);
+renderer.domElement.tabIndex = 0;
+renderer.domElement.setAttribute('aria-label', 'Scena 2D — sterowanie Atlasem');
+
+const scene = new THREE.Scene();
+const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 5000);
+camera.position.set(0, 0, 1000);
+let viewHeight = 4200;
+const cameraCenter = new THREE.Vector2(600, 0);
+
+{
+  const grid = new THREE.GridHelper(80000, 160, 0x16304f, 0x0b1a2e);
+  grid.rotation.x = Math.PI / 2;
+  grid.position.z = -20;
+  scene.add(grid);
+  const N = 2400;
+  const pos = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    pos[i * 3] = (Math.random() - 0.5) * 80000;
+    pos[i * 3 + 1] = (Math.random() - 0.5) * 80000;
+    pos[i * 3 + 2] = -30;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  scene.add(new THREE.Points(geo, new THREE.PointsMaterial({ color: 0x5f7ca0, size: 1.6, sizeAttenuation: false })));
+}
+
+BeamShips3D.init(scene);
+BeamShips3D.setLightDir(0.25, 0.35, 0.9);
+// Kadłuby nie piszą głębi (leżą w jednej płaszczyźnie) — odłamki i pociski rysujemy po nich.
+for (const batch of BeamShips3D.debris.batches) batch.mesh.renderOrder = 30;
+const weapons = new BeamWeapons3D(D, 256, { laserSpeed: 3600, missileSpeed: 1100, convergence: 2600, sideAxis: 1 });
+const weaponVisuals = new BeamWeaponsVisual3D(scene, weapons, { scale: 20 });
+for (const mesh of weaponVisuals.meshes) mesh.renderOrder = 31;
+
+D.onDebris = (body, node, wx, wy, wz, vx, vy, vz) => {
+  const scale = body.cellSize * (0.5 + Math.random() * 0.45);
+  const structural = node.beamCount > node.localBeamCount && Math.random() < 0.4;
+  BeamShips3D.spawnDebris(wx, wy, wz, vx, vy, vz, node.r, node.g, node.b, scale, structural);
+};
+
+// ============================== STAN ==============================
+const el = (id) => document.getElementById(id);
+const val = (id) => Number(el(id).value);
+let cfg = null;
+let cellSize = 15;
+let bodies = [];
+let atlas = null, dummy = null;
+let simTime = 0, accumulator = 0, paused = false, timeScale = 1, slowMo = false;
+let followMode = 'atlas';
+let contactTime = 0, contactActive = false, physicsPeakMs = 0, frameSimMs = 0, frameWallMs = 0;
+let ready = false;
+const hullCache = new Map();
+const structureCache = new Map();
+const keys = Object.create(null);
+const flightInput = {};
+const weaponInput = { laser: false, missile: false };
+
+const toastEl = el('toast');
+let toastTimer = 0;
+function toast(msg, holdMs = 2600) {
+  toastEl.textContent = msg;
+  toastEl.style.opacity = '1';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { toastEl.style.opacity = '0'; }, holdMs);
+}
+
+// ============================== KADŁUBY ==============================
+async function loadHull(id) {
+  if (hullCache.has(id)) return hullCache.get(id);
+  const def = HULLS[id];
+  const img = new Image();
+  img.src = def.src;
+  await img.decode();
+  // Siatkę próbkujemy w rozmiarze z gry (jak initHexBody na obrazie renderu),
+  // a rysujemy oryginał w pełnej rozdzielczości — UV są znormalizowane.
+  const size = getHullRenderSize(id, img.naturalWidth, img.naturalHeight);
+  const canvas = document.createElement('canvas');
+  canvas.width = size.w;
+  canvas.height = size.h;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0, size.w, size.h);
+  const hull = { id, img, w: size.w, h: size.h, imageData: ctx.getImageData(0, 0, size.w, size.h) };
+  hullCache.set(id, hull);
+  return hull;
+}
+
+function hullStructure(hull) {
+  const frames = val('opt-frame'), bulkheads = val('opt-bulkhead');
+  const cellsAlong = Math.max(4, Math.round(hull.w / cellSize));
+  const key = `${hull.id}|${cellsAlong}|${frames}|${bulkheads}`;
+  let structure = structureCache.get(key);
+  if (!structure) {
+    structure = buildSpriteBeamStructure(hull.imageData, {
+      key: hull.id, textureSource: hull.img, worldLength: hull.w, cellsAlong,
+      frameStride: frames, bulkheadEvery: bulkheads
+    });
+    structureCache.set(key, structure);
+  }
+  return structure;
+}
+
+// ============================== BUDOWA SCENY ==============================
+function applySlidersToConfig() {
+  if (!cfg) return;
+  cfg.crushStrength = val('sl-yield');
+  cfg.globalStiffnessMul = val('sl-stiff');
+  cfg.globalBreakMul = val('sl-break');
+  cfg.plasticRate = val('sl-plastic');
+  cfg.solverIterations = val('sl-iters');
+  cfg.crushTransfer = val('sl-crush');
+}
+
+function makeConfig() {
+  const c = createBeamConfig(cellSize);
+  c.planar = true;
+  // Front styku kadłubów 2D bywa dłuższy niż 128 par węzłów.
+  c.maxContacts = 384;
+  c.localSolver = el('cb-local').checked;
+  return c;
+}
+
+async function resetScene() {
+  ready = false;
+  cellSize = 1800 / val('opt-res');
+  const [atlasHull, dummyHull] = await Promise.all([loadHull('atlas'), loadHull(el('opt-dummy').value)]);
+  const atlasStructure = hullStructure(atlasHull);
+  let dummyStructure = cloneBeamStructure(hullStructure(dummyHull));
+  if (dummyHull.id === 'atlas') dummyStructure.spriteSkin = { ...dummyStructure.spriteSkin, tint: DUMMY_TINT };
+
+  for (const b of bodies) b.dead = true;
+  BeamShips3D.sync([], camera, simTime);
+  BeamShips3D.debris?.reset();
+  weapons.reset();
+  weaponVisuals.sync();
+
+  cfg = makeConfig();
+  applySlidersToConfig();
+  D.init(cfg);
+  D.splitQueue.length = 0;
+  D.perf.beamsBroken = 0;
+
+  // Gęstość jak w grze: Atlas 800 000; kukła ta sama blacha, więc masa z pola kadłuba.
+  const density = ATLAS_MASS / atlasStructure.mass;
+  atlas = D.createBody(cloneBeamStructure(atlasStructure), { name: 'Atlas', massMultiplier: density });
+  dummy = D.createBody(dummyStructure, { name: 'kukła', massMultiplier: density * val('opt-mass') });
+  const pose = val('opt-pose') * Math.PI / 180;
+  setPlanarHeading(dummy, pose);
+  // Kukła na osi dziobu: odstęp liczony od zasięgu obróconego kadłuba wzdłuż X.
+  const ab = atlas._localBounds, db = dummy._localBounds;
+  const c = Math.cos(pose), s = Math.sin(pose);
+  const reachX = Math.abs(c) * db[3] + Math.abs(s) * db[4];
+  const centerX = c * db[0] - s * db[1], centerY = s * db[0] + c * db[1];
+  dummy.pos.x = ab[0] + ab[3] + DUMMY_GAP + reachX - centerX;
+  dummy.pos.y = -centerY;
+  bodies = [atlas, dummy];
+
+  simTime = 0;
+  accumulator = 0;
+  contactTime = 0;
+  contactActive = false;
+  physicsPeakMs = 0;
+  BeamShips3D._lastTimeSec = 0;
+  for (const code in keys) keys[code] = false;
+  weaponInput.laser = weaponInput.missile = false;
+  BeamShips3D.sync(bodies, camera, simTime);
+  ready = true;
+  updateStats();
+}
+
+function ram() {
+  const speed = val('sl-speed');
+  return resetScene().then(() => {
+    const dx = dummy.pos.x - atlas.pos.x, dy = dummy.pos.y - atlas.pos.y;
+    const heading = Math.atan2(dy, dx);
+    setPlanarHeading(atlas, heading);
+    atlas.vel.x = Math.cos(heading) * speed;
+    atlas.vel.y = Math.sin(heading) * speed;
+    D.wake(atlas, 60);
+    paused = false;
+    toast(`Taran ${speed} j./s — ${el('opt-dummy').selectedOptions[0].textContent.toLowerCase()}, ${el('opt-pose').selectedOptions[0].textContent}`, 2200);
+  });
+}
+
+// Pierwsze przejście kodu kolizji, zgniotu i rozpadów kompiluje JIT — bez rozgrzewki
+// pierwszy taran przycina się na kilkadziesiąt ms. Dwie małe płyty, poza sceną.
+function warmUpPhysics() {
+  const w = 48, h = 20, data = new Uint8ClampedArray(w * h * 4);
+  for (let i = 0; i < w * h; i++) { data[i * 4] = data[i * 4 + 1] = data[i * 4 + 2] = 150; data[i * 4 + 3] = 255; }
+  const plate = buildSpriteBeamStructure({ width: w, height: h, data }, { worldLength: 480, cellsAlong: 48 });
+  const c = makeConfig();
+  c.crushStrength = 300000;
+  c.globalBreakMul = 0.6;
+  D.init(c);
+  const a = D.createBody(cloneBeamStructure(plate), {});
+  const b = D.createBody(cloneBeamStructure(plate), { position: { x: 380, y: 0, z: 0 } });
+  setPlanarHeading(b, Math.PI / 2);
+  a.vel.x = 1400;
+  const list = [a, b];
+  for (let i = 0; i < 160; i++) { D.integrate(FIXED_DT, list); D.update(FIXED_DT, list); }
+  D.splitQueue.length = 0;
+}
+
+// ============================== UI ==============================
+function bindSlider(id, outId, onChange, format = (v) => v) {
+  const input = el(id), out = el(outId);
+  const show = () => { out.textContent = format(Number(input.value)); };
+  input.addEventListener('input', () => { show(); onChange(Number(input.value)); });
+  show();
+}
+const kFormat = (v) => v === 0 ? 'dawne' : `${Math.round(v / 1000)}k`;
+bindSlider('sl-yield', 'o-yield', applySlidersToConfig, kFormat);
+for (const id of ['stiff', 'break', 'plastic', 'iters', 'crush']) bindSlider(`sl-${id}`, `o-${id}`, applySlidersToConfig);
+bindSlider('sl-speed', 'o-speed', () => {});
+bindSlider('sl-dmg', 'o-dmg', () => {});
+bindSlider('sl-radius', 'o-radius', () => {});
+bindSlider('sl-time', 'o-time', (v) => { timeScale = v; slowMo = false; });
+
+for (const id of ['opt-dummy', 'opt-pose', 'opt-mass', 'opt-res', 'opt-frame', 'opt-bulkhead', 'cb-local']) {
+  el(id).addEventListener('change', () => { resetScene().catch(fail); renderer.domElement.focus({ preventScroll: true }); });
+}
+el('btn-reset').addEventListener('click', () => resetScene().catch(fail));
+el('btn-ram').addEventListener('click', () => { ram().catch(fail); renderer.domElement.focus({ preventScroll: true }); });
+el('opt-follow').addEventListener('change', (e) => { followMode = e.target.value; });
+
+const toggles = [['cb-skin', 'skinEnabled', 'Sprite'], ['cb-beams', 'beamsEnabled', 'Podgląd belek'], ['cb-nodes', 'nodesEnabled', 'Podgląd węzłów']];
+for (const [id, prop, label] of toggles) {
+  el(id).addEventListener('change', (e) => {
+    BeamShips3D[prop] = e.target.checked;
+    for (const b of bodies) b.meshDirty = true;
+    toast(`${label}: ${e.target.checked ? 'ON' : 'OFF'}`, 1200);
+  });
+}
+function toggleCheckbox(id) {
+  const cb = el(id);
+  cb.checked = !cb.checked;
+  cb.dispatchEvent(new Event('change'));
+}
+for (const [button, panel] of [['btn-settings', 'panel-left'], ['btn-telemetry', 'panel-stats']]) {
+  el(button).addEventListener('click', () => {
+    const p = el(panel);
+    if (window.innerWidth <= 1000) {
+      const open = !p.classList.contains('open');
+      el('panel-left').classList.remove('open');
+      el('panel-stats').classList.remove('open');
+      p.classList.toggle('open', open);
+    } else p.classList.toggle('folded');
+  });
+}
+
+function fail(err) {
+  console.error('[destruktor2d]', err);
+  toast(`Błąd: ${err.message}`, 6000);
+}
+
+// ============================== STEROWANIE ==============================
+const FLIGHT_KEY = /^(Key[WASDQEX]|Arrow(Up|Down|Left|Right)|Shift(Left|Right)|Space)$/;
+window.addEventListener('keydown', (e) => {
+  if (e.target.closest('input, select, textarea') || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (FLIGHT_KEY.test(e.code)) e.preventDefault();
+  keys[e.code] = true;
+  if (e.repeat) return;
+  if (e.code === 'KeyT') ram().catch(fail);
+  if (e.code === 'KeyR') resetScene().catch(fail);
+  if (e.code === 'KeyP') { paused = !paused; accumulator = 0; toast(paused ? 'PAUZA (P)' : 'WZNOWIONO', 1200); }
+  if (e.code === 'KeyZ') {
+    slowMo = !slowMo;
+    timeScale = slowMo ? 0.2 : val('sl-time');
+    toast(slowMo ? 'Zwolnione tempo ×0,2 (Z)' : `Tempo ×${timeScale}`, 1200);
+  }
+  if (e.code === 'KeyV') {
+    const modes = ['atlas', 'dummy', 'pair', 'free'];
+    followMode = modes[(modes.indexOf(followMode) + 1) % modes.length];
+    el('opt-follow').value = followMode;
+    toast(`Kamera: ${el('opt-follow').selectedOptions[0].textContent}`, 1200);
+  }
+  if (e.code === 'KeyB') toggleCheckbox('cb-beams');
+  if (e.code === 'KeyK') toggleCheckbox('cb-skin');
+  if (e.code === 'KeyN') { D.repair(bodies, 0.4); toast('Naprawa konstrukcji…', 1200); }
+});
+window.addEventListener('keyup', (e) => { keys[e.code] = false; });
+function clearInput() {
+  for (const code in keys) keys[code] = false;
+  weaponInput.laser = weaponInput.missile = false;
+}
+window.addEventListener('blur', clearInput);
+document.addEventListener('visibilitychange', () => { if (document.hidden) clearInput(); });
+window.addEventListener('contextmenu', (e) => e.preventDefault());
+
+let panning = null;
+renderer.domElement.addEventListener('mousedown', (e) => {
+  renderer.domElement.focus({ preventScroll: true });
+  if (e.button === 1) {
+    e.preventDefault();
+    panning = { x: e.clientX, y: e.clientY };
+    followMode = 'free';
+    el('opt-follow').value = 'free';
+    return;
+  }
+  if (!ready || paused || !atlas || atlas.dead) return;
+  if (e.button === 0) weaponInput.laser = true;
+  if (e.button === 2) weaponInput.missile = true;
+  // Krótkie kliknięcie strzela raz, także między dwoma krokami fizyki.
+  weapons.triggers(0, atlas, e.button === 0, e.button === 2, val('sl-dmg'), val('sl-radius'));
+});
+window.addEventListener('mouseup', (e) => {
+  if (e.button === 0) weaponInput.laser = false;
+  if (e.button === 2) weaponInput.missile = false;
+  if (e.button === 1) panning = null;
+});
+window.addEventListener('mousemove', (e) => {
+  if (!panning) return;
+  const unitsPerPx = viewHeight / window.innerHeight;
+  cameraCenter.x -= (e.clientX - panning.x) * unitsPerPx;
+  cameraCenter.y += (e.clientY - panning.y) * unitsPerPx;
+  panning.x = e.clientX;
+  panning.y = e.clientY;
+});
+renderer.domElement.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const delta = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? window.innerHeight : 1);
+  viewHeight = Math.max(500, Math.min(24000, viewHeight * Math.exp(delta * 0.001)));
+}, { passive: false });
+
+// ============================== KAMERA ==============================
+const _target = new THREE.Vector2();
+function updateCamera(dt) {
+  const live = (b) => b && !b.dead;
+  if (followMode === 'atlas' && live(atlas)) _target.set(atlas.pos.x, atlas.pos.y);
+  else if (followMode === 'dummy' && live(dummy)) _target.set(dummy.pos.x, dummy.pos.y);
+  else if (followMode === 'pair' && live(atlas) && live(dummy)) _target.set((atlas.pos.x + dummy.pos.x) / 2, (atlas.pos.y + dummy.pos.y) / 2);
+  else _target.copy(cameraCenter);
+  if (followMode !== 'free') cameraCenter.lerp(_target, 1 - Math.exp(-dt * 6));
+  const aspect = window.innerWidth / window.innerHeight;
+  camera.left = -viewHeight * aspect / 2;
+  camera.right = viewHeight * aspect / 2;
+  camera.top = viewHeight / 2;
+  camera.bottom = -viewHeight / 2;
+  camera.position.set(cameraCenter.x, cameraCenter.y, 1000);
+  camera.updateProjectionMatrix();
+  camera.updateMatrixWorld();
+}
+
+// ============================== PĘTLA ==============================
+let lastFrame = performance.now();
+let fpsFrames = 0, fpsLast = performance.now(), fpsValue = 0;
+
+function pruneBodies() {
+  let changed = false;
+  for (const b of bodies) if (!b.dead && b.activeNodes <= 0) { b.dead = true; changed = true; }
+  if (changed) bodies = bodies.filter((b) => !b.dead);
+}
+
+function frame() {
+  requestAnimationFrame(frame);
+  const now = performance.now();
+  let dt = (now - lastFrame) / 1000;
+  lastFrame = now;
+  if (dt > 0.1) dt = 0.1;
+
+  const physicsStart = performance.now();
+  let simulated = 0;
+  if (ready && !paused && cfg) {
+    accumulator += dt * timeScale;
+    let steps = 0;
+    while (accumulator >= FIXED_DT && steps < 6) {
+      readPlanarFlightInput(keys, flightInput);
+      applyPlanarFlightControls(atlas, flightInput, FIXED_DT, PLANAR_FLIGHT_DEFAULTS, el('cb-assist').checked);
+      D.integrate(FIXED_DT, bodies);
+      weapons.triggers(FIXED_DT, atlas, weaponInput.laser, weaponInput.missile, val('sl-dmg'), val('sl-radius'));
+      weapons.update(FIXED_DT, bodies);
+      D.update(FIXED_DT, bodies);
+      contactActive = D.perf.contacts > 0;
+      if (contactActive && closingSpeed() > cfg.crushSpeedThreshold) contactTime += FIXED_DT;
+      simTime += FIXED_DT;
+      simulated += FIXED_DT;
+      accumulator -= FIXED_DT;
+      steps++;
+    }
+    if (steps === 6 && accumulator >= FIXED_DT) accumulator = 0;
+    pruneBodies();
+  }
+  const physicsMs = performance.now() - physicsStart;
+  if (simulated > 0) physicsPeakMs = Math.max(physicsPeakMs, physicsMs);
+  frameSimMs += simulated * 1000;
+  frameWallMs += dt * 1000;
+
+  updateCamera(dt);
+  BeamShips3D.sync(bodies, camera, simTime);
+  weaponVisuals.sync();
+  renderer.render(scene, camera);
+
+  fpsFrames++;
+  if (now - fpsLast > 500) {
+    fpsValue = Math.round(fpsFrames * 1000 / (now - fpsLast));
+    fpsFrames = 0;
+    fpsLast = now;
+    updateStats();
+    frameSimMs = frameWallMs = 0;
+  }
+}
+
+function speedOf(b) { return b && !b.dead ? Math.hypot(b.vel.x, b.vel.y) : 0; }
+
+// Prędkość zbliżania Atlasa i kukły wzdłuż linii środków (NaN, gdy któregoś brak).
+function closingSpeed() {
+  if (!atlas || !dummy || atlas.dead || dummy.dead) return NaN;
+  const dx = dummy.pos.x - atlas.pos.x, dy = dummy.pos.y - atlas.pos.y;
+  const len = Math.hypot(dx, dy) || 1;
+  return ((atlas.vel.x - dummy.vel.x) * dx + (atlas.vel.y - dummy.vel.y) * dy) / len;
+}
+
+function updateStats() {
+  const p = D.perf, s = BeamShips3D.stats;
+  const set = (id, v) => { el(id).textContent = v; };
+  set('st-fps', paused ? 'PAUZA' : String(fpsValue));
+  set('st-state', !ready ? 'BUDOWA…' : paused ? 'PAUZA (P)' : atlas?.dead ? 'ATLAS ZNISZCZONY — R' : contactActive ? 'STYK' : slowMo ? 'ZWOLNIONE ×0,2' : 'LOT');
+  set('st-phys', `${p.lastUpdateMs.toFixed(2)} ms`);
+  set('st-solver', `${p.lastSolverMs.toFixed(2)} ms`);
+  set('st-col', `${p.lastCollisionMs.toFixed(2)} ms`);
+  set('st-split', `${p.lastSplitMs.toFixed(2)} ms`);
+  set('st-physics-peak', `${physicsPeakMs.toFixed(1)} ms`);
+  set('st-sim-rate', frameWallMs > 0 ? `${(frameSimMs / frameWallMs * 100).toFixed(0)}%` : '—');
+  set('st-contacts', String(p.contacts));
+  set('st-contact-time', `${contactTime.toFixed(2)} s`);
+  set('st-speed', `${speedOf(atlas).toFixed(0)} j./s`);
+  set('st-dummy-speed', `${speedOf(dummy).toFixed(0)} j./s`);
+  const closing = closingSpeed();
+  set('st-closing', Number.isFinite(closing) ? `${closing.toFixed(0)} j./s` : '—');
+  set('st-atlas-nodes', atlas ? `${atlas.activeNodes}` : '—');
+  set('st-dummy-nodes', dummy ? `${dummy.activeNodes}` : '—');
+  set('st-bodies', `${bodies.length} / ${bodies.filter((b) => b.isWreck).length}`);
+  set('st-lattice', `${s.nodes} / ${s.beams}`);
+  if (cfg?.localSolver) {
+    let region = 0;
+    for (const b of bodies) if (!b.dead && b._region && b._region.store === b.nodeStore) region += b._region.list.length;
+    set('st-region', `${region} węzłów`);
+  } else set('st-region', 'pełny solver');
+  set('st-broken', String(p.beamsBroken));
+  const debris = BeamShips3D.debris;
+  set('st-debris', `${debris?.batches[0].alive || 0} / ${debris?.batches[1].alive || 0}`);
+  set('st-hits', `${weapons.stats.laserHits} / ${weapons.stats.missileHits}`);
+}
+
+window.addEventListener('resize', () => renderer.setSize(window.innerWidth, window.innerHeight));
+
+// Hook diagnostyczny — sterowanie z konsoli, gdy karta stoi w tle.
+window.__demo2d = {
+  scene, camera, renderer, D, BeamShips3D, weapons,
+  get bodies() { return bodies; },
+  get atlas() { return atlas; },
+  get dummy() { return dummy; },
+  get config() { return cfg; },
+  reset: () => resetScene(),
+  ram: () => ram(),
+  step(steps = 1) {
+    for (let i = 0; i < steps; i++) {
+      D.integrate(FIXED_DT, bodies);
+      weapons.update(FIXED_DT, bodies);
+      D.update(FIXED_DT, bodies);
+      simTime += FIXED_DT;
+    }
+    pruneBodies();
+  },
+  render() {
+    updateCamera(1);
+    BeamShips3D.sync(bodies, camera, simTime);
+    weaponVisuals.sync();
+    renderer.render(scene, camera);
+    updateStats();
+  },
+  setView(x, y, height, mode = 'free') {
+    cameraCenter.set(x, y);
+    viewHeight = height;
+    followMode = mode;
+  }
+};
+
+toast('Ładowanie sprite\'ów Atlasa i kukły…', 2000);
+warmUpPhysics();
+resetScene()
+  .then(() => toast('W — lot, T — taran w kukłę, Z — zwolnione tempo', 3200))
+  .catch(fail);
+frame();
+</script>
+</body>
+</html>

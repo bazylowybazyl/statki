@@ -68,11 +68,28 @@ export const BRIDGE_KILL_TIMELINE = Object.freeze({
   sequenceEnd: 4.0
 });
 
+// Zapas strefy od hardpointów i silników [px renderu] wg klasy uzbrojenia
+// kadłuba (WEAPON_TIER_BY_HULL w src/data/ships.js). Sonda hardpointu ma
+// tylko 14 px PNG (HARDPOINT_INTEGRITY_CONFIG.probeRadius × skala), ale nad
+// modelem mostka rysuje się wieżyczka 2D: korpus ~20 j. × skala rozmiaru
+// działa × skala klasy (turret2D SCALE_BY_SIZE, WEAPON_TIER_SCALE) — S ~6,
+// M ~10 px; L i Capital 14 px jak przy pierwszych strefach.
+export const BRIDGE_TURRET_CLEARANCE_PX = Object.freeze({ S: 6, M: 10, L: 14, Capital: 14 });
+
+/** Minimalny zapas strefy od hardpointu/silnika w px PNG (renderPerPng = render/PNG). */
+export function bridgeZoneMargin(renderPerPng, tier = 'L') {
+  const k = Number(renderPerPng) > 0 ? Number(renderPerPng) : 1;
+  const px = BRIDGE_TURRET_CLEARANCE_PX[tier] ?? BRIDGE_TURRET_CLEARANCE_PX.L;
+  return Math.max(14, px / k);
+}
+
 // PROPOZYCJE STREF (przestrzeń PNG). Do przeniesienia przy integracji do
-// src/data/hardpointEditorDefaults.js jako `bridges: [...]` obok `cores`
-// (klucze edytora: atlas, battleship, pirate_battleship). Położenia
-// odczytane z obrazków z nałożonymi hardpointami i silnikami — żadna strefa
-// ich nie nachodzi (pilnuje tego tests/shipBridge.test.mjs).
+// src/data/hardpointEditorDefaults.js jako `bridges: [...]` obok `cores`.
+// Klucze = klucze edytora hardpointów (ten sam sprite); gracz i NPC trafiają
+// tu przez normalizeBridgeHullKey / resolveBridgeHullKey (shipBridgeRuntime.js).
+// Strefa leży na namalowanej nadbudówce (model 3D ją zastępuje), poza
+// zapasem bridgeZoneMargin od hardpointów i silników (pilnuje tego
+// tests/shipBridge.test.mjs). Nowy kadłub: docs/BRIEF-mostek-nowego-kadluba.md.
 export const BRIDGE_LAYOUT_PROPOSALS = Object.freeze({
   battleship: Object.freeze({
     label: 'Bellator',
@@ -90,8 +107,8 @@ export const BRIDGE_LAYOUT_PROPOSALS = Object.freeze({
     windowColor: '#ff9a4a',
     variants: Object.freeze({
       standard: Object.freeze([
-        // Kolczasta kopuła z kratą chłodnic, rufowa połowa w osi.
-        Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', x: -242, y: -2, w: 176, h: 104, rot: 0 })
+        // Rufowa nadbudówka nowego sprite'a Iron Skull (1727 × 911 px).
+        Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', x: -312.5, y: 0.5, w: 254, h: 150, rot: 0 })
       ])
     }),
     defaultVariant: 'standard'
@@ -117,6 +134,90 @@ export const BRIDGE_LAYOUT_PROPOSALS = Object.freeze({
       ])
     }),
     defaultVariant: 'rufowy_z_zapasowym'
+  }),
+  // --- Terra Nova ---
+  frigate: Object.freeze({
+    label: 'Custos',
+    windowColor: '#e4f3ff',
+    variants: Object.freeze({
+      standard: Object.freeze([
+        // Rufowy blok dowodzenia: kwadratowa wieża i okrągły właz, między
+        // działami burtowymi a dyszami (PNG 2400 × 1792, render 192 × 143).
+        Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', x: -552, y: -5, w: 430, h: 220, rot: 0 })
+      ])
+    }),
+    defaultVariant: 'standard'
+  }),
+  destroyer: Object.freeze({
+    label: 'Hasta',
+    windowColor: '#e4f3ff',
+    variants: Object.freeze({
+      standard: Object.freeze([
+        // Ten sam układ co Custos: wieża i właz w osi, rufowa część (768 × 573).
+        Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', x: -193, y: 0, w: 150, h: 76, rot: 0 })
+      ])
+    }),
+    defaultVariant: 'standard'
+  }),
+  terran_carrier: Object.freeze({
+    label: 'Citadella',
+    windowColor: '#e4f3ff',
+    variants: Object.freeze({
+      standard: Object.freeze([
+        // Cytadela na rufowym bloku: poprzeczna płyta z dwoma okrągłymi
+        // kopułami i mechanizmem w osi (1672 × 941).
+        Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', x: -552.5, y: -14.5, w: 95, h: 161, rot: 0 })
+      ])
+    }),
+    defaultVariant: 'standard'
+  }),
+  terran_supercapital: Object.freeze({
+    label: 'Colossus',
+    windowColor: '#e4f3ff',
+    variants: Object.freeze({
+      standard: Object.freeze([
+        // Centralna nadbudówka: ośmiokątna wieża z kratą, długi blok z napisem
+        // TERRA NOVA i kapsuła czujników przed nim (1672 × 941).
+        Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', x: -81.5, y: 0, w: 347, h: 124, rot: 0 })
+      ])
+    }),
+    defaultVariant: 'standard'
+  }),
+  // --- Piraci (rodzina Iron Skull) ---
+  pirate_frigate: Object.freeze({
+    label: 'Iron Skull — fregata',
+    windowColor: '#ff9a4a',
+    variants: Object.freeze({
+      standard: Object.freeze([
+        // Najeżona kopuła i krata za nią, między dyszami a działami (1942 × 809).
+        Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', x: -439, y: 2.5, w: 232, h: 195, rot: 0 })
+      ])
+    }),
+    defaultVariant: 'standard'
+  }),
+  pirate_destroyer: Object.freeze({
+    label: 'Iron Skull — niszczyciel',
+    windowColor: '#ff9a4a',
+    variants: Object.freeze({
+      standard: Object.freeze([
+        // Bunkier z czaszką i krata chłodnic na rufie (1840 × 854).
+        Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', x: -406, y: -7.5, w: 268, h: 175, rot: 0 })
+      ])
+    }),
+    defaultVariant: 'standard'
+  }),
+  // --- Megafrachtowiec: mostek ma tylko lokomotywa (wagony to ładunek) ---
+  megafreighter: Object.freeze({
+    label: 'Megafrachtowiec — lokomotywa',
+    windowColor: '#ffe0b0',
+    variants: Object.freeze({
+      standard: Object.freeze([
+        // Blok „C” z włazem za dziobem, sterówka przed nim i kapsuły po bokach
+        // (1672 × 941, render 2760 × 1553 — sprite powiększony ×1,65).
+        Object.freeze({ id: 'mostek', label: 'Mostek', role: 'primary', x: 456, y: -6, w: 222, h: 212, rot: 0 })
+      ])
+    }),
+    defaultVariant: 'standard'
   })
 });
 
@@ -507,6 +608,8 @@ export function bridgeWorldDirToPng(entity, vx, vy, out = { x: 0, y: 0 }) {
  * opts.scaleX/scaleY — PNG → render (npc.__hardpointScaleX/Y; gracz: ship.__hardpointScaleX/Y).
  * opts.rule          — 'all' (domyślnie) albo 'any'.
  * opts.windowColor   — barwa okien, gdy definicja jej nie podaje.
+ * opts.hullKey       — klucz kadłuba (atlas, battleship, pirate_battleship):
+ *                      po nim src/3d/bridge3D.js wybiera model 3D mostka.
  */
 export function attachShipBridges(entity, list, opts = {}) {
   if (!entity) return null;
@@ -606,6 +709,7 @@ export function attachShipBridges(entity, list, opts = {}) {
     commandLost: false,
     commandLostAt: -1,
     cause: null,
+    hullKey: typeof opts.hullKey === 'string' ? opts.hullKey : null,
     scaleX,
     scaleY,
     hexRadius: radius,

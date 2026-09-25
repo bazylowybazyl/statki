@@ -22,6 +22,7 @@
 
 import * as THREE from 'three';
 import { Core3D } from './core3d.js';
+import { sceneOriginNearCamera } from './sceneOrigin.js';
 import { makeFlareTexture, makeGlowTexture, makeRingTexture } from '../../Engineeffects.js';
 
 const MAX_NOZZLES = 4096;
@@ -107,7 +108,10 @@ float noise (in vec2 st) {
 }
 
 void main() {
-    vec2 uv = vUv;
+    // MSAA liczy piksel krawędzi w jego środku, także POZA kwadem — uv wychodzi
+    // lekko poza [0, 1], a pow(y, ...) z ujemnym y daje w ANGLE/HLSL NaN, który
+    // bloom rozlewa na cały ekran.
+    vec2 uv = clamp(vUv, 0.0, 1.0);
     float x = (uv.x - 0.5) * 2.0;
     float y = 1.0 - uv.y;
 
@@ -278,6 +282,9 @@ let ring = null;
 let lightPool = null;
 let count = 0;
 const lightCandidates = [];
+// Początek układu instancji tej klatki (sceneOrigin.js): aPos jest względem
+// niego, a mesh.position warstw niesie duży kawałek (modelViewMatrix w double).
+const origin = { x: 0, y: 0 };
 
 function ensureBuilt() {
   if (flame) return true;
@@ -343,6 +350,7 @@ function pushGlowInstance(layer, index, x, y, sizeX, sizeY, color, opacity) {
 function commitLayer(layer, instanceCount) {
   const visible = instanceCount > 0;
   if (layer.mesh.visible !== visible) layer.mesh.visible = visible;
+  layer.mesh.position.set(origin.x, origin.y, 0);
   if (layer.geo.instanceCount !== instanceCount) layer.geo.instanceCount = instanceCount;
   if (!visible) return;
   // Zapisane jest tylko [0, instanceCount) — bez zakresu three wgrywalby caly
@@ -362,6 +370,8 @@ export const EngineExhaustBatch = {
   begin() {
     count = 0;
     lightCandidates.length = 0;
+    // Wołane z updateHexShips3D po Core3D.syncCamera — kamera tej klatki.
+    sceneOriginNearCamera(origin);
   },
 
   /**
@@ -394,12 +404,16 @@ export const EngineExhaustBatch = {
     const finalCol = kelvinToRGB(_scratchColor, state.colorTempK + throttle * 4000).lerp(_warpBlue, warp);
     const edgeMul = state.bloomGain * ENGINE_HDR;
 
+    // Pozycja względem początku przy kamerze — małe liczby dla float32.
+    const px = p.x - origin.x;
+    const py = p.y - origin.y;
+
     const i = count++;
     const i2 = i * 2;
     const i3 = i * 3;
     const a = flame.arrays;
-    a.aPos[i2] = p.x;
-    a.aPos[i2 + 1] = p.y;
+    a.aPos[i2] = px;
+    a.aPos[i2 + 1] = py;
     a.aRot[i] = p.rot;
     a.aScale[i2] = p.scaleX;
     a.aScale[i2 + 1] = p.scaleY;
@@ -421,14 +435,14 @@ export const EngineExhaustBatch = {
     const cR = Math.cos(p.rot);
     const sR = Math.sin(p.rot);
     const glowOffY = 2 * p.scaleY;
-    const glowX = p.x - glowOffY * sR;
-    const glowY = p.y + glowOffY * cR;
+    const glowX = px - glowOffY * sR;
+    const glowY = py + glowOffY * cR;
 
     state.flareOpacity = lerp(state.flareOpacity, (throttle * 0.5 + warp * 1.5) * state.bloomGain, 0.1);
     if (state.flareOpacity > 0.003) {
       _glowColor.copy(finalCol).multiplyScalar(ENGINE_HDR);
       pushGlowInstance(flare, i,
-        p.x, p.y,
+        px, py,
         (100 + warp * 150) * throttleWidthFactor * p.scaleX,
         (6 + warp * 4) * p.scaleY,
         _glowColor, state.flareOpacity);
@@ -448,7 +462,7 @@ export const EngineExhaustBatch = {
         70 * p.scaleY,
         _glowColor, state.heat);
       pushGlowInstance(ring, i,
-        p.x, p.y,
+        px, py,
         50 * (1.0 + warp * 0.3) * throttleWidthFactor * p.scaleX,
         30 * p.scaleY,
         ring.defaultColor, state.heat);

@@ -8,7 +8,7 @@
 // bezszwowa na u = 0/1 bez żadnych sztuczek.
 //
 //   mapA RGBA16F: wysokość [j.], odległość od rzeki [j.], wilgotność, temperatura
-//   mapB RGBA8:   wagi typów sektorów (krajobraz, miasto-ogród, przemysł, szkło)
+//   mapB RGBA8:   park (megabudowle, kopuły), wagi typów: miasto-ogród, przemysł, szkło
 //   mapC RGBA8:   las, zabudowa, odsłonięta konstrukcja, skała
 //
 // Pierwsza klatka dostaje mapę niskiej rozdzielczości w jednym przebiegu,
@@ -18,10 +18,12 @@ import { HALO_GLSL_COMMON, HALO_GLSL_NOISE, HALO_GLSL_PORTSITES } from './haloRi
 import { HALO_SECTOR_TYPES, HALO_TERRAIN } from './haloRingConfig.js';
 import { haloPortTileUniforms } from './haloRingUniforms.js';
 import { HALO_LANDMARK } from './haloRingLandmarks.js';
+import { HALO_DOME } from './haloRingDomes.js';
 
 const MAX_SECTORS = 32;
 const RIVERS = 3;
 const MAX_LANDMARKS = HALO_LANDMARK.maxCount;
+const MAX_DOMES = HALO_DOME.maxCount;
 
 const BAKE_VERTEX = /* glsl */`
 varying vec2 vUv;
@@ -50,25 +52,83 @@ uniform float uSeaDepth;
 uniform float uLandmarkCount;
 uniform vec4 uLandmarkA[${MAX_LANDMARKS}];   // s srodka, pol-dlugosc plyty wzdluz, t srodka, pol-szerokosc w poprzek
 uniform vec4 uLandmarkB[${MAX_LANDMARKS}];   // wysokosc placu, trawnik, rampa, -
+uniform vec4 uLandmarkC[${MAX_LANDMARKS}];   // park: pol-dlugosc wzdluz, pol-szerokosc w poprzek (od srodka)
+uniform vec4 uLandmarkD[${MAX_LANDMARKS}];   // staw: przesuniecie wzdluz, w poprzek, polosie a, b (a = 0: brak)
+uniform float uDomeCount;
+uniform vec4 uDomeA[${MAX_DOMES}];           // s srodka, t srodka, promien szkla, wysokosc podlogi
+uniform vec4 uDomeB[${MAX_DOMES}];           // typ wnetrza, ziarno, promien plaskiego pasa, rampa
+uniform vec4 uDomeC[${MAX_DOMES}];           // park: pol-dlugosc wzdluz, pol-szerokosc w poprzek
 varying vec2 vUv;
 ${HALO_GLSL_PORTSITES}
 
-// Place pod megabudowlami (haloRingLandmarks.js): x = waga placu (1 na plycie
-// i trawniku, rampa do terenu), y = rdzen pod plyta (ukryty pod kamienna
-// plyta: bez drzew i detalu), z = wysokosc placu, w = obrzeze plyty.
-vec4 haloLandmarkPlaza(float s, float t, float L) {
-  vec4 best = vec4(0.0);
+// Obiekty obywatelskie (haloRingLandmarks.js, haloRingDomes.js): plac lub
+// podloga kopuly (wyplaszczenie z rampa), rdzen i obrzeze plyty placu, pas
+// bez drzew (plyta, trawnik z pawilonami, brzeg szkla i pas wokol kopuly),
+// park (bez zabudowy: sciezki i kepy drzew), staw, wnetrze kopuly.
+struct HaloCivic {
+  float flatW;
+  float flatH;
+  float core;
+  float rim;
+  float clear;
+  float park;
+  float pond;
+  float dome;
+  float domeQ;
+  float domeType;
+  float domeSeed;
+};
+// granica parku: prostokat o zaokraglonych naroznikach (odleglosc ze znakiem)
+float haloParkSd(vec2 d, vec2 halfP) {
+  float R = min(320.0, 0.45 * min(halfP.x, halfP.y));
+  vec2 q = abs(d) - (halfP - R);
+  return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - R;
+}
+HaloCivic haloCivicAt(float s, float t, float L, float warp) {
+  HaloCivic c;
+  c.flatW = 0.0; c.flatH = 0.0; c.core = 0.0; c.rim = 0.0; c.clear = 0.0; c.park = 0.0; c.pond = 0.0;
+  c.dome = 0.0; c.domeQ = 10.0; c.domeType = 0.0; c.domeSeed = 0.0;
   for (int i = 0; i < ${MAX_LANDMARKS}; i++) {
     if (float(i) >= uLandmarkCount) break;
     vec4 A = uLandmarkA[i];
     vec4 B = uLandmarkB[i];
+    vec4 C = uLandmarkC[i];
+    vec4 D = uLandmarkD[i];
     float ds = s - A.x;
     ds -= L * floor(ds / L + 0.5);
-    float d = max(abs(ds) - A.y, abs(t - A.z) - A.w);
+    float dt = t - A.z;
+    float d = max(abs(ds) - A.y, abs(dt) - A.w);
     float w = 1.0 - smoothstep(B.y, B.y + B.z, d);
-    if (w > best.x) best = vec4(w, 1.0 - smoothstep(-70.0, -40.0, d), B.x, 1.0 - smoothstep(0.0, 80.0, d));
+    if (w > c.flatW) { c.flatW = w; c.flatH = B.x; }
+    c.core = max(c.core, 1.0 - smoothstep(-70.0, -40.0, d));
+    c.rim = max(c.rim, 1.0 - smoothstep(0.0, 80.0, d));
+    c.clear = max(c.clear, 1.0 - smoothstep(B.y - 20.0, B.y + 10.0, d));
+    float dp = haloParkSd(vec2(ds, dt), C.xy) + warp;
+    c.park = max(c.park, 1.0 - smoothstep(-80.0, 20.0, dp));
+    if (D.z > 0.5) {
+      float e = length(vec2((ds - D.x) / D.z, (dt - D.y) / D.w)) + warp * 0.0015;
+      c.pond = max(c.pond, 1.0 - smoothstep(0.86, 1.0, e));
+    }
   }
-  return best;
+  for (int i = 0; i < ${MAX_DOMES}; i++) {
+    if (float(i) >= uDomeCount) break;
+    vec4 A = uDomeA[i];
+    vec4 B = uDomeB[i];
+    vec4 C = uDomeC[i];
+    float ds = s - A.x;
+    ds -= L * floor(ds / L + 0.5);
+    float dt = t - A.y;
+    float dist = length(vec2(ds, dt));
+    float w = 1.0 - smoothstep(B.z, B.z + B.w, dist);
+    if (w > c.flatW) { c.flatW = w; c.flatH = A.w; }
+    float inside = 1.0 - smoothstep(A.z - 6.0, A.z + 2.0, dist);
+    if (dist < A.z * 1.5 && dist / A.z < c.domeQ) { c.domeQ = dist / A.z; c.domeType = B.x; c.domeSeed = B.y; }
+    c.dome = max(c.dome, inside);
+    c.clear = max(c.clear, smoothstep(A.z * 0.86, A.z * 0.92, dist) * (1.0 - smoothstep(B.z - 10.0, B.z + 20.0, dist)));
+    float dp = haloParkSd(vec2(ds, dt), C.xy) + warp;
+    c.park = max(c.park, (1.0 - smoothstep(-80.0, 20.0, dp)) * (1.0 - inside));
+  }
+  return c;
 }
 
 vec3 cylP(float s, float t, float scale) {
@@ -116,6 +176,7 @@ struct HaloWorld {
   float urban;
   float exposed;
   float rock;
+  float park;
 };
 
 HaloWorld haloWorldAt(float s, float t) {
@@ -157,9 +218,10 @@ HaloWorld haloWorldAt(float s, float t) {
   float zShield = pz.w;
   float zNear = max(zInd, zShield);
   typeW = typeW * (1.0 - zInd) + vec4(0.0, 0.0, zInd, 0.0);
-  // plac pod megabudowla: plasko, lad, bez rzek, zabudowy i lasu
-  vec4 lmP = haloLandmarkPlaza(s, t, L);
-  float lmW = lmP.x;
+  // obiekty obywatelskie: plac megabudowli / podloga kopuly (plasko, lad, bez
+  // rzek i zabudowy), park wokol (kepy drzew, sciezki), staw, wnetrze kopuly
+  HaloCivic cv = haloCivicAt(s, t, L, zWarp * 0.15);
+  float civFlat = max(cv.flatW, cv.dome);
 
   // --- kontynenty i morza (zawinieta domena, okresowa na walcu)
   vec3 q = cylP(s, t, 14000.0);
@@ -170,7 +232,7 @@ HaloWorld haloWorldAt(float s, float t) {
   float mountAmt = cl.y;
   float e = cont - thr + wallZone * mountAmt * 0.32;
   e = mix(e, max(e, 0.22), zNear);  // pod pasem fabrycznym i nad dokiem lad, nie morze
-  e = mix(e, max(e, 0.3), lmW);
+  e = mix(e, max(e, 0.3), civFlat);
   float coast = smoothstep(-0.015, 0.015, e);
   float seaH = -8.0 - uSeaDepth * smoothstep(0.0, 0.3, -e);
 
@@ -218,7 +280,51 @@ HaloWorld haloWorldAt(float s, float t) {
   // doki wpiete w podloge (K-7 + zatoki) i portale tranzytow: plaska plyta bez zabudowy
   float dockPad = haloPortPad(s, t, L, 0.0, 300.0);
   h = mix(h, 7.0, dockPad);
-  h = mix(h, lmP.z, lmW);
+  // wnetrze kopuly wg typu (jak domeInterior w orbital_ring_demo_2): woda,
+  // las, park, wzgorza i klimat (tropiki: palmy, dzicz: iglaste)
+  float dWater = 0.0;
+  float dForest = 0.0;
+  float dPark = 0.0;
+  float dHill = 0.0;
+  vec2 dClim = vec2(0.6, 0.7);
+  if (cv.dome > 0.001) {
+    float dn = fbm3(cylP(s, t, 160.0) + cv.domeSeed * 37.0, 3) * 0.5 + 0.5;
+    float dn2 = fbm3(cylP(s, t, 70.0) + cv.domeSeed * 53.0 + 11.0, 2) * 0.5 + 0.5;
+    float dq = cv.domeQ;
+    if (cv.domeType < 0.5) {
+      // las: staw na srodku, gesty las
+      dWater = 1.0 - smoothstep(0.2, 0.26, dq + (dn - 0.5) * 0.12);
+      dForest = 0.95; dPark = 0.25; dHill = 6.0 * dn2; dClim = vec2(0.5, 0.82);
+    } else if (cv.domeType < 1.5) {
+      // tropiki: sadzawka, rozlewiska, wzgorza, palmy
+      dWater = max(1.0 - smoothstep(0.13, 0.18, dq), smoothstep(0.6, 0.66, dn));
+      dForest = 1.0; dPark = 0.2; dClim = vec2(0.9, 0.95);
+      dHill = 26.0 * smoothstep(0.35, 0.75, dn2) * (1.0 - smoothstep(0.52, 0.6, dn));
+    } else if (cv.domeType < 2.5) {
+      // ogrod botaniczny: fontanna na srodku, sciezki, rzadkie drzewa
+      dWater = 1.0 - smoothstep(0.08, 0.11, dq);
+      dForest = 0.3 * smoothstep(0.5, 0.7, dn); dPark = 1.0; dClim = vec2(0.62, 0.72);
+    } else if (cv.domeType < 3.5) {
+      // park rekreacyjny: jeziora, trawniki, sciezki
+      dWater = smoothstep(0.6, 0.64, dn) * smoothstep(0.12, 0.18, dq);
+      dForest = 0.35 * smoothstep(0.45, 0.65, dn2); dPark = 1.0; dClim = vec2(0.6, 0.66);
+    } else if (cv.domeType < 4.5) {
+      // dzicz: las iglasty i laki, wzgorza
+      dWater = smoothstep(0.68, 0.72, dn);
+      dForest = 0.95 * smoothstep(0.42, 0.5, dn2); dHill = 30.0 * smoothstep(0.4, 0.8, dn); dClim = vec2(0.34, 0.78);
+    } else {
+      // akwarium: woda z wyspami
+      float isl = smoothstep(0.6, 0.64, dn) * smoothstep(0.18, 0.24, dq);
+      dWater = 1.0 - isl; dForest = 0.6 * isl; dPark = 0.6 * isl; dClim = vec2(0.75, 0.9);
+    }
+    // brzeg szkla bez wody i wzgorz (kolnierz); woda tylko przy niskiej podlodze
+    dWater *= (1.0 - smoothstep(0.84, 0.92, dq)) * (1.0 - smoothstep(12.0, 16.0, cv.flatH));
+    dHill *= 1.0 - smoothstep(0.7, 0.9, dq);
+  }
+  h = mix(h, cv.flatH + dHill * cv.dome, civFlat);
+  // stawy parkow i woda w kopulach (woda w terenie = poziom 0)
+  float civWater = max(cv.pond, dWater * cv.dome);
+  h = mix(h, min(h, -5.0), civWater);
 
   // --- rzeki: meandry okresowe (parametry z layoutu), zanikaja w gorach
   float uu = s / L;
@@ -232,7 +338,7 @@ HaloWorld haloWorldAt(float s, float t) {
     float halfW = ra.y * (0.5 + 0.5 * (haloGnoise3(cylP(s, 0.0, 9000.0) + float(i) * 7.3) * 0.5 + 0.5));
     rd = min(rd, abs(v - vc) * Wf - halfW);
   }
-  float riverW = clamp(typeW.x + typeW.y + typeW.w * 0.7, 0.0, 1.0) * (1.0 - desert * 0.85) * (1.0 - dockPad) * (1.0 - zInd) * (1.0 - lmW);
+  float riverW = clamp(typeW.x + typeW.y + typeW.w * 0.7, 0.0, 1.0) * (1.0 - desert * 0.85) * (1.0 - dockPad) * (1.0 - zInd) * (1.0 - civFlat);
   float fadeHigh = 1.0 - smoothstep(150.0, 320.0, h);
   float bankT = smoothstep(0.0, 110.0, max(rd, 0.0));
   float riverH = rd < 0.0 ? (-5.0 - 6.0 * clamp(-rd / 30.0, 0.0, 1.0)) : mix(1.2, h, bankT);
@@ -243,6 +349,8 @@ HaloWorld haloWorldAt(float s, float t) {
   float nearWater = (1.0 - smoothstep(0.0, 420.0, rd)) * 0.22 + (1.0 - coast) * 0.12;
   float moist = clamp(cl.w + nearWater, 0.0, 1.0);
   float temp = clamp(cl.z - max(h, 0.0) / max(hMax, 1.0) * 0.5, 0.0, 1.0);
+  moist = mix(moist, dClim.y, cv.dome);
+  temp = mix(temp, dClim.x, cv.dome);
   float fN = fbm3(cylP(s, t, 1200.0) + 57.0, 4) * 0.5 + 0.5;
   float forest = smoothstep(0.42, 0.7, fN * 0.62 + moist * 0.55 - 0.08)
     * smoothstep(0.16, 0.3, temp) * smoothstep(-2.0, 4.0, h) * (1.0 - desert)
@@ -254,19 +362,27 @@ HaloWorld haloWorldAt(float s, float t) {
     + typeW.w * smoothstep(0.38, 0.55, cityN) * 0.75) * dry * (1.0 - smoothstep(110.0, 260.0, h));
   // pas fabryczny gesty, osady w dolinach gestsze niz zwykle miasto-ogrod
   urban = max(urban, (zInd * 0.95 + zRes * smoothstep(0.16, 0.3, cityN)) * dry * (1.0 - smoothstep(110.0, 260.0, h)));
-  urban = clamp(urban, 0.0, 1.0) * (1.0 - dockPad) * (1.0 - lmW);
-  forest *= (1.0 - urban * 0.9) * (1.0 - dockPad) * (1.0 - zInd) * (1.0 - lmW);
+  urban = clamp(urban, 0.0, 1.0) * (1.0 - dockPad) * (1.0 - max(civFlat, cv.park));
+  forest *= (1.0 - urban * 0.9) * (1.0 - dockPad) * (1.0 - zInd);
+  // park: kepy drzew z szumu (jak lasy parkow ECUMENE) i pojedyncze drzewa na
+  // trawnikach (podloga 0.08: rzadkie sloty drzew, ponizej progu lasu w terenie);
+  // kopula: las wg typu
+  float clump = smoothstep(0.47, 0.62, fbm3(cylP(s, t, 230.0) + 77.0, 3) * 0.5 + 0.5);
+  forest = mix(forest, max(clump * 0.9, 0.08), cv.park);
+  forest = mix(forest, dForest, cv.dome);
+  forest *= (1.0 - cv.clear) * (1.0 - civWater);
   float exN = fbm3(cylP(s, t, 4800.0) + 91.0, 3);
   // plyta doku: goly metal z liniami (fartuch portu), bez zabudowy i lasu;
   // pod plyta placu megabudowli rdzen (bez drzew i detalu), obrzeze splaszczone
   float exposed = max(typeW.z * smoothstep(0.22, 0.36, exN) * dry * (1.0 - dockPad), dockPad);
-  exposed = max(exposed, max(lmP.y, lmP.w * 0.3));
+  exposed = max(exposed, max(cv.core, cv.rim * 0.3));
   float rock = clamp(smoothstep(230.0, 540.0, h) * 0.75 + desert * smoothstep(40.0, 110.0, h) * 0.8, 0.0, 1.0);
 
-  // pod plyta placu i tuz za nia bez drzew (drzewa miasta rosna z wagi
-  // ogrodu, a nie wolno im przebic plyty): waga ogrodu -> szklo, sam koniec
-  // (wysokosc, zabudowa, las policzone wyzej)
-  typeW = mix(typeW, vec4(0.0, 0.0, 0.0, 1.0), smoothstep(0.6, 0.8, lmP.w) * lmW);
+  // bez drzew na plycie placu, trawniku z pawilonami, przy brzegu szkla i na
+  // pasie wokol kopuly (drzewa miasta rosna tez z wagi ogrodu, a nie wolno im
+  // przebic plyty ani szkla): waga ogrodu -> szklo, sam koniec (wysokosc,
+  // zabudowa, las policzone wyzej)
+  typeW = mix(typeW, vec4(0.0, 0.0, 0.0, 1.0), cv.clear);
 
   W.h = h;
   W.riverDist = clamp(rd, -200.0, 600.0);
@@ -277,6 +393,8 @@ HaloWorld haloWorldAt(float s, float t) {
   W.urban = urban;
   W.exposed = exposed;
   W.rock = rock;
+  // park (kanal R mapy B): sciezki i kwietniki rysuje shader terenu
+  W.park = clamp(max(cv.park * (1.0 - cv.core), dPark * cv.dome), 0.0, 1.0) * (1.0 - civWater);
   return W;
 }
 `;
@@ -292,7 +410,7 @@ void main() {
   float t = uv.y * uGeo.y;
   HaloWorld W = haloWorldAt(s, t);
   ${output === 'A' ? 'gl_FragColor = vec4(W.h, W.riverDist, W.moist, W.temp);' : ''}
-  ${output === 'B' ? 'gl_FragColor = W.typeW;' : ''}
+  ${output === 'B' ? 'gl_FragColor = vec4(W.park, W.typeW.y, W.typeW.z, W.typeW.w);' : ''}
   ${output === 'C' ? 'gl_FragColor = vec4(W.forest, W.urban, W.exposed, W.rock);' : ''}
 }
 `;
@@ -382,6 +500,12 @@ export class HaloWorldMaps {
       uLandmarkCount: { value: 0 },
       uLandmarkA: { value: Array.from({ length: MAX_LANDMARKS }, () => new THREE.Vector4()) },
       uLandmarkB: { value: Array.from({ length: MAX_LANDMARKS }, () => new THREE.Vector4(0, 0, 1, 0)) },
+      uLandmarkC: { value: Array.from({ length: MAX_LANDMARKS }, () => new THREE.Vector4()) },
+      uLandmarkD: { value: Array.from({ length: MAX_LANDMARKS }, () => new THREE.Vector4(0, 0, 0, 1)) },
+      uDomeCount: { value: 0 },
+      uDomeA: { value: Array.from({ length: MAX_DOMES }, () => new THREE.Vector4(0, 0, 1, 0)) },
+      uDomeB: { value: Array.from({ length: MAX_DOMES }, () => new THREE.Vector4(0, 0, 0, 1)) },
+      uDomeC: { value: Array.from({ length: MAX_DOMES }, () => new THREE.Vector4()) },
       ...(() => {
         const t = haloPortTileUniforms(layout);
         return { uPortTile: { value: t.tile }, uPortRects: { value: t.rects }, uPortZones: { value: t.zones } };
@@ -481,19 +605,31 @@ export class HaloWorldMaps {
     this.cpu = { w, h, heights };
   }
 
-  // Place pod megabudowlami (buildHaloLandmarkPlan — miejsca wybrane z mapy
-  // sprzed placów): uniformy bake'u, ponowny bake mapy niskiej i odczyt CPU
-  // (wysokość placu dla lotu i kamery); pełna mapa dopieka się już z placami.
-  setLandmarks(list) {
-    const n = Math.min(Array.isArray(list) ? list.length : 0, MAX_LANDMARKS);
+  // Megabudowle i kopuły (buildHaloLandmarkPlan / buildHaloDomePlan — miejsca
+  // wybrane z mapy sprzed placów): place, parki, stawy, wnętrza kopuł do
+  // uniformów bake'u, ponowny bake mapy niskiej i odczyt CPU (wysokość placu
+  // dla lotu i kamery); pełna mapa dopieka się już z nimi.
+  setCivic({ landmarks = [], domes = [] } = {}) {
     const u = this.uniforms;
+    const nl = Math.min(landmarks.length, MAX_LANDMARKS);
     for (let i = 0; i < MAX_LANDMARKS; i++) {
-      const lm = i < n ? list[i] : null;
+      const lm = i < nl ? landmarks[i] : null;
+      const pd = lm?.pond;
       u.uLandmarkA.value[i].set(lm ? lm.s : 0, lm ? lm.plaza.halfA : 0, lm ? lm.t : 0, lm ? lm.plaza.halfQ : 0);
       u.uLandmarkB.value[i].set(lm ? lm.plazaH : 0, lm ? lm.plaza.lawn : 0, lm ? lm.plaza.ramp : 1, 0);
+      u.uLandmarkC.value[i].set(lm ? lm.park.halfA : 0, lm ? lm.park.halfQ : 0, 0, 0);
+      u.uLandmarkD.value[i].set(pd ? pd.da : 0, pd ? pd.dq : 0, pd ? pd.ra : 0, pd ? pd.rb : 1);
     }
-    const changed = u.uLandmarkCount.value !== n || n > 0;
-    u.uLandmarkCount.value = n;
+    const nd = Math.min(domes.length, MAX_DOMES);
+    for (let i = 0; i < MAX_DOMES; i++) {
+      const dm = i < nd ? domes[i] : null;
+      u.uDomeA.value[i].set(dm ? dm.s : 0, dm ? dm.t : 0, dm ? dm.r : 1, dm ? dm.floorH : 0);
+      u.uDomeB.value[i].set(dm ? dm.typeIndex : 0, dm ? dm.seed : 0, dm ? dm.flatR : 0, dm ? dm.ramp : 1);
+      u.uDomeC.value[i].set(dm ? dm.park.halfA : 0, dm ? dm.park.halfQ : 0, 0, 0);
+    }
+    const changed = u.uLandmarkCount.value !== nl || u.uDomeCount.value !== nd || nl > 0 || nd > 0;
+    u.uLandmarkCount.value = nl;
+    u.uDomeCount.value = nd;
     if (!changed || !this.low) return;
     this._bakeRegion(this.low, 0, 1);
     this._readbackCpu();

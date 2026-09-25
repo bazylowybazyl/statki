@@ -26,18 +26,47 @@ export { BRIDGE_EVENT, bridgePngToWorld, getBridgeAimPoint, noteBridgeHit, updat
 /** Długość agonii hulka [s] — od utraty dowodzenia do zamiany we wrak. */
 export const BRIDGE_HULK_SEC = BRIDGE_KILL_TIMELINE.sequenceEnd;
 
+// Klucz mostków = klucz edytora hardpointów (ten sam sprite). Gracz ma własne
+// id kadłubów (playerHullCatalog: carrier, supercapital, corvus na sprite'cie
+// Custosa), profile renderu mają prefiks terran_.
+const BRIDGE_HULL_ALIASES = Object.freeze({
+  player: 'atlas',
+  terran_frigate: 'frigate',
+  corvus: 'frigate',
+  terran_destroyer: 'destroyer',
+  terran_battleship: 'battleship',
+  carrier: 'terran_carrier',
+  supercapital: 'terran_supercapital'
+});
+
+/** Klucz gracza / profilu renderu → klucz BRIDGE_LAYOUT_PROPOSALS. */
+export function normalizeBridgeHullKey(key) {
+  const k = String(key || '').trim().toLowerCase();
+  if (!k) return null;
+  return BRIDGE_HULL_ALIASES[k] || k;
+}
+
 /**
  * Klucz kadłuba z mostkami dla NPC — to samo mapowanie co
  * getEditorShipIdForNpc w npcHardpointRuntime.js (hardpointy i mostki muszą
  * pochodzić z tego samego sprite'a). Gracz podaje klucz jawnie (activeHullId).
+ * Megafrachtowiec: mostek ma tylko lokomotywa — wagony i moduł ogonowy to
+ * osobne encje ładunku (towTrainRole), ich utrata nie zabija składu.
  */
 export function resolveBridgeHullKey(entity) {
   if (!entity) return null;
-  const frame = String(entity.shipFrame || '').toLowerCase();
-  if (frame === 'atlas') return 'atlas';
   const type = String(entity.type || '').toLowerCase();
+  if (type.startsWith('megafreighter')) {
+    return (type === 'megafreighter' || type === 'megafreighter_front') ? 'megafreighter' : null;
+  }
+  const frame = normalizeBridgeHullKey(entity.shipFrame);
+  if (frame && BRIDGE_LAYOUT_PROPOSALS[frame]) return frame;
   if (type === 'atlas') return 'atlas';
+  if (type === 'supercapital') return 'terran_supercapital';
+  if (type === 'carrier') return 'terran_carrier';
   if (type === 'battleship') return entity.isPirate ? 'pirate_battleship' : 'battleship';
+  if (type === 'destroyer') return entity.isPirate ? 'pirate_destroyer' : 'destroyer';
+  if (type.includes('frigate')) return entity.isPirate ? 'pirate_frigate' : 'frigate';
   return null;
 }
 
@@ -53,8 +82,9 @@ export function resolveBridgeLayout(key, variant = null) {
  * konfiguracji edytora (gdy kiedyś będzie), inaczej domyślny wariant z
  * BRIDGE_LAYOUT_PROPOSALS. Skala stref = skala hardpointów (render px / PNG px).
  */
-export function attachEntityBridges(entity, { key = resolveBridgeHullKey(entity), bridges = null, variant = null } = {}) {
+export function attachEntityBridges(entity, { key: keyIn = null, bridges = null, variant = null } = {}) {
   if (!entity) return null;
+  const key = keyIn != null ? normalizeBridgeHullKey(keyIn) : resolveBridgeHullKey(entity);
   const list = Array.isArray(bridges) && bridges.length ? bridges : resolveBridgeLayout(key, variant);
   if (!list || !entity.hexGrid) {
     if (entity.bridgeState) releaseShipBridges(entity);
@@ -63,7 +93,8 @@ export function attachEntityBridges(entity, { key = resolveBridgeHullKey(entity)
   return attachShipBridges(entity, list, {
     scaleX: entity.__hardpointScaleX,
     scaleY: entity.__hardpointScaleY,
-    windowColor: BRIDGE_LAYOUT_PROPOSALS[key]?.windowColor
+    windowColor: BRIDGE_LAYOUT_PROPOSALS[key]?.windowColor,
+    hullKey: key
   });
 }
 

@@ -632,8 +632,17 @@ function newEntry() {
     pivotX: 0,
     pivotY: 0,
     activeCount: -1,
-    bakedAt: -Infinity
+    bakedAt: -Infinity,
+    empty: false       // ostatnie pieczenie nie znalazło aktywnego heksa
   };
+}
+
+// Siatka ta sama, którą entry ostatnio piekło. Wraki idą z puli: ten sam
+// obiekt siatki dostaje nową tablicę heksów (i pivot), więc stara warstwa
+// należy wtedy do innego kadłuba.
+function sameGridAs(entry, grid) {
+  return entry.shardsRef === grid.shards &&
+    entry.pivotX === (Number(grid.pivot?.x) || 0) && entry.pivotY === (Number(grid.pivot?.y) || 0);
 }
 
 export const HullShadowSdf = {
@@ -697,7 +706,8 @@ export const HullShadowSdf = {
   },
 
   // Warstwa z sylwetką kadłuba (entry.layer, entry.layout) albo null, gdy
-  // jeszcze nie ma czym rzucić cienia (brak budżetu na pieczenie w tej klatce).
+  // jeszcze nie ma czym rzucić cienia (brak budżetu na pieczenie w tej
+  // klatce) albo kadłub nie ma już żadnego aktywnego heksa.
   acquire(grid, frameNowMs = nowMs()) {
     const shards = grid?.shards;
     if (!Array.isArray(shards) || shards.length === 0) return null;
@@ -723,15 +733,19 @@ export const HullShadowSdf = {
       entry = newEntry();
       this._perGrid.set(grid, entry);
     }
-    // Wraki idą z puli: ten sam obiekt siatki dostaje nową tablicę heksów
-    // (i pivot), więc stara warstwa należy do innego kadłuba.
-    const sameShape = entry.layer >= 0 && entry.shardsRef === shards &&
-      entry.pivotX === (Number(grid.pivot?.x) || 0) && entry.pivotY === (Number(grid.pivot?.y) || 0);
+    // Kadłub bez aktywnego heksa (hulk po mostku, pocięty wrak) nie rzuca
+    // cienia — także z szablonu — i nie piecze się co klatkę, dopóki siatka
+    // albo liczba heksów się nie zmieni.
+    if (entry.empty && entry.activeCount === active && sameGridAs(entry, grid)) return null;
+    const sameShape = entry.layer >= 0 && sameGridAs(entry, grid);
     const lost = sameShape ? Math.abs(entry.activeCount - active) : 0;
     const age = frameNowMs - entry.bakedAt;
     const stale = lost > 0 && (age >= REBAKE_SMALL_MS || (age >= REBAKE_MS && lost >= minLoss));
     if (!sameShape || stale) {
       if (this._bake(entry, grid, image, frameNowMs)) return this._touch(entry);
+      // Pieczenie nie znalazło heksów i oddało warstwę: sameShape jest już
+      // nieaktualne, a _touch(entry) sięgnąłby po layers[-1].
+      if (entry.empty) return null;
     }
     if (sameShape) return this._touch(entry);
     // Uszkodzony kadłub do pierwszego własnego pieczenia: sylwetka szablonu.
@@ -789,7 +803,10 @@ export const HullShadowSdf = {
     return best;
   },
 
+  // false: brak budżetu albo warstwy (entry bez zmian, stara sylwetka zostaje)
+  // albo kadłub bez aktywnego heksa (entry.empty, warstwa oddana).
   _bake(entry, grid, image, frameNowMs) {
+    entry.empty = false;
     if (this._bakesLeft <= 0) return false;
     if (this._bakesLeft < MAX_BAKES_PER_FRAME && this._bakeMs >= BAKE_BUDGET_MS) return false;
     const t0 = nowMs();
@@ -800,19 +817,20 @@ export const HullShadowSdf = {
     }
     const L = HULL_SDF_LAYER_SIZE;
     const layout = bakeHullSdfLayer(grid, getAlphaMap(image), this.data, layer * L * L, entry.layout);
-    if (!layout) {
-      // Brak aktywnych heksów: warstwa wraca do puli, kadłub nie rzuca cienia.
-      this.layers[layer].owner = null;
-      this.layers[layer].usedFrame = -1;
-      entry.layer = -1;
-      return false;
-    }
-    entry.layer = layer;
     entry.shardsRef = grid.shards;
     entry.pivotX = Number(grid.pivot?.x) || 0;
     entry.pivotY = Number(grid.pivot?.y) || 0;
     entry.activeCount = activeCountOf(grid);
     entry.bakedAt = frameNowMs;
+    if (!layout) {
+      // Brak aktywnych heksów: warstwa wraca do puli, kadłub nie rzuca cienia.
+      this.layers[layer].owner = null;
+      this.layers[layer].usedFrame = -1;
+      entry.layer = -1;
+      entry.empty = true;
+      return false;
+    }
+    entry.layer = layer;
     this.texture.addLayerUpdate(layer);
     this.texture.needsUpdate = true;
     const ms = nowMs() - t0;

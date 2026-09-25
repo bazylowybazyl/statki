@@ -5,15 +5,19 @@
 // nieba (jednolity odcień zamiast połysku), a słońce — leżące praktycznie na
 // horyzoncie (uLightDir = (dx, dy, 600)) — nie odbiłoby się nigdy: lustrzany
 // odblask wymaga nachylenia ~45° ku słońcu, a „poduszka” z hexShips3D daje
-// najwyżej ~25–32°. Stąd trzy elementy:
+// najwyżej ~25–32°. Dlatego odblask liczy się od „słońca odblasków”: ten sam
+// azymut, podniesione o sunElevDeg (jak „słońce cieni” 30° mostka).
+// Kierunek patrzenia to zawsze pion (kamera ortho), NIE pozycja kamery —
+// odbicia zależą tylko od położenia i obrotu statku. Stąd elementy:
 //  - MAPA KSZTAŁTU z alfy sprite'a, pieczona raz na obraz: duże rozmycie alfy
 //    to zaokrąglony przekrój kadłuba, normalne liczone z jego gradientu.
 //    Kanał B = waga lakieru, która gaśnie do zera przy sylwetce — jasna
 //    obwódka czytała się jak włączona tarcza (tarcze są dziś niewidoczne,
 //    a tarcza-obrys świeci właśnie wzdłuż sylwetki);
-//  - DALEKI KOSMOS = ciemny gradient + rzadkie gwiazdy HDR (kanał alfa)
-//    w podwójnej paraboloidzie: zenit w środku tekstury, horyzont na okręgu.
-//    Jest w nieskończoności, więc zmienia się tylko przy obrocie statku;
+//  - DALEKI KOSMOS = ciemny gradient (+ gwiazdy HDR w kanale alfa, domyślnie
+//    wyłączone: na krzywiznach rozciągały się w kropki) w podwójnej
+//    paraboloidzie: zenit w środku tekstury, horyzont na okręgu. Jest
+//    w nieskończoności, więc zmienia się tylko przy obrocie statku;
 //  - BLISKIE OBŁOKI = osobny, bezszwowy kafel (nie tło gry!) zakotwiczony
 //    w świecie. Statek przelatuje pod nimi z paralaksą (skyDrift), więc
 //    odbicie sunie po kadłubie także przy locie prosto — bez tej warstwy
@@ -29,7 +33,9 @@ export const HULL_LACQUER_DEFAULTS = Object.freeze({
   f0: 0.05,            // Fresnel lakieru przy patrzeniu na wprost
   nebGain: 10.0,       // wzmocnienie gradientu dalekiego kosmosu (liniowo)
   nebClamp: 0.9,       // sufit odbicia dalekiego kosmosu — pod progiem bloomu (0,9)
-  starMax: 40.0,       // HDR najjaśniejszej gwiazdy w odbiciu
+  // HDR najjaśniejszej gwiazdy w odbiciu. 0 = bez gwiazd (feedback usera
+  // 2026-09-25: rozciągnięte kropki na krzywiznach wyglądały źle); ~40 włącza.
+  starMax: 0,
   // Bliskie obłoki (kafel zakotwiczony w świecie). Podmiana grafiki: skyUrl —
   // dowolny bezszwowy obraz (ciemne tło, jaśniejsze obłoki), najlepiej 1024–2048 px.
   skyUrl: 'assets/reflections/lacquer-sky.png',
@@ -40,6 +46,7 @@ export const HULL_LACQUER_DEFAULTS = Object.freeze({
   skyCoreBoost: 2.0,   // dodatkowe podbicie najjaśniejszych włókien (HDR)
   skyBlurLod: 5.0,     // poziom mip obłoków dla odbicia metalicznego
   sunRadiance: 150.0,  // słońce w odbiciu; × Fresnel ≈ 7 → bloom
+  sunElevDeg: 30,      // wysokość „słońca odblasków” nad płaszczyzną gry (azymut = słońce)
   glintExp: 1500.0,    // ostrość odblasku słońca
   sheen: 3.0,          // miękki połysk wokół odblasku
   sheenExp: 60.0,
@@ -62,6 +69,9 @@ export const SHAPE_MAP_DEFAULTS = Object.freeze({
 });
 
 export const ENV_MAP_SIZE = 1024;
+// Normalizacja gwiazd w kanale alfa (alfa 1 = HDR 40). Stała, niezależna od
+// strojenia: `starMax` w strojeniu tylko skaluje/wyłącza gwiazdy w shaderze.
+export const ENV_STAR_HDR_REF = 40;
 export const MAX_ENGINE_ZONES = 20;
 
 const DEG = Math.PI / 180;
@@ -210,7 +220,7 @@ export function buildLacquerEnvPixels(srcRGBA, size, options = {}) {
   const starCount = Math.max(0, Math.round(clampNum(options.starCount, 0, 5000, 450)));
   const starMin = clampNum(options.starMin, 0, 100, 1.0);
   const starSlope = clampNum(options.starSlope, 0.2, 10, 1.3);
-  const starMax = clampNum(options.starMax, 1, 1000, HULL_LACQUER_DEFAULTS.starMax);
+  const starMax = clampNum(options.starMax, 1, 1000, ENV_STAR_HDR_REF);
   const sigma = clampNum(options.starSigmaPx, 0.3, 4, 0.8);
   const px = new Uint8Array(size * size * 4);
   const half = size * 0.5;
@@ -360,10 +370,9 @@ export const HullLacquer = {
   uniforms: {
     uLacquerEnv: { value: null },
     uLacquerSky: { value: emptySkyTexture },
-    uLacquerEye: { value: new THREE.Vector3(0, 0, 1000) },
     uLacquerA: { value: new THREE.Vector4(0, 0.05, 10, 0.9) },   // siła, F0, zysk dalekiego kosmosu, jego sufit
-    uLacquerB: { value: new THREE.Vector4(40, 150, 1500, 3) },   // gwiazdy HDR, słońce, ostrość odblasku, połysk
-    uLacquerC: { value: new THREE.Vector4(60, 0.6, 3, 0) },      // ostrość połysku, metal, mip rozmycia, -
+    uLacquerB: { value: new THREE.Vector4(0, 150, 1500, 3) },    // gwiazdy HDR, słońce, ostrość odblasku, połysk
+    uLacquerC: { value: new THREE.Vector4(60, 0.6, 3, 30 * DEG) }, // ostrość połysku, metal, mip rozmycia, wysokość słońca odblasków (rad)
     uLacquerD: { value: new THREE.Vector4(1 / 9000, 0.25, 700, 8) }, // obłoki: 1/kafel, drift, wygięcie, jasność
     uLacquerE: { value: new THREE.Vector4(2, 5, 1, 0) }          // obłoki: podbicie rdzeni, mip rozmycia, wygaszenie (warp), -
   },
@@ -422,17 +431,14 @@ export const HullLacquer = {
     if (idx >= 0) this._pending.splice(idx, 1);
   },
 
-  // Raz na klatkę, przed renderem. `eyePosition` = pozycja Core3D.cameraPersp:
-  // oko pseudo-perspektywy nad środkiem kadru (fov gry), dzięki któremu płaskie
-  // płyty odbijają różne kierunki nieba zamiast jednego punktu. Trzymamy
-  // referencję do wektora kamery, bo syncCamera przestawia go w każdym passie.
-  update(eyePosition) {
+  // Raz na klatkę, przed renderem: strojenie → wspólne uniformy, wygaszanie
+  // obłoków w warpie, tekstury i kolejka pieczenia. Nic z kamery.
+  update() {
     const t = this.getTuning();
     const u = this.uniforms;
     const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
     const dt = this._lastUpdateMs > 0 ? Math.min(0.25, (now - this._lastUpdateMs) * 0.001) : 0;
     this._lastUpdateMs = now;
-    if (eyePosition && u.uLacquerEye.value !== eyePosition) u.uLacquerEye.value = eyePosition;
     u.uLacquerA.value.set(
       t.enabled !== false ? clampNum(t.strength, 0, 4, 1) : 0,
       clampNum(t.f0, 0, 1, 0.05),
@@ -440,7 +446,7 @@ export const HullLacquer = {
       clampNum(t.nebClamp, 0, 10, 0.9)
     );
     u.uLacquerB.value.set(
-      clampNum(t.starMax, 0, 1000, 40),
+      clampNum(t.starMax, 0, 1000, 0),
       clampNum(t.sunRadiance, 0, 10000, 150),
       clampNum(t.glintExp, 1, 100000, 1500),
       clampNum(t.sheen, 0, 100, 3)
@@ -449,7 +455,7 @@ export const HullLacquer = {
       clampNum(t.sheenExp, 1, 10000, 60),
       clampNum(t.metalSheen, 0, 4, 0.6),
       clampNum(t.envBlurLod, 0, 10, 3),
-      0
+      clampNum(t.sunElevDeg, 0, 89, 30) * DEG
     );
     // W warpie bliskie obłoki gasną: kafel przewijałby się szybciej niż klatki.
     const warpActive = typeof window !== 'undefined' && window.warp?.state === 'active';
@@ -478,7 +484,7 @@ export const HullLacquer = {
   _ensureEnv() {
     if (this._envTexture) return;
     const texture = createEnvTexture(
-      buildLacquerEnvPixels(null, ENV_MAP_SIZE, { starMax: HULL_LACQUER_DEFAULTS.starMax }),
+      buildLacquerEnvPixels(null, ENV_MAP_SIZE, { starMax: ENV_STAR_HDR_REF }),
       ENV_MAP_SIZE
     );
     this._envTexture = texture;

@@ -19,6 +19,7 @@
 
 import { packKey, invertSymmetric3, bindSkinToLattice } from './voxelBody3D.js';
 import { markOriginalBeamBridges } from './beamConnectivity3D.js';
+import { packBeamStructure, defineLazyViews } from './beamStore3D.js';
 
 export const BEAM_TYPE = Object.freeze({
   PLATING: 0,   // poszycie: powłoka zewnętrzna, pęka pierwsza
@@ -78,7 +79,13 @@ function makeNode(cell, index, cellMassBase) {
     _hashNext: null,
     _massStamp: 0,
     _crushStamp: 0,
-    _crushDepth: 0
+    _crushDepth: 0,
+    // Obszar aktywny solvera lokalnego (beamActiveRegion3D): w ruchu / kroki spokoju / stemple.
+    _act: 0,
+    _quiet: 0,
+    _solveStamp: 0,
+    _outerStamp: 0,
+    _skinDirty: 0
   };
 }
 
@@ -94,7 +101,8 @@ export function cloneBeamNode(n) {
     surface: n.surface, depth: n.depth, coverage: n.coverage,
     r: n.r, g: n.g, b: n.b, beams: n.beams.slice(),
     beamCount: n.beamCount, localBeamCount: n.localBeamCount, platingCount: n.platingCount, active: n.active,
-    __islandStamp: 0, _hashNext: null, _massStamp: 0, _crushStamp: 0, _crushDepth: 0
+    __islandStamp: 0, _hashNext: null, _massStamp: 0, _crushStamp: 0, _crushDepth: 0,
+    _act: n._act || 0, _quiet: n._quiet || 0, _solveStamp: 0, _outerStamp: 0, _skinDirty: 0
   };
 }
 
@@ -102,7 +110,8 @@ export function cloneBeam(beam, a = beam.a, b = beam.b) {
   return {
     a, b, rest: beam.rest, restBase: beam.restBase, type: beam.type,
     stiffness: beam.stiffness, deform: beam.deform, break: beam.break,
-    broken: beam.broken, strain: beam.strain, fatigue: beam.fatigue || 0, restBridge: beam.restBridge
+    broken: beam.broken, strain: beam.strain, fatigue: beam.fatigue || 0, restBridge: beam.restBridge,
+    _stamp: 0
   };
 }
 
@@ -139,9 +148,16 @@ function staysInsideHull(a, b, isSolid) {
  */
 export function buildBeamStructure(vox, opts = {}) {
   const cellMassBase = Number.isFinite(opts.cellMassBase) ? opts.cellMassBase : 10;
-  const frameStride = Math.max(1, opts.frameStride === undefined ? 2 : (opts.frameStride | 0));
+  // 0 = bez wręgów (porównanie w demie 2D); domyślnie co drugi węzeł poszycia.
+  const frameStride = opts.frameStride === 0 ? 0 : Math.max(1, opts.frameStride === undefined ? 2 : (opts.frameStride | 0));
   const bulkheadEvery = Math.max(0, opts.bulkheadEvery === undefined ? 8 : (opts.bulkheadEvery | 0));
   const maxFrameSpan = Math.max(2, opts.maxFrameSpan === undefined ? 14 : (opts.maxFrameSpan | 0));
+  // Osie, wzdłuż których wolno prowadzić wręgi (maska x, y, z). Kadłub 2D ma wręgi
+  // tylko w poprzek (oś Y) — z narożnika obrysu szłyby ukośnie przez cały kadłub.
+  const frameAxes = Array.isArray(opts.frameAxes) ? opts.frameAxes : [1, 1, 1];
+  // Wręg kończy się dopiero na przeciwległej ścianie (za celem już pusto) —
+  // w pełnej płycie 2D obrys dziobu leży w tej samej kolumnie co burta.
+  const frameToOppositeWall = !!opts.frameToOppositeWall;
 
   const cells = vox.cells;
   if (!Array.isArray(cells) || cells.length === 0) throw new Error('buildBeamStructure: brak komórek');
@@ -183,7 +199,8 @@ export function buildBeamStructure(vox, opts = {}) {
       broken: false,
       strain: 0,
       fatigue: 0,
-      restBridge: false
+      restBridge: false,
+      _stamp: 0
     };
     const index = beams.length;
     beams.push(beam);
@@ -213,7 +230,7 @@ export function buildBeamStructure(vox, opts = {}) {
   // jak kartka, bo poszycie samo w sobie nie ma o co się oprzeć.
   let frameCount = 0;
   for (const node of nodes) {
-    if (!node.surface) continue;
+    if (!frameStride || !node.surface) continue;
     if ((node.id % frameStride) !== 0) continue;
 
     // normalna zewnętrzna = suma kierunków, w których brakuje sąsiada
@@ -223,6 +240,7 @@ export function buildBeamStructure(vox, opts = {}) {
         ox += dir[0]; oy += dir[1]; oz += dir[2];
       }
     }
+    ox *= frameAxes[0]; oy *= frameAxes[1]; oz *= frameAxes[2];
     const len = Math.sqrt(ox * ox + oy * oy + oz * oz);
     if (len < 1e-6) continue;
     const inx = -ox / len, iny = -oy / len, inz = -oz / len;
@@ -234,6 +252,8 @@ export function buildBeamStructure(vox, opts = {}) {
       const tz = Math.round(node.iz + inz * step);
       const target = lattice.get(packKey(tx, ty, tz));
       if (!target || !target.surface) continue;
+      if (frameToOppositeWall && lattice.get(packKey(
+        Math.round(node.ix + inx * (step + 1)), Math.round(node.iy + iny * (step + 1)), Math.round(node.iz + inz * (step + 1))))) continue;
       if (addBeam(node, target, BEAM_TYPE.FRAME)) frameCount++;
       break;
     }
@@ -373,9 +393,14 @@ export function buildBeamStructure(vox, opts = {}) {
     }
   }
 
-  return {
-    nodes,
-    beams,
+  // Budowa idzie na obiektach (raz na model); ciało dostaje magazyny SoA, a `nodes` /
+  // `beams` to widoki na żądanie (defineLazyViews) — widoki węzłów już są, bo trzyma je kratownica.
+  const packed = packBeamStructure(nodes, beams);
+  for (const [key, n] of lattice) lattice.set(key, packed.nodes[n.id]);
+
+  return defineLazyViews({
+    nodeStore: packed.nodeStore,
+    beamStore: packed.beamStore,
     lattice,
     dims: { x: vox.nx, y: vox.ny, z: vox.nz },
     cellSize: cs,
@@ -394,7 +419,37 @@ export function buildBeamStructure(vox, opts = {}) {
       frames: frameCount,
       bulkheads: bulkheadCount
     }
-  };
+  }, packed.nodes);
+}
+
+/**
+ * computeNodeSetInertia dla wszystkich węzłów magazynu SoA (sekcja po rozłamie) —
+ * te same działania w tej samej kolejności, więc wynik bit w bit jak na obiektach.
+ */
+export function computeStoreInertia(store, cellSize) {
+  const count = store.count, ox = store.ox, oy = store.oy, oz = store.oz, mass = store.mass;
+  let comX = 0, comY = 0, comZ = 0, mSum = 0;
+  for (let i = 0; i < count; i++) {
+    comX += ox[i] * mass[i]; comY += oy[i] * mass[i]; comZ += oz[i] * mass[i];
+    mSum += mass[i];
+  }
+  if (mSum <= 0) return null;
+  comX /= mSum; comY /= mSum; comZ /= mSum;
+
+  const cubeTerm = (cellSize * cellSize) / 6;
+  let ixx = 0, iyy = 0, izz = 0, ixy = 0, ixz = 0, iyz = 0;
+  for (let i = 0; i < count; i++) {
+    const m = mass[i];
+    const px = ox[i] - comX, py = oy[i] - comY, pz = oz[i] - comZ;
+    ixx += m * (py * py + pz * pz + cubeTerm);
+    iyy += m * (px * px + pz * pz + cubeTerm);
+    izz += m * (px * px + py * py + cubeTerm);
+    ixy -= m * px * py;
+    ixz -= m * px * pz;
+    iyz -= m * py * pz;
+  }
+  const inertia = [ixx, ixy, ixz, ixy, iyy, iyz, ixz, iyz, izz];
+  return { com: { x: comX, y: comY, z: comZ }, mass: mSum, inertia, invInertia: invertSymmetric3(inertia) };
 }
 
 /**

@@ -3,8 +3,10 @@ import { LASER } from '../game/beamWeapons3D.js';
 
 // Reuses the demo scene/renderer. All projectiles and explosions are instanced.
 export class BeamWeaponsVisual3D {
-  constructor(scene, weapons) {
+  // opts.scale — rozmiar pocisków względem sceny dema 3D (kadłuby 2D w skali gry są ~5× większe).
+  constructor(scene, weapons, opts = {}) {
     this.weapons = weapons;
+    const s = this.scale = opts.scale > 0 ? opts.scale : 1;
     this.transform = new THREE.Object3D(); this.direction = new THREE.Vector3();
     this.axis = new THREE.Vector3(0, 1, 0); this.color = new THREE.Color();
     const make = (geo, color, count, additive = false) => {
@@ -15,27 +17,28 @@ export class BeamWeaponsVisual3D {
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage); mesh.frustumCulled = false; mesh.count = 0;
       scene.add(mesh); return mesh;
     };
-    this.lasers = make(new THREE.CylinderGeometry(0.10, 0.10, 1, 5), 0x62efff, weapons.projectiles.length, true);
-    this.rockets = make(new THREE.ConeGeometry(0.23, 1.8, 6), 0xd7e2ee, weapons.projectiles.length);
-    this.trails = make(new THREE.CylinderGeometry(0.12, 0.03, 1, 5), 0xff8d36, weapons.projectiles.length, true);
+    this.lasers = make(new THREE.CylinderGeometry(0.10 * s, 0.10 * s, 1, 5), 0x62efff, weapons.projectiles.length, true);
+    this.rockets = make(new THREE.ConeGeometry(0.23 * s, 1.8 * s, 6), 0xd7e2ee, weapons.projectiles.length);
+    this.trails = make(new THREE.CylinderGeometry(0.12 * s, 0.03 * s, 1, 5), 0xff8d36, weapons.projectiles.length, true);
     this.flashes = make(new THREE.IcosahedronGeometry(1, 1), 0xffffff, weapons.effects.length, true);
     this.flashes.setColorAt(0, this.color.set(0xffffff));
     this.meshes = [this.lasers, this.rockets, this.trails, this.flashes];
   }
   sync() {
     for (const mesh of this.meshes) mesh.count = 0;
-    const o = this.transform, d = this.direction;
+    const o = this.transform, d = this.direction, s = this.scale;
+    const laserSpeed = this.weapons.laserSpeed || 620;
     for (const p of this.weapons.projectiles) {
       if (!p.active) continue;
       d.set(p.vx, p.vy, p.vz).normalize(); o.quaternion.setFromUnitVectors(this.axis, d);
       if (p.kind === LASER) {
-        const length = Math.min(5, Math.max(0.5, p.age * 620));
+        const length = Math.min(5 * s, Math.max(0.5 * s, p.age * laserSpeed));
         o.position.set(p.x, p.y, p.z).addScaledVector(d, -length / 2); o.scale.set(1, length, 1); o.updateMatrix();
         this.lasers.setMatrixAt(this.lasers.count++, o.matrix);
       } else {
         o.position.set(p.x, p.y, p.z); o.scale.setScalar(1); o.updateMatrix();
         this.rockets.setMatrixAt(this.rockets.count++, o.matrix);
-        o.position.addScaledVector(d, -2.6); o.scale.set(1, 4, 1); o.updateMatrix();
+        o.position.addScaledVector(d, -2.6 * s); o.scale.set(1, 4 * s, 1); o.updateMatrix();
         this.trails.setMatrixAt(this.trails.count++, o.matrix);
       }
     }

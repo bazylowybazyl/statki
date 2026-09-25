@@ -13,8 +13,8 @@ import {
 
 export const HALO_TAU = Math.PI * 2;
 
-// Geometria przekroju. Promienie liczone od obwiedni obecnego ringu
-// (computePlanetaryRingLayout): kadłub = outerRadius, podłoga o hullThickness
+// Geometria przekroju. Promienie liczone od obwiedni dawnego ringu gry
+// (computeHaloEnvelope, te same strefy orbit): kadłub = outerRadius, podłoga o hullThickness
 // niżej, krawędź ścian o wallHeight nad podłogą (ku osi).
 export const HALO_GEOMETRY_DEFAULTS = Object.freeze({
   planetRadius: RING_PLANET_WORLD_RADII.earth,
@@ -96,26 +96,64 @@ export const HALO_TYPE_CLIMATE = Object.freeze({
   glass: { sea: 0.22, mount: 0.12, temp: 0.6, moist: 0.58 }
 });
 
+// LOD zabudowy, drzew, megastruktury i portu per jakość. Tryb „ultra” (prośba
+// użytkownika 2026-09-25: „w ultra z daleka okna budynków i więcej
+// szczegółów”) przesuwa wszystkie progi dalej; low / medium / high zostają przy
+// progach strojonych w demie.
+const HALO_LOD_BASE = Object.freeze({
+  detailScale: 1,                              // progi wygaszania okien i wzorów (uDetailScale)
+  cityFade: Object.freeze([17000, 30000]),     // wspólne opadanie miasta (kamera ↔ podłoga) [j.]
+  cityMinPixels: 1.0,                          // kawałek miasta, gdy jego najwyższa bryła ma ≥ N px
+  buildingPixels: Object.freeze([0.6, 1.6]),   // budynek opada płynnie między N a M px
+  cityChunks: Object.freeze([96, 128]),        // kawałki ogrodu / przemysłu naraz
+  treeGrid: 128,                               // sloty drzew na bok siatki (co 16 j.)
+  treeAltitude: 2500,                          // drzewa, gdy kamera bliżej podłogi [j.]
+  treePixels: 1.5,                             // drzewo, gdy ma ≥ N px
+  geomFade: Object.freeze([14000, 20000]),     // detal megastruktury: pełny → brak [j.]
+  k7Pixels: 3                                  // kompleks portu obcinany poniżej N px
+});
+export const HALO_LOD_ULTRA = Object.freeze({
+  detailScale: 1.8,
+  cityFade: Object.freeze([36000, 64000]),
+  cityMinPixels: 0.55,
+  buildingPixels: Object.freeze([0.3, 0.9]),
+  cityChunks: Object.freeze([192, 256]),
+  treeGrid: 192,
+  treeAltitude: 4200,
+  treePixels: 0.9,
+  geomFade: Object.freeze([26000, 38000]),
+  k7Pixels: 1.5
+});
+
 // Mapy habitatu (bake na GPU). Rozdzielczość rośnie z jakością; v skaluje się
 // z szerokością wstęgi, żeby teksel w poprzek został ~11–16 j.
 export const HALO_QUALITY = Object.freeze({
   low: {
     label: 'Niska', pixelRatio: 0.75, msaa: 0, mapU: 4096, mapVPer6000: 192,
-    lodFactor: 1.8, gridDiv: 16, airSteps: 4, cloudOctaves: 3, bloomScale: 0.5, maxNodes: 320
+    lodFactor: 1.8, gridDiv: 16, airSteps: 4, cloudOctaves: 3, bloomScale: 0.5, maxNodes: 320,
+    lod: Object.freeze({ ...HALO_LOD_BASE, treeGrid: 88 })
   },
   medium: {
     label: 'Średnia', pixelRatio: 1.0, msaa: 2, mapU: 8192, mapVPer6000: 320,
-    lodFactor: 2.2, gridDiv: 32, airSteps: 6, cloudOctaves: 4, bloomScale: 0.75, maxNodes: 480
+    lodFactor: 2.2, gridDiv: 32, airSteps: 6, cloudOctaves: 4, bloomScale: 0.75, maxNodes: 480,
+    lod: HALO_LOD_BASE
   },
   high: {
     label: 'Wysoka', pixelRatio: 1.0, msaa: 4, mapU: 12288, mapVPer6000: 448,
-    lodFactor: 2.6, gridDiv: 32, airSteps: 8, cloudOctaves: 5, bloomScale: 1.0, maxNodes: 640
+    lodFactor: 2.6, gridDiv: 32, airSteps: 8, cloudOctaves: 5, bloomScale: 1.0, maxNodes: 640,
+    lod: HALO_LOD_BASE
   },
   ultra: {
     label: 'Ultra', pixelRatio: 1.5, msaa: 4, mapU: 16384, mapVPer6000: 512,
-    lodFactor: 3.2, gridDiv: 64, airSteps: 12, cloudOctaves: 6, bloomScale: 1.0, maxNodes: 900
+    lodFactor: 3.2, gridDiv: 64, airSteps: 12, cloudOctaves: 6, bloomScale: 1.0, maxNodes: 900,
+    lod: HALO_LOD_ULTRA
   }
 });
+
+// LOD jakości (brak bloku = progi bazowe).
+export function haloQualityLod(quality) {
+  return quality?.lod || HALO_LOD_BASE;
+}
 
 // Teren: CDLOD. Najdrobniejszy węzeł ≈ 40 j. (siatka co ~1,3 j. przy 32 podziałach).
 export const HALO_TERRAIN = Object.freeze({
@@ -355,8 +393,8 @@ export function resolveHaloQuality(value) {
   return 'high';
 }
 
-// Obwiednia promieniowa zgodna z computePlanetaryRingLayout (planetaryRing3D.js)
-// — liczona z tych samych stałych ringScale.js, bez importu modułu z Core3D.
+// Obwiednia promieniowa dawnego ringu gry (planetaryRing3D.computePlanetaryRingLayout,
+// usunięty przy porcie 2026-09-25) — z tych samych stałych ringScale.js.
 export function computeHaloEnvelope(planetRadius = RING_PLANET_WORLD_RADII.earth) {
   const R = Math.max(2000, Number(planetRadius) || RING_PLANET_WORLD_RADII.earth);
   const gap = computeRingAtmosphereGap(R);

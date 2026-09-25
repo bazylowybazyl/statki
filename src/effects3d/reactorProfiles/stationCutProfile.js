@@ -23,16 +23,7 @@ export const STATION_CUT_REACTOR_PROFILE = Object.freeze({
     sparkSizeMaxMul: 0.10,
     sparkLifeMin: 0.60,
     sparkLifeMax: 1.30,
-    shockwave3D: Object.freeze({
-        scaleMul: 6.2,
-        minScale: 120,
-        life: 0.75,
-        color: 0x55d6ff,
-    }),
-    heatHaze: Object.freeze({
-        duration: 0.90,
-        startScaleMul: 1.4,
-        growthMul: 12.0,
-        strength: 3.2,
-    }),
+    // bez fali z refrakcją — zostaje tylko dla rakiet supernova (2026-09-24)
+    shockwave3D: null,
+    heatHaze: null,
 });

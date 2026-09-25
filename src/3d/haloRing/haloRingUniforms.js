@@ -90,6 +90,7 @@ export function createHaloUniforms(layout) {
     uLayers: { value: new THREE.Vector4(1, 1, 1, 1) },   // chmury, światła miast, statki, drzewa
     uCloudParams: { value: new THREE.Vector4(820, 520, 6.0, 0.05) }, // wysokość, grubość, wiatr (j./s), więcej chmur (+)
     uNightLights: { value: 1 },
+    uDetailScale: { value: 1 },   // z HALO_QUALITY[q].lod.detailScale (ultra > 1)
     // dach (M3) — ustawia applyRoofPlanUniforms po zbudowaniu planu
     uRoofLanes0: { value: new THREE.Vector4() },   // koniec kratownicy krawędzi, rząd A od-do, rząd B od
     uRoofLanes1: { value: new THREE.Vector4() },   // rząd B do, kolej od-do, kratownica kadłuba od

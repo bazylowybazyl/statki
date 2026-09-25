@@ -324,7 +324,8 @@ export function initStations3D(_sceneIgnored, stations) {
   const activeKeys = new Set();
 
   for (const station of stations) {
-    if (!station || isPirateStation(station)) continue;
+    // port ringu (Ziemia, Mars) zastępuje stację — bez bryły 3D (haloRingPlanets.js)
+    if (!station || isPirateStation(station) || station.ringPort) continue;
 
     const urls = getModelUrlsForStation(station);
     if (!urls) continue;
@@ -402,7 +403,8 @@ export function updateStations3D(stations, cullInfo = null) {
   const activeKeys = new Set();
 
   for (const station of stations) {
-    if (!station || isPirateStation(station)) continue;
+    // port ringu (Ziemia, Mars) zastępuje stację — bez bryły 3D (haloRingPlanets.js)
+    if (!station || isPirateStation(station) || station.ringPort) continue;
     const urls = getModelUrlsForStation(station);
     if (!urls) continue;
     const path = urls.find(Boolean);

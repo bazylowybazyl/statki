@@ -119,7 +119,7 @@ export function prepareSkinSurface(skin) {
 }
 
 export function createSurfaceState(skin) {
-  return { nodes: null, beams: null, activeNodes: -1, liveBeams: -1,
+  return { store: null, beamStore: null, activeNodes: -1, liveBeams: -1,
     alive: new Uint8Array(skin.occupancy.length), edges: new Uint8Array(skin.supportEdges.length / 2),
     exposed: new Uint8Array(skin.occupancy.length),
     links: new Uint8Array(skin.occupancy.length * 4),
@@ -127,19 +127,21 @@ export function createSurfaceState(skin) {
 }
 
 export function updateSurfaceState(body, state) {
-  if (state.nodes === body.nodes && state.beams === body.beams && state.activeNodes === body.activeNodes && state.liveBeams === body.liveBeams) return false;
+  const s = body.nodeStore, e = body.beamStore;
+  if (state.store === s && state.beamStore === e && state.activeNodes === body.activeNodes && state.liveBeams === body.liveBeams) return false;
   const d = body.skin.dims, total = state.alive.length;
-  const cell = n => n.ix + n.iy * d.x + n.iz * d.x * d.y;
+  const ix = s.ix, iy = s.iy, iz = s.iz, active = s.active, ea = e.a, eb = e.b, broken = e.broken;
+  const cell = i => ix[i] + iy[i] * d.x + iz[i] * d.x * d.y;
   state.alive.fill(0); state.links.fill(0); state.edges.fill(0); state.exposed.fill(0);
   let edgeCount = 0;
-  for (const n of body.nodes) if (n.active) state.alive[cell(n)] = 1;
-  for (const beam of body.beams) {
-    const a = body.nodes[beam.a], b = body.nodes[beam.b];
-    if (beam.broken || !a.active || !b.active) continue;
+  for (let i = 0; i < s.count; i++) if (active[i]) state.alive[cell(i)] = 1;
+  for (let bi = 0; bi < e.count; bi++) {
+    const a = ea[bi], b = eb[bi];
+    if (broken[bi] || !active[a] || !active[b]) continue;
     const ca = cell(a), cb = cell(b);
     const edge = body.skin._surfaceEdges.get(pairKey(ca, cb, total));
     if (edge !== undefined) { state.edges[edge] = 1; edgeCount++; }
-    const dx = b.ix - a.ix, dy = b.iy - a.iy, dz = b.iz - a.iz;
+    const dx = ix[b] - ix[a], dy = iy[b] - iy[a], dz = iz[b] - iz[a];
     if (Math.abs(dx) > 1 || Math.abs(dy) > 1 || Math.abs(dz) > 1) continue;
     const bit = dx + 1 + (dy + 1) * 3 + (dz + 1) * 9, reverse = 26 - bit;
     state.links[ca * 4 + (bit >> 3)] |= 1 << (bit & 7);
@@ -168,7 +170,7 @@ export function updateSurfaceState(body, state) {
     }
   }
   state.intact = intact;
-  state.nodes = body.nodes; state.beams = body.beams;
+  state.store = s; state.beamStore = e;
   state.activeNodes = body.activeNodes; state.liveBeams = body.liveBeams;
   return true;
 }

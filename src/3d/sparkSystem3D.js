@@ -1,5 +1,6 @@
 // src/3d/sparkSystem3D.js
 import * as THREE from 'three';
+import { sceneOriginNearCamera } from './sceneOrigin.js';
 
 const sparkVertexShader = /* glsl */`
   uniform float uTime;
@@ -55,10 +56,13 @@ const sparkVertexShader = /* glsl */`
     // Offset geometryczny quada
     vec2 offset = fwd2 * (position.x * sparkLength) + right2 * (position.y * thickness);
 
-    // Rzutowanie na plaszczyzne XZ dla kamery Orthographic (patrzacej w dol)
-    vec3 worldPos = vec3(currentPos.x + offset.x, currentPos.y, currentPos.z + offset.y);
+    // Rzutowanie na plaszczyzne XZ dla kamery Orthographic (patrzacej w dol).
+    // Pozycje sa wzgledem mesh.position (poczatek puli, patrz emit) - duzy
+    // kawalek skladany w modelViewMatrix na CPU w double, float32 tu dostaje
+    // male liczby (swiat lezy przy 5-10 mln j.).
+    vec3 localPos = vec3(currentPos.x + offset.x, currentPos.y, currentPos.z + offset.y);
 
-    gl_Position = projectionMatrix * viewMatrix * vec4(worldPos, 1.0);
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(localPos, 1.0);
   }
 `;
 
@@ -124,6 +128,46 @@ let highWater = 0;
 let liveUntil = -Infinity;
 let dirtyLo = -1;
 let dirtyHi = -1;
+// Poczatek ukladu puli przy kamerze gry (x, z sceny overlay = x, y swiata).
+// Swiat lezy przy 5-10 mln j., gdzie float32 ma krok 0,5 j.: bezwzgledne
+// iPosition drgaly na GPU ~1 px x zoom, a ruch iskry szedl skokami po 0,5 j.
+// Poczatek jest "lepki": pusta pula bierze go od kamery przy pierwszej iskrze,
+// zywa trzyma go, az kamera odjedzie o SPARK_REBASE_DIST (rebaseSparks w
+// update), wiec zapisanych danych zwykle nie trzeba przesuwac (iskra zyje
+// <= 0,9 s). Iskry daleko od kamery maja wieksze liczby — i tak ich nie widac.
+const SPARK_REBASE_DIST = 100000;
+let originX = 0;
+let originZ = 0;
+const _camOrigin = { x: 0, y: 0 };
+
+function cameraOrigin() {
+  const o = sceneOriginNearCamera(_camOrigin);
+  // Scena Core3D ma (x, -y) swiata; overlay: x = x, z = y swiata.
+  o.y = -o.y;
+  return o;
+}
+
+function setSparkOrigin(x, z) {
+  originX = x;
+  originZ = z;
+  mesh.position.set(x, 0, z);
+}
+
+// Przesuwa zywe iskry do nowego poczatku (caly uzyty zakres na GPU).
+function rebaseSparks(x, z) {
+  const dx = originX - x;
+  const dz = originZ - z;
+  for (let i = 0; i < highWater; i++) {
+    iPositions[i * 3] += dx;
+    iPositions[i * 3 + 2] += dz;
+  }
+  if (highWater > 0) {
+    dirtyLo = 0;
+    if (dirtyHi < highWater - 1) dirtyHi = highWater - 1;
+    isDirty = true;
+  }
+  setSparkOrigin(x, z);
+}
 
 // Aproksymacja krzywej Gaussa (od -1.0 do 1.0)
 function randomGaussian() {
@@ -235,13 +279,17 @@ export const SparkSystem3D = {
 
   emit(gameX, gameY, vx, vy, life, size) {
     if (!this.isInitialized) return;
+    if (highWater === 0) {
+      const o = cameraOrigin();
+      setSparkOrigin(o.x, o.y);
+    }
     const i = idx;
     const i3 = i * 3;
 
-    // Przerzucenie osi z 2D na 3D
-    iPositions[i3]     = gameX;
+    // Przerzucenie osi z 2D na 3D, wzgledem poczatku puli (originX/Z)
+    iPositions[i3]     = gameX - originX;
     iPositions[i3 + 1] = 0.5; // Wysokosc (leciutko nad podloga by nie klipowac)
-    iPositions[i3 + 2] = gameY;
+    iPositions[i3 + 2] = gameY - originZ;
 
     iVelocities[i3]     = vx;
     iVelocities[i3 + 1] = 0;
@@ -279,6 +327,12 @@ export const SparkSystem3D = {
     if (!this.isInitialized) return;
     globalTime += dt;
     material.uniforms.uTime.value = globalTime;
+
+    // Kamera odjechala od poczatku zywej puli — przesuniecie danych (rzadkie).
+    if (highWater > 0) {
+      const o = cameraOrigin();
+      if (Math.abs(o.x - originX) > SPARK_REBASE_DIST || Math.abs(o.y - originZ) > SPARK_REBASE_DIST) rebaseSparks(o.x, o.y);
+    }
 
     if (isDirty) {
       const attrs = geometry.attributes;
@@ -413,6 +467,8 @@ export const SparkSystem3D = {
     liveUntil = -Infinity;
     dirtyLo = -1;
     dirtyHi = -1;
+    originX = 0;
+    originZ = 0;
     this.isInitialized = false;
   }
 };

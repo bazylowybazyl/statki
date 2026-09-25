@@ -35,6 +35,8 @@ export const GameState = {
 
   // podsystemy gracza
   warp: null,
+  // dopalacz w strefie planety (Shift) — struga silników MAIN przechodzi na dopalanie
+  boost: null,
   input: null,
   mouse: null
 };

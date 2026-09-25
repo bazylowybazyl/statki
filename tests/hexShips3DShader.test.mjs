@@ -50,8 +50,19 @@ test('obłoki odbić są zakotwiczone w świecie i przesuwają się z pozycją s
   assert.match(fragment, /texture2D\(uLacquerSky,\s*skyUV\)/);
 });
 
+test('lakier nie zależy od kamery: pion zamiast oka, odblask od „słońca odblasków”', () => {
+  const fragment = readShaderConst('HEX_FRAGMENT_SHADER');
+  // Oko pseudo-perspektywy jechało z look-aheadem kamery — odblask pływał po kadłubie.
+  assert.doesNotMatch(fragment, /uLacquerEye|cameraPosition/);
+  assert.match(fragment, /float NdotV = max\(N\.z,/);
+  // Słońce gry leży w płaszczyźnie; odblask liczy się od podniesionego (uLacquerC.w).
+  assert.match(fragment, /vec3 glintL = vec3\(sunXY \* cos\(uLacquerC\.w\), sin\(uLacquerC\.w\)\)/);
+  assert.match(fragment, /dot\(R, glintL\)/);
+  assert.doesNotMatch(source, /HullLacquer\.update\([^)]/, 'update() bez argumentów kamery');
+});
+
 test('materiał kadłuba dostaje WSPÓLNE obiekty uniformów lakieru', () => {
-  for (const name of ['uLacquerEnv', 'uLacquerSky', 'uLacquerEye', 'uLacquerA', 'uLacquerB', 'uLacquerC', 'uLacquerD', 'uLacquerE']) {
+  for (const name of ['uLacquerEnv', 'uLacquerSky', 'uLacquerA', 'uLacquerB', 'uLacquerC', 'uLacquerD', 'uLacquerE']) {
     assert.match(source, new RegExp(name + ':\\s*HullLacquer\\.uniforms\\.' + name + '\\b'), name);
     assert.match(readShaderConst('HEX_FRAGMENT_SHADER'), new RegExp('uniform\\s+\\w+\\s+' + name + '\\s*;'), name);
   }

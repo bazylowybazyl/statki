@@ -1,0 +1,308 @@
+{
+ "size": [
+  1600,
+  900
+ ],
+ "scenes": {
+  "bench": {
+   "shots": [
+    "bitwa_174_flota",
+    "bitwa_174_mieszana"
+   ],
+   "hdr": {},
+   "evals": {
+    "bitwa_174": {
+     "ships": 174,
+     "records": 189,
+     "views": [
+      {
+       "zoom": 0.12,
+       "on": {
+        "updateMs": 0.115,
+        "updateP90": 0.152,
+        "frameMs": 2.855,
+        "drawMs": 1.692,
+        "hexMs": 0.927,
+        "gpuMs": 0.906,
+        "gpuSamples": 78,
+        "orthoCalls": 343,
+        "fgCalls": 1,
+        "instances": 5,
+        "emitters": 0,
+        "drawCalls": 1
+       },
+       "off": {
+        "updateMs": 0,
+        "updateP90": 0.005,
+        "frameMs": 2.555,
+        "drawMs": 1.603,
+        "hexMs": 0.83,
+        "gpuMs": 0.84,
+        "gpuSamples": 78,
+        "orthoCalls": 342,
+        "fgCalls": 1,
+        "instances": 5,
+        "emitters": 0,
+        "drawCalls": 0
+       },
+       "variants": {}
+      },
+      {
+       "zoom": 0.22,
+       "on": {
+        "updateMs": 0.11,
+        "updateP90": 0.175,
+        "frameMs": 2.06,
+        "drawMs": 1.107,
+        "hexMs": 0.673,
+        "gpuMs": 0.833,
+        "gpuSamples": 77.5,
+        "orthoCalls": 230,
+        "fgCalls": 1,
+        "instances": 97,
+        "emitters": 0,
+        "drawCalls": 2
+       },
+       "off": {
+        "updateMs": 0,
+        "updateP90": 0.005,
+        "frameMs": 1.922,
+        "drawMs": 1.05,
+        "hexMs": 0.675,
+        "gpuMs": 0.603,
+        "gpuSamples": 78,
+        "orthoCalls": 228,
+        "fgCalls": 1,
+        "instances": 97,
+        "emitters": 0,
+        "drawCalls": 0
+       },
+       "variants": {}
+      },
+      {
+       "zoom": 0.6,
+       "on": {
+        "updateMs": 0.125,
+        "updateP90": 0.168,
+        "frameMs": 1.06,
+        "drawMs": 0.402,
+        "hexMs": 0.445,
+        "gpuMs": 0.683,
+        "gpuSamples": 77.5,
+        "orthoCalls": 21,
+        "fgCalls": 2,
+        "instances": 12,
+        "emitters": 358,
+        "drawCalls": 4
+       },
+       "off": {
+        "updateMs": 0,
+        "updateP90": 0.005,
+        "frameMs": 0.823,
+        "drawMs": 0.352,
+        "hexMs": 0.372,
+        "gpuMs": 0.595,
+        "gpuSamples": 78,
+        "orthoCalls": 18,
+        "fgCalls": 1,
+        "instances": 12,
+        "emitters": 358,
+        "drawCalls": 0
+       },
+       "variants": {}
+      }
+     ],
+     "adoptMs": 2.695,
+     "adoptRecords": 25
+    },
+    "bitwa_174_mieszana": {
+     "ships": 174,
+     "records": 366,
+     "views": [
+      {
+       "zoom": 0.12,
+       "on": {
+        "updateMs": 0.145,
+        "updateP90": 0.205,
+        "frameMs": 2.882,
+        "drawMs": 1.65,
+        "hexMs": 0.955,
+        "gpuMs": 1.05,
+        "gpuSamples": 76.5,
+        "orthoCalls": 352,
+        "fgCalls": 1,
+        "instances": 7,
+        "emitters": 0,
+        "drawCalls": 2
+       },
+       "off": {
+        "updateMs": 0,
+        "updateP90": 0.005,
+        "frameMs": 2.482,
+        "drawMs": 1.525,
+        "hexMs": 0.84,
+        "gpuMs": 0.795,
+        "gpuSamples": 77.5,
+        "orthoCalls": 350,
+        "fgCalls": 1,
+        "instances": 7,
+        "emitters": 0,
+        "drawCalls": 0
+       },
+       "variants": {}
+      },
+      {
+       "zoom": 0.22,
+       "on": {
+        "updateMs": 0.11,
+        "updateP90": 0.18,
+        "frameMs": 2.195,
+        "drawMs": 1.22,
+        "hexMs": 0.72,
+        "gpuMs": 0.645,
+        "gpuSamples": 78,
+        "orthoCalls": 264,
+        "fgCalls": 1,
+        "instances": 24,
+        "emitters": 0,
+        "drawCalls": 4
+       },
+       "off": {
+        "updateMs": 0,
+        "updateP90": 0.005,
+        "frameMs": 2.083,
+        "drawMs": 1.143,
+        "hexMs": 0.768,
+        "gpuMs": 0.534,
+        "gpuSamples": 78,
+        "orthoCalls": 260,
+        "fgCalls": 1,
+        "instances": 24,
+        "emitters": 0,
+        "drawCalls": 0
+       },
+       "variants": {}
+      },
+      {
+       "zoom": 0.6,
+       "on": {
+        "updateMs": 0.133,
+        "updateP90": 0.21,
+        "frameMs": 1.09,
+        "drawMs": 0.375,
+        "hexMs": 0.473,
+        "gpuMs": 0.635,
+        "gpuSamples": 78,
+        "orthoCalls": 22,
+        "fgCalls": 2,
+        "instances": 14,
+        "emitters": 320,
+        "drawCalls": 5
+       },
+       "off": {
+        "updateMs": 0,
+        "updateP90": 0.005,
+        "frameMs": 0.955,
+        "drawMs": 0.34,
+        "hexMs": 0.53,
+        "gpuMs": 0.524,
+        "gpuSamples": 78,
+        "orthoCalls": 18,
+        "fgCalls": 1,
+        "instances": 14,
+        "emitters": 320,
+        "drawCalls": 0
+       },
+       "variants": {}
+      }
+     ],
+     "adoptMs": 1.055,
+     "adoptRecords": 213
+    }
+   },
+   "stats": {}
+  }
+ },
+ "logs": [],
+ "gpu": {
+  "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 5080 (0x00002C02) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+  "timer": true
+ },
+ "boot": {
+  "time": 1.824999999999996,
+  "shots": 0,
+  "hullHits": 0,
+  "probeMisses": 0,
+  "windows": 0,
+  "calls": 30,
+  "errors": [],
+  "targets": [
+   {
+    "key": "battleship",
+    "hp": 12000,
+    "hexes": {
+     "active": 2920,
+     "total": 2920,
+     "ratio": 1
+    },
+    "dead": false,
+    "cause": null,
+    "commandLost": false,
+    "bridges": [
+     {
+      "id": "mostek",
+      "total": 102,
+      "alive": 102,
+      "integrity": 1,
+      "dead": false
+     }
+    ]
+   }
+  ]
+ },
+ "boot3d": {
+  "stats": {
+   "records": 1,
+   "visible": 1,
+   "instances": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "receivers": 1,
+   "emitters": 38,
+   "drawCalls": 3,
+   "cpuMs": 0,
+   "rowsUsed": 1,
+   "rowUploads": 1,
+   "flashes": 0,
+   "lastMs": 0
+  },
+  "records": [
+   {
+    "kind": "bellator",
+    "host": "Bellator",
+    "isWreck": false,
+    "row": 0,
+    "cells": 231,
+    "block": [
+     21,
+     11
+    ],
+    "anyDead": 0,
+    "moved": 0,
+    "powerLostAt": -1,
+    "emitters": 39
+   }
+  ]
+ },
+ "finalErrors": []
+}

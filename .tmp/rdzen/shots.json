@@ -1,373 +1,247 @@
 {
-  "formationStart": {
-    "png": "15-formacja-start.png"
-  },
-  "formationBlast": {
-    "png": "16-formacja-wybuch-A.png",
-    "summary": {
-      "simTime": 4.76,
-      "ships": [
-        {
-          "label": "Bellator A",
-          "dead": false,
-          "wreck": false,
-          "hp": 12000,
-          "cores": [
-            {
-              "id": "bellator_A",
-              "state": "meltdown",
-              "label": "STOPIENIE",
-              "classId": "capital",
-              "integrity": 1,
-              "chamber": 32,
-              "alive": 32,
-              "dead": 0,
-              "elsewhere": 0,
-              "meltdownRemaining": 0.42500000000000837,
-              "meltdownDuration": 3.5,
-              "cause": "wymuszone",
-              "chainDepth": 0,
-              "severed": false,
-              "invalid": null,
-              "probeMisses": 0
-            }
-          ]
-        },
-        {
-          "label": "Bellator B",
-          "dead": false,
-          "wreck": false,
-          "hp": 12000,
-          "cores": [
-            {
-              "id": "bellator_A",
-              "state": "nominal",
-              "label": "NOMINALNY",
-              "classId": "capital",
-              "integrity": 1,
-              "chamber": 32,
-              "alive": 32,
-              "dead": 0,
-              "elsewhere": 0,
-              "meltdownRemaining": 0,
-              "meltdownDuration": 0,
-              "cause": null,
-              "chainDepth": 0,
-              "severed": false,
-              "invalid": null,
-              "probeMisses": 0
-            }
-          ]
-        },
-        {
-          "label": "Iron Skull C",
-          "dead": false,
-          "wreck": false,
-          "hp": 12000,
-          "cores": [
-            {
-              "id": "skull_A",
-              "state": "nominal",
-              "label": "NOMINALNY",
-              "classId": "capital",
-              "integrity": 1,
-              "chamber": 34,
-              "alive": 34,
-              "dead": 0,
-              "elsewhere": 0,
-              "meltdownRemaining": 0,
-              "meltdownDuration": 0,
-              "cause": null,
-              "chainDepth": 0,
-              "severed": false,
-              "invalid": null,
-              "probeMisses": 0
-            }
-          ]
-        },
-        {
-          "label": "Iron Skull D",
-          "dead": false,
-          "wreck": false,
-          "hp": 12000,
-          "cores": [
-            {
-              "id": "skull_A",
-              "state": "nominal",
-              "label": "NOMINALNY",
-              "classId": "capital",
-              "integrity": 1,
-              "chamber": 34,
-              "alive": 34,
-              "dead": 0,
-              "elsewhere": 0,
-              "meltdownRemaining": 0,
-              "meltdownDuration": 0,
-              "cause": null,
-              "chainDepth": 0,
-              "severed": false,
-              "invalid": null,
-              "probeMisses": 0
-            }
-          ]
-        }
-      ],
-      "destructibles": 4,
-      "hits": 0,
-      "softBody": "gpu",
-      "log": [
-        "  0.00s  scena: Formacja — Bellator A 2920 heksów, Bellator B 2920 heksów, Iron Skull C 2261 heksów, Iron Skull D 2261 heksów",
-        "  1.67s  Bellator A/bellator_A: STOPIENIE (wymuszone) — odliczanie 3.5 s"
-      ]
+  "reactorModels": [
+    {
+      "hull": "battleship",
+      "kind": "terran",
+      "state": "exposed",
+      "coreState": "exposed",
+      "integrity": 0.735,
+      "pixels": 336400,
+      "nan": 0,
+      "max": 9.0232203125,
+      "p50": 0.06431458740234375,
+      "p99": 0.497392724609375,
+      "p999": 0.7200660400390625,
+      "over09": 143,
+      "band": 20545,
+      "white": 111,
+      "hist": {
+        "0-0.1": 199068,
+        "0.1-0.4": 116645,
+        "0.4-0.9": 20544,
+        "0.9-1.3": 1,
+        "1.3-2": 4,
+        "2-4": 17,
+        "4-8": 22,
+        "8-12": 99,
+        "12-∞": 0
+      }
+    },
+    {
+      "hull": "battleship",
+      "kind": "terran",
+      "state": "critical",
+      "coreState": "critical",
+      "integrity": 0.471,
+      "pixels": 336400,
+      "nan": 0,
+      "max": 9.7108953125,
+      "p50": 0.09754584350585938,
+      "p99": 0.6741072265625,
+      "p999": 9.484515625,
+      "over09": 558,
+      "band": 84471,
+      "white": 465,
+      "hist": {
+        "0-0.1": 170290,
+        "0.1-0.4": 81095,
+        "0.4-0.9": 84457,
+        "0.9-1.3": 14,
+        "1.3-2": 18,
+        "2-4": 35,
+        "4-8": 72,
+        "8-12": 419,
+        "12-∞": 0
+      }
+    },
+    {
+      "hull": "battleship",
+      "kind": "terran",
+      "state": "meltdown-80",
+      "coreState": "meltdown",
+      "integrity": 0.471,
+      "pixels": 687241,
+      "nan": 0,
+      "max": 11.035309374999999,
+      "p50": 0.12139244384765624,
+      "p99": 8.974934375,
+      "p999": 10.677571874999998,
+      "over09": 13751,
+      "band": 92532,
+      "white": 9644,
+      "hist": {
+        "0-0.1": 301230,
+        "0.1-0.4": 282231,
+        "0.4-0.9": 90029,
+        "0.9-1.3": 2503,
+        "1.3-2": 313,
+        "2-4": 697,
+        "4-8": 1256,
+        "8-12": 8982,
+        "12-∞": 0
+      }
+    },
+    {
+      "hull": "pirate_battleship",
+      "kind": "pirate",
+      "state": "exposed",
+      "coreState": "exposed",
+      "integrity": 0.75,
+      "pixels": 342225,
+      "nan": 0,
+      "max": 9.12655,
+      "p50": 0.03405304260253906,
+      "p99": 0.41492207031250006,
+      "p999": 0.5549388671875,
+      "over09": 189,
+      "band": 4116,
+      "white": 144,
+      "hist": {
+        "0-0.1": 247441,
+        "0.1-0.4": 90484,
+        "0.4-0.9": 4111,
+        "0.9-1.3": 5,
+        "1.3-2": 8,
+        "2-4": 21,
+        "4-8": 27,
+        "8-12": 128,
+        "12-∞": 0
+      }
+    },
+    {
+      "hull": "pirate_battleship",
+      "kind": "pirate",
+      "state": "critical",
+      "coreState": "critical",
+      "integrity": 0.5,
+      "pixels": 342225,
+      "nan": 0,
+      "max": 9.7513984375,
+      "p50": 0.061901031494140626,
+      "p99": 0.5458079345703125,
+      "p999": 9.478951562499999,
+      "over09": 759,
+      "band": 78241,
+      "white": 643,
+      "hist": {
+        "0-0.1": 217737,
+        "0.1-0.4": 45502,
+        "0.4-0.9": 78227,
+        "0.9-1.3": 14,
+        "1.3-2": 23,
+        "2-4": 40,
+        "4-8": 91,
+        "8-12": 591,
+        "12-∞": 0
+      }
+    },
+    {
+      "hull": "pirate_battleship",
+      "kind": "pirate",
+      "state": "meltdown-80",
+      "coreState": "meltdown",
+      "integrity": 0.5,
+      "pixels": 697225,
+      "nan": 0,
+      "max": 11.0462125,
+      "p50": 0.054854089355468746,
+      "p99": 0.83515263671875,
+      "p999": 10.787084375000001,
+      "over09": 1931,
+      "band": 94521,
+      "white": 888,
+      "hist": {
+        "0-0.1": 459759,
+        "0.1-0.4": 141929,
+        "0.4-0.9": 93606,
+        "0.9-1.3": 915,
+        "1.3-2": 25,
+        "2-4": 47,
+        "4-8": 98,
+        "8-12": 846,
+        "12-∞": 0
+      }
+    },
+    {
+      "hull": "atlas",
+      "kind": "atlas",
+      "state": "exposed",
+      "coreState": "exposed",
+      "integrity": 0.743,
+      "pixels": 362404,
+      "nan": 0,
+      "max": 8.836509375,
+      "p50": 0.041386669921875,
+      "p99": 0.42682255859374996,
+      "p999": 0.6275365234375,
+      "over09": 314,
+      "band": 5364,
+      "white": 256,
+      "hist": {
+        "0-0.1": 268911,
+        "0.1-0.4": 87819,
+        "0.4-0.9": 5360,
+        "0.9-1.3": 4,
+        "1.3-2": 9,
+        "2-4": 22,
+        "4-8": 47,
+        "8-12": 232,
+        "12-∞": 0
+      }
+    },
+    {
+      "hull": "atlas",
+      "kind": "atlas",
+      "state": "critical",
+      "coreState": "critical",
+      "integrity": 0.486,
+      "pixels": 362404,
+      "nan": 0,
+      "max": 9.87441875,
+      "p50": 0.06721276245117187,
+      "p99": 0.5911216796875,
+      "p999": 9.639996875,
+      "over09": 943,
+      "band": 95486,
+      "white": 774,
+      "hist": {
+        "0-0.1": 230005,
+        "0.1-0.4": 35989,
+        "0.4-0.9": 95467,
+        "0.9-1.3": 19,
+        "1.3-2": 31,
+        "2-4": 61,
+        "4-8": 114,
+        "8-12": 718,
+        "12-∞": 0
+      }
+    },
+    {
+      "hull": "atlas",
+      "kind": "atlas",
+      "state": "meltdown-80",
+      "coreState": "meltdown",
+      "integrity": 0.486,
+      "pixels": 741321,
+      "nan": 0,
+      "max": 10.9642234375,
+      "p50": 0.048180358886718753,
+      "p99": 1.5688033203124998,
+      "p999": 10.645543749999998,
+      "over09": 8026,
+      "band": 103253,
+      "white": 6422,
+      "hist": {
+        "0-0.1": 510912,
+        "0.1-0.4": 119657,
+        "0.4-0.9": 102726,
+        "0.9-1.3": 527,
+        "1.3-2": 206,
+        "2-4": 459,
+        "4-8": 848,
+        "8-12": 5986,
+        "12-∞": 0
+      }
     }
-  },
-  "formationChain": {
-    "png": "17-formacja-lancuch.png",
-    "summary": {
-      "simTime": 5.67,
-      "ships": [
-        {
-          "label": "Bellator A (zniszczony)",
-          "dead": true,
-          "wreck": false,
-          "hp": 12000,
-          "cores": [
-            {
-              "id": "bellator_A",
-              "state": "detonated",
-              "label": "DETONACJA",
-              "classId": "capital",
-              "integrity": 1,
-              "chamber": 32,
-              "alive": 32,
-              "dead": 0,
-              "elsewhere": 0,
-              "meltdownRemaining": 0,
-              "meltdownDuration": 3.5,
-              "cause": "wymuszone",
-              "chainDepth": 0,
-              "severed": false,
-              "invalid": null,
-              "probeMisses": 0
-            }
-          ]
-        },
-        {
-          "label": "Bellator B",
-          "dead": false,
-          "wreck": false,
-          "hp": 8106.152055385854,
-          "cores": [
-            {
-              "id": "bellator_A",
-              "state": "meltdown",
-              "label": "STOPIENIE",
-              "classId": "capital",
-              "integrity": 0.1295102441356841,
-              "chamber": 32,
-              "alive": 32,
-              "dead": 0,
-              "elsewhere": 0,
-              "meltdownRemaining": 3.0750000000000015,
-              "meltdownDuration": 3.5,
-              "cause": "chain",
-              "chainDepth": 1,
-              "severed": false,
-              "invalid": null,
-              "probeMisses": 0
-            }
-          ]
-        },
-        {
-          "label": "Iron Skull C",
-          "dead": false,
-          "wreck": false,
-          "hp": 7989.620902728126,
-          "cores": [
-            {
-              "id": "skull_A",
-              "state": "critical",
-              "label": "KRYTYCZNY",
-              "classId": "capital",
-              "integrity": 0.5181598289474815,
-              "chamber": 34,
-              "alive": 34,
-              "dead": 0,
-              "elsewhere": 0,
-              "meltdownRemaining": 0,
-              "meltdownDuration": 0,
-              "cause": null,
-              "chainDepth": 0,
-              "severed": false,
-              "invalid": null,
-              "probeMisses": 0
-            }
-          ]
-        },
-        {
-          "label": "Iron Skull D",
-          "dead": false,
-          "wreck": false,
-          "hp": 7989.620902728126,
-          "cores": [
-            {
-              "id": "skull_A",
-              "state": "critical",
-              "label": "KRYTYCZNY",
-              "classId": "capital",
-              "integrity": 0.5181598289474815,
-              "chamber": 34,
-              "alive": 34,
-              "dead": 0,
-              "elsewhere": 0,
-              "meltdownRemaining": 0,
-              "meltdownDuration": 0,
-              "cause": null,
-              "chainDepth": 0,
-              "severed": false,
-              "invalid": null,
-              "probeMisses": 0
-            }
-          ]
-        }
-      ],
-      "destructibles": 8,
-      "hits": 0,
-      "softBody": "gpu",
-      "log": [
-        "  0.00s  scena: Formacja — Bellator A 2920 heksów, Bellator B 2920 heksów, Iron Skull C 2261 heksów, Iron Skull D 2261 heksów",
-        "  1.67s  Bellator A/bellator_A: STOPIENIE (wymuszone) — odliczanie 3.5 s",
-        "  5.20s  DETONACJA Bellator A (zniszczony)/bellator_A [capital] — AoE 1963 j. / 5400 HP, fala 785 j., łańcuch 0, dotkniętych 3, fragmentów 5",
-        "  5.23s  Bellator B/bellator_A: KRYTYCZNY",
-        "  5.23s  Bellator B/bellator_A: STOPIENIE (chain, łańcuch 1) — odliczanie 3.5 s",
-        "  5.23s  Iron Skull C/skull_A: KRYTYCZNY",
-        "  5.23s  Iron Skull D/skull_A: KRYTYCZNY"
-      ]
-    }
-  },
-  "formationEnd": {
-    "png": "18-formacja-koniec.png",
-    "summary": {
-      "simTime": 10.64,
-      "ships": [
-        {
-          "label": "Bellator A (zniszczony)",
-          "dead": true,
-          "wreck": false,
-          "hp": 12000,
-          "cores": [
-            {
-              "id": "bellator_A",
-              "state": "detonated",
-              "label": "DETONACJA",
-              "classId": "capital",
-              "integrity": 1,
-              "chamber": 32,
-              "alive": 32,
-              "dead": 0,
-              "elsewhere": 0,
-              "meltdownRemaining": 0,
-              "meltdownDuration": 3.5,
-              "cause": "wymuszone",
-              "chainDepth": 0,
-              "severed": false,
-              "invalid": null,
-              "probeMisses": 0
-            }
-          ]
-        },
-        {
-          "label": "Bellator B (zniszczony)",
-          "dead": true,
-          "wreck": false,
-          "hp": 8106.152055385854,
-          "cores": [
-            {
-              "id": "bellator_A",
-              "state": "detonated",
-              "label": "DETONACJA",
-              "classId": "capital",
-              "integrity": 0.12951022691439992,
-              "chamber": 32,
-              "alive": 32,
-              "dead": 0,
-              "elsewhere": 0,
-              "meltdownRemaining": 0,
-              "meltdownDuration": 3.5,
-              "cause": "chain",
-              "chainDepth": 1,
-              "severed": false,
-              "invalid": null,
-              "probeMisses": 0
-            }
-          ]
-        },
-        {
-          "label": "Iron Skull C",
-          "dead": false,
-          "wreck": false,
-          "hp": 5655.377243286312,
-          "cores": [
-            {
-              "id": "skull_A",
-              "state": "critical",
-              "label": "KRYTYCZNY",
-              "classId": "capital",
-              "integrity": 0.5181598289474815,
-              "chamber": 34,
-              "alive": 34,
-              "dead": 0,
-              "elsewhere": 0,
-              "meltdownRemaining": 0,
-              "meltdownDuration": 0,
-              "cause": null,
-              "chainDepth": 0,
-              "severed": false,
-              "invalid": null,
-              "probeMisses": 0
-            }
-          ]
-        },
-        {
-          "label": "Iron Skull D",
-          "dead": false,
-          "wreck": false,
-          "hp": 5628.8254137551285,
-          "cores": [
-            {
-              "id": "skull_A",
-              "state": "critical",
-              "label": "KRYTYCZNY",
-              "classId": "capital",
-              "integrity": 0.5181598289474815,
-              "chamber": 34,
-              "alive": 34,
-              "dead": 0,
-              "elsewhere": 0,
-              "meltdownRemaining": 0,
-              "meltdownDuration": 0,
-              "cause": null,
-              "chainDepth": 0,
-              "severed": false,
-              "invalid": null,
-              "probeMisses": 0
-            }
-          ]
-        }
-      ],
-      "destructibles": 25,
-      "hits": 0,
-      "softBody": "gpu",
-      "log": [
-        "  0.00s  scena: Formacja — Bellator A 2920 heksów, Bellator B 2920 heksów, Iron Skull C 2261 heksów, Iron Skull D 2261 heksów",
-        "  1.67s  Bellator A/bellator_A: STOPIENIE (wymuszone) — odliczanie 3.5 s",
-        "  5.20s  DETONACJA Bellator A (zniszczony)/bellator_A [capital] — AoE 1963 j. / 5400 HP, fala 785 j., łańcuch 0, dotkniętych 3, fragmentów 5",
-        "  5.23s  Bellator B/bellator_A: KRYTYCZNY",
-        "  5.23s  Bellator B/bellator_A: STOPIENIE (chain, łańcuch 1) — odliczanie 3.5 s",
-        "  5.23s  Iron Skull C/skull_A: KRYTYCZNY",
-        "  5.23s  Iron Skull D/skull_A: KRYTYCZNY",
-        "  8.75s  DETONACJA Bellator B (zniszczony)/bellator_A [capital] — AoE 1963 j. / 3240 HP, fala 785 j., łańcuch 1, dotkniętych 2, fragmentów 5"
-      ]
-    }
-  }
+  ]
 }

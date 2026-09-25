@@ -8,6 +8,8 @@ import { deflateSync } from 'node:zlib';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SHIP_EDITOR_DEFAULTS } from '../src/data/hardpointEditorDefaults.js';
+import { getWeaponTierForHull } from '../src/data/ships.js';
+import { BRIDGE_LAYOUT_PROPOSALS, bridgeZoneCorners, bridgeZoneDistance, bridgeZoneMargin, normalizeBridgeList } from '../src/game/shipBridge.js';
 import { HULLS, HULL_IDS, expandCandidate } from './rdzen-hulls-data.js';
 import { getHullAlphaMask, getHullRenderRaster } from './rdzen-node-hulls.js';
 
@@ -91,6 +93,17 @@ function markersOf(key) {
   return { hp, eng };
 }
 
+// --probe kadłub:x,y,r … — ocena wskazanych punktów (px PNG) tą samą miarą
+const PROBES = [];
+for (let i = 2; i < process.argv.length; i++) {
+  if (process.argv[i] !== '--probe') continue;
+  for (let j = i + 1; j < process.argv.length && !process.argv[j].startsWith('--'); j++) {
+    const [hull, rest] = process.argv[j].split(':');
+    const [x, y, r] = rest.split(',').map(Number);
+    PROBES.push({ hull, x, y, r });
+  }
+}
+
 function analyzeHull(hullId) {
   const def = HULLS[hullId];
   const { mask, width: w, height: h } = getHullAlphaMask(hullId);
@@ -167,7 +180,92 @@ function analyzeHull(hullId) {
   }
   const best = picks.map((s) => evaluate(toPng(s.x, s.y)));
 
-  const candidates = (def.candidates || []).flatMap((c) => expandCandidate(c).map((m) => ({ id: m.id, label: c.label, ...evaluate(m), rGrid: +(m.r * uni).toFixed(1) })));
+  // Mostki (BRIDGE_LAYOUT_PROPOSALS, docs/PORT-mostki.md) — WSZYSTKIE warianty:
+  // rdzenie dopisane przy integracji do hardpointEditorDefaults sprawdza test
+  // mostków (tests/shipBridge.test.mjs) dla każdego wariantu. Komora (koło r)
+  // nie może dotknąć strefy: heks należy albo do komory, albo do mostka, a zapas
+  // = bridgeZoneMargin klasy kadłuba (jak od hardpointów i silników).
+  const bridgeEntry = BRIDGE_LAYOUT_PROPOSALS[def.editorKey] || null;
+  const zones = [];
+  if (bridgeEntry) {
+    for (const [variant, list] of Object.entries(bridgeEntry.variants)) {
+      for (const z of normalizeBridgeList(list)) zones.push({ ...z, variant, isDefault: variant === bridgeEntry.defaultVariant });
+    }
+  }
+  const bridgeMargin = bridgeZoneMargin(uni, getWeaponTierForHull(def.renderProfile));
+  // odstęp brzegu komory od najbliższej strefy mostka [px PNG] (< 0 = nachodzi)
+  const bridgeGap = (px, py, rPng) => {
+    let best = Infinity;
+    let which = null;
+    for (const z of zones) {
+      const d = bridgeZoneDistance(z, px, py) - rPng;
+      if (d < best) { best = d; which = z; }
+    }
+    return { d: best, which };
+  };
+
+  const candidates = (def.candidates || []).flatMap((c) => expandCandidate(c).map((m) => {
+    const bg = bridgeGap(m.x, m.y, m.r);
+    return {
+      id: m.id, label: c.label, ...evaluate(m), rGrid: +(m.r * uni).toFixed(1),
+      bridgeGap: zones.length ? { d: +bg.d.toFixed(1), zone: bg.which?.id, variant: bg.which?.variant, ok: bg.d >= bridgeMargin } : null
+    };
+  }));
+
+  // Najbliżej środka masy: komora cała w kadłubie (głębokość ≥ 2r), poza
+  // sondą hardpointów i dysz (r + 14 px renderu) i poza mostkami (wyżej).
+  const rPng = def.cores?.[0]?.r || 48;
+  const rG = rPng * uni;
+  const minDepth = 2 * rG;
+  const needFree = rG + 14;
+  const nearCom = [];
+  for (let y = 0; y < h; y += 2) {
+    for (let x = 0; x < w; x += 2) {
+      const i = y * w + x;
+      if (!mask[i] || dist[i] < minDepth) continue;
+      if (nearest(x, y, hpG).d < needFree || nearest(x, y, engG).d < needFree) continue;
+      const p = toPng(x, y);
+      const gap = zones.length ? bridgeGap(p.x, p.y, rPng).d : Infinity;
+      if (gap < bridgeMargin) continue;
+      // zapas = najciaśniejszy z warunków [px siatki]
+      const slack = Math.min(dist[i] - minDepth, nearest(x, y, hpG).d - needFree, nearest(x, y, engG).d - needFree, (gap - bridgeMargin) * uni);
+      nearCom.push({ x, y, dCom: Math.hypot(x - centroid.gx, y - centroid.gy), slack });
+    }
+  }
+  // najpewniejsze w promieniu 2r od środka masy: największy zapas
+  const robust = nearCom.filter((s) => s.dCom <= 2 * rG).sort((a, b) => b.slack - a.slack)[0] || null;
+  nearCom.sort((a, b) => a.dCom - b.dCom);
+  const comPicks = [];
+  for (const s of nearCom) {
+    if (comPicks.every((p) => Math.hypot(p.x - s.x, p.y - s.y) > 40)) comPicks.push(s);
+    if (comPicks.length >= 4) break;
+  }
+  const nearComBest = comPicks.map((s) => {
+    const p = toPng(s.x, s.y);
+    const bg = bridgeGap(p.x, p.y, rPng);
+    return { ...evaluate(p), rPng, bridgeGap: zones.length ? { d: +bg.d.toFixed(1), zone: bg.which?.id, variant: bg.which?.variant } : null };
+  });
+  const robustBest = robust ? (() => {
+    const p = toPng(robust.x, robust.y);
+    const bg = bridgeGap(p.x, p.y, rPng);
+    return { ...evaluate(p), rPng, slackGrid: +robust.slack.toFixed(1), bridgeGap: zones.length ? { d: +bg.d.toFixed(1), zone: bg.which?.id, variant: bg.which?.variant } : null };
+  })() : null;
+  const probes = PROBES.filter((p) => p.hull === hullId).map((p) => {
+    const r = p.r || rPng;
+    const e = evaluate(p);
+    const bg = bridgeGap(p.x, p.y, r);
+    const rg = r * uni;
+    return {
+      ...e, rPng: r,
+      ok: {
+        depth: e.depth >= 2 * rg,
+        hardpoint: !e.nearestHardpoint || e.nearestHardpoint.d >= rg + 14,
+        engine: !e.nearestEngine || e.nearestEngine.d >= rg + 14,
+        bridge: !zones.length || bg.d >= bridgeMargin
+      },
+      bridgeGap: zones.length ? { d: +bg.d.toFixed(1), zone: bg.which?.id, variant: bg.which?.variant } : null
+    };
+  });
 
   // obrazek: głębokość jako jasność, tło ciemne, hardpointy czerwone, dysze
   // pomarańczowe, kandydaci zieloni (okrąg = komora), środek masy biały krzyż
@@ -188,9 +286,25 @@ function analyzeHull(hullId) {
     const n = Math.max(24, Math.round(rad * 6));
     for (let k = 0; k < n; k++) { const a = k / n * Math.PI * 2; put(cx + Math.cos(a) * rad, cy + Math.sin(a) * rad, ...col); }
   };
+  const line = (x0, y0, x1, y1, col) => {
+    const n = Math.max(2, Math.ceil(Math.hypot(x1 - x0, y1 - y0)));
+    for (let k = 0; k <= n; k++) put(x0 + (x1 - x0) * k / n, y0 + (y1 - y0) * k / n, ...col);
+  };
+  // mostki: domyślny wariant magenta, pozostałe przygaszone
+  for (const z of zones) {
+    const c = bridgeZoneCorners(z, []);
+    const col = z.isDefault ? [255, 70, 230] : [150, 60, 140];
+    for (let k = 0; k < c.length; k += 2) {
+      const a = toGrid({ x: c[k], y: c[k + 1] });
+      const b = toGrid({ x: c[(k + 2) % c.length], y: c[(k + 3) % c.length] });
+      line(a.gx, a.gy, b.gx, b.gy, col);
+    }
+  }
   for (const m of hpG) disc(m.gx, m.gy, 3, [255, 60, 60]);
   for (const m of engG) disc(m.gx, m.gy, 3, [255, 160, 40]);
   for (const b of best) ring(b.grid.x + w / 2, b.grid.y + h / 2, 6, [255, 255, 120]);
+  // najbliżej środka masy (poza mostkami): cyjan, okrąg = komora
+  for (const b of nearComBest) { ring(b.grid.x + w / 2, b.grid.y + h / 2, rG, [80, 230, 255]); disc(b.grid.x + w / 2, b.grid.y + h / 2, 2, [80, 230, 255]); }
   for (const c of candidates) { ring(c.grid.x + w / 2, c.grid.y + h / 2, c.rGrid, [80, 255, 120]); disc(c.grid.x + w / 2, c.grid.y + h / 2, 2, [80, 255, 120]); }
   for (let k = -6; k <= 6; k++) { put(centroid.gx + k, centroid.gy, 255, 255, 255); put(centroid.gx, centroid.gy + k, 255, 255, 255); }
   writeFileSync(resolve(outDir, `placement-${hullId}.png`), encodePngRgb(rgb, w, h));
@@ -202,7 +316,12 @@ function analyzeHull(hullId) {
     maxDepth: +maxDepth.toFixed(1),
     maxDepthAtPng: maxAt ? toPng(maxAt.gx, maxAt.gy) : null,
     bestFree: best,
-    candidates
+    candidates,
+    bridges: zones.map((z) => ({ id: z.id, variant: z.variant, isDefault: z.isDefault, x: z.x, y: z.y, w: z.w, h: z.h })),
+    bridgeMarginPng: +bridgeMargin.toFixed(1),
+    nearCom: nearComBest,
+    robustNearCom: robustBest,
+    probes
   };
 }
 
@@ -210,8 +329,22 @@ const report = HULL_IDS.map(analyzeHull);
 writeFileSync(resolve(outDir, 'placement.json'), JSON.stringify(report, null, 2));
 for (const r of report) {
   console.log(`\n== ${r.hull}  siatka ${r.grid.w}x${r.grid.h}  skala ${r.grid.scale.x}/${r.grid.scale.y}  max głęb. ${r.maxDepth} @ png (${r.maxDepthAtPng.x.toFixed(0)}, ${r.maxDepthAtPng.y.toFixed(0)})  środek masy png (${r.centroidPng.x.toFixed(0)}, ${r.centroidPng.y.toFixed(0)})`);
+  for (const z of r.bridges) console.log(`  mostek ${z.variant}/${z.id}${z.isDefault ? ' (domyślny)' : ''}: png (${z.x}, ${z.y}) ${z.w}×${z.h}`);
+  const gapTxt = (g) => (g ? `  mostek ${g.d} px${g.ok === false ? ' ← NACHODZI/za blisko' : ''} (${g.variant}/${g.zone})` : '');
   for (const c of r.candidates) {
-    console.log(`  kandydat ${c.id.padEnd(14)} png (${c.png.x}, ${c.png.y}) r=${c.rGrid}px  głęb. ${c.depth}  hp ${c.nearestHardpoint?.d} (${c.nearestHardpoint?.type})  dysza ${c.nearestEngine?.d}  do śr. masy ${c.toCentroid}`);
+    console.log(`  kandydat ${c.id.padEnd(14)} png (${c.png.x}, ${c.png.y}) r=${c.rGrid}px  głęb. ${c.depth}  hp ${c.nearestHardpoint?.d} (${c.nearestHardpoint?.type})  dysza ${c.nearestEngine?.d}  do śr. masy ${c.toCentroid}${gapTxt(c.bridgeGap)}`);
+  }
+  console.log(`  -- najbliżej środka masy, poza mostkami (zapas ${r.bridgeMarginPng} px PNG), głęb. ≥ 2r, hardpointy/dysze ≥ r + 14:`);
+  for (const b of r.nearCom) {
+    console.log(`  przy ŚM    png (${b.png.x}, ${b.png.y}) r=${b.rPng}  głęb. ${b.depth}  hp ${b.nearestHardpoint?.d} (${b.nearestHardpoint?.type})  dysza ${b.nearestEngine?.d}  do śr. masy ${b.toCentroid}${gapTxt(b.bridgeGap)}`);
+  }
+  if (r.robustNearCom) {
+    const b = r.robustNearCom;
+    console.log(`  NAJPEWN.   png (${b.png.x}, ${b.png.y}) r=${b.rPng}  zapas ${b.slackGrid} px siatki  głęb. ${b.depth}  hp ${b.nearestHardpoint?.d} (${b.nearestHardpoint?.type})  dysza ${b.nearestEngine?.d}  do śr. masy ${b.toCentroid}${gapTxt(b.bridgeGap)}`);
+  }
+  for (const b of r.probes) {
+    const bad = Object.entries(b.ok).filter(([, v]) => !v).map(([k]) => k);
+    console.log(`  PRÓBA      png (${b.png.x}, ${b.png.y}) r=${b.rPng}  głęb. ${b.depth}  hp ${b.nearestHardpoint?.d} (${b.nearestHardpoint?.type})  dysza ${b.nearestEngine?.d}  do śr. masy ${b.toCentroid}${gapTxt(b.bridgeGap)}  ${bad.length ? 'NIE: ' + bad.join(', ') : 'OK'}`);
   }
   for (const b of r.bestFree) {
     console.log(`  wolne       png (${b.png.x}, ${b.png.y})  głęb. ${b.depth}  hp ${b.nearestHardpoint?.d} (${b.nearestHardpoint?.type})  dysza ${b.nearestEngine?.d}  do śr. masy ${b.toCentroid}`);
