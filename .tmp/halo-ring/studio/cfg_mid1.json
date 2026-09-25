@@ -1,9 +1,0 @@
-[
- {"id": "p9", "js": "H.applyPreset(9)"},
- {"id": "k7_docked_z1", "js": "H.flight.start('docked', 1)"},
- {"id": "k7_docked_z035", "js": "H.flight.start('docked', 0.35)"},
- {"id": "k7_docked_z016", "js": "H.flight.start('docked', 0.16)"},
- {"id": "port_z02", "js": "H.applyPreset(7); const a = Math.PI/4; H.setGame(Math.cos(a)*47500, Math.sin(a)*47500, 0.2)"},
- {"id": "port_z0035", "js": "H.applyPreset(7); const a = Math.PI/4; H.setGame(Math.cos(a)*52000, Math.sin(a)*52000, 0.035)"},
- {"id": "port_z06", "js": "H.applyPreset(7); const a = Math.PI/4; H.setGame(Math.cos(a)*45000, Math.sin(a)*45000, 0.6)"}
-]

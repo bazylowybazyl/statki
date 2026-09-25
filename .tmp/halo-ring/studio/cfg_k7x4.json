@@ -1,9 +1,0 @@
-[
- {"id": "p8", "js": "H.applyPreset(8)"},
- {"id": "p9", "js": "H.applyPreset(9)"},
- {"id": "k7_z01", "js": "H.flight.start('docked', 0.1)"},
- {"id": "k7_z016", "js": "H.flight.start('docked', 0.16)"},
- {"id": "k7_z035", "js": "H.flight.start('docked', 0.35)"},
- {"id": "complex2_cine", "js": "const h7 = H.ring.k7Halls[1]; const f = h7.frame; const v = h.v3; const pos = v(f.origin.x + f.rx*21000 + f.tx*-3500, f.origin.y + f.ry*21000 + f.ty*-3500, 7600); const tgt = v(f.origin.x + f.rx*1500 + f.tx*1200, f.origin.y + f.ry*1500 + f.ty*1200, -600); H.setCine({ pos, fwd: tgt.sub(pos).normalize(), up: v(0,0,1), fov: 42, sun: { azimuth: Math.atan2(f.ry, f.rx)/h.DEG - 30, elevation: 40 } })"},
- {"id": "game_z0035", "js": "H.applyPreset(7)"}
-]

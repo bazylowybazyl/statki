@@ -1,1 +1,0 @@
-[{"id": "with_city", "js": "H.applyPreset(7); H.setGame(31961.226510, 31961.226510, 0.2);H.ring.setVisible('city', true);"}, {"id": "no_city", "js": "H.applyPreset(7); H.setGame(31961.226510, 31961.226510, 0.2);H.ring.setVisible('city', false);"}]

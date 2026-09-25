@@ -1,8 +1,0 @@
-  → exposed: 65 tr / 193 s / -195 heksów · critical: 75 tr / 223 s / -225 heksów · meltdown: 81 tr / 241 s / -243 heksów
-special_valkyrie_railgun   gpu@60           solver=gpu  sim 241.0 s  trafień    81  heksów - 243  dryf max  72.5  komora meltdown 24% (24 martwych)  [67.5 s]
-  → exposed: 52 tr / 154 s / --19 heksów · critical: 62 tr / 184 s / -12 heksów · meltdown: 65 tr / 193 s / -22 heksów
-special_valkyrie_railgun   cpu@60           solver=cpu  sim 193.0 s  trafień    65  heksów -  22  dryf max  50.3  komora meltdown 25% (24 martwych)  [57.5 s]
-  → exposed: 72 tr / 116 s / -122 heksów · critical: 90 tr / 146 s / -161 heksów · meltdown: 99 tr / 161 s / -177 heksów
-special_yamato_cannon      gpu@60           solver=gpu  sim 161.0 s  trafień    99  heksów - 177  dryf max  59.3  komora meltdown 29% (22 martwych)  [48.2 s]
-  → exposed: 48 tr / 76 s / -21 heksów · critical: 54 tr / 86 s / -51 heksów · meltdown: 57 tr / 91 s / -58 heksów
-special_yamato_cannon      cpu@60           solver=cpu  sim 91.0 s  trafień    57  heksów -  58  dryf max    52  komora meltdown 29% (22 martwych)  [28.7 s]

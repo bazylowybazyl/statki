@@ -1,3 +1,0 @@
-[
- {"id": "hmap", "dump": "const ring = H.ring; const L = ring.layout; const R = L.radii.floorMid; const out = []; for (const c of [0, 1, 2, 3]) { const thc = ring.k7Halls[c].frame.angle; const rows = []; for (let j = 0; j < 90; j++) { const z = -2740 + j * (5480 / 89); const row = []; for (let i = 0; i < 360; i++) { const s = -40000 + i * (80000 / 359); const th = thc + s / R; row.push(Math.round(ring.terrainHeightAt(Math.cos(th) * R, Math.sin(th) * R, z))); } rows.push(row); } out.push({ c, rows }); } return out;"}
-]
