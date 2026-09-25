@@ -10,6 +10,7 @@
 
 import * as THREE from 'three';
 import { Core3D } from './core3d.js';
+import { sceneOriginNearCamera } from './sceneOrigin.js';
 import { DrawCallStats } from './drawCallStats.js';
 import { Turret2D, normalizeWeaponFxKey } from '../vfx/turret2D.js';
 import { Fx3D } from './fxParticles3D.js';
@@ -93,6 +94,12 @@ function getBulletStyleHdr(style) {
   }
   return hdr;
 }
+
+// Początek układu instancji tej klatki (sceneOrigin.js), ustawiany w
+// syncProjectiles: translacje błysków i pocisków są względem niego, a duży
+// kawałek niesie mesh.position (modelViewMatrix w double) — przy 5–10 mln j.
+// float32 w shaderze inaczej drga ~1 px × zoom względem kadłuba i wieżyczek.
+const _origin = { x: 0, y: 0 };
 
 // Wysyła na GPU tylko [0, count) instancji zamiast całego bufora — pełne
 // bufory pocisków (2000 slotów) szły co klatkę nawet przy jednym pocisku.
@@ -314,6 +321,8 @@ function updateMuzzleFlashes(dt) {
   const active = muzzleInstances.active;
   const elements = _muzzleMatrix.elements;
   let count = 0;
+  outer.position.set(_origin.x, _origin.y, 0);
+  core.position.set(_origin.x, _origin.y, 0);
 
   for (let i = active.length - 1; i >= 0; i--) {
     const f = active[i];
@@ -332,8 +341,9 @@ function updateMuzzleFlashes(dt) {
     // minus — tak samo jak w macierzach pocisków (atan2(-segY, segX)).
     const cA = Math.cos(-f.angle);
     const sA = Math.sin(-f.angle);
-    const wx = f.x;
-    const wy = -f.y;
+    // Względem początku przy kamerze (_origin).
+    const wx = f.x - _origin.x;
+    const wy = -f.y - _origin.y;
 
     const so = f.size * grow;
     elements[0] = cA * so; elements[4] = -sA * so; elements[8] = 0; elements[12] = wx;
@@ -1092,6 +1102,8 @@ export const Weapon3DSystem = {
     const dt = this._lastFxTimeSec > 0 ? Math.max(0.001, Math.min(0.05, timeSec - this._lastFxTimeSec)) : (1 / 60);
     this._lastFxTimeSec = timeSec;
 
+    // Wołane z updateHexShips3D po Core3D.syncCamera — kamera tej klatki.
+    sceneOriginNearCamera(_origin);
     this._updateWeaponFx(dt);
     this._updateBeamFx(dt, timeSec);
     this._updateCameraShake(dt);
@@ -1106,6 +1118,13 @@ export const Weapon3DSystem = {
     let arcInstanceCount = 0;
     const dummy = bulletInstances.dummy;
     const matrixElements = dummy.matrix.elements;
+    // Pociski względem początku przy kamerze (_origin), jak błyski wylotowe.
+    const ox = _origin.x;
+    const oy = _origin.y;
+    bulletInstances.trails.position.set(ox, oy, 0);
+    bulletInstances.cores.position.set(ox, oy, 0);
+    bulletInstances.heads.position.set(ox, oy, 0);
+    bulletInstances.arcs.position.set(ox, oy, 0);
     
     const setMatrix = (x, y, z, rot, scaleX, scaleY) => {
         const c = Math.cos(rot);
@@ -1157,11 +1176,11 @@ export const Weapon3DSystem = {
       const coreLen = Math.max(minLen * 0.55, segLen * 0.7);
 
       const styleHdr = getBulletStyleHdr(style);
-      setMatrix(cx, -cy, style.z, angle, trailLen, style.trailWidth * wScale);
+      setMatrix(cx - ox, -cy - oy, style.z, angle, trailLen, style.trailWidth * wScale);
       bulletInstances.trails.setMatrixAt(instanceCount, dummy.matrix);
       bulletInstances.trails.setColorAt(instanceCount, styleHdr.trail);
 
-      setMatrix(x, -y, style.z + 0.01, angle, coreLen, style.coreWidth * wScale);
+      setMatrix(x - ox, -y - oy, style.z + 0.01, angle, coreLen, style.coreWidth * wScale);
       bulletInstances.cores.setMatrixAt(instanceCount, dummy.matrix);
       bulletInstances.cores.setColorAt(instanceCount, styleHdr.core);
 
@@ -1175,12 +1194,12 @@ export const Weapon3DSystem = {
         const jitterX = Math.sin(timeSec * 41.0 + x * 0.03) * 0.6;
         const jitterY = Math.cos(timeSec * 38.0 + y * 0.03) * 0.6;
 
-        setMatrix(x + jitterX, -y + jitterY, style.z + 0.04, angle + Math.PI * 0.5, arcLen, arcWidth);
+        setMatrix(x + jitterX - ox, -y + jitterY - oy, style.z + 0.04, angle + Math.PI * 0.5, arcLen, arcWidth);
         bulletInstances.arcs.setMatrixAt(arcInstanceCount, dummy.matrix);
         bulletInstances.arcs.setColorAt(arcInstanceCount, BULLET_ARC_HDR_COLOR);
         arcInstanceCount++;
 
-        setMatrix(x - jitterX, -y - jitterY, style.z + 0.04, angle - Math.PI * 0.5, arcLen * 0.75, arcWidth * 0.75);
+        setMatrix(x - jitterX - ox, -y - jitterY - oy, style.z + 0.04, angle - Math.PI * 0.5, arcLen * 0.75, arcWidth * 0.75);
         bulletInstances.arcs.setMatrixAt(arcInstanceCount, dummy.matrix);
         bulletInstances.arcs.setColorAt(arcInstanceCount, BULLET_ARC_HDR_COLOR);
         arcInstanceCount++;

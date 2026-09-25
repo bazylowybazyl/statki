@@ -9,17 +9,23 @@ import {
   riverCenterV
 } from '../src/3d/haloRing/haloRingLayout.js';
 import { HALO_STATION_ANGLE, HALO_TAU } from '../src/3d/haloRing/haloRingConfig.js';
-import { computePlanetaryRingLayout } from '../src/3d/planetaryRing3D.js';
 
 const near = (a, b, eps, msg) => assert.ok(Math.abs(a - b) <= eps, `${msg}: ${a} vs ${b} (±${eps})`);
 
-test('obwiednia Halo = obwiednia obecnego ringu (port nie rusza stref orbit)', () => {
-  for (const planet of [{ id: 'earth' }, { id: 'mars' }, 37800, 30000]) {
-    assert.deepEqual(computeHaloRingLayout(planet), computePlanetaryRingLayout(planet));
-  }
-  const earth = computePlanetaryRingLayout({ id: 'earth' });
+// Obwiednia dawnego ringu (planetaryRing3D.computePlanetaryRingLayout, usunięty
+// przy porcie 2026-09-25): strefy orbit, spawn, CIC i HUD liczą się z tych liczb.
+test('obwiednia Halo = obwiednia dawnego ringu (port nie rusza stref orbit)', () => {
+  const earth = computeHaloRingLayout({ id: 'earth' });
+  assert.equal(earth.planetR, 37800);
   assert.equal(earth.innerRadius, 41202);
   assert.equal(earth.outerRadius, 43752);
+  assert.deepEqual([earth.inner.outerR, earth.industrial.outerR, earth.parking.outerR, earth.military.outerR], [41810, 42418, 43298, 43752]);
+  assert.deepEqual(computeHaloRingLayout(37800), earth, 'promień zamiast planety');
+  const mars = computeHaloRingLayout({ id: 'mars' });
+  assert.equal(mars.planetR, 30000);
+  assert.equal(mars.innerRadius, 32700);
+  assert.equal(mars.outerRadius, 35250);
+  assert.deepEqual(computeHaloRingLayout(30000), mars);
 });
 
 test('habitat domyślnie w stronę kosmosu; oba warianty w obwiedni 41 202–43 752', () => {

@@ -70,9 +70,11 @@ test('moons rotate visibly and receive a correctly layered halo', () => {
   assert.match(planetSource, /this\.halo\.material\.uniforms\.sunPosition\.value\.set/);
 });
 
-test('Earth and Mars stations orbit outside their rings without offsetting initial player spawn', () => {
-  assert.match(gameSource, /const\s+hasPlanetaryRing\s*=\s*stationPlanetKey\s*===\s*'earth'\s*\|\|\s*stationPlanetKey\s*===\s*'mars'/);
-  assert.match(gameSource, /computeRingStationOrbitRadius\(pl\)/);
+test('Earth and Mars stations are ring ports in the K-7 hall without offsetting initial player spawn', () => {
+  // port ringu „Halo” zastępuje stację orbitalną (haloRingPlanets.computeHaloPortStation)
+  assert.match(gameSource, /const\s+ringPort\s*=\s*computeHaloPortStation\(pl\)/);
+  assert.match(gameSource, /const\s+orbitRadius\s*=\s*ringPort\s*\?\s*ringPort\.orbitRadius\s*:\s*0/);
+  assert.match(gameSource, /ringPort:\s*ringPort\.key,\s*isCollidable:\s*false/);
   assert.match(gameSource, /x:\s*planet\.x\s*\+\s*Math\.cos\(spawnAngle\)\s*\*\s*spawnOrbitRadius/);
   assert.match(gameSource, /y:\s*planet\.y\s*\+\s*Math\.sin\(spawnAngle\)\s*\*\s*spawnOrbitRadius/);
 });

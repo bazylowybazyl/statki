@@ -1177,6 +1177,9 @@ function drawInfrastructureInstances(ctx, cam) {
     if (activeKey && key === activeKey) return;
     for (const inst of list) {
       if (!inst || !inst.worldPos || !inst.buildingId) continue;
+      // Stacja-port ringu „Halo” stoi w hali K-7: jej budynki są częścią
+      // ringu, ikony 2D leżałyby na dachu hali (widać je tylko w edytorze).
+      if (inst.stationRef?.ringPort) continue;
       const building = INFRA_BUILDING_MAP.get(inst.buildingId);
       if (!building) continue;
       const screen = window.worldToScreen(inst.worldPos.x, inst.worldPos.y, cam);

@@ -601,9 +601,44 @@ function landmarkView(index, { mode = 'cine', night = false, zoom = 0.45 } = {})
   pos.z = Math.min(pos.z, L.z.topIn - 200);
   return { mode: 'cine', pos, fwd: tgt.sub(pos).normalize(), up: f.up.clone(), fov: 55, sun, name, lm };
 }
+// Kopuły-biosfery (K, Shift+K wstecz): ujęcie z ukosa znad parku (szkło,
+// wnętrze wg typu, wejścia), w kamerze gry nad kopułą.
+let domeIndex = -1;
+function domeView(index, { mode = 'cine', night = false, zoom = 0.45 } = {}) {
+  const list = ring.domes || [];
+  if (!list.length) return null;
+  const dm = list[((index % list.length) + list.length) % list.length];
+  const L = ring.layout;
+  const th = dm.theta;
+  const f = frameAt(th);
+  const sun = night ? { azimuth: th / DEG + 150, elevation: 25 } : { azimuth: th / DEG - 30, elevation: 38 };
+  const name = `K. ${dm.name}`;
+  if (mode === 'game') {
+    const r = L.floorRadiusAtT(dm.t) + L.sigma * (dm.floorH + dm.h * 0.5);
+    return { mode: 'game', game: { x: Math.cos(th) * r, y: -Math.sin(th) * r, zoom }, sun, name, dome: dm };
+  }
+  const base = L.floorPoint(dm.s, dm.t, dm.floorH, {});
+  const p0 = new THREE.Vector3(base.x, base.y, base.z);
+  const tgt = p0.clone().addScaledVector(f.up, dm.h * 0.25);
+  const dist = dm.r * 2.2 + 350;
+  const pos = p0.clone().addScaledVector(f.z, dist * 0.8).addScaledVector(f.up, dm.h * 0.9 + 260).addScaledVector(f.along, dist * 0.55);
+  pos.z = Math.min(pos.z, L.z.topIn - 200);
+  return { mode: 'cine', pos, fwd: tgt.sub(pos).normalize(), up: f.up.clone(), fov: 55, sun, name, dome: dm };
+}
+function applyDome(index, opts) {
+  const cfg = domeView(index, opts);
+  if (!applyCivicView(cfg)) return null;
+  const dm = cfg.dome;
+  return { name: dm.name, type: dm.type, sector: dm.sectorName, theta: dm.theta, t: dm.t, z: dm.z, floorH: dm.floorH, r: dm.r, h: dm.h };
+}
 function applyLandmark(index, opts) {
   const cfg = landmarkView(index, opts);
-  if (!cfg) return null;
+  if (!applyCivicView(cfg)) return null;
+  const lm = cfg.lm;
+  return { name: lm.name, sector: lm.sectorName, theta: lm.theta, t: lm.t, z: lm.z, plazaH: lm.plazaH, h: lm.h };
+}
+function applyCivicView(cfg) {
+  if (!cfg) return false;
   tour.active = false;
   state.sun.azimuth = ((cfg.sun.azimuth + 540) % 360) - 180;
   state.sun.elevation = cfg.sun.elevation;
@@ -620,8 +655,7 @@ function applyLandmark(index, opts) {
   }
   state.presetName = cfg.name;
   syncUi();
-  const lm = cfg.lm;
-  return { name: lm.name, sector: lm.sectorName, theta: lm.theta, t: lm.t, z: lm.z, plazaH: lm.plazaH, h: lm.h };
+  return true;
 }
 
 function applyPreset(index, { instant = true } = {}) {
@@ -784,6 +818,10 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyM' && !e.repeat && state.mode !== 'flight') {
     landmarkIndex += e.shiftKey ? -1 : 1;
     applyLandmark(landmarkIndex, { mode: state.mode === 'game' ? 'game' : 'cine' });
+  }
+  if (e.code === 'KeyK' && !e.repeat && state.mode !== 'flight') {
+    domeIndex += e.shiftKey ? -1 : 1;
+    applyDome(domeIndex, { mode: state.mode === 'game' ? 'game' : 'cine' });
   }
   if (state.mode === 'flight' && ['Space', 'KeyW', 'KeyS', 'KeyA', 'KeyD'].includes(e.code)) e.preventDefault();
 });
@@ -1150,7 +1188,15 @@ window.__halo = {
     return applyLandmark(i, opts);
   },
   get landmarks() {
-    return (ring.landmarks || []).map((lm) => ({ name: lm.name, sector: lm.sectorName, kind: lm.kind, theta: lm.theta, t: lm.t, z: lm.z, plazaH: lm.plazaH, h: lm.h }));
+    return (ring.landmarks || []).map((lm) => ({ name: lm.name, sector: lm.sectorName, kind: lm.kind, theta: lm.theta, t: lm.t, z: lm.z, plazaH: lm.plazaH, h: lm.h, pond: !!lm.pond }));
+  },
+  // kopuła i (opts jak landmark) → opis i ujęcie
+  dome(i = 0, opts = {}) {
+    domeIndex = i;
+    return applyDome(i, opts);
+  },
+  get domes() {
+    return (ring.domes || []).map((dm) => ({ name: dm.name, type: dm.type, sector: dm.sectorName, theta: dm.theta, s: dm.s, t: dm.t, z: dm.z, floorH: dm.floorH, r: dm.r, h: dm.h }));
   },
   // Lot K-7 do zrzutów i testów: stan startowy, sekwencje, pozycja statku
   flight: {
@@ -1227,6 +1273,15 @@ if (params.get('cam') === 'game') {
 if (params.has('landmark')) {
   landmarkIndex = Number(params.get('landmark')) || 0;
   applyLandmark(landmarkIndex, {
+    mode: params.get('cam') === 'game' ? 'game' : 'cine',
+    night: params.get('night') === '1',
+    zoom: params.has('zoom') ? Number(params.get('zoom')) : 0.45
+  });
+}
+// ?dome=i (&cam=game&zoom=…, &night=1): kopuła do zrzutów
+if (params.has('dome')) {
+  domeIndex = Number(params.get('dome')) || 0;
+  applyDome(domeIndex, {
     mode: params.get('cam') === 'game' ? 'game' : 'cine',
     night: params.get('night') === '1',
     zoom: params.has('zoom') ? Number(params.get('zoom')) : 0.45

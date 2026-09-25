@@ -16,6 +16,7 @@ import { MetalDebrisPool } from './beamDebris3D.js';
 import { BEAM_TYPE } from '../game/beamBody3D.js';
 import { prepareSkinChunks, selectSkinChunk } from './beamSkinChunks3D.js';
 import { prepareSkinSurface, createSurfaceState, updateSurfaceState, writeTearRims } from './beamSkinSurface3D.js';
+import { buildSpriteSkinTopology, writeSpriteSkinGeometry, writeSpriteSkinQuads } from './beamSpriteSkin2D.js';
 
 const FIELD_ALIVE = THREE.DataUtils.toHalfFloat(1);
 const FIELD_NEVER = THREE.DataUtils.toHalfFloat(0.5);
@@ -194,6 +195,9 @@ export const BeamShips3D = {
   bodyData: new Map(),
   _seen: new Set(),
   debris: null,
+  // Tekstury sprite'ów kadłubów 2D — jedna na obraz, wspólna dla kopii i wraków.
+  _spriteTextures: new WeakMap(),
+  _spriteRange: { min: 0, max: -1 },
   lightDirWorld: new THREE.Vector3(0.35, 0.8, 0.5).normalize(),
   _lightDirView: new THREE.Vector3(),
   _lastTimeSec: 0,
@@ -243,8 +247,9 @@ export const BeamShips3D = {
   },
 
   _createBodyData(body) {
-    const data = { skin: null, beamLines: null, nodeMesh: null, beamCapacity: body.beams.length };
+    const data = { skin: null, sprite: null, beamLines: null, nodeMesh: null, beamCapacity: body.beamStore.count };
     if (body.skin) data.skin = this._createBodySkin(body);
+    if (body.spriteSkin) data.sprite = this._createSpriteSkin(body);
     this.bodyData.set(body, data);
     body.meshDirty = true;
     return data;
@@ -253,7 +258,7 @@ export const BeamShips3D = {
   _createNodeMesh(body, data) {
     const cs = body.cellSize;
     const nodeGeo = new THREE.BoxGeometry(cs * 0.4, cs * 0.4, cs * 0.4);
-    const nodeColors = new Float32Array(body.nodes.length * 3);
+    const nodeColors = new Float32Array(body.nodeStore.count * 3);
     nodeGeo.setAttribute('aColor', new THREE.InstancedBufferAttribute(nodeColors, 3));
     const nodeMat = new THREE.ShaderMaterial({
       uniforms: {
@@ -264,8 +269,10 @@ export const BeamShips3D = {
       vertexShader: NODE_VERTEX_SHADER,
       fragmentShader: NODE_FRAGMENT_SHADER
     });
-    const nodeMesh = new THREE.InstancedMesh(nodeGeo, nodeMat, body.nodes.length);
+    const nodeMesh = new THREE.InstancedMesh(nodeGeo, nodeMat, body.nodeStore.count);
     nodeMesh.frustumCulled = false;
+    // Kadłub 2D leży w płaszczyźnie skóry — podgląd konstrukcji rysujemy nad nią.
+    if (body.spriteSkin) { nodeMat.depthTest = false; nodeMesh.renderOrder = 21; }
     nodeMesh.count = 0;
     nodeMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     nodeGeo.getAttribute('aColor').setUsage(THREE.DynamicDrawUsage);
@@ -274,7 +281,7 @@ export const BeamShips3D = {
   },
 
   _createBeamLines(body, data) {
-    const cap = body.beams.length;
+    const cap = body.beamStore.count;
     const linePos = new Float32Array(cap * 6);
     const lineCol = new Float32Array(cap * 6);
     const lineGeo = new THREE.BufferGeometry();
@@ -284,6 +291,7 @@ export const BeamShips3D = {
     const lineMat = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.9 });
     const lines = new THREE.LineSegments(lineGeo, lineMat);
     lines.frustumCulled = false;
+    if (body.spriteSkin) { lineMat.depthTest = false; lines.renderOrder = 20; }
     this.scene.add(lines);
     data.beamLines = lines;
     data.beamCapacity = cap;
@@ -334,7 +342,7 @@ export const BeamShips3D = {
     for (let partId = 0; partId < gpuParts.length; partId++) {
       const gp = gpuParts[partId];
       const patch = surface && !surface.intact ? surface.parts[partId] : null;
-      const chunk = surface || body.activeNodes === skin._nodeCount ? null : selectSkinChunk(skin, partId, body.nodes);
+      const chunk = surface || body.activeNodes === skin._nodeCount ? null : selectSkinChunk(skin, partId, body.nodeStore);
       // Atrybuty modelu pozostają wspólne. Odłam wysyła tylko swoje indeksy,
       // zamiast przetwarzać cały GLB i odrzucać go dopiero w fragmencie shadera.
       const geometry = new THREE.BufferGeometry();
@@ -381,9 +389,118 @@ export const BeamShips3D = {
       partIds.push(partId);
     }
     const result = { meshes, materials, partIds, triangleCount, texture, linksTexture, surface, data, base: skin._baseField, dims, deformScale,
-      nodes: body.nodes, activeNodes: body.activeNodes, deformed: false, rims: null, ribs: null };
+      store: body.nodeStore, activeNodes: body.activeNodes, deformed: false, rims: null, ribs: null };
     if (surface && !surface.intact) this._updateTearRims(body, result);
     return result;
+  },
+
+  // --- skóra kadłuba 2D ze sprite'a (tryb płaski) ---
+
+  _spriteTexture(skin) {
+    const source = skin.image || skin;
+    let texture = this._spriteTextures.get(source);
+    if (!texture) {
+      texture = new THREE.Texture(skin.image || null);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.anisotropy = 8;
+      if (skin.image) texture.needsUpdate = true;
+      this._spriteTextures.set(source, texture);
+    }
+    return texture;
+  },
+
+  _createSpriteSkin(body) {
+    const skin = body.spriteSkin;
+    const material = new THREE.MeshBasicMaterial({
+      map: this._spriteTexture(skin),
+      vertexColors: true,
+      // Obrys kadłuba wycina alfa sprite'a, nie granica komórek.
+      alphaTest: 0.45,
+      side: THREE.DoubleSide,
+      // Kadłuby 2D leżą w jednej płaszczyźnie: kolejność ustala renderOrder, nie głębia.
+      depthTest: false,
+      depthWrite: false
+    });
+    if (skin.tint) material.color.setRGB(skin.tint[0], skin.tint[1], skin.tint[2]);
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
+    mesh.frustumCulled = false;
+    mesh.renderOrder = 10 + (body.id % 1000) * 0.001;
+    this.scene.add(mesh);
+    const sprite = { mesh, topology: null, positions: null, colors: null, visible: 0 };
+    this._rebuildSpriteSkin(body, sprite);
+    return sprite;
+  },
+
+  _rebuildSpriteSkin(body, sprite) {
+    const topology = buildSpriteSkinTopology(body);
+    const vertices = topology.count * 4;
+    sprite.positions = new Float32Array(vertices * 3);
+    sprite.colors = new Float32Array(vertices * 3);
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(sprite.positions, 3).setUsage(THREE.DynamicDrawUsage));
+    geometry.setAttribute('color', new THREE.BufferAttribute(sprite.colors, 3).setUsage(THREE.DynamicDrawUsage));
+    geometry.setAttribute('uv', new THREE.BufferAttribute(topology.uvs, 2));
+    geometry.setIndex(new THREE.BufferAttribute(topology.indices, 1));
+    sprite.mesh.geometry.dispose();
+    sprite.mesh.geometry = geometry;
+    sprite.topology = topology;
+    sprite.visible = writeSpriteSkinGeometry(body, topology, sprite.positions, sprite.colors);
+    this._clearSkinDirty(body);
+  },
+
+  _updateSpriteSkin(body, sprite) {
+    // Rozpad podmienia magazyny węzłów i belek ciała: przebuduj dane skóry.
+    if (sprite.topology.store !== body.nodeStore || sprite.topology.beamStore !== body.beamStore) {
+      this._rebuildSpriteSkin(body, sprite);
+      return;
+    }
+    const geometry = sprite.mesh.geometry;
+    const position = geometry.attributes.position, color = geometry.attributes.color;
+    const region = body._region;
+    if (region && region.store === body.nodeStore && !region.dirtyAll) {
+      // Solver lokalny zna węzły zmienione od ostatniej klatki: tylko ich czworokąty
+      // (i sąsiadów) na CPU i tylko ten zakres bufora na GPU.
+      if (region.dirtyCount === 0) return;
+      const range = writeSpriteSkinQuads(body, sprite.topology, sprite.positions, sprite.colors,
+        region.dirty, region.dirtyCount, this._spriteRange);
+      this._clearSkinDirty(body);
+      sprite.visible = body.activeNodes;
+      if (range.max < range.min) return;
+      for (const attribute of [position, color]) {
+        attribute.clearUpdateRanges();
+        attribute.addUpdateRange(range.min * 12, (range.max - range.min + 1) * 12);
+        attribute.needsUpdate = true;
+      }
+      return;
+    }
+    sprite.visible = writeSpriteSkinGeometry(body, sprite.topology, sprite.positions, sprite.colors);
+    this._clearSkinDirty(body);
+    for (const attribute of [position, color]) {
+      attribute.clearUpdateRanges();
+      attribute.needsUpdate = true;
+    }
+  },
+
+  _clearSkinDirty(body) {
+    const region = body._region;
+    if (!region || region.store !== body.nodeStore) return;
+    const skinDirty = body.nodeStore.skinDirty;
+    if (region.dirtyAll) {
+      skinDirty.fill(0);
+      region.dirtyAll = false;
+    } else {
+      for (let k = 0; k < region.dirtyCount; k++) skinDirty[region.dirty[k]] = 0;
+    }
+    region.dirtyCount = 0;
+  },
+
+  /** Zwalnia teksturę sprite'a (po zmianie zestawu kadłubów w demie). */
+  disposeSpriteSkin(skin) {
+    const source = skin?.image || skin;
+    const texture = source ? this._spriteTextures.get(source) : null;
+    if (!texture) return;
+    texture.dispose();
+    this._spriteTextures.delete(source);
   },
 
   _updateSkinIndices(body, sd) {
@@ -403,11 +520,11 @@ export const BeamShips3D = {
       this._updateTearRims(body, sd);
       return;
     }
-    if (sd.nodes === body.nodes && sd.activeNodes === body.activeNodes) return;
+    if (sd.store === body.nodeStore && sd.activeNodes === body.activeNodes) return;
     sd.triangleCount = 0;
     for (let i = 0; i < sd.meshes.length; i++) {
       const partId = sd.partIds[i];
-      const chunk = selectSkinChunk(body.skin, partId, body.nodes);
+      const chunk = selectSkinChunk(body.skin, partId, body.nodeStore);
       const geometry = sd.meshes[i].geometry;
       if (geometry.index === body.skin._gpu[partId].geometry.index) {
         geometry.setIndex(new THREE.BufferAttribute(chunk.selected.slice(0, chunk.count), 1).setUsage(THREE.DynamicDrawUsage));
@@ -418,7 +535,7 @@ export const BeamShips3D = {
       geometry.setDrawRange(0, chunk.count);
       sd.triangleCount += chunk.count / 3;
     }
-    sd.nodes = body.nodes;
+    sd.store = body.nodeStore;
     sd.activeNodes = body.activeNodes;
   },
 
@@ -451,13 +568,14 @@ export const BeamShips3D = {
 
   _updateRibs(body, sd) {
     if (!sd.surface || (sd.surface.intact && !sd.ribs)) return;
-    if (!sd.ribs || sd.ribs.beams !== body.beams) {
+    const s = body.nodeStore, e = body.beamStore;
+    if (!sd.ribs || sd.ribs.beamStore !== e) {
       if (sd.ribs) {
         this.scene.remove(sd.ribs.mesh); sd.ribs.mesh.dispose();
         sd.ribs.mesh.geometry.dispose(); sd.ribs.mesh.material.dispose();
       }
       const members = [];
-      for (let i = 0; i < body.beams.length; i++) if (body.beams[i].type >= BEAM_TYPE.FRAME) members.push(i);
+      for (let i = 0; i < e.count; i++) if (e.type[i] >= BEAM_TYPE.FRAME) members.push(i);
       const material = new THREE.ShaderMaterial({
         uniforms: { uColor: { value: new THREE.Vector3(0.22, 0.25, 0.28) },
           uLightDirView: { value: this._lightDirView.clone() }, uAmbient: { value: 0.38 }, uDiffuse: { value: 0.8 } },
@@ -467,25 +585,26 @@ export const BeamShips3D = {
       mesh.frustumCulled = false;
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       this.scene.add(mesh);
-      sd.ribs = { mesh, members: new Uint32Array(members), beams: body.beams };
+      sd.ribs = { mesh, members: new Uint32Array(members), beamStore: e };
     }
     const ribs = sd.ribs;
+    const x = s.x, y = s.y, z = s.z, ix = s.ix, iy = s.iy, iz = s.iz, active = s.active;
     let count = 0;
     for (const index of ribs.members) {
-      const beam = body.beams[index], a = body.nodes[beam.a], b = body.nodes[beam.b];
-      if (beam.broken || !a.active || !b.active) continue;
+      const a = e.a[index], b = e.b[index];
+      if (e.broken[index] || !active[a] || !active[b]) continue;
       const dims = sd.dims, exposed = sd.surface.exposed;
-      const ca = a.ix + a.iy * dims.x + a.iz * dims.x * dims.y;
-      const cb = b.ix + b.iy * dims.x + b.iz * dims.x * dims.y;
+      const ca = ix[a] + iy[a] * dims.x + iz[a] * dims.x * dims.y;
+      const cb = ix[b] + iy[b] * dims.x + iz[b] * dims.x * dims.y;
       // An impact exposes nearby structure, not every virtual reinforcement
       // in the asset. Some of those sit outside the authored GLB surface.
       if (!exposed[ca] && !exposed[cb]) continue;
-      ribDirection.set(b.x - a.x, b.y - a.y, b.z - a.z);
+      ribDirection.set(x[b] - x[a], y[b] - y[a], z[b] - z[a]);
       const length = ribDirection.length();
-      if (length < 1e-5 || length > beam.restBase * 1.7) continue;
+      if (length < 1e-5 || length > e.restBase[index] * 1.7) continue;
       ribRotation.setFromUnitVectors(ribUp, ribDirection.multiplyScalar(1 / length));
-      ribCenter.set((a.x + b.x) * 0.5, (a.y + b.y) * 0.5, (a.z + b.z) * 0.5);
-      const width = body.cellSize * (beam.type === BEAM_TYPE.BULKHEAD ? 0.24 : 0.14);
+      ribCenter.set((x[a] + x[b]) * 0.5, (y[a] + y[b]) * 0.5, (z[a] + z[b]) * 0.5);
+      const width = body.cellSize * (e.type[index] === BEAM_TYPE.BULKHEAD ? 0.24 : 0.14);
       ribScale.set(width, length, width * 0.6);
       ribMatrix.compose(ribCenter, ribRotation, ribScale);
       ribs.mesh.setMatrixAt(count++, ribMatrix);
@@ -504,8 +623,9 @@ export const BeamShips3D = {
     // Duży zgniot nie może zatrzymać się wizualnie na sztywnym limicie 8 komórek.
     let scale = body.cellSize * 8;
     let maxDisplacement = 0;
-    for (const n of body.nodes) {
-      if (n.active) maxDisplacement = Math.max(maxDisplacement, Math.abs(n.x - n.ox), Math.abs(n.y - n.oy), Math.abs(n.z - n.oz));
+    const s = body.nodeStore, x = s.x, y = s.y, z = s.z, ox = s.ox, oy = s.oy, oz = s.oz, active = s.active;
+    for (let i = 0; i < s.count; i++) {
+      if (active[i]) maxDisplacement = Math.max(maxDisplacement, Math.abs(x[i] - ox[i]), Math.abs(y[i] - oy[i]), Math.abs(z[i] - oz[i]));
     }
     scale = Math.max(scale, maxDisplacement);
     // The intact high-detail fleet needs no field sampling in its vertex
@@ -515,12 +635,13 @@ export const BeamShips3D = {
     const invScale = 1 / sd.deformScale;
     for (const material of sd.materials) material.uniforms.uDeformScale.value = sd.deformScale;
 
-    for (const n of body.nodes) {
-      if (!n.active) continue;
-      const o = (n.ix + n.iy * nx + n.iz * nxy) * 4;
-      let vx = (n.x - n.ox) * invScale;
-      let vy = (n.y - n.oy) * invScale;
-      let vz = (n.z - n.oz) * invScale;
+    const ix = s.ix, iy = s.iy, iz = s.iz;
+    for (let i = 0; i < s.count; i++) {
+      if (!active[i]) continue;
+      const o = (ix[i] + iy[i] * nx + iz[i] * nxy) * 4;
+      let vx = (x[i] - ox[i]) * invScale;
+      let vy = (y[i] - oy[i]) * invScale;
+      let vz = (z[i] - oz[i]) * invScale;
       if (vx < -1) vx = -1; else if (vx > 1) vx = 1;
       if (vy < -1) vy = -1; else if (vy > 1) vy = 1;
       if (vz < -1) vz = -1; else if (vz > 1) vz = 1;
@@ -538,22 +659,23 @@ export const BeamShips3D = {
     const colAttr = lines.geometry.getAttribute('color');
     const pos = posAttr.array;
     const col = colAttr.array;
-    const nodes = body.nodes;
+    const ns = body.nodeStore, e = body.beamStore;
+    const x = ns.x, y = ns.y, z = ns.z, active = ns.active;
     let w = 0;
     let broken = 0;
 
-    for (const beam of body.beams) {
-      if (beam.broken) { broken++; continue; }
-      const a = nodes[beam.a];
-      const c = nodes[beam.b];
-      if (!a.active || !c.active) continue;
+    for (let bi = 0; bi < e.count; bi++) {
+      if (e.broken[bi]) { broken++; continue; }
+      const a = e.a[bi];
+      const c = e.b[bi];
+      if (!active[a] || !active[c]) continue;
 
-      pos[w * 6] = a.x; pos[w * 6 + 1] = a.y; pos[w * 6 + 2] = a.z;
-      pos[w * 6 + 3] = c.x; pos[w * 6 + 4] = c.y; pos[w * 6 + 5] = c.z;
+      pos[w * 6] = x[a]; pos[w * 6 + 1] = y[a]; pos[w * 6 + 2] = z[a];
+      pos[w * 6 + 3] = x[c]; pos[w * 6 + 4] = y[c]; pos[w * 6 + 5] = z[c];
 
-      const base = BEAM_BASE_COLORS[beam.type] || BEAM_BASE_COLORS[BEAM_TYPE.PLATING];
+      const base = BEAM_BASE_COLORS[e.type[bi]] || BEAM_BASE_COLORS[BEAM_TYPE.PLATING];
       // Naprężenie przesuwa kolor ku czerwieni — belka bliska zerwania świeci.
-      const s = Math.min(1, Math.abs(beam.strain) / Math.max(1e-4, beam.break));
+      const s = Math.min(1, Math.abs(e.strain[bi]) / Math.max(1e-4, e.brk[bi]));
       const r = base[0] + (1 - base[0]) * s;
       const g = base[1] * (1 - s * 0.75);
       const b = base[2] * (1 - s * 0.9);
@@ -577,15 +699,16 @@ export const BeamShips3D = {
     const arr = mesh.instanceMatrix.array;
     const colAttr = mesh.geometry.getAttribute('aColor');
     const col = colAttr.array;
+    const s = body.nodeStore;
     let w = 0;
-    for (const n of body.nodes) {
-      if (!n.active) continue;
+    for (let i = 0; i < s.count; i++) {
+      if (!s.active[i]) continue;
       const o = w * 16;
       arr[o + 0] = 1; arr[o + 1] = 0; arr[o + 2] = 0; arr[o + 3] = 0;
       arr[o + 4] = 0; arr[o + 5] = 1; arr[o + 6] = 0; arr[o + 7] = 0;
       arr[o + 8] = 0; arr[o + 9] = 0; arr[o + 10] = 1; arr[o + 11] = 0;
-      arr[o + 12] = n.x; arr[o + 13] = n.y; arr[o + 14] = n.z; arr[o + 15] = 1;
-      col[w * 3] = n.r; col[w * 3 + 1] = n.g; col[w * 3 + 2] = n.b;
+      arr[o + 12] = s.x[i]; arr[o + 13] = s.y[i]; arr[o + 14] = s.z[i]; arr[o + 15] = 1;
+      col[w * 3] = s.r[i]; col[w * 3 + 1] = s.g[i]; col[w * 3 + 2] = s.b[i];
       w++;
     }
     mesh.count = w;
@@ -612,13 +735,13 @@ export const BeamShips3D = {
       seen.add(body);
 
       let data = this.bodyData.get(body);
-      if (data && data.beamCapacity < body.beams.length) {
+      if (data && data.beamCapacity < body.beamStore.count) {
         this._disposeBodyData(body, data);
         data = null;
       }
       if (!data) data = this._createBodyData(body);
 
-      const hasSkin = !!(body.skin && this.skinEnabled);
+      const hasSkin = !!((body.skin || body.spriteSkin) && this.skinEnabled);
       // Bez skóry siatka belek i węzłów jest jedynym wyglądem ciała — nie wolno
       // jej wtedy zgasić, nawet gdy podgląd konstrukcji jest wyłączony.
       const showBeams = this.beamsEnabled || !hasSkin;
@@ -630,6 +753,7 @@ export const BeamShips3D = {
         if (showBeams) this._updateBeamLines(body, data);
         if (showNodes) this._updateNodes(body, data);
         if (data.skin) this._updateSkinField(body, data.skin);
+        if (data.sprite) this._updateSpriteSkin(body, data.sprite);
         body.meshDirty = false;
       }
 
@@ -646,6 +770,14 @@ export const BeamShips3D = {
         data.nodeMesh.position.set(px, py, pz);
         data.nodeMesh.quaternion.set(q.x, q.y, q.z, q.w);
         data.nodeMesh.material.uniforms.uLightDirView.value.copy(this._lightDirView);
+      }
+
+      if (data.sprite) {
+        const mesh = data.sprite.mesh;
+        mesh.visible = this.skinEnabled && data.sprite.visible > 0;
+        mesh.position.set(px, py, pz);
+        mesh.quaternion.set(q.x, q.y, q.z, q.w);
+        if (mesh.visible) this.stats.skinTriangles += data.sprite.visible * 2;
       }
 
       if (data.skin) {
@@ -683,7 +815,7 @@ export const BeamShips3D = {
       this.stats.bodies++;
       this.stats.nodes += body.activeNodes;
       this.stats.beams += body.liveBeams;
-      this.stats.brokenBeams += (body.beams.length - body.liveBeams);
+      this.stats.brokenBeams += (body.beamStore.count - body.liveBeams);
     }
 
     for (const [body, data] of this.bodyData) {
@@ -708,6 +840,12 @@ export const BeamShips3D = {
       this.scene?.remove(data.nodeMesh);
       data.nodeMesh.geometry?.dispose?.();
       data.nodeMesh.material?.dispose?.();
+    }
+    if (data.sprite) {
+      // Tekstura jest wspólna dla kopii kadłuba — zwalnia ją disposeSpriteSkin.
+      this.scene?.remove(data.sprite.mesh);
+      data.sprite.mesh.geometry.dispose();
+      data.sprite.mesh.material.dispose();
     }
     if (data.skin) {
       for (let i = 0; i < data.skin.meshes.length; i++) {

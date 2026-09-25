@@ -38,6 +38,41 @@ export function findBeamBridges(nodes, beams, scratch) {
   return bridges;
 }
 
+// To samo na magazynach SoA (beamStore3D): listy belek z CSR, pola z tablic.
+export function findBeamBridgesStore(nodeStore, beamStore, scratch) {
+  const { order, low, parent, cursor, stack, bridges } = scratch;
+  const active = nodeStore.active, adjStart = nodeStore.adjStart, adj = nodeStore.adj;
+  const ea = beamStore.a, eb = beamStore.b, broken = beamStore.broken;
+  order.fill(0); parent.fill(-1); cursor.fill(0); bridges.fill(0);
+  let time = 0;
+  for (let root = 0; root < nodeStore.count; root++) {
+    if (!active[root] || order[root]) continue;
+    let top = 0;
+    stack[0] = root; order[root] = low[root] = ++time;
+    while (top >= 0) {
+      const node = stack[top], first = adjStart[node], degree = adjStart[node + 1] - first;
+      if (cursor[node] < degree) {
+        const edge = adj[first + cursor[node]++];
+        if (broken[edge] || edge === parent[node]) continue;
+        const other = ea[edge] === node ? eb[edge] : ea[edge];
+        if (!active[other]) continue;
+        if (!order[other]) {
+          parent[other] = edge; order[other] = low[other] = ++time;
+          stack[++top] = other;
+        } else low[node] = Math.min(low[node], order[other]);
+      } else {
+        top--;
+        const edge = parent[node];
+        if (edge < 0) continue;
+        const other = ea[edge] === node ? eb[edge] : ea[edge];
+        if (low[node] > order[other]) bridges[edge] = 1;
+        low[other] = Math.min(low[other], low[node]);
+      }
+    }
+  }
+  return bridges;
+}
+
 export function markOriginalBeamBridges(nodes, beams) {
   const scratch = beamConnectivityScratch(nodes.length, beams.length);
   const bridges = findBeamBridges(nodes, beams, scratch);

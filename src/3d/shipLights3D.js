@@ -1,10 +1,11 @@
 import * as THREE from 'three';
 import { Core3D } from './core3d.js';
+import { sceneOriginNearCamera } from './sceneOrigin.js';
 import { MAX_NAV_LIGHT_SPRITES, NAV_LIGHT_CHASE, glslFloat } from '../game/shipLightRuntime.js';
 
-// Billboardy blasku świateł pozycyjnych. Rysują się na warstwie 2 (pass FG,
-// PO shadowShaftsPass) — tak jak lasery i muzzle flashe — więc świecą także
-// w cieniu planety i rozświetlają wtedy kadłub pod sobą (blend addytywny).
+// Billboardy blasku świateł pozycyjnych. Rysują się na warstwie 2 (pass FG)
+// i jak każda emisja nie czytają maski cienia (sunShadowMask.js), więc świecą
+// także w cieniu planety i rozświetlają wtedy kadłub pod sobą (blend addytywny).
 // Rdzeń wypycha luminancję HDR > progu bloomu (0.9), halo zostaje pod progiem
 // i działa jako miękki rozlew światła na pancerzu.
 const NAV_LIGHT_Z = 13;             // FG: nad kadłubem ortho, pod laserami (14+)
@@ -71,6 +72,9 @@ void main() {
   gl_FragColor = vec4(col, alpha);
 }
 `;
+
+// Początek układu instancji przy kamerze (sceneOrigin.js) — scratch bez alokacji.
+const _origin = { x: 0, y: 0 };
 
 function setAttrUpdateRange(attr, count) {
   if (!attr) return;
@@ -155,6 +159,11 @@ export const ShipLights3D = {
     this.material.uniforms.uCoreGain.value = Number.isFinite(coreGain) ? Math.max(0, coreGain) : NAV_LIGHT_DEFAULTS.coreGain;
     this.material.uniforms.uHaloGain.value = Number.isFinite(haloGain) ? Math.max(0, haloGain) : NAV_LIGHT_DEFAULTS.haloGain;
 
+    // Translacje względem początku przy kamerze: duży kawałek niesie
+    // mesh.position (modelViewMatrix w double), float32 w shaderze dostaje
+    // małe liczby — lampy nie drgają względem kadłuba przy 5–10 mln j.
+    const org = sceneOriginNearCamera(_origin);
+    this.mesh.position.set(org.x, org.y, 0);
     const matrixArray = this.mesh.instanceMatrix.array;
     for (let i = 0; i < count; i++) {
       const sprite = sprites[i];
@@ -173,8 +182,8 @@ export const ShipLights3D = {
       matrixArray[offset + 10] = 1;
       matrixArray[offset + 11] = 0;
       // Świat gry -> scena three: Y jest odbite (tak jak mesh.position statków).
-      matrixArray[offset + 12] = Number(sprite.x) || 0;
-      matrixArray[offset + 13] = -(Number(sprite.y) || 0);
+      matrixArray[offset + 12] = (Number(sprite.x) || 0) - org.x;
+      matrixArray[offset + 13] = -(Number(sprite.y) || 0) - org.y;
       matrixArray[offset + 14] = NAV_LIGHT_Z;
       matrixArray[offset + 15] = 1;
 

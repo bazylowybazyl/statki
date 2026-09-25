@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import * as ships from '../src/data/ships.js';
-import * as planetaryRing from '../src/3d/planetaryRing3D.js';
+import { computeHaloRingLayout, createHaloRingLayout } from '../src/3d/haloRing/haloRingLayout.js';
+import { computeHaloPortStation } from '../src/game/haloRingPlanets.js';
 
 const IMAGE_SIZES = Object.freeze({
   atlas: [3747, 1677],
@@ -42,10 +43,8 @@ test('hull render sizes use the shared world-scale tuning', () => {
   assert.equal(supercapital.radius, 300);
 });
 
-test('planetary ring layout stays compact while preserving a parking band', () => {
-  assert.equal(typeof planetaryRing.computePlanetaryRingLayout, 'function');
-
-  const layout = planetaryRing.computePlanetaryRingLayout({ id: 'earth', r: 2800 });
+test('planetary ring envelope stays compact (ring „Halo” keeps the old orbit zones)', () => {
+  const layout = computeHaloRingLayout({ id: 'earth', r: 2800 });
 
   assert.equal(layout.planetR, 37800);
   assert.equal(whole(layout.inner.innerR), 41202);
@@ -54,14 +53,18 @@ test('planetary ring layout stays compact while preserving a parking band', () =
   assert.equal(whole(layout.outerRadius), 43752);
   assert.equal(whole(layout.military.outerR - layout.inner.innerR), 2550);
   assert.equal(whole(layout.parking.outerR - layout.parking.innerR), 880);
-  assert.ok(planetaryRing.computeRingStationOrbitRadius({ id: 'earth', r: 2800 }) > layout.outerRadius + 2000);
 
   const defenseLapDistance = Math.PI * 2 * layout.militaryCenter;
-  assert.ok(defenseLapDistance / 1000 > 240, 'a 1000 u/s ship should need over four minutes for one defense-line lap');
+  assert.ok(defenseLapDistance / 1000 > 240, 'a 1000 u/s ship should need over four minutes for one ring lap');
 
-  const physicsBands = planetaryRing.computeRingPhysicsBands(layout);
-  assert.deepEqual(physicsBands.map(band => band.id), ['city', 'military']);
-  assert.equal(whole(physicsBands[0].outerR), whole(layout.industrial.outerR));
-  assert.equal(whole(physicsBands[1].innerR), whole(layout.military.innerR));
-  assert.ok(!physicsBands.some(band => band.id === 'parking'));
+  // bryła ringu w obwiedni; płyta podłogi (kadłub → podłoga) to przeszkoda w płaszczyźnie gry
+  const ring = createHaloRingLayout({ planetRadius: layout.planetR });
+  assert.ok(ring.bounds.insideEnvelope);
+  assert.equal(ring.radii.rim, layout.outerRadius);
+  assert.ok(ring.radii.floorMid - ring.radii.back > 400, 'płyta podłogi grubsza niż krok pocisku (≤ ~170 j.)');
+
+  // stacja Ziemi = port ringu w hali K-7, poza obwiednią ringu (spawn i strefy bez zmian)
+  const port = computeHaloPortStation({ id: 'earth', r: 2800 });
+  assert.ok(port.orbitRadius > layout.outerRadius + 2000, `stacja-port na ${port.orbitRadius}`);
+  assert.ok(port.orbitRadius < 57252, 'stacja-port przed orbitą spawnu');
 });

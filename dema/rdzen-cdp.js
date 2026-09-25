@@ -50,7 +50,9 @@ export async function evaluate(cdp, expression, timeout = 120000) {
 
 export async function startVite(port = 5260) {
   const { createServer } = await import('vite');
-  const server = await createServer({ root: repo, logLevel: 'error', server: { port, strictPort: false } });
+  // Bez HMR i obserwowania plików: równoległe sesje edytują moduły gry, a pełny
+  // reload strony w trakcie scenariusza gubił window.__rdzen.
+  const server = await createServer({ root: repo, logLevel: 'error', server: { port, strictPort: false, hmr: false, watch: { ignored: ['**/*'] } } });
   await server.listen();
   const base = `http://localhost:${server.httpServer.address().port}`;
   return { server, base };

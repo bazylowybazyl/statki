@@ -12,6 +12,7 @@
 import * as THREE from 'three';
 import { Core3D } from './core3d.js';
 import { Fx3D, FX_PLANE_Z, FX_RENDER_ORDER } from './fxParticles3D.js';
+import { sceneOriginNearCamera } from './sceneOrigin.js';
 
 /* ============================================================================
    SMUGA POCISKU — port WorldTrail z „capital_engine_vfx_v3".
@@ -63,7 +64,8 @@ vec3 endpoint(vec4 origin,vec4 velocity,vec4 sideWidth,float path){
  p+=sideWidth.xyz*wobble*sideWidth.w*uTurbulence*develop*.46;
  p.z+=sin(path*3.8+aMeta.x+age*.6)*sideWidth.w*uTurbulence*develop*.24;
  vec3 tangent=vec3(-sideWidth.y,sideWidth.x,0.);
- vec3 faceSide=normalize(cross(tangent,normalize(cameraPosition-p))+vec3(.000001));
+ // p jest wzgledem mesh.position (poczatek smugi): kamera tez, roznica duzych liczb najpierw
+ vec3 faceSide=normalize(cross(tangent,normalize((cameraPosition-modelMatrix[3].xyz)-p))+vec3(.000001));
  if(dot(faceSide,sideWidth.xyz)<0.)faceSide=-faceSide;
  float neck=mix(.30,1.,smoothstep(0.,.62,age));
  float width=sideWidth.w*neck*(1.+min(age*.16,2.1));
@@ -75,8 +77,13 @@ void main(){
  vec3 p=mix(endpoint(aA,aVA,aSA,aPath.x),endpoint(aB,aVB,aSB,aPath.y),t);
  vUv=uv;vBirth=mix(aA.w,aB.w,t);vAge=max(0.,uTime-vBirth);
  vEnergy=mix(aVA.w,aVB.w,t);vSeed=aMeta.x;vPath=mix(aPath.x,aPath.y,t);
- gl_Position=projectionMatrix*viewMatrix*vec4(p,1.);
+ gl_Position=projectionMatrix*modelViewMatrix*vec4(p,1.);
 }`;
+
+// Kamera dalej niż tyle od początku żywej smugi (j. sceny) przesuwa początek
+// razem z danymi — float32 przy 100 tys. j. ma krok ~0,008 j.
+const TRAIL_REBASE_DIST = 100000;
+const _camOrigin = { x: 0, y: 0 };
 
 const TRAIL_FRAGMENT = /* glsl */`
 uniform float uTime,uLife,uOpacity,uTurbulence,uHotAmt;
@@ -165,7 +172,58 @@ export class SlugTrail {
     this.active = 0; this.head = 0; this.tail = 0;
     this.node = new Float32Array(13);
     this._p = new THREE.Vector3();
+    // Początek układu danych (scena: x, −y świata). Świat leży przy 5–10 mln j.,
+    // gdzie float32 ma krok 0,5 j.: bezwzględne węzły drgały na GPU ~1 px ×
+    // zoom, a dryf i meandry gazu szły skokami. Węzły są względem początku
+    // przy kamerze (sceneOrigin.js), duży kawałek niesie mesh.position
+    // (modelViewMatrix w double). Początek jest „lepki”: pusta smuga idzie za
+    // kamerą, żywa trzyma go, aż kamera odjedzie o TRAIL_REBASE_DIST (_rebase),
+    // więc zapisanych segmentów zwykle nie trzeba przepisywać.
+    this.originX = 0;
+    this.originY = 0;
     this.clear();
+  }
+
+  _live() {
+    if (this.active > 0) return true;
+    for (let e = 0; e < this.headCount; e++) if (this.previousValid[e] || this.headValid[e]) return true;
+    return false;
+  }
+  _setOrigin(x, y) {
+    this.originX = x;
+    this.originY = y;
+    this.mesh.position.set(x, y, 0);
+  }
+  // Wołane przed zapisem nowego pocisku (begin) i raz na klatkę (prepare).
+  _syncOrigin() {
+    const o = sceneOriginNearCamera(_camOrigin);
+    if (!this._live()) {
+      if (o.x !== this.originX || o.y !== this.originY) this._setOrigin(o.x, o.y);
+    } else if (Math.abs(o.x - this.originX) > TRAIL_REBASE_DIST || Math.abs(o.y - this.originY) > TRAIL_REBASE_DIST) {
+      this._rebase(o.x, o.y);
+    }
+  }
+  // Przesuwa początek razem z żywymi danymi: pozycje A/B wszystkich slotów
+  // (głowy + historia) i ostatnie węzły emiterów. Rzadkie (kamera odjechała
+  // przy żywej smudze), więc pełny zapis bufora nie boli.
+  _rebase(x, y) {
+    const dx = this.originX - x;
+    const dy = this.originY - y;
+    const st = this.stride;
+    const d = this.data;
+    const n = this.headCount + this.active;
+    for (let s = 0; s < n; s++) {
+      const b = s * st;
+      d[b] += dx; d[b + 1] += dy;
+      d[b + 12] += dx; d[b + 13] += dy;
+      this.mark(s);
+    }
+    for (let e = 0; e < this.headCount; e++) {
+      if (!this.previousValid[e]) continue;
+      const p = this.previous[e];
+      p[0] += dx; p[1] += dy;
+    }
+    this._setOrigin(x, y);
   }
 
   mark(slot) { if (!this.dirtyFlags[slot]) { this.dirtyFlags[slot] = 1; this.dirtySlots[this.dirtyCount++] = slot; } }
@@ -195,7 +253,8 @@ export class SlugTrail {
   // `dir` jest już w przestrzeni sceny (XY w płaszczyźnie gry, Z ku kamerze).
   makeNode(out, pos, time, dir, path) {
     const S = this.S;
-    out[0] = pos.x; out[1] = pos.y; out[2] = pos.z; out[3] = time;
+    // Względem początku smugi (małe liczby dla float32).
+    out[0] = pos.x - this.originX; out[1] = pos.y - this.originY; out[2] = pos.z; out[3] = time;
     out[4] = -dir.x * TRAIL_DRIFT * S; out[5] = -dir.y * TRAIL_DRIFT * S; out[6] = -dir.z * TRAIL_DRIFT * S; out[7] = 1;
     // bok = kierunek obrócony o -90° w płaszczyźnie gry
     let sx = dir.y;
@@ -213,6 +272,7 @@ export class SlugTrail {
     return -1;                          // wszystkie sloty zajęte: pocisk poleci bez smugi
   }
   begin(e, pos, time, dir, speed) {
+    this._syncOrigin();
     const m = this.em[e];
     m.busy = true; m.acc = 0;
     m.path = Math.random() * 40 * TRAIL_PATH_UNIT;   // każdy ślad ma inny wzór
@@ -282,6 +342,7 @@ export class SlugTrail {
   }
 
   prepare(time) {
+    this._syncOrigin();
     const u = this.uniforms;
     const c = this.cfg;
     u.uTime.value = time; u.uLife.value = c.trailLife; u.uOpacity.value = c.trailOpacity;

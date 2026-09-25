@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- Ścieżki tekstur gry (assets/…) są względne do katalogu głównego. -->
+<base href="/">
+<title>Warp — demo wyjścia</title>
+<style>
+  :root { --ink: #d6e2e8; --muted: #7d919b; --line: #9fc6d626; --panel: #070d13e6; --accent: #7cc9ff; --warn: #f0b060; --bad: #ff5a52; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #030406; overflow: hidden; color: var(--ink); font: 12px/1.35 "Segoe UI", system-ui, sans-serif; }
+  #root { position: fixed; inset: 0; overflow: hidden; background: #030406; }
+  #webgl-layer { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; }
+  #c { position: absolute; inset: 0; z-index: 1; outline: none; cursor: crosshair; }
+  #hud { position: fixed; left: 10px; top: 10px; z-index: 40; padding: 8px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; font: 11px/1.45 ui-monospace, Consolas, monospace; min-width: 300px; pointer-events: none; white-space: pre; }
+  #hud b { color: var(--accent); font-weight: 600; }
+  #panel { position: fixed; right: 10px; top: 10px; z-index: 40; width: 330px; max-height: calc(100vh - 20px); overflow-y: auto; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+  #panel h1 { font-size: 13px; margin: 0 0 2px; letter-spacing: .06em; }
+  #panel .sub { color: var(--muted); margin-bottom: 8px; }
+  #panel h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 12px 0 6px; font-weight: 600; }
+  .scenes { display: grid; grid-template-columns: 1fr; gap: 5px; }
+  .scenes button { text-align: left; padding: 8px 10px; font-size: 13px; }
+  .scenes button small { display: block; color: var(--muted); font-size: 11px; }
+  .row { display: flex; align-items: center; gap: 8px; margin: 5px 0; }
+  .row label { flex: 0 0 82px; color: var(--muted); }
+  .row input[type=range] { flex: 1 1 auto; min-width: 0; }
+  .row output { flex: 0 0 56px; text-align: right; font-variant-numeric: tabular-nums; }
+  .row select { flex: 1 1 auto; min-width: 0; }
+  .btns { display: flex; flex-wrap: wrap; gap: 4px; }
+  button, select { background: #0e1a24; color: var(--ink); border: 1px solid #2a4252; border-radius: 4px; padding: 4px 8px; font: inherit; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.on { background: #173247; border-color: var(--accent); color: #fff; }
+  .checks { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 8px; }
+  .checks label { display: flex; align-items: center; gap: 5px; }
+  .hint { color: var(--muted); font-size: 11px; margin-top: 6px; }
+  #errors { position: fixed; left: 50%; bottom: 10px; transform: translateX(-50%); z-index: 60; max-width: 60vw; max-height: 40vh; overflow: auto; padding: 8px; background: #2a0b0bee; border: 1px solid #a33; border-radius: 6px; font: 11px ui-monospace, monospace; white-space: pre-wrap; display: none; }
+  #loading { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 70; padding: 10px 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+  body.shot #panel, body.shot #hud { display: none; }
+</style>
+</head>
+<body>
+<div id="root">
+  <canvas id="webgl-layer"></canvas>
+  <canvas id="c" tabindex="0" aria-label="Demo warpu"></canvas>
+</div>
+<div id="hud">ładowanie…</div>
+<div id="loading">Ładowanie kadłubów…</div>
+<div id="errors"></div>
+<div id="panel">
+  <h1>WARP — DEMO</h1>
+  <div class="sub">Wyjście z warpa (efekt „Fałda”: zwiastun → rozdarcie → wyrzut → stygnięcie) i widok skoku: soczewka świata. Prawdziwe Core3D, kadłuby heksowe, planety i tło z gry. Plan: docs/BRIEF-warp.md.</div>
+  <div class="scenes">
+    <button id="sc-arrival" data-scene="arrival">1 · Przylot okrętu<small>jeden okręt obok Atlasa, powtarza się sam</small></button>
+    <button id="sc-fleet" data-scene="fleet">2 · Wezwanie floty<small>klik na mapie = flota Terra Nova w tym miejscu</small></button>
+    <button id="sc-ambush" data-scene="ambush">3 · Zasadzka piratów<small>piraci wychodzą z warpa wokół Atlasa</small></button>
+    <button id="sc-travel" data-scene="travel">4 · Podróż warpem — soczewka świata<small>Atlas leci od Ziemi do Jowisza, obok Marsa</small></button>
+  </div>
+  <h2>Czas</h2>
+  <div class="btns">
+    <button id="replay">R · Powtórz</button>
+    <button id="pause">Spacja · Pauza</button>
+    <button id="slow">S · Zwolnij ×0,25</button>
+    <button id="loop" class="on">Pętla</button>
+  </div>
+  <div class="row"><label>oś sceny</label><input id="scrub" type="range" min="0" max="10" step="0.01" value="0"><output id="scrub-out">0,00 s</output></div>
+  <div class="hint">Przeciągnięcie osi pauzuje i przewija szew, zgięcie, fale i smugę. Cząstki rodzą się tylko w trakcie odtwarzania.</div>
+  <h2>Okręt (scena 1)</h2>
+  <div class="row"><label>kadłub</label><select id="hull"></select></div>
+  <div class="row"><label>barwy</label><select id="palette">
+    <option value="auto">wg kadłuba</option>
+    <option value="atlas">Atlas (magenta)</option>
+    <option value="terran">Terra Nova (błękit)</option>
+    <option value="pirate">piraci (karmazyn, brudny)</option>
+  </select></div>
+  <h2>Warstwy</h2>
+  <div class="checks">
+    <label><input type="checkbox" id="ly-glyphs" checked> szew i błyski</label>
+    <label><input type="checkbox" id="ly-smear" checked> smuga sylwetki</label>
+    <label><input type="checkbox" id="ly-lens" checked> zgięcie tła</label>
+    <label><input type="checkbox" id="ly-waves" checked> fale (cała klatka)</label>
+    <label><input type="checkbox" id="ly-particles" checked> cząstki</label>
+    <label><input type="checkbox" id="ly-heat" checked> żar kadłuba</label>
+  </div>
+  <h2>Kamera</h2>
+  <div class="btns">
+    <button id="zoom-in">Zbliż</button>
+    <button id="zoom-out">Oddal</button>
+    <button id="zoom-reset">Kadr sceny</button>
+  </div>
+  <div class="hint">Kółko = zoom do kursora, prawy przycisk = przesuwanie. Skróty: 1/2/3 sceny, R, Spacja, S.</div>
+</div>
+<script type="module" src="/dema/warp-demo.js"></script>
+</body>
+</html>

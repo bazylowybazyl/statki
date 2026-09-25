@@ -41,6 +41,9 @@ uniform vec4 uRefBasis;    // cos thref, sin thref, thref, sref
 uniform vec4 uLayers;      // chmury, swiatla miast, statki, drzewa
 uniform vec4 uCloudParams; // wysokosc, grubosc, wiatr, pokrycie
 uniform float uNightLights;
+// skala detalu z jakosci (ultra > 1): progi wygaszania okien i wzorow z
+// odlegloscia przesuwaja sie dalej (okna widac z daleka, kosztem migotania)
+uniform float uDetailScale;
 
 float haloFloorRadiusAtZ(float z) {
   return uRing.y + (z - 0.5 * (uRingZ.y + uRingZ.z)) * uRing.w;

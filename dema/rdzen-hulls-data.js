@@ -3,8 +3,14 @@
 // dokładnie jak `cores[]` w src/data/hardpointEditorDefaults.js.
 //
 // `candidates` = miejsca do wyboru (demo przełącza je klawiszem / listą),
-// `cores` = domyślny wybór dema. Uzasadnienie liczbami: docs/PORT-rdzen.md
+// `cores` = domyślny wybór dema. Uzasadnienie liczbami: docs/PORT-rdzen.md § 3
 // (głębokość = odległość od krawędzi maski, odstęp od hardpointów i dysz).
+//
+// Reaktor stoi PRZY ŚRODKU MASY i poza strefami mostków (BRIDGE_LAYOUT_PROPOSALS
+// w src/game/shipBridge.js, WSZYSTKIE warianty): komora (koło r) ≥
+// bridgeZoneMargin od każdej strefy. Dawne miejsca „najgłębiej, na rufie”
+// leżały w mostkach (2026-09-25). Sprawdza: node dema/rdzen-analyze.js
+// (--probe kadłub:x,y,r) i tests/shipCore.test.mjs.
 
 export const HULLS = Object.freeze({
   atlas: Object.freeze({
@@ -22,13 +28,15 @@ export const HULLS = Object.freeze({
     radius: 500,
     faction: 'player',
     npcType: 'atlas',
+    // Na grzbiecie przy środku masy (−221, −4) miejsca nie ma: od rufy hardpoint
+    // special_missile (~−330, 0), od dziobu wariant mostka „śródokręcie”.
     candidates: Object.freeze([
-      Object.freeze({ id: 'atlas_A', label: 'A: grzbiet między bankami ogniw (najgłębiej)', x: -830, y: 0, r: 56, armorMul: 3 }),
-      Object.freeze({ id: 'atlas_B', label: 'B: grzbiet przed wieżą (bliżej śr. masy)', x: 70, y: 0, r: 52, armorMul: 3 }),
-      Object.freeze({ id: 'atlas_C', label: 'C: para w bankach ogniw', x: -830, y: -180, r: 44, armorMul: 3, pair: true })
+      Object.freeze({ id: 'atlas_A', label: 'A: przy środku masy, pod grzbietem', x: -275, y: 94, r: 56, armorMul: 3 }),
+      Object.freeze({ id: 'atlas_B', label: 'B: przy środku masy, nad grzbietem', x: -275, y: -110, r: 56, armorMul: 3 }),
+      Object.freeze({ id: 'atlas_C', label: 'C: grzbiet w środku masy (koliduje z wariantem mostka „śródokręcie”)', x: -221, y: 0, r: 56, armorMul: 3 })
     ]),
     cores: Object.freeze([
-      Object.freeze({ id: 'atlas_A', x: -830, y: 0, r: 56, armorMul: 3 })
+      Object.freeze({ id: 'atlas_A', x: -275, y: 94, r: 56, armorMul: 3 })
     ])
   }),
   battleship: Object.freeze({
@@ -47,12 +55,11 @@ export const HULLS = Object.freeze({
     faction: 'terran',
     npcType: 'battleship',
     candidates: Object.freeze([
-      Object.freeze({ id: 'bellator_A', label: 'A: blok rufowy (najgłębiej)', x: -320, y: 0, r: 48, armorMul: 3 }),
-      Object.freeze({ id: 'bellator_B', label: 'B: właz grzbietu między toroidami', x: -219, y: -5, r: 44, armorMul: 3 }),
-      Object.freeze({ id: 'bellator_C', label: 'C: para toroidów (pod wyrzutniami, płytko — odradzane)', x: -192, y: -112, r: 40, armorMul: 3, pair: true })
+      Object.freeze({ id: 'bellator_A', label: 'A: środek masy (grzbiet śródokręcia)', x: -32, y: 0, r: 48, armorMul: 3 }),
+      Object.freeze({ id: 'bellator_B', label: 'B: przed środkiem masy', x: 40, y: 0, r: 48, armorMul: 3 })
     ]),
     cores: Object.freeze([
-      Object.freeze({ id: 'bellator_A', x: -320, y: 0, r: 48, armorMul: 3 })
+      Object.freeze({ id: 'bellator_A', x: -32, y: 0, r: 48, armorMul: 3 })
     ])
   }),
   pirate_battleship: Object.freeze({
@@ -61,8 +68,8 @@ export const HULLS = Object.freeze({
     editorKey: 'pirate_battleship',
     renderProfile: 'pirate_battleship',
     spritePath: 'src/assets/ships/piratebattleship.png',
-    pngWidth: 1158,
-    pngHeight: 632,
+    pngWidth: 1727,
+    pngHeight: 911,
     player: false,
     hull: 12000,
     shield: 7200,
@@ -72,12 +79,11 @@ export const HULLS = Object.freeze({
     npcType: 'battleship',
     pirate: true,
     candidates: Object.freeze([
-      Object.freeze({ id: 'skull_A', label: 'A: kopuła i kratka rufowa (najgłębiej)', x: -205, y: 0, r: 42, armorMul: 3 }),
-      Object.freeze({ id: 'skull_B', label: 'B: płyta z czaszką (przy śr. masy)', x: -80, y: 0, r: 40, armorMul: 3 }),
-      Object.freeze({ id: 'skull_C', label: 'C: śródokręcie pod napisem', x: 40, y: 10, r: 40, armorMul: 3 })
+      Object.freeze({ id: 'skull_A', label: 'A: przy środku masy (dziobowo od mostka)', x: -60, y: 0, r: 62.64, armorMul: 3 }),
+      Object.freeze({ id: 'skull_B', label: 'B: śródokręcie (największy zapas)', x: 10, y: 0, r: 62.64, armorMul: 3 })
     ]),
     cores: Object.freeze([
-      Object.freeze({ id: 'skull_A', x: -205, y: 0, r: 42, armorMul: 3 })
+      Object.freeze({ id: 'skull_A', x: -60, y: 0, r: 62.64, armorMul: 3 })
     ])
   })
 });

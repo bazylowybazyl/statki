@@ -22,7 +22,7 @@ import {
   HALO_GLSL_NOISE,
   HALO_GLSL_RTE
 } from './haloRingGLSL.js';
-import { HALO_TAU, haloPortSites } from './haloRingConfig.js';
+import { HALO_TAU, haloPortSites, haloQualityLod } from './haloRingConfig.js';
 import { HALO_GLSL_SURFACE } from './haloRingTerrain.js';
 import { HALO_PRIM_FRAGMENT } from './haloRingMegastructure.js';
 import { HALO_GLSL_INDKIT, IND_PARTS } from './haloRingIndustryKit.js';
@@ -78,6 +78,7 @@ ${HALO_GLSL_SURFACE}
 ${GLSL_FLOOR_FRAME}
 uniform vec4 uCityGrid;        // kwartały na kawałek, rzędy kwartałów, —, zanik miasta
 uniform float uPixelAngle;
+uniform vec2 uBldPx;         // budynek opada miedzy N a M px (LOD jakosci)
 attribute vec4 aLot;           // kwartał w kawałku, rząd kwartałów, działka (0..5), piętro (0/1)
 attribute float iChunk;        // pierwszy kwartał (bezwzględny) kawałka
 varying vec3 vRel;
@@ -151,7 +152,7 @@ void main() {
   vec3 anchor = cityFloorRel(sRel + offT.x, t + offT.y, base);
   // płynne znikanie: wysokość maleje, gdy budynek ma < ~1,5 px (dach z mapy zostaje)
   float px = (height + 8.0) / max(length(anchor), 1.0) / uPixelAngle;
-  float k = smoothstep(0.6, 1.6, px) * uCityGrid.w;
+  float k = smoothstep(uBldPx.x, uBldPx.y, px) * uCityGrid.w;
   if (k < 0.02) { collapse(); return; }
   size.z *= k;
   vec3 ex;
@@ -187,6 +188,7 @@ ${GLSL_FLOOR_FRAME}
 ${HALO_GLSL_INDKIT}
 uniform vec4 uCityGrid;
 uniform float uPixelAngle;
+uniform vec2 uBldPx;
 attribute vec4 aLot;           // kwartał w kawałku, rząd kwartałów, działka (0..5), część (0..4)
 attribute float aPrim;         // 0 prostopadłościan, 1 walec
 attribute float iChunk;
@@ -238,7 +240,7 @@ void main() {
   float base = max(A.r, 0.0) - 2.0 + KB.x;
   vec3 anchor = cityFloorRel(sRel + KA.x, t + KA.y, base);
   float px = (KB.y + KB.x) / max(length(anchor), 1.0) / uPixelAngle;
-  float k = smoothstep(0.6, 1.6, px) * uCityGrid.w;
+  float k = smoothstep(uBldPx.x, uBldPx.y, px) * uCityGrid.w;
   if (k < 0.02) { collapse(); return; }
   vec3 lp;
   vec3 ln;
@@ -274,8 +276,11 @@ void main() {
 }
 `;
 
-// Drzewa: slot siatki wokół kamery (co 16 j.), gęstość z mapy lasu,
-// parków miasta i nabrzeży; iglaste w chłodzie (korona ściśnięta w stożek).
+// Drzewa: slot siatki wokół kamery (co 16 j.), gęstość z mapy lasu (też
+// kępy i pojedyncze drzewa parków), nabrzeży i ogrodów miasta. Gatunek z
+// klimatu (geometria: makeTreeKit): chłód → iglaste, tropiki i ciepłe plaże
+// → palmy, nad rzeką i losowo → topole, reszta liściaste (część w odmianach
+// ozdobnych: miedź, złoto — więcej w chłodniejszych sektorach).
 const TREE_VERTEX = /* glsl */`
 ${HALO_GLSL_COMMON}
 ${HALO_GLSL_NOISE}
@@ -284,11 +289,27 @@ ${HALO_GLSL_SURFACE}
 ${GLSL_FLOOR_FRAME}
 uniform vec4 uTreeGrid;        // sloty wzdluz, sloty w poprzek, krok [j.], t srodka siatki
 uniform float uPixelAngle;
-attribute float aPart;         // 0 pien, 1 korona
+uniform float uTreePx;       // drzewo rysowane od N px (LOD jakosci)
+attribute float aSpecies;      // -1 pien (wspolny), 0 lisciaste, 1 iglaste, 2 topola, 3 palma
 varying vec3 vRel;
 varying vec3 vNormal;
 varying vec3 vCol;
 varying float vPart;
+void collapse() {
+  gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+  vRel = vec3(0.0); vNormal = vec3(0.0, 0.0, 1.0); vCol = vec3(0.0); vPart = 0.0;
+}
+// gatunek z klimatu (A: h, odleglosc od rzeki, wilgoc, temperatura) i losu slotu
+float treeSpecies(vec4 A, float r3, float r4) {
+  float coldK = 1.0 - smoothstep(0.36, 0.48, A.a);
+  float palmK = max(smoothstep(0.68, 0.8, A.a) * smoothstep(0.45, 0.6, A.b),
+    smoothstep(0.6, 0.66, A.a) * smoothstep(14.0, 5.0, A.r) * smoothstep(0.55, 0.7, A.b));
+  float poplarK = 0.1 + 0.35 * smoothstep(60.0, 15.0, A.g);
+  if (r3 < coldK) return 1.0;
+  if (r4 < palmK) return 3.0;
+  if (r4 > 1.0 - poplarK) return 2.0;
+  return 0.0;
+}
 void main() {
   float NS = uTreeGrid.x;
   float NT = uTreeGrid.y;
@@ -299,12 +320,18 @@ void main() {
   // siatka zakotwiczona w swiecie: indeks wzgledem punktu odniesienia
   float cellS = floor(uRefBasis.w / step0) - floor(NS * 0.5) + iS;
   float cellT = floor(uTreeGrid.w / step0) - floor(NT * 0.5) + iT;
-  vec2 j = haloHash22(vec2(mod(cellS, 65536.0), cellT) + 0.37);
+  vec2 cid = vec2(mod(cellS, 65536.0), cellT);
+  vec2 j = haloHash22(cid + 0.37);
   float sAbsCell = (cellS + j.x) * step0;
   float sRel = sAbsCell - uRefBasis.w;
   float t = (cellT + j.y) * step0;
   vec2 uvMap = haloMapUV(sRel + uRefBasis.w, t);
   vec4 A = textureLod(uMapA, uvMap, 0.0);
+  float r3 = haloHash12(cid + 13.3);
+  float r4 = haloHash12(cid + 17.9);
+  float species = treeSpecies(A, r3, r4);
+  // wierzcholki innych gatunkow do kosza zaraz po mapie A (tanio)
+  if (aSpecies > -0.5 && abs(aSpecies - species) > 0.5) { collapse(); return; }
   vec4 B = textureLod(uMapB, uvMap, 0.0);
   vec4 C = textureLod(uMapC, uvMap, 0.0);
   float h = A.r;
@@ -315,42 +342,63 @@ void main() {
   float riverBank = smoothstep(40.0, 10.0, A.g) * (1.0 - water);
   float density = max(forest * 0.9, max(riverBank * 0.35, (1.0 - urban) * 0.12 * B.g));
   density *= (1.0 - water) * (1.0 - clamp(snowy, 0.0, 1.0)) * (1.0 - C.b) * step(8.0, t) * step(t, uFloorDims.y - 8.0);
-  float r1 = haloHash12(vec2(mod(cellS, 65536.0), cellT) + 5.1);
-  float r2 = haloHash12(vec2(mod(cellS, 65536.0), cellT) + 9.7);
-  bool present = r1 < density;
-  float conifer = step(A.a, 0.42 + 0.1 * (r2 - 0.5));
-  float height = mix(7.0, 15.0, r2) * mix(1.0, 1.35, conifer);
-  float crownR = height * mix(0.36, 0.22, conifer);
+  float r1 = haloHash12(cid + 5.1);
+  float r2 = haloHash12(cid + 9.7);
+  if (r1 >= density) { collapse(); return; }
+  // wymiary gatunku: wysokosc [j.], pien (promien, wysokosc) w ulamkach wysokosci
+  float height = mix(7.0, 15.0, r2);
+  vec2 trunk = vec2(0.05, 0.5);
+  if (species > 2.5) { height = mix(9.0, 17.0, r2); trunk = vec2(0.024, 0.93); }
+  else if (species > 1.5) { height = mix(12.0, 22.0, r2); trunk = vec2(0.03, 0.2); }
+  else if (species > 0.5) { height = mix(9.5, 20.0, r2); trunk = vec2(0.035, 0.3); }
   vec3 anchor = cityFloorRel(sRel, t, max(h, 0.0) - 1.0);
-  float dist = length(anchor);
-  present = present && height / max(dist, 1.0) > 1.5 * uPixelAngle;
+  if (height / max(length(anchor), 1.0) <= uTreePx * uPixelAngle) { collapse(); return; }
   vec3 ex;
   vec3 ey;
   vec3 ez;
   cityFrame(sRel, ex, ey, ez);
   vec3 lp = position;
   vec3 nl = normal;
-  if (aPart < 0.5) {
-    lp *= vec3(height * 0.05, height * 0.05, height * 0.45);
+  if (aSpecies < -0.5) {
+    lp = vec3(lp.xy * trunk.x, lp.z * trunk.y) * height;
   } else {
-    float zc = lp.z;
-    float cone = mix(1.0, 1.25 * (1.0 - zc), conifer);
-    lp = vec3(lp.xy * crownR * cone, height * (0.3 + 0.7 * zc));
-    nl = normalize(vec3(nl.xy, nl.z * mix(1.0, 0.5, conifer) + conifer * 0.6));
+    float wj = mix(0.85, 1.2, fract(r2 * 7.7 + r3));
+    lp = vec3(lp.xy * wj, lp.z) * height;
+    nl = normalize(vec3(nl.xy / wj, nl.z));
   }
-  if (!present) lp = vec3(0.0);
-  float yaw = r1 * 6.2831;
+  // palma: pien lekko wygiety, pioropusz na jego szczycie
+  if (species > 2.5) {
+    float zc = aSpecies < -0.5 ? position.z : 1.0;
+    float ang = r4 * 97.0;
+    lp.xy += vec2(cos(ang), sin(ang)) * (0.04 + 0.1 * r3) * height * zc * zc;
+  }
+  float yaw = fract(r1 * 13.7 + r3) * 6.2831;
   vec2 cs = vec2(cos(yaw), sin(yaw));
   lp.xy = vec2(cs.x * lp.x - cs.y * lp.y, cs.y * lp.x + cs.x * lp.y);
   nl.xy = vec2(cs.x * nl.x - cs.y * nl.y, cs.y * nl.x + cs.x * nl.y);
   vec3 rel = anchor + ex * lp.x + ey * lp.y + ez * lp.z;
   vRel = rel;
   vNormal = ex * nl.x + ey * nl.y + ez * nl.z;
+  // barwy (albedo liniowe): lisciaste wg wilgoci i suszy, czesc w odmianach
+  // ozdobnych; iglaste sine, topola jasniejsza, palma zolto-zielona na jasnym pniu
   vec3 leaf = mix(vec3(0.030, 0.052, 0.018), vec3(0.020, 0.040, 0.016), A.b);
   leaf = mix(leaf, vec3(0.055, 0.050, 0.020), smoothstep(0.7, 0.9, A.a) * (1.0 - A.b));
-  leaf = mix(leaf, vec3(0.012, 0.028, 0.018), conifer);
-  vCol = aPart < 0.5 ? vec3(0.035, 0.025, 0.016) : leaf * (0.75 + 0.5 * r2);
-  vPart = aPart;
+  vec3 bark = vec3(0.035, 0.025, 0.016);
+  if (species < 0.5) {
+    float orn = 0.06 + 0.2 * smoothstep(0.56, 0.44, A.a);
+    float ro = fract(r2 * 13.1 + r4 * 3.7);
+    if (ro < orn) leaf = ro < orn * 0.5 ? vec3(0.072, 0.028, 0.014) : vec3(0.080, 0.062, 0.016);
+  } else if (species < 1.5) {
+    leaf = vec3(0.012, 0.028, 0.018);
+    bark = vec3(0.028, 0.019, 0.013);
+  } else if (species < 2.5) {
+    leaf = mix(leaf, vec3(0.040, 0.064, 0.020), 0.5);
+  } else {
+    leaf = vec3(0.038, 0.064, 0.020);
+    bark = vec3(0.075, 0.062, 0.044);
+  }
+  vCol = aSpecies < -0.5 ? bark : leaf * (0.75 + 0.5 * r2);
+  vPart = aSpecies < -0.5 ? 0.0 : 1.0;
   gl_Position = haloProjectRel(rel);
 }
 `;
@@ -509,41 +557,169 @@ function makeIndustryChunk(blocks, rows) {
   return g;
 }
 
-// Drzewo: pień (graniastosłup) + korona (z od 0 do 1 w lokalnym z, promień 1).
-function makeTree() {
-  const trunk = new THREE.CylinderGeometry(1, 1.2, 1, 5, 1, true);
-  trunk.rotateX(Math.PI / 2);
-  trunk.translate(0, 0, 0.5);
-  const crown = new THREE.IcosahedronGeometry(1, 1);
-  const cp = crown.getAttribute('position');
-  for (let i = 0; i < cp.count; i++) cp.setZ(i, cp.getZ(i) * 0.5 + 0.5);
-  crown.computeVertexNormals();
-  const parts = [trunk, crown].map((g) => (g.index ? g.toNonIndexed() : g));
+// Gatunki drzew: jedna geometria indeksowana (~190 wierzchołków — mniej niż
+// dawna korona z ikosaedru bez indeksów). Shader zostawia pień i koronę
+// gatunku wylosowanego w slocie, wierzchołki pozostałych zapadają się zaraz
+// po odczycie mapy A. Pień (−1) = walec o promieniu i wysokości 1 (skala z
+// gatunku w shaderze); korony w ułamkach wysokości drzewa (z: 0 podłoga, 1 czubek).
+export const HALO_TREE_SPECIES = Object.freeze(['broadleaf', 'conifer', 'poplar', 'palm']);
+
+const ICO_T = (1 + Math.sqrt(5)) / 2;
+const ICO_POS = [
+  [-1, ICO_T, 0], [1, ICO_T, 0], [-1, -ICO_T, 0], [1, -ICO_T, 0],
+  [0, -1, ICO_T], [0, 1, ICO_T], [0, -1, -ICO_T], [0, 1, -ICO_T],
+  [ICO_T, 0, -1], [ICO_T, 0, 1], [-ICO_T, 0, -1], [-ICO_T, 0, 1]
+];
+const ICO_IDX = [
+  0, 11, 5, 0, 5, 1, 0, 1, 7, 0, 7, 10, 0, 10, 11,
+  1, 5, 9, 5, 11, 4, 11, 10, 2, 10, 7, 6, 7, 1, 8,
+  3, 9, 4, 3, 4, 2, 3, 2, 6, 3, 6, 8, 3, 8, 9,
+  4, 9, 5, 2, 4, 11, 6, 2, 10, 8, 6, 7, 9, 8, 1
+];
+// stały „szum” wierzchołków (nieregularne korony; obrót instancji ukrywa powtórzenie)
+const treeJit = (k) => {
+  const x = Math.sin(k * 12.9898 + 4.1414) * 43758.5453;
+  return x - Math.floor(x);
+};
+
+export function makeTreeKit() {
   const pos = [];
   const nor = [];
-  const part = [];
-  parts.forEach((g, k) => {
-    const p = g.getAttribute('position');
-    const n = g.getAttribute('normal');
-    for (let i = 0; i < p.count; i++) {
-      pos.push(p.getX(i), p.getY(i), p.getZ(i));
-      nor.push(n.getX(i), n.getY(i), n.getZ(i));
-      part.push(k);
+  const spc = [];
+  const idx = [];
+  const vert = (species, p, n) => {
+    const l = Math.hypot(n[0], n[1], n[2]) || 1;
+    pos.push(p[0], p[1], p[2]);
+    nor.push(n[0] / l, n[1] / l, n[2] / l);
+    spc.push(species);
+    return spc.length - 1;
+  };
+  const tri = (a, b, c) => idx.push(a, b, c);
+  // pierścienie wokół osi z: [z, promień, składowa pionowa normalnej, rozrzut promienia]
+  const lathe = (species, sides, rings, rot = 0) => {
+    const start = spc.length;
+    rings.forEach(([z, r, nz, jit = 0], k) => {
+      for (let s = 0; s < sides; s++) {
+        const a = rot + s / sides * Math.PI * 2;
+        const rr = r * (1 + jit * (treeJit(start + k * 17 + s) - 0.5));
+        vert(species, [Math.cos(a) * rr, Math.sin(a) * rr, z], [Math.cos(a), Math.sin(a), nz]);
+      }
+    });
+    for (let k = 0; k + 1 < rings.length; k++) {
+      for (let s = 0; s < sides; s++) {
+        const a = start + k * sides + s;
+        const b = start + k * sides + (s + 1) % sides;
+        tri(a, b, b + sides);
+        tri(a, b + sides, a + sides);
+      }
     }
+    return start;
+  };
+  const capTop = (species, ring, sides, apex) => {
+    const c = vert(species, apex, [0, 0, 1]);
+    for (let s = 0; s < sides; s++) tri(ring + s, ring + (s + 1) % sides, c);
+  };
+  const capBottom = (species, ring, sides, center) => {
+    const c = vert(species, center, [0, 0, -1]);
+    for (let s = 0; s < sides; s++) tri(c, ring + (s + 1) % sides, ring + s);
+  };
+
+  // pień: graniastosłup 5-boczny zwężany ku górze (3 pierścienie: palma się gnie)
+  lathe(-1, 5, [[0, 1, 0], [0.5, 0.85, 0], [1, 0.7, 0]]);
+
+  // 0 liściaste: cztery nieregularne kule (ikosaedr) — szczyt + trzy niżej wokół
+  const lobes = [[0, 0, 0.7, 0.3, 0.27]];
+  for (let k = 0; k < 3; k++) {
+    const a = 0.35 + k * Math.PI * 2 / 3;
+    lobes.push([Math.cos(a) * 0.17, Math.sin(a) * 0.17, 0.5 + 0.03 * k, 0.215 - 0.008 * k, 0.185]);
+  }
+  lobes.forEach(([cx, cy, cz, rh, rv], li) => {
+    const start = spc.length;
+    ICO_POS.forEach((v, k) => {
+      const l = Math.hypot(v[0], v[1], v[2]);
+      const u = [v[0] / l, v[1] / l, v[2] / l];
+      const j = 0.9 + 0.2 * treeJit(li * 31 + k);
+      vert(0, [cx + u[0] * rh * j, cy + u[1] * rh * j, cz + u[2] * rv * j], [u[0] / rh, u[1] / rh, u[2] / rv]);
+    });
+    for (let i = 0; i < ICO_IDX.length; i += 3) tri(start + ICO_IDX[i], start + ICO_IDX[i + 1], start + ICO_IDX[i + 2]);
   });
-  trunk.dispose();
-  crown.dispose();
-  parts.forEach((g) => g.dispose());
+
+  // 1 iglaste: trzy piętra stożków (spód lekko wklęsły), piętra obrócone
+  [[0.12, 0.62, 0.3], [0.36, 0.84, 0.23], [0.6, 1.0, 0.15]].forEach(([zb, zt, r], k) => {
+    const rot = k * 0.45;
+    const side = lathe(1, 7, [[zb, r, r / (zt - zb), 0.22]], rot);
+    capTop(1, side, 7, [0, 0, zt]);
+    const under = spc.length;
+    for (let s = 0; s < 7; s++) {
+      const p = [pos[(side + s) * 3], pos[(side + s) * 3 + 1], zb];
+      vert(1, p, [p[0] * 0.3, p[1] * 0.3, -1]);
+    }
+    capBottom(1, under, 7, [0, 0, zb + 0.05]);
+  });
+
+  // 2 topola: wrzeciono (profil jak topola włoska), wąska i wysoka
+  const prof = [[0.1, 0.03], [0.22, 0.1], [0.4, 0.13], [0.62, 0.11], [0.82, 0.065]];
+  const pz = [...prof.map((p) => p[0]), 1];
+  const pr = [...prof.map((p) => p[1]), 0];
+  const ring0 = lathe(2, 6, prof.map(([z, r], k) => {
+    const a = Math.max(k - 1, 0);
+    const b = k + 1;
+    return [z, r, -(pr[b] - pr[a]) / (pz[b] - pz[a]), 0.12];
+  }), 0.3);
+  capTop(2, ring0 + (prof.length - 1) * 6, 6, [0, 0, 1]);
+  capBottom(2, ring0, 6, [0, 0, 0.08]);
+
+  // 3 palma: 7 liści-pióropuszy z czubka pnia (z = 0,93), łuk w górę i opadanie;
+  // przekrój Λ (nerw wyżej niż brzegi listków) zamknięty spodem — widać z obu stron
+  const nF = 7;
+  for (let f = 0; f < nF; f++) {
+    const a = f / nF * Math.PI * 2 + (f % 2) * 0.2;
+    const dx = Math.cos(a);
+    const dy = Math.sin(a);
+    const S = [-dy, dx, 0];
+    const Lf = 0.42 * (0.85 + 0.3 * treeJit(f * 7 + 3));
+    const at = (u) => [dx * Lf * u, dy * Lf * u, 0.935 + Lf * (0.55 * u - 0.95 * u * u)];
+    const frame = (u) => {
+      const p0 = at(u - 0.02);
+      const p1 = at(u + 0.02);
+      const T = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
+      const l = Math.hypot(T[0], T[1], T[2]);
+      const t = [T[0] / l, T[1] / l, T[2] / l];
+      // góra liścia = T × S
+      const N = [t[1] * S[2] - t[2] * S[1], t[2] * S[0] - t[0] * S[2], t[0] * S[1] - t[1] * S[0]];
+      return { P: at(u), N };
+    };
+    const sec = [];
+    for (const u of [0.12, 0.55]) {
+      const { P, N } = frame(u);
+      const w = 0.07 * Math.sin(Math.PI * Math.min(u * 1.1, 1));
+      const drop = w * 0.35;
+      const M = vert(3, P, N);
+      const Lv = vert(3, [P[0] + S[0] * w - N[0] * drop, P[1] + S[1] * w - N[1] * drop, P[2] - N[2] * drop], [N[0] + S[0] * 0.35, N[1] + S[1] * 0.35, N[2]]);
+      const Rv = vert(3, [P[0] - S[0] * w - N[0] * drop, P[1] - S[1] * w - N[1] * drop, P[2] - N[2] * drop], [N[0] - S[0] * 0.35, N[1] - S[1] * 0.35, N[2]]);
+      sec.push({ M, L: Lv, R: Rv });
+    }
+    const tip = frame(0.98);
+    const Tp = vert(3, at(1), tip.N);
+    const [i, j] = sec;
+    tri(i.M, j.M, j.L); tri(i.M, j.L, i.L);
+    tri(i.R, j.R, j.M); tri(i.R, j.M, i.M);
+    tri(i.L, j.L, j.R); tri(i.L, j.R, i.R);
+    tri(j.M, Tp, j.L); tri(j.R, Tp, j.M); tri(j.L, Tp, j.R);
+  }
+
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
-  g.setAttribute('aPart', new THREE.Float32BufferAttribute(part, 1));
+  g.setAttribute('aSpecies', new THREE.Float32BufferAttribute(spc, 1));
+  g.setIndex(idx);
   return g;
 }
 
 function instancedTrees(base, count) {
   const geo = new THREE.InstancedBufferGeometry();
   for (const [name, attr] of Object.entries(base.attributes)) geo.setAttribute(name, attr);
+  geo.setIndex(base.index);
   geo.instanceCount = count;
   geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e9);
   return geo;
@@ -557,11 +733,12 @@ function sectorHas(sector, cls) {
 
 // Wybór kawałków jednej klasy (bez alokacji: bufory stałe).
 export class HaloCityChunkSet {
-  constructor({ layout, cls, blocksPerChunk, blocks, maxChunks, mesh = null }) {
+  constructor({ layout, cls, blocksPerChunk, blocks, maxChunks, mesh = null, minPixels = HALO_CITY.minPixels }) {
     this.layout = layout;
     this.cls = cls;
     this.blocksPerChunk = blocksPerChunk;
     this.maxChunks = maxChunks;
+    this.minPixels = minPixels;
     this.mesh = mesh;
     this.blocks = blocks;
     this.count = Math.ceil(blocks / blocksPerChunk);
@@ -618,7 +795,7 @@ export class HaloCityChunkSet {
       if (th < 0) th += HALO_TAU;
       const c0 = Math.floor(th / this.chunkAngle);
       const half = Math.hypot(this.chunkAngle * rMid * 0.5, L.floor.length * 0.5);
-      const minPx = HALO_CITY.minPixels * Math.max(pixelAngle, 1e-6);
+      const minPx = this.minPixels * Math.max(pixelAngle, 1e-6);
       // Horyzont wypukłej podłogi (habitat na zewnątrz): punkt podłogi dalej
       // kątowo niż acos(Rf/Rc) jest za krzywizną — plus zapas na wysokość brył
       // i pół kawałka. Dla Halo (podłoga wklęsła) bez ograniczenia.
@@ -685,6 +862,11 @@ export class HaloCity {
     this.pixelAngle = { value: 2 * Math.tan(17.5 * Math.PI / 180) / 1080 };
     const Wf = layout.floor.length;
     const C = HALO_CITY;
+    // progi LOD z jakości (tryb ultra: dalej, więcej kawałków i drzew)
+    const lod = haloQualityLod(quality);
+    this.lod = lod;
+    this.bldPx = { value: new THREE.Vector2(lod.buildingPixels[0], lod.buildingPixels[1]) };
+    this.treePx = { value: lod.treePixels };
     const gRows = Math.ceil(Wf / C.gardenBlockT);
     const iRows = Math.ceil(Wf / C.industryBlockT);
     this.gardenGrid = new THREE.Vector4(C.gardenChunkBlocks, gRows, 0, 1);
@@ -692,7 +874,7 @@ export class HaloCity {
 
     const gardenMat = new THREE.ShaderMaterial({
       name: 'HaloCity_garden',
-      uniforms: { ...common, uCityGrid: { value: this.gardenGrid }, uPixelAngle: this.pixelAngle },
+      uniforms: { ...common, uCityGrid: { value: this.gardenGrid }, uPixelAngle: this.pixelAngle, uBldPx: this.bldPx },
       vertexShader: GARDEN_VERTEX,
       fragmentShader: HALO_PRIM_FRAGMENT,
       defines: { AIR_STEPS: 4, PRIM_FACE_FROM_LOCAL: 1 },
@@ -701,7 +883,7 @@ export class HaloCity {
     const gardenGeo = makeGardenChunk(C.gardenChunkBlocks, gRows);
     const industryMat = new THREE.ShaderMaterial({
       name: 'HaloCity_industry',
-      uniforms: { ...common, uCityGrid: { value: this.industryGrid }, uPixelAngle: this.pixelAngle },
+      uniforms: { ...common, uCityGrid: { value: this.industryGrid }, uPixelAngle: this.pixelAngle, uBldPx: this.bldPx },
       vertexShader: INDUSTRY_VERTEX,
       fragmentShader: HALO_PRIM_FRAGMENT,
       defines: { AIR_STEPS: 4 },
@@ -722,8 +904,8 @@ export class HaloCity {
     const gardenMesh = mk(gardenGeo, gardenMat, 'HaloCity_garden');
     const industryMesh = mk(industryGeo, industryMat, 'HaloCity_industry');
     const pn = surfaceUniforms.uPatN.value;
-    this.garden = new HaloCityChunkSet({ layout, cls: 'garden', blocksPerChunk: C.gardenChunkBlocks, blocks: pn[0], maxChunks: C.maxGardenChunks, mesh: gardenMesh });
-    this.industry = new HaloCityChunkSet({ layout, cls: 'industrial', blocksPerChunk: C.industryChunkBlocks, blocks: pn[1], maxChunks: C.maxIndustryChunks, mesh: industryMesh });
+    this.garden = new HaloCityChunkSet({ layout, cls: 'garden', blocksPerChunk: C.gardenChunkBlocks, blocks: pn[0], maxChunks: lod.cityChunks[0], mesh: gardenMesh, minPixels: lod.cityMinPixels });
+    this.industry = new HaloCityChunkSet({ layout, cls: 'industrial', blocksPerChunk: C.industryChunkBlocks, blocks: pn[1], maxChunks: lod.cityChunks[1], mesh: industryMesh, minPixels: lod.cityMinPixels });
     gardenGeo.setAttribute('iChunk', this.garden.attr);
     industryGeo.setAttribute('iChunk', this.industry.attr);
     gardenGeo.instanceCount = 0;
@@ -732,13 +914,12 @@ export class HaloCity {
     this.industryVerts = industryGeo.getAttribute('position').count;
 
     // drzewa
-    const hi = quality.gridDiv >= 32;
-    this._tree = makeTree();
-    const tns = hi ? 128 : 88;
+    this._tree = makeTreeKit();
+    const tns = lod.treeGrid;
     this.treeGrid = new THREE.Vector4(tns, tns, 16, 0);
     this.treeMaterial = new THREE.ShaderMaterial({
       name: 'HaloTrees',
-      uniforms: { ...common, uTreeGrid: { value: this.treeGrid }, uPixelAngle: this.pixelAngle },
+      uniforms: { ...common, uTreeGrid: { value: this.treeGrid }, uPixelAngle: this.pixelAngle, uTreePx: this.treePx },
       vertexShader: TREE_VERTEX,
       fragmentShader: TREE_FRAGMENT,
       defines: { AIR_STEPS: 4 },
@@ -760,15 +941,16 @@ export class HaloCity {
     // odległość kamery od podłogi (z boku wstęgi: od najbliższego brzegu)
     const dz = Math.max(L.z.botIn - camLocal.z, 0, camLocal.z - L.z.topIn);
     const camFloor = Math.hypot(Math.abs(f.alt), dz);
-    const C = HALO_CITY;
-    const t = Math.min(1, Math.max(0, (camFloor - C.fadeNear) / (C.fadeFar - C.fadeNear)));
+    const fadeNear = this.lod.cityFade[0];
+    const fadeFar = this.lod.cityFade[1];
+    const t = Math.min(1, Math.max(0, (camFloor - fadeNear) / (fadeFar - fadeNear)));
     const fade = 1 - t * t * (3 - 2 * t);
     this.gardenGrid.w = fade;
     this.industryGrid.w = fade;
     this.stats.fade = fade;
     this.stats.gardenChunks = this.garden.select(frustum, camLocal, this.pixelAngle.value, fade);
     this.stats.industryChunks = this.industry.select(frustum, camLocal, this.pixelAngle.value, fade);
-    const near = L.isInsideAir(camLocal.x, camLocal.y, camLocal.z) || Math.abs(f.alt) < 2500;
+    const near = L.isInsideAir(camLocal.x, camLocal.y, camLocal.z) || Math.abs(f.alt) < this.lod.treeAltitude;
     this.trees.geometry.instanceCount = near ? this.treeCount : 0;
     this.treeGrid.w = Math.min(Math.max(f.t, 0), L.floor.length);
   }

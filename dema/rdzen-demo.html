@@ -79,6 +79,23 @@
   <div class="row"><label for="rot">Obrót celu</label><input id="rot" type="range" min="-8" max="8" step="0.5" value="0"><output id="rot-out">0°/s</output></div>
   <div class="row"><label for="drift">Dryf celu</label><input id="drift" type="range" min="0" max="200" step="5" value="0"><output id="drift-out">0 j/s</output></div>
 
+  <h2>Model reaktora</h2>
+  <div class="row"><label for="model-kind">Model (M)</label><select id="model-kind">
+    <option value="auto">wg kadłuba</option>
+    <option value="terran">tokamak Terra Nova</option>
+    <option value="pirate">prowizorka piratów</option>
+    <option value="atlas">podwójny pierścień Atlasa</option>
+  </select></div>
+  <div class="checks">
+    <label title="model pod pancerzem, widoczny przez wyrwę; wyłączony = dawny żar"><input type="checkbox" id="model-on" checked> model reaktora</label>
+    <label title="podgląd: cały model nad kadłubem, niezależnie od wyrwy i stanu"><input type="checkbox" id="model-xray"> prześwietlenie (X)</label>
+  </div>
+  <div class="btns">
+    <button id="btn-model-focus" title="Z — kamera na reaktor celu, zbliżenie; drugi raz albo przesuw kamery — powrót">Zbliż na reaktor (Z)</button>
+    <button id="btn-model-gallery" title="każdy model po kolei na swoim kadłubie: prześwietlenie → odsłonięty → krytyczny → stopienie → wrak reaktora po wyrzucie">Galeria modeli</button>
+  </div>
+  <div class="hint">Model leży pod pancerzem: widać go tylko przez wyrwę w komorze (albo w prześwietleniu). Przy zoomie ~1 komora ma ~50 px — szczegóły po zbliżeniu (Z).</div>
+
   <h2>Broń</h2>
   <div class="row"><label for="weapon">Działo (1–9)</label><select id="weapon"></select></div>
   <div class="checks">
@@ -104,11 +121,29 @@
     <label><input type="checkbox" id="cpu-soft"> solver CPU (lustro)</label>
   </div>
 
+  <h2>Detonacja</h2>
+  <div class="row"><label for="det-variant">Wariant</label><select id="det-variant">
+    <option value="">losowy (wagi klasy)</option>
+    <option value="shatter">rozprysk</option>
+    <option value="halves">przełamanie na pół</option>
+    <option value="thirds">rozerwanie na trzy</option>
+    <option value="hole">wyrwa bez rozpadu</option>
+    <option value="jet">wyrzut plazmy (strumień)</option>
+    <option value="orb">kula plazmy (wypada i topi)</option>
+  </select></div>
+  <div class="row"><label for="det-secondary">Wtórne</label><select id="det-secondary">
+    <option value="random">losowo (szansa wariantu)</option>
+    <option value="always">zawsze</option>
+    <option value="never">nigdy</option>
+  </select></div>
+  <div class="btns"><button id="btn-gallery" title="każdy wariant po kolei na świeżym Bellatorze">Galeria wariantów</button></div>
+
   <h2>Nakładki</h2>
   <div class="checks">
     <label><input type="checkbox" id="ov-grid"> siatka heksów</label>
-    <label><input type="checkbox" id="ov-chamber" checked> komora</label>
-    <label><input type="checkbox" id="ov-probe" checked> punkty sondy</label>
+    <label title="strefy mostków z src/game/shipBridge.js (domyślny wariant ciągłą linią, pozostałe przerywaną) — reaktor stoi poza nimi"><input type="checkbox" id="ov-bridges" checked> mostki</label>
+    <label title="kontury heksów komory, okrąg i krzyżyk — przykrywają model w wyrwie"><input type="checkbox" id="ov-chamber"> komora</label>
+    <label><input type="checkbox" id="ov-probe"> punkty sondy</label>
     <label><input type="checkbox" id="ov-state" checked> stan / osłona</label>
     <label><input type="checkbox" id="ov-hp"> hardpointy / dysze</label>
     <label><input type="checkbox" id="ov-cands"> kandydaci A/B/C</label>

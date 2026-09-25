@@ -117,7 +117,16 @@ const SHOTS = [
   { id: 'lm0_game_z045', q: { landmark: 0, cam: 'game', zoom: 0.45 } },
   { id: 'lm2_game_z02', q: { landmark: 2, cam: 'game', zoom: 0.2 } },
   { id: 'lm1_game_z1', q: { landmark: 1, cam: 'game', zoom: 1.0 } },
-  { id: 'lm5_game_night_z045', q: { landmark: 5, cam: 'game', zoom: 0.45, night: 1 } }
+  { id: 'lm5_game_night_z045', q: { landmark: 5, cam: 'game', zoom: 0.45, night: 1 } },
+  // kopuły-biosfery i parki (2026-09-25): tropiki, akwarium, dzicz, ogród, noc, kamera gry
+  { id: 'dome0_tropical', q: { dome: 0 } },
+  { id: 'dome5_aquatic', q: { dome: 5 } },
+  { id: 'dome9_wild', q: { dome: 9 } },
+  { id: 'dome3_botanical', q: { dome: 3 } },
+  { id: 'dome0_night', q: { dome: 0, night: 1 } },
+  { id: 'dome0_game_z045', q: { dome: 0, cam: 'game', zoom: 0.45 } },
+  { id: 'dome2_game_z1', q: { dome: 2, cam: 'game', zoom: 1.0 } },
+  { id: 'lm3_park_night', q: { landmark: 3, night: 1 } }
 ];
 // zestawy: --set flip (obrót habitatu), domyślnie wszystko
 const SETS = {
@@ -139,7 +148,9 @@ const SETS = {
     'k7_docked_z1', 'k7_docked_z035', 'mid_k7_z016', 'mid_k7_z01', 'mid_port_side_z02', 'mid_port_z01', 'm3_port_z0035',
     'city_garden_z034', 'city_heph_z034', 'city_heph_z089'],
   landmarks: ['lm0_gate', 'lm1_terrace', 'lm2_crown', 'lm4_bridge', 'lm6_glass_gate', 'lm2_night', 'lm0_game_z045', 'lm2_game_z02',
-    'lm1_game_z1', 'lm5_game_night_z045', 'p6', 'p9', 'm4_city_z1', 'k7_docked_z035']
+    'lm1_game_z1', 'lm5_game_night_z045', 'p6', 'p9', 'm4_city_z1', 'k7_docked_z035'],
+  domes: ['dome0_tropical', 'dome5_aquatic', 'dome9_wild', 'dome3_botanical', 'dome0_night', 'dome0_game_z045', 'dome2_game_z1',
+    'lm0_gate', 'lm3_park_night', 'lm0_game_z045', 'p6', 'm4_city_z1']
 };
 
 const only = args.only ? new Set(args.only.split(',')) : (args.set && SETS[args.set] ? new Set(SETS[args.set]) : null);

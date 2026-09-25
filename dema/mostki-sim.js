@@ -46,7 +46,16 @@ export const GAME_RULES = Object.freeze({
 export const HULL_POOLS = Object.freeze({
   battleship: { hp: 12000, shield: 7200, regenRate: 320, regenDelay: 5.2, rules: 'npc' },
   pirate_battleship: { hp: 12000, shield: 7200, regenRate: 320, regenDelay: 5.2, rules: 'npc' },
-  atlas: { hp: 12000, shield: 18000, regenRate: 150, regenDelay: 2.5, rules: 'player' }
+  atlas: { hp: 12000, shield: 18000, regenRate: 150, regenDelay: 2.5, rules: 'player' },
+  // Reszta floty: SUPPORT_SHIP_TEMPLATES (frigate_laser, destroyer) i
+  // CAPITAL_SHIP_TEMPLATES (carrier, supercapital, megafreighter — lokomotywa bez tarczy).
+  frigate: { hp: 1800, shield: 900, regenRate: 140, regenDelay: 3.8, rules: 'npc' },
+  pirate_frigate: { hp: 1800, shield: 900, regenRate: 140, regenDelay: 3.8, rules: 'npc' },
+  destroyer: { hp: 4200, shield: 2200, regenRate: 200, regenDelay: 4.5, rules: 'npc' },
+  pirate_destroyer: { hp: 4200, shield: 2200, regenRate: 200, regenDelay: 4.5, rules: 'npc' },
+  terran_carrier: { hp: 42000, shield: 28000, regenRate: 600, regenDelay: 5.5, rules: 'npc' },
+  terran_supercapital: { hp: 85000, shield: 52000, regenRate: 900, regenDelay: 6, rules: 'npc' },
+  megafreighter: { hp: 160000, shield: 0, regenRate: 0, regenDelay: 5, rules: 'npc' }
 });
 
 // Mulberry32 — deterministyczny rozrzut (gra używa Math.random).

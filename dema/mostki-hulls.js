@@ -28,8 +28,8 @@ export const HULLS = Object.freeze({
     label: 'Iron Skull',
     faction: 'Piraci',
     png: new URL('../src/assets/ships/piratebattleship.png', import.meta.url).href,
-    pngW: 1158,
-    pngH: 632,
+    pngW: 1727,
+    pngH: 911,
     profile: 'pirate_battleship',
     npc: { type: 'battleship', isPirate: true, shipFrame: 'pirate_battleship', mass: 50000, rammingMass: 8000 }
   }),
@@ -44,10 +44,82 @@ export const HULLS = Object.freeze({
     // Atlas jest statkiem gracza; w demie jedzie ścieżką NPC (typ 'atlas'
     // → klucz edytora 'atlas'), a pula i reguły są gracza (HULL_POOLS).
     npc: { type: 'atlas', isPirate: false, shipFrame: 'atlas', mass: 800000, rammingMass: 800000 }
+  }),
+  // Reszta floty z mostkami (docs/PORT-mostki.md §2, §8).
+  frigate: Object.freeze({
+    key: 'frigate',
+    label: 'Custos',
+    faction: 'Terra',
+    png: new URL('../src/assets/ships/terranfrigate.png', import.meta.url).href,
+    pngW: 2400,
+    pngH: 1792,
+    profile: 'terran_frigate',
+    npc: { type: 'frigate', isPirate: false, shipFrame: 'terran_frigate', mass: 10000, rammingMass: 1200 }
+  }),
+  destroyer: Object.freeze({
+    key: 'destroyer',
+    label: 'Hasta',
+    faction: 'Terra',
+    png: new URL('../src/assets/ships/terrandestroyer.png', import.meta.url).href,
+    pngW: 768,
+    pngH: 573,
+    profile: 'terran_destroyer',
+    npc: { type: 'destroyer', isPirate: false, shipFrame: 'terran_destroyer', mass: 25000, rammingMass: 5000 }
+  }),
+  terran_carrier: Object.freeze({
+    key: 'terran_carrier',
+    label: 'Citadella',
+    faction: 'Terra',
+    png: new URL('../src/assets/ships/terrancarrier.png', import.meta.url).href,
+    pngW: 1672,
+    pngH: 941,
+    profile: 'terran_carrier',
+    npc: { type: 'carrier', isPirate: false, shipFrame: 'terran_carrier', mass: 200000, rammingMass: 60000 }
+  }),
+  terran_supercapital: Object.freeze({
+    key: 'terran_supercapital',
+    label: 'Colossus',
+    faction: 'Terra',
+    png: new URL('../src/assets/ships/terransupercapital.png', import.meta.url).href,
+    pngW: 1672,
+    pngH: 941,
+    profile: 'terran_supercapital',
+    npc: { type: 'supercapital', isPirate: false, shipFrame: 'terran_supercapital', mass: 400000, rammingMass: 120000 }
+  }),
+  pirate_frigate: Object.freeze({
+    key: 'pirate_frigate',
+    label: 'Fregata piratów',
+    faction: 'Piraci',
+    png: new URL('../src/assets/ships/piratefrigate.png', import.meta.url).href,
+    pngW: 1942,
+    pngH: 809,
+    profile: 'pirate_frigate',
+    npc: { type: 'frigate', isPirate: true, shipFrame: 'pirate_frigate', mass: 10000, rammingMass: 1200 }
+  }),
+  pirate_destroyer: Object.freeze({
+    key: 'pirate_destroyer',
+    label: 'Niszczyciel piratów',
+    faction: 'Piraci',
+    png: new URL('../src/assets/ships/piratedestroyer.png', import.meta.url).href,
+    pngW: 1840,
+    pngH: 854,
+    profile: 'pirate_destroyer',
+    npc: { type: 'destroyer', isPirate: true, shipFrame: 'pirate_destroyer', mass: 25000, rammingMass: 5000 }
+  }),
+  megafreighter: Object.freeze({
+    key: 'megafreighter',
+    label: 'Megafrachtowiec (lokomotywa)',
+    faction: 'Cywilni',
+    png: new URL('../assets/megafreighterfront.png', import.meta.url).href,
+    pngW: 1672,
+    pngH: 941,
+    profile: 'megafreighter',
+    // Lokomotywa składu: typ modułu jak w grze (configureMegafreighterModule).
+    npc: { type: 'megafreighter_front', isPirate: false, shipFrame: 'megafreighter', mass: 900000, rammingMass: 900000 }
   })
 });
 
-export const HULL_ORDER = Object.freeze(['atlas', 'battleship', 'pirate_battleship']);
+export const HULL_ORDER = Object.freeze(['atlas', 'battleship', 'pirate_battleship', 'frigate', 'destroyer', 'terran_carrier', 'terran_supercapital', 'pirate_frigate', 'pirate_destroyer', 'megafreighter']);
 
 /** Rozmiar obrazu renderu (tak jak getNpcHexInitSource w grze). */
 export function hullRenderSize(key) {
@@ -118,6 +190,7 @@ export function attachHullBridges(entity, list, opts = {}) {
     scaleX: entity.__hardpointScaleX,
     scaleY: entity.__hardpointScaleY,
     windowColor: BRIDGE_LAYOUT_PROPOSALS[key]?.windowColor,
+    hullKey: key,
     ...opts
   });
 }

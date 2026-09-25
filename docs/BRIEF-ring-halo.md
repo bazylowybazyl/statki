@@ -35,6 +35,8 @@ Poprzeczka: grafika na poziomie referencji. Nie kolejne demo z pudełek.
 | Kadłuby gracza (2026-09-23) | gracz lata frachtowcami i innymi statkami jak NPC — dokuje na każdym stanowisku, na którym kadłub się mieści (hala K-7 i otwarte zatoki); demo: klawisz V, `?hull=` |
 | Ruch statków (2026-09-24) | **ring nie udaje życia**: bez ruchu zastępczego (frachtowce wokół ringu, okręty liniowe w zatokach), bez zaparkowanych statków NPC i bez nocnych świateł aut na ulicach miast — statki i ruch wdrażane osobno (system ruchu v2 przez adapter `haloPortTraffic.js`). Pociągi maglevu na dachu zostają |
 | Landmarki (2026-09-24) | ring dopracowujemy rzeczami „pożyczonymi” z innych dem (ECUMENE `orbital_ring_gameplay_hub_v3.html`, `orbital_ring_demo_2.html`). Pierwsze: **megabudowle ECUMENE** (9: brama, tarasy, iglica, most) jako punkty orientacyjne sektorów miast — w dolnej połowie wstęgi (w kamerze gry front ku kamerze, nie przecinają płaszczyzny lotu), na placu w podłodze |
+| Kopuły, parki, drzewa (2026-09-25) | **budowla nie stoi w pustce — stoi w parku** jak w obu demach: trawnik z pawilonami, kępy drzew, ścieżki, kwietniki, staw przy niskim terenie. **12 kopuł-biosfer** ECUMENE z wnętrzami wg typów z demo_2 (tropiki, akwarium, dzicz…), też w parkach. **Różne gatunki drzew** (liściaste, iglaste, topole, palmy) z klimatu. Następny krok: **port do gry + tryb „ultra”** (mniej agresywny LOD: z daleka okna budynków i więcej detalu) — zrobione 2026-09-25, wiersz niżej |
+| Port do gry (2026-09-25) | **ring „Halo” podpięty do gry**, stary ring (`planetaryRing3D`, `ringCity*`) usunięty: ring Ziemi i Marsa, stacja planety = **stacja-port w hali K-7** (terminal w całej hali), ring w płaszczyźnie gry jest **przeszkodą** (płyta z terenem; przelot tylko 4 tranzytami), pociski zatrzymuje płyta. Tryb **„Ultra”** w „Jakość planet i ringu” = dalszy LOD (okna, drzewa, detal widać z daleka). Szczegóły i ograniczenia: `docs/PORT-halo-ring.md` § „W grze” |
 | Strefy wokół doków (2026-09-23) | dok wbity w ziemię generuje wokół siebie **pas fabryczny**, który przechodzi w **domy**, a dopiero dalej w to, co ma sektor (nie park tuż przy doku). Przemysł **tylko wokół doków** — bez sektorów przemysłowych. **Góry sektora przy brzegach wstęgi (u góry i u dołu) mogą stać obok doków — nie muszą**; nad dokiem teren niski (w kamerze gry zasłoniłby dok) |
 | Tranzyty przez ring (2026-09-23) | jak w K-7 z ECUMENE: **4 tunele co 90°** (±45° i ±135° od K-7) przez płytę podłogi z kadłubem — ring w płaszczyźnie gry jest przeszkodą, a tędy się przez niego przelatuje |
 | Płaszczyzna gry i doki (2026-09-23, poprawka) | **doki NA ŚRODKU wstęgi, wpięte w podłogę habitatu** — nie na dachu i bez wsporników-balkonów. Płaszczyzna gry przecina ring w połowie szerokości (`flightLevel: 0.5`): gameplay „na środku ringu”, górna połowa wstęgi nad statkami (FG), dolna pod nimi |
@@ -268,8 +270,8 @@ Tryb kinowy: „Wysoka” ≥ 60 FPS w 1440p na przeciętnym GPU; „Ultra” mo
 
 ## 11. Architektura pod port
 
-- Moduły w `src/3d/haloRing/` (niepodpięte do `index.html`); demo tylko jako host:
-  `dema/halo_ring_demo.html` + `dema/halo_ring_demo.js`.
+- Moduły w `src/3d/haloRing/` (od 2026-09-25 podpięte do gry przez `haloRingGame.js`); demo
+  jako drugi host i warsztat: `dema/halo_ring_demo.html` + `dema/halo_ring_demo.js`.
 - Proponowany podział:
   - `haloRingLayout.js` — czysta matematyka bez Three: profil, promienie, sektory, (u,v) ↔ świat;
     getter obwiedni zgodny z polami `computePlanetaryRingLayout` (`innerRadius`, `outerRadius`, …);
@@ -333,8 +335,8 @@ Po każdym etapie: zrzuty do `.tmp/halo-ring/` + tabela: preset → draw calle, 
 
 ## 15. Poza zakresem i pułapki repo
 
-- Nie ruszaj `index.html`, `planetaryRing3D.js`, `ringCity*.js`, `core3d.js` ani starych dem.
-  Port to osobne zadanie.
+- (Etap dema) Nie ruszaj `index.html`, `core3d.js` ani starych dem — port był osobnym zadaniem
+  (zrobiony 2026-09-25; `planetaryRing3D.js` i `ringCity*.js` usunięte).
 - `npm run build` pada dziś na brakującym `AISPACE.html` w `vite.config.js` (dema przeniesiono do
   `dema/`) — nie naprawiaj przy okazji.
 - W `tests/` są testy czerwone już na czystym HEAD — nie naprawiaj cudzych.
@@ -342,7 +344,9 @@ Po każdym etapie: zrzuty do `.tmp/halo-ring/` + tabela: preset → draw calle, 
 
 ## 16. Na później: port (zaprojektuj API tak, żeby był prosty)
 
-Obecny ring spina się z grą przez: importy w `index.html` (≈ :1179–1188: init/update, zapytania
+> Zrobione 2026-09-25 — stan w `docs/PORT-halo-ring.md` § „W grze”. Opis niżej dotyczy starego ringu.
+
+Stary ring spinał się z grą przez: importy w `index.html` (≈ :1179–1188: init/update, zapytania
 o encje i cele, `getPlanetaryRing`, `computeRingStationOrbitRadius`, `computePlanetaryRingLayout`,
 `resolveRingPlanetWorldRadius`), pas cienia ringu w `planet3d.assets.js`, okluder ringu w `core3d.js`
 (shadow shafts), tryb `free3d` (lot `RingCityFlight` z kokpitu — naturalny dom kamery kinowej),

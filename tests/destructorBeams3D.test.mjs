@@ -5,6 +5,7 @@ import { voxelizeTriangles, makeBoxTriangles } from '../src/game/voxelBody3D.js'
 import { buildBeamStructure, BEAM_TYPE } from '../src/game/beamBody3D.js';
 import { DestructorBeams3D, createBeamConfig } from '../src/game/destructorBeams3D.js';
 import { markOriginalBeamBridges } from '../src/game/beamConnectivity3D.js';
+import { cloneBeamStructure } from '../src/game/beamCrashScene3D.js';
 
 const CS = 0.5;
 
@@ -17,14 +18,8 @@ function structure({ w = 3, h = 3, d = 3, shell = 0, frameStride = 1, bulkheadEv
   return buildBeamStructure(vox, { cellMassBase: 10, frameStride, bulkheadEvery });
 }
 
-function clone(src) {
-  return {
-    ...src,
-    nodes: src.nodes.map((n) => ({ ...n, beams: n.beams.slice() })),
-    beams: src.beams.map((b) => ({ ...b })),
-    invInertia: src.invInertia.slice()
-  };
-}
+// Węzły i belki siedzą w magazynach (beamStore3D) — kopia przez magazyny, nie przez spread widoków.
+const clone = cloneBeamStructure;
 
 function fresh(overrides = {}) {
   const cfg = createBeamConfig(CS);
@@ -174,16 +169,11 @@ test('zderzenie wgniata konstrukcję TRWALE (plastyczność belek)', () => {
 });
 
 test('przycięte zapytania kontaktów zgadzają się z pełnym przeglądem, także na granicach hasha', () => {
-  class CountingMap extends Map {
-    reads = 0;
-    get(key) { this.reads++; return super.get(key); }
-  }
   for (const shift of [-0.501, -0.249, 0, 0.249, 0.501, 1.001]) {
     fresh({ maxContacts: 10000, separationPercent: 0 });
     const A = makeBody({ position: { x: shift, y: -shift * 0.4, z: shift * 0.7 },
       quaternion: { x: 0, y: Math.sin(0.3), z: 0, w: Math.cos(0.3) } }, { w: 1, h: 1, d: 1 });
     const B = makeBody({}, { w: 2, h: 2, d: 2 });
-    B._hash = new CountingMap();
     const m = DestructorBeams3D._refreshRot(A);
     const world = n => ({ x: m[0] * n.x + m[1] * n.y + m[2] * n.z + A.pos.x,
       y: m[3] * n.x + m[4] * n.y + m[5] * n.z + A.pos.y,
@@ -197,15 +187,18 @@ test('przycięte zapytania kontaktów zgadzają się z pełnym przeglądem, tak�
       if (closest < limit) expected.set(a, closest);
     }
     const contactsBefore = DestructorBeams3D.perf.contacts;
+    const lookupsBefore = DestructorBeams3D.perf.hashLookups;
     DestructorBeams3D.collideBodies(A, B, 1 / 120, false);
+    const reads = DestructorBeams3D.perf.hashLookups - lookupsBefore;
     assert.equal(DestructorBeams3D.perf.contacts - contactsBefore, expected.size);
+    // Kontakty to indeksy węzłów w magazynach ciał (widok: body.nodes[i]).
     for (let i = 0; i < A._contacts.length; i++) {
-      const a = A._contacts[i], b = B._contacts[i], p = world(a);
+      const a = A.nodes[A._contacts[i]], b = B.nodes[B._contacts[i]], p = world(a);
       const d2 = (p.x - b.x) ** 2 + (p.y - b.y) ** 2 + (p.z - b.z) ** 2;
       assert.ok(Math.abs(d2 - expected.get(a)) < 1e-10, 'najbliższy kontakt nie może zniknąć przez pruning');
     }
-    assert.ok(B._hash.reads < A.nodes.length * 60 + B.nodes.length,
-      `zapytania nadal skanują 125 kubików: ${B._hash.reads}`);
+    assert.ok(reads > 0 && reads < A.nodes.length * 60,
+      `zapytania nadal skanują 125 kubików: ${reads}`);
   }
 });
 
@@ -421,8 +414,12 @@ test('hash obejmuje odsłonięte wnętrze i odświeża się po zgniocie w tym sa
   const interior = body.nodes.find(n => !n.surface);
   assert.ok(interior);
   for (const n of body.nodes) if (n !== interior) n.active = false;
-  const includes = hash => {
-    for (let node of hash.values()) for (; node; node = node._hashNext) if (node === interior) return true;
+  // Kubełek = indeks pierwszego węzła, dalej łańcuch nodeStore.hashNext (−1 = koniec);
+  // siatka gęsta nad AABB albo — dla ogromnego AABB — zapasowa Map.
+  const includes = grid => {
+    const next = body.nodeStore.hashNext;
+    const heads = grid.map ? [...grid.map.values()] : grid.heads.subarray(0, grid.nx * grid.ny * grid.nz);
+    for (let i of heads) for (; i >= 0; i = next[i]) if (body.nodes[i] === interior) return true;
     return false;
   };
   assert.ok(includes(DestructorBeams3D._refreshHash(body)));
@@ -431,6 +428,30 @@ test('hash obejmuje odsłonięte wnętrze i odświeża się po zgniocie w tym sa
   DestructorBeams3D._updateRadius(body);
   assert.ok(body.radius >= Math.hypot(interior.x, interior.y, interior.z));
   assert.ok(includes(DestructorBeams3D._refreshHash(body)));
+});
+
+test('siatka węzłów: węzeł odrzucony daleko przełącza ciało na zapasową Map, kontakty te same', () => {
+  fresh({ maxContacts: 10000, separationPercent: 0 });
+  const A = makeBody({ position: { x: 0.3, y: 0.1, z: 0 } }, { w: 1, h: 1, d: 1 });
+  const B = makeBody({}, { w: 2, h: 2, d: 2 });
+  const contacts = () => {
+    const before = DestructorBeams3D.perf.contacts;
+    DestructorBeams3D.collideBodies(A, B, 1 / 120, false);
+    const n = DestructorBeams3D.perf.contacts - before;
+    return { n, a: A._contacts.slice(0, n), b: B._contacts.slice(0, n) };
+  };
+  const dense = contacts();
+  assert.ok(dense.n > 0);
+  assert.equal(B._grid.map, null, 'zwykłe ciało ma gęstą siatkę');
+  // Węzeł B najdalej od A (poza kontaktem) odlatuje o milion jednostek — AABB rośnie do
+  // miliardów kubełków, więc siatka gęsta byłaby absurdem.
+  const far = B.nodes.reduce((best, n) => (n.active && n.x < best.x ? n : best));
+  far.x += 1e6;
+  B._hashTick = -1;
+  DestructorBeams3D._updateRadius(B);
+  const fallback = contacts();
+  assert.ok(B._grid.map instanceof Map, 'ogromne AABB → Map');
+  assert.deepEqual(fallback, dense);
 });
 
 test('przeniesienie lokalnego ruchu fragmentu zachowuje prędkości świata i nadaje obrót', () => {

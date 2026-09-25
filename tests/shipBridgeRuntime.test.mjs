@@ -24,19 +24,25 @@ test('bridge hull keys follow the NPC editor mapping; other hulls have no bridge
   assert.equal(resolveBridgeHullKey({ type: 'battleship' }), 'battleship');
   assert.equal(resolveBridgeHullKey({ type: 'battleship', isPirate: true }), 'pirate_battleship');
   assert.equal(resolveBridgeHullKey({ type: 'battleship', shipFrame: 'atlas' }), 'atlas');
-  assert.equal(resolveBridgeHullKey({ type: 'destroyer' }), null);
+  // Od 2026-09-25 mostki ma cała flota bojowa (i lokomotywa megafrachtowca);
+  // frachtowce cywilne nadal nie.
+  assert.equal(resolveBridgeHullKey({ type: 'destroyer' }), 'destroyer');
+  assert.equal(resolveBridgeHullKey({ type: 'freighter-large', shipFrame: 'long_haul_freighter' }), null);
   assert.equal(resolveBridgeHullKey(null), null);
   assert.equal(resolveBridgeLayout('atlas').length, 2, 'Atlas: main + backup by default');
   assert.equal(resolveBridgeLayout('battleship').length, 1);
-  assert.equal(resolveBridgeLayout('destroyer'), null);
+  assert.equal(resolveBridgeLayout('destroyer').length, 1);
+  assert.equal(resolveBridgeLayout('long_haul_freighter'), null);
 });
 
 test('a hull without bridges gets nothing and drops a stale bridge state', () => {
   const e = hull({ width: 320, height: 100 });
   try {
     assert.ok(attachEntityBridges(e, { bridges: ZONE }));
-    assert.equal(attachEntityBridges(e, { key: 'destroyer' }), null);
-    assert.equal(e.bridgeState, null);
+    // `=== null`, nie assert.equal: przy porażce assert rozwija w komunikacie
+    // cały stan mostka z siatką heksów bez limitu głębokości — brak pamięci.
+    assert.ok(attachEntityBridges(e, { key: 'long_haul_freighter' }) === null, 'frachtowiec bez mostków');
+    assert.ok(e.bridgeState === null, 'stary stan mostków zdjęty');
   } finally { disposeHexBody(e); }
 });
 

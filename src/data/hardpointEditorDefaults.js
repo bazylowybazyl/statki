@@ -1648,116 +1648,116 @@ export const SHIP_EDITOR_DEFAULTS = {
         {
             "id": "m_p5pgvkj",
             "type": "special",
-            "x": -145.47,
-            "y": -105.35
+            "x": -235.5,
+            "y": -189.5
         },
         {
             "id": "m_92mp3nj",
             "type": "special",
-            "x": -143.97,
-            "y": 109.85
+            "x": -235.5,
+            "y": 194.5
         },
         {
             "id": "m_wsxghs2",
             "type": "special",
-            "x": 268.45,
-            "y": -1.87
+            "x": 570.5,
+            "y": 5.5
         },
         {
             "id": "m_vpidpf9",
             "type": "special",
-            "x": 119.98,
-            "y": 140.6
+            "x": 309.5,
+            "y": 187.5
         },
         {
             "id": "m_42v3ntq",
             "type": "special",
-            "x": 115.48,
-            "y": -141.35
+            "x": 309.5,
+            "y": -180.5
         },
         {
             "id": "m_m5m6eqq",
             "type": "main",
-            "x": 303.21,
-            "y": -94.04
+            "x": 474.5,
+            "y": -118.5
         },
         {
             "id": "m_rik6o0v",
             "type": "main",
-            "x": 303.21,
-            "y": 94.04
+            "x": 474.5,
+            "y": 117.5
         },
         {
             "id": "m_e5sllp3",
             "type": "main",
-            "x": 218.84,
-            "y": -122.16
+            "x": 440.5,
+            "y": -189.5
         },
         {
             "id": "m_c3vevjg",
             "type": "main",
-            "x": 218.84,
-            "y": 122.16
+            "x": 440.5,
+            "y": 190.5
         },
         {
             "id": "m_y9aspbk",
             "type": "main",
-            "x": -21.09,
-            "y": -137.1
+            "x": -72.5,
+            "y": -152.5
         },
         {
             "id": "m_bar4xf8",
             "type": "main",
-            "x": -21.09,
-            "y": 137.1
+            "x": -72.5,
+            "y": 157.5
         },
         {
             "id": "m_c35kkmu",
             "type": "main",
-            "x": -164.35,
-            "y": -169.62
+            "x": -357.5,
+            "y": -340.5
         },
         {
             "id": "m_oekr20o",
             "type": "main",
-            "x": -164.35,
-            "y": 169.62
+            "x": -357.5,
+            "y": 342.5
         },
         {
             "id": "m_su8eq18",
             "type": "aux",
-            "x": -101.07,
-            "y": -143.26
+            "x": -188.5,
+            "y": -245.5
         },
         {
             "id": "m_svc3mqq",
             "type": "aux",
-            "x": -101.07,
-            "y": 143.26
+            "x": -188.5,
+            "y": 242.5
         },
         {
             "id": "m_v034d1y",
             "type": "aux",
-            "x": 41.31,
-            "y": -141.5
+            "x": 95.5,
+            "y": -152.5
         },
         {
             "id": "m_ilidmdw",
             "type": "aux",
-            "x": 41.31,
-            "y": 141.5
+            "x": 95.5,
+            "y": 157.5
         },
         {
             "id": "m_ggf5qyn",
             "type": "aux",
-            "x": 373.52,
-            "y": -5.27
+            "x": 687.5,
+            "y": 1.5
         },
         {
             "id": "m_ny1a0ou",
             "type": "aux",
-            "x": -362.97,
-            "y": 1.76
+            "x": -513.5,
+            "y": 0.5
         }
     ],
     "cores": [],
@@ -1765,39 +1765,40 @@ export const SHIP_EDITOR_DEFAULTS = {
         "main": [
             {
                 "id": "m_llge2x6",
-                "x": -457.41,
-                "y": -61.86,
+                "x": -763.5,
+                "y": -95.5,
                 "deg": 90,
                 "offsetX": 0,
                 "offsetY": 0
             },
             {
                 "id": "m_lftjcis",
-                "x": -440.92,
-                "y": -143.6,
+                "x": -763.5,
+                "y": -235.5,
                 "deg": 90,
                 "offsetX": 0,
                 "offsetY": 0
             },
             {
                 "id": "m_lrnj6rk",
-                "x": -459.66,
-                "y": 64.11,
+                "x": -763.5,
+                "y": 104.5,
                 "deg": 90,
                 "offsetX": 0,
                 "offsetY": 0
             },
             {
                 "id": "m_25d19is",
-                "x": -437.92,
-                "y": 145.85,
+                "x": -763.5,
+                "y": 244.5,
                 "deg": 90,
                 "offsetX": 0,
                 "offsetY": 0
             }
         ],
         "side": []
-    }
+    },
+    "spriteRevision": 2
 },
     "pirate_destroyer": {
     "label": "Piraci: Destroyer",
@@ -1806,123 +1807,149 @@ export const SHIP_EDITOR_DEFAULTS = {
         {
             "id": "m_bcebjuk",
             "type": "main",
-            "x": -100,
-            "y": -70
+            "x": -316,
+            "y": -191
         },
         {
             "id": "m_39mwmxa",
             "type": "main",
-            "x": -100,
-            "y": 70
+            "x": -316,
+            "y": 181
         },
         {
             "id": "m_1bc3qth",
             "type": "main",
-            "x": 80,
-            "y": -90
+            "x": 281,
+            "y": -144
         },
         {
             "id": "m_z113tre",
             "type": "main",
-            "x": 80,
-            "y": 90
+            "x": 281,
+            "y": 133
         },
         {
             "id": "m_ko6m00t",
             "type": "main",
-            "x": 180,
+            "x": 588,
             "y": 0
         },
         {
             "id": "m_hmqbxtf",
             "type": "main",
-            "x": 0,
-            "y": -90
+            "x": -22,
+            "y": -127
         },
         {
             "id": "m_94e2ygy",
             "type": "main",
-            "x": 170,
-            "y": -50
+            "x": 475,
+            "y": -86
         },
         {
             "id": "m_evoydld",
             "type": "main",
-            "x": 150,
-            "y": 50
+            "x": 475,
+            "y": 91
         },
         {
             "id": "m_wnjmjff",
             "type": "main",
-            "x": 0,
-            "y": 80
+            "x": -22,
+            "y": 126
         },
         {
             "id": "m_cjalknc",
             "type": "aux",
-            "x": -150,
-            "y": -140
+            "x": -457,
+            "y": -290
         },
         {
             "id": "m_9uaokjc",
             "type": "aux",
-            "x": -100,
-            "y": -110
+            "x": -220,
+            "y": -97
         },
         {
             "id": "m_0noahgf",
             "type": "aux",
-            "x": 130,
-            "y": -80
+            "x": 391,
+            "y": -148
         },
         {
             "id": "m_282pr8w",
             "type": "aux",
-            "x": 220,
-            "y": -40
+            "x": 700,
+            "y": -42
         },
         {
             "id": "m_ax1tlot",
             "type": "aux",
-            "x": 220,
-            "y": 30
+            "x": 700,
+            "y": 42
         },
         {
             "id": "m_j3wwkcu",
             "type": "aux",
-            "x": 130,
-            "y": 70
+            "x": 391,
+            "y": 135
         },
         {
             "id": "m_l2rsz9i",
             "type": "aux",
-            "x": -110,
-            "y": 110
+            "x": -220,
+            "y": 103
         },
         {
             "id": "m_4nouhl5",
             "type": "aux",
-            "x": -170,
-            "y": 140
+            "x": -457,
+            "y": 277
         },
         {
             "id": "m_w5p35hz",
             "type": "aux",
-            "x": -110,
-            "y": 140
+            "x": -361,
+            "y": 292
         },
         {
             "id": "m_5wadff7",
             "type": "aux",
-            "x": -180,
-            "y": -90
+            "x": -490,
+            "y": -156
         }
     ],
     "cores": [],
     "engines": {
-        "main": [],
+        "main": [
+            {
+                "id": "pirate_destroyer_engine_0",
+                "deg": 90,
+                "offsetX": 0,
+                "offsetY": 0,
+                "x": -805,
+                "y": -187
+            },
+            {
+                "id": "pirate_destroyer_engine_1",
+                "deg": 90,
+                "offsetX": 0,
+                "offsetY": 0,
+                "x": -865,
+                "y": 0
+            },
+            {
+                "id": "pirate_destroyer_engine_2",
+                "deg": 90,
+                "offsetX": 0,
+                "offsetY": 0,
+                "x": -805,
+                "y": 190
+            }
+        ],
         "side": []
-    }
+    },
+    "spriteRevision": 2
 },
     "pirate_frigate": {
     "label": "Piraci: Fregata",
@@ -1931,116 +1958,116 @@ export const SHIP_EDITOR_DEFAULTS = {
         {
             "id": "m_4v77ihm",
             "type": "main",
-            "x": -350,
-            "y": -260
+            "x": -347,
+            "y": -164.5
         },
         {
             "id": "m_ci5m2rh",
             "type": "main",
-            "x": -350,
-            "y": 260
+            "x": -347,
+            "y": 209.5
         },
         {
             "id": "m_gcbrgg7",
             "type": "main",
-            "x": 650,
-            "y": -10
+            "x": 553,
+            "y": 20.5
         },
         {
             "id": "m_g7uxhw9",
             "type": "aux",
-            "x": 340,
-            "y": -290
+            "x": 374,
+            "y": -97.5
         },
         {
             "id": "m_aj8zp4w",
             "type": "aux",
-            "x": 270,
-            "y": -290
+            "x": 259,
+            "y": -97.5
         },
         {
             "id": "m_uwsfum4",
             "type": "aux",
-            "x": 210,
-            "y": -290
+            "x": 129,
+            "y": -84.5
         },
         {
             "id": "m_hbojo1e",
             "type": "aux",
-            "x": 130,
-            "y": -290
+            "x": -1,
+            "y": -94.5
         },
         {
             "id": "m_eootp8f",
             "type": "aux",
-            "x": 360,
-            "y": 300
+            "x": 374,
+            "y": 137.5
         },
         {
             "id": "m_q1wnmuq",
             "type": "aux",
-            "x": 310,
-            "y": 300
+            "x": 259,
+            "y": 137.5
         },
         {
             "id": "m_zs01sam",
             "type": "aux",
-            "x": 250,
-            "y": 300
+            "x": 129,
+            "y": 129.5
         },
         {
             "id": "m_f8ye86b",
             "type": "aux",
-            "x": -330,
-            "y": 440
+            "x": -269,
+            "y": 172.5
         },
         {
             "id": "m_ic925ij",
             "type": "aux",
-            "x": -400,
-            "y": 570
+            "x": -405,
+            "y": 281.5
         },
         {
             "id": "m_6i79izv",
             "type": "aux",
-            "x": -610,
-            "y": 550
+            "x": -520,
+            "y": 249.5
         },
         {
             "id": "m_v6v9gwh",
             "type": "aux",
-            "x": -960,
-            "y": 150
+            "x": -627,
+            "y": 72.5
         },
         {
             "id": "m_lr3rzrr",
             "type": "aux",
-            "x": -960,
-            "y": 10
+            "x": -644,
+            "y": 16.5
         },
         {
             "id": "m_j9cdixd",
             "type": "aux",
-            "x": -950,
-            "y": -140
+            "x": -616,
+            "y": -43.5
         },
         {
             "id": "m_a1518wf",
             "type": "aux",
-            "x": -850,
-            "y": 10
+            "x": -215,
+            "y": 17.5
         },
         {
             "id": "m_i19wlt4",
             "type": "aux",
-            "x": -340,
-            "y": -390
+            "x": -262,
+            "y": -80.5
         },
         {
             "id": "m_uars2jw",
             "type": "aux",
-            "x": -490,
-            "y": -390
+            "x": -464,
+            "y": -211.5
         }
     ],
     "cores": [],
@@ -2048,16 +2075,16 @@ export const SHIP_EDITOR_DEFAULTS = {
         "main": [
             {
                 "id": "m_y4mc84p",
-                "x": -990,
-                "y": -350,
+                "x": -856,
+                "y": -133.5,
                 "deg": 90,
                 "offsetX": 0,
                 "offsetY": 0
             },
             {
                 "id": "m_jred6j8",
-                "x": -990,
-                "y": 360,
+                "x": -856,
+                "y": 176.5,
                 "deg": 90,
                 "offsetX": 0,
                 "offsetY": 0
@@ -2066,22 +2093,23 @@ export const SHIP_EDITOR_DEFAULTS = {
         "side": [
             {
                 "id": "m_9x86ohy",
-                "x": 440,
-                "y": -300,
+                "x": 339,
+                "y": -119.5,
                 "deg": 180,
-                "offsetX": 90,
+                "offsetX": 0,
                 "offsetY": 0
             },
             {
                 "id": "m_u59faf5",
-                "x": 440,
-                "y": 300,
+                "x": 339,
+                "y": 158.5,
                 "deg": 0,
-                "offsetX": 90,
+                "offsetX": 0,
                 "offsetY": 0
             }
         ]
-    }
+    },
+    "spriteRevision": 2
 },
   }
 };

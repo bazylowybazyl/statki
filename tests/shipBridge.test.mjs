@@ -1,8 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import { readFileSync } from 'node:fs';
+
 import { DestructorSystem as D, disposeHexBody } from '../src/game/destructor.js';
 import { SHIP_EDITOR_DEFAULTS } from '../src/data/hardpointEditorDefaults.js';
+import { getHullRenderSize, getWeaponTierForHull } from '../src/data/ships.js';
 import {
   BRIDGE_EVENT,
   BRIDGE_KILL_TIMELINE,
@@ -10,6 +13,7 @@ import {
   applyCommandLossVisuals,
   attachShipBridges,
   bridgePngToWorld,
+  bridgeZoneMargin,
   bridgeZoneContains,
   bridgeZoneDistance,
   compactBridgeDef,
@@ -30,6 +34,7 @@ import {
   updateShipBridges,
   validateBridgeLayout
 } from '../src/game/shipBridge.js';
+import { normalizeBridgeHullKey, resolveBridgeHullKey } from '../src/game/shipBridgeRuntime.js';
 import { makeDestructorHull as hull } from './helpers/destructorHull.mjs';
 
 // Pełny prostokąt 320×100 (alfa 255 wszędzie), skala PNG → render = 1, więc
@@ -382,17 +387,73 @@ test('a render pose overrides the physics pose (interpolated player hull)', () =
   } finally { disposeHexBody(e); }
 });
 
+// Sprite i profil renderu kadłubów ze strefami. Rozmiar PNG czytamy z pliku:
+// podmieniony sprite (jak migracja piratów 2026-09-24) wywala test, zanim
+// strefy i model mostka rozjadą się z obrazkiem.
+const BRIDGE_HULL_SPRITES = {
+  atlas: ['assets/capital_ship_rect_v1.png', 3747, 1677, 'atlas'],
+  battleship: ['src/assets/ships/terranbattleship.png', 1158, 714, 'terran_battleship'],
+  pirate_battleship: ['src/assets/ships/piratebattleship.png', 1727, 911, 'pirate_battleship'],
+  frigate: ['src/assets/ships/terranfrigate.png', 2400, 1792, 'terran_frigate'],
+  destroyer: ['src/assets/ships/terrandestroyer.png', 768, 573, 'terran_destroyer'],
+  terran_carrier: ['src/assets/ships/terrancarrier.png', 1672, 941, 'terran_carrier'],
+  terran_supercapital: ['src/assets/ships/terransupercapital.png', 1672, 941, 'terran_supercapital'],
+  pirate_frigate: ['src/assets/ships/piratefrigate.png', 1942, 809, 'pirate_frigate'],
+  pirate_destroyer: ['src/assets/ships/piratedestroyer.png', 1840, 854, 'pirate_destroyer'],
+  megafreighter: ['assets/megafreighterfront.png', 1672, 941, 'megafreighter']
+};
+
+function pngSize(path) {
+  const b = readFileSync(new URL(`../${path}`, import.meta.url));
+  return [b.readUInt32BE(16), b.readUInt32BE(20)];
+}
+
+test('every hull with bridge zones has a known sprite of the recorded size', () => {
+  for (const key of Object.keys(BRIDGE_LAYOUT_PROPOSALS)) {
+    const spr = BRIDGE_HULL_SPRITES[key];
+    assert.ok(spr, `${key}: brak sprite'a w BRIDGE_HULL_SPRITES`);
+    assert.deepEqual(pngSize(spr[0]), [spr[1], spr[2]], `${key}: sprite zmienił rozmiar — przesuń strefy mostka i model`);
+  }
+});
+
 test('proposed zones clear every hardpoint, engine slot and core of the editor defaults', () => {
-  // Sonda hardpointu = 14 px renderu → w px PNG: 14 / (render / PNG).
-  const margins = { atlas: 14 / (1800 / 3747), battleship: 14 / (624 / 1158), pirate_battleship: 14 / (720 / 1158) };
+  // Zapas = korpus wieżyczki klasy kadłuba (bridgeZoneMargin), w px PNG.
   for (const [key, entry] of Object.entries(BRIDGE_LAYOUT_PROPOSALS)) {
     const cfg = SHIP_EDITOR_DEFAULTS.ships[key];
     assert.ok(cfg, `editor defaults for ${key}`);
+    const [, pw, ph, profile] = BRIDGE_HULL_SPRITES[key];
+    const size = getHullRenderSize(profile, pw, ph);
+    const margin = bridgeZoneMargin(Math.min(size.w / pw, size.h / ph), getWeaponTierForHull(profile));
     for (const [variant, list] of Object.entries(entry.variants)) {
-      const issues = validateBridgeLayout(list, cfg, { margin: margins[key] });
+      const issues = validateBridgeLayout(list, cfg, { margin });
       assert.deepEqual(issues, [], `${key}/${variant}: ${JSON.stringify(issues)}`);
+      // Strefa w obrysie sprite'a.
+      for (const z of list) {
+        assert.ok(Math.abs(z.x) + z.w / 2 <= pw / 2 && Math.abs(z.y) + z.h / 2 <= ph / 2, `${key}/${z.id}: poza obrazkiem`);
+      }
     }
   }
+});
+
+test('bridge hull keys: player hull ids, NPC types and frames, megafreighter locomotive only', () => {
+  const cases = [
+    ['player', 'atlas'], ['atlas', 'atlas'], ['frigate', 'frigate'], ['corvus', 'frigate'], ['terran_frigate', 'frigate'],
+    ['destroyer', 'destroyer'], ['battleship', 'battleship'], ['carrier', 'terran_carrier'], ['supercapital', 'terran_supercapital'],
+    ['pirate_frigate', 'pirate_frigate'], ['pirate_destroyer', 'pirate_destroyer'], ['megafreighter', 'megafreighter'], ['', null]
+  ];
+  for (const [inKey, outKey] of cases) assert.equal(normalizeBridgeHullKey(inKey), outKey, inKey);
+  const npc = (o) => resolveBridgeHullKey(o);
+  assert.equal(npc({ type: 'frigate' }), 'frigate');
+  assert.equal(npc({ type: 'frigate', isPirate: true }), 'pirate_frigate');
+  assert.equal(npc({ type: 'destroyer', isPirate: true, shipFrame: 'pirate_destroyer' }), 'pirate_destroyer');
+  assert.equal(npc({ type: 'battleship', shipFrame: 'terran_battleship' }), 'battleship');
+  assert.equal(npc({ type: 'carrier', shipFrame: 'terran_carrier' }), 'terran_carrier');
+  assert.equal(npc({ type: 'supercapital' }), 'terran_supercapital');
+  assert.equal(npc({ type: 'megafreighter_front', shipFrame: 'megafreighter' }), 'megafreighter');
+  assert.equal(npc({ type: 'megafreighter_wagon', shipFrame: 'megafreighter' }), null);
+  assert.equal(npc({ type: 'megafreighter_back', shipFrame: 'megafreighter' }), null);
+  assert.equal(npc({ type: 'freighter-large', shipFrame: 'long_haul_freighter' }), null);
+  for (const key of Object.keys(BRIDGE_LAYOUT_PROPOSALS)) assert.ok(SHIP_EDITOR_DEFAULTS.ships[key], `${key}: klucz edytora`);
 });
 
 test('export JSON round-trips through normalization in PNG space', () => {

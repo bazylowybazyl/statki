@@ -60,6 +60,15 @@
     <button data-hull="pirate_battleship">Iron Skull <kbd>3</kbd></button>
     <button data-hull="all">Wszystkie <kbd>4</kbd></button>
   </div>
+  <div class="btns" id="hull-btns-fleet" style="margin-top:4px">
+    <button data-hull="frigate">Custos</button>
+    <button data-hull="destroyer">Hasta</button>
+    <button data-hull="terran_carrier">Citadella</button>
+    <button data-hull="terran_supercapital">Colossus</button>
+    <button data-hull="pirate_frigate">Fregata pir.</button>
+    <button data-hull="pirate_destroyer">Niszcz. pir.</button>
+    <button data-hull="megafreighter">Megafrachtowiec</button>
+  </div>
   <div class="row" style="margin-top:6px"><label for="atlas-variant">Mostek Atlasa</label>
     <select id="atlas-variant"></select></div>
 
@@ -108,6 +117,13 @@
     <label><input type="checkbox" data-ov="info" checked> Stan i integralność</label>
     <label><input type="checkbox" data-ov="aim" checked> Linia ognia</label>
   </div>
+
+  <h2>Model 3D mostka <kbd>M</kbd></h2>
+  <div class="checks">
+    <label title="src/3d/bridge3D.js — nadbudówka 3D w strefie mostka; wyłączone = dawne szczeliny okien (bridgeFx3D)."><input type="checkbox" id="model3d" checked> Model 3D</label>
+    <label title="Jak finishBridgeKill w grze: po 4 s agonii hulk staje się wrakiem (model przechodzi na wrak, zgaszony)."><input type="checkbox" id="hulkwreck" checked> Hulk → wrak po 4 s</label>
+  </div>
+  <div class="hint">Obrażenia modelu tylko z heksów 2D: wyrwa tam, gdzie heksy strefy zginęły. Strojenie: <code>window.__bridge3DTune</code>.</div>
 
   <h2>Model trafień</h2>
   <div class="checks">

@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import * as THREE from 'three';
 import { DESTRUCTOR_CONFIG } from '../src/game/destructor.js';
+import { sunShadowUniforms } from '../src/3d/sunShadowMask.js';
 
 const source = readFileSync(new URL('../src/3d/hexShips3D.js', import.meta.url), 'utf8');
 // Execute the production pool with real Three.js attributes, without a renderer.
@@ -11,7 +12,7 @@ const poolCode = source.slice(source.indexOf('const GPU_DEBRIS_MAX ='), source.i
 function makePool() {
   const context = { THREE, Core3D: { scene: new THREE.Scene() },
     createManagedTexture: () => new THREE.Texture(), SHIP_LIGHT_DEFAULTS: {},
-    DEBRIS_VERTEX_SHADER: '', DEBRIS_FRAGMENT_SHADER: '', DESTRUCTOR_CONFIG,
+    DEBRIS_VERTEX_SHADER: '', DEBRIS_FRAGMENT_SHADER: '', DESTRUCTOR_CONFIG, sunShadowUniforms,
     setAttrUpdateRange: (attr, start, count) => { attr.clearUpdateRanges(); attr.addUpdateRange(start, count); } };
   return vm.runInNewContext(`${poolCode}\n({ Pool: GpuDebrisPool, manager: GpuDebrisManager })`, context);
 }

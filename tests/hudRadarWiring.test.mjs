@@ -54,7 +54,7 @@ test('HUD radar builds planet and megaring outlines from shared world geometry',
   const cicDisplay = readFileSync('src/ui/cicDisplay.js', 'utf8');
 
   assert.match(html, /function buildHudRadarWorldFeatures\(planetList, sun\)/);
-  assert.match(html, /computePlanetaryRingLayout\(planet\)/);
+  assert.match(html, /computeHaloRingLayout\(planet\)/);
   assert.match(html, /innerRadius:\s*layout\.innerRadius/);
   assert.match(html, /outerRadius:\s*layout\.outerRadius/);
   assert.match(cicDisplay, /drawCicHudRadarWorldFeatures/);

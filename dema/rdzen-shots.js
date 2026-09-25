@@ -157,6 +157,130 @@ const SCENARIOS = {
     for (const r of rows) console.log(`  ${r.hull.padEnd(18)} ${r.state.padEnd(12)} (${r.coreState} ${Math.round(r.integrity * 100)}%)  max ${r.max.toFixed(2)}  p99 ${r.p99.toFixed(2)}  >0,9: ${r.over09}  ≥6: ${r.white}  hist ${JSON.stringify(r.hist)}`);
   },
 
+  // Warianty detonacji: każdy na świeżym Bellatorze, trzy ujęcia na zegarze
+  // ręcznym (błysk, rozpad albo strumień/kula w locie, koniec).
+  async variants() {
+    const rows = [];
+    // Czas od wywołania; stopienie 0,9 s, więc błysk reactorblow (chargeTime 0,8 s
+    // przed końcem odliczania) wypada na detonację. Błysk capital trwa 1,2 s.
+    const ZOOM = { shatter: 0.36, halves: 0.36, thirds: 0.36, hole: 0.4, jet: 0.24, orb: 0.3 };
+    const BASE_TIMES = [['a-wybuch', 1.05], ['b-po', 2.3], ['c-koniec', 3.9]];
+    // wyrzut i kula: dodatkowa klatka w trakcie cięcia / wytapiania wyjścia
+    const TIMES_FOR = { jet: [['a-wybuch', 1.05], ['a2-ciecie', 1.5], ['b-po', 2.3], ['c-koniec', 3.9]], orb: [['a-wybuch', 1.05], ['a2-topi', 1.5], ['b-po', 2.3], ['c-koniec', 3.9]] };
+    let n = 0;
+    for (const id of ['shatter', 'halves', 'thirds', 'hole', 'jet', 'orb']) {
+      n++;
+      // pierwszy start Vite potrafi przeładować stronę (optymalizacja zależności)
+      // w środku ujęcia — wtedy jedno ponowienie od zera
+      for (let attempt = 0; ; attempt++) {
+        try { await variantShots(id, n); break; } catch (e) {
+          if (attempt >= 1) throw e;
+          console.log(`  ${id}: ponawiam (${String(e.message).split('\n')[0]})`);
+        }
+      }
+    }
+    results.variants = rows;
+    results.variantsHdr = rows.hdr || null;
+    for (const [k, h] of Object.entries(rows.hdr || {})) console.log(`  HDR ${k}: max ${h.max.toFixed(2)} p99 ${h.p99.toFixed(2)} >0,9: ${h.over09} ≥6: ${h.white} hist ${JSON.stringify(h.hist.map((b) => b.count))}`);
+
+    async function variantShots(id, n) {
+      await open('battleship');
+      await ev(`(() => { const R = window.__rdzen; R.setOpt('det-secondary', 'always'); const t = R.S.ships[0]; const c = t.shipCores[0]; const w = R.SC.getCoreWorld(c, {}); R.setCamera(w.x + 200, w.y, ${ZOOM[id]}); R.detonateAs('${id}', 0, 0.9); return true; })()`);
+      let tPrev = 0;
+      const shots = [];
+      for (const [tag, at] of (TIMES_FOR[id] || BASE_TIMES)) {
+        await ev(`window.__rdzen.runFrames(${Math.round((at - tPrev) * 60)}, 60, { realtime: true }).then(() => true)`);
+        tPrev = at;
+        const name = `v${n}-${id}-${tag}`;
+        shots.push(await shot(name));
+        // pasma HDR strumienia i kuli w szerokim oknie wokół wyrwy
+        if (tag === 'b-po' && (id === 'jet' || id === 'orb')) rows.hdr = { ...(rows.hdr || {}), [id]: await coreHdr(8) };
+      }
+      const info = await ev(`(() => { const R = window.__rdzen; return { hazards: R.hazards(), destructibles: R.S.destructibles.length, wrecks: R.S.destructibles.filter((e) => e.isWreck).length, log: R.S.log.map((l) => l.text).slice(-5) }; })()`);
+      rows.push({ id, shots, ...info });
+      console.log(`  ${id.padEnd(8)} wraków ${info.wrecks} · ${info.log.filter((l) => /DETONACJA|KULA/.test(l)).map((l) => l.replace(/^\s*[0-9.]+s\s+/, '')).join(' | ').slice(0, 230)}`);
+    }
+  },
+
+  // Modele reaktora: prześwietlenie (cały model nad kadłubem), potem przez
+  // wyrwę w trzech stanach z pomiarem HDR, na koniec wrak reaktora po wyrzucie.
+  async reactorModels() {
+    const rows = [];
+    let n = 0;
+    for (const [id, kind] of [['battleship', 'terran'], ['pirate_battleship', 'pirate'], ['atlas', 'atlas']]) {
+      n++;
+      await open(id);
+      await ev(`(() => { const R = window.__rdzen; R.setOpt('hp-off', true); R.setOpt('model-xray', true); const c = R.S.ships[0].shipCores[0]; const w = R.SC.getCoreWorld(c, {}); R.setCamera(w.x, w.y, 2.2); R.renderFrames(3); return true; })()`);
+      await shot(`m${n}-${kind}-a-przeswietlenie`);
+      // zbliżenie na komorę (×8): sam model w prześwietleniu, potem przez wyrwę
+      await ev(`(() => { const R = window.__rdzen; const c = R.S.ships[0].shipCores[0]; const w = R.SC.getCoreWorld(c, {}); R.setCamera(w.x, w.y, 8); R.renderFrames(3); return true; })()`);
+      await shot(`m${n}-${kind}-a2-przeswietlenie-zblizenie`);
+      await ev(`(() => { const R = window.__rdzen; R.setOpt('model-xray', false); R.renderFrames(2); return true; })()`);
+      const measure = async (state, k) => {
+        const hdr = await coreHdr(k);
+        const core = await ev('window.__rdzen.summary().ships[0].cores[0]');
+        rows.push({ hull: id, kind, state, coreState: core.state, integrity: +core.integrity.toFixed(3), ...hdr, hist: Object.fromEntries(hdr.hist.map((b) => [`${b.from}-${b.to}`, b.count])) });
+      };
+      await ev(`(async () => { const R = window.__rdzen; R.openChamber(0.25); await R.runFrames(20, 60); R.pause(true); R.renderFrames(2); return true; })()`);
+      await measure('exposed', 1.4);
+      await shot(`m${n}-${kind}-b-odsloniety`);
+      await ev(`(async () => { const R = window.__rdzen; R.pause(false); R.openChamber(0.35); await R.runFrames(20, 60); R.pause(true); R.renderFrames(2); return true; })()`);
+      await measure('critical', 1.4);
+      await shot(`m${n}-${kind}-c-krytyczny`);
+      // wariant bez reactorblow (wyrzut): błysk capital startuje 0,8 s przed
+      // wybuchem i przy zbliżeniu ×8 zalewałby klatkę stopienia
+      const dur = await ev(`(() => { const R = window.__rdzen; R.pause(false); R.forceMeltdown(0); const c = R.S.ships[0].shipCores[0]; c.pendingVariant = 'jet'; return c.meltdownDuration; })()`);
+      await ev(`(async () => { const R = window.__rdzen; await R.runFrames(${Math.round(dur * 0.8 * 60)}, 60); R.pause(true); R.renderFrames(2); return true; })()`);
+      await measure('meltdown-80', 2.0);
+      await shot(`m${n}-${kind}-d-stopienie`);
+      // wrak reaktora po wyrzucie (plazma zgasła, łuk rozerwany, żar stygnie)
+      await ev(`(async () => { const R = window.__rdzen; R.pause(false); R.setOpt('det-secondary', 'never'); const c = R.S.ships[0].shipCores[0]; c.meltdownRemaining = 0.05; $('det-variant').value = 'jet'; c.pendingVariant = 'jet'; await R.runFrames(150, 60); R.pause(true); R.renderFrames(2); return true; })()`.replace('$(', 'document.getElementById('));
+      // odrzut przesunął i obrócił kadłub — kamera wraca na rdzeń
+      await ev(`(() => { const R = window.__rdzen; const c = R.S.ships[0].shipCores[0]; const w = R.SC.getCoreWorld(c, {}); R.setCamera(w.x, w.y, 5); R.renderFrames(2); return true; })()`);
+      await shot(`m${n}-${kind}-e-wrak-po-wyrzucie`);
+      await ev(`(() => { const R = window.__rdzen; R.setOpt('model-xray', true); R.renderFrames(2); return true; })()`);
+      await shot(`m${n}-${kind}-f-wrak-przeswietlenie`);
+      await ev(`(() => { const R = window.__rdzen; R.setOpt('model-xray', false); R.pause(false); return true; })()`);
+      const st = await ev('window.__rdzen.reactor3D.stats');
+      console.log(`  ${kind}: model ${JSON.stringify(st)}`);
+    }
+    results.reactorModels = rows;
+    for (const r of rows) console.log(`  ${r.kind.padEnd(7)} ${r.state.padEnd(12)} (${r.coreState} ${Math.round(r.integrity * 100)}%)  max ${r.max.toFixed(2)}  p99 ${r.p99.toFixed(2)}  >0,9: ${r.over09}  ≥6: ${r.white}  hist ${JSON.stringify(r.hist)}`);
+  },
+
+  // Kula wycelowana w sąsiada (formacja): topi wyjście z Bellatora A, leci
+  // i przetapia się przez Iron Skulla C; strumień z A tnie Bellatora B.
+  async formationHazards() {
+    const rows = {};
+    for (const [id, aim, tag, times, zoom] of [
+      ['orb', 2, 'v7-kula-topi', [['a-wyjscie', 1.45], ['b-lot', 2.1], ['c-w-celu', 2.7], ['d-koniec', 3.7]], 0.3],
+      ['jet', 1, 'v8-strumien-tnie', [['a-start', 1.1], ['b-ciecie', 1.6], ['c-koniec', 2.8]], 0.3]
+    ]) {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          await open('formation');
+          await ev(`(() => { const R = window.__rdzen; R.setOpt('det-secondary', 'never'); const a = R.S.ships[0]; const b = R.S.ships[${aim}]; const w = R.SC.getCoreWorld(a.shipCores[0], {}); R.setCamera((w.x + b.x) / 2, (w.y + b.y) / 2, ${zoom}); R.detonateAs('${id}', 0, 0.9, ${aim}); return true; })()`);
+          let tPrev = 0;
+          const shots = [];
+          for (const [t, at] of times) {
+            await ev(`window.__rdzen.runFrames(${Math.round((at - tPrev) * 60)}, 60, { realtime: true }).then(() => true)`);
+            tPrev = at;
+            shots.push(await shot(`${tag}-${t}`));
+          }
+          const info = await ev(`(() => { const R = window.__rdzen; return { log: R.S.log.map((l) => l.text).slice(-6), ships: R.S.ships.map((s) => ({ label: s.__label, hexes: s.hexGrid ? s.hexGrid.shards.filter((h) => h.active && !h.isDebris).length : 0 })) }; })()`);
+          rows[tag] = { shots, ...info };
+          console.log(`  ${tag}: ${info.ships.map((x) => `${x.label} ${x.hexes}`).join(' · ')}`);
+          for (const l of info.log.filter((l) => /DETONACJA|KULA|STOPIENIE|ODSŁ|KRYT/.test(l))) console.log(`    ${l.replace(/^\s*[0-9.]+s\s+/, '').slice(0, 200)}`);
+          break;
+        } catch (e) {
+          if (attempt >= 1) throw e;
+          console.log(`  ${tag}: ponawiam (${String(e.message).split('\n')[0]})`);
+        }
+      }
+    }
+    results.formationHazards = rows;
+  },
+
   // Koszt detonacji: 1, 3, 6 kapitalnych naraz (czas klatki, draw calle)
   async perf() {
     const rows = [];

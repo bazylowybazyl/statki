@@ -38,9 +38,11 @@ export function traceBeamShot(system, bodies, owner, ox, oy, oz, dx, dy, dz, dis
       }
     }
     if (near > far) continue;
-    for (const n of body.nodes) {
-      if (!n.active) continue;
-      const x = n.x - lx, y = n.y - ly, z = n.z - lz;
+    const s = body.nodeStore, nx = s.x, ny = s.y, nz = s.z, active = s.active;
+    let best = -1;
+    for (let i = 0; i < s.count; i++) {
+      if (!active[i]) continue;
+      const x = nx[i] - lx, y = ny[i] - ly, z = nz[i] - lz;
       const t = x * vx + y * vy + z * vz;
       const perpendicular = Math.max(0, x * x + y * y + z * z - t * t);
       if (perpendicular > nr * nr) continue;
@@ -48,19 +50,29 @@ export function traceBeamShot(system, bodies, owner, ox, oy, oz, dx, dy, dz, dis
       if (t + half < 0) continue;
       const entry = Math.max(0, t - half);
       if (entry > out.t) continue;
-      out.t = entry; out.body = body; out.node = n;
-      out.x = ox + dx * entry; out.y = oy + dy * entry; out.z = oz + dz * entry;
-      out.cx = body.pos.x + m[0] * n.x + m[1] * n.y + m[2] * n.z;
-      out.cy = body.pos.y + m[3] * n.x + m[4] * n.y + m[5] * n.z;
-      out.cz = body.pos.z + m[6] * n.x + m[7] * n.y + m[8] * n.z;
+      out.t = entry; out.body = body; best = i;
     }
+    if (best < 0) continue;
+    const entry = out.t;
+    // Indeks w body.nodeStore (widok: body.nodes[i]) — bez tymczasowych obiektów na trafienie.
+    out.nodeIndex = best;
+    out.x = ox + dx * entry; out.y = oy + dy * entry; out.z = oz + dz * entry;
+    out.cx = body.pos.x + m[0] * nx[best] + m[1] * ny[best] + m[2] * nz[best];
+    out.cy = body.pos.y + m[3] * nx[best] + m[4] * ny[best] + m[5] * nz[best];
+    out.cz = body.pos.z + m[6] * nx[best] + m[7] * ny[best] + m[8] * nz[best];
   }
   return out.body !== null;
 }
 
 export class BeamWeapons3D {
-  constructor(system, capacity = 256) {
+  // opts: prędkości pocisków, odległość zbieżności luf i oś rozstawu luf
+  // (2 = lokalne Z kadłuba 3D, 1 = lokalne Y kadłuba 2D w płaszczyźnie gry).
+  constructor(system, capacity = 256, opts = {}) {
     this.system = system;
+    this.laserSpeed = opts.laserSpeed ?? 620;
+    this.missileSpeed = opts.missileSpeed ?? 165;
+    this.convergence = opts.convergence ?? 450;
+    this.sideAxis = opts.sideAxis === 1 ? 1 : 2;
     this.projectiles = Array.from({ length: capacity }, () => ({ active: false, owner: null,
       kind: 0, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, age: 0, life: 0, damage: 0, radius: 0 }));
     this.effects = Array.from({ length: 64 }, () => ({ active: false, x: 0, y: 0, z: 0, age: 0, life: 0, radius: 0, kind: 0 }));
@@ -88,15 +100,16 @@ export class BeamWeapons3D {
       if (!this.projectiles[index].active) { p = this.projectiles[index]; this.cursor = (index + 1) % this.projectiles.length; break; }
     }
     if (!p) return false;
-    const m = this.system._refreshRot(owner), b = owner._localBounds;
+    const m = this.system._refreshRot(owner), b = owner._localBounds, ax = this.sideAxis;
     const nose = b ? b[0] + b[3] + owner.cellSize : owner.radius;
-    const side = (this.barrel++ % 2 ? 1 : -1) * (b ? b[5] * 0.6 : owner.radius * 0.25);
-    p.x = owner.pos.x + m[0] * nose + m[2] * side;
-    p.y = owner.pos.y + m[3] * nose + m[5] * side;
-    p.z = owner.pos.z + m[6] * nose + m[8] * side;
+    const side = (this.barrel++ % 2 ? 1 : -1) * (b ? b[3 + ax] * 0.6 : owner.radius * 0.25);
+    p.x = owner.pos.x + m[0] * nose + m[ax] * side;
+    p.y = owner.pos.y + m[3] * nose + m[3 + ax] * side;
+    p.z = owner.pos.z + m[6] * nose + m[6 + ax] * side;
     // Fixed forward guns converge slightly; both weapons inherit ship velocity.
-    let dx = m[0] * 450 - m[2] * side, dy = m[3] * 450 - m[5] * side, dz = m[6] * 450 - m[8] * side;
-    const speed = kind === LASER ? 620 : 165, factor = speed / Math.hypot(dx, dy, dz);
+    const conv = this.convergence;
+    let dx = m[0] * conv - m[ax] * side, dy = m[3] * conv - m[3 + ax] * side, dz = m[6] * conv - m[6 + ax] * side;
+    const speed = kind === LASER ? this.laserSpeed : this.missileSpeed, factor = speed / Math.hypot(dx, dy, dz);
     p.vx = dx * factor + owner.vel.x; p.vy = dy * factor + owner.vel.y; p.vz = dz * factor + owner.vel.z;
     p.kind = kind; p.owner = owner; p.age = 0; p.life = kind === LASER ? 2.4 : 6;
     p.damage = damage * (kind === LASER ? 0.3 : 2);

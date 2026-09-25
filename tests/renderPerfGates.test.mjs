@@ -151,12 +151,14 @@ test('wybuchy overlaya bez PointLight (scena bez materiałów oświetlanych, św
   }
 });
 
-test('martwe: bez regl z unpkg, soczewka warpu tworzy kontekst WebGL dopiero przy skoku', () => {
+test('martwe: bez regl z unpkg, soczewka warpu bez własnego kontekstu WebGL (pass Core3D)', () => {
   assert.doesNotMatch(indexHtml, /unpkg\.com\/regl/);
+  // Soczewka to pass Core3D na tle (warpLens3D.js) — żadnego trzeciego
+  // kontekstu ani uploadu całej kanwy 2D jako tekstury co klatkę.
   const lens = readSrc('src/vfx/warpLensPass.js');
-  assert.match(lens, /let warpBlackHoleFX = null;/);
-  assert.doesNotMatch(lens, /^const warpBlackHoleFX = new WarpBlackHole/m);
-  assert.match(lens, /warp\.state !== 'charging' && warp\.state !== 'active'\)\) return;\s*if \(!ensureWarpBlackHole\(\)\) return;/);
+  assert.doesNotMatch(lens, /WarpBlackHole|getContext\(|texImage2D/);
+  assert.match(lens, /Core3D\.setWarpLensWorld\(/);
+  assert.match(core3d, /this\.warpLensPass = new FullScreenBlendPass\(createWarpLensShader\(\)/);
 });
 
 test('warstwa raw rakiet i pule odłamków paneli: puste siatki są niewidoczne', () => {

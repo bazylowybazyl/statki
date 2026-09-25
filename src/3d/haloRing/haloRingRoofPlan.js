@@ -18,6 +18,7 @@
 import { HALO_PORT, HALO_ROOF, HALO_STATION_ANGLE, HALO_TAU, HALO_TRANSIT, haloTransitAngles } from './haloRingConfig.js';
 import { HALO_BAY, haloBayLayouts } from './haloPortBays.js';
 import { haloLandmarkParts, haloLandmarkSegment } from './haloRingLandmarks.js';
+import { haloDomeParts } from './haloRingDomes.js';
 
 // ---- hasz: bit w bit jak haloLowbias/haloHashI w haloRingGLSL.js ----------
 export function haloLowbias(x) {
@@ -180,6 +181,36 @@ function qrot(q, v) {
   const tz = 2 * (x * v[1] - y * v[0]);
   return [v[0] + w * tx + (y * tz - z * ty), v[1] + w * ty + (z * tx - x * tz), v[2] + w * tz + (x * ty - y * tx)];
 }
+// obrót z bazy: lokalne x → xAxis, lokalne z → zAxis (y = z × x); osie
+// w układzie ramy (x wzdłuż, y promieniowo, z), xAxis rzutowana prostopadle do z
+function quatFromBasis(xAxis, zAxis) {
+  const zl = Math.hypot(zAxis[0], zAxis[1], zAxis[2]) || 1;
+  const Z = [zAxis[0] / zl, zAxis[1] / zl, zAxis[2] / zl];
+  const d = xAxis[0] * Z[0] + xAxis[1] * Z[1] + xAxis[2] * Z[2];
+  const xr = [xAxis[0] - d * Z[0], xAxis[1] - d * Z[1], xAxis[2] - d * Z[2]];
+  const xl = Math.hypot(xr[0], xr[1], xr[2]) || 1;
+  const X = [xr[0] / xl, xr[1] / xl, xr[2] / xl];
+  const Y = [Z[1] * X[2] - Z[2] * X[1], Z[2] * X[0] - Z[0] * X[2], Z[0] * X[1] - Z[1] * X[0]];
+  // macierz o kolumnach X, Y, Z → kwaternion (x, y, z, w)
+  const m00 = X[0], m11 = Y[1], m22 = Z[2];
+  const tr = m00 + m11 + m22;
+  let q;
+  if (tr > 0) {
+    const s = Math.sqrt(tr + 1) * 2;
+    q = [(Y[2] - Z[1]) / s, (Z[0] - X[2]) / s, (X[1] - Y[0]) / s, 0.25 * s];
+  } else if (m00 > m11 && m00 > m22) {
+    const s = Math.sqrt(1 + m00 - m11 - m22) * 2;
+    q = [0.25 * s, (Y[0] + X[1]) / s, (Z[0] + X[2]) / s, (Y[2] - Z[1]) / s];
+  } else if (m11 > m22) {
+    const s = Math.sqrt(1 + m11 - m00 - m22) * 2;
+    q = [(Y[0] + X[1]) / s, 0.25 * s, (Z[1] + Y[2]) / s, (Z[0] - X[2]) / s];
+  } else {
+    const s = Math.sqrt(1 + m22 - m00 - m11) * 2;
+    q = [(Z[0] + X[2]) / s, (Z[1] + Y[2]) / s, 0.25 * s, (X[1] - Y[0]) / s];
+  }
+  const ql = Math.hypot(q[0], q[1], q[2], q[3]) || 1;
+  return [q[0] / ql, q[1] / ql, q[2] / ql, q[3] / ql];
+}
 // oś cylindra/tuby (lokalnie Z) w kierunek (dx wzdłuż, dy promieniowo, dz)
 function quatAxis(dx, dy, dz) {
   const len = Math.hypot(dx, dy, dz) || 1;
@@ -235,6 +266,8 @@ export function buildHaloRoofPlan(layout, domain, options = {}) {
   const lights = Array.from({ length: segCount }, () => new InstanceList(HALO_LIGHT_STRIDE));
   // światła doków (warstwa BG, jak bryły doków) osobno od świateł dachu (FG)
   const landmarkLights = Array.from({ length: segCount }, () => new InstanceList(HALO_LIGHT_STRIDE));
+  // szkło kopuł (osobna siatka przezroczysta; granice jak punkty orientacyjne)
+  const glass = Array.from({ length: segCount }, () => new InstanceList(HALO_INSTANCE_STRIDE));
   const bounds = Array.from({ length: 2 * segCount }, () => ({ rMin: Infinity, rMax: -Infinity, zMin: Infinity, zMax: -Infinity }));
 
   // Wstaw bryłę w układzie lokalnym ramy (kąt thF, promień rF): x wzdłuż
@@ -249,10 +282,11 @@ export function buildHaloRoofPlan(layout, domain, options = {}) {
     const segStart = seg * segAngle;
     let along = (thF + dth - segStart);
     along -= HALO_TAU * Math.round(along / HALO_TAU);
-    const list = (set === 'landmark' ? landmark : detail)[seg][prim];
-    // +256: punkt orientacyjny (dok) — shader nie wygasza go z odległością
-    list.data.push(seg, along * floorMid, r - floorMid, z, sx, sy, sz, mat + (set === 'landmark' ? 256 : 0), qq[0], qq[1], qq[2], qq[3]);
-    const b = bounds[(set === 'landmark' ? segCount : 0) + seg];
+    const lm = set !== 'detail';
+    const list = set === 'glass' ? glass[seg] : (lm ? landmark : detail)[seg][prim];
+    // +256: punkt orientacyjny (dok, budowla, kopuła) — shader nie wygasza go z odległością
+    list.data.push(seg, along * floorMid, r - floorMid, z, sx, sy, sz, mat + (lm ? 256 : 0), qq[0], qq[1], qq[2], qq[3]);
+    const b = bounds[(lm ? segCount : 0) + seg];
     const ext = 0.5 * Math.hypot(sx, sy, sz);
     b.rMin = Math.min(b.rMin, r - ext);
     b.rMax = Math.max(b.rMax, r + ext);
@@ -602,41 +636,67 @@ export function buildHaloRoofPlan(layout, domain, options = {}) {
     }
   }
 
-  // ---- megabudowle miast (ECUMENE, haloRingLandmarks.js) -----------------
-  // Budowla stoi na placu w podłodze habitatu: góra = normalna podłogi (ku
-  // powietrzu), w poprzek = styczna podłogi (ku górnej ścianie, front),
-  // skręt yaw wokół góry. Prymityw ma z w górę, więc kwaternion stawia go
-  // na podłodze — okna, dach i fazki w shaderze liczą się w jego osiach.
+  // ---- megabudowle i kopuły (haloRingLandmarks.js, haloRingDomes.js) -------
+  // Obiekt stoi na placu w podłodze habitatu: góra = normalna podłogi (ku
+  // powietrzu), w poprzek = styczna podłogi (ku górnej ścianie, front).
+  // Prymityw ma z w górę, więc kwaternion stawia go na podłodze — okna, dach
+  // i fazki w shaderze liczą się w jego osiach. Bryły budowli skręcone o yaw
+  // wokół góry; bryły „fixed” (płyta placu, park, kopuła) w osiach ringu —
+  // przesunięcie liczone wprost z wektorów ramy, kierunek bryły z `dir`.
   const landmarks = Array.isArray(options.landmarks) ? options.landmarks : [];
-  if (landmarks.length) {
+  const domes = Array.isArray(options.domes) ? options.domes : [];
+  if (landmarks.length || domes.length) {
     const LM_MAT = { stone: HALO_MAT.stone, brass: HALO_MAT.brass, lamp: HALO_MAT.lamp, dark: HALO_MAT.roofMid, garden: HALO_MAT.gardenRoof };
     const LM_COLOR = { white: HALO_LIGHT_COLOR.white, red: HALO_LIGHT_COLOR.red, blue: HALO_LIGHT_COLOR.blue, warm: HALO_LIGHT_COLOR.warm, green: HALO_LIGHT_COLOR.green };
     const LM_MODE = { strobe: HALO_LIGHT_MODE.strobe, steady: HALO_LIGHT_MODE.steady, pulse: HALO_LIGHT_MODE.pulse, chase: HALO_LIGHT_MODE.chase };
     const n = layout.floor.normal;
-    const qUp = quatAxis(0, n.r, n.z);
-    for (const lm of landmarks) {
-      const seg = haloLandmarkSegment(lm, segCount);
-      const rF = layout.floorRadiusAtT(lm.t) + n.r * lm.plazaH;
-      const zF = layout.floorZAtT(lm.t) + n.z * lm.plazaH;
+    const tg = layout.floor.tangent;
+    const N = [0, n.r, n.z];
+    const qUp = quatFromBasis([1, 0, 0], N);
+    // wektor ramy z (a wzdłuż, q w poprzek, u w górę)
+    const frameVec = (a, q, u) => [a, q * tg.r + u * n.r, q * tg.z + u * n.z];
+    const emit = (seg, theta, t, baseH, yaw, parts, warm) => {
+      const rF = layout.floorRadiusAtT(t) + n.r * baseH;
+      const zF = layout.floorZAtT(t) + n.z * baseH;
       // wariant Halo (góra ku osi): obrót właściwy odwróciłby front ku −z —
       // dodatkowe pół obrotu wokół góry trzyma front po stronie górnej ściany
-      const yaw = lm.yaw + (layout.sigma < 0 ? Math.PI : 0);
-      const sh = Math.sin(yaw * 0.5);
-      const q = quatMul([0, n.r * sh, n.z * sh, Math.cos(yaw * 0.5)], qUp);
-      const facade = (lm.warm ? HALO_MAT.facadeWarm : HALO_MAT.facadeCool) + 32 * HALO_EMIT.facade;
-      const { boxes, lights: lamps } = haloLandmarkParts(lm);
-      for (const b of boxes) {
-        const qb = b.fixed ? qUp : q;
-        // lokalnie prymitywu: x wzdłuż, −y w poprzek (y → −styczna), z w górę
-        const off = qrot(qb, [b.a, -b.q, b.u0]);
-        push('landmark', HALO_PRIM.box, seg, lm.theta, rF, off[0], off[1], zF + off[2], b.sa, b.sq, b.su,
+      const yw = yaw + (layout.sigma < 0 ? Math.PI : 0);
+      const sh = Math.sin(yw * 0.5);
+      const q = quatMul([0, n.r * sh, n.z * sh, Math.cos(yw * 0.5)], qUp);
+      const facade = (warm ? HALO_MAT.facadeWarm : HALO_MAT.facadeCool) + 32 * HALO_EMIT.facade;
+      for (const b of parts.boxes) {
+        let off;
+        let qb;
+        if (b.fixed) {
+          off = frameVec(b.a, b.q, b.u0);
+          qb = Number.isFinite(b.dir) ? quatFromBasis(frameVec(Math.cos(b.dir), Math.sin(b.dir), 0), N) : qUp;
+        } else {
+          // lokalnie prymitywu: x wzdłuż, −y w poprzek (y → −styczna), z w górę
+          off = qrot(q, [b.a, -b.q, b.u0]);
+          qb = q;
+        }
+        push('landmark', HALO_PRIM.box, seg, theta, rF, off[0], off[1], zF + off[2], b.sa, b.sq, b.su,
           b.mat === 'facade' ? facade : (LM_MAT[b.mat] ?? HALO_MAT.stone), qb);
       }
-      for (const l of lamps) {
-        const off = qrot(q, [l.a, -l.q, l.u]);
-        light(seg, lm.theta, rF, off[0], off[1], zF + off[2], l.size, l.phase,
+      for (const l of parts.lights) {
+        const off = l.fixed ? frameVec(l.a, l.q, l.u) : qrot(q, [l.a, -l.q, l.u]);
+        light(seg, theta, rF, off[0], off[1], zF + off[2], l.size, l.phase,
           LM_COLOR[l.color] ?? HALO_LIGHT_COLOR.warm, LM_MODE[l.mode] ?? HALO_LIGHT_MODE.steady, 'landmark');
       }
+      // szkło kopuły: półkula (x, y promień, z wysokość), paleta = typ wnętrza,
+      // emisja 1 = ciepłe wnętrze nocą (ogród, krajobraz), 0 = chłodne (szkło)
+      if (parts.glass) {
+        push('glass', 0, seg, theta, rF, 0, 0, zF, 2 * parts.glass.r, 2 * parts.glass.r, parts.glass.h,
+          (parts.glass.type || 0) + 32 * (warm ? 1 : 0), qUp);
+      }
+    };
+    for (const lm of landmarks) {
+      emit(haloLandmarkSegment(lm, segCount), lm.theta, lm.t, lm.plazaH, lm.yaw, haloLandmarkParts(lm), lm.warm);
+    }
+    for (const dm of domes) {
+      const parts = haloDomeParts(dm);
+      parts.glass.type = dm.typeIndex;
+      emit(haloLandmarkSegment(dm, segCount), dm.theta, dm.t, dm.floorH, 0, parts, dm.warm);
     }
   }
 
@@ -697,6 +757,8 @@ export function buildHaloRoofPlan(layout, domain, options = {}) {
     docks,
     transits,
     landmarks,
+    domes,
+    glass: pack(glass, HALO_INSTANCE_STRIDE),
     detailBounds: segBounds.slice(0, segCount),
     landmarkBounds: segBounds.slice(segCount)
   };

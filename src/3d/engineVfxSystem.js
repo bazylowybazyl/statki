@@ -1,8 +1,44 @@
+// Dysze silników: MAIN i WARP w nowych modułach, SIDE na starym batchu.
+//
+//   MAIN  — mainExhaust3D.js (port dema wydechu): struga + iskry, jedna pula
+//           na całą flotę; rozmiar i paleta PER STATEK (visual.engineFx,
+//           edytowane w edytorze hardpointów, src/data/engineFx.js).
+//   WARP  — warpPlume3D.js (port PlasmaEngineFX): leci z tych samych dysz co
+//           MAIN na czas ładowania i skoku; pula z limitem, nadmiar dysz
+//           dostaje strugę MAIN z dopalaczem.
+//   SIDE  — engineExhaustBatch.js bez zmian (globalny tuner sideW/sideL).
 import { Core3D } from './core3d.js';
 import { EngineExhaustBatch, createExhaustState } from './engineExhaustBatch.js';
 import { getEngineVfxClassScale } from './engineVfxScale.js';
+import {
+  MainExhaust3D,
+  MAIN_EXHAUST_Z,
+  createMainExhaustState,
+  releaseMainExhaustState
+} from './mainExhaust3D.js';
+import { WarpPlume3D } from './warpPlume3D.js';
+import { sceneOriginNearCamera } from './sceneOrigin.js';
+import { GameState } from '../game/gameState.js';
+import { buildEntityEngineFx, fallbackNozzleRadius } from '../data/engineFx.js';
+import {
+  getHullRenderProfile,
+  resolveEntityHullProfileId,
+  HULL_RENDER_WORLD_SCALE
+} from '../data/ships.js';
 
 import { DrawCallStats } from './drawCallStats.js';
+
+// Silnik żywego statku nigdy nie gaśnie do zera — na jałowym dysza lekko
+// pracuje (dawny płomień miał w tym miejscu stały rdzeń w wylocie).
+const MAIN_IDLE_THROTTLE = 0.06;
+// Iskry NPC rzadziej niż gracza: bank iskier dzielą bronie całej bitwy.
+const NPC_SPARK_MUL = 0.35;
+
+function smoothstep(e0, e1, x) {
+  const t = Math.max(0, Math.min(1, (x - e0) / (e1 - e0)));
+  return t * t * (3 - 2 * t);
+}
+
 function getEntityScale(entity) {
   if (entity?.visual && typeof entity.visual.spriteScale === 'number') return entity.visual.spriteScale;
   return 1.0;
@@ -235,15 +271,103 @@ function makeSlotKey(slots) {
 }
 
 // Dysza nie ma juz wlasnych obiektow w scenie — zostaje sam stan wygladzania,
-// ktory EngineExhaustBatch przepisuje na atrybuty instancji. Cala flota rysuje
-// sie czterema wywolaniami zamiast czterema NA DYSZE.
+// ktory batch przepisuje na atrybuty instancji. Cala flota rysuje sie stala
+// liczba wywolan zamiast kilkoma NA DYSZE. Dysza MAIN trzyma stan strugi
+// i (tylko w skoku) instancje plazmy warpa z puli.
 function createEffects(slots) {
   const exhausts = [];
   for (const slot of slots) {
-    exhausts.push({ state: createExhaustState(), slot });
+    if (slot.kind === 'side') exhausts.push({ state: createExhaustState(), slot, main: null, warp: null });
+    else exhausts.push({ state: null, slot, main: createMainExhaustState(), warp: null });
   }
   return { exhausts, slotKey: makeSlotKey(slots) };
 }
+
+/**
+ * Konfiguracja silników encji: blok z edytora (visual.engineFx — ustawia go
+ * runtime układu NPC i układ gracza) albo zapas liczony od kadłuba.
+ */
+function resolveEntityEngineFx(entity) {
+  const fx = entity?.visual?.engineFx;
+  if (fx && typeof fx === 'object') return fx;
+  const hullId = resolveEntityHullProfileId(entity);
+  const cached = entity.__engineFxFallback;
+  if (cached && cached.hullId === hullId) return cached;
+  const renderLength = (Number(getHullRenderProfile(hullId)?.length) || 3000) * HULL_RENDER_WORLD_SCALE;
+  const fallback = buildEntityEngineFx(hullId, null, 1);
+  // Promień z domyślnych edytora jest w pikselach PNG i bez hpScale nic nie
+  // znaczy — kadłub bez układu z edytora bierze dyszę od długości renderu.
+  fallback.nozzleRadius = fallbackNozzleRadius(renderLength);
+  fallback.hullId = hullId;
+  entity.__engineFxFallback = fallback;
+  return fallback;
+}
+
+/** Tryb napędu skokowego encji: 'off' | 'charging' | 'active'. */
+function resolveWarpMode(entity) {
+  if (entity.__warpPreview === true) return 'active';
+  const player = GameState.ship;
+  if (player && entity === player) {
+    const w = GameState.warp;
+    if (w?.state === 'charging') return 'charging';
+    if (w?.state === 'active') return 'active';
+    return 'off';
+  }
+  if (entity.state === 'warping_in' || entity.phase === 'warping') return 'active';
+  return 'off';
+}
+
+/** Dopalacz silników MAIN (Shift w strefie planety; w edytorze — Shift testu). */
+function resolveMainBoost(entity) {
+  if (entity.__editorBoost === true) return true;
+  const player = GameState.ship;
+  return !!(player && entity === player && GameState.boost?.state === 'active');
+}
+
+/**
+ * Plazma warpa na dyszy MAIN. Zwraca, co ma robić struga MAIN tej dyszy:
+ * 'none' — normalna praca, 'on' — plazma pali (struga gaśnie),
+ * 'fallback' — skok bez wolnej instancji (struga na dopalaczu).
+ */
+function driveWarpPlume(item, mode, frame, x, y, dirX, dirY, radius, fx) {
+  let plume = item.warp;
+  if (!plume) {
+    if (mode === 'off') return 'none';
+    plume = WarpPlume3D.acquire();
+    if (!plume) return 'fallback';
+    item.warp = plume;
+  }
+  if (mode === 'off') {
+    plume.shutdown();
+  } else {
+    plume.ignite();              // bez skutku, gdy już pali
+    plume.setBoost(mode === 'active');
+  }
+  plume.setPalette(fx.warpPaletteIndex | 0);
+  plume.params.plumeLength = Number(fx.warpLength) > 0 ? Number(fx.warpLength) : 1;
+  plume.setPose(x, y, MAIN_EXHAUST_Z, dirX, dirY, radius);
+  plume.update(frame.dt, frame.camera, frame.viewportH, frame.isOrtho);
+  if (plume.finished) {
+    WarpPlume3D.release(plume);
+    item.warp = null;
+    return 'none';
+  }
+  return (plume.state === 'ignition' || plume.state === 'running') ? 'on' : 'none';
+}
+
+// Kontekst klatki (jeden obiekt, bez alokacji per klatkę).
+const frameOrigin = { x: 0, y: 0 };
+const frameCtx = {
+  dt: 1 / 60,
+  zoom: 1,
+  camera: null,
+  isOrtho: true,
+  viewportH: 1080
+};
+const mainPush = {
+  x: 0, y: 0, dirX: 0, dirY: -1, radius: 0, throttle: 0, boost: false,
+  lengthMul: 1, widthMul: 1, palette: 0, jetGain: 1, sparkMul: 1, pixelRadius: 99, dt: 0
+};
 
 function updateEffects(entity, fxData, dt) {
   const interpPose = getInterpolatedPose(entity);
@@ -277,6 +401,16 @@ function updateEffects(entity, fxData, dt) {
   const halfL = radius * lengthScale * 0.5;
   const halfW = radius * widthScale * 0.5;
 
+  // MAIN: rozmiar i paleta per statek, tryb skoku, dopalacz — raz na encję.
+  const engineFx = resolveEntityEngineFx(entity);
+  const warpMode = resolveWarpMode(entity);
+  const mainBoost = resolveMainBoost(entity);
+  const isPlayerEntity = entity === GameState.ship || entity.isPlayer === true;
+  const isHulk = entity.isBridgeHulk === true;
+  const jetGainRaw = (isPlayerEntity && typeof window !== 'undefined') ? Number(window.OPTIONS?.vfx?.bloomGain) : NaN;
+  const jetGain = Number.isFinite(jetGainRaw) && jetGainRaw >= 0 ? jetGainRaw : 1;
+  const sparkMul = isPlayerEntity ? 1 : NPC_SPARK_MUL;
+
   for (const item of fxData.exhausts) {
     const slot = item.slot || {};
     const slotForward = resolveSlotForward(slot);
@@ -297,26 +431,88 @@ function updateEffects(entity, fxData, dt) {
         ? strafeLeft
         : (slot.side === 'right' ? strafeRight : Math.max(strafeLeft, strafeRight));
       slotThrottle = Math.max(sideDrive, torque * 0.8, moveGlow * 0.55);
+    } else if (!isHulk) {
+      slotThrottle = Math.max(slotThrottle, MAIN_IDLE_THROTTLE);
     }
     if (hasForcedThrottle) slotThrottle = forcedThrottleRaw;
     slotThrottle = Math.max(0, Math.min(1, slotThrottle));
 
-    const tune = (typeof window !== 'undefined' && window.VFX_TUNE) ? window.VFX_TUNE : null;
-    const widthMul = slot.kind === 'side'
-      ? Math.max(0.05, Number(tune?.sideW) || 1)
-      : Math.max(0.05, Number(tune?.mainW) || 1);
-    const lengthMul = slot.kind === 'side'
-      ? Math.max(0.05, Number(tune?.sideL) || 1)
-      : Math.max(0.05, Number(tune?.mainL) || 1);
-    const curveVal = slot.kind === 'side'
-      ? Number(tune?.sideCurve ?? tune?.curve)
-      : Number(tune?.mainCurve ?? tune?.curve);
-    const curve = Number.isFinite(curveVal) ? Math.max(0.2, Math.min(4.0, curveVal)) : 1.8;
-
-    // Pozycje dysz pozostają w przestrzeni kadłuba. Tylko sam płomień skaluje
-    // się z klasą statku, a globalny tuner jest końcowym mnożnikiem.
+    // Pozycje dysz pozostają w przestrzeni kadłuba. vfxScale dyszy dławi ją
+    // przy utracie dowodzenia (shipBridge) — dla MAIN i SIDE tak samo.
     const slotScaleRaw = Number(slot?.source?.vfxScale);
     const slotScale = Number.isFinite(slotScaleRaw) && slotScaleRaw > 0 ? slotScaleRaw : 1;
+
+    // Rozwiniety lancuch transformacji, ktory wczesniej robila hierarchia
+    // Object3D: T(ex,-ey) . Rz(-angle) . S(scale) . T(lx,ly). Skala encji jest
+    // jednorodna, wiec przechodzi przez obrot i mozna ja zwinac do jednej
+    // pozycji i jednego kata na dysze.
+    const nozzleWorldX = ex + (lx * scale) * cA - (ly * scale) * sA;
+    const nozzleWorldY = sceneOriginY + (lx * scale) * sA + (ly * scale) * cA;
+
+    // Kierunek wydechu = os dyszy (slotForward) obrocona do sceny,
+    // spojnie z meshem plomienia — nie wektor srodek statku -> dysza.
+    const fwdX = Number(slotForward.x);
+    const fwdY = Number(slotForward.y);
+    const localDirX = Number.isFinite(fwdX) ? -fwdX : 0;
+    const localDirY = Number.isFinite(fwdY) ? fwdY : 1;
+    let dirX = localDirX * cA - localDirY * sA;
+    let dirY = localDirX * sA + localDirY * cA;
+    const dirLen = Math.sqrt(dirX * dirX + dirY * dirY);
+    if (dirLen > 0.0001) {
+      dirX /= dirLen;
+      dirY /= dirLen;
+    } else {
+      dirX = 0;
+      dirY = -1;
+    }
+
+    if (slot.kind !== 'side') {
+      const nozzleR = Math.max(0, Number(engineFx.nozzleRadius) || 0) * scale * slotScale;
+      const warpUse = driveWarpPlume(item, isHulk ? 'off' : warpMode, frameCtx,
+        nozzleWorldX, nozzleWorldY, dirX, dirY, nozzleR, engineFx);
+      const warpOn = warpUse === 'on';
+      const warpFallback = warpUse === 'fallback';
+
+      const p = mainPush;
+      p.x = nozzleWorldX;
+      p.y = nozzleWorldY;
+      p.dirX = dirX;
+      p.dirY = dirY;
+      p.radius = nozzleR;
+      // Plazma pali — struga MAIN gaśnie; skok bez wolnej instancji — dopalacz.
+      p.throttle = warpOn ? 0 : (warpFallback ? 1 : slotThrottle);
+      p.boost = !warpOn && (warpFallback || mainBoost);
+      p.lengthMul = Number(engineFx.mainLength) > 0 ? Number(engineFx.mainLength) : 1;
+      p.widthMul = Number(engineFx.mainWidth) > 0 ? Number(engineFx.mainWidth) : 1;
+      p.palette = engineFx.mainPaletteIndex | 0;
+      p.jetGain = jetGain;
+      p.sparkMul = sparkMul;
+      p.pixelRadius = nozzleR * frameCtx.zoom;
+      p.dt = dt;
+      MainExhaust3D.push(item.main, p);
+
+      // Gorące powietrze jak w demie plazmy: źródło = wylot (promień dyszy),
+      // siła = rampa mocy × (1 + 0,5 · dopalacz); kształt stożka liczy uberPass.
+      if (nozzleR > 0 && Core3D.pushHeatHazeWorld) {
+        const plume = warpOn ? item.warp : null;
+        const hazePower = plume ? plume.ch.power : Math.min(1, item.main.power);
+        const hazeBoost = plume ? plume.ch.boost : (item.main.boosting ? 1 : 0);
+        const hazeK = smoothstep(0.08, 0.45, hazePower) * (1 + 0.5 * hazeBoost);
+        if (hazeK > 0.01) {
+          Core3D.pushHeatHazeWorld(nozzleWorldX, nozzleWorldY, -4, nozzleR * (plume ? 1 : p.widthMul), hazeK, dirX, dirY);
+        }
+      }
+      continue;
+    }
+
+    const tune = (typeof window !== 'undefined' && window.VFX_TUNE) ? window.VFX_TUNE : null;
+    const widthMul = Math.max(0.05, Number(tune?.sideW) || 1);
+    const lengthMul = Math.max(0.05, Number(tune?.sideL) || 1);
+    const curveVal = Number(tune?.sideCurve ?? tune?.curve);
+    const curve = Number.isFinite(curveVal) ? Math.max(0.2, Math.min(4.0, curveVal)) : 1.8;
+
+    // Płomień boczny skaluje się z klasą statku, a globalny tuner jest końcowym
+    // mnożnikiem (dysze boczne zostają na starym batchu).
     const effectScale = classScale * slotScale;
 
     const state = item.state;
@@ -330,14 +526,8 @@ function updateEffects(entity, fxData, dt) {
       state.bloomGain = window.OPTIONS.vfx.bloomGain;
     }
 
-    // Rozwiniety lancuch transformacji, ktory wczesniej robila hierarchia
-    // Object3D: T(ex,-ey) . Rz(-angle) . S(scale) . T(lx,ly) . Rz(nozzleRot)
-    // . S(widthMul*effectScale, lengthMul*effectScale). Skala encji jest
-    // jednorodna, wiec przechodzi przez obrot i mozna ja zwinac do jednej
-    // pozycji, jednego kata i pary skal na instancje.
-    const nozzleWorldX = ex + (lx * scale) * cA - (ly * scale) * sA;
-    const nozzleWorldY = sceneOriginY + (lx * scale) * sA + (ly * scale) * cA;
-
+    // Dalej łańcuch dyszy bocznej: . Rz(nozzleRot) . S(widthMul*effectScale,
+    // lengthMul*effectScale) — para skal na instancję.
     EngineExhaustBatch.push(state, {
       x: nozzleWorldX,
       y: nozzleWorldY,
@@ -347,43 +537,27 @@ function updateEffects(entity, fxData, dt) {
       dt
     });
 
-    if (slotThrottle > 0.06 && Core3D.pushHeatHazeWorld) {
-      const localX = lx * scale;
-      const localY = ly * scale;
-      const worldX = ex + localX * cA - localY * sA;
-      const worldY = sceneOriginY + localX * sA + localY * cA;
-      const baseRadius = slot.kind === 'side' ? 78 : 110;
-      const radiusWorld = baseRadius * scale * classScale * slotScale * widthMul * (0.55 + slotThrottle * 0.9);
-      const warpState = (typeof window !== 'undefined' && window.warp?.state === 'active') ? 1 : 0;
-      const strength = slotThrottle * (1.0 + moveGlow * 0.6 + warpState * 0.5);
-
-      // Kierunek wydechu = os dyszy (slotForward) obrocona do sceny,
-      // spojnie z meshem plomienia — nie wektor srodek statku -> dysza.
-      const fwdX = Number(slotForward.x);
-      const fwdY = Number(slotForward.y);
-      const localDirX = Number.isFinite(fwdX) ? -fwdX : 0;
-      const localDirY = Number.isFinite(fwdY) ? fwdY : 1;
-      let dirX = localDirX * cA - localDirY * sA;
-      let dirY = localDirX * sA + localDirY * cA;
-      const dirLen = Math.sqrt(dirX * dirX + dirY * dirY);
-      if (dirLen > 0.0001) {
-        dirX /= dirLen;
-        dirY /= dirLen;
-      } else {
-        dirX = 0;
-        dirY = -1;
-      }
-
-      // Jedno zrodlo na dysze: shader sam wydluza haze w stozek wzdluz kierunku.
-      const plumeBoost = 0.9 + slotThrottle * 0.35 + warpState * 0.3;
-      Core3D.pushHeatHazeWorld(worldX, worldY, -4, radiusWorld * plumeBoost, strength, dirX, dirY);
+    // Ten sam model gorącego powietrza co MAIN (stożek od wylotu w uberPass),
+    // słabszy: wylot bocznej dyszy ~1/5 dawnego promienia smugi.
+    const sideHaze = smoothstep(0.08, 0.45, Number(state.currentThrottle) || 0) * 0.6;
+    if (sideHaze > 0.01 && Core3D.pushHeatHazeWorld) {
+      const sideR = 78 * scale * classScale * slotScale * widthMul * 0.2;
+      Core3D.pushHeatHazeWorld(nozzleWorldX, nozzleWorldY, -4, sideR, sideHaze, dirX, dirY);
     }
   }
 }
 
 function disposeEffects(fxData) {
-  // Brak obiektow w scenie — stan dyszy odchodzi razem z wpisem w mapie.
-  if (fxData?.exhausts) fxData.exhausts.length = 0;
+  // Stan strugi oddaje właściciela (strugi dogasają same), plazma wraca do puli.
+  if (fxData?.exhausts) {
+    for (const item of fxData.exhausts) {
+      if (item.main) releaseMainExhaustState(item.main);
+      if (item.warp) WarpPlume3D.release(item.warp);
+      item.main = null;
+      item.warp = null;
+    }
+    fxData.exhausts.length = 0;
+  }
 }
 
 export const EngineVfxSystem = {
@@ -409,7 +583,18 @@ export const EngineVfxSystem = {
     const dt = this._lastUpdateSec > 0 ? Math.max(0, Math.min(0.1, now - this._lastUpdateSec)) : 1 / 60;
     this._lastUpdateSec = now;
 
+    // Kamera tej klatki: zoom do LOD strug, kamera passa ortho do raymarchu
+    // plazmy, początek układu strug przy środku kadru (precyzja float32).
+    const cam = Core3D.activeCam1;
+    frameCtx.dt = dt;
+    frameCtx.zoom = Math.max(0.0001, Number(cam?.zoom) || 1);
+    frameCtx.camera = Core3D.getPassCamera(true);
+    frameCtx.isOrtho = frameCtx.camera === Core3D.cameraOrtho;
+    frameCtx.viewportH = Math.max(1, Number(Core3D.renderer?.domElement?.height) || Number(Core3D.height) || 1080);
+    sceneOriginNearCamera(frameOrigin, cam);
+
     EngineExhaustBatch.begin();
+    MainExhaust3D.begin(frameOrigin.x, frameOrigin.y, dt);
 
     for (const entity of entities) {
       if (!entity || entity.dead) continue;
@@ -437,8 +622,12 @@ export const EngineVfxSystem = {
     }
 
     EngineExhaustBatch.flush();
+    MainExhaust3D.flush(dt);
     const batchStats = EngineExhaustBatch.getStats();
-    DrawCallStats.addEngine(batchStats.nozzles, batchStats.draws);
+    const mainStats = MainExhaust3D.getStats();
+    // Plazma warpa: ~5 obiektów renderowalnych na aktywną instancję.
+    const warpDraws = WarpPlume3D.activeCount * 5;
+    DrawCallStats.addEngine(batchStats.nozzles + mainStats.nozzles, batchStats.draws + mainStats.draws + warpDraws);
   },
 
   disposeAll() {
@@ -448,5 +637,7 @@ export const EngineVfxSystem = {
     this.entityEffects.clear();
     this._lastUpdateSec = 0;
     EngineExhaustBatch.dispose();
+    MainExhaust3D.dispose();
+    WarpPlume3D.disposeAll();
   }
 };

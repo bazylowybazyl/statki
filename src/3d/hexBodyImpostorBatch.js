@@ -20,6 +20,8 @@
 
 import * as THREE from 'three';
 import { Core3D } from './core3d.js';
+import { sceneOriginNearCamera } from './sceneOrigin.js';
+import { SUN_SHADOW_GLSL, sunShadowUniforms } from './sunShadowMask.js';
 
 const MAX_IMPOSTORS = 2048;
 
@@ -49,17 +51,19 @@ void main() {
 
 // Miękka elipsa z lekko ściemnionym brzegiem — na kilkunastu pikselach czyta się
 // jak kawałek blachy, a nie jak kropka.
+// Kolor = średnia sprite'a bez światła, więc cień planety (maska Core3D)
+// przygasza całość jak nocną stronę kadłuba (sunShadeUnlit).
 const FRAGMENT_SHADER = `
 varying vec2 vUv;
 varying vec3 vColor;
 varying float vOpacity;
-
+${SUN_SHADOW_GLSL}
 void main() {
     vec2 d = (vUv - 0.5) * 2.0;
     float r = length(d);
     if (r > 1.0) discard;
     float mask = 1.0 - smoothstep(0.55, 1.0, r);
-    vec3 color = vColor * (0.75 + 0.25 * (1.0 - r));
+    vec3 color = sunShadeUnlit(vColor * (0.75 + 0.25 * (1.0 - r)));
     gl_FragColor = vec4(color, mask * vOpacity);
 }
 `;
@@ -68,6 +72,10 @@ let mesh = null;
 let geo = null;
 let arrays = null;
 let count = 0;
+// Początek układu tej klatki (sceneOrigin.js): aPos względem niego, duży
+// kawałek w mesh.position — smugi (także zimnych wraków, rysowanych nimi przy
+// każdym zoomie) nie drgają przy 5–10 mln j.
+const origin = { x: 0, y: 0 };
 
 function ensureBuilt() {
   if (mesh) return true;
@@ -90,7 +98,7 @@ function ensureBuilt() {
   }
 
   const material = new THREE.ShaderMaterial({
-    uniforms: {},
+    uniforms: { ...sunShadowUniforms },
     vertexShader: VERTEX_SHADER,
     fragmentShader: FRAGMENT_SHADER,
     transparent: true,
@@ -153,7 +161,11 @@ export function computeAverageBodyColor(source) {
 export const HexBodyImpostorBatch = {
   MAX_IMPOSTORS,
 
-  begin() { count = 0; },
+  // Wołane z updateHexShips3D po Core3D.syncCamera — kamera tej klatki.
+  begin() {
+    count = 0;
+    sceneOriginNearCamera(origin);
+  },
 
   /**
    * @param {object} p
@@ -177,8 +189,8 @@ export const HexBodyImpostorBatch = {
     const i = count++;
     const i2 = i * 2;
     const i3 = i * 3;
-    arrays.aPos[i2] = x;
-    arrays.aPos[i2 + 1] = y;
+    arrays.aPos[i2] = x - origin.x;
+    arrays.aPos[i2 + 1] = y - origin.y;
     arrays.aRot[i] = rot;
     arrays.aSize[i2] = halfW;
     arrays.aSize[i2 + 1] = halfH;
@@ -195,6 +207,7 @@ export const HexBodyImpostorBatch = {
     if (mesh.visible !== visible) mesh.visible = visible;
     if (geo.instanceCount !== count) geo.instanceCount = count;
     if (!visible) return;
+    mesh.position.set(origin.x, origin.y, 0);
     for (const name of Object.keys(arrays)) {
       const attr = geo.getAttribute(name);
       if (!attr) continue;

@@ -1,46 +1,25 @@
-// Warp lens: soczewka grawitacyjna rysowana pod warstwa 3D podczas skoku.
-// Zrodlem obrazu jest albo canvas tla, albo pelna klatka 2D — stad tryb
-// 'background' / 'full' i przelaczanie zrodla przy resize.
+// Warp lens: soczewka grawitacyjna wokół statku gracza podczas skoku.
+// Rysuje ją Core3D — pass na samym tle (src/3d/warpLens3D.js), statek
+// i reszta sceny kładą się na wierzchu, bloom liczy się z gotowego obrazu.
+// Tu zostaje tylko strona gry: kiedy soczewka jest, gdzie stoi i jak mocna.
 //
-// Stan gry (ctx, canvas, camera, ship, warp) czytamy z GameState w momencie
+// Stan gry (ship, warp, zoneState) czytamy z GameState w momencie
 // wywolania — modul startuje zanim te obiekty powstana.
-import { WarpBlackHole } from './warpBlackHole.js';
+import { Core3D } from '../3d/core3d.js';
 import { GameState } from '../game/gameState.js';
-import { resolveWorldUnitsPerAu } from '../config/units.js';
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const smoothstep01 = (t) => { const x = clamp(t, 0, 1); return x * x * (3 - 2 * x); };
 
-// Soczewka ma własny kontekst WebGL (trzeci obok Core3D i overlaya). Powstaje
-// dopiero przy pierwszym ładowaniu skoku w strefie z efektem — wcześniej
-// tworzył go sam import i kontekst wisiał całą sesję, nawet bez jednego skoku.
-let warpBlackHoleFX = null;
-let warpBlackHoleUnavailable = false;
-function ensureWarpBlackHole() {
-  if (warpBlackHoleFX || warpBlackHoleUnavailable) return warpBlackHoleFX;
-  try {
-    warpBlackHoleFX = new WarpBlackHole({ zIndex: 45, mode: 'offscreen' });
-    warpBlackHoleFX.setEnabled(false);
-  } catch (err) {
-    warpBlackHoleUnavailable = true;
-    console.warn('[warpLens] brak WebGL — soczewka skoku wyłączona', err);
-  }
-  return warpBlackHoleFX;
-}
-let warpLensMode = 'background';
-let warpLensSource = null;
-
+// Wymiary w DŁUGOŚCIACH KADŁUBA (świat): soczewka rośnie i maleje razem ze
+// statkiem przy każdym zoomie i na każdym kadłubie.
 const WARP_LENS_DEFAULTS = Object.freeze({
-  threshold: 0,
-  radiusBase: 0.6,
-  radiusScale: 0.3,
-  massBase: 0,
-  massScale: 0.035,
-  softness: 0.6,
-  opacityBase: 0.55,
-  opacityScale: 0.73,
-  tailDepthExtra: -0.2,
-  forwardStretch: 1.0
+  radius: 1.3,         // promień wzdłuż osi lotu przy pełnym skoku
+  radiusStart: 0.6,    // ułamek promienia na początku wejścia w skok
+  stretch: 1.3,        // wydłużenie wzdłuż lotu (promień wzdłuż / w poprzek)
+  swallow: 0.55,       // połknięta tarcza tła jako ułamek promienia (max 0,65)
+  centerOffset: -0.15, // środek od środka kadłuba wzdłuż osi (ujemny = ku rufie)
+  fadeOut: 0.45        // sekundy wygaszania po wyjściu ze skoku
 });
 
 const DevVFX = window.DevVFX = window.DevVFX || {};
@@ -54,168 +33,52 @@ function warpLensParam(key) {
   return Number.isFinite(raw) ? raw : defaults[key];
 }
 
-function getAuToWorldUnits() {
-  return resolveWorldUnitsPerAu(window);
-}
+// Siła soczewki 0..1: rośnie z wejściem w skok, po wyjściu (albo wlocie
+// w strefę bez efektu) gaśnie przez fadeOut zamiast znikać w jednej klatce.
+let lensLevel = 0;
 
-function getWarpLensThreshold() {
-  const v = warpLensParam('threshold');
-  if (!Number.isFinite(v)) return WARP_LENS_DEFAULTS.threshold;
-  return Math.min(1, Math.max(0, v));
-}
-
-export function configureWarpLensSource() {
-  if (!warpBlackHoleFX) return;
-  const { ctx } = GameState;
-  if (!ctx) return;
-  if (typeof warpBlackHoleFX.setSourceParallaxTransform === 'function') {
-    warpBlackHoleFX.setSourceParallaxTransform(null);
+/**
+ * Wołane co klatkę PRZED renderem 3D (drawHexShips3D → Core3D.render).
+ * interpPos/interpAngle — poza, z którą rysuje się kadłub (Core3D mapuje
+ * soczewkę tą samą kamerą co scenę); frameDt w sekundach (wygaszanie).
+ */
+export function updateWarpLens3D(interpPos, interpAngle, frameDt) {
+  const { ship, warp, zoneState } = GameState;
+  if (!ship || ship.dead || !interpPos) {
+    lensLevel = 0;
+    Core3D.clearWarpLens();
+    return;
   }
-  if (warpLensMode === 'background') {
-    const src = ctx?.canvas || null;
-    if (src && warpLensSource !== src) {
-      warpLensSource = src;
-      warpBlackHoleFX.setSourceCanvas(src);
-    }
-  } else if (warpLensMode === 'full') {
-    if (warpLensSource !== ctx.canvas) {
-      warpLensSource = ctx.canvas;
-      warpBlackHoleFX.setSourceCanvas(ctx.canvas);
-    }
-  }
-}
-
-window.setWarpLensMode = function (mode) {
-  const next = mode === 'full' ? 'full' : 'background';
-  if (warpLensMode !== next) {
-    warpLensMode = next;
-    warpLensSource = null;
-    configureWarpLensSource();
-  }
-};
-window.addEventListener('resize', configureWarpLensSource);
-
-export function renderWarpLensPass(cam, interpPos, interpAngle) {
-  const { ctx, canvas, camera, ship, warp, zoneState } = GameState;
-  if (!ctx || !canvas || !camera || !ship || !warp) return;
   const zoneAllowsWarpLens = zoneState?.current?.wormholeVfx ?? false;
-  if (!warpBlackHoleFX) {
-    // Kontekst i shader powstają już w fazie ładowania skoku, żeby ich koszt
-    // nie wypadł na pierwszą klatkę widocznej soczewki.
-    if (!zoneAllowsWarpLens || (warp.state !== 'charging' && warp.state !== 'active')) return;
-    if (!ensureWarpBlackHole()) return;
-  }
-  const isWarpActive = (warp.state === 'active');
-  const entryProgress = isWarpActive ? clamp(warp.entryProgress, 0, 1) : 0;
-  const warpIntensity = isWarpActive ? smoothstep01(entryProgress) : 0;
-
-  const lensThreshold = getWarpLensThreshold();
-  const desiredLensMode = (warpIntensity >= lensThreshold) ? 'full' : 'background';
-  if (desiredLensMode !== warpLensMode) {
-    warpLensMode = desiredLensMode;
-    warpLensSource = null;
-  }
-  if (!warpLensSource) {
-    configureWarpLensSource();
+  const isWarpActive = !!(warp && warp.state === 'active' && zoneAllowsWarpLens);
+  const targetLevel = isWarpActive ? smoothstep01(Number(warp.entryProgress) || 0) : 0;
+  if (targetLevel >= lensLevel) {
+    lensLevel = targetLevel;
+  } else {
+    const fadeOut = Math.max(0.05, warpLensParam('fadeOut'));
+    const dt = clamp(Number(frameDt) || 0, 0, 0.1);
+    lensLevel = Math.max(targetLevel, lensLevel - dt / fadeOut);
   }
 
-  const shouldRenderWarpLens = isWarpActive && warpIntensity > 0.001 && zoneAllowsWarpLens;
-  warpBlackHoleFX.setEnabled(shouldRenderWarpLens && !!warpLensSource);
-
-  if (!(shouldRenderWarpLens && warpLensSource)) return;
-
-  const engineTail = ship.visual?.mainEngine?.y ?? (ship.h * 0.5);
-  const tailDepthExtra = warpLensParam('tailDepthExtra');
-  const warpDepth = engineTail + ship.h * tailDepthExtra;
-
-  const tailOffset = rotate({ x: 0, y: warpDepth }, interpAngle);
-  const tailWorld = {
-    x: interpPos.x + tailOffset.x,
-    y: interpPos.y + tailOffset.y
-  };
-  const s = worldToScreen(tailWorld.x, tailWorld.y, cam);
-
-  const radiusBase = warpLensParam('radiusBase');
-  const radiusScale = warpLensParam('radiusScale');
-  const massBase = warpLensParam('massBase');
-  const massScale = warpLensParam('massScale');
-  const softness = Math.min(1, Math.max(0, warpLensParam('softness')));
-  const opacityBase = warpLensParam('opacityBase');
-  const opacityScale = warpLensParam('opacityScale');
-
-  const baseRadius = Math.max(0.01, radiusBase + radiusScale * warpIntensity);
-  const referenceZoom = Math.max(0.0001, camera.defaultZoom || 1);
-  const zoomFactor = camera.zoom / referenceZoom;
-  const radius = Math.min(1, baseRadius * zoomFactor);
-
-  const baseMass = Math.max(0, (massBase + massScale * warpIntensity) * warpIntensity);
-  const mass = Math.min(0.6, baseMass * zoomFactor * zoomFactor);
-  const opacity = Math.min(1, Math.max(0, (opacityBase + opacityScale * warpIntensity) * warpIntensity));
-
-  const forwardStretchParam = warpLensParam('forwardStretch');
-  const forwardStretchMajor = forwardStretchParam >= 1
-    ? forwardStretchParam
-    : 1 + (1 - forwardStretchParam);
-
-  const lensStretchFactor = 1 + (forwardStretchMajor - 1) * warpIntensity;
-  const lensAngle = ship.angle || 0;
-
-  warpBlackHoleFX.render({
-    centerX: s.x,
-    centerY: s.y,
-    mass,
-    radius,
-    softness,
-    rotation: lensAngle,
-    opacity,
-    lensStretchForward: lensStretchFactor
-  });
-
-  let updated = false;
-  if (typeof warpBlackHoleFX.updateOutputBuffer === 'function') {
-    updated = warpBlackHoleFX.updateOutputBuffer();
+  if (!(lensLevel > 0.001)) {
+    Core3D.clearWarpLens();
+    return;
   }
 
-  const warpLensOutputCanvas = (typeof warpBlackHoleFX.getOutputCanvas === 'function')
-    ? warpBlackHoleFX.getOutputCanvas()
-    : null;
+  // ship.w leży wzdłuż osi lotu (lokalne +x), ship.h w poprzek.
+  const spriteScale = Number(ship.visual?.spriteScale) || 1;
+  const fallback = (Number(ship.radius) || 20) * 2;
+  const length = Math.max(24, (Number(ship.w) || fallback) * spriteScale);
+  const angle = Number.isFinite(interpAngle) ? interpAngle : (Number(ship.angle) || 0);
 
-  if (updated && warpLensOutputCanvas && warpLensOutputCanvas.width && warpLensOutputCanvas.height) {
-    const shipS = worldToScreen(interpPos.x, interpPos.y, cam);
-    const shipSpriteScale = ship.visual?.spriteScale || 1;
-    const shipVisualW = Math.max(24, (Number(ship.w) || (Number(ship.radius) || 20) * 2) * shipSpriteScale);
-    const shipVisualH = Math.max(24, (Number(ship.h) || (Number(ship.radius) || 20) * 2) * shipSpriteScale);
-    const shipMaskScale = 0.58;
-    const shipMaskPad = 1.08;
+  const offset = warpLensParam('centerOffset') * length;
+  const centerX = interpPos.x + Math.cos(angle) * offset;
+  const centerY = interpPos.y + Math.sin(angle) * offset;
 
-    ctx.save();
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.beginPath();
-    ctx.rect(0, 0, canvas.width, canvas.height);
-    ctx.save();
-    ctx.translate(shipS.x, shipS.y);
-    ctx.rotate(interpAngle || 0);
-    ctx.ellipse(
-      0,
-      0,
-      shipVisualW * cam.zoom * shipMaskScale * shipMaskPad,
-      shipVisualH * cam.zoom * shipMaskScale * shipMaskPad,
-      0,
-      0,
-      Math.PI * 2
-    );
-    ctx.restore();
-    ctx.clip('evenodd');
-    ctx.drawImage(
-      warpLensOutputCanvas,
-      0, 0, warpLensOutputCanvas.width, warpLensOutputCanvas.height,
-      0, 0, canvas.width, canvas.height
-    );
-    ctx.restore();
-  }
-}
+  const radiusStart = clamp(warpLensParam('radiusStart'), 0, 1);
+  const radiusAlong = Math.max(0, warpLensParam('radius')) * length * (radiusStart + (1 - radiusStart) * lensLevel);
+  const stretch = Math.max(0.2, warpLensParam('stretch'));
+  const swallow = Math.max(0, warpLensParam('swallow')) * lensLevel;
 
-/** Ustawia zrodlo obrazu po starcie gry (nasluch resize podpina blok wyzej). */
-export function initWarpLens() {
-  configureWarpLensSource();
+  Core3D.setWarpLensWorld(centerX, centerY, angle, radiusAlong, radiusAlong / stretch, swallow);
 }

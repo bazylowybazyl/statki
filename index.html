@@ -316,7 +316,7 @@
                 <button class="menu-chip" data-planet-q="ultra">Ultra</button>
               </div>
               <div style="margin-top:7px; font-size:10px; line-height:1.45; color:#6f8fb8;">
-                Ring: Low = tylko LOD, Med = SynthCity blisko, High/Ultra = pelne SynthCity.
+                Ring: Low/Med = lzejsze mapy i teren, High = pelny ring, Ultra = mapy 16K i dalszy LOD (okna budynkow, drzewa i detal widac z daleka).
               </div>
               <div style="margin-top:12px; margin-bottom:8px; font-size:12px; color:#a2d9ff;">Smugi cieni (god rays)</div>
               <div class="menu-chip-group" aria-label="Smugi cieni">
@@ -1062,7 +1062,6 @@
     window.syncNpcFlightState = syncNpcFlightState;
     import { HUDSystem } from "./src/ui/hudSystem.js";
     import { InfrastructureUI } from "./src/ui/infrastructureUI.js";
-    import { ZonePainterUI } from "./src/ui/zonePainterUI.js";
     import { CanvasVFX } from "./src/vfx/canvasParticleSystem.js";
     import { MuzzleFX3D } from "./src/3d/muzzleFx3D.js";
     import { Turret2D } from "./src/vfx/turret2D.js";
@@ -1142,7 +1141,7 @@
       PLAYER_HULL_MARKET_ORDER
     } from "./src/data/playerHullMarket.js";
     import { publishGameState } from "./src/game/gameState.js";
-    import { configureWarpLensSource, renderWarpLensPass, initWarpLens } from "./src/vfx/warpLensPass.js";
+    import { updateWarpLens3D } from "./src/vfx/warpLensPass.js";
     import { createPlayerHullCatalog } from "./src/data/playerHullCatalog.js";
     import {
       targetingStrokeGlass,
@@ -1198,7 +1197,9 @@
       normalizeCallInSpawnMode
     } from "./src/game/callInSpawnPolicy.js";
     import { PLAYER_EDITOR_DEFAULTS, SHIP_EDITOR_DEFAULTS } from "./src/data/hardpointEditorDefaults.js";
+    import { migratePirateSpriteLayout } from "./src/data/pirateSpriteMigration.js";
     import { createNpcHardpointRuntime } from "./src/game/npcHardpointRuntime.js";
+    import { buildEntityEngineFx } from "./src/data/engineFx.js";
     import {
       BRIDGE_EVENT,
       applyBridgeHulkVisuals,
@@ -1213,17 +1214,13 @@
       updateShipBridges
     } from "./src/game/shipBridgeRuntime.js";
     import { BridgeFx3D } from "./src/3d/bridgeFx3D.js";
-    import {
-      initPlanetaryRings3D,
-      updatePlanetaryRings3D,
-      getPlanetaryRingEntities,
-      getPotentialPlanetaryRingTargets,
-      getPlanetaryRing,
-      computeRingStationOrbitRadius,
-      computePlanetaryRingLayout,
-      resolveRingPlanetWorldRadius
-    } from "./src/3d/planetaryRing3D.js";
-    import { RingCityFlight } from "./src/3d/ringCityFlight.js";
+    import { Bridge3D } from "./src/3d/bridge3D.js";
+    // Ring „Halo” wokół Ziemi i Marsa (port 2026-09-25, docs/PORT-halo-ring.md):
+    // render + kolizje płyty i portu; stacja planety z ringiem = port w hali K-7.
+    import { HaloRingGame } from "./src/3d/haloRing/haloRingGame.js";
+    import { computeHaloRingLayout } from "./src/3d/haloRing/haloRingLayout.js";
+    import { resolveRingPlanetWorldRadius } from "./src/3d/ringScale.js";
+    import { computeHaloPortStation } from "./src/game/haloRingPlanets.js";
     // Statki Terran (Wsparcie)
     import terranFrigateImg from "./src/assets/ships/terranfrigate.png";
     import terranDestroyerImg from "./src/assets/ships/terrandestroyer.png";
@@ -1318,7 +1315,11 @@
     if (initHexShips3D) {
       const hex3dReady = initHexShips3D({ canvas: hexShipsCanvas, width: W, height: H });
       setHexShips3DActive?.(!!hex3dReady);
-      if (hex3dReady && Core3D.scene) BridgeFx3D.attach(Core3D.scene);
+      if (hex3dReady && Core3D.scene) {
+        BridgeFx3D.attach(Core3D.scene);
+        // Model 3D mostka (docs/PORT-mostki.md §8) — ta sama scena, bez renderera.
+        Bridge3D.attach(Core3D.scene);
+      }
     }
 
 
@@ -2335,9 +2336,6 @@
     function getAuToWorldUnits() {
       return resolveWorldUnitsPerAu(window);
     }
-
-    // Warp lens zyje w src/vfx/warpLensPass.js — tu tylko pierwsze ustawienie zrodla.
-    initWarpLens();
 
     let mainScene3D = null;
     let planetScene3D = null;
@@ -3611,7 +3609,9 @@
         if (!raw) return null;
         const parsed = JSON.parse(raw);
         if (!parsed || typeof parsed !== 'object') return null;
-        return (parsed.ships && typeof parsed.ships === 'object') ? parsed.ships : null;
+        if (!parsed.ships || typeof parsed.ships !== 'object') return null;
+        for (const key of Object.keys(parsed.ships)) parsed.ships[key] = migratePirateSpriteLayout(key, parsed.ships[key]);
+        return parsed.ships;
       } catch {
         return null;
       }
@@ -3622,7 +3622,7 @@
       if (!key) return '';
       if (key === 'player' || key === 'atlas') return 'atlas';
       if (key.startsWith('terran_')) return key.slice('terran_'.length);
-      if (key.startsWith('pirate_')) return key.slice('pirate_'.length);
+      if (key.startsWith('pirate_')) return key;
       return key;
     }
 
@@ -3968,7 +3968,10 @@
         });
       }
 
-      return { mainThrusters, sideThrusters };
+      // Rozmiar i palety silników MAIN/WARP tego kadłuba (edytor: blok engineFx),
+      // dysza w pikselach PNG przez tę samą skalę co pozycje markerów.
+      const engineFx = buildEntityEngineFx(resolvePlayerEditorKey(preferredKey), playerCfg?.engineFx, (scaleX + scaleY) * 0.5);
+      return { mainThrusters, sideThrusters, engineFx };
     }
 
     function applyPlayerEditorEngineLayoutFromStorage(preferredKey = null) {
@@ -3979,6 +3982,8 @@
 
       ship.visual.mainThrusters = cfg.mainThrusters;
       ship.visual.torqueThrusters = cfg.sideThrusters;
+      if (cfg.mainThrusters.length) ship.visual.engineFx = cfg.engineFx;
+      else delete ship.visual.engineFx;
 
       if (cfg.mainThrusters.length) {
         const firstMain = cfg.mainThrusters[0];
@@ -5576,7 +5581,6 @@
       }
       if (resizeHexShips3D) resizeHexShips3D(W, H);
       resizeShieldSystem(innerWidth, innerHeight);
-      configureWarpLensSource();
       if (camera.mode === 'focus' && camera.focusStation) {
         const target = computeStationFocusTarget(camera.focusStation);
         camera.focusZoom = target.zoom;
@@ -5661,12 +5665,14 @@
       if (yamatoFactory) {
         window.makeYamatoImpact = yamatoFactory(ov.scene);
       }
-      // Init 3D destruction engine — needs scene + sparks factory + shockwave manager
+      // Init 3D destruction engine — scene + reactor factory. Bez menedżera fali:
+      // fala z refrakcją zostaje wyłącznie dla rakiet supernova (2026-09-24),
+      // więc rozpad stacji (shatter/implodeMass) jej nie odpala.
       if (window.Destruction3D) {
         window.Destruction3D.init({
           scene:            window.Core3D?.scene,
           reactorFactory:   window.makeReactorBlow,
-          shockwaveManager: window.Core3D?.shockwave3DManager,
+          shockwaveManager: null,
         });
       }
       if (supernovaFactory) {
@@ -6216,7 +6222,7 @@
         const id = String(planet.id || planet.name || `planet-${i}`).toLowerCase();
         const hasMegaring = id === 'earth' || id === 'mars';
         if (hasMegaring) {
-          const layout = computePlanetaryRingLayout(planet);
+          const layout = computeHaloRingLayout(planet);
           features.push({
             id,
             type: 'planet',
@@ -6343,7 +6349,7 @@
 
       const ringKey = String(planet?.id || planet?.name || '').toLowerCase();
       if (ringKey === 'earth' || ringKey === 'mars') {
-        const layout = computePlanetaryRingLayout(planet);
+        const layout = computeHaloRingLayout(planet);
         const outer = layout.outerRadius + 3000;
         return {
           inner: layout.inner.innerR,
@@ -6637,29 +6643,29 @@
     const STATION_STYLES = ['ringGate', 'hexHub', 'triRing', 'solarPetals', 'shipyard', 'tradeSpindle'];
 
     let stations = planets.map(pl => {
-      const stationPlanetKey = String(pl?.id || pl?.name || '').toLowerCase();
-      const hasPlanetaryRing = stationPlanetKey === 'earth' || stationPlanetKey === 'mars';
-      const orbitRadius = hasPlanetaryRing
-        ? computeRingStationOrbitRadius(pl)
-        : 0;
-      // Ring stations stay as independent gameplay objects outside the defense line.
-      const angle = stationPlanetKey === 'earth'
-        ? Math.PI * 0.25
-        : stationPlanetKey === 'mars' ? Math.PI * 1.25 : 0;
+      // Planeta z ringiem (Ziemia, Mars): port ringu zastępuje stację orbitalną
+      // (decyzja użytkownika 2026-09-23). Punkt stacji = środek hali K-7 gracza
+      // (handel, terminal w całej hali), porty frachtowców i brama warp na płycie
+      // przed bramą główną G-01 — src/game/haloRingPlanets.js.
+      const ringPort = computeHaloPortStation(pl);
+      const orbitRadius = ringPort ? ringPort.orbitRadius : 0;
+      const angle = ringPort ? ringPort.angle : 0;
       const periodHours = 12; // zachowana spójność parametrów; orbitowanie jest obecnie wyłączone przez speed=0
       const speed = 0;
       const x = pl.x + Math.cos(angle) * orbitRadius;
       const y = pl.y + Math.sin(angle) * orbitRadius;
       const r = 120;
       const portOffset = r + 40;
-      const gateOffset = 220;
-      const warpGate = { x: x + gateOffset, y, offset: { x: gateOffset, y: 0 } };
-      const ports = [
-        { x: portOffset, y: 0 },
-        { x: 0, y: portOffset },
-        { x: -portOffset, y: 0 },
-        { x: 0, y: -portOffset }
-      ];
+      const gateOffset = ringPort ? ringPort.gateOffset : { x: 220, y: 0 };
+      const warpGate = { x: x + gateOffset.x, y: y + gateOffset.y, offset: { x: gateOffset.x, y: gateOffset.y } };
+      const ports = ringPort
+        ? ringPort.ports.map(p => ({ x: p.x, y: p.y }))
+        : [
+          { x: portOffset, y: 0 },
+          { x: 0, y: portOffset },
+          { x: -portOffset, y: 0 },
+          { x: 0, y: -portOffset }
+        ];
       const style = STATION_STYLES[Math.floor(Math.random() * STATION_STYLES.length)];
       // Właściciel wynika z planety: rdzeń wewnętrzny należy do Terra Nova,
       // olbrzymy gazowe do Konsorcjum. Planeta spoza żadnej listy (Neptun)
@@ -6686,14 +6692,12 @@
         // Bullet collision radius — 3D model renders at r*2.8, so hitR ≈ r*2.2 gives
         // hits across most of the visual model without extending past the edges
         hitR: Math.round(r * 2.2),
+        // Port ringu: bez bryły stacji 3D i bez trafień (to punkt w hali K-7).
+        ...(ringPort ? { ringPort: ringPort.key, isCollidable: false, terminalRange: ringPort.terminalRange } : {})
       };
     });
     window.stations = stations;
     publishGameState({ stations });
-    RingCityFlight.configure({
-      inputCanvas: canvas,
-      setUiVisible: visible => toggleGameUI(!!visible && !isMainMenuVisible())
-    });
     window.USE_STATION_3D = true;
     if (window.__setStation3DScale) {
       window.__lastStationScale = 1;
@@ -8338,7 +8342,6 @@
 
     function classifyBeamHitEntity(pt, stationList, platformList, wreckList) {
       if (pt === window.ship) return 'player';
-      if (pt?.isRingSegment) return 'ring';
       if (stationList && stationList.includes(pt)) return 'station';
       if (platformList && platformList.includes(pt)) return 'platform';
       if (wreckList && wreckList.includes(pt)) return 'wreck';
@@ -8346,12 +8349,9 @@
       return 'world';
     }
 
-    const EMPTY_BEAM_RING_TARGETS = Object.freeze([]);
     const _beamTargets = [];
     const _beamHitPool = [];
     const _beamHits = [];
-    const _beamRingRankPool = [];
-    const _beamRingRank = [];
     const _beamWorldHit = { dist: 0, entity: null, kind: null, shard: null };
     const _pdBeamHit = createPdBeamHit();
     const _beam2dEnd = { x: 0, y: 0 };
@@ -8368,11 +8368,10 @@
     };
 
     function compareBeamHitEnter(a, b) { return a.tEnter - b.tEnter; }
-    function compareBeamRingRank(a, b) { return (a.t - b.t) || (a.d2 - b.d2); }
 
     // Prefiltr: pudełko kapsuły strzału (odcinek od lufy na pełen zasięg,
     // poszerzony o promień celu). Dawniej KAŻDY strzał liczył promień i rzut
-    // dla wszystkich NPC, wraków, stacji i segmentów ringu — rój
+    // dla wszystkich NPC, wraków i stacji — rój
     // przechwytywaczy (laser PD co 0,18 s) robił setki takich przebiegów na
     // sekundę. Promień jest zachowawczy (większy z kadłuba i tarczy) i liczony
     // raz na klatkę na encję, więc dokładna pętla niżej widzi te same trafienia.
@@ -8393,87 +8392,8 @@
       _beamTargets.push(obj);
     }
 
-    // --- FIX: Detekcja pierścieni planetarnych dla lasera ---
-    // Segmenty ringu wzdłuż wiązki, z cache. Klucz liczbowy: komórka lufy (120 u)
-    // i kierunek (1/12) — ten sam podział co dawny klucz tekstowy, bez stringa
-    // per strzał. Emitera w kluczu nie ma: lufy z tej samej komórki w tym samym
-    // kierunku dostają ten sam zestaw (i tak jest nadmiarowy — dokładny test jest
-    // dalej); wpis pamięta zasięg i limit, więc inna broń go przelicza.
-    function getBeamRingTargets(muzzleX, muzzleY, dirX, dirY, range, continuous) {
-      const now = (typeof performance !== 'undefined') ? performance.now() / 1000 : 0;
-      const cache = window.__beamRingTargetCache || (window.__beamRingTargetCache = new Map());
-      const key = spatialCellKey(Math.round((Number(muzzleX) || 0) / 120), Math.round((Number(muzzleY) || 0) / 120)) * 625
-        + (Math.round(dirX * 12) + 12) * 25 + (Math.round(dirY * 12) + 12);
-      const ttl = continuous ? 0.14 : 0.06;
-      const maxRingTargets = continuous ? 42 : 128;
-      let entry = cache.get(key);
-      if (entry && (now - entry.t) <= ttl && entry.range === range && entry.maxTargets === maxRingTargets) {
-        return entry.targets;
-      }
-      const ringQueryFn = getPotentialPlanetaryRingTargets;
-      if (!ringQueryFn) return EMPTY_BEAM_RING_TARGETS;
-      if (!entry) {
-        entry = { t: 0, range: 0, maxTargets: 0, targets: [] };
-        cache.set(key, entry);
-      }
-      const ringTargets = entry.targets;
-      ringTargets.length = 0;
-      const midX = muzzleX + dirX * (range / 2);
-      const midY = muzzleY + dirY * (range / 2);
-      // Pobieramy heksy pierścienia z obszaru wzdłuż linii strzału lasera
-      const query = ringQueryFn(midX, midY, (range / 2) + 1800);
-      let rankCount = 0;
-      for (let k = 0; k < query.count; k++) {
-        const seg = query.buffer[k];
-        if (!seg || seg.dead || seg.isCollidable === false) continue;
-        const sx = Number(seg.x) || 0;
-        const sy = Number(seg.y) || 0;
-        const fx = sx - muzzleX;
-        const fy = sy - muzzleY;
-        const tProj = fx * dirX + fy * dirY;
-        if (tProj < -200 || tProj > range + 200) continue;
-        const closestX = muzzleX + dirX * tProj;
-        const closestY = muzzleY + dirY * tProj;
-        const dx = sx - closestX;
-        const dy = sy - closestY;
-        let segRadius = Math.max(80, Number(seg.radius) || 120);
-        if (seg.hexGrid?.srcWidth && seg.hexGrid?.srcHeight) {
-          const segScale = Math.max(0.0001, seg.visual?.spriteScale || seg.capitalProfile?.spriteScale || seg.profile?.spriteScale || 1.0);
-          const segHalfW = (Number(seg.hexGrid.srcWidth) || 0) * 0.5 * segScale;
-          const segHalfH = (Number(seg.hexGrid.srcHeight) || 0) * 0.5 * segScale;
-          const segHullRadius = Math.max(segHalfW, segHalfH) + Math.min(segHalfW, segHalfH) * 0.45;
-          if (Number.isFinite(segHullRadius) && segHullRadius > segRadius) segRadius = segHullRadius;
-        }
-        const lane = segRadius + 260;
-        if (dx * dx + dy * dy > lane * lane) continue;
-        let rank = _beamRingRankPool[rankCount];
-        if (!rank) rank = _beamRingRankPool[rankCount] = { seg: null, d2: 0, t: 0 };
-        rank.seg = seg;
-        rank.d2 = dx * dx + dy * dy;
-        rank.t = tProj;
-        _beamRingRank[rankCount] = rank;
-        rankCount++;
-      }
-      _beamRingRank.length = rankCount;
-      if (rankCount > 1) _beamRingRank.sort(compareBeamRingRank);
-      for (let k = 0; k < rankCount && ringTargets.length < maxRingTargets; k++) {
-        ringTargets.push(_beamRingRank[k].seg);
-      }
-      for (let k = 0; k < rankCount; k++) _beamRingRank[k].seg = null;
-      _beamRingRank.length = 0;
-      entry.t = now;
-      entry.range = range;
-      entry.maxTargets = maxRingTargets;
-      if (cache.size > 512) {
-        for (const [k, v] of cache) {
-          if (!v || (now - Number(v.t || 0)) > 0.6) cache.delete(k);
-        }
-      }
-      return ringTargets;
-    }
-
     // Ogólna ścieżka wiązki: pierwszy obiekt świata na linii strzału (gracz, NPC,
-    // stacje, platformy, wraki, segmenty ringu). Wynik w `out`.
+    // stacje, platformy, wraki). Wynik w `out`.
     function resolveBeamWorldHit(shooter, weapon, muzzleX, muzzleY, dirX, dirY, range, out) {
       let hitDist = range;
       let hitEntity = null;
@@ -8481,7 +8401,6 @@
       let beamHitShard = null;
 
       const mercCtx = window.mercMission || (typeof mercMission !== 'undefined' ? mercMission : null);
-      const ringTargets = getBeamRingTargets(muzzleX, muzzleY, dirX, dirY, range, weapon.beamMode === 'continuous');
 
       const stationList = Array.isArray(window.stations) ? window.stations : null;
       const platformList = Array.isArray(mercCtx?.weaponPlatforms) ? mercCtx.weaponPlatforms : null;
@@ -8522,9 +8441,6 @@
         for (let k = 0; k < wreckList.length; k++) {
           pushBeamTarget(wreckList[k], shooter, beamFrameId, beamBoundCacheable, beamMinX, beamMaxX, beamMinY, beamMaxY);
         }
-      }
-      for (let k = 0; k < ringTargets.length; k++) {
-        pushBeamTarget(ringTargets[k], shooter, beamFrameId, beamBoundCacheable, beamMinX, beamMaxX, beamMinY, beamMaxY);
       }
 
       const beamCfg = DESTRUCTOR_CONFIG;
@@ -8625,11 +8541,7 @@
             // 3×3 nie widziało heksów wypchniętych z komórek i wiązka
             // przelatywała przez wgniecenie („heksy-duchy”).
             const beamShard = findBeamHexShard(pt.hexGrid, gridX, gridY, beamHitRadSq);
-            let hexHit = !!beamShard;
-            if (!hexHit && pt?.isRingSegment && DestructorSystem && typeof DestructorSystem.probeImpact === 'function') {
-              hexHit = DestructorSystem.probeImpact(pt, testX, testY);
-            }
-            if (hexHit) {
+            if (beamShard) {
               hitDist = testT;
               hitEntity = pt;
               hitType = classifyBeamHitEntity(pt, stationList, platformList, wreckList);
@@ -9344,25 +9256,91 @@
       return out;
     };
 
-    function applyRingFlightDevSpawn() {
-      const params = new URLSearchParams(location.search);
-      const targetKey = String(params.get('ringFlightTest') || '').toLowerCase();
-      if (!params.has('dev') || !['earth', 'mars'].includes(targetKey)) return;
-      const ring = getPlanetaryRing(targetKey);
-      const planet = planets.find(p => String(p?.id || p?.name || '').toLowerCase() === targetKey);
-      if (!ring?.layout || !planet) return;
-      const radius = ring.layout.outerRadius + 1200;
-      ship.pos.x = planet.x + radius;
-      ship.pos.y = planet.y;
+    // Ring „Halo” wokół Ziemi i Marsa (HaloRingGame): kolidery od razu, render
+    // leniwie, gdy kadr zbliży się do planety. Jakość = „Jakość planet i ringu”
+    // z ustawień; zapis z localStorage czytany tutaj, bo jego odtworzenie w
+    // OPTIONS idzie później (osobny DOMContentLoaded na końcu pliku).
+    let haloRings = null;
+    function initHaloRings() {
+      if (!Core3D.isInitialized) Core3D.init();
+      let saved = null;
+      try { saved = localStorage.getItem('sc_planet_quality'); } catch { /* bez zapisu */ }
+      haloRings = new HaloRingGame({ planets, quality: saved || window.OPTIONS?.planetQuality || 'medium' });
+      window.__haloRings = haloRings;
+    }
+
+    // Konsola / testy: HaloRingDebug.goto('earth', 'port' | 'transit' | 'hall')
+    // stawia statek przed halą K-7 portu, przed tranzytem albo w hali; stats().
+    function placeShipAtHaloRing(key = 'earth', where = 'port') {
+      const planet = planets.find(p => String(p?.id || p?.name || '').toLowerCase() === key);
+      const station = stations.find(st => st?.ringPort === key);
+      if (!planet || !station) return null;
+      const a = station.angle;
+      const ux = Math.cos(a);
+      const uy = Math.sin(a);
+      let x;
+      let y;
+      let heading;
+      if (where === 'transit') {
+        // oś pierwszego tranzytu: kąt stacji + 45° (świat gry, y w dół: −45°)
+        const t = a - Math.PI / 4;
+        const r = computeHaloRingLayout(planet).outerRadius + 1800;
+        x = planet.x + Math.cos(t) * r;
+        y = planet.y + Math.sin(t) * r;
+        heading = t + Math.PI;
+      } else {
+        const r = station.orbitRadius + (where === 'hall' ? -1800 : 6200);
+        x = planet.x + ux * r;
+        y = planet.y + uy * r;
+        heading = a + Math.PI;
+      }
+      ship.pos.x = x;
+      ship.pos.y = y;
       ship.vel.x = 0;
       ship.vel.y = 0;
-      ship.angle = Math.PI;
-      camera.x = ship.pos.x;
-      camera.y = ship.pos.y;
-      camera.targetX = ship.pos.x;
-      camera.targetY = ship.pos.y;
-      overlayView.center.x = ship.pos.x;
-      overlayView.center.y = ship.pos.y;
+      ship.angle = heading;
+      camera.x = x;
+      camera.y = y;
+      camera.targetX = x;
+      camera.targetY = y;
+      overlayView.center.x = x;
+      overlayView.center.y = y;
+      return { x, y, heading };
+    }
+    window.HaloRingDebug = {
+      goto: placeShipAtHaloRing,
+      // statek w układzie lokalnym ringu (kąt Three, promień od środka planety)
+      at: (key = 'earth', localAngle = 0, radius = 45000, heading = null) => {
+        const entry = haloRings?.entries.find(e => e.key === key);
+        if (!entry) return null;
+        const p = entry.place;
+        const lx = Math.cos(localAngle) * radius;
+        const ly = Math.sin(localAngle) * radius;
+        const x = p.x + lx * p.cos - ly * p.sin;
+        const y = p.y - (lx * p.sin + ly * p.cos);
+        ship.pos.x = x; ship.pos.y = y; ship.vel.x = 0; ship.vel.y = 0;
+        if (Number.isFinite(heading)) ship.angle = heading;
+        camera.x = camera.targetX = x;
+        camera.y = camera.targetY = y;
+        return { x, y };
+      },
+      zoom: (z) => {
+        camera.zoom = camera.targetZoom = Math.max(0.035, Math.min(3.2, Number(z) || 1));
+        camera.manualZoom = true;
+        return camera.zoom;
+      },
+      stats: () => ({
+        ...(haloRings?.stats || {}),
+        quality: haloRings?.qualityKey,
+        rings: haloRings?.entries.map(e => ({ key: e.key, built: !!e.ring, visible: e.visible })),
+        camera: { x: Math.round(camera.x), y: Math.round(camera.y), zoom: camera.zoom }
+      })
+    };
+    function applyHaloRingDevSpawn() {
+      const params = new URLSearchParams(location.search);
+      const targetKey = String(params.get('haloTest') || '').toLowerCase();
+      if (!params.has('dev') || !['earth', 'mars'].includes(targetKey)) return;
+      placeShipAtHaloRing(targetKey, params.get('haloAt') || 'port');
     }
 
     function initNPCs() {
@@ -9375,8 +9353,8 @@
     // Ensure Three.js modules are loaded before initializing 3D objects
     window.addEventListener('DOMContentLoaded', () => {
       const planetInitResult = initPlanets3D(planets, SUN);
-      initPlanetaryRings3D(planets);
-      applyRingFlightDevSpawn();
+      initHaloRings();
+      applyHaloRingDevSpawn();
       const sceneFromInit = asThreeScene(planetInitResult);
       if (sceneFromInit) {
         planetScene3D = sceneFromInit;
@@ -9636,7 +9614,6 @@
       const sx = Number(ship?.pos?.x);
       const sy = Number(ship?.pos?.y);
       if (!Number.isFinite(sx) || !Number.isFinite(sy)) return null;
-      const limitSq = maxDistance * maxDistance;
       let best = null;
       let bestDistSq = Infinity;
       for (const station of stations) {
@@ -9644,7 +9621,9 @@
         const dx = Number(station.x) - sx;
         const dy = Number(station.y) - sy;
         const distSq = dx * dx + dy * dy;
-        if (distSq > limitSq) continue;
+        // port ringu: terminal w całej hali K-7 (terminalRange > zasięg stacji)
+        const limit = Math.max(maxDistance, Number(station.terminalRange) || 0);
+        if (distSq > limit * limit) continue;
         if (distSq < bestDistSq) {
           bestDistSq = distSq;
           best = station;
@@ -9698,7 +9677,6 @@
       stationUI.editorMode = false;
       InfrastructureUI.setActiveStation(null);
       InfrastructureUI.setVisible(false);
-      ZonePainterUI.setVisible(false);
       camera.clearFocus();
       stationTerminal.open = false;
       stationTerminal.phase = 'idle';
@@ -11644,26 +11622,6 @@
           }
         }]
       }));
-
-      // Ring zone painter card
-      pane.appendChild(createStationCard({
-        title: 'Planowanie stref ringu',
-        badge: 'Ring',
-        description: 'Maluj strefy na pierścieniu orbitalnym — mieszkalne, handlowe, przemysłowe, wojskowe.',
-        actions: [{
-          label: 'Otwórz planowanie',
-          onClick: () => {
-            const st = stationUI.station;
-            const pKey = st?.planet?.id || st?.id || '';
-            const r = getPlanetaryRing(pKey);
-            if (!r) {
-              toast('Ta stacja nie posiada pierścienia orbitalnego');
-              return;
-            }
-            ZonePainterUI.setVisible(true, pKey);
-          }
-        }]
-      }));
     }
 
     function initStationOverlay() {
@@ -12904,7 +12862,6 @@
     InfrastructureUI.init(canvas);
     InfrastructureUI.autopopulate();
     seedStationEconomies();
-    ZonePainterUI.init(canvas);
     function startMercenaryMission() {
       if (mercMission) { toast('Misja już aktywna. Wciśnij J aby zobaczyć dziennik.'); return; }
 
@@ -18876,10 +18833,6 @@
     // wpisywane do wszystkich komórek pokrytych ich promieniem kolizji.
     const SpatialGrid = new BulletSpatialGrid();
 
-    const _ringNearEntitiesBuffer = [];
-    const _ringNearSeen = new Set();
-    const _ringHotEntitiesBuffer = [];
-    const _ringHotSeen = new Set();
     const _activeWrecksBuffer = [];
     const _sleepingWrecksBuffer = [];
     const _activeAsteroidHexBuffer = [];
@@ -18892,10 +18845,6 @@
     let _integrityDtAcc = 0;
     let _integrityTick = 0;
     const _dynamicDestructibles = [];
-    const _mergedDestructibles = [];
-    const _mergedSeen = new Set();
-    const _combinedRingDestructibles = [];
-    const _combinedRingSeen = new Set();
     const _playerRepairBuffer = [];
 
     function buildDynamicDestructibles(shipEntity, npcList, wreckList, p2Entity = null) {
@@ -18909,137 +18858,6 @@
         for (let i = 0; i < asteroidHexes.length; i++) _dynamicDestructibles.push(asteroidHexes[i]);
       }
       return _dynamicDestructibles;
-    }
-
-    function mergeDestructibles(base, near, hot) {
-      _mergedDestructibles.length = 0;
-      _mergedSeen.clear();
-
-      for (let i = 0; i < base.length; i++) {
-        const e = base[i];
-        if (!e || _mergedSeen.has(e)) continue;
-        _mergedSeen.add(e);
-        _mergedDestructibles.push(e);
-      }
-      for (let i = 0; i < near.length; i++) {
-        const e = near[i];
-        if (!e || _mergedSeen.has(e)) continue;
-        _mergedSeen.add(e);
-        _mergedDestructibles.push(e);
-      }
-      for (let i = 0; i < hot.length; i++) {
-        const e = hot[i];
-        if (!e || _mergedSeen.has(e)) continue;
-        _mergedSeen.add(e);
-        _mergedDestructibles.push(e);
-      }
-      return _mergedDestructibles;
-    }
-
-    function appendUniqueEntities(out, seen, source) {
-      for (let i = 0; i < source.length; i++) {
-        const e = source[i];
-        if (!e || seen.has(e)) continue;
-        seen.add(e);
-        out.push(e);
-      }
-      return out;
-    }
-    function collectNearbyRingDestructibles(
-      dynamicEntities,
-      centerX = null,
-      centerY = null,
-      entityRadius = 12000,
-      maxSegments = 96
-    ) {
-      _ringNearEntitiesBuffer.length = 0;
-      _ringNearSeen.clear();
-      if (!dynamicEntities || !dynamicEntities.length) return _ringNearEntitiesBuffer;
-      const useCenterFilter =
-        Number.isFinite(centerX) &&
-        Number.isFinite(centerY) &&
-        Number.isFinite(entityRadius) &&
-        entityRadius > 0;
-      const entityRadiusSq = useCenterFilter ? (entityRadius * entityRadius) : 0;
-
-      for (let i = 0; i < dynamicEntities.length; i++) {
-        const ent = dynamicEntities[i];
-        if (!ent || ent.dead || !ent.hexGrid || ent.isCollidable === false) continue;
-
-        const ex = Number(ent.pos?.x ?? ent.x);
-        const ey = Number(ent.pos?.y ?? ent.y);
-        if (!Number.isFinite(ex) || !Number.isFinite(ey)) continue;
-        if (useCenterFilter) {
-          const cdx = ex - centerX;
-          const cdy = ey - centerY;
-          if (cdx * cdx + cdy * cdy > entityRadiusSq) continue;
-        }
-
-        const er = Math.max(60, Number(ent.radius) || 120);
-        const query = getPotentialPlanetaryRingTargets(ex, ey, er + 1400);
-        const buf = query.buffer;
-        const cnt = query.count;
-
-        for (let j = 0; j < cnt; j++) {
-          const seg = buf[j];
-          if (!seg || seg.dead || seg.isCollidable === false || !seg.hexGrid) continue;
-          if (_ringNearSeen.has(seg)) continue;
-
-          const sx = Number(seg.x) || 0;
-          const sy = Number(seg.y) || 0;
-          const sr = Math.max(80, Number(seg.radius) || 120);
-          if (useCenterFilter) {
-            const cdx = sx - centerX;
-            const cdy = sy - centerY;
-            const centerReach = entityRadius + sr + 400;
-            if (cdx * cdx + cdy * cdy > centerReach * centerReach) continue;
-          }
-          const reach = er + sr + 260;
-          const dx = sx - ex;
-          const dy = sy - ey;
-          if (dx * dx + dy * dy > reach * reach) continue;
-
-          _ringNearSeen.add(seg);
-          _ringNearEntitiesBuffer.push(seg);
-          if (_ringNearEntitiesBuffer.length >= maxSegments) return _ringNearEntitiesBuffer;
-        }
-      }
-      return _ringNearEntitiesBuffer;
-    }
-
-    function collectHotRingDestructibles(nowMs = performance.now(), mode = 'physics', centerX = null, centerY = null, maxRadius = Infinity) {
-      _ringHotEntitiesBuffer.length = 0;
-      _ringHotSeen.clear();
-      const ringEntities = getPlanetaryRingEntities();
-      if (!Array.isArray(ringEntities) || ringEntities.length === 0) return _ringHotEntitiesBuffer;
-      const fieldName = mode === 'visual' ? '__ringVisualHotUntilMs' : '__destructorHotUntilMs';
-      const useRadiusFilter =
-        Number.isFinite(centerX) &&
-        Number.isFinite(centerY) &&
-        Number.isFinite(maxRadius) &&
-        maxRadius > 0;
-      const maxRadiusSq = useRadiusFilter ? (maxRadius * maxRadius) : 0;
-
-      for (let i = 0; i < ringEntities.length; i++) {
-        const seg = ringEntities[i];
-        if (!seg || seg.dead || seg.isCollidable === false || !seg.hexGrid) continue;
-        if (useRadiusFilter) {
-          const sx = Number(seg.x) || 0;
-          const sy = Number(seg.y) || 0;
-          const dx = sx - centerX;
-          const dy = sy - centerY;
-          if (dx * dx + dy * dy > maxRadiusSq) continue;
-        }
-        let hotUntil = Number(seg[fieldName]) || 0;
-        if (mode === 'visual' && hotUntil <= nowMs) {
-          hotUntil = Number(seg.__destructorHotUntilMs) || 0;
-        }
-        if (hotUntil <= nowMs) continue;
-        if (_ringHotSeen.has(seg)) continue;
-        _ringHotSeen.add(seg);
-        _ringHotEntitiesBuffer.push(seg);
-      }
-      return _ringHotEntitiesBuffer;
     }
 
     // Klasa trafienia w tarcze dla efektow czasteczkowych. Pocisk niesie
@@ -19521,65 +19339,13 @@
         if (profileBullet) secAst += (performance.now() - tBulletSection0) * bulletProfileScale;
 
         tBulletSection0 = profileBullet ? performance.now() : 0;
-        // --- KOLIZJE Z RINGIEM PLANETARNYM (swept hit, bez wrzucania ringu do glownego SpatialGrid) ---
-        if (!hitNPC) {
-          const segX0 = Number.isFinite(b.px) ? b.px : b.x;
-          const segY0 = Number.isFinite(b.py) ? b.py : b.y;
-          const segX1 = b.x;
-          const segY1 = b.y;
-          const vxSweep = segX1 - segX0;
-          const vySweep = segY1 - segY0;
-          const vvSweep = vxSweep * vxSweep + vySweep * vySweep;
-          const sweepLen = Math.sqrt(vvSweep);
-          const searchRadius = Math.max(120, (b.r || 0) + sweepLen + 48);
-          const ringSearch = getPotentialPlanetaryRingTargets(b.x, b.y, searchRadius);
-          const ringBuf = ringSearch.buffer;
-          const ringCount = ringSearch.count;
-          let ringHit = null;
-          let ringHitX = b.x;
-          let ringHitY = b.y;
-
-          for (let k = 0; k < ringCount; k++) {
-            const seg = ringBuf[k];
-            if (!seg || seg.dead || seg.isCollidable === false) continue;
-            if (b.source && b.source === seg) continue;
-
-            const tx = Number(seg.x) || 0;
-            const ty = Number(seg.y) || 0;
-            const hitR = (Number(seg.radius) || 80) + (Number(b.r) || 0);
-            let tSweep = 0;
-            if (vvSweep > 1e-6) {
-              tSweep = ((tx - segX0) * vxSweep + (ty - segY0) * vySweep) / vvSweep;
-              tSweep = Math.max(0, Math.min(1, tSweep));
-            }
-            const cx = segX0 + vxSweep * tSweep;
-            const cy = segY0 + vySweep * tSweep;
-            const dx = tx - cx;
-            const dy = ty - cy;
-            if (dx * dx + dy * dy > hitR * hitR) continue;
-
-            // Precyzyjny test trafienia po heksach (usuwa "niewidzialne" hitboxy w szczelinie ringu)
-            const hasRealHexHit = (typeof DestructorSystem.probeImpact === 'function')
-              ? DestructorSystem.probeImpact(seg, cx, cy)
-              : DestructorSystem.applyImpact(seg, cx, cy, 0, { x: 0, y: 0 });
-            if (!hasRealHexHit) continue;
-
-            ringHit = seg;
-            ringHitX = cx;
-            ringHitY = cy;
-            break;
-          }
-
-          if (ringHit) {
-            const ringDamage = Number.isFinite(b.damage) ? b.damage : 0;
-            DestructorSystem.applyImpact(ringHit, ringHitX, ringHitY, ringDamage, { x: b.vx, y: b.vy });
-
-            spawnBulletImpactEffect(b, ringHitX, ringHitY, 0.95);
-
-            if (shouldRemoveProjectileAfterImpact(b, true)) removeBulletAt(i);
-            if (profileBullet) secRing += (performance.now() - tBulletSection0) * bulletProfileScale;
-            continue;
-          }
+        // --- RING „HALO”: płyta podłogi w płaszczyźnie gry zatrzymuje pociski
+        // (tranzyty otwarte). Pocisk ≤ ~170 j./krok, płyta ≥ ~450 j. — bez tunelowania.
+        if (haloRings && haloRings.pointInSlab(b.x, b.y)) {
+          spawnBulletImpactEffect(b, b.x, b.y, 0.95);
+          removeBulletAt(i);
+          if (profileBullet) secRing += (performance.now() - tBulletSection0) * bulletProfileScale;
+          continue;
         }
         if (profileBullet) secRing += (performance.now() - tBulletSection0) * bulletProfileScale;
 
@@ -19612,7 +19378,7 @@
         }
         for (let si = 0; si < stepStationCount; si++) {
           const st = _bulletStepStations[si];
-          if (st.hp && !st._destroyed3D && b.source !== st) {
+          if (st.hp && !st._destroyed3D && b.source !== st && st.isCollidable !== false) {
             const sdx = st.x - b.x;
             const sdy = st.y - b.y;
             const collisionR = (st.hitR || st.r) + b.r;
@@ -20352,6 +20118,7 @@
       angularDampingFactor: 0.65,
       effectTime: 0, effectDuration: 0.25, effectDir: { x: 0, y: -1 }
     };
+    publishGameState({ boost });
 
     function attemptWarp() {
       if (warp.state === 'idle' && (DevFlags.unlimitedWarp || warp.fuel > 0)) {
@@ -21689,13 +21456,15 @@
       // Kolizje statków z asteroidami — przed destruktorem, żeby wypchnięcie ze
       // skały zadziałało przed kolizjami heksów w tym samym podkroku.
       stepShipAsteroidCollisions(dt);
+      // Ring „Halo” (Ziemia, Mars): płyta podłogi przecina płaszczyznę gry,
+      // przez ring prowadzą tranzyty; ściany hal K-7 i zatok portu dla graczy.
+      stepShipRingCollisions(dt);
 
       tPhysSection0 = performance.now();
       // Listy destruktora budujemy RAZ na klatkę renderu — między substepami tej
-      // samej klatki zmieniają się pomijalnie, a collectNearbyRingDestructibles robi
-      // zapytanie przestrzenne per encja (drogie w dużych bitwach). Nowe wraki ze
-      // splitów dopisują się do allDestructibles w DestructorSystem.spawnWreckEntity,
-      // a martwe encje odfiltrowuje sam destruktor.
+      // samej klatki zmieniają się pomijalnie. Nowe wraki ze splitów dopisują się
+      // do allDestructibles w DestructorSystem.spawnWreckEntity, a martwe encje
+      // odfiltrowuje sam destruktor.
       let dynamicDestructibles;
       let allDestructibles;
       if (_destrPrepFrameId === renderFrameId && _cachedDynamicDestructibles) {
@@ -21708,46 +21477,12 @@
         _activeWrecksBuffer,
         (splitScreenMode && player2Ship && !player2Ship.destroyed && player2Ship.hexGrid) ? player2Ship : null
       );
-      const shipPx = Number(ship?.pos?.x ?? ship?.x);
-      const shipPy = Number(ship?.pos?.y ?? ship?.y);
 
       // Wake sweep: budź śpiące wraki, w które ciało może wjechać przed
       // następną budową listy. Gracz w warpie nie budzi niczego.
       wakeSleepingWrecksNearBodies(_sleepingWrecksBuffer, dynamicDestructibles, warp.state === 'active' ? ship : null);
 
-      _combinedRingDestructibles.length = 0;
-      _combinedRingSeen.clear();
-      appendUniqueEntities(
-        _combinedRingDestructibles,
-        _combinedRingSeen,
-        collectNearbyRingDestructibles(
-          dynamicDestructibles,
-          shipPx,
-          shipPy,
-          12000,
-          128
-        )
-      );
-      // Also collect ring segments near P2 if in split screen
-      if (splitScreenMode && player2Ship && !player2Ship.destroyed) {
-        const p2rx = Number(player2Ship.pos?.x ?? 0);
-        const p2ry = Number(player2Ship.pos?.y ?? 0);
-        appendUniqueEntities(
-          _combinedRingDestructibles,
-          _combinedRingSeen,
-          collectNearbyRingDestructibles(dynamicDestructibles, p2rx, p2ry, 12000, 128)
-        );
-      }
-      const hotRingDestructibles = collectHotRingDestructibles(
-        performance.now(),
-        'physics',
-        shipPx,
-        shipPy,
-        11000
-      );
-      allDestructibles = (_combinedRingDestructibles.length || hotRingDestructibles.length)
-        ? mergeDestructibles(dynamicDestructibles, _combinedRingDestructibles, hotRingDestructibles)
-        : dynamicDestructibles;
+      allDestructibles = dynamicDestructibles;
 
       _destrPrepFrameId = renderFrameId;
       _cachedDynamicDestructibles = dynamicDestructibles;
@@ -21809,6 +21544,29 @@
       for (let i = 0; i < npcs.length; i++) {
         const npc = npcs[i];
         if (npc && !npc.dead && npc.pos) field.checkShipCollisions(npc, dt);
+      }
+    }
+
+    // Ring „Halo” (src/game/haloRingCollision.js): płyta podłogi z terenem
+    // przecina płaszczyznę gry — każdy statek przy ringu jest z niej wypychany
+    // (bez odbicia, prędkość w głąb płyty zerowana); ściany hal K-7, zatok
+    // i tuneli tranzytów tylko dla statków graczy (NPC do portu nie wlatują).
+    // Statki daleko od ringów odpadają na teście odległości od planety.
+    let _haloRingNoticeAtMs = 0;
+    function stepShipRingCollisions(dt) {
+      if (!haloRings) return;
+      if (ship && !ship.dead) {
+        const hit = haloRings.constrainShip(ship, true);
+        const nowMs = performance.now();
+        if (hit && hit.impactSpeed > 150 && nowMs - _haloRingNoticeAtMs > 2500) {
+          _haloRingNoticeAtMs = nowMs;
+          pushZoneMessage(hit.walls > 0 ? 'PORT: OGRANICZENIE KADŁUBA' : 'RING: PŁYTA HABITATU — PRZELOT TYLKO TRANZYTEM', 2.2);
+        }
+      }
+      if (player2Ship && !player2Ship.dead && !player2Ship.destroyed) haloRings.constrainShip(player2Ship, true);
+      for (let i = 0; i < npcs.length; i++) {
+        const npc = npcs[i];
+        if (npc && !npc.dead && npc.pos) haloRings.constrainShip(npc, false);
       }
     }
 
@@ -21919,21 +21677,6 @@
       const frameStartMs = performance.now();
       const frame = Math.min(0.033, (now - lastTime) / 1000);
       lastTime = now;
-      if (RingCityFlight.isActive()) {
-        // Eksperymentalny lot po mieście ma własny stan i kamerę. Zatrzymujemy
-        // źródło prawdy 2D bez zmiany PAUSED, żeby powrót od razu wznowił grę.
-        acc = 0;
-        vfxTime += frame;
-        renderFrameId++;
-        window.__frameId = renderFrameId;
-        RingCityFlight.update(frame);
-        render(0, frame);
-        const frameEndMs = performance.now();
-        PerfHUD.recordFrameTime(frameEndMs - frameStartMs);
-        PerfHUD.flush(frameEndMs);
-        requestAnimationFrame(loop);
-        return;
-      }
       applyGamepad();
       if (PAUSED) {
         saveState();
@@ -22740,31 +22483,6 @@
       //  cheats (np. nielimitowany warp)
       if (window.ApplyCheats) ApplyCheats();
 
-      if (RingCityFlight.isActive()) {
-        const flightCamera = RingCityFlight.getCamera();
-        if (window.updatePlanets3D) window.updatePlanets3D(frameDt, flightCamera);
-        updatePlanetaryRings3D(frameDt, planets, flightCamera);
-        // updatePlanetaryRings3D ustawia transform rodzica ringu; dopiero po
-        // nim przeliczamy pozycję bolidu i kamery na bieżący world-space.
-        RingCityFlight.updateWorld(0);
-        if (window.updateStations3D) window.updateStations3D(stations);
-        if (updateWorld3D) updateWorld3D(frameDt, vfxTime);
-
-        const flightEntities = [];
-        if (ship && !ship.dead) flightEntities.push(ship);
-        if (updateHexShips3D) {
-          updateHexShips3D(
-            flightCamera,
-            flightEntities,
-            RingCityFlight.getCullInfo(W, H)
-          );
-        }
-        if (updateShields3D) updateShields3D(frameDt, flightEntities, window.__interpShipPose);
-        if (drawHexShips3D) drawHexShips3D(ctx, W, H);
-        PerfHUD.addTiming('render3dDrawTime', performance.now() - tRenderProfileSection);
-        return;
-      }
-
       window.__weaponAimAlpha = alpha;
       // Interpolacja stanu
       const interpPos = {
@@ -22905,11 +22623,19 @@
 
       tRender3dSub = performance.now();
       if (renderDbgEnabled) tRenderSection = tRender3dSub;
-      updatePlanetaryRings3D(frameDt, planets, camNoShake);
-      RingCityFlight.updateIdle(frameDt);
+      // Ring „Halo”: kamera TEJ klatki (cam, ze wstrząsem — ta sama trafia do
+      // passów Core3D), bo ring liczy pozycje względem kamery (RTE).
+      if (haloRings) {
+        haloRings.update(frameDt, cam, {
+          sun: SUN,
+          ship,
+          quality: window.OPTIONS?.planetQuality,
+          splitScreen: splitScreenMode
+        });
+      }
       const render3dRingsMs = performance.now() - tRender3dSub;
       PerfHUD.addTiming('render3dRingsUpdateTime', render3dRingsMs);
-      if (renderDbgEnabled) RenderLiveDebug.record('updatePlanetaryRings3D', render3dRingsMs);
+      if (renderDbgEnabled) RenderLiveDebug.record('haloRings.update', render3dRingsMs);
 
       tRender3dSub = performance.now();
       if (renderDbgEnabled) tRenderSection = tRender3dSub;
@@ -22954,10 +22680,6 @@
       if (splitScreenMode && player2Ship && !player2Ship.destroyed) renderEntities.push(player2Ship);
       for (const npc of npcs) if (npc && !npc.dead) renderEntities.push(npc);
       for (const w of wrecks) if (w && !w.dead) renderEntities.push(w);
-      const ringEnts = getPlanetaryRingEntities();
-      for (const re of ringEnts) {
-        if (re && !re.dead) renderEntities.push(re);
-      }
       if (window.asteroidField?.getActiveHexEntities) {
         const asteroidHexes = window.asteroidField.getActiveHexEntities(_activeAsteroidHexBuffer);
         for (let i = 0; i < asteroidHexes.length; i++) renderEntities.push(asteroidHexes[i]);
@@ -23003,6 +22725,9 @@
         // Mostki: dławienie dysz i gaśnięcie świateł hulków (czyta je
         // EngineVfxSystem / ShipLights3D w updateHexShips3D), okna i wyrzut.
         applyBridgeHulkVisuals(renderEntities, bridgeSimTime);
+        // Model 3D mostka PRZED BridgeFx3D: ustawia bridgeState.model3D, więc
+        // szczeliny okien się nie dublują (wyrzut atmosfery zostaje w BridgeFx3D).
+        Bridge3D.update(renderEntities, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose, cull: _hexCullInfo, camera: cam });
         BridgeFx3D.update(renderEntities, { nowSec: bridgeSimTime, dt: PAUSED ? 0 : frameDt, zoom: zoomNow, poseOf: bridgeRenderPose });
         // Zimne wraki nie są w renderEntities (brak meshy, świateł, cieni) —
         // tylko smugi z batcha.
@@ -23023,6 +22748,12 @@
       const render3dShieldsMs = performance.now() - tRender3dSub;
       PerfHUD.addTiming('render3dShieldsUpdateTime', render3dShieldsMs);
       if (renderDbgEnabled) RenderLiveDebug.record('updateShields3D', render3dShieldsMs);
+
+      // Soczewka skoku: pass Core3D na samym tle (src/vfx/warpLensPass.js),
+      // więc parametry muszą trafić do Core3D PRZED drawHexShips3D.
+      tRender3dSub = performance.now();
+      updateWarpLens3D(interpPos, interpAngle, frameDt);
+      if (renderDbgEnabled) RenderLiveDebug.record('warpLens', performance.now() - tRender3dSub);
       PerfHUD.addTiming('render3dUpdateTime', performance.now() - tRenderProfileSection);
       tRenderProfileSection = performance.now();
 
@@ -23048,11 +22779,8 @@
         PerfHUD.addTiming('render3dComposerTime', hexDrawPerf.composerMs || 0);
         PerfHUD.addTiming('render3dBlitTime', hexDrawPerf.blitMs || 0);
       }
-      if (renderDbgEnabled) RenderLiveDebug.record('drawHexShips3D', performance.now() - tRenderSection);
-      if (renderDbgEnabled) tRenderSection = performance.now();
-      renderWarpLensPass(cam, interpPos, interpAngle);
       if (renderDbgEnabled) {
-        RenderLiveDebug.record('warpLens', tRenderSection > 0 ? (performance.now() - tRenderSection) : 0);
+        RenderLiveDebug.record('drawHexShips3D', performance.now() - tRenderSection);
         tPost3DStart = performance.now();
       }
       PerfHUD.addTiming('render3dDrawTime', performance.now() - tRenderProfileSection);
@@ -25022,6 +24750,9 @@
       ship.visual = ship.visual || {};
       ship.visual.mainThrusters = mainThrusters;
       ship.visual.torqueThrusters = sideThrusters;
+      // Układ zapasowy (bez markerów edytora): dysza liczona od kadłuba, nie
+      // rozmiar z poprzedniego kadłuba.
+      delete ship.visual.engineFx;
 
       if (ship.engines?.main && mainThrusters.length) {
         const first = mainThrusters[0];
@@ -26180,7 +25911,6 @@
   <script type="module">
     import { initDevTools } from './src/ui/devTools.js';
     import { initBloomTunerPanel } from './src/ui/bloomTunerPanel.js';
-    import { initRingColorTunerPanel } from './src/ui/ringColorTunerPanel.js';
     import { initDestructorConfigPanel } from './src/ui/destructorConfigPanel.js';
     import { initDestructorMassPanel } from './src/ui/destructorMassPanel.js';
 
@@ -26188,7 +25918,6 @@
       setTimeout(() => {
         initDevTools();
         initBloomTunerPanel({ enableHotkey: false });
-        initRingColorTunerPanel();
         initDestructorConfigPanel();
         initDestructorMassPanel();
       }, 100);

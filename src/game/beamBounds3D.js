@@ -1,14 +1,16 @@
 // Bounds of the deforming node cloud, independent of the visual GLB mesh.
 export function updateBeamBounds(body) {
   const b = body._localBounds ||= new Float64Array(6);
+  const s = body.nodeStore, x = s.x, y = s.y, z = s.z, active = s.active;
   let minX = Infinity, minY = Infinity, minZ = Infinity;
   let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity, r2 = 0;
-  for (const n of body.nodes) {
-    if (!n.active) continue;
-    minX = Math.min(minX, n.x); maxX = Math.max(maxX, n.x);
-    minY = Math.min(minY, n.y); maxY = Math.max(maxY, n.y);
-    minZ = Math.min(minZ, n.z); maxZ = Math.max(maxZ, n.z);
-    r2 = Math.max(r2, n.x * n.x + n.y * n.y + n.z * n.z);
+  for (let i = 0; i < s.count; i++) {
+    if (!active[i]) continue;
+    const nx = x[i], ny = y[i], nz = z[i];
+    minX = Math.min(minX, nx); maxX = Math.max(maxX, nx);
+    minY = Math.min(minY, ny); maxY = Math.max(maxY, ny);
+    minZ = Math.min(minZ, nz); maxZ = Math.max(maxZ, nz);
+    r2 = Math.max(r2, nx * nx + ny * ny + nz * nz);
   }
   if (minX === Infinity) minX = minY = minZ = maxX = maxY = maxZ = 0;
   b[0] = (minX + maxX) * 0.5; b[1] = (minY + maxY) * 0.5; b[2] = (minZ + maxZ) * 0.5;

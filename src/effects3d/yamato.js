@@ -503,14 +503,8 @@ export function createYamatoImpactFactory(scene) {
             }
         }
 
-        // ── 3D shockwave ─────────────────────────────────────────────────────
-        const sw3d = (typeof window !== "undefined") ? window.trigger3DShockwave : null;
-        if (typeof sw3d === "function") {
-            // Scena Core3D: XY gry z y3d = -yGry, z = 0 (jak reactorblow i rakiety).
-            // Dawniej (eX, 0, -eZ) kładło falę na y=0 i z=-yGry — niewidoczna,
-            // a mimo to włączała snapshot refrakcji (3 rendery sceny co 2. klatkę).
-            sw3d(eX, -eZ, 0, Math.max(60, size * 1.3 * q), 0.5, 0x44aaff);
-        }
+        // Bez fali z refrakcją (window.trigger3DShockwave): zostaje wyłącznie
+        // dla rakiet supernova (2026-09-24).
 
         const initTime = performance.now() / 1000;
         let disposed   = false;

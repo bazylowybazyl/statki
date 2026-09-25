@@ -46,10 +46,20 @@ export function selectSkinChunk(skin, partIndex, nodes) {
   if (++chunk.stamp >= 0xffffffff) { chunk.marks.fill(0); chunk.stamp = 1; }
   const nx = skin.dims.x, nxy = nx * skin.dims.y;
   const source = skin.parts[partIndex].indices;
+  // Magazyn węzłów ciała (beamStore3D) albo tablica obiektów { ix, iy, iz, active }.
+  const store = nodes && nodes.ix instanceof Int32Array ? nodes : null;
+  const total = store ? store.count : nodes.length;
   let count = 0;
-  for (const n of nodes) {
-    if (!n.active) continue;
-    const cell = n.ix + n.iy * nx + n.iz * nxy;
+  for (let k = 0; k < total; k++) {
+    let cell;
+    if (store) {
+      if (!store.active[k]) continue;
+      cell = store.ix[k] + store.iy[k] * nx + store.iz[k] * nxy;
+    } else {
+      const n = nodes[k];
+      if (!n.active) continue;
+      cell = n.ix + n.iy * nx + n.iz * nxy;
+    }
     for (let i = chunk.offsets[cell]; i < chunk.offsets[cell + 1]; i++) {
       const triangle = chunk.triangles[i];
       if (chunk.marks[triangle] === chunk.stamp) continue;

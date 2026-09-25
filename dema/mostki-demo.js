@@ -1,6 +1,7 @@
 // Demo mostków — host dema: prawdziwy Core3D + hexShips3D + DestructorSystem.
 // Serwowanie: `npm run dev`, potem /dema/mostki-demo.html
-// Parametry adresu: ?hull=battleship|pirate_battleship|atlas|all
+// Parametry adresu: ?hull=battleship|pirate_battleship|atlas|all|frigate|destroyer|
+// terran_carrier|terran_supercapital|pirate_frigate|pirate_destroyer|megafreighter
 //   &weapon=<id z weapons.js>&variant=<wariant mostka Atlasa>&shot=1 (bez panelu)
 //
 // Kolejność klatki jak render() gry: symulacja 120 Hz (update destruktora,
@@ -13,6 +14,7 @@ import { drawHexShips3D, initHexShips3D, prewarmHexShipVisual, updateHexShips3D 
 import { HULL_LACQUER_DEFAULTS } from '../src/3d/hullLacquer.js';
 import { Fx3D, FX_PLANE_Z, sp } from '../src/3d/fxParticles3D.js';
 import { BridgeFx3D, BRIDGE_FX_TUNE } from '../src/3d/bridgeFx3D.js';
+import { Bridge3D, BRIDGE3D_TUNE } from '../src/3d/bridge3D.js';
 import { DestructorSystem, disposeHexBody, getHexStructuralState, setHexShips3DActive } from '../src/game/destructor.js';
 import { DestructorGpuSoftBody } from '../src/game/destructorGpuSoftBody.js';
 import { MASTER_WEAPONS } from '../src/data/weapons.js';
@@ -22,6 +24,7 @@ import {
   BRIDGE_KILL_TIMELINE,
   BRIDGE_LAYOUT_PROPOSALS,
   applyCommandLossVisuals,
+  bridgeGridToWorld,
   bridgeShardIsAlive,
   bridgeWorldToGrid,
   bridgeZoneContains,
@@ -31,6 +34,7 @@ import {
   hexCellCenter,
   noteBridgeHit,
   normalizeBridgeDef,
+  releaseShipBridges,
   sampleEngineGlow,
   validateBridgeLayout
 } from '../src/game/shipBridge.js';
@@ -128,6 +132,9 @@ Core3D.renderer.debug.onShaderError = (gl, program, vs, fs) => {
   reportError(`SHADER: ${[gl.getProgramInfoLog(program), gl.getShaderInfoLog(vs), gl.getShaderInfoLog(fs)].filter(Boolean).join('\n')}`);
 };
 BridgeFx3D.attach(Core3D.scene);
+// Model 3D mostka (src/3d/bridge3D.js) — w grze ten sam hak obok BridgeFx3D.
+Bridge3D.attach(Core3D.scene);
+if (params.get('model') === '0') BRIDGE3D_TUNE.enabled = false;
 
 const cam = { x: 0, y: 0, zoom: 0.8 };
 window.camera = cam;
@@ -204,6 +211,8 @@ const state = {
   timeScale: 1,
   overlays: { grid: false, zone: true, bridgeHexes: false, hardpoints: false, info: true, aim: true, ...(saved.overlays || {}) },
   fixProbe: params.get('nofix') !== '1',
+  // Hulk → wrak po BRIDGE_KILL_TIMELINE.sequenceEnd (jak finishBridgeKill w grze).
+  hulkToWreck: params.get('wreck') !== '0',
   // Gra: ×1. `?pool=0.5` — eksperyment balansu z raportu (mostek staje się
   // realną alternatywą dla puli HP).
   poolMul: Math.min(1, Math.max(0.1, Number(params.get('pool')) || 1)),
@@ -467,11 +476,37 @@ function physicsStep(dt) {
     }
   }
   stepWorld(sim, dt);
+  if (state.hulkToWreck) finishHulks();
+}
+
+// Koniec agonii hulka jak finishBridgeKill (index.html): wrak z żywych heksów
+// (te same obiekty heksów — spawnWreckEntity), mostki zwolnione, ciało hulka
+// oddane. Model 3D mostka przechodzi na wrak sam (bridge3D.js).
+function finishHulks() {
+  for (const t of sim.targets) {
+    const st = t.bridgeState;
+    if (!st || !st.commandLost || t.__wrecked) continue;
+    if (sim.time - st.commandLostAt < BRIDGE_KILL_TIMELINE.sequenceEnd) continue;
+    t.__wrecked = true;
+    const shards = t.hexGrid?.shards || [];
+    const surviving = shards.filter((s) => s.active && !s.isDebris && s.hp > 0);
+    const wreck = surviving.length > 3 ? DestructorSystem.spawnWreckEntity(t, surviving, sim.entities) : null;
+    releaseShipBridges(t);
+    const i = sim.entities.indexOf(t);
+    if (i >= 0) sim.entities.splice(i, 1);
+    t.hideHexVisual = true;
+    t.dead = true;
+    if (t.combat) t.combat.wreck = wreck;
+    try { disposeHexBody(t); } catch { /* ciało już oddane */ }
+    pushMessage(`${t.displayName}: koniec agonii — wrak (${surviving.length} heksów)`, '#9fdcb0', 3);
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Render klatki
 const cull = { x: 0, y: 0, halfW: 0, halfH: 0, drawHalfW: 0, drawHalfH: 0 };
+// Pomiar kosztu modelu 3D (zegar rzeczywisty — demo podmienia performance.now).
+const bench3D = { lastUpdateMs: 0 };
 const renderBullets = [];
 
 // Dysza bez kadłuba gaśnie. EngineExhaustBatch rysuje płomyk postojowy także
@@ -564,13 +599,24 @@ function applyTargetVisuals() {
 }
 
 function renderFrame(simDt) {
-  const f = focusTarget();
+  const ft = focusTarget();
+  // Po końcu agonii kamera jedzie za wrakiem (hulk zniknął jak w grze).
+  const f = ft?.combat?.wreck && !ft.combat.wreck.dead ? ft.combat.wreck : ft;
   if (f) {
     // Kamera jedzie za wybranym celem (dryf), przesunięcie ustawia gracz.
     if (renderFrame.lastFocus === f) { cam.x += f.x - renderFrame.fx; cam.y += f.y - renderFrame.fy; }
     renderFrame.lastFocus = f; renderFrame.fx = f.x; renderFrame.fy = f.y;
   }
   applyTargetVisuals();
+  const halfW0 = (W * 0.5) / cam.zoom;
+  const halfH0 = (H * 0.5) / cam.zoom;
+  cull.x = cam.x; cull.y = cam.y;
+  cull.drawHalfW = halfW0; cull.drawHalfH = halfH0;
+  cull.halfW = halfW0 * 3; cull.halfH = halfH0 * 3;
+  // Kolejność jak w grze: model 3D (ustawia bridgeState.model3D) → okna/wyrzut.
+  const tb3 = realNow();
+  Bridge3D.update(sim.entities, { nowSec: sim.time, dt: simDt, zoom: cam.zoom, cull, camera: cam });
+  bench3D.lastUpdateMs = realNow() - tb3;
   BridgeFx3D.update(sim.targets, { nowSec: sim.time, dt: simDt, zoom: cam.zoom });
 
   renderBullets.length = 0;
@@ -583,13 +629,13 @@ function renderFrame(simDt) {
 
   Core3D.beginPlanetLayerFrame();
   Core3D.setShieldLayerActive(false);
-  const halfW = (W * 0.5) / cam.zoom;
-  const halfH = (H * 0.5) / cam.zoom;
-  cull.x = cam.x; cull.y = cam.y;
-  cull.drawHalfW = halfW; cull.drawHalfH = halfH;
-  cull.halfW = halfW * 3; cull.halfH = halfH * 3;
+  const th = realNow();
   updateHexShips3D(cam, sim.entities, cull);
+  const td = realNow();
   drawHexShips3D(ctx, W, H);
+  const te = realNow();
+  bench3D.hexMs = td - th;
+  bench3D.drawMs = te - td;
   drawOverlay();
 }
 renderFrame.lastFocus = null;
@@ -723,7 +769,14 @@ window.addEventListener('keydown', (e) => {
   else if (k === 'z') toggleOverlay('zone');
   else if (k === 'b') toggleOverlay('bridgeHexes');
   else if (k === 'h') toggleOverlay('hardpoints');
+  else if (k === 'm') setModel3D(!BRIDGE3D_TUNE.enabled);
 });
+
+function setModel3D(on) {
+  BRIDGE3D_TUNE.enabled = !!on;
+  const el = $('model3d');
+  if (el) el.checked = BRIDGE3D_TUNE.enabled;
+}
 
 window.addEventListener('resize', () => {
   W = canvas.width = innerWidth;
@@ -769,7 +822,7 @@ function chooseHull(key) {
   buildScene();
 }
 function markHullButtons() {
-  document.querySelectorAll('#hull-btns button').forEach((b) => {
+  document.querySelectorAll('#hull-btns button, #hull-btns-fleet button').forEach((b) => {
     const h = b.dataset.hull;
     b.classList.toggle('on', h === state.hull || (state.hull === 'all' && h === state.focus));
   });
@@ -858,7 +911,7 @@ function exportText() {
 }
 
 function wireUi() {
-  document.querySelectorAll('#hull-btns button').forEach((b) => b.addEventListener('click', () => chooseHull(b.dataset.hull)));
+  document.querySelectorAll('#hull-btns button, #hull-btns-fleet button').forEach((b) => b.addEventListener('click', () => chooseHull(b.dataset.hull)));
   const av = $('atlas-variant');
   const labels = { rufowy: 'A: kręgosłup rufowy', srodokrecie: 'B: szyja śródokręcia', dziobowy: 'C: nadbudówka dziobowa', rufowy_z_zapasowym: 'A + C zapasowy (kill po obu)' };
   for (const v of Object.keys(bridgeVariants('atlas'))) {
@@ -921,6 +974,16 @@ function wireUi() {
     el.addEventListener('change', () => { state.overlays[el.dataset.ov] = el.checked; saveState(); });
   });
 
+  const m3 = $('model3d');
+  if (m3) {
+    m3.checked = BRIDGE3D_TUNE.enabled;
+    m3.addEventListener('change', () => setModel3D(m3.checked));
+  }
+  const hw = $('hulkwreck');
+  if (hw) {
+    hw.checked = state.hulkToWreck;
+    hw.addEventListener('change', () => { state.hulkToWreck = hw.checked; });
+  }
   $('fixprobe').checked = state.fixProbe;
   $('fixprobe').addEventListener('change', (e) => { state.fixProbe = e.target.checked; sim.fixHitProbe = state.fixProbe; });
   const pm = $('poolmul');
@@ -1065,7 +1128,9 @@ const api = {
       for (let i = 0; i < need && i < order.length; i++) if (order[i].active) DestructorSystem.destroyShard(t, order[i]);
     });
     st.probeTimer = 0;
-    return this.advance(1 / 60).targets;
+    // Sonda integralności biegnie co integrityEverySubsteps (3) kroki fizyki —
+    // 3/60 s to 6 kroków, więc zwracany stan zawiera już utratę mostka.
+    return this.advance(3 / 60).targets;
   },
   freeze(v = true) { running = !v; return running; },
   // Utrata dowodzenia PRAWDZIWYM ostrzałem (lock na mostek, pociski
@@ -1181,6 +1246,272 @@ const api = {
     cam.zoom = zoom;
     renderFrame.lastFocus = null;
     return true;
+  },
+  // --- Model 3D mostka (src/3d/bridge3D.js) ---------------------------------
+  model3d(on = true) { setModel3D(on); return BRIDGE3D_TUNE.enabled; },
+  bridge3D() {
+    return {
+      stats: { ...Bridge3D.stats, instances: Bridge3D.stats.instances.slice() },
+      records: Bridge3D.records.map((r) => ({
+        kind: r.kind.name, host: r.host?.displayName || (r.host?.isWreck ? 'wrak' : '?'), isWreck: !!r.host?.isWreck,
+        row: r.row, cells: r.cellCount, block: [r.blockW, r.blockH], anyDead: r.anyDead, moved: r.moved,
+        powerLostAt: r.powerLostAt, emitters: r.kind.emit.count
+      }))
+    };
+  },
+  // Ostrzał mostka (lock, pociski natychmiastowe) do zadanej integralności —
+  // „uszkodzony”, ale jeszcze dowodzący. Pula HP wyłączona na czas ostrzału.
+  damageBridge(targetKey = state.focus, { weapon = 'heavy_autocannon', integrity = 0.8, maxShots = 800, index = 0 } = {}) {
+    const t = sim.targets.find((e) => e.hullKey === targetKey);
+    const st = t?.bridgeState;
+    if (!st) return false;
+    const w = resolveWeapon(weapon);
+    const prevPool = sim.poolHitMul;
+    sim.poolHitMul = 0;
+    const mem = { shard: null };
+    const aim = { x: 0, y: 0 };
+    const bridge = st.bridges[index];
+    let n = 0;
+    try {
+      while (n < maxShots && bridge && !bridge.dead && !st.commandLost) {
+        evaluateShipBridges(t, sim.time);
+        if (bridge.integrity <= integrity) break;
+        const p = getBridgeAimPoint(t, aim, { mode: 'breach', fromX: gun.x, fromY: gun.y, memory: mem, bridgeId: bridge.id });
+        if (!p) break;
+        fireInstant(sim, w, { x: gun.x, y: gun.y }, p, null);
+        n++;
+        for (let k = 0; k < 2; k++) physicsStep(PHYS_DT);
+        clock.virtual += 1000 / 60;
+        stepVisuals(sim, 1 / 60);
+        if (n % 3 === 0) renderFrame(1 / 60);
+      }
+    } finally {
+      sim.poolHitMul = prevPool;
+    }
+    renderFrame(1 / 60);
+    return { shots: n, integrity: bridge ? +bridge.integrity.toFixed(3) : null, dead: !!bridge?.dead, commandLost: st.commandLost };
+  },
+  // Środek modelu (świat) — działa też po przejściu modelu na wrak.
+  modelCenter(targetKey = state.focus, index = 0) {
+    const t = sim.targets.find((e) => e.hullKey === targetKey);
+    if (!t) return null;
+    const hosts = [t, t.combat?.wreck].filter(Boolean);
+    for (const h of hosts) {
+      const recs = (h.__bridge3D || []).filter((r) => r.bridgeIndex === index);
+      const r = recs[0];
+      if (!r) continue;
+      const out = { x: 0, y: 0 };
+      bridgeGridToWorld(h, r.map.zgx, r.map.zgy, out);
+      return { x: out.x, y: out.y, host: h === t ? 'kadłub' : 'wrak' };
+    }
+    return null;
+  },
+  zoomModel(targetKey = state.focus, zoom = 3, index = 0, offX = 0, offY = 0) {
+    const c = this.modelCenter(targetKey, index);
+    if (!c) return false;
+    cam.x = c.x + offX;
+    cam.y = c.y + offY;
+    cam.zoom = zoom;
+    renderFrame.lastFocus = null;
+    return c;
+  },
+  // Wolna kamera perspektywiczna (tryb free3d gry, np. lot nad Ring City):
+  // widać wysokość modelu. elevDeg — wysokość nad płaszczyzną, azDeg — azymut
+  // w scenie (0 = od dziobu, 90 = od lewej burty).
+  freeCam(targetKey = state.focus, { dist = 160, elevDeg = 35, azDeg = 200, fov = 50, index = 0 } = {}) {
+    const c = this.modelCenter(targetKey, index);
+    if (!c) return false;
+    const target = new THREE.Vector3(c.x, -c.y, 8);
+    const e = elevDeg * DEG;
+    const a = azDeg * DEG;
+    // Kamera (nie Object3D): lookAt kieruje na cel oś −Z, jak patrzy kamera.
+    const o = new THREE.PerspectiveCamera();
+    o.up.set(0, 0, 1);
+    o.position.set(target.x + dist * Math.cos(e) * Math.cos(a), target.y + dist * Math.cos(e) * Math.sin(a), target.z + dist * Math.sin(e));
+    o.lookAt(target);
+    cam.mode = 'free3d';
+    cam.position = o.position.clone();
+    cam.quaternion = o.quaternion.clone();
+    cam.fov = fov;
+    cam.near = 1;
+    cam.far = 400000;
+    cam.x = c.x; cam.y = c.y;
+    cam.zoom = 0.12;
+    renderFrame.lastFocus = null;
+    return true;
+  },
+  orthoCam() {
+    delete cam.mode;
+    delete cam.position;
+    delete cam.quaternion;
+    return true;
+  },
+  // Bitwa 174 okrętów (80 Bellatorów, 80 Iron Skulli, 14 Atlasów): klony
+  // dzielące siatki heksów trzech prototypów (koszt modelu nie zależy od tego,
+  // czy siatki są wspólne — każdy klon ma własne rekordy i wiersze obrażeń).
+  // Mierzy: CPU Bridge3D.update, wywołania rysowania (ortho/FG), czas GPU
+  // klatki (EXT_disjoint_timer_query), z modelem i bez.
+  async bench174({ counts = { battleship: 80, pirate_battleship: 80, atlas: 14 }, views = [0.12, 0.22, 0.6], frames = 90, hulls = true, variants = [] } = {}) {
+    running = false;
+    this.orthoCam();
+    state.hull = 'all';
+    state.focus = 'battleship';
+    buildScene();
+    const protos = {};
+    for (const t of sim.targets) { protos[t.hullKey] = t; t.hideHexVisual = true; }
+    // Kadłuby spoza sceny „wszystkie” (reszta floty z mostkami): prototyp tutaj.
+    const keys = Object.keys(counts).filter((k) => (counts[k] || 0) > 0 && HULLS[k]);
+    for (const key of keys) {
+      if (protos[key]) continue;
+      const img = hullImages[key];
+      const p = buildHullEntity(key, { renderImage: img.canvas, visualImage: img.img, x: 0, y: 0, angle: 0 });
+      attachBridgesFor(p);
+      p.hideHexVisual = true;
+      protos[key] = p;
+    }
+    const clones = [];
+    // Blok rzędów na typ; rozstaw z rozmiaru renderu kadłuba, flota ~12,4 tys. j. szeroka.
+    let y0 = -3300;
+    for (const key of keys) {
+      const n = counts[key] || 0;
+      const p = protos[key];
+      const size = hullRenderSize(key);
+      const sx = Math.max(260, size.w * 1.25);
+      const sy = Math.max(200, size.h * 1.25);
+      const perRow = Math.max(1, Math.floor(12400 / sx));
+      let row = 0;
+      let col = 0;
+      for (let i = 0; i < n; i++) {
+        const c = Object.assign({}, p);
+        c.id = `${p.id}_k${i}`;
+        c.visual = { ...p.visual, mainThrusters: [], torqueThrusters: [] };
+        c.editorLights = null;
+        c.__bridge3D = undefined;
+        c.__bridge3DState = undefined;
+        c.__bridge3DFull = undefined;
+        c.hideHexVisual = !hulls;
+        c.x = -6200 + col * sx + sx * 0.5;
+        c.y = y0 + row * sy;
+        c.angle = ((i * 37) % 360) * DEG * 0.05;
+        c.vx = 0; c.vy = 0; c.angVel = 0;
+        clones.push(c);
+        if (++col >= perRow) { col = 0; row++; }
+      }
+      y0 += (row + (col > 0 ? 1 : 0)) * sy + 200;
+    }
+    sim.entities.length = 0;
+    for (const c of clones) sim.entities.push(c);
+    const out = { ships: clones.length, records: 0, views: [] };
+    const pause = () => new Promise((r) => setTimeout(r, 4));
+    const measure = async (on) => {
+      setModel3D(on);
+      const acc = { update: [], frame: [], draw: [], hex: [], gpu: [], ortho: 0, fg: 0, emitters: 0, visible: 0 };
+      let lastGpu = -1;
+      for (let f = 0; f < frames; f++) {
+        clock.virtual += 1000 / 60;
+        sim.time += 1 / 60;
+        const t0 = realNow();
+        renderFrame(1 / 60);
+        const ft = realNow() - t0;
+        // Oddaj wątek: zapytania timera GPU muszą się zakończyć (Core3D._gpuTimerPoll).
+        await pause();
+        if (f < 12) continue;
+        acc.frame.push(ft);
+        acc.update.push(bench3D.lastUpdateMs);
+        acc.draw.push(bench3D.drawMs);
+        acc.hex.push(bench3D.hexMs);
+        const g = Number(Core3D.gpuFrameMs);
+        if (Number.isFinite(g) && g > 0 && g !== lastGpu) { acc.gpu.push(g); lastGpu = g; }
+        const info = Core3D.lastFrameRenderInfo || {};
+        acc.ortho = info.ortho?.calls ?? null;
+        acc.fg = info.fg?.calls ?? null;
+        acc.emitters = Bridge3D.stats.emitters;
+        acc.visible = Bridge3D.stats.visible;
+      }
+      const med = (a) => { const b = a.slice().sort((x, y) => x - y); return b.length ? +b[Math.floor(b.length / 2)].toFixed(3) : null; };
+      const p90 = (a) => { const b = a.slice().sort((x, y) => x - y); return b.length ? +b[Math.floor(b.length * 0.9)].toFixed(3) : null; };
+      return { updateMs: med(acc.update), updateP90: p90(acc.update), frameMs: med(acc.frame), drawMs: med(acc.draw), hexMs: med(acc.hex), gpuMs: med(acc.gpu), gpuSamples: acc.gpu.length, orthoCalls: acc.ortho, fgCalls: acc.fg, instances: acc.visible, emitters: acc.emitters, drawCalls: on ? Bridge3D.stats.drawCalls : 0 };
+    };
+    // Koszt podpięcia: pierwsza klatka tworzy rekordy wszystkich okrętów naraz.
+    setModel3D(true);
+    cam.x = 0; cam.y = -1200; cam.zoom = views[0];
+    renderFrame(1 / 60);
+    out.adoptMs = +bench3D.lastUpdateMs.toFixed(3);
+    out.adoptRecords = Bridge3D.stats.records;
+    try {
+      for (const z of views) {
+        cam.x = 0; cam.y = -1200; cam.zoom = z;
+        renderFrame.lastFocus = null;
+        // Na zmianę, żeby dryf zegarów/temperatury nie faworyzował żadnej strony.
+        const on = await measure(true);
+        const off = await measure(false);
+        const on2 = await measure(true);
+        const off2 = await measure(false);
+        const avg = (a, b) => { const o = {}; for (const k of Object.keys(a)) o[k] = typeof a[k] === 'number' && typeof b[k] === 'number' ? +((a[k] + b[k]) / 2).toFixed(3) : a[k]; return o; };
+        const row = { zoom: z, on: avg(on, on2), off: avg(off, off2), variants: {} };
+        // Warianty diagnostyczne (np. bez brył / bez cienia) w tej samej scenie.
+        for (const v of variants) {
+          const keep = {};
+          for (const k of Object.keys(v.tune)) { keep[k] = BRIDGE3D_TUNE[k]; BRIDGE3D_TUNE[k] = v.tune[k]; }
+          const a = await measure(true);
+          const b = await measure(false);
+          for (const k of Object.keys(keep)) BRIDGE3D_TUNE[k] = keep[k];
+          row.variants[v.label] = { on: a, off: b };
+        }
+        out.views.push(row);
+      }
+      out.records = Bridge3D.stats.records;
+      setModel3D(true);
+      cam.x = 0; cam.y = -1200; cam.zoom = views[0];
+      renderFrame(1 / 60);
+    } finally {
+      running = true;
+    }
+    return out;
+  },
+  // Pasma HDR okien modelu: kadr z emiterami i bez (różnica pikseli), bez bloomu.
+  measureWindows3D(rect = null) {
+    const r = rect || { x: W * 0.25, y: H * 0.25, w: W * 0.5, h: H * 0.5 };
+    const readLum = () => {
+      renderFrame(0);
+      const rt = Core3D.postTarget;
+      const pr = Core3D.pixelRatio || 1;
+      const x = Math.max(0, Math.floor(r.x * pr));
+      const w = Math.max(1, Math.min(rt.width - x, Math.floor(r.w * pr)));
+      const h = Math.max(1, Math.floor(r.h * pr));
+      const y = Math.max(0, rt.height - Math.floor(r.y * pr) - h);
+      const buf = new Uint16Array(w * h * 4);
+      Core3D.renderer.readRenderTargetPixels(rt, x, y, w, h, buf);
+      const lum = new Float32Array(w * h);
+      for (let i = 0, j = 0; i < buf.length; i += 4, j++) {
+        lum[j] = 0.2126 * THREE.DataUtils.fromHalfFloat(buf[i]) + 0.7152 * THREE.DataUtils.fromHalfFloat(buf[i + 1]) + 0.0722 * THREE.DataUtils.fromHalfFloat(buf[i + 2]);
+      }
+      return lum;
+    };
+    const prevBloom = Core3D.perfToggles.bloom !== false;
+    Core3D.setPerfToggles({ bloom: false });
+    const T = BRIDGE3D_TUNE;
+    const keep = [T.winCoreGain, T.winHaloGain, T.beaconCoreGain, T.beaconHaloGain, T.accentCoreGain, T.accentHaloGain];
+    const on = readLum();
+    T.winCoreGain = T.winHaloGain = T.beaconCoreGain = T.beaconHaloGain = T.accentCoreGain = T.accentHaloGain = 0;
+    const off = readLum();
+    [T.winCoreGain, T.winHaloGain, T.beaconCoreGain, T.beaconHaloGain, T.accentCoreGain, T.accentHaloGain] = keep;
+    Core3D.setPerfToggles({ bloom: prevBloom });
+    renderFrame(0);
+    const lit = [];
+    let over = 0; let max = 0; let hullOver = 0; let offMax = 0;
+    for (let i = 0; i < on.length; i++) {
+      if (off[i] > 0.9) hullOver++;
+      if (off[i] > offMax) offMax = off[i];
+      if (on[i] - off[i] <= 0.02) continue;
+      lit.push(on[i]);
+      if (on[i] > 0.9) over++;
+      if (on[i] > max) max = on[i];
+    }
+    lit.sort((a, b) => a - b);
+    const pct = (p) => lit[Math.min(lit.length - 1, Math.floor(lit.length * p))] || 0;
+    return { rect: r, pixels: on.length, windowPixels: lit.length, windowPixelsOver09: over, maxWithWindows: max,
+      p50: pct(0.5), p90: pct(0.9), p99: pct(0.99), surfacePixelsOver09: hullOver, surfaceMax: offMax };
   },
   renderFrames(n = 1) {
     for (let i = 0; i < n; i++) renderFrame(0);

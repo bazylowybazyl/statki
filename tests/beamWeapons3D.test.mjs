@@ -30,7 +30,7 @@ test('swept collision finds the nearest rotated body, ignores the shooter and do
   assert.equal(traceBeamShot(D, [near], owner, 0, 12, 0, 1, 0, 0, 80, hit), false);
   near.quat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 4); near._rotTick = -1;
   assert.equal(traceBeamShot(D, [near], owner, 0, 0, 0, 1, 0, 0, 80, hit), true);
-  const n = hit.node;
+  const n = near.nodes[hit.nodeIndex];
   const expected = new THREE.Vector3(n.x, n.y, n.z).applyQuaternion(near.quat).add(near.pos);
   assert.ok(expected.distanceTo(new THREE.Vector3(hit.cx, hit.cy, hit.cz)) < 1e-8);
 });

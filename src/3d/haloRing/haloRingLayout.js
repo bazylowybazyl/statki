@@ -471,8 +471,8 @@ export function createHaloRingLayout(options = {}) {
   });
 }
 
-// Getter obwiedni zgodny z polami computePlanetaryRingLayout — do podmiany
-// przy porcie (strefy orbit, spawn, CIC, testy scaleTuning liczą się z tego).
+// Obwiednia ringu planety (pola jak dawne computePlanetaryRingLayout): strefy
+// orbit, spawn, CIC, radar HUD, pas cienia na planecie i testy scaleTuning.
 export function computeHaloRingLayout(planetOrRadius) {
   return computeHaloEnvelope(resolveRingPlanetWorldRadius(planetOrRadius));
 }

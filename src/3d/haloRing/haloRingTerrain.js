@@ -316,7 +316,8 @@ void main() {
 
   float desert = smoothstep(0.32, 0.14, moist) * smoothstep(0.55, 0.8, temp);
   vec3 ground = mix(grass, sandCol, desert);
-  float fEdge = forest + var1.b * 0.22 + (var2.r - 0.3) * 0.25;
+  // (w parku bez podlogi lasu 0.08 = pojedyncze drzewa 3D na trawniku)
+  float fEdge = forest - 0.08 * Bw.r + var1.b * 0.22 + (var2.r - 0.3) * 0.25;
   float fMask = smoothstep(0.42, 0.56, fEdge) * (1.0 - desert) * (1.0 - smoothstep(0.3, 0.5, slopeMat));
   ground = mix(ground, forestCol, fMask);
   // pojedyncze drzewa i kępy na łąkach (komórki ~13 j.), z daleka średnia
@@ -334,6 +335,63 @@ void main() {
   float snow = smoothstep(snowLine - 40.0, snowLine + 60.0, h + varA * 60.0 + (var2.b) * 18.0) * (1.0 - smoothstep(0.22, 0.42, slopeMat + d1c.a * 0.18 + var1.b * 0.06));
   snow = max(snow, smoothstep(0.14, 0.04, temp) * (1.0 - water) * (1.0 - smoothstep(0.4, 0.65, slopeMat)));
   ground = mix(ground, snowCol, snow);
+
+  // ---- parki (megabudowle, kopuly; kanal R mapy B): trawnik strzyzony,
+  // zwirowe sciezki - siatka zakrzywiona lagodnym szumem (jak strefa PARK
+  // w orbital_ring_demo_2), w czesci komorek sciezka na skos albo kwietnik
+  // z obwodka zywoplotu, korony pojedynczych drzew z daleka; noca latarnie
+  // na czesci skrzyzowan. Komorka ~140 x 104 j. zakotwiczona w swiecie (wzor 0)
+  float parkW = Bw.r * (1.0 - water) * (1.0 - snow);
+  float parkLamp = 0.0;
+  if (parkW > 0.01) {
+    vec2 cellU = vec2(uPatT[0], 104.0);
+    // zakrzywienie z niskich oktaw szumu (mip 4 kafla 3300 j.: luki ~200-400 j.,
+    // bez drobnych zmarszczek, ktore daja wzor pekniec)
+    vec2 wuv = vec2(sRel / uVarN.x + uVarOff.x, t / uVarN.x);
+    vec2 wp = vec2(textureLod(uDetail2, wuv, 4.0).b, textureLod(uDetail2, wuv + vec2(0.37, 0.61), 4.0).b);
+    float pS = sRel / uPatT[0] + uPatF[0] + wp.x * 0.9;
+    float pT = t / 104.0 + wp.y * 0.8;
+    vec2 pf = vec2(fract(pS), fract(pT));
+    vec2 pid = vec2(haloWrapI(floor(pS) + uPatI[0], uPatN[0]), floor(pT));
+    float fwu = max(fwidth(pS) * cellU.x, fwidth(pT) * cellU.y);
+    vec2 ed = min(pf, 1.0 - pf) * cellU;
+    float pathK = 1.0 - smoothstep(1.6, 1.6 + fwu, min(ed.x, ed.y));
+    vec2 dq = (pf - 0.5) * cellU;
+    float hd = haloHash12(pid + 17.0);
+    float sgn = hd > 0.82 ? -1.0 : 1.0;
+    float diag = abs(dq.x * cellU.y - sgn * dq.y * cellU.x) / length(cellU);
+    pathK = max(pathK, (1.0 - smoothstep(1.2, 1.2 + fwu, diag)) * step(0.64, hd));
+    // kwietnik (co ~4. komorka bez skosu): kolo albo elipsa wzdluz, obwodka zywoplotu
+    float hb = haloHash12(pid + 5.0);
+    vec2 bq = dq / vec2(hb > 0.86 ? 1.6 : 1.0, 1.0);
+    float bedR = 6.0 + 4.0 * fract(hb * 7.3);
+    float bl = length(bq);
+    float bed = (1.0 - smoothstep(bedR - fwu, bedR + fwu, bl)) * step(0.72, hb) * (1.0 - step(0.64, hd));
+    float hedge = smoothstep(bedR - 2.2 - fwu, bedR - 1.2, bl);
+    float hc = fract(hb * 13.1);
+    vec3 bedCol = hc < 0.4 ? vec3(0.20, 0.045, 0.035) : (hc < 0.6 ? vec3(0.22, 0.17, 0.035) : (hc < 0.8 ? vec3(0.11, 0.05, 0.15) : vec3(0.24, 0.24, 0.22)));
+    // pasy koszenia z bliska (wzor 2: ~7 j. zakotwiczony w swiecie)
+    float mowFar = 1.0 - smoothstep(0.3, 1.0, fwidth(sRel) / uPatT[2]);
+    float mow = (step(0.5, haloPat(2, sRel).y) - 0.5) * 0.1 * mowFar;
+    vec3 lawnC = mix(grass, vec3(0.050, 0.118, 0.030), 0.45) * (1.0 + mow);
+    bedCol = mix(mix(bedCol, lawnC, 0.3), vec3(0.018, 0.045, 0.014), hedge);
+    vec3 pathC = vec3(0.17, 0.16, 0.135) * (0.9 + 0.2 * var2.g);
+    vec3 parkCol = mix(lawnC, bedCol, bed);
+    // z daleka (sciezka < ~1 px) srednia pokrycia zamiast migotania
+    float pathFar = 1.0 - smoothstep(0.5, 1.0, fwu / 6.0);
+    parkCol = mix(parkCol, pathC, mix(0.05, pathK, pathFar));
+    // korony pojedynczych drzew (jak na lakach, gestosc z lasu parku): z daleka,
+    // gdzie siatka drzew 3D juz nie siega, park nie jest golym trawnikiem
+    float pDens = forest * 0.9;
+    float pCan = smoothstep(0.3, 0.12, treeTex.r) * step(treeTex.g, pDens * 1.6);
+    pCan = mix(pCan, pDens * 0.35, treeFar);
+    parkCol = mix(parkCol, forestCol * (1.3 + 0.8 * treeTex.g), pCan);
+    // pod koronami kep drzew zostaje las
+    ground = mix(ground, parkCol, parkW * (1.0 - fMask * 0.85));
+    float lampD = length(min(pf, 1.0 - pf) * cellU);
+    float lampOn = step(0.45, haloHash12(vec2(haloWrapI(floor(pS + 0.5) + uPatI[0], uPatN[0]), floor(pT + 0.5)) + 23.0));
+    parkLamp = exp(-lampD * lampD / 18.0) * lampOn * pathFar * parkW * (1.0 - fMask);
+  }
 
   // ---- zabudowa z mapy (daleki LOD miasta): kwartaly, ulice, dachy, parki
   vec3 emit = vec3(0.0);
@@ -414,7 +472,7 @@ void main() {
     blockCol = ic;
   }
   vec3 cityCol = mix(blockCol, vec3(0.048, 0.050, 0.054), street);
-  float farCity = smoothstep(0.22, 0.6, max(fw.x, fw.y));
+  float farCity = smoothstep(0.22, 0.6, max(fw.x, fw.y) / uDetailScale);
   vec3 cityAvg = mix(vec3(0.105, 0.108, 0.11), vec3(0.11, 0.105, 0.095), typeInd);
   cityAvg = mix(cityAvg, grass, 0.25 * (1.0 - typeInd));
   cityCol = mix(cityCol, cityAvg, farCity);
@@ -525,7 +583,7 @@ void main() {
   vec2 wp = haloPat(2, sRel);
   float wt = t / 7.0;
   float win = step(0.62, haloHash12(vec2(wp.x, floor(wt)) + 0.37)) * (1.0 - park);
-  float winAA = smoothstep(0.35, 0.9, fwidth(sRel) / uPatT[2]);
+  float winAA = smoothstep(0.35, 0.9, fwidth(sRel) / (uPatT[2] * uDetailScale));
   // kwartaly roznia sie jasnoscia (nieliczne jasne centra, reszta przygaszona),
   // parki ciemne - z daleka miasto to siec ulic i plam, nie jednolita tafla
   float blockB = 0.3 + 0.7 * haloHash12(bid * 3.1 + 5.0);
@@ -536,6 +594,8 @@ void main() {
   float artery = 1.0 - aaStep(0.018, abs(fract(bid.y * 0.3334 + bf.y * 0.3334 + 0.02) - 0.5), fw.y * 0.34);
   vec3 cityLight = lampCol * (lotDensity * (1.0 - street) * 0.32 + street * 0.2 + artery * 0.12);
   emit += cityLight * cityMask * on * uLayers.y * uNightLights;
+  // latarnie parku (stale, nie ruch): cieple punkty na skrzyzowaniach sciezek
+  emit += warm * parkLamp * 0.9 * smoothstep(0.35, 0.7, dark) * (1.0 - 0.9 * dayG) * uLayers.y * uNightLights;
   color += emit;
 
   color = haloApplyAir(color, rel, haloIGN(gl_FragCoord.xy));

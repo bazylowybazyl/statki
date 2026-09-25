@@ -357,6 +357,10 @@ export function createReactorBlowFactory(scene) {
     const fireParticleSystem = new GPUInstancedParticleManager(scene, 100000, THREE.AdditiveBlending);
     const smokeParticleSystem = new GPUParticleManager(scene, 15000, THREE.NormalBlending);
 
+    // Fala z refrakcją (shockwave3D, Shockwave3DManager w core3d.js) i jej zapas
+    // heatHaze zdjęte ze wszystkich wybuchów (2026-09-24): refrakcja zostaje
+    // wyłącznie dla rakiet supernova (rocketSystem3D). Pola zostają, żeby profil
+    // z falą dało się jeszcze kiedyś zbudować bez zmian w kodzie spawnu.
     const PROFILE_CONFIGS = Object.freeze({
         fighter: Object.freeze({
             chargeTime: 0.05,
@@ -417,18 +421,8 @@ export function createReactorBlowFactory(scene) {
             sparkSizeMaxMul: 0.14,
             sparkLifeMin: 0.8,
             sparkLifeMax: 1.9,
-            shockwave3D: Object.freeze({
-                scaleMul: 5.0,
-                minScale: 70,
-                life: 0.7,
-                color: 0x33ccff,
-            }),
-            heatHaze: Object.freeze({
-                duration: 1.0,
-                startScaleMul: 1.6,
-                growthMul: 16.0,
-                strength: 3.2,
-            }),
+            shockwave3D: null,
+            heatHaze: null,
         }),
         cruiser: Object.freeze({
             chargeTime: 0.55,
@@ -455,18 +449,8 @@ export function createReactorBlowFactory(scene) {
             sparkSizeMaxMul: 0.15,
             sparkLifeMin: 1.1,
             sparkLifeMax: 2.8,
-            shockwave3D: Object.freeze({
-                scaleMul: 6.3,
-                minScale: 105,
-                life: 0.9,
-                color: 0x33ccff,
-            }),
-            heatHaze: Object.freeze({
-                duration: 1.5,
-                startScaleMul: 1.8,
-                growthMul: 20.0,
-                strength: 4.5,
-            }),
+            shockwave3D: null,
+            heatHaze: null,
         }),
         chain: STATION_CHAIN_REACTOR_PROFILE,
         cut: STATION_CUT_REACTOR_PROFILE,
@@ -495,18 +479,8 @@ export function createReactorBlowFactory(scene) {
             sparkSizeMaxMul: 0.16,
             sparkLifeMin: 1.5,
             sparkLifeMax: 4.0,
-            shockwave3D: Object.freeze({
-                scaleMul: 7.5,
-                minScale: 140,
-                life: 1.1,
-                color: 0x33ccff,
-            }),
-            heatHaze: Object.freeze({
-                duration: 2.0,
-                startScaleMul: 2.0,
-                growthMul: 25.0,
-                strength: 6.0,
-            }),
+            shockwave3D: null,
+            heatHaze: null,
         }),
         final: STATION_FINAL_REACTOR_PROFILE,
     });

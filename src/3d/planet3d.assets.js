@@ -6,7 +6,8 @@ import {
     pickStarParallaxLayer
 } from './starParallax.js';
 import { resolveRingPlanetWorldRadius } from './ringScale.js';
-import { computePlanetaryRingLayout } from './planetaryRing3D.js';
+import { computeHaloRingLayout } from './haloRing/haloRingLayout.js';
+import { SUN_SHADOW_GLSL, attachSunShadowUniforms, applySunShadowToBuiltinMaterial } from './sunShadowMask.js';
 
 window.Dev = window.Dev || {};
 const PLANET_SIZE_MULTIPLIER = 4.5;
@@ -52,7 +53,8 @@ const SATURN_VISUAL_RING = Object.freeze({
 const STAR_PLANET_MASK_CAP = 12;
 
 const NEBULA_VERTEX = `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
-const NEBULA_FRAGMENT = `uniform sampler2D map; uniform float warpFactor; varying vec2 vUv; void main() { vec4 texColor = texture2D(map, vUv); vec3 color = texColor.rgb; float boost = 1.0 + warpFactor * 0.8; gl_FragColor = vec4(color * boost, 1.0); }`;
+// Tło dostaje długą smugę cienia z maski Core3D (sunShaftBackdrop, sunShadowMask.js).
+const NEBULA_FRAGMENT = `uniform sampler2D map; uniform float warpFactor; varying vec2 vUv; ${SUN_SHADOW_GLSL} void main() { vec4 texColor = texture2D(map, vUv); vec3 color = texColor.rgb; float boost = 1.0 + warpFactor * 0.8; gl_FragColor = vec4(sunShaftBackdrop(color * boost), 1.0); }`;
 const STARS_VERTEX = `
 uniform vec2 cameraOffset;
 uniform float containerSize;
@@ -131,6 +133,7 @@ varying float vStretch;
 varying float vScreenSize;
 varying float vPlanetMask;
 varying float vExitWhip;
+${SUN_SHADOW_GLSL}
 void main() {
     vec2 rawUV = gl_PointCoord - 0.5;
     float distFromCenter = length(rawUV);
@@ -160,6 +163,7 @@ void main() {
     vec3 finalColor = mix(vColor, vec3(0.7, 0.85, 1.0), clamp(vWarp * 0.75, 0.0, 1.0));
     finalColor = mix(finalColor, vec3(0.88, 0.94, 1.0), clamp(vExitWhip * 0.65, 0.0, 1.0));
     float whipFlash = 1.0 + vExitWhip * 1.25;
+    finalColor = sunShaftBackdrop(finalColor);
     gl_FragColor = vec4(finalColor * twinkle * whipFlash, tex.a * vBrightness * globalBrightness * mask * trailFade * whipFlash);
 }`;
 
@@ -246,25 +250,28 @@ void main() {
 }
 `;
 
-const EARTH_VERTEX = `precision highp float; varying vec2 vUv; varying vec3 vNormal; varying vec3 vWorldPosition; varying vec3 vViewPosition; void main() { vUv = uv; vNormal = normalize(normalMatrix * normal); vec4 worldPosition = modelMatrix * vec4(position, 1.0); vWorldPosition = worldPosition.xyz; vec4 mvPosition = viewMatrix * worldPosition; vViewPosition = -mvPosition.xyz; gl_Position = projectionMatrix * viewMatrix * worldPosition; }`;
-const EARTH_FRAGMENT = `precision highp float; uniform float uPlanetBloom; uniform sampler2D dayTexture; uniform sampler2D nightTexture; uniform sampler2D specularTexture; uniform sampler2D normalTexture; uniform vec3 sunPosition; uniform vec3 sunsetTint; uniform float hasNightTexture; uniform float uBrightness; uniform float uAmbient; uniform float uSpecular; uniform float uSunWrap; uniform float uSunIntensity; uniform float uHazeStrength; uniform vec3 uHazeColor; uniform vec3 uHazeBeta; uniform float uRingShadowStrength; uniform float uRingShadowRadius; uniform float uRingShadowReach; uniform vec2 uRingShadowCenter; varying vec2 vUv; varying vec3 vNormal; varying vec3 vWorldPosition; varying vec3 vViewPosition; float hash12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); } void main() { vec3 viewDir = normalize(vViewPosition); vec3 sunViewPosition = (viewMatrix * vec4(sunPosition, 1.0)).xyz; vec3 lightDir = normalize(sunViewPosition + vViewPosition); vec3 halfVector = normalize(lightDir + viewDir); vec3 normal = normalize(vNormal); if (hasNightTexture > 0.5) { vec3 mapN = texture2D(normalTexture, vUv).xyz * 2.0 - 1.0; mapN.xy *= 0.8; vec3 q0 = dFdx(-vViewPosition.xyz); vec3 q1 = dFdy(-vViewPosition.xyz); vec2 st0 = dFdx(vUv.st); vec2 st1 = dFdy(vUv.st); vec3 S = normalize(q0 * st1.t - q1 * st0.t); vec3 T = normalize(-q0 * st1.s + q1 * st0.s); vec3 N = normalize(vNormal); mat3 tsn = mat3(S, T, N); normal = normalize(tsn * mapN); } float NdotL = dot(normal, lightDir); float sunL = max(0.0, NdotL); float dayLight = clamp(uAmbient + sunL * uSunIntensity, 0.0, 1.2); vec4 dayColor = texture2D(dayTexture, vUv); vec4 nightColor = texture2D(nightTexture, vUv); float specularMask = texture2D(specularTexture, vUv).r; float specular = 0.0; if (sunL > 0.0) { float waterMask = smoothstep(0.08, 0.82, specularMask); float NdotH = max(0.0, dot(normal, halfVector)); float shininess = mix(16.0, 42.0, waterMask); specular = pow(NdotH, shininess) * waterMask * uSpecular * sunL; } float terminatorCenter = -0.02 - uSunWrap * 0.45; float terminatorSoft = 0.26 + abs(uSunWrap) * 0.35; float mixFactor = smoothstep(terminatorCenter - terminatorSoft, terminatorCenter + terminatorSoft, NdotL); vec3 finalColor; if (hasNightTexture > 0.5) { vec3 daySide = dayColor.rgb * uBrightness * dayLight; daySide += vec3(0.55, 0.62, 0.78) * specular; float nightMask = 1.0 - mixFactor; vec3 nightBase = nightColor.rgb; float cityBrightness = dot(nightBase, vec3(0.299, 0.587, 0.114)); vec3 cityGlow = nightBase * pow(cityBrightness, 2.0) * 5.0; vec3 nightSide = (nightBase * 0.55 + cityGlow) * nightMask; finalColor = mix(nightSide, daySide, mixFactor); } else { float twilight = smoothstep(terminatorCenter - (terminatorSoft + 0.06), terminatorCenter + terminatorSoft, NdotL); float minNightLight = max(0.006, uAmbient * 0.35); float lit = mix(minNightLight, dayLight, twilight); float nightBand = 1.0 - smoothstep(-0.35, 0.08, NdotL); vec3 nightTint = vec3(0.02, 0.03, 0.05) * nightBand; finalColor = dayColor.rgb * uBrightness * lit + nightTint; } float sunsetBand = smoothstep(-0.30, -0.02, NdotL) * (1.0 - smoothstep(-0.02, 0.20, NdotL)); finalColor = mix(finalColor, finalColor * sunsetTint, sunsetBand * 0.45); if (uHazeStrength > 0.0005) { vec3 geoN = normalize(vNormal); float mu = clamp(dot(geoN, viewDir), 0.0, 1.0); float airmass = uHazeStrength / (mu * 0.95 + 0.05); vec3 extinction = exp(-airmass * uHazeBeta); float geoNdotL = dot(geoN, lightDir); float dayHaze = smoothstep(-0.02, 0.30, geoNdotL); vec3 hazeCol = uHazeColor * dayHaze + sunsetTint * 0.9 * sunsetBand * 0.6; finalColor = finalColor * extinction + hazeCol * (1.0 - extinction); } float dither = (hash12(gl_FragCoord.xy) - 0.5) / 1024.0; float ditherMask = mixFactor * (1.0 - mixFactor) * 4.0; finalColor += dither * ditherMask; finalColor = max(finalColor, vec3(0.0)); if (uRingShadowStrength > 0.0005 && uRingShadowRadius > 1.0) { vec2 rsP = vWorldPosition.xy - uRingShadowCenter; vec2 rsSun = sunPosition.xy - vWorldPosition.xy; float rsLen = length(rsSun); if (rsLen > 1.0) { vec2 rsD = rsSun / rsLen; float rsB = dot(rsP, rsD); float rsC = dot(rsP, rsP) - uRingShadowRadius * uRingShadowRadius; float rsDisc = rsB * rsB - rsC; if (rsC < 0.0 && rsDisc > 0.0) { float rsT = -rsB + sqrt(rsDisc); float rsShade = (1.0 - smoothstep(0.0, max(1.0, uRingShadowReach), rsT)) * uRingShadowStrength * mixFactor; finalColor *= 1.0 - clamp(rsShade, 0.0, 0.95); } } } float luminance = dot(finalColor, vec3(0.299, 0.587, 0.114)); float bloomPush = smoothstep(0.85, 1.0, luminance) * uPlanetBloom; finalColor += finalColor * bloomPush; gl_FragColor = vec4(finalColor, 1.0); }`;
-const CLOUD_VERTEX = `varying vec2 vUv; varying vec3 vNormal; varying vec3 vWorldPosition; void main() { vUv = uv; vec4 worldPosition = modelMatrix * vec4(position, 1.0); vNormal = normalize(mat3(modelMatrix) * normal); vWorldPosition = worldPosition.xyz; gl_Position = projectionMatrix * viewMatrix * worldPosition; }`;
-const CLOUD_FRAGMENT = `precision highp float; uniform sampler2D cloudTexture; uniform vec3 sunPosition; uniform float uOpacity; uniform float uHazeStrength; uniform vec3 uHazeColor; uniform vec3 uHazeBeta; uniform float uRingShadowStrength; uniform float uRingShadowRadius; uniform float uRingShadowReach; uniform vec2 uRingShadowCenter; varying vec2 vUv; varying vec3 vNormal; varying vec3 vWorldPosition; void main() { vec4 texel = texture2D(cloudTexture, vUv); float mask = dot(texel.rgb, vec3(0.299, 0.587, 0.114)); if (mask < 0.03) discard; vec3 normal = normalize(vNormal); vec3 lightDir = normalize(sunPosition - vWorldPosition); float lit = smoothstep(-0.02, 0.22, dot(normal, lightDir)); float alpha = mask * uOpacity * pow(lit, 1.35); if (alpha < 0.01) discard; vec3 color = vec3(1.0) * (0.08 + 0.92 * lit); if (uHazeStrength > 0.0005) { vec3 viewDirW = normalize(cameraPosition - vWorldPosition); float mu = clamp(dot(normal, viewDirW), 0.0, 1.0); float airmass = uHazeStrength / (mu * 0.95 + 0.05); vec3 extinction = exp(-airmass * uHazeBeta); float hazeDay = smoothstep(-0.02, 0.30, dot(normal, lightDir)); color = color * extinction + uHazeColor * hazeDay * (1.0 - extinction); } if (uRingShadowStrength > 0.0005 && uRingShadowRadius > 1.0) { vec2 rsP = vWorldPosition.xy - uRingShadowCenter; vec2 rsSun = sunPosition.xy - vWorldPosition.xy; float rsLen = length(rsSun); if (rsLen > 1.0) { vec2 rsD = rsSun / rsLen; float rsB = dot(rsP, rsD); float rsC = dot(rsP, rsP) - uRingShadowRadius * uRingShadowRadius; float rsDisc = rsB * rsB - rsC; if (rsC < 0.0 && rsDisc > 0.0) { float rsT = -rsB + sqrt(rsDisc); float rsShade = (1.0 - smoothstep(0.0, max(1.0, uRingShadowReach), rsT)) * uRingShadowStrength * lit; color *= 1.0 - clamp(rsShade, 0.0, 0.95); } } } gl_FragColor = vec4(color, alpha); }`;
+const EARTH_VERTEX = `precision highp float; varying vec2 vUv; varying vec3 vNormal; varying vec3 vWorldPosition; varying vec3 vViewPosition; void main() { vUv = uv; vNormal = normalize(normalMatrix * normal); vec4 worldPosition = modelMatrix * vec4(position, 1.0); vWorldPosition = worldPosition.xyz; vec4 mvPosition = modelViewMatrix * vec4(position, 1.0); vViewPosition = -mvPosition.xyz; gl_Position = projectionMatrix * mvPosition; }`; // Pozycja z modelViewMatrix (three składa ją w double), nie viewMatrix * (modelMatrix * p): Ziemia i Mars leżą w passie ortho przy 5–10 mln j., gdzie świat we float32 drgał ~1 px × zoom względem pierścienia. vWorldPosition zostaje tylko do światła.
+const EARTH_FRAGMENT = `precision highp float; uniform float uPlanetBloom; uniform sampler2D dayTexture; uniform sampler2D nightTexture; uniform sampler2D specularTexture; uniform sampler2D normalTexture; uniform vec3 sunPosition; uniform vec3 sunsetTint; uniform float hasNightTexture; uniform float uBrightness; uniform float uAmbient; uniform float uSpecular; uniform float uSunWrap; uniform float uSunIntensity; uniform float uHazeStrength; uniform vec3 uHazeColor; uniform vec3 uHazeBeta; uniform float uRingShadowStrength; uniform float uRingShadowRadius; uniform float uRingShadowReach; uniform vec2 uRingShadowCenter; varying vec2 vUv; varying vec3 vNormal; varying vec3 vWorldPosition; varying vec3 vViewPosition; uniform float uSunShadowRecv; ${SUN_SHADOW_GLSL} float hash12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); } void main() { vec3 viewDir = normalize(vViewPosition); vec3 sunViewPosition = (viewMatrix * vec4(sunPosition, 1.0)).xyz; vec3 lightDir = normalize(sunViewPosition + vViewPosition); vec3 halfVector = normalize(lightDir + viewDir); vec3 normal = normalize(vNormal); if (hasNightTexture > 0.5) { vec3 mapN = texture2D(normalTexture, vUv).xyz * 2.0 - 1.0; mapN.xy *= 0.8; vec3 q0 = dFdx(-vViewPosition.xyz); vec3 q1 = dFdy(-vViewPosition.xyz); vec2 st0 = dFdx(vUv.st); vec2 st1 = dFdy(vUv.st); vec3 S = normalize(q0 * st1.t - q1 * st0.t); vec3 T = normalize(-q0 * st1.s + q1 * st0.s); vec3 N = normalize(vNormal); mat3 tsn = mat3(S, T, N); normal = normalize(tsn * mapN); } float NdotL = dot(normal, lightDir); float sunL = max(0.0, NdotL); float dayLight = clamp(uAmbient + sunL * uSunIntensity, 0.0, 1.2); vec4 dayColor = texture2D(dayTexture, vUv); vec4 nightColor = texture2D(nightTexture, vUv); float specularMask = texture2D(specularTexture, vUv).r; float specular = 0.0; if (sunL > 0.0) { float waterMask = smoothstep(0.08, 0.82, specularMask); float NdotH = max(0.0, dot(normal, halfVector)); float shininess = mix(16.0, 42.0, waterMask); specular = pow(NdotH, shininess) * waterMask * uSpecular * sunL; } float terminatorCenter = -0.02 - uSunWrap * 0.45; float terminatorSoft = 0.26 + abs(uSunWrap) * 0.35; float mixFactor = smoothstep(terminatorCenter - terminatorSoft, terminatorCenter + terminatorSoft, NdotL); float sunVisP = mix(1.0, sunVisibility(), uSunShadowRecv); mixFactor *= sunVisP; vec3 finalColor; if (hasNightTexture > 0.5) { vec3 daySide = dayColor.rgb * uBrightness * dayLight; daySide += vec3(0.55, 0.62, 0.78) * specular; float nightMask = 1.0 - mixFactor; vec3 nightBase = nightColor.rgb; float cityBrightness = dot(nightBase, vec3(0.299, 0.587, 0.114)); vec3 cityGlow = nightBase * pow(cityBrightness, 2.0) * 5.0; vec3 nightSide = (nightBase * 0.55 + cityGlow) * nightMask; finalColor = mix(nightSide, daySide, mixFactor); } else { float twilight = smoothstep(terminatorCenter - (terminatorSoft + 0.06), terminatorCenter + terminatorSoft, NdotL) * sunVisP; float minNightLight = max(0.006, uAmbient * 0.35); float lit = mix(minNightLight, dayLight, twilight); float nightBand = 1.0 - smoothstep(-0.35, 0.08, NdotL); vec3 nightTint = vec3(0.02, 0.03, 0.05) * nightBand; finalColor = dayColor.rgb * uBrightness * lit + nightTint; } float sunsetBand = smoothstep(-0.30, -0.02, NdotL) * (1.0 - smoothstep(-0.02, 0.20, NdotL)); finalColor = mix(finalColor, finalColor * sunsetTint, sunsetBand * 0.45); if (uHazeStrength > 0.0005) { vec3 geoN = normalize(vNormal); float mu = clamp(dot(geoN, viewDir), 0.0, 1.0); float airmass = uHazeStrength / (mu * 0.95 + 0.05); vec3 extinction = exp(-airmass * uHazeBeta); float geoNdotL = dot(geoN, lightDir); float dayHaze = smoothstep(-0.02, 0.30, geoNdotL) * sunVisP; vec3 hazeCol = uHazeColor * dayHaze + sunsetTint * 0.9 * sunsetBand * 0.6; finalColor = finalColor * extinction + hazeCol * (1.0 - extinction); } float dither = (hash12(gl_FragCoord.xy) - 0.5) / 1024.0; float ditherMask = mixFactor * (1.0 - mixFactor) * 4.0; finalColor += dither * ditherMask; finalColor = max(finalColor, vec3(0.0)); if (uRingShadowStrength > 0.0005 && uRingShadowRadius > 1.0) { vec2 rsP = vWorldPosition.xy - uRingShadowCenter; vec2 rsSun = sunPosition.xy - vWorldPosition.xy; float rsLen = length(rsSun); if (rsLen > 1.0) { vec2 rsD = rsSun / rsLen; float rsB = dot(rsP, rsD); float rsC = dot(rsP, rsP) - uRingShadowRadius * uRingShadowRadius; float rsDisc = rsB * rsB - rsC; if (rsC < 0.0 && rsDisc > 0.0) { float rsT = -rsB + sqrt(rsDisc); float rsShade = (1.0 - smoothstep(0.0, max(1.0, uRingShadowReach), rsT)) * uRingShadowStrength * mixFactor; finalColor *= 1.0 - clamp(rsShade, 0.0, 0.95); } } } float luminance = dot(finalColor, vec3(0.299, 0.587, 0.114)); float bloomPush = smoothstep(0.85, 1.0, luminance) * uPlanetBloom; finalColor += finalColor * bloomPush; gl_FragColor = vec4(finalColor, 1.0); }`;
+const CLOUD_VERTEX = `varying vec2 vUv; varying vec3 vNormal; varying vec3 vWorldPosition; void main() { vUv = uv; vec4 worldPosition = modelMatrix * vec4(position, 1.0); vNormal = normalize(mat3(modelMatrix) * normal); vWorldPosition = worldPosition.xyz; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
+const CLOUD_FRAGMENT = `precision highp float; uniform sampler2D cloudTexture; uniform vec3 sunPosition; uniform float uOpacity; uniform float uHazeStrength; uniform vec3 uHazeColor; uniform vec3 uHazeBeta; uniform float uRingShadowStrength; uniform float uRingShadowRadius; uniform float uRingShadowReach; uniform vec2 uRingShadowCenter; varying vec2 vUv; varying vec3 vNormal; varying vec3 vWorldPosition; uniform float uSunShadowRecv; ${SUN_SHADOW_GLSL} void main() { vec4 texel = texture2D(cloudTexture, vUv); float mask = dot(texel.rgb, vec3(0.299, 0.587, 0.114)); if (mask < 0.03) discard; vec3 normal = normalize(vNormal); vec3 lightDir = normalize(sunPosition - vWorldPosition); float lit = smoothstep(-0.02, 0.22, dot(normal, lightDir)) * mix(1.0, sunVisibility(), uSunShadowRecv); float alpha = mask * uOpacity * pow(lit, 1.35); if (alpha < 0.01) discard; vec3 color = vec3(1.0) * (0.08 + 0.92 * lit); if (uHazeStrength > 0.0005) { vec3 viewDirW = normalize(cameraPosition - vWorldPosition); float mu = clamp(dot(normal, viewDirW), 0.0, 1.0); float airmass = uHazeStrength / (mu * 0.95 + 0.05); vec3 extinction = exp(-airmass * uHazeBeta); float hazeDay = smoothstep(-0.02, 0.30, dot(normal, lightDir)); color = color * extinction + uHazeColor * hazeDay * (1.0 - extinction); } if (uRingShadowStrength > 0.0005 && uRingShadowRadius > 1.0) { vec2 rsP = vWorldPosition.xy - uRingShadowCenter; vec2 rsSun = sunPosition.xy - vWorldPosition.xy; float rsLen = length(rsSun); if (rsLen > 1.0) { vec2 rsD = rsSun / rsLen; float rsB = dot(rsP, rsD); float rsC = dot(rsP, rsP) - uRingShadowRadius * uRingShadowRadius; float rsDisc = rsB * rsB - rsC; if (rsC < 0.0 && rsDisc > 0.0) { float rsT = -rsB + sqrt(rsDisc); float rsShade = (1.0 - smoothstep(0.0, max(1.0, uRingShadowReach), rsT)) * uRingShadowStrength * lit; color *= 1.0 - clamp(rsShade, 0.0, 0.95); } } } gl_FragColor = vec4(color, alpha); }`;
 const ATMOSPHERE_VERTEX = `varying vec3 vNormalWorld; varying vec3 vWorldPosition; varying float vRimMask; void main() { vNormalWorld = normalize(mat3(modelMatrix) * normal); vec4 worldPos = modelMatrix * vec4(position, 1.0); vWorldPosition = worldPos.xyz; vec3 viewDir = normalize(cameraPosition - worldPos.xyz); float facing = dot(vNormalWorld, viewDir); vRimMask = clamp(-facing - 0.05, 0.0, 1.0); vec4 viewPos = modelViewMatrix * vec4(position, 1.0); gl_Position = projectionMatrix * viewPos; }`;
-const ATMOSPHERE_FRAGMENT = `precision highp float; varying vec3 vNormalWorld; varying vec3 vWorldPosition; varying float vRimMask; uniform vec3 glowColor; uniform vec3 sunsetTint; uniform vec3 sunPosition; uniform float coef; uniform float power; uniform float uSunIntensity; void main() { vec3 normalW = normalize(vNormalWorld); float radialFade = pow(vRimMask, max(0.35, power * 0.18)); radialFade = smoothstep(0.0, 1.0, radialFade); float rim = radialFade * clamp(coef, 0.0, 2.0); vec3 lightDir = normalize(sunPosition - vWorldPosition); float sunDot = dot(normalW, lightDir); float dayFactor = smoothstep(-0.45, 0.25, sunDot); float sunsetFactor = smoothstep(-0.35, -0.05, sunDot) * (1.0 - smoothstep(-0.05, 0.25, sunDot)); vec3 baseColor = mix(glowColor, sunsetTint * 1.5, sunsetFactor * 0.8); float intensity = clamp(rim * (dayFactor + sunsetFactor * 0.3), 0.0, 1.0); float alpha = intensity * clamp(uSunIntensity, 0.2, 1.0); if (alpha <= 0.001) discard; gl_FragColor = vec4(baseColor, alpha); }`;
+const ATMOSPHERE_FRAGMENT = `precision highp float; varying vec3 vNormalWorld; varying vec3 vWorldPosition; varying float vRimMask; uniform vec3 glowColor; uniform vec3 sunsetTint; uniform vec3 sunPosition; uniform float coef; uniform float power; uniform float uSunIntensity; uniform float uSunShadowRecv; ${SUN_SHADOW_GLSL} void main() { vec3 normalW = normalize(vNormalWorld); float radialFade = pow(vRimMask, max(0.35, power * 0.18)); radialFade = smoothstep(0.0, 1.0, radialFade); float rim = radialFade * clamp(coef, 0.0, 2.0); vec3 lightDir = normalize(sunPosition - vWorldPosition); float sunDot = dot(normalW, lightDir); float dayFactor = smoothstep(-0.45, 0.25, sunDot); float sunsetFactor = smoothstep(-0.35, -0.05, sunDot) * (1.0 - smoothstep(-0.05, 0.25, sunDot)); vec3 baseColor = mix(glowColor, sunsetTint * 1.5, sunsetFactor * 0.8); float intensity = clamp(rim * (dayFactor + sunsetFactor * 0.3), 0.0, 1.0); float alpha = intensity * clamp(uSunIntensity, 0.2, 1.0) * mix(1.0, sunVisibility(), uSunShadowRecv); if (alpha <= 0.001) discard; gl_FragColor = vec4(baseColor, alpha); }`;
 
-function createAtmosphereMaterial(glowColor, sunsetTint, coef, power, sunMul = 1) {
+// sunShadowRecv: poświata gaśnie w cieniu z maski Core3D — tylko ciała przy
+// ringu (pass ortho, piksel = punkt świata), patrz uSunShadowRecv planety.
+function createAtmosphereMaterial(glowColor, sunsetTint, coef, power, sunMul = 1, sunShadowRecv = false) {
     return new THREE.ShaderMaterial({
         vertexShader: ATMOSPHERE_VERTEX,
         fragmentShader: ATMOSPHERE_FRAGMENT,
-        uniforms: {
+        uniforms: attachSunShadowUniforms({
             coef: { value: coef },
             power: { value: power },
             glowColor: { value: glowColor },
             sunsetTint: { value: sunsetTint },
             uSunIntensity: { value: 1.1 * sunMul },
-            sunPosition: { value: new THREE.Vector3(0, 0, -50000) }
-        },
+            sunPosition: { value: new THREE.Vector3(0, 0, -50000) },
+            uSunShadowRecv: { value: sunShadowRecv ? 1.0 : 0.0 }
+        }),
         transparent: true,
         side: THREE.BackSide,
         depthWrite: false,
@@ -281,7 +288,7 @@ const NebulaSystem = {
         tex.colorSpace = THREE.SRGBColorSpace;
         tex.wrapS = THREE.ClampToEdgeWrapping; tex.wrapT = THREE.ClampToEdgeWrapping;
         tex.minFilter = THREE.LinearFilter; tex.magFilter = THREE.LinearFilter;
-        this.uniforms = { map: { value: tex }, warpFactor: { value: 0.0 } };
+        this.uniforms = attachSunShadowUniforms({ map: { value: tex }, warpFactor: { value: 0.0 } });
         const mat = new THREE.ShaderMaterial({ uniforms: this.uniforms, vertexShader: NEBULA_VERTEX, fragmentShader: NEBULA_FRAGMENT, depthWrite: false, depthTest: false });
         this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(this.baseScale, this.baseScale / this.aspectRatio), mat);
         this.mesh.position.z = -150000; this.mesh.renderOrder = -999;
@@ -344,7 +351,7 @@ const StarSystem = {
             thinningStrength: { value: 38.0 }, baseSizeMul: { value: 1.65 },
             planetMasks: { value: Array.from({ length: STAR_PLANET_MASK_CAP }, () => new THREE.Vector4(0, 0, 0, 0)) }
         };
-        const mat = new THREE.ShaderMaterial({ uniforms: this.uniforms, vertexShader: STARS_VERTEX, fragmentShader: STARS_FRAGMENT, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+        const mat = new THREE.ShaderMaterial({ uniforms: attachSunShadowUniforms(this.uniforms), vertexShader: STARS_VERTEX, fragmentShader: STARS_FRAGMENT, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
         this.mesh = new THREE.Points(geo, mat); this.mesh.renderOrder = -1; this.mesh.frustumCulled = false;
         Core3D.scene.add(this.mesh); Core3D.enableBackground3D(this.mesh);
     },
@@ -485,8 +492,14 @@ class DirectPlanet {
             uBrightness: { value: 1.2 }, uAmbient: { value: 0.05 }, uSpecular: { value: 1.2 }, uSunWrap: { value: 0.5 },
             uSunIntensity: { value: 1.0 }, sunsetTint: { value: new THREE.Vector3(1.4, 0.1, 0.1) },
             uHazeStrength: { value: 0.0 }, uHazeColor: { value: new THREE.Vector3(0.55, 0.72, 1.0) }, uHazeBeta: { value: new THREE.Vector3(0.05, 0.10, 0.22) },
-            uRingShadowStrength: { value: 0.0 }, uRingShadowRadius: { value: 0.0 }, uRingShadowReach: { value: 1.0 }, uRingShadowCenter: { value: new THREE.Vector2(0, 0) }
+            uRingShadowStrength: { value: 0.0 }, uRingShadowRadius: { value: 0.0 }, uRingShadowReach: { value: 1.0 }, uRingShadowCenter: { value: new THREE.Vector2(0, 0) },
+            // Maska cieni (sunShadowMask.js) tylko dla ciał przy ringu: leżą w
+            // płaszczyźnie gry (pass ortho), więc piksel = ich punkt świata.
+            // Planety tła siedzą na z = −50 000 w perspektywie — maska liczona
+            // w płaszczyźnie gry trafiałaby w nie obok (własna smuga na tarczy).
+            uSunShadowRecv: { value: this.isRingAnchored ? 1.0 : 0.0 }
         };
+        attachSunShadowUniforms(this.uniforms);
         // Analityczny cień ringu na tarczy planety (dzienny łuk od nawietrznej,
         // czyli słonecznej, strony) — parametry ustawia init() dla ciał na ringu.
         this._ringShadowRadius = 0;
@@ -576,7 +589,7 @@ class DirectPlanet {
 
         if (name === 'earth') {
             const cloudTex = loadTex(`assets/planety/solar/earth/earth_clouds.jpg`); cloudTex.colorSpace = THREE.SRGBColorSpace;
-            this.cloudUniforms = { cloudTexture: { value: cloudTex }, sunPosition: { value: new THREE.Vector3(0, 0, -50000) }, uOpacity: { value: 0.62 }, uHazeStrength: this.uniforms.uHazeStrength, uHazeColor: this.uniforms.uHazeColor, uHazeBeta: this.uniforms.uHazeBeta, uRingShadowStrength: this.uniforms.uRingShadowStrength, uRingShadowRadius: this.uniforms.uRingShadowRadius, uRingShadowReach: this.uniforms.uRingShadowReach, uRingShadowCenter: this.uniforms.uRingShadowCenter };
+            this.cloudUniforms = { cloudTexture: { value: cloudTex }, sunPosition: { value: new THREE.Vector3(0, 0, -50000) }, uOpacity: { value: 0.62 }, uHazeStrength: this.uniforms.uHazeStrength, uHazeColor: this.uniforms.uHazeColor, uHazeBeta: this.uniforms.uHazeBeta, uRingShadowStrength: this.uniforms.uRingShadowStrength, uRingShadowRadius: this.uniforms.uRingShadowRadius, uRingShadowReach: this.uniforms.uRingShadowReach, uRingShadowCenter: this.uniforms.uRingShadowCenter, uSunShadowRecv: this.uniforms.uSunShadowRecv }; attachSunShadowUniforms(this.cloudUniforms);
             const cloudMat = new THREE.ShaderMaterial({ uniforms: this.cloudUniforms, vertexShader: CLOUD_VERTEX, fragmentShader: CLOUD_FRAGMENT, transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.NormalBlending });
             this.clouds = new THREE.Mesh(new THREE.SphereGeometry(1.005, 128, 128), cloudMat); this.group.add(this.clouds);
         }
@@ -600,7 +613,7 @@ class DirectPlanet {
         this.uniforms.uHazeBeta.value.copy(hazeBeta);
 
         atmSize *= HALO_DEFAULTS.sizeMul; atmCoef = atmCoef * HALO_DEFAULTS.coefMul + HALO_DEFAULTS.coefAdd; atmPower = atmPower * HALO_DEFAULTS.powerMul + HALO_DEFAULTS.powerAdd;
-        const atmMat = createAtmosphereMaterial(atmColor, sunsetTint, atmCoef, atmPower, HALO_DEFAULTS.sunMul);
+        const atmMat = createAtmosphereMaterial(atmColor, sunsetTint, atmCoef, atmPower, HALO_DEFAULTS.sunMul, this.isRingAnchored);
         this.atmosphere = new THREE.Mesh(new THREE.SphereGeometry(atmSize, 64, 64), atmMat); this.group.add(this.atmosphere);
         this.visibleRadiusMul = Math.max(1.0, atmSize, name === 'saturn' ? SATURN_VISUAL_RING.outerRadius : 1.0);
 
@@ -609,10 +622,10 @@ class DirectPlanet {
             // The atmosphere stays with the body in the same orthographic pass.
             // This avoids a perspective halo drifting away from the anchored ring.
             enableRingPlanetLayer(this.group);
-            // Pas cienia ringu: środek pasma z tego samego layoutu, którym
-            // kotwiczy się ring (screen-space shafts znikają z dystansowym
-            // gate'em ringu — analityczny pas w shaderze działa zawsze).
-            const ringLayout = computePlanetaryRingLayout(this.data);
+            // Pas cienia ringu: środek obwiedni ringu „Halo” (ta sama co
+            // dawnego ringu, 41 202–43 752 dla Ziemi) — analityczny pas w
+            // shaderze działa zawsze, także przy ringu poza kadrem.
+            const ringLayout = computeHaloRingLayout(this.data);
             this._ringShadowRadius = (ringLayout.innerRadius + ringLayout.outerRadius) * 0.5;
             this._ringShadowReach = this._ringShadowRadius * 1.15;
         } else {
@@ -765,6 +778,9 @@ class DirectMoon {
             metalness: 0.0,
             color: 0xffffff
         });
+        // Księżyc przy ringu wchodzi co orbitę w cień planety — maska Core3D
+        // gasi mu światło bezpośrednie (zaćmienie), otoczenie zostaje.
+        if (this.isRingAnchored) applySunShadowToBuiltinMaterial(material, 'direct');
         this.mesh = new THREE.Mesh(geometry, material);
         this.mesh.castShadow = true;
         this.mesh.receiveShadow = true;
@@ -778,7 +794,8 @@ class DirectMoon {
             sunsetTint,
             MOON_HALO_DEFAULTS.coef,
             MOON_HALO_DEFAULTS.power,
-            MOON_HALO_DEFAULTS.sunMul
+            MOON_HALO_DEFAULTS.sunMul,
+            this.isRingAnchored
         );
         this.halo = new THREE.Mesh(
             new THREE.SphereGeometry(MOON_HALO_DEFAULTS.size, 48, 48),

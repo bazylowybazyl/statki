@@ -14,6 +14,10 @@ import { DestructorGpuSoftBody } from '../src/game/destructorGpuSoftBody.js';
 import { initOverlay } from '../src/effects3d/overlay.js';
 import { createReactorBlowFactory } from '../src/effects3d/reactorblow.js';
 import { createCoreFx3D } from '../src/3d/coreFx3D.js';
+import { createReactor3D } from '../src/3d/reactor3D.js';
+import { Fx3D } from '../src/3d/fxParticles3D.js';
+import { MuzzleFX3D } from '../src/3d/muzzleFx3D.js';
+import { SparkSystem3D } from '../src/3d/sparkSystem3D.js';
 import { HULL_LACQUER_DEFAULTS } from '../src/3d/hullLacquer.js';
 import { MASTER_WEAPONS } from '../src/data/weapons.js';
 import { stepDecay120 } from '../src/game/stepDecay.js';
@@ -82,6 +86,15 @@ const S = {
   lastFrameMs: 0,
   frameMsAvg: 16,
   blowVisuals: new WeakSet(),
+  // po detonacji: strumienie plazmy, kule plazmy, zaplanowane wybuchy wtórne
+  jets: [],
+  orbs: [],
+  secondaries: [],
+  galleryRun: 0,
+  modelGallery: 0,   // numer biegu galerii modeli (0 = nie trwa)
+  // kamera przyklejona do reaktora (Z, galeria modeli): { core, prev: { x, y, zoom } }
+  focus: null,
+  aimExitAt: null,
   editor: { active: false, selected: null, dragging: false }
 };
 for (const id of Object.keys(HULLS)) S.markers[id] = HULLS[id].cores.map((m) => ({ ...m }));
@@ -92,7 +105,7 @@ window.bullets = S.bullets;
 window.DestructorSystem = DestructorSystem;
 
 const opts = () => ({
-  grid: $('ov-grid').checked, chamber: $('ov-chamber').checked, probe: $('ov-probe').checked,
+  grid: $('ov-grid').checked, bridges: $('ov-bridges').checked, chamber: $('ov-chamber').checked, probe: $('ov-probe').checked,
   state: $('ov-state').checked, hp: $('ov-hp').checked, cands: $('ov-cands').checked,
   bugs: $('ov-bugs').checked, blast: $('ov-blast').checked, lock: $('lock').checked,
   weaponName: MASTER_WEAPONS[S.weaponId]?.name || S.weaponId
@@ -101,8 +114,17 @@ const opts = () => ({
 function coreConfig() {
   return {
     maxChainDepth: Number($('chain').value) | 0,
-    attritionDetonatesFrom: $('attr-det').checked ? SC.CORE_STATE.CRITICAL : null
+    attritionDetonatesFrom: $('attr-det').checked ? SC.CORE_STATE.CRITICAL : null,
+    detonationVariant: $('det-variant').value || null
   };
+}
+
+const _rngSec = { s: 0x51ed270b };
+function demoRng() {
+  let t = (_rngSec.s = (_rngSec.s + 0x6d2b79f5) >>> 0);
+  t = Math.imul(t ^ (t >>> 15), t | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 }
 
 function log(text, cls = '') {
@@ -134,10 +156,39 @@ const overlayView = { viewport: { w: W, h: H }, zoom: S.cam.zoom, center: { x: 0
 const overlay3D = initOverlay({ host: root, getView: () => overlayView });
 window.overlay3D = overlay3D;
 window.makeReactorBlow = createReactorBlowFactory(overlay3D.scene);
+// Iskry trafień i tarcia jak w grze (index.html: SparkSystem3D.init(ov.scene));
+// aktualizuje je overlay3D.tick, a coreFx3D sypie z tej puli przy cięciu i topieniu.
+SparkSystem3D.init(overlay3D.scene);
+window.SparkSystem3D = SparkSystem3D;
 
-// Żar i wyrzuty na warstwie passa tarcz (po cieniach); demo nie ma tarcz 3D,
-// więc flagę warstwy gasi co klatkę render(), a coreFx.sync ją zapala.
-const coreFx = createCoreFx3D({ scene: Core3D.scene, markLayerActive: () => Core3D.setShieldLayerActive(true) });
+// Wybuch reaktora jak triggerReactorBlow3D w grze. Fali z refrakcją już nie ma:
+// profile reactorblow.js mają shockwave3D/heatHaze = null (tylko supernova).
+function spawnReactorBlow(opts) {
+  overlay3D.spawn(window.makeReactorBlow(opts));
+}
+
+// Modele reaktora (pod pancerzem, widoczne przez wyrwę) i żar/wyrzuty — oba na
+// warstwie passa tarcz (po cieniach); demo nie ma tarcz 3D, więc flagę warstwy
+// gasi co klatkę render(), a sync-i ją zapalają. Rdzeń z modelem nie dostaje
+// żaru coreFx: światło daje plazma w torusie.
+const MODEL_KIND_BY_HULL = { battleship: 'terran', pirate_battleship: 'pirate', atlas: 'atlas' };
+function demoReactorKind(core) {
+  const pick = $('model-kind')?.value || 'auto';
+  if (pick !== 'auto') return pick;
+  return MODEL_KIND_BY_HULL[core?.host?.__hullId] || 'terran';
+}
+const reactor3D = createReactor3D({
+  scene: Core3D.scene,
+  markLayerActive: () => Core3D.setShieldLayerActive(true),
+  kindFor: demoReactorKind
+});
+// początek instancji modelu przy kamerze (precyzja float32 — jak w grze)
+const reactorSyncOpts = { origin: S.cam };
+const coreFx = createCoreFx3D({
+  scene: Core3D.scene,
+  markLayerActive: () => Core3D.setShieldLayerActive(true),
+  glowFilter: (core) => !reactor3D.covers(core)
+});
 
 let cpuSoft = null;
 let restoreProbeMode = null;
@@ -170,12 +221,19 @@ function clearWorld() {
   S.bullets.length = 0;
   S.rockets.length = 0;
   S.pendingShots.length = 0;
+  S.jets.length = 0;
+  S.orbs.length = 0;
+  S.secondaries.length = 0;
   DestructorSystem.splitQueue = [];
   S.blowVisuals = new WeakSet();
+  coreFx.reset();
+  reactor3D.reset();
+  if (Fx3D.ready) Fx3D.reset();
 }
 
 function buildScene(id = S.sceneId) {
   clearWorld();
+  S.focus = null;
   S.sceneId = id;
   const scene = SCENES[id];
   const killMode = $('killmode').value;
@@ -223,6 +281,172 @@ function fitCamera() {
   S.cam.zoom = Math.max(0.05, Math.min(1.6, Math.min(zx, zy) * 0.92));
   S.cam.x = b.cx + (shotMode ? 0 : 150 / S.cam.zoom);
   S.cam.y = b.cy;
+}
+
+// ---------------------------------------------------------------------------
+// Oglądanie modelu reaktora: zbliżenie z kamerą przy rdzeniu, galeria modeli.
+// Model leży pod pancerzem i przy zoomie ~1 komora ma ~50 px, a nakładka
+// „komora” (kontury, okrąg, krzyżyk) przykrywała go — tak wyglądał jak zaślepka.
+function coreWorldRadius(core) {
+  const host = core.host;
+  const l = {};
+  const a = {};
+  const b = {};
+  SC.gridToLocal(host, core.gridX, core.gridY, l); SC.localToWorld(host, l.x, l.y, a);
+  SC.gridToLocal(host, core.gridX + core.gridR, core.gridY, l); SC.localToWorld(host, l.x, l.y, b);
+  return Math.max(1, Math.hypot(b.x - a.x, b.y - a.y));
+}
+
+function focusCore() {
+  const t = target();
+  const cores = t?.shipCores || [];
+  return cores.find((c) => !c.invalid && c.state !== SC.CORE_STATE.DETONATED) || cores.find((c) => !c.invalid) || null;
+}
+
+// on: true / false / undefined (przełącz). Komora zajmuje ~30% wysokości ekranu.
+function focusReactor(on) {
+  const want = on === undefined ? !S.focus : !!on;
+  if (!want) {
+    if (S.focus?.prev) { S.cam.x = S.focus.prev.x; S.cam.y = S.focus.prev.y; S.cam.zoom = S.focus.prev.zoom; }
+    S.focus = null;
+    $('btn-model-focus').classList.remove('on');
+    return false;
+  }
+  const core = focusCore();
+  if (!core?.host?.hexGrid) return false;
+  const prev = S.focus?.prev || { x: S.cam.x, y: S.cam.y, zoom: S.cam.zoom };
+  S.focus = { core, prev };
+  S.cam.zoom = Math.max(0.5, Math.min(12, 0.3 * H / coreWorldRadius(core)));
+  followFocus();
+  $('btn-model-focus').classList.add('on');
+  return true;
+}
+
+// Kamera jedzie za rdzeniem (odrzut wyrzutu przesuwa i obraca kadłub).
+function followFocus() {
+  const core = S.focus?.core;
+  if (!core?.host?.hexGrid) return;
+  const w = SC.getCoreWorld(core, {});
+  S.cam.x = w.x;
+  S.cam.y = w.y;
+}
+
+// przesuw kamery ręką kończy zbliżenie bez powrotu
+function dropFocus() {
+  if (!S.focus) return;
+  S.focus = null;
+  $('btn-model-focus').classList.remove('on');
+}
+
+const MODEL_KIND_CYCLE = ['auto', 'terran', 'pirate', 'atlas'];
+function cycleModelKind() {
+  const sel = $('model-kind');
+  sel.value = MODEL_KIND_CYCLE[(MODEL_KIND_CYCLE.indexOf(sel.value) + 1) % MODEL_KIND_CYCLE.length];
+  sel.dispatchEvent(new Event('change'));
+  log(`model reaktora: ${sel.options[sel.selectedIndex].text}`);
+}
+
+function setXray(on) {
+  $('model-xray').checked = !!on;
+  $('model-xray').dispatchEvent(new Event('change'));
+}
+
+// Komora otwierana od środka: `frac` żywych heksów komory, odłamki od rdzenia.
+function openChamber(frac = 0.3, i = S.targetIndex) {
+  const t = S.ships[i];
+  const c = t?.shipCores?.[0];
+  if (!c) return null;
+  const cx = c.gridX, cy = c.gridY;
+  const list = c.chamber.filter((s) => s.active).sort((a, b) => Math.hypot(a.origGridX - cx, a.origGridY - cy) - Math.hypot(b.origGridX - cx, b.origGridY - cy));
+  const n = Math.round(list.length * frac);
+  // Odłamki lecą od rdzenia jak po trafieniu — bez prędkości wisiałyby nad
+  // wyrwą i zasłaniały żar (zaniżony pomiar HDR).
+  const cw = SC.getCoreWorld(c, {});
+  const l = {}, w = {};
+  for (let k = 0; k < n; k++) {
+    const s = list[k];
+    SC.gridToLocal(t, s.gridX, s.gridY, l);
+    SC.localToWorld(t, l.x, l.y, w);
+    const dx = w.x - cw.x, dy = w.y - cw.y;
+    const d = Math.hypot(dx, dy) || 1;
+    const sp = 350 + Math.random() * 350;
+    DestructorSystem.destroyShard(t, s, { x: (t.vx || 0) + dx / d * sp, y: (t.vy || 0) + dy / d * sp });
+  }
+  return n;
+}
+
+// Galeria modeli: każdy model na swoim kadłubie, przez wszystkie stany —
+// to samo, co zrzuty `rdzen-shots.js --only reactorModels`, tylko na żywo.
+const MODEL_GALLERY = [
+  { hull: 'battleship', label: 'tokamak Terra Nova (Bellator)' },
+  { hull: 'pirate_battleship', label: 'prowizorka piratów (Iron Skull)' },
+  { hull: 'atlas', label: 'podwójny pierścień Atlasa (gracz)' }
+];
+// drugi klik w trakcie przerywa galerię
+function toggleModelGallery() {
+  if (S.modelGallery && S.modelGallery === S.galleryRun) {
+    S.galleryRun++;
+    S.modelGallery = 0;
+    $('btn-model-gallery').classList.remove('on');
+    log('galeria modeli przerwana');
+    return;
+  }
+  runModelGallery();
+}
+
+async function runModelGallery() {
+  const run = ++S.galleryRun;
+  S.modelGallery = run;
+  $('btn-model-gallery').classList.add('on');
+  const prev = { variant: $('det-variant').value, secondary: $('det-secondary').value, kind: $('model-kind').value, xray: $('model-xray').checked };
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const alive = () => run === S.galleryRun;
+  $('model-kind').value = 'auto';
+  $('det-variant').value = 'jet';        // wyrzut zostawia wrak reaktora
+  $('det-secondary').value = 'never';
+  if (!$('model-on').checked) { $('model-on').checked = true; $('model-on').dispatchEvent(new Event('change')); }
+  try {
+    for (const step of MODEL_GALLERY) {
+      if (!alive()) return;
+      $('scene').value = step.hull;
+      S.targetIndex = 0;
+      buildScene(step.hull);
+      reactor3D.reset();
+      const c = S.ships[0]?.shipCores?.[0];
+      if (!c) continue;
+      setXray(true);
+      focusReactor(true);
+      log(`GALERIA MODELI: ${step.label} — prześwietlenie`, 'warn');
+      await wait(3000); if (!alive()) return;
+      setXray(false);
+      openChamber(0.25);
+      log('  ODSŁONIĘTY — model przez wyrwę');
+      await wait(3000); if (!alive()) return;
+      openChamber(0.35);
+      log('  KRYTYCZNY — pękają cewki');
+      await wait(3000); if (!alive()) return;
+      c.config = { ...c.config, ...coreConfig() };
+      processEvents(SC.forceCoreMeltdown(c, S.simTime, 'galeria'));
+      log('  STOPIENIE');
+      const meltMs = Math.max(1500, (c.meltdownRemaining || 3) / Math.max(0.05, S.timeScale) * 1000);
+      await wait(meltMs + 2500); if (!alive()) return;
+      log('  wrak reaktora po wyrzucie');
+      await wait(1500); if (!alive()) return;
+      setXray(true);
+      await wait(2000); if (!alive()) return;
+      setXray(false);
+    }
+  } finally {
+    // skończona, przerwana albo zastąpiona inną galerią — ustawienia wracają
+    // (wariant detonacji zostaje galerii, która przejęła scenę)
+    const superseded = S.galleryRun !== run && S.modelGallery === run;
+    $('det-secondary').value = prev.secondary;
+    if (!superseded) $('det-variant').value = prev.variant;
+    if ($('model-kind').value !== prev.kind) { $('model-kind').value = prev.kind; $('model-kind').dispatchEvent(new Event('change')); }
+    setXray(prev.xray);
+    if (S.modelGallery === run) S.modelGallery = 0;
+    $('btn-model-gallery').classList.toggle('on', !!S.modelGallery);
+  }
 }
 
 function placeGun() {
@@ -371,7 +595,7 @@ function blowAtCenter(entity, classId) {
   const y = Combat.entityY(entity);
   const size = (entity.radius || 40) * 1.5 * 1.8;
   const profile = SC.getCoreClassProfile(classId).blastProfile;
-  overlay3D.spawn(window.makeReactorBlow({ x, y, size, profile }));
+  spawnReactorBlow({ x, y, size, profile });
   const fake = {
     host: entity, profile: SC.getCoreClassProfile(classId), config: SC.CORE_DEFAULTS, chainDepth: 0,
     classId, gridR: 30, gridX: entity.hexGrid.srcWidth / 2, gridY: entity.hexGrid.srcHeight / 2
@@ -382,10 +606,16 @@ function blowAtCenter(entity, classId) {
   destroyHost(entity, fake);
 }
 
+// Dzisiejszy rozpad (rozprysk od środka kadłuba) dla wybuchu „jak dziś”.
 function destroyHost(host, core) {
   const plan = SC.planCoreBreakup(core, { seed: (S.frame * 2654435761) >>> 0 });
   const wrecks = SC.applyCoreBreakup(core, plan, S.destructibles, { seed: S.frame + 17 });
   SC.consumeHostCores(host, S.simTime);
+  removeHost(host);
+  return wrecks;
+}
+
+function removeHost(host) {
   host.dead = true;
   const si = S.ships.indexOf(host);
   if (si >= 0) S.ships[si].__label = `${host.__label} (zniszczony)`;
@@ -394,24 +624,156 @@ function destroyHost(host, core) {
   disposeHexBody(host);
   S.shake = Math.max(S.shake, 12);
   refreshTargetSelect();
-  return wrecks;
 }
 
 function spawnBlowVisual(core, blast) {
   if (S.blowVisuals.has(core)) return;
   S.blowVisuals.add(core);
+  if (!blast.reactorProfile) return;
   const w = SC.getCoreWorld(core, {});
-  overlay3D.spawn(window.makeReactorBlow({ x: w.x, y: w.y, size: blast.visualSize, profile: blast.reactorProfile }));
+  spawnReactorBlow({ x: w.x, y: w.y, size: blast.visualSize, profile: blast.reactorProfile });
 }
 
+// Iskry wybuchu w komorze na wariant. Przy wyrzucie i kuli główny obraz daje
+// wystrzał (Hexlance / Tempest z coreFx3D), tu zostaje tylko resztka.
+const BLAST_SPARKS = {
+  shatter: { sparks: 260, chunks: 24, arcs: 12, vapor: 16 },
+  halves: { sparks: 170, chunks: 16, arcs: 8, vapor: 10 },
+  thirds: { sparks: 190, chunks: 18, arcs: 9, vapor: 12 },
+  hole: { sparks: 220, chunks: 30, arcs: 10, vapor: 16 },
+  jet: { sparks: 60, chunks: 8, arcs: 4, vapor: 6, flare: false, hitSparks: 20 },
+  orb: { sparks: 50, chunks: 6, arcs: 6, vapor: 6, flare: false, hitSparks: 16 }
+};
+
+// Detonacja wg wariantu (shipCore.chooseCoreDetonationVariant w zdarzeniu):
+// wybuch w komorze (reactorblow + AoE), rozpad z planu wariantu, a potem
+// zagrożenia: strumień plazmy, kula plazmy, wybuchy wtórne.
 function detonate(ev) {
   const { core, host, x, y, blast } = ev;
+  const variant = ev.variant || 'shatter';
+  const vdef = SC.CORE_DETONATION_VARIANTS[variant] || SC.CORE_DETONATION_VARIANTS.shatter;
+  const color = core.color || [0.3, 0.7, 1.0];
   spawnBlowVisual(core, blast);
   coreFx.onEvent(ev);
   const affected = Combat.applyCoreBlast(combatCtx, blast, x, y, host, S.simTime);
-  const wrecks = destroyHost(host, core);
-  log(`DETONACJA ${host.__label}/${core.id} [${blast.reactorProfile}] — AoE ${Math.round(blast.aoeRadius)} j. / ${Math.round(blast.aoeDamage)} HP, fala ${Math.round(blast.shockRadius)} j., łańcuch ${blast.chainDepth}, dotkniętych ${affected.length}, fragmentów ${wrecks.length}`, 'bad');
+  const seed = (Math.imul(S.frame + 1, 2654435761) + Math.round(S.simTime * 1000)) >>> 0;
+  // Celowany wyrzut/kula (ujęcia dema): kierunek świata do wskazanego kadłuba → siatka.
+  let exitDir = null;
+  if (S.aimExitAt && (variant === 'jet' || variant === 'orb')) {
+    const cw = SC.getCoreWorld(core, {});
+    const d = Math.hypot(S.aimExitAt.x - cw.x, S.aimExitAt.y - cw.y) || 1;
+    const a = SC.worldToLocal(host, cw.x, cw.y, {});
+    const b = SC.worldToLocal(host, cw.x + (S.aimExitAt.x - cw.x) / d, cw.y + (S.aimExitAt.y - cw.y) / d, {});
+    exitDir = { x: b.x - a.x, y: b.y - a.y };
+  }
+  S.aimExitAt = null;
+  const plan = SC.planCoreBreakup(core, { mode: variant, seed, exitDir });
+  // model reaktora: wyrzut i kula zostawiają wrak (łuk rozerwany w stronę wyrzutu),
+  // pozostałe warianty wyparowują go razem z komorą
+  reactor3D.detonated(core, { variant, dirGridX: plan.dirGridX, dirGridY: plan.dirGridY });
+  // iskry z brzegów pęknięć i wyrwy liczone na jeszcze całym kadłubie
+  if (variant === 'halves' || variant === 'thirds') coreFx.crackSparks(core, plan);
+  else if (variant === 'hole') coreFx.rimSparks(core, plan);
+  const res = SC.applyCoreDetonation(core, plan, S.destructibles, { seed: seed ^ 0x9e37 });
+  SC.consumeHostCores(host, S.simTime);
+  const owners = res.keptHost ? [host, ...res.wrecks] : res.wrecks;
+  if (res.keptHost) {
+    makeDerelict(host, vdef.label);
+    S.shake = Math.max(S.shake, 10);
+  } else {
+    removeHost(host);
+  }
+  const nowSec = performance.now() * 0.001;
+  // rozżarzone brzegi pęknięć/wyrwy jadą z heksami do wraków i stygną
+  // pomarańcz (≤ 0,6): biel brzegu na całym obrysie kawałka czytałaby się jak tarcza
+  coreFx.heatShards(plan.edgeShards, owners, variant === 'hole' ? 0.62 : 0.55, nowSec);
+  // wybuch w komorze: iskry, odpryski, łuki i opar z puli gry (Fx3D + SparkSystem3D)
+  coreFx.blastSparks(x, y, { classId: core.classId, color, vx: host.vx, vy: host.vy, ...BLAST_SPARKS[variant] });
+  // własny obraz wariantu: rozbłysk plazmy i pierścień (reactorblow wg blowShift)
+  if (blast.flashRadius > 0) coreFx.flash(x, y, blast.flashRadius, color, variant === 'hole' ? 0.7 : 0.5);
+  if (blast.ringRadius > 0) coreFx.spawnRing(x, y, blast.ringRadius, color, variant === 'hole' ? 0.9 : 0.7);
+  let extra = '';
+  if (variant === 'jet' && res.keptHost) {
+    const jet = SC.createCoreJet(core, plan, blast);
+    S.jets.push(jet);
+    coreFx.spawnJet(jet, color);
+    extra = ` · strumień ${Math.round(jet.length)} j. × ${jet.duration.toFixed(1)} s, ${Math.round(jet.dps)} HP/s, odrzut ${Math.round(Math.hypot(res.recoil?.x || 0, res.recoil?.y || 0))} j/s`;
+  } else if (variant === 'orb' && res.keptHost) {
+    const orb = SC.createPlasmaOrb(core, plan, blast, { seed });
+    S.orbs.push(orb);
+    coreFx.spawnOrb(orb, color);
+    extra = ` · kula plazmy ${Math.round(Math.hypot(orb.vx - (host.vx || 0), orb.vy - (host.vy || 0)))} j/s, zapalnik ${orb.fuse.toFixed(1)} s`;
+  }
+  // wybuchy wtórne (amunicja, paliwo) na tym, co zostało
+  const secMode = $('det-secondary').value;
+  let secCount = 0;
+  if (secMode === 'always') secCount = Math.max(SC.CORE_SECONDARY_PROFILES[core.classId]?.countMin || 2, SC.rollSecondaryBlasts(variant, core.classId, () => 0));
+  else if (secMode !== 'never') secCount = SC.rollSecondaryBlasts(variant, core.classId, demoRng);
+  if (secCount > 0) {
+    const pieces = res.keptHost ? [host, ...res.wrecks] : res.wrecks;
+    for (const it of SC.planSecondaryBlasts(pieces, { count: secCount, classId: core.classId, seed: seed + 5, edgeShards: plan.edgeShards })) {
+      S.secondaries.push({ ...it, at: S.simTime + it.delay, color, classId: core.classId });
+    }
+  }
+  log(`DETONACJA ${host.__label}/${core.id} — ${vdef.label.toUpperCase()} [${blast.reactorProfile}] — AoE ${Math.round(blast.aoeRadius)} j. / ${Math.round(blast.aoeDamage)} HP, łańcuch ${blast.chainDepth}, dotkniętych ${affected.length}, fragmentów ${res.wrecks.length}${res.keptHost ? ' (kadłub zostaje)' : ''}${extra}${secCount ? `, wtórnych ${secCount}` : ''}`, 'bad');
 }
+
+// Kula plazmy wybucha (zetknięcie z kadłubem albo zapalnik).
+function orbDetonate(ev) {
+  const { orb, x, y, blast } = ev;
+  const color = orb.color || [0.3, 0.7, 1.0];
+  spawnReactorBlow({ x, y, size: blast.visualSize, profile: blast.reactorProfile });
+  coreFx.flash(x, y, blast.aoeRadius * 0.2, color, 0.45);
+  coreFx.spawnRing(x, y, blast.aoeRadius * 0.5, color, 0.6);
+  coreFx.blastSparks(x, y, { classId: orb.classId, color, scale: 0.8, sparks: 170, chunks: 14, arcs: 10, vapor: 10, vx: orb.vx, vy: orb.vy });
+  const affected = Combat.applyCoreBlast(combatCtx, blast, x, y, null, S.simTime);
+  S.shake = Math.max(S.shake, 9);
+  log(`KULA PLAZMY wybuchła ${ev.hit ? `na ${ev.hit.__label || 'wraku'}` : 'z zapalnika'} — AoE ${Math.round(blast.aoeRadius)} j. / ${Math.round(blast.aoeDamage)} HP, dotkniętych ${affected.length}`, 'bad');
+}
+
+// Wybuch wtórny: heks mógł przejść do innego wraku albo już nie istnieć.
+function secondaryBlast(it) {
+  const loc = SC.locateShard(it.shard, S.destructibles, {});
+  if (!loc) return;
+  const e = loc.entity;
+  spawnReactorBlow({ x: loc.x, y: loc.y, size: it.size, profile: it.profile });
+  coreFx.cookOff(loc.x, loc.y, { classId: it.classId, vx: e.vx || 0, vy: e.vy || 0 });
+  const a = demoRng() * Math.PI * 2;
+  DestructorSystem.applyImpact(e, loc.x, loc.y, it.hexDamage, { x: Math.cos(a) * 900, y: Math.sin(a) * 900 }, { radius: it.hexRadius, shard: it.shard });
+  S.shake = Math.max(S.shake, 3);
+}
+
+const jetHooks = {
+  hullDamage: (e, dmg, cause) => { Combat.applyHullDamage(e, dmg, cause, { bypassShield: false }, combatCtx.hooks); },
+  blocksHexes: (e) => Combat.isShieldUp(e)
+};
+
+function stepHazards(dt) {
+  for (let i = S.jets.length - 1; i >= 0; i--) {
+    if (!SC.stepCoreJet(S.jets[i], dt, S.destructibles, { hooks: jetHooks, time: S.simTime })) {
+      S.jets[i] = S.jets[S.jets.length - 1];
+      S.jets.pop();
+    }
+  }
+  if (S.orbs.length) {
+    hazardEvents.length = 0;
+    SC.stepPlasmaOrbs(S.orbs, dt, S.destructibles, { events: hazardEvents, time: S.simTime, hooks: jetHooks });
+    for (const ev of hazardEvents) orbDetonate(ev);
+    for (let i = S.orbs.length - 1; i >= 0; i--) {
+      if (!S.orbs[i].detonated) continue;
+      S.orbs[i] = S.orbs[S.orbs.length - 1];
+      S.orbs.pop();
+    }
+  }
+  for (let i = S.secondaries.length - 1; i >= 0; i--) {
+    const it = S.secondaries[i];
+    if (it.at > S.simTime) continue;
+    S.secondaries[i] = S.secondaries[S.secondaries.length - 1];
+    S.secondaries.pop();
+    secondaryBlast(it);
+  }
+}
+const hazardEvents = [];
 
 function processEvents(events) {
   for (const ev of events) {
@@ -491,6 +853,7 @@ function physicsStep(dt) {
   Combat.stepBullets(combatCtx, dt);
   Combat.stepRockets3D(combatCtx, dt);
   DestructorSystem.update(dt, S.destructibles);
+  stepHazards(dt);
 
   cullEmptyWrecks();
 
@@ -543,12 +906,17 @@ function render(realDt, simFrameDt) {
   const cores = allCores();
   for (const core of cores) {
     if (core.state !== SC.CORE_STATE.MELTDOWN || S.blowVisuals.has(core)) continue;
-    const blast = SC.computeCoreBlast(core);
+    // przepis obrazu z wariantu znanego od początku stopienia (pendingVariant)
+    const blast = SC.applyVariantToBlast(SC.computeCoreBlast(core), core.pendingVariant || 'shatter');
+    if (!blast.reactorProfile) { S.blowVisuals.add(core); continue; }
     const lead = BLOW_CHARGE[blast.reactorProfile] || 0.8;
     if (core.meltdownRemaining / Math.max(0.05, S.timeScale) <= lead) spawnBlowVisual(core, blast);
   }
   Core3D.beginPlanetLayerFrame();
   Core3D.setShieldLayerActive(false);
+  if (S.focus) followFocus();
+  reactorSyncOpts.origin = S.cam;
+  reactor3D.sync(cores, nowSec, simFrameDt, reactorSyncOpts);
   coreFx.sync(cores, nowSec, simFrameDt);
 
   // wstrząs kamery po detonacji
@@ -561,6 +929,11 @@ function render(realDt, simFrameDt) {
   cullInfo.halfW = cullInfo.drawHalfW * 3; cullInfo.halfH = cullInfo.drawHalfH * 3;
   cullEmptyWrecks();
   const renderEntities = S.destructibles.filter((e) => !e.dead);
+  // Wspólny bank cząstek (iskry, błyski wylotowe, Hexlance) — w grze przesuwa
+  // go Weapon3DSystem.syncProjectiles, dokładnie raz na klatkę; demo nie ma
+  // systemu broni 3D, więc robi to tutaj (czas symulacji: pauza zatrzymuje iskry).
+  Fx3D.update(simFrameDt);
+  MuzzleFX3D.beginFrame();
   const t1 = performance.now();
   updateHexShips3D(cam, renderEntities, cullInfo);
   drawHexShips3D(ctx2d, W, H);
@@ -598,7 +971,7 @@ function updateHud(cores) {
   const ov = overlay3D.getStats();
   const lines = [];
   lines.push(`<b>RDZEŃ</b>  ${(1000 / Math.max(1, S.frameMsAvg)).toFixed(0)} FPS · klatka ${S.frameMsAvg.toFixed(1)} ms · Core3D ${(Core3D.lastFramePerf?.renderTotalMs || 0).toFixed(1)} ms`);
-  lines.push(`draw calle ${ri.calls} (Core3D) + ${ri.ovCalls} (overlay ${ov.lastRenderMs.toFixed(1)} ms) · FX rdzeni ${coreFx.stats.drawCalls} · wyrzuty ${coreFx.stats.vents}`);
+  lines.push(`draw calle ${ri.calls} (Core3D) + ${ri.ovCalls} (overlay ${ov.lastRenderMs.toFixed(1)} ms) · FX rdzeni ${coreFx.stats.drawCalls} · wyrzuty ${coreFx.stats.vents} · model ${reactor3D.stats.instances} (${reactor3D.stats.drawCalls} dc)`);
   lines.push(`solver: ${softBodyMode()} · krok 120 Hz · czas ×${S.timeScale.toFixed(2)}${S.paused ? ' · PAUZA' : ''} · sim ${S.simTime.toFixed(1)} s`);
   if (t) {
     const hp = t.isPlayer ? `${Math.round(t.hull.val)}/${t.hull.max}` : `${Math.round(Math.max(0, t.hp))}/${t.maxHp}`;
@@ -613,7 +986,13 @@ function updateHud(cores) {
   }
   const w = MASTER_WEAPONS[S.weaponId];
   lines.push(`broń: ${w?.name || S.weaponId} · trafień ${S.stats.hullHits || 0} · obrażeń ${Math.round(S.stats.hullDamage || 0)} · pocisków ${S.bullets.length}`);
+  if (S.jets.length || S.orbs.length || S.secondaries.length) {
+    lines.push(`<span class="warn">po wybuchu: strumienie ${S.jets.length} · kule plazmy ${S.orbs.length} · wybuchy wtórne w kolejce ${S.secondaries.length}</span>`);
+  }
   lines.push(`rdzenie w scenie: ${cores.length} · ${cores.map((c) => `${c.id}:${(SC.CORE_STATE_LABEL[c.state] || '').slice(0, 4)}`).join(' ')}`);
+  const kindSel = $('model-kind');
+  const kindLabel = kindSel.value === 'auto' ? 'wg kadłuba' : kindSel.options[kindSel.selectedIndex].text;
+  lines.push(`model reaktora (M): <b>${reactor3D.debug.enabled ? kindLabel : 'wył. — dawny żar'}</b>${reactor3D.debug.xray ? ' · prześwietlenie' : ''}${S.focus ? ' · zbliżenie' : ''}${S.modelGallery ? ' · <span class="warn">GALERIA</span>' : ''}`);
   $('hud').innerHTML = lines.join('\n');
 }
 
@@ -686,6 +1065,7 @@ canvas2d.addEventListener('mousedown', (ev) => {
   if (!audioCtx) { try { audioCtx = new AudioContext(); } catch { /* */ } }
   updateMouse(ev);
   if (ev.button === 1 || (ev.button === 0 && ev.altKey)) {
+    dropFocus();
     panDrag = { x: ev.clientX, y: ev.clientY, cx: S.cam.x, cy: S.cam.y };
     ev.preventDefault();
     return;
@@ -703,7 +1083,10 @@ canvas2d.addEventListener('wheel', (ev) => {
   ev.preventDefault();
   updateMouse(ev);
   const before = { ...S.mouse.world };
-  S.cam.zoom = Math.max(0.03, Math.min(4, S.cam.zoom * Math.exp(-ev.deltaY * 0.0012)));
+  // do ×12: przy ×4 komora reaktora ma ledwie ~100 px promienia
+  S.cam.zoom = Math.max(0.03, Math.min(12, S.cam.zoom * Math.exp(-ev.deltaY * 0.0012)));
+  // przy zbliżeniu na reaktor zoom zostaje w jego środku
+  if (S.focus) return;
   const after = screenToWorld({ camX: S.cam.x, camY: S.cam.y, zoom: S.cam.zoom, W, H }, S.mouse.x, S.mouse.y, {});
   S.cam.x += before.x - after.x;
   S.cam.y += before.y - after.y;
@@ -725,6 +1108,9 @@ addEventListener('keydown', (ev) => {
     S.gun.x = S.mouse.world.x; S.gun.y = S.mouse.world.y;
     if (t) S.gunOffset = { x: S.gun.x - Combat.entityX(t), y: S.gun.y - Combat.entityY(t) };
   }
+  if (ev.code === 'KeyZ') focusReactor();
+  if (ev.code === 'KeyX') setXray(!$('model-xray').checked);
+  if (ev.code === 'KeyM') cycleModelKind();
   if (ev.code === 'Comma') setTimeScale(S.timeScale * 0.5);
   if (ev.code === 'Period') setTimeScale(S.timeScale * 2);
   if (/^Digit[1-9]$/.test(ev.code)) {
@@ -735,6 +1121,7 @@ addEventListener('keydown', (ev) => {
 addEventListener('keyup', (ev) => keys.delete(ev.code));
 setInterval(() => {
   const pan = 900 / S.cam.zoom * 0.016;
+  if (keys.has('KeyW') || keys.has('KeyS') || keys.has('KeyA') || keys.has('KeyD')) dropFocus();
   if (keys.has('KeyW')) S.cam.y -= pan;
   if (keys.has('KeyS')) S.cam.y += pan;
   if (keys.has('KeyA')) S.cam.x -= pan;
@@ -878,6 +1265,18 @@ function initPanel() {
   bindRange('meltmul', (v) => `${v.toFixed(2).replace('.', ',')}×`, () => S.ships.forEach(applyKillFrac));
   bindRange('chain', (v) => String(v), () => { for (const c of allCores()) c.config = { ...c.config, ...coreConfig() }; });
   $('attr-det').addEventListener('change', () => { for (const c of allCores()) c.config = { ...c.config, ...coreConfig() }; });
+  $('det-variant').addEventListener('change', () => {
+    for (const c of allCores()) {
+      c.config = { ...c.config, ...coreConfig() };
+      if (c.state === SC.CORE_STATE.MELTDOWN) c.pendingVariant = SC.chooseCoreDetonationVariant(c, { time: S.simTime });
+    }
+  });
+  $('btn-gallery').addEventListener('click', () => runGallery());
+  $('btn-model-focus').addEventListener('click', () => focusReactor());
+  $('btn-model-gallery').addEventListener('click', () => toggleModelGallery());
+  $('model-on').addEventListener('change', () => { reactor3D.debug.enabled = $('model-on').checked; });
+  $('model-xray').addEventListener('change', () => { reactor3D.debug.xray = $('model-xray').checked; });
+  for (const ev of ['change', 'input']) $('model-kind').addEventListener(ev, () => reactor3D.reset());
   $('killmode').addEventListener('change', () => { for (const c of allCores()) c.killMode = $('killmode').value; });
   $('hp-off').addEventListener('change', () => { for (const s of S.ships) s.__hpImmune = $('hp-off').checked; });
   // A/B sprzed poprawki heksów-duchów: dawne okna sond i solver co klatkę na
@@ -1057,9 +1456,30 @@ function stepSim(seconds) {
   }
 }
 
+// Galeria: po kolei każdy wariant na świeżym Bellatorze (krótkie stopienie).
+async function runGallery() {
+  const run = ++S.galleryRun;
+  const prev = $('det-variant').value;
+  for (const id of SC.CORE_VARIANT_IDS) {
+    if (run !== S.galleryRun) return;
+    $('scene').value = 'battleship';
+    $('det-variant').value = id;
+    buildScene('battleship');
+    const t = S.ships[0];
+    const c = t?.shipCores?.[0];
+    if (!c) continue;
+    S.cam.zoom = 0.42;
+    log(`GALERIA: ${SC.CORE_DETONATION_VARIANTS[id].label}`, 'warn');
+    processEvents(SC.forceCoreMeltdown(c, S.simTime, 'galeria'));
+    c.meltdownRemaining = 0.6;
+    await new Promise((r) => setTimeout(r, 4800));
+  }
+  if (run === S.galleryRun) $('det-variant').value = prev;
+}
+
 window.__rdzen = {
   ready: false,
-  S, Core3D, coreFx, SC,
+  S, Core3D, coreFx, reactor3D, SC,
   setScene(id) { S.targetIndex = 0; $('scene').value = id; buildScene(id); return S.ships.map((s) => s.__label); },
   setCamera(x, y, zoom) { S.cam.x = x; S.cam.y = y; if (zoom) S.cam.zoom = zoom; },
   fit() { fitCamera(); },
@@ -1097,28 +1517,10 @@ window.__rdzen = {
     return SC.summarizeCore(c);
   },
   // wyrwa w komorze bez strzelania: niszczy ułamek heksów komory (od środka)
-  openChamber(frac = 0.3, i = S.targetIndex) {
-    const t = S.ships[i];
-    const c = t?.shipCores?.[0];
-    if (!c) return null;
-    const cx = c.gridX, cy = c.gridY;
-    const list = c.chamber.filter((s) => s.active).sort((a, b) => Math.hypot(a.origGridX - cx, a.origGridY - cy) - Math.hypot(b.origGridX - cx, b.origGridY - cy));
-    const n = Math.round(list.length * frac);
-    // Odłamki lecą od rdzenia jak po trafieniu — bez prędkości wisiałyby nad
-    // wyrwą i zasłaniały żar (zaniżony pomiar HDR).
-    const cw = SC.getCoreWorld(c, {});
-    const l = {}, w = {};
-    for (let k = 0; k < n; k++) {
-      const s = list[k];
-      SC.gridToLocal(t, s.gridX, s.gridY, l);
-      SC.localToWorld(t, l.x, l.y, w);
-      const dx = w.x - cw.x, dy = w.y - cw.y;
-      const d = Math.hypot(dx, dy) || 1;
-      const sp = 350 + Math.random() * 350;
-      DestructorSystem.destroyShard(t, s, { x: (t.vx || 0) + dx / d * sp, y: (t.vy || 0) + dy / d * sp });
-    }
-    return n;
-  },
+  openChamber(frac = 0.3, i = S.targetIndex) { return openChamber(frac, i); },
+  focusReactor,
+  runModelGallery,
+  toggleModelGallery,
   renderFrames(n = 1) { for (let i = 0; i < n; i++) frame(performance.now()); return renderInfo(); },
   // n klatek po 1/fps czasu gry, z oddaniem pętli zdarzeń między klatkami
   // (odczyt wyników WebGPU przychodzi asynchronicznie, jak w grze).
@@ -1134,10 +1536,20 @@ window.__rdzen = {
     };
     try {
       let t = lastT;
+      // opts.realtime: klatka nie szybciej niż 1/fps czasu rzeczywistego —
+      // reactorblow.js liczy fazy z performance.now(), więc bez tego na
+      // zrzutach jego wybuch byłby „młodszy” niż czas symulacji.
+      let wall = performance.now();
       for (let i = 0; i < n; i++) {
         t += 1000 / fps;
         frame(t);
-        await new Promise((r) => setTimeout(r, 0));
+        if (opts.realtime) {
+          wall += 1000 / fps;
+          const wait = wall - performance.now();
+          await new Promise((r) => setTimeout(r, Math.max(0, wait)));
+        } else {
+          await new Promise((r) => setTimeout(r, 0));
+        }
         if (opts.waitGpu) {
           for (let w = 0; w < 40 && gpuBusy(); w++) await new Promise((r) => setTimeout(r, 1));
         }
@@ -1169,6 +1581,22 @@ window.__rdzen = {
     return { x: (w.x - S.cam.x) * S.cam.zoom + W / 2, y: (w.y - S.cam.y) * S.cam.zoom + H / 2, r: c.gridR * S.cam.zoom };
   },
   hexCounts() { return S.ships.map((s) => ({ label: s.__label, hexes: s.hexGrid?.shards.length })); },
+  // wymuszony wariant detonacji celu (i = indeks statku), odliczanie `remaining` s
+  // aimAt: indeks kadłuba, w który ma pójść wyrzut/kula (inaczej kierunek losowy)
+  detonateAs(variant, i = S.targetIndex, remaining = 0.0001, aimAt = null) {
+    const t = S.ships[i];
+    const c = t?.shipCores?.find((x) => x.state !== SC.CORE_STATE.DETONATED && !x.invalid);
+    if (!c) return null;
+    const aim = aimAt !== null && aimAt !== undefined ? S.ships[aimAt] : null;
+    S.aimExitAt = aim ? { x: Combat.entityX(aim), y: Combat.entityY(aim) } : null;
+    $('det-variant').value = variant || '';
+    c.config = { ...c.config, ...coreConfig() };
+    processEvents(SC.forceCoreMeltdown(c, S.simTime, 'wymuszone'));
+    c.meltdownRemaining = remaining;
+    return SC.summarizeCore(c);
+  },
+  hazards() { return { jets: S.jets.length, orbs: S.orbs.length, secondaries: S.secondaries.length, fx: { ...coreFx.stats } }; },
+  runGallery,
   // Liczniki kroków solvera sprężyn: wyniki GPU nałożone na siatkę / dispatche lustra.
   solverCounters() {
     return { gpuApplied: DestructorGpuSoftBody._debugAppliedCount || 0, cpuDispatches: cpuSoft?.stats.dispatches || 0, cpuSteps: cpuSoft?.stats.steps || 0 };

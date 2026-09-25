@@ -1,5 +1,5 @@
-// Ring „Halo” — punkt wejścia modułu (niepodpięty do index.html; port to
-// osobne zadanie, patrz docs/BRIEF-ring-halo.md §16).
+// Ring „Halo” — punkt wejścia modułu. W grze od portu 2026-09-25: klej
+// haloRingGame.js (Ziemia i Mars, kolizje, stacja-port) — docs/PORT-halo-ring.md.
 //
 //   const ring = createHaloRing({ planetRadius, seed, quality, renderer });
 //   scene.add(ring.group);
@@ -16,7 +16,7 @@
 // Moduł nie tworzy renderera ani canvasu (AGENTS.md): renderer dostaje od
 // hosta wyłącznie do upieczenia map (render-to-texture).
 import * as THREE from 'three';
-import { HALO_DEFAULT_LAYER, HALO_FG, HALO_QUALITY, haloPortComplexAngles, resolveHaloQuality } from './haloRingConfig.js';
+import { HALO_DEFAULT_LAYER, HALO_FG, HALO_QUALITY, haloPortComplexAngles, haloQualityLod, resolveHaloQuality } from './haloRingConfig.js';
 import { createHaloRingLayout } from './haloRingLayout.js';
 import { applyLayoutToUniforms, applyRoofPlanUniforms, createHaloUniforms } from './haloRingUniforms.js';
 import { HaloWorldMaps } from './haloRingWorldGen.js';
@@ -25,7 +25,8 @@ import { HaloTerrain } from './haloRingTerrain.js';
 import { HaloStructure } from './haloRingStructure.js';
 import { HaloAirShell, HaloClouds } from './haloRingAtmosphere.js';
 import { buildHaloRoofPlan } from './haloRingRoofPlan.js';
-import { buildHaloLandmarkPlan } from './haloRingLandmarks.js';
+import { buildHaloLandmarkPlan, haloCivicContext } from './haloRingLandmarks.js';
+import { buildHaloDomePlan } from './haloRingDomes.js';
 import { HaloMegastructure } from './haloRingMegastructure.js';
 import { HaloCity } from './haloRingCity.js';
 import { HaloPortK7 } from './haloPortK7.js';
@@ -64,15 +65,20 @@ export function createHaloRing(options = {}) {
     const quality = HALO_QUALITY[state.qualityKey];
     if (!uniforms) uniforms = createHaloUniforms(layout);
     else applyLayoutToUniforms(uniforms, layout);
+    // skala detalu z LOD jakości (ultra: okna i wzory wygaszane dalej)
+    uniforms.uDetailScale.value = haloQualityLod(quality).detailScale;
     const maps = new HaloWorldMaps(renderer, layout, quality);
-    // Megabudowle z ECUMENE (landmarki miast, 2026-09-24): miejsca z mapy
-    // wysokości sprzed placów, potem plac w mapach (płasko, bez zabudowy
-    // i lasu) i bryły w megastrukturze (punkty orientacyjne, BG).
+    // Megabudowle z ECUMENE (landmarki miast, 2026-09-24) i kopuły-biosfery
+    // (2026-09-25): miejsca z mapy wysokości sprzed placów (wspólny kontekst —
+    // parki się nie nakładają), potem w mapach plac, park, staw i wnętrze
+    // kopuły, a bryły i szkło w megastrukturze (punkty orientacyjne, BG).
     const Wf = layout.floor.length;
-    const landmarks = state.options.landmarks === false ? [] : buildHaloLandmarkPlan(layout, {
+    const civicCtx = haloCivicContext(layout, {
       heightAt: maps.cpu ? (theta, t) => maps.heightAtUV(theta / (Math.PI * 2), t / Wf) : null
     });
-    maps.setLandmarks(landmarks);
+    const landmarks = state.options.landmarks === false ? [] : buildHaloLandmarkPlan(layout, { ctx: civicCtx });
+    const domes = state.options.domes === false ? [] : buildHaloDomePlan(layout, { ctx: civicCtx });
+    maps.setCivic({ landmarks, domes });
     const detail = parts?.detail || new HaloDetailTextures(renderer);
     const terrain = new HaloTerrain({ layout, uniforms, maps, detail, quality });
     const domain = {
@@ -88,9 +94,9 @@ export function createHaloRing(options = {}) {
     const clouds = new HaloClouds({ layout, uniforms, surfaceUniforms: terrain.surfaceUniforms, domain, quality });
     const shell = new HaloAirShell({ layout, uniforms, surfaceUniforms: terrain.surfaceUniforms, domain, quality });
     // M3: dach, kratownice, kolej, port — plan w czystym JS, render instancjami
-    const plan = buildHaloRoofPlan(layout, domain, { landmarks });
+    const plan = buildHaloRoofPlan(layout, domain, { landmarks, domes });
     applyRoofPlanUniforms(uniforms, plan);
-    const mega = new HaloMegastructure({ layout, uniforms, surfaceUniforms: terrain.surfaceUniforms, domain, plan });
+    const mega = new HaloMegastructure({ layout, uniforms, surfaceUniforms: terrain.surfaceUniforms, domain, plan, quality });
     // M4: budynki i drzewa na podłodze — z tych samych reguł co mapa miasta w terenie
     const city = new HaloCity({ layout, uniforms, surfaceUniforms: terrain.surfaceUniforms, quality });
     // Ruchu statków ring nie udaje (decyzja użytkownika 2026-09-24: statki i ruch
@@ -186,6 +192,7 @@ export function createHaloRing(options = {}) {
     const horizon = Math.acos(Math.min(1, Rf / Math.max(Rc, Rf + 1))) + Math.acos(Rf / (Rf + 9000)) + 0.05;
     const camTh = Math.atan2(camLocal.y, camLocal.x);
     const pc = uniforms.uPlanet.value;
+    const minPx = haloQualityLod(parts.quality).k7Pixels;
     for (const hall of halls) {
       const B = hall.bounds;
       _hallC.set(B.x, B.y, B.z);
@@ -196,7 +203,7 @@ export function createHaloRing(options = {}) {
         if (Math.abs(d) > horizon + B.r / Rf) vis = false;
       }
       const dist = _hallC.distanceTo(camLocal);
-      if (vis && pixelAngle > 0 && 2 * B.r / Math.max(dist, 1) / pixelAngle < 3) vis = false;
+      if (vis && pixelAngle > 0 && 2 * B.r / Math.max(dist, 1) / pixelAngle < minPx) vis = false;
       if (vis) {
         // odcinek kamera → hala przecina planetę?
         const dx = _hallC.x - camLocal.x;
@@ -370,8 +377,10 @@ export function createHaloRing(options = {}) {
     get k7Layout() { return state.k7Layout || null; },
     get bays() { return state.bayLayouts || []; },
     get plan() { return parts.plan; },
-    // Megabudowle (haloRingLandmarks.js): nazwa, sektor, kąt, t podłogi, plac.
+    // Megabudowle (haloRingLandmarks.js): nazwa, sektor, kąt, t podłogi, plac, park.
     get landmarks() { return parts.plan.landmarks || []; },
+    // Kopuły-biosfery (haloRingDomes.js): typ wnętrza, sektor, kąt, t, promień.
+    get domes() { return parts.plan.domes || []; },
 
     dispose() {
       disposeParts(false);

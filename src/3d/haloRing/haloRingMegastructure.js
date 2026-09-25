@@ -21,7 +21,7 @@ import {
   HALO_GLSL_NOISE,
   HALO_GLSL_RTE
 } from './haloRingGLSL.js';
-import { HALO_HDR, HALO_ROOF } from './haloRingConfig.js';
+import { HALO_HDR, haloQualityLod } from './haloRingConfig.js';
 import { HALO_GLSL_SURFACE } from './haloRingTerrain.js';
 import { HALO_INSTANCE_STRIDE, HALO_LIGHT_STRIDE, HALO_PRIM_NAMES, HALO_TRAIN_STRIDE } from './haloRingRoofPlan.js';
 
@@ -298,7 +298,7 @@ void main() {
     vec2 wf = fract(wg);
     float frame = step(0.2, wf.x) * step(wf.x, 0.8) * step(0.25, wf.y) * step(wf.y, 0.75) * step(0.0, vLocal.z - 4.0) * step(vLocal.z, vSize.z - 4.0);
     float lit = step(0.55, haloHash12(wc + vSeed * 57.0));
-    float aa = 1.0 - smoothstep(0.4, 1.2, fw / 4.0);
+    float aa = 1.0 - smoothstep(0.4, 1.2, fw / (4.0 * uDetailScale));
     vec3 wcol = emitType < 1.5 ? vec3(${f3(HALO_HDR.windowWarm)}) : vec3(${f3(HALO_HDR.windowCool)});
     emit += wcol * frame * lit * night * mix(0.28, 1.0, aa) * 0.9 * uLayers.y * uNightLights;
     albedo = mix(albedo, vec3(0.02, 0.025, 0.03), frame * aa * 0.8);
@@ -346,8 +346,8 @@ void main() {
     vec2 cf = fract(fc);
     vec2 fwc = max(vec2(fwidth(fc.x), fwidth(fc.y)), vec2(1e-4));
     float fwm = max(fwc.x, fwc.y);
-    float farA = smoothstep(0.35, 0.85, fwm);
-    float farB = smoothstep(0.35, 0.85, fwm / 3.0);
+    float farA = smoothstep(0.35, 0.85, fwm / uDetailScale);
+    float farB = smoothstep(0.35, 0.85, fwm / (3.0 * uDetailScale));
     float gx = smoothstep(0.16 - fwc.x, 0.16 + fwc.x, cf.x) * (1.0 - smoothstep(0.84 - fwc.x, 0.84 + fwc.x, cf.x));
     float gy = smoothstep(0.24 - fwc.y, 0.24 + fwc.y, cf.y) * (1.0 - smoothstep(0.86 - fwc.y, 0.86 + fwc.y, cf.y));
     float bz = vLocal.z / 54.0;
@@ -435,6 +435,112 @@ void main() {
   gl_FragColor = vec4(max(color, vec3(0.0)), 1.0);
 }
 `;
+
+// Szkło kopuł-biosfer (haloRingDomes.js): półkula przezroczysta, żebra
+// (południki i równoleżniki) i drobna siatka rombów z położenia na kopule,
+// Fresnel z odbiciem nieba habitatu, odblask słońca, nocą ciepła poświata
+// wnętrza. Paleta instancji = typ wnętrza (barwa szkła), emisja = ciepłe
+// wnętrze. Jedna siatka na wszystkie kopuły (1 draw call), bez zapisu głębi.
+const GLASS_FRAGMENT = /* glsl */`
+${HALO_GLSL_COMMON}
+${HALO_GLSL_NOISE}
+${HALO_GLSL_LIGHT}
+${HALO_GLSL_AIR}
+varying vec3 vRel;
+varying vec3 vNormal;
+varying vec3 vLocal;
+varying vec3 vLocalN;
+varying vec3 vSize;
+varying float vMat;
+varying float vSeed;
+
+float glassLine(float x, float w, float fw) {
+  float d = abs(fract(x + 0.5) - 0.5);
+  return 1.0 - smoothstep(w, w + fw, d);
+}
+
+void main() {
+  vec3 rel = vRel;
+  float dist = length(rel);
+  vec3 V = -rel / max(dist, 1e-3);
+  vec3 p = uCamLocal + rel;
+  vec3 N = normalize(vNormal);
+  float NdV = dot(N, V);
+  if (NdV < 0.0) { N = -N; NdV = -NdV; }
+  float matI = floor(vMat + 0.5);
+  float warmK = floor((matI + 0.5) / 32.0);
+  float type = matI - 32.0 * warmK;
+  // polozenie na kopule: wysokosc katowa (0 u podstawy) i azymut
+  vec3 q = vLocal / max(vSize, vec3(1e-3));
+  float zq = clamp(q.z, 0.0, 1.0);
+  float el = asin(zq) / 1.5707963;
+  float az = atan(q.y, q.x) / 6.2831853;
+  // fwidth azymutu bez skoku na szwie +-pi
+  float fwAz = min(fwidth(az), fwidth(fract(az + 0.5)));
+  float fwEl = fwidth(el);
+  float nMer = 16.0;
+  float nPar = 6.0;
+  vec2 g = vec2(az * nMer, el * nPar);
+  vec2 fwg = vec2(fwAz * nMer, fwEl * nPar) + 1e-4;
+  // zebra: poludniki (gasna przy szczycie, gdzie sie zbiegaja) i rownolezniki
+  float mer = glassLine(g.x, 0.035, fwg.x) * (1.0 - smoothstep(0.82, 0.95, zq));
+  float par = glassLine(g.y, 0.05, fwg.y);
+  float rib = max(mer, par);
+  // drobna siatka rombow (geodezyjna), z daleka srednia zamiast migotania
+  vec2 g2 = g * vec2(3.0, 3.0);
+  float fw2 = max(fwg.x, fwg.y) * 3.0;
+  float mesh = max(glassLine(g2.x + g2.y, 0.04, fw2), glassLine(g2.x - g2.y, 0.04, fw2));
+  mesh = mix(mesh, 0.18, smoothstep(0.25, 0.8, fw2)) * (1.0 - smoothstep(0.85, 0.97, zq));
+  // barwa szkla wg typu wnetrza (las, tropiki, ogrod, rekreacja, dzicz, woda)
+  vec3 tint = vec3(0.55, 0.78, 0.95);
+  if (type > 0.5 && type < 1.5) tint = vec3(0.55, 0.85, 0.85);
+  if (type > 1.5 && type < 2.5) tint = vec3(0.70, 0.82, 0.95);
+  if (type > 2.5 && type < 3.5) tint = vec3(0.65, 0.80, 1.00);
+  if (type > 3.5 && type < 4.5) tint = vec3(0.50, 0.75, 0.90);
+  if (type > 4.5) tint = vec3(0.45, 0.80, 1.00);
+  vec3 L = uSunDir;
+  vec3 sunVis = haloSunVisibility(p + N * 2.0, L);
+  vec3 upW = haloUp(p);
+  float dayG = haloLuma(haloPlanetTransmit(p, L)) * smoothstep(-0.02, 0.12, dot(upW, L));
+  float night = (1.0 - smoothstep(0.02, 0.25, haloLuma(sunVis) * max(dot(upW, L) + 0.2, 0.0))) * (1.0 - 0.9 * dayG);
+  float fres = 0.04 + 0.96 * pow(1.0 - NdV, 5.0);
+  // odbicie nieba habitatu (jak szklo megastruktury)
+  vec3 R = reflect(-V, N);
+  float up = clamp(dot(R, upW), -1.0, 1.0);
+  vec3 skyR = mix(vec3(0.18, 0.25, 0.36), vec3(0.05, 0.10, 0.21), clamp(up, 0.0, 1.0)) * haloLuma(haloSunVisibility(p + upW * 600.0, L)) * max(dot(upW, L) + 0.3, 0.0);
+  skyR = mix(skyR, vec3(0.03, 0.035, 0.03), smoothstep(0.05, -0.2, up));
+  vec3 H = normalize(L + V);
+  float NdL = max(dot(N, L), 0.0);
+  float NdH = max(dot(N, H), 0.0);
+  float a2 = 0.012;
+  float dd = NdH * NdH * (a2 - 1.0) + 1.0;
+  float spec = min(a2 / (HALO_PI * dd * dd) * 0.25 / max(NdV, 0.05), 8.0) * NdL;
+  vec3 amb = haloSkyAmbient(p, N) + vec3(uNightAmbient);
+  vec3 glassC = tint * 0.05 * (uSunColor * sunVis * NdL + amb) + skyR * mix(0.25, 1.0, fres);
+  glassC += uSunColor * sunVis * spec * fres * 0.9;
+  // rama: jasny metal, oswietlony
+  vec3 frameC = vec3(0.26, 0.27, 0.28) * (uSunColor * sunVis * (0.35 + 0.65 * NdL) + amb);
+  vec3 warmC = warmK > 0.5 ? vec3(1.0, 0.78, 0.52) : vec3(0.62, 0.8, 1.0);
+  // noca poswiata wnetrza na szkle (slaba, przy podstawie) i lampy na zebrach
+  float lowK = (1.0 - zq) * (1.0 - zq);
+  glassC += warmC * 0.06 * night * uLayers.y * uNightLights * (0.25 + 0.75 * lowK);
+  frameC += warmC * 0.35 * night * uLayers.y * uNightLights * par * step(fract(g.x * 2.0), 0.12);
+  float frameK = max(rib, mesh * 0.55);
+  vec3 color = mix(glassC, frameC, frameK);
+  float alpha = clamp(0.12 + 0.5 * fres + 0.8 * rib + 0.4 * mesh + 0.06 * night, 0.0, 0.95);
+  color = haloApplyAir(color, rel, haloIGN(gl_FragCoord.xy));
+  gl_FragColor = vec4(max(color, vec3(0.0)), alpha);
+}
+`;
+
+// Półkula szkła gęstsza niż prymityw kopuły (duże promienie, gładki obrys).
+function makeGlassDome() {
+  const g = new THREE.SphereGeometry(0.5, 56, 16, 0, Math.PI * 2, 0, Math.PI / 2);
+  g.rotateX(Math.PI / 2);
+  g.scale(1, 1, 2);                // półsfera: z od 0 do 1
+  g.computeVertexNormals();
+  return g;
+}
 
 // Billboardy świateł pozycyjnych: stały rozmiar w świecie, ale nie mniejszy
 // niż ~1,6 px (z daleka ring obrysowują migające punkty).
@@ -532,18 +638,23 @@ function makeInstanced(base, capacity, material) {
 }
 
 export class HaloMegastructure {
-  constructor({ layout, uniforms, surfaceUniforms, domain, plan }) {
+  constructor({ layout, uniforms, surfaceUniforms, domain, plan, quality = null }) {
     this.layout = layout;
     this.plan = plan;
     this.domain = domain;
     this.group = new THREE.Group();
     this.group.name = 'HaloMegastructure';
+    // zasięg detalu z LOD jakości (ultra: dalej); pojemność buforów detalu
+    // rośnie z zasięgiem (więcej segmentów w kadrze naraz)
+    const lod = haloQualityLod(quality);
+    this._geomFade = { value: new THREE.Vector2(lod.geomFade[0], lod.geomFade[1]) };
+    this._detailSegs = Math.round(72 * Math.max(1, lod.geomFade[1] / 20000));
     // dach nad płaszczyzną gry (flightLevel liczbowy): materiały z HALO_FG
     const fgDefines = layout.flightLevel !== 'roof' ? { HALO_FG: 1 } : {};
     const common = { ...uniforms, ...surfaceUniforms, uSegCells: { value: domain.segCells } };
     const primMaterial = (defines) => new THREE.ShaderMaterial({
       name: 'HaloMegaPrims',
-      uniforms: { ...common, uGeomFade: { value: new THREE.Vector2(HALO_ROOF.geomNear, HALO_ROOF.geomFar) } },
+      uniforms: { ...common, uGeomFade: this._geomFade },
       vertexShader: PRIM_VERTEX,
       fragmentShader: HALO_PRIM_FRAGMENT,
       defines: { AIR_STEPS: 4, ...defines },
@@ -557,7 +668,7 @@ export class HaloMegastructure {
     const makeSet = (key, material) => HALO_PRIM_NAMES.map((name, p) => {
       const src = plan.prims[p][key];
       const capacity = key === 'detail'
-        ? Math.max(64, Math.min(src.total, src.maxPerSeg * 72))
+        ? Math.max(64, Math.min(src.total, src.maxPerSeg * this._detailSegs))
         : Math.max(16, src.total);
       const inst = makeInstanced(bases[p], capacity, material);
       inst.mesh.name = `HaloMega_${key}_${name}`;
@@ -568,6 +679,29 @@ export class HaloMegastructure {
     });
     this.prims = makeSet('detail', this.material);
     this.landmarks = makeSet('landmark', this.landmarkMaterial);
+
+    // szkło kopuł-biosfer: osobna siatka przezroczysta (po bryłach, bez zapisu
+    // głębi), wybierana razem z punktami orientacyjnymi (te same segmenty)
+    const gsrc = plan.glass;
+    this.glassMaterial = new THREE.ShaderMaterial({
+      name: 'HaloDomeGlass',
+      uniforms: { ...common, uGeomFade: this._geomFade },
+      vertexShader: PRIM_VERTEX,
+      fragmentShader: GLASS_FRAGMENT,
+      defines: { AIR_STEPS: 4 },
+      side: THREE.BackSide,
+      transparent: true,
+      depthWrite: false
+    });
+    this._glassBase = makeGlassDome();
+    this.glass = makeInstanced(this._glassBase, Math.max(4, gsrc?.total || 0), this.glassMaterial);
+    this.glass.mesh.name = 'HaloMega_domeGlass';
+    this.glass.mesh.renderOrder = 30;
+    this.glass.views = Array.from({ length: plan.segCount }, (_, s) => (gsrc
+      ? gsrc.data.subarray(gsrc.offsets[s] * HALO_INSTANCE_STRIDE, (gsrc.offsets[s] + gsrc.counts[s]) * HALO_INSTANCE_STRIDE)
+      : new Float32Array(0)));
+    this.glass.mesh.visible = (gsrc?.total || 0) > 0;
+    this.group.add(this.glass.mesh);
 
     // pociągi: ta sama bryła prostopadłościanu, własny wierzchołek
     const trainGeo = new THREE.InstancedBufferGeometry();
@@ -671,7 +805,7 @@ export class HaloMegastructure {
   }
 
   _select(frustum, camLocal) {
-    const far = HALO_ROOF.geomFar;
+    const far = this._geomFade.value.y;
     const n = this._nextN;
     n.detail = 0;
     n.landmark = 0;
@@ -750,6 +884,7 @@ export class HaloMegastructure {
     if (this._changed('landmark', n.landmark)) {
       this._accept('landmark', n.landmark);
       this._landmarkCount = this._fillPrims(this.landmarks, 'landmark', n.landmark);
+      this._fillPrims([this.glass], 'landmark', n.landmark);
     }
     this.visibleInstances = (this._detailCount || 0) + (this._landmarkCount || 0);
     if (this._changed('lights', n.lights)) {
@@ -768,7 +903,7 @@ export class HaloMegastructure {
   }
 
   get bgMeshes() {
-    return [...this.landmarks.map((p) => p.mesh), this.landmarkLights.mesh];
+    return [...this.landmarks.map((p) => p.mesh), this.glass.mesh, this.landmarkLights.mesh];
   }
 
   get meshes() {
@@ -776,8 +911,10 @@ export class HaloMegastructure {
   }
 
   dispose() {
-    for (const inst of [...this.prims, ...this.landmarks]) inst.geo.dispose();
+    for (const inst of [...this.prims, ...this.landmarks, this.glass]) inst.geo.dispose();
     for (const b of this._bases) b.dispose();
+    this._glassBase.dispose();
+    this.glassMaterial.dispose();
     this.trains.geometry.dispose();
     this.lights.geo.dispose();
     this.landmarkLights.geo.dispose();
