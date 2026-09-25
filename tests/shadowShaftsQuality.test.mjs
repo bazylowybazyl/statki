@@ -57,22 +57,77 @@ test('shafts pass shades the ortho world but not FG emissives', () => {
     'shadow shafts must run after ring-planet and ortho world passes');
   assert.ok(shaftsIndex < fgIndex,
     'shadow shafts must run BEFORE the FG pass so weapon emissives stay lit in shadow');
-  assert.match(coreSource, /new FullScreenBlendPass\(createShadowShaftsShader\(\), BLEND_MULTIPLY_SCENE\)/);
+  assert.match(coreSource, /this\.shadowShaftsPass = new ShadowShaftsPass\(\);/);
+  // Oba quady mnożą scenę (ZERO/SRC_COLOR) — pass może tylko przyciemniać.
+  assert.match(coreSource, /Object\.assign\(material, BLEND_MULTIPLY_SCENE\);/);
 });
 
-test('shields render after the shafts pass, in ortho, without clearing depth', () => {
+test('shields and ortho emissives render after the shafts pass, in ortho, without clearing depth', () => {
   const shieldSource = readFileSync(new URL('../src/3d/shield3D.js', import.meta.url), 'utf8');
   const scenePassList = coreSource.match(/_scenePasses\s*=\s*\[([\s\S]*?)\]/)?.[1] || '';
   const shaftsIndex = scenePassList.indexOf('this.shadowShaftsPass');
-  const shieldIndex = scenePassList.indexOf('this.renderPassShields');
-  assert.ok(shieldIndex > shaftsIndex,
-    'shield pass must run AFTER shadow shafts — shield glow is emissive, not a lit surface');
-  // Kamera ortho (jak swiat) + BEZ czyszczenia glebi (test glebi wzgledem kadlubow).
-  assert.match(coreSource, /makeSplitScreenRenderPass\(this\.renderPassShields,\s*SHIELD_RENDER_LAYER,\s*true,\s*false,\s*false\)/);
+  const emissiveIndex = scenePassList.indexOf('this.renderPassEmissive');
+  assert.ok(emissiveIndex > shaftsIndex,
+    'emissive pass must run AFTER shadow shafts — shield glow, engines and bullets are light sources, not lit surfaces');
+  // Kamera ortho (jak swiat) + BEZ czyszczenia glebi (test glebi wzgledem kadlubow),
+  // tarcze i emisja w jednym obchodzie grafu.
+  assert.match(coreSource, /const EMISSIVE_PASS_LAYERS = Object\.freeze\(\[SHIELD_RENDER_LAYER, ORTHO_EMISSIVE_RENDER_LAYER\]\);/);
+  assert.match(coreSource, /makeSplitScreenRenderPass\(this\.renderPassEmissive,\s*EMISSIVE_PASS_LAYERS,\s*true,\s*false,\s*false\)/);
   assert.match(coreSource, /new RenderPass\(this\.scene, this\.cameraOrtho\)/);
+  // Pass pomijany tylko, gdy ani tarcze, ani emisja nie mają nic do narysowania.
+  assert.match(coreSource, /if \(pass === this\.renderPassEmissive\) return activity\.shields !== false \|\| this\._orthoEmissiveActive;/);
+  assert.match(coreSource, /this\._orthoEmissiveActive = this\._hasOrthoEmissiveContent\(\);/);
   // Obie tarcze (obrys kadluba i banka) musza trafic na warstwe tarcz.
   const shieldLayerCalls = shieldSource.match(/Core3D\.enableShield3D\(mesh\)/g) || [];
   assert.equal(shieldLayerCalls.length, 2, 'both hull and sphere shield meshes must use the shield layer');
+});
+
+test('ortho emitters live on the post-shaft emissive layer, not layer 0', () => {
+  // Na warstwie 0 umbra planety mnożyła HDR dysz i pocisków pod próg bloomu
+  // (2,4 × 0,06 = 0,14 < 0,9): w cieniu Ziemi silniki i pociski gasły.
+  const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
+  const exhaust = read('../src/3d/engineExhaustBatch.js');
+  const weapons = read('../src/3d/weapon3DSystem.js');
+  const fx = read('../src/3d/fxParticles3D.js');
+  const slug = read('../src/3d/slugTrail3D.js');
+  const railgun = read('../src/3d/railgunFx3D.js');
+  assert.match(exhaust, /Core3D\.scene\.add\(layer\.mesh\);\s*Core3D\.enableOrthoEmissive3D\(layer\.mesh\);/);
+  assert.match(weapons, /Core3D\.scene\.add\(mesh\);\s*Core3D\.enableOrthoEmissive3D\(mesh\);/, 'bullet instances');
+  assert.match(weapons, /Core3D\.enableOrthoEmissive3D\(outer\);\s*Core3D\.enableOrthoEmissive3D\(core\);/, 'muzzle flashes');
+  assert.equal((weapons.match(/Core3D\.enableOrthoEmissive3D\(group\);/g) || []).length, 2, 'pulse and continuous beams');
+  assert.match(fx, /for \(const sys of \[this\.vapor, this\.glow, this\.star, this\.wash, this\.plume, this\.cross\]\)/);
+  assert.match(fx, /Core3D\.enableOrthoEmissive3D\(this\.spark\.lines\);/);
+  assert.match(fx, /Core3D\.enableOrthoEmissive3D\(this\.arcs\.lines\);/);
+  assert.ok(!/enableOrthoEmissive3D\(this\.smoke/.test(fx), 'smoke is lit matter and must keep receiving the shadow');
+  assert.match(slug, /Core3D\.enableOrthoEmissive3D\(this\._trail\.mesh\);/);
+  assert.match(railgun, /Core3D\.enableOrthoEmissive3D\(this\._fx\.trail\.mesh\);/);
+  // Światła (PointLight trafienia wiązki) zostają na warstwie 0 i dalej świecą na kadłuby.
+  assert.match(coreSource, /object3d\.traverse\(\(child\) => \{ if \(!child\.isLight\) child\.layers\.set\(ORTHO_EMISSIVE_RENDER_LAYER\); \}\);/);
+  // Refrakcja shockwave widzi emisję jak dawniej (była na warstwie 0).
+  assert.match(coreSource, /layers\.push\(\{ layer: EMISSIVE_PASS_LAYERS, ortho: true \}\);/);
+});
+
+test('shadow splits into a partial background tier and a full surface tier', () => {
+  // Tło (mgławica, gwiazdy, planety) dostaje tylko część cienia planety —
+  // cień nie sięga tła w nieskończoności, a pełna umbra na tle gasiła cały
+  // kadr, gdy kamera siedziała w cieniu Ziemi. Ring nie zaciemnia tła wcale.
+  const volume = coreSource.match(/export const SHAFT_VOLUME_STRENGTH = Object\.freeze\(\{ disc: ([\d.]+), ring: ([\d.]+) \}\);/);
+  assert.ok(volume, 'SHAFT_VOLUME_STRENGTH missing');
+  const [discVolume, ringVolume] = [Number(volume[1]), Number(volume[2])];
+  assert.ok(discVolume > 0 && discVolume < 1, 'planet shaft must stay visible on the background but never go full umbra there');
+  assert.equal(ringVolume, 0, 'ring shadow must not darken the planet–ring gap background');
+  assert.ok(coreSource.includes('float shadowAmt = clamp(max(max(discShadow * uVolumeDisc, hullShadow), ringShadow * uVolumeRing), 0.0, 1.0);'));
+  // Powierzchnie (kadłuby = piksele z głębią passa ortho): pełny cień jak dawniej.
+  assert.ok(coreSource.includes('float shadowAmt = clamp(max(max(discShadow, hullShadow), ringShadow), 0.0, 1.0);'));
+  // Oba quady na dalekiej płaszczyźnie; głębia dzieli piksele rozłącznie:
+  // tło (wyczyszczone 1.0) przechodzi LEQUAL, kadłub (~0,375) GREATER —
+  // każdy piksel liczony raz, bez podwójnego mnożenia.
+  assert.ok(coreSource.includes('gl_Position = vec4(position.xy, 0.9999, 1.0);'));
+  assert.match(coreSource, /depthTest: true,\s*depthFunc: surface \? THREE\.GreaterDepth : THREE\.LessEqualDepth,\s*depthWrite: false,/);
+  assert.match(coreSource, /defines: surface \? \{ SHAFT_SURFACE: 1 \} : \{\},/);
+  // Oba quady w jednym render() — drugi FullScreenQuad to drugi resolve MSAA.
+  assert.match(coreSource, /this\._scene\.add\(volumeQuad, surfaceQuad\);/);
+  assert.match(coreSource, /renderer\.render\(this\._scene, this\._camera\);/);
 });
 
 test('analytic occluders skip interiors so surfaces keep their own lighting', () => {
@@ -91,7 +146,21 @@ test('planets and moons push analytic discs every frame', () => {
   const planetPushes = planetSource.match(/Core3D\.pushShaftDiscWorld\(/g) || [];
   assert.ok(planetPushes.length >= 2, 'both DirectPlanet and DirectMoon must push disc occluders');
   assert.match(planetSource, /beginShaftDiscFrame/);
-  assert.match(coreSource, /pushShaftDiscWorld\(worldX, worldY, radius, strength = 1\)/);
+  assert.match(coreSource, /pushShaftDiscWorld\(worldX, worldY, radius, strength = 1, depth = 0\)/);
+});
+
+test('background planets cast their shadow from where they are seen', () => {
+  // Planety tła (kamera persp, z = -50 000) zgłaszają głębokość za płaszczyzną
+  // gry; bez tego tarcza cienia leżała na płaszczyźnie z promieniem r × 4,5 —
+  // 2–30× większa od widocznej planety i przesunięta o paralaksę.
+  assert.match(planetSource, /Core3D\.pushShaftDiscWorld\(this\.data\.x, this\.data\.y, scale, 1, anchoredToRing \? 0 : -visualZ\);/);
+  assert.match(planetSource, /Core3D\.pushShaftDiscWorld\(mx, my, scale, 1, this\.isRingAnchored \? 0 : -z\)/);
+  // Shader rzutuje tarczę kamerą persp: środek i promień × D / (D + głębokość).
+  assert.ok(coreSource.includes('float s = perspDist / (perspDist + depth);'));
+  assert.ok(coreSource.includes('center = camC + (center - camC) * s;'));
+  // D = ta sama odległość kamery persp co w syncCamera.
+  assert.match(coreSource, /uShafts\.uPerspDist\.value\.set\(bufH \* 0\.5 \/ perspTan \/ zoom1, bufH \* 0\.5 \/ perspTan \/ zoom2\);/);
+  assert.match(coreSource, /const targetZ = \(h \/ 2\) \/ Math\.tan\(fovRad\) \/ zoom;/);
 });
 
 test('ships push size-sorted hull silhouettes from the hex update loop', () => {
@@ -137,10 +206,10 @@ test('hull shaft starts at the hull edge and only dims the scene', () => {
   // Marsz po SDF od piksela do slonca: promien wchodzacy w kadlub tuz za
   // burta daje pelny cien, polcien rosnie z dystansem od statku.
   assert.ok(hullSdfSource.includes('float w = max(softMax * clamp(t / span, 0.0, 1.0), wMin);'));
-  assert.ok(coreSource.includes('shadow = max(shadow, hullSdfShadow(worldP, d, sunDist) * ${HULL_SHADOW_STRENGTH.toFixed(2)});'));
+  assert.ok(coreSource.includes('float hullShadow = hullSdfShadow(worldP, d, sunDist) * ${HULL_SHADOW_STRENGTH.toFixed(2)};'));
   // Statek/asteroida tylko przygaszaja; umbra do czerni zostaje planetom.
   assert.match(coreSource, /const HULL_SHADOW_STRENGTH = 0\.55;/);
-  assert.match(coreSource, /shadow = max\(shadow, edge \* fall \* max\(disc\.w, 0\.0\)\);/);
+  assert.match(coreSource, /discShadow = max\(discShadow, edge \* fall \* max\(disc\.w, 0\.0\)\);/);
   assert.match(asteroidSource, /const ASTEROID_SHAFT_STRENGTH = 0\.5;/);
   assert.match(asteroidSource, /pushShaftDiscWorld\(cache\[i\]\.x, cache\[i\]\.y, cache\[i\]\.r, ASTEROID_SHAFT_STRENGTH\)/);
 });

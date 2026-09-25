@@ -207,10 +207,12 @@ function ensureBulletInstances() {
   bulletInstances.heads.renderOrder = 80;
   bulletInstances.arcs.renderOrder = 81;
 
-  Core3D.scene.add(bulletInstances.trails);
-  Core3D.scene.add(bulletInstances.cores);
-  Core3D.scene.add(bulletInstances.heads);
-  Core3D.scene.add(bulletInstances.arcs);
+  // Pociski świecą — warstwa emisji Core3D (po shadow shafts), inaczej cień
+  // planety gasił je razem z kadłubami i w cieniu traciły bloom.
+  for (const mesh of meshes) {
+    Core3D.scene.add(mesh);
+    Core3D.enableOrthoEmissive3D(mesh);
+  }
 }
 
 // ── Błyski wylotowe ─────────────────────────────────────────────────────────
@@ -266,6 +268,8 @@ function ensureMuzzleInstances() {
   muzzleInstances.core = core;
   Core3D.scene.add(outer);
   Core3D.scene.add(core);
+  Core3D.enableOrthoEmissive3D(outer);
+  Core3D.enableOrthoEmissive3D(core);
 }
 
 function spawnMuzzleFlash(x, y, angle, scale, colorHex) {
@@ -456,6 +460,7 @@ function createPulseBeamVisual() {
   group.visible = false;
   group.frustumCulled = false;
   Core3D.scene.add(group);
+  Core3D.enableOrthoEmissive3D(group);
   return {
     group,
     core,
@@ -525,6 +530,9 @@ function createContinuousBeamVisual() {
   }
 
   Core3D.scene.add(group);
+  // Wiązka na warstwę emisji; światło trafienia zostaje na warstwie 0
+  // (enableOrthoEmissive3D pomija światła) i dalej oświetla kadłuby.
+  Core3D.enableOrthoEmissive3D(group);
   return {
     group,
     core,

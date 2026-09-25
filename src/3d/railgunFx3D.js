@@ -397,6 +397,8 @@ export const RailgunFX3D = {
     if (this._fx) return this._fx;
     if (!this.available || !Fx3D.ensure()) return null;
     this._fx = new RailgunFX(Core3D.scene, this.cfg, this.scale);
+    // Smuga Hexlance'a świeci — warstwa emisji Core3D (po shadow shafts).
+    Core3D.enableOrthoEmissive3D(this._fx.trail.mesh);
     // Bufor smugi musi trafić na GPU PO przesunięciu zegara banku, inaczej
     // uTime shadera zostaje o klatkę w tyle za czasem narodzin węzłów.
     Fx3D.addUpdater(trailUpdater);

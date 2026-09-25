@@ -796,6 +796,15 @@ export const Fx3D = {
     this.cross = new OrientedQuadSystem(scene, tex.cross, CAPACITY.cross, CROSS_VERT, RENDER_ORDER.cross, 2.6);
     this.spark = new SparkSystem(scene, CAPACITY.spark, RENDER_ORDER.spark);
     this.arcs = new ArcSystem(scene, CAPACITY.arcs, 13, RENDER_ORDER.arcs);
+    // Żar, błyski, iskry i łuki świecą — warstwa emisji Core3D (po shadow
+    // shafts), żeby cień planety nie gasił ich bloomu. Dym (NormalBlending)
+    // to oświetlona materia: zostaje w passie ortho i przyjmuje cień.
+    // Poświata na poszyciu (wash, 84) rysuje się teraz nad dymem (85).
+    for (const sys of [this.vapor, this.glow, this.star, this.wash, this.plume, this.cross]) {
+      Core3D.enableOrthoEmissive3D(sys.mesh);
+    }
+    Core3D.enableOrthoEmissive3D(this.spark.lines);
+    Core3D.enableOrthoEmissive3D(this.arcs.lines);
     return true;
   },
 

@@ -635,8 +635,13 @@ class DirectPlanet {
             : (this.data.r || 100) * PLANET_SIZE_MULTIPLIER;
         this.group.scale.set(scale, scale, scale);
         // Zgłoszenie tarczy PRZED cullingiem — analityczny cień w shaderze
-        // shaftów musi działać także, gdy planeta jest poza kadrem.
-        if (typeof Core3D.pushShaftDiscWorld === 'function') Core3D.pushShaftDiscWorld(this.data.x, this.data.y, scale);
+        // shaftów musi działać także, gdy planeta jest poza kadrem. Planeta
+        // tła (persp, z = -50 000) zgłasza głębokość: bez niej tarcza cienia
+        // leżała na płaszczyźnie gry z promieniem r × 4,5, 2–30× większa od
+        // widocznej planety i przesunięta względem niej (paralaksa).
+        if (typeof Core3D.pushShaftDiscWorld === 'function') {
+            Core3D.pushShaftDiscWorld(this.data.x, this.data.y, scale, 1, anchoredToRing ? 0 : -visualZ);
+        }
         let offScreen = false;
         const renderCamera = anchoredToRing ? Core3D.cameraOrtho : Core3D.cameraPersp;
         if (anchoredToRing) {
@@ -827,7 +832,8 @@ class DirectMoon {
             const moonR = parentR * sizeRatio;
             const scale = Math.max(900, moonR * (this.isRingAnchored ? 1 : PLANET_SIZE_MULTIPLIER));
             this.mesh.scale.set(scale, scale, scale);
-            if (typeof Core3D.pushShaftDiscWorld === 'function') Core3D.pushShaftDiscWorld(mx, my, scale);
+            // Księżyc planety tła leży za płaszczyzną gry (z < 0, kamera persp).
+            if (typeof Core3D.pushShaftDiscWorld === 'function') Core3D.pushShaftDiscWorld(mx, my, scale, 1, this.isRingAnchored ? 0 : -z);
             this.mesh.rotation.y = (this.mesh.rotation.y + this.spinSpeed * Math.max(0, Number(dt) || 0)) % (Math.PI * 2);
             if (this.halo) {
                 this.halo.scale.set(scale, scale, scale);
