@@ -20632,6 +20632,69 @@
       thawWreck(wreck, 'rozkaz:' + reason);
     }
 
+    // Budzenie śpiących wraków (wake sweep). Śpiący wrak nie jest na liście
+    // destruktora, więc kadłub przeleciałby przez niego jak przez ducha. Przy
+    // budowie listy (RAZ na klatkę renderu, physicsStep) budzimy wraki, w które
+    // jakieś ciało może wjechać, zanim lista powstanie znowu.
+    //
+    // Horyzont jest w SEKUNDACH, nie w krokach, więc ?physHz go nie zmienia:
+    // do następnej budowy listy ciało leci najwyżej 0,033 s (sufit klatki
+    // w loop()), a destruktor sięga po parę jeszcze prędkość × 1/60 s dalej
+    // (wydłużenie broadphase w resolveCollisions). 0,033 + 1/60 ≈ 0,05 s.
+    //
+    // Dawniej `speed * 3` = trzy SEKUNDY lotu: w walce (3–10 tys. j./s) budziło
+    // wraki w promieniu 9–30 km, a w warpie (do 160 tys. j./s) — do 480 km.
+    // Obudzone wracały do list destruktora (koszt w bitwie), a wyzerowany sen
+    // nie pozwalał im zamarznąć (src/game/coldWrecks.js, afterSec).
+    const WRECK_WAKE_LOOKAHEAD_SEC = 0.05;
+    // Sufit drogi look-ahead [j.] = 160 tys. j./s × 0,05 s: najszybszy ruch
+    // w grze (warp 80 tys. j./s × mnożnik strefy 2, także tuż po wyjściu,
+    // gdy statek wytraca prędkość). Prawdziwej prędkości nie przycina — chroni
+    // przed wartością z błędu (Infinity obudziłoby całe pole).
+    const WRECK_WAKE_LOOKAHEAD_MAX = 8000;
+
+    // Budzi wraki ze `sleeping`, w które może wjechać któreś ciało z `bodies`:
+    // obudzony trafia na koniec `bodies` (lista destruktora tej klatki) i znika
+    // ze `sleeping`. `ignoreBody` (gracz w warpie) nie budzi niczego.
+    function wakeSleepingWrecksNearBodies(sleeping, bodies, ignoreBody = null) {
+      for (let si = sleeping.length - 1; si >= 0; si--) {
+        const sw = sleeping[si];
+        const swx = sw.x, swy = sw.y;
+        const swR = Number(sw._bpRadius) || 100;
+        for (let ai = 0; ai < bodies.length; ai++) {
+          const active = bodies[ai];
+          if (!active || active.dead || active === sw || active === ignoreBody) continue;
+          // Ciało bez kolizji (NPC w przylocie z warpa) destruktor i tak pomija.
+          if (active.isCollidable === false) continue;
+          const avx = Number(active.vel?.x ?? active.vx ?? 0);
+          const avy = Number(active.vel?.y ?? active.vy ?? 0);
+          const speedSq = avx * avx + avy * avy;
+          if (speedSq < 225) continue; // < 15 u/s — nie budź
+
+          const ax = Number(active.pos?.x ?? active.x ?? 0);
+          const ay = Number(active.pos?.y ?? active.y ?? 0);
+          const aR = Number(active._bpRadius) || 100;
+          const dx = swx - ax, dy = swy - ay;
+          const distSq = dx * dx + dy * dy;
+          const lookAhead = Math.min(Math.sqrt(speedSq) * WRECK_WAKE_LOOKAHEAD_SEC, WRECK_WAKE_LOOKAHEAD_MAX);
+          const wakeR = swR + aR + lookAhead;
+
+          if (distSq < wakeR * wakeR) {
+            sw._wreckSleeping = false;
+            sw._wreckSleepTimer = 0;
+            if (sw.hexGrid) {
+              sw.hexGrid.isSleeping = false;
+              sw.hexGrid.sleepFrames = 0;
+              sw.hexGrid.wakeHoldFrames = 20;
+            }
+            bodies.push(sw);
+            sleeping.splice(si, 1);
+            break;
+          }
+        }
+      }
+    }
+
     function physicsStep(dt, runFrameLogic = true, frameLogicDt = dt, runAiLogic = runFrameLogic, aiLogicDt = frameLogicDt, aiBrainPhase = 0, aiBrainPhaseCount = 1) {
       const tPhysics0 = performance.now();
       PerfHUD.markPhysicsStep();
@@ -21648,41 +21711,9 @@
       const shipPx = Number(ship?.pos?.x ?? ship?.x);
       const shipPy = Number(ship?.pos?.y ?? ship?.y);
 
-      // Wake sweep: budź sleeping wraki gdy szybki obiekt zbliża się do nich
-      for (let si = _sleepingWrecksBuffer.length - 1; si >= 0; si--) {
-        const sw = _sleepingWrecksBuffer[si];
-        const swx = sw.x, swy = sw.y;
-        const swR = Number(sw._bpRadius) || 100;
-        for (let ai = 0; ai < dynamicDestructibles.length; ai++) {
-          const active = dynamicDestructibles[ai];
-          if (!active || active.dead || active === sw) continue;
-          const avx = Number(active.vel?.x ?? active.vx ?? 0);
-          const avy = Number(active.vel?.y ?? active.vy ?? 0);
-          const speedSq = avx * avx + avy * avy;
-          if (speedSq < 225) continue; // < 15 u/s — nie budź
-
-          const ax = Number(active.pos?.x ?? active.x ?? 0);
-          const ay = Number(active.pos?.y ?? active.y ?? 0);
-          const aR = Number(active._bpRadius) || 100;
-          const dx = swx - ax, dy = swy - ay;
-          const distSq = dx * dx + dy * dy;
-          const speed = Math.sqrt(speedSq);
-          const wakeR = swR + aR + speed * 3; // 3-klatkowy look-ahead
-
-          if (distSq < wakeR * wakeR) {
-            sw._wreckSleeping = false;
-            sw._wreckSleepTimer = 0;
-            if (sw.hexGrid) {
-              sw.hexGrid.isSleeping = false;
-              sw.hexGrid.sleepFrames = 0;
-              sw.hexGrid.wakeHoldFrames = 20;
-            }
-            dynamicDestructibles.push(sw);
-            _sleepingWrecksBuffer.splice(si, 1);
-            break;
-          }
-        }
-      }
+      // Wake sweep: budź śpiące wraki, w które ciało może wjechać przed
+      // następną budową listy. Gracz w warpie nie budzi niczego.
+      wakeSleepingWrecksNearBodies(_sleepingWrecksBuffer, dynamicDestructibles, warp.state === 'active' ? ship : null);
 
       _combinedRingDestructibles.length = 0;
       _combinedRingSeen.clear();
