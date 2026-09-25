@@ -16,8 +16,24 @@ dist-ssr/
 
 # Electron / packaged build artifacts
 release/
+dist-electron/
 *.asar
 
 # Local agent worktrees
 **/.claude/worktrees/
 .superpowers/
+
+# Zrzuty ekranu i wyniki benchmarków — dema/*-shots.js, dema/*-bench*.js
+# i scripts/halo-ring-shots.mjs zapisują je do .tmp/; da się je odtworzyć
+/.tmp/
+/tmp/
+
+# Logi, profile CPU, pliki PID
+*.log
+*.cpuprofile
+*.pid
+
+# Śmieci systemowe (Windows / macOS)
+desktop.ini
+Thumbs.db
+.DS_Store
