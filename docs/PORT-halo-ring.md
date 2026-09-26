@@ -274,6 +274,11 @@ Moduły kleju (poza nimi gra woła tylko to, co niżej):
   nie rysują się na dachu hali (`infrastructureUI.js`) — widać je w edytorze infrastruktury,
   ekonomia i czujniki bez zmian;
 - **start**: `initHaloRings()` w DOMContentLoaded po `initPlanets3D` (jakość z `sc_planet_quality`);
+- **menu główne** (2026-09-26): tło menu (`src/3d/menuBackdrop3D.js`) wypożycza ring Ziemi od razu
+  (`showcaseRing`), więc mapy pieką się w menu, a `startGame` oddaje ring (`releaseShowcase`) przed
+  pierwszą klatką. Shader pieczenia map kompiluje się ~5–8 s (ANGLE/D3D, bez cache GPU) i dawniej
+  zamrażał pierwszą klatkę gry przy Ziemi — tło rozgrzewa go `createHaloBakeWarmup` +
+  `renderer.compileAsync` (budowa ringu 8,3 s → 0,3 s na wątku głównym, zmierzone w headless);
 - **render**: `haloRings.update(frameDt, cam, { sun, ship, quality, splitScreen })` po
   `updatePlanets3D`, przed `updateStations3D` i `updateHexShips3D` (tam `Core3D.render`); PerfHUD
   `render3dRingsUpdateTime`;

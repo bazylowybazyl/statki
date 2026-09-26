@@ -199,10 +199,11 @@ test('index.html: ring „Halo” zamiast starego ringu (render, kolizje, stacje
   const phys = html.indexOf('function physicsStep(');
   const ast = html.indexOf('stepShipAsteroidCollisions(dt);', phys);
   const ring = html.indexOf('stepShipRingCollisions(dt);', phys);
-  const destr = html.indexOf('DestructorSystem.update(dt, allDestructibles);', phys);
+  const destr = html.indexOf('HullBodies.step(dt, allDestructibles);', phys);
   assert.ok(ast > 0 && ring > ast && destr > ring, 'kolejność kolizji w physicsStep');
   assert.match(html, /haloRings\.constrainShip\(ship, true\)/);
-  assert.match(html, /haloRings\.constrainShip\(npc, false\)/);
+  // NPC: widok kinematyki x/y/vx/vy (zachowanie: tests/npcWorldCollisions.test.mjs)
+  assert.match(html, /haloRings\.constrainShip\(loadNpcCollisionBody\(body, npc\), false\)/);
   // pociski: płyta zatrzymuje, stacja-port nie łapie trafień
   assert.match(html, /haloRings && haloRings\.pointInSlab\(b\.x, b\.y\)/);
   assert.match(html, /b\.source !== st && st\.isCollidable !== false/);
@@ -215,8 +216,6 @@ test('index.html: ring „Halo” zamiast starego ringu (render, kolizje, stacje
   // domyślna infrastruktura stacji Ziemi / Marsa nie leży ikonami 2D na dachu hali K-7
   const infra = readFileSync(new URL('../src/ui/infrastructureUI.js', import.meta.url), 'utf8');
   assert.match(infra, /if \(inst\.stationRef\?\.ringPort\) continue;/);
-  const massPanel = readFileSync(new URL('../src/ui/destructorMassPanel.js', import.meta.url), 'utf8');
-  assert.ok(!massPanel.includes('__planetaryRingsDebug'), 'panel mas bez segmentów starego ringu');
 });
 
 test('port: 4 kompleksy co 90° od kąta stacji — każdy z halą i dwiema zatokami w ścianach portu', () => {

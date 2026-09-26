@@ -351,10 +351,12 @@ button:focus-visible,
 }
 .key-hints kbd { margin-right: 6px; }
 
-/* Dół ekranu: siatka 1fr / auto / 1fr — klaster zawsze dokładnie pod statkiem. */
+/* Dół ekranu: siatka 1fr / auto / 1fr — klaster zawsze dokładnie pod statkiem.
+   Odstęp od pasków min. 60 px: przy małej skali czcionki stoją na podłogach w px,
+   więc prędkość i obroty na barkach kopuły są względnie szersze. */
 .hud-bottom {
   position: absolute; right: 0; bottom: calc(8 * var(--u)); left: 0; z-index: 20;
-  display: grid; grid-template-columns: 1fr auto 1fr; column-gap: calc(70 * var(--u)); align-items: end;
+  display: grid; grid-template-columns: 1fr auto 1fr; column-gap: max(calc(70 * var(--u)), 60px); align-items: end;
   height: calc(340 * var(--u)); pointer-events: none;
   transition: opacity 0.3s, visibility 0.3s;
 }
@@ -395,8 +397,36 @@ button:focus-visible,
 .slot.on .slot-icon { color: #9dffc4; }
 .slot.empty { opacity: 0.38; }
 
-/* Klaster: radar + łuki (canvas) + odczyty. */
-.cluster { position: relative; width: calc(340 * var(--u)); height: calc(340 * var(--u)); pointer-events: none; }
+/* Klaster: radar + łuki (canvas) + odczyty. Normalnie widać kopułę: łuki (kadłub / tarcza
+   na zewnątrz, prędkość / obroty w środku) i górę radaru, ściętą cięciwą 12u pod środkiem
+   (znacznik statku cały) na linii dolnych krawędzi pasków — 16u nad dołem ekranu.
+   Alt (tryb interfejsu) wysuwa cały radar spod tej linii. Przesunięcie i przycięcie jadą
+   jednym przejściem, więc cięcie stoi w miejscu: 8u + inset − translate = 16u
+   (158 − 150 normalnie, 0 − (−8) po wysunięciu, liniowo pomiędzy). */
+.cluster {
+  --cluster-ease: 0.38s cubic-bezier(0.2, 0.8, 0.2, 1);
+  position: relative; width: calc(340 * var(--u)); height: calc(340 * var(--u)); pointer-events: none;
+  transform: translateY(calc(150 * var(--u)));
+  clip-path: inset(calc(-160 * var(--u)) calc(-220 * var(--u)) calc(158 * var(--u)));
+  transition: transform var(--cluster-ease), clip-path var(--cluster-ease);
+}
+.app.pointer .cluster {
+  transform: translateY(calc(-8 * var(--u)));
+  clip-path: inset(calc(-160 * var(--u)) calc(-220 * var(--u)) 0px);
+}
+/* Cięciwa zamyka ściętą kopułę (środek w kolorze obrysu radaru, boki jak obwódka
+   pierścienia). Stoi na linii cięcia; gaśnie, gdy radar już wyjechał. */
+.cluster-base {
+  position: absolute; bottom: calc(8 * var(--u)); left: 50%;
+  width: calc(328 * var(--u)); height: 2px; translate: -50% 0;
+  background: linear-gradient(90deg,
+    transparent, rgba(255, 255, 255, 0.16) 2.5%, rgba(255, 255, 255, 0.16) 14.2%,
+    rgba(255, 102, 0, 0.55) 14.2%, rgba(255, 102, 0, 0.55) 85.8%,
+    rgba(255, 255, 255, 0.16) 85.8%, rgba(255, 255, 255, 0.16) 97.5%, transparent);
+  pointer-events: none;
+  transition: opacity 0.12s;
+}
+.app.pointer .cluster-base { opacity: 0; transition: opacity 0.2s 0.25s; }
 #clusterCanvas { position: absolute; top: 0; left: 0; width: calc(340 * var(--u)); height: calc(340 * var(--u)); }
 #radarCanvas {
   position: absolute; top: calc(52 * var(--u)); left: calc(52 * var(--u));
@@ -404,16 +434,26 @@ button:focus-visible,
   box-shadow: 0 0 0 1.5px rgba(255, 102, 0, 0.38);
   cursor: crosshair; pointer-events: auto; touch-action: none;
 }
+/* Odczyty na barkach kopuły: kadłub + prędkość po lewej, tarcza + obroty po prawej.
+   Napęd schodkiem na zewnątrz, po okręgu — żeby nie wchodził na łuk kadłuba / tarczy. */
+.flank {
+  position: absolute; top: calc(12 * var(--u)); display: flex; flex-direction: column; gap: calc(8 * var(--u));
+  pointer-events: none;
+}
+.flank.left { right: calc(100% - 64 * var(--u)); align-items: flex-end; }
+.flank.right { left: calc(100% - 64 * var(--u)); align-items: flex-start; }
+.flank.left .drive-readout { margin-right: calc(40 * var(--u)); }
+.flank.right .drive-readout { margin-left: calc(40 * var(--u)); }
 .vital-readout {
-  position: absolute; top: calc(12 * var(--u)); display: flex; flex-direction: column; gap: 1px;
+  display: flex; flex-direction: column; gap: 1px;
   font-variant-numeric: tabular-nums; text-shadow: 0 1px 3px #000, 0 0 10px #000; white-space: nowrap;
-  pointer-events: none; transition: opacity 0.6s;
+  transition: opacity 0.6s;
 }
 .vital-readout small { font-size: var(--fs-xs); letter-spacing: 0.16em; }
 .vital-readout b { color: #fff; font-size: var(--fs-l); }
-.vital-readout.hp { right: calc(100% - 64 * var(--u)); align-items: flex-end; }
+.vital-readout.hp { align-items: flex-end; }
 .vital-readout.hp small { color: #ff8a8f; }
-.vital-readout.shield { left: calc(100% - 64 * var(--u)); align-items: flex-start; }
+.vital-readout.shield { align-items: flex-start; }
 .vital-readout.shield small { color: #86b3ff; }
 .vital-readout.calm { opacity: 0.5; }
 .vital-readout.crit b { color: #ff6b6b; animation: vital-crit 0.7s ease-in-out infinite; }
@@ -426,16 +466,15 @@ button:focus-visible,
 }
 .radar-top .hostile { color: var(--hostile); font-weight: 700; }
 .radar-top .hostile.clear { color: #5f9a72; font-weight: 400; }
-/* Prędkość i obroty przy swoich łukach (na zewnątrz dolnych ćwiartek), żeby pod
-   radarem nic nie było i klaster mógł zejść na sam dół ekranu. */
+/* Prędkość i obroty pod kadłubem / tarczą (.flank), jak ich łuki na wewnętrznym pierścieniu.
+   Kolor liczby obrotów podpowiada zmianę biegu (zielony = okno, czerwony = za późno). */
 .drive-readout {
-  position: absolute; top: calc(262 * var(--u)); display: flex; flex-direction: column; gap: 1px;
+  display: flex; flex-direction: column; gap: 1px;
   font-variant-numeric: tabular-nums; text-shadow: 0 1px 3px #000, 0 0 10px #000; white-space: nowrap;
-  pointer-events: none;
 }
 .drive-readout small { color: #e0915a; font-size: var(--fs-xs); letter-spacing: 0.16em; }
-.drive-readout.speed { right: calc(100% - 34 * var(--u)); align-items: flex-end; }
-.drive-readout.rpm { left: calc(100% - 34 * var(--u)); align-items: flex-start; }
+.drive-readout.speed { align-items: flex-end; }
+.drive-readout.rpm { align-items: flex-start; }
 .drive-value { display: flex; align-items: baseline; gap: 4px; }
 .drive-value b { color: #fff; font-size: calc(22 * var(--u)); font-weight: 700; line-height: 1.05; text-shadow: 0 0 10px rgba(255, 102, 0, 0.35); }
 .drive-readout.rpm .drive-value b { font-size: var(--fs-l); }
@@ -444,16 +483,15 @@ button:focus-visible,
 .drive-unit { color: #9a9a9a; font-size: var(--fs-xs); letter-spacing: 0.08em; }
 .gear-readout { color: #8a8a8a; font-size: var(--fs-xs); letter-spacing: 0.1em; }
 .gear-readout b { color: #fff; font-size: var(--fs-s); }
-/* Litera trybu (B/M/P) w szczelinie między łukami napędu, na dole pierścienia. */
+/* Litera trybu (B/M/P) na czele rzędu kontrolek — widać ją też przy schowanym klastrze. */
 .mode-badge {
-  position: absolute; top: calc(306 * var(--u)); left: 50%; translate: -50% 0;
-  min-width: calc(22 * var(--u)); padding: 1px 5px; border-radius: 3px;
+  min-width: calc(22 * var(--u)); margin-right: calc(3 * var(--u)); padding: 1px 5px; border-radius: 3px;
   color: #fff; background: var(--mode-accent); box-shadow: 0 0 10px var(--mode-accent);
   font-size: var(--fs-s); font-weight: 800; line-height: 1.3; text-align: center;
   pointer-events: auto; cursor: default;
 }
 /* Kontrolki jak w aucie: ciemne gdy wyłączone, świecą gdy włączone. */
-.telltales { position: absolute; bottom: calc(100% - 6 * var(--u)); left: 50%; display: flex; gap: calc(5 * var(--u)); translate: -50% 0; pointer-events: none; }
+.telltales { position: absolute; bottom: calc(100% - 6 * var(--u)); left: 50%; display: flex; align-items: center; gap: calc(5 * var(--u)); translate: -50% 0; pointer-events: none; }
 .telltale {
   padding: 1px 6px; border: 1px solid #252525; border-radius: 4px;
   color: #3d3d3d; background: rgba(0, 0, 0, 0.55);

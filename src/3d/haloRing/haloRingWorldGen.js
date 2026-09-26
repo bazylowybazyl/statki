@@ -433,6 +433,38 @@ function makeTarget(width, height, type, mipmaps) {
   return rt;
 }
 
+// Rozgrzewka kompilacji (tło menu, src/3d/menuBackdrop3D.js): shader pieczenia
+// map kompiluje się w sterowniku (ANGLE/D3D) kilka sekund, a three czeka na nią
+// przy pierwszym bake'u — strona stała. Te same źródła i parametry co
+// _makeMaterial, scena bez świateł jak scena bake'u (liczba świateł wchodzi do
+// klucza programu): po renderer.compileAsync(warm.scene, camera) program leży
+// w cache three i HaloWorldMaps bierze go gotowy. dispose() dopiero PO
+// zbudowaniu ringu (inaczej three usunie nieużywany program).
+export function createHaloBakeWarmup() {
+  const scene = new THREE.Scene();
+  const geometry = new THREE.PlaneGeometry(2, 2);
+  const materials = ['A', 'B', 'C'].map((output) => new THREE.ShaderMaterial({
+    name: `HaloWorldBake${output}`,
+    uniforms: {},
+    vertexShader: BAKE_VERTEX,
+    fragmentShader: makeBakeFragment(output),
+    depthTest: false,
+    depthWrite: false
+  }));
+  for (const material of materials) {
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.frustumCulled = false;
+    scene.add(mesh);
+  }
+  return {
+    scene,
+    dispose() {
+      geometry.dispose();
+      for (const material of materials) material.dispose();
+    }
+  };
+}
+
 export class HaloWorldMaps {
   constructor(renderer, layout, quality) {
     this.renderer = renderer;

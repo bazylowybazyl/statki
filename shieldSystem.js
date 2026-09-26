@@ -162,8 +162,15 @@ function unwrapShieldEntity(entity) {
 
 export function entityUsesHullShield(rawEntity) {
   const entity = unwrapShieldEntity(rawEntity);
-  if (!entity?.shield || !entity?.hexGrid) return false;
-  if (!Array.isArray(entity.hexGrid.shards) || entity.hexGrid.shards.length === 0) return false;
+  if (!entity?.shield) return false;
+  // Kadłub na belkach (hullBodies.js): obrys z węzłów spoczynkowych.
+  const beamHull = entity.beamHull;
+  if (beamHull) {
+    if (beamHull.entity !== entity || !beamHull.body || beamHull.body.dead) return false;
+  } else {
+    if (!entity.hexGrid) return false;
+    if (!Array.isArray(entity.hexGrid.shards) || entity.hexGrid.shards.length === 0) return false;
+  }
   if (entity.isRingSegment || entity.isAsteroidHex || entity.isWreck) return false;
   if (entity.visual?.preserveBillboardOrientation === true) return false;
   return true;
@@ -183,35 +190,57 @@ export function getShieldHullAngle(rawEntity) {
   return base + (Number.isFinite(r) ? r : 0);
 }
 
+// Komórki obrysu w pikselach sprite'a względem środka (y w dół): heksy (origLx/Ly) albo
+// węzły kadłuba na belkach (pozycje spoczynkowe) — płaska tablica [x0, y0, x1, y1, ...].
+function shieldOutlineCells(entity) {
+  const hull = entity.beamHull;
+  if (hull) {
+    if (hull.shieldCells) return { cells: hull.shieldCells, cellR: hull.pixelPitch * 0.62 };
+    const body = hull.body, s = body.nodeStore;
+    const out = new Float32Array(s.count * 2);
+    const cx = body.latticeMin.x + hull.anchorDX, cy = body.latticeMin.y + hull.anchorDY;
+    for (let i = 0; i < s.count; i++) {
+      out[i * 2] = (s.ox[i] - cx) / hull.scale;
+      out[i * 2 + 1] = -(s.oy[i] - cy) / hull.scale;
+    }
+    hull.shieldCells = out;
+    return { cells: out, cellR: hull.pixelPitch * 0.62 };
+  }
+  const shards = entity.hexGrid.shards;
+  const out = new Float32Array(shards.length * 2);
+  for (let i = 0; i < shards.length; i++) {
+    const s = shards[i];
+    out[i * 2] = Number.isFinite(s.origLx) ? s.origLx : (Number(s.lx) || 0);
+    out[i * 2 + 1] = Number.isFinite(s.origLy) ? s.origLy : (Number(s.ly) || 0);
+  }
+  return { cells: out, cellR: Number(shards[0]?.radius) || 6 };
+}
+
 function buildShieldProfile(entity) {
-  const grid = entity.hexGrid;
-  const shards = grid.shards;
+  const outline = shieldOutlineCells(entity);
+  const cells = outline.cells;
+  const cellCount = cells.length >> 1;
   const sx = getEntityScaleX(entity);
   const sy = getEntityScaleY(entity);
   const n = SHIELD_PROFILE_BINS;
   const bins = new Float32Array(n);
 
-  const shardLx = (s) => (Number.isFinite(s.origLx) ? s.origLx : (Number(s.lx) || 0));
-  const shardLy = (s) => (Number.isFinite(s.origLy) ? s.origLy : (Number(s.ly) || 0));
-
   let maxRawR = 0;
-  for (let i = 0; i < shards.length; i++) {
-    const s = shards[i];
-    const x = shardLx(s) * sx;
-    const y = shardLy(s) * sy;
+  for (let i = 0; i < cellCount; i++) {
+    const x = cells[i * 2] * sx;
+    const y = cells[i * 2 + 1] * sy;
     const r = Math.sqrt(x * x + y * y);
     if (r > maxRawR) maxRawR = r;
   }
   if (maxRawR <= 0) return null;
 
-  // Odstęp pola od pancerza: promień heksa + składnik proporcjonalny do rozmiaru.
-  const hexR = (Number(shards[0]?.radius) || 6) * Math.max(sx, sy);
+  // Odstęp pola od pancerza: promień komórki + składnik proporcjonalny do rozmiaru.
+  const hexR = outline.cellR * Math.max(sx, sy);
   const pad = hexR * 1.6 + clamp(maxRawR * 0.06, 6, 42);
 
-  for (let i = 0; i < shards.length; i++) {
-    const s = shards[i];
-    const x = shardLx(s) * sx;
-    const y = shardLy(s) * sy;
+  for (let i = 0; i < cellCount; i++) {
+    const x = cells[i * 2] * sx;
+    const y = cells[i * 2 + 1] * sy;
     const r = Math.sqrt(x * x + y * y);
     const outer = r + pad;
     const theta = Math.atan2(y, x);
@@ -262,7 +291,7 @@ function buildShieldProfile(entity) {
 export function getEntityShieldProfile(rawEntity) {
   const entity = unwrapShieldEntity(rawEntity);
   if (!entityUsesHullShield(entity)) return null;
-  const grid = entity.hexGrid;
+  const grid = entity.beamHull || entity.hexGrid;
   const sx = getEntityScaleX(entity);
   const sy = getEntityScaleY(entity);
   const cache = entity._shieldProfileCache;

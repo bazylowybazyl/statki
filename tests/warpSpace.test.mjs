@@ -14,6 +14,9 @@ const {
   WARP_SPACE_TYPE,
   packWarpSpacePrims,
   warpSpaceSampleUv,
+  warpFisheyeScale,
+  warpAlcubierreHeight,
+  WARP_ALCUBIERRE_DEFAULTS,
   createWarpLensShader
 } = await import('../src/3d/warpLens3D.js');
 const { Core3D } = await import('../src/3d/core3d.js');
@@ -100,9 +103,18 @@ test('GLSL: pętla prymitywów liczy to samo co lustro CPU, soczewka skoku bez z
   assert.equal((fs.match(/texture2D\(tSource/g) || []).length, 3);
   assert.match(fs, /if \(uWV\.w > 0\.001\) \{/);
   assert.match(fs, /gl_FragColor\.rgb = mix\(gl_FragColor\.rgb, wvFlow, wvOut\);/);
-  // Rybie oko bez ujemnej podstawy potęgi (NaN) i ze ściskiem ograniczonym.
-  assert.match(fs, /float wxi = min\(wx, 0\.94\);/);
-  assert.match(fs, /pow\(1\.0 \/ \(1\.0 - wxi \* wxi\), uWVMisc\.w \* wbeta\)/);
+  // Rybie oko bez ujemnej podstawy potęgi (NaN), ograniczone krawędzią kadru tła
+  // (lustro warpFisheyeScale) — próbka nie wychodzi w lustrzane odbicie.
+  assert.match(fs, /float c = clamp\(1\.0 - pow\(max\(kmax, 1\.0\), -1\.0 \/ p\), 0\.0, 0\.8836\);/);
+  assert.match(fs, /return pow\(1\.0 \/ \(1\.0 - c \* xi \* xi\), p \* clamp\(beta, 0\.0, 1\.0\)\);/);
+  assert.match(fs, /float wkS = wvFisheye\(wx, 0\.97 \* wEdge \/ \(wB \* wR\), uWVMisc\.w, wbeta\);/);
+  // Gwiazdy we własnym celu: mgławica przez pełne rybie oko (odbicie jej nie
+  // szkodzi), gwiazdy tylko z kadru — wnętrze i opływ.
+  assert.match(fs, /float wk = uWVStars > 0\.5 \? wvFisheye\(wx, 8\.6, uWVMisc\.w, wbeta\) : wkS;/);
+  assert.match(fs, /wcA \+= texture2D\(tSource, uWVStars > 0\.5 \? qA : cA\)\.rgb;/);
+  assert.match(fs, /wcA \+= texture2D\(tStars, cA\)\.rgb;/);
+  assert.match(fs, /vec2 cA = clamp\(qA, 0\.001, 0\.999\);/);
+  assert.match(fs, /if \(uWVStars > 0\.5\) gl_FragColor\.rgb \+= texture2D\(tStars, clamp\(wStarUv, 0\.001, 0\.999\)\)\.rgb;/);
   // Front wyjścia: przed frontem (dalej w kierunku lotu) zwykły widok — lustro sweepBeta.
   assert.match(fs, /float wbeta = uWV\.w \* \(1\.0 - smoothstep\(uWVFront\.x - uWVFront\.y, uWVFront\.x \+ uWVFront\.y, wfs\)\);/);
   assert.match(fs, /wvOut = smoothstep\(0\.9, 1\.03, wx\);/);
@@ -118,6 +130,108 @@ test('GLSL: pętla prymitywów liczy to samo co lustro CPU, soczewka skoku bez z
   assert.match(fs, /float wB = wvDropExit\(wl > 1e-6 \? vec2\(wfs, wcs\) \/ wl : vec2\(1\.0, 0\.0\), uWVDrop\);/);
   assert.match(fs, /float wx = wl \/ wB;/);
   assert.match(fs, /float wa = wfs \/ wB;/);
+});
+
+test('rybie oko w kropli: na brzegu próbka dokładnie na krawędzi kadru tła, nigdy dalej', () => {
+  for (const kmax of [1.08, 1.5, 2.5, 5, 8]) {
+    assert.ok(Math.abs(warpFisheyeScale(0, kmax, 1, 1) - 1) < 1e-12, 'przy statku bez zmian');
+    assert.ok(Math.abs(warpFisheyeScale(1, kmax, 1, 1) - kmax) < 1e-9, `kmax ${kmax}: brzeg = krawędź kadru`);
+    let prev = 1;
+    for (let x = 0.05; x <= 1.0001; x += 0.05) {
+      const k = warpFisheyeScale(x, kmax, 1, 1);
+      assert.ok(k >= prev - 1e-12 && k <= kmax + 1e-9, 'rośnie do brzegu i nie wychodzi poza kadr');
+      prev = k;
+    }
+    assert.ok(Math.abs(warpFisheyeScale(1.4, kmax, 1, 1) - kmax) < 1e-9, 'za brzegiem kropli stała');
+  }
+  // Krawędź kadru bliżej niż brzeg kropli (albo β = 0) — bez rybiego oka.
+  assert.equal(warpFisheyeScale(0.9, 0.6, 1, 1), 1);
+  assert.equal(warpFisheyeScale(0.9, 4, 1, 0), 1);
+  // Ściśnięcie brzegu ograniczone (~8,6×) nawet przy dalekiej krawędzi.
+  assert.ok(warpFisheyeScale(1, 100, 1, 1) < 8.7);
+});
+
+test('bańka Alcubierre\'a: zagłębienie przed statkiem, wybrzuszenie za nim, zero po bokach, bez fałd', () => {
+  const p = WARP_ALCUBIERRE_DEFAULTS;
+  assert.ok(Math.abs(warpAlcubierreHeight(p.rPeak, 0, p) + 1) < 1e-9, 'przed statkiem dno −1');
+  assert.ok(Math.abs(warpAlcubierreHeight(-p.rPeak, 0, p) - 1) < 1e-9, 'za statkiem szczyt +1');
+  for (const c of [0.1, 0.4, 0.9]) assert.equal(warpAlcubierreHeight(0, c, p), 0, 'po bokach statku zero — przewężenie');
+  assert.ok(Math.abs(warpAlcubierreHeight(0.1, 0, p)) < 0.05, 'płaskie wnętrze przy statku');
+  // Załamanie tła q → q + amp·∇h bez fałd: wyznacznik Jakobianu > 0 wszędzie.
+  const e = 0.004;
+  const h = (a, c) => warpAlcubierreHeight(a, c, p);
+  let minDet = Infinity;
+  for (let a = -1.6; a <= 1.6; a += 0.01) {
+    for (let c = -1.2; c <= 1.2; c += 0.01) {
+      const hxx = (h(a + e, c) - 2 * h(a, c) + h(a - e, c)) / (e * e);
+      const hyy = (h(a, c + e) - 2 * h(a, c) + h(a, c - e)) / (e * e);
+      const hxy = (h(a + e, c + e) - h(a + e, c - e) - h(a - e, c + e) + h(a - e, c - e)) / (4 * e * e);
+      minDet = Math.min(minDet, (1 + p.amp * hxx) * (1 + p.amp * hyy) - p.amp * p.amp * hxy * hxy);
+    }
+  }
+  assert.ok(minDet > 0.05, `najmniejszy wyznacznik ${minDet}`);
+  // GLSL: to samo pole, próbka w stronę rosnącej wysokości, dodatki po próbce.
+  const fs = createWarpLensShader().fragmentShader;
+  assert.match(fs, /float wvAlcH\(vec2 q, vec4 g\) \{/);
+  assert.match(fs, /return -sign\(q\.x\) \* pow\(u, k\) \* exp\(0\.5 \* k \* \(1\.0 - u \* u\) - w \* w\);/);
+  assert.match(fs, /if \(uWVMode > 0\.5\) \{/);
+  assert.match(fs, /vec2 aqs = aq \+ uWVAlc2\.x \* wbeta \* vec2\(ahx, ahy\);/);
+  assert.match(fs, /wvAdd = acol \* aw \* uWVAlc2\.y;/);
+  assert.match(fs, /gl_FragColor\.rgb = gl_FragColor\.rgb \* wvShade \+ wvAdd;/);
+  // Bez siatki czasoprzestrzeni (user 2026-09-26: „wywalamy tę siatkę”).
+  assert.doesNotMatch(fs, /uWVAlc3|fwidth\(agp\)|aline/);
+  // Gwiazd gry bańka nie gnie — smugi skoku zostają płaskie, równoległe do lotu.
+  const alcBranch = fs.slice(fs.indexOf('if (uWVMode > 0.5) {'), fs.indexOf('float wl = sqrt(wfs * wfs + wcs * wcs);'));
+  assert.ok(alcBranch.length > 100);
+  assert.doesNotMatch(alcBranch, /wStarUv\s*=/);
+});
+
+test('Core3D: kształt bańki z setWarpViewWorld trafia do uniformów, bez niego kropla', () => {
+  const core = makeFakeCore();
+  core.width = W;
+  core.height = H;
+  core._warpViewReq = { ...Core3D._warpViewReq };
+  const now = () => performance.now() / 1000;
+  core.setWarpViewWorld(0, 0, 300, 1, 0, { mode: 'alcubierre', alc: { rPeak: 0.7, rWidth: 0.5, flat: 3, amp: 0.04, tintGain: 0.2, shadeGain: 0.5 } });
+  core._prepareWarpLens(false, now());
+  const lu = core.warpLensPass.uniforms;
+  assert.equal(lu.uWVMode.value, 1);
+  assert.deepEqual([lu.uWVAlc.value.x, lu.uWVAlc.value.y, lu.uWVAlc.value.z], [0.7, 0.5, 3]);
+  assert.deepEqual([lu.uWVAlc2.value.x, lu.uWVAlc2.value.y, lu.uWVAlc2.value.z], [0.04, 0.2, 0.5]);
+  assert.equal(lu.uWVAlc3, undefined);
+  core.setWarpViewWorld(0, 0, 300, 1, 0, {});
+  core._prepareWarpLens(false, now());
+  assert.equal(lu.uWVMode.value, 0);
+});
+
+test('Core3D: gwiazdy gry w widoku skoku na własnej warstwie i w celu, potem z powrotem na tle', () => {
+  const core = makeFakeCore();
+  core.width = W;
+  core.height = H;
+  core._warpViewReq = { ...Core3D._warpViewReq };
+  core.warpStarTarget = null;
+  core._warpStarsOn = false;
+  const now = () => performance.now() / 1000;
+  const stars = new THREE.Points();
+  const parent = new THREE.Group();
+  parent.add(stars);
+  stars.layers.set(1);
+  core.setWarpStarsObject(stars);
+  core.setWarpViewWorld(0, 0, 300, 1, 0, {});
+  assert.equal(core._prepareWarpLens(false, now()), true);
+  const lu = core.warpLensPass.uniforms;
+  assert.equal(lu.uWVStars.value, 1);
+  assert.ok(stars.layers.isEnabled(8) && !stars.layers.isEnabled(1), 'gwiazdy poza tłem');
+  assert.equal(lu.tStars.value, core.warpStarTarget.texture);
+  // Brak zgłoszenia widoku — gwiazdy wracają na tło, pass znika.
+  core.clearWarpView();
+  assert.equal(core._prepareWarpLens(false, now()), false);
+  assert.ok(stars.layers.isEnabled(1) && !stars.layers.isEnabled(8));
+  // Tryb bez composera też je oddaje.
+  core.setWarpViewWorld(0, 0, 300, 1, 0, {});
+  core._prepareWarpLens(false, now());
+  core._restoreWarpStars();
+  assert.ok(stars.layers.isEnabled(1));
 });
 
 test('Core3D: kształt kropli z setWarpViewWorld trafia do uniformu, bez niego koło', () => {

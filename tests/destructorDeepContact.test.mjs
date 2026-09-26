@@ -168,15 +168,26 @@ test('GPU result publishes increased collision bounds immediately', () => {
   }
 });
 
-test('AI avoidance yields ownership to hull contact and resumes after separation', () => {
+// Kadłuby statków są na belkach (src/game/hullBodies.js): AI ustępuje fizyce, gdy HullBodies
+// zgłasza styk metalu pary, i wraca do nawigacji, gdy styk wygaśnie (okno contactHoldSec).
+test('AI avoidance yields ownership to hull contact and resumes after separation', async () => {
+  const { HullBodies } = await import('../src/game/hullBodies.js');
+  const plate = (w, h) => {
+    const data = new Uint8ClampedArray(w * h * 4);
+    for (let i = 0; i < w * h; i++) { data[i * 4] = data[i * 4 + 1] = data[i * 4 + 2] = 150; data[i * 4 + 3] = 255; }
+    return { width: w, height: h, data };
+  };
+  const image = plate(160, 80);
   const source = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
   const code = source.slice(source.indexOf('function applySeparationForces('), source.indexOf('window.applySeparationForces ='));
   for (const player of [false, true]) {
-    const npc = hull({ width: 160, height: 80, friendly: true });
-    const other = hull({ width: 160, height: 80, x: 20, friendly: true });
+    const npc = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angVel: 0, mass: 50000, friendly: true };
+    const other = { x: 20, y: 0, vx: 0, vy: 0, angle: 0, angVel: 0, mass: 50000, friendly: true };
     if (player) { other.pos = { x: 20, y: 0 }; other.vel = { x: 0, y: 0 }; }
+    HullBodies.createHull(npc, image);
+    HullBodies.createHull(other, image);
     const context = {
-      DestructorSystem: D, aiDecisionTickId: 1, npcs: [npc, other], performance,
+      HullBodies, aiDecisionTickId: 1, npcs: [npc, other], performance,
       isNpcCombatActive: () => false, shieldPairStandoff: () => 0, sepYieldFactor: () => 1,
       clampVecLen: (x, y, max) => { const k = Math.min(1, max / (Math.hypot(x, y) || 1)); return { x: x * k, y: y * k }; },
       window: { ship: player ? other : null, isEnemyUnit: () => false }
@@ -185,13 +196,18 @@ test('AI avoidance yields ownership to hull contact and resumes after separation
     try {
       const before = apply(npc, 0, 0);
       assert.ok(Math.hypot(before.ax, before.ay) > 0, 'avoidance remains active before impact');
-      D.collideEntities(npc, other, 1 / 120, false);
+      HullBodies.step(1 / 120, [npc, other]);
+      assert.ok(HullBodies.hasContact(npc, other), 'nakładające się kadłuby są w styku');
       const during = apply(npc, 0, 0);
       assert.equal(Math.hypot(during.ax, during.ay), 0, 'cached repulsion must stop on impact');
-      D.update(0.11, []);
+      // Rozsunięte kadłuby: styk wygasa po oknie contactHoldSec czasu symulacji.
+      if (other.pos) { other.pos.x = 5000; } other.x = 5000;
+      for (let k = 0; k < 14; k++) HullBodies.step(1 / 120, [npc, other]);
+      assert.equal(HullBodies.hasContact(npc, other), false, 'contact history expires after separation');
+      if (other.pos) { other.pos.x = 20; } other.x = 20;
       context.aiDecisionTickId++;
       const after = apply(npc, 0, 0);
       assert.ok(Math.hypot(after.ax, after.ay) > 0, 'normal navigation resumes');
-    } finally { disposeHexBody(npc); disposeHexBody(other); }
+    } finally { HullBodies.release(npc); HullBodies.release(other); }
   }
 });

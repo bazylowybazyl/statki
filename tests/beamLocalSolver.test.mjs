@@ -191,7 +191,9 @@ test('solver lokalny: odprysk nie przebudowuje kadłuba, oderwana sekcja tak', (
   assert.equal(bodies.length, 1);
   assert.equal(body.nodes, nodesBefore, 'odprysk przebudował cały kadłub');
   for (const n of chip) assert.equal(n.active, false);
-  // Przecięcie w połowie: wrak i przebudowa.
+  // Przecięcie w połowie: wrak i przebudowa kadłuba — w miejscu (te same tablice, węzły
+  // wraku gasną, środek masy i bezwładność od nowa), kopiuje się tylko wrak.
+  const massBefore = body.mass;
   for (const beam of body.beams) {
     if ((body.nodes[beam.a].ox > 0) !== (body.nodes[beam.b].ox > 0)) beam.broken = true;
   }
@@ -200,7 +202,17 @@ test('solver lokalny: odprysk nie przebudowuje kadłuba, oderwana sekcja tak', (
   D.splitQueue.push(body);
   D.processSplits(bodies);
   assert.equal(bodies.length, 2);
-  assert.notEqual(body.nodes, nodesBefore);
+  const wreck = bodies[1];
+  assert.equal(body.nodes, nodesBefore, 'kadłub skopiowany mimo rozpadu w miejscu');
+  let mx = 0, m = 0, alive = 0;
+  for (const n of body.nodes) {
+    if (!n.active) continue;
+    mx += n.ox * n.mass; m += n.mass; alive++;
+  }
+  assert.equal(alive, body.activeNodes);
+  assert.ok(Math.abs(mx / m) < 1e-9, `kadłub nie wyśrodkowany po rozpadzie: ${mx / m}`);
+  assert.ok(Math.abs(body.mass + wreck.mass - massBefore) < 1e-6, 'masa się nie sumuje');
+  assert.equal(body.liveBeams, body.beams.filter(b => !b.broken && body.nodes[b.a].active && body.nodes[b.b].active).length);
 });
 
 test('skóra przyrostowa: po trafieniach i krokach solvera identyczna z pełnym przepisaniem', () => {

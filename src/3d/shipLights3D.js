@@ -11,10 +11,13 @@ import { MAX_NAV_LIGHT_SPRITES, NAV_LIGHT_CHASE, glslFloat } from '../game/shipL
 const NAV_LIGHT_Z = 13;             // FG: nad kadłubem ortho, pod laserami (14+)
 const NAV_LIGHT_RENDER_ORDER = 52;  // bronie zaczynają się od 55
 
+// 2026-09-26 (user: „żeby mocniej świeciły”): rdzeń 5 → 6,5, halo 0,9 → 1,3
+// i o ~20% szersze. Rozlew na skały i sąsiednie kadłuby liczą grupy lamp
+// (shipLightRuntime.buildNavLightClusters), nie te billboardy.
 const NAV_LIGHT_DEFAULTS = Object.freeze({
-  coreGain: 5.0,   // mnożnik HDR jasnego rdzenia lampy
-  haloGain: 0.9,   // mnożnik miękkiego halo (świadomie pod progiem bloomu)
-  haloScale: 16,   // promień halo = radius lampy * haloScale
+  coreGain: 6.5,   // mnożnik HDR jasnego rdzenia lampy
+  haloGain: 1.3,   // mnożnik miękkiego halo (świadomie pod progiem bloomu)
+  haloScale: 19,   // promień halo = radius lampy * haloScale
   minHaloPx: 3.2   // minimalny rozmiar ekranowy błysku (mryganie z daleka)
 });
 

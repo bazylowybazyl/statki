@@ -158,16 +158,19 @@ function run(local, scenario) {
   const vel = { x: 0, y: 0, z: 0 };
   const skin = new Map(), range = { min: 0, max: -1 };
   let physics = 0, solver = 0, collisions = 0, skinMs = 0, frames = 0, worst = 0, hitAcc = 0, missileAcc = 0;
+  // Cel = k-ty żywy węzeł poszycia, prosto z magazynu: losowanie nie zależy od dziur
+  // w tablicach po rozpadzie w miejscu i nie buduje widoków węzłów.
   const target = () => {
     const b = bodies[(rnd() * SHIPS) | 0];
     if (!b || b.dead) return null;
-    for (let tries = 0; tries < 20; tries++) {
-      const n = b.nodes[(rnd() * b.nodes.length) | 0];
-      if (!n.active || !n.surface) continue;
-      const m = D._refreshRot(b);
-      return { b, x: b.pos.x + m[0] * n.x + m[1] * n.y, y: b.pos.y + m[3] * n.x + m[4] * n.y };
-    }
-    return null;
+    const st = b.nodeStore;
+    let alive = 0;
+    for (let i = 0; i < st.count; i++) if (st.active[i] && st.surface[i]) alive++;
+    if (!alive) return null;
+    let pick = (rnd() * alive) | 0, k = -1;
+    for (let i = 0; i < st.count; i++) if (st.active[i] && st.surface[i] && pick-- === 0) { k = i; break; }
+    const m = D._refreshRot(b);
+    return { b, x: b.pos.x + m[0] * st.x[k] + m[1] * st.y[k], y: b.pos.y + m[3] * st.x[k] + m[4] * st.y[k] };
   };
   for (let i = 0; i < steps + warm; i++) {
     const t0 = performance.now();

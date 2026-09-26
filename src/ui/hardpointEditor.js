@@ -1046,7 +1046,8 @@ function getSpriteSource(shipId) {
   const selectedShipId = normalizeEditorShipId(shipId);
   const resolvedShipId = resolveEditorShipId(selectedShipId);
   if (selectedShipId === CURRENT_SHIP_ID) {
-    const canvas = window.ship?.hexGrid?.cacheCanvas;
+    // Kadłub na belkach: obraz, z którego powstał (sprite w rozmiarze renderu).
+    const canvas = window.ship?.beamHull?.image || window.ship?.hexGrid?.cacheCanvas;
     if (canvas) return { kind: 'canvas', value: canvas, key: `current_${resolvedShipId}_${canvas.width}x${canvas.height}` };
   }
   const def = getShipDef(resolvedShipId);

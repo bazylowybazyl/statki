@@ -342,7 +342,7 @@ export function updateSuperweapon(dt, ship, aimPos) {
         if (window.DestructorSystem && window.npcs) {
             const targets = [...window.npcs, ...(window.wrecks || [])];
             for (const t of targets) {
-                if (!t.hexGrid || (t.dead && !t.isWreck)) continue;
+                if ((!t.hexGrid && !t.beamHull) || (t.dead && !t.isWreck)) continue;
 
                 // BROADPHASE: Znajdź najbliższy punkt na linii lotu pocisku do środka statku
                 const lenSq = moveX * moveX + moveY * moveY;
@@ -363,7 +363,18 @@ export function updateSuperweapon(dt, ship, aimPos) {
                     const steps = Math.max(1, Math.ceil(stepDist / 25));
 
                     let biteX = 0, biteY = 0, bitFrac = -1;
-                    for (let s = 0; s <= steps; s++) {
+                    if (t.beamHull && window.HullBodies) {
+                        // Kadłub na belkach: rzaz o półszerokości 35 j. wzdłuż całego odcinka
+                        // lotu — węzły w pasie giną, rozpad robi resztę.
+                        const cut = window.HullBodies.cutSegment(t, prevX, prevY, proj.x, proj.y, 35);
+                        if (cut > 0) {
+                            const r = window.HullBodies.sweepResult;
+                            bitFrac = r.t;
+                            biteX = r.worldX;
+                            biteY = r.worldY;
+                        }
+                    }
+                    for (let s = 0; s <= steps && !t.beamHull; s++) {
                         const frac = s / steps;
                         const testX = prevX + moveX * frac;
                         const testY = prevY + moveY * frac;

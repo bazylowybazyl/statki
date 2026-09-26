@@ -144,9 +144,6 @@ const HTML = `
   <div class="row">
     <button id="btn-destructor-panel" class="dt-btn" style="width:100%">Destructor panel</button>
   </div>
-  <div class="row">
-    <button id="btn-destructor-mass-panel" class="dt-btn" style="width:100%">Destructor masy</button>
-  </div>
   <div class="small muted">Otwiera panele suwakow z polami liczbowymi.</div>
 </div>
 <div class="group">
@@ -323,7 +320,7 @@ function wireDevToolsLogic() {
     cbPirate3D: 'dt-use-3d-pirate', btnCopy: 'btnCopy', btnReset: 'btnReset', cfgOut: 'cfgOut',
     fileGlb: 'dt-file-glb', btnLoadGlb: 'btn-load-glb', glbRot: 'dt-glb-rot', glbZoom: 'dt-glb-zoom', glbScale: 'dt-glb-scale',
     btnHardpointEditor: 'btn-hardpoint-editor', btnBloomPanel: 'btn-bloom-panel', btnRingColorPanel: 'btn-ring-color-panel', btnDestructorPanel: 'btn-destructor-panel',
-    btnDestructorMassPanel: 'btn-destructor-mass-panel', cbDamageTint: 'dt-toggle-damage-tint',
+    cbDamageTint: 'dt-toggle-damage-tint',
     btnPerfTools: 'btn-perf-tools', perfPanel: 'dt-perf-panel', perfStatus: 'dt-perf-status',
     perfBloom: 'dt-perf-bloom', perfHeat: 'dt-perf-heat', perfBg: 'dt-perf-bg', perfOrtho: 'dt-perf-ortho',
     perfFg: 'dt-perf-fg', perfMsaa: 'dt-perf-msaa',
@@ -939,19 +936,17 @@ function wireDevToolsLogic() {
           // Odbieramy obiekt { albedo, normal }
           const bakedData = await ModelBaker.bakeFromFile(file, 1024, radians, camZoom);
           
-          if (window.ship && window.initHexBody) {
-              if (window.ship.hexGrid && window.ship.hexGrid.meshDirty !== undefined) {
-                 window.ship.hexGrid.shards = [];
-              }
-              
+          if (window.ship && window.HullBodies) {
               // --- WAŻNE: Ustawiamy skalę PRZED wygenerowaniem fizyki! ---
               window.ship.visual.spriteScale = shipScale;
 
-              // 1. Aplikujemy obrazek kolorowy do destrukcji
-              window.initHexBody(window.ship, bakedData.albedo);
-              
-              // 2. Aplikujemy Normal Mapę do pamięci obiektu statku
-              window.ship.hexGrid.normalMapImage = bakedData.normal;
+              // Kadłub na belkach z upieczonego obrazu: albedo = kształt i tekstura skóry,
+              // normal mapa idzie do materiału kadłuba (hexShips3D przebuduje mesh).
+              window.HullBodies.release(window.ship);
+              window.HullBodies.createHull(window.ship, bakedData.albedo, {
+                visualImage: bakedData.albedo,
+                normalMapImage: bakedData.normal
+              });
               
               console.log(`Model GLB załadowany! Obrót: ${degrees}°, Kadr: ${camZoom}x, Skala Gry: ${shipScale}x`);
           }
@@ -989,14 +984,6 @@ function wireDevToolsLogic() {
       ui.btnDestructorPanel.addEventListener('click', () => {
         if (window.__destructorPanel && typeof window.__destructorPanel.toggle === 'function') {
           window.__destructorPanel.toggle();
-        }
-      });
-    }
-
-    if (ui.btnDestructorMassPanel) {
-      ui.btnDestructorMassPanel.addEventListener('click', () => {
-        if (window.__destructorMassPanel && typeof window.__destructorMassPanel.toggle === 'function') {
-          window.__destructorMassPanel.toggle();
         }
       });
     }

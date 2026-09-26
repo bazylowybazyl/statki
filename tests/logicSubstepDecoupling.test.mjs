@@ -99,9 +99,11 @@ test('separation is cached on the AI decision tick and reuses its result object'
 test('projectiles and the destructor stay on the physics substep', () => {
   const physicsSlice = sliceBetween(indexHtml, 'function physicsStep(dt, runFrameLogic', "addTiming('physicsTime'");
 
-  // Pociski MUSZĄ chodzić co podkrok — inaczej tunelują.
-  assert.match(physicsSlice, /DestructorSystem\.update\(dt, allDestructibles\)/);
-  assert.doesNotMatch(physicsSlice, /if \(runAiLogic\)[\s\S]{0,200}DestructorSystem\.update/);
+  // Pociski MUSZĄ chodzić co podkrok — inaczej tunelują. Kadłuby: silnik belek (HullBodies),
+  // heksowy destruktor tylko dla ciał heksowych (asteroidy) — oba w każdym podkroku.
+  assert.match(physicsSlice, /HullBodies\.step\(dt, allDestructibles\)/);
+  assert.match(physicsSlice, /DestructorSystem\.update\(dt, _hexDestructibles\)/);
+  assert.doesNotMatch(physicsSlice, /if \(runAiLogic\)[\s\S]{0,200}(DestructorSystem\.update|HullBodies\.step)/);
   assert.match(physicsSlice, /TowSystem\.update\(dt\)/);
   assert.match(physicsSlice, /updateMegafreighterTrains\(dt\)/);
 });

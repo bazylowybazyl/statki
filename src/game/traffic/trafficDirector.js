@@ -136,7 +136,16 @@ export const DIRECTOR_DEFAULTS = Object.freeze({
    * a rośnie wyłącznie tonaż. Wielkość ładowni się nie zmienia, więc N× większy
    * przepływ to N× więcej kursów.
    */
-  economyScale: 1
+  economyScale: 1,
+  /**
+   * Czy rzut na przechwyt pomija kursy z przypiętą encją (`actorId`).
+   *
+   * Kurs oglądany przez gracza ma ciało w grze i tam rozstrzyga się jego los —
+   * walką, nie kostką. Bez tej opcji statek potrafił zniknąć graczowi sprzed
+   * nosa, bo gdzieś daleko wypadł mu rzut. Skrypt i demo nie mają encji, więc
+   * domyślnie wyłączone i ich przebiegi się nie zmieniają.
+   */
+  protectObserved: false
 });
 
 // ============================================================
@@ -170,6 +179,12 @@ export function createDirector(network, registry, options = {}) {
     piracy: options.piracy || null,
     /** Opcjonalna integracja świata gry z wrakiem po przechwycie. */
     onWreck: typeof options.onWreck === 'function' ? options.onWreck : null,
+    /**
+     * Źródło losowości dyspozytora: wybór kupca, miejsce wydobycia, rzut na
+     * przechwyt, wydobycie planet. Ziarniste w workerze gry — ten sam świat
+     * z tym samym ziarnem przechodzi tę samą historię.
+     */
+    rng: typeof options.rng === 'function' ? options.rng : Math.random,
     dispatchTimer: 0,
     economyTimer: 0,
     /** Ile kursów wyszło z danego portu — wejście do wyceny pustego powrotu. */
@@ -651,7 +666,7 @@ function dispatchAgent(director, stations) {
 
   const wolni = agents.agents.filter(agent => !agentIsBusy(agent));
   if (!wolni.length) return { ok: false, reason: 'wszyscy w drodze' };
-  const agent = wolni[Math.floor(Math.random() * wolni.length)];
+  const agent = wolni[Math.floor(director.rng() * wolni.length)];
 
   // Notowania liczone RAZ na tick, nie przy każdej próbie: to 28 surowców
   // × wszystkie stacje, a agent pyta o nie kilka razy na sekundę gry.
@@ -1421,7 +1436,7 @@ export function dispatchMining(director, stations) {
   // Każda wyprawa kopie GDZIE INDZIEJ. Pole to wycinek pasa o szerokości setek
   // tysięcy jednostek, a trzymanie jego środka ustawiało wszystkich górników
   // w jedną kolumnę lecącą w ten sam punkt.
-  const spot = randomFieldSpot(best.field);
+  const spot = randomFieldSpot(best.field, director.rng);
   const out = manoeuvrePoints(director, best.station.id, best.field.id);
   const back = manoeuvrePoints(director, best.field.id, best.station.id);
 
@@ -1518,9 +1533,12 @@ function rollPiracy(director, dt) {
     const konwoj = convoyOf(director.convoys, course.id);
     if (konwoj) {
       for (const id of konwoj.courseIds) rozliczone.add(id);
-      if (Math.random() >= convoyInterceptChance(konwoj, solo)) continue;
+      // Konwój z choćby jednym oglądanym statkiem gracz widzi w całości —
+      // o jego losie rozstrzyga gra, nie rzut.
+      if (config.protectObserved && convoyIsObserved(registry, konwoj)) continue;
+      if (director.rng() >= convoyInterceptChance(konwoj, solo)) continue;
       // Przechwyt konwoju: część składu przepada, reszta ucieka.
-      const wynik = resolveConvoyInterception(director.convoys, konwoj);
+      const wynik = resolveConvoyInterception(director.convoys, konwoj, { rng: director.rng });
       for (const id of wynik.lost) {
         // Przez indeks, nie przez przemiatanie listy aktywnych: przy dużym
         // konwoju to było skanowanie wszystkich kursów w locie RAZ NA OFIARĘ.
@@ -1532,10 +1550,19 @@ function rollPiracy(director, dt) {
       continue;
     }
 
-    if (Math.random() >= solo) continue;
+    if (config.protectObserved && course.actorId) continue;
+    if (director.rng() >= solo) continue;
     strikeCourse(director, course);
     note(director, `PRZECHWYT: ${course.originId}→${course.destinationId}`);
   }
+}
+
+/** Czy któryś kurs konwoju ma przypiętą encję w grze. */
+function convoyIsObserved(registry, convoy) {
+  for (const id of convoy.courseIds) {
+    if (getCourse(registry, id)?.actorId) return true;
+  }
+  return false;
 }
 
 /**
@@ -1543,15 +1570,24 @@ function rollPiracy(director, dt) {
  *
  * Wydzielone, bo przechwyt ma teraz dwa źródła — pojedynczy rzut na solistę
  * i rozstrzygnięcie ataku na konwój, w którym przepada tylko część składu.
+ * Trzecim jest gra (`destroyCourse`): statek zestrzelony w bańce gracza.
+ *
+ * `options`: `reason` (domyślnie 'pirate'), `byPirates` — czy łup idzie do
+ * kryjówki i liczy się do nagród (domyślnie tylko przy 'pirate'), `x`/`y` —
+ * miejsce śmierci znane grze.
  */
-function strikeCourse(director, course) {
+function strikeCourse(director, course, options = {}) {
   const { registry, fleet } = director;
+  const reason = options.reason || 'pirate';
+  const byPirates = options.byPirates ?? reason === 'pirate';
   // Pozycję bierzemy PRZED zamknięciem kursu i z faktycznego etapu, a nie
   // z linii między środkami węzłów. Pole wydobywcze ma setki tysięcy jednostek
   // szerokości, więc wraki liczone po środkach układały się w jeden sznurek
   // zamiast rozsypywać się tam, gdzie naprawdę zginęli górnicy.
-  const spot = courseWorldPosition(director.network, course);
-  const at = wreckCourse(registry, course, 'pirate');
+  const spot = Number.isFinite(options.x) && Number.isFinite(options.y)
+    ? { x: options.x, y: options.y }
+    : courseWorldPosition(director.network, course);
+  const at = wreckCourse(registry, course, reason);
   const orderId = course.payload?.orderId;
   // Przewoźnik traci nie tylko ładunek, ale i statek — to jest ta strata,
   // która decyduje o tym, czy małą firmę stać jeszcze na cokolwiek.
@@ -1575,7 +1611,7 @@ function strikeCourse(director, course) {
   }
   // Ładunek nie wyparowuje — ląduje w najbliższej kryjówce. Bez tego piractwo
   // jest podatkiem od transportu, a nie stroną, która ma z czego żyć.
-  if (director.piracy) {
+  if (byPirates && director.piracy) {
     depositLoot(director.piracy, course, spot?.x, spot?.y);
     recordPirateLoss(director.piracy, course.factionId, Number(course.payload?.value) || 0);
   }
@@ -1592,8 +1628,124 @@ function strikeCourse(director, course) {
     kind: course.kind,
     orderId: orderId || null,
     courseId: course.id,
-    clock: registry.clock
+    clock: registry.clock,
+    reason
   });
+}
+
+/**
+ * Rozbija kurs z zewnątrz — jego statek zginął w grze (gracz, walka w bańce).
+ *
+ * Skutki są te same co przy przechwycie: jednostka przepada, ładunek zostaje
+ * we wraku, konwój traci członka, a patrol frakcji dowiaduje się o stracie na
+ * szlaku. Łup NIE trafia do kryjówki piratów, chyba że `byPirates` — to nie
+ * oni go zdobyli. Kurs z przypiętą encją też da się rozbić: to jest właśnie
+ * ten przypadek.
+ *
+ * Zwraca wpis wraku (`director.wrecks`) albo `null`, gdy kurs już nie leci.
+ */
+export function destroyCourse(director, courseOrId, options = {}) {
+  const course = courseOrId && typeof courseOrId === 'object'
+    ? courseOrId
+    : getCourse(director?.registry, courseOrId);
+  if (!course || course.status !== COURSE_STATUS.ACTIVE) return null;
+  const reason = options.reason || 'destroyed';
+  strikeCourse(director, course, {
+    reason,
+    byPirates: options.byPirates ?? reason === 'pirate',
+    x: options.x,
+    y: options.y
+  });
+  note(director, `ZNISZCZONY: ${course.originId}→${course.destinationId} (${reason})`);
+  return director.wrecks[director.wrecks.length - 1] || null;
+}
+
+// ============================================================
+// Zmiany z zewnątrz: handel, pojemności, stacje
+// ============================================================
+
+/**
+ * Zmienia zapas stacji z zewnątrz: handel gracza, rozbiórka wraku w doku.
+ *
+ * Magazyn nie schodzi poniżej zera i nie rośnie ponad pojemność — nadwyżka
+ * przepada, tak jak w handlu w grze (dok odsprzedaje ją dalej). Pojemność 0
+ * znaczy „bez limitu", jak w `stationEconomy`. Zwraca worek tego, co naprawdę
+ * weszło (dodatnie) albo wyszło (ujemne).
+ */
+export function applyStockDelta(director, stationId, bag) {
+  const applied = {};
+  const econ = director?.getEconomy?.(stationId);
+  if (!econ?.resources || !bag) return applied;
+  for (const [id, raw] of Object.entries(bag)) {
+    if (!RESOURCES[id]) continue;
+    const delta = Number(raw);
+    if (!Number.isFinite(delta) || delta === 0) continue;
+    const stock = Math.max(0, Number(econ.resources[id]) || 0);
+    const cap = Number(econ.capacity?.[id]);
+    const next = delta > 0
+      ? (Number.isFinite(cap) && cap > 0 ? Math.min(cap, stock + delta) : stock + delta)
+      : Math.max(0, stock + delta);
+    if (next === stock) continue;
+    econ.resources[id] = next;
+    applied[id] = next - stock;
+  }
+  return applied;
+}
+
+/**
+ * Ustawia pojemności magazynów stacji — np. po budowie albo utracie hali.
+ *
+ * Wartości są już w skali świata ruchu; przelicza je wołający (gra podaje
+ * pojemności ze swoich budynków, `trafficWorld` mnoży je przez skalę). Zapas
+ * ponad nową pojemność przepada. Zwraca `true`, gdy cokolwiek się zmieniło.
+ */
+export function setCapacity(director, stationId, capacity) {
+  const econ = director?.getEconomy?.(stationId);
+  if (!econ || !capacity) return false;
+  if (!econ.capacity) econ.capacity = {};
+  let changed = false;
+  for (const [id, raw] of Object.entries(capacity)) {
+    if (!RESOURCES[id]) continue;
+    const value = Math.max(0, Number(raw) || 0);
+    if (econ.capacity[id] === value) continue;
+    econ.capacity[id] = value;
+    changed = true;
+    const stock = Number(econ.resources?.[id]) || 0;
+    if (value > 0 && stock > value) econ.resources[id] = value;
+  }
+  return changed;
+}
+
+/**
+ * Stacja przestała istnieć — zniszczona w grze albo porzucona.
+ *
+ * Od tej chwili nie ma frakcji, więc wypada z rynku, gospodarki i celów wojny
+ * (`isDerelict`), a jej port nikogo nie przyjmuje. Kursy stojące przy jej
+ * stanowiskach i w kolejce giną razem z nią. Kursy w drodze dolatują
+ * i rozładowują się do martwego magazynu — to, co tam zostanie, jest łupem,
+ * a nie ubytkiem z niczego.
+ *
+ * Zwraca liczbę kursów rozbitych w porcie albo `-1`, gdy stacji nie ma.
+ */
+export function stationDestroyed(director, stationId, stations = []) {
+  const id = String(stationId || '');
+  const station = (stations || []).find(entry => String(entry?.id) === id)
+    || getNode(director?.network, id);
+  if (!director || !station) return -1;
+  station.factionId = null;
+  station.destroyed = true;
+
+  let destroyed = 0;
+  for (const course of [...getActiveCourses(director.registry)]) {
+    const stage = currentStage(course);
+    if (stage?.kind !== STAGE_KIND.DWELL || stage.nodeId !== id) continue;
+    if (destroyCourse(director, course, { reason: 'station-destroyed' })) destroyed++;
+  }
+  director.docks.delete(id);
+  director.portControl.ports.delete(id);
+  director.portQueue.delete(id);
+  note(director, `STACJA ZNISZCZONA: ${id} (w porcie zginęło ${destroyed})`);
+  return destroyed;
 }
 
 // ============================================================
@@ -1786,7 +1938,7 @@ export function tickDirector(director, dt, stations) {
       const econ = director.getEconomy(station.id);
       // `cycles` to mnożnik przepustowości, a nie upływ czasu — jeden obrót tej
       // pętli to zawsze JEDEN cykl gry, niezależnie od skali gospodarki.
-      if (econ) runStationEconomy(station, econ, cycles, undefined,
+      if (econ) runStationEconomy(station, econ, cycles, director.rng,
         { seconds: ECONOMY_CYCLE_SECONDS });
     }
   }

@@ -47,8 +47,22 @@ const FIELD_CUT_MATERIAL_RATIO = 0.4;
 /** Złom jest lekki do wycięcia — wychodzi w całości niezależnie od reszty. */
 const FIELD_CUT_SCRAP_RATIO = 1.0;
 
-/** Ile komórek strukturalnych zjada sekunda cięcia. */
+/**
+ * Ile komórek strukturalnych zjada sekunda cięcia — w HEKSACH dawnego destruktora.
+ * Węzeł kadłuba na belkach to `hull.hexPerNode` heksów (fieldCutNodesPerSecond).
+ */
 export const FIELD_CUT_SHARDS_PER_SECOND = 34;
+
+/** Tempo cięcia w komórkach tego wraku (węzeł kadłuba belkowego = kilka heksów). */
+export function fieldCutNodesPerSecond(wreck) {
+  return FIELD_CUT_SHARDS_PER_SECOND / hexesPerCell(wreck);
+}
+
+/** Dawne heksy na komórkę encji: węzeł belkowy = `hexPerNode` (siatka 15 px → 4), heks = 1. */
+function hexesPerCell(entity) {
+  const k = Number(entity?.beamHull?.hexPerNode);
+  return Number.isFinite(k) && k > 0 ? k : 1;
+}
 
 /** Zasięg, w którym da się ciąć wrak. */
 export const FIELD_CUT_RANGE = 900;
@@ -61,6 +75,9 @@ export const DOCK_DELIVERY_RANGE = 1400;
 // ============================================================
 
 function shardCount(entity) {
+  // Kadłub na belkach (hullBodies.js): komórka = węzeł siatki, liczba z chwili budowy.
+  const hull = entity?.beamHull;
+  if (hull) return Math.max(0, Number(hull.baseNodes) || 0);
   const grid = entity?.hexGrid;
   if (!grid) return 0;
   return Math.max(
@@ -110,6 +127,10 @@ function collectMountedWeapons(entity) {
  * Bez tego nie wiadomo, z którym fragmentem ma odlecieć działo.
  */
 function anchorWeaponsToCells(entity, weapons) {
+  if (entity?.beamHull) {
+    anchorWeaponsToBeamCells(entity, weapons);
+    return;
+  }
   const grid = entity?.hexGrid;
   const shards = grid?.shards;
   if (!Array.isArray(shards) || !shards.length) return;
@@ -134,6 +155,36 @@ function anchorWeaponsToCells(entity, weapons) {
       }
     }
     if (best) weapon.cell = `${best.c},${best.r}`;
+  }
+}
+
+// Kadłub na belkach: najbliższy żywy węzeł w układzie spoczynkowym ciała, klucz `ix,iy`
+// (indeksy siatki przeżywają rozpad, więc broń odlatuje z właściwym odłamem).
+// Środek sprite'a leży w latticeMin + (anchorDX, anchorDY); oś Y ciała w górę.
+function anchorWeaponsToBeamCells(entity, weapons) {
+  const hull = entity.beamHull;
+  const body = hull?.body;
+  const s = body?.nodeStore;
+  if (!s || !weapons.length) return;
+  const scaleX = Number(entity.__hardpointScaleX) || Number(entity.__hardpointScale) || 1;
+  const scaleY = Number(entity.__hardpointScaleY) || Number(entity.__hardpointScale) || 1;
+  const k = Number(hull.scale) || 1;
+  const cx = body.latticeMin.x + hull.anchorDX, cy = body.latticeMin.y + hull.anchorDY;
+  for (const weapon of weapons) {
+    const lx = cx + weapon.x * scaleX * k;
+    const ly = cy - weapon.y * scaleY * k;
+    let best = -1;
+    let bestD2 = Infinity;
+    for (let i = 0; i < s.count; i++) {
+      if (!s.active[i]) continue;
+      const dx = s.ox[i] - lx, dy = s.oy[i] - ly;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < bestD2) {
+        bestD2 = d2;
+        best = i;
+      }
+    }
+    if (best >= 0) weapon.cell = `${s.ix[best]},${s.iy[best]}`;
   }
 }
 
@@ -186,7 +237,8 @@ export function ensureSalvageManifest(entity) {
 
   entity._salvage = {
     weapons,
-    materials: buildMaterials(entity, shards),
+    // Stawki są na heks; komórki (węzły) liczą dalej udziały przy rozpadzie i cięciu.
+    materials: buildMaterials(entity, shards * hexesPerCell(entity)),
     sourceShards: shards,
     // Maleje z każdym odrywanym fragmentem — to mianownik przy dzieleniu łupu.
     remainingShards: shards,

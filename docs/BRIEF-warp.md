@@ -4,22 +4,92 @@
 > znajomości rozmów. Numery linii są orientacyjne (`index.html` edytuje kilka
 > sesji naraz) — szukaj po nazwie funkcji.
 
-**Stan (2026-09-25): M1 (wyjście) i widok skoku z M3 (soczewka świata
-w kropli, wyjście frontem) zrobione w demie, nic nie jest wpięte do gry.**
-- `src/3d/warpWorldLens.js` — soczewka świata: `mapWorldLens` ustawia ciało po
-  KRAWĘDZI BLIŻSZEJ STATKOWI: odstęp g = m + (B − m)·dₛ/(dₛ + L) (dₛ — do
-  powierzchni, B — brzeg kropli w kierunku ciała, m — kadłub statku + odstęp),
-  wielkość s = r·K/(d + d0)·mijanie, środek w g + s. Tarcza nigdy nie wjeżdża pod
-  statek przed wyjściem (user: „spadasz na Jowisza, bo przesuwasz go pod statek,
-  a nie trzymasz przed”; start „leci nad Ziemię”). L osobne: przed dziobem krótka
-  (45 tys. — cel wisi wysoko aż do podejścia), z boku 220 tys., za rufą 90 tys.;
-  mijanie: ciało z boku do ~2× większe (sin² kąta, maleje z odległością) i zgina
-  tło wokół siebie (POINT w passie soczewki, `gravityLens`). Za rufą planeta,
-  która zmieści się w ogonie, jest w nim CAŁA („dopiero pokażesz ją całą”);
-  przed dziobem cel wystaje za krawędź i rośnie. Przejście β: odstęp liniowo,
-  wielkość w logarytmie. `WarpWorldLens.update` nakłada to na encje planet PO
-  `updatePlanets3D` (pozycja, skala, światło z prawdziwego kierunku słońca)
-  + zasłona na tło. Testy: `tests/warpWorldLens.test.mjs`.
+**Stan (2026-09-26): M1 (wyjście), ładowanie skoku z M2 i widok skoku z M3
+(soczewka świata w prawdziwych odległościach z przelotami obok planet
+i księżyców, cel wiszący przy krawędzi, podróż między dowolnymi planetami,
+zgięcie tła jako bańka Alcubierre'a albo kropla, wyjście frontem) zrobione
+w demie, nic nie jest wpięte do gry.**
+- **Bańka Alcubierre'a („klepsydra”)** — domyślny kształt zgięcia tła od
+  2026-09-26 (user: kropla „średnio się podoba”, pokazał wizualizację NASA
+  i narysował klepsydrę). Pole wysokości `warpAlcubierreHeight` (lustro GLSL
+  `wvAlcH`): przed statkiem zagłębienie (przestrzeń ściśnięta, turkus), za nim
+  wybrzuszenie (rozszerzona, pomarańcz), po bokach statku zero — przewężenie,
+  statek w płaskim wnętrzu. Z góry wysokości nie widać, więc pole pokazują:
+  załamanie tła gradientem (próbka z q + amp·∇h — zagłębienie ściska obraz,
+  wybrzuszenie rozciąga; pole gładkie, amp·|Hess h| < 1, bez fałd; smugi gwiazd
+  gną się na płatach), relief ze światła z boku i barwa płatów. Siatkę
+  czasoprzestrzeni (linie jak na obrazie NASA) user odrzucił tego samego dnia
+  („wywalamy tę siatkę”) — usunięta z shadera i uniformów. Front wyjścia
+  prostuje płaty tak samo jak kroplę. Przełącznik w demie: B / lista „kształt” /
+  `?shape=drop`; stroiwo `WarpWorldLens.view` (`shape`, `alc*`, `tintGain`,
+  `shadeGain`). Ciała nie zależą od kształtu (soczewka świata, niżej).
+- **Ładowanie skoku** (user: „brakuje stricte ładowania — rozciągnięcie gwiazd
+  jak w Star Wars”; „podczas ładowania trzeba oddalać kamerę”):
+  `WarpFx3D.spawnCharge` — punkt skoku przed dziobem (jedzie z okrętem,
+  `chargePoint`): rdzeń jaśnieje, połknięcie tła (POINT) i fale zaciskające się
+  na nim coraz częściej, iskry i pył ciągnięte do punktu (dziedziczą prędkość
+  okrętu), w ostatnich 0,45 s punkt rozcina się w szew; skok = wyrzut
+  (`spawnArrival({ burstOnly })`) w miejscu punktu. Gwiazdy gry: w ładowaniu
+  wydłużają się PŁASKO wzdłuż kursu, ogonem do tyłu, i jaśnieją
+  (`WarpWorldLens.update({ charge })`). Wcześniejsze zbieganie smug w punkcie
+  skoku (tunel jak w Star Wars) user odrzucił 2026-09-26: „powinny się
+  rozciągać w 2D w stronę przeciwną do lotu, a rozciągają się 3D w dół” —
+  usunięte razem z uniformem `starFocus`. W grze dojdzie sama plazma WARP z dysz MAIN
+  (system dysz czyta `GameState.warp` 'charging'). Demo: kamera oddala się
+  w ładowaniu do 0,5× i wraca w 2,4 s po zatrzymaniu (× zoom z kółka), drżenie
+  narasta do 4 px.
+- **Gwiazdy w kropli bez lustrzanego odbicia** (zgłoszenie usera: w górnej
+  części kropli gwiazdy „leciały w drugą stronę”): rybie oko sięga daleko poza
+  kadr, a cel tła zawija się lustrzanie. Mgławica zostaje w pełnym rybim oku
+  (brzeg kropli = nieskończoność, jej odbicie nie razi), gwiazdy gry na czas
+  kropli renderują się do osobnego celu (`Core3D.setWarpStarsObject`, warstwa 8,
+  `warpStarTarget`) i idą przez rybie oko ograniczone krawędzią kadru
+  (`warpFisheyeScale` / `wvFisheye`), próbki opływu gwiazd przycięte do kadru.
+  Samo ograniczenie rybiego oka dla całego tła zabijało kroplę (brzeg przestawał
+  być widoczny).
+- `src/3d/warpWorldLens.js` — soczewka świata w **PRAWDZIWYCH odległościach**
+  (user 2026-09-26: mijana planeta była „na siłę przybliżana do gracza, potem
+  oddalana”; ma być: statek przelatuje obok niej, zwalnia, planeta płynnie
+  rośnie, obraca się, maleje i zostaje z tyłu, „bez sztucznych efektów”; to
+  samo przy innych planetach i księżycach). `mapWorldLens`: jedna skala S dla
+  wszystkich ciał — środek tarczy w S·(ciało − statek), promień S·r ×
+  perspektywa wzdłuż kursu `warpDepthScale` = h/√(a² + h²) (a — odległość
+  wzdłuż kursu, h = `sizeDepth` 30 tys.: przy mijaniu prawdziwa wielkość, daleko
+  przed dziobem i za rufą mniejsza). Mijana planeta leci w kadrze PO PROSTEJ
+  w swojej prawdziwej odległości od kursu, rośnie z perspektywy i nigdy nie
+  jest bliżej statku niż naprawdę; tarcza pod statkiem tylko wtedy, gdy statek
+  naprawdę nad nią leci. Skala `warpLensScale` z NOMINALNEJ prędkości skoku
+  (bez zwolnień przy ciałach): w przelocie krótszy bok kadru mieści
+  `framingDist` 90 tys. (niezależnie od kierunku lotu), poniżej `zoomRefSpeed`
+  (rozpęd, hamowanie) widok się przybliża proporcjonalnie. Skala z faktycznej
+  prędkości przybliżała widok przy zwolnieniu i planeta krążyła wokół statku
+  w stałej odległości — znów „na siłę”. Dalekie ciała (słońce, planety po
+  drugiej stronie układu) są w tej skali daleko za kadrem. **Obrót przy
+  przelocie** (`flybyTurn`): wirtualna kamera `flybyHeight` 100 tys. nad
+  statkiem widzi ciało z ukosa — grupa ciała obrócona tak, żeby do ekranu była
+  zwrócona strona widziana ze statku, światło słońca obrócone razem z nią
+  (terminator się przesuwa; płaska poświata limbu Ziemi i Marsa zostaje
+  płaska); przy mijaniu powierzchnia przewija się jak widok z okna. Usunięte
+  sztuczne efekty: powiększanie „z boku”, zginanie tła wokół planety
+  (połknięcie POINT) i ściąganie kierunków ku przodowi. **Cel lotu**
+  (`update({ target })`, encja): wyłania się przy krawędzi kadru, gdy jest
+  bliżej niż `targetWindow` 450 tys., krawędź tarczy zatrzymuje się miękko
+  (`holdSoft`) przy krawędzi, widać `holdPeek` średnicy, wielkość r·K/(d + d0)
+  × `holdSize` (0,5 — wjazd tym gwałtowniejszy); księżyce celu stoją wokół
+  jego obrazu w tej samej skali. Wjazd: `arriveBeta` — β celu spada w pasie
+  2·`arriveBand` przed statkiem i kończy się, gdy front wyjścia mija statek
+  (w demie ~0,35 s tuż przed zatrzymaniem, razem z wyrzutem). Przejście β:
+  odstęp liniowo, wielkość w logarytmie. `WarpWorldLens.update({ speed })`
+  (prędkość nominalna) nakłada to na encje planet PO `updatePlanets3D`
+  (pozycja, skala, obrót, światło z prawdziwego kierunku słońca) + zasłona na
+  tło. Testy: `tests/warpWorldLens.test.mjs`.
+- **Zwolnienie przy mijanym ciele** (`warpFlybySlowdown` w `src/game/warpDrive.js`,
+  „grawitacja”): mnożnik prędkości — głębokość rośnie z wielkością ciała
+  widzianego z kursu (promień / (promień + odległość kursu od powierzchni)),
+  do `depth` 0,85; pas wzdłuż kursu (gauss) szerszy dla ciał dalej od kursu
+  (2,2 × (odległość + promień), co najmniej 60 tys.), więc statek zwalnia
+  z wyprzedzeniem i płynnie. Mars 70 tys. od kursu — do 15% prędkości, mały
+  daleki księżyc — wcale. Gra (M4) liczy to samo w autopilocie warpa.
 - Świat razem z TŁEM zwija się w **kroplę** wokół statku (user: „zamiast koła
   kropla” — cel mieści się wyżej): wypukła otoczka bańki z przodu i ogona za
   rufą (`warpDropGeometry` / `warpDropExit` w `warpLens3D.js`, lustro GLSL
@@ -38,12 +108,24 @@ w kropli, wyjście frontem) zrobione w demie, nic nie jest wpięte do gry.**
 - **Gwiazdy = PRAWDZIWE gwiazdy gry** (user: fejkowe gwiazdy „osadzały się”
   w rzeczywistości przy wyjściu sztucznie). `StarSystem` z `planet3d.assets.js`
   idzie z tłem przez pass soczewki i rozciąga się sam (czyta `window.warp`:
-  `active` od skoku do przejścia frontu przez statek). `_capStarParallax`
-  ogranicza prędkość wzoru (wirtualna kamera gwiazd ≤ `starSpeedCap`
-  14 tys. j/s — paralaksa 1,35× przy prędkości skoku to szum), trwale zostawia
-  przesunięcie (bez skoku wzoru na końcu), w widoku skoku podbija wielkość,
-  rozciągnięcie i jasność, a „bicz” gwiazd gry przy warp → idle przygasza
-  (`starWhipCut` — jedna jasna gwiazda ciągnęła smugę przez pół kadru).
+  `active` od skoku do przejścia frontu przez statek) — płasko, wzdłuż lotu,
+  ogonem do tyłu. Bańka Alcubierre'a NIE gnie gwiazd (tylko mgławicę): gięte na
+  płatach smugi wyglądały jak 3D. Kamera gwiazd (przesunięcie wzoru) liczy się
+  w `StarSystem.update` przez `advanceStarCamera` (`src/3d/starParallax.js`):
+  widok skoku zgłasza na następną klatkę limit prędkości wzoru
+  (`userData.starSpeedCap` = `starSpeedCap` 14 tys. j/s — paralaksa 1,35× przy
+  prędkości skoku to szum; bez odnowienia limit znika), przesunięcie zostaje
+  trwale (bez skoku wzoru na końcu). **Oddalenie kamery nie zagęszcza gwiazd**
+  (user: „jak oddalisz kamerę, gwiazdy się kumulują”): gwiazdy leżą
+  w płaszczyźnie gry, więc ich liczba na ekranie rosła jak 1/zoom², a przy
+  zoomie ~0,006 kadr wychodził poza pole gwiazd (220 tys. j.). Poniżej
+  `STAR_ZOOM_REF` 0,065 (zoom widoku skoku) wzór rośnie z kadrem
+  (`starZoomCompensation`, uniform `zoomComp`), a kamera gwiazd przesuwa się
+  o ruch kamery podzielony przez ten mnożnik — paralaksa na ekranie ta sama,
+  zmiana zoomu nie przesuwa wzoru; w zwykłym zakresie gry nic się nie zmienia.
+  W widoku skoku soczewka podbija wielkość, rozciągnięcie i jasność, a „bicz”
+  gwiazd gry przy warp → idle przygasza (`starWhipCut` — jedna jasna gwiazda
+  ciągnęła smugę przez pół kadru).
 - **Wyjście = front od dziobu ku rufie** (user: statek nie może „spaść” do
   rzeczywistości — ta ma się wyprostować przed nim; wyjście dłuższe). Front
   w promieniach kuli wzdłuż osi lotu (`front`, pas ±`frontBand`): przed nim
@@ -60,27 +142,45 @@ w kropli, wyjście frontem) zrobione w demie, nic nie jest wpięte do gry.**
   soczewka w kadrze) — wracają razem z frontem; shafty wygaszane stopniowo
   (`Core3D.suppressShadowShafts(amount)`, `uShaftGain`), bo cień z prawdziwego
   słońca kładł się klinem na przestawione planety.
-- Demo, scena 4 (~20 s): Atlas od Ziemi do Jowisza. Rozpęd 2,6 s (hipercruise
-  do 4 tys. j/s, ładowanie skoku, Ziemia trzymana przy krawędzi) → kopnięcie
-  1,1 s do ~225 tys. j/s (soczewka ciał w 0,7 s) → przy Marsie (70 tys. j. od
-  kursu) „grawitacja”: prędkość spada do ~38% w pasie ±60 tys. j. wokół punktu
-  mijania (zależne od MIEJSCA na kursie), potem znowu szybko → hamowanie 3,2 s
+- Demo, scena 4: **podróż między planetami** (user: „dodaj możliwość
+  podróżowania na inne planety”) — w panelu „skąd”/„dokąd” (Merkury, Wenus,
+  Ziemia, Mars, Jowisz, Saturn; `?from=earth&to=saturn`), zmiana startuje
+  przelot. `buildTrip`: start nad powierzchnią planety startu (krawędź tarczy
+  288 px pod statkiem), koniec nad tarczą celu (0,935 promienia od środka),
+  czas skoku 4 s + 1 s na 260 tys. j. (8–17 s). Mijane ciała — planety, słońce
+  i księżyce (z ruchem po orbicie, tory w czasie) — zwalniają statek w tablicy
+  prędkości (`warpFlybySlowdown`, prędkość przelotu dobrana siecznymi, żeby
+  statek stanął w P1); cel i jego księżyce nie. Gra losuje kąty orbit, demo
+  ustawia je pod przeloty: Ziemia ↔ Jowisz mija Marsa 70 tys. j. od kursu,
+  Ziemia ↔ Saturn — Marsa i Jowisza z księżycami 35 tys. j., Ziemia ↔ Merkury —
+  Wenus 35 tys. j., start z Ziemi — Księżyc 40 tys. j. tuż po kopnięciu;
+  mijane ciała stoją po stronie kursu dalszej od słońca (od słonecznej widać
+  nocną tarczę z sierpem). Ziemia → Jowisz (~20 s): rozpęd 3 s (hipercruise do
+  4 tys. j/s, ładowanie skoku, Ziemia przy krawędzi) → kopnięcie 1,1 s do
+  ~365 tys. j/s (Ziemia maleje i przy ~4,6 s zostaje za kadrem, Księżyc mija
+  statek przy ~4,4 s) → Mars wyłania się u góry przy ~7,2 s, statek zwalnia do
+  ~55 tys. j/s, Mars rośnie po prostej do ~150 px przy mijaniu (~8,5 s),
+  obraca się, maleje i znika na dole przy ~9,8 s → Jowisz wyłania się przy
+  górnej krawędzi przy ~11,7 s i rośnie przy niej → hamowanie 3,2 s
   z wyhamowaniem (v ~ (1 − u)²) → front startuje 2,1 s przed zatrzymaniem,
-  przechodzi kadr w 4,2 s i mija statek, gdy ten staje (wtedy wyrzut, żar
-  kadłuba, trzask gwiazd; front mijający statek w ruchu zostawiał wyrzut za
-  rufą). Położenie z tablicy (całkowanie co 1/240 s), prędkość przelotu dobrana
-  siecznymi, żeby statek stanął w P1. Stroiwo: `TRAVEL` w `dema/warp-demo.js`,
-  `WarpWorldLens.params` (K = 600, d0 = 30 tys., passBoost 1,1, aberracja 0,55).
+  przechodzi kadr w 4,2 s i mija statek, gdy ten staje; tuż przed tym Jowisz
+  z księżycami wjeżdża pod statek (wtedy wyrzut, żar kadłuba, trzask gwiazd;
+  front mijający statek w ruchu zostawiał wyrzut za rufą). Położenie z tablicy
+  (całkowanie co 1/240 s). Stroiwo: `TRAVEL` w `dema/warp-demo.js`,
+  `WarpWorldLens.params` (`framingDist`, `zoomRefSpeed`, `sizeDepth`,
+  `flyby*`, `targetWindow`, `hold*`), `WARP_FLYBY_DEFAULTS`.
   Uwaga: na końcu księżyc Jowisza bywa tuż przy statku i cienie shadow shafts
   gry (tarcze) przyciemniają kadłub — to istniejące cienie, nie warp.
 - Pomysł usera na później (M5): **widok podejścia w hipercruise** — lekka soczewka
   (β < 1) przy zbliżaniu do planety z ringiem; gra zna docelowy port, więc obraca
   planetę (tarcza jest 3D), żeby port był od strony podejścia, powiększa ją
   i przechodzi β → 0 do zwykłej kamery nad dachem doku.
-- `src/game/warpDrive.js` — oś czasu przylotu + plan floty (testy: `tests/warpDrive.test.mjs`).
-- `src/3d/warpFx3D.js` — render przylotu: glify (szew, poświata, pierścień, fala
-  dziobowa, smuga anamorficzna — 1 draw call), smuga sylwetki, cząstki z `Fx3D`,
-  żar brzegu kadłuba (`heatHullForWarp`), zgłoszenia zgięcia tła i fal.
+- `src/game/warpDrive.js` — oś czasu przylotu + plan floty + zwolnienie przy
+  mijanych ciałach `warpFlybySlowdown` (testy: `tests/warpDrive.test.mjs`).
+- `src/3d/warpFx3D.js` — render przylotu i ładowania: glify (szew, poświata,
+  pierścień, fala dziobowa, smuga anamorficzna — 1 draw call), smuga sylwetki,
+  cząstki z `Fx3D`, żar brzegu kadłuba (`heatHullForWarp`), zgłoszenia zgięcia
+  tła i fal; `spawnCharge` / `releaseCharge` / `chargePoint` (punkt skoku).
 - `src/3d/warpLens3D.js` + `core3d.js` — prymitywy zgięcia tła
   (`Core3D.pushWarpSpaceWorld`, POINT/SEAM/RING, do 16) w passie soczewki
   i fale w uberPassie (`Core3D.pushWarpWaveWorld`, pierścień/szew, do 8).
@@ -266,10 +366,14 @@ wielkości, gdy statek ją mija — to tylko przesunięcie. Efekt „mała → r
 prawie pełna przy mijaniu → maleje” wymaga rzutu zależnego od **odległości od
 statku**. Dlatego w warpie dalekie obiekty rysuje osobny świat:
 
-- położenie: kierunek od statku bez zmian, krawędź bliższa statkowi w odstępie
-  `g = m + (B − m) · dₛ / (dₛ + L)` — nieskończoność ląduje na **brzegu kropli**
-  `B` (zrobione: kropla zamiast pierścienia horyzontu, L zależne od kierunku);
-- wielkość: `s(d) = r · K / (d + d0)` (prawo perspektywy) × mijanie;
+- położenie: PRAWDZIWE — jedna skala S dla wszystkich ciał (z nominalnej
+  prędkości skoku), mijana planeta leci po prostej (zrobione; wcześniej
+  nieskończoność na brzegu kropli trzymała wszystko w kadrze, potem „okno
+  drogi” przyciągało planetę do statku i odpychało); cel lotu wisi przy
+  krawędzi i wjeżdża przy wyjściu;
+- wielkość: S · r × perspektywa wzdłuż kursu (przy mijaniu prawdziwa), statek
+  zwalnia przy mijanym ciele, ciało obraca się jak widziane z przelatującego
+  statku;
 - przejście: `β` 0 → 1 przy skoku (świat „zwija się” wokół statku); wyjście
   frontem od dziobu — rzeczywistość prostuje się przed statkiem, a nie cała
   naraz (patrz „Stan”); pozycja i wielkość = lerp(płaski, zgięty, β)

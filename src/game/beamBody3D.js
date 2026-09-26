@@ -427,9 +427,11 @@ export function buildBeamStructure(vox, opts = {}) {
  * te same działania w tej samej kolejności, więc wynik bit w bit jak na obiektach.
  */
 export function computeStoreInertia(store, cellSize) {
-  const count = store.count, ox = store.ox, oy = store.oy, oz = store.oz, mass = store.mass;
+  // Tylko żywe węzły — kadłub po rozpadzie w miejscu trzyma na tablicach węzły odłamów.
+  const count = store.count, ox = store.ox, oy = store.oy, oz = store.oz, mass = store.mass, active = store.active;
   let comX = 0, comY = 0, comZ = 0, mSum = 0;
   for (let i = 0; i < count; i++) {
+    if (!active[i]) continue;
     comX += ox[i] * mass[i]; comY += oy[i] * mass[i]; comZ += oz[i] * mass[i];
     mSum += mass[i];
   }
@@ -439,6 +441,7 @@ export function computeStoreInertia(store, cellSize) {
   const cubeTerm = (cellSize * cellSize) / 6;
   let ixx = 0, iyy = 0, izz = 0, ixy = 0, ixz = 0, iyz = 0;
   for (let i = 0; i < count; i++) {
+    if (!active[i]) continue;
     const m = mass[i];
     const px = ox[i] - comX, py = oy[i] - comY, pz = oz[i] - comZ;
     ixx += m * (py * py + pz * pz + cubeTerm);

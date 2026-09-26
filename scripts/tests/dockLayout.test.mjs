@@ -10,9 +10,16 @@
 import { createSuite, runIfMain } from './harness.mjs';
 import { HULL_RENDER_PROFILES, HULL_RENDER_WORLD_SCALE } from '../../src/data/ships.js';
 import {
-  BERTH_CLASSES, hullFootprint, berthClassForHull, berthFits,
+  BERTH_CLASSES, hullFootprint, berthClassForHull, berthFits, hullFitsBerth, BERTH_ROLE, berthRole,
   buildStationDocks, parkingSlotPosition, findBerth, reserveBerth, releaseBerth, berthOccupancy, suggestBerthMultiplier, TONS_PER_BERTH_BLOCK
 } from '../../src/game/traffic/dockLayout.js';
+
+/** Ile stanowisk zajętych w każdym doku (id doku → liczba). */
+function perDock(layout) {
+  const out = {};
+  for (const berth of layout.berths) out[berth.dockId] = (out[berth.dockId] || 0) + (berth.occupantId ? 1 : 0);
+  return out;
+}
 
 export function run() {
   const t = createSuite('dockLayout');
@@ -139,6 +146,82 @@ export function run() {
 
   t.equal('kadłub bez pasującej klasy nie dostaje nic',
     findBerth(port, 'megafreighter', 0, { freeOnly: true }), null);
+
+  // ----------------------------------------------------------
+  t.section('Role stanowisk: cywilne i wojskowe');
+
+  t.check('pomosty są domyślnie cywilne',
+    port.berths.every(berth => berth.role === BERTH_ROLE.CIVIL) && port.docks.every(dock => dock.role === BERTH_ROLE.CIVIL));
+  t.equal('stanowisko bez pola roli liczy się jako cywilne', berthRole({ cls: 'm' }), BERTH_ROLE.CIVIL);
+  const koszary = buildStationDocks({ id: 'baza', x: 0, y: 0, r: 120 }, { role: BERTH_ROLE.MILITARY });
+  t.check('rolę da się nadać całemu portowi', koszary.berths.every(berth => berthRole(berth) === BERTH_ROLE.MILITARY));
+
+  // Port mieszany: dwa pomosty cywilne i dwa wojskowe.
+  const cyw = buildStationDocks({ id: 'mix', x: 0, y: 0, r: 120 }, { dockCount: 2 });
+  const woj = buildStationDocks({ id: 'mix-w', x: 0, y: 0, r: 120 }, { dockCount: 2, role: BERTH_ROLE.MILITARY, angleOffset: Math.PI / 2 });
+  const mieszany = { ...cyw, docks: [...cyw.docks, ...woj.docks], berths: [...cyw.berths, ...woj.berths] };
+  const dlaCywila = findBerth(mieszany, 'container_ship', 0, { freeOnly: true, role: BERTH_ROLE.CIVIL });
+  const dlaWojska = findBerth(mieszany, 'container_ship', 0, { freeOnly: true, role: BERTH_ROLE.MILITARY });
+  t.equal('filtr roli: cywil dostaje cywilne', dlaCywila.berth.role, BERTH_ROLE.CIVIL);
+  t.equal('filtr roli: wojsko dostaje wojskowe', dlaWojska.berth.role, BERTH_ROLE.MILITARY);
+  for (const berth of cyw.berths) reserveBerth(berth, 'tlum', 900);
+  t.equal('pełne cywilne nie przelewają się na wojskowe',
+    findBerth(mieszany, 'container_ship', 0, { freeOnly: true, role: BERTH_ROLE.CIVIL }), null);
+  t.check('bez filtra roli widać wszystkie', !!findBerth(mieszany, 'container_ship', 0, { freeOnly: true }));
+  const obl = berthOccupancy(mieszany);
+  t.equal('obłożenie wg roli: cywilne pełne', obl.byRole.civil.taken, cyw.berths.length);
+  t.equal('obłożenie wg roli: wojskowe puste', obl.byRole.military.taken, 0);
+  t.equal('obłożenie wg doku', obl.byDock['mix:dok1'].taken, cyw.docks[0].berths.length);
+
+  // ----------------------------------------------------------
+  t.section('Limity pola stanowiska (pady K-7)');
+
+  // Fregata 192 × 144 nie wchodzi w klasę S ruchu (170 × 140), ale pad S hali
+  // K-7 ma 300 × 180 — stanowisko z własnymi limitami mierzy się nimi.
+  t.check('fregata nie mieści się w klasie S', !berthFits('s', 'terran_frigate'));
+  t.check('ale mieści się na padzie S z limitem 300 × 180',
+    hullFitsBerth({ cls: 's', maxLength: 300, maxBeam: 180 }, 'terran_frigate'));
+  t.check('stanowisko bez limitów mierzy się klasą', !hullFitsBerth({ cls: 's' }, 'terran_frigate'));
+  const pady = { ...port, docks: [], berths: [
+    { id: 'p:s', dockId: 'p', cls: 's', rank: 0, maxLength: 300, maxBeam: 180, freeAt: 0, occupantId: null },
+    { id: 'p:m', dockId: 'p', cls: 'm', rank: 1, freeAt: 0, occupantId: null }
+  ] };
+  t.equal('findBerth stawia fregatę na padzie S', findBerth(pady, 'terran_frigate', 0, { freeOnly: true })?.berth.id, 'p:s');
+
+  // ----------------------------------------------------------
+  t.section('Równy rozkład między doki');
+
+  // Do 2026-09-26 remis kosztu wygrywało pierwsze stanowisko z listy: hala
+  // K-7 nr 1 miała śr. 18/28 zajętych, zatoki po drugiej stronie ringu 0,1/28.
+  const rowny = buildStationDocks({ id: 'rowny', x: 0, y: 0, r: 120, ringWorldRadius: 37800 });
+  const pierwszeCztery = [];
+  for (let i = 0; i < 8; i++) {
+    const pick = findBerth(rowny, 'inter_station_shuttle', 0, { freeOnly: true });
+    if (i < 4) pierwszeCztery.push(pick.berth.dockId);
+    t.check(`szutla ${i + 1} dalej best-fit (S)`, pick.berth.cls === 's');
+    reserveBerth(pick.berth, `van-${i}`, 900);
+  }
+  t.equal('cztery pierwsze szutle w czterech różnych dokach', new Set(pierwszeCztery).size, 4);
+  t.check('po ośmiu każdy dok ma po dwie', Object.values(perDock(rowny)).every(n => n === 2));
+  t.equal('dziewiąta idzie klasę wyżej, gdy S pełne wszędzie',
+    findBerth(rowny, 'inter_station_shuttle', 0, { freeOnly: true }).berth.cls, 'm');
+
+  const kontenery = buildStationDocks({ id: 'k', x: 0, y: 0, r: 120, ringWorldRadius: 37800 });
+  for (let i = 0; i < 20; i++) {
+    reserveBerth(findBerth(kontenery, 'container_ship', 0, { freeOnly: true }).berth, `k-${i}`, 900);
+  }
+  const zajetePoDokach = Object.values(perDock(kontenery));
+  t.check('20 kontenerowców rozkłada się po równo (5 na dok)', zajetePoDokach.every(n => n === 5), JSON.stringify(zajetePoDokach));
+
+  // Przy równym obłożeniu wybór rotuje — żaden dok nie jest wiecznie „pierwszy”.
+  const rotacja = buildStationDocks({ id: 'rot', x: 0, y: 0, r: 120, ringWorldRadius: 37800 });
+  reserveBerth(rotacja.docks[1].berths.find(b => b.cls === 'l'), 'obcy', 900);
+  t.equal('remis trzech pustych doków rozstrzyga rotacja, nie kolejność listy',
+    findBerth(rotacja, 'inter_station_shuttle', 0, { freeOnly: true }).berth.dockId, 'rot:dok3');
+  const stary = buildStationDocks({ id: 'stary', x: 0, y: 0, r: 120, ringWorldRadius: 37800 });
+  reserveBerth(findBerth(stary, 'inter_station_shuttle', 0, { freeOnly: true, spread: false }).berth, 'a', 900);
+  t.equal('spread: false zostawia stary dobór „pierwsze z listy”',
+    findBerth(stary, 'inter_station_shuttle', 0, { freeOnly: true, spread: false }).berth.dockId, 'stary:dok1');
 
   t.section('Wielkość portu idzie za PRZEŁADUNKIEM, nie za osadą');
 

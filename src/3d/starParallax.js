@@ -74,3 +74,52 @@ export function computeStarCameraOffset(cameraX, cameraY, layer, wrapSize = DEFA
     y: wrapStarOffset(-(Number(cameraY) || 0) * parallax, wrapSize),
   };
 }
+
+// Gwiazdy leżą w płaszczyźnie gry, więc oddalenie kamery mnożyło ich liczbę na
+// ekranie (1/zoom²) — w skoku rozciągnięte smugi zlewały się w kurtynę (user
+// 2026-09-26: „jak oddalisz kamerę, gwiazdy się kumulują”). Poniżej tego zoomu
+// wzór gwiazd rozszerza się razem z kadrem: gęstość na ekranie zostaje taka jak
+// przy STAR_ZOOM_REF (zoom widoku skoku); w zwykłym zakresie gry nic się nie zmienia.
+export const STAR_ZOOM_REF = 0.065;
+
+/** Mnożnik położeń gwiazd względem kamery przy danym zoomie (≥ 1). */
+export function starZoomCompensation(zoom, ref = STAR_ZOOM_REF) {
+  const z = Number(zoom);
+  if (!(z > 0)) return 1;
+  return Math.max(1, (Number(ref) || STAR_ZOOM_REF) / z);
+}
+
+/**
+ * Kamera gwiazd (przesunięcie wzoru): całkuje ruch kamery gry podzielony przez
+ * kompensację zoomu k — na ekranie gwiazdy przesuwają się tak samo jak bez
+ * kompensacji, a zmiana zoomu nie przesuwa wzoru. maxStep > 0 ogranicza krok
+ * (widok skoku: przy prędkości warpa paralaksa to szum). sc = { x, y, lx, ly }
+ * — stan trzymany przez wołającego, (cx, cy) — kamera gry (świat, y w dół).
+ */
+export function advanceStarCamera(sc, cx, cy, k = 1, maxStep = 0) {
+  const x = Number(cx) || 0;
+  const y = Number(cy) || 0;
+  if (!Number.isFinite(sc.lx) || !Number.isFinite(sc.ly)) {
+    sc.x = x;
+    sc.y = y;
+    sc.lx = x;
+    sc.ly = y;
+    return sc;
+  }
+  let dx = x - sc.lx;
+  let dy = y - sc.ly;
+  sc.lx = x;
+  sc.ly = y;
+  const step = Number(maxStep) || 0;
+  if (step > 0) {
+    const d = Math.hypot(dx, dy);
+    if (d > step) {
+      dx *= step / d;
+      dy *= step / d;
+    }
+  }
+  const kk = Math.max(1e-6, Number(k) || 1);
+  sc.x += dx / kk;
+  sc.y += dy / kk;
+  return sc;
+}

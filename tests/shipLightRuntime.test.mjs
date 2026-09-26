@@ -3,8 +3,11 @@ import assert from 'node:assert/strict';
 
 import {
   MAX_SHADER_SHIP_LIGHTS,
+  NAV_CLUSTER,
   NAV_LIGHT_CHASE,
   buildCombinedShipLightShaderPayload,
+  buildNavLightClusters,
+  navChaseSequence,
   buildPositionLightWorldSprites,
   buildRoadLightWorldEmitters,
   buildShipLightShaderPayload,
@@ -34,14 +37,16 @@ test('editor lights are packed into sprite grid coordinates for shader use', () 
 
   const payload = buildShipLightShaderPayload(entity, grid);
 
+  // Kierunkowe (reflektory) przed pozycyjnymi — przy nadmiarze lamp wypada
+  // lampa pozycyjna, nie reflektor.
   assert.equal(payload.count, 2);
-  assert.deepEqual(payload.lights[0].pos, { x: 125, y: 37 });
-  assert.equal(payload.lights[0].kind, 'position');
-  assert.equal(payload.lights[0].radiusPx, 5);
-  assert.deepEqual(payload.lights[1].pos, { x: 45, y: 67 });
-  assert.equal(payload.lights[1].kind, 'road');
-  assert.deepEqual(payload.lights[1].dir, { x: 1, y: 0 });
-  assert.equal(payload.lights[1].rangePx, 1600);
+  assert.deepEqual(payload.lights[1].pos, { x: 125, y: 37 });
+  assert.equal(payload.lights[1].kind, 'position');
+  assert.equal(payload.lights[1].radiusPx, 5);
+  assert.deepEqual(payload.lights[0].pos, { x: 45, y: 67 });
+  assert.equal(payload.lights[0].kind, 'road');
+  assert.deepEqual(payload.lights[0].dir, { x: 1, y: 0 });
+  assert.equal(payload.lights[0].rangePx, 1600);
   // Podpis jest liczbą (hash) — skala hardpointu nadal w nim siedzi.
   assert.equal(typeof payload.signature, 'number');
   const rescaled = buildShipLightShaderPayload({ ...entity, __hardpointScaleY: 0.6 }, grid);
@@ -126,7 +131,7 @@ test('pudło zasięgu emiterów jest zachowawcze: nie wycina celu, który emiter
   assert.equal(roadEmittersMayReach(computeRoadEmitterReach([], createRoadEmitterReach()), { x: 0, y: 0, radius: 50 }, null), false);
 });
 
-test('shader payload clamps to the max supported light count with position lights first', () => {
+test('shader payload clamps to the max supported light count with directional lights first', () => {
   const position = Array.from({ length: MAX_SHADER_SHIP_LIGHTS + 8 }, (_, i) => ({
     id: `p${i}`,
     x: i,
@@ -138,8 +143,10 @@ test('shader payload clamps to the max supported light count with position light
   const entity = { editorLights: { position, road: [{ id: 'road', x: 0, y: 0 }] } };
   const payload = buildShipLightShaderPayload(entity, { srcWidth: 100, srcHeight: 100 });
 
+  // Kadłub o długości ~100 px przy skali 1 jest za mały na reflektory otoczenia.
   assert.equal(payload.count, MAX_SHADER_SHIP_LIGHTS);
-  assert.equal(payload.lights.at(-1).id, `p${MAX_SHADER_SHIP_LIGHTS - 1}`);
+  assert.equal(payload.lights[0].id, 'road', 'reflektor nie wypada przy nadmiarze lamp');
+  assert.equal(payload.lights.at(-1).id, `p${MAX_SHADER_SHIP_LIGHTS - 2}`);
 });
 
 test('hex colors convert to normalized rgb values', () => {
@@ -154,10 +161,71 @@ test('atlas default lights fit in one shader payload', () => {
     { srcWidth: 3600, srcHeight: 1300 }
   );
 
-  assert.equal(ATLAS_EDITOR_DEFAULTS.lights.position.length, 20);
-  assert.equal(ATLAS_EDITOR_DEFAULTS.lights.road.length, 2);
-  assert.equal(payload.count, 22);
+  // Wszystkie lampy z edytora + reflektory otoczenia dużego okrętu (rufa +
+  // 2 × 2 burty) mieszczą się — nic nie wypada (przy limicie 32 i 42 lampach
+  // pozycyjnych wypadały oba reflektory dziobu).
+  const { position, road } = ATLAS_EDITOR_DEFAULTS.lights;
+  const floods = payload.lights.filter((l) => l.kind === 'flood');
+  assert.equal(floods.length, 5);
+  assert.equal(payload.count, position.length + road.length + floods.length);
   assert.ok(payload.count <= MAX_SHADER_SHIP_LIGHTS);
+  assert.equal(payload.lights.filter((l) => l.kind === 'road').length, road.length);
+});
+
+test('reflektory otoczenia z obrysu lamp: rufa + burty zależnie od długości kadłuba', () => {
+  // Obrys prostokąta 1000 × 200 px z lamp pozycyjnych, reflektory dziobu do przodu.
+  const outline = [];
+  for (let i = 0; i <= 10; i++) {
+    outline.push({ x: -500 + i * 100, y: -100 }, { x: -500 + i * 100, y: 100 });
+  }
+  const lights = { position: outline, road: [{ id: 'r', x: 500, y: 0, deg: 90 }] };
+  const block = getEntityLights({ editorLights: lights });
+  assert.equal(block.flood.length, 7, 'rufa + para środkowa + dwie pary (filtr per encja)');
+  const rear = block.flood.find((f) => f.id === 'auto_flood_rear');
+  assert.equal(rear.deg, -90);
+  assert.ok(rear.x < -450 && Math.abs(rear.y) < 1);
+  for (const f of block.flood.filter((f) => f.id !== 'auto_flood_rear')) {
+    assert.ok(Math.abs(f.y) < 100 && Math.abs(f.y) > 60, 'burta tuż wewnątrz obrysu');
+    assert.equal(f.deg, f.y < 0 ? 0 : 180, 'burta świeci na zewnątrz');
+  }
+  const grid = { srcWidth: 1100, srcHeight: 260 };
+  const kinds = (scale) => buildShipLightShaderPayload({ editorLights: lights, __hardpointScale: scale }, grid)
+    .lights.filter((l) => l.kind === 'flood').map((l) => l.id).sort();
+  // Długość = 1000 px × skala: 100 j. (za mały), 400 j. (średni), 1000 j. (duży).
+  assert.deepEqual(kinds(0.1), []);
+  assert.deepEqual(kinds(0.4), ['auto_flood_mid_l', 'auto_flood_mid_r', 'auto_flood_rear']);
+  assert.deepEqual(kinds(1), ['auto_flood_pair0_l', 'auto_flood_pair0_r', 'auto_flood_pair1_l', 'auto_flood_pair1_r', 'auto_flood_rear']);
+  // Własny reflektor w bok = kadłub ma już swoje — bez generowanych.
+  const own = getEntityLights({ editorLights: { position: outline, road: [{ id: 'side', x: 0, y: 100, deg: 180 }] } });
+  assert.equal(own.flood.length, 0);
+  // Emitery: reflektory otoczenia jako krótkie reflektory z flagą flood.
+  const emitters = buildRoadLightWorldEmitters([{ id: 's', x: 0, y: 0, angle: 0, editorLights: lights }]);
+  assert.equal(emitters.filter((e) => e.flood).length, 5);
+  assert.equal(emitters.filter((e) => !e.flood).length, 1);
+});
+
+test('grupy lamp pozycyjnych: do 4 na statek, sekwencja w [rest, 1], rozlew na inny kadłub', () => {
+  const source = { id: 'atlas', x: 0, y: 0, angle: 0, radius: 900, editorLights: ATLAS_EDITOR_DEFAULTS.lights };
+  const clusters = buildNavLightClusters([source], { time: 1.3 });
+  assert.equal(clusters.length, 4);
+  assert.equal(clusters.reduce((s, c) => s + c.count, 0), ATLAS_EDITOR_DEFAULTS.lights.position.length);
+  for (const c of clusters) {
+    assert.ok(c.pulse >= NAV_LIGHT_CHASE.rest - 1e-9 && c.pulse <= 1 + 1e-9);
+    assert.ok(c.rangeWorld > c.spreadWorld);
+  }
+  // Średnia sekwencji w cyklu zgadza się ze stałą payloadu kadłubów.
+  let mean = 0;
+  for (let k = 0; k < 2000; k++) mean += navChaseSequence(k / 2000 / NAV_LIGHT_CHASE.speed, 0.3);
+  assert.ok(Math.abs(mean / 2000 - NAV_CLUSTER.meanSequence) < 0.03, `średnia sekwencji ${mean / 2000}`);
+  // Eskorta obok: dostaje rozlew czerwieni (typ 'omni'), własnych grup nie.
+  const target = { id: 'escort', x: 0, y: 1300, angle: 0, radius: 500, editorLights: { position: [], road: [] } };
+  const grid = { srcWidth: 1000, srcHeight: 400 };
+  const lit = buildCombinedShipLightShaderPayload(target, grid, [], { externalOmniLights: clusters });
+  assert.ok(lit.count > 0 && lit.lights.every((l) => l.kind === 'omni' && l.external));
+  const self = buildCombinedShipLightShaderPayload(source, grid, [], { externalOmniLights: clusters });
+  assert.equal(self.lights.filter((l) => l.kind === 'omni').length, 0);
+  const far = buildCombinedShipLightShaderPayload({ ...target, y: 9000 }, grid, [], { externalOmniLights: clusters });
+  assert.equal(far.count, 0);
 });
 
 test('road lights can be exported as world-space emitters for other ships', () => {

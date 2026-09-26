@@ -83,7 +83,8 @@ export function resolvePdBeamHit(out, x0, y0, dirX, dirY, range, target, deps) {
   const tExit = Math.min(range, along + half);
   if (tEnter > tExit) return out;
 
-  if (entity.hexGrid && deps.sweepImpact) {
+  // Kadłub heksowy albo na belkach (hullBodies.js) — sweep daje pierwszą komórkę na drodze.
+  if ((entity.hexGrid || entity.beamHull) && deps.sweepImpact) {
     const sx0 = x0 + dirX * tEnter;
     const sy0 = y0 + dirY * tEnter;
     const sx1 = x0 + dirX * tExit;

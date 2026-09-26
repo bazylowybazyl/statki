@@ -524,7 +524,11 @@ test('index.html: wpięcie — krok przed pętlą wraków, sen w sekundach, jawn
   assert.match(untilNextFunction('function executeRtsWorldCommandAction('), /thawWreckForOrder\(liveTarget, action\);/);
   assert.match(sliceFunction(src, 'function pickWreckTargetAtWorld(worldPoint)'), /pass === 0 \? window\.wrecks : coldWrecks/);
   assert.match(src, /const wreckList = pass === 0 \? window\.wrecks : coldWrecks;/, 'hover widzi zimne');
-  assert.match(sliceFunction(src, 'function removeWreckFromWorld(wreck)'), /coldWreckSystem\.forget\(wreck\);\s*DestructorSystem\?\.recycleWreck\?\.\(wreck\);/);
+  assert.match(sliceFunction(src, 'function removeWreckFromWorld(wreck)'), /coldWreckSystem\.forget\(wreck\);\s*recycleWreckEntity\(wreck\);/);
+  // Wrak na belkach zwalnia kadłub (HullBodies), heksowy wraca do puli destruktora.
+  const recycle = sliceFunction(src, 'function recycleWreckEntity(wreck)');
+  assert.match(recycle, /if \(wreck\?\.beamHull\) return HullBodies\.recycleWreck\(wreck\);/);
+  assert.match(recycle, /return DestructorSystem\?\.recycleWreck\?\.\(wreck\);/);
 
   const freezeHook = src.slice(src.indexOf('onBeforeFreeze(w) {'), src.indexOf('onThawed(w, reason) {'));
   assert.ok(freezeHook.indexOf('captureColdWreckImpostor') < freezeHook.indexOf('invalidateHexShipEntity3D(w)'),

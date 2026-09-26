@@ -35,6 +35,32 @@ export function activeRegion(body) {
   return region;
 }
 
+/**
+ * Obszar od nowa na TYM SAMYM magazynie (rozpad w miejscu): stan jak w świeżym obszarze
+ * (lista z flag `act` w kolejności indeksów, puste listy kroku, mocowania i skóra do
+ * przeliczenia), ale tablice zostają — kadłub Atlasa to kilkaset KB alokacji na rozpad.
+ */
+export function resetActiveRegion(body) {
+  const region = body._region;
+  if (!region || region.store !== body.nodeStore || region.beamStore !== body.beamStore) {
+    body._region = null;
+    return;
+  }
+  const s = body.nodeStore, active = s.active, act = s.act, list = region.list;
+  list.length = 0;
+  for (let i = 0; i < s.count; i++) {
+    if (active[i] && act[i]) list.push(i);
+    else act[i] = 0;
+  }
+  region.constraintCount = 0;
+  region.frontierCount = 0;
+  region.drift = 0;
+  region.mountLive = -1;
+  region.mountActive = -1;
+  region.dirtyCount = 0;
+  region.dirtyAll = true;
+}
+
 // Węzeł jako indeks w magazynie ciała; przyjmuje też widok (testy, kod spoza pętli).
 const indexOf = (node) => (typeof node === 'number' ? node : node ? node._i : -1);
 

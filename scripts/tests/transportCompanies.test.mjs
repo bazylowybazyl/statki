@@ -159,6 +159,46 @@ export function run() {
   t.equal('pełna flota nie dokupuje', maintainFleet(kolos, { targetShips: 1 }), null);
 
   // ----------------------------------------------------------
+  t.section('Odkup nie dostaje numeru jednostki, która wciąż lata');
+
+  // Regresja: numer brał się z długości floty. Strata ze środka listy skracała
+  // ją o jeden, więc odkup dostawał id OSTATNIEGO statku, a `shipsById`
+  // przepinał się na nowy obiekt. Koniec kursu starego zwalniał wtedy nowy,
+  // a stary zostawał zajęty na zawsze.
+  const indeks = createFleetRegistry();
+  const odkupujacy = createCompany({
+    id: 'odkup', policy: COMPANY_POLICY.AGGRESSIVE, capital: 100_000, homeStationId: 'earth'
+  });
+  for (let i = 0; i < 4; i++) addShip(odkupujacy, { vanClassId: 'hauler', stationId: 'earth' });
+  registerCompany(indeks, odkupujacy);
+  const wydane = new Set(odkupujacy.ships.map(ship => ship.id));
+
+  // Dokupiona jednostka trafia do indeksu tak samo jak w `tickDirector`.
+  const odkup = () => {
+    const ship = maintainFleet(odkupujacy, { targetShips: 4, stationId: 'earth' });
+    if (ship) indeks.shipsById.set(ship.id, ship);
+    return ship;
+  };
+
+  loseShip(indeks, odkupujacy, odkupujacy.ships[1]);
+  const zastepca = odkup();
+  t.check('firma odkupiła stratę', !!zastepca);
+  t.check('odkup dostaje numer, którego flota jeszcze nie widziała',
+    !wydane.has(zastepca?.id), `(${zastepca?.id})`);
+  wydane.add(zastepca?.id);
+  const numery = odkupujacy.ships.map(ship => ship.id);
+  t.equal('wszystkie id we flocie są unikalne', new Set(numery).size, numery.length);
+  t.check('indeks wskazuje każdy statek, a nie jego imiennika',
+    odkupujacy.ships.every(ship => indeks.shipsById.get(ship.id) === ship));
+  t.equal('indeks nie trzyma duchów', indeks.shipsById.size, odkupujacy.ships.length);
+
+  // Numer straconej jednostki też nie wraca — licznik tylko rośnie, więc
+  // `payload.shipId` zamkniętego kursu nigdy nie wskaże nowego statku.
+  loseShip(indeks, odkupujacy, zastepca);
+  const kolejny = odkup();
+  t.check('numer straconej jednostki nie wraca', !wydane.has(kolejny?.id), `(${kolejny?.id})`);
+
+  // ----------------------------------------------------------
   t.section('Podsumowanie');
 
   const raport = summarizeCompanies(registry);

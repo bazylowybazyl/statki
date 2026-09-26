@@ -1,8 +1,9 @@
 // src/3d/warpFx3D.js
 //
-// Efekty warpa „Fałda” — docs/BRIEF-warp.md §4. Na razie przylot (wyjście
-// z warpa): zwiastun → rozdarcie szwu → wyrzut → zamknięcie → stygnięcie.
-// Oś czasu liczy src/game/warpDrive.js; ten moduł tylko ją rysuje.
+// Efekty warpa „Fałda” — docs/BRIEF-warp.md §4. Przylot (wyjście z warpa):
+// zwiastun → rozdarcie szwu → wyrzut → zamknięcie → stygnięcie; oś czasu liczy
+// src/game/warpDrive.js, ten moduł tylko ją rysuje. Ładowanie skoku
+// (spawnCharge): punkt skoku przed dziobem zbiera przestrzeń i rozcina się w szew.
 //
 // Warstwy (co klatkę i tylko wtedy, gdy coś trwa):
 //  - glify: JEDEN InstancedMesh (szew, poświata, smuga anamorficzna; rodzaje
@@ -360,6 +361,7 @@ class SmearMesh {
 export const WarpFx3D = {
   time: 0,
   arrivals: [],
+  charges: [],
   glyphs: null,
   smears: [],
   stats: { arrivals: 0, glyphs: 0, smears: 0, lens: 0, waves: 0 },
@@ -415,9 +417,50 @@ export const WarpFx3D = {
     return a;
   },
 
+  /**
+   * Ładowanie skoku (brief §4.2, M2): „punkt skoku” przed dziobem zbiera
+   * przestrzeń — zgięcie tła rośnie, rdzeń jaśnieje, pył i światło ciągną do
+   * punktu, fale zaciskają się na nim, a w ostatnich ~0,45 s punkt rozcina się
+   * w szew wzdłuż kursu. Jedzie z okrętem. Skok (wyrzut) robi potem gra/demo
+   * przez spawnArrival({ burstOnly }) w miejscu punktu (chargePoint).
+   * o: { entity ({x, y, vel?}), heading (kurs w świecie gry; można zmieniać
+   *      na uchwycie), hullLength, palette, duration, lead (punkt przed dziobem,
+   *      w długościach kadłuba) }. Kończy się sam po czasie albo releaseCharge.
+   */
+  spawnCharge(o = {}) {
+    if (!this.ensure() || !o.entity) return null;
+    const c = {
+      entity: o.entity,
+      heading: Number(o.heading) || 0,
+      hullLength: Math.max(1, Number(o.hullLength) || 1800),
+      pal: WARP_FX_PALETTES[o.palette] || WARP_FX_PALETTES.terran,
+      t0: this.time + Math.max(0, Number(o.delay) || 0),
+      duration: Math.max(0.2, Number(o.duration) || 2.5),
+      lead: Number.isFinite(o.lead) ? o.lead : 0.45,
+      seed: Math.random() * 100,
+      moteAcc: 0,
+      x: 0, y: 0, progress: 0, dead: false
+    };
+    this.chargePoint(c);
+    this.charges.push(c);
+    return c;
+  },
+
+  releaseCharge(c) { if (c) c.dead = true; },
+
+  /** Położenie punktu skoku (świat gry) — przed dziobem okrętu. */
+  chargePoint(c, out = c) {
+    const e = c.entity;
+    const d = c.hullLength * (0.5 + c.lead);
+    out.x = (Number(e.x) || 0) + Math.cos(c.heading) * d;
+    out.y = (Number(e.y) || 0) + Math.sin(c.heading) * d;
+    return out;
+  },
+
   clear() {
     for (const a of this.arrivals) this._releaseSmear(a);
     this.arrivals.length = 0;
+    this.charges.length = 0;
   },
 
   _acquireSmear() {
@@ -460,6 +503,18 @@ export const WarpFx3D = {
       lens += r.lens;
       waves += r.waves;
       if (a.smear?.mesh.visible) smears++;
+    }
+    for (let i = this.charges.length - 1; i >= 0; i--) {
+      const c = this.charges[i];
+      c.progress = clamp01((t - c.t0) / c.duration);
+      if (c.dead || t >= c.t0 + c.duration) {
+        this.charges.splice(i, 1);
+        continue;
+      }
+      if (t < c.t0) continue;
+      const r = this._drawCharge(c, t, step);
+      lens += r.lens;
+      waves += r.waves;
     }
     g.end();
     this.stats.arrivals = this.arrivals.length;
@@ -574,6 +629,92 @@ export const WarpFx3D = {
     // --- smuga sylwetki -------------------------------------------------------
     this._drawSmear(a, s);
     return out;
+  },
+
+  _drawCharge(c, t, dt) {
+    const g = this.glyphs;
+    const pal = c.pal;
+    const H = c.hullLength;
+    const ang = c.heading;
+    const out = { lens: 0, waves: 0 };
+    this.chargePoint(c);
+    const cx = c.x;
+    const cy = c.y;
+    const p = c.progress;
+    // Narasta powoli, potem coraz szybciej — tuż przed skokiem na maksimum.
+    const build = p * p * (3 - 2 * p) * (0.35 + 0.65 * p);
+    const pulse = 0.85 + 0.15 * Math.sin(t * (8 + 22 * p) + c.seed);
+    // Rdzeń punktu; nad progiem bloomu dopiero pod koniec i tylko środek.
+    const pR = H * (0.14 + 0.26 * build);
+    g.push(GLYPH.GLOW, cx, cy, 6, ang, pR, pR, pal.core, (0.35 + 0.9 * build) * pulse, pal.body, 0,
+      0.8 + 4 * build * build, 0.18 + 0.4 * build, c.seed);
+    // Przestrzeń wciągana w punkt: połknięcie tła i fale zaciskające się na
+    // nim coraz częściej (sama refrakcja, bez świecącego obrysu).
+    if (WARP_FX_LAYERS.lens) {
+      if (Core3D.pushWarpSpaceWorld(WARP_SPACE_TYPE.POINT, cx, cy, ang, H * (0.5 + 0.9 * build), H * (0.45 + 0.6 * build), 0.6 * build)) out.lens++;
+    }
+    if (WARP_FX_LAYERS.waves) {
+      const period = 0.85 - 0.45 * build;
+      const ph = ((t - c.t0) / period) % 1;
+      const ringR = H * (1.9 - 1.6 * ph * ph);
+      const env = Math.min(1, ph * 4) * (1 - ph);
+      if (Core3D.pushWarpWaveWorld(0, cx, cy, ringR, H * 0.09, H * 0.035 * build * env, 0)) out.waves++;
+      Core3D.pushHeatHazeWorld?.(cx, -cy, -4, H * (0.3 + 0.2 * build), 0.9 * build);
+    }
+    // Ostatnie ~0,45 s: punkt rozcina się w szew wzdłuż kursu — w niego skacze okręt.
+    const seamT = clamp01((t - (c.t0 + c.duration - 0.45)) / 0.45);
+    if (seamT > 0) {
+      const halfLen = H * 0.55 * easeOutCubic(seamT);
+      const hw = H * 0.05;
+      const open = 0.32 * seamT;
+      const quadAlong = halfLen * 1.12 + hw * 2.0;
+      const quadAcross = hw * (1.2 + 3.5 * Math.max(open, 0.15)) + H * 0.02;
+      g.push(GLYPH.SEAM, cx, cy, -4, ang, quadAlong, quadAcross, pal.core, pulse, pal.body, hw, Math.min(1, halfLen / quadAlong), open, c.seed);
+      if (WARP_FX_LAYERS.lens) {
+        if (Core3D.pushWarpSpaceWorld(WARP_SPACE_TYPE.SEAM, cx, cy, ang, halfLen * 1.05, Math.max(hw * 5.5, H * 0.08), 0.5 * seamT)) out.lens++;
+      }
+    }
+    if (WARP_FX_LAYERS.particles && Fx3D.ensure()) this._chargeMotes(c, build, dt);
+    return out;
+  },
+
+  // Światło i pył ciągnięte do punktu skoku — dziedziczą prędkość okrętu
+  // (punkt jedzie z nim), więc zbiegają się w nim, a nie zostają z tyłu.
+  _chargeMotes(c, build, dt) {
+    const H = c.hullLength;
+    c.moteAcc += dt * (16 + 70 * build);
+    const col = c.pal.body;
+    const rim = c.pal.rim;
+    const vx = Number(c.entity.vel?.x) || 0;
+    const vy = Number(c.entity.vel?.y) || 0;
+    while (c.moteAcc >= 1) {
+      c.moteAcc -= 1;
+      {
+        const ang = Math.random() * Math.PI * 2;
+        const r = H * frand(0.8, 2.2);
+        const life = frand(0.28, 0.5);
+        const sp = r / life;
+        _v1.set(c.x + Math.cos(ang) * r, -(c.y + Math.sin(ang) * r), 9);
+        _v2.set(-Math.cos(ang) * sp + vx, Math.sin(ang) * sp - vy, 0);
+        _sparkCol[0] = rim[0] * 1.8; _sparkCol[1] = rim[1] * 1.8; _sparkCol[2] = rim[2] * 1.8;
+        Fx3D.spark.spawn(_v1, _v2, life, 0, H * frand(0.08, 0.22), _sparkCol, 1, 1);
+      }
+      const ang = Math.random() * Math.PI * 2;
+      const r = H * frand(0.6, 1.5);
+      const life = frand(0.45, 0.85);
+      const sp = r / life * 0.95;
+      const size = H * frand(0.01, 0.026);
+      const k = frand(0.45, 0.9) * (0.5 + 0.5 * build);
+      Fx3D.glow.spawn({
+        x: c.x + Math.cos(ang) * r, y: -(c.y + Math.sin(ang) * r), z: 8,
+        vx: -Math.cos(ang) * sp + vx, vy: Math.sin(ang) * sp - vy, vz: 0,
+        life, drag: 0,
+        s0: size, s1: size * 0.35, rot: 0, vrot: 0,
+        r0: col[0] * k, g0: col[1] * k, b0: col[2] * k,
+        r1: 1.2, g1: 1.2, b1: 1.2, mix: 1.2,
+        alpha: 0.6, fadeIn: 0.25, fadeOut: 1.0, grow: 1.0
+      });
+    }
   },
 
   _heraldMotes(a, s, dt) {
@@ -709,6 +850,7 @@ export const WarpFx3D = {
  * pomarańcz ~2,3 s, wiśnia ~5 s. Baza czasu = performance.now() (jak renderer).
  */
 export function heatHullForWarp(entity, edge = 0.85, interior = 0) {
+  if (entity?.beamHull) return heatBeamHullForWarp(entity.beamHull, edge, interior);
   const grid = entity?.hexGrid;
   const shards = grid?.shards;
   if (!Array.isArray(shards) || shards.length === 0) return 0;
@@ -730,6 +872,30 @@ export function heatHullForWarp(entity, edge = 0.85, interior = 0) {
   if (n > 0) {
     grid.meshDirty = true;
     grid.meshDirtyAll = true;
+  }
+  return n;
+}
+
+// Kadłub na belkach (hullBodies.js): brzeg = węzeł poszycia (surface), żar w polach węzłów.
+// Skóra całego kadłuba do przepisania (obszar aktywny: dirtyAll, bez obszaru: meshDirty).
+function heatBeamHullForWarp(hull, edge, interior) {
+  const body = hull?.body;
+  const s = body?.nodeStore;
+  if (!s || body.dead) return 0;
+  const nowSec = performance.now() * 0.001;
+  let n = 0;
+  for (let i = 0; i < s.count; i++) {
+    if (!s.active[i]) continue;
+    const v = s.surface[i] ? edge : interior;
+    if (v > 0 && s.heat[i] < v) {
+      s.heat[i] = v > 1 ? 1 : v;
+      s.heatStamp[i] = nowSec;
+      n++;
+    }
+  }
+  if (n > 0) {
+    body.meshDirty = true;
+    if (body._region && body._region.store === s) body._region.dirtyAll = true;
   }
   return n;
 }

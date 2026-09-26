@@ -91,6 +91,8 @@ test('NPC overlay culling keeps what is on screen and drops the rest', () => {
   assert.equal(isNpcOverlayOnScreen(capital, { x: -4000, y: 540 }, 1, W, H), false);
 });
 
-test('NPCs without a hex body are never culled (lazy initHexBody lives in the draw)', () => {
-  assert.match(html, /\(npc\.hexGrid \|\| isFighterUnit\(npc\)\) && !isNpcOverlayOnScreen\(/);
+// Kadłub NPC powstaje leniwie w rysowaniu (HullBodies.createHull w drawNPCPretty), więc
+// culling nakładki dotyczy tylko encji z ciałem (heksy albo kadłub na belkach) i myśliwców.
+test('NPCs without a hull body are never culled (lazy hull init lives in the draw)', () => {
+  assert.match(html, /\(npc\.hexGrid \|\| npc\.beamHull \|\| isFighterUnit\(npc\)\) && !isNpcOverlayOnScreen\(/);
 });

@@ -9,10 +9,11 @@ import { readFileSync } from 'node:fs';
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 const indexHtml = read('index.html');
 
-test('drawNPCPretty: rekurencja tylko gdy initHexBody dało siatkę, porażka = ponowna próba za 2 s', () => {
+test('drawNPCPretty: rekurencja tylko gdy powstał kadłub, porażka = ponowna próba za 2 s', () => {
   const fn = indexHtml.match(/function drawNPCPretty\(ctx, npc, s\) \{[\s\S]*?\n    }\n/)?.[0] || '';
   assert.ok(fn.length > 0);
-  assert.match(fn, /initHexBody\(npc, [^)]*\)\);\s*_hexInitSpentMs \+= performance\.now\(\) - nowMs;\s*if \(npc\.hexGrid\) \{[\s\S]*?drawNPCPretty\(ctx, npc, s\);\s*return;\s*\}/);
+  // Kadłub NPC na belkach (HullBodies.createHull); rekurencja rysuje nakładki gotowego kadłuba.
+  assert.match(fn, /HullBodies\.createHull\(npc, [^;]*\);\s*_hexInitSpentMs \+= performance\.now\(\) - nowMs;\s*if \(npc\.beamHull\) \{[\s\S]*?drawNPCPretty\(ctx, npc, s\);\s*return;\s*\}/);
   assert.match(fn, /npc\.__hexInitRetryAtMs = nowMs \+ 2000;/);
   assert.match(fn, /!\(npc\.__hexInitRetryAtMs > nowMs\)/);
 });

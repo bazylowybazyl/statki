@@ -367,6 +367,67 @@ export function initOverlay({
     return false;
   }
 
+  // Rozgrzewka przy starcie gry. Pierwszy efekt w sesji kompilował programy passów kompozytora
+  // (bloom: jasność, 5 rozmyć, składanie; przywracanie alfy) i materiału efektu — iskry pierwszej
+  // kolizji ~50 ms, Yamato z wysyłką buforów swojej puli 140–200 ms. Efekty z materiałami
+  // tworzonymi na każdy wybuch (rail, armata, działko) kompilowały się OD NOWA po każdej przerwie
+  // w strzelaniu: dispose ostatniego materiału z danym programem niszczy program three.
+  // Jeden przebieg kompozytora ze WSZYSTKIM widocznym — ukryte pule bez żywych cząstek nic nie
+  // rysują — i próbkami efektów bez obcinania kadrem kompiluje programy dokładnie w wariancie
+  // gry i wysyła bufory. Kanwa czyszczona w tym samym zadaniu, więc nic nie mignie.
+  // Próbki (`samples`: obiekty fabryk efektów, { group }) zostają w `programKeepers` BEZ
+  // dispose — ich materiały trzymają programy przy życiu przez całą sesję.
+  const programKeepers = [];
+  function prewarm(samples = []) {
+    const t0 = (typeof performance !== "undefined") ? performance.now() : 0;
+    const revealed = [];
+    const unculled = [];
+    const reveal = (root) => {
+      if (!root) return;
+      root.traverse((o) => {
+        if (o.visible === false) { revealed.push(o); o.visible = true; }
+        if (o.frustumCulled) { unculled.push(o); o.frustumCulled = false; }
+      });
+    };
+    const sampleGroups = [];
+    for (const fx of samples) {
+      const group = fx?.group;
+      if (!group) continue;
+      if (!group.parent) scene.add(group);
+      sampleGroups.push(group);
+    }
+    reveal(scene);
+    reveal(rawScene);
+    const bloomWasEnabled = bloomPass ? bloomPass.enabled : false;
+    if (bloomPass) bloomPass.enabled = true;
+    try {
+      syncCamera();
+      if (useBloom) applyOverlayBloomConfig();
+      renderer.setRenderTarget(null);
+      renderer.clear();
+      if (composer) composer.render(); else renderer.render(scene, camera);
+      if (rawScene) {
+        const prevAutoClear = renderer.autoClear;
+        renderer.autoClear = false;
+        renderer.setRenderTarget(null);
+        renderer.clearDepth();
+        renderer.render(rawScene, camera);
+        renderer.autoClear = prevAutoClear;
+      }
+    } finally {
+      for (const o of revealed) o.visible = false;
+      for (const o of unculled) o.frustumCulled = true;
+      for (const group of sampleGroups) group.parent?.remove(group);
+      for (const fx of samples) if (fx) programKeepers.push(fx);
+      if (bloomPass) bloomPass.enabled = bloomWasEnabled;
+      renderer.setRenderTarget(null);
+      renderer.clear();
+    }
+    stats.prewarmMs = (t0 > 0) ? (performance.now() - t0) : 0;
+    stats.programKeepers = programKeepers.length;
+    return stats.prewarmMs;
+  }
+
   function tick(dt) {
     syncCamera();
     applyAdaptiveQuality();
@@ -472,6 +533,7 @@ export function initOverlay({
 
   function dispose() {
     effects.length = 0;
+    programKeepers.length = 0;
     if (dom.parentElement === host) host.removeChild(dom);
     if (composer) composer.dispose();
     renderer.dispose();
@@ -494,7 +556,7 @@ export function initOverlay({
   } : null;
 
   return {
-    scene, camera, renderer, composer, tick, spawn, resize, dispose, rawScene, rawLayer,
+    scene, camera, renderer, composer, tick, spawn, resize, dispose, rawScene, rawLayer, prewarm,
     getStats: () => ({ ...stats }),
     getBloomConfig: () => ({ ...getOverlayBloomConfig() }),
     setBloomConfig: (next = {}) => {

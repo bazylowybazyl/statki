@@ -3,7 +3,9 @@ import { Core3D } from './core3d.js';
 import {
     STAR_PARALLAX_LAYERS,
     computeStarParallaxFactor,
-    pickStarParallaxLayer
+    pickStarParallaxLayer,
+    starZoomCompensation,
+    advanceStarCamera
 } from './starParallax.js';
 import { resolveRingPlanetWorldRadius } from './ringScale.js';
 import { computeHaloRingLayout } from './haloRing/haloRingLayout.js';
@@ -67,6 +69,9 @@ uniform float baseSizeMul;
 uniform vec2 moveDir;
 uniform vec2 viewportSize;
 uniform vec4 planetMasks[${STAR_PLANET_MASK_CAP}];
+// Oddalenie kamery nie zagęszcza gwiazd: wzór rozszerza się razem z kadrem
+// (starZoomCompensation w starParallax.js).
+uniform float zoomComp;
 attribute float size;
 attribute float brightness;
 attribute vec3 color;
@@ -81,6 +86,7 @@ varying float vStretch;
 varying float vScreenSize;
 varying float vPlanetMask;
 varying float vExitWhip;
+varying vec2 vDir;
 void main() {
     vColor = color;
     vec3 pos = position;
@@ -90,6 +96,7 @@ void main() {
     float halfSize = containerSize / 2.0;
     pos.x = mod(pos.x + halfSize, containerSize) - halfSize;
     pos.y = mod(pos.y + halfSize, containerSize) - halfSize;
+    pos.xy *= zoomComp;
     vec4 worldPos = modelMatrix * vec4(pos, 1.0);
     vPlanetMask = 1.0;
     for (int i = 0; i < ${STAR_PLANET_MASK_CAP}; i++) {
@@ -110,9 +117,10 @@ void main() {
     float distFactor = perspectiveScale / depth;
     float pointSize = (finalSize * stretch) * distFactor;
     vec4 clipPosition = projectionMatrix * mvPosition;
+    vec2 warpDir = length(moveDir) > 0.001 ? normalize(moveDir) : vec2(0.0, 1.0);
+    vec2 safeViewport = max(viewportSize, vec2(1.0));
+    vDir = warpDir;
     if (stretchDrive > 0.001) {
-        vec2 warpDir = length(moveDir) > 0.001 ? normalize(moveDir) : vec2(0.0, 1.0);
-        vec2 safeViewport = max(viewportSize, vec2(1.0));
         vec2 screenOffset = warpDir * vec2(pointSize / safeViewport.x, pointSize / safeViewport.y) * clipPosition.w;
         clipPosition.xy -= screenOffset;
     }
@@ -133,6 +141,7 @@ varying float vStretch;
 varying float vScreenSize;
 varying float vPlanetMask;
 varying float vExitWhip;
+varying vec2 vDir;
 ${SUN_SHADOW_GLSL}
 void main() {
     vec2 rawUV = gl_PointCoord - 0.5;
@@ -143,7 +152,7 @@ void main() {
     vec2 uv = rawUV;
     float trailFade = 1.0;
     if (vWarp > 0.01) {
-        float angle = atan(moveDir.y, moveDir.x);
+        float angle = atan(vDir.y, vDir.x);
         float c = cos(angle);
         float s = sin(angle);
         mat2 rot = mat2(c, s, -s, c);
@@ -280,6 +289,81 @@ function createAtmosphereMaterial(glowColor, sunsetTint, coef, power, sunMul = 1
     });
 }
 
+// Poświata limbu planet przy ringu (Ziemia, Mars) — model atmosfery z tła menu
+// (menuBackdrop3D.js: głębokość optyczna wzdłuż promienia przez powłokę
+// o wysokości H, gęstość e^(−h/Hs)), przeliczony na kamerę gry: pass ortho
+// patrzy pionowo w dół, więc promienie są równoległe, a o poświacie decyduje
+// tylko odległość od środka tarczy ρ. Płaski dysk w środku planety (z = 0):
+// wewnątrz tarczy przegrywa test głębi z kulą planety, zostaje pierścień za
+// limbem, który sam gaśnie do zera na brzegu powłoki (bez twardej krawędzi,
+// na której stara powłoka 1,21 R dawała kropkowany łuk). Dawna powłoka
+// 1,034 R z maską Fresnela dawała tu ~1% jasności — poświaty nie było widać.
+const RING_ATMOSPHERE_TUNE = Object.freeze({
+    earth: Object.freeze({ height: 1250, day: [0.26, 0.5, 1.0], sunset: [1.0, 0.38, 0.12], gain: 0.95 }),
+    mars: Object.freeze({ height: 700, day: [0.85, 0.5, 0.3], sunset: [0.35, 0.55, 1.0], gain: 0.55 })
+});
+const RING_ATMOSPHERE_VERTEX = `varying vec2 vOff; void main() { vOff = position.xy; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
+const RING_ATMOSPHERE_FRAGMENT = `precision highp float;
+uniform vec3 uSunDir;
+uniform float uRa;
+uniform float uHs;
+uniform vec3 uDayColor;
+uniform vec3 uSunsetColor;
+uniform vec3 uGain;
+uniform float uSunShadowRecv;
+varying vec2 vOff;
+${SUN_SHADOW_GLSL}
+void main() {
+    float rho = length(vOff);
+    if (rho >= uRa) discard;
+    // promień pionowy nad punktem limbu: cięciwa przez powłokę i najniższa wysokość
+    float h = max(rho - 1.0, 0.0);
+    float chord = 2.0 * sqrt(max(uRa * uRa - rho * rho, 0.0));
+    float tau = chord * exp(-h / uHs) / (uRa - 1.0) * 0.9;
+    vec3 n = vec3(vOff / max(rho, 1e-4), 0.0);
+    float nl = dot(n, uSunDir);
+    float dayF = smoothstep(-0.22, 0.25, nl);
+    float sunsetF = smoothstep(-0.28, -0.02, nl) * (1.0 - smoothstep(-0.02, 0.22, nl));
+    vec3 col = mix(uDayColor, uSunsetColor, sunsetF) * (dayF + sunsetF * 0.6);
+    vec3 glow = col * uGain * (1.0 - exp(-tau * vec3(0.35, 0.62, 1.0)));
+    // cień ringu z maski słońca tylko do połowy: słońce gry leży w płaszczyźnie
+    // ringu, więc pełna maska gasiłaby cały limb od strony słońca
+    glow *= mix(1.0, sunVisibility(), 0.5 * uSunShadowRecv);
+    float alpha = max(glow.r, max(glow.g, glow.b));
+    if (alpha <= 0.001) discard;
+    gl_FragColor = vec4(glow, alpha);
+}`;
+
+// key: 'earth' | 'mars', planetRadius: promień planety w świecie gry.
+// Siatka w jednostkach promienia planety (grupa ma skalę R): dysk o promieniu
+// uRa = 1 + H/R. Blend ONE/ONE z alfą = max(rgb) (kanwa premultiplied).
+function createRingAtmosphere(key, planetRadius) {
+    const tune = RING_ATMOSPHERE_TUNE[key] || RING_ATMOSPHERE_TUNE.earth;
+    const R = Math.max(1, Number(planetRadius) || 1);
+    const ra = 1 + tune.height / R;
+    const material = new THREE.ShaderMaterial({
+        vertexShader: RING_ATMOSPHERE_VERTEX,
+        fragmentShader: RING_ATMOSPHERE_FRAGMENT,
+        uniforms: attachSunShadowUniforms({
+            uSunDir: { value: new THREE.Vector3(1, 0, 0) },
+            uRa: { value: ra },
+            uHs: { value: tune.height * 0.22 / R },
+            uDayColor: { value: new THREE.Vector3(...tune.day) },
+            uSunsetColor: { value: new THREE.Vector3(...tune.sunset) },
+            uGain: { value: new THREE.Vector3(1.02, 0.985, 0.933).multiplyScalar(tune.gain) },
+            uSunShadowRecv: { value: 1.0 }
+        }),
+        transparent: true,
+        premultipliedAlpha: true,
+        depthWrite: false,
+        depthTest: true,
+        blending: THREE.AdditiveBlending
+    });
+    const mesh = new THREE.Mesh(new THREE.CircleGeometry(ra, 256), material);
+    mesh.name = 'RingPlanetAtmosphere';
+    return { mesh, radiusMul: ra };
+}
+
 const NebulaSystem = {
     mesh: null, uniforms: null, parallaxFactor: 0.98, baseScale: 800000, aspectRatio: 1.6,
     init: function () {
@@ -316,6 +400,7 @@ const NebulaSystem = {
 const StarSystem = {
     mesh: null, uniforms: null, count: 26000, worldScale: 220000, layerZ: -250, lastWarpState: 'idle',
     exitWhipTimer: 0, exitWhipDuration: 0.34, lastWarpDirX: 0, lastWarpDirY: 1,
+    starCam: { x: 0, y: 0, lx: NaN, ly: NaN },
     init: function () {
         if (!Core3D.isInitialized) return;
         const geo = new THREE.BufferGeometry();
@@ -346,6 +431,7 @@ const StarSystem = {
             pointTexture: { value: this.createStarTexture() }, time: { value: 0 }, cameraOffset: { value: new THREE.Vector2(0, 0) },
             containerSize: { value: this.worldScale }, perspectiveScale: { value: 800.0 }, globalBrightness: { value: 1.0 },
             warpFactor: { value: 0.0 }, moveDir: { value: new THREE.Vector2(0, 1) }, stretchStrength: { value: 20.0 },
+            zoomComp: { value: 1.0 },
             exitWhipFactor: { value: 0.0 }, exitWhipStrength: { value: 1.75 },
             viewportSize: { value: new THREE.Vector2(window.innerWidth || 1, window.innerHeight || 1) },
             thinningStrength: { value: 38.0 }, baseSizeMul: { value: 1.65 },
@@ -365,7 +451,16 @@ const StarSystem = {
         const cx = typeof gameCamera.x === 'number' ? gameCamera.x : 0; const cy = typeof gameCamera.y === 'number' ? gameCamera.y : 0;
         this.uniforms.time.value += dt;
         if (this.mesh) this.mesh.position.set(cx, -cy, this.layerZ);
-        this.uniforms.cameraOffset.value.set(cx, -cy);
+        // Kamera gwiazd: ruch kamery gry podzielony przez kompensację zoomu (przy
+        // oddaleniu wzór rośnie z kadrem zamiast gęstnieć). Widok skoku
+        // (warpWorldLens.js) zgłasza na następną klatkę limit prędkości wzoru
+        // w userData.starSpeedCap — przy prędkości warpa paralaksa to szum.
+        const zoomComp = starZoomCompensation(gameCamera.zoom);
+        this.uniforms.zoomComp.value = zoomComp;
+        const speedCap = this.mesh ? (Number(this.mesh.userData.starSpeedCap) || 0) : 0;
+        if (this.mesh) this.mesh.userData.starSpeedCap = 0;
+        advanceStarCamera(this.starCam, cx, cy, zoomComp, speedCap > 0 ? speedCap * Math.max(0, dt) : 0);
+        this.uniforms.cameraOffset.value.set(this.starCam.x, -this.starCam.y);
         this.uniforms.viewportSize.value.set(Core3D.width || window.innerWidth || 1, Core3D.height || window.innerHeight || 1);
         const planetMasks = this.uniforms.planetMasks?.value;
         if (Array.isArray(planetMasks) && planetMasks.length && window.planets) {
@@ -613,8 +708,16 @@ class DirectPlanet {
         this.uniforms.uHazeBeta.value.copy(hazeBeta);
 
         atmSize *= HALO_DEFAULTS.sizeMul; atmCoef = atmCoef * HALO_DEFAULTS.coefMul + HALO_DEFAULTS.coefAdd; atmPower = atmPower * HALO_DEFAULTS.powerMul + HALO_DEFAULTS.powerAdd;
-        const atmMat = createAtmosphereMaterial(atmColor, sunsetTint, atmCoef, atmPower, HALO_DEFAULTS.sunMul, this.isRingAnchored);
-        this.atmosphere = new THREE.Mesh(new THREE.SphereGeometry(atmSize, 64, 64), atmMat); this.group.add(this.atmosphere);
+        if (this.isRingAnchored) {
+            // Ziemia i Mars (pass ortho): poświata limbu z modelu atmosfery, jak w tle menu.
+            const ringAtm = createRingAtmosphere(name, resolveRingPlanetWorldRadius(this.data));
+            this.atmosphere = ringAtm.mesh;
+            atmSize = ringAtm.radiusMul;
+        } else {
+            const atmMat = createAtmosphereMaterial(atmColor, sunsetTint, atmCoef, atmPower, HALO_DEFAULTS.sunMul, this.isRingAnchored);
+            this.atmosphere = new THREE.Mesh(new THREE.SphereGeometry(atmSize, 64, 64), atmMat);
+        }
+        this.group.add(this.atmosphere);
         this.visibleRadiusMul = Math.max(1.0, atmSize, name === 'saturn' ? SATURN_VISUAL_RING.outerRadius : 1.0);
 
         Core3D.scene.add(this.group);
@@ -727,7 +830,16 @@ class DirectPlanet {
             const sunZ = this.group.position.z;
             this.uniforms.sunPosition.value.set(window.SUN.x, -window.SUN.y, sunZ);
             if (this.cloudUniforms) this.cloudUniforms.sunPosition.value.set(window.SUN.x, -window.SUN.y, sunZ);
-            if (this.atmosphere) this.atmosphere.material.uniforms.sunPosition.value.set(window.SUN.x, -window.SUN.y, sunZ);
+            const atmU = this.atmosphere?.material?.uniforms;
+            if (atmU?.uSunDir) {
+                // poświata limbu (createRingAtmosphere): kierunek planeta → Słońce, w płaszczyźnie
+                const dx = window.SUN.x - this.data.x;
+                const dy = -(window.SUN.y - this.data.y);
+                const len = Math.hypot(dx, dy) || 1;
+                atmU.uSunDir.value.set(dx / len, dy / len, 0);
+            } else if (atmU?.sunPosition) {
+                atmU.sunPosition.value.set(window.SUN.x, -window.SUN.y, sunZ);
+            }
         }
         if (this.isRingAnchored && this._ringShadowRadius > 0) {
             // Cień ringu gaśnie razem z wyłączeniem shadow shafts (opcja Off).

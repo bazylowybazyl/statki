@@ -37,6 +37,8 @@ test('split skins stay attached to their nodes and large dents fit the deformati
         const skin = R.bodyData.get(part).skin;
         const offset = skin.materials[0].uniforms.uBodyOffset.value;
         for (const n of part.nodes) {
+          // Kadłub po rozpadzie w miejscu trzyma martwe węzły wraku — skóra wiąże tylko żywe.
+          if (!n.active) continue;
           const originalLocal = new THREE.Vector3(
             part.skinLatticeMin.x + (n.ix + 0.5) * part.cellSize,
             part.skinLatticeMin.y + (n.iy + 0.5) * part.cellSize,

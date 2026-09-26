@@ -269,59 +269,44 @@
  * moduły ES — otwarta z dysku nie wczyta się.
  */
 
+import { RESOURCES, RESOURCE_KEYS } from './src/data/resources.js';
+import { getFactionColor } from './src/data/factions.js';
 import {
-  RESOURCES, RESOURCE_KEYS, TIER, getResourceCapacityFactor
-} from './src/data/resources.js';
-import { FACTION, getDefaultStationFaction, getFactionColor } from './src/data/factions.js';
-import {
-  seedStationStock, getStationDeficits, stationWantsResource, STATION_INDUSTRY
+  getStationDeficits, stationWantsResource, resourcePrice
 } from './src/game/stationEconomy.js';
-import { createFleetState } from './src/game/cargoFleet.js';
-import { BELT_DEFINITIONS, getOutermostBeltEdgeAu } from './src/data/asteroidTypes.js';
-import { buildTravelNetwork, NODE_KIND } from './src/game/traffic/travelNetwork.js';
-import { createCourseRegistry, getActiveCourses, COURSE_KIND } from './src/game/traffic/courseRegistry.js';
+import { BELT_DEFINITIONS } from './src/data/asteroidTypes.js';
 import {
-  createDirector, tickDirector, directorSnapshot, courseWorldPosition, settleCourseEvents
+  getActiveCourses, COURSE_KIND, summarizeFlows, currentStage, STAGE_KIND
+} from './src/game/traffic/courseRegistry.js';
+import {
+  directorSnapshot, courseWorldPosition, settleCourseEvents
 } from './src/game/traffic/trafficDirector.js';
-import { summarizeFlows, currentStage, STAGE_KIND } from './src/game/traffic/courseRegistry.js';
-import {
-  buildStationDocks, parkingSlotPosition, berthOccupancy, BERTH_CLASSES,
-  suggestBerthMultiplier, berthClassForHull
-} from './src/game/traffic/dockLayout.js';
-import { createFleetRegistry, summarizeCompanies, SHIP_STATE } from './src/game/traffic/transportCompanies.js';
-import { buildCarriers, TONS_PER_SHIP_HOUR } from './src/game/traffic/carrierRoster.js';
+import { parkingSlotPosition, berthClassForHull } from './src/game/traffic/dockLayout.js';
+import { summarizeCompanies, SHIP_STATE } from './src/game/traffic/transportCompanies.js';
 import {
   createBubble, updateBubble, getActors, clearBubble
 } from './src/game/traffic/materializedFlight.js';
-import {
-  createAgentRegistry, buildMerchants, summarizeAgents
-} from './src/game/traffic/agentFleets.js';
-import {
-  createShipyardRegistry, registerShipyard, tickShipyards, summarizeShipyards
-} from './src/game/traffic/shipyards.js';
-import {
-  createWarState, tickWar, summarizeWar, declareAmmoDemand
-} from './src/game/traffic/warDispatcher.js';
-import {
-  createScrapperState, tickScrappers, summarizeScrappers
-} from './src/game/traffic/scrapperFleets.js';
-import {
-  createPiracyState, registerNest, tickPiracy, summarizePiracy
-} from './src/game/traffic/piracy.js';
-import { patrolMultiplier } from './src/game/traffic/patrols.js';
-import {
-  resourcePrice, systemHaulTonnage, stationHaulTonnage, getStationIndustry, militaryScale
-} from './src/game/stationEconomy.js';
+import { summarizeAgents } from './src/game/traffic/agentFleets.js';
+import { summarizeShipyards } from './src/game/traffic/shipyards.js';
+import { summarizeWar } from './src/game/traffic/warDispatcher.js';
+import { summarizeScrappers } from './src/game/traffic/scrapperFleets.js';
+import { summarizePiracy } from './src/game/traffic/piracy.js';
+import { buildTrafficWorld, stepTrafficWorld } from './src/game/traffic/trafficWorld.js';
 
 // ============================================================
 // Świat
 // ============================================================
 
-const beltEdgeAu = getOutermostBeltEdgeAu(BELT_DEFINITIONS);
+/** Pasy asteroid — tylko do rysowania; pola wydobywcze buduje `trafficWorld`. */
 const mainBelt = BELT_DEFINITIONS.find(belt => belt.id === 'main');
 const kuiper = BELT_DEFINITIONS.find(belt => belt.id === 'kuiper');
-const CAPACITY_BY_TIER = { [TIER.RAW]: 250, [TIER.REFINED]: 150, [TIER.COMPONENT]: 60 };
 
+/**
+ * Cały świat ruchu z `trafficWorld.js` — ten sam builder co w skrypcie
+ * headless i w workerze gry. Zmienne niżej to tylko skróty do jego części,
+ * żeby rysowanie i panele czytały się jak dotąd.
+ */
+let world = null;
 let network, registry, fleet, director, stations, economies, docks, companies, agents;
 /**
  * Górne piętra gospodarki. Do 2026-08-20 chodziły WYŁĄCZNIE w skrypcie headless,
@@ -340,164 +325,26 @@ let worldRadius = 1;
  */
 const bubble = createBubble({ maxActors: 500 });
 
-/** Promienie pierścieni z systemMap — to do nich przyczepione są doki. */
-const RING_RADIUS = { earth: 37800, mars: 30000 };
 let carrierCount = 0;
-let shipCount = 0;
-
-// Przeładunek każdej stacji w t/h — od tego, a nie od liczby mieszkańców,
-// zależy wielkość portu. Merkury to mała kolonia z ogromną kopalnią.
-const PRZEŁADUNEK = stationHaulTonnage();
-
-/** Waga stoczni — te same liczby co w symulacji headless, żeby oba biegi zgadzały się. */
-const YARD_WEIGHT = {
-  mars: 2.0, earth: 1.2, jupiter: 1.1, ceres: 1.0, venus: 0.8,
-  mercury: 0.6, saturn: 0.6, uranus: 0.5, vesta: 0.4
-};
 
 function buildWorld(capacityMultiplier) {
-  network = buildTravelNetwork({
-    beltEdgeAu,
+  world = buildTrafficWorld({
+    economyScale: ui.skala,
+    // Magazyn rośnie razem z przepływem — inaczej większa gospodarka to tylko
+    // szybsze przelewanie się tego samego wiadra.
+    capacityMultiplier,
+    piracyPressure: ui.presja,
+    piracyEnabled: ui.piraci,
     // Kąty rozstawione, żeby planety nie stały w jednej linii — układ w linii
     // to przypadek szczególny i najkrótsze możliwe trasy.
     angleFor: (_def, index) => index * 0.79 + 0.3,
-    outposts: [
-    // LIGA PASA w pasie głównym (36–47 AU mapy). Kąty rozstawione tak, żeby
-    // nie leżały na jednej prostej z rdzeniem — inaczej cały ruch do nich
-    // szedłby jedną trasą i piractwo miałoby jedno wąskie gardło.
-    { id: 'ceres', label: 'Ceres', orbitAU: 39.5, angle: 2.6, berths: 6 },
-    { id: 'vesta', label: 'Westa', orbitAU: 44.0, angle: 5.1, berths: 4 },
-    // KRYJOWKI PIRACKIE. Leza przy trasach, nie przy zlozach: Hildy tuz za
-    // pasem glownym, zlomowisko na dlugim odcinku do olbrzymow gazowych.
-    // Malo stanowisk - to nie porty, tylko miejsca, gdzie sie uplynnia lup.
-    { id: 'gniazdo-hildy', label: 'Gniazdo Hildy', orbitAU: 52.0, angle: 0.9, berths: 3 },
-    { id: 'zlomowisko', label: 'Zlomowisko', orbitAU: 68.0, angle: 3.8, berths: 3 }
-  ],
-  fields: [
-      {
-        id: 'belt-main', label: 'Pas Główny',
-        orbitAU: (mainBelt.innerAU + mainBelt.outerAU) / 2, angle: 1.9,
-      innerAU: mainBelt.innerAU, outerAU: mainBelt.outerAU, arcSpread: 0.85,
-        yields: { iron_ore: 1, silicon_ore: 1, copper_ore: 1, titanium_ore: 1, raw_crystal: 1 },
-        extractionSeconds: 600
-      },
-      {
-        id: 'belt-kuiper', label: 'Pas Kuipera',
-        orbitAU: (kuiper.innerAU + kuiper.outerAU) / 2, angle: 4.2,
-      innerAU: kuiper.innerAU, outerAU: kuiper.outerAU, arcSpread: 0.7,
-        yields: { uranium_ore: 1, ice: 1, raw_crystal: 1 },
-        extractionSeconds: 900
-      }
-    ]
+    directorOptions: { dispatchInterval: ui.odstep }
   });
-
-  // Magazyn rośnie razem z przepływem — inaczej większa gospodarka to tylko
-  // szybsze przelewanie się tego samego wiadra.
-  const capacity = Object.fromEntries(RESOURCE_KEYS.map(key =>
-    [key, (CAPACITY_BY_TIER[RESOURCES[key].tier] ?? 100)
-      * getResourceCapacityFactor(key) * capacityMultiplier * ui.skala]));
-
-  economies = new Map();
-  stations = network.stations.map(node => {
-    // Pozycja MUSI iść ze STACJĄ, nie tylko z węzłem sieci: wojna i złomiarze
-    // liczą odległości po `station.x/y`. Bez nich każdy dystans wychodzi zerowy
-    // i wszystko wygląda na opłacalne — zmierzone w symulacji: 112 wraków,
-    // 112 holowanych, ani jednego ciętego.
-    const station = {
-      id: node.id, name: node.label, factionId: getDefaultStationFaction(node.id),
-      x: node.x, y: node.y
-    };
-    const econ = {
-      resources: Object.fromEntries(RESOURCE_KEYS.map(key => [key, 0])),
-      capacity: { ...capacity }
-    };
-    // Księżyc startuje chudo — inaczej przez pierwsze godziny gry tylko
-    // eksportuje i nigdy nie staje się niczyim klientem.
-    seedStationStock(station, econ, node.moon ? 0.18 : 0.45);
-    economies.set(station.id, econ);
-    return station;
-  });
-
-  // Doki: przy pierścieniu tam, gdzie pierścień jest, inaczej wokół stacji.
-  docks = new Map();
-  for (const node of network.stations) {
-    if (node.derelict) continue;
-    docks.set(node.id, buildStationDocks(
-      { id: node.id, x: node.x, y: node.y, r: 120, ringWorldRadius: RING_RADIUS[node.id] || 0 },
-      // Port rośnie razem z zakładami: Ziemia odbiera 55% tonażu układu.
-      { berthMultiplier: suggestBerthMultiplier(PRZEŁADUNEK[node.id], ui.skala) }
-    ));
-  }
-
-  // Rynek przewoźników skaluje się z gospodarką: kilku dużych, garść średnich
-  // i długi ogon drobnych. Statki rozstawione po całym układzie, nie tylko
-  // w portach macierzystych — inaczej pierwsze pół godziny to same puste przeloty.
-  companies = createFleetRegistry();
-  const ports = network.stations
-    .filter(node => !node.derelict && getDefaultStationFaction(node.id) !== FACTION.PIRATES)
-    .map(node => node.id);
-  // Flota wynika z tonażu, który gospodarka musi przewieźć — dołożenie stacji
-  // samo dokłada przewoźników zamiast po cichu zapychać transport.
-  const roster = buildCarriers(companies, ports, ui.skala,
-    { factionOf: getDefaultStationFaction, shipsPerScale: systemHaulTonnage() / TONS_PER_SHIP_HOUR });
-  carrierCount = roster.companies.length;
-  shipCount = roster.ships;
-
-  // Niezależni kupcy: kilka DOMÓW HANDLOWYCH — karawana kilku dużych
-  // frachtowców z opłaconą ochroną — i długi ogon samotnych wilków. Ruch
-  // agentowy jest z natury rzadszy od frakcyjnego (agent czeka na marżę,
-  // a nie na czyjś niedobór), za to jednorazowo dużo cenniejszy.
-  agents = createAgentRegistry();
-  buildMerchants(agents, ports, ui.skala);
-
-  // ---------- stocznie, wojna, złom, piractwo ----------
-  // Cztery pętle, które domykają gospodarkę. Stocznia zjada komponenty T2
-  // (nadmiar 52 silników i 44 rdzeni na godzinę bez niej), wojna zużywa gotowe
-  // okręty i robi wraki, złomiarze je sprzątają, a piractwo zamienia łup
-  // w kredyty i wysyła za nie kolejne rejdy.
-  shipyards = createShipyardRegistry();
-  for (const station of stations) {
-    if (!station.factionId) continue;
-    // Pochylnie stoją tam, gdzie jest przemysł — księżyc-kopalnia nie składa
-    // krążowników, choć ma flagę i port.
-    if (militaryScale(getStationIndustry(station)) <= 0) continue;
-    registerShipyard(shipyards, {
-      // `station` przekazujemy CELOWO: stocznia dopisuje swoje zapotrzebowanie
-      // do `station.extraDemand` i dopiero wtedy transport w ogóle wie, że tu
-      // trzeba wozić podzespoły. Bez tego buduje wyłącznie ten, kto produkuje.
-      station,
-      stationId: station.id,
-      factionId: station.factionId,
-      weight: (YARD_WEIGHT[station.id] || 0.6) * Math.sqrt(ui.skala)
-    });
-  }
-  war = createWarState();
-  // Amunicja musi trafić na listę zakupów portów, inaczej wojna stanie
-  // z pustymi magazynami mimo działającej amunicjowni.
-  declareAmmoDemand(stations);
-  scrappers = createScrapperState();
-  piracy = createPiracyState();
-  for (const station of stations) {
-    if (station.factionId === FACTION.PIRATES) registerNest(piracy, station);
-  }
-
-  registry = createCourseRegistry({ keepHistory: false });
-  fleet = createFleetState();
-  director = createDirector(network, registry, {
-    fleet,
-    companies,
-    docks,
-    agents,
-    // Bez tego przechwyt nadal działa, tylko ładunek paruje zamiast trafić
-    // do kryjówki — czyli tak, jak było, zanim piractwo dostało adres.
-    piracy,
-    getEconomy: id => economies.get(String(id)) || null,
-    piracyPressure: ui.presja,
-    piracyEnabled: ui.piraci,
-    dispatchInterval: ui.odstep,
-    economyScale: ui.skala,
-    targetFleetPerCompany: Math.max(4, Math.round(shipCount / Math.max(1, carrierCount)))
-  });
+  ({
+    network, registry, fleet, director, stations, economies, docks, companies, agents,
+    shipyards, war, scrappers, piracy
+  } = world);
+  carrierCount = world.carriers.length;
   applyEconomyKnobs();
   // Encje ze starego świata wskazywałyby na nieistniejące kursy.
   bubble.actors.clear();
@@ -586,31 +433,10 @@ const aktywneIndeks = new Map();
 
 function step(dt) {
   const before = director.stats.lost;
-  tickDirector(director, dt, stations);
-
-  // Górne piętra chodzą PO dyspozytorze, a przed bańką: kampania wojenna, rejd
-  // i holownik są zwykłymi kursami, więc mają się materializować w tej samej
-  // klatce, w której powstały.
-  tickShipyards(shipyards, dt, { getEconomy: id => economies.get(String(id)) || null });
-  tickWar(war, dt, {
-    shipyards, stations, network, registry,
-    getEconomy: id => economies.get(String(id)) || null
-  });
-  tickPiracy(piracy, dt, {
-    stations, registry,
-    getEconomy: id => economies.get(String(id)) || null,
-    // Ta sama danina frakcji chroni konwoje I dusi przemyt: siła kontroli to
-    // dokładnie to, o ile patrol zbija ryzyko na szlaku.
-    patrolStrength: (fromId, toId) =>
-      Math.max(0, (1 / Math.max(0.05, patrolMultiplier(director.patrols, fromId, toId))) - 1),
-    priceAt: (station, resourceId) => {
-      const econ = economies.get(String(station.id));
-      return econ ? (resourcePrice(station, econ, resourceId)?.bid || 0) : 0;
-    }
-  });
-  tickScrappers(scrappers, dt, {
-    war, stations, registry, getEconomy: id => economies.get(String(id)) || null
-  });
+  // Dyspozytor, potem górne piętra (stocznie, wojna, piractwo, złomiarze) —
+  // przed bańką: kampania wojenna, rejd i holownik są zwykłymi kursami, więc
+  // mają się materializować w tej samej klatce, w której powstały.
+  stepTrafficWorld(world, dt);
 
   // Warstwa 3 chodzi PO dyspozytorze: rekordy są już przesunięte, a encje
   // przejmują te, które gracz faktycznie ogląda. Bańka materializuje się tylko

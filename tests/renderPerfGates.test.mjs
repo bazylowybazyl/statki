@@ -194,7 +194,9 @@ test('spawn floty: budżet initHexBody na klatkę + rozgrzanie tekstury i lakier
   assert.match(indexHtml, /beginHexInitBudgetFrame\(\);\s*for \(let _sp = 0; _sp < _splitPassCount; _sp\+\+\)/);
   assert.equal(indexHtml.match(/beginHexInitBudgetFrame\(\);/g)?.length, 1);
   assert.match(indexHtml, /&& hexInitBudgetAllows\(\)\) \{/);
-  assert.match(indexHtml, /npc\.hexGrid\.visualImage = sprite\.image;\s*prewarmHexShipVisual\(sprite\.image\);/);
+  // Tekstura skóry kadłuba na belkach = pełny sprite (visualImage), rozgrzany przy budowie kadłuba.
+  assert.match(indexHtml, /HullBodies\.createHull\(npc, \(hexInit\?\.image \|\| sprite\.image\), \{ visualImage: sprite\.image \}\);/);
+  assert.match(indexHtml, /if \(npc\.beamHull\) \{\s*prewarmHexShipVisual\(sprite\.image\);/);
   assert.match(hexShips, /export function prewarmHexShipVisual\(image\)/);
 });
 

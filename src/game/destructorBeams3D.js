@@ -17,13 +17,13 @@
  * beamStore3D); body.nodes / body.beams to widoki dla kodu spoza gorącej ścieżki.
  */
 
-import { BEAM_TYPE, computeStoreInertia } from './beamBody3D.js';
-import { BeamNodeStore, BeamLinkStore, buildAdjacency, defineLazyViews, cachedNodeViews,
+import { BEAM_TYPE, buildBeamStructure, computeStoreInertia } from './beamBody3D.js';
+import { BeamNodeStore, BeamLinkStore, BeamNodeView, buildAdjacency, defineLazyViews, cachedNodeViews,
   cachedBeamViews, nodeViewAt } from './beamStore3D.js';
 import { beamSolverScratch, refreshBeamMounts, prepareBeamConstraints, projectBeamConstraints } from './beamConstraintSolver3D.js';
-import { updateBeamBounds, beamBoundsOverlap } from './beamBounds3D.js';
+import { updateBeamBounds, extendBeamBounds, beamBoundsOverlap } from './beamBounds3D.js';
 import { beamConnectivityScratch, findBeamBridgesStore } from './beamConnectivity3D.js';
-import { activeRegion, activateNode, activateNeighbors, markSkinDirty } from './beamActiveRegion3D.js';
+import { activeRegion, activateNode, activateNeighbors, markSkinDirty, resetActiveRegion } from './beamActiveRegion3D.js';
 
 export function createBeamConfig(cellSize = 1) {
   const cs = Math.max(1e-6, Number(cellSize) || 1);
@@ -76,6 +76,10 @@ export function createBeamConfig(cellSize = 1) {
     mountMinSupportRatio: 0.3,
     splitMaxPerTick: 2,
     splitMaxFragments: 20,
+    // Kadłub po rozpadzie zostaje na swoich tablicach (kopiuje się tylko odłam), dopóki żywych
+    // węzłów jest co najmniej tyle × pojemność; niżej magazyny się zagęszczają. Fizyka ta sama
+    // przy każdej wartości (zagęszczenie zachowuje kolejność): 1 = zawsze, 0 = nigdy.
+    compactBelow: 0.5,
     maxWrecks: 48,
     wreckOutwardKick: 0.5 * cs,
     wreckSpinResponse: 0.02,
@@ -100,7 +104,19 @@ export function createBeamConfig(cellSize = 1) {
     // niewidoczne; niższy próg łapie drgania, które fala sprężysta roznosi po całym
     // kadłubie po każdym trafieniu (flota pod ostrzałem: 0,02·cs 4,7 ms/krok, 0,2·cs 1,4).
     activeMotionThreshold: 0.2 * cs,
-    activeSettleFrames: 8               // kroki spokoju, po których węzeł wypada z obszaru
+    activeSettleFrames: 8,              // kroki spokoju, po których węzeł wypada z obszaru
+
+    // --- żar blachy (tylko do rysowania; fizyka go nie czyta) ---
+    // Poziom zderzenia = min(1, zbliżanie / heatSpeed) · heatGain. Biało świeci BRZEG RANY —
+    // końce belek zerwanych w zderzeniu (i sąsiedzi, strefa wpływu ciepła); zgniatana
+    // powierzchnia dostaje tylko ułamek heatContact (pomarańcz). Podniesienie do poziomu,
+    // nie suma. Znacznik w sekundach zegara `clock` systemu; zanik liczy shader.
+    heatGain: 0,                        // 0 = bez żaru (demo); gra: 1
+    heatSpeed: 20 * cs,                 // j./s zbliżania, przy których brzeg rany jest biały
+    heatContact: 0.35,                  // żar zgniatanej powierzchni względem brzegu rany
+    heatSpread: 0.55,                   // pierścień sąsiadów brzegu względem brzegu
+    heatWoundWindow: 0.12,              // s — zerwania tak długo po styku liczą się do rany zderzenia
+    heatDecay: 0.35                     // 1/s — ten sam zanik co w shaderze kadłuba
   };
 }
 
@@ -156,6 +172,74 @@ function hashKey(i, j, k) {
   return ((i + HASH_BIAS) | 0) | (((j + HASH_BIAS) | 0) << 10) | (((k + HASH_BIAS) | 0) << 20);
 }
 
+// Zbieranie pól sekcji do nowego magazynu (_partitionBeams): osobna pętla na typ tablicy,
+// żeby każda była monomorficzna. Pomijane pola chwilowe: znaczniki (porównywane z rosnącymi
+// licznikami, więc 0 ≡ stara wartość), hashNext (odbudowa co krok), crushDepth (ważny tylko
+// przy bieżącym znaczniku zgniotu), beamCount (liczony od nowa).
+function gatherF64(from, to, order, count) { for (let k = 0; k < count; k++) to[k] = from[order[k]]; }
+function gatherI32(from, to, order, count) { for (let k = 0; k < count; k++) to[k] = from[order[k]]; }
+function gatherU8(from, to, order, count) { for (let k = 0; k < count; k++) to[k] = from[order[k]]; }
+
+function gatherNodeFields(src, dst, order, count) {
+  gatherF64(src.x, dst.x, order, count); gatherF64(src.y, dst.y, order, count); gatherF64(src.z, dst.z, order, count);
+  gatherF64(src.ox, dst.ox, order, count); gatherF64(src.oy, dst.oy, order, count); gatherF64(src.oz, dst.oz, order, count);
+  gatherF64(src.px, dst.px, order, count); gatherF64(src.py, dst.py, order, count); gatherF64(src.pz, dst.pz, order, count);
+  gatherF64(src.vx, dst.vx, order, count); gatherF64(src.vy, dst.vy, order, count); gatherF64(src.vz, dst.vz, order, count);
+  gatherF64(src.mass, dst.mass, order, count); gatherF64(src.invMass, dst.invMass, order, count);
+  gatherF64(src.hp, dst.hp, order, count); gatherF64(src.maxHp, dst.maxHp, order, count);
+  gatherF64(src.coverage, dst.coverage, order, count);
+  gatherF64(src.r, dst.r, order, count); gatherF64(src.g, dst.g, order, count); gatherF64(src.b, dst.b, order, count);
+  gatherF64(src.heat, dst.heat, order, count); gatherF64(src.heatStamp, dst.heatStamp, order, count);
+  gatherI32(src.ix, dst.ix, order, count); gatherI32(src.iy, dst.iy, order, count); gatherI32(src.iz, dst.iz, order, count);
+  gatherI32(src.depth, dst.depth, order, count); gatherI32(src.localBeamCount, dst.localBeamCount, order, count);
+  gatherI32(src.platingCount, dst.platingCount, order, count); gatherI32(src.quiet, dst.quiet, order, count);
+  gatherU8(src.active, dst.active, order, count); gatherU8(src.surface, dst.surface, order, count);
+  gatherU8(src.act, dst.act, order, count); gatherU8(src.skinDirty, dst.skinDirty, order, count);
+}
+
+// Belki sekcji (list = indeksy w magazynie źródłowym, rosnąco); końce przez map. Zwraca liczbę żywych.
+function gatherBeamFields(src, dst, list, count, map) {
+  const a = dst.a, b = dst.b, sa = src.a, sb = src.b;
+  for (let n = 0; n < count; n++) {
+    const bi = list[n];
+    a[n] = map[sa[bi]];
+    b[n] = map[sb[bi]];
+  }
+  gatherF64(src.rest, dst.rest, list, count); gatherF64(src.restBase, dst.restBase, list, count);
+  gatherF64(src.stiffness, dst.stiffness, list, count); gatherF64(src.deform, dst.deform, list, count);
+  gatherF64(src.brk, dst.brk, list, count); gatherF64(src.strain, dst.strain, list, count);
+  gatherF64(src.fatigue, dst.fatigue, list, count);
+  gatherU8(src.type, dst.type, list, count); gatherU8(src.broken, dst.broken, list, count);
+  gatherU8(src.restBridge, dst.restBridge, list, count);
+  let live = 0;
+  const broken = dst.broken;
+  for (let n = 0; n < count; n++) if (!broken[n]) live++;
+  return live;
+}
+
+// Płyta nx × ny komórek (jak kadłub 2D ze sprite'a) do rozgrzewki ścieżek rozpadu.
+function warmUpLattice(nx, ny) {
+  const cells = [];
+  for (let iy = 0; iy < ny; iy++) {
+    for (let ix = 0; ix < nx; ix++) {
+      const edge = ix === 0 || iy === 0 || ix === nx - 1 || iy === ny - 1;
+      cells.push({ ix, iy, iz: 0, x: ix + 0.5, y: iy + 0.5, z: 0, surface: edge, depth: edge ? 1 : 2,
+        coverage: 1, r: 0.5, g: 0.5, b: 0.5 });
+    }
+  }
+  return { cells, nx, ny, nz: 1, cellSize: 1, origin: { x: 0, y: 0, z: 0 } };
+}
+
+// Pierwsza pozycja w rosnącej tablicy z wartością ≥ value.
+function lowerBound(sorted, count, value) {
+  let lo = 0, hi = count;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (sorted[mid] < value) lo = mid + 1; else hi = mid;
+  }
+  return lo;
+}
+
 // Siatka węzłów ciała (_refreshHash): kubełki nad AABB w komórkach cs; map = zapas dla
 // ciała o zbyt dużym AABB (wtedy nx = ny = nz = 0).
 function createNodeGrid() {
@@ -173,6 +257,12 @@ export const DestructorBeams3D = {
   config: null,
   splitQueue: [],
   onDebris: null,
+  // Haki gry (src/game/hullBodies.js); w demie puste.
+  pairFilter: null,       // (A, B) → false = para bez kolizji (właściciel, hol, wrak wyłączony)
+  onContact: null,        // (A, B, info) — styk pary po impulsie i zgniocie (_contactInfo, tylko do odczytu)
+  onWreck: null,          // (parent, wreck) — nowy wrak z rozpadu, już w liście ciał
+  onNodeDebris: null,     // (body, i, wx, wy, wz, vx, vy, vz) — ginący węzeł jako indeks, bez widoku
+  clock: () => nowMs() * 0.001,   // sekundy znaczników żaru (baza czasu renderera)
   _tick: 0,
   _islandStamp: 1,
   _contactStamp: 1,
@@ -196,11 +286,66 @@ export const DestructorBeams3D = {
   _s4: { x: 0, y: 0, z: 0 }, _s5: { x: 0, y: 0, z: 0 }, _s6: { x: 0, y: 0, z: 0 },
 
   init(config) {
+    this.warmUp();
     this.config = config;
     this.splitQueue.length = 0;
     this._tick = 0;
     this.perf.beamsBroken = 0;
     return this;
+  },
+
+  _warmedUp: false,
+
+  /**
+   * Rozgrzewka JIT rzadkich ścieżek rozpadu — raz na proces (wołana z init). V8 kompiluje
+   * funkcję dopiero po wielu przebiegach, a rozpady zdarzają się rzadko, więc pierwsze w bitwie
+   * szły w interpreterze: przebudowa pancernika przy 7,5 j. 4 ms zamiast 0,1, przeniesienie
+   * ruchu odłamu 1,4 ms zamiast 0,04. Mała płyta rozcinana w pętli przechodzi wszystkie
+   * ścieżki (wrak, kadłub w miejscu, zagęszczenie, odprysk); potem stan systemu wraca.
+   */
+  warmUp(rounds = 48) {
+    if (this._warmedUp) return;
+    this._warmedUp = true;
+    const saved = { config: this.config, splitQueue: this.splitQueue, onDebris: this.onDebris,
+      pairFilter: this.pairFilter, onContact: this.onContact, onWreck: this.onWreck, onNodeDebris: this.onNodeDebris,
+      tick: this._tick, perf: { ...this.perf }, nextId: NEXT_BODY_ID };
+    try {
+      const cfg = createBeamConfig(1);
+      Object.assign(cfg, { planar: true, localSolver: true, crushStrength: 300000 });
+      this.config = cfg;
+      this.onDebris = null;
+      this.pairFilter = null; this.onContact = null; this.onWreck = null; this.onNodeDebris = null;
+      const base = buildBeamStructure(warmUpLattice(32, 10), { frameAxes: [0, 1, 0], frameToOppositeWall: true, maxFrameSpan: 10 });
+      // Cięcia: na pół (kadłub w miejscu), ogon (wrak), ostatnia kolumna, róg (odprysk < splitMinNodes).
+      const cuts = [16, 27, 30.5, -1];
+      for (let r = 0; r < rounds; r++) {
+        cfg.compactBelow = r % 4 === 3 ? 1 : 0.5;
+        const body = this.createBody({ ...base, nodeStore: base.nodeStore.clone(), beamStore: base.beamStore.clone(),
+          invInertia: base.invInertia.slice() }, {});
+        const bodies = [body];
+        const s = body.nodeStore, e = body.beamStore, cut = cuts[r % cuts.length];
+        let broken = 0;
+        for (let bi = 0; bi < e.count; bi++) {
+          const xa = s.ox[e.a[bi]] - body.latticeMin.x, xb = s.ox[e.b[bi]] - body.latticeMin.x;
+          const ya = s.oy[e.a[bi]] - body.latticeMin.y, yb = s.oy[e.b[bi]] - body.latticeMin.y;
+          const split = cut < 0 ? ((xa < 2 && ya < 1) !== (xb < 2 && yb < 1)) : ((xa > cut) !== (xb > cut));
+          if (split && !e.broken[bi]) { e.broken[bi] = 1; broken++; }
+        }
+        body.liveBeams -= broken;
+        body.structureDirty = true;
+        this.splitQueue = [body];
+        this.processSplits(bodies);
+      }
+    } finally {
+      this.config = saved.config;
+      this.splitQueue = saved.splitQueue;
+      this.onDebris = saved.onDebris;
+      this.pairFilter = saved.pairFilter; this.onContact = saved.onContact;
+      this.onWreck = saved.onWreck; this.onNodeDebris = saved.onNodeDebris;
+      this._tick = saved.tick;
+      Object.assign(this.perf, saved.perf);
+      NEXT_BODY_ID = saved.nextId;
+    }
   },
 
   createBody(structure, opts = {}) {
@@ -627,12 +772,19 @@ export const DestructorBeams3D = {
       body.structureDirty = true;
       body.meshDirty = true;
       if (!body.noSplit && !this.splitQueue.includes(body)) this.splitQueue.push(body);
+      // Brzeg rany zderzenia: belki zerwane tuż po styku rozżarzają oba końce do poziomu zderzenia.
+      const woundNow = body._woundHeat > 0 ? this.clock() : 0;
+      const wound = woundNow > 0 && woundNow - body._woundHeatAt <= cfg.heatWoundWindow ? body._woundHeat : 0;
       // Koniec zerwanej belki na pierścieniu traci oparcie — też rusza.
       for (let c = 0; c < cCount; c++) {
         const bi = constraints[c];
         if (!broken[bi]) continue;
         activateNode(body, ea[bi]);
         activateNode(body, eb[bi]);
+        if (wound > 0.02) {
+          this._heatWound(body, ea[bi], wound, woundNow);
+          this._heatWound(body, eb[bi], wound, woundNow);
+        }
       }
     }
     this._localSolved = projectBeamConstraints(scratch, scratch.count, iterations);
@@ -641,10 +793,10 @@ export const DestructorBeams3D = {
     const planar = !!cfg.planar;
     const invDt = 1 / dt;
     const threshold = cfg.activeMotionThreshold;
-    const lb = body._localBounds;
+    const mm = body._boundsMinMax;
     let jx = 0, jy = 0, jz = 0;       // impuls więzów na A ∪ F
     let qx = 0, qy = 0, qz = 0;       // pęd uspokojonych węzłów oddawany ciału
-    let drift = 0, outside = false;
+    let drift = 0;
     for (let k = 0; k < sCount; k++) {
       const i = solve[k], j = i * 3;
       const nx = P[j], ny = P[j + 1], nz = planar ? oz[i] : P[j + 2];
@@ -662,7 +814,9 @@ export const DestructorBeams3D = {
       if (!skinDirty[i]) { skinDirty[i] = 1; region.dirty[region.dirtyCount++] = i; }
       const disp = Math.max(Math.abs(nx - ox[i]), Math.abs(ny - oy[i]), Math.abs(nz - oz[i]));
       if (disp > body._maxDisp) body._maxDisp = disp;
-      if (lb && (Math.abs(nx - lb[0]) > lb[3] || Math.abs(ny - lb[1]) > lb[4] || Math.abs(nz - lb[2]) > lb[5])) outside = true;
+      // Obrys tylko rośnie (extendBeamBounds); dokładny wraca przy wyrównaniu środka.
+      if (nx < mm[0] || nx > mm[3] || ny < mm[1] || ny > mm[4] || nz < mm[2] || nz > mm[5] ||
+          nx * nx + ny * ny + nz * nz > body._boundsR2) extendBeamBounds(body, nx, ny, nz);
       if (Math.abs(vx[i]) + Math.abs(vy[i]) + Math.abs(vz[i]) > threshold) activateNode(body, i);
       else if (act[i]) quiet[i]++;
       else {
@@ -708,7 +862,6 @@ export const DestructorBeams3D = {
     // Środek masy wyrównujemy leniwie (O(N)): po uspokojeniu albo gdy lokalny ruch
     // przesunął już sporo masy — nie w każdym kroku jak pełny solver.
     if (write === 0 || region.drift > 0.25 * body.cellSize * M) this._recentre(body);
-    else if (outside) this._updateRadius(body);
     body._hashTick = -1;
     body.meshDirty = true;
     if (write === 0) { body.isSleeping = true; body.wakeHold = 0; }
@@ -821,6 +974,7 @@ export const DestructorBeams3D = {
         if (!A || A.dead || A.activeNodes <= 0) continue;
         if (!B || B.dead || B.activeNodes <= 0) continue;
         if (A.static && B.static) continue;
+        if (this.pairFilter !== null && !this.pairFilter(A, B)) continue;
         this.perf.broadphasePairs++;
 
         const dx = A.pos.x - B.pos.x;
@@ -1134,6 +1288,7 @@ export const DestructorBeams3D = {
     const invMassB = B.static ? 0 : 1 / massB;
     const crushing = approach > cfg.crushSpeedThreshold;
     const transfer = crushing ? Math.max(0, Math.min(1, cfg.crushTransfer)) : 0;
+    let impulse = 0;
 
     // --- impuls na ciała sztywne ---
     if (velAlongNormal < 0) {
@@ -1170,6 +1325,7 @@ export const DestructorBeams3D = {
             : Math.max(contactMassA / A.mass, contactMassB / B.mass);
           j *= doDamage ? (1 - Math.pow(transfer, dt * 60)) * Math.max(0.04, Math.min(1, contactShare)) : 0;
         }
+        impulse = j;
         this._applyImpulse(A, rAx, rAy, rAz, nX * j, nY * j, nZ * j, invMassA);
         this._applyImpulse(B, rBx, rBy, rBz, -nX * j, -nY * j, -nZ * j, invMassB);
 
@@ -1206,23 +1362,38 @@ export const DestructorBeams3D = {
       const lnB = matVecT(this._refreshRot(B), -nX, -nY, -nZ, this._s5);
 
       const local = !!cfg.localSolver;
+      // Żar zderzenia: szybszy taran = bielszy brzeg rany (obie strony, także dziób taranującego).
+      // Zgniatana powierzchnia tylko się rozgrzewa (heatContact); pełny poziom dostaje brzeg
+      // rany — belki zerwane w solverze przez chwilę po styku (_woundHeat, _solveLocal).
+      const level = cfg.heatGain > 0 ? Math.min(1, approach / Math.max(1e-6, cfg.heatSpeed)) * cfg.heatGain : 0;
+      const heatNow = level > 0.02 ? this.clock() : 0;
+      const heat = level * cfg.heatContact;
+      if (heatNow > 0) {
+        if (level >= (A._woundHeat || 0) || heatNow - (A._woundHeatAt || 0) > cfg.heatWoundWindow) { A._woundHeat = level; A._woundHeatAt = heatNow; }
+        if (level >= (B._woundHeat || 0) || heatNow - (B._woundHeatAt || 0) > cfg.heatWoundWindow) { B._woundHeat = level; B._woundHeatAt = heatNow; }
+      }
       for (let i = 0; i < count; i++) {
         const na = contactsA[i];
         const nb = contactsB[i];
         const depth = Math.min(contactDist * 0.65, Math.max(depths[i], travel)) * transfer;
+        // Obrys rośnie o zgniecione węzły zamiast pełnego przeliczenia (dawniej 2× na parę na iterację).
         if (sa.active[na] && shareA > 0) {
           this._crushNode(sa, na, lnA, depth * shareA, dt, stamp, cfg.crushBuckling);
+          extendBeamBounds(A, sa.x[na], sa.y[na], sa.z[na]);
+          if (heatNow > 0) this._heatCrushed(A, na, heat, heatNow, local);
           if (local) activateNode(A, na);
         }
         if (sb.active[nb] && shareB > 0) {
           this._crushNode(sb, nb, lnB, depth * shareB, dt, stamp, cfg.crushBuckling);
+          extendBeamBounds(B, sb.x[nb], sb.y[nb], sb.z[nb]);
+          if (heatNow > 0) this._heatCrushed(B, nb, heat, heatNow, local);
           if (local) activateNode(B, nb);
         }
       }
       A.meshDirty = true;
       B.meshDirty = true;
-      if (!A.static) { A._hashTick = -1; this._updateRadius(A); }
-      if (!B.static) { B._hashTick = -1; this._updateRadius(B); }
+      if (!A.static) A._hashTick = -1;
+      if (!B.static) B._hashTick = -1;
     }
 
     // --- separacja ciał sztywnych ---
@@ -1232,6 +1403,62 @@ export const DestructorBeams3D = {
       const corr = (penetration - slop) / (invMassA + invMassB) * separation * (1 - transfer);
       A.pos.x += nX * corr * invMassA; A.pos.y += nY * corr * invMassA; A.pos.z += nZ * corr * invMassA;
       B.pos.x -= nX * corr * invMassB; B.pos.y -= nY * corr * invMassB; B.pos.z -= nZ * corr * invMassB;
+    }
+
+    if (this.onContact !== null) {
+      const info = this._contactInfo;
+      info.count = count;
+      info.x = hitX; info.y = hitY; info.z = hitZ;
+      info.nx = nX; info.ny = nY; info.nz = nZ;       // normalna B → A
+      info.relSpeed = speed;
+      info.approach = approach;
+      info.slide = Math.sqrt(Math.max(0, speed * speed - velAlongNormal * velAlongNormal));
+      info.penetration = penetration;
+      info.crushing = crushing;
+      info.impulse = impulse;
+      info.doDamage = doDamage;
+      this.onContact(A, B, info);
+    }
+  },
+
+  _contactInfo: {
+    count: 0, x: 0, y: 0, z: 0, nx: 0, ny: 0, nz: 0, relSpeed: 0, approach: 0, slide: 0,
+    penetration: 0, crushing: false, impulse: 0, doDamage: false
+  },
+
+  // Żar węzła PODNIESIONY do poziomu `value` (nie dodany): brzeg zgniotu ma temperaturę
+  // taranu, nie sumę kontaktów. Porównanie po zaniku od ostatniego znacznika. true = zapis.
+  _raiseHeat(s, i, value, now) {
+    const peak = s.heat[i];
+    if (peak >= value && peak * Math.exp(-Math.max(0, now - s.heatStamp[i]) * this.config.heatDecay) >= value) return false;
+    s.heat[i] = value > 1 ? 1 : value;
+    s.heatStamp[i] = now;
+    return true;
+  },
+
+  // Zgniatany węzeł i jego sąsiedzi (strefa wpływu ciepła): kontakty są rzadkie — co któryś
+  // węzeł frontu — więc sam węzeł dawał kropkowany żar zamiast pasa rozgrzanej blachy.
+  _heatCrushed(body, i, value, now, local) {
+    this._raiseHeat(body.nodeStore, i, value, now);
+    this._heatRing(body, i, value * this.config.heatSpread, now, local);
+  },
+
+  // Brzeg rany (koniec zerwanej belki) + pierścień sąsiadów. Tylko solver lokalny.
+  _heatWound(body, i, value, now) {
+    const s = body.nodeStore;
+    if (!s.active[i]) return;
+    if (this._raiseHeat(s, i, value, now)) markSkinDirty(body, i);
+    this._heatRing(body, i, value * this.config.heatSpread, now, true);
+  },
+
+  _heatRing(body, i, ring, now, local) {
+    if (!(ring > 0.02)) return;
+    const s = body.nodeStore, e = body.beamStore, adj = s.adj, active = s.active, ea = e.a, eb = e.b;
+    for (let q = s.adjStart[i]; q < s.adjStart[i + 1]; q++) {
+      const bi = adj[q];
+      const m = ea[bi] === i ? eb[bi] : ea[bi];
+      if (!active[m]) continue;
+      if (this._raiseHeat(s, m, ring, now) && local) markSkinDirty(body, m);
     }
   },
 
@@ -1281,6 +1508,12 @@ export const DestructorBeams3D = {
   /**
    * Trafienie w punkt świata: uszkadza węzły w promieniu, ZRYWA belki w promieniu
    * mniejszym (stąd czyste przecięcie) i wpycha węzły wzdłuż wektora pocisku.
+   *
+   * opts.hpBudget > 0 — tryb KRATERU (gra): zamiast HP po całym promieniu z opadaniem,
+   * budżet HP schodzi z węzłów od najbliższego punktu trafienia, aż się wyczerpie.
+   * Nadmiar ponad HP węzła przechodzi na następny — ciężki pocisk wybija dziurę na
+   * miarę swojej energii, lekki drapie jeden węzeł. Belki pękają wtedy tylko przy
+   * zabitych węzłach (i dalej wg oparcia), bez osobnego promienia zerwań.
    */
   applyImpact(body, wx, wy, wz, damage = 0, worldVel = null, opts = null) {
     const cfg = this.config;
@@ -1316,8 +1549,14 @@ export const DestructorBeams3D = {
     const total = all ? s.count : windowCount;
     const killedNodes = this._impactKilled;
     killedNodes.length = 0;
-    let movedOutside = false;
-    const lb = body._localBounds;
+    const hpBudget = opts?.hpBudget > 0 ? opts.hpBudget * fraction : 0;
+    const crater = hpBudget > 0;
+    if (crater && this._craterNodes.length < total) {
+      this._craterNodes = new Int32Array(Math.max(total, this._craterNodes.length * 2));
+      this._craterD2 = new Float64Array(this._craterNodes.length);
+    }
+    const craterNodes = this._craterNodes, craterD2 = this._craterD2;
+    let craterCount = 0;
 
     for (let k = 0; k < total; k++) {
       const i = all ? k : candidates[k];
@@ -1329,7 +1568,19 @@ export const DestructorBeams3D = {
       if (local) activateNode(body, i);
       const falloff = 1 - Math.sqrt(d2) / radius;
       const influence = falloff * falloff * (3 - 2 * falloff);
-      hp[i] -= damage * 0.5 * influence * fraction;
+      if (crater) {
+        // Wstawienie w kolejności odległości (węzłów w promieniu jest kilkadziesiąt).
+        let at = craterCount++;
+        while (at > 0 && craterD2[at - 1] > d2) {
+          craterNodes[at] = craterNodes[at - 1];
+          craterD2[at] = craterD2[at - 1];
+          at--;
+        }
+        craterNodes[at] = i;
+        craterD2[at] = d2;
+      } else {
+        hp[i] -= damage * 0.5 * influence * fraction;
+      }
       if (impulseTime > 0) {
         // Pressure changes velocity; the solver moves and buckles the metal
         // over subsequent steps instead of teleporting it at detonation.
@@ -1344,22 +1595,52 @@ export const DestructorBeams3D = {
         x[i] += dir.x * push * influence * fraction;
         y[i] += dir.y * push * influence * fraction;
         z[i] += dir.z * push * influence * fraction;
-        if (local) {
-          this._noteDisplacement(body, i);
-          if (lb && (Math.abs(x[i] - lb[0]) > lb[3] || Math.abs(y[i] - lb[1]) > lb[4] || Math.abs(z[i] - lb[2]) > lb[5])) movedOutside = true;
-        }
+        extendBeamBounds(body, x[i], y[i], z[i]);
+        if (local) this._noteDisplacement(body, i);
       }
-      if (hp[i] <= 0) { this.destroyNode(body, i); killed++; if (local) killedNodes.push(i); }
+      if (!crater && hp[i] <= 0) { this.destroyNode(body, i); killed++; if (local) killedNodes.push(i); }
     }
 
     if (!hitAny) return false;
+
+    if (crater) {
+      let budget = hpBudget;
+      // Wybita blacha wylatuje z rany (odłamek bierze prędkość węzła w onNodeDebris): większość
+      // odprysku wstecz, w stronę strzelca, z rozrzutem na boki, reszta przelatuje wzdłuż pocisku.
+      // Bez kierunku pocisku — promieniście od punktu trafienia. Tempo rośnie z obrażeniami.
+      const kick = Math.min(260, 40 + damage * 0.04);
+      const hasDir = dir.x * dir.x + dir.y * dir.y > 1e-6;
+      for (let k = 0; k < craterCount && budget > 0; k++) {
+        const i = craterNodes[k];
+        if (!active[i]) continue;
+        const take = hp[i] < budget ? hp[i] : budget;
+        hp[i] -= take;
+        budget -= take;
+        if (hp[i] <= 1e-9) {
+          const speed = kick * (0.6 + Math.random() * 0.8);
+          if (hasDir) {
+            const along = Math.random() < 0.65 ? -0.8 : 0.8;
+            const side = (Math.random() - 0.5) * 1.6;
+            s.vx[i] += (dir.x * along - dir.y * side) * speed;
+            s.vy[i] += (dir.y * along + dir.x * side) * speed;
+          } else {
+            const rx = x[i] - l.x, ry = y[i] - l.y, rl = Math.sqrt(rx * rx + ry * ry) || 1;
+            s.vx[i] += rx / rl * speed;
+            s.vy[i] += ry / rl * speed;
+          }
+          this.destroyNode(body, i);
+          killed++;
+          if (local) killedNodes.push(i);
+        } else if (local) markSkinDirty(body, i);
+      }
+    }
 
     // Zerwij belki, których środek leży w rdzeniu trafienia — to daje ranę
     // o wyraźnej krawędzi zamiast rozmytego osłabienia konstrukcji.
     const e = body.beamStore, ea = e.a, eb = e.b, broken = e.broken, type = e.type;
     const affected = this._impactAffected;
     affected.length = 0;
-    const beamCount = local ? this._impactBeams(body, all ? null : candidates, total) : e.count;
+    const beamCount = crater ? 0 : local ? this._impactBeams(body, all ? null : candidates, total) : e.count;
     const beamList = this._impactBeamList;
     for (let k = 0; k < beamCount; k++) {
       const bi = local ? beamList[k] : k;
@@ -1396,10 +1677,8 @@ export const DestructorBeams3D = {
           affected.push(ea[bi] === dead ? eb[bi] : ea[bi]);
         }
       }
-      if (movedOutside) this._updateRadius(body);
       this._refreshIntegrityAround(body, affected);
     } else {
-      this._updateRadius(body);
       this._refreshNodeIntegrity(body);
     }
     if (!body.noSplit && (killed > 0 || body.structureDirty) && this.splitQueue.indexOf(body) === -1) {
@@ -1413,6 +1692,8 @@ export const DestructorBeams3D = {
   _impactKilled: [],
   _impactAffected: [],
   _impactDoomed: [],
+  _craterNodes: new Int32Array(256),
+  _craterD2: new Float64Array(256),
 
   // Indeks siatki spoczynkowej: komórka (ix, iy, iz) → węzeł. Pozycja spoczynkowa
   // węzła to zawsze latticeMin + (i + 0,5) · cs (środek przesuwa ją razem z latticeMin),
@@ -1454,7 +1735,8 @@ export const DestructorBeams3D = {
     const z1 = Math.min(d.z - 1, Math.ceil((l.z + pad - lm.z) / cs - 0.5));
     if (x1 < x0 || y1 < y0 || z1 < z0) return 0;
     // Okno większe niż kadłub (mocno pogięty wrak): pełny przegląd jest tańszy.
-    if ((x1 - x0 + 1) * (y1 - y0 + 1) * (z1 - z0 + 1) > body.nodeStore.count) return -1;
+    // (Żywe węzły, nie pojemność magazynu: decyzja ta sama z dziurami po rozpadzie i bez nich.)
+    if ((x1 - x0 + 1) * (y1 - y0 + 1) * (z1 - z0 + 1) > body.activeNodes) return -1;
     const cells = index.cells;
     for (let zz = z0; zz <= z1; zz++) {
       for (let yy = y0; yy <= y1; yy++) {
@@ -1561,6 +1843,16 @@ export const DestructorBeams3D = {
       }
     }
 
+    if (this.onNodeDebris !== null) {
+      const m = this._refreshRot(body);
+      const w = matVec(m, s.x[i], s.y[i], s.z[i], this._s3);
+      const rx = w.x, ry = w.y, rz = w.z;
+      const kick = matVec(m, s.vx[i], s.vy[i], s.vz[i], this._s4);
+      this.onNodeDebris(body, i, rx + body.pos.x, ry + body.pos.y, rz + body.pos.z,
+        body.vel.x + (body.angVel.y * rz - body.angVel.z * ry) + kick.x,
+        body.vel.y + (body.angVel.z * rx - body.angVel.x * rz) + kick.y,
+        body.vel.z + (body.angVel.x * ry - body.angVel.y * rx) + kick.z);
+    }
     if (this.onDebris) {
       const m = this._refreshRot(body);
       const w = matVec(m, s.x[i], s.y[i], s.z[i], this._s3);
@@ -1614,6 +1906,97 @@ export const DestructorBeams3D = {
       y: w.y + body.pos.y,
       z: w.z + body.pos.z
     };
+  },
+
+  /**
+   * Odcinek (x0, y0) → (x1, y1) w UKŁADZIE CIAŁA płaskiego (planar, nz = 1) przeciw kołom
+   * węzłów o promieniu `reach`: pierwszy żywy węzeł na drodze. Wynik w `out` (t ∈ [0, 1],
+   * node = indeks) i zwrot indeksu albo −1. Zapytania gry (pocisk, wiązka) — kandydaci
+   * z siatki spoczynkowej wiersz po wierszu: w każdym wierszu tylko pas kolumn, przez który
+   * przechodzi odcinek (± zasięg i maks. przemieszczenie węzła), więc długa wiązka przez
+   * cały kadłub nie przegląda całego prostokąta.
+   */
+  sweepLocal2D(body, x0, y0, x1, y1, reach, out) {
+    out.t = Infinity;
+    out.node = -1;
+    if (!body || body.dead || body.activeNodes <= 0) return -1;
+    const mm = body._boundsMinMax;
+    if (Math.max(x0, x1) < mm[0] - reach || Math.min(x0, x1) > mm[3] + reach ||
+        Math.max(y0, y1) < mm[1] - reach || Math.min(y0, y1) > mm[4] + reach) return -1;
+    const index = this._latticeIndex(body);
+    const s = body.nodeStore, x = s.x, y = s.y, active = s.active, cells = index.cells;
+    const cs = body.cellSize, lm = body.latticeMin, d = body.dims;
+    // + cs: zgniot w bieżącym kroku mógł przesunąć węzeł przed aktualizacją _maxDisp.
+    const pad = reach + (body._maxDisp || 0) + cs;
+    const dx = x1 - x0, dy = y1 - y0;
+    const a = dx * dx + dy * dy, r2 = reach * reach;
+    const row0 = Math.max(0, Math.floor((Math.min(y0, y1) - pad - lm.y) / cs - 0.5));
+    const row1 = Math.min(d.y - 1, Math.ceil((Math.max(y0, y1) + pad - lm.y) / cs - 0.5));
+    let bestT = Infinity, best = -1;
+    for (let iy = row0; iy <= row1; iy++) {
+      const cy = lm.y + (iy + 0.5) * cs;
+      let tLo = 0, tHi = 1;
+      if (Math.abs(dy) > 1e-12) {
+        let ta = (cy - pad - y0) / dy, tb = (cy + pad - y0) / dy;
+        if (ta > tb) { const tmp = ta; ta = tb; tb = tmp; }
+        if (ta > tLo) tLo = ta;
+        if (tb < tHi) tHi = tb;
+        if (tLo > tHi) continue;
+      } else if (Math.abs(y0 - cy) > pad) continue;
+      if (tLo >= bestT) continue;
+      const xa = x0 + dx * tLo, xb = x0 + dx * tHi;
+      const col0 = Math.max(0, Math.floor((Math.min(xa, xb) - pad - lm.x) / cs - 0.5));
+      const col1 = Math.min(d.x - 1, Math.ceil((Math.max(xa, xb) + pad - lm.x) / cs - 0.5));
+      const rowBase = iy * d.x;
+      for (let ix = col0; ix <= col1; ix++) {
+        const i = cells[rowBase + ix];
+        if (i < 0 || !active[i]) continue;
+        const fx = x0 - x[i], fy = y0 - y[i];
+        const c = fx * fx + fy * fy - r2;
+        let t;
+        if (c <= 0) t = 0;
+        else {
+          if (a <= 1e-18) continue;
+          const b = fx * dx + fy * dy;
+          if (b >= 0) continue;                       // oddala się od środka
+          const disc = b * b - a * c;
+          if (disc < 0) continue;
+          t = (-b - Math.sqrt(disc)) / a;
+          if (t > 1) continue;
+        }
+        if (t < bestT) { bestT = t; best = i; }
+      }
+    }
+    out.t = bestT;
+    out.node = best;
+    return best;
+  },
+
+  /** Najbliższy żywy węzeł ciała płaskiego w promieniu `reach` od punktu (układ ciała) albo −1. */
+  probeLocal2D(body, lx, ly, reach) {
+    if (!body || body.dead || body.activeNodes <= 0) return -1;
+    const mm = body._boundsMinMax;
+    if (lx < mm[0] - reach || lx > mm[3] + reach || ly < mm[1] - reach || ly > mm[4] + reach) return -1;
+    const index = this._latticeIndex(body);
+    const s = body.nodeStore, x = s.x, y = s.y, active = s.active, cells = index.cells;
+    const cs = body.cellSize, lm = body.latticeMin, d = body.dims;
+    const pad = reach + (body._maxDisp || 0) + cs;
+    const x0 = Math.max(0, Math.floor((lx - pad - lm.x) / cs - 0.5));
+    const x1 = Math.min(d.x - 1, Math.ceil((lx + pad - lm.x) / cs - 0.5));
+    const y0 = Math.max(0, Math.floor((ly - pad - lm.y) / cs - 0.5));
+    const y1 = Math.min(d.y - 1, Math.ceil((ly + pad - lm.y) / cs - 0.5));
+    let bestD2 = reach * reach, best = -1;
+    for (let iy = y0; iy <= y1; iy++) {
+      const rowBase = iy * d.x;
+      for (let ix = x0; ix <= x1; ix++) {
+        const i = cells[rowBase + ix];
+        if (i < 0 || !active[i]) continue;
+        const ddx = x[i] - lx, ddy = y[i] - ly;
+        const d2 = ddx * ddx + ddy * ddy;
+        if (d2 <= bestD2) { bestD2 = d2; best = i; }
+      }
+    }
+    return best;
   },
 
   // --------------------------- ROZPADY ---------------------------
@@ -1721,59 +2104,63 @@ export const DestructorBeams3D = {
   },
 
   _partitionMap: new Int32Array(0),
-  _partitionKept: [],
+  _partitionOrder: new Int32Array(0),
+  _partitionKept: new Int32Array(0),
 
   /**
    * Sekcja ciała (węzły `group` — indeksy w bieżącym magazynie) jako nowe magazyny.
-   * Belki w kolejności dawnego przeglądu (węzeł po węźle, jego lista belek), więc
-   * numeracja i listy sąsiedztwa wychodzą jak przy obiektach. Widoki węzłów sekcji
-   * przepinają się na nowy magazyn — tożsamość węzła przeżywa rozpad jak dawniej.
+   * `keepOrder` (zagęszczenie kadłuba): węzły i belki w DOTYCHCZASOWEJ kolejności (rosnące
+   * indeksy), więc zagęszczenie jest przezroczyste dla fizyki — kadłub z dziurami po rozpadzie
+   * w miejscu liczy się bit w bit tak samo jak zagęszczony. Wrak (bez keepOrder) powstaje
+   * tak samo w obu trybach, więc dostaje tanią kolejność jak dawniej: węzły w kolejności
+   * wyspy, belki węzeł po węźle — bez sortowania.
+   * Belki: oba końce w sekcji, także zerwane (naprawa może je zrosnąć, jak w miejscu).
+   * `beamCount` = żywe belki węzła w sekcji (próg oparcia liczony od stanu po rozpadzie).
+   * Widoki węzłów sekcji przepinają się na nowy magazyn — tożsamość przeżywa rozpad.
    */
-  _partitionBeams(body, group) {
+  _partitionBeams(body, group, keepOrder = false) {
     const src = body.nodeStore, srcBeams = body.beamStore, count = group.length;
-    if (this._partitionMap.length < src.count) {
-      this._partitionMap = new Int32Array(src.count).fill(-1);
-    }
+    if (this._partitionMap.length < src.count) this._partitionMap = new Int32Array(src.count).fill(-1);
+    if (this._partitionOrder.length < count) this._partitionOrder = new Int32Array(Math.max(count, this._partitionOrder.length * 2));
     const map = this._partitionMap;
-    for (let k = 0; k < count; k++) map[group[k]] = k;
+    const order = this._partitionOrder.subarray(0, count);
+    for (let k = 0; k < count; k++) order[k] = group[k];
+    if (keepOrder) order.sort();
+    for (let k = 0; k < count; k++) map[order[k]] = k;
 
     const ns = new BeamNodeStore(count);
-    const f64 = ['x', 'y', 'z', 'ox', 'oy', 'oz', 'px', 'py', 'pz', 'vx', 'vy', 'vz', 'mass', 'invMass',
-      'hp', 'maxHp', 'coverage', 'r', 'g', 'b', 'crushDepth'];
-    const ints = ['ix', 'iy', 'iz', 'depth', 'beamCount', 'localBeamCount', 'platingCount', 'quiet',
-      'solveStamp', 'outerStamp', 'islandStamp', 'massStamp', 'crushStamp', 'hashNext',
-      'active', 'surface', 'act', 'skinDirty'];
-    for (const f of f64) { const from = src[f], to = ns[f]; for (let k = 0; k < count; k++) to[k] = from[group[k]]; }
-    for (const f of ints) { const from = src[f], to = ns[f]; for (let k = 0; k < count; k++) to[k] = from[group[k]]; }
+    gatherNodeFields(src, ns, order, count);
 
-    // Każda sekcja odwiedza tylko swoje belki. Skan całego rodzica dla każdego
-    // odłamu mnożył pracę w najdroższej klatce rozpadu przez liczbę fragmentów.
-    const kept = this._partitionKept;
-    kept.length = 0;
-    const adjStart = src.adjStart, adj = src.adj, ea = srcBeams.a, eb = srcBeams.b, broken = srcBeams.broken;
+    // Belki o obu końcach w sekcji — każda raz, od końca a (przy keepOrder potem posortowane).
+    let kept = this._partitionKept, keptCount = 0;
+    const adjStart = src.adjStart, adj = src.adj, ea = srcBeams.a, eb = srcBeams.b;
     for (let k = 0; k < count; k++) {
-      const i = group[k];
+      const i = order[k];
       for (let q = adjStart[i]; q < adjStart[i + 1]; q++) {
         const bi = adj[q];
-        if (broken[bi] || ea[bi] !== i) continue;
-        if (map[eb[bi]] < 0) continue;
-        kept.push(bi);
+        if (ea[bi] !== i || map[eb[bi]] < 0) continue;
+        if (keptCount === kept.length) {
+          const grown = new Int32Array(Math.max(1024, kept.length * 2));
+          grown.set(kept);
+          kept = this._partitionKept = grown;
+        }
+        kept[keptCount++] = bi;
       }
     }
-    const bs = new BeamLinkStore(kept.length);
-    for (let n = 0; n < kept.length; n++) {
-      const bi = kept[n];
-      bs.a[n] = map[ea[bi]]; bs.b[n] = map[eb[bi]];
-      bs.rest[n] = srcBeams.rest[bi]; bs.restBase[n] = srcBeams.restBase[bi];
-      bs.stiffness[n] = srcBeams.stiffness[bi]; bs.deform[n] = srcBeams.deform[bi];
-      bs.brk[n] = srcBeams.brk[bi]; bs.strain[n] = srcBeams.strain[bi];
-      bs.fatigue[n] = srcBeams.fatigue[bi] || 0;
-      bs.type[n] = srcBeams.type[bi]; bs.restBridge[n] = srcBeams.restBridge[bi];
-    }
+    const keptList = kept.subarray(0, keptCount);
+    if (keepOrder) keptList.sort();
+    const bs = new BeamLinkStore(keptCount);
+    const liveBeams = gatherBeamFields(srcBeams, bs, keptList, keptCount, map);
     buildAdjacency(ns, bs);
-    for (let k = 0; k < count; k++) ns.beamCount[k] = ns.adjStart[k + 1] - ns.adjStart[k];
+    const beamCount = ns.beamCount;
+    beamCount.fill(0);
+    for (let n = 0; n < keptCount; n++) {
+      if (bs.broken[n]) continue;
+      beamCount[bs.a[n]]++;
+      beamCount[bs.b[n]]++;
+    }
 
-    for (let k = 0; k < count; k++) map[group[k]] = -1;
+    for (let k = 0; k < count; k++) map[order[k]] = -1;
     // Widoki węzłów istnieją tylko, jeśli ktoś je czytał — wtedy przepinamy je na nowy
     // magazyn (tożsamość węzła przeżywa rozpad). Inaczej sekcja zostaje bez widoków.
     const views = cachedNodeViews(body);
@@ -1781,13 +2168,13 @@ export const DestructorBeams3D = {
     if (views) {
       nodes = new Array(count);
       for (let k = 0; k < count; k++) {
-        const view = views[group[k]];
+        const view = views[order[k]];
         view._s = ns;
         view._i = k;
         nodes[k] = view;
       }
     }
-    return { nodes, nodeStore: ns, beamStore: bs };
+    return { nodes, nodeStore: ns, beamStore: bs, order, liveBeams };
   },
 
   _shiftStore(s, cx, cy, cz) {
@@ -1798,9 +2185,35 @@ export const DestructorBeams3D = {
     }
   },
 
+  /**
+   * Kadłub po rozpadzie: zostaje sekcja `group`. Domyślnie W MIEJSCU — węzły odłamów (już
+   * skopiowane do wraków) gasną na tablicach kadłuba, a kopiuje się tylko odłam. Dawniej
+   * każdy rozpad kopiował cały pozostały kadłub (Atlas przy 7,5 j.: 12 tys. węzłów, 50 tys.
+   * belek, 4–17 ms) i renderer budował od nowa skórę całego kadłuba. Gdy żywych węzłów
+   * zostaje mniej niż `compactBelow` pojemności, magazyny się zagęszczają — w pierwotnej
+   * kolejności, więc wynik fizyki jest ten sam (bit w bit) przy każdym progu.
+   */
   _rebuildBody(body, group) {
-    const part = this._partitionBeams(body, group);
-    const info = computeStoreInertia(part.nodeStore, body.cellSize);
+    const s = body.nodeStore;
+    const compactBelow = this.config.compactBelow ?? 0.5;
+    let part = null;
+    if (group.length < compactBelow * s.count) {
+      const cursor = body._contactCursor;
+      part = this._partitionBeams(body, group, true);
+      const order = part.order, n = order.length;
+      // Kursor skanu kontaktów wskazuje ten sam węzeł co w miejscu (pierwszy żywy ≥ kursor).
+      body._contactCursor = lowerBound(order, n, cursor);
+      // Stan mocowań węzłów w scratchu solvera idzie za węzłami. Solver lokalny odświeża
+      // go tylko dla obszaru przy zmianie struktury, więc bez przepisania węzeł wchodzący
+      // później do obszaru czytał stan innego węzła (dawnego właściciela indeksu).
+      // order rośnie i order[k] ≥ k — przepisanie w miejscu niczego nie nadpisuje przed odczytem.
+      const failed = body._solverScratch?.mountFailed;
+      if (failed) for (let k = 0; k < n; k++) failed[k] = failed[order[k]];
+    } else {
+      this._retireOutsideGroup(body, group);
+    }
+    const store = part ? part.nodeStore : s;
+    const info = computeStoreInertia(store, body.cellSize);
     if (!info) return;
 
     const m = this._refreshRot(body);
@@ -1810,17 +2223,19 @@ export const DestructorBeams3D = {
     body.vel.y += body.angVel.z * shift.x - body.angVel.x * shift.z;
     body.vel.z += body.angVel.x * shift.y - body.angVel.y * shift.x;
 
-    this._shiftStore(part.nodeStore, info.com.x, info.com.y, info.com.z);
+    this._shiftStore(store, info.com.x, info.com.y, info.com.z);
     body.latticeMin.x -= info.com.x;
     body.latticeMin.y -= info.com.y;
     body.latticeMin.z -= info.com.z;
 
-    body.nodeStore = part.nodeStore;
-    body.beamStore = part.beamStore;
-    body.nodes = part.nodes;             // przepięte widoki albo null (na żądanie)
-    body.beams = null;
-    body.activeNodes = part.nodeStore.count;
-    body.liveBeams = part.beamStore.count;
+    if (part) {
+      body.nodeStore = part.nodeStore;
+      body.beamStore = part.beamStore;
+      body.nodes = part.nodes;           // przepięte widoki albo null (na żądanie)
+      body.beams = null;
+      body.liveBeams = part.liveBeams;
+    }
+    body.activeNodes = group.length;
     body.mass = Math.max(1, info.mass);
     if (!body.static) body.invMass = 1 / body.mass;
     body.invInertiaLocal = info.invInertia;
@@ -1829,6 +2244,43 @@ export const DestructorBeams3D = {
     body.meshDirty = true;
     body._hashTick = -1;
     this.wake(body, this.config.wakeHoldFrames);
+  },
+
+  /**
+   * Rozpad w miejscu: żywe węzły spoza `group` odleciały z wrakami (ich kopie są już
+   * w magazynach wraków) — tu gasną bez śladu (bez odłamków i liczników zerwań), a ich
+   * belki przestają się liczyć. Stan sekcji jak po zagęszczeniu: `beamCount` = żywe belki
+   * węzła, `liveBeams`, obszar aktywny od nowa w kolejności indeksów.
+   */
+  _retireOutsideGroup(body, group) {
+    const s = body.nodeStore;
+    const active = s.active, adjStart = s.adjStart, adj = s.adj, broken = body.beamStore.broken;
+    let stamp = (this._islandStamp + 1) | 0;
+    if (stamp <= 0) stamp = 1;
+    this._islandStamp = stamp;
+    const mark = s.islandStamp;
+    for (let k = 0; k < group.length; k++) mark[group[k]] = stamp;
+    const views = cachedNodeViews(body);
+    for (let i = 0; i < s.count; i++) {
+      if (!active[i] || mark[i] === stamp) continue;
+      active[i] = 0;
+      s.act[i] = 0;
+      for (let q = adjStart[i]; q < adjStart[i + 1]; q++) broken[adj[q]] = 1;
+      // Widok tego węzła należy już do wraku — kadłub dostaje własny (martwy) widok.
+      if (views) views[i] = new BeamNodeView(s, i);
+    }
+    const beamCount = s.beamCount;
+    let live = 0;
+    for (let k = 0; k < group.length; k++) {
+      const i = group[k];
+      let n = 0;
+      for (let q = adjStart[i]; q < adjStart[i + 1]; q++) if (!broken[adj[q]]) n++;
+      beamCount[i] = n;
+      live += n;
+    }
+    body.liveBeams = live >> 1;
+    // Obszar aktywny i jego listy od nowa (jak dla nowego magazynu); skóra całości do przepisania.
+    resetActiveRegion(body);
   },
 
   _spawnWreck(parent, group, bodies) {
@@ -1878,7 +2330,7 @@ export const DestructorBeams3D = {
       skin: parent.skin || null,
       spriteSkin: parent.spriteSkin || null,
       activeNodes: ns.count,
-      liveBeams: part.beamStore.count,
+      liveBeams: part.liveBeams,
       dead: false,
       isWreck: true,
       noSplit: false,
@@ -1920,17 +2372,20 @@ export const DestructorBeams3D = {
     }
 
     if (Array.isArray(bodies) && !bodies.includes(wreck)) bodies.push(wreck);
+    if (this.onWreck !== null) this.onWreck(parent, wreck);
     return wreck;
   },
 
   _transferFragmentMotion(body) {
     // Oderwana sekcja dziedziczy także ruch od zgniotu, nie tylko prędkość
     // środka rodzica. Średnią i moment pola prędkości zamieniamy na 6DoF.
-    const s = body.nodeStore, count = s.count, mass = s.mass;
+    // Tylko żywe węzły: kadłub po rozpadzie w miejscu ma na tablicach węzły odłamów.
+    const s = body.nodeStore, count = s.count, mass = s.mass, active = s.active;
     const x = s.x, y = s.y, z = s.z, nvx = s.vx, nvy = s.vy, nvz = s.vz;
     let vx = 0, vy = 0, vz = 0;
     let cx = 0, cy = 0, cz = 0;
     for (let i = 0; i < count; i++) {
+      if (!active[i]) continue;
       vx += nvx[i] * mass[i]; vy += nvy[i] * mass[i]; vz += nvz[i] * mass[i];
       cx += x[i] * mass[i]; cy += y[i] * mass[i]; cz += z[i] * mass[i];
     }
@@ -1938,6 +2393,7 @@ export const DestructorBeams3D = {
     cx /= body.mass; cy /= body.mass; cz /= body.mass;
     let lx = 0, ly = 0, lz = 0;
     for (let i = 0; i < count; i++) {
+      if (!active[i]) continue;
       const rx = x[i] - cx, ry = y[i] - cy, rz = z[i] - cz;
       lx += mass[i] * (ry * (nvz[i] - vz) - rz * (nvy[i] - vy));
       ly += mass[i] * (rz * (nvx[i] - vx) - rx * (nvz[i] - vz));
@@ -1956,6 +2412,7 @@ export const DestructorBeams3D = {
     const w = matVec(body._rot, wx, wy, wz, this._s5);
     body.angVel.x += w.x; body.angVel.y += w.y; body.angVel.z += w.z;
     for (let i = 0; i < count; i++) {
+      if (!active[i]) continue;
       nvx[i] -= vx + wy * (z[i] - cz) - wz * (y[i] - cy);
       nvy[i] -= vy + wz * (x[i] - cx) - wx * (z[i] - cz);
       nvz[i] -= vz + wx * (y[i] - cy) - wy * (x[i] - cx);
@@ -1973,17 +2430,18 @@ export const DestructorBeams3D = {
       let changed = false;
       let liveBeams = 0;
       for (let bi = 0; bi < e.count; bi++) {
+        // Belka do martwego węzła (albo do węzła, który odleciał z wrakiem) nie wróci —
+        // nie ruszamy jej wcale, więc wynik nie zależy od tego, czy magazyn zagęszczono.
+        const a = e.a[bi], c = e.b[bi];
+        if (!active[a] || !active[c]) continue;
         if (e.fatigue[bi] > 0) { e.fatigue[bi] = Math.max(0, e.fatigue[bi] - step * 2); changed = true; }
         if (e.rest[bi] !== e.restBase[bi]) {
           e.rest[bi] += (e.restBase[bi] - e.rest[bi]) * step * 2;
           if (Math.abs(e.rest[bi] - e.restBase[bi]) < 1e-4) e.rest[bi] = e.restBase[bi];
           changed = true;
         }
-        const a = e.a[bi], c = e.b[bi];
-        if (e.broken[bi]) {
-          if (active[a] && active[c]) { e.broken[bi] = 0; changed = true; }
-        }
-        if (!e.broken[bi] && active[a] && active[c]) liveBeams++;
+        if (e.broken[bi]) { e.broken[bi] = 0; changed = true; }
+        liveBeams++;
       }
       body.liveBeams = liveBeams;
       for (let i = 0; i < s.count; i++) {

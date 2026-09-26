@@ -89,6 +89,50 @@ export function warpDropExit(du, dv, g) {
   return db >= 0 ? pb + Math.sqrt(db) : tL;
 }
 
+/**
+ * Rybie oko w kropli: skala próbki tła (promień próbki / promień piksela) przy
+ * znormalizowanym promieniu x (1 = brzeg kropli). Na brzegu sięga dokładnie
+ * kmax = (odległość do krawędzi kadru tła w tym kierunku) / (promień kropli) —
+ * dalej cel tła zawija się lustrzanie, a w odbiciu gwiazdy leciały w drugą
+ * stronę (zgłoszenie usera). Najwyżej ~8,6× (ściśnięcie brzegu). Lustro GLSL:
+ * WARP_DROP_GLSL (wvFisheye).
+ */
+export function warpFisheyeScale(x, kmax, strength, beta) {
+  const p = Math.max(0.05, Number(strength) || 0);
+  const c = Math.min(0.8836, Math.max(0, 1 - Math.pow(Math.max(Number(kmax) || 0, 1), -1 / p)));
+  const xi = Math.min(Math.max(Number(x) || 0, 0), 1);
+  return Math.pow(1 / (1 - c * xi * xi), p * Math.min(Math.max(Number(beta) || 0, 0), 1));
+}
+
+/**
+ * Bańka Alcubierre'a („klepsydra”, user 2026-09-26, wizualizacja NASA): przed
+ * statkiem płat ściśniętej przestrzeni (zagłębienie, h < 0), za nim płat
+ * rozszerzonej (wybrzuszenie, h > 0), po bokach statku pole zerowe —
+ * przewężenie; statek w płaskim wnętrzu bańki. Wysokość −1..1 w układzie lotu
+ * (a wzdłuż, c w poprzek, w promieniach kuli). Tło załamuje gradient wysokości
+ * (próbka z q + amp·∇h): zagłębienie ściska obraz, wybrzuszenie go powiększa.
+ * Lustro GLSL: WARP_DROP_GLSL (wvAlcH).
+ */
+export const WARP_ALCUBIERRE_DEFAULTS = Object.freeze({
+  rPeak: 0.6,    // środek płatów od statku (wzdłuż osi lotu)
+  rWidth: 0.42,  // półszerokość płatów w poprzek
+  flat: 2.5,     // płaskość wnętrza przy statku (wykładnik profilu wzdłuż osi, ≥ 2)
+  amp: 0.05      // siła załamania tła (promienie kuli²) — bez fałd: amp·|Hess h| < 1
+});
+
+/**
+ * Wzdłuż osi profil (|a|/rPeak)^k·exp(k/2·(1 − (a/rPeak)²)) — szczyt 1 w rPeak,
+ * przy statku ~0 (płaskie wnętrze bańki); w poprzek gauss. Pole gładkie (bez
+ * rampy i czynnika kątowego — tamte dawały krzywiznę ~85 i fałdy siatki).
+ */
+export function warpAlcubierreHeight(a, c, p = WARP_ALCUBIERRE_DEFAULTS) {
+  const k = Math.max(2, Number(p.flat) || 2);
+  const u = Math.abs(a) / Math.max(p.rPeak, 1e-3);
+  const w = c / Math.max(p.rWidth, 1e-3);
+  if (u < 1e-9) return 0;
+  return -Math.sign(a) * Math.pow(u, k) * Math.exp(0.5 * k * (1 - u * u) - w * w);
+}
+
 export const WARP_DROP_GLSL = `
       // Kropla widoku skoku — lustro warpDropExit (warpLens3D.js). dir: x wzdluz
       // lotu, y w poprzek (liczy sie |y|); g = (ua, ra, ub, rb) w promieniach kuli.
@@ -108,6 +152,30 @@ export const WARP_DROP_GLSL = `
         float pb = g.z * dir.x;
         float db = pb * pb - g.z * g.z + g.w * g.w;
         return db >= 0.0 ? pb + sqrt(db) : tL;
+      }
+      // Rybie oko — lustro warpFisheyeScale: na brzegu kropli (x = 1) skala kmax
+      // (próbka na krawędzi kadru tła), bez ujemnej podstawy potęgi.
+      float wvFisheye(float x, float kmax, float strength, float beta) {
+        float p = max(strength, 0.05);
+        float c = clamp(1.0 - pow(max(kmax, 1.0), -1.0 / p), 0.0, 0.8836);
+        float xi = clamp(x, 0.0, 1.0);
+        return pow(1.0 / (1.0 - c * xi * xi), p * clamp(beta, 0.0, 1.0));
+      }
+      // Odległość od punktu s do krawędzi prostokąta [0, w] × [0, 1] wzdłuż e (|e| = 1).
+      float wvEdgeDist(vec2 s, vec2 e, float w) {
+        float tx = e.x > 1e-5 ? (w - s.x) / e.x : (e.x < -1e-5 ? -s.x / e.x : 1e6);
+        float ty = e.y > 1e-5 ? (1.0 - s.y) / e.y : (e.y < -1e-5 ? -s.y / e.y : 1e6);
+        return max(min(tx, ty), 0.0);
+      }
+      // Bańka Alcubierre'a — lustro warpAlcubierreHeight: przed statkiem
+      // zagłębienie (h < 0), za nim wybrzuszenie, po bokach zero (przewężenie).
+      // q: x wzdłuż lotu, y w poprzek (promienie kuli); g = (rPeak, rWidth, flat, —).
+      float wvAlcH(vec2 q, vec4 g) {
+        float k = max(g.z, 2.0);
+        float u = abs(q.x) / max(g.x, 1e-3);
+        float w = q.y / max(g.y, 1e-3);
+        if (u < 1e-6) return 0.0;
+        return -sign(q.x) * pow(u, k) * exp(0.5 * k * (1.0 - u * u) - w * w);
       }
 `;
 
@@ -330,7 +398,18 @@ export function createWarpLensShader() {
       uWVFront: { value: new THREE.Vector4(1000, 0.35, 0, 0) },
       // Kształt: kropla (ua, ra, ub, rb) w promieniach kuli — warpDropGeometry.
       // Domyślnie koło.
-      uWVDrop: { value: new THREE.Vector4(0, 1, 0, 1) }
+      uWVDrop: { value: new THREE.Vector4(0, 1, 0, 1) },
+      // Gwiazdy gry we własnym celu (Core3D.setWarpStarsObject): 1 = mgławica
+      // w tSource idzie przez mocne rybie oko, gwiazdy z tStars przez rybie oko
+      // ograniczone kadrem (bez lustrzanego odbicia). 0 = wszystko w tSource.
+      tStars: { value: null },
+      uWVStars: { value: 0 },
+      // Kształt widoku: 0 = kropla (rybie oko + opływ), 1 = bańka Alcubierre'a
+      // (klepsydra). uWVAlc = (rPeak, rWidth, flat, —), uWVAlc2 = (amp, barwa
+      // płatów, relief, —).
+      uWVMode: { value: 0 },
+      uWVAlc: { value: new THREE.Vector4(0.6, 0.42, 2.5, 0) },
+      uWVAlc2: { value: new THREE.Vector4(0.05, 0.12, 1.0, 0) }
     },
     vertexShader: `precision highp float; varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
     fragmentShader: `
@@ -349,6 +428,11 @@ export function createWarpLensShader() {
       uniform vec4 uWVMisc;
       uniform vec4 uWVFront;
       uniform vec4 uWVDrop;
+      uniform sampler2D tStars;
+      uniform float uWVStars;
+      uniform float uWVMode;
+      uniform vec4 uWVAlc;
+      uniform vec4 uWVAlc2;
       varying vec2 vUv;
 ${WARP_DROP_GLSL}
       void main() {
@@ -424,6 +508,9 @@ ${WARP_DROP_GLSL}
         // fazami (flow map). Warunek na uniformie: pochodne dla mipmap zostaja poprawne.
         vec3 wvFlow = vec3(0.0);
         float wvOut = 0.0;
+        vec2 wStarUv = uv;
+        vec3 wvAdd = vec3(0.0);
+        float wvShade = 1.0;
         if (uWV.w > 0.001) {
           vec2 wd = uv - uWV.xy;
           wd.x *= uAspect;
@@ -432,16 +519,43 @@ ${WARP_DROP_GLSL}
           vec2 wpp = vec2(-wf.y, wf.x);
           float wfs = dot(wd, wf) / wR;
           float wcs = dot(wd, wpp) / wR;
-          float wl = sqrt(wfs * wfs + wcs * wcs);
-          float wB = wvDropExit(wl > 1e-6 ? vec2(wfs, wcs) / wl : vec2(1.0, 0.0), uWVDrop);
-          float wx = wl / wB;
           // Front wyjscia: przestrzen prostuje sie najpierw PRZED statkiem —
           // piksele dalej w kierunku lotu niz front wracaja do zwyklego widoku.
           float wbeta = uWV.w * (1.0 - smoothstep(uWVFront.x - uWVFront.y, uWVFront.x + uWVFront.y, wfs));
-          // Scisk przy brzegu ograniczony (~7x): dalej lustrzane zawijanie tla
-          // powtarzalo sie drobnym wzorem („krzyzyki” na obwodzie kuli).
-          float wxi = min(wx, 0.94);
-          float wk = pow(1.0 / (1.0 - wxi * wxi), uWVMisc.w * wbeta);
+          if (uWVMode > 0.5) {
+          // Bańka Alcubierre'a (klepsydra): mglawica zalamana gradientem
+          // wysokosci pola — zaglebienie z przodu sciska obraz, wybrzuszenie
+          // z tylu go rozciaga; relief ze swiatla z boku i barwa platow
+          // (turkus / pomarancz). Gwiazd gry (wStarUv) bańka nie gnie: smugi
+          // skoku zostaja plaskie i rownolegle do lotu (user: gięte na platach
+          // wygladaly jak 3D).
+          vec2 aq = vec2(wfs, wcs);
+          float ah = wvAlcH(aq, uWVAlc);
+          float ahx = (wvAlcH(aq + vec2(0.01, 0.0), uWVAlc) - wvAlcH(aq - vec2(0.01, 0.0), uWVAlc)) * 50.0;
+          float ahy = (wvAlcH(aq + vec2(0.0, 0.01), uWVAlc) - wvAlcH(aq - vec2(0.0, 0.01), uWVAlc)) * 50.0;
+          // Probka w strone rosnacej wysokosci: w zaglebieniu od jego dna
+          // (obraz sciskany), na wybrzuszeniu ku szczytowi (obraz rozciagany).
+          vec2 aqs = aq + uWVAlc2.x * wbeta * vec2(ahx, ahy);
+          vec2 asrc = (wf * aqs.x + wpp * aqs.y) * wR;
+          uv = uWV.xy + vec2(asrc.x / uAspect, asrc.y);
+          float aw = abs(ah) * wbeta;
+          vec3 acol = mix(vec3(0.12, 0.85, 1.0), vec3(1.0, 0.42, 0.1), step(0.0, ah));
+          // Relief: normalna z gradientu (w ekranie), swiatlo z lewej-gory.
+          vec2 ag = (wf * ahx + wpp * ahy) * wbeta;
+          vec3 an = normalize(vec3(-ag * 0.6, 1.0));
+          wvShade = 1.0 + uWVAlc2.z * (dot(an, normalize(vec3(-0.45, 0.55, 0.7))) - 0.7 / length(vec3(-0.45, 0.55, 0.7)));
+          wvAdd = acol * aw * uWVAlc2.y;
+          } else {
+          float wl = sqrt(wfs * wfs + wcs * wcs);
+          float wB = wvDropExit(wl > 1e-6 ? vec2(wfs, wcs) / wl : vec2(1.0, 0.0), uWVDrop);
+          float wx = wl / wB;
+          // Gwiazdy: rybie oko siega najwyzej krawedzi kadru w kierunku piksela —
+          // dalej cel zawija sie lustrzanie i w odbiciu lecialy w druga strone.
+          // Mgławica (gwiazdy we wlasnym celu): pelne rybie oko, brzeg kropli =
+          // nieskonczonosc; jej odbicie czyta sie jak mgławica.
+          float wEdge = wvEdgeDist(vec2(uWV.x * uAspect, uWV.y), wl > 1e-6 ? wd / (wl * wR) : wf, uAspect);
+          float wkS = wvFisheye(wx, 0.97 * wEdge / (wB * wR), uWVMisc.w, wbeta);
+          float wk = uWVStars > 0.5 ? wvFisheye(wx, 8.6, uWVMisc.w, wbeta) : wkS;
           float wa = wfs / wB;
           float wb = wcs / wB;
           float wq2 = max(wa * wa + wb * wb, 1.0);
@@ -461,8 +575,18 @@ ${WARP_DROP_GLSL}
             float ws = (float(k) + wjit) / 12.0;
             vec2 pA = wd - wvb * (uWVMisc.x * wphA + uWVMisc.y * ws);
             vec2 pB = wd - wvb * (uWVMisc.x * wphB + uWVMisc.y * ws);
-            wcA += texture2D(tSource, uWV.xy + vec2(pA.x / uAspect, pA.y)).rgb;
-            wcB += texture2D(tSource, uWV.xy + vec2(pB.x / uAspect, pB.y)).rgb;
+            vec2 qA = uWV.xy + vec2(pA.x / uAspect, pA.y);
+            vec2 qB = uWV.xy + vec2(pB.x / uAspect, pB.y);
+            // Gwiazdy tylko z kadru (odbicie lustrzane odwracaloby ich ruch);
+            // sama mgławica moze brac odbicie.
+            vec2 cA = clamp(qA, 0.001, 0.999);
+            vec2 cB = clamp(qB, 0.001, 0.999);
+            wcA += texture2D(tSource, uWVStars > 0.5 ? qA : cA).rgb;
+            wcB += texture2D(tSource, uWVStars > 0.5 ? qB : cB).rgb;
+            if (uWVStars > 0.5) {
+              wcA += texture2D(tStars, cA).rgb;
+              wcB += texture2D(tStars, cB).rgb;
+            }
           }
           wvFlow = (wcA * wwA + wcB * (1.0 - wwA)) * (mix(1.0, uWVMisc.z, wbeta) / 12.0);
           // Brzeg kuli bez twardej granicy: wnetrze przechodzi w oplyw. Maska
@@ -472,10 +596,15 @@ ${WARP_DROP_GLSL}
           wvOut = smoothstep(0.9, 1.03, wx);
           vec2 wIn = wd * wk;
           uv = uWV.xy + vec2(wIn.x / uAspect, wIn.y);
+          vec2 wInS = wd * wkS;
+          wStarUv = uWV.xy + vec2(wInS.x / uAspect, wInS.y);
+          }
         }
         // Probkowanie poza galezia warunkowa: mipmapy biora pochodne z ciaglej
         // mapy (tlo sciskane stycznie przy srodku nie iskrzy).
         gl_FragColor = texture2D(tSource, uv);
+        if (uWVStars > 0.5) gl_FragColor.rgb += texture2D(tStars, clamp(wStarUv, 0.001, 0.999)).rgb;
+        gl_FragColor.rgb = gl_FragColor.rgb * wvShade + wvAdd;
         gl_FragColor.rgb = mix(gl_FragColor.rgb, wvFlow, wvOut);
       }
     `

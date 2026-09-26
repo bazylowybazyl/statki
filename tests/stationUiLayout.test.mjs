@@ -3,9 +3,10 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const root = process.cwd();
+// Kopia public/assets/css/main.css usunięta 2026-09-26 — dev i build czytają ten
+// sam plik (tests/devPublicShadow.test.mjs pilnuje, żeby nie wróciła).
 const cssFiles = [
   'assets/css/main.css',
-  'public/assets/css/main.css',
 ];
 
 function readRule(css, selector) {

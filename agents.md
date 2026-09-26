@@ -14,7 +14,8 @@
 - **`planet3d.assets.js`** — aktywna warstwa planet/słońca (API globalne: `initPlanets3D`, `updatePlanets3D`, `drawPlanets3D`).
 - **`planet3d.proc.js`** — wariant legacy/proceduralny (nie używać jako głównej ścieżki bez wyraźnej potrzeby).
 - **`src/3d/haloRing/`** — ring „Halo” Ziemi i Marsa (teren, miasta, megastruktura, port K-7); klej gry `haloRingGame.js`, kolizje `src/game/haloRingCollision.js`. Opis: `docs/PORT-halo-ring.md`.
-- **`src/game/destructor.js`** — silnik destrukcji heksów (fizyka kolizji, deformacje, splity, debris).
+- **`src/game/hullBodies.js`** — kadłuby statków, NPC i wraków na silniku belek (`src/game/destructorBeams3D.js`, tryb płaski): budowa ze sprite'a, synchronizacja ruchu, trafienia, wraki. Opis: `docs/PORT-silnik-belek.md`.
+- **`src/game/destructor.js`** — stary silnik heksów; dziś już tylko asteroidy (do portu skał na belki).
 - **`src/game/shipEntity.js`** — konfiguracja i geometria statku gracza (fizyka wejścia, offsety, thrusters, hardpointy).
 - **`package.json`** — serwer dev i zależności.
 
@@ -41,17 +42,25 @@
 ### Świat i kamera
 - `WORLD` — rozmiar mapy.
 - `camera` — zoom, limity, tryby śledzenia/focus.
+- Zoom: wejście (kółko, pad, ŚPM) ustawia tylko `camera.targetZoom`; `camera.zoom` goni go sprężyną w log(zoom) RAZ NA KLATKĘ renderu (`updateCameraZoom` w `index.html`, `src/game/cameraZoom.js`). Nie krokuj zoomu w `physicsStep` (120 Hz vs 144/165 Hz = klatki bez ruchu, zoom „skacze”) i nie pisz `camera.zoom` wprost z wejścia. Zoom RTS do kursora = kotwica `camera.zoomAnchor`.
 
 ### Planety i słońce
 - `initPlanets3D(planets, SUN)` — inicjalizacja.
 - `updatePlanets3D(dt, cam)` — aktualizacja.
 - Planety są częścią wizualnej warstwy 3D, gameplay nadal jest liczony w 2D.
+- Halo (poświata limbu) Ziemi i Marsa: `createRingAtmosphere` w `planet3d.assets.js` — płaski dysk w passie ortho z modelem atmosfery z tła menu (cięciwa przez powłokę R + H, gęstość e^(−h/Hs)), gaśnie do zera na brzegu powłoki. Nie wracaj do powłoki-kuli z maską Fresnela: przy 1,21 R dawała kropkowany łuk, przy 1,034 R ~1% jasności (halo znikało).
 
 ### Ring „Halo” (Ziemia, Mars)
 - `HaloRingGame` (`src/3d/haloRing/haloRingGame.js`): BG warstwa 1, górna ściana i suwnice K-7 w FG (warstwa 2). `haloRings.update(frameDt, cam, …)` co klatkę PRZED `Core3D.render`, z kamerą TEJ klatki (`cam` ze wstrząsem) — ring liczy pozycje względem kamery (RTE), inna kamera przesunie go względem statków. Jakość = `OPTIONS.planetQuality` („Ultra” = dalszy LOD, `HALO_LOD_ULTRA`).
 - Ring jest PRZESZKODĄ w płaszczyźnie gry: płyta podłogi z terenem, przelot tylko 4 tranzytami (`stepShipRingCollisions`, `haloRings.pointInSlab` dla pocisków). Nowe ruchy statków przy Ziemi/Marsie (spawny, teleporty, autopiloty) muszą tę płytę omijać.
 - Stacja Ziemi i Marsa = stacja-port w hali K-7 (`ringPort`, `isCollidable: false`, `terminalRange`) — wyglądem stacji jest ring: nie rysuj dla niej brył ani ikon stacji.
 - Ring nie udaje życia (`docs/BRIEF-ring-halo.md` §1): bez ruchu zastępczego, zaparkowanych NPC i świateł aut — statki tylko z systemu ruchu.
+
+### Menu główne i jego tło 3D
+- Tło menu przed startem gry = Ziemia z ringiem w kamerze kinowej: `MenuBackdrop3D` (`src/3d/menuBackdrop3D.js`). Ring to ring GRY wypożyczony przez `haloRings.showcaseRing('earth')` (mapy pieką się już w menu) i oddany `releaseShowcase` w `stopMenuBackdrop()` tuż przed pierwszą klatką gry (`startGame`). Nie twórz drugiego ringu dla menu.
+- Render: `Core3D.renderBackdrop(camera)` — ta sama scena i post (bloom, ACES), tylko warstwa `MENU_BACKDROP_LAYER` (9; na czas menu ring ma na niej wszystkie siatki). Ziemia i niebo tła są dziećmi grupy ringu i liczą światło w układzie ringu (`uCamLocal`, `uSunDir`, `haloRingBlock`); tekstury Ziemi pożyczone od planety gry (`window.EARTH`), mgławica od `NebulaSystem`.
+- Start tła jest w tle: shader pieczenia map ringu kompiluje się kilka sekund (ANGLE/D3D), więc `createHaloBakeWarmup` + `renderer.compileAsync` przed budową ringu, a programy ringu/Ziemi/nieba `compileAsync` przed pierwszą klatką. Rozgrzewka musi mieć te same źródła i parametry co `HaloWorldMaps._makeMaterial` i scenę BEZ świateł (liczba świateł wchodzi do klucza programu three) — pilnuje `tests/menuBackdrop.test.mjs`.
+- Style menu: `assets/css/main-menu.css` (osobny plik, wczytywany po `main.css`). JS menu szuka widoków po id i przycisków po klasie `menu-btn-styled` (pad/klawiatura); stare reguły tych klas neutralizuje `all: unset` w zasięgu `#main-menu`.
 
 ### Stacje i obiekty 3D
 - `updateStations3D(stations)` — synchronizacja stacji 2D -> 3D.
@@ -60,9 +69,19 @@
 ### Statek gracza
 - Obiekt `ship`: pozycja, kąt, prędkość, masa, shield/hull.
 - Sterowanie i fizyka gracza: `shipEntity.js`.
-- Destrukcja i kolizje heksów: `destructor.js`.
+- Kadłub, kolizje i destrukcja: `ship.beamHull` (`hullBodies.js`, silnik belek) — jak u NPC i wraków.
+
+### Kadłuby na belkach (`hullBodies.js`, `docs/PORT-silnik-belek.md`)
+- Encja z kadłubem ma `beamHull`, nie `hexGrid`. Budowa: `HullBodies.createHull(entity, obraz, { visualImage })` z tego samego obrazu, który dostawał `initHexBody`; zwolnienie: `HullBodies.release`.
+- Układ silnika = układ renderu Core3D: `X = x`, `Y = −y`, `θ = −(angle + spriteRotation)`. Kotwica encji: statek = środek sprite'a, wrak = środek masy (`anchorMode: 'com'`, `hull.pivot`).
+- Gra całkuje ruch encji; `HullBodies.step` w `physicsStep` synchronizuje ciało w obie strony. Nie pisz pozycji węzłów ani `body.pos` z gry — ruszaj encję.
+- Trafienia i zapytania tylko przez `HullBodies` (`sweep`, `impact` = krater z budżetem HP, `probe`, `cutSegment`); styk dla AI: `HullBodies.hasContact`; sufit HP: `HullBodies.structuralState`.
+- Nowy wrak z kadłuba (śmierć, rozpad, wybuch reaktora) idzie przez `convertToWreck` / `shatter` / hak `onWreck` — nie składaj go ręcznie.
+- Siatka 15 px jak w demie (`HULL_BODY_CONFIG.cellPx`); jednostką strojenia zostaje dawny heks (`HEX_PITCH_PX` = 7,5): węzeł = `hull.hexPerNode` heksów (HP ×4, łup, tempo cięcia, promień krateru). Nową wartość „na komórkę” przeliczaj przez `hexPerNode`. Nie zagęszczaj siatki bez pomiaru ciągłego styku — przy 7,5 px pchany okręt budził się cały i nie zasypiał (krok 2,7 ms zamiast 0,13).
+- Dwie masy: ciało w silniku ma masę ZDERZEŃ z powierzchni kadłuba (`HULL_BODY_CONFIG.massPerArea`, jedna gęstość jak demo — Atlas ≈ 800 tys.), `entity.mass` to masa GRY (ciąg ∝ masa, separacja AI, holowanie, asteroidy). Nie przepisuj jednej w drugą: `syncOut` skaluje masę gry i `inertia` w stosunku ubytku masy ciała, wrak dostaje masę w skali gry rodzica.
 
 ### Mostki (zniszczenie mostka = kill)
+- **Stan 2026-09-25: mostki i rdzenie wymagają `hexGrid`, więc na kadłubach belkowych są nieaktywne do ich portu (etapy 4–5 w `docs/PORT-silnik-belek.md`).** Opis niżej dotyczy docelowego zachowania.
 - `src/game/shipBridge.js` (strefy heksów, integralność, oś czasu), `src/game/shipBridgeRuntime.js` (klej gry), `src/3d/bridgeFx3D.js` (okna, wyrzut atmosfery). Opis: `docs/PORT-mostki.md`.
 - Utrata dowodzenia robi z NPC hulka (`isBridgeHulk`): `npcStep` pomija AI i model lotu, `applyDamageToNPC` i sufit heksów go nie ruszają, po `BRIDGE_KILL_TIMELINE.sequenceEnd` `finishBridgeKill` robi wrak BEZ losowego wybuchu reaktora. Nowe ścieżki śmierci / AI / celowania muszą to respektować.
 - AI celowo nie celuje w mostki (za szybko zabijałoby gracza) — tylko przyszli „bossowie”.
@@ -77,6 +96,7 @@
 - Shadery efektów w passie ortho: bez `pow()` z możliwie ujemną podstawą i z clampem varyingów — MSAA ekstrapoluje je poza trójkąt, a NaN w buforze HalfFloat bloom rozlewa na cały ekran.
 
 ### Wraki: gorące, śpiące, zimne
+- Wraki kadłubów na belkach (`beamHull`) jeszcze NIE zamarzają (`isFreezeCandidate` wymaga `hexGrid`) — port zimnych wraków to etap 3 w `docs/PORT-silnik-belek.md`. Usuwanie wraku: `recycleWreckEntity` (belki → `HullBodies.recycleWreck`).
 - `wrecks` = gorące i śpiące (`_wreckSleeping`); `coldWrecks` = zimne (`src/game/coldWrecks.js`, brief `docs/BRIEF-zimne-wraki.md`). Zimny wrak nie ma `hexGrid` (stan siatki w `_coldSnapshot`), nie jest w `wrecks`, siatce pocisków, listach destruktora ani `renderEntities` — rysuje go tylko batch smug. Łup i ładunek zostają na obiekcie.
 - Budzenie WYŁĄCZNIE jawne: `thawWreck(w, reason, onReady)` (holowanie, cięcie, rozkaz), max 1 na klatkę. Nowa ścieżka usuwająca wraki obsługuje też `coldWrecks` (`coldWreckSystem.forget`), a nowe odwołanie do wraku (cel, lina, rozkaz) trzeba stemplować w `markColdWreckReferences` — inaczej wrak zamarznie pod ręką.
 
@@ -113,6 +133,7 @@
    - Passy planet (warstwa 3), halo (5), ring-planet (6) i tarcz (7) są pomijane, gdy nikt nie zgłosi na nich widocznej zawartości (`Core3D.layerActivity`). Dodając obiekt na te warstwy, zgłaszaj go co klatkę (`Core3D.markPlanetLayersActive` / `Core3D.setShieldLayerActive`) — inaczej zniknie.
    - Shadow mapa słońca ma `autoUpdate = false`; odświeża się tylko przed passami ortho i FG. Nowy rzucający cień na innej warstwie wymaga `shadowMap.needsUpdate` przed jej passem.
    - Soczewka skoku (warp) to pass Core3D zaraz po tle (`src/3d/warpLens3D.js`): przy aktywnej tło (warstwa 1) idzie do `warpLensTarget`, a `warpLensPass` kładzie je zakrzywione pod planety, statki i FG, przed bloomem. Gra zgłasza ją w świecie co klatkę PRZED `Core3D.render` (`setWarpLensWorld` / `clearWarpLens`, klej: `src/vfx/warpLensPass.js`). Nie próbkuj gotowej klatki 2D i nie wycinaj statku maską — tak powstało „jajko” wokół kadłuba.
+   - Widok skoku (kropla, `src/3d/warpWorldLens.js`, `Core3D.setWarpViewWorld`) w tym samym passie: cel tła zawija się lustrzanie, więc gwiazdy gry na czas kropli idą osobno — `Core3D.setWarpStarsObject` przenosi je co klatkę na warstwę 8 (`warpStarTarget`, rybie oko ograniczone kadrem; w odbiciu leciały w drugą stronę) i oddaje na warstwę 1, gdy widoku nie ma. Warstwa 8 jest zajęta, warstwa 9 to tło menu (`MENU_BACKDROP_LAYER`, rysuje ją tylko `Core3D.renderBackdrop`).
    - Cienie słońca (shadow shafts) to MASKA widoczności, nie filtr obrazu: `Core3D._renderSunShadowMask` liczy ją raz na klatkę przed pre-passem halo (`sunShadowTarget`, `src/3d/sunShadowMask.js`; R = cień powierzchni, G = smuga tła z ringami). Nowy materiał oświetlany słońcem w płaszczyźnie gry dostaje `sunShadowUniforms` + `SUN_SHADOW_GLSL` i mnoży przez `sunVisibility()` człon słońca, a otoczenie przez `sunFill()` (w pełnym cieniu `SUN_SHADOW_FILL` = 0,4); światła, żar i glow zostają; tło — `sunShaftBackdrop`; wbudowane materiały three — `applySunShadowToBuiltinMaterial`. Emitery (broń, dysze, błyski, światła pozycyjne, tarcze) i ring „Halo” (własny model słońca) maski NIE czytają. Nie przywracaj quada mnożącego gotowy obraz — gasił broń z warstwy 0 pod progiem bloomu i kładł drugi cień na ring.
    - Cień kadłubów w passie shadow shafts = pole odległości sylwetki (`src/3d/hullShadowSdf.js`: warstwa tablicy tekstur na kształt, pieczenie z budżetem w `updateHexShips3D`). Okluder statku zgłaszaj przez `Core3D.pushShaftHullSdf` z danymi z `packHullShaftOccluder` (to samo przekształcenie co mesh kadłuba). Zmieniając `HULL_SDF_SHADOW_GLSL`, zmień też lustro `traceHullShadowCpu` — na nim stoją testy.
 
@@ -123,10 +144,11 @@
    - Początek przy kamerze daje `sceneOriginNearCamera` (`src/3d/sceneOrigin.js`); dane przepisywane co klatkę — początek co klatkę (np. `shipLights3D.js`, `fxParticles3D.js`), bufor pisany raz przy emisji (pierścień) — początek „lepki” z przesunięciem żywych danych dopiero po odjeździe kamery (`sparkSystem3D.js`, `slugTrail3D.js`). Pozycje świata w pulach CPU: `Float64Array`. Pomiar przed/po: `dema/precyzja-drzenie.js` (bloom wyłączaj przez `bloomPass.enabled` — sam `perfToggles.bloom = false` go nie wyłącza).
 
 3. **Destruction + ship integration**
-   - Zachowaj spójność osi/rotacji między `shipEntity.js` i `destructor.js`.
+   - Zachowaj spójność osi/rotacji między `shipEntity.js` i `hullBodies.js` (odbicie y, kotwica środka sprite'a).
    - Unikaj alokacji w gorących pętlach (kolizje, spatial queries, contact buffers).
    - Krok fizyki `PHYS_HZ` domyślnie 120 Hz (`?physHz=60` do testów A/B). Nowe stałe „na krok” (mnożniki tłumienia, liczniki w tickach) tylko przez `stepDecay120` / `ticksAt120` z `src/game/stepDecay.js` — inaczej zmiana kroku zmienia zachowanie gry.
-   - `hexGrid.grid` jest indeksowana komórką POCZĄTKOWĄ heksa, a wgnieciony heks stoi do `_maxHexDrift` px dalej. Szukanie heksów w oknie komórek (sondy trafień, raymarch wiązki) musi doliczyć `getHexProbeDrift(grid)` — inaczej heksy-duchy: pocisk przelatuje przez wgniecenie. Trafienie, które zna heks, podaje go do `applyImpact(..., { shard })` (w `index.html`: `applyHexImpact`), zamiast szukać drugi raz.
+   - Silnik belek: magazyny węzłów i belek to SoA (`beamStore3D.js`) — pola dodawaj jawnie po nazwie w konstruktorze (inaczej V8 przechodzi w tryb słownikowy) i w `gatherNodeFields`. Zmiana fizyki = sprawdzenie złotych stanów (hash stanu kanoniczny) i testów `tests/beam*.test.mjs`.
+   - (Heksy — dziś tylko asteroidy.) `hexGrid.grid` jest indeksowana komórką POCZĄTKOWĄ heksa, a wgnieciony heks stoi do `_maxHexDrift` px dalej. Szukanie heksów w oknie komórek (sondy trafień, raymarch wiązki) musi doliczyć `getHexProbeDrift(grid)` — inaczej heksy-duchy: pocisk przelatuje przez wgniecenie. Trafienie, które zna heks, podaje go do `applyImpact(..., { shard })` (w `index.html`: `applyHexImpact`), zamiast szukać drugi raz.
    - Solver sprężyn GPU kroczy w czasie gry (`gpuSoftBodyHz` = 60), nie w klatkach renderu; liczniki dispatchera są w krokach 60 Hz.
 
 4. **Wydajność**
@@ -145,6 +167,7 @@
 - Trzymaj zmiany małe i izolowane.
 - Nie zmieniaj API bez potrzeby i opisu skutków.
 - Zachowuj kompatybilność warstwy grywalnej 2D.
+- Nie kopiuj do `public/` plików, które `index.html` ładuje z roota (`assets/css/*`, `src/*`): Vite w dev podaje `public/` PRZED rootem, a build bierze root — do 2026-09-26 dev pokazywał sierpniową kopię `main.css`. Pilnuje `tests/devPublicShadow.test.mjs`.
 
 
 ### Lista kontrolna PR

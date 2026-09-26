@@ -54,6 +54,17 @@ test('road lights preserve direction and beam controls', () => {
   });
 });
 
+test('flood lights normalize like road lights with their own short, wide defaults', () => {
+  const flood = normalizeLightMarker({ id: 'f', x: -100, y: 20 }, 'floodlight');
+  assert.deepEqual(flood, {
+    id: 'f', x: -100, y: 20, color: '#e8f0ff', power: 1.5, radius: 6, deg: -90, range: 420, coneDeg: 110
+  });
+  const compact = compactLightMarker({ id: 'f', x: 1, y: 2, deg: 180, range: 300, coneDeg: 90 }, 'flood');
+  assert.equal(compact.deg, 180);
+  assert.equal(compact.coneDeg, 90);
+  assert.equal(compact.sequenceGroup, undefined);
+});
+
 test('lights block keeps supported marker groups only', () => {
   const lights = normalizeLightsBlock({
     position: [
@@ -76,7 +87,8 @@ test('lights block keeps supported marker groups only', () => {
 
 test('compact light markers keep the stored schema minimal and explicit', () => {
   const empty = createEmptyLights();
-  assert.deepEqual(empty, { position: [], road: [] });
+  // flood = reflektory otoczenia (rufa, burty) od 2026-09-26.
+  assert.deepEqual(empty, { position: [], road: [], flood: [] });
 
   const position = compactLightMarker({
     id: 'p',

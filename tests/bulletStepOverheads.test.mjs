@@ -199,7 +199,9 @@ test('sweep po odcinku [0, limit] znajduje ten sam heks co pełny, gdy leży prz
   }
   const step = sliceFunction(html, 'function bulletsAndCollisionsStep(dt, emitTrails = true, trailDt = dt) {');
   const shieldAt = step.indexOf('getEntityShieldRadiusTowards(npc._realEntity || npc, b.x, b.y)');
-  const sweepAt = step.indexOf('DestructorSystem.sweepImpact(realNpc');
+  // Sweep kadłuba: na belkach (HullBodies) albo po heksach (asteroidy) — ta sama funkcja wywołania.
+  const sweepAt = step.indexOf('sweepFn(realNpc');
+  assert.match(step, /const sweepFn = realNpc\.beamHull \? hullSweepImpact : hexSweepImpact;/);
   assert.ok(shieldAt > 0 && sweepAt > shieldAt, 'tarcza liczona przed sweepem heksów');
   assert.match(step, /if \(shieldT >= 0 && shieldT < sweepLimit\) sweepLimit = shieldT;/);
 });

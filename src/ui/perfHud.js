@@ -1205,18 +1205,26 @@ export const PerfHUD = {
     let hotWreckCount = 0;
     let sleepingWreckCount = 0;
     const all = [];
-    if (ship && ship.hexGrid && !ship.dead) all.push(ship);
+    if (ship && (ship.hexGrid || ship.beamHull) && !ship.dead) all.push(ship);
     for (const npc of npcs) {
-      if (npc && npc.hexGrid && !npc.dead) all.push(npc);
+      if (npc && (npc.hexGrid || npc.beamHull) && !npc.dead) all.push(npc);
     }
     for (const w of wrecks) {
       if (!w || w.dead) continue;
       if (w._wreckSleeping) sleepingWreckCount++;
       else hotWreckCount++;
-      if (w.hexGrid) all.push(w);
+      if (w.hexGrid || w.beamHull) all.push(w);
     }
     entitiesCount = all.length;
     for (const e of all) {
+      // Kadłub na belkach: żywe węzły zamiast heksów.
+      const hullBody = e?.beamHull?.body;
+      if (hullBody) {
+        const live = hullBody.dead ? 0 : hullBody.activeNodes;
+        if (e.isWreck && e._wreckSleeping) sleepingShards += live;
+        else activeShards += live;
+        continue;
+      }
       const shards = e?.hexGrid?.shards;
       if (!Array.isArray(shards)) continue;
       const isSleeping = e.isWreck && e._wreckSleeping;

@@ -26,8 +26,32 @@
  * to, co już zostało ustalone.
  */
 
-import { findBerth, reserveBerth, releaseBerth } from './dockLayout.js';
-import { STAGE_KIND, DWELL_REASON } from './courseRegistry.js';
+import { findBerth, reserveBerth, releaseBerth, berthRole, BERTH_ROLE } from './dockLayout.js';
+import { STAGE_KIND, DWELL_REASON, COURSE_KIND } from './courseRegistry.js';
+
+/**
+ * Kursy obsługiwane na stanowiskach wojskowych (hale K-7 — decyzja użytkownika
+ * 2026-09-26: K-7 = flota frakcji, zatoki = terminale przeładunkowe). Dziś
+ * wyprawy wojenne nie cumują (same przeloty), a łowcy tylko krążą (`HOLD`),
+ * więc to furtka dla przyszłych dostaw okrętów ze stoczni i powrotów floty.
+ * Kurs może też podać rolę wprost polem `berthRole`.
+ */
+export const MILITARY_COURSE_KINDS = Object.freeze([COURSE_KIND.WAR, COURSE_KIND.PATROL]);
+
+/** Na jakiej roli stanowisk kurs ma stanąć: `civil` albo `military`. */
+export function berthRoleForCourse(course) {
+  if (course?.berthRole) return String(course.berthRole);
+  return MILITARY_COURSE_KINDS.includes(course?.kind) ? BERTH_ROLE.MILITARY : BERTH_ROLE.CIVIL;
+}
+
+/**
+ * Rola, którą port faktycznie obsłuży. Port bez stanowisk tej roli (mała stacja
+ * z samymi pomostami cywilnymi) wpuszcza na wszystkie — inaczej okręt czekałby
+ * w kolejce do końca gry na stanowisko, którego nie ma.
+ */
+function serviceRole(port, wanted) {
+  return port.roles.has(wanted) ? wanted : null;
+}
 
 export const PORT_CONTROL_DEFAULTS = Object.freeze({
   /**
@@ -85,6 +109,8 @@ export function registerPort(control, stationId, layout, node) {
     /** Kąt, wokół którego rozpina się łuk oczekiwania. Stały, żeby kolejka
      *  nie wędrowała po orbicie między klatkami. */
     baseAngle: Number(node.angle) || 0,
+    /** Role stanowisk obecne w porcie (`civil`, `military`). */
+    roles: new Set(layout.berths.map(berthRole)),
     /** `courseId` → { berth, berthId, slot, heldSince } */
     assigned: new Map(),
     /** Zajęte numery miejsc w kolejce. */
@@ -167,7 +193,9 @@ function najnizszyWolnySlot(port) {
  * w kolejce.
  *
  * Dobór stanowiska jest best-fit po klasie kadłuba — bez tego szutla zajmuje
- * gniazdo klasy capital i blokuje je na czas obsługi.
+ * gniazdo klasy capital i blokuje je na czas obsługi. Rola stanowiska idzie
+ * za rodzajem kursu (`berthRoleForCourse`), a remis między dokami rozstrzyga
+ * `findBerth` na korzyść najmniej obłożonego — ruch widać w całym porcie.
  */
 export function requestService(control, stationId, course, now = 0, serviceSeconds = 0) {
   const port = getPort(control, stationId);
@@ -176,12 +204,14 @@ export function requestService(control, stationId, course, now = 0, serviceSecon
   const istniejacy = port.assigned.get(course.id);
   if (istniejacy) return istniejacy;
 
-  const pick = findBerth(port.layout, course.unitClass, now, { freeOnly: true });
+  const role = serviceRole(port, berthRoleForCourse(course));
+  const pick = findBerth(port.layout, course.unitClass, now, { freeOnly: true, role });
   if (pick) {
     reserveBerth(pick.berth, course.id, now + Math.max(0, serviceSeconds));
     const przydzial = {
       courseId: course.id,
       unitClass: course.unitClass,
+      role,
       berth: pick.berth,
       berthId: pick.berth.id,
       slot: null,
@@ -204,8 +234,10 @@ export function requestService(control, stationId, course, now = 0, serviceSecon
     courseId: course.id,
     // Klasa kadłuba MUSI zostać na przydziale: gdy zwolni się stanowisko,
     // `grantWaiting` dobiera je best-fit i bez tej informacji wpuściłoby
-    // szutlę na gniazdo klasy capital albo odwrotnie.
+    // szutlę na gniazdo klasy capital albo odwrotnie. Rola — z tego samego
+    // powodu: frachtowiec z kolejki nie może dostać stanowiska w hali wojskowej.
     unitClass: course.unitClass,
+    role,
     berth: null,
     berthId: null,
     slot,
@@ -244,6 +276,10 @@ export function releaseService(control, courseId, now = 0) {
  * odległości. To jest warunek braku zagłodzenia: przy sortowaniu po czymkolwiek
  * innym duży, wolny frachtowiec nigdy nie wchodzi, bo zawsze opłaca się wpuścić
  * kogoś szybszego.
+ *
+ * FIFO obowiązuje W OBRĘBIE ROLI: stanowiska cywilne i wojskowe to osobne
+ * pule, więc frachtowiec czekający na zatokę nie wstrzymuje okrętu, dla którego
+ * w hali K-7 jest miejsce (i odwrotnie).
  */
 export function grantWaiting(control, stationId, now = 0) {
   const port = getPort(control, stationId);
@@ -255,9 +291,16 @@ export function grantWaiting(control, stationId, now = 0) {
   if (!czekajacy.length) return 0;
 
   let wpuszczonych = 0;
+  let zablokowane = null;
   for (const entry of czekajacy) {
-    const pick = findBerth(port.layout, entry.unitClass || '', now, { freeOnly: true });
-    if (!pick) break;
+    const role = entry.role ?? null;
+    const pula = role || '*';
+    if (zablokowane?.has(pula)) continue;
+    const pick = findBerth(port.layout, entry.unitClass || '', now, { freeOnly: true, role });
+    if (!pick) {
+      (zablokowane ||= new Set()).add(pula);
+      continue;
+    }
     reserveBerth(pick.berth, entry.courseId, now);
     entry.berth = pick.berth;
     entry.berthId = pick.berth.id;
@@ -280,11 +323,16 @@ export function grantWaiting(control, stationId, now = 0) {
  *
  * Wejście do pochłaniania opóźnienia: zamiast lecieć na pełnej i stać pod
  * bramą, statek zwalnia w drodze — tam, gdzie postój nic nie kosztuje.
+ *
+ * `options.role` — pula stanowisk (`berthRoleForCourse(course)`); domyślnie
+ * cywilna, bo tak liczy dyspozytor ruchu (podaje samą klasę kadłuba). Bez
+ * tego frachtowiec widziałby wolne hale K-7 i nie zwalniał przed pełnymi zatokami.
  */
-export function estimateWait(control, stationId, unitClass, now = 0) {
+export function estimateWait(control, stationId, unitClass, now = 0, options = {}) {
   const port = getPort(control, stationId);
   if (!port) return 0;
-  const pick = findBerth(port.layout, unitClass, now, { freeOnly: false });
+  const role = serviceRole(port, options.role || BERTH_ROLE.CIVIL);
+  const pick = findBerth(port.layout, unitClass, now, { freeOnly: false, role });
   if (!pick) return 0;
   return Math.max(0, pick.availableAt - now);
 }

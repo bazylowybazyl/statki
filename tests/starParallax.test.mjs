@@ -113,3 +113,37 @@ test('warp exit uses a short whip pulse and preserves the last warp direction', 
   assert.match(source, /if\s*\(\s*this\.exitWhipTimer\s*>\s*0\s*\)\s*\{\s*dx\s*=\s*this\.lastWarpDirX\s*;\s*dy\s*=\s*this\.lastWarpDirY\s*;/);
   assert.doesNotMatch(source, /this\.exitTimer\s*=\s*0\.8/);
 });
+
+test('oddalenie kamery nie zagęszcza gwiazd: wzór rośnie z kadrem poniżej zoomu odniesienia', async () => {
+  const { STAR_ZOOM_REF, starZoomCompensation } = await loadStarParallax();
+  // W zwykłym zakresie gry (i w widoku skoku przy domyślnym zoomie) bez zmian.
+  assert.equal(starZoomCompensation(1), 1);
+  assert.equal(starZoomCompensation(STAR_ZOOM_REF), 1);
+  assert.equal(starZoomCompensation(0), 1, 'zły zoom — bez kompensacji');
+  // Dalej: gwiazd na ekranie tyle co przy zoomie odniesienia (gęstość ~ (zoom·k)²).
+  for (const zoom of [0.04, 0.02, 0.006]) {
+    const k = starZoomCompensation(zoom);
+    assert.ok(Math.abs(zoom * k - STAR_ZOOM_REF) < 1e-12, `zoom ${zoom}: skala wzoru na ekranie jak przy odniesieniu`);
+  }
+});
+
+test('kamera gwiazd: ruch kamery podzielony przez kompensację, zmiana zoomu nie przesuwa wzoru, limit kroku', async () => {
+  const { advanceStarCamera } = await loadStarParallax();
+  const sc = { x: 0, y: 0, lx: NaN, ly: NaN };
+  advanceStarCamera(sc, 5_000_000, 3_000_000, 1);
+  assert.deepEqual([sc.x, sc.y], [5_000_000, 3_000_000], 'start od kamery gry');
+  // k = 1: dokładnie jak dawniej (przesunięcie = kamera gry).
+  advanceStarCamera(sc, 5_010_000, 2_990_000, 1);
+  assert.deepEqual([sc.x, sc.y], [5_010_000, 2_990_000]);
+  // k = 4: wzór 4× większy na ekranie, więc kamera gwiazd przesuwa się 4× mniej —
+  // gwiazdy na ekranie jadą tak samo szybko jak bez kompensacji.
+  advanceStarCamera(sc, 5_018_000, 2_990_000, 4);
+  assert.equal(sc.x, 5_012_000);
+  // Sama zmiana zoomu (kamera stoi) nie rusza wzoru.
+  advanceStarCamera(sc, 5_018_000, 2_990_000, 2);
+  assert.equal(sc.x, 5_012_000);
+  // Limit kroku (widok skoku): najwyżej maxStep na krok, w kierunku ruchu.
+  advanceStarCamera(sc, 5_118_000, 2_990_000, 1, 300);
+  assert.equal(sc.x, 5_012_300);
+  assert.equal(sc.y, 2_990_000);
+});

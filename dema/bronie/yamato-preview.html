@@ -60,6 +60,11 @@
       <option value="beam_pulse">Laser Wiązkowy · Puls M</option>
       <option value="ciws_mk1">CIWS · Mk I S</option>
       <option value="ciws_mk2">CIWS · Mk II M</option>
+      <option value="laser_pd_mk1">Helios PD Laser · S</option>
+      <option value="flak_s">Kartacz Flak · Lekki S</option>
+      <option value="flak_m">Kartacz Flak · Średni M</option>
+      <option value="flak_l">Grad Flak · Ciężki L</option>
+      <option value="flak_capital">Zapora Flak „Perun” · Capital</option>
       <option value="missile_rack">Cruise Missile Rack · M</option>
       <option value="fast_missile_rack">Fast Missile Rack · S</option>
       <option value="osa_micro_missile">Osa Mk I · S</option>
@@ -85,6 +90,7 @@
     import { LauncherSprite2D } from '../../src/vfx/launcherSprite2D.js';
     import { SpecialWeaponSprite2D } from '../../src/vfx/specialWeaponSprite2D.js';
     import { MainWeaponSprite2D } from '../../src/vfx/mainWeaponSprite2D.js';
+    import { PdWeaponSprite2D } from '../../src/vfx/pdWeaponSprite2D.js';
     import { MASTER_WEAPONS } from '../../src/data/weapons.js';
     import { getMountedWeaponAim } from '../../src/game/weaponAim.js';
 
@@ -102,6 +108,7 @@
       weapons: { special: [{ weapon: MASTER_WEAPONS.special_yamato_cannon, hp: { x: 0, y: 0 } }] }
     };
     const camera = { zoom: 1, ox: 0, oy: 0 };
+    const pdCloseZoom = { S: 14, M: 10, L: 7, Capital: 4 };
     window.worldToScreen = (x, y, cam) => ({ x: cam.ox + x * cam.zoom, y: cam.oy + y * cam.zoom });
     let currentWeapon = MASTER_WEAPONS.special_yamato_cannon;
     let currentLoadout;
@@ -119,13 +126,14 @@
       byId('variant-label').textContent = currentWeapon.id === 'special_yamato_cannon'
         ? 'YAMATO · POPRAWIONE' : SpecialWeaponSprite2D.supports(currentWeapon.id)
         ? 'CAPITAL · BROŃ SPECJALNA' : MainWeaponSprite2D.supports(currentWeapon.id)
-        ? `${currentWeapon.size} · BROŃ GŁÓWNA` : currentWeapon.category === 'ciws'
+        ? `${currentWeapon.size} · BROŃ GŁÓWNA` : currentWeapon.mountType === 'aux'
         ? `${currentWeapon.size} · OBRONA PUNKTOWA` : currentWeapon.category === 'rocket'
         ? `${currentWeapon.size} · WYRZUTNIA RAKIET` : `${currentWeapon.size} · ${currentWeapon.barrelsPerShot === 2 ? '2 LUFY' : '1 LUFA'}`;
       document.title = `${currentWeapon.name} — podgląd sprite’a`;
       if (currentWeapon.id === 'special_yamato_cannon') YamatoSprite2D.preload();
       else if (SpecialWeaponSprite2D.supports(currentWeapon.id)) SpecialWeaponSprite2D.preload(currentWeapon.id);
       else if (MainWeaponSprite2D.supports(currentWeapon.id)) MainWeaponSprite2D.preload(currentWeapon.id);
+      else if (PdWeaponSprite2D.supports(currentWeapon.id)) PdWeaponSprite2D.preload(currentWeapon.id);
       else if (currentWeapon.category === 'ciws') CiwsSprite2D.preload(currentWeapon.id);
       else if (currentWeapon.category === 'rocket') LauncherSprite2D.preload(currentWeapon.id);
       else TempestSprite2D.preload(currentWeapon.id);
@@ -151,6 +159,7 @@
         : currentWeapon.id === 'siege_railgun' ? 2.2
         : SpecialWeaponSprite2D.supports(currentWeapon.id) ? 3
         : MainWeaponSprite2D.supports(currentWeapon.id) ? 5.5
+        : PdWeaponSprite2D.supports(currentWeapon.id) ? pdCloseZoom[currentWeapon.size]
         : currentWeapon.id === 'supernova_missile' ? 4
         : currentWeapon.category === 'ciws' || currentWeapon.category === 'rocket' ? 14 : 7;
       const zoom = (requestedZoom === 0.85 ? Math.min(width / dpr / 1360, height / dpr / 640)
@@ -168,6 +177,7 @@
       LauncherSprite2D.enabled = sprites;
       SpecialWeaponSprite2D.enabled = sprites;
       MainWeaponSprite2D.enabled = sprites;
+      PdWeaponSprite2D.enabled = sprites;
       Turret2D.draw(ctx, camera);
       ctx.setTransform(1, 0, 0, 1, 0, 0);
     }
@@ -195,6 +205,7 @@
       const ready = currentWeapon.id === 'special_yamato_cannon' ? YamatoSprite2D.ready
         : SpecialWeaponSprite2D.supports(currentWeapon.id) ? SpecialWeaponSprite2D.isReady(currentWeapon.id)
         : MainWeaponSprite2D.supports(currentWeapon.id) ? MainWeaponSprite2D.isReady(currentWeapon.id)
+        : PdWeaponSprite2D.supports(currentWeapon.id) ? PdWeaponSprite2D.isReady(currentWeapon.id)
         : currentWeapon.category === 'ciws' ? CiwsSprite2D.isReady(currentWeapon.id)
         : currentWeapon.category === 'rocket' ? LauncherSprite2D.isReady(currentWeapon.id) : TempestSprite2D.isReady(currentWeapon.id);
       byId('status').textContent = ready ? 'Gotowe' : 'Ładowanie grafiki / aktywna sylwetka zastępcza';

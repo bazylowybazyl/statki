@@ -21,7 +21,7 @@
           'devConfig', 'devFlags', 'devBloomPanel', 'devRingColors',
           'devDestructorConfig', 'devDestructorMassConfig',
           'perfHudCollapsedSections', 'statki.scannerOverview.layout.v1',
-          'sc_shadow_shafts', 'sc_planet_quality', 'sc_hull_lacquer'
+          'sc_shadow_shafts', 'sc_planet_quality', 'sc_hull_lacquer', 'sc_audio'
         ]
       };
       const ALL_KEYS = [...SAVE_KEYS.ship, ...SAVE_KEYS.dev];
@@ -90,6 +90,8 @@
   <link rel="stylesheet" href="assets/css/cockpit-ui-bridge.css">
   <link rel="stylesheet" href="assets/css/ring-city-flight.css">
   <link rel="stylesheet" href="assets/css/perf-hud.css">
+  <!-- Menu główne i ekran ładowania (osobny plik, po main.css). -->
+  <link rel="stylesheet" href="assets/css/main-menu.css">
 
 </head>
 
@@ -262,272 +264,175 @@
   <div id="hud-topbar" class="hud-topbar hidden">
     <div id="skill-slots" class="skill-slot-row" aria-label="Umiejetnosci i skille"></div>
   </div>
-  <div id="main-menu">
-    <div class="menu-perspective-wrapper">
-      <div class="sc-logo-container">
-        <h1 class="sc-main-title">SUPER CAPITAL</h1>
-        <div class="sc-subtitle">Battle for Solar System</div>
+  <!-- MENU GŁÓWNE: po lewej kolumna (tytuł, lista, panele podmenu), po prawej
+       tło 3D — Ziemia z ringiem „Halo” (src/3d/menuBackdrop3D.js). Style:
+       assets/css/main-menu.css. JS szuka widoków po id, a przycisków po klasie
+       menu-btn-styled (nawigacja padem i klawiaturą). -->
+  <div id="main-menu" data-view="home">
+    <div class="mm-curtain" aria-hidden="true"></div>
+    <div class="mm-scrim" aria-hidden="true"></div>
+    <div class="mm-grain" aria-hidden="true"></div>
+
+    <div class="mm-hud" aria-hidden="true">
+      <i class="mm-corner mm-corner-tl"></i><i class="mm-corner mm-corner-tr"></i>
+      <i class="mm-corner mm-corner-bl"></i><i class="mm-corner mm-corner-br"></i>
+    </div>
+
+    <div class="mm-shell">
+      <header class="mm-title">
+        <!-- tylko w menu pauzy (klasa in-game) -->
+        <div class="mm-kicker"><i class="mm-led"></i><span>Gra wstrzymana</span></div>
+        <h1 class="mm-logo" aria-label="Super Capital">
+          <span class="mm-logo-top">Super</span>
+          <span class="mm-logo-main">Capital</span>
+        </h1>
+        <div class="mm-sub"><i></i>Battle for Solar System</div>
+      </header>
+
+      <div class="mm-body">
+        <nav id="menu-home-view" class="menu-sub-view active mm-nav" aria-label="Menu główne">
+          <button id="btn-continue" class="menu-btn-styled mm-item hidden" data-hint="Wróć do przerwanej bitwy">
+            <span class="mm-idx"></span><span class="mm-label">Kontynuuj</span><span class="mm-go">&#9656;</span>
+          </button>
+          <button id="btn-new-game" class="menu-btn-styled mm-item primary" data-hint="Jeden dowódca albo co-op na podzielonym ekranie">
+            <span class="mm-idx"></span><span class="mm-label">Nowa gra</span><span class="mm-go">&#9656;</span>
+          </button>
+          <button id="btn-load-game" class="menu-btn-styled mm-item" disabled data-hint="Zapis stanu gry — wkrótce">
+            <span class="mm-idx"></span><span class="mm-label">Wczytaj</span><span class="mm-tag">wkrótce</span>
+          </button>
+          <button id="btn-options" class="menu-btn-styled mm-item" data-hint="Grafika, planety i ring, smugi cieni, dźwięk">
+            <span class="mm-idx"></span><span class="mm-label">Opcje</span><span class="mm-go">&#9656;</span>
+          </button>
+          <button id="btn-editor" class="menu-btn-styled mm-item" data-hint="Edytor gniazd broni i dysz kadłuba">
+            <span class="mm-idx"></span><span class="mm-label">Edytor</span><span class="mm-go">&#9656;</span>
+          </button>
+          <button id="btn-keybinds" class="menu-btn-styled mm-item" data-hint="Skróty lotu, walki i interfejsu">
+            <span class="mm-idx"></span><span class="mm-label">Sterowanie</span><span class="mm-go">&#9656;</span>
+          </button>
+          <button id="btn-credits" class="menu-btn-styled mm-item" data-hint="O projekcie">
+            <span class="mm-idx"></span><span class="mm-label">Twórcy</span><span class="mm-go">&#9656;</span>
+          </button>
+          <div class="mm-hint" id="mm-hint" aria-live="polite"></div>
+        </nav>
+
+        <!-- NOWA GRA: wybór trybu -->
+        <section id="menu-gamemode-view" class="menu-sub-view mm-panel" aria-label="Tryb gry">
+          <header class="mm-panel-head"><span class="mm-panel-kicker">Nowa gra</span><h2>Tryb gry</h2></header>
+          <button id="btn-mode-single" class="menu-btn-styled mm-card primary" data-hint="Start przy Ziemi, Atlas i flota Terra Nova">
+            <span class="mm-card-icon">&#9651;</span>
+            <span class="mm-card-text"><b>Jeden gracz</b><em>Dowodzisz Atlasem i flotą Terra Nova</em></span>
+            <span class="mm-go">&#9656;</span>
+          </button>
+          <button id="btn-mode-split" class="menu-btn-styled mm-card" data-hint="Dwa pady, podzielony ekran">
+            <span class="mm-card-icon">&#9651;&#9651;</span>
+            <span class="mm-card-text"><b>Split screen co-op</b><em>Dwóch graczy na jednym ekranie — wybór kontrolerów i kadłubów</em></span>
+            <span class="mm-go">&#9656;</span>
+          </button>
+          <button id="btn-gamemode-back" class="menu-btn-styled mm-back"><span class="mm-back-arrow">&#9666;</span>Wróć<kbd>Esc</kbd></button>
+        </section>
+
+        <!-- OPCJE -->
+        <section id="menu-options-view" class="menu-sub-view mm-panel mm-panel-wide" aria-label="Opcje">
+          <header class="mm-panel-head"><span class="mm-panel-kicker">Konfiguracja</span><h2>Opcje</h2></header>
+          <div class="mm-panel-body">
+            <div class="mm-group">
+              <div class="mm-group-title">Grafika</div>
+              <div class="mm-field">
+                <div class="mm-field-label">Jakość planet i ringu (3D)</div>
+                <div class="menu-chip-group" role="group" aria-label="Jakość planet i ringu">
+                  <button class="menu-chip" data-planet-q="low">Low</button>
+                  <button class="menu-chip" data-planet-q="medium">Med</button>
+                  <button class="menu-chip" data-planet-q="high">High</button>
+                  <button class="menu-chip" data-planet-q="ultra">Ultra</button>
+                </div>
+                <p class="mm-note">Ring: Low/Med = lżejsze mapy i teren, High = pełny ring, Ultra = mapy 16K i dalszy LOD (okna budynków, drzewa i detal widać z daleka). Zmiana przebudowuje ring — w tle menu od razu.</p>
+              </div>
+              <div class="mm-field">
+                <div class="mm-field-label">Smugi cieni (god rays)</div>
+                <div class="menu-chip-group" role="group" aria-label="Smugi cieni">
+                  <button class="menu-chip" data-shaft-q="off">Off</button>
+                  <button class="menu-chip" data-shaft-q="low">Low</button>
+                  <button class="menu-chip" data-shaft-q="medium">Med</button>
+                  <button class="menu-chip" data-shaft-q="high">High</button>
+                </div>
+                <p class="mm-note">Cienie rzucane pod słońce przez planety, księżyce, ring, statki i asteroidy. High = najdłuższe smugi i więcej statków.</p>
+              </div>
+              <div class="mm-field">
+                <div class="mm-field-label">Lakier kadłubów</div>
+                <div class="menu-chip-group" role="group" aria-label="Lakier kadłubów">
+                  <button class="menu-chip" data-lacquer="off">Off</button>
+                  <button class="menu-chip" data-lacquer="on">On</button>
+                </div>
+                <p class="mm-note">Połysk kadłubów: odblask słońca i odbicie mgławicy. Koszt tylko po stronie karty graficznej.</p>
+              </div>
+            </div>
+            <div class="mm-group">
+              <div class="mm-group-title">Dźwięk</div>
+              <label class="mm-slider"><span>Głośność główna</span><output data-audio-out="master">80%</output>
+                <input type="range" min="0" max="100" step="1" value="80" data-audio="master"></label>
+              <label class="mm-slider"><span>Muzyka</span><output data-audio-out="music">70%</output>
+                <input type="range" min="0" max="100" step="1" value="70" data-audio="music"></label>
+              <label class="mm-slider"><span>Efekty</span><output data-audio-out="sfx">100%</output>
+                <input type="range" min="0" max="100" step="1" value="100" data-audio="sfx"></label>
+            </div>
+            <div class="mm-group">
+              <div class="mm-group-title">Sterowanie</div>
+              <p class="mm-note">Lista skrótów: menu główne → Sterowanie. Przypisywanie klawiszy — wkrótce.</p>
+            </div>
+          </div>
+          <button id="btn-options-back" class="menu-btn-styled mm-back"><span class="mm-back-arrow">&#9666;</span>Wróć<kbd>Esc</kbd></button>
+        </section>
+
+        <!-- STEROWANIE -->
+        <section id="menu-keybinds-view" class="menu-sub-view mm-panel mm-panel-xwide" aria-label="Sterowanie">
+          <header class="mm-panel-head"><span class="mm-panel-kicker">Skróty lotu, walki i interfejsu</span><h2>Sterowanie</h2></header>
+          <div class="mm-panel-body mm-keys-grid">
+            <div class="mm-keys-card">
+              <div class="mm-group-title">Klawiatura</div>
+              <div class="mm-kb">
+                <div class="mm-kb-row"><span class="mm-kb-key"><b>Q</b>Strafe L</span><span class="mm-kb-key"><b>W</b>Ciąg</span><span class="mm-kb-key"><b>E</b>Strafe P</span><span class="mm-kb-key"><b>R</b>Naprawa</span></div>
+                <div class="mm-kb-row"><span class="mm-kb-key"><b>A</b>Obrót L</span><span class="mm-kb-key warn"><b>S</b>Damper</span><span class="mm-kb-key"><b>D</b>Obrót P</span><span class="mm-kb-key"><b>F</b>Specjal</span></div>
+                <div class="mm-kb-row"><span class="mm-kb-key wide"><b>Shift</b>Bieg +</span><span class="mm-kb-key"><b>X</b>Skan</span><span class="mm-kb-key"><b>9</b>Warp</span><span class="mm-kb-key"><b>7</b>Auto</span></div>
+                <div class="mm-kb-row"><span class="mm-kb-key"><b>Tab</b>CIC</span><span class="mm-kb-key"><b>Caps</b>Łączność</span><span class="mm-kb-key"><b>J</b>Misje</span><span class="mm-kb-key"><b>Alt</b>Panele</span></div>
+                <div class="mm-kb-row"><span class="mm-kb-key"><b>V / 8</b>Tryb</span><span class="mm-kb-key"><b>1 2 3</b>Broń</span><span class="mm-kb-key"><b>P</b>Wydajność</span><span class="mm-kb-key warn wide"><b>Spacja</b>Pauza</span></div>
+              </div>
+            </div>
+            <div class="mm-keys-side">
+              <div class="mm-keys-card">
+                <div class="mm-group-title">Mysz</div>
+                <div class="mm-mouse-row"><kbd>LPM</kbd><span>Zatwierdź namiar</span></div>
+                <div class="mm-mouse-row"><kbd>PPM</kbd><span>Menu rozkazów</span></div>
+                <div class="mm-mouse-row"><kbd>ŚPM</kbd><span>SINGLE / MULTI / SUB</span></div>
+                <div class="mm-mouse-row"><kbd>Kółko</kbd><span>Zoom kamery</span></div>
+              </div>
+              <div class="mm-keys-card">
+                <div class="mm-group-title">W skrócie</div>
+                <p class="mm-keys-note"><b>Lot:</b> W przyspiesza, Q/E strafe, A/D obrót, Shift wyższy bieg.</p>
+                <p class="mm-keys-note"><b>Damper:</b> S odpala damper, C przełącza damper, B stabilizator.</p>
+                <p class="mm-keys-note"><b>Walka:</b> LPM zatwierdza namiar, 1/2/3 grupy broni.</p>
+                <p class="mm-keys-note"><b>Interfejs:</b> Alt wolna mysz i panele, Tab CIC, X skan.</p>
+              </div>
+            </div>
+          </div>
+          <button id="btn-keybinds-back" class="menu-btn-styled mm-back"><span class="mm-back-arrow">&#9666;</span>Wróć<kbd>Esc</kbd></button>
+        </section>
+
+        <!-- TWÓRCY -->
+        <section id="menu-credits-view" class="menu-sub-view mm-panel" aria-label="Twórcy">
+          <header class="mm-panel-head"><span class="mm-panel-kicker">Dane projektu</span><h2>Twórcy</h2></header>
+          <div class="mm-panel-body mm-credits">
+            <div class="mm-credit"><span>Autor</span><b>Szymon Bogdanowicz</b></div>
+            <div class="mm-credit"><span>Render</span><b>Three.js · WebGL 2</b></div>
+            <div class="mm-credit"><span>Fizyka</span><b>JavaScript + WebGPU</b></div>
+            <div class="mm-credit"><span>Wersja</span><b>0.0.1 alpha</b></div>
+          </div>
+          <button id="btn-credits-back" class="menu-btn-styled mm-back"><span class="mm-back-arrow">&#9666;</span>Zamknij<kbd>Esc</kbd></button>
+        </section>
       </div>
 
-      <div class="menu-glass-panel">
-        <div id="menu-home-view" class="menu-sub-view active">
-          <button id="btn-continue" class="menu-btn-styled hidden">
-            <span>Kontynuuj</span> <span>&#9654;</span>
-          </button>
-          <button id="btn-new-game" class="menu-btn-styled primary">
-            <span>Nowa Gra</span> <span>&#9876;</span>
-          </button>
-          <button id="btn-load-game" class="menu-btn-styled" disabled>
-            <span>Wczytaj</span> <span>&#128194;</span>
-          </button>
-          <button id="btn-options" class="menu-btn-styled">
-            <span>Opcje</span> <span>&#9881;</span>
-          </button>
-          <button id="btn-editor" class="menu-btn-styled">
-            <span>Edytor</span> <span>&#9998;</span>
-          </button>
-          <button id="btn-keybinds" class="menu-btn-styled">
-            <span>Przypisanie klawiszy</span> <span>&#9000;</span>
-          </button>
-          <button id="btn-credits" class="menu-btn-styled">
-            <span>Credits</span> <span>i</span>
-          </button>
-        </div>
-
-        <div id="menu-options-view" class="menu-sub-view">
-          <h2 style="text-align:center; color:#fff; text-transform:uppercase; letter-spacing:4px; margin-bottom:10px;">
-            Konfiguracja
-          </h2>
-
-          <div class="menu-options-grid">
-            <div class="menu-section">
-              <div class="menu-section-title">Grafika</div>
-              <div style="margin-bottom:8px; font-size:12px; color:#a2d9ff;">Jakosc rendera (Nebula)</div>
-              <div class="menu-chip-group" role="group" aria-label="Jakosc rendera">
-                <button class="menu-chip" data-quality="2k">2K</button>
-                <button class="menu-chip" data-quality="4k">4K</button>
-                <button class="menu-chip" data-quality="8k">8K</button>
-              </div>
-              <div style="margin-top:12px; margin-bottom:8px; font-size:12px; color:#a2d9ff;">Jakosc planet i ringu (3D)</div>
-              <div class="menu-chip-group" aria-label="Jakosc planet i ringu">
-                <button class="menu-chip" data-planet-q="low">Low</button>
-                <button class="menu-chip" data-planet-q="medium">Med</button>
-                <button class="menu-chip" data-planet-q="high">High</button>
-                <button class="menu-chip" data-planet-q="ultra">Ultra</button>
-              </div>
-              <div style="margin-top:7px; font-size:10px; line-height:1.45; color:#6f8fb8;">
-                Ring: Low/Med = lzejsze mapy i teren, High = pelny ring, Ultra = mapy 16K i dalszy LOD (okna budynkow, drzewa i detal widac z daleka).
-              </div>
-              <div style="margin-top:12px; margin-bottom:8px; font-size:12px; color:#a2d9ff;">Smugi cieni (god rays)</div>
-              <div class="menu-chip-group" aria-label="Smugi cieni">
-                <button class="menu-chip" data-shaft-q="off">Off</button>
-                <button class="menu-chip" data-shaft-q="low">Low</button>
-                <button class="menu-chip" data-shaft-q="medium">Med</button>
-                <button class="menu-chip" data-shaft-q="high">High</button>
-              </div>
-              <div style="margin-top:7px; font-size:10px; line-height:1.45; color:#6f8fb8;">
-                Cienie rzucane pod slonce przez planety, ksiezyce, ring, statki i asteroidy. High = najdluzsze smugi + wiecej statkow.
-              </div>
-              <div style="margin-top:12px; margin-bottom:8px; font-size:12px; color:#a2d9ff;">Lakier kadlubow</div>
-              <div class="menu-chip-group" aria-label="Lakier kadlubow">
-                <button class="menu-chip" data-lacquer="off">Off</button>
-                <button class="menu-chip" data-lacquer="on">On</button>
-              </div>
-              <div style="margin-top:7px; font-size:10px; line-height:1.45; color:#6f8fb8;">
-                Polysk kadlubow: odblask slonca i odbicie mglawicy. Koszt tylko po stronie karty graficznej.
-              </div>
-            </div>
-
-            <div class="menu-section">
-              <div class="menu-section-title">Dzwiek</div>
-              <div class="option-slider-row">
-                <div class="option-slider-label"><span>Główna głośność</span> <span>80%</span></div>
-                <input type="range" class="option-slider" min="0" max="100" value="80">
-              </div>
-              <div class="option-slider-row">
-                <div class="option-slider-label"><span>Efekty SFX</span> <span>100%</span></div>
-                <input type="range" class="option-slider" min="0" max="100" value="100">
-              </div>
-            </div>
-
-            <div class="menu-section">
-              <div class="menu-section-title">Sterowanie</div>
-              <div class="menu-empty-placeholder">Brak dostepnych ustawien</div>
-            </div>
-          </div>
-
-          <button id="btn-options-back" class="menu-btn-styled" style="justify-content:center; margin-top:10px;">
-            Powrot
-          </button>
-        </div>
-
-        <!-- GAME MODE SELECTION (after New Game) -->
-        <div id="menu-gamemode-view" class="menu-sub-view">
-          <h2 style="text-align:center; color:#fff; text-transform:uppercase; letter-spacing:4px; margin-bottom:24px;">
-            Tryb Gry
-          </h2>
-          <button id="btn-mode-single" class="menu-btn-styled primary">
-            <span>Single Player</span> <span>&#9654;</span>
-          </button>
-          <button id="btn-mode-split" class="menu-btn-styled primary">
-            <span>Split Screen Co-Op</span> <span>&#127918;</span>
-          </button>
-          <button id="btn-gamemode-back" class="menu-btn-styled" style="justify-content:center; margin-top:12px;">
-            Wróć
-          </button>
-        </div>
-
-        <div id="menu-credits-view" class="menu-sub-view">
-          <div class="credits-text">
-            <h3 style="color:#fff; letter-spacing:2px; margin-bottom:15px;">Dane projektu</h3>
-            <p><strong>Created by:</strong><br>Szymon Bogdanowicz</p>
-            <p><strong>Rendered by:</strong><br>Three.js</p>
-            <p style="font-size:12px; opacity:0.7; margin-top:15px;">
-              Physics by: Javascript + WebGpu<br>
-              Version: 0.0.1 Alpha
-            </p>
-          </div>
-          <button id="btn-credits-back" class="menu-btn-styled" style="justify-content:center;">
-            Zamknij
-          </button>
-        </div>
-
-        <div id="menu-keybinds-view" class="menu-sub-view">
-          <h2 style="text-align:center; color:#fff; text-transform:uppercase; letter-spacing:4px; margin-bottom:12px;">
-            Przypisanie klawiszy
-          </h2>
-          <div style="font-size:12px; color:#9fc7ff; text-align:center; margin-bottom:14px;">
-            Najwazniejsze skróty dla lotu, walki i interfejsu
-          </div>
-          <div style="display:grid; grid-template-columns:1.25fr 1fr; gap:14px; align-items:start;">
-            <div
-              style="background:rgba(8,14,28,.58); border:1px solid rgba(92,132,210,.28); border-radius:14px; padding:14px;">
-              <div
-                style="font-size:12px; color:#8fb5ff; text-transform:uppercase; letter-spacing:2px; margin-bottom:10px;">
-                Klawiatura</div>
-              <div style="display:flex; flex-direction:column; gap:8px;">
-                <div style="display:flex; gap:8px; justify-content:center;">
-                  <div
-                    style="min-width:56px; height:48px; border-radius:10px; border:1px solid #2f426e; background:#0b1326; color:#8fb5ff; display:flex; flex-direction:column; align-items:center; justify-content:center; box-shadow:0 0 0 1px rgba(79,122,255,.08) inset;">
-                    <span style="font-weight:700; color:#fff;">W</span><span style="font-size:10px;">Ciag</span>
-                  </div>
-                </div>
-                <div style="display:flex; gap:8px; justify-content:center;">
-                  <div
-                    style="min-width:56px; height:48px; border-radius:10px; border:1px solid #2f426e; background:#0b1326; color:#8fb5ff; display:flex; flex-direction:column; align-items:center; justify-content:center;">
-                    <span style="font-weight:700; color:#fff;">A</span><span style="font-size:10px;">Obrot L</span>
-                  </div>
-                  <div
-                    style="min-width:56px; height:48px; border-radius:10px; border:1px solid #6a4d25; background:#1a1307; color:#ffd898; display:flex; flex-direction:column; align-items:center; justify-content:center;">
-                    <span style="font-weight:700; color:#fff;">S</span><span style="font-size:10px;">Damper</span>
-                  </div>
-                  <div
-                    style="min-width:56px; height:48px; border-radius:10px; border:1px solid #2f426e; background:#0b1326; color:#8fb5ff; display:flex; flex-direction:column; align-items:center; justify-content:center;">
-                    <span style="font-weight:700; color:#fff;">D</span><span style="font-size:10px;">Obrot P</span>
-                  </div>
-                </div>
-                <div style="display:flex; gap:8px; justify-content:center;">
-                  <div
-                    style="min-width:56px; height:48px; border-radius:10px; border:1px solid #2f426e; background:#0b1326; color:#8fb5ff; display:flex; flex-direction:column; align-items:center; justify-content:center;">
-                    <span style="font-weight:700; color:#fff;">Q</span><span style="font-size:10px;">Strafe L</span>
-                  </div>
-                  <div
-                    style="min-width:56px; height:48px; border-radius:10px; border:1px solid #2f426e; background:#0b1326; color:#8fb5ff; display:flex; flex-direction:column; align-items:center; justify-content:center;">
-                    <span style="font-weight:700; color:#fff;">E</span><span style="font-size:10px;">Strafe P</span>
-                  </div>
-                  <div
-                    style="min-width:120px; height:48px; border-radius:10px; border:1px solid #2f426e; background:#0b1326; color:#8fb5ff; display:flex; flex-direction:column; align-items:center; justify-content:center;">
-                    <span style="font-weight:700; color:#fff;">Shift</span><span style="font-size:10px;">Bieg +</span>
-                  </div>
-                </div>
-                <div style="display:flex; gap:8px; justify-content:center; flex-wrap:wrap; margin-top:6px;">
-                  <div
-                    style="min-width:56px; height:44px; border-radius:10px; border:1px solid #2f426e; background:#0b1326; color:#8fb5ff; display:flex; flex-direction:column; align-items:center; justify-content:center;">
-                    <span style="font-weight:700; color:#fff;">F</span><span style="font-size:10px;">Specjal</span>
-                  </div>
-                  <div
-                    style="min-width:56px; height:44px; border-radius:10px; border:1px solid #2f426e; background:#0b1326; color:#8fb5ff; display:flex; flex-direction:column; align-items:center; justify-content:center;">
-                    <span style="font-weight:700; color:#fff;">R</span><span style="font-size:10px;">Repair</span>
-                  </div>
-                  <div
-                    style="min-width:56px; height:44px; border-radius:10px; border:1px solid #2f426e; background:#0b1326; color:#8fb5ff; display:flex; flex-direction:column; align-items:center; justify-content:center;">
-                    <span style="font-weight:700; color:#fff;">LPM</span><span style="font-size:10px;">Namiar</span>
-                  </div>
-                  <div
-                    style="min-width:56px; height:44px; border-radius:10px; border:1px solid #2f426e; background:#0b1326; color:#8fb5ff; display:flex; flex-direction:column; align-items:center; justify-content:center;">
-                    <span style="font-weight:700; color:#fff;">X</span><span style="font-size:10px;">Scan</span>
-                  </div>
-                  <div
-                    style="min-width:56px; height:44px; border-radius:10px; border:1px solid #2f426e; background:#0b1326; color:#8fb5ff; display:flex; flex-direction:column; align-items:center; justify-content:center;">
-                    <span style="font-weight:700; color:#fff;">TAB / M</span><span style="font-size:10px;">CIC</span>
-                  </div>
-                  <div
-                    style="min-width:56px; height:44px; border-radius:10px; border:1px solid #2f426e; background:#0b1326; color:#8fb5ff; display:flex; flex-direction:column; align-items:center; justify-content:center;">
-                    <span style="font-weight:700; color:#fff;">P</span><span style="font-size:10px;">Perf</span>
-                  </div>
-                  <div
-                    style="min-width:56px; height:44px; border-radius:10px; border:1px solid #2f426e; background:#0b1326; color:#8fb5ff; display:flex; flex-direction:column; align-items:center; justify-content:center;">
-                    <span style="font-weight:700; color:#fff;">V / 8</span><span style="font-size:10px;">Tryb</span>
-                  </div>
-                  <div
-                    style="min-width:56px; height:44px; border-radius:10px; border:1px solid #2f426e; background:#0b1326; color:#8fb5ff; display:flex; flex-direction:column; align-items:center; justify-content:center;">
-                    <span style="font-weight:700; color:#fff;">7</span><span style="font-size:10px;">Auto</span>
-                  </div>
-                  <div
-                    style="min-width:56px; height:44px; border-radius:10px; border:1px solid #2f426e; background:#0b1326; color:#8fb5ff; display:flex; flex-direction:column; align-items:center; justify-content:center;">
-                    <span style="font-weight:700; color:#fff;">9</span><span style="font-size:10px;">Warp</span>
-                  </div>
-                </div>
-                <div style="display:flex; gap:8px; justify-content:center; margin-top:6px;">
-                  <div
-                    style="min-width:180px; height:40px; border-radius:10px; border:1px solid #6a4d25; background:#1a1307; color:#ffd898; display:flex; flex-direction:column; align-items:center; justify-content:center;">
-                    <span style="font-weight:700; color:#fff;">Space</span><span style="font-size:10px;">Pauza</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div style="display:flex; flex-direction:column; gap:12px;">
-              <div
-                style="background:rgba(8,14,28,.58); border:1px solid rgba(92,132,210,.28); border-radius:14px; padding:14px;">
-                <div
-                  style="font-size:12px; color:#8fb5ff; text-transform:uppercase; letter-spacing:2px; margin-bottom:10px;">
-                  Mysz</div>
-                <div style="display:grid; gap:8px;">
-                  <div style="display:flex; justify-content:space-between; gap:10px; font-size:13px;"><span
-                      style="color:#fff;">LPM</span><span style="color:#9fc7ff;">Zatwierdź namiar</span></div>
-                   <div style="display:flex; justify-content:space-between; gap:10px; font-size:13px;"><span
-                      style="color:#fff;">PPM</span><span style="color:#9fc7ff;">Menu rozkazów</span></div>
-                  <div style="display:flex; justify-content:space-between; gap:10px; font-size:13px;"><span
-                      style="color:#fff;">ŚPM</span><span style="color:#9fc7ff;">SINGLE / MULTI / SUB</span></div>
-                  <div style="display:flex; justify-content:space-between; gap:10px; font-size:13px;"><span
-                      style="color:#fff;">Kólko</span><span style="color:#9fc7ff;">Zoom kamery</span></div>
-                </div>
-              </div>
-              <div
-                style="background:rgba(8,14,28,.58); border:1px solid rgba(92,132,210,.28); border-radius:14px; padding:14px;">
-                <div
-                  style="font-size:12px; color:#8fb5ff; text-transform:uppercase; letter-spacing:2px; margin-bottom:10px;">
-                  Opis skrótów</div>
-                <div style="display:grid; gap:8px; font-size:12px; color:#cfe2ff;">
-                  <div><strong style="color:#fff;">Lot:</strong> W przyspiesza, Q/E robi strafe, A/D obraca statek; Shift wrzuca wyższy bieg.
-                  </div>
-                  <div><strong style="color:#fff;">Damper:</strong> S odpala damper, C przełącza damper, B przełącza
-                    stabilizer.</div>
-                  <div><strong style="color:#fff;">Walka:</strong> LPM zatwierdza namiar; klawisze 1/2/3 uruchamiają
-                    główne grupy broni.</div>
-                  <div><strong style="color:#fff;">Systemy:</strong> X skan, TAB/M CIC, P panel wydajności, R naprawa.
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-          <button id="btn-keybinds-back" class="menu-btn-styled" style="justify-content:center; margin-top:14px;">
-            Wróć
-          </button>
-        </div>
-      </div>
-
-      <div class="menu-footer">System online // oczekiwanie na rozkazy</div>
+      <footer class="mm-footer">
+        <div class="mm-keys"><kbd>&#8593;</kbd><kbd>&#8595;</kbd><span>wybór</span><kbd>Enter</kbd><span>zatwierdź</span><kbd>Esc</kbd><span>wstecz</span><em class="mm-ver">v0.0.1 alpha</em></div>
+      </footer>
     </div>
   </div>
   <div id="game-root" style="position: relative; width: 100vw; height: 100vh; overflow: hidden; background: #050505;">
@@ -538,11 +443,13 @@
   </div>
   <div id="loading" class="hidden">
     <div class="loading-box">
-      <div class="loading-title">Ladowanie</div>
+      <div class="loading-title">Ładowanie</div>
       <div class="loading-bar"><span id="loading-fill"></span></div>
       <div id="loading-progress" class="loading-progress">0%</div>
     </div>
   </div>
+  <!-- przejście przez czerń: tło menu → pierwsza klatka gry (fadeScreen) -->
+  <div id="screen-fade" aria-hidden="true"></div>
 
   <!-- SPLIT SCREEN SHIP SELECTION OVERLAY -->
   <div id="ship-select-overlay" class="hidden" style="
@@ -883,6 +790,12 @@
       syncNpcFlightState
     } from "./src/game/flight/npcFlight.js";
     import { stepShipFlight, usesShipFlightModel } from "./src/game/flight/shipFlightModel.js";
+    import {
+      createNpcCollisionBody,
+      loadNpcCollisionBody,
+      npcCollidesWithWorld,
+      storeNpcCollisionBody
+    } from "./src/game/npcCollisionBody.js";
     import { describeFleetAwareness, pickContactTarget } from "./src/ai/fleetAwareness.js";
     import { getFleetPhase } from "./src/ai/fleetCoordinator.js";
     import { applyNpcCommandIntent } from "./src/ai/npcCommandPilot.js";
@@ -926,6 +839,9 @@
     import { shouldZeroStabilizedAngularVelocity, updateHeadingStabilizer } from "./src/game/flight/stabilizer.js";
     import { compensateStrafeYaw, resolveShipTurnCapability, strafeUsableForCapability } from "./src/game/flight/headingControl.js";
     import { DestructorSystem, initHexBody, isHexShips3DActive, setHexShips3DActive, getHexStructuralState, getHexArenaStats, disposeHexBody, DESTRUCTOR_CONFIG, getCollisionBoundsDebug, getBroadphaseDebugInfo, findBeamHexShard } from "./src/game/destructor.js";
+    // Kadłuby statków, NPC i ich wraków: silnik belek (src/game/hullBodies.js).
+    // Stary destruktor heksowy zostaje tylko dla asteroid (heksowe ciała skał).
+    import { HullBodies } from "./src/game/hullBodies.js";
     import { TowConstraintSystem } from "./src/game/towSystem.js";
     import { createColdWreckSystem, THAW_RESULT } from "./src/game/coldWrecks.js";
     import { purgeFinishedNpcs } from "./src/game/npcListPurge.js";
@@ -993,7 +909,7 @@
       takeFieldCut,
       takeDockSalvage,
       FIELD_CUT_RANGE,
-      FIELD_CUT_SHARDS_PER_SECOND,
+      fieldCutNodesPerSecond,
       DOCK_DELIVERY_RANGE
     } from "./src/game/salvage.js";
     import {
@@ -1006,6 +922,7 @@
     import { shouldRemoveProjectileAfterImpact, stepProjectileKinematics } from "./src/game/projectileTrajectory.js";
     import { FixedStepCadence } from "./src/game/fixedStepCadence.js";
     import { stepDecay120 } from "./src/game/stepDecay.js";
+    import { stepCameraZoom, wheelDeltaPx } from "./src/game/cameraZoom.js";
     import { isFriendlyLineOfFireBlocked } from "./src/ai/lineOfFire.js";
     import { PhysicsBridge } from "./src/physics/physicsBridge.js";
     import { segmentCircleToi } from "./src/physics/physicsKernel.js";
@@ -1017,7 +934,7 @@
       setLiveDebugPerfHud,
       installLiveDebugConsoleApi
     } from "./src/ui/liveDebug.js";
-    import { updateShields3D, SHIELD_FIELD_TUNING } from "./src/3d/shield3D.js";
+    import { updateShields3D, prewarmShields3D, SHIELD_FIELD_TUNING } from "./src/3d/shield3D.js";
     // Pole tarczy jest niewidoczne w normalnej pracy — widac je przy rozruchu,
     // gaszeniu, peknieciu i lokalnie w miejscu trafienia. Te mnozniki stroja
     // sile tych trzech chwil: ShieldFieldTuning.hitOpacity = 1.4 dziala od razu.
@@ -1221,6 +1138,8 @@
     import { computeHaloRingLayout } from "./src/3d/haloRing/haloRingLayout.js";
     import { resolveRingPlanetWorldRadius } from "./src/3d/ringScale.js";
     import { computeHaloPortStation } from "./src/game/haloRingPlanets.js";
+    // Tło menu głównego: Ziemia z ringiem w kamerze kinowej (przed startem gry).
+    import { MenuBackdrop3D } from "./src/3d/menuBackdrop3D.js";
     // Statki Terran (Wsparcie)
     import terranFrigateImg from "./src/assets/ships/terranfrigate.png";
     import terranDestroyerImg from "./src/assets/ships/terrandestroyer.png";
@@ -2027,6 +1946,15 @@
       if (loadingEl) loadingEl.classList.add('hidden');
     }
 
+    // Pełnoekranowa czerń do przejść (start gry z tła menu): on = zaciemnij.
+    const screenFadeEl = document.getElementById('screen-fade');
+    function fadeScreen(on, ms = 400) {
+      if (!screenFadeEl) return Promise.resolve();
+      screenFadeEl.style.setProperty('--fade-ms', `${ms}ms`);
+      screenFadeEl.classList.toggle('on', !!on);
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
     function nextFrame() {
       return new Promise(resolve => requestAnimationFrame(() => resolve()));
     }
@@ -2050,7 +1978,9 @@
       if (menuCreditsView) menuCreditsView.classList.toggle('active', menuView === 'credits');
       if (menuKeybindsView) menuKeybindsView.classList.toggle('active', menuView === 'keybinds');
       if (menuGamemodeView) menuGamemodeView.classList.toggle('active', menuView === 'gamemode');
+      if (mainMenuEl) mainMenuEl.dataset.view = menuView;
       if (menuView === 'options') applyQualitySelection();
+      menuBackdrop?.setFocus(MENU_WIDE_VIEWS.has(menuView) ? 1 : 0);
       menuGamepad.selectedIndex = 0;
       menuGamepad.updateHighlight();
     }
@@ -2076,6 +2006,7 @@
         if (btns.length === 0) return;
         this.selectedIndex = Math.max(0, Math.min(this.selectedIndex, btns.length - 1));
         btns[this.selectedIndex].classList.add('gamepad-focus');
+        setMenuHint(btns[this.selectedIndex]);
       },
 
       navigate(dir) {
@@ -2144,12 +2075,34 @@
     // Keyboard navigation for menu (arrows + enter/escape)
     window.addEventListener('keydown', (e) => {
       if (!isMainMenuVisible()) return;
+      // suwaki dźwięku w opcjach biorą strzałki same
+      if (e.target instanceof HTMLInputElement) return;
       const k = e.key;
       if (k === 'ArrowUp' || k === 'ArrowLeft') { menuGamepad.navigate(-1); e.preventDefault(); }
       else if (k === 'ArrowDown' || k === 'ArrowRight') { menuGamepad.navigate(1); e.preventDefault(); }
       else if (k === 'Enter' || k === ' ') { menuGamepad.confirm(); e.preventDefault(); }
       else if (k === 'Escape' || k === 'Backspace') { menuGamepad.back(); e.preventDefault(); }
     });
+
+    // Linia podpowiedzi pod listą: opis (data-hint) wybranej pozycji.
+    const menuHintEl = document.getElementById('mm-hint');
+    function setMenuHint(btn) {
+      if (!menuHintEl) return;
+      const text = btn?.dataset?.hint || '';
+      if (menuHintEl.textContent !== text) menuHintEl.textContent = text;
+    }
+    // Mysz i pad/klawiatura prowadzą ten sam wybór: najechanie przestawia
+    // podświetlenie (dawniej hover i fokus pada świeciły na dwóch pozycjach).
+    mainMenuEl?.addEventListener('pointerover', (e) => {
+      const btn = e.target?.closest?.('button.menu-btn-styled');
+      if (!btn) return;
+      if (btn.disabled) { setMenuHint(btn); return; }
+      const idx = menuGamepad.getVisibleButtons().indexOf(btn);
+      if (idx < 0 || (idx === menuGamepad.selectedIndex && btn.classList.contains('gamepad-focus'))) return;
+      menuGamepad.selectedIndex = idx;
+      menuGamepad.updateHighlight();
+    });
+    menuGamepad.updateHighlight();
 
     function getMenuMusicVolume() {
       const master = OPTIONS?.audio?.master ?? 1;
@@ -2221,6 +2174,86 @@
       return !!mainMenuEl && !mainMenuEl.classList.contains('hidden');
     }
 
+    // --- TŁO MENU: Ziemia z ringiem (src/3d/menuBackdrop3D.js) ---
+    // Renderuje przed startem gry, póki menu widać (edytor i nakładki
+    // split-screen je chowają), a po „Start” jeszcze pod ekranem ładowania.
+    // Ring jest ringiem gry — startGame oddaje go przed pierwszą klatką.
+    // ?menu3d=0 = samo tło CSS.
+    let menuBackdrop = null;
+    let menuLaunching = false;
+    // Panel szerszy niż miejsce przed planetą: kamera przesuwa ją w prawo.
+    const MENU_WIDE_VIEWS = new Set(['keybinds']);
+    function syncMenuBackdrop() {
+      if (!menuBackdrop) return;
+      menuBackdrop.setActive(menuLaunching || (!gameStarted && isMainMenuVisible()));
+    }
+    function startMenuBackdrop() {
+      if (menuBackdrop || gameStarted) return;
+      let enabled = !!haloRings;
+      try { enabled = enabled && new URLSearchParams(location.search).get('menu3d') !== '0'; } catch { }
+      const backdrop = enabled ? new MenuBackdrop3D({ haloRings }) : null;
+      try {
+        if (!backdrop?.start()) return;
+      } catch (err) {
+        console.error('[MenuBackdrop3D] start nie wyszedł — zostaje tło CSS', err);
+        try { backdrop.stop(); } catch { }
+        return;
+      }
+      menuBackdrop = backdrop;
+      window.__menuBackdrop = backdrop;
+      backdrop.onReady(() => mainMenuEl?.classList.add('bd-ready'));
+      backdrop.setFocus(MENU_WIDE_VIEWS.has(menuView) ? 1 : 0);
+      syncMenuBackdrop();
+    }
+    function stopMenuBackdrop() {
+      menuLaunching = false;
+      if (!menuBackdrop) return;
+      menuBackdrop.stop();
+      menuBackdrop = null;
+      window.__menuBackdrop = null;
+      mainMenuEl?.classList.remove('bd-ready');
+    }
+    if (mainMenuEl) {
+      new MutationObserver(syncMenuBackdrop).observe(mainMenuEl, { attributes: true, attributeFilter: ['class'] });
+    }
+    window.addEventListener('pointermove', (e) => {
+      if (!menuBackdrop) return;
+      menuBackdrop.setPointer((e.clientX / Math.max(1, innerWidth)) * 2 - 1, (e.clientY / Math.max(1, innerHeight)) * 2 - 1);
+    }, { passive: true });
+
+    // --- DŹWIĘK: suwaki menu → OPTIONS.audio (zapis sc_audio) ---
+    const menuAudioSliders = Array.from(document.querySelectorAll('#main-menu [data-audio]'));
+    function syncMenuAudioSliders() {
+      for (const input of menuAudioSliders) {
+        const key = input.dataset.audio;
+        const pct = Math.round(Math.max(0, Math.min(1, Number(OPTIONS.audio[key]) || 0)) * 100);
+        input.value = String(pct);
+        input.style.setProperty('--fill', `${pct}%`);
+        const out = document.querySelector(`#main-menu [data-audio-out="${key}"]`);
+        if (out) out.textContent = `${pct}%`;
+      }
+    }
+    function applyAudioOptions() {
+      if (AudioSys.ctx && AudioSys.masterGain) AudioSys.masterGain.gain.setTargetAtTime(OPTIONS.audio.master, AudioSys.ctx.currentTime, 0.05);
+      if (menuMusicEl) menuMusicEl.volume = getMenuMusicVolume();
+    }
+    try {
+      const savedAudio = JSON.parse(localStorage.getItem('sc_audio') || 'null');
+      for (const key of ['master', 'music', 'sfx']) {
+        const v = Number(savedAudio?.[key]);
+        if (Number.isFinite(v)) OPTIONS.audio[key] = Math.max(0, Math.min(1, v));
+      }
+    } catch { }
+    for (const input of menuAudioSliders) {
+      input.addEventListener('input', () => {
+        OPTIONS.audio[input.dataset.audio] = Math.max(0, Math.min(1, Number(input.value) / 100));
+        syncMenuAudioSliders();
+        applyAudioOptions();
+        try { localStorage.setItem('sc_audio', JSON.stringify(OPTIONS.audio)); } catch { }
+      });
+    }
+    syncMenuAudioSliders();
+
     // Alt w kokpicie przełącza tryb interfejsu: wolna mysz + panele na żądanie.
     function isHudPointerMode() {
       return !!window.hudSystem?.cockpit?.pointerMode;
@@ -2269,6 +2302,8 @@
     function showMainMenu(view = 'home') {
       setMenuView(view);
       if (mainMenuEl) mainMenuEl.classList.remove('hidden');
+      // podświetlenie i podpowiedź liczone przy widocznym menu (offsetParent)
+      menuGamepad.updateHighlight();
 
       // UKRYJ HUD GRY GDY MENU JEST OTWARTE
       toggleGameUI(false);
@@ -2949,7 +2984,7 @@
         if (other === window.ship) continue;
         // Once metal touches, the destructor owns the response. AI avoidance
         // inside the crushed hull would add an independent repulsive force.
-        if (DestructorSystem.hasHullContact(npc, other)) continue;
+        if (HullBodies.hasContact(npc, other)) continue;
 
         const enemy = window.isEnemyUnit
           ? window.isEnemyUnit(npc, other)
@@ -3054,7 +3089,7 @@
 
       // --- Separacja od gracza / capitala ---
       if (window.ship && !window.ship.destroyed && npc !== window.ship &&
-          !DestructorSystem.hasHullContact(npc, window.ship)) {
+          !HullBodies.hasContact(npc, window.ship)) {
         const player = window.ship;
         const dx = npc.x - player.pos.x;
         const dy = npc.y - player.pos.y;
@@ -4434,19 +4469,21 @@
       return { x: x * hpScale.x, y: y * hpScale.y };
     }
 
+    // Kadłub na belkach: czy pod punktem (albo w krzyżu sond wokół) stoi żywy węzeł.
+    function isHullPointSupported(entity, worldPos, r) {
+      if (HullBodies.probe(entity, worldPos.x, worldPos.y)) return true;
+      if (HullBodies.probe(entity, worldPos.x + r, worldPos.y)) return true;
+      if (HullBodies.probe(entity, worldPos.x - r, worldPos.y)) return true;
+      if (HullBodies.probe(entity, worldPos.x, worldPos.y + r)) return true;
+      return HullBodies.probe(entity, worldPos.x, worldPos.y - r);
+    }
+
     function isHardpointHexSupported(entity, hp) {
-      if (!entity?.hexGrid) return true;
-      if (!DestructorSystem?.probeImpact) return true;
+      if (!HullBodies.hasHull(entity)) return true;
       const worldPos = getEntityHardpointWorldPos(entity, hp);
       if (!worldPos) return true;
-      if (DestructorSystem.probeImpact(entity, worldPos.x, worldPos.y)) return true;
       const hpScale = getEntityHardpointScale(entity);
-      const r = HARDPOINT_INTEGRITY_CONFIG.probeRadius * hpScale.uniform;
-      if (DestructorSystem.probeImpact(entity, worldPos.x + r, worldPos.y)) return true;
-      if (DestructorSystem.probeImpact(entity, worldPos.x - r, worldPos.y)) return true;
-      if (DestructorSystem.probeImpact(entity, worldPos.x, worldPos.y + r)) return true;
-      if (DestructorSystem.probeImpact(entity, worldPos.x, worldPos.y - r)) return true;
-      return false;
+      return isHullPointSupported(entity, worldPos, HARDPOINT_INTEGRITY_CONFIG.probeRadius * hpScale.uniform);
     }
 
     function getEntityCores(entity) {
@@ -4471,18 +4508,11 @@
     }
 
     function isCoreHexSupported(entity, core) {
-      if (!entity?.hexGrid) return true;
-      if (!DestructorSystem?.probeImpact) return true;
+      if (!HullBodies.hasHull(entity)) return true;
       const worldPos = getEntityCoreWorldPos(entity, core);
       if (!worldPos) return true;
-      if (DestructorSystem.probeImpact(entity, worldPos.x, worldPos.y)) return true;
       const hpScale = getEntityHardpointScale(entity);
-      const r = HARDPOINT_INTEGRITY_CONFIG.coreProbeRadius * hpScale.uniform;
-      if (DestructorSystem.probeImpact(entity, worldPos.x + r, worldPos.y)) return true;
-      if (DestructorSystem.probeImpact(entity, worldPos.x - r, worldPos.y)) return true;
-      if (DestructorSystem.probeImpact(entity, worldPos.x, worldPos.y + r)) return true;
-      if (DestructorSystem.probeImpact(entity, worldPos.x, worldPos.y - r)) return true;
-      return false;
+      return isHullPointSupported(entity, worldPos, HARDPOINT_INTEGRITY_CONFIG.coreProbeRadius * hpScale.uniform);
     }
 
     function computeHardpointHullDamage(entity, hardpointCount) {
@@ -4541,7 +4571,7 @@
     }
 
     function updateEntityHardpointIntegrity(entity, dt) {
-      if (!entity || entity.dead || !entity.hexGrid) return false;
+      if (!entity || entity.dead || !HullBodies.hasHull(entity)) return false;
       const hardpoints = getEntityHardpoints(entity);
       if (!hardpoints || hardpoints.length === 0) return false;
 
@@ -4568,7 +4598,7 @@
     }
 
     function updateEntityCoreIntegrity(entity, dt) {
-      if (!entity || entity.dead || !entity.hexGrid) return false;
+      if (!entity || entity.dead || !HullBodies.hasHull(entity)) return false;
       const cores = getEntityCores(entity);
       if (!cores || cores.length === 0) return false;
 
@@ -5314,6 +5344,10 @@
       minZoom: 0.035,
       maxZoom: 3.2,
       wheelSpeed: 0.002,
+      // Płynny zoom (src/game/cameraZoom.js): prędkość sprężyny w log/s i kotwica
+      // zoomu RTS pod kursorem (px od środka kadru). Krok raz na klatkę: updateCameraZoom.
+      zoomVel: 0,
+      zoomAnchor: { active: false, dx: 0, dy: 0 },
       manualZoom: false,
       shakeMag: 0,
       shakeTime: 0,
@@ -5349,6 +5383,7 @@
         this.targetX = this.x;
         this.targetY = this.y;
         this.targetZoom = this.zoom;
+        this.zoomVel = 0;
         this.transition = null;
         this.focusArrived = false;
         this.lastPointerX = null;
@@ -5558,9 +5593,8 @@
           camera.x += (camera.targetX - camera.x) * posLerp;
           camera.y += (camera.targetY - camera.y) * posLerp;
         }
-
-        const zoomLerp = Math.min(1, dt * 4);
-        camera.zoom += (camera.targetZoom - camera.zoom) * zoomLerp;
+        // Zoom goni targetZoom w updateCameraZoom — raz na klatkę renderu, nie tu:
+        // w krokach fizyki stał w klatkach bez kroku i przeskakiwał przy 2–3 krokach.
       }
 
       camera.zoom = clamp(camera.zoom, camera.minZoom, camera.maxZoom);
@@ -5683,6 +5717,16 @@
         initRocketSystem3D(rocketOv.scene);
       }
       resizeOverlay3D();
+      // Rozgrzewka programów overlaya (overlay.js, prewarm): pule (iskry, Yamato, reaktor,
+      // supernowa, rakiety) wiszą w scenie; próbki z fabryk tworzących materiały na każdy
+      // wybuch zostają jako trzymacze programów — bez nich rail/armata/działko kompilowały
+      // się od nowa po każdej przerwie w strzelaniu.
+      const prewarmSamples = [];
+      if (window.makeRailgunExplosion) prewarmSamples.push(window.makeRailgunExplosion({ x: 0, y: 0, size: 40 }));
+      if (window.makeArmataImpact) prewarmSamples.push(window.makeArmataImpact({ x: 0, y: 0, size: 40 }));
+      if (window.makeAutocannonImpact) prewarmSamples.push(window.makeAutocannonImpact({ x: 0, y: 0, size: 40 }));
+      ov.prewarm?.(prewarmSamples);
+      if (splitContexts) rocketOv.prewarm?.();
       return true;
     }
 
@@ -6008,19 +6052,11 @@
       tryPreserveMounts(prev);
       syncWeaponSystems();
       if (invalidateHexShipEntity3D) invalidateHexShipEntity3D(ship);
-      initHexBody(ship, hexInitImage);
-      if (ship.hexGrid) {
-        ship.hexGrid.visualImage = shipSprite;
-        ship.hexGrid.meshDirty = true;
-        ship.hexGrid.meshDirtyAll = true;
-        ship.hexGrid.textureDirty = true;
-        ship.hexGrid.cacheDirty = true;
-        ship.hexGrid.gpuTextureNeedsUpdate = true;
+      // Kadłub z belek z obrazu w rozmiarze renderu; tekstura skóry = pełny sprite.
+      // Promień (od środka sprite'a) i masę ustawia createHull.
+      HullBodies.release(ship);
+      if (HullBodies.createHull(ship, hexInitImage, { visualImage: shipSprite })) {
         attachEntityBridges(ship, { key: activeHullKey });
-      }
-      if (ship?.hexGrid?.rawRadius && Number.isFinite(ship.hexGrid.rawRadius)) {
-        const scaleNow = Math.max(0.0001, Number(ship?.visual?.spriteScale) || 1);
-        ship.radius = ship.hexGrid.rawRadius * scaleNow;
       }
       if (typeof renderMechanic === 'function') renderMechanic();
       saveLoadout();
@@ -7871,6 +7907,8 @@
     window.spawnPirateHeavyFleet = spawnPirateHeavyFleet;
     // Lista na martwe, dryfujące kawałki
     window.createWreckage = function (parentEntity, shards) {
+      // Kadłub na belkach: cały ocalały kadłub przechodzi na encję wraku (łup i ładunek z nim).
+      if (parentEntity?.beamHull) return HullBodies.convertToWreck(parentEntity);
       if (!shards || shards.length === 0) return;
       if (DestructorSystem?.spawnWreckEntity && parentEntity?.hexGrid) {
         try {
@@ -8302,7 +8340,16 @@
     // Opcje są wspólne (zero alokacji na trafienie); applyImpact czyta je
     // synchronicznie, a referencję zerujemy, żeby nie trzymać siatki kadłuba.
     const _hexImpactOpts = { shard: null };
+    // Sweep pocisku: kadłub na belkach albo heksy (asteroidy) — ten sam kształt wyniku.
+    function hullSweepImpact(entity, x0, y0, x1, y1, radius) {
+      return HullBodies.sweep(entity, x0, y0, x1, y1, radius);
+    }
+    function hexSweepImpact(entity, x0, y0, x1, y1, radius) {
+      return DestructorSystem.sweepImpact(entity, x0, y0, x1, y1, radius);
+    }
     function applyHexImpact(entity, x, y, damage, vel, shard) {
+      // Kadłub na belkach: krater od najbliższego węzła punktu trafienia (sweep daje punkt wejścia).
+      if (entity?.beamHull) return HullBodies.impact(entity, x, y, damage, vel);
       if (!shard) return DestructorSystem.applyImpact(entity, x, y, damage, vel);
       _hexImpactOpts.shard = shard;
       try {
@@ -8319,10 +8366,11 @@
     // wspólne: strzał zużywa je synchronicznie i nic ich nie zatrzymuje.
     function getBeamTargetRadius(pt) {
       let radius = Math.max(20, Number(pt?.hitR || pt?.radius || pt?.r) || 20);
-      if (pt?.hexGrid?.srcWidth && pt?.hexGrid?.srcHeight) {
+      const hullGrid = pt?.hexGrid || pt?.beamHull;
+      if (hullGrid?.srcWidth && hullGrid?.srcHeight) {
         const hexScale = Math.max(0.0001, pt.visual?.spriteScale || pt.capitalProfile?.spriteScale || pt.profile?.spriteScale || 1.0);
-        const halfW = (Number(pt.hexGrid.srcWidth) || 0) * 0.5 * hexScale;
-        const halfH = (Number(pt.hexGrid.srcHeight) || 0) * 0.5 * hexScale;
+        const halfW = (Number(hullGrid.srcWidth) || 0) * 0.5 * hexScale;
+        const halfH = (Number(hullGrid.srcHeight) || 0) * 0.5 * hexScale;
         const hullRadius = Math.max(halfW, halfH) + Math.min(halfW, halfH) * 0.45;
         if (Number.isFinite(hullRadius) && hullRadius > radius) radius = hullRadius;
       }
@@ -8362,7 +8410,9 @@
     const _beamEventScratch = { startX: 0, startY: 0, endX: 0, endY: 0, width: 5, mode: 'pulse', emitterUid: null };
     const PD_BEAM_DEPS = {
       shieldBlockingRadiusTowards: getEntityShieldBlockingRadiusTowards,
-      sweepImpact: (entity, x0, y0, x1, y1, radius) => DestructorSystem.sweepImpact(entity, x0, y0, x1, y1, radius),
+      sweepImpact: (entity, x0, y0, x1, y1, radius) => (entity?.beamHull
+        ? HullBodies.sweep(entity, x0, y0, x1, y1, radius)
+        : DestructorSystem.sweepImpact(entity, x0, y0, x1, y1, radius)),
       hullRadius: getBeamTargetRadius,
       get playerShip() { return window.ship; }
     };
@@ -8497,7 +8547,22 @@
           break;
         }
 
-        if (
+        if (pt.beamHull) {
+          // Kadłub na belkach: jeden przemiot odcinka [wejście, min(wyjście, dotychczasowe)]
+          // po siatce węzłów — pierwszy żywy węzeł na drodze wiązki (pas ~ promień trafienia heksa).
+          const tA = hit.tEnter;
+          const tB = Math.min(hit.tExit, hitDist);
+          const sweep = tB > tA
+            ? HullBodies.sweep(pt, muzzleX + dirX * tA, muzzleY + dirY * tA, muzzleX + dirX * tB, muzzleY + dirY * tB, 5)
+            : null;
+          if (sweep) {
+            hitDist = tA + (tB - tA) * sweep.t;
+            hitEntity = pt;
+            hitType = classifyBeamHitEntity(pt, stationList, platformList, wreckList);
+            beamHitShard = null;
+            break;
+          }
+        } else if (
           pt.hexGrid &&
           pt.hexGrid.grid &&
           Number.isFinite(pt.hexGrid.cols) &&
@@ -8720,7 +8785,7 @@
             const allowDamage = !ignoreSelfHit; // Przyjazny ogien aktywny (friendly fire on)!
 
             if (allowDamage && (!hitEntity.shield || hitEntity.shield.val <= 0)) {
-              if (hitEntity.hexGrid && DestructorSystem) {
+              if (hitEntity.hexGrid || hitEntity.beamHull) {
                 const impactSpeed = Number.isFinite(speed) ? speed : Math.max(800, Number(weapon.baseRange) || 2000);
                 applyHexImpact(hitEntity, finalEndX, finalEndY, damage, { x: dirX * impactSpeed, y: dirY * impactSpeed }, beamHitShard);
                 // Kierunek wyrzutu atmosfery, gdy padnie mostek (tunel wiązki).
@@ -9355,6 +9420,7 @@
       const planetInitResult = initPlanets3D(planets, SUN);
       initHaloRings();
       applyHaloRingDevSpawn();
+      startMenuBackdrop();
       const sceneFromInit = asThreeScene(planetInitResult);
       if (sceneFromInit) {
         planetScene3D = sceneFromInit;
@@ -11991,6 +12057,9 @@
 
     function ensureCargoWreckFragment(van) {
       if (van?._cargoWreck) return van._cargoWreck;
+      // Kadłub na belkach: wrak z ocalałych węzłów, a gdy nie zostało nic — z jednego
+      // odtworzonego węzła (nośnik partii, jak odtworzony heks niżej).
+      if (van?.beamHull) return HullBodies.ensureCargoCarrier(van) || van._cargoWreck || null;
       const shards = van?.hexGrid?.shards;
       if (!Array.isArray(shards) || shards.length === 0 || !window.createWreckage) return null;
       let shard = shards.find(candidate => candidate?.active && !candidate.isDebris && candidate.hp > 0);
@@ -12009,7 +12078,7 @@
 
     function ensureCargoWreckInventory(wreck, order) {
       if (!wreck) return null;
-      const shardCount = Math.max(1, Number(wreck.hexGrid?.activeStructuralCount) || 1);
+      const shardCount = Math.max(1, Number(wreck.beamHull?.body?.activeNodes ?? wreck.hexGrid?.activeStructuralCount) || 1);
       if (!wreck._salvage) {
         wreck._salvage = {
           weapons: [],
@@ -12508,6 +12577,12 @@
       pushZoneMessage(`SALVAGE: CIĘCIE${weaponsNote}`, 1.6);
     }
 
+    // Żywe komórki konstrukcji wraku: węzły kadłuba na belkach albo heksy.
+    function wreckStructureCount(wreck) {
+      if (wreck?.beamHull) return HullBodies.hasHull(wreck) ? wreck.beamHull.body.activeNodes : 0;
+      return Number(wreck?.hexGrid?.activeStructuralCount) || 0;
+    }
+
     function stopFieldSalvage(reason = '') {
       if (!salvageState.cutting) return;
       salvageState.cutting = null;
@@ -12521,6 +12596,7 @@
      * Liczone w lokalnych współrzędnych kratownicy, bez transformacji do świata.
      */
     function cutOuterShard(wreck) {
+      if (wreck?.beamHull) return HullBodies.cutOuterNode(wreck);
       const grid = wreck?.hexGrid;
       const shards = grid?.shards;
       if (!Array.isArray(shards) || !shards.length) return false;
@@ -12559,7 +12635,7 @@
       if (cargoRecovery.changed) {
         pushZoneMessage(`ODZYSKANO ŁADUNEK: ${formatCargoBag(cargoRecovery.moved)}`, 1.8);
       }
-      if (!wreck.hexGrid) {
+      if (!wreck.hexGrid && !HullBodies.hasHull(wreck)) {
         stopFieldSalvage(cargoRecovery.reason === 'capacity'
           ? 'SALVAGE: CAŁA PARTIA NIE MIEŚCI SIĘ W ŁADOWNI'
           : 'SALVAGE: PUSTY KONTENER');
@@ -12570,13 +12646,14 @@
         return;
       }
 
-      const before = Number(wreck.hexGrid.activeStructuralCount) || 0;
+      const before = wreckStructureCount(wreck);
       if (before <= 0) {
         stopFieldSalvage('SALVAGE: WRAK ROZEBRANY');
         return;
       }
 
-      salvageState.cutDebt += FIELD_CUT_SHARDS_PER_SECOND * dt;
+      // Tempo w heksach; węzeł kadłuba na belkach to kilka heksów — to samo tempo powierzchni.
+      salvageState.cutDebt += fieldCutNodesPerSecond(wreck) * dt;
       // Limit na klatkę chroni przed lawiną po zacięciu (np. po alt-tabie).
       let budget = Math.min(8, Math.floor(salvageState.cutDebt));
       while (budget > 0) {
@@ -12585,7 +12662,7 @@
         budget--;
       }
 
-      const after = Number(wreck.hexGrid.activeStructuralCount) || 0;
+      const after = wreckStructureCount(wreck);
       const removed = Math.max(0, before - after);
       if (removed <= 0) return;
 
@@ -12678,7 +12755,13 @@
       // Zimny wrak żyje tylko w coldWrecks — pula nie może wydać obiektu,
       // który nadal tam wisi.
       coldWreckSystem.forget(wreck);
-      DestructorSystem?.recycleWreck?.(wreck);
+      recycleWreckEntity(wreck);
+    }
+
+    // Wrak kończy życie: kadłub na belkach zwalnia ciało, heksowy wraca do puli destruktora.
+    function recycleWreckEntity(wreck) {
+      if (wreck?.beamHull) return HullBodies.recycleWreck(wreck);
+      return DestructorSystem?.recycleWreck?.(wreck);
     }
 
     function findDeliveryStation(wreck) {
@@ -12697,7 +12780,7 @@
     function updateWreckTow() {
       const wreck = salvageState.towed;
       if (!wreck) return;
-      if (wreck.dead || !wreck.hexGrid) {
+      if (wreck.dead || (!wreck.hexGrid && !HullBodies.hasHull(wreck))) {
         releaseWreckTow('HOL: WRAK PRZEPADŁ');
         return;
       }
@@ -14870,8 +14953,8 @@
     function getRadarTargetMeta(target) {
       const source = target?.__targetingSubsystem ? target.ownerEntity : target;
       const hpScale = getEntityHardpointScale(source);
-      const srcW = Number(source?.hexGrid?.srcWidth);
-      const srcH = Number(source?.hexGrid?.srcHeight);
+      const srcW = Number((source?.hexGrid || source?.beamHull)?.srcWidth);
+      const srcH = Number((source?.hexGrid || source?.beamHull)?.srcHeight);
       const radius = Math.max(20, getTargetRadius(source));
       return {
         unitId: getRadarTargetUnitId(target),
@@ -14911,10 +14994,28 @@
       return rows;
     }
 
+    // Plan kadłuba na belkach: komórka = węzeł (piksele sprite'a od środka, y w dół — jak origLx/Ly).
+    function buildBeamBlueprintCells(target, hpScale) {
+      const cells = HullBodies.shieldCells(target);
+      const s = target.beamHull?.body?.nodeStore;
+      if (!cells || !s) return [];
+      const out = new Array(s.count);
+      for (let i = 0; i < s.count; i++) {
+        out[i] = {
+          x: cells[i * 2] * hpScale.x,
+          y: cells[i * 2 + 1] * hpScale.y,
+          hp: s.hp[i],
+          maxHp: s.maxHp[i] || 1,
+          active: s.active[i] === 1
+        };
+      }
+      return out;
+    }
+
     function buildRadarBlueprintData(target) {
-      const grid = target?.hexGrid;
+      const grid = target?.hexGrid || target?.beamHull;
       const hpScale = getEntityHardpointScale(target);
-      const shards = Array.isArray(grid?.shards)
+      const shards = target?.beamHull ? buildBeamBlueprintCells(target, hpScale) : Array.isArray(grid?.shards)
         ? grid.shards.map((shard) => ({
             x: (Number(shard?.origLx) || 0) * hpScale.x,
             y: (Number(shard?.origLy) || 0) * hpScale.y,
@@ -16906,11 +17007,10 @@
           targetingMode.wheelHover = -1;
           targetingMode.wheelMouseStart = { x: mouse.x, y: mouse.y };
         } else {
-          camera.zoom = Math.abs(camera.zoom - camera.defaultZoom) < 0.03 ? camera.altZoom : camera.defaultZoom;
-          camera.targetZoom = camera.zoom;
+          camera.targetZoom = Math.abs(camera.targetZoom - camera.defaultZoom) < 0.03 ? camera.altZoom : camera.defaultZoom;
           camera.manualZoom = true;
           if (camera.transition && camera.transition.kind === 'ship') camera.transition = null;
-          zoomIndicator.show(camera.zoom);
+          zoomIndicator.show(camera.targetZoom);
         }
       }
     });
@@ -17007,37 +17107,23 @@
       if (stationUI.open) return;
       e.preventDefault();
       if (CICDisplay.active) { CICDisplay.onWheel(e.deltaY); return; }
-      const wheelDelta = clamp(e.deltaY, -240, 240);
+      // deltaMode: Firefox potrafi podać linie (3 na ząbek) zamiast pikseli.
+      const wheelDelta = clamp(wheelDeltaPx(e.deltaY, e.deltaMode, H), -240, 240);
       const f = Math.exp(-wheelDelta * camera.wheelSpeed);
       // Split-screen: wheel zooms the keyboard player's viewport
       if (splitScreenMode && camera2 && _getMouseForScreen(e.clientX).isP2) {
         camera2.targetZoom = clamp(camera2.targetZoom * f, camera2.minZoom, camera2.maxZoom);
       } else {
-        const camBefore = { x: camera.x, y: camera.y, zoom: camera.zoom };
-        const rect = canvas.getBoundingClientRect();
-        const sx = e.clientX - rect.left;
-        const sy = e.clientY - rect.top;
-        const worldBefore = screenToWorld(sx, sy, camBefore);
         if (camera.mode === 'rts') {
-          const nextZoom = clamp(camera.zoom * f, camera.minZoom, camera.maxZoom);
-          const camAfter = { x: camera.x, y: camera.y, zoom: nextZoom };
-          const worldAfter = screenToWorld(sx, sy, camAfter);
-          const dx = worldBefore.x - worldAfter.x;
-          const dy = worldBefore.y - worldAfter.y;
-          camera.x += dx;
-          camera.y += dy;
-          camera.targetX = camera.x;
-          camera.targetY = camera.y;
-          camera.zoom = nextZoom;
-          camera.targetZoom = nextZoom;
-          if (prevCameraState) {
-            prevCameraState.x = camera.x;
-            prevCameraState.y = camera.y;
-            prevCameraState.zoom = camera.zoom;
-          }
-        } else {
-          camera.targetZoom = clamp(camera.targetZoom * f, camera.minZoom, camera.maxZoom);
+          // Zoom RTS do kursora, ale płynnie: punkt świata pod kursorem trzyma
+          // updateCameraZoom, przesuwając kamerę w każdej klatce animacji.
+          const rect = canvas.getBoundingClientRect();
+          const vp = getViewportForCamera(camera);
+          camera.zoomAnchor.active = true;
+          camera.zoomAnchor.dx = (e.clientX - rect.left) - (vp.x + vp.w / 2);
+          camera.zoomAnchor.dy = (e.clientY - rect.top) - (vp.y + vp.h / 2);
         }
+        camera.targetZoom = clamp(camera.targetZoom * f, camera.minZoom, camera.maxZoom);
         camera.manualZoom = true;
         if (camera.transition && camera.transition.kind === 'ship') camera.transition = null;
       }
@@ -18430,6 +18516,9 @@
     }
 
     function spawnReactorBlowBreakup(entity, sourceShards, explosionPos, severity = 0) {
+      // Kadłub na belkach: wrak rozcięty promieniście z punktu wybuchu na kilka ciężkich
+      // odłamów + chmura odłamków z rdzenia; odłamy dostają pchnięcie jak niżej.
+      if (entity?.beamHull) return HullBodies.shatter(entity, explosionPos.x, explosionPos.y, severity);
       if (!entity?.hexGrid || !DestructorSystem?.spawnWreckEntity) {
         if (window.DEBUG_CRIT_BLOW) console.warn('[CritBlow breakup] aborted: missing entity/hexGrid/Destructor');
         return { fragments: 0, debris: 0 };
@@ -18512,6 +18601,13 @@
     }
 
     function releaseNpcHexBody(npc) {
+      if (npc?.beamHull) {
+        if (invalidateHexShipEntity3D) {
+          try { invalidateHexShipEntity3D(npc); } catch (_) {}
+        }
+        HullBodies.release(npc);
+        return;
+      }
       if (!npc?.hexGrid) return;
       if (invalidateHexShipEntity3D) {
         try { invalidateHexShipEntity3D(npc); } catch (_) {}
@@ -18529,6 +18625,7 @@
         && npc !== ship
         && !npc.isCargoVan
         && !npc.hexGrid
+        && !npc.beamHull
         && !isBridgeHulk(npc);
     }
 
@@ -18630,10 +18727,15 @@
       npc.hp = 0;
       npc.respawnTimer = 3 + Math.random() * 6;
       if (npc.fleetEntry?.status) npc.fleetEntry.status.hull = 0;
-      const shards = npc.hexGrid?.shards;
-      const survivingShards = Array.isArray(shards) ? shards.filter(s => s.active && !s.isDebris && s.hp > 0) : [];
-      if ((survivingShards.length > 3 || (npc.isCargoVan && survivingShards.length > 0)) && window.createWreckage) {
-        window.createWreckage(npc, survivingShards);
+      if (npc.beamHull) {
+        // Kadłub na belkach: cały ocalały kadłub zostaje wrakiem-łupem.
+        window.createWreckage?.(npc);
+      } else {
+        const shards = npc.hexGrid?.shards;
+        const survivingShards = Array.isArray(shards) ? shards.filter(s => s.active && !s.isDebris && s.hp > 0) : [];
+        if ((survivingShards.length > 3 || (npc.isCargoVan && survivingShards.length > 0)) && window.createWreckage) {
+          window.createWreckage(npc, survivingShards);
+        }
       }
       if (npc.isCargoVan) handleCargoVanDestroyed(npc);
       releaseShipBridges(npc);
@@ -18647,7 +18749,7 @@
       if (!Number.isFinite(dmg) || dmg <= 0) return;
       // Cargo może umrzeć dopiero, gdy istnieje geometria zdolna utworzyć realny wrak.
       // Do tego czasu rekord nadal leci, a encja jest wyłącznie niewrażliwym widokiem.
-      if (npc.isCargoVan && (!npc.hexGrid || !Array.isArray(npc.hexGrid.shards) || npc.hexGrid.shards.length === 0)) return;
+      if (npc.isCargoVan && !npc.beamHull && (!npc.hexGrid || !Array.isArray(npc.hexGrid.shards) || npc.hexGrid.shards.length === 0)) return;
       const bypassShield = !!opts?.bypassShield;
       npc.hitFlash = 0.12;
       npc.damageHue = (npc.damageHue || 0) + dmg;
@@ -18692,7 +18794,11 @@
         // even when the killing blow is a 1-damage integrity-finisher hit.
         let hexTotal = 0, hexAlive = 0;
         let survivingShards = [];
-        if (npc.hexGrid?.shards) {
+        const hullState = npc.beamHull ? HullBodies.structuralState(npc) : null;
+        if (hullState) {
+          hexTotal = hullState.total;
+          hexAlive = hullState.active;
+        } else if (npc.hexGrid?.shards) {
           for (const s of npc.hexGrid.shards) {
             hexTotal++;
             if (s.active && !s.isDebris && s.hp > 0) hexAlive++;
@@ -18703,7 +18809,9 @@
         const didCritBlow = tryTriggerCriticalReactorBlow(npc, overkillDmg, aliveRatio, survivingShards, _critChainDepth);
 
         if (!didCritBlow) {
-          if ((survivingShards.length > 3 || (npc.isCargoVan && survivingShards.length > 0)) && window.createWreckage) {
+          if (npc.beamHull) {
+            if (hexAlive > 0 && window.createWreckage) window.createWreckage(npc);
+          } else if ((survivingShards.length > 3 || (npc.isCargoVan && survivingShards.length > 0)) && window.createWreckage) {
             window.createWreckage(npc, survivingShards);
           }
           if (cause === 'plasma') {
@@ -18724,12 +18832,19 @@
     }
     window.applyDamageToNPC = applyDamageToNPC;
 
+    // Stan struktury kadłuba do sufitu HP: węzły kadłuba na belkach albo heksy (asteroidy).
+    const _hullStructState = { active: 0, total: 0, ratio: 1 };
+    function getHullStructuralState(entity) {
+      if (entity?.beamHull) return HullBodies.structuralState(entity, _hullStructState);
+      return entity?.hexGrid ? getHexStructuralState(entity) : null;
+    }
+
     function enforceNpcHexIntegrityBalance() {
       const playerHexLossExponent = 2.35;
       const npcHexLossExponent = 2.2;
 
-      if (ship && !ship.destroyed && ship.hexGrid && ship.hull && Number.isFinite(ship.hull.max) && ship.hull.max > 0) {
-        const shipState = getHexStructuralState(ship);
+      if (ship && !ship.destroyed && (ship.hexGrid || ship.beamHull) && ship.hull && Number.isFinite(ship.hull.max) && ship.hull.max > 0) {
+        const shipState = getHullStructuralState(ship);
         if (shipState && shipState.total > 0) {
           const ratioAdjusted = Math.pow(Math.max(0, Math.min(1, shipState.ratio)), playerHexLossExponent);
           const shipHullCap = Math.max(0, ship.hull.max * ratioAdjusted);
@@ -18744,9 +18859,9 @@
 
       for (let i = 0; i < npcs.length; i++) {
         const npc = npcs[i];
-        if (!npc || npc.dead || npc.isWreck || !npc.hexGrid || isBridgeHulk(npc)) continue;
+        if (!npc || npc.dead || npc.isWreck || (!npc.hexGrid && !npc.beamHull) || isBridgeHulk(npc)) continue;
 
-        const state = getHexStructuralState(npc);
+        const state = getHullStructuralState(npc);
         if (!state || state.total <= 0) continue;
 
         const npcMaxHull = Math.max(1, Number(npc.maxHp) || Number(npc.hp) || 1);
@@ -18845,6 +18960,7 @@
     let _integrityDtAcc = 0;
     let _integrityTick = 0;
     const _dynamicDestructibles = [];
+    const _hexDestructibles = [];
     const _playerRepairBuffer = [];
 
     function buildDynamicDestructibles(shipEntity, npcList, wreckList, p2Entity = null) {
@@ -18970,6 +19086,7 @@
             get radius() { return ship.radius || 50; },
             get shield() { return ship.shield; },
             get hexGrid() { return ship.hexGrid; },
+            get beamHull() { return ship.beamHull; },
             get capitalProfile() { return ship.capitalProfile; },
             get angle() { return ship.angle; },
             get w() { return ship.w; },
@@ -18995,6 +19112,7 @@
             get radius() { return player2Ship.radius || 50; },
             get shield() { return player2Ship.shield; },
             get hexGrid() { return player2Ship.hexGrid; },
+            get beamHull() { return player2Ship.beamHull; },
             get capitalProfile() { return player2Ship.capitalProfile; },
             get angle() { return player2Ship.angle; },
             get w() { return player2Ship.w; },
@@ -19176,7 +19294,8 @@
           let hullShard = null;
           let hullImpactX = hullT >= 0 ? b.px + (b.x - b.px) * hullT : b.x;
           let hullImpactY = hullT >= 0 ? b.py + (b.y - b.py) * hullT : b.y;
-          if (hullBroadT >= 0 && realNpc.hexGrid && typeof DestructorSystem.sweepImpact === 'function') {
+          const hullSweepable = !!(realNpc.beamHull || realNpc.hexGrid);
+          if (hullBroadT >= 0 && hullSweepable) {
             // Heks wygrywa tylko PRZED wejściem w tarczę (remis → tarcza) i przed
             // najlepszym trafieniem poprzednich kandydatów, więc sweep idzie tylko
             // po odcinku [0, sweepLimit]. Wynik jak przy pełnym sweepie, a przy
@@ -19184,10 +19303,11 @@
             let sweepLimit = hitT < 1 ? hitT : 1;
             if (shieldT >= 0 && shieldT < sweepLimit) sweepLimit = shieldT;
             let hexSweep = null;
+            const sweepFn = realNpc.beamHull ? hullSweepImpact : hexSweepImpact;
             if (sweepLimit >= 1) {
-              hexSweep = DestructorSystem.sweepImpact(realNpc, b.px, b.py, b.x, b.y, bulletR);
+              hexSweep = sweepFn(realNpc, b.px, b.py, b.x, b.y, bulletR);
             } else if (sweepLimit > 0) {
-              hexSweep = DestructorSystem.sweepImpact(realNpc, b.px, b.py,
+              hexSweep = sweepFn(realNpc, b.px, b.py,
                 b.px + (b.x - b.px) * sweepLimit, b.py + (b.y - b.py) * sweepLimit, bulletR);
             }
             hullT = hexSweep ? (sweepLimit >= 1 ? hexSweep.t : hexSweep.t * sweepLimit) : -1;
@@ -19251,6 +19371,9 @@
             hexHit = false;
           } else if (didHitHex) {
             hexHit = true;
+          } else if (hitNPC.beamHull) {
+            // Kadłub na belkach: sonda w punkcie trafienia, bez obrażeń (tarcza rozstrzyga niżej).
+            hexHit = HullBodies.probe(hitNPC._realEntity || hitNPC, hitX, hitY);
           } else if (hitNPC.hexGrid) {
             // Sprawdzamy kolizję z heksem, ale na razie bez zadawania obrażeń (damage=0),
             // żeby nie zranić statku pod tarczą.
@@ -19282,8 +19405,9 @@
           } else if (!shieldActive && hexHit) {
             // Tarcza nie działa, trafiono w kadłub -> OBRAŻENIA
 
-            // Obrażenia w heks trafiony przez sweep (bez niego — sonda w punkcie trafienia)
-            if (hitNPC.hexGrid) {
+            // Obrażenia w heks trafiony przez sweep (bez niego — sonda w punkcie trafienia);
+            // kadłub na belkach — krater od punktu wejścia.
+            if (hitNPC.hexGrid || hitNPC.beamHull) {
               applyHexImpact(hitNPC._realEntity || hitNPC, hitX, hitY, npcDamage, { x: b.vx, y: b.vy }, hitHexShard);
               // Kierunek wyrzutu atmosfery, gdy padnie mostek (tunel ostrzału).
               noteBridgeHit(hitNPC._realEntity || hitNPC, hitX, hitY, b.vx, b.vy, bridgeSimTime);
@@ -19299,7 +19423,7 @@
 
             spawnBulletImpactEffect(b, hitX, hitY, 1.0);
 
-            if (shouldRemoveProjectileAfterImpact(b, !!hitNPC.hexGrid)) removeBulletAt(i);
+            if (shouldRemoveProjectileAfterImpact(b, !!(hitNPC.hexGrid || hitNPC.beamHull))) removeBulletAt(i);
             if (profileBullet) secNpcHit += (performance.now() - tBulletSection0) * bulletProfileScale;
             continue;
           } else {
@@ -20215,11 +20339,50 @@
     let _wreckBudgetTimer = 0;
     const _wreckBudgetScratch = [];
 
+    // Sufit węzłów wraków na belkach (magazyny SoA, bez areny). Barierka jak niżej — przy
+    // normalnej grze wybuchy i despawn trzymają liczbę dużo poniżej; to ochrona przed klifem.
+    const WRECK_BEAM_NODE_BUDGET = 600000;
+
+    function enforceWreckBeamBudget() {
+      let total = 0;
+      for (let i = 0; i < wrecks.length; i++) {
+        const hull = wrecks[i]?.beamHull;
+        if (hull) total += hull.body.activeNodes;
+      }
+      if (total <= WRECK_BEAM_NODE_BUDGET) return;
+      _wreckBudgetScratch.length = 0;
+      const px = ship?.pos?.x || 0;
+      const py = ship?.pos?.y || 0;
+      for (let i = 0; i < wrecks.length; i++) {
+        const w = wrecks[i];
+        if (!w?.beamHull) continue;
+        if (salvageState.towed === w || salvageState.cutting === w) continue;
+        if (!cargoBagIsEmpty(w._cargoManifest)) continue;
+        const dx = w.x - px;
+        const dy = w.y - py;
+        _wreckBudgetScratch.push({ w, hexes: w.beamHull.body.activeNodes, distSq: dx * dx + dy * dy });
+      }
+      _wreckBudgetScratch.sort((a, b) => b.distSq - a.distSq);
+      const doomed = new Set();
+      for (let i = 0; i < _wreckBudgetScratch.length && total > WRECK_BEAM_NODE_BUDGET; i++) {
+        doomed.add(_wreckBudgetScratch[i].w);
+        total -= _wreckBudgetScratch[i].hexes;
+      }
+      for (let i = wrecks.length - 1; i >= 0; i--) {
+        const w = wrecks[i];
+        if (!doomed.has(w)) continue;
+        TowSystem.detachBody(w, 'wreck-budget');
+        recycleWreckEntity(w);
+        wrecks.splice(i, 1);
+      }
+    }
+
     function enforceWreckHexBudget() {
       _wreckBudgetTimer -= PHYS_DT;
       if (_wreckBudgetTimer > 0) return;
       _wreckBudgetTimer = WRECK_BUDGET_CHECK_SEC;
       if (!Array.isArray(wrecks) || wrecks.length === 0) return;
+      enforceWreckBeamBudget();
 
       const arenaStats = getHexArenaStats?.();
       const capacity = Math.max(1, Number(arenaStats?.capacity) || DEFAULT_HEX_ARENA_CAPACITY);
@@ -20449,7 +20612,9 @@
           if (distSq < wakeR * wakeR) {
             sw._wreckSleeping = false;
             sw._wreckSleepTimer = 0;
-            if (sw.hexGrid) {
+            if (sw.beamHull) {
+              HullBodies.wake(sw, 20);
+            } else if (sw.hexGrid) {
               sw.hexGrid.isSleeping = false;
               sw.hexGrid.sleepFrames = 0;
               sw.hexGrid.wakeHoldFrames = 20;
@@ -21296,6 +21461,7 @@
             w.angVel = 0;
             if (w.vel) { w.vel.x = 0; w.vel.y = 0; }
             // Wymuś usypianie gridu — nie czekaj na naturalny cykl deformacji
+            if (w.beamHull) HullBodies.sleep(w);
             const wg = w.hexGrid;
             if (wg && !wg.isSleeping) {
               wg.isSleeping = true;
@@ -21322,7 +21488,7 @@
 
         // Despawn jeśli wrak nie ma już heksów lub jest bardzo daleko
         const distToPlayer = Math.hypot(w.x - ship.pos.x, w.y - ship.pos.y);
-        const hasHexesLeft = w.hexGrid && w.hexGrid.activeStructuralCount > 0;
+        const hasHexesLeft = w.beamHull ? HullBodies.hasHull(w) : (w.hexGrid && w.hexGrid.activeStructuralCount > 0);
         const ownsShipmentCargo = !cargoBagIsEmpty(w._cargoManifest);
 
         // Usuń tylko jeśli: brak heksów LUB ekstremalna odległość (50 km).
@@ -21333,9 +21499,7 @@
           if (salvageState.towed === w) releaseWreckTow('HOL: WRAK PRZEPADŁ');
           if (salvageState.cutting === w) stopFieldSalvage('SALVAGE: WRAK ROZEBRANY');
           TowSystem.detachBody(w, 'wreck-despawn');
-          if (DestructorSystem?.recycleWreck) {
-            DestructorSystem.recycleWreck(w);
-          }
+          recycleWreckEntity(w);
           wrecks.splice(i, 1);
           continue;
         }
@@ -21475,7 +21639,7 @@
         ship,
         npcs,
         _activeWrecksBuffer,
-        (splitScreenMode && player2Ship && !player2Ship.destroyed && player2Ship.hexGrid) ? player2Ship : null
+        (splitScreenMode && player2Ship && !player2Ship.destroyed && (player2Ship.hexGrid || player2Ship.beamHull)) ? player2Ship : null
       );
 
       // Wake sweep: budź śpiące wraki, w które ciało może wjechać przed
@@ -21491,25 +21655,33 @@
       PerfHUD.addTiming('destructiblePrepTime', performance.now() - tPhysSection0);
 
       const tDestructor0 = performance.now();
-      if (playerRepairActive && (!ship.hexGrid || ship.destroyed || stationUI.open)) {
+      if (playerRepairActive && (!HullBodies.hasHull(ship) || ship.destroyed || stationUI.open)) {
         playerRepairActive = false;
       }
       if (playerRepairActive) {
         _playerRepairBuffer.length = 0;
         _playerRepairBuffer.push(ship);
-        const didRepair = DestructorSystem.repair(_playerRepairBuffer, dt);
+        const didRepair = HullBodies.repair(_playerRepairBuffer, dt);
         if (!didRepair) {
           playerRepairActive = false;
           pushZoneMessage('REPAIR: COMPLETE', 0.8);
         }
       }
-      DestructorSystem.update(dt, allDestructibles);
+      // Kadłuby statków, NPC i wraków: silnik belek. Heksowy destruktor dostaje tylko
+      // ciała heksowe (asteroidy) — kadłuby z listy i tak pomija (brak hexGrid).
+      HullBodies.step(dt, allDestructibles);
+      _hexDestructibles.length = 0;
+      for (let i = 0; i < allDestructibles.length; i++) {
+        const e = allDestructibles[i];
+        if (e?.hexGrid) _hexDestructibles.push(e);
+      }
+      if (_hexDestructibles.length > 0) DestructorSystem.update(dt, _hexDestructibles);
       const destructorMs = performance.now() - tDestructor0;
       PerfHUD.addTiming('destructorTime', destructorMs);
-      if (DestructorSystem.perf) {
-        PerfHUD.addTiming('collisionTime', DestructorSystem.perf.lastCollisionMs || 0);
-        PerfHUD.addContacts(DestructorSystem.perf.lastContacts || 0);
-      }
+      PerfHUD.addTiming('collisionTime', (HullBodies.engine.perf.lastCollisionMs || 0)
+        + (_hexDestructibles.length > 0 ? (DestructorSystem.perf?.lastCollisionMs || 0) : 0));
+      PerfHUD.addContacts((HullBodies.perf.lastContacts || 0)
+        + (_hexDestructibles.length > 0 ? (DestructorSystem.perf?.lastContacts || 0) : 0));
 
       tPhysSection0 = performance.now();
       // Stany integralności zmieniają się wolno — nie muszą chodzić w 120 Hz.
@@ -21536,14 +21708,20 @@
     // zależne od fps), z dt 1/60 wpisanym na sztywno i PO wyliczeniu interpolacji,
     // więc statek skakał o klatkę. Statki daleko od pasów odpadają w
     // checkShipCollisions na teście pasm, bez zapytania do hasha.
+    // NPC całkują ruch w x/y/vx/vy, a pos/vel mają najwyżej jako lustro, które
+    // nadpisuje następny krok — do kolizji ze światem (skały, ring) idą przez
+    // widok kinematyki (src/game/npcCollisionBody.js), wynik wraca do x/y/vx/vy.
+    const _npcCollisionBody = createNpcCollisionBody();
     function stepShipAsteroidCollisions(dt) {
       const field = window.asteroidField;
       if (!field) return;
       if (ship && !ship.dead) field.checkShipCollisions(ship, dt);
       if (player2Ship && !player2Ship.dead) field.checkShipCollisions(player2Ship, dt);
+      const body = _npcCollisionBody;
       for (let i = 0; i < npcs.length; i++) {
         const npc = npcs[i];
-        if (npc && !npc.dead && npc.pos) field.checkShipCollisions(npc, dt);
+        if (!npcCollidesWithWorld(npc)) continue;
+        if (field.checkShipBodyCollisions(npc, loadNpcCollisionBody(body, npc), dt)) storeNpcCollisionBody(body, npc);
       }
     }
 
@@ -21552,6 +21730,7 @@
     // (bez odbicia, prędkość w głąb płyty zerowana); ściany hal K-7, zatok
     // i tuneli tranzytów tylko dla statków graczy (NPC do portu nie wlatują).
     // Statki daleko od ringów odpadają na teście odległości od planety.
+    // NPC przez widok kinematyki, jak przy asteroidach (npcCollidesWithWorld).
     let _haloRingNoticeAtMs = 0;
     function stepShipRingCollisions(dt) {
       if (!haloRings) return;
@@ -21564,9 +21743,11 @@
         }
       }
       if (player2Ship && !player2Ship.dead && !player2Ship.destroyed) haloRings.constrainShip(player2Ship, true);
+      const body = _npcCollisionBody;
       for (let i = 0; i < npcs.length; i++) {
         const npc = npcs[i];
-        if (npc && !npc.dead && npc.pos) haloRings.constrainShip(npc, false);
+        if (!npcCollidesWithWorld(npc)) continue;
+        if (haloRings.constrainShip(loadNpcCollisionBody(body, npc), false)) storeNpcCollisionBody(body, npc);
       }
     }
 
@@ -21651,7 +21832,9 @@
     let acc = 0;
     let vfxTime = 0;
     let prevState = null;
-    let prevCameraState = { x: camera.x, y: camera.y, zoom: camera.zoom };
+    // Pozycja kamery RTS z poprzedniego kroku (interpolacja renderu). Zoom nie ma
+    // interpolacji: updateCameraZoom liczy go raz na klatkę renderu.
+    let prevCameraState = { x: camera.x, y: camera.y };
     let firstFrameResolver = null;
     // Stan z poprzedniego kroku do interpolacji renderu. Jeden obiekt na całą grę,
     // nadpisywany co krok — dawniej 3 obiekty + tablica w KAŻDYM kroku fizyki.
@@ -21673,6 +21856,34 @@
       if (splitScreenMode && player2Ship) saveState2();
     }
     saveState();
+    // Zoom kamery raz na klatkę renderu (czas klatki), tuż przed render(): sprężyna
+    // w log(zoom) z src/game/cameraZoom.js. Przejścia kamery (fokus stacji, wyjście
+    // z RTS) same prowadzą zoom w updateCameraTarget — wtedy sprężyna stoi.
+    // W RTS kamera jedzie tak, by punkt świata pod kotwicą (kursor z ostatniego
+    // ząbka) został w miejscu; ten sam przesuw dostaje prevCameraState, więc
+    // interpolacja pozycji go nie rozmywa.
+    function updateCameraZoom(dt) {
+      const anchor = camera.zoomAnchor;
+      if (camera.transition) {
+        camera.zoomVel = 0;
+        anchor.active = false;
+        return;
+      }
+      const zoomBefore = camera.zoom;
+      const moving = stepCameraZoom(camera, dt);
+      if (anchor.active && camera.mode === 'rts') {
+        const k = 1 / zoomBefore - 1 / camera.zoom;
+        const shiftX = anchor.dx * k;
+        const shiftY = anchor.dy * k;
+        camera.x += shiftX;
+        camera.y += shiftY;
+        camera.targetX = camera.x;
+        camera.targetY = camera.y;
+        prevCameraState.x += shiftX;
+        prevCameraState.y += shiftY;
+      }
+      if (!moving || camera.mode !== 'rts') anchor.active = false;
+    }
     function loop(now) {
       const frameStartMs = performance.now();
       const frame = Math.min(0.033, (now - lastTime) / 1000);
@@ -21681,6 +21892,7 @@
       if (PAUSED) {
         saveState();
         updateCameraTarget(frame);
+        updateCameraZoom(frame);
         zoomIndicator.update(frame);
         render(0, frame);
         // Rakiet NIE aktualizujemy w pauzie: update() to ich lot, trafienia
@@ -21715,7 +21927,6 @@
       while (acc >= PHYS_DT && steps < 10) {
         prevCameraState.x = camera.x;
         prevCameraState.y = camera.y;
-        prevCameraState.zoom = camera.zoom;
         saveState();
         const nextPhysicsTickId = physicsTickId + 1;
         const aiBrainPhase = aiDecisionCadence.phase(nextPhysicsTickId);
@@ -21773,6 +21984,7 @@
         camera.shakeTime -= frame;
         if (camera.shakeTime <= 0) camera.shakeMag = 0;
       }
+      updateCameraZoom(frame);
       zoomIndicator.update(frame);
       updatePlayerStatusUI();
 
@@ -21983,7 +22195,7 @@
     // zapasem na paski HP.
     function isNpcOverlayOnScreen(npc, s, zoom, viewW, viewH) {
       let extent = Number(npc.radius) || 20;
-      const grid = npc.hexGrid;
+      const grid = npc.hexGrid || npc.beamHull;
       if (grid) {
         const v = npc.visual;
         const renderScale = Math.max(Number(v?.spriteScaleX) || 0, Number(v?.spriteScaleY) || 0, Number(v?.spriteScale) || 0);
@@ -22398,7 +22610,7 @@
       const _zoom = _currentCam.zoom;
       const statusSize = (npc.radius || 20) * _zoom;
 
-      if (npc.hexGrid) {
+      if (npc.hexGrid || npc.beamHull) {
         if (DevFlags.showNpcHardpoints) drawNpcHardpointOverlay(ctx, npc, s);
         drawNpcStatusBars(ctx, npc, s, statusSize);
         return;
@@ -22429,7 +22641,7 @@
         return;
       }
 
-      if ((npc.type === 'destroyer' || npc.type === 'battleship' || npc.isCapitalShip || npc.isCargoVan || (npc.type && npc.type.includes('frigate'))) && !npc.hexGrid) {
+      if ((npc.type === 'destroyer' || npc.type === 'battleship' || npc.isCapitalShip || npc.isCargoVan || (npc.type && npc.type.includes('frigate'))) && !npc.hexGrid && !npc.beamHull && !npc.dead) {
         const sprite = getHullSpriteForNpc(npc) || (npc.capitalSprite && npc.capitalSprite.ready ? npc.capitalSprite : null);
         const nowMs = performance.now();
         if (sprite && sprite.ready && !sprite.error && !(npc.__hexInitRetryAtMs > nowMs) && hexInitBudgetAllows()) {
@@ -22439,10 +22651,9 @@
           npc.__hardpointScaleY = (hexInit?.hardpointScaleY && hexInit.hardpointScaleY > 0) ? hexInit.hardpointScaleY : 1.0;
           npc.__hardpointScale = (hexInit?.hardpointScale && hexInit.hardpointScale > 0) ? hexInit.hardpointScale : 1.0;
           applyEditorLayoutToNpc(npc);
-          initHexBody(npc, (hexInit?.image || sprite.image));
+          HullBodies.createHull(npc, (hexInit?.image || sprite.image), { visualImage: sprite.image });
           _hexInitSpentMs += performance.now() - nowMs;
-          if (npc.hexGrid) {
-            npc.hexGrid.visualImage = sprite.image;
+          if (npc.beamHull) {
             prewarmHexShipVisual(sprite.image);
             attachEntityBridges(npc);
             drawNPCPretty(ctx, npc, s);
@@ -22522,14 +22733,16 @@
         const mouseOffsetX = freeMouse ? 0 : (mouse.x - centerX) * lookAheadFactor / zoomSafe;
         const mouseOffsetY = freeMouse ? 0 : (mouse.y - centerY) * lookAheadFactor / zoomSafe;
 
-        // Velocity-based camera lead — zawsze ~15% szerokości ekranu w world units,
-        // niezależnie od zooma i prędkości hulla.
+        // Velocity-based camera lead — zawsze ~15% szerokości ekranu, niezależnie
+        // od zooma i prędkości hulla. Trzymany w PX EKRANU (na świat: / zoomSafe):
+        // w jednostkach świata lead gonił nowy zoom przez ~1 s i statek odpływał
+        // po ekranie przy każdym zoomie w locie.
         const _cvls = ship.__camVelLead || (ship.__camVelLead = { x: 0, y: 0 });
         const _cvSpd = Math.hypot(ship.vel.x, ship.vel.y);
         // Aktualny v_max tego hulla (z drag physics) — lead normalizowany do niego
         const _cvHullVmax = Math.max(100, Number(driveState?.modeMaxSpeed) || (SHIP_PHYSICS.SPEED / Math.max(1e-6, -Math.log(SHIP_PHYSICS.LINEAR_FRICTION) * 60)));
-        // Max lead w game units = 15% szerokości viewportu (stały % ekranu przy każdym zoomie)
-        const _cvMaxLead = W * 0.15 / Math.max(0.001, zoomSafe);
+        // Max lead = 15% szerokości viewportu, w px
+        const _cvMaxLead = W * 0.15;
         const _cvNorm = Math.min(_cvSpd, _cvHullVmax) / _cvHullVmax;
         // Wolniejszy lerp = mniej agresywna kamera (czas ~0.5s)
         const _cvLerp = 1 - Math.exp(-2 * (frameDt || 0.016));
@@ -22541,8 +22754,8 @@
           _cvls.y *= (1 - _cvLerp);
         }
 
-        targetCamX = interpPos.x + mouseOffsetX + _cvls.x;
-        targetCamY = interpPos.y + mouseOffsetY + _cvls.y;
+        targetCamX = interpPos.x + mouseOffsetX + _cvls.x / zoomSafe;
+        targetCamY = interpPos.y + mouseOffsetY + _cvls.y / zoomSafe;
 
         camera.x = targetCamX;
         camera.y = targetCamY;
@@ -22566,11 +22779,10 @@
 
       let camBaseX = camera.x;
       let camBaseY = camera.y;
-      let camBaseZoom = camera.zoom;
+      const camBaseZoom = camera.zoom;
       if (camera.mode === 'rts' && prevCameraState) {
         camBaseX = lerp(prevCameraState.x, camera.x, alpha);
         camBaseY = lerp(prevCameraState.y, camera.y, alpha);
-        camBaseZoom = lerp(prevCameraState.zoom, camera.zoom, alpha);
       }
 
       const camNoShake = { x: camBaseX, y: camBaseY, zoom: camBaseZoom };
@@ -22959,7 +23171,7 @@
           // kadłubów heksowych poza ekranem odpadają; NPC bez ciała heksowego
           // przechodzą zawsze, bo drawNPCPretty robi im leniwie initHexBody,
           // od którego zależą kolizje i obrażenia kadłuba także poza ekranem.
-          if ((npc.hexGrid || isFighterUnit(npc)) && !isNpcOverlayOnScreen(npc, s, npcDrawZoom, W, H)) continue;
+          if ((npc.hexGrid || npc.beamHull || isFighterUnit(npc)) && !isNpcOverlayOnScreen(npc, s, npcDrawZoom, W, H)) continue;
           drawNPCPretty(ctx, npc, s);
         }
         PerfHUD.addTiming('render2dNpcTime', performance.now() - tRender2dSection);
@@ -23077,7 +23289,7 @@
           }
 
           // --- 3. Rysowanie KADLUBA ---
-          if (ship.hexGrid) {
+          if (ship.hexGrid || ship.beamHull) {
             if (ship.hp < ship.maxHp) {
               const zoom = camera.zoom;
               const size = (ship.radius || 20); // Usunąłem * zoom, bo ctx jest już wyskalowany w linii 2010
@@ -24832,8 +25044,8 @@
       ship.h = sizeH;
       const fallbackHullRadius = Math.max(20, Number(immediateSize?.radius) || Number(hull.radius) || BASE_PLAYER_PROFILE.radius);
       const currentScale = Math.max(0.0001, Number(ship?.visual?.spriteScale) || 1);
-      if (ship?.hexGrid?.rawRadius && Number.isFinite(ship.hexGrid.rawRadius)) {
-        ship.radius = Math.max(fallbackHullRadius, ship.hexGrid.rawRadius * currentScale);
+      if (ship?.beamHull?.radius > 0) {
+        ship.radius = Math.max(fallbackHullRadius, ship.beamHull.radius);
       } else {
         ship.radius = fallbackHullRadius;
       }
@@ -24871,8 +25083,7 @@
           try { return new URL(desiredSprite, window.location.href).href; } catch { return desiredSprite; }
         })();
         if (invalidateHexShipEntity3D) invalidateHexShipEntity3D(ship);
-        disposeHexBody(ship);
-        ship.hexGrid = null;
+        HullBodies.release(ship);
         if (shipSprite.src !== desiredResolved) {
           ship.spriteReady = false;
           ship.renderSpriteImage = null;
@@ -24894,19 +25105,8 @@
           applyHullThrusterLayout(activeHullId);
           if (previousHardpoints.length) tryPreserveMounts(previousHardpoints);
           syncWeaponSystems();
-          initHexBody(ship, hexInitImage);
-          if (ship.hexGrid) {
-            ship.hexGrid.visualImage = shipSprite;
-            ship.hexGrid.meshDirty = true;
-            ship.hexGrid.meshDirtyAll = true;
-            ship.hexGrid.textureDirty = true;
-            ship.hexGrid.cacheDirty = true;
-            ship.hexGrid.gpuTextureNeedsUpdate = true;
+          if (HullBodies.createHull(ship, hexInitImage, { visualImage: shipSprite })) {
             attachEntityBridges(ship, { key: activeHullId });
-          }
-          if (ship?.hexGrid?.rawRadius && Number.isFinite(ship.hexGrid.rawRadius)) {
-            const scaleNow = Math.max(0.0001, Number(ship?.visual?.spriteScale) || 1);
-            ship.radius = ship.hexGrid.rawRadius * scaleNow;
           }
         }
       }
@@ -24940,6 +25140,16 @@
     };
     async function startGame() {
       if (gameStarted) return;
+
+      // Tło menu: najazd kamery na Ziemię, menu zjeżdża; render tła trwa pod
+      // ekranem ładowania aż do stopMenuBackdrop() przed pierwszą klatką gry.
+      const launchT0 = performance.now();
+      if (menuBackdrop) {
+        menuLaunching = true;
+        menuBackdrop.launch();
+        syncMenuBackdrop();
+      }
+      if (mainMenuEl) mainMenuEl.classList.add('is-launching');
 
       // --- AUDIO START ---
       AudioSys.init();
@@ -24976,10 +25186,17 @@
 
       if (continueButton) continueButton.classList.remove('hidden');
       if (optionsButton) optionsButton.disabled = false;
-      setMenuView('home');
+
+      // Menu zjeżdża z ekranu (is-launching, ~0,6 s) — dopiero potem je chowamy.
+      const launchWaitMs = 620 - (performance.now() - launchT0);
+      if (launchWaitMs > 0) await new Promise(resolve => setTimeout(resolve, launchWaitMs));
 
       // 1. Ręcznie ukryj menu i upewnij się, że HUD jest SCHOWANY podczas ładowania
-      if (mainMenuEl) mainMenuEl.classList.add('hidden');
+      if (mainMenuEl) {
+        mainMenuEl.classList.add('hidden', 'in-game');
+        mainMenuEl.classList.remove('is-launching');
+      }
+      setMenuView('home');
       toggleGameUI(false);
 
       showLoadingOverlay(0, 'Przygotowanie świata');
@@ -24998,6 +25215,9 @@
       if (prewarmHexShips3D) {
         prewarmHexShips3D({ canvas: hexShipsCanvas });
       }
+      // Tarcze: program obrysu kompilował się przy pierwszym wrogu (~200 ms) i po zniknięciu
+      // ostatniej tarczy od nowa (shield3D.js, prewarmShields3D).
+      prewarmShields3D();
       await nextFrame();
 
       // Wstępna symulacja fizyki
@@ -25017,15 +25237,28 @@
       // Inicjalizacja systemów (ale bez pokazywania ich ręcznie, zrobi to toggleGameUI)
       initShieldSystem(W, H);
 
+      // Z tłem menu: najazd kamery trwa co najmniej ~2,2 s, potem przez czerń
+      // do pierwszej klatki gry — twarde cięcie z kamery kinowej na widok z góry
+      // raziło (ring upieczony w menu = gra gotowa po ~1,5 s).
+      const fadeThroughBlack = !!menuBackdrop;
+      if (fadeThroughBlack) {
+        const launchLeftMs = 2200 - (performance.now() - launchT0);
+        if (launchLeftMs > 0) await new Promise(resolve => setTimeout(resolve, launchLeftMs));
+        await fadeScreen(true, 380);
+      }
+
+      // Tło menu oddaje ring grze (warstwy, słońce) przed jej pierwszą klatką.
+      stopMenuBackdrop();
       requestAnimationFrame(loop);
       await firstFramePromise;
 
       // Ukryj loading overlay
       hideLoadingOverlay();
 
-      // 2. TERAZ, gdy gra jest gotowa, używamy hideMainMenu() logicznie, 
+      // 2. TERAZ, gdy gra jest gotowa, używamy hideMainMenu() logicznie,
       // aby włączyć HUD i odpauzować grę.
       hideMainMenu();
+      if (fadeThroughBlack) fadeScreen(false, 750);
 
       console.log("[System] Gra uruchomiona.");
     }
@@ -25601,21 +25834,10 @@
         player2Ship.spriteReady = true;
         player2Ship.spriteW = Math.max(1, Number(renderImage.width) || Number(p2Sprite.naturalWidth) || 1);
         player2Ship.spriteH = Math.max(1, Number(renderImage.height) || Number(p2Sprite.naturalHeight) || 1);
-        // Init hex body for proper 3D/2D rendering
-        initHexBody(player2Ship, hexInitImage);
-        if (player2Ship.hexGrid) {
-          player2Ship.hexGrid.visualImage = p2Sprite;
-          player2Ship.hexGrid.meshDirty = true;
-          player2Ship.hexGrid.meshDirtyAll = true;
-          player2Ship.hexGrid.textureDirty = true;
-          player2Ship.hexGrid.cacheDirty = true;
-          player2Ship.hexGrid.gpuTextureNeedsUpdate = true;
-        }
-        if (player2Ship.hexGrid?.rawRadius && Number.isFinite(player2Ship.hexGrid.rawRadius)) {
-          const scaleNow = Math.max(0.0001, Number(player2Ship.visual?.spriteScale) || 1);
-          player2Ship.radius = player2Ship.hexGrid.rawRadius * scaleNow;
-        }
+        // Kadłub na belkach (render 3D skóry, kolizje, trafienia).
         if (invalidateHexShipEntity3D) invalidateHexShipEntity3D(player2Ship);
+        HullBodies.release(player2Ship);
+        HullBodies.createHull(player2Ship, hexInitImage, { visualImage: p2Sprite });
         console.log('[SplitScreen] P2 sprite loaded & hexBody initialized:', hullKey);
       };
       p2Sprite.onerror = () => {
@@ -25708,9 +25930,8 @@
         hideMainMenu();
       });
     }
-    if (loadGameButton) {
-      loadGameButton.title = 'Wkrotce dostepne';
-    }
+    // Opisy pozycji menu: data-hint w znacznikach (linia podpowiedzi pod listą),
+    // bez systemowych dymków title.
     let editorLaunchInProgress = false;
     async function openHardpointEditorFromMenu() {
       if (editorLaunchInProgress) return;
@@ -25720,7 +25941,7 @@
       try {
         showLoadingOverlay(0, 'Uruchamianie edytora');
         await nextFrame();
-        setLoadingProgress(35, 'Ladowanie modulu');
+        setLoadingProgress(35, 'Ładowanie modułu');
         const { openHardpointEditor } = await import('./src/ui/hardpointEditor.js');
         setLoadingProgress(70, 'Inicjalizacja edytora');
         await nextFrame();
@@ -25746,24 +25967,20 @@
       }
     }
     if (optionsButton) {
-      optionsButton.title = 'Dostosuj jakosc tla';
       optionsButton.addEventListener('click', () => showMainMenu('options'));
     }
     if (editorButton) {
-      editorButton.title = 'Otworz edytor hardpointow i dysz';
       editorButton.addEventListener('click', () => {
         openHardpointEditorFromMenu();
       });
     }
     if (keybindsButton) {
-      keybindsButton.title = 'Zobacz aktualne przypisanie klawiszy';
       keybindsButton.addEventListener('click', () => showMainMenu('keybinds'));
     }
     if (optionsBackButton) {
       optionsBackButton.addEventListener('click', () => setMenuView('home'));
     }
     if (creditsButton) {
-      creditsButton.title = 'Tworcy i dane projektu';
       creditsButton.addEventListener('click', () => showMainMenu('credits'));
     }
     if (creditsBackButton) {
@@ -25912,14 +26129,12 @@
     import { initDevTools } from './src/ui/devTools.js';
     import { initBloomTunerPanel } from './src/ui/bloomTunerPanel.js';
     import { initDestructorConfigPanel } from './src/ui/destructorConfigPanel.js';
-    import { initDestructorMassPanel } from './src/ui/destructorMassPanel.js';
 
     window.addEventListener('DOMContentLoaded', () => {
       setTimeout(() => {
         initDevTools();
         initBloomTunerPanel({ enableHotkey: false });
         initDestructorConfigPanel();
-        initDestructorMassPanel();
       }, 100);
     });
   </script>

@@ -127,17 +127,49 @@ export function distanceBetween(a, b) {
 }
 
 /**
+ * Środek układu. Gra trzyma Słońce w środku mapy (`SUN` = połowa `WORLD`),
+ * a skrypty i demo w zerze — bez przesunięcia każdy węzeł sieci leżałby
+ * o pół świata od planety, którą gracz widzi.
+ */
+function originOf(options) {
+  const x = Number(options.origin?.x);
+  const y = Number(options.origin?.y);
+  return { x: Number.isFinite(x) ? x : 0, y: Number.isFinite(y) ? y : 0 };
+}
+
+/**
+ * Kąty planet. `planetAngles` (`{ id: kąt }`) przychodzi z gry, która losuje
+ * je raz przy starcie i dalej trzyma planety w miejscu (prędkość orbit 0) —
+ * dlatego wystarczy podać je raz. Planeta spoza tabeli bierze kąt z `angleFor`.
+ */
+function planetAngleFor(options) {
+  const fallback = options.angleFor || (() => 0);
+  const angles = options.planetAngles;
+  if (!angles) return fallback;
+  return (def, index) => {
+    const angle = Number(angles[def.id]);
+    return Number.isFinite(angle) ? angle : fallback(def, index);
+  };
+}
+
+/**
  * Buduje węzły układu na podstawie mapy z `systemMap.js`.
  *
  * `fields` to pola wydobywcze podawane w AU mapy — pas główny i Kuiper. Nie
  * bierzemy ich z `BELT_DEFINITIONS`, żeby ten moduł nie ciągnął za sobą
  * półmilionowej definicji asteroid; wystarczy promień i nazwa.
+ *
+ * Z gry przychodzą trzy rzeczy, bez których sieć nie pokryje się z mapą:
+ * `origin` (pozycja Słońca), `planetAngles` i te same `planetScale`/`sunRadius`,
+ * którymi gra liczy orbity w `buildSystemMap`.
  */
 export function buildTravelNetwork(options = {}) {
   const beltEdgeAu = Number(options.beltEdgeAu) || 140;
+  const origin = originOf(options);
   const { auInWorldUnits, planets } = buildSystemMap(beltEdgeAu, {
-    angleFor: options.angleFor || (() => 0),
-    planetScale: options.planetScale
+    angleFor: planetAngleFor(options),
+    planetScale: options.planetScale,
+    sunRadius: options.sunRadius
   });
   const gateHubs = new Set(options.gateHubs || DEFAULT_GATE_HUBS);
   const derelict = new Set(options.derelict || ['neptune']);
@@ -146,7 +178,7 @@ export function buildTravelNetwork(options = {}) {
   const add = node => { nodes.set(node.id, node); return node; };
 
   for (const planet of planets) {
-    const pos = positionOnOrbit(planet.orbitRadius, planet.angle);
+    const pos = positionOnOrbit(planet.orbitRadius, planet.angle, origin.x, origin.y);
     add({
       id: planet.id,
       kind: NODE_KIND.STATION,
@@ -166,7 +198,7 @@ export function buildTravelNetwork(options = {}) {
       // do niej był realnym odcinkiem, a nie zerem.
       const gateOffset = Number(options.gateOffsetUnits) || DEFAULT_GATE_OFFSET_UNITS;
       const gateAngle = planet.angle + gateOffset / Math.max(1, planet.orbitRadius);
-      const gatePos = positionOnOrbit(planet.orbitRadius, gateAngle);
+      const gatePos = positionOnOrbit(planet.orbitRadius, gateAngle, origin.x, origin.y);
       add({
         id: `gate:${planet.id}`,
         kind: NODE_KIND.GATE,
@@ -187,7 +219,7 @@ export function buildTravelNetwork(options = {}) {
   for (const outpost of options.outposts || []) {
     const radius = Number(outpost.orbitAU) * auInWorldUnits;
     const angle = Number(outpost.angle) || 0;
-    const pos = positionOnOrbit(radius, angle);
+    const pos = positionOnOrbit(radius, angle, origin.x, origin.y);
     add({
       id: String(outpost.id),
       kind: NODE_KIND.STATION,
@@ -244,7 +276,7 @@ export function buildTravelNetwork(options = {}) {
   for (const field of options.fields || []) {
     const radius = Number(field.orbitAU) * auInWorldUnits;
     const angle = Number(field.angle) || 0;
-    const pos = positionOnOrbit(radius, angle);
+    const pos = positionOnOrbit(radius, angle, origin.x, origin.y);
     // Pole wydobywcze NIE JEST punktem — to wycinek pasa o szerokości setek
     // tysięcy jednostek. Trzymanie samego środka sprawiało, że wszyscy górnicy
     // lecieli dokładnie w to samo miejsce, jeden za drugim.
@@ -256,6 +288,9 @@ export function buildTravelNetwork(options = {}) {
       label: field.label || field.id,
       x: pos.x,
       y: pos.y,
+      /** Środek pasa (Słońce) — od niego `randomFieldSpot` odmierza promień. */
+      centerX: origin.x,
+      centerY: origin.y,
       orbitRadius: radius,
       angle,
       innerRadius: Number.isFinite(innerAu) ? innerAu * auInWorldUnits : radius * 0.88,
@@ -284,6 +319,8 @@ export function buildTravelNetwork(options = {}) {
 
   return {
     auInWorldUnits,
+    /** Pozycja Słońca — środek orbit planet, placówek i pól. */
+    origin,
     nodes,
     list: [...nodes.values()],
     gates: [...nodes.values()].filter(node => node.kind === NODE_KIND.GATE),
@@ -313,13 +350,15 @@ export function addStationNode(network, spec = {}) {
   const auInWorldUnits = network.auInWorldUnits || 1;
   const radius = Number.isFinite(spec.orbitAU) ? Number(spec.orbitAU) * auInWorldUnits : 0;
   const angle = Number(spec.angle) || 0;
+  const originX = Number(network.origin?.x) || 0;
+  const originY = Number(network.origin?.y) || 0;
 
   const node = {
     id,
     kind: NODE_KIND.STATION,
     label: spec.label || id,
-    x: Number.isFinite(spec.x) ? spec.x : Math.cos(angle) * radius,
-    y: Number.isFinite(spec.y) ? spec.y : Math.sin(angle) * radius,
+    x: Number.isFinite(spec.x) ? spec.x : originX + Math.cos(angle) * radius,
+    y: Number.isFinite(spec.y) ? spec.y : originY + Math.sin(angle) * radius,
     orbitRadius: radius,
     angle,
     derelict: false,
@@ -357,7 +396,9 @@ export function randomFieldSpot(field, rng = Math.random) {
   const spread = Number(field.arcSpread) || 0.5;
   const radius = Math.sqrt(inner * inner + rng() * (outer * outer - inner * inner));
   const angle = field.angle + (rng() * 2 - 1) * spread;
-  return { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius };
+  const cx = Number(field.centerX) || 0;
+  const cy = Number(field.centerY) || 0;
+  return { x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius };
 }
 
 /**

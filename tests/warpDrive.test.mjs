@@ -5,7 +5,9 @@ import {
   warpSizeScale,
   createWarpArrival,
   sampleWarpArrival,
-  planWarpFleetArrival
+  planWarpFleetArrival,
+  warpFlybySlowdown,
+  WARP_FLYBY_DEFAULTS
 } from '../src/game/warpDrive.js';
 
 test('przylot: fazy po kolei, większy kadłub zapowiada się dłużej', () => {
@@ -94,4 +96,24 @@ test('flota: zwiastuny razem, wyrzuty od najmniejszego, okręt flagowy ostatni z
   assert.equal(ships[last.index].hullLength, 1560, 'okręt flagowy wychodzi ostatni');
   assert.ok(last.burstTime - byBurst[byBurst.length - 2].burstTime >= 0.18 + 0.45 - 1e-9);
   assert.deepEqual(planWarpFleetArrival([]), []);
+});
+
+test('zwolnienie przy mijanym ciele: daleko pełna prędkość, przy mijaniu z bliska mocno, mały daleki księżyc wcale', () => {
+  // Mars 70 tys. j. od kursu (promień 30 tys.): pełne zwolnienie przy mijaniu.
+  assert.ok(Math.abs(warpFlybySlowdown(0, 70000, 30000) - (1 - WARP_FLYBY_DEFAULTS.depth)) < 1e-9);
+  assert.ok(warpFlybySlowdown(2e6, 70000, 30000) > 0.999, 'daleko przed nim — bez zwolnienia');
+  // Płynnie i symetrycznie: zwalnia z wyprzedzeniem, przyspiesza za rufą.
+  let prev = 0;
+  for (let a = 0; a <= 800000; a += 10000) {
+    const f = warpFlybySlowdown(a, 70000, 30000);
+    assert.equal(warpFlybySlowdown(-a, 70000, 30000), f);
+    assert.ok(f >= prev - 1e-12 && f <= 1, 'dalej wzdłuż kursu — szybciej');
+    prev = f;
+  }
+  assert.ok(warpFlybySlowdown(150000, 70000, 30000) < 0.6, 'zwalnia już 150 tys. j. przed planetą');
+  // Bliżej kursu albo większe ciało — mocniej; mały księżyc daleko — wcale.
+  assert.ok(warpFlybySlowdown(0, 40000, 9000) > warpFlybySlowdown(0, 20000, 9000));
+  assert.ok(warpFlybySlowdown(0, 60000, 1200) > 0.999);
+  // Nad ciałem (kurs przez tarczę) — pełne zwolnienie.
+  assert.ok(Math.abs(warpFlybySlowdown(0, 5000, 9000) - (1 - WARP_FLYBY_DEFAULTS.depth)) < 1e-9);
 });

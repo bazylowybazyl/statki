@@ -108,6 +108,45 @@ export function berthFits(berthClassId, hullId) {
   return size.length <= cls.length && size.width <= cls.width;
 }
 
+/**
+ * Czy kadłub zmieści się na TYM stanowisku.
+ *
+ * Stanowisko z własnymi limitami pola (`maxLength` / `maxBeam` — pady hal K-7
+ * i zatok ringu) mierzy się nimi, reszta — gabarytami klasy. Różnica ma
+ * znaczenie dla okrętów: fregata (192 × 144 j.) nie wchodzi w klasę S ruchu
+ * (170 × 140), ale pad S hali K-7 (300 × 180) mieści ją bez trudu. Kadłubom
+ * cywilnym klasy to nie zmienia (sprawdzone testem na wszystkich profilach).
+ */
+export function hullFitsBerth(berth, hullId) {
+  return !!berth && fitsSize(berth, hullFootprint(hullId));
+}
+
+function fitsSize(berth, size) {
+  const cls = BERTH_CLASSES[berth.cls];
+  const maxLength = Number(berth.maxLength) || (cls ? cls.length : 0);
+  const maxBeam = Number(berth.maxBeam) || (cls ? cls.width : 0);
+  return size.length <= maxLength && size.width <= maxBeam;
+}
+
+// ============================================================
+// Role stanowisk
+// ============================================================
+
+/**
+ * Do kogo należy stanowisko. Decyzja użytkownika 2026-09-26: hale K-7 to
+ * wojsko (flota frakcji), zatoki i pomosty to terminale przeładunkowe — kursy
+ * cywilne stają tylko na `civil`, flota frakcji tylko na `military`.
+ */
+export const BERTH_ROLE = Object.freeze({
+  CIVIL: 'civil',
+  MILITARY: 'military'
+});
+
+/** Rola stanowiska; brak pola = cywilne (stare układy i pomosty). */
+export function berthRole(berth) {
+  return berth?.role || BERTH_ROLE.CIVIL;
+}
+
 // ============================================================
 // Układ doku
 // ============================================================
@@ -131,7 +170,7 @@ const PIER_WIDTH = 260;
  *
  * Układ lokalny: pomost wzdłuż osi X, stanowiska odchodzą w ±Y.
  */
-function buildPier(dockId, mix) {
+function buildPier(dockId, mix, role) {
   const berths = [];
   let cursorA = 0;
   let cursorB = 0;
@@ -147,6 +186,7 @@ function buildPier(dockId, mix) {
       dockId,
       cls: cls.id,
       rank: cls.rank,
+      role,
       // Pozycja lokalna środka stanowiska.
       lx: along,
       ly: side * (PIER_WIDTH / 2 + cls.length / 2),
@@ -200,15 +240,18 @@ export function buildStationDocks(station, options = {}) {
   const dockRadius = hasRing
     ? ringRadius
     : Math.max(Number(station.r) || 0, 1000) * 4;
+  // Pomosty to terminale przeładunkowe — cywilne, chyba że wołający każe inaczej.
+  const role = options.role || BERTH_ROLE.CIVIL;
 
   const docks = [];
   for (let index = 0; index < count; index++) {
     const angle = (Math.PI * 2 * index) / count + (options.angleOffset || 0);
     const dockId = `${station.id}:dok${index + 1}`;
-    const pier = buildPier(dockId, mix);
+    const pier = buildPier(dockId, mix, role);
     const dock = {
       id: dockId,
       stationId: station.id,
+      role,
       // Punkt zaczepienia na obręczy pierścienia albo na orbicie doków.
       x: station.x + Math.cos(angle) * dockRadius,
       y: station.y + Math.sin(angle) * dockRadius,
@@ -290,24 +333,92 @@ export function parkingSlotPosition(layout, station, slotIndex) {
  *
  * `now` pozwala wybrać stanowisko, które ZWOLNI SIĘ najwcześniej, nawet jeśli
  * jeszcze jest zajęte — to jest wejście do kolejkowania slotowego.
+ *
+ * RÓWNY ROZKŁAD (decyzja użytkownika 2026-09-26: „chcę widzieć żywość w całym
+ * porcie”). Do tej pory remis kosztu wygrywało PIERWSZE stanowisko z listy, więc
+ * hala K-7 nr 1 miała śr. 18/28 zajętych i bywała pełna, a zatoki kompleksu
+ * po drugiej stronie ringu stały puste (0,1/28). Teraz remis rozstrzyga dok
+ * najmniej obłożony (ułamek zajętych), a przy równym obłożeniu — dok wskazany
+ * rotacją po liczbie zajętych w porcie, żeby żaden nie był wiecznie „pierwszy”.
+ * Best-fit zostaje nietknięty: obłożenie decyduje dopiero przy RÓWNYM koszcie,
+ * więc kara `rank × classWasteSeconds` nadal trzyma szutle z dala od capital.
+ *
+ * Opcje: `role` — tylko stanowiska tej roli (`BERTH_ROLE`; brak = wszystkie),
+ * `spread: false` — stary dobór „pierwsze z listy”, `freeOnly`, `readyBy`,
+ * `classWasteSeconds`.
  */
 export function findBerth(layout, hullId, now = 0, options = {}) {
   if (!layout) return null;
   const readyBy = Number(options.readyBy) || now;
+  const role = options.role || null;
+  const wastePerRank = options.classWasteSeconds ?? 30;
+  const size = hullFootprint(hullId);
+  const load = options.spread === false ? null : dockLoads(layout);
   let best = null;
 
   for (const berth of layout.berths) {
-    if (!berthFits(berth.cls, hullId)) continue;
+    if (role && berthRole(berth) !== role) continue;
+    if (!fitsSize(berth, size)) continue;
     if (options.freeOnly && berth.freeAt > now) continue;
     if (berth.occupantId && options.freeOnly) continue;
     const availableAt = Math.max(berth.freeAt, readyBy);
     // Kara za marnowanie klasy: przy równym czasie wygrywa ciaśniejsze stanowisko.
-    const waste = berth.rank * (options.classWasteSeconds ?? 30);
-    const cost = availableAt + waste;
-    if (!best || cost < best.cost) best = { berth, availableAt, cost };
+    const cost = availableAt + berth.rank * wastePerRank;
+    if (best) {
+      if (cost > best.cost + COST_EPSILON) continue;
+      if (cost >= best.cost - COST_EPSILON
+        && (!load || !lighterDock(load, berth.dockId, best.berth.dockId))) continue;
+    }
+    best = { berth, availableAt, cost };
   }
 
   return best;
+}
+
+const COST_EPSILON = 1e-6;
+
+/**
+ * Obłożenie doków liczone od nowa przy każdym doborze — 224 stanowiska portu
+ * K-7 to kilka mikrosekund, a licznik prowadzony w `reserveBerth` musiałby znać
+ * dok, którego stanowisko nie zna. Bufor żyje w WeakMap, nie w samym układzie:
+ * układ ma zostać czystymi danymi (worker ruchu, zrzuty JSON).
+ */
+const dockLoadScratch = new WeakMap();
+
+function dockLoads(layout) {
+  let scratch = dockLoadScratch.get(layout);
+  if (!scratch) {
+    scratch = { byDock: new Map(), taken: 0 };
+    dockLoadScratch.set(layout, scratch);
+  }
+  for (const entry of scratch.byDock.values()) { entry.taken = 0; entry.total = 0; }
+  let taken = 0;
+  for (const berth of layout.berths) {
+    let entry = scratch.byDock.get(berth.dockId);
+    if (!entry) {
+      entry = { taken: 0, total: 0, order: scratch.byDock.size };
+      scratch.byDock.set(berth.dockId, entry);
+    }
+    entry.total++;
+    if (berth.occupantId) { entry.taken++; taken++; }
+  }
+  scratch.taken = taken;
+  return scratch;
+}
+
+/** Czy dok `a` jest lepszym wyborem od `b` przy równym koszcie stanowiska. */
+function lighterDock(load, dockA, dockB) {
+  if (dockA === dockB) return false;
+  const a = load.byDock.get(dockA);
+  const b = load.byDock.get(dockB);
+  if (!a || !b) return false;
+  // Porównanie ułamków bez dzielenia: a.taken / a.total < b.taken / b.total.
+  const lhs = a.taken * b.total;
+  const rhs = b.taken * a.total;
+  if (lhs !== rhs) return lhs < rhs;
+  const n = load.byDock.size;
+  const shift = load.taken % n;
+  return ((a.order - shift + n) % n) < ((b.order - shift + n) % n);
 }
 
 /** Rezerwuje stanowisko do zadanego czasu. Zwraca `false`, gdy już zajęte. */
@@ -325,15 +436,24 @@ export function releaseBerth(berth, now = 0) {
   return true;
 }
 
-/** Ile stanowisk jest w tej chwili zajętych — do panelu i do wyceny slotów. */
+/**
+ * Ile stanowisk jest w tej chwili zajętych — do panelu i do wyceny slotów.
+ * `byRole` i `byDock` pokazują, czy rozkład jest równy (pomiar portu).
+ */
 export function berthOccupancy(layout) {
-  if (!layout) return { total: 0, taken: 0, byClass: {} };
+  if (!layout) return { total: 0, taken: 0, byClass: {}, byRole: {}, byDock: {} };
   const byClass = {};
+  const byRole = {};
+  const byDock = {};
   let taken = 0;
   for (const berth of layout.berths) {
     const entry = byClass[berth.cls] || (byClass[berth.cls] = { total: 0, taken: 0 });
+    const roleEntry = byRole[berthRole(berth)] || (byRole[berthRole(berth)] = { total: 0, taken: 0 });
+    const dockEntry = byDock[berth.dockId] || (byDock[berth.dockId] = { total: 0, taken: 0 });
     entry.total++;
-    if (berth.occupantId) { entry.taken++; taken++; }
+    roleEntry.total++;
+    dockEntry.total++;
+    if (berth.occupantId) { entry.taken++; roleEntry.taken++; dockEntry.taken++; taken++; }
   }
-  return { total: layout.berths.length, taken, byClass };
+  return { total: layout.berths.length, taken, byClass, byRole, byDock };
 }

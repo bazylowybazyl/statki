@@ -25,6 +25,12 @@ const LAYERS_ALL_ACTIVE = Object.freeze({ planets: true, halo: true, ringPlanets
 const PLANET_RENDER_LAYER = 3;
 const PLANET_HALO_RENDER_LAYER = 5;
 const RING_PLANET_RENDER_LAYER = 6;
+// Widok skoku: gwiazdy gry na czas kropli we własnym celu (patrz setWarpStarsObject).
+const WARP_STARS_RENDER_LAYER = 8;
+// Tło menu głównego (menuBackdrop3D.js): Ziemia z ringiem w kamerze kinowej.
+// Rysuje ją tylko renderBackdrop — passy gry tej warstwy nie widzą.
+export const MENU_BACKDROP_LAYER = 9;
+function finiteOr(v, d) { return Number.isFinite(v) ? v : d; }
 // Tarcze: własna warstwa ortho (kamera ortho, bez czyszczenia głębi). Tarcza
 // to emisja (blend addytywny), a nie powierzchnia oświetlana słońcem — maski
 // cienia nie czyta i świeci w cieniu planety tak samo jak poza nim.
@@ -94,7 +100,13 @@ function createShadowShaftsShader() {
       uHullC: { value: Array.from({ length: SHAFT_HULL_CAP }, () => new THREE.Vector4(0, 0, 0, 0)) },
       uRingCount: { value: 0 },
       // uRings[i]: xy = środek (three-space), z = promień pasma, w = zasięg cienia
-      uRings: { value: Array.from({ length: SHAFT_RING_CAP }, () => new THREE.Vector4(0, 0, 0, 0)) }
+      uRings: { value: Array.from({ length: SHAFT_RING_CAP }, () => new THREE.Vector4(0, 0, 0, 0)) },
+      // Pole przesłaniające słońce (gęste pola asteroid, asteroidFieldLight.js):
+      // tekstura transmitancji T (R8) wokół kamery; xy = róg prostokąta
+      // (three-space), zw = 1 / rozmiar. Mnoży widoczność w obu kanałach.
+      uFieldOcc: { value: null },
+      uFieldOccOn: { value: 0 },
+      uFieldOccRect: { value: new THREE.Vector4(0, 0, 1, 1) }
     },
     vertexShader: `precision highp float; varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
     fragmentShader: `
@@ -112,6 +124,9 @@ function createShadowShaftsShader() {
       uniform vec4 uDiscs[${SHAFT_DISC_CAP}];
       uniform int uRingCount;
       uniform vec4 uRings[${SHAFT_RING_CAP}];
+      uniform sampler2D uFieldOcc;
+      uniform float uFieldOccOn;
+      uniform vec4 uFieldOccRect;
       varying vec2 vUv;
 ${HULL_SDF_SHADOW_GLSL}
 
@@ -184,7 +199,22 @@ ${HULL_SDF_SHADOW_GLSL}
         // Statek nie robi czarnej dziury jak planeta — smuga tylko przygasza.
         shadow = max(shadow, hullSdfShadow(worldP, d, sunDist) * ${HULL_SHADOW_STRENGTH.toFixed(2)});
 
-        // Cien POWIERZCHNI (kanal R) konczy sie tutaj: tarcze + kadluby.
+        // ── Pole przeslaniajace slonce (gesty pas asteroid) ─────────────
+        // Transmitancja wzdluz promienia do slonca liczona na CPU; tu tylko
+        // mnozy widocznosc — kadluby, odlamki i skaly gry gasna w glebi pola.
+        // Kanal B = mrok pola (1 − T): w nim gasnie tez otoczenie (sunFill),
+        // bo w rdzeniu pola nie ma juz pylu oswietlonego sloncem.
+        float fieldDark = 0.0;
+        if (uFieldOccOn > 0.5) {
+          vec2 fuv = (worldP - uFieldOccRect.xy) * uFieldOccRect.zw;
+          if (fuv.x >= 0.0 && fuv.y >= 0.0 && fuv.x <= 1.0 && fuv.y <= 1.0) {
+            float fieldT = texture2D(uFieldOcc, fuv).r;
+            shadow = 1.0 - (1.0 - shadow) * fieldT;
+            fieldDark = 1.0 - fieldT;
+          }
+        }
+
+        // Cien POWIERZCHNI (kanal R) konczy sie tutaj: tarcze + kadluby + pole.
         float surfaceShadow = shadow;
 
         // ── Pierscienie (ring „Halo” wokol planety) — tylko smuga TLA ─────
@@ -223,7 +253,7 @@ ${HULL_SDF_SHADOW_GLSL}
         float dither = (fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) - 0.5) / 255.0;
         surfaceOut = surfaceOut > 0.0 ? clamp(surfaceOut + dither, 0.0, 1.0) : 0.0;
         backdropOut = backdropOut > 0.0 ? clamp(backdropOut + dither, 0.0, 1.0) : 0.0;
-        gl_FragColor = vec4(surfaceOut, backdropOut, 0.0, 1.0);
+        gl_FragColor = vec4(surfaceOut, backdropOut, clamp(fieldDark, 0.0, 1.0) * uShaftGain, 1.0);
       }
     `
   };
@@ -550,6 +580,8 @@ export const Core3D = {
   // warpLensTarget, a warpLensPass kładzie je zakrzywione do bufora sceny.
   // Zgłoszenie z gry w świecie (setWarpLensWorld), uniformy liczone w render().
   warpLensTarget: null, warpLensPass: null, _warpLensActive: false, _warpLensLastUseMs: 0,
+  // Widok skoku: gwiazdy gry osobno od mgławicy (setWarpStarsObject).
+  warpStarTarget: null, renderPassWarpStars: null, _warpStarsObject: null, _warpStarsOn: false,
   _warpLensRequest: { x: 0, y: 0, angle: 0, radiusAlong: 0, radiusAcross: 0, swallow: 0, stampMs: -Infinity },
   _warpLensUniformScratch: { centerU: 0.5, centerV: 0.5, axisX: 1, axisY: 0, radiusAlong: 0, radiusAcross: 0, aspect: 1, swallow: 0 },
   // Efekty warpa (warpFx3D.js): prymitywy zgięcia tła (ten sam pass co soczewka)
@@ -559,7 +591,13 @@ export const Core3D = {
   _warpWaveReq: Array.from({ length: MAX_WARP_WAVES }, () => ({ type: 0, x: 0, y: 0, radius: 0, width: 0, amp: 0, angle: 0 })),
   _warpWaveCount: 0,
   // Widok skoku (warpWorldLens.js): kropla wokół statku + opływ tła — też w passie soczewki.
-  _warpViewReq: { x: 0, y: 0, radiusPx: 0, beta: 0, angle: 0, phase: 0, travel: 1.2, blur: 0.3, gain: 0.8, fisheye: 1, front: 1000, band: 0.35, dropUa: 0, dropRa: 1, dropUb: 0, dropRb: 1, stampMs: -Infinity },
+  _warpViewReq: {
+    x: 0, y: 0, radiusPx: 0, beta: 0, angle: 0, phase: 0, travel: 1.2, blur: 0.3, gain: 0.8, fisheye: 1, front: 1000, band: 0.35,
+    dropUa: 0, dropRa: 1, dropUb: 0, dropRb: 1,
+    // Kształt: 0 = kropla, 1 = bańka Alcubierre'a (warpAlcubierreHeight).
+    mode: 0, alcPeak: 0.6, alcWidth: 0.42, alcFlat: 2.5, alcAmp: 0.05, tintGain: 0.12, shadeGain: 1.0,
+    stampMs: -Infinity
+  },
   heatHazeSources: null, heatHazeDirs: null, heatHazeCount: 0, heatHazeMaxSources: MAX_HEAT_HAZE_SOURCES, _heatHazeWorldScratch: new THREE.Vector3(),
   // shadowShaftsPass pisze maskę widoczności słońca do sunShadowTarget (RGBA8,
   // rozmiar bufora sceny, bez MSAA) — patrz sunShadowMask.js.
@@ -568,6 +606,7 @@ export const Core3D = {
   // dyski (planet3d.assets + asteroidField3D), kapsuły (hexShips3D),
   // pierścienie (ringi „Halo”, haloRingGame.js — Map po kluczu ringu, bez begin/reset).
   shaftDiscs: new Float32Array(SHAFT_DISC_CAP * 4), shaftDiscCount: 0,
+  sunOcclusionField: null,
   shaftHulls: new Float32Array(SHAFT_HULL_CAP * HULL_SDF_OCCLUDER_FLOATS), shaftHullCount: 0,
   shaftHullTexture: null,
   shaftRings: new Map(),
@@ -871,6 +910,8 @@ export const Core3D = {
 
     this.renderPassBg = new RenderPass(this.scene, this.cameraPersp);
     makeSplitScreenRenderPass(this.renderPassBg, 1, false, true);
+    this.renderPassWarpStars = new RenderPass(this.scene, this.cameraPersp);
+    makeSplitScreenRenderPass(this.renderPassWarpStars, WARP_STARS_RENDER_LAYER, false, true);
     this.renderPassPlanets = new RenderPass(this.scene, this.cameraPersp);
     makeSplitScreenRenderPass(this.renderPassPlanets, PLANET_RENDER_LAYER, false, false);
     this.planetHaloPass = new FullScreenBlendPass(PLANET_HALO_BLEND_SHADER, BLEND_ADD_ONE_ONE);
@@ -967,6 +1008,7 @@ export const Core3D = {
       try { this.postTarget?.dispose?.(); } catch { }
       try { this.refractionTarget?.dispose?.(); } catch { }
       try { this.warpLensTarget?.dispose?.(); } catch { }
+      try { this.warpStarTarget?.dispose?.(); } catch { }
       try { this.shockwave3DManager?.dispose?.(); } catch { }
       try { this.planetHaloTarget?.dispose?.(); } catch { }
       try { this.haloDepthMaskMaterial?.dispose?.(); } catch { }
@@ -978,6 +1020,8 @@ export const Core3D = {
     this.refractionTarget = null;
     this.warpLensTarget = null;
     this._warpLensActive = false;
+    this.warpStarTarget = null;
+    this._warpStarsOn = false;
     this.shockwave3DManager = null;
     this._shockwavePrevTime = 0;
   },
@@ -1154,6 +1198,7 @@ export const Core3D = {
       this.planetHaloTarget.setSize(bufW, bufH);
     }
     if (this.warpLensTarget) this.warpLensTarget.setSize(bufW, bufH);
+    if (this.warpStarTarget) this.warpStarTarget.setSize(bufW, bufH);
     if (this.bloomPass && typeof this.bloomPass.setSize === 'function') {
       const bScale = Math.max(0.1, Math.min(1, Number(this.bloomResolutionScale) || 1));
       this.bloomPass.setSize(Math.floor(width * this.pixelRatio * bScale), Math.floor(height * this.pixelRatio * bScale));
@@ -1308,12 +1353,23 @@ export const Core3D = {
     const pass = this.shadowShaftsPass;
     const target = this.sunShadowTarget;
     this._setSunShadowTexelFor(this.composerTarget);
-    if (!pass || !target || pass.enabled === false || !active) {
+    // Pole przesłaniające słońce to mechanika (ciemno w głębi pola), nie opcja
+    // jakości: maska liczy się też przy wyłączonych smugach — wtedy bez tarcz,
+    // kadłubów i ringów, sam term pola.
+    const field = this.sunOcclusionField;
+    const fieldOn = !!(field && field.texture && sun) && !this.isFreePerspectiveCamera();
+    const raysOn = !!active && !!pass && pass.enabled !== false;
+    if (!pass || !target || (!raysOn && !fieldOn)) {
       sunShadowUniforms.uSunShadowOn.value = 0;
       if (pass) pass.material.uniforms.uSunActive.value = 0;
       return false;
     }
     const uShafts = pass.material.uniforms;
+    uShafts.uFieldOccOn.value = fieldOn ? 1 : 0;
+    if (fieldOn) {
+      uShafts.uFieldOcc.value = field.texture;
+      uShafts.uFieldOccRect.value.set(field.x0, field.y0, 1 / Math.max(1e-6, field.w), 1 / Math.max(1e-6, field.h));
+    }
     const cam1 = this.activeCam1 || { x: 0, y: 0 };
     const cam2 = this.activeCam2 || cam1;
     const zoom1 = Math.max(0.0001, Number(cam1.zoom) || 1);
@@ -1336,7 +1392,7 @@ export const Core3D = {
     uShafts.uHullLenMul.value = Math.max(1, Number(shaftCfg.capsuleLenMul) || 3);
     uShafts.uHullSteps.value = Math.max(1, Math.min(HULL_SDF_MAX_STEPS, Number(shaftCfg.hullSteps) || 24));
 
-    const discCount = Math.min(this.shaftDiscCount | 0, SHAFT_DISC_CAP);
+    const discCount = raysOn ? Math.min(this.shaftDiscCount | 0, SHAFT_DISC_CAP) : 0;
     uShafts.uDiscCount.value = discCount;
     const discVals = uShafts.uDiscs.value;
     for (let i = 0; i < discCount; i++) {
@@ -1348,7 +1404,7 @@ export const Core3D = {
     // jakości (getShaftHullBudget), min() tylko na wszelki wypadek. Bez
     // tablicy warstw nie ma czego próbkować — pusta tablica czytałaby się
     // jako „wszędzie kadłub” i zaciemniała cały prostokąt statku.
-    const hullCount = this.shaftHullTexture
+    const hullCount = (raysOn && this.shaftHullTexture)
       ? Math.min(this.shaftHullCount | 0, Math.max(0, Number(shaftCfg.capsuleBudget) || SHAFT_HULL_CAP), SHAFT_HULL_CAP)
       : 0;
     uShafts.uHullCount.value = hullCount;
@@ -1367,7 +1423,7 @@ export const Core3D = {
     let ringCount = 0;
     const ringVals = uShafts.uRings.value;
     for (const rec of this.shaftRings.values()) {
-      if (ringCount >= SHAFT_RING_CAP) break;
+      if (!raysOn || ringCount >= SHAFT_RING_CAP) break;
       if (!(rec.r > 0)) continue;
       ringVals[ringCount].set(rec.x, rec.y, rec.r, rec.reach);
       ringCount++;
@@ -1632,6 +1688,10 @@ export const Core3D = {
       if (pass === this.renderPassOrtho || pass === this.renderPassFg) shadowMap.needsUpdate = true;
       const target = (warpLensOn && pass === this.renderPassBg) ? this.warpLensTarget : this.composerTarget;
       pass.render(this.renderer, null, target);
+      // Widok skoku: gwiazdy gry do własnego celu (warpLensPass łączy je z mgławicą).
+      if (pass === this.renderPassBg && warpLensOn && this._warpStarsOn && this.warpStarTarget) {
+        this.renderPassWarpStars.render(this.renderer, null, this.warpStarTarget);
+      }
     }
     for (const pass of this._postPasses) {
       if (pass && pass.enabled !== false) pass.render(this.renderer, null, this.postTarget);
@@ -1663,6 +1723,8 @@ export const Core3D = {
 
   _renderDirect(dbgEnabled, tRenderTotal0) {
     const renderer = this.renderer;
+    // Bez composera nie ma passa soczewki — gwiazdy muszą być na warstwie tła.
+    this._restoreWarpStars();
     const isSplit = typeof window !== 'undefined' && window.splitScreenMode && this.activeCam2;
 
     this._syncSceneMatrices();
@@ -1750,7 +1812,66 @@ export const Core3D = {
     if (dbgEnabled) recordRenderDbg('coreRenderCall', performance.now() - tCall0);
   },
 
+  // Tło menu głównego (menuBackdrop3D.js): ta sama scena, renderer i post co
+  // gra (resolve MSAA → bloom z bloomConfig.js → ACES w uberPassie), ale tylko
+  // warstwa MENU_BACKDROP_LAYER i kamera kinowa tła. Bez passów gry, maski
+  // cieni, soczewki, fal i refrakcji — przed startem gry nic ich nie zgłasza.
+  renderBackdrop(camera) {
+    if (!this.isInitialized || !camera) return;
+    const renderer = this.renderer;
+    const tRenderTotal0 = performance.now();
+    if (this._passTogglesDirty) {
+      this._applyPassToggles();
+      this._passTogglesDirty = false;
+    }
+    this._syncSceneMatrices();
+    renderer.info.reset();
+    this._resetRenderInfoBuckets();
+    const prevAutoClear = renderer.autoClear;
+    const prevClearAlpha = renderer.getClearAlpha();
+    const prevClearColor = this._clearColorScratch;
+    renderer.getClearColor(prevClearColor);
+    const prevMask = camera.layers.mask;
+    renderer.toneMapping = THREE.NoToneMapping;
+    renderer.autoClear = false;
+    renderer.setRenderTarget(this.composerTarget);
+    renderer.setScissorTest(false);
+    renderer.setClearColor(0x000000, 1);
+    renderer.clear(true, true, true);
+    camera.layers.set(MENU_BACKDROP_LAYER);
+    this._readRenderInfoInto(this._renderInfoBefore);
+    renderer.render(this.scene, camera);
+    this._addRenderInfoDelta('bg', performance.now() - tRenderTotal0);
+    camera.layers.mask = prevMask;
+    if (this.bloomPass && this.perfToggles.bloom !== false) this._applyBloomPassConfig();
+    const uPost = this.uberPass?.material.uniforms;
+    if (uPost) {
+      uPost.uSourceCount.value = 0;
+      if (uPost.uWaveCount) uPost.uWaveCount.value = 0;
+      if (uPost.uAspect) uPost.uAspect.value = this.width / Math.max(1, this.height);
+    }
+    for (const pass of this._postPasses) {
+      if (pass && pass.enabled !== false) pass.render(renderer, null, this.postTarget);
+    }
+    renderer.setRenderTarget(null);
+    renderer.setClearColor(prevClearColor, prevClearAlpha);
+    renderer.autoClear = prevAutoClear;
+    this._finalizeRenderInfoBuckets();
+    this.lastFramePerf = { renderTotalMs: performance.now() - tRenderTotal0, composerMs: 0 };
+  },
+
   beginShaftDiscFrame() { this.shaftDiscCount = 0; },
+  // Pole przesłaniające słońce (gęste pola asteroid): tekstura transmitancji
+  // (R, 1 = pełne słońce) na prostokącie w układzie sceny (x, −y świata).
+  // Maska cienia mnoży nią widoczność słońca — wszystko, co czyta
+  // sunVisibility()/sunShaftBackdrop(), ciemnieje w głębi pola. Właściciel
+  // (asteroidBelt3D) ustawia co klatkę, gdy mapa się przesunie.
+  setSunOcclusionField(texture, x0, y0, w, h) {
+    if (!texture) { this.sunOcclusionField = null; return; }
+    const f = this.sunOcclusionField || (this.sunOcclusionField = { texture: null, x0: 0, y0: 0, w: 1, h: 1 });
+    f.texture = texture; f.x0 = x0; f.y0 = y0; f.w = w; f.h = h;
+  },
+  clearSunOcclusionField() { this.sunOcclusionField = null; },
 
   // Planety: updatePlanets3D kasuje flagi na starcie, a każde ciało widoczne
   // w kadrze zapala swoje warstwy (patrz layerActivity).
@@ -1828,6 +1949,18 @@ export const Core3D = {
     r.dropRa = dropOk ? g.ra : 1;
     r.dropUb = dropOk ? g.ub : 0;
     r.dropRb = dropOk ? g.rb : 1;
+    // Bańka Alcubierre'a (o.mode 'alcubierre', o.alc = { rPeak, rWidth, flat,
+    // amp, tintGain, shadeGain }).
+    r.mode = o.mode === 'alcubierre' ? 1 : 0;
+    const a = o.alc;
+    if (r.mode === 1 && a) {
+      r.alcPeak = finiteOr(a.rPeak, 0.6);
+      r.alcWidth = finiteOr(a.rWidth, 0.42);
+      r.alcFlat = finiteOr(a.flat, 2.5);
+      r.alcAmp = finiteOr(a.amp, 0.05);
+      r.tintGain = finiteOr(a.tintGain, 0.12);
+      r.shadeGain = finiteOr(a.shadeGain, 1.0);
+    }
     r.stampMs = performance.now();
   },
 
@@ -1920,11 +2053,15 @@ export const Core3D = {
   // Pass pracuje, gdy jest świeża soczewka skoku ALBO prymitywy zgięcia.
   _prepareWarpLens(freePerspective, nowSec) {
     this._warpLensActive = false;
+    // Gwiazdy gry wracają na warstwę tła; widok skoku zabiera je niżej co klatkę.
+    this._restoreWarpStars();
     const nowMs = nowSec * 1000;
     // Nieużywany cel oddajemy po dłuższej przerwie (patrz WARP_LENS_TARGET_IDLE_MS).
     if (this.warpLensTarget && nowMs - this._warpLensLastUseMs > WARP_LENS_TARGET_IDLE_MS) {
       this.warpLensTarget.dispose();
       this.warpLensTarget = null;
+      this.warpStarTarget?.dispose();
+      this.warpStarTarget = null;
     }
     const req = this._warpLensRequest;
     const primCount = this._warpSpaceCount | 0;
@@ -1989,14 +2126,71 @@ export const Core3D = {
         lu.uWVMisc.value.set(view.travel, view.blur, view.gain, view.fisheye);
         if (lu.uWVFront) lu.uWVFront.value.set(view.front, view.band, 0, 0);
         if (lu.uWVDrop) lu.uWVDrop.value.set(view.dropUa, view.dropRa, view.dropUb, view.dropRb);
+        if (lu.uWVMode) {
+          lu.uWVMode.value = view.mode;
+          lu.uWVAlc.value.set(view.alcPeak, view.alcWidth, view.alcFlat, 0);
+          lu.uWVAlc2.value.set(view.alcAmp, view.tintGain, view.shadeGain, 0);
+        }
         if (!lensOn) lu.uAspect.value = cw / ch;
+        // Gwiazdy gry osobno: mgławica idzie przez mocne rybie oko kropli (jej
+        // lustrzane odbicie spoza kadru czyta się jak mgławica), gwiazdy przez
+        // rybie oko ograniczone kadrem — w odbiciu leciałyby w drugą stronę.
+        const stars = this._warpStarsObject;
+        const split = !!(stars && stars.parent && lu.tStars && lu.uWVStars);
+        if (split) {
+          stars.layers.set(WARP_STARS_RENDER_LAYER);
+          this._warpStarsOn = true;
+          lu.tStars.value = this._ensureWarpStarTarget(bufW, bufH).texture;
+        }
+        if (lu.uWVStars) lu.uWVStars.value = split ? 1 : 0;
       } else {
         lu.uWV.value.w = 0;
+        if (lu.uWVStars) lu.uWVStars.value = 0;
       }
     }
+    // Nieużywany sampler i tak musi wskazywać ważną teksturę.
+    if (lu.tStars && !this._warpStarsOn) lu.tStars.value = target.texture;
     this._warpLensLastUseMs = nowMs;
     this._warpLensActive = true;
     return true;
+  },
+
+  /**
+   * Widok skoku: gwiazdy gry (StarSystem, planet3d.assets.js) renderowane osobno
+   * od mgławicy, żeby rybie oko kropli nie brało ich z lustrzanego odbicia
+   * (gwiazdy leciały tam w drugą stronę — zgłoszenie usera). Rejestruje je
+   * warpWorldLens.js; warstwę przełącza _prepareWarpLens co klatkę.
+   */
+  setWarpStarsObject(obj) {
+    if (this._warpStarsObject && this._warpStarsObject !== obj) this._restoreWarpStars();
+    this._warpStarsObject = obj || null;
+  },
+
+  _restoreWarpStars() {
+    if (this._warpStarsOn && this._warpStarsObject) this._warpStarsObject.layers.set(1);
+    this._warpStarsOn = false;
+  },
+
+  _ensureWarpStarTarget(width, height) {
+    let rt = this.warpStarTarget;
+    if (!rt) {
+      rt = new THREE.WebGLRenderTarget(width, height, {
+        format: THREE.RGBAFormat,
+        type: this.renderer.capabilities.isWebGL2 ? THREE.HalfFloatType : THREE.UnsignedByteType,
+        depthBuffer: true,
+        stencilBuffer: false,
+        samples: 0,
+        generateMipmaps: true,
+        minFilter: THREE.LinearMipmapLinearFilter,
+        magFilter: THREE.LinearFilter
+      });
+      rt.texture.wrapS = THREE.ClampToEdgeWrapping;
+      rt.texture.wrapT = THREE.ClampToEdgeWrapping;
+      this.warpStarTarget = rt;
+    } else if (rt.width !== width || rt.height !== height) {
+      rt.setSize(width, height);
+    }
+    return rt;
   },
 
   _ensureWarpLensTarget(width, height) {

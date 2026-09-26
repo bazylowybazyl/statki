@@ -57,8 +57,12 @@ test('shafts write a sun-visibility mask before the scene instead of multiplying
   // Maska: RGBA8 bez MSAA, rozmiar bufora sceny (teksel 1:1 z gl_FragCoord).
   assert.match(coreSource, /this\.sunShadowTarget = new THREE\.WebGLRenderTarget\(/);
   assert.match(coreSource, /if \(this\.sunShadowTarget\) this\.sunShadowTarget\.setSize\(bufW, bufH\);/);
-  // Wyjscie shadera = maska (R powierzchnia, G tlo), bez sluzby 1 = "nic".
-  assert.match(coreSource, /gl_FragColor = vec4\(surfaceOut, backdropOut, 0\.0, 1\.0\);/);
+  // Wyjscie shadera = maska (R powierzchnia, G tlo, B mrok gestego pola
+  // asteroid), bez sluzby 1 = "nic".
+  assert.match(coreSource, /gl_FragColor = vec4\(surfaceOut, backdropOut, clamp\(fieldDark, 0\.0, 1\.0\) \* uShaftGain, 1\.0\);/);
+  // Pole asteroid to mechanika, nie opcja jakosci: maska liczy sie tez przy
+  // smugach Off (sam term pola, bez tarcz, kadlubow i ringow).
+  assert.match(coreSource, /if \(!pass \|\| !target \|\| \(!raysOn && !fieldOn\)\) \{/);
   assert.ok(!coreSource.includes('mix(vec3(1.0), vec3(0.06, 0.10, 0.16), rawShadow)'), 'old image multiply output is back');
   // Kolejnosc w render(): maska PRZED pre-passem halo (atmosfery ja czytaja)
   // i przed lancuchem passow sceny.
@@ -134,7 +138,9 @@ test('hull occluder is the silhouette distance field, not a capsule chain', () =
   assert.ok(hullSdfSource.includes('return !!s && s.active !== false && s.isDebris !== true;'));
   assert.ok(hullSdfSource.includes('sampleAlphaMap(alphaMap, sx * invW, sy * invH) < HULL_SDF_ALPHA_INSIDE'));
   // Wraki ida z puli: warstwa wazna tylko dla tej samej tablicy heksow.
-  assert.ok(hullSdfSource.includes('return entry.shardsRef === grid.shards &&'));
+  // (heksy albo komórki kadłuba na belkach: tablica zawartości siatki).
+  assert.ok(hullSdfSource.includes('return entry.shardsRef === contentRefOf(grid) &&'));
+  assert.ok(hullSdfSource.includes('return isCellGrid(grid) ? grid.cellX : grid.shards;'));
   assert.ok(hullSdfSource.includes('const sameShape = entry.layer >= 0 && sameGridAs(entry, grid);'));
   // Brzeg prostokata SDF musi byc dalej niz najszerszy polcien.
   const margin = Number(hullSdfSource.match(/HULL_SDF_MARGIN_TEXELS = (\d+);/)?.[1]);
@@ -204,7 +210,10 @@ test('sun shadow mask module shares uniform objects and keeps the backdrop tint'
   // Otoczenie w pelnym cieniu: widoczny cien, ale nie czarna kaluza (dawniej ×0,06).
   assert.equal(mask.SUN_SHADOW_FILL, 0.4);
   assert.equal(mask.sunShadowUniforms.uSunShadowFill.value, mask.SUN_SHADOW_FILL);
-  assert.match(mask.SUN_SHADOW_GLSL, /float sunFill\(float vis\) \{\s*return mix\(uSunShadowFill, 1\.0, vis\);/);
+  // W mroku gestego pola asteroid (kanal B maski) otoczenie gasnie prawie calkiem.
+  assert.match(mask.SUN_SHADOW_GLSL, /float sunFill\(float vis\) \{\s*return mix\(uSunShadowFill, 1\.0, vis\) \* \(1\.0 - fieldDarkness\(\) \* uFieldFillCut\);/);
+  assert.match(mask.SUN_SHADOW_GLSL, /float fieldDarkness\(\) \{\s*if \(uSunShadowOn < 0\.5\) return 0\.0;\s*return textureLod\(uSunShadowMap, gl_FragCoord\.xy \* uSunShadowTexel, 0\.0\)\.b;/);
+  assert.equal(uniforms.uFieldFillCut, mask.sunShadowUniforms.uFieldFillCut);
   // Odczyt po gl_FragCoord i wylaczenie uniformem (bez slonca / shafty Off).
   assert.match(mask.SUN_SHADOW_GLSL, /gl_FragCoord\.xy \* uSunShadowTexel/);
   assert.match(mask.SUN_SHADOW_GLSL, /if \(uSunShadowOn < 0\.5\) return vec2\(0\.0\);/);

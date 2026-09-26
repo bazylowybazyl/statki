@@ -96,6 +96,43 @@ function runFor(world, seconds, step = 5) {
   for (let t = 0; t < seconds; t += step) tickDirector(world.director, step, world.stations);
 }
 
+/**
+ * Powtarzalne losowanie (mulberry32) do podmiany `Math.random`. Piractwo rzuca
+ * nim o przechwyt, więc bez stałego ziarna test strat raz by błąd łapał, a raz nie.
+ */
+function seededRandom(seed) {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6D2B79F5) >>> 0;
+    let x = state;
+    x = Math.imul(x ^ (x >>> 15), x | 1);
+    x ^= x + Math.imul(x ^ (x >>> 7), x | 61);
+    return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * Rozjazdy między kursami a jednostkami przewoźników:
+ *   zawieszone — jednostka jest zajęta, a jej kurs już nie leci,
+ *   obce       — lecący kurs wskazuje w indeksie statek, który go nie wiezie.
+ */
+function fleetCourseMismatches(world) {
+  const active = getActiveCourses(world.registry);
+  const flying = new Set(active.map(course => course.id));
+  let zawieszone = 0;
+  for (const company of world.companies.companies) {
+    for (const ship of company.ships) {
+      if (ship.state !== SHIP_STATE.PARKED && !flying.has(ship.courseId)) zawieszone++;
+    }
+  }
+  let obce = 0;
+  for (const course of active) {
+    const shipId = course.payload?.shipId;
+    if (shipId && world.companies.shipsById.get(shipId)?.courseId !== course.id) obce++;
+  }
+  return { zawieszone, obce };
+}
+
 export function run() {
   const t = createSuite('trafficDirector');
 
@@ -479,6 +516,57 @@ export function run() {
     kursyDomu.every(course =>
       course.stages.reduce((suma, stage) => suma + (stage.fuel || 0), 0) <= course.fuelCapacity));
   t.equal('żaden kurs kupca nie stanął bez paliwa', kupcy.stats.stranded || 0, 0);
+
+  // ----------------------------------------------------------
+  t.section('Odkup po przechwycie nie zawiesza floty');
+
+  // Regresja: odkupiony statek dostawał id jednostki, która wciąż latała, bo
+  // `addShip` numerował po długości floty. `shipsById` przepinał się na nowy
+  // obiekt, koniec kursu starego zwalniał nowy (teleport do cudzego portu
+  // docelowego), a stary zostawał BUSY na zawsze z martwym `courseId`.
+  // Symulacja ×60 po 6 h gry: 4 448 jednostek zajętych bez żadnego kursu.
+  const losowanie = Math.random;
+  Math.random = seededRandom(7);
+  const przebieg = { stracone: 0, kupione: 0, rozjazdOd: null };
+  let zPiratami = null;
+  let przewoznik = null;
+  try {
+    zPiratami = makeWorld({
+      ships: 12,
+      economyScale: 5,
+      // Flota docelowa = startowa, więc firma odkupuje już pierwszą stratę.
+      directorOptions: { piracyEnabled: true, piracyPressure: 6, targetFleetPerCompany: 12 }
+    });
+    przewoznik = zPiratami.companies.companies[0];
+    for (let czas = 0; czas < 1800; czas += 5) {
+      const przed = new Set(przewoznik.ships);
+      tickDirector(zPiratami.director, 5, zPiratami.stations);
+      const po = new Set(przewoznik.ships);
+      for (const ship of przed) if (!po.has(ship)) przebieg.stracone++;
+      for (const ship of po) if (!przed.has(ship)) przebieg.kupione++;
+      if (przebieg.rozjazdOd === null && fleetCourseMismatches(zPiratami).obce) {
+        przebieg.rozjazdOd = czas;
+      }
+    }
+  } finally {
+    Math.random = losowanie;
+  }
+
+  t.note(`stracone ${przebieg.stracone}, odkupione ${przebieg.kupione}, `
+    + `flota na koniec ${przewoznik.ships.length}`);
+  // Bez strat i odkupów ta sekcja niczego by nie sprawdzała.
+  t.check('piraci zabrali jednostki', przebieg.stracone >= 3, `(${przebieg.stracone})`);
+  t.check('firma odkupiła straty', przebieg.kupione >= 3, `(${przebieg.kupione})`);
+  // Kurs bez paliwa legalnie zostawia jednostkę zajętą bez lecącego kursu.
+  t.equal('żaden kurs nie stanął bez paliwa', zPiratami.director.stats.stranded, 0);
+  t.check('lecący kurs zawsze wskazuje w indeksie swój statek', przebieg.rozjazdOd === null,
+    `(pierwszy rozjazd po ${przebieg.rozjazdOd} s)`);
+  t.equal('na koniec żadna jednostka nie wisi BUSY bez kursu',
+    fleetCourseMismatches(zPiratami).zawieszone, 0);
+  const numery = przewoznik.ships.map(ship => ship.id);
+  t.equal('id we flocie są unikalne', new Set(numery).size, numery.length);
+  t.check('indeks prowadzi do tych samych obiektów',
+    przewoznik.ships.every(ship => zPiratami.companies.shipsById.get(ship.id) === ship));
 
   return t.results;
 }

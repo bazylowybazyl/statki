@@ -68,18 +68,36 @@ export function createCompany(spec = {}) {
     profile: POLICY_PROFILE[policy],
     capital: Math.max(0, Number(spec.capital) || 0),
     ships: [],
+    /** Ostatni nadany numer jednostki. Tylko rośnie — patrz `nextShipId`. */
+    shipSeq: 0,
     ledger: { revenue: 0, fuel: 0, fees: 0, deadheads: 0, losses: 0, jobs: 0, waited: 0 }
   };
 }
 
 /**
+ * Numer nowej jednostki: z licznika firmy, NIE z długości floty.
+ *
+ * Długość spada przy każdej stracie (`loseShip` wycina statek z listy), więc
+ * odkup dostawał id statku, który wciąż latał. `shipsById` przepinał się na
+ * nowy obiekt, koniec kursu starego zwalniał nowy, a stary zostawał BUSY na
+ * zawsze — zmierzone przy ×60 po 6 h gry: 4 448 jednostek zajętych bez kursu.
+ * Licznik nie cofa się też po stracie, więc `payload.shipId` zamkniętego kursu
+ * nigdy nie wskaże nowego statku.
+ */
+function nextShipId(company) {
+  company.shipSeq = (Number(company.shipSeq) || 0) + 1;
+  return `${company.id}-s${company.shipSeq}`;
+}
+
+/**
  * Dokłada jednostkę do floty. Klasa bierze się z `VAN_CLASSES`, więc firmy
  * używają tych samych statków co reszta gry — nic nowego nie wymyślamy.
+ * Jawne `spec.id` ma pierwszeństwo; za jego unikalność odpowiada wołający.
  */
 export function addShip(company, spec = {}) {
   const vanClass = VAN_CLASSES.find(cls => cls.id === spec.vanClassId) || VAN_CLASSES[1];
   const ship = {
-    id: String(spec.id || `${company.id}-s${company.ships.length + 1}`),
+    id: String(spec.id || nextShipId(company)),
     companyId: company.id,
     vanClassId: vanClass.id,
     hullId: spec.hullId || hullForVanClass(vanClass.id),

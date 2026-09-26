@@ -1135,6 +1135,35 @@ function updateSphereShieldMesh(entity, mesh, shield, time, interpPoseOverride, 
 // ── Per-frame update ─────────────────────────────────────────────────────────
 const _activeShieldEntities = new Set();
 
+// Rozgrzewka programów tarcz (ekran ładowania). Tarcza-obrys ma jeden program na wszystkie
+// kadłuby, ale kompilował się przy pierwszej tarczy w sesji (~200 ms w klatce pojawienia się
+// pierwszego wroga), a gdy znikała ostatnia tarcza, dispose materiału niszczył program three
+// i następny wróg kompilował go od nowa. Materiały-trzymacze (bez dispose) trzymają programy
+// obu wariantów przez całą sesję; cząstki trafień (ShieldImpactFX) to stałe pule — wystarczy
+// je skompilować. Kompilacja bez celu renderu = wariant passu tarcz (wyjście liniowe, bez
+// tone mappingu; światła Core3D mają włączone wszystkie warstwy).
+let _programKeepers = null;
+
+export function prewarmShields3D() {
+    if (_programKeepers) return true;
+    if (!Core3D.isInitialized || !Core3D.renderer || !Core3D.cameraOrtho) return false;
+    ShieldImpactFX.init(Core3D.scene);
+    const geometry = getSharedGeometry();
+    const hull = new THREE.Mesh(geometry, createHullShieldMaterial({ maxR: 200, minR: 100 }));
+    const sphere = new THREE.Mesh(geometry, createShieldMaterial());
+    const probe = new THREE.Group();
+    probe.add(hull, sphere);
+    Core3D.enableShield3D(probe);
+    Core3D.scene.add(probe);
+    try {
+        Core3D.renderer.compile(Core3D.scene, Core3D.cameraOrtho);
+    } finally {
+        Core3D.scene.remove(probe);
+    }
+    _programKeepers = [hull.material, sphere.material];
+    return true;
+}
+
 export function updateShields3D(dt, entities, interpPoseOverride = null) {
     if (!Core3D.isInitialized) return;
     const time = performance.now() / 1000;

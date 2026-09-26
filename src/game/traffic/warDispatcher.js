@@ -374,7 +374,7 @@ function shipsLost(ships, ratio) {
   return lost;
 }
 
-function emitWrecks(war, lost, factionId, x, y) {
+function emitWrecks(war, lost, factionId, x, y, rng = Math.random) {
   let scrap = 0;
   for (const [classId, count] of Object.entries(lost)) {
     for (let i = 0; i < count; i++) {
@@ -388,8 +388,8 @@ function emitWrecks(war, lost, factionId, x, y) {
         // Rozrzut wokół pobojowiska. Bez niego wraki układają się w punkt
         // i złomiarze lecą wszyscy w to samo miejsce — ten sam błąd, który
         // trzykrotnie wracał przy kursach, dokach i wrakach po piratach.
-        x: x + (Math.random() - 0.5) * 4000,
-        y: y + (Math.random() - 0.5) * 4000,
+        x: x + (rng() - 0.5) * 4000,
+        y: y + (rng() - 0.5) * 4000,
         claimed: false
       });
       war.stats.byClass[classId] = (war.stats.byClass[classId] || 0) + 1;
@@ -431,7 +431,7 @@ export function tickWar(war, dt, options = {}) {
       // samo jak w bitwie — to jest ta konsekwencja, o którą chodziło.
       if (course && course.status === 'wrecked') {
         const scrap = emitWrecks(war, campaign.ships, campaign.attacker,
-          course.wreckX ?? campaign.x ?? 0, course.wreckY ?? campaign.y ?? 0);
+          course.wreckX ?? campaign.x ?? 0, course.wreckY ?? campaign.y ?? 0, rng);
         events.push({ type: 'campaign-lost', attacker: campaign.attacker, scrap });
         continue;
       }
@@ -466,8 +466,8 @@ export function tickWar(war, dt, options = {}) {
         obronaStracona = takeShips(shipyards, target.factionId, zbite).ships;
       }
 
-      const scrap = emitWrecks(war, attackerLost, campaign.attacker, target.x, target.y)
-        + emitWrecks(war, obronaStracona, target.factionId, target.x, target.y);
+      const scrap = emitWrecks(war, attackerLost, campaign.attacker, target.x, target.y, rng)
+        + emitWrecks(war, obronaStracona, target.factionId, target.x, target.y, rng);
 
       // Ocalali atakującego wracają — ale nie wszyscy. Odwrót też kosztuje.
       const ocalali = {};

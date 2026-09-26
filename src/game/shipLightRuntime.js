@@ -1,11 +1,44 @@
 import {
+  LIGHT_DEFAULTS,
   LIGHT_KINDS,
   normalizeLightsBlock
 } from '../ui/shipLightEditorModel.js';
 
-export const MAX_SHADER_SHIP_LIGHTS = 32;
+// 64, nie 32: Atlas ma 42 lampy pozycyjne + 2 reflektory + 5 reflektorów
+// otoczenia; przy 32 reflektory wypadały z shadera kadłuba (lampy pozycyjne
+// szły pierwsze). Tablice 3 × 64 vec4 mieszczą się w limicie fragmentu
+// (ANGLE/D3D11: 1024 vec4).
+export const MAX_SHADER_SHIP_LIGHTS = 64;
 export const MAX_EXTERNAL_ROAD_SHADER_LIGHTS = 8;
+// Grupy lamp pozycyjnych innych statków w payloadzie kadłuba (rozlew czerwieni).
+export const MAX_EXTERNAL_OMNI_SHADER_LIGHTS = 4;
 export const MAX_NAV_LIGHT_SPRITES = 512;
+
+// Reflektory otoczenia generowane z obrysu lamp, gdy kadłub nie ma własnych
+// (brak lamp `flood` i reflektorów `road` skierowanych w bok lub do tyłu).
+// Progi w j. świata długości kadłuba: rufa od małych okrętów, jedna para burt
+// dla średnich, dwie pary dla dużych (user 2026-09-26: „jeden reflektor na
+// tyle, po dwa na każdy bok (na duże statki)”).
+export const AUTO_FLOOD = Object.freeze({
+  rearMinLen: 150,
+  midMinLen: 250,
+  pairMinLen: 600,
+  pairAt: Object.freeze([0.3, 0.68]),   // położenie par wzdłuż kadłuba (od rufy)
+  midAt: 0.5,
+  inboard: 0.88,                        // lampa tuż wewnątrz obrysu lamp pozycyjnych
+  // Zasięg stożka (px sprite'a) = ułamek długości: sięga kadłuba okrętu obok
+  // w szyku (~1000 j. u Atlasa, jak światło pola). Na własnym pancerzu stożka
+  // nie ma (hexShips3D) — tylko lampa.
+  rangeFrac: 0.6
+});
+
+// Grupy lamp pozycyjnych (do 4 na statek: burta × połowa długości) — jedno
+// światło zamiast kilkudziesięciu lamp przy oświetlaniu skał i innych statków.
+export const NAV_CLUSTER = Object.freeze({
+  maxGroups: 4,
+  reachWorld: 260,       // zasięg rozlewu poza rozrzutem grupy [j. świata]
+  meanSequence: 0.44     // średnia mnożnika sekwencji w cyklu (rest + błysk)
+});
 const EPSILON = 1e-6;
 const LIGHT_KIND_LIST = Object.values(LIGHT_KINDS);
 
@@ -126,7 +159,9 @@ function getEntityLightSource(entity) {
 const normalizedLightsCache = new WeakMap();
 const EMPTY_LIGHTS_BLOCK = Object.freeze({
   [LIGHT_KINDS.POSITION]: Object.freeze([]),
-  [LIGHT_KINDS.ROAD]: Object.freeze([])
+  [LIGHT_KINDS.ROAD]: Object.freeze([]),
+  [LIGHT_KINDS.FLOOD]: Object.freeze([]),
+  hullLenPx: 0
 });
 
 export function getEntityLights(entity) {
@@ -135,9 +170,88 @@ export function getEntityLights(entity) {
   let block = normalizedLightsCache.get(source);
   if (block === undefined) {
     block = normalizeLightsBlock(source);
+    addAutoFloodMarkers(block);
     normalizedLightsCache.set(source, block);
   }
   return block;
+}
+
+// Obrys kadłuba z lamp (px sprite'a, +X = dziób): pozycyjne leżą na krawędzi.
+function lightsOutline(block) {
+  const pts = [];
+  for (const kind of [LIGHT_KINDS.POSITION, LIGHT_KINDS.ROAD, LIGHT_KINDS.FLOOD]) {
+    const list = block[kind];
+    if (Array.isArray(list)) for (const m of list) pts.push(m);
+  }
+  let xMin = Infinity;
+  let xMax = -Infinity;
+  for (const p of pts) {
+    if (p.x < xMin) xMin = p.x;
+    if (p.x > xMax) xMax = p.x;
+  }
+  return { pts, xMin, xMax, len: xMax - xMin };
+}
+
+/**
+ * Reflektory otoczenia z obrysu lamp: rufa + burty (pary zależnie od długości
+ * kadłuba, filtr per encja w floodLightAllowed). Tylko gdy kadłub nie ma
+ * własnych: lamp `flood` ani reflektorów `road` w bok/do tyłu (|deg − 90| > 50).
+ * Wynik trafia do bloku (cache per źródło) z `auto: true` i progami długości.
+ */
+function addAutoFloodMarkers(block) {
+  const outline = lightsOutline(block);
+  block.hullLenPx = Number.isFinite(outline.len) && outline.len > 0 ? outline.len : 0;
+  if (block[LIGHT_KINDS.FLOOD].length) return;
+  for (const r of block[LIGHT_KINDS.ROAD]) {
+    let d = Math.abs((Number(r.deg) || 0) - 90);
+    if (d > 180) d = 360 - d;
+    if (d > 50) return;
+  }
+  const { pts, xMin, len } = outline;
+  if (pts.length < 4 || !(len > 0)) return;
+  const edgeAt = (x0, side) => {
+    let best = 0;
+    let any = 0;
+    for (const p of pts) {
+      if (side * p.y <= len * 0.02) continue;
+      any = Math.max(any, Math.abs(p.y));
+      if (Math.abs(p.x - x0) <= len * 0.2 && Math.abs(p.y) > best) best = Math.abs(p.y);
+    }
+    return best > 0 ? best : (any > 0 ? any * 0.75 : len * 0.18);
+  };
+  let rearY = 0;
+  let rearN = 0;
+  for (const p of pts) {
+    if (p.x <= xMin + len * 0.1) { rearY += p.y; rearN++; }
+  }
+  const d = LIGHT_DEFAULTS[LIGHT_KINDS.FLOOD];
+  const make = (id, x, y, deg, minLen, maxLen = Infinity) => ({
+    id, x: Math.round(x * 100) / 100, y: Math.round(y * 100) / 100, deg,
+    color: d.color, power: d.power, radius: d.radius,
+    range: Math.round(Math.max(50, Math.min(4000, len * AUTO_FLOOD.rangeFrac))),
+    coneDeg: d.coneDeg, auto: true, minLen, maxLen
+  });
+  const out = block[LIGHT_KINDS.FLOOD];
+  out.push(make('auto_flood_rear', xMin + len * 0.02, rearN ? rearY / rearN : 0, -90, AUTO_FLOOD.rearMinLen));
+  const sides = (at, tag, minLen, maxLen) => {
+    const x = xMin + len * at;
+    out.push(make(`auto_flood_${tag}_l`, x, -edgeAt(x, -1) * AUTO_FLOOD.inboard, 0, minLen, maxLen));
+    out.push(make(`auto_flood_${tag}_r`, x, edgeAt(x, 1) * AUTO_FLOOD.inboard, 180, minLen, maxLen));
+  };
+  sides(AUTO_FLOOD.midAt, 'mid', AUTO_FLOOD.midMinLen, AUTO_FLOOD.pairMinLen);
+  AUTO_FLOOD.pairAt.forEach((at, i) => sides(at, `pair${i}`, AUTO_FLOOD.pairMinLen));
+}
+
+/** Długość kadłuba w j. świata z obrysu lamp (skala hardpointu × skala sprite'a). */
+export function getEntityHullLengthWorld(entity, block = getEntityLights(entity), options = {}) {
+  const lenPx = Number(block?.hullLenPx) || 0;
+  if (!(lenPx > 0)) return 0;
+  return lenPx * getEntityLightScale(entity).x * getEntitySpriteScale(entity, options).x;
+}
+
+function floodLightAllowed(marker, hullLenWorld) {
+  if (!marker?.auto) return true;
+  return hullLenWorld >= (Number(marker.minLen) || 0) && hullLenWorld < (Number.isFinite(marker.maxLen) ? marker.maxLen : Infinity);
 }
 
 // Tani test BEZ normalizacji: czy encja ma choć jeden marker lampy. Wraki,
@@ -289,9 +403,11 @@ function packLight(marker, kind, grid, scale) {
   const pivotY = Number(grid?.pivot?.y) || 0;
   const scaleUniform = Number(scale?.uniform) || 1;
   const local = getScaledLightLocal(marker, scale);
-  const color = hexToRgb01(marker?.color, kind === LIGHT_KINDS.POSITION ? '#ff2b2b' : '#ffffff');
-  const dir = kind === LIGHT_KINDS.ROAD ? lightDirection(marker?.deg) : { x: 0, y: -1 };
-  const rangeScale = kind === LIGHT_KINDS.ROAD ? directionalScale(dir, scale) : scaleUniform;
+  const defaults = LIGHT_DEFAULTS[kind] || LIGHT_DEFAULTS[LIGHT_KINDS.ROAD];
+  const directional = kind === LIGHT_KINDS.ROAD || kind === LIGHT_KINDS.FLOOD;
+  const color = hexToRgb01(marker?.color, defaults.color);
+  const dir = directional ? lightDirection(marker?.deg ?? defaults.deg) : { x: 0, y: -1 };
+  const rangeScale = directional ? directionalScale(dir, scale) : scaleUniform;
 
   return {
     id: marker?.id || '',
@@ -301,11 +417,11 @@ function packLight(marker, kind, grid, scale) {
       y: round2(local.y + height * 0.5 + pivotY)
     },
     color,
-    radiusPx: round2(clamp(marker?.radius, 1, 48, kind === LIGHT_KINDS.POSITION ? 4 : 14) * scaleUniform),
-    power: round2(clamp(marker?.power, 0.05, 20, kind === LIGHT_KINDS.POSITION ? 0.8 : 3)),
+    radiusPx: round2(clamp(marker?.radius, 1, 48, defaults.radius) * scaleUniform),
+    power: round2(clamp(marker?.power, 0.05, 20, defaults.power)),
     dir,
-    rangePx: round2(clamp(marker?.range, 50, 4000, 800) * rangeScale),
-    coneDeg: round2(clamp(marker?.coneDeg, 8, 160, 40))
+    rangePx: round2(clamp(marker?.range, 50, 4000, defaults.range ?? 800) * rangeScale),
+    coneDeg: round2(clamp(marker?.coneDeg, 8, 160, defaults.coneDeg ?? 40))
   };
 }
 
@@ -314,16 +430,22 @@ export function buildShipLightShaderPayload(entity, grid, maxLights = MAX_SHADER
   const scale = getEntityLightScale(entity);
   const out = [];
   const limit = clampLightLimit(maxLights);
+  const floods = Array.isArray(lights?.[LIGHT_KINDS.FLOOD]) ? lights[LIGHT_KINDS.FLOOD] : [];
+  const hullLen = floods.length ? getEntityHullLengthWorld(entity, lights) : 0;
 
   const pushKind = (kind) => {
     const markers = Array.isArray(lights?.[kind]) ? lights[kind] : [];
     for (let i = 0; i < markers.length && out.length < limit; i++) {
+      if (kind === LIGHT_KINDS.FLOOD && !floodLightAllowed(markers[i], hullLen)) continue;
       out.push(packLight(markers[i], kind, grid, scale));
     }
   };
 
-  pushKind(LIGHT_KINDS.POSITION);
+  // Kierunkowe najpierw: przy nadmiarze lamp wypada kolejna lampa pozycyjna,
+  // a nie reflektor (dawniej Atlas tracił w shaderze oba reflektory dziobu).
   pushKind(LIGHT_KINDS.ROAD);
+  pushKind(LIGHT_KINDS.FLOOD);
+  pushKind(LIGHT_KINDS.POSITION);
 
   // Te same składniki co dawny podpis tekstowy, w tej samej kolejności.
   let hash = FNV_OFFSET_BASIS;
@@ -363,12 +485,16 @@ export function buildRoadLightWorldEmitters(entities, options = {}) {
   const list = Array.isArray(entities) ? entities : [];
   const maxEmitters = Math.max(0, Math.floor(Number(options.maxEmitters) || 256));
 
+  // Reflektory otoczenia (flood) wchodzą jako emitery z `flood: true` — światło
+  // pola i kadłuby innych statków traktują je jak krótki, szeroki reflektor.
+  const withFloods = options.floods !== false;
   for (let entityIndex = 0; entityIndex < list.length && out.length < maxEmitters; entityIndex++) {
     const entity = list[entityIndex];
     if (!entity || entity.dead) continue;
     const lights = getEntityLights(entity);
     const roads = Array.isArray(lights?.road) ? lights.road : [];
-    if (!roads.length) continue;
+    const floods = withFloods && Array.isArray(lights?.flood) ? lights.flood : EMPTY_LIGHTS_BLOCK.flood;
+    if (!roads.length && !floods.length) continue;
 
     const hardpointScale = getEntityLightScale(entity);
     const spriteScale = getEntitySpriteScale(entity, options);
@@ -376,11 +502,16 @@ export function buildRoadLightWorldEmitters(entities, options = {}) {
     const angle = getEntityAngle(entity, options);
     const c = Math.cos(angle);
     const s = Math.sin(angle);
+    const hullLen = floods.length ? getEntityHullLengthWorld(entity, lights, options) : 0;
+    const total = roads.length + floods.length;
 
-    for (let i = 0; i < roads.length && out.length < maxEmitters; i++) {
-      const marker = roads[i];
+    for (let i = 0; i < total && out.length < maxEmitters; i++) {
+      const flood = i >= roads.length;
+      const marker = flood ? floods[i - roads.length] : roads[i];
+      if (flood && !floodLightAllowed(marker, hullLen)) continue;
+      const defaults = LIGHT_DEFAULTS[flood ? LIGHT_KINDS.FLOOD : LIGHT_KINDS.ROAD];
       const local = getScaledLightLocal(marker, hardpointScale);
-      const dirLocal = lightDirection(marker?.deg);
+      const dirLocal = lightDirection(marker?.deg ?? defaults.deg);
       const scaledDir = normalizeVec2(
         dirLocal.x * spriteScale.x,
         dirLocal.y * spriteScale.y,
@@ -396,25 +527,129 @@ export function buildRoadLightWorldEmitters(entities, options = {}) {
       const scaledLocalX = local.x * spriteScale.x;
       const scaledLocalY = local.y * spriteScale.y;
       const spriteDirectionalScale = directionalScale(dirLocal, spriteScale);
-      const rangePx = clamp(marker?.range, 50, 4000, 800) * directionalScale(dirLocal, hardpointScale);
-      const radiusPx = clamp(marker?.radius, 1, 48, 14) * (Number(hardpointScale?.uniform) || 1);
+      const rangePx = clamp(marker?.range, 50, 4000, defaults.range) * directionalScale(dirLocal, hardpointScale);
+      const radiusPx = clamp(marker?.radius, 1, 48, defaults.radius) * (Number(hardpointScale?.uniform) || 1);
 
       out.push({
         owner: entity,
         ownerId: entity?.id || entity?.uid || entity?.name || `entity${entityIndex}`,
         id: marker?.id || `road${i}`,
+        flood,
         x: round2(pos.x + scaledLocalX * c - scaledLocalY * s),
         y: round2(pos.y + scaledLocalX * s + scaledLocalY * c),
         dir: worldDir,
-        color: hexToRgb01(marker?.color, '#ffffff'),
+        color: hexToRgb01(marker?.color, defaults.color),
         radiusWorld: round2(radiusPx * (Number(spriteScale?.uniform) || 1)),
-        power: round2(clamp(marker?.power, 0.05, 20, 3)),
+        power: round2(clamp(marker?.power, 0.05, 20, defaults.power)),
         rangeWorld: round2(rangePx * spriteDirectionalScale),
-        coneDeg: round2(clamp(marker?.coneDeg, 8, 160, 40))
+        coneDeg: round2(clamp(marker?.coneDeg, 8, 160, defaults.coneDeg))
       });
     }
   }
 
+  return out;
+}
+
+// Grupy lamp pozycyjnych bloku (px sprite'a): burta × połowa długości, do
+// NAV_CLUSTER.maxGroups. Cache w bloku (blok jest per źródło, tylko do odczytu).
+function getNavGroups(block) {
+  if (block.__navGroups) return block.__navGroups;
+  const markers = Array.isArray(block?.[LIGHT_KINDS.POSITION]) ? block[LIGHT_KINDS.POSITION] : [];
+  const groups = [];
+  if (markers.length) {
+    let xMin = Infinity;
+    let xMax = -Infinity;
+    for (const m of markers) { if (m.x < xMin) xMin = m.x; if (m.x > xMax) xMax = m.x; }
+    const xMid = (xMin + xMax) * 0.5;
+    const buckets = [[], [], [], []];
+    for (const m of markers) buckets[(m.y < 0 ? 0 : 2) + (m.x < xMid ? 0 : 1)].push(m);
+    for (const b of buckets) {
+      if (!b.length) continue;
+      let cx = 0; let cy = 0; let power = 0; let r = 0; let g = 0; let bl = 0;
+      for (const m of b) {
+        cx += m.x; cy += m.y;
+        const p = clamp(m.power, 0.05, 20, 0.8);
+        const col = hexToRgb01(m.color, '#ff2b2b');
+        power += p; r += col.r * p; g += col.g * p; bl += col.b * p;
+      }
+      cx /= b.length; cy /= b.length;
+      let spread = 0;
+      for (const m of b) spread = Math.max(spread, Math.hypot(m.x - cx, m.y - cy));
+      groups.push({
+        x: cx, y: cy, spreadPx: spread, count: b.length, power,
+        color: { r: r / power, g: g / power, b: bl / power },
+        xs: Float64Array.from(b, (m) => m.x)
+      });
+    }
+  }
+  Object.defineProperty(block, '__navGroups', { value: groups, enumerable: false });
+  return groups;
+}
+
+// Mnożnik sekwencji „pasa startowego” lampy o fazie `phase` w chwili t — ta
+// sama formuła co pętla lamp kadłuba i billboardy (NAV_LIGHT_CHASE).
+export function navChaseSequence(t, phase) {
+  const C = NAV_LIGHT_CHASE;
+  const chase = ((t * C.speed + phase * C.phaseGain) % 1 + 1) % 1;
+  const pulse = smoothstep01(0, C.attack, chase) * (1 - smoothstep01(C.hold, C.release, chase));
+  return C.rest + (1 - C.rest) * pulse;
+}
+
+/**
+ * Grupy lamp pozycyjnych jako światła w świecie (rozlew czerwieni na skały
+ * i inne kadłuby). Jedno światło na grupę zamiast kilkudziesięciu lamp.
+ * `pulse` = średnia sekwencji lamp grupy w chwili options.time (błysk biegnie
+ * po skałach razem z billboardami); `mean` = średnia w cyklu (stała — do
+ * payloadu kadłubów, żeby podpis nie zmieniał się co klatkę).
+ */
+export function buildNavLightClusters(entities, options = {}) {
+  const out = Array.isArray(options.out) ? options.out : [];
+  if (options.clear !== false) out.length = 0;
+  const list = Array.isArray(entities) ? entities : [];
+  const maxClusters = Math.max(0, Math.floor(Number(options.maxClusters) || 256));
+  const time = Number(options.time) || 0;
+  for (let entityIndex = 0; entityIndex < list.length && out.length < maxClusters; entityIndex++) {
+    const entity = list[entityIndex];
+    if (!entity || entity.dead) continue;
+    const lights = getEntityLights(entity);
+    if (!lights?.[LIGHT_KINDS.POSITION]?.length) continue;
+    const groups = getNavGroups(lights);
+    const hardpointScale = getEntityLightScale(entity);
+    const spriteScale = getEntitySpriteScale(entity, options);
+    const pos = getEntityPosition(entity, options);
+    const angle = getEntityAngle(entity, options);
+    const c = Math.cos(angle);
+    const s = Math.sin(angle);
+    const grid = typeof options.getGrid === 'function' ? options.getGrid(entity) : entity?.hexGrid;
+    const width = Math.max(1, Number(grid?.srcWidth) || (lights.hullLenPx * hardpointScale.x * 1.1) || 1);
+    const pivotX = Number(grid?.pivot?.x) || 0;
+    const worldScale = (Number(hardpointScale.uniform) || 1) * (Number(spriteScale.uniform) || 1);
+    for (let gi = 0; gi < groups.length && out.length < maxClusters; gi++) {
+      const g = groups[gi];
+      const lx = g.x * hardpointScale.x * spriteScale.x;
+      const ly = g.y * hardpointScale.y * spriteScale.y;
+      let seq = 0;
+      for (let k = 0; k < g.xs.length; k++) {
+        const phase = Math.max(0, Math.min(1, (g.xs[k] * hardpointScale.x + width * 0.5 + pivotX) / width));
+        seq += navChaseSequence(time, phase);
+      }
+      seq /= Math.max(1, g.xs.length);
+      out.push({
+        owner: entity,
+        ownerId: entity?.id || entity?.uid || entity?.name || `entity${entityIndex}`,
+        id: `nav${gi}`,
+        x: pos.x + lx * c - ly * s,
+        y: pos.y + lx * s + ly * c,
+        color: g.color,
+        power: g.power,
+        count: g.count,
+        spreadWorld: g.spreadPx * worldScale,
+        rangeWorld: g.spreadPx * worldScale + NAV_CLUSTER.reachWorld,
+        pulse: seq,
+        mean: NAV_CLUSTER.meanSequence
+      });
+    }
+  }
   return out;
 }
 
@@ -560,7 +795,7 @@ function packExternalRoadLightForTarget(emitter, entity, grid, options = {}) {
   const directionalTargetScale = directionalScale(dir, targetScale);
   return {
     id: `external:${emitter?.ownerId || 'ship'}:${emitter?.id || 'road'}`,
-    kind: LIGHT_KINDS.ROAD,
+    kind: emitter?.flood ? LIGHT_KINDS.FLOOD : LIGHT_KINDS.ROAD,
     external: true,
     pos: worldToEntitySpritePixels(emitter?.x, emitter?.y, entity, grid, options),
     color: emitter?.color || hexToRgb01('#ffffff'),
@@ -572,10 +807,74 @@ function packExternalRoadLightForTarget(emitter, entity, grid, options = {}) {
   };
 }
 
+// Grupa lamp pozycyjnych innego statku sięga kadłuba celu (koło zasięgu vs koło celu).
+function omniLightAffectsTarget(light, entity, grid, options = {}) {
+  const targetPos = getEntityPosition(entity, options);
+  const targetRadius = getEntityRadiusWorld(entity, grid, getEntitySpriteScale(entity, options), options);
+  const reach = Math.max(1, Number(light?.rangeWorld) || 1) + targetRadius;
+  const dx = targetPos.x - (Number(light?.x) || 0);
+  const dy = targetPos.y - (Number(light?.y) || 0);
+  return dx * dx + dy * dy <= reach * reach;
+}
+
+// Rozlew grupy lamp w przestrzeni sprite'a celu: rodzaj 'omni' (typ 2 w shaderze
+// kadłuba) — bez rdzenia lampy (lampa jest na innym kadłubie), tylko poświata.
+function packExternalOmniLightForTarget(light, entity, grid, options = {}) {
+  const targetScale = getEntitySpriteScale(entity, options);
+  return {
+    id: `external:${light?.ownerId || 'ship'}:${light?.id || 'nav'}`,
+    kind: 'omni',
+    external: true,
+    pos: worldToEntitySpritePixels(light?.x, light?.y, entity, grid, options),
+    color: light?.color || hexToRgb01('#ff2b2b'),
+    radiusPx: 1,
+    // Średnia sekwencji w cyklu (stała), nie bieżący błysk — podpis payloadu
+    // nie zmienia się co klatkę.
+    power: round2(Math.max(0, (Number(light?.power) || 0) * (Number(light?.mean) || NAV_CLUSTER.meanSequence))),
+    dir: { x: 0, y: -1 },
+    rangePx: round2(Math.max(1, (Number(light?.rangeWorld) || 1) / Math.max(EPSILON, targetScale.uniform))),
+    coneDeg: 160
+  };
+}
+
 export function buildCombinedShipLightShaderPayload(entity, grid, externalRoadLights = [], options = {}) {
   const maxLights = clampLightLimit(options?.maxLights);
   const payload = buildShipLightShaderPayload(entity, grid, maxLights);
   const emitters = Array.isArray(externalRoadLights) ? externalRoadLights : [];
+  const omni = Array.isArray(options?.externalOmniLights) ? options.externalOmniLights : [];
+  if ((!emitters.length && !omni.length) || payload.count >= maxLights) return payload;
+
+  // Rozlew czerwieni z grup lamp innych statków (przed reflektorami — to one
+  // mają osobny, mały budżet MAX_EXTERNAL_OMNI_SHADER_LIGHTS).
+  let hashOmni = null;
+  if (omni.length) {
+    const near = [];
+    for (let i = 0; i < omni.length; i++) {
+      const light = omni[i];
+      if (!light || light.owner === entity || !(light.power > 0)) continue;
+      if (!omniLightAffectsTarget(light, entity, grid, options)) continue;
+      const targetPos = getEntityPosition(entity, options);
+      const dx = targetPos.x - (Number(light.x) || 0);
+      const dy = targetPos.y - (Number(light.y) || 0);
+      near.push({ score: dx * dx + dy * dy, light });
+    }
+    near.sort((a, b) => a.score - b.score);
+    const limit = Math.min(MAX_EXTERNAL_OMNI_SHADER_LIGHTS, maxLights - payload.count);
+    for (let i = 0; i < near.length && i < limit; i++) {
+      const light = packExternalOmniLightForTarget(near[i].light, entity, grid, options);
+      payload.lights.push(light);
+      if (hashOmni === null) hashOmni = Math.imul((payload.signature | 0) ^ 0x4f4d4e49, FNV_PRIME);
+      hashOmni = hashMixString(hashOmni, light.id);
+      hashOmni = hashMixNumber(hashOmni, light.pos.x);
+      hashOmni = hashMixNumber(hashOmni, light.pos.y);
+      hashOmni = hashMixNumber(hashOmni, light.rangePx);
+      hashOmni = hashMixNumber(hashOmni, light.power);
+    }
+    if (hashOmni !== null) {
+      payload.count = payload.lights.length;
+      payload.signature = hashOmni >>> 0;
+    }
+  }
   if (!emitters.length || payload.count >= maxLights) return payload;
 
   const candidates = [];

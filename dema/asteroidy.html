@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- Ścieżki tekstur gry (assets/…) są względne do katalogu głównego. -->
+<base href="/">
+<title>Asteroidy 3D — demo</title>
+<style>
+  :root { --ink: #d6e2e8; --muted: #7d919b; --line: #9fc6d626; --panel: #070d13e6; --accent: #7cc9ff; --warn: #f0b060; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #030406; overflow: hidden; color: var(--ink); font: 12px/1.35 "Segoe UI", system-ui, sans-serif; }
+  #root { position: fixed; inset: 0; overflow: hidden; background: #030406; }
+  #webgl-layer { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; }
+  #c { position: absolute; inset: 0; z-index: 1; outline: none; cursor: grab; }
+  #hud { position: fixed; left: 10px; top: 10px; z-index: 40; padding: 8px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; font: 11px/1.45 ui-monospace, Consolas, monospace; min-width: 320px; pointer-events: none; white-space: pre; }
+  #hud b { color: var(--accent); font-weight: 600; }
+  #panel { position: fixed; right: 10px; top: 10px; z-index: 40; width: 330px; max-height: calc(100vh - 20px); overflow-y: auto; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+  #panel h1 { font-size: 13px; margin: 0 0 2px; letter-spacing: .06em; }
+  #panel .sub { color: var(--muted); margin-bottom: 8px; }
+  #panel h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 12px 0 6px; font-weight: 600; }
+  .scenes { display: grid; grid-template-columns: 1fr; gap: 5px; }
+  .scenes button { text-align: left; padding: 7px 10px; font-size: 13px; }
+  .scenes button small { display: block; color: var(--muted); font-size: 11px; }
+  .row { display: flex; align-items: center; gap: 8px; margin: 5px 0; }
+  .row label { flex: 0 0 96px; color: var(--muted); }
+  .row input[type=range] { flex: 1 1 auto; min-width: 0; }
+  .row output { flex: 0 0 48px; text-align: right; font-variant-numeric: tabular-nums; }
+  .focus { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .focus button { padding: 3px 7px; font-size: 11px; }
+  .checks { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 8px; }
+  .checks label { display: flex; align-items: center; gap: 5px; }
+  button { background: #0e1a24; color: var(--ink); border: 1px solid #2a4252; border-radius: 4px; padding: 4px 8px; font: inherit; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.on { background: #173247; border-color: var(--accent); color: #fff; }
+  .hint { color: var(--muted); font-size: 11px; margin-top: 6px; }
+  #errors { position: fixed; left: 50%; bottom: 10px; transform: translateX(-50%); z-index: 60; max-width: 60vw; max-height: 40vh; overflow: auto; padding: 8px; background: #2a0b0bee; border: 1px solid #a33; border-radius: 6px; font: 11px ui-monospace, monospace; white-space: pre-wrap; display: none; }
+  #loading { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 70; padding: 10px 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+  body.shot #panel, body.shot #hud { display: none; }
+</style>
+</head>
+<body>
+<div id="root">
+  <canvas id="webgl-layer"></canvas>
+  <canvas id="c" tabindex="0" aria-label="Demo asteroid"></canvas>
+</div>
+<div id="hud">ładowanie…</div>
+<div id="loading">Pieczenie kształtów skał…</div>
+<div id="errors"></div>
+<div id="panel">
+  <h1>ASTEROIDY 3D — DEMO</h1>
+  <div class="sub">Nowe pole asteroid: skały 3D z kształtów pieczonych na GPU, proceduralny pas z gęstymi polami, tło w trzech pasmach głębokości, mgła i pył. Prawdziwe Core3D, tło i skala gry (zoom 0,035–3,2).</div>
+  <div class="scenes">
+    <button data-scene="gallery">1 · Galeria typów<small>skała neutralna + 7 rud, każdy typ z własną powierzchnią · ← → zbliżenie</small></button>
+    <button data-scene="shapes">2 · Galeria kształtów<small>10 rodzin: owalne, podwójne, dyski, odłamy, gruzowiska… · ← →</small></button>
+    <button data-scene="giants">3 · Olbrzymy: tunele, szczeliny, jaskinie<small>5 brył 18–62 tys. j. · ▶ przelot = autopilot trasą, W/S/A/D przejmuje · ← → Enter</small></button>
+    <button data-scene="giantField">4 · Olbrzym w polu<small>Labirynt na obrzeżu gęstego pola — wleć w tunel (W) i schowaj się pod stropem</small></button>
+    <button data-scene="field">5 · Gęste pole (Main Belt)<small>Atlas w rdzeniu pola · W/S/A/D lot, kółko zoom</small></button>
+    <button data-scene="flight">6 · Przelot: od słońca w głąb pola<small>obrzeże z wypełniacza (skały neutralne), rudy głębiej, coraz ciemniej</small></button>
+    <button data-scene="deep">7 · Głąb pola (cień)<small>słońce przesłonięte, świecą tylko reflektory statku</small></button>
+    <button data-scene="sparse">8 · Rzadki pas<small>zwykły pas poza polami — głównie skały neutralne</small></button>
+    <button data-scene="kuiper">9 · Pas Kuipera (lód)<small>rdzeń lodowego pola</small></button>
+    <button data-scene="storm">0 · Burza energetyczna<small>naładowane skały w mroku pola: pioruny między skałami i w pył, błyski w chmurach</small></button>
+  </div>
+  <div id="focus" class="focus"></div>
+  <h2>Mechanika pola</h2>
+  <div class="checks">
+    <label><input type="checkbox" id="t-lights" checked> światła statku (L)</label>
+    <label><input type="checkbox" id="t-veil" checked> ciemne tło w polu</label>
+    <label><input type="checkbox" id="t-rocklights" checked> świecące skały</label>
+    <label><input type="checkbox" id="t-floods" checked> reflektory otoczenia</label>
+    <label><input type="checkbox" id="t-navglow" checked> czerwień na otoczenie</label>
+    <label><input type="checkbox" id="t-escort" checked> eskorta (lotniskowiec)</label>
+    <label><input type="checkbox" id="t-storm" checked> burze energetyczne</label>
+  </div>
+  <div class="row"><label>przesłanianie</label><input id="s-occ" type="range" min="0" max="2.5" step="0.05" value="1"><output id="o-occ"></output></div>
+  <div class="row"><label>moc świateł</label><input id="s-light" type="range" min="0" max="3" step="0.05" value="1"><output id="o-light"></output></div>
+  <div class="row"><label>smugi w pyle</label><input id="s-beam" type="range" min="0" max="3" step="0.05" value="1"><output id="o-beam"></output></div>
+  <div class="hint">Słońce leży w płaszczyźnie gry: jego światło przechodzi przez pole radialnie. Wejście od strony słońca jest jasne, w głąb pola coraz ciemniej, a w środku gęstego pola całkowita ciemność — świecą tylko reflektory statku i skały kryształu i uranu. Za polem światło wraca. Reflektory Atlasa to jego znaczniki z edytora świateł (dziób), plus słabe światło dookoła kadłuba. Reflektory otoczenia (białe, krótkie): jeden na rufie i po dwa na burtę na dużych okrętach (po jednym na średnich) — z obrysu lamp, dopóki w edytorze nie ustawisz własnych. Czerwone lampy pozycyjne rozlewają czerwień na skały i na kadłub eskorty, pulsując sekwencją lamp.</div>
+  <h2>Warstwy</h2>
+  <div class="checks">
+    <label><input type="checkbox" id="t-play" checked> skały gry</label>
+    <label><input type="checkbox" id="t-rubble" checked> tło: gruz</label>
+    <label><input type="checkbox" id="t-mid" checked> tło: środek</label>
+    <label><input type="checkbox" id="t-deep" checked> tło: głębia</label>
+    <label><input type="checkbox" id="t-dust" checked> mgła i pył</label>
+    <label><input type="checkbox" id="t-ship" checked> Atlas</label>
+    <label><input type="checkbox" id="t-detail" checked> detal z bliska</label>
+    <label><input type="checkbox" id="t-veins" checked> żyły rud</label>
+    <label><input type="checkbox" id="t-lod"> kolory LOD</label>
+    <label><input type="checkbox" id="t-bloom" checked> bloom</label>
+  </div>
+  <h2>Światło</h2>
+  <div class="row"><label>słońce nad pł.</label><input id="s-elev" type="range" min="0" max="70" step="1" value="24"><output id="o-elev"></output></div>
+  <div class="row"><label>moc słońca</label><input id="s-sun" type="range" min="0.5" max="5" step="0.05" value="1.9"><output id="o-sun"></output></div>
+  <div class="row"><label>otoczenie</label><input id="s-amb" type="range" min="0" max="3" step="0.05" value="1"><output id="o-amb"></output></div>
+  <div class="row"><label>regolit (LS)</label><input id="s-lunar" type="range" min="0" max="1" step="0.05" value="0.35"><output id="o-lunar"></output></div>
+  <h2>Pole i mgła</h2>
+  <div class="row"><label>gęstość pól</label><input id="s-dens" type="range" min="0.25" max="4" step="0.05" value="1"><output id="o-dens"></output></div>
+  <div class="row"><label>gęstość mgły</label><input id="s-fog" type="range" min="0" max="3" step="0.05" value="1"><output id="o-fog"></output></div>
+  <div class="row"><label>jasność mgły</label><input id="s-fogb" type="range" min="0" max="3" step="0.05" value="1"><output id="o-fogb"></output></div>
+  <div class="row"><label>samocień mgły</label><input id="s-fogs" type="range" min="0" max="6" step="0.1" value="3.2"><output id="o-fogs"></output></div>
+  <div class="row"><label>drobiny</label><input id="s-specks" type="range" min="0" max="3" step="0.05" value="1"><output id="o-specks"></output></div>
+  <div class="row"><label>prędkość lotu</label><input id="s-speed" type="range" min="100" max="8000" step="50" value="1400"><output id="o-speed"></output></div>
+  <div class="hint">Kółko = zoom (jak w grze 0,035–3,2; w scenie olbrzymów do 0,012), Z = zoom 1, X = zoom 0,035. Przeciągnięcie myszą w galerii i przy olbrzymach przesuwa widok, klik w galerii = zbliżenie. Olbrzymy: Enter = przelot autopilotem, W/S/A/D przejmuje stery; pod stropem otwiera się przekrój wokół statku. H = ukryj panele.</div>
+</div>
+<script type="module" src="/dema/asteroidy.js"></script>
+</body>
+</html>

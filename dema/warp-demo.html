@@ -54,7 +54,7 @@
     <button id="sc-arrival" data-scene="arrival">1 · Przylot okrętu<small>jeden okręt obok Atlasa, powtarza się sam</small></button>
     <button id="sc-fleet" data-scene="fleet">2 · Wezwanie floty<small>klik na mapie = flota Terra Nova w tym miejscu</small></button>
     <button id="sc-ambush" data-scene="ambush">3 · Zasadzka piratów<small>piraci wychodzą z warpa wokół Atlasa</small></button>
-    <button id="sc-travel" data-scene="travel">4 · Podróż warpem — soczewka świata<small>Atlas leci od Ziemi do Jowisza, obok Marsa</small></button>
+    <button id="sc-travel" data-scene="travel">4 · Podróż warpem — soczewka świata<small>Atlas leci między planetami (trasa niżej), mija planety i księżyce</small></button>
   </div>
   <h2>Czas</h2>
   <div class="btns">
@@ -65,6 +65,16 @@
   </div>
   <div class="row"><label>oś sceny</label><input id="scrub" type="range" min="0" max="10" step="0.01" value="0"><output id="scrub-out">0,00 s</output></div>
   <div class="hint">Przeciągnięcie osi pauzuje i przewija szew, zgięcie, fale i smugę. Cząstki rodzą się tylko w trakcie odtwarzania.</div>
+  <h2>Podróż (scena 4)</h2>
+  <div class="row"><label>skąd</label><select id="trip-from"></select></div>
+  <div class="row"><label>dokąd</label><select id="trip-to"></select></div>
+  <div class="hint">Zmiana trasy startuje przelot. Z bliska: Ziemia ↔ Jowisz (Mars), Ziemia ↔ Saturn (Jowisz z księżycami), Ziemia ↔ Merkury (Wenus), start z Ziemi — Księżyc. Przy mijanym ciele statek zwalnia, a widok się przybliża.</div>
+  <h2>Zgięcie przestrzeni (scena 4)</h2>
+  <div class="row"><label>kształt</label><select id="warp-shape">
+    <option value="alcubierre">bańka Alcubierre'a (klepsydra)</option>
+    <option value="drop">kropla (rybie oko)</option>
+  </select></div>
+  <div class="hint">B = przełącz kształt. Bańka: przed statkiem przestrzeń ściśnięta (turkus), za nim rozszerzona (pomarańcz), po bokach przewężenie.</div>
   <h2>Okręt (scena 1)</h2>
   <div class="row"><label>kadłub</label><select id="hull"></select></div>
   <div class="row"><label>barwy</label><select id="palette">

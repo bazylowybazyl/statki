@@ -1,6 +1,10 @@
 export const LIGHT_KINDS = Object.freeze({
   POSITION: 'position',
-  ROAD: 'road'
+  ROAD: 'road',
+  // Reflektory otoczenia: krótkie, szerokie, białe — rufa i burty kadłuba.
+  // Oświetlają skały i statki obok; dalekie reflektory dziobu to `road`.
+  // Kadłub bez własnych dostaje je z obrysu lamp (shipLightRuntime).
+  FLOOD: 'flood'
 });
 
 export const LIGHT_DEFAULTS = Object.freeze({
@@ -17,27 +21,43 @@ export const LIGHT_DEFAULTS = Object.freeze({
     range: 800,
     coneDeg: 40,
     deg: 90
+  }),
+  [LIGHT_KINDS.FLOOD]: Object.freeze({
+    color: '#e8f0ff',
+    power: 1.5,
+    radius: 6,
+    range: 420,
+    coneDeg: 110,
+    deg: -90
   })
 });
 
 export function createEmptyLights() {
   return {
     [LIGHT_KINDS.POSITION]: [],
-    [LIGHT_KINDS.ROAD]: []
+    [LIGHT_KINDS.ROAD]: [],
+    [LIGHT_KINDS.FLOOD]: []
   };
 }
 
 export function hasLightsContent(lights) {
   return !!(
     (Array.isArray(lights?.[LIGHT_KINDS.POSITION]) && lights[LIGHT_KINDS.POSITION].length) ||
-    (Array.isArray(lights?.[LIGHT_KINDS.ROAD]) && lights[LIGHT_KINDS.ROAD].length)
+    (Array.isArray(lights?.[LIGHT_KINDS.ROAD]) && lights[LIGHT_KINDS.ROAD].length) ||
+    (Array.isArray(lights?.[LIGHT_KINDS.FLOOD]) && lights[LIGHT_KINDS.FLOOD].length)
   );
+}
+
+/** Lampa kierunkowa (stożek: deg, range, coneDeg): reflektor dalekiego zasięgu albo otoczenia. */
+export function isDirectionalLightKind(kind) {
+  return kind === LIGHT_KINDS.ROAD || kind === LIGHT_KINDS.FLOOD;
 }
 
 export function normalizeLightKind(kind) {
   const raw = String(kind || '').toLowerCase();
   if (raw === LIGHT_KINDS.POSITION || raw === 'positional' || raw === 'nav') return LIGHT_KINDS.POSITION;
   if (raw === LIGHT_KINDS.ROAD || raw === 'headlight' || raw === 'spot') return LIGHT_KINDS.ROAD;
+  if (raw === LIGHT_KINDS.FLOOD || raw === 'floodlight' || raw === 'work') return LIGHT_KINDS.FLOOD;
   return null;
 }
 
@@ -101,6 +121,13 @@ export function normalizeLightMarker(marker, kind, makeId = null) {
   out.deg = round2(normalizeDeg(marker.deg, defaults.deg));
   out.range = round2(clamp(marker.range, 50, 4000, defaults.range));
   out.coneDeg = round2(clamp(marker.coneDeg, 8, 160, defaults.coneDeg));
+  // Reflektor otoczenia wygenerowany z obrysu (nie z edytora): rozmiar kadłuba,
+  // od którego się zapala (patrz shipLightRuntime, autoFloodMarkers).
+  if (normalizedKind === LIGHT_KINDS.FLOOD && marker.auto) {
+    out.auto = true;
+    out.minLen = Number(marker.minLen) || 0;
+    out.maxLen = Number.isFinite(Number(marker.maxLen)) ? Number(marker.maxLen) : Infinity;
+  }
   return out;
 }
 
@@ -129,7 +156,7 @@ export function compactLightMarker(marker, kind) {
     radius: round2(normalized.radius)
   };
 
-  if (kind === LIGHT_KINDS.POSITION) {
+  if (normalizeLightKind(kind) === LIGHT_KINDS.POSITION) {
     out.sequenceGroup = normalized.sequenceGroup || LIGHT_DEFAULTS[LIGHT_KINDS.POSITION].sequenceGroup;
     return out;
   }

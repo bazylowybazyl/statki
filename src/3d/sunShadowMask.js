@@ -36,6 +36,11 @@ export const SUN_SHAFT_BACKDROP_TINT = Object.freeze([0.06, 0.10, 0.16]);
 // a światła, dysze i żar mocniej od niego odcięte. Strojenie na żywo:
 // sunShadowUniforms.uSunShadowFill.value.
 export const SUN_SHADOW_FILL = 0.4;
+// Ile otoczenia gaśnie w PEŁNYM mroku gęstego pola asteroid (kanał B maski,
+// asteroidFieldLight.js). Cień planety zostawia 0,4 otoczenia (pył wokół
+// statku dalej świeci w słońcu), w rdzeniu pola ten pył też jest w cieniu —
+// kadłub widać tylko w jego własnych światłach i reflektorach.
+export const FIELD_FILL_CUT = 0.92;
 
 // Wspólne obiekty uniformów: materiały dostają TE SAME referencje (spread albo
 // attachSunShadowUniforms), więc Core3D ustawia je raz na klatkę dla wszystkich.
@@ -44,7 +49,8 @@ export const sunShadowUniforms = Object.freeze({
   uSunShadowMap: { value: null },
   uSunShadowTexel: { value: new THREE.Vector2(1, 1) },
   uSunShadowOn: { value: 0 },
-  uSunShadowFill: { value: SUN_SHADOW_FILL }
+  uSunShadowFill: { value: SUN_SHADOW_FILL },
+  uFieldFillCut: { value: FIELD_FILL_CUT }
 });
 
 export function attachSunShadowUniforms(uniforms) {
@@ -53,6 +59,7 @@ export function attachSunShadowUniforms(uniforms) {
   uniforms.uSunShadowTexel = sunShadowUniforms.uSunShadowTexel;
   uniforms.uSunShadowOn = sunShadowUniforms.uSunShadowOn;
   uniforms.uSunShadowFill = sunShadowUniforms.uSunShadowFill;
+  uniforms.uFieldFillCut = sunShadowUniforms.uFieldFillCut;
   return uniforms;
 }
 
@@ -69,10 +76,16 @@ uniform sampler2D uSunShadowMap;
 uniform vec2 uSunShadowTexel;
 uniform float uSunShadowOn;
 uniform float uSunShadowFill;
+uniform float uFieldFillCut;
 // x = cień powierzchni, y = smuga tła; 0 = pełne słońce.
 vec2 sunShadowSample() {
   if (uSunShadowOn < 0.5) return vec2(0.0);
   return textureLod(uSunShadowMap, gl_FragCoord.xy * uSunShadowTexel, 0.0).rg;
+}
+// Mrok gęstego pola asteroid (0 = poza polem, 1 = rdzeń bez słońca).
+float fieldDarkness() {
+  if (uSunShadowOn < 0.5) return 0.0;
+  return textureLod(uSunShadowMap, gl_FragCoord.xy * uSunShadowTexel, 0.0).b;
 }
 // 1 = pełne słońce, 0 = umbra planety. Mnoży człon słońca (rozproszone,
 // połysk, odblask) — światła, żar i glow nigdy.
@@ -80,8 +93,9 @@ float sunVisibility() {
   return 1.0 - sunShadowSample().x;
 }
 // Mnożnik światła otoczenia przy widoczności vis (część otoczenia to słońce).
+// W mroku gęstego pola otoczenie gaśnie prawie całkiem (uFieldFillCut).
 float sunFill(float vis) {
-  return mix(uSunShadowFill, 1.0, vis);
+  return mix(uSunShadowFill, 1.0, vis) * (1.0 - fieldDarkness() * uFieldFillCut);
 }
 // Powierzchnia bez modelu światła (impostor, sprite billboard).
 vec3 sunShadeUnlit(vec3 color) {

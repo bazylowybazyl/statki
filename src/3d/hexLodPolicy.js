@@ -5,7 +5,8 @@
  * an intact ship.
  */
 export function allowsSolidArmorLod(entity) {
-  const grid = entity?.hexGrid;
+  // Kadłub na belkach (hullBodies.js) niesie te same flagi co siatka heksów.
+  const grid = entity?.hexGrid || entity?.beamHull;
   if (!grid) return false;
   if (entity?.isWreck === true) return false;
   if (grid.isFragment === true) return false;

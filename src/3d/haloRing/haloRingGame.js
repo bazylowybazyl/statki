@@ -122,6 +122,26 @@ export class HaloRingGame {
     return ring;
   }
 
+  // Tło menu głównego (menuBackdrop3D.js) przed startem gry: ring planety od
+  // razu (mapy dopiekają się w menu, więc start przy Ziemi ma je gotowe), na
+  // czas menu warstwy i słońce ustawia tło. releaseShowcase oddaje ring grze:
+  // warstwy HALO_GAME, bez wycięć, schowany do pierwszego update(), słońce gry.
+  showcaseRing(key) {
+    const e = this.entries.find((v) => v.key === key);
+    return e ? this._ensureRing(e) : null;
+  }
+
+  releaseShowcase(key) {
+    const e = this.entries.find((v) => v.key === key);
+    if (!e?.ring) return;
+    e.ring.setLayers(HALO_GAME.layers);
+    e.ring.setCutaway(0, null);
+    e.ring.setCutaway(1, null);
+    e.ring.group.visible = false;
+    e.visible = false;
+    e.sunAz = NaN;
+  }
+
   setQuality(q) {
     const key = resolveHaloQuality(q);
     if (key === this.qualityKey) return;

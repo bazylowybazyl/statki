@@ -22,8 +22,9 @@ import {
 // HUD „jeden klaster + kontekst” (makieta: dema/hud-koncept.html).
 // Warstwy: stałe (klaster, paski broni/umiejętności, komunikaty, kontrolki),
 // kontekstowe (karta celu, skrzydło, wyniki skanu — same się pokazują),
-// na żądanie (Alt przełącza tryb interfejsu: rezerwa, overview, panel centralny;
-// CapsLock = łączność, J = misje, Tab = CIC).
+// na żądanie (Alt przełącza tryb interfejsu: pełny radar, rezerwa, overview, panel centralny;
+// CapsLock = łączność, J = misje, Tab = CIC). Klaster normalnie pokazuje kopułę — radar
+// ścięty cięciwą na linii pasków (wszystkie łuki są w górnej połowie); Alt wysuwa pełny radar.
 
 const RADAR_RANGES = Object.freeze([5000, 10000, 20000, 40000, 60000]);
 const MODE_ORDER = Object.freeze(['combat', 'maneuver', 'travel']);
@@ -113,14 +114,20 @@ const RPM_WINDOW = Object.freeze({
 
 // Klaster w jednostkach projektowych (pole 340×340, skalowane przez --s).
 // Kąty "zegarowe": 0 = godz. 12, rosną zgodnie ze wskazówkami.
-// Góra = przetrwanie (kadłub ↖, tarcza ↗ — spływają od góry), dół = napęd (prędkość ↙, obroty ↘).
-const CLUSTER = Object.freeze({ box: 340, center: 170, ring: 150, radar: 118 });
+// Łuki tylko w górnej połowie — dolna jest ścięta (cockpit-ui.css), dopóki Alt nie wysunie radaru.
+// Zewnętrzny pierścień = przetrwanie (kadłub ↖, tarcza ↗ — spływają od góry), wewnętrzny,
+// cieńszy = napęd (prędkość pod kadłubem, obroty pod tarczą — rosną od dołu), w parze z odczytami.
+const CLUSTER = Object.freeze({ box: 340, center: 170, ring: 150, drive: 131, radar: 118 });
 const CLUSTER_ARCS = Object.freeze({
   hull: Object.freeze({ anchor: 275, span: 75, reverse: false }),
   shield: Object.freeze({ anchor: 85, span: 75, reverse: true }),
-  speed: Object.freeze({ anchor: 190, span: 73, reverse: false }),
-  rpm: Object.freeze({ anchor: 170, span: 73, reverse: true })
+  speed: Object.freeze({ anchor: 275, span: 75, reverse: false }),
+  rpm: Object.freeze({ anchor: 85, span: 75, reverse: true })
 });
+// Łuk napędu: cieńszy od kadłuba / tarczy, mieści się między nimi a radarem (jego poświata
+// sięga ~137u, poświata kadłuba / tarczy zaczyna się od 138,5u; okno biegu od strony radaru).
+const DRIVE_ARC = Object.freeze({ width: 4.5, glowSpread: 8, tip: 3.2, tipGlow: 6, band: 2.5 });
+const VITAL_ARC = Object.freeze({ width: 11, glowSpread: 12 });
 const VITAL_STYLE = Object.freeze({
   hull: Object.freeze({ color: '#ff2d36', track: 'rgba(255, 45, 54, 0.13)', ghost: 'rgba(255, 190, 190, 0.5)' }),
   shield: Object.freeze({ color: '#2f7dff', track: 'rgba(47, 125, 255, 0.14)', ghost: 'rgba(190, 210, 255, 0.5)' })
@@ -294,20 +301,20 @@ function vitalAlpha(motion, calm, now) {
 
 // Poświata bez shadowBlur (rozmycie gaussowskie co klatkę jest drogie):
 // dwa szersze, półprzezroczyste pociągnięcia pod właściwym łukiem.
-function strokeGlowArc(ctx, fromDeg, toDeg, width, style, alpha, glow = 1) {
+function strokeGlowArc(ctx, radius, fromDeg, toDeg, shape, style, alpha, glow = 1) {
   const center = CLUSTER.center;
-  arcPath(ctx, center, center, CLUSTER.ring, fromDeg, toDeg);
+  arcPath(ctx, center, center, radius, fromDeg, toDeg);
   ctx.strokeStyle = style;
   if (glow > 0) {
     ctx.globalAlpha = alpha * 0.16 * glow;
-    ctx.lineWidth = width + 12;
+    ctx.lineWidth = shape.width + shape.glowSpread;
     ctx.stroke();
     ctx.globalAlpha = alpha * 0.32 * glow;
-    ctx.lineWidth = width + 5;
+    ctx.lineWidth = shape.width + shape.glowSpread * 5 / 12;
     ctx.stroke();
   }
   ctx.globalAlpha = alpha;
-  ctx.lineWidth = width;
+  ctx.lineWidth = shape.width;
   ctx.stroke();
 }
 
@@ -318,13 +325,13 @@ function drawVitalArc(ctx, arc, motion, style, alpha) {
     const [from, to] = arcSegment(arc, motion.ghost);
     arcPath(ctx, CLUSTER.center, CLUSTER.center, CLUSTER.ring, from, to);
     ctx.globalAlpha = alpha;
-    ctx.lineWidth = 11;
+    ctx.lineWidth = VITAL_ARC.width;
     ctx.strokeStyle = style.ghost;
     ctx.stroke();
   }
   if (motion.shown > 0.002) {
     const [from, to] = arcSegment(arc, motion.shown);
-    strokeGlowArc(ctx, from, to, 11, style.color, alpha, 1 + motion.hit * 2);
+    strokeGlowArc(ctx, CLUSTER.ring, from, to, VITAL_ARC, style.color, alpha, 1 + motion.hit * 2);
     if (motion.hit > 0) {
       ctx.globalAlpha = alpha * Math.min(1, motion.hit * 2.4);
       ctx.lineWidth = 4;
@@ -355,7 +362,7 @@ function cockpitMarkup(devMode) {
     <div class="app" id="app" data-mode="combat">
       <div class="pointer-veil"></div>
       <div class="deploy-banner">WEKTOR ROZMIESZCZENIA — UPUŚĆ NA MAPĘ LUB RADAR, ABY ROZPOCZĄĆ WARP</div>
-      <div class="pointer-banner">ALT · TRYB INTERFEJSU — wolna mysz, panele klikalne</div>
+      <div class="pointer-banner">ALT · TRYB INTERFEJSU — wolna mysz, pełny radar, panele klikalne</div>
 
       <div class="safe-area">
         <section class="feed" id="feed">
@@ -412,7 +419,7 @@ function cockpitMarkup(devMode) {
           <span><kbd>Tab</kbd>CIC / flota</span>
           <span><kbd>Caps</kbd>Łączność</span>
           <span><kbd>J</kbd>Misje</span>
-          <span><kbd>Alt</kbd>Panele</span>
+          <span><kbd>Alt</kbd>Radar / panele</span>
         </div>
       </div>
 
@@ -420,16 +427,20 @@ function cockpitMarkup(devMode) {
         <div class="slot-bar weapons" id="weaponBar"></div>
         <div class="cluster" id="cluster">
           <div class="alert-line" id="alertLine"></div>
-          <div class="telltales" id="telltales"></div>
+          <div class="telltales" id="telltales"><span class="mode-badge" id="spMode" title="Tryb napędu — V zmienia">B</span></div>
           <canvas id="clusterCanvas" aria-hidden="true"></canvas>
           <canvas id="radarCanvas" class="hud-radar-canvas" aria-label="Radar"></canvas>
-          <div class="vital-readout hp" id="roHp"><small>KADŁUB</small><b id="vitalHpValue">0</b></div>
-          <div class="vital-readout shield" id="roShield"><small>TARCZA</small><b id="vitalShieldValue">0</b></div>
+          <div class="flank left">
+            <div class="vital-readout hp" id="roHp"><small>KADŁUB</small><b id="vitalHpValue">0</b></div>
+            <div class="drive-readout speed"><small>PRĘDKOŚĆ</small><span class="drive-value"><b id="spValue">0</b><span class="drive-unit" id="spSpeedUnit">M/S</span></span></div>
+          </div>
+          <div class="flank right">
+            <div class="vital-readout shield" id="roShield"><small>TARCZA</small><b id="vitalShieldValue">0</b></div>
+            <div class="drive-readout rpm"><small>OBROTY</small><span class="drive-value"><b id="spRpm">0</b><span class="drive-unit">RPM</span></span><span class="gear-readout" id="spGearWrap" hidden>BIEG <b id="spGear">1/1</b></span></div>
+          </div>
           <button type="button" class="radar-top" id="radarTop" title="Zasięg radaru — kliknij lub kółko myszy nad radarem"><span class="hostile" id="rdHostile">CZYSTO</span><span id="rdRange">20K</span></button>
-          <div class="drive-readout speed"><small>PRĘDKOŚĆ</small><span class="drive-value"><b id="spValue">0</b><span class="drive-unit" id="spSpeedUnit">M/S</span></span></div>
-          <div class="drive-readout rpm"><small>OBROTY</small><span class="drive-value"><b id="spRpm">0</b><span class="drive-unit">RPM</span></span><span class="gear-readout" id="spGearWrap" hidden>BIEG <b id="spGear">1/1</b></span></div>
-          <span class="mode-badge" id="spMode" title="Tryb napędu — V zmienia">B</span>
         </div>
+        <div class="cluster-base" aria-hidden="true"></div>
         <div class="slot-bar abilities" id="abilityBar"></div>
         <section class="cockpit-module mode-panel" id="modePanel">
           <span class="module-label">PANEL CENTRALNY / TRYB</span>
@@ -537,7 +548,7 @@ export class CockpitUI {
     this.applyScale();
     window.addEventListener('resize', () => this.applyScale());
     this.log('Inicjalizacja systemów kokpitu — OK', 'ok');
-    this.log('Alt przełącza tryb interfejsu. CapsLock otwiera łączność ze stacjami.', 'orbit');
+    this.log('Alt wysuwa radar i przełącza tryb interfejsu. CapsLock otwiera łączność ze stacjami.', 'orbit');
     window.CockpitUI = this;
     window.cockpitUI = this;
     return this;
@@ -1088,12 +1099,12 @@ export class CockpitUI {
     }
   }
 
+  // Łuki napędu rosną od poziomu w górę: u nasady ciemniejszy żar, u szczytu jaśniejszy.
   getGradients(ctx) {
     if (this.gradients) return this.gradients;
     const center = CLUSTER.center;
-    const radius = CLUSTER.ring;
     const make = (bottom, top) => {
-      const gradient = ctx.createLinearGradient(0, center + radius, 0, center - 10);
+      const gradient = ctx.createLinearGradient(0, center, 0, center - CLUSTER.drive);
       gradient.addColorStop(0, bottom);
       gradient.addColorStop(1, top);
       return gradient;
@@ -1107,10 +1118,11 @@ export class CockpitUI {
     return this.gradients;
   }
 
+  // Pasmo okna zmiany biegu: po wewnętrznej stronie łuku obrotów (od strony radaru).
   drawBand(ctx, arc, fromFraction, toFraction, color) {
     const a = arcPoint(arc, fromFraction);
     const b = arcPoint(arc, toFraction);
-    arcPath(ctx, CLUSTER.center, CLUSTER.center, CLUSTER.ring + 9, Math.min(a, b), Math.max(a, b));
+    arcPath(ctx, CLUSTER.center, CLUSTER.center, CLUSTER.drive - 6, Math.min(a, b), Math.max(a, b));
     ctx.strokeStyle = color;
     ctx.stroke();
   }
@@ -1138,27 +1150,28 @@ export class CockpitUI {
     ctx.lineWidth = 1;
     ctx.stroke();
     ctx.lineCap = 'round';
-    for (const [arc, width, color] of [
-      [CLUSTER_ARCS.hull, 11, VITAL_STYLE.hull.track],
-      [CLUSTER_ARCS.shield, 11, VITAL_STYLE.shield.track],
-      [CLUSTER_ARCS.speed, 7, 'rgba(255, 255, 255, 0.08)'],
-      [CLUSTER_ARCS.rpm, 7, 'rgba(255, 255, 255, 0.08)']
+    for (const [arc, arcRadius, width, color] of [
+      [CLUSTER_ARCS.hull, radius, VITAL_ARC.width, VITAL_STYLE.hull.track],
+      [CLUSTER_ARCS.shield, radius, VITAL_ARC.width, VITAL_STYLE.shield.track],
+      [CLUSTER_ARCS.speed, CLUSTER.drive, DRIVE_ARC.width, 'rgba(255, 255, 255, 0.08)'],
+      [CLUSTER_ARCS.rpm, CLUSTER.drive, DRIVE_ARC.width, 'rgba(255, 255, 255, 0.08)']
     ]) {
       const [from, to] = arcSegment(arc, 1);
-      arcPath(ctx, center, center, radius, from, to);
+      arcPath(ctx, center, center, arcRadius, from, to);
       ctx.lineWidth = width;
       ctx.strokeStyle = color;
       ctx.stroke();
     }
+    // Podziałka napędu na zewnątrz łuku, w szczelinie pod pierścieniem kadłuba / tarczy.
     ctx.lineCap = 'butt';
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
     for (const [arc, ticks] of [[CLUSTER_ARCS.speed, 6], [CLUSTER_ARCS.rpm, 8]]) {
       for (let index = 0; index <= ticks; index += 1) {
         const angle = clockRad(arcPoint(arc, index / ticks));
         const major = index % 2 === 0;
-        const inner = radius - (major ? 18 : 14);
-        const outer = radius - 9;
-        ctx.lineWidth = major ? 1.6 : 1;
+        const inner = CLUSTER.drive + (major ? 4 : 4.5);
+        const outer = CLUSTER.drive + (major ? 8 : 7);
+        ctx.lineWidth = major ? 1.3 : 0.9;
         ctx.beginPath();
         ctx.moveTo(center + Math.cos(angle) * inner, center + Math.sin(angle) * inner);
         ctx.lineTo(center + Math.cos(angle) * outer, center + Math.sin(angle) * outer);
@@ -1170,12 +1183,12 @@ export class CockpitUI {
   // Łuk napędu w stylu modułu PRĘDKOŚĆ: żar gradientu i biała kropka na końcu.
   drawDriveArc(ctx, arc, value, options) {
     const center = CLUSTER.center;
-    const radius = CLUSTER.ring;
+    const radius = CLUSTER.drive;
     ctx.save();
     if (options.window) {
       // Okno zmiany biegu: jasna zieleń = PERFECT, blada = BOOST, czerwień = ZA PÓŹNO.
       ctx.lineCap = 'round';
-      ctx.lineWidth = 3;
+      ctx.lineWidth = DRIVE_ARC.band;
       const perfect = value >= RPM_WINDOW.perfectStart && value <= RPM_WINDOW.perfectEnd;
       const good = value >= RPM_WINDOW.cue && value <= RPM_WINDOW.late;
       this.drawBand(ctx, arc, RPM_WINDOW.cue, RPM_WINDOW.late, good ? 'rgba(56, 224, 138, 0.55)' : 'rgba(56, 224, 138, 0.22)');
@@ -1186,30 +1199,31 @@ export class CockpitUI {
       const tone = options.warp ? 'warp' : options.tone === 1 ? 'cue' : options.tone === 2 ? 'danger' : 'normal';
       const [from, to] = arcSegment(arc, value);
       ctx.lineCap = 'round';
-      strokeGlowArc(ctx, from, to, 7, this.getGradients(ctx)[tone], 1);
+      strokeGlowArc(ctx, radius, from, to, DRIVE_ARC, this.getGradients(ctx)[tone], 1);
       const tip = clockRad(arcPoint(arc, value));
       const tipX = center + Math.cos(tip) * radius;
       const tipY = center + Math.sin(tip) * radius;
       ctx.globalAlpha = 0.35;
       ctx.fillStyle = DRIVE_GLOW[tone];
       ctx.beginPath();
-      ctx.arc(tipX, tipY, 8.5, 0, TAU);
+      ctx.arc(tipX, tipY, DRIVE_ARC.tipGlow, 0, TAU);
       ctx.fill();
       ctx.globalAlpha = 1;
       ctx.fillStyle = '#ffffff';
       ctx.beginPath();
-      ctx.arc(tipX, tipY, 4.6, 0, TAU);
+      ctx.arc(tipX, tipY, DRIVE_ARC.tip, 0, TAU);
       ctx.fill();
     }
     if (options.notch != null) {
+      // Limit prędkości biegu: kreska w poprzek łuku.
       const angle = clockRad(arcPoint(arc, options.notch));
       ctx.globalAlpha = 1;
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 1.6;
       ctx.lineCap = 'butt';
       ctx.beginPath();
-      ctx.moveTo(center + Math.cos(angle) * (radius + 5), center + Math.sin(angle) * (radius + 5));
-      ctx.lineTo(center + Math.cos(angle) * (radius + 13), center + Math.sin(angle) * (radius + 13));
+      ctx.moveTo(center + Math.cos(angle) * (radius - 5), center + Math.sin(angle) * (radius - 5));
+      ctx.lineTo(center + Math.cos(angle) * (radius + 5), center + Math.sin(angle) * (radius + 5));
       ctx.stroke();
     }
     ctx.restore();

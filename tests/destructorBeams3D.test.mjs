@@ -301,10 +301,11 @@ test('przecięcie: zerwanie belek w płaszczyźnie dzieli ciało na dwa wraki', 
   assert.equal(body.activeNodes + wreck.activeNodes, nodesBefore, 'zgubione węzły przy rozłamie');
   assert.ok(Math.abs((body.mass + wreck.mass) - massBefore) < 1e-6, 'masa się nie sumuje');
 
-  // Obie sekcje muszą mieć własny środek masy i spójne numery belek.
+  // Obie sekcje muszą mieć własny środek masy i spójne numery belek. Kadłub zostaje po
+  // rozpadzie na swoich tablicach (węzły wraku gasną u niego), więc liczą się żywe węzły.
   for (const b of bodies) {
     let mx = 0, m = 0;
-    for (const n of b.nodes) { mx += n.ox * n.mass; m += n.mass; }
+    for (const n of b.nodes) { if (!n.active) continue; mx += n.ox * n.mass; m += n.mass; }
     assert.ok(Math.abs(mx / m) < 1e-6, `sekcja nie wyśrodkowana: ${mx / m}`);
     for (const beam of b.beams) {
       assert.ok(b.nodes[beam.a] && b.nodes[beam.b], 'belka wskazuje nieistniejący węzeł');

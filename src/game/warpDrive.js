@@ -8,6 +8,8 @@
 // Wszystkie czasy i wymiary skalują się długością kadłuba w świecie
 // (Atlas = 1800 j.): duży okręt zapowiada się dłużej i rozdziera więcej
 // przestrzeni, myśliwiec wyskakuje prawie od razu.
+//
+// Podróż: warpFlybySlowdown — statek w skoku zwalnia przy mijanych ciałach.
 
 export const WARP_REF_HULL_LENGTH = 1800;
 
@@ -198,4 +200,37 @@ export function planWarpFleetArrival(ships, o = {}) {
     prev = burst;
   }
   return plan.map(({ index, startTime: st, heraldExtra, burstTime }) => ({ index, startTime: st, heraldExtra, burstTime }));
+}
+
+/** Zwolnienie skoku przy mijanym ciele — patrz warpFlybySlowdown. */
+export const WARP_FLYBY_DEFAULTS = Object.freeze({
+  depth: 0.85,      // najgłębsze zwolnienie (0,85 = statek zwalnia do 15% prędkości)
+  minSize: 0.05,    // ciało widziane z kursu mniejsze niż to — bez zwolnienia
+  fullSize: 0.42,   // … większe niż to — pełne zwolnienie
+  width: 2.2,       // półszerokość pasa zwolnienia × (odległość środka ciała od kursu + promień)
+  minWidth: 60000   // … nie węższa niż ta [j.]
+});
+
+/**
+ * Zwolnienie skoku przy mijanym ciele („grawitacja”; user 2026-09-26: „statek
+ * przelatuje obok planety? zwolnij statek, planetę powiększ (płynnie), pokaż
+ * ją, … pomniejsz, zostaw z tyłu”). Mnożnik prędkości 0..1. Głębokość rośnie
+ * z wielkością ciała widzianego z kursu (promień / (promień + odległość kursu od
+ * powierzchni)) — mijana z bliska planeta zwalnia mocno, daleki mały księżyc
+ * wcale; pas wzdłuż kursu (gauss) szerszy dla ciał dalej od kursu, więc statek
+ * zwalnia z wyprzedzeniem i płynnie. Widok skoku przybliża się, gdy statek
+ * zwalnia (warpLensScale w warpWorldLens.js) — stąd planeta płynnie rośnie.
+ * along — ciało przed statkiem wzdłuż kursu (ujemne: za rufą), lateral —
+ * odległość środka ciała od kursu, radius — promień ciała (jednostki świata).
+ */
+export function warpFlybySlowdown(along, lateral, radius, p = WARP_FLYBY_DEFAULTS) {
+  const r = Math.max(1, Number(radius) || 0);
+  const lat = Math.abs(Number(lateral) || 0);
+  const clear = Math.max(0, lat - r);
+  const size = r / (r + clear);
+  const depth = clamp01(p.depth) * smooth((size - p.minSize) / Math.max(1e-6, p.fullSize - p.minSize));
+  if (!(depth > 0)) return 1;
+  const w = Math.max(Number(p.minWidth) || 1, (Number(p.width) || 0) * (lat + r));
+  const g = (Number(along) || 0) / w;
+  return 1 - depth * Math.exp(-g * g);
 }

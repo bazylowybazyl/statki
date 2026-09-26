@@ -26,6 +26,10 @@ test('każdy kadłub z dyszami MAIN w domyślnych edytora ma dopasowany rozmiar 
     const def = ENGINE_FX_DEFAULTS[id];
     assert.ok(def, `${id}: brak wpisu w ENGINE_FX_DEFAULTS`);
     assert.ok(def.mainNozzle >= ENGINE_FX_LIMITS.mainNozzle[0] && def.mainNozzle <= ENGINE_FX_LIMITS.mainNozzle[1], `${id}: dysza poza zakresem`);
+    for (const key of ['mainLength', 'mainWidth', 'warpLength']) {
+      const [min, max] = ENGINE_FX_LIMITS[key];
+      assert.ok(def[key] >= min && def[key] <= max, `${id}: ${key} poza zakresem edytora`);
+    }
     assert.ok(mainExhaustPaletteIndex(def.mainPalette) >= 0, `${id}: nieznana paleta MAIN ${def.mainPalette}`);
     assert.ok(warpPlasmaPaletteIndex(def.warpPalette) >= 0, `${id}: nieznana paleta WARP ${def.warpPalette}`);
   }

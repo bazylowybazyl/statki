@@ -8,13 +8,24 @@
  */
 
 import { createSuite, runIfMain } from './harness.mjs';
-import { buildStationDocks, berthOccupancy } from '../../src/game/traffic/dockLayout.js';
+import { buildStationDocks, berthOccupancy, BERTH_ROLE, reserveBerth } from '../../src/game/traffic/dockLayout.js';
 import {
   PORT_CONTROL_DEFAULTS, createPortControl, registerPort, getPort,
   requestService, releaseService, grantWaiting, holdingSlotPosition,
-  estimateWait, absorbableDelay, summarizePorts, needsService
+  estimateWait, absorbableDelay, summarizePorts, needsService,
+  berthRoleForCourse, MILITARY_COURSE_KINDS
 } from '../../src/game/traffic/portControl.js';
-import { STAGE_KIND, DWELL_REASON, dwellStage, travelStage } from '../../src/game/traffic/courseRegistry.js';
+import { STAGE_KIND, DWELL_REASON, COURSE_KIND, dwellStage, travelStage } from '../../src/game/traffic/courseRegistry.js';
+
+/** Port z dwoma pomostami cywilnymi i dwoma wojskowymi. */
+function makeMixedPort(control, id) {
+  const cyw = buildStationDocks({ id, x: 0, y: 0, r: 120 }, { dockCount: 2 });
+  const woj = buildStationDocks({ id: `${id}-w`, x: 0, y: 0, r: 120 },
+    { dockCount: 2, role: BERTH_ROLE.MILITARY, angleOffset: Math.PI / 2 });
+  const layout = { ...cyw, docks: [...cyw.docks, ...woj.docks], berths: [...cyw.berths, ...woj.berths] };
+  registerPort(control, id, layout, { id, x: 0, y: 0, angle: 0 });
+  return { layout, civil: cyw.berths, military: woj.berths };
+}
 
 function makePort(control, options = {}) {
   const station = { id: options.id || 'test-port', x: 0, y: 0, r: 120 };
@@ -160,6 +171,73 @@ export function run() {
   const obloz = berthOccupancy(layout2);
   t.check('zajęte stanowiska widać w obłożeniu', obloz.taken > 0);
   t.check('nie więcej niż jest', obloz.taken <= obloz.total);
+
+  // ----------------------------------------------------------
+  t.section('Rola kursu wybiera pulę stanowisk (K-7 = wojsko, zatoki = cywile)');
+
+  t.equal('przewóz jest cywilny', berthRoleForCourse({ kind: COURSE_KIND.HAUL }), BERTH_ROLE.CIVIL);
+  t.equal('wydobycie jest cywilne', berthRoleForCourse({ kind: COURSE_KIND.MINE }), BERTH_ROLE.CIVIL);
+  t.equal('wyprawa wojenna jest wojskowa', berthRoleForCourse({ kind: COURSE_KIND.WAR }), BERTH_ROLE.MILITARY);
+  t.equal('patrol jest wojskowy', berthRoleForCourse({ kind: COURSE_KIND.PATROL }), BERTH_ROLE.MILITARY);
+  t.check('lista rodzajów wojskowych to wojna i patrol',
+    MILITARY_COURSE_KINDS.length === 2 && MILITARY_COURSE_KINDS.includes(COURSE_KIND.WAR));
+  t.equal('dostawa okrętu może podać rolę wprost',
+    berthRoleForCourse({ kind: COURSE_KIND.HAUL, berthRole: BERTH_ROLE.MILITARY }), BERTH_ROLE.MILITARY);
+
+  const controlR = createPortControl();
+  const mix = makeMixedPort(controlR, 'mix');
+  const cywilne = [];
+  for (let i = 0; i < 12; i++) {
+    cywilne.push(requestService(controlR, 'mix', { id: `c-${i}`, kind: COURSE_KIND.HAUL, unitClass: 'container_ship' }, 0, 90));
+  }
+  t.check('frachtowce stają wyłącznie na cywilnych',
+    cywilne.every(p => p.berth && p.berth.role === BERTH_ROLE.CIVIL));
+  const okret = requestService(controlR, 'mix', { id: 'w-0', kind: COURSE_KIND.WAR, unitClass: 'container_ship' }, 0, 90);
+  t.equal('okręt staje na wojskowym', okret.berth?.role, BERTH_ROLE.MILITARY);
+  t.equal('przydział pamięta rolę', okret.role, BERTH_ROLE.MILITARY);
+
+  // Cywilne pełne dla kontenerowca (M i wyżej) → kolejka, mimo wolnych wojskowych.
+  for (const berth of mix.civil) reserveBerth(berth, 'tlum', 1e9);
+  const czeka = requestService(controlR, 'mix', { id: 'c-late', kind: COURSE_KIND.HAUL, unitClass: 'container_ship' }, 10, 90);
+  t.check('pełne zatoki = kolejka, a nie hala wojskowa', !czeka.berth && czeka.slot !== null);
+  t.equal('kolejka pamięta rolę', czeka.role, BERTH_ROLE.CIVIL);
+  // Wojsko pełne, frachtowiec czeka pierwszy — nie może blokować okrętu.
+  for (const berth of mix.military) if (!berth.occupantId) reserveBerth(berth, 'garnizon', 1e9);
+  const okretCzeka = requestService(controlR, 'mix', { id: 'w-late', kind: COURSE_KIND.WAR, unitClass: 'container_ship' }, 20, 90);
+  t.check('okręt też czeka, gdy hale pełne', !okretCzeka.berth);
+  const halaWolna = mix.military.find(b => b.occupantId === 'garnizon' && b.cls === 'm');
+  halaWolna.occupantId = null;
+  halaWolna.freeAt = 0;
+  t.equal('zwolniona hala wpuszcza okręt mimo starszego frachtowca w kolejce',
+    grantWaiting(controlR, 'mix', 30), 1);
+  t.equal('okręt dostał wojskowe stanowisko', okretCzeka.berth?.role, BERTH_ROLE.MILITARY);
+  t.check('frachtowiec dalej czeka (nie wszedł do hali)', !czeka.berth);
+
+  // Mała stacja bez hal wojskowych: okręt nie czeka w nieskończoność.
+  const controlS = createPortControl();
+  makePort(controlS, { id: 'mala' });
+  const goscinny = requestService(controlS, 'mala', { id: 'w-1', kind: COURSE_KIND.PATROL, unitClass: 'container_ship' }, 0, 90);
+  t.equal('port bez hal wpuszcza okręt na cywilne', goscinny.berth?.role, BERTH_ROLE.CIVIL);
+
+  // Szacunek czekania liczy pulę kursu: frachtowiec nie widzi wolnych hal.
+  const controlE = createPortControl();
+  const est = makeMixedPort(controlE, 'est');
+  for (const berth of est.civil) reserveBerth(berth, 'tlum', 500);
+  t.equal('frachtowiec czeka na zatokę, choć hale wolne',
+    estimateWait(controlE, 'est', 'container_ship', 100), 400);
+  t.equal('okręt nie czeka', estimateWait(controlE, 'est', 'container_ship', 100, { role: BERTH_ROLE.MILITARY }), 0);
+
+  // ----------------------------------------------------------
+  t.section('Równy rozkład: ruch widać w całym porcie');
+
+  const controlQ = createPortControl();
+  const { layout: rowny } = makePort(controlQ, { id: 'rowny' });
+  const hulle = ['inter_station_shuttle', 'container_ship', 'long_haul_freighter'];
+  for (let i = 0; i < 18; i++) {
+    requestService(controlQ, 'rowny', { id: `r-${i}`, kind: COURSE_KIND.HAUL, unitClass: hulle[i % 3] }, i, 90);
+  }
+  const naDok = Object.values(berthOccupancy(rowny).byDock).map(d => d.taken);
+  t.check('dwa doki po tyle samo (±1)', Math.max(...naDok) - Math.min(...naDok) <= 1, JSON.stringify(naDok));
 
   return t.results;
 }

@@ -1514,10 +1514,22 @@ export class AsteroidField {
    * z dt wpisanym na sztywno 1/60 i PO wyliczeniu interpolacji statku.
    */
   checkShipCollisions(ship, dt = 1 / 60) {
-    if (!ship || !ship.pos) return null;
-    const sx = ship.pos.x;
-    const sy = ship.pos.y;
-    const shipR = ship.radius || 30;
+    return this.checkShipBodyCollisions(ship, ship, dt);
+  }
+
+  /**
+   * Jak checkShipCollisions, ale ruch statku czyta i pisze `body` ({ pos, vel,
+   * angle, radius, w, h, mass, rammingMass }), a tożsamość (gracz, hexGrid)
+   * i obrażenia idą przez `ship`. Gracz i P2: body === ship. NPC całkują ruch
+   * w x/y/vx/vy (pos/vel to najwyżej lustro, które nadpisuje następny krok),
+   * więc index.html podaje im widok kinematyki i przepisuje wynik
+   * (src/game/npcCollisionBody.js).
+   */
+  checkShipBodyCollisions(ship, body, dt = 1 / 60) {
+    if (!ship || !body || !body.pos) return null;
+    const sx = body.pos.x;
+    const sy = body.pos.y;
+    const shipR = body.radius || 30;
     // Promień zapytania: statek + max scale (BIG=1500u)
     const queryR = shipR + 1500;
     // Statek daleko od wszystkich pasów: w hashu nic nie ma, a to leci co
@@ -1538,7 +1550,10 @@ export class AsteroidField {
       const promoteR = shipR + asteroidR + 180;
       const withinPromote = dxNear * dxNear + dyNear * dyNear <= promoteR * promoteR;
       const hexEntity = asteroid.hexEntity;
-      if (hexEntity?.hexGrid) {
+      // AGENT: kadłuby statków są na belkach (hullBodies.js), a skały wciąż na heksach —
+      // heksowy destruktor nie zderza ich ze sobą, więc statek bez hexGrid dostaje
+      // kolizję kołową także z asteroidą już heksową (do portu skał na belki).
+      if (hexEntity?.hexGrid && ship?.hexGrid) {
         // Już heksowa (kolizje prowadzi destruktor) — tylko zegar bezczynności.
         if (withinPromote) hexEntity.__shipNearMs = nowMs;
         return;
@@ -1554,7 +1569,7 @@ export class AsteroidField {
         }
       }
 
-      const result = resolveShipAsteroidCollision(ship, asteroid);
+      const result = resolveShipAsteroidCollision(body, asteroid);
       if (!result || !result.collided) return;
       const contactLen = Math.hypot(dxNear, dyNear) || 1;
       const contactX = asteroid.worldX + (dxNear / contactLen) * asteroidR;
@@ -1562,13 +1577,13 @@ export class AsteroidField {
 
       // Separuj statek z asteroidy (wypchnięcie)
       if (result.separationDx !== 0 || result.separationDy !== 0) {
-        ship.pos.x += result.separationDx;
-        ship.pos.y += result.separationDy;
+        body.pos.x += result.separationDx;
+        body.pos.y += result.separationDy;
       }
       // Nowa velocity statku (post-collision)
-      if (ship.vel) {
-        ship.vel.x = result.shipVx;
-        ship.vel.y = result.shipVy;
+      if (body.vel) {
+        body.vel.x = result.shipVx;
+        body.vel.y = result.shipVy;
       }
       // Impuls do asteroidy - dodaje delta vel, oznacza jako moving
       if (result.asteroidDvx !== 0 || result.asteroidDvy !== 0) {
@@ -1600,7 +1615,7 @@ export class AsteroidField {
 
       // Damage do asteroidy (przez destruktor)
       if (result.asteroidDamage > 0) {
-        this.applyDamageAt(asteroid, contactX, contactY, result.asteroidDamage, ship.vel || null);
+        this.applyDamageAt(asteroid, contactX, contactY, result.asteroidDamage, body.vel || null);
       }
 
       if (!collisions) collisions = [];

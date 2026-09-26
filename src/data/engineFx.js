@@ -222,22 +222,27 @@ export const ENGINE_FX_LIMITS = Object.freeze({
 const TERRAN = Object.freeze({ mainPalette: 'wodor', warpPalette: 'magenta' });
 const PIRATE = Object.freeze({ mainPalette: 'rakieta', warpPalette: 'crimson' });
 
+// Kształt strugi względem dyszy — wspólny dla floty, bo wymiary strug i tak
+// skalują się promieniem wylotu. Strojenie usera na Atlasie (2026-09-26):
+// dawne 1,0 / 1,0 (proporcje dema) i warp 1,4 były za długie i za wąskie.
+const PLUME = Object.freeze({ mainLength: 0.6, mainWidth: 2.2, warpLength: 0.6 });
+
 export const ENGINE_FX_DEFAULTS = Object.freeze({
-  atlas: Object.freeze({ mainNozzle: 140, mainLength: 1.0, mainWidth: 1.0, mainPalette: 'plazma', warpLength: 1.4, warpPalette: 'magenta' }),
-  terran_carrier: Object.freeze({ mainNozzle: 66, mainLength: 1.0, mainWidth: 1.0, warpLength: 1.4, ...TERRAN }),
-  terran_supercapital: Object.freeze({ mainNozzle: 58, mainLength: 1.0, mainWidth: 1.0, warpLength: 1.4, ...TERRAN }),
-  capital_carrier: Object.freeze({ mainNozzle: 90, mainLength: 1.0, mainWidth: 1.0, warpLength: 1.4, ...TERRAN }),
-  battleship: Object.freeze({ mainNozzle: 58, mainLength: 1.0, mainWidth: 1.0, warpLength: 1.4, ...TERRAN }),
-  destroyer: Object.freeze({ mainNozzle: 32, mainLength: 1.0, mainWidth: 1.0, warpLength: 1.4, ...TERRAN }),
-  frigate: Object.freeze({ mainNozzle: 110, mainLength: 1.0, mainWidth: 1.0, warpLength: 1.4, ...TERRAN }),
-  pirate_battleship: Object.freeze({ mainNozzle: 105, mainLength: 1.0, mainWidth: 1.0, warpLength: 1.4, ...PIRATE }),
-  pirate_destroyer: Object.freeze({ mainNozzle: 115, mainLength: 1.0, mainWidth: 1.0, warpLength: 1.4, ...PIRATE }),
-  pirate_frigate: Object.freeze({ mainNozzle: 120, mainLength: 1.0, mainWidth: 1.0, warpLength: 1.4, ...PIRATE })
+  atlas: Object.freeze({ mainNozzle: 140, ...PLUME, mainPalette: 'plazma', warpPalette: 'magenta' }),
+  terran_carrier: Object.freeze({ mainNozzle: 66, ...PLUME, ...TERRAN }),
+  terran_supercapital: Object.freeze({ mainNozzle: 58, ...PLUME, ...TERRAN }),
+  capital_carrier: Object.freeze({ mainNozzle: 90, ...PLUME, ...TERRAN }),
+  battleship: Object.freeze({ mainNozzle: 58, ...PLUME, ...TERRAN }),
+  destroyer: Object.freeze({ mainNozzle: 32, ...PLUME, ...TERRAN }),
+  frigate: Object.freeze({ mainNozzle: 110, ...PLUME, ...TERRAN }),
+  pirate_battleship: Object.freeze({ mainNozzle: 105, ...PLUME, ...PIRATE }),
+  pirate_destroyer: Object.freeze({ mainNozzle: 115, ...PLUME, ...PIRATE }),
+  pirate_frigate: Object.freeze({ mainNozzle: 120, ...PLUME, ...PIRATE })
 });
 
 // Kadłub bez wpisu (frachtowce, legacy): dysza liczona od długości renderu.
 export const ENGINE_FX_FALLBACK = Object.freeze({
-  mainLength: 1.0, mainWidth: 1.0, mainPalette: 'wodor', warpLength: 1.4, warpPalette: 'magenta',
+  ...PLUME, mainPalette: 'wodor', warpPalette: 'magenta',
   // promień dyszy = ułamek długości kadłuba w świecie (Atlas: 1800 j. → ~34 j.)
   nozzleRadiusPerHullLength: 0.0188
 });

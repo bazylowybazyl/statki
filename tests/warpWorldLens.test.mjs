@@ -1,15 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-// Soczewka świata (widok skoku, docs/BRIEF-warp.md §4.3): odwzorowanie ciał
-// z odległości od statku. Pilnujemy: β = 0 to zwykły widok (bez skoku przy
-// wejściu), przy β = 1 świat mieści się w kropli, tarcza nigdy nie wjeżdża pod
-// statek (user: „spadasz na Jowisza”), cel przed dziobem wisi wysoko, mijane
-// ciało rośnie mocniej, aberracja ściąga kierunki ku przodowi, nie zmieniając strony.
+// Soczewka świata (widok skoku, docs/BRIEF-warp.md §4.3). Pilnujemy: β = 0 to
+// zwykły widok (bez skoku przy wejściu); przy β = 1 ciała stoją w PRAWDZIWYCH
+// odległościach w jednej skali (user: mijana planeta była „na siłę przybliżana
+// do gracza, potem oddalana”) — mijana planeta leci po prostej, rośnie
+// z perspektywy wzdłuż kursu do prawdziwej wielkości przy mijaniu i maleje za
+// rufą, nigdy nie jest bliżej statku niż naprawdę; skala idzie za nominalną
+// prędkością (zwolnienie przy planecie jej nie zmienia); ciało obraca się jak
+// widziane z przelatującego statku; cel wisi przy krawędzi i wjeżdża, gdy front
+// wyjścia dochodzi do statku; bez sztucznych efektów (zginania tła wokół planety).
 
 globalThis.window = globalThis.window || {};
 const {
-  mapWorldLens, aberrateAngle, flowAroundBall, sweepBeta, solveSweepBodyBeta, warpHorizonPx,
+  mapWorldLens, flowAroundBall, sweepBeta, solveSweepBodyBeta, warpHorizonPx,
+  viewEdgeDistance, arriveBeta, warpLensScale, warpDepthScale, flybyTurn,
   WORLD_LENS_DEFAULTS, WARP_VIEW_DEFAULTS
 } = await import('../src/3d/warpWorldLens.js');
 const { warpDropGeometry, warpDropExit } = await import('../src/3d/warpLens3D.js');
@@ -17,16 +22,17 @@ const { readFileSync } = await import('node:fs');
 
 const P = WORLD_LENS_DEFAULTS;
 const V = WARP_VIEW_DEFAULTS;
-const DROP = warpDropGeometry(V.dropFront, V.dropBack, V.dropBulb, V.dropTail);
+const S = 450 / P.framingDist; // skala soczewki w przelocie dla kadru 1600×900
 const base = {
-  zoom: 0.1, horizonPx: 400, drop: DROP,
-  lengthScale: P.lengthScale, lengthFront: P.lengthFront, frontCone: P.frontCone,
-  sizeK: P.sizeK, sizeD0: P.sizeD0, passBoost: P.passBoost, passScale: P.passScale,
-  gapPx: 24, hullHalfLen: 100, hullHalfWid: 45,
-  velAngle: 0, aberration: 0, sizeBoost: 1
+  zoom: 0.1, lensScale: S, sizeDepth: P.sizeDepth, viewHalfW: 800, viewHalfH: 450, shipSx: 0, shipSy: 0,
+  targetWindow: P.targetWindow, sizeK: P.sizeK, sizeD0: P.sizeD0,
+  gapPx: 24, hullHalfLen: 100, hullHalfWid: 45, holdSize: P.holdSize, holdPeek: P.holdPeek, holdSoft: P.holdSoft,
+  velAngle: 0, sizeBoost: 1
 };
 // Odstęp kadłuba w kierunku kąta a od osi lotu (jak w mapWorldLens).
 const marginAt = (a) => 24 + Math.abs(Math.cos(a)) * 100 + Math.abs(Math.sin(a)) * 45;
+// Krawędź kadru 1600×900 od statku na środku, w kierunku a (lot w +x).
+const edgeAt = (a) => viewEdgeDistance(Math.cos(a), Math.sin(a), 800, 450);
 
 test('β = 0: zwykły widok — ortho i perspektywa (flatScale)', () => {
   const out = {};
@@ -79,84 +85,171 @@ test('promień kuli: kropla sięga krawędzi kadru wzdłuż osi lotu, lot w bok 
   assert.ok(Math.abs(warpHorizonPx(1600, 900, 0) - P.horizonMax * 900) < 1e-6);
 });
 
-test('β = 1: tarcza nigdy nie wjeżdża pod statek, daleko = brzeg kropli, bliżej = większe', () => {
-  const o = {};
-  for (const a of [0, 0.4, 1.2, Math.PI / 2, 2.2, 2.9, Math.PI, -0.7, -1.9]) {
-    const ca = Math.cos(a);
-    const sa = Math.sin(a);
-    let prevGap = -Infinity;
-    let prevSize = Infinity;
-    for (const d of [5e3, 2e4, 4e4, 1e5, 3e5, 1e6, 5e6, 1e8]) {
-      for (const r of [0, 5000, 25000, 60000]) {
-        mapWorldLens(ca * d, sa * d, r, { ...base, beta: 1 }, o);
-        const rho = Math.hypot(o.x, o.y);
-        assert.ok(rho - o.size >= marginAt(a) - 1e-6, `kąt ${a}, d ${d}, r ${r}: krawędź ${rho - o.size} przy kadłubie`);
-        assert.ok(o.x * ca + o.y * sa > 0, 'ciało zostaje po swojej stronie');
-      }
-      if (d <= 20000) continue; // statek nad tarczą (d < r): odstęp = sam margines
-      mapWorldLens(ca * d, sa * d, 20000, { ...base, beta: 1 }, o);
-      assert.ok(o.gap > prevGap, 'odstęp rośnie z odległością');
-      assert.ok(o.size < prevSize, 'wielkość maleje z odległością');
-      prevGap = o.gap;
-      prevSize = o.size;
-    }
-    // Nieskończoność na brzegu kropli.
-    mapWorldLens(ca * 1e12, sa * 1e12, 1, { ...base, beta: 1 }, o);
-    const edge = warpDropExit(ca, sa, DROP) * 400;
-    assert.ok(Math.abs(Math.hypot(o.x, o.y) - edge) < edge * 0.01, `kąt ${a}: ${Math.hypot(o.x, o.y)} vs brzeg ${edge}`);
+test('krawędź kadru: odległość od statku w kierunku, także przy statku poza środkiem', () => {
+  assert.equal(viewEdgeDistance(1, 0, 800, 450), 800);
+  assert.equal(viewEdgeDistance(0, -1, 800, 450), 450);
+  assert.ok(Math.abs(viewEdgeDistance(Math.SQRT1_2, Math.SQRT1_2, 800, 450) - 450 * Math.SQRT2) < 1e-9);
+  assert.equal(viewEdgeDistance(0, -1, 800, 450, 0, 100), 550, 'statek niżej — dalej do górnej krawędzi');
+  assert.equal(viewEdgeDistance(1, 0, 800, 450, 900, 0), 0, 'statek poza kadrem');
+});
+
+test('skala soczewki: stała w przelocie (zwolnienie jej nie zmienia), przy rozpędzie i hamowaniu bliżej', () => {
+  const cruise = warpLensScale(P.zoomRefSpeed, 450, P);
+  assert.ok(Math.abs(cruise - 450 / P.framingDist) < 1e-12);
+  assert.equal(warpLensScale(P.zoomRefSpeed * 3, 450, P), cruise, 'szybciej niż odniesienie — ta sama skala');
+  assert.ok(Math.abs(warpLensScale(P.zoomRefSpeed / 4, 450, P) - cruise * 4) < 1e-12, 'wolniej — bliżej, proporcjonalnie');
+  assert.equal(warpLensScale(10, 450, P, 0.03), 0.03, 'prawie stoi — najwyżej maxScale');
+});
+
+test('perspektywa wzdłuż kursu: przy mijaniu prawdziwa wielkość, przed dziobem i za rufą mniejsza, symetrycznie', () => {
+  assert.equal(warpDepthScale(0, P.sizeDepth), 1);
+  let prev = 1;
+  for (let a = 5000; a <= 400000; a += 5000) {
+    const k = warpDepthScale(a, P.sizeDepth);
+    assert.ok(k < prev && k > 0, 'maleje z odległością wzdłuż kursu');
+    assert.equal(warpDepthScale(-a, P.sizeDepth), k, 'za rufą tak samo jak przed dziobem');
+    prev = k;
   }
 });
 
-test('cel przed dziobem wisi wysoko, mijane ciało z boku rośnie mocniej', () => {
-  const ahead = mapWorldLens(130000, 0, 30000, { ...base, beta: 1 }, {});
-  const side = mapWorldLens(0, 130000, 30000, { ...base, beta: 1 }, {});
-  const edgeF = warpDropExit(1, 0, DROP) * 400;
-  const edgeS = warpDropExit(0, 1, DROP) * 400;
-  const fracF = (ahead.gap - marginAt(0)) / (edgeF - marginAt(0));
-  const fracS = (side.gap - marginAt(Math.PI / 2)) / (edgeS - marginAt(Math.PI / 2));
-  assert.ok(fracF > 0.65, `cel 100 tys. j. od powierzchni: ${fracF.toFixed(2)} drogi do brzegu`);
-  assert.ok(fracF > fracS + 0.25, 'przed dziobem krótsza skala niż z boku');
-  // Mijanie w 70 tys. j.: z boku większe niż ta sama planeta przed dziobem.
-  const passSide = mapWorldLens(0, 70000, 30000, { ...base, beta: 1 }, {});
-  const passAhead = mapWorldLens(70000, 0, 30000, { ...base, beta: 1 }, {});
-  assert.ok(passSide.size > passAhead.size * 1.5, `${passSide.size} vs ${passAhead.size}`);
-  assert.ok(passSide.pass > 1.5 && Math.abs(passAhead.pass - 1) < 1e-9);
-  // W połowie β: wielkość — średnia geometryczna, odstęp — średnia zwykła.
+test('β = 1: prawdziwa geometria w jednej skali — środek S·(dx, dy), tarcza nigdy bliżej statku niż naprawdę', () => {
+  const o = {};
+  for (const a of [0, 0.4, 1.2, Math.PI / 2, 2.2, 2.9, Math.PI, -0.7, -1.9]) {
+    for (const d of [5e3, 2e4, 7e4, 1.5e5, 4e5, 2e6]) {
+      for (const r of [1000, 9000, 30000]) {
+        const dx = Math.cos(a) * d;
+        const dy = Math.sin(a) * d;
+        mapWorldLens(dx, dy, r, { ...base, beta: 1 }, o);
+        assert.ok(Math.abs(o.x - dx * S) < 1e-6 && Math.abs(o.y - dy * S) < 1e-6, `kąt ${a}, d ${d}: środek w prawdziwym miejscu`);
+        const k = warpDepthScale(dx, P.sizeDepth);
+        assert.ok(Math.abs(o.size - r * S * k) < 1e-9, 'wielkość: prawdziwa × perspektywa wzdłuż kursu');
+        assert.ok(o.gap >= S * (d - r) - 1e-9, 'krawędź nie bliżej statku niż naprawdę');
+      }
+    }
+  }
+  // Statek nad tarczą (d < r) — przy mijaniu tarcza pod statkiem, jak naprawdę.
+  mapWorldLens(0, 5000, 9000, { ...base, beta: 1 }, o);
+  assert.ok(o.gap < 0);
+  // Daleko (słońce, planety po drugiej stronie układu) — za kadrem.
+  mapWorldLens(0, 1.2e6, 12000, { ...base, beta: 1 }, o);
+  assert.ok(o.gap > 450);
+});
+
+test('przelot obok planety: po prostej, w prawdziwej odległości od kursu; rośnie płynnie do mijania, potem maleje', () => {
+  // Lot w górę kadru (−y), Mars 70 tys. j. w prawo od kursu.
+  const va = -Math.PI / 2;
+  const c = 70000;
+  const r = 30000;
+  let prev = null;
+  let peak = null;
+  for (let along = 150000; along >= -150000; along -= 2500) {
+    // Ciało względem statku: `along` przed dziobem (−y), c w prawo (+x).
+    const o = mapWorldLens(c, -along, r, { ...base, beta: 1, velAngle: va }, {});
+    assert.ok(Math.abs(o.x - c * S) < 1e-6, `stała odległość od kursu na ekranie (${o.x})`);
+    assert.ok(Math.abs(o.y + along * S) < 1e-6, 'wzdłuż kursu też prawdziwie');
+    if (prev) {
+      if (along >= 0) assert.ok(o.size >= prev.size - 1e-9, 'rośnie, gdy się zbliża');
+      else assert.ok(o.size <= prev.size + 1e-9, 'maleje za rufą');
+      assert.ok(Math.abs(o.size - prev.size) < 6, `płynnie: skok ${o.size - prev.size} px`);
+    }
+    if (along === 0) peak = o;
+    prev = o;
+  }
+  assert.ok(Math.abs(peak.size - r * S) < 1e-9, 'przy mijaniu prawdziwa wielkość');
+  assert.ok(Math.abs(peak.gap - (c - r) * S) < 1e-9, 'i prawdziwa odległość krawędzi od statku');
+  const far = mapWorldLens(c, -150000, r, { ...base, beta: 1, velAngle: va }, {});
+  assert.ok(far.size < peak.size * 0.3, 'z daleka dużo mniejsza — wyraźnie rośnie');
+});
+
+test('obrót przy przelocie: strona widziana ze statku zwrócona do ekranu, przed dziobem i za rufą w przeciwne strony', () => {
+  const h = P.flybyHeight;
+  const rot = (t, v) => {
+    // Rodrigues: obrót v wokół osi (ax, ay, 0) o kąt.
+    const k = [t.ax, t.ay, 0];
+    const c = Math.cos(t.angle);
+    const s = Math.sin(t.angle);
+    const kv = k[0] * v[0] + k[1] * v[1];
+    const cross = [k[1] * v[2], -k[0] * v[2], k[0] * v[1] - k[1] * v[0]];
+    return [0, 1, 2].map((i) => v[i] * c + cross[i] * s + k[i] * kv * (1 - c));
+  };
+  for (const [ox, oy] of [[70000, 90000], [70000, -90000], [-30000, 5000], [0, 200000]]) {
+    const t = flybyTurn(ox, oy, h);
+    const n = Math.hypot(ox, oy, h);
+    const v = rot(t, [-ox / n, -oy / n, h / n]);
+    assert.ok(Math.abs(v[0]) < 1e-9 && Math.abs(v[1]) < 1e-9 && Math.abs(v[2] - 1) < 1e-9, `(${ox}, ${oy}) → ${v}`);
+    assert.ok(Math.abs(t.angle - Math.atan2(Math.hypot(ox, oy), h)) < 1e-12);
+  }
+  const ahead = flybyTurn(70000, 90000, h);
+  const behind = flybyTurn(70000, -90000, h);
+  assert.ok(ahead.ax * behind.ax < 0, 'mijanie odwraca obrót wokół osi w poprzek kursu');
+  assert.equal(flybyTurn(0, 0, h).angle, 0, 'ciało przy statku — bez obrotu');
+});
+
+test('cel: wyłania się przy krawędzi przed dziobem i rośnie, nie zbliżając się do statku', () => {
+  const r = 17100;
+  const edge = edgeAt(0);
+  let prev = null;
+  let entered = null;
+  for (let ds = 1.6 * P.targetWindow; ds >= 0; ds -= 2000) {
+    const o = mapWorldLens(ds + r, 0, r, { ...base, beta: 1, hold: 1 }, {});
+    if (ds > 1.2 * P.targetWindow) assert.ok(o.gap > edge, 'daleko — za kadrem');
+    if (entered === null && o.gap < edge) entered = ds;
+    assert.ok(o.gap >= edge - 2 * o.size * P.holdPeek - 1e-6, `ds ${ds}: nie podjeżdża do statku (${o.gap})`);
+    if (prev) {
+      assert.ok(o.size >= prev.size, 'rośnie');
+      assert.ok(o.gap <= prev.gap + 1e-9, 'nie cofa się');
+      assert.ok(prev.gap - o.gap < 12, `płynnie: skok ${prev.gap - o.gap} px`);
+    }
+    prev = o;
+  }
+  assert.ok(entered !== null && Math.abs(entered - P.targetWindow) < 0.15 * P.targetWindow, `wyłania się przy ~oknie celu (${entered})`);
+  assert.ok(prev.gap < edge && prev.gap > edge * 0.5, `na końcu wisi przy krawędzi (${prev.gap})`);
+});
+
+test('wjazd celu: β celu spada, gdy front dochodzi do statku, i kończy się przy nim', () => {
+  const band = V.arriveBand;
+  assert.equal(arriveBeta(1, 1000, band), 1, 'bez frontu — soczewka');
+  assert.equal(arriveBeta(1, 2 * band + 0.01, band), 1, 'front jeszcze daleko — cel wisi');
+  assert.ok(Math.abs(arriveBeta(1, band, band) - 0.5) < 1e-9);
+  assert.equal(arriveBeta(1, 0, band), 0, 'front przy statku — cel na miejscu');
+  assert.equal(arriveBeta(1, -1, band), 0);
+  let prev = 1;
+  for (let f = 1; f >= -0.2; f -= 0.01) {
+    const b = arriveBeta(0.8, f, band);
+    assert.ok(b <= prev + 1e-12 && b >= 0 && b <= 0.8);
+    prev = b;
+  }
+});
+
+test('przejście β: odstęp liniowo, wielkość w logarytmie; start i dojazd bez „przelotu nad planetą”', () => {
   const f = mapWorldLens(0, 60000, 30000, { ...base, beta: 0 }, {});
   const l = mapWorldLens(0, 60000, 30000, { ...base, beta: 1 }, {});
   const h = mapWorldLens(0, 60000, 30000, { ...base, beta: 0.5 }, {});
   assert.ok(Math.abs(h.size - Math.sqrt(f.size * l.size)) < 1e-6);
   assert.ok(Math.abs(h.gap - (f.gap + l.gap) / 2) < 1e-6);
-});
-
-test('przejście β przy starcie i dojeździe: tarcza pod statkiem tylko w zwykłym widoku', () => {
   // Start: statek nad krawędzią ogromnej planety — w soczewce krawędź zostaje
-  // odsunięta od kadłuba przez całe przejście (bez „przelotu nad Ziemią”).
+  // przed kadłubem przez całe przejście.
   for (let b = 0; b <= 1.0001; b += 0.05) {
-    const o = mapWorldLens(-40000, 0, 24000, { ...base, beta: b, flatScale: 0.017 }, {});
+    const o = mapWorldLens(-40000, 0, 37800, { ...base, beta: b, flatScale: 0.017 }, {});
     assert.ok(o.x < 0, 'Ziemia zostaje za rufą');
-    assert.ok(Math.hypot(o.x, o.y) - o.size > 0, `β ${b.toFixed(2)}: krawędź przed kadłubem`);
+    assert.ok(Math.hypot(o.x, o.y) - o.size > 0, `β ${b.toFixed(2)}: krawędź nie pod statkiem`);
   }
-  // Dojazd: statek nad tarczą celu (zwykły widok, gap < 0) — w soczewce cel przed dziobem.
-  const real = mapWorldLens(16000, 0, 24700, { ...base, beta: 0, flatScale: 0.017 }, {});
-  const lens = mapWorldLens(16000, 0, 24700, { ...base, beta: 1, flatScale: 0.017 }, {});
+  // Dojazd: statek nad tarczą celu (zwykły widok, gap < 0) — w soczewce cel
+  // wisi przy krawędzi kadru przed dziobem.
+  const real = mapWorldLens(16000, 0, 24700, { ...base, beta: 0, flatScale: 0.017, hold: 1 }, {});
+  const lens = mapWorldLens(16000, 0, 24700, { ...base, beta: 1, flatScale: 0.017, hold: 1 }, {});
   assert.ok(real.gap < 0, 'na końcu cel pod statkiem');
-  assert.ok(lens.gap >= marginAt(0) - 1e-9 && lens.x > 0, 'w soczewce przed dziobem');
-  assert.ok(lens.size < real.size, 'przy „wjeździe” cel rośnie do prawdziwej wielkości');
+  const edge = edgeAt(0);
+  assert.ok(lens.x > 0 && lens.gap >= edge - 2 * lens.size * P.holdPeek - 1e-6 && lens.gap < edge, 'w soczewce przy krawędzi przed dziobem');
+  assert.ok(lens.size < real.size * 0.5, 'przy „wjeździe” cel gwałtownie rośnie do prawdziwej wielkości');
 });
 
-test('aberracja: ściąga ku przodowi, zachowuje stronę, przód i tył bez zmian', () => {
-  for (const a of [0.3, 1.0, 1.6, 2.5, -0.7, -2.2]) {
-    const ab = aberrateAngle(a, 0.5);
-    assert.ok(Math.abs(ab) < Math.abs(a), `kąt ${a} → ${ab}`);
-    assert.equal(Math.sign(ab), Math.sign(a));
-  }
-  assert.equal(aberrateAngle(0, 0.5), 0);
-  assert.ok(Math.abs(Math.abs(aberrateAngle(Math.PI, 0.5)) - Math.PI) < 1e-9);
-  assert.equal(aberrateAngle(1.2, 0), 1.2);
-  // W odwzorowaniu: gwiazda z boku (90°) przesuwa się ku kierunkowi lotu.
-  const side = mapWorldLens(0, 1e6, 0, { ...base, beta: 1, velAngle: 0, aberration: 0.5 }, {});
-  assert.ok(side.x > 0 && side.y > 0, 'z boku → do przodu, ta sama burta');
+test('bez sztucznych efektów: mijana planeta nie zgina tła, kierunki bez aberracji', () => {
+  const src = readFileSync(new URL('../src/3d/warpWorldLens.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(src, /pushWarpSpaceWorld|passBoost|aberrat/i);
+  // Kierunek ciała w soczewce = prawdziwy kierunek (także przy pełnej prędkości).
+  const o = mapWorldLens(0, 90000, 9000, { ...base, beta: 1, velAngle: 0 }, {});
+  assert.ok(Math.abs(o.x) < 1e-9 && o.y > 0);
 });
 
 test('opływ kuli: daleko jednolity wstecz, na brzegu styczny, punkty spiętrzenia z przodu i z tyłu', () => {
@@ -222,8 +315,8 @@ test('ciało za rufą: front je zabiera — jedzie na pasie frontu za kadr, nie 
   assert.ok(prevS < -2.4, 'na końcu frontu ciało jest za kadrem');
 });
 
-test('cel przed dziobem: zostaje w kuli, aż front minie jego obraz (dwa rozwiązania — ciągłość)', () => {
-  const sOf = axisS(4.0, 0.4); // Jowisz: naprawdę daleko przed kadrem, w kuli blisko statku
+test('ciało przed dziobem: zostaje w kuli, aż front minie jego obraz (dwa rozwiązania — ciągłość)', () => {
+  const sOf = axisS(4.0, 0.4); // naprawdę daleko przed kadrem, w kuli blisko statku
   // Front między obrazem a prawdziwym miejscem: oba położenia są spójne z tłem.
   const inBall = solveSweepBodyBeta(sOf, 1, 2.0, BAND, 1);
   const real = solveSweepBodyBeta(sOf, 1, 2.0, BAND, 0);
@@ -233,6 +326,50 @@ test('cel przed dziobem: zostaje w kuli, aż front minie jego obraz (dwa rozwią
   assert.ok(solveSweepBodyBeta(sOf, 1, -0.4, BAND, 1) < 0.05);
   // Bez frontu (skok trwa) — zwykłe β.
   assert.ok(Math.abs(solveSweepBodyBeta(sOf, 0.7, 1000, BAND, 0) - 0.7) < 1e-3);
+});
+
+test('ładowanie skoku: gwiazdy gry wydłużają się płasko wzdłuż lotu (bez zbiegania w tunel 3D), limit prędkości wzoru dla StarSystemu', async () => {
+  const { WarpWorldLens } = await import('../src/3d/warpWorldLens.js');
+  const THREE = await import('three');
+  const u = {
+    baseSizeMul: { value: 1.65 }, stretchStrength: { value: 20 }, globalBrightness: { value: 0.4 },
+    warpFactor: { value: 0.05 }, exitWhipFactor: { value: 0 }, moveDir: { value: new THREE.Vector2(0, 1) },
+    cameraOffset: { value: new THREE.Vector2(123, 456) }
+  };
+  const stars = { isPoints: true, parent: {}, material: { uniforms: u }, userData: {} };
+  const prev = WarpWorldLens._stars;
+  WarpWorldLens._stars = stars;
+  try {
+    const cam = { x: 0, y: 0 };
+    // Lot w prawo i w dół kadru (kąt gry 30°, y w dół).
+    const va = Math.PI / 6;
+    WarpWorldLens._capStarParallax(cam, 1 / 60, 0, 1, 0.8, va);
+    assert.ok(u.warpFactor.value >= WARP_VIEW_DEFAULTS.starChargeStretch * Math.pow(0.8, 1.3) - 1e-9, 'smugi rosną z ładowaniem');
+    assert.ok(u.globalBrightness.value > 1, 'gwiazdy jaśnieją zamiast gasnąć');
+    assert.ok(Math.abs(u.moveDir.value.x - Math.cos(va)) < 1e-9 && Math.abs(u.moveDir.value.y + Math.sin(va)) < 1e-9, 'smugi wzdłuż lotu (NDC, y w górę)');
+    assert.equal(stars.userData.starSpeedCap, WARP_VIEW_DEFAULTS.starSpeedCap, 'limit prędkości wzoru na następną klatkę');
+    assert.equal(u.cameraOffset.value.x, 123, 'przesunięcie wzoru liczy StarSystem, soczewka go nie nadpisuje');
+  } finally {
+    WarpWorldLens._stars = prev;
+  }
+  // Shader gwiazd gry: smugi wzdłuż moveDir (bez punktu zbiegu), wzór rośnie
+  // z kadrem przy oddaleniu, kamera gwiazd z limitem od widoku skoku.
+  const src = readFileSync(new URL('../src/3d/planet3d.assets.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(src, /starFocus/);
+  assert.match(src, /float angle = atan\(vDir\.y, vDir\.x\);/);
+  assert.match(src, /pos\.xy \*= zoomComp;/);
+  assert.match(src, /advanceStarCamera\(this\.starCam, cx, cy, zoomComp, speedCap > 0 \? speedCap \* Math\.max\(0, dt\) : 0\);/);
+  assert.match(src, /this\.uniforms\.cameraOffset\.value\.set\(this\.starCam\.x, -this\.starCam\.y\);/);
+});
+
+test('punkt skoku: przed dziobem wzdłuż kursu, jedzie z okrętem', async () => {
+  const { WarpFx3D } = await import('../src/3d/warpFx3D.js');
+  const c = { entity: { x: 1000, y: -500 }, heading: -Math.PI / 2, hullLength: 1800, lead: 0.45 };
+  WarpFx3D.chargePoint(c);
+  assert.ok(Math.abs(c.x - 1000) < 1e-6 && Math.abs(c.y - (-500 - 1800 * 0.95)) < 1e-6);
+  c.entity.y -= 4000;
+  const p = WarpFx3D.chargePoint(c, {});
+  assert.ok(Math.abs(p.y - (-4500 - 1800 * 0.95)) < 1e-6, 'po ruchu okrętu');
 });
 
 test('Core3D: shafty wygaszane stopniowo, pełne wygaszenie pomija pass i budżet sylwetek', () => {

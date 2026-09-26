@@ -25,6 +25,7 @@ import { CiwsSprite2D } from './ciwsSprite2D.js';
 import { LauncherSprite2D } from './launcherSprite2D.js';
 import { SpecialWeaponSprite2D } from './specialWeaponSprite2D.js';
 import { MainWeaponSprite2D } from './mainWeaponSprite2D.js';
+import { PdWeaponSprite2D } from './pdWeaponSprite2D.js';
 import { mountedWeaponRenderAngle } from '../game/weaponAim.js';
 
 // Barwy odpowiadają materiałom Lambert z weapon3DSystem, rozjaśnione o ~1.6×,
@@ -1018,6 +1019,12 @@ export const Turret2D = {
 
       if ((spec === SPECS.missileRack || spec === SPECS.siegeTorpedo || spec === SPECS.fbDefault)
         && LauncherSprite2D.draw(ctx, rec.weaponId, a, b, c, d, sx, sy, housingBack, barrelBack)) {
+        drawn++;
+        continue;
+      }
+
+      if ((spec === SPECS.flak || spec === SPECS.laserPD)
+        && PdWeaponSprite2D.draw(ctx, rec.weaponId, a, b, c, d, sx, sy, housingBack, barrelBack)) {
         drawn++;
         continue;
       }
