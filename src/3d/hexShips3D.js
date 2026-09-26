@@ -2197,9 +2197,11 @@ function updateBeamSkinMesh(entity, data, camX, camY, cameraZoom) {
   const sun = typeof window !== 'undefined' ? window.SUN : null;
   if (sun) uniforms.uLightDir.value.set(sun.x - ex, -(sun.y - ey), 600).normalize();
   uniforms.uStressTint.value = state.damageTintEnabled ? 0.30 : 0.0;
-  // Żar skóry belek: zanik z silnika (ten sam, którym węzły liczą „podniesienie”).
+  // Żar skóry belek: zanik i szczyt z konfiguracji kadłubów (HULL_BODY_CONFIG) —
+  // żar belek to wyłącznie zgniot i brzeg rany ZDERZENIA; heatGlowPeak destruktora
+  // zostaje heksom (asteroidy, żar od pocisków).
   uniforms.uHeatDecay.value = Math.max(0, Number(HullBodies.config.heatDecay) || 0);
-  uniforms.uHeatPeak.value = state.damageTintEnabled ? Math.max(0, Number(DESTRUCTOR_CONFIG.heatGlowPeak) || 0) : 0.0;
+  uniforms.uHeatPeak.value = state.damageTintEnabled ? Math.max(0, Number(HullBodies.config.heatGlowPeak) || 0) : 0.0;
   uniforms.uBillboardLighting.value = usesBillboardLighting(entity) ? 1 : 0;
   const bodyRadiusPx = Math.max(hull.srcWidth, hull.srcHeight) * 0.5 * entityScale * zoomPx;
   syncEntityLightUniforms(entity, data, hull, state.roadLightEmitters, bodyRadiusPx);
@@ -2265,9 +2267,8 @@ export function setHexDamageTintEnabled(enabled) {
       uniforms.uStressTint.value = state.damageTintEnabled ? 0.30 : 0.0;
     }
     if (uniforms?.uHeatPeak) {
-      uniforms.uHeatPeak.value = state.damageTintEnabled
-        ? Math.max(0, Number(DESTRUCTOR_CONFIG.heatGlowPeak) || 0)
-        : 0.0;
+      const peak = data.kind === 'beam' ? HullBodies.config.heatGlowPeak : DESTRUCTOR_CONFIG.heatGlowPeak;
+      uniforms.uHeatPeak.value = state.damageTintEnabled ? Math.max(0, Number(peak) || 0) : 0.0;
     }
   }
   return state.damageTintEnabled;

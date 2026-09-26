@@ -58,6 +58,14 @@ export const HULL_BODY_CONFIG = {
   heatGain: 1,
   heatSpeed: 150,           // j./s zbliżania, przy których zgniatana blacha jest biała
   heatDecay: 0.35,          // 1/s — ten sam zanik co DESTRUCTOR_CONFIG.heatDecay (shader kadłuba)
+  // Szczyt HDR żaru skóry (uHeatPeak w hexShips3D.js; jasność = szczyt × (0,26h + 0,74h⁴)).
+  // Dawniej 9 z DESTRUCTOR_CONFIG: zgniatana powierzchnia (h = heatContact 0,35) stała na
+  // progu bloomu (0,92), brzeg rany (h = 1) świecił bielą HDR 9 i bloom (×~7,5 energii)
+  // zalewał zgniot. Pomiar A/B 2026-09-26: po poprawce iskier to żar dawał ~¾ nadmiarowej
+  // jasności styku (przy 4,5). Przy 2,5 pierścień brzegu (h ≈ 0,55 → 0,53) i powierzchnia
+  // (0,26) tlą się pomarańczem pod progiem, a bielą z małą poświatą świeci tylko świeży brzeg
+  // rany — deformacja zostaje czytelna.
+  heatGlowPeak: 2.5,
 
   // --- trafienia: krater ---
   // Budżet HP = craterHpPerDamage · obrażenia, schodzi z węzłów od najbliższego (HP węzła =
