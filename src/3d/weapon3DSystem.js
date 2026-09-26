@@ -18,6 +18,19 @@ import { MuzzleFX3D } from './muzzleFx3D.js';
 import { BulletTrails } from './slugTrail3D.js';
 import { getEntityWeaponTier, WEAPON_TIER_SCALE } from '../data/ships.js';
 import { WeaponShotBus } from '../game/weaponShotBus.js';
+import { SimClock, CLOCK_RENDER } from '../game/simClock.js';
+import { createCarrier, writeCarrier } from '../game/carrierVelocity.js';
+
+// Nośnik wystrzału (prędkość lufy z kadłuba strzelca) — scratch na jeden strzał.
+const _shotCarrier = createCarrier();
+// Czas lotu z nośnikiem na tę klatkę (T − t0 zegara efektu).
+function carrierElapsed(clock, t0) {
+  return (clock === CLOCK_RENDER ? SimClock.render : SimClock.sim) - t0;
+}
+// Smuga pocisku = ruch WZGLĘDEM strzelca w tym czasie (dawniej: przesunięcie
+// w świecie w ostatnim kroku fizyki 120 Hz — przy 100% dziedziczenia prędkości
+// strzał do tyłu z szybkiego okrętu dostawał smugę skierowaną do przodu).
+const BULLET_STREAK_DT = 1 / 120;
 
 const WEP_RESOURCES = {
   geos: null,
@@ -281,7 +294,15 @@ function ensureMuzzleInstances() {
   Core3D.scene.add(core);
 }
 
-function spawnMuzzleFlash(x, y, angle, scale, colorHex) {
+// Błysk jedzie z lufą: nośnik (prędkość punktu wylotu, czas pozy, zegar).
+function setFlashCarrier(flash, carrier) {
+  flash.cvx = carrier ? carrier.vx : 0;
+  flash.cvy = carrier ? carrier.vy : 0;
+  flash.ct0 = carrier ? carrier.t0 : 0;
+  flash.clock = carrier ? carrier.clock : 0;
+}
+
+function spawnMuzzleFlash(x, y, angle, scale, colorHex, carrier = null) {
   ensureMuzzleInstances();
   if (!muzzleInstances.outer) return;
   if (muzzleInstances.active.length >= MUZZLE_MAX_INSTANCES) {
@@ -296,9 +317,11 @@ function spawnMuzzleFlash(x, y, angle, scale, colorHex) {
     reuse.life = 1;
     _muzzleColor.set(colorHex || '#ffffff');
     reuse.r = _muzzleColor.r; reuse.g = _muzzleColor.g; reuse.b = _muzzleColor.b;
+    setFlashCarrier(reuse, carrier);
     return;
   }
-  const flash = muzzleInstances.pool.pop() || { x: 0, y: 0, angle: 0, size: 1, life: 0, r: 1, g: 1, b: 1 };
+  const flash = muzzleInstances.pool.pop()
+    || { x: 0, y: 0, angle: 0, size: 1, life: 0, r: 1, g: 1, b: 1, cvx: 0, cvy: 0, ct0: 0, clock: 0 };
   flash.x = x;
   flash.y = y;
   flash.angle = angle;
@@ -308,6 +331,7 @@ function spawnMuzzleFlash(x, y, angle, scale, colorHex) {
   flash.r = _muzzleColor.r;
   flash.g = _muzzleColor.g;
   flash.b = _muzzleColor.b;
+  setFlashCarrier(flash, carrier);
   muzzleInstances.active.push(flash);
 }
 
@@ -341,9 +365,10 @@ function updateMuzzleFlashes(dt) {
     // minus — tak samo jak w macierzach pocisków (atan2(-segY, segX)).
     const cA = Math.cos(-f.angle);
     const sA = Math.sin(-f.angle);
-    // Względem początku przy kamerze (_origin).
-    const wx = f.x - _origin.x;
-    const wy = -f.y - _origin.y;
+    // Względem początku przy kamerze (_origin), z przesunięciem nośnika.
+    const ce = carrierElapsed(f.clock, f.ct0);
+    const wx = f.x + f.cvx * ce - _origin.x;
+    const wy = -(f.y + f.cvy * ce) - _origin.y;
 
     const so = f.size * grow;
     elements[0] = cA * so; elements[4] = -sA * so; elements[8] = 0; elements[12] = wx;
@@ -482,7 +507,12 @@ function createPulseBeamVisual() {
     startY: 0,
     endX: 0,
     endY: 0,
-    width: 4
+    width: 4,
+    // Nośnik (prędkość lufy): impuls żyje 0,15 s — przy 10 000 j/s to 1500 j.
+    cvx: 0,
+    cvy: 0,
+    ct0: 0,
+    clock: 0
   };
 }
 
@@ -579,8 +609,9 @@ function updatePulseBeamVisual(data, dt) {
   const dy = data.endY - data.startY;
   const dist = Math.hypot(dx, dy);
   const angle = Math.atan2(-dy, dx || 1e-6);
-  const mx = (data.startX + data.endX) * 0.5;
-  const my = (data.startY + data.endY) * 0.5;
+  const ce = carrierElapsed(data.clock, data.ct0);
+  const mx = (data.startX + data.endX) * 0.5 + data.cvx * ce;
+  const my = (data.startY + data.endY) * 0.5 + data.cvy * ce;
   const width = data.width * (0.45 + t * 0.75);
   data.group.visible = true;
   data.glow.position.set(mx, -my, 14.1);
@@ -976,6 +1007,12 @@ export const Weapon3DSystem = {
     pulse.endY = ey;
     pulse.maxLife = 0.15;
     pulse.life = pulse.maxLife;
+    // Początek wiązki = wylot z pozy fizycznej strzału; impuls jedzie z lufą.
+    const carrier = writeCarrier(detail?.shooter || null, sx, sy, false, _shotCarrier);
+    pulse.cvx = carrier.vx;
+    pulse.cvy = carrier.vy;
+    pulse.ct0 = carrier.t0;
+    pulse.clock = carrier.clock;
     pulse.width = Math.max(2.4, Number(beam.width) || 5);
     pulse.core.material.color.set(0xffffff).multiplyScalar(BEAM_HDR.core);
     pulse.glow.material.color.set(colorHex).multiplyScalar(BEAM_HDR.glow);
@@ -1058,12 +1095,16 @@ export const Weapon3DSystem = {
   _triggerShotByWorldPoint(weaponKey, shotX, shotY, shooter = null) {
     const shot = Turret2D.triggerShot(weaponKey, shotX, shotY, shooter);
     if (!shot) return;
+    // Nośnik: prędkość wylotu na kadłubie z wieżyczką, z pozy ostatniej klatki
+    // renderu (z niej Turret2D wziął lufę). Błysk i dym lecą z okrętem.
+    const carrier = writeCarrier(shot.entity || shooter, shot.x, shot.y, true, _shotCarrier);
+    shot.entity = null;
     // Armata, Yamato i Tempest Ion mają własne recepty z dema
     // (src/3d/muzzleFx3D.js). Gdy taka zadżiała, tani błysk
     // instancjonowany jest zbędny — siedziałby w środku
     // rozbłysku jako druga, jaśniejsza plama.
-    const rich = MuzzleFX3D.fire(weaponKey, shot.x, shot.y, shot.angle, shot.scale);
-    if (!rich) spawnMuzzleFlash(shot.x, shot.y, shot.angle, shot.scale, shot.color);
+    const rich = MuzzleFX3D.fire(weaponKey, shot.x, shot.y, shot.angle, shot.scale, carrier);
+    if (!rich) spawnMuzzleFlash(shot.x, shot.y, shot.angle, shot.scale, shot.color, carrier);
     this._cameraShakeMag = Math.min(18, this._cameraShakeMag + (Number(shot.shake) || 0));
   },
 
@@ -1135,6 +1176,13 @@ export const Weapon3DSystem = {
         matrixElements[3] = 0;          matrixElements[7] = 0;           matrixElements[11] = 0; matrixElements[15] = 1;
     };
 
+    // Pociski gracza (zegar renderu, patrz src/game/simClock.js) rysujemy w czasie
+    // tej klatki — cofnięte wzdłuż prędkości o zaległość interpolacji, jak jego
+    // kadłub i kamera. Przy 100% dziedziczenia prędkości strzał z okrętu lecącego
+    // 10 000 j/s skakał inaczej o v·krok (83 j.) względem lufy. Pociski NPC
+    // zostają w pozie fizycznej, tak jak rysowane są kadłuby NPC.
+    const renderLag = Math.max(0, SimClock.sim - SimClock.render);
+
     for (const bullet of bullets) {
       if (!bullet || bullet.life <= 0) continue;
       if (!isFiniteNumber(bullet.x) || !isFiniteNumber(bullet.y)) continue;
@@ -1147,16 +1195,19 @@ export const Weapon3DSystem = {
       }
       bullet.__renderedByThree = true;
 
-      const x = Number(bullet.x) || 0;
-      const y = Number(bullet.y) || 0;
+      const vx = Number(bullet.vx) || 0;
+      const vy = Number(bullet.vy) || 0;
+      const lag = bullet.clock === CLOCK_RENDER ? renderLag : 0;
+      const x = (Number(bullet.x) || 0) - vx * lag;
+      const y = (Number(bullet.y) || 0) - vy * lag;
       // Smuga świata dla wybranych stylów (Yamato). Musi iść stąd, bo tylko
       // tutaj w jednym miejscu jest i styl pocisku, i jego bieżąca pozycja.
-      BulletTrails.track(bullet, style.key, x, y, Number(bullet.vx) || 0, Number(bullet.vy) || 0);
-      const px = isFiniteNumber(bullet.px) ? Number(bullet.px) : (x - (Number(bullet.vx) || 0) * 0.016);
-      const py = isFiniteNumber(bullet.py) ? Number(bullet.py) : (y - (Number(bullet.vy) || 0) * 0.016);
-
-      const segX = x - px;
-      const segY = y - py;
+      BulletTrails.track(bullet, style.key, x, y, vx, vy);
+      // Smuga = ruch względem strzelca (ivx/ivy = prędkość odziedziczona przy strzale).
+      const segX = (vx - (Number(bullet.ivx) || 0)) * BULLET_STREAK_DT;
+      const segY = (vy - (Number(bullet.ivy) || 0)) * BULLET_STREAK_DT;
+      const px = x - segX;
+      const py = y - segY;
       const segLen = Math.hypot(segX, segY);
       const angle = Math.atan2(-segY, segX || 1e-6);
 

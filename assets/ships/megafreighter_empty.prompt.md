@@ -3,7 +3,7 @@
 Output: `megafreighter_empty.png` — 1774 × 887 px, jak oryginał.
 
 - Tryb: EDYCJA oryginału `assets/megafreighter.png` (jednoczęściowy sprite ruchu, `src/3d/haloRing/haloPortHulls.js`; dołącz go), najlepiej inpainting z maską tylko na ładowni.
-- Płótno, obrys, położenie i skala identyczne co do piksela: z PNG oryginału liczone są obrys kolizji portu, dysze i światła, a wersja pusta ma się podmieniać 1:1. Jeśli generator przesunie obrys, przenieś z wyniku na oryginał tylko wnętrze ładowni.
+- Płótno, obrys, położenie i skala identyczne co do piksela: z PNG oryginału liczone są obrys kolizji portu i położenie dysz, a wersja pusta ma się podmieniać 1:1. Jeśli generator przesunie obrys, przenieś z wyniku na oryginał tylko wnętrze ładowni.
 - Po co: kontenery i drony 3D (Z5/Z14, plan § 3.4). Klasa ruchu `mega`.
 - Sloty: górny i dolny rząd po 10 zatok = 20 (klasa `mega`: ~20), każda dzielona wzdłuż statku na 2 sloty (40 małych); środkowy rząd długich modułów → kil bez slotów. Cywilny: bez mostka.
 

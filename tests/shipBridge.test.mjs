@@ -364,6 +364,8 @@ test('command-loss visuals: engines and their idle glow die, lights go out, deta
     }
     assert.equal(e.editorLights.position.length, 0);
     assert.equal(e.editorLights.road.length, 0);
+    assert.equal(e.editorLights.flood.length, 0);
+    assert.equal(e.editorLights.autoFlood, false, 'hulk bez reflektorów otoczenia z obrysu lamp');
     assert.equal(sampleEngineGlow(0, 0.5), 1);
     assert.ok(sampleEngineGlow(T.engineChokeEnd, 0.5) < sampleEngineGlow(T.engineChokeStart + 0.2, 0.5));
 

@@ -24,8 +24,8 @@
  * Czysta matematyka (bez DOM i Three). Pisze do bufora ścieżki z `portPaths.js`.
  */
 
-import { HALO_TRANSIT, haloTransitAngles } from '../../3d/haloRing/haloRingConfig.js';
-import { createK7Layout, k7Frame, K7_PLACEMENT } from '../../3d/haloRing/haloPortK7Layout.js';
+import { HALO_TRANSIT, haloPortSites, haloTransitAngles } from '../../3d/haloRing/haloRingConfig.js';
+import { createK7Layout, k7Frame } from '../../3d/haloRing/haloPortK7Layout.js';
 import { createBayLayout } from '../../3d/haloRing/haloPortBays.js';
 import { HALO_COLLISION } from '../haloRingCollision.js';
 import {
@@ -133,12 +133,22 @@ export function createRingObstacle(spec = {}, options = {}) {
 
   // Tranzyty: osie w układzie ringu (scena) → kąty w grze przez obrót grupy.
   const place = key ? createHaloRingPlacement({ id: key, x, y }) : { x, y, cos: 1, sin: 0, rot: 0 };
+  const tmp = { x: 0, y: 0 };
+  const gameAngle = (theta) => {
+    haloLocalToGame(place, Math.cos(theta) * 1000, Math.sin(theta) * 1000, tmp);
+    return Math.atan2(tmp.y - y, tmp.x - x);
+  };
   const localAngles = haloTransitAngles();
   const transitAngles = new Float64Array(localAngles.length);
-  const tmp = { x: 0, y: 0 };
-  localAngles.forEach((theta, i) => {
-    haloLocalToGame(place, Math.cos(theta) * 1000, Math.sin(theta) * 1000, tmp);
-    transitAngles[i] = Math.atan2(tmp.y - y, tmp.x - x);
+  localAngles.forEach((theta, i) => { transitAngles[i] = gameAngle(theta); });
+
+  // Płyty portu (hale K-7, zatoki): w ich obrębie podłoga jest płaska (pad
+  // +7 j.), a nie teren z górami — hale stoją NA podłodze, nie w płycie.
+  const sites = haloPortSites(radii.floorMid).filter((site) => site.kind !== 'transit');
+  const pads = new Float64Array(sites.length * 2);
+  sites.forEach((site, i) => {
+    pads[i * 2] = gameAngle(site.theta);
+    pads[i * 2 + 1] = site.halfS / radii.floorMid;
   });
 
   return {
@@ -162,6 +172,11 @@ export function createRingObstacle(spec = {}, options = {}) {
     /** Pół-prześwit tranzytu (bez ścian) [j.] i jego kąt na promieniu podłogi. */
     transitHalfWidth: HALO_TRANSIT.halfWidth,
     transitHalf: HALO_TRANSIT.halfWidth / radii.floorMid,
+    /** Płyty portu: [kąt w grze, pół-rozpiętość kątowa] × n. */
+    pads,
+    /** Wierzch płyty w portach (pad nad podłogą) i poza nimi (teren). */
+    padTop: radii.floorMid + HALO_COLLISION.padHeight,
+    terrainTop: radii.floorMid + HALO_COLLISION.terrainReach,
     config
   };
 }
@@ -215,23 +230,43 @@ export function transitIndexAt(ring, x, y) {
   return -1;
 }
 
+/** Czy kąt (w grze, względem środka ringu) leży nad płytą portu. */
+function onPortPad(ring, angle) {
+  const pads = ring.pads;
+  for (let i = 0; i < pads.length; i += 2) {
+    if (Math.abs(wrapPi(angle - pads[i])) <= pads[i + 1]) return true;
+  }
+  return false;
+}
+
+/** Wierzch płyty ringu pod kątem punktu: płyta portu (+7 j.) albo teren (do ~1400 j.). */
+export function ringFloorTopAt(ring, x, y) {
+  return onPortPad(ring, Math.atan2(y - ring.y, x - ring.x)) ? ring.padTop : ring.terrainTop;
+}
+
 export function ringZoneAt(ring, x, y) {
   const r = Math.hypot(x - ring.x, y - ring.y);
   if (r >= ring.freeR) return RING_ZONE.OUTER;
   if (r > ring.slabOuter) return RING_ZONE.PORT;
-  if (r >= ring.slabInner) return transitIndexAt(ring, x, y) >= 0 ? RING_ZONE.TRANSIT : RING_ZONE.SLAB;
+  if (r >= ring.slabInner) {
+    if (transitIndexAt(ring, x, y) >= 0) return RING_ZONE.TRANSIT;
+    // Nad płytą portu (wnętrze hali, zatoka) to już strefa portu, nie płyta.
+    return r > ring.padTop + 40 && onPortPad(ring, Math.atan2(y - ring.y, x - ring.x))
+      ? RING_ZONE.PORT : RING_ZONE.SLAB;
+  }
   if (r > ring.planetR) return RING_ZONE.INNER;
   return RING_ZONE.CORE;
 }
 
 /**
- * Punkt w płycie ringu (kadłub → podłoga + teren) POZA korytarzem tranzytu.
- * Prześwit tranzytu liczony w jednostkach (±570), nie w kątach.
+ * Punkt w płycie ringu (kadłub → podłoga + teren; w portach → podłoga + pad)
+ * POZA korytarzem tranzytu. Prześwit tranzytu liczony w jednostkach (±570).
  */
 export function pointInRingSlab(ring, x, y) {
   const r = Math.hypot(x - ring.x, y - ring.y);
-  if (r < ring.back || r > ring.floorMid + HALO_COLLISION.terrainReach) return false;
-  return transitIndexAt(ring, x, y) < 0;
+  if (r < ring.back || r > ring.terrainTop) return false;
+  if (transitIndexAt(ring, x, y) >= 0) return false;
+  return r <= ringFloorTopAt(ring, x, y);
 }
 
 /** Pierwszy ring, w którego dysku objazdu (albo wnętrzu) leży punkt. */
@@ -265,11 +300,6 @@ export function ringFunnelPoint(ring, x, y, out) {
   out.x = ring.x + dx / r * ring.funnelR;
   out.y = ring.y + dy / r * ring.funnelR;
   return out;
-}
-
-/** Lejek w stronę punktu docelowego (dla środka planety jako końca kursu). */
-export function ringExitToward(ring, tx, ty, out) {
-  return ringFunnelPoint(ring, tx, ty, out);
 }
 
 // ============================================================
@@ -349,17 +379,22 @@ function pushInnerArc(path, ring, a0, a1) {
 }
 
 /** Oś tranzytu `i` od strony planety na zewnątrz (albo odwrotnie), z lejkiem. */
+/**
+ * Oś tranzytu `i`. Od strony planety wyrównaniem jest sam koniec łuku
+ * korytarza wewnętrznego (na osi, `innerR`) — korytarz ma ~3,2 tys. j., więc
+ * osobny punkt wyrównania wypadałby POD łukiem i kazał zawracać o 180°
+ * (duże kadłuby krążyły wokół niego). Od strony przestrzeni — `transitLead`
+ * nad płytą.
+ */
 function pushTransit(path, ring, i, outward) {
   const a = ring.transitAngles[i];
   const c = ring.config;
   const v = c.transitSpeed;
   const F = WP.TRANSIT;
-  const inLead = ring.slabInner - c.transitLead;
   const inMouth = ring.slabInner - c.transitMouth;
   const outMouth = ring.slabOuter + c.transitMouth;
   const outLead = ring.slabOuter + c.transitLead;
   if (outward) {
-    pushPolar(path, ring, inLead, a, v, F);
     pushPolar(path, ring, inMouth, a, v, F);
     pushPolar(path, ring, outMouth, a, v, F);
     pushPolar(path, ring, outLead, a, v, F);
@@ -369,7 +404,7 @@ function pushTransit(path, ring, i, outward) {
     pushPolar(path, ring, outLead, a, v, F);
     pushPolar(path, ring, outMouth, a, v, F);
     pushPolar(path, ring, inMouth, a, v, F);
-    pushPolar(path, ring, inLead, a, v, F);
+    pushPolar(path, ring, ring.innerR, a, v, F);
   }
 }
 

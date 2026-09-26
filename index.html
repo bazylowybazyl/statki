@@ -899,7 +899,8 @@
       getStationDeficits,
       getStationSurpluses,
       stationWantsResource,
-      describeStationRole
+      describeStationRole,
+      resourcePrice
     } from "./src/game/stationEconomy.js";
     import {
       ensureSalvageManifest,
@@ -925,6 +926,7 @@
     import { stepCameraZoom, wheelDeltaPx } from "./src/game/cameraZoom.js";
     import { isFriendlyLineOfFireBlocked } from "./src/ai/lineOfFire.js";
     import { PhysicsBridge } from "./src/physics/physicsBridge.js";
+    import { TrafficBridge } from "./src/game/trafficBridge.js";
     import { segmentCircleToi } from "./src/physics/physicsKernel.js";
     import { DEFAULT_HEX_ARENA_CAPACITY } from "./src/physics/hexArena.js";
     import { PerfHUD, mountPerfHudDom, setPerfHudWorldSource } from "./src/ui/perfHud.js";
@@ -2419,6 +2421,9 @@
       disableCameraShake: false,
       globalShieldsOff: false,
       workerPhysicsV2: new URLSearchParams(location.search).has('workerPhysicsV2'),
+      // Ruch v2 w Web Workerze (src/game/trafficBridge.js): gospodarka ×60,
+      // stara ekonomia stacji i vany stoją. `?trafficV2=N` — inna skala.
+      trafficV2: new URLSearchParams(location.search).has('trafficV2'),
       // Diagnostyka bramek kolizji - patrz drawCollisionBoundsDebug().
       showCollisionBounds: false,
       showBroadphaseGrid: false,
@@ -2448,6 +2453,9 @@
       : null;
     window.PhysicsBridgeV2 = physicsBridgeV2;
     window.PhysicsBridgeV2Stats = () => physicsBridgeV2?.getStats?.() || { mode: 'disabled' };
+    // Most ruchu v2 — tworzony w initTrafficV2(), gdy stacje i ich budynki już
+    // istnieją. `null` = flaga wyłączona (stara ekonomia i vany jak dotąd).
+    let trafficV2 = null;
     if (!Number.isFinite(Dev.station3DScale) || Dev.station3DScale <= 0) {
       Dev.station3DScale = DEFAULT_STATION_3D_SCALE;
     }
@@ -3675,7 +3683,8 @@
         (Array.isArray(cfg?.engines?.main) && cfg.engines.main.length) ||
         (Array.isArray(cfg?.engines?.side) && cfg.engines.side.length) ||
         (Array.isArray(cfg?.lights?.position) && cfg.lights.position.length) ||
-        (Array.isArray(cfg?.lights?.road) && cfg.lights.road.length)
+        (Array.isArray(cfg?.lights?.road) && cfg.lights.road.length) ||
+        (Array.isArray(cfg?.lights?.flood) && cfg.lights.flood.length)
       );
     }
 
@@ -3752,7 +3761,10 @@
             : (Array.isArray(base?.lights?.position) ? base.lights.position : []),
           road: Array.isArray(cfg?.lights?.road)
             ? cfg.lights.road
-            : (Array.isArray(base?.lights?.road) ? base.lights.road : [])
+            : (Array.isArray(base?.lights?.road) ? base.lights.road : []),
+          flood: Array.isArray(cfg?.lights?.flood)
+            ? cfg.lights.flood
+            : (Array.isArray(base?.lights?.flood) ? base.lights.flood : [])
         }
       };
       return merged;
@@ -3923,7 +3935,8 @@
       };
       return {
         position: cloneList('position'),
-        road: cloneList('road')
+        road: cloneList('road'),
+        flood: cloneList('flood')
       };
     }
 
@@ -11199,15 +11212,44 @@
     }
 
     function getTradeBuyPrice(key, station = stationUI.station) {
+      if (trafficV2?.hasStation(station?.id)) return getTrafficV2PlayerPrice(station, key, 'ask');
       // Dobra reputacja obniża cenę zakupu...
       const rep = getFactionPriceMultiplier(station?.factionId, PLAYER.reputation);
       return Math.max(1, Math.round(getLocalBasePrice(station, key) * TRADE_BUY_MARGIN * rep));
     }
 
     function getTradeSellPrice(key, station = stationUI.station) {
+      if (trafficV2?.hasStation(station?.id)) return getTrafficV2PlayerPrice(station, key, 'bid');
       // ...i podnosi cenę skupu, więc dzielimy zamiast mnożyć.
       const rep = getFactionPriceMultiplier(station?.factionId, PLAYER.reputation) || 1;
       return Math.max(1, Math.round(getLocalBasePrice(station, key) * TRADE_SELL_MARGIN / rep));
+    }
+
+    // Ruch v2 (?trafficV2): JEDEN model ceny dla gracza i kupców NPC —
+    // `resourcePrice` z gospodarki świata ruchu (niedobór, profil frakcji,
+    // długość głodu) z reputacją gracza. Wycena doku wyżej (marża ±18%) zostaje
+    // dla stacji spoza świata ruchu, np. misyjnej kryjówki piratów.
+    function getTrafficV2PlayerPrice(station, key, side) {
+      const price = resourcePrice(station, trafficV2.getEconomy(station.id), key,
+        { reputation: PLAYER.reputation });
+      return Math.max(1, Math.round(Number(price?.[side]) || 0));
+    }
+
+    // Magazyn, który widzi terminal: pod ?trafficV2 kopia z workera ruchu
+    // (zapas ×60 i ceny świata), bez flagi — gospodarka stacji w grze.
+    function getTradeEconomy(station) {
+      if (!station) return null;
+      return trafficV2?.getEconomy(station.id) || InfrastructureUI.ensureEconomy(station);
+    }
+
+    // Zmiana zapasu stacji z gry (handel, rozbiórka wraku). Pod ?trafficV2 idzie
+    // przez most — kopia zmienia się od razu, worker po swojej stronie.
+    function adjustStationStock(station, econ, key, delta) {
+      if (trafficV2?.hasStation(station?.id)) {
+        trafficV2.stockDelta(station.id, { [key]: delta }, 'player');
+        return;
+      }
+      econ.resources[key] = (Number(econ.resources[key]) || 0) + delta;
     }
 
     // Komponenty handluje się sztukami, surowce sypkie partiami po 10.
@@ -11765,7 +11807,7 @@
       if (!pane) return;
       const table = pane.querySelector('.trade-resource-table');
       if (!table) return;
-      const econ = station ? InfrastructureUI.ensureEconomy(station) : null;
+      const econ = getTradeEconomy(station);
       if (!econ) return;
       table.querySelectorAll('tr[data-resource-key]').forEach(row => {
         const key = row.dataset.resourceKey;
@@ -11786,7 +11828,7 @@
       const pane = stationOverlayDom.panels.trade;
       const table = pane?.querySelector('.trade-market-table');
       if (!table) return;
-      const econ = station ? InfrastructureUI.ensureEconomy(station) : null;
+      const econ = getTradeEconomy(station);
       const cargoFree = getPlayerCargoFree();
       const cargoCap = Number(getPlayerHullDef(PLAYER.activeHullId)?.cargoCap) || 0;
 
@@ -11867,7 +11909,7 @@
       const amount = Math.max(1, Math.round(Number(qty) || 1));
       if (!RESOURCES[key]) return;
       const station = stationUI.station;
-      const econ = station ? InfrastructureUI.ensureEconomy(station) : null;
+      const econ = getTradeEconomy(station);
       if (!econ) {
         toast('Brak magazynu stacji');
         return;
@@ -11879,7 +11921,7 @@
         if ((Number(econ.resources?.[key]) || 0) < amount) { toast('Stacja nie ma zapasu'); return; }
         if (getPlayerCargoFree() < getResourceMassLocal(key, amount)) { toast('Ładownia pełna'); return; }
         PLAYER.credits -= cost;
-        econ.resources[key] = (Number(econ.resources[key]) || 0) - amount;
+        adjustStationStock(station, econ, key, -amount);
         PLAYER.cargo[key] = (Number(PLAYER.cargo[key]) || 0) + amount;
       } else if (type === 'sell') {
         const held = Number(PLAYER.cargo?.[key]) || 0;
@@ -11891,7 +11933,7 @@
         const stored = Number.isFinite(cap) ? Math.min(amount, Math.max(0, cap - stock)) : amount;
         PLAYER.cargo[key] = held - amount;
         if (PLAYER.cargo[key] <= 0) delete PLAYER.cargo[key];
-        econ.resources[key] = stock + stored;
+        adjustStationStock(station, econ, key, stored);
         PLAYER.credits += getTradeSellPrice(key, station) * amount;
         // Regularny handel powoli ociepla stosunki z właścicielem doku.
         if (station.factionId) changePlayerReputation(station.factionId, REPUTATION_EVENTS.tradedGoods);
@@ -11935,7 +11977,9 @@
     const CARGO_MATERIALIZE_RADIUS = 15000;
     const CARGO_DEMATERIALIZE_RADIUS = 18000;
     const CARGO_WARP_SPEED = 4000;
-    const CARGO_DISPATCH_ENABLED = true;
+    // Pod ?trafficV2 zlecenia wystawia dyspozytor ruchu v2 w workerze — stare
+    // vany dzieliłyby z nim magazyny i zlecenia cargoFleet, więc stoją.
+    const CARGO_DISPATCH_ENABLED = !DevFlags.trafficV2;
     const cargoAdvanceOptions = {
       events: cargoTransitEvents,
       getEconomy: resolveCargoEconomy,
@@ -12798,14 +12842,17 @@
       const cargoRecovery = recoverCargoWreckToStation(wreck, station, econ);
       const { materials, weapons } = takeDockSalvage(wreck);
       const storedParts = [];
-      if (econ) {
+      // Pod ?trafficV2 materiały trafiają do magazynu świata ruchu (przez most);
+      // bez flagi to ten sam obiekt co `econ`.
+      const store = getTradeEconomy(station);
+      if (store) {
         for (const [id, amount] of Object.entries(materials)) {
           if (!RESOURCES[id]) continue;
-          const cap = Number(econ.capacity?.[id]);
-          const stock = Number(econ.resources?.[id]) || 0;
+          const cap = Number(store.capacity?.[id]);
+          const stock = Number(store.resources?.[id]) || 0;
           const stored = Number.isFinite(cap) ? Math.min(amount, Math.max(0, cap - stock)) : amount;
           if (stored <= 0) continue;
-          econ.resources[id] = stock + stored;
+          adjustStationStock(station, store, id, stored);
           storedParts.push(`${getResourceLabel(id)} ×${Math.round(stored)}`);
         }
       }
@@ -12945,6 +12992,90 @@
     InfrastructureUI.init(canvas);
     InfrastructureUI.autopopulate();
     seedStationEconomies();
+
+    // ============================================================
+    // RUCH v2 (?trafficV2) — src/game/trafficBridge.js
+    // Gospodarka stacji ×60, przewoźnicy, kupcy, stocznie, wojna, piractwo
+    // i złomiarze liczą się w Web Workerze (docs/PLAN-ruch-v2-w-grze.md, Z1).
+    // Gra wysyła mu czas z krokami fizyki, pozycję gracza (fokus bańki),
+    // handel i pojemności budynków; dostaje kopię rynku (terminal handlu)
+    // i kursy w bańce (proxy statków — Z13). Bez flagi nic się tu nie dzieje.
+    // ============================================================
+
+    /** Promień bańki kursów wokół gracza — Z13 dostroi go pod proxy statków. */
+    const TRAFFIC_V2_BUBBLE_RADIUS = 60000;
+    /** Magazyny ×4 = stacje z halami, jak w pomiarach portów przy ×60. */
+    const TRAFFIC_V2_CAPACITY_MULTIPLIER = 4;
+    const trafficV2CapacitySent = new Map();
+    let trafficV2CapacityTimer = 0;
+
+    function initTrafficV2() {
+      const params = new URLSearchParams(location.search);
+      const scale = Number(params.get('trafficV2'));
+      const seedParam = params.get('trafficSeed');
+      const seed = seedParam !== null && seedParam !== ''
+        ? (Number(seedParam) >>> 0)
+        : ((Math.random() * 4294967296) >>> 0);
+      const stationSpecs = {};
+      for (const station of stations) {
+        if (!station?.id) continue;
+        const econ = InfrastructureUI.ensureEconomy(station);
+        const spec = { factionId: station.factionId || null };
+        if (econ?.capacity) {
+          spec.capacity = { ...econ.capacity };
+          trafficV2CapacitySent.set(station.id, { ...econ.capacity });
+        }
+        // Opuszczona stacja niesie resztki po mieszkańcach — łup gracza.
+        if (isDerelict(station) && econ?.resources) spec.stock = { ...econ.resources };
+        stationSpecs[station.id] = spec;
+      }
+      const bridge = new TrafficBridge();
+      bridge.init({
+        seed,
+        economyScale: scale > 0 ? scale : 60,
+        capacityMultiplier: TRAFFIC_V2_CAPACITY_MULTIPLIER,
+        piracyPressure: 1,
+        origin: { x: SUN.x, y: SUN.y },
+        planetAngles: Object.fromEntries(planets.map(planet => [String(planet.id), planet.angle])),
+        planetScale: PLANET_SCALE,
+        sunRadius: SUN.r,
+        stations: stationSpecs,
+        focus: { x: ship.pos.x, y: ship.pos.y, r: TRAFFIC_V2_BUBBLE_RADIUS }
+      }).then(ready => {
+        console.info(`[ruch v2] ${bridge.mode === 'worker' ? 'worker' : 'GŁÓWNY WĄTEK (tryb awaryjny)'}: `
+          + `${ready.stations.length} stacji, gospodarka ×${ready.economyScale}, ziarno ${ready.seed}, `
+          + `budowa świata ${Math.round(ready.buildMs)} ms`);
+      }).catch(error => console.error('[ruch v2] świat nie wystartował:', error));
+      bridge.on('error', message => console.error('[ruch v2]', message.during || '', message.message));
+      // Terminal pokazuje magazyny — po każdym kroku świata odświeżamy otwarty.
+      bridge.on('market', () => {
+        if (stationUI.open) updateStationOverlay(stationUI.tab, stationUI.station);
+      });
+      return bridge;
+    }
+
+    /** Pojemności z budynków gry → worker, gdy się zmienią (sprawdzane co 1 s gry). */
+    function syncTrafficV2Capacities(dt) {
+      trafficV2CapacityTimer += dt;
+      if (trafficV2CapacityTimer < 1) return;
+      trafficV2CapacityTimer = 0;
+      for (const station of stations) {
+        if (!station?.id || !trafficV2.hasStation(station.id)) continue;
+        const capacity = InfrastructureUI.ensureEconomy(station)?.capacity;
+        if (!capacity) continue;
+        const sent = trafficV2CapacitySent.get(station.id);
+        if (sent && RESOURCE_KEYS.every(key => sent[key] === capacity[key])) continue;
+        trafficV2CapacitySent.set(station.id, { ...capacity });
+        trafficV2.setCapacity(station.id, capacity);
+      }
+    }
+
+    if (DevFlags.trafficV2) {
+      trafficV2 = initTrafficV2();
+      window.TrafficV2 = trafficV2;
+      window.TrafficV2Stats = () => trafficV2.getStats();
+    }
+
     function startMercenaryMission() {
       if (mercMission) { toast('Misja już aktywna. Wciśnij J aby zobaczyć dziennik.'); return; }
 
@@ -20637,8 +20768,14 @@
       updateStationUIState(dt);
       InfrastructureUI.updateEditorState(dt);
       InfrastructureUI.update(dt);
-      updateStationEconomies(dt);
-      updateCargoFleet(dt);
+      if (trafficV2) {
+        // Ruch v2: gospodarka i vany żyją w workerze (czas idzie z pętli, razem
+        // z krokami fizyki) — tu tylko pojemności budynków gry do mostu.
+        syncTrafficV2Capacities(dt);
+      } else {
+        updateStationEconomies(dt);
+        updateCargoFleet(dt);
+      }
       updateSalvage(dt);
       if (window.updateInfrastructureAnimations) {
         window.updateInfrastructureAnimations(dt);
@@ -21951,6 +22088,13 @@
       if (steps > 0 && physicsBridgeV2) {
         const pressure = Math.max(0, (PerfHUD.display?.frameP95 || 0) / 16.67 - 1);
         physicsBridgeV2.step(bridgeStartTick, steps, pressure, PHYS_DT);
+      }
+      if (trafficV2) {
+        // Czas gospodarki = czas gry: te same kroki fizyki, więc pauza (return
+        // wyżej) i przycięte klatki zatrzymują ją tak samo jak resztę świata.
+        if (steps > 0) trafficV2.advance(steps * PHYS_DT);
+        trafficV2.setFocus(ship.pos.x, ship.pos.y, TRAFFIC_V2_BUBBLE_RADIUS);
+        PerfHUD.addTiming('trafficBridgeTime', trafficV2.takeMainThreadMs());
       }
 
       // Deformacje wizualne destruktora (lerp, GPU soft body, elastyczność, erase cache)

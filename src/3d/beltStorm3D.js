@@ -10,7 +10,11 @@
 //     nie — shader kadłubów świateł pola nie czyta);
 //   • rozbłysk pęknięć skał energetycznych przy uderzeniu (uFieldStrike);
 //   • błyski w chmurach głęboko pod płaszczyzną: światło w mgle rozświetla
-//     płaty od środka (beltDust3D, rozpraszanie w wierzchołkach).
+//     płaty od środka (beltDust3D, rozpraszanie w wierzchołkach);
+//   • iskry, poświata, gwiazda rozbłysku i pełzające łuki w miejscu uderzenia
+//     oraz ciche trzaski na skałach energetycznych — z PUL EFEKTÓW GRY (Fx3D,
+//     te same co iskry Hexlance'a); pule aktualizuje gospodarz (w grze
+//     Weapon3DSystem, w demie pętla dema).
 //
 // Pozycje wierzchołków względem kamery (przepisywane co klatkę, początek co
 // klatkę — sceneOrigin.js): float32 nie drga przy 5–10 mln j.
@@ -19,6 +23,16 @@ import * as THREE from 'three';
 import { StormSimulator, buildBoltChains, strikeEnvelope, sheetEnvelope } from '../game/asteroidStorms.js';
 import { ENERGY_TYPE } from '../game/asteroidRockKinds.js';
 import { fieldLightUniforms, FIELD_STRIKE_CAP } from './fieldLights3D.js';
+import { Fx3D, sp, rand } from './fxParticles3D.js';
+
+// Iskry jonowe (HDR, błękit — nie stygną do pomarańczu jak proch: cool > 1
+// jak jony Hexlance'a) i barwa łuków w miejscu uderzenia.
+const ION_COLOR = Object.freeze([1.5, 2.4, 3.9]);
+const ARC_COLOR = Object.freeze([1.2, 1.9, 3.9]);
+const _fxP = new THREE.Vector3();
+const _fxV = new THREE.Vector3();
+const _fxQ = new THREE.Vector3();
+const _ionCol = [0, 0, 0];
 
 const MAX_POINTS = 1600;          // punkty wszystkich łańcuchów w klatce
 const Z_LIFT = 30;                // wstęga tuż nad osią pioruna (przed skałą, którą łączy)
@@ -30,7 +44,7 @@ export const STORM_LOOK = Object.freeze({
   glowGain: 2.0,
   // Błysk w polu: moc, zasięg = flashRangeBase + flashRangeMul × długość pioruna.
   flashColor: [0.72, 0.8, 1.0],
-  flashIntensity: 5.0,
+  flashIntensity: 3.0,
   flashRangeBase: 900,
   flashRangeMul: 1.1,
   // Błysk w chmurze (głęboko pod płaszczyzną): fiolet, w pyle rozprasza w pełni.
@@ -91,6 +105,8 @@ export class BeltStorm3D {
     // światła na kadłuby obok pioruna — w mroku pola błysk wydobywa okręt.
     this.flashes = [];
     this._flashPool = [];
+    // Iskry, poświata i łuki z pul efektów gry (Fx3D); przełącznik w demie.
+    this.impactFx = true;
     this._build();
     this.stats = { rocks: 0, strikes: 0, sheets: 0, points: 0 };
   }
@@ -184,6 +200,7 @@ export class BeltStorm3D {
     this._view.x = cam.x; this._view.y = cam.y; this._view.halfW = halfW * 1.1; this._view.halfH = halfH * 1.1;
     this.sim.update(dt, rocks, storm, this._view);
     this._render(cam, zoom, o.lights);
+    if (this.impactFx && storm > 0.02) this._crackleFx(dt, rocks, storm);
     this.stats.rocks = rocks.length;
     this.stats.strikes = this.sim.strikes.length;
     this.stats.sheets = this.sim.sheets.length;
@@ -248,6 +265,11 @@ export class BeltStorm3D {
         strikeU[slot++].set(s.ax - cx, -(s.ay - cy), s.az, e.intensity);
         if (slot < FIELD_STRIKE_CAP && s.kind === 'arc') strikeU[slot++].set(s.bx - cx, -(s.by - cy), s.bz, e.intensity);
       }
+      // Nowy udar = iskry w miejscu uderzenia (z pul efektów gry).
+      if (e.stroke > (s.fxStroke ?? -1)) {
+        s.fxStroke = e.stroke;
+        if (this.impactFx) this._strikeImpactFx(s, s.strokes[e.stroke]?.amp ?? 1, e.stroke === 0);
+      }
     }
     // Błyski w chmurach głęboko pod płaszczyzną: samo światło (rozświetla mgłę od środka).
     if (lights) {
@@ -278,6 +300,103 @@ export class BeltStorm3D {
     this.mesh.position.set(cx, -cy, 0);
     this.mesh.updateMatrixWorld(true);
     this.stats.points = nv / 2;
+  }
+
+  /** Pule efektów gry gotowe? (Fx3D tworzy je leniwie w Core3D.scene.) */
+  _fxReady() {
+    return Fx3D.ready || (Fx3D.available && Fx3D.ensure());
+  }
+
+  /**
+   * Iskry w miejscu uderzenia: snop jonów od powierzchni skały, poświata,
+   * gwiazda rozbłysku (udar główny) i łuki pełzające po skale. Pozycje w
+   * układzie sceny pul (x, −y świata). amp = siła udaru.
+   */
+  _strikeImpactFx(s, amp, main) {
+    if (!this._fxReady()) return;
+    // Koniec A zawsze na skale; B na skale tylko przy łuku (w pył — bez iskier).
+    this._impactAt(s.ax, s.ay, s.az, s.ax - s.acx, s.ay - s.acy, s.ar, amp, main);
+    if (s.kind === 'arc') this._impactAt(s.bx, s.by, s.bz, s.bx - s.bcx, s.by - s.bcy, s.br, amp, main);
+  }
+
+  _impactAt(x, y, z, nx, ny, rockR, amp, main) {
+    const nl = Math.hypot(nx, ny) || 1;
+    // Normalna w scenie (y odwrócone).
+    const snx = nx / nl;
+    const sny = -ny / nl;
+    const px = x;
+    const py = -y;
+    const k = Math.max(0.3, Math.min(1.5, amp));
+    // Snop jonów: od powierzchni, rozwarcie ±75°, trochę w górę (ku kamerze).
+    const n = Math.round((main ? 26 : 14) * k);
+    for (let i = 0; i < n; i++) {
+      const a = (Math.random() * 2 - 1) * 1.3;
+      const ca = Math.cos(a);
+      const sa = Math.sin(a);
+      const speed = rand(260, 1150) * (0.6 + 0.4 * k);
+      _fxP.set(px + snx * 6, py + sny * 6, z + 20);
+      _fxV.set((snx * ca - sny * sa) * speed, (snx * sa + sny * ca) * speed, rand(-60, 200));
+      const b = rand(0.75, 1.25);
+      _ionCol[0] = ION_COLOR[0] * b; _ionCol[1] = ION_COLOR[1] * b; _ionCol[2] = ION_COLOR[2] * b;
+      Fx3D.spark.spawn(_fxP, _fxV, rand(0.12, 0.42), rand(1.2, 3.0), rand(25, 85), _ionCol, 1.05, 1.25);
+    }
+    // Poświata styku (biało-błękitna → fiolet ładunku).
+    let o = sp();
+    o.x = px; o.y = py; o.z = z + 20;
+    o.life = 0.16; o.drag = 0;
+    o.s0 = 24 + rockR * 0.12; o.s1 = 80 + rockR * 0.35;
+    o.r0 = 2.6; o.g0 = 3.2; o.b0 = 4.4;
+    o.r1 = 0.8; o.g1 = 0.5; o.b1 = 2.2; o.mix = 10;
+    o.alpha = Math.min(1, 0.9 * k); o.fadeIn = 0.004; o.fadeOut = 2.0; o.grow = 0.4;
+    Fx3D.glow.spawn(o);
+    if (main) {
+      o = sp();
+      o.x = px; o.y = py; o.z = z + 20;
+      o.life = 0.12; o.drag = 0;
+      o.s0 = 50; o.s1 = 160 + rockR * 0.3;
+      o.rot = rand(0, 6.283); o.vrot = rand(-1.5, 1.5);
+      o.r0 = 3.0; o.g0 = 3.4; o.b0 = 4.4;
+      o.r1 = 1.0; o.g1 = 1.2; o.b1 = 3.4; o.mix = 11;
+      o.alpha = 0.9; o.fadeIn = 0.004; o.fadeOut = 2.4; o.grow = 0.35;
+      Fx3D.star.spawn(o);
+    }
+    // Łuki pełzające po skale: od miejsca uderzenia do punktów na obrysie obok.
+    const arcs = main ? 3 : 2;
+    for (let i = 0; i < arcs; i++) {
+      const a = (Math.random() * 2 - 1) * 1.1;
+      const ca = Math.cos(a);
+      const sa = Math.sin(a);
+      // Punkt na obrysie skały, obrócony od normalnej uderzenia.
+      const ex = px - snx * rockR + (snx * ca - sny * sa) * rockR * 0.95;
+      const ey = py - sny * rockR + (snx * sa + sny * ca) * rockR * 0.95;
+      _fxP.set(px, py, z + 20);
+      _fxQ.set(ex, ey, z + 20);
+      Fx3D.arcs.spawn(_fxP, _fxQ, rand(0.06, 0.2), rand(6, 18) * (0.5 + rockR / 400), ARC_COLOR);
+    }
+  }
+
+  /**
+   * Ciche trzaski na skałach energetycznych w kadrze (ognie świętego Elma):
+   * krótkie łuki między punktami obrysu, częstość rośnie z burzą.
+   */
+  _crackleFx(dt, rocks, storm) {
+    if (!rocks.length || !this._fxReady()) return;
+    let expect = rocks.length * 0.6 * storm * dt;
+    let budget = 3;
+    while (budget-- > 0 && Math.random() < expect) {
+      expect -= 1;
+      const r = rocks[Math.floor(Math.random() * rocks.length)];
+      const a0 = Math.random() * Math.PI * 2;
+      const a1 = a0 + (Math.random() < 0.5 ? -1 : 1) * rand(0.4, 1.3);
+      _fxP.set(r.x + Math.cos(a0) * r.r * 0.9, -(r.y + Math.sin(a0) * r.r * 0.9), r.z + 20);
+      _fxQ.set(r.x + Math.cos(a1) * r.r * 0.9, -(r.y + Math.sin(a1) * r.r * 0.9), r.z + 20);
+      Fx3D.arcs.spawn(_fxP, _fxQ, rand(0.05, 0.14), rand(4, 12) * (0.5 + r.r / 400), ARC_COLOR);
+      if (Math.random() < 0.5) {
+        _fxV.set(rand(-300, 300), rand(-300, 300), rand(0, 120));
+        _ionCol[0] = ION_COLOR[0] * 0.7; _ionCol[1] = ION_COLOR[1] * 0.7; _ionCol[2] = ION_COLOR[2] * 0.7;
+        Fx3D.spark.spawn(_fxP, _fxV, rand(0.1, 0.25), 2.5, rand(15, 40), _ionCol, 1.05, 1.25);
+      }
+    }
   }
 
   /**

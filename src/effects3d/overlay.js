@@ -5,6 +5,19 @@ import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js"
 import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
 import { BLOOM_DEFAULTS } from "../3d/bloomConfig.js";
 import { flushParticlePools } from "./particlePool.js";
+import { SimClock, CLOCK_RENDER } from "../game/simClock.js";
+import { ActiveCarrier } from "../game/carrierVelocity.js";
+
+// NOŚNIK (src/game/carrierVelocity.js): efekt z `followCarrier` (cała zawartość
+// w `group`) przejmuje przy spawnie ActiveCarrier — wybuch na pędzącym kadłubie
+// jedzie z nim, zamiast zostawać w świecie. Pozycja grupy co klatkę renderu:
+// start + v · (T − t0) z zegara gry, także w klatkach bez update efektów.
+function placeCarriedEffect(fx) {
+  const c = fx.__carrier;
+  const e = (c.clock === CLOCK_RENDER ? SimClock.render : SimClock.sim) - c.t0;
+  fx.group.position.x = c.baseX + c.vx * e;
+  fx.group.position.z = c.baseZ + c.vz * e;
+}
 
 const RestoreAlphaShader = {
   uniforms: {
@@ -453,6 +466,10 @@ export function initOverlay({
         if (!fx.group || !fx.group.parent) effects.splice(i, 1);
       }
     }
+    for (let i = 0; i < effects.length; i++) {
+      const fx = effects[i];
+      if (fx.__carrier && fx.group) placeCarriedEffect(fx);
+    }
 
     stats.activeEffects = effects.length;
 
@@ -523,6 +540,17 @@ export function initOverlay({
     }
     
     if (effect.group) {
+        if (effect.followCarrier && (ActiveCarrier.vx !== 0 || ActiveCarrier.vy !== 0)) {
+          effect.__carrier = {
+            vx: ActiveCarrier.vx,
+            vz: ActiveCarrier.vy,          // overlay: z = y świata
+            t0: ActiveCarrier.t0,
+            clock: ActiveCarrier.clock,
+            baseX: effect.group.position.x,
+            baseZ: effect.group.position.z
+          };
+          placeCarriedEffect(effect);
+        }
         scene.add(effect.group);
         effects.push(effect);
         stats.activeEffects = effects.length;

@@ -176,7 +176,9 @@ export function buildPortParking(layout, station = null, options = {}) {
 /**
  * Strefy przy ringu: w każdym sektorze między kompleksem a sąsiednim tranzytem
  * (Ziemia: ±18°…±43° od środka kompleksu) część cywilna od strony kompleksu
- * i wojskowa od strony tranzytu.
+ * i wojskowa od strony tranzytu. Obie zapełniają się OD ŚRODKA SEKTORA (od
+ * wspólnej granicy): brzegi sektora to korytarze — podejścia do zatok i wylot
+ * tranzytu — i mają zostać wolne, dopóki reda nie jest prawie pełna.
  */
 function ringZones(stationId, ring, cfg) {
   const R = Math.max(1, Number(ring.floorMid) || 1);
@@ -200,12 +202,12 @@ function ringZones(stationId, ring, cfg) {
       zones.push(makeZone({
         id: `${stationId}:reda-${tag}`, role: BERTH_ROLE.CIVIL, complex: c, side,
         cx: ring.x, cy: ring.y, r0,
-        anchor: complexAngle + side * inner, far: complexAngle + side * (split - halfGap)
+        anchor: complexAngle + side * (split - halfGap), far: complexAngle + side * inner
       }));
       zones.push(makeZone({
         id: `${stationId}:reda-wojsk-${tag}`, role: BERTH_ROLE.MILITARY, complex: c, side,
         cx: ring.x, cy: ring.y, r0,
-        anchor: complexAngle + side * outer, far: complexAngle + side * (split + halfGap)
+        anchor: complexAngle + side * (split + halfGap), far: complexAngle + side * outer
       }));
     }
   });
@@ -243,13 +245,14 @@ function openZones(stationId, layout, cx, cy, cfg) {
     const half = Math.min(cfg.openZoneHalfAngle, mid.half * 0.6);
     const split = -half + 2 * half * cfg.civilShare;
     const halfGap = cfg.roleGap / 2 / r0;
+    // Jak przy ringu: zapełnianie od wspólnej granicy, brzegi (podejścia do doków) wolne.
     zones.push(makeZone({
       id: `${stationId}:reda-${k + 1}`, role: BERTH_ROLE.CIVIL, complex: -1, side: 0,
-      cx, cy, r0, anchor: mid.angle - half, far: mid.angle + split - halfGap
+      cx, cy, r0, anchor: mid.angle + split - halfGap, far: mid.angle - half
     }));
     zones.push(makeZone({
       id: `${stationId}:reda-wojsk-${k + 1}`, role: BERTH_ROLE.MILITARY, complex: -1, side: 0,
-      cx, cy, r0, anchor: mid.angle + half, far: mid.angle + split + halfGap
+      cx, cy, r0, anchor: mid.angle + split + halfGap, far: mid.angle + half
     }));
   });
   return zones;
@@ -260,7 +263,7 @@ function makeZone({ id, role, complex, side, cx, cy, r0, anchor, far }) {
     id, role, complex, side, cx, cy, r0, r1: r0,
     a0: Math.min(anchor, far),
     a1: Math.max(anchor, far),
-    /** Brzeg, od którego strefa się zapełnia (kompleks albo tranzyt). */
+    /** Brzeg, od którego strefa się zapełnia (granica części cywilnej i wojskowej). */
     anchorAngle: anchor,
     bands: [],
     corners: []
@@ -271,7 +274,7 @@ function makeZone({ id, role, complex, side, cx, cy, r0, anchor, far }) {
  * Pasma klas w strefie: od ringu na zewnątrz S, M, L, capital, mega. Rząd to
  * łuk na stałym promieniu; statki stoją obok siebie dziobem od planety.
  * Kolejność zapełniania = odległość od narożnika przy kotwicy strefy, więc
- * zajęte sloty tworzą zwarty blok przy kompleksie, a nie sznurek przez całą strefę.
+ * zajęte sloty tworzą zwarty blok w środku sektora, a nie sznurek przez całą strefę.
  */
 function buildBands(zone, rowsByClass, cfg) {
   let r = zone.r0;
@@ -659,7 +662,7 @@ function militaryHalls(layout) {
       hall.byRank.set(rank, interleaved);
     }
   }
-  return { halls: [...byDock.values()], byId, placed: 0 };
+  return { halls: [...byDock.values()], byId, placed: 0, baseRank: new Map() };
 }
 
 /** Najniższa ranga padu, na który okręt w ogóle wchodzi. */
@@ -675,9 +678,10 @@ function baseRankFor(halls, size) {
 
 function tryPad(halls, memory, ship, upgrade, cfg) {
   const size = sizeOf(ship.hullId);
-  if (ship.baseRank === undefined) ship.baseRank = baseRankFor(halls, size);
-  if (!Number.isFinite(ship.baseRank)) return false;
-  const rank = ship.baseRank + upgrade;
+  let base = halls.baseRank.get(ship.hullId);
+  if (base === undefined) halls.baseRank.set(ship.hullId, base = baseRankFor(halls, size));
+  if (!Number.isFinite(base)) return false;
+  const rank = base + upgrade;
   let bestHall = null;
   let bestPad = null;
   for (const hall of halls.halls) {

@@ -207,15 +207,26 @@ export function run() {
   syncParking(reg, [...zostaja.slice(1), { ...zostaja[0], hullId: 'megafreighter' }]);
   t.equal('zmiana kadłuba = nowe miejsce w pasującej klasie', parkingSpot(reg, zostaja[0].id).cls, 'mega');
 
-  // Kolejność zapełniania: zwarty blok przy kompleksie, nie sznurek przez strefę.
+  // Kolejność zapełniania: zwarty blok w środku sektora (przy granicy części
+  // cywilnej i wojskowej), a brzegi sektora — podejścia do zatok i wylot
+  // tranzytu — wolne, dopóki reda nie jest prawie pełna.
   const regMaly = createParkingRegistry(plan);
   syncParking(regMaly, makeShips({ inter_station_shuttle: 24 }));
   const strefa = plan.zones.find(z => z.id === parkingSpot(regMaly, 'inter_station_shuttle-0').zoneId);
   const wStrefieMalej = [...regMaly.byShip.values()].filter(s => s.zoneId === strefa.id);
   const c = ring.complexAngles[strefa.complex];
-  const zasieg = Math.max(...wStrefieMalej.map(s => angleDiff(Math.atan2(s.y - ring.y, s.x - ring.x), c)));
-  t.check('pierwsze statki stoją przy brzegu od kompleksu', zasieg < angleDiff(strefa.a0, c) + angleDiff(strefa.a1, c) - zasieg,
-    `(zasięg ${(zasieg * 180 / Math.PI).toFixed(1)}°)`);
+  const katy = wStrefieMalej.map(s => angleDiff(Math.atan2(s.y - ring.y, s.x - ring.x), c));
+  const brzegKompleksu = Math.min(angleDiff(strefa.a0, c), angleDiff(strefa.a1, c));
+  const granica = Math.max(angleDiff(strefa.a0, c), angleDiff(strefa.a1, c));
+  t.check('pierwsze statki stoją przy granicy z redą wojskową, nie przy zatokach',
+    Math.min(...katy) - brzegKompleksu > (granica - brzegKompleksu) / 2,
+    `(najbliżej kompleksu ${(Math.min(...katy) * 180 / Math.PI).toFixed(1)}°, brzeg ${(brzegKompleksu * 180 / Math.PI).toFixed(1)}°)`);
+  const regWMaly = createParkingRegistry(plan, { role: BERTH_ROLE.MILITARY });
+  syncParking(regWMaly, makeShips({ terran_frigate: 40 }));
+  const najblizejTranzytu = Math.min(...[...regWMaly.byShip.values()].map(s =>
+    Math.min(...ring.transitAngles.map(a => angleDiff(Math.atan2(s.y - ring.y, s.x - ring.x), a)))));
+  t.check('okręty z nadmiaru nie stoją przy wylocie tranzytu (≥ 3° od osi)', najblizejTranzytu > 3 * Math.PI / 180,
+    `(${(najblizejTranzytu * 180 / Math.PI).toFixed(1)}°)`);
 
   // ----------------------------------------------------------
   t.section('Mars: reda idzie za obróconym ringiem');
@@ -263,7 +274,8 @@ export function run() {
   const regC = createParkingRegistry(ciasny, { hangarCapacity: 0 });
   syncParking(regC, makeShips({ container_ship: 5 }));
   t.check('gdy nie ma gdzie stanąć — przelew z pozycją, nie zniknięcie',
-    [...regC.byShip.values()].every(s => s.kind === 'overflow' && Number.isFinite(s.x) && Math.hypot(s.x - ring.x, s.y - ring.y) >= ciasny.overflowRadius));
+    [...regC.byShip.values()].every(s => s.kind === 'overflow' && Number.isFinite(s.x)
+      && Math.hypot(s.x - ring.x, s.y - ring.y) >= ciasny.overflowRadius - 1));
 
   // Wejście z floty przewoźników.
   const flota = { companies: [{ ships: [

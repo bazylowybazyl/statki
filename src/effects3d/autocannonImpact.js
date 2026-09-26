@@ -333,7 +333,9 @@ export function createAutocannonImpactFactory(scene) {
       emberMaterial.dispose();
     }
 
-    return { group, update, dispose };
+    // followCarrier: całość siedzi w `group`, więc overlay może ją nieść
+    // z prędkością trafionego kadłuba (src/game/carrierVelocity.js).
+    return { group, update, dispose, followCarrier: true };
   };
 }
 

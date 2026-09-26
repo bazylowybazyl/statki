@@ -10,6 +10,7 @@
  *   node scripts/symulacja-ruchu.mjs 60 4            presja piratów ×4
  *   node scripts/symulacja-ruchu.mjs 120 1 4         magazyny ×4 (stacje z halami)
  *   SEED=7 node scripts/symulacja-ruchu.mjs 240 1 4 60   gospodarka ×60, powtarzalnie
+ *   K7=0 …                                            Ziemia i Mars na dawnych pomostach
  */
 
 import { RESOURCES, RESOURCE_KEYS, RECIPES, PLANET_YIELD } from '../src/data/resources.js';
@@ -46,6 +47,11 @@ const ECONOMY_SCALE = process.argv[5] !== undefined ? Number(process.argv[5]) : 
  * dwie wersje kodu albo dwa scenariusze liczba w liczbę.
  */
 const SEED = process.env.SEED !== undefined && process.env.SEED !== '' ? Number(process.env.SEED) : undefined;
+/**
+ * Port Ziemi i Marsa: kompleksy K-7 z gry (domyślnie) albo dawne teoretyczne
+ * pomosty ruchu v2 (`K7=0`) — do porównań z wynikami sprzed 2026-09-26.
+ */
+const RING_PORTS = process.env.K7 !== '0';
 const STEP = TRAFFIC_STEP_SECONDS;   // sekund gry na krok — dość drobno, żeby postoje nie ginęły
 
 // ---------- świat ----------
@@ -57,7 +63,8 @@ const world = buildTrafficWorld({
   capacityMultiplier: CAPACITY_MUL,
   piracyPressure: PRESSURE,
   piracyEnabled: PRESSURE > 0,
-  seed: SEED
+  seed: SEED,
+  ringPorts: RING_PORTS
 });
 const {
   network, stations, economies, docks, companies, agents,

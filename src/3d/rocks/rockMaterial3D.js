@@ -74,7 +74,7 @@ export const ROCK_TYPE_LOOKS = Object.freeze([
   Object.freeze({ id: 'rock', base: '#5c554d', base2: '#3b3631', a: '#595b5e', aSpec: 0.04, b: '#37383a', bParam: 0.5, c: '#77716a', d: '#2c2926', emit: 0, cover: 0.3, line: 0, sparkle: 0.05, ice: 0, gloss: 12, metal: 0, relief: 0.025 }),
   // energetyczna (burze, asteroidStorms.js): a = błękitna biel łuku (gorące
   // pęknięcia), b = fiolet ładunku, c = emisja HDR pęknięć, d = szklisty czarny bazalt
-  Object.freeze({ id: 'energy', base: '#26213a', base2: '#110e1a', a: '#a8ecff', aSpec: 0.6, b: '#8a3cff', bParam: 0.5, c: '#b8f0ff', d: '#0c0a12', emit: 1.1, cover: 0.75, line: 6, sparkle: 0.5, ice: 0, gloss: 55, metal: 0, relief: 0.04 })
+  Object.freeze({ id: 'energy', base: '#26213a', base2: '#110e1a', a: '#a8ecff', aSpec: 0.6, b: '#8a3cff', bParam: 0.5, c: '#b8f0ff', d: '#0c0a12', emit: 1.6, cover: 0.75, line: 6, sparkle: 0.5, ice: 0, gloss: 55, metal: 0, relief: 0.04 })
 ]);
 
 export const ROCK_LIGHT_DEFAULTS = Object.freeze({
@@ -634,7 +634,7 @@ void main() {
     float pulse = 0.6 + 0.4 * sin(uTime * (1.1 + fract(seed * 7.1) * 1.4) + ph);
     float crackle = pow(max(0.0, sin(uTime * 19.0 + ph * 3.0) * sin(uTime * 6.1 + ph)), 14.0);
     float surge = fieldStrikeSurge(vViewPos, R * 2.4);
-    float charge = pulse + crackle * 1.6 + surge * 2.2;
+    float charge = pulse + crackle * 1.6 + surge * 0.9;
     // Pęknięcia jak u kryształu (poziomica pola żył), ale w większej części bryły.
     lf = veinField;
     lw = tP.y * veinZone;
@@ -642,7 +642,7 @@ void main() {
     lspec = 0.4;
     lemit = tC.w * charge;
     float halo = (1.0 - smoothstep(0.0, 0.1, abs(lf))) * veinZone;
-    emit += tB.rgb * tC.w * 0.03 * halo * charge;
+    emit += tB.rgb * tC.w * 0.06 * halo * charge;
     albedo = mix(albedo, tD.rgb, smoothstep(0.4, 0.8, nq.r) * 0.6);
     H -= (1.0 - smoothstep(0.0, 0.06, abs(lf))) * relief;
     specK = 0.18;

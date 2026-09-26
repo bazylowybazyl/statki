@@ -3,12 +3,17 @@
 // Extracts firing logic from index.html into reusable instances
 import { getMountedWeaponAim, mountedWeaponBase, stepMountedWeaponAim } from './weaponAim.js';
 import { Turret2D } from '../vfx/turret2D.js';
+import { createCarrier, writeCarrier, writePointVelocity } from './carrierVelocity.js';
 
 const AIM_GROUPS = ['main', 'missile', 'special', 'special_missile'];
 const EMPTY_WEAPONS = [];
 const _aimBase = { x: 0, y: 0 };
 const _aimPoint = { x: 0, y: 0 };
+// Prędkość podstawy wieżyczki (ruch okrętu + obrót) — pocisk ją dziedziczy,
+// więc wyprzedzenie liczymy względem niej.
+const _aimVel = { x: 0, y: 0 };
 const _muzzleOffset = { x: 0, y: 0 };
+const _muzzleCarrier = createCarrier();
 
 // OPTYMALIZACJA: Pre-alokowany obiekt, używany wielokrotnie podczas wyliczania Muzzle.
 // Zabija to powstawanie setek tysięcy obiektów na sekundę dla Garbage Collectora.
@@ -215,7 +220,8 @@ export class WeaponController {
         if (state.target) {
           if (weapon.category !== 'beam' && typeof window.getLeadAim === 'function') {
             aimPoint = window.getLeadAim(_aimBase, state.target,
-              (weapon.baseSpeed || 1000) * (ship.modifiers?.projectileSpeed || 1));
+              (weapon.baseSpeed || 1000) * (ship.modifiers?.projectileSpeed || 1),
+              undefined, writePointVelocity(ship, _aimBase.x, _aimBase.y, _aimVel));
           } else {
             _aimPoint.x = targetX(state.target);
             _aimPoint.y = targetY(state.target);
@@ -238,8 +244,8 @@ export class WeaponController {
     _muzzleScratch.pos.y += _muzzleOffset.x * s + _muzzleOffset.y * c;
     _muzzleScratch.dir.x = c;
     _muzzleScratch.dir.y = s;
-    _muzzleScratch.baseVel.x = ship.vel?.x || ship.vx || 0;
-    _muzzleScratch.baseVel.y = ship.vel?.y || ship.vy || 0;
+    // Prędkość wylotu = ruch okrętu + obrót (v + ω × r): pocisk dziedziczy ją w 100%.
+    writePointVelocity(ship, _muzzleScratch.pos.x, _muzzleScratch.pos.y, _muzzleScratch.baseVel);
     return _muzzleScratch;
   }
 
@@ -314,16 +320,18 @@ export class WeaponController {
       if (CanvasVFX && !rich3D && weaponData.category !== 'beam') {
         const isHeavy = (weaponData.size === 'L' || weaponData.size === 'Capital');
         const muzzleScale = isHeavy ? 1.8 : 1.0;
+        // Błysk leci z lufą (nośnik: prędkość wylotu, poza fizyczna strzału).
+        const carrier = writeCarrier(ship, muzzle.pos.x, muzzle.pos.y, false, _muzzleCarrier);
         if (weaponData.category === 'torpedo') {
-          CanvasVFX.spawnArmataMuzzle(muzzle.pos, muzzle.dir, ship.vel, muzzleScale * 1.5);
+          CanvasVFX.spawnArmataMuzzle(muzzle.pos, muzzle.dir, muzzle.baseVel, muzzleScale * 1.5, carrier);
         } else if (weaponData.category === 'superweapon' || weaponData.id === 'siege_railgun') {
-          CanvasVFX.spawnRailMuzzle(muzzle.pos, muzzle.dir, ship.vel, muzzleScale * 2.0);
+          CanvasVFX.spawnRailMuzzle(muzzle.pos, muzzle.dir, muzzle.baseVel, muzzleScale * 2.0, carrier);
         } else if (weaponData.category === 'armata' || weaponData.category === 'plasma') {
-          CanvasVFX.spawnArmataMuzzle(muzzle.pos, muzzle.dir, ship.vel, muzzleScale);
+          CanvasVFX.spawnArmataMuzzle(muzzle.pos, muzzle.dir, muzzle.baseVel, muzzleScale, carrier);
         } else if (weaponData.category === 'autocannon') {
-          CanvasVFX.spawnAutocannonMuzzle(muzzle.pos, muzzle.dir, ship.vel, muzzleScale);
+          CanvasVFX.spawnAutocannonMuzzle(muzzle.pos, muzzle.dir, muzzle.baseVel, muzzleScale, carrier);
         } else {
-          CanvasVFX.spawnRailMuzzle(muzzle.pos, muzzle.dir, ship.vel, muzzleScale);
+          CanvasVFX.spawnRailMuzzle(muzzle.pos, muzzle.dir, muzzle.baseVel, muzzleScale, carrier);
         }
       }
 

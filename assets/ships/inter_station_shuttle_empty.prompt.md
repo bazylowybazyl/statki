@@ -3,7 +3,7 @@
 Output: `inter_station_shuttle_empty.png` — 1774 × 887 px, jak oryginał.
 
 - Tryb: EDYCJA oryginału `assets/inter_station_shuttle.png` (dołącz go), najlepiej inpainting z maską tylko na ładowni.
-- Płótno, obrys, położenie i skala identyczne co do piksela: z PNG oryginału liczone są obrys kolizji portu (`src/3d/haloRing/haloPortHulls.js`), dysze i światła, a wersja pusta ma się podmieniać 1:1. Jeśli generator przesunie obrys, przenieś z wyniku na oryginał tylko wnętrze ładowni.
+- Płótno, obrys, położenie i skala identyczne co do piksela: z PNG oryginału liczone są obrys kolizji portu i położenie dysz (`src/3d/haloRing/haloPortHulls.js`), a wersja pusta ma się podmieniać 1:1. Jeśli generator przesunie obrys, przenieś z wyniku na oryginał tylko wnętrze ładowni.
 - Po co: kontenery i drony 3D (Z5/Z14, plan § 3.4) — domalowany ładunek zasłania kontenery i nie pozwala pokazać pustego ani częściowo pełnego statku.
 - Sloty: górny i dolny rząd po 4 = 8 (klasa ruchu `van`: 8 slotów); środkowy rząd → kil bez slotów. Cywilny: bez mostka.
 

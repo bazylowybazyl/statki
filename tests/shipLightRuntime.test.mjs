@@ -11,13 +11,16 @@ import {
   buildPositionLightWorldSprites,
   buildRoadLightWorldEmitters,
   buildShipLightShaderPayload,
+  computeAutoFloodMarkers,
   computeRoadEmitterReach,
   createRoadEmitterReach,
+  floodLightAllowed,
   getEntityLights,
   glslFloat,
   hexToRgb01,
   roadEmittersMayReach
 } from '../src/game/shipLightRuntime.js';
+import { normalizeLightsBlock } from '../src/ui/shipLightEditorModel.js';
 import { ATLAS_EDITOR_DEFAULTS } from '../src/data/atlasHardpointDefaults.js';
 
 test('editor lights are packed into sprite grid coordinates for shader use', () => {
@@ -202,6 +205,32 @@ test('reflektory otoczenia z obrysu lamp: rufa + burty zależnie od długości k
   const emitters = buildRoadLightWorldEmitters([{ id: 's', x: 0, y: 0, angle: 0, editorLights: lights }]);
   assert.equal(emitters.filter((e) => e.flood).length, 5);
   assert.equal(emitters.filter((e) => !e.flood).length, 1);
+});
+
+test('reflektory z obrysu: generator dla edytora = blok gry, autoFlood:false gasi', () => {
+  const outline = [];
+  for (let i = 0; i <= 10; i++) {
+    outline.push({ x: -500 + i * 100, y: -100 }, { x: -500 + i * 100, y: 100 });
+  }
+  const lights = { position: outline, road: [{ id: 'r', x: 500, y: 0, deg: 90 }] };
+  // Edytor liczy podgląd z tego samego generatora co gra (bez mutacji bloku).
+  const plain = normalizeLightsBlock(lights);
+  const { hullLenPx, markers } = computeAutoFloodMarkers(plain);
+  assert.equal(hullLenPx, 1000);
+  assert.equal(plain.flood.length, 0, 'generator nie dopisuje do bloku');
+  assert.deepEqual(markers.map((m) => m.id), getEntityLights({ editorLights: lights }).flood.map((f) => f.id));
+  // Progi długości: te same, które payload stosuje per encja.
+  assert.deepEqual(markers.filter((m) => floodLightAllowed(m, 400)).map((m) => m.id).sort(),
+    ['auto_flood_mid_l', 'auto_flood_mid_r', 'auto_flood_rear']);
+  assert.ok(floodLightAllowed({ id: 'own' }, 0), 'własny reflektor świeci na każdym kadłubie');
+  // Hulk po utracie dowodzenia: lampy bez reflektorów, ale bez automatycznych.
+  const dark = getEntityLights({ editorLights: { position: outline, road: [], flood: [], autoFlood: false } });
+  assert.equal(dark.flood.length, 0);
+  assert.equal(dark.hullLenPx, 1000);
+  // Własne reflektory z edytora przechodzą bez zmian i wyłączają generator.
+  const own = getEntityLights({ editorLights: { ...lights, flood: [{ id: 'f', x: 0, y: 90, deg: 180 }] } });
+  assert.deepEqual(own.flood.map((f) => f.id), ['f']);
+  assert.equal(computeAutoFloodMarkers(own).markers.length, 0);
 });
 
 test('grupy lamp pozycyjnych: do 4 na statek, sekwencja w [rest, 1], rozlew na inny kadłub', () => {

@@ -188,6 +188,8 @@ export function createRailgunExplosionFactory(scene) {
       localSmokeMaterial.dispose();
     }
 
-    return { update, dispose, group };
+    // followCarrier: całość siedzi w `group`, więc overlay może ją nieść
+    // z prędkością trafionego kadłuba (src/game/carrierVelocity.js).
+    return { update, dispose, group, followCarrier: true };
   };
 }

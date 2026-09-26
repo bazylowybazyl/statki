@@ -1382,7 +1382,11 @@ export function applyCommandLossVisuals(entity, nowSec, opts = {}) {
   // Światła pozycyjne: pierwotna lista zapamiętana raz.
   if (!st.navOriginal) {
     const src = entity.editorLights;
-    st.navOriginal = src ? { position: Array.isArray(src.position) ? src.position.slice() : [], road: Array.isArray(src.road) ? src.road.slice() : [] } : null;
+    st.navOriginal = src ? {
+      position: Array.isArray(src.position) ? src.position.slice() : [],
+      road: Array.isArray(src.road) ? src.road.slice() : [],
+      ...(Array.isArray(src.flood) ? { flood: src.flood.slice() } : {})
+    } : null;
     st.navMask = '';
   }
   const orig = st.navOriginal;
@@ -1402,7 +1406,14 @@ export function applyCommandLossVisuals(entity, nowSec, opts = {}) {
   mask += roadOn ? 'R' : 'r';
   if (mask === st.navMask) return;
   st.navMask = mask;
-  entity.editorLights = { position: lit, road: roadOn ? orig.road : [] };
+  // Reflektory otoczenia gasną z drogowymi; `autoFlood: false`, bo lista bez
+  // reflektorów dostałaby w shipLightRuntime automatyczne z obrysu lamp.
+  entity.editorLights = {
+    position: lit,
+    road: roadOn ? orig.road : [],
+    flood: roadOn && orig.flood ? orig.flood : [],
+    autoFlood: roadOn
+  };
 }
 
 // vfxScale musi zostać > 0 (EngineVfxSystem traktuje 0 jak brak wpisu = 1).

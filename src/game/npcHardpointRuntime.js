@@ -350,7 +350,8 @@ export function createNpcHardpointRuntime({
     npc.editorLights = cfg.lights && typeof cfg.lights === 'object'
       ? {
           position: Array.isArray(cfg.lights.position) ? cfg.lights.position : [],
-          road: Array.isArray(cfg.lights.road) ? cfg.lights.road : []
+          road: Array.isArray(cfg.lights.road) ? cfg.lights.road : [],
+          flood: Array.isArray(cfg.lights.flood) ? cfg.lights.flood : []
         }
       : null;
     npc.editorHardpointCursor = {};

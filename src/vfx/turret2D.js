@@ -541,8 +541,9 @@ function indexRecordForEntity(entity, rec) {
 }
 
 // Wynik triggerShot — jeden obiekt, ważny do następnego wywołania (wołający
-// czyta go od razu: błysk, odrzut, wstrząs).
-const _shotResult = { x: 0, y: 0, angle: 0, scale: 1, color: '#b8d7ff', shake: 0 };
+// czyta go od razu: błysk, odrzut, wstrząs). `entity` = kadłub z wieżyczką,
+// z którego błysk bierze prędkość (nośnik); wołający nie zatrzymuje referencji.
+const _shotResult = { x: 0, y: 0, angle: 0, scale: 1, color: '#b8d7ff', shake: 0, entity: null };
 
 function getRecoilState(entity, uid) {
   let perEntity = recoilByEntity.get(entity);
@@ -876,6 +877,7 @@ export const Turret2D = {
     out.scale = best.scale;
     out.color = MUZZLE_COLOR[profile.key] || '#b8d7ff';
     out.shake = Math.max(0, profile.shake);
+    out.entity = best.entity || null;
     return out;
   },
 

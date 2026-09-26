@@ -13,6 +13,15 @@ import * as THREE from 'three';
 import { Core3D } from './core3d.js';
 import { Fx3D, FX_PLANE_Z, FX_RENDER_ORDER } from './fxParticles3D.js';
 import { sceneOriginNearCamera } from './sceneOrigin.js';
+import { SimClock, CLOCK_RENDER } from '../game/simClock.js';
+
+// NOŚNIK smugi (src/game/carrierVelocity.js): pocisk dziedziczy prędkość okrętu,
+// więc gaz, który zostawia, też. Każdy węzeł pamięta czas nośnika, segment —
+// prędkość i zegar; shader dokłada  v · (T − t)  do pozycji węzła. Zerowy nośnik
+// = smuga stoi w świecie jak dawniej. Czasy względem epoki smugi (float32 na
+// GPU: czas gry rośnie godzinami), epoka przesuwana, gdy smuga pusta albo
+// odjedzie o TRAIL_EPOCH_SPAN.
+const TRAIL_EPOCH_SPAN = 600;
 
 /* ============================================================================
    SMUGA POCISKU — port WorldTrail z „capital_engine_vfx_v3".
@@ -52,13 +61,18 @@ float cloud(vec2 p){
 const TRAIL_VERTEX = /* glsl */`
 attribute vec4 aA,aB,aVA,aVB,aSA,aSB;
 attribute vec2 aMeta,aPath;
-uniform float uTime,uLife,uTurbulence;
+attribute vec4 aCarrier;
+attribute float aCarrierClock;
+uniform float uTime,uLife,uTurbulence,uCarrierRender,uCarrierSim;
 varying vec2 vUv;
 varying float vAge,vEnergy,vSeed,vBirth,vPath;
-vec3 endpoint(vec4 origin,vec4 velocity,vec4 sideWidth,float path){
+vec3 endpoint(vec4 origin,vec4 velocity,vec4 sideWidth,float path,float carrierTime){
  float age=max(0.,uTime-origin.w);
  float drift=min(age,.35)+max(age-.35,0.)*.26;
  vec3 p=origin.xyz+velocity.xyz*drift;
+ // nośnik: węzeł leci z prędkością odziedziczoną przez pocisk
+ float carrierNow=aCarrierClock>.5?uCarrierRender:uCarrierSim;
+ p.xy+=aCarrier.xy*(carrierNow-carrierTime);
  float develop=smoothstep(.15,2.8,age);
  float wobble=(sin(path*2.7+aMeta.x+age*.75)*.68+sin(path*6.1-aMeta.x-age*.9)*.28);
  p+=sideWidth.xyz*wobble*sideWidth.w*uTurbulence*develop*.46;
@@ -74,7 +88,7 @@ vec3 endpoint(vec4 origin,vec4 velocity,vec4 sideWidth,float path){
 void main(){
  if(aMeta.y<0.){vUv=uv;vAge=0.;vEnergy=0.;vSeed=0.;vBirth=0.;vPath=0.;gl_Position=vec4(2.,2.,2.,1.);return;}
  float t=uv.x;
- vec3 p=mix(endpoint(aA,aVA,aSA,aPath.x),endpoint(aB,aVB,aSB,aPath.y),t);
+ vec3 p=mix(endpoint(aA,aVA,aSA,aPath.x,aCarrier.z),endpoint(aB,aVB,aSB,aPath.y,aCarrier.w),t);
  vUv=uv;vBirth=mix(aA.w,aB.w,t);vAge=max(0.,uTime-vBirth);
  vEnergy=mix(aVA.w,aVB.w,t);vSeed=aMeta.x;vPath=mix(aPath.x,aPath.y,t);
  gl_Position=projectionMatrix*modelViewMatrix*vec4(p,1.);
@@ -128,7 +142,8 @@ export class SlugTrail {
     this.cfg = cfg;
     this.S = scale;                     // skala świata właściciela
     this.capacity = capacity;
-    this.stride = 28;                   // [A 12][B 12][seed, emiter][drogaA, drogaB]
+    // [A 12][B 12][seed, emiter][drogaA, drogaB][nośnik: vx, vy (scena), czasA, czasB][zegar]
+    this.stride = 33;
     this.headCount = heads;
     this.totalSlots = capacity + heads;
     this.headValid = new Uint8Array(heads);
@@ -137,12 +152,14 @@ export class SlugTrail {
     this.buffer.setUsage(THREE.DynamicDrawUsage);
     this.geometry = makeTrailStrip();
     this.geometry.instanceCount = 0;
-    const fields = [['aA', 4, 0], ['aVA', 4, 4], ['aSA', 4, 8], ['aB', 4, 12], ['aVB', 4, 16], ['aSB', 4, 20], ['aMeta', 2, 24], ['aPath', 2, 26]];
+    const fields = [['aA', 4, 0], ['aVA', 4, 4], ['aSA', 4, 8], ['aB', 4, 12], ['aVB', 4, 16], ['aSB', 4, 20], ['aMeta', 2, 24], ['aPath', 2, 26],
+      ['aCarrier', 4, 28], ['aCarrierClock', 1, 32]];
     for (const [name, size, offset] of fields) {
       this.geometry.setAttribute(name, new THREE.InterleavedBufferAttribute(this.buffer, size, offset));
     }
     this.uniforms = {
       uTime: { value: 0 }, uLife: { value: cfg.trailLife }, uTurbulence: { value: cfg.turbulence },
+      uCarrierRender: { value: 0 }, uCarrierSim: { value: 0 },
       uOpacity: { value: cfg.trailOpacity }, uHotAmt: { value: 1.2 },
       uTrailYoung: { value: new THREE.Color().setRGB(0.22, 0.62, 1.25) },
       uTrailOld: { value: new THREE.Color().setRGB(0.07, 0.035, 0.30) },
@@ -160,9 +177,15 @@ export class SlugTrail {
     this.mesh.name = `${name}__WORLD_SPACE`;
     scene.add(this.mesh);
 
-    this.previous = Array.from({ length: heads }, () => new Float32Array(13));
+    // węzeł: [12 danych][droga][czas nośnika względem epoki]
+    this.previous = Array.from({ length: heads }, () => new Float32Array(14));
     this.previousValid = new Uint8Array(heads);
-    this.em = Array.from({ length: heads }, () => ({ busy: false, acc: 0, path: 0, spacing: 40, seed: 0 }));
+    // Nośnik emitera (stały na cały ślad — pocisk ma jedną odziedziczoną prędkość):
+    // cvx/cvy w scenie, zegar i czas nośnika ostatniego punktu (bezwzględny, double).
+    this.em = Array.from({ length: heads }, () => ({
+      busy: false, acc: 0, path: 0, spacing: 40, seed: 0, cvx: 0, cvy: 0, clock: 0, ct: 0
+    }));
+    this.carrierEpoch = SimClock.sim;
     this.idToSlot = new Int32Array(capacity);
     this.slotToId = new Int32Array(capacity);
     this.queueTimes = new Float64Array(capacity);
@@ -170,7 +193,7 @@ export class SlugTrail {
     this.dirtySlots = new Uint32Array(this.totalSlots);
     this.dirtyCount = 0;
     this.active = 0; this.head = 0; this.tail = 0;
-    this.node = new Float32Array(13);
+    this.node = new Float32Array(14);
     this._p = new THREE.Vector3();
     // Początek układu danych (scena: x, −y świata). Świat leży przy 5–10 mln j.,
     // gdzie float32 ma krok 0,5 j.: bezwzględne węzły drgały na GPU ~1 px ×
@@ -203,6 +226,40 @@ export class SlugTrail {
       this._rebase(o.x, o.y);
     }
   }
+  // Epoka czasów nośnika: pusta smuga bierze bieżący czas gry, żywa przesuwa
+  // czasy zapisanych węzłów, gdy od epoki minie TRAIL_EPOCH_SPAN (float32).
+  _syncEpoch() {
+    const now = SimClock.sim;
+    if (!this._live()) {
+      this.carrierEpoch = now;
+    } else if (now - this.carrierEpoch > TRAIL_EPOCH_SPAN) {
+      this._rebaseEpoch(now);
+    }
+  }
+  _rebaseEpoch(epoch) {
+    const shift = this.carrierEpoch - epoch;
+    const st = this.stride;
+    const d = this.data;
+    const n = this.headCount + this.active;
+    for (let s = 0; s < n; s++) {
+      const b = s * st;
+      d[b + 30] += shift; d[b + 31] += shift;
+      this.mark(s);
+    }
+    for (let e = 0; e < this.headCount; e++) {
+      if (this.previousValid[e]) this.previous[e][13] += shift;
+    }
+    this.carrierEpoch = epoch;
+  }
+  // Nośnik segmentu: prędkość i zegar emitera, czasy obu końców.
+  _writeCarrier(base, e, a, b) {
+    const m = this.em[e];
+    const d = this.data;
+    d[base + 28] = m.cvx; d[base + 29] = m.cvy;
+    d[base + 30] = a[13]; d[base + 31] = b[13];
+    d[base + 32] = m.clock;
+  }
+
   // Przesuwa początek razem z żywymi danymi: pozycje A/B wszystkich slotów
   // (głowy + historia) i ostatnie węzły emiterów. Rzadkie (kamera odjechała
   // przy żywej smudze), więc pełny zapis bufora nie boli.
@@ -249,9 +306,10 @@ export class SlugTrail {
     while (this.active && time - this.queueTimes[this.head] > life) this.retire();
   }
 
-  // węzeł: [pozycja, narodziny][prędkość dryfu, energia][bok, szerokość][droga]
+  // węzeł: [pozycja, narodziny][prędkość dryfu, energia][bok, szerokość][droga][czas nośnika]
   // `dir` jest już w przestrzeni sceny (XY w płaszczyźnie gry, Z ku kamerze).
-  makeNode(out, pos, time, dir, path) {
+  makeNode(out, pos, time, dir, path, carrierTime = this.carrierEpoch) {
+    out[13] = carrierTime - this.carrierEpoch;
     const S = this.S;
     // Względem początku smugi (małe liczby dla float32).
     out[0] = pos.x - this.originX; out[1] = pos.y - this.originY; out[2] = pos.z; out[3] = time;
@@ -271,14 +329,21 @@ export class SlugTrail {
     for (let e = 0; e < this.headCount; e++) if (!this.em[e].busy) return e;
     return -1;                          // wszystkie sloty zajęte: pocisk poleci bez smugi
   }
-  begin(e, pos, time, dir, speed) {
+  // `carrier` (src/game/carrierVelocity.js, prędkość w świecie gry): nośnik
+  // całego śladu; `t0` = czas nośnika punktu `pos`.
+  begin(e, pos, time, dir, speed, carrier = null) {
     this._syncOrigin();
+    this._syncEpoch();
     const m = this.em[e];
     m.busy = true; m.acc = 0;
     m.path = Math.random() * 40 * TRAIL_PATH_UNIT;   // każdy ślad ma inny wzór
     m.seed = Math.random() * 100;
     m.spacing = Math.max(40 * this.S, speed / 160);  // najwyżej ~160 próbek/s
-    this.makeNode(this.previous[e], pos, time, dir, m.path);
+    m.cvx = carrier ? (Number(carrier.vx) || 0) : 0;
+    m.cvy = carrier ? -(Number(carrier.vy) || 0) : 0;   // scena ma odwrócone Y
+    m.clock = carrier?.clock === CLOCK_RENDER ? 1 : 0;
+    m.ct = carrier && Number.isFinite(carrier.t0) ? carrier.t0 : SimClock.sim;
+    this.makeNode(this.previous[e], pos, time, dir, m.path, m.ct);
     this.previousValid[e] = 1;
   }
   emit(e, node) {
@@ -292,6 +357,7 @@ export class SlugTrail {
       this.data.set(node.subarray(0, 12), base + 12);
       this.data[base + 24] = this.em[e].seed; this.data[base + 25] = e;
       this.data[base + 26] = prev[12]; this.data[base + 27] = node[12];
+      this._writeCarrier(base, e, prev, node);
       this.slotToId[slot] = id; this.idToSlot[id] = slot; this.queueTimes[id] = node[3];
       this.tail = (this.tail + 1) % this.capacity;
       this.mark(slot + this.headCount);
@@ -311,31 +377,37 @@ export class SlugTrail {
     this.data.set(node.subarray(0, 12), base + 12);
     this.data[base + 24] = this.em[e].seed; this.data[base + 25] = e;
     this.data[base + 26] = prev[12]; this.data[base + 27] = node[12];
+    this._writeCarrier(base, e, prev, node);
     this.headValid[e] = 1;
     this.mark(e);
   }
 
-  // przesuwa emiter po odcinku from->to; próbki co `spacing` jednostek drogi
-  advance(e, from, to, t0, t1, dir) {
+  // przesuwa emiter po odcinku from->to; próbki co `spacing` jednostek drogi.
+  // `carrier.t0` = czas nośnika punktu `to` (czasy węzłów po drodze — interpolowane).
+  advance(e, from, to, t0, t1, dir, carrier = null) {
     const m = this.em[e];
+    const ctFrom = m.ct;
+    const ctTo = carrier && Number.isFinite(carrier.t0) ? carrier.t0 : ctFrom;
     const seg = from.distanceTo(to);
     if (seg > 1e-6) {
       let d = m.spacing - m.acc;
       while (d <= seg) {
         const f = d / seg;
         this._p.lerpVectors(from, to, f);
-        this.emit(e, this.makeNode(this.node, this._p, t0 + (t1 - t0) * f, dir, m.path + d));
+        this.emit(e, this.makeNode(this.node, this._p, t0 + (t1 - t0) * f, dir, m.path + d, ctFrom + (ctTo - ctFrom) * f));
         d += m.spacing;
       }
       m.acc = seg - (d - m.spacing);
       m.path += seg;
     }
-    this.updateHead(e, this.makeNode(this.node, to, t1, dir, m.path));
+    m.ct = ctTo;
+    this.updateHead(e, this.makeNode(this.node, to, t1, dir, m.path, ctTo));
   }
   // domyka ślad dokładnie w punkcie końcowym (np. trafienia) i zwalnia emiter
-  end(e, pos, time, dir) {
+  end(e, pos, time, dir, carrier = null) {
     const m = this.em[e];
-    if (this.previousValid[e] && m.acc > 1e-3) this.emit(e, this.makeNode(this.node, pos, time, dir, m.path));
+    const ct = carrier && Number.isFinite(carrier.t0) ? carrier.t0 : m.ct;
+    if (this.previousValid[e] && m.acc > 1e-3) this.emit(e, this.makeNode(this.node, pos, time, dir, m.path, ct));
     this.previousValid[e] = 0;
     this.hideHead(e);
     m.busy = false;
@@ -343,10 +415,13 @@ export class SlugTrail {
 
   prepare(time) {
     this._syncOrigin();
+    this._syncEpoch();
     const u = this.uniforms;
     const c = this.cfg;
     u.uTime.value = time; u.uLife.value = c.trailLife; u.uOpacity.value = c.trailOpacity;
     u.uTurbulence.value = c.turbulence;
+    u.uCarrierRender.value = SimClock.render - this.carrierEpoch;
+    u.uCarrierSim.value = SimClock.sim - this.carrierEpoch;
     let heads = 0;
     for (let e = 0; e < this.headCount; e++) heads += this.headValid[e];
     this.geometry.instanceCount = this.active + this.headCount;
@@ -428,6 +503,17 @@ const BULLET_TRAIL_HOT = 0.7;   // Hexlance: 1.2 — mniej przepalony łeb
 const _from = new THREE.Vector3();
 const _to = new THREE.Vector3();
 const _dir = new THREE.Vector3();
+// Nośnik śladu: prędkość odziedziczona przez pocisk przy strzale (ivx/ivy)
+// i zegar, w którym pocisk jest rysowany (bullet.clock, patrz weapon3DSystem).
+const _carrier = { vx: 0, vy: 0, clock: 0, t0: 0 };
+
+function writeBulletCarrier(bullet) {
+  _carrier.vx = Number(bullet.ivx) || 0;
+  _carrier.vy = Number(bullet.ivy) || 0;
+  _carrier.clock = bullet.clock === CLOCK_RENDER ? CLOCK_RENDER : 0;
+  _carrier.t0 = SimClock.now(_carrier.clock);
+  return _carrier;
+}
 
 const live = new Map();          // bullet -> { emitter, lastX, lastY, seen }
 
@@ -477,19 +563,20 @@ export const BulletTrails = {
     const t0 = t1 - Fx3D.lastDt;
     const len = Math.hypot(vx, vy) || 1;
     _dir.set(vx / len, -vy / len, 0);
+    // (x, y) to pozycja pocisku W TEJ KLATCE (weapon3DSystem cofa pociski gracza
+    // o zaległość interpolacji), więc czas nośnika punktu = „teraz” jego zegara.
+    const carrier = writeBulletCarrier(bullet);
 
     let state = live.get(bullet);
     if (!state) {
-      // Start od poprzedniego kroku fizyki, jeśli jest — bliżej wylotu lufy
-      // niż bieżąca pozycja, więc dziura pod błyskiem jest mniejsza.
-      const sx = Number.isFinite(bullet.px) ? Number(bullet.px) : x;
-      const sy = Number.isFinite(bullet.py) ? Number(bullet.py) : y;
+      // Start w bieżącej pozycji: `px/py` to poza fizyczna z innego zegara niż
+      // rysowany pocisk gracza (szczelinę pod lufą i tak kryje błysk).
       const emitter = trail.acquire();
       if (emitter >= 0) {
-        _from.set(sx, -sy, FX_PLANE_Z);
-        trail.begin(emitter, _from, t0, _dir, len);
+        _from.set(x, -y, FX_PLANE_Z);
+        trail.begin(emitter, _from, t0, _dir, len, carrier);
       }
-      state = { emitter, lastX: sx, lastY: sy, dirX: vx / len, dirY: vy / len, seen: true };
+      state = { emitter, lastX: x, lastY: y, dirX: vx / len, dirY: vy / len, seen: true };
       live.set(bullet, state);
     }
     state.seen = true;
@@ -497,7 +584,7 @@ export const BulletTrails = {
     if (state.emitter >= 0) {
       _from.set(state.lastX, -state.lastY, FX_PLANE_Z);
       _to.set(x, -y, FX_PLANE_Z);
-      trail.advance(state.emitter, _from, _to, t0, t1, _dir);
+      trail.advance(state.emitter, _from, _to, t0, t1, _dir, carrier);
     }
     state.lastX = x;
     state.lastY = y;

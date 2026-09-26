@@ -3,7 +3,7 @@
 Output: `megafreighterwagon_empty.png` — 1672 × 941 px, jak oryginał (inne płótno niż reszta!).
 
 - Tryb: EDYCJA oryginału `assets/megafreighterwagon.png` (wagon składu, `src/game/megafreighterTrain.js`; dołącz go), najlepiej inpainting z maską tylko na ładowni.
-- Płótno, obrys, położenie i skala identyczne co do piksela: sprzęgi i ciało wagonu liczone są z PNG oryginału, a wersja pusta ma się podmieniać 1:1. Jeśli generator przesunie obrys, przenieś z wyniku na oryginał tylko wnętrze ładowni.
+- Płótno, obrys, położenie i skala identyczne co do piksela: gra rysuje wagon w stałym prostokącie 2760 × 1554 j. (`renderWidth`/`renderHeight` w `src/game/megafreighterTrain.js`) ze sprzęgami w stałych kotwicach, a ciało kadłuba powstaje z alfy PNG — inne płótno albo przesunięty obrys rozjedzie się ze sprzęgami. Jeśli generator przesunie obrys, przenieś z wyniku na oryginał tylko wnętrze ładowni.
 - Po co: kontenery i drony 3D (Z5/Z14, plan § 3.4).
 - Sloty: 2 × 8 zatok = 16, każda dzielona wzdłuż wagonu na 2 sloty (32 małe). Cywilny: bez mostka.
 

@@ -3,7 +3,7 @@
 Output: `heavy_freighter_empty.png` — 1774 × 887 px, jak oryginał.
 
 - Tryb: EDYCJA `assets/ships/heavy_freighter.png` — najpierw wygeneruj go z `heavy_freighter.prompt.md`, potem dołącz jako cel edycji; najlepiej inpainting z maską tylko na ładowni.
-- Płótno, obrys, położenie i skala identyczne co do piksela z wersją z ładunkiem (obrys kolizji, dysze i światła liczone są z jednego PNG, wersje mają się podmieniać 1:1). Jeśli generator przesunie obrys, przenieś z wyniku tylko wnętrze ładowni.
+- Płótno, obrys, położenie i skala identyczne co do piksela z wersją z ładunkiem (obrys kolizji i położenie dysz liczone są z jednego PNG, wersje mają się podmieniać 1:1). Jeśli generator przesunie obrys, przenieś z wyniku tylko wnętrze ładowni.
 - Po co: kontenery i drony 3D (Z5/Z14, plan § 3.4). Klasa ruchu `heavy` (stanowiska `capital`).
 - Sloty: 3 × 8 zatok, każda dzielona wzdłuż statku na 2 sloty = 24 zatoki / 48 slotów (plan § 3.4 liczy dziś `heavy` 14 — z zastępczego sprite'a; do aktualizacji w Z5). Cywilny: bez mostka.
 

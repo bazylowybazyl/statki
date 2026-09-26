@@ -3,7 +3,7 @@
 Output: `long_haul_freighter_empty.png` — 1774 × 887 px, jak oryginał.
 
 - Tryb: EDYCJA oryginału `assets/long_haul_freighter.png` (dołącz go), najlepiej inpainting z maską tylko na ładowni.
-- Płótno, obrys, położenie i skala identyczne co do piksela: z PNG oryginału liczone są obrys kolizji portu (`src/3d/haloRing/haloPortHulls.js`), dysze i światła, a wersja pusta ma się podmieniać 1:1. Jeśli generator przesunie obrys, przenieś z wyniku na oryginał tylko wnętrze ładowni.
+- Płótno, obrys, położenie i skala identyczne co do piksela: z PNG oryginału liczone są obrys kolizji portu i położenie dysz (`src/3d/haloRing/haloPortHulls.js`), a wersja pusta ma się podmieniać 1:1. Jeśli generator przesunie obrys, przenieś z wyniku na oryginał tylko wnętrze ładowni.
 - Po co: kontenery i drony 3D (Z5/Z14, plan § 3.4). Klasa ruchu `bulk` (stanowiska `L`).
 - Sloty: 2 × 7 zatok, każda dzielona wzdłuż statku na 2 sloty = 28 (klasa `bulk`: 28 slotów). Cywilny: bez mostka.
 

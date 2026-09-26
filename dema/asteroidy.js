@@ -20,6 +20,7 @@ import { GIANT_PRESETS, GIANT_PRESET_IDS, buildGiantPlan } from '../src/game/ast
 import { GiantBuilder } from '../src/game/asteroidGiantBuilder.js';
 import { GiantRock3D } from '../src/3d/rocks/giantRock3D.js';
 import { FIELD_SHIP_LIGHTS } from '../src/3d/fieldLights3D.js';
+import { Fx3D } from '../src/3d/fxParticles3D.js';
 import { AsteroidBelt3D } from '../src/3d/asteroidBelt3D.js';
 import { ATLAS_EDITOR_DEFAULTS } from '../src/data/atlasHardpointDefaults.js';
 import { SHIP_EDITOR_DEFAULTS } from '../src/data/hardpointEditorDefaults.js';
@@ -504,6 +505,7 @@ function setScene(name) {
   S.scene = name;
   S.focus = -1;
   S.camGoal = null;
+  S.camHold = null;
   S.autopilot = null;
   for (const b of document.querySelectorAll('[data-scene]')) b.classList.toggle('on', b.dataset.scene === name);
   const spot = SPOTS[name] || SPOTS.field;
@@ -879,6 +881,9 @@ function stepCamera(dt) {
       S.cam.x += (S.camGoal.x - S.cam.x) * k;
       S.cam.y += (S.camGoal.y - S.cam.y) * k;
     }
+  } else if (S.camHold) {
+    // Kamera trzymana na punkcie (__demo.lookAt — zrzuty, zbliżenia).
+    S.cam.x = S.camHold.x; S.cam.y = S.camHold.y;
   } else {
     // Z eskortą kamera celuje w środek szyku (oba okręty w kadrze).
     let tx = S.ship.x;
@@ -952,6 +957,9 @@ function frame(nowMs, forcedDt = null) {
   // Błyski burzy padają też na pancerze (rozlew w pętli lamp kadłuba).
   setHexShipWorldLights(belt.storm.enabled ? belt.storm.flashes : null);
   updateHexShips3D(cam, renderList, cullInfo);
+  // Pule efektów gry (iskry burzy): w grze aktualizuje je Weapon3DSystem, tu
+  // demo — po zsynchronizowaniu kamery tej klatki, przed renderem.
+  Fx3D.update(realDt);
   drawHexShips3D(ctx2d, W, H);
   drawOverlay(cam);
   updateHud();
@@ -1066,6 +1074,8 @@ async function start() {
     focusGallery,
     GIANTS, FIELD_GIANTS, focusGiant, flyGiant,
     ships: () => ({ atlas, escort }),
+    // Kamera na punkcie (null = z powrotem za statkiem / szykiem).
+    lookAt: (x, y, zoom) => { S.camHold = Number.isFinite(x) ? { x, y } : null; if (zoom) S.cam.zoom = S.targetZoom = zoom; },
     setZoom: (z) => { S.cam.zoom = S.targetZoom = z; },
     step: (n = 1, dt = 1 / 60) => { for (let i = 0; i < n; i++) frame(performance.now(), dt); },
     stats: () => ({

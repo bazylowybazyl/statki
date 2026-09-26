@@ -343,6 +343,11 @@ const PERF_PANEL_HTML = `
     <div class="perf-bar" id="barOverlayFx" style="width:0%;background:#fb923c"></div>
   </div>
 
+  <div class="perf-row"><span class="perf-label">Ruch v2 (most)</span><span class="perf-val" id="perfTrafficBridge">--</span></div>
+  <div class="perf-bar-bg">
+    <div class="perf-bar" id="barTrafficBridge" style="width:0%;background:#2dd4bf"></div>
+  </div>
+
   <div class="perf-sep"></div>
   <div class="perf-row"><span class="perf-label">Shardy (aktywne)</span><span class="perf-val"
       id="perfShards">--</span></div>
@@ -506,6 +511,9 @@ export const PerfHUD = {
     hex3dTime: 0,
     vfxUpdateTime: 0,
     overlayFxTime: 0,
+    // Koszt mostu ruchu v2 na głównym wątku (?trafficV2): wiadomości, kopia
+    // rynku; w trybie awaryjnym także krok świata (co 5 s gry).
+    trafficBridgeTime: 0,
     contacts: 0,
     physicsSteps: 0,
     aiDecisionTicks: 0
@@ -617,6 +625,7 @@ export const PerfHUD = {
     hex3dTime: 0,
     vfxUpdateTime: 0,
     overlayFxTime: 0,
+    trafficBridgeTime: 0,
     contacts: 0,
     physicsSteps: 0,
     aiDecisionHz: 0,
@@ -755,6 +764,7 @@ export const PerfHUD = {
       renderHud: document.getElementById('perfRenderHud'),
       renderUi: document.getElementById('perfRenderUi'),
       overlayFx: document.getElementById('perfOverlayFx'),
+      trafficBridge: document.getElementById('perfTrafficBridge'),
       shards: document.getElementById('perfShards'),
       contacts: document.getElementById('perfContacts'),
       gpuFrame: document.getElementById('perfGpuFrame'),
@@ -838,6 +848,7 @@ export const PerfHUD = {
       barRenderHud: document.getElementById('barRenderHud'),
       barRenderUi: document.getElementById('barRenderUi'),
       barOverlayFx: document.getElementById('barOverlayFx'),
+      barTrafficBridge: document.getElementById('barTrafficBridge'),
       colStart: document.getElementById('perfColStart'),
       colStop: document.getElementById('perfColStop'),
       renderStart: document.getElementById('perfRenderStart'),
@@ -1130,14 +1141,17 @@ export const PerfHUD = {
     this.display.npcFireSpawnTime = this.accum.npcFireSpawnTime / frames;
     this.display.npcFireSpawnPerStep = this.accum.npcFireSpawnTime / Math.max(1, this.accum.physicsSteps);
     this.display.drawTime = this.accum.drawTime / frames;
+    this.display.trafficBridgeTime = this.accum.trafficBridgeTime / frames;
     // Untracked = klatka minus WSZYSTKIE mierzone buckety najwyższego poziomu
-    // (fizyka, rysowanie, deformacje destruktora, CanvasVFX update, overlay FX 3D).
+    // (fizyka, rysowanie, deformacje destruktora, CanvasVFX update, overlay FX 3D,
+    // most ruchu v2 — w trybie awaryjnym krok świata leci właśnie w klatce).
     this.display.frameUntrackedTime = Math.max(0, this.display.frameMs
       - this.display.physicsTime
       - this.display.drawTime
       - this.display.deformTime
       - this.display.vfxUpdateTime
-      - this.display.overlayFxTime);
+      - this.display.overlayFxTime
+      - this.display.trafficBridgeTime);
     this.display.renderPrepTime = this.accum.renderPrepTime / frames;
     this.display.render3dUpdateTime = this.accum.render3dUpdateTime / frames;
     this.display.render3dPlanetsUpdateTime = this.accum.render3dPlanetsUpdateTime / frames;
@@ -1435,6 +1449,7 @@ export const PerfHUD = {
     setMs(e.renderHud, d.renderHudTime);
     setMs(e.renderUi, d.renderUiTime);
     setMs(e.overlayFx, d.overlayFxTime);
+    setMs(e.trafficBridge, d.trafficBridgeTime);
     setBar(e.barFrameUntracked, d.frameUntrackedTime);
     setBar(e.barPhysics, d.physicsTime);
     setBar(e.barDestructor, d.destructorTime);
@@ -1498,6 +1513,7 @@ export const PerfHUD = {
     setBar(e.barRenderHud, d.renderHudTime);
     setBar(e.barRenderUi, d.renderUiTime);
     setBar(e.barOverlayFx, d.overlayFxTime);
+    setBar(e.barTrafficBridge, d.trafficBridgeTime);
     if (e.shards) e.shards.textContent = d.sleepingShards > 0 ? `${d.shards} (${d.sleepingShards} zz)` : `${d.shards}`;
     if (e.contacts) e.contacts.textContent = `${Math.round(d.contacts)}`;
     if (e.drawCalls) {
@@ -1673,6 +1689,7 @@ export const PerfHUD = {
     this.accum.hex3dTime = 0;
     this.accum.vfxUpdateTime = 0;
     this.accum.overlayFxTime = 0;
+    this.accum.trafficBridgeTime = 0;
     this.accum.contacts = 0;
     this.accum.physicsSteps = 0;
     this.accum.aiDecisionTicks = 0;

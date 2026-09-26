@@ -237,7 +237,9 @@ export function createArmataImpactFactory(scene) {
       smokeMaterial.dispose();
     }
 
-    return { group, update, dispose };
+    // followCarrier: całość siedzi w `group`, więc overlay może ją nieść
+    // z prędkością trafionego kadłuba (src/game/carrierVelocity.js).
+    return { group, update, dispose, followCarrier: true };
   };
 }
 

@@ -21,7 +21,19 @@ export function clampTurnVec(vx, vy, wantVx, wantVy, dt, maxDeg, out = _clampTur
 }
 
 const _leadAimOut = { x: 0, y: 0 };
-export function getLeadAim(shooter, target, projSpeed, out = _leadAimOut) {
+/**
+ * Punkt wyprzedzenia dla pocisku o prędkości wylotowej `projSpeed`.
+ *
+ * Pocisk dziedziczy 100% prędkości strzelca (src/game/carrierVelocity.js), więc
+ * liczy się ruch celu WZGLĘDEM strzelca: w jego układzie pocisk leci prosto
+ * z prędkością wylotową, a cel z prędkością v_celu − v_strzelca. Zwracany punkt
+ * leży w tym układzie — kierunek od strzelca do niego to kierunek lufy, a odległość
+ * = droga pocisku względem strzelca (zapalnik flaku).
+ *
+ * `shooterVel` — prędkość punktu wylotu ({x, y}). Bez niej strzelec stoi — tak
+ * liczy np. sterowanie myśliwca (kurs na przechwycenie, nie lufa).
+ */
+export function getLeadAim(shooter, target, projSpeed, out = _leadAimOut, shooterVel = null) {
   const helperWindow = typeof window !== 'undefined' ? window : null;
   const targetX = typeof helperWindow?.getTargetX === 'function'
     ? helperWindow.getTargetX(target)
@@ -34,10 +46,16 @@ export function getLeadAim(shooter, target, projSpeed, out = _leadAimOut) {
   let vy = target.vy ?? target.vel?.y ?? 0;
   if (!Number.isFinite(vx)) vx = 0;
   if (!Number.isFinite(vy)) vy = 0;
+  let svx = shooterVel ? Number(shooterVel.x) : 0;
+  let svy = shooterVel ? Number(shooterVel.y) : 0;
+  if (!Number.isFinite(svx)) svx = 0;
+  if (!Number.isFinite(svy)) svy = 0;
+  const rvx = vx - svx;
+  const rvy = vy - svy;
   const px = targetX - shooter.x;
   const py = targetY - shooter.y;
-  const A = (vx * vx + vy * vy) - projSpeed * projSpeed;
-  const B = 2 * (px * vx + py * vy);
+  const A = (rvx * rvx + rvy * rvy) - projSpeed * projSpeed;
+  const B = 2 * (px * rvx + py * rvy);
   const C = (px * px + py * py);
   let t = 0;
   if (Math.abs(A) < 1e-3) {
@@ -47,8 +65,8 @@ export function getLeadAim(shooter, target, projSpeed, out = _leadAimOut) {
     t = (disc > 0) ? (-B - Math.sqrt(disc)) / (2 * A) : 0;
   }
   t = Math.max(0, Math.min(2.0, t));
-  out.x = targetX + vx * t;
-  out.y = targetY + vy * t;
+  out.x = targetX + rvx * t;
+  out.y = targetY + rvy * t;
   return out;
 }
 

@@ -38,6 +38,8 @@ import { createFleetRegistry } from './transportCompanies.js';
 import { buildCarriers, TONS_PER_SHIP_HOUR } from './carrierRoster.js';
 import { createShipyardRegistry, registerShipyard, tickShipyards } from './shipyards.js';
 import { createAgentRegistry, buildMerchants } from './agentFleets.js';
+import { haloRingKey, haloRingLayoutFor } from '../haloRingPlanets.js';
+import { buildHaloPortTrafficLayout } from '../../3d/haloRing/haloPortTraffic.js';
 
 // ============================================================
 // Stałe świata
@@ -143,7 +145,10 @@ export function seededRandom(seed) {
  *                       buduje ziarniste `seededRandom(seed)`
  *   stationSpecs        `{ id: { factionId?, capacity?, stock? } }` z gry — patrz niżej
  *   directorOptions     dodatkowa konfiguracja dyspozytora (np. `dispatchInterval`)
- *   ringRadius          `{ id: promień }` — doki na obręczy (domyślnie `systemMap`)
+ *   ringPorts           planeta z ringiem „Halo” dostaje port K-7 z gry
+ *                       (`buildHaloPortTrafficLayout`: hale wojskowe + zatoki
+ *                       cywilne). Domyślnie tak; `false` = dawne pomosty ruchu v2
+ *   ringRadius          `{ id: promień }` — pomosty na obręczy (bez `ringPorts`)
  */
 export function buildTrafficWorld(options = {}) {
   const economyScale = Number.isFinite(options.economyScale) ? options.economyScale : 1;
@@ -210,13 +215,22 @@ export function buildTrafficWorld(options = {}) {
   const getEconomy = stationId => economies.get(String(stationId)) || null;
 
   // ---------- doki ----------
-  // Ziemia i Mars mają pierścienie, więc ich doki wyrastają z obręczy. Reszta
-  // dostaje doki na orbicie wokół stacji.
+  // Ziemia i Mars mają pierścienie „Halo”: ich port to kompleksy K-7 z gry
+  // (hale = wojsko, zatoki = terminale przeładunkowe, decyzja 2026-09-26) —
+  // te same stanowiska, które rysuje render, więc kurs staje tam, gdzie gracz
+  // widzi pad. Reszta dostaje pomosty na orbicie wokół stacji.
+  const ringPorts = options.ringPorts !== false;
   const docks = new Map();
   for (const node of network.stations) {
     if (node.derelict) continue;
     const ringWorldRadius = Number(options.ringRadius?.[node.id])
       || Number(SYSTEM_MAP_PLANET_BY_ID[node.id]?.ringWorldRadius) || 0;
+    const planet = { id: node.id, ringWorldRadius };
+    if (ringPorts && !node.moon && haloRingKey(planet)) {
+      docks.set(node.id, buildHaloPortTrafficLayout(haloRingLayoutFor(planet),
+        { id: node.id, x: node.x, y: node.y }));
+      continue;
+    }
     docks.set(node.id, buildStationDocks(
       { id: node.id, x: node.x, y: node.y, r: 120, ringWorldRadius },
       { berthMultiplier: suggestBerthMultiplier(haulTonnage[node.id], economyScale) }

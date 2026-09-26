@@ -22,10 +22,19 @@
 // a do GPU idą pozycje WZGLĘDEM początku przy kamerze (sceneOrigin.js), który
 // niesie mesh.position każdego systemu. Shadery: `modelViewMatrix * …`, nie
 // `viewMatrix * świat` — inaczej efekty drgają ~1 px względem kadłubów.
+//
+// NOŚNIK (src/game/carrierVelocity.js): cząstka rodzi się z prędkością kadłuba,
+// z którego wyszła (100% — w próżni nic jej nie zatrzyma), i rysuje się
+// w  pos + v_nośnika · (T − t0)  z zegara gry (src/game/simClock.js). Opór
+// i prędkości recept działają na ruch WŁASNY, względem nośnika — dym z lufy
+// Atlasa przy 10 000 j/s wygląda jak przy postoju. Zerowy nośnik (domyślny)
+// = zachowanie sprzed zmiany, np. iskry dysz, które mają zostawać za statkiem.
 
 import * as THREE from 'three';
 import { Core3D } from './core3d.js';
 import { sceneOriginNearCamera } from './sceneOrigin.js';
+import { SimClock, CLOCK_RENDER } from '../game/simClock.js';
+import { ActiveCarrier } from '../game/carrierVelocity.js';
 
 /* ============================================================================
    WARSTWY Z I KOLEJNOŚĆ RYSOWANIA
@@ -253,6 +262,26 @@ function makeTextures() {
 // Początek układu tej klatki (scena: x, −y świata), ustawiany w Fx3D.update.
 const ORIGIN = { x: 0, y: 0 };
 
+// Czasy pokazywane w tej klatce przez oba zegary, zbierane raz na update.
+const CLOCK_NOW = { render: 0, sim: 0 };
+
+// Pola nośnika w każdej puli: prędkość (scena: x, −y świata), czas pozy
+// (double — czas gry rośnie godzinami), zegar (1 = render, 0 = fizyka).
+// Wartości bierze spawn z ActiveCarrier (ustawia go fasada efektu).
+const CARRIER_FIELDS = { cv: 2, ct: 1, ck: 1 };
+
+function writeCarrierFields(f, i) {
+  f.cv[i * 2] = ActiveCarrier.vx;
+  f.cv[i * 2 + 1] = -ActiveCarrier.vy;     // scena ma odwrócone Y
+  f.ct[i] = ActiveCarrier.t0;
+  f.ck[i] = ActiveCarrier.clock;
+}
+
+// Czas lotu z nośnikiem dla cząstki i (T − t0 jej zegara).
+function carrierElapsed(f, i) {
+  return (f.ck[i] === CLOCK_RENDER ? CLOCK_NOW.render : CLOCK_NOW.sim) - f.ct[i];
+}
+
 class Pool {
   // `doubles` — pola z pozycją świata, trzymane w Float64Array.
   constructor(capacity, fields, doubles = null) {
@@ -354,8 +383,9 @@ const BB_FRAG = /* glsl */`
 class BillboardSystem {
   constructor(scene, texture, blending, capacity, renderOrder = 1) {
     this.p = new Pool(capacity, {
-      pos: 3, vel: 3, t: 2, drag: 1, size: 2, rot: 2, c0: 3, c1: 3, mix: 1, a: 3, grow: 1
-    }, ['pos']);
+      pos: 3, vel: 3, t: 2, drag: 1, size: 2, rot: 2, c0: 3, c1: 3, mix: 1, a: 3, grow: 1,
+      ...CARRIER_FIELDS
+    }, ['pos', 'ct']);
     const q = instancedQuad(
       [['iPos', 3], ['iCol', 3], ['iData', 3]], capacity,
       BB_VERT, BB_FRAG, { map: { value: texture } }, blending
@@ -382,6 +412,7 @@ class BillboardSystem {
     f.mix[i] = o.mix;
     f.a[i3] = o.alpha; f.a[i3 + 1] = Math.max(0.002, o.fadeIn); f.a[i3 + 2] = o.fadeOut;
     f.grow[i] = o.grow;
+    writeCarrierFields(f, i);
   }
   update(dt) {
     const p = this.p;
@@ -392,6 +423,7 @@ class BillboardSystem {
       const age = f.t[i2] + dt;
       if (age >= f.t[i2 + 1]) { p.kill(i); continue; }
       f.t[i2] = age;
+      // Opór i ruch WŁASNY cząstki — względem nośnika (patrz nagłówek).
       const d = Math.exp(-f.drag[i] * dt);
       f.vel[i3] *= d; f.vel[i3 + 1] *= d; f.vel[i3 + 2] *= d;
       f.pos[i3] += f.vel[i3] * dt;
@@ -414,7 +446,10 @@ class BillboardSystem {
       const u = age / life;
       const g = Math.pow(u, f.grow[i]);
       const m = Math.min(1, age * f.mix[i]);
-      P[i3] = f.pos[i3] - ox; P[i3 + 1] = f.pos[i3 + 1] - oy; P[i3 + 2] = f.pos[i3 + 2];
+      const e = carrierElapsed(f, i);
+      P[i3] = f.pos[i3] + f.cv[i2] * e - ox;
+      P[i3 + 1] = f.pos[i3 + 1] + f.cv[i2 + 1] * e - oy;
+      P[i3 + 2] = f.pos[i3 + 2];
       C[i3] = lerp(f.c0[i3], f.c1[i3], m);
       C[i3 + 1] = lerp(f.c0[i3 + 1], f.c1[i3 + 1], m);
       C[i3 + 2] = lerp(f.c0[i3 + 2], f.c1[i3 + 2], m);
@@ -494,7 +529,7 @@ class OrientedQuadSystem {
   constructor(scene, texture, capacity, vertexShader, renderOrder = 4, fadePow = 2.0, fadeIn = 0.10) {
     this.fadePow = fadePow;
     this.fadeIn = fadeIn;
-    this.p = new Pool(capacity, { pos: 3, dir: 3, t: 2, len: 2, wid: 2, col: 3, a: 1 }, ['pos']);
+    this.p = new Pool(capacity, { pos: 3, dir: 3, t: 2, len: 2, wid: 2, col: 3, a: 1, ...CARRIER_FIELDS }, ['pos', 'ct']);
     const q = instancedQuad(
       [['iPos', 3], ['iDir', 3], ['iCol', 3], ['iData', 3]], capacity,
       vertexShader, BB_FRAG, { map: { value: texture } }, THREE.AdditiveBlending
@@ -517,6 +552,7 @@ class OrientedQuadSystem {
     f.wid[i2] = w0; f.wid[i2 + 1] = w1;
     f.col[i3] = col[0]; f.col[i3 + 1] = col[1]; f.col[i3 + 2] = col[2];
     f.a[i] = alpha;
+    writeCarrierFields(f, i);
   }
   update(dt) {
     const p = this.p;
@@ -540,7 +576,11 @@ class OrientedQuadSystem {
       const i3 = i * 3;
       const u = f.t[i2] / f.t[i2 + 1];
       const ease = 1 - Math.pow(1 - u, 2.4);      // szybkie wyrzucenie, wolne dojście
-      P[i3] = f.pos[i3] - ox; P[i3 + 1] = f.pos[i3 + 1] - oy; P[i3 + 2] = f.pos[i3 + 2];
+      // Jęzor, krzyż i rozlanie stoją przy lufie — jadą z nośnikiem.
+      const e = carrierElapsed(f, i);
+      P[i3] = f.pos[i3] + f.cv[i2] * e - ox;
+      P[i3 + 1] = f.pos[i3 + 1] + f.cv[i2 + 1] * e - oy;
+      P[i3 + 2] = f.pos[i3 + 2];
       DIR[i3] = f.dir[i3]; DIR[i3 + 1] = f.dir[i3 + 1]; DIR[i3 + 2] = f.dir[i3 + 2];
       C[i3] = f.col[i3]; C[i3 + 1] = f.col[i3 + 1]; C[i3 + 2] = f.col[i3 + 2];
       D[i3] = lerp(f.len[i2], f.len[i2 + 1], ease);
@@ -580,7 +620,7 @@ const _ad = new THREE.Vector3();
 class ArcSystem {
   constructor(scene, capacity = 48, segs = 11, renderOrder = 5) {
     this.segs = segs;
-    this.p = new Pool(capacity, { a: 3, b: 3, t: 2, col: 3, jit: 1, seed: 1 }, ['a', 'b']);
+    this.p = new Pool(capacity, { a: 3, b: 3, t: 2, col: 3, jit: 1, seed: 1, ...CARRIER_FIELDS }, ['a', 'b', 'ct']);
     const verts = capacity * segs * 2;
     const geo = new THREE.BufferGeometry();
     this.posAttr = new THREE.BufferAttribute(new Float32Array(verts * 3), 3);
@@ -613,6 +653,7 @@ class ArcSystem {
     f.col[i3] = col[0]; f.col[i3 + 1] = col[1]; f.col[i3 + 2] = col[2];
     f.jit[i] = jitter;
     f.seed[i] = (Math.random() * 65535) | 0;
+    writeCarrierFields(f, i);
   }
   update(dt, time) {
     const p = this.p;
@@ -638,9 +679,13 @@ class ArcSystem {
       const u = f.t[i2] / f.t[i2 + 1];
       const seed = f.seed[i];
       const jit = f.jit[i];
-      // Końce względem początku przy kamerze — cała łamana w małych liczbach.
-      _aa.set(f.a[i3] - ox, f.a[i3 + 1] - oy, f.a[i3 + 2]);
-      _ab.set(f.b[i3] - ox, f.b[i3 + 1] - oy, f.b[i3 + 2]);
+      // Końce względem początku przy kamerze — cała łamana w małych liczbach;
+      // oba jadą z nośnikiem (łuk wychodzi z lufy).
+      const e = carrierElapsed(f, i);
+      const cx = f.cv[i2] * e - ox;
+      const cy = f.cv[i2 + 1] * e - oy;
+      _aa.set(f.a[i3] + cx, f.a[i3 + 1] + cy, f.a[i3 + 2]);
+      _ab.set(f.b[i3] + cx, f.b[i3 + 1] + cy, f.b[i3 + 2]);
       _ad.subVectors(_ab, _aa);
       const len = _ad.length() || 1e-4;
       _ad.divideScalar(len);
@@ -684,7 +729,7 @@ class SparkSystem {
   constructor(scene, capacity = 2000, renderOrder = 5) {
     this.cap = capacity;
     // misc: [dł. smugi, faza migotania], cool: [docelowy mnożnik G, B]
-    this.p = new Pool(capacity, { pos: 3, vel: 3, t: 2, drag: 1, col: 3, misc: 2, cool: 2 }, ['pos']);
+    this.p = new Pool(capacity, { pos: 3, vel: 3, t: 2, drag: 1, col: 3, misc: 2, cool: 2, ...CARRIER_FIELDS }, ['pos', 'ct']);
     const geo = new THREE.BufferGeometry();
     this.posAttr = new THREE.BufferAttribute(new Float32Array(capacity * 6), 3);
     this.colAttr = new THREE.BufferAttribute(new Float32Array(capacity * 6), 3);
@@ -717,6 +762,7 @@ class SparkSystem {
     f.col[i3] = col[0]; f.col[i3 + 1] = col[1]; f.col[i3 + 2] = col[2];
     f.misc[i2] = streak; f.misc[i2 + 1] = Math.random() * 6.28;
     f.cool[i2] = coolG; f.cool[i2 + 1] = coolB;
+    writeCarrierFields(f, i);
   }
   update(dt, time) {
     const p = this.p;
@@ -744,13 +790,16 @@ class SparkSystem {
       const i3 = i * 3;
       const o = i * 6;
       const u = f.t[i2] / f.t[i2 + 1];
+      // Smuga iskry z ruchu WŁASNEGO (względem nośnika, czyli tak, jak iskra
+      // wygląda z pokładu) — prędkość kadłuba rozciągałaby każdą w tę samą stronę.
       const vx = f.vel[i3];
       const vy = f.vel[i3 + 1];
       const vz = f.vel[i3 + 2];
       const sp2 = Math.sqrt(vx * vx + vy * vy + vz * vz) || 1e-6;
       const len = Math.min(sp2 * 0.022, f.misc[i2]) * (0.35 + 0.65 * (1 - u));
-      const px = f.pos[i3] - ox;
-      const py = f.pos[i3 + 1] - oy;
+      const e = carrierElapsed(f, i);
+      const px = f.pos[i3] + f.cv[i2] * e - ox;
+      const py = f.pos[i3 + 1] + f.cv[i2 + 1] * e - oy;
       const pz = f.pos[i3 + 2];
       P[o] = px; P[o + 1] = py; P[o + 2] = pz;
       P[o + 3] = px - vx / sp2 * len;
@@ -837,11 +886,23 @@ export const Fx3D = {
     if (typeof fn === 'function' && !updaters.includes(fn)) updaters.push(fn);
   },
 
+  /**
+   * Nośnik kolejnych spawnów (src/game/carrierVelocity.js: { vx, vy, t0, clock },
+   * prędkość w ŚWIECIE gry) — skrót do ActiveCarrier. Fasada efektu ustawia go
+   * na czas recepty i zdejmuje `clearCarrier()` — bez tego następny efekt
+   * poleciałby z cudzą prędkością.
+   */
+  setCarrier(carrier) { ActiveCarrier.set(carrier); },
+
+  clearCarrier() { ActiveCarrier.clear(); },
+
   // Wołane DOKŁADNIE RAZ na klatkę renderu (Weapon3DSystem.syncProjectiles).
   update(dt) {
     if (!this.glow) return;
     // Wołane z updateHexShips3D po Core3D.syncCamera — kamera tej klatki.
     sceneOriginNearCamera(ORIGIN);
+    CLOCK_NOW.render = SimClock.render;
+    CLOCK_NOW.sim = SimClock.sim;
     const step = Math.min(Math.max(0, Number(dt) || 0), 0.1);
     this.time += step;
     this.lastDt = step;

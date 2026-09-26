@@ -392,9 +392,11 @@ export const MuzzleFX3D = {
    * @param x,y       punkt wylotu w świecie gry
    * @param angle     kąt lufy (radiany, przestrzeń gry)
    * @param scale     skala wieżyczki z Turret2D.triggerShot
+   * @param carrier   nośnik z src/game/carrierVelocity.js (prędkość lufy) —
+   *                  rozbłysk, gazy i dym lecą z okrętem, nie zostają w świecie
    * @returns true, jeśli błysk powstał
    */
-  fire(weaponKey, x, y, angle, scale = 1) {
+  fire(weaponKey, x, y, angle, scale = 1, carrier = null) {
     const recipe = RECIPES[weaponKey];
     if (!recipe || !this.available || !Fx3D.ensure()) return false;
 
@@ -415,8 +417,13 @@ export const MuzzleFX3D = {
     _pos.set(x, -y, FX_PLANE_Z);
     _dir.set(Math.cos(angle), -Math.sin(angle), 0);   // scena ma odwrócone Y
 
-    if (recipe.kind === 'ion') fireIon(_pos, _dir, S, recipe.power, density);
-    else fireCannon(_pos, _dir, S, recipe.power, PALETTES[recipe.palette], density);
+    if (carrier) Fx3D.setCarrier(carrier);
+    try {
+      if (recipe.kind === 'ion') fireIon(_pos, _dir, S, recipe.power, density);
+      else fireCannon(_pos, _dir, S, recipe.power, PALETTES[recipe.palette], density);
+    } finally {
+      Fx3D.clearCarrier();
+    }
     // Skala wieżyczki idzie do wstrząsu: ta sama broń na fregacie ma szarpać
     // słabiej niż na kadłubie klasy Capital.
     addCameraShake(recipe.shake * turretScale, recipe.shakeTime);

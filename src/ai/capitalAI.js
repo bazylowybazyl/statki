@@ -768,6 +768,9 @@ function pickTargetSubsystem(weapon, target) {
 
 const _leadAimScratch = { x: 0, y: 0 };
 const _leadOriginScratch = { x: 0, y: 0 };
+// Prędkość strzelca: pocisk dziedziczy ruch okrętu, więc wyprzedzenie liczy
+// getLeadAim z prędkości celu WZGLĘDEM niego.
+const _leadShooterVel = { x: 0, y: 0 };
 const _spawnOpts = { type: null, hp: null, angleOverride: 0, pdTarget: null };
 const _leadTargetScratch = { x: 0, y: 0, vx: 0, vy: 0 };
 let nextWeaponGeometryId = 1;
@@ -899,6 +902,8 @@ export function processAutonomousWeapons(npc, dt) {
       const speed = weapon.def.baseSpeed || 1000;
       _leadOriginScratch.x = npc.x;
       _leadOriginScratch.y = npc.y;
+      _leadShooterVel.x = Number(npc.vx) || 0;
+      _leadShooterVel.y = Number(npc.vy) || 0;
       _leadTargetScratch.x = aimX;
       _leadTargetScratch.y = aimY;
       _leadTargetScratch.vx = bestTarget.vx ?? bestTarget.vel?.x ?? 0;
@@ -906,7 +911,7 @@ export function processAutonomousWeapons(npc, dt) {
       _leadAimScratch.x = aimX;
       _leadAimScratch.y = aimY;
       const lead = window.getLeadAim
-        ? window.getLeadAim(_leadOriginScratch, _leadTargetScratch, speed, _leadAimScratch)
+        ? window.getLeadAim(_leadOriginScratch, _leadTargetScratch, speed, _leadAimScratch, _leadShooterVel)
         : _leadAimScratch;
       const aimAngle = Math.atan2(lead.y - npc.y, lead.x - npc.x);
 

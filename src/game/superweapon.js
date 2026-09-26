@@ -4,6 +4,12 @@
 
 import { MASTER_WEAPONS } from '../data/weapons.js';
 import { RailgunFX3D } from '../3d/railgunFx3D.js';
+import { createCarrier, writeCarrier } from './carrierVelocity.js';
+
+// Nośniki (src/game/carrierVelocity.js): lufa okrętu — ładowanie, rozbłysk,
+// smuga i prędkość pocisku; trafiony kadłub — rozbłysk wejścia i rzaz.
+const _muzzleCarrier = createCarrier();
+const _targetCarrier = createCarrier();
 
 const VFX_CONFIG = {
     newMinSize: 2.0,
@@ -194,10 +200,14 @@ function fireSingleMount(ship, cannonIndex) {
         detail: { weaponId: 'hexlance', x: m.x, y: m.y }
     }));
     const projectileLife = Math.max(8, (superweaponState.range / Math.max(1, superweaponState.projectileSpeed)) + 2);
+    // Pocisk bierze pełną prędkość lufy (ruch okrętu + obrót) — w próżni nic
+    // jej nie odbierze. `ivx/ivy` = ta część: zasięg liczymy względem strzelca.
+    const carrier = writeCarrier(ship, m.x, m.y, false, _muzzleCarrier);
     const proj = {
         x: m.x, y: m.y,
-        vx: m.dir.x * superweaponState.projectileSpeed + (ship.vel?.x || 0),
-        vy: m.dir.y * superweaponState.projectileSpeed + (ship.vel?.y || 0),
+        vx: m.dir.x * superweaponState.projectileSpeed + carrier.vx,
+        vy: m.dir.y * superweaponState.projectileSpeed + carrier.vy,
+        ivx: carrier.vx, ivy: carrier.vy,
         life: projectileLife, traveled: 0,
         beamWidth: superweaponState.beamWidth,
         angle: angle,
@@ -207,10 +217,10 @@ function fireSingleMount(ship, cannonIndex) {
     };
     hexlanceProjectiles.push(proj);
     if (fx3d) {
-        RailgunFX3D.fire(m.x, m.y, m.dir.x, m.dir.y, 1);
+        RailgunFX3D.fire(m.x, m.y, m.dir.x, m.dir.y, 1, carrier);
         // Smuga startuje z lufy, nie ze środka pierwszego kroku — inaczej po
         // wystrzale zostaje dziura długości jednej klatki lotu (200 jednostek).
-        proj.slug = RailgunFX3D.beginSlug(m.x, m.y, m.dir.x, m.dir.y, Math.hypot(proj.vx, proj.vy));
+        proj.slug = RailgunFX3D.beginSlug(m.x, m.y, m.dir.x, m.dir.y, Math.hypot(proj.vx, proj.vy), carrier);
     }
     // Cały stary rozbłysk 2D — biała cząstka kanwy, pierścień uderzeniowy
     // i iskry — zostaje WYŁĄCZNIE jako zapas, gdy warstwa 3D jest niedostępna.
@@ -281,7 +291,9 @@ export function updateSuperweapon(dt, ship, aimPos) {
             const m = getMuzzlePos(ship, i);
             // RailgunFX3D pokazuje energię biegnącą szynami w głąb kadłuba;
             // stary efekt zasysał cząstki do lufy i dublowałby się z nią.
-            if (RailgunFX3D.available) RailgunFX3D.charge(m.x, m.y, m.dir.x, m.dir.y, dt, chargeU);
+            if (RailgunFX3D.available) {
+                RailgunFX3D.charge(m.x, m.y, m.dir.x, m.dir.y, dt, chargeU, writeCarrier(ship, m.x, m.y, false, _muzzleCarrier));
+            }
             else for(let k=0; k<3; k++) spawnChargeEffect(m);
         }
 
@@ -303,7 +315,9 @@ export function updateSuperweapon(dt, ship, aimPos) {
         const nextShot = superweaponState.queue[0];
         if (nextShot.delay > 0 && nextShot.delay <= 0.22) {
              const m = getMuzzlePos(ship, nextShot.cannonIndex);
-             if (RailgunFX3D.available) RailgunFX3D.charge(m.x, m.y, m.dir.x, m.dir.y, dt, 1);
+             if (RailgunFX3D.available) {
+                 RailgunFX3D.charge(m.x, m.y, m.dir.x, m.dir.y, dt, 1, writeCarrier(ship, m.x, m.y, false, _muzzleCarrier));
+             }
              else for(let k=0; k<3; k++) spawnChargeEffect(m);
         }
         nextShot.delay -= dt;
@@ -329,7 +343,9 @@ export function updateSuperweapon(dt, ship, aimPos) {
         proj.x += moveX;
         proj.y += moveY;
         proj.life -= dt;
-        proj.traveled += stepDist;
+        // Zasięg względem strzelca: odziedziczona prędkość okrętu nie może
+        // skracać (strzał w przód w pędzie) ani wydłużać zasięgu działa.
+        proj.traveled += Math.hypot(moveX - (proj.ivx || 0) * dt, moveY - (proj.ivy || 0) * dt);
         if (proj.cutCd > 0) proj.cutCd -= dt;
 
         // Smuga świata idzie za pociskiem: emiter dostaje CAŁY przebyty odcinek,
@@ -391,13 +407,18 @@ export function updateSuperweapon(dt, ship, aimPos) {
                     // pancernik nie zamieniło się w stroboskop.
                     if (bitFrac >= 0 && RailgunFX3D.available) {
                         if (!proj.bitten) proj.bitten = new Set();
+                        // Rozbłysk i rzaz jadą z trafionym kadłubem; kierunek
+                        // wyrzutu z prędkości pocisku WZGLĘDEM celu.
+                        const hitCarrier = writeCarrier(t, biteX, biteY, false, _targetCarrier);
+                        const relVx = proj.vx - hitCarrier.vx;
+                        const relVy = proj.vy - hitCarrier.vy;
                         if (!proj.bitten.has(t)) {
                             proj.bitten.add(t);
                             proj.cutCd = 0.05;
-                            RailgunFX3D.impact(biteX, biteY, proj.vx, proj.vy, 0.85);
+                            RailgunFX3D.impact(biteX, biteY, relVx, relVy, 0.85, hitCarrier);
                         } else if (proj.cutCd <= 0) {
                             proj.cutCd = 0.05;
-                            RailgunFX3D.kerf(biteX, biteY, proj.vx, proj.vy, 0.7);
+                            RailgunFX3D.kerf(biteX, biteY, relVx, relVy, 0.7, hitCarrier);
                         }
                     }
                 }

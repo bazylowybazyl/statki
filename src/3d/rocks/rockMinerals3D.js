@@ -10,7 +10,9 @@
 //   lód      — przezroczyste odłamki (klingi) w kilku skupieniach;
 //   uran     — kwadratowe tabliczki autunitu/torbernitu w rozetach (żółto-
 //              zielone, słabo fluoryzują);
-//   krzem    — drobna druza kwarcu w zagłębieniach (mleczne słupki).
+//   krzem    — drobna druza kwarcu w zagłębieniach (mleczne słupki);
+//   energia  — iglice kryształów ładunku (burze, asteroidStorms.js): fiolet →
+//              błękit, pulsują z ładunkiem skały i rozbłyskują przy uderzeniu.
 //
 // Szablony (położenia minerałów na skale) liczone RAZ na parę (kształt, typ)
 // z map promienia banku (rockShapes3D) — skały tego samego kształtu i typu
@@ -168,7 +170,9 @@ const MINERAL_RECIPES = Object.freeze({
   crystal: { kind: MINERAL_KIND.PRISM, clusters: [3, 5], per: [4, 8], length: [0.22, 0.62], width: [0.045, 0.1], spread: 0.55, glow: 1, concave: false },
   ice: { kind: MINERAL_KIND.SHARD, clusters: [2, 4], per: [3, 6], length: [0.18, 0.45], width: [0.05, 0.1], spread: 0.6, glow: 0.12, concave: false },
   uran: { kind: MINERAL_KIND.PLATE, clusters: [4, 7], per: [3, 6], length: [0.07, 0.15], width: [0.06, 0.13], spread: 0.9, glow: 0.5, concave: false },
-  silicon: { kind: MINERAL_KIND.PRISM, clusters: [4, 8], per: [5, 10], length: [0.05, 0.12], width: [0.012, 0.024], spread: 0.7, glow: 0, concave: true }
+  silicon: { kind: MINERAL_KIND.PRISM, clusters: [4, 8], per: [5, 10], length: [0.05, 0.12], width: [0.012, 0.024], spread: 0.7, glow: 0, concave: true },
+  // Energetyczna: nieliczne, smukłe iglice (piorunochrony skały), mocny blask.
+  energy: { kind: MINERAL_KIND.PRISM, clusters: [2, 3], per: [3, 5], length: [0.32, 0.78], width: [0.045, 0.09], spread: 0.45, glow: 1, concave: false, antipodal: true }
 });
 
 export const MINERAL_TYPES = Object.freeze(Object.keys(MINERAL_RECIPES).map((id) => ROCK_TYPE_INDEX[id]));
@@ -225,19 +229,8 @@ export class MineralTemplates {
     const maxR = this.bank.maxRadius ? this.bank.maxRadius[shape] : 1.3;
     const clusters = Math.round(between(recipe.clusters));
     const out = [];
-    for (let c = 0; c < clusters; c++) {
-      // Środek skupienia: losowy kierunek; druza — najbardziej wklęsły z kilku.
-      let best = null;
-      const tries = recipe.concave ? 14 : 1;
-      for (let k = 0; k < tries; k++) {
-        const z = rng() * 2 - 1;
-        const phi = rng() * Math.PI * 2;
-        const s = Math.sqrt(Math.max(0, 1 - z * z));
-        const d = [s * Math.cos(phi), s * Math.sin(phi), z];
-        const surf = this._surface(shape, d);
-        if (!best || surf.cav > best.surf.cav) best = { d, surf };
-      }
-      const { d: dc, surf: sc } = best;
+    // Skupienie wokół kierunku dc (powierzchnia sc): minerały na powierzchni.
+    const emitCluster = (dc, sc) => {
       const [t1, t2] = tangentsOf(dc);
       const per = Math.round(between(recipe.per));
       const hueC = rng();
@@ -273,6 +266,27 @@ export class MineralTemplates {
           q[0], q[1], q[2], q[3],
           len, wid, thick, (hueC * 0.7 + rng() * 0.3) % 1
         );
+      }
+    };
+    for (let c = 0; c < clusters; c++) {
+      // Środek skupienia: losowy kierunek; druza — najbardziej wklęsły z kilku.
+      let best = null;
+      const tries = recipe.concave ? 14 : 1;
+      for (let k = 0; k < tries; k++) {
+        const z = rng() * 2 - 1;
+        const phi = rng() * Math.PI * 2;
+        const s = Math.sqrt(Math.max(0, 1 - z * z));
+        const d = [s * Math.cos(phi), s * Math.sin(phi), z];
+        const surf = this._surface(shape, d);
+        if (!best || surf.cav > best.surf.cav) best = { d, surf };
+      }
+      emitCluster(best.d, best.surf);
+      // Antypodycznie (energia): bliźniak po drugiej stronie bryły. Skały gry
+      // obracają się tylko wokół z, więc dolna półkula nigdy nie staje przed
+      // kamerą — z parą przy dowolnej orientacji widać połowę skupień.
+      if (recipe.antipodal) {
+        const d = [-best.d[0], -best.d[1], -best.d[2]];
+        emitCluster(d, this._surface(shape, d));
       }
     }
     return { kind: recipe.kind, count: out.length / TPL, data: new Float32Array(out) };
@@ -343,6 +357,7 @@ uniform vec3 uSunColor;
 uniform vec3 uAmbientTop;
 uniform float uGlow;
 uniform float uFieldLightGain;
+uniform float uTime;
 varying vec3 vN;
 varying vec3 vViewPos;
 varying float vU;
@@ -365,6 +380,9 @@ void main() {
   vec3 glow;
   float trans;       // ile światła przechodzi (przezroczystość)
   float gloss = 140.0;
+  float charge = 1.0; // mnożnik blasku (ładunek kryształów energii)
+  float glowBase = 0.06; // blask u podstawy (reszta rośnie ku czubkowi)
+  float glowPow = 3.0;   // jak szybko blask rośnie ku czubkowi (większy = gorący sam czubek)
   // Barwy nasycone i ciemne: szkło ma kolor z głębi, nie z rozproszenia —
   // jasne ciała prześwietlały się na biało (płaska ściana = cały w połysku).
   if (type == ${ROCK_TYPE_INDEX.crystal}) {
@@ -375,6 +393,18 @@ void main() {
     body = vec3(0.12, 0.2, 0.3);
     glow = vec3(0.2, 0.45, 1.0);
     trans = 0.9;
+  } else if (type == ${ROCK_TYPE_INDEX.energy}) {
+    body = mix(vec3(0.05, 0.02, 0.12), vec3(0.02, 0.05, 0.14), hue);
+    // HDR: czubki iglic łapią bloom (widziane z góry kryształ to głównie czubek).
+    glow = mix(vec3(0.3, 0.7, 1.0), vec3(0.62, 0.22, 1.0), hue) * 1.8;
+    trans = 0.75;
+    gloss = 120.0;
+    // Ładunek: wolny puls (faza z odcienia) + rozbłysk przy uderzeniu pioruna obok.
+    charge = 0.6 + 0.4 * sin(uTime * 1.6 + hue * 17.0) + fieldStrikeSurge(vViewPos, 700.0) * 1.4;
+    // Świeci całe ciało iglicy (z góry widać ją głównie od czoła, sam czubek ginął).
+    glowBase = 0.1;
+    // Gorący tylko sam czubek (HDR → bloom); przy vU³ ACES wybielał pół iglicy.
+    glowPow = 6.0;
   } else if (type == ${ROCK_TYPE_INDEX.uran}) {
     body = mix(vec3(0.2, 0.3, 0.02), vec3(0.08, 0.3, 0.03), hue);
     glow = mix(vec3(0.5, 0.85, 0.08), vec3(0.3, 0.9, 0.12), hue);
@@ -403,7 +433,7 @@ void main() {
     col += (body * fDiff * (1.0 + trans) + fSpec) * uFieldLightGain;
   }
   // Blask od środka: rośnie ku czubkowi (HDR → bloom na końcach kryształów).
-  col += glow * glowK * uGlow * (0.06 + 0.95 * vU * vU * vU);
+  col += glow * glowK * uGlow * charge * (glowBase + 0.95 * pow(vU, glowPow));
   gl_FragColor = vec4(max(col, vec3(0.0)), 1.0);
 }
 `;

@@ -115,9 +115,17 @@ export function run() {
   t.check('zapas frakcji zmalał', fleetPower(yards2, FACTION.TERRA_NOVA) < silaPrzed);
   t.check('garnizon kryjówki odrósł', (war2.garrisons.get('gniazdo') || 0) > 0);
 
-  // Kurs kończy się — rozstrzygamy starcie.
+  // Kurs kończy się — rozstrzygamy starcie. Pierwszy rzut (0,1) rozstrzyga
+  // bitwę; dalej idzie rozrzut wraków, który od 2026-09-26 też bierze się
+  // z `rng` (ziarnisty świat w workerze) — stała wartość położyłaby je
+  // wszystkie w jednym punkcie.
   registry.courses[0].status = 'done';
-  const bitwa = tickWar(war2, 1, { shipyards: yards2, stations: st2, registry, rng: () => 0.1 });
+  const rzuty = [0.1];
+  let ziarno = 12345;
+  const rng = () => (rzuty.length
+    ? rzuty.shift()
+    : (ziarno = (ziarno * 16807) % 2147483647) / 2147483647);
+  const bitwa = tickWar(war2, 1, { shipyards: yards2, stations: st2, registry, rng });
   t.check('doszło do bitwy', bitwa.some(e => e.type === 'battle'));
   t.check('są wraki', war2.wrecks.length > 0);
   t.check('wraki niosą złom', war2.wrecks.every(w => w.scrap > 0));

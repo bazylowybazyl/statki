@@ -19,6 +19,27 @@
 // gradientowe generowane raz przy starcie. Zamiast gradientu per cząstka mamy
 // drawImage z gotowej tekstury — to jest cała sztuczka wydajnościowa tego pliku.
 
+import { SimClock, CLOCK_RENDER } from '../game/simClock.js';
+import { ActiveCarrier } from '../game/carrierVelocity.js';
+
+// NOŚNIK (src/game/carrierVelocity.js): pęknięcie przejmuje przy spawnie
+// ActiveCarrier (prędkość odziedziczoną przez pocisk) i rysuje się w
+// pos + v · (T − t0) z zegara gry — flak z pędzącego okrętu pęka tak, jak
+// z nieruchomego. Opór działa na ruch własny odłamków. `opts.vx/vy` = prędkość
+// pocisku WZGLĘDEM nośnika.
+function carrierElapsed(o) {
+  if (o.cvx === 0 && o.cvy === 0) return 0;
+  return (o.clock === CLOCK_RENDER ? SimClock.render : SimClock.sim) - o.ct0;
+}
+
+function stampCarrier(o) {
+  o.cvx = ActiveCarrier.vx;
+  o.cvy = ActiveCarrier.vy;
+  o.ct0 = ActiveCarrier.t0;
+  o.clock = ActiveCarrier.clock;
+  return o;
+}
+
 const FIRE_STAGES = 4;
 
 // [offset, kolor] — kolejne stadia stygnięcia odłamka ognia.
@@ -72,7 +93,8 @@ export const FlakBurstVFX = {
     for (let i = 0; i < this.MAX_PARTS; i++) {
       this.parts.push({
         x: 0, y: 0, vx: 0, vy: 0, age: 0, life: 1, size: 1,
-        drag: 0.9, kind: KIND_FIRE, seed: 0, spin: 0, active: false, _idx: -1
+        drag: 0.9, kind: KIND_FIRE, seed: 0, spin: 0, active: false, _idx: -1,
+        cvx: 0, cvy: 0, ct0: 0, clock: 0
       });
     }
     this.bursts.length = 0;
@@ -113,7 +135,7 @@ export const FlakBurstVFX = {
     p.active = true;
     p._idx = this.live.length;
     this.live.push(p);
-    return p;
+    return stampCarrier(p);
   },
 
   /**
@@ -140,14 +162,15 @@ export const FlakBurstVFX = {
     const vy = Number(opts.vy) || 0;
 
     if (this.bursts.length >= this.MAX_BURSTS) this.bursts.shift();
-    this.bursts.push({
+    this.bursts.push(stampCarrier({
       x, y, radius,
       age: 0,
       flashLife: 0.13 + 0.09 * Math.sqrt(s),
       ringLife: 0.34 + 0.16 * s,
       flashSize: radius * 0.46,
-      power: Math.min(1.6, 0.75 + 0.35 * s)
-    });
+      power: Math.min(1.6, 0.75 + 0.35 * s),
+      cvx: 0, cvy: 0, ct0: 0, clock: 0
+    }));
 
     // — ogień: cienka szybka powłoka (62%) + wolniejsze, dłużej żyjące jądro —
     const nFire = Math.round(Math.min(34, 12 * Math.sqrt(s) + 6) * quality);
@@ -255,7 +278,8 @@ export const FlakBurstVFX = {
       const p = this.live[i];
       if (p.kind !== KIND_SMOKE) continue;
       const t = p.age / p.life;
-      const s = w2s(p.x, p.y, cam);
+      const ce = carrierElapsed(p);
+      const s = w2s(p.x + p.cvx * ce, p.y + p.cvy * ce, cam);
       const size = (p.size * (0.55 + t * 1.5)) * zoom;
       if (size < 1.2) continue;
       if (s.x < -size || s.x > vw + size || s.y < -size || s.y > vh + size) continue;
@@ -270,7 +294,8 @@ export const FlakBurstVFX = {
       const p = this.live[i];
       if (p.kind !== KIND_FIRE) continue;
       const t = p.age / p.life;
-      const s = w2s(p.x, p.y, cam);
+      const ce = carrierElapsed(p);
+      const s = w2s(p.x + p.cvx * ce, p.y + p.cvy * ce, cam);
       const size = (p.size * (0.5 + t * 1.35)) * zoom;
       if (size < 1) continue;
       if (s.x < -size || s.x > vw + size || s.y < -size || s.y > vh + size) continue;
@@ -281,7 +306,8 @@ export const FlakBurstVFX = {
     }
 
     for (const b of this.bursts) {
-      const s = w2s(b.x, b.y, cam);
+      const ce = carrierElapsed(b);
+      const s = w2s(b.x + b.cvx * ce, b.y + b.cvy * ce, cam);
       if (b.age < b.flashLife) {
         const t = b.age / b.flashLife;
         const size = b.flashSize * (0.6 + t * 1.1) * zoom;
@@ -313,7 +339,8 @@ export const FlakBurstVFX = {
       const p = this.live[i];
       if (p.kind !== KIND_SHRAPNEL) continue;
       const t = p.age / p.life;
-      const s = w2s(p.x, p.y, cam);
+      const ce = carrierElapsed(p);
+      const s = w2s(p.x + p.cvx * ce, p.y + p.cvy * ce, cam);
       if (s.x < -40 || s.x > vw + 40 || s.y < -40 || s.y > vh + 40) continue;
       // Smuga = ślad z ostatnich ~28 ms lotu.
       const tailX = p.vx * 0.028 * zoom;

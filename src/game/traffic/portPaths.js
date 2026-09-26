@@ -14,6 +14,12 @@
  * osi x huba w grze). Pomosty stacji bez ringu (`buildStationDocks`) i nieznane
  * rodzaje doków dostają ścieżkę ogólną: oś stanowiska od punktu podejścia.
  *
+ * Korytarz portu (pas capital / MEGA — jedno stanowisko; aleja grzebienia —
+ * wiele) ma jedno UJŚCIE (brama, wylot zatoki). Przed nim leży punkt czekania
+ * (`WP.WAIT`): statek wchodzący staje tam, gdy korytarzem wychodzi inny albo
+ * jego stanowisko jeszcze nie opustoszało. Wychodzący mija czekającego bokiem —
+ * za ujściem odbija o pół szerokości korytarza (`sideX/sideY`).
+ *
  * Moduł jest czystą logiką (bez DOM, bez Three). Ścieżki pisze do buforów
  * `Float64Array` — bańka nie alokuje na krok.
  *
@@ -51,10 +57,16 @@ export const WP = Object.freeze({
   BERTH: 16,
   /** Korytarz tranzytu przez ring. */
   TRANSIT: 32,
-  /** Wejście do wspólnego korytarza portu (brama / wylot): tu się czeka na wolny. */
+  /** Brama hali / wylot zatoki (ujście korytarza portu). */
   GATE: 64,
   /** Punkt redy / oczekiwania — koniec ścieżki z postojem. */
-  HOLD: 128
+  HOLD: 128,
+  /**
+   * Punkt czekania przed korytarzem: tu statek staje, gdy korytarzem wychodzi
+   * inny albo jego stanowisko jeszcze nie opustoszało. Za nim statek jest
+   * „zobowiązany” — dalej już nie czeka.
+   */
+  WAIT: 256
 });
 
 export function createPath(capacity = 96) {
@@ -96,6 +108,15 @@ export function pathSetVmax(path, i, vmax) { path.data[i * PATH_STRIDE + PV] = v
 export function pathAddFlags(path, i, flags) {
   const o = i * PATH_STRIDE + PF;
   path.data[o] = path.data[o] | flags;
+}
+
+/** Indeks pierwszego punktu z flagą (od `from`), −1 gdy brak. */
+export function pathFind(path, flags, from = 1) {
+  const d = path.data;
+  for (let i = Math.max(0, from); i < path.count; i++) {
+    if (d[i * PATH_STRIDE + PF] & flags) return i;
+  }
+  return -1;
 }
 
 /**
@@ -164,11 +185,17 @@ export function pathPointAt(path, s, out) {
  * Statek bańki obraca się z ograniczoną prędkością kątową, więc na zakręcie
  * o kąt φ jedzie łukiem o promieniu v/ω i ścina róg o ≈ (v/ω)(1/cos(φ/2) − 1).
  * Dopuszczalne ścięcie zależy od miejsca: w alei portu kilkadziesiąt jednostek,
- * w tranzycie ~150 (prześwit ±570), w otwartej przestrzeni dużo. Zmiana
- * kierunku jazdy (przód ↔ tył) to zawsze zatrzymanie.
+ * w tranzycie tyle, ile zostaje z prześwitu ±570 po połowie szerokości kadłuba
+ * (`transitTol`), w otwartej przestrzeni dużo. Zmiana kierunku jazdy
+ * (przód ↔ tył) to zawsze zatrzymanie.
+ *
+ * Wejście z lotu swobodnego w odcinek precyzyjny (tranzyt, port) statek
+ * zaczyna skręcać dopiero W punkcie (celowanie nie wybiega za niego), więc
+ * wynosi go o R(1 − cos φ) — tak liczony jest tam sufit.
  */
-export function pathApplyCornerSpeeds(path, turnFree, turnPort) {
+export function pathApplyCornerSpeeds(path, turnFree, turnPort, transitTol = 140) {
   const d = path.data;
+  const precise = WP.PORT | WP.PRECISE | WP.TRANSIT;
   for (let i = 1; i < path.count - 1; i++) {
     const o = i * PATH_STRIDE;
     const p = o - PATH_STRIDE;
@@ -192,8 +219,9 @@ export function pathApplyCornerSpeeds(path, turnFree, turnPort) {
     const inPort = ((fIn | fOut) & (WP.PORT | WP.PRECISE)) !== 0;
     const inTransit = ((fIn | fOut) & WP.TRANSIT) !== 0;
     const omega = inPort || inTransit ? turnPort : turnFree;
-    const tol = (fIn & WP.PRECISE) ? 25 : inPort ? 90 : inTransit ? 140 : 1500;
-    const cut = 1 / Math.cos(Math.min(phi, 3.0) * 0.5) - 1;
+    const tol = (fIn & WP.PRECISE) ? 25 : inTransit ? transitTol : inPort ? 90 : 1500;
+    const entry = (fIn & precise) === 0 && (fOut & precise) !== 0;
+    const cut = entry ? 1 - Math.cos(Math.min(phi, Math.PI / 2)) : 1 / Math.cos(Math.min(phi, 3.0) * 0.5) - 1;
     const cap = phi > 2.6 ? 4 : omega * tol / Math.max(cut, 1e-6);
     d[o + PV] = Math.min(d[o + PV], Math.max(4, cap));
   }
@@ -231,6 +259,11 @@ export const CAPTURE_DEFAULTS = Object.freeze({
   settleSeconds: 1.1
 });
 
+/** Odstęp boczny wychodzącego od osi korytarza ponad pół szerokości obu kadłubów. */
+const SIDE_CLEARANCE = 220;
+/** Zapas punktu czekania przed kadłubem wycofującym się z pasa. */
+const WAIT_CLEARANCE = 300;
+
 // ============================================================
 // Indeks portów
 // ============================================================
@@ -240,6 +273,8 @@ const K7_BERTHS = new Map(K7_TEMPLATE.berths.map(b => [b.id, b]));
 const K7_GATES = new Map(K7_TEMPLATE.gates.map(g => [g.id, g]));
 const K7_BANKS = new Map(K7_TEMPLATE.sideBanks.map(b => [b.side, b]));
 const K7_LANES = new Map(K7_TEMPLATE.lanes.map(l => [l.berthId, l]));
+/** Największy kadłub grzebienia (pad L) — szerokość i długość wspólnej alei. */
+const COMB_MAX = Object.freeze({ length: 850, beam: 500 });
 
 const BAY_TEMPLATE = createBayLayout();
 /** Stanowiska zatoki po przyrostku id („MG1”, „L03”) — wszystkie zatoki mają ten sam układ. */
@@ -295,6 +330,7 @@ export function addPortLayout(index, stationId, layout) {
 }
 
 function corridorId(index, key) {
+  if (!index) return 0;
   let id = index.corridors.get(key);
   if (id === undefined) {
     id = index.corridors.size + 1;
@@ -324,6 +360,28 @@ export function findPortEntry(index, course) {
   return null;
 }
 
+/**
+ * Wpis stanowiska leżącego w punkcie (x, y) portu `stationId` — dla kursu,
+ * którego etap zaczyna się NA stanowisku (`fromPos` = pozycja stanowiska),
+ * a przydział w dyspozytorze już zwolniono. Liniowo po stanowiskach portu:
+ * wołane tylko przy materializacji.
+ */
+export function findPortEntryAt(index, stationId, x, y, tolerance = 5) {
+  if (!index || !Number.isFinite(x) || !Number.isFinite(y)) return null;
+  const layout = index.layouts.get(String(stationId ?? ''));
+  if (!layout) return null;
+  const tol2 = tolerance * tolerance;
+  for (const berth of layout.berths || []) {
+    const dx = Number(berth.x) - x;
+    const dy = Number(berth.y) - y;
+    if (dx * dx + dy * dy > tol2) continue;
+    const ref = index.berths.get(String(berth.id));
+    return index.entries.get(String(berth.id))
+      || buildEntry(index, berth, ref?.dock || null, String(stationId));
+  }
+  return null;
+}
+
 /** Wpis dla obiektu stanowiska (także spoza indeksu — np. `berthRef` testu). */
 export function portEntryForBerth(index, berth, dock = null, stationId = '') {
   if (!berth) return null;
@@ -342,6 +400,14 @@ function hubToGame(dock, hx, hz, out) {
   const s = Math.sin(dock.angle);
   out.x = dock.x + hx * c - hz * s;
   out.y = dock.y + hx * s + hz * c;
+  return out;
+}
+
+function hubDirToGame(dock, hx, hz, out) {
+  const c = Math.cos(dock.angle);
+  const s = Math.sin(dock.angle);
+  out.x = hx * c - hz * s;
+  out.y = hx * s + hz * c;
   return out;
 }
 
@@ -364,11 +430,8 @@ function captureFor(templateBerth, cls) {
 }
 
 /**
- * Buduje wpis: poza stanowiska i szkielet ścieżki w układzie gry.
- *
- * `hub` — punkty w układzie huba doku (x wzdłuż ringu, z na zewnątrz), od
- * podejścia do stanowiska; `lane` — dla pasów (capital, MEGA) oś pasa i jego
- * wylot, bo tam wycofanie zależy od długości kadłuba.
+ * Buduje wpis: poza stanowiska, szkielet wejścia w układzie gry i ujście
+ * korytarza (brama / wylot) z osią na zewnątrz i kierunkiem odbicia wychodzących.
  */
 function buildEntry(index, berth, dock, stationId) {
   const bx = Number(berth.x);
@@ -392,7 +455,7 @@ function buildEntry(index, berth, dock, stationId) {
     /** Szkielet wejścia: [x, y, vmax, flagi] × n, od podejścia do stanowiska. */
     inbound: new Float64Array(8 * 4),
     inboundCount: 0,
-    /** Oś wyjścia z pola (jednostkowa, od stanowiska na zewnątrz). */
+    /** Oś wyjścia z pola (jednostkowa, od stanowiska w stronę alei / pasa). */
     axisX: -Math.cos(angle),
     axisY: -Math.sin(angle),
     /** Pas (capital / MEGA): wycofanie do wylotu pasa zamiast do alei. */
@@ -401,7 +464,23 @@ function buildEntry(index, berth, dock, stationId) {
     reverseTo: 0,
     /** Dla pasa: odległość wzdłuż osi od stanowiska do wylotu konstrukcji. */
     mouthDepth: 0,
-    laneEndDepth: 0
+    laneEndDepth: 0,
+    /** Ujście korytarza (brama hali, wylot zatoki; pomost — skraj pola). */
+    gateX: bx,
+    gateY: by,
+    /** Oś ujścia na zewnątrz (od bramy do punktu podejścia). */
+    outX: -Math.cos(angle),
+    outY: -Math.sin(angle),
+    /** Kierunek odbicia wychodzących za ujściem (w bok od osi). */
+    sideX: Math.sin(angle),
+    sideY: -Math.cos(angle),
+    /** Brama → punkt podejścia wzdłuż osi. */
+    approachDist: 0,
+    /** Największy kadłub korytarza (długość, szerokość) — do punktu czekania i odbicia. */
+    corridorLength: Number(berth.maxLength) || Number(berth.length) || 300,
+    corridorBeam: Number(berth.maxBeam) || Number(berth.width) || 200,
+    /** Encja bańki stojąca teraz na stanowisku (albo z niego wychodząca). */
+    occupant: null
   };
   const tmp = { x: 0, y: 0 };
   const put = (hx, hz, vmax, flags) => {
@@ -411,6 +490,12 @@ function buildEntry(index, berth, dock, stationId) {
     entry.inbound[k * 4 + 1] = tmp.y;
     entry.inbound[k * 4 + 2] = vmax;
     entry.inbound[k * 4 + 3] = flags;
+  };
+  const setSide = (hx, hz) => {
+    hubDirToGame(dock, hx, hz, tmp);
+    const len = Math.hypot(tmp.x, tmp.y) || 1;
+    entry.sideX = tmp.x / len;
+    entry.sideY = tmp.y / len;
   };
   const S = PORT_PATH_SPEED;
   const kind = dock?.kind;
@@ -430,19 +515,27 @@ function buildEntry(index, berth, dock, stationId) {
       entry.lane = true;
       entry.mouthDepth = gateZ - tb.z;
       entry.laneEndDepth = (lane ? lane.z1 : gateZ + K7_TEMPLATE.apronDepth) - tb.z;
+      entry.corridorLength = tb.maxLength;
+      entry.corridorBeam = tb.maxBeam;
       put(tb.x, approachZ, S.approach, WP.PORT);
       put(tb.x, gateZ, S.gate, WP.PORT | WP.GATE);
       put(tb.x, tb.z, S.berth, WP.PORT | WP.BERTH | WP.STOP);
+      // Odbicie od środka hali — pasy capital leżą obok siebie co 1620 j.
+      setSide(tb.x < 0 ? -1 : 1, 0);
       entry.corridor = corridorId(index, `${dock.id}|lane|${tb.id}`);
     } else {
       const gate = K7_GATES.get(tb.side < 0 ? 'G-03' : 'G-02');
       const bank = K7_BANKS.get(tb.side);
+      entry.corridorLength = COMB_MAX.length;
+      entry.corridorBeam = COMB_MAX.beam;
       put(gate.x + gate.nx * 900, gate.z + gate.nz * 900, S.approach, WP.PORT);
       put(gate.x, gate.z, S.gate, WP.PORT | WP.GATE);
       put(bank.aisleX, bank.z1, S.aisle, WP.PORT);
       put(tb.approach.from.x, tb.approach.from.z, S.corner, WP.PORT | WP.PRECISE);
       put(tb.x, tb.z, S.berth, WP.PORT | WP.BERTH | WP.STOP);
       entry.reverseTo = Math.hypot(tb.approach.from.x - tb.x, tb.approach.from.z - tb.z);
+      // Brama boczna na skosie: odbicie wzdłuż skosu, od środka hali.
+      setSide(gate.nz * tb.side, -gate.nx * tb.side);
       entry.corridor = corridorId(index, `${dock.id}|bank|${tb.side}`);
     }
   } else if (hasHub && kind === 'bay' && BAY_BERTHS.has(suffixOf(berth.k7BerthId))) {
@@ -455,17 +548,24 @@ function buildEntry(index, berth, dock, stationId) {
       entry.lane = true;
       entry.mouthDepth = openZ - tb.z;
       entry.laneEndDepth = (lane ? lane.z1 : openZ + 1200) - tb.z;
+      entry.corridorLength = tb.maxLength;
+      entry.corridorBeam = tb.maxBeam;
       put(tb.x, openZ + 1500, S.approach, WP.PORT);
       put(tb.x, openZ, S.gate, WP.PORT | WP.GATE);
       put(tb.x, tb.z, S.berth, WP.PORT | WP.BERTH | WP.STOP);
+      // Odbicie na zewnątrz zatoki (za ścianą boczną jest już otwarta przestrzeń).
+      setSide(tb.x < 0 ? -1 : 1, 0);
       entry.corridor = corridorId(index, `${dock.id}|lane|${suffixOf(tb.id)}`);
     } else {
       const aisleX = BAY_TEMPLATE.aisle.x;
+      entry.corridorLength = COMB_MAX.length;
+      entry.corridorBeam = COMB_MAX.beam;
       put(aisleX, openZ + 700, S.approach, WP.PORT);
       put(aisleX, openZ, S.gate, WP.PORT | WP.GATE);
       put(tb.approach.from.x, tb.approach.from.z, S.corner, WP.PORT | WP.PRECISE);
       put(tb.x, tb.z, S.berth, WP.PORT | WP.BERTH | WP.STOP);
       entry.reverseTo = Math.hypot(tb.approach.from.x - tb.x, tb.approach.from.z - tb.z);
+      setSide(1, 0);
       entry.corridor = corridorId(index, `${dock.id}|comb`);
     }
   } else {
@@ -495,6 +595,15 @@ function buildEntry(index, berth, dock, stationId) {
     entry.inbound[7] = WP.PORT | WP.BERTH | WP.STOP;
     entry.inboundCount = 2;
     entry.reverseTo = len;
+    // Ujście pomostu = skraj pola stanowiska od strony przestrzeni.
+    const padHalf = Math.max(20, (Number(berth.length) || entry.corridorLength) * 0.5);
+    entry.gateX = bx + entry.axisX * padHalf;
+    entry.gateY = by + entry.axisY * padHalf;
+    entry.outX = entry.axisX;
+    entry.outY = entry.axisY;
+    entry.sideX = -entry.axisY;
+    entry.sideY = entry.axisX;
+    entry.approachDist = Math.max(0, len - padHalf);
     entry.corridor = corridorId(index, `${entry.stationId}|pier|${entry.berthId || `${bx},${by}`}`);
   }
 
@@ -506,22 +615,18 @@ function buildEntry(index, berth, dock, stationId) {
     const len = Math.hypot(px - bx, py - by) || 1;
     entry.axisX = (px - bx) / len;
     entry.axisY = (py - by) / len;
+    // Ujście = punkt z flagą GATE, oś na zewnątrz = od niego do punktu podejścia.
+    entry.gateX = entry.inbound[4];
+    entry.gateY = entry.inbound[5];
+    const ox = entry.inbound[0] - entry.gateX;
+    const oy = entry.inbound[1] - entry.gateY;
+    const ol = Math.hypot(ox, oy) || 1;
+    entry.outX = ox / ol;
+    entry.outY = oy / ol;
+    entry.approachDist = ol;
   }
   if (entry.berthId && index) index.entries.set(entry.berthId, entry);
   return entry;
-}
-
-/** Punkt podejścia wpisu (pierwszy punkt szkieletu) — tam kończy się trasa z przestrzeni. */
-export function portApproachPoint(entry, hull, out) {
-  if (entry.kind === 'pier') {
-    const reach = pierReach(entry, hull);
-    out.x = entry.x + entry.axisX * reach;
-    out.y = entry.y + entry.axisY * reach;
-    return out;
-  }
-  out.x = entry.inbound[0];
-  out.y = entry.inbound[1];
-  return out;
 }
 
 function pierReach(entry, hull) {
@@ -530,9 +635,42 @@ function pierReach(entry, hull) {
   return Math.max(base, length * 1.2 + 300);
 }
 
+/** Ile za ujście (wzdłuż osi) wysuwa się kadłub wycofujący się z pasa. */
+function laneBeyondGate(entry, length) {
+  const clear = Math.max(entry.laneEndDepth, entry.mouthDepth + length * 0.5 + 260);
+  return clear - entry.mouthDepth;
+}
+
 /**
- * Wejście: dokłada do ścieżki punkty od podejścia do pola STOP.
- * `fromIndex` = 1 pomija punkt podejścia (trasa z przestrzeni już go dała).
+ * Punkt czekania wpisu — koniec trasy z przestrzeni, początek korytarza.
+ *
+ * Aleja i pomost: sam punkt podejścia. Pas: tak daleko za bramą, żeby minął
+ * go rufą NAJWIĘKSZY kadłub pasa, wycofujący się ze stanowiska (dziób do
+ * wnętrza — capital K-7 wysuwa rufę ~2,3 tys. j. za bramę G-01).
+ */
+export function portApproachPoint(entry, hull, out) {
+  if (entry.kind === 'pier') {
+    const reach = pierReach(entry, hull);
+    out.x = entry.x + entry.axisX * reach;
+    out.y = entry.y + entry.axisY * reach;
+    return out;
+  }
+  let dist = entry.approachDist;
+  if (entry.lane) {
+    const length = Math.max(40, Number(hull?.length) || 0);
+    const beyond = laneBeyondGate(entry, entry.corridorLength);
+    dist = Math.max(dist, beyond + entry.corridorLength * 0.5 + length * 0.5 + WAIT_CLEARANCE);
+  }
+  out.x = entry.gateX + entry.outX * dist;
+  out.y = entry.gateY + entry.outY * dist;
+  return out;
+}
+
+/**
+ * Wejście: dokłada do ścieżki punkty od podejścia do pola STOP. Trasa
+ * z przestrzeni kończy się w punkcie czekania (`portApproachPoint`), więc
+ * pierwszy punkt szkieletu, gdy pokrywa się z punktem czekania, zlewa się
+ * z nim w `pathFinalize`.
  */
 export function writeInbound(entry, path, hull, fromIndex = 0) {
   if (!entry) return 0;
@@ -554,42 +692,50 @@ export function writeInbound(entry, path, hull, fromIndex = 0) {
 
 /**
  * Wyjście ze stanowiska. Statek stoi na polu (punkt 0 ścieżki = stanowisko):
- *  - grzebień: tyłem do alei, potem przodem aleją do bramy i do punktu podejścia;
- *  - pas capital / MEGA: tyłem po pasie aż kadłub wyjdzie z konstrukcji, potem
- *    obrót i przodem na zewnątrz osią pasa;
- *  - pomost: tyłem na długość kadłuba, potem przodem osią stanowiska.
- * Kończy się punktem na zewnętrznej osi (dalej prowadzi router ringu).
+ *  - grzebień: tyłem do alei, potem przodem aleją do bramy / wylotu;
+ *  - pas capital / MEGA: tyłem po pasie, aż kadłub minie bramę, potem obrót;
+ *  - pomost: tyłem na długość kadłuba.
+ * Za ujściem statek odbija w bok od osi korytarza (`side`), żeby minąć
+ * czekającego w punkcie czekania. Kończy się na zewnątrz — dalej prowadzi
+ * router ringu (lejek promieniowo w górę).
  */
 export function writeOutbound(entry, path, hull) {
   if (!entry) return 0;
   const before = path.count;
   const cap = inPortCap(hull);
   const length = Math.max(40, Number(hull?.length) || 0);
+  const beam = Math.max(20, Number(hull?.width) || 0);
   const S = PORT_PATH_SPEED;
+  const side = entry.corridorBeam * 0.5 + beam * 0.5 + SIDE_CLEARANCE;
   if (entry.lane) {
     // Wylot pasa: dziób (skierowany do wnętrza) musi minąć bramę / wylot zatoki.
     const clear = Math.max(entry.laneEndDepth, entry.mouthDepth + length * 0.5 + 260);
     pathPush(path, entry.x + entry.axisX * clear, entry.y + entry.axisY * clear,
       Math.min(S.reverseLane, cap), WP.PORT | WP.REVERSE);
-    const out = clear + Math.max(700, length * 0.6);
-    pathPush(path, entry.x + entry.axisX * out, entry.y + entry.axisY * out, Math.min(S.approach, cap), WP.PORT);
+    const out = laneBeyondGate(entry, length) + Math.max(700, length * 0.6);
+    pathPush(path, entry.gateX + entry.outX * out + entry.sideX * side,
+      entry.gateY + entry.outY * out + entry.sideY * side, Math.min(S.approach, cap), WP.PORT);
     return path.count - before;
   }
   if (entry.kind === 'pier') {
     const back = Math.max(entry.reverseTo * 0.5, length * 0.6 + 200);
     pathPush(path, entry.x + entry.axisX * back, entry.y + entry.axisY * back, Math.min(S.reverse, cap), WP.PORT | WP.REVERSE);
     const reach = Math.max(pierReach(entry, hull), back + 400);
-    pathPush(path, entry.x + entry.axisX * reach, entry.y + entry.axisY * reach, Math.min(S.approach, cap), WP.PORT);
+    pathPush(path, entry.x + entry.axisX * reach + entry.sideX * side,
+      entry.y + entry.axisY * reach + entry.sideY * side, Math.min(S.approach, cap), WP.PORT);
     return path.count - before;
   }
-  // Grzebień: tyłem do punktu skrętu w alei, dalej szkielet wejścia wspak.
+  // Grzebień: tyłem do punktu skrętu w alei, dalej szkielet wejścia wspak do bramy.
   const k = entry.inboundCount - 2;
   pathPush(path, entry.inbound[k * 4], entry.inbound[k * 4 + 1], Math.min(S.reverse, cap), WP.PORT | WP.REVERSE);
-  for (let j = k - 1; j >= 0; j--) {
+  for (let j = k - 1; j >= 1; j--) {
     const o = j * 4;
-    // Brama przy wyjeździe nie jest punktem czekania — flaga GATE zostaje tylko dla wjazdu.
     pathPush(path, entry.inbound[o], entry.inbound[o + 1], Math.min(entry.inbound[o + 2], cap), WP.PORT);
   }
+  // Punkt podejścia — odsunięty w bok, żeby minąć czekającego na osi.
+  const out = entry.approachDist;
+  pathPush(path, entry.gateX + entry.outX * out + entry.sideX * side,
+    entry.gateY + entry.outY * out + entry.sideY * side, Math.min(S.approach, cap), WP.PORT);
   return path.count - before;
 }
 

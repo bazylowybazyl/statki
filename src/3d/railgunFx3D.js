@@ -19,6 +19,7 @@ import {
   clamp01, lerp, rand, makeBasis, coneDir, sp
 } from './fxParticles3D.js';
 import { SlugTrail } from './slugTrail3D.js';
+import { SimClock } from '../game/simClock.js';
 
 /* ============================================================================
    KONFIGURACJA
@@ -248,15 +249,18 @@ class RailgunFX {
   /* ----------------------------------------------------------------------
      POCISK — iskry ablacyjne i rozgrzany czubek na przebytym odcinku
      -------------------------------------------------------------------- */
-  slugStep(state, from, to, dir, vel, t0, t1) {
+  slugStep(state, from, to, dir, vel, t0, t1, carrier = null) {
     const S = this.S;
     const C = this.cfg;
-    if (state.emitter >= 0) this.trail.advance(state.emitter, from, to, t0, t1, dir);
+    if (state.emitter >= 0) this.trail.advance(state.emitter, from, to, t0, t1, dir, carrier);
 
-    // iskry ablacyjne zdzierane z pocisku — rozmieszczane po drodze, nie co klatkę
+    // iskry ablacyjne zdzierane z pocisku — rozmieszczane po drodze, nie co klatkę.
+    // Lecą w układzie strzelca (nośnik = prędkość odziedziczona przez pocisk),
+    // czubek niżej ma już pełną prędkość pocisku i nośnika nie potrzebuje.
     const seg = from.distanceTo(to);
     const step = 180 * S;
     state.sparkAcc += seg;
+    if (carrier) Fx3D.setCarrier(carrier);
     while (state.sparkAcc >= step) {
       state.sparkAcc -= step;
       const f = seg > 1e-6 ? 1 - state.sparkAcc / seg : 1;
@@ -267,6 +271,7 @@ class RailgunFX {
       Fx3D.spark.spawn(_v1, _v3, rand(0.25, 0.7), rand(0.5, 1.4), rand(15, 50) * S,
         [2.2, 2.8, 3.8], 1.0, 1.1);
     }
+    Fx3D.clearCarrier();
 
     // rozgrzany czubek — halo leci z prędkością pocisku, więc przy 12000 j/s
     // nie rozsypuje się w szereg kropek
@@ -403,8 +408,10 @@ export const RailgunFX3D = {
     return this._fx;
   },
 
-  /* --- ŁADOWANIE: u = 0..1 postępu ładowania ---------------------------- */
-  charge(x, y, dirX, dirY, dt, u) {
+  /* --- ŁADOWANIE: u = 0..1 postępu ładowania ----------------------------
+     `carrier` (w tym i kolejnych wejściach) — nośnik z src/game/carrierVelocity.js:
+     efekt leci z okrętem, zamiast zostawać w miejscu świata, gdzie strzelono. */
+  charge(x, y, dirX, dirY, dt, u, carrier = null) {
     const fx = this._ensure();
     if (!fx || !(dt > 0)) return;
     const S = this.scale;
@@ -422,32 +429,49 @@ export const RailgunFX3D = {
     _railL1.set(_muzzle.x - dx * f + px, _muzzle.y - dy * f + py, FX_PLANE_Z);
     _railR0.set(_muzzle.x - dx * b - px, _muzzle.y - dy * b - py, FX_PLANE_Z);
     _railR1.set(_muzzle.x - dx * f - px, _muzzle.y - dy * f - py, FX_PLANE_Z);
-    fx.charge(_muzzle, _dir, _railL0, _railL1, _railR0, _railR1, dt, clamp01(u));
+    if (carrier) Fx3D.setCarrier(carrier);
+    try {
+      fx.charge(_muzzle, _dir, _railL0, _railL1, _railR0, _railR1, dt, clamp01(u));
+    } finally {
+      Fx3D.clearCarrier();
+    }
   },
 
   /* --- WYSTRZAŁ --------------------------------------------------------- */
-  fire(x, y, dirX, dirY, power = 1) {
+  fire(x, y, dirX, dirY, power = 1, carrier = null) {
     const fx = this._ensure();
     if (!fx) return;
     const len = Math.hypot(dirX, dirY) || 1;
     _muzzle.set(x, -y, FX_PLANE_Z);
     _dir.set(dirX / len, -dirY / len, 0);
-    fx.fire(_muzzle, _dir, power);
+    if (carrier) Fx3D.setCarrier(carrier);
+    try {
+      fx.fire(_muzzle, _dir, power);
+    } finally {
+      Fx3D.clearCarrier();
+    }
   },
 
   /* --- SMUGA POCISKU ----------------------------------------------------
      Gra prowadzi pocisk sama (superweapon.js), więc smuga dostaje osobne
      API: start, krok po odcinku, domknięcie.
      -------------------------------------------------------------------- */
-  beginSlug(x, y, dirX, dirY, speed) {
+  // `carrier` = prędkość odziedziczona przez pocisk (okręt w chwili strzału):
+  // smuga i iskry ablacyjne zostają w układzie strzelca, jak dym z lufy.
+  // Pozycje pocisku podaje gra z pozy fizycznej, więc czas nośnika każdego
+  // punktu to `SimClock.sim` z chwili wywołania (odświeżany w stepSlug/endSlug).
+  beginSlug(x, y, dirX, dirY, speed, carrier = null) {
     const fx = this._ensure();
     if (!fx) return null;
     const e = fx.trail.acquire();
     const len = Math.hypot(dirX, dirY) || 1;
     _muzzle.set(x, -y, FX_PLANE_Z);
     _dir.set(dirX / len, -dirY / len, 0);
-    if (e >= 0) fx.trail.begin(e, _muzzle, fx.now, _dir, Math.abs(speed) || 1);
-    return { emitter: e, sparkAcc: 0 };
+    const own = carrier
+      ? { vx: Number(carrier.vx) || 0, vy: Number(carrier.vy) || 0, clock: carrier.clock, t0: SimClock.sim }
+      : null;
+    if (e >= 0) fx.trail.begin(e, _muzzle, fx.now, _dir, Math.abs(speed) || 1, own);
+    return { emitter: e, sparkAcc: 0, carrier: own };
   },
 
   // Czasy narodzin węzłów rozkładamy po odcinku między zegarem banku
@@ -464,7 +488,8 @@ export const RailgunFX3D = {
     _dir.set(dirX / len, -dirY / len, 0);
     _vel.set(velX, -velY, 0);
     const step = Math.min(Math.max(0, Fx3D.lastDt), MAX_DT);
-    fx.slugStep(state, _a, _b, _dir, _vel, fx.now, fx.now + step);
+    if (state.carrier) state.carrier.t0 = SimClock.sim;
+    fx.slugStep(state, _a, _b, _dir, _vel, fx.now, fx.now + step, state.carrier || null);
   },
 
   endSlug(state, x, y, dirX, dirY) {
@@ -473,27 +498,39 @@ export const RailgunFX3D = {
     const len = Math.hypot(dirX, dirY) || 1;
     _b.set(x, -y, FX_PLANE_Z);
     _dir.set(dirX / len, -dirY / len, 0);
-    fx.trail.end(state.emitter, _b, fx.now, _dir);
+    if (state.carrier) state.carrier.t0 = SimClock.sim;
+    fx.trail.end(state.emitter, _b, fx.now, _dir, state.carrier || null);
     state.emitter = -1;
   },
 
-  /* --- TRAFIENIE / RZAZ -------------------------------------------------- */
-  impact(x, y, dirX, dirY, power = 1) {
+  /* --- TRAFIENIE / RZAZ -------------------------------------------------
+     `carrier` = nośnik trafionego celu: iskry i żar jadą z kadłubem. */
+  impact(x, y, dirX, dirY, power = 1, carrier = null) {
     const fx = this._ensure();
     if (!fx) return;
     const len = Math.hypot(dirX, dirY) || 1;
     _b.set(x, -y, FX_PLANE_Z);
     _dir.set(dirX / len, -dirY / len, 0);
-    fx.impact(_b, _dir, power);
+    if (carrier) Fx3D.setCarrier(carrier);
+    try {
+      fx.impact(_b, _dir, power);
+    } finally {
+      Fx3D.clearCarrier();
+    }
   },
 
-  kerf(x, y, dirX, dirY, power = 1) {
+  kerf(x, y, dirX, dirY, power = 1, carrier = null) {
     const fx = this._ensure();
     if (!fx) return;
     const len = Math.hypot(dirX, dirY) || 1;
     _b.set(x, -y, FX_PLANE_Z);
     _dir.set(dirX / len, -dirY / len, 0);
-    fx.kerf(_b, _dir, power);
+    if (carrier) Fx3D.setCarrier(carrier);
+    try {
+      fx.kerf(_b, _dir, power);
+    } finally {
+      Fx3D.clearCarrier();
+    }
   },
 
   // Powołuje smugę i oddaje jej siatkę — ekran ładowania kompiluje

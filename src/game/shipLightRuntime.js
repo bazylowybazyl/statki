@@ -170,7 +170,9 @@ export function getEntityLights(entity) {
   let block = normalizedLightsCache.get(source);
   if (block === undefined) {
     block = normalizeLightsBlock(source);
-    addAutoFloodMarkers(block);
+    // `autoFlood: false` — źródło celowo bez reflektorów otoczenia (hulk po
+    // utracie dowodzenia): bez tego zgaszone lampy dostałyby automatyczne.
+    addAutoFloodMarkers(block, source.autoFlood !== false);
     normalizedLightsCache.set(source, block);
   }
   return block;
@@ -196,19 +198,23 @@ function lightsOutline(block) {
  * Reflektory otoczenia z obrysu lamp: rufa + burty (pary zależnie od długości
  * kadłuba, filtr per encja w floodLightAllowed). Tylko gdy kadłub nie ma
  * własnych: lamp `flood` ani reflektorów `road` w bok/do tyłu (|deg − 90| > 50).
- * Wynik trafia do bloku (cache per źródło) z `auto: true` i progami długości.
+ * Markery mają `auto: true` i progi długości. Blok znormalizowany
+ * (normalizeLightsBlock); edytor pokazuje z tego podgląd i „wstaw domyślne”.
+ * @returns {{ hullLenPx: number, markers: object[] }}
  */
-function addAutoFloodMarkers(block) {
+export function computeAutoFloodMarkers(block) {
   const outline = lightsOutline(block);
-  block.hullLenPx = Number.isFinite(outline.len) && outline.len > 0 ? outline.len : 0;
-  if (block[LIGHT_KINDS.FLOOD].length) return;
+  const hullLenPx = Number.isFinite(outline.len) && outline.len > 0 ? outline.len : 0;
+  const out = [];
+  const result = { hullLenPx, markers: out };
+  if (block[LIGHT_KINDS.FLOOD].length) return result;
   for (const r of block[LIGHT_KINDS.ROAD]) {
     let d = Math.abs((Number(r.deg) || 0) - 90);
     if (d > 180) d = 360 - d;
-    if (d > 50) return;
+    if (d > 50) return result;
   }
   const { pts, xMin, len } = outline;
-  if (pts.length < 4 || !(len > 0)) return;
+  if (pts.length < 4 || !(len > 0)) return result;
   const edgeAt = (x0, side) => {
     let best = 0;
     let any = 0;
@@ -231,7 +237,6 @@ function addAutoFloodMarkers(block) {
     range: Math.round(Math.max(50, Math.min(4000, len * AUTO_FLOOD.rangeFrac))),
     coneDeg: d.coneDeg, auto: true, minLen, maxLen
   });
-  const out = block[LIGHT_KINDS.FLOOD];
   out.push(make('auto_flood_rear', xMin + len * 0.02, rearN ? rearY / rearN : 0, -90, AUTO_FLOOD.rearMinLen));
   const sides = (at, tag, minLen, maxLen) => {
     const x = xMin + len * at;
@@ -240,6 +245,15 @@ function addAutoFloodMarkers(block) {
   };
   sides(AUTO_FLOOD.midAt, 'mid', AUTO_FLOOD.midMinLen, AUTO_FLOOD.pairMinLen);
   AUTO_FLOOD.pairAt.forEach((at, i) => sides(at, `pair${i}`, AUTO_FLOOD.pairMinLen));
+  return result;
+}
+
+// Blok z cache getEntityLights dostaje reflektory z obrysu i długość obrysu.
+function addAutoFloodMarkers(block, allowAuto = true) {
+  const { hullLenPx, markers } = computeAutoFloodMarkers(block);
+  block.hullLenPx = hullLenPx;
+  if (!allowAuto) return;
+  for (const m of markers) block[LIGHT_KINDS.FLOOD].push(m);
 }
 
 /** Długość kadłuba w j. świata z obrysu lamp (skala hardpointu × skala sprite'a). */
@@ -249,7 +263,8 @@ export function getEntityHullLengthWorld(entity, block = getEntityLights(entity)
   return lenPx * getEntityLightScale(entity).x * getEntitySpriteScale(entity, options).x;
 }
 
-function floodLightAllowed(marker, hullLenWorld) {
+/** Czy reflektor świeci na kadłubie tej długości (automatyczne mają progi rozmiaru). */
+export function floodLightAllowed(marker, hullLenWorld) {
   if (!marker?.auto) return true;
   return hullLenWorld >= (Number(marker.minLen) || 0) && hullLenWorld < (Number.isFinite(marker.maxLen) ? marker.maxLen : Infinity);
 }

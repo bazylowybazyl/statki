@@ -342,6 +342,9 @@ export class StormSimulator {
       ax, ay, az, bx, by, bz,
       length: Math.hypot(bx - ax, by - ay, bz - az),
       rockA: a.id, rockB: b ? b.id : -1,
+      // Środki i promienie skał końców (iskry w miejscu uderzenia lecą od środka skały).
+      acx: a.x, acy: a.y, ar: a.r,
+      bcx: b ? b.x : bx, bcy: b ? b.y : by, br: b ? b.r : 0,
       duration: 0
     };
     strike.duration = strikeDuration(strike);

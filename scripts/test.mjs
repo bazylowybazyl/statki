@@ -34,6 +34,10 @@ import { run as runScrapperFleets } from './tests/scrapperFleets.test.mjs';
 import { run as runPiracy } from './tests/piracy.test.mjs';
 import { run as runWeaponEconomy } from './tests/weaponEconomy.test.mjs';
 import { run as runPortControl } from './tests/portControl.test.mjs';
+import { run as runHaloPortTraffic } from './tests/haloPortTraffic.test.mjs';
+import { run as runPortParking } from './tests/portParking.test.mjs';
+import { run as runTrafficWorld } from './tests/trafficWorld.test.mjs';
+import { run as runTrafficCore } from './tests/trafficCore.test.mjs';
 
 const GREEN = '\x1b[32m';
 const RED = '\x1b[31m';
@@ -65,7 +69,11 @@ const suites = [
   runScrapperFleets,
   runPiracy,
   runWeaponEconomy,
-  runPortControl
+  runPortControl,
+  runHaloPortTraffic,
+  runPortParking,
+  runTrafficWorld,
+  runTrafficCore
 ];
 const results = [];
 

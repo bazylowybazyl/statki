@@ -1,15 +1,28 @@
 // src/3d/sparkSystem3D.js
 import * as THREE from 'three';
 import { sceneOriginNearCamera } from './sceneOrigin.js';
+import { SimClock } from '../game/simClock.js';
+import { ActiveCarrier } from '../game/carrierVelocity.js';
+
+// NOŚNIK (src/game/carrierVelocity.js): iskra trafienia rodzi się z prędkością
+// trafionego kadłuba i leci z nim (w próżni nic jej nie zatrzyma); opór 0,5/s
+// działa już tylko na jej ruch własny. Atrybut iCarrier = (vx, vy świata, czas
+// pozy względem epoki puli, zegar), uniformy = „teraz” obu zegarów gry.
+// Epoka: pusta pula bierze bieżący czas, żywa przesuwa ją po CARRIER_EPOCH_SPAN
+// (float32 na GPU — czas gry rośnie godzinami).
+const CARRIER_EPOCH_SPAN = 600;
 
 const sparkVertexShader = /* glsl */`
   uniform float uTime;
+  uniform float uCarrierRender;
+  uniform float uCarrierSim;
 
   attribute vec3 iPosition;
   attribute vec3 iVelocity;
   attribute float iStartTime;
   attribute float iLifeTime;
   attribute float iSize;
+  attribute vec4 iCarrier;
 
   varying float vAge;
   varying vec2 vUv;
@@ -40,6 +53,9 @@ const sparkVertexShader = /* glsl */`
     float drag = 0.5;
     vec3 currentVel = iVelocity * exp(-drag * timeAlive);
     vec3 currentPos = iPosition + iVelocity * (1.0 - exp(-drag * timeAlive)) / drag;
+    // Nośnik: przesunięcie z kadłubem (smuga iskry zostaje z ruchu własnego).
+    float carrierNow = iCarrier.w > 0.5 ? uCarrierRender : uCarrierSim;
+    currentPos.xz += iCarrier.xy * (carrierNow - iCarrier.z);
 
     // FIZYKA GRY: Y to u nas Z w WebGL! Przelaczamy fizyke na plaszczyzne XZ
     float speed = length(currentVel.xz);
@@ -115,7 +131,8 @@ const MAX_GRINDING_VISUAL_ENERGY = 650;
 let mesh = null;
 let material = null;
 let geometry = null;
-let iPositions, iVelocities, iStartTimes, iLifeTimes, iSizes;
+let iPositions, iVelocities, iStartTimes, iLifeTimes, iSizes, iCarriers;
+let carrierEpoch = 0;
 let idx = 0;
 let isDirty = false;
 let globalTime = 0;
@@ -151,6 +168,18 @@ function setSparkOrigin(x, z) {
   originX = x;
   originZ = z;
   mesh.position.set(x, 0, z);
+}
+
+// Przesuwa epokę czasów nośnika żywych iskier (rzadkie: po CARRIER_EPOCH_SPAN).
+function rebaseCarrierEpoch(epoch) {
+  const shift = carrierEpoch - epoch;
+  for (let i = 0; i < highWater; i++) iCarriers[i * 4 + 2] += shift;
+  if (highWater > 0) {
+    dirtyLo = 0;
+    if (dirtyHi < highWater - 1) dirtyHi = highWater - 1;
+    isDirty = true;
+  }
+  carrierEpoch = epoch;
 }
 
 // Przesuwa zywe iskry do nowego poczatku (caly uzyty zakres na GPU).
@@ -246,18 +275,23 @@ export const SparkSystem3D = {
     iStartTimes = new Float32Array(MAX_SPARKS).fill(-999.0);
     iLifeTimes  = new Float32Array(MAX_SPARKS);
     iSizes      = new Float32Array(MAX_SPARKS);
+    iCarriers   = new Float32Array(MAX_SPARKS * 4);
 
     geometry.setAttribute('iPosition',  new THREE.InstancedBufferAttribute(iPositions, 3));
     geometry.setAttribute('iVelocity',  new THREE.InstancedBufferAttribute(iVelocities, 3));
     geometry.setAttribute('iStartTime', new THREE.InstancedBufferAttribute(iStartTimes, 1));
     geometry.setAttribute('iLifeTime',  new THREE.InstancedBufferAttribute(iLifeTimes, 1));
     geometry.setAttribute('iSize',      new THREE.InstancedBufferAttribute(iSizes, 1));
+    geometry.setAttribute('iCarrier',   new THREE.InstancedBufferAttribute(iCarriers, 4));
+    carrierEpoch = SimClock.sim;
 
     material = new THREE.ShaderMaterial({
       vertexShader: sparkVertexShader,
       fragmentShader: sparkFragmentShader,
       uniforms: {
         uTime:       { value: 0.0 },
+        uCarrierRender: { value: 0.0 },
+        uCarrierSim:    { value: 0.0 },
         uSparkColor: { value: DEFAULT_COLOR.clone() }
       },
       transparent: true,
@@ -277,14 +311,18 @@ export const SparkSystem3D = {
     this.isInitialized = true;
   },
 
+  // vx, vy = ruch WŁASNY iskry; prędkość kadłuba dokłada ActiveCarrier (nośnik
+  // ustawiony przez wołającego wokół serii, np. trafienia w pędzący okręt).
   emit(gameX, gameY, vx, vy, life, size) {
     if (!this.isInitialized) return;
     if (highWater === 0) {
       const o = cameraOrigin();
       setSparkOrigin(o.x, o.y);
+      carrierEpoch = SimClock.sim;
     }
     const i = idx;
     const i3 = i * 3;
+    const i4 = i * 4;
 
     // Przerzucenie osi z 2D na 3D, wzgledem poczatku puli (originX/Z)
     iPositions[i3]     = gameX - originX;
@@ -294,6 +332,15 @@ export const SparkSystem3D = {
     iVelocities[i3]     = vx;
     iVelocities[i3 + 1] = 0;
     iVelocities[i3 + 2] = vy;
+
+    // Overlay: x = x świata, z = y świata — prędkość nośnika bez odwracania osi.
+    const cvx = ActiveCarrier.vx;
+    const cvy = ActiveCarrier.vy;
+    const carried = cvx !== 0 || cvy !== 0;
+    iCarriers[i4]     = cvx;
+    iCarriers[i4 + 1] = cvy;
+    iCarriers[i4 + 2] = carried ? ActiveCarrier.t0 - carrierEpoch : 0;
+    iCarriers[i4 + 3] = ActiveCarrier.clock;
 
     const clampedLife = THREE.MathUtils.clamp(Number.isFinite(life) ? life : 0.25, MIN_SPARK_LIFE, MAX_SPARK_LIFE);
     iStartTimes[i] = globalTime;
@@ -332,13 +379,16 @@ export const SparkSystem3D = {
     if (highWater > 0) {
       const o = cameraOrigin();
       if (Math.abs(o.x - originX) > SPARK_REBASE_DIST || Math.abs(o.y - originZ) > SPARK_REBASE_DIST) rebaseSparks(o.x, o.y);
+      if (SimClock.sim - carrierEpoch > CARRIER_EPOCH_SPAN) rebaseCarrierEpoch(SimClock.sim);
     }
+    material.uniforms.uCarrierRender.value = SimClock.render - carrierEpoch;
+    material.uniforms.uCarrierSim.value = SimClock.sim - carrierEpoch;
 
     if (isDirty) {
       const attrs = geometry.attributes;
       const lo = dirtyLo;
       const count = dirtyHi - lo + 1;
-      const list = [attrs.iPosition, attrs.iVelocity, attrs.iStartTime, attrs.iLifeTime, attrs.iSize];
+      const list = [attrs.iPosition, attrs.iVelocity, attrs.iStartTime, attrs.iLifeTime, attrs.iSize, attrs.iCarrier];
       for (const attr of list) {
         const items = attr.itemSize || 1;
         // Zakresy z klatek bez uploadu kumuluja sie (three czysci je dopiero po
@@ -459,7 +509,8 @@ export const SparkSystem3D = {
     if (geometry) geometry.dispose();
     if (material) material.dispose();
     mesh = null; geometry = null; material = null;
-    iPositions = null; iVelocities = null; iStartTimes = null; iLifeTimes = null; iSizes = null;
+    iPositions = null; iVelocities = null; iStartTimes = null; iLifeTimes = null; iSizes = null; iCarriers = null;
+    carrierEpoch = 0;
     idx = 0;
     isDirty = false;
     globalTime = 0;

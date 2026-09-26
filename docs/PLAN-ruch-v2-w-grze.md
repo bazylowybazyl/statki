@@ -159,3 +159,22 @@ Faza 1 = można zaczynać od razu (równolegle). Faza 2 = po zależnościach.
   jeszcze stary. Zostało: bańka na ścieżkach (przechwyt 1,1 s, wycofanie, reda, korytarze, separacja bez
   alokacji, poza do interpolacji), testy w `scripts/tests` + `scripts/test.mjs`. Uwaga Z1/Z13: bańka potrzebuje
   `berthId` kursu (nie tylko x, y postoju) i układów doków stacji.
+- 2026-09-26 Z11: zrobione (bez commita) — 27 promptów w `assets/ships/*.prompt.md` (5 ról, 4 frakcje × fregata,
+  niszczyciel, krążownik, nosiciel, 6 pustych pokładów) + `assets/ships/README.md` (lista, proporcje, priorytety,
+  siatki slotów, checklista po wygenerowaniu); PNG generuje użytkownik. Uwaga Z5: ciężki frachtowiec dostaje
+  3 × 8 zatok (nie „heavy 14”). Do decyzji: krążowniki i nosiciele frakcji w obwiedniach profilu mają 0,4–0,7 pola
+  Bellatora i Citadelli (HP, masa zderzeń).
+- 2026-09-26 Z2: zrobione (w commicie „update” + drobne poprawki bez commita). Role stanowisk (`BERTH_ROLE`: K-7
+  `military`, zatoki i pomosty `civil`; `berthRoleForCourse` = WAR/PATROL albo `course.berthRole`; port bez hal
+  wpuszcza okręt na cywilne; FIFO kolejki osobno na rolę); stanowiska niosą limity padów (`maxLength/maxBeam` —
+  fregata na S hali); `findBerth` przy remisie kosztu bierze najmniej obłożony dok (+ rotacja, `spread: false` = stary
+  dobór); `buildHaloPortTrafficLayout(…, { rotation })`, domyślnie z `haloRingRotation` (Mars −π — był 180° obok)
+  i `layout.ring` (kąty kompleksów/tranzytów w grze). Nowy `portParking.js`: reda cywilna od strony kompleksu,
+  wojskowa od strony tranzytu, obie zapełniane od środka sektora (podejścia do zatok i wylot tranzytu wolne)
+  (Ziemia r 48–58,5 tys., 1192 + 728 slotów w standardzie padów K-7), hangar dla portów
+  bez ringu i przy `expectedParked ≤ 60`, stabilny rejestr `syncParking`, zapas okrętów `placeFleetStock` (pady K-7,
+  1 capital na halę wolny, nadmiar na redzie wojskowej). Pomiar ×60, A/B na 3 ziarnach: kolejka Ziemi śr. 0,02–0,14
+  / max 13–27 (jak same zatoki), kompleksy 10,0/9,7/9,7/9,4 z 28 (było 18,9/10,8/6,3/3,0), dostawy w szumie; na żywej
+  flocie reda Ziemi max 400, Marsa 330, bez przelewu, 0 przestawień, sync ~50 µs. Uwagi: Z1 — `estimateWait(…,
+  { role })`, gdy kursy wojskowe zaczną cumować; `ruch-v2.html` może rysować postój z `portParking`. Z3/Z13 — rejestr
+  postoju trzymać między tickami (to on daje stabilność), okręty z `placeFleetStock`; `SPREAD=1` w pomiarze zbędne.
