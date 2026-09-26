@@ -21,3 +21,24 @@ release/
 # Local agent worktrees
 **/.claude/worktrees/
 .superpowers/
+
+# Śmieci robocze agentów i narzędzi (zrzuty, pomiary, buildy sprite'ów, profile)
+.tmp/
+tmp/
+output/
+.codex/
+dist-electron/
+*.log
+*.cpuprofile
+statki/
+
+# Kopie zapasowe assetów
+assets/_alpha_fix_backups_*/
+
+# Lokalne ustawienia Claude Code (launch.json zostaje wspólny)
+.claude/settings.local.json
+
+# Pliki systemowe
+desktop.ini
+Thumbs.db
+.DS_Store
