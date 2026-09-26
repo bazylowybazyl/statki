@@ -339,7 +339,9 @@ export class TrafficBridge {
       stations: message.stations || [],
       resources: message.resources || [],
       factions: message.factions || [],
-      kinds: message.kinds || []
+      kinds: message.kinds || [],
+      /** `stationId` → id stanowisk portu; `BERTH` kursu to indeks w tej liście. */
+      berths: message.berths || {}
     };
     this.step = Number(message.step) || this.step;
     this.clock = Number(message.clock) || 0;
@@ -455,6 +457,20 @@ export class TrafficBridge {
   /** Klasa jednostki kursu nr `index` z bufora bańki (`container_ship` itd.). */
   courseHull(index) {
     return this.hulls[this.courses.data[index * COURSE_STRIDE + COURSE_FIELD.HULL]] || '';
+  }
+
+  /**
+   * Id stanowiska kursu nr `index` — to samo, co w układach doków gry
+   * (`earth:K7-1:…`, `earth:Z-01:…`) — albo `null`, gdy kurs czeka w kolejce
+   * lub jest w drodze.
+   */
+  courseBerth(index) {
+    const offset = index * COURSE_STRIDE;
+    const port = this.courses.data[offset + COURSE_FIELD.PORT];
+    const berth = this.courses.data[offset + COURSE_FIELD.BERTH];
+    if (!(port >= 0) || !(berth >= 0) || !this.tables) return null;
+    const stationId = this.tables.stations[port]?.id;
+    return this.tables.berths[stationId]?.[berth] || null;
   }
 
   /** Ms spędzone na głównym wątku od ostatniego odczytu — wiersz PerfHUD. */

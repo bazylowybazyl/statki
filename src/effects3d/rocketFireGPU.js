@@ -87,10 +87,17 @@ export class RocketFireGPU {
         this.startPos = new Float32Array(maxParticles * 3);
         this.startVel = new Float32Array(maxParticles * 3);
         this.dataInfo = new Float32Array(maxParticles * 4); // startTime, life, size, type
+        // Nośnik (x, z overlaya): prędkość układu rakiety w chwili narodzin — ogień
+        // leci z nią (dysza rakiety wyrzuconej z pędzącego okrętu), a rozciąganie
+        // i kierunek smugi zostają z ruchu własnego (aStartVel).
+        this.carrier = new Float32Array(maxParticles * 2);
+        this._cx = 0;
+        this._cz = 0;
 
         geo.setAttribute("aStartPos", new THREE.InstancedBufferAttribute(this.startPos, 3));
         geo.setAttribute("aStartVel", new THREE.InstancedBufferAttribute(this.startVel, 3));
         geo.setAttribute("aData",     new THREE.InstancedBufferAttribute(this.dataInfo, 4));
+        geo.setAttribute("aCarrier",  new THREE.InstancedBufferAttribute(this.carrier, 2));
 
         /* ── Soft radial gradient texture ── */
         const canvas = document.createElement("canvas");
@@ -127,6 +134,7 @@ export class RocketFireGPU {
                 attribute vec3 aStartPos;
                 attribute vec3 aStartVel;
                 attribute vec4 aData;   // x=startTime, y=life, z=size, w=type
+                attribute vec2 aCarrier; // prędkość nośnika (x, z)
 
                 uniform float uTime;
                 uniform float u_startSize;
@@ -163,6 +171,7 @@ export class RocketFireGPU {
                     float ageNorm = age / maxLife;
 
                     vec3  pos         = aStartPos + aStartVel * age;
+                    pos.xz += aCarrier * age;
                     float currentSize = aData.z;
                     float stretchFactor = 1.0;
 
@@ -360,6 +369,12 @@ export class RocketFireGPU {
      * Spawn a single fire / explosion / spark / shockwave particle.
      * @param {number} type  0=fire, 2=RCS, 3=explosion core, 4=sparks, 5=shockwave
      */
+    /** Nośnik kolejnych spawnów (x, z overlaya) — zdejmowany setCarrier(0, 0). */
+    setCarrier(x, z) {
+        this._cx = Number(x) || 0;
+        this._cz = Number(z) || 0;
+    }
+
     spawn(x, y, z, vx, vy, vz, size, life, type) {
         const i  = this.activeIndex;
         this.activeIndex = (this.activeIndex + 1) % this.maxParticles;
@@ -367,6 +382,7 @@ export class RocketFireGPU {
 
         this.startPos[i3]   = x;  this.startPos[i3+1] = y;  this.startPos[i3+2] = z;
         this.startVel[i3]   = vx; this.startVel[i3+1] = vy; this.startVel[i3+2] = vz;
+        this.carrier[i * 2] = this._cx; this.carrier[i * 2 + 1] = this._cz;
 
         this.dataInfo[i4]   = this._time;   // startTime
         this.dataInfo[i4+1] = life;
@@ -396,6 +412,7 @@ export class RocketFireGPU {
         applyAttrRange(geo.attributes.aStartPos, start * 3, count * 3);
         applyAttrRange(geo.attributes.aStartVel, start * 3, count * 3);
         applyAttrRange(geo.attributes.aData, start * 4, count * 4);
+        applyAttrRange(geo.attributes.aCarrier, start * 2, count * 2);
         this._dirtyMin = Infinity;
         this._dirtyMax = -1;
     }

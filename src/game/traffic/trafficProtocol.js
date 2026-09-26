@@ -28,7 +28,9 @@
  *
  * WORKER → GRA
  *   ready      { version, clock, step, seed, economyScale, capacityMultiplier,
- *                stations, resources, factions, kinds, hulls, buildMs }
+ *                stations, resources, factions, kinds, berths, buildMs }
+ *              `berths`: { stationId: [id stanowiska…] } — `BERTH` kursu to
+ *              indeks w liście jego portu (`PORT`), id jak w układach gry.
  *   tick       { clock, steps, stepMs, stats, stockSeq, market, bubble,
  *                wrecks, warWrecks, stationFactions? }   po każdym kroku świata
  *   bubble     { clock, count, data, hulls? }            po przesunięciu fokusu
@@ -90,7 +92,7 @@ export const COURSE_FIELD = Object.freeze({
   FACTION: 9,
   /** Indeks stacji portu w `stations` albo −1 — gdy kurs ma przydział w porcie. */
   PORT: 10,
-  /** Indeks stanowiska w `docks.berths` tego portu albo −1 (w kolejce / w drodze). */
+  /** Indeks w `ready.berths[stacja portu]` albo −1 (w kolejce / w drodze). */
   BERTH: 11
 });
 

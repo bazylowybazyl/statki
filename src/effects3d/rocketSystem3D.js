@@ -17,6 +17,20 @@ import { RocketFireGPU, FlameSettings } from "./rocketFireGPU.js";
 import { RocketSmokeGPU } from "./rocketSmokeGPU.js";
 import { isEntityShieldBlocking } from "../../shieldSystem.js";
 import { shieldImpactClass } from "../data/weapons.js";
+import { SimClock } from "../game/simClock.js";
+
+/*
+ * UKŁAD RAKIETY (src/game/carrierVelocity.js). Rakieta startuje z prędkością
+ * wyrzutni (`frameVel`, płaszczyzna x/z overlaya) i zachowuje ją — to jej pęd,
+ * w próżni nic go nie odbierze, więc salwa z pędzącego okrętu nie zostaje w tyle.
+ * Model lotu (kinematyczny: prędkość idzie za nosem, szybkość goni desiredSpeed)
+ * działa na ruch WŁASNY w tym układzie: z pokładu wyrzutni rakieta leci tak samo
+ * jak z postoju, a przy wyrzutni w spoczynku (frameVel = 0) wszystko jest jak
+ * przed zmianą. Układu świadomie NIE dopasowujemy do ruchu celu — rakieta
+ * zyskałaby prędkość celu nawet strzelana z postoju. Prowadzenie liczy ruch celu
+ * względem układu, a znany dryf układu kompensuje w całości; zasięg = droga własna.
+ * Ogień i dym z dyszy dziedziczą układ (nośnik GPU).
+ */
 
 /* ═══════════════════════════════════════════════════
    TUNABLES
@@ -62,22 +76,27 @@ const _BASE_FWD  = new THREE.Vector3(0, 1, 0);  // rocket nose in local space
 const _VISUAL_FWD = new THREE.Vector3(0, 0, 1);
 const _renderDir = new THREE.Vector3();
 const _renderQuat = new THREE.Quaternion();
-const _leadAim2D = { x: 0, y: 0 };
+const _leadAim2D = { x: 0, y: 0, t: 0 };
 const _colorScratch = new THREE.Color();
+// Scratch prowadzenia (bez obiektów per rakieta per klatka).
+const _leadPos = { x: 0, y: 0 };
+const _leadVel = { x: 0, y: 0 };
+const _leadFrame = { x: 0, y: 0 };
+const _targetVel = { x: 0, y: 0 };
 
-function getTargetVelocity2D(target) {
-    if (!target) return { x: 0, y: 0 };
-    const vel = target.vel || target.velocity || null;
-    return {
-        x: Number(target.vx ?? vel?.x) || 0,
-        y: Number(target.vy ?? vel?.y) || 0
-    };
+function readTargetVelocity2D(target, out) {
+    const vel = target?.vel || target?.velocity || null;
+    out.x = Number(target?.vx ?? vel?.x) || 0;
+    out.y = Number(target?.vy ?? vel?.y) || 0;
+    return out;
 }
 
-function solveLeadAim2D(shooterPos, shooterVel, target, projectileSpeed, out = _leadAim2D) {
+// `frameVel` — układ, w którym leci pocisk: zwracany punkt = cel przesunięty
+// o ruch WZGLĘDEM układu (kierunek nosa w tym układzie). Bez niego = świat.
+function solveLeadAim2D(shooterPos, shooterVel, target, projectileSpeed, out = _leadAim2D, frameVel = null) {
     const tx = Number(target?.x ?? target?.pos?.x) || 0;
     const ty = Number(target?.y ?? target?.pos?.y) || 0;
-    const tv = getTargetVelocity2D(target);
+    const tv = readTargetVelocity2D(target, _targetVel);
     const speed = Math.max(1, projectileSpeed);
     const rx = tx - shooterPos.x;
     const ry = ty - shooterPos.y;
@@ -100,8 +119,11 @@ function solveLeadAim2D(shooterPos, shooterVel, target, projectileSpeed, out = _
         }
     }
     if (!Number.isFinite(t) || t < 0) t = 0;
-    out.x = tx + tv.x * t;
-    out.y = ty + tv.y * t;
+    const fx = frameVel ? (Number(frameVel.x) || 0) : 0;
+    const fy = frameVel ? (Number(frameVel.y) || 0) : 0;
+    out.x = tx + (tv.x - fx) * t;
+    out.y = ty + (tv.y - fy) * t;
+    out.t = t;
     return out;
 }
 
@@ -301,7 +323,11 @@ class RocketSystem3D {
                 reacquireUntil: 0,
                 terminalEnteredAtDist: Infinity,
                 missGrowTime: 0,
-                visualDir:      new THREE.Vector3(0, 0, 1)
+                visualDir:      new THREE.Vector3(0, 0, 1),
+                // Układ rakiety (x, z overlaya) i czas pozy wyrzutni — patrz nagłówek.
+                frameVel:       new THREE.Vector3(),
+                bornSim:        0,
+                frameSynced:    false
             });
             _dummy.position.set(0, -999999, 0);
             _dummy.updateMatrix();
@@ -320,8 +346,10 @@ class RocketSystem3D {
      * @param {number}      damage     — damage on impact
      * @param {object}      weaponDef  — weapon definition (for explodeRadius etc.)
      * @param {string}      colorTheme — 'blue' | 'red'
+     * @param {number}      launchVx, launchVy — prędkość wyrzutni (świat gry):
+     *                      rakieta startuje w jej układzie (patrz nagłówek)
      */
-    fire(gameX, gameY, target, damage, weaponDef, colorTheme = "blue") {
+    fire(gameX, gameY, target, damage, weaponDef, colorTheme = "blue", launchVx = 0, launchVy = 0) {
         let r = null;
         for (let i = 0; i < ROCKET.maxRockets; i++) {
             if (!this.rockets[i].active) { r = this.rockets[i]; break; }
@@ -333,6 +361,11 @@ class RocketSystem3D {
         this.mesh.visible = true;
         // Game coords → overlay: X stays, game-Y → overlay-Z, height=0
         r.position.set(gameX, 0, gameY);
+        r.frameVel.set(Number(launchVx) || 0, 0, Number(launchVy) || 0);
+        // Poza wyrzutni pochodzi z kroku fizyki — pierwszy update dosuwa układ
+        // do czasu klatki (SimClock), jak interpolowany kadłub gracza.
+        r.bornSim = SimClock.sim;
+        r.frameSynced = false;
 
         // Ejection: random horizontal spread + upward burst
         r.velocity.set(
@@ -396,14 +429,19 @@ class RocketSystem3D {
         r.missGrowTime = 0;
         r.prevExhaustPos.copy(r.position);
 
+        // Nos w stronę celu przesuniętego o ruch względem układu wyrzutni.
+        _leadFrame.x = r.frameVel.x;
+        _leadFrame.y = r.frameVel.z;
         const initialAim = target && !target.dead
             ? (target._isPositionTarget
                 ? { x: Number(target.x ?? target.pos?.x) || gameX, y: Number(target.y ?? target.pos?.y) || gameY }
                 : solveLeadAim2D(
                     { x: gameX, y: gameY },
-                    { x: 0, y: 0 },
+                    _leadFrame,
                     target,
-                    profile.desiredSpeed
+                    profile.desiredSpeed,
+                    _leadAim2D,
+                    _leadFrame
                 ))
             : null;
         if (initialAim) {
@@ -517,14 +555,38 @@ class RocketSystem3D {
                 }
 
                 const planarSpeed = Math.max(300, Math.hypot(r.velocity.x, r.velocity.z), guidanceDesiredSpeed);
-                const leadPoint = isPointTarget
-                    ? { x: tx, y: ty }
-                    : solveLeadAim2D(
-                        { x: r.position.x, y: r.position.z },
-                        { x: r.velocity.x, y: r.velocity.z },
-                        r.target,
-                        planarSpeed
-                    );
+                // Prowadzenie w układzie rakiety: prędkość całkowita = własna + układ,
+                // punkt = cel przesunięty o ruch WZGLĘDEM układu (u = v_celu − układ).
+                // Punkt w świecie też ma ruch względny (−układ), więc liczymy go zawsze.
+                _leadPos.x = r.position.x;
+                _leadPos.y = r.position.z;
+                _leadVel.x = r.velocity.x + r.frameVel.x;
+                _leadVel.y = r.velocity.z + r.frameVel.z;
+                _leadFrame.x = r.frameVel.x;
+                _leadFrame.y = r.frameVel.z;
+                // Dostrojona formuła (prędkość własna w ruchu względnym — z nią
+                // zestrojone leadHorizon) — przy wyrzutni w spoczynku jak dawniej.
+                const tunedLead = solveLeadAim2D(_leadPos, _leadVel, r.target, planarSpeed, _leadAim2D, _leadFrame);
+                const tunedX = tunedLead.x;
+                const tunedY = tunedLead.y;
+                // Udział dryfu układu w ruchu względnym: 0 = wyrzutnia w spoczynku,
+                // 1 = cel stoi, a przesuwa go tylko dryf — znany co do joty, więc
+                // wyprzedzamy go w całości i z prawdziwym czasem przechwycenia w
+                // układzie rakiety (dostrojona formuła zaniża go przy szybkim
+                // zbliżaniu: 7800 j/s mijało cel o 75 j. przy bezpieczniku 65 j.).
+                // W pościgu (cel leci z układem) ruch względny znika sam.
+                readTargetVelocity2D(r.target, _targetVel);
+                const frameSpeed = Math.hypot(r.frameVel.x, r.frameVel.z);
+                const driftShare = frameSpeed > 1e-6
+                    ? frameSpeed / (frameSpeed + Math.hypot(_targetVel.x, _targetVel.y))
+                    : 0;
+                let leadPoint = tunedLead;
+                if (driftShare > 0) {
+                    const trueLead = solveLeadAim2D(_leadPos, _leadFrame, r.target, planarSpeed, _leadAim2D, _leadFrame);
+                    trueLead.x = tunedX + (trueLead.x - tunedX) * driftShare;
+                    trueLead.y = tunedY + (trueLead.y - tunedY) * driftShare;
+                    leadPoint = trueLead;
+                }
 
                 let leadWeight = 0;
                 let targetY = 0;
@@ -547,8 +609,9 @@ class RocketSystem3D {
                     effectiveTurnRate *= r.reacquireTurnMultiplier;
                 }
 
-                const aimX = THREE.MathUtils.lerp(tx, leadPoint.x, leadWeight);
-                const aimZ = THREE.MathUtils.lerp(ty, leadPoint.y, leadWeight);
+                const aimWeight = leadWeight + (1 - leadWeight) * driftShare;
+                const aimX = THREE.MathUtils.lerp(tx, leadPoint.x, aimWeight);
+                const aimZ = THREE.MathUtils.lerp(ty, leadPoint.y, aimWeight);
                 const dx = aimX - r.position.x;
                 const dz = aimZ - r.position.z;
 
@@ -625,10 +688,14 @@ class RocketSystem3D {
             }
 
             r.position.addScaledVector(r.velocity, dt);
-            r.travelDistance += Math.hypot(
-                r.position.x - r.prevTravelPos.x,
-                r.position.z - r.prevTravelPos.z
-            );
+            // Układ rakiety: pierwszy update dosuwa pozę z kroku fizyki (bornSim)
+            // do czasu tej klatki — potem SimClock.render rośnie o to samo dt.
+            const frameDt = r.frameSynced ? dt : (SimClock.render - r.bornSim);
+            r.frameSynced = true;
+            r.position.x += r.frameVel.x * frameDt;
+            r.position.z += r.frameVel.z * frameDt;
+            // Zasięg = droga WŁASNA (względem układu), nie przelot razem z wyrzutnią.
+            r.travelDistance += Math.hypot(r.velocity.x, r.velocity.z) * dt;
             // prevTravelPos still holds the pre-step position; the fuse check below
             // sweeps the full segment traveled this frame. Synced after hit detection.
 
@@ -657,6 +724,10 @@ class RocketSystem3D {
             _exhaustP.set(0, 0, -R.exhaustOffset * (r.exhaustScale || 1)).applyMatrix4(_dummy.matrix);
 
             /* ── Spawn FIRE particles ── */
+            // Ogień i dym jadą w układzie rakiety (nośnik GPU) — z pokładu wyrzutni
+            // smuga wygląda jak przy strzale z postoju.
+            this.fireGPU.setCarrier(r.frameVel.x, r.frameVel.z);
+            this.smokeGPU.setCarrier(r.frameVel.x, r.frameVel.z);
             if (r.currentThrust > 0) {
                 const dist = _exhaustP.distanceTo(r.prevExhaustPos);
                 // OPTIMIZATION: cap reduced 15→8. Supernova (speed=3600) was hitting 15 every frame,
@@ -707,6 +778,8 @@ class RocketSystem3D {
             }
 
             r.prevExhaustPos.copy(_exhaustP);
+            this.fireGPU.setCarrier(0, 0);
+            this.smokeGPU.setCarrier(0, 0);
 
             const traveled = r.travelDistance;
 
@@ -916,6 +989,22 @@ class RocketSystem3D {
             return;
         }
 
+        // Nośnik wybuchu: trafiony kadłub (kula ognia jedzie z nim), a wybuch
+        // w próżni (koniec zasięgu, punkt) — układ rakiety.
+        const hitEntity = r.didImpactDamage && r.target && !r.target._isPositionTarget ? r.target : null;
+        if (hitEntity) readTargetVelocity2D(hitEntity, _leadFrame);
+        else { _leadFrame.x = r.frameVel.x; _leadFrame.y = r.frameVel.z; }
+        this.fireGPU.setCarrier(_leadFrame.x, _leadFrame.y);
+        this.smokeGPU.setCarrier(_leadFrame.x, _leadFrame.y);
+        try {
+            this._spawnExplosionFx(r, ex, ey, ez, eS);
+        } finally {
+            this.fireGPU.setCarrier(0, 0);
+            this.smokeGPU.setCarrier(0, 0);
+        }
+    }
+
+    _spawnExplosionFx(r, ex, ey, ez, eS) {
         const coreType = r.explosionCoreType || 3;
         const sparkType = r.explosionSparkType || 4;
         const shockwaveType = r.shockwaveType || 5;
@@ -1085,7 +1174,8 @@ export function updateRocketSystem3D(dt) {
  * @param {number}  damage    — damage on hit
  * @param {object}  weaponDef — weapon definition
  * @param {string}  color     — 'blue' | 'red'
+ * @param {number}  launchVx, launchVy — prędkość wyrzutni (układ rakiety)
  */
-export function fireRocket3D(gameX, gameY, target, damage, weaponDef, color) {
-    if (instance) instance.fire(gameX, gameY, target, damage, weaponDef, color);
+export function fireRocket3D(gameX, gameY, target, damage, weaponDef, color, launchVx = 0, launchVy = 0) {
+    if (instance) instance.fire(gameX, gameY, target, damage, weaponDef, color, launchVx, launchVy);
 }

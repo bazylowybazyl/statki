@@ -6,7 +6,8 @@ import * as THREE from 'three';
 import { DESTRUCTOR_CONFIG } from '../src/game/destructor.js';
 import { sunShadowUniforms } from '../src/3d/sunShadowMask.js';
 
-const source = readFileSync(new URL('../src/3d/hexShips3D.js', import.meta.url), 'utf8');
+// CRLF → LF: wycinek niżej szuka znacznika z `\n` (checkout z core.autocrlf daje CRLF).
+const source = readFileSync(new URL('../src/3d/hexShips3D.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 // Execute the production pool with real Three.js attributes, without a renderer.
 const poolCode = source.slice(source.indexOf('const GPU_DEBRIS_MAX ='), source.indexOf("if (typeof window !== 'undefined') {\n  window.spawnGpuDebris"));
 function makePool() {

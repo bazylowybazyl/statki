@@ -6,7 +6,8 @@ import { readFileSync } from 'node:fs';
 // w stylu repo (index.html i moduły z WebGL nie wczytają się w node), a polityka
 // degradacji heks-asteroid jest testowana behawioralnie.
 
-const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
+// CRLF → LF: regexy niżej liczą na `\n`, a checkout z core.autocrlf daje CRLF.
+const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const indexHtml = read('index.html');
 
 test('drawNPCPretty: rekurencja tylko gdy powstał kadłub, porażka = ponowna próba za 2 s', () => {

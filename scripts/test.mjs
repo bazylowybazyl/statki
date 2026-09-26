@@ -22,6 +22,8 @@ import { run as runDockLayout } from './tests/dockLayout.test.mjs';
 import { run as runTransportCompanies } from './tests/transportCompanies.test.mjs';
 import { run as runTrafficDirector } from './tests/trafficDirector.test.mjs';
 import { run as runMaterializedFlight } from './tests/materializedFlight.test.mjs';
+import { run as runRingRouter } from './tests/ringRouter.test.mjs';
+import { run as runPortPaths } from './tests/portPaths.test.mjs';
 import { run as runTradeMarket } from './tests/tradeMarket.test.mjs';
 import { run as runConvoy } from './tests/convoy.test.mjs';
 import { run as runAgentFleets } from './tests/agentFleets.test.mjs';
@@ -58,6 +60,8 @@ const suites = [
   runTransportCompanies,
   runTrafficDirector,
   runMaterializedFlight,
+  runRingRouter,
+  runPortPaths,
   runTradeMarket,
   runConvoy,
   runAgentFleets,

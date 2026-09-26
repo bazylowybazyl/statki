@@ -516,8 +516,8 @@ export const CanvasVFX = {
     for (const p of this.activeParticles) {
       if (!p.beam) continue;
       const ce = carrierElapsed(p.clock, p.ct0);
-      const ox = p.cvx * ce;
-      const oy = p.cvy * ce;
+      const ox = p.cvx ? p.cvx * ce : 0;
+      const oy = p.cvy ? p.cvy * ce : 0;
       const s1 = window.worldToScreen(p.start.x + ox, p.start.y + oy, cam);
       const s2 = window.worldToScreen(p.end.x + ox, p.end.y + oy, cam);
       const alphaFactor = Math.max(0, Math.min(1, 1 - p.age / Math.max(p.life, 0.0001)));
@@ -559,7 +559,7 @@ export const CanvasVFX = {
       const size = p.size * cam.zoom;
       if (size < 0.8) continue;
       const ce = carrierElapsed(p.clock, p.ct0);
-      projectInto(p.pos.x + p.cvx * ce, p.pos.y + p.cvy * ce, cam, s);
+      projectInto(p.pos.x + (p.cvx ? p.cvx * ce : 0), p.pos.y + (p.cvy ? p.cvy * ce : 0), cam, s);
       if (s.x < -10 || s.x > vw + 10 || s.y < -10 || s.y > vh + 10) continue;
       if (drawn >= this.MAX_PARTICLES_DRAW) break;
       drawn++;
@@ -580,7 +580,7 @@ export const CanvasVFX = {
       if (!p.flash) continue;
       // Patrz drawParticles: budzet konsumuja tylko blyski faktycznie rysowane.
       const ce = carrierElapsed(p.clock, p.ct0);
-      projectInto(p.pos.x + p.cvx * ce, p.pos.y + p.cvy * ce, cam, s);
+      projectInto(p.pos.x + (p.cvx ? p.cvx * ce : 0), p.pos.y + (p.cvy ? p.cvy * ce : 0), cam, s);
       if (s.x < -50 || s.x > vw + 50 || s.y < -50 || s.y > vh + 50) continue;
       if (drawn >= this.MAX_PARTICLES_DRAW) break;
       drawn++;
@@ -606,7 +606,7 @@ export const CanvasVFX = {
     for (const p of this.lightningParticles) {
       const t = 1 - (p.age / p.maxLife);
       const ce = carrierElapsed(p.clock, p.ct0);
-      projectInto(p.x + (p.cvx || 0) * ce, p.y + (p.cvy || 0) * ce, cam, s);
+      projectInto(p.x + (p.cvx ? p.cvx * ce : 0), p.y + (p.cvy ? p.cvy * ce : 0), cam, s);
       if (s.x < -50 || s.x > vw + 50 || s.y < -50 || s.y > vh + 50) continue;
       ctx.strokeStyle = `rgba(180, 240, 255, ${t * 0.8})`;
       ctx.lineWidth = (1 + Math.random()) * cam.zoom;
@@ -633,7 +633,7 @@ export const CanvasVFX = {
   drawShockwaves(ctx, cam) {
     for (const s of this.shockwaves) {
       const ce = carrierElapsed(s.clock, s.ct0);
-      const sw = window.worldToScreen(s.x + (s.cvx || 0) * ce, s.y + (s.cvy || 0) * ce, cam);
+      const sw = window.worldToScreen(s.x + (s.cvx ? s.cvx * ce : 0), s.y + (s.cvy ? s.cvy * ce : 0), cam);
       ctx.beginPath();
       ctx.lineWidth = s.w * cam.zoom;
       ctx.strokeStyle = s.color + Math.max(0, 1 - s.life / s.maxLife) + ')';

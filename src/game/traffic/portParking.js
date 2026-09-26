@@ -14,7 +14,7 @@
  *   WOJSKO   — zapas okrętów frakcji (`shipyards.js`) stoi w halach K-7
  *              (stanowiska `military`), nadmiar na osobnej redzie wojskowej.
  *
- * Zmierzone przy ×60 (`.tmp/pomiar-portu-x60.mjs`, 6 h): na Ziemi czeka śr. 256,
+ * Zmierzone przy ×60 (`scripts/pomiar-portu-x60.mjs`, 6 h): na Ziemi czeka śr. 256,
  * p95 385, max 408 statków (vany do ~300, haulery do ~290, bulk do 69, ciężkie
  * i mega do ~18); Mars max 330. Zapas okrętów po 6 h: Mars 155–300, hale mieszczą
  * 4 × 28. Stąd pojemności: reda cywilna Ziemi ~1100 slotów, wojskowa ~850.

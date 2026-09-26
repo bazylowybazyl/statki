@@ -14,6 +14,7 @@ import { createPdBeamHit, resolvePdBeamHit } from '../../src/game/pdBeamFastPath
 import { isPointDefenseWeapon } from '../../src/ai/pointDefenseTargeting.js';
 import { makeDestructorHull } from './destructorHull.mjs';
 import { readIndexHtml, sliceFunction } from './indexSource.mjs';
+import { CARRIER_SCOPE } from './carrierScope.mjs';
 
 // Pomocniki modułowe wiązki (po refaktorze) stoją między tym znacznikiem
 // a fireWeaponCore; przed refaktorem znacznika nie ma i bierzemy samą funkcję.
@@ -66,6 +67,7 @@ export function createBeamHarness({ html = readIndexHtml(), extraScope = {} } = 
   }
 
   const scope = {
+    ...CARRIER_SCOPE,
     window: win,
     MASTER_WEAPONS,
     isTargetAlive,

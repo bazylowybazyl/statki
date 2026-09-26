@@ -58,12 +58,18 @@ export class RocketSmokeGPU {
         this.startPos = new Float32Array(maxParticles * 3);
         this.startVel = new Float32Array(maxParticles * 3);
         this.dataInfo = new Float32Array(maxParticles * 4);
+        // Nośnik (x, z overlaya) — patrz rocketFireGPU.js: dym jedzie z układem
+        // rakiety z chwili narodzin, zamiast zostawać w świecie za wyrzutnią.
+        this.carrier = new Float32Array(maxParticles * 2);
+        this._cx = 0;
+        this._cz = 0;
         const dummyPos = new Float32Array(maxParticles * 3);
 
         geo.setAttribute("position",  new THREE.BufferAttribute(dummyPos,       3));
         geo.setAttribute("aStartPos", new THREE.BufferAttribute(this.startPos,  3));
         geo.setAttribute("aStartVel", new THREE.BufferAttribute(this.startVel,  3));
         geo.setAttribute("aData",     new THREE.BufferAttribute(this.dataInfo,  4));
+        geo.setAttribute("aCarrier",  new THREE.BufferAttribute(this.carrier,   2));
 
         /* ── Soft radial gradient texture ── */
         const canvas = document.createElement("canvas");
@@ -95,6 +101,7 @@ export class RocketSmokeGPU {
                 attribute vec3 aStartPos;
                 attribute vec3 aStartVel;
                 attribute vec4 aData;
+                attribute vec2 aCarrier; // prędkość nośnika (x, z)
 
                 uniform float uTime;
                 uniform float u_smokeSize;
@@ -125,6 +132,7 @@ export class RocketSmokeGPU {
                     float noiseZ = cos(age * 12.0 + aStartPos.x * 0.02) * 20.0 * u_worldScale;
 
                     vec3 pos = aStartPos + aStartVel * age;
+                    pos.xz += aCarrier * age;
                     pos.x += noiseX * age * 2.0;
                     pos.z += noiseZ * age * 2.0;
 
@@ -183,6 +191,12 @@ export class RocketSmokeGPU {
         scene.add(this.points);
     }
 
+    /** Nośnik kolejnych spawnów (x, z overlaya) — zdejmowany setCarrier(0, 0). */
+    setCarrier(x, z) {
+        this._cx = Number(x) || 0;
+        this._cz = Number(z) || 0;
+    }
+
     /** Spawn one smoke particle. */
     spawn(x, y, z, vx, vy, vz, size, life, type) {
         const i  = this.activeIndex;
@@ -191,6 +205,7 @@ export class RocketSmokeGPU {
 
         this.startPos[i3]   = x;  this.startPos[i3+1] = y;  this.startPos[i3+2] = z;
         this.startVel[i3]   = vx; this.startVel[i3+1] = vy; this.startVel[i3+2] = vz;
+        this.carrier[i * 2] = this._cx; this.carrier[i * 2 + 1] = this._cz;
 
         this.dataInfo[i4]   = this._time;
         this.dataInfo[i4+1] = life;
@@ -219,6 +234,7 @@ export class RocketSmokeGPU {
         applyAttrRange(geo.attributes.aStartPos, start * 3, count * 3);
         applyAttrRange(geo.attributes.aStartVel, start * 3, count * 3);
         applyAttrRange(geo.attributes.aData, start * 4, count * 4);
+        applyAttrRange(geo.attributes.aCarrier, start * 2, count * 2);
         this._dirtyMin = Infinity;
         this._dirtyMax = -1;
     }

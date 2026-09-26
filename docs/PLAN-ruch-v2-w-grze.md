@@ -22,7 +22,7 @@
    oraz ich doki mają wyglądać inaczej niż Ziemia.** Pozostałe planety (Merkury, Wenus, Saturn,
    Uran, Neptun) dostają **ogromne doki / stacje** (megadoki), każda z własnym charakterem.
 
-## 2. Liczby (pomiar `.tmp/pomiar-portu-x60.mjs`, ×60, magazyny ×4, presja 1, 6 h, od 60. min)
+## 2. Liczby (pomiar `scripts/pomiar-portu-x60.mjs`, ×60, magazyny ×4, presja 1, 6 h, od 60. min)
 
 Port Ziemi, 224 stanowiska (4 kompleksy × [K-7 + 2 zatoki]):
 - zajęte śr. 42 / p95 68 / max 118, kolejka 0; 1 764 cumowań/h; postój przy stanowisku śr. 86 s
@@ -138,7 +138,7 @@ Faza 1 = można zaczynać od razu (równolegle). Faza 2 = po zależnościach.
 - **Render:** tylko przez `Core3D` (bez nowych rendererów), pozycje świata względem
   `sceneOriginNearCamera`, emitery HDR > 1, AGENTS.md. Nowe budowle najpierw w demie, potem w grze.
 - **Ring nie udaje życia:** żadnych zastępczych statków ani ruchu — statki przychodzą z ruchu v2.
-- **Pomiar portu** po każdej zmianie składu stanowisk: `.tmp/pomiar-portu-x60.mjs`
+- **Pomiar portu** po każdej zmianie składu stanowisk: `node scripts/pomiar-portu-x60.mjs 360 1 4 60`
   (`WATCH=…`, `DROP=…`, `SPREAD=1`, `SEED=7`).
 
 ## 7. Stan
@@ -147,18 +147,34 @@ Faza 1 = można zaczynać od razu (równolegle). Faza 2 = po zależnościach.
   x/y/vx/vy (`src/game/npcCollisionBody.js`, `AsteroidField.checkShipBodyCollisions`); poza kolizją:
   skok tranzytu (`phase 'warping'`), `isCollidable === false`, dok, wagony megafrachtowca; testy
   `tests/npcWorldCollisions.test.mjs`. Uwaga Z3/Z13: pełne NPC przy Ziemi/Marsie czują płytę — trasy muszą ją omijać.
-- 2026-09-26 Z1 (W TOKU, bez commita): faza A częściowo — `trafficWorld.js` (jeden builder + krok, skrypt i demo
-  przełączone, wynik `SEED=7 … 240 1 4 60` identyczny z przedrefaktorowym na tej samej migawce), `travelNetwork`
-  (`origin`, `planetAngles`, `sunRadius`), `trafficDirector`: jedno ziarniste `rng`, `destroyCourse`,
-  `applyStockDelta`, `setCapacity`, `stationDestroyed`, opcja `protectObserved`; `trafficProtocol.js`.
-  Zostało: `trafficCore.js`, `traffic.worker.js`, `trafficBridge.js`, testy, cała faza B.
-- 2026-09-26 Z3 (W TOKU, bez commita, przerwane limitem): nowe `src/game/traffic/ringRouter.js` (strefy ringu,
-  objazd łukiem `keepR` ≈ 60 tys. j. za halami i redą, 4 tranzyty, ruch w strefie portu tylko promieniowo; test
-  dymny 4000 par bez wejścia w płytę) i `portPaths.js` (format ścieżki Float64Array, szkielety K-7 capital/banki,
-  zatoki MEGA/grzebień, pomosty; okna przechwytu jak `PortDocking`). NIE wpięte: `materializedFlight.js`
-  jeszcze stary. Zostało: bańka na ścieżkach (przechwyt 1,1 s, wycofanie, reda, korytarze, separacja bez
-  alokacji, poza do interpolacji), testy w `scripts/tests` + `scripts/test.mjs`. Uwaga Z1/Z13: bańka potrzebuje
-  `berthId` kursu (nie tylko x, y postoju) i układów doków stacji.
+- 2026-09-26 Z1: zrobione (większość w commitach „update”, reszta bez commita). Faza A: `trafficWorld.js` (jeden
+  builder + krok; skrypt i demo przełączone; `SEED=7 … 240 1 4 60` identyczny z przedrefaktorowym na tej samej
+  migawce; Ziemia/Mars domyślnie na porcie K-7 z `buildHaloPortTrafficLayout`, `K7=0` = stare pomosty),
+  `travelNetwork` (`origin`, `planetAngles`, `sunRadius`), `trafficDirector` (jedno ziarniste `rng`, `destroyCourse`,
+  `applyStockDelta`, `setCapacity`, `stationDestroyed`, `protectObserved`), `trafficProtocol.js`, `trafficCore.js`,
+  `traffic.worker.js`, `src/game/trafficBridge.js` (worker, przesiadka na główny wątek przed `ready`, kopia rynku
+  z uzgadnianiem numerów zmian), testy `scripts/tests/traffic{World,Core}` i `tests/trafficBridge`. Faza B pod
+  `?trafficV2[=skala]` (`&trafficSeed=N`): start z planet/stacji gry, `advance` z krokami fizyki, stara ekonomia
+  i vany stoją, terminal i rozbiórka wraku na kopii rynku, jedna cena `resourcePrice` + reputacja, pojemności
+  budynków przez most, PerfHUD „Ruch v2 (most)”; sprawdzone w headless Chrome (worker i tryb awaryjny). Dla Z13:
+  bufor kursów (`COURSE_FIELD`, `coursePosition`, `courseHull`, `courseBerth` = id padu jak w układach gry),
+  `attach/detach/progress/stage-done/destroyed`, zdarzenia `wrecks`/`war-wrecks`; `TRAFFIC_V2_BUBBLE_RADIUS` 60 tys.
+  Do decyzji: pojemność = baza × 4 + premie budynków (× skala); cena gracza pod flagą z rozstępem 12% zamiast ±18%.
+  Nie zrobione: `berth-hold` gracza (Z13 + API portu Z2), rola w `estimateWait` (gdy kursy wojskowe zaczną cumować).
+- 2026-09-26 Z3: zrobione (część w commitach „update”, reszta bez commita). `ringRouter.js`: strefy ringu
+  (płyty portu +7 j., poza nimi teren), objazd planety łukiem `keepR` ≈ 60 tys. (Ziemia; nad redą Z2 do 58,5),
+  w strefie portu tylko promieniowo, płyta tylko przez 4 tranzyty; `createRingObstaclesForNetwork`.
+  `portPaths.js`: ścieżki K-7 (pas capital, banki przez G-02/G-03) i zatok (pas MEGA, grzebień), pomosty ogólnie;
+  punkt czekania przed ujściem korytarza, wyjście tyłem (grzebień → aleja, pas → za bramę) i w bok od osi.
+  `materializedFlight.js` (API bez zmian + `createBubble({ rings, docks, holdPose, records })`, `getActorList`,
+  `actorRenderPose`, `ACTOR_PHASE`): lot po ścieżce, kurs przy stanowisku ze stanowiska (`berthId`, zapasowo
+  `berthRef`), przechwyt w oknie `PortDocking` + 1,1 s pozy, odłączenie `PORT_SEQUENCE`, kolejka dziobem od
+  planety, korytarze bez cykli czekania, separacja na tablicach typowanych, `prevX/prevY/prevAngle`, `vx/vy`,
+  `throttle`, `dockTime`. Testy: `ringRouter`, `portPaths` (60 pełnych cykli Ziemia + Mars bez ścian i płyty,
+  przechwyt ≤ 3% okna, ≤ 0,7°), `materializedFlight` (świat ×60 12 min: 0 zamrożeń, 0 osieroconych przypięć;
+  200 encji ~0,4 µs/encję/krok; świat ×60 ~7 µs z przeglądem ~900 rekordów). Uwagi Z13: rekord w bańce potrzebuje
+  `berthId` (z `BERTH` protokołu → `docks.berths[i].id`) i rodzaju NASTĘPNEGO etapu (inaczej koniec przelotu =
+  stop); `records` = attach/detach/progress/stage-done protokołu; `holdPose` = reda, gdy kolejka na nią przejdzie.
 - 2026-09-26 Z11: zrobione (bez commita) — 27 promptów w `assets/ships/*.prompt.md` (5 ról, 4 frakcje × fregata,
   niszczyciel, krążownik, nosiciel, 6 pustych pokładów) + `assets/ships/README.md` (lista, proporcje, priorytety,
   siatki slotów, checklista po wygenerowaniu); PNG generuje użytkownik. Uwaga Z5: ciężki frachtowiec dostaje

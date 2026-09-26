@@ -174,6 +174,11 @@ export function createTrafficCore(post, options = {}) {
       resources: [...RESOURCE_KEYS],
       factions: [...FACTION_IDS],
       kinds: [...KINDS],
+      // `BERTH` w rekordzie kursu to indeks w tej liście — id stanowisk są te
+      // same co w układach gry (`earth:K7-1:…` z haloPortTraffic), więc bańka
+      // wie, do którego padu i hali leci statek, bez własnej kopii doków.
+      berths: Object.fromEntries([...world.docks].map(([stationId, layout]) =>
+        [stationId, layout.berths.map(berth => berth.id)])),
       buildMs
     });
     // Rynek od razu, nie po pierwszych pięciu sekundach — terminal handlu

@@ -104,6 +104,13 @@
 - Tablice `bullets`, `particles`.
 - `bulletsAndCollisionsStep(dt)` — ruch, trafienia, eksplozje, applyImpact.
 
+### Nośnik prędkości: pociski i efekty lecą z tym, z czego wyszły
+- Pocisk dziedziczy 100% prędkości lufy (ruch + obrót kadłuba, `writePointVelocity`, `src/game/carrierVelocity.js`) i niesie znaczniki: `ivx/ivy` (odziedziczona część), `clock` (gracz/P2 — `CLOCK_RENDER`, reszta `CLOCK_SIM`), `bornSim` (czas pozy lufy). Nowe źródło pocisków robi to samo — bez znaczników smuga, zasięg i kierunek trafienia liczą się w świecie.
+- Efekt rodzi się z nośnikiem: `ActiveCarrier.set(writeCarrier(encja, x, y, zRekorduRenderu, scratch))` → spawn → `ActiveCarrier.clear()`, bez wołania w środku innych emiterów. Czytają go Fx3D, CanvasVFX, SparkSystem3D, overlay (efekty z `followCarrier`) i FlakBurstVFX. Wylot = kadłub strzelca, trafienie = trafiony kadłub, pęknięcie i odłamki pocisku = jego `ivx/ivy`. Dysze MAIN celowo bez nośnika (smuga ma zostawać za statkiem).
+- Rysowanie: `pos + v · (T − t0)` z `SimClock` (`src/game/simClock.js`): `sim` rośnie w `physicsStep` zaraz po całkowaniu pozycji gracza, `render` = czas interpolowanej pozy gracza (`beginRender` przed `render`). Nie przesuwaj niesionych efektów zegarem klatki — rozjadą się z kadłubem w pauzie i przy interpolacji. Czas pozy: z rekordów Turret2D `fromRender = true`, z pozy fizycznej `false`.
+- Wyprzedzenie liczy ruch celu WZGLĘDEM strzelca (`getLeadAim(..., shooterVel)`, `leadTarget`), smuga pocisku = ruch względem strzelca, kierunek wgniecenia = prędkość pocisku względem celu, zasięg Hexlance'a i rakiet = droga własna.
+- Rakiety 3D: `rocketSystem3D.fire(..., launchVx, launchVy)` — układ rakiety to pęd wyrzutni (stały, bez dopasowania do celu), lot kinematyczny w nim; przy wyrzutni w spoczynku zachowanie jak dawniej. Canvasowe rakiety i torpedy naprowadzają ruch własny w układzie `ivx/ivy`.
+
 ### Wejście i HUD (aktualne skróty)
 - `W/S` — ciąg przód/tył
 - `Q/E` — strafe

@@ -277,7 +277,11 @@ function createActor(bubble, course) {
     vx: 0,
     vy: 0,
     angVel: 0,
-    /** −1…1: ciąg główny (+) / wsteczny (−) w tym kroku — dla dysz. */
+    /**
+     * −1…1: przyspieszenie wzdłuż dziobu w tym kroku — dysze główne (+) albo
+     * wsteczne (−; też przy cofaniu ze stanowiska). Stały przelot = 0: struga
+     * „w ruchu” niech render bierze z `speed / cruise`.
+     */
     throttle: 0,
     stageIndex: course.stageIndex,
     docked: false,
@@ -550,7 +554,17 @@ function signatureChanged(actor, course, stage) {
   return false;
 }
 
-/** Miejsce i kurs w kolejce portu: hak `holdPose`, inaczej punkt z dyspozytora dziobem od planety. */
+/**
+ * Miejsce i kurs w kolejce portu: hak `holdPose`, inaczej punkt z dyspozytora
+ * (`holdingSlotPosition` → `stage.pos`) dziobem od planety — jak sloty redy
+ * w `portParking.js` („z redy odlatuje się prosto w przestrzeń”).
+ *
+ * TODO AGENT: reda z Z2 (`portParking.js`) obsługuje dziś statki BEZ kursu
+ * (`syncParking` / `parkingSpot` po `shipId`); kolejka kursów nadal stoi na
+ * łukach `holdingSlotPosition` (r ≈ 64 tys. j. przy Ziemi, poza dyskiem
+ * objazdu). Gdy kolejka przejdzie na redę, Z13 podaje `holdPose(course, stage,
+ * out)` z miejsca redy (x, y, angle) — router dojdzie do niej promieniowo.
+ */
 function holdTarget(bubble, network, course, stage, out) {
   if (bubble.holdPose && bubble.holdPose(course, stage, out)) return true;
   const at = stage.pos || stage.entryPos;
@@ -1009,13 +1023,16 @@ function followPath(bubble, actor, dt) {
   }
 
   const accel = precise ? actor.accelPort : actor.cruise * cfg.accelRatio * actor.accelScale;
-  const brake = precise ? actor.accelPort : actor.cruise * cfg.brakeRatio * actor.accelScale;
+  // Nadmiar prędkości (np. po etapie warpu) hamuje się proporcjonalnie do niej.
+  const brake = precise
+    ? Math.max(actor.accelPort, (v0Abs(actor) - actor.portCap) * cfg.brakeRatio * actor.accelScale)
+    : Math.max(actor.cruise, v0Abs(actor)) * cfg.brakeRatio * actor.accelScale;
   const v0 = actor.speed;
   const speedingUp = v0 >= 0 ? desiredSpeed > v0 && desiredSpeed > 0 : desiredSpeed < v0 && desiredSpeed < 0;
   const lim = (speedingUp ? accel : brake) * dt;
   const dv = desiredSpeed - v0;
   const v = v0 + (dv > lim ? lim : dv < -lim ? -lim : dv);
-  actor.throttle = accel > 0 && dt > 0 ? clamp((v - v0) / (accel * dt), -1, 1) * (v >= 0 ? 1 : -1) : 0;
+  actor.throttle = accel > 0 && dt > 0 ? clamp((v - v0) / (accel * dt), -1, 1) : 0;
   actor.speed = v;
   const c = Math.cos(actor.angle);
   const sn = Math.sin(actor.angle);
@@ -1038,15 +1055,24 @@ function followPath(bubble, actor, dt) {
     if (flags & (WP.STOP | WP.HOLD)) {
       return Math.abs(rem) <= Math.max(12, actor.length * 0.05) && Math.abs(v) <= 10 ? STEP_REACHED : STEP_MOVING;
     }
-    if (rem <= Math.max(actor.length * 1.5, Math.abs(v) * dt * 2)) return STEP_REACHED;
+    // Przelot dalej: koniec mija się z prędkością z profilu (`vmax` punktu),
+    // nie z bieżącą — inaczej szybki statek „zaliczał” koniec kilometr przed
+    // nim, pędząc warpem prosto w ring.
+    const endV = Math.max(50, Math.min(Math.abs(v), d[o + PV]));
+    if (rem <= Math.max(actor.length * 1.5, endV * dt * 2)) return STEP_REACHED;
   }
   return STEP_MOVING;
+}
+
+function v0Abs(actor) {
+  return actor.speed < 0 ? -actor.speed : actor.speed;
 }
 
 /** Wyhamowanie w miejscu i obrót na zadany kurs (postój, kolejka). */
 function settle(actor, dt, brake, targetAngle, turnRate) {
   const v0 = actor.speed;
-  const lim = brake * dt;
+  // Postój zaczęty w pędzie hamuje hamulcem przelotu, nie portowym.
+  const lim = Math.max(brake, v0Abs(actor) * 0.9 * actor.accelScale) * dt;
   const v = Math.abs(v0) <= lim ? 0 : v0 - Math.sign(v0) * lim;
   actor.speed = v;
   actor.throttle = 0;
@@ -1465,6 +1491,18 @@ function stepActor(bubble, network, registry, course, actor, dt, events) {
       return finishStage(bubble, network, registry, course, actor, events);
     }
     return false;
+  }
+
+  // Postój: dojście w porcie jest w rekordzie częścią postoju (`moveSeconds`).
+  // Rekord dostaje postęp lotu — inaczej po wyjściu z bańki i powrocie encja
+  // zaczynałaby podejście od nowa (krążyła wokół planety, kurs stał). Do 95%:
+  // resztę dopełnia przechwyt.
+  const move = Number(stage.moveSeconds) || 0;
+  const seconds = Number(stage.seconds) || 0;
+  if (move > 0 && seconds > 0 && stage.fromPos && actor.path.count > 1) {
+    const total = actor.path.data[(actor.path.count - 1) * S + PS];
+    const f = total > 1e-9 ? clamp(actor.bestS / total, 0, 0.95) : 0;
+    bubble.records.sync(course, Math.min(move, seconds) * f / seconds);
   }
 
   // Postój: dolot do stanowiska / kolejki / punktu.

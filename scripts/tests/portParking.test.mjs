@@ -22,7 +22,7 @@ import { SHIP_STATE } from '../../src/game/traffic/transportCompanies.js';
 
 const angleDiff = (a, b) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
 
-/** Rozkład z pomiaru ×60 (Ziemia, maksima wg klasy — `.tmp/pomiar-portu-x60.mjs`). */
+/** Rozkład z pomiaru ×60 (Ziemia, maksima wg klasy — `scripts/pomiar-portu-x60.mjs`). */
 const EARTH_PEAK = { inter_station_shuttle: 305, container_ship: 288, long_haul_freighter: 69, heavy_freighter: 18, megafreighter: 15 };
 
 function makeShips(counts, prefix = '') {

@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { MASTER_WEAPONS } from '../src/data/weapons.js';
 import { CanvasVFX } from '../src/vfx/canvasParticleSystem.js';
 import { readIndexHtml, sliceFunction, loadIndexFunction } from './helpers/indexSource.mjs';
+import { CARRIER_SCOPE } from './helpers/carrierScope.mjs';
 
 const html = readIndexHtml();
 
@@ -63,6 +64,7 @@ function loadAdapter() {
     }
   };
   const scope = {
+    ...CARRIER_SCOPE,
     window: win,
     getEntityHardpointScaleX: loadIndexFunction(html, 'function getEntityHardpointScaleX(entity) {', 'getEntityHardpointScaleX'),
     getEntityHardpointScaleY: loadIndexFunction(html, 'function getEntityHardpointScaleY(entity) {', 'getEntityHardpointScaleY')

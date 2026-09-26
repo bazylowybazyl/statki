@@ -6,10 +6,19 @@ function finite(value, fallback = 0) {
 /**
  * Advances the authoritative 2D projectile pose by one fixed physics step.
  * The previous pose is retained for render interpolation and swept collision.
+ *
+ * `nowSim` (SimClock.sim, src/game/simClock.js) + `projectile.bornSim` (czas pozy
+ * lufy przy strzale): pocisk wystrzelony w tym kroku z pozy PO całkowaniu ruchu
+ * (CIWS, NPC) stoi już tam, gdzie lufa na końcu kroku — pełny krok lotu wysuwał
+ * go o v·dt przed lufę (przy 100% dziedziczenia prędkości: 83 j. przy 10 000 j/s).
+ * Taki pocisk leci dopiero od następnego kroku.
  */
-export function stepProjectileKinematics(projectile, dt) {
+export function stepProjectileKinematics(projectile, dt, nowSim = null) {
   if (!projectile) return null;
-  const step = Math.max(0, finite(dt, 0));
+  let step = Math.max(0, finite(dt, 0));
+  if (nowSim !== null && Number.isFinite(projectile.bornSim)) {
+    step = Math.min(step, Math.max(0, finite(nowSim, 0) - projectile.bornSim));
+  }
   const x = finite(projectile.x, 0);
   const y = finite(projectile.y, 0);
 

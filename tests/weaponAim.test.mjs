@@ -9,6 +9,7 @@ import { MASTER_WEAPONS } from '../src/data/weapons.js';
 import { createPdBeamHit, resolvePdBeamHit } from '../src/game/pdBeamFastPath.js';
 import { isPointDefenseWeapon } from '../src/ai/pointDefenseTargeting.js';
 import { spatialCellKey } from '../src/game/spatialCellKey.js';
+import { CARRIER_SCOPE } from './helpers/carrierScope.mjs';
 
 globalThis.window = {};
 const { getLeadAim } = await import('../src/ai/aiUtils.js');
@@ -146,6 +147,7 @@ test('P1 index firing paths use the same simulated mount state as the shared con
     settle(f.controller);
     const shots = [];
     const ctx = {
+      ...CARRIER_SCOPE, _fireCarrier: CARRIER_SCOPE.createCarrier(),
       ship: f.ship, p1WeaponCtrl: f.controller, getMountedWeaponAim,
       Game: { player: { weapons: f.ship.weapons } }, HP: { MAIN: 'main' },
       mainAutoFire: false, lockedTargets: [], rail: { cd: [0, 0], cdMax: 0.15 },
@@ -182,6 +184,7 @@ test('two players retain independent cursor and turn state', () => {
 function firingCore(ship, owner = 'player') {
   const events = [];
   const context = {
+    ...CARRIER_SCOPE,
     window: {
       ship: owner === 'player' ? ship : null, player2Ship: owner === 'player2' ? ship : null,
       bullets: [], mouse2: { x: -500, y: 900 }, screenToWorld: (x, y) => ({ x, y }),
@@ -224,6 +227,31 @@ test('actual fireWeaponCore fires player bullets and beams along the muzzle, nev
       close(beam.endY - beam.startY, muzzle.dir.y * beamDef.baseRange);
     }
   }
+});
+
+test('fireWeaponCore: pocisk dziedziczy 100% prędkości lufy i pamięta jej część (ivx/ivy)', () => {
+  const f = fixture('special', 'special_yamato_cannon', 'player');
+  f.controller.updateAim(1 / 60);
+  const muzzle = structuredClone(f.controller.computeMountedMuzzle(f.loadouts[0]));
+  muzzle.baseVel = { x: 10000, y: -300 };
+  const core = firingCore(f.ship, 'player');
+  core.window.fireWeaponCore(f.ship, null, 'special_yamato_cannon', muzzle);
+  const bullet = core.window.bullets[0];
+  const speed = MASTER_WEAPONS.special_yamato_cannon.baseSpeed;
+  close(bullet.vx, muzzle.dir.x * speed + 10000);
+  close(bullet.vy, muzzle.dir.y * speed - 300);
+  assert.deepEqual([bullet.ivx, bullet.ivy], [10000, -300]);
+  assert.ok(Number.isFinite(bullet.bornSim), 'czas pozy lufy');
+});
+
+test('NPC fireWeaponCore: wyprzedzenie z ruchu celu WZGLĘDEM strzelca (lecą razem = strzał prosto)', () => {
+  const npc = { x: 0, y: 0, vx: 7000, vy: 0 };
+  const core = firingCore(null);
+  const muzzle = { pos: { x: 0, y: 0 }, dir: { x: 1, y: 0 }, baseVel: { x: 7000, y: 0 } };
+  core.window.fireWeaponCore(npc, { x: 0, y: 1000, vx: 7000, vy: 0 }, 'special_yamato_cannon', muzzle);
+  const bullet = core.window.bullets[0];
+  close(bullet.vx - bullet.ivx, 0, 1e-6);
+  close(bullet.vy, MASTER_WEAPONS.special_yamato_cannon.baseSpeed, 1e-6);
 });
 
 test('NPC fireWeaponCore keeps its existing target-based aim', () => {

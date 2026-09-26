@@ -140,6 +140,8 @@ export function run() {
   let zgodnePozycje = 0;
   let zgodneFlagi = 0;
   let zgodneKadluby = 0;
+  let zgodneStanowiska = 0;
+  let naStanowiskach = 0;
   let maxBlad = 0;
   for (let i = 0; i < count; i++) {
     const o = i * COURSE_STRIDE;
@@ -159,6 +161,11 @@ export function run() {
     if (kind === course.kind && !!(flags & COURSE_FLAG.DWELL) === dwell
       && !!(flags & COURSE_FLAG.BLOCKED) === !!course.blocked) zgodneFlagi++;
     if (hulls[data[o + F.HULL]] === course.unitClass) zgodneKadluby++;
+    if (course.berthId) {
+      naStanowiskach++;
+      const port = ready.stations[data[o + F.PORT]]?.id;
+      if (ready.berths[port]?.[data[o + F.BERTH]] === course.berthId) zgodneStanowiska++;
+    }
   }
   t.check('w bańce przy Ziemi są kursy', count > 0, `(${count})`);
   t.equal('każdy rekord to żywy kurs', [...Array(count).keys()]
@@ -167,6 +174,10 @@ export function run() {
   t.note(`największa różnica ${maxBlad.toExponential(2)} j.`);
   t.equal('rodzaj, postój i kolejka zgadzają się z rekordem', zgodneFlagi, count);
   t.equal('tabela kadłubów wskazuje klasę jednostki', zgodneKadluby, count);
+  t.check('w bańce są kursy przy stanowiskach', naStanowiskach > 0, `(${naStanowiskach})`);
+  t.equal('port + stanowisko z bufora = berthId kursu (id jak w układach gry)',
+    zgodneStanowiska, naStanowiskach);
+  t.check('Ziemia ma w tabeli wszystkie 224 stanowiska K-7', ready.berths.earth?.length === 224);
   let pominiete = 0;
   for (const course of getActiveCourses(world.registry)) {
     const at = courseWorldPosition(world.network, course);

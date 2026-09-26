@@ -862,6 +862,15 @@
     import { createPdBeamHit, resolvePdBeamHit } from "./src/game/pdBeamFastPath.js";
     import { spatialCellKey } from "./src/game/spatialCellKey.js";
     import { WeaponShotBus } from "./src/game/weaponShotBus.js";
+    import { SimClock, CLOCK_RENDER, CLOCK_SIM } from "./src/game/simClock.js";
+    import {
+      ActiveCarrier,
+      createCarrier,
+      writeCarrier,
+      writeCarrierVelocity,
+      writePointVelocity,
+      isInterpolatedEntity
+    } from "./src/game/carrierVelocity.js";
     import { createVoiceLimiter } from "./src/game/audioVoiceLimiter.js";
     import { createBulletStepBounds, computeBulletStepBounds, filterCirclesTouchingBounds, stationCollisionRadius, platformCollisionRadius } from "./src/game/bulletStepFilters.js";
     import {
@@ -2568,11 +2577,18 @@
       if (weapon.name && weapon.name.includes('Rail')) bType = 'rail';
       if (weapon.name && weapon.name.includes('Flak')) bType = 'armata';
 
+      // Pocisk dziedziczy 100% prędkości strzelca (src/game/carrierVelocity.js).
+      const ivx = Number(from.vx) || 0;
+      const ivy = Number(from.vy) || 0;
       window.bullets.push({
         x: from.x,
         y: from.y,
-        vx: Math.cos(a) * speed + (from.vx || 0) * 0.2,
-        vy: Math.sin(a) * speed + (from.vy || 0) * 0.2,
+        vx: Math.cos(a) * speed + ivx,
+        vy: Math.sin(a) * speed + ivy,
+        ivx,
+        ivy,
+        clock: CLOCK_SIM,
+        bornSim: SimClock.sim,
         life: (weapon.range || 1000) / speed,
         r: (bType === 'rail') ? 4 : 3,
         owner: from.friendly ? 'player' : 'npc',
@@ -5344,7 +5360,11 @@
         }
       }
       if (!isFinite(t) || t < 0) t = 0;
-      return { x: tx + tvx * t, y: ty + tvy * t };
+      // Punkt w układzie strzelca: pocisk dziedziczy shooterVel, więc lufa ma
+      // mierzyć w cel przesunięty o ruch WZGLĘDNY (dawniej o ruch celu w świecie —
+      // przy 10 000 j/s obrona punktowa chybiała o v·t). Odległość do punktu
+      // = droga pocisku względem strzelca (zapalnik flaku).
+      return { x: tx + rvx * t, y: ty + rvy * t };
     }
 
     // =============== World / camera ===============
@@ -8417,6 +8437,10 @@
     const _pdBeamHit = createPdBeamHit();
     const _beam2dEnd = { x: 0, y: 0 };
     const _fireAimPoint = { x: 0, y: 0 };
+    // Nośniki strzału (src/game/carrierVelocity.js): lufa strzelca i trafiony
+    // kadłub — efekty lecą z nimi zamiast zostawać w świecie.
+    const _fireCarrier = createCarrier();
+    const _hitCarrier = createCarrier();
     const _beam2dOpts = { life: 0.12, colorOuter: null, colorInner: '#ffffff', glowColor: null, glowBlur: 20 };
     // Dane wiązki dla zdarzenia strzału — jeden obiekt: słuchacze czytają go
     // synchronicznie i niczego z niego nie zatrzymują (Weapon3DSystem kopiuje liczby).
@@ -8699,7 +8723,8 @@
           aimPoint.x = getTargetX(effectiveTarget);
           aimPoint.y = getTargetY(effectiveTarget);
         } else {
-          aimPoint = window.getLeadAim(muzzleData.pos, effectiveTarget, speed);
+          // Pocisk dziedziczy prędkość lufy — wyprzedzenie z ruchu celu względem niej.
+          aimPoint = window.getLeadAim(muzzleData.pos, effectiveTarget, speed, undefined, muzzleData.baseVel || null);
         }
       } else if (isPlayerShip && !targetingMode.wheelOpen) {
         // Tryb celownika nie zmienia balistyki: gracz zawsze strzela dokładnie
@@ -8727,6 +8752,13 @@
       const flakAimDist = flakProfile
         ? Math.min(range, Math.hypot(aimPoint.x - muzzleData.pos.x, aimPoint.y - muzzleData.pos.y))
         : 0;
+
+      // Prędkość odziedziczona przez pocisk: 100% prędkości lufy (ruch okrętu +
+      // obrót, src/game/carrierVelocity.js). W próżni nic jej nie odbiera, więc
+      // strzał z pędzącego okrętu leci względem niego jak z nieruchomego.
+      const inheritVx = Number(muzzleData.baseVel?.x) || 0;
+      const inheritVy = Number(muzzleData.baseVel?.y) || 0;
+      const shotClock = isInterpolatedEntity(shooter) ? CLOCK_RENDER : CLOCK_SIM;
 
       // 3. Wystrzał (obsługa salwy / burst)
       let beamEventData = null;
@@ -8766,7 +8798,10 @@
             _beam2dOpts.life = weapon.duration || 0.12;
             _beam2dOpts.colorOuter = weapon.vfxColor;
             _beam2dOpts.glowColor = weapon.vfxColor;
+            // Smuga wiązki jedzie z lufą (nośnik), zamiast zostawać za okrętem.
+            ActiveCarrier.set(writeCarrierVelocity(inheritVx, inheritVy, shotClock, SimClock.sim, _fireCarrier));
             spawnLaserBeam(muzzleData.pos, _beam2dEnd, weapon.size === 'L' ? 12 : 5, _beam2dOpts);
+            ActiveCarrier.clear();
           }
 
           if (!pdBeam) {
@@ -8843,7 +8878,10 @@
             // Tarcza ma wlasne VFX (ripple + czasteczki + banka) — VFX uderzenia
             // broni jest efektem trafienia w PANCERZ i na polu wyglada obco.
             if (!beamBlockedByShield) {
+              // Iskry i błysk trafienia jadą z trafionym kadłubem.
+              ActiveCarrier.set(writeCarrier(hitEntity, finalEndX, finalEndY, false, _hitCarrier));
               impactFx('beam', weapon.vfxColor, 1.0, finalEndX, finalEndY);
+              ActiveCarrier.clear();
             }
           }
         } else {
@@ -8879,16 +8917,27 @@
                 _isPositionTarget: true
               };
             }
+            // Rakieta startuje z prędkością wyrzutni, silnik przejmuje ją potem
+            // stopniowo (src/effects3d/rocketSystem3D.js, układ rakiety).
             window.rocketSystem3D.fire(
               muzzleData.pos.x, muzzleData.pos.y,
-              rocketTarget, damage, weapon, colorTheme
+              rocketTarget, damage, weapon, colorTheme,
+              inheritVx, inheritVy
             );
           } else {
             const bullet = {
               x: muzzleData.pos.x,
               y: muzzleData.pos.y,
-              vx: dirX * speed + (muzzleData.baseVel?.x || 0) * 0.2,
-              vy: dirY * speed + (muzzleData.baseVel?.y || 0) * 0.2,
+              vx: dirX * speed + inheritVx,
+              vy: dirY * speed + inheritVy,
+              // ivx/ivy: odziedziczona część prędkości (smuga rysowana względem
+              // strzelca, zasięg i kierunek trafienia liczone względnie);
+              // clock: w którym czasie rysować pocisk (gracz — interpolowany);
+              // bornSim: czas pozy lufy (patrz stepProjectileKinematics).
+              ivx: inheritVx,
+              ivy: inheritVy,
+              clock: shotClock,
+              bornSim: SimClock.sim,
               life: life,
               // weapon.bulletRadius opt-in override (e.g. osa_micro_missile sets r=8 to widen fuse for fast-mover)
               // Flak ma stały, mały promień kolizji — robotę odwala pęknięcie, nie sam pocisk.
@@ -9138,8 +9187,8 @@
       if (opts.originVel) {
         muzzle.baseVel = opts.originVel;
       } else {
-        _adapterBaseVel.x = owner.vx || 0;
-        _adapterBaseVel.y = owner.vy || 0;
+        // Prędkość lufy = ruch okrętu + obrót (v + ω × r) — pocisk dziedziczy ją w 100%.
+        writePointVelocity(owner, muzzlePos.x, muzzlePos.y, _adapterBaseVel);
         muzzle.baseVel = _adapterBaseVel;
       }
       muzzle.emitterUid = opts.hp?.id != null ? getNpcEmitterUid(owner, opts.hp) : null;
@@ -11977,9 +12026,9 @@
     const CARGO_MATERIALIZE_RADIUS = 15000;
     const CARGO_DEMATERIALIZE_RADIUS = 18000;
     const CARGO_WARP_SPEED = 4000;
-    // Pod ?trafficV2 zlecenia wystawia dyspozytor ruchu v2 w workerze — stare
-    // vany dzieliłyby z nim magazyny i zlecenia cargoFleet, więc stoją.
-    const CARGO_DISPATCH_ENABLED = !DevFlags.trafficV2;
+    // Pod ?trafficV2 stare vany stoją, bo physicsStep w ogóle nie woła
+    // updateCargoFleet — zlecenia wystawia dyspozytor ruchu v2 w workerze.
+    const CARGO_DISPATCH_ENABLED = true;
     const cargoAdvanceOptions = {
       events: cargoTransitEvents,
       getEconomy: resolveCargoEconomy,
@@ -17536,12 +17585,16 @@
       const swarmCount = missileDef?.swarm || 1;
       const spread = ((missileDef?.spread || 0) * Math.PI) / 180;
 
+      // Rakieta dziedziczy prędkość wyrzutni (ruch + obrót okrętu) — pęd, w którego
+      // układzie potem się naprowadza (bulletsAndCollisionsStep).
+      const launch = writeCarrier(ship, gunWorld.x, gunWorld.y, false, _fireCarrier);
       for (let n = 0; n < swarmCount; n++) {
         const offsetAng = spread ? (Math.random() - 0.5) * spread : 0;
         const dir = rotate(baseDir, offsetAng);
         window.bullets.push({
           x: gunWorld.x, y: gunWorld.y, px: gunWorld.x, py: gunWorld.y,
-          vx: dir.x * speed + ship.vel.x, vy: dir.y * speed + ship.vel.y,
+          vx: dir.x * speed + launch.vx, vy: dir.y * speed + launch.vy,
+          ivx: launch.vx, ivy: launch.vy, clock: launch.clock, bornSim: SimClock.sim,
           life: life || 2.4, r: 5, owner: 'player', damage, penetration: 0, type: 'rocket',
           explodeRadius, homingDelay, target,
           color: missileDef?.color,
@@ -17549,11 +17602,14 @@
           source: ship, spawnGrace: 0.08
         });
       }
-      spawnParticle({ x: gunWorld.x, y: gunWorld.y }, { x: baseDir.x * 120 + ship.vel.x * 0.1, y: baseDir.y * 120 + ship.vel.y * 0.1 }, 0.14, '#b4ffb4', 3.2, true);
+      // Błysk wyrzutni jedzie z okrętem (nośnik), dawniej brał 10% jego prędkości.
+      ActiveCarrier.set(launch);
+      spawnParticle({ x: gunWorld.x, y: gunWorld.y }, { x: baseDir.x * 120, y: baseDir.y * 120 }, 0.14, '#b4ffb4', 3.2, true);
       for (let k = 0; k < 6; k++) {
         const aa = Math.atan2(baseDir.y, baseDir.x) + (Math.random() - 0.5) * 0.9;
         spawnParticle({ x: gunWorld.x + Math.cos(aa) * 6, y: gunWorld.y + Math.sin(aa) * 6 }, { x: Math.cos(aa) * 160, y: Math.sin(aa) * 160 }, 0.14 + Math.random() * 0.06, '#a8ff9a', 1.1, true);
       }
+      ActiveCarrier.clear();
     }
 
     // =============== Fighters ===============
@@ -17944,18 +18000,20 @@
         if (weaponData.category !== 'beam' && !MuzzleFX3D.handles(weaponData.id)) {
           const isHeavyWeapon = (weaponData.size === 'L' || weaponData.size === 'Capital');
           const muzzleScale = isHeavyWeapon ? 1.8 : 1.0;
+          // Błysk leci z lufą w 100% (nośnik: prędkość wylotu, poza fizyczna strzału).
+          const flashCarrier = writeCarrier(ship, muzzle.pos.x, muzzle.pos.y, false, _fireCarrier);
           if (weaponData.category === 'torpedo') {
             // Torpedo launch: smoke + directional flame
-            CanvasVFX.spawnArmataMuzzle(muzzle.pos, muzzle.dir, ship.vel, muzzleScale * 1.5);
+            CanvasVFX.spawnArmataMuzzle(muzzle.pos, muzzle.dir, muzzle.baseVel, muzzleScale * 1.5, flashCarrier);
           } else if (weaponData.category === 'superweapon' || weaponData.id === 'siege_railgun') {
             // Siege railgun: massive rail flash + screen shake handled elsewhere
-            CanvasVFX.spawnRailMuzzle(muzzle.pos, muzzle.dir, ship.vel, muzzleScale * 2.0);
+            CanvasVFX.spawnRailMuzzle(muzzle.pos, muzzle.dir, muzzle.baseVel, muzzleScale * 2.0, flashCarrier);
           } else if (weaponData.category === 'armata' || weaponData.category === 'plasma') {
-            CanvasVFX.spawnArmataMuzzle(muzzle.pos, muzzle.dir, ship.vel, muzzleScale);
+            CanvasVFX.spawnArmataMuzzle(muzzle.pos, muzzle.dir, muzzle.baseVel, muzzleScale, flashCarrier);
           } else if (weaponData.category === 'autocannon') {
-            CanvasVFX.spawnAutocannonMuzzle(muzzle.pos, muzzle.dir, ship.vel, muzzleScale);
+            CanvasVFX.spawnAutocannonMuzzle(muzzle.pos, muzzle.dir, muzzle.baseVel, muzzleScale, flashCarrier);
           } else {
-            CanvasVFX.spawnRailMuzzle(muzzle.pos, muzzle.dir, ship.vel, muzzleScale);
+            CanvasVFX.spawnRailMuzzle(muzzle.pos, muzzle.dir, muzzle.baseVel, muzzleScale, flashCarrier);
           }
         }
 
@@ -18101,16 +18159,20 @@
             // Laser niszczy rakietę natychmiast
             const rIdx = bullets.indexOf(target);
             if (rIdx !== -1) {
+              // Zestrzelona rakieta: jej odłamki lecą w układzie wyrzutni (ivx).
+              ActiveCarrier.set(writeCarrierVelocity(target.ivx, target.ivy, target.clock, SimClock.sim, _hitCarrier));
               spawnBulletImpactEffect(target, target.x, target.y, 1.2);
               spawnPointDefenseLaserHit(target.x, target.y);
               const lDir = { x: Math.cos(gun.angle), y: Math.sin(gun.angle) };
               const lMuz = { x: base.x + lDir.x * 6, y: base.y + lDir.y * 6 };
+              ActiveCarrier.set(writeCarrierVelocity(baseVel.x, baseVel.y, CLOCK_RENDER, SimClock.sim, _fireCarrier));
               spawnLaserBeam(lMuz, { x: target.x, y: target.y }, LASER_PD_BEAM_WIDTH, {
                 life: 0.09, colorOuter: stats?.color || 'rgba(110,200,255,0.9)',
                 colorInner: 'rgba(250,255,255,1.0)', glowColor: stats?.color || 'rgba(90,180,255,0.95)',
                 glowBlur: 22, outerWidthMul: 1.05, innerWidthMul: 0.45
               });
               spawnPointDefenseLaserMuzzle(lMuz, lDir, baseVel);
+              ActiveCarrier.clear();
               target.life = -1; // znika też z _pdEnemyRocketBuffer (checki life<=0)
               removeBulletAt(rIdx);
             }
@@ -18138,6 +18200,12 @@
         y: py,
         vx: dir.x * speed + baseVel.x,
         vy: dir.y * speed + baseVel.y,
+        // Znaczniki jak w fireWeaponCore: prędkość odziedziczona, zegar gracza,
+        // czas pozy (CIWS strzela z pozy po kroku — pocisk czeka na następny).
+        ivx: baseVel.x,
+        ivy: baseVel.y,
+        clock: CLOCK_RENDER,
+        bornSim: SimClock.sim,
         life: range / speed,
         r: 2,
         owner: 'player',
@@ -18146,14 +18214,17 @@
         color: wDef?.vfxColor,
         type: 'ciws'
       });
+      // Błysk jedzie z wieżyczką (nośnik), dawniej brał 10% prędkości okrętu.
+      ActiveCarrier.set(writeCarrierVelocity(baseVel.x, baseVel.y, CLOCK_RENDER, SimClock.sim, _fireCarrier));
       spawnParticle(
         { x: px, y: py },
-        { x: dir.x * 120 + baseVel.x * 0.1, y: dir.y * 120 + baseVel.y * 0.1 },
+        { x: dir.x * 120, y: dir.y * 120 },
         0.06,
         '#ffdf9e',
         2.0,
         true
       );
+      ActiveCarrier.clear();
       gun.cd = fireInterval ?? CIWS_FIRE_INTERVAL;
     }
 
@@ -18169,6 +18240,8 @@
       const distance = clamp(Math.hypot(toTarget.x, toTarget.y), 0, range);
       const beamEnd = { x: muzzle.x + dir.x * distance, y: muzzle.y + dir.y * distance };
 
+      // Wiązka i błysk wylotu jadą z wieżyczką, trafienie — z celem.
+      ActiveCarrier.set(writeCarrierVelocity(baseVel.x, baseVel.y, CLOCK_RENDER, SimClock.sim, _fireCarrier));
       spawnLaserBeam(muzzle, beamEnd, LASER_PD_BEAM_WIDTH, {
         life: 0.09,
         colorOuter: stats?.color || 'rgba(110,200,255,0.9)',
@@ -18179,7 +18252,9 @@
         innerWidthMul: 0.45
       });
       spawnPointDefenseLaserMuzzle(muzzle, dir, baseVel);
+      ActiveCarrier.set(writeCarrier(target, beamEnd.x, beamEnd.y, false, _hitCarrier));
       spawnPointDefenseLaserHit(beamEnd.x, beamEnd.y);
+      ActiveCarrier.clear();
       applyDamageToNPC(target, damage, 'laser_pd');
       gun.cd = fireInterval ?? LASER_PD_FIRE_INTERVAL;
     }
@@ -18206,6 +18281,10 @@
           x: muzzle.x, y: muzzle.y,
           vx: sx * profile.speed + baseVel.x,
           vy: sy * profile.speed + baseVel.y,
+          ivx: baseVel.x,
+          ivy: baseVel.y,
+          clock: CLOCK_RENDER,
+          bornSim: SimClock.sim,
           life,
           r: FLAK_TUNING.SHELL_RADIUS,
           owner: 'player',
@@ -18226,22 +18305,25 @@
         });
       }
 
+      ActiveCarrier.set(writeCarrierVelocity(baseVel.x, baseVel.y, CLOCK_RENDER, SimClock.sim, _fireCarrier));
       spawnFlakMuzzle(muzzle, dir, baseVel, wDef);
+      ActiveCarrier.clear();
       gun.cd = fireInterval ?? (wDef.cooldown || CIWS_FIRE_INTERVAL);
     }
 
     // Wylot flaku: krótki, gruby blask + kilka niedopalonych ziaren prochu.
+    // Prędkość wieżyczki dokłada nośnik (ActiveCarrier od wołającego).
     function spawnFlakMuzzle(pos, dir, baseVel, wDef) {
       if (!isCanvasWeaponVfxEnabled()) return;
       const scale = wDef.size === 'Capital' ? 2.2 : (wDef.size === 'L' ? 1.5 : (wDef.size === 'M' ? 1.1 : 0.8));
       const angle = Math.atan2(dir.y, dir.x);
-      spawnParticle({ x: pos.x, y: pos.y }, { x: dir.x * 140 + baseVel.x * 0.12, y: dir.y * 140 + baseVel.y * 0.12 }, 0.09, '#ffe6b0', 7 * scale, true);
+      spawnParticle({ x: pos.x, y: pos.y }, { x: dir.x * 140, y: dir.y * 140 }, 0.09, '#ffe6b0', 7 * scale, true);
       for (let i = 0; i < 5; i++) {
         const aa = angle + (Math.random() - 0.5) * 0.5;
         const speed = 220 + Math.random() * 180;
         spawnParticle(
           { x: pos.x + Math.cos(aa) * 6 * scale, y: pos.y + Math.sin(aa) * 6 * scale },
-          { x: Math.cos(aa) * speed + baseVel.x * 0.15, y: Math.sin(aa) * speed + baseVel.y * 0.15 },
+          { x: Math.cos(aa) * speed, y: Math.sin(aa) * speed },
           0.14 + Math.random() * 0.12,
           (Math.random() < 0.4) ? '#fff0c8' : '#ffb347',
           (1.8 + Math.random() * 2.0) * scale,
@@ -18313,21 +18395,30 @@
       }
 
       // 3. Efekt: pęknięcie 2D (port prototypu) + cięższy akcent 3D dla L/Capital.
-      FlakBurstVFX.spawn(b.x, b.y, { radius, vx: b.vx, vy: b.vy });
+      // Pęknięcie leci w układzie wyrzutni (pęd pocisku odziedziczony po okręcie),
+      // odłamki dostają część prędkości pocisku WZGLĘDEM niego — flak z pędzącego
+      // okrętu pęka tak, jak z nieruchomego.
+      const shellIvx = Number(b.ivx) || 0;
+      const shellIvy = Number(b.ivy) || 0;
+      ActiveCarrier.set(writeCarrierVelocity(shellIvx, shellIvy, b.clock, SimClock.sim, _impactCarrier));
+      FlakBurstVFX.spawn(b.x, b.y, { radius, vx: b.vx - shellIvx, vy: b.vy - shellIvy });
       if (radius >= 240 && window.triggerArmataImpact3D) {
         window.triggerArmataImpact3D(b.x, b.y, Math.min(260, radius * 0.5));
       }
+      ActiveCarrier.clear();
       if (window.AudioSys) AudioSys.playSound('explosion');
     }
 
+    // Prędkość wieżyczki dokłada nośnik (ActiveCarrier ustawiony przez wołającego) —
+    // tu tylko ruch własny iskier.
     function spawnPointDefenseLaserMuzzle(pos, dir, baseVel) {
       if (!isCanvasWeaponVfxEnabled()) return;
       const tangential = { x: -dir.y, y: dir.x };
       for (let i = 0; i < 3; i++) {
         const spread = (Math.random() - 0.5) * 0.6;
         const vel = {
-          x: dir.x * (220 + Math.random() * 80) + tangential.x * spread * 80 + baseVel.x * 0.1,
-          y: dir.y * (220 + Math.random() * 80) + tangential.y * spread * 80 + baseVel.y * 0.1
+          x: dir.x * (220 + Math.random() * 80) + tangential.x * spread * 80,
+          y: dir.y * (220 + Math.random() * 80) + tangential.y * spread * 80
         };
         spawnParticle(
           { x: pos.x, y: pos.y },
@@ -19161,16 +19252,27 @@
       // Use bullet's actual color when available (e.g. cyan #7ef0ff for osa_micro_missile),
       // fall back to type-default for legacy bullets without explicit color.
       const trailColor = isTorpedo ? '#ff6644' : (b.color || '#8cff8c');
+      // Ślad leci w układzie wyrzutni (nośnik = prędkość odziedziczona przez pocisk),
+      // odrzut porcji liczony z ruchu WZGLĘDEM niej — z pędzącego okrętu wygląda
+      // jak z nieruchomego. Porcja k leży tam, gdzie pocisk będzie za stepT·k.
+      const ivx = Number(b.ivx) || 0;
+      const ivy = Number(b.ivy) || 0;
+      const rvx = b.vx - ivx;
+      const rvy = b.vy - ivy;
+      const carried = ivx !== 0 || ivy !== 0;
       for (let k = 0; k < count; k++) {
         const px = b.x + b.vx * stepT * k;
         const py = b.y + b.vy * stepT * k;
+        if (carried) {
+          ActiveCarrier.set(writeCarrierVelocity(ivx, ivy, b.clock, SimClock.sim + stepT * k, _trailCarrier));
+        }
         if (autocannon) {
-          CanvasVFX.spawnParticleXY(px, py, -b.vx * 0.015, -b.vy * 0.015, 0.18, '#ffdca8', 1.1, true);
+          CanvasVFX.spawnParticleXY(px, py, -rvx * 0.015, -rvy * 0.015, 0.18, '#ffdca8', 1.1, true);
           continue;
         }
         CanvasVFX.spawnParticleXY(
           px + (Math.random() - 0.5) * 3, py + (Math.random() - 0.5) * 3,
-          -b.vx * 0.02 + (Math.random() - 0.5) * 10, -b.vy * 0.02 + (Math.random() - 0.5) * 10,
+          -rvx * 0.02 + (Math.random() - 0.5) * 10, -rvy * 0.02 + (Math.random() - 0.5) * 10,
           isTorpedo ? 0.5 : 0.28, trailColor, isTorpedo ? 2.0 : 1.0, false
         );
         // Extra engine glow for torpedoes
@@ -19182,7 +19284,12 @@
           CanvasVFX.spawnParticleXY(px, py, 0, 0, 0.12, b.color || '#7ef0ff', 1.6, true);
         }
       }
+      if (carried) ActiveCarrier.clear();
     }
+    const _trailCarrier = createCarrier();
+    // Nośniki efektów trafienia (cel) i pęknięcia pocisku (jego układ wyrzutni).
+    const _impactCarrier = createCarrier();
+    const _impactRelVel = { x: 0, y: 0 };
 
     // Stacje i platformy, których okrąg przecina pudło pocisków kroku
     // (src/game/bulletStepFilters.js) — liczone raz na krok, nie per pocisk.
@@ -19283,7 +19390,7 @@
         const profileBullet = bulletProfileStride > 0 && (i % bulletProfileStride) === 0;
         let tBulletSection0 = profileBullet ? performance.now() : 0;
         const b = bullets[i];
-        stepProjectileKinematics(b, dt);
+        stepProjectileKinematics(b, dt, SimClock.sim);
 
         // --- RUCH I EFEKTY WIZUALNE POCISKÓW ---
         const threeVisual = b.__renderedByThree === true;
@@ -19297,16 +19404,26 @@
             if (isTargetAlive(target)) {
               const tx = getTargetX(target);
               const ty = getTargetY(target);
-              const speed = Math.sqrt(b.vx * b.vx + b.vy * b.vy);
-              const dx = tx - b.x;
-              const dy = ty - b.y;
-              const current = Math.atan2(b.vy, b.vx);
+              // Naprowadzanie w układzie wyrzutni (ivx/ivy = pęd z wyrzutni, jak
+              // rakiety 3D): skręca się ruch WŁASNY, a znany dryf układu
+              // kompensujemy, celując „pod prąd”. Bez pędu (ivx = 0) jak dawniej.
+              const ivx = Number(b.ivx) || 0;
+              const ivy = Number(b.ivy) || 0;
+              const ox = b.vx - ivx;
+              const oy = b.vy - ivy;
+              const speed = Math.sqrt(ox * ox + oy * oy);
+              const driftT = (ivx !== 0 || ivy !== 0)
+                ? Math.min(3, Math.hypot(tx - b.x, ty - b.y) / Math.max(300, speed))
+                : 0;
+              const dx = tx - ivx * driftT - b.x;
+              const dy = ty - ivy * driftT - b.y;
+              const current = Math.atan2(oy, ox);
               const desired = Math.atan2(dy, dx);
               const diff = wrapAngle(desired - current);
               const maxTurn = (b.turnRate || SIDE_ROCKET_TURN_RATE) * dt;
               const turn = Math.abs(diff) < maxTurn ? diff : Math.sign(diff) * maxTurn;
               const newAng = current + turn;
-              b.vx = Math.cos(newAng) * speed; b.vy = Math.sin(newAng) * speed;
+              b.vx = ivx + Math.cos(newAng) * speed; b.vy = ivy + Math.sin(newAng) * speed;
             }
           }
         } else if (!threeVisual && b.type === 'autocannon') {
@@ -19363,7 +19480,10 @@
             if (dx * dx + dy * dy > hitR * hitR) continue;
             // Trafiono rakietę! Oznaczamy do usunięcia — zniknie w swojej iteracji
             // pętli na checku life<=0 (bez żonglowania indeksami przy splice).
+            // Jej odłamki lecą w układzie wyrzutni (pęd rakiety, ivx/ivy).
+            ActiveCarrier.set(writeCarrierVelocity(rb.ivx, rb.ivy, rb.clock, SimClock.sim, _impactCarrier));
             spawnBulletImpactEffect(rb, rb.x, rb.y, 1.3);
+            ActiveCarrier.clear();
             rb.life = -1;
             removeBulletAt(i); // usuń pocisk CIWS
             intercepted = true;
@@ -19536,12 +19656,20 @@
           } else if (!shieldActive && hexHit) {
             // Tarcza nie działa, trafiono w kadłub -> OBRAŻENIA
 
+            // Nośnik trafionego punktu kadłuba (ruch + obrót): kierunek wgniecenia
+            // i tunelu mostka z prędkości pocisku WZGLĘDEM niego (pocisk niesie
+            // prędkość strzelca — przy celu lecącym obok bezwzględna wskazywałaby
+            // wzdłuż lotu), a iskry i wybuch trafienia jadą z kadłubem.
+            const hitCarrier = writeCarrier(hitNPC, hitX, hitY, false, _impactCarrier);
+            _impactRelVel.x = b.vx - hitCarrier.vx;
+            _impactRelVel.y = b.vy - hitCarrier.vy;
+
             // Obrażenia w heks trafiony przez sweep (bez niego — sonda w punkcie trafienia);
             // kadłub na belkach — krater od punktu wejścia.
             if (hitNPC.hexGrid || hitNPC.beamHull) {
-              applyHexImpact(hitNPC._realEntity || hitNPC, hitX, hitY, npcDamage, { x: b.vx, y: b.vy }, hitHexShard);
+              applyHexImpact(hitNPC._realEntity || hitNPC, hitX, hitY, npcDamage, _impactRelVel, hitHexShard);
               // Kierunek wyrzutu atmosfery, gdy padnie mostek (tunel ostrzału).
-              noteBridgeHit(hitNPC._realEntity || hitNPC, hitX, hitY, b.vx, b.vy, bridgeSimTime);
+              noteBridgeHit(hitNPC._realEntity || hitNPC, hitX, hitY, _impactRelVel.x, _impactRelVel.y, bridgeSimTime);
             }
 
             // Routing obrażeń: gracz vs NPC
@@ -19552,7 +19680,9 @@
               applyDamageToNPC(hitNPC, npcDamage, b.type);
             }
 
+            ActiveCarrier.set(hitCarrier);
             spawnBulletImpactEffect(b, hitX, hitY, 1.0);
+            ActiveCarrier.clear();
 
             if (shouldRemoveProjectileAfterImpact(b, !!(hitNPC.hexGrid || hitNPC.beamHull))) removeBulletAt(i);
             if (profileBullet) secNpcHit += (performance.now() - tBulletSection0) * bulletProfileScale;
@@ -19580,10 +19710,15 @@
             const hitX = segX0 + (segX1 - segX0) * tAst;
             const hitY = segY0 + (segY1 - segY0) * tAst;
             const astDamage = Number.isFinite(b.damage) ? b.damage : 0;
-            const astResult = window.asteroidField.applyDamageAt(astHit.asteroid, hitX, hitY, astDamage, { x: b.vx, y: b.vy });
+            // Kierunek uderzenia względem skały (pocisk niesie prędkość strzelca).
+            const astCarrier = writeCarrier(astHit.asteroid, hitX, hitY, false, _impactCarrier);
+            const astResult = window.asteroidField.applyDamageAt(astHit.asteroid, hitX, hitY, astDamage,
+              { x: b.vx - astCarrier.vx, y: b.vy - astCarrier.vy });
 
             if (astResult?.hit || astResult?.destroyed) {
+              ActiveCarrier.set(astCarrier);
               spawnBulletImpactEffect(b, hitX, hitY, 0.9);
+              ActiveCarrier.clear();
 
               if (shouldRemoveProjectileAfterImpact(b, true)) removeBulletAt(i);
               if (profileBullet) secAst += (performance.now() - tBulletSection0) * bulletProfileScale;
@@ -19686,10 +19821,13 @@
           const dirX = dx / len;
           const dirY = dy / len;
           const bx = shooter.x + dirX * (shooter.radius + 6), by = shooter.y + dirY * (shooter.radius + 6);
+          // Pełna prędkość strzelca była tu od zawsze — znaczniki jak w fireWeaponCore.
+          const svx = Number(shooter.vx) || 0;
+          const svy = Number(shooter.vy) || 0;
           if (shooter.weapon === 'railgun') {
-            window.bullets.push({ x: bx, y: by, vx: dirX * 600 + shooter.vx, vy: dirY * 600 + shooter.vy, life: 2.0, r: 4, owner: 'npc', damage: 40, type: 'rail', penetration: 1, source: shooter });
+            window.bullets.push({ x: bx, y: by, vx: dirX * 600 + svx, vy: dirY * 600 + svy, ivx: svx, ivy: svy, clock: CLOCK_SIM, bornSim: SimClock.sim, life: 2.0, r: 4, owner: 'npc', damage: 40, type: 'rail', penetration: 1, source: shooter });
           } else {
-            window.bullets.push({ x: bx, y: by, vx: dirX * 220 + shooter.vx, vy: dirY * 220 + shooter.vy, life: 4, r: 3, owner: 'npc', damage: 12, source: shooter });
+            window.bullets.push({ x: bx, y: by, vx: dirX * 220 + svx, vy: dirY * 220 + svy, ivx: svx, ivy: svy, clock: CLOCK_SIM, bornSim: SimClock.sim, life: 4, r: 3, owner: 'npc', damage: 12, source: shooter });
           }
           npcFireSpawnMs = performance.now() - tNpcFireSpawn0;
         }
@@ -20084,9 +20222,11 @@
           const jitter = (Math.random() - 0.5) * platform.rail.scatter;
           const dir = { x: Math.cos(aim + jitter), y: Math.sin(aim + jitter) };
           const muzzle = muzzlePosFor(platform, dir, 14);
+          // Pocisk dziedziczy ruch orbitalny platformy — z nim liczy wyprzedzenie leadTarget.
           window.bullets.push({
             x: muzzle.x, y: muzzle.y,
-            vx: dir.x * (RAIL_SPEED * 0.9), vy: dir.y * (RAIL_SPEED * 0.9),
+            vx: dir.x * (RAIL_SPEED * 0.9) + tangentialVel.x, vy: dir.y * (RAIL_SPEED * 0.9) + tangentialVel.y,
+            ivx: tangentialVel.x, ivy: tangentialVel.y, clock: CLOCK_SIM, bornSim: SimClock.sim,
             life: 2.0, r: 4, owner: 'npc', damage: platform.rail.damage, type: 'rail', penetration: 2,
             source: platform, spawnGrace: 0.08
           });
@@ -20101,7 +20241,8 @@
           const muzzleR = muzzlePosFor(platform, dir, 16);
           window.bullets.push({
             x: muzzleR.x, y: muzzleR.y, px: muzzleR.x, py: muzzleR.y,
-            vx: dir.x * SIDE_BULLET_SPEED, vy: dir.y * SIDE_BULLET_SPEED,
+            vx: dir.x * SIDE_BULLET_SPEED + tangentialVel.x, vy: dir.y * SIDE_BULLET_SPEED + tangentialVel.y,
+            ivx: tangentialVel.x, ivy: tangentialVel.y, clock: CLOCK_SIM, bornSim: SimClock.sim,
             life: 2.6, r: 5, owner: 'npc', damage: platform.missile.damage,
             type: 'rocket', explodeRadius: SIDE_PLASMA_EXPLODE_RADIUS,
             homingDelay: SIDE_ROCKET_HOMING_DELAY,
@@ -21451,6 +21592,9 @@
       updateGravityWarpBrake(dt);
       ship.pos.x += ship.vel.x * dt;
       ship.pos.y += ship.vel.y * dt;
+      // Czas pozy fizycznej (src/game/simClock.js): broń gracza strzelała wyżej
+      // z pozy sprzed kroku, CIWS, NPC i trafienia niżej — z pozy po kroku.
+      SimClock.advance(dt);
 
       // granice
       const margin = Math.max(50, getAuToWorldUnits() * WORLD_EDGE_MARGIN_AU);
@@ -22031,6 +22175,9 @@
         updateCameraTarget(frame);
         updateCameraZoom(frame);
         zoomIndicator.update(frame);
+        // Pauza: poza gracza = fizyczna, efekty niesione nośnikiem stoją razem z nim.
+        SimClock.beginRender(0, PHYS_DT, true);
+        ActiveCarrier.clear();
         render(0, frame);
         // Rakiet NIE aktualizujemy w pauzie: update() to ich lot, trafienia
         // (_onHit → applyDamageTo*) i wybuchy — leciały i zadawały obrażenia przy
@@ -22153,6 +22300,12 @@
       // --------------------
 
       const tDraw0 = performance.now();
+      // Czas pokazywany w tej klatce (interpolacja gracza) — z niego rysują się
+      // efekty i pociski niesione prędkością strzelca (src/game/simClock.js).
+      SimClock.beginRender(alpha, PHYS_DT, false);
+      // Bezpiecznik: nośnik ustawia się tylko na czas serii spawnów — wyjątek
+      // między set/clear nie może nieść kolejnych efektów cudzą prędkością.
+      ActiveCarrier.clear();
       render(alpha, frame);
       PerfHUD.addTiming('drawTime', performance.now() - tDraw0);
 
