@@ -9651,6 +9651,35 @@
         camera: { x: Math.round(camera.x), y: Math.round(camera.y), zoom: camera.zoom }
       })
     };
+    // Harness zrzutów portu WebGPU (scripts/webgpu/zrzuty.mjs) — tylko z ?dev, rozgrywki nie
+    // zmienia: teleport statku gracza (jak HaloRingDebug.goto, z kamerą i środkiem overlaya).
+    if (new URLSearchParams(location.search).has('dev')) {
+      window.DevScene = Object.assign(window.DevScene || {}, {
+        teleport(x, y, heading = ship.angle) {
+          ship.pos.x = x; ship.pos.y = y; ship.vel.x = 0; ship.vel.y = 0;
+          if (Number.isFinite(heading)) ship.angle = heading;
+          camera.x = camera.targetX = x;
+          camera.y = camera.targetY = y;
+          overlayView.center.x = x;
+          overlayView.center.y = y;
+          return { x, y };
+        },
+        // Kamera RTS rysuje się z interpolacji prevCameraState → camera (stan zapisywany
+        // w krokach fizyki); przy zatrzymanym czasie harness ustawia oba punkty naraz.
+        syncCamera() {
+          camera.transition = null;
+          prevCameraState.x = camera.x;
+          prevCameraState.y = camera.y;
+          return true;
+        },
+        // Sprite'y kadłubów wczytane z góry: kadłub NPC powstaje w drawNPCPretty, gdy sprite
+        // jest gotowy — bez tego kolejność tworzenia ciał zależała od kolejności wczytania.
+        preloadHullSprites() {
+          const entries = Object.values(HULL_SPRITE_PATHS_BY_ID).map((src) => loadHullSprite(src)).filter(Boolean);
+          return entries.every((e) => e.ready || e.error);
+        }
+      });
+    }
     function applyHaloRingDevSpawn() {
       const params = new URLSearchParams(location.search);
       const targetKey = String(params.get('haloTest') || '').toLowerCase();
@@ -9704,9 +9733,15 @@
         })();
       }
 
+      // Port WebGPU (decyzja użytkownika 2026-09-27, docs/webgpu/POSTEP.md): stare pole
+      // asteroid i tło pasa są WYŁĄCZONE na czas portu — nowe asteroidy wejdą z dem
+      // (dema/asteroidy*.html). Haki gry znoszą brak window.asteroidField / beltBackdrop.
+      // `?asteroidyStare` przywraca je do porównań na ścieżce WebGL.
+      const OLD_ASTEROIDS_ENABLED = new URLSearchParams(location.search).has('asteroidyStare');
+
       // Pole asteroid (InstancedMesh) - 5 pasów: Main Belt, Greeks (L4), Trojans (L5),
       // Hildas (rezonans 3:2 z Jowiszem), Kuiper Belt. Generowane raz, deterministycznie z seed.
-      if (AsteroidField && !window.asteroidField) {
+      if (OLD_ASTEROIDS_ENABLED && AsteroidField && !window.asteroidField) {
         try {
           window.asteroidField = new AsteroidField({
             seed: 0xA57E20,
@@ -9724,7 +9759,7 @@
       // Tło 3D pasów asteroid — proceduralne skały na warstwie tła (layer 1),
       // pod sprite'owym polem gameplayu. Regiony liczone z tych samych
       // BELT_DEFINITIONS i pozycji planet co AsteroidField wyżej.
-      if (AsteroidBeltBackdrop && !window.beltBackdrop) {
+      if (OLD_ASTEROIDS_ENABLED && AsteroidBeltBackdrop && !window.beltBackdrop) {
         try {
           window.beltBackdrop = new AsteroidBeltBackdrop({
             seed: 0xB4CD07,
@@ -26170,6 +26205,18 @@
     document.getElementById('btn-gamemode-back')?.addEventListener('click', () => {
       setMenuView('home');
     });
+
+    // Harness zrzutów portu WebGPU — tylko z ?dev: podzielony ekran bez przydziału padów.
+    if (new URLSearchParams(location.search).has('dev')) {
+      window.DevScene = Object.assign(window.DevScene || {}, {
+        startSplit(p1 = PLAYER.activeHullId, p2 = PLAYER.activeHullId) {
+          splitScreenMode = true;
+          window.splitScreenMode = true;
+          if (mainMenuEl) mainMenuEl.classList.add('hidden');
+          return startSplitScreenGame(p1, p2);
+        }
+      });
+    }
 
     async function startSplitScreenGame(p1HullKey, p2HullKey) {
       // Start the game normally first

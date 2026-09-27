@@ -1,0 +1,2809 @@
+{
+  "opis": "Baza odniesienia portu WebGPU: gra na starym WebGLRenderer (tag webgl-baseline), 1920×1080, harness scripts/webgpu/zrzuty.mjs. PNG w .tmp/webgpu/baseline/webgl/p1 (nie w repo) — odtwarzalne z tagu.",
+  "utworzono": "2026-09-27T18:15:22.858Z",
+  "tag": "webgl-baseline",
+  "commitPrzebiegu": "9859d07",
+  "commitZapisu": "9859d07",
+  "polecenie": "node scripts/webgpu/zrzuty.mjs --backend webgl --powtorz 2 --wydajnosc --out .tmp/webgpu/baseline",
+  "katalogPng": ".tmp/webgpu/baseline/webgl/p1",
+  "rozdzielczosc": "1920x1080",
+  "seed": 1592594996,
+  "srodowisko": {
+    "system": "win32 10.0.26200",
+    "cpu": "AMD Ryzen 7 7800X3D 8-Core Processor",
+    "ramGB": 31.1,
+    "node": "v22.20.0",
+    "chrome": "153.0.8010.54",
+    "three": "0.183.2",
+    "gpu": [
+      {
+        "name": "NVIDIA GeForce RTX 5080",
+        "driver": "32.0.16.1088",
+        "date": "/Date(1784678400000)/"
+      },
+      {
+        "name": "AMD Radeon(TM) Graphics",
+        "driver": "32.0.13036.4",
+        "date": "/Date(1740441600000)/"
+      }
+    ],
+    "webgl2": "ANGLE (NVIDIA, NVIDIA GeForce RTX 5080 (0x00002C02) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "adapterWebGPU": "nvidia blackwell"
+  },
+  "tolerancjaPortu": {
+    "roznePct8": 2,
+    "srednia": 1,
+    "stan": "wstępna — do kalibracji w zadaniu 02"
+  },
+  "sceny": {
+    "menu": {
+      "opis": "Menu główne: Ziemia z ringiem w kamerze kinowej (MenuBackdrop3D), intro po 150 klatkach",
+      "sesja": "menu",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 1
+      },
+      "drawCalls": null,
+      "trojkaty": null,
+      "passy": null,
+      "coreRenderMs": 0,
+      "gpuMs": 0,
+      "hdr": {
+        "pixels": 230400,
+        "nanOrInf": 0,
+        "overFraction": 0,
+        "p50": 0.0094,
+        "p90": 0.0536,
+        "p99": 0.2871,
+        "p999": 0.4571,
+        "max": 0.896
+      },
+      "stan": null,
+      "spis": {
+        "zamienniki": 0,
+        "warstwy": {
+          "ortho": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "fg": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "tlo": {
+            "ShaderMaterial:map+warpFactor+uSunShadowMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:pointTexture+time+cameraOffset": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "planety": {
+            "ShaderMaterial:uTime+uIsOcclusion": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "SpriteMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uPlanetBloom+dayTexture+nightTexture": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "MeshStandardMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "halo": {
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 5,
+              "instancje": 5
+            }
+          },
+          "ring-planety": {
+            "ShaderMaterial:uPlanetBloom+dayTexture+nightTexture": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "ShaderMaterial:cloudTexture+sunPosition+uOpacity": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uSunDir+uRa+uHs": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshStandardMaterial:?": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 5,
+              "instancje": 5
+            }
+          },
+          "menu": {
+            "ShaderMaterial:HaloTerrain": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloStructure": {
+              "obiekty": 2,
+              "instancje": 2
+            },
+            "ShaderMaterial:HaloClouds": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloAirShell": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloMegaPrims": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "ShaderMaterial:HaloDomeGlass": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloMegaTrains": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloMegaLights": {
+              "obiekty": 2,
+              "instancje": 2
+            },
+            "ShaderMaterial:HaloCity_garden": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloCity_industry": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloTrees": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:K7Instances": {
+              "obiekty": 24,
+              "instancje": 24
+            },
+            "ShaderMaterial:K7Plates": {
+              "obiekty": 6,
+              "instancje": 6
+            },
+            "ShaderMaterial:K7Labels": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "ShaderMaterial:K7Hoses": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "ShaderMaterial:MenuEarth": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:MenuEarthAtmosphere": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:MenuSky": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          }
+        }
+      }
+    },
+    "hud": {
+      "opis": "Gra przy Ziemi: kamera nad statkiem (RTS — rig kamery statku przy stojącym czasie nie dojeżdża), HUD kokpitu nad 3D",
+      "sesja": "ziemia",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      },
+      "drawCalls": 41,
+      "trojkaty": 318844,
+      "passy": {
+        "total": 41,
+        "refraction": 0,
+        "bg": 7,
+        "planets": 3,
+        "shafts": 1,
+        "ortho": 6,
+        "fg": 9,
+        "bloom": 13,
+        "post": 1,
+        "other": 1
+      },
+      "coreRenderMs": 0.445,
+      "gpuMs": 0.735,
+      "hdr": {
+        "pixels": 230400,
+        "nanOrInf": 0,
+        "overFraction": 0,
+        "p50": 0.0074,
+        "p90": 0.0233,
+        "p99": 0.1415,
+        "p999": 0.5836,
+        "max": 0.778
+      },
+      "stan": {
+        "kroki": 0,
+        "npc": 0,
+        "wraki": 0,
+        "pociski": 0,
+        "kamera": [
+          5899603,
+          4989402,
+          1,
+          "rts"
+        ],
+        "suma": 0
+      },
+      "spis": {
+        "zamienniki": 0,
+        "warstwy": {
+          "ortho": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uSprite+uNormalMap+uHasNormalMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uMap": {
+              "obiekty": 3,
+              "instancje": 3
+            }
+          },
+          "fg": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloMegaPrims": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "ShaderMaterial:HaloMegaTrains": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloMegaLights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloStructure": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:K7Instances": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:K7Plates": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:K7Hoses": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:space_station_1001": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1003": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1002": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1004": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshPhysicalMaterial:spacestation_main2": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshPhysicalMaterial:spacestation_smalllights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshPhysicalMaterial:spacestation_main": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "ShaderMaterial:uTime+uCoreGain+uHaloGain": {
+              "obiekty": 1,
+              "instancje": 42
+            }
+          },
+          "tlo": {
+            "ShaderMaterial:map+warpFactor+uSunShadowMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:pointTexture+time+cameraOffset": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloTerrain": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloStructure": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloClouds": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloAirShell": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloMegaPrims": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloDomeGlass": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloMegaLights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloCity_garden": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloCity_industry": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloTrees": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:K7Instances": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "ShaderMaterial:K7Plates": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:K7Labels": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "planety": {
+            "ShaderMaterial:uTime+uIsOcclusion": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "SpriteMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "ring-planety": {
+            "ShaderMaterial:uPlanetBloom+dayTexture+nightTexture": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:cloudTexture+sunPosition+uOpacity": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uSunDir+uRa+uHs": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:?": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 5,
+              "instancje": 5
+            }
+          }
+        }
+      }
+    },
+    "ring-z02": {
+      "opis": "Ring Ziemi z zewnątrz (tło ringu + górna ściana FG), zoom 0,2",
+      "sesja": "ziemia",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      },
+      "drawCalls": 45,
+      "trojkaty": 329244,
+      "passy": {
+        "total": 45,
+        "refraction": 0,
+        "bg": 10,
+        "planets": 3,
+        "shafts": 1,
+        "ortho": 6,
+        "fg": 10,
+        "bloom": 13,
+        "post": 1,
+        "other": 1
+      },
+      "coreRenderMs": 0.425,
+      "gpuMs": 0.648,
+      "hdr": {
+        "pixels": 230400,
+        "nanOrInf": 0,
+        "overFraction": 0.00042,
+        "p50": 0.0102,
+        "p90": 0.0454,
+        "p99": 0.1929,
+        "p999": 0.7029,
+        "max": 0.957
+      },
+      "stan": {
+        "kroki": 0,
+        "npc": 0,
+        "wraki": 0,
+        "pociski": 0,
+        "kamera": [
+          5899603,
+          4989402,
+          0.2,
+          "rts"
+        ],
+        "suma": 0
+      },
+      "spis": {
+        "zamienniki": 0,
+        "warstwy": {
+          "ortho": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uSprite+uNormalMap+uHasNormalMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uMap": {
+              "obiekty": 3,
+              "instancje": 3
+            }
+          },
+          "fg": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloMegaPrims": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "ShaderMaterial:HaloMegaTrains": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloMegaLights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloStructure": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:K7Instances": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:K7Plates": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:K7Hoses": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:space_station_1001": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1003": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1002": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1004": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshPhysicalMaterial:spacestation_main2": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshPhysicalMaterial:spacestation_smalllights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshPhysicalMaterial:spacestation_main": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "ShaderMaterial:uTime+uCoreGain+uHaloGain": {
+              "obiekty": 1,
+              "instancje": 42
+            }
+          },
+          "tlo": {
+            "ShaderMaterial:map+warpFactor+uSunShadowMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:pointTexture+time+cameraOffset": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloTerrain": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloStructure": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloClouds": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloAirShell": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloMegaPrims": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloDomeGlass": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloMegaLights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloCity_garden": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloCity_industry": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloTrees": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:K7Instances": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "ShaderMaterial:K7Plates": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:K7Labels": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "planety": {
+            "ShaderMaterial:uTime+uIsOcclusion": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "SpriteMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "ring-planety": {
+            "ShaderMaterial:uPlanetBloom+dayTexture+nightTexture": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:cloudTexture+sunPosition+uOpacity": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uSunDir+uRa+uHs": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:?": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 5,
+              "instancje": 5
+            }
+          }
+        }
+      }
+    },
+    "ring-z02__fg": {
+      "wariantSceny": "ring-z02",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "ring-z02__ortho": {
+      "wariantSceny": "ring-z02",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "ring-z02__planety": {
+      "wariantSceny": "ring-z02",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "ring-z02__tlo": {
+      "wariantSceny": "ring-z02",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "ring-z1": {
+      "opis": "Przy ścianie ringu, zoom 1",
+      "sesja": "ziemia",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      },
+      "drawCalls": 41,
+      "trojkaty": 318844,
+      "passy": {
+        "total": 41,
+        "refraction": 0,
+        "bg": 7,
+        "planets": 3,
+        "shafts": 1,
+        "ortho": 6,
+        "fg": 9,
+        "bloom": 13,
+        "post": 1,
+        "other": 1
+      },
+      "coreRenderMs": 0.415,
+      "gpuMs": 0.552,
+      "hdr": {
+        "pixels": 230400,
+        "nanOrInf": 0,
+        "overFraction": 0,
+        "p50": 0.0074,
+        "p90": 0.0233,
+        "p99": 0.1415,
+        "p999": 0.5836,
+        "max": 0.778
+      },
+      "stan": {
+        "kroki": 0,
+        "npc": 0,
+        "wraki": 0,
+        "pociski": 0,
+        "kamera": [
+          5899603,
+          4989402,
+          1,
+          "rts"
+        ],
+        "suma": 0
+      },
+      "spis": {
+        "zamienniki": 0,
+        "warstwy": {
+          "ortho": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uSprite+uNormalMap+uHasNormalMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uMap": {
+              "obiekty": 3,
+              "instancje": 3
+            }
+          },
+          "fg": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloMegaPrims": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "ShaderMaterial:HaloMegaTrains": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloMegaLights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloStructure": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:K7Instances": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:K7Plates": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:K7Hoses": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:space_station_1001": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1003": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1002": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1004": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshPhysicalMaterial:spacestation_main2": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshPhysicalMaterial:spacestation_smalllights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshPhysicalMaterial:spacestation_main": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "ShaderMaterial:uTime+uCoreGain+uHaloGain": {
+              "obiekty": 1,
+              "instancje": 42
+            }
+          },
+          "tlo": {
+            "ShaderMaterial:map+warpFactor+uSunShadowMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:pointTexture+time+cameraOffset": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloTerrain": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloStructure": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloClouds": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloAirShell": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloMegaPrims": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloDomeGlass": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloMegaLights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloCity_garden": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloCity_industry": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloTrees": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:K7Instances": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "ShaderMaterial:K7Plates": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:K7Labels": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "planety": {
+            "ShaderMaterial:uTime+uIsOcclusion": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "SpriteMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "ring-planety": {
+            "ShaderMaterial:uPlanetBloom+dayTexture+nightTexture": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:cloudTexture+sunPosition+uOpacity": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uSunDir+uRa+uHs": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:?": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 5,
+              "instancje": 5
+            }
+          }
+        }
+      }
+    },
+    "k7-hala": {
+      "opis": "Hala K-7 (statek w hali: wycięcie dachu, lampy), zoom 0,35, 90 klatek na zanik dachu",
+      "sesja": "ziemia",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0.0001,
+        "maks": 1
+      },
+      "drawCalls": 52,
+      "trojkaty": 6665954,
+      "passy": {
+        "total": 52,
+        "refraction": 0,
+        "bg": 15,
+        "planets": 3,
+        "shafts": 1,
+        "ortho": 6,
+        "fg": 12,
+        "bloom": 13,
+        "post": 1,
+        "other": 1
+      },
+      "coreRenderMs": 0.39,
+      "gpuMs": 1.773,
+      "hdr": {
+        "pixels": 230400,
+        "nanOrInf": 0,
+        "overFraction": 0.00031,
+        "p50": 0.0105,
+        "p90": 0.0747,
+        "p99": 0.181,
+        "p999": 0.6999,
+        "max": 5.311
+      },
+      "stan": {
+        "kroki": 90,
+        "npc": 0,
+        "wraki": 0,
+        "pociski": 0,
+        "kamera": [
+          5893660,
+          4983698,
+          0.35,
+          "rts"
+        ],
+        "suma": 0
+      },
+      "spis": {
+        "zamienniki": 0,
+        "warstwy": {
+          "ortho": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uSprite+uNormalMap+uHasNormalMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uMap": {
+              "obiekty": 3,
+              "instancje": 3
+            }
+          },
+          "fg": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloMegaPrims": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "ShaderMaterial:HaloMegaTrains": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloMegaLights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloStructure": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:K7Instances": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "ShaderMaterial:K7Hoses": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:space_station_1001": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1003": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1002": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1004": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshPhysicalMaterial:spacestation_main2": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshPhysicalMaterial:spacestation_smalllights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshPhysicalMaterial:spacestation_main": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "ShaderMaterial:uTime+uCoreGain+uHaloGain": {
+              "obiekty": 1,
+              "instancje": 42
+            }
+          },
+          "tlo": {
+            "ShaderMaterial:map+warpFactor+uSunShadowMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:pointTexture+time+cameraOffset": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloTerrain": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloStructure": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloClouds": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloAirShell": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloMegaPrims": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloDomeGlass": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloMegaLights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloCity_garden": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloCity_industry": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloTrees": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:K7Instances": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "ShaderMaterial:K7Plates": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:K7Labels": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "planety": {
+            "ShaderMaterial:uTime+uIsOcclusion": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "SpriteMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "ring-planety": {
+            "ShaderMaterial:uPlanetBloom+dayTexture+nightTexture": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:cloudTexture+sunPosition+uOpacity": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uSunDir+uRa+uHs": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:?": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 5,
+              "instancje": 5
+            }
+          }
+        }
+      }
+    },
+    "k7-hala__fg": {
+      "wariantSceny": "k7-hala",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "k7-hala__ortho": {
+      "wariantSceny": "k7-hala",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "k7-hala__planety": {
+      "wariantSceny": "k7-hala",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "k7-hala__tlo": {
+      "wariantSceny": "k7-hala",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "planeta-cien": {
+      "opis": "Wenus: tarcza planety (dzień/noc, halo) i jej cień na tle (shadow shafts), zoom 0,05",
+      "sesja": "ziemia",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      },
+      "drawCalls": 32,
+      "trojkaty": 222743,
+      "passy": {
+        "total": 32,
+        "refraction": 0,
+        "bg": 2,
+        "planets": 2,
+        "shafts": 1,
+        "ortho": 1,
+        "fg": 9,
+        "bloom": 13,
+        "post": 1,
+        "other": 3
+      },
+      "coreRenderMs": 0.3,
+      "gpuMs": 0.889,
+      "hdr": {
+        "pixels": 230400,
+        "nanOrInf": 0,
+        "overFraction": 0,
+        "p50": 0.0057,
+        "p90": 0.0275,
+        "p99": 0.2781,
+        "p999": 0.4788,
+        "max": 0.792
+      },
+      "stan": {
+        "kroki": 90,
+        "npc": 0,
+        "wraki": 0,
+        "pociski": 0,
+        "kamera": [
+          6567681,
+          5702735,
+          0.05,
+          "rts"
+        ],
+        "suma": 0
+      },
+      "spis": {
+        "zamienniki": 0,
+        "warstwy": {
+          "ortho": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "fg": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:space_station_1001": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1003": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1002": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1004": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshPhysicalMaterial:spacestation_main2": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshPhysicalMaterial:spacestation_smalllights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshPhysicalMaterial:spacestation_main": {
+              "obiekty": 4,
+              "instancje": 4
+            }
+          },
+          "tlo": {
+            "ShaderMaterial:map+warpFactor+uSunShadowMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:pointTexture+time+cameraOffset": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "planety": {
+            "ShaderMaterial:uTime+uIsOcclusion": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "SpriteMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uPlanetBloom+dayTexture+nightTexture": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "halo": {
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "ring-planety": {
+            "MeshStandardMaterial:?": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 5,
+              "instancje": 5
+            }
+          }
+        }
+      }
+    },
+    "planeta-cien__fg": {
+      "wariantSceny": "planeta-cien",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "planeta-cien__ortho": {
+      "wariantSceny": "planeta-cien",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "planeta-cien__planety": {
+      "wariantSceny": "planeta-cien",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "planeta-cien__tlo": {
+      "wariantSceny": "planeta-cien",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "slonce": {
+      "opis": "Słońce (kula, korona, bloom HDR), zoom 0,035",
+      "sesja": "ziemia",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      },
+      "drawCalls": 22,
+      "trojkaty": 8088,
+      "passy": {
+        "total": 22,
+        "refraction": 0,
+        "bg": 2,
+        "planets": 2,
+        "shafts": 1,
+        "ortho": 1,
+        "fg": 1,
+        "bloom": 13,
+        "post": 1,
+        "other": 1
+      },
+      "coreRenderMs": 0.24,
+      "gpuMs": 0.576,
+      "hdr": {
+        "pixels": 230400,
+        "nanOrInf": 0,
+        "overFraction": 0.0013,
+        "p50": 0.0076,
+        "p90": 0.0198,
+        "p99": 0.1433,
+        "p999": 1.0439,
+        "max": 2.595
+      },
+      "stan": {
+        "kroki": 90,
+        "npc": 0,
+        "wraki": 0,
+        "pociski": 0,
+        "kamera": [
+          6000000,
+          6000000,
+          0.035,
+          "rts"
+        ],
+        "suma": 0
+      },
+      "spis": {
+        "zamienniki": 0,
+        "warstwy": {
+          "ortho": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "fg": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:space_station_1001": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1003": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1002": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1004": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshPhysicalMaterial:spacestation_main2": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshPhysicalMaterial:spacestation_smalllights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshPhysicalMaterial:spacestation_main": {
+              "obiekty": 4,
+              "instancje": 4
+            }
+          },
+          "tlo": {
+            "ShaderMaterial:map+warpFactor+uSunShadowMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:pointTexture+time+cameraOffset": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "planety": {
+            "ShaderMaterial:uTime+uIsOcclusion": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "SpriteMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "ring-planety": {
+            "MeshStandardMaterial:?": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 5,
+              "instancje": 5
+            }
+          }
+        }
+      }
+    },
+    "bitwa": {
+      "opis": "Bitwa w próżni: 3 piratów vs 2 Terra Nova, 180 klatek walki (pociski, wiązki, tarcze, dysze, bloom)",
+      "sesja": "kosmos",
+      "szum": {
+        "roznePct2": 0.0008,
+        "roznePct8": 0.0003,
+        "roznePct32": 0,
+        "srednia": 0.0001,
+        "maks": 16
+      },
+      "drawCalls": 48,
+      "trojkaty": 25434,
+      "passy": {
+        "total": 48,
+        "refraction": 0,
+        "bg": 2,
+        "planets": 0,
+        "shafts": 1,
+        "ortho": 28,
+        "fg": 2,
+        "bloom": 13,
+        "post": 1,
+        "other": 1
+      },
+      "coreRenderMs": 0.44,
+      "gpuMs": 0.727,
+      "hdr": {
+        "pixels": 230400,
+        "nanOrInf": 0,
+        "overFraction": 0.00045,
+        "p50": 0.0071,
+        "p90": 0.0296,
+        "p99": 0.2015,
+        "p999": 0.6711,
+        "max": 4.574
+      },
+      "stan": {
+        "kroki": 180,
+        "npc": 5,
+        "wraki": 0,
+        "pociski": 8,
+        "kamera": [
+          6211800,
+          5330000,
+          0.3,
+          "rts"
+        ],
+        "suma": 7214.1355
+      },
+      "spis": {
+        "zamienniki": 0,
+        "warstwy": {
+          "ortho": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshBasicMaterial:?": {
+              "obiekty": 3,
+              "instancje": 28
+            },
+            "ShaderMaterial:map": {
+              "obiekty": 6,
+              "instancje": 6
+            },
+            "LineBasicMaterial:?": {
+              "obiekty": 2,
+              "instancje": 2
+            },
+            "ShaderMaterial:uZ+uFlowPh+uPal": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uSprite+uNormalMap+uHasNormalMap": {
+              "obiekty": 6,
+              "instancje": 6
+            },
+            "ShaderMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uMap": {
+              "obiekty": 3,
+              "instancje": 3
+            }
+          },
+          "fg": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:space_station_1001": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1003": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1002": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1004": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshPhysicalMaterial:spacestation_main2": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshPhysicalMaterial:spacestation_smalllights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshPhysicalMaterial:spacestation_main": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "ShaderMaterial:uTime+uCoreGain+uHaloGain": {
+              "obiekty": 1,
+              "instancje": 66
+            }
+          },
+          "tlo": {
+            "ShaderMaterial:map+warpFactor+uSunShadowMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:pointTexture+time+cameraOffset": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "planety": {
+            "ShaderMaterial:uTime+uIsOcclusion": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "SpriteMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "ring-planety": {
+            "MeshStandardMaterial:?": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 5,
+              "instancje": 5
+            }
+          },
+          "tarcze": {
+            "ShaderMaterial:uTime+uTrailScale+uMinHalfWidth": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uTime": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uTime+uColor+uLife": {
+              "obiekty": 4,
+              "instancje": 4
+            }
+          }
+        }
+      }
+    },
+    "bitwa__fg": {
+      "wariantSceny": "bitwa",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "bitwa__ortho": {
+      "wariantSceny": "bitwa",
+      "szum": {
+        "roznePct2": 0.001,
+        "roznePct8": 0.0005,
+        "roznePct32": 0,
+        "srednia": 0.0001,
+        "maks": 30
+      }
+    },
+    "bitwa__planety": {
+      "wariantSceny": "bitwa",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "bitwa__tlo": {
+      "wariantSceny": "bitwa",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "bitwa-blisko": {
+      "opis": "Największy pirat z bliska (zoom 1): kadłub, wieżyczki, trafienia w tarczę, lakier, cienie SDF",
+      "sesja": "kosmos",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 1
+      },
+      "drawCalls": 37,
+      "trojkaty": 9366,
+      "passy": {
+        "total": 37,
+        "refraction": 0,
+        "bg": 2,
+        "planets": 0,
+        "shafts": 1,
+        "ortho": 18,
+        "fg": 1,
+        "bloom": 13,
+        "post": 1,
+        "other": 1
+      },
+      "coreRenderMs": 0.495,
+      "gpuMs": 0.667,
+      "hdr": {
+        "pixels": 230400,
+        "nanOrInf": 0,
+        "overFraction": 0.00066,
+        "p50": 0.0076,
+        "p90": 0.032,
+        "p99": 0.2251,
+        "p999": 0.7761,
+        "max": 6.891
+      },
+      "stan": {
+        "kroki": 180,
+        "npc": 5,
+        "wraki": 0,
+        "pociski": 8,
+        "kamera": [
+          6213653,
+          5329888,
+          1,
+          "rts"
+        ],
+        "suma": 7214.1355
+      },
+      "spis": {
+        "zamienniki": 0,
+        "warstwy": {
+          "ortho": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshBasicMaterial:?": {
+              "obiekty": 3,
+              "instancje": 28
+            },
+            "ShaderMaterial:map": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "LineBasicMaterial:?": {
+              "obiekty": 2,
+              "instancje": 2
+            },
+            "ShaderMaterial:uZ+uFlowPh+uPal": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uMap": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "ShaderMaterial:uSprite+uNormalMap+uHasNormalMap": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "fg": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:space_station_1001": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1003": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1002": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1004": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshPhysicalMaterial:spacestation_main2": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshPhysicalMaterial:spacestation_smalllights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshPhysicalMaterial:spacestation_main": {
+              "obiekty": 4,
+              "instancje": 4
+            }
+          },
+          "tlo": {
+            "ShaderMaterial:map+warpFactor+uSunShadowMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:pointTexture+time+cameraOffset": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "planety": {
+            "ShaderMaterial:uTime+uIsOcclusion": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "SpriteMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "ring-planety": {
+            "MeshStandardMaterial:?": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 5,
+              "instancje": 5
+            }
+          },
+          "tarcze": {
+            "ShaderMaterial:uTime+uTrailScale+uMinHalfWidth": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uTime": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uTime+uColor+uLife": {
+              "obiekty": 4,
+              "instancje": 4
+            }
+          }
+        }
+      }
+    },
+    "wybuch": {
+      "opis": "Zniszczenie największego pirata: wybuch 15 klatek po (overlay3D, fala uderzeniowa, iskry), zoom 0,5",
+      "sesja": "kosmos",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      },
+      "drawCalls": 41,
+      "trojkaty": 20326,
+      "passy": {
+        "total": 41,
+        "refraction": 0,
+        "bg": 2,
+        "planets": 0,
+        "shafts": 1,
+        "ortho": 22,
+        "fg": 1,
+        "bloom": 13,
+        "post": 1,
+        "other": 1
+      },
+      "coreRenderMs": 0.385,
+      "gpuMs": 0.656,
+      "hdr": {
+        "pixels": 230400,
+        "nanOrInf": 0,
+        "overFraction": 0.00002,
+        "p50": 0.0072,
+        "p90": 0.0258,
+        "p99": 0.1501,
+        "p999": 0.5844,
+        "max": 1.801
+      },
+      "stan": {
+        "kroki": 195,
+        "npc": 4,
+        "wraki": 2,
+        "pociski": 3,
+        "kamera": [
+          6213653,
+          5329888,
+          0.5,
+          "rts"
+        ],
+        "suma": 63482.3451
+      },
+      "spis": {
+        "zamienniki": 0,
+        "warstwy": {
+          "ortho": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshBasicMaterial:?": {
+              "obiekty": 3,
+              "instancje": 8
+            },
+            "ShaderMaterial:map": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "LineBasicMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uZ+uFlowPh+uPal": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uTime+uLightDir+uAmbient": {
+              "obiekty": 2,
+              "instancje": 2
+            },
+            "ShaderMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uMap": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "ShaderMaterial:uSprite+uNormalMap+uHasNormalMap": {
+              "obiekty": 4,
+              "instancje": 4
+            }
+          },
+          "fg": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:space_station_1001": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1003": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1002": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1004": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshPhysicalMaterial:spacestation_main2": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshPhysicalMaterial:spacestation_smalllights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshPhysicalMaterial:spacestation_main": {
+              "obiekty": 4,
+              "instancje": 4
+            }
+          },
+          "tlo": {
+            "ShaderMaterial:map+warpFactor+uSunShadowMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:pointTexture+time+cameraOffset": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "planety": {
+            "ShaderMaterial:uTime+uIsOcclusion": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "SpriteMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "ring-planety": {
+            "MeshStandardMaterial:?": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 5,
+              "instancje": 5
+            }
+          },
+          "tarcze": {
+            "ShaderMaterial:uTime+uTrailScale+uMinHalfWidth": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uTime": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uTime+uColor+uLife": {
+              "obiekty": 4,
+              "instancje": 4
+            }
+          }
+        }
+      }
+    },
+    "wraki": {
+      "opis": "Ten sam wrak 150 klatek po zniszczeniu: kadłub-wrak, szczątki, żar ran (błysk już zgasł), zoom 0,6",
+      "sesja": "kosmos",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      },
+      "drawCalls": 37,
+      "trojkaty": 24860,
+      "passy": {
+        "total": 37,
+        "refraction": 0,
+        "bg": 2,
+        "planets": 0,
+        "shafts": 1,
+        "ortho": 18,
+        "fg": 1,
+        "bloom": 13,
+        "post": 1,
+        "other": 1
+      },
+      "coreRenderMs": 0.34,
+      "gpuMs": 0.769,
+      "hdr": {
+        "pixels": 230400,
+        "nanOrInf": 0,
+        "overFraction": 0.00001,
+        "p50": 0.0072,
+        "p90": 0.0254,
+        "p99": 0.1506,
+        "p999": 0.5799,
+        "max": 1.686
+      },
+      "stan": {
+        "kroki": 330,
+        "npc": 4,
+        "wraki": 2,
+        "pociski": 5,
+        "kamera": [
+          6213653,
+          5329888,
+          0.6,
+          "rts"
+        ],
+        "suma": 61849.2508
+      },
+      "spis": {
+        "zamienniki": 0,
+        "warstwy": {
+          "ortho": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshBasicMaterial:?": {
+              "obiekty": 3,
+              "instancje": 20
+            },
+            "ShaderMaterial:map": {
+              "obiekty": 2,
+              "instancje": 2
+            },
+            "LineBasicMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uZ+uFlowPh+uPal": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uTime+uLightDir+uAmbient": {
+              "obiekty": 2,
+              "instancje": 2
+            },
+            "ShaderMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uMap": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "ShaderMaterial:uSprite+uNormalMap+uHasNormalMap": {
+              "obiekty": 2,
+              "instancje": 2
+            }
+          },
+          "fg": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:space_station_1001": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1003": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1002": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1004": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshPhysicalMaterial:spacestation_main2": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshPhysicalMaterial:spacestation_smalllights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshPhysicalMaterial:spacestation_main": {
+              "obiekty": 4,
+              "instancje": 4
+            }
+          },
+          "tlo": {
+            "ShaderMaterial:map+warpFactor+uSunShadowMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:pointTexture+time+cameraOffset": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "planety": {
+            "ShaderMaterial:uTime+uIsOcclusion": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "SpriteMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "ring-planety": {
+            "MeshStandardMaterial:?": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 5,
+              "instancje": 5
+            }
+          },
+          "tarcze": {
+            "ShaderMaterial:uTime+uTrailScale+uMinHalfWidth": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uTime": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uTime+uColor+uLife": {
+              "obiekty": 4,
+              "instancje": 4
+            }
+          }
+        }
+      }
+    },
+    "wraki__fg": {
+      "wariantSceny": "wraki",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "wraki__ortho": {
+      "wariantSceny": "wraki",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "wraki__planety": {
+      "wariantSceny": "wraki",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "wraki__tlo": {
+      "wariantSceny": "wraki",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "warp": {
+      "opis": "Ładowanie skoku: plazma WARP z dysz MAIN (na WebGPU bez starej soczewki — porównanie tylko na WebGL)",
+      "sesja": "kosmos",
+      "szum": {
+        "roznePct2": 0.0068,
+        "roznePct8": 0.0007,
+        "roznePct32": 0.0002,
+        "srednia": 0.003,
+        "maks": 64
+      },
+      "drawCalls": 66,
+      "trojkaty": 40709,
+      "passy": {
+        "total": 66,
+        "refraction": 0,
+        "bg": 3,
+        "planets": 0,
+        "shafts": 1,
+        "ortho": 45,
+        "fg": 2,
+        "bloom": 13,
+        "post": 1,
+        "other": 1
+      },
+      "coreRenderMs": 0.44,
+      "gpuMs": 1.28,
+      "hdr": {
+        "pixels": 230400,
+        "nanOrInf": 0,
+        "overFraction": 0.00557,
+        "p50": 0.0116,
+        "p90": 0.0599,
+        "p99": 0.5476,
+        "p999": 2.2509,
+        "max": 6.621
+      },
+      "stan": {
+        "kroki": 405,
+        "npc": 4,
+        "wraki": 2,
+        "pociski": 2,
+        "kamera": [
+          6210767,
+          5330000,
+          0.6,
+          "rts"
+        ],
+        "suma": 60686.3452
+      },
+      "spis": {
+        "zamienniki": 0,
+        "warstwy": {
+          "ortho": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshBasicMaterial:?": {
+              "obiekty": 2,
+              "instancje": 4
+            },
+            "ShaderMaterial:map": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "LineBasicMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uZ+uFlowPh+uPal": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uTime+uLen+uWidth": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:uSize+uStretch+uColor": {
+              "obiekty": 15,
+              "instancje": 15
+            },
+            "ShaderMaterial:uLifePh+uLen+uWidth": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:uTime+uLightDir+uAmbient": {
+              "obiekty": 2,
+              "instancje": 2
+            },
+            "ShaderMaterial:uSprite+uNormalMap+uHasNormalMap": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uMap": {
+              "obiekty": 3,
+              "instancje": 3
+            }
+          },
+          "fg": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:space_station_1001": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1003": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1002": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1004": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshPhysicalMaterial:spacestation_main2": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshPhysicalMaterial:spacestation_smalllights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshPhysicalMaterial:spacestation_main": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "ShaderMaterial:uTime+uCoreGain+uHaloGain": {
+              "obiekty": 1,
+              "instancje": 42
+            }
+          },
+          "tlo": {
+            "ShaderMaterial:map+warpFactor+uSunShadowMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:pointTexture+time+cameraOffset": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "planety": {
+            "ShaderMaterial:uTime+uIsOcclusion": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "SpriteMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "ring-planety": {
+            "MeshStandardMaterial:?": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 5,
+              "instancje": 5
+            }
+          },
+          "tarcze": {
+            "ShaderMaterial:uTime+uTrailScale+uMinHalfWidth": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uTime": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uTime+uColor+uLife": {
+              "obiekty": 2,
+              "instancje": 2
+            }
+          }
+        }
+      }
+    },
+    "split": {
+      "opis": "Podzielony ekran (dwa renderSingle + wycinki), obie kamery na statkach, zoom 0,5",
+      "sesja": "split",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      },
+      "drawCalls": 27,
+      "trojkaty": 12686,
+      "passy": {
+        "total": 27,
+        "refraction": 0,
+        "bg": 2,
+        "planets": 0,
+        "shafts": 1,
+        "ortho": 7,
+        "fg": 2,
+        "bloom": 13,
+        "post": 1,
+        "other": 1
+      },
+      "coreRenderMs": 0.33,
+      "gpuMs": 0.906,
+      "hdr": {
+        "pixels": 230400,
+        "nanOrInf": 0,
+        "overFraction": 0.0002,
+        "p50": 0.0009,
+        "p90": 0.0088,
+        "p99": 0.0541,
+        "p999": 0.1649,
+        "max": 3.565
+      },
+      "stan": {
+        "kroki": 0,
+        "npc": 0,
+        "wraki": 0,
+        "pociski": 0,
+        "kamera": [
+          5855374,
+          4895841,
+          0.5,
+          "rts"
+        ],
+        "suma": 0
+      },
+      "spis": {
+        "zamienniki": 0,
+        "warstwy": {
+          "ortho": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uMap": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "ShaderMaterial:uSprite+uNormalMap+uHasNormalMap": {
+              "obiekty": 2,
+              "instancje": 2
+            }
+          },
+          "fg": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:space_station_1001": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1003": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1002": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1004": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshPhysicalMaterial:spacestation_main2": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshPhysicalMaterial:spacestation_smalllights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshPhysicalMaterial:spacestation_main": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "ShaderMaterial:uTime+uCoreGain+uHaloGain": {
+              "obiekty": 1,
+              "instancje": 42
+            }
+          },
+          "tlo": {
+            "ShaderMaterial:map+warpFactor+uSunShadowMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:pointTexture+time+cameraOffset": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "planety": {
+            "ShaderMaterial:uTime+uIsOcclusion": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "SpriteMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "ring-planety": {
+            "MeshStandardMaterial:?": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 5,
+              "instancje": 5
+            }
+          }
+        }
+      }
+    }
+  },
+  "wydajnosc": {
+    "scenariusz": "bitwa w czasie rzeczywistym, 48 okrętów (zrzuty.mjs --wydajnosc, --bok 24), zoom 0,12, headless bez vsync",
+    "mediana": {
+      "fps": 288,
+      "klatka": 3.562,
+      "p95": 5.355,
+      "fizyka": 0.543,
+      "rysowanie": 2.404,
+      "uHex": 0.965,
+      "coreRender": 0.868,
+      "coreRenderTotal": 0.9,
+      "gpu": 1.142,
+      "drawCalls": 88,
+      "trojkaty": 102012,
+      "npc": 46,
+      "pociski": 64,
+      "wraki": 5
+    }
+  },
+  "drzenie": {
+    "narzedzie": "node dema/precyzja-drzenie.js --variant po",
+    "px": {
+      "lights_0_z1.8": {
+        "rms": 0.003,
+        "maks": 0.006
+      },
+      "lights_7M_z1.8": {
+        "rms": 0.003,
+        "maks": 0.005
+      },
+      "lights_7M_z0.9": {
+        "rms": 0.002,
+        "maks": 0.003
+      },
+      "lights_9.9M_z1.8": {
+        "rms": 0.003,
+        "maks": 0.005
+      },
+      "lights_7M_z2": {
+        "rms": 0.002,
+        "maks": 0.004
+      },
+      "windows_0_z1.8": {
+        "rms": 0.043,
+        "maks": 0.096
+      },
+      "windows_7M_z1.8": {
+        "rms": 0.043,
+        "maks": 0.096
+      },
+      "windows_7M_z0.9": {
+        "rms": 0.063,
+        "maks": 0.113
+      },
+      "windows_9.9M_z1.8": {
+        "rms": 0.043,
+        "maks": 0.096
+      },
+      "windows_7M_z2": {
+        "rms": 0.023,
+        "maks": 0.032
+      },
+      "exhaust_0_z1.8": {
+        "uwaga": "brak"
+      },
+      "exhaust_7M_z1.8": {
+        "uwaga": "brak"
+      },
+      "exhaust_7M_z0.9": {
+        "uwaga": "brak"
+      },
+      "exhaust_9.9M_z1.8": {
+        "uwaga": "brak"
+      },
+      "exhaust_7M_z2": {
+        "uwaga": "brak"
+      },
+      "impostor_0_z1.8": {
+        "rms": 0.139,
+        "maks": 0.535
+      },
+      "impostor_7M_z1.8": {
+        "rms": 0,
+        "maks": 0
+      },
+      "impostor_7M_z0.9": {
+        "rms": 0,
+        "maks": 0
+      },
+      "impostor_9.9M_z1.8": {
+        "rms": 0,
+        "maks": 0
+      },
+      "impostor_7M_z2": {
+        "rms": 0,
+        "maks": 0
+      },
+      "fx_0_z1.8": {
+        "rms": 0.001,
+        "maks": 0.002
+      },
+      "fx_7M_z1.8": {
+        "rms": 0,
+        "maks": 0
+      },
+      "fx_7M_z0.9": {
+        "rms": 0,
+        "maks": 0
+      },
+      "fx_9.9M_z1.8": {
+        "rms": 0,
+        "maks": 0
+      },
+      "fx_7M_z2": {
+        "rms": 0,
+        "maks": 0
+      },
+      "bullets_0_z1.8": {
+        "rms": 0.001,
+        "maks": 0.003
+      },
+      "bullets_7M_z1.8": {
+        "rms": 0,
+        "maks": 0
+      },
+      "bullets_7M_z0.9": {
+        "rms": 0,
+        "maks": 0
+      },
+      "bullets_9.9M_z1.8": {
+        "rms": 0,
+        "maks": 0
+      },
+      "bullets_7M_z2": {
+        "rms": 0,
+        "maks": 0
+      },
+      "muzzle_0_z1.8": {
+        "rms": 0.001,
+        "maks": 0.003
+      },
+      "muzzle_7M_z1.8": {
+        "rms": 0,
+        "maks": 0
+      },
+      "muzzle_7M_z0.9": {
+        "rms": 0,
+        "maks": 0
+      },
+      "muzzle_9.9M_z1.8": {
+        "rms": 0,
+        "maks": 0
+      },
+      "muzzle_7M_z2": {
+        "rms": 0,
+        "maks": 0
+      },
+      "trails_0_z1.8": {
+        "rms": 0.008,
+        "maks": 0.021
+      },
+      "trails_7M_z1.8": {
+        "rms": 0,
+        "maks": 0
+      },
+      "trails_7M_z0.9": {
+        "rms": 0,
+        "maks": 0
+      },
+      "trails_9.9M_z1.8": {
+        "rms": 0,
+        "maks": 0
+      },
+      "trails_7M_z2": {
+        "rms": 0,
+        "maks": 0
+      },
+      "sparks_0_z1.8": {
+        "rms": 0,
+        "maks": 0
+      },
+      "sparks_7M_z1.8": {
+        "rms": 0,
+        "maks": 0
+      },
+      "sparks_7M_z0.9": {
+        "rms": 0,
+        "maks": 0
+      },
+      "sparks_9.9M_z1.8": {
+        "rms": 0,
+        "maks": 0
+      },
+      "sparks_7M_z2": {
+        "rms": 0,
+        "maks": 0
+      }
+    }
+  }
+}

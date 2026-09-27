@@ -1,0 +1,304 @@
+// Wstrzykiwane do strony gry PRZED jej skryptami (CDP Page.addScriptToEvaluateOnNewDocument)
+// przez scripts/webgpu/zrzuty.mjs. Gry nie zmienia — podmienia tylko źródła czasu i losowości,
+// żeby klatka była powtarzalna:
+//  - zegar wirtualny: performance.now(), Date.now() i znacznik rAF. Tryby:
+//      'frozen' — czas stoi (gra: dt = 0, fizyka nie kroczy, efekty stoją; render trwa),
+//      'step'   — każda klatka rAF przesuwa czas o stepMs, przez stepsLeft klatek, potem 'frozen',
+//      'real'   — przepuszcza prawdziwy czas;
+//    start w 'frozen' (tło menu i świat gry stoją na t = 0, niezależnie od długości ładowania);
+//  - Math.random z ziarnem (mulberry32) — ten sam świat i te same decyzje przy tych samych krokach;
+//  - dyspozytor rAF: wywołania rAF strony (pętla gry, tło menu, pętla three) idą przez ticker;
+//    w trybie „hold” tylko w klatkach zamówionych przez harness (frames/step) — między komendami
+//    CDP strona stoi, więc liczba klatek (i efekty liczone na klatkę: iskry, obrót stacji) jest
+//    powtarzalna. Bez „hold” (ładowanie) każda prawdziwa klatka jest dozwolona;
+//  - CSS bez animacji i przejść (menu, HUD) — inaczej zrzut łapie je w połowie.
+// window.__harness: clock, step(n), frames(n), hold(on), reseed(v), freeze(), realNow(), scene.
+(() => {
+  if (window.__harness) return;
+  const SEED = Number(window.__HARNESS_SEED__ || 0x5eed1234) >>> 0;
+  const realNow = performance.now.bind(performance);
+  const realDateNow = Date.now.bind(Date);
+  const realRaf = window.requestAnimationFrame.bind(window);
+  // Stała baza czasu (nie realNow()): porównania typu now − lastShot ≥ cooldown na liczbach
+  // zmiennoprzecinkowych zależą od bezwzględnej wartości — z bazą z chwili wczytania strzał
+  // wypadał o klatkę wcześniej/później w zależności od przebiegu (rozjazd pocisków w bitwie).
+  const T0 = 10000;
+  void realDateNow;
+  const clock = {
+    mode: 'frozen',
+    t: T0,
+    dateBase: Date.UTC(2026, 0, 1) - T0,
+    stepMs: 1000 / 60,
+    stepsLeft: 0,
+    frames: 0,        // prawdziwe klatki (ticker)
+    gameFrames: 0,    // klatki, w których strona dostała rAF
+    steppedFrames: 0,
+    hold: false,
+    budget: 0
+  };
+  const virtualNow = () => (clock.mode === 'real' ? realNow() : clock.t);
+  performance.now = virtualNow;
+  Date.now = () => Math.round(clock.dateBase + virtualNow());
+
+  // Wywołania rAF strony czekają tu na klatkę dozwoloną przez ticker.
+  const pending = new Map();
+  let rafSeq = 0;
+  window.requestAnimationFrame = (cb) => { const id = ++rafSeq; pending.set(id, cb); return id; };
+  window.cancelAnimationFrame = (id) => { pending.delete(id); };
+
+  const waiters = [];
+  const tick = () => {
+    realRaf(tick);
+    clock.frames++;
+    if (clock.hold && clock.budget <= 0) return;
+    if (clock.hold) clock.budget--;
+    if (clock.mode === 'step') {
+      if (clock.stepsLeft > 0) {
+        clock.t += clock.stepMs;
+        clock.stepsLeft--;
+        clock.steppedFrames++;
+      }
+      if (clock.stepsLeft <= 0) clock.mode = 'frozen';
+    }
+    clock.gameFrames++;
+    const ts = clock.mode === 'real' ? realNow() : clock.t;
+    const cbs = [...pending.values()];
+    pending.clear();
+    for (const cb of cbs) {
+      try { cb(ts); } catch (err) { setTimeout(() => { throw err; }); }
+    }
+    for (let i = waiters.length - 1; i >= 0; i--) {
+      const w = waiters[i];
+      if (clock.gameFrames >= w.frame) { waiters.splice(i, 1); w.resolve(clock.gameFrames); }
+    }
+  };
+  realRaf(tick);
+
+  let s = SEED;
+  Math.random = () => {
+    s = (s + 0x6D2B79F5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+
+  const css = '*, *::before, *::after { animation: none !important; transition: none !important; caret-color: transparent !important; }';
+  const addCss = () => {
+    const st = document.createElement('style');
+    st.id = 'harness-css';
+    st.textContent = css;
+    (document.head || document.documentElement).appendChild(st);
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', addCss, { once: true });
+  else addCss();
+
+  const halfToFloat = (h) => {
+    const s = (h & 0x8000) ? -1 : 1;
+    const e = (h >> 10) & 0x1f;
+    const f = h & 0x3ff;
+    if (e === 0) return s * 5.960464477539063e-8 * f;
+    if (e === 31) return f ? NaN : s * Infinity;
+    return s * Math.pow(2, e - 15) * (1 + f / 1024);
+  };
+
+  // Pomocniki scen (wołane z zrzuty.mjs po starcie gry — sięgają po window.* w chwili wywołania).
+  const scene = {
+    // HUD DOM: ukryj wszystko poza kanwami #game-root (3D, 2D i overlay efektów).
+    hideHud(on = true) {
+      let st = document.getElementById('harness-hud');
+      if (!st) {
+        st = document.createElement('style');
+        st.id = 'harness-hud';
+        document.head.appendChild(st);
+      }
+      // opacity, nie samo visibility: panele kokpitu ustawiają sobie visibility: visible
+      // i przebijały się przez ukryty kontener (podzielony ekran).
+      st.textContent = on
+        ? 'body > *:not(#game-root), #game-root > :not(canvas) { visibility: hidden !important; opacity: 0 !important; }'
+        : '';
+      return true;
+    },
+    // Kamera RTS w punkcie świata i stały zoom (rig kamery statku nie działa w RTS).
+    // RTS rysuje się z interpolacji prevCameraState → camera (zapis w krokach fizyki), a zmiana
+    // trybu zaczyna przejście z czasem — przy stojącym czasie DevScene.syncCamera ustawia oba.
+    cam(x, y, zoom) {
+      const c = window.camera;
+      if (c.mode !== 'rts' && typeof c.enterRtsMode === 'function') c.enterRtsMode();
+      c.x = c.targetX = x;
+      c.y = c.targetY = y;
+      c.manualZoom = true;
+      c.zoom = c.targetZoom = zoom;
+      window.DevScene?.syncCamera?.();
+      return true;
+    },
+    // Kamera statku (tryb gry) wprost na statku, bez przejścia.
+    shipCam(zoom = 1) {
+      const c = window.camera;
+      c.mode = 'ship';
+      c.focusStation = null;
+      c.x = c.targetX = window.ship.pos.x;
+      c.y = c.targetY = window.ship.pos.y;
+      c.manualZoom = true;
+      c.zoom = c.targetZoom = zoom;
+      window.DevScene?.syncCamera?.();
+      return true;
+    },
+    uploadsIdle() { return !(window.Core3D?._textureUploadQueue?.length); },
+    ringReady(key = 'earth') {
+      const e = window.__haloRings?.entries?.find((x) => x.key === key);
+      return !!(e && e.ring && e.ring.mapsReady);
+    },
+    // Kadłuby belkowe powstają po wczytaniu sprite'a (asynchronicznie) — przed krokami czekamy na wszystkie.
+    hullsReady() {
+      const list = [window.ship, window.player2Ship, ...(window.npcs || [])].filter((e) => e && !e.dead && !e.fighter);
+      return list.every((e) => !!e.beamHull);
+    },
+    // Czas CPU Core3D.render (prawdziwym zegarem) i odstęp klatek — n klatek przy stojącym czasie.
+    async perf(n = 60) {
+      const C = window.Core3D;
+      const orig = C.render;
+      const cpu = [];
+      C.render = function (...a) { const t0 = realNow(); const r = orig.apply(this, a); cpu.push(realNow() - t0); return r; };
+      // Odstęp między kolejnymi klatkami strony (w trybie hold: n zamówionych klatek pod rząd).
+      const frameMs = [];
+      let last = realNow();
+      await new Promise((resolve) => {
+        let k = 0;
+        const f = () => { const now = realNow(); frameMs.push(now - last); last = now; if (++k >= n) resolve(); else window.requestAnimationFrame(f); };
+        window.requestAnimationFrame(f);
+        if (clock.hold) clock.budget += n;
+      });
+      C.render = orig;
+      const med = (a) => { const s = [...a].sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : 0; };
+      const p95 = (a) => { const s = [...a].sort((x, y) => x - y); return s.length ? s[Math.min(s.length - 1, Math.floor(s.length * 0.95))] : 0; };
+      const info = window.__rendererInfo || {};
+      return {
+        coreRenderMs: +med(cpu).toFixed(3), coreRenderP95: +p95(cpu).toFixed(3),
+        frameMs: +med(frameMs.slice(1)).toFixed(3),
+        gpuMs: Number.isFinite(C.gpuFrameMs) ? +C.gpuFrameMs.toFixed(3) : null,
+        drawCalls: info.calls ?? null, triangles: info.triangles ?? null,
+        passes: info.passes ? Object.fromEntries(Object.entries(info.passes).map(([k, v]) => [k, v.calls])) : null
+      };
+    },
+    // Izolacja warstw: renderer.render dla kamer passów Core3D (cameraOrtho / cameraPersp) rysuje
+    // tylko wybrane warstwy (numery z Core3D: 0 ortho, 1 tło, 2 FG, 3 planety, 5 halo, 6 ring-planety,
+    // 7 tarcze). Pass tła dalej czyści cel, więc nie zostaje stara klatka (setPerfToggles z bgPass:
+    // false jej nie czyści). null = wszystko. Post (bloom, uber) idzie jak zwykle.
+    isolate(layers = null) {
+      const C = window.Core3D;
+      const r = C?.renderer;
+      if (!r) return false;
+      if (!r.__harnessRender) r.__harnessRender = r.render;
+      if (!layers) { r.render = r.__harnessRender; delete r.__harnessRender; return true; }
+      let mask = 0;
+      for (const l of layers) mask |= (1 << l);
+      const orig = r.__harnessRender;
+      r.render = function (sceneArg, cam, ...rest) {
+        if ((cam === C.cameraOrtho || cam === C.cameraPersp) && !(cam.layers.mask & mask)) return undefined;
+        return orig.call(this, sceneArg, cam, ...rest);
+      };
+      return true;
+    },
+    // Spis widocznych obiektów sceny Core3D: warstwa → „typ materiału:nazwa” → obiekty / instancje.
+    // Na WebGL mówi, które materiały składają scenę; na WebGPU liczy zamienniki (isPlaceholder).
+    census() {
+      const C = window.Core3D;
+      const LAYER = { 0: 'ortho', 1: 'tlo', 2: 'fg', 3: 'planety', 5: 'halo', 6: 'ring-planety', 7: 'tarcze', 8: 'gwiazdy-warp', 9: 'menu' };
+      const out = {};
+      let placeholders = 0;
+      const visit = (o, parentVisible) => {
+        const vis = parentVisible && o.visible !== false;
+        if (!vis) return;
+        const mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : null;
+        if (mats && (o.isMesh || o.isPoints || o.isLine || o.isSprite)) {
+          let bit = 0;
+          while (bit < 32 && !((o.layers.mask >>> bit) & 1)) bit++;
+          const layer = LAYER[bit] ?? `w${bit}`;
+          for (const m of mats) {
+            if (!m) continue;
+            const sig = m.name || (m.uniforms ? Object.keys(m.uniforms).slice(0, 3).join('+') : '') || '?';
+            const key = `${m.isPlaceholder ? 'ZAMIENNIK ' : ''}${m.type}:${sig}`;
+            const bucket = out[layer] || (out[layer] = {});
+            const e = bucket[key] || (bucket[key] = { obiekty: 0, instancje: 0 });
+            e.obiekty++;
+            e.instancje += o.isInstancedMesh ? (o.count | 0) : 1;
+            if (m.isPlaceholder) placeholders++;
+          }
+        }
+        for (const ch of o.children) visit(ch, vis);
+      };
+      if (C?.scene) visit(C.scene, true);
+      return { zamienniki: placeholders, warstwy: out };
+    },
+    // Histogram HDR bufora sceny (przed bloomem i ACES): luminancja co `step`-ty piksel.
+    async hdr(step = 3) {
+      const C = window.Core3D;
+      const r = C.renderer;
+      const rt = C.composerTarget;
+      if (!r || !rt) return null;
+      const w = rt.width; const h = rt.height;
+      const half = rt.texture.type === 1016;
+      let data; let rowElems = w * 4;
+      try {
+        if (typeof r.readRenderTargetPixelsAsync === 'function' && r.isWebGPURenderer) {
+          data = await r.readRenderTargetPixelsAsync(rt, 0, 0, w, h);
+          rowElems = Math.ceil((w * 4 * data.BYTES_PER_ELEMENT) / 256) * 256 / data.BYTES_PER_ELEMENT;
+        } else {
+          data = half ? new Uint16Array(w * h * 4) : new Float32Array(w * h * 4);
+          r.readRenderTargetPixels(rt, 0, 0, w, h, data);
+        }
+      } catch (err) {
+        return { error: String(err?.message || err) };
+      }
+      const isHalf = data instanceof Uint16Array;
+      const lum = [];
+      let nan = 0; let over = 0; let max = 0;
+      for (let y = 0; y < h; y += step) {
+        for (let x = 0; x < w; x += step) {
+          const i = y * rowElems + x * 4;
+          const R = isHalf ? halfToFloat(data[i]) : data[i];
+          const G = isHalf ? halfToFloat(data[i + 1]) : data[i + 1];
+          const B = isHalf ? halfToFloat(data[i + 2]) : data[i + 2];
+          if (!Number.isFinite(R) || !Number.isFinite(G) || !Number.isFinite(B)) { nan++; continue; }
+          const l = 0.2126 * R + 0.7152 * G + 0.0722 * B;
+          lum.push(l);
+          if (l > 0.9) over++;
+          if (l > max) max = l;
+        }
+      }
+      lum.sort((a, b) => a - b);
+      const pct = (p) => +(lum[Math.min(lum.length - 1, Math.floor(lum.length * p))] || 0).toFixed(4);
+      return { pixels: lum.length, nanOrInf: nan, overFraction: +(over / Math.max(1, lum.length)).toFixed(5), p50: pct(0.5), p90: pct(0.9), p99: pct(0.99), p999: pct(0.999), max: +max.toFixed(3) };
+    }
+  };
+
+  window.__harness = {
+    clock,
+    realNow,
+    scene,
+    // n klatek po stepMs; Promise kończy się, gdy czas znów stoi
+    step(n = 1, stepMs = 1000 / 60) {
+      clock.stepMs = stepMs;
+      clock.stepsLeft = Math.max(0, n | 0);
+      clock.mode = clock.stepsLeft > 0 ? 'step' : 'frozen';
+      if (clock.hold) clock.budget += clock.stepsLeft;
+      return new Promise((resolve) => {
+        const poll = () => (clock.mode === 'step' ? realRaf(poll) : resolve(clock.steppedFrames));
+        realRaf(poll);
+      });
+    },
+    // Wstrzymanie: strona dostaje klatki tylko przez step()/frames().
+    hold(on = true) { clock.hold = !!on; clock.budget = 0; return clock.hold; },
+    freeze() { clock.mode = 'frozen'; clock.stepsLeft = 0; },
+    // Nowe ziarno tuż przed krokami symulacji: asynchroniczne rzeczy przed nimi (kolejność
+    // wczytania sprite'ów i budowy kadłubów) zużywają losowania w różnej kolejności.
+    reseed(v = SEED) { s = v >>> 0; return true; },
+    // czeka n prawdziwych klatek (czas wirtualny bez zmian w trybie 'frozen')
+    frames(n = 1) {
+      const k = Math.max(1, n | 0);
+      if (clock.hold) clock.budget += k;
+      return new Promise((resolve) => waiters.push({ frame: clock.gameFrames + k, resolve }));
+    },
+    seed: SEED
+  };
+})();
