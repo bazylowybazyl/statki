@@ -2,7 +2,13 @@
 // Dwie kamery: replika kamery gry (Core3D: BG persp → planeta ortho → świat
 // ortho) i kamera kinowa. Serwowanie: `npm run dev`, potem
 // /dema/halo_ring_demo.html?preset=1&quality=high&seed=1337&shot=1
-import * as THREE from 'three';
+//
+// Port WebGPU (zadanie 06): WebGPURenderer (limity z adaptera — mapy „Ultra”
+// 16K), post w RenderPipeline (halo_ring_demo_env.js), budowa ringu
+// asynchroniczna (await ring.ready przed presetami — mapa CPU z odczytu
+// asynchronicznego), materiały ringu czekające na zadania 07–10 rysują się
+// magentowym zamiennikiem. Czas GPU ze znaczników (trackTimestamp).
+import * as THREE from 'three/webgpu';
 import { createHaloRing } from '../src/3d/haloRing/index.js';
 import { createArchRing } from '../src/3d/haloRing/arch/archRing.js';
 import { HALO_QUALITY, HALO_GEOMETRY_DEFAULTS, HALO_STATION_ANGLE, haloTransitAngles } from '../src/3d/haloRing/haloRingConfig.js';
@@ -18,6 +24,7 @@ import {
   createPlanetBody,
   createPost,
   createSky,
+  installDemoPlaceholders,
   loadShipTexture
 } from './halo_ring_demo_env.js';
 
@@ -37,28 +44,37 @@ function reportError(text) {
 window.addEventListener('error', (e) => reportError(`JS: ${e.message} @ ${e.filename}:${e.lineno}`));
 
 // ---------------------------------------------------------------------------
-// Renderer (demo jest hostem — moduły ringu go nie tworzą)
+// Renderer (demo jest hostem — moduły ringu go nie tworzą). Tylko WebGPU:
+// limity z adaptera (domyślne urządzenie ma 8192 px tekstury — mapy „Ultra” 16K).
 const canvas = $('view');
-const renderer = new THREE.WebGLRenderer({
-  canvas,
-  antialias: false,
-  alpha: false,
-  powerPreference: 'high-performance',
-  logarithmicDepthBuffer: false,
-  preserveDrawingBuffer: shotMode
-});
+const WANTED_LIMITS = ['maxTextureDimension2D', 'maxTextureArrayLayers', 'maxSampledTexturesPerShaderStage',
+  'maxInterStageShaderVariables', 'maxVertexAttributes', 'maxStorageBuffersPerShaderStage', 'maxStorageTexturesPerShaderStage',
+  'maxColorAttachmentBytesPerSample', 'maxBufferSize', 'maxStorageBufferBindingSize'];
+const adapter = navigator.gpu ? await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' }) : null;
+if (!adapter) {
+  reportError('Demo wymaga przeglądarki z WebGPU (brak adaptera).');
+  throw new Error('brak WebGPU');
+}
+const requiredLimits = {};
+for (const k of WANTED_LIMITS) if (Number.isFinite(adapter.limits[k])) requiredLimits[k] = adapter.limits[k];
+const renderer = new THREE.WebGPURenderer({ canvas, antialias: false, alpha: false, trackTimestamp: true, requiredLimits });
+await renderer.init();
+if (!renderer.backend.isWebGPUBackend) {
+  reportError('Demo wymaga WebGPU (three przeszedł na zapasowy backend WebGL2).');
+  throw new Error('brak WebGPU');
+}
 renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
 renderer.toneMapping = THREE.NoToneMapping;
 renderer.autoClear = false;
 renderer.info.autoReset = false;
-renderer.debug.onShaderError = (gl, program, vs, fs) => {
-  const log = [
-    gl.getProgramInfoLog(program),
-    gl.getShaderInfoLog(vs),
-    gl.getShaderInfoLog(fs)
-  ].filter(Boolean).join('\n');
-  reportError(`SHADER: ${log}`);
-};
+renderer.highPrecision = true;
+const placeholders = installDemoPlaceholders(renderer);
+const gpuInfo = (() => {
+  const i = adapter.info || {};
+  return `${i.vendor || ''} ${i.architecture || ''} ${i.description || ''}`.trim() || 'WebGPU';
+})();
+// błędy walidacji WebGPU / WGSL (odpowiednik debug.onShaderError z WebGL)
+renderer.backend.device.addEventListener('uncapturederror', (e) => reportError(`WEBGPU: ${e.error?.message || e.error}`));
 
 // Planeta (Z6, 2026-09-26): ?planet=earth|mars|jupiter — ring z profilem planety
 // (wygląd ringu i doków, haloRingProfiles.js), promień i ziarno jak w grze.
@@ -876,29 +892,15 @@ let lastFrameTime = performance.now();
 let frameMs = 16;
 let fps = 60;
 let gpuMs = 0;
-const gl = renderer.getContext();
-const timerExt = gl.getExtension('EXT_disjoint_timer_query_webgl2');
-const gpuQueries = [];
-let gpuActive = null;
-function gpuBegin() {
-  if (!timerExt || gpuActive || gpuQueries.length > 4) return;
-  gpuActive = gl.createQuery();
-  gl.beginQuery(timerExt.TIME_ELAPSED_EXT, gpuActive);
-}
-function gpuEnd() {
-  if (!gpuActive) return;
-  gl.endQuery(timerExt.TIME_ELAPSED_EXT);
-  gpuQueries.push(gpuActive);
-  gpuActive = null;
-}
+// Czas GPU: znaczniki czasu renderera (trackTimestamp), jedno zapytanie w locie.
+const timerOn = renderer.hasFeature('timestamp-query');
+let gpuPending = false;
 function gpuPoll() {
-  if (!timerExt) return;
-  if (gl.getParameter(timerExt.GPU_DISJOINT_EXT)) { gpuQueries.length = 0; return; }
-  while (gpuQueries.length && gl.getQueryParameter(gpuQueries[0], gl.QUERY_RESULT_AVAILABLE)) {
-    const q = gpuQueries.shift();
-    gpuMs = gpuMs * 0.85 + (gl.getQueryParameter(q, gl.QUERY_RESULT) / 1e6) * 0.15;
-    gl.deleteQuery(q);
-  }
+  if (!timerOn || gpuPending) return;
+  gpuPending = true;
+  renderer.resolveTimestampsAsync('render').then((ms) => {
+    if (Number.isFinite(ms) && ms > 0) gpuMs = gpuMs * 0.85 + ms * 0.15;
+  }).catch(() => {}).finally(() => { gpuPending = false; });
 }
 
 let lastCameraHeight = 0;
@@ -977,15 +979,13 @@ function frame() {
   const dt = Math.min(0.1, Math.max(0, (now - lastFrameTime) / 1000));
   lastFrameTime = now;
   const t0 = performance.now();
-  gpuPoll();
-  gpuBegin();
   renderer.info.reset();
   prepareFrame(dt);
   renderScene(null);
-  const calls = renderer.info.render.calls;
+  const calls = renderer.info.render.drawCalls;
   const tris = renderer.info.render.triangles;
   post.finish(dt);
-  gpuEnd();
+  gpuPoll();
   frameMs = frameMs * 0.9 + (performance.now() - t0) * 0.1;
   fps = fps * 0.92 + (1 / Math.max(dt, 1e-3)) * 0.08;
   lastStats.calls = calls;
@@ -1006,7 +1006,7 @@ function updateHud() {
   hudTimer = now;
   const st = ring.stats;
   const lines = [
-    `<b>FPS</b> ${fps.toFixed(0).padStart(4)}   <b>ms</b> ${frameMs.toFixed(1)}${timerExt ? `  <b>GPU</b> ${gpuMs.toFixed(1)}` : ''}`,
+    `<b>FPS</b> ${fps.toFixed(0).padStart(4)}   <b>ms</b> ${frameMs.toFixed(1)}${timerOn ? `  <b>GPU</b> ${gpuMs.toFixed(1)}` : ''}${placeholders.built ? `   <b>zamienniki</b> ${placeholders.built}` : ''}`,
     `<b>draw calle</b> ${lastStats.calls}   <b>trójkąty</b> ${(lastStats.triangles / 1000).toFixed(0)} tys.`,
     `<b>kafle</b> ${st.activeTiles}   <b>segmenty</b> ${st.segments}`,
     `<b>tekstury ringu</b> ${fmtBytes(st.textureBytes)}   <b>mapy</b> ${(st.mapProgress * 100).toFixed(0)}%`,
@@ -1062,12 +1062,14 @@ $('planet').addEventListener('change', (e) => {
   q.delete('seed');
   location.search = q.toString();
 });
-$('rebuild').addEventListener('click', () => {
+$('rebuild').addEventListener('click', async () => {
   state.seed = Number($('g-seed').value) || 1337;
   const facingChanged = $('g-facing').value !== state.geometry.habitatFacing;
   state.geometry.habitatFacing = $('g-facing').value;
   ring.rebuild({ seed: state.seed, ...state.geometry });
   applySun();
+  // presety liczą wysokość terenu z mapy CPU — po odczycie
+  await ring.ready;
   if (facingChanged) {
     buildPresetButtons();
     applyPreset(state.presetIndex);
@@ -1129,17 +1131,18 @@ applyLayers();
 
 // ---------------------------------------------------------------------------
 // Pomiar HDR (brief §9): scena do RT Float, histogram luminancji, NaN/Inf.
-function measureHDR(width = 640) {
+// WebGPU: odczyt asynchroniczny, wiersze wyrównane do 256 B (kolejność wierszy
+// dla histogramu bez znaczenia).
+async function measureHDR(width = 640) {
   const height = Math.max(1, Math.round(width * viewH / viewW));
-  const rt = new THREE.WebGLRenderTarget(width, height, { type: THREE.FloatType, depthBuffer: true });
-  const prevW = viewW;
-  const prevH = viewH;
+  const rt = new THREE.RenderTarget(width, height, { type: THREE.FloatType, depthBuffer: true });
   renderScene(rt);
-  const px = new Float32Array(width * height * 4);
-  renderer.readRenderTargetPixels(rt, 0, 0, width, height, px);
+  const raw = await renderer.readRenderTargetPixelsAsync(rt, 0, 0, width, height);
   rt.dispose();
   renderer.setRenderTarget(null);
-  void prevW; void prevH;
+  const rowElems = Math.ceil(width * 16 / 256) * 64;
+  const px = new Float32Array(width * height * 4);
+  for (let y = 0; y < height; y++) px.set(raw.subarray(y * rowElems, y * rowElems + width * 4), y * width * 4);
   const lum = [];
   let nan = 0;
   let over = 0;
@@ -1177,22 +1180,27 @@ window.__halo = {
       renderer.info.reset();
       prepareFrame(dt);
       renderScene(null);
-      lastStats.calls = renderer.info.render.calls;
+      lastStats.calls = renderer.info.render.drawCalls;
       lastStats.triangles = renderer.info.render.triangles;
       post.finish(dt);
     }
     return { ...lastStats };
   },
-  bench(n = 30) {
+  // ms/klatkę z czekaniem na GPU (koniec kolejki WebGPU zamiast gl.readPixels)
+  async bench(n = 30) {
+    await renderer.backend.device.queue.onSubmittedWorkDone();
     const t0 = performance.now();
     for (let i = 0; i < n; i++) {
       prepareFrame(1 / 60);
       renderScene(null);
       post.finish(1 / 60);
     }
-    gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4));
+    await renderer.backend.device.queue.onSubmittedWorkDone();
     return (performance.now() - t0) / n;
   },
+  gpu: gpuInfo,
+  get placeholders() { return { built: placeholders.built, names: [...placeholders.names] }; },
+  get bake() { return ring.stats.bake || null; },
   measureHDR,
   // dowolne ujęcie kinowe (skrypty zrzutów i strojenie presetów)
   setCine(cfg) {
@@ -1259,22 +1267,30 @@ window.__halo = {
     }
   },
   stats() {
-    return { ...lastStats, ...ring.stats, near: cineCam.near, far: cineCam.far, mode: state.mode, preset: state.presetName, errors: shaderErrors.slice() };
+    return { ...lastStats, ...ring.stats, near: cineCam.near, far: cineCam.far, mode: state.mode, preset: state.presetName, errors: shaderErrors.slice(), placeholders: placeholders.built, gpuMs };
   },
   get errors() { return shaderErrors.slice(); },
-  waitMaps() {
-    return new Promise((resolve) => {
+  async waitMaps() {
+    await ring.ready;
+    await new Promise((resolve) => {
       const tick = () => {
         if (ring.mapsReady) resolve(true);
         else { ring.update(1 / 60, { camera: state.mode === 'game' ? camPersp : cineCam }); setTimeout(tick, 0); }
       };
       tick();
     });
+    return true;
   }
 };
 
 // ---------------------------------------------------------------------------
-// Start
+// Start: ring buduje się asynchronicznie (kompilacja bake'u, mapa CPU z odczytu,
+// budowle i kopuły) — presety liczą wysokość terenu, lot K-7 potrzebuje hali.
+const tBuild = performance.now();
+$('loading').textContent = 'Budowa ringu (kompilacja i pieczenie map)…';
+const ringOk = await ring.ready;
+window.__halo.buildMs = performance.now() - tBuild;
+if (!ringOk) reportError(`Budowa ringu nie wyszła: ${ring.error?.message || ring.error}`);
 ensureK7Flight();
 const startPreset = Math.max(1, Math.min(presetList().length, Number(params.get('preset')) || 8));
 applyPreset(startPreset - 1);
