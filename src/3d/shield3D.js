@@ -5,10 +5,14 @@
 //     obramówka (fresnel + pas krawędziowy), ripple trafień po powierzchni.
 //  2) "sphere" — klasyczna kolista bańka (droideka, port z flow-shield-effect):
 //     stacje, budowle, myśliwce i przyszłe generatory osłon obszarowych.
+// Materiały: TSL w shield3D.tsl.js (port WebGPU, zadanie 14) — graf budowany RAZ
+// na wariant, każda tarcza ma lekki materiał z wartościami w `material.uniforms`
+// (obiekty { value } jak dawniej), więc spawn floty nie buduje shaderów per okręt.
 // ============================================================
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
 import { Core3D } from './core3d.js';
 import { ShieldImpactFX } from './shieldImpactFx.js';
+import { SHIELD_MAX_HITS, SHIELD_TSL_STATS, createShieldNodeMaterial } from './shield3D.tsl.js';
 import {
     getEntityShieldBaseRadius,
     getEntityShieldProfile,
@@ -17,456 +21,11 @@ import {
     sampleShieldProfileRadius
 } from '../../shieldSystem.js';
 
-const MAX_HITS = 24;
+const MAX_HITS = SHIELD_MAX_HITS;
 
 function clamp(v, min, max) {
     return v < min ? min : (v > max ? max : v);
 }
-
-// ── Vertex shader (sfera) ────────────────────────────────────────────────────
-const SHIELD_VERTEX = `
-varying vec3 vNormal;
-varying vec3 vViewDir;
-varying vec3 vObjPos;
-varying float vWorldY;
-
-void main() {
-    vObjPos  = position;
-    vNormal  = normalize(normalMatrix * normal);
-    vec4 worldPos = modelMatrix * vec4(position, 1.0);
-    vWorldY = worldPos.y;
-    vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
-    vViewDir = normalize(-mvPos.xyz);
-    gl_Position = projectionMatrix * mvPos;
-}
-`;
-
-// ── Wspólne kawałki GLSL (noise, hex, life color) ────────────────────────────
-const SHIELD_GLSL_COMMON = `
-// ── Simplex 3D noise ────────────────────────────────────────────────────────
-vec3 mod289v3(vec3 x){ return x - floor(x*(1./289.))*289.; }
-vec4 mod289v4(vec4 x){ return x - floor(x*(1./289.))*289.; }
-vec4 permute(vec4 x){ return mod289v4(((x*34.)+1.)*x); }
-vec4 taylorInvSqrt(vec4 r){ return 1.79284291400159 - 0.85373472095314*r; }
-
-float snoise(vec3 v){
-    const vec2 C = vec2(1./6., 1./3.);
-    const vec4 D = vec4(0., 0.5, 1., 2.);
-    vec3 i  = floor(v + dot(v, C.yyy));
-    vec3 x0 = v - i + dot(i, C.xxx);
-    vec3 g  = step(x0.yzx, x0.xyz);
-    vec3 l  = 1. - g;
-    vec3 i1 = min(g.xyz, l.zxy);
-    vec3 i2 = max(g.xyz, l.zxy);
-    vec3 x1 = x0 - i1 + C.xxx;
-    vec3 x2 = x0 - i2 + C.yyy;
-    vec3 x3 = x0 - D.yyy;
-    i = mod289v3(i);
-    vec4 p = permute(permute(permute(
-      i.z+vec4(0.,i1.z,i2.z,1.))
-     +i.y+vec4(0.,i1.y,i2.y,1.))
-     +i.x+vec4(0.,i1.x,i2.x,1.));
-    float n_ = 0.142857142857;
-    vec3  ns = n_*D.wyz - D.xzx;
-    vec4 j   = p - 49.*floor(p*ns.z*ns.z);
-    vec4 x_  = floor(j*ns.z);
-    vec4 y_  = floor(j - 7.*x_);
-    vec4 x   = x_*ns.x + ns.yyyy;
-    vec4 y   = y_*ns.x + ns.yyyy;
-    vec4 h   = 1. - abs(x) - abs(y);
-    vec4 b0  = vec4(x.xy, y.xy);
-    vec4 b1  = vec4(x.zw, y.zw);
-    vec4 s0  = floor(b0)*2.+1.;
-    vec4 s1  = floor(b1)*2.+1.;
-    vec4 sh  = -step(h, vec4(0.));
-    vec4 a0  = b0.xzyw + s0.xzyw*sh.xxyy;
-    vec4 a1  = b1.xzyw + s1.xzyw*sh.zzww;
-    vec3 p0  = vec3(a0.xy, h.x);
-    vec3 p1  = vec3(a0.zw, h.y);
-    vec3 p2  = vec3(a1.xy, h.z);
-    vec3 p3  = vec3(a1.zw, h.w);
-    vec4 norm = taylorInvSqrt(vec4(dot(p0,p0),dot(p1,p1),dot(p2,p2),dot(p3,p3)));
-    p0*=norm.x; p1*=norm.y; p2*=norm.z; p3*=norm.w;
-    vec4 m = max(0.6-vec4(dot(x0,x0),dot(x1,x1),dot(x2,x2),dot(x3,x3)),0.);
-    m = m*m;
-    return 42.*dot(m*m, vec4(dot(p0,x0),dot(p1,x1),dot(p2,x2),dot(p3,x3)));
-}
-
-// ── Life color: uColor (full) -> red (empty) ────────────────────────────────
-vec3 lifeColor(float life){
-    return mix(vec3(1.0, 0.08, 0.04), uColor, life);
-}
-
-// ── Hex grid ────────────────────────────────────────────────────────────────
-float hexPattern(vec2 p){
-    p *= uHexScale;
-    const vec2 s = vec2(1., 1.7320508);
-    vec4 hC = floor(vec4(p, p-vec2(0.5,1.))/s.xyxy) + 0.5;
-    vec4 h  = vec4(p-hC.xy*s, p-(hC.zw+0.5)*s);
-    vec2 cell = (dot(h.xy,h.xy) < dot(h.zw,h.zw)) ? h.xy : h.zw;
-    cell = abs(cell);
-    float d = max(dot(cell, s*0.5), cell.x);
-    return smoothstep(0.5-uEdgeWidth, 0.5, d);
-}
-
-vec2 hexCellId(vec2 p){
-    p *= uHexScale;
-    const vec2 s = vec2(1., 1.7320508);
-    vec4 hC = floor(vec4(p, p-vec2(0.5,1.))/s.xyxy) + 0.5;
-    vec4 h  = vec4(p-hC.xy*s, p-(hC.zw+0.5)*s);
-    return (dot(h.xy,h.xy) < dot(h.zw,h.zw)) ? hC.xy : hC.zw+0.5;
-}
-
-float cellFlash(vec2 cellId){
-    float rnd   = fract(sin(dot(cellId, vec2(127.1,311.7)))*43758.5453);
-    float phase = rnd * 6.2831;
-    float speed = 0.5 + rnd * 1.5;
-    return smoothstep(0.6, 1.0, sin(uTime*uFlashSpeed*speed+phase)) * uFlashIntensity;
-}
-`;
-
-const SHIELD_UNIFORMS_GLSL = `
-uniform float uTime;
-uniform vec3  uColor;
-uniform float uLife;
-uniform float uHexScale;
-uniform float uEdgeWidth;
-uniform float uFresnelPower;
-uniform float uFresnelStrength;
-uniform float uOpacity;
-uniform float uReveal;
-uniform float uFlashSpeed;
-uniform float uFlashIntensity;
-uniform float uNoiseScale;
-uniform vec3  uNoiseEdgeColor;
-uniform float uNoiseEdgeWidth;
-uniform float uNoiseEdgeIntensity;
-uniform float uNoiseEdgeSmoothness;
-uniform float uHexOpacity;
-uniform float uShowHex;
-uniform float uFlowScale;
-uniform float uFlowSpeed;
-uniform float uFlowIntensity;
-uniform vec3  uHitPos[MAX_HITS];
-uniform float uHitTime[MAX_HITS];
-uniform float uHitRingSpeed;
-uniform float uHitRingWidth;
-uniform float uHitMaxRadius;
-uniform float uHitDuration;
-uniform float uHitIntensity;
-uniform float uHitImpactRadius;
-uniform float uIsBreaking;
-uniform float uEnergyShot;
-`;
-
-// ── Fragment shader (sfera — oryginalny wygląd droideki) ─────────────────────
-const SHIELD_FRAGMENT = `
-#define MAX_HITS 24
-${SHIELD_UNIFORMS_GLSL}
-uniform float uFadeStart;
-
-varying vec3 vNormal;
-varying vec3 vViewDir;
-varying vec3 vObjPos;
-varying float vWorldY;
-${SHIELD_GLSL_COMMON}
-void main(){
-    // ── Reveal / dissolve ─────────────────────────────────────────────────────
-    float noise = snoise(vObjPos * uNoiseScale) * 0.5 + 0.5;
-
-    // Breaking state: glitch + fast dissolve
-    float effectiveReveal = uReveal;
-    if (uIsBreaking > 0.5) {
-        // Add glitch noise jitter to reveal threshold
-        float glitch = fract(sin(dot(vObjPos.xy, vec2(12.9898, 78.233)) + uTime * 30.0) * 43758.5453);
-        effectiveReveal = max(effectiveReveal, glitch * 0.3);
-    }
-
-    float revealMask = smoothstep(effectiveReveal - uNoiseEdgeWidth, effectiveReveal, noise);
-    if (revealMask < 0.001) discard;
-
-    float innerFade  = mix(0.98, 0.15, uNoiseEdgeSmoothness);
-    float edgeLow    = smoothstep(effectiveReveal-uNoiseEdgeWidth, effectiveReveal-uNoiseEdgeWidth*innerFade, noise);
-    float edgeHigh   = smoothstep(effectiveReveal-uNoiseEdgeWidth*0.15, effectiveReveal, noise);
-    float revealEdge = edgeLow * (1.0 - edgeHigh);
-
-    // ── Fresnel ───────────────────────────────────────────────────────────────
-    float fresnel = pow(1.0 - dot(vNormal, vViewDir), uFresnelPower) * uFresnelStrength;
-
-    // ── Flow noise ────────────────────────────────────────────────────────────
-    float t   = uTime * uFlowSpeed;
-    float fn1 = snoise(vObjPos*uFlowScale + vec3(t, t*0.6, t*0.4));
-    float fn2 = snoise(vObjPos*uFlowScale*2.1 + vec3(-t*0.5, t*0.9, t*0.3));
-    float flowNoise = (fn1*0.6 + fn2*0.4)*0.5 + 0.5;
-
-    // ── Hex: cube-face select + seam fade ──────────────────────────────────
-    vec3 absN = abs(normalize(vObjPos));
-    float dominance = max(absN.x, max(absN.y, absN.z));
-    float hexFade   = smoothstep(0.65, 0.85, dominance);
-
-    vec2 faceUV;
-    if (absN.x >= absN.y && absN.x >= absN.z) {
-        faceUV = vObjPos.yz;
-    } else if (absN.y >= absN.z) {
-        faceUV = vObjPos.xz;
-    } else {
-        faceUV = vObjPos.xy;
-    }
-
-    float hex   = hexPattern(faceUV) * hexFade;
-    vec2  cId   = hexCellId(faceUV);
-    float flash = cellFlash(cId) * hexFade;
-
-    // ── Hit ring buffer ───────────────────────────────────────────────────────
-    vec3  normPos     = normalize(vObjPos);
-    float ringContrib = 0.0;
-    float hexHitBoost = 0.0;
-
-    for (int i = 0; i < MAX_HITS; i++) {
-        float ht      = uHitTime[i];
-        float elapsed = uTime - ht;
-
-        float isActive = step(0.0, ht)
-                       * step(0.0, elapsed)
-                       * step(elapsed, uHitDuration);
-
-        // Geodesic distance on sphere surface
-        float dist = acos(clamp(dot(normPos, normalize(uHitPos[i])), -1.0, 1.0));
-
-        // Expanding ring
-        float ringR      = min(elapsed * uHitRingSpeed, uHitMaxRadius);
-        float noiseD     = snoise(normPos*5.0 + vec3(elapsed*2.0)) * 0.05;
-        float ring       = smoothstep(uHitRingWidth, 0.0, abs(dist + noiseD - ringR));
-        float fade       = 1.0 - smoothstep(uHitDuration*0.5, uHitDuration, elapsed);
-        float radialFade = 1.0 - smoothstep(uHitMaxRadius*0.75, uHitMaxRadius, ringR);
-        ringContrib     += ring * fade * radialFade * isActive;
-
-        // Hex highlight zone
-        float zone     = smoothstep(uHitImpactRadius, 0.0, dist);
-        float zoneFade = 1.0 - smoothstep(0.0, uHitDuration*0.35, elapsed);
-        hexHitBoost   += zone * zoneFade * isActive;
-    }
-
-    ringContrib = min(ringContrib, 2.0);
-    hexHitBoost = min(hexHitBoost, 1.0);
-
-    // ── Energy shot boost ─────────────────────────────────────────────────────
-    float energyBoost = uEnergyShot * 0.5;
-
-    // ── Combine ───────────────────────────────────────────────────────────────
-    vec3  lColor = lifeColor(uLife);
-
-    // Breaking: shift to red/white
-    if (uIsBreaking > 0.5) {
-        float bFlash = fract(uTime * 25.0);
-        lColor = mix(vec3(1.0, 0.15, 0.1), vec3(2.0), bFlash * 0.4);
-    }
-
-    float effectiveHexOpacity = (uHexOpacity + hexHitBoost * uHitIntensity) * uShowHex;
-    float intensity = hex * effectiveHexOpacity * (0.3 + fresnel*0.7) + fresnel*0.4 + flash * uShowHex;
-    intensity += energyBoost;
-
-    vec3 shieldColor = lColor * intensity * 2.0;
-    shieldColor += lColor * (flowNoise * fresnel * uFlowIntensity);
-    shieldColor += lColor * ringContrib * uHitIntensity;
-
-    vec3 edgeColor = mix(uNoiseEdgeColor, lColor, 1.0 - uLife);
-    vec3 edgeGlow  = edgeColor * revealEdge * uNoiseEdgeIntensity;
-
-    float alpha = clamp(intensity*uOpacity*revealMask + revealEdge*uNoiseEdgeIntensity, 0.0, 1.0);
-
-    // Pełna okrągła tarcza w 3D - żadnego wycinania
-    gl_FragColor = vec4(shieldColor + edgeGlow, alpha);
-}
-`;
-
-// ── Vertex shader (tarcza-obrys kadłuba) ─────────────────────────────────────
-const HULL_SHIELD_VERTEX = `
-attribute float aEdge;
-
-varying vec3 vNormal;
-varying vec3 vViewDir;
-varying vec3 vObjPos;
-varying float vEdge;
-
-void main() {
-    vObjPos  = position;
-    vEdge    = aEdge;
-    vNormal  = normalize(normalMatrix * normal);
-    vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
-    vViewDir = normalize(-mvPos.xyz);
-    gl_Position = projectionMatrix * mvPos;
-}
-`;
-
-// ── Fragment shader (tarcza-obrys kadłuba) ───────────────────────────────────
-// Geometria leży w lokalnej klatce kadłuba (x w prawo, y = -y_grid, z w górę),
-// jednostki świata. Trafienia liczone dystansem planarnym w XY, obramówka
-// z fresnela + pasa krawędziowego (vEdge).
-const HULL_SHIELD_FRAGMENT = `
-#define MAX_HITS 24
-${SHIELD_UNIFORMS_GLSL}
-uniform float uRimStart;
-uniform float uRimIntensity;
-uniform float uFilmStrength;
-// ── Sterowanie widocznością (model "niewidzialne pole") ─────────────────────
-uniform float uFieldVisibility; // 0 = normalna praca (pole niewidoczne)
-uniform float uSweep;           // -1 = brak fali; 0..1.6 = czoło fali w vEdge
-uniform float uSweepWidth;
-uniform float uLowPower;        // 0..1 — ostrzeżenie o dogorywającej tarczy
-uniform float uHitOpacity;
-uniform float uHitGrow;
-uniform float uHitDecay;
-uniform float uHitCoreLife;
-
-varying vec3 vNormal;
-varying vec3 vViewDir;
-varying vec3 vObjPos;
-varying float vEdge;
-${SHIELD_GLSL_COMMON}
-void main(){
-    // ── Reveal / dissolve ─────────────────────────────────────────────────────
-    float noise = snoise(vObjPos * uNoiseScale) * 0.5 + 0.5;
-
-    float effectiveReveal = uReveal;
-    if (uIsBreaking > 0.5) {
-        float glitch = fract(sin(dot(vObjPos.xy, vec2(12.9898, 78.233)) + uTime * 30.0) * 43758.5453);
-        effectiveReveal = max(effectiveReveal, glitch * 0.3);
-    }
-
-    float revealMask = smoothstep(effectiveReveal - uNoiseEdgeWidth, effectiveReveal, noise);
-    if (revealMask < 0.001) discard;
-
-    float innerFade  = mix(0.98, 0.15, uNoiseEdgeSmoothness);
-    float edgeLow    = smoothstep(effectiveReveal-uNoiseEdgeWidth, effectiveReveal-uNoiseEdgeWidth*innerFade, noise);
-    float edgeHigh   = smoothstep(effectiveReveal-uNoiseEdgeWidth*0.15, effectiveReveal, noise);
-    float revealEdge = edgeLow * (1.0 - edgeHigh);
-
-    // ── Fresnel: kopuła jest płaska na środku (przezroczysta z góry),
-    //    a przy krawędzi normalne kładą się poziomo -> świecący obrys.
-    float fresnel = pow(1.0 - abs(dot(vNormal, vViewDir)), uFresnelPower) * uFresnelStrength;
-
-    // ── Flow noise ────────────────────────────────────────────────────────────
-    float t   = uTime * uFlowSpeed;
-    float fn1 = snoise(vObjPos*uFlowScale + vec3(t, t*0.6, t*0.4));
-    float fn2 = snoise(vObjPos*uFlowScale*2.1 + vec3(-t*0.5, t*0.9, t*0.3));
-    float flowNoise = (fn1*0.6 + fn2*0.4)*0.5 + 0.5;
-
-    // ── Hex w lokalnej płaszczyźnie kadłuba ───────────────────────────────────
-    vec2 faceUV = vObjPos.xy;
-    float hex   = hexPattern(faceUV);
-    vec2  cId   = hexCellId(faceUV);
-    float flash = cellFlash(cId);
-
-    // ── Ziarno pola: JEDEN szum na fragment deformuje krawędzie wszystkich łat.
-    //    Wspólny dla trafień (pole ma własną strukturę), więc pętla poniżej nie
-    //    woła snoise per slot — to 24 wywołania szumu mniej na piksel.
-    float fieldGrain = snoise(vObjPos * (uNoiseScale * 3.0) + vec3(uTime * 0.7));
-
-    // ── Trafienia: miękka łata wokół punktu ──────────────────────────────────
-    // NIE "patch": to słowo zarezerwowane w GLSL ES 3.00 (WebGL2), shader
-    // przestaje się kompilować. Tak samo sample/input/output/filter/half.
-    // (Bez backticków w komentarzach — cały shader to template string JS.)
-    float hitPatch = 0.0;
-    float core  = 0.0;
-    float ringContrib = 0.0;
-
-    for (int i = 0; i < MAX_HITS; i++) {
-        float ht      = uHitTime[i];
-        float elapsed = uTime - ht;
-
-        float isActive = step(0.0, ht)
-                       * step(0.0, elapsed)
-                       * step(elapsed, uHitDuration);
-
-        float dist = length(vObjPos.xy - uHitPos[i].xy);
-
-        // Łata rozpycha się w pierwszych ~100 ms, potem gaśnie wykładniczo.
-        float grow   = smoothstep(0.0, uHitGrow, elapsed);
-        float radius = uHitImpactRadius * (0.42 + 0.58 * grow);
-        float decay  = exp(-elapsed * uHitDecay) * (1.0 - smoothstep(uHitDuration*0.7, uHitDuration, elapsed));
-
-        float d      = dist + fieldGrain * radius * 0.17;
-        float fall   = smoothstep(radius, radius * 0.10, d);
-        hitPatch    += fall * fall * decay * isActive;
-
-        // Jądro — krótki, bardzo jasny punkt styku.
-        core        += smoothstep(radius * 0.30, 0.0, dist)
-                     * (1.0 - smoothstep(0.0, uHitCoreLife, elapsed)) * isActive;
-
-        // Pierścień zamknięty w okolicy trafienia, nie przez całą tarczę.
-        float ringR  = elapsed * uHitRingSpeed;
-        float ring   = smoothstep(uHitRingWidth, 0.0, abs(d - ringR));
-        ringContrib += ring * (1.0 - smoothstep(uHitMaxRadius*0.55, uHitMaxRadius, ringR)) * decay * isActive;
-    }
-
-    hitPatch    = min(hitPatch, 1.6);
-    core        = min(core, 1.0);
-    ringContrib = min(ringContrib, 1.5);
-
-    vec3 lColor = lifeColor(uLife);
-    if (uIsBreaking > 0.5) {
-        float bFlash = fract(uTime * 25.0);
-        lColor = mix(vec3(1.0, 0.15, 0.1), vec3(2.0), bFlash * 0.4);
-    }
-
-    // ── Obramówka: jasny pas przy krawędzi obrysu ─────────────────────────────
-    float rim = smoothstep(uRimStart, 1.0, vEdge);
-    float rimGlow = rim * rim * uRimIntensity;
-
-    // ── Film energetyczny na całej czaszy ────────────────────────────────────
-    float film = uFilmStrength * (0.55 + 0.45 * flowNoise);
-
-    // ── WARSTWA POLA — widoczna tylko przy rozruchu, gaszeniu i pęknięciu ────
-    // uSweep < 0 => brak fali, całe pole zapalone (pęknięcie).
-    // uSweep >= 0 => zapalone jest to, co leży WEWNĄTRZ czoła (vEdge < uSweep):
-    //   rozruch  — czoło biegnie 0 -> 1.2 i pole rozlewa się na zewnątrz,
-    //   gaszenie — czoło wraca 1.2 -> 0 i pole zapada się do środka.
-    float lit = 1.0;
-    float sweepBand = 0.0;
-    if (uSweep >= 0.0) {
-        lit       = smoothstep(uSweep + uSweepWidth, uSweep - uSweepWidth, vEdge);
-        sweepBand = smoothstep(uSweepWidth, 0.0, abs(vEdge - uSweep)) * (0.75 + 0.25 * flowNoise);
-    }
-
-    float hexField = hex * uHexOpacity * uShowHex * (0.3 + fresnel*0.7) + flash * uShowHex;
-    float field    = (hexField + fresnel*0.4 + rimGlow + film) * lit;
-    field         += sweepBand * 1.9;
-    // Domknięcie: czoło dobija do obrysu i całość błyska krawędzią.
-    field         += rim * smoothstep(0.86, 1.04, uSweep) * (1.0 - smoothstep(1.04, 1.5, uSweep)) * 2.4;
-    field         *= uFieldVisibility;
-
-    // ── Ostrzeżenie: ledwo widoczny, pulsujący obrys przy niskim HP ──────────
-    float warn = rimGlow * uLowPower * (0.55 + 0.45 * sin(uTime * 4.6)) * 0.30;
-
-    // ── WARSTWA TRAFIENIA — jedyne światło podczas normalnej pracy ───────────
-    float local = hitPatch * (0.42 + fresnel*0.85 + flowNoise*0.35 + rim*0.5)
-                + core * 1.9
-                + ringContrib * 0.8;
-    local *= uHitIntensity;
-
-    float intensity = field + warn + local + uEnergyShot * 0.5;
-
-    vec3 shieldColor = lColor * intensity * 2.0;
-    shieldColor += lColor * (flowNoise * (fresnel + rim*0.6 + uFilmStrength) * uFlowIntensity * lit * uFieldVisibility);
-    shieldColor += vec3(1.0) * core * 0.75; // jądro trafienia wybielone
-
-    float edgeVis  = max(uFieldVisibility, uIsBreaking);
-    vec3 edgeColor = mix(uNoiseEdgeColor, lColor, 1.0 - uLife);
-    vec3 edgeGlow  = edgeColor * revealEdge * uNoiseEdgeIntensity * edgeVis;
-
-    // Wystrzał energii z tarczy zapala ją całą — to zdarzenie, nie "normalna
-    // praca", więc wchodzi do alfy własnym kanałem (baza pola jest tu zerowa).
-    float alpha = clamp((field + warn) * uOpacity
-                      + local * uHitOpacity
-                      + uEnergyShot * 0.35
-                      + revealEdge * uNoiseEdgeIntensity * edgeVis, 0.0, 1.0);
-    alpha *= revealMask;
-    if (alpha < 0.002) discard;
-
-    gl_FragColor = vec4(shieldColor * revealMask + edgeGlow, alpha);
-}
-`;
 
 // ── Shared state ─────────────────────────────────────────────────────────────
 const HIT_DURATION = 1.5; // seconds — must match uHitDuration default
@@ -603,126 +162,112 @@ function makeHitUniformArrays(y) {
 }
 
 // ── Create shield material with droideka preset defaults ─────────────────────
+// Materiał = graf wariantu 'sphere' (wspólny) + wartości tej tarczy.
 function createShieldMaterial() {
     const { hitPositions, hitTimes } = makeHitUniformArrays(1.8);
 
-    return new THREE.ShaderMaterial({
-        uniforms: {
-            uTime:                { value: 0 },
-            uColor:               { value: new THREE.Color('#5992f7') },
-            uLife:                { value: 1.0 },
-            uReveal:              { value: 1.0 },     // 1 = hidden, 0 = fully visible
-            // Hex grid (showHex=0 for droideka — pure energy look)
-            uHexScale:            { value: 3.0 },
-            uHexOpacity:          { value: 0.27 },
-            uShowHex:             { value: 0.0 },
-            uEdgeWidth:           { value: 0.2 },
-            // Fresnel
-            uFresnelPower:        { value: 1.8 },
-            uFresnelStrength:     { value: 1.75 },
-            uOpacity:             { value: 0.29 },
-            uFadeStart:           { value: 1.0 },
-            // Flash
-            uFlashSpeed:          { value: 0.6 },
-            uFlashIntensity:      { value: 0.11 },
-            // Noise edge (reveal/dissolve)
-            uNoiseScale:          { value: 1.0 },
-            uNoiseEdgeColor:      { value: new THREE.Color('#7faaf5') },
-            uNoiseEdgeWidth:      { value: 0.1 },
-            uNoiseEdgeIntensity:  { value: 0.6 },
-            uNoiseEdgeSmoothness: { value: 0.5 },
-            // Flow noise
-            uFlowScale:           { value: 6.2 },
-            uFlowSpeed:           { value: 1.08 },
-            uFlowIntensity:       { value: 4.0 },
-            // Hit ring buffer
-            uHitPos:              { value: hitPositions },
-            uHitTime:             { value: hitTimes },
-            uHitRingSpeed:        { value: 0.8 },
-            uHitRingWidth:        { value: 0.12 },
-            uHitMaxRadius:        { value: 2.1 },
-            uHitDuration:         { value: 1.5 },
-            uHitIntensity:        { value: 1.0 },
-            uHitImpactRadius:     { value: 0.3 },
-            // Game-specific
-            uIsBreaking:          { value: 0.0 },
-            uEnergyShot:          { value: 0.0 },
-        },
-        vertexShader: SHIELD_VERTEX,
-        fragmentShader: SHIELD_FRAGMENT,
-        transparent: true,
-        depthWrite: false,
-        side: THREE.FrontSide,
-        blending: THREE.AdditiveBlending
+    return createShieldNodeMaterial('sphere', {
+        uTime:                { value: 0 },
+        uColor:               { value: new THREE.Color('#5992f7') },
+        uLife:                { value: 1.0 },
+        uReveal:              { value: 1.0 },     // 1 = hidden, 0 = fully visible
+        // Hex grid (showHex=0 for droideka — pure energy look)
+        uHexScale:            { value: 3.0 },
+        uHexOpacity:          { value: 0.27 },
+        uShowHex:             { value: 0.0 },
+        uEdgeWidth:           { value: 0.2 },
+        // Fresnel
+        uFresnelPower:        { value: 1.8 },
+        uFresnelStrength:     { value: 1.75 },
+        uOpacity:             { value: 0.29 },
+        uFadeStart:           { value: 1.0 },
+        // Flash
+        uFlashSpeed:          { value: 0.6 },
+        uFlashIntensity:      { value: 0.11 },
+        // Noise edge (reveal/dissolve)
+        uNoiseScale:          { value: 1.0 },
+        uNoiseEdgeColor:      { value: new THREE.Color('#7faaf5') },
+        uNoiseEdgeWidth:      { value: 0.1 },
+        uNoiseEdgeIntensity:  { value: 0.6 },
+        uNoiseEdgeSmoothness: { value: 0.5 },
+        // Flow noise
+        uFlowScale:           { value: 6.2 },
+        uFlowSpeed:           { value: 1.08 },
+        uFlowIntensity:       { value: 4.0 },
+        // Hit ring buffer
+        uHitPos:              { value: hitPositions },
+        uHitTime:             { value: hitTimes },
+        uHitRingSpeed:        { value: 0.8 },
+        uHitRingWidth:        { value: 0.12 },
+        uHitMaxRadius:        { value: 2.1 },
+        uHitDuration:         { value: 1.5 },
+        uHitIntensity:        { value: 1.0 },
+        uHitImpactRadius:     { value: 0.3 },
+        // Game-specific
+        uIsBreaking:          { value: 0.0 },
+        uEnergyShot:          { value: 0.0 },
     });
 }
 
 // ── Materiał tarczy-obrysu: parametry przeskalowane do rozmiaru kadłuba ──────
+// Graf wariantu 'hull' (wspólny dla wszystkich kadłubów) + wartości tej tarczy.
 function createHullShieldMaterial(profile) {
     const maxR = Math.max(1, profile.maxR);
     const { hitPositions, hitTimes } = makeHitUniformArrays(0);
     const hexCell = clamp(maxR * 0.16, 10, 40);
 
-    return new THREE.ShaderMaterial({
-        uniforms: {
-            uTime:                { value: 0 },
-            uColor:               { value: new THREE.Color('#5992f7') },
-            uLife:                { value: 1.0 },
-            uReveal:              { value: 1.0 },
-            // Hex grid (domyślnie wyłączony — czysty energetyczny obrys)
-            uHexScale:            { value: 1 / hexCell },
-            uHexOpacity:          { value: 0.27 },
-            uShowHex:             { value: 0.0 },
-            uEdgeWidth:           { value: 0.2 },
-            // Fresnel — ciaśniejszy niż na sferze, robi obramówkę
-            uFresnelPower:        { value: 2.2 },
-            uFresnelStrength:     { value: 2.2 },
-            uOpacity:             { value: 0.30 },
-            // Flash
-            uFlashSpeed:          { value: 0.6 },
-            uFlashIntensity:      { value: 0.11 },
-            // Noise edge (reveal/dissolve) — skala w jednostkach świata
-            uNoiseScale:          { value: 2.2 / maxR },
-            uNoiseEdgeColor:      { value: new THREE.Color('#7faaf5') },
-            uNoiseEdgeWidth:      { value: 0.1 },
-            uNoiseEdgeIntensity:  { value: 0.6 },
-            uNoiseEdgeSmoothness: { value: 0.5 },
-            // Flow noise — intensywność jak na sferze, film niesie ją na górze
-            uFlowScale:           { value: 5.5 / maxR },
-            uFlowSpeed:           { value: 1.08 },
-            uFlowIntensity:       { value: 4.0 },
-            // Hit ring buffer — dystanse w jednostkach świata
-            uHitPos:              { value: hitPositions },
-            uHitTime:             { value: hitTimes },
-            uHitRingSpeed:        { value: maxR * 0.55 },
-            uHitRingWidth:        { value: clamp(maxR * 0.045, 4, 18) },
-            uHitMaxRadius:        { value: maxR * 0.52 },
-            uHitDuration:         { value: 1.5 },
-            uHitIntensity:        { value: 1.0 },
-            uHitImpactRadius:     { value: maxR * 0.26 },
-            // Obramówka + film wnętrza
-            uRimStart:            { value: 0.84 },
-            uRimIntensity:        { value: 1.8 },
-            uFilmStrength:        { value: 0.20 },
-            // Game-specific
-            uIsBreaking:          { value: 0.0 },
-            uEnergyShot:          { value: 0.0 },
-            // Sterowanie widocznością (model "niewidzialne pole")
-            uFieldVisibility:     { value: 0.0 },
-            uSweep:               { value: -1.0 },
-            uSweepWidth:          { value: 0.17 },
-            uLowPower:            { value: 0.0 },
-            uHitOpacity:          { value: 0.90 },
-            uHitGrow:             { value: 0.10 },
-            uHitDecay:            { value: 3.4 },
-            uHitCoreLife:         { value: 0.16 },
-        },
-        vertexShader: HULL_SHIELD_VERTEX,
-        fragmentShader: HULL_SHIELD_FRAGMENT,
-        transparent: true,
-        depthWrite: false,
-        side: THREE.FrontSide,
-        blending: THREE.AdditiveBlending
+    return createShieldNodeMaterial('hull', {
+        uTime:                { value: 0 },
+        uColor:               { value: new THREE.Color('#5992f7') },
+        uLife:                { value: 1.0 },
+        uReveal:              { value: 1.0 },
+        // Hex grid (domyślnie wyłączony — czysty energetyczny obrys)
+        uHexScale:            { value: 1 / hexCell },
+        uHexOpacity:          { value: 0.27 },
+        uShowHex:             { value: 0.0 },
+        uEdgeWidth:           { value: 0.2 },
+        // Fresnel — ciaśniejszy niż na sferze, robi obramówkę
+        uFresnelPower:        { value: 2.2 },
+        uFresnelStrength:     { value: 2.2 },
+        uOpacity:             { value: 0.30 },
+        // Flash
+        uFlashSpeed:          { value: 0.6 },
+        uFlashIntensity:      { value: 0.11 },
+        // Noise edge (reveal/dissolve) — skala w jednostkach świata
+        uNoiseScale:          { value: 2.2 / maxR },
+        uNoiseEdgeColor:      { value: new THREE.Color('#7faaf5') },
+        uNoiseEdgeWidth:      { value: 0.1 },
+        uNoiseEdgeIntensity:  { value: 0.6 },
+        uNoiseEdgeSmoothness: { value: 0.5 },
+        // Flow noise — intensywność jak na sferze, film niesie ją na górze
+        uFlowScale:           { value: 5.5 / maxR },
+        uFlowSpeed:           { value: 1.08 },
+        uFlowIntensity:       { value: 4.0 },
+        // Hit ring buffer — dystanse w jednostkach świata
+        uHitPos:              { value: hitPositions },
+        uHitTime:             { value: hitTimes },
+        uHitRingSpeed:        { value: maxR * 0.55 },
+        uHitRingWidth:        { value: clamp(maxR * 0.045, 4, 18) },
+        uHitMaxRadius:        { value: maxR * 0.52 },
+        uHitDuration:         { value: 1.5 },
+        uHitIntensity:        { value: 1.0 },
+        uHitImpactRadius:     { value: maxR * 0.26 },
+        // Obramówka + film wnętrza
+        uRimStart:            { value: 0.84 },
+        uRimIntensity:        { value: 1.8 },
+        uFilmStrength:        { value: 0.20 },
+        // Game-specific
+        uIsBreaking:          { value: 0.0 },
+        uEnergyShot:          { value: 0.0 },
+        // Sterowanie widocznością (model "niewidzialne pole")
+        uFieldVisibility:     { value: 0.0 },
+        uSweep:               { value: -1.0 },
+        uSweepWidth:          { value: 0.17 },
+        uLowPower:            { value: 0.0 },
+        uHitOpacity:          { value: 0.90 },
+        uHitGrow:             { value: 0.10 },
+        uHitDecay:            { value: 3.4 },
+        uHitCoreLife:         { value: 0.16 },
     });
 }
 
@@ -1139,18 +684,22 @@ const _activeShieldEntities = new Set();
 // kadłuby, ale kompilował się przy pierwszej tarczy w sesji (~200 ms w klatce pojawienia się
 // pierwszego wroga), a gdy znikała ostatnia tarcza, dispose materiału niszczył program three
 // i następny wróg kompilował go od nowa. Materiały-trzymacze (bez dispose) trzymają programy
-// obu wariantów przez całą sesję; cząstki trafień (ShieldImpactFX) to stałe pule — wystarczy
-// je skompilować. Kompilacja bez celu renderu = wariant passu tarcz (wyjście liniowe, bez
-// tone mappingu; światła Core3D mają włączone wszystkie warstwy).
+// obu wariantów przez całą sesję: WebGPU usuwa stan budowy materiału (NodeBuilderState) i
+// pipeline, gdy ostatni obiekt renderu przestaje ich używać — obiekty renderu próbek zostają.
+// Cząstki trafień (ShieldImpactFX) to stałe pule — wystarczy je skompilować.
+// Pass tarcz = Core3D.prewarmPass: cel composerTarget (HalfFloat, MSAA), kamera ortho z
+// warstwą 7, bez cullingu; compileAsync nie blokuje. Klucz stanu budowy i układ
+// wierzchołków pipeline'u zależą od ZESTAWU ATRYBUTÓW geometrii, więc próbka obrysu ma
+// geometrię obrysu (position, aEdge, normal, indeks) — sfera jej nie zastąpi.
 let _programKeepers = null;
+const PREWARM_PROFILE = { bins: new Float32Array(16).fill(150), binCount: 16, maxR: 150, minR: 150, pad: 0 };
 
 export function prewarmShields3D() {
     if (_programKeepers) return true;
     if (!Core3D.isInitialized || !Core3D.renderer || !Core3D.cameraOrtho) return false;
     ShieldImpactFX.init(Core3D.scene);
-    const geometry = getSharedGeometry();
-    const hull = new THREE.Mesh(geometry, createHullShieldMaterial({ maxR: 200, minR: 100 }));
-    const sphere = new THREE.Mesh(geometry, createShieldMaterial());
+    const hull = new THREE.Mesh(buildHullShieldGeometry(PREWARM_PROFILE), createHullShieldMaterial(PREWARM_PROFILE));
+    const sphere = new THREE.Mesh(getSharedGeometry(), createShieldMaterial());
     const probe = new THREE.Group();
     probe.add(hull, sphere);
     Core3D.enableShield3D(probe);
@@ -1162,9 +711,28 @@ export function prewarmShields3D() {
     } finally {
         Core3D.scene.remove(probe);
     }
+    // Wstęgi i bańki trafień: ukryte do pierwszego trafienia (compileAsync pomija
+    // niewidoczne) — pule odsłaniają się tylko na czas projekcji.
+    ShieldImpactFX.prewarm();
     _programKeepers = [hull.material, sphere.material];
     return true;
 }
+
+/** Liczniki materiałów tarcz: lekkie materiały per tarcza i budowy NodeBuildera (spawn floty). */
+export function getShieldMaterialStats() {
+    return {
+        materials: { ...SHIELD_TSL_STATS.materials },
+        builds: { ...SHIELD_TSL_STATS.builds }
+    };
+}
+
+// Fabryki dla testów i narzędzi (scripts/webgpu/tarcze-parzystosc.mjs — parzystość
+// z GLSL tagu webgl-baseline na tych samych wartościach i geometrii).
+export {
+    createShieldMaterial as createSphereShieldMaterialForTools,
+    createHullShieldMaterial as createHullShieldMaterialForTools,
+    buildHullShieldGeometry as buildHullShieldGeometryForTools
+};
 
 export function updateShields3D(dt, entities, interpPoseOverride = null) {
     if (!Core3D.isInitialized) return;

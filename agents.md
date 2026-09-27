@@ -75,6 +75,14 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   (textureSample / textureLoad) TSL wybiera z tekstury obecnej przy BUDOWIE — tekstury zastępcze z filtrem liniowym,
   osobny obiekt na każde wiązanie (TextureNode skleja wiązania po uuid tekstury). `InstancedMesh` wnosi swój uuid do
   klucza — każdy egzemplarz to osobny NodeBuilder (dla instancji per encja: jeden wspólny InstancedMesh).
+- **Pułapki z zadania 13 (efekty addytywne):** `NodeMaterial` z `premultipliedAlpha: true` MNOŻY wyjście przez alfę
+  (`setupOutput` → `premultiplyAlpha`), a `ShaderMaterial` w WebGL zmieniał tylko czynniki mieszania (ONE, ONE) — efekt
+  piszący `vec4(rgb, max(rgb))` ściemniałby; czynniki jawnie: `blendAddytywnePremul` (`src/3d/tsl/mieszanie.js`).
+  `AdditiveBlending` bez premultiplied ma te same czynniki w WebGL r183 i WebGPU. `discard` w WGSL (Tint na D3D12:
+  „demote to helper”) NIE kończy wykonania — ciężka pętla po `discard` (raymarch) liczy się dalej; pętlę za flagą (wzór
+  plume w `warpPlume3D.js`). Punkty (`gl_PointSize`) → kwady na instancjach, rozmiar w px przez `viewportSize`.
+  `zrzuty.mjs` zbiera błędy per scena — błąd pipeline'u z pierwszej klatki gry (przed pierwszą sceną) nie trafia do
+  `bledy`; `scripts/webgpu/silniki.mjs` wypisuje „start gry”.
 - **Post (zadanie 02, `src/3d/tsl/postGry.js`):** kolejność jak dawny łańcuch resolve → bloom → uber. Bloom =
   `BloomGry` (BloomNode three, ten sam algorytm co dawny pass WebGL; BloomNode r183 nie ma ×3 kompozytu —
   `BLOOM_ZGODNOSC_WEBGL = 3`, alfa = max(rgb) bloomu jak przy dawnym blendzie; liczony raz na RENDER, bo podzielony ekran to
@@ -200,6 +208,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 
 ### Silniki: MAIN, WARP, SIDE
 - `src/3d/engineVfxSystem.js` rozdziela dysze: MAIN → `mainExhaust3D.js` (struga + iskry z `Fx3D.spark`, jedna pula na flotę), WARP → `warpPlume3D.js` (plazma z tych samych dysz MAIN na czas ładowania/skoku, pula z limitem `WARP_PLUME_CAP`, nadmiar dostaje strugę MAIN z dopalaczem), SIDE → stary `engineExhaustBatch.js`.
+- Wszystkie trzy w TSL (zadanie 13, obraz 1:1 z WebGL — `scripts/webgpu/silniki.mjs`). Plazma WARP: JEDEN graf na rodzaj (plume w wariancie jakości — kroki marszu i oktawy to stałe grafu, poświata, cząstki), instancja puli ma własne materiały na tych węzłach, a jej wartości w `material.uniforms.X.value` czyta `uniform().onObjectUpdate` — nowa instancja nie buduje shadera (nie wracaj do `new ShaderMaterial` / nowych węzłów na instancję). Cząstki = kwady na instancjach (WebGPU rysuje punkty 1 px). SIDE: dane instancji w jednym buforze z przeplotem (limit 8 buforów wierzchołków). Mieszanie efektów „premultiplied” (alfa = max(rgb)) przez `blendAddytywnePremul` (`src/3d/tsl/mieszanie.js`).
 - Rozmiar i palety MAIN/WARP są PER STATEK: blok `engineFx` w danych edytora (`hpEditor.v1` → `ships[id]`), domyślne dopasowane do sprite'ów w `src/data/engineFx.js` (`ENGINE_FX_DEFAULTS`). Dysza w pikselach PNG, w grze × hpScale × spriteScale (jak markery). Gra czyta `visual.engineFx` (runtime NPC, układ gracza); nowy kadłub z dyszami MAIN potrzebuje wpisu w `ENGINE_FX_DEFAULTS` (pilnuje test).
 - Tryb skoku encji: gracz z `GameState.warp`, NPC `state === 'warping_in'` / `phase === 'warping'`, podgląd edytora `__warpPreview`. Dopalacz MAIN: `GameState.boost`.
 - Jasność dysz SIDE: `ENGINE_HDR` w `engineExhaustBatch.js` (0,6). W bloomie ma świecić tylko dysza, która odpala (mnożnik 1 + 1,5 · ciąg); biały „pilot” w spoczynku (= `ENGINE_HDR`) i sam lot (`moveGlow`) zostają pod progiem 0,9 — przy 2,4 każda z 8 dysz Atlasa świeciła jak lampa, a manewr zalewał burtę białą plamą (pilnuje `tests/renderBugfixGuards.test.mjs`). MAIN zostaje 1:1 z dema (świadomie). Audyt: `docs/AUDYT-bloom-kolizje-2026-09-26.md`.

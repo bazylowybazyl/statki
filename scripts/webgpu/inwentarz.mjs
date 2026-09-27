@@ -53,7 +53,7 @@ const NOTES = {
   'src/effects3d/rocketSystem3D.js': 'lot i trafienia rakiet (rozgrywka) zostają; render zastąpi demo rakiet (zadanie 19)',
   'src/effects3d/reactorblow.js': 'scena overlay; port do Core3D w zadaniu 20',
   'src/3d/fxParticles3D.js': 'Fx3D: port 1:1 w zadaniu 12 (dysze MAIN, mostki, rdzenie)',
-  'Engineeffects.js': 'gra importuje tylko tekstury make*Texture; getEngineVFX z własnym WebGLRenderer i shader — martwe',
+  'Engineeffects.js': 'tylko tekstury poświaty dysz SIDE (make*Texture); martwe getEngineVFX z własnym WebGLRenderer i shader usunięte (zadanie 13)',
   'src/3d/sunShadowMask.js': 'biblioteka maski słońca + onBeforeCompile dla wbudowanych materiałów',
   'src/3d/hullShadowSdf.js': 'biblioteka SDF kadłubów; lustro CPU traceHullShadowCpu (test)',
   'src/3d/haloRing/haloRingWorldGen.js': 'pieczenie map + odczyt CPU (WebGPU: asynchronicznie, bez odwracania osi — zadanie 06)',
