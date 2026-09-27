@@ -154,7 +154,8 @@ test('uber w TSL: pętla po źródłach z uniformu int, czyste funkcje szumu, cl
 test('Core3D: post = dwa RenderPipeline zbudowane raz, bez GLSL uber, uniformy postu przed postem', () => {
   assert.doesNotMatch(core, /UberPostShader|HEAT_HAZE: 1|#ifdef HEAT_HAZE|ShaderPass|texture2D\(tDiffuse/, 'GLSL „uber” usunięty (port w tsl/postGry.js)');
   const create = bodyOf(core, '  _createPost(renderer) {');
-  assert.match(create, /new BloomGry\(texture\(sceneTexture\), cfg\.strength, cfg\.radius, cfg\.threshold\)/);
+  // 12-B: wejście bloomu przez siatkę bezpieczeństwa NaN / Inf (hdrBezpieczny, postGry.js)
+  assert.match(create, /new BloomGry\(hdrBezpieczny\(texture\(sceneTexture\)\), cfg\.strength, cfg\.radius, cfg\.threshold\)/);
   assert.match(create, /bloom\.onRenderBegin = this\._onBloomRenderBegin;/);
   assert.equal((create.match(/new THREE\.RenderPipeline\(/g) || []).length, 2);
   assert.match(create, /bloomTexture: bloom\.getTextureNode\(\)/);

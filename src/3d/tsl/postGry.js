@@ -32,14 +32,23 @@
 // Funkcje z `setLayout` są CZYSTE (bez uniformów z domknięcia — błąd r183, PLAN §3).
 // WGSL nie przyjmuje smoothstep z odwróconymi krawędziami (stałe low ≥ high to błąd
 // tworzenia shadera) — smoothstep(1, 0,15, t) z GLSL = 1 − smoothstep(0,15, 1, t).
+//
+// Zadanie 12-B (infrastruktura efektów, docs/webgpu/FX-INFRA.md §7–§8): „uber” próbkuje też
+// ŹRÓDŁA ZNIEKSZTAŁCEŃ efektów (src/3d/fx/distortion.js — fala, implozja, gorące powietrze;
+// przesunięcie z dyspersją ×0,82 / ×1 / ×1,22 jak dysze) i WARSTWĘ DIST (cel z przesunięciem
+// w px w osiach sceny, aberracja ×1,12 / ×1 / ×0,88 jak demo broni) — tym samym przesuniętym UV
+// dla sceny i bloomu, co gorące powietrze. Bez źródeł i bez warstwy obraz jest bit w bit jak
+// wcześniej (przesunięcia są dokładnymi zerami). Siatka bezpieczeństwa HDR (`hdrBezpieczny`):
+// NaN i ±Inf bufora sceny → 0 na wejściu bloomu i w odczytach „uber”.
 import { Vector2, Vector4, NodeUpdateType } from 'three/webgpu';
 import BloomNode from 'three/addons/tsl/display/BloomNode.js';
 import {
-  Continue, Fn, If, Loop, abs, clamp, dot, exp, float, floor, fract, length, max, mix, smoothstep,
-  texture, uniform, uniformArray, uv, vec2, vec4
+  Continue, Fn, If, Loop, abs, clamp, dot, exp, float, floatBitsToUint, floor, fract, length, max, mix, select, smoothstep,
+  texture, uint, uniform, uniformArray, uv, vec2, vec4
 } from 'three/tsl';
 import { uniformsAdapter, uniformNode } from './uniformy.js';
 import { acesGry, linearDoSrgb } from './kolorGry.js';
+import { distortionOffset } from '../fx/distortion.js';
 
 /** Ile źródeł gorącego powietrza przyjmuje uber w klatce (Core3D.pushHeatHazeWorld). */
 export const MAX_HEAT_HAZE_SOURCES = 24;
@@ -104,11 +113,25 @@ export const hazeNoise = /*@__PURE__*/ Fn(([p]) => {
   return mix(a, b, u.x).add(c.sub(a).mul(u.y).mul(float(1.0).sub(u.x))).add(d.sub(b).mul(u.x).mul(u.y));
 }).setLayout({ name: 'hazeNoise', type: 'float', inputs: [{ name: 'p', type: 'vec2' }] });
 
+// ── Siatka bezpieczeństwa HDR (zadanie 12-B, jak demo rakiet) ────────────────
+// NaN i ±Inf (wykładnik same jedynki) → 0 per składowa; skończone wartości bez zmian (bit w
+// bit — także ujemne). Test bitów zamiast x != x: WGSL pozwala kompilatorowi zakładać brak NaN
+// i zwinąć porównanie, a min / max z NaN oddają drugi argument (demo zamieniało NaN w 60 000 —
+// jasną plamę po bloomie). Czysta funkcja z layoutem (bez uniformów — PLAN §3).
+export const hdrBezpieczny = /*@__PURE__*/ Fn(([c]) => {
+  const bits = floatBitsToUint(c).toVar();
+  const wykladnik = uint(0x7f800000);
+  const skonczona = (b, v) => select(b.bitAnd(wykladnik).equal(wykladnik), float(0.0), v);
+  return vec4(skonczona(bits.x, c.x), skonczona(bits.y, c.y), skonczona(bits.z, c.z), skonczona(bits.w, c.w));
+}).setLayout({ name: 'hdrBezpieczny', type: 'vec4', inputs: [{ name: 'c', type: 'vec4' }] });
+
 /**
  * Uniformy postu w kształcie `material.uniforms` (adapter, uniformy.js): kod Core3D
  * ustawia `.value` jak na WebGL, bez przebudowy pipeline'u. uHeatOn zastępuje define
- * HEAT_HAZE (perfToggles.heatHaze), uSourceCount ogranicza pętlę (tablice zawsze po 24).
- * Bufory uniformów etapu: grupa obiektu + dwie tablice = 3 (limit 12).
+ * HEAT_HAZE (perfToggles.heatHaze), uSourceCount ogranicza pętlę (tablice zawsze po 24),
+ * uDistLayerOn — warstwa DIST ma w tym renderze zawartość (12-B).
+ * Bufory uniformów etapu: grupa obiektu + dwie tablice = 3 (+ blok źródeł zniekształceń = 4;
+ * limit 12).
  */
 export function createPostUniforms() {
   return uniformsAdapter({
@@ -117,6 +140,7 @@ export function createPostUniforms() {
     uGlobalStrength: uniform(1.0),
     uAspect: uniform(1.0),
     uHeatOn: uniform(1.0),
+    uDistLayerOn: uniform(0.0),
     // xy = środek (UV, v od dołu ekranu), z = promień w jednostkach osi v, w = siła
     uHeatSources: uniformArray(Array.from({ length: MAX_HEAT_HAZE_SOURCES }, () => new Vector4(2, 2, 0, 0)), 'vec4'),
     // kierunek wydechu dyszy w przestrzeni ekranu; (0, 0) = źródło izotropowe
@@ -129,9 +153,12 @@ export function createPostUniforms() {
  * scena (+ bloom × BLOOM_ZGODNOSC_WEBGL) próbkowana z przesunięciem gorącego powietrza,
  * ACES gry, LinearTosRGB. `bloomTexture` = bloomGry.getTextureNode() albo null (bloom
  * wyłączony — osobny RenderPipeline, bez kosztu passów bloomu).
- * @param {{ sceneTexture: any, bloomTexture?: any, uniforms: Record<string, any>, bloomGain?: number }} o
+ * `distortion` — blok źródeł zniekształceń efektów (`DistortionField.node`, fxFrame.js) albo null,
+ * `distortionLayer` — tekstura warstwy DIST (Core3D.distortionTarget: RG, px w osiach sceny) albo
+ * null; warstwa wymaga bloku (rozmiar celu z jego nagłówka) i uniformu uDistLayerOn.
+ * @param {{ sceneTexture: any, bloomTexture?: any, uniforms: Record<string, any>, bloomGain?: number, distortion?: any, distortionLayer?: any }} o
  */
-export function createUberPost({ sceneTexture, bloomTexture = null, uniforms, bloomGain = BLOOM_ZGODNOSC_WEBGL }) {
+export function createUberPost({ sceneTexture, bloomTexture = null, uniforms, bloomGain = BLOOM_ZGODNOSC_WEBGL, distortion: fxBlock = null, distortionLayer = null }) {
   const uTime = uniformNode(uniforms.uTime);
   const uSourceCount = uniformNode(uniforms.uSourceCount);
   const uGlobalStrength = uniformNode(uniforms.uGlobalStrength);
@@ -139,6 +166,7 @@ export function createUberPost({ sceneTexture, bloomTexture = null, uniforms, bl
   const uHeatOn = uniformNode(uniforms.uHeatOn);
   const uHeatSources = uniformNode(uniforms.uHeatSources);
   const uHeatDirs = uniformNode(uniforms.uHeatDirs);
+  const uDistLayerOn = uniforms.uDistLayerOn ? uniformNode(uniforms.uDistLayerOn) : null;
 
   // UV kwadu WebGPU ma v = 0 u GÓRY; źródła i przesunięcia liczymy jak w GLSL (v od dołu),
   // przesunięcie wraca do UV tekstury z odwróconą składową y.
@@ -154,12 +182,17 @@ export function createUberPost({ sceneTexture, bloomTexture = null, uniforms, bl
   // clone() gubi uvNode, więc .sample(uv).level(0) wróciłoby do domyślnego UV.
   const sceneBase = sceneTexture.isTextureNode === true ? sceneTexture : texture(sceneTexture, uv());
   const level0 = (base, uvNode) => texture(base, uvNode, float(0));
+  // Odczyt sceny przez siatkę bezpieczeństwa (NaN / Inf → 0) — ten sam węzeł co wejście bloomu.
   const sampleScene = (uvNode) => {
-    const scene = level0(sceneBase, uvNode);
+    const scene = hdrBezpieczny(level0(sceneBase, uvNode));
     if (!bloomTexture) return scene;
     const b = level0(bloomTexture, uvNode).rgb.mul(bloomGain).toVar();
     return vec4(scene.rgb.add(b), scene.a.add(max(b.r, max(b.g, b.b))));
   };
+  // Warstwa DIST (baza z jawnym UV — bez macierzy tekstury), tylko z blokiem źródeł (rozmiar celu).
+  const distLayerBase = (distortionLayer && fxBlock && uDistLayerOn)
+    ? (distortionLayer.isTextureNode === true ? distortionLayer : texture(distortionLayer, uv()))
+    : null;
 
   return Fn(() => {
     const uvTex = uv().toVar();
@@ -228,16 +261,53 @@ export function createUberPost({ sceneTexture, bloomTexture = null, uniforms, bl
 
     // Dysze: mikroskopijna dyspersja (trzy odczyty); poza strefą dysz jeden odczyt.
     const sceneColor = vec4(0.0).toVar();
-    If(dot(nozzleHaze, nozzleHaze).greaterThan(1.0e-12), () => {
-      const base = uvTex.add(toTextureUv(distortion)).toVar();
-      const nh = toTextureUv(nozzleHaze).toVar();
-      const cr = sampleScene(base.add(nh.mul(0.82))).r;
-      const cg = sampleScene(base.add(nh)).toVar();
-      const cb = sampleScene(base.add(nh.mul(1.22))).b;
-      sceneColor.assign(vec4(cr, cg.g, cb, cg.a));
-    }).Else(() => {
-      sceneColor.assign(sampleScene(uvTex.add(toTextureUv(distortion))));
-    });
+    const zDyszami = () => {
+      If(dot(nozzleHaze, nozzleHaze).greaterThan(1.0e-12), () => {
+        const base = uvTex.add(toTextureUv(distortion)).toVar();
+        const nh = toTextureUv(nozzleHaze).toVar();
+        const cr = sampleScene(base.add(nh.mul(0.82))).r;
+        const cg = sampleScene(base.add(nh)).toVar();
+        const cb = sampleScene(base.add(nh.mul(1.22))).b;
+        sceneColor.assign(vec4(cr, cg.g, cb, cg.a));
+      }).Else(() => {
+        sceneColor.assign(sampleScene(uvTex.add(toTextureUv(distortion))));
+      });
+    };
+
+    if (!fxBlock) {
+      zDyszami();
+    } else {
+      // Źródła zniekształceń efektów (12-B) — tylko gdy w tym renderze są (licznik bloku) albo
+      // warstwa DIST ma zawartość; inaczej dawna ścieżka co do instrukcji (obraz bit w bit jak
+      // przed 12-B — kontrola A w scripts/webgpu/efekty-kontrola.mjs). fxOff.xy — całe przesunięcie
+      // UV tekstury (y w dół), zw — jego część z dyspersją (×0,82 / ×1 / ×1,22 jak dysze). Warstwa
+      // DIST: przesunięcie w px w osiach sceny (x w prawo, y w górę) — próbka z p − o w osiach sceny
+      // w OBU osiach (demo broni odejmowało je od UV ekranu, co w osi y odwracało kierunek),
+      // aberracja ×1,12 / ×1 / ×0,88 jak demo; rozmiar celu z nagłówka bloku.
+      const layerOn = uDistLayerOn ? uDistLayerOn.greaterThan(0.5) : null;
+      const fxOn = layerOn ? fxBlock.element(0).x.greaterThan(0.5).or(layerOn) : fxBlock.element(0).x.greaterThan(0.5);
+      If(fxOn, () => {
+        const fxOff = distortionOffset(fxBlock, uvTex).toVar();
+        const layerOff = vec2(0.0).toVar();
+        if (distLayerBase) {
+          If(layerOn, () => {
+            const size = max(fxBlock.element(1).xy, vec2(1.0));
+            const o = level0(distLayerBase, uvTex).xy;
+            layerOff.assign(vec2(o.x.negate(), o.y).div(size));
+          });
+        }
+        const base = uvTex.add(toTextureUv(distortion)).add(fxOff.xy.sub(fxOff.zw)).add(layerOff).toVar();
+        const nh = toTextureUv(nozzleHaze).add(fxOff.zw).toVar();
+        If(dot(nh, nh).add(dot(layerOff, layerOff)).greaterThan(1.0e-12), () => {
+          const cr = sampleScene(base.add(nh.mul(0.82)).add(layerOff.mul(0.12))).r;
+          const cg = sampleScene(base.add(nh)).toVar();
+          const cb = sampleScene(base.add(nh.mul(1.22)).sub(layerOff.mul(0.12))).b;
+          sceneColor.assign(vec4(cr, cg.g, cb, cg.a));
+        }).Else(() => {
+          sceneColor.assign(sampleScene(base));
+        });
+      }).Else(zDyszami);
+    }
 
     return vec4(linearDoSrgb(acesGry(sceneColor.rgb)), sceneColor.a);
   })();

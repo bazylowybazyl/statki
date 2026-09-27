@@ -15,7 +15,8 @@ import { Shockwave3DManager } from '../effects3d/shockwave3D.js';
 import { HULL_SDF_MAX_STEPS, HULL_SDF_OCCLUDER_FLOATS, HULL_SDF_SHADOW_GLSL, HULL_SDF_SHAFT_CAP } from './hullShadowSdf.js';
 import { sunShadowUniforms } from './sunShadowMask.js';
 import { installPlaceholders } from './tsl/zamiennik.js';
-import { BloomGry, MAX_HEAT_HAZE_SOURCES, createPostUniforms, createUberPost } from './tsl/postGry.js';
+import { BloomGry, MAX_HEAT_HAZE_SOURCES, createPostUniforms, createUberPost, hdrBezpieczny } from './tsl/postGry.js';
+import { FxFrame, FX_DISTORT_LAYER } from './fx/fxFrame.js';
 
 // Brama znaczników czasu GPU (_gpuTimerGate): tyle zapytań musi zostać w puli three
 // (2 na pass), żeby zmieścić całą klatkę — dwa rendery podzielonego ekranu z modułami
@@ -45,7 +46,7 @@ export const GPU_REQUIRED_LIMITS = Object.freeze([
 const SHIELD_RENDER_LAYER = 7;
 // Warstwy rysowane kamerą ortho (reszta — perspektywą): świat gry, ring-planety,
 // tarcze. Rozgrzewka passa (prewarmPass) bierze z tego kamerę dla warstwy.
-const ORTHO_PASS_LAYERS = new Set([0, RING_PLANET_RENDER_LAYER, SHIELD_RENDER_LAYER]);
+const ORTHO_PASS_LAYERS = new Set([0, RING_PLANET_RENDER_LAYER, SHIELD_RENDER_LAYER, FX_DISTORT_LAYER]);
 // Shadow shafts: WSZYSTKIE okludery są analityczne (dyski / pola odległości
 // kadłubów / pierścienie w world-space, liczone per piksel w shaderze passa).
 // Pass NIE mnoży już obrazu — pisze maskę widoczności słońca (sunShadowTarget,
@@ -393,7 +394,7 @@ export const Core3D = {
   _onGpuRenderTimestamp: null,
   _onGpuComputeTimestamp: null,
   _onGpuTimestampError: null,
-  perfToggles: { bloom: true, heatHaze: true, shadowShafts: true, threeShadows: true, bgPass: true, planetPass: true, orthoPass: true, fgPass: true, fgBuildings: true, fgStations: true, fgWeapons: true, fgShadows: true, enginePointLights: false },
+  perfToggles: { bloom: true, heatHaze: true, fxDistortion: true, shadowShafts: true, threeShadows: true, bgPass: true, planetPass: true, orthoPass: true, fgPass: true, fgBuildings: true, fgStations: true, fgWeapons: true, fgShadows: true, enginePointLights: false },
   shadowShaftsQuality: 'medium',
   _shaftCfg: resolveShadowShaftsQuality('medium'),
   _passTogglesDirty: true,
@@ -407,6 +408,12 @@ export const Core3D = {
   _renderInfoBucketNames: ['refraction', 'bg', 'planets', 'shafts', 'ortho', 'fg', 'bloom', 'post', 'other'],
   // window.__rendererInfo — jeden obiekt na sesję (harness i PerfHUD go czytają).
   _rendererInfoOut: { calls: 0, triangles: 0, points: 0, lines: 0, passes: null },
+  // Infrastruktura efektów GPU (zadanie 12-B, src/3d/fx/fxFrame.js, docs/webgpu/FX-INFRA.md): kroki
+  // compute raz na klatkę przed passami (addFxStep), początek pul i zegar efektów (fx.origin, fx.time),
+  // siatka świateł (fx.grid; renderer.lighting = GridLighting „optIn”), światła efektów (fx.lights),
+  // źródła zniekształceń w „uber” (fxDistortion()) i warstwa DIST (FX_DISTORT_LAYER → distortionTarget).
+  // fxStats — pomiar klatki (PerfHUD, harness).
+  fx: null, fxStats: null, distortionTarget: null,
 
   _getBloomConfig() {
     const bloom = (typeof window !== 'undefined' && window.DevVFX?.bloom) ? window.DevVFX.bloom : null;
@@ -684,6 +691,14 @@ export const Core3D = {
     });
     sunShadowUniforms.uSunShadowMap.value = this.sunShadowTarget.texture;
     sunShadowUniforms.uSunShadowOn.value = 0;
+    // Efekty GPU (fxFrame.js): klatka efektów przeżywa ponowny init (kroki i pule zostają).
+    // Warstwa DIST: przesunięcie w px (osie sceny) w RG HalfFloat, rozmiar bufora sceny.
+    this.fx = this.fx || new FxFrame();
+    this.fxStats = this.fx.stats;
+    this.distortionTarget = new THREE.RenderTarget(w0, h0, {
+      format: THREE.RGFormat, type: THREE.HalfFloatType, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
+      generateMipmaps: false, depthBuffer: false, stencilBuffer: false, samples: 0
+    });
     // Pre-pass halo: głębia planet bez koloru (overrideMaterial, SPIKE 12).
     this.haloDepthMaskMaterial = new THREE.MeshBasicNodeMaterial({ color: 0x000000 });
     this.haloDepthMaskMaterial.name = 'Core3D.haloDepthMask';
@@ -792,6 +807,9 @@ export const Core3D = {
     });
     // Bez zapasowego backendu: nieudane urządzenie = odrzucone init(), nie WebGL2.
     renderer._getFallback = null;
+    // Siatka świateł jako system oświetlenia (tryb „optIn” — fxFrame.js) PRZED init():
+    // three r183 łapie renderer.lighting w init() (RenderLists) — podmiana później nic nie zmienia.
+    this.fx?.attach(renderer, this);
     // Liczniki per klatka zeruje render() — przy autoReset = true wewnętrzna pętla
     // renderera zerowałaby je co rAF (SPIKE 14).
     renderer.info.autoReset = false;
@@ -808,6 +826,8 @@ export const Core3D = {
     this._passTogglesDirty = true;
     this._applyPassToggles();
     this._scheduleTextureUpload();
+    // Rozgrzewka kroków efektów zarejestrowanych przed urządzeniem (puste dispatche, prewarmPass).
+    this.fx?.warmAll();
     return true;
   },
 
@@ -889,14 +909,19 @@ export const Core3D = {
   _createPost(renderer) {
     const cfg = this._getBloomConfig();
     const sceneTexture = this.composerTarget.texture;
-    const bloom = new BloomGry(texture(sceneTexture), cfg.strength, cfg.radius, cfg.threshold);
+    // Siatka bezpieczeństwa (12-B): NaN / ±Inf bufora sceny → 0 przed bloomem (i w „uber”) —
+    // pojedynczy NaN w HalfFloat rozlewał bloom na cały ekran.
+    const bloom = new BloomGry(hdrBezpieczny(texture(sceneTexture)), cfg.strength, cfg.radius, cfg.threshold);
     bloom.resolutionScale = cfg.resolutionScale;
     bloom.onRenderBegin = this._onBloomRenderBegin;
     bloom.onRenderEnd = this._onBloomRenderEnd;
     const uniforms = createPostUniforms();
-    const post = new THREE.RenderPipeline(renderer, createUberPost({ sceneTexture, bloomTexture: bloom.getTextureNode(), uniforms }));
+    // Zniekształcenia efektów (fxFrame.js): blok źródeł i warstwa DIST — wspólne dla obu pipeline'ów.
+    const distortion = this.fx ? this.fx.distortion.node : null;
+    const distortionLayer = this.distortionTarget ? this.distortionTarget.texture : null;
+    const post = new THREE.RenderPipeline(renderer, createUberPost({ sceneTexture, bloomTexture: bloom.getTextureNode(), uniforms, distortion, distortionLayer }));
     post.outputColorTransform = false;
-    const postBezBloomu = new THREE.RenderPipeline(renderer, createUberPost({ sceneTexture, bloomTexture: null, uniforms }));
+    const postBezBloomu = new THREE.RenderPipeline(renderer, createUberPost({ sceneTexture, bloomTexture: null, uniforms, distortion, distortionLayer }));
     postBezBloomu.outputColorTransform = false;
     this.bloomPass = bloom;
     this._postUniforms = uniforms;
@@ -911,6 +936,7 @@ export const Core3D = {
       try { this._postBezBloomu?.dispose?.(); } catch { }
       try { this.bloomPass?.dispose?.(); } catch { }
       try { this.sunShadowTarget?.dispose?.(); } catch { }
+      try { this.distortionTarget?.dispose?.(); } catch { }
       try { this.composerTarget?.dispose?.(); } catch { }
       try { this.refractionTarget?.dispose?.(); } catch { }
       try { this.shockwave3DManager?.dispose?.(); } catch { }
@@ -923,6 +949,7 @@ export const Core3D = {
     this._postUniforms = null;
     this.bloomPass = null;
     this.sunShadowTarget = null;
+    this.distortionTarget = null;
     sunShadowUniforms.uSunShadowMap.value = null;
     sunShadowUniforms.uSunShadowOn.value = 0;
     this.refractionTarget = null;
@@ -1080,6 +1107,7 @@ export const Core3D = {
     const bufH = Math.max(1, Math.floor(height * this.pixelRatio));
     if (this.composerTarget) this.composerTarget.setSize(bufW, bufH);
     if (this.sunShadowTarget) this.sunShadowTarget.setSize(bufW, bufH);
+    if (this.distortionTarget) this.distortionTarget.setSize(bufW, bufH);
 
     if (this.refractionTarget) {
       this.refractionTarget.setSize(
@@ -1387,6 +1415,10 @@ export const Core3D = {
     // kubełka 'shafts' (pre-pass halo liczy się w 'other').
     this._beginRenderInfo();
 
+    // Klatka efektów GPU (raz na klatkę rAF, przed passami): kroki compute, początek pul,
+    // siatka świateł (fxFrame.js). Podzielony ekran: drugi renderSingle nic tu nie robi.
+    this._runFxFrame(freePerspective);
+
     const prevAutoClear = renderer.autoClear;
     const prevClearAlpha = renderer.getClearAlpha();
     const prevClearColor = this._clearColorScratch;
@@ -1443,6 +1475,8 @@ export const Core3D = {
         // warp wejdzie tu od razu w TSL; stara soczewka i fale są usunięte.
       }
     }
+    // Zniekształcenia efektów do „uber”: źródła rzutowane na kamerę tego renderu, warstwa DIST.
+    this._renderFxDistortion(freePerspective || t.fxDistortion === false);
     renderer.setRenderTarget(null);
     this._renderPost();
 
@@ -1524,6 +1558,48 @@ export const Core3D = {
     post.render();
     this._addRenderInfoDelta('post', performance.now() - t0, before);
     this._takeBloomOutOfPost();
+  },
+
+  // Klatka efektów GPU (fxFrame.js) — raz na klatkę rAF, kamera gracza 1 (w podzielonym ekranie
+  // siatka świateł obejmuje też kadr gracza 2: window.camera2). Pomiar w fxStats.
+  _runFxFrame(freePerspective) {
+    const fx = this.fx;
+    if (!fx || !this.composerTarget) return;
+    const split = typeof window !== 'undefined' && !!window.splitScreenMode;
+    const cam2 = split && !freePerspective ? (window.camera2 || null) : null;
+    fx.frame(this.renderer, this.activeCam1, cam2, this.composerTarget.width, this.composerTarget.height, !!freePerspective, performance.now());
+  },
+
+  // Na każdy render: źródła zniekształceń rzutowane na kamerę tego renderu (blok „uber”) i warstwa
+  // DIST (FX_DISTORT_LAYER, kamera ortho) do distortionTarget — tylko gdy właściciel zgłosił w tej
+  // klatce zawartość (setDistortLayerActive), inaczej „uber” jej nie próbkuje (uDistLayerOn = 0).
+  _renderFxDistortion(off) {
+    const fx = this.fx;
+    const u = this._postUniforms;
+    if (!fx || !u || !this.composerTarget) return;
+    const w = this.composerTarget.width;
+    const h = this.composerTarget.height;
+    fx.commitDistortion(this.activeCam1, w, h, off, this.renderer?.info?.frame ?? 0);
+    const target = this.distortionTarget;
+    const layerOn = !off && fx.distortLayerActive === true && !!target;
+    fx.stats.distortLayer = layerOn;
+    u.uDistLayerOn.value = layerOn ? 1 : 0;
+    if (!layerOn) return;
+    const renderer = this.renderer;
+    const prevTarget = renderer.getRenderTarget();
+    const before = this._renderInfoBefore;
+    this._readRenderInfoInto(before);
+    const t0 = performance.now();
+    renderer.setRenderTarget(target);
+    renderer.setClearColor(0x000000, 0.0);
+    renderer.clear(true, false, false);
+    const camera = this.getPassCamera(true);
+    const prevMask = camera.layers.mask;
+    camera.layers.set(FX_DISTORT_LAYER);
+    renderer.render(this.scene, camera);
+    camera.layers.mask = prevMask;
+    renderer.setRenderTarget(prevTarget);
+    this._addRenderInfoDelta('ortho', performance.now() - t0, before);
   },
 
   // Halo planet: głębia planet (warstwa 3, bez koloru) + poświaty (warstwa 5)
@@ -1675,7 +1751,9 @@ export const Core3D = {
     this._addRenderInfoDelta('bg', performance.now() - tRenderTotal0);
     camera.layers.mask = prevMask;
     if (this.bloomPass && this.perfToggles.bloom !== false) this._applyBloomPassConfig();
-    // Tło menu: bez źródeł gorącego powietrza (przed startem gry nic ich nie zgłasza).
+    // Tło menu: bez zniekształceń efektów i bez źródeł gorącego powietrza (przed startem gry
+    // nic ich nie zgłasza).
+    this._renderFxDistortion(true);
     this._updatePostUniforms(false, 0);
     renderer.setRenderTarget(null);
     this._renderPost();
@@ -1717,6 +1795,8 @@ export const Core3D = {
     });
     camera.layers.set(layer);
     renderer.setRenderTarget(this.composerTarget);
+    // Warstwa DIST rysuje do własnego celu (RG HalfFloat bez MSAA i głębi) — inny klucz pipeline'u.
+    if (layer === FX_DISTORT_LAYER && this.distortionTarget) renderer.setRenderTarget(this.distortionTarget);
     let promise;
     try {
       promise = renderer.compileAsync(object3d, camera, object3d.isScene ? null : this.scene);
@@ -1774,6 +1854,17 @@ export const Core3D = {
   },
 
   setShieldLayerActive(active) { this.layerActivity.shields = !!active; },
+
+  // ── Efekty GPU (zadanie 12-B, src/3d/fx/fxFrame.js — opis kroku i kontekstu tam) ──
+  // Krok { name, spawn?(ctx), lights?(ctx), update?(ctx), warm?(ctx) } raz na klatkę przed
+  // passami scen; warm raz przy gotowym urządzeniu (puste dispatche, prewarmPass siatek).
+  addFxStep(step) { return this.fx ? this.fx.addStep(step) : step; },
+  removeFxStep(step) { this.fx?.removeStep(step); },
+  // Źródła zniekształceń tej klatki w świecie gry (shock / implode / heat — distortion.js);
+  // dysze i tarcze zostają przy pushHeatHazeWorld.
+  fxDistortion() { return this.fx ? this.fx.distortionSources() : null; },
+  // Warstwa DIST (FX_DISTORT_LAYER): właściciel zgłasza co klatkę, czy ma widoczną zawartość.
+  setDistortLayerActive(active) { if (this.fx) this.fx.distortLayerActive = !!active; },
 
   // Pass sceny bez widocznej zawartości pomijamy w całości.
   _scenePassHasContent(pass, activity) {
