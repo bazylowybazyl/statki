@@ -38,7 +38,7 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 
 | # | Zadanie | Zależy od | Równolegle z | Effort | Status | Commit | Uwagi |
 |---|---|---|---|---|---|---|---|
-| 01 | Fundament: `WebGPURenderer` w Core3D, zamienniki, adapter uniformów, harness na WebGPU | — | nie | max | w toku (2026-09-27, podagent, worktree `statki-wt/01`) | | od niego gra = magenta dla nieprzeniesionych materiałów |
+| 01 | Fundament: `WebGPURenderer` w Core3D, zamienniki, adapter uniformów, harness na WebGPU | — | nie | max | zrobione, scalone (159dd42) | fca136a, b9c95d2, be4ea80 | gra na WebGPU; magenta = nieprzeniesione; harness `--uuid osobne` + nowa baza (dziennik) |
 | 02 | Post 1/2: bloom, pełny „uber”, pre-pass halo, MSAA, kalibracja tolerancji | 01 | 06 | max | czeka | | kalibruje `tolerancjaPortu` |
 | 03 | Post 2/2: maska słońca, SDF kadłubów, refrakcja, fala uderzeniowa | 02 | 06 | max | czeka | | biblioteki dla 04–20 |
 | 04 | Kadłuby (belki + heksy), lakier, impostory, szczątki | 03 | 05–14, 16, 19 | max | czeka | | graf na wariant zamiast materiału na encję; miejsce na światła siatki (18) |
@@ -70,6 +70,9 @@ Stan zamierzony na `main` w trakcie portu — nie „naprawiać” poza zadaniem
 | Od | Do | Co | Kończy |
 |---|---|---|---|
 | 01 | 24 | Nieprzeniesione `ShaderMaterial` rysują się magentą (`spis.zamienniki` w harnessie) | zadania 02–22 |
+| 01 | 02 | Post bez bloomu i gorącego powietrza (tylko ACES gry + sRGB); `perfToggles.bloom/heatHaze` bez skutku; `kalibracja__ortho` vs baza: >8/255 w 85,8% pikseli (sama poświata) | 02 |
+| 01 | 03 | Maska słońca wyłączona (`uSunShadowOn = 0`): bez cienia słońca na materiałach, smug tła i SDF kadłubów; fala uderzeniowa bez passa refrakcji | 03 |
+| 01 | 11 | Rozgrzewka tylko „nie rzuca”: pipeline'y kompilują się asynchronicznie przy pierwszym użyciu, osłona `backend.draw` pomija rysunek do gotowości (obiekt pojawia się 1–2 klatki później) | 11 (moduły przez `Core3D.prewarmPass`) |
 | 01 | 06 | Brak synchronicznego odczytu → mapa CPU ringu pusta (`heightAtUV` = 0): płyta ringu koliduje bez rzeźby terenu, LOD terenu bez wysokości, landmarki i kopuły stawiane bez mapy (stała wysokość z `haloRingLandmarks.js`) | 06 |
 | 01 | 20 | Overlay efektów na własnym `WebGLRenderer` (jedyny drugi renderer; stare efekty overlaya działają bez zamienników) | 17–19 zabierają efekty, 20 usuwa overlay |
 | 01 | 17–19 | Pociski i błyski ze starego `weapon3DSystem` (materiały wbudowane — rysują się), smugi `slugTrail3D` (zamiennik), dym i iskry Fx3D (zamiennik do 12) | 12, 17–19 |
@@ -277,3 +280,29 @@ Todo (2): „PORT poprawka 1 / 3 (TODO integracji)” w `tests/shipCore.test.mjs
     limitu przebić; krater zakleszczenia 0,5 × obrażeń × (v/v_wejścia)²; naładowane działo bez celu gaśnie po 2 s;
     kolejka serii z opóźnieniami względnymi; recoil/shake dopisane wszystkim broniom (warianty S/L, `ciws_mk2`,
     `hexlance_siege` dostały wartości rodziny z dema — dziś mają fallback 3/1,8, zmiana przy przełączeniu źródła w 18-D).
+- **Zadanie 01 scalone do `main`** (fca136a, b9c95d2, be4ea80; scalenie 159dd42): Core3D na `WebGPURenderer`, tylko
+  WebGPU (brak `navigator.gpu` / adaptera → komunikat w menu, przyciski startu wyłączone; `_getFallback = null`,
+  `featureLevel: 'compatibility'`, limity z adaptera); `init()` synchroniczne, urządzenie w tle (`Core3D.gpuReady` /
+  `Core3D.ready`); runner passów bez EffectComposer (tło → planety → quad halo → ring-planety → ortho → tarcze bez
+  czyszczenia głębi → FG); post = `RenderPipeline` (ACES gry + sRGB gry, `outputColorTransform = false`), `renderBackdrop`
+  tym samym postem; cienie per światło (`Core3D.setSunShadowLight`); `info.drawCalls`; zegar GPU = znaczniki czasu
+  (1 zapytanie w locie; three nie czyści mapy `timestamps` — ~15,8 tys. wpisów — Core3D czyści sam); split tylko przez
+  2× `renderSingle`; API warpa = no-opy + miejsce na pass zgięcia tła; `src/3d/tsl/` (`uniformy.js`, `zamiennik.js`,
+  `kolorGry.js`); `Core3D.prewarmPass(obiekt, warstwa)` (rozgrzewka broni w `weapon3DSystem` wcześniej NIGDY się nie
+  wykonywała — warunek `Core3D.camera` zawsze fałszywy); osłona `backend.draw` (three r183 wkłada pipeline z
+  `compileAsync` do cache, zanim GPU go odda → `setPipeline(undefined)`, realny TypeError); `modelBaker.js` usunięty.
+- Harness po 01: 16 scen / 32 warianty, renderer `webgpu`, 0 błędów WebGPU/WGSL, 0 ostrzeżeń three. Zamienniki: menu 80,
+  hud 45, ring-z02 45, ring-z1 45, k7-hala 42, planeta-cien 10, slonce 8, mars-ring 69, jowisz-ring 75, kalibracja 14,
+  bitwa 32, bitwa-blisko 24, wybuch 28, wraki 25, warp 51, split 15. `kalibracja__ortho` vs baza: >2 93,54%, >8 85,83%,
+  >32 71,94%, średnia 75,96, maks 252 — sama poświata (brak bloomu), HDR > 0,9: 0,02515 vs 0,02525. Start: `gpuReady`
+  ~4,3–4,5 s od nawigacji, tło menu ~5,6–5,9 s.
+- **Nowa baza (tryb `--uuid osobne`):** three bierze 4 × `Math.random` na UUID każdego obiektu i węzła TSL, więc na
+  WebGPU losowania gry przesuwały się (inne kąty planet, inne przebiegi wraków i warpa). Harness `--uuid osobne` daje UUID
+  osobny strumień (podmiana w odpowiedzi serwera przez CDP — gra i tag bez zmian); bazę z tagu zrobiono ponownie w tym
+  trybie (p1 = p2) — stan świata WebGPU zgodny w 16/16 scen. Przyjęta do `.tmp/webgpu/baseline/webgl/` (stara w
+  `.tmp/webgpu/baseline-stara/`), `baseline.json` przebudowany (`losowanieUuid: 'osobne'`, `kodGry`). Harness wybiera tryb z
+  bazy sam. Szum WebGPU p1/p2: 0 poza `planeta-cien` (0,06% — obrót stacji Wenus).
+- Testy na `main` po scaleniu: `node --test` 1373 / 7 porażek bazowych + 1 niestabilny pod obciążeniem
+  (`capitalAiFlight` „ship follows a moving target…”, sam przechodzi 3/3) / 2 todo; `npm test` OK. **Po każdym scaleniu:**
+  `bash scripts/webgpu/lf-po-scaleniu.sh` — `git merge` przy `core.autocrlf=true` zapisuje zmienione pliki z CRLF i 4
+  strażniki padają fałszywie (827, 828, 939, 941 po scaleniu 01).
