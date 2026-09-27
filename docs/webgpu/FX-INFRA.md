@@ -83,8 +83,14 @@ tylko struktura: +2 bufory storage, pętla po liście komórki (pusta siatka = 0
 ### Klatka
 
 `grid.begin(origin.x, origin.y)` → `setBounds(kadr lokalnie z zapasem)` → `addShipLights(…)` / `fxLights.commit(grid,
-t)` / `add…` → `grid.build()` (raz; ułamek ms dla ≤ 1536 świateł) → render i compute czytają bufory. Mapy cienia
-(`grid.shadows = atlas`) i materiały z siatką — przed pierwszą kompilacją.
+t)` / `add…` → `grid.build()` (raz) → render i compute czytają bufory. Mapy cienia (`grid.shadows = atlas`) i materiały
+z siatką — przed pierwszą kompilacją.
+
+Koszt CPU `add` + `build` (Node 22, Ryzen 7800X3D, kadr 5200 × 3200 j., 20% reflektorów): 64 światła — 0,06 ms,
+256 — 0,17 ms, 1024 — 0,69 ms, 1536 — 1,1 ms przy zasięgach ≤ 800 j. (efekty: 60–1100 j.); przy zasięgach do 3000 j.
+1024 światła — 2,7 ms i `ITEM_CAP` nasycony (wpisy ponad limit giną w `stats.dropped`). `fxLights.commit` 512 błysków
++ 512 punktów — 0,09 ms. **Ryzyko (21, 18):** reflektor dalekiego zasięgu statku (`FIELD_SHIP_LIGHTS.spot` do 14 tys. j.)
+pokrywa większość kadru — w dużej bitwie w polu asteroid ograniczyć reflektory do najbliższych kamery / w kadrze.
 
 ## 2. Światła efektów (`fxLights.js`)
 
