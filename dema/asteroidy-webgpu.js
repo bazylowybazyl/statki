@@ -772,6 +772,10 @@ async function start() {
   layerFrame.cam = S.cam; layerFrame.viewW = W; layerFrame.viewH = H; layerFrame.focalPx = focalPx(); layerFrame.time = 0;
   layerFrame.budgetMs = 4000;
   for (const layer of layers) layer.update(layerFrame);
+  // Parametry testów w adresie: ?particles=1000000&lights=512&zoom=1.5
+  if (params.has('particles')) setParticlesUi(Math.max(0, Math.min(DUST_CAP, Number(params.get('particles')) || 0)));
+  if (params.has('lights')) setLightsUi(Math.max(0, Math.min(LIGHT_CAP - 96, Number(params.get('lights')) || 0)));
+  if (params.has('zoom')) S.cam.zoom = S.targetZoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Number(params.get('zoom')) || 1));
   loading.style.display = 'none';
   S.ready = true;
   window.__demo = {

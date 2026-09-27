@@ -12,8 +12,8 @@
 
 import * as THREE from 'three/webgpu';
 import {
-  Fn, float, vec2, vec3, vec4, uniform, texture, uv, modelViewMatrix, positionViewDirection,
-  max, mix, dot, normalize, clamp, diffuseColor
+  float, vec2, vec3, vec4, uniform, texture, uv, modelViewMatrix, positionViewDirection,
+  max, mix, dot, normalize, clamp, smoothstep, fwidth, diffuseColor
 } from 'three/tsl';
 import { getHullRenderSize } from '../../src/data/ships.js';
 import { buildEntityEngineFx } from '../../src/data/engineFx.js';
@@ -147,7 +147,16 @@ class HullNodeMaterial extends THREE.NodeMaterial {
     // Właściciel świateł (lights.js): kadłub nie łapie własnych lamp i reflektorów.
     this.lightOwner = uniform(owner);
     this.fog = false;
-    this.alphaTest = 0.5;
+    // Krawędź sylwetki z alfy tekstury (premultiplied „over”) — twardy próg
+    // alfy dawał schodki, których MSAA nie wygładza. Głębię pisze cały kwad
+    // poza pustym tłem (półprzezroczysty brzeg zasłania pył tylko na 1–2 px).
+    this.transparent = true;
+    this.depthWrite = true;
+    this.blending = THREE.CustomBlending;
+    this.blendSrc = THREE.OneFactor;
+    this.blendDst = THREE.OneMinusSrcAlphaFactor;
+    this.blendSrcAlpha = THREE.OneFactor;
+    this.blendDstAlpha = THREE.OneMinusSrcAlphaFactor;
     this.map = map;
     this.S = shared;
     this.hullW = hullW;
@@ -165,7 +174,9 @@ class HullNodeMaterial extends THREE.NodeMaterial {
     const tuv = uv();
     const tex = texture(map, tuv).toVar();
     diffuseColor.assign(tex);
-    diffuseColor.a.lessThanEqual(0.5).discard();
+    diffuseColor.a.lessThanEqual(0.02).discard();
+    // Alfa krawędzi wyostrzona do ~1,5 px (tekstura ma miękki, szeroki brzeg).
+    this._alpha = smoothstep(float(0.5).sub(fwidth(tex.a).mul(0.75)), float(0.5).add(fwidth(tex.a).mul(0.75)), tex.a);
     // Normalna z gradientu luminancji (relief paneli, kraty, dysze).
     const du = 1.5 / this.texW;
     const dv = 1.5 / this.texH;
@@ -203,7 +214,8 @@ class HullNodeMaterial extends THREE.NodeMaterial {
   }
 
   setupOutput(builder, outputNode) {
-    return vec4(max(outputNode.rgb.mul(this.S.exposure), vec3(0.0)), 1.0);
+    const a = this._alpha;
+    return vec4(max(outputNode.rgb.mul(this.S.exposure), vec3(0.0)).mul(a), a);
   }
 }
 
