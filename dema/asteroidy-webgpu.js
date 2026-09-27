@@ -29,7 +29,8 @@ import carrierUrl from '../src/assets/ships/terrancarrier.png';
 import { SUN, field, FIELD_SPOT, BELT_BAND, sunTransmittance, AU } from './asteroidy-webgpu/world.js';
 import { RockShapeBankGPU } from './asteroidy-webgpu/rockBank.js';
 import { createRockNoiseVolume } from './asteroidy-webgpu/rockNoise.js';
-import { createRockShared, RockNodeMaterial, ROCK_LIGHT_DEFAULTS } from './asteroidy-webgpu/rockMaterial.js';
+import { createRockShared, RockNodeMaterial, RockShadowMaterial, ROCK_LIGHT_DEFAULTS } from './asteroidy-webgpu/rockMaterial.js';
+import { SpotShadowMaps, SHADOW_LAYER } from './asteroidy-webgpu/spotShadows.js';
 import { RockLayer } from './asteroidy-webgpu/rockLayers.js';
 import { LightGrid, GridLighting, addShipLights, LIGHT_CAP } from './asteroidy-webgpu/lights.js';
 import { DemoHull } from './asteroidy-webgpu/ship.js';
@@ -87,6 +88,7 @@ const S = {
   rockLights: true,
   dustOn: true,
   fogOn: true,
+  spotShadows: true,
   thrustGain: 1,
   blastGain: 1,
   lightTarget: 256,
@@ -132,6 +134,7 @@ let glow = null;
 let sky = null;
 let dust = null;
 let fog = null;
+let shadows = null;
 
 function focalPx() {
   return (H * 0.5) / Math.tan((FOV_DEG * Math.PI / 180) * 0.5);
@@ -398,10 +401,17 @@ function buildLights() {
   grid.begin();
   const ox = S.origin.x;
   const oy = S.origin.y;
-  if (S.shipLights) {
-    if (atlas) addShipLights(grid, atlas.entity, atlas.length, ox, oy, { time: S.time });
-    if (escort && S.showEscort) addShipLights(grid, escort.entity, escort.length, ox, oy, { time: S.time });
-  }
+  // Światła statków; reflektory dalekie z mapą cienia skał (spotShadows.js).
+  const ships = [atlas, escort && S.showEscort ? escort : null];
+  ships.forEach((hull, i) => {
+    let far = null;
+    if (hull && S.shipLights) far = addShipLights(grid, hull.entity, hull.length, ox, oy, { time: S.time, shadowIndex: i, owner: hull.owner });
+    if (shadows) {
+      const on = !!(far && far.n > 0 && S.spotShadows);
+      if (on) shadows.set(i, true, far.x, far.y, far.z, far.ax, far.ay, far.az, far.coneDeg, far.range);
+      else shadows.set(i, false);
+    }
+  });
   if (S.dynLights) {
     _dynCtx.hulls = activeHulls();
     _dynCtx.rockLights = S.rockLights;
@@ -472,6 +482,7 @@ function frame(nowMs, forcedDt = null) {
   }
   if (dust && S.dustOn) feedDust(realDt, camZ);
   buildLights();
+  if (shadows) shadows.render(renderer, fgScene);
   if (dust && S.dustOn) dust.light();
 
   glow.begin();
@@ -677,6 +688,7 @@ function bindControls() {
   const toggle = (id, fn) => { const el = $(id); el.addEventListener('change', () => fn(el.checked)); fn(el.checked); };
   toggle('t-dust', (v) => { S.dustOn = v; dust?.setVisible(v); });
   toggle('t-fog', (v) => { S.fogOn = v; fog?.setVisible(v); });
+  toggle('t-shadows', (v) => { S.spotShadows = v; });
   toggle('t-shiplights', (v) => { S.shipLights = v; });
   toggle('t-dynlights', (v) => { S.dynLights = v; });
   toggle('t-sunocc', (v) => { S.sunOcc = v; });
@@ -712,6 +724,10 @@ async function start() {
   const noise = createRockNoiseVolume(renderer, 64);
   shared = createRockShared(bank, noise);
   const playMaterial = new RockNodeMaterial({ shared, backdrop: false });
+  // Mapy cienia reflektorów: skały gry z pozycji lamp; siatka świateł czyta je
+  // w pętli (światła z flagą mapy gasną za skałą — pył i skały).
+  shadows = new SpotShadowMaps({ count: 2, material: new RockShadowMaterial(playMaterial) });
+  grid.shadows = shadows;
   // Czubek skały gry pod płaszczyzną: kadłuby (z = 0) zawsze nad skałą.
   const playZ = (rock) => -rock.r * 1.45 * Math.max(rock.sx, rock.sy, rock.sz);
   playLayer = new RockLayer({
@@ -719,6 +735,7 @@ async function start() {
     perspective: false, renderOrder: 1, zOf: playZ, minPx: 0.7, maxLod: 5, sunT: sunTransmittance
   });
   layers.push(playLayer);
+  for (const L of playLayer.buckets.lods) L.mesh.layers.enable(SHADOW_LAYER);
   const FADE = { [BELT_BAND.RUBBLE]: [0.22, 0.09], [BELT_BAND.MID]: [0.07, 0.03], [BELT_BAND.DEEP]: null };
   for (const band of [BELT_BAND.RUBBLE, BELT_BAND.MID, BELT_BAND.DEEP]) {
     layers.push(new RockLayer({
@@ -731,10 +748,10 @@ async function start() {
   glow = new GlowSprites({ scene: fgScene, capacity: 4096 });
   loading.textContent = 'Kadłuby…';
   try {
-    atlas = await DemoHull.load({ id: 'atlas', url: atlasUrl, editor: ATLAS_EDITOR_DEFAULTS, scene: fgScene, shared });
+    atlas = await DemoHull.load({ id: 'atlas', url: atlasUrl, editor: ATLAS_EDITOR_DEFAULTS, scene: fgScene, shared, owner: 1 });
   } catch (err) { reportError(`Atlas: ${err.stack || err}`); }
   try {
-    escort = await DemoHull.load({ id: 'terran_carrier', url: carrierUrl, editor: SHIP_EDITOR_DEFAULTS.ships?.terran_carrier || null, scene: fgScene, shared });
+    escort = await DemoHull.load({ id: 'terran_carrier', url: carrierUrl, editor: SHIP_EDITOR_DEFAULTS.ships?.terran_carrier || null, scene: fgScene, shared, owner: 2 });
   } catch (err) { reportError(`Eskorta: ${err.stack || err}`); }
   // Kamera od razu na szyku.
   formationCenter(S.cam);
@@ -747,7 +764,7 @@ async function start() {
     dust.setOriginPhase(S.origin.x, S.origin.y);
   }
   // Mgła pasa (płaty beltDust3D) w passie tła.
-  fog = new BeltFog({ renderer, scene: bgScene, field, grid, fieldMap: sunMap });
+  fog = new BeltFog({ renderer, scene: bgScene, fgScene, field, grid, fieldMap: sunMap });
   buildPipeline();
   bindControls();
   loading.textContent = 'Wczytywanie skał pola…';

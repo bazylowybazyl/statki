@@ -17,13 +17,15 @@
 //
 // Światło (4 × vec4): L0 = pozycja (scena) + zasięg, L1 = barwa × moc +
 // rozpraszanie w pyle, L2 = oś reflektora + cos stożka zewn. (−2 = dookólne),
-// L3 = cos stożka wewn., rozbłysk lampy. Tłumienie jak światła pola gry
+// L3 = cos stożka wewn., rozbłysk lampy, mapa cienia (1..n, 0 = bez), właściciel
+// (kadłub nie łapie własnych lamp — jak w grze, gdzie własne lampy kadłuba
+// liczy jego shader osobno). Tłumienie jak światła pola gry
 // (src/3d/fieldLights3D.js): okno do zera na zasięgu × 1/(1 + 4x²).
 
 import * as THREE from 'three/webgpu';
 import {
   Fn, float, int, uint, vec4, uniform, attributeArray, Loop, If,
-  floor, max, length, smoothstep, dot, normalize, positionWorld, cameraViewMatrix
+  floor, max, abs, length, smoothstep, dot, normalize, positionWorld, cameraViewMatrix
 } from 'three/tsl';
 import { buildNavLightClusters, buildRoadLightWorldEmitters } from '../../src/game/shipLightRuntime.js';
 
@@ -63,6 +65,8 @@ export class LightGrid {
     this.invCell = uniform(new THREE.Vector2(1, 1));
     // Mnożnik wszystkich świateł siatki (przełącznik w panelu).
     this.gain = uniform(1);
+    // Mapy cienia reflektorów (spotShadows.js); światło z flagą L3.z gaśnie za skałą.
+    this.shadows = null;
     this.count = 0;
     this.itemsUsed = 0;
     this.dropped = 0;
@@ -79,7 +83,7 @@ export class LightGrid {
    * Dodaje światło (współrzędne SCENY). Zwraca indeks albo −1 (pula pełna).
    * cosOuter ≤ −1,5 = dookólne.
    */
-  add(x, y, z, range, r, g, b, scatter = 0.5, dx = 0, dy = 0, dz = -1, cosOuter = -2, cosInner = 0, flare = 0) {
+  add(x, y, z, range, r, g, b, scatter = 0.5, dx = 0, dy = 0, dz = -1, cosOuter = -2, cosInner = 0, flare = 0, shadow = 0, owner = 0) {
     if (this.count >= LIGHT_CAP || !(range > 1) || !(r + g + b > 1e-5)) return -1;
     const i = this.count++;
     const o = i * FLOATS;
@@ -87,7 +91,7 @@ export class LightGrid {
     L[o] = x; L[o + 1] = y; L[o + 2] = z; L[o + 3] = range;
     L[o + 4] = r; L[o + 5] = g; L[o + 6] = b; L[o + 7] = scatter;
     L[o + 8] = dx; L[o + 9] = dy; L[o + 10] = dz; L[o + 11] = cosOuter;
-    L[o + 12] = cosInner; L[o + 13] = flare; L[o + 14] = 0; L[o + 15] = 0;
+    L[o + 12] = cosInner; L[o + 13] = flare; L[o + 14] = shadow; L[o + 15] = owner;
     return i;
   }
 
@@ -198,9 +202,10 @@ export class LightGrid {
   /**
    * TSL: pętla po światłach komórki punktu P (scena). cb dostaje dla każdego
    * światła w zasięgu: toL (wektor do światła, jednostkowy), att (tłumienie ×
-   * stożek), col (barwa × moc), scatter, dist.
+   * stożek × cień), col (barwa × moc), scatter, dist. skipOwner (węzeł) pomija
+   * światła tego właściciela.
    */
-  loop(P, cb) {
+  loop(P, cb, skipOwner = null) {
     const c = floor(P.xy.sub(this.origin).mul(this.invCell)).toVar();
     If(c.x.greaterThanEqual(0.0).and(c.y.greaterThanEqual(0.0)).and(c.x.lessThan(GRID_NX)).and(c.y.lessThan(GRID_NY)), () => {
       const cell = int(c.y).mul(GRID_NX).add(int(c.x));
@@ -211,16 +216,22 @@ export class LightGrid {
         const d = L0.xyz.sub(P).toVar();
         const dist = length(d).toVar();
         const x = dist.div(max(L0.w, 1.0)).toVar();
-        If(x.lessThan(1.0), () => {
+        const L3 = this.lightNode.element(li.add(uint(3))).toVar();
+        const use = skipOwner ? x.lessThan(1.0).and(abs(L3.w.sub(skipOwner)).greaterThan(0.5)) : x.lessThan(1.0);
+        If(use, () => {
           const L1 = this.lightNode.element(li.add(uint(1)));
           const L2 = this.lightNode.element(li.add(uint(2))).toVar();
-          const L3 = this.lightNode.element(li.add(uint(3)));
           const win = float(1.0).sub(x.mul(x));
           const att = win.mul(win).div(x.mul(x).mul(4.0).add(1.0)).toVar();
           const toL = d.div(max(dist, 1e-3)).toVar();
           If(L2.w.greaterThan(-1.5), () => {
             att.mulAssign(smoothstep(L2.w, L3.x, dot(toL.negate(), normalize(L2.xyz))));
           });
+          if (this.shadows) {
+            If(L3.z.greaterThan(0.5).and(att.greaterThan(1e-4)), () => {
+              att.mulAssign(this.shadows.visibility(L3.z, P));
+            });
+          }
           cb({ toL, att, col: L1.xyz.mul(this.gain), scatter: L1.w, dist });
         });
       });
@@ -247,12 +258,14 @@ class GridLightsNode extends THREE.LightsNode {
     lightingModel.directSpecular.toStack();
     super.setupLights(builder, lightNodes);
     const grid = this.grid;
+    // Kadłub nie łapie świateł własnego statku (materiał ma lightOwner).
+    const skip = builder.material && builder.material.lightOwner ? builder.material.lightOwner : null;
     Fn(() => {
       const P = positionWorld.toVar();
       grid.loop(P, ({ toL, att, col }) => {
         const Lv = normalize(cameraViewMatrix.mul(vec4(toL, 0.0)).xyz);
         builder.lightsNode.setupDirectLight(builder, this, { lightDirection: Lv, lightColor: col.mul(att) });
-      });
+      }, skip);
     }, 'void')();
   }
 }
@@ -283,8 +296,14 @@ const _navOptions = { out: _clusters, time: 0 };
  * lamp pozycyjnych. Współrzędne świata gry → scena względem początku (ox, oy).
  * opts: { floods, nav, strength, time }
  */
+const _farInfo = { n: 0, x: 0, y: 0, z: 0, ax: 0, ay: 0, az: 0, coneDeg: 30, range: 0 };
+
 export function addShipLights(grid, entity, hullLength, ox, oy, opts = {}) {
   const P = FIELD_SHIP_LIGHTS;
+  const shadow = Number.isFinite(opts.shadowIndex) ? opts.shadowIndex + 1 : 0;
+  const owner = opts.owner || 0;
+  const far = _farInfo;
+  far.n = 0; far.x = 0; far.y = 0; far.ax = 0; far.ay = 0;
   const k = opts.strength ?? 1;
   const L = Math.max(100, hullLength || 600);
   const sp = P.spot;
@@ -296,31 +315,47 @@ export function addShipLights(grid, entity, hullLength, ox, oy, opts = {}) {
   const ey = entity.pos.y;
   _emitters.length = 0;
   buildRoadLightWorldEmitters([entity], _emitterOptions);
-  let far = 0;
-  for (const em of _emitters) if (!em.flood) far++;
-  const spot = (x, y, dirX, dirY, prof, intensity, rng, flare) => {
+  let farCount = 0;
+  for (const em of _emitters) if (!em.flood) farCount++;
+  const spot = (x, y, dirX, dirY, prof, intensity, rng, flare, shadowFlag = 0) => {
     const half = Math.max(1, Math.min(170, prof.coneDeg)) * Math.PI / 360;
     const tilt = (prof.tiltDeg ?? 0) * Math.PI / 180;
     const len = Math.hypot(dirX, dirY) || 1;
     const c = prof.color;
+    const ax = (dirX / len) * Math.cos(tilt);
+    const ay = -(dirY / len) * Math.cos(tilt);
+    const az = -Math.sin(tilt);
     grid.add(
       x - ox, -(y - oy), prof.z, rng,
       c[0] * intensity * k, c[1] * intensity * k, c[2] * intensity * k,
-      prof.scatter ?? 1,
-      (dirX / len) * Math.cos(tilt), -(dirY / len) * Math.cos(tilt), -Math.sin(tilt),
-      Math.cos(half), Math.cos(half * (prof.innerFrac ?? 0.45)), flare
+      prof.scatter ?? 1, ax, ay, az,
+      Math.cos(half), Math.cos(half * (prof.innerFrac ?? 0.45)), flare, shadowFlag, owner
     );
+    if (shadowFlag) {
+      // Średnia pozycja i oś reflektorów dalekich — kamera mapy cienia.
+      far.n++;
+      far.x += x - ox; far.y += -(y - oy); far.z = prof.z;
+      far.ax += ax; far.ay += ay; far.az = az;
+      far.coneDeg = prof.coneDeg; far.range = rng;
+    }
   };
-  if (far) {
+  if (farCount) {
     for (const em of _emitters) {
       if (em.flood) continue;
-      spot(em.x, em.y, em.dir.x, em.dir.y, sp, sp.intensity / Math.sqrt(far), range, 1);
+      spot(em.x, em.y, em.dir.x, em.dir.y, sp, sp.intensity / Math.sqrt(farCount), range, 1, shadow);
     }
   } else {
     const side = L * 0.035;
     for (let s = -1; s <= 1; s += 2) {
-      spot(ex + fx * L * 0.47 - fy * side * s, ey + fy * L * 0.47 + fx * side * s, fx, fy, sp, sp.intensity / Math.SQRT2, range, 1);
+      spot(ex + fx * L * 0.47 - fy * side * s, ey + fy * L * 0.47 + fx * side * s, fx, fy, sp, sp.intensity / Math.SQRT2, range, 1, shadow);
     }
+  }
+  if (far.n) {
+    far.x /= far.n; far.y /= far.n;
+    const al = Math.hypot(far.ax, far.ay, far.az) || 1;
+    far.ax /= far.n; far.ay /= far.n;
+    const l2 = Math.hypot(far.ax, far.ay, far.az) || al;
+    far.ax /= l2; far.ay /= l2; far.az /= l2;
   }
   if (opts.floods !== false) {
     const fl = P.flood;
@@ -332,6 +367,8 @@ export function addShipLights(grid, entity, hullLength, ox, oy, opts = {}) {
   }
   const om = P.omni;
   const omRange = Math.min(om.maxRange, Math.max(om.minRange, L * om.rangeMul));
+  // Światło dookoła oświetla też własny kadłub (bez niego w mroku pola kadłub
+  // gasł całkiem); lampy pozycyjne i reflektory własnego kadłuba już nie.
   grid.add(ex - ox, -(ey - oy), om.z, omRange, om.color[0] * om.intensity * k, om.color[1] * om.intensity * k, om.color[2] * om.intensity * k, om.scatter);
   if (opts.nav !== false) {
     const nv = P.nav;
@@ -340,7 +377,9 @@ export function addShipLights(grid, entity, hullLength, ox, oy, opts = {}) {
     for (const c of _clusters) {
       const intensity = nv.intensity * c.power * c.pulse * k;
       grid.add(c.x - ox, -(c.y - oy), nv.z, Math.max(nv.minRange, c.rangeWorld * nv.rangeMul),
-        c.color.r * intensity, c.color.g * intensity, c.color.b * intensity, nv.scatter);
+        c.color.r * intensity, c.color.g * intensity, c.color.b * intensity, nv.scatter,
+        0, 0, -1, -2, 0, 0, 0, owner);
     }
   }
+  return far;
 }

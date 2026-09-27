@@ -4,10 +4,17 @@
 //
 // Stan w buforach storage (pozycja + ziarno, prędkość, barwa po oświetleniu),
 // pojemność 2²¹ drobin przydzielona raz; aktywna liczba to zakres dispatchu.
-// Obszar: pudło wokół kamery (XY ~1,2× kadru przy najmniejszym zoomie, warstwa
-// w Z od −600 do +400 wokół płaszczyzny gry). Drobina, która wyjdzie z pudła,
-// wraca po drugiej stronie z prędkością tła (dryf) — pole wydaje się
-// nieskończone, a zaburzenia się nie teleportują.
+// Obszar: pudło wokół kamery (XY ~1,2× kadru przy najmniejszym zoomie), warstwa
+// POD płaszczyzną gry (z od −700 do 0, odbicie od dna i od płaszczyzny):
+// statki lecą nad pyłem i orzą jego wierzch, skały z niego wystają. Drobina,
+// która wyjdzie z pudła w XY, wraca po drugiej stronie z prędkością tła
+// (dryf) — pole wydaje się nieskończone, a zaburzenia się nie teleportują.
+//
+// Dwa rodzaje drobin: MGIEŁKA (większość — miękkie, słabe plamki, razem dają
+// gęstość ośrodka: zagęszczenia fali i strugi są jaśniejsze, smugi świateł
+// widać jako objętość; jasność normalizowana liczbą drobin, więc suwak
+// zmienia rozdzielczość, nie ilość pyłu) i DROBINY (małe, iskrzące, słabe
+// w słońcu, jasne w światłach).
 //
 // Krok stały 1/120 s (do 4 kroków na klatkę), siły:
 //   • dryf: pole bezdywergencyjne z funkcji prądu (rotacja 2D), słabe
@@ -27,10 +34,9 @@
 // z funkcją fazy Henyeya–Greensteina (jaśniej patrząc pod światło). Drobiny
 // poza kadrem dostają zero i nie rysują się (zerowy rozmiar).
 //
-// Render: instancjonowane kwady w passie gry. Pod płaszczyzną rzut jak skały
-// gry (ortho — pył opływa skały dokładnie tam, gdzie je widać), NAD
-// płaszczyzną paralaksa kamery perspektywicznej tła (drobiny bliżej kamery
-// przesuwają się szybciej i rosną), z zanikiem tuż przy kamerze.
+// Render: instancjonowane kwady w passie gry, rzut jak skały gry (ortho — pył
+// opływa skały dokładnie tam, gdzie je widać). Gdyby warstwa sięgała nad
+// płaszczyznę (zHi > 0), drobiny nad nią dostają paralaksę kamery tła.
 
 import * as THREE from 'three/webgpu';
 import {
@@ -50,11 +56,12 @@ const RG_NY = 32;
 const ROCK_ITEM_CAP = 1 << 16;
 
 export const DUST_DEFAULTS = Object.freeze({
-  zLo: -600,
-  zHi: 400,
+  zLo: -700,
+  zHi: 0,
   step: 1 / 120,
   maxSteps: 4,
   damping: 0.55,          // [1/s] ciągnięcie do prędkości tła
+  quadDrag: 0.0006,       // [1/j.] opór kwadratowy (szybkie drobiny tracą prędkość szybciej)
   driftSpeed: 14,         // [j./s] prędkość tła
   jetSpeed: 3200,         // [j./s] prędkość strugi względem dyszy
   jetLength: 2600,        // [j.] zasięg strugi przy pełnym ciągu
@@ -66,9 +73,12 @@ export const DUST_DEFAULTS = Object.freeze({
   friction: 0.25,
   albedo: 0.55,
   phaseG: 0.35,
+  // Mgiełka: udział, jasność (× 250 tys. / liczba drobin).
+  hazeShare: 0.75,
+  hazeGain: 0.06,
+  // Drobiny: jasność w światłach i udział słońca (słabe w słońcu, bez szumu na cały kadr).
   speckGain: 1.0,
-  puffGain: 0.1,
-  puffShare: 0.12
+  speckSun: 0.22
 });
 
 // Fale funkcji prądu dryfu: [kx, ky, ω, amplituda (× driftSpeed)].
@@ -162,9 +172,12 @@ export class PhysicalDust {
       albedo: uniform(this.cfg.albedo),
       brightness: uniform(1),
       phaseG: uniform(this.cfg.phaseG),
+      hazeShare: uniform(this.cfg.hazeShare),
+      hazeGain: uniform(this.cfg.hazeGain),
+      hazeNorm: uniform(1),
       speckGain: uniform(this.cfg.speckGain),
-      puffGain: uniform(this.cfg.puffGain),
-      puffShare: uniform(this.cfg.puffShare),
+      speckSun: uniform(this.cfg.speckSun),
+      quadDrag: uniform(this.cfg.quadDrag),
       pxMin: uniform(1.3),
       lightOn: uniform(1)
     };
@@ -197,15 +210,16 @@ export class PhysicalDust {
     return select(z.greaterThan(0.0), U.camZ.div(max(U.camZ.sub(z), U.camZ.mul(0.25))), float(1.0));
   }
 
+  /** 1 = mgiełka, 0 = drobina. */
   _kindOf(seed) {
-    return select(seed.lessThan(this.U.puffShare), float(1.0), float(0.0));
+    return select(seed.lessThan(this.U.hazeShare), float(1.0), float(0.0));
   }
 
   _sizeOf(seed, kind) {
     const f = seed.mul(13.7).fract();
-    const speck = f.mul(f).mul(2.6).add(1.7);
-    const puff = seed.mul(5.3).fract().mul(34.0).add(16.0);
-    return mix(speck, puff, kind);
+    const speck = f.mul(f).mul(1.9).add(1.1);
+    const haze = seed.mul(5.3).fract().mul(26.0).add(18.0);
+    return mix(speck, haze, kind);
   }
 
   _buildCompute() {
@@ -255,6 +269,9 @@ export class PhysicalDust {
       // Dryf i tłumienie: pole wraca do prędkości tła.
       const vd = this._drift(p).toVar();
       v.addAssign(vd.sub(v).mul(U.dampK));
+      // Opór kwadratowy: struga i fala nie ciągną pyłu przez pół pola.
+      const dv = v.sub(vd).toVar();
+      v.subAssign(dv.mul(min(length(dv).mul(U.quadDrag).mul(U.dt), 0.5)));
 
       // Dysze: stożek za dyszą, dociąganie do prędkości strugi.
       Loop(U.nozCount, ({ i }) => {
@@ -369,15 +386,21 @@ export class PhysicalDust {
         });
       });
 
-      // Zawinięcie pudła: drobina wraca po drugiej stronie z prędkością tła.
+      // Warstwa w z: odbicie od płaszczyzny gry i od dna (bez przeskoków).
+      If(p.z.greaterThan(U.zHi), () => {
+        p.assign(vec3(p.x, p.y, max(U.zHi.mul(2.0).sub(p.z), U.zLo)));
+        v.assign(vec3(v.x, v.y, abs(v.z).mul(-0.4)));
+      });
+      If(p.z.lessThan(U.zLo), () => {
+        p.assign(vec3(p.x, p.y, min(U.zLo.mul(2.0).sub(p.z), U.zHi)));
+        v.assign(vec3(v.x, v.y, abs(v.z).mul(0.4)));
+      });
+      // Zawinięcie pudła w XY: drobina wraca po drugiej stronie z prędkością tła.
       const rel = p.xy.sub(U.boxCenter).toVar();
-      const out = abs(rel.x).greaterThan(U.boxHalf.x).or(abs(rel.y).greaterThan(U.boxHalf.y)).or(p.z.lessThan(U.zLo)).or(p.z.greaterThan(U.zHi));
-      If(out, () => {
+      If(abs(rel.x).greaterThan(U.boxHalf.x).or(abs(rel.y).greaterThan(U.boxHalf.y)), () => {
         const span = U.boxHalf.mul(2.0);
         const wrapped = rel.sub(span.mul(floor(rel.add(U.boxHalf).div(span))));
-        const zs = U.zHi.sub(U.zLo);
-        const zr = p.z.sub(U.zLo);
-        p.assign(vec3(U.boxCenter.add(wrapped), U.zLo.add(zr.sub(zs.mul(floor(zr.div(zs)))))));
+        p.assign(vec3(U.boxCenter.add(wrapped), p.z));
         v.assign(this._drift(p));
       });
 
@@ -397,11 +420,10 @@ export class PhysicalDust {
       const sp = p.xy.sub(U.camXY).mul(k).toVar();
       const size = this._sizeOf(seed, kind).mul(k);
       const inView = abs(sp.x).lessThan(U.viewHalf.x.add(size)).and(abs(sp.y).lessThan(U.viewHalf.y.add(size)));
-      // Zanik tuż przy kamerze (nad płaszczyzną) i przy dnie warstwy.
+      // Zanik tuż przy kamerze (gdyby warstwa sięgała nad płaszczyznę) i przy dnie.
       const near = float(1.0).sub(smoothstep(U.camZ.mul(0.55), U.camZ.mul(0.72), p.z));
-      const bottom = smoothstep(U.zLo, U.zLo.add(120.0), p.z);
-      const top = float(1.0).sub(smoothstep(U.zHi.sub(120.0), U.zHi, p.z));
-      const fade = near.mul(bottom).mul(top).toVar();
+      const bottom = smoothstep(U.zLo, U.zLo.add(160.0), p.z);
+      const fade = near.mul(bottom).toVar();
       If(inView.not().or(fade.lessThan(0.002)).or(U.lightOn.lessThan(0.5)), () => {
         col.element(instanceIndex).assign(vec4(0.0));
         Return();
@@ -410,7 +432,8 @@ export class PhysicalDust {
       const muv = clamp(p.xy.sub(this.sunMap.origin).mul(this.sunMap.invSize), 0.0, 1.0);
       const T = mix(float(1.0), texture(this.sunMap.texture, muv).level(0).r, U.sunOcc).toVar();
       const fill = mix(float(0.22), float(1.0), T).mul(float(1.0).sub(float(1.0).sub(T).mul(0.92)));
-      const acc = U.sunCol.mul(T).mul(U.sunPhase).add(U.ambient.mul(fill)).toVar();
+      const sunAcc = U.sunCol.mul(T).mul(U.sunPhase).add(U.ambient.mul(fill));
+      const acc = vec3(0).toVar();
       // Światła siatki: funkcja fazy HG (widok z góry: kierunek do kamery +z).
       const g = U.phaseG;
       const g2 = g.mul(g);
@@ -419,8 +442,12 @@ export class PhysicalDust {
         const ph = float(1.0).sub(g2).div(pow(max(g2.add(1.0).sub(g.mul(2.0).mul(cosT)), 1e-4), 1.5));
         acc.addAssign(lc.mul(att).mul(scatter).mul(ph));
       });
-      const gain = mix(U.speckGain, U.puffGain, kind);
-      const c = acc.mul(U.albedo).mul(U.brightness).mul(gain).mul(fade);
+      // Drobiny iskrzą (obracają się w świetle), w słońcu są słabe; mgiełka
+      // bierze całe światło, jasność normalizowana liczbą drobin.
+      const twinkle = sin(U.time.mul(seed.mul(3.1).fract().mul(1.9).add(0.7)).add(seed.mul(40.0))).mul(0.45).add(0.55);
+      const speckC = sunAcc.mul(U.speckSun).add(acc).mul(U.speckGain).mul(twinkle);
+      const hazeC = sunAcc.add(acc).mul(U.hazeGain).mul(U.hazeNorm);
+      const c = mix(speckC, hazeC, kind).mul(U.albedo).mul(U.brightness).mul(fade);
       col.element(instanceIndex).assign(vec4(min(c, vec3(64.0)), fade));
     })().compute(DUST_CAP).setName('dustLight');
   }
@@ -453,7 +480,7 @@ export class PhysicalDust {
       const k = this._parallax(p.z).toVar();
       const center = vec3(U.camXY.add(p.xy.sub(U.camXY).mul(k)), p.z);
       const px = this._sizeOf(seed, kind).mul(U.zoom).mul(k).toVar();
-      const maxPx = mix(float(9.0), float(140.0), kind);
+      const maxPx = mix(float(8.0), float(160.0), kind);
       const pxC = clamp(px, U.pxMin, maxPx).toVar();
       // Drobina mniejsza od piksela: stały rozmiar, jasność ~ powierzchnia.
       const energy = min(px.div(pxC), 1.0);
@@ -466,8 +493,8 @@ export class PhysicalDust {
       const q = uv().sub(0.5).mul(2.0);
       const r2 = dot(q, q);
       const speck = exp(r2.mul(-4.2));
-      const puff = exp(r2.mul(-2.4)).mul(float(1.0).sub(smoothstep(0.55, 1.0, r2)));
-      const prof = mix(speck, puff, vKind);
+      const haze = exp(r2.mul(-2.2)).mul(float(1.0).sub(smoothstep(0.55, 1.0, r2)));
+      const prof = mix(speck, haze, vKind);
       return vec4(vCol.mul(prof), 0.0);
     })();
     this.material = mat;
@@ -488,6 +515,8 @@ export class PhysicalDust {
     if (target > this.count) this._init(this.count, target - this.count);
     this.count = target;
     this.U.count.value = target;
+    // Mgiełka: ta sama gęstość optyczna ośrodka przy każdej liczbie drobin.
+    this.U.hazeNorm.value = 250000 / Math.max(1, target);
     this.mesh.count = target;
   }
 

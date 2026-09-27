@@ -141,9 +141,11 @@ function buildHullSdf(img, hullW, hullH) {
 class HullNodeMaterial extends THREE.NodeMaterial {
   static get type() { return 'HullNodeMaterial'; }
 
-  constructor({ map, shared, hullW, hullH, texW, texH }) {
+  constructor({ map, shared, hullW, hullH, texW, texH, owner = 0 }) {
     super();
     this.lights = true;
+    // Właściciel świateł (lights.js): kadłub nie łapie własnych lamp i reflektorów.
+    this.lightOwner = uniform(owner);
     this.fog = false;
     this.alphaTest = 0.5;
     this.map = map;
@@ -213,15 +215,16 @@ class HullNodeMaterial extends THREE.NodeMaterial {
  * @param {object} o.editor dane edytora (engines, lights)
  */
 export class DemoHull {
-  static async load({ id, url, editor, scene, shared }) {
+  static async load({ id, url, editor, scene, shared, owner = 0 }) {
     const img = await loadImage(url);
     const hull = new DemoHull();
-    await hull._init({ id, img, editor, scene, shared });
+    await hull._init({ id, img, editor, scene, shared, owner });
     return hull;
   }
 
-  async _init({ id, img, editor, scene, shared }) {
+  async _init({ id, img, editor, scene, shared, owner }) {
     this.id = id;
+    this.owner = owner;
     const size = getHullRenderSize(id, img.naturalWidth, img.naturalHeight);
     this.w = size.w;
     this.h = size.h;
@@ -233,7 +236,7 @@ export class DemoHull {
     map.generateMipmaps = true;
     map.minFilter = THREE.LinearMipmapLinearFilter;
     map.needsUpdate = true;
-    this.material = new HullNodeMaterial({ map, shared, hullW: size.w, hullH: size.h, texW: img.naturalWidth, texH: img.naturalHeight });
+    this.material = new HullNodeMaterial({ map, shared, hullW: size.w, hullH: size.h, texW: img.naturalWidth, texH: img.naturalHeight, owner });
     this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(size.w, size.h), this.material);
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = 5;

@@ -1,8 +1,10 @@
 // dema/asteroidy-webgpu/fog.js
 //
 // Mgła pasa jako osobna warstwa — port płatów src/3d/beltDust3D.js do TSL:
-// siedem płatów objętości na głębokościach 420–20 500 j. pod płaszczyzną gry
-// (pass tła, kamera persp., test głębi ze skałami tła), kafelkowany szum 2D
+// płaty objętości pod płaszczyzną gry — DWA PŁYTKIE (200 i 600 j.) w passie
+// gry (kamera ortho, test głębi ze skałami gry: dolne części skał toną w mgle,
+// czubki wystają) i sześć głębszych (1300–20 500 j.) w passie tła (kamera
+// persp., test głębi ze skałami tła), kafelkowany szum 2D
 // (tu z compute do tekstury storage), gęstość makro pola w wierzchołkach
 // siatki 36 × 36 kotwiczonej w świecie, samocień w stronę słońca, pochłanianie
 // (blend premultiplied „over”). Światła siatki (lights.js) rozpraszają się
@@ -17,9 +19,11 @@ import {
 } from 'three/tsl';
 import { stormIntensity } from '../../src/game/asteroidStorms.js';
 
-// Z beltDust3D.js (DUST_SLICES, DUST_LOOK_DEFAULTS, GRID, DUST_NOISE_WRAP).
+// Z beltDust3D.js (DUST_SLICES od 1300 j., DUST_LOOK_DEFAULTS, GRID,
+// DUST_NOISE_WRAP). Płytkie płaty (fg) w passie gry — mgła na wysokości skał.
 export const DUST_SLICES = Object.freeze([
-  Object.freeze({ depth: 420, scale: 9000, alpha: 0.10, drift: 0.8 }),
+  Object.freeze({ depth: 200, scale: 7000, alpha: 0.09, drift: 0.9, fg: true }),
+  Object.freeze({ depth: 600, scale: 10000, alpha: 0.11, drift: 0.7, fg: true }),
   Object.freeze({ depth: 1300, scale: 14000, alpha: 0.11, drift: 0.6 }),
   Object.freeze({ depth: 2800, scale: 21000, alpha: 0.13, drift: 0.45 }),
   Object.freeze({ depth: 5200, scale: 31000, alpha: 0.15, drift: 0.35 }),
@@ -121,18 +125,21 @@ export class BeltFog {
   /**
    * @param {object} o
    * @param {THREE.WebGPURenderer} o.renderer
-   * @param {THREE.Scene} o.scene pass tła
+   * @param {THREE.Scene} o.scene pass tła (głębokie płaty)
+   * @param {THREE.Scene} o.fgScene pass gry (płytkie płaty)
    * @param {import('../../src/game/asteroidBeltField.js').AsteroidBeltField} o.field
    * @param {import('./lights.js').LightGrid} o.grid
    * @param {import('./sunMap.js').SunFieldMap} o.fieldMap mapa transmitancji słońca (wspólna z pyłem)
    */
-  constructor({ renderer, scene, field, grid, fieldMap }) {
+  constructor({ renderer, scene, fgScene, field, grid, fieldMap }) {
     this.field = field;
     this.look = { ...DUST_LOOK_DEFAULTS };
     this.enabled = true;
     this.noise = bakeFogNoise(renderer);
     this.group = new THREE.Group();
     this.group.name = 'beltFog';
+    this.fgGroup = new THREE.Group();
+    this.fgGroup.name = 'beltFogFg';
     this._macroCache = new Map();
     this.U = {
       rockLit: uniform(new THREE.Vector3(...this.look.rockLit)),
@@ -150,8 +157,9 @@ export class BeltFog {
       lightScatter: uniform(1)
     };
     this.slices = DUST_SLICES.map((def, i) => this._makeSlice(def, i, grid, fieldMap));
-    for (const s of this.slices) this.group.add(s.mesh);
+    for (const s of this.slices) (s.def.fg ? this.fgGroup : this.group).add(s.mesh);
     scene.add(this.group);
+    fgScene.add(this.fgGroup);
   }
 
   _makeSlice(def, i, grid, fieldMap) {
@@ -230,8 +238,9 @@ export class BeltFog {
     })();
     const mesh = new THREE.Mesh(geo, mat);
     mesh.frustumCulled = false;
-    // Najgłębszy płat najpierw (kolejka przezroczysta sortuje po renderOrder).
-    mesh.renderOrder = 10 + (DUST_SLICES.length - 1 - i);
+    // Najgłębszy płat najpierw (kolejka przezroczysta sortuje po renderOrder);
+    // w passie gry przed duszkami blasku (20) i pyłem (30).
+    mesh.renderOrder = def.fg ? 8 + (2 - i) : 10 + (DUST_SLICES.length - 1 - i);
     mesh.name = `beltFog_${i}`;
     return { def, mesh, geo, S, step: 0, gx: NaN, gy: NaN, maxFog: 0 };
   }
@@ -239,6 +248,7 @@ export class BeltFog {
   setVisible(v) {
     this.enabled = !!v;
     this.group.visible = this.enabled;
+    this.fgGroup.visible = this.enabled;
   }
 
   _macro(wx, wy, step) {
@@ -270,7 +280,8 @@ export class BeltFog {
     this.U.sunOcc.value = f.sunOcc ? 1 : 0;
     for (const s of this.slices) {
       const def = s.def;
-      const spread = (camZ + def.depth) / camZ;
+      // Płytkie płaty w passie gry: kamera ortho, kadr bez rozszerzenia perspektywy.
+      const spread = def.fg ? 1 : (camZ + def.depth) / camZ;
       const halfW = (f.viewW * 0.5 / zoom) * spread * 1.08;
       const halfH = (f.viewH * 0.5 / zoom) * spread * 1.08;
       const span = Math.max(halfW, halfH) * 2;

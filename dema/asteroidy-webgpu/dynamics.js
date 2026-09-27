@@ -12,9 +12,11 @@ import { EXPLOSION_CAP, SHOT_CAP } from './dust.js';
 const EXPLOSION_LIFE = 1.9;
 const SHOT_SPEED = 3400;
 const SHOT_LIFE = 1.8;
+// Flary: głównie ciepłe i chłodne biele (sygnałowe, magnezowe), rzadko barwne —
+// setki barwnych świateł robiły z ciemnego rdzenia pola dyskotekę.
 const FLARE_COLORS = [
-  [1.0, 0.62, 0.28], [0.35, 0.8, 1.0], [1.0, 0.35, 0.72], [0.45, 1.0, 0.5],
-  [0.95, 0.9, 0.8], [0.6, 0.45, 1.0], [1.0, 0.85, 0.35]
+  [1.0, 0.78, 0.52], [1.0, 0.78, 0.52], [1.0, 0.7, 0.42], [0.8, 0.88, 1.0],
+  [0.8, 0.88, 1.0], [0.95, 0.93, 0.88], [1.0, 0.45, 0.3], [0.45, 0.85, 1.0]
 ];
 
 // Świecące typy skał (indeksy ROCK_TYPES): kryształ, uran, energetyczna.
@@ -111,7 +113,8 @@ export class Dynamics {
       f.x += f.vx * dt;
       f.y += f.vy * dt;
       f.z += f.vz * dt;
-      if (f.z > 260 || f.z < -260) f.vz = -f.vz;
+      // Flary dryfują w warstwie pyłu (pod płaszczyzną gry).
+      if ((f.z > 60 && f.vz > 0) || (f.z < -520 && f.vz < 0)) f.vz = -f.vz;
       const out = f.x < b.x0 || f.x > b.x1 || f.y < b.y0 || f.y > b.y1;
       if (out || time - f.t0 > f.life) f.dead = true;
     }
@@ -123,9 +126,9 @@ export class Dynamics {
       const sp = 20 + rng() * 70;
       const a = rng() * Math.PI * 2;
       this.flares.push({
-        x: b.x0 + rng() * (b.x1 - b.x0), y: b.y0 + rng() * (b.y1 - b.y0), z: -150 + rng() * 380,
+        x: b.x0 + rng() * (b.x1 - b.x0), y: b.y0 + rng() * (b.y1 - b.y0), z: -480 + rng() * 520,
         vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, vz: (rng() - 0.5) * 30,
-        color: c, power: 0.7 + rng() * 0.8, range: 380 + rng() * 620,
+        color: c, power: 0.22 + rng() * 0.3, range: 300 + rng() * 450,
         t0: time - rng() * 4, life: 7 + rng() * 9, phase: rng() * 10
       });
     }
@@ -218,8 +221,9 @@ export class Dynamics {
     for (const f of this.flares) {
       const a = time - f.t0;
       const env = Math.max(0, Math.min(1, a / 1.2) * Math.min(1, (f.life - a) / 1.5));
-      const k = 2.2 * env * f.power;
-      glow.add(f.x - ox, -(f.y - oy), Math.max(f.z, 2), 26, f.color[0] * k, f.color[1] * k, f.color[2] * k, GLOW_ROUND);
+      // Flara pod płaszczyzną (z < 0) — w mgle i pyle, blask słabszy.
+      const k = 3.2 * env * f.power * (f.z < 0 ? 0.6 : 1);
+      glow.add(f.x - ox, -(f.y - oy), f.z, 16, f.color[0] * k, f.color[1] * k, f.color[2] * k, GLOW_ROUND);
     }
   }
 }

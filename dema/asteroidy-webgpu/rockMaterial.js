@@ -20,7 +20,7 @@
 import * as THREE from 'three/webgpu';
 import {
   Fn, float, int, vec3, vec4, uniform, uniformArray, attribute, varyingProperty,
-  texture, texture3D, positionGeometry, positionView, positionViewDirection, cameraViewMatrix,
+  texture, texture3D, positionGeometry, positionView, positionViewDirection, positionWorld, cameraViewMatrix,
   If, select, mix, smoothstep, clamp, fract, floor, abs, sign, sqrt, pow, sin, cos, log2,
   min, max, dot, cross, normalize, reflect, step, dFdx, dFdy, fwidth, diffuseColor
 } from 'three/tsl';
@@ -161,7 +161,7 @@ export class RockNodeMaterial extends THREE.NodeMaterial {
     this._surf = null;
   }
 
-  _buildVertex() {
+  _buildVertex(withVaryings = true) {
     const S = this.S;
     const L = this.L;
     const V = this.V;
@@ -186,13 +186,15 @@ export class RockNodeMaterial extends THREE.NodeMaterial {
       const q = quatMul(vec4(iSpin.xyz.mul(sin(ang)), cos(ang)), iRot).toVar();
       const pObj = dir.mul(r).mul(iStretch.xyz).toVar();
       const local = quatRotate(q, pObj).mul(iPos.w.mul(fadeScale));
-      const lod = log2(max(1.0, S.shapeSize.mul(2.8284).div(max(1.0, radiusPx.mul(6.2832)))));
-      V.dir.assign(dir);
-      V.objP.assign(pObj.mul(iPos.w));
-      V.rot.assign(q);
-      V.stretchR.assign(vec4(iStretch.xyz, iPos.w));
-      V.info.assign(vec4(float(layer), iShape.y, iShape.z, lod));
-      V.misc.assign(vec4(radiusPx, pxPerUnit, depth, iStretch.w));
+      if (withVaryings) {
+        const lod = log2(max(1.0, S.shapeSize.mul(2.8284).div(max(1.0, radiusPx.mul(6.2832)))));
+        V.dir.assign(dir);
+        V.objP.assign(pObj.mul(iPos.w));
+        V.rot.assign(q);
+        V.stretchR.assign(vec4(iStretch.xyz, iPos.w));
+        V.info.assign(vec4(float(layer), iShape.y, iShape.z, lod));
+        V.misc.assign(vec4(radiusPx, pxPerUnit, depth, iStretch.w));
+      }
       return iPos.xyz.add(local);
     })();
   }
@@ -540,5 +542,29 @@ export class RockNodeMaterial extends THREE.NodeMaterial {
       N: Nv, V: Vv, mu, diffAlbedo, lunarK: S.lunar.mul(float(1.0).sub(metal)), wrap: S.wrap,
       gloss, specK, specTint, sparkBase, sparkCol, sunVis, emissive
     };
+  }
+}
+
+/**
+ * Mapa cienia reflektora: skały gry renderowane z pozycji lampy, wyjście
+ * = 1 / odległość od lampy (0 = brak zasłony). Ten sam wierzchołek co
+ * materiał skał (kształt z banku, obrót w czasie, próg pikseli warstwy).
+ */
+export class RockShadowMaterial extends THREE.NodeMaterial {
+  static get type() { return 'RockShadowMaterial'; }
+
+  constructor(source) {
+    super();
+    this.lights = false;
+    this.fog = false;
+    this.lightPos = uniform(new THREE.Vector3());
+    this.S = source.S;
+    this.L = source.L;
+    this.V = source.V;
+    this.positionNode = RockNodeMaterial.prototype._buildVertex.call(this, false);
+    this.fragmentNode = Fn(() => {
+      const d = positionWorld.sub(this.lightPos).length();
+      return vec4(float(1.0).div(max(d, 1.0)), 0.0, 0.0, 1.0);
+    })();
   }
 }
