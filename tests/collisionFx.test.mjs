@@ -338,8 +338,9 @@ function countSparks(emitFn) {
 }
 
 test('szew dzieli budżet iskier między punkty, nie mnoży go przez ich liczbę', () => {
-  const bounceForce = 400;
+  const approachSpeed = 40;
   const slideSpeed = 60;
+  const budget = 48;
   const points = new Float32Array(6 * 4);
   for (let p = 0; p < 6; p++) {
     points[p * 4] = p * 50;      // szew długi na 250 jednostek
@@ -349,13 +350,13 @@ test('szew dzieli budżet iskier między punkty, nie mnoży go przez ich liczbę
   }
 
   const burst = countSparks(() => {
-    SparkSystem3D.grindingBurst(0, 0, 0, -1, 1, 0, bounceForce, slideSpeed, 0, 0);
+    SparkSystem3D.grindingBurst(0, 0, 0, -1, 1, 0, approachSpeed, slideSpeed, 0, 0, budget);
   });
   const seam = countSparks(() => {
-    SparkSystem3D.grindingSeam(points, 6, 1, 0, bounceForce, slideSpeed, 0, 0);
+    SparkSystem3D.grindingSeam(points, 6, 1, 0, approachSpeed, slideSpeed, 0, 0, budget);
   });
 
-  assert.ok(burst.length > 0);
+  assert.equal(burst.length, budget, 'snop wysypuje dokładnie podany budżet');
   assert.equal(seam.length, burst.length, 'ten sam budżet iskier, inny rozkład');
 
   // Snop z centroidu siedzi wokół jednego punktu; szew rozkłada się na całej długości.
@@ -368,9 +369,9 @@ test('szew dzieli budżet iskier między punkty, nie mnoży go przez ich liczbę
 test('jeden punkt szwu spada z powrotem na dawny snop', () => {
   const points = new Float32Array([120, -40, 0, 1]);
   const seam = countSparks(() => {
-    SparkSystem3D.grindingSeam(points, 1, 1, 0, 400, 60, 0, 0);
+    SparkSystem3D.grindingSeam(points, 1, 1, 0, 40, 60, 0, 0, 30);
   });
-  assert.ok(seam.length > 0);
+  assert.equal(seam.length, 30);
   const cx = seam.reduce((sum, p) => sum + p[0], 0) / seam.length;
   assert.ok(Math.abs(cx - 120) < 200, 'fallback iskrzy w podanym punkcie');
 });

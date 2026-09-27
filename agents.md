@@ -92,6 +92,7 @@
 - `src/3d/engineVfxSystem.js` rozdziela dysze: MAIN → `mainExhaust3D.js` (struga + iskry z `Fx3D.spark`, jedna pula na flotę), WARP → `warpPlume3D.js` (plazma z tych samych dysz MAIN na czas ładowania/skoku, pula z limitem `WARP_PLUME_CAP`, nadmiar dostaje strugę MAIN z dopalaczem), SIDE → stary `engineExhaustBatch.js`.
 - Rozmiar i palety MAIN/WARP są PER STATEK: blok `engineFx` w danych edytora (`hpEditor.v1` → `ships[id]`), domyślne dopasowane do sprite'ów w `src/data/engineFx.js` (`ENGINE_FX_DEFAULTS`). Dysza w pikselach PNG, w grze × hpScale × spriteScale (jak markery). Gra czyta `visual.engineFx` (runtime NPC, układ gracza); nowy kadłub z dyszami MAIN potrzebuje wpisu w `ENGINE_FX_DEFAULTS` (pilnuje test).
 - Tryb skoku encji: gracz z `GameState.warp`, NPC `state === 'warping_in'` / `phase === 'warping'`, podgląd edytora `__warpPreview`. Dopalacz MAIN: `GameState.boost`.
+- Jasność dysz SIDE: `ENGINE_HDR` w `engineExhaustBatch.js` (0,6). W bloomie ma świecić tylko dysza, która odpala (mnożnik 1 + 1,5 · ciąg); biały „pilot” w spoczynku (= `ENGINE_HDR`) i sam lot (`moveGlow`) zostają pod progiem 0,9 — przy 2,4 każda z 8 dysz Atlasa świeciła jak lampa, a manewr zalewał burtę białą plamą (pilnuje `tests/renderBugfixGuards.test.mjs`). MAIN zostaje 1:1 z dema (świadomie). Audyt: `docs/AUDYT-bloom-kolizje-2026-09-26.md`.
 - Gorące powietrze dysz = port maski z dema plazmy w uberPass (`Core3D`): źródło z kierunkiem (`pushHeatHazeWorld(..., dirX, dirY)`) to DYSZA — `radiusWorld` = promień wylotu, siła = rampa mocy; stożek 7R zaczyna się ~1R za wylotem (dysze siedzą na krawędzi kadłuba), przesunięcie ~0,12 promienia dyszy na ekranie. Źródła bez kierunku (wybuchy, rakiety, tarcze) liczą się po staremu.
 - Shadery efektów w passie ortho: bez `pow()` z możliwie ujemną podstawą i z clampem varyingów — MSAA ekstrapoluje je poza trójkąt, a NaN w buforze HalfFloat bloom rozlewa na cały ekran.
 
@@ -103,6 +104,8 @@
 ### Pociski, kolizje, efekty
 - Tablice `bullets`, `particles`.
 - `bulletsAndCollisionsStep(dt)` — ruch, trafienia, eksplozje, applyImpact.
+- Efekty zderzeń kadłubów idą przez `CollisionFX` (`grind` co krok styku, `impact` raz na zetknięcie). `bounceForce` w zdarzeniu to IMPULS (masa × v; na belkach 10⁵–10⁶) — nie skaluj nim efektów. Iskry tarcia (`src/vfx/collisionSparks.js`): budżet = TEMPO z prędkości styku (`COLLISION_SPARKS_TUNE`) w czasie symulacji pary, plus jednorazowy snop na `impact`; jasność iskry przez `gain` w `SparkSystem3D.emit` (atrybut `iGain`, tarcie < 1, trafienia 1). Dawny budżet „na wywołanie z impulsu” sypał 6–10 tys. iskier/s przy zwykłym taranie.
+- Żar skóry kadłubów belkowych: szczyt `HULL_BODY_CONFIG.heatGlowPeak` (nie `DESTRUCTOR_CONFIG.heatGlowPeak`, ten zostaje heksom — asteroidy).
 
 ### Nośnik prędkości: pociski i efekty lecą z tym, z czego wyszły
 - Pocisk dziedziczy 100% prędkości lufy (ruch + obrót kadłuba, `writePointVelocity`, `src/game/carrierVelocity.js`) i niesie znaczniki: `ivx/ivy` (odziedziczona część), `clock` (gracz/P2 — `CLOCK_RENDER`, reszta `CLOCK_SIM`), `bornSim` (czas pozy lufy). Nowe źródło pocisków robi to samo — bez znaczników smuga, zasięg i kierunek trafienia liczą się w świecie.
@@ -135,6 +138,7 @@
 1. **Core3D (`src/3d/core3d.js`)**
    - Modyfikacje renderera/composera/blooma/alpha-pass rób wyłącznie tutaj.
    - Parametry bloomu (strength/radius/threshold, także dla overlay3D) żyją w `src/3d/bloomConfig.js` — jedyne źródło prawdy; tuner (panel Bloom) nadpisuje je trwale tylko z `?dev` w URL.
+   - `UnrealBloomPass` (three r183) przepuszcza przez próg CAŁY teksel (nie nadmiar) i dokłada ~9 × strength jego energii (radius tylko przesuwa wagę między mipami; rozmycia gubią ~3%): Core3D 0,85 → ~7,5×, overlay3D 1,6 przy progu 0,15 → ~14× prawie wszystkiego. Jasność nowego emitera dobieraj z tym w głowie.
    - Pipeline jest HDR-first: emitery (pociski, beamy, dysze) mnożą kolory >1.0, próg bloomu ~0.9 odcina zwykłe powierzchnie. Nowe efekty, które mają świecić, muszą wypychać luminancję >1.
    - Nie duplikuj postprocessingu w innych modułach.
    - Passy planet (warstwa 3), halo (5), ring-planet (6) i tarcz (7) są pomijane, gdy nikt nie zgłosi na nich widocznej zawartości (`Core3D.layerActivity`). Dodając obiekt na te warstwy, zgłaszaj go co klatkę (`Core3D.markPlanetLayersActive` / `Core3D.setShieldLayerActive`) — inaczej zniknie.

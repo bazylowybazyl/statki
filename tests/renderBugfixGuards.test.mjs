@@ -58,6 +58,27 @@ test('haze reaktora i rakiet w osi sceny (y3d = -yGry); fala z refrakcją tylko 
   assert.match(code('src/effects3d/rocketSystem3D.js'), /explosionStyle === "supernova"\) \{\s*const triggerShockwave = window\.trigger3DShockwave;/);
 });
 
+test('dysza SIDE świeci w bloomie tylko przy manewrze (audyt 2026-09-26)', () => {
+  // Barwa płomienia = rdzeń ENGINE_HDR (biały) / brzeg z kelwinów (kanał ≤ 1)
+  // × bloomGain gracza (domyślnie 1,1) × ENGINE_HDR, całość × (1 + 1,5 · ciąg).
+  // Przy 2,4 każda z 8 dysz bocznych Atlasa świeciła w spoczynku jak lampa,
+  // a odpalona zalewała burtę białą plamą.
+  const threshold = Number(read('src/3d/bloomConfig.js').match(/threshold: ([0-9.]+),/)?.[1]);
+  const hdr = Number(read('src/3d/engineExhaustBatch.js').match(/const ENGINE_HDR = ([0-9.]+);/)?.[1]);
+  const defaultBloomGain = Number(indexHtml.match(/vfx: \{ colorTempK: \d+, bloomGain: ([0-9.]+),/)?.[1]);
+  assert.ok(threshold > 0 && hdr > 0 && defaultBloomGain > 0);
+  // Filtr bloomu patrzy na luminancję: brzeg z kelwinów (domyślnie 8000 K + 4000 K · ciąg)
+  // ma ją ≤ 0,90 kanału maksymalnego, rdzeń jest biały.
+  const EDGE_LUM = 0.9;
+  const lum = (mult) => Math.max(hdr, hdr * Math.max(1, defaultBloomGain) * EDGE_LUM) * mult;
+  assert.ok(lum(1) < threshold, `pilot SIDE w spoczynku (${lum(1).toFixed(2)}) ponad progiem ${threshold}`);
+  // Lot bez manewru: moveGlow ≤ 0,48 → ciąg dyszy bocznej ≤ 0,48 · 0,55.
+  const cruise = lum(1 + 1.5 * 0.48 * 0.55);
+  assert.ok(cruise < threshold, `dysza SIDE w samym locie (${cruise.toFixed(2)}) ponad progiem ${threshold}`);
+  // Pełny manewr ma wyraźnie błysnąć.
+  assert.ok(hdr * 2.5 > threshold * 1.5, `odpalona dysza SIDE (${hdr * 2.5}) ledwo nad progiem`);
+});
+
 test('bloom overlaya: efekty tylko przez modyfikatory, bez zapisu/przywracania bazy', () => {
   const overlay = read('src/effects3d/overlay.js');
   assert.match(overlay, /setBloomModifier: \(key, modifier\) =>/);

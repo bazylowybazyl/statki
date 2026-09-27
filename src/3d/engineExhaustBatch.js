@@ -32,8 +32,15 @@ const MAX_NOZZLES = 4096;
 // dyszom — reszta ma tylko poświatę sprite'ową i nikt tego nie zauważy.
 const MAX_ENGINE_LIGHTS = 24;
 
-// HDR: plazma dyszy musi przekraczać próg bloomu (src/3d/bloomConfig.js).
-const ENGINE_HDR = 2.4;
+// HDR rdzenia dyszy bocznej. Płomień mnoży barwę jeszcze przez (1 + 1,5 · ciąg),
+// a w spoczynku zostaje biały „pilot” (glowAlpha) o jasności równej ENGINE_HDR.
+// Przy 2,4 (dawniej) KAŻDA dysza — Atlas ma ich 8 — świeciła w spoczynku bielą
+// HDR 2,4 z poświatą bloomu Core3D (~7,5× energii ponad progiem 0,9), w samym
+// locie (moveGlow) ~3,3, a przy manewrze do HDR 6 (w „diamentach” ~11) — biała
+// plama zalewała burtę. Przy 0,6 pilot (0,6) i lot (≤ 0,84) są pod progiem,
+// a w bloomie świeci tylko dysza, która faktycznie odpala: pełny manewr 1,5
+// (diamenty ~2,9). Audyt: docs/AUDYT-bloom-kolizje-2026-09-26.md.
+const ENGINE_HDR = 0.6;
 
 // Głębokości z oryginalnej hierarchii: grupa dyszy siedziała na z=-5, a w niej
 // płomień 0, heat glow 0.1, ring 0.2, flara 1.5.

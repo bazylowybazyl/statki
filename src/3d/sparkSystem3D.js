@@ -23,15 +23,18 @@ const sparkVertexShader = /* glsl */`
   attribute float iLifeTime;
   attribute float iSize;
   attribute vec4 iCarrier;
+  attribute float iGain;
 
   varying float vAge;
   varying vec2 vUv;
   varying float vSpeed;
   varying float vStartTime;
+  varying float vGain;
 
   void main() {
     vUv = uv;
     vStartTime = iStartTime;
+    vGain = iGain;
 
     // Guard: Bezpieczne cull-owanie (unikamy czarnych kwadratow na niektorych sterownikach GPU)
     if (iLifeTime <= 0.0) {
@@ -90,6 +93,7 @@ const sparkFragmentShader = /* glsl */`
   varying vec2 vUv;
   varying float vSpeed;
   varying float vStartTime;
+  varying float vGain;
 
   void main() {
     if (vAge < 0.0 || vAge > 1.0) discard;
@@ -116,7 +120,9 @@ const sparkFragmentShader = /* glsl */`
 
     float boost = mix(4.0, 0.5, pow(vAge, 0.5));
 
-    gl_FragColor = vec4(color * intensity * boost, intensity);
+    // vGain: jasność serii (emit, argument gain). Iskry trafień mają 1, tarcie
+    // kadłubów mniej — pod bloomem overlaya (próg 0,15) każda iskra świeci.
+    gl_FragColor = vec4(color * intensity * boost * vGain, intensity);
   }
 `;
 
@@ -127,11 +133,16 @@ const MAX_SPARK_SIZE = 0.9;
 const MIN_SPARK_LIFE = 0.05;
 const MAX_SPARK_LIFE = 0.9;
 const MAX_GRINDING_VISUAL_ENERGY = 650;
+// Energia wyrzutu snopu tarcia z prędkości styku (j./s): sufit 650 przy ~240 j./s.
+// Dawniej liczona z IMPULSU (masa × prędkość) — przy masach kadłubów na belkach
+// (10⁵–10⁶) sufit był osiągany przy każdym dotyku, więc dosunięcie burtą
+// sypało jak taran.
+const GRIND_ENERGY_PER_SPEED = 2.7;
 
 let mesh = null;
 let material = null;
 let geometry = null;
-let iPositions, iVelocities, iStartTimes, iLifeTimes, iSizes, iCarriers;
+let iPositions, iVelocities, iStartTimes, iLifeTimes, iSizes, iCarriers, iGains;
 let carrierEpoch = 0;
 let idx = 0;
 let isDirty = false;
@@ -203,6 +214,18 @@ function randomGaussian() {
   return ((Math.random() + Math.random() + Math.random()) / 1.5) - 1.0;
 }
 
+// Kształt snopu tarcia z prędkości styku: energia wyrzutu i udział normalnej
+// (zbliżanie) względem stycznej (poślizg) w kierunku snopu.
+const _grindShape = { visualEnergy: 0, bounceRatio: 0 };
+function grindShape(approachSpeed, slideSpeed) {
+  const approach = Math.max(0, Number(approachSpeed) || 0);
+  const slide = Math.abs(Number(slideSpeed) || 0);
+  const speed = approach + slide;
+  _grindShape.visualEnergy = Math.min(MAX_GRINDING_VISUAL_ENERGY, speed * GRIND_ENERGY_PER_SPEED);
+  _grindShape.bounceRatio = speed > 1e-6 ? approach / speed : 0;
+  return _grindShape;
+}
+
 // Kierunek glowny snopu: normalna + znos z poslizgu.
 const _mainDir = { x: 0, y: 0 };
 function grindMainDir(normalX, normalY, tangentX, tangentY, bounceRatio) {
@@ -218,7 +241,7 @@ function grindMainDir(normalX, normalY, tangentX, tangentY, bounceRatio) {
 // (snop w centroidzie) i grindingSeam (snopy wzdluz szwu). Dobor predkosci,
 // zycia i rozmiaru czastki siedzi tylko tutaj, zeby obie sciezki nie rozjechaly
 // sie przy pierwszym strojeniu.
-function emitGrindCluster(x, y, normalX, normalY, tangentX, tangentY, count, visualEnergy, spreadRadius, baseVx, baseVy, bounceRatio) {
+function emitGrindCluster(x, y, normalX, normalY, tangentX, tangentY, count, visualEnergy, spreadRadius, baseVx, baseVy, bounceRatio, gain) {
   const mainDir = grindMainDir(normalX, normalY, tangentX, tangentY, bounceRatio);
   const mDx = mainDir.x;
   const mDy = mainDir.y;
@@ -243,7 +266,7 @@ function emitGrindCluster(x, y, normalX, normalY, tangentX, tangentY, count, vis
     const lifeTime = 0.1 + (weight * 0.5) + Math.random() * 0.2;
     const size = 0.18 + weight * 0.42;
 
-    SparkSystem3D.emit(pX, pY, vX, vY, lifeTime, size);
+    SparkSystem3D.emit(pX, pY, vX, vY, lifeTime, size, gain);
   }
 }
 
@@ -276,6 +299,7 @@ export const SparkSystem3D = {
     iLifeTimes  = new Float32Array(MAX_SPARKS);
     iSizes      = new Float32Array(MAX_SPARKS);
     iCarriers   = new Float32Array(MAX_SPARKS * 4);
+    iGains      = new Float32Array(MAX_SPARKS).fill(1.0);
 
     geometry.setAttribute('iPosition',  new THREE.InstancedBufferAttribute(iPositions, 3));
     geometry.setAttribute('iVelocity',  new THREE.InstancedBufferAttribute(iVelocities, 3));
@@ -283,6 +307,7 @@ export const SparkSystem3D = {
     geometry.setAttribute('iLifeTime',  new THREE.InstancedBufferAttribute(iLifeTimes, 1));
     geometry.setAttribute('iSize',      new THREE.InstancedBufferAttribute(iSizes, 1));
     geometry.setAttribute('iCarrier',   new THREE.InstancedBufferAttribute(iCarriers, 4));
+    geometry.setAttribute('iGain',      new THREE.InstancedBufferAttribute(iGains, 1));
     carrierEpoch = SimClock.sim;
 
     material = new THREE.ShaderMaterial({
@@ -313,7 +338,8 @@ export const SparkSystem3D = {
 
   // vx, vy = ruch WŁASNY iskry; prędkość kadłuba dokłada ActiveCarrier (nośnik
   // ustawiony przez wołającego wokół serii, np. trafienia w pędzący okręt).
-  emit(gameX, gameY, vx, vy, life, size) {
+  // gain = jasność iskry (1 = iskra trafienia; tarcie kadłubów podaje mniej).
+  emit(gameX, gameY, vx, vy, life, size, gain = 1) {
     if (!this.isInitialized) return;
     if (highWater === 0) {
       const o = cameraOrigin();
@@ -346,6 +372,7 @@ export const SparkSystem3D = {
     iStartTimes[i] = globalTime;
     iLifeTimes[i]  = clampedLife;
     iSizes[i]      = THREE.MathUtils.clamp(size !== undefined ? size : 0.5, MIN_SPARK_SIZE, MAX_SPARK_SIZE);
+    iGains[i]      = Number.isFinite(gain) ? Math.max(0, gain) : 1;
 
     if (i + 1 > highWater) highWater = i + 1;
     if (dirtyLo < 0 || i < dirtyLo) dirtyLo = i;
@@ -388,7 +415,7 @@ export const SparkSystem3D = {
       const attrs = geometry.attributes;
       const lo = dirtyLo;
       const count = dirtyHi - lo + 1;
-      const list = [attrs.iPosition, attrs.iVelocity, attrs.iStartTime, attrs.iLifeTime, attrs.iSize, attrs.iCarrier];
+      const list = [attrs.iPosition, attrs.iVelocity, attrs.iStartTime, attrs.iLifeTime, attrs.iSize, attrs.iCarrier, attrs.iGain];
       for (const attr of list) {
         const items = attr.itemSize || 1;
         // Zakresy z klatek bez uploadu kumuluja sie (three czysci je dopiero po
@@ -415,28 +442,25 @@ export const SparkSystem3D = {
     }
   },
 
-  // Nowa funkcja dla tarcia i zderzen statkow.
-  // Jeden snop w jednym punkcie — zostaje jako fallback dla par, ktore nie
-  // niosa probek szwu (pointCount <= 1).
-  grindingBurst(gameX, gameY, normalX, normalY, tangentX, tangentY, bounceForce, slideSpeed, baseVx, baseVy) {
+  // Tarcie i zderzenia kadłubów. `count` = ile iskier wysypać TERAZ: budżet
+  // (tempo × czas styku) liczy subskrybent (src/vfx/collisionSparks.js), tu
+  // zostaje kształt snopu. Prędkości styku w j./s — zbliżanie po normalnej
+  // i poślizg — dają prędkość wyrzutu i kierunek (normalna vs styczna).
+  // Jeden snop w jednym punkcie — fallback dla par bez próbek szwu (pointCount <= 1).
+  grindingBurst(gameX, gameY, normalX, normalY, tangentX, tangentY, approachSpeed, slideSpeed, baseVx, baseVy, count, gain = 1) {
     if (!this.isInitialized) return;
-
-    // Calkowita energia decyduje o sile wyrzutu i progu minimalnym
-    const totalEnergy = bounceForce + Math.abs(slideSpeed) * 3.0;
-    if (totalEnergy < 15) return;
-    const visualEnergy = Math.min(totalEnergy, MAX_GRINDING_VISUAL_ENERGY);
-
-    const count = Math.min(120, Math.floor(5 + totalEnergy * 0.15));
-    const bounceRatio = Math.min(1.0, bounceForce / (totalEnergy + 0.001));
+    const n = Math.max(0, Math.floor(Number(count) || 0));
+    if (n <= 0) return;
+    const shape = grindShape(approachSpeed, slideSpeed);
     // Snop z jednego punktu musi udawac caly szew, stad rozrzut z ENERGII.
-    const spreadRadius = Math.min(180, visualEnergy * 0.28);
+    const spreadRadius = Math.min(180, shape.visualEnergy * 0.28);
 
     emitGrindCluster(
       gameX, gameY,
       normalX, normalY,
       tangentX, tangentY,
-      count, visualEnergy, spreadRadius,
-      baseVx, baseVy, bounceRatio
+      n, shape.visualEnergy, spreadRadius,
+      baseVx, baseVy, shape.bounceRatio, gain
     );
   },
 
@@ -447,12 +471,14 @@ export const SparkSystem3D = {
   // Budzet iskier jest TEN SAM co w grindingBurst — dzielimy go miedzy punkty,
   // nie mnozymy przez ich liczbe. Otarcie burta w burte ma wygladac na dluzsze,
   // nie na jasniejsze.
-  grindingSeam(points, pointCount, tangentX, tangentY, bounceForce, slideSpeed, baseVx, baseVy) {
+  grindingSeam(points, pointCount, tangentX, tangentY, approachSpeed, slideSpeed, baseVx, baseVy, count, gain = 1) {
     if (!this.isInitialized) return;
 
     const available = points ? (points.length >> 2) : 0;
     const n = Math.min(Math.max(0, pointCount | 0), available);
     if (n <= 0) return;
+    const total = Math.max(0, Math.floor(Number(count) || 0));
+    if (total <= 0) return;
     if (n === 1) {
       // Normalna kontaktu idzie z B do A; grindingBurst dostaje ja odwrocona
       // (patrz wywolanie sprzed rozbicia na szew) — zachowujemy ten sam zwrot.
@@ -460,18 +486,12 @@ export const SparkSystem3D = {
         points[0], points[1],
         -points[2], -points[3],
         tangentX, tangentY,
-        bounceForce, slideSpeed, baseVx, baseVy
+        approachSpeed, slideSpeed, baseVx, baseVy, total, gain
       );
       return;
     }
 
-    const totalEnergy = bounceForce + Math.abs(slideSpeed) * 3.0;
-    if (totalEnergy < 15) return;
-    const visualEnergy = Math.min(totalEnergy, MAX_GRINDING_VISUAL_ENERGY);
-
-    const count = Math.min(120, Math.floor(5 + totalEnergy * 0.15));
-    if (count <= 0) return;
-    const bounceRatio = Math.min(1.0, bounceForce / (totalEnergy + 0.001));
+    const shape = grindShape(approachSpeed, slideSpeed);
 
     // Rozrzut wzdluz stycznej = POLOWA odstepu miedzy sasiednimi punktami.
     // Szew jest juz pokryty probkami, wiec kazdy snop ma tylko domknac luke do
@@ -480,12 +500,14 @@ export const SparkSystem3D = {
     const seamLength = Math.hypot(points[lastBase] - points[0], points[lastBase + 1] - points[1]);
     const spreadRadius = Math.max(4, (seamLength / (n - 1)) * 0.5);
 
+    // Podział przez skumulowany próg z losowym przesunięciem: suma udziałów to
+    // DOKŁADNIE `total`, a przy budżecie mniejszym niż liczba punktów iskry nie
+    // lecą co krok z tych samych punktów szwu (stały próg faworyzował końce).
+    const offset = Math.random();
     let emitted = 0;
     for (let p = 0; p < n; p++) {
       const base = p * 4;
-      // Podzial przez skumulowany prog: suma udzialow to DOKLADNIE `count`,
-      // niezaleznie od reszty z dzielenia.
-      const share = Math.floor((count * (p + 1)) / n) - emitted;
+      const share = Math.floor((total * (p + 1)) / n + offset) - emitted;
       if (share <= 0) continue;
       emitted += share;
 
@@ -493,8 +515,8 @@ export const SparkSystem3D = {
         points[base], points[base + 1],
         -points[base + 2], -points[base + 3],
         tangentX, tangentY,
-        share, visualEnergy, spreadRadius,
-        baseVx, baseVy, bounceRatio
+        share, shape.visualEnergy, spreadRadius,
+        baseVx, baseVy, shape.bounceRatio, gain
       );
     }
   },
@@ -509,7 +531,7 @@ export const SparkSystem3D = {
     if (geometry) geometry.dispose();
     if (material) material.dispose();
     mesh = null; geometry = null; material = null;
-    iPositions = null; iVelocities = null; iStartTimes = null; iLifeTimes = null; iSizes = null; iCarriers = null;
+    iPositions = null; iVelocities = null; iStartTimes = null; iLifeTimes = null; iSizes = null; iCarriers = null; iGains = null;
     carrierEpoch = 0;
     idx = 0;
     isDirty = false;
