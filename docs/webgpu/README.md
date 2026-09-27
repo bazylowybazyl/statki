@@ -91,11 +91,21 @@ node scripts/webgpu/zrzuty.mjs --backend webgpu --out .tmp/webgpu/zadania/NN --b
 | różne >2 / >8 / >32 | % pikseli różniących się o więcej niż 2 / 8 / 32 (z 255) w którymkolwiek kanale |
 | `średnia`, `maks` | średnia i największa różnica kanału |
 | w progu szumu | różnica ≤ 1,5 × szum dwóch przebiegów bazy (+ mały zapas) — „nic się nie zmieniło” |
-| w tolerancji portu | różnica ≤ `tolerancjaPortu` z `baseline.json` (kalibruje zadanie 02) — „ten sam obraz, inny renderer” |
+| w tolerancji portu | różnica ≤ `tolerancjaPortu` z `baseline.json` (od zadania 02: >8/255 w ≤ 0,05% pikseli, średnia ≤ 0,03) — „ten sam obraz, inny renderer” |
 | obok siebie | `<scena>-obok.png` (baza \| nowy \| mapa różnic, pół rozdzielczości), `<scena>-roznica.png` (pełna mapa: szarość = różnica × 4, czerwień > 32/255) |
 
 Scena z zamiennikami (`spis.zamienniki` > 0 w `wyniki.json`) nie musi być w tolerancji — patrz na jej warianty warstw.
 Regresje względem poprzedniego zadania: `node scripts/webgpu/porownaj.mjs --a .tmp/webgpu/zadania/<poprzednie>/webgpu --b .tmp/webgpu/zadania/NN/webgpu --out .tmp/webgpu/zadania/NN/vs-poprzednie`.
+
+Tolerancję skalibrowano na `kalibracja__ortho` (mało sylwetek: 0,44% pikseli na krawędziach). Różnica renderer↔renderer to
+wyłącznie piksele sylwetek po resolve MSAA (~4% pikseli krawędzi, pokrycie o jedną próbkę) — scena gęstsza (ring, K-7,
+bitwa) może przekroczyć próg mimo zgodności; wtedy rozstrzyga mapa różnic (różnice tylko na sylwetkach, wnętrza ≤ 2/255).
+Szczegóły i pomiary: `baseline.json` → `tolerancjaPortu`.
+
+Poza harnessem (post, zadanie 02): `node scripts/webgpu/post-kontrola.mjs` — tuner bloomu, `perfToggles.bloom`, MSAA 4 → 0 → 4,
+pula znaczników czasu, bloom raz na render w podzielonym ekranie (kod wyjścia 1 przy porażce);
+`node scripts/webgpu/gorace-powietrze.mjs [--root <worktree tagu>]` — kalibracja z czterema źródłami gorącego powietrza i bitwa
+z gorącym powietrzem i bez, ta sama scena na WebGL i WebGPU (porównanie: `porownaj.mjs`).
 
 ### Nowe efekty z dem (zadania 17–22)
 

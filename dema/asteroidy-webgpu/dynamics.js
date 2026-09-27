@@ -1,13 +1,15 @@
 // dema/asteroidy-webgpu/dynamics.js
 //
-// Zdarzenia i źródła światła dema: wybuchy (fala w pyle + błysk), pociski
-// (lecące światło + ślad w pyle, wybuch przy trafieniu w skałę), światło dysz,
+// Zdarzenia i źródła światła dema: wybuchy (błysk + łuna w pyle), pociski
+// (lecące światło, wybuch przy trafieniu w skałę), światło dysz,
 // świecące skały (każda skała energetyczna, kryształu i uranu przy kadrze =
 // światło) i flary dryfujące w polu (dopełniają liczbę świateł do suwaka).
 // Stan w świecie gry (double), do GPU idzie względem początku sceny.
 
 import { GLOW_ROUND, GLOW_STREAK } from './glowSprites.js';
-import { EXPLOSION_CAP, SHOT_CAP } from './dust.js';
+
+export const EXPLOSION_CAP = 8;
+export const SHOT_CAP = 16;
 
 const EXPLOSION_LIFE = 1.9;
 const SHOT_SPEED = 3400;
@@ -18,6 +20,11 @@ const FLARE_COLORS = [
   [1.0, 0.78, 0.52], [1.0, 0.78, 0.52], [1.0, 0.7, 0.42], [0.8, 0.88, 1.0],
   [0.8, 0.88, 1.0], [0.95, 0.93, 0.88], [1.0, 0.45, 0.3], [0.45, 0.85, 1.0]
 ];
+
+// Moc flar (światło na skałach, blask duszka): głęboka noc ma być czarna poza
+// reflektorami — flary to pojedyncze punkty, nie gwiazdozbiór (2026-09-27).
+const FLARE_LIGHT = 0.55;
+const FLARE_GLOW = 1.7;
 
 // Świecące typy skał (indeksy ROCK_TYPES): kryształ, uran, energetyczna.
 const GLOW_ROCK = { 4: [0.34, 0.82, 1.0], 6: [0.34, 1.0, 0.24], 8: [0.62, 0.5, 1.0] };
@@ -134,27 +141,6 @@ export class Dynamics {
     }
   }
 
-  /** Uniformy pyłu na chwilę t kroku (wybuchy, odcinki lotu pocisków). */
-  fillDust(dust, t, h, ox, oy, blastGain) {
-    const U = dust.U;
-    for (let i = 0; i < EXPLOSION_CAP; i++) {
-      const e = this.explosions[i];
-      if (!e) { U.expB.array[i].set(0, 0, 0, 0); continue; }
-      const age = Math.max(0, t - e.t0);
-      U.expA.array[i].set(e.x - ox, -(e.y - oy), 0, age);
-      U.expB.array[i].set(e.power * blastGain, dust.cfg.blastSpeed, 150 + 40 * e.power, age < 1.6 ? 1 : 0);
-    }
-    for (let i = 0; i < SHOT_CAP; i++) {
-      const s = this.shots[i];
-      if (!s) { U.shotB.array[i].set(0, 0, 0, 0); continue; }
-      // Odcinek lotu w tym kroku (pozycja z ruchu jednostajnego).
-      const a0 = Math.max(0, t - h - s.t0);
-      const a1 = Math.max(0, t - s.t0);
-      U.shotA.array[i].set(s.sx + s.vx * a0 - ox, -(s.sy + s.vy * a0 - oy), 0, dust.cfg.shotRadius);
-      U.shotB.array[i].set(s.sx + s.vx * a1 - ox, -(s.sy + s.vy * a1 - oy), 0, 1);
-    }
-  }
-
   /** Światła wybuchów, pocisków, flar i świecących skał (scena). */
   addLights(grid, ox, oy, time, ctx) {
     for (const e of this.explosions) {
@@ -178,7 +164,8 @@ export class Dynamics {
       const bx = hull.x - c * hull.length * 0.62;
       const by = hull.y - s * hull.length * 0.62;
       const t = hull.thrust;
-      grid.add(bx - ox, -(by - oy), 30, 700 + 1500 * t, 0.45 * t, 0.85 * t, 1.9 * t, 0.9);
+      // W pyle dysza świeci umiarkowanie (przy 0,9 łuna za rufą zalewała pół kadru).
+      grid.add(bx - ox, -(by - oy), 30, 700 + 1500 * t, 0.45 * t, 0.85 * t, 1.9 * t, 0.18);
       engines++;
     }
     this.stats.engineLights = engines;
@@ -194,7 +181,9 @@ export class Dynamics {
         const size = Math.min(1.4, Math.max(0.45, Math.sqrt(rock.r / 400)));
         let I = 0.75 * size * (0.3 + 0.7 * dark);
         if (rock.type === 8) I *= 0.7 + 0.3 * Math.sin(time * (1.1 + (rock.seed * 7.1 % 1) * 1.4) + rock.seed * 43.7);
-        if (grid.add(rock.x - ox, -(rock.y - oy), rock.r * 0.25, Math.min(2600, rock.r * 4 + 400), col[0] * I, col[1] * I, col[2] * I, 0.5) >= 0) rockLights++;
+        // W pyle skała świeci lekko (halo wokół bryły) — przy 0,5 skały energetyczne
+        // burzy zalewały fioletem cały ośrodek.
+        if (grid.add(rock.x - ox, -(rock.y - oy), rock.r * 0.25, Math.min(2600, rock.r * 4 + 400), col[0] * I, col[1] * I, col[2] * I, rock.type === 8 ? 0.1 : 0.12) >= 0) rockLights++;
       });
     }
     this.stats.rockLights = rockLights;
@@ -202,8 +191,9 @@ export class Dynamics {
       const a = time - f.t0;
       const env = Math.min(1, a / 1.2) * Math.min(1, (f.life - a) / 1.5);
       const flick = 0.85 + 0.15 * Math.sin(time * 9 + f.phase) * Math.sin(time * 5.3 + f.phase * 2);
-      const I = f.power * Math.max(0, env) * flick;
-      grid.add(f.x - ox, -(f.y - oy), f.z, f.range, f.color[0] * I, f.color[1] * I, f.color[2] * I, 0.7);
+      const I = f.power * FLARE_LIGHT * Math.max(0, env) * flick;
+      // W pyle flara tylko lekko (setki flar rozlewały światło na cały ośrodek).
+      grid.add(f.x - ox, -(f.y - oy), f.z, f.range, f.color[0] * I, f.color[1] * I, f.color[2] * I, 0.02);
     }
   }
 
@@ -222,7 +212,7 @@ export class Dynamics {
       const a = time - f.t0;
       const env = Math.max(0, Math.min(1, a / 1.2) * Math.min(1, (f.life - a) / 1.5));
       // Flara pod płaszczyzną (z < 0) — w mgle i pyle, blask słabszy.
-      const k = 3.2 * env * f.power * (f.z < 0 ? 0.6 : 1);
+      const k = FLARE_GLOW * env * f.power * (f.z < 0 ? 0.6 : 1);
       glow.add(f.x - ox, -(f.y - oy), f.z, 16, f.color[0] * k, f.color[1] * k, f.color[2] * k, GLOW_ROUND);
     }
   }

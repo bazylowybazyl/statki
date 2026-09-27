@@ -35,13 +35,32 @@ export const GRID_NY = 40;
 export const ITEM_CAP = 1 << 18;
 const FLOATS = 16;
 
-// Profil świateł pola dla kadłuba — KOPIA FIELD_SHIP_LIGHTS z
-// src/3d/fieldLights3D.js (moduł importuje three z WebGL).
+// Profil świateł pola dla kadłuba — na bazie FIELD_SHIP_LIGHTS z
+// src/3d/fieldLights3D.js (moduł importuje three z WebGL), podkręcony pod
+// światło wolumetryczne dema WebGPU (prośba użytkownika 2026-09-27: „smuga
+// światła ze świateł głównych i bocznych w ciemnościach, boczne lepsze niż
+// w WebGL, bo tam ledwo świeciły”):
+//   • spot  — reflektory dalekie (dziób): smuga w pyle z cieniem skał; stożek
+//             36° (30° był za wąski — prośba użytkownika 2026-09-27);
+//   • flood — reflektory otoczenia (rufa, burty): moc ×2,6, zasięg ×1,6,
+//             węższy stożek (76° zamiast 110°) z jasnością gasnącą od osi do
+//             brzegu, mniej pochylone — smugi na boki, każda z mapą cienia;
+//   • omni  — światło dookoła kadłuba: w pyle prawie nic (szara mgła na kadr);
+//   • nav   — czerwone lampy pozycyjne: czerwona poświata w pyle.
 export const FIELD_SHIP_LIGHTS = Object.freeze({
-  spot: Object.freeze({ rangeMul: 6.5, minRange: 2600, maxRange: 14000, coneDeg: 30, innerFrac: 0.45, intensity: 2.4, color: [1.0, 0.94, 0.84], z: 140, tiltDeg: 5, beam: 1.0 }),
-  omni: Object.freeze({ rangeMul: 1.15, minRange: 700, maxRange: 2800, intensity: 0.5, color: [0.74, 0.84, 1.0], z: 320, scatter: 0.12 }),
-  flood: Object.freeze({ rangeMul: 0.55, minRange: 450, maxRange: 2400, coneDeg: 110, innerFrac: 0.35, intensity: 1.0, color: [0.92, 0.95, 1.0], z: 60, tiltDeg: 16, beam: 0.3, flare: 0.2, scatter: 0.25 }),
-  nav: Object.freeze({ intensity: 0.075, z: 40, rangeMul: 1.0, minRange: 320, scatter: 0.35 })
+  spot: Object.freeze({ rangeMul: 6.5, minRange: 2600, maxRange: 14000, coneDeg: 36, innerFrac: 0.45, intensity: 2.6, color: [1.0, 0.94, 0.84], z: 140, tiltDeg: 5, beam: 1.0, scatter: 0.8, flare: 1 }),
+  omni: Object.freeze({ rangeMul: 1.15, minRange: 700, maxRange: 2800, intensity: 0.5, color: [0.74, 0.84, 1.0], z: 320, scatter: 0.06 }),
+  flood: Object.freeze({ rangeMul: 0.9, minRange: 800, maxRange: 3400, coneDeg: 76, innerFrac: 0.0, intensity: 2.8, color: [0.9, 0.95, 1.0], z: 70, tiltDeg: 10, beam: 0.8, flare: 0.45, scatter: 0.16 }),
+  nav: Object.freeze({ intensity: 0.075, z: 40, rangeMul: 1.0, minRange: 320, scatter: 0.2 })
+});
+
+// Pod stropem olbrzyma (tunel, jaskinia): reflektory pochylone do dna,
+// szersze światło dookoła (jak CAVE_SHIP_LIGHTS w demie WebGL).
+export const CAVE_SHIP_LIGHTS = Object.freeze({
+  spot: Object.freeze({ ...FIELD_SHIP_LIGHTS.spot, tiltDeg: 14 }),
+  omni: Object.freeze({ ...FIELD_SHIP_LIGHTS.omni, rangeMul: 3.2, maxRange: 6500, intensity: 0.8, scatter: 0.04 }),
+  flood: Object.freeze({ ...FIELD_SHIP_LIGHTS.flood, tiltDeg: 18 }),
+  nav: FIELD_SHIP_LIGHTS.nav
 });
 
 /**
@@ -225,7 +244,10 @@ export class LightGrid {
           const att = win.mul(win).div(x.mul(x).mul(4.0).add(1.0)).toVar();
           const toL = d.div(max(dist, 1e-3)).toVar();
           If(L2.w.greaterThan(-1.5), () => {
-            att.mulAssign(smoothstep(L2.w, L3.x, dot(toL.negate(), normalize(L2.xyz))));
+            // Stożek z miękkim brzegiem (smoothstep²: jasny środek, łagodny zanik
+            // ku krawędzi — bez twardych „łopat” szerokich reflektorów w pyle).
+            const cone = smoothstep(L2.w, L3.x, dot(toL.negate(), normalize(L2.xyz)));
+            att.mulAssign(cone.mul(cone));
           });
           if (this.shadows) {
             If(L3.z.greaterThan(0.5).and(att.greaterThan(1e-4)), () => {
@@ -289,24 +311,43 @@ const _emitters = [];
 const _clusters = [];
 const _emitterOptions = { out: _emitters, maxEmitters: 12 };
 const _navOptions = { out: _clusters, time: 0 };
+const _far = [];
+const _farPool = [];
+const _farInfo = { n: 0, x: 0, y: 0, z: 0, ax: 0, ay: 0, az: 0, coneDeg: 36, range: 0, shadow: 0 };
+
+const _axis = { ax: 0, ay: 0, az: 0 };
+
+function spotAxis(dirX, dirY, tiltDeg, out) {
+  const tilt = (tiltDeg ?? 0) * Math.PI / 180;
+  const len = Math.hypot(dirX, dirY) || 1;
+  out.ax = (dirX / len) * Math.cos(tilt);
+  out.ay = -(dirY / len) * Math.cos(tilt);
+  out.az = -Math.sin(tilt);
+  return out;
+}
 
 /**
  * Światła pola statku: reflektory dalekie (znaczniki `road` edytora),
- * reflektory otoczenia (`flood`, z obrysu), światło dookoła, grupy czerwonych
- * lamp pozycyjnych. Współrzędne świata gry → scena względem początku (ox, oy).
- * opts: { floods, nav, strength, time }
+ * reflektory otoczenia (`flood`, z obrysu: rufa i burty), światło dookoła,
+ * grupy czerwonych lamp pozycyjnych. Współrzędne świata gry → scena względem
+ * początku (ox, oy).
+ * opts: { floods, nav, strength, time, owner, profile, shadows (ShadowAtlas) }
+ * Reflektory dalekie dzielą jedną mapę cienia (średnia poza pary na dziobie),
+ * każdy reflektor otoczenia ma własną (kafel atlasu) — w smudze w pyle widać
+ * cień skał, a skała za skałą nie łapie światła.
  */
-const _farInfo = { n: 0, x: 0, y: 0, z: 0, ax: 0, ay: 0, az: 0, coneDeg: 30, range: 0 };
-
 export function addShipLights(grid, entity, hullLength, ox, oy, opts = {}) {
-  const P = FIELD_SHIP_LIGHTS;
-  const shadow = Number.isFinite(opts.shadowIndex) ? opts.shadowIndex + 1 : 0;
+  const prof = opts.profile || FIELD_SHIP_LIGHTS;
+  const sp = prof.spot || FIELD_SHIP_LIGHTS.spot;
+  const fl = prof.flood || FIELD_SHIP_LIGHTS.flood;
+  const om = prof.omni || FIELD_SHIP_LIGHTS.omni;
+  const nv = prof.nav || FIELD_SHIP_LIGHTS.nav;
+  const atlas = opts.shadows || null;
   const owner = opts.owner || 0;
   const far = _farInfo;
-  far.n = 0; far.x = 0; far.y = 0; far.ax = 0; far.ay = 0;
+  far.n = 0; far.x = 0; far.y = 0; far.z = sp.z; far.ax = 0; far.ay = 0; far.az = 0; far.shadow = 0;
   const k = opts.strength ?? 1;
   const L = Math.max(100, hullLength || 600);
-  const sp = P.spot;
   const range = Math.min(sp.maxRange, Math.max(sp.minRange, L * sp.rangeMul));
   const angle = Number(entity.angle) || 0;
   const fx = Math.cos(angle);
@@ -315,63 +356,68 @@ export function addShipLights(grid, entity, hullLength, ox, oy, opts = {}) {
   const ey = entity.pos.y;
   _emitters.length = 0;
   buildRoadLightWorldEmitters([entity], _emitterOptions);
-  let farCount = 0;
-  for (const em of _emitters) if (!em.flood) farCount++;
-  const spot = (x, y, dirX, dirY, prof, intensity, rng, flare, shadowFlag = 0) => {
-    const half = Math.max(1, Math.min(170, prof.coneDeg)) * Math.PI / 360;
-    const tilt = (prof.tiltDeg ?? 0) * Math.PI / 180;
-    const len = Math.hypot(dirX, dirY) || 1;
-    const c = prof.color;
-    const ax = (dirX / len) * Math.cos(tilt);
-    const ay = -(dirY / len) * Math.cos(tilt);
-    const az = -Math.sin(tilt);
-    grid.add(
-      x - ox, -(y - oy), prof.z, rng,
-      c[0] * intensity * k, c[1] * intensity * k, c[2] * intensity * k,
-      prof.scatter ?? 1, ax, ay, az,
-      Math.cos(half), Math.cos(half * (prof.innerFrac ?? 0.45)), flare, shadowFlag, owner
-    );
-    if (shadowFlag) {
-      // Średnia pozycja i oś reflektorów dalekich — kamera mapy cienia.
-      far.n++;
-      far.x += x - ox; far.y += -(y - oy); far.z = prof.z;
-      far.ax += ax; far.ay += ay; far.az = az;
-      far.coneDeg = prof.coneDeg; far.range = rng;
-    }
+  // Reflektory dalekie: ze znaczników `road` albo para na dziobie.
+  _far.length = 0;
+  const pushFar = (x, y, dx, dy) => {
+    const f = _farPool[_far.length] || (_farPool[_far.length] = { x: 0, y: 0, dx: 0, dy: 0, ax: 0, ay: 0, az: 0 });
+    f.x = x; f.y = y; f.dx = dx; f.dy = dy;
+    _far.push(f);
   };
-  if (farCount) {
-    for (const em of _emitters) {
-      if (em.flood) continue;
-      spot(em.x, em.y, em.dir.x, em.dir.y, sp, sp.intensity / Math.sqrt(farCount), range, 1, shadow);
-    }
-  } else {
+  for (const em of _emitters) {
+    if (!em.flood) pushFar(em.x, em.y, em.dir.x, em.dir.y);
+  }
+  if (!_far.length) {
     const side = L * 0.035;
-    for (let s = -1; s <= 1; s += 2) {
-      spot(ex + fx * L * 0.47 - fy * side * s, ey + fy * L * 0.47 + fx * side * s, fx, fy, sp, sp.intensity / Math.SQRT2, range, 1, shadow);
-    }
+    for (let s = -1; s <= 1; s += 2) pushFar(ex + fx * L * 0.47 - fy * side * s, ey + fy * L * 0.47 + fx * side * s, fx, fy);
   }
-  if (far.n) {
-    far.x /= far.n; far.y /= far.n;
-    const al = Math.hypot(far.ax, far.ay, far.az) || 1;
-    far.ax /= far.n; far.ay /= far.n;
-    const l2 = Math.hypot(far.ax, far.ay, far.az) || al;
-    far.ax /= l2; far.ay /= l2; far.az /= l2;
+  const a = _axis;
+  for (const f of _far) {
+    spotAxis(f.dx, f.dy, sp.tiltDeg, a);
+    f.ax = a.ax; f.ay = a.ay; f.az = a.az;
+    far.n++;
+    far.x += f.x - ox; far.y += -(f.y - oy);
+    far.ax += a.ax; far.ay += a.ay; far.az += a.az;
   }
+  far.x /= far.n; far.y /= far.n;
+  const al = Math.hypot(far.ax, far.ay, far.az) || 1;
+  far.ax /= al; far.ay /= al; far.az /= al;
+  far.coneDeg = sp.coneDeg;
+  far.range = range;
+  if (atlas && opts.spotShadows !== false) far.shadow = atlas.request(true, far.x, far.y, sp.z, far.ax, far.ay, far.az, sp.coneDeg, range);
+  const half = Math.max(1, Math.min(170, sp.coneDeg)) * Math.PI / 360;
+  const I = sp.intensity / Math.sqrt(_far.length);
+  for (const f of _far) {
+    grid.add(
+      f.x - ox, -(f.y - oy), sp.z, range,
+      sp.color[0] * I * k, sp.color[1] * I * k, sp.color[2] * I * k,
+      sp.scatter ?? 1, f.ax, f.ay, f.az,
+      Math.cos(half), Math.cos(half * (sp.innerFrac ?? 0.45)), sp.flare ?? 1, far.shadow, owner
+    );
+  }
+  // Reflektory otoczenia: rufa i burty (moc z lampy edytora, 1,5 = domyślna).
   if (opts.floods !== false) {
-    const fl = P.flood;
     const floodRange = Math.min(fl.maxRange, Math.max(fl.minRange, L * fl.rangeMul));
+    const fh = Math.max(1, Math.min(170, fl.coneDeg)) * Math.PI / 360;
     for (const em of _emitters) {
       if (!em.flood) continue;
-      spot(em.x, em.y, em.dir.x, em.dir.y, fl, fl.intensity * (Number(em.power) || 1.5) / 1.5, floodRange, fl.flare);
+      spotAxis(em.dir.x, em.dir.y, fl.tiltDeg, a);
+      const x = em.x - ox;
+      const y = -(em.y - oy);
+      const shadow = atlas && opts.spotShadows !== false ? atlas.request(false, x, y, fl.z, a.ax, a.ay, a.az, fl.coneDeg, floodRange) : 0;
+      const fI = fl.intensity * (Number(em.power) || 1.5) / 1.5;
+      grid.add(
+        x, y, fl.z, floodRange,
+        fl.color[0] * fI * k, fl.color[1] * fI * k, fl.color[2] * fI * k,
+        fl.scatter ?? 0.5, a.ax, a.ay, a.az,
+        Math.cos(fh), Math.cos(fh * (fl.innerFrac ?? 0.4)), fl.flare ?? 0.3, shadow, owner
+      );
     }
   }
-  const om = P.omni;
   const omRange = Math.min(om.maxRange, Math.max(om.minRange, L * om.rangeMul));
   // Światło dookoła oświetla też własny kadłub (bez niego w mroku pola kadłub
   // gasł całkiem); lampy pozycyjne i reflektory własnego kadłuba już nie.
   grid.add(ex - ox, -(ey - oy), om.z, omRange, om.color[0] * om.intensity * k, om.color[1] * om.intensity * k, om.color[2] * om.intensity * k, om.scatter);
   if (opts.nav !== false) {
-    const nv = P.nav;
     _navOptions.time = opts.time || 0;
     buildNavLightClusters([entity], _navOptions);
     for (const c of _clusters) {

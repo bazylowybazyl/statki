@@ -33,10 +33,9 @@
 // ciągu idzie per wywołanie), błysk wylotowy odpalany co klatkę (stała suma
 // gasnących błysków; kadłuby dema nie mają wieżyczek, więc Turret2D.triggerShot
 // oddaje na ten czas stałą lufę), smuga po zniknięciu pocisku z zamrożonym
-// zegarem. Bloom wyłączony WPROST (bloomPass.enabled): sam zapis
-// perfToggles.bloom = false go nie wyłącza, a piramida bloomu (×2) dawała
-// jasnym efektom wzór co 2 px przesunięcia i rozlewała błysk na pół ekranu.
-// `--bloom` zostawia go włączonego.
+// zegarem. Bloom wyłączony (perfToggles.bloom = false — post czyta go w każdym
+// renderze): piramida bloomu (×2) dawała jasnym efektom wzór co 2 px
+// przesunięcia i rozlewała błysk na pół ekranu. `--bloom` zostawia go włączonego.
 //
 // Wyniki: .tmp/precyzja/drzenie/<wariant>_<przypadek>.png (klatka 0),
 // ..._roznica.png (czerwony jaśniej, zielony ciemniej, niebieski — maska),
@@ -287,14 +286,14 @@ async function probe(opts, analyze) {
   const api = window.__mostki;
   const Fx = window.Fx3D;
   // Jak w §8.12: zapis do perfToggles wyłącza to, co render() czyta wprost
-  // (promienie, żar). bloomPass.enabled ustawia dopiero _applyPassToggles,
-  // więc bloom zostawał włączony — jego piramida (×2) dawała wzór co 2 px
-  // przesunięcia. Wyłączony wprost; setPerfToggles z bgPass: false zatrzymuje
-  // w demie odświeżanie klatki, więc tego nie ruszamy (pass tła rysuje gwiazdy
-  // dema przy zerze — pomiar i tak bierze tylko różnicę wł./wył. modułu).
+  // (promienie, żar, od portu WebGPU także bloom — post wybiera pipeline z
+  // bloomem albo bez w każdym renderze). Piramida bloomu (×2) dawała wzór co
+  // 2 px przesunięcia, więc bloom tylko z --bloom. setPerfToggles z bgPass: false
+  // zatrzymuje w demie odświeżanie klatki, więc tego nie ruszamy (pass tła rysuje
+  // gwiazdy dema przy zerze — pomiar i tak bierze tylko różnicę wł./wył. modułu).
   const T = Core3D.perfToggles;
   for (const k of ['bloom', 'shadowShafts', 'heatHaze', 'bgPass', 'planetPass']) T[k] = false;
-  if (Core3D.bloomPass) Core3D.bloomPass.enabled = !!opts.bloom;
+  T.bloom = !!opts.bloom;
 
   // Meshe modułów rozpoznawane po nazwie / sygnaturze shadera / kolejności
   // rysowania — działa dla obu wariantów (kopia „przed” to inna instancja
@@ -471,7 +470,7 @@ async function probe(opts, analyze) {
   const hulls = [];
   Core3D.scene.traverse((o) => {
     const m = o.material;
-    if (o.isMesh && m && m.uniforms && (m.uniforms.uStressTint || m.uniforms.uLacquerEye)) {
+    if (o.isMesh && m && m.uniforms && (m.isHullNodeMaterial || m.uniforms.uStressTint || m.uniforms.uLacquerEye)) {
       hulls.push(o);
       if (m.colorWrite !== false) { m.colorWrite = false; hidden.push(m); }
     }

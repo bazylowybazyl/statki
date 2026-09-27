@@ -90,9 +90,12 @@ test('kolor gry: ACES Narkowicza bez ÷0,6 i LinearTosRGB — lustra CPU, funkcj
   assert.ok(Number.isFinite(linearDoSrgbCpu(-0.5)), 'ujemne wejście bez NaN');
   assert.equal(acesGry.shaderNode.layout.name, 'acesGry');
   assert.equal(linearDoSrgb.shaderNode.layout.name, 'linearDoSrgb');
-  // Post: RenderPipeline bez transformacji three (ACES gry to inna krzywa niż acesFilmicToneMapping).
-  assert.match(core, /return vec4\(linearDoSrgb\(acesGry\(scene\.rgb\)\), scene\.a\);/);
+  // Post (od zadania 02 w tsl/postGry.js): RenderPipeline bez transformacji three (ACES gry to
+  // inna krzywa niż acesFilmicToneMapping) — oba pipeline'y, z bloomem i bez.
+  const postGry = read('src/3d/tsl/postGry.js');
+  assert.match(postGry, /return vec4\(linearDoSrgb\(acesGry\(sceneColor\.rgb\)\), sceneColor\.a\);/);
   assert.match(core, /post\.outputColorTransform = false;/);
+  assert.match(core, /postBezBloomu\.outputColorTransform = false;/);
 });
 
 test('Core3D: tylko WebGPURenderer z limitami adaptera, bez zapasu WebGL2, konfiguracja jak na WebGL', () => {
@@ -215,6 +218,27 @@ test('osłona pipeline\'ów w kompilacji: rysunek czeka, aż createRenderPipelin
   const once = backend.draw;
   Core3D._guardPendingPipelines({ backend });
   assert.equal(backend.draw, once, 'osłona zakładana raz');
+});
+
+test('odrzucony createRenderPipelineAsync (three r183 go połyka) ląduje w konsoli raz na etykietę', async () => {
+  // Zadanie 04: 9 buforów wierzchołków > maxVertexBuffers (8) — GPUPipelineError szedł do pustego
+  // catch w WebGPUPipelineUtils, pipeline zostawał „w budowie”, a osłona po cichu pomijała rysunek.
+  const device = {
+    createRenderPipelineAsync(d) { return d.ok ? Promise.resolve({ gpu: true }) : Promise.reject(new Error('Vertex buffer count (9) exceeds the maximum number of vertex buffers (8).')); }
+  };
+  const backend = { device, get() { return {}; }, draw() { } };
+  Core3D._guardPendingPipelines({ backend });
+  const errors = [];
+  const orig = console.error;
+  console.error = (m) => errors.push(String(m));
+  try {
+    assert.deepEqual(await device.createRenderPipelineAsync({ ok: true, label: 'dobry' }), { gpu: true });
+    for (let i = 0; i < 2; i++) await assert.rejects(device.createRenderPipelineAsync({ label: 'renderPipeline_zly' }), /maximum number of vertex buffers/);
+  } finally {
+    console.error = orig;
+  }
+  assert.equal(errors.length, 1, 'raz na etykietę');
+  assert.match(errors[0], /pipeline „renderPipeline_zly” nie powstał: Vertex buffer count \(9\)/);
 });
 
 test('rozgrzewka passa: compileAsync na celu sceny, kamera passa z warstwą, bez cullingu, bez blokowania', () => {

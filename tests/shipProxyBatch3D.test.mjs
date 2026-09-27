@@ -28,7 +28,11 @@ test('shader proxy: instancje względem początku przy kamerze (precyzja float32
   assert.doesNotMatch(source, /WebGLRenderer/);
 });
 
-test('shader proxy: rdzeń światła = HEX_FRAGMENT_SHADER kadłubów (maska słońca, glow)', () => {
+// Parzystość GLSL proxy (Z4, poza portem — PLAN §1 p. 5) z GLSL kadłubów straciła sens:
+// kadłuby są w TSL od zadania 04 (hexShips3D.tsl.js). Test zostaje jako todo.
+test('shader proxy: rdzeń światła = HEX_FRAGMENT_SHADER kadłubów (maska słońca, glow)', {
+  todo: 'Z4 przejdzie na TSL przy integracji (PLAN §1 p. 5) — wtedy parzystość z grafem kadłuba (hexShips3D.tsl.js)'
+}, () => {
   const proxy = squash(shaderConst(source, 'FRAGMENT_SHADER'));
   const hull = squash(shaderConst(hullSource, 'HEX_FRAGMENT_SHADER'));
   const shared = [

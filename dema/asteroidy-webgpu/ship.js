@@ -7,12 +7,12 @@
 //   • dysze MAIN z danych edytora (`engines.main`) i promienia z engineFx —
 //     duszki blasku i smugi ciągu (glowSprites.js), światło dysz w pyle;
 //   • lampy pozycyjne (czerwone, sekwencja „pasa startowego” jak w grze);
-//   • POLE ODLEGŁOŚCI sylwetki z kanału alfa (transformata odległości na CPU,
-//     raz) — przeszkoda dla pyłu (dust.js): d < 0 w kadłubie + gradient.
+//   • światło wolumetryczne nad kadłubem (volumetrics.js: pył między kamerą
+//     a pancerzem świeci w smugach reflektorów).
 
 import * as THREE from 'three/webgpu';
 import {
-  float, vec2, vec3, vec4, uniform, texture, uv, modelViewMatrix, positionViewDirection,
+  float, vec2, vec3, vec4, uniform, texture, uv, modelViewMatrix, positionViewDirection, positionWorld,
   max, mix, dot, normalize, clamp, smoothstep, fwidth, diffuseColor
 } from 'three/tsl';
 import { getHullRenderSize } from '../../src/data/ships.js';
@@ -21,120 +21,11 @@ import { navChaseSequence, buildPositionLightWorldSprites } from '../../src/game
 import { SurfaceLightingModel } from './surfaceLighting.js';
 import { GLOW_ROUND, GLOW_STREAK } from './glowSprites.js';
 
-// Rozdzielczość pola odległości (teksele wzdłuż długości kadłuba) i margines.
-const SDF_RES = 320;
-const SDF_MARGIN = 260;
-
 async function loadImage(url) {
   const img = new Image();
   img.src = url;
   await img.decode();
   return img;
-}
-
-/** Transformata odległości (Felzenszwalb) 1D — kwadraty odległości. */
-function edt1d(f, n, d, v, z) {
-  let k = 0;
-  v[0] = 0;
-  z[0] = -Infinity;
-  z[1] = Infinity;
-  for (let q = 1; q < n; q++) {
-    let s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
-    while (s <= z[k]) {
-      k--;
-      s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
-    }
-    k++;
-    v[k] = q;
-    z[k] = s;
-    z[k + 1] = Infinity;
-  }
-  k = 0;
-  for (let q = 0; q < n; q++) {
-    while (z[k + 1] < q) k++;
-    d[q] = (q - v[k]) * (q - v[k]) + f[v[k]];
-  }
-}
-
-function edt2d(grid, w, h) {
-  const n = Math.max(w, h);
-  const f = new Float64Array(n);
-  const d = new Float64Array(n);
-  const v = new Int32Array(n);
-  const z = new Float64Array(n + 1);
-  for (let x = 0; x < w; x++) {
-    for (let y = 0; y < h; y++) f[y] = grid[y * w + x];
-    edt1d(f, h, d, v, z);
-    for (let y = 0; y < h; y++) grid[y * w + x] = d[y];
-  }
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) f[x] = grid[y * w + x];
-    edt1d(f, w, d, v, z);
-    for (let x = 0; x < w; x++) grid[y * w + x] = d[x];
-  }
-  return grid;
-}
-
-/**
- * Pole odległości sylwetki w lokalnym układzie kadłuba (x wzdłuż dziobu,
- * y w górę sceny), teksele RGBA16F: d [j.], gradient (gx, gy).
- */
-function buildHullSdf(img, hullW, hullH) {
-  const worldW = hullW + SDF_MARGIN * 2;
-  const worldH = hullH + SDF_MARGIN * 2;
-  const texel = worldW / SDF_RES;
-  const w = SDF_RES;
-  const h = Math.max(8, Math.round(worldH / texel));
-  // Maska: sprite przeskalowany do rozmiaru kadłuba w świecie, w środku płótna.
-  const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
-  const cx = canvas.getContext('2d', { willReadFrequently: true });
-  cx.clearRect(0, 0, w, h);
-  cx.drawImage(img, SDF_MARGIN / texel, SDF_MARGIN / texel, hullW / texel, hullH / texel);
-  const px = cx.getImageData(0, 0, w, h).data;
-  const INF = 1e20;
-  const inside = new Float64Array(w * h);
-  const outside = new Float64Array(w * h);
-  for (let i = 0; i < w * h; i++) {
-    const solid = px[i * 4 + 3] > 127;
-    outside[i] = solid ? 0 : INF;
-    inside[i] = solid ? INF : 0;
-  }
-  edt2d(outside, w, h);
-  edt2d(inside, w, h);
-  const dist = new Float32Array(w * h);
-  for (let i = 0; i < w * h; i++) {
-    dist[i] = (Math.sqrt(outside[i]) - Math.sqrt(inside[i])) * texel;
-  }
-  // Wiersz 0 płótna = góra sprite'a = +y sceny: tekstura z v rosnącym w górę.
-  const data = new Uint16Array(w * h * 4);
-  for (let y = 0; y < h; y++) {
-    const sy = h - 1 - y;
-    for (let x = 0; x < w; x++) {
-      const i = sy * w + x;
-      const xl = Math.max(0, x - 1);
-      const xr = Math.min(w - 1, x + 1);
-      const yu = Math.max(0, sy - 1);
-      const yd = Math.min(h - 1, sy + 1);
-      const gx = (dist[sy * w + xr] - dist[sy * w + xl]) / ((xr - xl) * texel || 1);
-      // sy rośnie w dół sceny → gradient w +y sceny ma znak odwrotny.
-      const gy = -(dist[yd * w + x] - dist[yu * w + x]) / ((yd - yu) * texel || 1);
-      const o = (y * w + x) * 4;
-      data[o] = THREE.DataUtils.toHalfFloat(dist[i]);
-      data[o + 1] = THREE.DataUtils.toHalfFloat(gx);
-      data[o + 2] = THREE.DataUtils.toHalfFloat(gy);
-      data[o + 3] = THREE.DataUtils.toHalfFloat(0);
-    }
-  }
-  const tex = new THREE.DataTexture(data, w, h, THREE.RGBAFormat, THREE.HalfFloatType);
-  tex.minFilter = THREE.LinearFilter;
-  tex.magFilter = THREE.LinearFilter;
-  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
-  tex.generateMipmaps = false;
-  tex.colorSpace = THREE.NoColorSpace;
-  tex.needsUpdate = true;
-  return { texture: tex, width: worldW, height: worldH };
 }
 
 /** Materiał kadłuba: tekstura sprite'a, normalna z luminancji, model światła skał. */
@@ -215,7 +106,14 @@ class HullNodeMaterial extends THREE.NodeMaterial {
 
   setupOutput(builder, outputNode) {
     const a = this._alpha;
-    return vec4(max(outputNode.rgb.mul(this.S.exposure), vec3(0.0)).mul(a), a);
+    const lit = max(outputNode.rgb.mul(this.S.exposure), vec3(0.0)).mul(a).toVar();
+    if (this.S.volume) {
+      // Pył nad pancerzem: rozproszenie od kamery do z kadłuba, pancerz
+      // przygaszony transmitancją (dno ośrodka jest pod kadłubem zasłonięte).
+      const v = this.S.volume.sample(positionWorld);
+      lit.assign(lit.mul(v.a).add(v.rgb));
+    }
+    return vec4(lit, a);
   }
 }
 
@@ -264,7 +162,6 @@ export class DemoHull {
     this.nozzleRadius = fx.nozzleRadius || this.length * 0.0188;
     this.nozzles = (editor?.engines?.main || []).map((e) => ({ x: e.x * this.hpScale, y: e.y * this.hpScale }));
     if (!this.nozzles.length) this.nozzles.push({ x: -size.w * 0.48, y: 0 });
-    this.sdf = buildHullSdf(img, size.w, size.h);
     // Stan ruchu (świat gry).
     this.x = 0; this.y = 0; this.angle = 0; this.vx = 0; this.vy = 0; this.angVel = 0;
     this.thrust = 0;

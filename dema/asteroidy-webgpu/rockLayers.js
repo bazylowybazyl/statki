@@ -110,6 +110,11 @@ export class RockLayer {
     this.maxLod = Math.min(ROCK_LODS.length - 1, o.maxLod ?? ROCK_LODS.length - 1);
     this.fadeZoom = o.fadeZoom || null;
     this.marginFrac = o.marginFrac ?? 0.3;
+    // Minerały (minerals.js): dopisywane przy kompaktowaniu dla skał w kadrze.
+    this.minerals = o.minerals || null;
+    // Skały przejęte przez wydobycie (asteroidMining.js — rysuje je minedRocks.js):
+    // id rekordów pola pomijane przy kompaktowaniu.
+    this.hidden = new Set();
     this.enabled = true;
     this.origin = { x: 0, y: 0 };
     this.stats = { instances: 0, drawn: 0, tris: 0, cells: 0, pending: 0, lods: [] };
@@ -161,6 +166,16 @@ export class RockLayer {
   setVisible(v) {
     this.enabled = !!v;
     this.group.visible = this.enabled;
+    this.minerals?.setVisible(this.enabled);
+  }
+
+  /** Skała pola (id rekordu) znika z warstwy / wraca. */
+  hide(id) {
+    if (!this.hidden.has(id)) { this.hidden.add(id); this._version++; }
+  }
+
+  unhide(id) {
+    if (this.hidden.delete(id)) this._version++;
   }
 
   /** Nowy lokalny początek sceny (świat gry, double): przepisanie danych. */
@@ -273,6 +288,8 @@ export class RockLayer {
     B.x = f.cam.x; B.y = f.cam.y; B.zoom = zoom; B.version = this._version; B.minPx = minPx;
     const buckets = this.buckets;
     buckets.begin();
+    const M = this.minerals;
+    M?.begin();
     const cx = f.cam.x - this.origin.x;
     const cy = -(f.cam.y - this.origin.y);
     const baseHalfW = (f.viewW * 0.5 / zoom) * (1 + CULL_MARGIN + REBUILD_MOVE);
@@ -281,10 +298,12 @@ export class RockLayer {
     const focal = f.focalPx;
     const maxLod = this.maxLod;
     const lods = buckets.lods;
+    const hidden = this.hidden.size ? this.hidden : null;
     for (const o of this.octaves) {
       if (!o.active || !o.count) continue;
       const d = o.data;
       for (let s = 0; s < o.count; s++) {
+        if (hidden && hidden.has(o.slotRock[s].id)) continue;
         const b = s * FLOATS;
         const r = d[b + 3];
         let pxPerUnit = zoom;
@@ -305,8 +324,10 @@ export class RockLayer {
         if (dst < 0) continue;
         const out = lods[lod].data;
         for (let i = 0; i < FLOATS; i++) out[dst + i] = d[b + i];
+        if (M) M.appendRock(out, dst, rPx);
       }
     }
+    M?.commit();
     const res = buckets.commit();
     this.stats.drawn = res.drawn;
     this.stats.tris = res.tris;
@@ -377,11 +398,99 @@ export class RockLayer {
     this._version++;
   }
 
-  /** Wszystkie wczytane skały (rekordy pola, tylko do odczytu). */
+  /** Wszystkie wczytane skały (rekordy pola, tylko do odczytu) — bez przejętych przez wydobycie. */
   forEachLoaded(cb) {
+    const hidden = this.hidden.size ? this.hidden : null;
     for (const o of this.octaves) {
       if (!o.active) continue;
-      for (let s = 0; s < o.count; s++) cb(o.slotRock[s], o.data, s * FLOATS);
+      for (let s = 0; s < o.count; s++) {
+        if (hidden && hidden.has(o.slotRock[s].id)) continue;
+        cb(o.slotRock[s], o.data, s * FLOATS);
+      }
     }
+  }
+}
+
+/**
+ * Skały podane wprost (galerie dema; w grze — skały z HP) na tej samej siatce
+ * banku i tym samym materiale co warstwa. Rekordy jak z AsteroidBeltField
+ * (x, y, z, r, q*, a*, spin, phase, shape, type, seed, s*); pozycje względem
+ * wspólnego początku sceny — port RockSet3D z rockLayer3D.js.
+ */
+export class RockSet {
+  constructor({ scene, bank, material, renderOrder = 1, perspective = false, zOf = null, name = 'rockSet', maxLod = ROCK_LODS.length - 1, minerals = null, sunT = null }) {
+    this.scene = scene;
+    this.minerals = minerals;
+    this.material = material;
+    this.perspective = perspective;
+    this.zOf = zOf || ((rock) => -rock.z);
+    this.sunT = sunT || (() => 1);
+    this.maxLod = maxLod;
+    this.origin = { x: 0, y: 0 };
+    this.rocks = [];
+    this.buckets = new LodBuckets({ bank, material, renderOrder, name, capacities: [512, 512, 256, 128, 64, 32], maxLod });
+    this.group = this.buckets.group;
+    this.scene.add(this.group);
+    this.enabled = true;
+    this._dirty = true;
+    this._lastPx = -1;
+    this.stats = { drawn: 0, tris: 0 };
+  }
+
+  set(rocks) {
+    this.rocks = rocks;
+    this._dirty = true;
+  }
+
+  setOrigin(x, y) {
+    this.origin.x = x;
+    this.origin.y = y;
+    this._dirty = true;
+  }
+
+  /** f: cam, viewW, viewH, focalPx (jak RockLayer.update). */
+  update(f) {
+    if (!this.enabled) return;
+    const zoom = Math.max(1e-5, f.cam.zoom || 1);
+    const camZ = f.focalPx / zoom;
+    const L = this.material.L;
+    L.pxScale.value = this.perspective ? f.focalPx : zoom;
+    L.camZ.value = this.perspective ? camZ : 0;
+    const px = this.perspective ? f.focalPx / camZ : zoom;
+    if (!this._dirty && Math.abs(px - this._lastPx) <= this._lastPx * 0.15) return;
+    this._dirty = false;
+    this._lastPx = px;
+    const B = this.buckets;
+    B.begin();
+    const M = this.minerals;
+    M?.begin();
+    for (const rock of this.rocks) {
+      if (rock.alive === false) continue;
+      const pxPerUnit = this.perspective ? f.focalPx / (camZ + (rock.z || 0)) : zoom;
+      const rPx = rock.r * pxPerUnit;
+      const lod = pickRockLod(rPx, this.maxLod);
+      const b = B.slot(lod);
+      if (b < 0) continue;
+      const d = B.lods[lod].data;
+      d[b] = rock.x - this.origin.x;
+      d[b + 1] = -(rock.y - this.origin.y);
+      d[b + 2] = this.zOf(rock);
+      d[b + 3] = rock.r;
+      d[b + 4] = rock.qx; d[b + 5] = rock.qy; d[b + 6] = rock.qz; d[b + 7] = rock.qw;
+      d[b + 8] = rock.ax; d[b + 9] = rock.ay; d[b + 10] = rock.az; d[b + 11] = rock.spin;
+      d[b + 12] = rock.shape; d[b + 13] = rock.type; d[b + 14] = rock.seed; d[b + 15] = rock.phase;
+      d[b + 16] = rock.sx; d[b + 17] = rock.sy; d[b + 18] = rock.sz; d[b + 19] = this.sunT(rock.x, rock.y);
+      if (M) M.appendRock(d, b, rPx);
+    }
+    const res = B.commit();
+    M?.commit();
+    this.stats.drawn = res.drawn;
+    this.stats.tris = res.tris;
+  }
+
+  setVisible(v) {
+    this.enabled = !!v;
+    this.group.visible = this.enabled;
+    this.minerals?.setVisible(this.enabled);
   }
 }

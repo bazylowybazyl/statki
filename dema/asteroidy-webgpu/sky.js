@@ -1,16 +1,23 @@
 // dema/asteroidy-webgpu/sky.js
 //
-// Tło passa tła: gwiazdy i ciemna mgławica (proceduralnie, w przestrzeni
-// ekranu z bardzo wolną paralaksą), przykryte zasłoną pyłu gęstego pola jak
-// w src/3d/beltDust3D.js (w rdzeniu pola galaktyki prawie nie widać; po
-// stronie słońca łuna, gasnąca w mroku pola). Pełnoekranowy kwad bez testu
-// głębi, rysowany pierwszy.
+// Tło passa tła: gwiazdy i mgławica (proceduralnie, w przestrzeni ekranu
+// z bardzo wolną paralaksą), przykryte zasłoną pyłu gęstego pola jak
+// w src/3d/beltDust3D.js. Pełnoekranowy kwad bez testu głębi, rysowany pierwszy.
+//
+// NOC W POLU (demo WebGPU): w rdzeniu pola galaktyki prawie nie widać, ale
+// ciemność nie jest płaska — zasłona ma wielkie, ledwo widoczne kłęby, od
+// strony słońca świeci przesiane przez pole światło (łuna ~√T: nawet w głębi
+// zostaje ślad kierunku), przez rzadkie prześwity mrugają pojedyncze gwiazdy,
+// a błyski burzy głęboko pod płaszczyzną rozświetlają chmury od środka
+// (do 4 błysków — pozycje ekranu z storm.js).
 
 import * as THREE from 'three/webgpu';
 import {
-  Fn, float, uint, vec2, vec3, vec4, uniform, screenCoordinate, screenSize, floor, dot,
-  mix, smoothstep, clamp, max, exp, hash, mx_fractal_noise_float, attribute
+  Fn, float, uint, vec2, vec3, vec4, uniform, uniformArray, screenCoordinate, screenSize, floor, dot,
+  mix, smoothstep, clamp, max, exp, sqrt, hash, mx_fractal_noise_float, attribute, length
 } from 'three/tsl';
+
+export const SKY_FLASH_CAP = 4;
 
 export class Sky {
   constructor(scene) {
@@ -19,10 +26,15 @@ export class Sky {
       veil: uniform(0.9),                         // 0..1 — ile tła zasłania pył
       sunLevel: uniform(1),                       // słońce przy kamerze (transmitancja)
       sunDir: uniform(new THREE.Vector2(1, 0)),   // kierunek do słońca na ekranie (y w górę)
-      dark: uniform(new THREE.Vector3(0.0042, 0.0048, 0.0062)),
+      dark: uniform(new THREE.Vector3(0.0036, 0.0042, 0.0058)),
       lit: uniform(new THREE.Vector3(0.019, 0.02, 0.023)),
       glow: uniform(new THREE.Vector3(0.03, 0.03, 0.031)),
-      starGain: uniform(1)
+      night: uniform(new THREE.Vector3(0.006, 0.0075, 0.012)),   // łuna przesiana przez pole
+      ice: uniform(0),                            // udział lodu (Kuiper: zasłona chłodniejsza)
+      starGain: uniform(1),
+      // Błyski burzy: xy = piksel ekranu (y w dół), z = promień [px], w = jasność.
+      flashes: uniformArray(Array.from({ length: SKY_FLASH_CAP }, () => new THREE.Vector4()), 'vec4'),
+      flashColor: uniform(new THREE.Vector3(0.5, 0.42, 1.0))
     };
     const U = this.u;
     const mat = new THREE.NodeMaterial();
@@ -47,28 +59,64 @@ export class Sky {
       const starPos = cell.add(vec2(h2, h3).mul(0.8).add(0.1)).mul(cellSize);
       const d = px.sub(starPos);
       const r2 = dot(d, d);
-      const bright = smoothstep(0.93, 1.0, h1).mul(h1.mul(h1).mul(h1)).toVar();
+      // Rzadkie gwiazdy (~1,2% komórek), większość słaba, pojedyncze jasne.
+      const bright = smoothstep(0.988, 1.0, h1).mul(h4.mul(h4).mul(0.85).add(0.15)).mul(0.9).toVar();
       const tint = mix(vec3(0.75, 0.82, 1.0), vec3(1.0, 0.86, 0.7), h4);
       const star = tint.mul(bright).mul(exp(r2.mul(-0.9)).mul(1.4).add(exp(r2.mul(-0.12)).mul(0.08)));
-      // Mgławica: ciemna, chłodna, wolno zmienna.
+      // Mgławica: chłodne pasma (granat, fiolet, turkus), ciemne włókna pyłu.
       const q = px.div(900.0);
-      const neb = mx_fractal_noise_float(vec3(q, 0.37), 4, 2.0, 0.5, 1.0).mul(0.5).add(0.5);
-      const neb2 = mx_fractal_noise_float(vec3(q.mul(2.3).add(5.1), 1.7), 3, 2.0, 0.5, 1.0).mul(0.5).add(0.5);
-      const nebula = vec3(0.012, 0.013, 0.02).mul(smoothstep(0.35, 0.8, neb)).add(vec3(0.006, 0.004, 0.009).mul(smoothstep(0.45, 0.9, neb2)));
+      const neb = mx_fractal_noise_float(vec3(q, 0.37), 4, 2.0, 0.5, 1.0).mul(0.5).add(0.5).toVar();
+      const neb2 = mx_fractal_noise_float(vec3(q.mul(2.3).add(5.1), 1.7), 3, 2.0, 0.5, 1.0).mul(0.5).add(0.5).toVar();
+      const neb3 = mx_fractal_noise_float(vec3(q.mul(0.45).add(11.3), 3.1), 3, 2.0, 0.5, 1.0).mul(0.5).add(0.5).toVar();
+      const band = smoothstep(0.38, 0.82, neb);
+      const nebula = vec3(0.010, 0.014, 0.032).mul(band)
+        .add(vec3(0.012, 0.006, 0.02).mul(smoothstep(0.5, 0.9, neb2)))
+        .add(vec3(0.004, 0.016, 0.022).mul(smoothstep(0.55, 0.85, neb3)).mul(band))
+        .mul(float(1.0).sub(smoothstep(0.55, 0.8, neb2.mul(0.6).add(neb3.mul(0.5))).mul(0.6)))
+        .toVar();
       const space = star.mul(U.starGain).add(nebula).toVar();
       // Zasłona pyłu gęstego pola.
       const uvc = screenCoordinate.xy.div(screenSize).sub(0.5).mul(vec2(1.0, -1.0));
       const cloud = smoothstep(0.35, 0.75, mx_fractal_noise_float(vec3(px.div(1400.0), 2.9), 3, 2.0, 0.5, 1.0).mul(0.5).add(0.5)).toVar();
-      const veilCol = mix(U.dark, U.lit, cloud.mul(0.8)).mul(U.sunLevel).toVar();
-      const side = clamp(dot(uvc, U.sunDir).mul(1.4).add(0.5), 0.0, 1.0);
-      veilCol.addAssign(U.glow.mul(side.mul(side).mul(float(3.0).sub(side.mul(2.0)))).mul(U.sunLevel).mul(cloud.mul(0.4).add(0.6)));
+      const big = mx_fractal_noise_float(vec3(px.div(3600.0), 7.3), 2, 2.0, 0.5, 1.0).mul(0.5).add(0.5).toVar();
+      const coolTint = mix(vec3(1.0), vec3(0.8, 0.95, 1.25), U.ice);
+      const veilCol = mix(U.dark, U.lit, cloud.mul(0.8)).mul(U.sunLevel).mul(coolTint).toVar();
+      const side = clamp(dot(uvc, U.sunDir).mul(1.4).add(0.5), 0.0, 1.0).toVar();
+      const sideS = side.mul(side).mul(float(3.0).sub(side.mul(2.0))).toVar();
+      veilCol.addAssign(U.glow.mul(sideS).mul(U.sunLevel).mul(cloud.mul(0.4).add(0.6)).mul(coolTint));
+      // Noc: łuna ~√T od strony słońca, kłęby z dużej skali (ciemność ma głębię).
+      const nightK = sqrt(max(U.sunLevel, 0.0)).mul(float(1.0).sub(U.sunLevel)).toVar();
+      veilCol.addAssign(U.night.mul(coolTint).mul(nightK).mul(sideS.mul(1.6).add(0.25)).mul(cloud.mul(0.7).add(big.mul(0.6)).add(0.15)));
+      // Błyski burzy pod płaszczyzną: chmury rozświetlone od środka.
+      const flash = vec3(0.0).toVar();
+      for (let i = 0; i < SKY_FLASH_CAP; i++) {
+        const f = U.flashes.element(i);
+        const dd = length(screenCoordinate.xy.sub(f.xy)).div(max(f.z, 1.0));
+        flash.addAssign(U.flashColor.mul(f.w).mul(exp(dd.mul(dd).mul(-2.2))));
+      }
+      veilCol.addAssign(flash.mul(cloud.mul(0.8).add(big.mul(0.5)).add(0.1)).mul(0.06));
       const a = U.veil.mul(mix(mix(0.9, 0.99, cloud), 1.0, float(1.0).sub(U.sunLevel)));
-      return vec4(max(mix(space, veilCol, a), vec3(0.0)), 1.0);
+      // Prześwity: w najrzadszych miejscach zasłony mrugają pojedyncze gwiazdy —
+      // w rdzeniu pola (słońce przy kamerze < 0,1) gasną prawie do zera.
+      const gap = smoothstep(0.78, 0.95, float(1.0).sub(cloud).mul(0.6).add(big.mul(-0.4).add(0.4)));
+      const deep = smoothstep(0.0, 0.1, U.sunLevel).mul(0.9).add(0.1);
+      const through = star.mul(U.starGain).mul(gap).mul(0.12).mul(U.veil).mul(deep);
+      return vec4(max(mix(space, veilCol, a).add(through), vec3(0.0)), 1.0);
     })();
     this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = -100;
     this.mesh.name = 'sky';
     scene.add(this.mesh);
+  }
+
+  /** Błyski burzy: lista { sx, sy [px ekranu], r [px], e } (max SKY_FLASH_CAP). */
+  setFlashes(list) {
+    const A = this.u.flashes.array;
+    for (let i = 0; i < SKY_FLASH_CAP; i++) {
+      const f = list[i];
+      if (f) A[i].set(f.sx, f.sy, f.r, f.e);
+      else A[i].set(0, 0, 1, 0);
+    }
   }
 }
