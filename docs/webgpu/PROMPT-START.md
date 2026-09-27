@@ -18,27 +18,21 @@ fakty już sprawdzone w kodzie i w źródłach three — nie odkrywaj ich od now
 
 1. **Gameplay się nie zmienia.** Fizyka, AI, kolizje, input, misje i HUD 2D są źródłem prawdy;
    port dotyczy wyłącznie warstwy renderu 3D.
-2. **Dwie ścieżki renderu do końca portu.** WebGL zostaje domyślny i nietknięty; WebGPU włącza
-   flaga `?renderer=webgpu`. Po każdym commicie ścieżka WebGL daje obraz równy bazie odniesienia
-   (różnica na poziomie szumu). Gra musi być grywalna na WebGL w każdym commicie.
-3. **Nie usuwaj GLSL.** Sprzątanie to osobna decyzja użytkownika po zakończeniu portu.
-4. **Jeden renderer, tylko w `Core3D`** — reguła z `agents.md` obowiązuje obie ścieżki.
-5. **API three sprawdzaj w `node_modules/three`, nie z pamięci.** TSL szybko się zmienia
+2. **usuwaj GLSL.** 
+3. **Jeden renderer, tylko w `Core3D`** — reguła z `agents.md` obowiązuje
+4. **API three sprawdzaj w `node_modules/three`, nie z pamięci.** TSL szybko się zmienia
    (np. w r183 `PostProcessing` → `RenderPipeline`). Przy każdej niepewności czytaj źródło.
-6. **Reguły z `agents.md` obowiązują w TSL tak samo jak w GLSL:** precyzja przy 5–10 mln j.,
+5. **Reguły z `agents.md` obowiązują w TSL tak samo jak w GLSL:** precyzja przy 5–10 mln j.,
    pipeline HDR-first i próg bloomu, zakaz `pow()` z ujemną podstawą i clamp varyingów
    (MSAA + HalfFloat), zero alokacji per klatkę, zgłaszanie aktywności warstw, maska cienia słońca.
-7. **Bez nowych frameworków i bundlerów.** Narzędzia pisz jako skrypty Node `.mjs` bez zależności,
+6. **Bez nowych frameworków i bundlerów.** Narzędzia pisz jako skrypty Node `.mjs` bez zależności,
    jak istniejące (`dema/rdzen-cdp.js`). Jeśli jakaś zależność deweloperska jest naprawdę
    potrzebna, zapytaj użytkownika.
-8. **Git:** na starcie sprawdź, że drzewo robocze jest czyste (jeśli nie — zatrzymaj się i zapytaj).
-   Utwórz tag `webgl-baseline` na bieżącym commicie i gałąź `webgpu/port`. Commituj po każdym
-   kroku, jasnymi komunikatami po polsku. Bez force-push i bez przepisywania historii.
-   Push gałęzi `webgpu/port` na `origin`, jeśli remote działa.
-9. **Język:** dokumenty i komentarze po polsku (konwencja repo).
-10. **Kontekst:** `index.html` ma ~26 tys. linii — nigdy nie czytaj go w całości, szukaj grepem.
+7. **Git:** pracuj na main użytkownik zrobil backup rar lokalnie
+8. **Język:** dokumenty i komentarze po polsku (konwencja repo).
+9. **Kontekst:** `index.html` ma ~26 tys. linii — nigdy nie czytaj go w całości, szukaj grepem.
     Szerokie przeszukiwania zlecaj subagentom.
-11. **Ciągłość między sesjami:** sesja może się urwać na limicie. Po każdym kroku aktualizuj
+10. **Ciągłość między sesjami:** sesja może się urwać na limicie. Po każdym kroku aktualizuj
     `docs/webgpu/POSTEP.md` (co zrobione, commit, co dalej). Jeśli ten plik już istnieje, zacznij
     od niego i kontynuuj od pierwszego niezakończonego kroku.
 
@@ -248,11 +242,7 @@ Proponowana kolejność — zweryfikuj i popraw po inwentarzu:
 20. Ładunek (`cargoContainers3D`, `cargoDrones3D`).
 21. Wydajność i precyzja: bitwa WebGL vs WebGPU (CPU/GPU ms), `dema/precyzja-drzenie.js`
     na WebGPU, czasy kompilacji i rozgrzewka, pamięć.
-22. Electron i build produkcyjny (`vite build`, schemat `app://`) na WebGPU.
-23. Przełączenie domyślnego backendu i polityka awaryjna bez WebGPU — **decyzja użytkownika**
-    (opcje: ścieżka GLSL zostaje jako awaryjna albo wbudowany backend WebGL2 `WebGPURenderer`,
-    który wykona te same materiały TSL); aktualizacja `agents.md`.
-24. **Odłożone:** nowy warp na WebGPU — dopiero po wpięciu nowego warpa do gry (decyzja
+22. **Odłożone:** nowy warp na WebGPU — dopiero po wpięciu nowego warpa do gry (decyzja
     użytkownika); pass zgięcia tła powstaje wtedy od razu w TSL.
 
 Dodatkowo utwórz:
