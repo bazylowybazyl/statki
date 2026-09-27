@@ -1,12 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import * as THREE from 'three/webgpu';
+import { Fn, float, texture, uniform, uniformArray, uv, vec2, vec4 } from 'three/tsl';
 import {
   HULL_SDF_LAYER_SIZE,
   HULL_SDF_LAYER_COUNT,
+  HULL_SDF_MAX_STEPS,
   HULL_SDF_OCCLUDER_FLOATS,
-  HULL_SDF_SHADOW_GLSL,
+  HULL_SDF_SHAFT_CAP,
+  HULL_SDF_TRACE_CONSTANTS,
   HullShadowSdf,
   bakeHullSdfLayer,
+  createHullSdfPlaceholderTexture,
+  hullSdfShadow,
   measureHullExtent,
   packHullShaftOccluder,
   planHullSdfLayout,
@@ -367,16 +373,87 @@ test('kadłub bez aktywnego heksa: bez cienia (także z szablonu), bez wyjątku,
   assert.equal(HullShadowSdf.stats.bakes, 1);
 });
 
-test('GLSL: stałe z kropką, bez backticków, próbkowanie jawnym LOD', () => {
-  assert.match(HULL_SDF_SHADOW_GLSL, /uniform sampler2DArray uHullSdf;/);
-  assert.match(HULL_SDF_SHADOW_GLSL, /textureLod\(uHullSdf, vec3\(uv, layer\), 0\.0\)/);
-  assert.ok(!HULL_SDF_SHADOW_GLSL.includes('`'));
-  assert.doesNotMatch(HULL_SDF_SHADOW_GLSL, /\$\{/);
-  // Każda wstrzyknięta liczba zmiennoprzecinkowa musi mieć kropkę (GLSL ES nie rzutuje int -> float).
-  for (const m of HULL_SDF_SHADOW_GLSL.matchAll(/\* (\d[\d.eE+-]*)/g)) {
-    assert.match(m[1], /[.eE]/, `liczba bez kropki: ${m[1]}`);
+test('pieczenie wgrywa jedną warstwę przez hak (WebGPU), bez haka / przed pierwszym wgraniem — całą tablicę', () => {
+  HullShadowSdf.reset();
+  const tex = HullShadowSdf.ensureTexture();
+  const calls = [];
+  const prev = HullShadowSdf.layerUploader;
+  try {
+    // Hak odmawia (tablica jeszcze nie na GPU) — needsUpdate jak dotąd.
+    HullShadowSdf.layerUploader = (t, layer) => { calls.push(layer); return false; };
+    const a = makeGrid(300, 120, (x, y) => Math.abs(x) < 100 && Math.abs(y) < 40);
+    a.armorImage = { width: 300, height: 120, id: 'hak-a' };
+    let v = tex.version;
+    HullShadowSdf.beginFrame(1);
+    const ea = HullShadowSdf.acquire(a, 0);
+    assert.ok(ea && ea.layer >= 0);
+    assert.deepEqual(calls, [ea.layer]);
+    assert.ok(tex.version > v, 'odmowa haka = needsUpdate');
+    assert.ok(tex.layerUpdates.has(ea.layer));
+    // Hak przyjmuje — tablica bez needsUpdate (three r183 w WebGPU wgrałby wszystkie 64 warstwy).
+    HullShadowSdf.layerUploader = (t, layer) => { calls.push(layer); return t === tex; };
+    const b = makeGrid(310, 120, (x, y) => Math.abs(x) < 90 && Math.abs(y) < 40);
+    b.armorImage = { width: 310, height: 120, id: 'hak-b' };
+    v = tex.version;
+    HullShadowSdf.beginFrame(2);
+    const eb = HullShadowSdf.acquire(b, 0);
+    assert.ok(eb && eb.layer >= 0 && eb.layer !== ea.layer);
+    assert.equal(calls.at(-1), eb.layer);
+    assert.equal(tex.version, v, 'warstwa poszła hakiem — bez pełnego wgrania');
+    assert.equal(HullShadowSdf.stats.layerUploads, 1);
+  } finally {
+    HullShadowSdf.layerUploader = prev;
   }
-  // Lustro CPU i shader muszą dzielić stałe — sprawdzamy, że planowanie siatki ich używa.
+});
+
+// Port WebGPU (zadanie 03): marsz po SDF to funkcja TSL (hullSdfShadow) wklejana w graf
+// passa maski — dawny test tekstu GLSL zastępuje WGSL zbudowany w Node (bez GPU):
+// te same stałe co lustro CPU, próbki warstw z jawnym poziomem 0 i indeksem warstwy,
+// pętle z granicą z uniformów (bez rozwijania w JS). Liczby z GPU ↔ lustro CPU i maska
+// w grze ↔ baza WebGL: scripts/webgpu/maska-slonca.mjs.
+test('TSL: marsz po tablicy warstw ze stałymi lustra CPU, próbki jawnym LOD, pętle z uniformów', () => {
+  const canvas = { width: 1, height: 1, style: {}, addEventListener() {}, removeEventListener() {}, getContext() { return null; } };
+  const renderer = new THREE.WebGPURenderer({ canvas });
+  renderer.hasFeature = () => false;
+  const v4 = (n) => Array.from({ length: n }, () => new THREE.Vector4());
+  const placeholder = createHullSdfPlaceholderTexture();
+  // Pusta tablica czytałaby się jako „wszędzie kadłub” — zastępcza to „daleko” (255).
+  assert.equal(placeholder.isDataArrayTexture, true);
+  assert.equal(placeholder.image.data[0], 255);
+  assert.equal(placeholder.magFilter, THREE.LinearFilter, 'filtr liniowy: ścieżka textureSampleLevel wybierana przy budowie');
+  const u = {
+    uHullSdf: texture(placeholder, vec2(0.5)),
+    uHullCount: uniform(0, 'int'),
+    uHullSteps: uniform(24, 'int'),
+    uHullLenMul: uniform(3.0),
+    uHullA: uniformArray(v4(HULL_SDF_SHAFT_CAP), 'vec4'),
+    uHullM: uniformArray(v4(HULL_SDF_SHAFT_CAP), 'vec4'),
+    uHullC: uniformArray(v4(HULL_SDF_SHAFT_CAP), 'vec4')
+  };
+  const material = new THREE.NodeMaterial();
+  material.fragmentNode = Fn(() => vec4(hullSdfShadow(u, uv().mul(1000.0), vec2(1.0, 0.0), float(1.0e6)), 0.0, 0.0, 1.0))();
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(), material);
+  const b = renderer.backend.createNodeBuilder(mesh, renderer);
+  b.material = material;
+  b.scene = new THREE.Scene();
+  b.camera = new THREE.PerspectiveCamera();
+  b.context.material = material;
+  b.build();
+  const wgsl = b.fragmentShader;
+  assert.match(wgsl, /texture_2d_array<f32>/);
+  const samples = wgsl.match(/textureSampleLevel\( \w+, \w+_sampler, [^;]*, i32\( \w+ \), 0\.0 \)/g) || [];
+  assert.equal(samples.length, 2, 'próbka samocienia + próbka marszu, obie z poziomem 0 i warstwą');
+  assert.doesNotMatch(wgsl, /textureSample\(/, 'bez próbek z pochodnymi w pętli zależnej od piksela');
+  // Stałe marszu = te, z których liczy lustro CPU (traceHullShadowCpu).
+  const C = HULL_SDF_TRACE_CONSTANTS;
+  for (const [name, value] of Object.entries({ uvMin: C.uvMin, softRatio: C.softRatio, selfRatio: C.selfRatio, stepRatio: C.stepRatio, penumbraStep: C.penumbraStep })) {
+    assert.ok(wgsl.includes(String(value)), `stała ${name} (${value}) w WGSL`);
+  }
+  // Jedna pętla po kadłubach i jedna po krokach, granice z uniformów (int), bez rozwinięcia.
+  assert.equal((wgsl.match(/for \( var hullIdx : i32 = 0; hullIdx < \w+\.\w+; hullIdx \+\+ \)/g) || []).length, 1);
+  assert.equal((wgsl.match(/for \( var hullStep : i32 = 0; hullStep < \w+\.\w+; hullStep \+\+ \)/g) || []).length, 1);
+  assert.ok(HULL_SDF_MAX_STEPS >= 24, 'Core3D obcina uHullSteps do HULL_SDF_MAX_STEPS');
+  // Lustro CPU i marsz dzielą rozkład siatki (planowanie z tych samych stałych).
   const layout = planHullSdfLayout({ minX: -100, maxX: 100, minY: -40, maxY: 40, count: 10 }, 5);
   assert.ok(layout.gw > 0 && layout.gh > 0);
 });
