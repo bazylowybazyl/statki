@@ -815,6 +815,11 @@ export class HaloWorldMaps {
     const t0 = performance.now();
     const u0 = p.nextSlice / p.slices;
     const u1 = (p.nextSlice + 1) / p.slices;
+    // Mipmapy mapy w budowie tylko po pierwszym plastrze (tekstura powstaje wtedy
+    // z poziomami mip) i po ostatnim — WebGPU generuje je po KAŻDYM renderze do
+    // celu (24 plastry × 3 mapy); mapy w budowie nikt nie próbkuje, wynik ten sam.
+    const mips = p.nextSlice === 0 || p.nextSlice === p.slices - 1;
+    for (const key of ['A', 'B', 'C']) p[key].texture.generateMipmaps = mips;
     this._bakeRegion(p, u0, u1);
     p.nextSlice++;
     const dt = performance.now() - t0;
