@@ -61,7 +61,9 @@ refrakcja fal uderzeniowych. W `render()` zostaje opisane miejsce na przyszły p
 - Harness `--backend webgpu --out .tmp/webgpu/zadania/03 --baza .tmp/webgpu/baseline/webgl/p1`: zero błędów walidacji;
   smuga cienia Wenus w `planeta-cien__tlo` i cienie kadłubów w `bitwa__tlo`/`bitwa__ortho` w tolerancji tam, gdzie warstwa
   nie ma zamienników (inaczej: porównanie wzrokowe z bazą w miejscach cienia, opisane w raporcie); bez regresji względem 02.
-- Fala uderzeniowa (`wybuch`) załamuje tło jak w bazie.
+- Fala uderzeniowa załamuje tło jak na tagu. Uwaga: od 2026-09-24 falę odpala tylko Supernowa (scena `wybuch` jej nie
+  ma) — sprawdź ją ręcznie w stronie harnessu (`Core3D.shockwave3DManager.spawn(...)` przy kamerze, zrzut po kilku
+  klatkach, to samo na tagu). Zadanie 19 zastąpi ją refrakcją z dema rakiet (API zniekształceń z 12).
 - `INWENTARZ.md`: `sunShadowMask.js`, `hullShadowSdf.js`, `shockwave3D.js` bez GLSL; `POSTEP.md`; `agents.md` (maska
   w TSL: `screenUV`, funkcje TSL zamiast `SUN_SHADOW_GLSL`); commit na `main`.
 
