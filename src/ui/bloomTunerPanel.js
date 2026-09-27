@@ -124,13 +124,9 @@ function applyBloomState(bloom) {
         core3d.resize(core3d.width || window.innerWidth, core3d.height || window.innerHeight);
       }
     }
-    if (typeof core3d._applyBloomPassConfig === 'function') {
-      core3d._applyBloomPassConfig();
-    } else if (core3d.bloomPass) {
-      core3d.bloomPass.strength = bloom.strength;
-      core3d.bloomPass.radius = bloom.radius;
-      core3d.bloomPass.threshold = bloom.threshold;
-    }
+    // Core3D czyta DevVFX.bloom co klatkę (_applyBloomPassConfig: uniformy węzła
+    // bloomu, bez przebudowy) — tu tylko natychmiastowe zastosowanie.
+    if (typeof core3d._applyBloomPassConfig === 'function') core3d._applyBloomPassConfig();
   }
 
   if (window.overlay3D?.setBloomConfig) {

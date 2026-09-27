@@ -75,8 +75,18 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   (textureSample / textureLoad) TSL wybiera z tekstury obecnej przy BUDOWIE — tekstury zastępcze z filtrem liniowym,
   osobny obiekt na każde wiązanie (TextureNode skleja wiązania po uuid tekstury). `InstancedMesh` wnosi swój uuid do
   klucza — każdy egzemplarz to osobny NodeBuilder (dla instancji per encja: jeden wspólny InstancedMesh).
-- **Przejściowo (do swoich zadań):** bloom i gorące powietrze (02), maska słońca / SDF / refrakcja (03, do tego czasu
-  `uSunShadowOn = 0`).
+- **Post (zadanie 02, `src/3d/tsl/postGry.js`):** kolejność jak dawny łańcuch resolve → bloom → uber. Bloom =
+  `BloomGry` (BloomNode three, ten sam algorytm co dawny pass WebGL; BloomNode r183 nie ma ×3 kompozytu —
+  `BLOOM_ZGODNOSC_WEBGL = 3`, alfa = max(rgb) bloomu jak przy dawnym blendzie; liczony raz na RENDER, bo podzielony ekran to
+  dwa `renderSingle` w klatce; rozmiar = bufor rysowania × `resolutionScale`). „Uber” próbkuje scenę i bloom tym samym
+  przesuniętym UV (gorące powietrze do 24 źródeł, dyspersja dysz), potem ACES gry i sRGB. Dwa `RenderPipeline` zbudowane
+  raz: z bloomem i bez (`perfToggles.bloom`, czytane w każdym renderze), gorące powietrze = uniform `uHeatOn` — przełączniki
+  bez przebudowy. Strojenie bloomu = uniformy węzła (`_applyBloomPassConfig` co klatkę, tuner `?dev`). Kubełek `bloom`
+  mierzą haki BloomGry (jego passy lecą w środku renderu postu), `post` = sam uber. Znaczniki czasu GPU: brama na granicy
+  klatki (`_gpuTimerGate`) — pula three (2048 zapytań) nie przepełnia się przy wolnym wyniku.
+- **Przejściowo (do swoich zadań):** maska słońca / SDF / refrakcja (03, do tego czasu `uSunShadowOn = 0`). Gorące
+  powietrze w podzielonym ekranie ma tylko widok gracza 1 (źródła w UV kamery gracza 1; na WebGL widok 1 miał je
+  przesunięte, widok 2 — żadnych).
 - **Nowe efekty broni i rakiet z dem** (`dema/bronie-webgpu`, `dema/rakiety-webgpu` — decyzja użytkownika 2026-09-27)
   zastępują stare (zadania 12, 17–20); wspólne klocki w `src/3d/fx/`. Starych efektów broni, rakiet, iskier i trafień nie
   przenosimy 1:1 ani nie poprawiamy — idą do wymiany. Rozgrywka zostaje w grze: dema dostają tylko zdarzenia (strzał,
@@ -90,7 +100,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   tryb bierze się z bazy, patrz nagłówek `zrzuty.mjs`); haki `?dev`: `window.DevScene.teleport / syncCamera /
   preloadHullSprites / startSplit`. Testy: `node --test "tests/*.test.mjs"` (wzorzec w cudzysłowie — `tests/` na Node 22
   nie działa).
-- **TSL — pułapki sprawdzone w zadaniach 06–07:** (1) funkcja z `setLayout` musi być CZYSTA — three buforuje jej kod globalnie
+- **TSL — pułapki sprawdzone w zadaniach 02, 06–07:** (1) funkcja z `setLayout` musi być CZYSTA — three buforuje jej kod globalnie
   (klasa buildera → węzeł `Fn`), więc uniform / tekstura złapane w domknięciu wskazują w drugim materiale cudzy slot;
   uniformy jako parametry funkcji albo funkcja wklejana (bez layoutu) — wzór `HaloFn` / `haloRingTSL(u)` w
   `src/3d/haloRing/haloRingTSL.js`; (2) najwyżej **12 buforów uniformów na etap** (`maxUniformBuffersPerShaderStage`,
@@ -110,7 +120,9 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   `vertexNode`: `varyingProperty(typ, nazwa).assign(…)` w funkcji wierzchołków, ten sam węzeł we fragmencie; (10) baza
   WebGL (ANGLE/FXC) liczy `a·b + c` jednym zaokrągleniem (FMA), Dawn/DXC dwoma — gdy wynik idzie do haszu (wejście
   niecałkowite), 1 ULP zmienia hasz; dla całkowitego `a` i stałej `b` → `haloFusedMulAddInt(a, b, c)` (`haloRingTSL.js`,
-  bit w bit z WebGL); sprawdzanie: wiersze haszy w `scripts/webgpu/ring-tsl-parzystosc.mjs`.
+  bit w bit z WebGL); sprawdzanie: wiersze haszy w `scripts/webgpu/ring-tsl-parzystosc.mjs`; (11) `PassTextureNode` (np.
+  `bloom.getTextureNode()`) gubi `uvNode` w `clone()` — odczyt z UV i poziomem przez `texture(węzeł, uv, poziom)`, nie
+  `.sample(uv).level(0)` (drugi klon wraca do domyślnego UV; zadanie 02, `postGry.js`).
 
 ---
 
@@ -191,7 +203,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 - Rozmiar i palety MAIN/WARP są PER STATEK: blok `engineFx` w danych edytora (`hpEditor.v1` → `ships[id]`), domyślne dopasowane do sprite'ów w `src/data/engineFx.js` (`ENGINE_FX_DEFAULTS`). Dysza w pikselach PNG, w grze × hpScale × spriteScale (jak markery). Gra czyta `visual.engineFx` (runtime NPC, układ gracza); nowy kadłub z dyszami MAIN potrzebuje wpisu w `ENGINE_FX_DEFAULTS` (pilnuje test).
 - Tryb skoku encji: gracz z `GameState.warp`, NPC `state === 'warping_in'` / `phase === 'warping'`, podgląd edytora `__warpPreview`. Dopalacz MAIN: `GameState.boost`.
 - Jasność dysz SIDE: `ENGINE_HDR` w `engineExhaustBatch.js` (0,6). W bloomie ma świecić tylko dysza, która odpala (mnożnik 1 + 1,5 · ciąg); biały „pilot” w spoczynku (= `ENGINE_HDR`) i sam lot (`moveGlow`) zostają pod progiem 0,9 — przy 2,4 każda z 8 dysz Atlasa świeciła jak lampa, a manewr zalewał burtę białą plamą (pilnuje `tests/renderBugfixGuards.test.mjs`). MAIN zostaje 1:1 z dema (świadomie). Audyt: `docs/AUDYT-bloom-kolizje-2026-09-26.md`.
-- Gorące powietrze dysz = port maski z dema plazmy w uberPass (`Core3D`): źródło z kierunkiem (`pushHeatHazeWorld(..., dirX, dirY)`) to DYSZA — `radiusWorld` = promień wylotu, siła = rampa mocy; stożek 7R zaczyna się ~1R za wylotem (dysze siedzą na krawędzi kadłuba), przesunięcie ~0,12 promienia dyszy na ekranie. Źródła bez kierunku (wybuchy, rakiety, tarcze) liczą się po staremu.
+- Gorące powietrze dysz = port maski z dema plazmy w „uber” postu (`src/3d/tsl/postGry.js`, `Core3D`): źródło z kierunkiem (`pushHeatHazeWorld(..., dirX, dirY)`) to DYSZA — `radiusWorld` = promień wylotu, siła = rampa mocy; stożek 7R zaczyna się ~1R za wylotem (dysze siedzą na krawędzi kadłuba), przesunięcie ~0,12 promienia dyszy na ekranie. Źródła bez kierunku (wybuchy, rakiety, tarcze) liczą się po staremu.
 - Shadery efektów w passie ortho: bez `pow()` z możliwie ujemną podstawą i z clampem varyingów — MSAA ekstrapoluje je poza trójkąt, a NaN w buforze HalfFloat bloom rozlewa na cały ekran.
 
 ### Wraki: gorące, śpiące, zimne
@@ -236,7 +248,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 1. **Core3D (`src/3d/core3d.js`)**
    - Modyfikacje renderera, passów scen (runner `_runScenePass`: tło → planety → halo → ring-planety → ortho → tarcze → FG, wszystko do `composerTarget` HalfFloat MSAA 4, czyszczona tylko głębia) i postu (`RenderPipeline`) rób wyłącznie tutaj.
    - Parametry bloomu (strength/radius/threshold, także dla overlay3D) żyją w `src/3d/bloomConfig.js` — jedyne źródło prawdy; tuner (panel Bloom) nadpisuje je trwale tylko z `?dev` w URL.
-   - `UnrealBloomPass` (three r183) przepuszcza przez próg CAŁY teksel (nie nadmiar) i dokłada ~9 × strength jego energii (radius tylko przesuwa wagę między mipami; rozmycia gubią ~3%): Core3D 0,85 → ~7,5×, overlay3D 1,6 przy progu 0,15 → ~14× prawie wszystkiego. Jasność nowego emitera dobieraj z tym w głowie. (Port: bloom Core3D wraca w zadaniu 02 jako `BloomNode` — ten sam algorytm.)
+   - Bloom przepuszcza przez próg CAŁY teksel (nie nadmiar) i dokłada ~9 × strength jego energii (radius tylko przesuwa wagę między mipami; rozmycia gubią ~3%): Core3D 0,85 → ~7,5×, overlay3D 1,6 przy progu 0,15 → ~14× prawie wszystkiego. Jasność nowego emitera dobieraj z tym w głowie. Core3D od zadania 02: `BloomGry` (BloomNode + ×3 `BLOOM_ZGODNOSC_WEBGL`, `src/3d/tsl/postGry.js`) — obraz 1:1 z dawnym `UnrealBloomPass` (strażnik różnic three: `tests/webgpuPost.test.mjs`); overlay3D do zadania 20 na starym passie.
    - Pipeline jest HDR-first: emitery (pociski, beamy, dysze) mnożą kolory >1.0, próg bloomu ~0.9 odcina zwykłe powierzchnie. Nowe efekty, które mają świecić, muszą wypychać luminancję >1.
    - Nie duplikuj postprocessingu w innych modułach.
    - Passy planet (warstwa 3), halo (5), ring-planet (6) i tarcz (7) są pomijane, gdy nikt nie zgłosi na nich widocznej zawartości (`Core3D.layerActivity`). Dodając obiekt na te warstwy, zgłaszaj go co klatkę (`Core3D.markPlanetLayersActive` / `Core3D.setShieldLayerActive`) — inaczej zniknie.
@@ -249,7 +261,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
    - Używaj `Core3D.scene` i `Core3D.camera`.
    - Nie twórz lokalnych rendererów ani dodatkowych canvasów WebGL.
    - Świat leży przy 5–10 mln j.: pozycja świata liczona na GPU we float32 drga ~1 px względem kadłubów. Nie wpisuj bezwzględnych pozycji do macierzy instancji ani atrybutów — duży offset w `mesh.position` (three składa `modelViewMatrix` w double), dane względem niego, w shaderze `modelViewMatrix * instanceMatrix`. Wzór: `Bridge3D._setOrigin` (`docs/PORT-mostki.md` §8.12).
-   - Początek przy kamerze daje `sceneOriginNearCamera` (`src/3d/sceneOrigin.js`); dane przepisywane co klatkę — początek co klatkę (np. `shipLights3D.js`, `fxParticles3D.js`), bufor pisany raz przy emisji (pierścień) — początek „lepki” z przesunięciem żywych danych dopiero po odjeździe kamery (`sparkSystem3D.js`, `slugTrail3D.js`). Pozycje świata w pulach CPU: `Float64Array`. Pomiar przed/po: `dema/precyzja-drzenie.js` (bloom wyłączaj przez `bloomPass.enabled` — sam `perfToggles.bloom = false` go nie wyłącza).
+   - Początek przy kamerze daje `sceneOriginNearCamera` (`src/3d/sceneOrigin.js`); dane przepisywane co klatkę — początek co klatkę (np. `shipLights3D.js`, `fxParticles3D.js`), bufor pisany raz przy emisji (pierścień) — początek „lepki” z przesunięciem żywych danych dopiero po odjeździe kamery (`sparkSystem3D.js`, `slugTrail3D.js`). Pozycje świata w pulach CPU: `Float64Array`. Pomiar przed/po: `dema/precyzja-drzenie.js` (bloom wyłącza `perfToggles.bloom = false` — od zadania 02 post czyta go w każdym renderze).
    - Przezroczysty materiał z `side: DoubleSide` three rysuje DWA razy (tył, potem przód) i przed każdym ustawia `needsUpdate` — każdy draw liczy program od nowa (`getProgram`). Nie dotyczy `ShaderMaterial` (ma `forceSinglePass = true`), dotyczy `MeshBasicMaterial` i innych wbudowanych: efekty addytywne bez zapisu głębi i płaskie siatki dostają `forceSinglePass: true` (pociski, błyski, wiązki, iskry raila).
 
 3. **Destruction + ship integration**
