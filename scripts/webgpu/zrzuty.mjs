@@ -96,6 +96,46 @@ const SCENES = {
          await H.step(90);
          for (let i = 0; i < 60; i++) { await H.frames(5); if (S.uploadsIdle()) break; }`
   },
+  'mars-ring': {
+    opis: 'Ring Marsa (archetyp ECUMENE) przy porcie K-7, zoom 0,2',
+    hud: false, warm: 45, warstwy: true,
+    js: `S.cam(ship.pos.x, ship.pos.y, 0.2);`
+  },
+  'jowisz-ring': {
+    opis: 'Ring Jowisza (archetyp Fable) przy porcie K-7, zoom 0,2',
+    hud: false, warm: 45, warstwy: true,
+    js: `S.cam(ship.pos.x, ship.pos.y, 0.2);`
+  },
+  kalibracja: {
+    opis: 'Kalibracja tolerancji portu: same wbudowane materiały three (Standard, Basic HDR, addytywny, tekstura-gradient) na warstwie 0 — wariant __ortho nie ma zamienników już po zadaniach 01–02',
+    hud: false, warm: 30, warstwy: true,
+    js: `DevScene.teleport(${DEEP.x}, ${DEEP.y + 60000}, 0);
+         const url = performance.getEntriesByType('resource').map((e) => e.name).find((n) => /\\/three\\.js(\\?|$)|three\\.module\\.js/.test(n));
+         const T = await import(url);
+         const root = new T.Group(); root.name = 'harness-kalibracja';
+         const x0 = ship.pos.x, y0 = -ship.pos.y;
+         const add = (mesh, dx, dy) => { mesh.position.set(x0 + dx, y0 + dy, 20); mesh.layers.set(0); root.add(mesh); };
+         add(new T.Mesh(new T.SphereGeometry(160, 48, 24), new T.MeshStandardMaterial({ color: 0x9aa4b0, roughness: 0.45, metalness: 0.3 })), -600, 150);
+         add(new T.Mesh(new T.SphereGeometry(110, 48, 24), new T.MeshStandardMaterial({ color: 0x202020, emissive: new T.Color(1, 0.45, 0.1), emissiveIntensity: 4 })), -200, 150);
+         const hdr = new T.MeshBasicMaterial(); hdr.color.setRGB(3.0, 1.5, 0.6);
+         add(new T.Mesh(new T.PlaneGeometry(220, 60), hdr), 200, 180);
+         const add2 = new T.MeshBasicMaterial({ transparent: true, blending: T.AdditiveBlending, depthWrite: false }); add2.color.setRGB(0.2, 0.6, 1.2);
+         add(new T.Mesh(new T.CircleGeometry(120, 48), add2), 260, 120);
+         const W = 256, px = new Uint8Array(W * 4 * 4);
+         for (let y = 0; y < 4; y++) for (let x = 0; x < W; x++) { const i = (y * W + x) * 4; px[i] = x; px[i + 1] = y < 2 ? x : 255 - x; px[i + 2] = 128; px[i + 3] = 255; }
+         const tex = new T.DataTexture(px, W, 4, T.RGBAFormat); tex.colorSpace = T.SRGBColorSpace; tex.needsUpdate = true;
+         add(new T.Mesh(new T.PlaneGeometry(900, 90), new T.MeshBasicMaterial({ map: tex })), -100, -200);
+         const alfa = new T.MeshBasicMaterial({ color: 0x40ff80, transparent: true, opacity: 0.5 });
+         add(new T.Mesh(new T.PlaneGeometry(300, 160), alfa), 450, -120);
+         Core3D.scene.add(root); root.updateMatrixWorld(true);
+         window.__harnessKalibracja = root;
+         S.cam(ship.pos.x, ship.pos.y, 1.0);`
+  },
+  'kalibracja-sprzatanie': {
+    opis: 'Bez zrzutu: usunięcie obiektów kalibracji ze sceny',
+    capture: false, warm: 2,
+    js: `const r = window.__harnessKalibracja; if (r) { r.parent?.remove(r); r.traverse((o) => { o.geometry?.dispose?.(); o.material?.map?.dispose?.(); o.material?.dispose?.(); }); window.__harnessKalibracja = null; }`
+  },
   slonce: {
     opis: 'Słońce (kula, korona, bloom HDR), zoom 0,035',
     hud: false, warm: 45,
@@ -155,7 +195,9 @@ const SCENES = {
 const SESSIONS = [
   { id: 'menu', query: 'dev=1', start: null, scenes: ['menu'] },
   { id: 'ziemia', query: 'dev=1&haloTest=earth&haloAt=port', start: 'single', ring: 'earth', scenes: ['hud', 'ring-z02', 'ring-z1', 'k7-hala', 'planeta-cien', 'slonce'] },
-  { id: 'kosmos', query: 'dev=1', start: 'single', sprites: true, scenes: ['bitwa', 'bitwa-blisko', 'wybuch', 'wraki', 'warp'] },
+  { id: 'mars', query: 'dev=1&haloTest=mars&haloAt=port', start: 'single', ring: 'mars', scenes: ['mars-ring'] },
+  { id: 'jowisz', query: 'dev=1&haloTest=jupiter&haloAt=port', start: 'single', ring: 'jupiter', scenes: ['jowisz-ring'] },
+  { id: 'kosmos', query: 'dev=1', start: 'single', sprites: true, scenes: ['kalibracja', 'kalibracja-sprzatanie', 'bitwa', 'bitwa-blisko', 'wybuch', 'wraki', 'warp'] },
   { id: 'split', query: 'dev=1', start: 'split', sprites: true, scenes: ['split'] }
 ];
 
@@ -186,6 +228,9 @@ async function runSession(session, backend, outDir, base) {
       if (session.start === 'single') await ev(`(() => { document.getElementById('btn-mode-single')?.click(); return true; })()`);
       else if (session.start === 'split') await ev(`(() => { window.DevScene.startSplit(); return true; })()`);
       if (!await waitFor(cdp, '(window.__frameId || 0) > 30', 300000, 400)) throw new Error('gra nie ruszyła (__frameId)');
+      // Ring buduje się leniwie, gdy środek kadru jest bliżej planety niż 420 tys. j. — przy stojącym
+      // czasie kamera nie dojedzie do statku sama (Mars, Jowisz; ring Ziemi piecze się już w menu).
+      if (session.ring) await ev('(() => { window.__harness.scene.cam(window.ship.pos.x, window.ship.pos.y, 0.2); return true; })()');
       if (session.ring && !await waitFor(cdp, `window.__harness.scene.ringReady('${session.ring}')`, 240000, 400)) throw new Error(`ring ${session.ring} bez map`);
       if (session.sprites && !await waitFor(cdp, 'window.DevScene.preloadHullSprites()', 120000, 250)) throw new Error('nie wczytano sprite’ów kadłubów');
     }

@@ -1,9 +1,9 @@
 {
   "opis": "Baza odniesienia portu WebGPU: gra na starym WebGLRenderer (tag webgl-baseline), 1920×1080, harness scripts/webgpu/zrzuty.mjs. PNG w .tmp/webgpu/baseline/webgl/p1 (nie w repo) — odtwarzalne z tagu.",
-  "utworzono": "2026-09-27T18:15:22.858Z",
+  "utworzono": "2026-09-27T18:41:45.903Z",
   "tag": "webgl-baseline",
-  "commitPrzebiegu": "9859d07",
-  "commitZapisu": "9859d07",
+  "commitPrzebiegu": "d57cbdd",
+  "commitZapisu": "d57cbdd",
   "polecenie": "node scripts/webgpu/zrzuty.mjs --backend webgl --powtorz 2 --wydajnosc --out .tmp/webgpu/baseline",
   "katalogPng": ".tmp/webgpu/baseline/webgl/p1",
   "rozdzielczosc": "1920x1080",
@@ -40,11 +40,11 @@
       "opis": "Menu główne: Ziemia z ringiem w kamerze kinowej (MenuBackdrop3D), intro po 150 klatkach",
       "sesja": "menu",
       "szum": {
-        "roznePct2": 0,
+        "roznePct2": 0.0001,
         "roznePct8": 0,
         "roznePct32": 0,
         "srednia": 0,
-        "maks": 1
+        "maks": 5
       },
       "drawCalls": null,
       "trojkaty": null,
@@ -234,8 +234,8 @@
         "post": 1,
         "other": 1
       },
-      "coreRenderMs": 0.445,
-      "gpuMs": 0.735,
+      "coreRenderMs": 0.59,
+      "gpuMs": 0.542,
       "hdr": {
         "pixels": 230400,
         "nanOrInf": 0,
@@ -467,8 +467,8 @@
         "post": 1,
         "other": 1
       },
-      "coreRenderMs": 0.425,
-      "gpuMs": 0.648,
+      "coreRenderMs": 0.595,
+      "gpuMs": 0.789,
       "hdr": {
         "pixels": 230400,
         "nanOrInf": 0,
@@ -740,8 +740,8 @@
         "post": 1,
         "other": 1
       },
-      "coreRenderMs": 0.415,
-      "gpuMs": 0.552,
+      "coreRenderMs": 0.525,
+      "gpuMs": 0.724,
       "hdr": {
         "pixels": 230400,
         "nanOrInf": 0,
@@ -973,8 +973,8 @@
         "post": 1,
         "other": 1
       },
-      "coreRenderMs": 0.39,
-      "gpuMs": 1.773,
+      "coreRenderMs": 0.46,
+      "gpuMs": 1.589,
       "hdr": {
         "pixels": 230400,
         "nanOrInf": 0,
@@ -1242,8 +1242,8 @@
         "post": 1,
         "other": 3
       },
-      "coreRenderMs": 0.3,
-      "gpuMs": 0.889,
+      "coreRenderMs": 0.37,
+      "gpuMs": 1.016,
       "hdr": {
         "pixels": 230400,
         "nanOrInf": 0,
@@ -1252,7 +1252,7 @@
         "p90": 0.0275,
         "p99": 0.2781,
         "p999": 0.4788,
-        "max": 0.792
+        "max": 0.803
       },
       "stan": {
         "kroki": 90,
@@ -1417,8 +1417,8 @@
         "post": 1,
         "other": 1
       },
-      "coreRenderMs": 0.24,
-      "gpuMs": 0.576,
+      "coreRenderMs": 0.315,
+      "gpuMs": 0.574,
       "hdr": {
         "pixels": 230400,
         "nanOrInf": 0,
@@ -1518,15 +1518,682 @@
         }
       }
     },
+    "mars-ring": {
+      "opis": "Ring Marsa (archetyp ECUMENE) przy porcie K-7, zoom 0,2",
+      "sesja": "mars",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      },
+      "drawCalls": 48,
+      "trojkaty": 509636,
+      "passy": {
+        "total": 48,
+        "refraction": 0,
+        "bg": 13,
+        "planets": 2,
+        "shafts": 1,
+        "ortho": 6,
+        "fg": 11,
+        "bloom": 13,
+        "post": 1,
+        "other": 1
+      },
+      "coreRenderMs": 0.565,
+      "gpuMs": 0.695,
+      "hdr": {
+        "pixels": 230400,
+        "nanOrInf": 0,
+        "overFraction": 0.00004,
+        "p50": 0.0083,
+        "p90": 0.073,
+        "p99": 0.1533,
+        "p999": 0.6718,
+        "max": 0.922
+      },
+      "stan": {
+        "kroki": 0,
+        "npc": 0,
+        "wraki": 0,
+        "pociski": 0,
+        "kamera": [
+          7360087,
+          6052578,
+          0.2,
+          "rts"
+        ],
+        "suma": 0
+      },
+      "spis": {
+        "zamienniki": 0,
+        "warstwy": {
+          "ortho": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uSprite+uNormalMap+uHasNormalMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uMap": {
+              "obiekty": 3,
+              "instancje": 3
+            }
+          },
+          "fg": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:space_station_1001": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1003": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1002": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1004": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshPhysicalMaterial:spacestation_main2": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshPhysicalMaterial:spacestation_smalllights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshPhysicalMaterial:spacestation_main": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "ShaderMaterial:ArchInstancedFG": {
+              "obiekty": 1,
+              "instancje": 3928
+            },
+            "ShaderMaterial:ArchStripFG": {
+              "obiekty": 2,
+              "instancje": 2
+            },
+            "ShaderMaterial:K7Instances": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "ShaderMaterial:K7Plates": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:K7Hoses": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uTime+uCoreGain+uHaloGain": {
+              "obiekty": 1,
+              "instancje": 42
+            }
+          },
+          "tlo": {
+            "ShaderMaterial:map+warpFactor+uSunShadowMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:pointTexture+time+cameraOffset": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:EcumeneSurface": {
+              "obiekty": 12,
+              "instancje": 12
+            },
+            "ShaderMaterial:ArchInstanced": {
+              "obiekty": 25,
+              "instancje": 52422
+            },
+            "ShaderMaterial:ArchStrip": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:ArchPoints": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:K7Instances": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "ShaderMaterial:K7Plates": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:K7Labels": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "planety": {
+            "ShaderMaterial:uTime+uIsOcclusion": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "SpriteMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "ring-planety": {
+            "ShaderMaterial:uPlanetBloom+dayTexture+nightTexture": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uSunDir+uRa+uHs": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:?": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 5,
+              "instancje": 5
+            }
+          }
+        }
+      }
+    },
+    "mars-ring__fg": {
+      "wariantSceny": "mars-ring",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "mars-ring__ortho": {
+      "wariantSceny": "mars-ring",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "mars-ring__planety": {
+      "wariantSceny": "mars-ring",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "mars-ring__tlo": {
+      "wariantSceny": "mars-ring",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "jowisz-ring": {
+      "opis": "Ring Jowisza (archetyp Fable) przy porcie K-7, zoom 0,2",
+      "sesja": "jowisz",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      },
+      "drawCalls": 50,
+      "trojkaty": 704220,
+      "passy": {
+        "total": 50,
+        "refraction": 0,
+        "bg": 14,
+        "planets": 2,
+        "shafts": 1,
+        "ortho": 6,
+        "fg": 12,
+        "bloom": 13,
+        "post": 1,
+        "other": 1
+      },
+      "coreRenderMs": 0.58,
+      "gpuMs": 0.922,
+      "hdr": {
+        "pixels": 230400,
+        "nanOrInf": 0,
+        "overFraction": 0.00002,
+        "p50": 0.008,
+        "p90": 0.0248,
+        "p99": 0.1871,
+        "p999": 0.653,
+        "max": 0.966
+      },
+      "stan": {
+        "kroki": 0,
+        "npc": 0,
+        "wraki": 0,
+        "pociski": 0,
+        "kamera": [
+          7957969,
+          6742914,
+          0.2,
+          "rts"
+        ],
+        "suma": 0
+      },
+      "spis": {
+        "zamienniki": 0,
+        "warstwy": {
+          "ortho": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uSprite+uNormalMap+uHasNormalMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uMap": {
+              "obiekty": 3,
+              "instancje": 3
+            }
+          },
+          "fg": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:space_station_1001": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1003": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1002": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1004": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshPhysicalMaterial:spacestation_main2": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshPhysicalMaterial:spacestation_smalllights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshPhysicalMaterial:spacestation_main": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "ShaderMaterial:ArchStripFG": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:ArchInstancedFG": {
+              "obiekty": 1,
+              "instancje": 2965
+            },
+            "ShaderMaterial:ArchPoints": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:K7Instances": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:K7Plates": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:K7Hoses": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uTime+uCoreGain+uHaloGain": {
+              "obiekty": 1,
+              "instancje": 42
+            }
+          },
+          "tlo": {
+            "ShaderMaterial:map+warpFactor+uSunShadowMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:pointTexture+time+cameraOffset": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:FableSurface": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:ArchStrip": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:ArchInstanced": {
+              "obiekty": 41,
+              "instancje": 93236
+            },
+            "ShaderMaterial:ArchPoints": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:K7Instances": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "ShaderMaterial:K7Plates": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:K7Labels": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "planety": {
+            "ShaderMaterial:uTime+uIsOcclusion": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "SpriteMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "ring-planety": {
+            "ShaderMaterial:uPlanetBloom+dayTexture+nightTexture": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uSunDir+uRa+uHs": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:?": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 5,
+              "instancje": 5
+            }
+          }
+        }
+      }
+    },
+    "jowisz-ring__fg": {
+      "wariantSceny": "jowisz-ring",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "jowisz-ring__ortho": {
+      "wariantSceny": "jowisz-ring",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "jowisz-ring__planety": {
+      "wariantSceny": "jowisz-ring",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "jowisz-ring__tlo": {
+      "wariantSceny": "jowisz-ring",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "kalibracja": {
+      "opis": "Kalibracja tolerancji portu: same wbudowane materiały three (Standard, Basic HDR, addytywny, tekstura-gradient) na warstwie 0 — wariant __ortho nie ma zamienników już po zadaniach 01–02",
+      "sesja": "kosmos",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      },
+      "drawCalls": 32,
+      "trojkaty": 10882,
+      "passy": {
+        "total": 32,
+        "refraction": 0,
+        "bg": 2,
+        "planets": 0,
+        "shafts": 1,
+        "ortho": 12,
+        "fg": 2,
+        "bloom": 13,
+        "post": 1,
+        "other": 1
+      },
+      "coreRenderMs": 0.475,
+      "gpuMs": 0.469,
+      "hdr": {
+        "pixels": 230400,
+        "nanOrInf": 0,
+        "overFraction": 0.02525,
+        "p50": 0.0081,
+        "p90": 0.1692,
+        "p99": 2.175,
+        "p999": 2.3117,
+        "max": 2.312
+      },
+      "stan": {
+        "kroki": 0,
+        "npc": 0,
+        "wraki": 0,
+        "pociski": 0,
+        "kamera": [
+          6210000,
+          5390000,
+          1,
+          "rts"
+        ],
+        "suma": 0
+      },
+      "spis": {
+        "zamienniki": 0,
+        "warstwy": {
+          "ortho": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uSprite+uNormalMap+uHasNormalMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uMap": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshStandardMaterial:?": {
+              "obiekty": 2,
+              "instancje": 2
+            },
+            "MeshBasicMaterial:?": {
+              "obiekty": 4,
+              "instancje": 4
+            }
+          },
+          "fg": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:space_station_1001": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1003": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1002": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1004": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshPhysicalMaterial:spacestation_main2": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshPhysicalMaterial:spacestation_smalllights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshPhysicalMaterial:spacestation_main": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "ShaderMaterial:uTime+uCoreGain+uHaloGain": {
+              "obiekty": 1,
+              "instancje": 42
+            }
+          },
+          "tlo": {
+            "ShaderMaterial:map+warpFactor+uSunShadowMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:pointTexture+time+cameraOffset": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "planety": {
+            "ShaderMaterial:uTime+uIsOcclusion": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "SpriteMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "ring-planety": {
+            "MeshStandardMaterial:?": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 5,
+              "instancje": 5
+            }
+          }
+        }
+      }
+    },
+    "kalibracja__fg": {
+      "wariantSceny": "kalibracja",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "kalibracja__ortho": {
+      "wariantSceny": "kalibracja",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "kalibracja__planety": {
+      "wariantSceny": "kalibracja",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "kalibracja__tlo": {
+      "wariantSceny": "kalibracja",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
     "bitwa": {
       "opis": "Bitwa w próżni: 3 piratów vs 2 Terra Nova, 180 klatek walki (pociski, wiązki, tarcze, dysze, bloom)",
       "sesja": "kosmos",
       "szum": {
-        "roznePct2": 0.0008,
-        "roznePct8": 0.0003,
+        "roznePct2": 0,
+        "roznePct8": 0,
         "roznePct32": 0,
-        "srednia": 0.0001,
-        "maks": 16
+        "srednia": 0,
+        "maks": 1
       },
       "drawCalls": 48,
       "trojkaty": 25434,
@@ -1542,15 +2209,15 @@
         "post": 1,
         "other": 1
       },
-      "coreRenderMs": 0.44,
-      "gpuMs": 0.727,
+      "coreRenderMs": 0.555,
+      "gpuMs": 0.728,
       "hdr": {
         "pixels": 230400,
         "nanOrInf": 0,
         "overFraction": 0.00045,
         "p50": 0.0071,
         "p90": 0.0296,
-        "p99": 0.2015,
+        "p99": 0.2014,
         "p999": 0.6711,
         "max": 4.574
       },
@@ -1702,11 +2369,11 @@
     "bitwa__ortho": {
       "wariantSceny": "bitwa",
       "szum": {
-        "roznePct2": 0.001,
-        "roznePct8": 0.0005,
+        "roznePct2": 0,
+        "roznePct8": 0,
         "roznePct32": 0,
-        "srednia": 0.0001,
-        "maks": 30
+        "srednia": 0,
+        "maks": 1
       }
     },
     "bitwa__planety": {
@@ -1737,7 +2404,7 @@
         "roznePct8": 0,
         "roznePct32": 0,
         "srednia": 0,
-        "maks": 1
+        "maks": 0
       },
       "drawCalls": 37,
       "trojkaty": 9366,
@@ -1753,8 +2420,8 @@
         "post": 1,
         "other": 1
       },
-      "coreRenderMs": 0.495,
-      "gpuMs": 0.667,
+      "coreRenderMs": 0.51,
+      "gpuMs": 0.668,
       "hdr": {
         "pixels": 230400,
         "nanOrInf": 0,
@@ -1920,8 +2587,8 @@
         "post": 1,
         "other": 1
       },
-      "coreRenderMs": 0.385,
-      "gpuMs": 0.656,
+      "coreRenderMs": 0.555,
+      "gpuMs": 0.619,
       "hdr": {
         "pixels": 230400,
         "nanOrInf": 0,
@@ -2091,8 +2758,8 @@
         "post": 1,
         "other": 1
       },
-      "coreRenderMs": 0.34,
-      "gpuMs": 0.769,
+      "coreRenderMs": 0.625,
+      "gpuMs": 0.594,
       "hdr": {
         "pixels": 230400,
         "nanOrInf": 0,
@@ -2282,11 +2949,11 @@
       "opis": "Ładowanie skoku: plazma WARP z dysz MAIN (na WebGPU bez starej soczewki — porównanie tylko na WebGL)",
       "sesja": "kosmos",
       "szum": {
-        "roznePct2": 0.0068,
-        "roznePct8": 0.0007,
+        "roznePct2": 0.0267,
+        "roznePct8": 0.0006,
         "roznePct32": 0.0002,
-        "srednia": 0.003,
-        "maks": 64
+        "srednia": 0.0042,
+        "maks": 65
       },
       "drawCalls": 66,
       "trojkaty": 40709,
@@ -2302,15 +2969,15 @@
         "post": 1,
         "other": 1
       },
-      "coreRenderMs": 0.44,
-      "gpuMs": 1.28,
+      "coreRenderMs": 0.685,
+      "gpuMs": 3.036,
       "hdr": {
         "pixels": 230400,
         "nanOrInf": 0,
         "overFraction": 0.00557,
         "p50": 0.0116,
         "p90": 0.0599,
-        "p99": 0.5476,
+        "p99": 0.5471,
         "p999": 2.2509,
         "max": 6.621
       },
@@ -2489,8 +3156,8 @@
         "post": 1,
         "other": 1
       },
-      "coreRenderMs": 0.33,
-      "gpuMs": 0.906,
+      "coreRenderMs": 0.395,
+      "gpuMs": 0.71,
       "hdr": {
         "pixels": 230400,
         "nanOrInf": 0,
@@ -2610,20 +3277,20 @@
   "wydajnosc": {
     "scenariusz": "bitwa w czasie rzeczywistym, 48 okrętów (zrzuty.mjs --wydajnosc, --bok 24), zoom 0,12, headless bez vsync",
     "mediana": {
-      "fps": 288,
-      "klatka": 3.562,
-      "p95": 5.355,
-      "fizyka": 0.543,
-      "rysowanie": 2.404,
-      "uHex": 0.965,
-      "coreRender": 0.868,
-      "coreRenderTotal": 0.9,
-      "gpu": 1.142,
-      "drawCalls": 88,
-      "trojkaty": 102012,
-      "npc": 46,
-      "pociski": 64,
-      "wraki": 5
+      "fps": 205,
+      "klatka": 4.883,
+      "p95": 6.795,
+      "fizyka": 0.958,
+      "rysowanie": 2.958,
+      "uHex": 1.199,
+      "coreRender": 1.032,
+      "coreRenderTotal": 1.03,
+      "gpu": 1.023,
+      "drawCalls": 87,
+      "trojkaty": 99058,
+      "npc": 45,
+      "pociski": 59,
+      "wraki": 10
     }
   },
   "drzenie": {
