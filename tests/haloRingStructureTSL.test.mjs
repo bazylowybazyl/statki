@@ -153,6 +153,9 @@ test('pasy obrotowe w WGSL: atrybuty i instancje jak dawny STRIP_VERTEX, dwa blo
       assert.equal((stage.match(/var<uniform> haloRingU\b/g) || []).length, 1);
       assert.ok((stage.match(new RegExp(`var<uniform> ${HALO_SURFACE_BLOCK_NAME}\\b`, 'g')) || []).length <= 1);
       assert.ok((stage.match(/var<uniform>/g) || []).length <= 4, 'haloRingU, haloSurfU, object, render (limit 12)');
+      // tekstury zawsze z jawnym uv — bez uniformów macierzy uv na każde próbkowanie (updateMatrix)
+      const obj = stage.match(/struct objectStruct \{[\s\S]*?\};/);
+      assert.ok(!obj || !/mat3x3/.test(obj[0]), `${part.material.name}: bez macierzy uv tekstur`);
     }
     // funkcje biblioteki i dachu czyste (kod wspólny dla materiałów i trzech ringów)
     for (const name of [...fragment.matchAll(/^fn (halo\w+)/gm)].map((x) => x[1])) {
