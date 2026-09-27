@@ -18,13 +18,25 @@
 //   - skala per dysza: S = promień dyszy / promień dyszy dema, a długość
 //     gradientu palety jedzie atrybutem instancji (dema miały jedno S);
 //   - bez PointLightów (gra trzyma enginePointLights: false);
-//   - alfa = max(rgb) przy premultipliedAlpha — alfa 1 na całym kwadzie wycina
-//     w poświacie bloomu ciemny prostokąt (kanwa Core3D jest premultiplied);
+//   - alfa = max(rgb) przy mieszaniu (ONE, ONE) — alfa 1 na całym kwadzie
+//     wycina w poświacie bloomu ciemny prostokąt (kanwa Core3D jest premultiplied);
 //   - faza szumu całkowana na CPU (uFlowPh), nie uTime·flow.
+//
+// Port WebGPU (zadanie 13): materiał węzłowy TSL 1:1 z dawnym GLSL. Mieszanie
+// jak WebGL z premultipliedAlpha (ONE, ONE — tsl/mieszanie.js): NodeMaterial
+// z premultipliedAlpha: true mnożyłby wyjście przez alfę, czego ShaderMaterial
+// w WebGL nie robił — struga by ściemniała.
 
 import * as THREE from 'three';
+import { NodeMaterial } from 'three/webgpu';
+import {
+  Fn, attribute, clamp, dot, exp, float, floor, fract, inverseSqrt, max, min, mix, pow,
+  positionGeometry, smoothstep, texture, uniform, uv, varying, vec2, vec3, vec4
+} from 'three/tsl';
 import { Core3D } from './core3d.js';
 import { Fx3D, makeBasis, coneDir } from './fxParticles3D.js';
+import { uniformsAdapter } from './tsl/uniformy.js';
+import { blendAddytywnePremul } from './tsl/mieszanie.js';
 import {
   MAIN_EXHAUST_PALETTES,
   MAIN_EXHAUST_TUNE as T,
@@ -53,55 +65,99 @@ const FLOW_PHASE_WRAP = 1024;
 // Wspólny bank iskier dzielą bronie — silniki biorą najwyżej tyle jego pojemności.
 const SPARK_BUDGET_SHARE = 0.55;
 
-const JET_VERT = /* glsl */`
-attribute vec2 iPos;     // wylot dyszy względem mesh.position (początek przy kamerze)
-attribute vec2 iDir;     // kierunek wydechu w płaszczyźnie gry
-attribute vec2 iPalG;    // x: indeks palety w atlasie, y: długość gradientu [j.]
-attribute vec4 iData;    // x: długość, y: szerokość, z: alfa, w: u życia
-attribute float iSeed;
-uniform float uZ;
-varying vec2 vUv;
-varying float vA, vU, vSeed, vPal, vDist, vGradLen;
-void main() {
-  vUv = uv; vA = iData.z; vU = iData.w; vSeed = iSeed; vPal = iPalG.x; vGradLen = iPalG.y;
-  vDist = (position.y + 0.5) * iData.x;          // odległość od dyszy wzdłuż strugi
-  vec2 axis = iDir * inversesqrt(max(dot(iDir, iDir), 1e-12));
-  vec2 side = vec2(-axis.y, axis.x);              // kwad leży w płaszczyźnie XY
-  vec2 p = iPos + axis * ((position.y + 0.5) * iData.x) + side * (position.x * iData.y);
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(p, uZ, 1.0);
-}`;
+/* ============================================================================
+   MATERIAŁ (TSL) — kwady strug na instancjach
+   Atrybuty instancji:
+     iPos   wylot dyszy względem mesh.position (początek przy kamerze)
+     iDir   kierunek wydechu w płaszczyźnie gry
+     iPalG  x: indeks palety w atlasie, y: długość gradientu [j.]
+     iData  x: długość, y: szerokość, z: alfa, w: u życia
+     iSeed  ziarno szumu strugi
+   ========================================================================== */
+// Szum strugi z dema: hash21 na węzłach siatki (floor) — wejście całkowite.
+// Funkcje z layoutem są CZYSTE (PLAN §3 — błąd r183 z uniformem w domknięciu).
+const jetHash21 = /*@__PURE__*/ Fn(([p0]) => {
+  const p = fract(p0.mul(vec2(123.34, 456.21))).toVar();
+  p.addAssign(dot(p, p.add(45.32)));
+  return fract(p.x.mul(p.y));
+}).setLayout({ name: 'mainJetHash21', type: 'float', inputs: [{ name: 'p', type: 'vec2' }] });
 
-const JET_FRAG = /* glsl */`
-uniform float uFlowPh;   // faza płynięcia szumu — ∫flow·dt liczone na CPU
-uniform sampler2D uPal;
-varying vec2 vUv;
-varying float vA, vU, vSeed, vPal, vDist, vGradLen;
-float hash21(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract(p.x*p.y);}
-float noise2(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(hash21(i),hash21(i+vec2(1,0)),f.x),mix(hash21(i+vec2(0,1)),hash21(i+vec2(1,1)),f.x),f.y);}
-float cloud(vec2 p){return .68*noise2(p)+.32*noise2(p*2.07+17.3);}
-vec3 palColor(float t, float g) {
-  float row = vPal * ${PAL_L}.0 + 0.5 + g * ${PAL_L - 1}.0;
-  return texture2D(uPal, vec2((t * ${PAL_T - 1}.0 + 0.5) / ${PAL_T}.0, row / ${PAL_MAX * PAL_L}.0)).rgb;
+const jetNoise2 = /*@__PURE__*/ Fn(([p]) => {
+  const i = floor(p).toVar();
+  const f0 = fract(p).toVar();
+  const f = f0.mul(f0).mul(float(3.0).sub(f0.mul(2.0))).toVar();
+  return mix(
+    mix(jetHash21(i), jetHash21(i.add(vec2(1.0, 0.0))), f.x),
+    mix(jetHash21(i.add(vec2(0.0, 1.0))), jetHash21(i.add(vec2(1.0, 1.0))), f.x),
+    f.y
+  );
+}).setLayout({ name: 'mainJetNoise2', type: 'float', inputs: [{ name: 'p', type: 'vec2' }] });
+
+const jetCloud = /*@__PURE__*/ Fn(([p]) =>
+  float(0.68).mul(jetNoise2(p)).add(float(0.32).mul(jetNoise2(p.mul(2.07).add(17.3))))
+).setLayout({ name: 'mainJetCloud', type: 'float', inputs: [{ name: 'p', type: 'vec2' }] });
+
+function makeJetMaterial(atlasTex) {
+  const U = uniformsAdapter({
+    uZ: uniform(MAIN_EXHAUST_Z),
+    // faza płynięcia szumu — ∫flow·dt liczone na CPU
+    uFlowPh: uniform(0),
+    uPal: texture(atlasTex)
+  });
+  const iPos = attribute('iPos', 'vec2');
+  const iDir = attribute('iDir', 'vec2');
+  const iPalG = attribute('iPalG', 'vec2');
+  const iData = attribute('iData', 'vec4');
+  const iSeed = attribute('iSeed', 'float');
+  // odległość od dyszy wzdłuż strugi (0 u wylotu)
+  const alongLocal = positionGeometry.y.add(0.5);
+
+  const m = new NodeMaterial();
+  m.name = 'MainExhaustJets';
+  m.positionNode = Fn(() => {
+    const axis = iDir.mul(inverseSqrt(max(dot(iDir, iDir), 1e-12))).toVar();
+    const side = vec2(axis.y.negate(), axis.x);              // kwad leży w płaszczyźnie XY
+    const p = iPos.add(axis.mul(alongLocal.mul(iData.x))).add(side.mul(positionGeometry.x.mul(iData.y)));
+    return vec3(p, U.uZ);
+  })();
+  const vDist = varying(alongLocal.mul(iData.x), 'vDist');
+  m.fragmentNode = Fn(() => {
+    const vUv = uv();
+    // Clamp: MSAA ekstrapoluje varyingi do próbek POZA trójkątem, a pow() z ujemną
+    // podstawą to NaN — w buforze HalfFloat bloom rozlewał go na cały ekran.
+    const along = clamp(vUv.y, 0.0, 1.0).toVar();                    // 0 = dysza, 1 = koniec
+    const x = clamp(vUv.x, 0.0, 1.0).mul(2.0).sub(1.0).toVar();
+    const vA = iData.z;
+    const vSeed = iSeed;
+    const n = jetCloud(vec2(along.mul(5.5).sub(U.uFlowPh), x.mul(1.4).add(vSeed.mul(9.0))));
+    const n2 = jetCloud(vec2(along.mul(2.2).sub(U.uFlowPh.mul(0.55)).add(vSeed.mul(5.0)), 0.3));
+    const w = mix(0.30, 1.0, along);                                 // stożek się rozszerza
+    // NIE pow(x / w, 2.0): x < 0 to w HLSL NaN, a NaN w buforze HalfFloat
+    // bloom rozlewa na cały ekran (tak było w pierwszym porcie z dema).
+    const xw = x.div(w).toVar();
+    const across = exp(xw.negate().mul(xw).mul(3.2)).mul(float(0.55).add(float(0.7).mul(n)));
+    const base = smoothstep(0.0, 0.06, along).mul(pow(float(1.0).sub(along), 0.85)).mul(float(0.65).add(float(0.55).mul(n2)));
+    const a = across.mul(base).mul(vA).toVar();
+    const t = clamp(a.mul(1.5).add(exp(x.negate().mul(x).mul(30.0)).mul(float(1.0).sub(along)).mul(0.55)), 0.0, 1.0);
+    const g = clamp(vDist.div(max(iPalG.y, 1e-3)), 0.0, 1.0);       // gradient liczony od dyszy
+    // palColor: wiersz palety = indeks · PAL_L + gradient, kolumna = temperatura
+    const row = iPalG.x.mul(PAL_L).add(0.5).add(g.mul(PAL_L - 1));
+    const pal = U.uPal.sample(vec2(t.mul(PAL_T - 1).add(0.5).div(PAL_T), row.div(PAL_MAX * PAL_L))).rgb;
+    const c = pal.mul(a).toVar();
+    return vec4(c, min(1.0, max(c.r, max(c.g, c.b))));
+  })();
+  m.transparent = true;
+  m.depthTest = true;
+  m.depthWrite = false;
+  m.side = THREE.DoubleSide;
+  // Jak ShaderMaterial w WebGL: jeden draw, nie dwa (tył + przód).
+  m.forceSinglePass = true;
+  m.fog = false;
+  m.lights = false;
+  blendAddytywnePremul(m);
+  m.uniforms = U;
+  return m;
 }
-void main() {
-  // Clamp: MSAA ekstrapoluje varyingi do próbek POZA trójkątem, a pow() z ujemną
-  // podstawą to NaN — w buforze HalfFloat bloom rozlewał go na cały ekran.
-  float along = clamp(vUv.y, 0.0, 1.0);                      // 0 = dysza, 1 = koniec
-  float x = clamp(vUv.x, 0.0, 1.0) * 2.0 - 1.0;
-  float n  = cloud(vec2(along * 5.5 - uFlowPh, x * 1.4 + vSeed * 9.0));
-  float n2 = cloud(vec2(along * 2.2 - uFlowPh * 0.55 + vSeed * 5.0, 0.3));
-  float w = mix(0.30, 1.0, along);                           // stożek się rozszerza
-  // NIE pow(x / w, 2.0): x < 0 to w HLSL/ANGLE NaN, a NaN w buforze HalfFloat
-  // bloom rozlewa na cały ekran (tak było w pierwszym porcie z dema).
-  float xw = x / w;
-  float across = exp(-xw * xw * 3.2) * (0.55 + 0.7 * n);
-  float base = smoothstep(0.0, 0.06, along) * pow(1.0 - along, 0.85) * (0.65 + 0.55 * n2);
-  float a = across * base * vA;
-  float t = clamp(a * 1.5 + exp(-x * x * 30.0) * (1.0 - along) * 0.55, 0.0, 1.0);
-  float g = clamp(vDist / max(vGradLen, 1e-3), 0.0, 1.0);    // gradient liczony od dyszy
-  vec3 c = palColor(t, g) * a;
-  gl_FragColor = vec4(c, min(1.0, max(c.r, max(c.g, c.b))));
-}`;
 
 const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -240,21 +296,7 @@ function ensureBuilt() {
   }
   geo.instanceCount = 0;
   atlas = buildAtlas();
-  mat = new THREE.ShaderMaterial({
-    uniforms: {
-      uZ: { value: MAIN_EXHAUST_Z },
-      uFlowPh: { value: 0 },
-      uPal: { value: atlas }
-    },
-    vertexShader: JET_VERT,
-    fragmentShader: JET_FRAG,
-    transparent: true,
-    blending: THREE.AdditiveBlending,
-    premultipliedAlpha: true,
-    depthTest: true,
-    depthWrite: false,
-    side: THREE.DoubleSide
-  });
+  mat = makeJetMaterial(atlas);
   mesh = new THREE.Mesh(geo, mat);
   mesh.name = 'MainExhaustJets';
   mesh.frustumCulled = false;
@@ -339,6 +381,9 @@ function kick(state, p, S, palIdx, grad, str) {
   const n = Math.min(sparkBudgetLeft(), Math.round(40 * str * p.sparkMul));
   for (let i = 0; i < n; i++) spawnSpark(state, p.x, p.y, p.dirX, p.dirY, S, 1, palIdx, 0, 0, 50, 220, rand(0.3, 1.1));
 }
+
+// Dla testów: materiał strugi i atlas palet (bez Core3D).
+export const MainExhaustInternals = Object.freeze({ makeJetMaterial, buildAtlas });
 
 /* ============================================================================
    API

@@ -16,364 +16,445 @@
 //     cieplnych (warstwa 3 w grze to planety; gorące powietrze daje
 //     Core3D.pushHeatHazeWorld);
 //   - bez siatek dyszy (gardziel, wnętrze) — dyszę rysuje sprite kadłuba;
-//   - alfa = max(rgb) przy premultipliedAlpha: alfa 1 na całym proxy wycinała
-//     w poświacie bloomu ciemny prostokąt (kanwa Core3D jest premultiplied);
+//   - alfa = max(rgb) przy mieszaniu (ONE, ONE): alfa 1 na całym proxy
+//     wycinała w poświacie bloomu ciemny prostokąt (kanwa Core3D jest premultiplied);
 //   - pozycja w mesh.position (świat 5–10 mln j. — three składa modelView
 //     w double), cały raymarch w przestrzeni lokalnej instancji;
 //   - fazy przepływu całkowane na CPU (patrz sampleMedium).
+//
+// Port WebGPU (zadanie 13): trzy materiały węzłowe TSL 1:1 z dawnym GLSL.
+//   - JEDEN GRAF na rodzaj (plume w wariancie jakości, poświata, cząstki), budowany
+//     raz na moduł. Instancja puli ma własne materiały (ten sam graf = ten sam
+//     klucz programu, NodeBuilder buduje go raz), a jej wartości leżą w
+//     `material.uniforms.X.value` jak dawniej — węzły uniformów czytają je z
+//     materiału rysowanego obiektu (onObjectUpdate). Dawniej `new ShaderMaterial`
+//     w konstruktorze: na WebGPU każda z 16 instancji budowałaby ciężki raymarch
+//     od nowa (przestój przy pierwszych skokach floty).
+//   - Kroki marszu i oktawy (dawne `defines` PE_STEPS / PE_OCT) to stałe przy
+//     budowie grafu: `Loop(steps)` i gałęzie oktaw w JS — jakość = osobny graf.
+//   - Cząstki: WebGPU rysuje punkty tylko 1 px, więc dawne `gl_PointSize` to
+//     kwad na instancję (rozmiar w pikselach celu przez viewportSize); dawne
+//     `gl_PointCoord` = uv kwadu.
+//   - Mieszanie jak WebGL z premultipliedAlpha (ONE, ONE — tsl/mieszanie.js).
 
 import * as THREE from 'three';
+import { NodeMaterial } from 'three/webgpu';
+import {
+  Break, Discard, Fn, If, Loop,
+  abs, atan, attribute, cameraProjectionMatrix, clamp, cos, dot, exp, float, floor, fract, length,
+  max, min, mix, modelViewMatrix, normalize, positionGeometry, pow, screenCoordinate, screenSize,
+  select, sin, smoothstep, sqrt, step, uniform, uv, varying, vec2, vec3, vec4, viewportSize
+} from 'three/tsl';
 import { Core3D } from './core3d.js';
+import { blendAddytywnePremul } from './tsl/mieszanie.js';
 import { WARP_PLASMA_PALETTES, WARP_PLUME_BASE_LEN, WARP_PLUME_BOOST_LEN } from '../data/engineFx.js';
 
 /* ============================================================================
-   0. WSPÓLNY GLSL — simplex noise 3D (Ashima / Gustavson), prefiks pe_
+   0. WSPÓLNE — simplex noise 3D (Ashima / Gustavson), prefiks pe_
+   Funkcje z layoutem są CZYSTE (PLAN §3 — błąd r183 z uniformem w domknięciu).
    ========================================================================== */
-const NOISE = /* glsl */`
-vec3 pe_mod289(vec3 x){ return x - floor(x*(1.0/289.0))*289.0; }
-vec4 pe_mod289(vec4 x){ return x - floor(x*(1.0/289.0))*289.0; }
-vec4 pe_permute(vec4 x){ return pe_mod289(((x*34.0)+1.0)*x); }
-vec4 pe_tis(vec4 r){ return 1.79284291400159 - 0.85373472095314 * r; }
-float pe_snoise(vec3 v){
-  const vec2 C = vec2(1.0/6.0, 1.0/3.0);
-  const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
-  vec3 i  = floor(v + dot(v, C.yyy));
-  vec3 x0 = v - i + dot(i, C.xxx);
-  vec3 g = step(x0.yzx, x0.xyz);
-  vec3 l = 1.0 - g;
-  vec3 i1 = min(g.xyz, l.zxy);
-  vec3 i2 = max(g.xyz, l.zxy);
-  vec3 x1 = x0 - i1 + C.xxx;
-  vec3 x2 = x0 - i2 + C.yyy;
-  vec3 x3 = x0 - D.yyy;
-  i = pe_mod289(i);
-  vec4 p = pe_permute( pe_permute( pe_permute(
-             i.z + vec4(0.0, i1.z, i2.z, 1.0))
-           + i.y + vec4(0.0, i1.y, i2.y, 1.0))
-           + i.x + vec4(0.0, i1.x, i2.x, 1.0));
-  float n_ = 0.142857142857;
-  vec3 ns = n_ * D.wyz - D.xzx;
-  vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
-  vec4 x_ = floor(j * ns.z);
-  vec4 y_ = floor(j - 7.0 * x_);
-  vec4 x = x_ * ns.x + ns.yyyy;
-  vec4 y = y_ * ns.x + ns.yyyy;
-  vec4 h = 1.0 - abs(x) - abs(y);
-  vec4 b0 = vec4(x.xy, y.xy);
-  vec4 b1 = vec4(x.zw, y.zw);
-  vec4 s0 = floor(b0)*2.0 + 1.0;
-  vec4 s1 = floor(b1)*2.0 + 1.0;
-  vec4 sh = -step(h, vec4(0.0));
-  vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy;
-  vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww;
-  vec3 p0 = vec3(a0.xy, h.x);
-  vec3 p1 = vec3(a0.zw, h.y);
-  vec3 p2 = vec3(a1.xy, h.z);
-  vec3 p3 = vec3(a1.zw, h.w);
-  vec4 norm = pe_tis(vec4(dot(p0,p0), dot(p1,p1), dot(p2,p2), dot(p3,p3)));
-  p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
-  vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
-  m = m * m;
-  return 42.0 * dot(m*m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));
+const peMod289 = (x) => x.sub(floor(x.mul(1.0 / 289.0)).mul(289.0));
+const pePermute = (x) => peMod289(x.mul(34.0).add(1.0).mul(x));
+const peTis = (r) => float(1.79284291400159).sub(r.mul(0.85373472095314));
+
+export const peSnoise = /*@__PURE__*/ Fn(([v]) => {
+  const C = vec2(1.0 / 6.0, 1.0 / 3.0);
+  const D = vec4(0.0, 0.5, 1.0, 2.0);
+  const i = floor(v.add(dot(v, C.yyy))).toVar();
+  const x0 = v.sub(i).add(dot(i, C.xxx)).toVar();
+  const g = step(x0.yzx, x0.xyz).toVar();
+  const l = float(1.0).sub(g).toVar();
+  const i1 = min(g.xyz, l.zxy).toVar();
+  const i2 = max(g.xyz, l.zxy).toVar();
+  const x1 = x0.sub(i1).add(C.xxx).toVar();
+  const x2 = x0.sub(i2).add(C.yyy).toVar();
+  const x3 = x0.sub(D.yyy).toVar();
+  i.assign(peMod289(i));
+  const p = pePermute(pePermute(pePermute(
+    i.z.add(vec4(0.0, i1.z, i2.z, 1.0)))
+    .add(i.y).add(vec4(0.0, i1.y, i2.y, 1.0)))
+    .add(i.x).add(vec4(0.0, i1.x, i2.x, 1.0))).toVar();
+  const n_ = float(0.142857142857);
+  const ns = n_.mul(D.wyz).sub(D.xzx).toVar();
+  const j = p.sub(float(49.0).mul(floor(p.mul(ns.z).mul(ns.z)))).toVar();
+  const x_ = floor(j.mul(ns.z)).toVar();
+  const y_ = floor(j.sub(float(7.0).mul(x_))).toVar();
+  const x = x_.mul(ns.x).add(ns.yyyy).toVar();
+  const y = y_.mul(ns.x).add(ns.yyyy).toVar();
+  const h = float(1.0).sub(abs(x)).sub(abs(y)).toVar();
+  const b0 = vec4(x.xy, y.xy).toVar();
+  const b1 = vec4(x.zw, y.zw).toVar();
+  const s0 = floor(b0).mul(2.0).add(1.0).toVar();
+  const s1 = floor(b1).mul(2.0).add(1.0).toVar();
+  const sh = step(h, vec4(0.0)).negate().toVar();
+  const a0 = b0.xzyw.add(s0.xzyw.mul(sh.xxyy)).toVar();
+  const a1 = b1.xzyw.add(s1.xzyw.mul(sh.zzww)).toVar();
+  const p0 = vec3(a0.xy, h.x).toVar();
+  const p1 = vec3(a0.zw, h.y).toVar();
+  const p2 = vec3(a1.xy, h.z).toVar();
+  const p3 = vec3(a1.zw, h.w).toVar();
+  const norm = peTis(vec4(dot(p0, p0), dot(p1, p1), dot(p2, p2), dot(p3, p3))).toVar();
+  p0.mulAssign(norm.x);
+  p1.mulAssign(norm.y);
+  p2.mulAssign(norm.z);
+  p3.mulAssign(norm.w);
+  const m = max(float(0.6).sub(vec4(dot(x0, x0), dot(x1, x1), dot(x2, x2), dot(x3, x3))), 0.0).toVar();
+  m.assign(m.mul(m));
+  return float(42.0).mul(dot(m.mul(m), vec4(dot(p0, x0), dot(p1, x1), dot(p2, x2), dot(p3, x3))));
+}).setLayout({ name: 'peSnoise', type: 'float', inputs: [{ name: 'v', type: 'vec3' }] });
+
+const peHash12 = /*@__PURE__*/ Fn(([p]) => {
+  const p3 = fract(vec3(p.xyx).mul(0.1031)).toVar();
+  p3.addAssign(dot(p3, p3.yzx.add(33.33)));
+  return fract(p3.x.add(p3.y).mul(p3.z));
+}).setLayout({ name: 'peHash12', type: 'float', inputs: [{ name: 'p', type: 'vec2' }] });
+
+// Uniform per obiekt: graf wspólny dla całej puli, wartość z `uniforms`
+// materiału RYSOWANEGO obiektu (materiał na instancję, dawne API bez zmian).
+// Wszystkie w grupie obiektu — jeden bufor uniformów na draw (limit 12 na etap).
+function perObject(name, init) {
+  return uniform(init).onObjectUpdate(({ material }) => material.uniforms[name].value);
 }
-float pe_hash12(vec2 p){
-  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
-  p3 += dot(p3, p3.yzx + 33.33);
-  return fract((p3.x + p3.y) * p3.z);
-}`;
 
 /* ============================================================================
    1. PLUME — raymarch w układzie lokalnym: oś dyszy = +Z, promień dyszy = 1
    ========================================================================== */
-const PLUME_VS = /* glsl */`
-varying vec3 vLocal;
-void main(){
-  vLocal = position;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-}`;
+const plumeGraphs = new Map();
 
-const PLUME_FS = NOISE + /* glsl */`
-precision highp float;
+function plumeGraph(steps, oct) {
+  const key = `${steps}|${oct}`;
+  const cached = plumeGraphs.get(key);
+  if (cached) return cached;
 
-varying vec3 vLocal;
+  const u = {
+    uTime: perObject('uTime', 0),              // tylko ziarno jittera marszu (zawijany na CPU)
+    uLen: perObject('uLen', 0),                // długość ciała plume (promień dyszy = 1)
+    uWidth: perObject('uWidth', 0),            // mnożnik promienia
+    uCore: perObject('uCore', 0),              // intensywność białego rdzenia
+    uBright: perObject('uBright', 0),          // globalna jasność
+    uTurb: perObject('uTurb', 0),              // amplituda turbulencji
+    uStretch: perObject('uStretch', 0),        // rozciągnięcie smug wzdłuż osi (wygładzane na CPU)
+    uFlowPh: perObject('uFlowPh', new THREE.Vector3()),  // fazy oktaw w przestrzeni szumu (całkowane na CPU)
+    uMachPh: perObject('uMachPh', 0),          // faza diamentów Macha (całkowana na CPU)
+    uSheath: perObject('uSheath', 0),          // siła otoczki
+    uDensity: perObject('uDensity', 0),        // gęstość / gain całki
+    uBodyGain: perObject('uBodyGain', 0),      // ciało + otoczka względem rdzenia (pod próg bloomu gry)
+    uAfterglow: perObject('uAfterglow', 0),    // 0..1 — poświata po wyłączeniu (bez rdzenia)
+    uPower: perObject('uPower', 0),            // 0..1 moc silnika (kształt + barwa)
+    uIgnite: perObject('uIgnite', 0),          // impuls zapłonu (0..1+)
+    uExtinct: perObject('uExtinct', 0),        // samoprzesłanianie ośrodka
+    uCamPosL: perObject('uCamPosL', new THREE.Vector3()),  // pozycja kamery w przestrzeni lokalnej
+    uCamDirL: perObject('uCamDirL', new THREE.Vector3()),  // kierunek patrzenia kamery (ortho) lokalnie
+    uOrtho: perObject('uOrtho', 0),
+    uBoundR: perObject('uBoundR', 0),          // ciasne granice marszu — promień
+    uBoundZ0: perObject('uBoundZ0', 0),
+    uBoundZ1: perObject('uBoundZ1', 0),
+    uJitter: perObject('uJitter', 0),
+    uCoreWarm: perObject('uCoreWarm', new THREE.Color()),
+    uCoreCold: perObject('uCoreCold', new THREE.Color()),
+    uBody0: perObject('uBody0', new THREE.Color()),
+    uBody1: perObject('uBody1', new THREE.Color()),
+    uBody2: perObject('uBody2', new THREE.Color()),
+    uBody3: perObject('uBody3', new THREE.Color()),
+    uOuter0: perObject('uOuter0', new THREE.Color()),
+    uOuter1: perObject('uOuter1', new THREE.Color())
+  };
 
-uniform float uTime;       // tylko ziarno jittera marszu (zawijany na CPU)
-uniform float uLen;        // długość ciała plume (promień dyszy = 1)
-uniform float uWidth;      // mnożnik promienia
-uniform float uCore;       // intensywność białego rdzenia
-uniform float uBright;     // globalna jasność
-uniform float uTurb;       // amplituda turbulencji
-uniform float uStretch;    // rozciągnięcie smug wzdłuż osi (wygładzane na CPU)
-uniform vec3  uFlowPh;     // fazy oktaw w przestrzeni szumu (całkowane na CPU)
-uniform float uMachPh;     // faza diamentów Macha (całkowana na CPU)
-uniform float uSheath;     // siła otoczki
-uniform float uDensity;    // gęstość / gain całki
-uniform float uBodyGain;   // ciało + otoczka względem rdzenia (pod próg bloomu gry)
-uniform float uAfterglow;  // 0..1 — poświata po wyłączeniu (bez rdzenia)
-uniform float uPower;      // 0..1 moc silnika (kształt + barwa)
-uniform float uIgnite;     // impuls zapłonu (0..1+)
-uniform float uExtinct;    // samoprzesłanianie ośrodka
+  // Ośrodek w punkcie p (wklejany w ciało pętli — jedna kopia w WGSL).
+  const sampleMedium = (p) => {
+    const res = vec4(0.0).toVar();
+    const L = max(u.uLen, 0.001).toVar();
+    const s = p.z.div(L).toVar();                      // 0 = wylot dyszy, 1 = koniec ciała
+    // dawne `if (s > 1.32) return vec4(0.0);`
+    If(s.greaterThan(1.32).not(), () => {
+      const sc = clamp(s, 0.0, 1.32).toVar();
+      const r = length(p.xy).toVar();
+      const inNoz = select(s.lessThan(0.0), exp(p.z.mul(5.0)), float(1.0)).toVar();
 
-uniform vec3  uCamPosL;    // pozycja kamery w przestrzeni lokalnej
-uniform vec3  uCamDirL;    // kierunek patrzenia kamery (ortho) w przestrzeni lokalnej
-uniform float uOrtho;
-uniform float uBoundR;     // ciasne granice marszu — promień
-uniform float uBoundZ0;
-uniform float uBoundZ1;
-uniform float uJitter;
+      const flare = float(1.0).add(float(0.24).mul(sc.div(sc.add(0.055))).mul(exp(sc.negate().mul(6.5))));
+      const taper = float(1.0).sub(float(0.56).mul(smoothstep(0.08, 1.20, sc)));
+      const Renv = u.uWidth.mul(flare).mul(taper).toVar();
 
-#ifndef PE_STEPS
-  #define PE_STEPS 44
-#endif
-#ifndef PE_OCT
-  #define PE_OCT 3
-#endif
+      // Fazy przepływu CAŁKOWANE na CPU (faza += prędkość·dt). Iloczyn czas·prędkość
+      // skakał przy każdej zmianie prędkości i po minucie cofał strumień.
+      const expand = float(1.0).div(float(0.55).add(float(0.95).mul(sc))).toVar();
+      const fstr = u.uStretch;
+      const q1 = vec3(p.xy.mul(expand).mul(1.45), p.z.mul(float(0.26).mul(fstr)).sub(u.uFlowPh.x));
+      const n1 = peSnoise(q1).toVar();
+      let n2;
+      let n3;
+      if (oct > 1) {
+        const q2 = vec3(p.xy.mul(expand).mul(3.40), p.z.mul(float(0.62).mul(fstr)).sub(u.uFlowPh.y));
+        n2 = peSnoise(q2).toVar();
+      } else {
+        n2 = n1.mul(0.6).toVar();
+      }
+      if (oct > 2) {
+        const q3 = vec3(p.xy.mul(expand).mul(7.60).add(17.3), p.z.mul(float(1.45).mul(fstr)).sub(u.uFlowPh.z));
+        n3 = peSnoise(q3).toVar();
+      } else {
+        n3 = n2.mul(0.6).toVar();
+      }
 
-uniform vec3 uCoreWarm;
-uniform vec3 uCoreCold;
-uniform vec3 uBody0;
-uniform vec3 uBody1;
-uniform vec3 uBody2;
-uniform vec3 uBody3;
-uniform vec3 uOuter0;
-uniform vec3 uOuter1;
+      const tLow = n1;
+      const tMid = n1.mul(0.55).add(n2.mul(0.45)).toVar();
+      const tHigh = n1.mul(0.26).add(n2.mul(0.34)).add(n3.mul(0.40)).toVar();
 
-vec4 sampleMedium(vec3 p){
-  float L  = max(uLen, 0.001);
-  float s  = p.z / L;                       // 0 = wylot dyszy, 1 = koniec ciała
-  if (s > 1.32) return vec4(0.0);
+      const tAmp = u.uTurb.mul(smoothstep(-0.02, 0.22, sc)).mul(float(1.0).add(float(0.45).mul(float(1.0).sub(u.uPower)))).toVar();
 
-  float sc   = clamp(s, 0.0, 1.32);
-  float r    = length(p.xy);
-  float inNoz = (s < 0.0) ? exp(p.z * 5.0) : 1.0;
+      const rq = r.div(max(Renv, 1e-4)).toVar();
+      const rqB = rq.mul(float(1.0).sub(float(0.42).mul(tAmp).mul(tMid))).toVar();
+      const rqS = rq.mul(float(1.0).sub(float(0.50).mul(tAmp).mul(tLow))).toVar();
 
-  float flare = 1.0 + 0.24 * (sc / (sc + 0.055)) * exp(-sc * 6.5);
-  float taper = 1.0 - 0.56 * smoothstep(0.08, 1.20, sc);
-  float Renv  = uWidth * flare * taper;
+      const tipN = float(0.17).mul(tAmp).mul(tLow).toVar();
+      const eB = max(float(1.02).add(tipN), 0.34);
+      const eS = max(float(1.30).add(tipN.mul(1.4)), 0.42);
+      const axBody = float(1.0).sub(smoothstep(0.46, eB, sc));
+      const axShe = float(1.0).sub(smoothstep(0.34, eS, sc)).toVar();
+      const axCore = pow(float(1.0).sub(smoothstep(0.008, 0.26, sc)), 1.20);
 
-  // Fazy przepływu CAŁKOWANE na CPU (faza += prędkość·dt). Iloczyn czas·prędkość
-  // skakał przy każdej zmianie prędkości i po minucie cofał strumień.
-  float expand = 1.0 / (0.55 + 0.95 * sc);
-  float fstr = uStretch;
-  vec3 q1 = vec3(p.xy * expand * 1.45, p.z * (0.26 * fstr) - uFlowPh.x);
-  float n1 = pe_snoise(q1);
-  float n2 = 0.0;
-  float n3 = 0.0;
-  #if PE_OCT > 1
-    vec3 q2 = vec3(p.xy * expand * 3.40, p.z * (0.62 * fstr) - uFlowPh.y);
-    n2 = pe_snoise(q2);
-  #else
-    n2 = n1 * 0.6;
-  #endif
-  #if PE_OCT > 2
-    vec3 q3 = vec3(p.xy * expand * 7.60 + 17.3, p.z * (1.45 * fstr) - uFlowPh.z);
-    n3 = pe_snoise(q3);
-  #else
-    n3 = n2 * 0.6;
-  #endif
+      const body = pow(max(0.0, float(1.0).sub(rqB.mul(rqB))), 1.70).mul(axBody).toVar();
+      const mott = float(0.72).add(float(0.56).mul(tMid.mul(0.5).add(0.5)));
+      body.mulAssign(mix(0.98, mott, smoothstep(0.02, 0.30, sc)));
 
-  float tLow  = n1;
-  float tMid  = n1 * 0.55 + n2 * 0.45;
-  float tHigh = n1 * 0.26 + n2 * 0.34 + n3 * 0.40;
+      const coreVis = smoothstep(0.14, 0.52, u.uPower).toVar();
+      const Rc = u.uWidth.mul(float(0.18).add(float(0.27).mul(sc))).mul(float(0.70).add(float(0.42).mul(u.uPower)));
+      const cr = r.div(max(Rc, 1e-4)).toVar();
+      const core = exp(cr.negate().mul(cr).mul(2.9)).mul(axCore).toVar();
+      core.mulAssign(float(0.86).add(float(0.28).mul(tHigh.mul(0.5).add(0.5))));
+      core.mulAssign(float(1.0).add(float(0.19).mul(sin(sc.mul(33.0).sub(u.uMachPh))).mul(exp(sc.negate().mul(7.5)))));
+      core.mulAssign(coreVis);
 
-  float tAmp = uTurb * smoothstep(-0.02, 0.22, sc) * (1.0 + 0.45 * (1.0 - uPower));
+      const ign = exp(max(sc, 0.0).negate().mul(26.0)).mul(float(1.0).sub(smoothstep(0.35, 1.05, rq))).toVar();
+      ign.mulAssign(float(0.85).add(float(0.30).mul(tHigh.mul(0.5).add(0.5))));
 
-  float rq  = r / max(Renv, 1e-4);
-  float rqB = rq * (1.0 - 0.42 * tAmp * tMid);
-  float rqS = rq * (1.0 - 0.50 * tAmp * tLow);
+      const d = rqS.sub(0.88).div(0.26).toVar();
+      const shell = exp(d.negate().mul(d));
+      const skirt = exp(pow(max(0.0, rqS.sub(0.34)).div(0.66), 2.0).negate()).mul(0.46);
+      const sheath = shell.add(skirt).mul(axShe).toVar();
+      sheath.mulAssign(float(0.68).add(float(0.64).mul(tLow.mul(0.5).add(0.5))));
+      sheath.mulAssign(float(0.45).add(float(0.75).mul(smoothstep(0.0, 0.35, sc))));
 
-  float tipN   = 0.17 * tAmp * tLow;
-  float eB = max(1.02 + tipN, 0.34);
-  float eS = max(1.30 + tipN * 1.4, 0.42);
-  float axBody = 1.0 - smoothstep(0.46, eB, sc);
-  float axShe  = 1.0 - smoothstep(0.34, eS, sc);
-  float axCore = pow(1.0 - smoothstep(0.008, 0.26, sc), 1.20);
+      const rm = clamp(rqB, 0.0, 1.2).toVar();
+      const bodyCol = mix(u.uBody0, u.uBody1, smoothstep(0.00, 0.20, rm)).toVar();
+      bodyCol.assign(mix(bodyCol, u.uBody2, smoothstep(0.12, 0.46, rm)));
+      bodyCol.assign(mix(bodyCol, u.uBody3, smoothstep(0.38, 0.82, rm)));
+      bodyCol.assign(mix(bodyCol, u.uOuter0, smoothstep(0.58, 1.34, sc.mul(0.74).add(rm.mul(0.46)))));
+      bodyCol.assign(mix(bodyCol, mix(u.uOuter0, u.uOuter1, 0.45), u.uAfterglow.mul(0.85).add(float(1.0).sub(u.uPower).mul(0.18))));
 
-  float body = pow(max(0.0, 1.0 - rqB * rqB), 1.70) * axBody;
-  float mott = 0.72 + 0.56 * (tMid * 0.5 + 0.5);
-  body *= mix(0.98, mott, smoothstep(0.02, 0.30, sc));
+      const coreCol = mix(u.uCoreWarm, u.uCoreCold, smoothstep(0.02, 0.26, sc));
+      const sheathCol = mix(u.uOuter0, u.uOuter1, smoothstep(0.06, 0.70, sc));
 
-  float coreVis = smoothstep(0.14, 0.52, uPower);
-  float Rc = uWidth * (0.18 + 0.27 * sc) * (0.70 + 0.42 * uPower);
-  float cr = r / max(Rc, 1e-4);
-  float core = exp(-cr * cr * 2.9) * axCore;
-  core *= 0.86 + 0.28 * (tHigh * 0.5 + 0.5);
-  core *= 1.0 + 0.19 * sin(sc * 33.0 - uMachPh) * exp(-sc * 7.5);
-  core *= coreVis;
+      const noCore = float(1.0).sub(u.uAfterglow).toVar();
+      const hollow = float(1.0).sub(float(0.50).mul(exp(cr.negate().mul(cr).mul(1.7))).mul(coreVis));
+      const e = vec3(0.0).toVar();
+      e.addAssign(coreCol.mul(core).mul(float(34.0).mul(u.uCore)).mul(noCore));
+      e.addAssign(vec3(1.0, 0.90, 0.80).mul(ign).mul(float(3.4).add(float(16.0).mul(u.uIgnite)).mul(u.uCore)).mul(noCore));
+      e.addAssign(bodyCol.mul(body).mul(hollow).mul(1.35).mul(u.uBodyGain));
+      e.addAssign(sheathCol.mul(sheath).mul(float(0.46).mul(u.uSheath)).mul(u.uBodyGain));
+      e.mulAssign(u.uBright.mul(u.uDensity).mul(inNoz));
 
-  float ign = exp(-max(sc, 0.0) * 26.0) * (1.0 - smoothstep(0.35, 1.05, rq));
-  ign *= 0.85 + 0.30 * (tHigh * 0.5 + 0.5);
+      const dens = body.mul(0.55).add(core.mul(1.10)).add(sheath.mul(0.22)).add(ign.mul(0.5)).mul(inNoz);
+      res.assign(vec4(e, dens));
+    });
+    return res;
+  };
 
-  float d = (rqS - 0.88) / 0.26;
-  float shell = exp(-d * d);
-  float skirt = exp(-pow(max(0.0, rqS - 0.34) / 0.66, 2.0)) * 0.46;
-  float sheath = (shell + skirt) * axShe;
-  sheath *= 0.68 + 0.64 * (tLow * 0.5 + 0.5);
-  sheath *= 0.45 + 0.75 * smoothstep(0.0, 0.35, sc);
+  const vLocal = varying(positionGeometry, 'vLocal');
+  const fragmentNode = Fn(() => {
+    const ro = vec3(0.0).toVar();
+    const rd = vec3(0.0).toVar();
+    If(u.uOrtho.greaterThan(0.5), () => {
+      rd.assign(normalize(u.uCamDirL));
+      ro.assign(vLocal.sub(rd.mul(u.uBoundZ1.mul(4.0).add(40.0))));
+    }).Else(() => {
+      ro.assign(u.uCamPosL);
+      rd.assign(normalize(vLocal.sub(ro)));
+    });
 
-  float rm = clamp(rqB, 0.0, 1.2);
-  vec3 bodyCol = mix(uBody0,  uBody1, smoothstep(0.00, 0.20, rm));
-  bodyCol      = mix(bodyCol, uBody2, smoothstep(0.12, 0.46, rm));
-  bodyCol      = mix(bodyCol, uBody3, smoothstep(0.38, 0.82, rm));
-  bodyCol      = mix(bodyCol, uOuter0, smoothstep(0.58, 1.34, sc * 0.74 + rm * 0.46));
-  bodyCol = mix(bodyCol, mix(uOuter0, uOuter1, 0.45), uAfterglow * 0.85 + (1.0 - uPower) * 0.18);
+    const t0 = float(0.0).toVar();
+    const t1 = float(1.0e9).toVar();
+    // Dawne `discard` w granicach marszu. WGSL ma semantykę „demote to helper”
+    // (Tint na D3D12: discard = flaga, kod po nim dalej się wykonuje), więc sam
+    // Discard nie ominąłby pętli dla pikseli proxy poza walcem — marsz idzie
+    // tylko przy `hit`, wynik piksela bez zmian.
+    const hit = float(1.0).toVar();
 
-  vec3 coreCol   = mix(uCoreWarm, uCoreCold, smoothstep(0.02, 0.26, sc));
-  vec3 sheathCol = mix(uOuter0, uOuter1, smoothstep(0.06, 0.70, sc));
+    const a = dot(rd.xy, rd.xy).toVar();
+    const b = float(2.0).mul(dot(ro.xy, rd.xy)).toVar();
+    const c = dot(ro.xy, ro.xy).sub(u.uBoundR.mul(u.uBoundR)).toVar();
+    If(a.lessThan(1.0e-7), () => {
+      If(c.greaterThan(0.0), () => { hit.assign(0.0); });
+    }).Else(() => {
+      const disc = b.mul(b).sub(float(4.0).mul(a).mul(c)).toVar();
+      If(disc.lessThan(0.0), () => { hit.assign(0.0); }).Else(() => {
+        const sq = sqrt(disc).toVar();
+        t0.assign(max(t0, b.negate().sub(sq).div(float(2.0).mul(a))));
+        t1.assign(min(t1, b.negate().add(sq).div(float(2.0).mul(a))));
+      });
+    });
+    If(abs(rd.z).lessThan(1.0e-7), () => {
+      If(ro.z.lessThan(u.uBoundZ0).or(ro.z.greaterThan(u.uBoundZ1)), () => { hit.assign(0.0); });
+    }).Else(() => {
+      const ta = u.uBoundZ0.sub(ro.z).div(rd.z).toVar();
+      const tb = u.uBoundZ1.sub(ro.z).div(rd.z).toVar();
+      t0.assign(max(t0, min(ta, tb)));
+      t1.assign(min(t1, max(ta, tb)));
+    });
+    t0.assign(max(t0, 0.0));
+    If(t1.lessThanEqual(t0), () => { hit.assign(0.0); });
+    If(hit.lessThan(0.5), () => { Discard(); });
 
-  float noCore = 1.0 - uAfterglow;
-  float hollow = 1.0 - 0.50 * exp(-cr * cr * 1.7) * coreVis;
-  vec3 e = vec3(0.0);
-  e += coreCol             * core   * (34.0 * uCore) * noCore;
-  e += vec3(1.0,0.90,0.80) * ign    * ((3.4 + 16.0 * uIgnite) * uCore) * noCore;
-  e += bodyCol             * body   * hollow * 1.35 * uBodyGain;
-  e += sheathCol           * sheath * (0.46 * uSheath) * uBodyGain;
-  e *= uBright * uDensity * inNoz;
+    const acc = vec3(0.0).toVar();
+    If(hit.greaterThan(0.5), () => {
+      const stepLen = t1.sub(t0).div(float(steps)).toVar();
+      // gl_FragCoord w konwencji GL (y od dołu celu) — ten sam wzór jittera co WebGL.
+      const fragCoordGL = vec2(screenCoordinate.x, screenSize.y.sub(screenCoordinate.y));
+      const jit = peHash12(fragCoordGL.add(fract(u.uTime).mul(91.7))).mul(u.uJitter);
+      const t = t0.add(stepLen.mul(jit)).toVar();
+      const tr = float(1.0).toVar();
 
-  float dens = (body * 0.55 + core * 1.10 + sheath * 0.22 + ign * 0.5) * inNoz;
-  return vec4(e, dens);
+      Loop(steps, () => {
+        const p = ro.add(rd.mul(t)).toVar();
+        const m = sampleMedium(p);
+        acc.addAssign(m.rgb.mul(stepLen).mul(tr));
+        tr.mulAssign(exp(m.a.negate().mul(stepLen).mul(u.uExtinct)));
+        If(tr.lessThan(0.012), () => { Break(); });
+        t.addAssign(stepLen);
+      });
+    });
+
+    const col = max(acc, 0.0).toVar();
+    return vec4(col, min(1.0, max(col.r, max(col.g, col.b))));
+  })();
+
+  const graph = { fragmentNode };
+  plumeGraphs.set(key, graph);
+  return graph;
 }
-
-void main(){
-  vec3 ro, rd;
-  if (uOrtho > 0.5){
-    rd = normalize(uCamDirL);
-    ro = vLocal - rd * (uBoundZ1 * 4.0 + 40.0);
-  } else {
-    ro = uCamPosL;
-    rd = normalize(vLocal - ro);
-  }
-
-  float t0 = 0.0;
-  float t1 = 1.0e9;
-
-  float a = dot(rd.xy, rd.xy);
-  float b = 2.0 * dot(ro.xy, rd.xy);
-  float c = dot(ro.xy, ro.xy) - uBoundR * uBoundR;
-  if (a < 1.0e-7){
-    if (c > 0.0) discard;
-  } else {
-    float disc = b * b - 4.0 * a * c;
-    if (disc < 0.0) discard;
-    float sq = sqrt(disc);
-    t0 = max(t0, (-b - sq) / (2.0 * a));
-    t1 = min(t1, (-b + sq) / (2.0 * a));
-  }
-  if (abs(rd.z) < 1.0e-7){
-    if (ro.z < uBoundZ0 || ro.z > uBoundZ1) discard;
-  } else {
-    float ta = (uBoundZ0 - ro.z) / rd.z;
-    float tb = (uBoundZ1 - ro.z) / rd.z;
-    t0 = max(t0, min(ta, tb));
-    t1 = min(t1, max(ta, tb));
-  }
-  t0 = max(t0, 0.0);
-  if (t1 <= t0) discard;
-
-  float stepLen = (t1 - t0) / float(PE_STEPS);
-  float jit = pe_hash12(gl_FragCoord.xy + fract(uTime) * 91.7) * uJitter;
-  float t = t0 + stepLen * jit;
-
-  vec3  acc  = vec3(0.0);
-  float tr   = 1.0;
-
-  for (int i = 0; i < PE_STEPS; i++){
-    vec3 p = ro + rd * t;
-    vec4 m = sampleMedium(p);
-    acc += m.rgb * stepLen * tr;
-    tr  *= exp(-m.a * stepLen * uExtinct);
-    if (tr < 0.012) break;
-    t += stepLen;
-  }
-
-  vec3 col = max(acc, 0.0);
-  gl_FragColor = vec4(col, min(1.0, max(col.r, max(col.g, col.b))));
-}`;
 
 /* ============================================================================
    2. BILLBOARDY POŚWIATY (view-space — działa w ortho i perspektywie)
    ========================================================================== */
-const GLOW_VS = /* glsl */`
-uniform float uSize;
-uniform float uStretch;
-varying vec2 vUv;
-void main(){
-  vUv = uv;
-  vec4 mv = modelViewMatrix * vec4(0.0, 0.0, 0.0, 1.0);
-  mv.xy += vec2(position.x * uSize * uStretch, position.y * uSize);
-  gl_Position = projectionMatrix * mv;
-}`;
+let glowGraphCache = null;
 
-const GLOW_FS = NOISE + /* glsl */`
-precision highp float;
-uniform vec3  uColor;
-uniform float uIntensity;
-uniform float uFalloff;
-uniform float uCoreBoost;
-uniform float uTime;
-uniform float uWobble;
-varying vec2 vUv;
-void main(){
-  vec2 q = vUv - 0.5;
-  float d = length(q) * 2.0;
-  // atan(0, 0) jest niezdefiniowany — NaN w buforze HalfFloat bloom rozlewa
-  // na cały ekran; przesunięcie o 1e-6 nic nie zmienia w obrazie.
-  float ang = atan(q.y, q.x + 1e-6);
-  float w = pe_snoise(vec3(cos(ang) * 1.6, sin(ang) * 1.6, uTime * 0.6)) * uWobble;
-  d *= 1.0 + w;
-  float f = max(0.0, 1.0 - d);
-  float a = pow(f, uFalloff) + uCoreBoost * pow(f, uFalloff * 4.5);
-  if (a < 0.0008) discard;
-  vec3 col = uColor * a * uIntensity;
-  gl_FragColor = vec4(col, min(1.0, max(col.r, max(col.g, col.b))));
-}`;
+function glowGraph() {
+  if (glowGraphCache) return glowGraphCache;
+  const u = {
+    uSize: perObject('uSize', 0),
+    uStretch: perObject('uStretch', 0),
+    uColor: perObject('uColor', new THREE.Color()),
+    uIntensity: perObject('uIntensity', 0),
+    uFalloff: perObject('uFalloff', 0),
+    uCoreBoost: perObject('uCoreBoost', 0),
+    uTime: perObject('uTime', 0),
+    uWobble: perObject('uWobble', 0)
+  };
+  const vertexNode = Fn(() => {
+    const mv = modelViewMatrix.mul(vec4(0.0, 0.0, 0.0, 1.0)).toVar();
+    const xy = mv.xy.add(vec2(positionGeometry.x.mul(u.uSize).mul(u.uStretch), positionGeometry.y.mul(u.uSize)));
+    return cameraProjectionMatrix.mul(vec4(xy, mv.z, mv.w));
+  })();
+  const fragmentNode = Fn(() => {
+    const q = uv().sub(0.5).toVar();
+    const d = length(q).mul(2.0).toVar();
+    // atan(0, 0) jest niezdefiniowany — NaN w buforze HalfFloat bloom rozlewa
+    // na cały ekran; przesunięcie o 1e-6 nic nie zmienia w obrazie.
+    const ang = atan(q.y, q.x.add(1e-6)).toVar();
+    const w = peSnoise(vec3(cos(ang).mul(1.6), sin(ang).mul(1.6), u.uTime.mul(0.6))).mul(u.uWobble);
+    d.mulAssign(float(1.0).add(w));
+    const f = max(0.0, float(1.0).sub(d)).toVar();
+    const a = pow(f, u.uFalloff).add(u.uCoreBoost.mul(pow(f, u.uFalloff.mul(4.5)))).toVar();
+    If(a.lessThan(0.0008), () => { Discard(); });
+    const col = u.uColor.mul(a).mul(u.uIntensity).toVar();
+    return vec4(col, min(1.0, max(col.r, max(col.g, col.b))));
+  })();
+  glowGraphCache = { vertexNode, fragmentNode };
+  return glowGraphCache;
+}
 
 /* ============================================================================
-   3. CZĄSTKI — pozycja liczona proceduralnie w vertex shaderze
+   3. CZĄSTKI — pozycja liczona proceduralnie w vertex shaderze; kwad na cząstkę
+   (dawny punkt z gl_PointSize — WebGPU rysuje punkty tylko 1 px)
    ========================================================================== */
-const PART_VS = /* glsl */`
-attribute vec3  aSeed;
-attribute float aPhase;
-uniform float uLen, uWidth, uEmit, uPower, uSizeK, uPixK, uOrtho;
-uniform float uLifePh;     // faza życia cząstek, całkowana na CPU (0..1)
-uniform vec3  uPart0, uPart1, uPart2;
-varying float vA;
-varying vec3  vC;
-void main(){
-  float life = fract(uLifePh + aPhase);
-  float gate = step(aPhase, uEmit);
-  float sp   = 0.70 + 0.60 * aSeed.z;
-  float z    = life * uLen * 1.20 * sp;
-  float ang  = aSeed.x * 6.28318 + life * 2.4 * (aSeed.z - 0.5);
-  float rad  = (0.16 + 0.80 * aSeed.y) * uWidth * (0.55 + 1.10 * life);
-  vec3 pos = vec3(cos(ang) * rad, sin(ang) * rad, z);
-  pos.xy += vec2(sin(life * 12.0 + aSeed.x * 31.0), cos(life * 9.5 + aSeed.y * 27.0))
-            * 0.09 * uWidth * life;
+let particleGraphCache = null;
 
-  vec4 mv = modelViewMatrix * vec4(pos, 1.0);
-  gl_Position = projectionMatrix * mv;
+function particleGraph() {
+  if (particleGraphCache) return particleGraphCache;
+  const u = {
+    uLifePh: perObject('uLifePh', 0),          // faza życia cząstek, całkowana na CPU (0..1)
+    uLen: perObject('uLen', 0),
+    uWidth: perObject('uWidth', 0),
+    uEmit: perObject('uEmit', 0),
+    uPower: perObject('uPower', 0),
+    uSizeK: perObject('uSizeK', 0),
+    uPixK: perObject('uPixK', 0),
+    uOrtho: perObject('uOrtho', 0),
+    uGain: perObject('uGain', 0),
+    uPart0: perObject('uPart0', new THREE.Color()),
+    uPart1: perObject('uPart1', new THREE.Color()),
+    uPart2: perObject('uPart2', new THREE.Color())
+  };
+  const aSeed = attribute('aSeed', 'vec3');
+  const aPhase = attribute('aPhase', 'float');
+  const life = fract(u.uLifePh.add(aPhase));
+  const gate = step(aPhase, u.uEmit);
 
-  float fade = smoothstep(0.0, 0.05, life) * (1.0 - smoothstep(0.30, 1.0, life));
-  vA = fade * gate * smoothstep(0.05, 0.4, uPower);
-  vC = mix(uPart0, mix(uPart1, uPart2, smoothstep(0.25, 0.9, life)),
-           smoothstep(0.015, 0.28, life));
-  float sz = (0.026 + 0.042 * aSeed.z) * (1.0 - 0.45 * life) * uWidth;
-  float szP = sz * uSizeK / max(-mv.z, 0.01);
-  gl_PointSize = clamp(mix(szP, sz * uPixK, uOrtho), 1.0, 42.0);
-}`;
+  const vertexNode = Fn(() => {
+    const lifeV = life.toVar();
+    const sp = float(0.70).add(float(0.60).mul(aSeed.z));
+    const z = lifeV.mul(u.uLen).mul(1.20).mul(sp);
+    const ang = aSeed.x.mul(6.28318).add(lifeV.mul(2.4).mul(aSeed.z.sub(0.5))).toVar();
+    const rad = float(0.16).add(float(0.80).mul(aSeed.y)).mul(u.uWidth).mul(float(0.55).add(float(1.10).mul(lifeV))).toVar();
+    const wob = vec2(sin(lifeV.mul(12.0).add(aSeed.x.mul(31.0))), cos(lifeV.mul(9.5).add(aSeed.y.mul(27.0))))
+      .mul(0.09).mul(u.uWidth).mul(lifeV);
+    const pos = vec3(vec2(cos(ang).mul(rad), sin(ang).mul(rad)).add(wob), z);
 
-const PART_FS = /* glsl */`
-precision highp float;
-uniform float uGain;
-varying float vA;
-varying vec3  vC;
-void main(){
-  float d = length(gl_PointCoord - 0.5) * 2.0;
-  float a = pow(max(0.0, 1.0 - d), 2.3);
-  if (a * vA < 0.002) discard;
-  vec3 col = vC * a * vA * uGain;
-  gl_FragColor = vec4(col, min(1.0, max(col.r, max(col.g, col.b))));
-}`;
+    const mv = modelViewMatrix.mul(vec4(pos, 1.0)).toVar();
+    const clip = cameraProjectionMatrix.mul(mv).toVar();
+
+    const sz = float(0.026).add(float(0.042).mul(aSeed.z)).mul(float(1.0).sub(float(0.45).mul(lifeV))).mul(u.uWidth).toVar();
+    const szP = sz.mul(u.uSizeK).div(max(mv.z.negate(), 0.01));
+    const size = clamp(mix(szP, sz.mul(u.uPixK), u.uOrtho), 1.0, 42.0);
+    // dawny punkt size × size pikseli celu: przesunięcie w NDC × w (dzielenie perspektywy)
+    const off = positionGeometry.xy.mul(size).mul(2.0).div(viewportSize).mul(clip.w);
+    return vec4(clip.xy.add(off), clip.z, clip.w);
+  })();
+
+  const fade = smoothstep(0.0, 0.05, life).mul(float(1.0).sub(smoothstep(0.30, 1.0, life)));
+  const vA = varying(fade.mul(gate).mul(smoothstep(0.05, 0.4, u.uPower)), 'vA');
+  const vC = varying(mix(u.uPart0, mix(u.uPart1, u.uPart2, smoothstep(0.25, 0.9, life)), smoothstep(0.015, 0.28, life)), 'vC');
+
+  const fragmentNode = Fn(() => {
+    // dawne gl_PointCoord = uv kwadu (funkcja odległości od środka — orientacja bez znaczenia)
+    const d = length(uv().sub(0.5)).mul(2.0);
+    const a = pow(max(0.0, float(1.0).sub(d)), 2.3).toVar();
+    If(a.mul(vA).lessThan(0.002), () => { Discard(); });
+    const col = vC.mul(a).mul(vA).mul(u.uGain).toVar();
+    return vec4(col, min(1.0, max(col.r, max(col.g, col.b))));
+  })();
+  particleGraphCache = { vertexNode, fragmentNode };
+  return particleGraphCache;
+}
+
+// Materiał instancji puli: wspólny graf (ten sam klucz programu), własne wartości.
+function makeFxMaterial(name, graph, uniforms, side) {
+  const m = new NodeMaterial();
+  m.name = name;
+  if (graph.vertexNode) m.vertexNode = graph.vertexNode;
+  m.fragmentNode = graph.fragmentNode;
+  m.transparent = true;
+  m.depthWrite = false;
+  m.depthTest = true;
+  m.side = side;
+  // Jak ShaderMaterial w WebGL: DoubleSide w jednym drawie, nie dwóch (tył + przód).
+  m.forceSinglePass = true;
+  m.fog = false;
+  m.lights = false;
+  blendAddytywnePremul(m);
+  m.uniforms = uniforms;
+  return m;
+}
 
 /* ============================================================================
    4. KLASA
@@ -393,7 +474,7 @@ const _v2 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion();
 const _Z = new THREE.Vector3(0, 0, 1);
 
-const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const clampJs = (v, a, b) => Math.min(b, Math.max(a, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 // wykładnicze dążenie niezależne od kroku czasu
 const approach = (cur, target, rate, dt) => cur + (target - cur) * (1 - Math.exp(-rate * dt));
@@ -442,31 +523,20 @@ export class WarpPlumeFX {
   _buildPlume() {
     const g = new THREE.BoxGeometry(MAX_RAD * 2, MAX_RAD * 2, MAX_LEN + 1.0);
     g.translate(0, 0, (MAX_LEN + 1.0) * 0.5 - 0.5);
-    this.plumeMat = new THREE.ShaderMaterial({
-      vertexShader: PLUME_VS,
-      fragmentShader: PLUME_FS,
-      uniforms: {
-        uTime: { value: 0 }, uLen: { value: WARP_PLUME_BASE_LEN }, uWidth: { value: 1 }, uCore: { value: 1 },
-        uBright: { value: 1 }, uTurb: { value: 1 }, uSheath: { value: 1 },
-        uFlowPh: { value: new THREE.Vector3() }, uMachPh: { value: 0 }, uStretch: { value: 1 },
-        uDensity: { value: 1 }, uBodyGain: { value: 1 }, uAfterglow: { value: 0 }, uPower: { value: 0 },
-        uIgnite: { value: 0 }, uExtinct: { value: 0.28 },
-        uCamPosL: { value: new THREE.Vector3() }, uCamDirL: { value: new THREE.Vector3(0, 0, -1) },
-        uOrtho: { value: 1 }, uBoundR: { value: 1.5 }, uBoundZ0: { value: -0.5 }, uBoundZ1: { value: 12 },
-        uJitter: { value: QUALITY.jitter },
-        uCoreWarm: { value: new THREE.Color(1, 1, 1) }, uCoreCold: { value: new THREE.Color(1, 1, 1) },
-        uBody0: { value: new THREE.Color() }, uBody1: { value: new THREE.Color() },
-        uBody2: { value: new THREE.Color() }, uBody3: { value: new THREE.Color() },
-        uOuter0: { value: new THREE.Color() }, uOuter1: { value: new THREE.Color() }
-      },
-      defines: { PE_STEPS: QUALITY.steps, PE_OCT: QUALITY.oct },
-      transparent: true,
-      depthWrite: false,
-      depthTest: true,
-      side: THREE.BackSide,
-      blending: THREE.AdditiveBlending,
-      premultipliedAlpha: true
-    });
+    this.plumeMat = makeFxMaterial('WarpPlume', plumeGraph(QUALITY.steps, QUALITY.oct), {
+      uTime: { value: 0 }, uLen: { value: WARP_PLUME_BASE_LEN }, uWidth: { value: 1 }, uCore: { value: 1 },
+      uBright: { value: 1 }, uTurb: { value: 1 }, uSheath: { value: 1 },
+      uFlowPh: { value: new THREE.Vector3() }, uMachPh: { value: 0 }, uStretch: { value: 1 },
+      uDensity: { value: 1 }, uBodyGain: { value: 1 }, uAfterglow: { value: 0 }, uPower: { value: 0 },
+      uIgnite: { value: 0 }, uExtinct: { value: 0.28 },
+      uCamPosL: { value: new THREE.Vector3() }, uCamDirL: { value: new THREE.Vector3(0, 0, -1) },
+      uOrtho: { value: 1 }, uBoundR: { value: 1.5 }, uBoundZ0: { value: -0.5 }, uBoundZ1: { value: 12 },
+      uJitter: { value: QUALITY.jitter },
+      uCoreWarm: { value: new THREE.Color(1, 1, 1) }, uCoreCold: { value: new THREE.Color(1, 1, 1) },
+      uBody0: { value: new THREE.Color() }, uBody1: { value: new THREE.Color() },
+      uBody2: { value: new THREE.Color() }, uBody3: { value: new THREE.Color() },
+      uOuter0: { value: new THREE.Color() }, uOuter1: { value: new THREE.Color() }
+    }, THREE.BackSide);
     this.plume = new THREE.Mesh(g, this.plumeMat);
     this.plume.name = 'WarpPlume';
     this.plume.frustumCulled = false;
@@ -475,18 +545,12 @@ export class WarpPlumeFX {
   }
 
   _makeGlow(cfg) {
-    const mat = new THREE.ShaderMaterial({
-      vertexShader: GLOW_VS,
-      fragmentShader: GLOW_FS,
-      uniforms: {
-        uSize: { value: cfg.size }, uStretch: { value: 1 },
-        uColor: { value: new THREE.Color() }, uIntensity: { value: 0 },
-        uFalloff: { value: cfg.falloff }, uCoreBoost: { value: cfg.boost || 0 },
-        uTime: { value: 0 }, uWobble: { value: cfg.wobble || 0 }
-      },
-      transparent: true, depthWrite: false, depthTest: true,
-      blending: THREE.AdditiveBlending, premultipliedAlpha: true, side: THREE.DoubleSide
-    });
+    const mat = makeFxMaterial('WarpPlumeGlow', glowGraph(), {
+      uSize: { value: cfg.size }, uStretch: { value: 1 },
+      uColor: { value: new THREE.Color() }, uIntensity: { value: 0 },
+      uFalloff: { value: cfg.falloff }, uCoreBoost: { value: cfg.boost || 0 },
+      uTime: { value: 0 }, uWobble: { value: cfg.wobble || 0 }
+    }, THREE.DoubleSide);
     const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
     m.position.z = cfg.z;
     m.frustumCulled = false;
@@ -503,8 +567,12 @@ export class WarpPlumeFX {
 
   _buildParticles() {
     const N = QUALITY.particles;
-    const g = new THREE.BufferGeometry();
-    const pos = new Float32Array(N * 3);
+    // Kwad na cząstkę (instancje): pozycję liczy vertex shader z ziarna i fazy.
+    const base = new THREE.PlaneGeometry(1, 1);
+    const g = new THREE.InstancedBufferGeometry();
+    g.index = base.index;
+    g.setAttribute('position', base.attributes.position);
+    g.setAttribute('uv', base.attributes.uv);
     const seed = new Float32Array(N * 3);
     const phase = new Float32Array(N);
     for (let i = 0; i < N; i++) {
@@ -513,24 +581,19 @@ export class WarpPlumeFX {
       seed[i * 3 + 2] = Math.random();
       phase[i] = Math.random();
     }
-    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    g.setAttribute('aSeed', new THREE.BufferAttribute(seed, 3));
-    g.setAttribute('aPhase', new THREE.BufferAttribute(phase, 1));
+    g.setAttribute('aSeed', new THREE.InstancedBufferAttribute(seed, 3));
+    g.setAttribute('aPhase', new THREE.InstancedBufferAttribute(phase, 1));
+    g.instanceCount = 0;
     g.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, MAX_LEN * 0.5), MAX_LEN);
-    this.partMat = new THREE.ShaderMaterial({
-      vertexShader: PART_VS,
-      fragmentShader: PART_FS,
-      uniforms: {
-        uLifePh: { value: 0 }, uLen: { value: WARP_PLUME_BASE_LEN }, uWidth: { value: 1 },
-        uEmit: { value: 0 }, uPower: { value: 0 }, uSizeK: { value: 600 }, uPixK: { value: 20 },
-        uOrtho: { value: 1 }, uGain: { value: 0.95 },
-        uPart0: { value: new THREE.Color() }, uPart1: { value: new THREE.Color() },
-        uPart2: { value: new THREE.Color() }
-      },
-      transparent: true, depthWrite: false, depthTest: true,
-      blending: THREE.AdditiveBlending, premultipliedAlpha: true
-    });
-    this.particles = new THREE.Points(g, this.partMat);
+    this.partMat = makeFxMaterial('WarpPlumeParticles', particleGraph(), {
+      uLifePh: { value: 0 }, uLen: { value: WARP_PLUME_BASE_LEN }, uWidth: { value: 1 },
+      uEmit: { value: 0 }, uPower: { value: 0 }, uSizeK: { value: 600 }, uPixK: { value: 20 },
+      uOrtho: { value: 1 }, uGain: { value: 0.95 },
+      uPart0: { value: new THREE.Color() }, uPart1: { value: new THREE.Color() },
+      uPart2: { value: new THREE.Color() }
+    }, THREE.DoubleSide);
+    this.particles = new THREE.Mesh(g, this.partMat);
+    this.particles.name = 'WarpPlumeParticles';
     this.particles.frustumCulled = false;
     this.particles.renderOrder = 4;
     this.root.add(this.particles);
@@ -626,7 +689,7 @@ export class WarpPlumeFX {
         ch.glow = approach(ch.glow, 1.35 * (0.25 + T / 0.24), 14, dt);
       } else {
         if (ch.ignite < 0.05 && T < 0.34) ch.ignite = 1.0;   // błysk zapłonu
-        const u = clamp((T - 0.24) / 0.62, 0, 1);
+        const u = clampJs((T - 0.24) / 0.62, 0, 1);
         const e = 1 - Math.pow(1 - u, 2.6);
         cmd = lerp(0.085, this.throttle, e);
         if (T > 0.95) { this.state = 'running'; this._stateT = 0; }
@@ -644,7 +707,7 @@ export class WarpPlumeFX {
     const dying = (this.state === 'shutdown' || this.state === 'off');
 
     ch.power = approach(ch.power, cmd, dying ? 7.5 : 3.6, dt);
-    const coreTgt = Math.pow(clamp((cmd - 0.07) / 0.93, 0, 1), 0.75);
+    const coreTgt = Math.pow(clampJs((cmd - 0.07) / 0.93, 0, 1), 0.75);
     ch.core = approach(ch.core, dying ? 0 : coreTgt, dying ? 16 : 9, dt);
     const lenTgt = dying ? (0.22 * ch.sheath) : (0.16 + 0.84 * Math.pow(cmd, 0.72));
     ch.len = approach(ch.len, lenTgt, dying ? 9 : 5.2, dt);
@@ -682,7 +745,7 @@ export class WarpPlumeFX {
     const ph = this._ph;
     const zMax = Math.max(len * 1.34 + 0.4, 1);
     const maxLn = 0.7 * flow / zMax * dt;
-    const lnD = clamp(Math.log(1.17 / (1 + flow * 0.085) / ph.stretch), -maxLn, maxLn);
+    const lnD = clampJs(Math.log(1.17 / (1 + flow * 0.085) / ph.stretch), -maxLn, maxLn);
     ph.stretch *= Math.exp(lnD);
     const fstr = ph.stretch;
     const dz = flow * fstr * dt;
@@ -747,7 +810,7 @@ export class WarpPlumeFX {
     /* -------------------------------- cząstki ---------------------------- */
     const pu = this.partMat.uniforms;
     const count = Math.floor(QUALITY.particles * P.particles);
-    this.particles.geometry.setDrawRange(0, count);
+    this.particles.geometry.instanceCount = count;
     this.particles.visible = count > 0 && ch.emit > 0.01;
     const partFlow = (0.55 + 0.9 * ch.power) * (1 + 1.5 * B);
     ph.life = (ph.life + partFlow * dt) % 1;
@@ -778,6 +841,9 @@ export class WarpPlumeFX {
     });
   }
 }
+
+// Dla testów: grafy (budowane raz na wariant) i jakość gry.
+export const WarpPlumeInternals = Object.freeze({ plumeGraph, glowGraph, particleGraph, QUALITY });
 
 /* ============================================================================
    5. PULA
@@ -815,7 +881,8 @@ export const WarpPlume3D = {
 
   /**
    * Obiekty do kompilacji na ekranie ładowania (widoczność ustawia wołający).
-   * Instancja zostaje w puli — pierwszy skok nie buduje już niczego.
+   * Instancja zostaje w puli — pierwszy skok nie buduje już niczego, a kolejne
+   * instancje mają ten sam graf (ten sam program).
    */
   prewarm() {
     if (!Core3D.isInitialized || !Core3D.scene) return [];
