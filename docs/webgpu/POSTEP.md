@@ -16,6 +16,7 @@
 | 2026-09-27 | **Dema spoza gry zostają na tagu `webgl-baseline`** (odpowiedź na pytanie w Fazie 0): port obejmuje to, co ładuje gra, plus warsztaty przenoszonych modułów (`halo_ring_demo`, `mostki-demo`, `rdzen-demo`). `warp-demo`, `asteroidy.html`, `budowle-portowe` (Z7), `kontenery` (Z5), `scripts/proxy-batch` (Z4), `destruktor2d/3d` działają z tagu (osobny worktree); warp, nowe asteroidy i moduły Z4/Z5/Z7 przechodzą na TSL przy swojej integracji. |
 | 2026-09-27 | Z listy zadań wypadły: Electron i build produkcyjny oraz przełączenie domyślnego backendu / polityka awaryjna (zmiana `PROMPT-START.md`). |
 | 2026-09-27 | **Odpowiedzi na pytania planu (PLAN §12):** usuwać nieużywany kod, „przechodzimy w pełni na WebGPU”; **tylko WebGPU** (bez zapasu WebGL2 — komunikat); `modelBaker.js` usunąć; bez pushowania (użytkownik ma kopię na bieżąco, nie sprawdza po drodze); inne sesje skończyły — port prowadzi jedna sesja (z podagentami); **obrażenia i mechanika broni z dema wchodzą do rozgrywki** (mapa ran, przebicia, rykoszety, ładowanie, serie — zadanie 18); demo fizyki belek na GPU — później; warp czeka na poprawiony „Nurt” (osobna sesja). Cel końcowy: gra działa na WebGPU z nowymi brońmi, rakietami i ringiem. |
+| 2026-09-27 | **Asteroidy i warp też wchodzą** („asteroidy zaraz będą production ready — zielone światło”, „warp też będzie ready do wgrania, jak skończy sesję”): zadania 21 (asteroidy z `dema/asteroidy-webgpu`) i 22 (warp „Nurt” z `dema/warp-webgpu`) po zakończeniu sesji dem; wydajność → 23, sprzątanie → 24. **Praca samodzielna do końca** („zostawiam ciebie samopas, od teraz rządzisz”); po wdrożeniu wszystkiego (WebGPU w grze, bronie, rakiety, asteroidy, warp, ringi) — **wyłączyć komputer** (po sprawdzeniu, że wszystko zacommitowane, a inne sesje bezczynne). |
 | 2026-09-27 | **Nowe efekty broni i rakiet wchodzą przy porcie** (po obejrzeniu dem: „bronie — wszystkie super”, „rakiety — super”, „można je śmiało wdrażać przy okazji skoku na WebGPU”): efekty z `dema/bronie-webgpu` i `dema/rakiety-webgpu` zastępują stare efekty broni, trafień, iskier, rakiet i Supernowej zamiast portu 1:1. Plan przebudowany: 12 = infrastruktura efektów, 17–18 = broń, 19 = rakiety, 20 = koniec overlaya (22 zadania). Rozgrywka bez zmian. |
 
 ## Faza 0 — kroki
@@ -27,7 +28,7 @@
 | 3 | Spike techniczny (`dema/webgpu-spike.*`, `SPIKE.md`) | zrobione — 17/17, bez blokad | (commit kroków 2–4) |
 | 4 | Inwentarz (`scripts/webgpu/inwentarz.mjs` → `INWENTARZ.md`) | zrobione | (commit kroków 2–4) |
 | 5 | Harness zrzutów + baza WebGL (`zrzuty.mjs`, `porownaj.mjs`, `baseline.json`) | zrobione — 48 zrzutów, szum ≤ 0,03% (>2/255), 0% (>8); tag `webgl-baseline` | (commit kroku 5) |
-| 6 | Plan i zadania (`PLAN.md`, `zadania/NN-*.md`, `README.md`, sekcja w `agents.md`) | zrobione — 22 zadania + odłożony warp (po decyzji o nowych efektach) | 30e76b9 + przebudowa |
+| 6 | Plan i zadania (`PLAN.md`, `zadania/NN-*.md`, `README.md`, sekcja w `agents.md`) | zrobione — 24 zadania (po decyzjach o nowych efektach, asteroidach i warpie) | 30e76b9 + przebudowa |
 | 7 | Raport dla użytkownika | zrobione (w rozmowie); zadanie 01 czeka na zgodę | — |
 
 ## Zadania portu
@@ -57,9 +58,10 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 | 18 | Broń 2/2: obrażenia z dema — mapa ran, przebicia, rykoszety, ładowanie, serie; światła efektów na poszyciu | 17, 04 | 05–11, 13–16, 19 | max | czeka | | zatwierdzona zmiana rozgrywki |
 | 19 | Rakiety z dema `rakiety-webgpu`: dym GPU, dysze, kule ognia, Supernowa, iskry | 12 | 05–11, 13–18 | max | czeka | | lot rakiet zostaje w `rocketSystem3D` |
 | 20 | Koniec overlaya: wybuch reaktora w Core3D, usunięcie drugiego renderera | 17, 18, 19 | 13–16 | xhigh | czeka | | jeden renderer, jeden bloom |
-| 21 | Wydajność i precyzja: A/B z tagiem, drżenie, kompilacja, pamięć | 04–20 | nie | max | czeka | | koszt portu osobno od kosztu nowych efektów |
-| 22 | Sprzątanie i domknięcie portu | 21 | nie | xhigh | czeka | | decyzje PLAN §12 p. 1, 3 |
-| — | Odłożone: nowy warp od razu w TSL (pass zgięcia tła w `Core3D.render`) | wpięcie nowego warpa | — | — | odłożone | | który warp — PLAN §12 p. 8 |
+| 21 | Asteroidy z dema `asteroidy-webgpu` + rozgrywka pól | 12, 04, 05 (+ koniec sesji dema) | 13–20 | max | czeka na sesję dema | | zielone światło użytkownika |
+| 22 | Warp „Nurt” z dema `warp-webgpu` | 12, 13 (+ koniec sesji dema) | 14–21 | max | czeka na sesję dema | | „ready do wgrania, jak skończy sesję” |
+| 23 | Wydajność i precyzja: A/B z tagiem, drżenie, kompilacja, pamięć | 04–22 | nie | max | czeka | | koszt portu osobno od kosztu nowych efektów |
+| 24 | Sprzątanie i domknięcie portu | 23 | nie | xhigh | czeka | | decyzje PLAN §12 p. 1, 3 |
 
 ## Regresje przejściowe (świadome)
 
@@ -67,12 +69,12 @@ Stan zamierzony na `main` w trakcie portu — nie „naprawiać” poza zadaniem
 
 | Od | Do | Co | Kończy |
 |---|---|---|---|
-| 01 | 22 | Nieprzeniesione `ShaderMaterial` rysują się magentą (`spis.zamienniki` w harnessie) | zadania 02–20 |
+| 01 | 24 | Nieprzeniesione `ShaderMaterial` rysują się magentą (`spis.zamienniki` w harnessie) | zadania 02–22 |
 | 01 | 06 | Brak synchronicznego odczytu → mapa CPU ringu pusta (`heightAtUV` = 0): płyta ringu koliduje bez rzeźby terenu, LOD terenu bez wysokości, landmarki i kopuły stawiane bez mapy (stała wysokość z `haloRingLandmarks.js`) | 06 |
 | 01 | 20 | Overlay efektów na własnym `WebGLRenderer` (jedyny drugi renderer; stare efekty overlaya działają bez zamienników) | 17–19 zabierają efekty, 20 usuwa overlay |
 | 01 | 17–19 | Pociski i błyski ze starego `weapon3DSystem` (materiały wbudowane — rysują się), smugi `slugTrail3D` (zamiennik), dym i iskry Fx3D (zamiennik do 12) | 12, 17–19 |
-| 01 | — | Soczewka i fale warpa usunięte (API jako no-op), skok działa bez efektu zgięcia | nowy warp (odłożone) |
-| Faza 0 | — | Stare pole asteroid i tło pasa wyłączone (`?asteroidyStare`) | integracja nowych asteroid |
+| 01 | 22 | Soczewka i fale warpa usunięte (API jako no-op), skok działa bez efektu zgięcia | 22 (nowy warp) |
+| Faza 0 | 21 | Stare pole asteroid i tło pasa wyłączone (`?asteroidyStare`) | 21 (nowe asteroidy) |
 
 ## Środowisko (Krok 2, 2026-09-27)
 
@@ -189,7 +191,7 @@ Todo (2): „PORT poprawka 1 / 3 (TODO integracji)” w `tests/shipCore.test.mjs
     → PNG w `.tmp/webgpu/baseline/webgl/p1` (+ `p2`, `szum-p1-p2/`), `node scripts/webgpu/baza.mjs` →
     `docs/webgpu/baseline.json`. Wydajność (bitwa 24×24, 1920×1080, headless): klatka 3,6–4,9 ms, fizyka 0,5–1,0,
     rysowanie 2,4–3,0, render Core3D 0,87–1,03 ms CPU, GPU 1,0–1,1 ms, 87–88 draw calli — rozrzut między
-    przebiegami, bo inne sesje użytkownika pracowały na tym samym GPU/CPU; porównanie wydajności (zadanie 21) tylko
+    przebiegami, bo inne sesje użytkownika pracowały na tym samym GPU/CPU; porównanie wydajności (zadanie 23) tylko
     naprzemiennie i bez innych obciążeń. Drżenie (`dema/precyzja-drzenie.js
     --variant po`): światła 0,003 px RMS, okna mostków 0,04–0,06 px, reszta ≈ 0.
   - Testy po hakach: bez zmian (7 porażek bazowych, `npm test` OK).

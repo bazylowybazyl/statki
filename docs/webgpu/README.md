@@ -59,7 +59,7 @@ Które mogą iść naraz: kolumna „Równolegle z” w `POSTEP.md` / `PLAN.md` 
    Każda równoległa sesja inny `--port` (domyślny 5340; np. 5341, 5342).
 4. Koniec: commit w worktree; w głównym katalogu `git merge <gałąź worktree>`. Konflikty zwykle w `POSTEP.md` (zachowaj
    oba wpisy), `INWENTARZ.md` (wygeneruj od nowa: `node scripts/webgpu/inwentarz.mjs`) i `agents.md`.
-5. **Pomiary wydajności** (`--wydajnosc`, `--tylko-wydajnosc`, zadanie 21) tylko wtedy, gdy nic innego nie obciąża GPU
+5. **Pomiary wydajności** (`--wydajnosc`, `--tylko-wydajnosc`, zadanie 23) tylko wtedy, gdy nic innego nie obciąża GPU
    (inne sesje, dema WebGPU, harnessy). Zrzuty obrazu są na to odporne, liczby ms — nie.
 
 ## Harness zrzutów
@@ -94,7 +94,7 @@ node scripts/webgpu/zrzuty.mjs --backend webgpu --out .tmp/webgpu/zadania/NN --b
 Scena z zamiennikami (`spis.zamienniki` > 0 w `wyniki.json`) nie musi być w tolerancji — patrz na jej warianty warstw.
 Regresje względem poprzedniego zadania: `node scripts/webgpu/porownaj.mjs --a .tmp/webgpu/zadania/<poprzednie>/webgpu --b .tmp/webgpu/zadania/NN/webgpu --out .tmp/webgpu/zadania/NN/vs-poprzednie`.
 
-### Nowe efekty z dem (zadania 17–19)
+### Nowe efekty z dem (zadania 17–22)
 
 Stare efekty broni i rakiet wyglądają inaczej niż nowe, więc sceny z nimi (`galeria-broni`, `galeria-rakiet`, bitwy)
 nie mają bazy w tagu. Sesja zadania kładzie zrzuty gry obok zrzutów dema (`scripts/webgpu/bronie-demo.mjs --tryb zrzuty`,

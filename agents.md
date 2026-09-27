@@ -55,8 +55,9 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   zastępują stare (zadania 12, 17–20); wspólne klocki w `src/3d/fx/`. Starych efektów broni, rakiet, iskier i trafień nie
   przenosimy 1:1 ani nie poprawiamy — idą do wymiany. Rozgrywka zostaje w grze: dema dostają tylko zdarzenia (strzał,
   lot, trafienie).
-- **Poza portem:** warp (soczewka, fale — do wymiany), stare asteroidy (**wyłączone** w grze: `OLD_ASTEROIDS_ENABLED`,
-  `?asteroidyStare`), moduły ruchu v2 spoza gry (Z4/Z5/Z7) — przechodzą na TSL przy swojej integracji.
+- **Stara soczewka warpa i stare asteroidy nie przechodzą** (stare pole **wyłączone** w grze: `OLD_ASTEROIDS_ENABLED`,
+  `?asteroidyStare`) — zastępują je nowe z dem WebGPU (`dema/asteroidy-webgpu` → zadanie 21, `dema/warp-webgpu` →
+  zadanie 22). Moduły ruchu v2 spoza gry (Z4/Z5/Z7) przechodzą na TSL przy swojej integracji.
 - **Weryfikacja:** `node scripts/webgpu/zrzuty.mjs --backend webgpu --out .tmp/webgpu/zadania/NN --baza .tmp/webgpu/baseline/webgl/p1`
   (sceny deterministyczne, porównanie z bazą WebGL, spis zamienników); haki `?dev`: `window.DevScene.teleport / syncCamera /
   preloadHullSprites / startSplit`. Testy: `node --test "tests/*.test.mjs"` (wzorzec w cudzysłowie — `tests/` na Node 22

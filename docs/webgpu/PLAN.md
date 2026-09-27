@@ -14,9 +14,10 @@
 4. **Gameplay bez zmian.** Port dotyka tylko warstwy renderu 3D. Wyjątki to decyzje użytkownika: **stare pole
    asteroid i tło pasa są wyłączone na czas portu** (`OLD_ASTEROIDS_ENABLED`, `?asteroidyStare` przywraca je na tagu)
    oraz **mechanika broni z dema** (przebicia, rykoszety, ładowanie Mjolnira, serie Hexlance'a — zadanie 18).
-5. **Poza portem:** warp (stara soczewka do wyrzucenia; nowy warp z `dema/warp-demo.html` wejdzie od razu w TSL),
-   asteroidy (stare wyłączone; nowe z `dema/asteroidy.html` / `dema/asteroidy-webgpu.html` wejdą przy integracji),
-   moduły ruchu v2 jeszcze nie w grze (Z4 `shipProxyBatch3D`, Z5 `cargoContainers3D` / `cargoDrones3D`,
+5. **Poza portem 1:1:** stara soczewka warpa (usuwana w 01) i stare asteroidy (wyłączone) — zamiast nich wchodzą NOWE
+   z dem WebGPU (decyzja użytkownika 2026-09-27, wieczór: „asteroidy zaraz production ready”, „warp też będzie ready do
+   wgrania”): asteroidy z `dema/asteroidy-webgpu` (zadanie 21) i warp „Nurt” z `dema/warp-webgpu` (zadanie 22) — po
+   zakończeniu poprawek w ich sesjach. Dalej poza portem: moduły ruchu v2 jeszcze nie w grze (Z4 `shipProxyBatch3D`, Z5 `cargoContainers3D` / `cargoDrones3D`,
    Z7 `portBuildings/*` — przejdą na TSL przy swojej integracji), strony `destruktor2d/3d.html` (`beamShips3D` i spółka).
    Te dema działają z tagu `webgl-baseline` (osobny worktree).
 6. **Nowe efekty broni i rakiet wchodzą przy porcie** (decyzja użytkownika 2026-09-27, po obejrzeniu dem: „bronie —
@@ -46,7 +47,7 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
 | Post | `RenderPipeline(renderer, outputNode)` z `outputColorTransform = false`: `texture(composerTarget.texture)` → bloom (`BloomNode` — ten sam algorytm co `UnrealBloomPass`: 5 mipów, jądra 6…22, `bloomConfig.js`) → „uber” w TSL (gorące powietrze do 24 źródeł, dyspersja dysz, ACES **gry** — nie `acesFilmicToneMapping` three, inna krzywa — i LinearTosRGB) → kanwa. Pełnoekranowe passy pomocnicze (halo, maska słońca, resolve) = `QuadMesh` + `NodeMaterial` | SPIKE 4a, 4b |
 | Zamienniki | `renderer.library.addMaterial(ZamiennikMaterial, 'ShaderMaterial')` (+ `'RawShaderMaterial'`): magenta ze stanem renderu oryginału (blending, głębia), licznik budów, `isPlaceholder = true` — harness liczy je w `spis.zamienniki`. Bez tego three loguje błąd i rysuje pusty `NodeMaterial` | SPIKE 15 |
 | Materiały wbudowane | `MeshBasic/Standard/Physical/Lambert/Phong`, `ShadowMaterial`, `Sprite`, `Points`, `Line*` WebGPU zamienia sam (`StandardNodeLibrary`). Portu wymagają tylko te z `onBeforeCompile` (`applySunShadowToBuiltinMaterial`) i `customProgramCacheKey` | USTALENIA §4, INWENTARZ |
-| Składanie klatki | **Bez zmian:** `drawHexShips3D` kopiuje kanwę WebGPU do `#c` w tym samym zadaniu JS; podzielony ekran = 2× `renderSingle` + wycinki. Kopiować zawsze w zadaniu renderu — po `await` kanwa bywa już pusta. Warstwa bez kopii (kanwa 3D pod 2D) — do oceny w zadaniu 21 (zysk znikomy) | SPIKE 5, 5k |
+| Składanie klatki | **Bez zmian:** `drawHexShips3D` kopiuje kanwę WebGPU do `#c` w tym samym zadaniu JS; podzielony ekran = 2× `renderSingle` + wycinki. Kopiować zawsze w zadaniu renderu — po `await` kanwa bywa już pusta. Warstwa bez kopii (kanwa 3D pod 2D) — do oceny w zadaniu 23 (zysk znikomy) | SPIKE 5, 5k |
 | Split w jednym renderze | `makeSplitScreenRenderPass` (gałąź split), `renderSplitScreen`, `_renderDirect` są martwe (gra robi split przez 2× `renderSingle`) i na WebGPU i tak nie działają: `clear()` czyści CAŁY cel, nożyczek nie respektuje. **Usuwamy** (zadanie 01) | SPIKE 13 |
 | Viewport celu | `rt.viewport` / `rt.scissor` / `rt.scissorTest` (`renderer.setViewport` działa tylko na kanwę) | SPIKE 13 |
 | Overlay efektów | `overlay3D` / `rocketOverlay3D` (`src/effects3d/overlay.js`) mają dziś **własny `WebGLRenderer`** (iskry, trafienia, wybuchy, Yamato, Supernowa, rakiety). Zostaje na nim w czasie portu (wyjątek przejściowy — stare efekty działają bez zamienników). Zadania 17–19 zabierają z niego efekty (zastąpione nowymi w scenie Core3D), 20 przenosi ostatni — wybuch reaktora — do Core3D i **usuwa overlay**: jedna kanwa 3D, jeden bloom. `CanvasTarget` + `setCanvasTarget()` działa (SPIKE 5), ale nie jest potrzebny | SPIKE 5, decyzja §1 p. 6 |
@@ -167,12 +168,12 @@ TSL w zgodzie z lustrem `traceHullShadowCpu` (test). Do zadania 03 maska jest wy
   obok zrzutów dema (te same bronie / scenariusze) i ocena użytkownika; po akceptacji przebieg z `main` (`galeria-broni`,
   `galeria-rakiet`, bitwy) staje się bazą tych scen na przyszłość. Reszta scen i warianty bez broni — dalej tolerancja
   względem tagu.
-- **Wydajność:** `coreRenderMs` / `gpuMs` scen w `wyniki.json` (orientacyjnie); pełne A/B w zadaniu 21 (bitwa
+- **Wydajność:** `coreRenderMs` / `gpuMs` scen w `wyniki.json` (orientacyjnie); pełne A/B w zadaniu 23 (bitwa
   `zrzuty.mjs --wydajnosc`, naprzemiennie tag ↔ `main`, bez innych obciążeń GPU; koszt samego portu osobno od kosztu
   nowych efektów).
 
 Testy do przepisania (mapa z Fazy 0; zadanie w nawiasie): `glslReservedWords` (01: próg „> 50 shaderów” → „jeśli
-są”; 22: zamiana na strażnika „brak GLSL w plikach gry”), `renderPerfGates`, `perfInstrumentation`, `sceneMatrixSync`,
+są”; 24: zamiana na strażnika „brak GLSL w plikach gry”), `renderPerfGates`, `perfInstrumentation`, `sceneMatrixSync`,
 `fighterCombatFixes`, `warpLens3D` / `warpSpace` / `warpWorldLens` (01: asercje o passie soczewki w `core3d.js`
 znikają, matematyka CPU zostaje), `ringPlanetAnchoring` (01, 05), `shipLights3D` (01, 15), `shadowShaftsQuality`
 (01, 03, 05), `renderBugfixGuards` (02, 04, 13, 19, 20), `hullShadowSdf` (03), `hexShips3DShader`, `hexDebrisPool`,
@@ -222,9 +223,10 @@ efektów i nowe efekty z dem → koniec overlaya → wydajność → sprzątanie
 | 18 | Broń 2/2: obrażenia z dema — mapa ran na kadłubach, przebicia, rykoszety, ładowanie, serie; światła efektów na poszyciu | 17, 04 | 05–11, 13–16, 19 | max | materiał kadłuba + logika trafień (zmiana rozgrywki zatwierdzona) |
 | 19 | Rakiety z dema `rakiety-webgpu`: dym GPU, dysze, kule ognia, Supernowa, iskry | 12 | 05–11, 13–18 | max | zastępuje ~630 linii GLSL |
 | 20 | Koniec overlaya: wybuch reaktora w Core3D, usunięcie drugiego renderera | 17, 18, 19 | 13–16 | xhigh | 2 / 226 + overlay 36 + drugi renderer |
-| 21 | Wydajność i precyzja: A/B z tagiem, drżenie, kompilacja, pamięć | 04–20 | nie | max | pomiary |
-| 22 | Sprzątanie i domknięcie portu | 21 | nie | xhigh | resztki, strażnicy, agents.md |
-| — | **Odłożone:** nowy warp na WebGPU — po wpięciu nowego warpa do gry; pass zgięcia tła od razu w TSL w miejscu opisanym w `Core3D.render()` | — | — | — | — |
+| 21 | Asteroidy z dema `asteroidy-webgpu` (pola, skały, minerały, olbrzymy, światło wolumetryczne, burze) + rozgrywka pól | 12, 04, 05 (+ zakończenie sesji dema) | 13–20 (bez `src/3d/fx/`) | max | nowe moduły TSL/compute; stare asteroidy do usunięcia |
+| 22 | Warp „Nurt” z dema `warp-webgpu` (ładowanie, skok, podróż, wyjście, przylot NPC; pass zgięcia tła) | 12, 13 (+ zakończenie sesji dema) | 14–21 | max | nowe moduły TSL/compute w miejscu opisanym w `Core3D.render()` |
+| 23 | Wydajność i precyzja: A/B z tagiem, drżenie, kompilacja, pamięć | 04–22 | nie | max | pomiary |
+| 24 | Sprzątanie i domknięcie portu | 23 | nie | xhigh | resztki, strażnicy, agents.md |
 
 „Równolegle z” = rozłączne pliki; każda równoległa sesja we własnym worktree (`README.md`). Zalecane maks. 2–3 naraz
 (GPU wspólne dla pomiarów harnessu).
@@ -250,16 +252,16 @@ na kadłubach belkowych (18), cień dymu rakiet (19) — wszystko wymaga materia
    ringu jest pusta — płyta ringu dalej koliduje, ale bez rzeźby terenu. Dlatego 06 idzie zaraz po 01 (równolegle z 02–03);
    zadanie 01 zapisuje to w `POSTEP.md` jako znaną, przejściową regresję.
 4. **`Texture.updateRanges` ignorowane przez backend WebGPU** — częściowe aktualizacje tekstur (np. wiersze obrażeń
-   mostków) stają się pełnym uploadem; mierzyć (zadania 04, 15, 21).
+   mostków) stają się pełnym uploadem; mierzyć (zadania 04, 15, 23).
 5. **Koszt CPU backendu WebGPU** przy wielu małych draw callach — gra jest ograniczona przez CPU w dużych bitwach
-   (fizyka); sam port nie przyspieszy klatki. Mierzyć, nie obiecywać (zadanie 21).
+   (fizyka); sam port nie przyspieszy klatki. Mierzyć, nie obiecywać (zadanie 23).
 6. **Przepisywanie testów-strażników** może je osłabić — zasada: odpowiednik TSL albo test zachowania, nigdy samo
    usunięcie; lustra CPU zostają.
 7. **Równoległe sesje** (ruch v2 Z-zadania, dema `dema/*-webgpu/` powstające obok) mogą dotykać `core3d.js`,
    `index.html`, modułów portu — koordynacja przez użytkownika; nowy kod renderu tylko w TSL (`agents.md`).
 8. **Tylko WebGPU** — maszyna bez WebGPU nie uruchomi gry (komunikat; decyzja użytkownika, §12 p. 2).
 9. **Pomiar drżenia** stoi na `mostki-demo` (ścieżka heksów) — do zadania 15 nie ma pomiaru precyzji na WebGPU
-   (w zadaniach 04–14 wystarcza reguła `highPrecision` + offset i zrzuty); moduły efektów w narzędziu przepina 21.
+   (w zadaniach 04–14 wystarcza reguła `highPrecision` + offset i zrzuty); moduły efektów w narzędziu przepina 23.
 10. **Nowe efekty w prawdziwej bitwie** (17–19) — dema pokazują kilka okrętów; gra ma setki pocisków, ~100 trafień/s,
     salwy rakiet i 125+ okrętów. Budżety pul, LOD po rozmiarze na ekranie i koszt siatki świateł w materiałach mierzyć
     w bitwie przed akceptacją; ocena wyglądu należy do użytkownika (brak bazy w tagu).
@@ -268,8 +270,7 @@ na kadłubach belkowych (18), cień dymu rakiet (19) — wszystko wymaga materia
 
 ## 11. Poza zakresem
 
-Nowy warp (odłożony; sesja użytkownika dopracowuje „Nurt”), asteroidy (nowe wejdą z demem WebGPU — skorzystają z
-siatki świateł z 12), moduły Z4/Z5/Z7 (przejdą na TSL przy integracji), demo fizyki belek na GPU
+Moduły Z4/Z5/Z7 (przejdą na TSL przy integracji), demo fizyki belek na GPU
 (`FIZYKA-BELEK-GPU.md` — „może na później”), zmiany rozgrywki poza zatwierdzoną mechaniką broni z dema (18), symulacje
 z dem jako takie (pociski 240 Hz, lot rakiet, `Gunnery` — mechanikę przenosimy do logiki gry, nie ich pętle), wieżyczki
 3D z dema broni, wspólne urządzenie GPU z solverem sprężyn (`destructorGpuSoftBody*` ma własne `GPUDevice` i zostaje —
@@ -277,7 +278,7 @@ dwa urządzenia działają obok siebie), Electron i build produkcyjny.
 
 ## 12. Pytania do użytkownika — odpowiedzi (2026-09-27, wieczór)
 
-1. **GLSL w modułach poza grą:** „usuwać nieużywane, przechodzimy w pełni na WebGPU” → zadanie 22 kasuje martwy
+1. **GLSL w modułach poza grą:** „usuwać nieużywane, przechodzimy w pełni na WebGPU” → zadanie 24 kasuje martwy
    i nieużywany kod (legacy `planet3d.proc.js`, `voxelShips3D`, `stationDestructionEffects`, martwe części
    `Engineeffects.js`, stara soczewka warpa po 01, stare tło pasa); moduły rozwijane (Z4/Z5/Z7, nowe asteroidy) przejdą
    na TSL przy swojej integracji.
@@ -290,5 +291,8 @@ dwa urządzenia działają obok siebie), Electron i build produkcyjny.
 7. **Obrażenia i mechanika broni z dema** (mapa ran, przebicia, rykoszety, ładowanie Mjolnira, serie Hexlance'a, pola
    `recoil` / `shake` / `impactScale`): „tak, bardzo mi się podobają nowe obrażenia od broni w demie — trzeba to
    wdrożyć” → zadanie 18 (zmiana rozgrywki zatwierdzona). Demo fizyki belek na GPU — „może na później” (poza portem).
-8. **Warp:** użytkownik zlecił osobnej sesji poprawę „Nurtu” (lot dobry, ładowanie i wyjście gorsze od „portalu”) —
-   warp zostaje odłożony do jej wyniku.
+8. **Warp:** użytkownik zlecił osobnej sesji poprawę „Nurtu” (lot dobry, ładowanie i wyjście gorsze od „portalu”);
+   potem „warp też będzie ready do wgrania” → zadanie 22 po zakończeniu tamtej sesji.
+9. **Asteroidy:** „zaraz będą production ready — zielone światło” (po poprawkach w sesji dema) → zadanie 21.
+10. **Koniec pracy:** „jak skończysz i wszystko będzie wdrożone (WebGPU w grze, bronie, rakiety, asteroidy, warp,
+   ringi) — wyłącz komputer”. Przed wyłączeniem: wszystko zacommitowane, inne sesje bezczynne.
