@@ -50,7 +50,7 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 | 10 | Ring 5/5: K-7 + ringi-archetypy Marsa i Jowisza | 09 | j.w. | xhigh | czeka | | ring bez zamienników |
 | 11 | Tło menu + rozgrzewka pipeline'ów | 05, 10 | 12–20 | max | czeka | | nowy `menuBackdrop.test` |
 | 12 | Infrastruktura efektów GPU: compute w klatce, siatka świateł, zniekształcenia, Fx3D w TSL | 03 | 04–11, 13–16 | max | 12-A zrobione i scalone (moduły `src/3d/fx/`); 12-B (wpięcie w Core3D, Fx3D w TSL) w toku (podagent, worktree `statki-wt/12b`, równolegle z 03 — zmiany `core3d.js` zwarte, scala `main` po 03) | 0f3d429…37953a6 | podstawa pod 17–19 (i przyszłe asteroidy) |
-| 13 | Silniki: MAIN, WARP (plazma), SIDE | 03 | 04–12, 14–20 | xhigh | w toku (podagent, worktree `statki-wt/13`; bloom po 02, iskry Fx3D po 12-B) | | |
+| 13 | Silniki: MAIN, WARP (plazma), SIDE | 03 | 04–12, 14–20 | xhigh | zrobione, scalone (bd96586) | e844a7a, c85042f, 3ff03a4 (scalenia `main` 23ed7d5, 49e7fdf) | graf plazmy na pulę (0 budów przy skoku); iskry MAIN = Fx3D (sprawdzić po 12-B: `silniki.mjs --post` z Fx3D) |
 | 14 | Tarcze i trafienia w tarczę | 03 | 04–13, 15–20 | xhigh | zrobione, scalone (7703490) | 9b8dad0, 9b95df5, e566f74, 02d6f02 | graf na wariant + wartości per obiekt; trafienia w `uniformArray` pakowanej w `onObjectUpdate` |
 | 15 | Mostki, rdzenie, reaktory, światła (+ `mostki-demo`, `rdzen-demo`) | 04 | 05–14, 16–20 | xhigh | w toku (podagent, worktree `statki-wt/15`; maska w `bridge3D` = zastępnik do 03) | | |
 | 16 | Zniszczenie stacji (+ scena bazy `stacja-rozpad`) | 03 | 04–15, 17–19 | xhigh | czeka | | |
@@ -388,3 +388,19 @@ Todo (2): „PORT poprawka 1 / 3 (TODO integracji)” w `tests/shipCore.test.mjs
   zamienników. Narzędzie A/B tarcz w grze: `scripts/webgpu/tarcze-gra.mjs` (wymuszone trafienia 4 klas). Inwentarz z
   HEAD 7703490: port 36 plików z GLSL, 55 materiałów, 6743 linie. Testy: 1469 / 7 porażek bazowych / 3 todo; `npm test`
   OK. Wyniki: `.tmp/webgpu/zadania/14`, `14-po02`.
+- **Zadanie 13 scalone do `main`** (e844a7a, c85042f, 3ff03a4; scalenia `main` 23ed7d5, 49e7fdf; scalenie bd96586): MAIN
+  (`mainExhaust3D`), WARP (`warpPlume3D`: raymarch, poświaty, cząstki) i SIDE (`engineExhaustBatch`: płomień + 3
+  poświaty) w TSL, −607 linii GLSL / −7 materiałów; `Engineeffects.js` bez martwego `getEngineVFX` (własny
+  `WebGLRenderer`) — zostają tekstury. Plazma: jeden graf na rodzaj (`Loop(44)`, 3 oktawy jako stałe grafu), instancja
+  puli = lekkie materiały na wspólnych węzłach (`onObjectUpdate`); cząstki = kwady na instancjach (punkty WebGPU mają
+  1 px); pętla marszu za flagą (`discard` w WGSL nie kończy wykonania); mieszanie (ONE, ONE) przez
+  `src/3d/tsl/mieszanie.js` (NodeMaterial z `premultipliedAlpha` mnoży wyjście przez alfę). Płomień SIDE miał 12 buforów
+  wierzchołków (limit 8) — błąd pipeline'u i utracony bufor poleceń passa ortho, niewidoczny w harnessie (padł przed
+  pierwszą sceną; harness zbiera błędy per scena — do poprawy w 23: błędy startu sesji). Weryfikacja
+  (`scripts/webgpu/silniki.mjs`, same dysze vs tag): bufor HDR >8/255 ≤ 0,0014% (gracz 0%), energia RGB i piksele > 0,9
+  równe; z postem 02 w tolerancji (warp 0,0007%, śr. 0,0055; bitwa 0,0004%; gracz 0%); gorące powietrze dysz A/B
+  identyczne; SIDE w spoczynku 0 px > 0,9 (reguła jasności). Pierwszy skok i flota 16 instancji: 0 budów
+  NodeBuilder/WGSL/pipeline'ów; najwolniejsze klatki to wgrywanie geometrii `hull:beam` 170 ms przy wejściu w skok (→ 23)
+  i linie Fx3D 28 ms (12-B); tag WebGL: 132 ms (nowy program). Rozgrzewka SIDE (`EngineExhaustBatch`) niedopisana — 4
+  pipeline'y w pierwszej klatce gry jak dawniej (→ 11). Zamienniki silników 0 (warp 49 → 13 po 02/04/13). Inwentarz z HEAD
+  bd96586: port 32 pliki z GLSL, 48 materiałów, 6136 linii. Testy: 1477 / 7 porażek bazowych / 3 todo; `npm test` OK.
