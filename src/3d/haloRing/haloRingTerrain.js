@@ -48,6 +48,26 @@ const nodeOrFloat = (x) => (typeof x === 'number' ? float(x) : x);
 // GLSL aaStep: smoothstep(edge − w, edge + w, x)
 const aaStep = (edge, x, w) => smoothstep(nodeOrFloat(edge).sub(w), nodeOrFloat(edge).add(w), x);
 
+// a·b + c z JEDNYM zaokrągleniem (jak FMA) dla całkowitego a (|a| < 4096) i stałej b.
+// Baza WebGL (ANGLE/FXC) liczy a·b + c jako mad → FMA, Dawn/DXC mnoży i dodaje osobno;
+// przy haszu z wejścia niecałkowitego (jasność kwartału: bid·3,1 + 5) różnica o 1 ULP
+// zmieniała hasz — 0,8% kwartałów świeciło inaczej niż w bazie. b rozbite na dwie połowy
+// mantysy po 12 bitów: a·hi + c jest dokładne (≤ 24 bity), a·lo też, więc ostatnie dodanie
+// zaokrągla raz — wynik = FMA bit w bit, bez względu na to, czy kompilator scali działania
+// (na GPU 16 384 / 16 384 zgodnych z WebGL; scripts/webgpu/ring-tsl-parzystosc.mjs).
+export function haloSplitF32(b) {
+  const f = new Float32Array([b]);
+  const bits = new Uint32Array(f.buffer)[0];
+  const e = ((bits >>> 23) & 255) - 127;
+  const m = (bits & 0x7fffff) | 0x800000;
+  const sign = bits >>> 31 ? -1 : 1;
+  return [sign * (m >>> 12) * 2 ** (e - 11), sign * (m & 0xfff) * 2 ** (e - 23)];
+}
+export const haloFusedMulAddInt = (a, b, c) => {
+  const [hi, lo] = haloSplitF32(b);
+  return a.mul(hi).add(c).add(a.mul(lo));
+};
+
 // Tekstura zastępcza 1×1 tego samego typu co mapa (TSL potrzebuje tekstury już
 // przy budowie materiału — typ próbkowania wchodzi do wiązań). Mapy są gotowe
 // przed budową terenu (index.js: assemble po maps.init), więc tylko na wszelki wypadek.
@@ -568,7 +588,7 @@ export function makeHaloTerrainNodes({ u, su, airSteps = 8 }) {
     const winAA = smoothstep(0.35, 0.9, fwidth(sRel).div(patT.element(2).mul(U.uDetailScale)));
     // kwartały różnią się jasnością (nieliczne jasne centra, reszta przygaszona),
     // parki ciemne — z daleka miasto to sieć ulic i plam, nie jednolita tafla
-    const blockB = float(0.3).add(float(0.7).mul(haloHash12(bid.mul(3.1).add(5.0)))).toVar();
+    const blockB = float(0.3).add(float(0.7).mul(haloHash12(haloFusedMulAddInt(bid, 3.1, 5.0)))).toVar();
     blockB.mulAssign(blockB);
     const lotDensity = mix(win, 0.3, max(winAA, farCity)).mul(blockB).mul(float(1.0).sub(park));
     // główne ulice jaśniejsze od bocznych (latarnie, bez ruchu — światła aut
