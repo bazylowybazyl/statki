@@ -51,7 +51,7 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 | 11 | Tło menu + rozgrzewka pipeline'ów | 05, 10 | 12–20 | max | czeka | | nowy `menuBackdrop.test` |
 | 12 | Infrastruktura efektów GPU: compute w klatce, siatka świateł, zniekształcenia, Fx3D w TSL | 03 | 04–11, 13–16 | max | 12-A zrobione i scalone (moduły `src/3d/fx/`); 12-B (wpięcie w Core3D, Fx3D w TSL) w toku (podagent, worktree `statki-wt/12b`, równolegle z 03 — zmiany `core3d.js` zwarte, scala `main` po 03) | 0f3d429…37953a6 | podstawa pod 17–19 (i przyszłe asteroidy) |
 | 13 | Silniki: MAIN, WARP (plazma), SIDE | 03 | 04–12, 14–20 | xhigh | w toku (podagent, worktree `statki-wt/13`; bloom po 02, iskry Fx3D po 12-B) | | |
-| 14 | Tarcze i trafienia w tarczę | 03 | 04–13, 15–20 | xhigh | zrobione na `webgpu/14` (parzystość z GLSL tagu na GPU); scala `main` po 02/04 i sprawdza z bloomem | 9b8dad0, 9b95df5 | graf na wariant + wartości per obiekt; trafienia w `uniformArray` pakowanej w `onObjectUpdate` |
+| 14 | Tarcze i trafienia w tarczę | 03 | 04–13, 15–20 | xhigh | zrobione, scalone (7703490) | 9b8dad0, 9b95df5, e566f74, 02d6f02 | graf na wariant + wartości per obiekt; trafienia w `uniformArray` pakowanej w `onObjectUpdate` |
 | 15 | Mostki, rdzenie, reaktory, światła (+ `mostki-demo`, `rdzen-demo`) | 04 | 05–14, 16–20 | xhigh | w toku (podagent, worktree `statki-wt/15`; maska w `bridge3D` = zastępnik do 03) | | |
 | 16 | Zniszczenie stacji (+ scena bazy `stacja-rozpad`) | 03 | 04–15, 17–19 | xhigh | czeka | | |
 | 17 | Broń 1/2 z dema `bronie-webgpu`: efekty wszystkich broni (pociski, smugi, trafienia, wiązki, PD, flak) | 12, 04 | 05–11, 13–16, 19 | max | czeka | | nowe efekty — ocena obrazu zamiast tolerancji; PD i flak z kanwy 2D do 3D |
@@ -379,3 +379,12 @@ Todo (2): „PORT poprawka 1 / 3 (TODO integracji)” w `tests/shipCore.test.mjs
   tarcz, cache stały (51) przez 388 klatek. −583 linie GLSL. Uwaga dla 03: snapshot refrakcji rysuje warstwę tarcz do
   `refractionTarget` (inny kontekst renderu — osobna, nierozgrzana budowa tarcz przy pierwszej fali). Czeka na scalenie
   `main` i sprawdzenie z bloomem.
+- **Zadanie 14 scalone do `main`** (9b8dad0, 9b95df5, scalenie `main` e566f74, 02d6f02; scalenie 7703490). Po 02 i 04
+  (bloom, kadłuby w TSL) sama warstwa tarcz vs WebGL: 0% pikseli >8/255 (średnia 0,0154, z gorącym powietrzem z trafień —
+  po 2 źródła `special` / `shield` na obu rendererach); kadłuby + tarcze 0,053% (jedyna różnica: kłąb dymu Fx3D —
+  zamiennik do 12-B); `bitwa__ortho` 1,95% (po 01 było 14,5%; zostają dysze 13 i Fx3D 12-B), `wraki__ortho` 0,25%,
+  `wraki__fg` 0%. Pełne sceny poza tolerancją przez tło (mgławica, gwiazdy, słońce — 05) i światła okrętów (15).
+  Zamienniki: bitwa 26 → 20, bitwa-blisko 18 → 17, wybuch 22 → 16, wraki 19 → 15, warp 46 → 40; warstwa 7 bez
+  zamienników. Narzędzie A/B tarcz w grze: `scripts/webgpu/tarcze-gra.mjs` (wymuszone trafienia 4 klas). Inwentarz z
+  HEAD 7703490: port 36 plików z GLSL, 55 materiałów, 6743 linie. Testy: 1469 / 7 porażek bazowych / 3 todo; `npm test`
+  OK. Wyniki: `.tmp/webgpu/zadania/14`, `14-po02`.

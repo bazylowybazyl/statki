@@ -22,8 +22,8 @@
 
 | zakres | pliki z GLSL | materiały | linie GLSL | oBC | odczyty | compile | wbudowane | clone / needsUpdate / defines | TSL / mieszane |
 |---|---:|---|---:|---:|---:|---:|---:|---|---|
-| **razem** | 60 | 105 (102 SM, 0 Raw, 3 ShaderPass) | 12263 | 1 | 2 | 5 | 61 | 6 / 36 / 23 | 19 / 2 |
-| port | 38 | 59 (58 SM, 0 Raw, 1 ShaderPass) | 7326 | 1 | 1 | 5 | 49 | 6 / 27 / 17 | 14 / 2 |
+| **razem** | 58 | 101 (98 SM, 0 Raw, 3 ShaderPass) | 11680 | 1 | 2 | 5 | 61 | 6 / 36 / 23 | 22 / 2 |
+| port | 36 | 55 (54 SM, 0 Raw, 1 ShaderPass) | 6743 | 1 | 1 | 5 | 49 | 6 / 27 / 17 | 17 / 2 |
 | warp | 2 | 2 (2 SM, 0 Raw, 0 ShaderPass) | 364 | 0 | 0 | 0 | 1 | 0 / 0 / 0 | 0 / 0 |
 | asteroidy-stare | 1 | 1 (1 SM, 0 Raw, 0 ShaderPass) | 66 | 0 | 0 | 0 | 2 | 0 / 3 / 0 | 0 / 0 |
 | asteroidy-nowe | 7 | 15 (15 SM, 0 Raw, 0 ShaderPass) | 1889 | 0 | 1 | 0 | 0 | 0 / 0 / 1 | 0 / 0 |
@@ -32,8 +32,8 @@
 
 ### Porównanie z `USTALENIA.md` (~105 materiałów w 53 plikach, ~12,7 tys. linii GLSL w 59 plikach)
 
-Tu: **105 miejsc tworzenia materiałów** (w tym 3 `ShaderPass`) w 53 plikach,
-**12263 linii GLSL** w 59 plikach. Różnice: (1) ten lekser liczy szablony w całości
+Tu: **101 miejsc tworzenia materiałów** (w tym 3 `ShaderPass`) w 51 plikach,
+**11680 linii GLSL** w 57 plikach. Różnice: (1) ten lekser liczy szablony w całości
 (z `${…}`) i także krótkie jednolinijkowe shadery w zwykłych napisach; (2) liczy `ShaderPass` jako materiał; (3) pliki dodane od
 `2c2ef18` (ringi-archetypy Z6 `haloRing/arch/*`, budowle portowe Z7, burze pasa). Do planu liczy się wiersz **port**.
 
@@ -46,7 +46,6 @@ Tu: **105 miejsc tworzenia materiałów** (w tym 3 `ShaderPass`) w 53 plikach,
 | `src/3d/haloRing/haloRingMegastructure.js` | 4 | 535 |  |  |  |  |  |  | · / · / 7 | GLSL |  |
 | `src/3d/haloRing/arch/archGLSL.js` |  | 424 |  |  |  |  |  |  | · / · / · | GLSL |  |
 | `src/3d/bridge3D.js` | 3 | 420 |  |  |  |  |  |  | · / · / · | GLSL |  |
-| `src/3d/shield3D.js` | 2 | 398 |  |  |  |  |  |  | · / · / · | GLSL |  |
 | `src/3d/haloRing/haloRingCity.js` | 3 | 375 |  |  |  |  |  |  | · / · / 3 | GLSL |  |
 | `src/3d/warpPlume3D.js` | 3 | 330 |  |  |  |  |  |  | · / · / 1 | GLSL |  |
 | `src/effects3d/yamato.js` | 2 | 328 |  |  |  |  |  |  | · / · / · | GLSL | scena overlay; zastąpią receptury dema broni (zadanie 17) |
@@ -56,7 +55,6 @@ Tu: **105 miejsc tworzenia materiałów** (w tym 3 `ShaderPass`) w 53 plikach,
 | `src/effects3d/rocketFireGPU.js` | 1 | 213 |  |  |  |  |  |  | · / · / · | GLSL | zastąpi dym i dysze z dema rakiet (zadanie 19) |
 | `src/3d/menuBackdrop3D.js` | 3 | 200 |  |  |  | 2 | initTexture |  | · / · / · | GLSL | rozgrzewka po kluczu programu WebGL — do przeprojektowania |
 | `src/3d/planet3d.assets.js` | 7 | 191 |  |  |  |  |  | 3 | · / · / · | GLSL |  |
-| `src/3d/shieldImpactFx.js` | 2 | 185 |  |  |  |  |  |  | · / · / · | GLSL |  |
 | `src/3d/haloRing/arch/fable.js` | 1 | 178 |  |  |  |  |  |  | · / 2 / · | GLSL |  |
 | `src/3d/haloRing/arch/ecumene.js` | 1 | 171 |  |  |  |  |  |  | · / 2 / · | GLSL |  |
 | `src/3d/core3d.js` |  | 148 |  | RenderTarget×4 |  | 1 | initTexture | 2 | · / · / · | mieszany | serce portu: WebGPURenderer, passy sceny (zadanie 01), post w TSL — bloom i uber z gorącym powietrzem w src/3d/tsl/postGry.js (zadanie 02); zostało źródło GLSL maski słońca (03); soczewka i fale warpa usunięte |
@@ -205,7 +203,6 @@ bo stoją na niej warsztaty `mostki-demo`, `rdzen-demo` i pomiar drżenia (PLAN.
 | `src/3d/haloRing/arch/archGLSL.js:116` | `ARCH_INSTANCED_FRAGMENT` | 169 | port |
 | `src/3d/haloRing/arch/fable.js:41` | `FAB_SURFACE_FRAGMENT` | 165 | port |
 | `src/effects3d/yamato.js:57` | `vertexShader:` | 165 | port |
-| `src/3d/shield3D.js:306` | `HULL_SHIELD_FRAGMENT` | 164 | port |
 | `src/3d/haloRing/arch/ecumene.js:51` | `ECU_SURFACE_FRAGMENT` | 158 | port |
 | `src/effects3d/rocketFireGPU.js:133` | `vertexShader:` | 153 | port |
 | `src/3d/bridge3D.js:382` | `MODEL_FRAG` | 148 | port |
@@ -216,9 +213,7 @@ bo stoją na niej warsztaty `mostki-demo`, `rdzen-demo` i pomiar drżenia (PLAN.
 | `src/3d/rocks/rockShapes3D.js:308` | `—` | 124 | asteroidy-nowe |
 | `src/3d/haloRing/haloRingCity.js:284` | `TREE_VERTEX` | 121 | port |
 | `src/3d/portBuildings/portBuildings3D.js:150` | `PB_GLSL_SURFACE` | 120 | poza grą (dema) |
-| `src/3d/shield3D.js:163` | `SHIELD_FRAGMENT` | 119 | port |
 | `src/vfx/shatterMaterial.js:43` | `VERT` | 118 | port |
-| `src/3d/shieldImpactFx.js:94` | `VERTEX_SHADER` | 113 | port |
 | `src/effects3d/supernovaMissileBlow.js:48` | `vertexShader:` | 110 | port |
 | `src/3d/haloRing/haloRingGLSL.js:202` | `HALO_GLSL_LIGHT` | 109 | port |
 | `src/3d/warpFx3D.js:82` | `GLYPH_FRAG` | 108 | warp |
@@ -232,6 +227,9 @@ bo stoją na niej warsztaty `mostki-demo`, `rdzen-demo` i pomiar drżenia (PLAN.
 | `src/3d/haloRing/haloRingMegastructure.js:426` | `GLASS_FRAGMENT` | 93 | port |
 | `src/3d/reactor3D.js:170` | `STRUCT_FRAGMENT` | 90 | poza grą (dema) |
 | `src/3d/haloRing/haloRingGLSL.js:312` | `HALO_GLSL_AIR` | 88 | port |
+| `src/3d/rocks/rockMaterial3D.js:243` | `ROCK_VERTEX` | 84 | asteroidy-nowe |
+| `src/effects3d/stationDestructionEffects.js:226` | `fragmentShader:` | 83 | poza grą (nieużywany) |
+| `Engineeffects.js:18` | `fragmentShader` | 83 | port |
 
 ## Przebudowy materiałów w locie (zakres: port)
 
@@ -287,6 +285,7 @@ bo stoją na niej warsztaty `mostki-demo`, `rdzen-demo` i pomiar drżenia (PLAN.
 | `scripts/proxy-batch/index.html` | tak |  |  | 13 (core3d.js, sunShadowMask.js, hullShadowSdf.js, shockwave3D.js, beamDebris3D.js …(+8)) | `scripts/proxy-batch/gallery.mjs`, `scripts/proxy-batch/lighting.mjs`, `scripts/proxy-batch/precision.mjs`, `scripts/proxy-batch/run.mjs`, `scripts/webgpu/inwentarz.mjs` |
 | `scripts/webgpu/ring-mapa-strona.html` |  | tak |  | 6 (fable.js, archMaterials.js, archGLSL.js, haloRingGLSL.js, ecumene.js …(+1)) | `scripts/webgpu/ring-mapa.mjs` |
 | `scripts/webgpu/ring-tsl-parzystosc-strona.html` |  |  | tak | 2 (haloRingIndustryKit.js, haloRingGLSL.js) | `scripts/webgpu/ring-tsl-parzystosc.mjs` |
+| `scripts/webgpu/tarcze-parzystosc-strona.html` | tak | tak | tak | 4 (core3d.js, sunShadowMask.js, hullShadowSdf.js, shockwave3D.js) | `scripts/webgpu/tarcze-parzystosc.mjs` |
 | `destruktor2d.html` |  | tak |  | 2 (beamShips3D.js, beamDebris3D.js) |  |
 | `destruktor3d.html` |  | tak |  | 2 (beamShips3D.js, beamDebris3D.js) |  |
 
@@ -305,17 +304,16 @@ bo stoją na niej warsztaty `mostki-demo`, `rdzen-demo` i pomiar drżenia (PLAN.
 | `tests/overlayContextMerge.test.mjs` | `src/effects3d/overlay.js` |
 | `tests/perfInstrumentation.test.mjs` | `src/3d/core3d.js`, `Engineeffects.js` |
 | `tests/portBuildings.test.mjs` | `src/3d/core3d.js`, `src/3d/portBuildings/portBuildings3D.js`, `src/3d/portBuildings/portBuoys3D.js`, `src/3d/portBuildings/portHullBuild3D.js` |
-| `tests/renderPerfGates.test.mjs` | `src/3d/core3d.js`, `src/3d/planet3d.assets.js`, `src/3d/shield3D.js`, `src/3d/shieldImpactFx.js`, `src/effects3d/overlay.js` …(+5) |
+| `tests/renderPerfGates.test.mjs` | `src/3d/core3d.js`, `src/3d/planet3d.assets.js`, `src/effects3d/overlay.js`, `src/effects3d/reactorblow.js`, `src/effects3d/rocketFireGPU.js` …(+3) |
 | `tests/ringPlanetAnchoring.test.mjs` | `src/3d/core3d.js`, `src/3d/planet3d.assets.js` |
 | `tests/sceneMatrixSync.test.mjs` | `src/3d/core3d.js`, `src/effects3d/shockwave3D.js` |
-| `tests/shaderPrewarm.test.mjs` | `src/3d/shield3D.js`, `src/effects3d/overlay.js` |
-| `tests/shadowShaftsQuality.test.mjs` | `src/3d/asteroidBeltBackdrop3D.js`, `src/3d/bridge3D.js`, `src/3d/bridgeFx3D.js`, `src/3d/core3d.js`, `src/3d/engineExhaustBatch.js` …(+13) |
-| `tests/shieldImpactFx.test.mjs` | `src/3d/shieldImpactFx.js` |
+| `tests/shaderPrewarm.test.mjs` | `src/effects3d/overlay.js` |
+| `tests/shadowShaftsQuality.test.mjs` | `src/3d/asteroidBeltBackdrop3D.js`, `src/3d/bridge3D.js`, `src/3d/bridgeFx3D.js`, `src/3d/core3d.js`, `src/3d/engineExhaustBatch.js` …(+11) |
 | `tests/shipLights3D.test.mjs` | `src/3d/core3d.js`, `src/3d/shipLights3D.js` |
 | `tests/shipProxyBatch3D.test.mjs` | `src/3d/core3d.js`, `src/3d/shipProxyBatch3D.js` |
 | `tests/starParallax.test.mjs` | `src/3d/planet3d.assets.js` |
 | `tests/warpLens3D.test.mjs` | `src/3d/core3d.js`, `src/3d/warpLens3D.js` |
 | `tests/warpPlume3D.test.mjs` | `src/3d/warpPlume3D.js` |
 | `tests/warpSpace.test.mjs` | `src/3d/core3d.js`, `src/3d/warpLens3D.js` |
-| `tests/webgpuFundament.test.mjs` | `src/3d/core3d.js`, `src/3d/shield3D.js`, `src/effects3d/overlay.js` |
+| `tests/webgpuFundament.test.mjs` | `src/3d/core3d.js`, `src/effects3d/overlay.js` |
 | `tests/webgpuPost.test.mjs` | `src/3d/core3d.js` |
