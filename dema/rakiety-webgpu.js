@@ -179,21 +179,26 @@ const sx = (x) => x - O.x;
 const sy = (y) => -(y - O.y);
 
 const _shake = { x: 0, y: 0 };
-function updateCamera(realDt) {
+/**
+ * Kamera w czasie SYMULACJI (dt = 0 w pauzie): w zwolnieniu zwalnia razem
+ * z akcją, w pauzie stoi (cel ma wyprzedzenie prędkością — w czasie
+ * rzeczywistym kamera odjeżdżałaby od zatrzymanej rakiety).
+ */
+function updateCamera(dt) {
   const t = S.camTarget;
   // Kamera jedzie z flotą (bez tego sprężyna zostawałaby w tyle o v/k).
-  if (S.moveAtlas && !S.paused) { S.cam.x += fleetVx() * realDt * S.timeScale; S.cam.y += fleetVy() * realDt * S.timeScale; }
-  const k = 1 - Math.exp(-3.2 * realDt);
+  if (S.moveAtlas) { S.cam.x += fleetVx() * dt; S.cam.y += fleetVy() * dt; }
+  const k = 1 - Math.exp(-CAM_K * dt);
   S.cam.x += (t.x - S.cam.x) * k;
   S.cam.y += (t.y - S.cam.y) * k;
   if (!S.manualZoom) {
     const lz = Math.log(S.cam.zoom);
     const lt = Math.log(t.zoom);
-    S.cam.zoom = Math.exp(lz + (lt - lz) * (1 - Math.exp(-2.4 * realDt)));
+    S.cam.zoom = Math.exp(lz + (lt - lz) * (1 - Math.exp(-2.4 * dt)));
   }
-  // Wstrząs: gładki szum w px ekranu.
+  // Wstrząs: gładki szum w px ekranu (czas symulacji — w pauzie stoi).
   const mag = fx ? fx.shake : 0;
-  const tt = performance.now() / 1000;
+  const tt = S.time;
   _shake.x = (Math.sin(tt * 47.3) * 0.6 + Math.sin(tt * 91.7 + 1.3) * 0.4) * mag;
   _shake.y = (Math.sin(tt * 53.1 + 2.1) * 0.6 + Math.sin(tt * 83.9 + 0.7) * 0.4) * mag;
   const zoom = S.cam.zoom;
@@ -277,6 +282,8 @@ function place(hull, home, time, weave = 0) {
 const atlasState = { x: O.x + HOME.atlas.x, y: O.y + HOME.atlas.y, a: 0, vx: 0, vy: 0, orbit: 0 };
 // Panel po prawej zasłania ~360 px: środek kadru przesunięty w lewo o połowę.
 const PANEL_SHIFT_PX = 180;
+// Sztywność sprężyny pozycji kamery [1/s].
+const CAM_K = 3.2;
 function stepAtlas(dt) {
   const st = atlasState;
   const k = S.keys;
@@ -439,6 +446,15 @@ const SCENARIOS = {
       }
     }
   },
+  poscig: {
+    label: 'Za rakietą — kamera jedzie za rakietą manewrującą: dyski Macha, żar spalin, smuga rośnie i kłębi się',
+    duration: 5.2, zoom: 1.6, follow: true, zoomAfter: 0.75,
+    start(sc) {
+      sc.at(0.2, () => { sc.missile = fire('cruise', asTarget(pirate(0))); });
+      sc.at(0.6, () => fire('cruise', asTarget(pirate(1))));
+      sc.at(0.9, () => fire('cruise', asTarget(pirate(2))));
+    }
+  },
   novaZoom: {
     label: 'Supernowa z bliska (×0,4) — implozja wsysa dym, fala go wymiata, włókna pozostałości',
     duration: 5.4, zoom: 0.55, zoomAfter: 0.3, timeScale: 0.4, focus: () => pirate(0),
@@ -459,7 +475,7 @@ const SCENARIOS = {
     }
   }
 };
-const ORDER = ['salwa', 'szybkie', 'supernowa', 'deszcz', 'zblizenie', 'novaZoom'];
+const ORDER = ['salwa', 'szybkie', 'supernowa', 'deszcz', 'zblizenie', 'novaZoom', 'poscig'];
 
 const scen = {
   name: null,
@@ -510,9 +526,12 @@ function stepScenario(dt) {
   if (def.follow && scen.missile) {
     if (scen.missile.alive) {
       // Wyprzedzenie ~250 px ekranu przed rakietą (przy każdym zoomie).
+      // + prędkość / sztywność sprężyny kamery: bez tego kamera zostaje
+      // za rakietą o v/k (przy 1800 j./s to ~560 j.).
+      const m = scen.missile;
       const lead = Math.min(500, 250 / S.cam.zoom);
-      S.camTarget.x = scen.missile.x + Math.cos(scen.missile.heading) * lead;
-      S.camTarget.y = scen.missile.y + Math.sin(scen.missile.heading) * lead;
+      S.camTarget.x = m.x + Math.cos(m.heading) * lead + (m.vx + m.fx) / CAM_K;
+      S.camTarget.y = m.y + Math.sin(m.heading) * lead + (m.vy + m.fy) / CAM_K;
     } else {
       if (!scen.lastNova) scen.lastNova = { x: scen.missile.x, y: scen.missile.y, t: scen.t };
       S.camTarget.x = scen.lastNova.x;
@@ -563,7 +582,7 @@ function frame(nowMs, forcedDt = null) {
   } else {
     for (const h of allHulls()) h.syncMesh(O.x, O.y);
   }
-  const view = updateCamera(realDt);
+  const view = updateCamera(dt);
   updateSun();
 
   // Światła siatki: statki + efekty.

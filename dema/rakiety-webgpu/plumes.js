@@ -103,19 +103,19 @@ export class PlumeSystem {
       const N = float(4.2);
       const phase = sPos.mul(N).mul(6.2831853);
       const w = mix(float(0.18), float(0.64), pow(sPos, 0.7));
-      const pinch = float(1.0).sub(exp(sPos.mul(-3.2)).mul(0.34).mul(cos(phase).mul(0.5).add(0.5)));
+      const pinch = float(1.0).sub(exp(sPos.mul(-2.6)).mul(0.5).mul(cos(phase).mul(0.5).add(0.5)));
       const wE = max(w.mul(pinch), 0.04);
       const g = exp(t.div(wE).mul(t.div(wE)).mul(-2.0));
       const nodeC = max(cos(phase.add(3.14159)), 0.0);
       const node2 = nodeC.mul(nodeC);
       const node4 = node2.mul(node2);
       const nodes = exp(sPos.mul(-2.6)).mul(node4.mul(node4));
-      const body = g.mul(tailFade).mul(inFront).mul(nodes.mul(1.7).add(0.72)).mul(flick);
+      const body = g.mul(tailFade).mul(inFront).mul(nodes.mul(2.8).add(0.6)).mul(flick);
       const colA = mix(vHot, vMid, smoothstep(0.02, 0.42, sPos));
       const tail = vMid.mul(vec3(0.62, 0.34, 0.2));
       const col = mix(colA, tail, smoothstep(0.38, 1.0, sPos));
       const coreW = sPos.mul(0.05).add(0.07);
-      const core = exp(t.div(coreW).mul(t.div(coreW)).mul(-2.5)).mul(exp(sPos.div(-0.13))).mul(inFront);
+      const core = exp(t.div(coreW).mul(t.div(coreW)).mul(-2.5)).mul(exp(sPos.div(-0.08))).mul(inFront);
       const chem = col.mul(body).mul(inten).add(vCore.mul(core));
 
       // --- Plazma: spiralna niestabilność, smugi ---
