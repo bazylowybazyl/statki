@@ -7,8 +7,11 @@
 // (zadanie 10) strona może porównywać z zapisanym wynikiem GLSL (--zapisz-glsl).
 // Zadanie 07: zestaw przemysłowy (haloRingIndustryKit.js) — GLSL (HALO_GLSL_INDKIT) ↔ TSL
 // i osobno wynik TSL na GPU ↔ bliźniak JS (indKitPart): state.mirror.
+// Zadanie 08: hasze konstrukcji (okna, pasma pięter, kreski tarasów) GLSL ↔ TSL oraz reguły
+// komórek dachu TSL na GPU ↔ lustro CPU planu brył (industrialCellRule, plotRule, klasa sektora
+// komórki): state.roofMirror — GLSL dachu zniknął z portem (08), wzorcem jest plan brył na CPU.
 import * as THREE from 'three/webgpu';
-import { Fn, float, int, ivec2, vec2, vec3, vec4, texture, textureLoad, screenCoordinate, normalize, length } from 'three/tsl';
+import { Fn, float, int, ivec2, vec2, vec3, vec4, texture, textureLoad, screenCoordinate, normalize, length, fract, mod } from 'three/tsl';
 import {
   HALO_GLSL_AIR, HALO_GLSL_COMMON, HALO_GLSL_FG, HALO_GLSL_LIGHT, HALO_GLSL_NOISE, HALO_GLSL_PORTSITES,
   HALO_GLSL_RTE, HALO_GLSL_STORM, HALO_GLSL_TRANSIT
@@ -23,6 +26,9 @@ import { HALO_RING_PLANETS } from '../../src/game/haloRingPlanets.js';
 import { mulberry32 } from '../../src/3d/haloRing/haloRingLayout.js';
 import { HALO_GLSL_INDKIT, IND_PARTS, haloIndKitTSL, indKitPart } from '../../src/3d/haloRing/haloRingIndustryKit.js';
 import { haloFusedMulAddInt } from '../../src/3d/haloRing/haloRingTSL.js';
+import { haloRoofTSL } from '../../src/3d/haloRing/haloRingStructure.js';
+import { buildHaloRoofPlan, industrialCellRule, plotRule } from '../../src/3d/haloRing/haloRingRoofPlan.js';
+import { applyRoofPlanUniforms } from '../../src/3d/haloRing/haloRingUniforms.js';
 
 const W = 64;
 const H = 64;
@@ -60,6 +66,11 @@ const TAU = Math.PI * 2;
   u.uIndKitCdf1.value.set(0.5, 0.6, 0.7, 1.01);
 }
 const KIT_CDF = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 1.01];
+// dach (zadanie 08): plan brył jak w index.js (domena: 8 segmentów na korzeń terenu) → uniformy
+// pasów, komórek i sektorów; reguły komórek z profilu planety (uRoofOcc / uRoofKinds / uRoofPlotEmpty)
+const roofPlan = buildHaloRoofPlan(layout, { segCount: Math.max(8, Math.round(layout.circumference / layout.floor.length)) * 8 });
+applyRoofPlanUniforms(u, roofPlan);
+const roofRules = layout.planetProfile?.roofRules;
 
 // Wejścia: punkty wokół ringu i planety, kierunki, parametry skalarne.
 const rand = mulberry32(0x7a17);
@@ -145,7 +156,47 @@ const TESTS = [
     (a, b, d) => vec4(Kt.indTopColor(d.z, a.w, a.xy.div(40000.0).mul(45.0), vec4(0.0, 0.0, float(6.0).add(a.w.mul(30.0)), 12.0)), 1.0)],
   ['kitShadowCyl', 'vec4(indSegBox(b.xy * 30.0, b.zw * vec2(40.0, 0.001), vec2(12.0, 7.0)), indSegCircle(b.xy * 30.0, b.zx * 40.0, 9.0), indCylRadius(floor(d.z / 21.0), a.w), indCylSlope(floor(d.z / 21.0), a.w))',
     (a, b, d) => vec4(Kt.indSegBox(b.xy.mul(30.0), b.zw.mul(vec2(40.0, 0.001)), vec2(12.0, 7.0)), Kt.indSegCircle(b.xy.mul(30.0), b.zx.mul(40.0), 9.0),
-      Kt.indCylRadius(d.z.div(21.0).floor(), a.w), Kt.indCylSlope(d.z.div(21.0).floor(), a.w))]
+      Kt.indCylRadius(d.z.div(21.0).floor(), a.w), Kt.indCylSlope(d.z.div(21.0).floor(), a.w))],
+  // konstrukcja (zadanie 08): hasze ścian od środka jak w haloRingStructure.js — bp.x = kwartał (d.x / 32, do 2048),
+  // wc.x = okno (d.y), row / level = piętro (d.z), grupa kolumn (d.w · 4). Okno: vec2(wc.x, row) + bp.x · 0,37 (wejście
+  // NIEcałkowite) — baza liczy x z dwoma zaokrągleniami, y jednym (FMA): kanał 0 structHashWin to wariant z materiału,
+  // structHashWinNaive / structHashWinFma — oba składniki wprost / oba przez FMA (dla porównania)
+  ['structHashWin', 'vec4(haloHash12(vec2(d.y, d.z) + floor(d.x / 32.0) * 0.37), haloHash12(vec2(floor(d.x / 32.0) * 7.0 + floor(d.w * 4.0), d.z) + 1.3), haloHash12(vec2(floor(d.x / 32.0), d.z) + 3.7), haloHash12(vec2(floor(d.x / 32.0), floor(d.w * 4.0)) + 9.1))',
+    (a, b, d) => {
+      const bpx = d.x.div(32.0).floor();
+      const grp = d.w.mul(4.0).floor();
+      return vec4(haloHash12(vec2(d.y.add(bpx.mul(0.37)), haloFusedMulAddInt(bpx, 0.37, d.z))), haloHash12(vec2(bpx.mul(7.0).add(grp), d.z).add(1.3)),
+        haloHash12(vec2(bpx, d.z).add(3.7)), haloHash12(vec2(bpx, grp).add(9.1)));
+    }],
+  ['structHashWinNaive', 'vec4(haloHash12(vec2(d.y, d.z) + floor(d.x / 32.0) * 0.37), 0.0, 0.0, 1.0)',
+    (a, b, d) => vec4(haloHash12(vec2(d.y, d.z).add(d.x.div(32.0).floor().mul(0.37))), 0.0, 0.0, 1.0)],
+  ['structHashWinFma', 'vec4(haloHash12(vec2(d.y, d.z) + floor(d.x / 32.0) * 0.37), 0.0, 0.0, 1.0)',
+    (a, b, d) => vec4(haloHash12(haloFusedMulAddInt(d.x.div(32.0).floor(), 0.37, vec2(d.y, d.z))), 0.0, 0.0, 1.0)],
+  // kreski tarasów fract(sRel / 23 + level · 0,37) (sRel = b.w, wprost jak w materiale; structDashFma — przez FMA),
+  // kreski dróg / kolei na dachu (sRel / 24, / 40). UWAGA: FXC scala a·b + c zależnie od sąsiedniego kodu — ten sam
+  // kanał 0 z haszem w kanale 3 dawał 75% zamiast 99% zgodnych bitów, więc wiersz jest wskazówką, a wariant w materiale
+  // rozstrzyga porównanie zrzutów (dema i gry) z bazą
+  ['structDash', 'vec4(fract(b.w / 23.0 + d.z * 0.37), fract(b.w / 24.0), fract(b.w / 40.0), 1.0)',
+    (a, b, d) => vec4(fract(b.w.div(23.0).add(d.z.mul(0.37))), fract(b.w.div(24.0)), fract(b.w.div(40.0)), 1.0)],
+  ['structDashFma', 'vec4(fract(b.w / 23.0 + d.z * 0.37), 0.0, 0.0, 1.0)',
+    (a, b, d) => vec4(fract(haloFusedMulAddInt(d.z, 0.37, b.w.div(23.0))), 0.0, 0.0, 1.0)],
+  // płyty (hasz z rodzajem krawędzi · 17), działka i komórka dachu, okna kadłuba (wejścia całkowite)
+  ['structPanelRoof', 'vec4(haloHash12(vec2(floor(d.x / 8.0), floor(d.y / 64.0)) + floor(d.w * 8.0) * 17.0), haloHash12(vec2(d.x, d.z)), haloHash12(vec2(floor(d.y / 4.0), mod(d.z, 2.0))), haloHash12(vec2(floor(d.x / 16.0), floor(d.y / 22.0)) + 4.0))',
+    (a, b, d) => vec4(haloHash12(vec2(d.x.div(8.0).floor(), d.y.div(64.0).floor()).add(d.w.mul(8.0).floor().mul(17.0))), haloHash12(vec2(d.x, d.z)),
+      haloHash12(vec2(d.y.div(4.0).floor(), mod(d.z, 2.0))), haloHash12(vec2(d.x.div(16.0).floor(), d.y.div(22.0).floor()).add(4.0)))]
+];
+
+// Tylko TSL (zadanie 08): reguły komórek dachu na GPU, porównane z planem brył na CPU (compareRoofMirror).
+// d.x = indeks komórki / działki wzdłuż (0…65535), d.z = komórka w poprzek (0…63), klasa sektora = floor(d.w · 4),
+// rząd działki = d.z mod 2.
+const Rt = haloRoofTSL(u);
+const ROOF_TESTS = [
+  ['roofCellC', (a, b, d) => Rt.roofIndCell(d.x, d.z, d.w.mul(4.0).floor()).element(0)],
+  ['roofCellEx', (a, b, d) => Rt.roofIndCell(d.x, d.z, d.w.mul(4.0).floor()).element(1)],
+  ['roofPlotPl', (a, b, d) => Rt.roofPlot(d.x, mod(d.z, 2.0), d.w.mul(4.0).floor()).element(0)],
+  ['roofPlotTw', (a, b, d) => Rt.roofPlot(d.x, mod(d.z, 2.0), d.w.mul(4.0).floor()).element(1)],
+  ['roofPlotTo', (a, b, d) => Rt.roofPlot(d.x, mod(d.z, 2.0), d.w.mul(4.0).floor()).element(2)],
+  ['roofClass', (a, b, d) => vec4(Rt.roofClassOf(mod(d.x, Rt.cells.z)), Rt.roofClassOf(d.y.div(8.0).floor()), 0.0, 1.0)]
 ];
 
 // ---------------------------------------------------------------------------
@@ -274,7 +325,7 @@ async function tslRun() {
   const rt = new THREE.RenderTarget(W, H, { type: THREE.FloatType, depthBuffer: false });
   const quad = new THREE.QuadMesh();
   const results = {};
-  for (const [name, , tslExpr] of TESTS) {
+  for (const [name, tslExpr] of [...TESTS.map(([n, , e]) => [n, e]), ...ROOF_TESTS]) {
     const m = new THREE.NodeMaterial();
     m.fragmentNode = Fn(() => {
       const c = ivec2(int(screenCoordinate.x), int(screenCoordinate.y));
@@ -341,7 +392,82 @@ async function main() {
   }
   state.mirror = compareKitMirror(tsl);
   log(`zestaw TSL ↔ bliźniak JS: ${JSON.stringify(state.mirror)}`);
+  state.roofMirror = compareRoofMirror(tsl);
+  log(`dach TSL ↔ plan brył CPU: ${JSON.stringify(state.roofMirror)}`);
   state.done = true;
+}
+
+// Reguły komórek dachu: TSL na GPU (float32) ↔ plan brył na CPU (industrialCellRule / plotRule / klasa
+// sektora komórki jak sectorOfCell w buildHaloRoofPlan, float64). Decyzje (zajętość, rodzaj, orientacja
+// radiatora, klasa sektora) mają być identyczne — bryła z bliska stoi na swoim odcisku; wymiary i
+// przesunięcia w granicach zaokrąglenia float32 (ULP po zaokrągleniu wyniku CPU do float32).
+function compareRoofMirror(tsl) {
+  const f32 = new Float32Array(2);
+  const i32 = new Int32Array(f32.buffer);
+  const ord = (x) => (x < 0 ? 0x80000000 - x : x);
+  const ulp = (x, y) => {
+    f32[0] = x;
+    f32[1] = y;
+    return Math.abs(ord(i32[0]) - ord(i32[1]));
+  };
+  const out = { cells: 0, plots: 0, classes: 0, decisionMismatch: 0, values: 0, maxUlp: 0, ulpHist: { 0: 0, 1: 0, 2: 0, '>2': 0 }, maxAbs: 0, kinds: {}, worst: [] };
+  const val = (x, y) => {
+    out.values++;
+    const dl = ulp(Math.fround(x), y);
+    out.ulpHist[dl > 2 ? '>2' : dl]++;
+    out.maxUlp = Math.max(out.maxUlp, dl);
+    out.maxAbs = Math.max(out.maxAbs, Math.abs(x - y));
+  };
+  const miss = (what) => {
+    out.decisionMismatch++;
+    if (out.worst.length < 8) out.worst.push(what);
+  };
+  const cellS = u.uRoofCells.value.x;
+  const { totalCells, cell0, cellsPerSector, classes } = roofPlan;
+  const sectorOfCell = (i) => {
+    let x = (i + 0.5 - cell0) % totalCells;
+    if (x < 0) x += totalCells;
+    return Math.min(classes.length - 1, Math.floor(x / cellsPerSector));
+  };
+  for (let n = 0; n < N; n++) {
+    const o = n * 4;
+    const i = in2[o];
+    const jy = in2[o + 1];
+    const j = in2[o + 2];
+    const cls = Math.floor(Math.fround(in2[o + 3] * 4));
+    // komórka przemysłowa
+    const ref = industrialCellRule(i, j, cls, cellS, roofRules);
+    const C = tsl.roofCellC.subarray(o, o + 4);
+    const E = tsl.roofCellEx.subarray(o, o + 4);
+    out.cells++;
+    const kind = ref ? ref.kind : 0;
+    out.kinds[`k${kind}`] = (out.kinds[`k${kind}`] || 0) + 1;
+    if (C[0] !== kind) miss({ cell: [i, j, cls], cpu: kind, gpu: C[0] });
+    else if (ref) {
+      val(ref.a, C[1]); val(ref.b, C[2]); val(ref.h, C[3]); val(ref.ox, E[0]); val(ref.oy, E[1]);
+      if (kind === 3 && (ref.along ? 1 : 0) !== E[2]) miss({ cell: [i, j, cls], along: ref.along, gpu: E[2] });
+    }
+    // działka
+    const row = j % 2;
+    const pref = plotRule(i, row, cls, roofRules);
+    const P = tsl.roofPlotPl.subarray(o, o + 4);
+    const T = tsl.roofPlotTw.subarray(o, o + 4);
+    const Q = tsl.roofPlotTo.subarray(o, o + 4);
+    out.plots++;
+    out.kinds[`p${pref.kind}`] = (out.kinds[`p${pref.kind}`] || 0) + 1;
+    if (P[0] !== pref.kind) miss({ plot: [i, row, cls], cpu: pref.kind, gpu: P[0] });
+    else if (pref.kind > 0) {
+      val(pref.a, P[1]); val(pref.b, P[2]); val(pref.h, P[3]);
+      if (pref.kind === 1) { val(pref.ta, T[0]); val(pref.tb, T[1]); val(pref.th, T[2]); val(pref.tox, Q[0]); val(pref.toy, Q[1]); }
+    }
+    // klasa sektora komórki (środek komórki → sektor)
+    const K = tsl.roofClass.subarray(o, o + 4);
+    for (const [ci, got] of [[i % totalCells, K[0]], [Math.floor(jy / 8), K[1]]]) {
+      out.classes++;
+      if (classes[sectorOfCell(ci)] !== got) miss({ classOf: ci, cpu: classes[sectorOfCell(ci)], gpu: got });
+    }
+  }
+  return out;
 }
 
 // Wynik TSL na GPU (float32) ↔ bliźniak JS indKitPart (float64) na tych samych lotH (float32
