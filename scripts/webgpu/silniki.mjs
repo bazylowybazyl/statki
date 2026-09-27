@@ -1,5 +1,6 @@
 // Porównanie SAMYCH dysz (zadanie 13): te same sceny co zrzuty.mjs, ale w passach Core3D
-// widać tylko siatki silników (MAIN — struga, WARP — plazma, SIDE — płomień i poświaty),
+// widać tylko siatki silników (MAIN — struga, WARP — plazma, SIDE — płomień i poświaty)
+// i bank cząstek Fx3D (od zadania 12-B: iskry MAIN, błyski i dym dział — siatki `FX3D_*`),
 // a zrzut to bufor sceny HDR (composerTarget, PRZED postem) tonowany ACES gry + sRGB na kanwie
 // strony. Porównanie nie zależy od bloomu, gorącego powietrza, zamienników innych warstw ani
 // od składania z kanwą 2D — porównuje same materiały silników. Na tagu (WebGL) bloom,
@@ -37,6 +38,9 @@ const DEEP = { x: 6210000, y: 5330000 };
 // Pomocniki strony: izolacja siatek silników i odczyt bufora sceny.
 const SILNIKI_STRONA = `(() => {
   const isEngine = (o) => {
+    // Bank Fx3D (zadanie 12-B): iskry MAIN idą przez Fx3D.spark; reszta banku (błyski, dym
+    // dział) w tych scenach też jest efektem — porównujemy cały bank (te same nazwy na tagu).
+    if (/^FX3D_/.test(o.name || '')) return true;
     for (let p = o; p; p = p.parent) if (p.name === 'MainExhaustJets' || p.name === 'WarpPlumeFX') return true;
     const a = o.geometry && o.geometry.attributes;
     return !!(a && (a.aFlame || (a.aOpacity && a.aSize)));
@@ -107,7 +111,12 @@ const SILNIKI_STRONA = `(() => {
           let B = isHalf ? halfToFloat(data[i + 2]) : data[i + 2];
           const A = isHalf ? halfToFloat(data[i + 3]) : data[i + 3];
           if (!Number.isFinite(R) || !Number.isFinite(G) || !Number.isFinite(B)) { st.nan++; R = G = B = 0; }
-          if (R < 0 || G < 0 || B < 0) st.negative++;
+          if (R < 0 || G < 0 || B < 0) {
+            st.negative++;
+            // pierwsze ujemne piksele (x, y od góry, RGB) — skąd się biorą (bufor HalfFloat bez przycięcia)
+            if (!st.negPts) st.negPts = [];
+            if (st.negPts.length < 8) st.negPts.push([x, y, +R.toFixed(3), +G.toFixed(3), +B.toFixed(3)]);
+          }
           st.sumR += R; st.sumG += G; st.sumB += B; st.sumA += Number.isFinite(A) ? A : 0;
           const l = 0.2126 * R + 0.7152 * G + 0.0722 * B;
           if (l > 0.9) st.over09++;
