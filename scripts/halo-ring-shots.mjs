@@ -9,10 +9,14 @@
 // megastruktura, miasto i hale K-7 ukryte; otoczenie dema zostaje) — porównanie
 // terenu z bazą WebGL z tagu, póki reszta ringu to zamienniki (08–10). Ten sam
 // skrypt działa w worktree z tagu webgl-baseline (demo na WebGLRenderer).
+// Zadanie 08: --czesci terrain,structure,structureTop,clouds,shell[,mega,city,k7] — tylko
+// wymienione części ringu (reszta ukryta jak w --teren; --teren = --czesci terrain);
+// wynik i czasy kompilacji materiałów (window.__halo.compileMs) w results.json.
 //
 //   node scripts/halo-ring-shots.mjs --set m2 --out .tmp/halo-ring/m2
 //   node scripts/halo-ring-shots.mjs --only p1,p8 --size 2560x1440
 //   node scripts/halo-ring-shots.mjs --set m4 --teren --out .tmp/halo-ring/m4-teren
+//   node scripts/halo-ring-shots.mjs --set mid --czesci terrain,structure,structureTop,clouds,shell --out .tmp/halo-ring/mid-08
 import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -315,12 +319,13 @@ async function main() {
       continue;
     }
     const bakeMs = Date.now() - t0;
-    if (args.teren) {
-      // hale K-7 (cullHalls ustawia visible co klatkę) — na warstwę, której nie widzi żadna kamera;
-      // --bez-otoczenia: także planeta, niebo, tło i duszki dema (porównanie samego terenu)
-      await evaluate(cdp, `(() => { const r = window.__halo.ring;
-        for (const k of ['structure', 'structureTop', 'clouds', 'shell', 'mega', 'city']) r.setVisible(k, false);
-        for (const h of r.k7Halls || []) h.root.traverse((o) => o.layers.set(30));
+    const keepParts = args.czesci ? args.czesci.split(',').filter(Boolean) : (args.teren ? ['terrain'] : null);
+    if (keepParts) {
+      // części ringu spoza listy ukryte; hale K-7 (cullHalls ustawia visible co klatkę) — na warstwę,
+      // której nie widzi żadna kamera; --bez-otoczenia: także planeta, niebo, tło i duszki dema
+      await evaluate(cdp, `(() => { const r = window.__halo.ring; const keep = new Set(${JSON.stringify(keepParts)});
+        for (const k of ['terrain', 'structure', 'structureTop', 'clouds', 'shell', 'mega', 'city']) if (!keep.has(k)) r.setVisible(k, false);
+        if (!keep.has('k7')) for (const h of r.k7Halls || []) h.root.traverse((o) => o.layers.set(30));
         if (${args['bez-otoczenia'] ? 'true' : 'false'}) for (const o of r.group.parent.children) if (o !== r.group) o.visible = false;
         return true; })()`);
     }
@@ -336,16 +341,17 @@ async function main() {
     await evaluate(cdp, 'window.dispatchEvent(new Event("resize")), window.__halo.renderFrames(3), true');
     const ms = await evaluate(cdp, 'window.__halo.bench(24)');
     const gpu = await evaluate(cdp, 'window.__halo.gpu');
-    const build = await evaluate(cdp, '({ buildMs: window.__halo.buildMs, bake: window.__halo.bake, placeholders: window.__halo.placeholders, terrainCompileMs: window.__halo.terrainCompileMs ?? null })');
+    const build = await evaluate(cdp, '({ buildMs: window.__halo.buildMs, bake: window.__halo.bake, placeholders: window.__halo.placeholders, terrainCompileMs: window.__halo.terrainCompileMs ?? null, compileMs: window.__halo.compileMs ?? null })');
     const row = {
       id: shot.id, preset: stats.preset, mode: stats.mode, calls: frame.calls, triangles: frame.triangles,
-      tiles: stats.activeTiles, segments: stats.segments, textureMB: +(stats.textureBytes / 1048576).toFixed(0),
+      tiles: stats.activeTiles, segments: stats.segments, shellActive: stats.shellActive ?? null, textureMB: +(stats.textureBytes / 1048576).toFixed(0),
       ms1440: +ms.toFixed(2), fps1440: +(1000 / ms).toFixed(0), bakeMs, near: stats.near, hdr, gpu,
       buildMs: build.buildMs, bake: build.bake, placeholders: build.placeholders, terrainCompileMs: build.terrainCompileMs,
-      errors: stats.errors, logs: logs.slice()
+      compileMs: build.compileMs, errors: stats.errors, logs: logs.slice()
     };
     results.push(row);
-    console.log(`${shot.id.padEnd(18)} calls ${String(row.calls).padStart(3)}  tris ${(row.triangles / 1000).toFixed(0).padStart(5)}k  ${row.ms1440} ms (${row.fps1440} FPS @1440p)  HDR max ${hdr.max.toFixed(2)} >0.9: ${(hdr.overFraction * 100).toFixed(2)}%  NaN ${hdr.nanOrInf}  budowa ${Math.round(row.buildMs || 0)} ms  teren (kompilacja) ${row.terrainCompileMs == null ? "—" : Math.round(row.terrainCompileMs) + " ms"}  zamienniki ${row.placeholders?.built ?? "?"}  err ${row.errors.length + row.logs.length}`);
+    const compiled = build.compileMs ? Object.entries(build.compileMs).map(([k, v]) => `${k.replace(/^Halo/, '')} ${v == null ? '—' : Math.round(v)}`).join(', ') : null;
+    console.log(`${shot.id.padEnd(18)} calls ${String(row.calls).padStart(3)}  tris ${(row.triangles / 1000).toFixed(0).padStart(5)}k  ${row.ms1440} ms (${row.fps1440} FPS @1440p)  HDR max ${hdr.max.toFixed(2)} >0.9: ${(hdr.overFraction * 100).toFixed(2)}%  NaN ${hdr.nanOrInf}  budowa ${Math.round(row.buildMs || 0)} ms  ${compiled ? `kompilacja [ms] ${compiled}` : `teren (kompilacja) ${row.terrainCompileMs == null ? '—' : Math.round(row.terrainCompileMs) + ' ms'}`}  zamienniki ${row.placeholders?.built ?? "?"}  err ${row.errors.length + row.logs.length}`);
     for (const l of [...row.errors, ...row.logs].slice(0, 4)) console.log(`    ${l.slice(0, 300)}`);
   }
   writeFileSync(join(outDir, 'results.json'), JSON.stringify(results, null, 2));

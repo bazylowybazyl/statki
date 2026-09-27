@@ -105,7 +105,10 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   kompilacji — pomocnik `haloSmooth`; `screenCoordinate` liczy y od GÓRY (dither 1:1 z WebGL przez `haloFragCoordGL`);
   `texture()` bez jawnego uv dostaje własny uniform mat3 (`updateMatrix`) — podawaj uv, żeby nie zjadać limitu 12
   buforów; FXC liczy `a·b + c` z jednym zaokrągleniem, DXC z dwoma — hasze z mnożenia i dodawania przez
-  `haloFusedMulAddInt` (bit w bit z bazą WebGL).
+  `haloFusedMulAddInt` (bit w bit z bazą WebGL). **Zadanie 08:** baza nie zawsze scala `a·b + c` —
+  `vec2(x, y) + s·0,37`: x dwa zaokrąglenia, y jedno; `s / 23 + l·0,37` — dwa; decyzja zależy nawet od kodu obok, więc
+  wariant wybiera pomiar na GPU (wiersz `ring-tsl-parzystosc.mjs` z dokładnym wyrażeniem materiału to wskazówka,
+  rozstrzyga porównanie zrzutów z bazą), nie reguła.
 - **Pułapki z zadań 04 i 14 (three r183):** limit **8 buforów wierzchołków** na pipeline (`maxVertexBuffers` = 8 także w
   adapterze) — każdy nieprzeplatany atrybut to bufor; stałe atrybuty przeplatać. three **połyka błąd
   `createRenderPipelineAsync`** (pusty catch) — pipeline zostaje „w budowie”, osłona pomija rysunek bez śladu; Core3D loguje
