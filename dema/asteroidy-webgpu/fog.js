@@ -195,13 +195,20 @@ export class BeltFog {
     mat.positionNode = Fn(() => {
       vLocal.assign(positionGeometry.xy);
       vMacro.assign(attribute('aMacro', 'vec3'));
-      // Rozpraszanie świateł siatki w wierzchołku (płat to ośrodek bez normalnej).
-      const P = modelWorldMatrix.mul(vec4(positionGeometry, 1.0)).xyz.toVar();
-      const acc = vec3(0).toVar();
-      grid.loop(P, ({ att, col, scatter }) => {
-        acc.addAssign(col.mul(att).mul(scatter));
-      });
-      vScatter.assign(acc.mul(S.scatter).mul(U.lightScatter));
+      if (def.fg) {
+        // Płytkie płaty leżą w ośrodku światła wolumetrycznego (volumetrics.js)
+        // — tam smugi reflektorów liczą się per froxel, z cieniem skał.
+        vScatter.assign(vec3(0.0));
+      } else {
+        // Głębokie płaty: rozpraszanie świateł siatki w wierzchołku (błyski
+        // w chmurach burzy, łuny wybuchów pod płaszczyzną).
+        const P = modelWorldMatrix.mul(vec4(positionGeometry, 1.0)).xyz.toVar();
+        const acc = vec3(0).toVar();
+        grid.loop(P, ({ att, col, scatter }) => {
+          acc.addAssign(col.mul(att).mul(scatter));
+        });
+        vScatter.assign(acc.mul(S.scatter).mul(U.lightScatter));
+      }
       return positionGeometry;
     })();
     const noise = this.noise;

@@ -547,6 +547,7 @@ function createBakeMaterials(bank, procTexture) {
 // Bank
 
 const _dec = { x: 0, y: 0, z: 1 };
+const _oct = { u: 0, v: 0 };
 
 export class RockShapeBankGPU {
   constructor(opts = {}) {
@@ -747,6 +748,29 @@ export class RockShapeBankGPU {
       this.longAxis[k * 3 + 1] = ay / al;
       this.longAxis[k * 3 + 2] = az / al;
     }
+  }
+
+  /**
+   * Promień kształtu w kierunku (x, y, z) z mapy odczytu (po normalizacji;
+   * dwuliniowo) — kopia RockShapeBank.radiusAt z rockShapes3D.js. Minerały
+   * (minerals.js) sadzają na nim kryształy.
+   */
+  radiusAt(shape, x, y, z) {
+    const map = this.radiusMaps && this.radiusMaps[shape];
+    if (!map) return 1;
+    const R = this.readbackSize;
+    const o = octEncodeCpu(x, y, z, _oct);
+    const fx = o.u * (R - 1);
+    const fy = o.v * (R - 1);
+    const x0 = Math.min(R - 2, Math.max(0, Math.floor(fx)));
+    const y0 = Math.min(R - 2, Math.max(0, Math.floor(fy)));
+    const tx = Math.min(1, Math.max(0, fx - x0));
+    const ty = Math.min(1, Math.max(0, fy - y0));
+    const a = map[y0 * R + x0];
+    const b = map[y0 * R + x0 + 1];
+    const c = map[(y0 + 1) * R + x0];
+    const d = map[(y0 + 1) * R + x0 + 1];
+    return (a + (b - a) * tx) + ((c + (d - c) * tx) - (a + (b - a) * tx)) * ty;
   }
 
   dispose() {

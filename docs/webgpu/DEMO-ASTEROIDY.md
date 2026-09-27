@@ -1,85 +1,219 @@
-# Demo WebGPU: gęste pole asteroid, fizyczny pył, setki świateł
+# Demo WebGPU: nowe pole asteroid — sceny, światło wolumetryczne, pioruny
 
 `dema/asteroidy-webgpu.html` (+ `dema/asteroidy-webgpu.js`, moduły w `dema/asteroidy-webgpu/`).
-Scena „5 · Gęste pole (Main Belt)” z `dema/asteroidy.html` na `WebGPURenderer` + TSL. Gra,
-`Core3D` i demo WebGL bez zmian. Start: `npm run dev` → `/dema/asteroidy-webgpu.html`.
+Port dema WebGL `dema/asteroidy.html` na `WebGPURenderer` + TSL — **te same dziesięć scen**
+(klawisze 1–9, 0) — plus to, czego WebGL nie robi: światło wolumetryczne z cieniami skał, setki
+świateł w jednej siatce, nowe pioruny, iskry na GPU. Gra, `Core3D` i demo WebGL bez zmian.
+Start: `npm run dev` → `/dema/asteroidy-webgpu.html` (parametry: `?scene=storm&zoom=0.5&lights=512`).
+
+## Sceny
+
+| Klawisz | Scena | Co pokazuje |
+|---|---|---|
+| 1 | Galeria typów | skała neutralna, 7 rud, skała energetyczna — z minerałami (kryształy, lód, uran, kwarc) |
+| 2 | Galeria kształtów | 10 rodzin × 4 warianty |
+| 3 | Olbrzymy | 5 brył z tunelami / szczelinami / jaskinią; ▶ przelot = autopilot trasą, przekrój pod stropem |
+| 4 | Olbrzym w polu | Labirynt na obrzeżu gęstego pola (Enter = przelot) |
+| 5 | Gęste pole | Atlas + eskorta w rdzeniu pola |
+| 6 | Przelot | radialnie od słońca w głąb pola — coraz ciemniej |
+| 7 | Głąb pola | noc: słońce przesłonięte, świecą reflektory i skały |
+| 8 | Rzadki pas | pełne słońce |
+| 9 | Pas Kuipera | lodowe pole |
+| 0 | Burza | skały energetyczne w mroku, pioruny (P = piorun na żądanie, działa też w innych scenach) |
+| G | Kopalnia | skała testowa (typ z panelu), drony z laserami, ładunki, wiązka ściągająca, skaner — fizyka wydobycia (`docs/ASTEROIDY-FIZYKA.md`); tryb G działa też w scenach pola |
+
+Miejsca scen liczone jak w demie WebGL (`world.js`: `findSpot`, `freeSpotNear`, `findDeepSpot`,
+`findSparseSpot`, `findStormSpot`, rząd olbrzymów i olbrzym pola z wykluczeniem skał). Cień pól
+(`FieldSunOcclusion.precomputeAll`) liczony raz na starcie (~1 s), jak na ekranie ładowania gry.
 
 ## Moduły
 
 | Plik | Co robi |
 |---|---|
-| `world.js` | słońce, mapa układu, `AsteroidBeltField`, miejsce sceny 5 (kopie `findSpot` / `freeSpotNear` z dema WebGL, wykluczenie obrysu olbrzyma pola), `FieldSunOcclusion` (prefetch sektorów wokół sceny) |
-| `rockBank.js` | bank 40 kształtów: parametry CPU (kopia z `rockShapes3D.js`), pieczenie w TSL do tablic tekstur (PROC → odczyt promienia → NORMAL / MASK), siatki LOD |
-| `rockNoise.js` | objętość szumu 64³ skał — compute do `Storage3DTexture` |
-| `rockMaterial.js` | `RockNodeMaterial` (programy powierzchni typów z `rockMaterial3D.js`), `RockShadowMaterial` (mapa cienia reflektora) |
-| `surfaceLighting.js` | `LightingModel` skał i kadłubów (Lambert z zawinięciem + Lommel–Seeliger, Blinn–Phong, jednostki jak w grze) |
-| `rockLayers.js` | port `rockLayer3D.js` (komórki z budżetem, LOD per skała), wspólny lokalny początek sceny |
-| `lights.js` | pula świateł → siatka komórek w świecie (sumy prefiksowe na CPU) → bufory storage; `GridLighting` / `GridLightsNode` dla three; światła statku (port `FieldLights.addShip`) |
-| `spotShadows.js` | mapa `1/odległość` z reflektorów dalekich każdego statku (skały gry, warstwa 1, `overrideMaterial`) |
-| `dust.js` | fizyczny pył: bufory storage (2²¹ drobin), krok compute 1/120 s, oświetlenie w compute, render instancjami |
-| `fog.js` | płaty mgły z `beltDust3D.js` w TSL (szum 2D z compute) |
-| `dynamics.js` | wybuchy, pociski, światło dysz, świecące skały, flary |
-| `ship.js` | kadłub jako kwad z tekstury (normalna z luminancji), dysze, lampy pozycyjne, SDF sylwetki dla pyłu |
-| `glowSprites.js`, `sky.js`, `sunMap.js`, `tslCommon.js` | duszki blasku, tło, mapa transmitancji słońca, wspólne funkcje TSL (ACES gry) |
+| `world.js` | słońce, mapa układu, `AsteroidBeltField`, miejsca wszystkich scen, olbrzymy, cień pól |
+| `rockBank.js` | bank 40 kształtów pieczony w TSL do tablic tekstur, odczyt promienia (`radiusAt`), siatki LOD |
+| `rockNoise.js` | objętość szumu skał 64³ i szumu ośrodka 96³ (kłęby, włókna) — compute do `Storage3DTexture` |
+| `rockMaterial.js` | `RockNodeMaterial` (programy powierzchni typów), mapa cienia skał; rozbłysk pęknięć przy uderzeniu pioruna (`S.strikes`), poświata krawędzi w mroku |
+| `rockLayers.js` | warstwy pasm pola (komórki z budżetem, LOD per skała) + `RockSet` (skały podane wprost — galerie); dopisywanie minerałów |
+| `minerals.js` | minerały (port `rockMinerals3D.js`): szablony z map promienia, szkło z załamaniem i śledzeniem ściany wyjścia graniastosłupa |
+| `lights.js` | siatka świateł (≤ 1536, listy komórek), `GridLighting` dla three, światła statków (profile `FIELD_SHIP_LIGHTS`, `CAVE_SHIP_LIGHTS`) |
+| `spotShadows.js` | **atlas map cienia** (2048 × 1024 HalfFloat): kafel 2 × 2 na reflektory dalekie statku, kafel 1 × 1 na każdy reflektor boczny; rzucający cień wybierani na CPU w niskim LOD |
+| `volumetrics.js` | **światło wolumetryczne** — ośrodek (froxele, compute), dno ośrodka, `sample(P)` dla materiałów |
+| `storm.js` | burze: symulator z `src/game/asteroidStorms.js`, nowy kształt i przebieg piorunów, łańcuch świateł kanału, rozbłyski skał, łuki, trzaski |
+| `sparks.js` | iskry na GPU (compute: emisja z kolejki, ruch; render smugami) |
+| `giants.js` | olbrzymy (port `giantRock3D.js`): SDF z workerów, pieczenie światła w compute, raymarching z głębią i przekrojem |
+| `ship.js` | kadłub jako kwad z tekstury (normalna z luminancji), dysze, lampy pozycyjne |
+| `fog.js` | płaty mgły z `beltDust3D.js` (płytkie w passie gry, głębokie w passie tła) |
+| `minedRocks.js` | skały w WYDOBYCIU (`src/game/asteroidMining.js`): atlas 3D siatek ciał (compute), zewnętrze materiałem skał w trybie `carve`, wnętrze raymarchingiem (ściany otworów i przełomy: warstwy, ruda, rdzeń, żar cięcia), okruchy jako skały banku |
+| `miningRig.js` | kopalnia w demie: drony z laserami i reflektorami, ładunki S–XL, detonacja, wiązka ściągająca, skaner, HUD |
+| `sky.js` | gwiazdy, mgławica, zasłona gęstego pola, noc w polu, błyski burzy w chmurach |
+| `sunMap.js` | mapa pola nad kadrem (RGBA16F): transmitancja słońca, pył, lód, burza |
+| `dynamics.js`, `glowSprites.js`, `surfaceLighting.js`, `tslCommon.js` | wybuchy / pociski / flary / świecące skały, duszki blasku, model światła powierzchni, wspólne TSL (ACES gry) |
 
 ## Decyzje
 
-- **Dwa passy jak w Core3D.** Skały gry, kadłuby, płytka mgła i pył w passie gry (kamera ortho —
-  skała rysuje się dokładnie w miejscu kolizji), tło (skały RUBBLE / MID / DEEP, głęboka mgła,
-  niebo) w passie tła (kamera persp. dopasowana skalą w z = 0). Składanie `gra + tło · (1 − alfa)`,
-  bloom (`BloomNode`, wartości z `bloomConfig.js`), ACES w wersji gry (inna krzywa niż three),
-  wyjście sRGB.
-- **Własny system świateł zamiast `TiledLighting` z r183.** `TiledLightsNode` trzyma 8 świateł na
-  kafel 32 px (`_tileLightCount = 8`; dalsze giną w kolejności indeksów — widać kafle), promień
-  rzutu światła to `distance / z` bez ogniskowej kamery (przy fov 35° za mały → obcięte brzegi),
-  a pył w compute nie ma piksela ekranu. Tu: siatka 64 × 40 komórek w płaszczyźnie XY wokół kamery,
-  lista komórki bez limitu (sumy prefiksowe na CPU, ≤ 1024 świateł — ułamek ms). Ten sam bufor
-  czytają materiały (przez `Lighting` three → `lightingModel.direct()`, wzór z `TiledLightsNode`),
-  pył (compute) i mgła (wierzchołki). Tłumienie jak światła pola gry.
-- **Wysokości (decyzja użytkownika 2026-09-27: „mgła za nisko, pył za wysoko”).** Pył tylko pod
-  płaszczyzną (z od −700 do 0, odbicie od dna i od płaszczyzny) — statki lecą nad nim i orzą jego
-  wierzch. Mgła: dwa płytkie płaty (200 i 600 j.) w passie gry z testem głębi ze skałami gry,
-  głębsze płaty (1300–20 500 j.) w tle.
-- **Pył = mgiełka + drobiny.** 75% drobin to miękkie, słabe plamki (gęstość ośrodka — zagęszczenia
-  fali i strugi są jaśniejsze, smugi reflektorów widać jako objętość), jasność normalizowana liczbą
-  drobin (suwak zmienia rozdzielczość, nie ilość pyłu); reszta to iskrzące drobiny, słabe w słońcu.
-  Pierwsza wersja (same drobiny, 40% nad płaszczyzną) dawała szum na cały kadr.
-- **Kadłub nie łapie własnych lamp** (flaga właściciela w świetle; tylko światło dookoła zostaje) —
-  własne czerwone lampy przepalały eskortę na różowo. W grze własne lampy liczy shader kadłuba.
-- **Precyzja.** Lokalny początek sceny przy kamerze (double na CPU, przeskok po 20 tys. j.): skały
-  przepisywane, pył przesuwany compute, faza dryfu pyłu i szumu mgły liczona na CPU;
-  `renderer.highPrecision = true`.
+- **Pył fizyczny usunięty (decyzja użytkownika 2026-09-27: „zbyt gęsty i agresywny, wdrożę go
+  inaczej”).** Usunięty cały moduł `dust.js` (compute 2²¹ drobin), suwaki i przełączniki; pole
+  odległości kadłubów (służyło tylko pyłowi) też. Mgła (płaty) zostaje.
+- **Światło wolumetryczne zamiast pyłu jako ośrodka smug.** Płyta wokół płaszczyzny gry
+  (z od −760 do +380, miękkie brzegi), gęstość = pył pola z mapy pola × szum 3D (kłęby 5 oktaw +
+  włókna grzbietowe, kontrast progami; szum GRADIENTOWY — szum wartości progowany kontrastem układał
+  się w kratkę, smugi miały prostokątne plamy wyrównane do ekranu; rozkład kanałów dopasowany do
+  dawnego, więc pokrycie pyłu to samo). Siatka froxeli wyrównana do kamery ortho, zakotwiczona
+  w świecie (bez pływania), ~4–6 px na kolumnę, najwyżej ~420 kolumn w poprzek, 40 plastrów.
+  Jeden przebieg compute na kolumnę (komórka siatki świateł wspólna dla całej kolumny): wszystkie
+  światła, faza Henyeya–Greensteina (g = 0,3), bliskie pole lampy ~1/d (smuga zaczyna się jasno),
+  cienie z atlasu, ekstynkcja; w teksturze 3D całka od góry (rgb) i transmitancja (a).
+  Złożenie bez bufora głębi, jeden właściciel piksela: kadłuby i olbrzymy dodają całkę do swojej
+  wysokości (`sample()`, pod dnem ośrodka pełna kolumna), **skały gry i minerały na nich — do
+  stropu warstwy skał** (`S.rockLayerTop`, z = 0), a „dno ośrodka” (kwad z testem głębi na
+  z = −29 000, pod wszystkim, co rysuje pass gry) kładzie pełną kolumnę tylko na tło.
+  Dlaczego strop warstwy, a nie powierzchnia (drugie zgłoszenie użytkownika 2026-09-27: „w nocy
+  kawałek dużej skały jest bez światła, a reszta robi się bardzo jasna”): widoczna półkula dużej
+  skały PLAY sięga od z ≈ −2000 do ≈ 0, więc przechodzi przez dno płyty (−760). Stoki pod dnem
+  łapały pełną, jasną kolumnę smugi (białe koło), wierzch nad dnem tylko część (ciemny „kawałek”);
+  skała cała pod dnem była białą tarczą. Zrzut diagnostyczny (barwa: pod / nad dnem) pokrywał się
+  z plamami ze zrzutów użytkownika. Teraz cała skała ma jedną mgłę (kolumna nad warstwą skał,
+  ~30% pełnej), pełna kolumna i cienie skał w smudze zostają nad tłem między skałami. Świecący
+  pył nad skałą dokłada jej światła (`S.fogLit` 1,5 × albedo × rgb kolumny, mocniej ku górze —
+  rozproszenie w dół ≈ to, które widzi kamera). Wcześniejsza wersja (kwad tuż pod zBot +
+  `sample()` = (0, 1) pod dnem) usuwała tylko podwójne liczenie pyłu, nie sam podział skały.
+  Odczyt: filtr B-spline z 4 próbek trójliniowych (trójliniowy robił schodki na wąskich smugach).
+- **Każde światło ma własny ułamek rozpraszania w pyle** (`scatter`, L1.w): reflektor daleki 0,8,
+  boczny 0,16 (stożek jest szeroki — w kolumnie zbiera ~4× więcej niż daleki), światło dookoła
+  0,06, czerwień lamp 0,2, kanał pioruna 0,12, świecące skały 0,1–0,12, dysze 0,18, flary 0,02
+  (setki flar dawały kolorowe „bokeh” na cały kadr). Stożki reflektorów z brzegiem smoothstep² —
+  bez twardych „łopat wiatraka”.
+- **Reflektory boczne mocniejsze niż w WebGL** (prośba użytkownika: „tam ledwo świeciły”): moc
+  1,0 → 2,8, zasięg 0,55 → 0,9 długości kadłuba (800–3400 j.), stożek 110° → 76°, pochylenie
+  16° → 10°, każdy z własną mapą cienia skał.
+- **Reflektory dalekie (dziób) 36°** — 30° było za wąsko (prośba użytkownika 2026-09-27:
+  „delikatnie poszerz”).
+- **Głęboka noc — czarna poza światłami** (prośba użytkownika 2026-09-27: „jeszcze ciemniej,
+  wciąż dużo rzeczy widać”). Pomiar A/B w głębi pola bez świateł statku: kadr rozjaśniały flary
+  (~połowa), przesiane słońce przy T ≈ 0,03, otoczenie i poświata krawędzi. Teraz:
+  - słońce w rdzeniu gaśnie szybciej niż transmitancja: poniżej T = 0,12 jasność
+    ∝ T · smoothstep(0, 0,12, T) (`nightKnee` w `asteroidy-webgpu.js`; dostają ją materiały, mgła,
+    niebo i olbrzymy, miejsca scen i HUD liczą z samej T) — w głębi ~7× ciemniej, gęste pole
+    (T ≈ 0,18) bez zmian;
+  - bez poświaty krawędzi skał w mroku, otoczenie × (1 − mrok · 0,96) zamiast 0,92;
+  - flary słabsze (światło × 0,55, blask 3,2 → 1,7) i domyślnie mniej (liczba świateł 96 → 64);
+  - gwiazdy w prześwitach zasłony gasną w rdzeniu (słońce przy kamerze < 0,1).
+  Wynik: kadr głębi bez świateł statku średnio 4,1 → 1,3 (na 255), pikseli > 8 z 12% do 1%.
+  Zasłona nieba z łuną od strony słońca i błyski burzy w chmurach zostały.
+- **Pioruny (nowe):** kanał główny z meandrami i zygzakiem, gałęzie z pod-gałęziami (część
+  „martwa” — świeci tylko w liderze), końce na GÓRNEJ powierzchni skał od strony partnera i kanał
+  wygięty łukiem ku kamerze (inaczej skały po drodze go zasłaniały). Przebieg: lider krokowy
+  0,14–0,28 s (skoki z przestojami, jasny czubek), udar główny (biel), 0–3 udary powrotne po tym
+  samym kanale (drobne przesunięcie = migotanie), poświata stygnącego kanału (fiolet, ~0,4 s).
+  Render: segmenty-kapsuły z mieszaniem MAX (bez jasnych kropek na łączeniach), rdzeń HDR cienki
+  z dolną granicą w pikselach. Światło: łańcuch świateł siatki wzdłuż kanału (co ~450 j.),
+  czubek lidera, gałęzie, błyski w chmurach głęboko pod płaszczyzną. W miejscu uderzenia:
+  rozbłysk pęknięć skał energetycznych, snop iskier na GPU, błysk i stygnący żar, łuki po skale.
+- **Kadłub nie łapie własnych lamp** (flaga właściciela w świetle) — jak wcześniej.
+- **Precyzja.** Lokalny początek sceny przy kamerze (double na CPU, przeskok po 20 tys. j.);
+  faza szumu ośrodka i mgły liczona na CPU; `renderer.highPrecision = true`.
 
 ## three r183 pod WebGPU — ustalenia z dema
 
-- `new RenderTarget(w, h, { depth: N })` + `renderer.setRenderTarget(rt, warstwa)` renderuje do
-  warstwy tablicy; mipmapy generują się dla wszystkich warstw. Pamięć mipmap alokuje pierwsze użycie
-  celu — `renderer.initRenderTarget(rt)` przy `generateMipmaps = true`, potem flaga tylko przy
-  ostatniej warstwie (jak w WebGL).
-- `readRenderTargetPixelsAsync` zwraca wiersze **wyrównane do 256 B** (padding w wyniku) — przy
-  szerokości 48 × RGBA8 dane się przesuwają.
-- `Storage3DTexture` / `StorageTexture` + `textureStore` w compute działają (bez mipmap).
-- Compute nie sprawdza zakresu `instanceIndex` — każdy kernel zaczyna się od `Return()` poza
-  licznikiem; `renderer.compute(node, n)` ustawia rozmiar dispatchu dynamicznie.
-- `varyingProperty(...).assign()` w `positionNode` przenosi dane instancji do fragmentów.
-- Własny `LightingModel` + nadpisane `setupDiffuseColor` / `setupNormal` / `setupLighting` /
-  `setupOutput` w `NodeMaterial` — cały program powierzchni gry mieści się w TSL. `builder.material`
-  jest dostępny w `LightsNode.setupLights` (np. pomijanie świateł właściciela).
-- `positionViewDirection` dla kamery ortho = (0, 0, 1), jak `isOrthographic` w GLSL.
-- `resolveTimestampsAsync('render' | 'compute')` zwraca czas ostatniej klatki (zapytania z wielu
-  klatek się kumulują — trzeba rozwiązywać regularnie, pula ma 2048 zapytań).
-- Domyślne limity urządzenia: 8 buforów storage na etap i 16 zmiennych między etapami — demo
-  prosi o więcej (`requiredLimits`), jeśli adapter ma (RTX 5080: 16 / 28).
-- `overrideMaterial` + warstwy kamery wystarczą do mapy cienia z instancjonowanych skał.
+- **Limit 12 buforów uniform na etap shadera** (domyślny): każdy `uniformArray` to osobny bufor.
+  Materiał skał przekroczył go po dodaniu danych cieni (16 > 12, walidacja pipeline'u) —
+  tablice typów skał i dane atlasu cieni spakowane w po jednej tablicy.
+- **`renderer.setAnimationLoop(null)` zdejmuje tylko callback** — wewnętrzna pętla rAF działa
+  dalej, a numer klatki węzłów (`nodeFrame.frameId`) rośnie tylko w niej. `pass()` i `BloomNode`
+  mają `updateBeforeType = FRAME`, więc kilka `pipeline.render()` w jednym zadaniu renderuje passy
+  sceny RAZ (reszta pokazuje obraz pierwszego). Demo przy krokach ręcznych (`__demo.step`) woła
+  `renderer._nodes.nodeFrame.update()` (pole prywatne); w pętli rAF nie trzeba.
+- `NodeMaterial.setupDepth` buduje `depthNode` PRZED `fragmentNode` — wynik raymarchingu
+  (olbrzymy) to zmienna (`toVar`) liczona w węźle głębi i czytana przez fragment.
+- `Storage3DTexture` z `type = HalfFloatType` → `rgba16float`; `textureStore` z compute, potem
+  próbkowanie w materiałach i w innym compute (`texture3D(...).level(0)` = `textureSampleLevel`).
+- `THREE.MaxEquation` w `CustomBlending` → operacja `max` (czynniki muszą być `One`).
+- Kafle atlasu: `renderTarget.viewport` (piksele od lewego górnego rogu); `renderer.clear()`
+  czyści cały cel (nożyczki ignoruje), więc atlas czyszczony raz na klatkę.
+- Nazwy zmiennych `Loop` zależą od pozycji parametru, nie od zagnieżdżenia — zagnieżdżone pętle
+  dostają jawne `name`.
+- Wcześniejsze ustalenia (cele tablicowe, padding 256 B odczytu, `Return()` w compute, limity
+  urządzenia, `positionViewDirection` w ortho, własny `LightingModel`) — bez zmian, patrz historia pliku.
 
-## Uproszczenia względem sceny 5 (WebGL) i braki
+## Do portu w grze
+
+Demo to warstwa RENDERU nowego pola asteroid na WebGPU. Dane i logika pola już są w grze
+(`src/game/`: `AsteroidBeltField`, `FieldSunOcclusion`, `asteroidStorms.js`, `asteroidGiants.js`
++ `GiantBuilder`, `asteroidRockKinds.js`) — demo czyta je bez kopii. Odpowiednikiem WebGL jest
+klej `src/3d/asteroidBelt3D.js` (warstwy `src/3d/rocks/*`, `beltDust3D`, `beltStorm3D`,
+`fieldLights3D`); dziś tworzy go tylko demo WebGL, gra nie. Klejem WebGPU jest `start()` +
+`frame()` w `dema/asteroidy-webgpu.js` — do przeniesienia jako moduł pasa w Core3D.
+
+**Moduły produkcyjne** (`dema/asteroidy-webgpu/`, każdy z komentarzem API w nagłówku):
+
+| Moduł | Tworzenie | Co klatkę |
+|---|---|---|
+| `rockBank.js` | `await new RockShapeBankGPU().bake(renderer)` — 40 kształtów, siatki LOD (`ROCK_LODS`, `pickRockLod`), `radiusAt()` na CPU | — |
+| `rockNoise.js` | `createRockNoiseVolume(renderer, 64)`, `createMediumNoiseVolume(renderer, 96)` | — |
+| `rockMaterial.js` | `createRockShared(bank, noise)` (wspólne uniformy: słońce, otoczenie, czas, typy, `volume`, `strikes`), `RockNodeMaterial({ shared, backdrop })` | `shared.time`, `shared.sunDir`, `shared.sunOcc` |
+| `rockLayers.js` | `RockLayer({ scene, bank, material, field, bandIndex, perspective, zOf, sunT, minerals, minPx, maxLod })` — pasmo PLAY w passie gry (ortho), RUBBLE/MID/DEEP w passie tła; `RockSet` — skały podane wprost (np. skały z HP) | `update({ cam, viewW, viewH, focalPx, time, budgetMs })` (komórki z budżetem czasu, LOD per skała), `setOrigin()` przy przeskoku początku, `forEachLoaded(cb)` do trafień i świateł |
+| `minerals.js` | `MineralTemplates(bank)`, `MineralMaterial`, `MineralLayer` (podpinany do warstwy / zestawu) | przez warstwę |
+| `lights.js` | `LightGrid`, `renderer.lighting = new GridLighting(grid)` (materiały czytają siatkę jak światła three), `addShipLights(...)` z profilami `FIELD_SHIP_LIGHTS` / `CAVE_SHIP_LIGHTS` (runtime świateł gry `shipLightRuntime.js`) | `grid.begin()` → `add(...)` → `build(x0, y0, x1, y1)` (prostokąt kadru w scenie) |
+| `spotShadows.js` | `ShadowAtlas({ bank, source: playMaterial })`, `grid.shadows = atlas` | `begin()` → `request()` (z `addShipLights`) → `gather(playLayer)` → `render(renderer)` |
+| `volumetrics.js` | `VolumeLight({ renderer, grid, fieldMap, scene: fgScene, maxW, maxH })`, `shared.volume = volume` PRZED kompilacją materiałów | `update({ camX, camY, zoom, viewW, viewH, time, originX, originY })` + `compute()` po `grid.build` i `atlas.render` |
+| `sunMap.js` | `FieldMap` (R słońce, G pył, B lód, A burza) | `update({ cam, viewW, viewH, focalPx, originX, originY, sunT, field })` |
+| `storm.js`, `sparks.js` | `StormSystem({ scene, field, shared, sparks })`, `Sparks({ renderer, scene })` | `storm.update(frame, { layer, zOf })`, `addLights`, `addGlows`; `sparks.update(dt, zoom)`, `shift(dx, dy)` przy przeskoku |
+| `giants.js` | `GiantView` (SDF z workerów `GiantBuilder`, `bake(sun)`) | `update(frame, focus)`, `setVisible()` |
+| `fog.js`, `glowSprites.js`, `surfaceLighting.js`, `tslCommon.js` | `BeltFog`, `GlowSprites`, `SurfaceLightingModel`, ACES gry i oktaedry | `fog.update`, `glow.begin/add/commit` |
+
+**Tylko pokaz — nie przenosić:** `world.js` (miejsca scen, słońce dema), `ship.js` (`DemoHull`:
+kadłub jako kwad tekstury — w grze kadłuby z Core3D, trzeba im dodać `volume.sample` jak
+w `HullNodeMaterial.setupOutput`), `dynamics.js` (wybuchy, pociski i flary dema; flary tylko dopełniają
+liczbę świateł), `sky.js` (w grze tło ma własne niebo — z dema warto wziąć zasłonę pola i nocną
+łunę), galerie, autopilot i panel w `asteroidy-webgpu.js`.
+
+**Kolejność klatki** (`frame()` dema): ruch i kamera → przeskok lokalnego początku sceny (double na
+CPU, co 20 tys. j.: `setOrigin` warstw, `sparks.shift`) → kamery (gra: ortho z góry, z = 30 000,
+near 1, far 60 000; tło: perspektywa) → słońce → kadłuby → `layer.update` (gra + 3 pasma tła) →
+olbrzymy → źródła światła → `fieldMap.update` → mgła → burza → siatka świateł i atlas
+(`begin`/`request`/`gather`, `build`) → `shadows.render` → `volume.update` + `compute` → iskry →
+duszki → niebo → `pipeline.render()` (pass gry + pass tła, złożenie gra + tło·(1 − alfa gry),
+bloom, ACES gry).
+
+**Warunki, które łatwo zgubić przy porcie:**
+- Skały pasma PLAY leżą POD płaszczyzną gry (`zOf = −1,45 r · max(skala)`, z minerałami 1,62),
+  kadłuby na z ≈ 0 zawsze nad nimi; ośrodek smug sięga od z = −760 do 380.
+- Każdy materiał passa gry łączy ośrodek przez `volume.sample(P)` (`col·a + rgb`): kadłuby
+  i olbrzymy w swoim `positionWorld`, skały gry i minerały na nich z z = max(P.z,
+  `rockLayerTop`); kwad dna ośrodka jest w scenie passa gry (renderOrder 12, przed duszkami)
+  i leży POD wszystkim (z = −29 000) — każda nowa powierzchnia z zapisem głębi w passie gry musi
+  sama wołać `sample()`, inaczej zostanie bez pyłu.
+- Transmitancja słońca do renderu idzie przez `nightKnee` (głęboka noc), do logiki — sama T.
+- Limit 12 buforów uniform na etap shadera (każdy `uniformArray` to bufor) — w materiale skał
+  jest już na styk; nowe tablice pakować do istniejących.
+- Siatka świateł to kopia w 3 demach (tu, `bronie-webgpu/lightGrid.js`, `rakiety-webgpu/lights.js`):
+  ta wersja ma rozpraszanie w pyle per światło (L1.w), mapę cienia (L3.z) i właściciela (L3.w).
+
+**Wydajność** (RTX 5080, 2560 × 1440, zegar GPU z panelu): 1,5–3 ms w scenach pola (skały
+0,4–1,4 mln trójkątów, ośrodek ~100 tys. kolumn × 40 plastrów, atlas 6–24 map cienia), ~4 ms przy
+1024 światłach. CPU dema w headless 6–13 ms na klatkę — do zmierzenia w grze (`layer.update`
+z budżetem, `grid.build`, `atlas.gather`, burza).
+
+**Rozgrywka — co jest w demie, a czego nie ma:**
+- kolizje statków z olbrzymami: są (`giant.collideCircle` na SDF, `collideShipWithGiants`);
+  z małymi skałami: brak (leżą pod płaszczyzną — statki latają nad nimi);
+- rudy i minerały: wygląd + **fizyka wydobycia** (scena Kopalnia, `docs/ASTEROIDY-FIZYKA.md`): laser drona kopie
+  do rdzenia (skład skorupa → płaszcz → rdzeń), piła, ładunki z pękaniem zależnym od materiału, odłamy i okruchy,
+  wiązka ściągająca do ładowni; logika w `src/game/asteroidMining.js` (bez three, testy), w grze jeszcze nie wpięta;
+- niszczenie skał pociskami: brak (pociski dema wybuchają na kole skały — sam efekt);
+- burze: symulator gry (`StormSimulator`), pioruny i trafienia tylko wizualnie, bez obrażeń;
+- cień pól na słońcu: `FieldSunOcclusion.precomputeAll` (~1 s) — w grze na ekran ładowania.
+
+## Uproszczenia względem dema WebGL i braki
 
 - Kadłuby to kwady z tekstury: bez heksów / belek, lakieru, własnych lamp w shaderze kadłuba,
   cieni kadłubów (SDF) i odblasku.
-- Bez minerałów na skałach (kryształy, odłamki lodu, tabliczki uranu), burz i piorunów, olbrzymów.
-- Smugi reflektorów tylko z pyłu i mgły (bez osobnych kwadów smug z `fieldLights3D.js`).
-- Pył zderza się ze skałami jako kulami (średni promień), z kadłubem jak z płytą ±110 j.;
-  cień reflektorów rzucają tylko skały gry w kadrze.
-- Zoom dema 0,5–3,2 (pudło pyłu pokrywa kadr przy 0,5).
-- Pomiary wydajności i porównanie z WebGL — po stronie użytkownika (panel: FPS, CPU, GPU
-  render / compute, drobiny, światła, draw calle; `?particles=…&lights=…&zoom=…`).
+- Bez przesłaniania słońca suwakiem siły i suwaka gęstości pól (wymagają przeliczenia cienia pól);
+  jest przełącznik „słońce przesłonięte”.
+- Szum skał i olbrzymów bez mipmap (tekstury storage 3D) — przy mocnym oddaleniu drobny szum
+  olbrzyma bywa ziarnisty.
+- Cień w smugach rzucają tylko skały gry; minerały, kadłuby i olbrzymy nie.
+- Pomiary wydajności — po stronie użytkownika (panel: FPS, CPU, GPU render / compute, światła,
+  kolumny ośrodka, mapy cienia, draw calle). Orientacyjnie (RTX 5080, 2560 × 1440): 1,5–3 ms GPU
+  w scenach pola, ~4 ms przy 1024 światłach.

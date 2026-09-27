@@ -21,8 +21,8 @@ import * as THREE from 'three/webgpu';
 import {
   Fn, float, int, vec3, vec4, uniform, uniformArray, attribute, varyingProperty,
   texture, texture3D, positionGeometry, positionView, positionViewDirection, positionWorld, cameraViewMatrix,
-  If, select, mix, smoothstep, clamp, fract, floor, abs, sign, sqrt, pow, sin, cos, log2,
-  min, max, dot, cross, normalize, reflect, step, dFdx, dFdy, fwidth, diffuseColor
+  If, select, mix, smoothstep, clamp, fract, floor, abs, sign, sqrt, pow, sin, cos, log2, exp,
+  min, max, dot, cross, normalize, reflect, step, dFdx, dFdy, fwidth, diffuseColor, Discard, length
 } from 'three/tsl';
 import { ROCK_TYPES, SHAPE_COUNT } from '../../src/game/asteroidRockKinds.js';
 import { octTexUv, quatRotate, quatMul } from './tslCommon.js';
@@ -68,8 +68,11 @@ export function hexToLinear(hex, out = new THREE.Vector3()) {
 /**
  * Uniformy wspólne dla wszystkich materiałów skał (jedno ustawienie na klatkę).
  */
+// Wygląd typów w JEDNEJ tablicy uniformów (limit 12 buforów uniform na etap
+// shadera): typ t, pole k → element t · 8 + k.
+export const TYPE_ROW = Object.freeze({ base: 0, base2: 1, a: 2, b: 3, c: 4, d: 5, p: 6, s: 7 });
+
 export function createRockShared(bank, noise) {
-  const typeArray = () => Array.from({ length: ROCK_TYPE_COUNT }, () => new THREE.Vector4());
   const S = {
     bank,
     noise,
@@ -89,31 +92,47 @@ export function createRockShared(bank, noise) {
     hazePerUnit: uniform(ROCK_LIGHT_DEFAULTS.hazePerUnit),
     // 1 = słońce przesłaniane przez pole (transmitancja per skała), 0 = pełne.
     sunOcc: uniform(1),
-    typeBase: uniformArray(typeArray(), 'vec4'),
-    typeBase2: uniformArray(typeArray(), 'vec4'),
-    typeA: uniformArray(typeArray(), 'vec4'),
-    typeB: uniformArray(typeArray(), 'vec4'),
-    typeC: uniformArray(typeArray(), 'vec4'),
-    typeD: uniformArray(typeArray(), 'vec4'),
-    typeP: uniformArray(typeArray(), 'vec4'),
-    typeS: uniformArray(typeArray(), 'vec4'),
+    typeData: uniformArray(Array.from({ length: ROCK_TYPE_COUNT * 8 }, () => new THREE.Vector4()), 'vec4'),
+    // Światło wolumetryczne passa gry (volumetrics.js), ustawiane przed kompilacją.
+    volume: null,
+    // [z sceny] strop warstwy skał gry — dno pyłu nad skałami (i minerałami na
+    // nich): skały PLAY leżą pod płaszczyzną gry (wierzch ≤ 0, rockLayers zOf).
+    rockLayerTop: uniform(0),
+    // Mnożnik światła świecącego pyłu na skałach (volumetrics.js, rgb kolumny).
+    fogLit: uniform(1.5),
+    // Uderzenia piorunów (storm.js): xyz punkt (scena), w siła (0 = pusty).
+    strikes: uniformArray(Array.from({ length: 8 }, () => new THREE.Vector4()), 'vec4'),
     shapeAxis: uniformArray(Array.from({ length: SHAPE_COUNT }, (_, k) => {
       const a = bank.longAxis;
       return new THREE.Vector4(a[k * 3] || 1, a[k * 3 + 1] || 0, a[k * 3 + 2] || 0, 0);
     }), 'vec4')
   };
   const lin = new THREE.Vector3();
+  const T = S.typeData.array;
   for (let i = 0; i < ROCK_TYPE_COUNT; i++) {
     const L = ROCK_TYPE_LOOKS[Math.min(i, ROCK_TYPE_LOOKS.length - 1)];
-    hexToLinear(L.base, lin); S.typeBase.array[i].set(lin.x, lin.y, lin.z, 1);
-    hexToLinear(L.base2, lin); S.typeBase2.array[i].set(lin.x, lin.y, lin.z, 1);
-    hexToLinear(L.a, lin); S.typeA.array[i].set(lin.x, lin.y, lin.z, L.aSpec);
-    hexToLinear(L.b, lin); S.typeB.array[i].set(lin.x, lin.y, lin.z, L.bParam);
-    hexToLinear(L.c, lin); S.typeC.array[i].set(lin.x, lin.y, lin.z, L.emit);
-    hexToLinear(L.d, lin); S.typeD.array[i].set(lin.x, lin.y, lin.z, 1);
-    S.typeP.array[i].set(L.cover, L.line, L.sparkle, L.relief);
-    S.typeS.array[i].set(L.ice, L.gloss, L.metal, 0);
+    const o = i * 8;
+    hexToLinear(L.base, lin); T[o + TYPE_ROW.base].set(lin.x, lin.y, lin.z, 1);
+    hexToLinear(L.base2, lin); T[o + TYPE_ROW.base2].set(lin.x, lin.y, lin.z, 1);
+    hexToLinear(L.a, lin); T[o + TYPE_ROW.a].set(lin.x, lin.y, lin.z, L.aSpec);
+    hexToLinear(L.b, lin); T[o + TYPE_ROW.b].set(lin.x, lin.y, lin.z, L.bParam);
+    hexToLinear(L.c, lin); T[o + TYPE_ROW.c].set(lin.x, lin.y, lin.z, L.emit);
+    hexToLinear(L.d, lin); T[o + TYPE_ROW.d].set(lin.x, lin.y, lin.z, 1);
+    T[o + TYPE_ROW.p].set(L.cover, L.line, L.sparkle, L.relief);
+    T[o + TYPE_ROW.s].set(L.ice, L.gloss, L.metal, 0);
   }
+  S.typeRow = (type, k) => S.typeData.element(type.mul(8).add(k));
+  /** TSL: rozbłysk ładunku przy uderzeniu pioruna blisko P (suma siła × gauss). */
+  S.strikeSurge = (P, radiusIn) => {
+    const radius = float(radiusIn);
+    const sum = float(0.0).toVar();
+    for (let i = 0; i < 8; i++) {
+      const st = S.strikes.element(i);
+      const d = st.xyz.sub(P);
+      sum.addAssign(st.w.mul(exp(dot(d, d).div(radius.mul(radius)).negate())));
+    }
+    return sum;
+  };
   return S;
 }
 
@@ -135,12 +154,17 @@ const bandMask = Fn(([h, w, fw]) => {
 export class RockNodeMaterial extends THREE.NodeMaterial {
   static get type() { return 'RockNodeMaterial'; }
 
-  constructor({ shared, backdrop = false }) {
+  constructor({ shared, backdrop = false, carve = null }) {
     super();
     this.lights = true;
     this.fog = false;
     this.backdrop = backdrop;
     this.S = shared;
+    // Skały w wydobyciu (minedRocks.js): siatka komórek ciała w atlasie 3D —
+    // pikseli z wykopanego miejsca nie ma (wnętrze rysuje raymarching).
+    // Atrybuty instancji: iCarve = (początek bloku w atlasie [teksele], bok
+    // komórki), iGrid = (środek komórki 0 w układzie skały, —).
+    this.carve = carve;
     // Uniformy warstwy: skala pikseli (ortho: zoom; persp: ogniskowa [px]),
     // wysokość kamery persp. (0 = ortho), próg pikseli, przyciemnienie tła.
     this.L = {
@@ -155,13 +179,15 @@ export class RockNodeMaterial extends THREE.NodeMaterial {
       rot: varyingProperty('vec4', 'vRockRot'),
       stretchR: varyingProperty('vec4', 'vRockStretchR'),
       info: varyingProperty('vec4', 'vRockInfo'),
-      misc: varyingProperty('vec4', 'vRockMisc')
+      misc: varyingProperty('vec4', 'vRockMisc'),
+      carve: carve ? varyingProperty('vec4', 'vRockCarve') : null,
+      grid: carve ? varyingProperty('vec4', 'vRockGrid') : null
     };
     this.positionNode = this._buildVertex();
     this._surf = null;
   }
 
-  _buildVertex(withVaryings = true) {
+  _buildVertex(withVaryings = true, shadowCarve = null) {
     const S = this.S;
     const L = this.L;
     const V = this.V;
@@ -186,6 +212,12 @@ export class RockNodeMaterial extends THREE.NodeMaterial {
       const q = quatMul(vec4(iSpin.xyz.mul(sin(ang)), cos(ang)), iRot).toVar();
       const pObj = dir.mul(r).mul(iStretch.xyz).toVar();
       const local = quatRotate(q, pObj).mul(iPos.w.mul(fadeScale));
+      if (shadowCarve) {
+        // Mapa cienia skały w wydobyciu: punkt w układzie skały i dane ciała (atlas).
+        shadowCarve.objP.assign(pObj.mul(iPos.w));
+        shadowCarve.carve.assign(attribute('iCarve', 'vec4'));
+        shadowCarve.grid.assign(attribute('iGrid', 'vec4'));
+      }
       if (withVaryings) {
         const lod = log2(max(1.0, S.shapeSize.mul(2.8284).div(max(1.0, radiusPx.mul(6.2832)))));
         V.dir.assign(dir);
@@ -194,6 +226,10 @@ export class RockNodeMaterial extends THREE.NodeMaterial {
         V.stretchR.assign(vec4(iStretch.xyz, iPos.w));
         V.info.assign(vec4(float(layer), iShape.y, iShape.z, lod));
         V.misc.assign(vec4(radiusPx, pxPerUnit, depth, iStretch.w));
+        if (this.carve) {
+          V.carve.assign(attribute('iCarve', 'vec4'));
+          V.grid.assign(attribute('iGrid', 'vec4'));
+        }
       }
       return iPos.xyz.add(local);
     })();
@@ -201,7 +237,23 @@ export class RockNodeMaterial extends THREE.NodeMaterial {
 
   setupDiffuseColor(/* builder */) {
     this._surf = this._buildSurface();
+    if (this.carve) this._carveTest();
     diffuseColor.assign(vec4(this._surf.diffAlbedo, 1.0));
+  }
+
+  // Wykopane / odłupane miejsce: zapełnienie siatki ciała kawałek POD powierzchnią
+  // (promieniowo do środka o 0,8 komórki) < 0,5 → piksel znika.
+  _carveTest() {
+    const V = this.V;
+    const c = V.carve;
+    const g = V.grid;
+    const p = V.objP;
+    const len = max(length(p), 1.0);
+    const pin = p.mul(float(1.0).sub(c.w.mul(0.8).div(len)));
+    const cell = pin.sub(g.xyz).div(c.w);
+    const uvw = c.xyz.add(cell).add(0.5).div(this.carve.size);
+    const f = texture3D(this.carve.atlas, uvw).level(0).r;
+    If(f.lessThan(0.5), () => { Discard(); });
   }
 
   setupNormal() {
@@ -226,6 +278,24 @@ export class RockNodeMaterial extends THREE.NodeMaterial {
       const haze = clamp(misc.z.mul(S.hazePerUnit), 0.0, 0.92).toVar();
       const sunT = mix(float(1.0), misc.w, S.sunOcc);
       col.assign(mix(col.mul(float(1.0).sub(haze.mul(0.45))), S.hazeColor.mul(sunT), haze.mul(0.85)));
+    } else if (S.volume) {
+      // Pył nad skałą (volumetrics.js): rozproszenie świateł od kamery do
+      // stropu warstwy skał, skała przygaszona transmitancją ośrodka.
+      // Warstwa skał gry jest DNEM pyłu: kolumna kończy się na jej stropie
+      // (S.rockLayerTop, z = 0), nie na powierzchni. Całka do powierzchni
+      // robiła z dużej skały (środek do z ≈ −2000, wierzch pod płaszczyzną)
+      // białą tarczę: jej stoki łapały pełną, jasną kolumnę smugi, a wierzch
+      // tylko część — „kawałek bez światła, reszta prawie biała” (zgłoszenie
+      // użytkownika 2026-09-27, drugie). Tak cała skała ma jedną mgłę, a pełna
+      // kolumna zostaje nad tłem między skałami (tam widać cienie skał w smudze).
+      const P = positionWorld;
+      const v = S.volume.sample(vec3(P.xy, max(P.z, S.rockLayerTop))).toVar();
+      // Świecący pył nad skałą oświetla ją też z góry (rozproszenie w dół ≈ to,
+      // które widzi kamera): skała w smudze dostaje barwę smugi na albedo,
+      // mocniej na ścianach zwróconych w górę.
+      const Nv = this._surf.N;
+      const fogLit = this._surf.diffAlbedo.mul(v.rgb).mul(S.fogLit).mul(clamp(Nv.z.mul(0.6).add(0.4), 0.0, 1.0));
+      col.assign(col.add(fogLit).mul(v.a).add(v.rgb));
     }
     return vec4(max(col, vec3(0.0)), 1.0);
   }
@@ -272,14 +342,14 @@ export class RockNodeMaterial extends THREE.NodeMaterial {
     const fwNqG = fwidth(nq.g).toVar();
     const longAxis = S.shapeAxis.element(layer).xyz.toVar();
 
-    const tA = S.typeA.element(type).toVar();
-    const tB = S.typeB.element(type).toVar();
-    const tC = S.typeC.element(type).toVar();
-    const tD = S.typeD.element(type).toVar();
-    const tP = S.typeP.element(type).toVar();
-    const tS = S.typeS.element(type).toVar();
-    const tBase = S.typeBase.element(type).rgb.toVar();
-    const tBase2 = S.typeBase2.element(type).rgb.toVar();
+    const tA = S.typeRow(type, TYPE_ROW.a).toVar();
+    const tB = S.typeRow(type, TYPE_ROW.b).toVar();
+    const tC = S.typeRow(type, TYPE_ROW.c).toVar();
+    const tD = S.typeRow(type, TYPE_ROW.d).toVar();
+    const tP = S.typeRow(type, TYPE_ROW.p).toVar();
+    const tS = S.typeRow(type, TYPE_ROW.s).toVar();
+    const tBase = S.typeRow(type, TYPE_ROW.base).rgb.toVar();
+    const tBase2 = S.typeRow(type, TYPE_ROW.base2).rgb.toVar();
     const ao = sb.r.toVar();
     const crater = sb.g.toVar();
     const macro = sb.b.toVar();
@@ -448,13 +518,15 @@ export class RockNodeMaterial extends THREE.NodeMaterial {
       lemit.assign(tC.w);
     }).ElseIf(type.equal(8), () => {
       // ENERGETYCZNA: szklisty bazalt z siecią pęknięć, ładunek pulsuje i trzaska.
+      // Uderzenie pioruna obok (storm.js → S.strikes): pęknięcia rozbłyskują.
       const ph = seed.mul(43.7).toVar();
       const pulse = sin(S.time.mul(fract(seed.mul(7.1)).mul(1.4).add(1.1)).add(ph)).mul(0.4).add(0.6);
       const crackle = pow(max(0.0, sin(S.time.mul(19.0).add(ph.mul(3.0))).mul(sin(S.time.mul(6.1).add(ph)))), 14.0).toVar();
-      const charge = pulse.add(crackle.mul(1.6)).toVar();
+      const surge = S.strikeSurge(positionWorld, R.mul(2.4)).toVar();
+      const charge = pulse.add(crackle.mul(1.6)).add(surge.mul(0.9)).toVar();
       lf.assign(veinField);
       lw.assign(tP.y.mul(veinZone));
-      lcol.assign(mix(tB.rgb, tA.rgb, smoothstep(0.35, 0.8, nd.r)));
+      lcol.assign(mix(tB.rgb, tA.rgb, smoothstep(0.35, 0.8, nd.r.add(surge.mul(0.4)))));
       lspec.assign(0.4);
       lemit.assign(tC.w.mul(charge));
       const halo = float(1).sub(smoothstep(0.0, 0.1, abs(veinField))).mul(veinZone);
@@ -463,7 +535,7 @@ export class RockNodeMaterial extends THREE.NodeMaterial {
       H.subAssign(float(1).sub(smoothstep(0.0, 0.06, abs(veinField))).mul(relief));
       specK.assign(0.18);
       gloss.assign(tS.y);
-      sparkK.assign(tP.z.mul(crackle.mul(3.0).add(0.4)));
+      sparkK.assign(tP.z.mul(crackle.mul(3.0).add(0.4).add(surge.mul(2.0))));
       sparkCol.assign(tA.rgb);
     }).Else(() => {
       // NEUTRALNA: odcień per skała, regolit, łaty wietrzenia, głazy.
@@ -510,8 +582,9 @@ export class RockNodeMaterial extends THREE.NodeMaterial {
     const sunT = mix(float(1.0), V.misc.w, S.sunOcc).toVar();
     const sunVis = sunT;
     // Otoczenie: w tle razem ze słońcem; w warstwie gry słabsze w cieniu (0,22)
-    // i gaśnie w mroku pola (× (1 − mrok · 0,92)) — jak sunFill w Core3D.
-    const fill = (this.backdrop ? sunT : mix(float(0.22), float(1.0), sunVis).mul(float(1.0).sub(float(1.0).sub(sunT).mul(0.92)))).toVar();
+    // i gaśnie w mroku pola (× (1 − mrok · 0,96); w grze Core3D 0,92 — w demie
+    // głęboka noc ma być czarna poza światłami, prośba użytkownika 2026-09-27).
+    const fill = (this.backdrop ? sunT : mix(float(0.22), float(1.0), sunVis).mul(float(1.0).sub(float(1.0).sub(sunT).mul(0.96)))).toVar();
     const diffAlbedo = albedo.mul(float(1.0).sub(metal.mul(0.85))).toVar();
     const specTint = mix(vec3(1.0), metalF0, metal).toVar();
     const mu = max(dot(Nv, Vv), 0.02).toVar();
@@ -519,6 +592,8 @@ export class RockNodeMaterial extends THREE.NodeMaterial {
     const NdotLs = dot(Nv, Ls).toVar();
     const up = clamp(Nv.z.mul(0.5).add(0.5), 0.0, 1.0);
     const ambient = S.ambientTop.mul(up.mul(0.45).add(0.55)).add(S.ambientBounce.mul(max(0.0, NdotLs.negate()))).mul(ao);
+    // (Bez poświaty krawędzi w mroku: głęboka noc ma być czarna — skały widać
+    // tylko w świetle reflektorów, flar i świecących skał.)
     const emissive = diffAlbedo.mul(ambient).mul(fill).toVar();
     // Metal odbija otoczenie: blask tylko tam, gdzie odbicie celuje blisko słońca.
     If(metal.greaterThan(0.001), () => {
@@ -546,14 +621,20 @@ export class RockNodeMaterial extends THREE.NodeMaterial {
 }
 
 /**
- * Mapa cienia reflektora: skały gry renderowane z pozycji lampy, wyjście
- * = 1 / odległość od lampy (0 = brak zasłony). Ten sam wierzchołek co
- * materiał skał (kształt z banku, obrót w czasie, próg pikseli warstwy).
+ * Mapa cienia reflektora (kafel atlasu spotShadows.js): skały gry renderowane
+ * z pozycji lampy, wyjście = 100 / odległość od lampy (0 = brak zasłony;
+ * skala 100 trzyma wartości w zakresie normalnym HalfFloat). Ten sam
+ * wierzchołek co materiał skał (kształt z banku, obrót w czasie, próg pikseli).
  */
 export class RockShadowMaterial extends THREE.NodeMaterial {
   static get type() { return 'RockShadowMaterial'; }
 
-  constructor(source) {
+  /**
+   * @param {RockNodeMaterial} source materiał skał (wierzchołki, uniformy warstwy)
+   * @param {{atlas, size}|null} [carve] skały w wydobyciu (minedRocks.js): wykopane
+   *   miejsca nie rzucają cienia (ten sam test atlasu co RockNodeMaterial._carveTest)
+   */
+  constructor(source, carve = null) {
     super();
     this.lights = false;
     this.fog = false;
@@ -561,10 +642,23 @@ export class RockShadowMaterial extends THREE.NodeMaterial {
     this.S = source.S;
     this.L = source.L;
     this.V = source.V;
-    this.positionNode = RockNodeMaterial.prototype._buildVertex.call(this, false);
+    this.carve = null;
+    const SV = carve ? {
+      objP: varyingProperty('vec3', 'vShadowObjP'),
+      carve: varyingProperty('vec4', 'vShadowCarve'),
+      grid: varyingProperty('vec4', 'vShadowGrid')
+    } : null;
+    this.positionNode = RockNodeMaterial.prototype._buildVertex.call(this, false, SV);
     this.fragmentNode = Fn(() => {
+      if (carve) {
+        const p = SV.objP;
+        const len = max(length(p), 1.0);
+        const pin = p.mul(float(1.0).sub(SV.carve.w.mul(0.8).div(len)));
+        const uvw = SV.carve.xyz.add(pin.sub(SV.grid.xyz).div(SV.carve.w)).add(0.5).div(carve.size);
+        If(texture3D(carve.atlas, uvw).level(0).r.lessThan(0.5), () => { Discard(); });
+      }
       const d = positionWorld.sub(this.lightPos).length();
-      return vec4(float(1.0).div(max(d, 1.0)), 0.0, 0.0, 1.0);
+      return vec4(float(100.0).div(max(d, 1.0)), 0.0, 0.0, 1.0);
     })();
   }
 }
