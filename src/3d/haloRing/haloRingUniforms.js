@@ -1,7 +1,15 @@
 // Wspólne uniformy ringu. Wszystkie materiały trzymają REFERENCJE do tych
 // samych obiektów { value }, więc jedna aktualizacja na klatkę obsługuje
 // teren, chmury, konstrukcję i powłokę powietrza.
+//
+// Port WebGPU (zadanie 06): wszystkie uniformy ringu leżą w JEDNYM bloku
+// (createUniformBlock — jeden bufor uniformów zamiast ~12: WebGPU daje najwyżej
+// 12 buforów na etap, a każda tablica uniformów to osobny bufor). Adapter
+// zostawia klucze i kod aktualizacji (`u.uX.value = …`, `u.uV.value.set(...)`,
+// `u.uArr.value[i].set(...)`) bez zmian; `.node` wpisu to węzeł TSL (element
+// bloku), biblioteka TSL (haloRingTSL.js) bierze go przez nodeOf().
 import * as THREE from 'three';
+import { createUniformBlock } from './haloUniformsAdapter.js';
 import { HALO_ATMOSPHERE, HALO_LIGHT, HALO_ROOF, HALO_TRANSIT, haloPortTemplate, haloTransitAngles } from './haloRingConfig.js';
 import {
   HALO_MEGA_PALETTE_SIZE,
@@ -63,84 +71,94 @@ export function haloTransitUniforms(layout, outA = new THREE.Vector4(), outZ = n
   return { transit: outA, transitZ: outZ };
 }
 
+const v4 = (x = 0, y = 0, z = 0, w = 0) => new THREE.Vector4(x, y, z, w);
+const v3 = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
+const v4Array = (n, make = () => new THREE.Vector4()) => ({ array: Array.from({ length: n }, make) });
+const v3Array = (n) => ({ array: Array.from({ length: n }, () => new THREE.Vector3()) });
+const num = (x) => Number(x) || 0;   // float bloku
+// blok TSL ringu (węzeł uniformArray) — dla materiałów i testów; poza kluczami
+export const HALO_UNIFORM_BLOCK = Symbol('haloUniformBlock');
+
 export function createHaloUniforms(layout) {
-  const u = {
-    uTime: { value: 0 },
+  const block = createUniformBlock({
+    uTime: num(0),
     // geometria (lokalny układ ringu, oś = Z)
-    uRing: { value: new THREE.Vector4() },       // rim, floorMid, hull, dr/dz podłogi
-    uRingZ: { value: new THREE.Vector4() },      // roof, topIn, botIn, bottom
-    uFloorLine: { value: new THREE.Vector4() },  // r(t=0), z(t=0), tangent.r, tangent.z
-    uFloorDims: { value: new THREE.Vector4() },  // L (obwód na floorMid), Wf, floorMid, wallHeight
-    uPlanet: { value: new THREE.Vector4() },     // środek xyz, promień
-    uHabitat: { value: new THREE.Vector4(1, 0, 0, 0) }, // σ, promień kadłuba, bryła r min, r max
-    uPlanetAtmoH: { value: HALO_LIGHT.planetAtmosphereHeight },
+    uRing: v4(),       // rim, floorMid, hull, dr/dz podłogi
+    uRingZ: v4(),      // roof, topIn, botIn, bottom
+    uFloorLine: v4(),  // r(t=0), z(t=0), tangent.r, tangent.z
+    uFloorDims: v4(),  // L (obwód na floorMid), Wf, floorMid, wallHeight
+    uPlanet: v4(),     // środek xyz, promień
+    uHabitat: v4(1, 0, 0, 0), // σ, promień kadłuba, bryła r min, r max
+    uPlanetAtmoH: num(HALO_LIGHT.planetAtmosphereHeight),
     // słońce ringu (kierunek w układzie lokalnym ringu)
-    uSunDir: { value: new THREE.Vector3(0.6, 0, 0.75).normalize() },
-    uSunColor: { value: new THREE.Vector3(...HALO_LIGHT.sunColor).multiplyScalar(HALO_LIGHT.sunIntensity) },
-    uSunAngular: { value: HALO_LIGHT.sunAngularRadius },
-    uPlanetshine: { value: new THREE.Vector4(...HALO_LIGHT.planetshineColor, HALO_LIGHT.planetshineGain) },
-    uPlanetAlbedo: { value: HALO_LIGHT.planetAlbedo },
-    uSkyAmbient: { value: HALO_LIGHT.skyAmbient },
-    uNightAmbient: { value: HALO_LIGHT.nightAmbient },
+    uSunDir: new THREE.Vector3(0.6, 0, 0.75).normalize(),
+    uSunColor: new THREE.Vector3(...HALO_LIGHT.sunColor).multiplyScalar(HALO_LIGHT.sunIntensity),
+    uSunAngular: num(HALO_LIGHT.sunAngularRadius),
+    uPlanetshine: v4(...HALO_LIGHT.planetshineColor, HALO_LIGHT.planetshineGain),
+    uPlanetAlbedo: num(HALO_LIGHT.planetAlbedo),
+    uSkyAmbient: num(HALO_LIGHT.skyAmbient),
+    uNightAmbient: num(HALO_LIGHT.nightAmbient),
     // powietrze habitatu
-    uAirRayleigh: { value: new THREE.Vector3(...HALO_ATMOSPHERE.rayleigh) },
-    uAirMie: { value: new THREE.Vector3(HALO_ATMOSPHERE.mie, HALO_ATMOSPHERE.mieG, HALO_ATMOSPHERE.multiScatter) },
-    uAirScaleH: { value: HALO_ATMOSPHERE.scaleHeight },
-    uSkyBoost: { value: HALO_ATMOSPHERE.skyBoost },
-    uAirOn: { value: 1 },
+    uAirRayleigh: v3(...HALO_ATMOSPHERE.rayleigh),
+    uAirMie: v3(HALO_ATMOSPHERE.mie, HALO_ATMOSPHERE.mieG, HALO_ATMOSPHERE.multiScatter),
+    uAirScaleH: num(HALO_ATMOSPHERE.scaleHeight),
+    uSkyBoost: num(HALO_ATMOSPHERE.skyBoost),
+    uAirOn: num(1),
     // kamera (lokalny układ ringu): pozycja do oświetlenia + punkt odniesienia RTE
-    uCamLocal: { value: new THREE.Vector3() },
-    uRefRel: { value: new THREE.Vector3() },     // P_ref − C (liczone w double na CPU)
-    uRefBasis: { value: new THREE.Vector4(1, 0, 0, 0) }, // cos θ_ref, sin θ_ref, θ_ref, s_ref
+    uCamLocal: v3(),
+    uRefRel: v3(),     // P_ref − C (liczone w double na CPU)
+    uRefBasis: v4(1, 0, 0, 0), // cos θ_ref, sin θ_ref, θ_ref, s_ref
     // warstwy
-    uLayers: { value: new THREE.Vector4(1, 1, 1, 1) },   // chmury, światła miast, statki, drzewa
-    uCloudParams: { value: new THREE.Vector4(820, 520, 6.0, 0.05) }, // wysokość, grubość, wiatr (j./s), więcej chmur (+)
-    uNightLights: { value: 1 },
-    uDetailScale: { value: 1 },   // z HALO_QUALITY[q].lod.detailScale (ultra > 1)
+    uLayers: v4(1, 1, 1, 1),   // chmury, światła miast, statki, drzewa
+    uCloudParams: v4(820, 520, 6.0, 0.05), // wysokość, grubość, wiatr (j./s), więcej chmur (+)
+    uNightLights: num(1),
+    uDetailScale: num(1),   // z HALO_QUALITY[q].lod.detailScale (ultra > 1)
     // dach (M3) — ustawia applyRoofPlanUniforms po zbudowaniu planu
-    uRoofLanes0: { value: new THREE.Vector4() },   // koniec kratownicy krawędzi, rząd A od-do, rząd B od
-    uRoofLanes1: { value: new THREE.Vector4() },   // rząd B do, kolej od-do, kratownica kadłuba od
-    uRoofLanes2: { value: new THREE.Vector4() },   // przemysł od, komórek w poprzek, szerokość dachu, komórka w poprzek
-    uRoofCells: { value: new THREE.Vector4() },    // komórka wzdłuż, działka wzdłuż, komórek na obwód, komórek na działkę
-    uRoofSector: { value: new THREE.Vector4() },   // komórka startu sektora 0, komórek na sektor, sektorów, —
-    uSectorClass: { value: new Array(32).fill(0) }, // 0 krajobraz, 1 miasto, 2 przemysł, 3 port
-    uPortDocks: { value: new THREE.Vector4() },    // kąt doku 0, krok, liczba, pół-rozpiętość [rad]
-    uPortTile: { value: new THREE.Vector4() },
-    uPortRects: { value: Array.from({ length: HALO_PORT_RECTS }, () => new THREE.Vector4()) },
-    uPortZones: { value: Array.from({ length: HALO_PORT_RECTS }, () => new THREE.Vector4()) },
-    uTransit: { value: new THREE.Vector4(0, 1, 0, 0) },
-    uTransitZ: { value: new THREE.Vector4() },
+    uRoofLanes0: v4(),   // koniec kratownicy krawędzi, rząd A od-do, rząd B od
+    uRoofLanes1: v4(),   // rząd B do, kolej od-do, kratownica kadłuba od
+    uRoofLanes2: v4(),   // przemysł od, komórek w poprzek, szerokość dachu, komórka w poprzek
+    uRoofCells: v4(),    // komórka wzdłuż, działka wzdłuż, komórek na obwód, komórek na działkę
+    uRoofSector: v4(),   // komórka startu sektora 0, komórek na sektor, sektorów, —
+    uSectorClass: { array: new Array(32).fill(0), type: 'float' }, // 0 krajobraz, 1 miasto, 2 przemysł, 3 port
+    uPortDocks: v4(),    // kąt doku 0, krok, liczba, pół-rozpiętość [rad]
+    uPortTile: v4(),
+    uPortRects: v4Array(HALO_PORT_RECTS),
+    uPortZones: v4Array(HALO_PORT_RECTS),
+    uTransit: v4(0, 1, 0, 0),
+    uTransitZ: v4(),
     // górna połowa wstęgi w FG (HALO_FG): x widoczność od powiększenia,
     // y = 1 kamera gry (wycięcia liczone w rzucie na z = 0), z, w —
-    uFgFade: { value: new THREE.Vector4(1, 0, 1e6, 0) },
+    uFgFade: v4(1, 0, 1e6, 0),
     // wycięcia nad graczem: A = (środek x, y, oś cos, sin), B = (pół a, pół b, miękkość, siła)
-    uCutA: { value: [new THREE.Vector4(), new THREE.Vector4()] },
-    uCutB: { value: [new THREE.Vector4(0, 0, 1, 0), new THREE.Vector4(0, 0, 1, 0)] },
-    // ---- profil planety (haloRingProfiles.js): wartości, nie źródła GLSL —
-    // trzy ringi dzielą programy (rozgrzewka z menu działa na każdym)
-    uSkyTint: { value: new THREE.Vector3() },       // barwa światła nieba habitatu
-    uPlanetNight: { value: new THREE.Vector3() },   // nocna strona planety w jej świetle
-    uAirMieTint: { value: new THREE.Vector3(1, 1, 1) },
-    uCloudTint: { value: new THREE.Vector3() },
-    uHdrWarm: { value: new THREE.Vector3() },
-    uHdrSodium: { value: new THREE.Vector3() },
-    uHdrCool: { value: new THREE.Vector3() },
-    uHdrStrip: { value: new THREE.Vector3() },
-    uTerPal: { value: HALO_TERRAIN_PALETTE_KEYS.map(() => new THREE.Vector3()) },
-    uStructPal: { value: HALO_STRUCTURE_PALETTE_KEYS.map(() => new THREE.Vector3()) },
-    uMegaPal: { value: Array.from({ length: HALO_MEGA_PALETTE_SIZE }, () => new THREE.Vector3()) },
-    uMegaSky: { value: [new THREE.Vector3(), new THREE.Vector3()] },
-    uDomeTint: { value: new THREE.Vector3(1, 1, 1) },
-    uLeafTint: { value: new THREE.Vector3(1, 1, 1) },
-    uIndTopTint: { value: new THREE.Vector3(1, 1, 1) },
-    uProfFrag: { value: new THREE.Vector4() },      // siarka (Io), linie na lodzie (Europa), —, —
-    uStorm: { value: new THREE.Vector4() },         // siła, błysków/s na komórkę, komórka [j.], jasność HDR
-    uRoofOcc: { value: new THREE.Vector4() },       // reguły dachu (lustro haloRingRoofPlan.js)
-    uRoofKinds: { value: new THREE.Vector4() },
-    uRoofPlotEmpty: { value: new THREE.Vector4() },
-    uIndKitCdf0: { value: new THREE.Vector4() },    // progi zakładów działki (haloRingIndustryKit.js)
-    uIndKitCdf1: { value: new THREE.Vector4() }
-  };
+    uCutA: v4Array(2),
+    uCutB: v4Array(2, () => new THREE.Vector4(0, 0, 1, 0)),
+    // ---- profil planety (haloRingProfiles.js): wartości, nie źródła shaderów —
+    // trzy ringi dzielą funkcje biblioteki TSL (haloRingTSL.js)
+    uSkyTint: v3(),       // barwa światła nieba habitatu
+    uPlanetNight: v3(),   // nocna strona planety w jej świetle
+    uAirMieTint: v3(1, 1, 1),
+    uCloudTint: v3(),
+    uHdrWarm: v3(),
+    uHdrSodium: v3(),
+    uHdrCool: v3(),
+    uHdrStrip: v3(),
+    uTerPal: v3Array(HALO_TERRAIN_PALETTE_KEYS.length),
+    uStructPal: v3Array(HALO_STRUCTURE_PALETTE_KEYS.length),
+    uMegaPal: v3Array(HALO_MEGA_PALETTE_SIZE),
+    uMegaSky: v3Array(2),
+    uDomeTint: v3(1, 1, 1),
+    uLeafTint: v3(1, 1, 1),
+    uIndTopTint: v3(1, 1, 1),
+    uProfFrag: v4(),      // siarka (Io), linie na lodzie (Europa), —, —
+    uStorm: v4(),         // siła, błysków/s na komórkę, komórka [j.], jasność HDR
+    uRoofOcc: v4(),       // reguły dachu (lustro haloRingRoofPlan.js)
+    uRoofKinds: v4(),
+    uRoofPlotEmpty: v4(),
+    uIndKitCdf0: v4(),    // progi zakładów działki (haloRingIndustryKit.js)
+    uIndKitCdf1: v4()
+  }, 'haloRingU');
+  const u = block.uniforms;
+  Object.defineProperty(u, HALO_UNIFORM_BLOCK, { value: block, enumerable: false });
   applyLayoutToUniforms(u, layout);
   return u;
 }

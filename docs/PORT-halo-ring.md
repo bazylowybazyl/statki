@@ -43,6 +43,19 @@ halo.setCutaway(1, { x: shipX - earth.x, y: -shipY + earth.y, a: 1350, b: 1350, 
 Moduł nie tworzy renderera ani canvasu (renderer tylko do bake'u map przy starcie). Pozycje liczone
 względem kamery (RTE) z `group.matrixWorld` — ring może stać przy Ziemi setki tysięcy j. od początku układu.
 
+**WebGPU (port, zadanie 06):** renderer to `WebGPURenderer`, a budowa ringu jest asynchroniczna —
+`createHaloRing` zwraca ring od razu (`layout`, `uniforms`, pusta `group`), bryły i mapa CPU powstają po
+kompilacji pipeline'ów bake'u, bake'u mapy niskiej, odczycie `readRenderTargetPixelsAsync`, planie
+megabudowli i kopuł z tej mapy i `setCivic`. Host czeka na `await ring.ready` (true = gotowe) zanim sięgnie
+po `terrainHeightAt` (przed odczytem 0), `k7Halls`, `landmarks`; `mapsReady` = bryły + mapa CPU + pełna mapa.
+`setQuality` buduje nowy zestaw w tle i podmienia gotowy; `ringi-archetypy` (`createArchRing`) są gotowe od
+razu (`ready` rozwiązane — plan i teren liczą się na CPU, bez map GPU). Biblioteka shaderów: `haloRingTSL.js`
+(`haloRingTSL(ring.uniforms)` → funkcje jak w GLSL, np. `H.haloSunVisibility(p, L)`). Adapter
+`material.uniforms` jest wspólny (`src/3d/tsl/uniformy.js`), przy ringu zostaje blok uniformów
+(`createUniformBlock`, `haloUniformsAdapter.js`). Sprawdzenie w grze, że kolider płyty dostaje teren z mapy
+CPU po `ready` (wysokości ≠ 0, `pointInSlab`, `constrainShip`): `node scripts/webgpu/ring-kolizje-gra.mjs
+--ring earth|mars|jupiter`.
+
 ## Płaszczyzna gry na środku wstęgi (decyzja użytkownika 2026-09-23)
 
 `flightLevel: 0.5` (domyślnie dla habitatu w stronę kosmosu): z = 0 przecina podłogę habitatu w
