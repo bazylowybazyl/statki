@@ -26,8 +26,11 @@ test('shadow shafts are fully analytic — screen-space mask is gone', () => {
   assert.match(coreSource, /const SHAFT_HULL_CAP = HULL_SDF_SHAFT_CAP;/);
   assert.match(hullSdfSource, /export const HULL_SDF_SHAFT_CAP = 32;/);
   assert.match(coreSource, /const SHAFT_RING_CAP = 2;/);
-  // Blok GLSL kadlubow wstrzykiwany przed main passa.
-  assert.match(coreSource, /\$\{HULL_SDF_SHADOW_GLSL\}/);
+  // Port WebGPU (zadanie 03): marsz po SDF kadłubów to funkcja TSL z hullShadowSdf.js
+  // wklejana w graf passa maski (GLSL usunięty).
+  assert.match(coreSource, /hullSdfShadow\(hullUniforms, worldP, d, sunDist\)/);
+  assert.doesNotMatch(coreSource, /HULL_SDF_SHADOW_GLSL|createShadowShaftsShader|gl_FragColor/);
+  assert.doesNotMatch(hullSdfSource, /export const HULL_SDF_SHADOW_GLSL/);
 });
 
 test('quality levels map to shaft lengths and capsule budget', () => {
@@ -53,18 +56,22 @@ test('shafts write a sun-visibility mask before the scene instead of multiplying
   assert.ok(scenePassList.length > 0, 'scene pass chain missing');
   assert.ok(!scenePassList.includes('this.shadowShaftsPass'), 'shafts pass must not blend into the scene buffer');
   assert.ok(!coreSource.includes('BLEND_MULTIPLY_SCENE'), 'full-screen multiply blend is back');
-  // Port WebGPU: pass maski w TSL powstaje w zadaniu 03 — do tego czasu brak passa,
-  // maska wyłączona uniformem (materiały jej nie próbkują), shader GLSL zostaje
-  // w core3d.js jako źródło portu.
-  assert.match(coreSource, /this\.shadowShaftsPass = null;/);
+  // Port WebGPU (zadanie 03): pass maski = QuadMesh + NodeMaterial (graf TSL budowany
+  // raz w init), rysowany do sunShadowTarget; bez słońca / przy shaftach Off maska
+  // wyłączona uniformem (materiały dostają pełne słońce).
+  assert.match(coreSource, /this\.shadowShaftsPass = createShadowShaftsPass\(\);/);
+  assert.match(coreSource, /const quad = new THREE\.QuadMesh\(material\);/);
+  assert.match(coreSource, /material\.blending = THREE\.NoBlending;/);
+  assert.match(coreSource, /renderer\.setRenderTarget\(target\);\s*pass\.quad\.render\(renderer\);/);
   assert.match(coreSource, /sunShadowUniforms\.uSunShadowOn\.value = 0;/);
+  assert.match(coreSource, /sunShadowUniforms\.uSunShadowOn\.value = 1;/);
   // Maska: RGBA8 bez MSAA, rozmiar bufora sceny (teksel 1:1 z pikselem materiału).
   assert.match(coreSource, /this\.sunShadowTarget = new THREE\.RenderTarget\(/);
   assert.doesNotMatch(coreSource, /WebGLRenderTarget/);
   assert.match(coreSource, /if \(this\.sunShadowTarget\) this\.sunShadowTarget\.setSize\(bufW, bufH\);/);
-  // Wyjscie shadera = maska (R powierzchnia, G tlo, B mrok gestego pola
-  // asteroid), bez sluzby 1 = "nic".
-  assert.match(coreSource, /gl_FragColor = vec4\(surfaceOut, backdropOut, clamp\(fieldDark, 0\.0, 1\.0\) \* uShaftGain, 1\.0\);/);
+  // Wyjście passa = maska (R powierzchnia, G tło, B mrok gęstego pola
+  // asteroid), bez służby 1 = "nic".
+  assert.match(coreSource, /out\.assign\(vec4\(surfaceOut, backdropOut, clamp\(fieldDark, 0\.0, 1\.0\)\.mul\(uShaftGain\), 1\.0\)\);/);
   // Pole asteroid to mechanika, nie opcja jakosci: maska liczy sie tez przy
   // smugach Off (sam term pola, bez tarcz, kadlubow i ringow).
   assert.match(coreSource, /if \(!pass \|\| !target \|\| \(!raysOn && !fieldOn\)\) \{/);
@@ -77,8 +84,11 @@ test('shafts write a sun-visibility mask before the scene instead of multiplying
   const chainAt = coreSource.indexOf('for (const pass of this._scenePasses)', renderAt);
   assert.ok(renderAt >= 0 && maskAt > renderAt, 'render() must build the sun shadow mask');
   assert.ok(maskAt < haloAt && maskAt < chainAt, 'mask must be ready before halo pre-pass and scene passes');
-  // Snapshot refrakcji ma polowe rozdzielczosci — skala teksela idzie za celem.
-  assert.match(coreSource, /this\._setSunShadowTexelFor\(this\.refractionTarget\);/);
+  // Snapshot refrakcji ma połowę rozdzielczości — materiały czytają maskę po screenUV
+  // (rozmiar aktualnego celu), więc bez przestawiania teksela (dawne _setSunShadowTexelFor).
+  const maskSource = readFileSync(new URL('../src/3d/sunShadowMask.js', import.meta.url), 'utf8');
+  assert.match(maskSource, /texture\(sunShadowUniforms\.uSunShadowMap, screenUV, float\(0\)\)/);
+  assert.doesNotMatch(coreSource, /_setSunShadowTexelFor/);
 });
 
 test('shields render in ortho without clearing depth and never read the mask', () => {
@@ -105,11 +115,11 @@ test('analytic occluders skip interiors so surfaces keep their own lighting', ()
   // kadlubie (SDF < progu) = jego wlasne oswietlenie w shaderze heksow;
   // ring na powierzchni planety = uRingShadow* w shaderze planety (bez
   // podwojnego liczenia w passie).
-  assert.match(coreSource, /if \(along <= exitDist\) continue;/);
+  assert.match(coreSource, /If\(along\.lessThanEqual\(exitDist\), \(\) => \{ Continue\(\); \}\);/);
   // Pomijany CALY statek, nie jedna jego czesc — lancuch kapsul pomijal
   // tylko wnetrze tej samej kapsuly i kazda cienila kadlub pod sasiednia.
-  assert.match(hullSdfSource, /if \(t <= 0\.0 && hullSdfDist\(q, layer, distScale\) < wMin\) continue;/);
-  assert.match(coreSource, /if \(!insideDisc\) \{/);
+  assert.match(hullSdfSource, /If\(t\.lessThanEqual\(0\.0\), \(\) => \{\s*If\(hullSdfDist\(q\)\.lessThan\(wMin\), \(\) => \{ Continue\(\); \}\);/);
+  assert.match(coreSource, /If\(insideDisc\.lessThan\(0\.5\), \(\) => \{/);
 });
 
 test('planets and moons push analytic discs every frame', () => {
@@ -164,11 +174,11 @@ test('hull occluder is the silhouette distance field, not a capsule chain', () =
 test('hull shaft starts at the hull edge and only dims the scene', () => {
   // Marsz po SDF od piksela do slonca: promien wchodzacy w kadlub tuz za
   // burta daje pelny cien, polcien rosnie z dystansem od statku.
-  assert.ok(hullSdfSource.includes('float w = max(softMax * clamp(t / span, 0.0, 1.0), wMin);'));
-  assert.ok(coreSource.includes('shadow = max(shadow, hullSdfShadow(worldP, d, sunDist) * ${HULL_SHADOW_STRENGTH.toFixed(2)});'));
+  assert.ok(hullSdfSource.includes('const w = max(softMax.mul(clamp(t.div(span), 0.0, 1.0)), wMin).toVar();'));
+  assert.ok(coreSource.includes('shadow.assign(max(shadow, hullSdfShadow(hullUniforms, worldP, d, sunDist).mul(HULL_SHADOW_STRENGTH)));'));
   // Statek/asteroida tylko przygaszaja; umbra do czerni zostaje planetom.
   assert.match(coreSource, /const HULL_SHADOW_STRENGTH = 0\.55;/);
-  assert.match(coreSource, /shadow = max\(shadow, edge \* fall \* max\(disc\.w, 0\.0\)\);/);
+  assert.match(coreSource, /shadow\.assign\(max\(shadow, edge\.mul\(fall\)\.mul\(max\(disc\.w, 0\.0\)\)\)\);/);
   assert.match(asteroidSource, /const ASTEROID_SHAFT_STRENGTH = 0\.5;/);
   assert.match(asteroidSource, /pushShaftDiscWorld\(cache\[i\]\.x, cache\[i\]\.y, cache\[i\]\.r, ASTEROID_SHAFT_STRENGTH\)/);
 });
@@ -209,7 +219,8 @@ test('escape menu exposes off/low/medium/high shadow shafts option', () => {
   assert.match(gameSource, /setShadowShaftsQuality\?\.\('off'\)/);
 });
 
-test('sun shadow mask module shares uniform objects and keeps the backdrop tint', async () => {
+test('sun shadow mask module shares uniform nodes and keeps the backdrop tint', async () => {
+  const THREE = await import('three/webgpu');
   const mask = await import('../src/3d/sunShadowMask.js');
   const uniforms = mask.attachSunShadowUniforms({ own: { value: 1 } });
   // TE SAME obiekty co w module — Core3D ustawia je raz na klatke dla wszystkich.
@@ -222,31 +233,52 @@ test('sun shadow mask module shares uniform objects and keeps the backdrop tint'
   // Otoczenie w pelnym cieniu: widoczny cien, ale nie czarna kaluza (dawniej ×0,06).
   assert.equal(mask.SUN_SHADOW_FILL, 0.4);
   assert.equal(mask.sunShadowUniforms.uSunShadowFill.value, mask.SUN_SHADOW_FILL);
-  // W mroku gestego pola asteroid (kanal B maski) otoczenie gasnie prawie calkiem.
-  assert.match(mask.SUN_SHADOW_GLSL, /float sunFill\(float vis\) \{\s*return mix\(uSunShadowFill, 1\.0, vis\) \* \(1\.0 - fieldDarkness\(\) \* uFieldFillCut\);/);
-  assert.match(mask.SUN_SHADOW_GLSL, /float fieldDarkness\(\) \{\s*if \(uSunShadowOn < 0\.5\) return 0\.0;\s*return textureLod\(uSunShadowMap, gl_FragCoord\.xy \* uSunShadowTexel, 0\.0\)\.b;/);
   assert.equal(uniforms.uFieldFillCut, mask.sunShadowUniforms.uFieldFillCut);
-  // Odczyt po gl_FragCoord i wylaczenie uniformem (bez slonca / shafty Off).
-  assert.match(mask.SUN_SHADOW_GLSL, /gl_FragCoord\.xy \* uSunShadowTexel/);
-  assert.match(mask.SUN_SHADOW_GLSL, /if \(uSunShadowOn < 0\.5\) return vec2\(0\.0\);/);
+  assert.equal(mask.sunShadowUniforms.uFieldFillCut.value, mask.FIELD_FILL_CUT);
+  // Port WebGPU (zadanie 03): wspólne WĘZŁY TSL z tym samym API `.value` — tekstura
+  // maski (węzeł bazowy z uv-atrapą: bez macierzy uv) i uniformy w grupie renderu
+  // (jeden zapis na render() dla wszystkich materiałów).
+  const U = mask.sunShadowUniforms;
+  assert.equal(U.uSunShadowMap.isTextureNode, true);
+  assert.equal(U.uSunShadowMap.updateMatrix, false);
+  assert.ok(U.uSunShadowMap.value?.isTexture, 'maska zastępcza zanim Core3D poda cel');
+  for (const k of ['uSunShadowOn', 'uSunShadowFill', 'uFieldFillCut', 'uSunShadowTexel']) {
+    assert.equal(U[k].isUniformNode, true, k);
+    assert.equal(U[k].groupNode?.name, 'render', `${k} w grupie renderu`);
+  }
+  // Legacy GLSL (tylko nieprzeniesione ShaderMaterial — na WebGPU i tak zamienniki):
+  // re-eksport z sunShadowMaskGLSL.js, tekst bez zmian, barwa smugi = SUN_SHAFT_BACKDROP_TINT.
+  const legacy = await import('../src/3d/sunShadowMaskGLSL.js');
+  assert.equal(mask.SUN_SHADOW_GLSL, legacy.SUN_SHADOW_GLSL);
+  const tint = mask.SUN_SHAFT_BACKDROP_TINT.map((v) => Number(v).toPrecision(6)).join(', ');
+  assert.ok(mask.SUN_SHADOW_GLSL.includes(`vec3(${tint})`), 'barwa smugi w legacy GLSL = SUN_SHAFT_BACKDROP_TINT');
+  assert.match(mask.SUN_SHADOW_GLSL, /float sunFill\(float vis\) \{\s*return mix\(uSunShadowFill, 1\.0, vis\) \* \(1\.0 - fieldDarkness\(\) \* uFieldFillCut\);/);
   assert.match(mask.SUN_SHADOW_GLSL, /float sunVisibility\(\)/);
   assert.match(mask.SUN_SHADOW_GLSL, /vec3 sunShaftBackdrop\(vec3 color\)/);
-  assert.match(mask.SUN_SHADOW_GLSL, /vec3\(0\.0600000, 0\.100000, 0\.160000\)/);
-  // Wbudowane materialy: wstrzykniecie w onBeforeCompile, osobny klucz programu.
-  const fakeMaterial = {};
-  mask.applySunShadowToBuiltinMaterial(fakeMaterial, 'direct');
-  const shader = { uniforms: {}, fragmentShader: 'void main() {\n#include <lights_fragment_end>\n#include <opaque_fragment>\n}' };
-  fakeMaterial.onBeforeCompile(shader);
-  assert.equal(shader.uniforms.uSunShadowOn, mask.sunShadowUniforms.uSunShadowOn);
-  assert.match(shader.fragmentShader, /reflectedLight\.directDiffuse \*= sunVisD;/);
-  assert.doesNotMatch(shader.fragmentShader, /sunShaftBackdrop\(gl_FragColor/);
-  assert.equal(fakeMaterial.customProgramCacheKey(), 'sunShadow:direct');
+  const maskSource = readFileSync(new URL('../src/3d/sunShadowMask.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(maskSource, /gl_FragCoord\.xy \*|textureLod\(|#include|onBeforeCompile = /, 'sunShadowMask.js bez GLSL');
+  // Wbudowane materiały: hak w polach materiału (NodeLibrary.fromMaterial kopiuje je na
+  // materiał węzłowy), osobny klucz programu = klucz klasy + rodzaj haka.
+  const std = new THREE.MeshStandardMaterial();
+  assert.equal(mask.applySunShadowToBuiltinMaterial(std, 'direct'), std, 'sygnatura bez zmian: ten sam materiał');
+  assert.equal(typeof std.setupLightingModel, 'function');
+  assert.equal(std.outputNode, undefined);
+  assert.match(std.customProgramCacheKey(), /\|sunShadow:direct$/);
+  const dust = new THREE.PointsMaterial();
+  mask.applySunShadowToBuiltinMaterial(dust, 'backdrop');
+  assert.equal(dust.outputNode?.isNode, true);
+  assert.match(dust.customProgramCacheKey(), /\|sunShadow:backdrop$/);
+  // Materiał węzłowy dostaje hak wprost, a klucz zostaje kluczem jego grafu + hak.
+  const nodeMat = new THREE.MeshStandardNodeMaterial();
+  const plainKey = nodeMat.customProgramCacheKey();
+  mask.applySunShadowToBuiltinMaterial(nodeMat, 'direct');
+  assert.equal(nodeMat.customProgramCacheKey(), `${plainKey}|sunShadow:direct`);
 });
 
 test('lit surfaces lose the sun term and dim fill; lights, glow and heat stay', () => {
   // Port WebGPU (zadanie 04): kadłuby, szczątki GPU, odłamki belek i smugi wraków w TSL.
-  // Maska słońca przez JEDNO miejsce importu (hexShips3D.tsl.js — do zadania 03 zastępnik
-  // z pełnym słońcem, potem funkcje z sunShadowMask.js); tu pilnujemy, KTÓRE człony ją czytają.
+  // Maska słońca przez JEDNO miejsce importu (hexShips3D.tsl.js — od zadania 03 funkcje
+  // TSL z sunShadowMask.js); tu pilnujemy, KTÓRE człony ją czytają.
   const tsl = readFileSync(new URL('../src/3d/hexShips3D.tsl.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   const hullFragment = tsl.slice(tsl.indexOf('function hullFragmentNode(opts)'), tsl.indexOf('// Offset fragmentu od początku mesha'));
   const debrisFragment = tsl.slice(tsl.indexOf('const fragmentNode = Fn(() => {\n    const suv'), tsl.indexOf('_debrisGraph = { vertexNode, fragmentNode };'));
@@ -262,10 +294,11 @@ test('lit surfaces lose the sun term and dim fill; lights, glow and heat stay', 
   const lightsLoop = hullFragment.slice(hullFragment.indexOf('Loop({ start: int(0), end: int(P.uShipLightCount)'));
   assert.ok(lightsLoop.length > 0 && !/sunVis|sunFill|sunVisibility/.test(lightsLoop), 'ship lights, stress and heat must ignore the mask');
   assert.match(debrisFragment, /const lightMul = uDayAmbient\.mul\(sunFill\(sunVis\)\)\.add\(NdotL\.mul\(uDayDiffuseMul\)\.mul\(sunVis\)\);/);
-  // Jedno miejsce importu maski dla kadłubów, odłamków belek i smug wraków.
-  assert.match(tsl, /export const sunVisibility = /);
-  assert.match(tsl, /export const sunFill = /);
-  assert.match(tsl, /export const sunShadeUnlit = /);
+  // Jedno miejsce importu maski dla kadłubów, odłamków belek i smug wraków — funkcje TSL
+  // biblioteki (zadanie 03), bez zastępnika z pełnym słońcem.
+  assert.match(tsl, /import \{ fieldDarkness, sunFill, sunShadeUnlit, sunVisibility \} from '\.\/sunShadowMask\.js';/);
+  assert.match(tsl, /export \{ fieldDarkness, sunFill, sunShadeUnlit, sunVisibility \};/);
+  assert.doesNotMatch(tsl, /export const sunVisibility = \(\) => float\(1\.0\)/, 'zastępnik pełnego słońca wrócił');
   const plates = readFileSync(new URL('../src/3d/hullDebris3D.js', import.meta.url), 'utf8');
   assert.match(plates, /import \{ sunFill, sunVisibility \} from '\.\/hexShips3D\.tsl\.js';/);
   assert.match(plates, /uniforms\.uAmbient\.mul\(sunFill\(sunVis\)\)\.add\(diffuse\.mul\(uniforms\.uDiffuse\)\)/);
@@ -297,7 +330,7 @@ test('emitters and the Halo ring never read the sun shadow mask', () => {
     assert.ok(!/sunShadowUniforms|SUN_SHADOW_GLSL|sunVisibility/.test(read(`haloRing/${rel}`)), `haloRing/${rel} must keep its own sun model`);
   }
   // Okrag ringu tylko w kanale tla — powierzchnia (R) konczy sie na kadlubach.
-  assert.match(coreSource, /float surfaceShadow = shadow;[\s\S]*if \(!insideDisc\) \{[\s\S]*float backdropOut = clamp\(shadow, 0\.0, 1\.0\) \* uShaftGain;/);
+  assert.match(coreSource, /const surfaceShadow = float\(shadow\)\.toVar\(\);[\s\S]*If\(insideDisc\.lessThan\(0\.5\), \(\) => \{[\s\S]*const backdropOut = clamp\(shadow, 0\.0, 1\.0\)\.mul\(uShaftGain\)\.toVar\(\);/);
 });
 
 test('backdrop keeps the long shaft; ring-anchored bodies get eclipses', () => {

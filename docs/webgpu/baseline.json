@@ -3289,6 +3289,801 @@
           }
         }
       }
+    },
+    "ring-dach": {
+      "opis": "Ring Ziemi z daleka (zoom 0,05), 0,3 rad od portu: górna ściana z dachem w FG (odcisk brył, pasy świateł), kadłub, chmury",
+      "sesja": "ziemia-ring",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      },
+      "drawCalls": 50,
+      "trojkaty": 4727002,
+      "passy": {
+        "total": 50,
+        "refraction": 0,
+        "bg": 13,
+        "planets": 3,
+        "shafts": 1,
+        "ortho": 6,
+        "fg": 12,
+        "bloom": 13,
+        "post": 1,
+        "other": 1
+      },
+      "coreRenderMs": 0.42,
+      "gpuMs": 1.188,
+      "hdr": {
+        "pixels": 230400,
+        "nanOrInf": 0,
+        "overFraction": 0.00005,
+        "p50": 0.0009,
+        "p90": 0.0089,
+        "p99": 0.125,
+        "p999": 0.323,
+        "max": 1.401
+      },
+      "stan": {
+        "kroki": 0,
+        "npc": 0,
+        "wraki": 0,
+        "pociski": 0,
+        "kamera": [
+          6242250,
+          7070519,
+          0.05,
+          "rts"
+        ],
+        "suma": 0
+      },
+      "spis": {
+        "zamienniki": 0,
+        "warstwy": {
+          "ortho": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uSprite+uNormalMap+uHasNormalMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uMap": {
+              "obiekty": 3,
+              "instancje": 3
+            }
+          },
+          "fg": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloMegaPrims": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "ShaderMaterial:HaloMegaTrains": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloMegaLights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloStructure": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:K7Instances": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:K7Plates": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:K7Hoses": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:space_station_1001": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1003": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1002": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1004": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshPhysicalMaterial:spacestation_main2": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshPhysicalMaterial:spacestation_smalllights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshPhysicalMaterial:spacestation_main": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "ShaderMaterial:uTime+uCoreGain+uHaloGain": {
+              "obiekty": 1,
+              "instancje": 42
+            }
+          },
+          "tlo": {
+            "ShaderMaterial:map+warpFactor+uSunShadowMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:pointTexture+time+cameraOffset": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloTerrain": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloStructure": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloClouds": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloAirShell": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloMegaPrims": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloDomeGlass": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloMegaLights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloCity_garden": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloCity_industry": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloTrees": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:K7Instances": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "ShaderMaterial:K7Plates": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:K7Labels": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "planety": {
+            "ShaderMaterial:uTime+uIsOcclusion": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "SpriteMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "ring-planety": {
+            "ShaderMaterial:uPlanetBloom+dayTexture+nightTexture": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:cloudTexture+sunPosition+uOpacity": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uSunDir+uRa+uHs": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:?": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 5,
+              "instancje": 5
+            }
+          }
+        }
+      }
+    },
+    "ring-dach__fg": {
+      "wariantSceny": "ring-dach",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "ring-dach__ortho": {
+      "wariantSceny": "ring-dach",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "ring-dach__planety": {
+      "wariantSceny": "ring-dach",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "ring-dach__tlo": {
+      "wariantSceny": "ring-dach",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "ring-dach-z01": {
+      "opis": "Jak ring-dach, zoom 0,1: dach nad wąwozem w trakcie zaniku (przerzedzenie IGN górnej ściany w FG)",
+      "sesja": "ziemia-ring",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      },
+      "drawCalls": 53,
+      "trojkaty": 8021742,
+      "passy": {
+        "total": 53,
+        "refraction": 0,
+        "bg": 15,
+        "planets": 3,
+        "shafts": 1,
+        "ortho": 5,
+        "fg": 14,
+        "bloom": 13,
+        "post": 1,
+        "other": 1
+      },
+      "coreRenderMs": 0.385,
+      "gpuMs": 1.452,
+      "hdr": {
+        "pixels": 230400,
+        "nanOrInf": 0,
+        "overFraction": 0.00001,
+        "p50": 0.0009,
+        "p90": 0.0044,
+        "p99": 0.0567,
+        "p999": 0.3226,
+        "max": 0.938
+      },
+      "stan": {
+        "kroki": 0,
+        "npc": 0,
+        "wraki": 0,
+        "pociski": 0,
+        "kamera": [
+          6242250,
+          7070519,
+          0.1,
+          "rts"
+        ],
+        "suma": 0
+      },
+      "spis": {
+        "zamienniki": 0,
+        "warstwy": {
+          "ortho": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uMap": {
+              "obiekty": 3,
+              "instancje": 3
+            }
+          },
+          "fg": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloMegaPrims": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "ShaderMaterial:HaloMegaTrains": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloMegaLights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloStructure": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:K7Instances": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:K7Plates": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:K7Hoses": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:space_station_1001": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1003": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1002": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1004": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshPhysicalMaterial:spacestation_main2": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshPhysicalMaterial:spacestation_smalllights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshPhysicalMaterial:spacestation_main": {
+              "obiekty": 4,
+              "instancje": 4
+            }
+          },
+          "tlo": {
+            "ShaderMaterial:map+warpFactor+uSunShadowMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:pointTexture+time+cameraOffset": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloTerrain": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloStructure": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloClouds": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloAirShell": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloMegaPrims": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloDomeGlass": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloMegaLights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloCity_garden": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloCity_industry": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloTrees": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:K7Instances": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "ShaderMaterial:K7Plates": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:K7Labels": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "planety": {
+            "ShaderMaterial:uTime+uIsOcclusion": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "SpriteMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "ring-planety": {
+            "ShaderMaterial:uPlanetBloom+dayTexture+nightTexture": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:cloudTexture+sunPosition+uOpacity": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uSunDir+uRa+uHs": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:?": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 5,
+              "instancje": 5
+            }
+          }
+        }
+      }
+    },
+    "ring-dach-z01__fg": {
+      "wariantSceny": "ring-dach-z01",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "ring-dach-z01__ortho": {
+      "wariantSceny": "ring-dach-z01",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "ring-dach-z01__planety": {
+      "wariantSceny": "ring-dach-z01",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "ring-dach-z01__tlo": {
+      "wariantSceny": "ring-dach-z01",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "ring-habitat": {
+      "opis": "Habitat ringu Ziemi z kamery gry poza ringiem (zoom 0,34), 0,3 rad od portu: podłoga, ściany od środka, chmury, powietrze, krawędź dachu w FG",
+      "sesja": "ziemia-ring",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      },
+      "drawCalls": 42,
+      "trojkaty": 1452350,
+      "passy": {
+        "total": 42,
+        "refraction": 0,
+        "bg": 13,
+        "planets": 1,
+        "shafts": 1,
+        "ortho": 1,
+        "fg": 11,
+        "bloom": 13,
+        "post": 1,
+        "other": 1
+      },
+      "coreRenderMs": 0.335,
+      "gpuMs": 0.806,
+      "hdr": {
+        "pixels": 230400,
+        "nanOrInf": 0,
+        "overFraction": 0.00006,
+        "p50": 0.0007,
+        "p90": 0.0088,
+        "p99": 0.0557,
+        "p999": 0.3079,
+        "max": 1.18
+      },
+      "stan": {
+        "kroki": 0,
+        "npc": 0,
+        "wraki": 0,
+        "pociski": 0,
+        "kamera": [
+          6243546,
+          7072974,
+          0.34,
+          "rts"
+        ],
+        "suma": 0
+      },
+      "spis": {
+        "zamienniki": 0,
+        "warstwy": {
+          "ortho": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "fg": {
+            "ShadowMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloMegaPrims": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "ShaderMaterial:HaloMegaTrains": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloMegaLights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloStructure": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:K7Instances": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:K7Plates": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:K7Hoses": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:space_station_1001": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1003": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1002": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshStandardMaterial:space_station_1004": {
+              "obiekty": 4,
+              "instancje": 4
+            },
+            "MeshPhysicalMaterial:spacestation_main2": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "MeshPhysicalMaterial:spacestation_smalllights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshPhysicalMaterial:spacestation_main": {
+              "obiekty": 4,
+              "instancje": 4
+            }
+          },
+          "tlo": {
+            "ShaderMaterial:map+warpFactor+uSunShadowMap": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:pointTexture+time+cameraOffset": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloTerrain": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloStructure": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloClouds": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloAirShell": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloMegaPrims": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloDomeGlass": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloMegaLights": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloCity_garden": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloCity_industry": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:HaloTrees": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:K7Instances": {
+              "obiekty": 3,
+              "instancje": 3
+            },
+            "ShaderMaterial:K7Plates": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:K7Labels": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "planety": {
+            "ShaderMaterial:uTime+uIsOcclusion": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "SpriteMaterial:?": {
+              "obiekty": 1,
+              "instancje": 1
+            }
+          },
+          "ring-planety": {
+            "ShaderMaterial:uPlanetBloom+dayTexture+nightTexture": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:cloudTexture+sunPosition+uOpacity": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "ShaderMaterial:uSunDir+uRa+uHs": {
+              "obiekty": 1,
+              "instancje": 1
+            },
+            "MeshStandardMaterial:?": {
+              "obiekty": 5,
+              "instancje": 5
+            },
+            "ShaderMaterial:coef+power+glowColor": {
+              "obiekty": 5,
+              "instancje": 5
+            }
+          }
+        }
+      }
+    },
+    "ring-habitat__fg": {
+      "wariantSceny": "ring-habitat",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "ring-habitat__ortho": {
+      "wariantSceny": "ring-habitat",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "ring-habitat__planety": {
+      "wariantSceny": "ring-habitat",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
+    },
+    "ring-habitat__tlo": {
+      "wariantSceny": "ring-habitat",
+      "szum": {
+        "roznePct2": 0,
+        "roznePct8": 0,
+        "roznePct32": 0,
+        "srednia": 0,
+        "maks": 0
+      }
     }
   },
   "wydajnosc": {
@@ -3489,5 +4284,29 @@
         "maks": 0
       }
     }
-  }
+  },
+  "dopisane": [
+    {
+      "kiedy": "2026-09-27T23:33:45.546Z",
+      "commitPrzebiegu": "766fe6a",
+      "sceny": [
+        "ring-dach",
+        "ring-dach__fg",
+        "ring-dach__ortho",
+        "ring-dach__planety",
+        "ring-dach__tlo",
+        "ring-dach-z01",
+        "ring-dach-z01__fg",
+        "ring-dach-z01__ortho",
+        "ring-dach-z01__planety",
+        "ring-dach-z01__tlo",
+        "ring-habitat",
+        "ring-habitat__fg",
+        "ring-habitat__ortho",
+        "ring-habitat__planety",
+        "ring-habitat__tlo"
+      ],
+      "polecenie": "node scripts/webgpu/baza.mjs --dopisz .tmp/webgpu/zadania/08/baza-ziemia-ring"
+    }
+  ]
 }
