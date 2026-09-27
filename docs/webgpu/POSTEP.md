@@ -49,7 +49,7 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 | 09 | Ring 4/5: megastruktura + miasto (kopuły, landmarki, drzewa) | 08 | j.w. | xhigh | czeka | | |
 | 10 | Ring 5/5: K-7 + ringi-archetypy Marsa i Jowisza | 09 | j.w. | xhigh | czeka | | ring bez zamienników |
 | 11 | Tło menu + rozgrzewka pipeline'ów | 05, 10 | 12–20 | max | czeka | | nowy `menuBackdrop.test` |
-| 12 | Infrastruktura efektów GPU: compute w klatce, siatka świateł, zniekształcenia, Fx3D w TSL | 03 | 04–11, 13–16 | max | część 12-A w toku (podagent, worktree `statki-wt/12a`: czyste moduły `src/3d/fx/`); 12-B (wpięcie w Core3D) po 03 | | podstawa pod 17–19 (i przyszłe asteroidy) |
+| 12 | Infrastruktura efektów GPU: compute w klatce, siatka świateł, zniekształcenia, Fx3D w TSL | 03 | 04–11, 13–16 | max | 12-A zrobione i scalone (moduły `src/3d/fx/`); 12-B (wpięcie w Core3D, Fx3D w TSL) czeka na 03 | 0f3d429…37953a6 | podstawa pod 17–19 (i przyszłe asteroidy) |
 | 13 | Silniki: MAIN, WARP (plazma), SIDE | 03 | 04–12, 14–20 | xhigh | w toku (podagent, worktree `statki-wt/13`; bloom po 02, iskry Fx3D po 12-B) | | |
 | 14 | Tarcze i trafienia w tarczę | 03 | 04–13, 15–20 | xhigh | czeka | | |
 | 15 | Mostki, rdzenie, reaktory, światła (+ `mostki-demo`, `rdzen-demo`) | 04 | 05–14, 16–20 | xhigh | czeka | | |
@@ -318,3 +318,16 @@ Todo (2): „PORT poprawka 1 / 3 (TODO integracji)” w `tests/shipCore.test.mjs
   materiałów, 8504 linie. Testy na `main`: 1389 / 7 porażek bazowych / 2 todo + niestabilne pod obciążeniem całego
   zestawu (same przechodzą): `capitalAiFlight` („ship follows a moving target…”), `hullShadowSdf` („warstwy: wspólna dla
   świeżej floty…, LRU”).
+- **Część 12-A scalona do `main`** (0f3d429, 4eb03d8, dba17aa, d086021, 37953a6): `src/3d/fx/` — `lightGrid.js` (jedna siatka
+  świateł z trzech kopii dem; baza = wersja asteroid: wycinek koła reflektora, brzeg smoothstep², mapy cienia, profile
+  `FIELD` / `CAVE`; układ lokalny przy kamerze liczony w double; 2 bufory storage; uniformy w grupie `render`; odrzucanie
+  poza kadrem; naprawiony błąd wszystkich trzech kopii — przepełnienie granic komórek w `Int16Array` dla świateł daleko
+  poza kadrem; właściciel 0 = brak; tryb `optIn`: siatkę czytają tylko materiały z flagą `gridLights` — reszta ma WGSL
+  identyczny jak bez siatki), `fxLights.js` (błyski z nośnikiem, zero alokacji), `fxRandom.js` (mulberry32 dla efektów;
+  harness ziarni go razem z `reseed` — 09f968c), `noise.js` (szumy bit w bit jak w demach), `carrier.js` (paczka nośnika +
+  lustro CPU), `gpuPoolOrigin.js` (`FxPoolOrigin`: wspólny początek przy kamerze dla pul i siatki, przeskok co 20 tys. j.,
+  kernel przesunięcia, epoki zegarów co 600 s — każda pula GPU MUSI się zarejestrować), `distortion.js`
+  (`DistortionField`: fala, implozja, gorące powietrze z kierunkiem; jeden bufor, `DISTORT_CAP` 32). Opis:
+  `docs/webgpu/FX-INFRA.md`. Koszt CPU siatki: 1024 światła 0,7 ms, 1536 — 1,1 ms. Ryzyko: `ITEM_CAP` nasyci się w dużej
+  bitwie w polu asteroid (reflektory do 14 tys. j.) — ograniczyć reflektory do najbliższych / w kadrze (21). Testy na
+  `main`: 1434 / 7 porażek bazowych / 2 todo.
