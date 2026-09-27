@@ -83,8 +83,11 @@ test('shafts write a sun-visibility mask before the scene instead of multiplying
 
 test('shields render in ortho without clearing depth and never read the mask', () => {
   const shieldSource = readFileSync(new URL('../src/3d/shield3D.js', import.meta.url), 'utf8');
+  // Port WebGPU (zadanie 14): graf TSL tarcz w pliku obok — ten sam strażnik.
+  const shieldTslSource = readFileSync(new URL('../src/3d/shield3D.tsl.js', import.meta.url), 'utf8');
   // Tarcza to emisja, nie oswietlona powierzchnia.
   assert.ok(!/sunShadow|SUN_SHADOW_GLSL/.test(shieldSource), 'shield glow must not be dimmed by the sun shadow mask');
+  assert.ok(!/sunShadow|SUN_SHADOW_GLSL|sunVisibility|sunFill/.test(shieldTslSource), 'shield TSL graph must not read the sun shadow mask');
   // Kamera ortho (jak swiat) + BEZ czyszczenia glebi (test glebi wzgledem kadlubow).
   // Port WebGPU: pass = opis dla runnera Core3D (bez RenderPass z addons), tuż po
   // passie ortho w łańcuchu, do tego samego celu MSAA (głębia ortho zostaje).
