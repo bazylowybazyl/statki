@@ -211,6 +211,34 @@
       };
       return true;
     },
+    // Tylko obiekty sceny Core3D o podanych nazwach (z przodkami) — reszta siatek ukryta na czas
+    // zrzutu; null przywraca. Zadanie 07: sam teren ringu (`HaloTerrain`) w grze, porównanie z bazą
+    // z tagu, póki reszta ringu i tło to zamienniki (05, 08–10).
+    onlyNamed(names = null) {
+      const C = window.Core3D;
+      if (!C?.scene) return false;
+      if (!names) {
+        for (const e of this.__hiddenByName || []) {
+          delete e.o.visible;
+          e.o.visible = e.v;
+        }
+        this.__hiddenByName = null;
+        return true;
+      }
+      const want = new Set(names);
+      const keep = new Set();
+      C.scene.traverse((o) => { if (want.has(o.name)) for (let p = o; p; p = p.parent) keep.add(p); });
+      const hidden = [];
+      C.scene.traverse((o) => {
+        if (keep.has(o) || !(o.isMesh || o.isPoints || o.isLine || o.isSprite)) return;
+        // gra przestawia visible co klatkę (np. zanik dachu K-7) — na czas zrzutu zapis zapamiętany, odczyt false
+        const e = { o, v: o.visible };
+        Object.defineProperty(o, 'visible', { configurable: true, get: () => false, set: (x) => { e.v = x; } });
+        hidden.push(e);
+      });
+      this.__hiddenByName = hidden;
+      return keep.size;
+    },
     // Spis widocznych obiektów sceny Core3D: warstwa → „typ materiału:nazwa” → obiekty / instancje.
     // Na WebGL mówi, które materiały składają scenę; na WebGPU liczy zamienniki: każdy ShaderMaterial /
     // RawShaderMaterial rysuje się tam zamiennikiem (src/3d/tsl/zamiennik.js — także zanim pierwszy raz
