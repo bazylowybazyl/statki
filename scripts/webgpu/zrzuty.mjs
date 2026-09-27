@@ -10,6 +10,9 @@
 // --teren-ringu: w ring-z02 / ring-z1 / k7-hala dodatkowo wariant `<scena>__teren` — tylko siatka terenu ringu
 //            (zadanie 07; reszta sceny Core3D ukryta). Dokłada klatki, więc porównuj z przebiegiem z tą samą opcją
 //            (baza: ten sam skrypt w worktree z tagu webgl-baseline, --backend webgl).
+// --czesci-ringu [nazwy]: jak --teren-ringu, ale wybrane części ringu (zadanie 08; domyślnie teren, konstrukcja
+//            z górną ścianą FG, chmury i powłoka powietrza — nazwy siatek po przecinku) → wariant `<scena>__ring`,
+//            a w scenach z warstwami także `__ring-tlo` (warstwa 1) i `__ring-fg` (warstwa 2). Też dokłada klatki.
 // --backend: nazywa katalog wyniku i dopisuje ?renderer=<backend> do adresu. Gra flagi NIE czyta (jedna ścieżka
 //            renderu: tag webgl-baseline = WebGL, main od zadania 01 = WebGPU) — faktyczny renderer zapisuje się
 //            w wyniki.json (pole `renderer`), więc pomyłka w etykiecie wychodzi od razu.
@@ -71,8 +74,12 @@ const PASS_VARIANTS = [
   ['ortho', [0, 7]],
   ['fg', [2]]
 ];
-// Sceny z terenem ringu Ziemi w kadrze (opcja --teren-ringu → wariant `__teren`).
-const TEREN_RINGU_SCENES = new Set(['ring-z02', 'ring-z1', 'k7-hala']);
+// Sceny z terenem ringu Ziemi w kadrze (opcja --teren-ringu → wariant `__teren`, --czesci-ringu → `__ring`).
+const TEREN_RINGU_SCENES = new Set(['ring-z02', 'ring-z1', 'k7-hala', 'ring-dach', 'ring-dach-z01', 'ring-habitat']);
+// Części ringu przeniesione do zadania 08 (nazwy siatek w scenie Core3D).
+const CZESCI_RINGU = args['czesci-ringu']
+  ? (args['czesci-ringu'] === '1' ? ['HaloTerrain', 'HaloStructure', 'HaloStructure_topWall', 'HaloClouds', 'HaloAirShell'] : args['czesci-ringu'].split(','))
+  : null;
 
 // ── Sceny ─────────────────────────────────────────────────────────────────────
 // js: ciało funkcji async w stronie (S = pomocniki scen, H = zegar); hud: czy zostawić HUD DOM;
@@ -102,6 +109,33 @@ const SCENES = {
     opis: 'Hala K-7 (statek w hali: wycięcie dachu, lampy), zoom 0,35, 90 klatek na zanik dachu',
     hud: false, warm: 45, warstwy: true,
     js: `HaloRingDebug.goto('earth', 'hall'); S.cam(ship.pos.x, ship.pos.y, 0.35); H.reseed(0x4b7); await H.step(90); S.cam(ship.pos.x, ship.pos.y, 0.35);`
+  },
+  // Zadanie 08: widoki ringu Ziemi z dala od portu (osobna sesja — nie przesuwają scen sesji „ziemia”; baza z tagu
+  // przez `baza.mjs --dopisz`). W scenach przy porcie konstrukcji i atmosfery prawie nie widać (dach nad halą
+  // wycięty, przy zoomie 0,2 dach nad wąwozem schowany), tu: górna ściana z dachem w FG i habitat z boku.
+  'ring-dach': {
+    opis: 'Ring Ziemi z daleka (zoom 0,05), 0,3 rad od portu: górna ściana z dachem w FG (odcisk brył, pasy świateł), kadłub, chmury',
+    hud: false, warm: 45, warstwy: true,
+    js: `const pl = planets.find((p) => p.id === 'earth'); const st = stations.find((s) => s.ringPort === 'earth');
+         const R = window.__haloRings.entries.find((e) => e.key === 'earth').ring.layout.radii;
+         const a = st.angle + 0.3, r = 0.5 * (R.back + R.rim);
+         S.cam(pl.x + Math.cos(a) * r, pl.y + Math.sin(a) * r, 0.05);`
+  },
+  'ring-dach-z01': {
+    opis: 'Jak ring-dach, zoom 0,1: dach nad wąwozem w trakcie zaniku (przerzedzenie IGN górnej ściany w FG)',
+    hud: false, warm: 45, warstwy: true,
+    js: `const pl = planets.find((p) => p.id === 'earth'); const st = stations.find((s) => s.ringPort === 'earth');
+         const R = window.__haloRings.entries.find((e) => e.key === 'earth').ring.layout.radii;
+         const a = st.angle + 0.3, r = 0.5 * (R.back + R.rim);
+         S.cam(pl.x + Math.cos(a) * r, pl.y + Math.sin(a) * r, 0.1);`
+  },
+  'ring-habitat': {
+    opis: 'Habitat ringu Ziemi z kamery gry poza ringiem (zoom 0,34), 0,3 rad od portu: podłoga, ściany od środka, chmury, powietrze, krawędź dachu w FG',
+    hud: false, warm: 45, warstwy: true,
+    js: `const pl = planets.find((p) => p.id === 'earth'); const st = stations.find((s) => s.ringPort === 'earth');
+         const R = window.__haloRings.entries.find((e) => e.key === 'earth').ring.layout.radii;
+         const a = st.angle + 0.3, r = R.rim + 1800;
+         S.cam(pl.x + Math.cos(a) * r, pl.y + Math.sin(a) * r, 0.34);`
   },
   'planeta-cien': {
     opis: 'Wenus: tarcza planety (dzień/noc, halo) i jej cień na tle (shadow shafts), zoom 0,05',
@@ -224,6 +258,7 @@ const SCENES = {
 const SESSIONS = [
   { id: 'menu', query: 'dev=1', start: null, scenes: ['menu'] },
   { id: 'ziemia', query: 'dev=1&haloTest=earth&haloAt=port', start: 'single', ring: 'earth', scenes: ['hud', 'ring-z02', 'ring-z1', 'k7-hala', 'planeta-cien', 'slonce'] },
+  { id: 'ziemia-ring', query: 'dev=1&haloTest=earth&haloAt=port', start: 'single', ring: 'earth', scenes: ['ring-dach', 'ring-dach-z01', 'ring-habitat'] },
   { id: 'mars', query: 'dev=1&haloTest=mars&haloAt=port', start: 'single', ring: 'mars', scenes: ['mars-ring'] },
   { id: 'jowisz', query: 'dev=1&haloTest=jupiter&haloAt=port', start: 'single', ring: 'jupiter', scenes: ['jowisz-ring'] },
   { id: 'kosmos', query: 'dev=1', start: 'single', sprites: true, scenes: ['kalibracja', 'kalibracja-sprzatanie', 'bitwa', 'bitwa-blisko', 'wybuch', 'wraki', 'warp'] },
@@ -313,6 +348,23 @@ async function runSession(session, backend, outDir, base) {
         await ev('window.__harness.scene.onlyNamed(null)');
         await ev('window.__harness.frames(3)');
         if (!n) console.log(`  ${id}: brak siatki HaloTerrain w scenie`);
+      }
+      // --czesci-ringu (zadanie 08): wybrane części ringu, cała klatka i (sceny z warstwami) tło / FG osobno.
+      if (CZESCI_RINGU && TEREN_RINGU_SCENES.has(id)) {
+        const n = await ev(`window.__harness.scene.onlyNamed(${JSON.stringify(CZESCI_RINGU)})`);
+        await ev('window.__harness.frames(3)');
+        await screenshotPng(cdp, join(outDir, `${id}__ring.png`));
+        if (sc.warstwy) {
+          for (const [nazwa, layers] of [['tlo', [1]], ['fg', [2]]]) {
+            await ev(`window.__harness.scene.isolate(${JSON.stringify(layers)})`);
+            await ev('window.__harness.frames(3)');
+            await screenshotPng(cdp, join(outDir, `${id}__ring-${nazwa}.png`));
+          }
+          await ev('window.__harness.scene.isolate(null)');
+        }
+        await ev('window.__harness.scene.onlyNamed(null)');
+        await ev('window.__harness.frames(3)');
+        if (!n) console.log(`  ${id}: brak części ringu ${CZESCI_RINGU.join(', ')} w scenie`);
       }
       let perf = null; let hdr = null; let state = null;
       try { perf = await ev('window.__harness.scene.perf(60)'); } catch (err) { perf = { error: String(err?.message || err) }; }

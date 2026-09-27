@@ -11,6 +11,11 @@
 // z czerwonym brzegiem jak przy zaćmieniu Księżyca) + bryła ringu
 // (dwie ściany jako pierścienie w płaszczyznach, podłoga jako walec/stożek,
 // kadłub jako walec). Do tego światło planety i niebo habitatu.
+//
+// Port WebGPU: biblioteka jest w TSL (haloRingTSL.js); teren (07), konstrukcja
+// i atmosfera (08) już jej nie używają. Zostaje dla megastruktury i miasta (09),
+// K-7 i ringów-archetypów (10) oraz narzędzia parzystości GLSL ↔ TSL
+// (scripts/webgpu/ring-tsl-parzystosc.mjs — jedyny użytkownik HALO_GLSL_STORM po 08).
 
 export const HALO_GLSL_COMMON = /* glsl */`
 #define HALO_PI 3.14159265359
@@ -544,10 +549,10 @@ vec4 haloProjectRel(vec3 relLocal) {
 }
 `;
 
-// Wspólne próbkowanie map i detalu (vertex + fragment + chmury). Do zadania 07
-// w haloRingTerrain.js; teren jest już w TSL (haloRingSurfaceTSL w haloRingTSL.js),
-// GLSL zostaje dla struktury i atmosfery (08) oraz megastruktury i miasta (09).
-// AGENT: usunąć po zadaniach 08 i 09 (razem z resztą tego pliku po 10).
+// Wspólne próbkowanie map i detalu (vertex + fragment). Do zadania 07
+// w haloRingTerrain.js; teren (07), konstrukcja i atmosfera (08) są już w TSL
+// (haloRingSurfaceTSL w haloRingTSL.js), GLSL zostaje dla megastruktury i miasta (09).
+// AGENT: usunąć po zadaniu 09 (razem z resztą tego pliku po 10).
 export const HALO_GLSL_SURFACE = /* glsl */`
 uniform sampler2D uMapA;
 uniform sampler2D uMapB;
@@ -602,29 +607,5 @@ vec3 haloDetailHeight(float sRel, float t, float mountain, float flatten, float 
   acc += haloDetailOct(sRel, t, uDetailN.z, uDetailOff.z, mix(0.34, 1.2, mountain), 0.0, lodBias);
   acc += haloDetailOct(sRel, t, uDetailN.w, uDetailOff.w, mix(0.12, 0.3, mountain), 0.0, lodBias);
   return acc * (1.0 - flatten);
-}
-`;
-
-// Pokrycie chmur: te same kafelkowe tekstury, wiatr wzdluz wstegi. Wspolne
-// dla cienia chmur na terenie i samej warstwy chmur (spojnosc cieni).
-// AGENT: usunąć razem z HALO_GLSL_SURFACE (po zadaniu 08 — chmury).
-export const HALO_GLSL_CLOUDCOVER = /* glsl */`
-${HALO_GLSL_PORTSITES}
-float haloCloudOct(float sRel, float t, float S, float T, float off, float windK, float salt) {
-  float wind = uTime * uCloudParams.z * windK;
-  vec2 uv = vec2((sRel + wind) / S + off, t / T + salt);
-  return texture(uDetail2, uv).b * 0.5 + 0.5;
-}
-float haloCloudCover(float sRel, float t, float moist, int octaves) {
-  float sum = 0.55 * haloCloudOct(sRel, t, uCloudS0.x, uCloudT0.x, uCloudOff0.x, 1.0, 0.0);
-  float norm = 0.55;
-  if (octaves > 1) { sum += 0.275 * haloCloudOct(sRel, t, uCloudS0.y, uCloudT0.y, uCloudOff0.y, 1.35, 0.37); norm += 0.275; }
-  if (octaves > 2) { sum += 0.1375 * haloCloudOct(sRel, t, uCloudS0.z, uCloudT0.z, uCloudOff0.z, 1.7, 0.74); norm += 0.1375; }
-  if (octaves > 3) { sum += 0.06875 * haloCloudOct(sRel, t, uCloudS0.w, uCloudT0.w, uCloudOff0.w, 2.05, 1.11); norm += 0.06875; }
-  float c = sum / norm;
-  float cover = mix(0.62, 0.44, clamp(moist, 0.0, 1.0)) - uCloudParams.w;
-  // nad dokami przejasnienie (hala i zatoki przechodza przez warstwe chmur)
-  float clear = haloPortPad(sRel + uRefBasis.w, t, uFloorDims.x, 1400.0, 1400.0);
-  return smoothstep(cover, cover + 0.16, c) * (1.0 - clear);
 }
 `;

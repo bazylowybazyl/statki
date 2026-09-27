@@ -40,17 +40,17 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 |---|---|---|---|---|---|---|---|
 | 01 | Fundament: `WebGPURenderer` w Core3D, zamienniki, adapter uniformów, harness na WebGPU | — | nie | max | zrobione, scalone (159dd42) | fca136a, b9c95d2, be4ea80 | gra na WebGPU; magenta = nieprzeniesione; harness `--uuid osobne` + nowa baza (dziennik) |
 | 02 | Post 1/2: bloom, pełny „uber”, pre-pass halo, MSAA, kalibracja tolerancji | 01 | 06 | max | zrobione, scalone (eb9370b) | a72b8fa, 777f86b, 77eef2b | `tolerancjaPortu` >8/255 ≤ 0,05%, średnia ≤ 0,03; `BloomNode` ×3 (zgodność z `UnrealBloomPass`); bloom ~1 ms CPU → 23 |
-| 03 | Post 2/2: maska słońca, SDF kadłubów, refrakcja, fala uderzeniowa | 02 | 06 | max | w toku (podagent, worktree `statki-wt/03`; podmienia też zastępnik maski z 04) | | biblioteki dla 04–20 |
+| 03 | Post 2/2: maska słońca, SDF kadłubów, refrakcja, fala uderzeniowa | 02 | 06 | max | zrobione, scalone (f487d2f) | 5adc702, 65d92a2 | maska = baza WebGL w grze (`maska-slonca.mjs`: maks. 5/255 na 2 pikselach); zastępnik z 04 podmieniony; SDF: wgrywanie jednej warstwy zamiast 4 MB |
 | 04 | Kadłuby (belki + heksy), lakier, impostory, szczątki | 03 | 05–14, 16, 19 | max | zrobione, scalone (f7c3c77, poprawka 9841cbf); maska słońca = zastępnik `// AGENT: po 03` w `hexShips3D.tsl.js` (podmienia 03) | 3adcc5c, 7599a42 | graf na wariant (spawn 30 NPC 14 ms zamiast 389); haki `hullDamageSurface/Heat`, `hullEffectLights` (18), `hullVolume` (21) |
-| 05 | Planety, słońce, mgławica, gwiazdy, stacje | 03 | 04, 06–10, 12–20 | xhigh | czeka | | |
+| 05 | Planety, słońce, mgławica, gwiazdy, stacje | 03 | 04, 06–10, 12–20 | xhigh | w toku (podagent, worktree `statki-wt/05`; maska = zastępnik do 03, tolerancja `planeta-cien` po 03) | | |
 | 06 | Ring 1/5: biblioteka TSL, pieczenie map, odczyt asynchroniczny, `halo_ring_demo` | 01 | 02–05, 12–20 | max | zrobione, scalone (070a407) | b7ecdc9…88d8df5 | kończy przejściową regresję terenu ringu z 01 |
 | 07 | Ring 2/5: teren + zestaw przemysłowy | 06 | 04, 05, 12–20 | xhigh | zrobione, scalone (f735076) | 7b43733…96baa16 | |
-| 08 | Ring 3/5: struktura + atmosfera | 07 | j.w. | xhigh | w toku (podagent, worktree `statki-wt/08`) | | |
-| 09 | Ring 4/5: megastruktura + miasto (kopuły, landmarki, drzewa) | 08 | j.w. | xhigh | czeka | | |
+| 08 | Ring 3/5: struktura + atmosfera | 07 | j.w. | xhigh | zrobione, scalone (979ed52) | 2c87915…fa8389b (scalenie `main` 60c7e4c) | nowe sceny bazy `ring-dach`, `ring-dach-z01`, `ring-habitat` (dopisane z tagu) |
+| 09 | Ring 4/5: megastruktura + miasto (kopuły, landmarki, drzewa) | 08 | j.w. | xhigh | w toku (podagent, worktree `statki-wt/09`) | | |
 | 10 | Ring 5/5: K-7 + ringi-archetypy Marsa i Jowisza | 09 | j.w. | xhigh | czeka | | ring bez zamienników |
 | 11 | Tło menu + rozgrzewka pipeline'ów | 05, 10 | 12–20 | max | czeka | | nowy `menuBackdrop.test` |
 | 12 | Infrastruktura efektów GPU: compute w klatce, siatka świateł, zniekształcenia, Fx3D w TSL | 03 | 04–11, 13–16 | max | 12-A zrobione i scalone (moduły `src/3d/fx/`); 12-B (wpięcie w Core3D, Fx3D w TSL) w toku (podagent, worktree `statki-wt/12b`, równolegle z 03 — zmiany `core3d.js` zwarte, scala `main` po 03) | 0f3d429…37953a6 | podstawa pod 17–19 (i przyszłe asteroidy) |
-| 13 | Silniki: MAIN, WARP (plazma), SIDE | 03 | 04–12, 14–20 | xhigh | w toku (podagent, worktree `statki-wt/13`; bloom po 02, iskry Fx3D po 12-B) | | |
+| 13 | Silniki: MAIN, WARP (plazma), SIDE | 03 | 04–12, 14–20 | xhigh | zrobione, scalone (bd96586) | e844a7a, c85042f, 3ff03a4 (scalenia `main` 23ed7d5, 49e7fdf) | graf plazmy na pulę (0 budów przy skoku); iskry MAIN = Fx3D (sprawdzić po 12-B: `silniki.mjs --post` z Fx3D) |
 | 14 | Tarcze i trafienia w tarczę | 03 | 04–13, 15–20 | xhigh | zrobione, scalone (7703490) | 9b8dad0, 9b95df5, e566f74, 02d6f02 | graf na wariant + wartości per obiekt; trafienia w `uniformArray` pakowanej w `onObjectUpdate` |
 | 15 | Mostki, rdzenie, reaktory, światła (+ `mostki-demo`, `rdzen-demo`) | 04 | 05–14, 16–20 | xhigh | w toku (podagent, worktree `statki-wt/15`; maska w `bridge3D` = zastępnik do 03) | | |
 | 16 | Zniszczenie stacji (+ scena bazy `stacja-rozpad`) | 03 | 04–15, 17–19 | xhigh | czeka | | |
@@ -71,7 +71,8 @@ Stan zamierzony na `main` w trakcie portu — nie „naprawiać” poza zadaniem
 | Od | Do | Co | Kończy |
 |---|---|---|---|
 | 01 | 24 | Nieprzeniesione `ShaderMaterial` rysują się magentą (`spis.zamienniki` w harnessie) | zadania 02–22 |
-| 01 | 03 | Maska słońca wyłączona (`uSunShadowOn = 0`): bez cienia słońca na materiałach, smug tła i SDF kadłubów; fala uderzeniowa bez passa refrakcji; kadłuby z 04 liczą pełne słońce (zastępnik `// AGENT: po 03` w `hexShips3D.tsl.js`) | 03 |
+| 01 | 03 | Maska słońca wyłączona (`uSunShadowOn = 0`): bez cienia słońca na materiałach, smug tła i SDF kadłubów; fala uderzeniowa bez passa refrakcji; kadłuby z 04 liczą pełne słońce (zastępnik `// AGENT: po 03` w `hexShips3D.tsl.js`) | 03 — ZAMKNIĘTE (f487d2f) |
+| 03 | 24 | `src/3d/sunShadowMaskGLSL.js` — napis GLSL maski dla nieprzeniesionych `ShaderMaterial` (planety 05, mostek 15, skały 21, Z4/Z5/Z7) | ostatni odbiorca; plik usuwa 24 |
 | 02 | 23 | Bloom = 12 osobnych `renderer.render()` (~0,9–1,0 ms CPU na render, GPU ~0,085 ms przy 1080p); znaczniki czasu ~15 µs CPU na pass | 23 |
 | 01 | 11 | Rozgrzewka tylko „nie rzuca”: pipeline'y kompilują się asynchronicznie przy pierwszym użyciu, osłona `backend.draw` pomija rysunek do gotowości (obiekt pojawia się 1–2 klatki później) | 11 (moduły przez `Core3D.prewarmPass`) |
 | 01 | 06 | Brak synchronicznego odczytu → mapa CPU ringu pusta (`heightAtUV` = 0): płyta ringu koliduje bez rzeźby terenu, LOD terenu bez wysokości, landmarki i kopuły stawiane bez mapy (stała wysokość z `haloRingLandmarks.js`) | 06 — ZAMKNIĘTE (070a407): teren w koliderze po `ring.ready`, sprawdzone w grze |
@@ -388,3 +389,58 @@ Todo (2): „PORT poprawka 1 / 3 (TODO integracji)” w `tests/shipCore.test.mjs
   zamienników. Narzędzie A/B tarcz w grze: `scripts/webgpu/tarcze-gra.mjs` (wymuszone trafienia 4 klas). Inwentarz z
   HEAD 7703490: port 36 plików z GLSL, 55 materiałów, 6743 linie. Testy: 1469 / 7 porażek bazowych / 3 todo; `npm test`
   OK. Wyniki: `.tmp/webgpu/zadania/14`, `14-po02`.
+- **Zadanie 13 scalone do `main`** (e844a7a, c85042f, 3ff03a4; scalenia `main` 23ed7d5, 49e7fdf; scalenie bd96586): MAIN
+  (`mainExhaust3D`), WARP (`warpPlume3D`: raymarch, poświaty, cząstki) i SIDE (`engineExhaustBatch`: płomień + 3
+  poświaty) w TSL, −607 linii GLSL / −7 materiałów; `Engineeffects.js` bez martwego `getEngineVFX` (własny
+  `WebGLRenderer`) — zostają tekstury. Plazma: jeden graf na rodzaj (`Loop(44)`, 3 oktawy jako stałe grafu), instancja
+  puli = lekkie materiały na wspólnych węzłach (`onObjectUpdate`); cząstki = kwady na instancjach (punkty WebGPU mają
+  1 px); pętla marszu za flagą (`discard` w WGSL nie kończy wykonania); mieszanie (ONE, ONE) przez
+  `src/3d/tsl/mieszanie.js` (NodeMaterial z `premultipliedAlpha` mnoży wyjście przez alfę). Płomień SIDE miał 12 buforów
+  wierzchołków (limit 8) — błąd pipeline'u i utracony bufor poleceń passa ortho, niewidoczny w harnessie (padł przed
+  pierwszą sceną; harness zbiera błędy per scena — do poprawy w 23: błędy startu sesji). Weryfikacja
+  (`scripts/webgpu/silniki.mjs`, same dysze vs tag): bufor HDR >8/255 ≤ 0,0014% (gracz 0%), energia RGB i piksele > 0,9
+  równe; z postem 02 w tolerancji (warp 0,0007%, śr. 0,0055; bitwa 0,0004%; gracz 0%); gorące powietrze dysz A/B
+  identyczne; SIDE w spoczynku 0 px > 0,9 (reguła jasności). Pierwszy skok i flota 16 instancji: 0 budów
+  NodeBuilder/WGSL/pipeline'ów; najwolniejsze klatki to wgrywanie geometrii `hull:beam` 170 ms przy wejściu w skok (→ 23)
+  i linie Fx3D 28 ms (12-B); tag WebGL: 132 ms (nowy program). Rozgrzewka SIDE (`EngineExhaustBatch`) niedopisana — 4
+  pipeline'y w pierwszej klatce gry jak dawniej (→ 11). Zamienniki silników 0 (warp 49 → 13 po 02/04/13). Inwentarz z HEAD
+  bd96586: port 32 pliki z GLSL, 48 materiałów, 6136 linii. Testy: 1477 / 7 porażek bazowych / 3 todo; `npm test` OK.
+- **Zadanie 08 scalone do `main`** (2c87915, 9dbb513, 4d501b9, e00dd1b, 0ce79e1, fa8389b; scalenie `main` 60c7e4c;
+  scalenie 979ed52): konstrukcja ringu (`HaloStructure` = NodeMaterial z `makeHaloStructureNodes`: płyty, miasto na
+  ścianie, odcisk brył dachu z pozornymi cieniami, pasy świateł, światło analityczne, powietrze na ścianach; warianty
+  górna ściana FG i reszta bryły; wspólny wierzchołek pasów `haloStripVertexTSL`; reguły dachu jako czyste funkcje,
+  `haloRoofTSL(u)`) i atmosfera (`makeHaloCloudNodes`, `makeHaloShellNodes`) w TSL; usunięte GLSL obu modułów,
+  `HALO_GLSL_CLOUDCOVER`, `haloPaletteDefines` (`HALO_GLSL_SURFACE`/`INDKIT` zostają dla 09, `HALO_GLSL_STORM` tylko
+  dla narzędzia parzystości). Zgodność: demo `--set mid` (22 kadry) konstrukcja + chmury + powłoka ≤ 0,15% >8/255 (tylko
+  krawędzie MSAA), Ultra ≤ 0,047%, noc ≤ 0,055%; gra: sceny ringu vs po 07/13 0%, `k7-hala` 0,0081%; nowe sceny (baza z
+  tagu dopisana `baza.mjs --dopisz`): `ring-dach__ring-fg` 0,019%, `ring-dach-z01__ring-fg` 0,0015%,
+  `ring-habitat__ring` 0,039%. Parzystość GPU: reguły dachu 0 rozbieżnych decyzji (4096 komórek / działek, 8192 klasy),
+  hasze z wejść całkowitych 100%, hasz okien 99,4% (FMA tylko na składowej y — najbliżej bazy), kreski tarasów 99,2%.
+  Kompilacja na zimno 1,1–1,7 s na wariant konstrukcji (WebGL 2,9 s; → rozgrzewka 11). Znalezione: `discard` w Tint nie
+  przerywa shadera — znikająca górna ściana i puste chmury liczą pełne cieniowanie (→ 23: pomijać rysunek, osłonić
+  chmury); teren w wariancie „do planety” z bliska 1,43% (`in_p1`, obszar 07). Narzędzia: `zrzuty.mjs --czesci-ringu`
+  (warianty `__ring`, `__ring-tlo`, `__ring-fg`), sesja `ziemia-ring`, `halo-ring-shots.mjs --czesci`. Zamienniki:
+  ring-z02 / ring-z1 44 → 40, k7-hala 41 → 37. Inwentarz z HEAD 979ed52: port 30 plików z GLSL, 45 materiałów, 5417 linii.
+  Testy: 1486 / 7 porażek bazowych / 3 todo; `npm test` OK.
+- **Zadanie 03 scalone do `main`** (5adc702, 65d92a2; scalenie f487d2f — konflikt w notatkach `inwentarz.mjs`): pass maski
+  słońca w TSL (`QuadMesh` + NodeMaterial, graf raz w `init()`: dyski, SDF kadłubów, pole przesłaniające, ringi tylko w
+  kanale G, szum ±0,5/255 z pikselem jak `gl_FragCoord`), `uSunShadowOn = 0` zdjęte, kubełek `shafts`; biblioteka
+  `sunShadowMask.js` w TSL (`sunVisibility`, `sunFill`, `sunShadeUnlit`, `sunShaftBackdrop`, `sunShadowSample`,
+  `fieldDarkness` po `screenUV`, wspólne węzły uniformów); `applySunShadowToBuiltinMaterial` z tą samą sygnaturą — hak
+  w polach materiału (`setupLightingModel` gasi człon bezpośredni, `outputNode` kładzie smugę), bez `onBeforeCompile`;
+  SDF kadłubów `hullSdfShadow` 1:1 z lustrem CPU; maska kadłubów z 04 podmieniona (w grafie wariantu); fala uderzeniowa w
+  TSL (graf na menedżera); miejsce na pass zgięcia tła warpa w `render()` po passie tła (przepis dla 22). −303 linie
+  GLSL; napis GLSL maski dla nieprzeniesionych w `sunShadowMaskGLSL.js` (regresja „03 → 24”). Three r183 w WebGPU
+  ignoruje `layerUpdates` — pieczenie SDF wgrywało całą tablicę 4 MB (2,3–3,1 ms CPU) → `Core3D.uploadTextureLayer`
+  (0,03–0,05 ms). **Weryfikacja:** `scripts/webgpu/maska-slonca.mjs` czyta cel maski w grze na tagu i na WebGPU —
+  ring-z02 0%, planeta-cien 0% (maks. 1), bitwa (SDF) 2 piksele (maks. 5/255), pole syntetyczne 0,0001%; harness:
+  `k7-hala__ortho` 3,31% → 0,0023% (w tolerancji), `kalibracja__ortho` 0,027%, `wraki__ortho` 0,061% (krawędzie i
+  dither odłamków, tuż nad progiem), sceny bez kadłubów w cieniu bez zmian (0%), 0 błędów walidacji. Fala
+  (`scripts/webgpu/fala-uderzeniowa.mjs`, tag ↔ WebGPU): 0,21–1,6% >8/255 (szum `sin` i krawędzie MSAA, obraz ten sam).
+  Cel refrakcji = format / MSAA / głębia `composerTarget` (HalfFloat, ~16 MB przy 1080p przy pierwszej fali; odczyt
+  obcięty do [0, 1] jak dawny RGBA8) — snapshot korzysta z rozgrzewki `prewarmPass`, pierwsza fala = 1 budowa (sama
+  fala). Zostawione 1:1 z tagu (do rozstrzygnięcia w 19): snapshot bierze środkową połowę kadru (tło w fali ×2) i fala
+  ma cyjanowy obrys (kłóci się z „bez świecących okręgów”). Materiał fali nierozgrzany (→ 11). Koszt passa maski: +1 draw
+  call, ~0,1 ms GPU (→ 23). Inwentarz z HEAD f487d2f: port 27 plików z GLSL, 44 materiały, 5149 linii, `onBeforeCompile`
+  0. Testy: 1495 / 7 porażek bazowych / 3 todo; `npm test` OK. Po scaleniu: 05, 15 i 12-B scalają `main` i podmieniają
+  zastępniki maski.

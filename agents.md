@@ -65,7 +65,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   Core3D osłania `backend.draw` (`_guardPendingPipelines`: taki rysunek czeka klatkę, dwie). `renderer.info`: draw calle
   w `render.drawCalls` (reset raz na klatkę rAF). Zegar GPU: znaczniki czasu (`trackTimestamp`), jedno zapytanie w
   locie → `Core3D.gpuFrameMs`; mapa `timestamps` puli three nie jest czyszczona przez three — Core3D czyści ją po wyniku.
-- **Pułapki TSL z zadania 04** (reszta — w notce „TSL — pułapki sprawdzone w zadaniach 06–07” niżej): **najwyżej 8
+- **Pułapki TSL z zadania 04** (reszta — w notce „TSL — pułapki sprawdzone w zadaniach 02, 06–08” niżej): **najwyżej 8
   buforów wierzchołków na pipeline** (`maxVertexBuffers` = 8 także w adapterze RTX 5080) — każdy nieprzeplatany atrybut
   to bufor, InstancedMesh dokłada macierz instancji (+ normalne); stałe atrybuty przeplataj, a materiał liczący pozycję
   sam (`vertexNode`) na InstancedMesh nadpisuje `setupPosition` (wzór `HullDebrisNodeMaterial`). three połyka błąd
@@ -75,6 +75,14 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   (textureSample / textureLoad) TSL wybiera z tekstury obecnej przy BUDOWIE — tekstury zastępcze z filtrem liniowym,
   osobny obiekt na każde wiązanie (TextureNode skleja wiązania po uuid tekstury). `InstancedMesh` wnosi swój uuid do
   klucza — każdy egzemplarz to osobny NodeBuilder (dla instancji per encja: jeden wspólny InstancedMesh).
+- **Pułapki z zadania 13 (efekty addytywne):** `NodeMaterial` z `premultipliedAlpha: true` MNOŻY wyjście przez alfę
+  (`setupOutput` → `premultiplyAlpha`), a `ShaderMaterial` w WebGL zmieniał tylko czynniki mieszania (ONE, ONE) — efekt
+  piszący `vec4(rgb, max(rgb))` ściemniałby; czynniki jawnie: `blendAddytywnePremul` (`src/3d/tsl/mieszanie.js`).
+  `AdditiveBlending` bez premultiplied ma te same czynniki w WebGL r183 i WebGPU. `discard` w WGSL (Tint na D3D12:
+  „demote to helper”) NIE kończy wykonania — ciężka pętla po `discard` (raymarch) liczy się dalej; pętlę za flagą (wzór
+  plume w `warpPlume3D.js`). Punkty (`gl_PointSize`) → kwady na instancjach, rozmiar w px przez `viewportSize`.
+  `zrzuty.mjs` zbiera błędy per scena — błąd pipeline'u z pierwszej klatki gry (przed pierwszą sceną) nie trafia do
+  `bledy`; `scripts/webgpu/silniki.mjs` wypisuje „start gry”.
 - **Post (zadanie 02, `src/3d/tsl/postGry.js`):** kolejność jak dawny łańcuch resolve → bloom → uber. Bloom =
   `BloomGry` (BloomNode three, ten sam algorytm co dawny pass WebGL; BloomNode r183 nie ma ×3 kompozytu —
   `BLOOM_ZGODNOSC_WEBGL = 3`, alfa = max(rgb) bloomu jak przy dawnym blendzie; liczony raz na RENDER, bo podzielony ekran to
@@ -84,9 +92,17 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   bez przebudowy. Strojenie bloomu = uniformy węzła (`_applyBloomPassConfig` co klatkę, tuner `?dev`). Kubełek `bloom`
   mierzą haki BloomGry (jego passy lecą w środku renderu postu), `post` = sam uber. Znaczniki czasu GPU: brama na granicy
   klatki (`_gpuTimerGate`) — pula three (2048 zapytań) nie przepełnia się przy wolnym wyniku.
-- **Przejściowo (do swoich zadań):** maska słońca / SDF / refrakcja (03, do tego czasu `uSunShadowOn = 0`). Gorące
-  powietrze w podzielonym ekranie ma tylko widok gracza 1 (źródła w UV kamery gracza 1; na WebGL widok 1 miał je
-  przesunięte, widok 2 — żadnych).
+- **Maska słońca, SDF kadłubów, refrakcja (zadanie 03):** pass maski = `QuadMesh` + NodeMaterial (`createShadowShaftsPass`
+  w `core3d.js`, marsz po SDF — `hullSdfShadow` w `hullShadowSdf.js`); materiały czytają maskę funkcjami TSL z
+  `sunShadowMask.js` po **`screenUV`** (rozmiar AKTUALNEGO celu — snapshot refrakcji w połowie rozdzielczości trafia sam,
+  bez teksela). Cele pomocnicze, do których rysują materiały SCENY (halo, snapshot refrakcji), mają format / typ / MSAA /
+  głębię `composerTarget`: three buduje materiały (NodeBuilder) i pipeline'y per KONTEKST renderu, a kontekst to stan
+  załączników celu — inny format = budowa wszystkiego w kadrze na zimno przy pierwszym użyciu. Tablice warstw
+  (`DataArrayTexture`): three r183 w WebGPU ignoruje `layerUpdates` i na `needsUpdate` wgrywa całą tablicę (SDF
+  kadłubów 4 MB, ~3 ms CPU) — jedna warstwa przez `Core3D.uploadTextureLayer` (hak `HullShadowSdf.layerUploader`).
+  Parzystość maski z bazą WebGL w grze: `scripts/webgpu/maska-slonca.mjs --root <worktree tagu>`; fala uderzeniowa A/B:
+  `scripts/webgpu/fala-uderzeniowa.mjs`. Gorące powietrze w podzielonym ekranie ma tylko widok gracza 1 (źródła w UV
+  kamery gracza 1; na WebGL widok 1 miał je przesunięte, widok 2 — żadnych).
 - **Nowe efekty broni i rakiet z dem** (`dema/bronie-webgpu`, `dema/rakiety-webgpu` — decyzja użytkownika 2026-09-27)
   zastępują stare (zadania 12, 17–20); wspólne klocki w `src/3d/fx/`. Starych efektów broni, rakiet, iskier i trafień nie
   przenosimy 1:1 ani nie poprawiamy — idą do wymiany. Rozgrywka zostaje w grze: dema dostają tylko zdarzenia (strzał,
@@ -100,7 +116,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   tryb bierze się z bazy, patrz nagłówek `zrzuty.mjs`); haki `?dev`: `window.DevScene.teleport / syncCamera /
   preloadHullSprites / startSplit`. Testy: `node --test "tests/*.test.mjs"` (wzorzec w cudzysłowie — `tests/` na Node 22
   nie działa).
-- **TSL — pułapki sprawdzone w zadaniach 02, 06–07:** (1) funkcja z `setLayout` musi być CZYSTA — three buforuje jej kod globalnie
+- **TSL — pułapki sprawdzone w zadaniach 02, 06–08:** (1) funkcja z `setLayout` musi być CZYSTA — three buforuje jej kod globalnie
   (klasa buildera → węzeł `Fn`), więc uniform / tekstura złapane w domknięciu wskazują w drugim materiale cudzy slot;
   uniformy jako parametry funkcji albo funkcja wklejana (bez layoutu) — wzór `HaloFn` / `haloRingTSL(u)` w
   `src/3d/haloRing/haloRingTSL.js`; (2) najwyżej **12 buforów uniformów na etap** (`maxUniformBuffersPerShaderStage`,
@@ -122,7 +138,12 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   niecałkowite), 1 ULP zmienia hasz; dla całkowitego `a` i stałej `b` → `haloFusedMulAddInt(a, b, c)` (`haloRingTSL.js`,
   bit w bit z WebGL); sprawdzanie: wiersze haszy w `scripts/webgpu/ring-tsl-parzystosc.mjs`; (11) `PassTextureNode` (np.
   `bloom.getTextureNode()`) gubi `uvNode` w `clone()` — odczyt z UV i poziomem przez `texture(węzeł, uv, poziom)`, nie
-  `.sample(uv).level(0)` (drugi klon wraca do domyślnego UV; zadanie 02, `postGry.js`).
+  `.sample(uv).level(0)` (drugi klon wraca do domyślnego UV; zadanie 02, `postGry.js`); (12) baza NIE zawsze scala
+  `a·b + c`, a decyzja zależy nawet od kodu obok (zadanie 08): w `vec2(x, y) + s·k` składnik x ma dwa zaokrąglenia, y jedno,
+  `s / 23 + l · 0,37` — dwa; wariant wybieraj POMIAREM (wiersz parzystości GLSL ↔ TSL z dokładnym wyrażeniem to wskazówka,
+  rozstrzyga porównanie zrzutów z bazą), nie z góry przez `haloFusedMulAddInt`; (13) ShaderMaterial w bazie miał
+  `forceSinglePass = true` — przenosząc przezroczysty `DoubleSide` na NodeMaterial, ustaw `forceSinglePass: true` (inaczej
+  three rysuje tył i przód osobno).
 
 ---
 
@@ -162,7 +183,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 - Trzy RÓŻNE ringi (decyzja użytkownika 2026-09-27): Ziemia = silnik Halo (`createHaloRing`), Mars = ECUMENE, Jowisz = ring Fable — z dem `orbital_ring_demo(_2).html` w skali ×3 (`createArchRing`, `src/3d/haloRing/arch/`). Archetyp i geometria są w profilu (`haloRingProfiles.js`), a `createHaloRingLayout` rozdaje je kolizjom, ruchowi v2 i stacji-portowi. Hala K-7 i zatoki (stanowiska, kolizje) są wspólne, różni je tylko ubiór. Zmiana ringu Ziemi nie dotyka Marsa i Jowisza, i odwrotnie. Opis: `docs/PORT-halo-ring.md` § „Ringi-archetypy”.
 - Ring nie udaje życia (`docs/BRIEF-ring-halo.md` §1): bez ruchu zastępczego, zaparkowanych NPC i świateł aut — statki tylko z systemu ruchu.
 - Ring na WebGPU (zadanie 06): biblioteka TSL `src/3d/haloRing/haloRingTSL.js` (odpowiednik `haloRingGLSL.js`, który
-  zostaje tylko dla materiałów struktury, atmosfery, miasta, K-7 i archetypów do ich zadań 08–10), uniformy ringu
+  zostaje tylko dla materiałów megastruktury, miasta, K-7 i archetypów do ich zadań 09–10), uniformy ringu
   w jednym bloku (`createHaloUniforms`, klucze i `.value` bez zmian), mapy świata i detal pieczone w TSL. **Budowa ringu
   jest asynchroniczna:** `createHaloRing` wraca od razu (układ i uniformy gotowe), bryły i mapa CPU dopiero po
   `await ring.ready` (compileAsync bake'u na prawdziwych celach → bake → odczyt CPU → plan budowli i kopuł z mapy →
@@ -176,8 +197,20 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   `haloRingSurfaceTSL(u, su)`). Jedyny wariant kompilacji to kroki powietrza (`quality.airSteps`), reszta jakości w
   uniformach. Zestaw przemysłowy: `haloIndKitTSL(u)` (`haloRingIndustryKit.js`), liczby z jednej definicji `kitParts` —
   na liczbach = bliźniak JS `indKitPart` bit w bit (`tests/haloRingTerrainTSL.test.mjs`), na GPU zero rozbieżnych decyzji
-  (parzystość). `HALO_GLSL_SURFACE`/`CLOUDCOVER` są w `haloRingGLSL.js` do 08–09, `HALO_GLSL_INDKIT` dla miasta do 09.
+  (parzystość). `HALO_GLSL_SURFACE` jest w `haloRingGLSL.js` do 09 (`CLOUDCOVER` usunięte w 08), `HALO_GLSL_INDKIT` dla miasta do 09.
   Zrzuty samego terenu dema: `scripts/halo-ring-shots.mjs --teren [--bez-otoczenia]` (ten sam skrypt w worktree z tagu).
+- Konstrukcja i atmosfera w TSL (zadanie 08): `HaloStructure` = NodeMaterial z `makeHaloStructureNodes`
+  (`haloRingStructure.js`, 1:1 z dawnym GLSL); wierzchołek pasów obrotowych `haloStripVertexTSL` dzielą konstrukcja, chmury
+  i powłoka. Warianty: górna ściana w FG (`haloFgClip` — zanik i wycięcia z `uFgFade` / `uCutA` / `uCutB`, które
+  `ring.update` / `setCutaway` ustawiają z kamery TEJ klatki; przerzedzenie IGN z `haloFragCoordGL`) albo reszta bryły.
+  Reguły komórek dachu to CZYSTE funkcje WGSL (`haloRoofIndCell`, `haloRoofPlot`, `haloRoofIndShadow`… — reguły profilu
+  planety parametrami), klasa sektora z tablicy `uSectorClass` wklejana (`haloRoofTSL(u)`); zgodność z planem brył na
+  CPU (`industrialCellRule` / `plotRule`): na GPU 0 rozbieżnych decyzji (`scripts/webgpu/ring-tsl-parzystosc.mjs`), w Node
+  sole i progi (`tests/haloRingStructureTSL.test.mjs`). Chmury (`makeHaloCloudNodes`) i powłoka (`makeHaloShellNodes`):
+  stan renderu jak dawny ShaderMaterial — chmury przezroczyste DoubleSide z `forceSinglePass: true`, powłoka BackSide
+  z mieszaniem kolor + cel · alfa; warianty z jakości (kroki powietrza, oktawy chmur). Zrzuty części ringu: dema
+  `scripts/halo-ring-shots.mjs --czesci terrain,structure,structureTop,clouds,shell`, gry `zrzuty.mjs --czesci-ringu`
+  (sceny `ring-dach`, `ring-dach-z01`, `ring-habitat` — dach w FG i habitat z dala od portu).
 
 ### Menu główne i jego tło 3D
 - Tło menu przed startem gry = Ziemia z ringiem w kamerze kinowej: `MenuBackdrop3D` (`src/3d/menuBackdrop3D.js`). Ring to ring GRY wypożyczony przez `haloRings.showcaseRing('earth')` (mapy pieką się już w menu) i oddany `releaseShowcase` w `stopMenuBackdrop()` tuż przed pierwszą klatką gry (`startGame`). Nie twórz drugiego ringu dla menu.
@@ -214,6 +247,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 
 ### Silniki: MAIN, WARP, SIDE
 - `src/3d/engineVfxSystem.js` rozdziela dysze: MAIN → `mainExhaust3D.js` (struga + iskry z `Fx3D.spark`, jedna pula na flotę), WARP → `warpPlume3D.js` (plazma z tych samych dysz MAIN na czas ładowania/skoku, pula z limitem `WARP_PLUME_CAP`, nadmiar dostaje strugę MAIN z dopalaczem), SIDE → stary `engineExhaustBatch.js`.
+- Wszystkie trzy w TSL (zadanie 13, obraz 1:1 z WebGL — `scripts/webgpu/silniki.mjs`). Plazma WARP: JEDEN graf na rodzaj (plume w wariancie jakości — kroki marszu i oktawy to stałe grafu, poświata, cząstki), instancja puli ma własne materiały na tych węzłach, a jej wartości w `material.uniforms.X.value` czyta `uniform().onObjectUpdate` — nowa instancja nie buduje shadera (nie wracaj do `new ShaderMaterial` / nowych węzłów na instancję). Cząstki = kwady na instancjach (WebGPU rysuje punkty 1 px). SIDE: dane instancji w jednym buforze z przeplotem (limit 8 buforów wierzchołków). Mieszanie efektów „premultiplied” (alfa = max(rgb)) przez `blendAddytywnePremul` (`src/3d/tsl/mieszanie.js`).
 - Rozmiar i palety MAIN/WARP są PER STATEK: blok `engineFx` w danych edytora (`hpEditor.v1` → `ships[id]`), domyślne dopasowane do sprite'ów w `src/data/engineFx.js` (`ENGINE_FX_DEFAULTS`). Dysza w pikselach PNG, w grze × hpScale × spriteScale (jak markery). Gra czyta `visual.engineFx` (runtime NPC, układ gracza); nowy kadłub z dyszami MAIN potrzebuje wpisu w `ENGINE_FX_DEFAULTS` (pilnuje test).
 - Tryb skoku encji: gracz z `GameState.warp`, NPC `state === 'warping_in'` / `phase === 'warping'`, podgląd edytora `__warpPreview`. Dopalacz MAIN: `GameState.boost`.
 - Jasność dysz SIDE: `ENGINE_HDR` w `engineExhaustBatch.js` (0,6). W bloomie ma świecić tylko dysza, która odpala (mnożnik 1 + 1,5 · ciąg); biały „pilot” w spoczynku (= `ENGINE_HDR`) i sam lot (`moveGlow`) zostają pod progiem 0,9 — przy 2,4 każda z 8 dysz Atlasa świeciła jak lampa, a manewr zalewał burtę białą plamą (pilnuje `tests/renderBugfixGuards.test.mjs`). MAIN zostaje 1:1 z dema (świadomie). Audyt: `docs/AUDYT-bloom-kolizje-2026-09-26.md`.
@@ -268,8 +302,8 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
    - Passy planet (warstwa 3), halo (5), ring-planet (6) i tarcz (7) są pomijane, gdy nikt nie zgłosi na nich widocznej zawartości (`Core3D.layerActivity`). Dodając obiekt na te warstwy, zgłaszaj go co klatkę (`Core3D.markPlanetLayersActive` / `Core3D.setShieldLayerActive`) — inaczej zniknie.
    - Mapa cienia słońca: w WebGPU odświeżanie jest per światło (`renderer.shadowMap` ma tylko `enabled` / `type`). Słońce gry zgłasza się `Core3D.setSunShadowLight(light)`, a `render()` raz na klatkę, na starcie, ustawia `light.shadow.autoUpdate = false; needsUpdate = true` — ShadowNode i tak aktualizuje najwyżej raz na klatkę rAF (kamera cienia z `layers.enableAll()` widzi rzucających na wszystkich warstwach). Nowe światło z cieniem zgłaszaj tak samo.
    - Warp poza portem (decyzja użytkownika 2026-09-27): soczewka skoku, zgięcie tła, widok skoku (kropla / bańka), gwiazdy na warstwie 8 i fale w „uber” są usunięte z Core3D. API (`setWarpLensWorld`, `clearWarpLens`, `setWarpViewWorld`, `clearWarpView`, `pushWarpSpaceWorld`, `pushWarpWaveWorld`, `setWarpStarsObject`, `suppressShadowShafts`) zostaje jako no-op; nowy warp wejdzie od razu w TSL w miejscu opisanym w `render()` (pass zgięcia tła zaraz po passie tła, przed planetami). Nie próbkuj gotowej klatki 2D i nie wycinaj statku maską — tak powstało kiedyś „jajko” wokół kadłuba. Warstwa 8 wolna (dla nowego warpa), warstwa 9 to tło menu (`MENU_BACKDROP_LAYER`, rysuje ją tylko `Core3D.renderBackdrop`).
-   - Cienie słońca (shadow shafts) to MASKA widoczności, nie filtr obrazu (port: pass maski w TSL w zadaniu 03 — do tego czasu wyłączona, `uSunShadowOn = 0`): `Core3D._renderSunShadowMask` liczy ją raz na klatkę przed pre-passem halo (`sunShadowTarget`, `src/3d/sunShadowMask.js`; R = cień powierzchni, G = smuga tła z ringami). Nowy materiał oświetlany słońcem w płaszczyźnie gry dostaje `sunShadowUniforms` + `SUN_SHADOW_GLSL` i mnoży przez `sunVisibility()` człon słońca, a otoczenie przez `sunFill()` (w pełnym cieniu `SUN_SHADOW_FILL` = 0,4); światła, żar i glow zostają; tło — `sunShaftBackdrop`; wbudowane materiały three — `applySunShadowToBuiltinMaterial`. Emitery (broń, dysze, błyski, światła pozycyjne, tarcze) i ring „Halo” (własny model słońca) maski NIE czytają. Nie przywracaj quada mnożącego gotowy obraz — gasił broń z warstwy 0 pod progiem bloomu i kładł drugi cień na ring.
-   - Cień kadłubów w passie shadow shafts = pole odległości sylwetki (`src/3d/hullShadowSdf.js`: warstwa tablicy tekstur na kształt, pieczenie z budżetem w `updateHexShips3D`). Okluder statku zgłaszaj przez `Core3D.pushShaftHullSdf` z danymi z `packHullShaftOccluder` (to samo przekształcenie co mesh kadłuba). Zmieniając `HULL_SDF_SHADOW_GLSL`, zmień też lustro `traceHullShadowCpu` — na nim stoją testy.
+   - Cienie słońca (shadow shafts) to MASKA widoczności, nie filtr obrazu: `Core3D._renderSunShadowMask` liczy ją raz na klatkę (pass TSL — `createShadowShaftsPass`, jeden quad) przed pre-passem halo (`sunShadowTarget`, `src/3d/sunShadowMask.js`; R = cień powierzchni, G = smuga tła z ringami, B = mrok pola). Nowy materiał (TSL) oświetlany słońcem w płaszczyźnie gry importuje z `sunShadowMask.js` funkcje i mnoży przez `sunVisibility()` człon słońca, a otoczenie przez `sunFill(vis)` (w pełnym cieniu `SUN_SHADOW_FILL` = 0,4); światła, żar i glow zostają; bez modelu światła — `sunShadeUnlit(color)`; tło — `sunShaftBackdrop(color)`; wbudowane materiały three — `applySunShadowToBuiltinMaterial` (hak w polach materiału: `setupLightingModel` gasi `direct()` modelu klasy, `outputNode` kładzie smugę — NodeLibrary kopiuje pola na materiał węzłowy). Funkcje czytają maskę po `screenUV` (tylko w węzłach fragmentów) na wspólnych węzłach `sunShadowUniforms` (`.value` jak dawniej; uniformy w grupie renderu). `SUN_SHADOW_GLSL` zostaje TYLKO dla nieprzeniesionych ShaderMaterial (`sunShadowMaskGLSL.js`, na WebGPU i tak zamienniki). Emitery (broń, dysze, błyski, światła pozycyjne, tarcze) i ring „Halo” (własny model słońca) maski NIE czytają. Nie przywracaj quada mnożącego gotowy obraz — gasił broń z warstwy 0 pod progiem bloomu i kładł drugi cień na ring.
+   - Cień kadłubów w passie shadow shafts = pole odległości sylwetki (`src/3d/hullShadowSdf.js`: warstwa tablicy tekstur na kształt, pieczenie z budżetem w `updateHexShips3D`, wgranie jednej warstwy przez `Core3D.uploadTextureLayer`). Okluder statku zgłaszaj przez `Core3D.pushShaftHullSdf` z danymi z `packHullShaftOccluder` (to samo przekształcenie co mesh kadłuba). Zmieniając `hullSdfShadow` (TSL), zmień też lustro `traceHullShadowCpu` — na nim stoją testy; maskę w grze porównuje z bazą WebGL `scripts/webgpu/maska-slonca.mjs`.
 
 2. **Moduły 3D (`world3d.js`, `stations3D.js`, `hexShips3D.js`)**
    - Używaj `Core3D.scene` i `Core3D.camera`.

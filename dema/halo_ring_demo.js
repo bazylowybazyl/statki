@@ -1296,14 +1296,16 @@ $('loading').textContent = 'Budowa ringu (kompilacja i pieczenie map)…';
 const ringOk = await ring.ready;
 window.__halo.buildMs = performance.now() - tBuild;
 if (!ringOk) reportError(`Budowa ringu nie wyszła: ${ring.error?.message || ring.error}`);
-// Czas kompilacji materiału terenu (zadanie 07): compileAsync samej siatki terenu
+// Czas kompilacji materiałów ringu (zadania 07–08): compileAsync samej siatki
 // (budowa węzłów TSL → WGSL, moduł i pipeline) na celu sceny posta (format i MSAA
-// jak w klatce), przed pierwszą klatką — na zimno. Przy okazji rozgrzewa pipeline.
-async function measureTerrainCompile() {
-  const mesh = ring.group.getObjectByName('HaloTerrain');
+// jak w klatce), przed pierwszą klatką — na zimno, po kolei: teren, konstrukcja
+// (reszta i górna ściana FG), chmury, powłoka powietrza. Przy okazji rozgrzewa pipeline'y.
+const COMPILE_MEASURED = ['HaloTerrain', 'HaloStructure', 'HaloStructure_topWall', 'HaloClouds', 'HaloAirShell'];
+async function measureCompile(name) {
+  const mesh = ring.group.getObjectByName(name);
   if (!mesh || typeof renderer.compileAsync !== 'function') return null;
   const cam = new THREE.PerspectiveCamera();
-  cam.layers.mask = mesh.layers.mask;      // warstwy terenu (BG) — compileAsync pomija obiekty spoza warstw kamery
+  cam.layers.mask = mesh.layers.mask;      // warstwy siatki (BG / FG) — compileAsync pomija obiekty spoza warstw kamery
   const prev = renderer.getRenderTarget();
   const t0 = performance.now();
   let pending;
@@ -1316,7 +1318,13 @@ async function measureTerrainCompile() {
   await pending;
   return performance.now() - t0;
 }
-window.__halo.terrainCompileMs = ringOk ? await measureTerrainCompile().catch((err) => { reportError(`Kompilacja terenu: ${err?.message || err}`); return null; }) : null;
+window.__halo.compileMs = {};
+if (ringOk) {
+  for (const name of COMPILE_MEASURED) {
+    window.__halo.compileMs[name] = await measureCompile(name).catch((err) => { reportError(`Kompilacja ${name}: ${err?.message || err}`); return null; });
+  }
+}
+window.__halo.terrainCompileMs = window.__halo.compileMs.HaloTerrain ?? null;
 ensureK7Flight();
 const startPreset = Math.max(1, Math.min(presetList().length, Number(params.get('preset')) || 8));
 applyPreset(startPreset - 1);

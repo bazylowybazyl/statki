@@ -1,6 +1,6 @@
 // src/3d/sunShadowMask.js
 //
-// Maska widoczności słońca (shadow shafts).
+// Maska widoczności słońca (shadow shafts) — biblioteka TSL (port WebGPU, zadanie 03).
 //
 // Core3D liczy ją raz na klatkę, ZANIM narysuje jakikolwiek pass sceny:
 // analityczne okludery (tarcze planet i księżyców, pola odległości kadłubów,
@@ -14,18 +14,37 @@
 //    (sunShaftBackdrop);
 //  - emitery (pociski, wiązki, dysze, błyski, światła pozycyjne, tarcze)
 //    i ring „Halo” (własny model słońca: zaćmienie z czerwonym brzegiem
-//    + cień ścian, haloRingGLSL.js) maski NIE czytają.
+//    + cień ścian) maski NIE czytają.
 // Wcześniej pass mnożył GOTOWY obraz przez (0,06; 0,10; 0,16) po narysowaniu
 // warstwy 0: gasił pod progiem bloomu broń i dysze (które na niej siedzą),
 // kładł na ring drugi, sprzeczny cień i nie dało się rozświetlić cienia.
 //
 // Kanały maski: R = cień powierzchni (tarcze + kadłuby), G = smuga tła
-// (R + ringi). Okrąg ringu to ściana 2D ze słońcem w płaszczyźnie — dla
-// statków przeczyłby modelowi ringu (słońce 49°), więc zostaje tylko w tle.
-// Odczyt po gl_FragCoord: maska ma rozmiar bufora sceny, a uSunShadowTexel
-// = 1 / rozmiar AKTUALNEGO celu (Core3D przestawia go na czas snapshotu
-// refrakcji, który ma połowę rozdzielczości).
-import * as THREE from 'three';
+// (R + ringi), B = mrok gęstego pola asteroid. Okrąg ringu to ściana 2D ze
+// słońcem w płaszczyźnie — dla statków przeczyłby modelowi ringu (słońce 49°),
+// więc zostaje tylko w tle.
+//
+// Odczyt po screenUV (fragCoord / rozmiar AKTUALNEGO celu renderu — three bierze go
+// z celu przy każdym render()), więc snapshot refrakcji w połowie rozdzielczości trafia
+// w ten sam punkt maski bez przestawiania uniformu (dawny uSunShadowTexel). W WebGPU
+// wiersz 0 celu to GÓRA ekranu i pass maski (core3d.js) pisze go tak samo: piksel
+// materiału i teksel maski leżą 1:1 (maska ma rozmiar bufora sceny).
+//
+// Funkcje TSL (sunVisibility(), sunFill(vis), sunShadeUnlit(color), sunShaftBackdrop(color),
+// sunShadowSample(), fieldDarkness()) — tylko w węzłach FRAGMENTÓW (fragCoord). Każde
+// wywołanie buduje własne węzły próbki na WSPÓLNYCH węzłach uniformów i tekstury: materiały
+// dzielą wiązania (Core3D ustawia `.value` raz na klatkę), a grafy wariantów (kadłuby: graf
+// na wariant) mają maskę w swoim kodzie raz — nie per obiekt. Bez setLayout: funkcja
+// z uniformem w domknięciu byłaby w three r183 buforowana globalnie (PLAN §3).
+//
+// GLSL maski dla jeszcze nieprzeniesionych ShaderMaterial: sunShadowMaskGLSL.js
+// (re-eksport SUN_SHADOW_GLSL niżej) — na WebGPU to i tak zamienniki.
+import {
+  DataTexture, LinearFilter, NoColorSpace, RGBAFormat, UnsignedByteType, Vector2
+} from 'three/webgpu';
+import { float, mix, output, renderGroup, screenUV, select, texture, uniform, vec2, vec3, vec4 } from 'three/tsl';
+
+export { SUN_SHADOW_GLSL } from './sunShadowMaskGLSL.js';
 
 // Barwa smugi na tle — ta sama, którą pass mnożył dawniej cały obraz.
 export const SUN_SHAFT_BACKDROP_TINT = Object.freeze([0.06, 0.10, 0.16]);
@@ -42,15 +61,38 @@ export const SUN_SHADOW_FILL = 0.4;
 // kadłub widać tylko w jego własnych światłach i reflektorach.
 export const FIELD_FILL_CUT = 0.92;
 
-// Wspólne obiekty uniformów: materiały dostają TE SAME referencje (spread albo
-// attachSunShadowUniforms), więc Core3D ustawia je raz na klatkę dla wszystkich.
-// Nie klonować takich materiałów: UniformsUtils.clone zeruje teksturę celu.
+// Maska zastępcza (1×1, zero = pełne słońce), dopóki Core3D nie narysuje pierwszej maski.
+// Filtr liniowy i RGBA8 jak cel maski: TSL wybiera ścieżkę próbkowania (textureSampleLevel
+// z próbnikiem filtrującym) z tekstury obecnej przy BUDOWIE materiału.
+function makePlaceholderMask() {
+  const t = new DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1, RGBAFormat, UnsignedByteType);
+  t.name = 'sunShadowMask:zastepcza';
+  t.magFilter = LinearFilter;
+  t.minFilter = LinearFilter;
+  t.generateMipmaps = false;
+  t.colorSpace = NoColorSpace;
+  t.needsUpdate = true;
+  return t;
+}
+export const SUN_SHADOW_MAP_PLACEHOLDER = makePlaceholderMask();
+
+// Wartość wspólna: grupa renderu — jeden zapis na render() dla wszystkich materiałów
+// (w buforze grupy, który kadłuby i tak mają — HULL_SHARED), nie w buforze każdego obiektu.
+const shared = (value, type) => uniform(value, type).setGroup(renderGroup);
+
+// Wspólne węzły uniformów (to samo API `.value` co dawne obiekty `{ value }`): materiały TSL
+// czytają je przez funkcje niżej, a nieprzeniesione ShaderMaterial wkładają te same obiekty
+// do swoich `uniforms` (attachSunShadowUniforms / spread) — Core3D ustawia je raz na klatkę.
+// Tekstura: węzeł bazowy z uv-atrapą (bez niej każdy odczyt mnożyłby uv przez macierz
+// tekstury — osobny uniform mat3 na obiekt, PLAN §3); odczyty to klony z własnym uv.
+// Nie klonować materiałów z tymi obiektami (UniformsUtils.clone zeruje teksturę celu).
 export const sunShadowUniforms = Object.freeze({
-  uSunShadowMap: { value: null },
-  uSunShadowTexel: { value: new THREE.Vector2(1, 1) },
-  uSunShadowOn: { value: 0 },
-  uSunShadowFill: { value: SUN_SHADOW_FILL },
-  uFieldFillCut: { value: FIELD_FILL_CUT }
+  uSunShadowMap: texture(SUN_SHADOW_MAP_PLACEHOLDER, vec2(0.5)),
+  // Tylko dla GLSL nieprzeniesionych modułów (gl_FragCoord · teksel) — TSL czyta po screenUV.
+  uSunShadowTexel: shared(new Vector2(1, 1)),
+  uSunShadowOn: shared(0),
+  uSunShadowFill: shared(SUN_SHADOW_FILL),
+  uFieldFillCut: shared(FIELD_FILL_CUT)
 });
 
 export function attachSunShadowUniforms(uniforms) {
@@ -63,69 +105,103 @@ export function attachSunShadowUniforms(uniforms) {
   return uniforms;
 }
 
-function glslNum(value) {
-  const s = Number(value).toPrecision(6);
-  return /[.eE]/.test(s) ? s : `${s}.0`;
+// Teksel maski pod pikselem fragmentu. Poziom 0 jawnie (textureSampleLevel): odczyty leżą
+// też w gałęziach zależnych od piksela (po Discard, w pętlach świateł), a maska nie ma
+// mipmap — wynik jak dawny odczyt GLSL z poziomem 0.
+function maskTexel() {
+  return texture(sunShadowUniforms.uSunShadowMap, screenUV, float(0));
 }
 
-const TINT = SUN_SHAFT_BACKDROP_TINT.map(glslNum).join(', ');
+const maskOff = () => sunShadowUniforms.uSunShadowOn.lessThan(0.5);
 
-// Tylko do shaderów FRAGMENTÓW (gl_FragCoord).
-export const SUN_SHADOW_GLSL = `
-uniform sampler2D uSunShadowMap;
-uniform vec2 uSunShadowTexel;
-uniform float uSunShadowOn;
-uniform float uSunShadowFill;
-uniform float uFieldFillCut;
-// x = cień powierzchni, y = smuga tła; 0 = pełne słońce.
-vec2 sunShadowSample() {
-  if (uSunShadowOn < 0.5) return vec2(0.0);
-  return textureLod(uSunShadowMap, gl_FragCoord.xy * uSunShadowTexel, 0.0).rg;
+/** vec2: x = cień powierzchni, y = smuga tła; 0 = pełne słońce (maska wyłączona → 0). */
+export function sunShadowSample() {
+  return select(maskOff(), vec2(0.0), maskTexel().rg);
 }
-// Mrok gęstego pola asteroid (0 = poza polem, 1 = rdzeń bez słońca).
-float fieldDarkness() {
-  if (uSunShadowOn < 0.5) return 0.0;
-  return textureLod(uSunShadowMap, gl_FragCoord.xy * uSunShadowTexel, 0.0).b;
-}
-// 1 = pełne słońce, 0 = umbra planety. Mnoży człon słońca (rozproszone,
-// połysk, odblask) — światła, żar i glow nigdy.
-float sunVisibility() {
-  return 1.0 - sunShadowSample().x;
-}
-// Mnożnik światła otoczenia przy widoczności vis (część otoczenia to słońce).
-// W mroku gęstego pola otoczenie gaśnie prawie całkiem (uFieldFillCut).
-float sunFill(float vis) {
-  return mix(uSunShadowFill, 1.0, vis) * (1.0 - fieldDarkness() * uFieldFillCut);
-}
-// Powierzchnia bez modelu światła (impostor, sprite billboard).
-vec3 sunShadeUnlit(vec3 color) {
-  return color * sunFill(sunVisibility());
-}
-// Tło: długa smuga cienia.
-vec3 sunShaftBackdrop(vec3 color) {
-  return color * mix(vec3(1.0), vec3(${TINT}), sunShadowSample().y);
-}
-`;
 
-// Wbudowane materiały three (MeshBasic/MeshStandard): wstrzyknięcie przez
-// onBeforeCompile. mode 'backdrop' = smuga na kolorze wyjściowym, 'direct' =
-// maska na świetle bezpośrednim (otoczenie zostaje).
+/** float: mrok gęstego pola asteroid (0 = poza polem, 1 = rdzeń bez słońca). */
+export function fieldDarkness() {
+  return select(maskOff(), float(0.0), maskTexel().b);
+}
+
+/** float: 1 = pełne słońce, 0 = umbra planety. Mnoży człon słońca (rozproszone, połysk,
+ *  odblask) — światła, żar i glow nigdy. */
+export function sunVisibility() {
+  return float(1.0).sub(sunShadowSample().x);
+}
+
+/** float: mnożnik światła otoczenia przy widoczności `vis` (część otoczenia to słońce);
+ *  w mroku gęstego pola otoczenie gaśnie prawie całkiem (uFieldFillCut). */
+export function sunFill(vis) {
+  const U = sunShadowUniforms;
+  return mix(U.uSunShadowFill, float(1.0), vis).mul(float(1.0).sub(fieldDarkness().mul(U.uFieldFillCut)));
+}
+
+/** vec3: powierzchnia bez modelu światła (impostor, sprite billboard). */
+export function sunShadeUnlit(color) {
+  return vec3(color).mul(sunFill(sunVisibility()));
+}
+
+/** vec3: tło — długa smuga cienia. */
+export function sunShaftBackdrop(color) {
+  return vec3(color).mul(mix(vec3(1.0), vec3(...SUN_SHAFT_BACKDROP_TINT), sunShadowSample().y));
+}
+
+// ── Wbudowane materiały three ────────────────────────────────────────────────
+// WebGPURenderer zamienia MeshStandardMaterial / MeshBasicMaterial / PointsMaterial … na
+// materiał węzłowy tej samej klasy przy budowie (NodeLibrary.fromMaterial) i KOPIUJE mu
+// wszystkie wyliczalne pola — więc hak zapisany w polu materiału przechodzi na jego
+// odpowiednik węzłowy (materiał węzłowy dostaje go wprost):
+//  - 'direct': setupLightingModel = model oświetlenia KLASY (Physical dla Standard, Phong,
+//    Lambert…) z direct() mnożącym barwę światła przez sunVisibility() — rozproszone i
+//    połysk każdego światła bezpośredniego gasną w cieniu, otoczenie (indirect) zostaje;
+//    dawniej to samo robił mnożnik reflectedLight.directDiffuse / directSpecular po
+//    lights_fragment_end (onBeforeCompile, WebGL);
+//  - 'backdrop': outputNode = smuga cienia na kolorze wyjściowym (`output`), jak dawny
+//    mnożnik gl_FragColor po opaque_fragment.
+// Klucz programu: klucz klasy + rodzaj haka — materiał z maską i bez niej to dwa programy.
+function sunMaskedDirect(model) {
+  const direct = model.direct;
+  model.direct = function sunShadowDirect(input, builder) {
+    input.lightColor = input.lightColor.mul(sunVisibility());
+    return direct.call(this, input, builder);
+  };
+  return model;
+}
+
+// `this` = materiał węzłowy (kopia z biblioteki albo materiał węzłowy wprost); model klasy
+// z jej prototypu (własne pole to ten hak — bez rekurencji).
+function setupSunShadowLightingModel(builder) {
+  const model = Object.getPrototypeOf(this).setupLightingModel.call(this, builder);
+  return (model && typeof model.direct === 'function') ? sunMaskedDirect(model) : model;
+}
+
+function sunShadowDirectCacheKey() {
+  return `${Object.getPrototypeOf(this).customProgramCacheKey.call(this)}|sunShadow:direct`;
+}
+
+function sunShadowBackdropCacheKey() {
+  return `${Object.getPrototypeOf(this).customProgramCacheKey.call(this)}|sunShadow:backdrop`;
+}
+
+let _backdropOutput = null;
+function backdropOutputNode() {
+  if (!_backdropOutput) _backdropOutput = vec4(sunShaftBackdrop(output.rgb), output.a);
+  return _backdropOutput;
+}
+
+// mode 'backdrop' = smuga na kolorze wyjściowym, 'direct' = maska na świetle bezpośrednim
+// (otoczenie zostaje). Materiał wraca ten sam (hak w jego polach) — sygnatura bez zmian.
 export function applySunShadowToBuiltinMaterial(material, mode = 'direct') {
   if (!material) return material;
   const kind = mode === 'backdrop' ? 'backdrop' : 'direct';
-  material.onBeforeCompile = (shader) => {
-    attachSunShadowUniforms(shader.uniforms);
-    let frag = SUN_SHADOW_GLSL + shader.fragmentShader;
-    if (kind === 'backdrop') {
-      frag = frag.replace('#include <opaque_fragment>',
-        '#include <opaque_fragment>\n\tgl_FragColor.rgb = sunShaftBackdrop(gl_FragColor.rgb);');
-    } else {
-      frag = frag.replace('#include <lights_fragment_end>',
-        '#include <lights_fragment_end>\n\t{ float sunVisD = sunVisibility(); reflectedLight.directDiffuse *= sunVisD; reflectedLight.directSpecular *= sunVisD; }');
-    }
-    shader.fragmentShader = frag;
-  };
-  material.customProgramCacheKey = () => `sunShadow:${kind}`;
+  if (kind === 'backdrop') {
+    material.outputNode = backdropOutputNode();
+    material.customProgramCacheKey = sunShadowBackdropCacheKey;
+  } else {
+    material.setupLightingModel = setupSunShadowLightingModel;
+    material.customProgramCacheKey = sunShadowDirectCacheKey;
+  }
   material.needsUpdate = true;
   return material;
 }

@@ -52,11 +52,9 @@ export const HALO_STRUCTURE_PALETTE_KEYS = Object.freeze([
   'hull', 'roof', 'wall', 'facadeA', 'facadeB', 'windowGlass', 'deck', 'greenA', 'greenB',
   'envSkyHorizon', 'envSkyZenith', 'envGround', 'planetLit', 'roofTint'
 ]);
-// Nazwy palety w GLSL: #define TP_GRASS_LUSH uTerPal[0] … (stałe indeksy,
-// kolejność = klucze palety; ta sama tablica wartości wypełnia uniform).
-export function haloPaletteDefines(prefix, uniformName, keys) {
-  return keys.map((k, i) => `#define ${prefix}_${k.replace(/[A-Z]/g, (c) => '_' + c).toUpperCase()} ${uniformName}[${i}]`).join('\n');
-}
+// Palety terenu i konstrukcji czytają materiały TSL po kluczu: element(i) tablicy
+// uTerPal / uStructPal (stałe indeksy, kolejność = klucze palety; ta sama tablica
+// wartości wypełnia uniform — applyProfileUniforms w haloRingUniforms.js).
 // Paleta megastruktury, miasta i megabudowli: indeks = kod palety materiału
 // (HALO_MAT w haloRingRoofPlan.js, IND_MAT w haloRingIndustryKit.js).
 // 29 = panel radiatora (Jowisz), 30 = dach-ogród z góry, 31 = dachówka z góry.

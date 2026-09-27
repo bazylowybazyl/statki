@@ -376,13 +376,13 @@ test('punkt skoku: przed dziobem wzdłuż kursu, jedzie z okrętem', async () =>
 
 // Port WebGPU (zadanie 01, warp poza portem): widok skoku nie ma passa, więc
 // Core3D.suppressShadowShafts jest no-opem — gra bez widoku skoku nie wygasza
-// smug. Wzmocnienie maski (uShaftGain) zostaje w źródle shadera maski dla nowego
-// warpa (port maski do TSL: zadanie 03).
+// smug. Wzmocnienie maski (uShaftGain) zostaje w passie maski dla nowego warpa
+// (pass maski w TSL od zadania 03).
 test('Core3D: wygaszanie shaftów przez widok skoku — no-op na czas portu, wzmocnienie maski zostaje', async () => {
   const src = readFileSync(new URL('../src/3d/core3d.js', import.meta.url), 'utf8');
   // Oba kanały maski cieni (powierzchnia i tło) gasną z uShaftGain.
-  assert.match(src, /float surfaceOut = clamp\(surfaceShadow, 0\.0, 1\.0\) \* uShaftGain;/);
-  assert.match(src, /float backdropOut = clamp\(shadow, 0\.0, 1\.0\) \* uShaftGain;/);
+  assert.match(src, /const surfaceOut = clamp\(surfaceShadow, 0\.0, 1\.0\)\.mul\(uShaftGain\)\.toVar\(\);/);
+  assert.match(src, /const backdropOut = clamp\(shadow, 0\.0, 1\.0\)\.mul\(uShaftGain\)\.toVar\(\);/);
   assert.match(src, /suppressShadowShafts\(amount = 1\) \{ \},/);
   assert.doesNotMatch(src, /_shaftsSuppressed/);
   const { Core3D } = await import('../src/3d/core3d.js');

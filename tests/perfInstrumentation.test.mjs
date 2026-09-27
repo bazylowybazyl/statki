@@ -7,7 +7,9 @@ import { readFileSync } from 'node:fs';
 const indexHtml = `${readFileSync(new URL('../index.html', import.meta.url), 'utf8')}\n${readFileSync(new URL('../src/ui/perfHud.js', import.meta.url), 'utf8')}`;
 const core3dJs = readFileSync(new URL('../src/3d/core3d.js', import.meta.url), 'utf8');
 const hexShips3dJs = readFileSync(new URL('../src/3d/hexShips3D.js', import.meta.url), 'utf8');
-const engineEffectsJs = readFileSync(new URL('../Engineeffects.js', import.meta.url), 'utf8');
+// Światła dysz (PointLight na pulę najmocniejszych dysz) żyją w batchu dysz —
+// dawny Engineeffects.js po porcie WebGPU (zadanie 13) ma już tylko tekstury.
+const engineEffectsJs = readFileSync(new URL('../src/3d/engineExhaustBatch.js', import.meta.url), 'utf8');
 
 const requiredPhysicsCounters = [
   'preAiTime',
