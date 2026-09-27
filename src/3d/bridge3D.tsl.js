@@ -42,15 +42,13 @@ import {
   vec4, renderGroup
 } from 'three/tsl';
 import { heatRamp } from './hexShips3D.tsl.js';
-
 // ── Maska słońca ─────────────────────────────────────────────────────────────
-// AGENT: po 03 — funkcje maski słońca z sunShadowMask.js (TSL: sunVisibility,
-// sunFill) zamiast pełnego słońca. Do tego czasu maska wyłączona jak w grze po
-// zadaniu 01 (uSunShadowOn = 0): pełne słońce, bez przygaszenia otoczenia.
-// Model mnoży przez sunVisibility() człon słońca (rozproszone, połysk, własny
-// cień), otoczenie przez sunFill(); cień modelu na kadłubie gaśnie bez słońca.
-const sunVisibility = () => float(1.0);
-const sunFill = (/* vis */) => float(1.0);
+// Funkcje TSL z sunShadowMask.js (zadanie 03): próbka maski Core3D po screenUV na
+// wspólnych węzłach uniformów i tekstury — tylko we fragmentach. Model mnoży przez
+// sunVisibility() człon słońca (rozproszone, połysk, własny cień), otoczenie przez
+// sunFill(); cień modelu na kadłubie gaśnie bez słońca (AO zostaje). Okna, lampy
+// i listwy (emitery) maski nie czytają.
+import { sunFill, sunVisibility } from './sunShadowMask.js';
 
 // ── Układ danych ─────────────────────────────────────────────────────────────
 
