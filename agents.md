@@ -166,7 +166,8 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   z tymi samymi węzłami; wartości per ciało w `material.uniforms` (obiekty `{ value }` — kontrakt
   `window.EARTH.uniforms.*Texture.value` / `cloudUniforms` dla tła menu i devTools bez zmian), tekstury per ciało przez
   `PlanetObjectTextureNode`. Mgławica (`uniforms.map.value` pożycza tło menu) i gwiazdy — węzły za adapterem uniformów.
-  Maska słońca w JEDNYM miejscu modułu (do scalenia 03 zastępnik `// AGENT: po 03`: pełne słońce, tło bez smugi).
+  Maska słońca: JEDEN import z `sunShadowMask.js` (TSL, zadanie 03) — `sunVisibility()` na ciałach przy ringu
+  (`uSunShadowRecv = 1`; planety tła w perspektywie jej nie czytają), `sunShaftBackdrop()` na mgławicy i gwiazdach.
 - Gwiazdy (`StarSystem`): WebGPU rysuje punkty zawsze po 1 px, więc to `Mesh` z `InstancedBufferGeometry` (kwadrat ×
   26 000, dane gwiazd w JEDNYM przeplecionym buforze instancji — limit 8 buforów wierzchołków) i kwadrat punktu z GL
   (bok gl_PointSize obcięty do ≥ 1 px, gl_PointCoord z rogów, t w dół). Nie wracaj do `THREE.Points` z rozmiarem.

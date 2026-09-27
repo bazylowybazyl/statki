@@ -41,14 +41,12 @@ import {
   select, smoothstep, sqrt, step, distance, dFdx, dFdy
 } from 'three/tsl';
 import { uniformNode } from './tsl/uniformy.js';
-
 // ── Maska słońca: JEDNO miejsce dla planet, chmur, poświat, mgławicy i gwiazd ──
-// AGENT: po 03 — sunVisibility / sunShaftBackdrop z sunShadowMask.js (TSL). Do tego czasu maska
-// wyłączona jak w grze po zadaniu 01 (uSunShadowOn = 0): pełne słońce, tło bez smugi cienia.
-// Planety tła (perspektywa, z = −50 000) maski nie czytają (uSunShadowRecv = 0), ciała przy ringu
-// (pass ortho) — tak; mgławica i gwiazdy dostają smugę tła.
-const sunVisibility = () => float(1.0);
-const sunShaftBackdrop = (color) => color;
+// Biblioteka TSL maski (zadanie 03, sunShadowMask.js): odczyt po screenUV, wspólne węzły uniformów
+// w grupie renderu. Planety tła (perspektywa, z = −50 000) maski nie czytają (uSunShadowRecv = 0 —
+// maska liczona w płaszczyźnie gry trafiałaby w nie obok), ciała przy ringu (pass ortho) — tak;
+// mgławica i gwiazdy dostają długą smugę tła.
+import { sunShaftBackdrop, sunVisibility } from './sunShadowMask.js';
 
 export const STAR_PLANET_MASK_CAP = 12;
 
