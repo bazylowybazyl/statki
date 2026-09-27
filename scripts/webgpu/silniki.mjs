@@ -7,6 +7,9 @@
 //
 //   node scripts/webgpu/silniki.mjs [--out katalog] [--port 5345] [--baza katalog] [--sceny a,b] [--uuid osobne]
 //   node scripts/webgpu/silniki.mjs --skok [gracz,flota] [--out katalog]   (pierwszy skok: klatki i budowy programów)
+//   --post      bloom + gorące powietrze włączone (porównuj __strona.png — pełny post na samych dyszach)
+//   --kadluby   w passach zostają też kadłuby (materiał z uSprite)
+//   --bez-haze  (z --post) bloom bez gorącego powietrza — A/B wpływu źródeł dysz
 //
 // Baza: ten sam skrypt w worktree z tagu webgl-baseline (skopiuj scripts/webgpu/ z main):
 //   node scripts/webgpu/silniki.mjs --out <…>/.tmp/webgpu/zadania/13/silniki-webgl --port 5346
@@ -25,6 +28,9 @@ const outDir = resolve(repo, args.out || '.tmp/webgpu/silniki');
 const seed = Number(args.seed || 0x5eed1234);
 const onlyScenes = args.sceny ? new Set(args.sceny.split(',')) : null;
 const uuidMode = args.uuid || 'osobne';
+// --post: bloom i gorące powietrze włączone (zrzut strony = pełny post na samych dyszach),
+// --kadluby: w passach zostają też kadłuby (gorące powietrze widać na ich krawędziach).
+const isolateOpts = { post: !!args.post, kadluby: !!args.kadluby, bezHaze: !!args['bez-haze'] };
 const INJECT = readFileSync(join(repo, 'scripts/webgpu/harness-strona.js'), 'utf8');
 const DEEP = { x: 6210000, y: 5330000 };
 
@@ -43,23 +49,36 @@ const SILNIKI_STRONA = `(() => {
     if (e === 31) return f ? NaN : s * Infinity;
     return s * Math.pow(2, e - 15) * (1 + f / 1024);
   };
+  // Kadłuby (opcja „kadluby”): materiał z uniformem uSprite — ShaderMaterial na tagu, węzłowy po zadaniu 04.
+  const isHull = (o) => !!(o.material && o.material.uniforms && o.material.uniforms.uSprite);
+  let savedToggles = null;
   window.__silniki = {
-    // Tylko siatki silników w passach Core3D (reszta niewidoczna na czas render()).
-    isolate(on = true) {
+    // Tylko siatki silników (opcjonalnie + kadłuby) w passach Core3D (reszta niewidoczna na
+    // czas render()). Bez opcji „post” bloom, gorące powietrze i shafty wyłączone.
+    isolate(on = true, opts = {}) {
       const C = window.Core3D; const r = C && C.renderer;
       if (!r) return false;
       if (!r.__silnikiRender) r.__silnikiRender = r.render;
       const orig = r.__silnikiRender;
-      if (!on) { r.render = orig; delete r.__silnikiRender; return true; }
+      if (!on) {
+        r.render = orig; delete r.__silnikiRender;
+        if (savedToggles) { try { C.setPerfToggles(savedToggles); } catch (e) { /* */ } savedToggles = null; }
+        return true;
+      }
+      const keep = (o) => isEngine(o) || (opts.kadluby && isHull(o));
       r.render = function (sceneArg, cam, ...rest) {
         if (sceneArg !== C.scene) return orig.call(this, sceneArg, cam, ...rest);
         const hidden = [];
         sceneArg.traverse((o) => {
-          if ((o.isMesh || o.isPoints || o.isLine || o.isSprite) && o.visible && !isEngine(o)) { o.visible = false; hidden.push(o); }
+          if ((o.isMesh || o.isPoints || o.isLine || o.isSprite) && o.visible && !keep(o)) { o.visible = false; hidden.push(o); }
         });
         try { return orig.call(this, sceneArg, cam, ...rest); } finally { for (const o of hidden) o.visible = true; }
       };
-      try { C.setPerfToggles && C.setPerfToggles({ bloom: false, heatHaze: false, shadowShafts: false }); } catch (e) { /* */ }
+      if ((!opts.post || opts.bezHaze) && C.setPerfToggles) {
+        const t = C.perfToggles || {};
+        savedToggles = { bloom: t.bloom !== false, heatHaze: t.heatHaze !== false, shadowShafts: t.shadowShafts !== false };
+        try { C.setPerfToggles(opts.post ? { heatHaze: false } : { bloom: false, heatHaze: false, shadowShafts: false }); } catch (e) { /* */ }
+      }
       return true;
     },
     // Bufor sceny (HDR) → ACES gry + sRGB (jak post bez bloomu), PNG; statystyki.
@@ -332,7 +351,7 @@ async function run() {
       }
       // sceny spoza --sceny idą (stan świata jak w pełnym przebiegu), bez zrzutu
       if (onlyScenes && !onlyScenes.has(id)) { console.log(`  ${id.padEnd(24)} (bez zrzutu)`); continue; }
-      await ev('window.__silniki.isolate(true)');
+      await ev(`window.__silniki.isolate(true, ${JSON.stringify(isolateOpts)})`);
       await ev('window.__harness.frames(3)');
       const cap = await ev('window.__silniki.capture()', 120000);
       writeFileSync(join(outDir, `${id}.png`), Buffer.from(cap.png, 'base64'));
@@ -348,7 +367,7 @@ async function run() {
     await chrome.close();
     await server.close();
   }
-  writeJson(join(outDir, 'wyniki.json'), { when: new Date().toISOString(), renderer: rendererKind, rozmiar: `${W}x${H}`, seed, losowanieUuid: uuidMode, bledyStartu: startErrors.slice(0, 40), sceny: rows });
+  writeJson(join(outDir, 'wyniki.json'), { when: new Date().toISOString(), renderer: rendererKind, izolacja: isolateOpts, rozmiar: `${W}x${H}`, seed, losowanieUuid: uuidMode, bledyStartu: startErrors.slice(0, 40), sceny: rows });
   if (args.baza) {
     const bazaDir = resolve(repo, args.baza);
     if (existsSync(bazaDir)) {
