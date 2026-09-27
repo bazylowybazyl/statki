@@ -7,22 +7,24 @@
 <!--
   Generator tła kosmosu (WebGPU, three.js r183 z CDN, bez plików gry).
 
-  Tło to nie obrazek, tylko MAPA ŚWIATA: warstwy leżą na różnych głębokościach pod
-  płaszczyzną gry, więc paralaksa wynika z perspektywy, a lecąc przez układ widzisz,
-  jak tło się zmienia. Regiony przechodzą płynnie (wagi z pozycji kamery w double):
-  przy Słońcu, międzyplanetarna, pas asteroid, burza w pasie, zewnętrzny układ, pas
-  Kuipera, przestrzeń międzygwiezdna, obłok międzygwiezdny, pustka.
+  Samo TŁO: tylko to, co bardzo daleko. Mgławica leży 0,7–4,5 mln j. pod płaszczyzną
+  gry, więc przy locie przesuwa się o ~2% ruchu kamery i prawie nie reaguje na zoom
+  (jak dzisiejsze nebula.png w grze). Pył, mgła i gazy W PŁASZCZYŹNIE GRY to osobna
+  warstwa: dema/gazy-webgpu.html.
+
+  Tło zmienia się dopiero na dużych dystansach, jak mapa świata: regiony przechodzą
+  płynnie (wagi z pozycji kamery w double) — przy Słońcu, międzyplanetarna, pas
+  asteroid, burza w pasie, zewnętrzny układ, pas Kuipera, przestrzeń międzygwiezdna,
+  obłok międzygwiezdny, pustka.
 
   Warstwy:
-    • pył lokalny (2,5 i 12 tys. j.) — strugi wzdłuż orbity przy kamerze, włókienka,
-      krawędź od strony Słońca, poświata i smugi przy Słońcu, błyski burzy;
-    • mgławica (5 warstw, 70–450 tys. j.) — podwójnie zawinięty przepływ (domain warping,
+    • mgławica (5 warstw) — podwójnie zawinięty przepływ (domain warping,
       zawirowania jak w płynie), włókna z grzbietowego szumu płynące wzdłuż niego,
       barwna obwódka brzegów, ciemny pył, jądra z gwiazdami, które je oświetlają,
       cieniowanie włókien z pochodnych ekranu od strony najjaśniejszej gwiazdy;
     • gwiazdy proceduralne (3 warstwy, barwa z temperatury, krzyże dyfrakcyjne, gromady
-      wokół jąder), pas galaktyki z pasmami pyłu, dalekie galaktyki, iskrzenie drobin —
-      gwiazdy gasną za pyłem z poczerwienieniem.
+      wokół jąder), pas galaktyki z pasmami pyłu, dalekie galaktyki — gwiazdy gasną
+      za pyłem z poczerwienieniem.
   Paleta „auto” zależy od regionu (pas — ognista, Kuiper — lodowa, obłok — magenta
   i cyjan, pustka — błękitna); można ją też wybrać ręcznie.
 
@@ -99,7 +101,6 @@
     <div class="row"><span>mgławica</span><input type="range" id="s-neb" min="0" max="3" step="0.05" value="1"><output id="o-neb"></output></div>
     <div class="row"><span>pokrycie</span><input type="range" id="s-cov" min="-0.6" max="0.6" step="0.02" value="0"><output id="o-cov"></output></div>
     <div class="row"><span>ciemny pył</span><input type="range" id="s-dust" min="0" max="3" step="0.05" value="1"><output id="o-dust"></output></div>
-    <div class="row"><span>pył lokalny</span><input type="range" id="s-near" min="0" max="3" step="0.05" value="1"><output id="o-near"></output></div>
     <div class="row"><span>gwiazdy</span><input type="range" id="s-stars" min="0" max="3" step="0.05" value="1"><output id="o-stars"></output></div>
     <div class="row"><span>nasycenie</span><input type="range" id="s-sat" min="0.5" max="2" step="0.05" value="1.3"><output id="o-sat"></output></div>
     <div class="row"><span>bloom</span><input type="range" id="s-bloom" min="0" max="2" step="0.05" value="0.7"><output id="o-bloom"></output></div>
@@ -155,11 +156,10 @@ const PLACES = [
   { id: 'void', name: 'Pustka', x: VOID.x, y: VOID.y }
 ];
 
-// Skale szumu (warstwa bliska / daleka); głębokości warstw niżej (NEAR_DEPTHS, FAR_DEPTHS).
-const NEAR_SCALE = 1 / 9000;
-const FAR_SCALE = 1 / 140000;
+// Skala szumu mgławicy; głębokości warstw niżej (FAR_DEPTHS). Wszystko ~10× głębiej
+// niż kamera gry kiedykolwiek wisi (≤ 60 tys. j.) — paralaksa i zoom tła to ~1–8%.
+const FAR_SCALE = 1 / 1400000;
 const MAX_ILL = 6;
-const MAX_FLASH = 4;
 
 // ---------------------------------------------------------------------------
 // Renderer
@@ -182,16 +182,10 @@ document.getElementById('backend').textContent = isWebGPU ? 'WebGPU' : 'WebGPU n
 // ---------------------------------------------------------------------------
 // Uniformy
 
-const uCamNear = uniform(new THREE.Vector2());   // pozycja kamery × NEAR_SCALE (liczona w double)
-const uCamFar = uniform(new THREE.Vector2());    // × FAR_SCALE
-const uCamSun = uniform(new THREE.Vector2());    // kamera − Słońce [j.]
+const uCamFar = uniform(new THREE.Vector2());    // pozycja kamery × FAR_SCALE (liczona w double)
 const uCamStar = uniform(new THREE.Vector2());   // minimalna paralaksa gwiazd
-const uCamGlint = uniform(new THREE.Vector4());  // dwie warstwy iskrzenia
 const uSeed = uniform(new THREE.Vector3());
 const uTime = uniform(0);
-const uNear = uniform(new THREE.Vector4());      // gęstość, jasność, strugi orbitalne, smugi słoneczne
-const uNearCol = uniform(new THREE.Vector3(0.8, 0.6, 0.4));
-const uSunGlow = uniform(0);
 const uFar = uniform(new THREE.Vector4());       // intensywność, ciemny pył, pokrycie, żywość
 const uPalA = uniform(new THREE.Vector3());
 const uPalB = uniform(new THREE.Vector3());
@@ -199,20 +193,13 @@ const uPalC = uniform(new THREE.Vector3());
 const uReflect = uniform(new THREE.Vector3(0.35, 0.5, 1.0));
 const uStars = uniform(new THREE.Vector4(1, 1, 1, 0)); // jasność, pas galaktyki, galaktyki, krzyże
 const uBand = uniform(new THREE.Vector4(1, 0, 0, 0.22)); // normalna xy, przesunięcie, szerokość
-const uGlint = uniform(new THREE.Vector4(0, 0, 0, 0));   // siła, rgb
 const uLayers = uniform(5);                        // liczba warstw mgławicy (jakość)
 const uShadeK = uniform(55);                      // siła cieniowania z pochodnych
-const uOrbit = uniform(new THREE.Vector4());      // promień, łuk (przeskalowane), kierunek radialny przy kamerze
-const uSunDir2 = uniform(new THREE.Vector2(1, 0)); // kierunek ku Słońcu na ekranie
 const illPosArr = Array.from({ length: MAX_ILL }, () => new THREE.Vector4());
 const illColArr = Array.from({ length: MAX_ILL }, () => new THREE.Vector4());
 const uIllPos = uniformArray(illPosArr, 'vec4');   // względem kamery xyz, promień wpływu
 const uIllCol = uniformArray(illColArr, 'vec4');
 const uIllCount = uniform(0, 'int');
-const flashArr = Array.from({ length: MAX_FLASH }, () => new THREE.Vector4());
-const uFlash = uniformArray(flashArr, 'vec4');     // względem kamery xyz, moc
-const uFlashCount = uniform(0, 'int');
-const uFlashCol = uniform(new THREE.Vector3(0.65, 0.35, 1.0));
 
 // Szum przeplotu (stały): rozmywa schodki bez migotania w czasie.
 const ign = Fn(() => fract(float(52.9829189).mul(fract(dot(screenCoordinate.xy, vec2(0.06711056, 0.00583715))))));
@@ -292,37 +279,7 @@ const nebLayer = Fn(([uv, illum, li, ld]) => {
   { name: 'uv', type: 'vec2' }, { name: 'illum', type: 'vec3' }, { name: 'li', type: 'float' }, { name: 'ld', type: 'vec2' }
 ] });
 
-// Warstwa pyłu lokalnego (region): przepływ, strugi wzdłuż orbity przy kamerze,
-// włókienka, krawędź od strony Słońca, poświata i smugi przy Słońcu.
-const nearLayer = Fn(([v, li, ps, fl]) => {
-  const sunR = length(ps).toVar();
-  const cs = ps.div(max(sunR, 1.0)).toVar();
-  const o = vec2(li.mul(13.7), li.mul(4.1));
-  const w = uCamNear.add(v.mul(NEAR_SCALE)).add(o).add(uSeed.xy.mul(1.7)).toVar();
-  const radial = dot(v, uOrbit.zw);
-  const tang = dot(v, vec2(uOrbit.w.negate(), uOrbit.z));
-  const ao = vec2(uOrbit.x.add(radial.mul(NEAR_SCALE * 1.8)), uOrbit.y.add(tang.mul(NEAR_SCALE * 0.3))).add(o).toVar();
-  const q = vec2(fbm(w, int(3)), fbm(w.add(vec2(5.2, 1.3)), int(3))).toVar();
-  const base = fbm(w.add(q.mul(2.5)), int(4)).mul(0.5).add(0.5);
-  const streams = fbm(ao.add(q.mul(0.8)), int(4)).mul(0.5).add(0.5);
-  const dn = mix(base, streams, uNear.z).toVar();
-  const den = smoothstep(0.45, 0.85, dn).mul(uNear.x).toVar();
-  const fib = float(1.0).sub(abs(gnoise(w.mul(6.0).add(q.mul(4.0))))).pow(8.0);
-  const g = vec2(dFdx(dn), dFdy(dn)).mul(uShadeK);
-  const nrm = normalize(vec3(g.negate(), 1.0));
-  const lit = saturate(dot(nrm, normalize(vec3(uSunDir2, 0.5)))).mul(0.8).add(0.3);
-  const rs = sunR.div(AU * 0.28);
-  const glow = uSunGlow.div(rs.mul(rs).add(1.0));
-  const strm = smoothstep(-0.2, 0.8, gnoise(vec2(dot(cs, vec2(0.6, 0.8)), dot(cs, vec2(-0.8, 0.6))).mul(9.0).add(sunR.mul(1 / 70000)))).mul(uNear.w).add(0.35);
-  const e = uNearCol.mul(den.mul(fib.mul(0.3).add(0.07)).mul(lit).mul(uNear.y).add(glow.mul(den.mul(0.35).add(0.05)).mul(strm)))
-    .add(fl.mul(den.add(0.04)));
-  return vec4(e, den.mul(0.5));
-}).setLayout({ name: 'nearLayer', type: 'vec4', inputs: [
-  { name: 'v', type: 'vec2' }, { name: 'li', type: 'float' }, { name: 'ps', type: 'vec2' }, { name: 'fl', type: 'vec3' }
-] });
-
-const NEAR_DEPTHS = [2500, 12000];
-const FAR_DEPTHS = [70000, 120000, 190000, 290000, 450000];
+const FAR_DEPTHS = [700000, 1200000, 1900000, 2900000, 4500000];
 const FAR_SCALES = [1.0, 0.82, 0.66, 0.54, 0.44];
 
 const skyNebula = Fn(() => {
@@ -336,21 +293,6 @@ const skyNebula = Fn(() => {
   const ip0 = uIllPos.element(0);
   const s0 = ip0.xy.sub(ro.xy).div(max(ro.z.sub(ip0.z), 1.0));
   const ld = normalize(s0.sub(s).add(vec2(0.0001, 0.0))).toVar();
-  // Pył lokalny
-  for (let li = 0; li < NEAR_DEPTHS.length; li++) {
-    const p = ro.add(rd.mul(ro.z.add(NEAR_DEPTHS[li]).mul(invDz))).toVar();
-    const ps = uCamSun.add(p.xy).toVar();
-    const fl = vec3(0).toVar();
-    Loop({ start: 0, end: uFlashCount, type: 'int', condition: '<', name: `fk${li}` }, ({ [`fk${li}`]: k }) => {
-      const f = uFlash.element(k);
-      const d = length(f.xyz.sub(p)).div(9000.0);
-      fl.addAssign(uFlashCol.mul(f.w.div(d.mul(d).add(1.0))));
-    });
-    const L = nearLayer(p.xy, float(li), ps, fl);
-    col.addAssign(L.rgb.mul(T).mul(0.7));
-    T.mulAssign(exp(L.a.mul(0.7).negate()));
-  }
-  // Mgławica daleka
   for (let li = 0; li < FAR_DEPTHS.length; li++) {
     If(float(li).lessThan(uLayers).and(T.greaterThan(0.01)), () => {
       const p = ro.add(rd.mul(ro.z.add(FAR_DEPTHS[li]).mul(invDz))).toVar();
@@ -474,23 +416,6 @@ const skyStars = Fn(() => {
     const e = x.mul(x).mul(900.0).add(y.mul(y).mul(mix(float(2500.0), float(9000.0), a2)));
     col.addAssign(vec3(0.9, 0.82, 0.7).mul(exp(e.negate()).mul(0.5).add(exp(e.mul(8.0).negate()).mul(1.4))).mul(0.25));
   });
-  // Iskrzenie drobin (pas asteroid, pas Kuipera) — dwie bliskie warstwy z paralaksą.
-  If(uGlint.x.greaterThan(0.001), () => {
-    const invDz = float(1.0).div(max(rd.z.negate(), 0.05));
-    const g1 = uCamGlint.xy.add(ro.xy.add(rd.xy.mul(ro.z.add(2500.0).mul(invDz))).mul(1 / 140));
-    const g2 = uCamGlint.zw.add(ro.xy.add(rd.xy.mul(ro.z.add(9000.0).mul(invDz))).mul(1 / 380));
-    const tw = Fn(([g, sd]) => {
-      const cell = floor(g);
-      const h = mx_cell_noise_float(vec3(cell, sd));
-      const c = vec2(mx_cell_noise_float(vec3(cell, sd.add(1.0))), mx_cell_noise_float(vec3(cell, sd.add(2.0))));
-      const pxg = max(fwidth(g.x), 0.0001);
-      const d = length(fract(g).sub(c)).div(pxg);
-      const phase = sin(uTime.mul(mix(float(2.0), float(7.0), h)).add(h.mul(40.0))).mul(0.5).add(0.5);
-      return smoothstep(0.92, 1.0, h).mul(exp(d.mul(d).mul(-0.7))).mul(phase.mul(phase).mul(phase));
-    });
-    const gl = tw(g1, float(51.0)).mul(1.4).add(tw(g2, float(61.0)).mul(0.7));
-    col.addAssign(uGlint.yzw.mul(gl).mul(uGlint.x));
-  });
   // Gwiazdy wewnątrz mgławicy: jasne jądro, halo i krzyż.
   Loop({ start: 0, end: uIllCount, type: 'int', condition: '<', name: 'sk' }, ({ sk }) => {
     const k = sk;
@@ -551,15 +476,15 @@ pipeline.outputNode = vec4(comp.add(bloomNode.rgb).mul(vig).add(dither), 1.0);
 // Presety regionów i palety
 
 const PRESETS = {
-  sun:    { pal: 'fire',    nd: 0.55, nb: 1.1, col: [1.0, 0.7, 0.45], stream: 0.0, strm: 1.0, glow: 3.2, fi: 0.3, fd: 0.5, cov: -0.2, stars: 0.4, band: 0.4, gal: 0.0, glint: 0.0, gcol: [1, 0.9, 0.7] },
-  ipm:    { pal: 'blue',    nd: 0.3, nb: 0.9, col: [0.95, 0.8, 0.62], stream: 0.2, strm: 0.0, glow: 0.35, fi: 0.6, fd: 0.7, cov: -0.05, stars: 1.0, band: 1.0, gal: 0.2, glint: 0.1, gcol: [1, 0.9, 0.75] },
-  belt:   { pal: 'fire',    nd: 1.0, nb: 0.9, col: [0.85, 0.6, 0.38], stream: 0.75, strm: 0.0, glow: 0.15, fi: 0.6, fd: 1.0, cov: -0.02, stars: 0.8, band: 0.8, gal: 0.1, glint: 0.9, gcol: [1.0, 0.82, 0.55] },
-  storm:  { pal: 'magenta', nd: 1.25, nb: 0.6, col: [0.62, 0.48, 0.62], stream: 0.6, strm: 0.0, glow: 0.1, fi: 0.7, fd: 1.1, cov: 0.0, stars: 0.65, band: 0.6, gal: 0.1, glint: 0.6, gcol: [0.85, 0.7, 1.0] },
-  outer:  { pal: 'blue',    nd: 0.12, nb: 0.5, col: [0.55, 0.62, 0.8], stream: 0.0, strm: 0.0, glow: 0.0, fi: 0.8, fd: 0.8, cov: 0.02, stars: 1.1, band: 1.1, gal: 0.3, glint: 0.05, gcol: [0.8, 0.9, 1] },
-  kuiper: { pal: 'cold',    nd: 0.75, nb: 0.55, col: [0.52, 0.72, 1.0], stream: 0.5, strm: 0.0, glow: 0.0, fi: 0.8, fd: 0.8, cov: 0.02, stars: 1.1, band: 1.0, gal: 0.3, glint: 1.0, gcol: [0.7, 0.88, 1.0] },
-  inter:  { pal: 'magenta', nd: 0.06, nb: 0.35, col: [0.45, 0.55, 0.85], stream: 0.0, strm: 0.0, glow: 0.0, fi: 1.1, fd: 1.1, cov: 0.08, stars: 1.2, band: 1.2, gal: 0.6, glint: 0.0, gcol: [0.8, 0.9, 1] },
-  cloud:  { pal: 'magenta', nd: 0.18, nb: 0.5, col: [0.6, 0.45, 0.9], stream: 0.0, strm: 0.0, glow: 0.0, fi: 1.4, fd: 1.3, cov: 0.14, stars: 0.9, band: 0.7, gal: 0.3, glint: 0.15, gcol: [1, 0.7, 0.9] },
-  void:   { pal: 'blue',    nd: 0.0, nb: 0.0, col: [0.3, 0.35, 0.5], stream: 0.0, strm: 0.0, glow: 0.0, fi: 0.3, fd: 0.5, cov: -0.12, stars: 1.3, band: 0.5, gal: 1.0, glint: 0.0, gcol: [0.8, 0.9, 1] }
+  sun:    { pal: 'fire',    fi: 0.3, fd: 0.5, cov: -0.2, stars: 0.4, band: 0.4, gal: 0.0 },
+  ipm:    { pal: 'blue',    fi: 0.6, fd: 0.7, cov: -0.05, stars: 1.0, band: 1.0, gal: 0.2 },
+  belt:   { pal: 'fire',    fi: 0.6, fd: 1.0, cov: -0.02, stars: 0.8, band: 0.8, gal: 0.1 },
+  storm:  { pal: 'magenta', fi: 0.7, fd: 1.1, cov: 0.0, stars: 0.65, band: 0.6, gal: 0.1 },
+  outer:  { pal: 'blue',    fi: 0.8, fd: 0.8, cov: 0.02, stars: 1.1, band: 1.1, gal: 0.3 },
+  kuiper: { pal: 'cold',    fi: 0.8, fd: 0.8, cov: 0.02, stars: 1.1, band: 1.0, gal: 0.3 },
+  inter:  { pal: 'magenta', fi: 1.1, fd: 1.1, cov: 0.08, stars: 1.2, band: 1.2, gal: 0.6 },
+  cloud:  { pal: 'magenta', fi: 1.4, fd: 1.3, cov: 0.14, stars: 0.9, band: 0.7, gal: 0.3 },
+  void:   { pal: 'blue',    fi: 0.3, fd: 0.5, cov: -0.12, stars: 1.3, band: 0.5, gal: 1.0 }
 };
 // a = ciało mgławicy, b = gorące (jądra, włókna), c = obwódka brzegów.
 const PALETTES = {
@@ -598,8 +523,8 @@ const REGION_NAMES = { sun: 'Przy Słońcu', ipm: 'Przestrzeń międzyplanetarna
 
 const S = {
   x: PLACES[2].x, y: PLACES[2].y, H: 12000, tH: 12000, travel: null, seed: Number(params.get('seed')) || 1,
-  pal: 'auto', gains: { neb: 1, cov: 0, dust: 1, near: 1, stars: 1 }, anim: true, time: 0, keys: new Set(),
-  fps: 60, flashes: [], flashCd: 0, lastRegion: '', exporting: false, hideStars: false
+  pal: 'auto', gains: { neb: 1, cov: 0, dust: 1, stars: 1 }, anim: true, time: 0, keys: new Set(),
+  fps: 60, lastRegion: '', exporting: false, hideStars: false
 };
 
 function rand(seed, a, b, c = 0) {
@@ -616,9 +541,9 @@ function applySeed() {
   document.getElementById('seed').value = String(s);
 }
 
-// Gwiazdy wewnątrz mgławicy: siatka w świecie (G = 450 tys. j.), deterministyczna
+// Gwiazdy wewnątrz mgławicy: siatka w świecie (G = 4,5 mln j.), deterministyczna
 // z ziarna. Do shadera idzie 6 najważniejszych wokół kamery; pierwsza = światło kluczowe.
-const ILL_G = 450000;
+const ILL_G = 4500000;
 const _ills = [];
 function updateIlluminators() {
   _ills.length = 0;
@@ -628,15 +553,15 @@ function updateIlluminators() {
       if (rand(S.seed, gx, gy, 1) > 0.62) continue;
       const x = (gx + 0.15 + rand(S.seed, gx, gy, 2) * 0.7) * ILL_G;
       const y = (gy + 0.15 + rand(S.seed, gx, gy, 3) * 0.7) * ILL_G;
-      const z = -(170000 + rand(S.seed, gx, gy, 4) * 250000);
+      const z = -(1700000 + rand(S.seed, gx, gy, 4) * 2500000);
       const hot = rand(S.seed, gx, gy, 5);
       const lum = 0.6 + Math.pow(rand(S.seed, gx, gy, 6), 2) * 2.2;
       const dx = x - S.x, dy = y - S.y;
       const dist = Math.hypot(dx, dy);
-      const fade = 1 - sstep(700000, 1000000, dist);
+      const fade = 1 - sstep(7000000, 10000000, dist);
       if (fade <= 0) continue;
       const tint = hot > 0.35 ? [0.62, 0.78, 1.0] : (hot > 0.12 ? [1.0, 0.95, 0.88] : [1.0, 0.62, 0.38]);
-      _ills.push({ dx, dy, z, r: 60000 + lum * 30000, lum: lum * fade, tint, w: lum * fade / (1 + (dist / 400000) ** 2) });
+      _ills.push({ dx, dy, z, r: 600000 + lum * 300000, lum: lum * fade, tint, w: lum * fade / (1 + (dist / 4000000) ** 2) });
     }
   }
   _ills.sort((a, b) => b.w - a.w);
@@ -656,56 +581,28 @@ function updateIlluminators() {
 const _blend = {};
 function updateRegion(dt) {
   const { w, r } = regionWeights(S.x, S.y);
-  for (const key of ['nd', 'nb', 'stream', 'strm', 'glow', 'fi', 'fd', 'cov', 'stars', 'band', 'gal', 'glint']) _blend[key] = 0;
-  const col = [0, 0, 0], gcol = [0, 0, 0];
+  for (const key of ['fi', 'fd', 'cov', 'stars', 'band', 'gal']) _blend[key] = 0;
   let best = 'ipm', bestW = -1;
   for (const k in w) {
     const p = PRESETS[k], wk = w[k];
     if (!wk) continue;
     for (const key in _blend) _blend[key] += p[key] * wk;
-    for (let i = 0; i < 3; i++) { col[i] += p.col[i] * wk; gcol[i] += p.gcol[i] * wk; }
     if (wk > bestW) { bestW = wk; best = k; }
   }
   applyPalette(w);
   const g = S.gains;
-  uNear.value.set(_blend.nd * g.near, _blend.nb, _blend.stream, _blend.strm);
-  uNearCol.value.set(col[0], col[1], col[2]);
-  uSunGlow.value = _blend.glow * g.near;
   uFar.value.set(_blend.fi * g.neb, _blend.fd * g.dust, _blend.cov + g.cov, 0);
   S.gainsFarForIll = Math.min(2.5, _blend.fi) * g.neb;
   uStars.value.x = (S.hideStars ? 0 : _blend.stars * g.stars);
   uStars.value.y = document.getElementById('c-band').checked ? _blend.band : 0;
   uStars.value.z = _blend.gal;
   uStars.value.w = document.getElementById('c-spikes').checked ? 1 : 0;
-  uGlint.value.set(_blend.glint * g.near, gcol[0], gcol[1], gcol[2]);
-  S.stormW = w.storm;
   const name = REGION_NAMES[best];
   if (name !== S.lastRegion) {
     S.lastRegion = name;
     for (const b of document.querySelectorAll('#places button')) b.classList.toggle('on', b.dataset.id === best);
   }
   document.getElementById('region').textContent = `${name} · ${r < 10 ? r.toFixed(2) : r.toFixed(0)} AU od Słońca`;
-}
-
-function updateStorm(dt) {
-  S.flashCd -= dt;
-  if (S.stormW > 0.05 && S.flashCd <= 0) {
-    const half = S.H * 0.35 * camera.aspect;
-    S.flashes.push({ x: (Math.random() - 0.5) * half * 2.4, y: (Math.random() - 0.5) * S.H * 0.8, z: -(4000 + Math.random() * 22000), age: 0, life: 0.18 + Math.random() * 0.3, p: 2 + Math.random() * 4 });
-    if (S.flashes.length > MAX_FLASH) S.flashes.shift();
-    S.flashCd = 0.12 + Math.random() * (1.2 - S.stormW);
-  }
-  let n = 0;
-  for (let i = S.flashes.length - 1; i >= 0; i--) {
-    const f = S.flashes[i];
-    f.age += dt;
-    if (f.age > f.life) { S.flashes.splice(i, 1); continue; }
-  }
-  for (const f of S.flashes) {
-    const k = (1 - f.age / f.life) * (0.6 + 0.4 * Math.sin(f.age * 90) * Math.sin(f.age * 37 + f.p));
-    flashArr[n++].set(f.x, f.y, f.z, f.p * Math.max(0, k) * S.stormW * S.gains.near);
-  }
-  uFlashCount.value = n;
 }
 
 function fitCamera() {
@@ -719,21 +616,10 @@ function fitCamera() {
 
 function setCameraUniforms() {
   // Wszystko w układzie kamery (render przy 0,0), pozycja świata w double tylko tu.
-  const dx = S.x - SUN.x, dy = S.y - SUN.y;
-  const r = Math.hypot(dx, dy) || 1;
-  const ang = Math.atan2(dy, dx);
-  if (S.thetaPrev === undefined) S.theta = ang;
-  else { let d = ang - S.thetaPrev; d -= Math.round(d / (Math.PI * 2)) * Math.PI * 2; S.theta += d; }
-  S.thetaPrev = ang;
-  uOrbit.value.set(r * NEAR_SCALE * 1.8, S.theta * r * NEAR_SCALE * 0.3, dx / r, dy / r);
-  uSunDir2.value.set(-dx / r, -dy / r);
   const bufH = renderer.domElement.height || innerHeight;
   uShadeK.value = 60 * (bufH * nebPass.getResolutionScale()) / 1000;
-  uCamNear.value.set(S.x * NEAR_SCALE, S.y * NEAR_SCALE);
   uCamFar.value.set(S.x * FAR_SCALE, S.y * FAR_SCALE);
-  uCamSun.value.set(S.x - SUN.x, S.y - SUN.y);
   uCamStar.value.set(S.x * 2e-8, S.y * 2e-8);
-  uCamGlint.value.set((S.x / 140) % 100000, (S.y / 140) % 100000, (S.x / 380) % 100000, (S.y / 380) % 100000);
 }
 
 // ---------------------------------------------------------------------------
@@ -814,7 +700,6 @@ function bindRange(id, out, fn) {
 bindRange('s-neb', 'o-neb', (v) => { S.gains.neb = v; });
 bindRange('s-cov', 'o-cov', (v) => { S.gains.cov = v; });
 bindRange('s-dust', 'o-dust', (v) => { S.gains.dust = v; });
-bindRange('s-near', 'o-near', (v) => { S.gains.near = v; });
 bindRange('s-stars', 'o-stars', (v) => { S.gains.stars = v; });
 bindRange('s-bloom', 'o-bloom', (v) => { bloomNode.strength.value = v; });
 bindRange('s-sat', 'o-sat', (v) => { uSat.value = v; });
@@ -959,7 +844,6 @@ function frame(now) {
   setCameraUniforms();
   updateRegion(dt);
   updateIlluminators();
-  updateStorm(dt);
   pipeline.render();
 
   drawMap();
