@@ -37,7 +37,22 @@ const SCOPE_RULES = [
 const NOTES = {
   'src/3d/core3d.js': 'serce portu: passy sceny, post, maska słońca, uber; soczewka warp i fale warpa poza portem',
   'src/3d/hexShips3D.js': 'kadłuby = gałąź beam (BEAM_SKIN + HEX_FRAGMENT); gałąź heksów (HEX/ARMOR/DEBRIS, pula szczątków GPU) w grze rysuje tylko wyłączone asteroidy, ale stoją na niej mostki-demo, rdzen-demo i pomiar drżenia → port w zadaniu 04',
-  'src/effects3d/overlay.js': 'DRUGI WebGLRenderer (overlay3D eksplozji + rakiety, własny composer i bloom) → Core3D + CanvasTarget',
+  'src/effects3d/overlay.js': 'DRUGI WebGLRenderer (overlay3D eksplozji + rakiety, własny composer i bloom) — zostaje w porcie, usuwa go zadanie 20',
+  // Zastąpione efektami z dem WebGPU (decyzja użytkownika 2026-09-27, PLAN §1 p. 6) — nie przenosimy 1:1.
+  'src/3d/slugTrail3D.js': 'zastąpi TrailSystem z dema broni (zadanie 17)',
+  'src/3d/muzzleFx3D.js': 'zastąpią receptury dema broni (zadanie 17)',
+  'src/3d/railgunFx3D.js': 'zastąpią receptury dema broni (zadanie 17)',
+  'src/3d/sparkSystem3D.js': 'scena overlay; zastąpi sparks.js z dema rakiet (zadanie 19)',
+  'src/effects3d/yamato.js': 'scena overlay; zastąpią receptury dema broni (zadanie 17)',
+  'src/effects3d/railgunExplosion.js': 'scena overlay; zastąpią receptury dema broni (zadanie 17)',
+  'src/effects3d/armataImpact.js': 'scena overlay; zastąpią receptury dema broni (zadanie 17)',
+  'src/effects3d/autocannonImpact.js': 'scena overlay; zastąpią receptury dema broni (zadanie 17)',
+  'src/effects3d/rocketFireGPU.js': 'zastąpi dym i dysze z dema rakiet (zadanie 19)',
+  'src/effects3d/rocketSmokeGPU.js': 'zastąpi dym z dema rakiet (zadanie 19)',
+  'src/effects3d/supernovaMissileBlow.js': 'scena overlay; zastąpi Supernowa z dema rakiet (zadanie 19)',
+  'src/effects3d/rocketSystem3D.js': 'lot i trafienia rakiet (rozgrywka) zostają; render zastąpi demo rakiet (zadanie 19)',
+  'src/effects3d/reactorblow.js': 'scena overlay; port do Core3D w zadaniu 20',
+  'src/3d/fxParticles3D.js': 'Fx3D: port 1:1 w zadaniu 12 (dysze MAIN, mostki, rdzenie)',
   'Engineeffects.js': 'gra importuje tylko tekstury make*Texture; getEngineVFX z własnym WebGLRenderer i shader — martwe',
   'src/3d/modelBaker.js': 'narzędzie dev (devTools.js, import dynamiczny) z własnym WebGLRenderer',
   'src/3d/sunShadowMask.js': 'biblioteka maski słońca + onBeforeCompile dla wbudowanych materiałów',
@@ -47,7 +62,7 @@ const NOTES = {
   'src/vfx/destruction3D.js': 'zniszczenie stacji',
   'src/vfx/shatterMaterial.js': 'zniszczenie stacji',
   'src/3d/coldWreckImpostors.js': 'uśpione (wymaga hexGrid)',
-  'src/3d/weapon3DSystem.js': 'klon materiału na strzał (audyt bitwy §2.2)',
+  'src/3d/weapon3DSystem.js': 'zastąpią pule i receptury dema broni (zadania 17–18); klony materiałów wiązek w puli ≤ 96',
   'src/3d/asteroidBeltBackdrop3D.js': 'tło pasa (ShaderMaterial + onBeforeCompile pyłu)',
   'src/3d/asteroidField3D.js': 'sprite’y na MeshBasicMaterial + CAŁA rozgrywka asteroid; ciała heksowe rysuje hexShips3D'
 };
@@ -599,7 +614,7 @@ ${fileTable(groups['asteroidy-stare'])}
 
 Uwaga: **ścieżka heksów w \`hexShips3D.js\`** (HEX/ARMOR/DEBRIS, pula szczątków GPU, \`createEntityMesh\`/\`updateEntityMesh\`) rysuje w grze
 tylko asteroidy (ciała heksowe, na czas portu wyłączone) — liczy się w wierszu \`src/3d/hexShips3D.js\` wyżej i przechodzi w zadaniu 04,
-bo stoją na niej warsztaty \`mostki-demo\`, \`rdzen-demo\` i pomiar drżenia (PLAN.md §1 p. 6).
+bo stoją na niej warsztaty \`mostki-demo\`, \`rdzen-demo\` i pomiar drżenia (PLAN.md §1 p. 7).
 \`coldWreckImpostors.js\` / \`coldWrecks.js\` są uśpione (wymagają \`hexGrid\`).
 
 ### Nowe asteroidy (dema; wejdą z dema WebGPU)

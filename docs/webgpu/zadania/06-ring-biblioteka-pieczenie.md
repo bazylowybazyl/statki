@@ -1,5 +1,5 @@
 # Zadanie 06 — Ring 1/5: biblioteka TSL ringu, pieczenie map, odczyt asynchroniczny, warsztat halo_ring_demo
-Zależności: 01 | Równolegle z: 02, 03, 04, 05, 12–14, 16, 17 | Zalecany effort: max
+Zależności: 01 | Równolegle z: 02–05, 12–20 | Zalecany effort: max
 Zakres: `src/3d/haloRing/haloRingGLSL.js` (486 linii: `HALO_GLSL_COMMON`, `NOISE`, `STORM`, `LIGHT`, `AIR`,
 `PORTSITES`, `TRANSIT`, `FG`, `FG_CLIP`, `RTE`), wspólne kawałki z innych plików ringu: `HALO_GLSL_SURFACE`,
 `HALO_GLSL_CLOUDCOVER` (`haloRingTerrain.js:33, :92`), `src/3d/haloRing/haloRingUniforms.js`,

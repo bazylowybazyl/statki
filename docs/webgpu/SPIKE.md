@@ -43,7 +43,8 @@ Windows 11, three r183 (`POSTEP.md` § Środowisko). **Wszystkie punkty działaj
    (resolve → bloom → uber: gorące powietrze, ACES gry, sRGB) jako węzły TSL w `RenderPipeline` z
    `outputColorTransform = false`. `pass()` na warstwę (4a) zmieniłby blending i test głębi tarcz.
 3. **Składanie bez zmian** (5, 5k): kopia do `#c` w zadaniu renderu, split 2× `renderSingle`. `overlay3D` i rakiety
-   przechodzą na renderer Core3D przez `CanvasTarget` (zasada „jeden renderer”).
+   mogą przejść na renderer Core3D przez `CanvasTarget` (zasada „jeden renderer”). Po decyzji o nowych efektach broni
+   i rakiet (PLAN §1 p. 6) overlay znika w ogóle (zadanie 20) — `CanvasTarget` zostaje sprawdzoną możliwością.
 4. **Precyzja** (11): `renderer.highPrecision = true` + dotychczasowa reguła „duży offset w `mesh.position`, dane
    względem niego” wystarczają — także dla `InstancedMesh`.
 5. **Kompilacja nie jest ryzykiem** (10): WGSL/DXC kompiluje się 2–9× szybciej niż ten sam GLSL przez ANGLE.

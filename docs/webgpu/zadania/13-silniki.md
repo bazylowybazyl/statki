@@ -1,5 +1,5 @@
 # Zadanie 13 — Silniki: MAIN (struga), WARP (plazma z dysz MAIN), SIDE (manewrowe)
-Zależności: 03 | Równolegle z: 04–10, 12, 14, 16, 17 | Zalecany effort: xhigh
+Zależności: 03 | Równolegle z: 04–12, 14–20 | Zalecany effort: xhigh
 Zakres: `src/3d/mainExhaust3D.js` (1 materiał / 48 linii GLSL), `src/3d/warpPlume3D.js` (3 / 330: plazma — marsz
 promienia w proxy z `defines: { PE_STEPS, PE_OCT }` z jakości, materiał na instancję puli ≤ `WARP_PLUME_CAP` = 16,
 cząstki), `src/3d/engineExhaustBatch.js` (2 / 139: płomień i warstwy glow/ring/flare na instancjach, `ENGINE_HDR`),

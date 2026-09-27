@@ -1,5 +1,5 @@
 # Zadanie 16 — Zniszczenie stacji: rozpad (shatter), panele, odłamki
-Zależności: 03 | Równolegle z: 04–15, 17, 18 | Zalecany effort: xhigh
+Zależności: 03 | Równolegle z: 04–15, 17–19 | Zalecany effort: xhigh
 Zakres: `src/vfx/shatterMaterial.js` (1 materiał / 143 linie GLSL: fragmenty rozlatujące się w shaderze),
 `src/vfx/shatterShaderBake.js` (atrybuty fragmentów), `src/vfx/destruction3D.js` (1 / 29 — materiał w `:1572`, klony
 materiałów GLB przy rozpadzie, `Destruction3D.shatter` / `detachChunk`), `src/vfx/panelShardManager.js` (materiały
@@ -30,8 +30,8 @@ bazy nie pokazuje rozpadu — zadanie dodaje ją (i jej bazę z tagu), zanim cok
 4. **`destruction3D.js:1572`** → TSL; klony materiałów GLB (wbudowane, ten sam klucz — tanie) bez zmian; szablon GLB
    nietknięty (`_cloneOwnedMaterial`, test).
 5. **`panelShardManager`** — wbudowane (konwersja automatyczna): sprawdź `instanceColor`, emisję.
-6. Wybuch reaktora przy rozpadzie (`reactorFactory` → `window.makeReactorBlow`, scena overlay) — do 18 zamiennik
-   albo WebGL overlaya (do 17); nie przenoś go tutaj.
+6. Wybuch reaktora przy rozpadzie (`reactorFactory` → `window.makeReactorBlow`, scena overlay na własnym WebGL do
+   zadania 20) — nie przenoś go tutaj.
 
 ## Pułapki
 - Fragmenty rzucają cień (`castShadow` kopiowane z oryginału) — mapa cienia słońca aktualizuje się raz na klatkę (01).
@@ -47,7 +47,7 @@ bazy nie pokazuje rozpadu — zadanie dodaje ją (i jej bazę z tagu), zanim cok
 
 ## Czego NIE robić
 - Nie zmieniaj rozgrywki (HP stacji, progi odrywania fragmentów, misje) ani presetów rozpadu.
-- Nie ruszaj nieużywanego `src/effects3d/stationDestructionEffects.js` (poza grą — decyzja w 20).
+- Nie ruszaj nieużywanego `src/effects3d/stationDestructionEffects.js` (poza grą — decyzja w 22).
 
 ## Raport na koniec
 Co zrobione; zrzuty `stacja-rozpad` (tag vs main); szum bazy; czas klatki rozpadu; co zostało; pytania.

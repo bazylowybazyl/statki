@@ -1,5 +1,5 @@
 # Zadanie 04 — Kadłuby: hexShips3D (belki i heksy), lakier, światła, impostory wraków, szczątki
-Zależności: 03 | Równolegle z: 05, 06–10, 12, 13, 14, 16, 17 | Zalecany effort: max
+Zależności: 03 | Równolegle z: 05–14, 16, 19 | Zalecany effort: max
 Zakres: `src/3d/hexShips3D.js` (445 linii GLSL, 4 materiały: `HEX_FRAGMENT_SHADER` 268 — wspólny, `BEAM_SKIN_VERTEX`,
 `HEX_VERTEX`, `ARMOR_VERTEX`, pula szczątków GPU `DEBRIS_*`), `src/3d/hullLacquer.js`, `src/3d/beamHullSkin.js`,
 `src/3d/hexBodyImpostorBatch.js` (37), `src/3d/hullDebris3D.js` (61), `src/3d/beamDebris3D.js` (64, jeśli jego materiał
@@ -31,7 +31,7 @@ maska słońca, żar ran, cienie SDF (zgłaszanie okluderów), odblask; impostor
    względem `mesh.position` (reguła precyzji, `sceneOrigin.js`); `modelViewMatrix` z kontekstu (nie składaj ręcznie).
 4. Impostory (`hexBodyImpostorBatch.js`), szczątki (`hullDebris3D.js`, geometria `beamDebris3D`), uśpione
    `coldWreckImpostors.js` — materiały w TSL. Sprawdź, czy materiał `beamDebris3D.js` rysuje się w grze (graf importów:
-   `hullDebris3D` bierze z niego geometrię); jeśli tylko w destruktorach — zostaw (poza portem, PLAN §1.5).
+   `hullDebris3D` bierze z niego geometrię); jeśli tylko w destruktorach — zostaw (poza portem, PLAN §1 p. 5).
 5. `renderer.compile` → `compileAsync` (zrobione w 01) — sprawdź rozgrzewkę kadłubów NPC (`prewarmHexShipVisual`).
 6. `Texture.updateRanges` backend WebGPU ignoruje — jeśli tekstury pancerza/obrażeń aktualizują się częściowo, zmierz
    koszt pełnego uploadu na trafienie (bitwa) i zapisz (ew. osobna tekstura danych / storage buffer — tylko jeśli
@@ -40,7 +40,7 @@ maska słońca, żar ran, cienie SDF (zgłaszanie okluderów), odblask; impostor
    (wycinek źródła `hexShips3D` w `vm` z atrapami `ShaderMaterial` → nowy kontekst z materiałem węzłowym),
    `renderBugfixGuards` (wycinki `updateEntityMesh`), `hullLacquer`; `shipProxyBatch3D` porównuje 9 linii shadera proxy
    (Z4, poza portem) z shaderem kadłuba — parzystość przestaje mieć sens: oznacz test `todo` z opisem „Z4 przejdzie na
-   TSL przy integracji (PLAN §1.5)”, nie usuwaj.
+   TSL przy integracji (PLAN §1 p. 5)”, nie usuwaj.
 
 ## Pułapki
 - Własne lampy kadłuba są w cache per encja — obiekty lamp z payloadu tylko do odczytu (agents.md).
@@ -56,6 +56,9 @@ maska słońca, żar ran, cienie SDF (zgłaszanie okluderów), odblask; impostor
   źródle three / małym teście, czy `TextureNode` z `onObjectUpdate` daje osobne wiązania na obiekt; jeśli nie — graf na
   teksturę (sprite typu), wraki osobno. Zmierz: czas spawnu 30 NPC (`?dev`) i `coreRenderMs` pierwszej klatki po nim.
 - Liczba draw calli warstwy ortho ma zostać ~jak w bazie (mesh na encję zostaje — zmienia się tylko współdzielenie grafu).
+- Zostaw miejsce na światła efektów: w zadaniu 18 materiał kadłuba zacznie czytać siatkę świateł z 12 (błyski i
+  trafienia z dema broni oświetlają poszycie). Oświetlenie kadłuba złóż tak, żeby dodatkowe światła dało się dołożyć
+  bez przepisywania (np. `LightingModel` / węzeł świateł jak `surfaceLighting.js` w demach), a obraz dziś był 1:1.
 
 ## Kryteria akceptacji
 - `npm test` i `node --test "tests/*.test.mjs"`: bez nowych porażek (testy z kroku 7 przepisane, `shipProxyBatch3D`

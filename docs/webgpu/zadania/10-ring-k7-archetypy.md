@@ -1,5 +1,5 @@
 # Zadanie 10 — Ring 5/5: port K-7 i ringi-archetypy Marsa (ECUMENE) i Jowisza (Fable)
-Zależności: 09 | Równolegle z: 04, 05, 12–14, 16, 17 | Zalecany effort: xhigh
+Zależności: 09 | Równolegle z: 04, 05, 12–20 | Zalecany effort: xhigh
 Zakres: `src/3d/haloRing/haloPortK7.js` (278 linii: `K7Instances`, `K7Plates`, `K7Labels`, `K7Hoses` —
 `GLSL_K7_SURFACE`), `src/3d/haloRing/arch/archGLSL.js` (424: `ARCH_GLSL_LIT`, `ARCH_GLSL_SABS`, instancje, pasy,
 szkło, linie, punkty), `arch/archMaterials.js`, `arch/ecumene.js` (171), `arch/fable.js` (178). ~1050 linii, 7 materiałów.

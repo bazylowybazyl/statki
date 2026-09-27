@@ -1,5 +1,5 @@
 # Zadanie 11 — Tło menu: Ziemia z ringiem, niebo, rozgrzewka pipeline'ów
-Zależności: 05, 10 | Równolegle z: 12–18 | Zalecany effort: max
+Zależności: 05, 10 | Równolegle z: 12–20 | Zalecany effort: max
 Zakres: `src/3d/menuBackdrop3D.js` (200 linii GLSL, 3 materiały: Ziemia w układzie ringu, niebo; `compileAsync`
 w `:345`, `:371`), rozgrzewka pieczenia (`createHaloBakeWarmup`, `haloRingWorldGen.js:526`), `Core3D.renderBackdrop`,
 `tests/menuBackdrop.test.mjs` (nowy odpowiednik).

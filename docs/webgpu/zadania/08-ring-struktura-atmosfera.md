@@ -1,5 +1,5 @@
 # Zadanie 08 — Ring 3/5: struktura (ściany, dach, kadłub ringu) i atmosfera (chmury, powłoka powietrza)
-Zależności: 07 | Równolegle z: 04, 05, 12–14, 16, 17 | Zalecany effort: xhigh
+Zależności: 07 | Równolegle z: 04, 05, 12–20 | Zalecany effort: xhigh
 Zakres: `src/3d/haloRing/haloRingStructure.js` (564 linie: `HALO_GLSL_STRIP_VERTEX`, `HALO_GLSL_ROOF` 309,
 `STRUCTURE_FRAGMENT` 221; materiał `HaloStructure`), `src/3d/haloRing/haloRingAtmosphere.js` (135: `HaloClouds`,
 `HaloAirShell`; używa `STRIP_VERTEX`, `SURFACE`, `CLOUDCOVER`). ~700 linii, 3 materiały.

@@ -52,12 +52,12 @@ Tu: **117 miejsc tworzenia materiałów** (w tym 4 `ShaderPass`) w 60 plikach,
 | `src/3d/shield3D.js` | 2 | 398 |  |  |  | 1 |  |  | · / · / · | GLSL |  |
 | `src/3d/haloRing/haloRingCity.js` | 3 | 375 |  |  |  |  |  |  | · / · / 3 | GLSL |  |
 | `src/3d/warpPlume3D.js` | 3 | 330 |  |  |  |  |  |  | · / · / 1 | GLSL |  |
-| `src/effects3d/yamato.js` | 2 | 328 |  |  |  |  |  |  | · / · / · | GLSL |  |
+| `src/effects3d/yamato.js` | 2 | 328 |  |  |  |  |  |  | · / · / · | GLSL | scena overlay; zastąpią receptury dema broni (zadanie 17) |
 | `src/3d/core3d.js` | 2 | 296 |  | WebGLRenderTarget×7 |  |  | getContext(webgl), WebGLRenderer, .capabilities, isWebGL2, gl.getExtension, gl.createQuery …(+10) | 3 | · / 3 / 11 | GLSL | serce portu: passy sceny, post, maska słońca, uber; soczewka warp i fale warpa poza portem |
 | `src/3d/haloRing/haloPortK7.js` | 4 | 278 |  |  |  |  |  |  | · / · / · | GLSL |  |
-| `src/effects3d/supernovaMissileBlow.js` | 2 | 230 |  |  |  |  |  |  | · / · / · | GLSL |  |
-| `src/effects3d/reactorblow.js` | 2 | 226 |  |  |  |  |  |  | · / · / · | GLSL |  |
-| `src/effects3d/rocketFireGPU.js` | 1 | 213 |  |  |  |  |  |  | · / · / · | GLSL |  |
+| `src/effects3d/supernovaMissileBlow.js` | 2 | 230 |  |  |  |  |  |  | · / · / · | GLSL | scena overlay; zastąpi Supernowa z dema rakiet (zadanie 19) |
+| `src/effects3d/reactorblow.js` | 2 | 226 |  |  |  |  |  |  | · / · / · | GLSL | scena overlay; port do Core3D w zadaniu 20 |
+| `src/effects3d/rocketFireGPU.js` | 1 | 213 |  |  |  |  |  |  | · / · / · | GLSL | zastąpi dym i dysze z dema rakiet (zadanie 19) |
 | `src/3d/menuBackdrop3D.js` | 3 | 200 |  |  |  | 2 | .capabilities, initTexture |  | · / · / · | GLSL | rozgrzewka po kluczu programu WebGL — do przeprojektowania |
 | `src/3d/planet3d.assets.js` | 7 | 191 |  |  |  |  | .capabilities | 3 | · / · / · | GLSL |  |
 | `src/3d/shieldImpactFx.js` | 2 | 185 |  |  |  |  |  |  | · / · / · | GLSL |  |
@@ -67,12 +67,12 @@ Tu: **117 miejsc tworzenia materiałów** (w tym 4 `ShaderPass`) w 60 plikach,
 | `src/3d/engineExhaustBatch.js` | 2 | 139 |  |  |  |  |  |  | · / · / · | GLSL |  |
 | `src/3d/haloRing/haloRingAtmosphere.js` | 2 | 135 |  |  |  |  |  |  | · / · / 2 | GLSL |  |
 | `src/3d/haloRing/haloRingIndustryKit.js` |  | 127 |  |  |  |  |  |  | · / · / · | GLSL |  |
-| `src/3d/sparkSystem3D.js` | 1 | 112 |  |  |  |  |  |  | · / · / · | GLSL |  |
+| `src/3d/sparkSystem3D.js` | 1 | 112 |  |  |  |  |  |  | · / · / · | GLSL | scena overlay; zastąpi sparks.js z dema rakiet (zadanie 19) |
 | `Engineeffects.js` | 1 | 90 |  |  |  |  | WebGLRenderer, renderer.state | 3 | · / · / · | GLSL | gra importuje tylko tekstury make*Texture; getEngineVFX z własnym WebGLRenderer i shader — martwe |
-| `src/3d/slugTrail3D.js` | 1 | 75 |  |  |  |  |  |  | · / · / 1 | GLSL |  |
-| `src/effects3d/rocketSmokeGPU.js` | 1 | 74 |  |  |  |  |  |  | · / · / · | GLSL |  |
+| `src/3d/slugTrail3D.js` | 1 | 75 |  |  |  |  |  |  | · / · / 1 | GLSL | zastąpi TrailSystem z dema broni (zadanie 17) |
+| `src/effects3d/rocketSmokeGPU.js` | 1 | 74 |  |  |  |  |  |  | · / · / · | GLSL | zastąpi dym z dema rakiet (zadanie 19) |
 | `src/3d/hullShadowSdf.js` |  | 69 |  |  |  |  |  |  | · / · / · | GLSL | biblioteka SDF kadłubów; lustro CPU traceHullShadowCpu (test) |
-| `src/3d/fxParticles3D.js` | 1 | 67 |  |  |  |  |  | 2 | · / · / · | GLSL |  |
+| `src/3d/fxParticles3D.js` | 1 | 67 |  |  |  |  |  | 2 | · / · / · | GLSL | Fx3D: port 1:1 w zadaniu 12 (dysze MAIN, mostki, rdzenie) |
 | `src/3d/beamDebris3D.js` | 1 | 64 |  |  |  |  |  |  | · / · / · | GLSL |  |
 | `src/3d/hullDebris3D.js` | 1 | 61 |  |  |  |  |  |  | · / · / · | GLSL |  |
 | `src/effects3d/shockwave3D.js` | 1 | 50 |  |  |  |  |  |  | · / · / · | GLSL |  |
@@ -80,15 +80,21 @@ Tu: **117 miejsc tworzenia materiałów** (w tym 4 `ShaderPass`) w 60 plikach,
 | `src/3d/mainExhaust3D.js` | 1 | 48 |  |  |  |  |  |  | · / · / · | GLSL |  |
 | `src/3d/shipLights3D.js` | 1 | 43 |  |  |  |  |  |  | · / 1 / · | GLSL |  |
 | `src/3d/hexBodyImpostorBatch.js` | 1 | 37 |  |  |  |  |  |  | · / · / · | GLSL |  |
-| `src/effects3d/overlay.js` | 1 | 36 |  | WebGLRenderTarget |  |  | WebGLRenderer, EffectComposer, RenderPass, UnrealBloomPass, ShaderPass |  | · / · / · | GLSL | DRUGI WebGLRenderer (overlay3D eksplozji + rakiety, własny composer i bloom) → Core3D + CanvasTarget |
+| `src/effects3d/overlay.js` | 1 | 36 |  | WebGLRenderTarget |  |  | WebGLRenderer, EffectComposer, RenderPass, UnrealBloomPass, ShaderPass |  | · / · / · | GLSL | DRUGI WebGLRenderer (overlay3D eksplozji + rakiety, własny composer i bloom) — zostaje w porcie, usuwa go zadanie 20 |
 | `src/3d/sunShadowMask.js` |  | 36 | 1 |  |  |  |  |  | · / 1 / · | GLSL | biblioteka maski słońca + onBeforeCompile dla wbudowanych materiałów |
 | `src/3d/bridgeFx3D.js` | 1 | 33 |  |  |  |  |  |  | · / 1 / · | GLSL |  |
 | `src/vfx/destruction3D.js` | 1 | 29 |  |  |  |  |  |  | 2 / · / · | GLSL | zniszczenie stacji |
 | `src/3d/haloRing/arch/archMaterials.js` | 1 |  |  |  |  |  |  |  | · / 1 / 2 | GLSL |  |
 | `src/3d/coldWreckImpostors.js` |  |  |  |  |  |  |  |  | · / · / · | — | uśpione (wymaga hexGrid) |
 | `src/3d/modelBaker.js` |  |  |  |  |  |  | WebGLRenderer | 1 | · / · / · | — | narzędzie dev (devTools.js, import dynamiczny) z własnym WebGLRenderer |
+| `src/3d/muzzleFx3D.js` |  |  |  |  |  |  |  |  | · / · / · | — | zastąpią receptury dema broni (zadanie 17) |
+| `src/3d/railgunFx3D.js` |  |  |  |  |  |  |  |  | · / · / · | — | zastąpią receptury dema broni (zadanie 17) |
 | `src/3d/stations3D.js` |  |  |  |  |  |  | .capabilities |  | · / · / · | — |  |
-| `src/3d/weapon3DSystem.js` |  |  |  |  |  | 1 |  | 8 | · / 6 / · | — | klon materiału na strzał (audyt bitwy §2.2) |
+| `src/3d/weapon3DSystem.js` |  |  |  |  |  | 1 |  | 8 | · / 6 / · | — | zastąpią pule i receptury dema broni (zadania 17–18); klony materiałów wiązek w puli ≤ 96 |
+| `src/effects3d/armataImpact.js` |  |  |  |  |  |  |  | 6 | · / 2 / · | — | scena overlay; zastąpią receptury dema broni (zadanie 17) |
+| `src/effects3d/autocannonImpact.js` |  |  |  |  |  |  |  | 7 | · / 4 / · | — | scena overlay; zastąpią receptury dema broni (zadanie 17) |
+| `src/effects3d/railgunExplosion.js` |  |  |  |  |  |  |  | 4 | 2 / 1 / · | — | scena overlay; zastąpią receptury dema broni (zadanie 17) |
+| `src/effects3d/rocketSystem3D.js` |  |  |  |  |  |  |  | 1 | · / 2 / · | — | lot i trafienia rakiet (rozgrywka) zostają; render zastąpi demo rakiet (zadanie 19) |
 
 ## Poza portem — decyzje użytkownika
 
@@ -106,7 +112,7 @@ Tu: **117 miejsc tworzenia materiałów** (w tym 4 `ShaderPass`) w 60 plikach,
 
 Uwaga: **ścieżka heksów w `hexShips3D.js`** (HEX/ARMOR/DEBRIS, pula szczątków GPU, `createEntityMesh`/`updateEntityMesh`) rysuje w grze
 tylko asteroidy (ciała heksowe, na czas portu wyłączone) — liczy się w wierszu `src/3d/hexShips3D.js` wyżej i przechodzi w zadaniu 04,
-bo stoją na niej warsztaty `mostki-demo`, `rdzen-demo` i pomiar drżenia (PLAN.md §1 p. 6).
+bo stoją na niej warsztaty `mostki-demo`, `rdzen-demo` i pomiar drżenia (PLAN.md §1 p. 7).
 `coldWreckImpostors.js` / `coldWrecks.js` są uśpione (wymagają `hexGrid`).
 
 ### Nowe asteroidy (dema; wejdą z dema WebGPU)

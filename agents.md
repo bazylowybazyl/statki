@@ -49,8 +49,12 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   `src/3d/tsl/`. Konwencje (adapter `material.uniforms`, graf węzłów współdzielony zamiast materiału na encję, rozgrzewka
   passów, światła, precyzja): `PLAN.md` §3–§6.
 - **Magenta = nieprzeniesiony materiał.** Każdy `ShaderMaterial` bez portu rysuje się magentowym zamiennikiem (licznik
-  w harnessie) — to stan przejściowy, nie błąd do obchodzenia. Overlay efektów (`src/effects3d/overlay.js`) do zadania 17
+  w harnessie) — to stan przejściowy, nie błąd do obchodzenia. Overlay efektów (`src/effects3d/overlay.js`) do zadania 20
   zostaje na własnym `WebGLRenderer` (jedyny wyjątek od zasady żelaznej).
+- **Nowe efekty broni i rakiet z dem** (`dema/bronie-webgpu`, `dema/rakiety-webgpu` — decyzja użytkownika 2026-09-27)
+  zastępują stare (zadania 12, 17–20); wspólne klocki w `src/3d/fx/`. Starych efektów broni, rakiet, iskier i trafień nie
+  przenosimy 1:1 ani nie poprawiamy — idą do wymiany. Rozgrywka zostaje w grze: dema dostają tylko zdarzenia (strzał,
+  lot, trafienie).
 - **Poza portem:** warp (soczewka, fale — do wymiany), stare asteroidy (**wyłączone** w grze: `OLD_ASTEROIDS_ENABLED`,
   `?asteroidyStare`), moduły ruchu v2 spoza gry (Z4/Z5/Z7) — przechodzą na TSL przy swojej integracji.
 - **Weryfikacja:** `node scripts/webgpu/zrzuty.mjs --backend webgpu --out .tmp/webgpu/zadania/NN --baza .tmp/webgpu/baseline/webgl/p1`

@@ -1,5 +1,5 @@
 # Zadanie 09 — Ring 4/5: megastruktura i miasto (kopuły, landmarki, drzewa)
-Zależności: 08 | Równolegle z: 04, 05, 12–14, 16, 17 | Zalecany effort: xhigh
+Zależności: 08 | Równolegle z: 04, 05, 12–20 | Zalecany effort: xhigh
 Zakres: `src/3d/haloRing/haloRingMegastructure.js` (535 linii: `HALO_PRIM_FRAGMENT` 297 — używa go też miasto;
 materiały `HaloMegaPrims`, `HaloDomeGlass`, `HaloMegaTrains`, `HaloMegaLights`), `src/3d/haloRing/haloRingCity.js`
 (375: `HaloCity_garden`, `HaloCity_industry`, `HaloTrees` z `TREE_VERTEX` 121), `haloRingDomes.js`,

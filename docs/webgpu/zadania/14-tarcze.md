@@ -1,5 +1,5 @@
 # Zadanie 14 — Tarcze i trafienia w tarczę
-Zależności: 03 | Równolegle z: 04–10, 12, 13, 16, 17 | Zalecany effort: xhigh
+Zależności: 03 | Równolegle z: 04–13, 15–20 | Zalecany effort: xhigh
 Zakres: `src/3d/shield3D.js` (2 materiały / 398 linii GLSL: `SHIELD_FRAGMENT` — kopuła, `HULL_SHIELD_FRAGMENT` —
 obrys kadłuba; tablice trafień 24 × `vec3` / `float`; **materiał na encję** (`createShieldMaterial`,
 `createHullShieldMaterial`); `prewarmShields3D` z trzymaczami obu wariantów; `Core3D.setShieldLayerActive`),

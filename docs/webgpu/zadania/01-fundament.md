@@ -100,7 +100,8 @@ w `src/3d/hexShips3D.js`, `scripts/webgpu/zrzuty.mjs` i `harness-strona.js`.
   nie uzależniaj niczego od `setAnimationLoop`.
 - Zamiennik dziedziczy blending oryginału: addytywny pełnoekranowy `ShaderMaterial` (np. stary pass) zaleje ekran
   magentą — pełnoekranowe passy Core3D muszą być już przeniesione albo wyłączone.
-- `overlay3D` / `rocketOverlay3D` zostają na własnym `WebGLRenderer` do zadania 17 (osobne kanwy) — nie ruszaj.
+- `overlay3D` / `rocketOverlay3D` zostają na własnym `WebGLRenderer` (osobne kanwy) — nie ruszaj. Efekty broni, iskry i
+  rakiety zabierają z nich zadania 17–19 (nowe efekty z dem), overlay usuwa zadanie 20.
 - Nie zmieniaj liczby ani kolejności `Math.random` w JS (determinizm scen dynamicznych względem bazy).
 - CRLF: skrypty edycji zapisuj `Write`/`Edit`, nie heredokiem z `\\` (memory: ukośniki).
 

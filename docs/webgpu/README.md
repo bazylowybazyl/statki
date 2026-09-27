@@ -59,7 +59,7 @@ Które mogą iść naraz: kolumna „Równolegle z” w `POSTEP.md` / `PLAN.md` 
    Każda równoległa sesja inny `--port` (domyślny 5340; np. 5341, 5342).
 4. Koniec: commit w worktree; w głównym katalogu `git merge <gałąź worktree>`. Konflikty zwykle w `POSTEP.md` (zachowaj
    oba wpisy), `INWENTARZ.md` (wygeneruj od nowa: `node scripts/webgpu/inwentarz.mjs`) i `agents.md`.
-5. **Pomiary wydajności** (`--wydajnosc`, `--tylko-wydajnosc`, zadanie 19) tylko wtedy, gdy nic innego nie obciąża GPU
+5. **Pomiary wydajności** (`--wydajnosc`, `--tylko-wydajnosc`, zadanie 21) tylko wtedy, gdy nic innego nie obciąża GPU
    (inne sesje, dema WebGPU, harnessy). Zrzuty obrazu są na to odporne, liczby ms — nie.
 
 ## Harness zrzutów
@@ -94,9 +94,17 @@ node scripts/webgpu/zrzuty.mjs --backend webgpu --out .tmp/webgpu/zadania/NN --b
 Scena z zamiennikami (`spis.zamienniki` > 0 w `wyniki.json`) nie musi być w tolerancji — patrz na jej warianty warstw.
 Regresje względem poprzedniego zadania: `node scripts/webgpu/porownaj.mjs --a .tmp/webgpu/zadania/<poprzednie>/webgpu --b .tmp/webgpu/zadania/NN/webgpu --out .tmp/webgpu/zadania/NN/vs-poprzednie`.
 
-### Nowa scena bazy (zadania 16–18 i później)
+### Nowe efekty z dem (zadania 17–19)
 
-Baza sceny powstaje ZAWSZE na tagu (stary renderer), nigdy na `main`:
+Stare efekty broni i rakiet wyglądają inaczej niż nowe, więc sceny z nimi (`galeria-broni`, `galeria-rakiet`, bitwy)
+nie mają bazy w tagu. Sesja zadania kładzie zrzuty gry obok zrzutów dema (`scripts/webgpu/bronie-demo.mjs --tryb zrzuty`,
+`dema/rakiety-webgpu.html?scenario=…&shot=1`) i czeka na ocenę użytkownika; po akceptacji katalog przebiegu z `main`
+(np. `.tmp/webgpu/zadania/17/webgpu`) jest bazą tych scen dla kolejnych zadań (`porownaj.mjs --a <zatwierdzony> --b <nowy>`).
+Warianty bez broni i pozostałe sceny — dalej względem tagu.
+
+### Nowa scena bazy (zadanie 16 i późniejsze)
+
+Baza sceny powstaje ZAWSZE na tagu (stary renderer), nigdy na `main` — chyba że scena pokazuje nowe efekty (wyżej):
 
 1. Scena dopisana w `scripts/webgpu/zrzuty.mjs` na `main` (tylko harness, bez zmian w grze — haki `?dev` już są).
 2. Worktree z tagu: `git worktree add ../statki-webgl webgl-baseline`, dowiązanie `node_modules` jak wyżej, skopiuj

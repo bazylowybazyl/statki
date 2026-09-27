@@ -1,5 +1,5 @@
 # Zadanie 15 — Mostki, rdzenie, reaktory, światła pozycyjne (+ warsztaty mostki-demo i rdzen-demo)
-Zależności: 04 | Równolegle z: 05–14, 16–18 | Zalecany effort: xhigh
+Zależności: 04 | Równolegle z: 05–14, 16–20 | Zalecany effort: xhigh
 Zakres: `src/3d/shipLights3D.js` (1 materiał / 43 linie: światła pozycyjne, billboardy FG, `NAV_LIGHT_CHASE`),
 `src/3d/bridge3D.js` (3 / 420: `MODEL_FRAG` 148, `B3_FUNC_GLSL` 102, cień pod kadłubem `depthFunc GREATER`, tekstura
 obrażeń 768 × 512 RGBA8 z uploadem wierszami), `src/3d/bridgeFx3D.js` (1 / 33: szczeliny okien, wyrzut atmosfery, FG),
@@ -32,9 +32,11 @@ kadłubach belkowych (agents.md § Mostki — wymagają `hexGrid`), więc sprawd
 5. **`reactor3D`, `coreFx3D`** → TSL: warstwa 7 zgłaszana, instancje względem początku przy kamerze (test „precyzja: przy
    8 mln j.”), pasma HDR jak żar; grafy budowane raz na rodzaj (2 meshe na rodzaj — test).
 6. **Warsztaty:** `mostki-demo` (+ `mostki-shots.js`, `mostki3d-shots.js`) i `rdzen-demo` (+ `rdzen-shots.js`,
-   `rdzen-gpu-check.js`) startują na WebGPU. `rdzen-demo` ma własny overlay (iskry, wybuch reaktora) — do zadań 17–18
-   działa na WebGL obok, sprawdź, że nie przeszkadza. Zrzuty narzędziami dem na `main` i na tagu (worktree, `README.md`)
-   — obok siebie w raporcie. `mostki3d-drzenie.js` / `precyzja-drzenie.js` mają ruszać (pełny pomiar drżenia — 19).
+   `rdzen-gpu-check.js`) startują na WebGPU. `rdzen-demo` ma własny overlay (iskry, wybuch reaktora) — do zadania 20
+   działa na WebGL obok, sprawdź, że nie przeszkadza. `coreFx3D` woła `RailgunFX3D.impact` / `kerf` i `MuzzleFX3D` —
+   zostaw; zadanie 17 przepina je na receptury broni. Zrzuty narzędziami dem na `main` i na tagu (worktree,
+   `README.md`) — obok siebie w raporcie. `mostki3d-drzenie.js` / `precyzja-drzenie.js` mają ruszać (pełny pomiar
+   drżenia — 21).
 
 ## Pułapki
 - Cień mostka czyta głębię kadłubów — jeśli 04 zmieniło głębię/z kadłubów, cień zniknie lub zaleje kadłub.

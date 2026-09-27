@@ -1,5 +1,5 @@
-# Zadanie 19 — Wydajność i precyzja: A/B z tagiem, drżenie, kompilacja, pamięć
-Zależności: 04–18 | Równolegle z: nie | Zalecany effort: max
+# Zadanie 21 — Wydajność i precyzja: A/B z tagiem, drżenie, kompilacja, pamięć
+Zależności: 04–20 | Równolegle z: nie | Zalecany effort: max
 Zakres: pomiary i poprawki wydajności / precyzji po porcie (bez nowych funkcji i efektów); narzędzia:
 `scripts/webgpu/zrzuty.mjs --wydajnosc / --tylko-wydajnosc`, `scripts/profil-bitwy.mjs`, `dema/precyzja-drzenie.js`,
 PerfHUD; raport `docs/webgpu/WYDAJNOSC.md`.
@@ -11,18 +11,22 @@ użytkownika: zapas WebGL2 (PLAN §12 p. 2) i kanwa 3D bez kopii do `#c` (PLAN �
 
 ## Przeczytaj najpierw
 `agents.md` (Wydajność, precyzja), `docs/webgpu/PLAN.md` §2, §4, §6, §10, `docs/webgpu/baseline.json` (wydajność,
-drżenie, szum), `docs/webgpu/POSTEP.md` (liczby zadań 01–18), `docs/AUDYT-wydajnosc-bitwa-2026-09-24.md`,
+drżenie, szum), `docs/webgpu/POSTEP.md` (liczby zadań 01–20), `docs/AUDYT-wydajnosc-bitwa-2026-09-24.md`,
 `docs/webgpu/README.md` (worktree z tagu, pomiary tylko przy bezczynnym GPU), `dema/precyzja-drzenie.js` (nagłówek).
 
 ## Kroki
 1. **A/B bitwy:** `zrzuty.mjs --tylko-wydajnosc` naprzemiennie tag (worktree) ↔ `main`, ≥ 3 × każdy, GPU bez innych
    obciążeń (zamknij inne dema i sesje z GPU); mediany `coreRenderMs`, odstęp klatek, `gpuFrameMs`, draw calle per
-   pass, „Overlay FX 3D”, kubełki PerfHUD (physics / draw / 3D update, „U hex”).
+   pass, kubełki PerfHUD (physics / draw / 3D update, „U hex”, compute efektów). Od zadań 17–19 bitwa ma NOWE, bogatsze
+   efekty broni i rakiet — rozdziel koszt: sam port (sceny bez ognia: `hud`, `ring-z02`, `k7-hala`, `kalibracja`,
+   `slonce` — CPU / GPU na klatkę vs baza) i koszt nowych efektów (kubełki compute i passa ortho w bitwie, osobno).
 2. **Duża bitwa:** `scripts/profil-bitwy.mjs` (~125–174 okrętów) na obu — koszt CPU backendu przy wielu małych draw
    callach (PLAN §10 p. 5). Hotspoty: profil CDP (`Profiler`) po stronie `main`; poprawki tylko w warstwie renderu.
-3. **Drżenie:** `dema/precyzja-drzenie.js` (lights, windows, exhaust, impostor, fx, bullets, muzzle, trails, sparks) na
-   WebGPU vs `baseline.json` § drzenie. Regresje poprawiaj regułą precyzji (PLAN §4: węzeł `modelViewMatrix`, offset w
-   `mesh.position`, dane względem niego; `highPrecision`).
+3. **Drżenie:** `dema/precyzja-drzenie.js` na WebGPU vs `baseline.json` § drzenie. Moduły bullets / muzzle / trails /
+   sparks zastąpiły zadania 17–19 — przepnij narzędzie na nowe (pule `gpuFx`, `ProjectileSystem`, `TrailSystem`, iskry,
+   dym rakiet); próg dla nich ≤ 0,01 px RMS (baza starych: pociski 0,001, smugi 0,008), dla lights / windows /
+   exhaust / impostor / fx — baza + szum. Regresje poprawiaj regułą precyzji (PLAN §4: węzeł `modelViewMatrix`, offset
+   w `mesh.position`, dane względem niego; pule GPU względem początku przy kamerze — zadanie 12).
 4. **Kompilacja i start:** czas do menu, budowa ringu w menu, pierwsza klatka gry, pierwsza klatka bitwy, pierwszy
    strzał / trafienie / wybuch / skok każdego typu. Przestoje > 50 ms — lista i poprawki (rozgrzewka passów PLAN §6,
    grafy współdzielone PLAN §3).
@@ -33,7 +37,7 @@ drżenie, szum), `docs/webgpu/POSTEP.md` (liczby zadań 01–18), `docs/AUDYT-wy
    2D” — tylko pomiar i rekomendacja, bez zmiany składania.
 8. **Zapas WebGL2:** `WebGPURenderer({ forceWebGL: true })` za flagą dev — lista błędów i zrzuty harnessu (dane do
    decyzji użytkownika; nic nie włączaj domyślnie).
-9. **Raport** `docs/webgpu/WYDAJNOSC.md`: tabele przed/po, metoda, surowe dane w `.tmp/webgpu/zadania/19/`; wnioski
+9. **Raport** `docs/webgpu/WYDAJNOSC.md`: tabele przed/po, metoda, surowe dane w `.tmp/webgpu/zadania/21/`; wnioski
    trwałe do `agents.md` (Wydajność).
 
 ## Pułapki
@@ -43,8 +47,9 @@ drżenie, szum), `docs/webgpu/POSTEP.md` (liczby zadań 01–18), `docs/AUDYT-wy
 - Poprawka wydajności nie może zmienić obrazu: po każdej — harness vs poprzedni przebieg WebGPU.
 
 ## Kryteria akceptacji
-- Mediana CPU klatki bitwy (`coreRenderMs`, odstęp klatek) i `gpuFrameMs` nie gorsze niż baza o więcej niż szum (≥ 3
-  pary A/B) — albo lista przyczyn z planem i zgodą użytkownika na odstępstwo.
+- Sam port (sceny bez ognia): mediana CPU klatki i `gpuFrameMs` nie gorsze niż baza o więcej niż szum (≥ 3 pary A/B).
+  Bitwa z nowymi efektami: koszt efektów zmierzony, w budżecie zaakceptowanym przez użytkownika (liczby + propozycja
+  LOD, jeśli za drogo) — albo lista przyczyn z planem.
 - Drżenie wszystkich modułów ≤ baza + szum pomiaru.
 - Zero przestojów kompilacji > 100 ms w scenach harnessu po rozgrzewce; lista pozostałych > 50 ms.
 - `npm test` i `node --test "tests/*.test.mjs"`: bez nowych porażek; harness bez regresji obrazu.

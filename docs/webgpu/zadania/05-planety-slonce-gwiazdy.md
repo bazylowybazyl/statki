@@ -1,5 +1,5 @@
 # Zadanie 05 — Planety, słońce, mgławica, gwiazdy, stacje
-Zależności: 03 | Równolegle z: 04, 06–10, 12, 13, 14, 16, 17 | Zalecany effort: xhigh
+Zależności: 03 | Równolegle z: 04, 06–10, 12–20 | Zalecany effort: xhigh
 Zakres: `src/3d/planet3d.assets.js` (191 linii GLSL, 7 materiałów: powierzchnia planety dzień/noc + `uRingShadow*`,
 chmury, halo planety, halo limbu Ziemi/Marsa `createRingAtmosphere`, słońce, mgławica `NebulaSystem`, gwiazdy
 `StarSystem`), `src/3d/starParallax.js`, `src/3d/stations3D.js`, `src/3d/world3d.js`,
@@ -50,7 +50,7 @@ kontrakt warstw 3/5/6/7), `docs/webgpu/PLAN.md` §3, §5, `docs/webgpu/POSTEP.md
 
 ## Czego NIE robić
 - Nie przenoś ringu (06–10) ani tła menu (11) — Ziemia menu pożycza tekstury z planety gry, ale jej shader jest w 11.
-- Nie zmieniaj legacy `planet3d.proc.js` (usuwa go zadanie 20).
+- Nie zmieniaj legacy `planet3d.proc.js` (decyzja o nim w zadaniu 22).
 
 ## Raport na koniec
 Co zrobione; zrzuty `slonce`, `planeta-cien`, `hud` (obok siebie); stan rozciągania gwiazd; co zostało; pytania.

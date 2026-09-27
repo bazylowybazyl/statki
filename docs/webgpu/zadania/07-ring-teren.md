@@ -1,5 +1,5 @@
 # Zadanie 07 — Ring 2/5: teren (CDLOD) i zestaw przemysłowy
-Zależności: 06 | Równolegle z: 04, 05, 12–14, 16, 17 | Zalecany effort: xhigh
+Zależności: 06 | Równolegle z: 04, 05, 12–20 | Zalecany effort: xhigh
 Zakres: `src/3d/haloRing/haloRingTerrain.js` (601 linii GLSL: `TERRAIN_FRAGMENT` 447 + wierzchołki, materiał
 `HaloTerrain`; `HALO_GLSL_SURFACE`/`CLOUDCOVER` przeszły do biblioteki w 06), `src/3d/haloRing/haloRingIndustryKit.js`
 (`HALO_GLSL_INDKIT` 127 — używają go teren i miasto). ~650 linii, 1 materiał + biblioteka.
