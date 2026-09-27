@@ -39,9 +39,9 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 | # | Zadanie | Zależy od | Równolegle z | Effort | Status | Commit | Uwagi |
 |---|---|---|---|---|---|---|---|
 | 01 | Fundament: `WebGPURenderer` w Core3D, zamienniki, adapter uniformów, harness na WebGPU | — | nie | max | zrobione, scalone (159dd42) | fca136a, b9c95d2, be4ea80 | gra na WebGPU; magenta = nieprzeniesione; harness `--uuid osobne` + nowa baza (dziennik) |
-| 02 | Post 1/2: bloom, pełny „uber”, pre-pass halo, MSAA, kalibracja tolerancji | 01 | 06 | max | w toku (podagent, worktree `statki-wt/02`) | | kalibruje `tolerancjaPortu` |
+| 02 | Post 1/2: bloom, pełny „uber”, pre-pass halo, MSAA, kalibracja tolerancji | 01 | 06 | max | zrobione, scalone (eb9370b) | a72b8fa, 777f86b, 77eef2b | `tolerancjaPortu` >8/255 ≤ 0,05%, średnia ≤ 0,03; `BloomNode` ×3 (zgodność z `UnrealBloomPass`); bloom ~1 ms CPU → 23 |
 | 03 | Post 2/2: maska słońca, SDF kadłubów, refrakcja, fala uderzeniowa | 02 | 06 | max | czeka | | biblioteki dla 04–20 |
-| 04 | Kadłuby (belki + heksy), lakier, impostory, szczątki | 03 | 05–14, 16, 19 | max | w toku (podagent, worktree `statki-wt/04`; maska słońca po 03 — zastępnik do scalenia) | | graf na wariant zamiast materiału na encję; miejsce na światła siatki (18) |
+| 04 | Kadłuby (belki + heksy), lakier, impostory, szczątki | 03 | 05–14, 16, 19 | max | zrobione, scalone (f7c3c77, poprawka 9841cbf); maska słońca = zastępnik `// AGENT: po 03` w `hexShips3D.tsl.js` (podmienia 03) | 3adcc5c, 7599a42 | graf na wariant (spawn 30 NPC 14 ms zamiast 389); haki `hullDamageSurface/Heat`, `hullEffectLights` (18), `hullVolume` (21) |
 | 05 | Planety, słońce, mgławica, gwiazdy, stacje | 03 | 04, 06–10, 12–20 | xhigh | czeka | | |
 | 06 | Ring 1/5: biblioteka TSL, pieczenie map, odczyt asynchroniczny, `halo_ring_demo` | 01 | 02–05, 12–20 | max | zrobione, scalone (070a407) | b7ecdc9…88d8df5 | kończy przejściową regresję terenu ringu z 01 |
 | 07 | Ring 2/5: teren + zestaw przemysłowy | 06 | 04, 05, 12–20 | xhigh | zrobione, scalone (f735076) | 7b43733…96baa16 | |
@@ -51,7 +51,7 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 | 11 | Tło menu + rozgrzewka pipeline'ów | 05, 10 | 12–20 | max | czeka | | nowy `menuBackdrop.test` |
 | 12 | Infrastruktura efektów GPU: compute w klatce, siatka świateł, zniekształcenia, Fx3D w TSL | 03 | 04–11, 13–16 | max | 12-A zrobione i scalone (moduły `src/3d/fx/`); 12-B (wpięcie w Core3D, Fx3D w TSL) czeka na 03 | 0f3d429…37953a6 | podstawa pod 17–19 (i przyszłe asteroidy) |
 | 13 | Silniki: MAIN, WARP (plazma), SIDE | 03 | 04–12, 14–20 | xhigh | w toku (podagent, worktree `statki-wt/13`; bloom po 02, iskry Fx3D po 12-B) | | |
-| 14 | Tarcze i trafienia w tarczę | 03 | 04–13, 15–20 | xhigh | w toku (podagent, worktree `statki-wt/14`; bloom po 02) | | |
+| 14 | Tarcze i trafienia w tarczę | 03 | 04–13, 15–20 | xhigh | zrobione na `webgpu/14` (parzystość z GLSL tagu na GPU); scala `main` po 02/04 i sprawdza z bloomem | 9b8dad0, 9b95df5 | graf na wariant + wartości per obiekt; trafienia w `uniformArray` pakowanej w `onObjectUpdate` |
 | 15 | Mostki, rdzenie, reaktory, światła (+ `mostki-demo`, `rdzen-demo`) | 04 | 05–14, 16–20 | xhigh | czeka | | |
 | 16 | Zniszczenie stacji (+ scena bazy `stacja-rozpad`) | 03 | 04–15, 17–19 | xhigh | czeka | | |
 | 17 | Broń 1/2 z dema `bronie-webgpu`: efekty wszystkich broni (pociski, smugi, trafienia, wiązki, PD, flak) | 12, 04 | 05–11, 13–16, 19 | max | czeka | | nowe efekty — ocena obrazu zamiast tolerancji; PD i flak z kanwy 2D do 3D |
@@ -71,8 +71,8 @@ Stan zamierzony na `main` w trakcie portu — nie „naprawiać” poza zadaniem
 | Od | Do | Co | Kończy |
 |---|---|---|---|
 | 01 | 24 | Nieprzeniesione `ShaderMaterial` rysują się magentą (`spis.zamienniki` w harnessie) | zadania 02–22 |
-| 01 | 02 | Post bez bloomu i gorącego powietrza (tylko ACES gry + sRGB); `perfToggles.bloom/heatHaze` bez skutku; `kalibracja__ortho` vs baza: >8/255 w 85,8% pikseli (sama poświata) | 02 |
-| 01 | 03 | Maska słońca wyłączona (`uSunShadowOn = 0`): bez cienia słońca na materiałach, smug tła i SDF kadłubów; fala uderzeniowa bez passa refrakcji | 03 |
+| 01 | 03 | Maska słońca wyłączona (`uSunShadowOn = 0`): bez cienia słońca na materiałach, smug tła i SDF kadłubów; fala uderzeniowa bez passa refrakcji; kadłuby z 04 liczą pełne słońce (zastępnik `// AGENT: po 03` w `hexShips3D.tsl.js`) | 03 |
+| 02 | 23 | Bloom = 12 osobnych `renderer.render()` (~0,9–1,0 ms CPU na render, GPU ~0,085 ms przy 1080p); znaczniki czasu ~15 µs CPU na pass | 23 |
 | 01 | 11 | Rozgrzewka tylko „nie rzuca”: pipeline'y kompilują się asynchronicznie przy pierwszym użyciu, osłona `backend.draw` pomija rysunek do gotowości (obiekt pojawia się 1–2 klatki później) | 11 (moduły przez `Core3D.prewarmPass`) |
 | 01 | 06 | Brak synchronicznego odczytu → mapa CPU ringu pusta (`heightAtUV` = 0): płyta ringu koliduje bez rzeźby terenu, LOD terenu bez wysokości, landmarki i kopuły stawiane bez mapy (stała wysokość z `haloRingLandmarks.js`) | 06 — ZAMKNIĘTE (070a407): teren w koliderze po `ring.ready`, sprawdzone w grze |
 | 01 | 20 | Overlay efektów na własnym `WebGLRenderer` (jedyny drugi renderer; stare efekty overlaya działają bez zamienników) | 17–19 zabierają efekty, 20 usuwa overlay |
@@ -345,3 +345,37 @@ Todo (2): „PORT poprawka 1 / 3 (TODO integracji)” w `tests/shipCore.test.mjs
   jednym zaokrągleniem, DXC z dwoma — hasze z mnożenia i dodawania przez `haloFusedMulAddInt` (bit w bit z bazą);
   `haloStormFlash` (`cyc·1,37`) może mieć tę samą rozbieżność (burze tylko na Jowiszu z ringiem Fable — dziś niewidoczne).
   Inwentarz: port 41 plików z GLSL, 65 materiałów, 7979 linii. Testy na `main`: 1442 / 7 porażek bazowych / 2 todo.
+- **Zadanie 04 scalone do `main`** (3adcc5c, 7599a42; scalenie f7c3c77 + 9841cbf — znaczniki konfliktu w `agents.md`
+  trafiły do commitu scalenia, poprawione osobnym commitem): kadłuby belkowe i heksowe, lakier, odłamki GPU, smugi wraków i
+  impostory ciał heksowych w TSL (`src/3d/hexShips3D.tsl.js`, −543 linie GLSL). Graf na wariant (skóra belek, siatka
+  heksów, płyta pancerza, pula odłamków), każdy kadłub ma lekki `HullNodeMaterial` na wspólnych węzłach, wartości per
+  kadłub przez `uniform().onObjectUpdate`; tekstury per obiekt przez `HullObjectTextureNode` (`texture().onObjectUpdate()`
+  w r183 nie działa); lampy i strefy dysz w buforze storage `HullLightStore` (1024 sloty, zapis przy zmianie podpisu).
+  Spawn 30 NPC: CPU pierwszej klatki 14,4 ms (WebGL 37 ms, graf na materiał 389 ms); bitwa 48 okrętów bez regresji, U hex
+  niższe. Harness: 0 błędów, draw calle ortho = baza, `wraki__ortho` w tolerancji (0,44% >8/255… przed kalibracją 02 —
+  sprawdzić ponownie), zamienniki bitwa 31 → 25, wybuch 28 → 22, wraki 22 → 18, warp 49 → 43. Znalezione: limit 8
+  buforów wierzchołków (odłamki miały 9 — przeplecione), three połyka błąd `createRenderPipelineAsync` (Core3D loguje),
+  pułapki w PLAN §3. Maska słońca: zastępnik pełnego słońca w jednym miejscu (`// AGENT: po 03`). `beamDebris3D.js`
+  zostaje w GLSL (materiał tylko w demach destruktora). mostki-demo: kadłuby heksowe bez zamienników; odczyt HDR
+  (`readRenderTargetPixels`) i przepełnienie puli znaczników w demie → 15 / 23.
+- **Zadanie 02 scalone do `main`** (a72b8fa, 777f86b, 77eef2b; scalenie eb9370b): post w TSL (`src/3d/tsl/postGry.js`) —
+  `BloomGry` na `BloomNode` (ten sam algorytm co `UnrealBloomPass`: próg, 5 mipów, jądra; kompozyt ×3 jak dawny pass —
+  `BLOOM_ZGODNOSC_WEBGL`; alfa z rgb bloomu; bloom raz na render — split ma własny; skala rozdzielczości), pełny „uber”
+  (24 źródła gorącego powietrza, dysze z kierunkiem, dyspersja, ACES gry + sRGB) 1:1 z GLSL (usunięty z `core3d.js`: 296
+  → 148 linii GLSL, została maska słońca — 03); dwa `RenderPipeline` budowane raz (z bloomem i bez — wyłączony bloom nic
+  nie kosztuje); MSAA 4 → 0 → 4 bez błędów; brama `_gpuTimerGate` (pula znaczników czasu three przepełniała się w
+  headless). **Tolerancja portu skalibrowana:** `kalibracja__ortho` WebGL↔WebGPU >8/255 w 0,027% pikseli (średnia 0,0188;
+  po 01 było 85,8%) — różnice tylko na krawędziach po resolve MSAA; `tolerancjaPortu` = >8/255 ≤ 0,05%, średnia ≤ 0,03
+  (uwaga w `baseline.json`: sceny gęste w krawędzie mogą przekroczyć próg mimo zgodności — rozstrzyga mapa różnic).
+  Gorące powietrze A/B: WebGL 0,0679% vs WebGPU 0,0676% pikseli zmienionych przez haze. Koszt: render Core3D z bloomem
+  1,7–1,8 ms CPU / 0,19 ms GPU (bez 0,85 / 0,107) → regresja „02 → 23”. Narzędzia: `scripts/webgpu/post-kontrola.mjs`
+  (16/16), `scripts/webgpu/gorace-powietrze.mjs`. Regresja „01 → 02” zamknięta. Testy na `main` po obu scaleniach: 1462 /
+  7 porażek bazowych / 3 todo (nowe todo = parzystość proxy Z4 w `shipProxyBatch3D`, do Z13); `npm test` OK.
+- **Zadanie 14 zrobione na gałęzi** (9b8dad0, 9b95df5): tarcze (sfera, obrys) i trafienia w tarczę (wstęgi, bańki) w TSL,
+  graf na wariant + lekki materiał per tarcza; 24 trafienia w jednej `uniformArray` vec4 pakowanej per obiekt w
+  `onObjectUpdate` (domyślnie pakuje się raz na `render()` — sprawdzone na GPU: bez tego wszystkie obiekty dostają dane
+  pierwszego). Parzystość z GLSL tagu na GPU (cele RGBA32F): kopuły max |Δ| HDR 7e-5…2,9e-3, 0% pikseli >2/255 po ACES;
+  wstęgi 0,01% (2 piksele wyładowań — hasz z niecałkowitych wejść). Spawn 30 NPC z tarczami: 0 nowych budów NodeBuildera
+  tarcz, cache stały (51) przez 388 klatek. −583 linie GLSL. Uwaga dla 03: snapshot refrakcji rysuje warstwę tarcz do
+  `refractionTarget` (inny kontekst renderu — osobna, nierozgrzana budowa tarcz przy pierwszej fali). Czeka na scalenie
+  `main` i sprawdzenie z bloomem.
