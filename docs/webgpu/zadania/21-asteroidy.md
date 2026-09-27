@@ -24,7 +24,9 @@ w `index.html` grep: `asteroidField`, `OLD_ASTEROIDS_ENABLED`, `beltBackdrop`, `
 (co robiło stare pole: `update`, `_resolveActiveAsteroidImpacts`, `_promoteAsteroidToHex`), testy `asteroid*`.
 
 ## Kroki
-1. **Stan dema:** commit sesji asteroid na `main` (orkiestrator robi go przy starcie zadania, jeśli sesja nie zrobiła).
+1. **Stan dema:** commit dema asteroid na `main` dopiero po sygnale sesji „Asteroid lighting bug demo” (poprawia nocne
+   światło dużych skał i robi fizykę / rozgrywkę skał jako osobne API — cięcie, kopanie do rdzenia, ładunki, materiały;
+   to OSOBNE zadanie po jej meldunku). Orkiestrator pisze do niej przed startem 21 i commituje spójny stan.
 2. **Moduł pasa w Core3D** (klej z `start()`/`frame()`): kolejność klatki z § „Do portu w grze” wpięta w `render()` gry
    (przeskok początku → warstwy → olbrzymy → źródła świateł → `fieldMap` → mgła → burza → siatka świateł i atlas →
    cienie → ośrodek `compute` → iskry → duszki) PRZED `Core3D.render`; pasmo PLAY w passie ortho, RUBBLE/MID/DEEP w passie

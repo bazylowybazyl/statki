@@ -57,7 +57,7 @@ const NOTES = {
   'src/3d/modelBaker.js': 'narzędzie dev (devTools.js, import dynamiczny) z własnym WebGLRenderer',
   'src/3d/sunShadowMask.js': 'biblioteka maski słońca + onBeforeCompile dla wbudowanych materiałów',
   'src/3d/hullShadowSdf.js': 'biblioteka SDF kadłubów; lustro CPU traceHullShadowCpu (test)',
-  'src/3d/haloRing/haloRingWorldGen.js': 'pieczenie map + synchroniczny odczyt CPU (w WebGPU async, oś Y odwrócona)',
+  'src/3d/haloRing/haloRingWorldGen.js': 'pieczenie map + odczyt CPU (WebGPU: asynchronicznie, bez odwracania osi — zadanie 06)',
   'src/3d/menuBackdrop3D.js': 'rozgrzewka po kluczu programu WebGL — do przeprojektowania',
   'src/vfx/destruction3D.js': 'zniszczenie stacji',
   'src/vfx/shatterMaterial.js': 'zniszczenie stacji',

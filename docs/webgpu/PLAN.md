@@ -93,6 +93,14 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   WebGL patrzył tylko na liczbę świateł danego typu. Przełączanie `light.visible` w biegu (pule świateł) = przebudowa
   materiałów oświetlanych przy każdej nowej kombinacji. Dziś światła silników (`perfToggles.enginePointLights`) i trafień
   (`BEAM_ENABLE_IMPACT_LIGHT`) są wyłączone — przy włączaniu: stały zbiór świateł, gaszenie przez `intensity = 0`.
+- **Limit 12 buforów uniformów na etap shadera** (twardy — adapter RTX 5080 też daje 12; potwierdzone w zadaniu 06 i w
+  demie asteroid): każdy `uniformArray` i każda grupa uniformów to osobny bufor. Duże materiały pakują uniformy w JEDEN
+  blok (`createUniformBlock` w `src/3d/haloRing/`, stała nazwa bloku = wspólne programy dla wielu instancji).
+- **Błąd three r183 — `Fn(...).setLayout(...)` z uniformem w domknięciu** jest buforowane globalnie: drugi materiał czyta
+  slot pierwszego (sprawdzone w Node, zadanie 06). Funkcje z layoutem mają być CZYSTE — uniformy podawane parametrami;
+  funkcje z tablicami / teksturami / macierzami wklejane bez layoutu.
+- **Hasze float z niecałkowitych wejść** różnią się między kompilatorami (FXC w bazie WebGL, DXC przez Tint w WebGPU):
+  wejścia haszy trzymaj całkowite — wtedy wynik jest bit w bit (zadanie 06).
 - **TSL, nie `wgslFn`.** Tekstowy WGSL tylko dla wyizolowanej czystej funkcji, gdy TSL jest naprawdę niewygodny — z
   uzasadnieniem w commicie (zamyka drogę do zapasowego backendu WebGL2).
 - **Pętle:** `Loop` w TSL, nie `for` w JS generujący kopie (`mx_noise_float` ×160 rozwinięte = 44 s kompilacji).
@@ -125,7 +133,10 @@ TSL w zgodzie z lustrem `traceHullShadowCpu` (test). Do zadania 03 maska jest wy
 - **Start:** `Core3D.init()` tworzy renderer i zwraca `Core3D.ready`; pierwsze `render()` / `renderBackdrop()` po nim.
   Moduły tworzące zasoby GPU przy starcie (cele, `compileAsync`, pieczenie) czekają na `ready`.
 - **Ring:** `haloRingWorldGen._readbackCpu` (mapa wysokości 2048 × ~96 RGBA32F) → `readRenderTargetPixelsAsync`:
-  wiersze wyrównane do 256 B (wynik nieprzycięty), **wiersz 0 = GÓRA celu** (odwrotnie niż `readPixels`), 4–5 ms.
+  wiersze wyrównane do 256 B (wynik nieprzycięty), wiersz 0 = GÓRA celu (odwrotnie niż `readPixels`), 4–8 ms (pierwszy
+  ~30 ms). Pieczenie w TSL po `uv` pisze v = 0 u GÓRY celu, więc mapa CPU i próbkowanie w materiałach zgadzają się BEZ
+  odwracania (zadanie 06, zgodność z WebGL sprawdzona). Budowa ringu jest asynchroniczna: `createHaloRing` wraca od razu,
+  bryły / hale K-7 / mapa CPU po `await ring.ready`; `HaloRingGame` podpina teren do kolizji po `ready`.
   Mapa CPU steruje kolizjami (`terrainHeightAt`), LOD terenu, rozstawieniem budowli i wysokością kamery — ring nie
   może zgłosić gotowości przed odczytem (inaczej zmienia się gameplay). Harness czeka na `mapsReady`.
 - **Rozgrzewka:** tło menu rozgrzewa pieczenie ringu i jego materiały przez `compileAsync` na tych samych obiektach

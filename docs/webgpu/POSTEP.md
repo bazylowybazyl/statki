@@ -43,7 +43,7 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 | 03 | Post 2/2: maska słońca, SDF kadłubów, refrakcja, fala uderzeniowa | 02 | 06 | max | czeka | | biblioteki dla 04–20 |
 | 04 | Kadłuby (belki + heksy), lakier, impostory, szczątki | 03 | 05–14, 16, 19 | max | czeka | | graf na wariant zamiast materiału na encję; miejsce na światła siatki (18) |
 | 05 | Planety, słońce, mgławica, gwiazdy, stacje | 03 | 04, 06–10, 12–20 | xhigh | czeka | | |
-| 06 | Ring 1/5: biblioteka TSL, pieczenie map, odczyt asynchroniczny, `halo_ring_demo` | 01 | 02–05, 12–20 | max | w toku (2026-09-27, podagent, worktree `statki-wt/06`) | | kończy przejściową regresję terenu ringu z 01 |
+| 06 | Ring 1/5: biblioteka TSL, pieczenie map, odczyt asynchroniczny, `halo_ring_demo` | 01 | 02–05, 12–20 | max | zrobione na gałęzi `webgpu/06` (b7ecdc9…c1ad3d2); czeka na scalenie 01 i weryfikację w grze | b7ecdc9…c1ad3d2 | kończy przejściową regresję terenu ringu z 01 |
 | 07 | Ring 2/5: teren + zestaw przemysłowy | 06 | 04, 05, 12–20 | xhigh | czeka | | |
 | 08 | Ring 3/5: struktura + atmosfera | 07 | j.w. | xhigh | czeka | | |
 | 09 | Ring 4/5: megastruktura + miasto (kopuły, landmarki, drzewa) | 08 | j.w. | xhigh | czeka | | |
@@ -233,3 +233,32 @@ Todo (2): „PORT poprawka 1 / 3 (TODO integracji)” w `tests/shipCore.test.mjs
   z `main` jako baza. `INWENTARZ.md` z adnotacjami „zastąpi / port w …”, wygenerowany z czystego eksportu HEAD (bez
   niezacommitowanych zmian innych sesji).
 - Krok 7: raport dla użytkownika w rozmowie; zadanie 01 czeka na zgodę.
+
+### 2026-09-27 (wieczór) — egzekucja portu: orkiestrator + podagenci
+
+- Użytkownik: praca samodzielna do końca, potem wyłączenie komputera (tabela decyzji). Organizacja: każde zadanie robi
+  podagent w worktree `C:/Users/Szymon/Documents/GitHub/statki-wt/NN` (gałąź `webgpu/NN`); `node_modules` kopiowane
+  robocopy (NIE dowiązanie — `git worktree remove --force` kasuje zawartość celu dowiązania, sprawdzone); worktree
+  tworzyć z `git -c core.autocrlf=false` (inaczej CRLF i fałszywe porażki strażników); POSTEP / INWENTARZ prowadzi
+  orkiestrator (`bash scripts/webgpu/inwentarz-czysty.sh` — inwentarz z czystego HEAD).
+- Sesje dem: warp „Nurt” iteracja 2 gotowa (notatka w `DEMO-WARP.md` § Do portu w grze; sesja nie commituje bez zgody
+  swojego użytkownika — pliki zacommituje orkiestrator przy starcie 22); asteroidy gotowe (`DEMO-ASTEROIDY.md` § Do portu
+  w grze), ale sesja „Asteroid lighting bug demo” poprawia nocne światło dużych skał i robi fizykę / rozgrywkę skał
+  (cięcie dronami, kopanie do rdzenia, ładunki, materiały) jako osobne API — **dema asteroid nie commitować przed jej
+  sygnałem**, zadanie 21 = render + kolizje z olbrzymami, fizyka skał = osobne zadanie po jej meldunku.
+- Projekt integracji broni (podagent-architekt) → `PROJEKT-BRONI.md`; decyzje §5 w imieniu użytkownika.
+- **Zadanie 06 (ring 1/5) zrobione na gałęzi `webgpu/06`** (b7ecdc9, 0e53f47, 801317a, 446fbde, af86dd7, c1ad3d2) —
+  czeka na scalenie 01 i weryfikację w grze:
+  - biblioteka TSL ringu (`src/3d/haloRing/haloRingTSL.js`: całe `haloRingGLSL.js` + `SURFACE` / `CLOUDCOVER`),
+    uniformy w jednym bloku (`createUniformBlock` — limit 12 buforów uniformów na etap; pieczenie miało 20 i pipeline
+    się nie tworzył), pieczenie map i detal w TSL, odczyt CPU asynchroniczny (padding 256 B), budowa ringu
+    asynchroniczna (`await ring.ready`; kolizje terenu po `ready`); `halo_ring_demo` na WebGPU (otoczenie w TSL);
+  - mapa CPU vs WebGL z tagu: Mars i Jowisz bit w bit; Ziemia średnia różnica 0,0021 j., p99,9 0,075, maks. 0,569 j.,
+    0 NaN; plan budowli (9 megabudowli, 12 kopuł) identyczny; naprawiony NaN z `pow(1-|n|, 3)` (ujemna podstawa);
+  - czasy: kompilacja + mapa niska + odczyt 9,9 s (WebGL) → 1,4–2,5 s (WebGPU); demo do gotowości 31 s → 5,5 s;
+  - pułapki: `setLayout` z uniformem w domknięciu (błąd r183 — PLAN §3), hasze float z niecałkowitych wejść różnią się
+    między kompilatorami, v = 0 pieczenia u góry celu (bez odwracania osi), kolejność funkcji w WGSL zależy od kolejności
+    budowy materiałów (jedna dodatkowa kompilacja na typ); `dema/kontenery.html` na `main` nie działa (dema poza portem —
+    tag);
+  - testy: 1337 / 7 porażek bazowych / 2 todo; nowe `haloRingTSL` (12, WGSL budowany w Node) i `haloRingAsync` (3);
+    `menuBackdrop` (rozgrzewka) przepisany; inwentarz na gałęzi: port 42 pliki z GLSL, 68 materiałów, 8542 linie.

@@ -41,6 +41,9 @@ edytuje plików z jego zakresu (zwłaszcza `src/3d/core3d.js`, `index.html`) —
 Które mogą iść naraz: kolumna „Równolegle z” w `POSTEP.md` / `PLAN.md` §9. Najwyżej 2–3 naraz (wspólne GPU).
 
 1. Start sesji we własnym worktree: `claude --worktree webgpu-NN` (albo worktree z aplikacji) — osobny katalog i gałąź.
+   Ręcznie: `git -c core.autocrlf=false worktree add -b webgpu/NN ../statki-wt/NN main` — **bez `-c core.autocrlf=false`**
+   repo (`core.autocrlf=true`) wypakuje pliki z CRLF, a kilka testów-strażników (regexy po źródłach) padnie fałszywie
+   (zadanie 06 widziało ~5). Z tą opcją pliki mają LF i `git status` jest czysty.
 2. `node_modules`: worktree go nie ma. **Kopia, nie dowiązanie** (~150 MB bez Electrona, który harnessowi niepotrzebny):
 
    ```powershell
