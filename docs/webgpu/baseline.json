@@ -33,9 +33,40 @@
     "adapterWebGPU": "nvidia blackwell"
   },
   "tolerancjaPortu": {
-    "roznePct8": 2,
-    "srednia": 1,
-    "stan": "wstępna — do kalibracji w zadaniu 02"
+    "roznePct8": 0.05,
+    "srednia": 0.03,
+    "stan": "skalibrowana w zadaniu 02 (2026-09-28): ~1,5 × różnica WebGL (tag) ↔ WebGPU na scenie bez zamienników",
+    "uzasadnienie": "Różnica renderer↔renderer na kalibracja__ortho (same wbudowane materiały three, bloom, ACES gry, sRGB): >8/255 w 0,027% pikseli, średnia 0,0188; ta sama scena z 4 źródłami gorącego powietrza 0,0272% / 0,0191, z wyłączonym bloomem 0,0313% / 0,0127. Tolerancja = ~1,5 × największa z nich (0,0313 → 0,05; 0,0191 → 0,03), powyżej szumu bazy (największy: bitwa__ortho 0,0103% >8, bitwa średnia 0,0081). Skąd różnice: piksele sylwetek po resolve MSAA 4× — bez bloomu 95% różnic >8 leży na krawędziach, różni się ~4% pikseli krawędzi (pokrycie o jedną próbkę: podpikselowe różnice transformacji wierzchołków, FXC przez ANGLE vs DXC przez Tint; maks. 62/255 z bloomem, 249 bez). Bloom (BloomNode + ×3 jak kompozyt UnrealBloomPass r183) i ACES/sRGB 1:1: wnętrza ≤ 2/255 (suma sceny i bloomu w fp32 zamiast bufora fp16). Gorące powietrze 1:1 (dokłada 0,0002 p.p.). slonce nie nadaje się do kalibracji do zadania 05 (mgławica, słońce i poświata ring-planety to zamienniki).",
+    "uwaga": "Odsetek rośnie z długością sylwetek w kadrze: kalibracja ma 0,44% pikseli na krawędziach; scena gęstsza (ring, K-7, bitwa) może przekroczyć próg mimo zgodności — wtedy rozstrzyga mapa różnic (różnice tylko na sylwetkach, wnętrza ≤ 2/255).",
+    "pomiar": {
+      "kalibracja__ortho": {
+        "roznePct2": 0.0353,
+        "roznePct8": 0.027,
+        "roznePct32": 0.0092,
+        "srednia": 0.0188,
+        "maks": 62
+      },
+      "kalibracjaGorace": {
+        "roznePct8": 0.0272,
+        "srednia": 0.0191,
+        "maks": 62
+      },
+      "kalibracjaBezBloomu": {
+        "roznePct8": 0.0313,
+        "srednia": 0.0127,
+        "maks": 249
+      },
+      "krawedzie": {
+        "pikseleKrawedziPct": 0.44,
+        "roznePct8NaKrawedziachBezBloomu": 95.1,
+        "pikseleKrawedziRoznePct": 3.5
+      },
+      "szumBazy": {
+        "roznePct8": 0.0103,
+        "srednia": 0.0081
+      },
+      "przebieg": ".tmp/webgpu/zadania/02 (worktree statki-wt/02) vs .tmp/webgpu/baseline/webgl/p1; kalibracjaGorace i kalibracjaBezBloomu: scripts/webgpu/gorace-powietrze.mjs na worktree tagu (WebGL) i na gałęzi 02 (WebGPU)"
+    }
   },
   "sceny": {
     "menu": {

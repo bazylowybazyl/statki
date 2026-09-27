@@ -5,6 +5,8 @@
 // (WebGPURenderer). Wynik: window.__parz (różnice na funkcję).
 // Uruchamia scripts/webgpu/ring-tsl-parzystosc.mjs. Po usunięciu haloRingGLSL.js
 // (zadanie 10) strona może porównywać z zapisanym wynikiem GLSL (--zapisz-glsl).
+// Zadanie 07: zestaw przemysłowy (haloRingIndustryKit.js) — GLSL (HALO_GLSL_INDKIT) ↔ TSL
+// i osobno wynik TSL na GPU ↔ bliźniak JS (indKitPart): state.mirror.
 import * as THREE from 'three/webgpu';
 import { Fn, float, int, ivec2, vec2, vec3, vec4, texture, textureLoad, screenCoordinate, normalize, length } from 'three/tsl';
 import {
@@ -19,6 +21,8 @@ import { createHaloUniforms } from '../../src/3d/haloRing/haloRingUniforms.js';
 import { RING_PLANET_WORLD_RADII } from '../../src/3d/ringScale.js';
 import { HALO_RING_PLANETS } from '../../src/game/haloRingPlanets.js';
 import { mulberry32 } from '../../src/3d/haloRing/haloRingLayout.js';
+import { HALO_GLSL_INDKIT, IND_PARTS, haloIndKitTSL, indKitPart } from '../../src/3d/haloRing/haloRingIndustryKit.js';
+import { haloFusedMulAddInt } from '../../src/3d/haloRing/haloRingTSL.js';
 
 const W = 64;
 const H = 64;
@@ -51,7 +55,11 @@ const TAU = Math.PI * 2;
   u.uCutB.value[0].set(1400, 900, 120, 1);
   u.uCutA.value[1].set(cam.x + 3000, cam.y - 2000, 1, 0);
   u.uCutB.value[1].set(1350, 1350, 80, 0.7);
+  // zestaw przemysłowy: progi sięgające wszystkich 8 rodzajów zakładów (także radiatorów)
+  u.uIndKitCdf0.value.set(0.1, 0.2, 0.3, 0.4);
+  u.uIndKitCdf1.value.set(0.5, 0.6, 0.7, 1.01);
 }
+const KIT_CDF = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 1.01];
 
 // Wejścia: punkty wokół ringu i planety, kierunki, parametry skalarne.
 const rand = mulberry32(0x7a17);
@@ -89,6 +97,7 @@ const in2 = new Float32Array(N * 4);
 // Testy: [nazwa, wyrażenie GLSL (a = p+jitter, b = kierunek+skalar, d = parametry), wyrażenie TSL]
 const Hl = haloRingTSL(u);
 const Ut = Hl.uniforms;
+const Kt = haloIndKitTSL(u);
 const TESTS = [
   ['hashI', 'vec4(haloHashI(d.x, d.y, d.z), 0.0, 0.0, 1.0)', (a, b, d) => vec4(haloHashI(d.x, d.y, d.z), 0.0, 0.0, 1.0)],
   ['hash12', 'vec4(haloHash12(a.xy * 0.01), haloHash13(a.xyz * 0.003), 0.0, 1.0)', (a) => vec4(haloHash12(a.xy.mul(0.01)), haloHash13(a.xyz.mul(0.003)), 0.0, 1.0)],
@@ -118,7 +127,25 @@ const TESTS = [
     (a, b, d) => vec4(Hl.haloInTransitCut(d.x.mul(4.0), d.w.sub(0.5).mul(2400.0)).select(1.0, 0.0), Hl.haloRelFromPolar(d.w.mul(0.02).sub(0.01), a.w.mul(300.0).sub(100.0), a.z))],
   ['portSites', 'vec4(haloPortPad(d.x * 4.0, d.w * uFloorDims.y, uFloorDims.x, 0.0, 300.0), haloPortZones(d.x * 4.0, d.w * uFloorDims.y, uFloorDims.x, a.w * 400.0 - 200.0).xyw)',
     (a, b, d) => vec4(Hl.haloPortPad(d.x.mul(4.0), d.w.mul(Ut.uFloorDims.y), Ut.uFloorDims.x, 0.0, 300.0), Hl.haloPortZones(d.x.mul(4.0), d.w.mul(Ut.uFloorDims.y), Ut.uFloorDims.x, a.w.mul(400.0).sub(200.0)).xyw)],
-  ['fgVisibility', 'vec4(haloFgVisibility(a.xyz), 0.0, 0.0, 1.0)', (a) => vec4(Hl.haloFgVisibility(a.xyz), 0.0, 0.0, 1.0)]
+  ['fgVisibility', 'vec4(haloFgVisibility(a.xyz), 0.0, 0.0, 1.0)', (a) => vec4(Hl.haloFgVisibility(a.xyz), 0.0, 0.0, 1.0)],
+  // zestaw przemysłowy (zadanie 07): d.w = lotH, a = punkt działki, d.z = kod materiału
+  ...Array.from({ length: IND_PARTS }, (_, p) => [`kitA_p${p}`, `kitA(d.w, ${p})`, (a, b, d) => Kt.indKitPart(d.w, int(p)).element(0)]),
+  ...Array.from({ length: IND_PARTS }, (_, p) => [`kitB_p${p}`, `kitB(d.w, ${p})`, (a, b, d) => Kt.indKitPart(d.w, int(p)).element(1)]),
+  ['kitType', 'vec4(indKitType(d.w), 0.0, 0.0, 1.0)', (a, b, d) => vec4(Kt.indKitType(d.w), 0.0, 0.0, 1.0)],
+  // hasze terenu z identyfikatorów kwartałów (bid ~ 0…2000): jasność kwartału (bid·3,1 + 5 — wejście
+  // NIEcałkowite; FXC liczy je jednym zaokrągleniem, teren TSL przez haloFusedMulAddInt), okna (+0,37),
+  // park (+0,5), działka (bid·7 + lot + 3 — całkowite). terrainHashBidNaive: to samo mnożenie i dodawanie
+  // wprost (DXC: dwa zaokrąglenia) — dla porównania
+  ['terrainHashBid', 'vec4(haloHash12(floor(d.xy / 32.0) * 3.1 + 5.0), haloHash12(floor(d.xy / 32.0) + 0.37), haloHash12(floor(d.xy / 32.0) + 0.5), haloHash12(floor(d.xy / 32.0) * 7.0 + floor(d.zw * 2.0) + 3.0))',
+    (a, b, d) => vec4(haloHash12(haloFusedMulAddInt(d.xy.div(32.0).floor(), 3.1, 5.0)), haloHash12(d.xy.div(32.0).floor().add(0.37)), haloHash12(d.xy.div(32.0).floor().add(0.5)),
+      haloHash12(d.xy.div(32.0).floor().mul(7.0).add(d.zw.mul(2.0).floor()).add(3.0)))],
+  ['terrainHashBidNaive', 'vec4(haloHash12(floor(d.xy / 32.0) * 3.1 + 5.0), 0.0, 0.0, 1.0)',
+    (a, b, d) => vec4(haloHash12(d.xy.div(32.0).floor().mul(3.1).add(5.0)), 0.0, 0.0, 1.0)],
+  ['kitTopColor', 'vec4(indTopColor(d.z, a.w, (a.xy / 40000.0) * 45.0, vec4(0.0, 0.0, 6.0 + a.w * 30.0, 12.0)), 1.0)',
+    (a, b, d) => vec4(Kt.indTopColor(d.z, a.w, a.xy.div(40000.0).mul(45.0), vec4(0.0, 0.0, float(6.0).add(a.w.mul(30.0)), 12.0)), 1.0)],
+  ['kitShadowCyl', 'vec4(indSegBox(b.xy * 30.0, b.zw * vec2(40.0, 0.001), vec2(12.0, 7.0)), indSegCircle(b.xy * 30.0, b.zx * 40.0, 9.0), indCylRadius(floor(d.z / 21.0), a.w), indCylSlope(floor(d.z / 21.0), a.w))',
+    (a, b, d) => vec4(Kt.indSegBox(b.xy.mul(30.0), b.zw.mul(vec2(40.0, 0.001)), vec2(12.0, 7.0)), Kt.indSegCircle(b.xy.mul(30.0), b.zx.mul(40.0), 9.0),
+      Kt.indCylRadius(d.z.div(21.0).floor(), a.w), Kt.indCylSlope(d.z.div(21.0).floor(), a.w))]
 ];
 
 // ---------------------------------------------------------------------------
@@ -148,10 +175,12 @@ function glslRun() {
   gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, out, 0);
   const vs = '#version 300 es\nvoid main() { vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2)); gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0); }';
-  const lib = `${HALO_GLSL_COMMON}\n${HALO_GLSL_NOISE}\n${HALO_GLSL_STORM}\n${HALO_GLSL_LIGHT}\n#define AIR_STEPS 8\n${HALO_GLSL_AIR}\n${HALO_GLSL_PORTSITES}\n${HALO_GLSL_TRANSIT}\n#define HALO_FG\n${HALO_GLSL_FG}\nuniform mat4 viewMatrix;\nuniform mat4 modelMatrix;\nuniform mat4 projectionMatrix;\n${HALO_GLSL_RTE}\n`;
+  const lib = `${HALO_GLSL_COMMON}\n${HALO_GLSL_NOISE}\n${HALO_GLSL_STORM}\n${HALO_GLSL_LIGHT}\n#define AIR_STEPS 8\n${HALO_GLSL_AIR}\n${HALO_GLSL_PORTSITES}\n${HALO_GLSL_TRANSIT}\n#define HALO_FG\n${HALO_GLSL_FG}\nuniform mat4 viewMatrix;\nuniform mat4 modelMatrix;\nuniform mat4 projectionMatrix;\n${HALO_GLSL_RTE}\n${HALO_GLSL_INDKIT}\n`;
   const helpers = `
 vec4 haloAirTestIn(vec3 d, float t1, float j) { vec3 ins; vec3 tr; haloAirIntegrate(uCamLocal, d, 0.0, t1, j, ins, tr); return vec4(ins, 1.0); }
 vec4 haloAirTestTr(vec3 d, float t1, float j) { vec3 ins; vec3 tr; haloAirIntegrate(uCamLocal, d, 0.0, t1, j, ins, tr); return vec4(tr, 1.0); }
+vec4 kitA(float lotH, int p) { vec4 A; vec4 B; indKitPart(lotH, p, A, B); return A; }
+vec4 kitB(float lotH, int p) { vec4 A; vec4 B; indKitPart(lotH, p, A, B); return B; }
 `;
   const compile = (type, src) => {
     const s = gl.createShader(type);
@@ -280,13 +309,14 @@ function compare(A, B) {
   let nanB = 0;
   let sumAbs = 0;
   let at = -1;
+  const sameCh = [0, 0, 0, 0];
   for (let i = 0; i < A.length; i++) {
     const x = A[i];
     const y = B[i];
     if (!Number.isFinite(x)) nanA++;
     if (!Number.isFinite(y)) nanB++;
     if (!Number.isFinite(x) || !Number.isFinite(y)) { if (Number.isNaN(x) !== Number.isNaN(y)) at = i; continue; }
-    if (x === y) same++;
+    if (x === y) { same++; sameCh[i & 3]++; }
     const d = Math.abs(x - y);
     sumAbs += d;
     const rel = d / Math.max(1e-6, Math.abs(x));
@@ -295,6 +325,7 @@ function compare(A, B) {
   }
   return {
     n: A.length, bitIdentical: same, identicalPct: +(100 * same / A.length).toFixed(2), maxAbs, meanAbs: sumAbs / A.length,
+    identicalPctByChannel: sameCh.map((c) => +(100 * c / (A.length / 4)).toFixed(2)),
     maxRel, nanGLSL: nanA, nanTSL: nanB, worst: at >= 0 ? { i: at, glsl: A[at], tsl: B[at], sample: Math.floor(at / 4) } : null
   };
 }
@@ -308,7 +339,55 @@ async function main() {
     state.results[name] = compare(glsl[name], tsl[name]);
     log(`${name.padEnd(18)} ${JSON.stringify(state.results[name])}`);
   }
+  state.mirror = compareKitMirror(tsl);
+  log(`zestaw TSL ↔ bliźniak JS: ${JSON.stringify(state.mirror)}`);
   state.done = true;
+}
+
+// Wynik TSL na GPU (float32) ↔ bliźniak JS indKitPart (float64) na tych samych lotH (float32
+// z tekstury wejść): decyzje (istnienie części, materiał, kształt) mają być identyczne, wymiary —
+// w granicach zaokrąglenia float32 (odległość w ULP po zaokrągleniu wyniku JS do float32).
+function compareKitMirror(tsl) {
+  const f32 = new Float32Array(2);
+  const i32 = new Int32Array(f32.buffer);
+  const ord = (x) => (x < 0 ? 0x80000000 - x : x);
+  const ulp = (a, b) => {
+    f32[0] = a;
+    f32[1] = b;
+    return Math.abs(ord(i32[0]) - ord(i32[1]));
+  };
+  let values = 0;
+  let identical = 0;
+  let maxUlp = 0;
+  let maxAbs = 0;
+  let parts = 0;
+  let decisionMismatch = 0;
+  let worst = null;
+  const ulpHist = { 0: 0, 1: 0, 2: 0, '>2': 0 };
+  for (let i = 0; i < N; i++) {
+    const lotH = in2[i * 4 + 3];
+    for (let p = 0; p < IND_PARTS; p++) {
+      const ref = indKitPart(lotH, p, KIT_CDF);
+      const A = tsl[`kitA_p${p}`];
+      const B = tsl[`kitB_p${p}`];
+      const gpu = [A[i * 4], A[i * 4 + 1], A[i * 4 + 2], A[i * 4 + 3], B[i * 4], B[i * 4 + 1], B[i * 4 + 2], B[i * 4 + 3]];
+      const js = [...ref.A, ...ref.B];
+      parts++;
+      if ((js[5] > 0) !== (gpu[5] > 0) || js[6] !== gpu[6] || js[7] !== gpu[7]) {
+        decisionMismatch++;
+        if (!worst) worst = { lotH, p, js, gpu };
+      }
+      for (let k = 0; k < 8; k++) {
+        values++;
+        const d = ulp(Math.fround(js[k]), gpu[k]);
+        if (d === 0) identical++;
+        ulpHist[d > 2 ? '>2' : d]++;
+        maxUlp = Math.max(maxUlp, d);
+        maxAbs = Math.max(maxAbs, Math.abs(js[k] - gpu[k]));
+      }
+    }
+  }
+  return { parts, decisionMismatch, values, identicalF32: identical, identicalPct: +(100 * identical / values).toFixed(3), maxUlp, ulpHist, maxAbs, worst };
 }
 
 main().catch((err) => {

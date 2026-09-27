@@ -65,8 +65,28 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   Core3D osłania `backend.draw` (`_guardPendingPipelines`: taki rysunek czeka klatkę, dwie). `renderer.info`: draw calle
   w `render.drawCalls` (reset raz na klatkę rAF). Zegar GPU: znaczniki czasu (`trackTimestamp`), jedno zapytanie w
   locie → `Core3D.gpuFrameMs`; mapa `timestamps` puli three nie jest czyszczona przez three — Core3D czyści ją po wyniku.
-- **Przejściowo (do swoich zadań):** bloom i gorące powietrze (02), maska słońca / SDF / refrakcja (03, do tego czasu
-  `uSunShadowOn = 0`).
+- **Pułapki TSL z zadania 04** (reszta — w notce „TSL — pułapki sprawdzone w zadaniach 06–07” niżej): **najwyżej 8
+  buforów wierzchołków na pipeline** (`maxVertexBuffers` = 8 także w adapterze RTX 5080) — każdy nieprzeplatany atrybut
+  to bufor, InstancedMesh dokłada macierz instancji (+ normalne); stałe atrybuty przeplataj, a materiał liczący pozycję
+  sam (`vertexNode`) na InstancedMesh nadpisuje `setupPosition` (wzór `HullDebrisNodeMaterial`). three połyka błąd
+  `createRenderPipelineAsync` (pusty catch) — pipeline zostaje „w budowie”, osłona Core3D pomija rysunek; Core3D loguje
+  go do konsoli (harness: `bledy`). `texture(...).onObjectUpdate()` NIE działa (TextureNode.setup zeruje `updateType`
+  bez macierzy uv) — tekstura per obiekt: `HullObjectTextureNode` (`src/3d/hexShips3D.tsl.js`). Ścieżkę próbkowania
+  (textureSample / textureLoad) TSL wybiera z tekstury obecnej przy BUDOWIE — tekstury zastępcze z filtrem liniowym,
+  osobny obiekt na każde wiązanie (TextureNode skleja wiązania po uuid tekstury). `InstancedMesh` wnosi swój uuid do
+  klucza — każdy egzemplarz to osobny NodeBuilder (dla instancji per encja: jeden wspólny InstancedMesh).
+- **Post (zadanie 02, `src/3d/tsl/postGry.js`):** kolejność jak dawny łańcuch resolve → bloom → uber. Bloom =
+  `BloomGry` (BloomNode three, ten sam algorytm co dawny pass WebGL; BloomNode r183 nie ma ×3 kompozytu —
+  `BLOOM_ZGODNOSC_WEBGL = 3`, alfa = max(rgb) bloomu jak przy dawnym blendzie; liczony raz na RENDER, bo podzielony ekran to
+  dwa `renderSingle` w klatce; rozmiar = bufor rysowania × `resolutionScale`). „Uber” próbkuje scenę i bloom tym samym
+  przesuniętym UV (gorące powietrze do 24 źródeł, dyspersja dysz), potem ACES gry i sRGB. Dwa `RenderPipeline` zbudowane
+  raz: z bloomem i bez (`perfToggles.bloom`, czytane w każdym renderze), gorące powietrze = uniform `uHeatOn` — przełączniki
+  bez przebudowy. Strojenie bloomu = uniformy węzła (`_applyBloomPassConfig` co klatkę, tuner `?dev`). Kubełek `bloom`
+  mierzą haki BloomGry (jego passy lecą w środku renderu postu), `post` = sam uber. Znaczniki czasu GPU: brama na granicy
+  klatki (`_gpuTimerGate`) — pula three (2048 zapytań) nie przepełnia się przy wolnym wyniku.
+- **Przejściowo (do swoich zadań):** maska słońca / SDF / refrakcja (03, do tego czasu `uSunShadowOn = 0`). Gorące
+  powietrze w podzielonym ekranie ma tylko widok gracza 1 (źródła w UV kamery gracza 1; na WebGL widok 1 miał je
+  przesunięte, widok 2 — żadnych).
 - **Nowe efekty broni i rakiet z dem** (`dema/bronie-webgpu`, `dema/rakiety-webgpu` — decyzja użytkownika 2026-09-27)
   zastępują stare (zadania 12, 17–20); wspólne klocki w `src/3d/fx/`. Starych efektów broni, rakiet, iskier i trafień nie
   przenosimy 1:1 ani nie poprawiamy — idą do wymiany. Rozgrywka zostaje w grze: dema dostają tylko zdarzenia (strzał,
@@ -80,7 +100,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   tryb bierze się z bazy, patrz nagłówek `zrzuty.mjs`); haki `?dev`: `window.DevScene.teleport / syncCamera /
   preloadHullSprites / startSplit`. Testy: `node --test "tests/*.test.mjs"` (wzorzec w cudzysłowie — `tests/` na Node 22
   nie działa).
-- **TSL — pułapki sprawdzone w zadaniu 06:** (1) funkcja z `setLayout` musi być CZYSTA — three buforuje jej kod globalnie
+- **TSL — pułapki sprawdzone w zadaniach 02, 06–07:** (1) funkcja z `setLayout` musi być CZYSTA — three buforuje jej kod globalnie
   (klasa buildera → węzeł `Fn`), więc uniform / tekstura złapane w domknięciu wskazują w drugim materiale cudzy slot;
   uniformy jako parametry funkcji albo funkcja wklejana (bez layoutu) — wzór `HaloFn` / `haloRingTSL(u)` w
   `src/3d/haloRing/haloRingTSL.js`; (2) najwyżej **12 buforów uniformów na etap** (`maxUniformBuffersPerShaderStage`,
@@ -90,7 +110,19 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   potęgi całkowite mnożeniem; (4) WGSL próbkuje v = 0 z GÓRNEGO wiersza celu — mapę do `texture(map, (u, v))` piecz z
   v = 0 u góry (uv jak `QuadMesh`), wtedy odczyt CPU (`readRenderTargetPixelsAsync`: wiersz 0 = góra, wiersze wyrównane
   do 256 B) nie wymaga odwracania; (5) WGSL budujesz w Node bez GPU (`renderer.backend.createNodeBuilder`, wzór w
-  `tests/haloRingTSL.test.mjs`) — testy czytają wygenerowany kod.
+  `tests/haloRingTSL.test.mjs`) — testy czytają wygenerowany kod; (6) `smoothstep` ze STAŁYMI krawędziami low ≥ high to
+  błąd tworzenia shadera WGSL (GLSL ringu ma ich dziesiątki: `smoothstep(0.34, 0.05, x)`) — odwrócone krawędzie przez
+  `haloSmooth(e0, e1, x)` (`haloRingTSL.js`, wzór jak HLSL); (7) `texture(tex)` bez uv ma `updateMatrix = true`, a klony
+  z `.sample(uv)` to dziedziczą — każde próbkowanie mnoży uv przez macierz tekstury (osobny uniform mat3 w grupie obiektu,
+  aktualizowany co obiekt); węzeł bazowy z uv-atrapą `texture(tex, vec2(0))` (wzór `surfaceTextureNode` w
+  `haloRingTerrain.js`); (8) `screenCoordinate` liczy y od GÓRY celu — wzory z pozycji piksela (dither IGN) wychodzą
+  odbite względem `gl_FragCoord` bazy WebGL; `haloFragCoordGL()` daje ten sam piksel co WebGL; (9) varyingi z własnego
+  `vertexNode`: `varyingProperty(typ, nazwa).assign(…)` w funkcji wierzchołków, ten sam węzeł we fragmencie; (10) baza
+  WebGL (ANGLE/FXC) liczy `a·b + c` jednym zaokrągleniem (FMA), Dawn/DXC dwoma — gdy wynik idzie do haszu (wejście
+  niecałkowite), 1 ULP zmienia hasz; dla całkowitego `a` i stałej `b` → `haloFusedMulAddInt(a, b, c)` (`haloRingTSL.js`,
+  bit w bit z WebGL); sprawdzanie: wiersze haszy w `scripts/webgpu/ring-tsl-parzystosc.mjs`; (11) `PassTextureNode` (np.
+  `bloom.getTextureNode()`) gubi `uvNode` w `clone()` — odczyt z UV i poziomem przez `texture(węzeł, uv, poziom)`, nie
+  `.sample(uv).level(0)` (drugi klon wraca do domyślnego UV; zadanie 02, `postGry.js`).
 
 ---
 
@@ -116,7 +148,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 - Trzy RÓŻNE ringi (decyzja użytkownika 2026-09-27): Ziemia = silnik Halo (`createHaloRing`), Mars = ECUMENE, Jowisz = ring Fable — z dem `orbital_ring_demo(_2).html` w skali ×3 (`createArchRing`, `src/3d/haloRing/arch/`). Archetyp i geometria są w profilu (`haloRingProfiles.js`), a `createHaloRingLayout` rozdaje je kolizjom, ruchowi v2 i stacji-portowi. Hala K-7 i zatoki (stanowiska, kolizje) są wspólne, różni je tylko ubiór. Zmiana ringu Ziemi nie dotyka Marsa i Jowisza, i odwrotnie. Opis: `docs/PORT-halo-ring.md` § „Ringi-archetypy”.
 - Ring nie udaje życia (`docs/BRIEF-ring-halo.md` §1): bez ruchu zastępczego, zaparkowanych NPC i świateł aut — statki tylko z systemu ruchu.
 - Ring na WebGPU (zadanie 06): biblioteka TSL `src/3d/haloRing/haloRingTSL.js` (odpowiednik `haloRingGLSL.js`, który
-  zostaje tylko dla materiałów terenu, struktury, atmosfery, miasta, K-7 i archetypów do ich zadań 07–10), uniformy ringu
+  zostaje tylko dla materiałów struktury, atmosfery, miasta, K-7 i archetypów do ich zadań 08–10), uniformy ringu
   w jednym bloku (`createHaloUniforms`, klucze i `.value` bez zmian), mapy świata i detal pieczone w TSL. **Budowa ringu
   jest asynchroniczna:** `createHaloRing` wraca od razu (układ i uniformy gotowe), bryły i mapa CPU dopiero po
   `await ring.ready` (compileAsync bake'u na prawdziwych celach → bake → odczyt CPU → plan budowli i kopuł z mapy →
@@ -124,6 +156,14 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   i zeruje stanowiska K-7 po `ready`. Mapa CPU zgodna z WebGL do precyzji float (`scripts/webgpu/ring-mapa.mjs`),
   parzystość funkcji GLSL ↔ TSL: `scripts/webgpu/ring-tsl-parzystosc.mjs`, teren w koliderze gry:
   `scripts/webgpu/ring-kolizje-gra.mjs`; warsztat `dema/halo_ring_demo.html` na WebGPU.
+- Teren ringu w TSL (zadanie 07): `HaloTerrain` = NodeMaterial z `makeHaloTerrainNodes` (`haloRingTerrain.js`, 1:1 z
+  dawnym GLSL), uniformy powierzchni w bloku `haloSurfU` (`terrain.surfaceUniforms` — klucze i `.value` jak dawniej, mapy
+  i detal to węzły `texture()`; te same uniformy dostaną struktura, atmosfera, megastruktura i miasto przez
+  `haloRingSurfaceTSL(u, su)`). Jedyny wariant kompilacji to kroki powietrza (`quality.airSteps`), reszta jakości w
+  uniformach. Zestaw przemysłowy: `haloIndKitTSL(u)` (`haloRingIndustryKit.js`), liczby z jednej definicji `kitParts` —
+  na liczbach = bliźniak JS `indKitPart` bit w bit (`tests/haloRingTerrainTSL.test.mjs`), na GPU zero rozbieżnych decyzji
+  (parzystość). `HALO_GLSL_SURFACE`/`CLOUDCOVER` są w `haloRingGLSL.js` do 08–09, `HALO_GLSL_INDKIT` dla miasta do 09.
+  Zrzuty samego terenu dema: `scripts/halo-ring-shots.mjs --teren [--bez-otoczenia]` (ten sam skrypt w worktree z tagu).
 
 ### Menu główne i jego tło 3D
 - Tło menu przed startem gry = Ziemia z ringiem w kamerze kinowej: `MenuBackdrop3D` (`src/3d/menuBackdrop3D.js`). Ring to ring GRY wypożyczony przez `haloRings.showcaseRing('earth')` (mapy pieką się już w menu) i oddany `releaseShowcase` w `stopMenuBackdrop()` tuż przed pierwszą klatką gry (`startGame`). Nie twórz drugiego ringu dla menu.
@@ -148,6 +188,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 - Nowy wrak z kadłuba (śmierć, rozpad, wybuch reaktora) idzie przez `convertToWreck` / `shatter` / hak `onWreck` — nie składaj go ręcznie.
 - Siatka 15 px jak w demie (`HULL_BODY_CONFIG.cellPx`); jednostką strojenia zostaje dawny heks (`HEX_PITCH_PX` = 7,5): węzeł = `hull.hexPerNode` heksów (HP ×4, łup, tempo cięcia, promień krateru). Nową wartość „na komórkę” przeliczaj przez `hexPerNode`. Nie zagęszczaj siatki bez pomiaru ciągłego styku — przy 7,5 px pchany okręt budził się cały i nie zasypiał (krok 2,7 ms zamiast 0,13).
 - Dwie masy: ciało w silniku ma masę ZDERZEŃ z powierzchni kadłuba (`HULL_BODY_CONFIG.massPerArea`, jedna gęstość jak demo — Atlas ≈ 800 tys.), `entity.mass` to masa GRY (ciąg ∝ masa, separacja AI, holowanie, asteroidy). Nie przepisuj jednej w drugą: `syncOut` skaluje masę gry i `inertia` w stosunku ubytku masy ciała, wrak dostaje masę w skali gry rodzica.
+- Materiał kadłuba (port WebGPU, zadanie 04): graf TSL RAZ na wariant (`src/3d/hexShips3D.tsl.js`: skóra belek, siatka heksów, płyta pancerza, szczątki GPU), każdy kadłub dostaje lekki `HullNodeMaterial` z tymi samymi węzłami — nie buduj grafu na encję (NodeBuilder ~12 ms CPU na kadłub, spawn 30 NPC: 389 ms zamiast 14). Wartości per encja w `material.uniforms` (obiekty `{ value }`), wspólne (czas, strojenie światła, żar) w `HULL_SHARED` (raz na klatkę), lampy statku i strefy dysz w buforze storage `HullLightStore` (slot na kadłub, zapis tylko przy zmianie podpisu). Nowe dane per kadłub: holder w `createHullUniforms` + `perObject()` w grafie, nie pole-liczba materiału (klucz three bierze liczby jako 0/1). Maska słońca kadłubów, odłamków i smug: JEDNO miejsce importu (`sunVisibility`/`sunFill`/`sunShadeUnlit` w `hexShips3D.tsl.js`). Haki: mapa ran i światła efektów (zadanie 18: `hullDamageSurface`, `hullDamageHeat`, `hullEffectLights`), ośrodek wolumetryczny (zadanie 21: `hullVolume`, `kolor·a + rgb`).
 
 ### Mostki (zniszczenie mostka = kill)
 - **Stan 2026-09-25: mostki i rdzenie wymagają `hexGrid`, więc na kadłubach belkowych są nieaktywne do ich portu (etapy 4–5 w `docs/PORT-silnik-belek.md`).** Opis niżej dotyczy docelowego zachowania.
@@ -162,7 +203,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 - Rozmiar i palety MAIN/WARP są PER STATEK: blok `engineFx` w danych edytora (`hpEditor.v1` → `ships[id]`), domyślne dopasowane do sprite'ów w `src/data/engineFx.js` (`ENGINE_FX_DEFAULTS`). Dysza w pikselach PNG, w grze × hpScale × spriteScale (jak markery). Gra czyta `visual.engineFx` (runtime NPC, układ gracza); nowy kadłub z dyszami MAIN potrzebuje wpisu w `ENGINE_FX_DEFAULTS` (pilnuje test).
 - Tryb skoku encji: gracz z `GameState.warp`, NPC `state === 'warping_in'` / `phase === 'warping'`, podgląd edytora `__warpPreview`. Dopalacz MAIN: `GameState.boost`.
 - Jasność dysz SIDE: `ENGINE_HDR` w `engineExhaustBatch.js` (0,6). W bloomie ma świecić tylko dysza, która odpala (mnożnik 1 + 1,5 · ciąg); biały „pilot” w spoczynku (= `ENGINE_HDR`) i sam lot (`moveGlow`) zostają pod progiem 0,9 — przy 2,4 każda z 8 dysz Atlasa świeciła jak lampa, a manewr zalewał burtę białą plamą (pilnuje `tests/renderBugfixGuards.test.mjs`). MAIN zostaje 1:1 z dema (świadomie). Audyt: `docs/AUDYT-bloom-kolizje-2026-09-26.md`.
-- Gorące powietrze dysz = port maski z dema plazmy w uberPass (`Core3D`): źródło z kierunkiem (`pushHeatHazeWorld(..., dirX, dirY)`) to DYSZA — `radiusWorld` = promień wylotu, siła = rampa mocy; stożek 7R zaczyna się ~1R za wylotem (dysze siedzą na krawędzi kadłuba), przesunięcie ~0,12 promienia dyszy na ekranie. Źródła bez kierunku (wybuchy, rakiety, tarcze) liczą się po staremu.
+- Gorące powietrze dysz = port maski z dema plazmy w „uber” postu (`src/3d/tsl/postGry.js`, `Core3D`): źródło z kierunkiem (`pushHeatHazeWorld(..., dirX, dirY)`) to DYSZA — `radiusWorld` = promień wylotu, siła = rampa mocy; stożek 7R zaczyna się ~1R za wylotem (dysze siedzą na krawędzi kadłuba), przesunięcie ~0,12 promienia dyszy na ekranie. Źródła bez kierunku (wybuchy, rakiety, tarcze) liczą się po staremu.
 - Shadery efektów w passie ortho: bez `pow()` z możliwie ujemną podstawą i z clampem varyingów — MSAA ekstrapoluje je poza trójkąt, a NaN w buforze HalfFloat bloom rozlewa na cały ekran.
 
 ### Wraki: gorące, śpiące, zimne
@@ -207,7 +248,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 1. **Core3D (`src/3d/core3d.js`)**
    - Modyfikacje renderera, passów scen (runner `_runScenePass`: tło → planety → halo → ring-planety → ortho → tarcze → FG, wszystko do `composerTarget` HalfFloat MSAA 4, czyszczona tylko głębia) i postu (`RenderPipeline`) rób wyłącznie tutaj.
    - Parametry bloomu (strength/radius/threshold, także dla overlay3D) żyją w `src/3d/bloomConfig.js` — jedyne źródło prawdy; tuner (panel Bloom) nadpisuje je trwale tylko z `?dev` w URL.
-   - `UnrealBloomPass` (three r183) przepuszcza przez próg CAŁY teksel (nie nadmiar) i dokłada ~9 × strength jego energii (radius tylko przesuwa wagę między mipami; rozmycia gubią ~3%): Core3D 0,85 → ~7,5×, overlay3D 1,6 przy progu 0,15 → ~14× prawie wszystkiego. Jasność nowego emitera dobieraj z tym w głowie. (Port: bloom Core3D wraca w zadaniu 02 jako `BloomNode` — ten sam algorytm.)
+   - Bloom przepuszcza przez próg CAŁY teksel (nie nadmiar) i dokłada ~9 × strength jego energii (radius tylko przesuwa wagę między mipami; rozmycia gubią ~3%): Core3D 0,85 → ~7,5×, overlay3D 1,6 przy progu 0,15 → ~14× prawie wszystkiego. Jasność nowego emitera dobieraj z tym w głowie. Core3D od zadania 02: `BloomGry` (BloomNode + ×3 `BLOOM_ZGODNOSC_WEBGL`, `src/3d/tsl/postGry.js`) — obraz 1:1 z dawnym `UnrealBloomPass` (strażnik różnic three: `tests/webgpuPost.test.mjs`); overlay3D do zadania 20 na starym passie.
    - Pipeline jest HDR-first: emitery (pociski, beamy, dysze) mnożą kolory >1.0, próg bloomu ~0.9 odcina zwykłe powierzchnie. Nowe efekty, które mają świecić, muszą wypychać luminancję >1.
    - Nie duplikuj postprocessingu w innych modułach.
    - Passy planet (warstwa 3), halo (5), ring-planet (6) i tarcz (7) są pomijane, gdy nikt nie zgłosi na nich widocznej zawartości (`Core3D.layerActivity`). Dodając obiekt na te warstwy, zgłaszaj go co klatkę (`Core3D.markPlanetLayersActive` / `Core3D.setShieldLayerActive`) — inaczej zniknie.
@@ -220,7 +261,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
    - Używaj `Core3D.scene` i `Core3D.camera`.
    - Nie twórz lokalnych rendererów ani dodatkowych canvasów WebGL.
    - Świat leży przy 5–10 mln j.: pozycja świata liczona na GPU we float32 drga ~1 px względem kadłubów. Nie wpisuj bezwzględnych pozycji do macierzy instancji ani atrybutów — duży offset w `mesh.position` (three składa `modelViewMatrix` w double), dane względem niego, w shaderze `modelViewMatrix * instanceMatrix`. Wzór: `Bridge3D._setOrigin` (`docs/PORT-mostki.md` §8.12).
-   - Początek przy kamerze daje `sceneOriginNearCamera` (`src/3d/sceneOrigin.js`); dane przepisywane co klatkę — początek co klatkę (np. `shipLights3D.js`, `fxParticles3D.js`), bufor pisany raz przy emisji (pierścień) — początek „lepki” z przesunięciem żywych danych dopiero po odjeździe kamery (`sparkSystem3D.js`, `slugTrail3D.js`). Pozycje świata w pulach CPU: `Float64Array`. Pomiar przed/po: `dema/precyzja-drzenie.js` (bloom wyłączaj przez `bloomPass.enabled` — sam `perfToggles.bloom = false` go nie wyłącza).
+   - Początek przy kamerze daje `sceneOriginNearCamera` (`src/3d/sceneOrigin.js`); dane przepisywane co klatkę — początek co klatkę (np. `shipLights3D.js`, `fxParticles3D.js`), bufor pisany raz przy emisji (pierścień) — początek „lepki” z przesunięciem żywych danych dopiero po odjeździe kamery (`sparkSystem3D.js`, `slugTrail3D.js`). Pozycje świata w pulach CPU: `Float64Array`. Pomiar przed/po: `dema/precyzja-drzenie.js` (bloom wyłącza `perfToggles.bloom = false` — od zadania 02 post czyta go w każdym renderze).
    - Przezroczysty materiał z `side: DoubleSide` three rysuje DWA razy (tył, potem przód) i przed każdym ustawia `needsUpdate` — każdy draw liczy program od nowa (`getProgram`). Nie dotyczy `ShaderMaterial` (ma `forceSinglePass = true`), dotyczy `MeshBasicMaterial` i innych wbudowanych: efekty addytywne bez zapisu głębi i płaskie siatki dostają `forceSinglePass: true` (pociski, błyski, wiązki, iskry raila).
 
 3. **Destruction + ship integration**

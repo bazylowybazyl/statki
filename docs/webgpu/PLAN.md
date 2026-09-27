@@ -101,6 +101,11 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   funkcje z tablicami / teksturami / macierzami wklejane bez layoutu.
 - **Hasze float z niecałkowitych wejść** różnią się między kompilatorami (FXC w bazie WebGL, DXC przez Tint w WebGPU):
   wejścia haszy trzymaj całkowite — wtedy wynik jest bit w bit (zadanie 06).
+- **Kolejne pułapki WGSL / TSL (zadanie 07):** stałe `smoothstep` z odwróconymi krawędziami (e0 > e1) są w WGSL błędem
+  kompilacji — pomocnik `haloSmooth`; `screenCoordinate` liczy y od GÓRY (dither 1:1 z WebGL przez `haloFragCoordGL`);
+  `texture()` bez jawnego uv dostaje własny uniform mat3 (`updateMatrix`) — podawaj uv, żeby nie zjadać limitu 12
+  buforów; FXC liczy `a·b + c` z jednym zaokrągleniem, DXC z dwoma — hasze z mnożenia i dodawania przez
+  `haloFusedMulAddInt` (bit w bit z bazą WebGL).
 - **TSL, nie `wgslFn`.** Tekstowy WGSL tylko dla wyizolowanej czystej funkcji, gdy TSL jest naprawdę niewygodny — z
   uzasadnieniem w commicie (zamyka drogę do zapasowego backendu WebGL2).
 - **Pętle:** `Loop` w TSL, nie `for` w JS generujący kopie (`mx_noise_float` ×160 rozwinięte = 44 s kompilacji).

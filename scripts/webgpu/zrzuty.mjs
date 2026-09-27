@@ -7,6 +7,9 @@
 //        [--rozmiar 1920x1080] [--port 5340] [--baza katalog] [--powtorz N] [--wydajnosc] [--seed n]
 //        [--bok 24] [--tylko-wydajnosc] ["--chrome=--flaga …"]
 //
+// --teren-ringu: w ring-z02 / ring-z1 / k7-hala dodatkowo wariant `<scena>__teren` — tylko siatka terenu ringu
+//            (zadanie 07; reszta sceny Core3D ukryta). Dokłada klatki, więc porównuj z przebiegiem z tą samą opcją
+//            (baza: ten sam skrypt w worktree z tagu webgl-baseline, --backend webgl).
 // --backend: nazywa katalog wyniku i dopisuje ?renderer=<backend> do adresu. Gra flagi NIE czyta (jedna ścieżka
 //            renderu: tag webgl-baseline = WebGL, main od zadania 01 = WebGPU) — faktyczny renderer zapisuje się
 //            w wyniki.json (pole `renderer`), więc pomyłka w etykiecie wychodzi od razu.
@@ -68,6 +71,8 @@ const PASS_VARIANTS = [
   ['ortho', [0, 7]],
   ['fg', [2]]
 ];
+// Sceny z terenem ringu Ziemi w kadrze (opcja --teren-ringu → wariant `__teren`).
+const TEREN_RINGU_SCENES = new Set(['ring-z02', 'ring-z1', 'k7-hala']);
 
 // ── Sceny ─────────────────────────────────────────────────────────────────────
 // js: ciało funkcji async w stronie (S = pomocniki scen, H = zegar); hud: czy zostawić HUD DOM;
@@ -297,6 +302,17 @@ async function runSession(session, backend, outDir, base) {
         }
         await ev('window.__harness.scene.isolate(null)');
         await ev('window.__harness.frames(3)');
+      }
+      // --teren-ringu (zadanie 07): wariant `__teren` — tylko siatka terenu ringu Ziemi (reszta sceny
+      // Core3D ukryta), w worktree z tagu tak samo; dodatkowe klatki przesuwają kolejne sceny sesji,
+      // więc porównuj tylko z przebiegiem z tą samą opcją.
+      if (args['teren-ringu'] && TEREN_RINGU_SCENES.has(id)) {
+        const n = await ev(`window.__harness.scene.onlyNamed(['HaloTerrain'])`);
+        await ev('window.__harness.frames(3)');
+        await screenshotPng(cdp, join(outDir, `${id}__teren.png`));
+        await ev('window.__harness.scene.onlyNamed(null)');
+        await ev('window.__harness.frames(3)');
+        if (!n) console.log(`  ${id}: brak siatki HaloTerrain w scenie`);
       }
       let perf = null; let hdr = null; let state = null;
       try { perf = await ev('window.__harness.scene.perf(60)'); } catch (err) { perf = { error: String(err?.message || err) }; }

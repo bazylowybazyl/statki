@@ -1,6 +1,6 @@
 // Biblioteka TSL ringu „Halo” (port WebGPU, zadanie 06) — odpowiednik
 // haloRingGLSL.js (COMMON, NOISE, STORM, LIGHT, AIR, PORTSITES, TRANSIT, FG,
-// FG_CLIP, RTE) oraz HALO_GLSL_SURFACE / HALO_GLSL_CLOUDCOVER z haloRingTerrain.js.
+// FG_CLIP, RTE, SURFACE, CLOUDCOVER).
 // Materiały ringu (zadania 07–10), pieczenie map (haloRingWorldGen.js), detal
 // (haloRingDetail.js), warsztat dema i tło menu (11) składają z niej shadery.
 //
@@ -32,7 +32,7 @@ import {
   float, int, uint, vec2, vec3, vec4, mat3,
   abs, floor, fract, sqrt, exp, log, log2, pow, sin, cos, acos, min, max, clamp, mix, step, smoothstep,
   dot, length, normalize, mod,
-  screenCoordinate, cameraViewMatrix, cameraProjectionMatrix, modelWorldMatrix
+  screenCoordinate, screenSize, cameraViewMatrix, cameraProjectionMatrix, modelWorldMatrix
 } from 'three/tsl';
 import { nodeOf } from './haloUniformsAdapter.js';
 
@@ -147,6 +147,27 @@ export function haloPureFn(name, type, inputs, body) {
   return callable;
 }
 const pure = haloPureFn;
+
+// a·b + c z JEDNYM zaokrągleniem (jak FMA) dla całkowitego a (|a| < 4096) i stałej JS b
+// (zadanie 07). Baza WebGL (ANGLE/FXC) liczy a·b + c jako mad → FMA, Dawn/DXC mnoży i dodaje
+// osobno; gdy wynik idzie do haszu (wejście niecałkowite, np. jasność kwartału miasta
+// bid·3,1 + 5), różnica o 1 ULP zmienia hasz — 0,8% kwartałów świeciło inaczej niż w bazie.
+// b rozbite na dwie połowy mantysy po 12 bitów: a·hi + c jest dokładne (≤ 24 bity), a·lo też,
+// więc ostatnie dodanie zaokrągla raz — wynik = FMA bit w bit, bez względu na to, czy kompilator
+// scali działania (na GPU 16 384 / 16 384 zgodnych z WebGL; scripts/webgpu/ring-tsl-parzystosc.mjs).
+// Hasze z wejść całkowitych i z jednym dodaniem stałej (x + 0,37) takiej poprawki nie potrzebują.
+export function haloSplitF32(b) {
+  const f = new Float32Array([b]);
+  const bits = new Uint32Array(f.buffer)[0];
+  const e = ((bits >>> 23) & 255) - 127;
+  const m = (bits & 0x7fffff) | 0x800000;
+  const sign = bits >>> 31 ? -1 : 1;
+  return [sign * (m >>> 12) * 2 ** (e - 11), sign * (m & 0xfff) * 2 ** (e - 23)];
+}
+export const haloFusedMulAddInt = (a, b, c) => {
+  const [hi, lo] = haloSplitF32(b);
+  return a.mul(hi).add(c).add(a.mul(lo));
+};
 
 // smoothstep zapisany wzorem (jak rozwija go HLSL): t = clamp((x − e0)/(e1 − e0)),
 // t²(3 − 2t). Działa też dla e0 > e1 (GLSL ringu używa odwróconych krawędzi —
@@ -530,6 +551,10 @@ function applyAirFn(steps) {
 // Szum przeplotu (interleaved gradient noise) — dither z pozycji piksela.
 export const haloIGN = pure('haloIGN', 'float', [['fc', 'vec2']], (a) =>
   fract(float(52.9829189).mul(fract(dot(a.fc, vec2(0.06711056, 0.00583715))))));
+// gl_FragCoord.xy z WebGL (zadanie 07): wiersze od DOŁU celu. screenCoordinate
+// w WebGPU liczy y od góry, więc wzór IGN (dither powietrza, przerzedzenie FG)
+// wychodziłby odbity względem bazy WebGL; z tym ten sam piksel ma tę samą wartość.
+export const haloFragCoordGL = () => vec2(screenCoordinate.x, screenSize.y.sub(screenCoordinate.y));
 
 // ===========================================================================
 // PORTSITES (tablice uniformów → wklejane)
@@ -680,11 +705,12 @@ export function haloRingTSL(u) {
     });
     return vis;
   };
-  // Tylko we fragmencie: przerzedzenie (dither) zamiast przezroczystości.
+  // Tylko we fragmencie: przerzedzenie (dither) zamiast przezroczystości
+  // (wzór jak gl_FragCoord w bazie WebGL — haloFragCoordGL).
   const haloFgClip = (p, enabled = true) => {
     if (!enabled) return;
     const v = haloFgVisibility(p, true).toVar();
-    const n = haloIGN(screenCoordinate.xy);
+    const n = haloIGN(haloFragCoordGL());
     If(v.lessThan(0.999).and(v.lessThanEqual(n)), () => { Discard(); });
   };
 
@@ -711,6 +737,7 @@ export function haloRingTSL(u) {
     haloSkyGain: bind(fSkyGain),
     haloApplyAir: (color, rel, jitter, steps = 8) => applyAirFn(steps).call([color, rel, jitter], U),
     haloIGN,
+    haloFragCoordGL,
     haloInTransitCut: bind(fInTransitCut),
     haloRelFromPolar: bind(fRelFromPolar),
     haloProjectRel,

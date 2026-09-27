@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 
 const shipLightsSource = readFileSync(new URL('../src/3d/shipLights3D.js', import.meta.url), 'utf8');
 const hexShipsSource = readFileSync(new URL('../src/3d/hexShips3D.js', import.meta.url), 'utf8');
+const hullTslSource = readFileSync(new URL('../src/3d/hexShips3D.tsl.js', import.meta.url), 'utf8');
 const coreSource = readFileSync(new URL('../src/3d/core3d.js', import.meta.url), 'utf8');
 
 test('nav light billboards render on the FG layer with additive HDR blending', () => {
@@ -26,13 +27,14 @@ test('nav lights are emitters: the sun shadow mask never dims them', () => {
 });
 
 test('hull shader and billboard shader share the NAV_LIGHT_CHASE sequence', () => {
-  // Obie strony wstrzykują stałe przez glslFloat(NAV_LIGHT_CHASE.*) — zmiana
-  // tempa/kierunku sekwencji w jednym miejscu nie może rozjechać drugiego.
-  const chaseInject = /fract\(uTime \* \$\{glslFloat\(NAV_LIGHT_CHASE\.speed\)\} \+ /;
-  assert.match(shipLightsSource, chaseInject);
-  assert.match(hexShipsSource, chaseInject);
+  // Obie strony biorą stałe z NAV_LIGHT_CHASE (billboardy: glslFloat w GLSL do
+  // zadania 15; kadłub: węzły TSL, hexShips3D.tsl.js — port WebGPU, zadanie 04) —
+  // zmiana tempa/kierunku sekwencji w jednym miejscu nie może rozjechać drugiego.
+  assert.match(shipLightsSource, /fract\(uTime \* \$\{glslFloat\(NAV_LIGHT_CHASE\.speed\)\} \+ /);
+  assert.match(hullTslSource, /fract\(uTime\.mul\(NAV_LIGHT_CHASE\.speed\)\.add\(localPhase\.mul\(NAV_LIGHT_CHASE\.phaseGain\)\)\)/);
   // Znak "+" przy fazie = przebieg od dziobu (faza 1) ku rufie (faza 0).
-  assert.doesNotMatch(hexShipsSource, /fract\(uTime \* [^)]*\)?- localPhase/);
+  assert.doesNotMatch(hullTslSource, /NAV_LIGHT_CHASE\.speed\)\.sub\(localPhase/);
+  for (const k of ['attack', 'hold', 'release', 'rest']) assert.ok(hullTslSource.includes(`NAV_LIGHT_CHASE.${k}`), k);
 });
 
 test('hexShips3D feeds visible ships into the nav light billboard sync', () => {

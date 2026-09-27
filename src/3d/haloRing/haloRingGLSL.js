@@ -543,3 +543,88 @@ vec4 haloProjectRel(vec3 relLocal) {
   return projectionMatrix * vec4(view, 1.0);
 }
 `;
+
+// Wspólne próbkowanie map i detalu (vertex + fragment + chmury). Do zadania 07
+// w haloRingTerrain.js; teren jest już w TSL (haloRingSurfaceTSL w haloRingTSL.js),
+// GLSL zostaje dla struktury i atmosfery (08) oraz megastruktury i miasta (09).
+// AGENT: usunąć po zadaniach 08 i 09 (razem z resztą tego pliku po 10).
+export const HALO_GLSL_SURFACE = /* glsl */`
+uniform sampler2D uMapA;
+uniform sampler2D uMapB;
+uniform sampler2D uMapC;
+uniform vec4 uMapSize;       // w, h, 1/w, 1/h
+uniform sampler2D uDetail1;
+uniform sampler2D uDetail2;
+uniform vec4 uDetailN;       // okresy kafli detalu [j.]
+uniform vec4 uDetailOff;     // fract(s_ref / okres) dla kazdej skali
+uniform vec4 uCloudS0;       // okresy chmur w s (4 pierwsze)
+uniform vec4 uCloudT0;       // okresy chmur w t
+uniform vec4 uCloudOff0;     // fract(s_ref / okres_s)
+uniform vec4 uGridInfo;      // ds, dt (j. na komorke najdrobniejszej), Ns, refS
+uniform vec4 uVarN;          // okresy tekstur zmiennosci barw [j.]
+uniform vec4 uVarOff;
+uniform float uPatT[8];      // wzory: okres L/n (0-5 miasto, 6 komorka dachu, 7 dzialka)
+uniform float uPatF[8];      // fract(s_ref / okres)
+uniform float uPatI[8];      // floor(s_ref / okres) mod n
+uniform float uPatN[8];      // n (okresy na obwod)
+
+// Reszta z dzielenia liczb calkowitych zapisanych we float, odporna na
+// przyblizone dzielenie w ANGLE/D3D (mod(32, 16) potrafi dac 16).
+float haloWrapI(float x, float n) {
+  return x - n * floor((x + 0.5) / n);
+}
+// Komorka wzoru zakotwiczona w swiecie (nie w kamerze): id mod n, ulamek.
+vec2 haloPat(int k, float sRel) {
+  float c = sRel / uPatT[k] + uPatF[k];
+  float fl = floor(c);
+  return vec2(haloWrapI(fl + uPatI[k], uPatN[k]), c - fl);
+}
+vec4 haloVar(int k, float sRel, float t) {
+  float T = uVarN[k];
+  return texture(uDetail2, vec2(sRel / T + uVarOff[k], t / T));
+}
+
+vec2 haloMapUV(float sAbs, float t) {
+  return vec2(sAbs / uFloorDims.x, t / uFloorDims.y);
+}
+// detal wysokosci: 0 = gory (ridged), 1 = rownina; zwraca (h, dh/ds, dh/dt).
+// Petle rozwiniete: dynamiczne indeksowanie wektorow ANGLE/D3D emuluje (wolno).
+vec3 haloDetailOct(float sRel, float t, float T, float off, float amp, float ridgeK, float lodBias) {
+  vec2 uv = vec2(sRel / T + off, t / T);
+  float fade = 1.0 - smoothstep(0.35, 0.9, lodBias / T);
+  vec4 d1 = textureLod(uDetail1, uv, max(0.0, log2(max(lodBias * 1024.0 / T, 1.0)) - 0.5));
+  float hN = mix(d1.r, d1.a * 1.3, ridgeK);
+  return vec3(hN, d1.g / T, d1.b / T) * amp * fade;
+}
+vec3 haloDetailHeight(float sRel, float t, float mountain, float flatten, float lodBias) {
+  vec3 acc = haloDetailOct(sRel, t, uDetailN.x, uDetailOff.x, mix(2.6, 20.0, mountain), mountain, lodBias);
+  acc += haloDetailOct(sRel, t, uDetailN.y, uDetailOff.y, mix(1.0, 5.0, mountain), mountain, lodBias);
+  acc += haloDetailOct(sRel, t, uDetailN.z, uDetailOff.z, mix(0.34, 1.2, mountain), 0.0, lodBias);
+  acc += haloDetailOct(sRel, t, uDetailN.w, uDetailOff.w, mix(0.12, 0.3, mountain), 0.0, lodBias);
+  return acc * (1.0 - flatten);
+}
+`;
+
+// Pokrycie chmur: te same kafelkowe tekstury, wiatr wzdluz wstegi. Wspolne
+// dla cienia chmur na terenie i samej warstwy chmur (spojnosc cieni).
+// AGENT: usunąć razem z HALO_GLSL_SURFACE (po zadaniu 08 — chmury).
+export const HALO_GLSL_CLOUDCOVER = /* glsl */`
+${HALO_GLSL_PORTSITES}
+float haloCloudOct(float sRel, float t, float S, float T, float off, float windK, float salt) {
+  float wind = uTime * uCloudParams.z * windK;
+  vec2 uv = vec2((sRel + wind) / S + off, t / T + salt);
+  return texture(uDetail2, uv).b * 0.5 + 0.5;
+}
+float haloCloudCover(float sRel, float t, float moist, int octaves) {
+  float sum = 0.55 * haloCloudOct(sRel, t, uCloudS0.x, uCloudT0.x, uCloudOff0.x, 1.0, 0.0);
+  float norm = 0.55;
+  if (octaves > 1) { sum += 0.275 * haloCloudOct(sRel, t, uCloudS0.y, uCloudT0.y, uCloudOff0.y, 1.35, 0.37); norm += 0.275; }
+  if (octaves > 2) { sum += 0.1375 * haloCloudOct(sRel, t, uCloudS0.z, uCloudT0.z, uCloudOff0.z, 1.7, 0.74); norm += 0.1375; }
+  if (octaves > 3) { sum += 0.06875 * haloCloudOct(sRel, t, uCloudS0.w, uCloudT0.w, uCloudOff0.w, 2.05, 1.11); norm += 0.06875; }
+  float c = sum / norm;
+  float cover = mix(0.62, 0.44, clamp(moist, 0.0, 1.0)) - uCloudParams.w;
+  // nad dokami przejasnienie (hala i zatoki przechodza przez warstwe chmur)
+  float clear = haloPortPad(sRel + uRefBasis.w, t, uFloorDims.x, 1400.0, 1400.0);
+  return smoothstep(cover, cover + 0.16, c) * (1.0 - clear);
+}
+`;
