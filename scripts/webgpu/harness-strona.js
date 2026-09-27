@@ -81,6 +81,18 @@
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
+  // Osobny strumień na UUID three (generateUUID: 4 losowania na każdy Object3D, materiał,
+  // teksturę, geometrię i — w WebGPURenderer — węzeł TSL). zrzuty.mjs w trybie
+  // „--uuid osobne” podmienia w odpowiedzi serwera generateUUID na ten strumień
+  // (osobneLosowanieUuid w wspolne.mjs), więc liczba obiektów three nie przesuwa losowań
+  // gry — WebGL i WebGPU generują ten sam świat. Bez reseed: UUID mają być unikalne.
+  let su = (SEED ^ 0x9e3779b9) >>> 0;
+  window.__harnessUuidRandom = () => {
+    su = (su + 0x6D2B79F5) | 0;
+    let t = Math.imul(su ^ (su >>> 15), 1 | su);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 
   const css = '*, *::before, *::after { animation: none !important; transition: none !important; caret-color: transparent !important; }';
   const addCss = () => {
@@ -200,10 +212,14 @@
       return true;
     },
     // Spis widocznych obiektów sceny Core3D: warstwa → „typ materiału:nazwa” → obiekty / instancje.
-    // Na WebGL mówi, które materiały składają scenę; na WebGPU liczy zamienniki (isPlaceholder).
+    // Na WebGL mówi, które materiały składają scenę; na WebGPU liczy zamienniki: każdy ShaderMaterial /
+    // RawShaderMaterial rysuje się tam zamiennikiem (src/3d/tsl/zamiennik.js — także zanim pierwszy raz
+    // wszedł w kadr), a zbudowany oryginał dostaje isPlaceholder.
     census() {
       const C = window.Core3D;
       const LAYER = { 0: 'ortho', 1: 'tlo', 2: 'fg', 3: 'planety', 5: 'halo', 6: 'ring-planety', 7: 'tarcze', 8: 'gwiazdy-warp', 9: 'menu' };
+      const webgpu = !!C?.renderer?.isWebGPURenderer;
+      const isPlaceholder = (m) => !!m.isPlaceholder || (webgpu && (m.isShaderMaterial === true || m.isRawShaderMaterial === true));
       const out = {};
       let placeholders = 0;
       const visit = (o, parentVisible) => {
@@ -217,12 +233,13 @@
           for (const m of mats) {
             if (!m) continue;
             const sig = m.name || (m.uniforms ? Object.keys(m.uniforms).slice(0, 3).join('+') : '') || '?';
-            const key = `${m.isPlaceholder ? 'ZAMIENNIK ' : ''}${m.type}:${sig}`;
+            const ph = isPlaceholder(m);
+            const key = `${ph ? 'ZAMIENNIK ' : ''}${m.type}:${sig}`;
             const bucket = out[layer] || (out[layer] = {});
             const e = bucket[key] || (bucket[key] = { obiekty: 0, instancje: 0 });
             e.obiekty++;
             e.instancje += o.isInstancedMesh ? (o.count | 0) : 1;
-            if (m.isPlaceholder) placeholders++;
+            if (ph) placeholders++;
           }
         }
         for (const ch of o.children) visit(ch, vis);

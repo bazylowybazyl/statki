@@ -35,7 +35,7 @@ const SCOPE_RULES = [
 
 // Uwagi ręczne do tabel (to, czego skan nie wyczyta).
 const NOTES = {
-  'src/3d/core3d.js': 'serce portu: passy sceny, post, maska słońca, uber; soczewka warp i fale warpa poza portem',
+  'src/3d/core3d.js': 'serce portu: WebGPURenderer, passy sceny i post w TSL (zadanie 01); zostały źródła GLSL do portu: uber / gorące powietrze (02) i maska słońca (03); soczewka i fale warpa usunięte',
   'src/3d/hexShips3D.js': 'kadłuby = gałąź beam (BEAM_SKIN + HEX_FRAGMENT); gałąź heksów (HEX/ARMOR/DEBRIS, pula szczątków GPU) w grze rysuje tylko wyłączone asteroidy, ale stoją na niej mostki-demo, rdzen-demo i pomiar drżenia → port w zadaniu 04',
   'src/effects3d/overlay.js': 'DRUGI WebGLRenderer (overlay3D eksplozji + rakiety, własny composer i bloom) — zostaje w porcie, usuwa go zadanie 20',
   // Zastąpione efektami z dem WebGPU (decyzja użytkownika 2026-09-27, PLAN §1 p. 6) — nie przenosimy 1:1.
@@ -54,10 +54,9 @@ const NOTES = {
   'src/effects3d/reactorblow.js': 'scena overlay; port do Core3D w zadaniu 20',
   'src/3d/fxParticles3D.js': 'Fx3D: port 1:1 w zadaniu 12 (dysze MAIN, mostki, rdzenie)',
   'Engineeffects.js': 'gra importuje tylko tekstury make*Texture; getEngineVFX z własnym WebGLRenderer i shader — martwe',
-  'src/3d/modelBaker.js': 'narzędzie dev (devTools.js, import dynamiczny) z własnym WebGLRenderer',
   'src/3d/sunShadowMask.js': 'biblioteka maski słońca + onBeforeCompile dla wbudowanych materiałów',
   'src/3d/hullShadowSdf.js': 'biblioteka SDF kadłubów; lustro CPU traceHullShadowCpu (test)',
-  'src/3d/haloRing/haloRingWorldGen.js': 'pieczenie map + synchroniczny odczyt CPU (w WebGPU async, oś Y odwrócona)',
+  'src/3d/haloRing/haloRingWorldGen.js': 'pieczenie map + odczyt CPU (WebGPU: tylko async, oś Y odwrócona — do zadania 06 mapa CPU pusta)',
   'src/3d/menuBackdrop3D.js': 'rozgrzewka po kluczu programu WebGL — do przeprojektowania',
   'src/vfx/destruction3D.js': 'zniszczenie stacji',
   'src/vfx/shatterMaterial.js': 'zniszczenie stacji',
