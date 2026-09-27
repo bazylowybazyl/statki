@@ -317,6 +317,199 @@ export function createEarth(renderer, ringUniforms, planetRadius) {
 }
 
 // ---------------------------------------------------------------------------
+// Mars i Jowisz (ringi z profilami planet, Z6 2026-09-26): sama tekstura dnia
+// (bez nocy, oceanu i chmur). Tryb gry: shader planety gry (ścieżka bez nocnej
+// tekstury) z liczbami DirectPlanet.init i poświata limbu jak
+// createRingAtmosphere (planet3d.assets.js, RING_ATMOSPHERE_TUNE); kamera
+// kinowa: to samo słońce co ring, cień ringu, cienka atmosfera w barwach planety.
+export const DEMO_PLANETS = Object.freeze({
+  mars: Object.freeze({
+    day: '/assets/planety/solar/mars/mars_color.jpg',
+    game: { ambient: 0.0035, sunIntensity: 1.04, brightness: 0.95, sunsetTint: [0.2, 0.5, 1.5], haze: 0.32, hazeColor: [0.9, 0.62, 0.42], hazeBeta: [0.14, 0.10, 0.07], bloom: 0.4 },
+    atm: { height: 700, day: [0.85, 0.5, 0.3], sunset: [0.35, 0.55, 1.0], gain: 0.55, beta: [0.05, 0.04, 0.03], scat: [0.95, 0.6, 0.4] }
+  }),
+  jupiter: Object.freeze({
+    day: '/assets/planety/solar/jupiter/jupiter_color.jpg',
+    game: { ambient: 0.0025, sunIntensity: 0.92, brightness: 0.92, sunsetTint: [1.0, 0.6, 0.3], haze: 0, hazeColor: [0.55, 0.72, 1.0], hazeBeta: [0.05, 0.10, 0.22], bloom: 0.05 },
+    atm: { height: 2400, day: [0.72, 0.64, 0.52], sunset: [1.0, 0.55, 0.25], gain: 0.75, beta: [0.03, 0.035, 0.045], scat: [0.8, 0.72, 0.6] }
+  })
+});
+
+const CINE_PLANET_FRAGMENT = /* glsl */`
+${HALO_GLSL_COMMON}
+${HALO_GLSL_LIGHT}
+uniform sampler2D dayTexture;
+uniform vec3 uCenter;
+uniform vec3 uAtmBeta;
+uniform vec3 uAtmScat;
+uniform vec3 uAtmSunset;
+varying vec2 vUv;
+varying vec3 vPosW;
+varying vec3 vNrmW;
+float vhash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+float vnoise(vec3 x) {
+  vec3 i = floor(x); vec3 f = fract(x); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(vhash(i), vhash(i + vec3(1.0, 0.0, 0.0)), f.x), mix(vhash(i + vec3(0.0, 1.0, 0.0)), vhash(i + vec3(1.0, 1.0, 0.0)), f.x), f.y),
+             mix(mix(vhash(i + vec3(0.0, 0.0, 1.0)), vhash(i + vec3(1.0, 0.0, 1.0)), f.x), mix(vhash(i + vec3(0.0, 1.0, 1.0)), vhash(i + vec3(1.0, 1.0, 1.0)), f.x), f.y), f.z);
+}
+void main() {
+  vec3 Ng = normalize(vPosW - uCenter);
+  vec3 V = normalize(cameraPosition - vPosW);
+  vec3 L = uSunDir;
+  float NgL = dot(Ng, L);
+  float ringVis = haloRingBlock(vPosW + Ng * 8.0, L);
+  float dn = vnoise(Ng * uPlanet.w / 420.0) * 0.6 + vnoise(Ng * uPlanet.w / 95.0) * 0.4;
+  float closeK = 1.0 - smoothstep(9000.0, 30000.0, length(cameraPosition - vPosW));
+  vec3 day = texture2D(dayTexture, vUv).rgb * (1.0 + (dn - 0.5) * 0.22 * closeK);
+  float term = smoothstep(-0.06, 0.16, NgL);
+  vec3 sun = uSunColor * ringVis * term;
+  vec3 surf = day * 0.95 * (sun * max(NgL, 0.0) + vec3(0.004, 0.005, 0.006));
+  float mu = max(dot(Ng, V), 0.0);
+  float airmass = 1.0 / (mu + 0.045);
+  vec3 ext = exp(-uAtmBeta * airmass);
+  float dayF = smoothstep(-0.1, 0.3, NgL);
+  float sunsetF = smoothstep(-0.2, 0.0, NgL) * (1.0 - smoothstep(0.0, 0.28, NgL));
+  vec3 scat = mix(uAtmScat, uAtmSunset, sunsetF) * (dayF * 0.9 + sunsetF * 0.35) * ringVis;
+  surf = surf * ext + scat * uSunColor * (1.0 - ext) * 0.62;
+  gl_FragColor = vec4(max(surf, vec3(0.0)), 1.0);
+}
+`;
+const CINE_PLANET_ATM_FRAGMENT = CINE_ATM_FRAGMENT
+  .replace('uniform float uRa;', 'uniform float uRa;\nuniform vec3 uAtmDay;\nuniform vec3 uAtmSunset;\nuniform float uAtmGain;')
+  .replace('vec3 col = mix(vec3(0.26, 0.5, 1.0), vec3(1.0, 0.38, 0.12), sunsetF)', 'vec3 col = mix(uAtmDay, uAtmSunset, sunsetF)')
+  .replace('* 0.75;', '* 0.75 * uAtmGain;');
+// Poświata limbu w passie ortho (jak RING_ATMOSPHERE_FRAGMENT gry, bez maski cieni).
+const RING_ATM_VERTEX = 'varying vec2 vOff; void main() { vOff = position.xy; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }';
+const RING_ATM_FRAGMENT = /* glsl */`
+uniform vec3 uSunDir;
+uniform float uRa;
+uniform float uHs;
+uniform vec3 uDayColor;
+uniform vec3 uSunsetColor;
+uniform vec3 uGain;
+varying vec2 vOff;
+void main() {
+  float rho = length(vOff);
+  if (rho >= uRa) discard;
+  float h = max(rho - 1.0, 0.0);
+  float chord = 2.0 * sqrt(max(uRa * uRa - rho * rho, 0.0));
+  float tau = chord * exp(-h / uHs) / (uRa - 1.0) * 0.9;
+  vec3 n = vec3(vOff / max(rho, 1e-4), 0.0);
+  float nl = dot(n, uSunDir);
+  float dayF = smoothstep(-0.22, 0.25, nl);
+  float sunsetF = smoothstep(-0.28, -0.02, nl) * (1.0 - smoothstep(-0.02, 0.22, nl));
+  vec3 col = mix(uDayColor, uSunsetColor, sunsetF) * (dayF + sunsetF * 0.6);
+  vec3 glow = col * uGain * (1.0 - exp(-tau * vec3(0.35, 0.62, 1.0)));
+  float alpha = max(glow.r, max(glow.g, glow.b));
+  if (alpha <= 0.001) discard;
+  gl_FragColor = vec4(glow, alpha);
+}
+`;
+
+// Planeta dema wg klucza profilu ringu (Ziemia: createEarth bez zmian).
+export function createPlanetBody(renderer, ringUniforms, planetRadius, key = 'earth') {
+  const look = DEMO_PLANETS[key];
+  if (!look) return createEarth(renderer, ringUniforms, planetRadius);
+  const day = loadTex(look.day, renderer, true);
+  const black = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1);
+  black.needsUpdate = true;
+  const g = look.game;
+  const gameU = {
+    uPlanetBloom: { value: g.bloom * BLOOM_DEFAULTS.planetBloomMultiplier },
+    dayTexture: { value: day },
+    nightTexture: { value: black },
+    specularTexture: { value: black },
+    normalTexture: { value: black },
+    sunPosition: { value: new THREE.Vector3() },
+    hasNightTexture: { value: 0.0 },
+    uBrightness: { value: g.brightness },
+    uAmbient: { value: g.ambient },
+    uSpecular: { value: 0.0 },
+    uSunWrap: { value: -0.01 },
+    uSunIntensity: { value: g.sunIntensity },
+    sunsetTint: { value: new THREE.Vector3(...g.sunsetTint) },
+    uHazeStrength: { value: g.haze },
+    uHazeColor: { value: new THREE.Vector3(...g.hazeColor) },
+    uHazeBeta: { value: new THREE.Vector3(...g.hazeBeta) },
+    uRingShadowStrength: { value: 0.0 },
+    uRingShadowRadius: { value: 0.0 },
+    uRingShadowReach: { value: 1.0 },
+    uRingShadowCenter: { value: new THREE.Vector2(0, 0) }
+  };
+  const a = look.atm;
+  const ra = 1 + a.height / planetRadius;
+  const atmU = {
+    uSunDir: { value: new THREE.Vector3(1, 0, 0) },
+    uRa: { value: ra },
+    uHs: { value: a.height * 0.22 / planetRadius },
+    uDayColor: { value: new THREE.Vector3(...a.day) },
+    uSunsetColor: { value: new THREE.Vector3(...a.sunset) },
+    uGain: { value: new THREE.Vector3(1.02, 0.985, 0.933).multiplyScalar(a.gain) }
+  };
+  const sphere = new THREE.SphereGeometry(1, 192, 128);
+  const game = new THREE.Group();
+  game.name = `${key}Game`;
+  const gameMesh = new THREE.Mesh(sphere, new THREE.ShaderMaterial({ uniforms: gameU, vertexShader: EARTH_VERTEX, fragmentShader: EARTH_FRAGMENT }));
+  const gameAtm = new THREE.Mesh(new THREE.CircleGeometry(ra, 256), new THREE.ShaderMaterial({
+    uniforms: atmU, vertexShader: RING_ATM_VERTEX, fragmentShader: RING_ATM_FRAGMENT,
+    transparent: true, premultipliedAlpha: true, depthWrite: false, depthTest: true, blending: THREE.AdditiveBlending
+  }));
+  // dysk w płaszczyźnie środka planety: przednia półkula zasłania go głębią,
+  // zostaje pierścień poza tarczą (jak w grze)
+  game.add(gameMesh, gameAtm);
+  game.scale.setScalar(planetRadius);
+  game.traverse((o) => o.layers.set(DEMO_LAYERS.ringPlanet));
+
+  const cineU = {
+    ...ringUniforms,
+    dayTexture: { value: day },
+    uCenter: { value: new THREE.Vector3() },
+    uAtmBeta: { value: new THREE.Vector3(...a.beta) },
+    uAtmScat: { value: new THREE.Vector3(...a.scat) },
+    uAtmSunset: { value: new THREE.Vector3(...a.sunset) },
+    uAtmDay: { value: new THREE.Vector3(...a.day) },
+    uAtmGain: { value: a.gain / 0.95 },
+    uRa: { value: planetRadius + a.height }
+  };
+  const cine = new THREE.Group();
+  cine.name = `${key}Cinematic`;
+  const cineMesh = new THREE.Mesh(sphere, new THREE.ShaderMaterial({ uniforms: cineU, vertexShader: CINE_EARTH_VERTEX, fragmentShader: CINE_PLANET_FRAGMENT }));
+  const cineAtm = new THREE.Mesh(new THREE.SphereGeometry((planetRadius + a.height) / planetRadius, 128, 96), new THREE.ShaderMaterial({
+    uniforms: cineU, vertexShader: CINE_EARTH_VERTEX, fragmentShader: CINE_PLANET_ATM_FRAGMENT,
+    side: THREE.BackSide, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
+  }));
+  cineAtm.renderOrder = 6;
+  cine.add(cineMesh, cineAtm);
+  cine.scale.setScalar(planetRadius);
+  cine.rotation.x = Math.PI / 2;
+  cine.traverse((o) => o.layers.set(DEMO_LAYERS.cinePlanet));
+
+  let spin = 0;
+  return {
+    game,
+    cine,
+    gameUniforms: gameU,
+    update(dt, { planetCenterZ, sunAzimuth, ringShadow }) {
+      spin += 0.02 * dt;
+      gameMesh.rotation.y = spin;
+      cineMesh.rotation.y = spin;
+      const dist = 1.06e6;
+      const sx = Math.cos(sunAzimuth) * dist;
+      const sy = Math.sin(sunAzimuth) * dist;
+      gameU.sunPosition.value.set(sx, sy, 0);
+      atmU.uSunDir.value.set(Math.cos(sunAzimuth), Math.sin(sunAzimuth), 0);
+      if (ringShadow) {
+        gameU.uRingShadowStrength.value = ringShadow.strength;
+        gameU.uRingShadowRadius.value = ringShadow.radius;
+        gameU.uRingShadowReach.value = ringShadow.reach;
+      }
+      cine.position.set(0, 0, planetCenterZ);
+      cineU.uCenter.value.set(0, 0, planetCenterZ);
+    }
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Niebo kinowe: gwiazdy (3 warstwy jak ringCitySkyDome) + Droga Mleczna +
 // tarcza słońca HDR z poświatą. Rysowane na nieskończoności (xyww).
 const SKY_VERTEX = /* glsl */`

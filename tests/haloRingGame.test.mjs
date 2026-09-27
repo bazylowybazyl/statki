@@ -23,13 +23,19 @@ const TAU = Math.PI * 2;
 const wrap = (a) => a - TAU * Math.round(a / TAU);
 const EARTH = { id: 'earth', x: 1060000, y: -250000, r: 2800 };
 const MARS = { id: 'mars', x: -700000, y: 1200000, r: 2400 };
+const JUPITER = { id: 'jupiter', x: 2100000, y: 300000, r: 3800 };
 
-test('ringi planet: Ziemia i Mars, port pod kątem dawnej stacji (obrót grupy)', () => {
+test('ringi planet: Ziemia, Mars i Jowisz, port pod kątem stacji (obrót grupy)', () => {
   assert.equal(haloRingKey(EARTH), 'earth');
   assert.equal(haloRingKey(MARS), 'mars');
+  assert.equal(haloRingKey(JUPITER), 'jupiter');
   assert.equal(haloRingKey({ id: 'venus' }), '');
+  assert.equal(haloRingKey({ id: 'saturn' }), '');
   assert.equal(haloRingRotation('earth'), 0, 'port Ziemi = HALO_STATION_ANGLE bez obrotu');
-  for (const planet of [EARTH, MARS]) {
+  // profil planety = wygląd ringu i doków (Z6): każdy ring własny
+  assert.deepEqual(Object.values(HALO_RING_PLANETS).map((p) => p.profile), ['earth', 'mars', 'jupiter']);
+  assert.equal(new Set(Object.values(HALO_RING_PLANETS).map((p) => p.seed)).size, 3, 'ziarna różne');
+  for (const planet of [EARTH, MARS, JUPITER]) {
     const key = haloRingKey(planet);
     // kąt stacji w grze (y w dół) → Three (−kąt) → układ lokalny ringu (− obrót)
     const local = wrap(-HALO_RING_PLANETS[key].stationAngle - haloRingRotation(key));
@@ -46,7 +52,7 @@ test('ringi planet: Ziemia i Mars, port pod kątem dawnej stacji (obrót grupy)'
 
 test('stacja planety z ringiem = port: środek hali K-7, porty frachtowców i brama warp przed G-01', () => {
   const hall = createK7Layout();
-  for (const planet of [EARTH, MARS]) {
+  for (const planet of [EARTH, MARS, JUPITER]) {
     const st = computeHaloPortStation(planet);
     const place = createHaloRingPlacement(planet);
     const collider = new HaloRingCollider(planet);
@@ -187,7 +193,11 @@ test('jakość „ultra”: dalszy LOD miasta, drzew, megastruktury i portu; hig
 test('index.html: ring „Halo” zamiast starego ringu (render, kolizje, stacje, pociski)', () => {
   const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
   assert.match(html, /import \{ HaloRingGame \} from "\.\/src\/3d\/haloRing\/haloRingGame\.js";/);
-  assert.match(html, /import \{ computeHaloPortStation \} from "\.\/src\/game\/haloRingPlanets\.js";/);
+  assert.match(html, /import \{ computeHaloPortStation, haloRingKey \} from "\.\/src\/game\/haloRingPlanets\.js";/);
+  // planety z ringiem z HALO_RING_PLANETS (Jowisz od Z6), nie lista Ziemia/Mars na sztywno
+  assert.match(html, /const labelRadius = haloRingKey\(pl\)/);
+  assert.match(html, /const hasMegaring = !!haloRingKey\(planet\);/);
+  assert.match(html, /function planetOrbitRadii\(planet\) \{[\s\S]*?if \(haloRingKey\(planet\)\) \{/);
   for (const gone of ['planetaryRing3D', 'RingCityFlight', 'ZonePainterUI', 'getPotentialPlanetaryRingTargets', 'initRingColorTunerPanel', 'isRingSegment']) {
     assert.ok(!html.includes(gone), `stary ring: ${gone}`);
   }

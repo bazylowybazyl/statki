@@ -397,7 +397,7 @@ void main() {
     leaf = vec3(0.038, 0.064, 0.020);
     bark = vec3(0.075, 0.062, 0.044);
   }
-  vCol = aSpecies < -0.5 ? bark : leaf * (0.75 + 0.5 * r2);
+  vCol = aSpecies < -0.5 ? bark : leaf * uLeafTint * (0.75 + 0.5 * r2);
   vPart = aSpecies < -0.5 ? 0.0 : 1.0;
   gl_Position = haloProjectRel(rel);
 }
@@ -733,7 +733,7 @@ function sectorHas(sector, cls) {
 
 // Wybór kawałków jednej klasy (bez alokacji: bufory stałe).
 export class HaloCityChunkSet {
-  constructor({ layout, cls, blocksPerChunk, blocks, maxChunks, mesh = null, minPixels = HALO_CITY.minPixels }) {
+  constructor({ layout, cls, blocksPerChunk, blocks, maxChunks, mesh = null, minPixels = HALO_CITY.minPixels, domes = [] }) {
     this.layout = layout;
     this.cls = cls;
     this.blocksPerChunk = blocksPerChunk;
@@ -771,6 +771,19 @@ export class HaloCityChunkSet {
           let d = (c + 0.5) * this.chunkAngle - site.theta;
           d -= HALO_TAU * Math.round(d / HALO_TAU);
           if (Math.abs(d) <= halfA) this.chunkMaxH[c] = Math.max(this.chunkMaxH[c], cls === 'industrial' ? H.industrial : H.garden);
+        }
+      }
+    }
+    // miasta pod kopułami (profil: Mars) — zabudowa ogrodowa pod szkłem
+    if (cls !== 'industrial') {
+      const R = layout.radii.floorMid;
+      for (const dome of domes || []) {
+        if (!dome?.city) continue;
+        const halfA = (dome.r + 60) / R + this.chunkAngle;
+        for (let c = 0; c < this.count; c++) {
+          let d = (c + 0.5) * this.chunkAngle - dome.theta;
+          d -= HALO_TAU * Math.round(d / HALO_TAU);
+          if (Math.abs(d) <= halfA) this.chunkMaxH[c] = Math.max(this.chunkMaxH[c], H.garden);
         }
       }
     }
@@ -853,7 +866,7 @@ export class HaloCityChunkSet {
 }
 
 export class HaloCity {
-  constructor({ layout, uniforms, surfaceUniforms, quality }) {
+  constructor({ layout, uniforms, surfaceUniforms, quality, domes = [] }) {
     this.layout = layout;
     this.group = new THREE.Group();
     this.group.name = 'HaloCity';
@@ -904,7 +917,7 @@ export class HaloCity {
     const gardenMesh = mk(gardenGeo, gardenMat, 'HaloCity_garden');
     const industryMesh = mk(industryGeo, industryMat, 'HaloCity_industry');
     const pn = surfaceUniforms.uPatN.value;
-    this.garden = new HaloCityChunkSet({ layout, cls: 'garden', blocksPerChunk: C.gardenChunkBlocks, blocks: pn[0], maxChunks: lod.cityChunks[0], mesh: gardenMesh, minPixels: lod.cityMinPixels });
+    this.garden = new HaloCityChunkSet({ layout, cls: 'garden', blocksPerChunk: C.gardenChunkBlocks, blocks: pn[0], maxChunks: lod.cityChunks[0], mesh: gardenMesh, minPixels: lod.cityMinPixels, domes });
     this.industry = new HaloCityChunkSet({ layout, cls: 'industrial', blocksPerChunk: C.industryChunkBlocks, blocks: pn[1], maxChunks: lod.cityChunks[1], mesh: industryMesh, minPixels: lod.cityMinPixels });
     gardenGeo.setAttribute('iChunk', this.garden.attr);
     industryGeo.setAttribute('iChunk', this.industry.attr);

@@ -17,6 +17,7 @@ import * as THREE from 'three';
 import { HALO_GLSL_COMMON, HALO_GLSL_NOISE, HALO_GLSL_PORTSITES } from './haloRingGLSL.js';
 import { HALO_SECTOR_TYPES, HALO_TERRAIN } from './haloRingConfig.js';
 import { haloPortTileUniforms } from './haloRingUniforms.js';
+import { haloSectorFeatures, resolveHaloProfile } from './haloRingProfiles.js';
 import { HALO_LANDMARK } from './haloRingLandmarks.js';
 import { HALO_DOME } from './haloRingDomes.js';
 
@@ -58,6 +59,13 @@ uniform float uDomeCount;
 uniform vec4 uDomeA[${MAX_DOMES}];           // s srodka, t srodka, promien szkla, wysokosc podlogi
 uniform vec4 uDomeB[${MAX_DOMES}];           // typ wnetrza, ziarno, promien plaskiego pasa, rampa
 uniform vec4 uDomeC[${MAX_DOMES}];           // park: pol-dlugosc wzdluz, pol-szerokosc w poprzek
+// profil planety (haloRingProfiles.js): cechy sektorow (kaniony, kratery,
+// wydmy, mesy), plaskowyz i rzeki, meandry kanionow
+uniform vec4 uSectorFeat[${MAX_SECTORS}];
+uniform vec4 uProfBake;       // plaskowyz [j.], mnoznik rzek, -, -
+uniform vec4 uCanyonA[2];     // srodek v, pol-szerokosc [j.], glebokosc [j.], 1 = jest
+uniform vec3 uCanyonM1[2];    // meandry: okresy na obwod, amplituda (ulamek szerokosci), faza
+uniform vec3 uCanyonM2[2];
 varying vec2 vUv;
 ${HALO_GLSL_PORTSITES}
 
@@ -77,6 +85,7 @@ struct HaloCivic {
   float domeQ;
   float domeType;
   float domeSeed;
+  float apron;
 };
 // granica parku: prostokat o zaokraglonych naroznikach (odleglosc ze znakiem)
 float haloParkSd(vec2 d, vec2 halfP) {
@@ -87,7 +96,7 @@ float haloParkSd(vec2 d, vec2 halfP) {
 HaloCivic haloCivicAt(float s, float t, float L, float warp) {
   HaloCivic c;
   c.flatW = 0.0; c.flatH = 0.0; c.core = 0.0; c.rim = 0.0; c.clear = 0.0; c.park = 0.0; c.pond = 0.0;
-  c.dome = 0.0; c.domeQ = 10.0; c.domeType = 0.0; c.domeSeed = 0.0;
+  c.dome = 0.0; c.domeQ = 10.0; c.domeType = 0.0; c.domeSeed = 0.0; c.apron = 0.0;
   for (int i = 0; i < ${MAX_LANDMARKS}; i++) {
     if (float(i) >= uLandmarkCount) break;
     vec4 A = uLandmarkA[i];
@@ -103,6 +112,8 @@ HaloCivic haloCivicAt(float s, float t, float L, float warp) {
     c.core = max(c.core, 1.0 - smoothstep(-70.0, -40.0, d));
     c.rim = max(c.rim, 1.0 - smoothstep(0.0, 80.0, d));
     c.clear = max(c.clear, 1.0 - smoothstep(B.y - 20.0, B.y + 10.0, d));
+    // budowla przemyslowa (Jowisz): wokol plyty fartuch z golego metalu, bez trawnika
+    c.apron = max(c.apron, B.w * (1.0 - smoothstep(B.y, B.y + B.z, d)));
     float dp = haloParkSd(vec2(ds, dt), C.xy) + warp;
     c.park = max(c.park, 1.0 - smoothstep(-80.0, 20.0, dp));
     if (D.z > 0.5) {
@@ -166,6 +177,34 @@ vec4 typeOneHot(float k) {
   return vec4(step(abs(k - 0.0), 0.1), step(abs(k - 1.0), 0.1), step(abs(k - 2.0), 0.1), step(abs(k - 3.0), 0.1));
 }
 
+// Kratery (profil: Mars, Io): misy z walem, siatka komorek w (s, t)
+// okresowa wzdluz ringu (komorka dzieli obwod bez reszty; indeks zawijany
+// z zapasem 0,5 — ANGLE bywa o 1 za maly przy calkowitych we float).
+float haloCraters(float s, float t, float L, float cell, float salt) {
+  float nS = max(1.0, floor(L / cell + 0.5));
+  float cs = L / nS;
+  vec2 p = vec2(s / cs, t / cell);
+  vec2 i0 = floor(p);
+  vec2 f = p - i0;
+  float h = 0.0;
+  for (int y = -1; y <= 1; y++) {
+    for (int x = -1; x <= 1; x++) {
+      vec2 o = vec2(float(x), float(y));
+      vec2 c = i0 + o;
+      c.x = c.x - nS * floor((c.x + 0.5) / nS);
+      float pres = step(0.45, haloHash12(c + salt + 4.1));
+      vec2 j = haloHash22(c + salt);
+      float R = mix(0.14, 0.4, haloHash12(c + salt + 9.7)) * cell;
+      vec2 d = (o + 0.2 + 0.6 * j - f) * vec2(cs, cell);
+      float q = length(d) / R;
+      float bowl = q < 1.0 ? (q * q - 1.0) : 0.0;
+      float rim = exp(-(q - 1.0) * (q - 1.0) / 0.05);
+      h += pres * (bowl * 0.24 + rim * 0.07) * R;
+    }
+  }
+  return h;
+}
+
 struct HaloWorld {
   float h;
   float riverDist;
@@ -207,6 +246,7 @@ HaloWorld haloWorldAt(float s, float t) {
   int io = int(mod(ko, uSectorCount));
   vec4 typeW = typeOneHot(uSectorType[ik]) * wk + typeOneHot(uSectorType[io]) * wo;
   vec4 cl = uSectorClimate[ik] * wk + uSectorClimate[io] * wo;
+  vec4 feat = uSectorFeat[ik] * wk + uSectorFeat[io] * wo;
   // --- strefy wokol dokow (poprawki uzytkownika 2026-09-23): plyta doku ->
   // pas fabryczny (przemysl TYLKO wokol dokow) -> osady tam, gdzie nie ma gor
   // -> sektor jak byl; granice zafalowane szumem. Gory sektora przy brzegach
@@ -256,10 +296,41 @@ HaloWorld haloWorldAt(float s, float t) {
   float dunes = pow(1.0 - abs(haloGnoise3(dp + warp)), 3.0) * 24.0;
   float mesaN = fbm3(cylP(s, t, 2600.0) + 21.0, 4);
   float mesa = smoothstep(0.08, 0.13, mesaN) * 130.0 + smoothstep(0.25, 0.29, mesaN) * 85.0;
-  landH = mix(landH, landBase * 0.5 + dunes + mesa + mountains * 0.55, desert);
+  dunes *= 1.0 + feat.z;
+  mesa *= 1.0 + 0.5 * feat.w;
+  float dShape = max(desert, max(feat.z, feat.w) * 0.85);
+  landH = mix(landH, landBase * 0.5 + dunes + mesa + mountains * 0.55, dShape);
   // lodowiec: doliny wypelnione lodem (splaszczone)
   float glacial = smoothstep(0.25, 0.08, cl.z);
   landH = mix(landH, max(landH, 26.0 + hills * 0.4), glacial * 0.55);
+  // plaskowyz (profil: Mars): lad z dala od wybrzezy wyzej, poza strefami portu
+  landH += uProfBake.x * smoothstep(0.0, 0.25, e) * (1.0 - zNear);
+  // kaniony (profil: Mars): szerokie meandry wzdluz ringu, sciany tarasami,
+  // suche dno, cienka struga posrodku; tylko w sektorach z cecha canyon
+  float cutK = feat.x * (1.0 - zNear) * (1.0 - civFlat);
+  float streamW = 0.0;
+  if (cutK > 0.001) {
+    float uuC = s / L;
+    for (int i = 0; i < 2; i++) {
+      vec4 ca = uCanyonA[i];
+      if (ca.w > 0.5) {
+        float vc = ca.x + uCanyonM1[i].y * sin(HALO_TAU * uuC * uCanyonM1[i].x + uCanyonM1[i].z)
+          + uCanyonM2[i].y * sin(HALO_TAU * uuC * uCanyonM2[i].x + uCanyonM2[i].z);
+        float dC = abs(v - vc) * Wf;
+        float hw = ca.y * (0.8 + 0.4 * (haloGnoise3(cylP(s, 0.0, 6000.0) + float(i) * 5.1) * 0.5 + 0.5));
+        float xw = clamp((dC - 0.28 * hw) / (0.72 * hw), 0.0, 1.0);
+        float xs = (floor(xw * 4.0) + smoothstep(0.55, 1.0, fract(xw * 4.0))) * 0.25;
+        float floorC = max(landH - ca.z, 5.0 + 4.0 * (haloGnoise3(cylP(s, t, 300.0) + 9.0) * 0.5 + 0.5));
+        landH = mix(landH, min(landH, mix(floorC, landH, xs)), cutK);
+        streamW = max(streamW, (1.0 - smoothstep(10.0, 22.0, dC)) * cutK);
+      }
+    }
+  }
+  // kratery (profil: Mars, Io — kaldery): dwie skale, poza portem i placami
+  float cratK = feat.y * (1.0 - zNear) * (1.0 - civFlat);
+  if (cratK > 0.001) {
+    landH += (haloCraters(s, t, L, 2400.0, 13.0) + 0.8 * haloCraters(s, t, L, 800.0, 29.0)) * cratK;
+  }
   float hLand = mix(seaH, landH, coast);
 
   // miasto-ogrod: tarasy schodzace do jezior
@@ -286,6 +357,7 @@ HaloWorld haloWorldAt(float s, float t) {
   float dForest = 0.0;
   float dPark = 0.0;
   float dHill = 0.0;
+  float dUrban = 0.0;
   vec2 dClim = vec2(0.6, 0.7);
   if (cv.dome > 0.001) {
     float dn = fbm3(cylP(s, t, 160.0) + cv.domeSeed * 37.0, 3) * 0.5 + 0.5;
@@ -312,10 +384,15 @@ HaloWorld haloWorldAt(float s, float t) {
       // dzicz: las iglasty i laki, wzgorza
       dWater = smoothstep(0.68, 0.72, dn);
       dForest = 0.95 * smoothstep(0.42, 0.5, dn2); dHill = 30.0 * smoothstep(0.4, 0.8, dn); dClim = vec2(0.34, 0.78);
-    } else {
+    } else if (cv.domeType < 5.5) {
       // akwarium: woda z wyspami
       float isl = smoothstep(0.6, 0.64, dn) * smoothstep(0.18, 0.24, dq);
       dWater = 1.0 - isl; dForest = 0.6 * isl; dPark = 0.6 * isl; dClim = vec2(0.75, 0.9);
+    } else {
+      // miasto pod kopula (Mars): zabudowa do ~0,6 promienia (budynki pod
+      // szklem), dalej skwery i rzadkie drzewa
+      dUrban = 0.92 * (1.0 - smoothstep(0.56, 0.64, dq));
+      dForest = 0.3 * smoothstep(0.5, 0.7, dn) * (1.0 - dUrban); dPark = 0.45 * (1.0 - dUrban); dClim = vec2(0.58, 0.55);
     }
     // brzeg szkla bez wody i wzgorz (kolnierz); woda tylko przy niskiej podlodze
     dWater *= (1.0 - smoothstep(0.84, 0.92, dq)) * (1.0 - smoothstep(12.0, 16.0, cv.flatH));
@@ -325,6 +402,9 @@ HaloWorld haloWorldAt(float s, float t) {
   // stawy parkow i woda w kopulach (woda w terenie = poziom 0)
   float civWater = max(cv.pond, dWater * cv.dome);
   h = mix(h, min(h, -5.0), civWater);
+
+  // struga na dnie kanionu (woda w terenie = poziom 0)
+  h = mix(h, min(h, -4.0), streamW * typeW.x * (1.0 - dockPad));
 
   // --- rzeki: meandry okresowe (parametry z layoutu), zanikaja w gorach
   float uu = s / L;
@@ -338,7 +418,7 @@ HaloWorld haloWorldAt(float s, float t) {
     float halfW = ra.y * (0.5 + 0.5 * (haloGnoise3(cylP(s, 0.0, 9000.0) + float(i) * 7.3) * 0.5 + 0.5));
     rd = min(rd, abs(v - vc) * Wf - halfW);
   }
-  float riverW = clamp(typeW.x + typeW.y + typeW.w * 0.7, 0.0, 1.0) * (1.0 - desert * 0.85) * (1.0 - dockPad) * (1.0 - zInd) * (1.0 - civFlat);
+  float riverW = clamp(typeW.x + typeW.y + typeW.w * 0.7, 0.0, 1.0) * (1.0 - desert * 0.85) * (1.0 - dockPad) * (1.0 - zInd) * (1.0 - civFlat) * uProfBake.y;
   float fadeHigh = 1.0 - smoothstep(150.0, 320.0, h);
   float bankT = smoothstep(0.0, 110.0, max(rd, 0.0));
   float riverH = rd < 0.0 ? (-5.0 - 6.0 * clamp(-rd / 30.0, 0.0, 1.0)) : mix(1.2, h, bankT);
@@ -363,6 +443,7 @@ HaloWorld haloWorldAt(float s, float t) {
   // pas fabryczny gesty, osady w dolinach gestsze niz zwykle miasto-ogrod
   urban = max(urban, (zInd * 0.95 + zRes * smoothstep(0.16, 0.3, cityN)) * dry * (1.0 - smoothstep(110.0, 260.0, h)));
   urban = clamp(urban, 0.0, 1.0) * (1.0 - dockPad) * (1.0 - max(civFlat, cv.park));
+  urban = max(urban, dUrban * cv.dome);
   forest *= (1.0 - urban * 0.9) * (1.0 - dockPad) * (1.0 - zInd);
   // park: kepy drzew z szumu (jak lasy parkow ECUMENE) i pojedyncze drzewa na
   // trawnikach (podloga 0.08: rzadkie sloty drzew, ponizej progu lasu w terenie);
@@ -376,6 +457,8 @@ HaloWorld haloWorldAt(float s, float t) {
   // pod plyta placu megabudowli rdzen (bez drzew i detalu), obrzeze splaszczone
   float exposed = max(typeW.z * smoothstep(0.22, 0.36, exN) * dry * (1.0 - dockPad), dockPad);
   exposed = max(exposed, max(cv.core, cv.rim * 0.3));
+  exposed = max(exposed, cv.apron);
+  forest *= 1.0 - cv.apron;
   float rock = clamp(smoothstep(230.0, 540.0, h) * 0.75 + desert * smoothstep(40.0, 110.0, h) * 0.8, 0.0, 1.0);
 
   // bez drzew na plycie placu, trawniku z pawilonami, przy brzegu szkla i na
@@ -496,12 +579,22 @@ export class HaloWorldMaps {
     const sectorType = new Array(MAX_SECTORS).fill(0);
     const sectorClimate = Array.from({ length: MAX_SECTORS }, () => new THREE.Vector4());
     const sectorPort = new Array(MAX_SECTORS).fill(0);
+    const sectorFeat = Array.from({ length: MAX_SECTORS }, () => new THREE.Vector4());
     layout.sectors.forEach((sector, i) => {
       if (i >= MAX_SECTORS) return;
       sectorType[i] = typeIndex(sector.type);
       sectorClimate[i].set(sector.climate.sea, sector.climate.mount, sector.climate.temp, sector.climate.moist);
       sectorPort[i] = sector.port ? 1 : 0;
+      sectorFeat[i].set(...haloSectorFeatures(sector));
     });
+    // profil planety: płaskowyż, rzeki, morza, kaniony (meandry z layoutu)
+    const profile = resolveHaloProfile(layout.planetProfile);
+    const canyonA = [0, 1].map((i) => {
+      const c = layout.canyons?.[i];
+      return c ? new THREE.Vector4(c.center, c.halfWidth, c.depth, 1) : new THREE.Vector4(0.5, 1, 1, 0);
+    });
+    const canyonM1 = [0, 1].map((i) => new THREE.Vector3(...(layout.canyons?.[i]?.m1 || [1, 0, 0])));
+    const canyonM2 = [0, 1].map((i) => new THREE.Vector3(...(layout.canyons?.[i]?.m2 || [1, 0, 0])));
     const riverA = [];
     const m1 = [];
     const m2 = [];
@@ -528,7 +621,12 @@ export class HaloWorldMaps {
       uRiverM2: { value: m2 },
       uRiverM3: { value: m3 },
       uRegion: { value: new THREE.Vector4(0, 0, 1, 1) },
-      uSeaDepth: { value: HALO_TERRAIN.seaDepth },
+      uSeaDepth: { value: Number.isFinite(profile.terrain?.seaDepth) ? profile.terrain.seaDepth : HALO_TERRAIN.seaDepth },
+      uSectorFeat: { value: sectorFeat },
+      uProfBake: { value: new THREE.Vector4(profile.terrain?.plateau || 0, profile.terrain?.rivers ?? 1, 0, 0) },
+      uCanyonA: { value: canyonA },
+      uCanyonM1: { value: canyonM1 },
+      uCanyonM2: { value: canyonM2 },
       uLandmarkCount: { value: 0 },
       uLandmarkA: { value: Array.from({ length: MAX_LANDMARKS }, () => new THREE.Vector4()) },
       uLandmarkB: { value: Array.from({ length: MAX_LANDMARKS }, () => new THREE.Vector4(0, 0, 1, 0)) },
@@ -648,7 +746,7 @@ export class HaloWorldMaps {
       const lm = i < nl ? landmarks[i] : null;
       const pd = lm?.pond;
       u.uLandmarkA.value[i].set(lm ? lm.s : 0, lm ? lm.plaza.halfA : 0, lm ? lm.t : 0, lm ? lm.plaza.halfQ : 0);
-      u.uLandmarkB.value[i].set(lm ? lm.plazaH : 0, lm ? lm.plaza.lawn : 0, lm ? lm.plaza.ramp : 1, 0);
+      u.uLandmarkB.value[i].set(lm ? lm.plazaH : 0, lm ? lm.plaza.lawn : 0, lm ? lm.plaza.ramp : 1, lm?.apron ? 1 : 0);
       u.uLandmarkC.value[i].set(lm ? lm.park.halfA : 0, lm ? lm.park.halfQ : 0, 0, 0);
       u.uLandmarkD.value[i].set(pd ? pd.da : 0, pd ? pd.dq : 0, pd ? pd.ra : 0, pd ? pd.rb : 1);
     }

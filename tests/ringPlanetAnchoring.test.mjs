@@ -21,8 +21,8 @@ test('ring planets render through their own orthographic pass before world and f
   assert.ok(ringPassIndex < foregroundPassIndex, 'ring planets must render below the foreground ring');
 });
 
-test('Earth and Mars use physical radius and keep atmosphere in the anchored pass', () => {
-  assert.match(planetSource, /RING_PLANET_NAMES\s*=\s*new\s+Set\(\['earth',\s*'mars'\]\)/);
+test('Earth, Mars and Jupiter (ring „Halo”) use physical radius and keep atmosphere in the anchored pass', () => {
+  assert.match(planetSource, /RING_PLANET_NAMES\s*=\s*new\s+Set\(\['earth',\s*'mars',\s*'jupiter'\]\)/);
   assert.match(planetSource, /this\.isRingAnchored\s*=\s*RING_PLANET_NAMES\.has\(this\.name\)/);
   assert.match(planetSource, /const\s+scale\s*=\s*anchoredToRing[\s\S]*?resolveRingPlanetWorldRadius\(this\.data\)/);
   assert.match(planetSource, /anchoredToRing\s*\?\s*RING_PLANET_VISUAL_Z\s*:\s*-50000/);

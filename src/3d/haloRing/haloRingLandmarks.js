@@ -65,6 +65,38 @@ export const HALO_LANDMARK_SPECS = Object.freeze([
   { name: 'DAEDALUS DRYDOCK', sector: 'DAEDALUS', u: 0.68, z: 90, kind: 'gate', w: 650, d: 470, h: 530, yaw: -0.025 }
 ]);
 
+// Zestawy megabudowli per planeta (profil: landmarks.set, haloRingProfiles.js).
+// Mars: te same rodzaje co ECUMENE (brama, tarasy, iglica, most) pod nazwami
+// marsjańskimi, w miastach szklanych i ogrodach; Jowisz: przemysł przerobu
+// gazów — farmy zbiorników helu-3 i kolumny rafinerii w sektorach
+// przemysłowych (fartuch z gołego metalu zamiast parku) i dwie arkologie.
+export const HALO_LANDMARK_SETS = Object.freeze({
+  ecumene: HALO_LANDMARK_SPECS,
+  // Mars: miasta szklane 2/6/10/14 (po obu stronach tranzytu w środku sektora)
+  mars: Object.freeze([
+    { name: 'THARSIS GATE', sector: 'ELYSIUM', u: 0.2, z: -330, kind: 'gate', w: 520, d: 340, h: 900, yaw: 0.05 },
+    { name: 'ARCADIA TERRACES', sector: 'ELYSIUM', u: 0.8, z: -420, kind: 'terrace', w: 640, d: 320, h: 560, yaw: 0.03 },
+    { name: 'OLYMPUS SPIRE', sector: 'NOCTIS', u: 0.8, z: -300, kind: 'crown', w: 440, d: 330, h: 1150, yaw: -0.06 },
+    { name: 'PHOBOS BRIDGE', sector: 'NOCTIS', u: 0.2, z: -300, kind: 'bridge', w: 700, d: 420, h: 460, yaw: 0.02 },
+    { name: 'ARES EXCHANGE', sector: 'SYRTIS', u: 0.2, z: 380, kind: 'gate', w: 560, d: 300, h: 780, yaw: 0.07 },
+    { name: 'CYDONIA ARCOLOGY', sector: 'PROMETHEI', u: 0.2, z: -380, kind: 'terrace', w: 600, d: 290, h: 480, yaw: -0.04 },
+    { name: 'PROMETHEI CROWN', sector: 'PROMETHEI', u: 0.8, z: -350, kind: 'crown', w: 400, d: 300, h: 980, yaw: 0.05 }
+  ].map((s) => Object.freeze(s))),
+  // Jowisz: przemysł w 1/5/11 (poza zatokami kompleksów), arkologie w 2 i 6
+  jupiter: Object.freeze([
+    { name: 'AMALTHEA HE-3 TANK FARM', sector: 'AMALTHEA', u: 0.5, z: -400, kind: 'tanks', w: 720, d: 440, h: 330, yaw: 0.0 },
+    { name: 'AMALTHEA CRACKING TOWERS', sector: 'AMALTHEA', u: 0.8, z: -380, kind: 'refinery', w: 620, d: 400, h: 820, yaw: 0.0 },
+    { name: 'HIMALIA REFINERY', sector: 'HIMALIA', u: 0.5, z: -360, kind: 'refinery', w: 560, d: 380, h: 760, yaw: 0.0 },
+    { name: 'HIMALIA TANK FARM', sector: 'HIMALIA', u: 0.8, z: -420, kind: 'tanks', w: 680, d: 420, h: 300, yaw: 0.0 },
+    { name: 'PASIPHAE TANK FARM', sector: 'PASIPHAE', u: 0.5, z: -400, kind: 'tanks', w: 700, d: 440, h: 320, yaw: 0.0 },
+    { name: 'PASIPHAE REFINERY', sector: 'PASIPHAE', u: 0.2, z: -380, kind: 'refinery', w: 600, d: 400, h: 880, yaw: 0.0 },
+    { name: 'THEBE ARCOLOGY', sector: 'THEBE', u: 0.25, z: -330, kind: 'crown', w: 420, d: 320, h: 1100, yaw: 0.04 },
+    { name: 'ELARA GATE', sector: 'ELARA', u: 0.75, z: -330, kind: 'gate', w: 540, d: 320, h: 820, yaw: -0.05 }
+  ].map((s) => Object.freeze(s)))
+});
+// Budowle przemysłowe: fartuch z gołego metalu zamiast trawnika i parku.
+export const HALO_INDUSTRIAL_LANDMARK_KINDS = Object.freeze(new Set(['tanks', 'refinery']));
+
 const wrapS = (ds, L) => ds - L * Math.round(ds / L);
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 // hasz [0, 1) z liczby całkowitej i soli (deterministyczny, bez stanu)
@@ -179,9 +211,13 @@ export function buildHaloLandmarkPlan(layout, options = {}) {
   const out = [];
   if (!layout?.sectors?.length) return out;
   const ctx = options.ctx || haloCivicContext(layout, options);
-  const isCity = (s) => (s.type === 'garden' || s.type === 'glass') && !s.port;
+  // zestaw i dozwolone typy sektorów z profilu planety (Ziemia: ECUMENE w miastach)
+  const lmProfile = layout.planetProfile?.landmarks || { set: 'ecumene', sectorTypes: ['garden', 'glass'] };
+  const specs = HALO_LANDMARK_SETS[lmProfile.set] || HALO_LANDMARK_SPECS;
+  const types = new Set(lmProfile.sectorTypes || ['garden', 'glass']);
+  const isCity = (s) => types.has(s.type) && !s.port;
   const perSector = new Map();
-  for (const spec of HALO_LANDMARK_SPECS.slice(0, P.maxCount)) {
+  for (const spec of specs.slice(0, P.maxCount)) {
     let sec = layout.sectors.find((s) => s.name === spec.sector && isCity(s));
     if (!sec) {
       // inny plan sektorów: sektor miasta z najmniejszą liczbą budowli
@@ -191,9 +227,11 @@ export function buildHaloLandmarkPlan(layout, options = {}) {
       }
     }
     if (!sec) break;
+    // budowla przemysłowa: fartuch z gołego metalu (trawnik), bez parku i stawu
+    const industrialKind = HALO_INDUSTRIAL_LANDMARK_KINDS.has(spec.kind);
     const ext = haloLandmarkExtent(spec);
     const flatQ = ext.halfQ + P.lawn + P.ramp;
-    const parkA = ext.halfA + P.lawn + P.ramp + P.park;
+    const parkA = ext.halfA + P.lawn + P.ramp + (industrialKind ? 0 : P.park);
     const best = haloPlaceCivic(ctx, {
       sec, uPref: spec.u, fPref: 0.5 + 0.45 * (spec.z || 0) / 1050,
       halfA: ext.halfA + P.lawn, halfQ: ext.halfQ + P.lawn, reachA: parkA, reachQ: flatQ
@@ -203,12 +241,12 @@ export function buildHaloLandmarkPlan(layout, options = {}) {
     const index = out.length;
     const plazaH = clamp(best.ground, P.minPlazaH, P.maxPlazaH);
     // park w poprzek w granicach dozwolonego pasa (dolna połowa wstęgi)
-    const parkQ = Math.min(flatQ + P.parkQ, best.t - ctx.tBot, ctx.tTop - best.t);
+    const parkQ = industrialKind ? flatQ : Math.min(flatQ + P.parkQ, best.t - ctx.tBot, ctx.tTop - best.t);
     // staw z boku (po stronie z dala od pawilonów), za frontem — tylko przy
     // niskim terenie: woda w terenie leży na poziomie 0
     const side = index % 2 === 0 ? 1 : -1;
     let pond = null;
-    {
+    if (!industrialKind) {
       const ra = Math.min(210, 140 + 60 * haloCivicHash(index, 11));
       const rb = 85 + 35 * haloCivicHash(index, 12);
       const da = side * (ext.halfA + P.lawn + 40 + ra);
@@ -220,7 +258,7 @@ export function buildHaloLandmarkPlan(layout, options = {}) {
     }
     // pawilony parku na płaskim trawniku (po stronie przeciwnej do stawu i z tyłu)
     const pavA = -side * (ext.halfA + P.lawn * 0.5);
-    const pavilions = [
+    const pavilions = industrialKind ? [] : [
       { a: pavA, q: 0.35 * ext.halfQ },
       { a: pavA, q: -0.35 * ext.halfQ },
       { a: 0.25 * ext.halfA * side, q: -(ext.halfQ + P.lawn * 0.5) }
@@ -245,6 +283,7 @@ export function buildHaloLandmarkPlan(layout, options = {}) {
       warm: sec.type !== 'glass',
       plaza: { halfA: ext.halfA, halfQ: ext.halfQ, lawn: P.lawn, ramp: P.ramp },
       park: { halfA: parkA, halfQ: parkQ },
+      apron: industrialKind,
       pond,
       pavilions,
       reachA: parkA,
@@ -271,6 +310,7 @@ export function haloPavilionParts(boxes, lights, a, q, u0 = 0) {
 // sa × sq × su; fixed = bez skrętu yaw (płyta placu i park w osiach ringu).
 // Światła pozycyjne: czerwone na szczytach (przeszkodowe), ciepłe przy wejściu.
 export function haloLandmarkParts(lm) {
+  if (HALO_INDUSTRIAL_LANDMARK_KINDS.has(lm.kind)) return haloIndustrialLandmarkParts(lm);
   const boxes = [];
   const lights = [];
   const B = HALO_LANDMARK.plinthTop;
@@ -367,6 +407,86 @@ export function haloLandmarkParts(lm) {
   for (const side of [-1, 1]) lamp('warm', 'steady', side * w * 0.13, 38, -d * 0.55, 3.0);
   // pawilony parku na trawniku placu (poziom placu: u = 0)
   for (const p of lm.pavilions || []) haloPavilionParts(boxes, lights, p.a, p.q, 0);
+  return { boxes, lights };
+}
+
+// Budowle przemysłowe Jowisza (przerób gazów): prymitywy jak megastruktura —
+// `prim`: 'box' (domyślnie), 'cyl' (walec, średnica sa × sq, wysokość su),
+// 'dome' (półkula; `flip` = dolna połowa od równika w dół). Płyta placu
+// z betonu, bez podium ECUMENE i bez pawilonów (fartuch z gołego metalu).
+//  - 'tanks': farma kulistych zbiorników helu-3 na płaszczach, estakada rur,
+//    pochodnia i nastawnia;
+//  - 'refinery': kolumny rektyfikacyjne z pomostami i kopułkami, most rur,
+//    hala sprężarek z oknami, pochodnia i niskie zbiorniki.
+function haloIndustrialLandmarkParts(lm) {
+  const boxes = [];
+  const lights = [];
+  const w = lm.w;
+  const d = lm.d;
+  const H = lm.h;
+  const B = HALO_LANDMARK.plinthTop;
+  const add = (o) => boxes.push({ mat: 'tank', a: 0, q: 0, u0: B, sa: 10, sq: 10, su: 10, ...o });
+  boxes.push({ mat: 'concrete', a: 0, q: 0, u0: -HALO_LANDMARK.plinthDepth, sa: 2 * lm.plaza.halfA, sq: 2 * lm.plaza.halfQ,
+    su: HALO_LANDMARK.plinthDepth + B, fixed: true });
+  if (lm.kind === 'tanks') {
+    const R = Math.min(w / 6, d / 4) * 0.86;
+    const skirt = 0.32 * R;
+    const eq = B + skirt + R;
+    for (const ia of [-1, 0, 1]) {
+      for (const iq of [-0.5, 0.5]) {
+        const a = ia * w / 3;
+        const q = iq * d / 2;
+        add({ mat: 'steel', prim: 'cyl', a, q, u0: B, sa: 1.2 * R, sq: 1.2 * R, su: skirt + R * 0.6 });
+        add({ prim: 'dome', flip: true, a, q, u0: eq, sa: 2 * R, sq: 2 * R, su: R });
+        add({ prim: 'dome', a, q, u0: eq, sa: 2 * R, sq: 2 * R, su: R });
+        // pomost i drabina na szczycie, światło przeszkodowe
+        add({ mat: 'hazard', prim: 'cyl', a, q, u0: eq + R - 3, sa: 0.34 * R, sq: 0.34 * R, su: 5 });
+        lights.push({ color: 'red', mode: 'pulse', a, q, u: eq + R + 8, size: 3.2, phase: (ia + 1) * 0.21 + (iq + 0.5) * 0.4 });
+      }
+      // estakada rur między rzędami
+      add({ mat: 'pipe', a: ia * w / 3, q: 0, u0: B + skirt * 0.5, sa: R * 0.6, sq: 16, su: 12 });
+    }
+    add({ mat: 'pipe', a: 0, q: 0, u0: B + skirt, sa: w * 0.92, sq: 14, su: 14 });
+    add({ mat: 'pipe', a: 0, q: 22, u0: B + skirt, sa: w * 0.92, sq: 10, su: 10 });
+    // pochodnia w narożniku i nastawnia z oknami
+    const fa = w * 0.47;
+    const fq = -d * 0.44;
+    add({ mat: 'steel', prim: 'cyl', a: fa, q: fq, u0: B, sa: 16, sq: 16, su: H * 1.25 });
+    add({ mat: 'lamp', prim: 'cyl', a: fa, q: fq, u0: B + H * 1.25, sa: 20, sq: 20, su: 6 });
+    lights.push({ color: 'warm', mode: 'pulse', a: fa, q: fq, u: B + H * 1.25 + 12, size: 5.5, phase: 0.3 });
+    lights.push({ color: 'red', mode: 'strobe', a: fa, q: fq, u: B + H * 1.25 - 20, size: 3.4, phase: 0.1 });
+    add({ mat: 'facade', a: -w * 0.44, q: d * 0.42, u0: B, sa: 110, sq: 70, su: 42 });
+    lights.push({ color: 'warm', mode: 'steady', a: -w * 0.44, q: d * 0.42 + 38, u: B + 20, size: 2.4, phase: 0 });
+  } else {
+    // kolumny rektyfikacyjne: [a, q, średnica, wysokość] (ułamki w, d, w, H)
+    const cols = [[-0.3, 0.12, 0.13, 1.0], [-0.1, -0.1, 0.09, 0.72], [0.12, 0.1, 0.14, 0.9], [0.32, -0.08, 0.085, 0.62]];
+    cols.forEach(([fa, fq, fd, fh], k) => {
+      const a = fa * w;
+      const q = fq * d;
+      const D = fd * w;
+      const h = fh * H;
+      add({ prim: 'cyl', a, q, u0: B, sa: D, sq: D, su: h });
+      add({ mat: 'white', prim: 'dome', a, q, u0: B + h, sa: D, sq: D, su: D * 0.3 });
+      // pomosty co ~20% wysokości
+      for (let f = 0.18; f < 0.95; f += 0.2) add({ mat: 'steel', prim: 'cyl', a, q, u0: B + h * f, sa: D + 26, sq: D + 26, su: 5 });
+      lights.push({ color: 'red', mode: 'pulse', a, q, u: B + h + D * 0.3 + 8, size: 3.6, phase: k * 0.23 });
+      lights.push({ color: 'warm', mode: 'steady', a: a + D * 0.5 + 10, q, u: B + h * 0.58, size: 2.2, phase: 0 });
+    });
+    // most rur między kolumnami na połowie wysokości
+    add({ mat: 'pipe', a: 0.01 * w, q: 0, u0: B + H * 0.46, sa: w * 0.7, sq: 18, su: 14 });
+    add({ mat: 'pipe', a: -0.2 * w, q: 0, u0: B + H * 0.3, sa: w * 0.3, sq: 12, su: 10 });
+    // hala sprężarek z oknami (front ku kamerze gry) i niskie zbiorniki
+    add({ mat: 'facade', a: 0, q: -d * 0.36, u0: B, sa: w * 0.78, sq: d * 0.22, su: 0.1 * H });
+    add({ mat: 'rust', a: 0, q: -d * 0.36, u0: B + 0.1 * H, sa: w * 0.8, sq: d * 0.24, su: 4 });
+    for (const fa of [-0.36, -0.2, 0.3, 0.42]) add({ prim: 'cyl', a: fa * w, q: d * 0.34, u0: B, sa: 0.12 * w, sq: 0.12 * w, su: 0.12 * H });
+    // pochodnia
+    const fa = w * 0.47;
+    const fq = d * 0.05;
+    add({ mat: 'steel', prim: 'cyl', a: fa, q: fq, u0: B, sa: 14, sq: 14, su: H * 1.15 });
+    add({ mat: 'lamp', prim: 'cyl', a: fa, q: fq, u0: B + H * 1.15, sa: 18, sq: 18, su: 6 });
+    lights.push({ color: 'warm', mode: 'pulse', a: fa, q: fq, u: B + H * 1.15 + 12, size: 5.5, phase: 0.6 });
+    lights.push({ color: 'red', mode: 'strobe', a: fa, q: fq, u: B + H * 1.15 - 20, size: 3.4, phase: 0.4 });
+  }
   return { boxes, lights };
 }
 

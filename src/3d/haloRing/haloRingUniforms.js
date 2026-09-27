@@ -3,6 +3,12 @@
 // teren, chmury, konstrukcję i powłokę powietrza.
 import * as THREE from 'three';
 import { HALO_ATMOSPHERE, HALO_LIGHT, HALO_ROOF, HALO_TRANSIT, haloPortTemplate, haloTransitAngles } from './haloRingConfig.js';
+import {
+  HALO_MEGA_PALETTE_SIZE,
+  HALO_STRUCTURE_PALETTE_KEYS,
+  HALO_TERRAIN_PALETTE_KEYS,
+  resolveHaloProfile
+} from './haloRingProfiles.js';
 
 const srgbToLinear = (c) => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
 
@@ -109,10 +115,78 @@ export function createHaloUniforms(layout) {
     uFgFade: { value: new THREE.Vector4(1, 0, 1e6, 0) },
     // wycięcia nad graczem: A = (środek x, y, oś cos, sin), B = (pół a, pół b, miękkość, siła)
     uCutA: { value: [new THREE.Vector4(), new THREE.Vector4()] },
-    uCutB: { value: [new THREE.Vector4(0, 0, 1, 0), new THREE.Vector4(0, 0, 1, 0)] }
+    uCutB: { value: [new THREE.Vector4(0, 0, 1, 0), new THREE.Vector4(0, 0, 1, 0)] },
+    // ---- profil planety (haloRingProfiles.js): wartości, nie źródła GLSL —
+    // trzy ringi dzielą programy (rozgrzewka z menu działa na każdym)
+    uSkyTint: { value: new THREE.Vector3() },       // barwa światła nieba habitatu
+    uPlanetNight: { value: new THREE.Vector3() },   // nocna strona planety w jej świetle
+    uAirMieTint: { value: new THREE.Vector3(1, 1, 1) },
+    uCloudTint: { value: new THREE.Vector3() },
+    uHdrWarm: { value: new THREE.Vector3() },
+    uHdrSodium: { value: new THREE.Vector3() },
+    uHdrCool: { value: new THREE.Vector3() },
+    uHdrStrip: { value: new THREE.Vector3() },
+    uTerPal: { value: HALO_TERRAIN_PALETTE_KEYS.map(() => new THREE.Vector3()) },
+    uStructPal: { value: HALO_STRUCTURE_PALETTE_KEYS.map(() => new THREE.Vector3()) },
+    uMegaPal: { value: Array.from({ length: HALO_MEGA_PALETTE_SIZE }, () => new THREE.Vector3()) },
+    uMegaSky: { value: [new THREE.Vector3(), new THREE.Vector3()] },
+    uDomeTint: { value: new THREE.Vector3(1, 1, 1) },
+    uLeafTint: { value: new THREE.Vector3(1, 1, 1) },
+    uIndTopTint: { value: new THREE.Vector3(1, 1, 1) },
+    uProfFrag: { value: new THREE.Vector4() },      // siarka (Io), linie na lodzie (Europa), —, —
+    uStorm: { value: new THREE.Vector4() },         // siła, błysków/s na komórkę, komórka [j.], jasność HDR
+    uRoofOcc: { value: new THREE.Vector4() },       // reguły dachu (lustro haloRingRoofPlan.js)
+    uRoofKinds: { value: new THREE.Vector4() },
+    uRoofPlotEmpty: { value: new THREE.Vector4() },
+    uIndKitCdf0: { value: new THREE.Vector4() },    // progi zakładów działki (haloRingIndustryKit.js)
+    uIndKitCdf1: { value: new THREE.Vector4() }
   };
   applyLayoutToUniforms(u, layout);
   return u;
+}
+
+const setV3 = (v, a) => v.set(Number(a[0]) || 0, Number(a[1]) || 0, Number(a[2]) || 0);
+
+// Profil planety → uniformy (także przy przebudowie ringu z innym profilem).
+export function applyProfileUniforms(u, profileKey, facing = 'outward') {
+  const p = resolveHaloProfile(profileKey);
+  const L = p.light;
+  const A = p.air;
+  u.uSunColor.value.set(...L.sunColor).multiplyScalar(L.sunIntensity);
+  u.uPlanetshine.value.set(...L.planetshineColor, L.planetshineGain);
+  u.uPlanetAlbedo.value = L.planetAlbedo;
+  u.uPlanetAtmoH.value = L.planetAtmosphereHeight;
+  u.uSkyAmbient.value = L.skyAmbient;
+  u.uNightAmbient.value = L.nightAmbient;
+  setV3(u.uPlanetNight.value, L.planetNight);
+  u.uAirRayleigh.value.set(...A.rayleigh);
+  u.uAirMie.value.set(A.mie, A.mieG, A.multiScatter);
+  u.uAirScaleH.value = A.scaleHeight;
+  u.uSkyBoost.value = A.skyBoost;
+  setV3(u.uAirMieTint.value, A.mieTint);
+  u.uCloudParams.value.w = A.cloudCoverBias[facing] ?? 0;
+  setV3(u.uSkyTint.value, p.sky.tint);
+  setV3(u.uCloudTint.value, p.sky.cloudTint);
+  setV3(u.uHdrWarm.value, p.hdr.windowWarm);
+  setV3(u.uHdrSodium.value, p.hdr.windowSodium);
+  setV3(u.uHdrCool.value, p.hdr.windowCool);
+  setV3(u.uHdrStrip.value, p.hdr.strip);
+  HALO_TERRAIN_PALETTE_KEYS.forEach((k, i) => setV3(u.uTerPal.value[i], p.terrainPalette[k]));
+  HALO_STRUCTURE_PALETTE_KEYS.forEach((k, i) => setV3(u.uStructPal.value[i], p.structurePalette[k]));
+  u.uMegaPal.value.forEach((v, i) => setV3(v, p.megaPalette[i] || p.megaPalette[p.megaPalette.length - 1]));
+  setV3(u.uMegaSky.value[0], p.megaSky[0]);
+  setV3(u.uMegaSky.value[1], p.megaSky[1]);
+  setV3(u.uDomeTint.value, p.domeTint);
+  setV3(u.uLeafTint.value, p.leafTint);
+  setV3(u.uIndTopTint.value, p.indTopTint);
+  u.uProfFrag.value.set(p.frag.sulfur || 0, p.frag.lineae || 0, 0, 0);
+  u.uStorm.value.set(p.storm.strength, p.storm.rate, p.storm.cell, p.storm.brightness);
+  u.uRoofOcc.value.set(...p.roofRules.occupancy);
+  u.uRoofKinds.value.set(...p.roofRules.kinds);
+  u.uRoofPlotEmpty.value.set(...p.roofRules.plotEmpty);
+  const cdf = p.industryKit.cdf;
+  u.uIndKitCdf0.value.set(cdf[0], cdf[1], cdf[2], cdf[3]);
+  u.uIndKitCdf1.value.set(cdf[4], cdf[5], cdf[6], cdf[7]);
 }
 
 export function applyLayoutToUniforms(u, layout) {
@@ -127,6 +201,7 @@ export function applyLayoutToUniforms(u, layout) {
   if (u.uTransit) haloTransitUniforms(layout, u.uTransit.value, u.uTransitZ.value);
   u.uHabitat.value.set(layout.sigma, r.back, r.min, r.max);
   u.uCloudParams.value.w = HALO_ATMOSPHERE.cloudCoverBias[layout.facing] ?? 0;
+  if (u.uTerPal) applyProfileUniforms(u, layout.planetProfile, layout.facing);
 }
 
 export function applyRoofPlanUniforms(u, plan) {

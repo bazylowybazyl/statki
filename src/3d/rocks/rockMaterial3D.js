@@ -695,7 +695,10 @@ void main() {
   float lineTint = veinZone * uVeins * 0.16 * (1.0 - min(1.0, halfPx * 2.0)) * step(0.001, lw);
   albedo = mix(albedo, lcol, clamp(line + lineTint, 0.0, 1.0));
   metal = max(metal, line * lmetal);
-  specK = mix(specK, lspec, line);
+  // Połysk linii dopiero przy szerokiej linii: normalna bruzdy z pochodnych
+  // szumi na 1–3 px, a połysk (kryształ 1,2) robił z tego migające iskry HDR
+  // i plamy bloomu na żyłach (połowa mrygania skał kryształu w oddaleniu).
+  specK = mix(specK, lspec, line * smoothstep(1.5, 4.0, halfPx));
 
   // --- Światło ---
   float NdotL = dot(Nv, Lv);

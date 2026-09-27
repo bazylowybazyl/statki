@@ -1,6 +1,11 @@
+// Promień planety w świecie gry, gdy ma ring „Halo” (planeta rysowana w passie
+// ortho przy ringu, nie w tle). Jowisz (Z6, 2026-09-26): 48 000 ≈ 1,27 × Ziemi —
+// największa planeta z ringiem, a port z redą (do ~R + 21 tys.) i objazd ringu
+// mieszczą się przed pasmem księżyców (docs/PORT-halo-ring.md § Jowisz).
 export const RING_PLANET_WORLD_RADII = Object.freeze({
     earth: 37800,
-    mars: 30000
+    mars: 30000,
+    jupiter: 48000
 });
 
 export const RING_INFRASTRUCTURE_SIZE = Object.freeze({
@@ -18,6 +23,7 @@ export function normalizeRingPlanetKey(source) {
         const key = String(candidate || '').trim().toLowerCase();
         if (key.includes('earth')) return 'earth';
         if (key.includes('mars')) return 'mars';
+        if (key.includes('jupiter')) return 'jupiter';
     }
     return '';
 }

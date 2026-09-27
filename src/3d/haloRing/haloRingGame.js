@@ -97,9 +97,11 @@ export class HaloRingGame {
 
   _ensureRing(e) {
     if (e.ring) return e.ring;
+    const spec = HALO_RING_PLANETS[e.key];
     const ring = createHaloRing({
       planetRadius: resolveRingPlanetWorldRadius(e.planet),
-      seed: HALO_RING_PLANETS[e.key].seed,
+      seed: spec.seed,
+      profile: spec.profile,
       quality: this.qualityKey,
       renderer: this.renderer
     });

@@ -44,6 +44,25 @@ uniform float uNightLights;
 // skala detalu z jakosci (ultra > 1): progi wygaszania okien i wzorow z
 // odlegloscia przesuwaja sie dalej (okna widac z daleka, kosztem migotania)
 uniform float uDetailScale;
+// profil planety (haloRingProfiles.js): barwy i przelaczniki zalezne od
+// planety sa WARTOSCIAMI uniformow — trzy ringi dziela te same programy
+uniform vec3 uSkyTint;       // swiatlo nieba habitatu
+uniform vec3 uPlanetNight;   // nocna strona planety w jej swietle
+uniform vec3 uAirMieTint;    // barwa rozpraszania Mie (pyl Marsa)
+uniform vec3 uCloudTint;
+uniform vec3 uHdrWarm;
+uniform vec3 uHdrSodium;
+uniform vec3 uHdrCool;
+uniform vec3 uHdrStrip;      // pasy swiatel konstrukcji
+uniform vec3 uMegaPal[32];   // palety megastruktury, miasta i megabudowli (kod materialu)
+uniform vec3 uMegaSky[2];    // odbicie nieba w szkle i metalu: horyzont, zenit
+uniform vec3 uDomeTint;
+uniform vec3 uLeafTint;
+uniform vec3 uIndTopTint;
+uniform vec4 uProfFrag;      // siarka (Io), linie na lodzie (Europa), -, -
+uniform vec4 uStorm;         // burze: sila, blyskow na komorke na s, komorka [j.], jasnosc
+uniform vec4 uIndKitCdf0;    // progi zakladow dzialki przemyslowej (0-3)
+uniform vec4 uIndKitCdf1;    // (4-7)
 
 float haloFloorRadiusAtZ(float z) {
   return uRing.y + (z - 0.5 * (uRingZ.y + uRingZ.z)) * uRing.w;
@@ -157,6 +176,29 @@ vec3 haloWorleyP(vec2 p, vec2 period, float salt) {
 }
 `;
 
+// Burze profilu (Jowisz): blyski w komorkach chmur ~uStorm.z j. Te same
+// komorki i czasy licza teren (poswiata pod chmura) i warstwa chmur (blysk),
+// wiec swiatlo na ziemi zgadza sie z blyskiem w chmurze. Wynik 0..~1,7.
+// Wymaga COMMON i NOISE (osobny chunk: szum wchodzi tez do shaderow bez COMMON).
+export const HALO_GLSL_STORM = /* glsl */`
+float haloStormFlash(float sAbs, float t) {
+  float f = 0.0;
+  if (uStorm.x > 0.001) {
+    vec2 c = vec2(sAbs, t) / uStorm.z;
+    vec2 id = floor(c);
+    float period = 1.0 / max(uStorm.y, 1e-3);
+    float tt = uTime + haloHash12(id + 7.31) * period;
+    float cyc = floor(tt / period);
+    float ph = tt - cyc * period;
+    float on = step(haloHash12(id + vec2(cyc * 1.37, 3.9)), 0.4);
+    float pulse = exp(-ph * 16.0) + 0.7 * exp(-abs(ph - 0.16) * 30.0);
+    vec2 fp = fract(c) - (0.25 + 0.5 * haloHash22(id + vec2(cyc * 0.73, 1.7)));
+    f = uStorm.x * on * pulse * exp(-dot(fp, fp) * 7.0);
+  }
+  return f;
+}
+`;
+
 export const HALO_GLSL_LIGHT = /* glsl */`
 // Transmisja promienia p + t*L przez okolice planety: geometryczny polcien
 // tarczy slonca + zaczerwienienie w atmosferze przy krawedzi + slaba czerwien
@@ -248,7 +290,7 @@ vec3 haloPlanetshine(vec3 p, vec3 n) {
   float view = pow(clamp((cb + sinA) / (1.0 + sinA), 0.0, 1.0), 1.4);
   float E = sinA * sinA * view;
   vec3 lit = uPlanetshine.rgb * uPlanetAlbedo * uPlanetshine.a * max(phase, 0.0) * uSunColor;
-  vec3 night = vec3(0.9, 0.55, 0.25) * 0.004 * (1.0 - clamp(phase, 0.0, 1.0));
+  vec3 night = uPlanetNight * (1.0 - clamp(phase, 0.0, 1.0));
   return (lit + night) * E;
 }
 
@@ -263,7 +305,7 @@ vec3 haloSkyAmbient(vec3 p, vec3 n) {
   vec3 sunAir = 0.5 * (haloSunVisibility(above, uSunDir) + haloSunVisibility(mid, uSunDir));
   float sunUp = clamp(dot(uSunDir, up) * 0.75 + 0.35, 0.0, 1.0);
   float hemi = 0.55 + 0.45 * dot(n, up);
-  return vec3(0.34, 0.55, 1.0) * uSkyAmbient * sunAir * uSunColor * sunUp * hemi;
+  return uSkyTint * uSkyAmbient * sunAir * uSunColor * sunUp * hemi;
 }
 `;
 
@@ -328,7 +370,7 @@ void haloAirIntegrate(vec3 o, vec3 d, float t0, float t1, float jitter, out vec3
     float colSun = rho * uAirScaleH / max(cz + 0.12, 0.06);
     vec3 sunT = haloSunVisibility(x, uSunDir) * exp(-ext * colSun);
     vec3 ps = haloPlanetshine(x, up);
-    vec3 S = (bR * phaseR + vec3(bM * phaseM)) * sunT * uSunColor * uAirMie.z + bR * ps * 0.6;
+    vec3 S = (bR * phaseR + vec3(bM * phaseM) * uAirMieTint) * sunT * uSunColor * uAirMie.z + bR * ps * 0.6;
     vec3 stepOD = ext * rho * dt;
     vec3 stepT = exp(-stepOD);
     inscat += trans * S * rho * dt * ((vec3(1.0) - stepT) / max(stepOD, vec3(1e-6)));

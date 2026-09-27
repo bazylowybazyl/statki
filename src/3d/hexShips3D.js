@@ -1018,6 +1018,18 @@ function releaseSharedVisualTexture(source) {
   }
 }
 
+// Lekkie batche kadłubów (shipProxyBatch3D.js): TA SAMA tekstura co kadłub pełnego
+// NPC z tego obrazka (licznik referencji) i to samo strojenie światła statków.
+export function acquireHullVisualTexture(image) {
+  return image ? acquireSharedVisualTexture(image) : null;
+}
+export function releaseHullVisualTexture(image) {
+  releaseSharedVisualTexture(image);
+}
+export function getHullLightTuning() {
+  return getShipLightTuning();
+}
+
 function createLightUniformArray() {
   return Array.from({ length: MAX_SHADER_SHIP_LIGHTS }, () => new THREE.Vector4());
 }

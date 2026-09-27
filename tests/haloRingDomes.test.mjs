@@ -37,8 +37,8 @@ test('kopuły: 12 z planu ECUMENE w sektorach o tych samych nazwach, typy wnętr
     assert.ok(dm.h > dm.r * 0.7 && dm.h <= dm.r, `${dm.name}: wysokość ${dm.h}`);
     assert.equal(dm.warm, sec.type !== 'glass');
   }
-  // wszystkie typy wnętrz w użyciu
-  assert.equal(new Set(a.map((d) => d.type)).size, HALO_DOME_TYPES.length);
+  // wszystkie typy wnętrz w użyciu (poza miastem pod kopułą — profil Marsa)
+  assert.equal(new Set(a.map((d) => d.type)).size, HALO_DOME_TYPES.filter((t) => t !== 'city').length);
 });
 
 test('miejsca kopuł: pod płaszczyzną gry, z dala od portu, tranzytów, megabudowli i od siebie', () => {

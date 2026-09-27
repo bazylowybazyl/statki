@@ -50,7 +50,8 @@ export const HALO_TRAIN_STRIDE = 8;
 export const HALO_MAT = Object.freeze({
   roofLight: 0, roofMid: 1, dark: 2, white: 3, rust: 4, truss: 5, hazard: 6, glass: 7,
   bayFloor: 8, tunnel: 9, containerA: 10, containerB: 11, containerC: 12,
-  gardenRoof: 14, stone: 24, brass: 25, lamp: 26, facadeWarm: 27, facadeCool: 28
+  gardenRoof: 14, concrete: 16, tank: 20, pipe: 23, stone: 24, brass: 25, lamp: 26, facadeWarm: 27, facadeCool: 28,
+  radiator: 29
 });
 // bay = pokład ze znaczeniami (tunel tranzytu), deck = pokład zatoki bez znaczeń
 // (stanowiska rysuje render kompleksu K-7), tylko nocna poświata ścian;
@@ -71,10 +72,11 @@ export function roofSectorClass(sector) {
   return 0;
 }
 
-const IND_OCCUPANCY = [0.55, 0.62, 0.9, 0.85];
+// Reguły komórek z profilu planety (roofRules; te same liczby dostaje shader
+// dachu przez uRoofOcc / uRoofKinds / uRoofPlotEmpty). Domyślnie Ziemia.
+const ROOF_RULES_EARTH = Object.freeze({ occupancy: [0.55, 0.62, 0.9, 0.85], kinds: [0.34, 0.62, 0.8, 0.9], plotEmpty: [0.8, 0.6, 0.32, 0.3] });
 // wysokość płyty portu nad podłogą bazową (haloRingWorldGen: h = 7 w portPad)
 export const PORT_PAD_H = 7;
-const PLOT_EMPTY = [0.8, 0.6, 0.32, 0.3];
 
 // Pasy w poprzek dachu (d od krawędzi habitatu). Drugi rząd działek tylko,
 // gdy za nim zmieści się kolej, przemysł i kratownica kadłuba.
@@ -98,30 +100,31 @@ export function computeRoofLanes(roofWidth) {
 // ---- reguły komórek (lustro GLSL w haloRingStructure.js) -----------------
 // Komórka przemysłowa (i wzdłuż, j w poprzek). Wymiary w j.; środek względem
 // środka komórki. cellS = długość komórki wzdłuż (skala floorMid).
-export function industrialCellRule(i, j, cls, cellS) {
-  if (haloHashI(i, j, 11) >= IND_OCCUPANCY[cls]) return null;
+export function industrialCellRule(i, j, cls, cellS, rules = ROOF_RULES_EARTH) {
+  if (haloHashI(i, j, 11) >= rules.occupancy[cls]) return null;
+  const K = rules.kinds;
   const k = haloHashI(i, j, 12);
   const s = haloHashI(i, j, 13);
   const hgt = haloHashI(i, j, 14);
   const jx = haloHashI(i, j, 15) - 0.5;
   const jy = haloHashI(i, j, 16) - 0.5;
   const cellD = HALO_ROOF.crossCell;
-  if (k < 0.34) {
+  if (k < K[0]) {
     const radius = 12 + 12 * s;
     return { kind: HALO_CELL.tank, a: radius, b: radius, h: 18 + 70 * hgt,
       ox: jx * Math.max(0, cellS - 2 * radius - 8), oy: jy * Math.max(0, cellD - 2 * radius - 8) };
   }
-  if (k < 0.62) {
+  if (k < K[1]) {
     const sx = 22 + 24 * s;
     const sy = 22 + 24 * haloHashI(i, j, 17);
     return { kind: HALO_CELL.block, a: sx, b: sy, h: 10 + 60 * hgt,
       ox: jx * Math.max(0, cellS - sx - 8), oy: jy * Math.max(0, cellD - sy - 8) };
   }
-  if (k < 0.8) {
+  if (k < K[2]) {
     const along = haloHashI(i, j, 18) < 0.5;
     return { kind: HALO_CELL.radiator, a: along ? 44 : 40, b: along ? 40 : 44, h: 26 + 50 * hgt, along, ox: 0, oy: 0 };
   }
-  if (k < 0.9) {
+  if (k < K[3]) {
     return { kind: HALO_CELL.chimney, a: 5 + 4 * s, b: 22, h: 60 + 36 * hgt,
       ox: jx * Math.max(0, cellS - 30), oy: jy * Math.max(0, cellD - 30) };
   }
@@ -132,8 +135,8 @@ export function industrialCellRule(i, j, cls, cellS) {
 
 // Działka (L = indeks działki wzdłuż, row = 0/1). Wymiary w j.; środek
 // względem środka działki (wzdłuż, w poprzek).
-export function plotRule(L, row, cls) {
-  if (haloHashI(L, row, 21) < PLOT_EMPTY[cls]) return { kind: HALO_PLOT.pad };
+export function plotRule(L, row, cls, rules = ROOF_RULES_EARTH) {
+  if (haloHashI(L, row, 21) < rules.plotEmpty[cls]) return { kind: HALO_PLOT.pad };
   const k = haloHashI(L, row, 22);
   const a = haloHashI(L, row, 23);
   const b = haloHashI(L, row, 24);
@@ -232,6 +235,7 @@ function quatAxis(dx, dy, dz) {
 export function buildHaloRoofPlan(layout, domain, options = {}) {
   const R = HALO_ROOF;
   const sigma = layout.sigma;
+  const roofRules = layout.planetProfile?.roofRules || ROOF_RULES_EARTH;
   const floorMid = layout.radii.floorMid;
   const rim = layout.radii.rim;
   const back = layout.radii.back;
@@ -388,7 +392,7 @@ export function buildHaloRoofPlan(layout, domain, options = {}) {
       const cls = classOfCell(i);
       const thC = th0 + (c + 0.5) * cellS / floorMid;
       for (let j = 0; j < lanes.crossCells; j++) {
-        const rule = industrialCellRule(i, j, cls, cellS);
+        const rule = industrialCellRule(i, j, cls, cellS, roofRules);
         if (!rule) continue;
         const dC = lanes.industrial[0] + (j + 0.5) * R.crossCell;
         const rF = radiusAtD(dC);
@@ -432,7 +436,7 @@ export function buildHaloRoofPlan(layout, domain, options = {}) {
       rows.forEach((row, rowIdx) => {
         const dC = (row[0] + row[1]) * 0.5;
         const rF = radiusAtD(dC);
-        const rule = plotRule(L, rowIdx, cls);
+        const rule = plotRule(L, rowIdx, cls, roofRules);
         const padA = lotS - 2 * HALO_ROOF.road * 0.5;
         const padB = row[1] - row[0] - 20;
         if (rule.kind === HALO_PLOT.pad) {
@@ -544,6 +548,40 @@ export function buildHaloRoofPlan(layout, domain, options = {}) {
       box(0, y0, y1, z0, zB, len - 300, HALO_MAT.roofMid);
       for (const sd of [-1, 1]) box(sd * (len * 0.5 - 150 - 3), y0, y1 - 20, z0 + 30, z0 + 38, 6, HALO_MAT.dark + 32 * HALO_EMIT.blueStrip);
     }
+    // styl zatoki z profilu planety (tylko wygląd: bryły na ścianach, nad nimi
+    // albo pod płaszczyzną lotu — stanowiska i kolizje jak w standardzie K-7)
+    const bayStyle = layout.planetProfile?.port?.bays || 'k7';
+    if (bayStyle === 'berm') {
+      // Mars: nasypy z regolitu o pochyłych zboczach wzdłuż ścian bocznych
+      // (osłona przed promieniowaniem), grzbiet pod płaszczyzną lotu; na
+      // koronie bursztynowe znaczniki
+      for (const sd of [-1, 1]) {
+        const qb = [0, Math.sin(sd * 0.25), 0, Math.cos(sd * 0.25)];
+        push(L, HALO_PRIM.box, seg, th, rF, sd * (len * 0.5 + 170), D * 0.5, zB - 150, 380, D - 120, 200, HALO_MAT.roofMid, qb);
+        push(L, HALO_PRIM.box, seg, th, rF, sd * (len * 0.5 + 60), D * 0.5, zB - 40, 60, D - 200, 50, HALO_MAT.rust);
+        for (let k = 0; k < 8; k++) light(seg, th, rF, sd * (len * 0.5 + 40), 250 + k * (D - 500) / 7, -30, 2.2, k * 0.1, HALO_LIGHT_COLOR.warm, HALO_LIGHT_MODE.steady, L);
+      }
+      // łukowe żebra nad ścianą tylną (przęsła bramy terminalu)
+      for (const sx of [-0.3, 0, 0.3]) box(sx * len, P.backWall, P.backWall + 40, zW, zW + 110, 60, HALO_MAT.white);
+    } else if (bayStyle === 'industrial') {
+      // Jowisz: żebra radiatorów na koronie ścian bocznych, rurociągi na
+      // licu zewnętrznym (pod płaszczyzną lotu), zbiorniki na słupach kołnierza
+      for (const sd of [-1, 1]) {
+        const xw = sd * (len - P.sideWall) * 0.5;
+        for (let y = 700; y < D - 120; y += 95) {
+          push(L, HALO_PRIM.box, seg, th, rF, xw, y, zW, 170, 8, 70, HALO_MAT.radiator);
+        }
+        const qAlongY = quatAxis(0, 1, 0);
+        for (const zc of [-150, -110, -70]) {
+          push(L, HALO_PRIM.cylinder, seg, th, rF, sd * (len * 0.5 + 26), 200, zc, 22, 22, D - 400, HALO_MAT.pipe, qAlongY);
+        }
+        for (let y = 300; y < D - 200; y += 420) box(sd * (len * 0.5 + 26), y - 12, y + 12, zB - 40, -50, 70, HALO_MAT.dark);
+        const cxT = sd * (len * 0.5 + P.collar * 0.5);
+        push(L, HALO_PRIM.cylinder, seg, th, rF, cxT, P.collarDepth * 0.4, zW + 80, 240, 240, 26, HALO_MAT.truss);
+        push(L, HALO_PRIM.dome, seg, th, rF, cxT, P.collarDepth * 0.4, zW + 106, 250, 250, 118, HALO_MAT.tank);
+        light(seg, th, rF, cxT, P.collarDepth * 0.4, zW + 230, 3.0, 0.2 * (sd + 1), HALO_LIGHT_COLOR.red, HALO_LIGHT_MODE.pulse, L);
+      }
+    }
     // światła: stroboskopy przy wylocie, czerwone na kołnierzu, reflektory na
     // ścianach, nawigacja wylotu (zielone po prawej +x, czerwone po lewej) i
     // biały bieg wzdłuż krawędzi pasa MEGA na progu
@@ -646,7 +684,14 @@ export function buildHaloRoofPlan(layout, domain, options = {}) {
   const landmarks = Array.isArray(options.landmarks) ? options.landmarks : [];
   const domes = Array.isArray(options.domes) ? options.domes : [];
   if (landmarks.length || domes.length) {
-    const LM_MAT = { stone: HALO_MAT.stone, brass: HALO_MAT.brass, lamp: HALO_MAT.lamp, dark: HALO_MAT.roofMid, garden: HALO_MAT.gardenRoof };
+    const LM_MAT = {
+      stone: HALO_MAT.stone, brass: HALO_MAT.brass, lamp: HALO_MAT.lamp, dark: HALO_MAT.roofMid, garden: HALO_MAT.gardenRoof,
+      // budowle przemysłowe (Jowisz): beton, zbiornik, stal, rury, pasy ostrzegawcze
+      concrete: HALO_MAT.concrete, tank: HALO_MAT.tank, steel: HALO_MAT.truss, pipe: HALO_MAT.pipe,
+      hazard: HALO_MAT.hazard, white: HALO_MAT.white, rust: HALO_MAT.rust
+    };
+    const LM_PRIM = { box: HALO_PRIM.box, cyl: HALO_PRIM.cylinder, dome: HALO_PRIM.dome };
+    const Q_FLIP = [1, 0, 0, 0];   // 180° wokół lokalnego x: półkula od równika w dół
     const LM_COLOR = { white: HALO_LIGHT_COLOR.white, red: HALO_LIGHT_COLOR.red, blue: HALO_LIGHT_COLOR.blue, warm: HALO_LIGHT_COLOR.warm, green: HALO_LIGHT_COLOR.green };
     const LM_MODE = { strobe: HALO_LIGHT_MODE.strobe, steady: HALO_LIGHT_MODE.steady, pulse: HALO_LIGHT_MODE.pulse, chase: HALO_LIGHT_MODE.chase };
     const n = layout.floor.normal;
@@ -675,8 +720,8 @@ export function buildHaloRoofPlan(layout, domain, options = {}) {
           off = qrot(q, [b.a, -b.q, b.u0]);
           qb = q;
         }
-        push('landmark', HALO_PRIM.box, seg, theta, rF, off[0], off[1], zF + off[2], b.sa, b.sq, b.su,
-          b.mat === 'facade' ? facade : (LM_MAT[b.mat] ?? HALO_MAT.stone), qb);
+        push('landmark', LM_PRIM[b.prim] ?? HALO_PRIM.box, seg, theta, rF, off[0], off[1], zF + off[2], b.sa, b.sq, b.su,
+          b.mat === 'facade' ? facade : (LM_MAT[b.mat] ?? HALO_MAT.stone), b.flip ? quatMul(qb, Q_FLIP) : qb);
       }
       for (const l of parts.lights) {
         const off = l.fixed ? frameVec(l.a, l.q, l.u) : qrot(q, [l.a, -l.q, l.u]);

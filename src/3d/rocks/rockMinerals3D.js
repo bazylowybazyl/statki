@@ -5,8 +5,10 @@
 // Tego nie da się upiec w kształt gwiaździsty (promień(kierunek)): kryształ
 // rośnie pod kątem, ma płaskie ściany i ostre krawędzie.
 //
-//   kryształ — skupienia sześciokątnych graniastosłupów z piramidką, świecą
-//              od środka (cyjan → fiolet), jasny czubek (HDR → bloom);
+//   kryształ — skupienia sześciokątnych graniastosłupów z piramidką:
+//              przezroczyste szkło z wewnętrznymi ścianami (załamanie,
+//              całkowite odbicie), świecący rdzeń (cyjan → fiolet), gorący
+//              czubek (HDR → bloom);
 //   lód      — przezroczyste odłamki (klingi) w kilku skupieniach;
 //   uran     — kwadratowe tabliczki autunitu/torbernitu w rozetach (żółto-
 //              zielone, słabo fluoryzują);
@@ -33,11 +35,16 @@ const ROCK_FLOATS = 20;
 const FLOATS = 32;
 // Pola minerału w szablonie (12): kotwica xyz, blask, kwaternion xyzw, rozmiar xyz, odcień.
 const TPL = 12;
+// Połowa grubości tabliczki (oś x szablonu) — geometria i model grubości w shaderze.
+const PLATE_HALF_X = 0.14;
 
 // ---------------------------------------------------------------------------
 // Geometrie (bez indeksów, płaskie normalne — ostre ściany)
 
-function pushTri(pos, nor, uu, a, b, c, ua, ub, uc) {
+// Współrzędne barycentryczne wierzchołków (krawędzie ścian w shaderze).
+// `hide` = indeks wierzchołka naprzeciw PRZEKĄTNEJ czworokąta: ta krawędź
+// nie jest krawędzią ściany, więc jej składowa dostaje +1 (nigdy blisko zera).
+function pushTri(pos, nor, uu, bary, a, b, c, ua, ub, uc, hide = -1) {
   const e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
   const e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
   let nx = e1[1] * e2[2] - e1[2] * e2[1];
@@ -48,20 +55,25 @@ function pushTri(pos, nor, uu, a, b, c, ua, ub, uc) {
   pos.push(...a, ...b, ...c);
   nor.push(nx, ny, nz, nx, ny, nz, nx, ny, nz);
   uu.push(ua, ub, uc);
+  for (let v = 0; v < 3; v++) {
+    for (let k = 0; k < 3; k++) bary.push((v === k ? 1 : 0) + (k === hide ? 1 : 0));
+  }
 }
 
-function makeGeometry(pos, nor, uu) {
+function makeGeometry(pos, nor, uu, bary, kind) {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
   g.setAttribute('aU', new THREE.Float32BufferAttribute(uu, 1));
+  g.setAttribute('aBary', new THREE.Float32BufferAttribute(bary, 3));
+  g.setAttribute('aKind', new THREE.Float32BufferAttribute(new Float32Array(pos.length / 3).fill(kind), 1));
   g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 2);
   return g;
 }
 
 /** Graniastosłup sześciokątny wzdłuż +Z (podstawa w skale na z = −0,25), piramidka od 0,8. */
 function buildPrism() {
-  const pos = []; const nor = []; const uu = [];
+  const pos = []; const nor = []; const uu = []; const bary = [];
   const z0 = -0.25; const z1 = 0.8; const taper = 0.9;
   const ring = (r, z) => Array.from({ length: 6 }, (_, i) => {
     const a = (i / 6) * Math.PI * 2;
@@ -73,22 +85,22 @@ function buildPrism() {
   const u = (z) => (z - z0) / (1 - z0);
   for (let i = 0; i < 6; i++) {
     const j = (i + 1) % 6;
-    pushTri(pos, nor, uu, b[i], b[j], t[j], u(z0), u(z0), u(z1));
-    pushTri(pos, nor, uu, b[i], t[j], t[i], u(z0), u(z1), u(z1));
-    pushTri(pos, nor, uu, t[i], t[j], apex, u(z1), u(z1), 1);
+    pushTri(pos, nor, uu, bary, b[i], b[j], t[j], u(z0), u(z0), u(z1), 1);
+    pushTri(pos, nor, uu, bary, b[i], t[j], t[i], u(z0), u(z1), u(z1), 2);
+    pushTri(pos, nor, uu, bary, t[i], t[j], apex, u(z1), u(z1), 1);
   }
-  return makeGeometry(pos, nor, uu);
+  return makeGeometry(pos, nor, uu, bary, MINERAL_KIND.PRISM);
 }
 
 /** Tabliczka: cienki prostopadłościan stojący na krawędzi (+Z od powierzchni). */
 function buildPlate() {
-  const pos = []; const nor = []; const uu = [];
-  const x = 0.14; const y = 1; const z0 = -0.35; const z1 = 1;
+  const pos = []; const nor = []; const uu = []; const bary = [];
+  const x = PLATE_HALF_X; const y = 1; const z0 = -0.35; const z1 = 1;
   const v = (sx, sy, sz) => [sx * x, sy * y, sz < 0 ? z0 : z1];
   const u = (p) => (p[2] - z0) / (z1 - z0);
   const quad = (a, b, c, d) => {
-    pushTri(pos, nor, uu, a, b, c, u(a), u(b), u(c));
-    pushTri(pos, nor, uu, a, c, d, u(a), u(c), u(d));
+    pushTri(pos, nor, uu, bary, a, b, c, u(a), u(b), u(c), 1);
+    pushTri(pos, nor, uu, bary, a, c, d, u(a), u(c), u(d), 2);
   };
   const P = {
     a: v(-1, -1, -1), b: v(1, -1, -1), c: v(1, 1, -1), d: v(-1, 1, -1),
@@ -99,12 +111,12 @@ function buildPlate() {
   quad(P.c, P.d, P.h, P.g);   // +y
   quad(P.a, P.b, P.f, P.e);   // −y
   quad(P.e, P.f, P.g, P.h);   // +z (grzbiet)
-  return makeGeometry(pos, nor, uu);
+  return makeGeometry(pos, nor, uu, bary, MINERAL_KIND.PLATE);
 }
 
 /** Odłamek (klinga lodu): nieregularny czworościan wydłużony wzdłuż +Z. */
 function buildShard() {
-  const pos = []; const nor = []; const uu = [];
+  const pos = []; const nor = []; const uu = []; const bary = [];
   const z0 = -0.25;
   const b = [[1, 0.05, z0], [0.1, 0.5, z0], [-0.85, -0.05, z0], [0.05, -0.55, z0]];
   const m = [[0.62, 0.12, 0.45], [0.05, 0.3, 0.5], [-0.5, -0.02, 0.42], [0.08, -0.34, 0.48]];
@@ -112,11 +124,11 @@ function buildShard() {
   const u = (p) => (p[2] - z0) / (1 - z0);
   for (let i = 0; i < 4; i++) {
     const j = (i + 1) % 4;
-    pushTri(pos, nor, uu, b[i], b[j], m[j], u(b[i]), u(b[j]), u(m[j]));
-    pushTri(pos, nor, uu, b[i], m[j], m[i], u(b[i]), u(m[j]), u(m[i]));
-    pushTri(pos, nor, uu, m[i], m[j], apex, u(m[i]), u(m[j]), 1);
+    pushTri(pos, nor, uu, bary, b[i], b[j], m[j], u(b[i]), u(b[j]), u(m[j]), 1);
+    pushTri(pos, nor, uu, bary, b[i], m[j], m[i], u(b[i]), u(m[j]), u(m[i]), 2);
+    pushTri(pos, nor, uu, bary, m[i], m[j], apex, u(m[i]), u(m[j]), 1);
   }
-  return makeGeometry(pos, nor, uu);
+  return makeGeometry(pos, nor, uu, bary, MINERAL_KIND.SHARD);
 }
 
 // ---------------------------------------------------------------------------
@@ -295,6 +307,21 @@ export class MineralTemplates {
 
 // ---------------------------------------------------------------------------
 // Shader
+//
+// Minerały są PRZEZROCZYSTE (blend premultiplied „over”, bez zapisu głębi):
+// krycie = pochłanianie na drodze promienia w bryle + odbicie Fresnela.
+// Drogę liczymy analitycznie w układzie kryształu: promień widoku załamuje się
+// na ścianie wejścia, cięciwa przez graniastosłup / płytę daje grubość (grube
+// = kryjące i barwne, cienkie brzegi = szkło), najmniejsza odległość od osi
+// daje świecący rdzeń widoczny przez szkło, trzy próbki szumu wzdłuż drogi —
+// wtrącenia (spękania kryształu, pęcherzyki lodu, włókna ładunku energii).
+// Krawędzie ścian z barycentrycznych (bez przekątnych czworokątów).
+//
+// Bez NaN (MSAA ekstrapoluje varyingi poza trójkąt, a NaN w HalfFloat bloom
+// rozlewa się plamą): każdy varying w pow() przycięty — `pow(vU, …)` przy
+// vU < 0 dawał jednoklatkowe rozbłyski przy krawędziach kryształów.
+// Drobne kryształy (szerokość < ~2,5 px) dostają stałe krycie i przygaszony
+// blask: podpikselowa bryła z iskrą HDR migotała przy każdym obrocie skały.
 
 const MINERAL_VERTEX = /* glsl */`
 precision highp float;
@@ -304,7 +331,10 @@ uniform float uSunElev;
 uniform float uPxScale;
 uniform float uCamZ;
 uniform float uMinPx;
+uniform float uMinRockPx;
 attribute float aU;
+attribute vec3 aBary;
+attribute float aKind;
 attribute vec4 iPos;
 attribute vec4 iRot;
 attribute vec4 iSpin;
@@ -316,9 +346,14 @@ attribute vec4 mSize;    // x długość, y szerokość, z grubość, w odcień
 varying vec3 vN;
 varying vec3 vViewPos;
 varying float vU;
-flat varying vec4 vInfo;    // x typ, y odcień, z blask, w rodzaj
+varying vec3 vBary;
+varying vec3 vLP;           // punkt w układzie kryształu (j. promienia skały, bez obrotu)
+flat varying vec3 vLV;      // kierunek do kamery w układzie kryształu
+flat varying vec3 vLN;      // normalna ściany w układzie kryształu
+flat varying vec4 vInfo;    // x typ, y odcień, z blask, w rodzaj bryły
+flat varying vec4 vDim;     // x grubość, y szerokość, z długość, w szerokość na ekranie [px]
 flat varying vec3 vSunDir;
-flat varying float vPxPerUnit;
+flat varying vec3 vLS;      // kierunek do słońca w układzie kryształu
 
 vec4 quatMul(vec4 a, vec4 b) {
   return vec4(a.w * b.xyz + b.w * a.xyz + cross(a.xyz, b.xyz), a.w * b.w - dot(a.xyz, b.xyz));
@@ -327,27 +362,41 @@ vec3 quatRotate(vec4 q, vec3 v) {
   vec3 t = 2.0 * cross(q.xyz, v);
   return v + q.w * t + cross(q.xyz, t);
 }
+vec4 quatConj(vec4 q) { return vec4(-q.xyz, q.w); }
 
 void main() {
   float depth = -iPos.z;
   float pxPerUnit = uCamZ > 0.0 ? uPxScale / (uCamZ + depth) : uPxScale;
   float radiusPx = iPos.w * pxPerUnit;
   float fadeScale = smoothstep(uMinPx, uMinPx * 2.0, radiusPx);
+  // Próg warstwy (minRockPx): minerały rosną z podstawy, zamiast wyskakiwać.
+  float grow = smoothstep(uMinRockPx, uMinRockPx * 1.6, radiusPx);
   vec4 q = quatMul(vec4(iSpin.xyz * sin(0.5 * (iShape.w + iSpin.w * uTime)), cos(0.5 * (iShape.w + iSpin.w * uTime))), iRot);
   vec3 sc = vec3(mSize.z, mSize.y, mSize.x);
-  vec3 p = quatRotate(mRot, position * sc) + mPos.xyz * iStretch.xyz;
-  vec3 scenePos = iPos.xyz + quatRotate(q, p) * (iPos.w * fadeScale);
+  vec3 lp = position * sc;
+  vec3 p = quatRotate(mRot, lp * grow) + mPos.xyz * iStretch.xyz;
+  float k = iPos.w * fadeScale;
+  vec3 scenePos = iPos.xyz + quatRotate(q, p) * k;
   vec4 mv = modelViewMatrix * vec4(scenePos, 1.0);
   gl_Position = projectionMatrix * mv;
-  vN = quatRotate(q, quatRotate(mRot, normalize(normal / sc)));
+  vec3 ln = normalize(normal / sc);
+  vN = quatRotate(q, quatRotate(mRot, ln));
   vViewPos = mv.xyz;
   vU = aU;
-  vInfo = vec4(iShape.y, mSize.w, mPos.w, 0.0);
+  vBary = aBary;
+  vLP = lp;
+  vLN = ln;
+  // Do kamery: widok → scena (siatka bez obrotu) → skała → kryształ.
+  vec3 Vview = isOrthographic ? vec3(0.0, 0.0, 1.0) : normalize(-mv.xyz);
+  vec3 Vscene = normalize((vec4(Vview, 0.0) * viewMatrix).xyz);
+  vLV = quatRotate(quatConj(mRot), quatRotate(quatConj(q), Vscene));
+  vInfo = vec4(iShape.y, mSize.w, mPos.w, aKind);
+  vDim = vec4(sc, mSize.y * k * grow * pxPerUnit);
   vec2 toSun = uSunRel.xy - iPos.xy;
   float ls = length(toSun);
   vec2 sdir = ls > 1e-3 ? toSun / ls : vec2(1.0, 0.0);
   vSunDir = normalize(vec3(sdir * cos(uSunElev), sin(uSunElev)));
-  vPxPerUnit = pxPerUnit;
+  vLS = quatRotate(quatConj(mRot), quatRotate(quatConj(q), vSunDir));
 }
 `;
 
@@ -361,80 +410,279 @@ uniform float uTime;
 varying vec3 vN;
 varying vec3 vViewPos;
 varying float vU;
+varying vec3 vBary;
+varying vec3 vLP;
+flat varying vec3 vLV;
+flat varying vec3 vLN;
 flat varying vec4 vInfo;
+flat varying vec4 vDim;
 flat varying vec3 vSunDir;
-flat varying float vPxPerUnit;
+flat varying vec3 vLS;
 ${SUN_SHADOW_GLSL}
 ${FIELD_LIGHTS_GLSL}
 
+float mHash(vec3 p) {
+  p = fract(p * 0.1031);
+  p += dot(p, p.zyx + 31.32);
+  return fract((p.x + p.y) * p.z);
+}
+float mNoise(vec3 p) {
+  vec3 i = floor(p);
+  vec3 f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  float a = mix(mix(mHash(i), mHash(i + vec3(1.0, 0.0, 0.0)), f.x), mix(mHash(i + vec3(0.0, 1.0, 0.0)), mHash(i + vec3(1.0, 1.0, 0.0)), f.x), f.y);
+  float b = mix(mix(mHash(i + vec3(0.0, 0.0, 1.0)), mHash(i + vec3(1.0, 0.0, 1.0)), f.x), mix(mHash(i + vec3(0.0, 1.0, 1.0)), mHash(i + vec3(1.0, 1.0, 1.0)), f.x), f.y);
+  return mix(a, b, f.z);
+}
+
+// Droga promienia w bryle od punktu wejścia P w kierunku D (układ kryształu).
+// x = długość cięciwy względem średnicy przekroju, y = najmniejsza odległość
+// od osi (tabliczka: od płaszczyzny środkowej) względem promienia.
+vec2 crystalPath(vec3 P, vec3 D, int kind, vec3 dim) {
+  float tz = 1e9;
+  if (D.z > 1e-4) tz = (dim.z - P.z) / D.z;
+  else if (D.z < -1e-4) tz = (-0.35 * dim.z - P.z) / D.z;
+  if (kind == ${MINERAL_KIND.PLATE}) {
+    float hx = max(${PLATE_HALF_X} * dim.x, 1e-5);
+    float tx = abs(D.x) > 1e-4 ? (sign(D.x) * hx - P.x) / D.x : 1e9;
+    float ty = abs(D.y) > 1e-4 ? (sign(D.y) * dim.y - P.y) / D.y : 1e9;
+    float t = max(0.0, min(min(tx, ty), tz));
+    return vec2(t / (2.0 * hx), abs(P.x + D.x * t * 0.5) / hx);
+  }
+  // Graniastosłup / odłamek jako walec; od 0,8 długości piramidka zwęża przekrój.
+  float R = dim.y * (kind == ${MINERAL_KIND.SHARD} ? 0.6 : 0.95);
+  R *= 1.0 - 0.85 * clamp((P.z / max(dim.z, 1e-5) - 0.8) / 0.2, 0.0, 1.0);
+  R = max(R, 1e-5);
+  vec2 q = P.xy;
+  vec2 d = D.xy;
+  float a = dot(d, d);
+  float t = tz;
+  float tc = 0.0;
+  if (a > 1e-6) {
+    float b = dot(q, d);
+    float c = dot(q, q) - R * R;
+    t = min((-b + sqrt(max(b * b - a * c, 0.0))) / a, tz);
+    tc = clamp(-b / a, 0.0, max(t, 0.0));
+  }
+  t = max(t, 0.0);
+  return vec2(t / (2.0 * R), length(q + d * tc) / R);
+}
+
+// Graniastosłup sześciokątny z piramidką (jak buildPrism): wyjście promienia
+// z bryły (ściany boczne bez zbieżności). Zwraca (cięciwa / średnica, odległość od osi / apotema, 1 = całkowite
+// wewnętrzne odbicie na ścianie wyjścia, 1 = wyjście podstawą w skałę);
+// exitDir = kierunek dalszej drogi światła (załamany na zewnątrz albo odbity).
+vec4 prismTrace(vec3 P, vec3 D, vec3 dim, out vec3 exitDir, out vec3 hitP) {
+  float ap = 0.866 * 0.95 * dim.y;           // apotema ścian bocznych
+  float z1 = 0.8 * dim.z;
+  float ap1 = 0.866 * 0.9 * dim.y;           // apotema u nasady piramidki
+  float tBest = 1e9;
+  vec3 nX = vec3(0.0, 0.0, -1.0);
+  float bottom = 0.0;
+  if (D.z < -1e-4) { tBest = (-0.25 * dim.z - P.z) / D.z; bottom = 1.0; }
+  for (int k = 0; k < 6; k++) {
+    float a = (float(k) + 0.5) * 1.0471976;
+    vec2 n = vec2(cos(a), sin(a));
+    float dn = dot(D.xy, n);
+    if (dn > 1e-5) {
+      float t = (ap - dot(P.xy, n)) / dn;
+      vec3 hit = P + D * t;
+      if (t > 1e-6 && t < tBest && hit.z <= z1) { tBest = t; nX = vec3(n, 0.0); bottom = 0.0; }
+    }
+    // Ściana piramidki k: przez (n · ap1, z1) i czubek (0, 0, długość).
+    vec3 pn = normalize(vec3(n * (dim.z - z1), ap1));
+    float dp = dot(D, pn);
+    if (dp > 1e-5) {
+      float t = (dot(vec3(n * ap1, z1), pn) - dot(P, pn)) / dp;
+      vec3 hit = P + D * t;
+      if (t > 1e-6 && t < tBest && hit.z >= z1) { tBest = t; nX = pn; bottom = 0.0; }
+    }
+  }
+  float t = clamp(tBest, 0.0, 4.0 * dim.z);
+  hitP = P + D * t;
+  vec3 o = refract(D, -nX, 1.55);
+  float tir = (bottom < 0.5 && dot(o, o) < 1e-6) ? 1.0 : 0.0;
+  exitDir = tir > 0.5 ? reflect(D, -nX) : (dot(o, o) > 1e-6 ? normalize(o) : D);
+  float a2 = dot(D.xy, D.xy);
+  float tc = a2 > 1e-6 ? clamp(-dot(P.xy, D.xy) / a2, 0.0, t) : 0.0;
+  return vec4(t / (2.0 * ap), length(P.xy + D.xy * tc) / ap, tir, bottom);
+}
+
 void main() {
   int type = int(vInfo.x + 0.5);
+  int kind = int(vInfo.w + 0.5);
   float hue = vInfo.y;
   float glowK = vInfo.z;
+  float u = clamp(vU, 0.0, 1.0);
+  // Krawędzie ścian (pochodne liczone poza gałęziami).
+  vec3 bc = max(vBary, vec3(0.0));
+  float e = min(min(bc.x, bc.y), bc.z);
+  float fw = max(fwidth(e), 1e-4);
+  float edgeLine = 1.0 - smoothstep(fw * 0.8, fw * 2.4, e);
+  float edgeBand = 1.0 - smoothstep(0.0, 0.12, e);
+  float widthPx = vDim.w;
+  float pixFade = smoothstep(0.7, 2.5, widthPx);
+  float edgeFade = smoothstep(2.5, 7.0, widthPx);
+
   mat3 V3 = mat3(viewMatrix);
   vec3 N = normalize(V3 * normalize(vN));
   vec3 L = normalize(V3 * vSunDir);
   vec3 V = isOrthographic ? vec3(0.0, 0.0, 1.0) : normalize(-vViewPos);
-  // Barwy (liniowe): wnętrze, szkło przy krawędzi i blask od środka.
-  vec3 body;
-  vec3 glow;
-  float trans;       // ile światła przechodzi (przezroczystość)
-  float gloss = 140.0;
-  float charge = 1.0; // mnożnik blasku (ładunek kryształów energii)
-  float glowBase = 0.06; // blask u podstawy (reszta rośnie ku czubkowi)
-  float glowPow = 3.0;   // jak szybko blask rośnie ku czubkowi (większy = gorący sam czubek)
-  // Barwy nasycone i ciemne: szkło ma kolor z głębi, nie z rozproszenia —
-  // jasne ciała prześwietlały się na biało (płaska ściana = cały w połysku).
+  float ndv = clamp(dot(N, V), 0.0, 1.0);
+
+  // Promień w bryle: załamanie na ścianie wejścia (n ≈ 1,55).
+  vec3 lv = normalize(vLV);
+  vec3 ln = normalize(vLN);
+  if (dot(ln, lv) < 0.0) ln = -ln;
+  vec3 rd = refract(-lv, ln, 0.645);
+  if (dot(rd, rd) < 1e-6) rd = -lv;
+  // Graniastosłup: ściana wyjścia (wewnętrzne ściany, odbicia); reszta: cięciwa.
+  // Graniastosłup: do dwóch całkowitych odbić wewnątrz, potem wyjście; każda
+  // ściana pokazuje inny kierunek otoczenia (fasetowy wzór zmienia się z obrotem).
+  vec3 exitDir = rd;
+  vec4 tr = vec4(crystalPath(vLP, rd, kind, vDim.xyz), 0.0, 0.0);
+  float trapped = 0.0;
+  if (kind == ${MINERAL_KIND.PRISM}) {
+    vec3 hp;
+    tr = prismTrace(vLP, rd, vDim.xyz, exitDir, hp);
+    trapped = tr.z;
+    if (trapped > 0.5) {
+      vec3 d2;
+      vec3 hp2;
+      vec4 tr2 = prismTrace(hp, exitDir, vDim.xyz, d2, hp2);
+      tr.x += tr2.x;
+      exitDir = d2;
+      trapped = tr2.z;
+    }
+  }
+  float thick = clamp(tr.x, 0.0, 2.5);
+  float axisR = clamp(tr.y, 0.0, 1.5);
+  float tir = tr.z;
+  // Światło z kierunku wyjścia: tarcza słońca, jaśniejsza półkula od słońca,
+  // ciemna skała pod kryształem (−z układu kryształu), uwięzione = mrok.
+  vec3 ls = normalize(vLS);
+  float toSun = dot(exitDir, ls);
+  float sparkle = pow(max(toSun, 0.0), 40.0) * pixFade * (1.0 - trapped);
+  float envSky = (0.12 + 0.88 * pow(clamp(toSun * 0.5 + 0.5, 0.0, 1.0), 3.0)) * mix(0.25, 1.0, smoothstep(-0.6, 0.0, exitDir.z)) * (1.0 - 0.7 * trapped);
+
+  // Barwy (liniowe) i optyka typu.
+  vec3 scatter;          // rozproszenie w bryle (mleczność, wtrącenia)
+  vec3 glow;             // blask od środka (HDR)
+  float dens;            // gęstość optyczna: krycie = 1 − e^(−dens · grubość)
+  float milk;            // krycie wtrąceń
+  float gloss = 160.0;
+  float charge = 1.0;    // mnożnik blasku (ładunek kryształów energii)
+  float glowBase = 0.03; // blask całej bryły
+  // Gorący czubek od tego miejsca (u: 0 podstawa … 0,84 nasada piramidki … 1 czubek).
+  // Dawne u³ świeciło na całej długości = płaski gradient zamiast kryształu.
+  float tipFrom = 0.8;
+  float tipGain = 0.9;
+  float coreK = 0.6;     // świecący rdzeń wzdłuż osi
+  float inclLo = 0.45;   // próg wtrąceń (wyżej = rzadsze, ostrzejsze)
+  float filK = 0.0;      // włókna ładunku
   if (type == ${ROCK_TYPE_INDEX.crystal}) {
-    body = mix(vec3(0.02, 0.15, 0.3), vec3(0.11, 0.03, 0.27), hue);
-    glow = mix(vec3(0.1, 0.62, 1.0), vec3(0.5, 0.18, 1.0), hue);
-    trans = 0.8;
+    scatter = mix(vec3(0.01, 0.18, 0.6), vec3(0.2, 0.03, 0.55), hue);
+    glow = mix(vec3(0.04, 0.45, 1.0), vec3(0.42, 0.08, 1.0), hue);
+    dens = 0.4;
+    milk = 0.35;
+    inclLo = 0.56;
+    coreK = 0.4;
   } else if (type == ${ROCK_TYPE_INDEX.ice}) {
-    body = vec3(0.12, 0.2, 0.3);
+    scatter = vec3(0.4, 0.58, 0.8);
     glow = vec3(0.2, 0.45, 1.0);
-    trans = 0.9;
+    dens = 0.45;
+    milk = 0.55;
+    gloss = 200.0;
+    coreK = 0.25;
   } else if (type == ${ROCK_TYPE_INDEX.energy}) {
-    body = mix(vec3(0.05, 0.02, 0.12), vec3(0.02, 0.05, 0.14), hue);
-    // HDR: czubki iglic łapią bloom (widziane z góry kryształ to głównie czubek).
-    glow = mix(vec3(0.3, 0.7, 1.0), vec3(0.62, 0.22, 1.0), hue) * 1.8;
-    trans = 0.75;
-    gloss = 120.0;
+    scatter = mix(vec3(0.12, 0.03, 0.32), vec3(0.03, 0.09, 0.34), hue);
+    glow = mix(vec3(0.25, 0.6, 1.0), vec3(0.6, 0.16, 1.0), hue);
+    // HDR tylko na czubku (bloom); całe ciało × 1,6 ACES wybielał do lila.
+    tipGain = 1.6;
+    dens = 1.0;
+    milk = 0.25;
     // Ładunek: wolny puls (faza z odcienia) + rozbłysk przy uderzeniu pioruna obok.
     charge = 0.6 + 0.4 * sin(uTime * 1.6 + hue * 17.0) + fieldStrikeSurge(vViewPos, 700.0) * 1.4;
-    // Świeci całe ciało iglicy (z góry widać ją głównie od czoła, sam czubek ginął).
-    glowBase = 0.1;
-    // Gorący tylko sam czubek (HDR → bloom); przy vU³ ACES wybielał pół iglicy.
-    glowPow = 6.0;
+    glowBase = 0.06;
+    tipFrom = 0.84;
+    coreK = 0.8;
+    filK = 0.8;
   } else if (type == ${ROCK_TYPE_INDEX.uran}) {
-    body = mix(vec3(0.2, 0.3, 0.02), vec3(0.08, 0.3, 0.03), hue);
+    scatter = mix(vec3(0.34, 0.5, 0.04), vec3(0.14, 0.48, 0.06), hue);
     glow = mix(vec3(0.5, 0.85, 0.08), vec3(0.3, 0.9, 0.12), hue);
-    trans = 0.35;
-    gloss = 60.0;
+    dens = 2.2;
+    milk = 0.5;
+    gloss = 50.0;
+    coreK = 0.35;
+    // Tabliczka nie ma czubka: fluoryzuje cała, słabo.
+    glowBase = 0.1;
+    tipFrom = 2.0;
   } else {
-    body = vec3(0.24, 0.24, 0.23);
+    // Kwarc (krzem): mleczny, bez blasku.
+    scatter = vec3(0.5, 0.5, 0.48);
     glow = vec3(0.0);
-    trans = 0.5;
+    dens = 1.4;
+    milk = 0.7;
+    gloss = 160.0;
+    coreK = 0.0;
   }
+
+  // Wtrącenia: trzy próbki wzdłuż drogi w bryle (współrzędne względem szerokości).
+  vec3 sp = vLP / max(vDim.y, 1e-5);
+  vec3 sd = rd * (thick * 1.9);
+  float seed = hue * 57.3;
+  float incl = 0.0;
+  float fil = 0.0;
+  for (int i = 0; i < 3; i++) {
+    vec3 s = sp + sd * ((float(i) + 0.5) / 3.0);
+    incl += mNoise(s * vec3(2.2, 2.2, 0.8) + seed);
+    if (filK > 0.0) {
+      // Grzbiety szumu płynące wzdłuż osi (ładunek w iglicy).
+      float m = mNoise(s * vec3(3.0, 3.0, 1.2) + vec3(seed, 0.0, -uTime * 0.9));
+      fil += pow(clamp(1.0 - abs(m * 2.0 - 1.0), 0.0, 1.0), 8.0);
+    }
+  }
+  float cloud = smoothstep(inclLo, inclLo + 0.25, incl / 3.0) * milk;
+  fil /= 3.0;
+
+  // Światło w bryle: szkło rozprasza słońce prawie bez kierunku (przechodzi na wylot).
   float ndl = dot(N, L);
   float sunVis = sunVisibility();
   float fill = mix(0.22, 1.0, sunVis) * (1.0 - fieldDarkness());
-  // Rozproszenie słabe (szkło), światło przechodzące od tyłu i przy krawędzi.
-  float diff = max(ndl, 0.0) * (1.0 - trans * 0.6) + 0.06;
-  float through = trans * (pow(max(-ndl, 0.0), 1.5) * 0.55 + pow(1.0 - abs(ndl), 4.0) * 0.25);
-  vec3 H = normalize(L + V);
-  float spec = pow(max(dot(N, H), 0.0), gloss * 1.6) * 1.2 * step(0.0, ndl);
-  float fres = pow(1.0 - max(dot(N, V), 0.0), 4.0);
-  vec3 col = body * (uSunColor * (diff + through) * sunVis + uAmbientTop * 1.4 * fill);
-  col += uSunColor * spec * sunVis;
-  col += (uAmbientTop * 0.6 + glow * 0.08) * fres * (0.3 + trans) * fill;
+  vec3 lightIn = uSunColor * sunVis * (0.3 + 0.45 * max(ndl, 0.0) + 0.25 * max(-ndl, 0.0)) + uAmbientTop * 1.6 * fill;
+  vec3 fSpec = vec3(0.0);
   if (uFieldLightCount > 0 && uFieldLightGain > 0.0) {
-    vec3 fSpec;
     vec3 fDiff = fieldLightsShade(vViewPos, N, V, gloss, 1.5, fSpec);
-    col += (body * fDiff * (1.0 + trans) + fSpec) * uFieldLightGain;
+    lightIn += fDiff * 1.5 * uFieldLightGain;
+    fSpec *= uFieldLightGain * pixFade;
   }
-  // Blask od środka: rośnie ku czubkowi (HDR → bloom na końcach kryształów).
-  col += glow * glowK * uGlow * charge * (glowBase + 0.95 * pow(vU, glowPow));
-  gl_FragColor = vec4(max(col, vec3(0.0)), 1.0);
+  // Krycie bryły: pochłanianie na cięciwie, wtrącenia, ściany z całkowitym odbiciem.
+  float body = clamp(max(1.0 - exp(-dens * thick), cloud) + tir * 0.45, 0.0, 1.0);
+  float fres = 0.04 + 0.96 * pow(1.0 - ndv, 5.0);
+  vec3 H = normalize(L + V);
+  float spec = min(pow(max(dot(N, H), 0.0), gloss) * (gloss + 8.0) / 64.0, 1.0) * step(0.0, ndl) * pixFade * 0.5;
+
+  // Krycie: bryła + odbicie + krawędzie; drobinka = stała plamka (bez migotania).
+  float alpha = body * (1.0 - fres) + fres;
+  alpha = max(alpha, edgeLine * 0.4 * edgeFade);
+  alpha = mix(0.75, alpha, pixFade);
+  // Kolor (premultiplied): rozproszenie w bryle, odbicia, krawędzie, blask.
+  vec3 col = scatter * lightIn * body * (1.0 - fres) * (0.35 + 0.9 * cloud);
+  // Wewnętrzne ściany (całkowite odbicie): jasne płaty w barwie kryształu.
+  col += (scatter * (uSunColor * sunVis * 0.55 + uAmbientTop * 2.0 * fill) * envSky + glow * glowK * 0.12) * tir * (1.0 - fres);
+  // Słońce przez barwne szkło: w barwie kryształu (biel tylko w samym środku).
+  vec3 tint = scatter / max(max(scatter.r, max(scatter.g, scatter.b)), 1e-3);
+  col += uSunColor * sunVis * sparkle * (0.3 + 0.7 * tir) * 0.6 * mix(tint, vec3(1.0), sparkle * sparkle * 0.5);
+  // Odbicie otoczenia słabe: w kosmosie szkło odbija głównie czerń.
+  col += (uAmbientTop * 0.5 * fill + uSunColor * 0.02 * sunVis) * fres;
+  col += uSunColor * spec * sunVis + fSpec;
+  col += (uSunColor * 0.03 * sunVis + uAmbientTop * 0.3 * fill + glow * 0.2 * glowK) * (edgeLine * 0.7 + edgeBand * 0.2) * edgeFade;
+  // Rdzeń widać przez szkło (gaśnie w grubej, mętnej bryle); czubek HDR → bloom.
+  float core = exp(-axisR * axisR * 5.0) * coreK * (0.5 + 0.5 * exp(-dens * thick * 0.5));
+  float tipK = smoothstep(tipFrom, 1.0, u);
+  float emitK = glowBase + core * (0.25 + 0.75 * u) * 0.7 + tipGain * tipK * tipK + cloud * 0.2 + fil * filK;
+  col += glow * glowK * uGlow * charge * emitK * mix(0.45, 1.0, pixFade);
+  gl_FragColor = vec4(max(col, vec3(0.0)), clamp(alpha, 0.0, 1.0));
 }
 `;
 
@@ -446,6 +694,7 @@ export function createMineralMaterial() {
     uPxScale: { value: 1 },
     uCamZ: { value: 0 },
     uMinPx: { value: 0.6 },
+    uMinRockPx: { value: 0 },
     uSunColor: { value: new THREE.Vector3(1.9, 1.8, 1.67) },
     uAmbientTop: { value: new THREE.Vector3(0.16, 0.18, 0.22) },
     uGlow: { value: 1 },
@@ -455,9 +704,15 @@ export function createMineralMaterial() {
     vertexShader: MINERAL_VERTEX,
     fragmentShader: MINERAL_FRAGMENT,
     uniforms,
-    blending: THREE.NoBlending,
-    depthWrite: true,
-    depthTest: true
+    transparent: true,
+    depthWrite: false,
+    depthTest: true,
+    premultipliedAlpha: true,
+    blending: THREE.CustomBlending,
+    blendSrc: THREE.OneFactor,
+    blendDst: THREE.OneMinusSrcAlphaFactor,
+    blendSrcAlpha: THREE.OneFactor,
+    blendDstAlpha: THREE.OneMinusSrcAlphaFactor
   });
 }
 
@@ -479,6 +734,7 @@ export class MineralLayer3D {
     this.templates = o.templates;
     this.minRockPx = o.minRockPx ?? 9;
     this.material = o.material || createMineralMaterial();
+    this.material.uniforms.uMinRockPx.value = this.minRockPx;
     this.group = new THREE.Group();
     this.group.name = o.name || 'minerals';
     const geoms = [buildPrism(), buildPlate(), buildShard()];
@@ -491,6 +747,8 @@ export class MineralLayer3D {
       ig.setAttribute('position', base.getAttribute('position'));
       ig.setAttribute('normal', base.getAttribute('normal'));
       ig.setAttribute('aU', base.getAttribute('aU'));
+      ig.setAttribute('aBary', base.getAttribute('aBary'));
+      ig.setAttribute('aKind', base.getAttribute('aKind'));
       const names = ['iPos', 'iRot', 'iSpin', 'iShape', 'iStretch', 'mPos', 'mRot', 'mSize'];
       names.forEach((n, k) => ig.setAttribute(n, new THREE.InterleavedBufferAttribute(buffer, 4, k * 4)));
       ig.instanceCount = 0;

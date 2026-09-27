@@ -194,3 +194,36 @@ Faza 1 = można zaczynać od razu (równolegle). Faza 2 = po zależnościach.
   flocie reda Ziemi max 400, Marsa 330, bez przelewu, 0 przestawień, sync ~50 µs. Uwagi: Z1 — `estimateWait(…,
   { role })`, gdy kursy wojskowe zaczną cumować; `ruch-v2.html` może rysować postój z `portParking`. Z3/Z13 — rejestr
   postoju trzymać między tickami (to on daje stabilność), okręty z `placeFleetStock`; `SPREAD=1` w pomiarze zbędne.
+- 2026-09-26 Z4: zrobione (bez commita). `src/3d/shipProxyBatch3D.js`: InstancedMesh na teksturę kadłuba (warstwa 0,
+  renderOrder 10; tekstura wspólna z NPC przez nowe `acquireHullVisualTexture`/`getHullLightTuning` w hexShips3D),
+  początek przy kamerze, kolumna 2 macierzy = (cos, sin, krycie), światło = lustro rdzenia HEX_FRAGMENT_SHADER (maska
+  słońca, mrok pola, glow; bez lakieru i cienia SDF), interpolacja `alpha`, count 0 → `visible = false`, `pickAt`,
+  dysze MAIN jako `engineEntities` (budżet 48 statków — pula strug wspólna; warp = dopalacz, nie plazma; postój bez
+  dysz). Pomiar `scripts/proxy-batch/` (headless Chrome, RTX 5080): 200 proxy 0,02 ms CPU (0,1 µs/statek), 400 — 0,055 ms;
+  draw calle passa ortho = rodzaje w kadrze (+1 strugi); dysze 48 statków ~0,3 ms (EngineVfxSystem); precyzja przy
+  7 mln j. ≤ 2/255; jasność vs kadłub belkowy NPC z tego samego sprite'a 1,000–1,001. `src/data/trafficHulls.js`:
+  `TRAFFIC_HULLS` (sprite, płótno, dysze zmierzone na PNG), `TRAFFIC_UNIT_HULLS` (freighter-small/medium/large/capital →
+  prom/kontenerowiec/daleki/ciężki, raider → pirate_raider, smuggler, tug → salvage_hauler, warfleet → terran_destroyer;
+  tymczasowe z TODO AGENT: hunter/police → terran_frigate, rescue → distress_beacon_ship), `resolveTrafficHullId`,
+  `trafficHullFootprint`, `trafficHullRenderSize`. 11 profili w `ships.js`; odstępstwa od zlecenia: heavy_harvester
+  600 × 216 (220 nie mieści się w padzie M K-7, maxBeam 260), repair_drone 160 × 60 (przy 110 podłoga 64 j.
+  `getHullRenderSize` spłaszcza drona 3:2), distress_beacon_ship 400 × 150 (jak rescue_ship z Z11); tier broni
+  pirate_raider M, smuggler S. Testy `tests/trafficHulls` i `tests/shipProxyBatch3D`. Dla Z2/Z13:
+  `dockLayout.hullFootprint` i `materializedFlight.actorSize` biorą `unitClass` wprost (bez profilu = kontenerowiec) —
+  przełączyć na `trafficHullFootprint` i powtórzyć pomiar portu (prom → S, freighter-large → L, freighter-capital →
+  capital); do tego czasu proxy bywa większe niż pad. Z13: `setImageResolver` z cache index.html (w dev URL z `import`
+  i z `new URL` się różnią — normalizować), `engineEntities` do encji `updateHexShips3D`, awans z
+  `npc.shipFrame = resolveTrafficHullId(unitClass)` + sprite w `HULL_SPRITE_PATHS_BY_ID`, megafrachtowiec = jeden
+  sprite czy pociąg; rejder (bojowy) przed awansem potrzebuje mostka. PNG z Z11 (bounty_hunter, police_cutter,
+  rescue_ship, heavy_freighter, rodziny frakcji) leżą w `assets/ships/` niezarejestrowane. Znany błąd (bez naprawy):
+  vany cargoFleet rysują się jako fregaty — `materializeCargoOrder` daje `van.shipFrame = 'terran_frigate'`
+  (index.html ~12265), a `getNpcHullRenderProfileId` (~5889) sprawdza shipFrame przed typem; znikną w Z13.
+- 2026-09-26 Z5: demo zrobione (bez commita), ocena wyglądu u użytkownika. `form` w `resources.js`; `src/data/cargoContainers.js`
+  (rodziny zbiornik/zsyp/standard + hazmat, sloty zmierzone z pustych pokładów: prom 8, kontenerowiec 18, dalekiego zasięgu
+  28, ciężki 48 — nie 14, mega 20, wagon 32); `src/game/cargoPortOps.js` (plan z ziarna, bezstanowe `transferState`, okno
+  `cargoTransferWindow`, odlot `abortAt`); `src/3d/cargoContainers3D.js` + `cargoDrones3D.js` (≤ 5 wywołań, paralaksa per
+  wierzchołek sprawdzona 0,000 px, ścisk głębi pod tarcze); `dema/kontenery.html` (+ `kontenery-shots.js`); testy
+  `tests/cargoPortOps`, `tests/cargoContainers3D`. Dla Z14: bańka musi dać kursowi przy stanowisku ładunek (masa, surowce),
+  tryb LOAD/UNLOAD, zegar postoju i wpis stanowiska; tryb „stary sprite” = płyty maski; kontenery nad wyrwą —
+  `cargoDeckMask(…, (x, y) => HullBodies.probe(e, x, y))` przy zmianie `structuralState` (łup: później). Testy: npm test OK,
+  node --test te same 7 znanych porażek. Nie zrobione: suwnice pasów MEGA i dźwig K-7 (wszędzie drony).

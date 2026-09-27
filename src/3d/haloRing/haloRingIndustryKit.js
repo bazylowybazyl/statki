@@ -15,7 +15,8 @@
 // 2 komin zwężany). h = 0 → części nie ma.
 export const IND_MAT = Object.freeze({
   roofMid: 1, dark: 2, white: 3, rust: 4, truss: 5,
-  concrete: 16, concreteLight: 17, sawtooth: 18, chimney: 19, tank: 20, silo: 21, containers: 22, pipe: 23
+  concrete: 16, concreteLight: 17, sawtooth: 18, chimney: 19, tank: 20, silo: 21, containers: 22, pipe: 23,
+  radiator: 29
 });
 export const IND_EMIT = Object.freeze({ none: 0, windowsWarm: 1, windowsCool: 2, sodium: 4 });
 export const IND_LOT = Object.freeze({ along: 112, across: 126, halfU: 40, halfW: 44 });
@@ -23,14 +24,19 @@ export const IND_PARTS = 5;
 
 const fract = (x) => x - Math.floor(x);
 
-export function indKitType(lotH) {
-  return lotH < 0.30 ? 0 : lotH < 0.46 ? 1 : lotH < 0.56 ? 2 : lotH < 0.68 ? 3 : lotH < 0.74 ? 4 : lotH < 0.86 ? 5 : 6;
+// Progi rodzajów zakładów (profil planety: industryKit.cdf, uniformy
+// uIndKitCdf0/1): rodzaj k, gdy lotH < cdf[k]. Ziemia: 7 rodzajów, radiatory
+// (8.) nieosiągalne; Jowisz: farmy zbiorników, rafinerie i pola radiatorów.
+export const IND_KIT_CDF_DEFAULT = Object.freeze([0.30, 0.46, 0.56, 0.68, 0.74, 0.86, 1.01, 1.01]);
+export function indKitType(lotH, cdf = IND_KIT_CDF_DEFAULT) {
+  for (let k = 0; k < 7; k++) if (lotH < cdf[k]) return k;
+  return 7;
 }
-export const IND_KIT_NAMES = Object.freeze(['hala', 'zbiorniki', 'silosy', 'kotłownia', 'chłodnia', 'rafineria', 'kontenery']);
+export const IND_KIT_NAMES = Object.freeze(['hala', 'zbiorniki', 'silosy', 'kotłownia', 'chłodnia', 'rafineria', 'kontenery', 'radiatory']);
 
 // Lustro JS części zestawu (te same liczby co GLSL poniżej).
-export function indKitPart(lotH, p) {
-  const k = indKitType(lotH);
+export function indKitPart(lotH, p, cdf = IND_KIT_CDF_DEFAULT) {
+  const k = indKitType(lotH, cdf);
   const h1 = fract(lotH * 13.7);
   const h2 = fract(lotH * 7.31);
   const h3 = fract(lotH * 3.17);
@@ -86,15 +92,26 @@ export function indKitPart(lotH, p) {
     if (p === 3) return part([-4, 14, 4 + 1.5 * h3, 0], [0, 45 + 35 * h4, M.tank, 0]);
     return part([18, -10, 3 + 1.5 * h2, 0], [0, 60 + 25 * h1, M.tank, 0]);
   }
-  if (p === 0) return part([0, -20, 66, 13], [0, 10 + 14 * h1, M.containers, 0]);
-  if (p === 1) return part([0, 14, 66, 13], [0, 8 + 12 * h2, M.containers, 0]);
+  if (k === 6) {
+    if (p === 0) return part([0, -20, 66, 13], [0, 10 + 14 * h1, M.containers, 0]);
+    if (p === 1) return part([0, 14, 66, 13], [0, 8 + 12 * h2, M.containers, 0]);
+    return none;
+  }
+  // pole radiatorów (Jowisz): dwa długie panele na sztorc, pompownia, zawór
+  const rh = 26 + 14 * h1;
+  if (p === 0) return part([0, -17, 80, 5], [0, rh, M.radiator, 0]);
+  if (p === 1) return part([0, 17, 80, 5], [0, rh * (0.85 + 0.3 * h3), M.radiator, 0]);
+  if (p === 2) return part([-32, 36, 6 + 2 * h2, 0], [0, 12, M.pipe, 0]);
+  if (p === 3) return part([30, -36, 4.5, 0], [0, 9, M.tank, 0]);
   return none;
 }
 
 // GLSL: ta sama logika (wymaga niczego poza wbudowanymi funkcjami).
 export const HALO_GLSL_INDKIT = /* glsl */`
+// progi rodzajow z profilu planety (uIndKitCdf0/1, lustro indKitType w JS)
 float indKitType(float lotH) {
-  return lotH < 0.30 ? 0.0 : lotH < 0.46 ? 1.0 : lotH < 0.56 ? 2.0 : lotH < 0.68 ? 3.0 : lotH < 0.74 ? 4.0 : lotH < 0.86 ? 5.0 : 6.0;
+  return lotH < uIndKitCdf0.x ? 0.0 : lotH < uIndKitCdf0.y ? 1.0 : lotH < uIndKitCdf0.z ? 2.0 : lotH < uIndKitCdf0.w ? 3.0
+    : lotH < uIndKitCdf1.x ? 4.0 : lotH < uIndKitCdf1.y ? 5.0 : lotH < uIndKitCdf1.z ? 6.0 : 7.0;
 }
 void indKitPart(float lotH, int p, out vec4 A, out vec4 B) {
   float k = indKitType(lotH);
@@ -142,9 +159,15 @@ void indKitPart(float lotH, int p, out vec4 A, out vec4 B) {
     else if (p == 2) { A = vec4(-22.0, -18.0, 3.5 + 1.5 * h1, 0.0); B = vec4(0.0, 50.0 + 30.0 * h2, ${IND_MAT.tank}.0, 0.0); }
     else if (p == 3) { A = vec4(-4.0, 14.0, 4.0 + 1.5 * h3, 0.0); B = vec4(0.0, 45.0 + 35.0 * h4, ${IND_MAT.tank}.0, 0.0); }
     else { A = vec4(18.0, -10.0, 3.0 + 1.5 * h2, 0.0); B = vec4(0.0, 60.0 + 25.0 * h1, ${IND_MAT.tank}.0, 0.0); }
-  } else {
+  } else if (k < 6.5) {
     if (p == 0) { A = vec4(0.0, -20.0, 66.0, 13.0); B = vec4(0.0, 10.0 + 14.0 * h1, ${IND_MAT.containers}.0, 0.0); }
     else if (p == 1) { A = vec4(0.0, 14.0, 66.0, 13.0); B = vec4(0.0, 8.0 + 12.0 * h2, ${IND_MAT.containers}.0, 0.0); }
+  } else {
+    float rh = 26.0 + 14.0 * h1;
+    if (p == 0) { A = vec4(0.0, -17.0, 80.0, 5.0); B = vec4(0.0, rh, ${IND_MAT.radiator}.0, 0.0); }
+    else if (p == 1) { A = vec4(0.0, 17.0, 80.0, 5.0); B = vec4(0.0, rh * (0.85 + 0.3 * h3), ${IND_MAT.radiator}.0, 0.0); }
+    else if (p == 2) { A = vec4(-32.0, 36.0, 6.0 + 2.0 * h2, 0.0); B = vec4(0.0, 12.0, ${IND_MAT.pipe}.0, 0.0); }
+    else if (p == 3) { A = vec4(30.0, -36.0, 4.5, 0.0); B = vec4(0.0, 9.0, ${IND_MAT.tank}.0, 0.0); }
   }
 }
 // Profil walca: skala promienia na wysokości t ∈ [0,1] (chłodnia = hiperboloida,
@@ -175,9 +198,14 @@ float indSegCircle(vec2 a, vec2 V, float r) {
   float t = clamp(-dot(a, V) / max(dot(V, V), 1e-6), 0.0, 1.0);
   return 1.0 - smoothstep(r - 0.8, r + 0.8, length(a + V * t));
 }
-// Barwa dachu części z góry (odcisk w terenie z daleka).
-vec3 indTopColor(float mat, float seed, vec2 q, vec4 A) {
+// Barwa dachu części z góry (odcisk w terenie z daleka); indTopColor niżej
+// mnoży ją przez barwę profilu planety.
+vec3 indTopColorBase(float mat, float seed, vec2 q, vec4 A) {
   float m = mod(mat, 32.0);
+  if (m > 28.5 && m < 29.5) {
+    // panel radiatora z gory: waska krawedz z zebrami
+    return uMegaPal[29] * (0.8 + 0.4 * step(0.5, fract(q.x / 4.0)));
+  }
   if (m > 17.5 && m < 18.5) {
     float saw = fract(q.x / 9.0);
     return mix(vec3(0.05, 0.055, 0.06), vec3(0.20, 0.21, 0.22), step(0.38, saw));
@@ -201,5 +229,8 @@ vec3 indTopColor(float mat, float seed, vec2 q, vec4 A) {
   if (m > 2.5 && m < 3.5) return vec3(0.26, 0.262, 0.26);
   if (m > 4.5 && m < 5.5) return vec3(0.055, 0.058, 0.064);
   return vec3(0.09, 0.092, 0.097);
+}
+vec3 indTopColor(float mat, float seed, vec2 q, vec4 A) {
+  return indTopColorBase(mat, seed, q, A) * uIndTopTint;
 }
 `;

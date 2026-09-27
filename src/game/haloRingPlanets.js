@@ -18,10 +18,14 @@ import { createK7Layout, k7Frame } from '../3d/haloRing/haloPortK7Layout.js';
 import { normalizeRingPlanetKey, resolveRingPlanetWorldRadius } from '../3d/ringScale.js';
 
 // Kąt stacji w świecie gry (y w dół) — jak dawne stacje orbitalne: Ziemia π/4,
-// Mars 5π/4. Ziarno: ten sam ring przy każdym uruchomieniu, różny dla planet.
+// Mars 5π/4, Jowisz 3π/4 (Z6, 2026-09-26). Ziarno: ten sam ring przy każdym
+// uruchomieniu, różny dla planet. Profil = wygląd ringu i doków
+// (src/3d/haloRing/haloRingProfiles.js; decyzja użytkownika 2026-09-26: ringi
+// Marsa i Jowisza oraz ich doki wyglądają inaczej niż Ziemi).
 export const HALO_RING_PLANETS = Object.freeze({
-  earth: Object.freeze({ key: 'earth', seed: 1337, stationAngle: Math.PI * 0.25 }),
-  mars: Object.freeze({ key: 'mars', seed: 4099, stationAngle: Math.PI * 1.25 })
+  earth: Object.freeze({ key: 'earth', seed: 1337, stationAngle: Math.PI * 0.25, profile: 'earth' }),
+  mars: Object.freeze({ key: 'mars', seed: 4099, stationAngle: Math.PI * 1.25, profile: 'mars' }),
+  jupiter: Object.freeze({ key: 'jupiter', seed: 6151, stationAngle: Math.PI * 0.75, profile: 'jupiter' })
 });
 
 // Stacja-port w hali K-7 (układ huba: x wzdłuż ringu, z promieniowo na
@@ -53,7 +57,8 @@ export function haloRingLayoutFor(planet) {
   const id = `${key}:${planetRadius}`;
   let layout = _layouts.get(id);
   if (!layout) {
-    layout = createHaloRingLayout({ planetRadius, seed: HALO_RING_PLANETS[key].seed });
+    const spec = HALO_RING_PLANETS[key];
+    layout = createHaloRingLayout({ planetRadius, seed: spec.seed, profile: spec.profile });
     _layouts.set(id, layout);
   }
   return layout;

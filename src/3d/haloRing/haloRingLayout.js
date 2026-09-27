@@ -15,18 +15,14 @@
 // planety, „dół” = od osi — siła odśrodkowa). Cała reszta geometrii bierze
 // się z σ, więc oba warianty idą przez te same moduły.
 import {
-  HALO_BIOME_CLIMATE,
   HALO_GEOMETRY_DEFAULTS,
-  HALO_LANDSCAPE_BIOMES,
   HALO_LIMITS,
-  HALO_SECTOR_MIX,
-  HALO_SECTOR_PLAN_16,
   HALO_STATION_ANGLE,
   HALO_TAU,
-  HALO_TYPE_CLIMATE,
   computeHaloEnvelope,
   resolveHabitatFacing
 } from './haloRingConfig.js';
+import { resolveHaloProfile } from './haloRingProfiles.js';
 import { resolveRingPlanetWorldRadius } from '../ringScale.js';
 
 export const GAME_CAMERA_FOV_DEG = 35;
@@ -68,24 +64,30 @@ export function resolveFlightLevel(value) {
   return clamp(n, HALO_LIMITS.flightLevel[0], HALO_LIMITS.flightLevel[1]);
 }
 
-// Plan sektorów dla dowolnej liczby: proporcje z HALO_SECTOR_MIX (od
-// 2026-09-23 bez sektorów przemysłowych — przemysł tylko wokół doków), bez
-// dwóch takich samych typów obok siebie, deterministycznie z seeda. Sektor 0
-// (port) to krajobraz górski. Dla 16 — plan ręczny.
-export function buildHaloSectorPlan(count, seed) {
+// Plan sektorów dla dowolnej liczby: proporcje z profilu planety (Ziemia:
+// HALO_SECTOR_MIX, od 2026-09-23 bez sektorów przemysłowych — przemysł tylko
+// wokół doków), bez dwóch takich samych typów obok siebie, deterministycznie
+// z seeda. Sektor 0 (port) to krajobraz górski. Dla 16 — plan ręczny profilu
+// (haloRingProfiles.js).
+export function buildHaloSectorPlan(count, seed, profileKey) {
+  const profile = resolveHaloProfile(profileKey);
+  const mix = profile.sectorMix;
+  const biomes = profile.landscapeBiomes;
   const n = Math.round(clamp(Number(count) || 16, HALO_LIMITS.sectorCount[0], HALO_LIMITS.sectorCount[1]));
   const rand = mulberry32(hashSeed(seed, 0x51c7));
-  if (n === 16) {
-    return HALO_SECTOR_PLAN_16.map((entry, index) => jitterClimate({ ...entry, index }, rand));
+  if (n === 16 && profile.sectorPlan.length === 16) {
+    return profile.sectorPlan.map((entry, index) => jitterClimate({ ...entry, index }, rand));
   }
-  const kinds = Object.keys(HALO_SECTOR_MIX).filter((type) => HALO_SECTOR_MIX[type] > 0);
-  const total = kinds.reduce((sum, type) => sum + HALO_SECTOR_MIX[type], 0);
+  const kinds = Object.keys(mix).filter((type) => mix[type] > 0);
+  const total = kinds.reduce((sum, type) => sum + mix[type], 0);
   const counts = {};
   let assigned = 0;
   for (const type of kinds) {
-    counts[type] = Math.max(1, Math.round(n * HALO_SECTOR_MIX[type] / total));
+    counts[type] = Math.max(1, Math.round(n * mix[type] / total));
     assigned += counts[type];
   }
+  if (!counts.landscape) counts.landscape = 0;
+  if (!counts.garden) counts.garden = 0;
   // korekta zaokrągleń na krajobrazie / mieście-ogrodzie
   while (assigned > n) { const k = counts.landscape >= counts.garden ? 'landscape' : 'garden'; counts[k]--; assigned--; }
   while (assigned < n) { const k = counts.landscape <= counts.garden ? 'landscape' : 'garden'; counts[k]++; assigned++; }
@@ -126,12 +128,14 @@ export function buildHaloSectorPlan(count, seed) {
   }
   let biomeIndex = 0;
   const plan = types.map((type, index) => {
-    if (index === 0) return { type, name: 'PORT', biome: 'port', port: true, climate: { ...HALO_BIOME_CLIMATE.port } };
+    if (index === 0) return { type, name: 'PORT', biome: 'port', port: true, climate: { ...profile.biomeClimate.port } };
     if (type === 'landscape') {
-      const biome = HALO_LANDSCAPE_BIOMES[biomeIndex++ % HALO_LANDSCAPE_BIOMES.length];
-      return { type, name: biome.toUpperCase(), biome, climate: { ...HALO_BIOME_CLIMATE[biome] } };
+      const biome = biomes[biomeIndex++ % biomes.length];
+      // cechy terenu (kaniony, kratery…) biomu z planu ręcznego profilu
+      const feat = profile.sectorPlan.find((s) => s.biome === biome)?.feat;
+      return { type, name: biome.toUpperCase(), biome, climate: { ...(profile.biomeClimate[biome] || profile.biomeClimate.port) }, ...(feat ? { feat } : {}) };
     }
-    return { type, name: type.toUpperCase(), climate: { ...HALO_TYPE_CLIMATE[type] } };
+    return { type, name: type.toUpperCase(), climate: { ...profile.typeClimate[type] } };
   });
   return plan.map((entry, index) => jitterClimate({ ...entry, index }, rand));
 }
@@ -168,6 +172,26 @@ function buildRivers(seed) {
     });
   }
   return rivers;
+}
+
+// Kaniony profilu (Mars): meandry jak rzeki, ale łagodniejsze (dwie oktawy),
+// szerokie i głębokie; rzeźbią teren tylko w sektorach z cechą `canyon`.
+function buildCanyons(seed, specs) {
+  const rand = mulberry32(hashSeed(seed, 0xca7e));
+  return (specs || []).slice(0, 2).map((spec) => ({
+    center: clamp(Number(spec.center) || 0.5, 0.2, 0.8) + (rand() - 0.5) * 0.04,
+    halfWidth: Math.max(80, Number(spec.halfWidth) || 400),
+    depth: Math.max(20, Number(spec.depth) || 200),
+    m1: [3 + Math.floor(rand() * 4), 0.05 + rand() * 0.03, rand() * HALO_TAU],
+    m2: [11 + Math.floor(rand() * 7), 0.012 + rand() * 0.01, rand() * HALO_TAU]
+  }));
+}
+
+export function canyonCenterV(canyon, u) {
+  const a = HALO_TAU * u;
+  return canyon.center
+    + canyon.m1[1] * Math.sin(a * canyon.m1[0] + canyon.m1[2])
+    + canyon.m2[1] * Math.sin(a * canyon.m2[0] + canyon.m2[2]);
 }
 
 export function riverCenterV(river, u) {
@@ -299,7 +323,9 @@ export function createHaloRingLayout(options = {}) {
     return { kind, index: i, a, b, length: len, normal: { r: -dz / len, z: dr / len } };
   });
 
-  const plan = buildHaloSectorPlan(sectorCount, seed);
+  // profil planety (haloRingProfiles.js): plan sektorów, kaniony, palety…
+  const profile = resolveHaloProfile(options.profile);
+  const plan = buildHaloSectorPlan(sectorCount, seed, profile);
   const sectorSpan = HALO_TAU / plan.length;
   const sectorStart = HALO_STATION_ANGLE - sectorSpan * 0.5;
   const sectors = plan.map((entry, index) => {
@@ -316,6 +342,7 @@ export function createHaloRingLayout(options = {}) {
   });
 
   const rivers = buildRivers(seed);
+  const canyons = buildCanyons(seed, profile.canyons);
   const rand = mulberry32(hashSeed(seed, 0x0ff5e7));
   const noiseOffset = [rand() * 1000, rand() * 1000, rand() * 1000, rand() * 1000];
 
@@ -412,6 +439,9 @@ export function createHaloRingLayout(options = {}) {
 
   return Object.freeze({
     seed,
+    // profil planety (haloRingProfiles.js) — nie mylić z polem profile = przekrój (r, z)
+    planetProfile: profile,
+    profileKey: profile.key,
     planetRadius,
     width,
     wallHeight,
@@ -446,6 +476,7 @@ export function createHaloRingLayout(options = {}) {
     sectorSpan,
     sectorStart,
     rivers: Object.freeze(rivers),
+    canyons: Object.freeze(canyons),
     noiseOffset: Object.freeze(noiseOffset),
     // obwiednia do porównań z portem (brief §4)
     bounds: Object.freeze({

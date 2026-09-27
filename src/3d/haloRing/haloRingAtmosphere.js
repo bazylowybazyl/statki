@@ -13,9 +13,9 @@ import {
   HALO_GLSL_COMMON,
   HALO_GLSL_LIGHT,
   HALO_GLSL_NOISE,
-  HALO_GLSL_RTE
+  HALO_GLSL_RTE,
+  HALO_GLSL_STORM
 } from './haloRingGLSL.js';
-import { HALO_HDR } from './haloRingConfig.js';
 import { HALO_GLSL_CLOUDCOVER, HALO_GLSL_SURFACE } from './haloRingTerrain.js';
 import { HALO_GLSL_STRIP_VERTEX, HaloSegmentSet, buildStripGeometry } from './haloRingStructure.js';
 
@@ -46,6 +46,7 @@ ${HALO_GLSL_LIGHT}
 ${HALO_GLSL_AIR}
 ${HALO_GLSL_SURFACE}
 ${HALO_GLSL_CLOUDCOVER}
+${HALO_GLSL_STORM}
 varying vec3 vRel;
 varying vec3 vNormal;
 varying vec2 vST;
@@ -94,12 +95,18 @@ void main() {
   float hg = 0.25 * (1.0 - g * g) / pow(max(1.0 + g * g - 2.0 * g * mu, 1e-3), 1.5);
   float lightAmt = (0.3 + 0.7 * max(cz, 0.0)) * self * thick + hg * 0.35 * (1.0 - cov);
   vec3 amb = haloSkyAmbient(p, up) * mix(0.9, 1.6, below) + haloPlanetshine(p, up) * 0.8 + haloPlanetshine(p, -up) * 0.2 + vec3(uNightAmbient);
-  vec3 col = vec3(0.8) * (uSunColor * sunVis * lightAmt + amb);
+  vec3 col = uCloudTint * (uSunColor * sunVis * lightAmt + amb);
   col = mix(col, vec3(haloLuma(col)) * vec3(0.96, 0.98, 1.04), 0.35);
   // noca chmury nad miastem podswietla od spodu luna miasta (zamiast czarnych plam)
   float urbanBelow = smoothstep(0.25, 0.6, texture(uMapC, uvMap).g);
   float nightK = 1.0 - smoothstep(0.02, 0.2, haloLuma(sunVis) * max(cz, 0.0) + haloLuma(amb));
-  col += vec3(${HALO_HDR.windowSodium.map((x) => (x * 0.035).toFixed(4)).join(', ')}) * urbanBelow * nightK * (0.6 + 0.4 * cov) * uLayers.y * uNightLights;
+  col += (uHdrSodium * 0.035) * urbanBelow * nightK * (0.6 + 0.4 * cov) * uLayers.y * uNightLights;
+  // blyski burz (profil: Jowisz): wnetrze chmury rozswietlone od srodka,
+  // mocniej w grubych chmurach; HDR > 1 (bloom), barwa chlodna
+  if (uStorm.x > 0.001) {
+    float flash = haloStormFlash(sAbs, t);
+    col += vec3(0.62, 0.7, 1.0) * flash * uStorm.w * (0.25 + 0.75 * cov) * cov;
+  }
   col = haloApplyAir(col, rel, haloIGN(gl_FragCoord.xy));
   gl_FragColor = vec4(col * alpha, alpha);
 }

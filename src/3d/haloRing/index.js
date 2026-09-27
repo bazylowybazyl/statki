@@ -98,7 +98,8 @@ export function createHaloRing(options = {}) {
     applyRoofPlanUniforms(uniforms, plan);
     const mega = new HaloMegastructure({ layout, uniforms, surfaceUniforms: terrain.surfaceUniforms, domain, plan, quality });
     // M4: budynki i drzewa na podłodze — z tych samych reguł co mapa miasta w terenie
-    const city = new HaloCity({ layout, uniforms, surfaceUniforms: terrain.surfaceUniforms, quality });
+    // (kopuły-miasta profilu Marsa: kawałki zabudowy także pod szkłem)
+    const city = new HaloCity({ layout, uniforms, surfaceUniforms: terrain.surfaceUniforms, quality, domes });
     // Ruchu statków ring nie udaje (decyzja użytkownika 2026-09-24: statki i ruch
     // wdrażane osobno) — port wystawia stanowiska (k7Halls, bays) i adapter
     // do ruchu v2 (haloPortTraffic.js), statki rysuje system ruchu.
@@ -126,7 +127,8 @@ export function createHaloRing(options = {}) {
       haloPortComplexAngles().forEach((angle, i) => {
         const hallLayout = state.hallLayouts[i];
         const bays = state.bayLayouts.filter((b) => b.complex === i);
-        const hall = new HaloPortK7({ ringLayout: layout, uniforms, layout: hallLayout, angle, index: i, bays });
+        // styl doków z profilu planety (dach, ściany, paleta, światła, napisy)
+        const hall = new HaloPortK7({ ringLayout: layout, uniforms, layout: hallLayout, angle, index: i, bays, style: layout.planetProfile.port });
         hall.update(0, {});
         hall.setBerthLamps();
         group.add(hall.root);

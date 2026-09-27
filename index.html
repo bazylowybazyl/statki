@@ -1148,7 +1148,7 @@
     import { HaloRingGame } from "./src/3d/haloRing/haloRingGame.js";
     import { computeHaloRingLayout } from "./src/3d/haloRing/haloRingLayout.js";
     import { resolveRingPlanetWorldRadius } from "./src/3d/ringScale.js";
-    import { computeHaloPortStation } from "./src/game/haloRingPlanets.js";
+    import { computeHaloPortStation, haloRingKey } from "./src/game/haloRingPlanets.js";
     // Tło menu głównego: Ziemia z ringiem w kamerze kinowej (przed startem gry).
     import { MenuBackdrop3D } from "./src/3d/menuBackdrop3D.js";
     // Statki Terran (Wsparcie)
@@ -6289,7 +6289,8 @@
         const planet = planetList[i];
         if (!planet) continue;
         const id = String(planet.id || planet.name || `planet-${i}`).toLowerCase();
-        const hasMegaring = id === 'earth' || id === 'mars';
+        // ring „Halo”: Ziemia, Mars, Jowisz (HALO_RING_PLANETS)
+        const hasMegaring = !!haloRingKey(planet);
         if (hasMegaring) {
           const layout = computeHaloRingLayout(planet);
           features.push({
@@ -6416,8 +6417,8 @@
       // 1. Bezpiecznie pobierz fizyczny promień (hitbox)
       const r = (planet.r && Number.isFinite(planet.r)) ? planet.r : 100;
 
-      const ringKey = String(planet?.id || planet?.name || '').toLowerCase();
-      if (ringKey === 'earth' || ringKey === 'mars') {
+      // planeta z ringiem „Halo” (Ziemia, Mars, Jowisz): strefy od obwiedni ringu
+      if (haloRingKey(planet)) {
         const layout = computeHaloRingLayout(planet);
         const outer = layout.outerRadius + 3000;
         return {
@@ -9466,7 +9467,7 @@
     function applyHaloRingDevSpawn() {
       const params = new URLSearchParams(location.search);
       const targetKey = String(params.get('haloTest') || '').toLowerCase();
-      if (!params.has('dev') || !['earth', 'mars'].includes(targetKey)) return;
+      if (!params.has('dev') || !haloRingKey(targetKey)) return;
       placeShipAtHaloRing(targetKey, params.get('haloAt') || 'port');
     }
 
@@ -22736,8 +22737,7 @@
         if (!pl || !pl.label) continue;
         const screen = worldToScreen(pl.x, pl.y, cam);
         if (screen.x < -160 || screen.x > W + 160 || screen.y < -160 || screen.y > H + 160) continue;
-        const planetKey = String(pl.id || pl.name || '').toLowerCase();
-        const labelRadius = (planetKey === 'earth' || planetKey === 'mars')
+        const labelRadius = haloRingKey(pl)
           ? resolveRingPlanetWorldRadius(pl)
           : (pl.r || 0);
         const offset = (labelRadius + 40) * _camZoom;

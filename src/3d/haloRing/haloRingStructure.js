@@ -14,8 +14,9 @@ import {
   HALO_GLSL_RTE
 } from './haloRingGLSL.js';
 import { HALO_GLSL_FG, HALO_GLSL_FG_CLIP, HALO_GLSL_TRANSIT } from './haloRingGLSL.js';
-import { HALO_HDR, HALO_ROOF } from './haloRingConfig.js';
+import { HALO_ROOF } from './haloRingConfig.js';
 import { HALO_GLSL_SURFACE } from './haloRingTerrain.js';
+import { HALO_STRUCTURE_PALETTE_KEYS, haloPaletteDefines } from './haloRingProfiles.js';
 
 // Rodzaje krawędzi profilu (indeks = aEdge.x w shaderze).
 export const HALO_EDGE_KIND = Object.freeze({
@@ -70,6 +71,12 @@ uniform vec4 uRoofCells;
 uniform vec4 uRoofSector;
 uniform float uSectorClass[32];
 uniform vec4 uPortDocks;
+// reguly komorek z profilu planety (lustro industrialCellRule / plotRule):
+// zajetosc na klase sektora, progi rodzajow (zbiornik, blok, radiator, komin),
+// puste dzialki na klase
+uniform vec4 uRoofOcc;
+uniform vec4 uRoofKinds;
+uniform vec4 uRoofPlotEmpty;
 
 float roofClassOf(float cellIdx) {
   float x = mod(cellIdx + 0.5 - uRoofSector.x, uRoofCells.z);
@@ -90,7 +97,7 @@ bool roofInDock(float lotId) {
 // komorka przemyslowa: (rodzaj, a, b, wysokosc); ex = (przesuniecie, wzdluz?)
 vec4 roofIndCell(float i, float j, float cls, out vec3 ex) {
   ex = vec3(0.0);
-  float occ = cls < 0.5 ? 0.55 : (cls < 1.5 ? 0.62 : (cls < 2.5 ? 0.9 : 0.85));
+  float occ = cls < 0.5 ? uRoofOcc.x : (cls < 1.5 ? uRoofOcc.y : (cls < 2.5 ? uRoofOcc.z : uRoofOcc.w));
   if (haloHashI(i, j, 11.0) >= occ) return vec4(0.0);
   float k = haloHashI(i, j, 12.0);
   float s = haloHashI(i, j, 13.0);
@@ -99,23 +106,23 @@ vec4 roofIndCell(float i, float j, float cls, out vec3 ex) {
   float jy = haloHashI(i, j, 16.0) - 0.5;
   float cS = uRoofCells.x;
   float cD = uRoofLanes2.w;
-  if (k < 0.34) {
+  if (k < uRoofKinds.x) {
     float r = 12.0 + 12.0 * s;
     ex = vec3(jx * max(0.0, cS - 2.0 * r - 8.0), jy * max(0.0, cD - 2.0 * r - 8.0), 0.0);
     return vec4(1.0, r, r, 18.0 + 70.0 * hg);
   }
-  if (k < 0.62) {
+  if (k < uRoofKinds.y) {
     float sx = 22.0 + 24.0 * s;
     float sy = 22.0 + 24.0 * haloHashI(i, j, 17.0);
     ex = vec3(jx * max(0.0, cS - sx - 8.0), jy * max(0.0, cD - sy - 8.0), 0.0);
     return vec4(2.0, sx, sy, 10.0 + 60.0 * hg);
   }
-  if (k < 0.8) {
+  if (k < uRoofKinds.z) {
     float al = haloHashI(i, j, 18.0) < 0.5 ? 1.0 : 0.0;
     ex = vec3(0.0, 0.0, al);
     return vec4(3.0, al > 0.5 ? 44.0 : 40.0, al > 0.5 ? 40.0 : 44.0, 26.0 + 50.0 * hg);
   }
-  if (k < 0.9) {
+  if (k < uRoofKinds.w) {
     ex = vec3(jx * max(0.0, cS - 30.0), jy * max(0.0, cD - 30.0), 0.0);
     return vec4(4.0, 5.0 + 4.0 * s, 22.0, 60.0 + 36.0 * hg);
   }
@@ -175,7 +182,7 @@ float roofIndShadow(float iN, float jN, vec2 q, vec2 sdir) {
 vec4 roofPlot(float Lid, float row, float cls, out vec3 tw, out vec2 to) {
   tw = vec3(0.0);
   to = vec2(0.0);
-  float pE = cls < 0.5 ? 0.8 : (cls < 1.5 ? 0.6 : (cls < 2.5 ? 0.32 : 0.3));
+  float pE = cls < 0.5 ? uRoofPlotEmpty.x : (cls < 1.5 ? uRoofPlotEmpty.y : (cls < 2.5 ? uRoofPlotEmpty.z : uRoofPlotEmpty.w));
   if (haloHashI(Lid, row, 21.0) < pE) return vec4(0.0);
   float k = haloHashI(Lid, row, 22.0);
   float a = haloHashI(Lid, row, 23.0);
@@ -280,7 +287,7 @@ void haloRoofImpression(float sRel, float d, float fwS, float fwd, vec3 p, vec3 
       if (sdH < 0.0) {
         float rib = 1.0 - smoothstep(0.8, 0.8 + fwS, abs(fract(u / 12.0) - 0.5) * 12.0 - 4.5);
         albedo = vec3(0.085, 0.087, 0.09) * (1.0 - 0.3 * rib * detailK);
-        emit += vec3(${HALO_HDR.windowSodium.map((x) => x.toFixed(3)).join(', ')}) * night * 0.06 * detailK * rib;
+        emit += uHdrSodium * night * 0.06 * detailK * rib;
       } else {
         shade = max(shade, roofSegBox(q, sdir * pl.w, 0.5 * pl.yz));
       }
@@ -300,7 +307,7 @@ void haloRoofImpression(float sRel, float d, float fwS, float fwd, vec3 p, vec3 
       shade = max(shade, (1.0 - inC) * 0.35 * inYard * detailK);
     }
     // noca: znaczniki placow swieca na niebiesko (bilboardy robia to z bliska)
-    emit += vec3(${HALO_HDR.stripBlue.map((x) => x.toFixed(3)).join(', ')}) * corner * night * 0.25 * (pl.x < 0.5 ? 1.0 : 0.0) * (1.0 - detailK * 0.6);
+    emit += uHdrStrip * corner * night * 0.25 * (pl.x < 0.5 ? 1.0 : 0.0) * (1.0 - detailK * 0.6);
     return;
   }
   if (maglev) {
@@ -309,7 +316,7 @@ void haloRoofImpression(float sRel, float d, float fwS, float fwd, vec3 p, vec3 
     float guide = max(1.0 - smoothstep(13.0, 13.0 + fwd, abs(d - g1)), 1.0 - smoothstep(13.0, 13.0 + fwd, abs(d - g2)));
     albedo = mix(vec3(0.04, 0.042, 0.046), vec3(0.11, 0.112, 0.116), guide);
     float edge = max(1.0 - smoothstep(0.8, 0.8 + fwd, abs(abs(d - g1) - 14.0)), 1.0 - smoothstep(0.8, 0.8 + fwd, abs(abs(d - g2) - 14.0)));
-    emit += vec3(${HALO_HDR.stripBlue.map((x) => x.toFixed(3)).join(', ')}) * edge * (0.12 + 0.35 * night) * step(0.35, fract(sRel / 40.0));
+    emit += uHdrStrip * edge * (0.12 + 0.35 * night) * step(0.35, fract(sRel / 40.0));
     float dy = sdir.y * 12.0;
     float lo = min(d, d + dy);
     float hi = max(d, d + dy);
@@ -360,7 +367,7 @@ void haloRoofImpression(float sRel, float d, float fwS, float fwd, vec3 p, vec3 
     float lampOn = step(0.6, haloHashI(i, j, 41.0)) * step(1.5, cls);
     vec2 lpos = (vec2(haloHashI(i, j, 42.0), haloHashI(i, j, 43.0)) - 0.5) * vec2(cS, cD) * 0.8;
     float lamp = (1.0 - smoothstep(1.6, 1.6 + fw, length(vec2(u, w) - lpos))) * lampOn * (0.5 + 0.8 * haloHashI(i, j, 44.0));
-    emit += vec3(${HALO_HDR.windowSodium.map((x) => x.toFixed(3)).join(', ')}) * night * mix(0.006 * step(1.5, cls), lamp, detailK);
+    emit += uHdrSodium * night * mix(0.006 * step(1.5, cls), lamp, detailK);
     return;
   }
 }
@@ -376,6 +383,9 @@ ${HALO_GLSL_ROOF}
 ${HALO_GLSL_FG}
 ${HALO_GLSL_FG_CLIP}
 ${HALO_GLSL_TRANSIT}
+// paleta konstrukcji z profilu planety (haloRingProfiles.js)
+uniform vec3 uStructPal[${HALO_STRUCTURE_PALETTE_KEYS.length}];
+${haloPaletteDefines('SP', 'uStructPal', HALO_STRUCTURE_PALETTE_KEYS)}
 varying vec3 vRel;
 varying vec3 vNormal;
 varying vec2 vST;
@@ -390,13 +400,13 @@ vec3 structEnv(vec3 R, vec3 p, bool inner) {
   if (tb > 0.0 && d2 < uPlanet.w * uPlanet.w) {
     vec3 hitN = normalize(p + R * (tb - sqrt(uPlanet.w * uPlanet.w - d2)) - uPlanet.xyz);
     float pl = dot(hitN, uSunDir);
-    return mix(vec3(0.003, 0.005, 0.009), vec3(0.11, 0.17, 0.26) * uSunColor, smoothstep(-0.05, 0.3, pl));
+    return mix(vec3(0.003, 0.005, 0.009), SP_PLANET_LIT * uSunColor, smoothstep(-0.05, 0.3, pl));
   }
   if (inner) {
     vec3 up = haloUp(p);
     float h = dot(R, up);
-    vec3 sky = mix(vec3(0.15, 0.22, 0.33), vec3(0.04, 0.08, 0.16), clamp(h, 0.0, 1.0));
-    vec3 ground = vec3(0.025, 0.04, 0.028);
+    vec3 sky = mix(SP_ENV_SKY_HORIZON, SP_ENV_SKY_ZENITH, clamp(h, 0.0, 1.0));
+    vec3 ground = SP_ENV_GROUND;
     float lit = haloLuma(haloSunVisibility(p + up * 600.0, uSunDir));
     return mix(ground, sky, smoothstep(-0.12, 0.06, h)) * (0.15 + 0.85 * lit) + vec3(0.002);
   }
@@ -432,9 +442,9 @@ void main() {
   float seam = (1.0 - smoothstep(seamW, seamW + max(pw.x, pw.y) * 1.5, seamD)) * (1.0 - farP) * (inner ? 0.35 : 1.0);
   float ph = haloHash12(vec2(pp.x, floor(pv)) + vKind * 17.0);
   float panelVar = mix(ph, 0.5, farP);
-  vec3 base = vec3(0.030, 0.034, 0.040);           // kadlub, spod, krawedzie: prawie czern
-  if (kind == 3) base = vec3(0.056, 0.060, 0.066);  // dach
-  if (inner) base = vec3(0.060, 0.064, 0.070);      // sciany od srodka: ciemna stal
+  vec3 base = SP_HULL;                            // kadlub, spod, krawedzie: prawie czern
+  if (kind == 3) base = SP_ROOF;                   // dach
+  if (inner) base = SP_WALL;                       // sciany od srodka: ciemna stal
   vec3 metal = base * (0.86 + 0.28 * panelVar);
   vec4 var0 = haloVar(0, sRel, v);
   vec4 var1 = haloVar(1, sRel, v);
@@ -483,16 +493,16 @@ void main() {
     float win = step(0.22, wc.y) * step(wc.y, 0.78) * step(0.28, wf) * step(wf, 0.78) * gap * hasB;
     float winAvg = 0.28 * gap * hasB;
     // fasada: tynk / szklo wedlug budynku, pasma pieter jasniejsze/ciemniejsze
-    vec3 facade = mix(vec3(0.085, 0.088, 0.094), vec3(0.05, 0.062, 0.075), step(0.55, fract(bRand * 7.3)));
+    vec3 facade = mix(SP_FACADE_A, SP_FACADE_B, step(0.55, fract(bRand * 7.3)));
     facade *= mix(1.0, 0.8 + 0.4 * bandK, midAA) * mix(1.0, wellGap, midAA);
     vec3 wallBase = mix(metal, facade, hasB * gap);
-    wallBase = mix(wallBase, vec3(0.02, 0.026, 0.034), mix(winAvg, win, winAA) * 0.85);
-    wallBase = mix(wallBase, vec3(0.16, 0.16, 0.155), deck * 0.8);
+    wallBase = mix(wallBase, SP_WINDOW_GLASS, mix(winAvg, win, winAA) * 0.85);
+    wallBase = mix(wallBase, SP_DECK, deck * 0.8);
     // ogrody na tarasach (M4): pas zieleni nad krawedzia pokladu, korony drzew
     float gardenBand = smoothstep(0.03, 0.05, tf) * (1.0 - smoothstep(0.13, 0.16, tf)) * fadeT
       * step(0.5, cityK) * step(0.3, fract(bRand * 4.1));
     float crownsW = smoothstep(0.35, 0.1, haloVar(2, sRel, hw * 3.0).r);
-    vec3 green = mix(vec3(0.030, 0.058, 0.022), vec3(0.016, 0.036, 0.015), crownsW);
+    vec3 green = mix(SP_GREEN_A, SP_GREEN_B, crownsW);
     wallBase = mix(wallBase, green, gardenBand * 0.9);
     // z daleka (pas ogrodow ponizej piksela) zostaje zielonkawy odcien pasma
     wallBase = mix(wallBase, mix(wallBase, green, 0.1), (1.0 - fadeT) * cityK);
@@ -514,12 +524,12 @@ void main() {
     float midLit = step(0.35, bandK) * (0.35 + 0.9 * bandK) * (0.5 + grpK) * wellGap;
     float litMid = litFrac * mix(1.0, midLit, midAA);
     float lit = step(haloHash12(vec2(wc.x, row) + bp.x * 0.37), litFrac * (0.4 + midLit));
-    vec3 wcol = cls > 1.5 ? vec3(${HALO_HDR.windowSodium.map((x) => (x * 0.8).toFixed(3)).join(', ')}) :
-      mix(vec3(${HALO_HDR.windowWarm.map((x) => x.toFixed(3)).join(', ')}), vec3(${HALO_HDR.windowCool.map((x) => x.toFixed(3)).join(', ')}), step(0.6, fract(bRand * 3.1)));
+    vec3 wcol = cls > 1.5 ? (uHdrSodium * 0.8) :
+      mix(uHdrWarm, uHdrCool, step(0.6, fract(bRand * 3.1)));
     wallEmit = wcol * mix(winAvg * litMid, win * lit, winAA) * (1.0 - dayW * 0.92) * 0.8 * uLayers.y * uNightLights;
     // krawedz tarasow noca: pas swiatla (ogrody M4)
     float dash = step(0.45, fract(sRel / 23.0 + level * 0.37)) * step(0.3, fract(bRand * 2.3));
-    wallEmit += vec3(${HALO_HDR.windowWarm.map((x) => (x * 0.2).toFixed(3)).join(', ')}) * deck * cityK * (1.0 - dayW) * mix(0.3, dash, winAA) * uLayers.y;
+    wallEmit += (uHdrWarm * 0.2) * deck * cityK * (1.0 - dayW) * mix(0.3, dash, winAA) * uLayers.y;
   }
   metal *= 1.0 - seam * 0.4;
 
@@ -531,8 +541,9 @@ void main() {
     float dR = uHabitat.x > 0.0 ? (uRoofLanes2.z - v) : v;
     float nightR = 1.0 - smoothstep(0.02, 0.2, haloLuma(haloSunVisibility(p + N * 2.0, uSunDir)) * max(uSunDir.z + 0.15, 0.0));
     haloRoofImpression(sRel, dR, fwS, fwv, p, uSunDir, nightR, metal, emit, roofShade);
+    metal *= SP_ROOF_TINT;
   }
-  vec3 blue = vec3(${HALO_HDR.stripBlue.map((x) => x.toFixed(3)).join(', ')});
+  vec3 blue = uHdrStrip;
   if (kind == 3 || kind == 5) {
     float w1 = max(3.0, fwv * 0.8);
     float edgeLine = (1.0 - smoothstep(w1, w1 + fwv * 1.5, abs(v - 38.0))) * (3.0 / w1);
@@ -550,7 +561,7 @@ void main() {
     float dots = (1.0 - smoothstep(dotW, dotW * 1.6, abs(lp.y - 0.5))) * (0.06 / dotW) * row;
     emit += blue * dots * 1.1;
     float win = step(0.965, haloHash12(vec2(pp.x, floor(v / 22.0)) + 4.0)) * (1.0 - farP);
-    emit += vec3(${HALO_HDR.windowWarm.map((x) => (x * 0.55).toFixed(3)).join(', ')}) * win;
+    emit += (uHdrWarm * 0.55) * win;
   }
   if (kind == 2 || kind == 6) {
     float w2 = max(4.0, fwv * 0.8);

@@ -56,6 +56,10 @@ export const CATEGORY = Object.freeze({
 //   label    — nazwa PL do UI
 //   short    — skrót na ciasne pola (magazyny, ikony ładowni)
 //   unit     — 't' (tony, materiały sypkie/płynne) | 'szt' (sztuki, podzespoły)
+//   form     — stan skupienia w ładowni: 'solid' | 'liquid' | 'gas'. Tylko widok:
+//              wybiera rodzinę kontenera 3D (src/data/cargoContainers.js — gazy
+//              i ciecze w zbiornikach, sypkie tanie towary w zsypach), nigdy
+//              nie wchodzi do rachunku ekonomii.
 //   mass     — ile jednostek cargoCap zajmuje 1 sztuka.
 //              Kadłuby mają cargoCap 12–600, więc: ruda 1.0, chipy 0.4,
 //              komponent 4.0 → fregata (16) uniesie 16 rudy albo 4 płyty.
@@ -82,150 +86,150 @@ export const RESOURCES = Object.freeze({
   // ---------- T0: SUROWCE Z ASTEROID ----------
   iron_ore: {
     tier: TIER.RAW, category: CATEGORY.ORE,
-    label: 'Ruda żelaza', short: 'Fe', unit: 't',
+    label: 'Ruda żelaza', short: 'Fe', unit: 't', form: 'solid',
     mass: 1.0, value: 6, color: '#a8845c'
   },
   copper_ore: {
     tier: TIER.RAW, category: CATEGORY.ORE,
-    label: 'Ruda miedzi', short: 'Cu', unit: 't',
+    label: 'Ruda miedzi', short: 'Cu', unit: 't', form: 'solid',
     mass: 1.0, value: 8, color: '#c87137'
   },
   silicon_ore: {
     tier: TIER.RAW, category: CATEGORY.ORE,
-    label: 'Ruda krzemu', short: 'Si', unit: 't',
+    label: 'Ruda krzemu', short: 'Si', unit: 't', form: 'solid',
     mass: 1.0, value: 9, color: '#8b98a8'
   },
   titanium_ore: {
     tier: TIER.RAW, category: CATEGORY.ORE,
-    label: 'Ruda tytanu', short: 'Ti', unit: 't',
+    label: 'Ruda tytanu', short: 'Ti', unit: 't', form: 'solid',
     mass: 1.0, value: 14, color: '#7d8a99'
   },
   raw_crystal: {
     tier: TIER.RAW, category: CATEGORY.ORE,
-    label: 'Surowy kryształ', short: 'Kr', unit: 't',
+    label: 'Surowy kryształ', short: 'Kr', unit: 't', form: 'solid',
     mass: 0.8, value: 18, color: '#b06cf0'
   },
   ice: {
     tier: TIER.RAW, category: CATEGORY.VOLATILE,
-    label: 'Lód', short: 'H₂O', unit: 't',
+    label: 'Lód', short: 'H₂O', unit: 't', form: 'solid',
     mass: 1.0, value: 4, color: '#7fd4f5'
   },
   uranium_ore: {
     tier: TIER.RAW, category: CATEGORY.ORE,
-    label: 'Ruda uranu', short: 'U', unit: 't',
+    label: 'Ruda uranu', short: 'U', unit: 't', form: 'solid',
     mass: 1.2, value: 22, color: '#6ee06e'
   },
 
   // ---------- T0: GAZY Z OLBRZYMÓW GAZOWYCH ----------
   helium3: {
     tier: TIER.RAW, category: CATEGORY.GAS,
-    label: 'Hel-3', short: 'He3', unit: 't',
+    label: 'Hel-3', short: 'He3', unit: 't', form: 'gas',
     mass: 0.5, value: 26, color: '#ffd166'
   },
   methane: {
     tier: TIER.RAW, category: CATEGORY.GAS,
-    label: 'Metan', short: 'CH₄', unit: 't',
+    label: 'Metan', short: 'CH₄', unit: 't', form: 'gas',
     mass: 0.6, value: 7, color: '#4fd1c5'
   },
   ammonia: {
     tier: TIER.RAW, category: CATEGORY.GAS,
-    label: 'Amoniak', short: 'NH₃', unit: 't',
+    label: 'Amoniak', short: 'NH₃', unit: 't', form: 'gas',
     mass: 0.7, value: 9, color: '#9fe870'
   },
 
   // ---------- T0: Z WRAKÓW ----------
   scrap: {
     tier: TIER.RAW, category: CATEGORY.SALVAGE,
-    label: 'Złom', short: 'Zł', unit: 't',
+    label: 'Złom', short: 'Zł', unit: 't', form: 'solid',
     mass: 1.0, value: 3, color: '#8a8f96'
   },
 
   // ---------- T1: RAFINATY ----------
   steel: {
     tier: TIER.REFINED, category: CATEGORY.METAL,
-    label: 'Stal', short: 'St', unit: 't',
+    label: 'Stal', short: 'St', unit: 't', form: 'solid',
     mass: 1.0, value: 16, color: '#cbd5e1'
   },
   copper_wire: {
     tier: TIER.REFINED, category: CATEGORY.ELECTRONIC,
-    label: 'Przewód miedziany', short: 'Prz', unit: 't',
+    label: 'Przewód miedziany', short: 'Prz', unit: 't', form: 'solid',
     mass: 0.8, value: 21, color: '#e08a4c'
   },
   chips: {
     tier: TIER.REFINED, category: CATEGORY.ELECTRONIC,
-    label: 'Układy scalone', short: 'IC', unit: 'szt',
+    label: 'Układy scalone', short: 'IC', unit: 'szt', form: 'solid',
     mass: 0.4, value: 62, color: '#38bdf8'
   },
   titan_alloy: {
     tier: TIER.REFINED, category: CATEGORY.METAL,
-    label: 'Stop tytanu', short: 'TiA', unit: 't',
+    label: 'Stop tytanu', short: 'TiA', unit: 't', form: 'solid',
     mass: 1.0, value: 62, color: '#94a3b8'
   },
   optic_lens: {
     tier: TIER.REFINED, category: CATEGORY.ELECTRONIC,
-    label: 'Soczewka optyczna', short: 'Opt', unit: 'szt',
+    label: 'Soczewka optyczna', short: 'Opt', unit: 'szt', form: 'solid',
     mass: 0.4, value: 92, color: '#c084fc'
   },
   hydrogen: {
     tier: TIER.REFINED, category: CATEGORY.VOLATILE,
-    label: 'Wodór', short: 'H₂', unit: 't',
+    label: 'Wodór', short: 'H₂', unit: 't', form: 'gas',
     mass: 0.5, value: 7, color: '#60a5fa'
   },
   oxygen: {
     tier: TIER.REFINED, category: CATEGORY.VOLATILE,
-    label: 'Tlen', short: 'O₂', unit: 't',
+    label: 'Tlen', short: 'O₂', unit: 't', form: 'gas',
     mass: 0.6, value: 5, color: '#93c5fd'
   },
   fuel_rods: {
     tier: TIER.REFINED, category: CATEGORY.FUEL,
-    label: 'Pręty paliwowe', short: 'Prt', unit: 'szt',
+    label: 'Pręty paliwowe', short: 'Prt', unit: 'szt', form: 'solid',
     mass: 1.5, value: 175, color: '#4ade80'
   },
   polymer: {
     tier: TIER.REFINED, category: CATEGORY.CHEMICAL,
-    label: 'Polimer', short: 'Pol', unit: 't',
+    label: 'Polimer', short: 'Pol', unit: 't', form: 'solid',
     mass: 0.6, value: 18, color: '#a855f7'
   },
   coolant: {
     tier: TIER.REFINED, category: CATEGORY.CHEMICAL,
-    label: 'Chłodziwo', short: 'Chł', unit: 't',
+    label: 'Chłodziwo', short: 'Chł', unit: 't', form: 'liquid',
     mass: 0.8, value: 19, color: '#2dd4bf'
   },
   fusion_fuel: {
     tier: TIER.REFINED, category: CATEGORY.FUEL,
-    label: 'Paliwo fuzyjne', short: 'Fuz', unit: 't',
+    label: 'Paliwo fuzyjne', short: 'Fuz', unit: 't', form: 'gas',
     mass: 0.5, value: 100, color: '#fbbf24'
   },
 
   // ---------- T2: KOMPONENTY OKRĘTOWE ----------
   hull_plate: {
     tier: TIER.COMPONENT, category: CATEGORY.COMPONENT,
-    label: 'Płyta kadłuba', short: 'Płt', unit: 'szt',
+    label: 'Płyta kadłuba', short: 'Płt', unit: 'szt', form: 'solid',
     mass: 4.0, value: 190, color: '#9ca3af'
   },
   avionics: {
     tier: TIER.COMPONENT, category: CATEGORY.COMPONENT,
-    label: 'Awionika', short: 'Awi', unit: 'szt',
+    label: 'Awionika', short: 'Awi', unit: 'szt', form: 'solid',
     mass: 2.0, value: 390, color: '#22d3ee'
   },
   reactor_core: {
     tier: TIER.COMPONENT, category: CATEGORY.COMPONENT,
-    label: 'Rdzeń reaktora', short: 'Rdz', unit: 'szt',
+    label: 'Rdzeń reaktora', short: 'Rdz', unit: 'szt', form: 'solid',
     mass: 6.0, value: 740, color: '#34d399'
   },
   thruster: {
     tier: TIER.COMPONENT, category: CATEGORY.COMPONENT,
-    label: 'Silnik manewrowy', short: 'Sil', unit: 'szt',
+    label: 'Silnik manewrowy', short: 'Sil', unit: 'szt', form: 'solid',
     mass: 5.0, value: 660, color: '#fb923c'
   },
   weapon_mount: {
     tier: TIER.COMPONENT, category: CATEGORY.COMPONENT,
-    label: 'Podstawa uzbrojenia', short: 'Uzb', unit: 'szt',
+    label: 'Podstawa uzbrojenia', short: 'Uzb', unit: 'szt', form: 'solid',
     mass: 5.0, value: 1250, color: '#f87171'
   },
   life_support: {
     tier: TIER.COMPONENT, category: CATEGORY.COMPONENT,
-    label: 'Podtrzymywanie życia', short: 'LSS', unit: 'szt',
+    label: 'Podtrzymywanie życia', short: 'LSS', unit: 'szt', form: 'solid',
     mass: 3.0, value: 620, color: '#a3e635'
   },
 
@@ -239,24 +243,24 @@ export const RESOURCES = Object.freeze({
   // Dlatego uzbrojony okręt potrzebuje obu rzeczy naraz.
   gun_ballistic: {
     tier: TIER.COMPONENT, category: CATEGORY.WEAPON,
-    label: 'Działo kinetyczne', short: 'Kin', unit: 'szt',
+    label: 'Działo kinetyczne', short: 'Kin', unit: 'szt', form: 'solid',
     mass: 6.0, value: 440, color: '#fca5a5'
   },
   // Droższe w budowie od balistyki i tańsze w użyciu — nie je amunicji, tylko
   // moc reaktora. To jest cała różnica między tymi dwiema szkołami.
   gun_energy: {
     tier: TIER.COMPONENT, category: CATEGORY.WEAPON,
-    label: 'Emiter energetyczny', short: 'Emi', unit: 'szt',
+    label: 'Emiter energetyczny', short: 'Emi', unit: 'szt', form: 'solid',
     mass: 5.0, value: 720, color: '#67e8f9'
   },
   launcher_ordnance: {
     tier: TIER.COMPONENT, category: CATEGORY.WEAPON,
-    label: 'Wyrzutnia', short: 'Wyr', unit: 'szt',
+    label: 'Wyrzutnia', short: 'Wyr', unit: 'szt', form: 'solid',
     mass: 7.0, value: 500, color: '#fdba74'
   },
   pd_turret: {
     tier: TIER.COMPONENT, category: CATEGORY.WEAPON,
-    label: 'Wieżyczka OP', short: 'OP', unit: 'szt',
+    label: 'Wieżyczka OP', short: 'OP', unit: 'szt', form: 'solid',
     mass: 4.0, value: 450, color: '#a5b4fc'
   },
   /**
@@ -270,7 +274,7 @@ export const RESOURCES = Object.freeze({
    */
   fighter_craft: {
     tier: TIER.COMPONENT, category: CATEGORY.WEAPON,
-    label: 'Myśliwiec', short: 'Myś', unit: 'szt',
+    label: 'Myśliwiec', short: 'Myś', unit: 'szt', form: 'solid',
     mass: 3.0, value: 595, color: '#7cff91', capacityFactor: 1.5
   },
 
@@ -285,22 +289,22 @@ export const RESOURCES = Object.freeze({
   // w kilka minut. Ile strzałów daje sztuka — patrz `shotsPerAmmo` w weapons.js.
   ammo_kinetic: {
     tier: TIER.COMPONENT, category: CATEGORY.ORDNANCE,
-    label: 'Amunicja kinetyczna', short: 'Amk', unit: 'szt',
+    label: 'Amunicja kinetyczna', short: 'Amk', unit: 'szt', form: 'solid',
     mass: 0.8, value: 12, color: '#d4d4d8', capacityFactor: 2
   },
   flak_shell: {
     tier: TIER.COMPONENT, category: CATEGORY.ORDNANCE,
-    label: 'Pociski flak', short: 'Flk', unit: 'szt',
+    label: 'Pociski flak', short: 'Flk', unit: 'szt', form: 'solid',
     mass: 1.0, value: 36, color: '#fbbf24', capacityFactor: 1.5
   },
   missile_round: {
     tier: TIER.COMPONENT, category: CATEGORY.ORDNANCE,
-    label: 'Rakieta', short: 'Rak', unit: 'szt',
+    label: 'Rakieta', short: 'Rak', unit: 'szt', form: 'solid',
     mass: 2.0, value: 205, color: '#f472b6', capacityFactor: 0.8
   },
   torpedo_round: {
     tier: TIER.COMPONENT, category: CATEGORY.ORDNANCE,
-    label: 'Torpeda', short: 'Trp', unit: 'szt',
+    label: 'Torpeda', short: 'Trp', unit: 'szt', form: 'solid',
     mass: 6.0, value: 725, color: '#fb7185', capacityFactor: 0.25
   }
 });

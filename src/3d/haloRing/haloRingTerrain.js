@@ -19,11 +19,13 @@ import {
   HALO_GLSL_NOISE,
   HALO_GLSL_PORTSITES,
   HALO_GLSL_RTE,
+  HALO_GLSL_STORM,
   HALO_GLSL_TRANSIT
 } from './haloRingGLSL.js';
-import { HALO_HDR, HALO_ROOF, HALO_TERRAIN } from './haloRingConfig.js';
+import { HALO_ROOF, HALO_TERRAIN } from './haloRingConfig.js';
 import { haloDetailScales, haloCloudScales } from './haloRingDetail.js';
 import { HALO_GLSL_INDKIT } from './haloRingIndustryKit.js';
+import { HALO_TERRAIN_PALETTE_KEYS, haloPaletteDefines } from './haloRingProfiles.js';
 
 const MAX_LOD_UNIFORM = 12;
 
@@ -196,7 +198,11 @@ ${HALO_GLSL_SURFACE}
 ${HALO_GLSL_CLOUDCOVER}
 ${HALO_GLSL_INDKIT}
 ${HALO_GLSL_TRANSIT}
+${HALO_GLSL_STORM}
 uniform float uExposedLines;
+// paleta terenu z profilu planety (haloRingProfiles.js)
+uniform vec3 uTerPal[${HALO_TERRAIN_PALETTE_KEYS.length}];
+${haloPaletteDefines('TP', 'uTerPal', HALO_TERRAIN_PALETTE_KEYS)}
 varying vec3 vRel;
 varying vec2 vST;
 varying vec2 vUvMap;
@@ -297,22 +303,30 @@ void main() {
   vec4 var2 = haloVar(2, sRel, t);
   vec4 d1c = texture(uDetail1, vec2(sRel / uDetailN.x + uDetailOff.x, t / uDetailN.x));
   float varA = var0.b;
-  vec3 lushGrass = vec3(0.060, 0.112, 0.024);
-  vec3 dryGrass = vec3(0.190, 0.170, 0.070);
+  vec3 lushGrass = TP_GRASS_LUSH;
+  vec3 dryGrass = TP_GRASS_DRY;
   vec3 grass = mix(dryGrass, lushGrass, smoothstep(0.25, 0.75, moist + varA * 0.3));
   grass = mix(grass, grass * vec3(1.25, 1.05, 0.7), smoothstep(0.1, 0.6, var2.b) * 0.5);
   grass = mix(grass, grass * vec3(0.8, 0.95, 1.05), smoothstep(0.0, -0.5, var1.b) * 0.4);
   grass *= 0.86 + 0.28 * (var1.b * 0.5 + 0.5);
   float crowns = smoothstep(0.34, 0.05, var2.r);
-  vec3 forestCol = mix(vec3(0.013, 0.028, 0.010), vec3(0.030, 0.062, 0.019), crowns * (0.6 + 0.4 * var2.g));
-  forestCol = mix(forestCol, vec3(0.022, 0.034, 0.020), smoothstep(0.35, 0.1, temp));
+  vec3 forestCol = mix(TP_FOREST_DARK, TP_FOREST_LIGHT, crowns * (0.6 + 0.4 * var2.g));
+  forestCol = mix(forestCol, TP_FOREST_COLD, smoothstep(0.35, 0.1, temp));
   float strata = sin(h * 0.045 + varA * 3.0) * 0.5 + 0.5;
-  vec3 rockCol = mix(vec3(0.125, 0.112, 0.098), vec3(0.085, 0.078, 0.070), strata * 0.5 + (d1c.a + 0.5) * 0.25);
-  rockCol = mix(rockCol, vec3(0.30, 0.18, 0.10) * (0.85 + 0.3 * strata), smoothstep(0.55, 0.8, temp) * smoothstep(0.35, 0.15, moist));
-  vec3 sandCol = mix(vec3(0.44, 0.31, 0.15), vec3(0.34, 0.23, 0.11), var1.b * 0.5 + 0.5);
-  vec3 beachCol = vec3(0.52, 0.45, 0.31);
-  vec3 snowCol = vec3(0.68, 0.72, 0.76);
-  vec3 iceCol = vec3(0.40, 0.54, 0.64);
+  vec3 rockCol = mix(TP_ROCK_A, TP_ROCK_B, strata * 0.5 + (d1c.a + 0.5) * 0.25);
+  rockCol = mix(rockCol, TP_ROCK_DESERT * (0.85 + 0.3 * strata), smoothstep(0.55, 0.8, temp) * smoothstep(0.35, 0.15, moist));
+  vec3 sandCol = mix(TP_SAND_A, TP_SAND_B, var1.b * 0.5 + 0.5);
+  // siarka (profil: Jowisz, jak Io): plamy zolte i pomaranczowe, biale osady,
+  // czarne potoki lawy; ta sama paleta z inna proporcja plam
+  if (uProfFrag.x > 0.001) {
+    vec3 sul = mix(TP_SAND_A, TP_SAND_B, smoothstep(-0.25, 0.35, var0.b * 0.7 + var1.b * 0.3));
+    sul = mix(sul, TP_SULFUR_WHITE, smoothstep(0.3, 0.55, var2.b) * 0.75);
+    sul = mix(sul, TP_LAVA, smoothstep(0.22, 0.45, -var1.b) * 0.85);
+    sandCol = mix(sandCol, sul, uProfFrag.x);
+  }
+  vec3 beachCol = TP_BEACH;
+  vec3 snowCol = TP_SNOW;
+  vec3 iceCol = TP_ICE;
 
   float desert = smoothstep(0.32, 0.14, moist) * smoothstep(0.55, 0.8, temp);
   vec3 ground = mix(grass, sandCol, desert);
@@ -335,6 +349,21 @@ void main() {
   float snow = smoothstep(snowLine - 40.0, snowLine + 60.0, h + varA * 60.0 + (var2.b) * 18.0) * (1.0 - smoothstep(0.22, 0.42, slopeMat + d1c.a * 0.18 + var1.b * 0.06));
   snow = max(snow, smoothstep(0.14, 0.04, temp) * (1.0 - water) * (1.0 - smoothstep(0.4, 0.65, slopeMat)));
   ground = mix(ground, snowCol, snow);
+  // linie na lodzie (profil: Jowisz, jak Europa): dwie rodziny dlugich,
+  // falistych pekniec (izolinie pola z gradientem liniowym) i brazowe plamy
+  // chaosu; z daleka (linia < ~1 px) srednia zamiast migotania
+  if (uProfFrag.y > 0.001) {
+    float sA = sRel + uRefBasis.w;
+    float f1 = (sA * 0.8 + t * 0.6) / 620.0 + var0.b * 2.4;
+    float f2 = (sA * 0.3 - t * 0.95) / 980.0 + var1.b * 1.8;
+    float w1 = fwidth(f1);
+    float w2 = fwidth(f2);
+    float l1 = 1.0 - smoothstep(0.02, 0.02 + w1 * 1.5, 0.5 - abs(fract(f1) - 0.5));
+    float l2 = 1.0 - smoothstep(0.015, 0.015 + w2 * 1.5, 0.5 - abs(fract(f2) - 0.5));
+    float lin = max(mix(l1, 0.08, smoothstep(0.08, 0.3, w1)), mix(l2, 0.06, smoothstep(0.08, 0.3, w2)) * 0.8);
+    float chaos = smoothstep(0.42, 0.7, var2.b) * 0.35;
+    ground = mix(ground, TP_LINEAE, clamp(lin + chaos, 0.0, 1.0) * snow * uProfFrag.y * 0.85);
+  }
 
   // ---- parki (megabudowle, kopuly; kanal R mapy B): trawnik strzyzony,
   // zwirowe sciezki - siatka zakrzywiona lagodnym szumem (jak strefa PARK
@@ -420,11 +449,11 @@ void main() {
   float lotEdge = min(min(lotF.x, 1.0 - lotF.x), min(lotF.y, 1.0 - lotF.y));
   float fwLot = max(fw.x * 3.0, fw.y * 2.0);
   float footprint = aaStep(0.14, lotEdge, fwLot);
-  vec3 roofA = vec3(0.105, 0.108, 0.112) * (0.78 + 0.44 * lotH);
+  vec3 roofA = TP_CITY_ROOF * (0.78 + 0.44 * lotH);
   roofA = mix(roofA, vec3(0.16, 0.115, 0.095), step(0.86, lotH) * typeGarden);
   roofA = mix(roofA, grass * 0.8, step(0.72, fract(lotH * 7.3)) * step(lotH, 0.86) * typeGarden * 0.9);
   roofA = mix(roofA, vec3(0.12, 0.112, 0.10) + vec3(0.04, 0.012, 0.0) * lotH, typeInd);
-  roofA = mix(roofA, vec3(0.20, 0.23, 0.25) + vec3(0.0, 0.02, 0.05) * lotH, typeGlass * 0.8);
+  roofA = mix(roofA, (vec3(0.20, 0.23, 0.25) + vec3(0.0, 0.02, 0.05) * lotH) * uDomeTint, typeGlass * 0.8);
   vec3 yard = mix(grass * 0.75, vec3(0.11, 0.11, 0.105), 0.45 + 0.4 * typeInd);
   float park = step(bh, 0.24) * (1.0 - typeInd);
   // pozorny cien budynku po stronie odwrotnej do slonca (wysokosc losowa per dzialka)
@@ -442,7 +471,7 @@ void main() {
     vec2 lotSz = vec2(uPatT[1] / 3.0, blockT / 2.0);
     vec2 q = (lotF - 0.5) * lotSz;
     float fwq = max(fw.x * uPatT[1], fw.y * blockT) * 0.5;
-    vec3 ic = vec3(0.075, 0.076, 0.074) * (0.9 + 0.2 * fract(lotH * 29.0));
+    vec3 ic = vec3(0.075, 0.076, 0.074) * uIndTopTint * (0.9 + 0.2 * fract(lotH * 29.0));
     // oznakowanie placu: linie co 12 j. (z daleka srednia)
     float mk = (1.0 - smoothstep(0.3, 0.3 + fwq, abs(fract(q.x / 12.0) - 0.5) * 12.0 - 5.6)) * (1.0 - smoothstep(1.0, 3.0, fwq));
     ic = mix(ic, vec3(0.16, 0.15, 0.11), mk * 0.35);
@@ -471,9 +500,9 @@ void main() {
     ic *= 1.0 - 0.55 * shI;
     blockCol = ic;
   }
-  vec3 cityCol = mix(blockCol, vec3(0.048, 0.050, 0.054), street);
+  vec3 cityCol = mix(blockCol, TP_STREET, street);
   float farCity = smoothstep(0.22, 0.6, max(fw.x, fw.y) / uDetailScale);
-  vec3 cityAvg = mix(vec3(0.105, 0.108, 0.11), vec3(0.11, 0.105, 0.095), typeInd);
+  vec3 cityAvg = mix(TP_CITY_AVG, vec3(0.11, 0.105, 0.095) * uIndTopTint, typeInd);
   cityAvg = mix(cityAvg, grass, 0.25 * (1.0 - typeInd));
   cityCol = mix(cityCol, cityAvg, farCity);
   float cityMask = smoothstep(0.25, 0.5, urban + var1.b * 0.15) * (1.0 - water);
@@ -485,7 +514,7 @@ void main() {
   vec2 pf = vec2(pp.y, fract(pt));
   vec2 pw = vec2(fwidth(sRel) / uPatT[3], fwidth(pt));
   float seam = 1.0 - aaStep(0.03, min(min(pf.x, 1.0 - pf.x), min(pf.y, 1.0 - pf.y)), max(pw.x, pw.y));
-  vec3 metal = mix(vec3(0.085, 0.10, 0.12), vec3(0.14, 0.16, 0.18), haloHash12(vec2(pp.x, floor(pt)) + 9.0));
+  vec3 metal = mix(TP_METAL_A, TP_METAL_B, haloHash12(vec2(pp.x, floor(pt)) + 9.0));
   metal *= 1.0 - seam * 0.5 * (1.0 - smoothstep(0.2, 0.6, max(pw.x, pw.y)));
   float exMask = smoothstep(0.35, 0.6, exposed) * (1.0 - water);
   ground = mix(ground, metal, exMask);
@@ -497,7 +526,7 @@ void main() {
   line = max(line, (1.0 - aaStep(0.008, lf.x, lw.x)) * 0.6);
   float lineFar = 1.0 - smoothstep(0.08, 0.3, max(lw.x, lw.y));
   float exDark = 1.0 - smoothstep(0.05, 0.4, haloLuma(haloSunVisibility(p, uSunDir)) * max(dot(Nflat, uSunDir), 0.0));
-  emit += vec3(${HALO_HDR.stripBlue.map((v) => v.toFixed(3)).join(", ")}) * line * exMask * mix(0.12, 1.0, lineFar) * uExposedLines * mix(0.25, 1.0, exDark);
+  emit += uHdrStrip * line * exMask * mix(0.12, 1.0, lineFar) * uExposedLines * mix(0.25, 1.0, exDark);
 
   // ---- oswietlenie
   vec3 L = uSunDir;
@@ -518,6 +547,11 @@ void main() {
   float NdL = max(dot(N, L), 0.0);
   vec3 psh = haloPlanetshine(p, N);
   vec3 amb = haloSkyAmbient(p, N) * (1.0 - cloudShadow * 0.35) + psh + vec3(uNightAmbient);
+  // blyski burz (profil: Jowisz): poswiata pod blyskajaca chmura
+  if (uStorm.x > 0.001 && uLayers.x > 0.5) {
+    float flash = haloStormFlash(sRel + uRefBasis.w, t) * haloCloudCover(sRel, t, moist, 2);
+    amb += vec3(0.55, 0.62, 0.9) * flash * uStorm.w * 0.15;
+  }
 
   vec3 color = ground * (sunLight * NdL + amb);
   if (water > 0.001) {
@@ -537,12 +571,12 @@ void main() {
     float tbp = dot(oc, R);
     float dperp2 = dot(oc, oc) - tbp * tbp;
     float skyUp = clamp(dot(R, up), 0.0, 1.0);
-    vec3 skyCol = mix(vec3(0.20, 0.30, 0.45), vec3(0.05, 0.10, 0.22), skyUp) * haloLuma(sunVis) * 0.9 + vec3(0.004, 0.006, 0.01);
+    vec3 skyCol = mix(TP_SKY_HORIZON, TP_SKY_ZENITH, skyUp) * haloLuma(sunVis) * 0.9 + vec3(0.004, 0.006, 0.01);
     vec3 refl = skyCol;
     if (tbp > 0.0 && dperp2 < uPlanet.w * uPlanet.w) {
       vec3 hitN = normalize((p + R * (tbp - sqrt(uPlanet.w * uPlanet.w - dperp2))) - uPlanet.xyz);
       float pl = dot(hitN, L);
-      refl = mix(vec3(0.004, 0.006, 0.012), vec3(0.16, 0.24, 0.36) * uSunColor, smoothstep(-0.05, 0.3, pl));
+      refl = mix(vec3(0.004, 0.006, 0.012), TP_PLANET_LIT * uSunColor, smoothstep(-0.05, 0.3, pl));
     }
     vec3 Hs = normalize(L + V);
     float rough = mix(0.035, 0.16, 1.0 - waveFade);
@@ -551,8 +585,8 @@ void main() {
     float dd = NdH * NdH * (a2 - 1.0) + 1.0;
     float Dg = a2 / (HALO_PI * dd * dd);
     float spec = min(Dg * fres * 0.25 * max(dot(Nw, L), 0.0), 40.0);
-    vec3 deep = vec3(0.004, 0.020, 0.034);
-    vec3 shallow = vec3(0.020, 0.110, 0.115);
+    vec3 deep = TP_WATER_DEEP;
+    vec3 shallow = TP_WATER_SHALLOW;
     vec3 absorb = exp(-depth * vec3(0.09, 0.035, 0.028));
     vec3 bed = mix(beachCol * 0.6, rockCol, 0.3);
     vec3 body = mix(deep, mix(shallow, bed, absorb.g * 0.7), absorb);
@@ -576,9 +610,9 @@ void main() {
   // to tylko cien pod jasnym niebem, miasto nie przechodzi w tryb nocny
   float dayG = haloLuma(haloPlanetTransmit(p, L)) * smoothstep(-0.02, 0.12, dot(up, L));
   on *= 1.0 - 0.9 * dayG;
-  vec3 warm = vec3(${HALO_HDR.windowWarm.map((v) => v.toFixed(3)).join(", ")});
-  vec3 sodium = vec3(${HALO_HDR.windowSodium.map((v) => v.toFixed(3)).join(", ")});
-  vec3 cool = vec3(${HALO_HDR.windowCool.map((v) => v.toFixed(3)).join(", ")});
+  vec3 warm = uHdrWarm;
+  vec3 sodium = uHdrSodium;
+  vec3 cool = uHdrCool;
   vec3 lampCol = mix(mix(warm, sodium, typeInd), cool, typeGlass);
   vec2 wp = haloPat(2, sRel);
   float wt = t / 7.0;

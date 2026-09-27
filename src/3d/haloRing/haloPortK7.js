@@ -15,6 +15,7 @@ import { HALO_GLSL_COMMON, HALO_GLSL_LIGHT, HALO_GLSL_NOISE } from './haloRingGL
 import { K7_ABOVE_SCALE, K7_HEIGHTS, k7Frame, k7HeightToZ, k7Phase } from './haloPortK7Layout.js';
 import { K7_INSTANCE_STRIDE, K7_MAT, buildK7Scene } from './haloPortK7Build.js';
 import { haloFrameToFrame, haloXfPoint } from './haloPortBays.js';
+import { resolveHaloProfile } from './haloRingProfiles.js';
 
 const MAX_GROUPS = 40;   // 4 suwnice × 6 grup + 8 złączek + grupa 0
 const MAX_LAMPS = 10;    // lampy hali (4) + po trzy nad każdą z 2 zatok kompleksu (pasy MEGA, grzebień)
@@ -24,20 +25,20 @@ const srgb = (hex) => {
   return [c((hex >> 16) & 255), c((hex >> 8) & 255), c(hex & 255)];
 };
 
-// Paleta K-7 (kolory z DockMaterials, sRGB → liniowe).
-const K7_PALETTE = [
-  srgb(0x81909a), srgb(0x27323c), srgb(0xd1d0bf), srgb(0xd4a44f), srgb(0xaf693b), srgb(0x38777d),
-  srgb(0x8c9ba3), srgb(0x879797), srgb(0x101920), srgb(0x343b3d), srgb(0x987955), srgb(0x153d4a),
-  srgb(0xc9b587), srgb(0x84c1c6)
-];
+// Paleta K-7 (materiały K7_MAT 0–13) i emisja (cyjan, ciepła, biel, czerwień,
+// zieleń) z profilu planety (port.k7Palette / k7Emit, haloRingProfiles.js):
+// sRGB → liniowe, zaokrąglone do 4 miejsc jak dawne literały w shaderze.
 // Emisja: pasmo barwne 0,9–1,3 (bloomuje i zostaje barwne), biel ~1,4.
-const K7_EMIT = [
-  [0.30, 1.12, 1.28],   // cyan
-  [1.28, 0.78, 0.30],   // warm
-  [1.40, 1.36, 1.14],   // white
-  [1.28, 0.16, 0.08],   // red
-  [0.40, 1.15, 0.66]    // green
-];
+const K7_PAL_SIZE = 14;
+const round4 = (x) => Number(x.toFixed(4));
+export function k7StylePalette(style) {
+  const port = style || resolveHaloProfile('earth').port;
+  return {
+    pal: port.k7Palette.slice(0, K7_PAL_SIZE).map((hex) => srgb(hex).map(round4)),
+    emit: port.k7Emit.map((c) => c.map(round4)),
+    glow: port.k7Glow
+  };
+}
 
 const GLSL_K7_SURFACE = /* glsl */`
 uniform mat4 uHub;                 // hub (z odwzorowaną wysokością) → układ ringu
@@ -55,16 +56,15 @@ varying vec3 vSize;
 varying float vMat;
 varying float vGroup;
 
+uniform vec3 uK7Pal[${K7_PAL_SIZE}];       // paleta hali z profilu planety
+uniform vec3 uK7Emit[5];               // cyjan, ciepla, biel, czerwien, zielen
+uniform vec3 uK7Glow[2];               // poswiata szkla: stala, nocna
 vec3 k7Palette(float m) {
-  ${K7_PALETTE.map((c, i) => `if (m < ${i}.5) return vec3(${f3(c)});`).join('\n  ')}
-  return vec3(0.02, 0.022, 0.025);
+  int i = int(clamp(floor(m + 0.5), 0.0, ${K7_PAL_SIZE}.0));
+  return i < ${K7_PAL_SIZE} ? uK7Pal[i] : vec3(0.02, 0.022, 0.025);
 }
 vec3 k7Emit(float m) {
-  if (m < 14.5) return vec3(${f3(K7_EMIT[0])});
-  if (m < 15.5) return vec3(${f3(K7_EMIT[1])});
-  if (m < 16.5) return vec3(${f3(K7_EMIT[2])});
-  if (m < 17.5) return vec3(${f3(K7_EMIT[3])});
-  return vec3(${f3(K7_EMIT[4])});
+  return uK7Emit[int(clamp(floor(m + 0.5) - 14.0, 0.0, 4.0))];
 }
 // Płyty jak tekstura K-7: 3 × 4 płyty na kafel 260 j. (pokład 4 × 4), jaśniejsza
 // krawędź od góry-lewej, ciemna spoina, śruby w narożnikach, zacieki.
@@ -143,7 +143,7 @@ vec4 k7Shade(vec3 albedo0, float m, vec3 hubN, bool top, vec2 fuv, float fw, flo
   color += F0 * (0.02 + 0.05 * (1.0 - max(N.z, 0.0))) * (1.0 - rough);
   if (m > 13.5 && m < 18.5) color = k7Emit(m) * (0.85 + 0.15 * sin(uHallLights.z * 2.0 + vHub.x * 0.01));
   if (m > 18.5 && m < 19.5) color = uGroupEmit[int(matEmitGroup + 0.5)];
-  if (m > 10.5 && m < 11.5) color += vec3(0.0423, 0.1470, 0.1651) * 0.35 + vec3(0.06, 0.10, 0.11) * (0.3 + 0.7 * (1.0 - uHallLights.y));
+  if (m > 10.5 && m < 11.5) color += uK7Glow[0] + uK7Glow[1] * (0.3 + 0.7 * (1.0 - uHallLights.y));
   return vec4(max(color, vec3(0.0)), 1.0);
 }
 `;
@@ -517,7 +517,9 @@ function makeLabelMesh(labels, atlas) {
 export class HaloPortK7 {
   // angle — kąt kompleksu (hala K-7 w środku); index 0 = hala gracza przy kącie
   // stacji; bays — otwarte zatoki kompleksu (haloBayLayouts z ramkami)
-  constructor({ ringLayout, uniforms, layout, angle, index = 0, bays = [] }) {
+  // style — styl doków z profilu planety (port: dach, ściany, paleta, napisy)
+  constructor({ ringLayout, uniforms, layout, angle, index = 0, bays = [], style = null }) {
+    this.style = style || resolveHaloProfile(ringLayout?.planetProfile).port;
     this.layout = layout;
     this.index = index;
     this.frame = k7Frame(ringLayout, angle);
@@ -539,7 +541,7 @@ export class HaloPortK7 {
     this.root.matrix.copy(hubM);
     this.hubMatrix = hubM;
 
-    const scene = buildK7Scene(layout, { floorZ: fr.floorZ, rimZ: fr.rimZ, floorR: fr.floorR, bays: this.bays });
+    const scene = buildK7Scene(layout, { floorZ: fr.floorZ, rimZ: fr.rimZ, floorR: fr.floorR, bays: this.bays, style: this.style });
     this.scene = scene;
     this.groups = scene.groups;
     this.sphere = complexSphere(scene.sets);
@@ -571,8 +573,15 @@ export class HaloPortK7 {
       uGroupEmit: { value: groupEmit },
       uRoofOpacity: { value: 1 },
       uHallLights: { value: new THREE.Vector4(0.22, 1, 0, 0) },
-      uLamps: { value: lamps }
+      uLamps: { value: lamps },
+      uK7Pal: { value: [] },
+      uK7Emit: { value: [] },
+      uK7Glow: { value: [] }
     };
+    const kp = k7StylePalette(this.style);
+    this.k7Uniforms.uK7Pal.value = kp.pal.map((c) => new THREE.Vector3(...c));
+    this.k7Uniforms.uK7Emit.value = kp.emit.map((c) => new THREE.Vector3(...c));
+    this.k7Uniforms.uK7Glow.value = kp.glow.map((c) => new THREE.Vector3(...c));
     this.roofUniforms = { ...this.k7Uniforms, uRoofOpacity: { value: 1 } };
     const common = { ...uniforms, ...this.k7Uniforms };
     const commonRoof = { ...uniforms, ...this.roofUniforms };

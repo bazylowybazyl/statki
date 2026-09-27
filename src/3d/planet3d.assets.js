@@ -13,7 +13,9 @@ import { SUN_SHADOW_GLSL, attachSunShadowUniforms, applySunShadowToBuiltinMateri
 
 window.Dev = window.Dev || {};
 const PLANET_SIZE_MULTIPLIER = 4.5;
-const RING_PLANET_NAMES = new Set(['earth', 'mars']);
+// Planety z ringiem „Halo” (src/game/haloRingPlanets.js): rysowane w passie
+// ortho przy ringu, w promieniu świata z ringScale.js. Jowisz od Z6 (2026-09-26).
+const RING_PLANET_NAMES = new Set(['earth', 'mars', 'jupiter']);
 const RING_PLANET_VISUAL_Z = 0;
 const SUN_SIZE_MULTIPLIER = 6.0;
 // The old tuning expanded the atmosphere shell to 121% of the planet radius.
@@ -32,11 +34,17 @@ const MOON_TUNE = Object.freeze({
     bumpTex: 'assets/planety/images/moonbump.jpg',
     bumpScale: 0.07
 });
+// Dekoracyjne księżyce Jowisza. Od Z6 (2026-09-26) Jowisz ma ring „Halo”
+// (promień 48 000, ring do ~54 750, port z redą do ~70 tys.): dawne orbity
+// 20–48 tys. leżały w planecie i ringu. Orbity = promienie księżyców mapy
+// (systemMap.js: Io 60 tys. — pod ringiem, więc 86 tys.; Europa 105,
+// Ganimedes 165, Kallisto 250 tys.), okresy wydłużone proporcjonalnie
+// (prędkość liniowa jak dawniej). Rozmiar: ułamek promienia planety przy ringu.
 const JUPITER_MOONS_TUNE = Object.freeze([
-    Object.freeze({ id: 'io', orbitRadius: 20000, orbitPeriodSec: 82, spinPeriodSec: 48, sizeRatioToParent: 0.072, phase: 0.0, colorTex: 'assets/planety/images/jupiterIo.jpg', haloColor: 0xffb16f }),
-    Object.freeze({ id: 'europa', orbitRadius: 28000, orbitPeriodSec: 110, spinPeriodSec: 58, sizeRatioToParent: 0.061, phase: 1.4, colorTex: 'assets/planety/images/jupiterEuropa.jpg', haloColor: 0x9fc8ff }),
-    Object.freeze({ id: 'ganymede', orbitRadius: 37000, orbitPeriodSec: 150, spinPeriodSec: 74, sizeRatioToParent: 0.086, phase: 2.2, colorTex: 'assets/planety/images/jupiterGanymede.jpg', haloColor: 0xb6c3d6 }),
-    Object.freeze({ id: 'callisto', orbitRadius: 48000, orbitPeriodSec: 195, spinPeriodSec: 92, sizeRatioToParent: 0.080, phase: 3.1, colorTex: 'assets/planety/images/jupiterCallisto.jpg', haloColor: 0x91a7c4 })
+    Object.freeze({ id: 'io', orbitRadius: 86000, orbitPeriodSec: 352, spinPeriodSec: 48, sizeRatioToParent: 0.05, phase: 0.0, colorTex: 'assets/planety/images/jupiterIo.jpg', haloColor: 0xffb16f }),
+    Object.freeze({ id: 'europa', orbitRadius: 105000, orbitPeriodSec: 412, spinPeriodSec: 58, sizeRatioToParent: 0.042, phase: 1.4, colorTex: 'assets/planety/images/jupiterEuropa.jpg', haloColor: 0x9fc8ff }),
+    Object.freeze({ id: 'ganymede', orbitRadius: 165000, orbitPeriodSec: 669, spinPeriodSec: 74, sizeRatioToParent: 0.06, phase: 2.2, colorTex: 'assets/planety/images/jupiterGanymede.jpg', haloColor: 0xb6c3d6 }),
+    Object.freeze({ id: 'callisto', orbitRadius: 250000, orbitPeriodSec: 1016, spinPeriodSec: 92, sizeRatioToParent: 0.055, phase: 3.1, colorTex: 'assets/planety/images/jupiterCallisto.jpg', haloColor: 0x91a7c4 })
 ]);
 const SATURN_VISUAL_RING = Object.freeze({
     innerRadius: 1.22,
@@ -300,7 +308,9 @@ function createAtmosphereMaterial(glowColor, sunsetTint, coef, power, sunMul = 1
 // 1,034 R z maską Fresnela dawała tu ~1% jasności — poświaty nie było widać.
 const RING_ATMOSPHERE_TUNE = Object.freeze({
     earth: Object.freeze({ height: 1250, day: [0.26, 0.5, 1.0], sunset: [1.0, 0.38, 0.12], gain: 0.95 }),
-    mars: Object.freeze({ height: 700, day: [0.85, 0.5, 0.3], sunset: [0.35, 0.55, 1.0], gain: 0.55 })
+    mars: Object.freeze({ height: 700, day: [0.85, 0.5, 0.3], sunset: [0.35, 0.55, 1.0], gain: 0.55 }),
+    // Jowisz: gruba, jasna atmosfera (beż z bursztynem, zachód pomarańczowy)
+    jupiter: Object.freeze({ height: 2400, day: [0.72, 0.64, 0.52], sunset: [1.0, 0.55, 0.25], gain: 0.75 })
 });
 const RING_ATMOSPHERE_VERTEX = `varying vec2 vOff; void main() { vOff = position.xy; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
 const RING_ATMOSPHERE_FRAGMENT = `precision highp float;

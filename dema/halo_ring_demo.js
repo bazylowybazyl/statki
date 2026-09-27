@@ -6,13 +6,15 @@ import * as THREE from 'three';
 import { createHaloRing } from '../src/3d/haloRing/index.js';
 import { HALO_QUALITY, HALO_GEOMETRY_DEFAULTS, HALO_STATION_ANGLE, haloTransitAngles } from '../src/3d/haloRing/haloRingConfig.js';
 import { computeGameCameraHeight } from '../src/3d/haloRing/haloRingLayout.js';
+import { resolveHaloProfile } from '../src/3d/haloRing/haloRingProfiles.js';
 import { RING_PLANET_WORLD_RADII } from '../src/3d/ringScale.js';
+import { HALO_RING_PLANETS } from '../src/game/haloRingPlanets.js';
 import { K7FlightDemo } from './halo_ring_k7_flight.js';
 import {
   DEMO_LAYERS,
   createAtlasSprite,
-  createEarth,
   createGameBackground,
+  createPlanetBody,
   createPost,
   createSky,
   loadShipTexture
@@ -57,10 +59,15 @@ renderer.debug.onShaderError = (gl, program, vs, fs) => {
   reportError(`SHADER: ${log}`);
 };
 
+// Planeta (Z6, 2026-09-26): ?planet=earth|mars|jupiter — ring z profilem planety
+// (wygląd ringu i doków, haloRingProfiles.js), promień i ziarno jak w grze.
+const planetKey = HALO_RING_PLANETS[params.get('planet')] ? params.get('planet') : 'earth';
+const planetSpec = HALO_RING_PLANETS[planetKey];
+const planetProfile = resolveHaloProfile(planetSpec.profile);
 const state = {
   mode: 'cine',
   quality: HALO_QUALITY[params.get('quality')] ? params.get('quality') : 'high',
-  seed: Number(params.get('seed')) || 1337,
+  seed: Number(params.get('seed')) || planetSpec.seed,
   geometry: {
     width: Number(params.get('w')) || HALO_GEOMETRY_DEFAULTS.width,
     wallHeight: Number(params.get('wall')) || HALO_GEOMETRY_DEFAULTS.wallHeight,
@@ -81,10 +88,11 @@ const state = {
 // Scena
 const scene = new THREE.Scene();
 scene.matrixWorldAutoUpdate = true;
-const planetRadius = RING_PLANET_WORLD_RADII.earth;
+const planetRadius = RING_PLANET_WORLD_RADII[planetKey];
 const ring = createHaloRing({
   planetRadius,
   seed: state.seed,
+  profile: planetSpec.profile,
   quality: state.quality,
   renderer,
   ...state.geometry
@@ -92,7 +100,7 @@ const ring = createHaloRing({
 ring.setLayers({ default: DEMO_LAYERS.bg, fg: DEMO_LAYERS.fg });
 scene.add(ring.group);
 
-const earth = createEarth(renderer, ring.uniforms, planetRadius);
+const earth = createPlanetBody(renderer, ring.uniforms, planetRadius, planetKey);
 scene.add(earth.game, earth.cine);
 const sky = createSky();
 scene.add(sky.mesh);
@@ -515,10 +523,11 @@ const PRESETS_OUTWARD = [
   {
     key: '7', name: 'Kamera gry (zoom 0,035)',
     build() {
-      // poza ringiem przy stacji Ziemi (45° w układzie gry, y w dół);
+      // poza ringiem przy porcie (45° w układzie gry, y w dół; Ziemia 52 000);
       // Słońce po tej stronie: dzień habitatu = dzień planety obok
       const a = 45 * DEG;
-      return { mode: 'game', game: { x: Math.cos(a) * 52000, y: Math.sin(a) * 52000, zoom: 0.035 },
+      const r = ring.layout.radii.rim + 8250;
+      return { mode: 'game', game: { x: Math.cos(a) * r, y: Math.sin(a) * r, zoom: 0.035 },
         sun: { azimuth: -25, elevation: 49 } };
     }
   },
@@ -537,7 +546,7 @@ const PRESETS_OUTWARD = [
   }
 ];
 PRESETS_OUTWARD.push({
-  key: '9', name: 'Port Kepler: K-7 i doki transportowe',
+  key: '9', name: `${planetProfile.port.name}: K-7 i zatoki`,
   build() {
     // K-7 (dok gameplayowy z ECUMENE) wpięty w podłogę habitatu na środku
     // wstęgi, po bokach doki transportowe — widok z kosmosu jak na zrzucie
@@ -1025,7 +1034,7 @@ function syncUi() {
   $('preset-name').textContent = state.presetName;
   $('quality').value = state.quality;
   $('cam-hint').textContent = state.mode === 'game' ? 'Replika Core3D: BG persp (ring) → Ziemia ortho → świat ortho → FG (K-7)'
-    : state.mode === 'flight' ? 'Port Ziemi (K-7 i zatoki) · W/S/A/D, Spacja, Shift, E dokowanie, V kadłub, L wyjście' : 'Jedno słońce dla planety i ringu';
+    : state.mode === 'flight' ? `${planetProfile.port.name} (K-7 i zatoki) · W/S/A/D, Spacja, Shift, E dokowanie, V kadłub, L wyjście` : 'Jedno słońce dla planety i ringu';
 }
 uiSync.push(bindRange('sun-az', () => state.sun.azimuth, (v) => { state.sun.azimuth = v; applySun(); }, (v) => `${v.toFixed(1)}°`));
 uiSync.push(bindRange('sun-el', () => state.sun.elevation, (v) => { state.sun.elevation = v; applySun(); }, (v) => `${v.toFixed(1)}°`));
@@ -1039,6 +1048,15 @@ uiSync.push(bindRange('exposure', () => state.exposure, (v) => { state.exposure 
 post.state.exposure = state.exposure;
 $('g-seed').value = state.seed;
 $('g-facing').value = state.geometry.habitatFacing;
+// planeta: profil ringu i doków — nowa strona (bake map i bryły od zera)
+$('planet').value = planetKey;
+$('title').textContent = `RING HALO · ${planetProfile.label.toUpperCase()} · ${planetProfile.port.name}`;
+$('planet').addEventListener('change', (e) => {
+  const q = new URLSearchParams(location.search);
+  q.set('planet', e.target.value);
+  q.delete('seed');
+  location.search = q.toString();
+});
 $('rebuild').addEventListener('click', () => {
   state.seed = Number($('g-seed').value) || 1337;
   const facingChanged = $('g-facing').value !== state.geometry.habitatFacing;

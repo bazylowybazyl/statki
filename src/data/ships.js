@@ -220,7 +220,27 @@ export const HULL_RENDER_PROFILES = {
   // Ogniwo między frachtowcem dalekiego zasięgu (900) a megafrachtowcem (4600).
   // Bez niego nic w całej flocie nie mieści się w stanowisku klasy `capital`:
   // frachtowiec wchodzi na `l`, a megafrachtowiec wymaga już `mega`.
-  heavy_freighter: { id: 'heavy_freighter', length: 3000, radius: 550 }
+  heavy_freighter: { id: 'heavy_freighter', length: 3000, radius: 550 },
+  // Gotowe sprite'y z assets/ dla ruchu v2 (rejestr: src/data/trafficHulls.js).
+  // Płótna 2:1 (tanker 1780 × 884, dron 1536 × 1024). Belter, boja i dron
+  // zajmują ~2/3 szerokości płótna, więc w grze są krótsze niż length × 0,6.
+  // Klasa stanowiska z length × 2·radius (× 0,6) musi mieścić się w padzie K-7
+  // tej klasy (tests/haloPortTraffic.test.mjs).
+  heavy_harvester: { id: 'heavy_harvester', length: 600, radius: 216 },
+  belter: { id: 'belter', length: 300, radius: 110 },
+  surveyor: { id: 'surveyor', length: 320, radius: 110 },
+  refinery_tender: { id: 'refinery_tender', length: 800, radius: 260 },
+  tanker: { id: 'tanker', length: 900, radius: 260 },
+  salvage_hauler: { id: 'salvage_hauler', length: 700, radius: 240 },
+  construction_tug: { id: 'construction_tug', length: 360, radius: 140 },
+  pirate_raider: { id: 'pirate_raider', length: 480, radius: 170 },
+  smuggler: { id: 'smuggler', length: 360, radius: 130 },
+  // 160, nie 110: getHullRenderSize trzyma krótszy bok ≥ 64 j., więc dron
+  // (płótno 3:2) przy 110 rysowałby się 66 × 64 zamiast 66 × 44.
+  repair_drone: { id: 'repair_drone', length: 160, radius: 60 },
+  // Jak statek ratunkowy z Z11 (rescue_ship), którego zastępuje: kadłub bez
+  // masztu 1179 × 410 px płótna 1774 → w grze ~160 × 55.
+  distress_beacon_ship: { id: 'distress_beacon_ship', length: 400, radius: 150 }
 };
 
 export const HULL_RENDER_PROFILE_ALIASES = {
@@ -274,6 +294,9 @@ export const WEAPON_TIER_BY_HULL = Object.freeze({
   terran_supercapital: 'Capital',
   pirate_battleship: 'L',
   capital_carrier: 'L',
+  // Kadłuby ruchu v2 z uzbrojeniem po awansie do NPC (bez wpisu: Capital).
+  pirate_raider: 'M',
+  smuggler: 'S',
   megafreighter: 'Capital',
   supercapital: 'Capital',
   atlas: 'Capital'

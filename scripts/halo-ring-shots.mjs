@@ -153,6 +153,43 @@ const SETS = {
     'lm0_gate', 'lm3_park_night', 'lm0_game_z045', 'p6', 'm4_city_z1']
 };
 
+// Profile planet (Z6, 2026-09-26): --planet mars|jupiter|earth — ring z profilem
+// planety, promień i ziarno jak w grze; ujęcia liczone z promieni tego ringu
+// (sektor k: kąt gry 45° − 22,5°·k, słońce 20° przed nim). Zestaw „profile”.
+const planet = args.planet || '';
+let planetSeed = '1337';
+if (planet) {
+  const { createHaloRingLayout } = await import('../src/3d/haloRing/haloRingLayout.js');
+  const { RING_PLANET_WORLD_RADII } = await import('../src/3d/ringScale.js');
+  const { HALO_RING_PLANETS } = await import('../src/game/haloRingPlanets.js');
+  const spec = HALO_RING_PLANETS[planet];
+  planetSeed = String(spec.seed);
+  const L = createHaloRingLayout({ planetRadius: RING_PLANET_WORLD_RADII[planet], seed: spec.seed, profile: spec.profile });
+  const rim = L.radii.rim;
+  const secPhi = (k) => 45 - 22.5 * k;
+  const secSun = (k) => ({ az: -secPhi(k) - 20, el: 49 });
+  const P = (id, q) => ({ id: `${planet}_${id}`, q });
+  const sectorViews = (k, zoom = 0.342, off = 1800) => P(`sec${k}_z${String(zoom).replace('.', '')}`, { cam: 'game', preset: 7, zoom, ships: 0, ...secSun(k), ...atA(rim + off, secPhi(k)) });
+  const profileShots = [
+    P('p8', { preset: 8 }), P('p9', { preset: 9 }), P('p1', { preset: 1 }), P('p2', { preset: 2 }), P('p3', { preset: 3 }),
+    P('p4', { preset: 4 }), P('p5', { preset: 5 }), P('p6', { preset: 6 }), P('transit', { preset: 10 }),
+    P('game_port_z0035', { cam: 'game', preset: 7, zoom: 0.035, ...atA(rim + 8250, 45) }),
+    P('game_port_z01', { cam: 'game', preset: 7, zoom: 0.1, ...atA(rim + 6250, 42) }),
+    P('game_port_z02', { cam: 'game', preset: 7, zoom: 0.2, ...atA(rim + 4250, 38) }),
+    P('game_port_night_z02', { cam: 'game', preset: 7, zoom: 0.2, ships: 0, az: 135, el: 20, ...atA(rim + 4250, 38) }),
+    P('k7_docked_z035', { cam: 'flight', k7: 'docked', zoom: 0.35 }),
+    P('k7_hall_z016', { cam: 'flight', k7: 'docked', zoom: 0.16 }),
+    P('k7_docked_z1', { cam: 'flight', k7: 'docked', zoom: 1.0 }),
+    P('bay_cont_z035', { cam: 'flight', k7: 'docked', hull: 'container_ship', zoom: 0.35 }),
+    P('lm0', { landmark: 0 }), P('lm1', { landmark: 1 }), P('lm0_game_z045', { landmark: 0, cam: 'game', zoom: 0.45 }),
+    P('dome0', { dome: 0 }), P('dome0_game_z045', { dome: 0, cam: 'game', zoom: 0.45 }), P('dome0_night', { dome: 0, night: 1 }),
+    ...[1, 2, 3, 5, 7, 9, 11, 13, 15].map((k) => sectorViews(k)),
+    sectorViews(1, 0.1, 5000), sectorViews(7, 0.1, 5000)
+  ];
+  SHOTS.push(...profileShots);
+  SETS.profile = profileShots.map((s) => s.id);
+}
+
 const only = args.only ? new Set(args.only.split(',')) : (args.set && SETS[args.set] ? new Set(SETS[args.set]) : null);
 const shots = SHOTS.filter((s) => !only || only.has(s.id));
 
@@ -229,7 +266,7 @@ async function main() {
   const results = [];
   for (const shot of shots) {
     logs.length = 0;
-    const q = new URLSearchParams({ ...(shot.ui ? {} : { shot: '1' }), quality, seed: '1337', ...Object.fromEntries(Object.entries(shot.q).map(([k, v]) => [k, String(v)])) });
+    const q = new URLSearchParams({ ...(shot.ui ? {} : { shot: '1' }), quality, seed: planetSeed, ...(planet ? { planet } : {}), ...Object.fromEntries(Object.entries(shot.q).map(([k, v]) => [k, String(v)])) });
     const url = `${base}/dema/halo_ring_demo.html?${q}`;
     await cdp.send('Emulation.setDeviceMetricsOverride', { width: W, height: H, deviceScaleFactor: 1, mobile: false });
     const t0 = Date.now();

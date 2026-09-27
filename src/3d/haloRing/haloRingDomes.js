@@ -31,11 +31,13 @@ export const HALO_DOME = Object.freeze({
   waterDepth: -5
 });
 
-export const HALO_DOME_TYPES = Object.freeze(['forest', 'tropical', 'botanical', 'recreation', 'wilderness', 'aquatic']);
+// 'city' (Mars): miasto pod kopułą ciśnieniową — zabudowa w środku (bake:
+// zabudowa do ~0,6 promienia, kawałki miasta 3D w haloRingCity.js)
+export const HALO_DOME_TYPES = Object.freeze(['forest', 'tropical', 'botanical', 'recreation', 'wilderness', 'aquatic', 'city']);
 const WATER_TYPES = new Set(['forest', 'tropical', 'botanical', 'recreation', 'aquatic']);
 export const HALO_DOME_LABELS = Object.freeze({
   forest: 'LAS', tropical: 'TROPIKI', botanical: 'OGRÓD BOTANICZNY', recreation: 'PARK REKREACYJNY',
-  wilderness: 'DZICZ', aquatic: 'AKWARIUM'
+  wilderness: 'DZICZ', aquatic: 'AKWARIUM', city: 'MIASTO'
 });
 
 // 12 kopuł jak w ECUMENE (DOME_PLANS), typy wnętrz z demo_2 (DOME_TYPES):
@@ -56,6 +58,35 @@ export const HALO_DOME_SPECS = Object.freeze([
   { sector: 'HELIX', u: 0.05, z: 0, type: 'botanical', r: 200, v: 0.85 }
 ]);
 
+// Zestawy kopuł per planeta (profil: domes.set, haloRingProfiles.js). Mars:
+// kopuły ciśnieniowe — miasta pod szkłem w pustyniach, kraterach i kanionach
+// plus ogrody; Jowisz: kilka kopuł hydroponicznych przy arkologiach.
+export const HALO_DOME_SETS = Object.freeze({
+  ecumene: HALO_DOME_SPECS,
+  // Mars: kopuły-miasta na końcach sektorów krajobrazu przy tranzytach
+  // (reszta tych sektorów leży w strefach portu), ogrody w miastach szklanych
+  mars: Object.freeze([
+    { sector: 'VALLES MARINERIS', u: 0.88, z: 0, type: 'city', r: 440, v: 0.8 },
+    { sector: 'OLYMPUS', u: 0.12, z: 150, type: 'city', r: 420, v: 0.8 },
+    { sector: 'HELLAS', u: 0.88, z: -150, type: 'city', r: 480, v: 0.8 },
+    { sector: 'UTOPIA', u: 0.12, z: 0, type: 'city', r: 440, v: 0.8 },
+    { sector: 'ARGYRE', u: 0.88, z: 150, type: 'city', r: 420, v: 0.8 },
+    { sector: 'AMAZONIS', u: 0.12, z: -150, type: 'city', r: 460, v: 0.8 },
+    { sector: 'BOREALIS', u: 0.88, z: 0, type: 'city', r: 400, v: 0.8 },
+    { sector: 'MERIDIANI', u: 0.12, z: 150, type: 'city', r: 440, v: 0.8 },
+    { sector: 'SYRTIS', u: 0.8, z: 250, type: 'tropical', r: 360, v: 1.0 },
+    { sector: 'ELYSIUM', u: 0.5, z: 300, type: 'botanical', r: 240, v: 0.85 },
+    { sector: 'NOCTIS', u: 0.5, z: -300, type: 'forest', r: 260, v: 0.9 },
+    { sector: 'PROMETHEI', u: 0.5, z: 300, type: 'recreation', r: 240, v: 0.9 }
+  ].map((s) => Object.freeze(s))),
+  jupiter: Object.freeze([
+    { sector: 'CALLIRRHOE', u: 0.5, z: 0, type: 'tropical', r: 420, v: 1.0 },
+    { sector: 'THEBE', u: 0.2, z: -200, type: 'botanical', r: 260, v: 0.85 },
+    { sector: 'ANANKE', u: 0.7, z: 200, type: 'forest', r: 300, v: 0.9 },
+    { sector: 'KALE', u: 0.3, z: 0, type: 'recreation', r: 280, v: 0.9 }
+  ].map((s) => Object.freeze(s)))
+});
+
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 
 // Miejsca kopuł. options: heightAt (jak haloCivicContext), ctx — wspólny
@@ -69,7 +100,8 @@ export function buildHaloDomePlan(layout, options = {}) {
   for (const o of options.avoid || []) if (!ctx.placed.includes(o)) ctx.placed.push(o);
   const allowed = (s) => !s.port && (s.type === 'garden' || s.type === 'glass' || s.type === 'landscape');
   const perSector = new Map();
-  for (const spec of HALO_DOME_SPECS.slice(0, D.maxCount)) {
+  const specs = HALO_DOME_SETS[layout.planetProfile?.domes?.set] || HALO_DOME_SPECS;
+  for (const spec of specs.slice(0, D.maxCount)) {
     let sec = layout.sectors.find((s) => s.name === spec.sector && allowed(s));
     if (!sec) {
       for (const s of layout.sectors) {
@@ -113,6 +145,7 @@ export function buildHaloDomePlan(layout, options = {}) {
       flatR,
       ramp: D.ramp,
       park: { halfA: reachA, halfQ: parkQ },
+      city: spec.type === 'city',
       warm: sec.type !== 'glass',
       entrances,
       reachA,

@@ -20,6 +20,7 @@ import {
   k7SolidList
 } from './haloPortK7Layout.js';
 import { baySolidList, haloXfPoint } from './haloPortBays.js';
+import { resolveHaloProfile } from './haloRingProfiles.js';
 
 export const K7_MAT = Object.freeze({
   steel: 0, dark: 1, pale: 2, yellow: 3, orange: 4, teal: 5, floor: 6, rail: 7, black: 8, hose: 9,
@@ -149,6 +150,9 @@ export function buildK7Scene(layout, ringInfo = {}) {
   const l = layout;
   const f = new Recorder();
   const M = K7_MAT;
+  // styl doków z profilu planety (dach, ściany, napisy); Ziemia = hala z dema K-7
+  const style = ringInfo.style || resolveHaloProfile('earth').port;
+  const LC = style.labels;
   const plates = [];
   const labels = [];
   const groups = [];            // opisy grup ruchomych (indeks = pozycja + 1)
@@ -197,14 +201,14 @@ export function buildK7Scene(layout, ringInfo = {}) {
         for (let y = 110; y < 580; y += 95) f.box(x + e.nx * 72, y, z + e.nz * 72, 27, 35, 9, M.black, -e.angle);
       }
       for (let k = -1; k <= 1; k++) f.box(e.x + e.ux * k * gate.clearWidth * 0.3, 681, e.z + e.nz * 92, 125, 31, 8, M.green, -e.angle);
-      label(labels, gate.id, e.x - e.nx * 140, e.z - e.nz * 140, 360, 88, '#94cdd1', gate.name, -e.angle);
+      label(labels, gate.id, e.x - e.nx * 140, e.z - e.nz * 140, 360, 88, LC.gate, gate.name, -e.angle);
     }
   }
 
   // ---- pokład: stanowiska, pasy, strzałki (K-7 buildDeck)
   const stripe = (x, z, w, d, mat) => f.box(x, 1.5, z, w, 1.5, d, mat);
   const hubLabel = (text, x, z, width, depth, color, small, rotation) => label(labels, text, x, z, width, depth, color, small, rotation);
-  recordBerths(f, hubLabel, lamps, l.berths);
+  recordBerths(f, hubLabel, lamps, l.berths, LC);
   for (const lane of l.lanes) {
     for (const side of [-1, 1]) for (let z = 3230; z < l.frontZ + l.apronDepth - 70; z += 155) stripe(lane.x + side * 510, z, 8, 74, M.paintCold);
     for (let z = 3380; z < l.frontZ + l.apronDepth - 80; z += 670) {
@@ -212,14 +216,14 @@ export function buildK7Scene(layout, ringInfo = {}) {
       for (const side of [-1, 1]) f.box(lane.x + side * 563, 8, z, 23, 6, 75, M.cyan);
     }
   }
-  label(labels, 'K-7', 0, l.frontZ - 1210, 940, 330, '#687d83', 'CENTRAL HUB / ' + l.berths.length + ' BERTHS');
-  label(labels, 'CLEAR MANOEUVRING AREA', 0, l.frontZ - 720, 1910, 68, '#99a6a2');
+  label(labels, 'K-7', 0, l.frontZ - 1210, 940, 330, LC.hub, 'CENTRAL HUB / ' + l.berths.length + ' BERTHS');
+  label(labels, 'CLEAR MANOEUVRING AREA', 0, l.frontZ - 720, 1910, 68, LC.clear);
   for (const bank of l.sideBanks) {
     const z = (bank.z0 + bank.z1) / 2;
     const length = bank.z1 - bank.z0;
     for (const side of [-1, 1]) for (let zz = bank.z0; zz < bank.z1; zz += 155) stripe(bank.aisleX + side * (bank.aisleWidth / 2), zz, 5, 68, M.paintCold);
     for (let zz = 920; zz < bank.z1; zz += 660) directionArrow(f, bank.aisleX, zz, -Math.PI / 2, 105, M.paintCold);
-    label(labels, bank.id + ' / 2L  4M  6S', bank.aisleX, bank.z1 - 35, 850, 86, '#aab7ad', 'LOGISTICS TAXI / KEEP CLEAR');
+    label(labels, bank.id + ' / 2L  4M  6S', bank.aisleX, bank.z1 - 35, 850, 86, LC.bank, 'LOGISTICS TAXI / KEEP CLEAR');
     const x = bank.side * (l.halfWidth - 165);
     f.box(x, 10, z, 95, 20, length, M.dark);
     for (let zz = bank.z0; zz < bank.z1; zz += 40) f.box(x, 22, zz, 83, 3, 7, M.rail);
@@ -244,7 +248,7 @@ export function buildK7Scene(layout, ringInfo = {}) {
   f.box(0, 227, 780, 267, 80, 16, M.glass);
   f.box(0, 124, 778, 260, 31, 11, M.yellow);
   for (const x of [-108, 108]) f.box(x, 300, 789, 30, 13, 7, M.warm);
-  label(labels, 'PORT CONTROL', 0, 863, 340, 61, '#a6bbb6');
+  label(labels, 'PORT CONTROL', 0, 863, 340, 61, LC.control);
   for (const bank of l.sideBanks) {
     const side = bank.side;
     for (let k = 0; k < 4; k++) {
@@ -289,7 +293,7 @@ export function buildK7Scene(layout, ringInfo = {}) {
       const u = side * (half - 25);
       for (let d = 80; d < depth; d += 155) f.box(gate.x + gate.ux * u + gate.nx * d, 2, gate.z + gate.uz * u + gate.nz * d, 38, 6, 64, M.cyan, -gate.angle + Math.PI / 2);
     }
-    if (gate.id !== 'G-01') label(labels, 'LOGISTICS', gate.x + gate.nx * 470, gate.z + gate.nz * 470, 750, 77, '#80999e', '', -gate.angle);
+    if (gate.id !== 'G-01') label(labels, 'LOGISTICS', gate.x + gate.nx * 470, gate.z + gate.nz * 470, 750, 77, LC.logistics, '', -gate.angle);
   }
   for (const side of [-1, 1]) {
     const x = side * (l.frontHalfWidth + 160);
@@ -298,7 +302,10 @@ export function buildK7Scene(layout, ringInfo = {}) {
     f.box(x, 305, z, 68, 12, 74, M.cyan);
     f.box(x, 140, z + 55, 35, 160, 9, M.white);
   }
-  label(labels, 'K-7 / CAPITAL GATE', 0, l.frontZ + 510, 1420, 120, '#9caaa7');
+  label(labels, 'K-7 / CAPITAL GATE', 0, l.frontZ + 510, 1420, 120, LC.capital);
+  // ściany z zewnątrz (styl planety): pod płaszczyzną lotu, poza halą
+  if (style.walls === 'berm') buildBermWalls(f, l);
+  else if (style.walls === 'pipes') buildPipeWalls(f, l);
 
   // ---- suwnice i węże paliwowe (K-7 CraneSystem + FuelHoseSystem)
   const cranes = [];
@@ -309,9 +316,28 @@ export function buildK7Scene(layout, ringInfo = {}) {
   }
 
 
-  // ---- dach (K-7 buildRoof) — osobny zestaw, zanika przy statku w hali
+  // ---- dach (K-7 buildRoof) — osobny zestaw, zanika przy statku w hali;
+  // styl z profilu planety: 'k7' (Ziemia), 'vault' (Mars: sklepienie łukowe
+  // z regolitem), 'radiator' (Jowisz: pola radiatorów, rury, zbiorniki)
   f.set = 'roof';
   plate(plates, l.footprint, 711, 82, M.dark, 'roof');
+  if (style.roof === 'vault') buildVaultRoof(f, l);
+  else if (style.roof === 'radiator') buildRadiatorRoof(f, l);
+  else buildK7Roof(f, l);
+  f.set = 'bg';
+
+  // ---- przypięcie do ringu: most do krawędzi dachu, zastrzały, tunele do habitatu
+  buildHabitatPlug(f, plates, labels, l, ringInfo, style);
+
+  // ---- otwarte zatoki kompleksu (stanowiska w standardzie K-7)
+  for (const bay of ringInfo.bays || []) buildBay(f, plates, labels, lamps, bay.layout, bay.xf, LC);
+
+  return { sets: f.sets, plates, labels, groups, hoses, lamps, cranes };
+}
+
+// Dach hali z dema K-7 (Ziemia): belki poprzeczne, panele, moduły wentylacji.
+function buildK7Roof(f, l) {
+  const M = K7_MAT;
   for (let z = l.backZ + 220; z < l.frontZ - 140; z += 520) {
     const half = l.halfWidthAt(z) - 55;
     f.box(0, 819, z, half * 2, 62, 43, M.pale);
@@ -338,21 +364,120 @@ export function buildK7Scene(layout, ringInfo = {}) {
   }
   for (const x of [-820, 820]) f.box(x, 892, 780, 330, 82, 280, M.pale);
   for (let z = 850; z < l.bodyEndZ; z += 480) f.box(0, 840, z, 16, 9, 125, M.white);
-  f.set = 'bg';
+}
 
-  // ---- przypięcie do ringu: most do krawędzi dachu, zastrzały, tunele do habitatu
-  buildHabitatPlug(f, plates, labels, l, ringInfo);
+// Mars: sklepienie łukowe nad halą — żebra co 520 j. (łuk w płaszczyźnie
+// x-y, 8 odcinków), między nimi poszycie z regolitu pasami na przemian,
+// świetlik wzdłuż grzbietu. Wysokości K-7 (×0,42 nad płaszczyzną lotu):
+// grzbiet ~1000 → z ≈ 370 (kamera przy zoomie 3,2 wisi 535 j. nad z = 0).
+function buildVaultRoof(f, l) {
+  const M = K7_MAT;
+  const base = 793;
+  const rise = 190;
+  const n = 8;
+  const arch = (half) => Array.from({ length: n + 1 }, (_, k) => {
+    const u = (k / n) * 2 - 1;
+    return [u * half, base + rise * (1 - u * u)];
+  });
+  const zs = [];
+  for (let z = l.backZ + 220; z < l.frontZ - 140; z += 520) zs.push(z);
+  zs.forEach((z, i) => {
+    const half = l.halfWidthAt(z) - 55;
+    const pts = arch(half);
+    for (let k = 0; k < n; k++) f.beam([pts[k][0], pts[k][1], z], [pts[k + 1][0], pts[k + 1][1], z], 34, M.pale, 60);
+    // stopy żeber na koronie ścian
+    for (const side of [-1, 1]) f.box(side * (half - 20), 800, z, 70, 30, 90, M.yellow);
+    const zn = zs[i + 1];
+    if (zn === undefined) return;
+    const zc = (z + zn) * 0.5;
+    const halfC = l.halfWidthAt(zc) - 55;
+    const pc = arch(halfC);
+    for (let k = 0; k < n; k++) {
+      f.beam([pc[k][0], pc[k][1] - 8, zc], [pc[k + 1][0], pc[k + 1][1] - 8, zc], 16, k % 2 ? M.dark : M.hose, zn - z - 60);
+    }
+    // świetlik na grzbiecie (szkło świeci nocą)
+    f.box(0, base + rise - 2, zc, 220, 10, zn - z - 140, M.glass);
+  });
+  // śluzy i anteny na koronie sklepienia
+  for (const z of [1660, 4260]) {
+    f.box(0, base + rise + 20, z, 260, 40, 200, M.pale);
+    f.cyl(0, base + rise + 70, z, 12, 60, M.steel);
+  }
+}
 
-  // ---- otwarte zatoki kompleksu (stanowiska w standardzie K-7)
-  for (const bay of ringInfo.bays || []) buildBay(f, plates, labels, lamps, bay.layout, bay.xf);
+// Jowisz: dach przemysłowy — belki jak w K-7, na nich cztery pola
+// radiatorów (żebra wzdłuż hali, kolektory), rury na osi, zbiorniki
+// w narożnikach i pochodnia przy ścianie tylnej.
+function buildRadiatorRoof(f, l) {
+  const M = K7_MAT;
+  for (let z = l.backZ + 220; z < l.frontZ - 140; z += 520) {
+    const half = l.halfWidthAt(z) - 55;
+    f.box(0, 819, z, half * 2, 62, 43, M.pale);
+    for (const side of [-1, 1]) f.box(side * (half - 30), 848, z, 82, 19, 66, M.yellow);
+  }
+  const zMid = (l.backZ + l.bodyEndZ) * 0.5;
+  const len = l.bodyEndZ - l.backZ - 1500;
+  for (const xc of [-(l.halfWidth - 1150), -(l.halfWidth - 2550), l.halfWidth - 2550, l.halfWidth - 1150]) {
+    for (let k = -6; k <= 6; k++) f.box(xc + k * 72, 880, zMid, 14, 160, len, M.copper);
+    f.cyl(xc, 812, zMid, 28, len + 200, M.steel, [Math.PI / 2, 0, 0]);
+    f.box(xc, 962, zMid, 13 * 72, 8, 40, M.yellow);
+  }
+  for (const x of [-230, 0, 230]) f.cyl(x, 830, (l.backZ + l.frontZ) * 0.5, 24, l.frontZ - l.backZ - 1100, M.copper, [Math.PI / 2, 0, 0]);
+  for (const x of [-(l.halfWidth - 380), l.halfWidth - 380]) {
+    for (const z of [l.backZ + 460, l.bodyEndZ - 420]) {
+      f.cyl(x, 870, z, 230, 150, M.pale);
+      f.cyl(x, 947, z, 238, 10, M.yellow);
+      f.cyl(x, 952, z, 90, 18, M.steel);
+    }
+  }
+  // pochodnia: komin z czerwonym światłem na szczycie
+  const fx = l.halfWidth - 900;
+  const fz = l.backZ + 200;
+  f.cyl(fx, 960, fz, 20, 330, M.steel);
+  f.box(fx, 1130, fz, 44, 10, 44, M.red);
+}
 
-  return { sets: f.sets, plates, labels, groups, hoses, lamps, cranes };
+// Mars: nasypy z regolitu wzdłuż ścian bocznych (osłona) — pochyłe płyty
+// od pokładu do tuż pod płaszczyzną lotu, poza halą (statki lecą nad nimi).
+function buildBermWalls(f, l) {
+  const M = K7_MAT;
+  const z0 = 700;
+  const z1 = l.bodyEndZ - 200;
+  const zc = (z0 + z1) * 0.5;
+  const d = z1 - z0;
+  for (const side of [-1, 1]) {
+    const xi = side * (l.halfWidth + 40);
+    const xo = side * (l.halfWidth + 460);
+    f.beam([xo, -140, zc], [xi, 96, zc], 70, M.orange, d);
+    f.beam([xo + side * 120, -150, zc], [xo - side * 40, -40, zc], 60, M.dark, d);
+    // listwa ostrzegawcza na koronie nasypu
+    f.box(side * (l.halfWidth + 60), 98, zc, 40, 6, d, M.cyan);
+  }
+}
+
+// Jowisz: rurociągi na zewnątrz ścian bocznych (pod płaszczyzną lotu)
+// z podporami co 400 j.
+function buildPipeWalls(f, l) {
+  const M = K7_MAT;
+  const z0 = 700;
+  const z1 = l.bodyEndZ - 200;
+  const zc = (z0 + z1) * 0.5;
+  for (const side of [-1, 1]) {
+    const x = side * (l.halfWidth + 70);
+    for (const [y, r, mat] of [[30, 26, M.copper], [66, 20, M.steel], [98, 14, M.copper]]) {
+      f.cyl(x + side * (y - 30) * 0.4, y, zc, r, z1 - z0, mat, [Math.PI / 2, 0, 0]);
+    }
+    for (let z = z0 + 100; z < z1; z += 400) {
+      f.box(x + side * 12, 20, z, 90, 110, 16, M.dark);
+      f.box(x + side * 12, 104, z, 96, 8, 30, M.yellow);
+    }
+  }
 }
 
 // Stanowiska (pola, obrysy, podziałka, znaczniki pola STOP, napisy, lampka
 // stanu, strzałka i pasy podejścia) — wspólne dla hali i zatok. `lab` rysuje
 // napis w układzie, w którym leżą stanowiska (hub hali albo zatoka).
-function recordBerths(f, lab, lamps, berths) {
+function recordBerths(f, lab, lamps, berths, LC = resolveHaloProfile('earth').port.labels) {
   const M = K7_MAT;
   const stripe = (x, z, w, d, mat) => f.box(x, 1.5, z, w, 1.5, d, mat);
   for (const b of berths) {
@@ -387,9 +512,9 @@ function recordBerths(f, lab, lamps, berths) {
     const depth = b.size === 'MEGA' ? 150 : capital ? 135 : b.size === 'L' ? 108 : b.size === 'M' ? 80 : 58;
     const aft = place(-b.padLength / 2 + (big ? 180 : depth * 0.85 + 24), 0);
     const small = b.size === 'MEGA' ? 'MEGA / FREIGHT TRAIN' : capital ? 'ATLAS / REVERSIBLE' : b.size + ' / ' + (b.occupied ? 'OCCUPIED' : 'AVAILABLE');
-    lab(b.id, aft.x, aft.z, b.padBeam * 0.76, depth, b.id === 'C-01' ? '#9ecdd0' : '#cbb992', small, -(b.angle + Math.PI / 2));
+    lab(b.id, aft.x, aft.z, b.padBeam * 0.76, depth, b.id === 'C-01' ? LC.berthLead : LC.berth, small, -(b.angle + Math.PI / 2));
     const stop = place(b.padLength / 2 - (big ? 120 : 52), 0);
-    lab('STOP', stop.x, stop.z, Math.min(250, b.padBeam * 0.63), big ? 58 : 33, '#778685', '', -(b.angle + Math.PI / 2));
+    lab('STOP', stop.x, stop.z, Math.min(250, b.padBeam * 0.63), big ? 58 : 33, LC.stop, '', -(b.angle + Math.PI / 2));
     // lampka stanu stanowiska (kolor zmienia automat dokowania)
     const statusPoint = place(-b.padLength / 2 + 18, 0);
     lamps.push({ berthId: b.id, index: f.sets.bg.box.length / 16 });
@@ -414,7 +539,7 @@ function recordBerths(f, lab, lamps, berths) {
 // pośrodku, grzbiety serwisowe (listwa, słupki obsługi, pachołki, rurociąg)
 // między grzebieniem a pasami, napisy zatoki. Bryła
 // zatoki (pokład, ściany, kołnierz, klin, suwnice) jest w megastrukturze ringu.
-function buildBay(f, plates, labels, lamps, bay, xf) {
+function buildBay(f, plates, labels, lamps, bay, xf, LC = resolveHaloProfile('earth').port.labels) {
   const M = K7_MAT;
   const q = {};
   const lab = (text, x, z, width, depth, color, small, rotation = 0) => {
@@ -423,7 +548,7 @@ function buildBay(f, plates, labels, lamps, bay, xf) {
   };
   const stripe = (x, z, w, d, mat) => f.box(x, 1.5, z, w, 1.5, d, mat);
   f.setFrame(xf);
-  recordBerths(f, lab, lamps, bay.berths);
+  recordBerths(f, lab, lamps, bay.berths, LC);
   // pasy MEGA: szyny wzdłuż pasa, wjazd od wylotu, słupki paliwowe przy dziobie
   bay.lanes.forEach((lane, k) => {
     const mega = bay.berths.find((b) => b.id === lane.berthId);
@@ -442,7 +567,7 @@ function buildBay(f, plates, labels, lamps, bay, xf) {
       f.box(px, 173, pz + 36, 18, 14, 5, M.green);
     }
     arrow(f, lane.x, bay.openZ - 150, 150, M.paintCold, true);
-    lab(bay.tag + ' / MEGA ' + (k + 1), lane.x, bay.openZ - 60, 900, 90, '#9caaa7', 'OPEN BAY / FREIGHT TRAIN LANE');
+    lab(bay.tag + ' / MEGA ' + (k + 1), lane.x, bay.openZ - 60, 900, 90, LC.bayLane, 'OPEN BAY / FREIGHT TRAIN LANE');
   });
   // grzbiety serwisowe: listwa z szynami, rurociąg, słupki obsługi i pachołki przy nosach pól
   for (const sp of bay.spines) {
@@ -481,9 +606,9 @@ function buildBay(f, plates, labels, lamps, bay, xf) {
   const a = bay.aisle;
   for (const side of [-1, 1]) for (let z = a.z0 + 40; z < a.z1 - 40; z += 155) stripe(a.x + side * (a.width / 2), z, 5, 68, M.paintCold);
   for (let z = a.z1 - 420; z > a.z0 + 200; z -= 660) directionArrow(f, a.x, z, -Math.PI / 2, 105, M.paintCold);
-  lab(bay.tag + ' / 4L 4M 4S', a.x, a.z1 - 60, 820, 84, '#aab7ad', 'OPEN BAY / KEEP CLEAR');
+  lab(bay.tag + ' / 4L 4M 4S', a.x, a.z1 - 60, 820, 84, LC.bayBank, 'OPEN BAY / KEEP CLEAR');
   // napis zatoki na pokładzie przy ścianie tylnej
-  lab(bay.id, a.x, bay.backZ + 170, 760, 200, '#687d83', 'OPEN BAY / ' + bay.berths.length + ' BERTHS');
+  lab(bay.id, a.x, bay.backZ + 170, 760, 200, LC.bayId, 'OPEN BAY / ' + bay.berths.length + ' BERTHS');
   f.setFrame(null);
 }
 
@@ -649,7 +774,7 @@ function buildHose(f, b, a, addGroup) {
 // wysokości K-7 (odwrotność k7HeightToZ), więc nad płaszczyzną lotu też
 // działa ściśnięcie ×0,42.
 const yW = (z) => (z <= 0 ? z + K7_HEIGHTS.hullTop : K7_HEIGHTS.hullTop + z / K7_ABOVE_SCALE);
-function buildHabitatPlug(f, plates, labels, l, ring) {
+function buildHabitatPlug(f, plates, labels, l, ring, style = resolveHaloProfile('earth').port) {
   const M = K7_MAT;
   const floorZ = ring.floorZ ?? l.backZ;          // z huba powierzchni podłogi
   const rimZ = ring.rimZ ?? floorZ + 1500;        // z huba krawędzi ścian
@@ -696,7 +821,7 @@ function buildHabitatPlug(f, plates, labels, l, ring) {
     boxW(0, z0, z0 + 26, face + 4, 2 * x1 - 420, 6, row % 3 === 1 ? M.cyan : M.warm);
   }
   for (let x = -x1 + 300; x <= x1 - 300; x += 520) boxW(x, zLow + 40, zHall - 40, face + 8, 18, 10, M.steel);
-  labels.push({ text: 'PORT KEPLER', small: 'K-7 / TERMINAL HABITATU', color: '#b8cdc6', x: 0, z: face + 14, width: 2600, depth: 355, rotation: 0, y: -560, vertical: true, set: 'bg' });
+  labels.push({ text: style.name, small: style.terminal, color: style.labels.terminal, x: 0, z: face + 14, width: 2600, depth: 355, rotation: 0, y: -560, vertical: true, set: 'bg' });
   // klin nośny pod pokładem: od podłogi (spód podstawy) do kadłuba hali za krawędzią ścian
   const zEnd = Math.max(rimZ + 950, floorZ + 2400);
   plates.push({ axis: 'x', points: [[floorZ + 110, zHall], [zEnd, zHall], [floorZ + 110, zLow]], z0: -(l.halfWidth - 60), z1: l.halfWidth - 60, mat: M.dark, set: 'bg' });

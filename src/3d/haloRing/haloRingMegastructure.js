@@ -142,38 +142,13 @@ varying vec3 vEy;
 varying vec3 vEz;
 #endif
 
+// paleta z profilu planety (uMegaPal, haloRingProfiles.js): kod materialu
+// = indeks (0 jasny dach, 1 sredni, 2 ciemny, 3 bialy panel, 4 rdza, 5 stal
+// kratownic, 6 zolty, 7 szklo, 8 poklad zatoki, 9 tunel, 10-12 kontenery,
+// 13 pociag, 14-15 fasady, 16-23 przemysl, 24-28 megabudowle, 29 radiator)
 vec3 palette(float pal, float seed) {
-  if (pal < 0.5) return vec3(0.150, 0.152, 0.156);        // jasny dach
-  if (pal < 1.5) return vec3(0.090, 0.092, 0.097);        // sredni
-  if (pal < 2.5) return vec3(0.030, 0.032, 0.036);        // ciemny
-  if (pal < 3.5) return vec3(0.300, 0.302, 0.300);        // bialy panel
-  if (pal < 4.5) return vec3(0.120, 0.082, 0.060);        // rdza przemyslu
-  if (pal < 5.5) return vec3(0.055, 0.058, 0.064);        // stal kratownic
-  if (pal < 6.5) return vec3(0.330, 0.230, 0.040);        // zolty (suwnice, chwytaki)
-  if (pal < 7.5) return vec3(0.040, 0.055, 0.070);        // szklo
-  if (pal < 8.5) return vec3(0.070, 0.072, 0.076);        // poklad zatoki
-  if (pal < 9.5) return vec3(0.200, 0.205, 0.210);        // tunel
-  if (pal < 10.5) return vec3(0.190, 0.060, 0.035);       // kontener czerwony
-  if (pal < 11.5) return vec3(0.030, 0.080, 0.150);       // kontener niebieski
-  if (pal < 12.5) return vec3(0.160, 0.120, 0.050);       // kontener ochra
-  if (pal < 13.5) return vec3(0.230, 0.235, 0.245);       // pociag
-  if (pal < 14.5) return vec3(0.280, 0.282, 0.275);       // fasada biala (dach zielony)
-  if (pal < 15.5) return vec3(0.260, 0.235, 0.200);       // fasada kremowa (dachowka)
-  if (pal < 16.5) return vec3(0.160, 0.160, 0.150);       // beton
-  if (pal < 17.5) return vec3(0.280, 0.280, 0.260);       // beton jasny (chlodnia)
-  if (pal < 18.5) return vec3(0.130, 0.110, 0.095);       // hala szedowa (sciany)
-  if (pal < 19.5) return vec3(0.040, 0.040, 0.042);       // komin
-  if (pal < 20.5) return vec3(0.290, 0.292, 0.290);       // zbiornik
-  if (pal < 21.5) return vec3(0.230, 0.230, 0.220);       // silos
-  if (pal < 22.5) return vec3(0.160, 0.120, 0.080);       // kontenery
-  if (pal < 23.5) return vec3(0.120, 0.130, 0.140);       // rury, stal gladka
-  // megabudowle (haloRingLandmarks.js)
-  if (pal < 24.5) return vec3(0.310, 0.290, 0.255);       // kamien (podium, zebra, plyty)
-  if (pal < 25.5) return vec3(0.300, 0.220, 0.105);       // mosiadz (szprosy, maszty)
-  if (pal < 26.5) return vec3(0.300, 0.280, 0.240);       // pas swietlny (swieci)
-  if (pal < 27.5) return vec3(0.270, 0.235, 0.190);       // rama fasady cieplej (piaskowiec)
-  if (pal < 28.5) return vec3(0.170, 0.200, 0.235);       // rama fasady chlodnej (stal)
-  return vec3(0.120, 0.130, 0.140);
+  int i = int(clamp(floor(pal + 0.5), 0.0, 29.0));
+  return uMegaPal[i];
 }
 
 void main() {
@@ -202,8 +177,8 @@ void main() {
   // megabudowle: jedna barwa na budowle (czesci nie rozjezdzaja sie w laty)
   base *= pal > 23.5 ? 0.96 + 0.08 * vSeed : 0.85 + 0.3 * vSeed;
   bool top = lN.z > 0.5;
-  if (top && pal > 13.5 && pal < 14.5) base = vec3(0.040, 0.070, 0.028) * (0.8 + 0.4 * vSeed);   // dach-ogrod
-  if (top && pal > 14.5 && pal < 15.5) base = vec3(0.160, 0.105, 0.080);                            // dachowka
+  if (top && pal > 13.5 && pal < 14.5) base = uMegaPal[30] * (0.8 + 0.4 * vSeed);   // dach-ogrod
+  if (top && pal > 14.5 && pal < 15.5) base = uMegaPal[31];                                          // dachowka
   // krawedzie bryly: fazka jasniejsza, szczeliny paneli ciemniejsze
   vec3 halfS = vSize * vec3(0.5, 0.5, 1.0);
   vec3 lc = vec3(vLocal.x, vLocal.y, vLocal.z - 0.5 * vSize.z);
@@ -299,15 +274,15 @@ void main() {
     float frame = step(0.2, wf.x) * step(wf.x, 0.8) * step(0.25, wf.y) * step(wf.y, 0.75) * step(0.0, vLocal.z - 4.0) * step(vLocal.z, vSize.z - 4.0);
     float lit = step(0.55, haloHash12(wc + vSeed * 57.0));
     float aa = 1.0 - smoothstep(0.4, 1.2, fw / (4.0 * uDetailScale));
-    vec3 wcol = emitType < 1.5 ? vec3(${f3(HALO_HDR.windowWarm)}) : vec3(${f3(HALO_HDR.windowCool)});
+    vec3 wcol = emitType < 1.5 ? uHdrWarm : uHdrCool;
     emit += wcol * frame * lit * night * mix(0.28, 1.0, aa) * 0.9 * uLayers.y * uNightLights;
     albedo = mix(albedo, vec3(0.02, 0.025, 0.03), frame * aa * 0.8);
   } else if (emitType > 2.5 && emitType < 3.5) {
-    emit += vec3(${f3(HALO_HDR.stripBlue)}) * 0.9;
+    emit += uHdrStrip * 0.9;
   } else if (emitType > 3.5 && emitType < 4.5) {
     // sodowe lampy na gornych krawedziach
     float lamp = top ? (1.0 - smoothstep(0.0, 2.5 + fw, min(edgeD3.x, edgeD3.y))) * step(0.72, fract(fuv.x / 14.0 + vSeed)) : 0.0;
-    emit += vec3(${f3(HALO_HDR.windowSodium)}) * lamp * night;
+    emit += uHdrSodium * lamp * night;
   } else if (emitType > 4.5 && emitType < 5.5 && top) {
     // podloga tunelu tranzytu (poklady zatok maja typ 6): obrys, pasy, plamy reflektorow
     vec2 q = vLocal.xy;
@@ -325,7 +300,7 @@ void main() {
     vec2 lampP = vec2((px + 0.5) * 200.0, sign(q.y) * 560.0);
     float lampK = 0.5 + 0.8 * haloHash12(vec2(px, sign(q.y)) + vSeed * 13.0);
     float post = exp(-dot(q - lampP, q - lampP) / (2.0 * 45.0 * 45.0)) * lampK;
-    emit += vec3(0.9, 0.62, 0.34) * (wallWash * 0.22 + post * 0.3) * night + vec3(${f3(HALO_HDR.stripBlue)}) * outline * 0.25 * night;
+    emit += vec3(0.9, 0.62, 0.34) * (wallWash * 0.22 + post * 0.3) * night + uHdrStrip * outline * 0.25 * night;
   } else if (emitType > 5.5 && emitType < 6.5 && top) {
     // poklad otwartej zatoki: bez znaczen (stanowiska K-7 rysuje render
     // kompleksu), noca poswiata reflektorow scian bocznych i tylnej
@@ -375,7 +350,7 @@ void main() {
     float litB = pOn * 0.302 / 0.67 * ggx * ggy;
     float litC = (bAct * 0.8 + (1.0 - bAct) * 0.06) * 0.302;
     float lit = mix(mix(litA, litB, farA), litC, farB) * (1.0 - slab);
-    vec3 wcol = coolF ? vec3(${f3(HALO_HDR.windowCool)}) : vec3(${f3(HALO_HDR.windowWarm)});
+    vec3 wcol = coolF ? uHdrCool : uHdrWarm;
     emit += wcol * lit * night * 0.95 * uLayers.y * uNightLights;
   }
   if (pal > 25.5 && pal < 26.5) {
@@ -392,10 +367,17 @@ void main() {
     // tunel: zebra co 30 j., miedzy nimi przeszklenie z cieplym wnetrzem noca
     float rib = 1.0 - smoothstep(2.0, 3.5 + fw, abs(fract(vLocal.z / 30.0) - 0.5) * 30.0 - 12.0);
     albedo = mix(vec3(0.02, 0.03, 0.04), albedo, rib);
-    emit += vec3(${f3(HALO_HDR.windowWarm)}) * (1.0 - rib) * night * 0.35;
+    emit += uHdrWarm * (1.0 - rib) * night * 0.35;
   }
 
-  if (pal > 17.5 && pal < 18.5) emit += vec3(${f3(HALO_HDR.windowWarm)}) * indEmit * night * 0.35 * uLayers.y * uNightLights;
+  if (pal > 17.5 && pal < 18.5) emit += uHdrWarm * indEmit * night * 0.35 * uLayers.y * uNightLights;
+  if (pal > 28.5 && pal < 29.5 && side) {
+    // panel radiatora (Jowisz): zebra co 4 j., noca slaby zar goracego metalu
+    float ribR = step(0.5, fract(fuv.x / 4.0)) * (1.0 - smoothstep(0.6, 2.0, fw));
+    albedo *= 0.85 + 0.3 * ribR;
+    float hot = smoothstep(0.1, 0.9, tH) * (0.6 + 0.4 * vSeed);
+    emit += vec3(0.95, 0.22, 0.06) * hot * (0.12 + 0.35 * night) * uLayers.y;
+  }
   if (pal > 18.5 && pal < 19.5) {
     // swiatlo przeszkodowe na szczycie komina (miga)
     float beacon = step(0.96, tH) * (lN.z > 0.5 ? 1.0 : step(0.985, tH)) * (0.5 + 0.5 * step(0.5, fract(uTime * 0.8 + vSeed)));
@@ -423,7 +405,7 @@ void main() {
     vec3 R = reflect(-V, N);
     float up = clamp(dot(R, upW), -1.0, 1.0);
     vec3 skyR = inAir
-      ? mix(vec3(0.18, 0.25, 0.36), vec3(0.05, 0.10, 0.21), clamp(up, 0.0, 1.0)) * haloLuma(haloSunVisibility(p + upW * 600.0, L)) * max(dot(upW, L) + 0.3, 0.0)
+      ? mix(uMegaSky[0], uMegaSky[1], clamp(up, 0.0, 1.0)) * haloLuma(haloSunVisibility(p + upW * 600.0, L)) * max(dot(upW, L) + 0.3, 0.0)
       : vec3(0.004, 0.005, 0.008);
     skyR = mix(skyR, vec3(0.03, 0.035, 0.03), smoothstep(0.05, -0.2, up));
     float glassK = max(pal > 6.5 && pal < 7.5 ? 1.0 : 0.25, facadeGlass);
@@ -498,6 +480,8 @@ void main() {
   if (type > 2.5 && type < 3.5) tint = vec3(0.65, 0.80, 1.00);
   if (type > 3.5 && type < 4.5) tint = vec3(0.50, 0.75, 0.90);
   if (type > 4.5) tint = vec3(0.45, 0.80, 1.00);
+  if (type > 5.5) tint = vec3(0.62, 0.72, 0.80);   // miasto pod kopula (Mars)
+  tint *= uDomeTint;
   vec3 L = uSunDir;
   vec3 sunVis = haloSunVisibility(p + N * 2.0, L);
   vec3 upW = haloUp(p);
@@ -507,7 +491,7 @@ void main() {
   // odbicie nieba habitatu (jak szklo megastruktury)
   vec3 R = reflect(-V, N);
   float up = clamp(dot(R, upW), -1.0, 1.0);
-  vec3 skyR = mix(vec3(0.18, 0.25, 0.36), vec3(0.05, 0.10, 0.21), clamp(up, 0.0, 1.0)) * haloLuma(haloSunVisibility(p + upW * 600.0, L)) * max(dot(upW, L) + 0.3, 0.0);
+  vec3 skyR = mix(uMegaSky[0], uMegaSky[1], clamp(up, 0.0, 1.0)) * haloLuma(haloSunVisibility(p + upW * 600.0, L)) * max(dot(upW, L) + 0.3, 0.0);
   skyR = mix(skyR, vec3(0.03, 0.035, 0.03), smoothstep(0.05, -0.2, up));
   vec3 H = normalize(L + V);
   float NdL = max(dot(N, L), 0.0);
@@ -576,8 +560,8 @@ void main() {
   float c = iL1.z;
   vec3 col = vec3(${f3([HALO_HDR.navWhite, HALO_HDR.navWhite * 0.97, HALO_HDR.navWhite * 0.92])});
   if (c > 0.5) col = vec3(1.25, 0.1, 0.06);
-  if (c > 1.5) col = vec3(${f3(HALO_HDR.stripBlue)});
-  if (c > 2.5) col = vec3(${f3(HALO_HDR.windowWarm)}) * 1.2;
+  if (c > 1.5) col = uHdrStrip;
+  if (c > 2.5) col = uHdrWarm * 1.2;
   if (c > 3.5) col = vec3(0.1, 1.2, 0.35);
   // z daleka (rozmiar podbity do min. piksela) energia maleje, zeby tysiace
   // punktow nie zalaly bloomu

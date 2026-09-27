@@ -40,8 +40,9 @@ function reportError(text) {
 window.addEventListener('error', (e) => reportError(`JS: ${e.message} @ ${e.filename}:${e.lineno}`));
 window.addEventListener('unhandledrejection', (e) => reportError(`Promise: ${e.reason?.stack || e.reason}`));
 
-// Galeria typów: wypełniacz, potem rudy od pospolitych do rzadkich.
-const GALLERY_TYPES = ['rock', 'iron', 'silicon', 'copper', 'titan', 'ice', 'crystal', 'uran'];
+// Galeria typów: wypełniacz, potem rudy od pospolitych do rzadkich, na końcu
+// skała energetyczna (burze: pioruny między takimi skałami).
+const GALLERY_TYPES = ['rock', 'iron', 'silicon', 'copper', 'titan', 'ice', 'crystal', 'uran', 'energy'];
 const ZOOM_MIN = 0.035;
 const ZOOM_MAX = 3.2;
 
@@ -418,19 +419,21 @@ function galleryRock(o) {
 }
 
 // Kształt dobrany do typu (jak w polu) — każdy typ w swojej ulubionej rodzinie.
-const TYPE_SHOWCASE_FAMILY = { rock: 'cratered', iron: 'oval', silicon: 'rubble', copper: 'angular', titan: 'shard', ice: 'binary', crystal: 'angular', uran: 'potato' };
+const TYPE_SHOWCASE_FAMILY = { rock: 'cratered', iron: 'oval', silicon: 'rubble', copper: 'angular', titan: 'shard', ice: 'binary', crystal: 'angular', uran: 'potato', energy: 'ridged' };
 
 function buildTypeGallery() {
   const rocks = [];
   const g = SPOTS.gallery;
-  const COLS = 4;
+  const COLS = 5;
   const cellW = 2100;
   const cellH = 2200;
   S.galleryCells = [];
   GALLERY_TYPES.forEach((typeId, i) => {
     const col = i % COLS;
     const row = Math.floor(i / COLS);
-    const cx = g.x + (col - (COLS - 1) / 2) * cellW;
+    // Niepełny ostatni rząd wyśrodkowany.
+    const inRow = Math.min(COLS, GALLERY_TYPES.length - row * COLS);
+    const cx = g.x + (col - (inRow - 1) / 2) * cellW;
     const cy = g.y + (row - 0.5) * cellH;
     const type = ROCK_TYPE_INDEX[typeId];
     const famIndex = ROCK_FAMILIES.findIndex((f) => f.id === TYPE_SHOWCASE_FAMILY[typeId]);
@@ -497,8 +500,8 @@ const GALLERY_SCENES = new Set(['gallery', 'shapes']);
 const ESCORT_OFF_SCENES = new Set(['gallery', 'shapes', 'giants', 'giantField']);
 
 function galleryOverviewZoom(name) {
-  // Cały kafel galerii w kadrze (8400 × 4400 j. typów, 10 000 × 3800 kształtów).
-  return name === 'shapes' ? Math.min(W / 10400, H / 4300) : Math.min(W / 8800, H / 4700);
+  // Cała galeria w kadrze (10 500 × 4400 j. typów, 10 000 × 3800 kształtów).
+  return name === 'shapes' ? Math.min(W / 10400, H / 4300) : Math.min(W / 10900, H / 4700);
 }
 
 function setScene(name) {
