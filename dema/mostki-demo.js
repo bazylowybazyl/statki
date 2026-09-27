@@ -128,16 +128,46 @@ initHexShips3D({ canvas: glCanvas });
 setHexShips3DActive(true);
 // Jak index.html:816 — ścieżka rwania GPU soft body woła destroyShard przez window.
 window.DestructorSystem = DestructorSystem;
-// Port WebGPU (zadanie 04, minimum do startu warsztatu — reszta w zadaniu 15): renderer
-// powstaje w tle (Core3D.ready), a błędy shaderów WebGPU/WGSL idą do konsoli jako błędy
-// walidacji (bez haka WebGL onShaderError z logami programu GL). Odczyty HDR
-// (readRenderTargetPixels: measureHDR / measureWindows) na WebGPU jeszcze nie działają.
+// Port WebGPU (zadania 04 i 15): renderer powstaje w tle (Core3D.ready), a błędy
+// shaderów WebGPU/WGSL idą do konsoli jako błędy walidacji (bez haka WebGL
+// onShaderError z logami programu GL). Odczyty HDR (measureHDR / measureWindows /
+// measureWindows3D) — asynchronicznie z bufora sceny (readSceneLuminance).
 Core3D.ready.then((ok) => {
   if (!ok) reportError(`WebGPU: ${Core3D.gpuError || 'brak urządzenia'}`);
 });
 BridgeFx3D.attach(Core3D.scene);
 // Model 3D mostka (src/3d/bridge3D.js) — w grze ten sam hak obok BridgeFx3D.
 Bridge3D.attach(Core3D.scene);
+
+// Luminancja HDR bufora sceny (Core3D.composerTarget: HalfFloat, po resolve MSAA,
+// przed bloomem i ACES) w prostokącie ekranu (px CSS, y od góry). WebGPU: odczyt
+// asynchroniczny, wiersz 0 = GÓRA celu, wiersze wyrównane do 256 B (jak harness
+// scripts/webgpu/harness-strona.js). Nieskończone / NaN → NaN w `lum`, liczone w `nan`.
+async function readSceneLuminance(rect) {
+  const rt = Core3D.composerTarget;
+  const pr = Core3D.pixelRatio || 1;
+  const x = Math.max(0, Math.min(rt.width - 1, Math.floor(rect.x * pr)));
+  const y = Math.max(0, Math.min(rt.height - 1, Math.floor(rect.y * pr)));
+  const w = Math.max(1, Math.min(rt.width - x, Math.floor(rect.w * pr)));
+  const h = Math.max(1, Math.min(rt.height - y, Math.floor(rect.h * pr)));
+  const buf = await Core3D.renderer.readRenderTargetPixelsAsync(rt, x, y, w, h);
+  const half = buf instanceof Uint16Array;
+  const rowElems = Math.ceil((w * 4 * buf.BYTES_PER_ELEMENT) / 256) * 256 / buf.BYTES_PER_ELEMENT;
+  const lum = new Float32Array(w * h);
+  let nan = 0;
+  for (let j = 0; j < h; j++) {
+    for (let i = 0; i < w; i++) {
+      const o = j * rowElems + i * 4;
+      const R = half ? THREE.DataUtils.fromHalfFloat(buf[o]) : buf[o];
+      const G = half ? THREE.DataUtils.fromHalfFloat(buf[o + 1]) : buf[o + 1];
+      const B = half ? THREE.DataUtils.fromHalfFloat(buf[o + 2]) : buf[o + 2];
+      const l = 0.2126 * R + 0.7152 * G + 0.0722 * B;
+      if (!Number.isFinite(l)) nan++;
+      lum[j * w + i] = Number.isFinite(l) ? l : NaN;
+    }
+  }
+  return { lum, nan, w, h };
+}
 if (params.get('model') === '0') BRIDGE3D_TUNE.enabled = false;
 
 const cam = { x: 0, y: 0, zoom: 0.8 };
@@ -1176,33 +1206,21 @@ const api = {
     return { shots: n, commandLost: st.commandLost, bridgeDead: index == null ? st.commandLost : !!st.bridges[index]?.dead };
   },
   // Pasma HDR samych okien: ten sam kadr z oknami i bez (różnica pikseli).
-  measureWindows(targetKey = state.focus, pad = 8) {
+  async measureWindows(targetKey = state.focus, pad = 8) {
     const rect = this.bridgeRect(targetKey, pad);
     if (!rect) return null;
-    const readLum = () => {
+    const readLum = async () => {
       renderFrame(0);
-      const rt = Core3D.postTarget;
-      const pr = Core3D.pixelRatio || 1;
-      const x = Math.max(0, Math.floor(rect.x * pr));
-      const w = Math.max(1, Math.min(rt.width - x, Math.floor(rect.w * pr)));
-      const h = Math.max(1, Math.floor(rect.h * pr));
-      const y = Math.max(0, rt.height - Math.floor(rect.y * pr) - h);
-      const buf = new Uint16Array(w * h * 4);
-      Core3D.renderer.readRenderTargetPixels(rt, x, y, w, h, buf);
-      const lum = new Float32Array(w * h);
-      for (let i = 0, j = 0; i < buf.length; i += 4, j++) {
-        lum[j] = 0.2126 * THREE.DataUtils.fromHalfFloat(buf[i]) + 0.7152 * THREE.DataUtils.fromHalfFloat(buf[i + 1]) + 0.0722 * THREE.DataUtils.fromHalfFloat(buf[i + 2]);
-      }
-      return lum;
+      return (await readSceneLuminance(rect)).lum;
     };
     const prevBloom = Core3D.perfToggles.bloom !== false;
     Core3D.setPerfToggles({ bloom: false });
     const core = BRIDGE_FX_TUNE.coreGain;
     const halo = BRIDGE_FX_TUNE.haloGain;
-    const on = readLum();
+    const on = await readLum();
     BRIDGE_FX_TUNE.coreGain = 0;
     BRIDGE_FX_TUNE.haloGain = 0;
-    const off = readLum();
+    const off = await readLum();
     BRIDGE_FX_TUNE.coreGain = core;
     BRIDGE_FX_TUNE.haloGain = halo;
     Core3D.setPerfToggles({ bloom: prevBloom });
@@ -1474,31 +1492,19 @@ const api = {
     return out;
   },
   // Pasma HDR okien modelu: kadr z emiterami i bez (różnica pikseli), bez bloomu.
-  measureWindows3D(rect = null) {
+  async measureWindows3D(rect = null) {
     const r = rect || { x: W * 0.25, y: H * 0.25, w: W * 0.5, h: H * 0.5 };
-    const readLum = () => {
+    const readLum = async () => {
       renderFrame(0);
-      const rt = Core3D.postTarget;
-      const pr = Core3D.pixelRatio || 1;
-      const x = Math.max(0, Math.floor(r.x * pr));
-      const w = Math.max(1, Math.min(rt.width - x, Math.floor(r.w * pr)));
-      const h = Math.max(1, Math.floor(r.h * pr));
-      const y = Math.max(0, rt.height - Math.floor(r.y * pr) - h);
-      const buf = new Uint16Array(w * h * 4);
-      Core3D.renderer.readRenderTargetPixels(rt, x, y, w, h, buf);
-      const lum = new Float32Array(w * h);
-      for (let i = 0, j = 0; i < buf.length; i += 4, j++) {
-        lum[j] = 0.2126 * THREE.DataUtils.fromHalfFloat(buf[i]) + 0.7152 * THREE.DataUtils.fromHalfFloat(buf[i + 1]) + 0.0722 * THREE.DataUtils.fromHalfFloat(buf[i + 2]);
-      }
-      return lum;
+      return (await readSceneLuminance(r)).lum;
     };
     const prevBloom = Core3D.perfToggles.bloom !== false;
     Core3D.setPerfToggles({ bloom: false });
     const T = BRIDGE3D_TUNE;
     const keep = [T.winCoreGain, T.winHaloGain, T.beaconCoreGain, T.beaconHaloGain, T.accentCoreGain, T.accentHaloGain];
-    const on = readLum();
+    const on = await readLum();
     T.winCoreGain = T.winHaloGain = T.beaconCoreGain = T.beaconHaloGain = T.accentCoreGain = T.accentHaloGain = 0;
-    const off = readLum();
+    const off = await readLum();
     [T.winCoreGain, T.winHaloGain, T.beaconCoreGain, T.beaconHaloGain, T.accentCoreGain, T.accentHaloGain] = keep;
     Core3D.setPerfToggles({ bloom: prevBloom });
     renderFrame(0);
@@ -1542,30 +1548,21 @@ const api = {
     };
   },
   // Histogram luminancji HDR sceny (przed ACES) w prostokącie ekranu (px CSS).
-  measureHDR(rect = null, { bloom = false } = {}) {
+  // Bufor sceny jest przed bloomem, więc `bloom` tylko przełącza post (jak dawniej).
+  async measureHDR(rect = null, { bloom = false } = {}) {
     const prev = Core3D.perfToggles.bloom !== false;
     Core3D.setPerfToggles({ bloom });
     renderFrame(0);
-    const rt = Core3D.postTarget;
-    const pr = Core3D.pixelRatio || 1;
     const r = rect || { x: 0, y: 0, w: W, h: H };
-    const x = Math.max(0, Math.floor(r.x * pr));
-    const w = Math.max(1, Math.min(rt.width - x, Math.floor(r.w * pr)));
-    const hgt = Math.max(1, Math.floor(r.h * pr));
-    const y = Math.max(0, rt.height - Math.floor((r.y) * pr) - hgt);
-    const buf = new Uint16Array(w * hgt * 4);
-    Core3D.renderer.readRenderTargetPixels(rt, x, y, w, hgt, buf);
+    const read = await readSceneLuminance(r);
     Core3D.setPerfToggles({ bloom: prev });
     const lum = [];
-    let nan = 0;
+    const nan = read.nan;
     let over = 0;
     let max = 0;
-    for (let i = 0; i < buf.length; i += 4) {
-      const R = THREE.DataUtils.fromHalfFloat(buf[i]);
-      const G = THREE.DataUtils.fromHalfFloat(buf[i + 1]);
-      const B = THREE.DataUtils.fromHalfFloat(buf[i + 2]);
-      if (!Number.isFinite(R) || !Number.isFinite(G) || !Number.isFinite(B)) { nan++; continue; }
-      const l = 0.2126 * R + 0.7152 * G + 0.0722 * B;
+    for (let i = 0; i < read.lum.length; i++) {
+      const l = read.lum[i];
+      if (!Number.isFinite(l)) continue;
       lum.push(l);
       if (l > 0.9) over++;
       if (l > max) max = l;
