@@ -7,6 +7,15 @@
 //   ring.setSun(azimuth, elevation);           // radiany, w układzie XY sceny
 //   ring.update(dt, { camera, gameView });     // raz na klatkę, przed renderem
 //   ring.setCutaway(0, { x, y, angle, a, b, strength }); // wycięcie dachu nad graczem
+//   await ring.ready;                          // budowa asynchroniczna (niżej)
+//
+// Port WebGPU (zadanie 06): budowa jest ASYNCHRONICZNA — kompilacja pipeline'ów
+// bake'u (compileAsync), bake mapy niskiej, odczyt CPU (readRenderTargetPixelsAsync),
+// plan budowli i kopuł z tej mapy, setCivic (ponowny bake i odczyt), tekstury
+// detalu, dopiero potem bryły. Do tego czasu `ring.group` jest pusta, update() nic
+// nie rysuje, `mapsReady` = false, terrainHeightAt = 0 (host podpina kolizje z
+// terenem dopiero po `ring.ready`). setQuality() buduje nowy zestaw w tle i
+// podmienia go gotowy (stary rysuje się do końca), rebuild() zaczyna od pustego.
 //
 // Płaszczyzna gry na środku wstęgi (flightLevel 0,5, domyślnie od 2026-09-23):
 // górna ściana z dachem leży NAD statkami → siatki `layers.fg` (jak suwnice
@@ -48,18 +57,25 @@ export function createHaloRing(options = {}) {
     options: { ...options },
     qualityKey: resolveHaloQuality(options.quality),
     layers: { default: HALO_DEFAULT_LAYER },
-    sun: { azimuth: 0, elevation: 49 * Math.PI / 180 }
+    sun: { azimuth: 0, elevation: 49 * Math.PI / 180 },
+    visible: {}
   };
   const group = new THREE.Group();
   group.name = 'HaloRing';
   const frustum = new THREE.Frustum();
   const camLocal = new THREE.Vector3();
-  let parts = null;
+  let parts = null;       // zbudowane części (w grupie)
   let layout = null;
   let sigmaOut = true;
   let uniforms = null;
+  let detail = null;      // tekstury detalu (przeżywają przebudowy)
+  let buildGen = 0;       // numer bieżącej budowy (porzucone kończą się bez skutku)
+  let building = null;    // { gen, maps, promise } — budowa w toku
+  let lastError = null;
 
-  function build() {
+  // Budowa: układ i uniformy od razu (host czyta layout/uniforms), reszta asynchronicznie.
+  function startBuild({ keepOld = false } = {}) {
+    const gen = ++buildGen;
     layout = createHaloRingLayout(state.options);
     sigmaOut = layout.sigma > 0;
     const quality = HALO_QUALITY[state.qualityKey];
@@ -67,19 +83,55 @@ export function createHaloRing(options = {}) {
     else applyLayoutToUniforms(uniforms, layout);
     // skala detalu z LOD jakości (ultra: okna i wzory wygaszane dalej)
     uniforms.uDetailScale.value = haloQualityLod(quality).detailScale;
-    const maps = new HaloWorldMaps(renderer, layout, quality);
-    // Megabudowle z ECUMENE (landmarki miast, 2026-09-24) i kopuły-biosfery
-    // (2026-09-25): miejsca z mapy wysokości sprzed placów (wspólny kontekst —
-    // parki się nie nakładają), potem w mapach plac, park, staw i wnętrze
-    // kopuły, a bryły i szkło w megastrukturze (punkty orientacyjne, BG).
-    const Wf = layout.floor.length;
-    const civicCtx = haloCivicContext(layout, {
-      heightAt: maps.cpu ? (theta, t) => maps.heightAtUV(theta / (Math.PI * 2), t / Wf) : null
-    });
-    const landmarks = state.options.landmarks === false ? [] : buildHaloLandmarkPlan(layout, { ctx: civicCtx });
-    const domes = state.options.domes === false ? [] : buildHaloDomePlan(layout, { ctx: civicCtx });
-    maps.setCivic({ landmarks, domes });
-    const detail = parts?.detail || new HaloDetailTextures(renderer);
+    applySun();
+    if (!keepOld) disposeParts();
+    const buildLayout = layout;
+    const maps = new HaloWorldMaps(renderer, buildLayout, quality);
+    const job = { gen, maps, promise: null };
+    building = job;
+    job.promise = (async () => {
+      let done = false;
+      try {
+        await maps.init();
+        if (gen !== buildGen) return false;
+        // Megabudowle z ECUMENE (landmarki miast, 2026-09-24) i kopuły-biosfery
+        // (2026-09-25): miejsca z mapy wysokości sprzed placów (wspólny kontekst —
+        // parki się nie nakładają), potem w mapach plac, park, staw i wnętrze
+        // kopuły, a bryły i szkło w megastrukturze (punkty orientacyjne, BG).
+        // Mapa CPU jest już odczytana (maps.init czeka na odczyt) — rozstawienie
+        // jak w bazie WebGL.
+        const Wf = buildLayout.floor.length;
+        const civicCtx = haloCivicContext(buildLayout, {
+          heightAt: maps.cpu ? (theta, t) => maps.heightAtUV(theta / (Math.PI * 2), t / Wf) : null
+        });
+        const landmarks = state.options.landmarks === false ? [] : buildHaloLandmarkPlan(buildLayout, { ctx: civicCtx });
+        const domes = state.options.domes === false ? [] : buildHaloDomePlan(buildLayout, { ctx: civicCtx });
+        await maps.setCivic({ landmarks, domes });
+        if (gen !== buildGen) return false;
+        if (!detail) detail = new HaloDetailTextures(renderer);
+        await detail.init();
+        if (gen !== buildGen) return false;
+        const next = assemble(buildLayout, quality, maps, landmarks, domes);
+        disposeParts();
+        parts = next;
+        attachParts();
+        done = true;
+        lastError = null;
+        return true;
+      } catch (err) {
+        lastError = err;
+        console.error('[HaloRing] budowa ringu nie wyszła', err);
+        return false;
+      } finally {
+        if (building === job) building = null;
+        if (!done) maps.dispose();
+      }
+    })();
+    return job.promise;
+  }
+
+  // Bryły ringu z gotowych map (synchronicznie, po odczycie CPU i placach).
+  function assemble(layout, quality, maps, landmarks, domes) {
     const terrain = new HaloTerrain({ layout, uniforms, maps, detail, quality });
     const domain = {
       Ns: terrain.Ns,
@@ -103,8 +155,6 @@ export function createHaloRing(options = {}) {
     // Ruchu statków ring nie udaje (decyzja użytkownika 2026-09-24: statki i ruch
     // wdrażane osobno) — port wystawia stanowiska (k7Halls, bays) i adapter
     // do ruchu v2 (haloPortTraffic.js), statki rysuje system ruchu.
-    group.add(terrain.mesh, structure.mesh, clouds.mesh, shell.mesh, mega.group, city.group);
-    if (structureTop) group.add(structureTop.mesh);
     // Port Ziemi: 4 kompleksy co 90° — hala K-7 i jej 2 otwarte zatoki
     // (stanowiska w standardzie K-7; bryła zatok w megastrukturze). Układy
     // stanowisk (stan zajętości) przeżywają przebudowę ringu: hala 0 i zatoki
@@ -131,17 +181,24 @@ export function createHaloRing(options = {}) {
         const hall = new HaloPortK7({ ringLayout: layout, uniforms, layout: hallLayout, angle, index: i, bays, style: layout.planetProfile.port });
         hall.update(0, {});
         hall.setBerthLamps();
-        group.add(hall.root);
         k7Halls.push(hall);
       });
     }
     const k7 = k7Halls[0] || null;
-    parts = { maps, detail, terrain, structure, structureTop, clouds, shell, mega, city, k7, k7Halls, plan, domain, quality };
-    applyLayers();
-    applySun();
+    return { maps, terrain, structure, structureTop, clouds, shell, mega, city, k7, k7Halls, plan, domain, quality, landmarks, domes };
   }
 
-  function disposeParts(keepDetail) {
+  function attachParts() {
+    if (!parts) return;
+    group.add(parts.terrain.mesh, parts.structure.mesh, parts.clouds.mesh, parts.shell.mesh, parts.mega.group, parts.city.group);
+    if (parts.structureTop) group.add(parts.structureTop.mesh);
+    for (const hall of parts.k7Halls) group.add(hall.root);
+    applyLayers();
+    applySun();
+    for (const [part, visible] of Object.entries(state.visible)) applyVisible(part, visible);
+  }
+
+  function disposeParts() {
     if (!parts) return;
     for (const key of ['terrain', 'structure', 'structureTop', 'clouds', 'shell']) {
       const part = parts[key];
@@ -158,8 +215,23 @@ export function createHaloRing(options = {}) {
       hall.dispose();
     }
     parts.maps.dispose();
-    if (!keepDetail) parts.detail.dispose();
-    parts = keepDetail ? { detail: parts.detail } : null;
+    parts = null;
+  }
+
+  function applyVisible(part, visible) {
+    const p = parts?.[part];
+    if (p?.mesh) p.mesh.visible = !!visible;
+    else if (p?.group) p.group.visible = !!visible;
+  }
+
+  // Gotowość: czeka na bieżącą budowę (także gdy w międzyczasie ruszyła następna).
+  async function whenReady() {
+    while (building) {
+      const job = building;
+      await job.promise;
+      if (building === job) break;
+    }
+    return !!parts;
   }
 
   function applyLayers() {
@@ -186,7 +258,7 @@ export function createHaloRing(options = {}) {
   const _hallC = new THREE.Vector3();
   const _hallS = new THREE.Sphere();
   function cullHalls(pixelAngle) {
-    const halls = parts.k7Halls;
+    const halls = parts?.k7Halls;
     if (!halls?.length) return;
     const Rf = layout.radii.floorMid;
     const Rc = Math.hypot(camLocal.x, camLocal.y);
@@ -231,23 +303,29 @@ export function createHaloRing(options = {}) {
   }
 
   function applySun() {
+    if (!uniforms) return;
     const { azimuth, elevation } = state.sun;
     const ce = Math.cos(elevation);
     uniforms.uSunDir.value.set(ce * Math.cos(azimuth), ce * Math.sin(azimuth), Math.sin(elevation)).normalize();
   }
 
-  build();
+  startBuild();
 
   const api = {
     group,
     get layout() { return layout; },
     get uniforms() { return uniforms; },
     get quality() { return state.qualityKey; },
+    // Obietnica gotowości (true = bryły i mapa CPU gotowe, false = budowa nie wyszła).
+    get ready() { return whenReady(); },
+    get isReady() { return !!parts && !building; },
+    get error() { return lastError; },
 
     // Kamera → układ lokalny ringu, punkt odniesienia RTE, wybór węzłów.
     update(dt, view) {
       const camera = view.camera;
       uniforms.uTime.value += Math.max(0, Number(dt) || 0);
+      if (!parts) return;
       group.updateMatrixWorld();
       _inv.copy(group.matrixWorld).invert();
       camera.getWorldPosition(_camWorld);
@@ -308,19 +386,19 @@ export function createHaloRing(options = {}) {
       applySun();
     },
 
+    // Nowa jakość: nowy zestaw map i brył w tle, podmiana gotowego (stary rysuje
+    // się do końca — mapa CPU i kolizje bez przerwy; układ się nie zmienia).
     setQuality(q) {
       const key = resolveHaloQuality(q);
       if (key === state.qualityKey) return;
       state.qualityKey = key;
-      disposeParts(true);
-      build();
+      startBuild({ keepOld: true });
     },
 
-    // Przebudowa geometrii (W, ściany, floorTilt, sektory, seed).
+    // Przebudowa geometrii (W, ściany, floorTilt, sektory, seed) — od pustego ringu.
     rebuild(nextOptions = {}) {
       Object.assign(state.options, nextOptions);
-      disposeParts(true);
-      build();
+      startBuild({ keepOld: false });
     },
 
     // Wycięcie górnej ściany (0 lub 1) w kamerze gry: prostokąt o zaokrąglonych
@@ -341,51 +419,68 @@ export function createHaloRing(options = {}) {
       applyLayers();
     },
 
+    // Widoczność części (także przed zbudowaniem — nakłada się przy podpięciu).
     setVisible(part, visible) {
-      const p = parts?.[part];
-      if (p?.mesh) p.mesh.visible = !!visible;
-      else if (p?.group) p.group.visible = !!visible;
+      state.visible[part] = !!visible;
+      applyVisible(part, visible);
     },
 
-    // Wysokość terenu (CPU, niska rozdzielczość) — dynamiczny near kamery.
+    // Wysokość terenu (CPU, niska rozdzielczość) — kolizje płyty, dynamiczny near
+    // kamery. Przed pierwszym odczytem mapy 0 (host czeka na `ready`).
     terrainHeightAt(x, y, z) {
+      const maps = parts?.maps;
+      if (!maps?.cpu) return 0;
       const f = layout.worldToFloor(x, y, z, _floorTmp);
-      return parts.maps.heightAtUV(f.u, f.v);
+      return maps.heightAtUV(f.u, f.v);
     },
 
     get stats() {
       const p = parts;
+      if (!p) {
+        return {
+          activeTiles: 0, segments: 0, mapProgress: 0, mapsReady: false, textureBytes: 0,
+          terrainTriangles: 0, megaInstances: 0, megaLights: 0, shellActive: false, building: !!building
+        };
+      }
       return {
         activeTiles: p.terrain.activeNodes,
         segments: p.structure.segments.count + (p.structureTop?.segments.count || 0),
         mapProgress: p.maps.progress,
-        mapsReady: p.maps.ready,
-        textureBytes: p.maps.textureBytes + p.detail.textureBytes,
+        mapsReady: api.mapsReady,
+        textureBytes: p.maps.textureBytes + (detail?.textureBytes || 0),
         terrainTriangles: p.terrain.triangleEstimate,
         megaInstances: p.mega.visibleInstances,
         megaLights: p.mega.lights.count,
-        shellActive: p.shell.active
+        shellActive: p.shell.active,
+        building: !!building,
+        bake: p.maps.timings
       };
     },
 
-    get mapsReady() { return parts.maps.ready; },
+    // Gotowość dla gry: bryły zbudowane, mapa CPU odczytana, pełna mapa dopieczona,
+    // żadna przebudowa w toku.
+    get mapsReady() { return !!parts && !building && parts.maps.ready && !!parts.maps.cpu; },
 
     // Port K-7 (dok gameplayowy): render + układ hali (dane dla rozgrywki hosta).
     // k7 = hala gracza (kompleks 0), k7Halls = wszystkie 4 (każda z zatokami
     // swojego kompleksu: hall.bays), bays = 8 otwartych zatok (układy
     // stanowisk z ramkami, kolejność jak plan.docks).
-    get k7() { return parts.k7; },
-    get k7Halls() { return parts.k7Halls || []; },
+    get k7() { return parts?.k7 || null; },
+    get k7Halls() { return parts?.k7Halls || []; },
     get k7Layout() { return state.k7Layout || null; },
     get bays() { return state.bayLayouts || []; },
-    get plan() { return parts.plan; },
+    get plan() { return parts?.plan || null; },
     // Megabudowle (haloRingLandmarks.js): nazwa, sektor, kąt, t podłogi, plac, park.
-    get landmarks() { return parts.plan.landmarks || []; },
+    get landmarks() { return parts?.plan?.landmarks || []; },
     // Kopuły-biosfery (haloRingDomes.js): typ wnętrza, sektor, kąt, t, promień.
-    get domes() { return parts.plan.domes || []; },
+    get domes() { return parts?.plan?.domes || []; },
 
     dispose() {
-      disposeParts(false);
+      buildGen++;
+      building = null;
+      disposeParts();
+      detail?.dispose();
+      detail = null;
     }
   };
   return api;

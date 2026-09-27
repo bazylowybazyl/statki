@@ -174,6 +174,11 @@ export function createArchRing(options = {}) {
     get layout() { return layout; },
     get uniforms() { return uniforms; },
     get quality() { return state.qualityKey; },
+    // Budowa synchroniczna (plan i teren na CPU, bez map GPU) — gotowy od razu;
+    // API jak createHaloRing (ready / isReady), żeby klej gry nie rozróżniał ringów.
+    get ready() { return Promise.resolve(true); },
+    get isReady() { return true; },
+    get error() { return null; },
 
     update(dt, view) {
       const camera = view.camera;

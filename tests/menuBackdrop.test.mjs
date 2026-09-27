@@ -1,5 +1,5 @@
 // Tło menu głównego — Ziemia z ringiem „Halo” (2026-09-26): wypożyczenie ringu
-// gry na czas menu, rozgrzewka shadera map zgodna z materiałami bake'u,
+// gry na czas menu, rozgrzewka map (na WebGPU w HaloWorldMaps.init),
 // własna warstwa i render przez composer Core3D, wpięcie w index.html,
 // oraz halo (poświata limbu) Ziemi i Marsa w grze z tego samego modelu
 // atmosfery co w menu. Bez GPU.
@@ -44,23 +44,35 @@ test('showcase: menu dostaje ring gry, release oddaje go z warstwami gry, bez wy
   assert.doesNotThrow(() => early.releaseShowcase('earth'));
 });
 
-test('rozgrzewka shadera map = te same programy co bake (klucz cache three)', () => {
+test('rozgrzewka map na WebGPU: tło menu dostaje pustą scenę, pipeline’y bake’u kompiluje HaloWorldMaps.init na prawdziwych celach', async () => {
+  // Port WebGPU (zadanie 06): klucz pipeline'u zależy od formatu celu (rgba16float /
+  // rgba8unorm / rgba32float), więc kompilacja na kanwie nic nie daje. createHaloBakeWarmup
+  // zostaje dla API tła menu (zadanie 11 je usunie) i jest pustą sceną — compileAsync od razu.
   const warm = createHaloBakeWarmup();
-  const meshes = warm.scene.children.filter((o) => o.isMesh);
-  assert.equal(meshes.length, 3);
-  assert.equal(warm.scene.children.filter((o) => o.isLight).length, 0, 'bez świateł, jak scena bake’u (liczba świateł jest w kluczu)');
-  const owner = { uniforms: {} };
-  ['A', 'B', 'C'].forEach((output, i) => {
-    const bake = HaloWorldMaps.prototype._makeMaterial.call(owner, output);
-    const w = meshes[i].material;
-    assert.equal(w.vertexShader, bake.vertexShader, `${output}: vertex`);
-    assert.equal(w.fragmentShader, bake.fragmentShader, `${output}: fragment`);
-    for (const key of ['type', 'defines', 'side', 'transparent', 'blending', 'depthTest', 'depthWrite', 'lights', 'fog', 'glslVersion', 'extensions', 'vertexColors']) {
-      assert.deepEqual(w[key], bake[key], `${output}: ${key}`);
-    }
-    bake.dispose();
-  });
-  warm.dispose();
+  assert.equal(warm.scene.children.length, 0);
+  assert.doesNotThrow(() => warm.dispose());
+  // Budowa ringu (asynchroniczna) kompiluje PRAWDZIWE obiekty bake'u przed pierwszym bake'iem.
+  const calls = [];
+  let target = null;
+  const renderer = {
+    autoClear: true,
+    async init() {},
+    getRenderTarget: () => target,
+    setRenderTarget(t) { target = t; },
+    async compileAsync(scene) { calls.push(['compile', target?.texture?.type, scene.children[0].material.name]); },
+    render(scene) { calls.push(['render', target?.texture?.type, scene.children[0].material.name]); },
+    async readRenderTargetPixelsAsync(rt, x, y, w, h) { calls.push(['read']); return new Float32Array((h - 1) * Math.ceil(w * 16 / 256) * 64 + w * 4); }
+  };
+  const { createHaloRingLayout } = await import('../src/3d/haloRing/haloRingLayout.js');
+  const { HALO_QUALITY } = await import('../src/3d/haloRing/haloRingConfig.js');
+  const maps = new HaloWorldMaps(renderer, createHaloRingLayout({}), HALO_QUALITY.low);
+  await maps.init();
+  const firstRender = calls.findIndex((c) => c[0] === 'render');
+  const compiles = calls.filter((c) => c[0] === 'compile');
+  assert.equal(compiles.length, 4, 'A (mapa i odczyt), B, C');
+  assert.ok(calls.findLastIndex((c) => c[0] === 'compile') < firstRender, 'kompilacja przed bake');
+  assert.ok(maps.cpu, 'mapa CPU po odczycie');
+  maps.dispose();
 });
 
 test('tło menu: własna warstwa i render przez composer Core3D, bez własnego renderera', () => {
