@@ -55,7 +55,7 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 | 15 | Mostki, rdzenie, reaktory, światła (+ `mostki-demo`, `rdzen-demo`) | 04 | 05–14, 16–20 | xhigh | czeka | | |
 | 16 | Zniszczenie stacji (+ scena bazy `stacja-rozpad`) | 03 | 04–15, 17–19 | xhigh | czeka | | |
 | 17 | Broń 1/2 z dema `bronie-webgpu`: efekty wszystkich broni (pociski, smugi, trafienia, wiązki, PD, flak) | 12, 04 | 05–11, 13–16, 19 | max | czeka | | nowe efekty — ocena obrazu zamiast tolerancji; PD i flak z kanwy 2D do 3D |
-| 18 | Broń 2/2: obrażenia z dema — mapa ran, przebicia, rykoszety, ładowanie, serie; światła efektów na poszyciu | 17, 04 | 05–11, 13–16, 19 | max | część 18-A w toku (2026-09-27, podagent, worktree `statki-wt/18a`: moduły mechaniki + zapytania HullBodies, bez wpięcia) | | zatwierdzona zmiana rozgrywki |
+| 18 | Broń 2/2: obrażenia z dema — mapa ran, przebicia, rykoszety, ładowanie, serie; światła efektów na poszyciu | 17, 04 | 05–11, 13–16, 19 | max | część 18-A zrobiona i scalona (4e165fb): moduły mechaniki + zapytania `HullBodies` bez wpięcia; zostają 18-B (wpięcie, po 17), 18-C (mapa ran, po 04 i 12), 18-D | 8eaa828…2da882d | zatwierdzona zmiana rozgrywki |
 | 19 | Rakiety z dema `rakiety-webgpu`: dym GPU, dysze, kule ognia, Supernowa, iskry | 12 | 05–11, 13–18 | max | czeka | | lot rakiet zostaje w `rocketSystem3D` |
 | 20 | Koniec overlaya: wybuch reaktora w Core3D, usunięcie drugiego renderera | 17, 18, 19 | 13–16 | xhigh | czeka | | jeden renderer, jeden bloom |
 | 21 | Asteroidy z dema `asteroidy-webgpu` + kolizje z olbrzymami | 12, 04, 05 (+ commit dema) | 13–20 | max | czeka (demo gotowe, commit przy starcie zadania) | | zielone światło użytkownika; stare pole (zderzenia z małymi skałami, niszczenie, łup) znika — do decyzji użytkownika |
@@ -262,3 +262,18 @@ Todo (2): „PORT poprawka 1 / 3 (TODO integracji)” w `tests/shipCore.test.mjs
     tag);
   - testy: 1337 / 7 porażek bazowych / 2 todo; nowe `haloRingTSL` (12, WGSL budowany w Node) i `haloRingAsync` (3);
     `menuBackdrop` (rozgrzewka) przepisany; inwentarz na gałęzi: port 42 pliki z GLSL, 68 materiałów, 8542 linie.
+- **Część 18-A scalona do `main`** (8eaa828, 3c2ac69, 2da882d; scalenie 4e165fb): `HullBodies.surfaceNormal /
+  traceThrough / spriteUvAt`, `hullImpactResult`, `hull.dmgKey` (dziedziczony przez wraki i odłamy), hak `onImpact`;
+  `src/game/projectileMechanics.js` (`resolveHullHit`, `entryDamage`, `stepInsideHull`), `src/game/weaponCharge.js`
+  (`stepCharge`, kolejka serii Hexlance'a); pola danych w `weapons.js` (penDepth / penSpeedLoss / ricochet / chargeTime
+  Valkyrie / recoil i shake zgodne z `FX_PROFILE` — gra ich jeszcze nie czyta); `scripts/bilans-broni.mjs`, opis wpięcia
+  `docs/webgpu/MECHANIKA-BRONI.md`. Fizyka kadłubów A/B z HEAD: identyczny hash stanu i sekwencja `Math.random` (240
+  kroków). Testy na `main` po scaleniu: 1364 / 7 porażek bazowych / 2 todo, `npm test` OK.
+  - Bilans (1000 strzałów, prawdziwe sprite'y): Mjolnir 312,5 → 227,3 dps (−27%), kolumna 3 okrętów ×5,0 straty na
+    strzał; Valkyrie 166,7 → 152,5 dps (−8,5%), na wylot fregata 100% / niszczyciel 80% / pancernik 19%; Vulcan i
+    Gatling S −1,5…−4,2% dps (rykoszety 2–6% trafień); Hexlance seria 4 cięć = +53…57% straty (nie ×4 — cięcia biegną
+    tym samym pasem).
+  - Decyzje podagenta (do przejrzenia): ponowne wejście w ten sam kadłub robi krater bez drugiego HP i bez liczenia do
+    limitu przebić; krater zakleszczenia 0,5 × obrażeń × (v/v_wejścia)²; naładowane działo bez celu gaśnie po 2 s;
+    kolejka serii z opóźnieniami względnymi; recoil/shake dopisane wszystkim broniom (warianty S/L, `ciws_mk2`,
+    `hexlance_siege` dostały wartości rodziny z dema — dziś mają fallback 3/1,8, zmiana przy przełączeniu źródła w 18-D).
