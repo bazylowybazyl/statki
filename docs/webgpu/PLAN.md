@@ -106,6 +106,15 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   `texture()` bez jawnego uv dostaje własny uniform mat3 (`updateMatrix`) — podawaj uv, żeby nie zjadać limitu 12
   buforów; FXC liczy `a·b + c` z jednym zaokrągleniem, DXC z dwoma — hasze z mnożenia i dodawania przez
   `haloFusedMulAddInt` (bit w bit z bazą WebGL).
+- **Pułapki z zadań 04 i 14 (three r183):** limit **8 buforów wierzchołków** na pipeline (`maxVertexBuffers` = 8 także w
+  adapterze) — każdy nieprzeplatany atrybut to bufor; stałe atrybuty przeplatać. three **połyka błąd
+  `createRenderPipelineAsync`** (pusty catch) — pipeline zostaje „w budowie”, osłona pomija rysunek bez śladu; Core3D loguje
+  go do konsoli. **`texture(...).onObjectUpdate()` nie działa** (`TextureNode.setup` zeruje `updateType` bez macierzy uv) —
+  podklasa ze stałym `updateType = OBJECT` (`HullObjectTextureNode`). **`uniformArray` w grafie wspólnym pakuje się raz na
+  `render()`** — wszystkie obiekty passa dostają dane pierwszego; dane per obiekt przez `onObjectUpdate` (wzór
+  `shield3D.tsl.js`) albo bufor storage ze slotem na obiekt (wzór `HullLightStore`, 04). **uuid `InstancedMesh` wchodzi do
+  klucza programu** — każdy `InstancedMesh` z własnym materiałem ma osobny NodeBuilder (dla pul: jeden mesh, nie mesh na
+  encję).
 - **TSL, nie `wgslFn`.** Tekstowy WGSL tylko dla wyizolowanej czystej funkcji, gdy TSL jest naprawdę niewygodny — z
   uzasadnieniem w commicie (zamyka drogę do zapasowego backendu WebGL2).
 - **Pętle:** `Loop` w TSL, nie `for` w JS generujący kopie (`mx_noise_float` ×160 rozwinięte = 44 s kompilacji).
