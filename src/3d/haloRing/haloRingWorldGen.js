@@ -598,18 +598,21 @@ export class HaloWorldMaps {
   async _compile() {
     const r = this.renderer;
     if (typeof r.compileAsync !== 'function') return;
-    const prevTarget = r.getRenderTarget();
     const jobs = [['A', this.low.A], ['B', this.low.B], ['C', this.low.C], ['A', this.readTarget]];
-    try {
-      for (const [key, target] of jobs) {
-        if (this.disposed) return;
-        this.quad.material = this.materials[key];
-        r.setRenderTarget(target);
-        await r.compileAsync(this.scene, this.camera);
+    for (const [key, target] of jobs) {
+      if (this.disposed) return;
+      // compileAsync czyta cel synchronicznie (renderer już zainicjowany) — cel wraca
+      // PRZED czekaniem, żeby klatka gry w międzyczasie nie trafiła w cel bake'u
+      const prevTarget = r.getRenderTarget();
+      this.quad.material = this.materials[key];
+      r.setRenderTarget(target);
+      let pending;
+      try {
+        pending = r.compileAsync(this.scene, this.camera);
+      } finally {
         r.setRenderTarget(prevTarget);
       }
-    } finally {
-      r.setRenderTarget(prevTarget);
+      await pending;
     }
   }
 

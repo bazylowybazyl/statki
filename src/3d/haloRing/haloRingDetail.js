@@ -123,30 +123,40 @@ export class HaloDetailTextures {
     scene.add(quad);
     const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     const targets = [this.rt1, this.rt2];
-    const prev = renderer.getRenderTarget();
     try {
       const t0 = performance.now();
       if (typeof renderer.compileAsync === 'function') {
         for (let i = 0; i < 2; i++) {
           if (this._disposed) return;
+          // cel czytany synchronicznie — wraca przed czekaniem (klatka gry w międzyczasie)
+          const prev = renderer.getRenderTarget();
           quad.material = materials[i];
           renderer.setRenderTarget(targets[i]);
-          await renderer.compileAsync(scene, camera);
-          renderer.setRenderTarget(prev);
+          let pending;
+          try {
+            pending = renderer.compileAsync(scene, camera);
+          } finally {
+            renderer.setRenderTarget(prev);
+          }
+          await pending;
         }
       }
       this.compileMs = performance.now() - t0;
       if (this._disposed) return;
       const t1 = performance.now();
-      for (let i = 0; i < 2; i++) {
-        quad.material = materials[i];
-        renderer.setRenderTarget(targets[i]);
-        renderer.render(scene, camera);
+      const prev = renderer.getRenderTarget();
+      try {
+        for (let i = 0; i < 2; i++) {
+          quad.material = materials[i];
+          renderer.setRenderTarget(targets[i]);
+          renderer.render(scene, camera);
+        }
+      } finally {
+        renderer.setRenderTarget(prev);
       }
       this.bakeMs = performance.now() - t1;
       this.ready = true;
     } finally {
-      renderer.setRenderTarget(prev);
       for (const m of materials) m.dispose();
       quad.geometry.dispose();
     }
