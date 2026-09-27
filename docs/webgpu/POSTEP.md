@@ -44,12 +44,12 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 | 04 | Kadłuby (belki + heksy), lakier, impostory, szczątki | 03 | 05–14, 16, 19 | max | czeka | | graf na wariant zamiast materiału na encję; miejsce na światła siatki (18) |
 | 05 | Planety, słońce, mgławica, gwiazdy, stacje | 03 | 04, 06–10, 12–20 | xhigh | czeka | | |
 | 06 | Ring 1/5: biblioteka TSL, pieczenie map, odczyt asynchroniczny, `halo_ring_demo` | 01 | 02–05, 12–20 | max | zrobione na gałęzi `webgpu/06` (b7ecdc9…c1ad3d2); czeka na scalenie 01 i weryfikację w grze | b7ecdc9…c1ad3d2 | kończy przejściową regresję terenu ringu z 01 |
-| 07 | Ring 2/5: teren + zestaw przemysłowy | 06 | 04, 05, 12–20 | xhigh | czeka | | |
+| 07 | Ring 2/5: teren + zestaw przemysłowy | 06 | 04, 05, 12–20 | xhigh | w toku (podagent, worktree `statki-wt/07` z gałęzi 06 — warsztat ringu; w grze po 01) | | |
 | 08 | Ring 3/5: struktura + atmosfera | 07 | j.w. | xhigh | czeka | | |
 | 09 | Ring 4/5: megastruktura + miasto (kopuły, landmarki, drzewa) | 08 | j.w. | xhigh | czeka | | |
 | 10 | Ring 5/5: K-7 + ringi-archetypy Marsa i Jowisza | 09 | j.w. | xhigh | czeka | | ring bez zamienników |
 | 11 | Tło menu + rozgrzewka pipeline'ów | 05, 10 | 12–20 | max | czeka | | nowy `menuBackdrop.test` |
-| 12 | Infrastruktura efektów GPU: compute w klatce, siatka świateł, zniekształcenia, Fx3D w TSL | 03 | 04–11, 13–16 | max | czeka | | podstawa pod 17–19 (i przyszłe asteroidy) |
+| 12 | Infrastruktura efektów GPU: compute w klatce, siatka świateł, zniekształcenia, Fx3D w TSL | 03 | 04–11, 13–16 | max | część 12-A w toku (podagent, worktree `statki-wt/12a`: czyste moduły `src/3d/fx/`); 12-B (wpięcie w Core3D) po 03 | | podstawa pod 17–19 (i przyszłe asteroidy) |
 | 13 | Silniki: MAIN, WARP (plazma), SIDE | 03 | 04–12, 14–20 | xhigh | czeka | | |
 | 14 | Tarcze i trafienia w tarczę | 03 | 04–13, 15–20 | xhigh | czeka | | |
 | 15 | Mostki, rdzenie, reaktory, światła (+ `mostki-demo`, `rdzen-demo`) | 04 | 05–14, 16–20 | xhigh | czeka | | |
