@@ -927,6 +927,26 @@ export const Core3D = {
       return draw.call(this, renderObject, info);
     };
     backend.__core3dPendingPipelineGuard = true;
+    // three r183 połyka odrzucenie createRenderPipelineAsync (GPUPipelineError, np.
+    // „Vertex buffer count (9) exceeds the maximum number of vertex buffers (8)”):
+    // pusty catch, a błąd nie trafia do zakresu błędów walidacji — pipeline zostaje
+    // „w budowie” na zawsze i osłona wyżej po cichu pomija rysunek (zadanie 04:
+    // odłamki kadłubów znikały bez śladu). Błąd do konsoli (harness liczy go w
+    // `bledy`), raz na etykietę pipeline'u; rysunek dalej pominięty.
+    const device = backend.device;
+    if (device && typeof device.createRenderPipelineAsync === 'function' && !device.__core3dPipelineErrorLog) {
+      const createAsync = device.createRenderPipelineAsync.bind(device);
+      const reported = new Set();
+      device.createRenderPipelineAsync = (descriptor) => createAsync(descriptor).catch((err) => {
+        const label = descriptor?.label || '?';
+        if (!reported.has(label)) {
+          reported.add(label);
+          console.error(`[Core3D] pipeline „${label}” nie powstał: ${err?.message || err}`);
+        }
+        throw err;
+      });
+      device.__core3dPipelineErrorLog = true;
+    }
   },
 
   // Post zadania 01 („uber-lite”): bufor sceny (MSAA rozwiązane do .texture) →

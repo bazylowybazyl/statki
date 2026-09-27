@@ -22,10 +22,19 @@
 //    w świecie. Statek przelatuje pod nimi z paralaksą (skyDrift), więc
 //    odbicie sunie po kadłubie także przy locie prosto — bez tej warstwy
 //    kamera jadąca za statkiem sprawiała, że odbicie stało w miejscu;
-//  - WSPÓLNE UNIFORMY: ten sam obiekt siedzi we wszystkich materiałach
+//  - WSPÓLNE UNIFORMY: ten sam węzeł TSL siedzi we wszystkich materiałach
 //    kadłubów, więc strojenie to kilka przypisań na klatkę, bez pętli po statkach.
-// Shader: HEX_FRAGMENT_SHADER w hexShips3D.js (blok „LAKIER”).
+// Shader: blok „LAKIER” w src/3d/hexShips3D.tsl.js (hullLacquerCoat).
+//
+// Port WebGPU (zadanie 04): uniformy lakieru to węzły TSL — `uniform()` z grupy
+// renderGroup (jeden zapis na wywołanie render, wspólny dla wszystkich kadłubów)
+// i `texture()` dla map. `.value` działa jak dawniej (Vector4.set w miejscu,
+// podmiana tekstury). Mapa kształtu zostaje obiektem `{ value }` per sprite —
+// materiał kadłuba czyta ją per obiekt (onObjectUpdate w hexShips3D.tsl.js).
+// Tekstury zastępcze mają filtr liniowy: TSL wybiera ścieżkę próbkowania
+// (textureSample albo textureLoad) z tekstury obecnej przy BUDOWIE materiału.
 import * as THREE from 'three';
+import { renderGroup, texture, uniform } from 'three/tsl';
 
 export const HULL_LACQUER_DEFAULTS = Object.freeze({
   enabled: true,
@@ -345,13 +354,34 @@ const flatShapeTexture = createShapeTexture(
 );
 
 // Czarny kafel do czasu wczytania obłoków — warstwa bliska nic wtedy nie dodaje.
+// Filtr liniowy jak u prawdziwego kafla (patrz nagłówek: ścieżka próbkowania TSL).
 const emptySkyTexture = (() => {
   const texture = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
+  texture.magFilter = THREE.LinearFilter;
+  texture.minFilter = THREE.LinearFilter;
+  texture.generateMipmaps = false;
+  texture.colorSpace = THREE.SRGBColorSpace;
   texture.needsUpdate = true;
   return texture;
 })();
+
+// Daleki kosmos do czasu pierwszego update() (lakier włączony) — czarny, bez gwiazd.
+const emptyEnvTexture = (() => {
+  const texture = new THREE.DataTexture(new Uint8Array([0, 0, 0, 0]), 1, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.magFilter = THREE.LinearFilter;
+  texture.minFilter = THREE.LinearFilter;
+  texture.generateMipmaps = false;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.needsUpdate = true;
+  return texture;
+})();
+
+// Wspólny uniform lakieru: jedna wartość na klatkę dla wszystkich kadłubów.
+const sharedVec4 = (x, y, z, w) => uniform(new THREE.Vector4(x, y, z, w)).setGroup(renderGroup);
 
 function configureSkyTexture(texture) {
   texture.wrapS = THREE.RepeatWrapping;
@@ -365,16 +395,17 @@ function configureSkyTexture(texture) {
 }
 
 export const HullLacquer = {
-  // Wspólne obiekty uniformów — hexShips3D wkłada TE SAME obiekty do każdego
-  // materiału kadłuba (i płyty pancerza).
+  // Wspólne węzły TSL — graf materiału kadłuba (hexShips3D.tsl.js) czyta TE SAME
+  // węzły we wszystkich wariantach (skóra belek, siatka heksów, płyta pancerza).
   uniforms: {
-    uLacquerEnv: { value: null },
-    uLacquerSky: { value: emptySkyTexture },
-    uLacquerA: { value: new THREE.Vector4(0, 0.05, 10, 0.9) },   // siła, F0, zysk dalekiego kosmosu, jego sufit
-    uLacquerB: { value: new THREE.Vector4(0, 150, 1500, 3) },    // gwiazdy HDR, słońce, ostrość odblasku, połysk
-    uLacquerC: { value: new THREE.Vector4(60, 0.6, 3, 30 * DEG) }, // ostrość połysku, metal, mip rozmycia, wysokość słońca odblasków (rad)
-    uLacquerD: { value: new THREE.Vector4(1 / 9000, 0.25, 700, 8) }, // obłoki: 1/kafel, drift, wygięcie, jasność
-    uLacquerE: { value: new THREE.Vector4(2, 5, 1, 0) }          // obłoki: podbicie rdzeni, mip rozmycia, wygaszenie (warp), -
+    // setUpdateMatrix(false): bez macierzy uv tekstury (mat3 i jej aktualizacja per obiekt).
+    uLacquerEnv: texture(emptyEnvTexture).setUpdateMatrix(false),
+    uLacquerSky: texture(emptySkyTexture).setUpdateMatrix(false),
+    uLacquerA: sharedVec4(0, 0.05, 10, 0.9),        // siła, F0, zysk dalekiego kosmosu, jego sufit
+    uLacquerB: sharedVec4(0, 150, 1500, 3),         // gwiazdy HDR, słońce, ostrość odblasku, połysk
+    uLacquerC: sharedVec4(60, 0.6, 3, 30 * DEG),    // ostrość połysku, metal, mip rozmycia, wysokość słońca odblasków (rad)
+    uLacquerD: sharedVec4(1 / 9000, 0.25, 700, 8),  // obłoki: 1/kafel, drift, wygięcie, jasność
+    uLacquerE: sharedVec4(2, 5, 1, 0)               // obłoki: podbicie rdzeni, mip rozmycia, wygaszenie (warp), -
   },
   // Mapa „bez lakieru” (waga 0) dla kadłubów bez sprite'a i do czasu wypieczenia.
   flatShapeUniform: { value: flatShapeTexture },

@@ -144,11 +144,24 @@ test('hexShips3D: pudło rysowania oddzielone od pudła rozgrzania', () => {
   assert.match(indexHtml, /_hexCullInfo\.drawHalfW = viewHalfW;/);
 });
 
-test('hexShips3D: tablice lamp i stref dysz bez uploadu, gdy są puste', () => {
-  assert.match(hexShips, /uShipLightData: \{ value: createLightUniformArray\(\), needsUpdate: false \}/);
-  assert.match(hexShips, /uEngineZones: \{ value: createEngineZoneArray\(\), needsUpdate: false \}/);
-  assert.match(hexShips, /uniforms\.uEngineZones\.needsUpdate = zones\.length > 0;/);
-  assert.match(hexShips, /setShipLightArraysUpload\(uniforms, payload\.count > 0\);/);
+// Port WebGPU (zadanie 04): tablice lamp i stref dysz nie są już uniformami per
+// materiał (w WebGL wysyłane przy każdym rysowaniu, stąd needsUpdate: false przy
+// zerze). Leżą w jednym buforze storage (HullLightStore) — slot na kadłub, zapis
+// i wysyłka tylko przy zmianie podpisu lamp / układu dysz, nigdy przy rysowaniu.
+test('hexShips3D: lampy i strefy dysz w buforze storage — wysyłka tylko przy zmianie, pusty kadłub bez slotu', () => {
+  const lights = hexShips.slice(hexShips.indexOf('function syncEntityLightUniforms('), hexShips.indexOf('function disposeMeshData('));
+  assert.ok(lights.length > 0);
+  // Podpis bez zmian = wyjście przed zapisem.
+  assert.ok(lights.indexOf('if (payload.signature === data.lightSignature) return;') < lights.indexOf('HullLightStore.markDirty('));
+  assert.match(lights, /HullLightStore\.markDirty\(data\.lightSlot, 0, count \* 3\);/);
+  // Zero lamp (i stref) = slot wraca do puli; shader i tak czyta tylko do licznika.
+  assert.match(lights, /if \(count === 0\) releaseHullLightSlotIfUnused\(data\);/);
+  const lacquer = hexShips.slice(hexShips.indexOf('function syncEntityLacquer('), hexShips.indexOf('// Lampy w shaderze kadłuba'));
+  assert.ok(lacquer.indexOf('data.zoneMul === zoneMul') < lacquer.indexOf('HullLightStore.markDirty('), 'strefy tylko przy zmianie układu');
+  assert.match(lacquer, /HullLightStore\.markDirty\(data\.lightSlot, HULL_LIGHT_ZONE_OFFSET, zoneCount\);/);
+  // Jedna wersja bufora na klatkę (zakresy zmienionych slotów).
+  assert.equal((hexShips.match(/HullLightStore\.commit\(\);/g) || []).length, 1);
+  assert.match(hexShips, /HullLightStore\.release\(data\.lightSlot\);/);
 });
 
 test('shield3D: próg kopuły = próg cząstek ShieldImpactFX (9 px)', async () => {
