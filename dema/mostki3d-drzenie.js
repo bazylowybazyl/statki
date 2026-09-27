@@ -117,7 +117,8 @@ async function probe(opts) {
   const hidden = [];
   Core3D.scene.traverse((o) => {
     const m = o.material;
-    if (o.isMesh && m && m.uniforms && (m.uniforms.uStressTint || m.uniforms.uLacquerEye) && m.colorWrite !== false) {
+    // Port WebGPU (zadanie 04): materiał kadłuba = HullNodeMaterial (uStressTint to dziś węzeł wspólny).
+    if (o.isMesh && m && m.uniforms && (m.isHullNodeMaterial || m.uniforms.uStressTint || m.uniforms.uLacquerEye) && m.colorWrite !== false) {
       m.colorWrite = false;
       hidden.push(m);
     }

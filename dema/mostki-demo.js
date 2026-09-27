@@ -128,9 +128,13 @@ initHexShips3D({ canvas: glCanvas });
 setHexShips3DActive(true);
 // Jak index.html:816 — ścieżka rwania GPU soft body woła destroyShard przez window.
 window.DestructorSystem = DestructorSystem;
-Core3D.renderer.debug.onShaderError = (gl, program, vs, fs) => {
-  reportError(`SHADER: ${[gl.getProgramInfoLog(program), gl.getShaderInfoLog(vs), gl.getShaderInfoLog(fs)].filter(Boolean).join('\n')}`);
-};
+// Port WebGPU (zadanie 04, minimum do startu warsztatu — reszta w zadaniu 15): renderer
+// powstaje w tle (Core3D.ready), a błędy shaderów WebGPU/WGSL idą do konsoli jako błędy
+// walidacji (bez haka WebGL onShaderError z logami programu GL). Odczyty HDR
+// (readRenderTargetPixels: measureHDR / measureWindows) na WebGPU jeszcze nie działają.
+Core3D.ready.then((ok) => {
+  if (!ok) reportError(`WebGPU: ${Core3D.gpuError || 'brak urządzenia'}`);
+});
 BridgeFx3D.attach(Core3D.scene);
 // Model 3D mostka (src/3d/bridge3D.js) — w grze ten sam hak obok BridgeFx3D.
 Bridge3D.attach(Core3D.scene);
@@ -1633,6 +1637,8 @@ window.__mostki = api;
 (async function start() {
   try {
     await loadHullImages();
+    // Urządzenie WebGPU przed pierwszą klatką (zrzuty czekają na api.ready).
+    await Core3D.ready;
     wireUi();
     buildScene();
     if (params.get('lock') === '1') setLock(true);

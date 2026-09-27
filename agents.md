@@ -68,7 +68,15 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 - **Pułapki TSL (three r183):** najwyżej 12 buforów uniformów na etap shadera — `uniform()` z domyślnej grupy dzielą
   jeden bufor, ale każdy `uniformArray` i każda własna grupa to osobny (pakuj w blok, wzór `createUniformBlock` w
   `src/3d/haloRing/`). `Fn(...).setLayout(...)` jest buforowane globalnie: funkcja z layoutem ma być czysta, uniformy
-  jako parametry (złapany w domknięciu → drugi materiał czyta cudzy slot).
+  jako parametry (złapany w domknięciu → drugi materiał czyta cudzy slot). **Najwyżej 8 buforów wierzchołków na
+  pipeline** (`maxVertexBuffers` = 8 także w adapterze RTX 5080): każdy nieprzeplatany atrybut to bufor, InstancedMesh
+  dokłada macierz instancji (+ normalne) — stałe atrybuty przeplataj, a materiał liczący pozycję sam (`vertexNode`) na
+  InstancedMesh nadpisuje `setupPosition` (wzór `HullDebrisNodeMaterial`). three połyka błąd `createRenderPipelineAsync`
+  (pusty catch) — pipeline zostaje „w budowie”, osłona Core3D pomija rysunek; Core3D loguje go do konsoli (harness:
+  `bledy`). `texture(...).onObjectUpdate()` NIE działa (TextureNode.setup zeruje `updateType` bez macierzy uv) —
+  tekstura per obiekt: `HullObjectTextureNode` (`src/3d/hexShips3D.tsl.js`). Ścieżkę próbkowania (textureSample /
+  textureLoad) TSL wybiera z tekstury obecnej przy BUDOWIE — tekstury zastępcze z filtrem liniowym, osobny obiekt na
+  każde wiązanie (TextureNode skleja wiązania po uuid tekstury).
 - **Przejściowo (do swoich zadań):** bloom i gorące powietrze (02), maska słońca / SDF / refrakcja (03, do tego czasu
   `uSunShadowOn = 0`), mapa CPU ringu pusta — brak synchronicznego odczytu pikseli (06): płyta ringu koliduje bez
   rzeźby terenu.
@@ -133,6 +141,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 - Nowy wrak z kadłuba (śmierć, rozpad, wybuch reaktora) idzie przez `convertToWreck` / `shatter` / hak `onWreck` — nie składaj go ręcznie.
 - Siatka 15 px jak w demie (`HULL_BODY_CONFIG.cellPx`); jednostką strojenia zostaje dawny heks (`HEX_PITCH_PX` = 7,5): węzeł = `hull.hexPerNode` heksów (HP ×4, łup, tempo cięcia, promień krateru). Nową wartość „na komórkę” przeliczaj przez `hexPerNode`. Nie zagęszczaj siatki bez pomiaru ciągłego styku — przy 7,5 px pchany okręt budził się cały i nie zasypiał (krok 2,7 ms zamiast 0,13).
 - Dwie masy: ciało w silniku ma masę ZDERZEŃ z powierzchni kadłuba (`HULL_BODY_CONFIG.massPerArea`, jedna gęstość jak demo — Atlas ≈ 800 tys.), `entity.mass` to masa GRY (ciąg ∝ masa, separacja AI, holowanie, asteroidy). Nie przepisuj jednej w drugą: `syncOut` skaluje masę gry i `inertia` w stosunku ubytku masy ciała, wrak dostaje masę w skali gry rodzica.
+- Materiał kadłuba (port WebGPU, zadanie 04): graf TSL RAZ na wariant (`src/3d/hexShips3D.tsl.js`: skóra belek, siatka heksów, płyta pancerza, szczątki GPU), każdy kadłub dostaje lekki `HullNodeMaterial` z tymi samymi węzłami — nie buduj grafu na encję (NodeBuilder ~12 ms CPU na kadłub, spawn 30 NPC: 389 ms zamiast 14). Wartości per encja w `material.uniforms` (obiekty `{ value }`), wspólne (czas, strojenie światła, żar) w `HULL_SHARED` (raz na klatkę), lampy statku i strefy dysz w buforze storage `HullLightStore` (slot na kadłub, zapis tylko przy zmianie podpisu). Nowe dane per kadłub: holder w `createHullUniforms` + `perObject()` w grafie, nie pole-liczba materiału (klucz three bierze liczby jako 0/1). Maska słońca kadłubów, odłamków i smug: JEDNO miejsce importu (`sunVisibility`/`sunFill`/`sunShadeUnlit` w `hexShips3D.tsl.js`). Haki: mapa ran i światła efektów (zadanie 18: `hullDamageSurface`, `hullDamageHeat`, `hullEffectLights`), ośrodek wolumetryczny (zadanie 21: `hullVolume`, `kolor·a + rgb`).
 
 ### Mostki (zniszczenie mostka = kill)
 - **Stan 2026-09-25: mostki i rdzenie wymagają `hexGrid`, więc na kadłubach belkowych są nieaktywne do ich portu (etapy 4–5 w `docs/PORT-silnik-belek.md`).** Opis niżej dotyczy docelowego zachowania.
