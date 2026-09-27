@@ -80,7 +80,9 @@ try {
       samples: n, nonZero, abovePad, min: +min.toFixed(3), max: +max.toFixed(3), mean: +(sum / n).toFixed(3),
       colliderVsRing: diff,
       slab: { r: +r.toFixed(1), inSlab, inSlabFlat },
-      constrain: { hit: c.hit, floorPush: +c.floor.toFixed(2) }
+      constrain: { hit: c.hit, floorPush: +c.floor.toFixed(2) },
+      // czasy budowy map w grze (silnik Halo; ringi-archetypy nie pieką map)
+      bake: ring.stats?.bake || null
     };
   })()`);
   result.errors = logs.errors().filter((l) => !/favicon|AudioSys|decode audio|powerPreference/.test(l)).slice(0, 10);
