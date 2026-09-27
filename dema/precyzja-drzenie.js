@@ -300,7 +300,9 @@ async function probe(opts, analyze) {
   // modułu, ten sam wygląd).
   const vs = (o) => (typeof o.material?.vertexShader === 'string' ? o.material.vertexShader : '');
   const MATCH = {
-    lights: (o) => o.isInstancedMesh && o.name !== 'BRIDGE_WINDOWS' && !!o.material?.uniforms?.uTime && !!o.material?.uniforms?.uCoreGain && vs(o).includes('attribute vec3 aParams'),
+    // Port WebGPU (zadanie 15): billboardy świateł w TSL — bez tekstu GLSL, mesh ma nazwę.
+    lights: (o) => o.isInstancedMesh && (o.name === 'SHIP_NAV_LIGHTS'
+      || (o.name !== 'BRIDGE_WINDOWS' && !!o.material?.uniforms?.uTime && !!o.material?.uniforms?.uCoreGain && vs(o).includes('attribute vec3 aParams'))),
     windows: (o) => o.name === 'BRIDGE_WINDOWS',
     exhaust: (o) => o.isMesh && vs(o).includes('attribute vec2 aPos') && (vs(o).includes('attribute vec2 aFlame') || (!!o.material?.uniforms?.uMap && vs(o).includes('attribute float aOpacity') && !vs(o).includes('aRot'))),
     impostor: (o) => o.isMesh && vs(o).includes('attribute vec2 aPos') && vs(o).includes('attribute float aRot') && vs(o).includes('attribute float aOpacity') && !vs(o).includes('aFlame'),
@@ -369,6 +371,11 @@ async function probe(opts, analyze) {
   api.renderFrames(2);            // kamera dema jedzie za przesuniętym celem
   api.cam.x = t.x; api.cam.y = t.y; api.cam.zoom = opts.zoom;
   api.renderFrames(150);          // rozbieg: wygładzanie ciągu dysz (lerp per klatka)
+  // WebGPU kompiluje pipeline'y asynchronicznie przy pierwszym rysunku (osłona Core3D
+  // pomija rysunek do gotowości) — pętla synchroniczna nie oddaje wątku, więc moduł
+  // pierwszy raz widoczny w pomiarze (np. szczeliny okien po model3d(false)) nie
+  // narysowałby się wcale. Kilka klatek z oddaniem wątku.
+  for (let i = 0; i < 8; i++) { api.renderFrames(1); await new Promise((r) => setTimeout(r, 50)); }
 
   let center = null;
   let note = '';

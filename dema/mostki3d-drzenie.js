@@ -114,6 +114,10 @@ async function probe(opts) {
   api.renderFrames(4);
   api.zoomModel(opts.hull, opts.zoom, opts.index || 0);
   api.renderFrames(4);
+  // WebGPU (port, zadanie 15): pipeline'y kompilują się asynchronicznie przy pierwszym
+  // rysunku, a pętla synchroniczna nie oddaje wątku — kilka klatek z oddaniem wątku,
+  // zanim model i cień wejdą do pomiaru.
+  for (let i = 0; i < 8; i++) { api.renderFrames(1); await new Promise((r) => setTimeout(r, 50)); }
   const hidden = [];
   Core3D.scene.traverse((o) => {
     const m = o.material;
@@ -123,6 +127,9 @@ async function probe(opts) {
       hidden.push(m);
     }
   });
+  // colorWrite to inny pipeline WebGPU (maska zapisu koloru) — też asynchronicznie;
+  // bez niego kadłub nie zapisałby głębi pod cień modelu.
+  for (let i = 0; i < 8; i++) { api.renderFrames(1); await new Promise((r) => setTimeout(r, 50)); }
   const c = document.getElementById('c');
   const g = c.getContext('2d', { willReadFrequently: true });
   const RW = 360;
