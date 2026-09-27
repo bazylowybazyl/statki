@@ -104,29 +104,6 @@ const HTML = `
   <div class="small muted">Dodatnia wartosc = w gore, ujemna = w dol.</div>
 </div>
 <div class="group">
-  <div class="row"><strong>Bake 3D Model (.glb)</strong></div>
-
-  <div class="row">
-    <label>Korekta dziobu (deg):</label>
-    <input type="number" id="dt-glb-rot" value="0" style="background:#060e1c; color:#fff; border:1px solid #2a3a5a; padding:4px; border-radius:4px; flex:1; text-align: right;">
-  </div>
-
-  <div class="row">
-    <label>Kadr (Zoom tla):</label>
-    <input type="number" id="dt-glb-zoom" value="1.0" step="0.1" style="background:#060e1c; color:#fff; border:1px solid #2a3a5a; padding:4px; border-radius:4px; flex:1; text-align: right;">
-  </div>
-
-  <div class="row">
-    <label>Skala statku w grze (x):</label>
-    <input type="number" id="dt-glb-scale" value="1.0" step="0.1" style="background:#060e1c; color:#fff; border:1px solid #2a3a5a; padding:4px; border-radius:4px; flex:1; text-align: right;">
-  </div>
-
-  <div class="row">
-    <input type="file" id="dt-file-glb" accept=".glb,.gltf" style="display:none">
-    <button id="btn-load-glb" class="dt-btn" style="width:100%">Wybierz i wypal statek (GLB)</button>
-  </div>
-</div>
-<div class="group">
   <div class="row"><strong>Edytor hardpointow</strong></div>
   <div class="row">
     <button id="btn-hardpoint-editor" class="dt-btn" style="width:100%">Edytor</button>
@@ -370,7 +347,6 @@ function wireDevToolsLogic() {
     cbGlobalShields: 'dt-global-shields',
     cbSunDir: 'dt-show-sundir', cbShake: 'dt-disable-shake', cbPlanetStations3D: 'dt-use-planet-stations',
     cbPirate3D: 'dt-use-3d-pirate', btnCopy: 'btnCopy', btnReset: 'btnReset', cfgOut: 'cfgOut',
-    fileGlb: 'dt-file-glb', btnLoadGlb: 'btn-load-glb', glbRot: 'dt-glb-rot', glbZoom: 'dt-glb-zoom', glbScale: 'dt-glb-scale',
     btnHardpointEditor: 'btn-hardpoint-editor', btnBloomPanel: 'btn-bloom-panel', btnRingColorPanel: 'btn-ring-color-panel', btnDestructorPanel: 'btn-destructor-panel', btnCameraPanel: 'btn-camera-panel',
     cbDamageTint: 'dt-toggle-damage-tint',
     btnPerfTools: 'btn-perf-tools', perfPanel: 'dt-perf-panel', perfStatus: 'dt-perf-status',
@@ -962,56 +938,6 @@ function wireDevToolsLogic() {
         DevTuning.pirateStationScale = v;
         if (ui.pirScaleVal) ui.pirScaleVal.textContent = 'x' + v.toFixed(2);
         saveLS();
-      });
-    }
-    if (ui.btnLoadGlb && ui.fileGlb) {
-      ui.btnLoadGlb.addEventListener('click', () => ui.fileGlb.click());
-
-      ui.fileGlb.addEventListener('change', async (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        
-        const originalText = ui.btnLoadGlb.textContent;
-        ui.btnLoadGlb.textContent = "Wypalanie... Czekaj";
-        ui.btnLoadGlb.disabled = true;
-
-      try {
-          const rotInput = document.getElementById('dt-glb-rot');
-          const zoomInput = document.getElementById('dt-glb-zoom');
-          const scaleInput = document.getElementById('dt-glb-scale');
-          const degrees = rotInput ? (parseFloat(rotInput.value) || 0) : 0; 
-          const radians = degrees * (Math.PI / 180);
-          
-          const camZoom = zoomInput ? (parseFloat(zoomInput.value) || 1.0) : 1.0;
-          const shipScale = scaleInput ? (parseFloat(scaleInput.value) || 1.0) : 1.0;
-
-          const { ModelBaker } = await import('../3d/modelBaker.js');
-          
-          // Odbieramy obiekt { albedo, normal }
-          const bakedData = await ModelBaker.bakeFromFile(file, 1024, radians, camZoom);
-          
-          if (window.ship && window.HullBodies) {
-              // --- WAŻNE: Ustawiamy skalę PRZED wygenerowaniem fizyki! ---
-              window.ship.visual.spriteScale = shipScale;
-
-              // Kadłub na belkach z upieczonego obrazu: albedo = kształt i tekstura skóry,
-              // normal mapa idzie do materiału kadłuba (hexShips3D przebuduje mesh).
-              window.HullBodies.release(window.ship);
-              window.HullBodies.createHull(window.ship, bakedData.albedo, {
-                visualImage: bakedData.albedo,
-                normalMapImage: bakedData.normal
-              });
-              
-              console.log(`Model GLB załadowany! Obrót: ${degrees}°, Kadr: ${camZoom}x, Skala Gry: ${shipScale}x`);
-          }
-
-        } catch (err) {
-          console.error('Blad podczas bake GLB:', err);
-        } finally {
-          ui.btnLoadGlb.textContent = originalText;
-          ui.btnLoadGlb.disabled = false;
-          ui.fileGlb.value = ''; 
-        }
       });
     }
 

@@ -36,7 +36,7 @@ kadłubach belkowych (agents.md § Mostki — wymagają `hexGrid`), więc sprawd
    działa na WebGL obok, sprawdź, że nie przeszkadza. `coreFx3D` woła `RailgunFX3D.impact` / `kerf` i `MuzzleFX3D` —
    zostaw; zadanie 17 przepina je na receptury broni. Zrzuty narzędziami dem na `main` i na tagu (worktree,
    `README.md`) — obok siebie w raporcie. `mostki3d-drzenie.js` / `precyzja-drzenie.js` mają ruszać (pełny pomiar
-   drżenia — 21).
+   drżenia — 23).
 
 ## Pułapki
 - Cień mostka czyta głębię kadłubów — jeśli 04 zmieniło głębię/z kadłubów, cień zniknie lub zaleje kadłub.

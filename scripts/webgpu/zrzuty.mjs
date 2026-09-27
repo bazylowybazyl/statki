@@ -15,10 +15,16 @@
 //            osobne sesje w worktree podają bazę z głównego katalogu (tam jest .tmp/).
 // --powtorz: N przebiegów (p1…pN) — do progu szumu bazy.
 // --wydajnosc: dodatkowo bitwa w czasie rzeczywistym (CPU/GPU ms, draw calle) → <out>/<backend>/wydajnosc.json
+// --uuid osobne|wspolne: skąd three bierze losowania na UUID. „osobne” — z własnego strumienia strony
+//            (osobneLosowanieUuid w wspolne.mjs): liczba obiektów three (u WebGPU tysiące węzłów TSL) nie
+//            przesuwa Math.random gry, więc WebGL i WebGPU generują ten sam świat (planety, wraki, warp).
+//            „wspolne” — jak baza z Fazy 0 (UUID z Math.random gry). Domyślnie: tryb bazy z --baza (pole
+//            `losowanieUuid` w jej wyniki.json; baza bez pola = „wspolne”), bez --baza „osobne”.
+//            Tryb zapisuje się w wyniki.json (`losowanieUuid`); porównanie z bazą ma sens tylko w tym samym.
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, screenshotPng, writeJson, sleep, repo } from './wspolne.mjs';
+import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, screenshotPng, writeJson, sleep, repo, osobneLosowanieUuid } from './wspolne.mjs';
 import { compareDirs } from './porownaj.mjs';
 
 const args = parseArgs();
@@ -32,6 +38,23 @@ const seed = Number(args.seed || 0x5eed1234);
 const extraArgs = args.chrome ? args.chrome.split(/\s+/).filter(Boolean) : [];
 const onlyScenes = args.sceny ? new Set(args.sceny.split(',')) : null;
 const INJECT = readFileSync(join(repo, 'scripts/webgpu/harness-strona.js'), 'utf8');
+// Losowanie UUID three (patrz --uuid w nagłówku): jawna flaga > tryb bazy > „osobne”.
+const uuidMode = (() => {
+  if (args.uuid) {
+    if (args.uuid !== 'osobne' && args.uuid !== 'wspolne') throw new Error(`--uuid: osobne albo wspolne, nie „${args.uuid}”`);
+    return args.uuid;
+  }
+  if (args.baza) {
+    const f = join(resolve(repo, args.baza), 'wyniki.json');
+    try { return JSON.parse(readFileSync(f, 'utf8')).losowanieUuid || 'wspolne'; } catch { return 'wspolne'; }
+  }
+  return 'osobne';
+})();
+// Przed Page.navigate: w trybie „osobne” podmiana generateUUID w odpowiedziach serwera.
+const prepareUuid = (cdp) => (uuidMode === 'osobne' ? osobneLosowanieUuid(cdp) : null);
+const checkUuid = (stat) => {
+  if (stat && stat.podmienione < 1) throw new Error(`--uuid osobne: nie znaleziono generateUUID three w ${stat.skrypty} skryptach (zmienił się kod three?)`);
+};
 const PERF_SIDE = Math.max(2, Number(args.bok || 24));
 
 // Punkt w próżni między Ziemią a Wenus (~500 tys. j. od obu, z dala od stacji i ruchu).
@@ -219,9 +242,12 @@ async function runSession(session, backend, outDir, base) {
   const results = [];
   const t0 = Date.now();
   try {
+    const uuidStat = await prepareUuid(cdp);
     await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__HARNESS_SEED__ = ${seed};\n${INJECT}` });
     await cdp.send('Page.navigate', { url: `${base}/index.html?${session.query}&renderer=${backend}` });
-    if (!await waitFor(cdp, '!!(window.Core3D && window.Core3D.isInitialized && window.ship && window.__harness)', 240000, 400)) throw new Error('gra nie wstała (Core3D/ship)');
+    // gpuReady: na WebGPU urządzenie powstaje w tle po Core3D.init() (na tagu pola nie ma — undefined).
+    if (!await waitFor(cdp, '!!(window.Core3D && window.Core3D.isInitialized && window.Core3D.gpuReady !== false && window.ship && window.__harness)', 240000, 400)) throw new Error('gra nie wstała (Core3D/ship/urządzenie)');
+    checkUuid(uuidStat);
     const rendererKind = await ev('(() => { const r = window.Core3D.renderer; return r?.isWebGPURenderer ? (r.backend?.isWebGPUBackend ? "webgpu" : "webgpu-webgl2") : "webgl"; })()');
     if (!session.start) {
       if (!await waitFor(cdp, '!!(window.__menuBackdrop && window.__menuBackdrop.ready)', 240000, 400)) throw new Error('tło menu nie gotowe');
@@ -310,9 +336,11 @@ async function runPerf(backend, outDir, base) {
   const { cdp } = chrome;
   const ev = (e, t = 180000) => evaluate(cdp, e, t);
   try {
+    const uuidStat = await prepareUuid(cdp);
     await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__HARNESS_SEED__ = ${seed};\n${INJECT}` });
     await cdp.send('Page.navigate', { url: `${base}/index.html?dev=1&renderer=${backend}` });
-    if (!await waitFor(cdp, '!!(window.Core3D && window.Core3D.isInitialized && window.ship && window.__harness)', 240000, 400)) throw new Error('gra nie wstała');
+    if (!await waitFor(cdp, '!!(window.Core3D && window.Core3D.isInitialized && window.Core3D.gpuReady !== false && window.ship && window.__harness)', 240000, 400)) throw new Error('gra nie wstała');
+    checkUuid(uuidStat);
     await ev(`(() => { document.getElementById('btn-mode-single')?.click(); return true; })()`);
     if (!await waitFor(cdp, '(window.__frameId || 0) > 30', 300000, 400)) throw new Error('gra nie ruszyła');
     await ev(`(async () => { const m = await import('/src/ui/perfHud.js'); window.__PH = m.PerfHUD; if (!m.PerfHUD.visible) m.PerfHUD.toggle(); return true; })()`);
@@ -351,7 +379,8 @@ async function runPerf(backend, outDir, base) {
 
 // ── Przebieg ──────────────────────────────────────────────────────────────────
 const { server, base } = await startVite(port);
-const env = { when: new Date().toISOString(), ...gitInfo(), rozmiar: `${W}x${H}`, seed, chrome: extraArgs };
+const env = { when: new Date().toISOString(), ...gitInfo(), rozmiar: `${W}x${H}`, seed, losowanieUuid: uuidMode, chrome: extraArgs };
+console.log(`losowanie UUID three: ${uuidMode}${args.uuid ? '' : args.baza ? ' (jak baza)' : ' (domyślne)'}`);
 const summary = {};
 try {
   for (const backend of backends) {
@@ -383,6 +412,9 @@ if (repeats > 1) {
 }
 if (args.baza) {
   const bazaDir = resolve(repo, args.baza);
+  let bazaUuid = 'wspolne';
+  try { bazaUuid = JSON.parse(readFileSync(join(bazaDir, 'wyniki.json'), 'utf8')).losowanieUuid || 'wspolne'; } catch { /* baza bez wyniki.json */ }
+  if (bazaUuid !== uuidMode) console.log(`UWAGA: baza ma losowanie UUID „${bazaUuid}”, przebieg „${uuidMode}” — świat (planety, wraki, warp) inny, porównanie tylko orientacyjne`);
   for (const backend of backends) {
     const dir = repeats > 1 ? join(outRoot, backend, 'p1') : join(outRoot, backend);
     if (!existsSync(bazaDir)) { console.log(`brak bazy ${bazaDir}`); break; }

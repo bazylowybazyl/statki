@@ -47,7 +47,7 @@ bazy nie pokazuje rozpadu — zadanie dodaje ją (i jej bazę z tagu), zanim cok
 
 ## Czego NIE robić
 - Nie zmieniaj rozgrywki (HP stacji, progi odrywania fragmentów, misje) ani presetów rozpadu.
-- Nie ruszaj nieużywanego `src/effects3d/stationDestructionEffects.js` (poza grą — decyzja w 22).
+- Nie ruszaj nieużywanego `src/effects3d/stationDestructionEffects.js` (poza grą — decyzja w 24).
 
 ## Raport na koniec
 Co zrobione; zrzuty `stacja-rozpad` (tag vs main); szum bazy; czas klatki rozpadu; co zostało; pytania.

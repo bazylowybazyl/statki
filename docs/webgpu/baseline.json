@@ -1,9 +1,11 @@
 {
   "opis": "Baza odniesienia portu WebGPU: gra na starym WebGLRenderer (tag webgl-baseline), 1920×1080, harness scripts/webgpu/zrzuty.mjs. PNG w .tmp/webgpu/baseline/webgl/p1 (nie w repo) — odtwarzalne z tagu.",
-  "utworzono": "2026-09-27T18:41:45.903Z",
+  "utworzono": "2026-09-27T21:23:07.837Z",
   "tag": "webgl-baseline",
-  "commitPrzebiegu": "d57cbdd",
-  "commitZapisu": "d57cbdd",
+  "commitPrzebiegu": "3a0c5b2",
+  "kodGry": "tag webgl-baseline (kod gry d57cbdd)",
+  "losowanieUuid": "osobne",
+  "commitZapisu": "159dd42",
   "polecenie": "node scripts/webgpu/zrzuty.mjs --backend webgl --powtorz 2 --wydajnosc --out .tmp/webgpu/baseline",
   "katalogPng": ".tmp/webgpu/baseline/webgl/p1",
   "rozdzielczosc": "1920x1080",
@@ -234,17 +236,17 @@
         "post": 1,
         "other": 1
       },
-      "coreRenderMs": 0.59,
-      "gpuMs": 0.542,
+      "coreRenderMs": 0.655,
+      "gpuMs": 0.801,
       "hdr": {
         "pixels": 230400,
         "nanOrInf": 0,
         "overFraction": 0,
-        "p50": 0.0074,
-        "p90": 0.0233,
-        "p99": 0.1415,
-        "p999": 0.5836,
-        "max": 0.778
+        "p50": 0.0008,
+        "p90": 0.003,
+        "p99": 0.0199,
+        "p999": 0.0631,
+        "max": 0.081
       },
       "stan": {
         "kroki": 0,
@@ -252,8 +254,8 @@
         "wraki": 0,
         "pociski": 0,
         "kamera": [
-          5899603,
-          4989402,
+          6259086,
+          7069477,
           1,
           "rts"
         ],
@@ -467,16 +469,16 @@
         "post": 1,
         "other": 1
       },
-      "coreRenderMs": 0.595,
-      "gpuMs": 0.789,
+      "coreRenderMs": 0.575,
+      "gpuMs": 0.633,
       "hdr": {
         "pixels": 230400,
         "nanOrInf": 0,
         "overFraction": 0.00042,
-        "p50": 0.0102,
-        "p90": 0.0454,
-        "p99": 0.1929,
-        "p999": 0.7029,
+        "p50": 0.0011,
+        "p90": 0.0394,
+        "p99": 0.1657,
+        "p999": 0.4701,
         "max": 0.957
       },
       "stan": {
@@ -485,8 +487,8 @@
         "wraki": 0,
         "pociski": 0,
         "kamera": [
-          5899603,
-          4989402,
+          6259086,
+          7069477,
           0.2,
           "rts"
         ],
@@ -740,17 +742,17 @@
         "post": 1,
         "other": 1
       },
-      "coreRenderMs": 0.525,
-      "gpuMs": 0.724,
+      "coreRenderMs": 0.6,
+      "gpuMs": 0.603,
       "hdr": {
         "pixels": 230400,
         "nanOrInf": 0,
         "overFraction": 0,
-        "p50": 0.0074,
-        "p90": 0.0233,
-        "p99": 0.1415,
-        "p999": 0.5836,
-        "max": 0.778
+        "p50": 0.0008,
+        "p90": 0.003,
+        "p99": 0.0199,
+        "p999": 0.0631,
+        "max": 0.081
       },
       "stan": {
         "kroki": 0,
@@ -758,8 +760,8 @@
         "wraki": 0,
         "pociski": 0,
         "kamera": [
-          5899603,
-          4989402,
+          6259086,
+          7069477,
           1,
           "rts"
         ],
@@ -956,8 +958,8 @@
         "roznePct2": 0,
         "roznePct8": 0,
         "roznePct32": 0,
-        "srednia": 0.0001,
-        "maks": 1
+        "srednia": 0,
+        "maks": 0
       },
       "drawCalls": 52,
       "trojkaty": 6665954,
@@ -973,17 +975,17 @@
         "post": 1,
         "other": 1
       },
-      "coreRenderMs": 0.46,
-      "gpuMs": 1.589,
+      "coreRenderMs": 0.515,
+      "gpuMs": 1.59,
       "hdr": {
         "pixels": 230400,
         "nanOrInf": 0,
-        "overFraction": 0.00031,
-        "p50": 0.0105,
-        "p90": 0.0747,
-        "p99": 0.181,
-        "p999": 0.6999,
-        "max": 5.311
+        "overFraction": 0.00027,
+        "p50": 0.0011,
+        "p90": 0.0206,
+        "p99": 0.1328,
+        "p999": 0.6944,
+        "max": 2.599
       },
       "stan": {
         "kroki": 90,
@@ -991,8 +993,8 @@
         "wraki": 0,
         "pociski": 0,
         "kamera": [
-          5893660,
-          4983698,
+          6253143,
+          7063773,
           0.35,
           "rts"
         ],
@@ -1242,17 +1244,17 @@
         "post": 1,
         "other": 3
       },
-      "coreRenderMs": 0.37,
-      "gpuMs": 1.016,
+      "coreRenderMs": 0.435,
+      "gpuMs": 1.51,
       "hdr": {
         "pixels": 230400,
         "nanOrInf": 0,
         "overFraction": 0,
-        "p50": 0.0057,
-        "p90": 0.0275,
-        "p99": 0.2781,
-        "p999": 0.4788,
-        "max": 0.803
+        "p50": 0.0062,
+        "p90": 0.031,
+        "p99": 0.2553,
+        "p999": 0.4767,
+        "max": 0.786
       },
       "stan": {
         "kroki": 90,
@@ -1260,8 +1262,8 @@
         "wraki": 0,
         "pociski": 0,
         "kamera": [
-          6567681,
-          5702735,
+          6349522,
+          5462913,
           0.05,
           "rts"
         ],
@@ -1417,15 +1419,15 @@
         "post": 1,
         "other": 1
       },
-      "coreRenderMs": 0.315,
-      "gpuMs": 0.574,
+      "coreRenderMs": 0.33,
+      "gpuMs": 0.781,
       "hdr": {
         "pixels": 230400,
         "nanOrInf": 0,
         "overFraction": 0.0013,
         "p50": 0.0076,
-        "p90": 0.0198,
-        "p99": 0.1433,
+        "p90": 0.0197,
+        "p99": 0.1434,
         "p999": 1.0439,
         "max": 2.595
       },
@@ -1542,16 +1544,16 @@
         "post": 1,
         "other": 1
       },
-      "coreRenderMs": 0.565,
-      "gpuMs": 0.695,
+      "coreRenderMs": 0.44,
+      "gpuMs": 0.697,
       "hdr": {
         "pixels": 230400,
         "nanOrInf": 0,
         "overFraction": 0.00004,
-        "p50": 0.0083,
-        "p90": 0.073,
-        "p99": 0.1533,
-        "p999": 0.6718,
+        "p50": 0.0084,
+        "p90": 0.072,
+        "p99": 0.1507,
+        "p999": 0.6725,
         "max": 0.922
       },
       "stan": {
@@ -1560,8 +1562,8 @@
         "wraki": 0,
         "pociski": 0,
         "kamera": [
-          7360087,
-          6052578,
+          7354575,
+          5818534,
           0.2,
           "rts"
         ],
@@ -1779,16 +1781,16 @@
         "post": 1,
         "other": 1
       },
-      "coreRenderMs": 0.58,
-      "gpuMs": 0.922,
+      "coreRenderMs": 0.545,
+      "gpuMs": 0.697,
       "hdr": {
         "pixels": 230400,
         "nanOrInf": 0,
         "overFraction": 0.00002,
         "p50": 0.008,
-        "p90": 0.0248,
-        "p99": 0.1871,
-        "p999": 0.653,
+        "p90": 0.0268,
+        "p99": 0.18,
+        "p999": 0.6537,
         "max": 0.966
       },
       "stan": {
@@ -1797,8 +1799,8 @@
         "wraki": 0,
         "pociski": 0,
         "kamera": [
-          7957969,
-          6742914,
+          8058903,
+          6314218,
           0.2,
           "rts"
         ],
@@ -2020,8 +2022,8 @@
         "post": 1,
         "other": 1
       },
-      "coreRenderMs": 0.475,
-      "gpuMs": 0.469,
+      "coreRenderMs": 0.41,
+      "gpuMs": 0.486,
       "hdr": {
         "pixels": 230400,
         "nanOrInf": 0,
@@ -2189,37 +2191,37 @@
       "opis": "Bitwa w próżni: 3 piratów vs 2 Terra Nova, 180 klatek walki (pociski, wiązki, tarcze, dysze, bloom)",
       "sesja": "kosmos",
       "szum": {
-        "roznePct2": 0,
-        "roznePct8": 0,
-        "roznePct32": 0,
-        "srednia": 0,
-        "maks": 1
+        "roznePct2": 0.0246,
+        "roznePct8": 0.0072,
+        "roznePct32": 0.0014,
+        "srednia": 0.0081,
+        "maks": 61
       },
-      "drawCalls": 48,
-      "trojkaty": 25434,
+      "drawCalls": 47,
+      "trojkaty": 25082,
       "passy": {
-        "total": 48,
+        "total": 47,
         "refraction": 0,
         "bg": 2,
         "planets": 0,
         "shafts": 1,
-        "ortho": 28,
+        "ortho": 27,
         "fg": 2,
         "bloom": 13,
         "post": 1,
         "other": 1
       },
-      "coreRenderMs": 0.555,
-      "gpuMs": 0.728,
+      "coreRenderMs": 0.595,
+      "gpuMs": 1.338,
       "hdr": {
         "pixels": 230400,
         "nanOrInf": 0,
-        "overFraction": 0.00045,
-        "p50": 0.0071,
-        "p90": 0.0296,
-        "p99": 0.2014,
-        "p999": 0.6711,
-        "max": 4.574
+        "overFraction": 0.00033,
+        "p50": 0.0072,
+        "p90": 0.0297,
+        "p99": 0.2009,
+        "p999": 0.6614,
+        "max": 4.508
       },
       "stan": {
         "kroki": 180,
@@ -2232,7 +2234,7 @@
           0.3,
           "rts"
         ],
-        "suma": 7214.1355
+        "suma": 7397.7673
       },
       "spis": {
         "zamienniki": 0,
@@ -2244,7 +2246,7 @@
             },
             "MeshBasicMaterial:?": {
               "obiekty": 3,
-              "instancje": 28
+              "instancje": 24
             },
             "ShaderMaterial:map": {
               "obiekty": 6,
@@ -2344,10 +2346,6 @@
               "obiekty": 1,
               "instancje": 1
             },
-            "ShaderMaterial:uTime": {
-              "obiekty": 1,
-              "instancje": 1
-            },
             "ShaderMaterial:uTime+uColor+uLife": {
               "obiekty": 4,
               "instancje": 4
@@ -2369,11 +2367,11 @@
     "bitwa__ortho": {
       "wariantSceny": "bitwa",
       "szum": {
-        "roznePct2": 0,
-        "roznePct8": 0,
-        "roznePct32": 0,
-        "srednia": 0,
-        "maks": 1
+        "roznePct2": 0.047,
+        "roznePct8": 0.0103,
+        "roznePct32": 0.0024,
+        "srednia": 0.0062,
+        "maks": 72
       }
     },
     "bitwa__planety": {
@@ -2404,33 +2402,33 @@
         "roznePct8": 0,
         "roznePct32": 0,
         "srednia": 0,
-        "maks": 0
+        "maks": 1
       },
-      "drawCalls": 37,
-      "trojkaty": 9366,
+      "drawCalls": 36,
+      "trojkaty": 8814,
       "passy": {
-        "total": 37,
+        "total": 36,
         "refraction": 0,
         "bg": 2,
         "planets": 0,
         "shafts": 1,
-        "ortho": 18,
+        "ortho": 17,
         "fg": 1,
         "bloom": 13,
         "post": 1,
         "other": 1
       },
-      "coreRenderMs": 0.51,
-      "gpuMs": 0.668,
+      "coreRenderMs": 0.5,
+      "gpuMs": 0.66,
       "hdr": {
         "pixels": 230400,
         "nanOrInf": 0,
-        "overFraction": 0.00066,
+        "overFraction": 0.00097,
         "p50": 0.0076,
-        "p90": 0.032,
-        "p99": 0.2251,
-        "p999": 0.7761,
-        "max": 6.891
+        "p90": 0.0319,
+        "p99": 0.2297,
+        "p999": 0.8889,
+        "max": 6.902
       },
       "stan": {
         "kroki": 180,
@@ -2438,12 +2436,12 @@
         "wraki": 0,
         "pociski": 8,
         "kamera": [
-          6213653,
-          5329888,
+          6213661,
+          5329884,
           1,
           "rts"
         ],
-        "suma": 7214.1355
+        "suma": 7397.7673
       },
       "spis": {
         "zamienniki": 0,
@@ -2455,7 +2453,7 @@
             },
             "MeshBasicMaterial:?": {
               "obiekty": 3,
-              "instancje": 28
+              "instancje": 24
             },
             "ShaderMaterial:map": {
               "obiekty": 4,
@@ -2551,10 +2549,6 @@
               "obiekty": 1,
               "instancje": 1
             },
-            "ShaderMaterial:uTime": {
-              "obiekty": 1,
-              "instancje": 1
-            },
             "ShaderMaterial:uTime+uColor+uLife": {
               "obiekty": 4,
               "instancje": 4
@@ -2574,7 +2568,7 @@
         "maks": 0
       },
       "drawCalls": 41,
-      "trojkaty": 20326,
+      "trojkaty": 19746,
       "passy": {
         "total": 41,
         "refraction": 0,
@@ -2587,30 +2581,30 @@
         "post": 1,
         "other": 1
       },
-      "coreRenderMs": 0.555,
-      "gpuMs": 0.619,
+      "coreRenderMs": 0.57,
+      "gpuMs": 0.632,
       "hdr": {
         "pixels": 230400,
         "nanOrInf": 0,
-        "overFraction": 0.00002,
-        "p50": 0.0072,
-        "p90": 0.0258,
-        "p99": 0.1501,
-        "p999": 0.5844,
-        "max": 1.801
+        "overFraction": 0,
+        "p50": 0.0071,
+        "p90": 0.0256,
+        "p99": 0.1476,
+        "p999": 0.5791,
+        "max": 0.794
       },
       "stan": {
         "kroki": 195,
         "npc": 4,
         "wraki": 2,
-        "pociski": 3,
+        "pociski": 6,
         "kamera": [
-          6213653,
-          5329888,
+          6213661,
+          5329884,
           0.5,
           "rts"
         ],
-        "suma": 63482.3451
+        "suma": 63608.0058
       },
       "spis": {
         "zamienniki": 0,
@@ -2622,7 +2616,7 @@
             },
             "MeshBasicMaterial:?": {
               "obiekty": 3,
-              "instancje": 8
+              "instancje": 16
             },
             "ShaderMaterial:map": {
               "obiekty": 3,
@@ -2744,44 +2738,44 @@
         "srednia": 0,
         "maks": 0
       },
-      "drawCalls": 37,
-      "trojkaty": 24860,
+      "drawCalls": 35,
+      "trojkaty": 12924,
       "passy": {
-        "total": 37,
+        "total": 35,
         "refraction": 0,
         "bg": 2,
         "planets": 0,
         "shafts": 1,
-        "ortho": 18,
+        "ortho": 16,
         "fg": 1,
         "bloom": 13,
         "post": 1,
         "other": 1
       },
-      "coreRenderMs": 0.625,
-      "gpuMs": 0.594,
+      "coreRenderMs": 0.515,
+      "gpuMs": 0.738,
       "hdr": {
         "pixels": 230400,
         "nanOrInf": 0,
-        "overFraction": 0.00001,
-        "p50": 0.0072,
-        "p90": 0.0254,
-        "p99": 0.1506,
+        "overFraction": 0.00002,
+        "p50": 0.0071,
+        "p90": 0.0252,
+        "p99": 0.1496,
         "p999": 0.5799,
-        "max": 1.686
+        "max": 1.806
       },
       "stan": {
         "kroki": 330,
         "npc": 4,
         "wraki": 2,
-        "pociski": 5,
+        "pociski": 6,
         "kamera": [
-          6213653,
-          5329888,
+          6213661,
+          5329884,
           0.6,
           "rts"
         ],
-        "suma": 61849.2508
+        "suma": 60935.5295
       },
       "spis": {
         "zamienniki": 0,
@@ -2793,7 +2787,7 @@
             },
             "MeshBasicMaterial:?": {
               "obiekty": 3,
-              "instancje": 20
+              "instancje": 24
             },
             "ShaderMaterial:map": {
               "obiekty": 2,
@@ -2889,17 +2883,9 @@
             }
           },
           "tarcze": {
-            "ShaderMaterial:uTime+uTrailScale+uMinHalfWidth": {
-              "obiekty": 1,
-              "instancje": 1
-            },
-            "ShaderMaterial:uTime": {
-              "obiekty": 1,
-              "instancje": 1
-            },
             "ShaderMaterial:uTime+uColor+uLife": {
-              "obiekty": 4,
-              "instancje": 4
+              "obiekty": 3,
+              "instancje": 3
             }
           }
         }
@@ -2949,50 +2935,50 @@
       "opis": "Ładowanie skoku: plazma WARP z dysz MAIN (na WebGPU bez starej soczewki — porównanie tylko na WebGL)",
       "sesja": "kosmos",
       "szum": {
-        "roznePct2": 0.0267,
-        "roznePct8": 0.0006,
-        "roznePct32": 0.0002,
-        "srednia": 0.0042,
-        "maks": 65
+        "roznePct2": 0.005,
+        "roznePct8": 0.0017,
+        "roznePct32": 0,
+        "srednia": 0.0002,
+        "maks": 24
       },
-      "drawCalls": 66,
-      "trojkaty": 40709,
+      "drawCalls": 65,
+      "trojkaty": 29311,
       "passy": {
-        "total": 66,
+        "total": 65,
         "refraction": 0,
         "bg": 3,
         "planets": 0,
         "shafts": 1,
-        "ortho": 45,
+        "ortho": 44,
         "fg": 2,
         "bloom": 13,
         "post": 1,
         "other": 1
       },
-      "coreRenderMs": 0.685,
-      "gpuMs": 3.036,
+      "coreRenderMs": 0.5,
+      "gpuMs": 1.29,
       "hdr": {
         "pixels": 230400,
         "nanOrInf": 0,
-        "overFraction": 0.00557,
-        "p50": 0.0116,
-        "p90": 0.0599,
-        "p99": 0.5471,
-        "p999": 2.2509,
-        "max": 6.621
+        "overFraction": 0.00433,
+        "p50": 0.0118,
+        "p90": 0.0582,
+        "p99": 0.4929,
+        "p999": 2.7918,
+        "max": 16.09
       },
       "stan": {
         "kroki": 405,
         "npc": 4,
         "wraki": 2,
-        "pociski": 2,
+        "pociski": 1,
         "kamera": [
           6210767,
           5330000,
           0.6,
           "rts"
         ],
-        "suma": 60686.3452
+        "suma": 59430.7965
       },
       "spis": {
         "zamienniki": 0,
@@ -3004,7 +2990,7 @@
             },
             "MeshBasicMaterial:?": {
               "obiekty": 2,
-              "instancje": 4
+              "instancje": 2
             },
             "ShaderMaterial:map": {
               "obiekty": 1,
@@ -3035,8 +3021,8 @@
               "instancje": 2
             },
             "ShaderMaterial:uSprite+uNormalMap+uHasNormalMap": {
-              "obiekty": 5,
-              "instancje": 5
+              "obiekty": 4,
+              "instancje": 4
             },
             "ShaderMaterial:?": {
               "obiekty": 1,
@@ -3125,8 +3111,8 @@
               "instancje": 1
             },
             "ShaderMaterial:uTime+uColor+uLife": {
-              "obiekty": 2,
-              "instancje": 2
+              "obiekty": 1,
+              "instancje": 1
             }
           }
         }
@@ -3156,17 +3142,17 @@
         "post": 1,
         "other": 1
       },
-      "coreRenderMs": 0.395,
-      "gpuMs": 0.71,
+      "coreRenderMs": 0.27,
+      "gpuMs": 0.717,
       "hdr": {
         "pixels": 230400,
         "nanOrInf": 0,
         "overFraction": 0.0002,
         "p50": 0.0009,
-        "p90": 0.0088,
-        "p99": 0.0541,
-        "p999": 0.1649,
-        "max": 3.565
+        "p90": 0.0106,
+        "p99": 0.0597,
+        "p999": 0.1677,
+        "max": 3.563
       },
       "stan": {
         "kroki": 0,
@@ -3174,8 +3160,8 @@
         "wraki": 0,
         "pociski": 0,
         "kamera": [
-          5855374,
-          4895841,
+          6234341,
+          7088654,
           0.5,
           "rts"
         ],

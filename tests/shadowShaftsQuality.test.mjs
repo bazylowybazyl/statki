@@ -53,9 +53,14 @@ test('shafts write a sun-visibility mask before the scene instead of multiplying
   assert.ok(scenePassList.length > 0, 'scene pass chain missing');
   assert.ok(!scenePassList.includes('this.shadowShaftsPass'), 'shafts pass must not blend into the scene buffer');
   assert.ok(!coreSource.includes('BLEND_MULTIPLY_SCENE'), 'full-screen multiply blend is back');
-  assert.match(coreSource, /new FullScreenBlendPass\(createShadowShaftsShader\(\), \{ blending: THREE\.NoBlending \}\)/);
-  // Maska: RGBA8 bez MSAA, rozmiar bufora sceny (teksel 1:1 z gl_FragCoord).
-  assert.match(coreSource, /this\.sunShadowTarget = new THREE\.WebGLRenderTarget\(/);
+  // Port WebGPU: pass maski w TSL powstaje w zadaniu 03 — do tego czasu brak passa,
+  // maska wyłączona uniformem (materiały jej nie próbkują), shader GLSL zostaje
+  // w core3d.js jako źródło portu.
+  assert.match(coreSource, /this\.shadowShaftsPass = null;/);
+  assert.match(coreSource, /sunShadowUniforms\.uSunShadowOn\.value = 0;/);
+  // Maska: RGBA8 bez MSAA, rozmiar bufora sceny (teksel 1:1 z pikselem materiału).
+  assert.match(coreSource, /this\.sunShadowTarget = new THREE\.RenderTarget\(/);
+  assert.doesNotMatch(coreSource, /WebGLRenderTarget/);
   assert.match(coreSource, /if \(this\.sunShadowTarget\) this\.sunShadowTarget\.setSize\(bufW, bufH\);/);
   // Wyjscie shadera = maska (R powierzchnia, G tlo, B mrok gestego pola
   // asteroid), bez sluzby 1 = "nic".
@@ -68,7 +73,7 @@ test('shafts write a sun-visibility mask before the scene instead of multiplying
   // i przed lancuchem passow sceny.
   const renderAt = coreSource.indexOf('\n  render() {');
   const maskAt = coreSource.indexOf('this._renderSunShadowMask(', renderAt);
-  const haloAt = coreSource.indexOf('renderPlanetHaloViewport(this.activeCam1', renderAt);
+  const haloAt = coreSource.indexOf('this._renderPlanetHaloPrepass()', renderAt);
   const chainAt = coreSource.indexOf('for (const pass of this._scenePasses)', renderAt);
   assert.ok(renderAt >= 0 && maskAt > renderAt, 'render() must build the sun shadow mask');
   assert.ok(maskAt < haloAt && maskAt < chainAt, 'mask must be ready before halo pre-pass and scene passes');
@@ -81,8 +86,12 @@ test('shields render in ortho without clearing depth and never read the mask', (
   // Tarcza to emisja, nie oswietlona powierzchnia.
   assert.ok(!/sunShadow|SUN_SHADOW_GLSL/.test(shieldSource), 'shield glow must not be dimmed by the sun shadow mask');
   // Kamera ortho (jak swiat) + BEZ czyszczenia glebi (test glebi wzgledem kadlubow).
-  assert.match(coreSource, /makeSplitScreenRenderPass\(this\.renderPassShields,\s*SHIELD_RENDER_LAYER,\s*true,\s*false,\s*false\)/);
-  assert.match(coreSource, /new RenderPass\(this\.scene, this\.cameraOrtho\)/);
+  // Port WebGPU: pass = opis dla runnera Core3D (bez RenderPass z addons), tuż po
+  // passie ortho w łańcuchu, do tego samego celu MSAA (głębia ortho zostaje).
+  assert.match(coreSource, /this\.renderPassShields = makeScenePass\('shields',\s*'ortho',\s*SHIELD_RENDER_LAYER,\s*true,\s*false,\s*false\)/);
+  const chain = (coreSource.match(/_scenePasses\s*=\s*\[([\s\S]*?)\]/)?.[1] || '').split(',').map((s) => s.trim()).filter(Boolean);
+  assert.equal(chain.indexOf('this.renderPassShields'), chain.indexOf('this.renderPassOrtho') + 1, 'tarcze zaraz po świecie ortho');
+  assert.match(coreSource, /const camera = this\.getPassCamera\(pass\.ortho\);/);
   // Obie tarcze (obrys kadluba i banka) musza trafic na warstwe tarcz.
   const shieldLayerCalls = shieldSource.match(/Core3D\.enableShield3D\(mesh\)/g) || [];
   assert.equal(shieldLayerCalls.length, 2, 'both hull and sphere shield meshes must use the shield layer');

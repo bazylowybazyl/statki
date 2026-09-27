@@ -8,9 +8,10 @@ import { readFileSync } from 'node:fs';
 // „jajko” z uciętą poświatą dysz, fałdę mapy i ciemną obwódkę. Te testy
 // pilnują mapy (ciągła, monotoniczna), mapowania świat → UV i tego, że
 // soczewka nie wraca na gotową klatkę.
+// Port WebGPU (zadanie 01): warp poza portem — pass soczewki usunięty z Core3D,
+// jego API to no-op; zostaje matematyka CPU soczewki i glue gry (warpLensPass.js).
 
 globalThis.window = globalThis.window || {};
-const THREE = await import('three');
 const {
   WARP_LENS_MAX_SWALLOW,
   WARP_LENS_MIN_RADIUS_PX,
@@ -127,19 +128,24 @@ test('GLSL soczewki liczy to samo co lustro CPU', () => {
   assert.match(fs, /\}\s*\n\s*(\/\/[^\n]*\n\s*)*gl_FragColor = texture2D\(tSource, uv\);/);
 });
 
-test('Core3D: soczewka jako pass zaraz po tle, tło do osobnego celu, bez nowego renderera', () => {
+// Port WebGPU (zadanie 01, decyzja użytkownika: warp poza portem): pass soczewki,
+// jej cele i gwiazdy warstwy 8 usunięte z Core3D — asercje o passie zniknęły,
+// matematyka CPU soczewki (wyżej) zostaje. Tu: API bez rysowania i miejsce na
+// pass zgięcia tła nowego warpa zaraz po passie tła.
+test('Core3D: soczewka poza portem — bez passa i celów, jeden renderer (WebGPU), miejsce po passie tła', () => {
   const core = readSrc('src/3d/core3d.js');
   const list = core.match(/_scenePasses\s*=\s*\[([\s\S]*?)\]/)?.[1] || '';
-  const bg = list.indexOf('this.renderPassBg');
-  const lens = list.indexOf('this.warpLensPass');
-  const planets = list.indexOf('this.renderPassPlanets');
-  const ortho = list.indexOf('this.renderPassOrtho');
-  assert.ok(bg >= 0 && lens > bg, 'soczewka musi iść po passie tła');
-  assert.ok(lens < planets && lens < ortho, 'planety i statki kładą się NA zakrzywionym tle');
-  assert.match(core, /const target = \(warpLensOn && pass === this\.renderPassBg\) \? this\.warpLensTarget : this\.composerTarget;/);
-  assert.match(core, /if \(pass === this\.warpLensPass\) return this\._warpLensActive;/);
-  assert.match(core, /new FullScreenBlendPass\(createWarpLensShader\(\), \{ blending: THREE\.NoBlending \}\)/);
-  assert.equal((core.match(/new THREE\.WebGLRenderer/g) || []).length, 1, 'jedyny renderer WebGL gry to Core3D');
+  assert.ok(!list.includes('warpLensPass'), 'pass soczewki wrócił do łańcucha');
+  assert.doesNotMatch(core, /import[^;]*warpLens3D/);
+  assert.doesNotMatch(core, /warpLensTarget|warpStarTarget|renderPassWarpStars|_prepareWarpLens/);
+  // Miejsce na pass zgięcia tła (nowy warp) w render(): zaraz po passie tła.
+  const renderAt = core.indexOf('\n  render() {');
+  const bgHook = core.indexOf('if (pass === this.renderPassBg) {', renderAt);
+  const note = core.indexOf('Pass zgięcia tła (nowy warp)', bgHook);
+  assert.ok(renderAt > 0 && bgHook > renderAt && note > bgHook, 'komentarz-miejsce na pass zgięcia tła w render()');
+  // Jeden renderer gry: WebGPU w Core3D, żadnego WebGLRenderer.
+  assert.equal((core.match(/new THREE\.WebGLRenderer/g) || []).length, 0);
+  assert.equal((core.match(/new THREE\.WebGPURenderer\(/g) || []).length, 1, 'jedyny renderer gry to Core3D');
 });
 
 test('gra zgłasza soczewkę przed renderem 3D i bez własnego kontekstu', () => {
@@ -160,112 +166,83 @@ function makeWarpWorld({ state = 'active', entryProgress = 1, wormholeVfx = true
   return { ship, warp };
 }
 
+// Core3D.setWarpLensWorld / clearWarpLens są na WebGPU no-opami (warp poza portem),
+// więc zgłoszenie glue gry (warpLensPass.js — matematyka CPU) łapie podsłuch.
+function spyWarpLens() {
+  const req = { x: 0, y: 0, angle: 0, radiusAlong: 0, radiusAcross: 0, swallow: 0, stampMs: -Infinity };
+  const prev = { set: Core3D.setWarpLensWorld, clear: Core3D.clearWarpLens };
+  Core3D.setWarpLensWorld = (x, y, angle, radiusAlong, radiusAcross, swallow) => {
+    Object.assign(req, { x, y, angle, radiusAlong, radiusAcross, swallow, stampMs: performance.now() });
+  };
+  Core3D.clearWarpLens = () => { req.stampMs = -Infinity; };
+  return { req, restore() { Core3D.setWarpLensWorld = prev.set; Core3D.clearWarpLens = prev.clear; } };
+}
+
 test('updateWarpLens3D: środek na osi kadłuba, promień w długościach kadłuba, rampa i wygaszanie', () => {
-  const req = Core3D._warpLensRequest;
-  const defaults = window.__WARP_LENS_DEFAULTS;
-  const { warp } = makeWarpWorld({ angle: Math.PI / 2 });
+  const spy = spyWarpLens();
+  try {
+    const req = spy.req;
+    const defaults = window.__WARP_LENS_DEFAULTS;
+    const { warp } = makeWarpWorld({ angle: Math.PI / 2 });
 
-  updateWarpLens3D({ x: 100, y: 200 }, Math.PI / 2, 1 / 60);
-  // Oś lotu = +y gry (kąt π/2): przesunięcie WZDŁUŻ kadłuba, nie w bok.
-  assert.ok(Math.abs(req.x - 100) < 1e-9, 'środek przesunięty w bok od osi kadłuba');
-  assert.ok(Math.abs(req.y - (200 + defaults.centerOffset * 1800)) < 1e-9);
-  assert.ok(Math.abs(req.radiusAlong - defaults.radius * 1800) < 1e-9);
-  assert.ok(Math.abs(req.radiusAcross - defaults.radius * 1800 / defaults.stretch) < 1e-9);
-  assert.ok(Math.abs(req.swallow - defaults.swallow) < 1e-12);
-  assert.ok(performance.now() - req.stampMs < 1000, 'zgłoszenie musi być świeże');
+    updateWarpLens3D({ x: 100, y: 200 }, Math.PI / 2, 1 / 60);
+    // Oś lotu = +y gry (kąt π/2): przesunięcie WZDŁUŻ kadłuba, nie w bok.
+    assert.ok(Math.abs(req.x - 100) < 1e-9, 'środek przesunięty w bok od osi kadłuba');
+    assert.ok(Math.abs(req.y - (200 + defaults.centerOffset * 1800)) < 1e-9);
+    assert.ok(Math.abs(req.radiusAlong - defaults.radius * 1800) < 1e-9);
+    assert.ok(Math.abs(req.radiusAcross - defaults.radius * 1800 / defaults.stretch) < 1e-9);
+    assert.ok(Math.abs(req.swallow - defaults.swallow) < 1e-12);
+    assert.ok(performance.now() - req.stampMs < 1000, 'zgłoszenie musi być świeże');
 
-  // Wyjście ze skoku: soczewka gaśnie przez fadeOut, nie w jednej klatce.
-  warp.state = 'idle';
-  updateWarpLens3D({ x: 100, y: 200 }, Math.PI / 2, 1 / 30);
-  assert.ok(req.swallow > 0 && req.swallow < defaults.swallow, 'brak płynnego wygaszania');
-  let frames = 1;
-  while (req.stampMs !== -Infinity && frames < 200) {
+    // Wyjście ze skoku: soczewka gaśnie przez fadeOut, nie w jednej klatce.
+    warp.state = 'idle';
     updateWarpLens3D({ x: 100, y: 200 }, Math.PI / 2, 1 / 30);
-    frames++;
-  }
-  assert.equal(req.stampMs, -Infinity, 'po wygaszeniu soczewka ma zniknąć');
-  const fadeSec = frames / 30;
-  assert.ok(Math.abs(fadeSec - defaults.fadeOut) < 0.05, `wygaszanie trwało ${fadeSec} s zamiast ${defaults.fadeOut} s`);
+    assert.ok(req.swallow > 0 && req.swallow < defaults.swallow, 'brak płynnego wygaszania');
+    let frames = 1;
+    while (req.stampMs !== -Infinity && frames < 200) {
+      updateWarpLens3D({ x: 100, y: 200 }, Math.PI / 2, 1 / 30);
+      frames++;
+    }
+    assert.equal(req.stampMs, -Infinity, 'po wygaszeniu soczewka ma zniknąć');
+    const fadeSec = frames / 30;
+    assert.ok(Math.abs(fadeSec - defaults.fadeOut) < 0.05, `wygaszanie trwało ${fadeSec} s zamiast ${defaults.fadeOut} s`);
 
-  // Wejście w skok: siła rośnie z entryProgress.
-  warp.state = 'active';
-  warp.entryProgress = 0.5;
-  updateWarpLens3D({ x: 0, y: 0 }, 0, 1 / 60);
-  assert.ok(req.swallow > 0 && req.swallow < defaults.swallow);
+    // Wejście w skok: siła rośnie z entryProgress.
+    warp.state = 'active';
+    warp.entryProgress = 0.5;
+    updateWarpLens3D({ x: 0, y: 0 }, 0, 1 / 60);
+    assert.ok(req.swallow > 0 && req.swallow < defaults.swallow);
+  } finally {
+    spy.restore();
+  }
 });
 
 test('updateWarpLens3D: tylko w strefie z efektem, martwy statek gasi od razu', () => {
-  const req = Core3D._warpLensRequest;
-  makeWarpWorld({ wormholeVfx: false });
-  // Poprzedni test mógł zostawić poziom > 0 — w strefie bez efektu gaśnie.
-  for (let i = 0; i < 20; i++) updateWarpLens3D({ x: 0, y: 0 }, 0, 0.1);
-  assert.equal(req.stampMs, -Infinity);
+  const spy = spyWarpLens();
+  try {
+    const req = spy.req;
+    makeWarpWorld({ wormholeVfx: false });
+    // Poprzedni test mógł zostawić poziom > 0 — w strefie bez efektu gaśnie.
+    for (let i = 0; i < 20; i++) updateWarpLens3D({ x: 0, y: 0 }, 0, 0.1);
+    assert.equal(req.stampMs, -Infinity);
 
-  const { ship } = makeWarpWorld();
-  updateWarpLens3D({ x: 0, y: 0 }, 0, 1 / 60);
-  assert.ok(req.stampMs > 0);
-  ship.dead = true;
-  updateWarpLens3D({ x: 0, y: 0 }, 0, 1 / 60);
-  assert.equal(req.stampMs, -Infinity);
+    const { ship } = makeWarpWorld();
+    updateWarpLens3D({ x: 0, y: 0 }, 0, 1 / 60);
+    assert.ok(req.stampMs > 0);
+    ship.dead = true;
+    updateWarpLens3D({ x: 0, y: 0 }, 0, 1 / 60);
+    assert.equal(req.stampMs, -Infinity);
+  } finally {
+    spy.restore();
+  }
 });
 
-function makeFakeCore(overrides = {}) {
-  const def = createWarpLensShader();
-  return Object.assign(Object.create(Core3D), {
-    composerTarget: { width: 1600, height: 900 },
-    warpLensPass: { enabled: true, uniforms: THREE.UniformsUtils.clone(def.uniforms) },
-    renderer: { capabilities: { isWebGL2: true, getMaxAnisotropy: () => 16 } },
-    activeCam1: { x: 0, y: 0, zoom: 0.2 },
-    activeCam2: null,
-    warpLensTarget: null,
-    _warpLensActive: false,
-    _warpLensLastUseMs: 0,
-    _warpLensRequest: { x: 0, y: 0, angle: 0, radiusAlong: 0, radiusAcross: 0, swallow: 0, stampMs: -Infinity },
-    _warpLensUniformScratch: {}
-  }, overrides);
-}
-
-test('Core3D._prepareWarpLens: uniformy, cel z mipmapami i lustrem, zgłoszenie przeterminowane i split', () => {
-  const core = makeFakeCore();
-  const nowSec = performance.now() / 1000;
-  assert.equal(core._prepareWarpLens(false, nowSec), false, 'bez zgłoszenia nie ma passa');
-  assert.equal(core.warpLensTarget, null, 'cel powstaje dopiero przy pierwszej soczewce');
-
-  core.setWarpLensWorld(0, 0, 0, 2340, 1800, 0.55);
-  assert.equal(core._prepareWarpLens(false, performance.now() / 1000), true);
-  assert.equal(core._warpLensActive, true);
-  const lu = core.warpLensPass.uniforms;
-  assert.equal(lu.tSource.value, core.warpLensTarget.texture);
-  assert.ok(Math.abs(lu.uRadius.value.x - 2340 * 0.2 / 900) < 1e-9);
-  assert.equal(lu.uSwallow.value, 0.55);
-  const tex = core.warpLensTarget.texture;
-  assert.equal(core.warpLensTarget.width, 1600);
-  assert.equal(tex.generateMipmaps, true);
-  assert.equal(tex.minFilter, THREE.LinearMipmapLinearFilter);
-  assert.equal(tex.wrapS, THREE.MirroredRepeatWrapping);
-  assert.equal(tex.wrapT, THREE.MirroredRepeatWrapping);
-  assert.equal(tex.type, THREE.HalfFloatType);
-
-  // Wolna kamera i dwa widoki w jednym renderze — bez soczewki.
-  assert.equal(core._prepareWarpLens(true, performance.now() / 1000), false);
-  window.splitScreenMode = true;
-  core.activeCam2 = { x: 0, y: 0, zoom: 0.2 };
-  assert.equal(core._prepareWarpLens(false, performance.now() / 1000), false);
-  window.splitScreenMode = false;
-  core.activeCam2 = null;
-
-  // Gra przestała zgłaszać: po WARP_LENS_STALE_MS soczewka znika sama.
-  assert.equal(core._prepareWarpLens(false, performance.now() / 1000 + 1), false);
-  // clearWarpLens gasi od razu.
-  core.setWarpLensWorld(0, 0, 0, 2340, 1800, 0.55);
-  core.clearWarpLens();
-  assert.equal(core._prepareWarpLens(false, performance.now() / 1000), false);
-  assert.equal(core._warpLensActive, false);
-
-  // Po długiej przerwie cel wraca do puli (dispose).
-  let disposed = false;
-  core.warpLensTarget.dispose = () => { disposed = true; };
-  core._prepareWarpLens(false, performance.now() / 1000 + 120);
-  assert.equal(disposed, true);
-  assert.equal(core.warpLensTarget, null);
+test('Core3D: API soczewki to bezpieczny no-op — te same sygnatury, bez stanu i bez rysowania', () => {
+  assert.equal(Core3D.setWarpLensWorld.length, 6);
+  assert.equal(Core3D.setWarpLensWorld(0, 0, 0, 2340, 1800, 0.55), undefined);
+  assert.equal(Core3D.clearWarpLens(), undefined);
+  // Dawny stan soczewki (zgłoszenie, pass, cel z mipmapami i lustrem) nie istnieje.
+  for (const key of ['_warpLensRequest', 'warpLensPass', 'warpLensTarget', '_prepareWarpLens', '_warpLensActive']) {
+    assert.equal(Core3D[key], undefined, key);
+  }
 });

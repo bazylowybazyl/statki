@@ -1156,7 +1156,9 @@ export function prewarmShields3D() {
     Core3D.enableShield3D(probe);
     Core3D.scene.add(probe);
     try {
-        Core3D.renderer.compile(Core3D.scene, Core3D.cameraOrtho);
+        // WebGPU: compileAsync bez blokowania, pass tarcz (warstwa 7, kamera ortho,
+        // cel composerTarget) — Core3D.prewarmPass; projekcja synchronicznie.
+        Core3D.prewarmPass(probe, 7);
     } finally {
         Core3D.scene.remove(probe);
     }

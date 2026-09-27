@@ -100,9 +100,32 @@ test('trafienia pocisków: efekt 3D i iskry dopiero po bramce kadru/rozmiaru', (
   assert.ok(fn.indexOf('spark3D.burst(') > fn.indexOf('IMPACT_SPARK_MIN_PX'), 'iskry za bramką rozrzutu');
 });
 
-test('Core3D: shadow mapa odświeżana ręcznie tylko przed passami ortho i FG', () => {
-  assert.match(core3d, /shadowMap\.autoUpdate = false;/);
-  assert.match(core3d, /if \(pass === this\.renderPassOrtho \|\| pass === this\.renderPassFg\) shadowMap\.needsUpdate = true;/);
+// Port WebGPU (zadanie 01): renderer.shadowMap ma tylko enabled / type — mapa
+// cienia odświeża się per światło. Słońce gry zgłasza się do Core3D, a render()
+// raz na klatkę (na starcie, przed pierwszym odbiorcą) ustawia autoUpdate = false
+// i needsUpdate = true. Dawne dwa odświeżenia z WebGL (przed ortho i FG) są
+// zbędne: ShadowNode i tak aktualizuje najwyżej raz na klatkę rAF (SPIKE 9).
+test('Core3D: mapa cienia słońca per światło, odświeżana raz na klatkę na starcie render()', async () => {
+  assert.doesNotMatch(core3d, /shadowMap\.(autoUpdate|needsUpdate)\s*=/, 'WebGL-owe flagi mapy cienia wróciły');
+  const renderAt = core3d.indexOf('\n  render() {');
+  const requestAt = core3d.indexOf('this._requestSunShadowUpdate(t);', renderAt);
+  const chainAt = core3d.indexOf('for (const pass of this._scenePasses)', renderAt);
+  assert.ok(renderAt > 0 && requestAt > renderAt && requestAt < chainAt, 'odświeżenie mapy przed passami sceny');
+  const planets = readFileSync(new URL('../src/3d/planet3d.assets.js', import.meta.url), 'utf8');
+  assert.match(planets, /Core3D\.setSunShadowLight\?\.\(this\.sunLight\);/);
+  // Zachowanie: needsUpdate tylko przy włączonych cieniach, autoUpdate zawsze wyłączony.
+  globalThis.window = globalThis.window || {};
+  const { Core3D } = await import('../src/3d/core3d.js');
+  const light = { isLight: true, castShadow: true, shadow: { autoUpdate: true, needsUpdate: false } };
+  const core = Object.create(Core3D);
+  core.setSunShadowLight(light);
+  assert.equal(light.shadow.autoUpdate, false);
+  core._requestSunShadowUpdate({ threeShadows: false });
+  assert.equal(light.shadow.needsUpdate, false, 'cienie wyłączone — bez odświeżania');
+  core._requestSunShadowUpdate({ threeShadows: true });
+  assert.equal(light.shadow.needsUpdate, true);
+  core.setSunShadowLight(null);
+  assert.equal(core._sunShadowLight, null);
 });
 
 test('Core3D: puste passy planet/halo/ring-planet/tarcz są pomijane', () => {
@@ -151,14 +174,18 @@ test('wybuchy overlaya bez PointLight (scena bez materiałów oświetlanych, św
   }
 });
 
-test('martwe: bez regl z unpkg, soczewka warpu bez własnego kontekstu WebGL (pass Core3D)', () => {
+test('martwe: bez regl z unpkg, soczewka warpu bez własnego kontekstu WebGL (API Core3D)', () => {
   assert.doesNotMatch(indexHtml, /unpkg\.com\/regl/);
-  // Soczewka to pass Core3D na tle (warpLens3D.js) — żadnego trzeciego
+  // Soczewka zgłasza się do Core3D (warpLensPass.js) — żadnego trzeciego
   // kontekstu ani uploadu całej kanwy 2D jako tekstury co klatkę.
   const lens = readSrc('src/vfx/warpLensPass.js');
   assert.doesNotMatch(lens, /WarpBlackHole|getContext\(|texImage2D/);
   assert.match(lens, /Core3D\.setWarpLensWorld\(/);
-  assert.match(core3d, /this\.warpLensPass = new FullScreenBlendPass\(createWarpLensShader\(\)/);
+  // Port WebGPU: warp poza portem — pass soczewki i jej cele usunięte z Core3D,
+  // API zostaje jako no-op (nowy warp wejdzie w TSL w miejscu opisanym w render()).
+  assert.doesNotMatch(core3d, /import[^;]*warpLens3D/);
+  assert.doesNotMatch(core3d, /warpLensTarget|warpStarTarget|_prepareWarpLens|createWarpLensShader/);
+  assert.match(core3d, /setWarpLensWorld\(worldX, worldY, angle, radiusAlong, radiusAcross, swallow\) \{ \},/);
 });
 
 test('warstwa raw rakiet i pule odłamków paneli: puste siatki są niewidoczne', () => {
@@ -203,5 +230,9 @@ test('spawn floty: budżet initHexBody na klatkę + rozgrzanie tekstury i lakier
 test('tekstury planet: dekodowanie po pobraniu i upload z kolejki Core3D', () => {
   assert.match(core3d, /queueTextureUpload\(texture\) \{/);
   assert.match(core3d, /this\.renderer\.initTexture\(texture\);/);
+  // WebGPU: initTexture wymaga gotowego urządzenia — kolejka czeka na Core3D.ready
+  // (tekstury planet zgłaszają się, zanim urządzenie powstanie).
+  const schedule = core3d.slice(core3d.indexOf('_scheduleTextureUpload() {'), core3d.indexOf('_pumpTextureUpload() {'));
+  assert.match(schedule, /if \(!this\.gpuReady\) \{[\s\S]*?this\.ready\.then\(/);
   assert.match(readSrc('src/3d/planet3d.assets.js'), /textureLoader\.load\(path, prewarmLoadedTexture\)/);
 });

@@ -50,7 +50,7 @@ kontrakt warstw 3/5/6/7), `docs/webgpu/PLAN.md` §3, §5, `docs/webgpu/POSTEP.md
 
 ## Czego NIE robić
 - Nie przenoś ringu (06–10) ani tła menu (11) — Ziemia menu pożycza tekstury z planety gry, ale jej shader jest w 11.
-- Nie zmieniaj legacy `planet3d.proc.js` (decyzja o nim w zadaniu 22).
+- Nie zmieniaj legacy `planet3d.proc.js` (decyzja o nim w zadaniu 24).
 
 ## Raport na koniec
 Co zrobione; zrzuty `slonce`, `planeta-cien`, `hud` (obok siebie); stan rozciągania gwiazd; co zostało; pytania.

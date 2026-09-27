@@ -82,12 +82,21 @@ test('tło menu: własna warstwa i render przez composer Core3D, bez własnego r
     assert.notEqual(Number(m[1]), MENU_BACKDROP_LAYER, 'warstwa zajęta przez pass gry');
   }
   const body = core.slice(core.indexOf('renderBackdrop(camera) {'));
-  assert.match(body, /camera\.layers\.set\(MENU_BACKDROP_LAYER\)[\s\S]*?for \(const pass of this\._postPasses\)/, 'scena → resolve → bloom → ACES jak w grze');
+  // Port WebGPU: post to RenderPipeline (_renderPost — ACES gry + sRGB, bloom od
+  // zadania 02), ten sam co w grze; bez _postPasses z EffectComposer.
+  assert.match(body, /camera\.layers\.set\(MENU_BACKDROP_LAYER\)[\s\S]*?renderer\.setRenderTarget\(null\);\s*this\._renderPost\(\);/, 'scena → post jak w grze');
+  assert.doesNotMatch(core, /_postPasses/);
+  // Tło czeka na urządzenie WebGPU (bez niego: menu z komunikatem, tło CSS).
+  assert.match(body.slice(0, body.indexOf('\n  },')), /if \(!this\.isInitialized \|\| !this\.gpuReady \|\| !camera\) return;/);
   const src = read('src/3d/menuBackdrop3D.js');
   assert.doesNotMatch(src, /new\s+THREE\.WebGLRenderer|EffectComposer|UnrealBloomPass/);
   assert.match(src, /Core3D\.renderBackdrop\(cam\)/);
   assert.match(src, /compileAsync\(warm\.scene/, 'shader map w tle przed budową ringu');
   assert.match(src, /compileAsync\(ring\.group,/, 'programy ringu, Ziemi i nieba w tle przed pierwszą klatką');
+  // Urządzenie WebGPU powstaje w tle po Core3D.init() — start tła czeka na nie.
+  const startAsync = src.slice(src.indexOf('async _startAsync() {'));
+  assert.ok(startAsync.indexOf('await Core3D.ready') >= 0 && startAsync.indexOf('await Core3D.ready') < startAsync.indexOf('compileAsync(warm.scene'),
+    'Core3D.ready przed rozgrzewką i pieczeniem map');
   // tekstury Ziemi pożyczone od planety gry — tło zwalnia tylko własne
   assert.match(src, /for \(const tex of this\._ownTextures\) tex\.dispose\(\)/);
   assert.doesNotMatch(src, /this\._textures\.[a-z]+\.dispose\(\)/);
