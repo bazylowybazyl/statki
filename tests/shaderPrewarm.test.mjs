@@ -56,7 +56,9 @@ test('tarcze: materiały-trzymacze obu wariantów, rozgrzewka na ekranie ładowa
   assert.match(body, /createHullShieldMaterial\(/);
   assert.match(body, /createShieldMaterial\(\)/);
   assert.match(body, /ShieldImpactFX\.init\(Core3D\.scene\)/, 'pule cząstek trafień w scenie przed kompilacją');
-  assert.match(body, /Core3D\.renderer\.compile\(/);
+  // WebGPU: compileAsync bez blokowania dla passa tarcz (warstwa 7, cel sceny) —
+  // Core3D.prewarmPass (renderer.compile to tam alias compileAsync, zwraca Promise).
+  assert.match(body, /Core3D\.prewarmPass\(probe, 7\)/);
   assert.match(body, /_programKeepers = \[hull\.material, sphere\.material\]/, 'materiały bez dispose trzymają programy');
   assert.doesNotMatch(body, /\.dispose\(/);
   const loading = indexHtml.indexOf("setLoadingProgress(70, 'Kompilacja shaderów broni')");

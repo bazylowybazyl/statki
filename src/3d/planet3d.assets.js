@@ -582,7 +582,7 @@ function prewarmLoadedTexture(texture) {
     if (decoding) decoding.catch(() => {}).then(() => Core3D.queueTextureUpload(texture));
     else Core3D.queueTextureUpload(texture);
 }
-function loadTex(path) { const tex = textureLoader.load(path, prewarmLoadedTexture); if (Core3D.renderer) tex.anisotropy = Core3D.renderer.capabilities.getMaxAnisotropy(); return tex; }
+function loadTex(path) { const tex = textureLoader.load(path, prewarmLoadedTexture); tex.anisotropy = Core3D.getMaxAnisotropy(); return tex; }
 
 class DirectPlanet {
     constructor(data) {
@@ -659,7 +659,7 @@ class DirectPlanet {
             ringTex.offset.x = 0.0;
             ringTex.rotation = 0.0;
 
-            const maxAnisotropy = Number(Core3D?.renderer?.capabilities?.getMaxAnisotropy?.()) || 1;
+            const maxAnisotropy = Number(Core3D.getMaxAnisotropy?.()) || 1;
             ringTex.anisotropy = Math.min(16, Math.max(1, maxAnisotropy));
 
             // POPRAWKA: Zwiększenie segmentów promieniowych na 64 (zapobiega rozciąganiu kanciastych UV)
@@ -1014,6 +1014,8 @@ class DirectSun {
         this.sunLight.shadow.camera.near = SUN_SHADOW_TUNE.near; this.sunLight.shadow.camera.far = SUN_SHADOW_TUNE.far;
         this.sunTarget = new THREE.Object3D(); Core3D.scene.add(this.sunTarget); this.sunLight.target = this.sunTarget;
         Core3D.scene.add(this.sunLight);
+        // Mapa cienia per światło (WebGPU): Core3D odświeża ją raz na klatkę.
+        Core3D.setSunShadowLight?.(this.sunLight);
         this.ambientLight = new THREE.AmbientLight(0xffffff, 0.02); this.ambientLight.layers.enableAll(); Core3D.scene.add(this.ambientLight);
     }
     update(dt, cam) {
@@ -1061,6 +1063,7 @@ class DirectSun {
     dispose() {
         if (this.group && this.group.parent) this.group.parent.remove(this.group);
         if (this.sunLight && this.sunLight.parent) this.sunLight.parent.remove(this.sunLight);
+        if (this.sunLight && Core3D._sunShadowLight === this.sunLight) Core3D.setSunShadowLight?.(null);
         if (this.sunTarget && this.sunTarget.parent) this.sunTarget.parent.remove(this.sunTarget);
         if (this.ambientLight && this.ambientLight.parent) this.ambientLight.parent.remove(this.ambientLight);
     }
