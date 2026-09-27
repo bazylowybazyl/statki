@@ -56,7 +56,7 @@ const NOTES = {
   'Engineeffects.js': 'gra importuje tylko tekstury make*Texture; getEngineVFX z własnym WebGLRenderer i shader — martwe',
   'src/3d/sunShadowMask.js': 'biblioteka maski słońca + onBeforeCompile dla wbudowanych materiałów',
   'src/3d/hullShadowSdf.js': 'biblioteka SDF kadłubów; lustro CPU traceHullShadowCpu (test)',
-  'src/3d/haloRing/haloRingWorldGen.js': 'pieczenie map + odczyt CPU (WebGPU: tylko async, oś Y odwrócona — do zadania 06 mapa CPU pusta)',
+  'src/3d/haloRing/haloRingWorldGen.js': 'pieczenie map + odczyt CPU (WebGPU: asynchronicznie, bez odwracania osi — zadanie 06)',
   'src/3d/menuBackdrop3D.js': 'rozgrzewka po kluczu programu WebGL — do przeprojektowania',
   'src/vfx/destruction3D.js': 'zniszczenie stacji',
   'src/vfx/shatterMaterial.js': 'zniszczenie stacji',
