@@ -16,6 +16,7 @@ import {
   haloIndKitTSL, indKitPart, indKitType, kitParts
 } from '../src/3d/haloRing/haloRingIndustryKit.js';
 import { HALO_SURFACE_BLOCK, HALO_SURFACE_BLOCK_NAME, HaloTerrain } from '../src/3d/haloRing/haloRingTerrain.js';
+import { haloSplitF32 } from '../src/3d/haloRing/haloRingTSL.js';
 import { RING_PLANET_WORLD_RADII } from '../src/3d/ringScale.js';
 import { HALO_RING_PLANETS } from '../src/game/haloRingPlanets.js';
 
@@ -137,6 +138,34 @@ test('zestaw w WGSL: czyste funkcje (progi i paleta jako parametry), kody materi
 
 // ---------------------------------------------------------------------------
 // Teren
+
+test('a·b + c z jednym zaokrągleniem (haloFusedMulAddInt): stała rozbita na dwie dokładne połowy, wynik = FMA', () => {
+  const f = Math.fround;
+  for (const b of [3.1, 0.1031, 12.9898, -7.31, 43758.5453, 1.37]) {
+    const [hi, lo] = haloSplitF32(b);
+    assert.equal(hi + lo, f(b), `${b}: hi + lo = float32(b)`);
+    assert.equal(f(hi), hi);
+    assert.equal(f(lo), lo);
+    // każda połowa ma najwyżej 12 bitów mantysy → a·połowa dokładne dla |a| < 4096
+    for (const x of [hi, lo]) {
+      if (x === 0) continue;
+      const m = Math.abs(x) / 2 ** Math.floor(Math.log2(Math.abs(x)));
+      assert.ok(Number.isInteger(m * 2 ** 11), `${b}: ${x} ma ≤ 12 bitów`);
+    }
+  }
+  // lustro JS działań węzła (float32 po każdym kroku) = jedno zaokrąglenie a·b + c (FMA)
+  const [hi, lo] = haloSplitF32(3.1);
+  let diffNaive = 0;
+  for (let a = -64; a < 4096; a++) {
+    const split = f(f(f(a * hi) + 5) + f(a * lo));
+    const fused = f(a * f(3.1) + 5);
+    assert.equal(split, fused, `a = ${a}`);
+    if (f(f(a * f(3.1)) + 5) !== fused) diffNaive++;
+  }
+  assert.ok(diffNaive > 0, 'dwa zaokrąglenia (mnożenie, potem dodanie) dają inne wyniki — stąd poprawka');
+  const src = read('src/3d/haloRing/haloRingTerrain.js');
+  assert.match(src, /haloHash12\(haloFusedMulAddInt\(bid, 3\.1, 5\.0\)\)/, 'jasność kwartału przez haloFusedMulAddInt');
+});
 
 test('teren: materiał węzłowy bez GLSL, jedna definicja wierzchołków i fragmentu, bez mgły i tone mappingu', () => {
   const src = read('src/3d/haloRing/haloRingTerrain.js');

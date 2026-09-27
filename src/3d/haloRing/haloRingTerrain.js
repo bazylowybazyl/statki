@@ -35,7 +35,7 @@ import { HALO_ROOF, HALO_TERRAIN } from './haloRingConfig.js';
 import { haloDetailScales, haloCloudScales } from './haloRingDetail.js';
 import { haloIndKitTSL } from './haloRingIndustryKit.js';
 import { HALO_TERRAIN_PALETTE_KEYS } from './haloRingProfiles.js';
-import { HALO_PI, haloHash12, haloRingSurfaceTSL, haloRingTSL, haloSmooth, haloWrapI } from './haloRingTSL.js';
+import { HALO_PI, haloFusedMulAddInt, haloHash12, haloRingSurfaceTSL, haloRingTSL, haloSmooth, haloWrapI } from './haloRingTSL.js';
 import { createUniformBlock, nodeOf } from './haloUniformsAdapter.js';
 
 const MAX_LOD_UNIFORM = 12;
@@ -47,26 +47,6 @@ export const HALO_SURFACE_BLOCK = Symbol('haloSurfaceBlock');
 const nodeOrFloat = (x) => (typeof x === 'number' ? float(x) : x);
 // GLSL aaStep: smoothstep(edge − w, edge + w, x)
 const aaStep = (edge, x, w) => smoothstep(nodeOrFloat(edge).sub(w), nodeOrFloat(edge).add(w), x);
-
-// a·b + c z JEDNYM zaokrągleniem (jak FMA) dla całkowitego a (|a| < 4096) i stałej b.
-// Baza WebGL (ANGLE/FXC) liczy a·b + c jako mad → FMA, Dawn/DXC mnoży i dodaje osobno;
-// przy haszu z wejścia niecałkowitego (jasność kwartału: bid·3,1 + 5) różnica o 1 ULP
-// zmieniała hasz — 0,8% kwartałów świeciło inaczej niż w bazie. b rozbite na dwie połowy
-// mantysy po 12 bitów: a·hi + c jest dokładne (≤ 24 bity), a·lo też, więc ostatnie dodanie
-// zaokrągla raz — wynik = FMA bit w bit, bez względu na to, czy kompilator scali działania
-// (na GPU 16 384 / 16 384 zgodnych z WebGL; scripts/webgpu/ring-tsl-parzystosc.mjs).
-export function haloSplitF32(b) {
-  const f = new Float32Array([b]);
-  const bits = new Uint32Array(f.buffer)[0];
-  const e = ((bits >>> 23) & 255) - 127;
-  const m = (bits & 0x7fffff) | 0x800000;
-  const sign = bits >>> 31 ? -1 : 1;
-  return [sign * (m >>> 12) * 2 ** (e - 11), sign * (m & 0xfff) * 2 ** (e - 23)];
-}
-export const haloFusedMulAddInt = (a, b, c) => {
-  const [hi, lo] = haloSplitF32(b);
-  return a.mul(hi).add(c).add(a.mul(lo));
-};
 
 // Tekstura zastępcza 1×1 tego samego typu co mapa (TSL potrzebuje tekstury już
 // przy budowie materiału — typ próbkowania wchodzi do wiązań). Mapy są gotowe

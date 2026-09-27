@@ -148,6 +148,27 @@ export function haloPureFn(name, type, inputs, body) {
 }
 const pure = haloPureFn;
 
+// a·b + c z JEDNYM zaokrągleniem (jak FMA) dla całkowitego a (|a| < 4096) i stałej JS b
+// (zadanie 07). Baza WebGL (ANGLE/FXC) liczy a·b + c jako mad → FMA, Dawn/DXC mnoży i dodaje
+// osobno; gdy wynik idzie do haszu (wejście niecałkowite, np. jasność kwartału miasta
+// bid·3,1 + 5), różnica o 1 ULP zmienia hasz — 0,8% kwartałów świeciło inaczej niż w bazie.
+// b rozbite na dwie połowy mantysy po 12 bitów: a·hi + c jest dokładne (≤ 24 bity), a·lo też,
+// więc ostatnie dodanie zaokrągla raz — wynik = FMA bit w bit, bez względu na to, czy kompilator
+// scali działania (na GPU 16 384 / 16 384 zgodnych z WebGL; scripts/webgpu/ring-tsl-parzystosc.mjs).
+// Hasze z wejść całkowitych i z jednym dodaniem stałej (x + 0,37) takiej poprawki nie potrzebują.
+export function haloSplitF32(b) {
+  const f = new Float32Array([b]);
+  const bits = new Uint32Array(f.buffer)[0];
+  const e = ((bits >>> 23) & 255) - 127;
+  const m = (bits & 0x7fffff) | 0x800000;
+  const sign = bits >>> 31 ? -1 : 1;
+  return [sign * (m >>> 12) * 2 ** (e - 11), sign * (m & 0xfff) * 2 ** (e - 23)];
+}
+export const haloFusedMulAddInt = (a, b, c) => {
+  const [hi, lo] = haloSplitF32(b);
+  return a.mul(hi).add(c).add(a.mul(lo));
+};
+
 // smoothstep zapisany wzorem (jak rozwija go HLSL): t = clamp((x − e0)/(e1 − e0)),
 // t²(3 − 2t). Działa też dla e0 > e1 (GLSL ringu używa odwróconych krawędzi —
 // WGSL nie gwarantuje wyniku builtinu przy low ≥ high).

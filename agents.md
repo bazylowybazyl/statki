@@ -97,7 +97,10 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   aktualizowany co obiekt); węzeł bazowy z uv-atrapą `texture(tex, vec2(0))` (wzór `surfaceTextureNode` w
   `haloRingTerrain.js`); (8) `screenCoordinate` liczy y od GÓRY celu — wzory z pozycji piksela (dither IGN) wychodzą
   odbite względem `gl_FragCoord` bazy WebGL; `haloFragCoordGL()` daje ten sam piksel co WebGL; (9) varyingi z własnego
-  `vertexNode`: `varyingProperty(typ, nazwa).assign(…)` w funkcji wierzchołków, ten sam węzeł we fragmencie.
+  `vertexNode`: `varyingProperty(typ, nazwa).assign(…)` w funkcji wierzchołków, ten sam węzeł we fragmencie; (10) baza
+  WebGL (ANGLE/FXC) liczy `a·b + c` jednym zaokrągleniem (FMA), Dawn/DXC dwoma — gdy wynik idzie do haszu (wejście
+  niecałkowite), 1 ULP zmienia hasz; dla całkowitego `a` i stałej `b` → `haloFusedMulAddInt(a, b, c)` (`haloRingTSL.js`,
+  bit w bit z WebGL); sprawdzanie: wiersze haszy w `scripts/webgpu/ring-tsl-parzystosc.mjs`.
 
 ---
 

@@ -22,7 +22,7 @@ import { RING_PLANET_WORLD_RADII } from '../../src/3d/ringScale.js';
 import { HALO_RING_PLANETS } from '../../src/game/haloRingPlanets.js';
 import { mulberry32 } from '../../src/3d/haloRing/haloRingLayout.js';
 import { HALO_GLSL_INDKIT, IND_PARTS, haloIndKitTSL, indKitPart } from '../../src/3d/haloRing/haloRingIndustryKit.js';
-import { haloFusedMulAddInt } from '../../src/3d/haloRing/haloRingTerrain.js';
+import { haloFusedMulAddInt } from '../../src/3d/haloRing/haloRingTSL.js';
 
 const W = 64;
 const H = 64;
