@@ -95,7 +95,8 @@ export class FxLights {
    * Błysk (świat gry): barwa (r, g, b) × moc, zasięg [j.], życie [s], wykładnik zaniku
    * (1 − u)^decay, migotanie 0..1, z nad płaszczyzną, rozrost zasięgu (× (1 + grow·u)),
    * rozpraszanie w ośrodku. Nośnik z `ActiveCarrier` w chwili wywołania.
-   * Zwraca slot (≥ 0) albo −1 (wyłączone, poza kadrem, pula pełna).
+   * Zwraca slot (≥ 0 — ważny tylko do najbliższego `update`, pula przestawia sloty przy
+   * usuwaniu) albo −1 (wyłączone, poza kadrem, pula pełna).
    */
   flash(x, y, r, g, b, power, range, life, decay = 2, flicker = 0, z = 60, grow = 0, scatter = FX_LIGHT_SCATTER) {
     if (!this.enabled || !(life > 0) || !(range > 0)) return -1;

@@ -81,7 +81,8 @@ export class DistortionField {
    * fazy. Zwraca false, gdy siła za mała albo kolejka pełna.
    */
   add(type, x, y, radius, width, strengthPx, dispersion = 1, dirX = 0, dirY = 0, stretch = 1, seed = 0) {
-    if (!(strengthPx > 0.02) || !(radius > 0)) return false;
+    // Promień 0 jest ważny (fala tuż po wybuchu: front w środku, grubość > 0 — jak demo).
+    if (!(strengthPx > 0.02) || !(radius >= 0) || !Number.isFinite(x) || !Number.isFinite(y)) return false;
     if (this.count >= this.queue) { this.stats.dropped++; return false; }
     const i = this.count++;
     this.qx[i] = x;

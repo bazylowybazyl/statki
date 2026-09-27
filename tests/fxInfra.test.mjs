@@ -413,6 +413,7 @@ test('zniekształcenia: pakowanie do JEDNEGO bloku — piksele względem środka
   assert.ok(F.implode(6_000_000, -2_000_000, 300, 20));
   assert.ok(F.heat(5_999_900, -1_999_950, 150, 3, 1, 0, 2.5, 0, 7));
   assert.equal(F.add(DISTORT.SHOCK, 0, 0, 100, 10, 0.01), false, 'za słabe');
+  assert.equal(F.add(DISTORT.SHOCK, NaN, 0, 100, 10, 5), false, 'NaN');
   const n = F.commit(6_000_000, -2_000_000, 0.5, 1920, 1080, 12.5);
   assert.equal(n, 3);
   const A = F.array;
@@ -464,6 +465,11 @@ test('zniekształcenia (lustro CPU): profil fali antysymetryczny wokół frontu,
   F.on = 0;
   F.commit(0, 0, 1, 1000, 1000, 0);
   assert.equal(at(500 + 150, 500).x, 0);
+  F.on = 1;
+  F.begin();
+  assert.ok(F.shock(0, 0, 0, 50, 8), 'fala tuż po wybuchu: front w środku (R = 0), jak demo');
+  F.commit(0, 0, 1, 1000, 1000, 0);
+  assert.ok(Math.abs(at(500 + 35, 500).x) > 1);
 });
 
 test('zniekształcenia (lustro CPU): gorące powietrze bez kierunku zakotwiczone w świecie — kamera go nie przesuwa', () => {
