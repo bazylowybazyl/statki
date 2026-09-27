@@ -65,21 +65,16 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   Core3D osłania `backend.draw` (`_guardPendingPipelines`: taki rysunek czeka klatkę, dwie). `renderer.info`: draw calle
   w `render.drawCalls` (reset raz na klatkę rAF). Zegar GPU: znaczniki czasu (`trackTimestamp`), jedno zapytanie w
   locie → `Core3D.gpuFrameMs`; mapa `timestamps` puli three nie jest czyszczona przez three — Core3D czyści ją po wyniku.
-<<<<<<< HEAD
-=======
-- **Pułapki TSL (three r183):** najwyżej 12 buforów uniformów na etap shadera — `uniform()` z domyślnej grupy dzielą
-  jeden bufor, ale każdy `uniformArray` i każda własna grupa to osobny (pakuj w blok, wzór `createUniformBlock` w
-  `src/3d/haloRing/`). `Fn(...).setLayout(...)` jest buforowane globalnie: funkcja z layoutem ma być czysta, uniformy
-  jako parametry (złapany w domknięciu → drugi materiał czyta cudzy slot). **Najwyżej 8 buforów wierzchołków na
-  pipeline** (`maxVertexBuffers` = 8 także w adapterze RTX 5080): każdy nieprzeplatany atrybut to bufor, InstancedMesh
-  dokłada macierz instancji (+ normalne) — stałe atrybuty przeplataj, a materiał liczący pozycję sam (`vertexNode`) na
-  InstancedMesh nadpisuje `setupPosition` (wzór `HullDebrisNodeMaterial`). three połyka błąd `createRenderPipelineAsync`
-  (pusty catch) — pipeline zostaje „w budowie”, osłona Core3D pomija rysunek; Core3D loguje go do konsoli (harness:
-  `bledy`). `texture(...).onObjectUpdate()` NIE działa (TextureNode.setup zeruje `updateType` bez macierzy uv) —
-  tekstura per obiekt: `HullObjectTextureNode` (`src/3d/hexShips3D.tsl.js`). Ścieżkę próbkowania (textureSample /
-  textureLoad) TSL wybiera z tekstury obecnej przy BUDOWIE — tekstury zastępcze z filtrem liniowym, osobny obiekt na
-  każde wiązanie (TextureNode skleja wiązania po uuid tekstury).
->>>>>>> webgpu/04
+- **Pułapki TSL z zadania 04** (reszta — w notce „TSL — pułapki sprawdzone w zadaniach 06–07” niżej): **najwyżej 8
+  buforów wierzchołków na pipeline** (`maxVertexBuffers` = 8 także w adapterze RTX 5080) — każdy nieprzeplatany atrybut
+  to bufor, InstancedMesh dokłada macierz instancji (+ normalne); stałe atrybuty przeplataj, a materiał liczący pozycję
+  sam (`vertexNode`) na InstancedMesh nadpisuje `setupPosition` (wzór `HullDebrisNodeMaterial`). three połyka błąd
+  `createRenderPipelineAsync` (pusty catch) — pipeline zostaje „w budowie”, osłona Core3D pomija rysunek; Core3D loguje
+  go do konsoli (harness: `bledy`). `texture(...).onObjectUpdate()` NIE działa (TextureNode.setup zeruje `updateType`
+  bez macierzy uv) — tekstura per obiekt: `HullObjectTextureNode` (`src/3d/hexShips3D.tsl.js`). Ścieżkę próbkowania
+  (textureSample / textureLoad) TSL wybiera z tekstury obecnej przy BUDOWIE — tekstury zastępcze z filtrem liniowym,
+  osobny obiekt na każde wiązanie (TextureNode skleja wiązania po uuid tekstury). `InstancedMesh` wnosi swój uuid do
+  klucza — każdy egzemplarz to osobny NodeBuilder (dla instancji per encja: jeden wspólny InstancedMesh).
 - **Przejściowo (do swoich zadań):** bloom i gorące powietrze (02), maska słońca / SDF / refrakcja (03, do tego czasu
   `uSunShadowOn = 0`).
 - **Nowe efekty broni i rakiet z dem** (`dema/bronie-webgpu`, `dema/rakiety-webgpu` — decyzja użytkownika 2026-09-27)
