@@ -471,7 +471,7 @@ async function probe(opts, analyze) {
   const hulls = [];
   Core3D.scene.traverse((o) => {
     const m = o.material;
-    if (o.isMesh && m && m.uniforms && (m.uniforms.uStressTint || m.uniforms.uLacquerEye)) {
+    if (o.isMesh && m && m.uniforms && (m.isHullNodeMaterial || m.uniforms.uStressTint || m.uniforms.uLacquerEye)) {
       hulls.push(o);
       if (m.colorWrite !== false) { m.colorWrite = false; hidden.push(m); }
     }

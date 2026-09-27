@@ -18,55 +18,51 @@
 // Kolor bierzemy ze średniej z canvasa sprite'a (raz na ciało), więc smugi mają
 // barwę swojego kadłuba zamiast jednolitej szarości.
 
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
+import { Fn, If, Discard, float, vec2, vec3, vec4, attribute, uv, positionGeometry, cos, sin, length, smoothstep } from 'three/tsl';
 import { Core3D } from './core3d.js';
 import { sceneOriginNearCamera } from './sceneOrigin.js';
-import { SUN_SHADOW_GLSL, sunShadowUniforms } from './sunShadowMask.js';
+import { sunShadeUnlit } from './hexShips3D.tsl.js';
 
 const MAX_IMPOSTORS = 2048;
 
-const VERTEX_SHADER = `
-attribute vec2 aPos;
-attribute float aRot;
-attribute vec2 aSize;
-attribute vec3 aColor;
-attribute float aOpacity;
+// Materiał smug (TSL, port WebGPU — zadanie 04). Wierzchołek: kwadrat × rozmiar,
+// obrót, pozycja względem początku batcha (mesh.position — sceneOrigin.js), z = −0,3.
+// Fragment: miękka elipsa z lekko ściemnionym brzegiem — na kilkunastu pikselach
+// czyta się jak kawałek blachy, a nie jak kropka. Kolor = średnia sprite'a bez
+// światła, więc cień planety (maska Core3D) przygasza całość jak nocną stronę
+// kadłuba (sunShadeUnlit — to samo miejsce importu maski co kadłuby).
+function createImpostorMaterial() {
+  const aPos = attribute('aPos', 'vec2');
+  const aRot = attribute('aRot', 'float');
+  const aSize = attribute('aSize', 'vec2');
+  const aColor = attribute('aColor', 'vec3');
+  const aOpacity = attribute('aOpacity', 'float');
+  const local = positionGeometry.xy.mul(aSize);
+  const c = cos(aRot);
+  const s = sin(aRot);
+  const rotated = vec2(local.x.mul(c).sub(local.y.mul(s)), local.x.mul(s).add(local.y.mul(c)));
 
-varying vec2 vUv;
-varying vec3 vColor;
-varying float vOpacity;
-
-void main() {
-    vUv = uv;
-    vColor = aColor;
-    vOpacity = aOpacity;
-
-    vec2 local = position.xy * aSize;
-    float c = cos(aRot);
-    float s = sin(aRot);
-    vec2 rotated = vec2(local.x * c - local.y * s, local.x * s + local.y * c);
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(aPos + rotated, -0.3, 1.0);
+  const material = new THREE.NodeMaterial();
+  material.name = 'hull:impostor';
+  material.lights = false;
+  material.fog = false;
+  material.transparent = true;
+  material.depthWrite = false;
+  material.depthTest = true;
+  material.positionNode = vec3(aPos.add(rotated), -0.3);
+  material.fragmentNode = Fn(() => {
+    const d = uv().sub(0.5).mul(2.0);
+    const r = length(d).toVar();
+    If(r.greaterThan(1.0), () => {
+      Discard();
+    });
+    const mask = float(1.0).sub(smoothstep(0.55, 1.0, r));
+    const color = sunShadeUnlit(aColor.mul(float(1.0).sub(r).mul(0.25).add(0.75)));
+    return vec4(color, mask.mul(aOpacity));
+  })();
+  return material;
 }
-`;
-
-// Miękka elipsa z lekko ściemnionym brzegiem — na kilkunastu pikselach czyta się
-// jak kawałek blachy, a nie jak kropka.
-// Kolor = średnia sprite'a bez światła, więc cień planety (maska Core3D)
-// przygasza całość jak nocną stronę kadłuba (sunShadeUnlit).
-const FRAGMENT_SHADER = `
-varying vec2 vUv;
-varying vec3 vColor;
-varying float vOpacity;
-${SUN_SHADOW_GLSL}
-void main() {
-    vec2 d = (vUv - 0.5) * 2.0;
-    float r = length(d);
-    if (r > 1.0) discard;
-    float mask = 1.0 - smoothstep(0.55, 1.0, r);
-    vec3 color = sunShadeUnlit(vColor * (0.75 + 0.25 * (1.0 - r)));
-    gl_FragColor = vec4(color, mask * vOpacity);
-}
-`;
 
 let mesh = null;
 let geo = null;
@@ -97,16 +93,7 @@ function ensureBuilt() {
     arrays[name] = array;
   }
 
-  const material = new THREE.ShaderMaterial({
-    uniforms: { ...sunShadowUniforms },
-    vertexShader: VERTEX_SHADER,
-    fragmentShader: FRAGMENT_SHADER,
-    transparent: true,
-    depthWrite: false,
-    depthTest: true
-  });
-
-  mesh = new THREE.Mesh(geo, material);
+  mesh = new THREE.Mesh(geo, createImpostorMaterial());
   mesh.frustumCulled = false;
   // Tuż pod siatkami kadłubów (renderOrder 10), żeby żywy statek zawsze
   // przykrywał smugę, gdy się na siebie nakładają.

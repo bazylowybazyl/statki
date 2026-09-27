@@ -217,6 +217,27 @@ test('osłona pipeline\'ów w kompilacji: rysunek czeka, aż createRenderPipelin
   assert.equal(backend.draw, once, 'osłona zakładana raz');
 });
 
+test('odrzucony createRenderPipelineAsync (three r183 go połyka) ląduje w konsoli raz na etykietę', async () => {
+  // Zadanie 04: 9 buforów wierzchołków > maxVertexBuffers (8) — GPUPipelineError szedł do pustego
+  // catch w WebGPUPipelineUtils, pipeline zostawał „w budowie”, a osłona po cichu pomijała rysunek.
+  const device = {
+    createRenderPipelineAsync(d) { return d.ok ? Promise.resolve({ gpu: true }) : Promise.reject(new Error('Vertex buffer count (9) exceeds the maximum number of vertex buffers (8).')); }
+  };
+  const backend = { device, get() { return {}; }, draw() { } };
+  Core3D._guardPendingPipelines({ backend });
+  const errors = [];
+  const orig = console.error;
+  console.error = (m) => errors.push(String(m));
+  try {
+    assert.deepEqual(await device.createRenderPipelineAsync({ ok: true, label: 'dobry' }), { gpu: true });
+    for (let i = 0; i < 2; i++) await assert.rejects(device.createRenderPipelineAsync({ label: 'renderPipeline_zly' }), /maximum number of vertex buffers/);
+  } finally {
+    console.error = orig;
+  }
+  assert.equal(errors.length, 1, 'raz na etykietę');
+  assert.match(errors[0], /pipeline „renderPipeline_zly” nie powstał: Vertex buffer count \(9\)/);
+});
+
 test('rozgrzewka passa: compileAsync na celu sceny, kamera passa z warstwą, bez cullingu, bez blokowania', () => {
   const body = core.slice(core.indexOf('prewarmPass(object3d, layer = 0, opts = {}) {'), core.indexOf('getMaxAnisotropy() {'));
   assert.match(body, /renderer\.setRenderTarget\(this\.composerTarget\);/);

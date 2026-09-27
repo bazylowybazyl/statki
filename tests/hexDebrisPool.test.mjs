@@ -4,7 +4,9 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import * as THREE from 'three';
 import { DESTRUCTOR_CONFIG } from '../src/game/destructor.js';
-import { sunShadowUniforms } from '../src/3d/sunShadowMask.js';
+// Port WebGPU (zadanie 04): materiał puli to graf TSL (HullDebrisNodeMaterial) — prawdziwy
+// materiał węzłowy da się zbudować w Node (bez GPU), zanik i siła żaru w DEBRIS_SHARED.
+import { DEBRIS_SHARED, HullDebrisNodeMaterial } from '../src/3d/hexShips3D.tsl.js';
 
 // CRLF → LF: wycinek niżej szuka znacznika z `\n` (checkout z core.autocrlf daje CRLF).
 const source = readFileSync(new URL('../src/3d/hexShips3D.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
@@ -13,7 +15,7 @@ const poolCode = source.slice(source.indexOf('const GPU_DEBRIS_MAX ='), source.i
 function makePool() {
   const context = { THREE, Core3D: { scene: new THREE.Scene() },
     createManagedTexture: () => new THREE.Texture(), SHIP_LIGHT_DEFAULTS: {},
-    DEBRIS_VERTEX_SHADER: '', DEBRIS_FRAGMENT_SHADER: '', DESTRUCTOR_CONFIG, sunShadowUniforms,
+    HullDebrisNodeMaterial, DEBRIS_SHARED, DESTRUCTOR_CONFIG,
     setAttrUpdateRange: (attr, start, count) => { attr.clearUpdateRanges(); attr.addUpdateRange(start, count); } };
   return vm.runInNewContext(`${poolCode}\n({ Pool: GpuDebrisPool, manager: GpuDebrisManager })`, context);
 }
@@ -51,4 +53,21 @@ test('debris burst reuses fixed capacity and uploads all wrapped spawn data', ()
     assert.equal(pool.geometry.getAttribute('aStartPos').updateRanges[0].count, 20000);
     assert.equal(pool.geometry.getAttribute('aTimeData').updateRanges[0].count, 20000);
   } finally { pool.dispose(); }
+});
+
+test('heat of debris follows the shared DESTRUCTOR_CONFIG switch (one write per frame for all pools)', () => {
+  const { Pool, manager } = makePool();
+  const pool = new Pool({ armorImage: {}, srcWidth: 64, srcHeight: 64 });
+  try {
+    manager.pools.set('test', pool);
+    assert.ok(pool.material.isHullDebrisNodeMaterial, 'materiał węzłowy puli');
+    manager.heatTintEnabled = true;
+    manager.updateTime(1);
+    assert.equal(DEBRIS_SHARED.uHeatTint.value, Math.max(0, Number(DESTRUCTOR_CONFIG.debrisHeatGlow) || 0));
+    assert.equal(DEBRIS_SHARED.uHeatDecay.value, Math.max(0, Number(DESTRUCTOR_CONFIG.heatDecay) || 0));
+    manager.heatTintEnabled = false;
+    manager.updateTime(2);
+    assert.equal(DEBRIS_SHARED.uHeatTint.value, 0);
+    assert.equal(pool.material.uniforms.uTime.value, 2);
+  } finally { manager.heatTintEnabled = true; manager.dispose(); }
 });
