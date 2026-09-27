@@ -115,6 +115,15 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   `shield3D.tsl.js`) albo bufor storage ze slotem na obiekt (wzór `HullLightStore`, 04). **uuid `InstancedMesh` wchodzi do
   klucza programu** — każdy `InstancedMesh` z własnym materiałem ma osobny NodeBuilder (dla pul: jeden mesh, nie mesh na
   encję).
+- **Pułapki z zadania 05 (three r183):** `NodeMaterial` z `premultipliedAlpha = true` mnoży kolor przez alfę W SHADERZE
+  (`setupOutput` → `premultiplyAlpha`), a `ShaderMaterial` z tą flagą zmieniał tylko blend — port addytywnego ONE/ONE:
+  `premultipliedAlpha = false` + `CustomBlending` (czynniki One). `ShaderMaterial` ma `forceSinglePass = true`, materiał
+  węzłowy nie — przezroczysty `DoubleSide` w porcie ustawia go sam (inaczej dwa rysunki). `select(c, a, b)` z nietrywialnymi
+  gałęziami TSL generuje jako if/else i leniwie wkłada tam węzły, także próbki tekstur z pochodnymi — próbkę przed
+  wyborem przypiąć `.toVar()`. `THREE.Points` z rozmiarem nie istnieje w WebGPU (punkt = 1 px) — kwadraty
+  instancjonowane (kwadrat punktu z GL: bok ≥ 1 px, gl_PointCoord t w dół). Pusta `new Texture()` w WebGPU próbkuje
+  (0, 0, 0, 0), w WebGL (0, 0, 0, 1). Harness: sceny porównywać w pełnych sesjach — `--sceny` z podzbiorem zmienia drogę
+  kamery gwiazd (`advanceStarCamera` całkuje skoki kamery) i czas słońca (plamy), więc tło rozjeżdża się z bazą.
 - **TSL, nie `wgslFn`.** Tekstowy WGSL tylko dla wyizolowanej czystej funkcji, gdy TSL jest naprawdę niewygodny — z
   uzasadnieniem w commicie (zamyka drogę do zapasowego backendu WebGL2).
 - **Pętle:** `Loop` w TSL, nie `for` w JS generujący kopie (`mx_noise_float` ×160 rozwinięte = 44 s kompilacji).
