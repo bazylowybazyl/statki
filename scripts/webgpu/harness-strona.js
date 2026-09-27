@@ -309,7 +309,13 @@
     freeze() { clock.mode = 'frozen'; clock.stepsLeft = 0; },
     // Nowe ziarno tuż przed krokami symulacji: asynchroniczne rzeczy przed nimi (kolejność
     // wczytania sprite'ów i budowy kadłubów) zużywają losowania w różnej kolejności.
-    reseed(v = SEED) { s = v >>> 0; return true; },
+    // Generator efektów (`window.fxRandom`, src/3d/fx/fxRandom.js — efekty nie zużywają Math.random gry) dostaje
+    // to samo ziarno (przesunięte stałą), gdy już istnieje — powtarzalne efekty w scenach.
+    reseed(v = SEED) {
+      s = v >>> 0;
+      try { if (window.fxRandom && typeof window.fxRandom.seed === 'function') window.fxRandom.seed((v ^ 0x5eed5eed) >>> 0); } catch { /* bez efektów */ }
+      return true;
+    },
     // czeka n prawdziwych klatek (czas wirtualny bez zmian w trybie 'frozen')
     frames(n = 1) {
       const k = Math.max(1, n | 0);
