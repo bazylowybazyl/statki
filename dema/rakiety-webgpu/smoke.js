@@ -214,19 +214,26 @@ export class SmokeSystem {
         });
       });
 
-      // Ślady rakiet: odpychanie od odcinka lotu + wleczenie wzdłuż.
-      Loop(U.wakeCount, ({ i }) => {
-        const A = U.wakeA.element(i).toVar();
-        const B = U.wakeB.element(i).toVar();
-        const ab = A.zw.sub(A.xy).toVar();
-        const t = clamp(dot(p.xy.sub(A.xy), ab).div(max(dot(ab, ab), 1e-3)), 0.0, 1.0);
-        const q = p.xy.sub(A.xy.add(ab.mul(t))).toVar();
-        const dist = length(q).toVar();
-        If(dist.lessThan(B.x), () => {
-          const f = float(1.0).sub(dist.div(B.x));
-          const push = q.div(max(dist, 0.5)).mul(f.mul(f).mul(B.y));
-          const drag = B.zw.mul(f.mul(f).mul(0.05));
-          v.xy.addAssign(push.add(drag));
+      // Ślady rakiet w STARYM dymie: odpychanie od odcinka lotu + wleczenie
+      // wzdłuż. Tylko dym starszy niż ~0,8 s (pełna siła od 1,6 s): odcinek
+      // śladu obejmuje też świeży dym za własną dyszą i smugi poprzedniczek
+      // lecących gęsiego w salwie — bez progu rozpychało je na dwie strony
+      // i każda rakieta miała dwa ogony w kształcie litery V.
+      const wakeK = smoothstep(0.8, 1.6, age).toVar();
+      If(wakeK.greaterThan(0.0), () => {
+        Loop(U.wakeCount, ({ i }) => {
+          const A = U.wakeA.element(i).toVar();
+          const B = U.wakeB.element(i).toVar();
+          const ab = A.zw.sub(A.xy).toVar();
+          const t = clamp(dot(p.xy.sub(A.xy), ab).div(max(dot(ab, ab), 1e-3)), 0.0, 1.0);
+          const q = p.xy.sub(A.xy.add(ab.mul(t))).toVar();
+          const dist = length(q).toVar();
+          If(dist.lessThan(B.x), () => {
+            const f = float(1.0).sub(dist.div(B.x));
+            const push = q.div(max(dist, 0.5)).mul(f.mul(f).mul(B.y));
+            const drag = B.zw.mul(f.mul(f).mul(0.05));
+            v.xy.addAssign(push.add(drag).mul(wakeK));
+          });
         });
       });
 

@@ -55,6 +55,10 @@ Spacja — pauza, T — zwolnienie ×0,25, C — wyczyść, B — bloom, H — b
   zorientowane i wydłużone wzdłuż toru (kąt w części ułamkowej indeksu palety), faktura
   i erozja narastają z wiekiem. Turbulencja z pola wirowego (bez źródeł w płaszczyźnie)
   rośnie z wiekiem — świeża smuga gładka, stara się kłębi.
+- **Ślad rakiety w dymie tylko w STARYM dymie** (> 0,8 s, pełna siła od 1,6 s). Odcinek
+  śladu obejmuje świeży dym za własną dyszą i smugi poprzedniczek lecących gęsiego
+  w salwie — bez progu rozpychał je na boki i każda rakieta miała dwa ogony w kształcie
+  litery V (zgłosił user, potwierdzone A/B).
 - **Światło dymu per cząstka w compute**: słońce z samocieniem (marsz ku słońcu po mapie
   gęstości), wszystkie światła siatki (dysze, błyski, reflektory statków) z kierunkiem
   dominującym, nasycenie światła punktowego pod progiem bloomu. Ta sama mapa daje cień dymu
