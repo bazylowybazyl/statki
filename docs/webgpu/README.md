@@ -41,15 +41,15 @@ edytuje plików z jego zakresu (zwłaszcza `src/3d/core3d.js`, `index.html`) —
 Które mogą iść naraz: kolumna „Równolegle z” w `POSTEP.md` / `PLAN.md` §9. Najwyżej 2–3 naraz (wspólne GPU).
 
 1. Start sesji we własnym worktree: `claude --worktree webgpu-NN` (albo worktree z aplikacji) — osobny katalog i gałąź.
-2. `node_modules`: worktree go nie ma. Albo `npm ci` w worktree, albo dowiązanie do głównego (PowerShell):
+2. `node_modules`: worktree go nie ma. **Kopia, nie dowiązanie** (~150 MB bez Electrona, który harnessowi niepotrzebny):
 
    ```powershell
-   New-Item -ItemType Junction -Path <worktree>\node_modules -Target C:\Users\Szymon\Documents\GitHub\statki\node_modules
+   robocopy C:\Users\Szymon\Documents\GitHub\statki\node_modules <worktree>\node_modules /E /MT:8 /NFL /NDL /NJH /NJS /XD electron app-builder-bin
    ```
 
-   **Przed usunięciem worktree usuń SAMO dowiązanie:** `cmd /c rmdir <worktree>\node_modules`. Nigdy
-   `Remove-Item -Recurse` ani `rm -rf` na dowiązaniu — Windows PowerShell 5.1 potrafi wejść w cel i wyczyścić główne
-   `node_modules`.
+   **Nie rób dowiązania (junction) do głównego `node_modules`:** `git worktree remove --force` wchodzi w dowiązanie i
+   kasuje ZAWARTOŚĆ celu (sprawdzone 2026-09-27 na katalogu próbnym), tak samo `Remove-Item -Recurse` w Windows
+   PowerShell 5.1. Jeśli już jest dowiązanie — przed usunięciem worktree usuń SAMO dowiązanie: `cmd /c rmdir <ścieżka>`.
 3. Harness w worktree — własny port i baza z GŁÓWNEGO katalogu (`.tmp/` nie jest w git, worktree go nie widzi):
 
    ```
@@ -107,13 +107,13 @@ Warianty bez broni i pozostałe sceny — dalej względem tagu.
 Baza sceny powstaje ZAWSZE na tagu (stary renderer), nigdy na `main` — chyba że scena pokazuje nowe efekty (wyżej):
 
 1. Scena dopisana w `scripts/webgpu/zrzuty.mjs` na `main` (tylko harness, bez zmian w grze — haki `?dev` już są).
-2. Worktree z tagu: `git worktree add ../statki-webgl webgl-baseline`, dowiązanie `node_modules` jak wyżej, skopiuj
-   `scripts/webgpu/` z `main` do worktree (nadpisz).
+2. Worktree z tagu: `git worktree add ../statki-webgl webgl-baseline`, kopia `node_modules` jak wyżej (robocopy),
+   skopiuj `scripts/webgpu/` z `main` do worktree (nadpisz).
 3. W worktree: `node scripts/webgpu/zrzuty.mjs --backend webgl --powtorz 2 --port 5345 --sceny <nowa> --out C:/…/statki/.tmp/webgpu/baseline-nowe/<nowa>`.
 4. Na `main`: `node scripts/webgpu/baza.mjs --dopisz .tmp/webgpu/baseline-nowe/<nowa>` — kopiuje PNG do bazy, dopisuje
    scenę i jej szum do `baseline.json` (i do plików bazy, więc pełna przebudowa jej nie zgubi). Commit `baseline.json`
    + harness.
-5. Sprzątanie worktree: `cmd /c rmdir ..\statki-webgl\node_modules`, potem `git worktree remove ../statki-webgl`.
+5. Sprzątanie worktree: `git worktree remove --force ../statki-webgl` (bezpieczne tylko przy KOPII `node_modules`).
 
 Całą bazę od nowa (np. nowa rozdzielczość): w worktree z tagu `zrzuty.mjs --backend webgl --powtorz 2 --wydajnosc
 --out <…>/.tmp/webgpu/baseline`, potem na `main` `node scripts/webgpu/baza.mjs` (skalibrowana tolerancja zostaje).

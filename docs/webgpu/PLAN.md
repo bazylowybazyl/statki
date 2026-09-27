@@ -11,8 +11,9 @@
 2. **GLSL usuwamy.** Zadanie, które przenosi moduł, usuwa jego GLSL w tym samym commicie. Nowego GLSL nie piszemy
    (`agents.md` § Port WebGPU).
 3. **Praca na `main`** (użytkownik ma kopię zapasową). Zadania równoległe — w worktree, potem merge do `main`.
-4. **Gameplay bez zmian.** Port dotyka tylko warstwy renderu 3D. Jedyny wyjątek to decyzja użytkownika: **stare pole
-   asteroid i tło pasa są wyłączone na czas portu** (`OLD_ASTEROIDS_ENABLED`, `?asteroidyStare` przywraca je na tagu).
+4. **Gameplay bez zmian.** Port dotyka tylko warstwy renderu 3D. Wyjątki to decyzje użytkownika: **stare pole
+   asteroid i tło pasa są wyłączone na czas portu** (`OLD_ASTEROIDS_ENABLED`, `?asteroidyStare` przywraca je na tagu)
+   oraz **mechanika broni z dema** (przebicia, rykoszety, ładowanie Mjolnira, serie Hexlance'a — zadanie 18).
 5. **Poza portem:** warp (stara soczewka do wyrzucenia; nowy warp z `dema/warp-demo.html` wejdzie od razu w TSL),
    asteroidy (stare wyłączone; nowe z `dema/asteroidy.html` / `dema/asteroidy-webgpu.html` wejdą przy integracji),
    moduły ruchu v2 jeszcze nie w grze (Z4 `shipProxyBatch3D`, Z5 `cargoContainers3D` / `cargoDrones3D`,
@@ -22,8 +23,9 @@
    wszystkie super”, „rakiety — super”): efekty z `dema/bronie-webgpu` (27 broni: działa, obrona punktowa, lasery —
    `DEMO-BRONIE.md`) i `dema/rakiety-webgpu` (rakiety, Supernowa — `DEMO-RAKIETY.md`) zastępują stare efekty broni,
    trafień, iskier i rakiet, zamiast przenosić je 1:1. Zadania: 12 (wspólna infrastruktura: compute w klatce, siatka
-   świateł, zniekształcenia), 17–18 (broń), 19 (rakiety), 20 (koniec overlaya). **Rozgrywka dalej bez zmian** — dema
-   dostają zdarzenia gry (strzał, lot, trafienie), ich własne symulacje (pociski 240 Hz, lot rakiet) nie wchodzą.
+   świateł, zniekształcenia), 17–18 (broń), 19 (rakiety), 20 (koniec overlaya). Dema dostają zdarzenia gry (strzał, lot,
+   trafienie), ich własne pętle (pociski 240 Hz, lot rakiet) nie wchodzą; mechanikę trafień z dema (przebicia,
+   rykoszety, ładowanie, serie) przenosimy do logiki gry w zadaniu 18 — zatwierdzona zmiana rozgrywki.
    Warp „Nurt” (`dema/warp-webgpu`, `DEMO-WARP.md`) — bez decyzji (odłożony warp, §12).
 7. **Warsztaty przenoszonych modułów przechodzą razem z nimi:** `dema/halo_ring_demo.html` (ring), `dema/mostki-demo.html`
    (mostki + ścieżka heksów + pomiar drżenia), `dema/rdzen-demo.html` (reaktory i rdzenie — `reactor3D.js`,
@@ -52,7 +54,7 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
 | Pomiar GPU | `trackTimestamp: true` + `renderer.resolveTimestampsAsync('render')` raz na klatkę (jedno zapytanie w locie) → `Core3D.gpuFrameMs` (PerfHUD bez zmian). `EXT_disjoint_timer_query_webgl2` znika | SPIKE 8 |
 | `renderer.info` | Draw calle = `info.render.drawCalls` (w WebGL `render.calls`); `render.calls` liczy wywołania `render()` i nie zeruje się w `reset()`. `info.autoReset = false` + ręczny reset raz na klatkę (przy `true` wewnętrzna pętla zeruje liczniki co rAF). `window.__rendererInfo.calls` dalej = draw calle (harness i PerfHUD) | SPIKE 14 |
 | Kompilacja | `renderer.compile` = alias `compileAsync` (zwraca Promise) → wywołania w `shield3D.js`, `hexShips3D.js`, `weapon3DSystem.js` stają się asynchroniczne. WGSL przez DXC kompiluje się 2–9× szybciej niż ten sam GLSL przez ANGLE. Bez `compileAsync` pierwszy render nowego materiału oddaje CPU po ~6 ms, ale kolejka GPU czeka na kompilację (przestój klatki) | SPIKE 10 |
-| Zapas bez WebGPU | `WebGPURenderer` bez adaptera sam przechodzi na backend WebGL2 (te same materiały TSL). **Nie wspieramy go w porcie** (niesprawdzony) — `Core3D` loguje `backend.isWebGPUBackend`; decyzja po porcie (pytania §12) | źródło three |
+| Bez WebGPU | **Tylko WebGPU** (decyzja użytkownika, §12 p. 2). `WebGPURenderer` bez adaptera sam przechodzi na backend WebGL2 — nie dopuszczamy tego: przed utworzeniem renderera `navigator.gpu?.requestAdapter()`; brak adaptera → komunikat „Gra wymaga przeglądarki z WebGPU” zamiast startu; po `init()` sprawdzenie `backend.isWebGPUBackend` | źródło three, decyzja |
 
 ## 3. Konwencja modułów i materiałów
 
@@ -216,8 +218,8 @@ efektów i nowe efekty z dem → koniec overlaya → wydajność → sprzątanie
 | 14 | Tarcze i trafienia w tarczę | 03 | 04–13, 15–20 | xhigh | 4 / 583 |
 | 15 | Mostki, rdzenie, reaktory, światła statków (+ warsztaty mostki-demo, rdzen-demo; pełny pomiar drżenia w 21) | 04 | 05–14, 16–20 | xhigh | 9 / ~1000 |
 | 16 | Zniszczenie stacji (shatter, panele) + nowa scena bazy `stacja-rozpad` | 03 | 04–15, 17–19 | xhigh | 2 / 172 + wbudowane |
-| 17 | Broń 1/2 z dema `bronie-webgpu`: działa i pociski (wylot, pocisk, smuga, trafienie; Hexlance, Yamato) | 12, 04 | 05–11, 13–16, 19 | max | zastępuje ~400 linii GLSL (`slugTrail3D`, `yamato`) + `weapon3DSystem`, `muzzleFx3D`, `railgunFx3D`, trafienia overlaya |
-| 18 | Broń 2/2: wiązki, obrona punktowa, flak, jony; światła efektów na kadłubach; rany | 17 | 05–11, 13–16, 19 | xhigh | reszta `weapon3DSystem`, PD i flak z kanwy do 3D |
+| 17 | Broń 1/2 z dema `bronie-webgpu`: efekty wszystkich broni (wylot, pocisk, smuga, trafienie, wiązki, PD, flak; Hexlance, Yamato) | 12, 04 | 05–11, 13–16, 19 | max | zastępuje ~400 linii GLSL (`slugTrail3D`, `yamato`) + `weapon3DSystem`, `muzzleFx3D`, `railgunFx3D`, trafienia overlaya; PD i flak z kanwy do 3D |
+| 18 | Broń 2/2: obrażenia z dema — mapa ran na kadłubach, przebicia, rykoszety, ładowanie, serie; światła efektów na poszyciu | 17, 04 | 05–11, 13–16, 19 | max | materiał kadłuba + logika trafień (zmiana rozgrywki zatwierdzona) |
 | 19 | Rakiety z dema `rakiety-webgpu`: dym GPU, dysze, kule ognia, Supernowa, iskry | 12 | 05–11, 13–18 | max | zastępuje ~630 linii GLSL |
 | 20 | Koniec overlaya: wybuch reaktora w Core3D, usunięcie drugiego renderera | 17, 18, 19 | 13–16 | xhigh | 2 / 226 + overlay 36 + drugi renderer |
 | 21 | Wydajność i precyzja: A/B z tagiem, drżenie, kompilacja, pamięć | 04–20 | nie | max | pomiary |
@@ -234,9 +236,9 @@ scenie nie da się przenieść na TSL, dopóki rysuje ją `WebGLRenderer` — dl
 bez zamienników aż do zastąpienia: trafienia i Yamato w 17, iskry, rakiety i Supernowa w 19, wybuch reaktora (jedyny
 przenoszony 1:1) w 20, które usuwa overlay. `rdzen-demo` ma własny overlay — przepina go 20.
 
-**Nowe efekty a kadłuby:** światła efektów oświetlają kadłuby przez siatkę świateł (12 → 18), cień dymu rakiet (19) —
-oba wymagają materiału kadłuba z 04. Wieżyczki zostają 2D (`Turret2D`); mapa ran w uv z dema broni nie wchodzi (rana =
-żar skóry belek z krzywą stygnięcia z dema, 18).
+**Nowe efekty a kadłuby:** światła efektów oświetlają kadłuby przez siatkę świateł (12 → 18), mapa ran z dema broni
+na kadłubach belkowych (18), cień dymu rakiet (19) — wszystko wymaga materiału kadłuba z 04. Wieżyczki zostają 2D
+(`Turret2D`).
 
 ## 10. Ryzyka
 
@@ -255,7 +257,7 @@ oba wymagają materiału kadłuba z 04. Wieżyczki zostają 2D (`Turret2D`); map
    usunięcie; lustra CPU zostają.
 7. **Równoległe sesje** (ruch v2 Z-zadania, dema `dema/*-webgpu/` powstające obok) mogą dotykać `core3d.js`,
    `index.html`, modułów portu — koordynacja przez użytkownika; nowy kod renderu tylko w TSL (`agents.md`).
-8. **Zapas WebGL2 bez testów** — maszyna bez WebGPU dostanie niesprawdzony backend WebGL2 three.
+8. **Tylko WebGPU** — maszyna bez WebGPU nie uruchomi gry (komunikat; decyzja użytkownika, §12 p. 2).
 9. **Pomiar drżenia** stoi na `mostki-demo` (ścieżka heksów) — do zadania 15 nie ma pomiaru precyzji na WebGPU
    (w zadaniach 04–14 wystarcza reguła `highPrecision` + offset i zrzuty); moduły efektów w narzędziu przepina 21.
 10. **Nowe efekty w prawdziwej bitwie** (17–19) — dema pokazują kilka okrętów; gra ma setki pocisków, ~100 trafień/s,
@@ -266,28 +268,27 @@ oba wymagają materiału kadłuba z 04. Wieżyczki zostają 2D (`Turret2D`); map
 
 ## 11. Poza zakresem
 
-Usuwanie GLSL z modułów poza grą (decyzja w zadaniu 22), stara soczewka i nowy warp, asteroidy (nowe wejdą z demem
-WebGPU — skorzystają z siatki świateł z 12), moduły Z4/Z5/Z7, zmiany rozgrywki (także zdarzenia, które dema pokazują,
-a gra ich nie liczy: rykoszety, przebicia, ładowanie Mjolnira), symulacje z dem (pociski 240 Hz, lot rakiet, `Gunnery`),
-wieżyczki 3D z dema broni, mapa ran w uv, wspólne urządzenie GPU z solverem sprężyn (`destructorGpuSoftBody*` ma
-własne `GPUDevice` i zostaje — dwa urządzenia działają obok siebie), Electron i build produkcyjny.
+Nowy warp (odłożony; sesja użytkownika dopracowuje „Nurt”), asteroidy (nowe wejdą z demem WebGPU — skorzystają z
+siatki świateł z 12), moduły Z4/Z5/Z7 (przejdą na TSL przy integracji), demo fizyki belek na GPU
+(`FIZYKA-BELEK-GPU.md` — „może na później”), zmiany rozgrywki poza zatwierdzoną mechaniką broni z dema (18), symulacje
+z dem jako takie (pociski 240 Hz, lot rakiet, `Gunnery` — mechanikę przenosimy do logiki gry, nie ich pętle), wieżyczki
+3D z dema broni, wspólne urządzenie GPU z solverem sprężyn (`destructorGpuSoftBody*` ma własne `GPUDevice` i zostaje —
+dwa urządzenia działają obok siebie), Electron i build produkcyjny.
 
-## 12. Otwarte pytania do użytkownika
+## 12. Pytania do użytkownika — odpowiedzi (2026-09-27, wieczór)
 
-1. **GLSL w modułach poza grą** po porcie (nowe asteroidy 1889 linii, warp 364, Z4/Z5/Z7, `beamShips3D` i spółka dla
-   destruktorów, nieużywane `voxelShips3D`, `stationDestructionEffects`, legacy `planet3d.proc.js`): usunąć w zadaniu
-   22 czy zostawić do integracji? Rekomendacja: usunąć nieużywane i legacy; zostawić rozwijane (warp, asteroidy,
-   Z4/Z5/Z7) do ich integracji w TSL.
-2. **Brak WebGPU:** przyjąć automatyczny zapas three (backend WebGL2, te same materiały TSL — wymaga testów) czy
-   komunikat „wymagane WebGPU”? Rekomendacja: decyzja po zadaniu 21. Uwaga: compute z efektów 12, 17–19 nie ma
-   odpowiednika w backendzie WebGL2 — zapas oznaczałby efekty bez części GPU.
-3. **`src/3d/modelBaker.js`** (narzędzie dev z własnym `WebGLRenderer`): przenieść na renderer Core3D czy usunąć?
-4. **Push na `origin`:** po każdym zadaniu czy po testach użytkownika? (Faza 0 niczego nie wypchnęła.)
-5. **Równoległe sesje** (ruch v2, dema WebGPU): wstrzymać zmiany w `core3d.js` / `index.html` na czas zadań 01–03?
-6. ~~Nowe efekty z dem WebGPU~~ — **rozstrzygnięte 2026-09-27:** efekty broni i rakiet z dem wchodzą przy porcie
-   (§1 p. 6; zadania 12, 17–20).
-7. **Zdarzenia z dem, których gra nie liczy** (rykoszety, przebicia z wylotem, ładowanie Mjolnira — `chargeTime`,
-   `burstCount` Hexlance'a, `recoil` / `shake` / `impactScale` z `weapons.js`) — dodać do rozgrywki czy zostawić?
-   Zadanie 17 zbierze listę; bez decyzji efekt pokazuje tylko to, co gra zgłasza.
-8. **Warp:** który wejdzie — „Fałda” (`dema/warp-demo.html`, `BRIEF-warp.md`) czy „Nurt” (`dema/warp-webgpu.html`)?
-   Od tego zależy odłożone zadanie warpa (w „Nurcie” jest już TSL i compute).
+1. **GLSL w modułach poza grą:** „usuwać nieużywane, przechodzimy w pełni na WebGPU” → zadanie 22 kasuje martwy
+   i nieużywany kod (legacy `planet3d.proc.js`, `voxelShips3D`, `stationDestructionEffects`, martwe części
+   `Engineeffects.js`, stara soczewka warpa po 01, stare tło pasa); moduły rozwijane (Z4/Z5/Z7, nowe asteroidy) przejdą
+   na TSL przy swojej integracji.
+2. **Brak WebGPU:** „WebGPU-only” → bez zapasu WebGL2; gra bez adaptera WebGPU pokazuje komunikat (zadanie 01).
+3. **`src/3d/modelBaker.js`:** usunąć (zadanie 01 — razem z importem w `devTools.js`).
+4. **Push:** użytkownik ma kopię na bieżąco i nie sprawdza po drodze — commity lokalne na `main`, bez `git push`
+   (wypchnięcie tylko na wyraźną prośbę).
+5. **Sesje równoległe:** skończyły pracę — port prowadzi jedna sesja (orkiestrator + podagenci w worktree).
+6. **Nowe efekty z dem:** wchodzą (§1 p. 6; zadania 12, 17–20).
+7. **Obrażenia i mechanika broni z dema** (mapa ran, przebicia, rykoszety, ładowanie Mjolnira, serie Hexlance'a, pola
+   `recoil` / `shake` / `impactScale`): „tak, bardzo mi się podobają nowe obrażenia od broni w demie — trzeba to
+   wdrożyć” → zadanie 18 (zmiana rozgrywki zatwierdzona). Demo fizyki belek na GPU — „może na później” (poza portem).
+8. **Warp:** użytkownik zlecił osobnej sesji poprawę „Nurtu” (lot dobry, ładowanie i wyjście gorsze od „portalu”) —
+   warp zostaje odłożony do jej wyniku.

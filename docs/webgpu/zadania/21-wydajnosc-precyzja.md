@@ -7,7 +7,7 @@ PerfHUD; raport `docs/webgpu/WYDAJNOSC.md`.
 ## Cel
 Port nie pogarsza gry: klatka bitwy (CPU i GPU), draw calle, drżenie efektów względem kadłubów, czasy startu i
 pierwszych klatek, pamięć — na poziomie bazy albo lepiej, a każde odstępstwo ma przyczynę i plan. Dane do decyzji
-użytkownika: zapas WebGL2 (PLAN §12 p. 2) i kanwa 3D bez kopii do `#c` (PLAN §2).
+użytkownika: kanwa 3D bez kopii do `#c` (PLAN §2).
 
 ## Przeczytaj najpierw
 `agents.md` (Wydajność, precyzja), `docs/webgpu/PLAN.md` §2, §4, §6, §10, `docs/webgpu/baseline.json` (wydajność,
@@ -35,8 +35,8 @@ drżenie, szum), `docs/webgpu/POSTEP.md` (liczby zadań 01–20), `docs/AUDYT-wy
 6. **Pełne uploady tekstur** (`Texture.updateRanges` ignorowane — mostki z 15, inne tekstury danych): koszt w bitwie.
 7. **Kanwa bez kopii:** zmierz koszt kopii `#webgl-layer` → `#c` (`drawImage`) na `main`; oceń wariant „kanwa WebGPU pod
    2D” — tylko pomiar i rekomendacja, bez zmiany składania.
-8. **Zapas WebGL2:** `WebGPURenderer({ forceWebGL: true })` za flagą dev — lista błędów i zrzuty harnessu (dane do
-   decyzji użytkownika; nic nie włączaj domyślnie).
+8. **Tylko WebGPU:** sprawdź komunikat „Gra wymaga przeglądarki z WebGPU” w Chrome bez WebGPU (flaga
+   `--disable-webgpu` w `startChrome`) — gra nie startuje na zapasie WebGL2 (decyzja użytkownika, PLAN §12 p. 2).
 9. **Raport** `docs/webgpu/WYDAJNOSC.md`: tabele przed/po, metoda, surowe dane w `.tmp/webgpu/zadania/21/`; wnioski
    trwałe do `agents.md` (Wydajność).
 
@@ -57,7 +57,7 @@ drżenie, szum), `docs/webgpu/POSTEP.md` (liczby zadań 01–20), `docs/AUDYT-wy
 
 ## Czego NIE robić
 - Nie zmieniaj rozgrywki, kroku fizyki ani jakości efektów, żeby „wygrać” pomiar.
-- Nie przełączaj składania kanw ani zapasu WebGL2 bez decyzji użytkownika.
+- Nie przełączaj składania kanw bez decyzji użytkownika.
 
 ## Raport na koniec
-Tabela A/B; drżenie; czasy startu i przestoje; pamięć; rekomendacje (kanwa bez kopii, zapas WebGL2); co zostało; pytania.
+Tabela A/B; drżenie; czasy startu i przestoje; pamięć; rekomendacje (kanwa bez kopii); co zostało; pytania.

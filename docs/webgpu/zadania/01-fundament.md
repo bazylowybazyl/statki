@@ -37,8 +37,10 @@ w `src/3d/hexShips3D.js`, `scripts/webgpu/zrzuty.mjs` i `harness-strona.js`.
    `Core3D.gpuReady` / `Core3D.ready` (Promise z `await renderer.init()`) bramkują wszystko, co potrzebuje urządzenia:
    `render`, `renderSingle`, `renderBackdrop`, `queueTextureUpload` (`initTexture`), `compileAsync`, pieczenie i odczyty.
    Po `init`: `highPrecision = true`, `outputColorSpace = LinearSRGBColorSpace`, `toneMapping = NoToneMapping`,
-   `info.autoReset = false`, `installPlaceholders(renderer)`, log `backend.isWebGPUBackend` (zapas WebGL2 nie jest
-   wspierany — ostrzeżenie w konsoli, PLAN §2).
+   `info.autoReset = false`, `installPlaceholders(renderer)`. **Tylko WebGPU** (decyzja użytkownika, PLAN §2 / §12 p. 2):
+   przed utworzeniem renderera `navigator.gpu?.requestAdapter()`; brak adaptera → komunikat w menu „Gra wymaga
+   przeglądarki z WebGPU” (zamiast startu gry) i bez tworzenia renderera; po `init()` warunek
+   `backend.isWebGPUBackend` (inaczej ten sam komunikat) — zapasu WebGL2 three nie dopuszczamy.
 4. **Cele:** `RenderTarget` (nie `WebGLRenderTarget`): `composerTarget` HalfFloat MSAA 4, `planetHaloTarget` MSAA jak
    scena, `postTarget` (jeśli dalej potrzebny), `sunShadowTarget` RGBA8, `refractionTarget` pół rozdzielczości.
    `setMsaaEnabled`: `rt.samples = n; rt.dispose()` (SPIKE 17). `capabilities.isWebGL2` znika.
@@ -89,6 +91,8 @@ w `src/3d/hexShips3D.js`, `scripts/webgpu/zrzuty.mjs` i `harness-strona.js`.
     `_postPasses`), `glslReservedWords` (próg „> 50 shaderów” → sprawdzanie tylko, jeśli są), `fighterCombatFixes`.
 16. **Znana regresja przejściowa (zapisz w `POSTEP.md`):** `readRenderTargetPixels` nie istnieje, więc mapa CPU ringu
     jest pusta do zadania 06 — płyta ringu dalej koliduje, ale bez rzeźby terenu (`HaloRingCollider`, `h = 0`).
+17. **`src/3d/modelBaker.js` usuń** (decyzja użytkownika — narzędzie dev z własnym `WebGLRenderer`) razem z wywołaniem
+    w `src/ui/devTools.js`; w kodzie gry nie zostaje żaden `WebGLRenderer` poza overlayem (do zadania 20).
 
 ## Pułapki
 - `render()` przed `await renderer.init()` → ostrzeżenie three co klatkę (harness liczy je jako błąd): bramka `gpuReady`.

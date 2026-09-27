@@ -18,10 +18,13 @@ porównuje się z zatwierdzonym obrazem z `main`, nie z tagiem.
    `WebGLRenderTarget` / `WebGLRenderer` / `EffectComposer` — resztki usuń.
 2. **Strażnik:** `glslReservedWords` → test „brak GLSL i API WebGL w plikach ładowanych przez grę” (graf importów jak w
    `inwentarz.mjs`, bez listy ręcznej), z allowlistą modułów poza portem zgodną z decyzją użytkownika (PLAN §12 p. 1).
-3. **Moduły poza grą** — wyłącznie wg decyzji użytkownika (PLAN §12 p. 1, 3): nieużywane i legacy (`planet3d.proc.js`,
-   `voxelShips3D.js`, `stationDestructionEffects.js`, resztki `Engineeffects.js`) usuń; `modelBaker.js` przenieś na
-   renderer Core3D albo usuń; rozwijane (warp, nowe asteroidy, Z4 / Z5 / Z7, `beamShips3D` dla destruktorów) zostaw
-   z `// AGENT:` o przejściu na TSL przy integracji. Bez decyzji — nic nie usuwaj, zapytaj.
+3. **Nieużywany kod** (decyzja użytkownika: „usuwać nieużywane, przechodzimy w pełni na WebGPU”, PLAN §12 p. 1):
+   usuń legacy `planet3d.proc.js`, `voxelShips3D.js`, `stationDestructionEffects.js`, martwe części `Engineeffects.js`,
+   starą soczewkę warpa (`warpLens3D.js`, `warpWorldLens.js`, `warpFx3D.js`, `src/vfx/warpLensPass.js` — jeśli po 01
+   nic ich nie woła; matematykę CPU z testów przenieś tam, gdzie żyje), stare tło pasa `asteroidBeltBackdrop3D.js`
+   (wyłączone; rozgrywka asteroid w `asteroidField3D.js` zostaje do nowych asteroid). Graf importów z `inwentarz.mjs`
+   decyduje, co jest nieużywane — nic, co ładuje gra albo demo w repo, nie znika bez zastąpienia. Moduły rozwijane
+   (Z4 / Z5 / Z7, nowe asteroidy, `beamShips3D` dla destruktorów) zostają z `// AGENT:` o przejściu na TSL przy integracji.
 4. **Zamiennik** (`src/3d/tsl/zamiennik.js`): zostaw jako bezpiecznik (błąd w konsoli + magenta dla przyszłego GLSL)
    albo usuń, jeśli strażnik wystarcza — opisz decyzję.
 5. **`agents.md`:** przepisz Core3D i Moduły 3D na stan WebGPU (bez `UnrealBloomPass` / `EffectComposer` /
@@ -32,7 +35,7 @@ porównuje się z zatwierdzonym obrazem z `main`, nie z tagiem.
    scena (sceny z nowymi efektami — `galeria-broni`, `galeria-rakiet`, bitwy — vs zatwierdzone przebiegi z 17–19);
    zestawienie w `POSTEP.md`.
 7. **`README.md` / `POSTEP.md`:** port zakończony; harness na przyszłość (bazy nowych scen robi się z `main`, nie z tagu).
-8. Zaproponuj użytkownikowi tag `webgpu-port` i push (PLAN §12 p. 4) — bez zgody nie twórz i nie wypychaj.
+8. Tag `webgpu-port` na ostatnim commicie portu (lokalnie); bez `git push` (PLAN §12 p. 4).
 
 ## Pułapki
 - Strażnik nie może łapać dem ani narzędzi spoza gry (graf importów, nie `glob`).
@@ -46,7 +49,7 @@ porównuje się z zatwierdzonym obrazem z `main`, nie z tagiem.
 - `agents.md`, `README.md`, `POSTEP.md` zaktualizowane; commit na `main`.
 
 ## Czego NIE robić
-- Nie usuwaj niczego poza decyzjami użytkownika; nie zmieniaj rozgrywki; nie twórz tagu ani nie pushuj bez zgody.
+- Nie usuwaj niczego, co ładuje gra albo demo w repo, bez zastąpienia; nie zmieniaj rozgrywki; bez `git push`.
 
 ## Raport na koniec
 Co usunięto; decyzje (zamiennik, moduły poza grą); końcowe zestawienie z bazą; pytania.
