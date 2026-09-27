@@ -36,7 +36,7 @@ const SCOPE_RULES = [
 // Uwagi ręczne do tabel (to, czego skan nie wyczyta).
 const NOTES = {
   'src/3d/core3d.js': 'serce portu: passy sceny, post, maska słońca, uber; soczewka warp i fale warpa poza portem',
-  'src/3d/hexShips3D.js': 'gałąź heksów (HEX/ARMOR/DEBRIS, pula szczątków GPU) rysuje tylko asteroidy → pominąć; kadłuby = gałąź beam (BEAM_SKIN + HEX_FRAGMENT)',
+  'src/3d/hexShips3D.js': 'kadłuby = gałąź beam (BEAM_SKIN + HEX_FRAGMENT); gałąź heksów (HEX/ARMOR/DEBRIS, pula szczątków GPU) w grze rysuje tylko wyłączone asteroidy, ale stoją na niej mostki-demo, rdzen-demo i pomiar drżenia → port w zadaniu 04',
   'src/effects3d/overlay.js': 'DRUGI WebGLRenderer (overlay3D eksplozji + rakiety, własny composer i bloom) → Core3D + CanvasTarget',
   'Engineeffects.js': 'gra importuje tylko tekstury make*Texture; getEngineVFX z własnym WebGLRenderer i shader — martwe',
   'src/3d/modelBaker.js': 'narzędzie dev (devTools.js, import dynamiczny) z własnym WebGLRenderer',
@@ -598,7 +598,8 @@ ${fileTable(groups.warp)}
 ${fileTable(groups['asteroidy-stare'])}
 
 Uwaga: **ścieżka heksów w \`hexShips3D.js\`** (HEX/ARMOR/DEBRIS, pula szczątków GPU, \`createEntityMesh\`/\`updateEntityMesh\`) rysuje w grze
-tylko asteroidy (ciała heksowe) — liczy się w wierszu \`src/3d/hexShips3D.js\` wyżej, ale w porcie jest do pominięcia (PLAN.md).
+tylko asteroidy (ciała heksowe, na czas portu wyłączone) — liczy się w wierszu \`src/3d/hexShips3D.js\` wyżej i przechodzi w zadaniu 04,
+bo stoją na niej warsztaty \`mostki-demo\`, \`rdzen-demo\` i pomiar drżenia (PLAN.md §1 p. 6).
 \`coldWreckImpostors.js\` / \`coldWrecks.js\` są uśpione (wymagają \`hexGrid\`).
 
 ### Nowe asteroidy (dema; wejdą z dema WebGPU)

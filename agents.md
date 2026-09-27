@@ -37,6 +37,29 @@
 
 ---
 
+## Port WebGPU (w toku)
+
+Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; jak prowadzić zadania: `docs/webgpu/README.md`.
+
+- **Jedna ścieżka (decyzja użytkownika 2026-09-27):** od zadania 01 `Core3D` ma tylko `WebGPURenderer` (`three/webgpu`),
+  bez flagi wyboru backendu. Stary `WebGLRenderer` zostaje wyłącznie w tagu `webgl-baseline` (baza porównań, dema spoza
+  portu). Praca na `main`.
+- **GLSL usuwamy:** zadanie, które przenosi moduł, kasuje jego GLSL w tym samym commicie. **Nowego GLSL ani
+  `ShaderMaterial` nie piszemy** — nowy kod renderu tylko w TSL (`three/tsl`, materiały węzłowe), wspólne pomocniki w
+  `src/3d/tsl/`. Konwencje (adapter `material.uniforms`, graf węzłów współdzielony zamiast materiału na encję, rozgrzewka
+  passów, światła, precyzja): `PLAN.md` §3–§6.
+- **Magenta = nieprzeniesiony materiał.** Każdy `ShaderMaterial` bez portu rysuje się magentowym zamiennikiem (licznik
+  w harnessie) — to stan przejściowy, nie błąd do obchodzenia. Overlay efektów (`src/effects3d/overlay.js`) do zadania 17
+  zostaje na własnym `WebGLRenderer` (jedyny wyjątek od zasady żelaznej).
+- **Poza portem:** warp (soczewka, fale — do wymiany), stare asteroidy (**wyłączone** w grze: `OLD_ASTEROIDS_ENABLED`,
+  `?asteroidyStare`), moduły ruchu v2 spoza gry (Z4/Z5/Z7) — przechodzą na TSL przy swojej integracji.
+- **Weryfikacja:** `node scripts/webgpu/zrzuty.mjs --backend webgpu --out .tmp/webgpu/zadania/NN --baza .tmp/webgpu/baseline/webgl/p1`
+  (sceny deterministyczne, porównanie z bazą WebGL, spis zamienników); haki `?dev`: `window.DevScene.teleport / syncCamera /
+  preloadHullSprites / startSplit`. Testy: `node --test "tests/*.test.mjs"` (wzorzec w cudzysłowie — `tests/` na Node 22
+  nie działa).
+
+---
+
 ## Kluczowe byty gry
 
 ### Świat i kamera

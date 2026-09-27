@@ -1,8 +1,8 @@
 # Port WebGPU — postęp
 
 > Plik ciągłości między sesjami. Każda sesja zaczyna od niego i kończy na nim:
-> co zrobione, commit, co dalej. Stan zadań portu — tabela „Zadania” (powstaje w Kroku 6
-> Fazy 0). Dziennik sesji na końcu.
+> co zrobione, commit, co dalej. Stan zadań portu — tabela „Zadania portu”; świadome regresje
+> przejściowe — sekcja niżej; dziennik sesji na końcu. Jak prowadzić zadania: `README.md`.
 
 ## Decyzje użytkownika (obowiązują cały port)
 
@@ -12,7 +12,7 @@
 | 2026-09-27 | **Praca na `main`** (zasada 7); użytkownik ma lokalny backup (rar). |
 | 2026-09-27 | **Warp poza portem** — stara soczewka do wyrzucenia, nowy warp (`dema/warp-demo.html`) wejdzie później od razu w TSL (`PROMPT-START.md` § Warp, `USTALENIA.md` §7). |
 | 2026-09-27 | **Asteroidy poza portem** — nowe są gotowe w `dema/asteroidy.html` (i demo WebGPU `dema/asteroidy-webgpu.html`), więc starych nie przenosimy. |
-| 2026-09-27 | **Stare pole asteroid WYŁĄCZONE w całości na czas portu** (rozgrywka i wygląd; odpowiedź na pytanie w Fazie 0). Wdrożone: `OLD_ASTEROIDS_ENABLED` w `index.html` (przy tworzeniu `AsteroidField` / `AsteroidBeltBackdrop`), `?asteroidyStare` przywraca je na ścieżce WebGL. Wszystkie haki gry znoszą brak pola. |
+| 2026-09-27 | **Stare pole asteroid WYŁĄCZONE w całości na czas portu** (rozgrywka i wygląd; odpowiedź na pytanie w Fazie 0). Wdrożone: `OLD_ASTEROIDS_ENABLED` w `index.html` (przy tworzeniu `AsteroidField` / `AsteroidBeltBackdrop`), `?asteroidyStare` przywraca je (pełny obraz tylko na tagu — na `main` od zadania 01 ich materiały są zamiennikami). Wszystkie haki gry znoszą brak pola. |
 | 2026-09-27 | **Dema spoza gry zostają na tagu `webgl-baseline`** (odpowiedź na pytanie w Fazie 0): port obejmuje to, co ładuje gra, plus warsztaty przenoszonych modułów (`halo_ring_demo`, `mostki-demo`, `rdzen-demo`). `warp-demo`, `asteroidy.html`, `budowle-portowe` (Z7), `kontenery` (Z5), `scripts/proxy-batch` (Z4), `destruktor2d/3d` działają z tagu (osobny worktree); warp, nowe asteroidy i moduły Z4/Z5/Z7 przechodzą na TSL przy swojej integracji. |
 | 2026-09-27 | Z listy zadań wypadły: Electron i build produkcyjny oraz przełączenie domyślnego backendu / polityka awaryjna (zmiana `PROMPT-START.md`). |
 
@@ -25,8 +25,49 @@
 | 3 | Spike techniczny (`dema/webgpu-spike.*`, `SPIKE.md`) | zrobione — 17/17, bez blokad | (commit kroków 2–4) |
 | 4 | Inwentarz (`scripts/webgpu/inwentarz.mjs` → `INWENTARZ.md`) | zrobione | (commit kroków 2–4) |
 | 5 | Harness zrzutów + baza WebGL (`zrzuty.mjs`, `porownaj.mjs`, `baseline.json`) | zrobione — 48 zrzutów, szum ≤ 0,03% (>2/255), 0% (>8); tag `webgl-baseline` | (commit kroku 5) |
-| 6 | Plan i zadania (`PLAN.md`, `zadania/NN-*.md`, `README.md`, sekcja w `agents.md`) | — | |
-| 7 | Raport dla użytkownika | — | |
+| 6 | Plan i zadania (`PLAN.md`, `zadania/NN-*.md`, `README.md`, sekcja w `agents.md`) | zrobione — 20 zadań + odłożony warp | (commit kroku 6) |
+| 7 | Raport dla użytkownika | zrobione (w rozmowie); zadanie 01 czeka na zgodę | — |
+
+## Zadania portu
+
+Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `czeka` → `w toku (sesja, data)` →
+`zrobione` (commit). „Równolegle z” = rozłączne pliki, każda równoległa sesja we własnym worktree (`README.md`).
+
+| # | Zadanie | Zależy od | Równolegle z | Effort | Status | Commit | Uwagi |
+|---|---|---|---|---|---|---|---|
+| 01 | Fundament: `WebGPURenderer` w Core3D, zamienniki, adapter uniformów, harness na WebGPU | — | nie | max | czeka na zgodę użytkownika | | od niego gra = magenta dla nieprzeniesionych materiałów |
+| 02 | Post 1/2: bloom, pełny „uber”, pre-pass halo, MSAA, kalibracja tolerancji | 01 | 06 | max | czeka | | kalibruje `tolerancjaPortu` |
+| 03 | Post 2/2: maska słońca, SDF kadłubów, refrakcja, fala uderzeniowa | 02 | 06 | max | czeka | | biblioteki dla 04–18 |
+| 04 | Kadłuby (belki + heksy), lakier, impostory, szczątki | 03 | 05, 06–10, 12–14, 16, 17 | max | czeka | | graf na wariant zamiast materiału na encję |
+| 05 | Planety, słońce, mgławica, gwiazdy, stacje | 03 | 04, 06–10, 12–14, 16, 17 | xhigh | czeka | | |
+| 06 | Ring 1/5: biblioteka TSL, pieczenie map, odczyt asynchroniczny, `halo_ring_demo` | 01 | 02, 03, 04, 05, 12–14, 16, 17 | max | czeka | | kończy przejściową regresję terenu ringu z 01 |
+| 07 | Ring 2/5: teren + zestaw przemysłowy | 06 | 04, 05, 12–14, 16, 17 | xhigh | czeka | | |
+| 08 | Ring 3/5: struktura + atmosfera | 07 | j.w. | xhigh | czeka | | |
+| 09 | Ring 4/5: megastruktura + miasto (kopuły, landmarki, drzewa) | 08 | j.w. | xhigh | czeka | | |
+| 10 | Ring 5/5: K-7 + ringi-archetypy Marsa i Jowisza | 09 | j.w. | xhigh | czeka | | ring bez zamienników |
+| 11 | Tło menu + rozgrzewka pipeline'ów | 05, 10 | 12–18 | max | czeka | | nowy `menuBackdrop.test` |
+| 12 | Broń i cząstki w scenie Core3D | 03 | 04–10, 13, 14, 16, 17 | xhigh | czeka | | decyzja PLAN §12 p. 6 |
+| 13 | Silniki: MAIN, WARP (plazma), SIDE | 03 | 04–10, 12, 14, 16, 17 | xhigh | czeka | | |
+| 14 | Tarcze i trafienia w tarczę | 03 | 04–10, 12, 13, 16, 17 | xhigh | czeka | | |
+| 15 | Mostki, rdzenie, reaktory, światła (+ `mostki-demo`, `rdzen-demo`) | 04 | 05–14, 16–18 | xhigh | czeka | | |
+| 16 | Zniszczenie stacji (+ scena bazy `stacja-rozpad`) | 03 | 04–15, 17, 18 | xhigh | czeka | | |
+| 17 | Overlay efektów na renderer Core3D (`CanvasTarget`), iskry, rakiety | 03 | 04–16 | max | czeka | | decyzja PLAN §12 p. 6 |
+| 18 | Wybuchy, trafienia, Yamato | 17 | 04–16 | xhigh | czeka | | decyzja PLAN §12 p. 6 |
+| 19 | Wydajność i precyzja: A/B z tagiem, drżenie, kompilacja, pamięć | 04–18 | nie | max | czeka | | |
+| 20 | Sprzątanie i domknięcie portu | 19 | nie | xhigh | czeka | | decyzje PLAN §12 p. 1, 3 |
+| — | Odłożone: nowy warp od razu w TSL (pass zgięcia tła w `Core3D.render`) | wpięcie nowego warpa | — | — | odłożone | | decyzja użytkownika |
+
+## Regresje przejściowe (świadome)
+
+Stan zamierzony na `main` w trakcie portu — nie „naprawiać” poza zadaniem, które go kończy.
+
+| Od | Do | Co | Kończy |
+|---|---|---|---|
+| 01 | 20 | Nieprzeniesione `ShaderMaterial` rysują się magentą (`spis.zamienniki` w harnessie) | zadania 02–18 |
+| 01 | 06 | Brak synchronicznego odczytu → mapa CPU ringu pusta (`heightAtUV` = 0): płyta ringu koliduje bez rzeźby terenu, LOD terenu bez wysokości, landmarki i kopuły stawiane bez mapy (stała wysokość z `haloRingLandmarks.js`) | 06 |
+| 01 | 17 | Overlay efektów na własnym `WebGLRenderer` (jedyny drugi renderer) | 17 |
+| 01 | — | Soczewka i fale warpa usunięte (API jako no-op), skok działa bez efektu zgięcia | nowy warp (odłożone) |
+| Faza 0 | — | Stare pole asteroid i tło pasa wyłączone (`?asteroidyStare`) | integracja nowych asteroid |
 
 ## Środowisko (Krok 2, 2026-09-27)
 
@@ -147,3 +188,30 @@ Todo (2): „PORT poprawka 1 / 3 (TODO integracji)” w `tests/shipCore.test.mjs
     naprzemiennie i bez innych obciążeń. Drżenie (`dema/precyzja-drzenie.js
     --variant po`): światła 0,003 px RMS, okna mostków 0,04–0,06 px, reszta ≈ 0.
   - Testy po hakach: bez zmian (7 porażek bazowych, `npm test` OK).
+- Krok 6: `PLAN.md` (architektura z wyników spike'u, konwencje TSL, precyzja, cienie, asynchroniczność, weryfikacja,
+  20 zadań + odłożony warp, ryzyka, pytania), `zadania/01…20`, `README.md`, sekcja „Port WebGPU (w toku)” w `agents.md`,
+  tabela zadań i regresji przejściowych wyżej. Narzędzia: `baza.mjs --dopisz` (nowa scena bazy z tagu bez przebudowy
+  całości) i ochrona skalibrowanej tolerancji przy przebudowie (sprawdzone na kopii: pełna przebudowa daje plik
+  identyczny poza datą; dopisanie sceny + ponowna przebudowa ją zachowują). Ustalenia z planowania (źródło three r183
+  albo sprawdzone w Node):
+  - **Scena overlay** (osobny `WebGLRenderer` do 17) zawiera też **iskry** `SparkSystem3D` (`index.html:
+    SparkSystem3D.init(ov.scene)`) — materiału w niej nie da się przenieść przed przeniesieniem overlaya, więc iskry są
+    w 17 (nie w 12), wybuchy w 18. `rdzen-demo` ma własny overlay.
+  - **Materiał na encję = budowa NodeBuilder na encję:** klucz materiału węzłowego to id węzłów — dwa materiały z
+    osobnymi `uniform()` mają różne klucze, `clone()` i wspólny graf ten sam, `SpriteMaterial` o różnych kolorach ten
+    sam (sprawdzone w Node, `customProgramCacheKey`). Dziś materiał na encję mają kadłuby, tarcze i plazma WARP →
+    graf na wariant + `onObjectUpdate` (PLAN §3; zadania 04, 13, 14).
+  - **`compileAsync` odtwarza pass:** pomija niewidoczne, spoza warstw kamery i spoza frustum, kompiluje dla bieżącego
+    celu (format, MSAA) → rozgrzewka = cel `composerTarget` + kamera passa z warstwą (PLAN §6; pomocnik w 01).
+    Trzymacze programów nadal potrzebne (`NodeManager` usuwa stan przy `usedTimes === 0`).
+  - **Światła:** klucz materiałów oświetlanych zawiera id każdego widocznego światła (`LightsNode.customCacheKey`) —
+    nie przełączać `visible` w biegu (dziś światła silników i trafień i tak wyłączone).
+  - `Texture.updateRanges` backend ignoruje (tekstura obrażeń mostków 768 × 512 = 1,5 MB na zmianę — zadanie 15);
+    zakresy atrybutów działają (`WebGPUAttributeUtils`). Kanwa WebGPU tylko premultiplied → overlay (dziś
+    `premultipliedAlpha: false`) oddaje `kolor · alfa` (17). `three/webgpu` + `three/tsl` ładują się w Node (testy
+    mogą czytać graf).
+  - Gałąź heksów `hexShips3D` przechodzi w 04 (stoją na niej `mostki-demo`, `rdzen-demo` i pomiar drżenia), a
+    `reactor3D` / `coreFx3D` w 15 (warsztat `rdzen-demo`) — zgodnie z decyzją o warsztatach; notatka inwentarza poprawiona.
+  - Sesje równoległe tego dnia budują od nowa na WebGPU efekty broni (`dema/bronie-webgpu`), rakiet
+    (`dema/rakiety-webgpu`) i warpa (`dema/warp-webgpu`) — pytanie do użytkownika (PLAN §12 p. 6); plan zakłada port 1:1.
+- Krok 7: raport dla użytkownika w rozmowie; zadanie 01 czeka na zgodę.

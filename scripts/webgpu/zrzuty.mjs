@@ -7,10 +7,11 @@
 //        [--rozmiar 1920x1080] [--port 5340] [--baza katalog] [--powtorz N] [--wydajnosc] [--seed n]
 //        [--bok 24] [--tylko-wydajnosc] ["--chrome=--flaga …"]
 //
-// --backend: dopisuje ?renderer=<backend> do adresu (Core3D po zadaniu 01 go czyta) i nazywa katalog;
-//            dziś gra ma tylko WebGL, więc „webgl” = stan z tagu webgl-baseline.
+// --backend: nazywa katalog wyniku i dopisuje ?renderer=<backend> do adresu. Gra flagi NIE czyta (jedna ścieżka
+//            renderu: tag webgl-baseline = WebGL, main od zadania 01 = WebGPU) — faktyczny renderer zapisuje się
+//            w wyniki.json (pole `renderer`), więc pomyłka w etykiecie wychodzi od razu.
 // --out:     domyślnie .tmp/webgpu/zrzuty/<data-godzina>; wynik: <out>/<backend>[/pN]/<scena>.png + wyniki.json
-// --baza:    katalog bazy (np. .tmp/webgpu/baseline/p1) — po zrzutach porównanie (porownaj.mjs) z raportem;
+// --baza:    katalog bazy (np. .tmp/webgpu/baseline/webgl/p1) — po zrzutach porównanie (porownaj.mjs) z raportem;
 //            osobne sesje w worktree podają bazę z głównego katalogu (tam jest .tmp/).
 // --powtorz: N przebiegów (p1…pN) — do progu szumu bazy.
 // --wydajnosc: dodatkowo bitwa w czasie rzeczywistym (CPU/GPU ms, draw calle) → <out>/<backend>/wydajnosc.json

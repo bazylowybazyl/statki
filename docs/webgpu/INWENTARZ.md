@@ -46,7 +46,7 @@ Tu: **117 miejsc tworzenia materiałów** (w tym 4 `ShaderPass`) w 60 plikach,
 | `src/3d/haloRing/haloRingMegastructure.js` | 4 | 535 |  |  |  |  |  |  | · / · / 7 | GLSL |  |
 | `src/3d/haloRing/haloRingGLSL.js` |  | 486 |  |  |  |  |  |  | · / · / · | GLSL |  |
 | `src/3d/haloRing/haloRingWorldGen.js` | 2 | 470 |  | WebGLRenderTarget×2 | 1 |  |  |  | · / · / · | GLSL | pieczenie map + synchroniczny odczyt CPU (w WebGPU async, oś Y odwrócona) |
-| `src/3d/hexShips3D.js` | 4 | 445 |  |  |  | 1 | isWebGL2, .capabilities |  | · / 1 / · | GLSL | gałąź heksów (HEX/ARMOR/DEBRIS, pula szczątków GPU) rysuje tylko asteroidy → pominąć; kadłuby = gałąź beam (BEAM_SKIN + HEX_FRAGMENT) |
+| `src/3d/hexShips3D.js` | 4 | 445 |  |  |  | 1 | isWebGL2, .capabilities |  | · / 1 / · | GLSL | kadłuby = gałąź beam (BEAM_SKIN + HEX_FRAGMENT); gałąź heksów (HEX/ARMOR/DEBRIS, pula szczątków GPU) w grze rysuje tylko wyłączone asteroidy, ale stoją na niej mostki-demo, rdzen-demo i pomiar drżenia → port w zadaniu 04 |
 | `src/3d/haloRing/arch/archGLSL.js` |  | 424 |  |  |  |  |  |  | · / · / · | GLSL |  |
 | `src/3d/bridge3D.js` | 3 | 420 |  |  |  |  |  |  | · / · / · | GLSL |  |
 | `src/3d/shield3D.js` | 2 | 398 |  |  |  | 1 |  |  | · / · / · | GLSL |  |
@@ -105,7 +105,8 @@ Tu: **117 miejsc tworzenia materiałów** (w tym 4 `ShaderPass`) w 60 plikach,
 | `src/3d/asteroidField3D.js` |  |  |  |  |  |  |  | 1 | · / 1 / · | — | sprite’y na MeshBasicMaterial + CAŁA rozgrywka asteroid; ciała heksowe rysuje hexShips3D |
 
 Uwaga: **ścieżka heksów w `hexShips3D.js`** (HEX/ARMOR/DEBRIS, pula szczątków GPU, `createEntityMesh`/`updateEntityMesh`) rysuje w grze
-tylko asteroidy (ciała heksowe) — liczy się w wierszu `src/3d/hexShips3D.js` wyżej, ale w porcie jest do pominięcia (PLAN.md).
+tylko asteroidy (ciała heksowe, na czas portu wyłączone) — liczy się w wierszu `src/3d/hexShips3D.js` wyżej i przechodzi w zadaniu 04,
+bo stoją na niej warsztaty `mostki-demo`, `rdzen-demo` i pomiar drżenia (PLAN.md §1 p. 6).
 `coldWreckImpostors.js` / `coldWrecks.js` są uśpione (wymagają `hexGrid`).
 
 ### Nowe asteroidy (dema; wejdą z dema WebGPU)
