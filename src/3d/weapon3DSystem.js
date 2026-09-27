@@ -171,6 +171,10 @@ function ensureBulletInstances() {
   }
 
   if (!WEP_RESOURCES.bulletInstanceMats) {
+    // forceSinglePass: przezroczysty materiał DoubleSide three rysuje dwa razy
+    // (tył, potem przód) i przed każdym razem ustawia needsUpdate — dwa draw
+    // calle i dwa przeliczenia programu (getProgram) na mesh w każdym passie.
+    // Addytywnie i bez zapisu głębi kolejność ścian nic nie zmienia.
     WEP_RESOURCES.bulletInstanceMats = {
       trail: new THREE.MeshBasicMaterial({
         color: 0xffffff,
@@ -180,6 +184,7 @@ function ensureBulletInstances() {
         depthTest: false,
         blending: THREE.AdditiveBlending,
         side: THREE.DoubleSide,
+        forceSinglePass: true,
         toneMapped: false
       }),
       core: new THREE.MeshBasicMaterial({
@@ -190,6 +195,7 @@ function ensureBulletInstances() {
         depthTest: false,
         blending: THREE.AdditiveBlending,
         side: THREE.DoubleSide,
+        forceSinglePass: true,
         toneMapped: false
       }),
       head: new THREE.MeshBasicMaterial({
@@ -201,6 +207,7 @@ function ensureBulletInstances() {
         depthTest: false,
         blending: THREE.AdditiveBlending,
         side: THREE.DoubleSide,
+        forceSinglePass: true,
         toneMapped: false
       }),
       arc: new THREE.MeshBasicMaterial({
@@ -211,6 +218,7 @@ function ensureBulletInstances() {
         depthTest: false,
         blending: THREE.AdditiveBlending,
         side: THREE.DoubleSide,
+        forceSinglePass: true,
         toneMapped: false
       })
     };
@@ -265,6 +273,7 @@ function ensureMuzzleInstances() {
   if (muzzleInstances.outer || !Core3D.isInitialized || !Core3D.scene) return;
   ensureWeaponResources();
 
+  // forceSinglePass — patrz materiały pocisków (ensureBulletInstances).
   const makeMat = (opacity) => new THREE.MeshBasicMaterial({
     color: 0xffffff,
     transparent: true,
@@ -273,6 +282,7 @@ function ensureMuzzleInstances() {
     depthWrite: false,
     depthTest: false,
     side: THREE.DoubleSide,
+    forceSinglePass: true,
     toneMapped: false,
     vertexColors: true
   });
@@ -446,6 +456,7 @@ function resetBulletInstanceCounts() {
 
 function ensureBeamFxMaterials() {
   if (WEP_RESOURCES.beamFxMats) return WEP_RESOURCES.beamFxMats;
+  // forceSinglePass — patrz materiały pocisków (ensureBulletInstances).
   WEP_RESOURCES.beamFxMats = {
     core: new THREE.MeshBasicMaterial({
       color: 0xffffff,
@@ -455,6 +466,7 @@ function ensureBeamFxMaterials() {
       depthTest: false,
       blending: THREE.AdditiveBlending,
       side: THREE.DoubleSide,
+      forceSinglePass: true,
       toneMapped: false
     }),
     glow: new THREE.MeshBasicMaterial({
@@ -465,6 +477,7 @@ function ensureBeamFxMaterials() {
       depthTest: false,
       blending: THREE.AdditiveBlending,
       side: THREE.DoubleSide,
+      forceSinglePass: true,
       toneMapped: false
     }),
     spiral: new THREE.MeshBasicMaterial({
@@ -475,6 +488,7 @@ function ensureBeamFxMaterials() {
       depthTest: false,
       blending: THREE.AdditiveBlending,
       side: THREE.DoubleSide,
+      forceSinglePass: true,
       toneMapped: false,
       vertexColors: true
     })
@@ -1114,9 +1128,12 @@ export const Weapon3DSystem = {
 
   _updateCameraShake(dt) {
     if (typeof window === 'undefined') return;
-    const out = window.__weapon3dCameraShake || (window.__weapon3dCameraShake = { x: 0, y: 0 });
+    const out = window.__weapon3dCameraShake || (window.__weapon3dCameraShake = { x: 0, y: 0, mag: 0 });
     this._cameraShakeMag *= Math.exp(-8.0 * dt);
     if (this._cameraShakeMag < 0.01) this._cameraShakeMag = 0;
+    // `mag` czyta render() w index.html: amplituda w px ekranu i gładki szum
+    // (src/game/cameraRig.js). x/y zostają dla zgodności.
+    out.mag = this._cameraShakeMag;
     if (this._cameraShakeMag <= 0) {
       out.x = 0;
       out.y = 0;
@@ -1325,6 +1342,7 @@ export const Weapon3DSystem = {
     if (typeof window !== 'undefined' && window.__weapon3dCameraShake) {
       window.__weapon3dCameraShake.x = 0;
       window.__weapon3dCameraShake.y = 0;
+      window.__weapon3dCameraShake.mag = 0;
     }
     if (typeof window !== 'undefined' && this._shotListenerBound && this._shotListener) {
       window.removeEventListener('game_weapon_fired', this._shotListener);

@@ -39,8 +39,10 @@ test('weapon-fired events carry the shooter and the 3D listener looks only at it
 test('weapon camera shake moves the shared camera, not just the Three scenes', () => {
   const sync = sliceFunction(core3d, 'syncCamera(gameCamera, viewWidth, viewHeight, viewOffsetX = 0) {');
   assert.doesNotMatch(sync, /shake\?\.[xy]/, 'syncCamera nie może sam dokładać wstrząsu');
+  // Od 2026-09-27 wstrząs strzałów wchodzi amplitudą (`mag`) do wspólnego
+  // wstrząsu w px ekranu (src/game/cameraRig.js), a ten przesuwa `cam`.
   assert.match(html,
-    /const weaponShake = window\.__weapon3dCameraShake;[\s\S]{0,160}cam\.x \+= Number\(weaponShake\.x\)/);
+    /const weaponShake = window\.__weapon3dCameraShake;[\s\S]{0,700}Number\(weaponShake\.mag\)[\s\S]{0,400}cam\.x \+= _cameraShakePx\.x \/ cam\.zoom/);
 });
 
 test('only the hangar-launch spawnFighter remains', () => {

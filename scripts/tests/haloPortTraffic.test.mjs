@@ -134,7 +134,8 @@ export function run() {
   }
   t.equal('płyty kompleksu kończą się 13 100 j. łuku od środka', earth.ring.complexHalfArc, 13100);
   t.equal('tranzyt z płytą ±1 360 j.', earth.ring.transitHalfArc, 1360);
-  t.close('Mars: podłoga 33 750', mars.ring.floorMid, 33750, 1);
+  // Mars = ring ECUMENE (Z6, 2026-09-27): inna geometria niż Halo Ziemi
+  t.close('Mars: podłoga 35 088', mars.ring.floorMid, 35088, 1);
 
   // ----------------------------------------------------------
   t.section('Równy rozkład na prawdziwym porcie Ziemi');

@@ -270,6 +270,8 @@ async function main() {
     const url = `${base}/dema/halo_ring_demo.html?${q}`;
     await cdp.send('Emulation.setDeviceMetricsOverride', { width: W, height: H, deviceScaleFactor: 1, mobile: false });
     const t0 = Date.now();
+    // stara strona nie może odpowiedzieć „gotowe” za nową (wolne ładowanie)
+    try { await evaluate(cdp, 'window.__halo = undefined, true'); } catch { /* pierwsza strona */ }
     await cdp.send('Page.navigate', { url });
     let ready = false;
     for (let i = 0; i < 600 && !ready; i++) {

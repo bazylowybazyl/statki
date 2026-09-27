@@ -440,14 +440,46 @@ function packLight(marker, kind, grid, scale) {
   };
 }
 
+// Własne lampy kadłuba w przestrzeni sprite'a zależą tylko od bloku lamp (stały
+// per źródło — getEntityLights), skali hardpointu, długości kadłuba (progi
+// reflektorów otoczenia), limitu i wymiarów siatki — nie od pozy. Pakowanie
+// (obiekt + kolor + kierunek na lampę, do 64 lamp) szło w bitwie co klatkę dla
+// każdego kadłuba. Cache per encja; wynik to świeży obiekt i świeża tablica,
+// ale obiekty lamp są wspólne między wywołaniami — tylko do odczytu.
+const ownPayloadCache = new WeakMap();
+
 export function buildShipLightShaderPayload(entity, grid, maxLights = MAX_SHADER_SHIP_LIGHTS) {
   const lights = getEntityLights(entity);
   const scale = getEntityLightScale(entity);
-  const out = [];
   const limit = clampLightLimit(maxLights);
   const floods = Array.isArray(lights?.[LIGHT_KINDS.FLOOD]) ? lights[LIGHT_KINDS.FLOOD] : [];
   const hullLen = floods.length ? getEntityHullLengthWorld(entity, lights) : 0;
+  // Wymiary siatki dokładnie w postaci, której używają packLight i podpis.
+  const srcW = Number(grid?.srcWidth) || 1;
+  const srcH = Number(grid?.srcHeight) || 1;
+  const pivotX = Number(grid?.pivot?.x) || 0;
+  const pivotY = Number(grid?.pivot?.y) || 0;
+  const cacheable = entity !== null && typeof entity === 'object';
+  let cached = cacheable ? ownPayloadCache.get(entity) : undefined;
+  if (cached === undefined || cached.block !== lights || cached.scaleX !== scale.x || cached.scaleY !== scale.y ||
+      cached.limit !== limit || cached.hullLen !== hullLen || cached.srcW !== srcW || cached.srcH !== srcH ||
+      cached.pivotX !== pivotX || cached.pivotY !== pivotY) {
+    const own = packOwnShipLights(lights, scale, limit, hullLen, grid);
+    cached = {
+      block: lights, scaleX: scale.x, scaleY: scale.y, limit, hullLen, srcW, srcH, pivotX, pivotY,
+      lights: own.lights, signature: own.signature
+    };
+    if (cacheable) ownPayloadCache.set(entity, cached);
+  }
+  return {
+    count: cached.lights.length,
+    lights: cached.lights.slice(),
+    signature: cached.signature
+  };
+}
 
+function packOwnShipLights(lights, scale, limit, hullLen, grid) {
+  const out = [];
   const pushKind = (kind) => {
     const markers = Array.isArray(lights?.[kind]) ? lights[kind] : [];
     for (let i = 0; i < markers.length && out.length < limit; i++) {
@@ -488,7 +520,6 @@ export function buildShipLightShaderPayload(entity, grid, maxLights = MAX_SHADER
   }
 
   return {
-    count: out.length,
     lights: out,
     signature: hash >>> 0
   };
@@ -785,23 +816,51 @@ export function roadEmittersMayReach(reach, entity, grid, options = {}) {
     && pos.y >= reach.minY - inflate && pos.y <= reach.maxY + inflate;
 }
 
-function roadEmitterAffectsTarget(emitter, entity, grid, options = {}) {
-  const targetPos = getEntityPosition(entity, options);
-  const targetScale = getEntitySpriteScale(entity, options);
-  const targetRadius = getEntityRadiusWorld(entity, grid, targetScale, options);
-  const dx = targetPos.x - (Number(emitter?.x) || 0);
-  const dy = targetPos.y - (Number(emitter?.y) || 0);
-  const dirX = Number(emitter?.dir?.x) || 0;
-  const dirY = Number(emitter?.dir?.y) || 0;
+// Testy „czy światło innego statku sięga kadłuba celu” dostają pozycję (tx, ty)
+// i promień celu policzone RAZ na payload: pętle idą po wszystkich emiterach
+// i grupach lamp dla każdego kadłuba w każdej klatce (O(kadłuby × światła)),
+// a pozycja/skala/promień celu liczone per para były największym kosztem
+// „U hex” w dużej bitwie. Zwracają kwadrat odległości (ranking najbliższych)
+// albo −1, gdy światło nie sięga.
+
+// Stożek reflektora vs koło celu.
+function roadEmitterReachDistSq(emitter, tx, ty, targetRadius) {
+  const dx = tx - (Number(emitter.x) || 0);
+  const dy = ty - (Number(emitter.y) || 0);
+  const dirX = Number(emitter.dir?.x) || 0;
+  const dirY = Number(emitter.dir?.y) || 0;
   const along = dx * dirX + dy * dirY;
-  const range = Math.max(1, Number(emitter?.rangeWorld) || 1);
-  if (along < -targetRadius || along > range + targetRadius) return false;
+  const range = Math.max(1, Number(emitter.rangeWorld) || 1);
+  if (along < -targetRadius || along > range + targetRadius) return -1;
 
   const distSq = dx * dx + dy * dy;
   const perpSq = Math.max(0, distSq - along * along);
-  const halfRad = clamp(emitter?.coneDeg, 8, 160, 40) * Math.PI / 360;
+  const halfRad = clamp(emitter.coneDeg, 8, 160, 40) * Math.PI / 360;
   const coneRadius = Math.max(0, along) * Math.tan(halfRad) + targetRadius;
-  return perpSq <= coneRadius * coneRadius;
+  return perpSq <= coneRadius * coneRadius ? distSq : -1;
+}
+
+// Najbliższe światła celu bez sortowania wszystkich kandydatów (w bitwie setki
+// na kadłub): bufor `limit` najmniejszych odległości, remis → wcześniejsze
+// światło — to samo, co stabilny sort całej listy i pierwsze `limit`.
+const NEAREST_CAPACITY = Math.max(MAX_EXTERNAL_OMNI_SHADER_LIGHTS, MAX_EXTERNAL_ROAD_SHADER_LIGHTS);
+const _nearItems = new Array(NEAREST_CAPACITY).fill(null);
+const _nearScores = new Float64Array(NEAREST_CAPACITY);
+
+function insertNearest(count, limit, score, item) {
+  if (count >= limit) {
+    if (limit <= 0 || !(score < _nearScores[limit - 1])) return count;
+    count = limit - 1; // najdalszy wypada
+  }
+  let i = count;
+  while (i > 0 && _nearScores[i - 1] > score) {
+    _nearScores[i] = _nearScores[i - 1];
+    _nearItems[i] = _nearItems[i - 1];
+    i--;
+  }
+  _nearScores[i] = score;
+  _nearItems[i] = item;
+  return count + 1;
 }
 
 function packExternalRoadLightForTarget(emitter, entity, grid, options = {}) {
@@ -822,14 +881,13 @@ function packExternalRoadLightForTarget(emitter, entity, grid, options = {}) {
   };
 }
 
-// Grupa lamp pozycyjnych innego statku sięga kadłuba celu (koło zasięgu vs koło celu).
-function omniLightAffectsTarget(light, entity, grid, options = {}) {
-  const targetPos = getEntityPosition(entity, options);
-  const targetRadius = getEntityRadiusWorld(entity, grid, getEntitySpriteScale(entity, options), options);
-  const reach = Math.max(1, Number(light?.rangeWorld) || 1) + targetRadius;
-  const dx = targetPos.x - (Number(light?.x) || 0);
-  const dy = targetPos.y - (Number(light?.y) || 0);
-  return dx * dx + dy * dy <= reach * reach;
+// Grupa lamp pozycyjnych innego statku vs kadłub celu (koło zasięgu vs koło celu).
+function omniLightReachDistSq(light, tx, ty, targetRadius) {
+  const reach = Math.max(1, Number(light.rangeWorld) || 1) + targetRadius;
+  const dx = tx - (Number(light.x) || 0);
+  const dy = ty - (Number(light.y) || 0);
+  const distSq = dx * dx + dy * dy;
+  return distSq <= reach * reach ? distSq : -1;
 }
 
 // Rozlew grupy lamp w przestrzeni sprite'a celu: rodzaj 'omni' (typ 2 w shaderze
@@ -859,24 +917,27 @@ export function buildCombinedShipLightShaderPayload(entity, grid, externalRoadLi
   const omni = Array.isArray(options?.externalOmniLights) ? options.externalOmniLights : [];
   if ((!emitters.length && !omni.length) || payload.count >= maxLights) return payload;
 
+  // Cel raz na payload, nie per światło (patrz roadEmitterReachDistSq).
+  const targetPos = getEntityPosition(entity, options);
+  const tx = targetPos.x;
+  const ty = targetPos.y;
+  const targetRadius = getEntityRadiusWorld(entity, grid, getEntitySpriteScale(entity, options), options);
+
   // Rozlew czerwieni z grup lamp innych statków (przed reflektorami — to one
   // mają osobny, mały budżet MAX_EXTERNAL_OMNI_SHADER_LIGHTS).
   let hashOmni = null;
   if (omni.length) {
-    const near = [];
+    const limit = Math.min(MAX_EXTERNAL_OMNI_SHADER_LIGHTS, maxLights - payload.count);
+    let near = 0;
     for (let i = 0; i < omni.length; i++) {
       const light = omni[i];
       if (!light || light.owner === entity || !(light.power > 0)) continue;
-      if (!omniLightAffectsTarget(light, entity, grid, options)) continue;
-      const targetPos = getEntityPosition(entity, options);
-      const dx = targetPos.x - (Number(light.x) || 0);
-      const dy = targetPos.y - (Number(light.y) || 0);
-      near.push({ score: dx * dx + dy * dy, light });
+      const distSq = omniLightReachDistSq(light, tx, ty, targetRadius);
+      if (distSq >= 0) near = insertNearest(near, limit, distSq, light);
     }
-    near.sort((a, b) => a.score - b.score);
-    const limit = Math.min(MAX_EXTERNAL_OMNI_SHADER_LIGHTS, maxLights - payload.count);
-    for (let i = 0; i < near.length && i < limit; i++) {
-      const light = packExternalOmniLightForTarget(near[i].light, entity, grid, options);
+    for (let i = 0; i < near; i++) {
+      const light = packExternalOmniLightForTarget(_nearItems[i], entity, grid, options);
+      _nearItems[i] = null;
       payload.lights.push(light);
       if (hashOmni === null) hashOmni = Math.imul((payload.signature | 0) ^ 0x4f4d4e49, FNV_PRIME);
       hashOmni = hashMixString(hashOmni, light.id);
@@ -892,32 +953,30 @@ export function buildCombinedShipLightShaderPayload(entity, grid, externalRoadLi
   }
   if (!emitters.length || payload.count >= maxLights) return payload;
 
-  const candidates = [];
-  for (let i = 0; i < emitters.length; i++) {
-    const emitter = emitters[i];
-    if (!emitter || emitter.owner === entity) continue;
-    if (!roadEmitterAffectsTarget(emitter, entity, grid, options)) continue;
-
-    const targetPos = getEntityPosition(entity, options);
-    const dx = targetPos.x - (Number(emitter.x) || 0);
-    const dy = targetPos.y - (Number(emitter.y) || 0);
-    candidates.push({
-      score: dx * dx + dy * dy,
-      light: packExternalRoadLightForTarget(emitter, entity, grid, options)
-    });
-  }
-
-  if (!candidates.length) return payload;
-  candidates.sort((a, b) => a.score - b.score);
-
   const externalLimit = Math.max(0, Math.min(
     MAX_EXTERNAL_ROAD_SHADER_LIGHTS,
     Number(options?.maxExternalRoadLights) || MAX_EXTERNAL_ROAD_SHADER_LIGHTS,
     maxLights - payload.count
   ));
+  // Pakujemy tylko światła, które wejdą do payloadu (dawniej każdego kandydata).
+  const keep = Math.ceil(externalLimit);
+  let near = 0;
+  let anyCandidate = false;
+  for (let i = 0; i < emitters.length; i++) {
+    const emitter = emitters[i];
+    if (!emitter || emitter.owner === entity) continue;
+    const distSq = roadEmitterReachDistSq(emitter, tx, ty, targetRadius);
+    if (distSq < 0) continue;
+    anyCandidate = true;
+    near = insertNearest(near, keep, distSq, emitter);
+  }
+
+  if (!anyCandidate) return payload;
+
   let hash = Math.imul((payload.signature | 0) ^ HASH_EXTERNAL_SECTION, FNV_PRIME);
-  for (let i = 0; i < candidates.length && i < externalLimit; i++) {
-    const light = candidates[i].light;
+  for (let i = 0; i < near; i++) {
+    const light = packExternalRoadLightForTarget(_nearItems[i], entity, grid, options);
+    _nearItems[i] = null;
     payload.lights.push(light);
     hash = hashMixString(hash, light.id);
     hash = hashMixNumber(hash, light.pos.x);

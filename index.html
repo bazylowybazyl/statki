@@ -19,9 +19,9 @@
         // Panele deweloperskie, layouty HUD i ustawienia grafiki.
         dev: [
           'devConfig', 'devFlags', 'devBloomPanel', 'devRingColors',
-          'devDestructorConfig', 'devDestructorMassConfig',
+          'devDestructorConfig', 'devDestructorMassConfig', 'devCameraRig',
           'perfHudCollapsedSections', 'statki.scannerOverview.layout.v1',
-          'sc_shadow_shafts', 'sc_planet_quality', 'sc_hull_lacquer', 'sc_audio'
+          'sc_shadow_shafts', 'sc_planet_quality', 'sc_hull_lacquer', 'sc_audio', 'sc_camera_look'
         ]
       };
       const ALL_KEYS = [...SAVE_KEYS.ship, ...SAVE_KEYS.dev];
@@ -377,6 +377,15 @@
             </div>
             <div class="mm-group">
               <div class="mm-group-title">Sterowanie</div>
+              <div class="mm-field">
+                <div class="mm-field-label">Kamera za kursorem</div>
+                <div class="menu-chip-group" role="group" aria-label="Kamera za kursorem">
+                  <button class="menu-chip" data-camera-look="auto">Auto</button>
+                  <button class="menu-chip" data-camera-look="always">Zawsze</button>
+                  <button class="menu-chip" data-camera-look="never">Nigdy</button>
+                </div>
+                <p class="mm-note">Auto: w walce kamera zagląda za kursorem, poza walką stoi i wyprzedza lot. Zawsze = jak w walce, Nigdy = jak poza walką.</p>
+              </div>
               <p class="mm-note">Lista skrótów: menu główne → Sterowanie. Przypisywanie klawiszy — wkrótce.</p>
             </div>
           </div>
@@ -933,6 +942,10 @@
     import { FixedStepCadence } from "./src/game/fixedStepCadence.js";
     import { stepDecay120 } from "./src/game/stepDecay.js";
     import { stepCameraZoom, wheelDeltaPx } from "./src/game/cameraZoom.js";
+    import {
+      cameraRigTune, createCameraRig, stepCameraRig, noteCameraRigCombat, normalizeCameraLookMode,
+      defaultShipZoom, cameraShakeAmplitudePx, sampleCameraShakePx
+    } from "./src/game/cameraRig.js";
     import { isFriendlyLineOfFireBlocked } from "./src/ai/lineOfFire.js";
     import { PhysicsBridge } from "./src/physics/physicsBridge.js";
     import { TrafficBridge } from "./src/game/trafficBridge.js";
@@ -1062,7 +1075,9 @@
       resolveHullRenderProfileId,
       getHullRenderProfile,
       getHullRenderSize,
-      getWeaponTierForHull
+      getWeaponTierForHull,
+      HULL_RENDER_PROFILES,
+      HULL_RENDER_WORLD_SCALE
     } from "./src/data/ships.js";
     import {
       PLAYER_HULL_MARKET,
@@ -1168,6 +1183,9 @@
     import interStationShuttleImg from "./assets/inter_station_shuttle.png";
     import containerShipImg from "./assets/container_ship.png";
     import longHaulFreighterImg from "./assets/long_haul_freighter.png";
+    // Kadłuby ruchu v2 (górnicy, tankowce, holowniki…) — sprite'y ładowane
+    // leniwie, dopiero gdy taki NPC się pojawi (dziś: spawn z DevTools).
+    import { TRAFFIC_HULLS } from "./src/data/trafficHulls.js";
 
     if (CAPITAL_SHIP_TEMPLATES_DATA?.carrier?.profile) {
       CAPITAL_SHIP_TEMPLATES_DATA.carrier.profile.spriteSrc = terranCarrierImg;
@@ -1293,6 +1311,7 @@
     ]);
     const SUPPORT_CLICK_TYPES = new Set([
       'fighter',
+      'interceptor',
       'carrier_fighter'
     ]);
 
@@ -1309,7 +1328,23 @@
       carrier: 'capital',
       supercapital: 'capital',
       atlas: 'capital',
-      megafreighter: 'capital'
+      megafreighter: 'capital',
+      // Kadłuby cywilne z rosteru dev (spawnDevHull).
+      'freighter-small': 'frigate',
+      'freighter-medium': 'destroyer',
+      'freighter-large': 'battleship',
+      'freighter-capital': 'capital',
+      heavy_harvester: 'destroyer',
+      belter: 'frigate',
+      surveyor: 'frigate',
+      refinery_tender: 'battleship',
+      tanker: 'battleship',
+      salvage_hauler: 'destroyer',
+      construction_tug: 'frigate',
+      repair_drone: 'frigate',
+      distress_beacon_ship: 'destroyer',
+      smuggler: 'frigate',
+      pirate_raider: 'destroyer'
     });
     const SUPPORT_LINE_TIER_MAX = Object.freeze({
       frigate: 40,
@@ -1703,6 +1738,8 @@
       vfx: { colorTempK: 8000, bloomGain: 1.1, engineGain: 1.0 },
       audio: { master: 0.8, sfx: 1.0, music: 0.7 },
       controls: { mouseSensitivity: 1.0 }, // bez odwracania osi
+      // Kamera za kursorem: 'auto' (tylko w walce) | 'always' | 'never' — src/game/cameraRig.js.
+      cameraLook: 'auto',
       planetQuality: 'medium',
       shadowShafts: 'medium'
     };
@@ -5399,6 +5436,8 @@
       focusZoom: 1.0,
       focusArrived: false,
       transition: null,
+      returnZoom: null,
+      returnManualZoom: false,
       addShake(mag, dur) {
         if (DevFlags && DevFlags.disableCameraShake) {
           this.shakeMag = 0;
@@ -5428,14 +5467,10 @@
         this.focusArrived = false;
         this.lastPointerX = null;
         this.lastPointerY = null;
-        const tx = ship.pos.x;
-        const ty = ship.pos.y;
-        const tz = clamp(this.zoom, this.minZoom, this.maxZoom);
-        this.beginTransition(tx, ty, tz, 0.75, () => {
-          this.targetX = tx;
-          this.targetY = ty;
-          this.targetZoom = tz;
-        });
+        // Przejście do statku prowadzi tylko pozycję, a jego cel co klatkę
+        // przestawia render() na żywy cel kamery (statek + offset) — koniec nie
+        // skacze. Zoom zostaje sprężynie (kółko działa w trakcie przejścia).
+        this.beginTransition(ship.pos.x, ship.pos.y, this.targetZoom, 0.75);
         this.manualZoom = true;
       },
       toggleRtsMode() {
@@ -5460,6 +5495,7 @@
       },
       focusOnStation(station) {
         if (!station) return;
+        this.rememberShipZoom();
         this.focusStation = station;
         this.mode = 'focus';
         this.focusArrived = false;
@@ -5476,8 +5512,16 @@
           this.focusArrived = true;
         });
       },
+      // Zoom gracza sprzed fokusu stacji/edytora — clearFocus do niego wraca
+      // (dawniej wracał do defaultZoom i gubił ustawienie kółkiem).
+      rememberShipZoom() {
+        if (this.mode !== 'ship') return;
+        this.returnZoom = this.targetZoom;
+        this.returnManualZoom = this.manualZoom;
+      },
       focusOnInfrastructure(station, layout) {
         if (!station) return;
+        this.rememberShipZoom();
         this.focusStation = station;
         this.mode = 'infrastructure';
         this.focusArrived = false;
@@ -5499,17 +5543,94 @@
           this.focusStation = null;
           this.mode = 'ship';
           this.focusArrived = false;
-          this.manualZoom = false;
-          this.targetZoom = this.defaultZoom;
+          const returnZoom = Number(this.returnZoom);
+          this.targetZoom = returnZoom > 0 ? returnZoom : this.defaultZoom;
           this.targetX = ship.pos.x;
           this.targetY = ship.pos.y;
           this.beginTransition(this.targetX, this.targetY, this.targetZoom, 0.6);
+          this.manualZoom = returnZoom > 0 ? !!this.returnManualZoom : false;
+          this.returnZoom = null;
           this.lastPointerX = null;
           this.lastPointerY = null;
         }
       }
     };
     publishGameState({ camera });
+
+    // --- Kamera statku: postawy nawigacja / walka (src/game/cameraRig.js) ---
+    // Offset kamery względem statku w px ekranu; krok raz na klatkę w render().
+    // Strojenie: cameraRigTune (panel dev F12 → Kamera, zapis tylko z ?dev).
+    const cameraRig = createCameraRig();
+    window.CameraRig = { rig: cameraRig, tune: cameraRigTune };
+    const _cameraShakePx = { x: 0, y: 0 };
+    // Wejście riga pisane co klatkę w render() — jeden obiekt, bez alokacji.
+    const _cameraRigInput = {
+      dt: 0, holdDt: 0, viewW: 1, viewH: 1, mouseX: 0, mouseY: 0,
+      lookFrozen: true, lookEnabled: true, velX: 0, velY: 0, maxSpeed: 1, mode: 'auto'
+    };
+    let _cameraHostileScanAt = 0;
+    let _cameraHostileNear = false;
+
+    function noteCameraCombat(reason) {
+      noteCameraRigCombat(cameraRig, cameraRigTune, reason);
+    }
+    // Strzał gracza: cały rdzeń broni idzie szyną (strzelec w detail.shooter),
+    // Hexlance — zdarzeniem DOM bez strzelca (superbroń ma tylko gracz).
+    WeaponShotBus.on((detail) => {
+      if (detail && detail.shooter === ship) noteCameraCombat('strzał');
+    });
+    window.addEventListener('game_weapon_fired', (e) => {
+      if (e?.detail?.weaponId === 'hexlance') noteCameraCombat('strzał');
+    });
+
+    // Sygnały trwające: wrogi cel na namiarze albo wróg w zasięgu broni głównej
+    // (× hostileRangeScale). Skan NPC co 250 ms, nie co klatkę.
+    function sampleCameraCombatSignals(nowMs) {
+      if (lockedTarget && isHostileNpc(lockedTarget)) {
+        noteCameraCombat('cel na namiarze');
+        return;
+      }
+      const locks = Array.isArray(lockedTargets) ? lockedTargets : null;
+      for (let i = 0; locks && i < locks.length; i++) {
+        if (isHostileNpc(locks[i])) {
+          noteCameraCombat('cel na namiarze');
+          return;
+        }
+      }
+      if (nowMs >= _cameraHostileScanAt) {
+        _cameraHostileScanAt = nowMs + 250;
+        _cameraHostileNear = false;
+        const scale = Number(cameraRigTune.hostileRangeScale) || 0;
+        const ranges = scale > 0 ? getPlayerMainWeaponRanges() : null;
+        let range = 0;
+        if (ranges) for (let i = 0; i < ranges.length; i++) if (ranges[i] > range) range = ranges[i];
+        const list = Array.isArray(window.npcs) ? window.npcs : npcs;
+        if (range > 0 && ship && ship.pos && Array.isArray(list)) {
+          const lim = range * scale;
+          const lim2 = lim * lim;
+          for (let i = 0; i < list.length; i++) {
+            const n = list[i];
+            if (!n || n.dead || n.isWreck || n.isBridgeHulk) continue;
+            const dx = (Number(n.x) || 0) - ship.pos.x;
+            const dy = (Number(n.y) || 0) - ship.pos.y;
+            if (dx * dx + dy * dy > lim2) continue;
+            if (isHostileNpc(n)) { _cameraHostileNear = true; break; }
+          }
+        }
+      }
+      if (_cameraHostileNear) noteCameraCombat('wróg w zasięgu');
+    }
+
+    // Kursor zajęty interfejsem: kamera trzyma ostatni punkt patrzenia (nie zeruje
+    // go — dawniej Alt zerował offset w jednej klatce i obraz skakał).
+    function isCameraLookFrozen() {
+      return isHudPointerMode()
+        || !mouse.overCanvas
+        || !!worldCommandMenu.open
+        || !!targetingMode.wheelOpen
+        || !!stationUI.open
+        || !!CICDisplay.active;
+    }
 
     function computeStationFocusTarget(station) {
       if (!station) return { x: camera.x, y: camera.y, zoom: camera.zoom };
@@ -5577,8 +5698,6 @@
           }
         } else {
           camera.clearFocus();
-          // Wracamy do statku - render() przejmie pozycję
-          camera.targetZoom = camera.defaultZoom;
         }
       } else if (camera.mode === 'infrastructure') {
         const st = camera.focusStation;
@@ -5596,43 +5715,47 @@
           }
         } else {
           camera.clearFocus();
-          camera.targetZoom = camera.defaultZoom;
         }
       }
 
-      if (camera.transition) {
-        const tr = camera.transition;
-        tr.elapsed = Math.min(tr.elapsed + dt, tr.duration);
-        const t = tr.duration <= 0 ? 1 : tr.elapsed / tr.duration;
-        const eased = smoothstep01(t);
-        camera.x = lerp(tr.startX, tr.targetX, eased);
-        camera.y = lerp(tr.startY, tr.targetY, eased);
-        camera.zoom = lerp(tr.startZoom, tr.targetZoom, eased);
-        if (tr.elapsed >= tr.duration - 1e-6) {
-          camera.x = tr.targetX;
-          camera.y = tr.targetY;
-          camera.zoom = tr.targetZoom;
-          const onComplete = tr.onComplete;
-          camera.transition = null;
-          if (typeof onComplete === 'function') onComplete();
-        }
-      } else {
-        // --- WYGLADZANIE RUCHU KAMERY ---
-        // ZMIANA: Ruszamy kamerą tutaj TYLKO jeśli NIE jesteśmy w trybie statku.
-        // Pozycją statku steruje teraz render(), co eliminuje drgania przy interpolacji.
-
-        if (camera.mode !== 'ship') {
-          const posLerp = Math.min(1, dt * 6);
-          camera.x += (camera.targetX - camera.x) * posLerp;
-          camera.y += (camera.targetY - camera.y) * posLerp;
-        }
-        // Zoom goni targetZoom w updateCameraZoom — raz na klatkę renderu, nie tu:
-        // w krokach fizyki stał w klatkach bez kroku i przeskakiwał przy 2–3 krokach.
-      }
+      // Przejścia kamery i dojazd fokusu idą w stepCameraTransition, a zoom
+      // w updateCameraZoom — raz na klatkę renderu, nie tu: w krokach fizyki
+      // stały w klatkach bez kroku i przeskakiwały przy 2–3 krokach naraz.
 
       camera.zoom = clamp(camera.zoom, camera.minZoom, camera.maxZoom);
       mouse.dx = 0;
       mouse.dy = 0;
+    }
+
+    // Przejście kamery (wyjście z RTS, fokus i powrót z edytora stacji) oraz dojazd
+    // trybów fokusu — raz na klatkę renderu, z render() (tam przejście do statku
+    // dostaje świeży cel: statek + offset riga). Przejście 'ship' prowadzi tylko
+    // pozycję; zoom zostaje sprężynie w updateCameraZoom.
+    function stepCameraTransition(dt) {
+      const tr = camera.transition;
+      if (tr) {
+        tr.elapsed = Math.min(tr.elapsed + dt, tr.duration);
+        const t = tr.duration <= 0 ? 1 : tr.elapsed / tr.duration;
+        const eased = smoothstep01(t);
+        const ownsZoom = tr.kind !== 'ship';
+        camera.x = lerp(tr.startX, tr.targetX, eased);
+        camera.y = lerp(tr.startY, tr.targetY, eased);
+        if (ownsZoom) camera.zoom = lerp(tr.startZoom, tr.targetZoom, eased);
+        if (tr.elapsed >= tr.duration - 1e-6) {
+          camera.x = tr.targetX;
+          camera.y = tr.targetY;
+          if (ownsZoom) camera.zoom = tr.targetZoom;
+          const onComplete = tr.onComplete;
+          camera.transition = null;
+          if (typeof onComplete === 'function') onComplete();
+        }
+      } else if (camera.mode !== 'ship' && camera.mode !== 'rts') {
+        // RTS ma cel = pozycja (pan w fizyce, interpolowany prevCameraState).
+        const posLerp = 1 - Math.exp(-6 * dt);
+        camera.x += (camera.targetX - camera.x) * posLerp;
+        camera.y += (camera.targetY - camera.y) * posLerp;
+      }
+      camera.zoom = clamp(camera.zoom, camera.minZoom, camera.maxZoom);
     }
     // Bezpieczna, odroczona inicjalizacja overlayu 3D
     let overlay3D = null;
@@ -5913,7 +6036,7 @@
     function getHullSpriteForNpc(npc) {
       const hullProfileId = getNpcHullRenderProfileId(npc);
       if (!hullProfileId) return null;
-      const src = HULL_SPRITE_PATHS_BY_ID[hullProfileId] || null;
+      const src = HULL_SPRITE_PATHS_BY_ID[hullProfileId] || TRAFFIC_HULLS[hullProfileId]?.sprite || null;
       if (!src) return null;
       const sprite = loadHullSprite(src);
       if (!sprite || !sprite.ready || sprite.error) return null;
@@ -7809,6 +7932,14 @@
       if (templateKey === 'megafreighter') {
         return spawnCapitalCallIn('megafreighter', { ...opts, mode });
       }
+      // Frachtowce i kadłuby ruchu v2 (roster dev „Niezależni”/„Piraci”).
+      if (DEV_HULL_SPAWNS[templateKey]) {
+        const pos = opts.spawnPos || opts.pos || {
+          x: ship.pos.x + Math.cos(ship.angle || 0) * 3000,
+          y: ship.pos.y + Math.sin(ship.angle || 0) * 3000
+        };
+        return spawnDevHull(templateKey, { ...opts, spawnPos: pos, mode });
+      }
       return spawnSupportShip(templateKey, { ...opts, mode });
     }
 
@@ -8279,6 +8410,62 @@
       'guard': { radius: 20, speed: 100, hp: 100, color: '#ff9933', weapon: 'gun', isCollidable: true },
       'mercenary': { radius: 25, speed: 100, hp: 100, color: '#ff6633', weapon: 'gun', isCollidable: true }
     };
+
+    // --- DevTools: spawn kadłubów bez szablonu wsparcia ---
+    // Frachtowce cargoFleet i kadłuby ruchu v2 (TRAFFIC_HULLS). Bez AI i broni:
+    // `mission` = nie znikają za DESPAWN_RADIUS i słuchają rozkazów RTS.
+    // Bojowe typy (fregaty, niszczyciele, kapitały) idą przez spawnCallInShip.
+    const DEV_HULL_SPAWNS = Object.freeze({
+      'freighter-small': { hull: 'inter_station_shuttle', type: 'freighter-small', hp: 400, speed: 210 },
+      'freighter-medium': { hull: 'container_ship', type: 'freighter-medium', hp: 900, speed: 175 },
+      'freighter-large': { hull: 'long_haul_freighter', type: 'freighter-large', hp: 1600, speed: 140 },
+      'freighter-capital': { hull: 'heavy_freighter', type: 'freighter-capital', hp: 4000, speed: 115 },
+      heavy_harvester: { hull: 'heavy_harvester', hp: 1500, speed: 120 },
+      belter: { hull: 'belter', hp: 500, speed: 180 },
+      surveyor: { hull: 'surveyor', hp: 500, speed: 220 },
+      refinery_tender: { hull: 'refinery_tender', hp: 1800, speed: 120 },
+      tanker: { hull: 'tanker', hp: 1600, speed: 140 },
+      salvage_hauler: { hull: 'salvage_hauler', hp: 1400, speed: 150 },
+      construction_tug: { hull: 'construction_tug', hp: 700, speed: 170 },
+      repair_drone: { hull: 'repair_drone', hp: 200, speed: 260 },
+      distress_beacon_ship: { hull: 'distress_beacon_ship', hp: 600, speed: 200 },
+      smuggler: { hull: 'smuggler', hp: 600, speed: 240, pirate: true },
+      pirate_raider: { hull: 'pirate_raider', hp: 1400, speed: 220, pirate: true }
+    });
+
+    function spawnDevHull(key, opts = {}) {
+      const def = DEV_HULL_SPAWNS[key];
+      const pos = opts.spawnPos || opts.pos;
+      if (!def || !pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return null;
+      const mode = opts.mode || (def.pirate ? 'pirate' : 'dummy');
+      const npc = makeNPCBase({ x: pos.x, y: pos.y }, {
+        hp: def.hp,
+        maxSpeed: def.speed,
+        accel: def.speed * 0.6,
+        turn: 1.2,
+        friction: 0.99,
+        radius: Math.round((HULL_RENDER_PROFILES[def.hull]?.radius || 100) * HULL_RENDER_WORLD_SCALE),
+        isCollidable: true
+      });
+      npc.id = `dev-hull:${key}:${Math.random().toString(36).slice(2, 8)}`;
+      npc.type = def.type || def.hull;
+      npc.shipFrame = def.hull;
+      npc.devHull = true;
+      npc.mission = true;
+      npc.combatDisabled = true;
+      npc.friendly = mode === 'friendly';
+      npc.isPirate = mode === 'pirate';
+      npc.color = npc.friendly ? '#7cff91' : (npc.isPirate ? '#ff5c7c' : '#9fb6c8');
+      npc.displayName = key;
+      npc.angle = Number.isFinite(opts.spawnAngle) ? opts.spawnAngle : (Math.random() * Math.PI * 2);
+      npc.desiredAngle = npc.angle;
+      npc.weapons = { main: [], aux: [], missile: [], hangar: [], special: [], special_missile: [], builtin: [] };
+      npcs.push(npc);
+      return npc;
+    }
+
+    window.DEV_HULL_SPAWN_KEYS = Object.keys(DEV_HULL_SPAWNS);
+    window.spawnDevHull = spawnDevHull;
 
     // ============================================================================
     // TRYBY CELOWNIKA — wpływają wyłącznie na wybór celów, nigdy na statystyki broni.
@@ -17190,7 +17377,6 @@
         } else {
           camera.targetZoom = Math.abs(camera.targetZoom - camera.defaultZoom) < 0.03 ? camera.altZoom : camera.defaultZoom;
           camera.manualZoom = true;
-          if (camera.transition && camera.transition.kind === 'ship') camera.transition = null;
           zoomIndicator.show(camera.targetZoom);
         }
       }
@@ -17306,7 +17492,6 @@
         }
         camera.targetZoom = clamp(camera.targetZoom * f, camera.minZoom, camera.maxZoom);
         camera.manualZoom = true;
-        if (camera.transition && camera.transition.kind === 'ship') camera.transition = null;
       }
       zoomIndicator.show(camera.targetZoom);
     }, { passive: false });
@@ -17390,7 +17575,6 @@
             } else {
               camera.targetZoom = clamp(camera.targetZoom * (1 - zoomSpeed), camera.minZoom, camera.maxZoom);
               camera.manualZoom = true;
-              if (camera.transition && camera.transition.kind === 'ship') camera.transition = null;
             }
           }
           if (btn(5)) {
@@ -17399,7 +17583,6 @@
             } else {
               camera.targetZoom = clamp(camera.targetZoom * (1 + zoomSpeed), camera.minZoom, camera.maxZoom);
               camera.manualZoom = true;
-              if (camera.transition && camera.transition.kind === 'ship') camera.transition = null;
             }
           }
 
@@ -18471,6 +18654,9 @@
 
     function applyDamageToPlayer(amount, opts = {}) {
       const bypassShield = !!opts?.bypassShield;
+      // Kamera przechodzi w postawę walki od trafienia; `combat: false` mają
+      // obrażenia spoza walki (sufit kadłuba po zderzeniu, asteroidy).
+      if (amount > 0 && opts?.combat !== false) noteCameraCombat('trafienie');
       const prevHull = ship.hull.val;
       if (!bypassShield && isEntityShieldBlocking(ship)) { const s = Math.min(ship.shield.val, amount); ship.shield.val -= s; amount -= s; ship.shield.regenTimer = ship.shield.regenDelay; }
       if (amount > 0) ship.hull.val = Math.max(0, ship.hull.val - amount);
@@ -19072,10 +19258,10 @@
           const ratioAdjusted = Math.pow(Math.max(0, Math.min(1, shipState.ratio)), playerHexLossExponent);
           const shipHullCap = Math.max(0, ship.hull.max * ratioAdjusted);
           if (ship.hull.val > shipHullCap + 0.25) {
-            applyDamageToPlayer(ship.hull.val - shipHullCap, { bypassShield: true });
+            applyDamageToPlayer(ship.hull.val - shipHullCap, { bypassShield: true, combat: false });
           }
           if (!ship.destroyed && shipState.active <= 0 && ship.hull.val > 0) {
-            applyDamageToPlayer(ship.hull.val + 1, { bypassShield: true });
+            applyDamageToPlayer(ship.hull.val + 1, { bypassShield: true, combat: false });
           }
         }
       }
@@ -22139,14 +22325,15 @@
     }
     saveState();
     // Zoom kamery raz na klatkę renderu (czas klatki), tuż przed render(): sprężyna
-    // w log(zoom) z src/game/cameraZoom.js. Przejścia kamery (fokus stacji, wyjście
-    // z RTS) same prowadzą zoom w updateCameraTarget — wtedy sprężyna stoi.
+    // w log(zoom) z src/game/cameraZoom.js. Przejścia do fokusu (edytor stacji)
+    // same prowadzą zoom w stepCameraTransition — wtedy sprężyna stoi; przejście
+    // do statku ('ship': wyjście z RTS, powrót z fokusu) prowadzi tylko pozycję.
     // W RTS kamera jedzie tak, by punkt świata pod kotwicą (kursor z ostatniego
     // ząbka) został w miejscu; ten sam przesuw dostaje prevCameraState, więc
     // interpolacja pozycji go nie rozmywa.
     function updateCameraZoom(dt) {
       const anchor = camera.zoomAnchor;
-      if (camera.transition) {
+      if (camera.transition && camera.transition.kind !== 'ship') {
         camera.zoomVel = 0;
         anchor.active = false;
         return;
@@ -22938,7 +23125,7 @@
         return;
       }
 
-      if ((npc.type === 'destroyer' || npc.type === 'battleship' || npc.isCapitalShip || npc.isCargoVan || (npc.type && npc.type.includes('frigate'))) && !npc.hexGrid && !npc.beamHull && !npc.dead) {
+      if ((npc.type === 'destroyer' || npc.type === 'battleship' || npc.isCapitalShip || npc.isCargoVan || npc.devHull || (npc.type && npc.type.includes('frigate'))) && !npc.hexGrid && !npc.beamHull && !npc.dead) {
         const sprite = getHullSpriteForNpc(npc) || (npc.capitalSprite && npc.capitalSprite.ready ? npc.capitalSprite : null);
         const nowMs = performance.now();
         if (sprite && sprite.ready && !sprite.error && !(npc.__hexInitRetryAtMs > nowMs) && hexInitBudgetAllows()) {
@@ -23016,49 +23203,46 @@
         ciws: interpCIWSAngles
       };
 
-      // --- LOGIKA KAMERY (POPRAWIONA) ---
-      // Przeniesiona do render(), aby używać interpPos i uniknąć drgań (jitter)
-
-      if (camera.mode === 'ship' && !camera.transition) {
-        let targetCamX, targetCamY;
-        const lookAheadFactor = 2.0;
-        const centerX = W * 0.5;
-        const centerY = H * 0.5;
-        const zoomSafe = Math.max(0.1, camera.zoom || 1);
-        // Tryb interfejsu (Alt w kokpicie) = wolna mysz: kamera nie wychyla się za kursorem.
-        const freeMouse = splitScreenMode || isHudPointerMode();
-        const mouseOffsetX = freeMouse ? 0 : (mouse.x - centerX) * lookAheadFactor / zoomSafe;
-        const mouseOffsetY = freeMouse ? 0 : (mouse.y - centerY) * lookAheadFactor / zoomSafe;
-
-        // Velocity-based camera lead — zawsze ~15% szerokości ekranu, niezależnie
-        // od zooma i prędkości hulla. Trzymany w PX EKRANU (na świat: / zoomSafe):
-        // w jednostkach świata lead gonił nowy zoom przez ~1 s i statek odpływał
-        // po ekranie przy każdym zoomie w locie.
-        const _cvls = ship.__camVelLead || (ship.__camVelLead = { x: 0, y: 0 });
-        const _cvSpd = Math.hypot(ship.vel.x, ship.vel.y);
-        // Aktualny v_max tego hulla (z drag physics) — lead normalizowany do niego
-        const _cvHullVmax = Math.max(100, Number(driveState?.modeMaxSpeed) || (SHIP_PHYSICS.SPEED / Math.max(1e-6, -Math.log(SHIP_PHYSICS.LINEAR_FRICTION) * 60)));
-        // Max lead = 15% szerokości viewportu, w px
-        const _cvMaxLead = W * 0.15;
-        const _cvNorm = Math.min(_cvSpd, _cvHullVmax) / _cvHullVmax;
-        // Wolniejszy lerp = mniej agresywna kamera (czas ~0.5s)
-        const _cvLerp = 1 - Math.exp(-2 * (frameDt || 0.016));
-        if (_cvSpd > 1) {
-          _cvls.x += ((ship.vel.x / _cvSpd) * _cvNorm * _cvMaxLead - _cvls.x) * _cvLerp;
-          _cvls.y += ((ship.vel.y / _cvSpd) * _cvNorm * _cvMaxLead - _cvls.y) * _cvLerp;
+      // --- KAMERA STATKU (src/game/cameraRig.js) ---
+      // W render(), bo bierze interpPos (bez drgań interpolacji). Kamera = statek
+      // + offset riga w px ekranu: w nawigacji wyprzedza lot, w walce zagląda za
+      // kursorem. Rig kroczy także w trakcie przejścia (wyjście z RTS, powrót
+      // z edytora stacji) — przejście goni żywy cel, więc jego koniec nie skacze.
+      if (camera.mode === 'ship') {
+        const zoomSafe = Math.max(camera.minZoom || 1e-4, camera.zoom || 1);
+        sampleCameraCombatSignals(performance.now());
+        // Wyprzedzenie normalizowane do v_max bieżącego trybu napędu.
+        const hullVmax = Math.max(100, Number(driveState?.modeMaxSpeed) || (SHIP_PHYSICS.SPEED / Math.max(1e-6, -Math.log(SHIP_PHYSICS.LINEAR_FRICTION) * 60)));
+        const rigIn = _cameraRigInput;
+        rigIn.dt = frameDt || 0;
+        rigIn.holdDt = PAUSED ? 0 : (frameDt || 0);
+        rigIn.viewW = W;
+        rigIn.viewH = H;
+        rigIn.mouseX = mouse.x;
+        rigIn.mouseY = mouse.y;
+        rigIn.lookFrozen = isCameraLookFrozen();
+        rigIn.lookEnabled = !splitScreenMode;
+        rigIn.velX = ship.vel.x;
+        rigIn.velY = ship.vel.y;
+        rigIn.maxSpeed = hullVmax;
+        rigIn.mode = OPTIONS.cameraLook;
+        stepCameraRig(cameraRig, rigIn, cameraRigTune);
+        const rigX = interpPos.x + cameraRig.offsetX / zoomSafe;
+        const rigY = interpPos.y + cameraRig.offsetY / zoomSafe;
+        camera.targetX = rigX;
+        camera.targetY = rigY;
+        if (camera.transition) {
+          camera.transition.targetX = rigX;
+          camera.transition.targetY = rigY;
         } else {
-          _cvls.x *= (1 - _cvLerp);
-          _cvls.y *= (1 - _cvLerp);
+          camera.x = rigX;
+          camera.y = rigY;
         }
-
-        targetCamX = interpPos.x + mouseOffsetX + _cvls.x / zoomSafe;
-        targetCamY = interpPos.y + mouseOffsetY + _cvls.y / zoomSafe;
-
-        camera.x = targetCamX;
-        camera.y = targetCamY;
-        camera.targetX = targetCamX;
-        camera.targetY = targetCamY;
-        if (!camera.manualZoom) camera.targetZoom = camera.defaultZoom;
+        if (!camera.manualZoom) {
+          // Zoom startowy z długości kadłuba (Atlas 1800 j. przy stałym 1,0 zajmował cały ekran).
+          camera.defaultZoom = defaultShipZoom(W, Math.max(Number(ship.w) || 0, Number(ship.h) || 0), cameraRigTune, camera.minZoom, camera.maxZoom);
+          camera.targetZoom = camera.defaultZoom;
+        }
       } else if (camera.mode === 'focus') {
         const st = camera.focusStation;
         if (st) {
@@ -23073,6 +23257,7 @@
           camera.clearFocus();
         }
       }
+      stepCameraTransition(frameDt || 0);
 
       let camBaseX = camera.x;
       let camBaseY = camera.y;
@@ -23084,21 +23269,25 @@
 
       const camNoShake = { x: camBaseX, y: camBaseY, zoom: camBaseZoom };
       let cam = { x: camBaseX, y: camBaseY, zoom: camBaseZoom };
-      if (!DevFlags.disableCameraShake && camera.shakeMag > 0) {
-        const t = camera.shakeTime / camera.shakeDur;
-        const mag = camera.shakeMag * Math.max(0, t);
-        cam.x += (Math.random() * 2 - 1) * mag;
-        cam.y += (Math.random() * 2 - 1) * mag;
-      }
-      // Wstrząs od strzałów (Weapon3DSystem) rusza CAŁĄ klatką, jak camera.addShake.
-      // Dawniej dokładał go tylko Core3D.syncCamera: kadłuby i pociski 3D drgały,
-      // a wieżyczki, myśliwce i znaczniki z kanwy 2D stały w miejscu — warstwy
-      // się rozjeżdżały. Wartość jest z poprzedniej klatki (syncProjectiles liczy
-      // ją później), co przy losowym drganiu jest niezauważalne.
+      // Wstrząs w PX EKRANU (dawniej w jednostkach świata: 18 j. to 3 px przy
+      // zoomie 0,15 i 58 px przy 3,2), gładkim szumem zamiast białego co klatkę.
+      // camera.addShake + wstrząs strzałów z Weapon3DSystem ruszają CAŁĄ klatką
+      // (wspólne `cam`) — dawniej ten drugi dokładał tylko Core3D.syncCamera:
+      // kadłuby i pociski 3D drgały, a wieżyczki, myśliwce i znaczniki z kanwy 2D
+      // stały w miejscu. Wartość strzałów jest z poprzedniej klatki
+      // (syncProjectiles liczy ją później).
       const weaponShake = window.__weapon3dCameraShake;
-      if (!DevFlags.disableCameraShake && weaponShake) {
-        cam.x += Number(weaponShake.x) || 0;
-        cam.y += Number(weaponShake.y) || 0;
+      if (!DevFlags.disableCameraShake) {
+        const addShakeMag = (camera.shakeMag > 0 && camera.shakeDur > 0)
+          ? camera.shakeMag * Math.max(0, camera.shakeTime / camera.shakeDur)
+          : 0;
+        const weaponShakeMag = weaponShake ? (Number(weaponShake.mag) || 0) : 0;
+        const shakePx = cameraShakeAmplitudePx(addShakeMag, weaponShakeMag, cameraRigTune);
+        if (shakePx > 0) {
+          sampleCameraShakePx(shakePx, vfxTime, cameraRigTune, _cameraShakePx);
+          cam.x += _cameraShakePx.x / cam.zoom;
+          cam.y += _cameraShakePx.y / cam.zoom;
+        }
       }
 
       window.__splitCamera2 = (splitScreenMode && camera2 && player2Ship && !player2Ship.destroyed)
@@ -26420,18 +26609,47 @@
       updateLacquerUI();
     });
 
+    // --- KAMERA ZA KURSOREM (src/game/cameraRig.js) ---
+
+    function updateCameraLookUI() {
+      const current = normalizeCameraLookMode(window.OPTIONS && window.OPTIONS.cameraLook);
+      document.querySelectorAll('[data-camera-look]').forEach(btn => {
+        const isActive = (btn.dataset.cameraLook === current);
+        btn.classList.toggle('active', isActive);
+        btn.setAttribute('aria-pressed', isActive);
+      });
+    }
+
+    document.querySelectorAll('[data-camera-look]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const mode = normalizeCameraLookMode(e.currentTarget.dataset.cameraLook);
+        if (window.OPTIONS) window.OPTIONS.cameraLook = mode;
+        try { localStorage.setItem('sc_camera_look', mode); } catch { }
+        updateCameraLookUI();
+      });
+    });
+
+    // Skrypt modułu biegnie po sparsowaniu DOM — przyciski już są.
+    try {
+      const savedCameraLook = localStorage.getItem('sc_camera_look');
+      if (savedCameraLook) OPTIONS.cameraLook = normalizeCameraLookMode(savedCameraLook);
+    } catch { }
+    updateCameraLookUI();
+
   </script>
 
   <script type="module">
     import { initDevTools } from './src/ui/devTools.js';
     import { initBloomTunerPanel } from './src/ui/bloomTunerPanel.js';
     import { initDestructorConfigPanel } from './src/ui/destructorConfigPanel.js';
+    import { initCameraTunerPanel } from './src/ui/cameraTunerPanel.js';
 
     window.addEventListener('DOMContentLoaded', () => {
       setTimeout(() => {
         initDevTools();
         initBloomTunerPanel({ enableHotkey: false });
         initDestructorConfigPanel();
+        initCameraTunerPanel();
       }, 100);
     });
   </script>

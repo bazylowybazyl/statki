@@ -1595,7 +1595,8 @@ export class AsteroidField {
       if (result.shipDamage > 0) {
         const isPlayer = ship.controller === 'player' || ship === window.ship;
         if (isPlayer && typeof window.applyDamageToPlayer === 'function') {
-          window.applyDamageToPlayer(result.shipDamage);
+          // combat: false — zderzenie ze skałą nie przełącza kamery w postawę walki.
+          window.applyDamageToPlayer(result.shipDamage, { combat: false });
         } else if (typeof window.applyDamageToNPC === 'function') {
           window.applyDamageToNPC(ship, result.shipDamage, 'asteroid');
         } else {

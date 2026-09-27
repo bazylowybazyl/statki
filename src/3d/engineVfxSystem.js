@@ -270,6 +270,90 @@ function makeSlotKey(slots) {
   }).join('||');
 }
 
+// Odcisk wejść klucza dysz: te same źródła i pola, które czyta buildSlots
+// (bez nozzleDeg — nie wchodzi do klucza), wartości po Number()/String() jak
+// tam, zmieszane FNV-1a bez alokacji. Ten sam odcisk = ten sam klucz, więc
+// sloty i klucz tekstowy (5 toFixed + konkatenacje na dyszę) liczą się tylko
+// po zmianie układu — dawniej co klatkę dla każdej encji w pudle rozgrzania.
+const FNV_OFFSET_BASIS = 0x811c9dc5;
+const FNV_PRIME = 0x01000193;
+const _mixF64 = new Float64Array(1);
+const _mixU32 = new Uint32Array(_mixF64.buffer);
+
+function mixTag(hash, tag) {
+  return Math.imul(hash ^ tag, FNV_PRIME);
+}
+
+function mixNumber(hash, value) {
+  _mixF64[0] = Number(value);
+  hash = Math.imul(hash ^ _mixU32[0], FNV_PRIME);
+  return Math.imul(hash ^ _mixU32[1], FNV_PRIME);
+}
+
+function mixString(hash, str) {
+  hash = Math.imul(hash ^ str.length, FNV_PRIME);
+  for (let i = 0; i < str.length; i++) hash = Math.imul(hash ^ str.charCodeAt(i), FNV_PRIME);
+  return hash;
+}
+
+function mixThruster(hash, thruster) {
+  if (!thruster) return mixTag(hash, 1);
+  const offset = thruster.offset;
+  if (!offset) return mixTag(hash, 2);
+  hash = mixNumber(hash, offset.x);
+  hash = mixNumber(hash, offset.y);
+  hash = mixNumber(hash, thruster.forward?.x);
+  hash = mixNumber(hash, thruster.forward?.y);
+  hash = mixNumber(hash, thruster.baseDeg);
+  hash = mixNumber(hash, thruster.gimbalMinDeg);
+  hash = mixNumber(hash, thruster.gimbalMaxDeg);
+  hash = mixString(hash, String(thruster.mount || ''));
+  return mixTag(hash, thruster.side === 'left' ? 3 : (thruster.side === 'right' ? 4 : 5));
+}
+
+function mixMainEngine(hash, mainEngine) {
+  if (!mainEngine) return mixTag(hash, 6);
+  const offset = mainEngine.vfxOffset || mainEngine.visualOffset || mainEngine.offset;
+  // Ten sam test co buildSlots (Number.isFinite bez konwersji).
+  if (!offset || !Number.isFinite(offset.x) || !Number.isFinite(offset.y)) return mixTag(hash, 7);
+  hash = mixNumber(hash, offset.x);
+  hash = mixNumber(hash, offset.y);
+  hash = mixNumber(hash, mainEngine.vfxForward?.x);
+  hash = mixNumber(hash, mainEngine.vfxForward?.y);
+  hash = mixNumber(hash, mainEngine.baseDeg);
+  hash = mixNumber(hash, mainEngine.gimbalMinDeg);
+  hash = mixNumber(hash, mainEngine.gimbalMaxDeg);
+  return mixString(hash, String(mainEngine.mount || ''));
+}
+
+function slotInputHash(entity) {
+  let hash = FNV_OFFSET_BASIS;
+  const mainThrusters = entity?.visual?.mainThrusters;
+  if (Array.isArray(mainThrusters) && mainThrusters.length) {
+    hash = mixTag(hash, 0x100 + mainThrusters.length);
+    for (let i = 0; i < mainThrusters.length; i++) hash = mixThruster(hash, mainThrusters[i]);
+  } else {
+    hash = mixMainEngine(mixTag(hash, 0x200), entity?.engines?.main);
+  }
+  const sideThrusters = entity?.visual?.torqueThrusters;
+  if (Array.isArray(sideThrusters) && sideThrusters.length) {
+    hash = mixTag(hash, 0x300 + sideThrusters.length);
+    for (let i = 0; i < sideThrusters.length; i++) hash = mixThruster(hash, sideThrusters[i]);
+  }
+  const legacyOffsets = entity?.capitalProfile?.engineOffsets;
+  if (Array.isArray(legacyOffsets) && legacyOffsets.length) {
+    hash = mixTag(hash, 0x400 + legacyOffsets.length);
+    for (let i = 0; i < legacyOffsets.length; i++) {
+      hash = mixNumber(hash, legacyOffsets[i]?.x);
+      hash = mixNumber(hash, legacyOffsets[i]?.y);
+    }
+  }
+  return hash >>> 0;
+}
+
+// Dla testów: odcisk musi się zmieniać zawsze, gdy zmienia się klucz slotów.
+export const EngineSlotKeyInternals = Object.freeze({ buildSlots, makeSlotKey, slotInputHash });
+
 // Dysza nie ma juz wlasnych obiektow w scenie — zostaje sam stan wygladzania,
 // ktory batch przepisuje na atrybuty instancji. Cala flota rysuje sie stala
 // liczba wywolan zamiast kilkoma NA DYSZE. Dysza MAIN trzyma stan strugi
@@ -280,7 +364,7 @@ function createEffects(slots) {
     if (slot.kind === 'side') exhausts.push({ state: createExhaustState(), slot, main: null, warp: null });
     else exhausts.push({ state: null, slot, main: createMainExhaustState(), warp: null });
   }
-  return { exhausts, slotKey: makeSlotKey(slots) };
+  return { exhausts, slotKey: makeSlotKey(slots), inputHash: 0 };
 }
 
 /**
@@ -599,17 +683,20 @@ export const EngineVfxSystem = {
     for (const entity of entities) {
       if (!entity || entity.dead) continue;
 
-      const slots = buildSlots(entity);
-      if (!slots.length) continue;
-      activeEntities.add(entity);
-
       let fxData = this.entityEffects.get(entity);
-      const slotKey = makeSlotKey(slots);
-      if (!fxData || fxData.slotKey !== slotKey) {
-        if (fxData) disposeEffects(fxData);
-        fxData = createEffects(slots);
-        this.entityEffects.set(entity, fxData);
+      const inputHash = slotInputHash(entity);
+      if (!fxData || fxData.inputHash !== inputHash) {
+        const slots = buildSlots(entity);
+        if (!slots.length) continue;
+        const slotKey = makeSlotKey(slots);
+        if (!fxData || fxData.slotKey !== slotKey) {
+          if (fxData) disposeEffects(fxData);
+          fxData = createEffects(slots);
+          this.entityEffects.set(entity, fxData);
+        }
+        fxData.inputHash = inputHash;
       }
+      activeEntities.add(entity);
 
       updateEffects(entity, fxData, dt);
     }

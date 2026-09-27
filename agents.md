@@ -43,6 +43,8 @@
 - `WORLD` — rozmiar mapy.
 - `camera` — zoom, limity, tryby śledzenia/focus.
 - Zoom: wejście (kółko, pad, ŚPM) ustawia tylko `camera.targetZoom`; `camera.zoom` goni go sprężyną w log(zoom) RAZ NA KLATKĘ renderu (`updateCameraZoom` w `index.html`, `src/game/cameraZoom.js`). Nie krokuj zoomu w `physicsStep` (120 Hz vs 144/165 Hz = klatki bez ruchu, zoom „skacze”) i nie pisz `camera.zoom` wprost z wejścia. Zoom RTS do kursora = kotwica `camera.zoomAnchor`.
+- Kamera statku = statek + offset riga w PX EKRANU (`src/game/cameraRig.js`, krok w `render()`): postawa nawigacji (kursor nie rusza kamerą, wyprzedzenie lotu, wolna sprężyna) i walki (kursor z martwą strefą do 0,75 pół ekranu, szybka sprężyna), mieszane wagą walki. Walkę trzymają sygnały: strzał gracza (`WeaponShotBus`), trafienie (`applyDamageToPlayer`; obrażenia spoza walki podają `{ combat: false }`), wrogi cel na namiarze, wróg w zasięgu broni. Opcja `OPTIONS.cameraLook` (Auto/Zawsze/Nigdy), strojenie `cameraRigTune` (F12 → Kamera panel, zapis tylko z `?dev`). Środek statku nigdy bliżej krawędzi niż `frameMargin` — nie dokładaj offsetów kamery poza rigiem. Kursor zajęty UI (menu PPM, koło ŚPM, Alt, tablet, CIC) ZAMRAŻA punkt patrzenia (`isCameraLookFrozen`), nie zeruje go.
+- Przejścia kamery (`camera.transition`) kroczy `stepCameraTransition` raz na klatkę w `render()`. Przejście do statku (`kind: 'ship'`) prowadzi tylko pozycję i goni żywy cel riga (koniec bez skoku), zoom zostaje sprężynie; fokus stacji prowadzi zoom sam. Wstrząs (`camera.addShake`, wstrząs strzałów `__weapon3dCameraShake.mag`) liczony w px ekranu gładkim szumem, z sufitem.
 
 ### Planety i słońce
 - `initPlanets3D(planets, SUN)` — inicjalizacja.
@@ -50,10 +52,11 @@
 - Planety są częścią wizualnej warstwy 3D, gameplay nadal jest liczony w 2D.
 - Halo (poświata limbu) Ziemi i Marsa: `createRingAtmosphere` w `planet3d.assets.js` — płaski dysk w passie ortho z modelem atmosfery z tła menu (cięciwa przez powłokę R + H, gęstość e^(−h/Hs)), gaśnie do zera na brzegu powłoki. Nie wracaj do powłoki-kuli z maską Fresnela: przy 1,21 R dawała kropkowany łuk, przy 1,034 R ~1% jasności (halo znikało).
 
-### Ring „Halo” (Ziemia, Mars)
+### Ring „Halo” (Ziemia, Mars, Jowisz)
 - `HaloRingGame` (`src/3d/haloRing/haloRingGame.js`): BG warstwa 1, górna ściana i suwnice K-7 w FG (warstwa 2). `haloRings.update(frameDt, cam, …)` co klatkę PRZED `Core3D.render`, z kamerą TEJ klatki (`cam` ze wstrząsem) — ring liczy pozycje względem kamery (RTE), inna kamera przesunie go względem statków. Jakość = `OPTIONS.planetQuality` („Ultra” = dalszy LOD, `HALO_LOD_ULTRA`).
-- Ring jest PRZESZKODĄ w płaszczyźnie gry: płyta podłogi z terenem, przelot tylko 4 tranzytami (`stepShipRingCollisions`, `haloRings.pointInSlab` dla pocisków). Nowe ruchy statków przy Ziemi/Marsie (spawny, teleporty, autopiloty) muszą tę płytę omijać.
-- Stacja Ziemi i Marsa = stacja-port w hali K-7 (`ringPort`, `isCollidable: false`, `terminalRange`) — wyglądem stacji jest ring: nie rysuj dla niej brył ani ikon stacji.
+- Ring jest PRZESZKODĄ w płaszczyźnie gry: płyta podłogi z terenem, przelot tylko 4 tranzytami (`stepShipRingCollisions`, `haloRings.pointInSlab` dla pocisków). Nowe ruchy statków przy Ziemi/Marsie/Jowiszu (spawny, teleporty, autopiloty) muszą tę płytę omijać.
+- Stacja Ziemi, Marsa i Jowisza = stacja-port w hali K-7 (`ringPort`, `isCollidable: false`, `terminalRange`) — wyglądem stacji jest ring: nie rysuj dla niej brył ani ikon stacji.
+- Trzy RÓŻNE ringi (decyzja użytkownika 2026-09-27): Ziemia = silnik Halo (`createHaloRing`), Mars = ECUMENE, Jowisz = ring Fable — z dem `orbital_ring_demo(_2).html` w skali ×3 (`createArchRing`, `src/3d/haloRing/arch/`). Archetyp i geometria są w profilu (`haloRingProfiles.js`), a `createHaloRingLayout` rozdaje je kolizjom, ruchowi v2 i stacji-portowi. Hala K-7 i zatoki (stanowiska, kolizje) są wspólne, różni je tylko ubiór. Zmiana ringu Ziemi nie dotyka Marsa i Jowisza, i odwrotnie. Opis: `docs/PORT-halo-ring.md` § „Ringi-archetypy”.
 - Ring nie udaje życia (`docs/BRIEF-ring-halo.md` §1): bez ruchu zastępczego, zaparkowanych NPC i świateł aut — statki tylko z systemu ruchu.
 
 ### Menu główne i jego tło 3D
@@ -153,6 +156,7 @@
    - Nie twórz lokalnych rendererów ani dodatkowych canvasów WebGL.
    - Świat leży przy 5–10 mln j.: pozycja świata liczona na GPU we float32 drga ~1 px względem kadłubów. Nie wpisuj bezwzględnych pozycji do macierzy instancji ani atrybutów — duży offset w `mesh.position` (three składa `modelViewMatrix` w double), dane względem niego, w shaderze `modelViewMatrix * instanceMatrix`. Wzór: `Bridge3D._setOrigin` (`docs/PORT-mostki.md` §8.12).
    - Początek przy kamerze daje `sceneOriginNearCamera` (`src/3d/sceneOrigin.js`); dane przepisywane co klatkę — początek co klatkę (np. `shipLights3D.js`, `fxParticles3D.js`), bufor pisany raz przy emisji (pierścień) — początek „lepki” z przesunięciem żywych danych dopiero po odjeździe kamery (`sparkSystem3D.js`, `slugTrail3D.js`). Pozycje świata w pulach CPU: `Float64Array`. Pomiar przed/po: `dema/precyzja-drzenie.js` (bloom wyłączaj przez `bloomPass.enabled` — sam `perfToggles.bloom = false` go nie wyłącza).
+   - Przezroczysty materiał z `side: DoubleSide` three rysuje DWA razy (tył, potem przód) i przed każdym ustawia `needsUpdate` — każdy draw liczy program od nowa (`getProgram`). Nie dotyczy `ShaderMaterial` (ma `forceSinglePass = true`), dotyczy `MeshBasicMaterial` i innych wbudowanych: efekty addytywne bez zapisu głębi i płaskie siatki dostają `forceSinglePass: true` (pociski, błyski, wiązki, iskry raila).
 
 3. **Destruction + ship integration**
    - Zachowaj spójność osi/rotacji między `shipEntity.js` i `hullBodies.js` (odbicie y, kotwica środka sprite'a).
@@ -165,6 +169,7 @@
 4. **Wydajność**
    - Bez nowych alokacji per-frame tam, gdzie da się użyć pooli/buforów.
    - Profiluj przez `PerfHUD` (`performance.now()`), szczególnie: physics/draw/3D update.
+   - Pętle „każdy kadłub × każde światło/emiter” w `updateHexShips3D` (payload świateł, `buildCombinedShipLightShaderPayload`): dane celu (pozycja, promień) raz na kadłub, w pętli po światłach sama arytmetyka. Liczone per para kosztowały w bitwie ~125 okrętów większość „U hex” (4,5 ms). Własne lampy kadłuba są w cache per encja — obiekty lamp z payloadu tylko do odczytu.
 
 5. **Kolejność rysowania**
    - 3D world pass -> 2D world/HUD.

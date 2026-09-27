@@ -1,8 +1,10 @@
 // Ring „Halo” w grze (port do gry 2026-09-25): klej między grą (świat 2D,
 // Core3D) a modułem ringu (createHaloRing). Opis: docs/PORT-halo-ring.md.
 //
-//  - ring Ziemi i Marsa (ta sama bryła, promień planety i ziarno z
-//    src/game/haloRingPlanets.js): grupa w środku planety, obrócona tak, żeby
+//  - ringi Ziemi (Halo), Marsa (ECUMENE) i Jowisza (Fable) — archetyp,
+//    promień planety i ziarno z profilu i src/game/haloRingPlanets.js; Mars
+//    i Jowisz to inne ringi (src/3d/haloRing/arch/, decyzja użytkownika
+//    2026-09-27) z tym samym API; grupa w środku planety, obrócona tak, żeby
 //    port leżał pod kątem dawnej stacji; tworzony leniwie, gdy kadr się zbliży;
 //  - BG (warstwa 1, pod statkami), górna ściana z dachem i suwnice K-7 w FG
 //    (warstwa 2) — kolejność passów Core3D;
@@ -19,6 +21,8 @@
 import * as THREE from 'three';
 import { Core3D } from '../core3d.js';
 import { createHaloRing } from './index.js';
+import { createArchRing } from './arch/archRing.js';
+import { resolveHaloProfile } from './haloRingProfiles.js';
 import { resolveHaloQuality } from './haloRingConfig.js';
 import { K7RoofFade, k7HubToWorld } from './haloPortK7Layout.js';
 import { haloXfPoint } from './haloPortBays.js';
@@ -98,7 +102,10 @@ export class HaloRingGame {
   _ensureRing(e) {
     if (e.ring) return e.ring;
     const spec = HALO_RING_PLANETS[e.key];
-    const ring = createHaloRing({
+    // Mars = ECUMENE, Jowisz = ring Fable (arch/): inne ringi niż Ziemia,
+    // to samo API, geometria przekroju z profilu (jak kolizje i ruch v2)
+    const archetype = resolveHaloProfile(spec.profile).archetype || 'halo';
+    const ring = (archetype === 'halo' ? createHaloRing : createArchRing)({
       planetRadius: resolveRingPlanetWorldRadius(e.planet),
       seed: spec.seed,
       profile: spec.profile,

@@ -52,12 +52,15 @@ export function createArmataImpactFactory(scene) {
     group.add(core);
 
     const ringGeometry = new THREE.RingGeometry(0.22, 0.52, 48);
+    // forceSinglePass: bez tego przezroczysty DoubleSide idzie dwoma draw callami
+    // z przeliczeniem programu przed każdym; płaski pierścień addytywny — bez różnicy.
     const ringMaterial = new THREE.MeshBasicMaterial({
       color: 0xffc067,
       transparent: true,
       blending: THREE.AdditiveBlending,
       opacity: 0.9,
       side: THREE.DoubleSide,
+      forceSinglePass: true,
       depthWrite: false,
     });
     const ring = new THREE.Mesh(ringGeometry, ringMaterial);

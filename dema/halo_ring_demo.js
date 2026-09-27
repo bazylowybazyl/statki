@@ -4,6 +4,7 @@
 // /dema/halo_ring_demo.html?preset=1&quality=high&seed=1337&shot=1
 import * as THREE from 'three';
 import { createHaloRing } from '../src/3d/haloRing/index.js';
+import { createArchRing } from '../src/3d/haloRing/arch/archRing.js';
 import { HALO_QUALITY, HALO_GEOMETRY_DEFAULTS, HALO_STATION_ANGLE, haloTransitAngles } from '../src/3d/haloRing/haloRingConfig.js';
 import { computeGameCameraHeight } from '../src/3d/haloRing/haloRingLayout.js';
 import { resolveHaloProfile } from '../src/3d/haloRing/haloRingProfiles.js';
@@ -64,15 +65,19 @@ renderer.debug.onShaderError = (gl, program, vs, fs) => {
 const planetKey = HALO_RING_PLANETS[params.get('planet')] ? params.get('planet') : 'earth';
 const planetSpec = HALO_RING_PLANETS[planetKey];
 const planetProfile = resolveHaloProfile(planetSpec.profile);
+// Mars = ECUMENE, Jowisz = ring Fable (src/3d/haloRing/arch/): inne ringi,
+// geometria przekroju z profilu planety (jak w grze)
+const archetype = planetProfile.archetype || 'halo';
+const geomDefaults = { ...HALO_GEOMETRY_DEFAULTS, ...(planetProfile.geometry || {}) };
 const state = {
   mode: 'cine',
   quality: HALO_QUALITY[params.get('quality')] ? params.get('quality') : 'high',
   seed: Number(params.get('seed')) || planetSpec.seed,
   geometry: {
-    width: Number(params.get('w')) || HALO_GEOMETRY_DEFAULTS.width,
-    wallHeight: Number(params.get('wall')) || HALO_GEOMETRY_DEFAULTS.wallHeight,
+    width: Number(params.get('w')) || geomDefaults.width,
+    wallHeight: Number(params.get('wall')) || geomDefaults.wallHeight,
     floorTiltDeg: Number(params.get('tilt')) || 0,
-    sectorCount: Number(params.get('sectors')) || 16,
+    sectorCount: Number(params.get('sectors')) || geomDefaults.sectorCount,
     habitatFacing: params.get('facing') === 'in' ? 'inward' : 'outward',
     // płaszczyzna gry na środku wstęgi (domyślnie); ?plane=roof = układ M1–M5
     ...(params.has('plane') ? { flightLevel: params.get('plane') === 'roof' ? 'roof' : Number(params.get('plane')) } : {})
@@ -89,7 +94,7 @@ const state = {
 const scene = new THREE.Scene();
 scene.matrixWorldAutoUpdate = true;
 const planetRadius = RING_PLANET_WORLD_RADII[planetKey];
-const ring = createHaloRing({
+const ring = (archetype === 'halo' ? createHaloRing : createArchRing)({
   planetRadius,
   seed: state.seed,
   profile: planetSpec.profile,

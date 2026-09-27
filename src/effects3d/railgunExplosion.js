@@ -36,6 +36,9 @@ export function createRailgunExplosionFactory(scene) {
   });
 
   const sparkGeometry = new THREE.PlaneGeometry(1, 0.14);
+  // forceSinglePass: przezroczysty DoubleSide three rysuje dwa razy (tył, przód),
+  // za każdym razem z needsUpdate = przeliczenie programu. Addytywnie bez zapisu
+  // głębi kolejność ścian nic nie zmienia.
   const sparkMaterial = new THREE.MeshBasicMaterial({
     color: 0xb0f2ff,
     transparent: true,
@@ -43,7 +46,8 @@ export function createRailgunExplosionFactory(scene) {
     depthTest: true,
     depthWrite: false,
     blending: THREE.AdditiveBlending,
-    side: THREE.DoubleSide
+    side: THREE.DoubleSide,
+    forceSinglePass: true
   });
 
   const baseSmokeMaterial = new THREE.SpriteMaterial({

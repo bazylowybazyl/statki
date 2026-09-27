@@ -1,7 +1,9 @@
 # Port ringu „Halo” do gry — notatka (M5 2026-09-23, port 2026-09-25)
 
 > Stan: **podpięty do gry 2026-09-25** (§ „W grze” niżej) — ring Ziemi i Marsa, stacja-port
-> w hali K-7, kolizje, tryb jakości „Ultra”; stary ring (`planetaryRing3D.js`, `ringCity*.js`)
+> w hali K-7, kolizje, tryb jakości „Ultra”. **Od 2026-09-27 (Z6) Mars i Jowisz mają INNE ringi**
+> (ECUMENE i Fable z dem, § „Ringi-archetypy”); ten dokument poza tą sekcją opisuje ring Halo
+> Ziemi. Stary ring (`planetaryRing3D.js`, `ringCity*.js`)
 > usunięty. Demo `dema/halo_ring_demo.html` zostaje warsztatem ringu. Decyzje użytkownika:
 > `docs/BRIEF-ring-halo.md` §1 (habitat w stronę kosmosu, port ringu zastępuje stację Ziemi,
 > stacje docelowo w deep space, **płaszczyzna gry na środku wstęgi, doki wpięte w podłogę
@@ -249,8 +251,9 @@ w pikselach (`HaloCityChunkSet`), płynne znikanie w shaderze — bez twardej gr
 ## W grze (port 2026-09-25)
 
 Moduły kleju (poza nimi gra woła tylko to, co niżej):
-- `src/3d/haloRing/haloRingGame.js` — `HaloRingGame`: ring Ziemi i Marsa (ta sama bryła, promień
-  planety z `resolveRingPlanetWorldRadius`, ziarno 1337 / 4099), grupa w środku planety obrócona
+- `src/3d/haloRing/haloRingGame.js` — `HaloRingGame`: ringi Ziemi, Marsa i Jowisza (promień
+  planety z `resolveRingPlanetWorldRadius`, ziarno 1337 / 4099 / 6151; Ziemia = `createHaloRing`,
+  Mars i Jowisz = `createArchRing`, § „Ringi-archetypy”), grupa w środku planety obrócona
   tak, żeby port wypadł pod kątem dawnej stacji (`haloRingRotation`); tworzony leniwie, gdy środek
   kadru jest bliżej planety niż 420 tys. j. (bake map przy pierwszym podejściu). Co klatkę renderu:
   kamera = replika `Core3D.cameraPersp` TEJ klatki (FOV, wysokość z bufora composera i zoomu,
@@ -375,6 +378,62 @@ trwa 1–2 min (skrypt czeka do 4 min i wypisuje postęp ładowania).
   `haloRingBlock` z kamery kinowej dema.
 - kokpit: przycisk lotu nad ringiem (dawny `RingCityFlight`) wyłączony z opisem „w przygotowaniu”
   — docelowo kamera kinowa dema (`dema/halo_ring_demo.js`, dynamiczny near).
+
+## Ringi-archetypy: Mars = ECUMENE, Jowisz = Fable (Z6, 2026-09-27)
+
+Decyzja użytkownika (2026-09-26/27): ringi Marsa i Jowisza oraz ich doki mają być **kompletnie
+inne niż ring Ziemi**, nie przemalowane — z dem `dema/orbital_ring_demo.html` (ECUMENE) i
+`dema/orbital_ring_demo_2.html` (ring Fable). Wybory: Mars = ECUMENE, Jowisz = Fable; habitat
+**na zewnątrz jak Ziemia**; doki = **hala K-7 + zatoki w stylu dema** (te same stanowiska,
+kolizje i ruch v2); ląd **dokładnie jak w demach**. Ziemia i tło menu bez zmian (zrzuty dema
+przed/po: różnica ~0 pikseli, te same draw calle).
+
+- **Profil** (`haloRingProfiles.js`): `archetype` (`'halo' | 'ecumene' | 'fable'`) + `geometry`
+  (nadpisuje `HALO_GEOMETRY_DEFAULTS`). `createHaloRingLayout` bierze geometrię z profilu, więc
+  kolizje (`haloRingLayoutFor`), ruch v2 (`buildHaloPortTrafficLayout`, `ringRouter`) i stacja-port
+  (`computeHaloPortStation`) dostają ją same. Plan sektorów z dema: ECUMENE 12 dzielnic
+  (port = THARSIS), Fable 24 sektory = 2 × 12 stref dema (port = GALILEO).
+- **Geometria** (dema × 3): Mars szerokość 6 720, ściany 162, kadłub 1 600 → obwiednia 33 488 –
+  35 088 (podłoga) – 35 250, stacja-port na R 38 670; Jowisz (promień 48 000) szerokość 5 940,
+  ściany 780, kadłub 1 900 → 52 070 – 53 970 – 54 750, stacja na R 57 552. Długość dzielnicy =
+  obwód / liczba sektorów (rozciągnięcie względem dema 1,44 ECUMENE, 1,12 Fable): wymiary
+  bezwzględne × 3, ułamki długości × rozciągnięcie, częstotliwości szumu / 3.
+- **Render** (`src/3d/haloRing/arch/`): `archRing.js` (`createArchRing`, API jak `createHaloRing`:
+  hale K-7, reguły FG, wycięcia, słońce, jakość, `terrainHeightAt`), `ecumene.js` + `ecumenePlan.js`,
+  `fable.js` + `fablePlan.js` (plan = czysta matematyka, bez Three), `archPort.js` (zatoki
+  i tranzyty w wymiarach `HALO_PORT` / `HALO_TRANSIT`, ubrane w styl dema), `archFrame.js`
+  (rama punktu: X wzdłuż, Y od planety, Z = −oś; partie instancji), `archGLSL.js`,
+  `archMaterials.js`. Uniformy i model światła wspólne z Halo (`createHaloUniforms`,
+  `HALO_GLSL_*`). Pozycje lokalne względem grupy ringu (≤ 60 tys.), `gl_Position` przez
+  `modelViewMatrix` (precyzja). Materiały instancji rozróżniają rodzaj w `aInst` (fasady ECUMENE,
+  budynki Fable, panele, radiatory, woda, blask HDR); ziarno kwantowane (bez szumu z varyingu).
+- **Hala K-7** zostaje (stanowiska, kolizje), zmienia się ubiór: `port.roof/walls/bays` =
+  `'ecumene'` (panele stal/rura, stopnie, miedziane czapy) albo `'fable'` (pola radiatorów
+  z czerwonym pasem, kolektory). Płyty portu (`portClass`): 2 = pusta płaska płyta, 1 = pas
+  ochronny tylko z niską zabudową — bez drzew i budynków w zatokach/tranzytach.
+- **Ring nie udaje życia**: bez smug ruchu i impulsów maglevu z dema Fable; światła miast stoją.
+- **Budżet** (headless Chrome, 1920×1080): udział ringu w klatce gry przy porcie (z ringiem −
+  bez) Ziemia 16, **Mars 20, Jowisz 22** draw calle; całość Mars 48; Jowisz 78, bo bez ringu jest
+  już 56 (pule asteroid w pobliżu — nie ring). `haloRings.update` 0,04–0,12 ms. W demie: Mars
+  6 partii + K-7 11, Jowisz 7 + K-7 12 (konstrukcja, rury i bryły portu jedną partią na stronę,
+  atlas pasów kadłuba/ścian, LOD kopuł i tablic po zasięgu kamery). Budowa: plan ECUMENE
+  110–145 ms (5 092 budynki, 28 610 drzew, 12 kopuł — w demie port był jeden, tu 4 kompleksy
+  i 4 tranzyty, więc 5 kopuł z płyt przesuwa się wzdłuż dzielnicy albo za pas płyt); Fable: mapa stref 8192×256 na CPU 525–600 ms
+  + miasto 120 ms (35 397 budynków, 94 218 drzew, 17 kopuł) — synchronicznie, przy leniwym
+  tworzeniu ringu (< 420 tys. j. od planety).
+- **Rozgrzewka shaderów**: ringi-archetypy nie pieką map na GPU, więc `createHaloBakeWarmup`
+  i `tests/menuBackdrop.test.mjs` ich nie dotyczą; programy ECUMENE/Fable kompilują się przy
+  pierwszej klatce przy planecie (niezmierzone w ANGLE).
+- **Testy**: `haloRingProfiles.test.mjs` (Ziemia = liczby sprzed profili, archetypy i geometria,
+  doki, K-7 styl ≠ stanowiska, geometria wszędzie), `haloRingArch.test.mjs` (rama, ląd dem, port
+  wolny, konstrukcja w płycie kolizji, zatoki i tranzyty, pułapki ANGLE, klej gry);
+  `scripts/tests/haloPortTraffic.test.mjs` — podłoga Marsa 35 088.
+- **Demo**: `dema/halo_ring_demo.html?planet=mars|jupiter` (zrzuty `scripts/halo-ring-shots.mjs
+  --planet mars|jupiter`).
+- **Otwarte**: promień Jowisza 48 000 tymczasowy (`ringScale.js`); księżyc Io na orbicie ~60 tys.
+  wpada w ring/port/redę (`systemMap.js`, poza Z6 — propozycja ~85 tys.); mapa stref Fable może
+  iść do workera; w silniku Halo zostały nieużywane gałęzie dawnej „skórki” Marsa/Jowisza (siarka,
+  linie, burza, kratery, kaniony, miasto kopuł, landmarki przemysłowe, kit 7, zatoki „berm”).
 
 ## Po porcie (gameplay)
 

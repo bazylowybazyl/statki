@@ -227,3 +227,32 @@ Faza 1 = można zaczynać od razu (równolegle). Faza 2 = po zależnościach.
   tryb LOAD/UNLOAD, zegar postoju i wpis stanowiska; tryb „stary sprite” = płyty maski; kontenery nad wyrwą —
   `cargoDeckMask(…, (x, y) => HullBodies.probe(e, x, y))` przy zmianie `structuralState` (łup: później). Testy: npm test OK,
   node --test te same 7 znanych porażek. Nie zrobione: suwnice pasów MEGA i dźwig K-7 (wszędzie drony).
+- 2026-09-27 Z7 (faza 1): moduły + demo zrobione (bez commita), w grze nic nie wpięte; ocena wyglądu u użytkownika.
+  `src/3d/portBuildings/` (opis `docs/PORT-budowle-portowe.md`): stocznia (2 pochylnie 1500 × 640 pod nosiciela z kadłubem
+  rosnącym przez czas budowy — `slipStatesFromYard(yard)`: stępka → wręgi → poszycie → malowanie + iskry; suwnice ≤ 1/20
+  rozpiętości, żuraw, hala prefabrykacji) + suchy dok (pole capital K-7 pod Atlasa, drzwi teleskopowe, dach zanikający jak
+  K-7, rola ruchu `service` — findBerth civil/military i placeFleetStock go nie biorą); hangar postojowy (bębny z kołyskami
+  z dema B-5 + windy capital/mega, pojemność z poziomów: `planHangarCapacity` — Saturn 472 → 512, Uran 336 → 368, Ceres,
+  Jowisz; bramy IN/OUT, statek znika pod dachem FG, pas kolejki ze światłami); boje redy z `buildPortParking` (Z2). Układy
+  w formacie stanowisk K-7 + adapter `portModuleTraffic` (docks / yards / hangars / solids w układzie gry) + `K7CollisionWorld`;
+  styl per planeta (`resolvePortBuildingStyle`: profile Z6 k7/vault/radiator albo styl megadoku Z8). Render przez Core3D
+  (BG/FG jak K-7, dane względem korzenia / `sceneOriginNearCamera`, światło `space` z maską cieni albo `halo` = model ringu).
+  Demo `dema/budowle-portowe.html` (widoki 1–9, style, ×60), zrzuty `node dema/budowle-portowe-shots.js`; testy
+  `tests/portBuildings.test.mjs` (21). npm test OK, node --test te same 7 znanych porażek; build (demo + gra) OK. Uwagi: Z8 —
+  `portModuleFrame` + styl w kształcie `profile.port`; Z13 — hangar: wejście = `hangars[0].entry` (do `buildPortParking(…,
+  { hangar })`), zejście z pochylni = `yards[i].launch*`; `dema/dok_cylinder_3d.html` nie istnieje (wzięty B-5 i gigantyczny dok).
+  Do decyzji: rozmiar hangaru (Saturn 2 rzędy 9,9 × 8,6 tys. j.), małe pochylnie dla fregat, kto przydziela suchy dok,
+  miejsca na ringu (stocznia + hangar po obu stronach kompleksu = ≥ 6 prostokątów `HALO_PORT_RECTS`).
+- 2026-09-27 Z6: zrobione (bez commita). Decyzja użytkownika: nie „skórka”, tylko INNE ringi z dem — Mars = ECUMENE
+  (`dema/orbital_ring_demo.html`), Jowisz = ring Fable (`_2.html`), habitat na zewnątrz, ląd 1:1 z dem w skali ×3, doki =
+  hala K-7 + zatoki (stanowiska i kolizje bez zmian, ubiór jak w demach). `createArchRing` (`src/3d/haloRing/arch/`, API
+  `createHaloRing`), archetyp + geometria w profilu (`haloRingProfiles.js`) → `createHaloRingLayout` → kolizje, ruch v2,
+  stacja-port. Ziemia i tło menu bez zmian (zrzuty ~0 różnicy). Ring Jowisza: `HALO_RING_PLANETS.jupiter` (ziarno 6151,
+  3π/4), promień planety 48 000 (`ringScale.js`). Udział ringu w klatce gry: Ziemia 16, Mars 20, Jowisz 22 draw calle,
+  update 0,04–0,12 ms. Opis: `docs/PORT-halo-ring.md` § „Ringi-archetypy”. Uwagi: Z2/Z3/Z13 — podłogi Marsa i Jowisza
+  z nowej geometrii (Mars obwiednia 33 488–35 250, podłoga 35 088, stacja 38 670; Jowisz 52 070–54 750, stacja 57 552;
+  `haloPortTraffic.test` przepięty na 35 088); Z7 — `port.buildings` Marsa/Jowisza zostaje `vault/berm`
+  i `radiator/pipes`, paleta `k7Palette` z dem (można przestroić budowle pod ECUMENE/Fable). Do decyzji: promień
+  Jowisza 48 000 tymczasowy; Io na ~60 tys. wpada w ring/port/redę (`systemMap.js`, propozycja ~85 tys.); mapa stref
+  Fable liczy się synchronicznie ~0,6 s przy pierwszym podejściu (worker?); martwe gałęzie „skórki” Marsa/Jowisza
+  w silniku Halo do usunięcia.

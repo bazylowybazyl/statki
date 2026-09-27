@@ -144,6 +144,9 @@ const HTML = `
   <div class="row">
     <button id="btn-destructor-panel" class="dt-btn" style="width:100%">Destructor panel</button>
   </div>
+  <div class="row">
+    <button id="btn-camera-panel" class="dt-btn" style="width:100%">Kamera panel</button>
+  </div>
   <div class="small muted">Otwiera panele suwakow z polami liczbowymi.</div>
 </div>
 <div class="group">
@@ -209,6 +212,55 @@ const HTML = `
     <button id="dt-spawn-support-fleet-btn" class="dt-btn" style="width:100%;">Spawn support fleet</button>
   </div>
   <div class="small muted">Piraci i wsparcie spawnuja sie przed dziobem gracza.</div>
+  <div class="dt-row" style="align-items:center; margin-top:8px; gap:6px;">
+    <select id="dt-spawn-unit-type" style="flex:2; background:#060e1c; color:#fff; border:1px solid #2a3a5a; padding:4px; border-radius:4px;">
+      <optgroup label="Frachtowce">
+        <option value="hull:freighter-small">Wahadlowiec (maly)</option>
+        <option value="hull:freighter-medium" selected>Kontenerowiec (sredni)</option>
+        <option value="hull:freighter-large">Frachtowiec dalekiego zasiegu</option>
+        <option value="hull:freighter-capital">Ciezki frachtowiec</option>
+        <option value="call:megafreighter">Megafrachtowiec (sklad)</option>
+      </optgroup>
+      <optgroup label="Cywilne / przemysl">
+        <option value="hull:heavy_harvester">Ciezki zbieracz</option>
+        <option value="hull:belter">Belter</option>
+        <option value="hull:surveyor">Zwiadowca geologiczny</option>
+        <option value="hull:refinery_tender">Rafineria</option>
+        <option value="hull:tanker">Tankowiec</option>
+        <option value="hull:salvage_hauler">Zlomiarz</option>
+        <option value="hull:construction_tug">Holownik budowlany</option>
+        <option value="hull:repair_drone">Dron naprawczy</option>
+        <option value="hull:distress_beacon_ship">Statek ratunkowy</option>
+      </optgroup>
+      <optgroup label="Piraci (bez broni)">
+        <option value="hull:smuggler">Przemytnik</option>
+        <option value="hull:pirate_raider">Rajder</option>
+      </optgroup>
+      <optgroup label="Bojowe">
+        <option value="call:fighter">Mysliwce (eskadra)</option>
+        <option value="call:interceptor">Przechwytywacze (eskadra)</option>
+        <option value="call:frigate_pd">Fregata PD</option>
+        <option value="call:frigate_laser">Fregata laserowa</option>
+        <option value="call:destroyer">Niszczyciel</option>
+        <option value="call:battleship">Pancernik</option>
+        <option value="call:pirate_battleship">Pancernik piracki</option>
+        <option value="call:carrier">Lotniskowiec</option>
+        <option value="call:supercapital">Superkapital</option>
+        <option value="call:atlas">Atlas</option>
+      </optgroup>
+    </select>
+    <select id="dt-spawn-unit-side" style="flex:1; background:#060e1c; color:#fff; border:1px solid #2a3a5a; padding:4px; border-radius:4px;">
+      <option value="auto" selected>Strona: auto</option>
+      <option value="friendly">Sojusznik</option>
+      <option value="pirate">Pirat</option>
+      <option value="dummy">Neutralny</option>
+    </select>
+  </div>
+  <div class="dt-row" style="align-items:center; margin-top:6px; gap:6px;">
+    <input id="dt-spawn-unit-count" type="number" min="1" max="20" value="1" style="width:56px; background:#060e1c; color:#fff; border:1px solid #2a3a5a; padding:4px; border-radius:4px;">
+    <button id="dt-spawn-unit-btn" class="dt-btn" style="flex:1;">Spawn jednostki</button>
+  </div>
+  <div class="small muted">Jednostki cywilne bez AI i broni — dryfuja, sluchaja rozkazow RTS.</div>
 </div>
 <div class="group">
   <div class="row"><strong>Konfiguracja</strong></div>
@@ -319,7 +371,7 @@ function wireDevToolsLogic() {
     cbSunDir: 'dt-show-sundir', cbShake: 'dt-disable-shake', cbPlanetStations3D: 'dt-use-planet-stations',
     cbPirate3D: 'dt-use-3d-pirate', btnCopy: 'btnCopy', btnReset: 'btnReset', cfgOut: 'cfgOut',
     fileGlb: 'dt-file-glb', btnLoadGlb: 'btn-load-glb', glbRot: 'dt-glb-rot', glbZoom: 'dt-glb-zoom', glbScale: 'dt-glb-scale',
-    btnHardpointEditor: 'btn-hardpoint-editor', btnBloomPanel: 'btn-bloom-panel', btnRingColorPanel: 'btn-ring-color-panel', btnDestructorPanel: 'btn-destructor-panel',
+    btnHardpointEditor: 'btn-hardpoint-editor', btnBloomPanel: 'btn-bloom-panel', btnRingColorPanel: 'btn-ring-color-panel', btnDestructorPanel: 'btn-destructor-panel', btnCameraPanel: 'btn-camera-panel',
     cbDamageTint: 'dt-toggle-damage-tint',
     btnPerfTools: 'btn-perf-tools', perfPanel: 'dt-perf-panel', perfStatus: 'dt-perf-status',
     perfBloom: 'dt-perf-bloom', perfHeat: 'dt-perf-heat', perfBg: 'dt-perf-bg', perfOrtho: 'dt-perf-ortho',
@@ -333,6 +385,8 @@ function wireDevToolsLogic() {
     spawnPirateHeavyFleetBtn: 'dt-spawn-pirate-heavy-fleet-btn',
     spawnEnemyFightersBtn: 'dt-spawn-enemy-fighters-btn',
     spawnSupportFleetBtn: 'dt-spawn-support-fleet-btn',
+    spawnUnitType: 'dt-spawn-unit-type', spawnUnitSide: 'dt-spawn-unit-side',
+    spawnUnitCount: 'dt-spawn-unit-count', spawnUnitBtn: 'dt-spawn-unit-btn',
     hudCenterY: 'dt-hud-center-y', hudCenterYNum: 'dt-hud-center-y-num', hudCenterYVal: 'dt-hud-center-y-val',
     hudShieldY: 'dt-hud-shield-y', hudShieldYNum: 'dt-hud-shield-y-num', hudShieldYVal: 'dt-hud-shield-y-val',
     hudHpY: 'dt-hud-hp-y', hudHpYNum: 'dt-hud-hp-y-num', hudHpYVal: 'dt-hud-hp-y-val',
@@ -980,6 +1034,14 @@ function wireDevToolsLogic() {
       });
     }
 
+    if (ui.btnCameraPanel) {
+      ui.btnCameraPanel.addEventListener('click', () => {
+        if (window.__cameraPanel && typeof window.__cameraPanel.toggle === 'function') {
+          window.__cameraPanel.toggle();
+        }
+      });
+    }
+
     if (ui.btnDestructorPanel) {
       ui.btnDestructorPanel.addEventListener('click', () => {
         if (window.__destructorPanel && typeof window.__destructorPanel.toggle === 'function') {
@@ -1147,6 +1209,42 @@ function wireDevToolsLogic() {
         }
         if (typeof window.toast === 'function') window.toast('Flota wsparcia przybyla');
         console.log('[DevTools] Spawn support fleet');
+      });
+    }
+
+    if (ui.spawnUnitBtn) {
+      ui.spawnUnitBtn.addEventListener('click', () => {
+        const ship = window.ship;
+        const [kind, key] = String(ui.spawnUnitType?.value || '').split(':');
+        const side = ui.spawnUnitSide?.value || 'auto';
+        const mode = side === 'auto' ? undefined : side;
+        const count = Math.max(1, Math.min(20, Math.round(Number(ui.spawnUnitCount?.value) || 1)));
+        const spawnFn = kind === 'hull' ? window.spawnDevHull : window.spawnCallInShip;
+        if (!ship?.pos || !key || typeof spawnFn !== 'function') {
+          console.warn('[DevTools] Brak window.ship lub API spawnu (spawnDevHull / spawnCallInShip).');
+          return;
+        }
+
+        // Szereg w poprzek kursu, przed dziobem gracza.
+        const angle = Number(ship.angle) || 0;
+        const big = kind === 'call' && ['carrier', 'supercapital', 'atlas', 'megafreighter'].includes(key);
+        const spawnDist = big ? 6000 : 3000;
+        const spacing = big ? 2200 : 900;
+        const cx = (Number(ship.pos.x) || 0) + Math.cos(angle) * spawnDist;
+        const cy = (Number(ship.pos.y) || 0) + Math.sin(angle) * spawnDist;
+        const px = -Math.sin(angle);
+        const py = Math.cos(angle);
+        let spawned = 0;
+        for (let i = 0; i < count; i++) {
+          const off = (i - (count - 1) * 0.5) * spacing;
+          const pos = { x: cx + px * off, y: cy + py * off };
+          const opts = { spawnPos: pos, pos, spawnAngle: angle + Math.PI, singleModule: false };
+          if (mode) opts.mode = mode;
+          const result = spawnFn(key, opts);
+          if (Array.isArray(result) ? result.length : result) spawned++;
+        }
+        if (typeof window.toast === 'function') window.toast(`Spawn: ${count}x ${key}${spawned < count ? ` (udane: ${spawned})` : ''}`);
+        console.log(`[DevTools] Spawn ${kind}:${key} x${count} (${mode || 'auto'}) -> ${spawned}`);
       });
     }
 
