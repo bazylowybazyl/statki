@@ -1,10 +1,11 @@
-// Adapter uniformów TSL dla ringu „Halo” (port WebGPU, zadanie 06).
+// Uniformy TSL ringu „Halo” (port WebGPU, zadanie 06): blok uniformów
+// (`createUniformBlock`) i węzeł z wpisu (`nodeOf`).
 //
-// AGENT: lokalny pomocnik do czasu scalenia zadania 01 — po scaleniu przejść na
-// `uniformsAdapter` z `src/3d/tsl/uniformy.js` (ten plik ma wtedy tylko
-// re-eksportować albo zniknąć; importują go haloRingUniforms.js,
-// haloRingWorldGen.js, haloRingTSL.js). `createUniformBlock` warto przenieść do
-// src/3d/tsl/ — przyda się każdemu modułowi z wieloma tablicami uniformów.
+// Adapter `material.uniforms` dla zwykłych map węzłów jest wspólny — `uniformsAdapter`
+// / `uniformNode` / `makeUniforms` z `src/3d/tsl/uniformy.js` (zadanie 01); tu tylko
+// re-eksport (importy modułów ringu i zadań 07–10 z tego pliku działają dalej).
+// `createUniformBlock` zostaje przy ringu (AGENT: kandydat do src/3d/tsl/, gdy
+// drugi moduł będzie potrzebował wielu tablic uniformów w jednym buforze).
 //
 // material.uniforms / ring.uniforms zostają obiektem { uFoo: { value } }, więc kod
 // aktualizacji (`u.uFoo.value = x`, `u.uVec.value.set(...)`) się nie zmienia.
@@ -12,30 +13,11 @@
 import * as THREE from 'three';
 import { int, uniformArray } from 'three/tsl';
 
-// Mapa węzłów uniform()/texture()/uniformArray → adapter:
-//  - uniform() i texture() mają własne `.value` (liczba / Vector / Texture) — wchodzą wprost;
-//  - uniformArray trzyma dane gry w `node.array` (`node.value` to spakowany Float32Array,
-//    SPIKE 3) → opakowanie z `.value` = `node.array` i `.node` = węzeł.
-// Zmiana `.value` nie przebudowuje pipeline'u.
-export function uniformsAdapter(map) {
-  const out = {};
-  for (const [name, node] of Object.entries(map)) {
-    if (node && node.isArrayBufferNode && Array.isArray(node.array)) {
-      out[name] = {
-        node,
-        isUniformArrayRef: true,
-        get value() { return node.array; },
-        set value(v) { node.array = v; }
-      };
-    } else {
-      out[name] = node;
-    }
-  }
-  return out;
-}
+export { uniformsAdapter, uniformNode, makeUniforms } from '../tsl/uniformy.js';
 
-// Węzeł TSL wpisu adaptera (uniform/texture wprost, uniformArray i tablica bloku
-// z opakowania — tablica bloku to obiekt z `.element(i)`, nie Node).
+// Węzeł TSL wpisu: uniform()/texture() wprost; wpis tablicy adaptera z
+// src/3d/tsl/uniformy.js (`isUniformArrayAdapter`) i wpis bloku → `.node`
+// (tablica bloku to obiekt z `.element(i)`, nie Node).
 export function nodeOf(entry) {
   if (!entry) return null;
   if (entry.isNode || entry.isUniformBlockArray) return entry;

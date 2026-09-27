@@ -141,6 +141,48 @@ export async function attachLogs(chrome) {
   };
 }
 
+/**
+ * UUID three z osobnego strumienia losowego (tryb „--uuid osobne” w zrzuty.mjs).
+ * generateUUID three woła Math.random() 4× na każdy Object3D, materiał, teksturę, geometrię —
+ * a WebGPURenderer także na każdy węzeł TSL (tysiące przy imporcie three/webgpu i przy budowie
+ * materiałów). Na wspólnym Math.random z ziarnem (harness-strona.js) przesuwało to losowania
+ * gry: świat generowany przy ładowaniu (kąty planet → pozycja statku przy Ziemi) i przebieg
+ * scen z nowymi materiałami (wraki, warp) wychodziły inne niż w bazie WebGL. Podmiana idzie
+ * w odpowiedzi serwera (CDP Fetch, gra i tag bez zmian): cztery `dN = Math.random() * 0xffffffff | 0`
+ * z generateUUID (w paczce Vite `4294967295`) biorą window.__harnessUuidRandom.
+ * Wołać PRZED Page.navigate. Zwraca licznik { skrypty, podmienione } do kontroli.
+ */
+export async function osobneLosowanieUuid(cdp) {
+  const WZOR = /(\bd[0-3]\s*=\s*)Math\.random\(\)(\s*\*\s*(?:0xffffffff|4294967295)\s*\|\s*0)/g;
+  const stat = { skrypty: 0, podmienione: 0 };
+  const dalej = (requestId) => cdp.send('Fetch.continueRequest', { requestId }).catch(() => {});
+  cdp.on((msg) => {
+    if (msg.method !== 'Fetch.requestPaused') return;
+    const p = msg.params;
+    (async () => {
+      stat.skrypty++;
+      let body = null;
+      if (p.responseStatusCode === 200) {
+        try {
+          const r = await cdp.send('Fetch.getResponseBody', { requestId: p.requestId });
+          body = r.base64Encoded ? Buffer.from(r.body, 'base64').toString('utf8') : r.body;
+        } catch { body = null; }
+      }
+      if (!body || !body.includes('Math.random()')) return dalej(p.requestId);
+      let n = 0;
+      const out = body.replace(WZOR, (m, head, tail) => { n++; return `${head}(globalThis.__harnessUuidRandom || Math.random)()${tail}`; });
+      // generateUUID ma dokładnie cztery losowania — inna liczba = nie ten kod, zostaw plik.
+      if (n !== 4) return dalej(p.requestId);
+      stat.podmienione++;
+      const headers = (p.responseHeaders || []).filter((h) => !/^(content-length|content-encoding)$/i.test(h.name));
+      await cdp.send('Fetch.fulfillRequest', { requestId: p.requestId, responseCode: 200, responseHeaders: headers,
+        body: Buffer.from(out, 'utf8').toString('base64') }).catch(() => dalej(p.requestId));
+    })();
+  });
+  await cdp.send('Fetch.enable', { patterns: [{ urlPattern: '*', resourceType: 'Script', requestStage: 'Response' }] });
+  return stat;
+}
+
 /** Czeka, aż wyrażenie w stronie da prawdę. */
 export async function waitFor(cdp, expr, timeoutMs = 120000, stepMs = 250) {
   const t0 = Date.now();

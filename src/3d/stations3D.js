@@ -51,7 +51,7 @@ function getTemplate(stationId, path) {
     path,
     (gltf) => {
       const scene = gltf.scene;
-      const maxAnisotropy = Core3D.renderer ? Core3D.renderer.capabilities.getMaxAnisotropy() : 4;
+      const maxAnisotropy = Core3D.getMaxAnisotropy();
 
       const toRemove = [];
 

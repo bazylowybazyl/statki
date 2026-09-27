@@ -109,6 +109,10 @@ const out = {
   utworzono: new Date().toISOString(),
   tag: 'webgl-baseline',
   commitPrzebiegu: p1.commit,
+  // Kod gry bazy (tag) i tryb losowania UUID three w harnessie: „osobne” = własny strumień UUID (od zadania 01 —
+  // węzły TSL zużywały Math.random gry i przesuwały świat), „wspolne” = pierwsza baza z Fazy 0.
+  kodGry: args['kod-gry'] || poprzedni?.kodGry || 'tag webgl-baseline (kod gry d57cbdd)',
+  losowanieUuid: p1.losowanieUuid || 'wspolne',
   commitZapisu: git('rev-parse', '--short', 'HEAD'),
   polecenie: 'node scripts/webgpu/zrzuty.mjs --backend webgl --powtorz 2 --wydajnosc --out .tmp/webgpu/baseline',
   katalogPng: '.tmp/webgpu/baseline/webgl/p1',

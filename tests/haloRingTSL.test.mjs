@@ -158,6 +158,19 @@ test('createUniformBlock: skalary, wektory, tablice wektorów i liczb; nodeOf zw
   assert.equal(b.node.array[6].x, 9);
 });
 
+test('adapter uniformów ringu = wspólny z src/3d/tsl/uniformy.js (zadanie 01); nodeOf czyta jego wpisy tablic', async () => {
+  const shared = await import('../src/3d/tsl/uniformy.js');
+  const local = await import('../src/3d/haloRing/haloUniformsAdapter.js');
+  assert.equal(local.uniformsAdapter, shared.uniformsAdapter, 're-eksport, bez lokalnej kopii');
+  assert.equal(local.makeUniforms, shared.makeUniforms);
+  const u = shared.makeUniforms({ uT: 1, uV: new THREE.Vector3(), uArr: [new THREE.Vector4(), new THREE.Vector4()] });
+  assert.ok(u.uArr.isUniformArrayAdapter);
+  assert.equal(nodeOf(u.uArr), shared.uniformNode(u.uArr));
+  assert.ok(nodeOf(u.uArr).isNode);
+  assert.equal(nodeOf(u.uT), u.uT);
+  assert.doesNotMatch(read('src/3d/haloRing/haloUniformsAdapter.js'), /export function uniformsAdapter/);
+});
+
 test('pieczenie map: WGSL z jednym buforem (limit 12), mod jak GLSL, bez pow z ujemną podstawą, kwad v = 0 u góry', () => {
   const maps = new HaloWorldMaps(renderer, layoutOf('earth'), HALO_QUALITY.low);
   const geo = maps.quad.geometry;

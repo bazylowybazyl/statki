@@ -859,9 +859,11 @@ export const Weapon3DSystem = {
         }
     }   
     
-    if (Core3D.camera) {
-       Core3D.renderer.compile(Core3D.scene, Core3D.camera);
-    }
+    // WebGPU: compileAsync bez blokowania dla passa ortho (warstwa 0 — tam żyją
+    // pociski, wiązki i błyski), cel composerTarget (Core3D.prewarmPass).
+    // Projekcja idzie synchronicznie, więc tymczasowa widoczność wiązek działa.
+    // (Dawny warunek `Core3D.camera` był zawsze fałszywy — rozgrzewka nie szła.)
+    Core3D.prewarmPass(Core3D.scene, 0);
     
     // Ukrywamy po kompilacji
     for(const group of tempVisible) {

@@ -1,11 +1,11 @@
-# Zadanie 22 — Sprzątanie i domknięcie portu
-Zależności: 21 | Równolegle z: nie | Zalecany effort: xhigh
+# Zadanie 24 — Sprzątanie i domknięcie portu
+Zależności: 23 | Równolegle z: nie | Zalecany effort: xhigh
 Zakres: resztki GLSL i API WebGL w plikach gry, strażnicy testowi, moduły poza grą (wg decyzji użytkownika z PLAN §12),
 dokumentacja (`agents.md`, `docs/PORT-*.md`, `docs/webgpu/*`), końcowy przebieg harnessu.
 
 ## Cel
 Port zamknięty: gra bez GLSL i bez API WebGL, strażnik testowy tego pilnuje, dokumentacja opisuje stan WebGPU + TSL
-(z nowymi efektami broni i rakiet z zadań 17–19), końcowe zestawienie z bazą w `POSTEP.md`. Sceny z nowymi efektami
+(z nowymi efektami broni, rakiet, asteroid i warpa z zadań 17–22), końcowe zestawienie z bazą w `POSTEP.md`. Sceny z nowymi efektami
 porównuje się z zatwierdzonym obrazem z `main`, nie z tagiem.
 
 ## Przeczytaj najpierw
@@ -32,7 +32,7 @@ porównuje się z zatwierdzonym obrazem z `main`, nie z tagiem.
    `forceSinglePass`, grafu współdzielonego, rozgrzewki passów); sekcję „Port WebGPU (w toku)” zamień na krótką
    „Render: WebGPU + TSL”. `docs/PORT-*.md` — fragmenty z instrukcjami GLSL.
 6. **Końcowy harness** vs baza: wszystkie sceny i warianty, `spis.zamienniki` = 0, w tolerancji albo uzasadnienie per
-   scena (sceny z nowymi efektami — `galeria-broni`, `galeria-rakiet`, bitwy — vs zatwierdzone przebiegi z 17–19);
+   scena (sceny z nowymi efektami — `galeria-broni`, `galeria-rakiet`, bitwy — vs zatwierdzone przebiegi z 17–22);
    zestawienie w `POSTEP.md`.
 7. **`README.md` / `POSTEP.md`:** port zakończony; harness na przyszłość (bazy nowych scen robi się z `main`, nie z tagu).
 8. Tag `webgpu-port` na ostatnim commicie portu (lokalnie); bez `git push` (PLAN §12 p. 4).

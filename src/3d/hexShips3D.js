@@ -975,21 +975,13 @@ function createManagedTexture(source, isLinearData = false) {
     (typeof HTMLCanvasElement !== 'undefined' && source instanceof HTMLCanvasElement) ||
     (typeof OffscreenCanvas !== 'undefined' && source instanceof OffscreenCanvas);
   const texture = isCanvas ? new THREE.CanvasTexture(source) : new THREE.Texture(source);
-  const width = Number(source?.width ?? source?.naturalWidth ?? 0) || 0;
-  const height = Number(source?.height ?? source?.naturalHeight ?? 0) || 0;
-  const isPowerOfTwo = width > 0 && height > 0 && THREE.MathUtils.isPowerOfTwo(width) && THREE.MathUtils.isPowerOfTwo(height);
-  const isWebGL2 = !!Core3D?.renderer?.capabilities?.isWebGL2;
-  const canUseMipmaps = isWebGL2 || isPowerOfTwo;
+  // WebGPU (jak dawniej WebGL2) ma mipmapy także dla tekstur NPOT (sprite'y
+  // kadłubów), więc zawsze trilinear + anizotropia do 4.
   texture.flipY = false;
   texture.magFilter = THREE.LinearFilter;
-  texture.minFilter = canUseMipmaps ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter;
-  texture.generateMipmaps = canUseMipmaps;
-  if (canUseMipmaps && Core3D?.renderer?.capabilities?.getMaxAnisotropy) {
-    const maxAnisotropy = Core3D.renderer.capabilities.getMaxAnisotropy();
-    texture.anisotropy = Math.max(1, Math.min(4, maxAnisotropy || 1));
-  } else {
-    texture.anisotropy = 1;
-  }
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.generateMipmaps = true;
+  texture.anisotropy = Math.max(1, Math.min(4, Core3D.getMaxAnisotropy() || 1));
   texture.colorSpace = isLinearData ? THREE.LinearSRGBColorSpace : THREE.SRGBColorSpace;
   texture.needsUpdate = true;
   return texture;
@@ -2242,6 +2234,7 @@ export function initHexShips3D({ canvas = null } = {}) {
 // dziesięć własnych programów shaderowych. Bez kompilacji na ekranie
 // ładowania pierwszy strzał każdej rodziny broni gubi klatkę.
 function prewarmFx3D() {
+  // Core3D.renderer istnieje dopiero przy gotowym urządzeniu WebGPU.
   if (!Fx3D.ensure() || !Core3D.renderer || !Core3D.cameraOrtho) return false;
   const meshes = Fx3D.meshes;
   for (const trail of [RailgunFX3D.prewarm(), BulletTrails.prewarm(), MainExhaust3D.prewarm()]) {
@@ -2254,7 +2247,10 @@ function prewarmFx3D() {
   meshes.push(...HullDebris3D.prewarm());
   const prev = meshes.map((m) => m.visible);
   for (const m of meshes) m.visible = true;
-  Core3D.renderer.compile(Core3D.scene, Core3D.cameraOrtho);
+  // compileAsync bez blokowania (Core3D.prewarmPass: cel composerTarget, warstwa
+  // ortho, bez cullingu); projekcja idzie synchronicznie, więc widoczność można
+  // przywrócić zaraz po wywołaniu. Błąd tylko do konsoli.
+  Core3D.prewarmPass(Core3D.scene, 0);
   meshes.forEach((m, i) => { m.visible = prev[i]; });
   return true;
 }

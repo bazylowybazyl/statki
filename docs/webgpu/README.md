@@ -41,6 +41,9 @@ edytuje plików z jego zakresu (zwłaszcza `src/3d/core3d.js`, `index.html`) —
 Które mogą iść naraz: kolumna „Równolegle z” w `POSTEP.md` / `PLAN.md` §9. Najwyżej 2–3 naraz (wspólne GPU).
 
 1. Start sesji we własnym worktree: `claude --worktree webgpu-NN` (albo worktree z aplikacji) — osobny katalog i gałąź.
+   Ręcznie: `git -c core.autocrlf=false worktree add -b webgpu/NN ../statki-wt/NN main` — **bez `-c core.autocrlf=false`**
+   repo (`core.autocrlf=true`) wypakuje pliki z CRLF, a kilka testów-strażników (regexy po źródłach) padnie fałszywie
+   (zadanie 06 widziało ~5). Z tą opcją pliki mają LF i `git status` jest czysty.
 2. `node_modules`: worktree go nie ma. **Kopia, nie dowiązanie** (~150 MB bez Electrona, który harnessowi niepotrzebny):
 
    ```powershell
@@ -59,7 +62,7 @@ Które mogą iść naraz: kolumna „Równolegle z” w `POSTEP.md` / `PLAN.md` 
    Każda równoległa sesja inny `--port` (domyślny 5340; np. 5341, 5342).
 4. Koniec: commit w worktree; w głównym katalogu `git merge <gałąź worktree>`. Konflikty zwykle w `POSTEP.md` (zachowaj
    oba wpisy), `INWENTARZ.md` (wygeneruj od nowa: `node scripts/webgpu/inwentarz.mjs`) i `agents.md`.
-5. **Pomiary wydajności** (`--wydajnosc`, `--tylko-wydajnosc`, zadanie 21) tylko wtedy, gdy nic innego nie obciąża GPU
+5. **Pomiary wydajności** (`--wydajnosc`, `--tylko-wydajnosc`, zadanie 23) tylko wtedy, gdy nic innego nie obciąża GPU
    (inne sesje, dema WebGPU, harnessy). Zrzuty obrazu są na to odporne, liczby ms — nie.
 
 ## Harness zrzutów
@@ -94,7 +97,7 @@ node scripts/webgpu/zrzuty.mjs --backend webgpu --out .tmp/webgpu/zadania/NN --b
 Scena z zamiennikami (`spis.zamienniki` > 0 w `wyniki.json`) nie musi być w tolerancji — patrz na jej warianty warstw.
 Regresje względem poprzedniego zadania: `node scripts/webgpu/porownaj.mjs --a .tmp/webgpu/zadania/<poprzednie>/webgpu --b .tmp/webgpu/zadania/NN/webgpu --out .tmp/webgpu/zadania/NN/vs-poprzednie`.
 
-### Nowe efekty z dem (zadania 17–19)
+### Nowe efekty z dem (zadania 17–22)
 
 Stare efekty broni i rakiet wyglądają inaczej niż nowe, więc sceny z nimi (`galeria-broni`, `galeria-rakiet`, bitwy)
 nie mają bazy w tagu. Sesja zadania kładzie zrzuty gry obok zrzutów dema (`scripts/webgpu/bronie-demo.mjs --tryb zrzuty`,

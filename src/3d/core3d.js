@@ -1,40 +1,48 @@
 ﻿// src/3d/core3d.js
-import * as THREE from 'three';
-import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+//
+// Jedyny rdzeń renderu 3D gry: WebGPURenderer (three/webgpu) i TSL — port WebGPU,
+// docs/webgpu/PLAN.md §2. Model klatki jak na WebGL: passy scen rysowane ręcznie
+// po warstwach do JEDNEGO celu MSAA HalfFloat (composerTarget), czyszczona tylko
+// głębia między passami, potem post jako węzły TSL w RenderPipeline
+// (outputColorTransform = false — ACES i sRGB robi gra, kolorGry.js).
+// Nieprzeniesione ShaderMaterial rysują się magentowym zamiennikiem
+// (src/3d/tsl/zamiennik.js). Tylko WebGPU: bez adaptera renderer nie powstaje,
+// gra pokazuje komunikat (Core3D.ready → false, gpuUnsupported).
+import * as THREE from 'three/webgpu';
+import { Fn, texture, vec4 } from 'three/tsl';
 import { BLOOM_DEFAULTS } from './bloomConfig.js';
-import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { Shockwave3DManager } from '../effects3d/shockwave3D.js';
 import { HULL_SDF_MAX_STEPS, HULL_SDF_OCCLUDER_FLOATS, HULL_SDF_SHADOW_GLSL, HULL_SDF_SHAFT_CAP } from './hullShadowSdf.js';
 import { sunShadowUniforms } from './sunShadowMask.js';
-import { createWarpLensShader, computeWarpLensUniforms, packWarpSpacePrims, WARP_SPACE_MAX_PRIMS } from './warpLens3D.js';
+import { installPlaceholders } from './tsl/zamiennik.js';
+import { acesGry, linearDoSrgb } from './tsl/kolorGry.js';
 
 const MAX_HEAT_HAZE_SOURCES = 24;
-// Fale warpa w uberPassie (pierścień, szew, łuk) — drgają całą klatkę, także
-// kadłuby. 16: przylot floty zgłasza naraz kilka fal na okręt.
-const MAX_WARP_WAVES = 16;
-// Soczewka skoku: zgłoszenie starsze niż tyle ms jest martwe (gra przestała
-// wołać setWarpLensWorld, np. wyjątek w ramce) — soczewka nie zostaje w kadrze.
-const WARP_LENS_STALE_MS = 250;
-// Cel tła soczewki powstaje przy pierwszym skoku; po tylu ms bez skoku
-// oddajemy go (HalfFloat + mipmapy + głębia, pełna rozdzielczość bufora).
-const WARP_LENS_TARGET_IDLE_MS = 30000;
 // Zastępcze flagi warstw dla wolnej kamery (lot nad miastem): renderuj wszystko.
 const LAYERS_ALL_ACTIVE = Object.freeze({ planets: true, halo: true, ringPlanets: true, shields: true });
 const PLANET_RENDER_LAYER = 3;
 const PLANET_HALO_RENDER_LAYER = 5;
 const RING_PLANET_RENDER_LAYER = 6;
-// Widok skoku: gwiazdy gry na czas kropli we własnym celu (patrz setWarpStarsObject).
-const WARP_STARS_RENDER_LAYER = 8;
 // Tło menu głównego (menuBackdrop3D.js): Ziemia z ringiem w kamerze kinowej.
 // Rysuje ją tylko renderBackdrop — passy gry tej warstwy nie widzą.
 export const MENU_BACKDROP_LAYER = 9;
-function finiteOr(v, d) { return Number.isFinite(v) ? v : d; }
+// Limity urządzenia brane z adaptera (PLAN §2, POSTEP § Limity): domyślne
+// urządzenie WebGPU ma minimum ze specyfikacji — 8192 px tekstury (planety 8K,
+// mapy ringu „Ultra” 16K), 16 tekstur i 16 varyingów na etap.
+export const GPU_REQUIRED_LIMITS = Object.freeze([
+  'maxTextureDimension2D', 'maxTextureArrayLayers', 'maxSampledTexturesPerShaderStage',
+  'maxInterStageShaderVariables', 'maxVertexAttributes', 'maxStorageBuffersPerShaderStage',
+  'maxStorageTexturesPerShaderStage', 'maxColorAttachmentBytesPerSample', 'maxBufferSize',
+  'maxStorageBufferBindingSize', 'maxComputeInvocationsPerWorkgroup', 'maxComputeWorkgroupStorageSize',
+  'maxComputeWorkgroupSizeX', 'maxComputeWorkgroupSizeY'
+]);
 // Tarcze: własna warstwa ortho (kamera ortho, bez czyszczenia głębi). Tarcza
 // to emisja (blend addytywny), a nie powierzchnia oświetlana słońcem — maski
 // cienia nie czyta i świeci w cieniu planety tak samo jak poza nim.
 const SHIELD_RENDER_LAYER = 7;
+// Warstwy rysowane kamerą ortho (reszta — perspektywą): świat gry, ring-planety,
+// tarcze. Rozgrzewka passa (prewarmPass) bierze z tego kamerę dla warstwy.
+const ORTHO_PASS_LAYERS = new Set([0, RING_PLANET_RENDER_LAYER, SHIELD_RENDER_LAYER]);
 // Shadow shafts: WSZYSTKIE okludery są analityczne (dyski / pola odległości
 // kadłubów / pierścienie w world-space, liczone per piksel w shaderze passa).
 // Pass NIE mnoży już obrazu — pisze maskę widoczności słońca (sunShadowTarget,
@@ -73,6 +81,10 @@ export function resolveShadowShaftsQuality(level) {
   return { level: SHADOW_SHAFTS_QUALITY[norm] ? norm : 'medium', ...cfg };
 }
 
+// Źródło GLSL passa maski słońca — port do TSL w zadaniu 03 (docs/webgpu/zadania/
+// 03-post-cienie-refrakcja.md). Na WebGPU nie powstaje z niego żaden materiał:
+// do zadania 03 maska jest wyłączona (uSunShadowOn = 0, shadowShaftsPass = null),
+// a uniformy tego opisu pakuje _renderSunShadowMask dopiero przy passie TSL.
 function createShadowShaftsShader() {
   return {
     name: 'ShadowShaftsCompositeShader',
@@ -269,57 +281,37 @@ const BLEND_ADD_ONE_ONE = {
   blendDstAlpha: THREE.OneFactor
 };
 
-const PLANET_HALO_BLEND_SHADER = {
-  name: 'PlanetHaloBlendShader',
-  uniforms: { tPlanetHalo: { value: null } },
-  vertexShader: `precision highp float; varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-  fragmentShader: `precision highp float; uniform sampler2D tPlanetHalo; varying vec2 vUv; void main() { gl_FragColor = texture2D(tPlanetHalo, vUv); }`
-};
-
-const SCENE_RESOLVE_SHADER = {
-  name: 'SceneResolveShader',
-  uniforms: { tDiffuse: { value: null } },
-  vertexShader: `precision highp float; varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-  fragmentShader: `precision highp float; uniform sampler2D tDiffuse; varying vec2 vUv; void main() { gl_FragColor = texture2D(tDiffuse, vUv); }`
-};
-
-// Pełnoekranowy quad blendowany sprzętowo w bufor docelowy — zamiennik
-// ShaderPassa czytającego tDiffuse w środku łańcucha scen. ShaderPass wymuszał
-// tam resolve MSAA, a three po resolve INWALIDUJE renderbuffer multisample —
-// kolejne passy blendowały w niezdefiniowaną pamięć (czarne kafle przy
-// obciążeniu). Quad z blendingiem pisze wprost do bufora MSAA bez resolve.
-class FullScreenBlendPass extends Pass {
-  constructor(shader, blendConfig = {}) {
-    super();
-    this.needsSwap = false;
-    this.material = new THREE.ShaderMaterial({
-      name: shader.name || 'FullScreenBlendPass',
-      uniforms: THREE.UniformsUtils.clone(shader.uniforms),
-      vertexShader: shader.vertexShader,
-      fragmentShader: shader.fragmentShader,
-      depthTest: false,
-      depthWrite: false,
-      transparent: true
-    });
-    Object.assign(this.material, blendConfig);
-    this.uniforms = this.material.uniforms;
-    this.fsQuad = new FullScreenQuad(this.material);
-  }
-
-  render(renderer, writeBuffer, readBuffer) {
-    const oldAutoClear = renderer.autoClear;
-    renderer.autoClear = false;
-    renderer.setRenderTarget(this.renderToScreen ? null : readBuffer);
-    this.fsQuad.render(renderer);
-    renderer.autoClear = oldAutoClear;
-  }
-
-  dispose() {
-    this.material.dispose();
-    this.fsQuad.dispose();
-  }
+// Pełnoekranowy quad (QuadMesh + materiał węzłowy) dokładany do bieżącego celu —
+// halo planet w passach sceny. Backend WebGPU trzyma zawartość celu MSAA między
+// render() (storeOp store, SPIKE 4b), więc quad z blendingiem pisze wprost do
+// composerTarget; obejście z WebGL (inwalidacja renderbuffera po resolve) znika.
+function makeFullscreenBlendPass(name, bucket, sourceTexture, blendConfig) {
+  const material = new THREE.NodeMaterial();
+  material.name = name;
+  material.fragmentNode = texture(sourceTexture);
+  material.depthTest = false;
+  material.depthWrite = false;
+  material.transparent = true;
+  material.fog = false;
+  material.lights = false;
+  Object.assign(material, blendConfig);
+  const quad = new THREE.QuadMesh(material);
+  quad.name = name;
+  return { name, bucket, enabled: true, quad, material };
 }
 
+// Pass sceny: jedna warstwa, kamera ortho albo perspektywa passów Core3D, do
+// bieżącego celu (composerTarget). clearColor = czyści kolor i głębię (tło),
+// clearDepth = sama głębia; tarcze bez czyszczenia — testują głębię passa ortho.
+function makeScenePass(name, bucket, layer, isOrtho, clearColor, clearDepth = true) {
+  return { name, bucket, layer, ortho: isOrtho, clearColor, clearDepth, enabled: true };
+}
+
+// Źródło GLSL „uber” (gorące powietrze do 24 źródeł, dyspersja dysz, ACES gry,
+// LinearTosRGB) — port do TSL w zadaniu 02. Na WebGPU nie powstaje z niego
+// materiał: post zadania 01 to uber-lite (_createPost: ACES gry + sRGB z
+// kolorGry.js), źródła gorącego powietrza zbierane są dalej i kasowane co klatkę.
+// Fale warpa usunięte (warp poza portem, USTALENIA §7).
 const UberPostShader = {
   name: 'UberPostShader',
   uniforms: {
@@ -329,10 +321,7 @@ const UberPostShader = {
     uGlobalStrength: { value: 1.0 },
     uAspect: { value: 1.0 },
     uHeatSources: { value: Array.from({ length: MAX_HEAT_HAZE_SOURCES }, () => new THREE.Vector4(2, 2, 0, 0)) },
-    uHeatDirs: { value: Array.from({ length: MAX_HEAT_HAZE_SOURCES }, () => new THREE.Vector2(0, 0)) },
-    uWaveCount: { value: 0 },
-    uWaves: { value: Array.from({ length: MAX_WARP_WAVES }, () => new THREE.Vector4(2, 2, 0, 0)) },
-    uWaveShape: { value: Array.from({ length: MAX_WARP_WAVES }, () => new THREE.Vector4(0, 0, 1, 0)) }
+    uHeatDirs: { value: Array.from({ length: MAX_HEAT_HAZE_SOURCES }, () => new THREE.Vector2(0, 0)) }
   },
   vertexShader: `precision highp float; varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
   fragmentShader: `
@@ -354,9 +343,6 @@ const UberPostShader = {
     uniform float uAspect;
     uniform vec4 uHeatSources[${MAX_HEAT_HAZE_SOURCES}];
     uniform vec2 uHeatDirs[${MAX_HEAT_HAZE_SOURCES}];
-    uniform int uWaveCount;
-    uniform vec4 uWaves[${MAX_WARP_WAVES}];
-    uniform vec4 uWaveShape[${MAX_WARP_WAVES}];
 
     float hash12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
     float noise(vec2 p) { vec2 i = floor(p); vec2 f = fract(p); float a = hash12(i); float b = hash12(i + vec2(1.0, 0.0)); float c = hash12(i + vec2(0.0, 1.0)); float d = hash12(i + vec2(1.0, 1.0)); vec2 u = f * f * (3.0 - 2.0 * f); return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y; }
@@ -428,37 +414,6 @@ const UberPostShader = {
         vec2 disp = vec2(-wob.x * 1.4, wob.y * 0.6) * (0.0035 * ampl);
         distortion += disp / asp;
       }
-
-      // Fale warpa (warpFx3D.js): W = (u, v, promien, amplituda) w osi v,
-      // S = (typ, szerokosc, os). Typ 0 — pierscien: przesuniecie promieniowe
-      // (pochodna gaussa) w pasmie wokol promienia; typ 2 — luk: to samo
-      // z oknem katowym wokol osi (fala dziobowa); typ 1 — szew: drganie
-      // wzdluz odcinka o polowie dlugosci W.z, zanik w poprzek na S.y.
-      for (int i = 0; i < ${MAX_WARP_WAVES}; i++) {
-        if (i >= uWaveCount) break;
-        vec4 wv = uWaves[i];
-        vec4 ws = uWaveShape[i];
-        vec2 wp = (uv - wv.xy) * asp;
-        if (ws.x < 0.5 || ws.x > 1.5) {
-          float wr = length(wp);
-          float wk = (wr - wv.z) / max(ws.y, 1e-5);
-          if (abs(wk) < 3.0 && wr > 1e-5) {
-            vec2 wdir = wp / wr;
-            float wwin = ws.x > 1.5 ? smoothstep(0.15, 0.75, dot(wdir, ws.zw)) : 1.0;
-            distortion -= wdir * (wv.w * wk * exp(-wk * wk) * wwin) / asp;
-          }
-        } else {
-          vec2 wax = ws.zw;
-          float wl = dot(wp, wax) / max(wv.z, 1e-5);
-          float wc = dot(wp, vec2(-wax.y, wax.x)) / max(ws.y, 1e-5);
-          if (abs(wl) < 1.0 && abs(wc) < 3.0) {
-            float wm = (1.0 - wl * wl) * exp(-wc * wc);
-            vec2 wn = vec2(wl * 5.0 - uTime * 3.1 + float(i) * 3.7, wc * 1.7 + uTime * 0.9);
-            vec2 wo = vec2(noise(wn), noise(wn + vec2(9.2, 4.1))) - 0.5;
-            distortion += wo * (wv.w * wm) / asp;
-          }
-        }
-      }
       distortion = clamp(distortion, vec2(-0.022), vec2(0.022));
       nozzleHaze = clamp(nozzleHaze, vec2(-0.012), vec2(0.012));
       #endif
@@ -487,121 +442,36 @@ function recordRenderDbg(name, ms) {
   fn(name, ms);
 }
 
-// doClearDepth=false: pass dorysowuje się do bufora głębi zostawionego przez
-// poprzedni pass (używane przez pass tarcz, żeby tarcza dalej testowała
-// głębię względem świata ortho zamiast kłaść się na wszystkim).
-function makeSplitScreenRenderPass(pass, layerId, isOrtho, doClearColor, doClearDepth = true) {
-  pass.clear = false;
-
-  pass.render = function(renderer, writeBuffer, readBuffer) {
-      const oldAutoClear = renderer.autoClear;
-      renderer.autoClear = false; 
-
-      const target = this.renderToScreen ? null : readBuffer;
-      renderer.setRenderTarget(target);
-
-      const tw = target ? target.width : renderer.domElement.width;
-      const th = target ? target.height : renderer.domElement.height;
-      const isSplit = typeof window !== 'undefined' && window.splitScreenMode && Core3D.activeCam2;
-
-      const oldCol = renderer.getClearColor(new THREE.Color());
-      const oldAlpha = renderer.getClearAlpha();
-
-      if (isSplit) {
-          const halfW = Math.floor(tw / 2);
-          renderer.setScissorTest(true);
-
-          // GRACZ 1 (Lewa poĹ‚Ăłwka)
-          renderer.setViewport(0, 0, halfW, th);
-          renderer.setScissor(0, 0, halfW, th);
-          if (doClearColor) {
-              renderer.setClearColor(0x000000, 0.0);
-              renderer.clear(true, true, true);
-          } else if (doClearDepth) {
-              renderer.clear(false, true, false);
-          }
-
-          // KLUCZ: Przekazujemy halfW, aby aspekt kamery wynosiĹ‚ (halfW / th)
-          Core3D.syncCamera(Core3D.activeCam1, halfW, th, 0);
-          this.camera = Core3D.getPassCamera(isOrtho);
-          this.camera.layers.set(layerId);
-          renderer.render(this.scene, this.camera);
-
-          // GRACZ 2 (Prawa poĹ‚Ăłwka)
-          renderer.setViewport(halfW, 0, tw - halfW, th);
-          renderer.setScissor(halfW, 0, tw - halfW, th);
-          if (doClearColor) {
-              renderer.setClearColor(0x000000, 0.0);
-              renderer.clear(true, true, true);
-          } else if (doClearDepth) {
-              renderer.clear(false, true, false);
-          }
-
-          Core3D.syncCamera(Core3D.activeCam2, halfW, th, halfW);
-          this.camera = Core3D.getPassCamera(isOrtho);
-          this.camera.layers.set(layerId);
-          renderer.render(this.scene, this.camera);
-
-          renderer.setScissorTest(false);
-          renderer.setViewport(0, 0, tw, th);
-      } else {
-          // Tryb Single Player - bez zmian
-          renderer.setViewport(0, 0, tw, th);
-          renderer.setScissorTest(false);
-          if (doClearColor) {
-              renderer.setClearColor(0x000000, 0.0);
-              renderer.clear(true, true, true);
-          } else if (doClearDepth) {
-              renderer.clear(false, true, false);
-          }
-          Core3D.syncCamera(Core3D.activeCam1, tw, th, 0);
-          this.camera = Core3D.getPassCamera(isOrtho);
-          this.camera.layers.set(layerId);
-          renderer.render(this.scene, this.camera);
-      }
-      renderer.setClearColor(oldCol, oldAlpha);
-      renderer.autoClear = oldAutoClear;
-  };
-}
+// Gotowość urządzenia: Core3D.ready rozwiązuje się raz — true (WebGPU gotowe)
+// albo false (brak WebGPU: gra pokazuje komunikat, renderer nie powstaje).
+let resolveGpuReady = null;
+const gpuReadyPromise = new Promise((resolve) => { resolveGpuReady = resolve; });
 
 export const Core3D = {
   activeCam1: { x: 0, y: 0, zoom: 1 },
+  // Druga kamera podzielonego ekranu (window.camera2) — ustawia ją syncCamera;
+  // passy jej nie czytają: split to dwa renderSingle + wycinki (drawHexShips3D).
   activeCam2: null,
 
   canvas: null, renderer: null, scene: null, cameraOrtho: null, cameraPersp: null,
+  // Część synchroniczna init() (scena, kamery, cele) → isInitialized; urządzenie
+  // WebGPU → gpuReady / ready (render, kompilacja, wgrywanie tekstur czekają).
+  ready: gpuReadyPromise, gpuReady: false, gpuUnsupported: false, gpuError: null,
   shadowCatcher: null, shadowCatcherFg: null, shadowCatchersDebug: false,
-  composerTarget: null, postTarget: null, sceneResolvePass: null, _scenePasses: null, _postPasses: null,
+  composerTarget: null, _scenePasses: null, _post: null,
   refractionTarget: null, shockwave3DManager: null, _shockwavePrevTime: 0,
   _refractionValid: false, _refractionFlip: false,
   planetHaloTarget: null, haloDepthMaskMaterial: null,
 
   renderPassBg: null, renderPassPlanets: null, planetHaloPass: null, renderPassRingPlanets: null, renderPassOrtho: null, renderPassShields: null, renderPassFg: null,
-  // Soczewka skoku (warpLens3D.js): tło (warstwa 1) renderuje się wtedy do
-  // warpLensTarget, a warpLensPass kładzie je zakrzywione do bufora sceny.
-  // Zgłoszenie z gry w świecie (setWarpLensWorld), uniformy liczone w render().
-  warpLensTarget: null, warpLensPass: null, _warpLensActive: false, _warpLensLastUseMs: 0,
-  // Widok skoku: gwiazdy gry osobno od mgławicy (setWarpStarsObject).
-  warpStarTarget: null, renderPassWarpStars: null, _warpStarsObject: null, _warpStarsOn: false,
-  _warpLensRequest: { x: 0, y: 0, angle: 0, radiusAlong: 0, radiusAcross: 0, swallow: 0, stampMs: -Infinity },
-  _warpLensUniformScratch: { centerU: 0.5, centerV: 0.5, axisX: 1, axisY: 0, radiusAlong: 0, radiusAcross: 0, aspect: 1, swallow: 0 },
-  // Efekty warpa (warpFx3D.js): prymitywy zgięcia tła (ten sam pass co soczewka)
-  // i fale w uberPassie. Producent dorzuca co klatkę, render zabiera i zeruje.
-  _warpSpaceReq: Array.from({ length: WARP_SPACE_MAX_PRIMS }, () => ({ type: 0, x: 0, y: 0, angle: 0, a: 0, b: 0, strength: 0 })),
-  _warpSpaceCount: 0,
-  _warpWaveReq: Array.from({ length: MAX_WARP_WAVES }, () => ({ type: 0, x: 0, y: 0, radius: 0, width: 0, amp: 0, angle: 0 })),
-  _warpWaveCount: 0,
-  // Widok skoku (warpWorldLens.js): kropla wokół statku + opływ tła — też w passie soczewki.
-  _warpViewReq: {
-    x: 0, y: 0, radiusPx: 0, beta: 0, angle: 0, phase: 0, travel: 1.2, blur: 0.3, gain: 0.8, fisheye: 1, front: 1000, band: 0.35,
-    dropUa: 0, dropRa: 1, dropUb: 0, dropRb: 1,
-    // Kształt: 0 = kropla, 1 = bańka Alcubierre'a (warpAlcubierreHeight).
-    mode: 0, alcPeak: 0.6, alcWidth: 0.42, alcFlat: 2.5, alcAmp: 0.05, tintGain: 0.12, shadeGain: 1.0,
-    stampMs: -Infinity
-  },
   heatHazeSources: null, heatHazeDirs: null, heatHazeCount: 0, heatHazeMaxSources: MAX_HEAT_HAZE_SOURCES, _heatHazeWorldScratch: new THREE.Vector3(),
   // shadowShaftsPass pisze maskę widoczności słońca do sunShadowTarget (RGBA8,
-  // rozmiar bufora sceny, bez MSAA) — patrz sunShadowMask.js.
+  // rozmiar bufora sceny, bez MSAA) — patrz sunShadowMask.js. Pass TSL powstaje
+  // w zadaniu 03; do tego czasu null, a maska wyłączona (uSunShadowOn = 0).
   shadowShaftsPass: null, sunShadowTarget: null, _sunShadowTexelW: 1, _sunShadowTexelH: 1,
+  // Światło z mapą cienia (słońce gry, planet3d.assets.js): odświeżane raz na
+  // klatkę na starcie render() — w WebGPU cień jest per światło (SPIKE 9).
+  _sunShadowLight: null,
   // Analityczne okludery shaftów, zgłaszane co klatkę przez systemy gry:
   // dyski (planet3d.assets + asteroidField3D), kapsuły (hexShips3D),
   // pierścienie (ringi „Halo”, haloRingGame.js — Map po kluczu ringu, bez begin/reset).
@@ -616,19 +486,25 @@ export const Core3D = {
   // Flagi ustawiają właściciele: planet3d.assets.js (tym samym cullingiem, którym
   // chowa planety) i shield3D.js — zachowawczo, w razie wątpliwości true.
   layerActivity: { planets: true, halo: true, ringPlanets: true, shields: true },
-  uberPass: null,
+  // Bloom (BloomNode w RenderPipeline) — zadanie 02; do tego czasu null, a
+  // strojenie (bloomConfig.js, DevVFX.bloom) czeka w _getBloomConfig.
   bloomPass: null, bloomResolutionScale: BLOOM_DEFAULTS.resolutionScale, bloomBaseStrength: BLOOM_DEFAULTS.strength, bloomBaseThreshold: BLOOM_DEFAULTS.threshold,
   msaaSamples: 0,
   // Zegar GPU. Timery per pass mierzą czas CPU wokół pracy asynchronicznej, więc
   // gdy wąskim gardłem staje się karta, blokada wypada w losowym draw callu i
   // rozmazuje się po wszystkich passach — trzy razy w tej sesji wyglądało to jak
   // "wszystko nagle zwolniło 5x przy identycznej liczbie wywołań". To jest
-  // jedyny pomiar, który rozstrzyga CPU vs GPU.
+  // jedyny pomiar, który rozstrzyga CPU vs GPU. WebGPU: znaczniki czasu
+  // (trackTimestamp, cecha timestamp-query) rozwiązywane asynchronicznie —
+  // najwyżej jedno zapytanie w locie na typ (render / compute), bez narastania
+  // Promise (SPIKE 8); wynik = ms GPU ostatniej rozwiązanej klatki.
   gpuFrameMs: 0,
-  _gpuTimerExt: null,
-  _gpuQueryPool: null,
-  _gpuQueryPending: null,
-  _gpuQueryActive: null,
+  gpuComputeMs: 0,
+  _gpuTimerPending: { render: false, compute: false },
+  _gpuTimerFrame: -1,
+  _onGpuRenderTimestamp: null,
+  _onGpuComputeTimestamp: null,
+  _onGpuTimestampError: null,
   perfToggles: { bloom: true, heatHaze: true, shadowShafts: true, threeShadows: true, bgPass: true, planetPass: true, orthoPass: true, fgPass: true, fgBuildings: true, fgStations: true, fgWeapons: true, fgShadows: true, enginePointLights: false },
   shadowShaftsQuality: 'medium',
   _shaftCfg: resolveShadowShaftsQuality('medium'),
@@ -638,7 +514,11 @@ export const Core3D = {
   lastFramePerf: null,
   lastFrameRenderInfo: null,
   _renderInfoBefore: { calls: 0, triangles: 0, points: 0, lines: 0 },
+  _renderInfoStart: { calls: 0, triangles: 0, points: 0, lines: 0 },
+  _renderInfoFrame: -1,
   _renderInfoBucketNames: ['refraction', 'bg', 'planets', 'shafts', 'ortho', 'fg', 'bloom', 'post', 'other'],
+  // window.__rendererInfo — jeden obiekt na sesję (harness i PerfHUD go czytają).
+  _rendererInfoOut: { calls: 0, triangles: 0, points: 0, lines: 0, passes: null },
 
   _getBloomConfig() {
     const bloom = (typeof window !== 'undefined' && window.DevVFX?.bloom) ? window.DevVFX.bloom : null;
@@ -683,15 +563,35 @@ export const Core3D = {
     bucket.ms = 0;
   },
 
+  // Na starcie render() / renderBackdrop(): kubełki na zero, stan liczników
+  // renderera zapamiętany (suma = przyrost od tej chwili). Liczniki three zerujemy
+  // RAZ na klatkę rAF (info.frame), nie na każdy render: podzielony ekran to dwa
+  // renderSingle w klatce, a uid zapytań czasu GPU zawiera render.frameCalls —
+  // reset w środku klatki dawał drugiej połówce te same uid (ms pierwszej ginęły).
+  _beginRenderInfo() {
+    const renderer = this.renderer;
+    const frame = renderer.info.frame;
+    if (frame !== this._renderInfoFrame) {
+      renderer.info.reset();
+      this._renderInfoFrame = frame;
+    }
+    this._resetRenderInfoBuckets();
+    this._readRenderInfoInto(this._renderInfoStart);
+  },
+
   _resetRenderInfoBuckets() {
     const info = this._ensureRenderInfoBuckets();
     this._zeroRenderInfoBucket(info.total);
     for (const name of this._renderInfoBucketNames) this._zeroRenderInfoBucket(info[name]);
   },
 
+  // Liczniki renderera (info.autoReset = false, reset ręczny raz na klatkę —
+  // _beginRenderInfo). WebGPU: draw calle = render.drawCalls — render.calls liczy
+  // wywołania render() i reset() go nie zeruje (SPIKE 14). Pole `calls` kubełków
+  // zostaje (harness i PerfHUD czytają window.__rendererInfo.calls).
   _readRenderInfoInto(target) {
     const src = this.renderer?.info?.render;
-    target.calls = Number(src?.calls) || 0;
+    target.calls = Number(src?.drawCalls) || 0;
     target.triangles = Number(src?.triangles) || 0;
     target.points = Number(src?.points) || 0;
     target.lines = Number(src?.lines) || 0;
@@ -705,7 +605,7 @@ export const Core3D = {
       : 'other';
     const bucket = info[safeBucketName] || info.other;
     const current = this.renderer?.info?.render;
-    bucket.calls += Math.max(0, (Number(current?.calls) || 0) - before.calls);
+    bucket.calls += Math.max(0, (Number(current?.drawCalls) || 0) - before.calls);
     bucket.triangles += Math.max(0, (Number(current?.triangles) || 0) - before.triangles);
     bucket.points += Math.max(0, (Number(current?.points) || 0) - before.points);
     bucket.lines += Math.max(0, (Number(current?.lines) || 0) - before.lines);
@@ -714,7 +614,12 @@ export const Core3D = {
 
   _finalizeRenderInfoBuckets() {
     const info = this._ensureRenderInfoBuckets();
-    this._readRenderInfoInto(info.total);
+    const total = this._readRenderInfoInto(info.total);
+    const start = this._renderInfoStart;
+    total.calls = Math.max(0, total.calls - start.calls);
+    total.triangles = Math.max(0, total.triangles - start.triangles);
+    total.points = Math.max(0, total.points - start.points);
+    total.lines = Math.max(0, total.lines - start.lines);
     let knownCalls = 0;
     let knownTriangles = 0;
     let knownPoints = 0;
@@ -733,35 +638,6 @@ export const Core3D = {
     info.other.lines = Math.max(0, info.total.lines - knownLines);
   },
 
-  _wrapRenderInfoPass(pass, bucketName) {
-    if (!pass || pass.__core3dRenderInfoWrapped) return;
-    const originalRender = pass.render;
-    const core = this;
-    pass.render = function (...args) {
-      core._readRenderInfoInto(core._renderInfoBefore);
-      const t0 = performance.now();
-      const result = originalRender.apply(this, args);
-      core._addRenderInfoDelta(bucketName, performance.now() - t0);
-      return result;
-    };
-    pass.__core3dRenderInfoWrapped = true;
-    pass.__core3dRenderInfoBucket = bucketName;
-  },
-
-  _instrumentComposerPasses() {
-    this._wrapRenderInfoPass(this.renderPassBg, 'bg');
-    this._wrapRenderInfoPass(this.warpLensPass, 'bg');
-    this._wrapRenderInfoPass(this.renderPassPlanets, 'planets');
-    this._wrapRenderInfoPass(this.planetHaloPass, 'planets');
-    this._wrapRenderInfoPass(this.renderPassRingPlanets, 'planets');
-    this._wrapRenderInfoPass(this.shadowShaftsPass, 'shafts');
-    this._wrapRenderInfoPass(this.renderPassOrtho, 'ortho');
-    this._wrapRenderInfoPass(this.renderPassShields, 'ortho');
-    this._wrapRenderInfoPass(this.renderPassFg, 'fg');
-    this._wrapRenderInfoPass(this.bloomPass, 'bloom');
-    this._wrapRenderInfoPass(this.uberPass, 'post');
-  },
-
   _applyBloomPassConfig() {
     if (!this.bloomPass) return;
     const cfg = this._getBloomConfig();
@@ -770,36 +646,22 @@ export const Core3D = {
     this.bloomPass.threshold = cfg.threshold;
   },
 
+  // Część synchroniczna: scena, kamery, światła, cele renderu, passy — moduły
+  // wołają Core3D.init() i od razu dokładają obiekty (hexShips3D, planety, ring),
+  // więc isInitialized = true zaraz po niej. Urządzenie WebGPU powstaje w tle
+  // (_initGpu): gpuReady / ready bramkują wszystko, co go potrzebuje — render,
+  // renderBackdrop, kompilację (prewarmPass), wgrywanie tekstur.
   init(canvasElement) {
     if (this.isInitialized) return this;
 
     this.canvas = canvasElement || document.getElementById('webgl-layer');
-    this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, alpha: true, antialias: false, powerPreference: 'high-performance', premultipliedAlpha: true, logarithmicDepthBuffer: false });
-    this.renderer.localClippingEnabled = true;
 
     const dpr = (typeof window !== 'undefined' ? Number(window.devicePixelRatio) : 1) || 1;
     this.pixelRatio = Math.min(1.0, Math.max(1, dpr));
-    this.renderer.setPixelRatio(this.pixelRatio);
-    this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
-    this.renderer.toneMapping = THREE.NoToneMapping;
-    this.renderer.toneMappingExposure = 1.0;
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFShadowMap;
-    // Słońce (planet3d.assets.js) ma castShadow + layers.enableAll, więc przy
-    // autoUpdate three przerysowywało mapę 4096² w KAŻDYM renderer.render(scene):
-    // halo ×2, bg, planets, ringPlanets, ortho, shields, fg (+3 w refrakcji) —
-    // za każdym razem pełny obchód grafu (renderObject) i clear mapy. Rzucający
-    // żyją tylko na warstwach ortho i FG (stacje), więc mapę odświeżamy ręcznie
-    // tuż przed tymi passami (render() i snapshot refrakcji).
-    this.renderer.shadowMap.autoUpdate = false;
-    this.renderer.setClearColor(0x000000, 0);
-    // Disable per-render auto-reset so renderer.info accumulates across all
-    // passes — we manually reset once per frame at the start of the pass chain.
-    this.renderer.info.autoReset = false;
 
     this.scene = new THREE.Scene();
     this.scene.background = null;
-    // Jedna scena obsluguje 6 RenderPassow + pre-pass halo + snapshot refrakcji,
+    // Jedna scena obsluguje 6 passow sceny + pre-pass halo + snapshot refrakcji,
     // czyli do 11 wywolan renderer.render(scene, ...) na klatke. Kazde z nich
     // robi scene.updateMatrixWorld(), a ten ZAWSZE schodzi do wszystkich dzieci
     // (takze niewidocznych) i dla kazdego wezla z matrixAutoUpdate=true robi
@@ -826,11 +688,13 @@ export const Core3D = {
     this.cameraOrtho = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 400000);
     this.cameraPersp = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 100, 500000);
 
+    const w0 = Math.max(1, window.innerWidth | 0);
+    const h0 = Math.max(1, window.innerHeight | 0);
     // Refrakcja w połowie rozdzielczości — to tylko źródło zniekształcenia
     // dla shockwave; half-res jest niezauważalny, a tnie fill-rate 4×.
-    this.refractionTarget = new THREE.WebGLRenderTarget(
-      Math.max(1, Math.floor(window.innerWidth * this.pixelRatio * 0.5)),
-      Math.max(1, Math.floor(window.innerHeight * this.pixelRatio * 0.5)),
+    this.refractionTarget = new THREE.RenderTarget(
+      Math.max(1, Math.floor(w0 * this.pixelRatio * 0.5)),
+      Math.max(1, Math.floor(h0 * this.pixelRatio * 0.5)),
       {
         minFilter: THREE.LinearFilter,
         magFilter: THREE.LinearFilter,
@@ -848,7 +712,7 @@ export const Core3D = {
         }
       };
     }
-	
+
     const shadowGeo = new THREE.PlaneGeometry(500000, 500000);
     const shadowMat = new THREE.ShadowMaterial({ opacity: 0.6, color: 0x000000, transparent: true, depthWrite: false, depthTest: false });
     this.shadowCatcher = new THREE.Mesh(shadowGeo, shadowMat);
@@ -862,36 +726,28 @@ export const Core3D = {
     this.shadowCatcherFg.receiveShadow = true; this.shadowCatcherFg.renderOrder = 5; this.shadowCatcherFg.frustumCulled = false; this.shadowCatcherFg.layers.set(2);
     this.scene.add(this.shadowCatcherFg);
 
-    const rt = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, {
-      format: THREE.RGBAFormat, type: this.renderer.capabilities.isWebGL2 ? THREE.HalfFloatType : THREE.UnsignedByteType,
-      depthBuffer: true, samples: this.renderer.capabilities.isWebGL2 ? 4 : 0
+    // Bufor sceny: HalfFloat (HDR-first, próg bloomu ~0,9) + MSAA 4. Wszystkie
+    // passy sceny piszą do niego; backend WebGPU trzyma MSAA między render()
+    // (storeOp store) i rozwiązuje go do .texture na końcu każdego passa.
+    const rt = new THREE.RenderTarget(w0, h0, {
+      format: THREE.RGBAFormat, type: THREE.HalfFloatType,
+      depthBuffer: true, stencilBuffer: false, samples: 4
     });
     this.composerTarget = rt;
     this.msaaSamples = Number(rt.samples) || 0;
     // Te same próbki co scena: przy samples=0 krawędź maski halo ząbkowała
     // inaczej niż wygładzona MSAA krawędź planety = przerywana obwódka na limbie.
-    this.planetHaloTarget = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, {
+    this.planetHaloTarget = new THREE.RenderTarget(w0, h0, {
       format: THREE.RGBAFormat,
-      type: this.renderer.capabilities.isWebGL2 ? THREE.HalfFloatType : THREE.UnsignedByteType,
+      type: THREE.HalfFloatType,
       depthBuffer: true,
       stencilBuffer: false,
       samples: rt.samples
     });
-    // Post-łańcuch (bloom + uber) działa na buforze BEZ MSAA: bloom domalowuje
-    // się addytywnie do bufora, z którego przed chwilą czytał — na buforze MSAA
-    // three po resolve inwaliduje renderbuffer i blend trafiał w niezdefiniowane
-    // kafle (czarne prostokąty przy szybkim ruchu kamery).
-    this.postTarget = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, {
-      format: THREE.RGBAFormat,
-      type: this.renderer.capabilities.isWebGL2 ? THREE.HalfFloatType : THREE.UnsignedByteType,
-      depthBuffer: false,
-      stencilBuffer: false,
-      samples: 0
-    });
     // Maska widoczności słońca (sunShadowMask.js): rozmiar bufora sceny, żeby
-    // gl_FragCoord trafiał w teksel 1:1 — w połowie rozdzielczości brzeg
+    // piksel materiału trafiał w teksel 1:1 — w połowie rozdzielczości brzeg
     // kadłuba po stronie cienia łapał ciemną obwódkę z sąsiedniego teksela.
-    this.sunShadowTarget = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, {
+    this.sunShadowTarget = new THREE.RenderTarget(w0, h0, {
       format: THREE.RGBAFormat,
       type: THREE.UnsignedByteType,
       minFilter: THREE.LinearFilter,
@@ -903,66 +759,45 @@ export const Core3D = {
     });
     sunShadowUniforms.uSunShadowMap.value = this.sunShadowTarget.texture;
     sunShadowUniforms.uSunShadowOn.value = 0;
-    this.haloDepthMaskMaterial = new THREE.MeshBasicMaterial({ color: 0x000000 });
+    // Pre-pass halo: głębia planet bez koloru (overrideMaterial, SPIKE 12).
+    this.haloDepthMaskMaterial = new THREE.MeshBasicNodeMaterial({ color: 0x000000 });
+    this.haloDepthMaskMaterial.name = 'Core3D.haloDepthMask';
     this.haloDepthMaskMaterial.colorWrite = false;
     this.haloDepthMaskMaterial.depthWrite = true;
     this.haloDepthMaskMaterial.depthTest = true;
 
-    this.renderPassBg = new RenderPass(this.scene, this.cameraPersp);
-    makeSplitScreenRenderPass(this.renderPassBg, 1, false, true);
-    this.renderPassWarpStars = new RenderPass(this.scene, this.cameraPersp);
-    makeSplitScreenRenderPass(this.renderPassWarpStars, WARP_STARS_RENDER_LAYER, false, true);
-    this.renderPassPlanets = new RenderPass(this.scene, this.cameraPersp);
-    makeSplitScreenRenderPass(this.renderPassPlanets, PLANET_RENDER_LAYER, false, false);
-    this.planetHaloPass = new FullScreenBlendPass(PLANET_HALO_BLEND_SHADER, BLEND_ADD_ONE_ONE);
-    this.renderPassRingPlanets = new RenderPass(this.scene, this.cameraOrtho);
-    makeSplitScreenRenderPass(this.renderPassRingPlanets, RING_PLANET_RENDER_LAYER, true, false);
-    this.renderPassOrtho = new RenderPass(this.scene, this.cameraOrtho);
-    makeSplitScreenRenderPass(this.renderPassOrtho, 0, true, false);
-    // Tarcze: ta sama kamera ortho co świat, ale BEZ czyszczenia głębi —
-    // pass dokłada się do bufora zostawionego przez renderPassOrtho, więc
-    // tarcza dalej testuje głębię względem kadłubów zamiast kłaść się na
-    // wszystkim.
-    this.renderPassShields = new RenderPass(this.scene, this.cameraOrtho);
-    makeSplitScreenRenderPass(this.renderPassShields, SHIELD_RENDER_LAYER, true, false, false);
-    this.renderPassFg = new RenderPass(this.scene, this.cameraPersp);
-    makeSplitScreenRenderPass(this.renderPassFg, 2, false, false);
-
-    this.heatHazeSources = new Float32Array(this.heatHazeMaxSources * 4);
-    this.heatHazeDirs = new Float32Array(this.heatHazeMaxSources * 2);
-
-    // Shafty piszą maskę (bez blendingu, cały quad) do sunShadowTarget — raz na
-    // klatkę, przed pre-passem halo i wszystkimi passami sceny (render()).
-    this.shadowShaftsPass = new FullScreenBlendPass(createShadowShaftsShader(), { blending: THREE.NoBlending });
-    // Soczewka skoku: quad bez blendingu zastępuje cały kolor bufora sceny
-    // zakrzywionym tłem (warpLensTarget). Głębia zostaje nieczyszczona — każdy
-    // pass z testem głębi po nim (planety, ring, ortho, FG) czyści ją sam.
-    this.warpLensPass = new FullScreenBlendPass(createWarpLensShader(), { blending: THREE.NoBlending });
-
+    // Passy sceny — wszystkie do JEDNEGO composerTarget (MSAA), w tej kolejności.
+    //
     // Earth and Mars use an orthographic planet pass so their projected centre
     // and radius stay locked to the gameplay ring at every zoom level. The pass
     // still renders the real sphere/cloud/atmosphere meshes; only parallax is
     // removed. Later world/foreground passes clear depth and draw over the globe.
     //
-    // Wszystkie passy sceny piszą do JEDNEGO targetu MSAA, a halo to quad
-    // blendowany sprzętowo (nie ShaderPass czytający tDiffuse).
+    // Halo planet to quad blendowany addytywnie (nie pass czytający bufor
+    // sceny) — patrz makeFullscreenBlendPass.
     //
-    // Cieni słońca NIE MA w tym łańcuchu: shadowShaftsPass liczy maskę przed
-    // nim, a materiały czytają ją same (sunShadowMask.js) — kadłub gasi tylko
-    // człon słońca, tło dostaje smugę, emitery i ring nic. Dawniej był tu quad
-    // mnożący gotowy obraz po warstwie 0: broń i dysze, które na niej siedzą,
-    // spadały w umbrze pod próg bloomu, a ring dostawał drugi cień.
+    // Cieni słońca NIE MA w tym łańcuchu: pass maski liczy ją przed nim, a
+    // materiały czytają ją same (sunShadowMask.js) — kadłub gasi tylko człon
+    // słońca, tło dostaje smugę, emitery i ring nic. Dawniej był tu quad mnożący
+    // gotowy obraz po warstwie 0: broń i dysze, które na niej siedzą, spadały
+    // w umbrze pod próg bloomu, a ring dostawał drugi cień.
     //
-    // Tarcze: własny pass zamiast warstwy FG, bo tarcza musi zostać
-    // w projekcji ortho (kopuła/sfera w perspektywie rozjeżdżałaby się
-    // z kadłubem).
+    // Tarcze: własny pass zamiast warstwy FG, bo tarcza musi zostać w projekcji
+    // ortho (kopuła/sfera w perspektywie rozjeżdżałaby się z kadłubem); bez
+    // czyszczenia głębi — tarcza testuje głębię względem kadłubów zamiast kłaść
+    // się na wszystkim.
     //
-    // warpLensPass zaraz po tle: zakrzywia tylko to, co leży daleko za
-    // statkiem (mgławica, gwiazdy). Planety, statki i reszta kładą się na
-    // wierzchu, a bloom liczy się z gotowego obrazu.
+    // Pass zgięcia tła (nowy warp, odłożony — PLAN §9) wejdzie zaraz po tle,
+    // przed planetami: zakrzywia tylko to, co leży daleko za statkiem.
+    this.renderPassBg = makeScenePass('bg', 'bg', 1, false, true);
+    this.renderPassPlanets = makeScenePass('planets', 'planets', PLANET_RENDER_LAYER, false, false);
+    this.planetHaloPass = makeFullscreenBlendPass('Core3D.planetHaloBlend', 'planets', this.planetHaloTarget.texture, BLEND_ADD_ONE_ONE);
+    this.renderPassRingPlanets = makeScenePass('ringPlanets', 'planets', RING_PLANET_RENDER_LAYER, true, false);
+    this.renderPassOrtho = makeScenePass('ortho', 'ortho', 0, true, false);
+    this.renderPassShields = makeScenePass('shields', 'ortho', SHIELD_RENDER_LAYER, true, false, false);
+    this.renderPassFg = makeScenePass('fg', 'fg', 2, false, false);
     this._scenePasses = [
       this.renderPassBg,
-      this.warpLensPass,
       this.renderPassPlanets,
       this.planetHaloPass,
       this.renderPassRingPlanets,
@@ -971,57 +806,161 @@ export const Core3D = {
       this.renderPassFg
     ];
 
+    this.heatHazeSources = new Float32Array(this.heatHazeMaxSources * 4);
+    this.heatHazeDirs = new Float32Array(this.heatHazeMaxSources * 2);
+
+    // Maska słońca (zadanie 03): pass TSL do sunShadowTarget. Do tego czasu brak.
+    this.shadowShaftsPass = null;
+
     const bloomCfg = this._getBloomConfig();
     this.bloomResolutionScale = bloomCfg.resolutionScale;
-    const bloomScale = Math.max(0.1, Math.min(1, Number(this.bloomResolutionScale) || 1));
-    this.bloomPass = new UnrealBloomPass(
-      new THREE.Vector2(Math.floor(window.innerWidth * bloomScale), Math.floor(window.innerHeight * bloomScale)),
-      bloomCfg.strength,
-      bloomCfg.radius,
-      bloomCfg.threshold
-    );
 
-    this.uberPass = new ShaderPass(UberPostShader);
-    this.uberPass.material.defines = { HEAT_HAZE: 1 };
-    this.uberPass.material.needsUpdate = true;
-    this.uberPass.renderToScreen = true;
+    // Handlery zegara GPU przypięte raz (bez domknięć per klatka).
+    this._onGpuRenderTimestamp = (ms) => this._handleGpuTimestamp('render', ms);
+    this._onGpuComputeTimestamp = (ms) => this._handleGpuTimestamp('compute', ms);
+    this._onGpuTimestampError = () => {
+      this._gpuTimerPending.render = false;
+      this._gpuTimerPending.compute = false;
+    };
 
-    this.sceneResolvePass = new FullScreenBlendPass(SCENE_RESOLVE_SHADER, { blending: THREE.NoBlending });
-    this.sceneResolvePass.uniforms.tDiffuse.value = rt.texture;
-    this._postPasses = [this.sceneResolvePass, this.bloomPass, this.uberPass];
-    this.planetHaloPass.uniforms.tPlanetHalo.value = this.planetHaloTarget.texture;
-
-    this._initGpuTimer();
     this._applyPassToggles();
-    this._instrumentComposerPasses();
     this.isInitialized = true;
     this.resize(window.innerWidth, window.innerHeight);
 
+    if (this.renderer) {
+      // Ponowny init po _disposeComposerChain: urządzenie zostaje, nowy post.
+      this._post = this._createPost(this.renderer);
+      return this;
+    }
+    this._initGpu().then(
+      (ok) => resolveGpuReady?.(ok),
+      (err) => { this._failGpu(err); resolveGpuReady?.(false); }
+    );
     return this;
+  },
+
+  // Tylko WebGPU (decyzja użytkownika, PLAN §2 / §12 p. 2): przed utworzeniem
+  // renderera adapter; bez niego renderer nie powstaje i gra pokazuje komunikat
+  // „Gra wymaga przeglądarki z WebGPU” (index.html, Core3D.ready → false).
+  // Zapasowego backendu WebGL2 three nie dopuszczamy (_getFallback = null,
+  // po init() warunek backend.isWebGPUBackend).
+  async _initGpu() {
+    const gpu = (typeof navigator !== 'undefined') ? navigator.gpu : null;
+    if (!gpu || typeof gpu.requestAdapter !== 'function') return this._failGpu('brak navigator.gpu');
+    let adapter = null;
+    try {
+      // Te same opcje co WebGPUBackend.init — limity z tego adaptera są ważne dla jego urządzenia.
+      adapter = await gpu.requestAdapter({ featureLevel: 'compatibility' });
+    } catch (err) {
+      adapter = null;
+    }
+    if (!adapter) return this._failGpu('brak adaptera');
+    const requiredLimits = {};
+    for (const key of GPU_REQUIRED_LIMITS) {
+      const value = adapter.limits?.[key];
+      if (Number.isFinite(value)) requiredLimits[key] = value;
+    }
+    const renderer = new THREE.WebGPURenderer({
+      canvas: this.canvas, alpha: true, antialias: false, trackTimestamp: true, requiredLimits
+    });
+    // Bez zapasowego backendu: nieudane urządzenie = odrzucone init(), nie WebGL2.
+    renderer._getFallback = null;
+    // Liczniki per klatka zeruje render() — przy autoReset = true wewnętrzna pętla
+    // renderera zerowałaby je co rAF (SPIKE 14).
+    renderer.info.autoReset = false;
+    try {
+      await renderer.init();
+    } catch (err) {
+      return this._failGpu(`init urządzenia: ${err?.message || err}`);
+    }
+    if (renderer.backend?.isWebGPUBackend !== true) return this._failGpu('backend nie jest WebGPU');
+    this._configureRenderer(renderer);
+    this.renderer = renderer;
+    this._post = this._createPost(renderer);
+    this.gpuReady = true;
+    this._passTogglesDirty = true;
+    this._applyPassToggles();
+    this._scheduleTextureUpload();
+    return true;
+  },
+
+  _failGpu(reason) {
+    this.gpuUnsupported = true;
+    this.gpuReady = false;
+    this.gpuError = String(reason?.message || reason || 'nieznany powód');
+    if (typeof console !== 'undefined') console.warn(`[Core3D] Gra wymaga przeglądarki z WebGPU — ${this.gpuError}`);
+    return false;
+  },
+
+  _configureRenderer(renderer) {
+    // Precyzja (PLAN §4): modelViewMatrix składana na CPU w double — świat przy
+    // 5–10 mln j. nie drga względem kadłubów. Wchodzi w program przy budowie
+    // materiału, więc przed pierwszym renderem.
+    renderer.highPrecision = true;
+    renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+    renderer.toneMapping = THREE.NoToneMapping;
+    renderer.toneMappingExposure = 1.0;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
+    renderer.setClearColor(0x000000, 0);
+    renderer.info.autoReset = false;
+    installPlaceholders(renderer);
+    this._guardPendingPipelines(renderer);
+    renderer.setPixelRatio(this.pixelRatio);
+    renderer.setSize(Math.max(1, this.width | 0), Math.max(1, this.height | 0), false);
+  },
+
+  // three r183: compileAsync wkłada do cache pipeline, którego obiekt GPU dopiero
+  // powstaje (createRenderPipelineAsync). Zwykły render obiektu o tym samym kluczu
+  // pipeline'u — a zamienniki i materiały wbudowane dzielą programy — woła wtedy
+  // setPipeline(undefined) → TypeError i klatka pada (dym gry: rozgrzewka na ekranie
+  // ładowania + render tła menu). Taki rysunek pomijamy, aż pipeline będzie gotowy
+  // (klatka, dwie) — jak asynchroniczna kompilacja programu na WebGL. Bez alokacji:
+  // backend.draw i tak pobiera te same dane pipeline'u.
+  _guardPendingPipelines(renderer) {
+    const backend = renderer?.backend;
+    if (!backend || typeof backend.draw !== 'function' || backend.__core3dPendingPipelineGuard) return;
+    const draw = backend.draw;
+    backend.draw = function drawWhenPipelineReady(renderObject, info) {
+      const pipelineData = this.get(renderObject.pipeline);
+      if (pipelineData.pipeline === undefined && pipelineData.error !== true) return undefined;
+      return draw.call(this, renderObject, info);
+    };
+    backend.__core3dPendingPipelineGuard = true;
+  },
+
+  // Post zadania 01 („uber-lite”): bufor sceny (MSAA rozwiązane do .texture) →
+  // ACES gry → LinearTosRGB → kanwa. Bloom i gorące powietrze — zadanie 02.
+  // outputColorTransform = false: renderer ma NoToneMapping i wyjście liniowe,
+  // transformacji three nie dokładamy (byłaby podwójna).
+  _createPost(renderer) {
+    const sceneTexture = texture(this.composerTarget.texture);
+    const outputNode = Fn(() => {
+      const scene = sceneTexture.toVar();
+      return vec4(linearDoSrgb(acesGry(scene.rgb)), scene.a);
+    })();
+    const post = new THREE.RenderPipeline(renderer, outputNode);
+    post.outputColorTransform = false;
+    return post;
   },
 
   _disposeComposerChain() {
     try {
-      for (const pass of [...(this._scenePasses || []), ...(this._postPasses || []), this.shadowShaftsPass]) try { pass?.dispose?.(); } catch { }
+      try { this.planetHaloPass?.material?.dispose?.(); } catch { }
+      try { this._post?.dispose?.(); } catch { }
       try { this.sunShadowTarget?.dispose?.(); } catch { }
       try { this.composerTarget?.dispose?.(); } catch { }
-      try { this.postTarget?.dispose?.(); } catch { }
       try { this.refractionTarget?.dispose?.(); } catch { }
-      try { this.warpLensTarget?.dispose?.(); } catch { }
-      try { this.warpStarTarget?.dispose?.(); } catch { }
       try { this.shockwave3DManager?.dispose?.(); } catch { }
       try { this.planetHaloTarget?.dispose?.(); } catch { }
       try { this.haloDepthMaskMaterial?.dispose?.(); } catch { }
     } catch { }
     this.isInitialized = false;
+    this._post = null;
     this.sunShadowTarget = null;
     sunShadowUniforms.uSunShadowMap.value = null;
     sunShadowUniforms.uSunShadowOn.value = 0;
     this.refractionTarget = null;
-    this.warpLensTarget = null;
-    this._warpLensActive = false;
-    this.warpStarTarget = null;
-    this._warpStarsOn = false;
     this.shockwave3DManager = null;
     this._shockwavePrevTime = 0;
   },
@@ -1036,8 +975,6 @@ export const Core3D = {
   _applyPassToggles() {
     const t = this.perfToggles || {};
     if (this.renderPassBg) this.renderPassBg.enabled = t.bgPass !== false;
-    // Bez passa tła soczewka nie ma czego zakrzywiać.
-    if (this.warpLensPass) this.warpLensPass.enabled = t.bgPass !== false;
     if (this.renderPassPlanets) this.renderPassPlanets.enabled = t.planetPass !== false;
     if (this.planetHaloPass) this.planetHaloPass.enabled = t.planetPass !== false;
     if (this.renderPassRingPlanets) this.renderPassRingPlanets.enabled = t.planetPass !== false;
@@ -1046,11 +983,9 @@ export const Core3D = {
     if (this.renderPassFg) this.renderPassFg.enabled = t.fgPass !== false;
     if (this.bloomPass) this.bloomPass.enabled = t.bloom !== false;
     if (this.shadowShaftsPass) this.shadowShaftsPass.enabled = t.shadowShafts !== false;
-    if (this.uberPass) this.uberPass.enabled = true; // zawsze wlaczony — ACES + sRGB
-    if (this.renderer?.shadowMap) {
-      this.renderer.shadowMap.enabled = t.threeShadows !== false;
-      this.renderer.shadowMap.needsUpdate = t.threeShadows !== false;
-    }
+    // Post (ACES gry + sRGB) jest zawsze. Mapa cienia: w WebGPU odświeżanie jest
+    // per światło (_requestSunShadowUpdate) — globalnie tylko włącznik.
+    if (this.renderer?.shadowMap) this.renderer.shadowMap.enabled = t.threeShadows !== false;
     if (this.shadowCatcher) this.shadowCatcher.visible = t.threeShadows !== false;
     if (this.shadowCatcherFg) this.shadowCatcherFg.visible = (t.fgShadows !== false) && (t.threeShadows !== false);
     // FG sub-toggles: only FORCE-HIDE when toggle is OFF. When the toggle
@@ -1084,19 +1019,8 @@ export const Core3D = {
     if ('shadows' in next) t.threeShadows = !!next.shadows;
     Object.assign(t, next);
     this._passTogglesDirty = true;
-    if (this.uberPass) {
-      const hasHeatHaze = t.heatHaze !== false;
-      const defines = { ...(this.uberPass.material.defines || {}) };
-      if (hasHeatHaze && !defines.HEAT_HAZE) {
-        defines.HEAT_HAZE = 1;
-        this.uberPass.material.defines = defines;
-        this.uberPass.material.needsUpdate = true;
-      } else if (!hasHeatHaze && defines.HEAT_HAZE) {
-        delete defines.HEAT_HAZE;
-        this.uberPass.material.defines = defines;
-        this.uberPass.material.needsUpdate = true;
-      }
-    }
+    // heatHaze: gorące powietrze wróci w zadaniu 02 jako uniform (bez przebudowy
+    // pipeline'u); do tego czasu przełącznik tylko blokuje zbieranie źródeł.
     this._applyPassToggles();
     return this.getPerfStatus();
   },
@@ -1174,18 +1098,21 @@ export const Core3D = {
     return isOrtho ? this.cameraOrtho : this.cameraPersp;
   },
 
+  // Rozmiar kanwy i celów. Renderer może jeszcze nie istnieć (urządzenie w
+  // drodze) — wtedy _configureRenderer weźmie zapamiętany rozmiar.
   resize(w, h) {
     if (!this.isInitialized) return;
     const width = Math.max(1, w | 0);
     const height = Math.max(1, h | 0);
     this.pixelRatio = Math.min(1.5, Math.max(1, (typeof window !== 'undefined' ? window.devicePixelRatio : 1)));
-    this.renderer.setPixelRatio(this.pixelRatio);
     this.width = width; this.height = height;
-    this.renderer.setSize(width, height, false);
+    if (this.renderer) {
+      this.renderer.setPixelRatio(this.pixelRatio);
+      this.renderer.setSize(width, height, false);
+    }
     const bufW = Math.max(1, Math.floor(width * this.pixelRatio));
     const bufH = Math.max(1, Math.floor(height * this.pixelRatio));
     if (this.composerTarget) this.composerTarget.setSize(bufW, bufH);
-    if (this.postTarget) this.postTarget.setSize(bufW, bufH);
     if (this.sunShadowTarget) this.sunShadowTarget.setSize(bufW, bufH);
 
     if (this.refractionTarget) {
@@ -1197,8 +1124,6 @@ export const Core3D = {
     if (this.planetHaloTarget) {
       this.planetHaloTarget.setSize(bufW, bufH);
     }
-    if (this.warpLensTarget) this.warpLensTarget.setSize(bufW, bufH);
-    if (this.warpStarTarget) this.warpStarTarget.setSize(bufW, bufH);
     if (this.bloomPass && typeof this.bloomPass.setSize === 'function') {
       const bScale = Math.max(0.1, Math.min(1, Number(this.bloomResolutionScale) || 1));
       this.bloomPass.setSize(Math.floor(width * this.pixelRatio * bScale), Math.floor(height * this.pixelRatio * bScale));
@@ -1273,69 +1198,72 @@ export const Core3D = {
     }
   },
 
-  _initGpuTimer() {
-    this._gpuQueryPool = [];
-    this._gpuQueryPending = [];
-    this._gpuQueryActive = null;
-    try {
-      const gl = this.renderer?.getContext?.();
-      if (gl && this.renderer.capabilities?.isWebGL2) {
-        this._gpuTimerExt = gl.getExtension('EXT_disjoint_timer_query_webgl2') || null;
-      }
-    } catch (_) {
-      this._gpuTimerExt = null;
-    }
+  // Czy renderer mierzy czas GPU (cecha timestamp-query; PerfHUD pokazuje stan).
+  get gpuTimerSupported() {
+    return this.renderer?.backend?.trackTimestamp === true;
   },
 
-  _gpuTimerBegin() {
-    const ext = this._gpuTimerExt;
-    if (!ext || this._gpuQueryActive) return;
-    const gl = this.renderer.getContext();
-    // Więcej niż kilka zapytań w locie znaczy, że wyniki nie nadążają — wtedy
-    // odpuszczamy klatkę zamiast puchnąć w nieskończoność.
-    if (this._gpuQueryPending.length > 4) return;
-    const query = this._gpuQueryPool.pop() || gl.createQuery();
-    if (!query) return;
-    try {
-      gl.beginQuery(ext.TIME_ELAPSED_EXT, query);
-      this._gpuQueryActive = query;
-    } catch (_) {
-      this._gpuQueryPool.push(query);
-      this._gpuQueryActive = null;
-    }
+  // Zegar GPU: po klatce (koniec render / renderBackdrop) rozwiązanie zapytań —
+  // najwyżej jedno w locie na typ, nowe dopiero po rozwiązaniu poprzedniego.
+  // Zapytania kumulują się do rozwiązania (pula 2048 = 1024 rendery), więc
+  // rozwiązujemy stale; wynik three = suma ms GPU OSTATNIEJ klatki w paczce
+  // (passy Core3D + rendery modułów w tej klatce, np. pieczenie map ringu).
+  // Podzielony ekran to dwa renderSingle w klatce — pytamy po drugim, żeby
+  // ostatnia klatka paczki była pełna.
+  _gpuTimerAfterRender() {
+    const renderer = this.renderer;
+    if (!renderer) return;
+    const frame = renderer.info.frame;
+    const firstOfFrame = frame !== this._gpuTimerFrame;
+    this._gpuTimerFrame = frame;
+    const split = typeof window !== 'undefined' && !!window.splitScreenMode;
+    if (!split || !firstOfFrame) this._gpuTimerPoll();
   },
 
-  _gpuTimerEnd() {
-    const ext = this._gpuTimerExt;
-    if (!ext || !this._gpuQueryActive) return;
-    const gl = this.renderer.getContext();
-    try {
-      gl.endQuery(ext.TIME_ELAPSED_EXT);
-      this._gpuQueryPending.push(this._gpuQueryActive);
-    } catch (_) { }
-    this._gpuQueryActive = null;
+  // Wynik zapytania: ms ostatniej klatki paczki. Pula three trzyma ms KAŻDEGO
+  // renderu w mapie `timestamps` (klucz = uid z numerem klatki) i nigdy jej nie
+  // czyści — przy rozwiązywaniu co klatkę rosłaby bez końca (~700 wpisów/s),
+  // a gra używa tylko sumy klatki: czyścimy po każdym wyniku.
+  _handleGpuTimestamp(type, ms) {
+    this._gpuTimerPending[type] = false;
+    if (Number.isFinite(ms) && ms > 0) {
+      if (type === 'render') this.gpuFrameMs = ms;
+      else this.gpuComputeMs = ms;
+    }
+    this.renderer?.backend?.timestampQueryPool?.[type]?.timestamps?.clear?.();
   },
 
   _gpuTimerPoll() {
-    const ext = this._gpuTimerExt;
-    if (!ext || !this._gpuQueryPending?.length) return;
-    const gl = this.renderer.getContext();
-    // Disjoint = sterownik przerwał pomiar (zmiana zegarów, przełączenie
-    // kontekstu). Wyniki z takiej klatki są śmieciem i trzeba je wyrzucić.
-    const disjoint = gl.getParameter(ext.GPU_DISJOINT_EXT);
-    if (disjoint) {
-      for (const q of this._gpuQueryPending) this._gpuQueryPool.push(q);
-      this._gpuQueryPending.length = 0;
-      return;
+    const renderer = this.renderer;
+    const backend = renderer?.backend;
+    if (!backend || backend.trackTimestamp !== true) return;
+    const pools = backend.timestampQueryPool;
+    const pending = this._gpuTimerPending;
+    if (!pending.render && pools?.render) {
+      pending.render = true;
+      renderer.resolveTimestampsAsync('render').then(this._onGpuRenderTimestamp, this._onGpuTimestampError);
     }
-    while (this._gpuQueryPending.length) {
-      const query = this._gpuQueryPending[0];
-      if (!gl.getQueryParameter(query, gl.QUERY_RESULT_AVAILABLE)) break;
-      const ns = gl.getQueryParameter(query, gl.QUERY_RESULT);
-      this.gpuFrameMs = Number(ns) / 1e6;
-      this._gpuQueryPending.shift();
-      this._gpuQueryPool.push(query);
+    if (!pending.compute && pools?.compute) {
+      pending.compute = true;
+      renderer.resolveTimestampsAsync('compute').then(this._onGpuComputeTimestamp, this._onGpuTimestampError);
     }
+  },
+
+  // Słońce gry z mapą cienia (planet3d.assets.js, DirectSun) zgłasza się tu.
+  // W WebGPU odświeżanie mapy jest per światło (renderer.shadowMap ma tylko
+  // enabled / type): autoUpdate = false, needsUpdate raz na starcie render().
+  // ShadowNode i tak aktualizuje najwyżej raz na klatkę rAF (SPIKE 9) — dawne
+  // dwa odświeżenia z WebGL (przed ortho i FG) są zbędne.
+  setSunShadowLight(light) {
+    this._sunShadowLight = (light && light.isLight && light.shadow) ? light : null;
+    if (this._sunShadowLight) this._sunShadowLight.shadow.autoUpdate = false;
+  },
+
+  _requestSunShadowUpdate(toggles) {
+    const light = this._sunShadowLight;
+    if (!light || !light.castShadow || !light.shadow) return;
+    light.shadow.autoUpdate = false;
+    if (toggles.threeShadows !== false) light.shadow.needsUpdate = true;
   },
 
   // Skala gl_FragCoord → UV maski cieni dla celu, do którego rysują materiały.
@@ -1346,10 +1274,12 @@ export const Core3D = {
   },
 
   // Maska widoczności słońca (sunShadowMask.js): uniformy okluderów i jeden
-  // quad do sunShadowTarget. Bez słońca, przy shaftach Off, w wolnej kamerze
-  // albo w pełnym skoku maska jest wyłączona uniformem — materiały jej wtedy
-  // nie próbkują (stary target może zostać).
-  _renderSunShadowMask(active, sun, shaftCut, shaftCfg, isSplit) {
+  // quad do sunShadowTarget. Bez słońca, przy shaftach Off albo w wolnej kamerze
+  // maska jest wyłączona uniformem — materiały jej wtedy nie próbkują.
+  // Port WebGPU: pass TSL maski powstaje w zadaniu 03 (shadowShaftsPass z
+  // material.uniforms przez adapter i render(renderer, null, target)). Do tego
+  // czasu shadowShaftsPass = null — pierwsza bramka niżej wyłącza maskę co klatkę.
+  _renderSunShadowMask(active, sun, shaftCfg) {
     const pass = this.shadowShaftsPass;
     const target = this.sunShadowTarget;
     this._setSunShadowTexelFor(this.composerTarget);
@@ -1371,23 +1301,12 @@ export const Core3D = {
       uShafts.uFieldOccRect.value.set(field.x0, field.y0, 1 / Math.max(1e-6, field.w), 1 / Math.max(1e-6, field.h));
     }
     const cam1 = this.activeCam1 || { x: 0, y: 0 };
-    const cam2 = this.activeCam2 || cam1;
     const zoom1 = Math.max(0.0001, Number(cam1.zoom) || 1);
-    const zoom2 = Math.max(0.0001, Number(cam2.zoom) || 1);
-    const viewW = isSplit ? this.width / 2 : this.width;
     uShafts.uSunActive.value = 1;
-    uShafts.uShaftGain.value = 1 - shaftCut;
-    uShafts.uSplitScreen.value = isSplit ? 1 : 0;
+    uShafts.uShaftGain.value = 1;
     uShafts.uSunWorld.value.set(sun.x, -sun.y);
     uShafts.uCamCenter.value.set(Number(cam1.x) || 0, -(Number(cam1.y) || 0));
-    uShafts.uViewWorldSize.value.set(viewW / zoom1, this.height / zoom1);
-    if (isSplit) {
-      uShafts.uCamCenter2.value.set(Number(cam2.x) || 0, -(Number(cam2.y) || 0));
-      uShafts.uViewWorldSize2.value.set(viewW / zoom2, this.height / zoom2);
-    } else {
-      uShafts.uCamCenter2.value.copy(uShafts.uCamCenter.value);
-      uShafts.uViewWorldSize2.value.copy(uShafts.uViewWorldSize.value);
-    }
+    uShafts.uViewWorldSize.value.set(this.width / zoom1, this.height / zoom1);
     uShafts.uDiscLenMul.value = Math.max(1, Number(shaftCfg.discLenMul) || 5);
     uShafts.uHullLenMul.value = Math.max(1, Number(shaftCfg.capsuleLenMul) || 3);
     uShafts.uHullSteps.value = Math.max(1, Math.min(HULL_SDF_MAX_STEPS, Number(shaftCfg.hullSteps) || 24));
@@ -1438,12 +1357,15 @@ export const Core3D = {
     return true;
   },
 
+  // Jedna klatka: pre-pass halo, fale uderzeniowe, passy sceny do composerTarget,
+  // post na kanwę. Kanwę kopiuje do #c drawHexShips3D W TYM SAMYM zadaniu JS
+  // (po await kanwa WebGPU bywa już pusta — SPIKE 5). Przed gotowością
+  // urządzenia nie robi nic (render() przed init() three rzuca / ostrzega).
   render() {
-    if (!this.isInitialized) return;
+    if (!this.isInitialized || !this.gpuReady) return;
+    const renderer = this.renderer;
     const dbgEnabled = typeof globalThis !== 'undefined' && typeof globalThis.__renderDbgRecord === 'function';
     const tRenderTotal0 = performance.now();
-    this._gpuTimerPoll();
-    this._gpuTimerBegin();
 
     // Toggles zmieniają się tylko z panelu/presetu — aplikuj przy zmianie,
     // nie co klatkę (w środku jest m.in. traverse całej sceny po światłach).
@@ -1459,331 +1381,226 @@ export const Core3D = {
     this._syncSceneMatrices();
 
     const t = this.perfToggles || {};
-    const bloomOn = t.bloom !== false;
     const freePerspective = this.isFreePerspectiveCamera();
-    // Both effects below map 2D gameplay-space coordinates to screen UVs.
-    // Disable them only for the experimental free 3D camera; bloom and the
-    // shared ACES resolve remain fully active.
-    // Widok skoku (warpWorldLens.js) wygasza shafty na klatkę — patrz suppressShadowShafts.
-    const shaftCut = Number(this._shaftsSuppressed) || 0;
-    this._shaftsSuppressed = 0;
-    const raysEnabled = t.shadowShafts !== false && !freePerspective && shaftCut < 1;
-    const heatEnabled = t.heatHaze !== false && !freePerspective;
+    // Maska cieni mapuje świat gry 2D na ekran — w wolnej kamerze 3D jej nie ma.
+    const raysEnabled = t.shadowShafts !== false && !freePerspective;
     const shaftCfg = this._shaftCfg || resolveShadowShaftsQuality(this.shadowShaftsQuality);
-    let isSplit = false;
 
     // Warstwy bez widocznej zawartości (flagi od właścicieli). Wolna kamera lotu
     // nad miastem widzi scenę inaczej niż culling planet — tam rysujemy wszystko.
     const layerActivity = freePerspective ? LAYERS_ALL_ACTIVE : this.layerActivity;
-    isSplit = typeof window !== 'undefined' && window.splitScreenMode && this.activeCam2;
 
     // Liczniki renderera zerujemy PRZED maską cieni, żeby jej quad trafił do
-    // kubełka 'shafts' (pre-pass halo liczy się teraz w 'other').
-    this.renderer.info.reset();
-    this._resetRenderInfoBuckets();
-    this._instrumentComposerPasses();
+    // kubełka 'shafts' (pre-pass halo liczy się w 'other').
+    this._beginRenderInfo();
+
+    const prevAutoClear = renderer.autoClear;
+    const prevClearAlpha = renderer.getClearAlpha();
+    const prevClearColor = this._clearColorScratch;
+    renderer.getClearColor(prevClearColor);
+    // Czyszczenie tylko jawne (renderer.clear) — każdy render() dokłada do celu.
+    renderer.autoClear = false;
+    renderer.toneMapping = THREE.NoToneMapping;
+
+    // Mapa cienia słońca: raz na klatkę, zanim pierwszy odbiorca ją przeczyta.
+    this._requestSunShadowUpdate(t);
 
     // Maska widoczności słońca — PRZED pre-passem halo i passami sceny, bo
     // czytają ją materiały (kadłuby, tło, planety przy ringu, atmosfery).
     const sun = typeof window !== 'undefined' ? window.SUN : null;
-    this._renderSunShadowMask(raysEnabled && !!sun, sun, shaftCut, shaftCfg, isSplit);
+    this._renderSunShadowMask(raysEnabled && !!sun, sun, shaftCfg);
 
     // Pre-pass halo tylko gdy planety są w ogóle renderowane — wcześniej te
     // 2 przejścia sceny wykonywały się ZAWSZE, nawet na ultrafast bez planet.
     // Ani gdy żadne ciało z poświatą nie jest w kadrze (bitwa w próżni): wtedy
     // pomijany jest też quad halo w _scenePasses, więc stary target nie wycieka.
     if (t.planetPass !== false && layerActivity.halo !== false && this.planetHaloTarget && this.planetHaloPass && this.haloDepthMaskMaterial) {
-      const prevAutoClear = this.renderer.autoClear;
-      const prevTarget = this.renderer.getRenderTarget();
-      const prevClearAlpha = this.renderer.getClearAlpha();
-      const prevClearColor = this._clearColorScratch;
-      this.renderer.getClearColor(prevClearColor);
-      const prevOverrideMaterial = this.scene.overrideMaterial;
-      const prevPerspLayerMask = this.cameraPersp.layers.mask;
-
-      const renderPlanetHaloViewport = (camData, vpX, vpY, vpW, vpH) => {
-        this.renderer.setViewport(vpX, vpY, vpW, vpH);
-        this.renderer.setScissor(vpX, vpY, vpW, vpH);
-        this.renderer.setScissorTest(true);
-        this.renderer.clear(true, true, true);
-
-        this.syncCamera(camData, vpW, vpH, vpX);
-
-        this.scene.overrideMaterial = this.haloDepthMaskMaterial;
-        this.cameraPersp.layers.set(PLANET_RENDER_LAYER);
-        this.renderer.render(this.scene, this.cameraPersp);
-
-        this.scene.overrideMaterial = prevOverrideMaterial;
-        this.cameraPersp.layers.set(PLANET_HALO_RENDER_LAYER);
-        this.renderer.render(this.scene, this.cameraPersp);
-      };
-
-      this.renderer.autoClear = false;
-      this.renderer.setRenderTarget(this.planetHaloTarget);
-      this.renderer.setClearColor(0x000000, 0.0);
-
-      isSplit = typeof window !== 'undefined' && window.splitScreenMode && this.activeCam2;
-      const haloW = this.planetHaloTarget.width;
-      const haloH = this.planetHaloTarget.height;
-      if (isSplit) {
-        const halfW = Math.floor(haloW / 2);
-        renderPlanetHaloViewport(this.activeCam1, 0, 0, halfW, haloH);
-        renderPlanetHaloViewport(this.activeCam2, halfW, 0, haloW - halfW, haloH);
-      } else {
-        renderPlanetHaloViewport(this.activeCam1, 0, 0, haloW, haloH);
-      }
-
-      this.renderer.setScissorTest(false);
-      this.renderer.setViewport(0, 0, haloW, haloH);
-      this.scene.overrideMaterial = prevOverrideMaterial;
-      this.cameraPersp.layers.mask = prevPerspLayerMask;
-      this.renderer.setRenderTarget(prevTarget);
-      this.renderer.setClearColor(prevClearColor, prevClearAlpha);
-      this.renderer.autoClear = prevAutoClear;
-      this.planetHaloPass.uniforms.tPlanetHalo.value = this.planetHaloTarget.texture;
+      this._renderPlanetHaloPrepass();
     }
 
-    // UberPost zawsze wlaczony — ACES tonemapping + linear→sRGB
-    // Composer dziala nawet gdy bloom/heatHaze/shadowShafts sa off (passes disabled).
-    this.renderer.toneMapping = THREE.NoToneMapping;
+    // Bloom (02) dostanie tu konfigurację; bez passa — nic.
+    if (this.bloomPass && t.bloom !== false) this._applyBloomPassConfig();
 
-    const tBloom0 = dbgEnabled ? performance.now() : 0;
-    if (this.bloomPass && bloomOn) this._applyBloomPassConfig();
-    if (dbgEnabled) recordRenderDbg('coreBloomConfig', performance.now() - tBloom0);
+    // Źródła gorącego powietrza: producenci (dysze, wybuchy, rakiety, tarcze)
+    // tylko dorzucają, render zabiera wszystko, co uzbierało się od poprzedniej
+    // klatki, i kasuje licznik PRZY KONSUMPCJI (kasowanie u producenta gubiło
+    // źródła z ticku overlaya). Do zadania 02 post ich nie rysuje.
+    this.heatHazeCount = 0;
 
-    const tPost0 = dbgEnabled ? performance.now() : 0;
-    const nowSec = (typeof performance !== 'undefined' ? performance.now() : Date.now()) * 0.001;
-
-    if (this.uberPass) {
-      const uPost = this.uberPass.material.uniforms;
-      const heatCount = heatEnabled ? Math.max(0, Math.min(this.heatHazeCount | 0, this.heatHazeMaxSources | 0)) : 0;
-      uPost.uSourceCount.value = heatCount;
-      uPost.uGlobalStrength.value = 1.0;
-      // Zawinięty zegar szumu: przy uTime·9,9 po godzinie gry hash tracił
-      // precyzję float32 (kanciasty szum). Skok wzoru co 10 min jest niewidoczny.
-      uPost.uTime.value = nowSec % 600;
-      if (uPost.uAspect) uPost.uAspect.value = this.width / Math.max(1, this.height);
-
-      if (heatCount > 0) {
-        const dst = uPost.uHeatSources.value;
-        const dstDirs = uPost.uHeatDirs ? uPost.uHeatDirs.value : null;
-        const src = this.heatHazeSources;
-        const srcDirs = this.heatHazeDirs;
-        for (let i = 0; i < heatCount; i++) {
-          const base = i * 4;
-          dst[i].set(src[base], src[base + 1], src[base + 2], src[base + 3]);
-          if (dstDirs && srcDirs) dstDirs[i].set(srcDirs[i * 2], srcDirs[i * 2 + 1]);
-        }
-      }
-      if (uPost.uWaveCount) {
-        uPost.uWaveCount.value = heatEnabled ? this._packWarpWaves(uPost.uWaves.value, uPost.uWaveShape.value) : 0;
-      }
-      this._warpWaveCount = 0;
-      // Kasujemy licznik przy KONSUMPCJI, nie u producenta. Wcześniej zerował go
-      // każdy, kto zamierzał coś dorzucić: EngineVfxSystem na starcie swojego
-      // update, a potem jeszcze reactorblow i rocketSystem3D z ticku overlaya —
-      // czyli już PO tym passie. Efekt: źródła z wybuchów i rakiet nigdy nie
-      // trafiały na ekran (kasował je najbliższy update silników), a zafalowania
-      // od dysz znikały na czas eksplozji. Teraz producenci tylko dorzucają, a
-      // pass zabiera wszystko, co uzbierało się od poprzedniej klatki.
-      this.heatHazeCount = 0;
-    }
-    if (dbgEnabled) recordRenderDbg('coreUberSetup', performance.now() - tPost0);
-
-    // Liczniki renderera wyzerowane na górze render() (przed maską cieni).
     const tComposer0 = performance.now();
+    const nowSec = (typeof performance !== 'undefined' ? performance.now() : Date.now()) * 0.001;
+    this._updateShockwaves(nowSec, t, layerActivity);
 
-    if (this.shockwave3DManager) {
-      const shockDt = this._shockwavePrevTime > 0
-        ? Math.max(1 / 240, Math.min(1 / 20, nowSec - this._shockwavePrevTime))
-        : 1 / 60;
-      this._shockwavePrevTime = nowSec;
-      this.shockwave3DManager.update(shockDt);
-
-      const hasActiveShockwaves = this.refractionTarget && this.shockwave3DManager.hasActive();
-      if (!hasActiveShockwaves) this._refractionValid = false;
-      this._refractionFlip = !this._refractionFlip;
-      // Snapshot refrakcji odświeżany co drugą klatkę (pierwsza fala wymusza świeży)
-      // — źródło szybkiego zniekształcenia nie potrzebuje 60 Hz, a każdy render
-      // to pełne przejścia sceny.
-      if (hasActiveShockwaves && (!this._refractionValid || this._refractionFlip)) {
-        this._refractionValid = true;
-        const prevAutoClear = this.renderer.autoClear;
-        const prevTarget = this.renderer.getRenderTarget();
-        const prevClearAlpha = this.renderer.getClearAlpha();
-        const prevClearColor = this._clearColorScratch;
-        this.renderer.getClearColor(prevClearColor);
-        const prevPerspLayerMask = this.cameraPersp.layers.mask;
-        const prevOrthoLayerMask = this.cameraOrtho.layers.mask;
-
-        // Snapshot tylko tła + świata ortho. Warstwy planet/FG pomijamy — wewnątrz
-        // zniekształcenia shockwave ich brak jest niezauważalny, a FG potrafi nieść
-        // ~1000 draw calli (bronie/budynki), które tu dublowaliśmy przy każdej fali.
-        const layers = [];
-        if (t.bgPass !== false) layers.push({ layer: 1, ortho: false });
-        if (t.orthoPass !== false) layers.push({ layer: 0, ortho: true });
-        if (t.orthoPass !== false && layerActivity.shields !== false) layers.push({ layer: SHIELD_RENDER_LAYER, ortho: true });
-
-        const renderRefractionViewport = (camData, vpX, vpY, vpW, vpH) => {
-          this.renderer.setViewport(vpX, vpY, vpW, vpH);
-          this.renderer.setScissor(vpX, vpY, vpW, vpH);
-          this.renderer.setScissorTest(true);
-          this.renderer.clear(true, true, true);
-          this.syncCamera(camData, vpW, vpH, vpX);
-          for (const { layer, ortho } of layers) {
-            const cam = ortho ? this.cameraOrtho : this.cameraPersp;
-            cam.layers.set(layer);
-            // Mapa cienia z rzucającymi warstwy ortho (patrz autoUpdate w init()).
-            if (layer === 0) this.renderer.shadowMap.needsUpdate = true;
-            this.renderer.render(this.scene, cam);
-          }
-        };
-
-        this.shockwave3DManager.hideAll();
-        this.renderer.autoClear = false;
-        this.renderer.setRenderTarget(this.refractionTarget);
-        this.renderer.setClearColor(0x000000, 0.0);
-        // Snapshot ma połowę rozdzielczości: materiały czytają maskę cieni po
-        // gl_FragCoord, więc skala teksela idzie za celem (i wraca niżej).
-        this._setSunShadowTexelFor(this.refractionTarget);
-        this._readRenderInfoInto(this._renderInfoBefore);
-
-        if (isSplit) {
-          const rtW = this.refractionTarget.width;
-          const rtH = this.refractionTarget.height;
-          const halfW = Math.floor(rtW / 2);
-          renderRefractionViewport(this.activeCam1, 0, 0, halfW, rtH);
-          renderRefractionViewport(this.activeCam2, halfW, 0, rtW - halfW, rtH);
-        } else {
-          renderRefractionViewport(this.activeCam1, 0, 0, this.refractionTarget.width, this.refractionTarget.height);
-        }
-        this._addRenderInfoDelta('refraction');
-
-        this.shockwave3DManager.showAll();
-        this._setSunShadowTexelFor(this.composerTarget);
-        this.renderer.setScissorTest(false);
-        this.renderer.setViewport(0, 0, this.refractionTarget.width, this.refractionTarget.height);
-        this.cameraPersp.layers.mask = prevPerspLayerMask;
-        this.cameraOrtho.layers.mask = prevOrthoLayerMask;
-        this.renderer.setRenderTarget(prevTarget);
-        this.renderer.setClearColor(prevClearColor, prevClearAlpha);
-        this.renderer.autoClear = prevAutoClear;
-      }
-    }
-
-    // Soczewka skoku: przy aktywnej tło idzie do warpLensTarget, a warpLensPass
-    // (następny w łańcuchu) kładzie je zakrzywione do composerTarget.
-    const warpLensOn = this._prepareWarpLens(freePerspective, nowSec);
-
-    // Scena → composerTarget (MSAA, bez pośrednich resolve), potem jedyny
-    // resolve klatki (sceneResolvePass sampluje composerTarget) i post bez MSAA.
-    const shadowMap = this.renderer.shadowMap;
+    // Scena → composerTarget (MSAA; backend rozwiązuje je do .texture na końcu
+    // każdego passa), potem post bez MSAA na kanwę.
+    this.syncCamera(this.activeCam1, this.composerTarget.width, this.composerTarget.height);
+    renderer.setRenderTarget(this.composerTarget);
     for (const pass of this._scenePasses) {
       if (!pass || pass.enabled === false) continue;
       // Pusty pass (planety poza kadrem, zero widocznych tarcz) = zero pracy.
       if (!this._scenePassHasContent(pass, layerActivity)) continue;
-      // Shadow mapa tylko przed passami z rzucającymi: ortho i FG (stacje →
-      // shadowCatcherFg). Pozostałe passy nie mają odbiorców w zasięgu kamery
-      // cienia, a three kasuje needsUpdate po pierwszym renderze mapy.
-      if (pass === this.renderPassOrtho || pass === this.renderPassFg) shadowMap.needsUpdate = true;
-      const target = (warpLensOn && pass === this.renderPassBg) ? this.warpLensTarget : this.composerTarget;
-      pass.render(this.renderer, null, target);
-      // Widok skoku: gwiazdy gry do własnego celu (warpLensPass łączy je z mgławicą).
-      if (pass === this.renderPassBg && warpLensOn && this._warpStarsOn && this.warpStarTarget) {
-        this.renderPassWarpStars.render(this.renderer, null, this.warpStarTarget);
+      this._runScenePass(pass);
+      if (pass === this.renderPassBg) {
+        // Pass zgięcia tła (nowy warp) — zaraz po passie tła, przed planetami:
+        // zakrzywia tylko mgławicę i gwiazdy; planety, statki i FG kładą się na
+        // wierzchu, bloom liczy się z gotowego obrazu. Odłożone (PLAN §9) — nowy
+        // warp wejdzie tu od razu w TSL; stara soczewka i fale są usunięte.
       }
     }
-    for (const pass of this._postPasses) {
-      if (pass && pass.enabled !== false) pass.render(this.renderer, null, this.postTarget);
-    }
-    this.renderer.setRenderTarget(null);
-    this._gpuTimerEnd();
+    renderer.setRenderTarget(null);
+    this._renderPost();
+
+    renderer.setClearColor(prevClearColor, prevClearAlpha);
+    renderer.autoClear = prevAutoClear;
     this._finalizeRenderInfoBuckets();
     const composerMs = performance.now() - tComposer0;
-    this.lastFramePerf = {
-      renderTotalMs: performance.now() - tRenderTotal0,
-      composerMs
-    };
+    const perf = this.lastFramePerf || (this.lastFramePerf = { renderTotalMs: 0, composerMs: 0 });
+    perf.renderTotalMs = performance.now() - tRenderTotal0;
+    perf.composerMs = composerMs;
     if (dbgEnabled) {
       recordRenderDbg('coreComposerRender', composerMs);
-      recordRenderDbg('core3dRenderTotal', this.lastFramePerf.renderTotalMs);
+      recordRenderDbg('core3dRenderTotal', perf.renderTotalMs);
     }
-    // Expose renderer info for perf debugging — read with window.__rendererInfo
-    if (typeof window !== 'undefined') {
-      const info = this.lastFrameRenderInfo?.total || this.renderer.info.render;
-      window.__rendererInfo = {
-        calls: info.calls,
-        triangles: info.triangles,
-        points: info.points,
-        lines: info.lines,
-        passes: this.lastFrameRenderInfo
-      };
-    }
+    this._publishRendererInfo();
+    this._gpuTimerAfterRender();
   },
 
-  _renderDirect(dbgEnabled, tRenderTotal0) {
+  // Pass sceny albo pełnoekranowy quad; pomiar draw calli i czasu CPU do
+  // kubełka passa (nazwy kubełków czytają harness i PerfHUD).
+  _runScenePass(pass) {
     const renderer = this.renderer;
-    // Bez composera nie ma passa soczewki — gwiazdy muszą być na warstwie tła.
-    this._restoreWarpStars();
-    const isSplit = typeof window !== 'undefined' && window.splitScreenMode && this.activeCam2;
+    const before = this._renderInfoBefore;
+    this._readRenderInfoInto(before);
+    const t0 = performance.now();
+    if (pass.quad) {
+      pass.quad.render(renderer);
+    } else {
+      if (pass.clearColor) {
+        renderer.setClearColor(0x000000, 0.0);
+        renderer.clear(true, true, true);
+      } else if (pass.clearDepth) {
+        renderer.clear(false, true, false);
+      }
+      const camera = this.getPassCamera(pass.ortho);
+      camera.layers.set(pass.layer);
+      renderer.render(this.scene, camera);
+    }
+    this._addRenderInfoDelta(pass.bucket, performance.now() - t0, before);
+  },
 
-    this._syncSceneMatrices();
+  // Post na kanwę (bieżący cel = null): uber-lite, od zadania 02 bloom i „uber”.
+  _renderPost() {
+    const before = this._renderInfoBefore;
+    this._readRenderInfoInto(before);
+    const t0 = performance.now();
+    this._post.render();
+    this._addRenderInfoDelta('post', performance.now() - t0, before);
+  },
 
-    // ShaderMaterial outputuje wartosci sRGB bezposrednio - nie zmieniamy colorSpace.
-    renderer.autoClear = false;
-    renderer.setRenderTarget(null);
+  // Halo planet: głębia planet (warstwa 3, bez koloru) + poświaty (warstwa 5)
+  // do planetHaloTarget; quad halo w passach sceny dokłada je addytywnie.
+  _renderPlanetHaloPrepass() {
+    const renderer = this.renderer;
+    const scene = this.scene;
+    const camera = this.cameraPersp;
+    const target = this.planetHaloTarget;
+    const prevOverrideMaterial = scene.overrideMaterial;
+    const prevPerspLayerMask = camera.layers.mask;
+    renderer.setRenderTarget(target);
     renderer.setClearColor(0x000000, 0.0);
     renderer.clear(true, true, true);
+    this.syncCamera(this.activeCam1, target.width, target.height);
 
-    const t = this.perfToggles || {};
-    const layers = [];
-    if (t.bgPass !== false) layers.push({ layer: 1, ortho: false });
-    if (t.planetPass !== false) layers.push({ layer: PLANET_RENDER_LAYER, ortho: false });
-    if (t.planetPass !== false) layers.push({ layer: RING_PLANET_RENDER_LAYER, ortho: true });
-    layers.push({ layer: 0, ortho: true }); // ortho always
-    layers.push({ layer: SHIELD_RENDER_LAYER, ortho: true });
-    if (t.fgPass !== false) layers.push({ layer: 2, ortho: false });
+    scene.overrideMaterial = this.haloDepthMaskMaterial;
+    camera.layers.set(PLANET_RENDER_LAYER);
+    renderer.render(scene, camera);
 
-    const renderLayers = (camData, vpX, vpY, vpW, vpH) => {
-      renderer.setViewport(vpX, vpY, vpW, vpH);
-      renderer.setScissor(vpX, vpY, vpW, vpH);
-      renderer.setScissorTest(true);
+    scene.overrideMaterial = prevOverrideMaterial;
+    camera.layers.set(PLANET_HALO_RENDER_LAYER);
+    renderer.render(scene, camera);
 
-      this.syncCamera(camData, vpW, vpH, vpX);
+    camera.layers.mask = prevPerspLayerMask;
+  },
 
-      for (const { layer, ortho } of layers) {
-        const cam = ortho ? this.cameraOrtho : this.cameraPersp;
-        cam.layers.set(layer);
-        renderer.render(this.scene, cam);
-      }
-    };
+  // Fale uderzeniowe (shockwave3D.js) i snapshot refrakcji — źródło ich
+  // zniekształcenia (materiał fali w TSL: zadanie 03).
+  _updateShockwaves(nowSec, t, layerActivity) {
+    const manager = this.shockwave3DManager;
+    if (!manager) return;
+    const shockDt = this._shockwavePrevTime > 0
+      ? Math.max(1 / 240, Math.min(1 / 20, nowSec - this._shockwavePrevTime))
+      : 1 / 60;
+    this._shockwavePrevTime = nowSec;
+    manager.update(shockDt);
 
-    const w = renderer.domElement.width;
-    const h = renderer.domElement.height;
-
-    if (isSplit) {
-      const halfW = Math.floor(w / 2);
-      renderLayers(this.activeCam1, 0, 0, halfW, h);
-      renderer.clear(false, true, false);
-      renderLayers(this.activeCam2, halfW, 0, w - halfW, h);
-    } else {
-      renderLayers(this.activeCam1, 0, 0, w, h);
-    }
-
-    renderer.setScissorTest(false);
-    renderer.setViewport(0, 0, w, h);
-    renderer.autoClear = true;
-
-    this.lastFramePerf = {
-      renderTotalMs: performance.now() - tRenderTotal0,
-      composerMs: 0
-    };
-    if (dbgEnabled) {
-      recordRenderDbg('coreComposerRender', 0);
-      recordRenderDbg('core3dRenderTotal', this.lastFramePerf.renderTotalMs);
+    const hasActiveShockwaves = this.refractionTarget && manager.hasActive();
+    if (!hasActiveShockwaves) this._refractionValid = false;
+    this._refractionFlip = !this._refractionFlip;
+    // Snapshot refrakcji odświeżany co drugą klatkę (pierwsza fala wymusza świeży)
+    // — źródło szybkiego zniekształcenia nie potrzebuje 60 Hz, a każdy render
+    // to pełne przejścia sceny.
+    if (hasActiveShockwaves && (!this._refractionValid || this._refractionFlip)) {
+      this._refractionValid = true;
+      this._renderRefractionSnapshot(t, layerActivity);
     }
   },
 
+  // Snapshot tylko tła + świata ortho (+ tarcz). Warstwy planet/FG pomijamy —
+  // wewnątrz zniekształcenia shockwave ich brak jest niezauważalny, a FG potrafi
+  // nieść ~1000 draw calli (bronie/budynki), które tu dublowaliśmy przy każdej fali.
+  _renderRefractionSnapshot(t, layerActivity) {
+    const renderer = this.renderer;
+    const target = this.refractionTarget;
+    const persp = this.cameraPersp;
+    const ortho = this.cameraOrtho;
+    const prevPerspLayerMask = persp.layers.mask;
+    const prevOrthoLayerMask = ortho.layers.mask;
+
+    this.shockwave3DManager.hideAll();
+    renderer.setRenderTarget(target);
+    renderer.setClearColor(0x000000, 0.0);
+    renderer.clear(true, true, true);
+    // Snapshot ma połowę rozdzielczości: materiały czytają maskę cieni po
+    // pikselu, więc skala teksela idzie za celem (i wraca niżej).
+    this._setSunShadowTexelFor(this.refractionTarget);
+    this.syncCamera(this.activeCam1, target.width, target.height);
+    this._readRenderInfoInto(this._renderInfoBefore);
+    if (t.bgPass !== false) {
+      persp.layers.set(1);
+      renderer.render(this.scene, persp);
+    }
+    if (t.orthoPass !== false) {
+      ortho.layers.set(0);
+      renderer.render(this.scene, ortho);
+      if (layerActivity.shields !== false) {
+        ortho.layers.set(SHIELD_RENDER_LAYER);
+        renderer.render(this.scene, ortho);
+      }
+    }
+    this._addRenderInfoDelta('refraction');
+
+    this.shockwave3DManager.showAll();
+    this._setSunShadowTexelFor(this.composerTarget);
+    persp.layers.mask = prevPerspLayerMask;
+    ortho.layers.mask = prevOrthoLayerMask;
+  },
+
+  _publishRendererInfo() {
+    if (typeof window === 'undefined') return;
+    // Expose renderer info for perf debugging — read with window.__rendererInfo
+    const info = this.lastFrameRenderInfo?.total;
+    const out = this._rendererInfoOut;
+    out.calls = info ? info.calls : 0;
+    out.triangles = info ? info.triangles : 0;
+    out.points = info ? info.points : 0;
+    out.lines = info ? info.lines : 0;
+    out.passes = this.lastFrameRenderInfo;
+    window.__rendererInfo = out;
+  },
+
+  // Podzielony ekran NIE jest jednym renderem: drawHexShips3D woła renderSingle
+  // dla każdej kamery i kopiuje wycinki (clear() w WebGPU ignoruje nożyczki —
+  // SPIKE 13; dawna ścieżka „split w jednym renderze” usunięta w porcie).
   renderSingle(gameCamera = null) {
     if (!this.isInitialized) return;
     const dbgEnabled = typeof globalThis !== 'undefined' && typeof globalThis.__renderDbgRecord === 'function';
@@ -1798,26 +1615,12 @@ export const Core3D = {
     if (dbgEnabled) recordRenderDbg('coreRenderCall', performance.now() - tCall0);
   },
 
-  renderSplitScreen(cam1 = null, cam2 = null) {
-    if (!this.isInitialized) return;
-    const dbgEnabled = typeof globalThis !== 'undefined' && typeof globalThis.__renderDbgRecord === 'function';
-    const tCall0 = dbgEnabled ? performance.now() : 0;
-    const prevCam1 = this.activeCam1;
-    const prevCam2 = this.activeCam2;
-    if (cam1) this.activeCam1 = cam1;
-    if (cam2) this.activeCam2 = cam2;
-    this.render();
-    this.activeCam1 = prevCam1;
-    this.activeCam2 = prevCam2;
-    if (dbgEnabled) recordRenderDbg('coreRenderCall', performance.now() - tCall0);
-  },
-
   // Tło menu głównego (menuBackdrop3D.js): ta sama scena, renderer i post co
-  // gra (resolve MSAA → bloom z bloomConfig.js → ACES w uberPassie), ale tylko
-  // warstwa MENU_BACKDROP_LAYER i kamera kinowa tła. Bez passów gry, maski
-  // cieni, soczewki, fal i refrakcji — przed startem gry nic ich nie zgłasza.
+  // gra (ACES gry + sRGB; bloom od zadania 02), ale tylko warstwa
+  // MENU_BACKDROP_LAYER i kamera kinowa tła. Bez passów gry, maski cieni,
+  // refrakcji — przed startem gry nic ich nie zgłasza.
   renderBackdrop(camera) {
-    if (!this.isInitialized || !camera) return;
+    if (!this.isInitialized || !this.gpuReady || !camera) return;
     const renderer = this.renderer;
     const tRenderTotal0 = performance.now();
     if (this._passTogglesDirty) {
@@ -1825,8 +1628,7 @@ export const Core3D = {
       this._passTogglesDirty = false;
     }
     this._syncSceneMatrices();
-    renderer.info.reset();
-    this._resetRenderInfoBuckets();
+    this._beginRenderInfo();
     const prevAutoClear = renderer.autoClear;
     const prevClearAlpha = renderer.getClearAlpha();
     const prevClearColor = this._clearColorScratch;
@@ -1835,7 +1637,6 @@ export const Core3D = {
     renderer.toneMapping = THREE.NoToneMapping;
     renderer.autoClear = false;
     renderer.setRenderTarget(this.composerTarget);
-    renderer.setScissorTest(false);
     renderer.setClearColor(0x000000, 1);
     renderer.clear(true, true, true);
     camera.layers.set(MENU_BACKDROP_LAYER);
@@ -1844,20 +1645,68 @@ export const Core3D = {
     this._addRenderInfoDelta('bg', performance.now() - tRenderTotal0);
     camera.layers.mask = prevMask;
     if (this.bloomPass && this.perfToggles.bloom !== false) this._applyBloomPassConfig();
-    const uPost = this.uberPass?.material.uniforms;
-    if (uPost) {
-      uPost.uSourceCount.value = 0;
-      if (uPost.uWaveCount) uPost.uWaveCount.value = 0;
-      if (uPost.uAspect) uPost.uAspect.value = this.width / Math.max(1, this.height);
-    }
-    for (const pass of this._postPasses) {
-      if (pass && pass.enabled !== false) pass.render(renderer, null, this.postTarget);
-    }
     renderer.setRenderTarget(null);
+    this._renderPost();
     renderer.setClearColor(prevClearColor, prevClearAlpha);
     renderer.autoClear = prevAutoClear;
     this._finalizeRenderInfoBuckets();
-    this.lastFramePerf = { renderTotalMs: performance.now() - tRenderTotal0, composerMs: 0 };
+    const perf = this.lastFramePerf || (this.lastFramePerf = { renderTotalMs: 0, composerMs: 0 });
+    perf.renderTotalMs = performance.now() - tRenderTotal0;
+    perf.composerMs = 0;
+    this._publishRendererInfo();
+    this._gpuTimerPoll();
+  },
+
+  // Rozgrzewka pipeline'ów passa (PLAN §6): compileAsync odtwarza pass — kompiluje
+  // dla BIEŻĄCEGO celu (format, MSAA), warstw kamery i frustum, pomija obiekty
+  // niewidoczne. Tu: cel composerTarget, kamera passa z warstwą `layer`, obiekty
+  // poddrzewa bez cullingu na czas projekcji (compileAsync projektuje
+  // synchronicznie, gdy renderer jest gotowy — przełączniki widoczności wokół
+  // wywołania działają). Nie blokuje: Promise<boolean>, błąd tylko do konsoli.
+  // Przed gotowością urządzenia czeka na Core3D.ready (widoczność z tamtej chwili).
+  // opts.camera — własna kamera (np. kinowa tła menu), opts.ortho — wymuszenie.
+  prewarmPass(object3d, layer = 0, opts = {}) {
+    if (!object3d) return Promise.resolve(false);
+    if (!this.gpuReady) {
+      if (this.gpuUnsupported) return Promise.resolve(false);
+      return this.ready.then((ok) => (ok ? this.prewarmPass(object3d, layer, opts) : false));
+    }
+    const renderer = this.renderer;
+    const isOrtho = typeof opts.ortho === 'boolean' ? opts.ortho : ORTHO_PASS_LAYERS.has(layer);
+    const camera = opts.camera || this.getPassCamera(isOrtho);
+    const prevMask = camera.layers.mask;
+    const prevTarget = renderer.getRenderTarget();
+    const culled = [];
+    object3d.traverse((o) => {
+      if (o.frustumCulled) {
+        o.frustumCulled = false;
+        culled.push(o);
+      }
+    });
+    camera.layers.set(layer);
+    renderer.setRenderTarget(this.composerTarget);
+    let promise;
+    try {
+      promise = renderer.compileAsync(object3d, camera, object3d.isScene ? null : this.scene);
+    } catch (err) {
+      promise = Promise.reject(err);
+    } finally {
+      for (let i = 0; i < culled.length; i++) culled[i].frustumCulled = true;
+      camera.layers.mask = prevMask;
+      renderer.setRenderTarget(prevTarget);
+    }
+    return promise.then(() => true, (err) => {
+      console.warn('[Core3D] rozgrzewka passa nie wyszła:', err?.message || err);
+      return false;
+    });
+  },
+
+  // Maks. anizotropia próbkowania tekstur — także przed utworzeniem renderera
+  // (tekstury planet i stacji powstają wcześniej niż urządzenie). Backend
+  // WebGPU zwraca 16 (WebGL na tej karcie: też 16).
+  getMaxAnisotropy() {
+    const v = Number(this.renderer?.getMaxAnisotropy?.());
+    return Number.isFinite(v) && v >= 1 ? v : 16;
   },
 
   beginShaftDiscFrame() { this.shaftDiscCount = 0; },
@@ -1896,7 +1745,6 @@ export const Core3D = {
 
   // Pass sceny bez widocznej zawartości pomijamy w całości.
   _scenePassHasContent(pass, activity) {
-    if (pass === this.warpLensPass) return this._warpLensActive;
     if (pass === this.renderPassPlanets) return activity.planets !== false;
     if (pass === this.planetHaloPass) return activity.halo !== false;
     if (pass === this.renderPassRingPlanets) return activity.ringPlanets !== false;
@@ -1904,322 +1752,31 @@ export const Core3D = {
     return true;
   },
 
-  // Soczewka skoku w świecie gry (y w dół): środek, kąt osi lotu, promienie
-  // wzdłuż/w poprzek osi w jednostkach świata, siła „połknięcia” (warpLens3D.js).
-  // Gra zgłasza ją co klatkę PRZED Core3D.render (src/vfx/warpLensPass.js),
-  // a bez soczewki woła clearWarpLens. Zgłoszenie jest w świecie, więc dwa
-  // rendery podzielonego ekranu (renderSingle na kamerę) liczą je każdy dla siebie.
-  setWarpLensWorld(worldX, worldY, angle, radiusAlong, radiusAcross, swallow) {
-    const req = this._warpLensRequest;
-    req.x = Number(worldX) || 0;
-    req.y = Number(worldY) || 0;
-    req.angle = Number(angle) || 0;
-    req.radiusAlong = Number(radiusAlong) || 0;
-    req.radiusAcross = Number(radiusAcross) || 0;
-    req.swallow = Number(swallow) || 0;
-    req.stampMs = performance.now();
-  },
+  // ── Warp: poza portem (decyzja użytkownika 2026-09-27, USTALENIA §7) ─────────
+  // Stara soczewka skoku (warpLens3D.js), zgięcie tła, widok skoku (kropla /
+  // bańka Alcubierre'a), gwiazdy na warstwie 8 i fale w „uber” nie mają passa na
+  // WebGPU. API zostaje z tymi samymi sygnaturami — gra woła setWarpLensWorld /
+  // clearWarpLens co klatkę (src/vfx/warpLensPass.js), dema warpa resztę — ale
+  // niczego nie rysuje ani nie zapamiętuje. Zgłoszenia push* zwracają false
+  // (nic nie przyjęto do rysowania). Nowy warp wejdzie od razu w TSL: pass
+  // zgięcia tła w render() zaraz po passie tła (miejsce opisane tam).
+  setWarpLensWorld(worldX, worldY, angle, radiusAlong, radiusAcross, swallow) { },
 
-  clearWarpLens() { this._warpLensRequest.stampMs = -Infinity; },
+  clearWarpLens() { },
 
-  // Widok skoku (warpWorldLens.js) w świecie gry: środek kuli (statek), promień
-  // kuli w px ekranu, β (0 = zwykły widok), kąt lotu; o: { phase (faza
-  // przepływu, całkowana przez producenta), travel, blur, gain, fisheye, front,
-  // band, drop } — front wyjścia w promieniach kuli wzdłuż osi lotu (przed nim
-  // zwykły widok), drop = kształt { ua, ra, ub, rb } z warpDropGeometry (bez: koło).
-  // Co klatkę przed renderem; zgłoszenie starsze niż 250 ms jest martwe.
-  setWarpViewWorld(worldX, worldY, radiusPx, beta, angle, o = {}) {
-    const r = this._warpViewReq;
-    r.x = Number(worldX) || 0;
-    r.y = Number(worldY) || 0;
-    r.radiusPx = Math.max(0, Number(radiusPx) || 0);
-    r.beta = Math.max(0, Math.min(1, Number(beta) || 0));
-    r.angle = Number(angle) || 0;
-    r.phase = Number(o.phase) || 0;
-    if (Number.isFinite(o.travel)) r.travel = o.travel;
-    if (Number.isFinite(o.blur)) r.blur = o.blur;
-    if (Number.isFinite(o.gain)) r.gain = o.gain;
-    if (Number.isFinite(o.fisheye)) r.fisheye = o.fisheye;
-    // Front wyjścia (promienie kuli wzdłuż osi lotu); bez frontu = daleko przed statkiem.
-    r.front = Number.isFinite(o.front) ? o.front : 1000;
-    r.band = Number.isFinite(o.band) ? Math.max(0.01, o.band) : 0.35;
-    const g = o.drop;
-    const dropOk = g && g.ra > 0 && Number.isFinite(g.ua) && Number.isFinite(g.ub) && Number.isFinite(g.rb);
-    r.dropUa = dropOk ? g.ua : 0;
-    r.dropRa = dropOk ? g.ra : 1;
-    r.dropUb = dropOk ? g.ub : 0;
-    r.dropRb = dropOk ? g.rb : 1;
-    // Bańka Alcubierre'a (o.mode 'alcubierre', o.alc = { rPeak, rWidth, flat,
-    // amp, tintGain, shadeGain }).
-    r.mode = o.mode === 'alcubierre' ? 1 : 0;
-    const a = o.alc;
-    if (r.mode === 1 && a) {
-      r.alcPeak = finiteOr(a.rPeak, 0.6);
-      r.alcWidth = finiteOr(a.rWidth, 0.42);
-      r.alcFlat = finiteOr(a.flat, 2.5);
-      r.alcAmp = finiteOr(a.amp, 0.05);
-      r.tintGain = finiteOr(a.tintGain, 0.12);
-      r.shadeGain = finiteOr(a.shadeGain, 1.0);
-    }
-    r.stampMs = performance.now();
-  },
+  setWarpViewWorld(worldX, worldY, radiusPx, beta, angle, o = {}) { },
 
-  clearWarpView() { this._warpViewReq.stampMs = -Infinity; },
+  clearWarpView() { },
 
-  // Widok skoku (soczewka świata): cienie shadow shafts liczą się z prawdziwego
-  // słońca i prawdziwych pozycji — na przestawionych planetach kładłyby się
-  // klinem (cień kadłuba, tarcze planet). Zgłaszać co klatkę PRZED
-  // updateHexShips3D (budżet sylwetek) i Core3D.render; render zeruje flagę.
-  // amount: 1 = pass pominięty, ułamek = cienie przygaszone (płynny powrót
-  // przy wyjściu ze skoku zamiast wskoczenia smugi w jednej klatce).
-  suppressShadowShafts(amount = 1) {
-    const a = Number.isFinite(amount) ? Math.min(1, Math.max(0, amount)) : 1;
-    if (a > (this._shaftsSuppressed || 0)) this._shaftsSuppressed = a;
-  },
+  // Widok skoku wygaszał shafty na klatkę — bez widoku skoku nic do wygaszania.
+  suppressShadowShafts(amount = 1) { },
 
-  // Prymityw zgięcia tła na tę klatkę (warpLens3D.js: WARP_SPACE_TYPE) —
-  // świat gry (y w dół), długości w jednostkach świata. Zgłaszać co klatkę
-  // PRZED Core3D.render; pass zabiera wszystko i zeruje listę.
-  pushWarpSpaceWorld(type, worldX, worldY, angle, a, b, strength) {
-    const n = this._warpSpaceCount | 0;
-    if (n >= this._warpSpaceReq.length) return false;
-    const r = this._warpSpaceReq[n];
-    r.type = type | 0;
-    r.x = Number(worldX) || 0;
-    r.y = Number(worldY) || 0;
-    r.angle = Number(angle) || 0;
-    r.a = Number(a) || 0;
-    r.b = Number(b) || 0;
-    r.strength = Number(strength) || 0;
-    this._warpSpaceCount = n + 1;
-    return true;
-  },
+  pushWarpSpaceWorld(type, worldX, worldY, angle, a, b, strength) { return false; },
 
-  // Fala warpa w uberPassie (drga cała klatka, także kadłuby): typ 0 —
-  // pierścień o promieniu `radius` i szerokości pasma `width`; typ 1 — szew
-  // o połowie długości `radius`, zasięgu w poprzek `width` i osi `angle`;
-  // typ 2 — łuk: pierścień tylko po stronie osi `angle` (fala dziobowa).
-  // amp w jednostkach świata (przesunięcie obrazu). Co klatkę przed renderem.
-  pushWarpWaveWorld(type, worldX, worldY, radius, width, amp, angle = 0) {
-    const n = this._warpWaveCount | 0;
-    if (n >= this._warpWaveReq.length) return false;
-    if ((this.perfToggles?.heatHaze) === false) return false;
-    const r = this._warpWaveReq[n];
-    r.type = type | 0;
-    r.x = Number(worldX) || 0;
-    r.y = Number(worldY) || 0;
-    r.radius = Number(radius) || 0;
-    r.width = Number(width) || 0;
-    r.amp = Number(amp) || 0;
-    r.angle = Number(angle) || 0;
-    this._warpWaveCount = n + 1;
-    return true;
-  },
+  pushWarpWaveWorld(type, worldX, worldY, radius, width, amp, angle = 0) { return false; },
 
-  // Zgłoszone fale → uniformy uberPassa (osie v ekranu jak źródła haze).
-  _packWarpWaves(outW, outS) {
-    const n = Math.min(this._warpWaveCount | 0, MAX_WARP_WAVES, outW?.length || 0, outS?.length || 0);
-    if (n <= 0) return 0;
-    if (typeof window !== 'undefined' && window.splitScreenMode && this.activeCam2) return 0;
-    const cam = this.activeCam1;
-    if (!cam || this.isFreePerspectiveCamera(cam)) return 0;
-    const zoom = Math.max(1e-4, Number(cam.zoom) || 1);
-    const w = Math.max(1, this.width || 1);
-    const h = Math.max(1, this.height || 1);
-    const k = zoom / h;
-    const aspect = w / h;
-    let written = 0;
-    for (let i = 0; i < n; i++) {
-      const r = this._warpWaveReq[i];
-      const width = r.width * k;
-      const amp = r.amp * k;
-      if (!(width > 1e-6) || !(Math.abs(amp) > 1e-6)) continue;
-      const u = 0.5 + (r.x - (Number(cam.x) || 0)) * zoom / w;
-      const v = 0.5 + ((Number(cam.y) || 0) - r.y) * zoom / h;
-      const radius = r.radius * k;
-      const reach = r.type === 1 ? Math.max(radius, width * 3) : radius + width * 3;
-      const cx = u * aspect;
-      const dx = Math.max(0, -cx, cx - aspect);
-      const dy = Math.max(0, -v, v - 1);
-      if (dx * dx + dy * dy >= reach * reach) continue;
-      outW[written].set(u, v, radius, amp);
-      outS[written].set(r.type, width, Math.cos(r.angle), -Math.sin(r.angle));
-      written++;
-    }
-    return written;
-  },
-
-  // Ustawia uniformy passa soczewki na tę klatkę; false = tło idzie jak zwykle.
-  // Pass pracuje, gdy jest świeża soczewka skoku ALBO prymitywy zgięcia.
-  _prepareWarpLens(freePerspective, nowSec) {
-    this._warpLensActive = false;
-    // Gwiazdy gry wracają na warstwę tła; widok skoku zabiera je niżej co klatkę.
-    this._restoreWarpStars();
-    const nowMs = nowSec * 1000;
-    // Nieużywany cel oddajemy po dłuższej przerwie (patrz WARP_LENS_TARGET_IDLE_MS).
-    if (this.warpLensTarget && nowMs - this._warpLensLastUseMs > WARP_LENS_TARGET_IDLE_MS) {
-      this.warpLensTarget.dispose();
-      this.warpLensTarget = null;
-      this.warpStarTarget?.dispose();
-      this.warpStarTarget = null;
-    }
-    const req = this._warpLensRequest;
-    const primCount = this._warpSpaceCount | 0;
-    this._warpSpaceCount = 0;
-    const lensFresh = nowMs - req.stampMs <= WARP_LENS_STALE_MS;
-    const view = this._warpViewReq;
-    const viewFresh = nowMs - view.stampMs <= WARP_LENS_STALE_MS && view.beta > 0.001 && view.radiusPx > 1;
-    if (!lensFresh && primCount <= 0 && !viewFresh) return false;
-    const pass = this.warpLensPass;
-    if (!pass || pass.enabled === false || !this.composerTarget) return false;
-    // Wolna kamera 3D nie ma mapowania świat→ekran passów 2D. Dwa widoki
-    // w jednym renderze (renderSplitScreen) dzieliłyby jedną soczewkę na obie
-    // połówki — tam jej nie ma; drawHexShips3D renderuje split jako dwa renderSingle.
-    if (freePerspective) return false;
-    if (typeof window !== 'undefined' && window.splitScreenMode && this.activeCam2) return false;
-
-    // Kamery passów liczą widok z rozmiaru celu w pikselach bufora — mapowanie
-    // soczewki musi iść z tych samych liczb, żeby środek trafił w kadłub.
-    const bufW = this.composerTarget.width;
-    const bufH = this.composerTarget.height;
-    const u = this._warpLensUniformScratch;
-    const lu = pass.uniforms;
-    const lensOn = lensFresh && computeWarpLensUniforms(req, this.activeCam1, bufW, bufH, u);
-    const prims = (primCount > 0 && lu.uPrimA && lu.uPrimB)
-      ? packWarpSpacePrims(this._warpSpaceReq, primCount, this.activeCam1, bufW, bufH, lu.uPrimA.value, lu.uPrimB.value)
-      : 0;
-    const viewOn = viewFresh && !!lu.uWV && !!this.activeCam1;
-    if (!lensOn && prims <= 0 && !viewOn) return false;
-
-    const target = this._ensureWarpLensTarget(bufW, bufH);
-    lu.tSource.value = target.texture;
-    if (lensOn) {
-      lu.uCenter.value.set(u.centerU, u.centerV);
-      lu.uAxis.value.set(u.axisX, u.axisY);
-      lu.uRadius.value.set(u.radiusAlong, u.radiusAcross);
-      lu.uAspect.value = u.aspect;
-      lu.uSwallow.value = u.swallow;
-    } else {
-      // Same prymitywy: soczewka skoku poza kadrem, bez połknięcia (tożsamość).
-      lu.uCenter.value.set(-10, -10);
-      lu.uAxis.value.set(1, 0);
-      lu.uRadius.value.set(1, 1);
-      lu.uAspect.value = bufW / Math.max(1, bufH);
-      lu.uSwallow.value = 0;
-    }
-    if (lu.uPrimCount) lu.uPrimCount.value = prims;
-    if (lu.uWV) {
-      if (viewOn) {
-        // Świat → UV jak reszta passów tła: zoom = px ekranu (CSS) na jednostkę.
-        const cam = this.activeCam1;
-        const zoom = Math.max(1e-4, Number(cam.zoom) || 1);
-        const cw = Math.max(1, this.width || bufW);
-        const ch = Math.max(1, this.height || bufH);
-        lu.uWV.value.set(
-          0.5 + (view.x - (Number(cam.x) || 0)) * zoom / cw,
-          0.5 + ((Number(cam.y) || 0) - view.y) * zoom / ch,
-          view.radiusPx / ch,
-          view.beta
-        );
-        const ph = view.phase - Math.floor(view.phase);
-        lu.uWVFlow.value.set(Math.cos(view.angle), -Math.sin(view.angle), ph, (ph + 0.5) % 1);
-        lu.uWVMisc.value.set(view.travel, view.blur, view.gain, view.fisheye);
-        if (lu.uWVFront) lu.uWVFront.value.set(view.front, view.band, 0, 0);
-        if (lu.uWVDrop) lu.uWVDrop.value.set(view.dropUa, view.dropRa, view.dropUb, view.dropRb);
-        if (lu.uWVMode) {
-          lu.uWVMode.value = view.mode;
-          lu.uWVAlc.value.set(view.alcPeak, view.alcWidth, view.alcFlat, 0);
-          lu.uWVAlc2.value.set(view.alcAmp, view.tintGain, view.shadeGain, 0);
-        }
-        if (!lensOn) lu.uAspect.value = cw / ch;
-        // Gwiazdy gry osobno: mgławica idzie przez mocne rybie oko kropli (jej
-        // lustrzane odbicie spoza kadru czyta się jak mgławica), gwiazdy przez
-        // rybie oko ograniczone kadrem — w odbiciu leciałyby w drugą stronę.
-        const stars = this._warpStarsObject;
-        const split = !!(stars && stars.parent && lu.tStars && lu.uWVStars);
-        if (split) {
-          stars.layers.set(WARP_STARS_RENDER_LAYER);
-          this._warpStarsOn = true;
-          lu.tStars.value = this._ensureWarpStarTarget(bufW, bufH).texture;
-        }
-        if (lu.uWVStars) lu.uWVStars.value = split ? 1 : 0;
-      } else {
-        lu.uWV.value.w = 0;
-        if (lu.uWVStars) lu.uWVStars.value = 0;
-      }
-    }
-    // Nieużywany sampler i tak musi wskazywać ważną teksturę.
-    if (lu.tStars && !this._warpStarsOn) lu.tStars.value = target.texture;
-    this._warpLensLastUseMs = nowMs;
-    this._warpLensActive = true;
-    return true;
-  },
-
-  /**
-   * Widok skoku: gwiazdy gry (StarSystem, planet3d.assets.js) renderowane osobno
-   * od mgławicy, żeby rybie oko kropli nie brało ich z lustrzanego odbicia
-   * (gwiazdy leciały tam w drugą stronę — zgłoszenie usera). Rejestruje je
-   * warpWorldLens.js; warstwę przełącza _prepareWarpLens co klatkę.
-   */
-  setWarpStarsObject(obj) {
-    if (this._warpStarsObject && this._warpStarsObject !== obj) this._restoreWarpStars();
-    this._warpStarsObject = obj || null;
-  },
-
-  _restoreWarpStars() {
-    if (this._warpStarsOn && this._warpStarsObject) this._warpStarsObject.layers.set(1);
-    this._warpStarsOn = false;
-  },
-
-  _ensureWarpStarTarget(width, height) {
-    let rt = this.warpStarTarget;
-    if (!rt) {
-      rt = new THREE.WebGLRenderTarget(width, height, {
-        format: THREE.RGBAFormat,
-        type: this.renderer.capabilities.isWebGL2 ? THREE.HalfFloatType : THREE.UnsignedByteType,
-        depthBuffer: true,
-        stencilBuffer: false,
-        samples: 0,
-        generateMipmaps: true,
-        minFilter: THREE.LinearMipmapLinearFilter,
-        magFilter: THREE.LinearFilter
-      });
-      rt.texture.wrapS = THREE.ClampToEdgeWrapping;
-      rt.texture.wrapT = THREE.ClampToEdgeWrapping;
-      this.warpStarTarget = rt;
-    } else if (rt.width !== width || rt.height !== height) {
-      rt.setSize(width, height);
-    }
-    return rt;
-  },
-
-  _ensureWarpLensTarget(width, height) {
-    let rt = this.warpLensTarget;
-    if (!rt) {
-      // Bez MSAA (mgławica i gwiazdy nie mają krawędzi do wygładzania), za to
-      // z mipmapami: przy środku soczewka ściska tło stycznie i bez nich
-      // gwiazdy iskrzyłyby. Lustrzane zawijanie — soczewka ściąga obraz spoza
-      // kadru (przy bliskim zoomie), a lustro mgławicy czyta się jak mgławica;
-      // CLAMP rozmazywał krawędź ekranu w smugi.
-      rt = new THREE.WebGLRenderTarget(width, height, {
-        format: THREE.RGBAFormat,
-        type: this.renderer.capabilities.isWebGL2 ? THREE.HalfFloatType : THREE.UnsignedByteType,
-        depthBuffer: true,
-        stencilBuffer: false,
-        samples: 0,
-        generateMipmaps: true,
-        minFilter: THREE.LinearMipmapLinearFilter,
-        magFilter: THREE.LinearFilter
-      });
-      rt.texture.wrapS = THREE.MirroredRepeatWrapping;
-      rt.texture.wrapT = THREE.MirroredRepeatWrapping;
-      rt.texture.anisotropy = Math.max(1, Math.min(8, Number(this.renderer.capabilities.getMaxAnisotropy?.()) || 1));
-      this.warpLensTarget = rt;
-    } else if (rt.width !== width || rt.height !== height) {
-      rt.setSize(width, height);
-    }
-    return rt;
-  },
+  // Gwiazdy gry zostają na warstwie tła (1) — warstwa 8 wolna do nowego warpa.
+  setWarpStarsObject(obj) { },
 
   beginShaftHullFrame() { this.shaftHullCount = 0; },
 
@@ -2228,7 +1785,7 @@ export const Core3D = {
   // (ani żadnych, gdy shafty są wyłączone albo leci wolna kamera).
   getShaftHullBudget() {
     const t = this.perfToggles || {};
-    if (t.shadowShafts === false || this.isFreePerspectiveCamera() || this._shaftsSuppressed >= 1) return 0;
+    if (t.shadowShafts === false || this.isFreePerspectiveCamera()) return 0;
     const cfg = this._shaftCfg || resolveShadowShaftsQuality(this.shadowShaftsQuality);
     if (cfg.enabled === false) return 0;
     return Math.max(0, Math.min(SHAFT_HULL_CAP, Number(cfg.capsuleBudget) || SHAFT_HULL_CAP));
@@ -2289,9 +1846,12 @@ export const Core3D = {
   // zamiast przy pierwszym renderze obiektu w kadrze. Planety 8192×4096 dawały
   // w tej klatce upload 128 MB + mipmapy (Ziemia: pięć takich naraz). Jeśli
   // obiekt wejdzie w kadr wcześniej, three wgra teksturę samo, jak dotąd —
-  // initTexture na wgranej teksturze tylko ją wiąże.
+  // initTexture na wgranej teksturze tylko ją wiąże. initTexture wymaga gotowego
+  // urządzenia: kolejka czeka na Core3D.ready (tekstury planet zgłaszają się,
+  // zanim urządzenie powstanie).
   _textureUploadQueue: [],
   _textureUploadScheduled: false,
+  _textureUploadWaiting: false,
   queueTextureUpload(texture) {
     if (!texture || texture.isRenderTargetTexture) return;
     if (this._textureUploadQueue.includes(texture)) return;
@@ -2310,6 +1870,15 @@ export const Core3D = {
   },
   _scheduleTextureUpload() {
     if (this._textureUploadScheduled || this._textureUploadQueue.length === 0) return;
+    if (!this.gpuReady) {
+      if (this._textureUploadWaiting || this.gpuUnsupported) return;
+      this._textureUploadWaiting = true;
+      this.ready.then((ok) => {
+        this._textureUploadWaiting = false;
+        if (ok) this._scheduleTextureUpload();
+      });
+      return;
+    }
     this._textureUploadScheduled = true;
     const run = () => this._pumpTextureUpload();
     if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 2000 });

@@ -54,7 +54,9 @@ function footprintHub(owner) {
 
 export class HaloRingGame {
   constructor({ planets = [], quality = 'high', renderer = null, scene = null } = {}) {
-    this.renderer = renderer || Core3D.renderer;
+    // Renderer Core3D powstaje asynchronicznie (urządzenie WebGPU) — bierzemy go
+    // w chwili budowy ringu, nie przy konstrukcji (kolidery działają od razu).
+    this._renderer = renderer;
     this.scene = scene || Core3D.scene;
     this.qualityKey = resolveHaloQuality(quality);
     this.camera = new THREE.PerspectiveCamera(35, 1, 100, 500000);
@@ -99,8 +101,19 @@ export class HaloRingGame {
     return this.entries.find((e) => e.key === key)?.ring || null;
   }
 
+  get renderer() {
+    return this._renderer || Core3D.renderer;
+  }
+
+  set renderer(value) {
+    this._renderer = value || null;
+  }
+
   _ensureRing(e) {
     if (e.ring) return e.ring;
+    // Pieczenie map potrzebuje gotowego urządzenia — bez niego ring poczeka
+    // (update() spróbuje w następnej klatce).
+    if (!this.renderer) return null;
     const spec = HALO_RING_PLANETS[e.key];
     // Mars = ECUMENE, Jowisz = ring Fable (arch/): inne ringi niż Ziemia,
     // to samo API, geometria przekroju z profilu (jak kolizje i ruch v2)

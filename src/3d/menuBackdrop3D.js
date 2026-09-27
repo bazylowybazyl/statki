@@ -336,6 +336,14 @@ export class MenuBackdrop3D {
   }
 
   async _startAsync() {
+    // Urządzenie WebGPU powstaje w tle po Core3D.init() — pieczenie map ringu,
+    // kompilacja i render czekają na nie. Bez WebGPU tła nie ma (menu pokazuje
+    // komunikat, index.html), zostaje tło CSS.
+    const gpuOk = await Core3D.ready;
+    if (!gpuOk || !this.running) {
+      if (!gpuOk) this.stop();
+      return;
+    }
     const renderer = Core3D.renderer;
     const t0 = performance.now();
     // 1) shader pieczenia map: kilka sekund w sterowniku, na pierwszym bake'u
@@ -451,7 +459,7 @@ export class MenuBackdrop3D {
       if (tex?.isTexture) return tex;
       const own = new THREE.TextureLoader().load(path);
       if (srgb) own.colorSpace = THREE.SRGBColorSpace;
-      own.anisotropy = Core3D.renderer.capabilities.getMaxAnisotropy();
+      own.anisotropy = Core3D.getMaxAnisotropy();
       this._ownTextures.push(own);
       return own;
     };

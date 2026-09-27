@@ -50,7 +50,11 @@ megabudowli i kopuł z tej mapy i `setCivic`. Host czeka na `await ring.ready` (
 po `terrainHeightAt` (przed odczytem 0), `k7Halls`, `landmarks`; `mapsReady` = bryły + mapa CPU + pełna mapa.
 `setQuality` buduje nowy zestaw w tle i podmienia gotowy; `ringi-archetypy` (`createArchRing`) są gotowe od
 razu (`ready` rozwiązane — plan i teren liczą się na CPU, bez map GPU). Biblioteka shaderów: `haloRingTSL.js`
-(`haloRingTSL(ring.uniforms)` → funkcje jak w GLSL, np. `H.haloSunVisibility(p, L)`).
+(`haloRingTSL(ring.uniforms)` → funkcje jak w GLSL, np. `H.haloSunVisibility(p, L)`). Adapter
+`material.uniforms` jest wspólny (`src/3d/tsl/uniformy.js`), przy ringu zostaje blok uniformów
+(`createUniformBlock`, `haloUniformsAdapter.js`). Sprawdzenie w grze, że kolider płyty dostaje teren z mapy
+CPU po `ready` (wysokości ≠ 0, `pointInSlab`, `constrainShip`): `node scripts/webgpu/ring-kolizje-gra.mjs
+--ring earth|mars|jupiter`.
 
 ## Płaszczyzna gry na środku wstęgi (decyzja użytkownika 2026-09-23)
 

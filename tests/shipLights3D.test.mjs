@@ -20,6 +20,9 @@ test('nav lights are emitters: the sun shadow mask never dims them', () => {
   const scenePassList = coreSource.match(/_scenePasses\s*=\s*\[([\s\S]*?)\]/)?.[1] || '';
   assert.ok(scenePassList.includes('this.renderPassFg'), 'FG pass missing from the scene chain');
   assert.ok(!scenePassList.includes('this.shadowShaftsPass'), 'no image-multiply shadow pass in the scene chain');
+  // Pass FG (runner Core3D, port WebGPU): warstwa 2, kamera perspektywy, własna głębia, ostatni w łańcuchu.
+  assert.match(coreSource, /this\.renderPassFg = makeScenePass\('fg', 'fg', 2, false, false\);/);
+  assert.ok(scenePassList.trim().endsWith('this.renderPassFg'), 'FG kładzie się na wierzchu sceny');
 });
 
 test('hull shader and billboard shader share the NAV_LIGHT_CHASE sequence', () => {

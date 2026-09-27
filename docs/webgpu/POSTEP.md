@@ -16,6 +16,7 @@
 | 2026-09-27 | **Dema spoza gry zostają na tagu `webgl-baseline`** (odpowiedź na pytanie w Fazie 0): port obejmuje to, co ładuje gra, plus warsztaty przenoszonych modułów (`halo_ring_demo`, `mostki-demo`, `rdzen-demo`). `warp-demo`, `asteroidy.html`, `budowle-portowe` (Z7), `kontenery` (Z5), `scripts/proxy-batch` (Z4), `destruktor2d/3d` działają z tagu (osobny worktree); warp, nowe asteroidy i moduły Z4/Z5/Z7 przechodzą na TSL przy swojej integracji. |
 | 2026-09-27 | Z listy zadań wypadły: Electron i build produkcyjny oraz przełączenie domyślnego backendu / polityka awaryjna (zmiana `PROMPT-START.md`). |
 | 2026-09-27 | **Odpowiedzi na pytania planu (PLAN §12):** usuwać nieużywany kod, „przechodzimy w pełni na WebGPU”; **tylko WebGPU** (bez zapasu WebGL2 — komunikat); `modelBaker.js` usunąć; bez pushowania (użytkownik ma kopię na bieżąco, nie sprawdza po drodze); inne sesje skończyły — port prowadzi jedna sesja (z podagentami); **obrażenia i mechanika broni z dema wchodzą do rozgrywki** (mapa ran, przebicia, rykoszety, ładowanie, serie — zadanie 18); demo fizyki belek na GPU — później; warp czeka na poprawiony „Nurt” (osobna sesja). Cel końcowy: gra działa na WebGPU z nowymi brońmi, rakietami i ringiem. |
+| 2026-09-27 | **Asteroidy i warp też wchodzą** („asteroidy zaraz będą production ready — zielone światło”, „warp też będzie ready do wgrania, jak skończy sesję”): zadania 21 (asteroidy z `dema/asteroidy-webgpu`) i 22 (warp „Nurt” z `dema/warp-webgpu`) po zakończeniu sesji dem; wydajność → 23, sprzątanie → 24. **Praca samodzielna do końca** („zostawiam ciebie samopas, od teraz rządzisz”); po wdrożeniu wszystkiego (WebGPU w grze, bronie, rakiety, asteroidy, warp, ringi) — **wyłączyć komputer** (po sprawdzeniu, że wszystko zacommitowane, a inne sesje bezczynne). |
 | 2026-09-27 | **Nowe efekty broni i rakiet wchodzą przy porcie** (po obejrzeniu dem: „bronie — wszystkie super”, „rakiety — super”, „można je śmiało wdrażać przy okazji skoku na WebGPU”): efekty z `dema/bronie-webgpu` i `dema/rakiety-webgpu` zastępują stare efekty broni, trafień, iskier, rakiet i Supernowej zamiast portu 1:1. Plan przebudowany: 12 = infrastruktura efektów, 17–18 = broń, 19 = rakiety, 20 = koniec overlaya (22 zadania). Rozgrywka bez zmian. |
 
 ## Faza 0 — kroki
@@ -27,7 +28,7 @@
 | 3 | Spike techniczny (`dema/webgpu-spike.*`, `SPIKE.md`) | zrobione — 17/17, bez blokad | (commit kroków 2–4) |
 | 4 | Inwentarz (`scripts/webgpu/inwentarz.mjs` → `INWENTARZ.md`) | zrobione | (commit kroków 2–4) |
 | 5 | Harness zrzutów + baza WebGL (`zrzuty.mjs`, `porownaj.mjs`, `baseline.json`) | zrobione — 48 zrzutów, szum ≤ 0,03% (>2/255), 0% (>8); tag `webgl-baseline` | (commit kroku 5) |
-| 6 | Plan i zadania (`PLAN.md`, `zadania/NN-*.md`, `README.md`, sekcja w `agents.md`) | zrobione — 22 zadania + odłożony warp (po decyzji o nowych efektach) | 30e76b9 + przebudowa |
+| 6 | Plan i zadania (`PLAN.md`, `zadania/NN-*.md`, `README.md`, sekcja w `agents.md`) | zrobione — 24 zadania (po decyzjach o nowych efektach, asteroidach i warpie) | 30e76b9 + przebudowa |
 | 7 | Raport dla użytkownika | zrobione (w rozmowie); zadanie 01 czeka na zgodę | — |
 
 ## Zadania portu
@@ -37,29 +38,30 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 
 | # | Zadanie | Zależy od | Równolegle z | Effort | Status | Commit | Uwagi |
 |---|---|---|---|---|---|---|---|
-| 01 | Fundament: `WebGPURenderer` w Core3D, zamienniki, adapter uniformów, harness na WebGPU | — | nie | max | czeka na zgodę użytkownika | | od niego gra = magenta dla nieprzeniesionych materiałów |
-| 02 | Post 1/2: bloom, pełny „uber”, pre-pass halo, MSAA, kalibracja tolerancji | 01 | 06 | max | czeka | | kalibruje `tolerancjaPortu` |
+| 01 | Fundament: `WebGPURenderer` w Core3D, zamienniki, adapter uniformów, harness na WebGPU | — | nie | max | zrobione, scalone (159dd42) | fca136a, b9c95d2, be4ea80 | gra na WebGPU; magenta = nieprzeniesione; harness `--uuid osobne` + nowa baza (dziennik) |
+| 02 | Post 1/2: bloom, pełny „uber”, pre-pass halo, MSAA, kalibracja tolerancji | 01 | 06 | max | w toku (podagent, worktree `statki-wt/02`) | | kalibruje `tolerancjaPortu` |
 | 03 | Post 2/2: maska słońca, SDF kadłubów, refrakcja, fala uderzeniowa | 02 | 06 | max | czeka | | biblioteki dla 04–20 |
-| 04 | Kadłuby (belki + heksy), lakier, impostory, szczątki | 03 | 05–14, 16, 19 | max | czeka | | graf na wariant zamiast materiału na encję; miejsce na światła siatki (18) |
+| 04 | Kadłuby (belki + heksy), lakier, impostory, szczątki | 03 | 05–14, 16, 19 | max | w toku (podagent, worktree `statki-wt/04`; maska słońca po 03 — zastępnik do scalenia) | | graf na wariant zamiast materiału na encję; miejsce na światła siatki (18) |
 | 05 | Planety, słońce, mgławica, gwiazdy, stacje | 03 | 04, 06–10, 12–20 | xhigh | czeka | | |
-| 06 | Ring 1/5: biblioteka TSL, pieczenie map, odczyt asynchroniczny, `halo_ring_demo` | 01 | 02–05, 12–20 | max | czeka | | kończy przejściową regresję terenu ringu z 01 |
-| 07 | Ring 2/5: teren + zestaw przemysłowy | 06 | 04, 05, 12–20 | xhigh | czeka | | |
+| 06 | Ring 1/5: biblioteka TSL, pieczenie map, odczyt asynchroniczny, `halo_ring_demo` | 01 | 02–05, 12–20 | max | zrobione, scalone (070a407) | b7ecdc9…88d8df5 | kończy przejściową regresję terenu ringu z 01 |
+| 07 | Ring 2/5: teren + zestaw przemysłowy | 06 | 04, 05, 12–20 | xhigh | w toku (podagent, worktree `statki-wt/07` z gałęzi 06 — warsztat ringu; w grze po 01) | | |
 | 08 | Ring 3/5: struktura + atmosfera | 07 | j.w. | xhigh | czeka | | |
 | 09 | Ring 4/5: megastruktura + miasto (kopuły, landmarki, drzewa) | 08 | j.w. | xhigh | czeka | | |
 | 10 | Ring 5/5: K-7 + ringi-archetypy Marsa i Jowisza | 09 | j.w. | xhigh | czeka | | ring bez zamienników |
 | 11 | Tło menu + rozgrzewka pipeline'ów | 05, 10 | 12–20 | max | czeka | | nowy `menuBackdrop.test` |
-| 12 | Infrastruktura efektów GPU: compute w klatce, siatka świateł, zniekształcenia, Fx3D w TSL | 03 | 04–11, 13–16 | max | czeka | | podstawa pod 17–19 (i przyszłe asteroidy) |
-| 13 | Silniki: MAIN, WARP (plazma), SIDE | 03 | 04–12, 14–20 | xhigh | czeka | | |
+| 12 | Infrastruktura efektów GPU: compute w klatce, siatka świateł, zniekształcenia, Fx3D w TSL | 03 | 04–11, 13–16 | max | część 12-A w toku (podagent, worktree `statki-wt/12a`: czyste moduły `src/3d/fx/`); 12-B (wpięcie w Core3D) po 03 | | podstawa pod 17–19 (i przyszłe asteroidy) |
+| 13 | Silniki: MAIN, WARP (plazma), SIDE | 03 | 04–12, 14–20 | xhigh | w toku (podagent, worktree `statki-wt/13`; bloom po 02, iskry Fx3D po 12-B) | | |
 | 14 | Tarcze i trafienia w tarczę | 03 | 04–13, 15–20 | xhigh | czeka | | |
 | 15 | Mostki, rdzenie, reaktory, światła (+ `mostki-demo`, `rdzen-demo`) | 04 | 05–14, 16–20 | xhigh | czeka | | |
 | 16 | Zniszczenie stacji (+ scena bazy `stacja-rozpad`) | 03 | 04–15, 17–19 | xhigh | czeka | | |
 | 17 | Broń 1/2 z dema `bronie-webgpu`: efekty wszystkich broni (pociski, smugi, trafienia, wiązki, PD, flak) | 12, 04 | 05–11, 13–16, 19 | max | czeka | | nowe efekty — ocena obrazu zamiast tolerancji; PD i flak z kanwy 2D do 3D |
-| 18 | Broń 2/2: obrażenia z dema — mapa ran, przebicia, rykoszety, ładowanie, serie; światła efektów na poszyciu | 17, 04 | 05–11, 13–16, 19 | max | czeka | | zatwierdzona zmiana rozgrywki |
+| 18 | Broń 2/2: obrażenia z dema — mapa ran, przebicia, rykoszety, ładowanie, serie; światła efektów na poszyciu | 17, 04 | 05–11, 13–16, 19 | max | część 18-A zrobiona i scalona (4e165fb): moduły mechaniki + zapytania `HullBodies` bez wpięcia; zostają 18-B (wpięcie, po 17), 18-C (mapa ran, po 04 i 12), 18-D | 8eaa828…2da882d | zatwierdzona zmiana rozgrywki |
 | 19 | Rakiety z dema `rakiety-webgpu`: dym GPU, dysze, kule ognia, Supernowa, iskry | 12 | 05–11, 13–18 | max | czeka | | lot rakiet zostaje w `rocketSystem3D` |
 | 20 | Koniec overlaya: wybuch reaktora w Core3D, usunięcie drugiego renderera | 17, 18, 19 | 13–16 | xhigh | czeka | | jeden renderer, jeden bloom |
-| 21 | Wydajność i precyzja: A/B z tagiem, drżenie, kompilacja, pamięć | 04–20 | nie | max | czeka | | koszt portu osobno od kosztu nowych efektów |
-| 22 | Sprzątanie i domknięcie portu | 21 | nie | xhigh | czeka | | decyzje PLAN §12 p. 1, 3 |
-| — | Odłożone: nowy warp od razu w TSL (pass zgięcia tła w `Core3D.render`) | wpięcie nowego warpa | — | — | odłożone | | który warp — PLAN §12 p. 8 |
+| 21 | Asteroidy z dema `asteroidy-webgpu` + kolizje z olbrzymami | 12, 04, 05 (+ commit dema) | 13–20 | max | czeka (demo gotowe, commit przy starcie zadania) | | zielone światło użytkownika; stare pole (zderzenia z małymi skałami, niszczenie, łup) znika — do decyzji użytkownika |
+| 22 | Warp „Nurt” z dema `warp-webgpu` (iteracja 2) | 12, 13 (+ commit dema) | 14–21 | max | czeka (demo gotowe, commit przy starcie zadania) | | „ready do wgrania, jak skończy sesję”; wygląd iteracji 2 jeszcze nieoceniony |
+| 23 | Wydajność i precyzja: A/B z tagiem, drżenie, kompilacja, pamięć | 04–22 | nie | max | czeka | | koszt portu osobno od kosztu nowych efektów |
+| 24 | Sprzątanie i domknięcie portu | 23 | nie | xhigh | czeka | | decyzje PLAN §12 p. 1, 3 |
 
 ## Regresje przejściowe (świadome)
 
@@ -67,12 +69,15 @@ Stan zamierzony na `main` w trakcie portu — nie „naprawiać” poza zadaniem
 
 | Od | Do | Co | Kończy |
 |---|---|---|---|
-| 01 | 22 | Nieprzeniesione `ShaderMaterial` rysują się magentą (`spis.zamienniki` w harnessie) | zadania 02–20 |
-| 01 | 06 | Brak synchronicznego odczytu → mapa CPU ringu pusta (`heightAtUV` = 0): płyta ringu koliduje bez rzeźby terenu, LOD terenu bez wysokości, landmarki i kopuły stawiane bez mapy (stała wysokość z `haloRingLandmarks.js`) | 06 |
+| 01 | 24 | Nieprzeniesione `ShaderMaterial` rysują się magentą (`spis.zamienniki` w harnessie) | zadania 02–22 |
+| 01 | 02 | Post bez bloomu i gorącego powietrza (tylko ACES gry + sRGB); `perfToggles.bloom/heatHaze` bez skutku; `kalibracja__ortho` vs baza: >8/255 w 85,8% pikseli (sama poświata) | 02 |
+| 01 | 03 | Maska słońca wyłączona (`uSunShadowOn = 0`): bez cienia słońca na materiałach, smug tła i SDF kadłubów; fala uderzeniowa bez passa refrakcji | 03 |
+| 01 | 11 | Rozgrzewka tylko „nie rzuca”: pipeline'y kompilują się asynchronicznie przy pierwszym użyciu, osłona `backend.draw` pomija rysunek do gotowości (obiekt pojawia się 1–2 klatki później) | 11 (moduły przez `Core3D.prewarmPass`) |
+| 01 | 06 | Brak synchronicznego odczytu → mapa CPU ringu pusta (`heightAtUV` = 0): płyta ringu koliduje bez rzeźby terenu, LOD terenu bez wysokości, landmarki i kopuły stawiane bez mapy (stała wysokość z `haloRingLandmarks.js`) | 06 — ZAMKNIĘTE (070a407): teren w koliderze po `ring.ready`, sprawdzone w grze |
 | 01 | 20 | Overlay efektów na własnym `WebGLRenderer` (jedyny drugi renderer; stare efekty overlaya działają bez zamienników) | 17–19 zabierają efekty, 20 usuwa overlay |
 | 01 | 17–19 | Pociski i błyski ze starego `weapon3DSystem` (materiały wbudowane — rysują się), smugi `slugTrail3D` (zamiennik), dym i iskry Fx3D (zamiennik do 12) | 12, 17–19 |
-| 01 | — | Soczewka i fale warpa usunięte (API jako no-op), skok działa bez efektu zgięcia | nowy warp (odłożone) |
-| Faza 0 | — | Stare pole asteroid i tło pasa wyłączone (`?asteroidyStare`) | integracja nowych asteroid |
+| 01 | 22 | Soczewka i fale warpa usunięte (API jako no-op), skok działa bez efektu zgięcia | 22 (nowy warp) |
+| Faza 0 | 21 | Stare pole asteroid i tło pasa wyłączone (`?asteroidyStare`) | 21 (nowe asteroidy) |
 
 ## Środowisko (Krok 2, 2026-09-27)
 
@@ -189,7 +194,7 @@ Todo (2): „PORT poprawka 1 / 3 (TODO integracji)” w `tests/shipCore.test.mjs
     → PNG w `.tmp/webgpu/baseline/webgl/p1` (+ `p2`, `szum-p1-p2/`), `node scripts/webgpu/baza.mjs` →
     `docs/webgpu/baseline.json`. Wydajność (bitwa 24×24, 1920×1080, headless): klatka 3,6–4,9 ms, fizyka 0,5–1,0,
     rysowanie 2,4–3,0, render Core3D 0,87–1,03 ms CPU, GPU 1,0–1,1 ms, 87–88 draw calli — rozrzut między
-    przebiegami, bo inne sesje użytkownika pracowały na tym samym GPU/CPU; porównanie wydajności (zadanie 21) tylko
+    przebiegami, bo inne sesje użytkownika pracowały na tym samym GPU/CPU; porównanie wydajności (zadanie 23) tylko
     naprzemiennie i bez innych obciążeń. Drżenie (`dema/precyzja-drzenie.js
     --variant po`): światła 0,003 px RMS, okna mostków 0,04–0,06 px, reszta ≈ 0.
   - Testy po hakach: bez zmian (7 porażek bazowych, `npm test` OK).
@@ -231,3 +236,85 @@ Todo (2): „PORT poprawka 1 / 3 (TODO integracji)” w `tests/shipCore.test.mjs
   z `main` jako baza. `INWENTARZ.md` z adnotacjami „zastąpi / port w …”, wygenerowany z czystego eksportu HEAD (bez
   niezacommitowanych zmian innych sesji).
 - Krok 7: raport dla użytkownika w rozmowie; zadanie 01 czeka na zgodę.
+
+### 2026-09-27 (wieczór) — egzekucja portu: orkiestrator + podagenci
+
+- Użytkownik: praca samodzielna do końca, potem wyłączenie komputera (tabela decyzji). Organizacja: każde zadanie robi
+  podagent w worktree `C:/Users/Szymon/Documents/GitHub/statki-wt/NN` (gałąź `webgpu/NN`); `node_modules` kopiowane
+  robocopy (NIE dowiązanie — `git worktree remove --force` kasuje zawartość celu dowiązania, sprawdzone); worktree
+  tworzyć z `git -c core.autocrlf=false` (inaczej CRLF i fałszywe porażki strażników); POSTEP / INWENTARZ prowadzi
+  orkiestrator (`bash scripts/webgpu/inwentarz-czysty.sh` — inwentarz z czystego HEAD).
+- Sesje dem: warp „Nurt” iteracja 2 gotowa (notatka w `DEMO-WARP.md` § Do portu w grze; sesja nie commituje bez zgody
+  swojego użytkownika — pliki zacommituje orkiestrator przy starcie 22); asteroidy gotowe (`DEMO-ASTEROIDY.md` § Do portu
+  w grze), ale sesja „Asteroid lighting bug demo” poprawia nocne światło dużych skał i robi fizykę / rozgrywkę skał
+  (cięcie dronami, kopanie do rdzenia, ładunki, materiały) jako osobne API — **dema asteroid nie commitować przed jej
+  sygnałem**, zadanie 21 = render + kolizje z olbrzymami, fizyka skał = osobne zadanie po jej meldunku.
+- Projekt integracji broni (podagent-architekt) → `PROJEKT-BRONI.md`; decyzje §5 w imieniu użytkownika.
+- **Zadanie 06 (ring 1/5) zrobione na gałęzi `webgpu/06`** (b7ecdc9, 0e53f47, 801317a, 446fbde, af86dd7, c1ad3d2) —
+  czeka na scalenie 01 i weryfikację w grze:
+  - biblioteka TSL ringu (`src/3d/haloRing/haloRingTSL.js`: całe `haloRingGLSL.js` + `SURFACE` / `CLOUDCOVER`),
+    uniformy w jednym bloku (`createUniformBlock` — limit 12 buforów uniformów na etap; pieczenie miało 20 i pipeline
+    się nie tworzył), pieczenie map i detal w TSL, odczyt CPU asynchroniczny (padding 256 B), budowa ringu
+    asynchroniczna (`await ring.ready`; kolizje terenu po `ready`); `halo_ring_demo` na WebGPU (otoczenie w TSL);
+  - mapa CPU vs WebGL z tagu: Mars i Jowisz bit w bit; Ziemia średnia różnica 0,0021 j., p99,9 0,075, maks. 0,569 j.,
+    0 NaN; plan budowli (9 megabudowli, 12 kopuł) identyczny; naprawiony NaN z `pow(1-|n|, 3)` (ujemna podstawa);
+  - czasy: kompilacja + mapa niska + odczyt 9,9 s (WebGL) → 1,4–2,5 s (WebGPU); demo do gotowości 31 s → 5,5 s;
+  - pułapki: `setLayout` z uniformem w domknięciu (błąd r183 — PLAN §3), hasze float z niecałkowitych wejść różnią się
+    między kompilatorami, v = 0 pieczenia u góry celu (bez odwracania osi), kolejność funkcji w WGSL zależy od kolejności
+    budowy materiałów (jedna dodatkowa kompilacja na typ); `dema/kontenery.html` na `main` nie działa (dema poza portem —
+    tag);
+  - testy: 1337 / 7 porażek bazowych / 2 todo; nowe `haloRingTSL` (12, WGSL budowany w Node) i `haloRingAsync` (3);
+    `menuBackdrop` (rozgrzewka) przepisany; inwentarz na gałęzi: port 42 pliki z GLSL, 68 materiałów, 8542 linie.
+- **Część 18-A scalona do `main`** (8eaa828, 3c2ac69, 2da882d; scalenie 4e165fb): `HullBodies.surfaceNormal /
+  traceThrough / spriteUvAt`, `hullImpactResult`, `hull.dmgKey` (dziedziczony przez wraki i odłamy), hak `onImpact`;
+  `src/game/projectileMechanics.js` (`resolveHullHit`, `entryDamage`, `stepInsideHull`), `src/game/weaponCharge.js`
+  (`stepCharge`, kolejka serii Hexlance'a); pola danych w `weapons.js` (penDepth / penSpeedLoss / ricochet / chargeTime
+  Valkyrie / recoil i shake zgodne z `FX_PROFILE` — gra ich jeszcze nie czyta); `scripts/bilans-broni.mjs`, opis wpięcia
+  `docs/webgpu/MECHANIKA-BRONI.md`. Fizyka kadłubów A/B z HEAD: identyczny hash stanu i sekwencja `Math.random` (240
+  kroków). Testy na `main` po scaleniu: 1364 / 7 porażek bazowych / 2 todo, `npm test` OK.
+  - Bilans (1000 strzałów, prawdziwe sprite'y): Mjolnir 312,5 → 227,3 dps (−27%), kolumna 3 okrętów ×5,0 straty na
+    strzał; Valkyrie 166,7 → 152,5 dps (−8,5%), na wylot fregata 100% / niszczyciel 80% / pancernik 19%; Vulcan i
+    Gatling S −1,5…−4,2% dps (rykoszety 2–6% trafień); Hexlance seria 4 cięć = +53…57% straty (nie ×4 — cięcia biegną
+    tym samym pasem).
+  - Decyzje podagenta (do przejrzenia): ponowne wejście w ten sam kadłub robi krater bez drugiego HP i bez liczenia do
+    limitu przebić; krater zakleszczenia 0,5 × obrażeń × (v/v_wejścia)²; naładowane działo bez celu gaśnie po 2 s;
+    kolejka serii z opóźnieniami względnymi; recoil/shake dopisane wszystkim broniom (warianty S/L, `ciws_mk2`,
+    `hexlance_siege` dostały wartości rodziny z dema — dziś mają fallback 3/1,8, zmiana przy przełączeniu źródła w 18-D).
+- **Zadanie 01 scalone do `main`** (fca136a, b9c95d2, be4ea80; scalenie 159dd42): Core3D na `WebGPURenderer`, tylko
+  WebGPU (brak `navigator.gpu` / adaptera → komunikat w menu, przyciski startu wyłączone; `_getFallback = null`,
+  `featureLevel: 'compatibility'`, limity z adaptera); `init()` synchroniczne, urządzenie w tle (`Core3D.gpuReady` /
+  `Core3D.ready`); runner passów bez EffectComposer (tło → planety → quad halo → ring-planety → ortho → tarcze bez
+  czyszczenia głębi → FG); post = `RenderPipeline` (ACES gry + sRGB gry, `outputColorTransform = false`), `renderBackdrop`
+  tym samym postem; cienie per światło (`Core3D.setSunShadowLight`); `info.drawCalls`; zegar GPU = znaczniki czasu
+  (1 zapytanie w locie; three nie czyści mapy `timestamps` — ~15,8 tys. wpisów — Core3D czyści sam); split tylko przez
+  2× `renderSingle`; API warpa = no-opy + miejsce na pass zgięcia tła; `src/3d/tsl/` (`uniformy.js`, `zamiennik.js`,
+  `kolorGry.js`); `Core3D.prewarmPass(obiekt, warstwa)` (rozgrzewka broni w `weapon3DSystem` wcześniej NIGDY się nie
+  wykonywała — warunek `Core3D.camera` zawsze fałszywy); osłona `backend.draw` (three r183 wkłada pipeline z
+  `compileAsync` do cache, zanim GPU go odda → `setPipeline(undefined)`, realny TypeError); `modelBaker.js` usunięty.
+- Harness po 01: 16 scen / 32 warianty, renderer `webgpu`, 0 błędów WebGPU/WGSL, 0 ostrzeżeń three. Zamienniki: menu 80,
+  hud 45, ring-z02 45, ring-z1 45, k7-hala 42, planeta-cien 10, slonce 8, mars-ring 69, jowisz-ring 75, kalibracja 14,
+  bitwa 32, bitwa-blisko 24, wybuch 28, wraki 25, warp 51, split 15. `kalibracja__ortho` vs baza: >2 93,54%, >8 85,83%,
+  >32 71,94%, średnia 75,96, maks 252 — sama poświata (brak bloomu), HDR > 0,9: 0,02515 vs 0,02525. Start: `gpuReady`
+  ~4,3–4,5 s od nawigacji, tło menu ~5,6–5,9 s.
+- **Nowa baza (tryb `--uuid osobne`):** three bierze 4 × `Math.random` na UUID każdego obiektu i węzła TSL, więc na
+  WebGPU losowania gry przesuwały się (inne kąty planet, inne przebiegi wraków i warpa). Harness `--uuid osobne` daje UUID
+  osobny strumień (podmiana w odpowiedzi serwera przez CDP — gra i tag bez zmian); bazę z tagu zrobiono ponownie w tym
+  trybie (p1 = p2) — stan świata WebGPU zgodny w 16/16 scen. Przyjęta do `.tmp/webgpu/baseline/webgl/` (stara w
+  `.tmp/webgpu/baseline-stara/`), `baseline.json` przebudowany (`losowanieUuid: 'osobne'`, `kodGry`). Harness wybiera tryb z
+  bazy sam. Szum WebGPU p1/p2: 0 poza `planeta-cien` (0,06% — obrót stacji Wenus).
+- Testy na `main` po scaleniu: `node --test` 1373 / 7 porażek bazowych + 1 niestabilny pod obciążeniem
+  (`capitalAiFlight` „ship follows a moving target…”, sam przechodzi 3/3) / 2 todo; `npm test` OK. **Po każdym scaleniu:**
+  `bash scripts/webgpu/lf-po-scaleniu.sh` — `git merge` przy `core.autocrlf=true` zapisuje zmienione pliki z CRLF i 4
+  strażniki padają fałszywie (827, 828, 939, 941 po scaleniu 01).
+- **Zadanie 06 scalone do `main`** (scalenie 070a407; na gałęzi po scaleniu 01: bc24e0b, f1aaa99, 88d8df5): ring w grze na
+  WebGPU — 5 scen harnessu (ring-z02, ring-z1, k7-hala, mars-ring, jowisz-ring) bez błędów, `ringReady`, zrzuty piksel w
+  piksel jak po 01 (materiały ringu to jeszcze zamienniki — 07–10). Kolider płyty dostaje teren dopiero po `ring.ready`
+  (`scripts/webgpu/ring-kolizje-gra.mjs`): Ziemia 7060/7060 próbek ≠ 0 (−128…216), Mars 7036/7036 (1,5…171), Jowisz
+  płaski pokład Fable (0…7) — wynik kolidera = `ring.terrainHeightAt`. Regresja „01 → 06” zamknięta. Czasy w grze:
+  kompilacja pieczenia 2,5–3,7 s w tle, teren w koliderze 2,2–4,5 s od wstania gry (ring Ziemi piecze się już w menu).
+  Adapter uniformów ringu = adapter z 01 (`src/3d/tsl/uniformy.js`, re-eksport w `haloUniformsAdapter.js`),
+  `createUniformBlock` zostaje w `src/3d/haloRing/`. Otwarte dla 11: menu nie czeka na `ring.ready` (ring dołącza
+  2–4,5 s po Ziemi), pusta scena `createHaloBakeWarmup` do usunięcia. Inwentarz po 06: port 42 pliki z GLSL, 66
+  materiałów, 8504 linie. Testy na `main`: 1389 / 7 porażek bazowych / 2 todo + niestabilne pod obciążeniem całego
+  zestawu (same przechodzą): `capitalAiFlight` („ship follows a moving target…”), `hullShadowSdf` („warstwy: wspólna dla
+  świeżej floty…, LRU”).
