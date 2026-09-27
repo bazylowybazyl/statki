@@ -339,8 +339,9 @@ export class SmokeSystem {
       const n = texture(noiseTex, uv().mul(0.55).add(vA.xy)).toVar();
       const n2 = texture(noiseTex, uv().mul(1.35).add(vA.yx.mul(1.7))).toVar();
       const prof = max(float(1.0).sub(r2), 0.0).toVar();
-      // Faktura: duże płaty × drobne włókna; starszy dym bardziej poszarpany.
-      const detail = n.x.mul(0.75).add(n2.z.mul(0.5)).sub(0.1);
+      // Faktura: duże płaty × drobne włókna; młody dym gładki, starszy
+      // coraz bardziej poszarpany (vA.z = wiek / życie).
+      const detail = mix(float(0.78), n.x.mul(0.75).add(n2.z.mul(0.5)).sub(0.1), smoothstep(0.0, 0.25, vA.z));
       const base = prof.mul(sqrt(prof)).mul(detail);
       const dens = clamp(base.sub(erosion.mul(float(1.0).sub(n.y.mul(0.6).add(n2.w.mul(0.4)))).mul(0.7)), 0.0, 1.0);
       return { q, r2, n, dens, prof };

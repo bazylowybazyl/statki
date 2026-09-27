@@ -159,15 +159,17 @@ export class Effects {
       halo: vfx.plume.hot.map((v) => v * 0.25), haloSize: 160 * bs, tauHalo: 0.1,
       light: { color: L.color, I1: 3.0 * L.intensity, tau1: 0.08, I2: 0, tau2: 1, range: L.range * 1.1, z: 40 }
     });
-    // Kłąb gorących spalin przy zapłonie.
+    // Kłąb gorących spalin przy zapłonie (chemiczny dym supernowej słabiej —
+    // świeci sam i łapie jej magentowe światło).
     const kind = vfx.trail.kind;
-    for (let i = 0; i < 12; i++) {
+    const nova = m.vfx === 'supernova';
+    for (let i = 0; i < (nova ? 7 : 12); i++) {
       const sp = 250 + rng() * 550;
       const spread = (rng() - 0.5) * 1.6;
       const vx = -(c * Math.cos(spread) - s * Math.sin(spread)) * sp;
       const vy = -(s * Math.cos(spread) + c * Math.sin(spread)) * sp;
       this._puff(n.x, n.y, vx, vy, m.fx, m.fy, (4 + rng() * 3) * Math.sqrt(bs), (30 + rng() * 20) * Math.sqrt(bs),
-        0.8 + rng() * 1.4, 1.0, kind, 0.42 + rng() * 0.15, rng() * 0.02, 12);
+        0.8 + rng() * 1.4, nova ? 0.45 : 1.0, kind, 0.42 + rng() * 0.15, rng() * 0.02, 12);
     }
   }
 

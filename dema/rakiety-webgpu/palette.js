@@ -34,7 +34,7 @@ export const SMOKE_PALETTES = [
   // 1 — szybka rakieta: jaśniejszy, rzadszy dym, żółtawy żar, szybciej znika.
   { albedo: lin('#d8d8d6', 0.95), drag: 3.2, hot: [3.4, 2.5, 1.3], warm: [1.2, 0.5, 0.12], tempTau: 0.08, turb: 46, turbScale: 180, fadeTau: 2.0, stretch: 1.5 },
   // 2 — „chemiczny” dym supernowej: róż → fiolet → magenta, sam lekko świeci.
-  { albedo: lin('#c98ab8', 0.85), drag: 2.2, hot: [1.7, 0.5, 1.9], warm: [0.5, 0.07, 0.45], tempTau: 0.09, turb: 64, turbScale: 260, fadeTau: 3.2, stretch: 1.2 },
+  { albedo: lin('#c98ab8', 0.85), drag: 2.2, hot: [1.2, 0.35, 1.35], warm: [0.42, 0.06, 0.38], tempTau: 0.08, turb: 64, turbScale: 260, fadeTau: 3.2, stretch: 1.2 },
   // 3 — sadza wybuchu: ciemny, brązowawy, ciężki kłąb.
   { albedo: lin('#5a5048', 0.9), drag: 1.7, hot: [3.0, 1.4, 0.45], warm: [0.9, 0.22, 0.05], tempTau: 0.16, turb: 70, turbScale: 300, fadeTau: 3.8, stretch: 0 },
   // 4 — zimny gaz wyrzutu (VLS): biała para, szybko rzednie.
@@ -72,7 +72,7 @@ export const MISSILE_VFX = Object.freeze({
     body: { hull: lin('#e6b8da'), band: lin('#ff4fd8'), glow: [3.2, 1.0, 3.4] },
     // Napęd plazmowy: biały rdzeń → magenta → fiolet (paleta WARP „Magenta”).
     plume: { kind: 2, len: 7.5, width: 0.7, core: [10, 8.2, 11], hot: lin('#ffb3f2', 1.0), mid: lin('#e03cff', 0.9), tail: lin('#5a2cff', 0.55) },
-    light: { color: [1.0, 0.3, 0.95], intensity: 0.9, range: 620 },
+    light: { color: [1.0, 0.3, 0.95], intensity: 0.6, range: 560 },
     trail: { kind: SMOKE_KIND.CHEM, spacing: 5.5, size0: 4.2, growth: 40, lives: [0.36, 2.6, 7.0], opacity: 0.36, temp: 1.0, exhaust: 1.03 },
     blast: { style: 'supernova', radius: 420, sparks: 1400, fragments: 0, smoke: 0, flash: 3.0, shock: 3.0 }
   })

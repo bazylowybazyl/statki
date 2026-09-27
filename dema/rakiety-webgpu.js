@@ -106,6 +106,9 @@ let H = innerHeight;
 
 let renderer = null;
 let pipeline = null;
+let timestampsWanted = false;
+let timestampsOn = false;
+let stepping = false;
 const scene = new THREE.Scene();
 scene.name = 'rakiety';
 const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 80000);
@@ -150,6 +153,10 @@ async function initRenderer() {
   renderer.domElement.tabIndex = 0;
   await renderer.init();
   renderer.highPrecision = true;
+  // Znaczniki czasu GPU włączane dopiero po rozgrzewce (frame 90): przy starcie
+  // kompilacja wstrzymuje odczyty, a pula (1024 pary) zdążyłaby się zapełnić.
+  timestampsWanted = !!renderer.backend.trackTimestamp;
+  renderer.backend.trackTimestamp = false;
   if (!renderer.backend?.isWebGPUBackend) throw new Error('WebGPURenderer uruchomił się na zapasowym backendzie WebGL — demo wymaga WebGPU.');
 }
 
@@ -174,6 +181,8 @@ const sy = (y) => -(y - O.y);
 const _shake = { x: 0, y: 0 };
 function updateCamera(realDt) {
   const t = S.camTarget;
+  // Kamera jedzie z flotą (bez tego sprężyna zostawałaby w tyle o v/k).
+  if (S.moveAtlas && !S.paused) { S.cam.x += fleetVx() * realDt * S.timeScale; S.cam.y += fleetVy() * realDt * S.timeScale; }
   const k = 1 - Math.exp(-3.2 * realDt);
   S.cam.x += (t.x - S.cam.x) * k;
   S.cam.y += (t.y - S.cam.y) * k;
@@ -241,9 +250,18 @@ const HOME = {
   ]
 };
 
+// BITWA W RUCHU: cała flota (Atlas, eskorta, piraci) leci wspólnie z prędkością
+// FLEET_V, kamera za nią. Rakiety, dym i wybuchy dziedziczą 100% pędu nośnika
+// (reguła gry, src/game/carrierVelocity.js) — poprawny port wygląda wtedy
+// dokładnie jak bitwa stojąca; każdy błąd to smugi „zostające w tyle”.
+const FLEET_V = Object.freeze({ x: 0, y: -700 });
+const fleet = { x: 0, y: 0 };
+const fleetVx = () => (S.moveAtlas ? FLEET_V.x : 0);
+const fleetVy = () => (S.moveAtlas ? FLEET_V.y : 0);
+
 function place(hull, home, time, weave = 0) {
-  const wx = O.x + home.x;
-  const wy = O.y + home.y;
+  const wx = O.x + home.x + fleet.x;
+  const wy = O.y + home.y + fleet.y;
   // Dryf i uniki (fregaty) — cele w ruchu sprawdzają wyprzedzenie rakiet.
   const w = weave ? Math.sin(time * 0.9 + home.x * 0.001) * weave : 0;
   const vw = weave ? Math.cos(time * 0.9 + home.x * 0.001) * weave * 0.9 : 0;
@@ -251,8 +269,9 @@ function place(hull, home, time, weave = 0) {
   const s = Math.sin(home.a);
   const x = wx - s * w + c * Math.sin(time * 0.2) * 40;
   const y = wy + c * w + s * Math.sin(time * 0.2) * 40;
-  hull.setPose(x, y, home.a + Math.sin(time * 0.5 + home.y) * 0.03, -s * vw + c * Math.cos(time * 0.2) * 8, c * vw + s * Math.cos(time * 0.2) * 8, 0);
-  hull.thrust = 0.25;
+  hull.setPose(x, y, home.a + Math.sin(time * 0.5 + home.y) * 0.03,
+    -s * vw + c * Math.cos(time * 0.2) * 8 + fleetVx(), c * vw + s * Math.cos(time * 0.2) * 8 + fleetVy(), 0);
+  hull.thrust = S.moveAtlas ? 0.9 : 0.25;
 }
 
 const atlasState = { x: O.x + HOME.atlas.x, y: O.y + HOME.atlas.y, a: 0, vx: 0, vy: 0, orbit: 0 };
@@ -261,18 +280,8 @@ const PANEL_SHIFT_PX = 180;
 function stepAtlas(dt) {
   const st = atlasState;
   const k = S.keys;
-  if (S.moveAtlas) {
-    // Okrąg 1500 j. wokół pozycji domowej, 900 j./s — rakiety startują z pędem.
-    st.orbit += dt * 0.6;
-    const cx = O.x + HOME.atlas.x;
-    const cy = O.y + HOME.atlas.y + 1500;
-    const nx = cx + Math.sin(st.orbit) * 1500;
-    const ny = cy - Math.cos(st.orbit) * 1500;
-    st.vx = dt > 0 ? (nx - st.x) / dt : st.vx;
-    st.vy = dt > 0 ? (ny - st.y) / dt : st.vy;
-    st.x = nx; st.y = ny;
-    st.a = Math.atan2(st.vy, st.vx);
-  } else {
+  {
+    // Ruch własny Atlasa (W/S/A/D) w układzie floty.
     const fwd = k.has('w') ? 1 : 0;
     const back = k.has('s') ? 1 : 0;
     const turn = (k.has('d') ? 1 : 0) - (k.has('a') ? 1 : 0);
@@ -285,12 +294,14 @@ function stepAtlas(dt) {
     st.y += st.vy * dt;
   }
   if (hulls.atlas) {
-    hulls.atlas.setPose(st.x, st.y, st.a, st.vx, st.vy, 0);
+    hulls.atlas.setPose(st.x + fleet.x, st.y + fleet.y, st.a, st.vx + fleetVx(), st.vy + fleetVy(), 0);
     hulls.atlas.thrust = S.moveAtlas || k.has('w') ? 1 : 0.15;
   }
 }
 
 function stepFleet(time, dt) {
+  fleet.x += fleetVx() * dt;
+  fleet.y += fleetVy() * dt;
   stepAtlas(dt);
   if (hulls.escort) place(hulls.escort, HOME.escort, time);
   const P = hulls.pirates;
@@ -473,7 +484,11 @@ function startScenario(name) {
   S.timeScale = def.timeScale ?? (S.slow ? 0.25 : Number($('s-time').value));
   flight.cinematic = def.cinematic || $('t-cine').checked ? { turnRateDeg: 240, spreadDeg: 70 } : null;
   S.camTarget.zoom = def.zoom;
-  if (def.cam) { S.camTarget.x = O.x + def.cam.x; S.camTarget.y = O.y + def.cam.y; }
+  // Daleko odjechana flota (tryb „bitwa w ruchu”): powrót układu do O przy
+  // zmianie scenariusza (precyzja float32 przy setkach tysięcy j.).
+  if (Math.hypot(fleet.x, fleet.y) > 60000) { clearAll(); fleet.x = 0; fleet.y = 0; }
+  scen.cam = def.cam || null;
+  if (def.cam) { S.camTarget.x = O.x + def.cam.x + fleet.x; S.camTarget.y = O.y + def.cam.y + fleet.y; }
   def.start(scen);
   $('caption').textContent = def.label;
   $('caption').style.opacity = '1';
@@ -494,8 +509,10 @@ function stepScenario(dt) {
   // Kamera: śledzenie supernowej i odjazd po wybuchu.
   if (def.follow && scen.missile) {
     if (scen.missile.alive) {
-      S.camTarget.x = scen.missile.x + Math.cos(scen.missile.heading) * 500;
-      S.camTarget.y = scen.missile.y + Math.sin(scen.missile.heading) * 500;
+      // Wyprzedzenie ~250 px ekranu przed rakietą (przy każdym zoomie).
+      const lead = Math.min(500, 250 / S.cam.zoom);
+      S.camTarget.x = scen.missile.x + Math.cos(scen.missile.heading) * lead;
+      S.camTarget.y = scen.missile.y + Math.sin(scen.missile.heading) * lead;
     } else {
       if (!scen.lastNova) scen.lastNova = { x: scen.missile.x, y: scen.missile.y, t: scen.t };
       S.camTarget.x = scen.lastNova.x;
@@ -512,6 +529,10 @@ function stepScenario(dt) {
       if (!scen.lastNova) scen.lastNova = { x: scen.missile.x, y: scen.missile.y, t: scen.t };
       if (scen.t - scen.lastNova.t > 0.6) S.camTarget.zoom = def.zoomAfter;
     }
+  }
+  if (scen.cam && !def.follow && !def.focus) {
+    S.camTarget.x = O.x + scen.cam.x + fleet.x;
+    S.camTarget.y = O.y + scen.cam.y + fleet.y;
   }
   if (scen.t > def.duration && S.loop) {
     const i = ORDER.indexOf(scen.name);
@@ -596,7 +617,12 @@ function frame(nowMs, forcedDt = null) {
 
 let gpuPending = false;
 function resolveGpuTimes() {
-  if (gpuPending || !renderer) return;
+  if (!renderer || stepping) return;
+  if (!timestampsOn && timestampsWanted && S.frame >= 90) {
+    timestampsOn = true;
+    renderer.backend.trackTimestamp = true;
+  }
+  if (gpuPending || !timestampsOn) return;
   gpuPending = true;
   Promise.all([renderer.resolveTimestampsAsync('render'), renderer.resolveTimestampsAsync('compute')])
     .then(([r, c]) => {
@@ -652,7 +678,7 @@ function updateHud() {
   lines.push(`<b>RAKIETY WebGPU</b> · ${scen.def ? scen.name : '—'} · zoom ${S.cam.zoom.toFixed(2).replace('.', ',')}`);
   lines.push(`tempo ${f2(S.timeScale)}${S.paused ? ' · PAUZA' : ''}${S.loop ? ' · pętla' : ''} · czas ${S.time.toFixed(1).replace('.', ',')} s`);
   const zAtlas = hulls.atlas ? Math.hypot(hulls.atlas.vx, hulls.atlas.vy) : 0;
-  lines.push(`Atlas ${fmt(zAtlas)} j./s${S.moveAtlas ? ' (w ruchu — rakiety z pędem okrętu)' : ''}`);
+  lines.push(`Atlas ${fmt(zAtlas)} j./s${S.moveAtlas ? ' · bitwa w ruchu: rakiety, dym i wybuchy z pędem nośnika' : ''}`);
   $('hud').innerHTML = lines.join('\n');
 }
 
@@ -758,6 +784,40 @@ function bindControls() {
 }
 
 // ---------------------------------------------------------------------------
+// Rozgrzewka potoków: jedna klatka przez RenderPipeline z włączonymi, pustymi
+// warstwami efektów (klucz potoku zależy od celu passu — MSAA 4, HalfFloat —
+// więc compileAsync na kanwie by nie wystarczył; obiekty niewidoczne compile
+// pomija) i puste dispatche compute. Bez tego pierwszy wybuch i pierwsza
+// supernowa kompilowały shadery w trakcie pokazu (skok ~40 ms).
+
+function warmUp() {
+  const meshes = [smoke.mesh, smoke.densityMesh, sparks.mesh, plumes.mesh, fireballs.mesh, nebula.mesh, arcs.mesh, bodies.mesh, glow.mesh];
+  const saved = meshes.map((m) => ({ m, visible: m.visible, count: m.count, ic: m.geometry.instanceCount }));
+  for (const m of meshes) {
+    m.visible = true;
+    if (m.count !== undefined) m.count = Math.max(2, m.count || 0);
+    if (m.geometry.isInstancedBufferGeometry) m.geometry.instanceCount = Math.max(1, m.geometry.instanceCount || 0);
+  }
+  smoke.U.spawnCount.value = 0;
+  smoke.U.count.value = 0;
+  renderer.compute(smoke.emitNode, 1);
+  renderer.compute(smoke.stepNode, 1);
+  renderer.compute(smoke.lightNode, 1);
+  nebula.U.count.value = 0;
+  renderer.compute(nebula.initNode, 1);
+  const prev = renderer.getRenderTarget();
+  renderer.setRenderTarget(smoke.densityRT);
+  renderer.render(smoke.densityScene, smoke.densityCam);
+  renderer.setRenderTarget(prev);
+  pipeline.render();
+  for (const s of saved) {
+    s.m.visible = s.visible;
+    if (s.count !== undefined) s.m.count = s.count;
+    if (s.m.geometry.isInstancedBufferGeometry) s.m.geometry.instanceCount = s.ic;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Start
 
 async function start() {
@@ -808,6 +868,9 @@ async function start() {
   buildPipeline();
   bindControls();
   updateCamera(0);
+  loading.textContent = 'Kompilacja shaderów…';
+  await new Promise((r) => setTimeout(r, 20));
+  warmUp();
   loading.style.display = 'none';
   S.ready = true;
   const first = params.get('scenario') || 'salwa';
@@ -821,9 +884,9 @@ async function start() {
       // Krokowanie synchroniczne: bez znaczników czasu GPU (zapytania nie
       // zdążyłyby się rozwiązać — pula by się przepełniła).
       const b = renderer.backend;
-      const track = b.trackTimestamp;
+      stepping = true;
       b.trackTimestamp = false;
-      try { for (let i = 0; i < n; i++) frame(performance.now(), dt); } finally { b.trackTimestamp = track; }
+      try { for (let i = 0; i < n; i++) frame(performance.now(), dt); } finally { stepping = false; b.trackTimestamp = timestampsOn; }
     },
     pause: (v = true) => setPause(!!v),
     slow: (v = true) => setSlow(!!v),

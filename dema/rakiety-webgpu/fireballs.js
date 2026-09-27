@@ -134,7 +134,7 @@ export class FireballSystem {
         const nv = p.add(vec3(n.sub(0.5).mul(0.8))).add(vec3(0.0, 0.0, 0.02));
         const nrm = nv.div(max(length(nv), 1e-3));
         const lit = sunL.mul(clamp(dot(nrm, U.sunDir).mul(0.6).add(0.4), 0.0, 1.0)).add(U.ambient).add(blackbody(H.mul(1.3)).mul(0.35));
-        const sootCol = vec3(0.13, 0.115, 0.1).mul(lit).mul(dens).mul(S.mul(1.7));
+        const sootCol = vec3(0.2, 0.18, 0.16).mul(lit).mul(dens).mul(S.mul(1.7));
         acc.addAssign(trans.mul(em.add(sootCol)).mul(dz));
         trans.mulAssign(exp(sigma.mul(dz).mul(-1.4)));
       }
