@@ -1296,6 +1296,27 @@ $('loading').textContent = 'Budowa ringu (kompilacja i pieczenie map)…';
 const ringOk = await ring.ready;
 window.__halo.buildMs = performance.now() - tBuild;
 if (!ringOk) reportError(`Budowa ringu nie wyszła: ${ring.error?.message || ring.error}`);
+// Czas kompilacji materiału terenu (zadanie 07): compileAsync samej siatki terenu
+// (budowa węzłów TSL → WGSL, moduł i pipeline) na celu sceny posta (format i MSAA
+// jak w klatce), przed pierwszą klatką — na zimno. Przy okazji rozgrzewa pipeline.
+async function measureTerrainCompile() {
+  const mesh = ring.group.getObjectByName('HaloTerrain');
+  if (!mesh || typeof renderer.compileAsync !== 'function') return null;
+  const cam = new THREE.PerspectiveCamera();
+  cam.layers.mask = mesh.layers.mask;      // warstwy terenu (BG) — compileAsync pomija obiekty spoza warstw kamery
+  const prev = renderer.getRenderTarget();
+  const t0 = performance.now();
+  let pending;
+  renderer.setRenderTarget(post.sceneTarget);
+  try {
+    pending = renderer.compileAsync(mesh, cam, scene);
+  } finally {
+    renderer.setRenderTarget(prev);
+  }
+  await pending;
+  return performance.now() - t0;
+}
+window.__halo.terrainCompileMs = ringOk ? await measureTerrainCompile().catch((err) => { reportError(`Kompilacja terenu: ${err?.message || err}`); return null; }) : null;
 ensureK7Flight();
 const startPreset = Math.max(1, Math.min(presetList().length, Number(params.get('preset')) || 8));
 applyPreset(startPreset - 1);

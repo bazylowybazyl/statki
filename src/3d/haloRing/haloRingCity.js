@@ -23,7 +23,7 @@ import {
   HALO_GLSL_RTE
 } from './haloRingGLSL.js';
 import { HALO_TAU, haloPortSites, haloQualityLod } from './haloRingConfig.js';
-import { HALO_GLSL_SURFACE } from './haloRingTerrain.js';
+import { HALO_GLSL_SURFACE } from './haloRingGLSL.js';
 import { HALO_PRIM_FRAGMENT } from './haloRingMegastructure.js';
 import { HALO_GLSL_INDKIT, IND_PARTS } from './haloRingIndustryKit.js';
 

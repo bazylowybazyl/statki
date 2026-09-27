@@ -22,7 +22,7 @@ import {
   HALO_GLSL_RTE
 } from './haloRingGLSL.js';
 import { HALO_HDR, haloQualityLod } from './haloRingConfig.js';
-import { HALO_GLSL_SURFACE } from './haloRingTerrain.js';
+import { HALO_GLSL_SURFACE } from './haloRingGLSL.js';
 import { HALO_INSTANCE_STRIDE, HALO_LIGHT_STRIDE, HALO_PRIM_NAMES, HALO_TRAIN_STRIDE } from './haloRingRoofPlan.js';
 
 const f3 = (a) => a.map((x) => x.toFixed(3)).join(', ');

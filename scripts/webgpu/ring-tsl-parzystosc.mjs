@@ -39,6 +39,14 @@ try {
   for (const [name, r] of Object.entries(res.results)) {
     md.push(`| ${name} | ${r.n} | ${r.identicalPct}% | ${f(r.maxAbs)} | ${f(r.meanAbs)} | ${f(r.maxRel)} | ${r.nanGLSL} / ${r.nanTSL} |`);
   }
+  // zadanie 07: zestaw przemysłowy TSL (GPU, float32) ↔ bliźniak JS indKitPart (float64)
+  if (res.mirror) {
+    const m = res.mirror;
+    md.push('', '## Zestaw przemysłowy: TSL na GPU ↔ bliźniak JS (indKitPart)', '',
+      `Części: ${m.parts}, rozbieżne decyzje (istnienie, materiał, kształt): **${m.decisionMismatch}**. ` +
+      `Wartości: ${m.values}, identyczne po zaokrągleniu JS do float32: ${m.identicalPct}%, maks. ${m.maxUlp} ULP ` +
+      `(0: ${m.ulpHist[0]}, 1: ${m.ulpHist[1]}, 2: ${m.ulpHist[2]}, >2: ${m.ulpHist['>2']}), maks. |Δ| ${f(m.maxAbs)}.`);
+  }
   writeFileSync(join(outDir, 'parzystosc.md'), md.join('\n') + '\n');
   console.log(md.join('\n'));
   const errs = out.logs.filter((l) => /error|exception|WGSL|Invalid/i.test(l));
