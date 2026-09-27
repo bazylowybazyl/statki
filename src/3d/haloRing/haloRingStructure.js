@@ -15,7 +15,7 @@ import {
 } from './haloRingGLSL.js';
 import { HALO_GLSL_FG, HALO_GLSL_FG_CLIP, HALO_GLSL_TRANSIT } from './haloRingGLSL.js';
 import { HALO_ROOF } from './haloRingConfig.js';
-import { HALO_GLSL_SURFACE } from './haloRingTerrain.js';
+import { HALO_GLSL_SURFACE } from './haloRingGLSL.js';
 import { HALO_STRUCTURE_PALETTE_KEYS, haloPaletteDefines } from './haloRingProfiles.js';
 
 // Rodzaje krawędzi profilu (indeks = aEdge.x w shaderze).

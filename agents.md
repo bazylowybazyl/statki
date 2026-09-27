@@ -65,13 +65,6 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   Core3D osłania `backend.draw` (`_guardPendingPipelines`: taki rysunek czeka klatkę, dwie). `renderer.info`: draw calle
   w `render.drawCalls` (reset raz na klatkę rAF). Zegar GPU: znaczniki czasu (`trackTimestamp`), jedno zapytanie w
   locie → `Core3D.gpuFrameMs`; mapa `timestamps` puli three nie jest czyszczona przez three — Core3D czyści ją po wyniku.
-- **Pułapki TSL (three r183):** najwyżej 12 buforów uniformów na etap shadera — `uniform()` z domyślnej grupy dzielą
-  jeden bufor, ale każdy `uniformArray` i każda własna grupa to osobny (pakuj w blok, wzór `createUniformBlock` w
-  `src/3d/haloRing/`). `Fn(...).setLayout(...)` jest buforowane globalnie: funkcja z layoutem ma być czysta, uniformy
-  jako parametry (złapany w domknięciu → drugi materiał czyta cudzy slot). WGSL: `smoothstep` ze stałymi krawędziami
-  wymaga low < high (GLSL `smoothstep(a, b, x)` z a > b = `1 − smoothstep(b, a, x)`). `PassTextureNode` (np.
-  `bloom.getTextureNode()`) gubi `uvNode` w `clone()` — odczyt z UV i poziomem przez `texture(węzeł, uv, poziom)`, nie
-  `.sample(uv).level(0)`.
 - **Post (zadanie 02, `src/3d/tsl/postGry.js`):** kolejność jak dawny łańcuch resolve → bloom → uber. Bloom =
   `BloomGry` (BloomNode three, ten sam algorytm co dawny pass WebGL; BloomNode r183 nie ma ×3 kompozytu —
   `BLOOM_ZGODNOSC_WEBGL = 3`, alfa = max(rgb) bloomu jak przy dawnym blendzie; liczony raz na RENDER, bo podzielony ekran to
@@ -81,9 +74,9 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   bez przebudowy. Strojenie bloomu = uniformy węzła (`_applyBloomPassConfig` co klatkę, tuner `?dev`). Kubełek `bloom`
   mierzą haki BloomGry (jego passy lecą w środku renderu postu), `post` = sam uber. Znaczniki czasu GPU: brama na granicy
   klatki (`_gpuTimerGate`) — pula three (2048 zapytań) nie przepełnia się przy wolnym wyniku.
-- **Przejściowo (do swoich zadań):** maska słońca / SDF / refrakcja (03, do tego czasu `uSunShadowOn = 0`), mapa CPU ringu
-  pusta — brak synchronicznego odczytu pikseli (06): płyta ringu koliduje bez rzeźby terenu. Gorące powietrze w podzielonym
-  ekranie ma tylko widok gracza 1 (źródła w UV kamery gracza 1; na WebGL widok 1 miał je przesunięte, widok 2 — żadnych).
+- **Przejściowo (do swoich zadań):** maska słońca / SDF / refrakcja (03, do tego czasu `uSunShadowOn = 0`). Gorące
+  powietrze w podzielonym ekranie ma tylko widok gracza 1 (źródła w UV kamery gracza 1; na WebGL widok 1 miał je
+  przesunięte, widok 2 — żadnych).
 - **Nowe efekty broni i rakiet z dem** (`dema/bronie-webgpu`, `dema/rakiety-webgpu` — decyzja użytkownika 2026-09-27)
   zastępują stare (zadania 12, 17–20); wspólne klocki w `src/3d/fx/`. Starych efektów broni, rakiet, iskier i trafień nie
   przenosimy 1:1 ani nie poprawiamy — idą do wymiany. Rozgrywka zostaje w grze: dema dostają tylko zdarzenia (strzał,
@@ -97,6 +90,29 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   tryb bierze się z bazy, patrz nagłówek `zrzuty.mjs`); haki `?dev`: `window.DevScene.teleport / syncCamera /
   preloadHullSprites / startSplit`. Testy: `node --test "tests/*.test.mjs"` (wzorzec w cudzysłowie — `tests/` na Node 22
   nie działa).
+- **TSL — pułapki sprawdzone w zadaniach 02, 06–07:** (1) funkcja z `setLayout` musi być CZYSTA — three buforuje jej kod globalnie
+  (klasa buildera → węzeł `Fn`), więc uniform / tekstura złapane w domknięciu wskazują w drugim materiale cudzy slot;
+  uniformy jako parametry funkcji albo funkcja wklejana (bez layoutu) — wzór `HaloFn` / `haloRingTSL(u)` w
+  `src/3d/haloRing/haloRingTSL.js`; (2) najwyżej **12 buforów uniformów na etap** (`maxUniformBuffersPerShaderStage`,
+  także w adapterze RTX 5080): `uniform()` z domyślnej grupy dzielą jeden bufor, ale każdy `uniformArray` i każda własna
+  grupa to osobny — wiele tablic = blok `createUniformBlock` (`src/3d/haloRing/haloUniformsAdapter.js`) ze stałą nazwą
+  (`setName`, inaczej każdy egzemplarz to inny WGSL i osobna kompilacja); (3) `pow` z ujemną podstawą to NaN w WGSL (FXC w bazie WebGL liczył potęgi całkowite mnożeniem) —
+  potęgi całkowite mnożeniem; (4) WGSL próbkuje v = 0 z GÓRNEGO wiersza celu — mapę do `texture(map, (u, v))` piecz z
+  v = 0 u góry (uv jak `QuadMesh`), wtedy odczyt CPU (`readRenderTargetPixelsAsync`: wiersz 0 = góra, wiersze wyrównane
+  do 256 B) nie wymaga odwracania; (5) WGSL budujesz w Node bez GPU (`renderer.backend.createNodeBuilder`, wzór w
+  `tests/haloRingTSL.test.mjs`) — testy czytają wygenerowany kod; (6) `smoothstep` ze STAŁYMI krawędziami low ≥ high to
+  błąd tworzenia shadera WGSL (GLSL ringu ma ich dziesiątki: `smoothstep(0.34, 0.05, x)`) — odwrócone krawędzie przez
+  `haloSmooth(e0, e1, x)` (`haloRingTSL.js`, wzór jak HLSL); (7) `texture(tex)` bez uv ma `updateMatrix = true`, a klony
+  z `.sample(uv)` to dziedziczą — każde próbkowanie mnoży uv przez macierz tekstury (osobny uniform mat3 w grupie obiektu,
+  aktualizowany co obiekt); węzeł bazowy z uv-atrapą `texture(tex, vec2(0))` (wzór `surfaceTextureNode` w
+  `haloRingTerrain.js`); (8) `screenCoordinate` liczy y od GÓRY celu — wzory z pozycji piksela (dither IGN) wychodzą
+  odbite względem `gl_FragCoord` bazy WebGL; `haloFragCoordGL()` daje ten sam piksel co WebGL; (9) varyingi z własnego
+  `vertexNode`: `varyingProperty(typ, nazwa).assign(…)` w funkcji wierzchołków, ten sam węzeł we fragmencie; (10) baza
+  WebGL (ANGLE/FXC) liczy `a·b + c` jednym zaokrągleniem (FMA), Dawn/DXC dwoma — gdy wynik idzie do haszu (wejście
+  niecałkowite), 1 ULP zmienia hasz; dla całkowitego `a` i stałej `b` → `haloFusedMulAddInt(a, b, c)` (`haloRingTSL.js`,
+  bit w bit z WebGL); sprawdzanie: wiersze haszy w `scripts/webgpu/ring-tsl-parzystosc.mjs`; (11) `PassTextureNode` (np.
+  `bloom.getTextureNode()`) gubi `uvNode` w `clone()` — odczyt z UV i poziomem przez `texture(węzeł, uv, poziom)`, nie
+  `.sample(uv).level(0)` (drugi klon wraca do domyślnego UV; zadanie 02, `postGry.js`).
 
 ---
 
@@ -121,11 +137,28 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 - Stacja Ziemi, Marsa i Jowisza = stacja-port w hali K-7 (`ringPort`, `isCollidable: false`, `terminalRange`) — wyglądem stacji jest ring: nie rysuj dla niej brył ani ikon stacji.
 - Trzy RÓŻNE ringi (decyzja użytkownika 2026-09-27): Ziemia = silnik Halo (`createHaloRing`), Mars = ECUMENE, Jowisz = ring Fable — z dem `orbital_ring_demo(_2).html` w skali ×3 (`createArchRing`, `src/3d/haloRing/arch/`). Archetyp i geometria są w profilu (`haloRingProfiles.js`), a `createHaloRingLayout` rozdaje je kolizjom, ruchowi v2 i stacji-portowi. Hala K-7 i zatoki (stanowiska, kolizje) są wspólne, różni je tylko ubiór. Zmiana ringu Ziemi nie dotyka Marsa i Jowisza, i odwrotnie. Opis: `docs/PORT-halo-ring.md` § „Ringi-archetypy”.
 - Ring nie udaje życia (`docs/BRIEF-ring-halo.md` §1): bez ruchu zastępczego, zaparkowanych NPC i świateł aut — statki tylko z systemu ruchu.
+- Ring na WebGPU (zadanie 06): biblioteka TSL `src/3d/haloRing/haloRingTSL.js` (odpowiednik `haloRingGLSL.js`, który
+  zostaje tylko dla materiałów struktury, atmosfery, miasta, K-7 i archetypów do ich zadań 08–10), uniformy ringu
+  w jednym bloku (`createHaloUniforms`, klucze i `.value` bez zmian), mapy świata i detal pieczone w TSL. **Budowa ringu
+  jest asynchroniczna:** `createHaloRing` wraca od razu (układ i uniformy gotowe), bryły i mapa CPU dopiero po
+  `await ring.ready` (compileAsync bake'u na prawdziwych celach → bake → odczyt CPU → plan budowli i kopuł z mapy →
+  `setCivic` → detal); `mapsReady` po odczycie, `terrainHeightAt` = 0 przed nim, `HaloRingGame` podpina teren do kolizji
+  i zeruje stanowiska K-7 po `ready`. Mapa CPU zgodna z WebGL do precyzji float (`scripts/webgpu/ring-mapa.mjs`),
+  parzystość funkcji GLSL ↔ TSL: `scripts/webgpu/ring-tsl-parzystosc.mjs`, teren w koliderze gry:
+  `scripts/webgpu/ring-kolizje-gra.mjs`; warsztat `dema/halo_ring_demo.html` na WebGPU.
+- Teren ringu w TSL (zadanie 07): `HaloTerrain` = NodeMaterial z `makeHaloTerrainNodes` (`haloRingTerrain.js`, 1:1 z
+  dawnym GLSL), uniformy powierzchni w bloku `haloSurfU` (`terrain.surfaceUniforms` — klucze i `.value` jak dawniej, mapy
+  i detal to węzły `texture()`; te same uniformy dostaną struktura, atmosfera, megastruktura i miasto przez
+  `haloRingSurfaceTSL(u, su)`). Jedyny wariant kompilacji to kroki powietrza (`quality.airSteps`), reszta jakości w
+  uniformach. Zestaw przemysłowy: `haloIndKitTSL(u)` (`haloRingIndustryKit.js`), liczby z jednej definicji `kitParts` —
+  na liczbach = bliźniak JS `indKitPart` bit w bit (`tests/haloRingTerrainTSL.test.mjs`), na GPU zero rozbieżnych decyzji
+  (parzystość). `HALO_GLSL_SURFACE`/`CLOUDCOVER` są w `haloRingGLSL.js` do 08–09, `HALO_GLSL_INDKIT` dla miasta do 09.
+  Zrzuty samego terenu dema: `scripts/halo-ring-shots.mjs --teren [--bez-otoczenia]` (ten sam skrypt w worktree z tagu).
 
 ### Menu główne i jego tło 3D
 - Tło menu przed startem gry = Ziemia z ringiem w kamerze kinowej: `MenuBackdrop3D` (`src/3d/menuBackdrop3D.js`). Ring to ring GRY wypożyczony przez `haloRings.showcaseRing('earth')` (mapy pieką się już w menu) i oddany `releaseShowcase` w `stopMenuBackdrop()` tuż przed pierwszą klatką gry (`startGame`). Nie twórz drugiego ringu dla menu.
 - Render: `Core3D.renderBackdrop(camera)` — ta sama scena i post (bloom, ACES), tylko warstwa `MENU_BACKDROP_LAYER` (9; na czas menu ring ma na niej wszystkie siatki). Ziemia i niebo tła są dziećmi grupy ringu i liczą światło w układzie ringu (`uCamLocal`, `uSunDir`, `haloRingBlock`); tekstury Ziemi pożyczone od planety gry (`window.EARTH`), mgławica od `NebulaSystem`.
-- Start tła jest w tle: shader pieczenia map ringu kompiluje się kilka sekund (ANGLE/D3D), więc `createHaloBakeWarmup` + `renderer.compileAsync` przed budową ringu, a programy ringu/Ziemi/nieba `compileAsync` przed pierwszą klatką. Rozgrzewka musi mieć te same źródła i parametry co `HaloWorldMaps._makeMaterial` i scenę BEZ świateł (liczba świateł wchodzi do klucza programu three) — pilnuje `tests/menuBackdrop.test.mjs`. Port WebGPU: start tła najpierw czeka na `Core3D.ready` (urządzenie powstaje w tle); rozgrzewkę pod klucze pipeline'ów WebGPU przebudowują zadania 06 i 11.
+- Start tła jest w tle: najpierw czeka na `Core3D.ready` (urządzenie WebGPU powstaje w tle), potem programy ringu/Ziemi/nieba `compileAsync` przed pierwszą klatką. Na WebGPU (zadanie 06) pipeline'y pieczenia map kompiluje sam `HaloWorldMaps.init()` na PRAWDZIWYCH celach bake'u (klucz pipeline'u zależy od formatu celu) w asynchronicznej budowie ringu; `createHaloBakeWarmup` to już pusta scena zgodności (zadanie 11 usunie wywołanie) — pilnuje `tests/menuBackdrop.test.mjs`.
 - Style menu: `assets/css/main-menu.css` (osobny plik, wczytywany po `main.css`). JS menu szuka widoków po id i przycisków po klasie `menu-btn-styled` (pad/klawiatura); stare reguły tych klas neutralizuje `all: unset` w zasięgu `#main-menu`.
 
 ### Stacje i obiekty 3D

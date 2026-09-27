@@ -16,7 +16,7 @@ import {
   HALO_GLSL_RTE,
   HALO_GLSL_STORM
 } from './haloRingGLSL.js';
-import { HALO_GLSL_CLOUDCOVER, HALO_GLSL_SURFACE } from './haloRingTerrain.js';
+import { HALO_GLSL_CLOUDCOVER, HALO_GLSL_SURFACE } from './haloRingGLSL.js';
 import { HALO_GLSL_STRIP_VERTEX, HaloSegmentSet, buildStripGeometry } from './haloRingStructure.js';
 
 const STRIP_VERTEX = /* glsl */`

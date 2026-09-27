@@ -6,69 +6,87 @@
 //
 //   tex1 RGBA16F: fbm (wysokość), d/du, d/dv (gradient w jednostkach uv), ridged
 //   tex2 RGBA16F: Worley F1, id komórki, fbm #2, F2 − F1 (krawędzie komórek)
+//
+// Port WebGPU (zadanie 06): dwa materiały TSL (po jednym na teksturę), cele
+// RenderTarget, kompilacja compileAsync na prawdziwych celach przed bake'iem
+// (init() — asynchronicznie). Oś Y jak w mapach świata (haloRingWorldGen.js):
+// v = 0 w górnym wierszu celu, więc texture(tex, (u, v)) = wartość z GL.
 import * as THREE from 'three';
-import { HALO_GLSL_NOISE } from './haloRingGLSL.js';
+import { NodeMaterial } from 'three/webgpu';
+import { Fn, Loop, float, vec2, vec4, uv, positionGeometry, abs, clamp } from 'three/tsl';
+import { haloGnoise2P, haloPureFn, haloWorleyP } from './haloRingTSL.js';
 
 const SIZE = 1024;
 
-const VERT = /* glsl */`
-varying vec2 vUv;
-void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }
-`;
+// fbm z 6 oktaw okresowego szumu gradientowego (okres 8, 16, …)
+const haloFbmP = haloPureFn('haloFbmP', 'float', [['uvp', 'vec2'], ['salt', 'float']], (a) => {
+  const sum = float(0.0).toVar();
+  const amp = float(0.5).toVar();
+  const period = float(8.0).toVar();
+  Loop(6, ({ i }) => {
+    sum.addAssign(amp.mul(haloGnoise2P(a.uvp.mul(period), vec2(period, period), a.salt.add(float(i).mul(13.0)))));
+    period.mulAssign(2.0);
+    amp.mulAssign(0.5);
+  });
+  return sum;
+});
+const haloRidgedP = haloPureFn('haloRidgedP', 'float', [['uvp', 'vec2'], ['salt', 'float']], (a) => {
+  const sum = float(0.0).toVar();
+  const amp = float(0.5).toVar();
+  const period = float(6.0).toVar();
+  const wgt = float(1.0).toVar();
+  Loop(6, ({ i }) => {
+    const n = float(1.0).sub(abs(haloGnoise2P(a.uvp.mul(period), vec2(period, period), a.salt.add(float(i).mul(7.0))))).toVar();
+    n.mulAssign(n);
+    sum.addAssign(amp.mul(n).mul(wgt));
+    wgt.assign(clamp(n.mul(1.8), 0.0, 1.0));
+    period.mulAssign(2.0);
+    amp.mulAssign(0.5);
+  });
+  return sum;
+});
 
-const FRAG = /* glsl */`
-${HALO_GLSL_NOISE}
-uniform float uPass;
-varying vec2 vUv;
-float fbmP(vec2 uv, float salt) {
-  float sum = 0.0;
-  float a = 0.5;
-  float period = 8.0;
-  for (int i = 0; i < 6; i++) {
-    sum += a * haloGnoise2P(uv * period, vec2(period), salt + float(i) * 13.0);
-    period *= 2.0;
-    a *= 0.5;
-  }
-  return sum;
+// Kwad: v = 0 w GÓRNYM wierszu celu (konwencja WebGPU), pozycja = NDC.
+function makeQuadGeometry() {
+  const g = new THREE.PlaneGeometry(2, 2);
+  const uvAttr = g.attributes.uv;
+  for (let i = 0; i < uvAttr.count; i++) uvAttr.setY(i, 1 - uvAttr.getY(i));
+  return g;
 }
-float ridgedP(vec2 uv, float salt) {
-  float sum = 0.0;
-  float a = 0.5;
-  float period = 6.0;
-  float wgt = 1.0;
-  for (int i = 0; i < 6; i++) {
-    float n = 1.0 - abs(haloGnoise2P(uv * period, vec2(period), salt + float(i) * 7.0));
-    n *= n;
-    sum += a * n * wgt;
-    wgt = clamp(n * 1.8, 0.0, 1.0);
-    period *= 2.0;
-    a *= 0.5;
-  }
-  return sum;
+
+export function makeHaloDetailMaterial(pass) {
+  const m = new NodeMaterial();
+  m.name = `HaloDetail${pass + 1}`;
+  m.vertexNode = vec4(positionGeometry.xy, 0.0, 1.0);
+  m.fragmentNode = Fn(() => {
+    const p = uv().toVar();
+    if (pass === 0) {
+      const e = 1.0 / SIZE;
+      const h = haloFbmP(p, 1.0);
+      const hx = haloFbmP(p.add(vec2(e, 0.0)), 1.0).sub(haloFbmP(p.sub(vec2(e, 0.0)), 1.0)).div(2.0 * e);
+      const hy = haloFbmP(p.add(vec2(0.0, e)), 1.0).sub(haloFbmP(p.sub(vec2(0.0, e)), 1.0)).div(2.0 * e);
+      return vec4(h, hx, hy, haloRidgedP(p, 5.0).sub(0.5));
+    }
+    const w = haloWorleyP(p.mul(32.0), vec2(32.0, 32.0), 11.0).toVar();
+    const f2 = haloFbmP(p, 29.0);
+    return vec4(w.x, w.y, f2, w.z.sub(w.x));
+  })();
+  m.depthTest = false;
+  m.depthWrite = false;
+  m.blending = THREE.NoBlending;
+  m.toneMapped = false;
+  return m;
 }
-void main() {
-  vec2 uv = vUv;
-  if (uPass < 0.5) {
-    float e = 1.0 / ${SIZE}.0;
-    float h = fbmP(uv, 1.0);
-    float hx = (fbmP(uv + vec2(e, 0.0), 1.0) - fbmP(uv - vec2(e, 0.0), 1.0)) / (2.0 * e);
-    float hy = (fbmP(uv + vec2(0.0, e), 1.0) - fbmP(uv - vec2(0.0, e), 1.0)) / (2.0 * e);
-    gl_FragColor = vec4(h, hx, hy, ridgedP(uv, 5.0) - 0.5);
-  } else {
-    vec3 w = haloWorleyP(uv * 32.0, vec2(32.0), 11.0);
-    float f2 = fbmP(uv, 29.0);
-    gl_FragColor = vec4(w.x, w.y, f2, w.z - w.x);
-  }
-}
-`;
 
 export class HaloDetailTextures {
   constructor(renderer) {
+    this.renderer = renderer;
     const make = () => {
-      const rt = new THREE.WebGLRenderTarget(SIZE, SIZE, {
+      const rt = new THREE.RenderTarget(SIZE, SIZE, {
         type: THREE.HalfFloatType,
         format: THREE.RGBAFormat,
         depthBuffer: false,
+        stencilBuffer: false,
         generateMipmaps: true,
         minFilter: THREE.LinearMipmapLinearFilter,
         magFilter: THREE.LinearFilter,
@@ -76,39 +94,79 @@ export class HaloDetailTextures {
         wrapT: THREE.RepeatWrapping
       });
       rt.texture.anisotropy = 8;
+      rt.texture.colorSpace = THREE.NoColorSpace;
       return rt;
     };
     this.rt1 = make();
     this.rt2 = make();
-    const material = new THREE.ShaderMaterial({
-      uniforms: { uPass: { value: 0 } },
-      vertexShader: VERT,
-      fragmentShader: FRAG,
-      depthTest: false,
-      depthWrite: false
-    });
+    this.textureBytes = SIZE * SIZE * 8 * 2 * 4 / 3;
+    this.ready = false;
+    this.bakeMs = 0;
+    this.compileMs = 0;
+    this._initPromise = null;
+    this._disposed = false;
+  }
+
+  // Kompilacja (compileAsync na prawdziwych celach) i bake obu tekstur. Idempotentne.
+  init() {
+    if (!this._initPromise) this._initPromise = this._init();
+    return this._initPromise;
+  }
+
+  async _init() {
+    const renderer = this.renderer;
+    if (typeof renderer.init === 'function') await renderer.init();
+    const materials = [makeHaloDetailMaterial(0), makeHaloDetailMaterial(1)];
     const scene = new THREE.Scene();
-    const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+    const quad = new THREE.Mesh(makeQuadGeometry(), materials[0]);
     quad.frustumCulled = false;
     scene.add(quad);
     const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-    const prev = renderer.getRenderTarget();
-    material.uniforms.uPass.value = 0;
-    renderer.setRenderTarget(this.rt1);
-    renderer.render(scene, camera);
-    material.uniforms.uPass.value = 1;
-    renderer.setRenderTarget(this.rt2);
-    renderer.render(scene, camera);
-    renderer.setRenderTarget(prev);
-    material.dispose();
-    quad.geometry.dispose();
-    this.textureBytes = SIZE * SIZE * 8 * 2 * 4 / 3;
+    const targets = [this.rt1, this.rt2];
+    try {
+      const t0 = performance.now();
+      if (typeof renderer.compileAsync === 'function') {
+        for (let i = 0; i < 2; i++) {
+          if (this._disposed) return;
+          // cel czytany synchronicznie — wraca przed czekaniem (klatka gry w międzyczasie)
+          const prev = renderer.getRenderTarget();
+          quad.material = materials[i];
+          renderer.setRenderTarget(targets[i]);
+          let pending;
+          try {
+            pending = renderer.compileAsync(scene, camera);
+          } finally {
+            renderer.setRenderTarget(prev);
+          }
+          await pending;
+        }
+      }
+      this.compileMs = performance.now() - t0;
+      if (this._disposed) return;
+      const t1 = performance.now();
+      const prev = renderer.getRenderTarget();
+      try {
+        for (let i = 0; i < 2; i++) {
+          quad.material = materials[i];
+          renderer.setRenderTarget(targets[i]);
+          renderer.render(scene, camera);
+        }
+      } finally {
+        renderer.setRenderTarget(prev);
+      }
+      this.bakeMs = performance.now() - t1;
+      this.ready = true;
+    } finally {
+      for (const m of materials) m.dispose();
+      quad.geometry.dispose();
+    }
   }
 
   get tex1() { return this.rt1.texture; }
   get tex2() { return this.rt2.texture; }
 
   dispose() {
+    this._disposed = true;
     this.rt1.dispose();
     this.rt2.dispose();
   }

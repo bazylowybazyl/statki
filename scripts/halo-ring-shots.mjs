@@ -1,9 +1,18 @@
 // Automatyczne zrzuty dema ringu Halo (brief §13–§14): Vite + headless Chrome
 // przez CDP (bez zależności — WebSocket z Node 22). Dla każdego ujęcia:
 // zrzut PNG, draw calle, trójkąty, ms/klatkę, histogram HDR, błędy shaderów.
+// Port WebGPU (zadanie 06): demo na WebGPURenderer — nazwa GPU z adaptera
+// (window.__halo.gpu), błędy walidacji WebGPU z domeny Log, czas budowy ringu
+// (kompilacja + pieczenie + odczyt) i liczba zamienników materiałów (07–10).
+//
+// Zadanie 07: --teren — tylko teren ringu (struktura, dach, chmury, powłoka powietrza,
+// megastruktura, miasto i hale K-7 ukryte; otoczenie dema zostaje) — porównanie
+// terenu z bazą WebGL z tagu, póki reszta ringu to zamienniki (08–10). Ten sam
+// skrypt działa w worktree z tagu webgl-baseline (demo na WebGLRenderer).
 //
 //   node scripts/halo-ring-shots.mjs --set m2 --out .tmp/halo-ring/m2
 //   node scripts/halo-ring-shots.mjs --only p1,p8 --size 2560x1440
+//   node scripts/halo-ring-shots.mjs --set m4 --teren --out .tmp/halo-ring/m4-teren
 import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -228,7 +237,12 @@ async function evaluate(cdp, expression, timeout = 120000) {
 }
 
 async function main() {
-  const server = await createServer({ root: repo, logLevel: 'error', server: { port: 5230, strictPort: false } });
+  const server = await createServer({
+    root: repo, logLevel: 'error',
+    server: { port: Number(args.port) || 5230, strictPort: false, hmr: false, watch: { ignored: ['**/*'] } },
+    // bez tego pierwsze wykrycie three/webgpu i three/tsl przeładowuje stronę
+    optimizeDeps: { include: ['three', 'three/webgpu', 'three/tsl'] }
+  });
   await server.listen();
   const port = server.config.server.port;
   const base = `http://localhost:${server.httpServer.address().port}`;
@@ -237,7 +251,7 @@ async function main() {
   const dbgPort = 9333 + Math.floor(Math.random() * 500);
   const chrome = spawn(CHROME, [
     '--headless=new', `--remote-debugging-port=${dbgPort}`, `--user-data-dir=${profile}`,
-    '--use-angle=d3d11', '--enable-gpu', '--ignore-gpu-blocklist', '--enable-webgl',
+    '--use-angle=d3d11', '--enable-gpu', '--ignore-gpu-blocklist', '--enable-webgl', '--enable-unsafe-webgpu',
     '--disable-gpu-vsync', '--disable-frame-rate-limit', '--hide-scrollbars',
     `--window-size=${W},${H}`, 'about:blank'
   ], { stdio: 'ignore' });
@@ -256,12 +270,20 @@ async function main() {
   const logs = [];
   cdp.on((msg) => {
     if (msg.method === 'Runtime.consoleAPICalled' && (msg.params.type === 'error' || msg.params.type === 'warning')) {
-      logs.push(`[${msg.params.type}] ${msg.params.args.map((a) => a.value ?? a.description ?? '').join(' ')}`.slice(0, 2000));
+      const text = msg.params.args.map((a) => a.value ?? a.description ?? '').join(' ');
+      // zamiennik gry ostrzega raz na nieprzeniesiony materiał — liczy je `zamienniki`, to nie błąd
+      if (!text.startsWith('[Zamiennik]')) logs.push(`[${msg.params.type}] ${text}`.slice(0, 2000));
     }
     if (msg.method === 'Runtime.exceptionThrown') logs.push(`[exception] ${msg.params.exceptionDetails?.exception?.description || msg.params.exceptionDetails?.text}`);
+    // walidacja WebGPU / WGSL przychodzi przez domenę Log, nie przez console
+    if (msg.method === 'Log.entryAdded' && (msg.params.entry.level === 'error' || msg.params.entry.level === 'warning')) {
+      const e = msg.params.entry;
+      if (!/favicon|powerPreference/.test(`${e.text} ${e.url || ''}`)) logs.push(`[log:${e.level}] ${e.source}: ${e.text}${e.url ? ` (${e.url})` : ''}`.slice(0, 2000));
+    }
   });
   await cdp.send('Page.enable');
   await cdp.send('Runtime.enable');
+  await cdp.send('Log.enable');
 
   const results = [];
   for (const shot of shots) {
@@ -293,6 +315,15 @@ async function main() {
       continue;
     }
     const bakeMs = Date.now() - t0;
+    if (args.teren) {
+      // hale K-7 (cullHalls ustawia visible co klatkę) — na warstwę, której nie widzi żadna kamera;
+      // --bez-otoczenia: także planeta, niebo, tło i duszki dema (porównanie samego terenu)
+      await evaluate(cdp, `(() => { const r = window.__halo.ring;
+        for (const k of ['structure', 'structureTop', 'clouds', 'shell', 'mega', 'city']) r.setVisible(k, false);
+        for (const h of r.k7Halls || []) h.root.traverse((o) => o.layers.set(30));
+        if (${args['bez-otoczenia'] ? 'true' : 'false'}) for (const o of r.group.parent.children) if (o !== r.group) o.visible = false;
+        return true; })()`);
+    }
     const frame = await evaluate(cdp, 'window.__halo.renderFrames(4)');
     const stats = await evaluate(cdp, 'window.__halo.stats()');
     const hdr = await evaluate(cdp, 'window.__halo.measureHDR(480)');
@@ -304,15 +335,18 @@ async function main() {
     await sleep(300);
     await evaluate(cdp, 'window.dispatchEvent(new Event("resize")), window.__halo.renderFrames(3), true');
     const ms = await evaluate(cdp, 'window.__halo.bench(24)');
-    const gpu = await evaluate(cdp, `(() => { const gl = document.getElementById('view').getContext('webgl2'); const e = gl.getExtension('WEBGL_debug_renderer_info'); return e ? gl.getParameter(e.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER); })()`);
+    const gpu = await evaluate(cdp, 'window.__halo.gpu');
+    const build = await evaluate(cdp, '({ buildMs: window.__halo.buildMs, bake: window.__halo.bake, placeholders: window.__halo.placeholders, terrainCompileMs: window.__halo.terrainCompileMs ?? null })');
     const row = {
       id: shot.id, preset: stats.preset, mode: stats.mode, calls: frame.calls, triangles: frame.triangles,
       tiles: stats.activeTiles, segments: stats.segments, textureMB: +(stats.textureBytes / 1048576).toFixed(0),
       ms1440: +ms.toFixed(2), fps1440: +(1000 / ms).toFixed(0), bakeMs, near: stats.near, hdr, gpu,
+      buildMs: build.buildMs, bake: build.bake, placeholders: build.placeholders, terrainCompileMs: build.terrainCompileMs,
       errors: stats.errors, logs: logs.slice()
     };
     results.push(row);
-    console.log(`${shot.id.padEnd(18)} calls ${String(row.calls).padStart(3)}  tris ${(row.triangles / 1000).toFixed(0).padStart(5)}k  ${row.ms1440} ms (${row.fps1440} FPS @1440p)  HDR max ${hdr.max.toFixed(2)} >0.9: ${(hdr.overFraction * 100).toFixed(2)}%  NaN ${hdr.nanOrInf}  err ${row.errors.length + row.logs.length}`);
+    console.log(`${shot.id.padEnd(18)} calls ${String(row.calls).padStart(3)}  tris ${(row.triangles / 1000).toFixed(0).padStart(5)}k  ${row.ms1440} ms (${row.fps1440} FPS @1440p)  HDR max ${hdr.max.toFixed(2)} >0.9: ${(hdr.overFraction * 100).toFixed(2)}%  NaN ${hdr.nanOrInf}  budowa ${Math.round(row.buildMs || 0)} ms  teren (kompilacja) ${row.terrainCompileMs == null ? "—" : Math.round(row.terrainCompileMs) + " ms"}  zamienniki ${row.placeholders?.built ?? "?"}  err ${row.errors.length + row.logs.length}`);
+    for (const l of [...row.errors, ...row.logs].slice(0, 4)) console.log(`    ${l.slice(0, 300)}`);
   }
   writeFileSync(join(outDir, 'results.json'), JSON.stringify(results, null, 2));
   const table = ['| ujęcie | tryb | draw calle | trójkąty | kafle | ms @1440p | FPS @1440p | HDR p99 | HDR max | >0,9 | NaN |', '|---|---|---|---|---|---|---|---|---|---|---|'];

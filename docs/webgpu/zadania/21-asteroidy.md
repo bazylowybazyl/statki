@@ -34,9 +34,13 @@ w `index.html` grep: `asteroidField`, `OLD_ASTEROIDS_ENABLED`, `beltBackdrop`, `
 3. **Siatka świateł** — wersja z 12 z polami dema asteroid (rozpraszanie w pyle L1.w, indeks mapy cienia L3.z, właściciel
    L3.w); światła statków z runtime gry (`shipLightRuntime.js`, `addShipLights`, profile `FIELD_SHIP_LIGHTS`); atlas map
    cienia reflektorów (`ShadowAtlas`, `grid.shadows = atlas`).
-4. **Ośrodek (światło wolumetryczne):** `volume.sample(positionWorld)` (`col·a + rgb`) w KAŻDYM materiale passa gry, także
-   w materiale kadłuba z 04 (wzór `HullNodeMaterial.setupOutput` z `ship.js` dema) i w materiałach efektów, które mają go
-   czuć; kwad dna ośrodka w passie gry (renderOrder 12); `shared.volume` przed kompilacją materiałów.
+4. **Ośrodek (światło wolumetryczne):** `volume.sample(positionWorld)` (`col·a + rgb`) w KAŻDEJ powierzchni z zapisem
+   głębi w passie gry — także w materiale kadłuba z 04 (hak zostawiony w 04; wzór `HullNodeMaterial.setupOutput` z
+   `ship.js` dema) i w materiałach efektów, które mają go czuć; `shared.volume` przed kompilacją materiałów. Poprawka
+   sesji dema (meldunek 2026-09-27): kwad dna ośrodka na z = −29 000 (pod wszystkim w passie gry, pełna kolumna tylko na
+   tło), `sample(P)` bez bramki (pod dnem = pełna kolumna); skały i minerały czytają pył do stropu warstwy:
+   `sample(vec3(P.xy, max(P.z, S.rockLayerTop)))`, `rockLayerTop = 0`, człon `S.fogLit` (1,5 × albedo × rgb kolumny);
+   szum ośrodka gradientowy (`createMediumNoiseVolume`) — patrz `DEMO-ASTEROIDY.md` (Decyzje, Warunki).
 5. **Warunki z dema:** skały PLAY pod płaszczyzną (`zOf = −1,45 r · skala`, z minerałami 1,62), ośrodek z od −760 do 380;
    transmitancja słońca do renderu przez `nightKnee` (logika — surowe T); limit 12 buforów uniform (pakować);
    `FieldSunOcclusion.precomputeAll` (~1 s) na ekranie ładowania; maska słońca z 03 (`uFieldOcc`, przesłaniacze pola).

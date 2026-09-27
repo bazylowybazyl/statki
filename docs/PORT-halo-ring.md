@@ -43,6 +43,31 @@ halo.setCutaway(1, { x: shipX - earth.x, y: -shipY + earth.y, a: 1350, b: 1350, 
 Moduł nie tworzy renderera ani canvasu (renderer tylko do bake'u map przy starcie). Pozycje liczone
 względem kamery (RTE) z `group.matrixWorld` — ring może stać przy Ziemi setki tysięcy j. od początku układu.
 
+**WebGPU (port, zadanie 06):** renderer to `WebGPURenderer`, a budowa ringu jest asynchroniczna —
+`createHaloRing` zwraca ring od razu (`layout`, `uniforms`, pusta `group`), bryły i mapa CPU powstają po
+kompilacji pipeline'ów bake'u, bake'u mapy niskiej, odczycie `readRenderTargetPixelsAsync`, planie
+megabudowli i kopuł z tej mapy i `setCivic`. Host czeka na `await ring.ready` (true = gotowe) zanim sięgnie
+po `terrainHeightAt` (przed odczytem 0), `k7Halls`, `landmarks`; `mapsReady` = bryły + mapa CPU + pełna mapa.
+`setQuality` buduje nowy zestaw w tle i podmienia gotowy; `ringi-archetypy` (`createArchRing`) są gotowe od
+razu (`ready` rozwiązane — plan i teren liczą się na CPU, bez map GPU). Biblioteka shaderów: `haloRingTSL.js`
+(`haloRingTSL(ring.uniforms)` → funkcje jak w GLSL, np. `H.haloSunVisibility(p, L)`). Adapter
+`material.uniforms` jest wspólny (`src/3d/tsl/uniformy.js`), przy ringu zostaje blok uniformów
+(`createUniformBlock`, `haloUniformsAdapter.js`). Sprawdzenie w grze, że kolider płyty dostaje teren z mapy
+CPU po `ready` (wysokości ≠ 0, `pointInSlab`, `constrainShip`): `node scripts/webgpu/ring-kolizje-gra.mjs
+--ring earth|mars|jupiter`.
+
+**Teren (port, zadanie 07):** `HaloTerrain` rysuje NodeMaterial (`makeHaloTerrainNodes` w `haloRingTerrain.js`,
+1:1 z dawnym GLSL: CDLOD z kaskadowym morphem w `Loop`, strefy, parki, zabudowa z odciskiem zestawu
+przemysłowego, konstrukcja, cień chmur i terenu, burze, woda, światła miast, powietrze). Uniformy powierzchni
+(`terrain.surfaceUniforms`: mapy A/B/C, detal, wzory, CDLOD, `uExposedLines`) leżą w bloku `haloSurfU`, klucze
+i `.value` jak dawniej, mapy i detal to węzły `texture()` (`syncMaps` podmienia `.value` po dopieczeniu pełnej
+mapy). Wariant kompilacji tylko z liczby kroków powietrza (`quality.airSteps`), więc zmiana jakości = nowy
+materiał (i tak powstaje w `setQuality`). Zestaw przemysłowy w TSL: `haloIndKitTSL(ring.uniforms)`
+(`haloRingIndustryKit.js`) — liczby z definicji `kitParts`, która na liczbach JS daje bliźniaka `indKitPart`
+bit w bit. Zrzuty samego terenu (porównanie z bazą WebGL z tagu, póki reszta ringu to zamienniki 08–10):
+`node scripts/halo-ring-shots.mjs --set m4 --teren [--bez-otoczenia]` — ten sam skrypt w worktree z tagu
+`webgl-baseline`; czas kompilacji terenu na zimno: `__halo.terrainCompileMs` w demie.
+
 ## Płaszczyzna gry na środku wstęgi (decyzja użytkownika 2026-09-23)
 
 `flightLevel: 0.5` (domyślnie dla habitatu w stronę kosmosu): z = 0 przecina podłogę habitatu w
@@ -361,7 +386,10 @@ osie tranzytów co 90°, strefy, kołnierz w kolizjach), `haloPortTraffic.test.m
 ruchu v2), `haloPortBays.test.mjs` (zatoki: stanowiska, pasy, aleja, kadłuby gracza, dokowanie
 każdym kadłubem, scena kompleksu, port bez udawanego życia), `haloRingLandmarks.test.mjs`
 (megabudowle: sektory, place pod płaszczyzną gry i z dala od portu, teren, bryły na placu,
-wariant Halo).
+wariant Halo). Port WebGPU: `haloRingTSL.test.mjs` i `haloRingAsync.test.mjs` (06),
+`haloRingTerrainTSL.test.mjs` (07: definicja zestawu = bliźniak JS bit w bit, czyste funkcje zestawu,
+WGSL terenu budowany w Node — CDLOD w pętli, dwa bufory ringu, bez macierzy uv tekstur, rosnące stałe
+krawędzie smoothstep, wariant tylko z kroków powietrza, blok `haloSurfU`, wybór węzłów CDLOD).
 
 ### Narzędzie: zrzuty prawdziwej gry
 

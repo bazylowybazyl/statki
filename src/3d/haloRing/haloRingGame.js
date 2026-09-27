@@ -132,14 +132,21 @@ export class HaloRingGame {
     this.scene.add(ring.group);
     e.ring = ring;
     e.sunAz = NaN;
-    // stanowiska wolne: statków ruchu jeszcze nie ma (ring nie udaje życia),
-    // dokowanie gracza w hali K-7 przyjdzie z automatem portu
-    for (const hall of ring.k7Halls) {
-      for (const b of hall.layout.berths) { b.occupied = null; b.reserved = null; }
-      for (const lane of hall.layout.lanes || []) lane.reserved = null;
-      hall.setBerthLamps();
-    }
-    e.collider.setTerrain((lx, ly) => ring.terrainHeightAt(lx, ly, 0));
+    // Ring Ziemi buduje się asynchronicznie (port WebGPU: mapa CPU z odczytu
+    // asynchronicznego, hale K-7 po nim) — stanowiska i teren w kolizjach dopiero
+    // po zbudowaniu; do tego czasu kolider zna samą płytę (jak przed powstaniem
+    // ringu), nigdy pustej mapy (wysokość 0 zamiast rzeźby).
+    Promise.resolve(ring.ready).then((ok) => {
+      if (!ok || e.ring !== ring) return;
+      // stanowiska wolne: statków ruchu jeszcze nie ma (ring nie udaje życia),
+      // dokowanie gracza w hali K-7 przyjdzie z automatem portu
+      for (const hall of ring.k7Halls) {
+        for (const b of hall.layout.berths) { b.occupied = null; b.reserved = null; }
+        for (const lane of hall.layout.lanes || []) lane.reserved = null;
+        hall.setBerthLamps();
+      }
+      e.collider.setTerrain((lx, ly) => ring.terrainHeightAt(lx, ly, 0));
+    });
     this.stats.rings = this.entries.filter((v) => v.ring).length;
     return ring;
   }
