@@ -122,7 +122,8 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   `await ring.ready` (compileAsync bake'u na prawdziwych celach → bake → odczyt CPU → plan budowli i kopuł z mapy →
   `setCivic` → detal); `mapsReady` po odczycie, `terrainHeightAt` = 0 przed nim, `HaloRingGame` podpina teren do kolizji
   i zeruje stanowiska K-7 po `ready`. Mapa CPU zgodna z WebGL do precyzji float (`scripts/webgpu/ring-mapa.mjs`),
-  parzystość funkcji GLSL ↔ TSL: `scripts/webgpu/ring-tsl-parzystosc.mjs`; warsztat `dema/halo_ring_demo.html` na WebGPU.
+  parzystość funkcji GLSL ↔ TSL: `scripts/webgpu/ring-tsl-parzystosc.mjs`, teren w koliderze gry:
+  `scripts/webgpu/ring-kolizje-gra.mjs`; warsztat `dema/halo_ring_demo.html` na WebGPU.
 
 ### Menu główne i jego tło 3D
 - Tło menu przed startem gry = Ziemia z ringiem w kamerze kinowej: `MenuBackdrop3D` (`src/3d/menuBackdrop3D.js`). Ring to ring GRY wypożyczony przez `haloRings.showcaseRing('earth')` (mapy pieką się już w menu) i oddany `releaseShowcase` w `stopMenuBackdrop()` tuż przed pierwszą klatką gry (`startGame`). Nie twórz drugiego ringu dla menu.

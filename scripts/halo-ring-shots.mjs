@@ -264,7 +264,9 @@ async function main() {
   const logs = [];
   cdp.on((msg) => {
     if (msg.method === 'Runtime.consoleAPICalled' && (msg.params.type === 'error' || msg.params.type === 'warning')) {
-      logs.push(`[${msg.params.type}] ${msg.params.args.map((a) => a.value ?? a.description ?? '').join(' ')}`.slice(0, 2000));
+      const text = msg.params.args.map((a) => a.value ?? a.description ?? '').join(' ');
+      // zamiennik gry ostrzega raz na nieprzeniesiony materiał — liczy je `zamienniki`, to nie błąd
+      if (!text.startsWith('[Zamiennik]')) logs.push(`[${msg.params.type}] ${text}`.slice(0, 2000));
     }
     if (msg.method === 'Runtime.exceptionThrown') logs.push(`[exception] ${msg.params.exceptionDetails?.exception?.description || msg.params.exceptionDetails?.text}`);
     // walidacja WebGPU / WGSL przychodzi przez domenę Log, nie przez console

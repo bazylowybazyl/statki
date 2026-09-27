@@ -24,9 +24,9 @@ import {
   createPlanetBody,
   createPost,
   createSky,
-  installDemoPlaceholders,
   loadShipTexture
 } from './halo_ring_demo_env.js';
+import { getPlaceholderStats, installPlaceholders } from '../src/3d/tsl/zamiennik.js';
 
 const DEG = Math.PI / 180;
 const params = new URLSearchParams(location.search);
@@ -68,7 +68,12 @@ renderer.toneMapping = THREE.NoToneMapping;
 renderer.autoClear = false;
 renderer.info.autoReset = false;
 renderer.highPrecision = true;
-const placeholders = installDemoPlaceholders(renderer);
+// zamiennik gry (src/3d/tsl/zamiennik.js): magenta ze stanem renderu oryginału, licznik budów
+installPlaceholders(renderer);
+const placeholders = {
+  get built() { return getPlaceholderStats().builds; },
+  get names() { return getPlaceholderStats().names.map(([key]) => key); }
+};
 const gpuInfo = (() => {
   const i = adapter.info || {};
   return `${i.vendor || ''} ${i.architecture || ''} ${i.description || ''}`.trim() || 'WebGPU';
@@ -1199,7 +1204,7 @@ window.__halo = {
     return (performance.now() - t0) / n;
   },
   gpu: gpuInfo,
-  get placeholders() { return { built: placeholders.built, names: [...placeholders.names] }; },
+  get placeholders() { return { built: placeholders.built, names: placeholders.names }; },
   get bake() { return ring.stats.bake || null; },
   measureHDR,
   // dowolne ujęcie kinowe (skrypty zrzutów i strojenie presetów)

@@ -6,9 +6,9 @@
 // Port WebGPU (zadanie 06): wszystko w TSL (WebGPURenderer). Kinowa planeta liczy
 // cień ringu funkcją haloRingBlock z biblioteki TSL ringu (haloRingTSL.js).
 // Nieprzeniesione materiały ringu (ShaderMaterial, zadania 07–10) rysują się
-// magentowym zamiennikiem (installDemoPlaceholders).
-// AGENT: po scaleniu zadania 01 — zamiennik z src/3d/tsl/zamiennik.js, ACES i sRGB
-// z src/3d/tsl/kolorGry.js (tu lokalne kopie tych samych wzorów).
+// magentowym zamiennikiem gry (src/3d/tsl/zamiennik.js — instaluje go demo), kolor
+// wyjścia jak w grze (acesGry + linearDoSrgb, src/3d/tsl/kolorGry.js), uniformy
+// otoczenia przez makeUniforms (src/3d/tsl/uniformy.js).
 import * as THREE from 'three/webgpu';
 import {
   Fn, If, Loop, Discard, float, int, vec2, vec3, vec4, mat3, uniform, texture, uv, varying,
@@ -27,6 +27,8 @@ import {
 import { haloRingTSL } from '../src/3d/haloRing/haloRingTSL.js';
 import { HALO_HDR } from '../src/3d/haloRing/haloRingConfig.js';
 import { mulberry32 } from '../src/3d/haloRing/haloRingLayout.js';
+import { acesGry, linearDoSrgb } from '../src/3d/tsl/kolorGry.js';
+import { makeUniforms } from '../src/3d/tsl/uniformy.js';
 
 export const DEMO_LAYERS = Object.freeze({
   world: 0,        // świat ortho gry (sprite Atlasa)
@@ -38,41 +40,8 @@ export const DEMO_LAYERS = Object.freeze({
   cinePlanet: 10   // Ziemia w kamerze kinowej
 });
 
-// ---------------------------------------------------------------------------
-// Kolor gry (jak UberPostShader): ACES Narkowicza bez ÷0,6, clamp 0…1, LinearTosRGB.
-export const acesGame = Fn(([c]) => clamp(c.mul(c.mul(2.51).add(0.03)).div(c.mul(c.mul(2.43).add(0.59)).add(0.14)), 0.0, 1.0));
-export const linearToSrgbGame = Fn(([c]) => {
-  const hi = pow(c, vec3(0.41666)).mul(1.055).sub(0.055);
-  const lo = c.mul(12.92);
-  return mix(hi, lo, step(c, vec3(0.0031308)));
-});
-
-// Nieprzeniesione ShaderMaterial (ring 07–10) → magenta ze stanem renderu oryginału.
-export function installDemoPlaceholders(renderer) {
-  const stats = { built: 0, names: new Set() };
-  class DemoPlaceholderMaterial extends THREE.NodeMaterial {
-    static get type() { return 'DemoPlaceholderMaterial'; }
-    constructor() { super(); this.isPlaceholder = true; }
-    setup(builder) {
-      stats.built++;
-      stats.names.add(this.name || 'ShaderMaterial');
-      this.vertexNode = null;
-      this.fragmentNode = null;
-      this.colorNode = vec4(1.0, 0.0, 1.0, 1.0);
-      return super.setup(builder);
-    }
-  }
-  renderer.library.addMaterial(DemoPlaceholderMaterial, 'ShaderMaterial');
-  renderer.library.addMaterial(DemoPlaceholderMaterial, 'RawShaderMaterial');
-  return stats;
-}
-
 // uniform() z .value — obiekt { klucz: węzeł } działa jak dawne { value }.
-const U = (map) => {
-  const out = {};
-  for (const [k, v] of Object.entries(map)) out[k] = v && v.isNode ? v : uniform(v);
-  return out;
-};
+const U = makeUniforms;
 
 const hash12 = Fn(([p]) => {
   const p3 = fract(vec3(p.x, p.y, p.x).mul(0.1031)).toVar();
@@ -797,7 +766,7 @@ export function createPost(renderer) {
 
   function build() {
     const c = sceneTex.rgb.add(bloomNode.rgb.mul(uBloomOn));
-    const out = vec4(linearToSrgbGame(acesGame(max(c, vec3(0.0)).mul(uExposure))), 1.0);
+    const out = vec4(linearDoSrgb(acesGry(max(c, vec3(0.0)).mul(uExposure))), 1.0);
     pipeline = new THREE.RenderPipeline(renderer, out);
     pipeline.outputColorTransform = false;
   }
