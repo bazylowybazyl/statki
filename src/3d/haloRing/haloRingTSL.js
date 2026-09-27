@@ -1,6 +1,6 @@
 // Biblioteka TSL ringu „Halo” (port WebGPU, zadanie 06) — odpowiednik
 // haloRingGLSL.js (COMMON, NOISE, STORM, LIGHT, AIR, PORTSITES, TRANSIT, FG,
-// FG_CLIP, RTE) oraz HALO_GLSL_SURFACE / HALO_GLSL_CLOUDCOVER z haloRingTerrain.js.
+// FG_CLIP, RTE, SURFACE, CLOUDCOVER).
 // Materiały ringu (zadania 07–10), pieczenie map (haloRingWorldGen.js), detal
 // (haloRingDetail.js), warsztat dema i tło menu (11) składają z niej shadery.
 //
@@ -32,7 +32,7 @@ import {
   float, int, uint, vec2, vec3, vec4, mat3,
   abs, floor, fract, sqrt, exp, log, log2, pow, sin, cos, acos, min, max, clamp, mix, step, smoothstep,
   dot, length, normalize, mod,
-  screenCoordinate, cameraViewMatrix, cameraProjectionMatrix, modelWorldMatrix
+  screenCoordinate, screenSize, cameraViewMatrix, cameraProjectionMatrix, modelWorldMatrix
 } from 'three/tsl';
 import { nodeOf } from './haloUniformsAdapter.js';
 
@@ -530,6 +530,10 @@ function applyAirFn(steps) {
 // Szum przeplotu (interleaved gradient noise) — dither z pozycji piksela.
 export const haloIGN = pure('haloIGN', 'float', [['fc', 'vec2']], (a) =>
   fract(float(52.9829189).mul(fract(dot(a.fc, vec2(0.06711056, 0.00583715))))));
+// gl_FragCoord.xy z WebGL (zadanie 07): wiersze od DOŁU celu. screenCoordinate
+// w WebGPU liczy y od góry, więc wzór IGN (dither powietrza, przerzedzenie FG)
+// wychodziłby odbity względem bazy WebGL; z tym ten sam piksel ma tę samą wartość.
+export const haloFragCoordGL = () => vec2(screenCoordinate.x, screenSize.y.sub(screenCoordinate.y));
 
 // ===========================================================================
 // PORTSITES (tablice uniformów → wklejane)
@@ -680,11 +684,12 @@ export function haloRingTSL(u) {
     });
     return vis;
   };
-  // Tylko we fragmencie: przerzedzenie (dither) zamiast przezroczystości.
+  // Tylko we fragmencie: przerzedzenie (dither) zamiast przezroczystości
+  // (wzór jak gl_FragCoord w bazie WebGL — haloFragCoordGL).
   const haloFgClip = (p, enabled = true) => {
     if (!enabled) return;
     const v = haloFgVisibility(p, true).toVar();
-    const n = haloIGN(screenCoordinate.xy);
+    const n = haloIGN(haloFragCoordGL());
     If(v.lessThan(0.999).and(v.lessThanEqual(n)), () => { Discard(); });
   };
 
@@ -711,6 +716,7 @@ export function haloRingTSL(u) {
     haloSkyGain: bind(fSkyGain),
     haloApplyAir: (color, rel, jitter, steps = 8) => applyAirFn(steps).call([color, rel, jitter], U),
     haloIGN,
+    haloFragCoordGL,
     haloInTransitCut: bind(fInTransitCut),
     haloRelFromPolar: bind(fRelFromPolar),
     haloProjectRel,
