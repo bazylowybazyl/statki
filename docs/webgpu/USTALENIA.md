@@ -23,7 +23,7 @@ Testy: `npm test` uruchamia tylko `scripts/tests` (32 zestawy). Katalog `tests/`
 
 - Renderer: `core3d.js:777` — `WebGLRenderer({ alpha: true, antialias: false, premultipliedAlpha: true, powerPreference: 'high-performance' })`, `outputColorSpace = LinearSRGBColorSpace`, `toneMapping = NoToneMapping` (tone mapping ACES jest w passie „uber”), `renderer.info.autoReset = false` (reset ręczny raz na klatkę), `scene.matrixWorldAutoUpdate = false` (macierze aktualizowane ręcznie raz na klatkę).
 - Cienie: `core3d.js:786-794` — `shadowMap.autoUpdate = false`, odświeżanie ręczne (`needsUpdate = true`) tylko przed passami ortho i FG (`core3d.js:1637`, `:1688`).
-- Łańcuch (`core3d.js:911-989`): `RenderPass` ×7 (Bg, WarpStars, Planets, RingPlanets, Ortho, Shields, Fg), własne `FullScreenBlendPass` (halo planet, shadow shafts → maska `sunShadowTarget`, soczewka warp, scene resolve), `UnrealBloomPass`, `ShaderPass` „uber” (heat haze do 24 źródeł, fale warpa, ACES), pre-pass halo, snapshot refrakcji w połowie rozdzielczości. Do ~11 `renderer.render(scene, …)` na klatkę.
+- Łańcuch (`core3d.js:911-989`): `RenderPass` ×7 (Bg, WarpStars, Planets, RingPlanets, Ortho, Shields, Fg), własne `FullScreenBlendPass` (halo planet, shadow shafts → maska `sunShadowTarget`, soczewka warp, scene resolve), `UnrealBloomPass`, `ShaderPass` „uber” (heat haze do 24 źródeł, fale warpa, ACES), pre-pass halo, snapshot refrakcji w połowie rozdzielczości. Do ~11 `renderer.render(scene, …)` na klatkę. Soczewka, gwiazdy warpa (WarpStars, warstwa 8) i fale warpa są poza portem — §7.
 - Cele renderu: HalfFloat + MSAA 4 (scena, `planetHaloTarget`), `postTarget`, `sunShadowTarget`, `refractionTarget`, leniwe `warpLensTarget` / `warpStarTarget`. `setMsaaEnabled` zmienia `samples` w locie.
 - Warstwy: 0 ortho (gra), 1 tło, 2 FG, 3 planety, 5 halo, 6 ring-planety, 7 tarcze, 8 gwiazdy warpa, 9 tło menu (`MENU_BACKDROP_LAYER`, rysuje tylko `renderBackdrop`).
 - Pomiar GPU: `EXT_disjoint_timer_query_webgl2` (`core3d.js:1281-1334`) → `Core3D.gpuFrameMs` → PerfHUD (`src/ui/perfHud.js:1546`).
@@ -67,6 +67,21 @@ Testy: `npm test` uruchamia tylko `scripts/tests` (32 zestawy). Katalog `tests/`
 
 `docs/AUDYT-wydajnosc-bitwa-2026-09-24.md`: w dużej bitwie klatka 25,9 ms, z czego fizyka 16,1 ms; rysowanie 7,3 ms to głównie CPU (`U hex` 2,61 ms JS, `Core render` 2,35 ms CPU przy ~11 przejściach sceny). Sam port na WebGPU nie przyspieszy klatki ograniczonej przez CPU — mierz i raportuj, nie obiecuj.
 
-## 7. Środowisko weryfikacji
+## 7. Warp — poza portem (decyzja użytkownika 2026-09-27)
+
+- **W grze działa tylko stara soczewka skoku:** `index.html:1087` importuje `updateWarpLens3D`
+  z `src/vfx/warpLensPass.js`, który zgłasza ją przez `Core3D.setWarpLensWorld`; pass soczewki
+  i `warpLensTarget` w `core3d.js`, shader w `src/3d/warpLens3D.js`. Ta soczewka **idzie do
+  wyrzucenia**.
+- **Nowy warp** jest tylko w demie `dema/warp-demo.html` (importuje `src/3d/warpFx3D.js`
+  i `src/3d/warpWorldLens.js`; gra ich nie importuje). Korzysta z tego samego passa zgięcia tła
+  w `Core3D` (`pushWarpSpaceWorld` — POINT/SEAM/RING, `setWarpViewWorld` — kropla / bańka
+  Alcubierre'a, `setWarpStarsObject` — warstwa 8 i `warpStarTarget`) oraz z fal w passie „uber”
+  (`pushWarpWaveWorld`). Stan i plany: `docs/BRIEF-warp.md` (M1–M3 w demie, nic nie jest wpięte).
+- Dlatego port nie przenosi ani starej soczewki, ani nowego warpa. Na WebGPU te wywołania są
+  no-opami; przenosi się normalnie plazmę WARP z dysz (`warpPlume3D.js`, zostaje w nowym warpie)
+  i gwiazdy `StarSystem` (ich rozciąganie w skoku `BRIEF-warp.md` §1 też przeznacza do wymiany).
+
+## 8. Środowisko weryfikacji
 
 WebGPU trzeba sprawdzać na prawdziwym GPU (lokalnie, Windows). W kontenerze chmurowym Claude Code WebGPU nie nadaje się do weryfikacji: SwiftShader daje adapter tylko z flagami (`--enable-unsafe-webgpu --use-webgpu-adapter=swiftshader`), a urządzenie ginie po pierwszym `submit`. Test kopiowania canvasa WebGPU na canvas 2D był tam przez to niekonkluzywny — do sprawdzenia lokalnie.

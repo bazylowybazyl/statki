@@ -46,6 +46,28 @@ fakty już sprawdzone w kodzie i w źródłach three — nie odkrywaj ich od now
 obejścia; decyzja zmienia to, co widzi gracz (np. sposób składania klatki, wygląd efektu, którego
 nie da się odtworzyć 1:1); potrzebna jest nowa zależność; cokolwiek dotyka gameplayu.
 
+## Warp — poza portem (decyzja użytkownika 2026-09-27)
+
+Obecna soczewka skoku (w grze: `src/vfx/warpLensPass.js` → `Core3D.setWarpLensWorld` → pass
+soczewki w `core3d.js` na bazie `src/3d/warpLens3D.js`) **idzie do wyrzucenia**. Zastąpi ją nowy
+warp rozwijany w `dema/warp-demo.html` (`src/3d/warpFx3D.js`, `src/3d/warpWorldLens.js`, prymitywy
+zgięcia tła `Core3D.pushWarpSpaceWorld`, widok skoku `setWarpViewWorld`, gwiazdy na warstwie 8
+`setWarpStarsObject`, fale warpa w passie „uber” `pushWarpWaveWorld`; opis: `docs/BRIEF-warp.md`).
+Nowy warp nie jest jeszcze wpięty do gry i wciąż się zmienia. W porcie:
+- nie przenoś do TSL ani starej soczewki, ani nowego warpa: pass zgięcia tła, `warpLensTarget`,
+  `warpStarTarget`, warstwa 8, fale warpa w „uber”, materiały `warpFx3D.js`;
+- na WebGPU te wywołania `Core3D` są bezpiecznymi no-opami (nic nie rysują, nie rzucają
+  wyjątków). Na WebGL działają jak dziś — nie usuwaj ich w porcie, wymianę zrobi integracja
+  nowego warpa;
+- w `RenderPipeline` zostaw opisane miejsce na pass zgięcia tła zaraz po tle — tam wejdzie
+  nowy warp;
+- plazma WARP z dysz (`warpPlume3D.js`) zostaje w nowym warpie, więc przenosimy ją normalnie;
+- rozciąganie gwiazd w skoku (`StarSystem` w `planet3d.assets.js`) `BRIEF-warp.md` §1 też
+  przeznacza do wymiany: gwiazdy przenosimy, samo rozciąganie tylko jeśli wychodzi przy okazji
+  1:1 — inaczej pomiń i zapisz w `POSTEP.md`;
+- inwentarz oznacza te pliki jako „poza portem (warp)”; `tests/warpLens3D.test.mjs`
+  i `tests/warpSpace.test.mjs` zostają dla ścieżki WebGL.
+
 ---
 
 ## Krok 1 — Rozpoznanie
@@ -124,7 +146,8 @@ oraz `scripts/halo-ring-shots.mjs`:
   bez zmiany gameplayu, i opisz go;
 - sceny (dopasuj po lekturze kodu): menu (Ziemia + ring), gra przy ringu Ziemi (tło + dach FG
   + wycięcie), hala K-7, gęste pole asteroid (światła pola, pył), burza pasa, bitwa (pociski,
-  wiązki, wybuchy, tarcze, bloom, gorące powietrze), skok warp (soczewka, plazma, gwiazdy),
+  wiązki, wybuchy, tarcze, bloom, gorące powietrze), ładowanie i skok warp (plazma WARP
+  z dysz; na WebGPU bez soczewki — tę scenę porównujesz z bazą tylko na WebGL),
   planety i słońce z shadow shafts, mostek 3D z bliska z uszkodzeniami, wraki i szczątki,
   split-screen, HUD 2D nad 3D;
 - dla każdej sceny: PNG, błędy i ostrzeżenia konsoli (porażka przy błędach walidacji WebGPU,
@@ -156,8 +179,8 @@ Baza odniesienia:
 - kolejność: fundament → postprocessing → wspólne biblioteki GLSL → rodziny materiałów;
 - składanie klatki (wynik spike'u), odświeżanie cieni per światło, `highPrecision`,
   asynchroniczne pieczenie i odczyty (ring, skały, rozgrzewka menu);
-- poza zakresem: usuwanie GLSL, nowe efekty (TSL daje np. oświetlenie kafelkowe — to później),
-  zmiany gameplayu, wspólne urządzenie z solverem sprężyn;
+- poza zakresem: usuwanie GLSL, stara soczewka i nowy warp (sekcja Warp), nowe efekty (TSL daje
+  np. oświetlenie kafelkowe — to później), zmiany gameplayu, wspólne urządzenie z solverem sprężyn;
 - ryzyka i otwarte pytania do użytkownika.
 
 **`docs/webgpu/zadania/NN-nazwa.md`** — każde zadanie to samodzielny prompt dla świeżej sesji
@@ -186,7 +209,7 @@ Zakres: <pliki>, <liczba materiałów>, <linie GLSL>
 
 Zasady podziału: jedno zadanie = jeden podsystem albo jedna rodzina materiałów, do ~1500 linii
 GLSL i ~8 plików; większe dziel (ring na kilka zadań). **Zalecany effort `max`** tylko dla zadań
-architektonicznych i trudnych (fundament, postprocessing, shadow shafts / soczewka, pieczenie
+architektonicznych i trudnych (fundament, postprocessing, shadow shafts, pieczenie
 i odczyty asynchroniczne, precyzja, wydajność); mechaniczne porty materiałów — `xhigh`.
 „Równolegle z” wpisuj tylko dla zadań na rozłącznych plikach, po zakończeniu wspólnych bibliotek
 (równoległe sesje idą w osobnych worktree).
@@ -196,9 +219,10 @@ Proponowana kolejność — zweryfikuj i popraw po inwentarzu:
    światło, `info`, znaczniki czasu GPU w PerfHUD, składanie klatki, zamienniki materiałów,
    adapter uniformów; harness działa na obu backendach.
 2. **Postprocessing (1/2):** passy sceny po warstwach, bloom z parametrami z `bloomConfig.js`,
-   „uber” (gorące powietrze, fale warpa, ACES), scene resolve, `setMsaaEnabled`.
-3. **Postprocessing (2/2):** maska shadow shafts (`sunShadowTarget` + SDF kadłubów), soczewka
-   i widok skoku warp, refrakcja, halo planet, fala uderzeniowa.
+   „uber” (gorące powietrze, ACES; fale warpa pomiń — należą do nowego warpa), scene resolve,
+   `setMsaaEnabled`.
+3. **Postprocessing (2/2):** maska shadow shafts (`sunShadowTarget` + SDF kadłubów), refrakcja,
+   halo planet, fala uderzeniowa; opisane miejsce na przyszły pass zgięcia tła (sekcja Warp).
 4. **Wspólne biblioteki GLSL → TSL:** maska cienia słońca (+ zamiennik `onBeforeCompile`),
    cień SDF kadłubów (+ zgodność z `traceHullShadowCpu`), uniformy świateł pola, pomocniki
    `sceneOrigin`.
@@ -214,7 +238,7 @@ Proponowana kolejność — zweryfikuj i popraw po inwentarzu:
 14. Broń i cząstki (`weapon3DSystem` — przy okazji bez klonowania materiałów na strzał, audyt
     §2.2; `fxParticles3D`, `sparkSystem3D`, `railgunFx3D`, `muzzleFx3D`, `slugTrail3D`,
     `beamWeaponsVisual3D`).
-15. Silniki i warp (`mainExhaust3D`, `warpPlume3D`, `engineExhaustBatch`, `warpFx3D`, `warpWorldLens`).
+15. Silniki (`mainExhaust3D`, `warpPlume3D` — plazma WARP, `engineExhaustBatch`).
 16. Tarcze (`shield3D`, `shieldImpactFx`).
 17. Mostki, reaktory, rdzenie, światła statków (`bridge3D`, `bridgeFx3D`, `reactor3D`, `coreFx3D`,
     `shipLights3D`; trik cienia mostka z `depthFunc GREATER`).
@@ -228,6 +252,8 @@ Proponowana kolejność — zweryfikuj i popraw po inwentarzu:
 23. Przełączenie domyślnego backendu i polityka awaryjna bez WebGPU — **decyzja użytkownika**
     (opcje: ścieżka GLSL zostaje jako awaryjna albo wbudowany backend WebGL2 `WebGPURenderer`,
     który wykona te same materiały TSL); aktualizacja `agents.md`.
+24. **Odłożone:** nowy warp na WebGPU — dopiero po wpięciu nowego warpa do gry (decyzja
+    użytkownika); pass zgięcia tła powstaje wtedy od razu w TSL.
 
 Dodatkowo utwórz:
 - **`docs/webgpu/README.md`** dla użytkownika: jak odpalać zadania (gałąź `webgpu/port`, jedno
