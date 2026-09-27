@@ -123,6 +123,7 @@ test('taran: styk pary dla AI, zdarzenia CollisionFX, odrzut, wraki z kotwicą w
     for (const w of window.wrecks) {
       const h = w.beamHull;
       assert.ok(h && h.anchorMode === 'com' && h.isFragment);
+      assert.ok(h.dmgKey === a.beamHull.dmgKey || h.dmgKey === b.beamHull.dmgKey, 'odłam z taranu w warstwie ran rodzica');
       // Okruch rozpuszczony w odłamki: ciało martwe, pętla wraków gry usuwa encję.
       if (!HullBodies.hasHull(w)) continue;
       assert.ok(Math.abs(w.x - h.body.pos.x) < 1e-6 && Math.abs(w.y + h.body.pos.y) < 1e-6, 'kotwica wraku = początek ciała');
@@ -172,6 +173,7 @@ test('śmierć: cały kadłub przechodzi na encję wraku; okruch wraku znika', (
   try {
     assert.ok(wreck && wreck.isWreck && window.wrecks.includes(wreck));
     assert.ok(e.beamHull === null && wreck.beamHull.body === body && body.entity === wreck);
+    assert.ok(hull.dmgKey > 0 && wreck.beamHull.dmgKey === hull.dmgKey, 'wrak dziedziczy klucz mapy ran');
     assert.ok(Math.abs(wreck.x - body.pos.x) < 1e-9 && Math.abs(wreck.y + body.pos.y) < 1e-9);
     assert.ok(Math.abs(wreck.angle - 0.4) < 1e-9, 'kąt wraku z kadłuba');
     // Wrak rozebrany do 3 węzłów (mniej niż najmniejszy odłam) rozpada się w odłamki.
@@ -206,6 +208,7 @@ test('łup: broń przypięta do komórki kadłuba odlatuje z odłamem, który j�
     for (let k = 0; k < 12 && window.wrecks.length === 0; k++) HullBodies.step(1 / 120, [e, ...window.wrecks]);
     assert.equal(window.wrecks.length, 1, 'jeden odłam odpadł');
     const wreck = window.wrecks[0];
+    assert.equal(wreck.beamHull.dmgKey, hull.dmgKey, 'odłam z rozpadu dziedziczy klucz mapy ran');
     const carried = wreck._salvage?.weapons?.map((w) => w.weaponId) || [];
     const onWreck = HullBodies.hasCell(wreck, left.cell) ? 'laser_mk1' : 'railgun_mk1';
     assert.deepEqual(carried, [onWreck], 'broń z komórki odłamu');
@@ -225,8 +228,11 @@ test('krytyczny wybuch reaktora: wrak, chmura odłamków z rdzenia, kilka odłam
   HullBodies.createHull(e, plate(480, 160));
   try {
     const nodes = e.beamHull.body.activeNodes;
+    const key = e.beamHull.dmgKey;
     const result = HullBodies.shatter(e, e.x, e.y, 0.9);
     assert.equal(e.beamHull, null, 'statek oddał kadłub');
+    assert.ok(window.wrecks.length > 0 && window.wrecks.every((w) => w.beamHull.dmgKey === key),
+      'wszystkie odłamy wybuchu reaktora w warstwie ran rodzica (ten sam dmgKey)');
     assert.ok(result.debris > nodes * 0.2, `rdzeń w odłamki: ${result.debris}/${nodes}`);
     // Pierwsze idą odłamki rdzenia (szybkie); potem węzły z rzazów i drobnica rozpadu.
     assert.ok(debris.length >= result.debris && debris.slice(0, result.debris).every((v) => v > 300), 'odłamki rdzenia lecą od wybuchu');
@@ -240,6 +246,19 @@ test('krytyczny wybuch reaktora: wrak, chmura odłamków z rdzenia, kilka odłam
     for (const w of window.wrecks) HullBodies.release(w);
     window.wrecks.length = 0;
   }
+});
+
+test('klucz mapy ran: każdy nowy kadłub ma własny, ponowna budowa dostaje nowy', () => {
+  const a = npcAt(0, 0), b = npcAt(500, 0);
+  const ha = HullBodies.createHull(a, SMALL);
+  const hb = HullBodies.createHull(b, SMALL);
+  try {
+    assert.ok(Number.isInteger(ha.dmgKey) && ha.dmgKey > 0);
+    assert.notEqual(ha.dmgKey, hb.dmgKey, 'wspólna konstrukcja (ten sam obraz), osobne rany');
+    HullBodies.release(a);
+    const again = HullBodies.createHull(a, SMALL);
+    assert.ok(again.dmgKey > hb.dmgKey, 'nowy kadłub tej samej encji = nowa warstwa ran');
+  } finally { HullBodies.release(a); HullBodies.release(b); }
 });
 
 test('naprawa: kształt, belki i HP wracają w skończonym czasie, bez budzenia solvera', () => {
