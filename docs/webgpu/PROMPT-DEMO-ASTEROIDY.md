@@ -1,7 +1,8 @@
 # Prompt (jedna sesja): demo WebGPU — gęste pole asteroid, fizyczny pył, setki świateł
 
-Pracujesz lokalnie na Windowsie użytkownika, w repozytorium gry (three.js r183, Vite). Masz
-prawdziwe GPU, Chrome i Node — sam uruchamiasz demo w headless Chrome i oglądasz zrzuty.
+Pracujesz lokalnie na Windowsie użytkownika, w repozytorium gry (three.js r183, Vite),
+bezpośrednio na gałęzi `main`. **Testy robi użytkownik** — Ty budujesz demo i na końcu piszesz,
+że jest gotowe do testowania.
 
 **Cel:** nowe, samodzielne demo `dema/asteroidy-webgpu.html` na `WebGPURenderer` + TSL, które
 pokazuje scenę **„5 · Gęste pole (Main Belt)”** z `dema/asteroidy.html` (Atlas w rdzeniu pola)
@@ -14,7 +15,7 @@ i dokłada dwie rzeczy, których dzisiejszy renderer WebGL gry nie robi:
 
 To pokaz możliwości, nie port gry: nie ruszasz gry, `Core3D` ani istniejącego dema. Obraz nie
 musi zgadzać się z wersją WebGL co do piksela, ale ma wyglądać co najmniej tak dobrze jak scena 5
-w `dema/asteroidy.html` — porównasz je obok siebie.
+w `dema/asteroidy.html` (porówna je użytkownik).
 
 ---
 
@@ -24,8 +25,9 @@ w `dema/asteroidy.html` — porównasz je obok siebie.
   moduły w `dema/asteroidy-webgpu/`. Kod gry i `dema/asteroidy.*` tylko czytasz. Jeśli moduł gry
   da się zaimportować (dane, generator pola), importuj; jeśli ciągnie kod renderu WebGL, skopiuj
   potrzebne czyste funkcje do katalogu dema z komentarzem, skąd pochodzą.
-- Gałąź `webgpu/demo-asteroidy` od bieżącego `main`; commit po każdym etapie (niżej), tak żeby
-  w każdej chwili było działające demo. Bez force-push.
+- **Pracuj na `main`** — nie twórz gałęzi ani worktree. Commit na `main` po każdym etapie
+  (niżej), tak żeby w każdej chwili było działające demo. Bez push i bez force-push — wypchnie
+  użytkownik po testach.
 - Bez nowych zależności. Komentarze i teksty w UI po polsku.
 - **Precyzja:** świat gry leży przy milionach jednostek (słońce w 6 mln, pas na 37–45 AU) —
   float32 na GPU tego nie uniesie. Wszystkie dane dla GPU (skały, pył, światła) trzymaj względem
@@ -36,8 +38,9 @@ w `dema/asteroidy.html` — porównasz je obok siebie.
   jako punkt wyjścia), ACES na końcu. Bez `pow()` z ujemną podstawą, clamp tam, gdzie NaN
   rozlałby się przez bloom.
 - Zero alokacji w pętli klatki; bufory i pule tworzone raz.
-- Zatrzymaj się i zapytaj użytkownika tylko wtedy, gdy nie ma adaptera WebGPU albo trafisz na
-  blokadę bez obejścia. Poza tym pracuj samodzielnie do końca.
+- Zatrzymaj się i zapytaj użytkownika tylko wtedy, gdy drzewo robocze na starcie nie jest czyste,
+  strona nie może wystartować na WebGPU (brak adaptera) albo trafisz na blokadę bez obejścia.
+  Poza tym pracuj samodzielnie do końca.
 
 ## Przeczytaj najpierw
 
@@ -96,7 +99,7 @@ w `dema/asteroidy.html` — porównasz je obok siebie.
 ## Fizyczny pył (główny pokaz)
 
 - Stan w buforach GPU (`instancedArray`: pozycja, prędkość, wiek / rozmiar / ziarno), start
-  **250 tys.** drobin, suwak do ~2 mln — zmierz, gdzie spada płynność.
+  **250 tys.** drobin, suwak do ~2 mln (gdzie spada płynność, sprawdzi użytkownik).
 - Obszar: pudło wokół kamery (XY ~1,5× kadru, gruba warstwa w Z wokół płaszczyzny gry dla
   paralaksy). Drobina, która wyjdzie z pudła, wraca po przeciwnej stronie z prędkością tła —
   pole wydaje się nieskończone, a zaburzenia nie teleportują się.
@@ -113,7 +116,7 @@ w `dema/asteroidy.html` — porównasz je obok siebie.
   zanik tuż przy kamerze, rozpraszanie w przód (jaśniej patrząc pod światło), jak w `beltDust3D`.
   **Pył musi być oświetlony wszystkimi światłami:** smugi reflektorów widać w samym pyle, błysk
   wybuchu rozświetla chmurę. Sposób (oświetlenie per drobina w compute z siatką świateł albo
-  kwady w materiale z oświetleniem kafelkowym) wybierz sam po pomiarze.
+  kwady w materiale z oświetleniem kafelkowym) wybierz sam.
 - Mgła z `beltDust3D` jako osobna warstwa, jeśli wyjdzie tanio; fizyczny pył idzie na wierzchu.
 
 ## Oświetlenie (drugi pokaz)
@@ -131,39 +134,38 @@ w `dema/asteroidy.html` — porównasz je obok siebie.
 Panel jak w `dema/asteroidy.html` (po polsku): przełączniki (pył fizyczny, mgła, światła statku,
 światła dynamiczne, słońce przesłonięte, bloom), suwaki (liczba drobin, liczba świateł, siła dysz,
 siła wybuchu, tłumienie), statystyki: FPS, ms CPU, ms GPU, liczba drobin, liczba świateł,
-draw calle. `window.__demo` dla headless: `setZoom`, `step(n)`, `explode(x, y, moc)`,
-`setParticles(n)`, `setLights(n)`, `stats()`.
+draw calle — to narzędzia dla testów użytkownika. `window.__demo` (konsola): `setZoom`,
+`step(n)`, `explode(x, y, moc)`, `setParticles(n)`, `setLights(n)`, `stats()`.
 
-## Etapy (commit po każdym)
+## Etapy (commit na `main` po każdym)
 
-0. Gałąź; adapter WebGPU w headless Chrome (flagi i narzędzia z `dema/rdzen-cdp.js`); zrzut
-   odniesienia WebGL: `dema/asteroidy.html?scene=field&shot=1` → `.tmp/asteroidy-webgpu/ref-webgl.png`.
-1. Szkielet: renderer, kamera, skały w dobrym miejscu (prosty materiał), Atlas, bloom + ACES —
-   zrzut obok odniesienia.
+0. Sprawdź, że jesteś na `main` i drzewo robocze jest czyste.
+1. Szkielet: renderer, kamera, skały w dobrym miejscu (prosty materiał), Atlas, bloom + ACES.
 2. Wygląd skał w TSL (typy, żyły, lód, metal, świecące skały).
 3. Fizyczny pył: symulacja, render, siły (dysze, kadłub, skały, wybuch).
 4. Światła: statek + kafelkowe dynamiczne, oświetlenie pyłu.
-5. Dopracowanie i wydajność: panel, statystyki, pomiary; popraw najdroższe miejsca.
-6. Zrzuty i raport.
+5. Dopracowanie: panel, statystyki, sterowanie.
+6. Jedno uruchomienie strony (`npm run dev` albo headless Chrome z narzędzi `dema/rdzen-cdp.js`)
+   tylko po to, żeby sprawdzić, że startuje bez błędów w konsoli. Potem komunikat (niżej).
 
-Jeśli limit sesji się kończy, dokończ bieżący etap, zacommituj i napisz raport z tym, co jest.
+Jeśli limit sesji się kończy, dokończ bieżący etap, zacommituj i napisz, co jest gotowe do
+testowania, a czego jeszcze brakuje.
 
-## Kryteria akceptacji
+## Kiedy gotowe
 
-- `npm run dev` → `/dema/asteroidy-webgpu.html` działa na GPU użytkownika, zero błędów walidacji
+- Demo startuje przez `npm run dev` pod `/dema/asteroidy-webgpu.html`, bez błędów walidacji
   WebGPU / WGSL w konsoli.
-- Cel: 60 FPS w 1920×1080 przy 250 tys. drobin i 256 światłach. Podaj rzeczywiste liczby;
-  jeśli mniej, wskaż, co kosztuje.
-- Zrzuty w `.tmp/asteroidy-webgpu/`: obok siebie WebGL (scena 5) i WebGPU z tej samej kamery;
-  sekwencja wybuchu w pyle (0 / 0,2 / 0,5 / 1,0 s); przelot Atlasa z ciągiem przez pył; 16 / 256 /
-  1024 świateł. Obejrzyj je sam (Read) przed raportem i popraw to, co wygląda źle.
-- `git diff main` pokazuje tylko nowe pliki dema (i ewentualnie notatkę w `docs/`).
+- Kod pisany pod budżet 60 FPS w 1920×1080 przy 250 tys. drobin i 256 światłach; mierzy
+  użytkownik (statystyki w panelu).
+- **Zrzutów, porównań z wersją WebGL ani pomiarów wydajności nie robisz** — testuje użytkownik.
+- `git status` pokazuje czyste drzewo, a commity na `main` dodają tylko nowe pliki dema
+  (i ewentualnie notatkę w `docs/`).
 
-## Raport na koniec (dla użytkownika, krótko)
+## Komunikat na koniec (krótko)
 
-- Jak uruchomić i czym sterować.
-- Co wzięte z gry, co napisane od nowa, co uproszczone względem sceny 5.
-- Tabela wydajności: drobiny (250 tys. / 1 mln / 2 mln) × światła (64 / 256 / 1024) → FPS, ms GPU.
-- Ścieżki zrzutów do obejrzenia.
-- Co trzeba by zrobić, żeby fizyczny pył i oświetlenie kafelkowe weszły do gry (po porcie
-  renderu na WebGPU).
+Zacznij od **„Gotowe do testowania.”**, potem:
+- jak uruchomić (polecenie i adres strony);
+- sterowanie (klawisze, mysz, panel);
+- co warto sprawdzić: wybuch w pyle (LPM), przelot Atlasa z ciągiem przez pył, suwaki liczby
+  drobin i świateł, „słońce przesłonięte”;
+- co jest uproszczone względem sceny 5 i znane braki.
