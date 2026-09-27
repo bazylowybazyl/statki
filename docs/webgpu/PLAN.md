@@ -100,7 +100,10 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   slot pierwszego (sprawdzone w Node, zadanie 06). Funkcje z layoutem mają być CZYSTE — uniformy podawane parametrami;
   funkcje z tablicami / teksturami / macierzami wklejane bez layoutu.
 - **Hasze float z niecałkowitych wejść** różnią się między kompilatorami (FXC w bazie WebGL, DXC przez Tint w WebGPU):
-  wejścia haszy trzymaj całkowite — wtedy wynik jest bit w bit (zadanie 06).
+  wejścia haszy trzymaj całkowite — wtedy wynik jest bit w bit (zadanie 06). Gdy wejście musi być niecałkowite
+  (`a·b + c`), liczba zaokrągleń w bazie zależy od wyrażenia: `bid·3,1 + 5` — jedno (FMA, `haloFusedMulAddInt`, 07),
+  `vec2(x, y) + s·0,37` — x dwa, y jedno, `s / 23 + l·0,37` — dwa (08). Wariant wybiera pomiar na GPU (wiersz
+  `ring-tsl-parzystosc.mjs` z dokładnym wyrażeniem materiału), nie reguła.
 - **TSL, nie `wgslFn`.** Tekstowy WGSL tylko dla wyizolowanej czystej funkcji, gdy TSL jest naprawdę niewygodny — z
   uzasadnieniem w commicie (zamyka drogę do zapasowego backendu WebGL2).
 - **Pętle:** `Loop` w TSL, nie `for` w JS generujący kopie (`mx_noise_float` ×160 rozwinięte = 44 s kompilacji).
