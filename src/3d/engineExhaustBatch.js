@@ -19,10 +19,20 @@
 // utworzenia), więc turbulencja i shock diamonds były rozjechane między
 // silnikami. Wspólny uniform zsynchronizowałby całą flotę w jeden rytm, dlatego
 // czas jedzie jako atrybut `aTime`.
+//
+// Port WebGPU (zadanie 13): płomień i trzy warstwy poświaty to materiały węzłowe
+// TSL 1:1 z dawnym GLSL. AdditiveBlending bez premultipliedAlpha ma na WebGPU te
+// same czynniki co WebGL r183 (SRC_ALPHA, ONE | ONE, ONE) — mieszanie bez zmian.
 
 import * as THREE from 'three';
+import { NodeMaterial } from 'three/webgpu';
+import {
+  Fn, abs, attribute, clamp, cos, dot, float, floor, fract, length, max, mix, positionGeometry, pow,
+  sin, smoothstep, texture, uv, vec2, vec3, vec4
+} from 'three/tsl';
 import { Core3D } from './core3d.js';
 import { sceneOriginNearCamera } from './sceneOrigin.js';
+import { uniformsAdapter } from './tsl/uniformy.js';
 import { makeFlareTexture, makeGlowTexture, makeRingTexture } from '../../Engineeffects.js';
 
 const MAX_NOZZLES = 4096;
@@ -49,155 +59,152 @@ const Z_GLOW = -4.9;
 const Z_RING = -4.8;
 const Z_FLARE = -3.5;
 
-const FLAME_VERTEX_SHADER = `
-attribute vec2 aPos;
-attribute float aRot;
-attribute vec2 aScale;
-attribute vec2 aFlame;
-attribute float aTime;
-attribute float aThrottle;
-attribute float aBoost;
-attribute float aCurve;
-attribute vec3 aColorCore;
-attribute vec3 aColorEdge;
+/* ============================================================================
+   PŁOMIEŃ (TSL) — kwad na instancję dyszy
+   ========================================================================== */
+// Szum płomienia: random() na węzłach siatki (floor) — wejście całkowite.
+// Funkcje z layoutem są CZYSTE (PLAN §3).
+const flameRandom = /*@__PURE__*/ Fn(([st]) =>
+  fract(sin(dot(st, vec2(12.9898, 78.233))).mul(43758.5453123))
+).setLayout({ name: 'engineFlameRandom', type: 'float', inputs: [{ name: 'st', type: 'vec2' }] });
 
-varying vec2 vUv;
-varying float vTime;
-varying float vThrottle;
-varying float vBoost;
-varying float vCurve;
-varying vec3 vColorCore;
-varying vec3 vColorEdge;
+const flameNoise = /*@__PURE__*/ Fn(([st]) => {
+  const i = floor(st).toVar();
+  const f = fract(st).toVar();
+  const a = flameRandom(i).toVar();
+  const b = flameRandom(i.add(vec2(1.0, 0.0))).toVar();
+  const c = flameRandom(i.add(vec2(0.0, 1.0)));
+  const d = flameRandom(i.add(vec2(1.0, 1.0)));
+  const u = f.mul(f).mul(float(3.0).sub(f.mul(2.0))).toVar();
+  return mix(a, b, u.x).add(c.sub(a).mul(u.y).mul(float(1.0).sub(u.x))).add(d.sub(b).mul(u.x).mul(u.y));
+}).setLayout({ name: 'engineFlameNoise', type: 'float', inputs: [{ name: 'st', type: 'vec2' }] });
 
-void main() {
-    vUv = uv;
-    vTime = aTime;
-    vThrottle = aThrottle;
-    vBoost = aBoost;
-    vCurve = aCurve;
-    vColorCore = aColorCore;
-    vColorEdge = aColorEdge;
+function makeFlameMaterial() {
+  const aPos = attribute('aPos', 'vec2');
+  const aRot = attribute('aRot', 'float');
+  const aScale = attribute('aScale', 'vec2');
+  const aFlame = attribute('aFlame', 'vec2');
+  const vTime = attribute('aTime', 'float');
+  const vThrottle = attribute('aThrottle', 'float');
+  const vBoost = attribute('aBoost', 'float');
+  const vCurve = attribute('aCurve', 'float');
+  const vColorCore = attribute('aColorCore', 'vec3');
+  const vColorEdge = attribute('aColorEdge', 'vec3');
 
-    // Odwzorowanie starego łańcucha: mesh miał scale (totalWidth, totalLen)
-    // i position.y = -totalLen/2 WEWNĄTRZ grupy dyszy, a grupa własny obrót,
-    // skalę i pozycję w świecie.
-    vec2 local = vec2(position.x * aFlame.x, position.y * aFlame.y - aFlame.y * 0.5);
-    local *= aScale;
-    float c = cos(aRot);
-    float s = sin(aRot);
-    vec2 rotated = vec2(local.x * c - local.y * s, local.x * s + local.y * c);
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(aPos + rotated, ${Z_FLAME.toFixed(1)}, 1.0);
-}
-`;
-
-const FLAME_FRAGMENT_SHADER = `
-varying vec2 vUv;
-varying float vTime;
-varying float vThrottle;
-varying float vBoost;
-varying float vCurve;
-varying vec3 vColorCore;
-varying vec3 vColorEdge;
-
-float random (in vec2 st) {
-    return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123);
-}
-
-float noise (in vec2 st) {
-    vec2 i = floor(st);
-    vec2 f = fract(st);
-    float a = random(i);
-    float b = random(i + vec2(1.0, 0.0));
-    float c = random(i + vec2(0.0, 1.0));
-    float d = random(i + vec2(1.0, 1.0));
-    vec2 u = f * f * (3.0 - 2.0 * f);
-    return mix(a, b, u.x) + (c - a)* u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
-}
-
-void main() {
+  const m = new NodeMaterial();
+  m.name = 'EngineFlame';
+  // Odwzorowanie starego łańcucha: mesh miał scale (totalWidth, totalLen)
+  // i position.y = -totalLen/2 WEWNĄTRZ grupy dyszy, a grupa własny obrót,
+  // skalę i pozycję w świecie.
+  m.positionNode = Fn(() => {
+    const local = vec2(positionGeometry.x.mul(aFlame.x), positionGeometry.y.mul(aFlame.y).sub(aFlame.y.mul(0.5))).mul(aScale).toVar();
+    const c = cos(aRot).toVar();
+    const s = sin(aRot).toVar();
+    const rotated = vec2(local.x.mul(c).sub(local.y.mul(s)), local.x.mul(s).add(local.y.mul(c)));
+    return vec3(aPos.add(rotated), Z_FLAME);
+  })();
+  // Atrybuty instancji czytane we fragmencie idą varyingami (jak vTime, vThrottle…).
+  m.fragmentNode = Fn(() => {
     // MSAA liczy piksel krawędzi w jego środku, także POZA kwadem — uv wychodzi
-    // lekko poza [0, 1], a pow(y, ...) z ujemnym y daje w ANGLE/HLSL NaN, który
+    // lekko poza [0, 1], a pow(y, ...) z ujemnym y daje w HLSL NaN, który
     // bloom rozlewa na cały ekran.
-    vec2 uv = clamp(vUv, 0.0, 1.0);
-    float x = (uv.x - 0.5) * 2.0;
-    float y = 1.0 - uv.y;
+    const st = clamp(uv(), 0.0, 1.0).toVar();
+    const x = st.x.sub(0.5).mul(2.0).toVar();
+    const y = float(1.0).sub(st.y).toVar();
 
-    float visibleLength = 0.2 + 0.78 * (vThrottle + vBoost);
-    float lengthMask = 1.0 - smoothstep(visibleLength * 0.7, visibleLength, y);
+    const visibleLength = float(0.2).add(float(0.78).mul(vThrottle.add(vBoost))).toVar();
+    const lengthMask = float(1.0).sub(smoothstep(visibleLength.mul(0.7), visibleLength, y));
 
-    float curvePow = max(0.2, vCurve);
-    float width = (1.0 - pow(y, curvePow)) * 0.95;
-    width *= (1.0 + vBoost * 0.4);
+    const curvePow = max(0.2, vCurve);
+    const width = float(1.0).sub(pow(y, curvePow)).mul(0.95).toVar();
+    width.mulAssign(float(1.0).add(vBoost.mul(0.4)));
 
-    float shape = 1.0 - smoothstep(width * 0.4, width, abs(x));
-    shape *= smoothstep(0.0, 0.1, y);
-    shape *= (1.0 - smoothstep(0.4, 0.95, y));
+    const shape = float(1.0).sub(smoothstep(width.mul(0.4), width, abs(x))).toVar();
+    shape.mulAssign(smoothstep(0.0, 0.1, y));
+    shape.mulAssign(float(1.0).sub(smoothstep(0.4, 0.95, y)));
 
-    float turbulenceMix = smoothstep(0.0, 0.3, vThrottle + vBoost);
-    float flowSpeed = vTime * 8.0 * (1.0 + vThrottle * 2.5);
-    float n = noise(vec2(x * 2.5, y * 6.0 - flowSpeed));
-    float finalShape = mix(shape, shape * (0.7 + 0.4 * n), turbulenceMix);
+    const turbulenceMix = smoothstep(0.0, 0.3, vThrottle.add(vBoost));
+    const flowSpeed = vTime.mul(8.0).mul(float(1.0).add(vThrottle.mul(2.5)));
+    const n = flameNoise(vec2(x.mul(2.5), y.mul(6.0).sub(flowSpeed)));
+    const finalShape = mix(shape, shape.mul(float(0.7).add(float(0.4).mul(n))), turbulenceMix);
 
-    float diamonds = sin(y * 22.0 - vTime * 4.0) * sin(y * 14.0 + vTime * 9.0);
-    float diamondPattern = smoothstep(0.3, 0.9, diamonds);
-    diamondPattern *= (1.0 - abs(x) * 1.5);
-    float diamondStr = smoothstep(0.2, 1.0, vThrottle) * (1.0 - vBoost);
+    const diamonds = sin(y.mul(22.0).sub(vTime.mul(4.0))).mul(sin(y.mul(14.0).add(vTime.mul(9.0))));
+    const diamondPattern = smoothstep(0.3, 0.9, diamonds).toVar();
+    diamondPattern.mulAssign(float(1.0).sub(abs(x).mul(1.5)));
+    const diamondStr = smoothstep(0.2, 1.0, vThrottle).mul(float(1.0).sub(vBoost));
 
-    float coreGlowDist = length(vec2(x * 0.7, y * 4.0));
-    float coreGlow = pow((1.0 - smoothstep(0.0, 0.6, coreGlowDist)), 2.0);
-    float idlePulse = 0.9 + 0.1 * sin(vTime * 4.0);
+    const coreGlowDist = length(vec2(x.mul(0.7), y.mul(4.0)));
+    const coreGlow = pow(float(1.0).sub(smoothstep(0.0, 0.6, coreGlowDist)), 2.0);
+    const idlePulse = float(0.9).add(float(0.1).mul(sin(vTime.mul(4.0))));
 
-    float coreIntensity = pow(clamp(1.0 - abs(x) / (width * 1.2), 0.0, 1.0), 3.0);
-    vec3 color = mix(vColorEdge, vColorCore, coreIntensity);
-    color += vColorCore * diamondPattern * diamondStr * 0.9;
+    const coreIntensity = pow(clamp(float(1.0).sub(abs(x).div(width.mul(1.2))), 0.0, 1.0), 3.0);
+    const color = mix(vColorEdge, vColorCore, coreIntensity).toVar();
+    color.addAssign(vColorCore.mul(diamondPattern).mul(diamondStr).mul(0.9));
 
-    float streamAlpha = finalShape * lengthMask * (0.5 + 0.5 * vThrottle);
-    float glowAlpha = coreGlow * idlePulse * (1.0 - vThrottle * 0.3);
-    float finalAlpha = max(streamAlpha, glowAlpha);
+    const streamAlpha = finalShape.mul(lengthMask).mul(float(0.5).add(float(0.5).mul(vThrottle)));
+    const glowAlpha = coreGlow.mul(idlePulse).mul(float(1.0).sub(vThrottle.mul(0.3)));
+    const finalAlpha = max(streamAlpha, glowAlpha);
 
-    color *= (1.0 + (vThrottle + vBoost) * 1.5);
+    color.mulAssign(float(1.0).add(vThrottle.add(vBoost).mul(1.5)));
 
-    gl_FragColor = vec4(color, finalAlpha);
+    return vec4(color, finalAlpha);
+  })();
+  m.transparent = true;
+  m.blending = THREE.AdditiveBlending;
+  m.depthWrite = false;
+  m.side = THREE.DoubleSide;
+  // Jak ShaderMaterial w WebGL: jeden draw, nie dwa (tył + przód).
+  m.forceSinglePass = true;
+  m.fog = false;
+  m.lights = false;
+  return m;
 }
-`;
 
 // Sprite'y three ignorują obrót rodzica i zawsze stoją równolegle do kamery.
 // Przy ortho patrzącej prosto w -Z to jest kwad wyrównany do osi świata, więc
 // odtwarzamy je zwykłym kwadratem bez obrotu.
-function makeGlowVertexShader(z) {
-  return `
-attribute vec2 aPos;
-attribute vec2 aSize;
-attribute vec3 aColor;
-attribute float aOpacity;
-
-varying vec2 vUv;
-varying vec3 vColor;
-varying float vOpacity;
-
-void main() {
-    vUv = uv;
-    vColor = aColor;
-    vOpacity = aOpacity;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(aPos + position.xy * aSize, ${z.toFixed(1)}, 1.0);
+function makeGlowMaterial(tex, z, name) {
+  const aPos = attribute('aPos', 'vec2');
+  const aSize = attribute('aSize', 'vec2');
+  const vColor = attribute('aColor', 'vec3');
+  const vOpacity = attribute('aOpacity', 'float');
+  const U = uniformsAdapter({ uMap: texture(tex) });
+  const m = new NodeMaterial();
+  m.name = name;
+  m.positionNode = vec3(aPos.add(positionGeometry.xy.mul(aSize)), z);
+  m.fragmentNode = vec4(vColor, vOpacity).mul(U.uMap.sample(uv()));
+  m.transparent = true;
+  m.blending = THREE.AdditiveBlending;
+  m.depthWrite = false;
+  m.fog = false;
+  m.lights = false;
+  m.uniforms = U;
+  return m;
 }
-`;
+
+// Układ danych instancji: przesunięcia pól w jednym rekordzie (floaty).
+function instanceLayout(specs) {
+  const out = { specs, stride: 0 };
+  for (const [name, itemSize] of specs) {
+    out[name] = out.stride;
+    out.stride += itemSize;
+  }
+  return out;
 }
 
-const GLOW_FRAGMENT_SHADER = `
-uniform sampler2D uMap;
+const FLAME_LAYOUT = instanceLayout([
+  ['aPos', 2], ['aRot', 1], ['aScale', 2], ['aFlame', 2], ['aTime', 1],
+  ['aThrottle', 1], ['aBoost', 1], ['aCurve', 1],
+  ['aColorCore', 3], ['aColorEdge', 3]
+]);
+const GLOW_LAYOUT = instanceLayout([['aPos', 2], ['aSize', 2], ['aColor', 3], ['aOpacity', 1]]);
 
-varying vec2 vUv;
-varying vec3 vColor;
-varying float vOpacity;
-
-void main() {
-    vec4 texel = texture2D(uMap, vUv);
-    gl_FragColor = vec4(vColor, vOpacity) * texel;
-}
-`;
-
-function makeInstancedQuad(attributeSpecs, material, renderOrder) {
+// Dane instancji warstwy w JEDNYM buforze z przeplotem (rekord = layout.stride
+// floatów). WebGPU pozwala na 8 buforów wierzchołków na pipeline — płomień z
+// osobnym buforem na atrybut miał ich 12 (10 atrybutów instancji + position + uv)
+// i pipeline się nie tworzył. Przy okazji jedno wgranie na warstwę zamiast
+// jednego na atrybut. Shader czyta te same atrybuty (nazwy bez zmian).
+function makeInstancedQuad(layout, material, renderOrder) {
   const base = new THREE.PlaneGeometry(1, 1);
   const geo = new THREE.InstancedBufferGeometry();
   geo.index = base.index;
@@ -205,36 +212,23 @@ function makeInstancedQuad(attributeSpecs, material, renderOrder) {
   geo.setAttribute('uv', base.attributes.uv);
   geo.instanceCount = 0;
 
-  const arrays = {};
-  for (const [name, itemSize] of attributeSpecs) {
-    const array = new Float32Array(MAX_NOZZLES * itemSize);
-    const attr = new THREE.InstancedBufferAttribute(array, itemSize);
-    attr.setUsage(THREE.DynamicDrawUsage);
-    geo.setAttribute(name, attr);
-    arrays[name] = array;
+  const data = new Float32Array(MAX_NOZZLES * layout.stride);
+  const buffer = new THREE.InstancedInterleavedBuffer(data, layout.stride);
+  buffer.setUsage(THREE.DynamicDrawUsage);
+  for (const [name, itemSize] of layout.specs) {
+    geo.setAttribute(name, new THREE.InterleavedBufferAttribute(buffer, itemSize, layout[name]));
   }
 
   const mesh = new THREE.Mesh(geo, material);
   mesh.frustumCulled = false;
   mesh.renderOrder = renderOrder;
   mesh.visible = false;
-  return { mesh, geo, arrays };
+  return { mesh, geo, data, buffer, stride: layout.stride };
 }
 
-function makeGlowLayer(texture, color, z, renderOrder) {
-  const material = new THREE.ShaderMaterial({
-    uniforms: { uMap: { value: texture } },
-    vertexShader: makeGlowVertexShader(z),
-    fragmentShader: GLOW_FRAGMENT_SHADER,
-    transparent: true,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false
-  });
-  const layer = makeInstancedQuad(
-    [['aPos', 2], ['aSize', 2], ['aColor', 3], ['aOpacity', 1]],
-    material,
-    renderOrder
-  );
+function makeGlowLayer(tex, color, z, renderOrder, name) {
+  const material = makeGlowMaterial(tex, z, name);
+  const layer = makeInstancedQuad(GLOW_LAYOUT, material, renderOrder);
   layer.defaultColor = new THREE.Color(color);
   return layer;
 }
@@ -297,24 +291,11 @@ function ensureBuilt() {
   if (flame) return true;
   if (!Core3D.isInitialized || !Core3D.scene) return false;
 
-  const flameMaterial = new THREE.ShaderMaterial({
-    uniforms: {},
-    vertexShader: FLAME_VERTEX_SHADER,
-    fragmentShader: FLAME_FRAGMENT_SHADER,
-    transparent: true,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-    side: THREE.DoubleSide
-  });
-  flame = makeInstancedQuad([
-    ['aPos', 2], ['aRot', 1], ['aScale', 2], ['aFlame', 2], ['aTime', 1],
-    ['aThrottle', 1], ['aBoost', 1], ['aCurve', 1],
-    ['aColorCore', 3], ['aColorEdge', 3]
-  ], flameMaterial, 0);
+  flame = makeInstancedQuad(FLAME_LAYOUT, makeFlameMaterial(), 0);
 
-  glow = makeGlowLayer(makeGlowTexture(), 0xff4400, Z_GLOW, 1);
-  ring = makeGlowLayer(makeRingTexture(), 0xffaa00, Z_RING, 2);
-  flare = makeGlowLayer(makeFlareTexture(), 0x88ccff, Z_FLARE, 3);
+  glow = makeGlowLayer(makeGlowTexture(), 0xff4400, Z_GLOW, 1, 'EngineHeatGlow');
+  ring = makeGlowLayer(makeRingTexture(), 0xffaa00, Z_RING, 2, 'EngineHeatRing');
+  flare = makeGlowLayer(makeFlareTexture(), 0x88ccff, Z_FLARE, 3, 'EngineFlare');
 
   for (const layer of [flame, glow, ring, flare]) Core3D.scene.add(layer.mesh);
   return true;
@@ -342,16 +323,16 @@ function ensureLightPool() {
 }
 
 function pushGlowInstance(layer, index, x, y, sizeX, sizeY, color, opacity) {
-  const i2 = index * 2;
-  const i3 = index * 3;
-  layer.arrays.aPos[i2] = x;
-  layer.arrays.aPos[i2 + 1] = y;
-  layer.arrays.aSize[i2] = sizeX;
-  layer.arrays.aSize[i2 + 1] = sizeY;
-  layer.arrays.aColor[i3] = color.r;
-  layer.arrays.aColor[i3 + 1] = color.g;
-  layer.arrays.aColor[i3 + 2] = color.b;
-  layer.arrays.aOpacity[index] = opacity;
+  const d = layer.data;
+  const b = index * GLOW_LAYOUT.stride;
+  d[b + GLOW_LAYOUT.aPos] = x;
+  d[b + GLOW_LAYOUT.aPos + 1] = y;
+  d[b + GLOW_LAYOUT.aSize] = sizeX;
+  d[b + GLOW_LAYOUT.aSize + 1] = sizeY;
+  d[b + GLOW_LAYOUT.aColor] = color.r;
+  d[b + GLOW_LAYOUT.aColor + 1] = color.g;
+  d[b + GLOW_LAYOUT.aColor + 2] = color.b;
+  d[b + GLOW_LAYOUT.aOpacity] = opacity;
 }
 
 function commitLayer(layer, instanceCount) {
@@ -362,14 +343,14 @@ function commitLayer(layer, instanceCount) {
   if (!visible) return;
   // Zapisane jest tylko [0, instanceCount) — bez zakresu three wgrywalby caly
   // bufor na MAX_NOZZLES (dla samego plomienia ~280 kB na klatke).
-  for (const name of Object.keys(layer.arrays)) {
-    const attr = layer.geo.getAttribute(name);
-    if (!attr) continue;
-    if (attr.updateRanges && attr.updateRanges.length >= 8) attr.clearUpdateRanges();
-    else if (attr.addUpdateRange) attr.addUpdateRange(0, instanceCount * (attr.itemSize || 1));
-    attr.needsUpdate = true;
-  }
+  const buffer = layer.buffer;
+  buffer.clearUpdateRanges();
+  buffer.addUpdateRange(0, instanceCount * layer.stride);
+  buffer.needsUpdate = true;
 }
+
+// Dla testów: materiały i układ danych instancji (bez Core3D i kanwy 2D).
+export const EngineExhaustInternals = Object.freeze({ makeFlameMaterial, makeGlowMaterial, makeInstancedQuad, FLAME_LAYOUT, GLOW_LAYOUT });
 
 export const EngineExhaustBatch = {
   MAX_NOZZLES,
@@ -416,26 +397,26 @@ export const EngineExhaustBatch = {
     const py = p.y - origin.y;
 
     const i = count++;
-    const i2 = i * 2;
-    const i3 = i * 3;
-    const a = flame.arrays;
-    a.aPos[i2] = px;
-    a.aPos[i2 + 1] = py;
-    a.aRot[i] = p.rot;
-    a.aScale[i2] = p.scaleX;
-    a.aScale[i2 + 1] = p.scaleY;
-    a.aFlame[i2] = totalWidth;
-    a.aFlame[i2 + 1] = totalLen;
-    a.aTime[i] = state.time;
-    a.aThrottle[i] = throttle;
-    a.aBoost[i] = warp;
-    a.aCurve[i] = state.curve;
-    a.aColorCore[i3] = ENGINE_HDR;
-    a.aColorCore[i3 + 1] = ENGINE_HDR;
-    a.aColorCore[i3 + 2] = ENGINE_HDR;
-    a.aColorEdge[i3] = finalCol.r * edgeMul;
-    a.aColorEdge[i3 + 1] = finalCol.g * edgeMul;
-    a.aColorEdge[i3 + 2] = finalCol.b * edgeMul;
+    const d = flame.data;
+    const L = FLAME_LAYOUT;
+    const b = i * L.stride;
+    d[b + L.aPos] = px;
+    d[b + L.aPos + 1] = py;
+    d[b + L.aRot] = p.rot;
+    d[b + L.aScale] = p.scaleX;
+    d[b + L.aScale + 1] = p.scaleY;
+    d[b + L.aFlame] = totalWidth;
+    d[b + L.aFlame + 1] = totalLen;
+    d[b + L.aTime] = state.time;
+    d[b + L.aThrottle] = throttle;
+    d[b + L.aBoost] = warp;
+    d[b + L.aCurve] = state.curve;
+    d[b + L.aColorCore] = ENGINE_HDR;
+    d[b + L.aColorCore + 1] = ENGINE_HDR;
+    d[b + L.aColorCore + 2] = ENGINE_HDR;
+    d[b + L.aColorEdge] = finalCol.r * edgeMul;
+    d[b + L.aColorEdge + 1] = finalCol.g * edgeMul;
+    d[b + L.aColorEdge + 2] = finalCol.b * edgeMul;
 
     // Warstwy poświaty: heat glow siedział na (0, 2) w układzie dyszy, więc jego
     // offset przechodzi przez obrót grupy — sam kwad zostaje wyrównany do osi.
