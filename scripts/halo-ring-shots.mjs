@@ -344,7 +344,7 @@ async function main() {
     const build = await evaluate(cdp, '({ buildMs: window.__halo.buildMs, bake: window.__halo.bake, placeholders: window.__halo.placeholders, terrainCompileMs: window.__halo.terrainCompileMs ?? null, compileMs: window.__halo.compileMs ?? null })');
     const row = {
       id: shot.id, preset: stats.preset, mode: stats.mode, calls: frame.calls, triangles: frame.triangles,
-      tiles: stats.activeTiles, segments: stats.segments, textureMB: +(stats.textureBytes / 1048576).toFixed(0),
+      tiles: stats.activeTiles, segments: stats.segments, shellActive: stats.shellActive ?? null, textureMB: +(stats.textureBytes / 1048576).toFixed(0),
       ms1440: +ms.toFixed(2), fps1440: +(1000 / ms).toFixed(0), bakeMs, near: stats.near, hdr, gpu,
       buildMs: build.buildMs, bake: build.bake, placeholders: build.placeholders, terrainCompileMs: build.terrainCompileMs,
       compileMs: build.compileMs, errors: stats.errors, logs: logs.slice()
