@@ -27,7 +27,7 @@ import {
   varying, varyingProperty, vec2, vec3, vec4
 } from 'three/tsl';
 import { uniformsAdapter } from './tsl/uniformy.js';
-import { setAdditiveOneOne } from './coreFx3D.tsl.js';
+import { blendAddytywnePremul } from './tsl/mieszanie.js';
 
 const PI = 3.14159265;
 const TWO_PI = 6.2831853;
@@ -301,8 +301,8 @@ export function createReactorPlasmaMaterial(v) {
   material.fog = false;
   // Kolor i alfa ONE/ONE jak blend bloomu w three (dawne AdditiveBlending +
   // premultipliedAlpha). Bez premultipliedAlpha: NodeMaterial mnożyłby rgb przez
-  // alfę w shaderze (ShaderMaterial w WebGL tego nie robił) — coreFx3D.tsl.js.
-  setAdditiveOneOne(material);
+  // alfę w shaderze (ShaderMaterial w WebGL tego nie robił) — tsl/mieszanie.js.
+  blendAddytywnePremul(material);
   material.side = THREE.DoubleSide;
   // Przezroczysty DoubleSide WebGPU rysowałby dwa razy — WebGL (ShaderMaterial) raz.
   material.forceSinglePass = true;

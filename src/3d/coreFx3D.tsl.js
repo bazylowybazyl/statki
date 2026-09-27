@@ -7,9 +7,9 @@
 //
 // Każdy efekt ma jeden materiał (jeden mesh z InstancedBufferGeometry, zwykły
 // Mesh — bez uuid obiektu w kluczu), graf budowany raz przy createCoreFx3D.
-// Blend jak dawniej: ONE/ONE na kolorze i alfie (setAdditiveOneOne — NIE
-// premultipliedAlpha, które w NodeMaterial mnoży rgb przez alfę w shaderze),
-// alfa z shadera = max(rgb) liniowo.
+// Blend jak dawniej: ONE/ONE na kolorze i alfie (blendAddytywnePremul z
+// tsl/mieszanie.js — NIE premultipliedAlpha, które w NodeMaterial mnoży rgb przez
+// alfę w shaderze), alfa z shadera = max(rgb) liniowo.
 //
 // Pułapki WGSL (PLAN §3): smoothstep z odwróconymi krawędziami (stałymi — błąd
 // kompilacji, w biegu — wynik niezdefiniowany) liczony wzorem jak HLSL (baza
@@ -29,6 +29,7 @@ import {
   modelViewMatrix, positionGeometry, pow, select, sin, smoothstep, sqrt, step, uniform, varying, vec2, vec3, vec4
 } from 'three/tsl';
 import { uniformsAdapter } from './tsl/uniformy.js';
+import { blendAddytywnePremul } from './tsl/mieszanie.js';
 
 // smoothstep wzorem (jak rozwija go HLSL): poprawny także dla e0 > e1.
 const smoothRev = (e0, e1, x) => {
@@ -68,32 +69,16 @@ const fxOut = (col) => vec4(col, min(1.0, max(col.x, max(col.y, col.z))));
 // Punkt świata sceny (x, y) na płaszczyźnie z = uZ → przestrzeń obcinania.
 const clipAt = (xy, z) => cameraProjectionMatrix.mul(modelViewMatrix).mul(vec4(xy, z, 1.0));
 
-/**
- * Blend ONE/ONE na kolorze i alfie (jak dawny ShaderMaterial z AdditiveBlending
- * + premultipliedAlpha). Pułapka WebGPU: NodeMaterial z premultipliedAlpha = true
- * MNOŻY rgb przez alfę w shaderze (setupPremultipliedAlpha) — ShaderMaterial w WebGL
- * tego nie robił, więc słabe efekty (alfa = max(rgb) < 1) gasły kwadratowo. Tu
- * blend własny, bez mnożenia w shaderze.
- */
-export function setAdditiveOneOne(material) {
-  material.blending = THREE.CustomBlending;
-  material.blendEquation = THREE.AddEquation;
-  material.blendSrc = THREE.OneFactor;
-  material.blendDst = THREE.OneFactor;
-  material.blendEquationAlpha = THREE.AddEquation;
-  material.blendSrcAlpha = THREE.OneFactor;
-  material.blendDstAlpha = THREE.OneFactor;
-  material.premultipliedAlpha = false;
-  return material;
-}
-
 function fxMaterial(name, U, vertexNode, fragmentNode) {
   const material = new THREE.NodeMaterial();
   material.name = `coreFx3D:${name}`;
   material.uniforms = U;
   material.lights = false;
   material.fog = false;
-  setAdditiveOneOne(material);
+  // ONE/ONE jak dawne AdditiveBlending + premultipliedAlpha (tsl/mieszanie.js):
+  // NodeMaterial z premultipliedAlpha mnożyłby rgb przez alfę w shaderze —
+  // słabe wyrzuty (alfa = max(rgb) < 1) gasły kwadratowo.
+  blendAddytywnePremul(material);
   material.transparent = true;
   material.depthTest = true;
   material.depthWrite = false;
