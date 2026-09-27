@@ -645,7 +645,7 @@ export function makeHaloStructureNodes({ u, su, segCells, fg = false, rimH = 250
       // hasz okna z (wc.x, row) + bp.x · 0,37 (wejście NIEcałkowite): baza WebGL (FXC + sterownik) liczy
       // x z dwoma zaokrągleniami (iloczyn, potem suma), a y jednym (jak FMA) — zmierzone na GPU
       // (scripts/webgpu/ring-tsl-parzystosc.mjs, wiersz structHashWin: 99,4% haszy bit w bit; oba
-      // składniki wprost 95,2%, oba przez FMA 78,7%); w demie 5–6× mniej różnych okien niż z FMA
+      // składniki wprost 95,2%, oba przez FMA 78,7%); w demie 3–7× mniej różnych pikseli ścian niż z FMA
       const bp37 = bp.x.mul(0.37);
       const lit = step(haloHash12(vec2(wc.x.add(bp37), haloFusedMulAddInt(bp.x, 0.37, row))), litFrac.mul(float(0.4).add(midLit))).toVar();
       const wcol = cls.greaterThan(1.5).select(U.uHdrSodium.mul(0.8), mix(U.uHdrWarm, U.uHdrCool, step(0.6, fract(bRand.mul(3.1))))).toVar();
