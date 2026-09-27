@@ -715,6 +715,12 @@ export class HaloWorldMaps {
   // CPU: wysokość i zabudowa w niskiej rozdzielczości (dynamiczny near
   // kamery kinowej, rozstawianie obiektów w M4).
   _readbackCpu() {
+    // Port WebGPU: renderer nie ma synchronicznego readRenderTargetPixels (tylko
+    // …Async: wiersze po 256 B, wiersz 0 = góra celu) — odczyt asynchroniczny
+    // i bramka gotowości ringu to zadanie 06. Do tego czasu mapa CPU zostaje
+    // pusta (heightAtUV = 0): płyta ringu koliduje bez rzeźby terenu — znana
+    // regresja przejściowa (docs/webgpu/POSTEP.md).
+    if (typeof this.renderer?.readRenderTargetPixels !== 'function') return;
     const w = 2048;
     const h = Math.max(32, Math.round(96 * this.layout.width / 6000));
     let rt = null;

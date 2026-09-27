@@ -347,6 +347,16 @@
 }
 #main-menu .mm-hint:not(:empty)::before { content: "\203A"; color: var(--mm-orange); margin-right: calc(9 * var(--mm-u)); }
 
+/* Brak adaptera WebGPU (Core3D.ready → false): gra nie startuje. */
+#main-menu .mm-webgpu-required {
+  margin-bottom: calc(18 * var(--mm-u));
+  padding-left: calc(14 * var(--mm-u));
+  font-family: var(--mm-mono);
+  font-size: calc(14 * var(--mm-u));
+  letter-spacing: 0.05em;
+  color: var(--mm-orange);
+}
+
 #main-menu .mm-panel { width: 100%; }
 #main-menu .mm-panel.active { gap: calc(14 * var(--mm-u)); animation: mm-panel-in 0.45s var(--mm-ease) both; }
 #main-menu .mm-panel-head { display: flex; flex-direction: column; gap: calc(6 * var(--mm-u)); flex: 0 0 auto; }

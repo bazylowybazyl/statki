@@ -307,11 +307,18 @@ test('3D draw exposes core render and blit timings', () => {
 });
 
 test('Core3D exposes renderer.info deltas per render pass', () => {
+  // Port WebGPU: bez EffectComposer passy nie są owijane (_wrapRenderInfoPass
+  // zniknął) — runner passów mierzy sam (_runScenePass, _renderPost), a draw
+  // calle to render.drawCalls (render.calls w WebGPU liczy wywołania render()).
   const requiredCore3dSnippets = [
     'lastFrameRenderInfo',
-    '_wrapRenderInfoPass',
+    '_runScenePass(pass)',
+    "this._addRenderInfoDelta(pass.bucket, performance.now() - t0, before);",
+    "this._addRenderInfoDelta('post', performance.now() - t0, before);",
+    "this._addRenderInfoDelta('refraction');",
     '_addRenderInfoDelta',
     '_resetRenderInfoBuckets',
+    'target.calls = Number(src?.drawCalls) || 0;',
     "bucketName === 'fg'",
     "bucketName === 'bloom'",
     "bucketName === 'refraction'"
@@ -320,6 +327,38 @@ test('Core3D exposes renderer.info deltas per render pass', () => {
   for (const snippet of requiredCore3dSnippets) {
     assert.ok(core3dJs.includes(snippet), `${snippet} is missing from Core3D draw-call instrumentation`);
   }
+  assert.ok(!core3dJs.includes('_wrapRenderInfoPass'), 'passy nie są już owijane — mierzy runner');
+  // Kubełki: nazwy czyta harness (zrzuty.mjs → perf.passes) i PerfHUD (ri.passes).
+  for (const name of ['refraction', 'bg', 'planets', 'shafts', 'ortho', 'fg', 'bloom', 'post', 'other']) {
+    assert.ok(core3dJs.includes(`'${name}'`), `kubełek ${name}`);
+  }
+});
+
+test('Core3D: draw calle z render.drawCalls, suma per render, reset liczników raz na klatkę', async () => {
+  globalThis.window = globalThis.window || {};
+  const { Core3D } = await import('../src/3d/core3d.js');
+  const info = { frame: 7, render: { drawCalls: 10, calls: 99, triangles: 30, points: 0, lines: 0 }, resets: 0, reset() { this.resets++; this.render.drawCalls = 0; this.render.triangles = 0; } };
+  const core = Object.assign(Object.create(Core3D), {
+    renderer: { info },
+    lastFrameRenderInfo: null,
+    _renderInfoStart: { calls: 0, triangles: 0, points: 0, lines: 0 },
+    _renderInfoBefore: { calls: 0, triangles: 0, points: 0, lines: 0 },
+    _renderInfoFrame: -1
+  });
+  core._beginRenderInfo();
+  assert.equal(info.resets, 1);
+  info.render.drawCalls += 4; info.render.triangles += 8;
+  core._finalizeRenderInfoBuckets();
+  assert.equal(core.lastFrameRenderInfo.total.calls, 4, 'draw calle, nie wywołania render()');
+  // Drugi render w tej samej klatce (podzielony ekran): bez resetu, suma = przyrost.
+  core._beginRenderInfo();
+  assert.equal(info.resets, 1, 'reset raz na klatkę rAF');
+  info.render.drawCalls += 3;
+  core._finalizeRenderInfoBuckets();
+  assert.equal(core.lastFrameRenderInfo.total.calls, 3);
+  info.frame = 8;
+  core._beginRenderInfo();
+  assert.equal(info.resets, 2);
 });
 
 test('bulletsAndCollisionsStep records projectile hot-path subsection timings', () => {

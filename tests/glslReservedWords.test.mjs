@@ -67,6 +67,9 @@ test('shadery nie używają słów zarezerwowanych GLSL ES 3.00 jako nazw', () =
     }
   }
 
-  assert.ok(shaders > 50, `skaner ma widzieć shadery gry, znalazł ${shaders}`);
+  // Port WebGPU: GLSL znika moduł po module (zadania 02–20), więc skaner nie
+  // wymaga już progu „> 50 shaderów” — sprawdza te, które jeszcze są (zadanie 22
+  // zamieni go na strażnika „brak GLSL w plikach gry”).
+  assert.ok(shaders >= 0, `skaner: ${shaders} szablonów GLSL`);
   assert.deepEqual(problems, [], 'zmień nazwy — na WebGL2 te shadery się nie skompilują:\n' + problems.join('\n'));
 });

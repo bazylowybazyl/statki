@@ -5,7 +5,8 @@ import { readFileSync } from 'node:fs';
 // Prymitywy zgięcia przestrzeni dla efektów warpa (docs/BRIEF-warp.md §5.1):
 // ten sam pass tła co soczewka skoku, lista punkt / szew / fala. Testy pilnują
 // pakowania świat → UV, lustra CPU shadera (tożsamość poza zasięgiem, kierunek
-// wciągania) i tego, że pass działa także bez soczewki skoku.
+// wciągania). Port WebGPU: pass w Core3D usunięty (warp poza portem) — API to
+// no-op, moduł warpLens3D.js czeka na nowy warp.
 
 globalThis.window = globalThis.window || {};
 const THREE = await import('three');
@@ -186,124 +187,27 @@ test('bańka Alcubierre\'a: zagłębienie przed statkiem, wybrzuszenie za nim, z
   assert.doesNotMatch(alcBranch, /wStarUv\s*=/);
 });
 
-test('Core3D: kształt bańki z setWarpViewWorld trafia do uniformów, bez niego kropla', () => {
-  const core = makeFakeCore();
-  core.width = W;
-  core.height = H;
-  core._warpViewReq = { ...Core3D._warpViewReq };
-  const now = () => performance.now() / 1000;
-  core.setWarpViewWorld(0, 0, 300, 1, 0, { mode: 'alcubierre', alc: { rPeak: 0.7, rWidth: 0.5, flat: 3, amp: 0.04, tintGain: 0.2, shadeGain: 0.5 } });
-  core._prepareWarpLens(false, now());
-  const lu = core.warpLensPass.uniforms;
-  assert.equal(lu.uWVMode.value, 1);
-  assert.deepEqual([lu.uWVAlc.value.x, lu.uWVAlc.value.y, lu.uWVAlc.value.z], [0.7, 0.5, 3]);
-  assert.deepEqual([lu.uWVAlc2.value.x, lu.uWVAlc2.value.y, lu.uWVAlc2.value.z], [0.04, 0.2, 0.5]);
-  assert.equal(lu.uWVAlc3, undefined);
-  core.setWarpViewWorld(0, 0, 300, 1, 0, {});
-  core._prepareWarpLens(false, now());
-  assert.equal(lu.uWVMode.value, 0);
-});
-
-test('Core3D: gwiazdy gry w widoku skoku na własnej warstwie i w celu, potem z powrotem na tle', () => {
-  const core = makeFakeCore();
-  core.width = W;
-  core.height = H;
-  core._warpViewReq = { ...Core3D._warpViewReq };
-  core.warpStarTarget = null;
-  core._warpStarsOn = false;
-  const now = () => performance.now() / 1000;
-  const stars = new THREE.Points();
-  const parent = new THREE.Group();
-  parent.add(stars);
-  stars.layers.set(1);
-  core.setWarpStarsObject(stars);
-  core.setWarpViewWorld(0, 0, 300, 1, 0, {});
-  assert.equal(core._prepareWarpLens(false, now()), true);
-  const lu = core.warpLensPass.uniforms;
-  assert.equal(lu.uWVStars.value, 1);
-  assert.ok(stars.layers.isEnabled(8) && !stars.layers.isEnabled(1), 'gwiazdy poza tłem');
-  assert.equal(lu.tStars.value, core.warpStarTarget.texture);
-  // Brak zgłoszenia widoku — gwiazdy wracają na tło, pass znika.
-  core.clearWarpView();
-  assert.equal(core._prepareWarpLens(false, now()), false);
-  assert.ok(stars.layers.isEnabled(1) && !stars.layers.isEnabled(8));
-  // Tryb bez composera też je oddaje.
-  core.setWarpViewWorld(0, 0, 300, 1, 0, {});
-  core._prepareWarpLens(false, now());
-  core._restoreWarpStars();
-  assert.ok(stars.layers.isEnabled(1));
-});
-
-test('Core3D: kształt kropli z setWarpViewWorld trafia do uniformu, bez niego koło', () => {
-  const core = makeFakeCore();
-  core.width = W;
-  core.height = H;
-  core._warpViewReq = { ...Core3D._warpViewReq };
-  const now = () => performance.now() / 1000;
-  core.setWarpViewWorld(0, 0, 300, 1, 0, { drop: { ua: 0.25, ra: 0.8, ub: -0.98, rb: 0.07 } });
-  assert.equal(core._prepareWarpLens(false, now()), true);
-  const d = core.warpLensPass.uniforms.uWVDrop.value;
-  assert.deepEqual([d.x, d.y, d.z, d.w], [0.25, 0.8, -0.98, 0.07]);
-  core.setWarpViewWorld(0, 0, 300, 1, 0, {});
-  core._prepareWarpLens(false, now());
-  assert.deepEqual([d.x, d.y, d.z, d.w], [0, 1, 0, 1]);
-});
-
-function makeFakeCore() {
-  const def = createWarpLensShader();
-  return Object.assign(Object.create(Core3D), {
-    composerTarget: { width: W, height: H },
-    warpLensPass: { enabled: true, uniforms: THREE.UniformsUtils.clone(def.uniforms) },
-    renderer: { capabilities: { isWebGL2: true, getMaxAnisotropy: () => 16 } },
-    activeCam1: { x: 0, y: 0, zoom: 0.2 },
-    activeCam2: null,
-    warpLensTarget: null,
-    _warpLensActive: false,
-    _warpLensLastUseMs: 0,
-    _warpLensRequest: { x: 0, y: 0, angle: 0, radiusAlong: 0, radiusAcross: 0, swallow: 0, stampMs: -Infinity },
-    _warpLensUniformScratch: {},
-    _warpSpaceReq: Array.from({ length: WARP_SPACE_MAX_PRIMS }, () => ({})),
-    _warpSpaceCount: 0
-  });
-}
-
-test('Core3D: same prymitywy włączają pass (soczewka skoku neutralna), lista zerowana co klatkę', () => {
-  const core = makeFakeCore();
-  const now = () => performance.now() / 1000;
-  assert.equal(core._prepareWarpLens(false, now()), false);
-  assert.equal(core.pushWarpSpaceWorld(WARP_SPACE_TYPE.SEAM, 100, -50, 0.3, 900, 120, 0.5), true);
-  assert.equal(core._prepareWarpLens(false, now()), true);
-  const lu = core.warpLensPass.uniforms;
-  assert.equal(lu.uPrimCount.value, 1);
-  assert.equal(lu.uSwallow.value, 0, 'bez soczewki skoku — jej mapa to tożsamość');
-  assert.ok(lu.uCenter.value.x < -1, 'soczewka skoku poza kadrem');
-  assert.equal(lu.tSource.value, core.warpLensTarget.texture);
-  // Producent nic nie zgłosił w tej klatce → pass znika.
-  assert.equal(core._prepareWarpLens(false, now()), false);
-  // Limit listy.
-  for (let i = 0; i < WARP_SPACE_MAX_PRIMS; i++) core.pushWarpSpaceWorld(0, 0, 0, 0, 500, 500, 0.3);
-  assert.equal(core.pushWarpSpaceWorld(0, 0, 0, 0, 500, 500, 0.3), false);
-});
-
-test('Core3D: fale warpa w uberPassie — uniformy i konsumpcja w render()', () => {
+// Port WebGPU (zadanie 01, warp poza portem): pass zgięcia tła, widok skoku
+// (kropla / bańka Alcubierre'a), gwiazdy na warstwie 8 i fale w „uber” usunięte
+// z Core3D — asercje o uniformach passa zniknęły (matematyka CPU i GLSL modułu
+// warpLens3D.js wyżej zostają dla nowego warpa). API zostaje jako no-op.
+test('Core3D: API zgięcia tła, widoku skoku i fal to bezpieczne no-opy (warp poza portem)', () => {
   const core = readSrc('src/3d/core3d.js');
-  assert.match(core, /uWaveCount: \{ value: 0 \}/);
-  assert.match(core, /uniform vec4 uWaves\[\$\{MAX_WARP_WAVES\}\];/);
-  assert.match(core, /uPost\.uWaveCount\.value = heatEnabled \? this\._packWarpWaves\(uPost\.uWaves\.value, uPost\.uWaveShape\.value\) : 0;/);
-  assert.match(core, /this\._warpWaveCount = 0;/);
-  // Fala zgłoszona w świecie trafia do uniformów w osi v ekranu.
-  const fake = Object.assign(Object.create(Core3D), {
-    width: W, height: H, activeCam1: { x: 0, y: 0, zoom: 0.5 }, activeCam2: null,
-    perfToggles: { heatHaze: true },
-    _warpWaveReq: Array.from({ length: 8 }, () => ({})), _warpWaveCount: 0
-  });
-  assert.equal(fake.pushWarpWaveWorld(0, 200, 100, 400, 50, 20, 0), true);
-  const outW = vecs(8);
-  const outS = vecs(8);
-  assert.equal(fake._packWarpWaves(outW, outS), 1);
-  assert.ok(Math.abs(outW[0].x - (0.5 + 200 * 0.5 / W)) < 1e-12);
-  assert.ok(Math.abs(outW[0].y - (0.5 - 100 * 0.5 / H)) < 1e-12);
-  assert.ok(Math.abs(outW[0].z - 400 * 0.5 / H) < 1e-12);
-  assert.ok(Math.abs(outW[0].w - 20 * 0.5 / H) < 1e-12);
-  assert.equal(outS[0].x, 0);
+  assert.doesNotMatch(core, /_packWarpWaves|uWaveCount|uWaves|_warpSpaceReq|_warpViewReq|WARP_STARS_RENDER_LAYER/);
+  // Zgłoszenia nic nie przyjmują do rysowania — ta sama sygnatura, wynik false.
+  assert.equal(Core3D.pushWarpSpaceWorld(WARP_SPACE_TYPE.SEAM, 100, -50, 0.3, 900, 120, 0.5), false);
+  assert.equal(Core3D.pushWarpWaveWorld(0, 200, 100, 400, 50, 20, 0), false);
+  assert.equal(Core3D.setWarpViewWorld(0, 0, 300, 1, 0, { mode: 'alcubierre', drop: { ua: 0.25, ra: 0.8, ub: -0.98, rb: 0.07 } }), undefined);
+  assert.equal(Core3D.clearWarpView(), undefined);
+  assert.equal(Core3D.suppressShadowShafts(1), undefined);
+  // Gwiazdy gry zostają na warstwie tła (1) — Core3D ich nie przenosi.
+  const stars = new THREE.Points();
+  new THREE.Group().add(stars);
+  stars.layers.set(1);
+  assert.equal(Core3D.setWarpStarsObject(stars), undefined);
+  assert.ok(stars.layers.isEnabled(1) && !stars.layers.isEnabled(8));
+  // Budżet sylwetek dla smug nie zależy już od widoku skoku.
+  const fake = Object.assign(Object.create(Core3D), { perfToggles: { shadowShafts: true }, activeCam1: { x: 0, y: 0, zoom: 1 } });
+  fake.suppressShadowShafts(1);
+  assert.ok(fake.getShaftHullBudget() > 0);
 });

@@ -431,7 +431,7 @@
           <header class="mm-panel-head"><span class="mm-panel-kicker">Dane projektu</span><h2>Twórcy</h2></header>
           <div class="mm-panel-body mm-credits">
             <div class="mm-credit"><span>Autor</span><b>Szymon Bogdanowicz</b></div>
-            <div class="mm-credit"><span>Render</span><b>Three.js · WebGL 2</b></div>
+            <div class="mm-credit"><span>Render</span><b>Three.js · WebGPU</b></div>
             <div class="mm-credit"><span>Fizyka</span><b>JavaScript + WebGPU</b></div>
             <div class="mm-credit"><span>Wersja</span><b>0.0.1 alpha</b></div>
           </div>
@@ -695,6 +695,8 @@
 {
   "imports": {
     "three": "./node_modules/three/build/three.module.js",
+    "three/webgpu": "./node_modules/three/build/three.webgpu.js",
+    "three/tsl": "./node_modules/three/build/three.tsl.js",
     "three/addons/": "./node_modules/three/examples/jsm/"
   }
 }
@@ -2221,6 +2223,24 @@
     function isMainMenuVisible() {
       return !!mainMenuEl && !mainMenuEl.classList.contains('hidden');
     }
+
+    // --- TYLKO WEBGPU (docs/webgpu/PLAN.md §2, decyzja użytkownika 2026-09-27) ---
+    // Core3D tworzy renderer dopiero, gdy przeglądarka da adapter WebGPU; bez
+    // niego (Core3D.ready → false) gra nie startuje, a menu mówi dlaczego.
+    function showWebGpuRequired() {
+      if (document.getElementById('mm-webgpu-required')) return;
+      const note = document.createElement('div');
+      note.id = 'mm-webgpu-required';
+      note.className = 'mm-webgpu-required';
+      note.setAttribute('role', 'alert');
+      note.textContent = 'Gra wymaga przeglądarki z WebGPU';
+      document.getElementById('menu-home-view')?.prepend(note);
+      for (const id of ['btn-continue', 'btn-new-game', 'btn-mode-single', 'btn-mode-split']) {
+        const btn = document.getElementById(id);
+        if (btn) btn.disabled = true;
+      }
+    }
+    Core3D.ready?.then((ok) => { if (!ok) showWebGpuRequired(); });
 
     // --- TŁO MENU: Ziemia z ringiem (src/3d/menuBackdrop3D.js) ---
     // Renderuje przed startem gry, póki menu widać (edytor i nakładki
@@ -23482,8 +23502,9 @@
       PerfHUD.addTiming('render3dShieldsUpdateTime', render3dShieldsMs);
       if (renderDbgEnabled) RenderLiveDebug.record('updateShields3D', render3dShieldsMs);
 
-      // Soczewka skoku: pass Core3D na samym tle (src/vfx/warpLensPass.js),
-      // więc parametry muszą trafić do Core3D PRZED drawHexShips3D.
+      // Soczewka skoku (src/vfx/warpLensPass.js): parametry idą do Core3D PRZED
+      // drawHexShips3D. Port WebGPU: warp poza portem — Core3D.setWarpLensWorld
+      // to no-op, skok działa bez efektu zgięcia do wpięcia nowego warpa.
       tRender3dSub = performance.now();
       updateWarpLens3D(interpPos, interpAngle, frameDt);
       if (renderDbgEnabled) RenderLiveDebug.record('warpLens', performance.now() - tRender3dSub);
@@ -25661,6 +25682,8 @@
     };
     async function startGame() {
       if (gameStarted) return;
+      // Tylko WebGPU: bez adaptera gra nie startuje (komunikat w menu).
+      if (Core3D.gpuUnsupported) { showWebGpuRequired(); return; }
 
       // Tło menu: najazd kamery na Ziemię, menu zjeżdża; render tła trwa pod
       // ekranem ładowania aż do stopMenuBackdrop() przed pierwszą klatką gry.

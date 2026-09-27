@@ -21,29 +21,38 @@ test('scena ma wyłączony automatyczny update macierzy', () => {
   );
 });
 
-test('render() i _renderDirect() robią jeden ręczny sync macierzy', () => {
+// Port WebGPU (zadanie 01): _renderDirect (render bez composera) i split w jednym
+// renderze zniknęły — ścieżki renderu sceny to render() (passy gry, także każda
+// połówka podzielonego ekranu przez renderSingle) i renderBackdrop() (tło menu).
+test('render() i renderBackdrop() robią jeden ręczny sync macierzy przed pierwszym przejściem sceny', () => {
   assert.match(
     core3d,
     /_syncSceneMatrices\(\)\s*\{\s*if \(this\.scene\) this\.scene\.updateMatrixWorld\(\);/,
     'helper musi przechodzić graf sceny'
   );
+  assert.ok(!core3d.includes('_renderDirect('), 'martwa ścieżka bez composera wróciła');
 
-  const renderStart = core3d.indexOf('\n  render() {');
-  const renderDirectStart = core3d.indexOf('\n  _renderDirect(');
-  assert.ok(renderStart > 0 && renderDirectStart > renderStart, 'obie ścieżki renderu muszą istnieć');
-
-  const renderBody = core3d.slice(renderStart, renderDirectStart);
+  const body = (header) => {
+    const start = core3d.indexOf(header);
+    assert.ok(start > 0, `brak ${header}`);
+    return core3d.slice(start, core3d.indexOf('\n  },', start));
+  };
+  const renderBody = body('\n  render() {');
   const syncIdx = renderBody.indexOf('this._syncSceneMatrices()');
   assert.ok(syncIdx > 0, 'render() musi zsynchronizować macierze');
+  assert.equal(renderBody.split('this._syncSceneMatrices()').length - 1, 1, 'jeden sync na render()');
+  // Sync MUSI stać przed pierwszym przejściem sceny w klatce (maska cieni,
+  // pre-pass halo, refrakcja, passy sceny), inaczej czyta macierze z poprzedniej klatki.
+  for (const pass of ['this._renderSunShadowMask(', 'this._renderPlanetHaloPrepass()', 'this._updateShockwaves(', 'this._runScenePass(pass)']) {
+    const at = renderBody.indexOf(pass);
+    assert.ok(at > 0, `render() woła ${pass}`);
+    assert.ok(syncIdx < at, `sync przed ${pass}`);
+  }
 
-  // Sync MUSI stać przed pierwszym renderem sceny w klatce (pre-pass halo),
-  // inaczej pierwsze przejście czyta macierze z poprzedniej klatki.
-  const firstSceneRender = renderBody.indexOf('this.renderer.render(this.scene');
-  assert.ok(firstSceneRender > 0, 'render() renderuje scenę');
-  assert.ok(syncIdx < firstSceneRender, 'sync musi poprzedzać pierwsze przejście sceny');
-
-  const directBody = core3d.slice(renderDirectStart, renderDirectStart + 4000);
-  assert.match(directBody, /this\._syncSceneMatrices\(\)/, '_renderDirect też potrzebuje synca');
+  const backdropBody = body('\n  renderBackdrop(camera) {');
+  const bSync = backdropBody.indexOf('this._syncSceneMatrices()');
+  const bRender = backdropBody.indexOf('renderer.render(this.scene, camera)');
+  assert.ok(bSync > 0 && bRender > bSync, 'renderBackdrop: sync przed renderem sceny');
 });
 
 test('węzły ruszane W TRAKCIE render() odświeżają macierz same', () => {
