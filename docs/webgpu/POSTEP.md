@@ -45,7 +45,7 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 | 05 | Planety, słońce, mgławica, gwiazdy, stacje | 03 | 04, 06–10, 12–20 | xhigh | w toku (podagent, worktree `statki-wt/05`; maska = zastępnik do 03, tolerancja `planeta-cien` po 03) | | |
 | 06 | Ring 1/5: biblioteka TSL, pieczenie map, odczyt asynchroniczny, `halo_ring_demo` | 01 | 02–05, 12–20 | max | zrobione, scalone (070a407) | b7ecdc9…88d8df5 | kończy przejściową regresję terenu ringu z 01 |
 | 07 | Ring 2/5: teren + zestaw przemysłowy | 06 | 04, 05, 12–20 | xhigh | zrobione, scalone (f735076) | 7b43733…96baa16 | |
-| 08 | Ring 3/5: struktura + atmosfera | 07 | j.w. | xhigh | w toku (podagent, worktree `statki-wt/08`) | | |
+| 08 | Ring 3/5: struktura + atmosfera | 07 | j.w. | xhigh | zrobione, scalone (979ed52) | 2c87915…fa8389b (scalenie `main` 60c7e4c) | nowe sceny bazy `ring-dach`, `ring-dach-z01`, `ring-habitat` (dopisane z tagu) |
 | 09 | Ring 4/5: megastruktura + miasto (kopuły, landmarki, drzewa) | 08 | j.w. | xhigh | czeka | | |
 | 10 | Ring 5/5: K-7 + ringi-archetypy Marsa i Jowisza | 09 | j.w. | xhigh | czeka | | ring bez zamienników |
 | 11 | Tło menu + rozgrzewka pipeline'ów | 05, 10 | 12–20 | max | czeka | | nowy `menuBackdrop.test` |
@@ -404,3 +404,20 @@ Todo (2): „PORT poprawka 1 / 3 (TODO integracji)” w `tests/shipCore.test.mjs
   i linie Fx3D 28 ms (12-B); tag WebGL: 132 ms (nowy program). Rozgrzewka SIDE (`EngineExhaustBatch`) niedopisana — 4
   pipeline'y w pierwszej klatce gry jak dawniej (→ 11). Zamienniki silników 0 (warp 49 → 13 po 02/04/13). Inwentarz z HEAD
   bd96586: port 32 pliki z GLSL, 48 materiałów, 6136 linii. Testy: 1477 / 7 porażek bazowych / 3 todo; `npm test` OK.
+- **Zadanie 08 scalone do `main`** (2c87915, 9dbb513, 4d501b9, e00dd1b, 0ce79e1, fa8389b; scalenie `main` 60c7e4c;
+  scalenie 979ed52): konstrukcja ringu (`HaloStructure` = NodeMaterial z `makeHaloStructureNodes`: płyty, miasto na
+  ścianie, odcisk brył dachu z pozornymi cieniami, pasy świateł, światło analityczne, powietrze na ścianach; warianty
+  górna ściana FG i reszta bryły; wspólny wierzchołek pasów `haloStripVertexTSL`; reguły dachu jako czyste funkcje,
+  `haloRoofTSL(u)`) i atmosfera (`makeHaloCloudNodes`, `makeHaloShellNodes`) w TSL; usunięte GLSL obu modułów,
+  `HALO_GLSL_CLOUDCOVER`, `haloPaletteDefines` (`HALO_GLSL_SURFACE`/`INDKIT` zostają dla 09, `HALO_GLSL_STORM` tylko
+  dla narzędzia parzystości). Zgodność: demo `--set mid` (22 kadry) konstrukcja + chmury + powłoka ≤ 0,15% >8/255 (tylko
+  krawędzie MSAA), Ultra ≤ 0,047%, noc ≤ 0,055%; gra: sceny ringu vs po 07/13 0%, `k7-hala` 0,0081%; nowe sceny (baza z
+  tagu dopisana `baza.mjs --dopisz`): `ring-dach__ring-fg` 0,019%, `ring-dach-z01__ring-fg` 0,0015%,
+  `ring-habitat__ring` 0,039%. Parzystość GPU: reguły dachu 0 rozbieżnych decyzji (4096 komórek / działek, 8192 klasy),
+  hasze z wejść całkowitych 100%, hasz okien 99,4% (FMA tylko na składowej y — najbliżej bazy), kreski tarasów 99,2%.
+  Kompilacja na zimno 1,1–1,7 s na wariant konstrukcji (WebGL 2,9 s; → rozgrzewka 11). Znalezione: `discard` w Tint nie
+  przerywa shadera — znikająca górna ściana i puste chmury liczą pełne cieniowanie (→ 23: pomijać rysunek, osłonić
+  chmury); teren w wariancie „do planety” z bliska 1,43% (`in_p1`, obszar 07). Narzędzia: `zrzuty.mjs --czesci-ringu`
+  (warianty `__ring`, `__ring-tlo`, `__ring-fg`), sesja `ziemia-ring`, `halo-ring-shots.mjs --czesci`. Zamienniki:
+  ring-z02 / ring-z1 44 → 40, k7-hala 41 → 37. Inwentarz z HEAD 979ed52: port 30 plików z GLSL, 45 materiałów, 5417 linii.
+  Testy: 1486 / 7 porażek bazowych / 3 todo; `npm test` OK.
