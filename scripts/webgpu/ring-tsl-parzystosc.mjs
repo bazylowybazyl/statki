@@ -4,7 +4,8 @@
 // (TSL) i porównuje wyniki element po elemencie.
 //   node scripts/webgpu/ring-tsl-parzystosc.mjs [--out .tmp/webgpu/zadania/06/parzystosc] [--port 5342] [--planet earth]
 // Wynik: <out>/parzystosc.json i parzystosc.md. Narzędzie dla zadań 07–10 (materiały
-// ringu na tej bibliotece); znika razem z haloRingGLSL.js.
+// ringu na tej bibliotece); znika razem z haloRingGLSL.js (porównanie reguł dachu TSL ↔
+// plan brył na CPU z zadania 08 nie potrzebuje GLSL — do przeniesienia, jeśli ma zostać).
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { startChrome, attachLogs, waitFor, evaluate, repo, parseArgs } from './wspolne.mjs';
@@ -34,10 +35,10 @@ try {
   const md = [
     `# Parzystość biblioteki ringu GLSL ↔ TSL (${out.planet})`, '',
     `GLSL: ${res.meta.glsl}  `, `TSL: ${res.meta.tsl}; błędy walidacji WebGPU: ${res.meta.tslErrors?.length || 0}`, '',
-    '| funkcja | próbek | identyczne bity | maks. |Δ| | średnia |Δ| | maks. Δ wzgl. | NaN GLSL / TSL |', '|---|---:|---:|---:|---:|---:|---|'
+    '| funkcja | próbek | identyczne bity | kanały x / y / z / w | maks. |Δ| | średnia |Δ| | maks. Δ wzgl. | NaN GLSL / TSL |', '|---|---:|---:|---|---:|---:|---:|---|'
   ];
   for (const [name, r] of Object.entries(res.results)) {
-    md.push(`| ${name} | ${r.n} | ${r.identicalPct}% | ${f(r.maxAbs)} | ${f(r.meanAbs)} | ${f(r.maxRel)} | ${r.nanGLSL} / ${r.nanTSL} |`);
+    md.push(`| ${name} | ${r.n} | ${r.identicalPct}% | ${(r.identicalPctByChannel || []).join(' / ')} | ${f(r.maxAbs)} | ${f(r.meanAbs)} | ${f(r.maxRel)} | ${r.nanGLSL} / ${r.nanTSL} |`);
   }
   // zadanie 07: zestaw przemysłowy TSL (GPU, float32) ↔ bliźniak JS indKitPart (float64)
   if (res.mirror) {
@@ -46,6 +47,16 @@ try {
       `Części: ${m.parts}, rozbieżne decyzje (istnienie, materiał, kształt): **${m.decisionMismatch}**. ` +
       `Wartości: ${m.values}, identyczne po zaokrągleniu JS do float32: ${m.identicalPct}%, maks. ${m.maxUlp} ULP ` +
       `(0: ${m.ulpHist[0]}, 1: ${m.ulpHist[1]}, 2: ${m.ulpHist[2]}, >2: ${m.ulpHist['>2']}), maks. |Δ| ${f(m.maxAbs)}.`);
+  }
+  // zadanie 08: reguły komórek dachu TSL (GPU) ↔ plan brył na CPU (industrialCellRule / plotRule / klasa sektora)
+  if (res.roofMirror) {
+    const r = res.roofMirror;
+    md.push('', '## Dach: reguły komórek TSL na GPU ↔ plan brył na CPU', '',
+      `Komórki: ${r.cells}, działki: ${r.plots}, klasy sektorów: ${r.classes}; rozbieżne decyzje (zajętość, rodzaj, ` +
+      `orientacja radiatora, klasa sektora): **${r.decisionMismatch}**. Wymiary i przesunięcia: ${r.values} wartości, maks. ` +
+      `${r.maxUlp} ULP (0: ${r.ulpHist[0]}, 1: ${r.ulpHist[1]}, 2: ${r.ulpHist[2]}, >2: ${r.ulpHist['>2']}), maks. |Δ| ${f(r.maxAbs)}. ` +
+      `Rodzaje w próbce: ${Object.entries(r.kinds).map(([k, v]) => `${k} ${v}`).join(', ')}.`);
+    if (r.worst?.length) md.push('', `Przykłady rozbieżności: \`${JSON.stringify(r.worst)}\``);
   }
   writeFileSync(join(outDir, 'parzystosc.md'), md.join('\n') + '\n');
   console.log(md.join('\n'));

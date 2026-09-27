@@ -10,7 +10,7 @@
 //
 // Teraz każdy kształt kadłuba ma warstwę w tablicy tekstur R8 (256×256):
 // odległość ze znakiem od sylwetki (alfa sprite'a ∩ aktywne heksy), ujemna
-// w środku. Shader passa (HULL_SDF_SHADOW_GLSL) przenosi piksel do układu
+// w środku. Pass maski (hullSdfShadow — TSL) przenosi piksel do układu
 // statku (to samo przekształcenie co mesh kadłuba), przycina promień do
 // prostokąta warstwy, pomija piksele NA własnym kadłubie i idzie po SDF
 // w stronę słońca (sphere tracing). Półcień = najmniejszy stosunek
@@ -26,6 +26,7 @@
 // Pieczenie ma budżet na klatkę. hexShips3D woła acquire od największych
 // kadłubów, więc duże okręty dostają cień od pierwszej klatki.
 import * as THREE from 'three';
+import { Break, Continue, If, Loop, clamp, dot, float, int, max, min, select, smoothstep, texture, vec2 } from 'three/tsl';
 
 export const HULL_SDF_LAYER_SIZE = 256;     // bok warstwy w tekselach
 export const HULL_SDF_LAYER_COUNT = 64;     // warstw w tablicy (256² × 64 × 1 B = 4 MB)
@@ -69,87 +70,104 @@ const SELF_RATIO = SELF_BIAS_TEXELS / CODE_SPAN_TEXELS;
 const STEP_RATIO = STEP_FLOOR_TEXELS / CODE_SPAN_TEXELS;
 const UV_MIN = 0.5 / HULL_SDF_LAYER_SIZE;
 
-function glslNum(value) {
-  const s = Number(value).toPrecision(8);
-  return /[.eE]/.test(s) ? s : `${s}.0`;
+// Stałe marszu dla testów i narzędzi (lustro CPU i TSL liczą z tych samych liczb).
+export const HULL_SDF_TRACE_CONSTANTS = Object.freeze({
+  uvMin: UV_MIN, softRatio: SOFT_RATIO, selfRatio: SELF_RATIO, stepRatio: STEP_RATIO, penumbraStep: PENUMBRA_STEP
+});
+
+// Tablica warstw zastępcza (1×1×1, 255 = „daleko”), dopóki hexShips3D nie poda tablicy
+// HullShadowSdf: węzeł tekstury potrzebuje przy budowie tekstury tego samego rodzaju
+// (texture_2d_array, R8, filtr liniowy), a przy uHullCount = 0 i tak nic jej nie czyta.
+export function createHullSdfPlaceholderTexture() {
+  const t = new THREE.DataArrayTexture(new Uint8Array([255]), 1, 1, 1);
+  t.name = 'hullShadowSdf:zastepcza';
+  t.format = THREE.RedFormat;
+  t.type = THREE.UnsignedByteType;
+  t.magFilter = THREE.LinearFilter;
+  t.minFilter = THREE.LinearFilter;
+  t.wrapS = THREE.ClampToEdgeWrapping;
+  t.wrapT = THREE.ClampToEdgeWrapping;
+  t.generateMipmaps = false;
+  t.colorSpace = THREE.NoColorSpace;
+  t.unpackAlignment = 1;
+  t.needsUpdate = true;
+  return t;
 }
 
-// Cień kadłubów liczony w passie shadow shafts (core3d.js wstrzykuje ten blok
-// przed main). Uniformy wypełnia Core3D z rejestru pushShaftHullSdf.
-//   uHullA[i] = (początek prostokąta SDF w three-space xy, świat na jednostkę
-//                kodu tekstury, długość kadłuba w świecie)
-//   uHullM[i] = macierz: przesunięcie w świecie -> UV warstwy
-//   uHullC[i] = (max U, max V prostokąta, warstwa, siła)
+// Cień kadłubów w passie maski słońca (core3d.js) — TSL, port dawnego HULL_SDF_SHADOW_GLSL
+// 1:1 (te same wzory w tej samej kolejności). Wklejana, bez setLayout: czyta tablice
+// uniformów i teksturę warstw (funkcja z layoutem i uniformem w domknięciu jest w three r183
+// buforowana globalnie — PLAN §3). Uniformy wypełnia Core3D z rejestru pushShaftHullSdf:
+//   u.uHullA[i] = (początek prostokąta SDF w three-space xy, świat na jednostkę
+//                  kodu tekstury, długość kadłuba w świecie)
+//   u.uHullM[i] = macierz: przesunięcie w świecie -> UV warstwy
+//   u.uHullC[i] = (max U, max V prostokąta, warstwa, siła)
+//   u.uHullSdf  = węzeł bazowy tablicy warstw (z uv-atrapą), u.uHullCount / uHullSteps (int),
+//   u.uHullLenMul (float). Węzły, nie wpisy adaptera (dla uniformArray — `.node`).
+// worldP (vec2, three-space), d = jednostkowy kierunek DO słońca, sunDist — węzły float.
+// Wynik: najciemniejszy cień kadłubów, 0 = brak, 1 = pełny (przed siłą cienia kadłuba).
+// Próbki warstw z jawnym poziomem 0 (textureSampleLevel) — w pętli zależnej od piksela
+// WGSL nie pozwala na próbkowanie z pochodnymi.
 // Zmieniając logikę, zmień też traceHullShadowCpu (lustro dla testów).
-export const HULL_SDF_SHADOW_GLSL = `
-uniform sampler2DArray uHullSdf;
-uniform int uHullCount;
-uniform int uHullSteps;
-uniform float uHullLenMul;
-uniform vec4 uHullA[${HULL_SDF_SHAFT_CAP}];
-uniform vec4 uHullM[${HULL_SDF_SHAFT_CAP}];
-uniform vec4 uHullC[${HULL_SDF_SHAFT_CAP}];
+export function hullSdfShadow(u, worldP, d, sunDist) {
+  const shadow = float(0.0).toVar('hullShadow');
+  Loop({ start: int(0), end: u.uHullCount, type: 'int', condition: '<', name: 'hullIdx' }, ({ hullIdx }) => {
+    const hA = u.uHullA.element(hullIdx).toVar();
+    const hM = u.uHullM.element(hullIdx).toVar();
+    const hC = u.uHullC.element(hullIdx).toVar();
+    const distScale = hA.z.toVar();
+    const span = hA.w.toVar();
+    If(distScale.lessThanEqual(0.0).or(span.lessThanEqual(0.0)), () => { Continue(); });
 
-float hullSdfDist(vec2 uv, float layer, float distScale) {
-  return (textureLod(uHullSdf, vec3(uv, layer), 0.0).r - 0.5) * distScale;
-}
+    // Piksel i promień w UV warstwy — to samo przekształcenie co mesh kadłuba.
+    const rel = worldP.sub(hA.xy).toVar();
+    const q = vec2(dot(hM.xy, rel), dot(hM.zw, rel)).toVar();
+    const dq = vec2(dot(hM.xy, d), dot(hM.zw, d)).toVar();
+    const safeDq = vec2(
+      select(dq.x.greaterThanEqual(0.0), max(dq.x, 1e-12), min(dq.x, -1e-12)),
+      select(dq.y.greaterThanEqual(0.0), max(dq.y, 1e-12), min(dq.y, -1e-12))
+    ).toVar();
+    const tA = vec2(UV_MIN).sub(q).div(safeDq).toVar();
+    const tB = hC.xy.sub(q).div(safeDq).toVar();
+    const tNear = min(tA, tB).toVar();
+    const tFar = max(tA, tB).toVar();
+    const reach = span.mul(u.uHullLenMul).toVar();
+    const t = max(max(tNear.x, tNear.y), 0.0).toVar();
+    const tEnd = min(min(min(tFar.x, tFar.y), reach), sunDist).toVar();
+    If(tEnd.lessThanEqual(t), () => { Continue(); });
 
-// Najciemniejszy cien kadlubow w worldP (three-space); d = jednostkowy
-// kierunek DO slonca. 0 = brak, 1 = pelny (przed sila cienia kadluba).
-float hullSdfShadow(vec2 worldP, vec2 d, float sunDist) {
-  float shadow = 0.0;
-  for (int i = 0; i < ${HULL_SDF_SHAFT_CAP}; i++) {
-    if (i >= uHullCount) break;
-    vec4 hA = uHullA[i];
-    vec4 hM = uHullM[i];
-    vec4 hC = uHullC[i];
-    float distScale = hA.z;
-    float span = hA.w;
-    if (distScale <= 0.0 || span <= 0.0) continue;
+    const layer = hC.z.toVar();
+    const softMax = distScale.mul(SOFT_RATIO).toVar();
+    const wMin = distScale.mul(SELF_RATIO).toVar();
+    const stepFloor = distScale.mul(STEP_RATIO).toVar();
+    const hullSdfDist = (uvNode) => texture(u.uHullSdf, uvNode, float(0)).depth(layer).r.sub(0.5).mul(distScale);
+    // Piksel na własnym kadłubie: bez samocienia — dzień i noc kadłuba
+    // liczy jego własne oświetlenie w materiale kadłuba. (Próbka tylko przy t <= 0,
+    // jak skrócone && w GLSL — TSL wyciąga odczyt przed warunek złożony.)
+    If(t.lessThanEqual(0.0), () => {
+      If(hullSdfDist(q).lessThan(wMin), () => { Continue(); });
+    });
 
-    // Piksel i promien w UV warstwy — to samo przeksztalcenie co mesh kadluba.
-    vec2 rel = worldP - hA.xy;
-    vec2 q = vec2(dot(hM.xy, rel), dot(hM.zw, rel));
-    vec2 dq = vec2(dot(hM.xy, d), dot(hM.zw, d));
-    vec2 safeDq = vec2(
-      dq.x >= 0.0 ? max(dq.x, 1e-12) : min(dq.x, -1e-12),
-      dq.y >= 0.0 ? max(dq.y, 1e-12) : min(dq.y, -1e-12)
-    );
-    vec2 tA = (vec2(${glslNum(UV_MIN)}) - q) / safeDq;
-    vec2 tB = (hC.xy - q) / safeDq;
-    vec2 tNear = min(tA, tB);
-    vec2 tFar = max(tA, tB);
-    float reach = span * uHullLenMul;
-    float t = max(max(tNear.x, tNear.y), 0.0);
-    float tEnd = min(min(min(tFar.x, tFar.y), reach), sunDist);
-    if (tEnd <= t) continue;
-
-    float layer = hC.z;
-    float softMax = distScale * ${glslNum(SOFT_RATIO)};
-    float wMin = distScale * ${glslNum(SELF_RATIO)};
-    float stepFloor = distScale * ${glslNum(STEP_RATIO)};
-    // Piksel na wlasnym kadlubie: bez samocienia — dzien i noc kadluba
-    // liczy jego wlasne oswietlenie w shaderze heksow.
-    if (t <= 0.0 && hullSdfDist(q, layer, distScale) < wMin) continue;
-
-    float res = 1.0;
-    float tRes = t;
-    for (int k = 0; k < ${HULL_SDF_MAX_STEPS}; k++) {
-      if (k >= uHullSteps || t > tEnd) break;
-      float h = hullSdfDist(q + dq * t, layer, distScale);
-      // Polcien rosnie z dystansem od statku: ostry przy burcie, miekki dalej.
-      float w = max(softMax * clamp(t / span, 0.0, 1.0), wMin);
-      float r = h / w;
-      if (r < res) { res = r; tRes = t; }
-      if (res <= 0.0) break;
-      t += max(h, max(stepFloor, w * ${glslNum(PENUMBRA_STEP)}));
-    }
-    float fall = 1.0 - smoothstep(0.2, 1.0, tRes / max(reach, 1.0));
-    shadow = max(shadow, (1.0 - smoothstep(0.0, 1.0, res)) * fall * hC.w);
-  }
+    const res = float(1.0).toVar();
+    const tRes = float(t).toVar();
+    Loop({ start: int(0), end: u.uHullSteps, type: 'int', condition: '<', name: 'hullStep' }, () => {
+      If(t.greaterThan(tEnd), () => { Break(); });
+      const h = hullSdfDist(q.add(dq.mul(t))).toVar();
+      // Półcień rośnie z dystansem od statku: ostry przy burcie, miękki dalej.
+      const w = max(softMax.mul(clamp(t.div(span), 0.0, 1.0)), wMin).toVar();
+      const r = h.div(w).toVar();
+      If(r.lessThan(res), () => {
+        res.assign(r);
+        tRes.assign(t);
+      });
+      If(res.lessThanEqual(0.0), () => { Break(); });
+      t.addAssign(max(h, max(stepFloor, w.mul(PENUMBRA_STEP))));
+    });
+    const fall = float(1.0).sub(smoothstep(0.2, 1.0, tRes.div(max(reach, 1.0))));
+    shadow.assign(max(shadow, float(1.0).sub(smoothstep(0.0, 1.0, res)).mul(fall).mul(hC.w)));
+  });
   return shadow;
 }
-`;
 
 // ── Pola odległości (czyste funkcje, bez DOM) ──────────────────────────────
 
@@ -498,7 +516,7 @@ export function bakeHullSdfLayer(grid, alphaMap, dst, dstOffset = 0, layoutOut =
   return layout;
 }
 
-// 12 floatów okludera dla shadera (układ jak w HULL_SDF_SHADOW_GLSL).
+// 12 floatów okludera dla passa maski (układ A, M, C jak w hullSdfShadow).
 // Przekształcenie = mesh kadłuba w hexShips3D: T(ex, -ey) · Rz(rot) · S(sx, -sy),
 // rot = rotation.z mesha (-kąt, a dla orientacji billboardu +kąt), sx/sy ze znakiem.
 export function packHullShaftOccluder(out, offset, ex, ey, rot, sx, sy, layout, layer, strength = 1) {
@@ -530,7 +548,7 @@ export function packHullShaftOccluder(out, offset, ex, ey, rot, sx, sy, layout, 
   return out;
 }
 
-function smoothstep(e0, e1, x) {
+function smoothstepCpu(e0, e1, x) {
   const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
   return t * t * (3 - 2 * t);
 }
@@ -555,7 +573,7 @@ export function sampleSdfLayer(layerData, layerOffset, u, v) {
   return (top * (1 - ty) + bot * ty) / 255;
 }
 
-// Lustro GLSL (hullSdfShadow dla JEDNEGO kadłuba) — do testów i podglądu
+// Lustro CPU hullSdfShadow (TSL) dla JEDNEGO kadłuba — do testów i podglądu
 // offline (scripts/podglad-cieni.mjs). worldX/Y i kierunek d w three-space.
 export function traceHullShadowCpu(worldX, worldY, dx, dy, sunDist, packed, offset, layerData, options = {}) {
   const steps = Math.min(HULL_SDF_MAX_STEPS, Math.max(1, options.steps ?? 24));
@@ -595,8 +613,8 @@ export function traceHullShadowCpu(worldX, worldY, dx, dy, sunDist, packed, offs
     if (res <= 0) break;
     t += Math.max(h, Math.max(stepFloor, w * PENUMBRA_STEP));
   }
-  const fall = 1 - smoothstep(0.2, 1.0, tRes / Math.max(reach, 1));
-  return (1 - smoothstep(0, 1, res)) * fall * strength;
+  const fall = 1 - smoothstepCpu(0.2, 1.0, tRes / Math.max(reach, 1));
+  return (1 - smoothstepCpu(0, 1, res)) * fall * strength;
 }
 
 // ── Runtime: tablica warstw w przeglądarce ─────────────────────────────────
@@ -693,12 +711,18 @@ export const HullShadowSdf = {
   texture: null,
   data: null,
   layers: null,
+  // Wgranie JEDNEJ warstwy po pieczeniu: (texture, layer) => true, gdy warstwa poszła na GPU.
+  // Ustawia Core3D (uploadTextureLayer): three r183 w WebGPU ignoruje texture.layerUpdates
+  // i na needsUpdate wgrywa całą tablicę — 64 × 256² = 4 MB, ~3 ms CPU na KAŻDE pieczenie
+  // (zmierzone, zadanie 03); jedna warstwa to 64 KB. Bez haka albo zanim tablica jest na GPU
+  // (false) — needsUpdate jak dotąd.
+  layerUploader: null,
   _perGrid: new WeakMap(),
   _templates: new WeakMap(),
   _frame: 0,
   _bakesLeft: MAX_BAKES_PER_FRAME,
   _bakeMs: 0,
-  stats: { bakes: 0, bakeMs: 0, evictions: 0 },
+  stats: { bakes: 0, bakeMs: 0, evictions: 0, layerUploads: 0 },
 
   ensureTexture() {
     if (this.texture) return this.texture;
@@ -715,6 +739,9 @@ export const HullShadowSdf = {
     texture.generateMipmaps = false;
     texture.colorSpace = THREE.NoColorSpace;
     texture.unpackAlignment = 1;
+    // Cała tablica („daleko”) na GPU przy pierwszym użyciu — potem pieczenia wgrywają
+    // pojedyncze warstwy (layerUploader).
+    texture.needsUpdate = true;
     this.texture = texture;
     this.layers = Array.from({ length: HULL_SDF_LAYER_COUNT }, () => ({ owner: null, usedFrame: -1 }));
     return texture;
@@ -733,6 +760,7 @@ export const HullShadowSdf = {
     this._bakeMs = 0;
     this.stats.bakes = 0;
     this.stats.bakeMs = 0;
+    this.stats.layerUploads = 0;
   },
 
   // Po disposeHexShips3D: wszystkie warstwy wolne, sylwetki pieką się od nowa.
@@ -875,8 +903,12 @@ export const HullShadowSdf = {
       return false;
     }
     entry.layer = layer;
-    this.texture.addLayerUpdate(layer);
-    this.texture.needsUpdate = true;
+    if (typeof this.layerUploader === 'function' && this.layerUploader(this.texture, layer) === true) {
+      this.stats.layerUploads++;
+    } else {
+      this.texture.addLayerUpdate(layer);
+      this.texture.needsUpdate = true;
+    }
     const ms = nowMs() - t0;
     this._bakesLeft--;
     this._bakeMs += ms;

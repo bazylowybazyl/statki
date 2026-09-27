@@ -68,6 +68,23 @@ bit w bit. Zrzuty samego terenu (porównanie z bazą WebGL z tagu, póki reszta 
 `node scripts/halo-ring-shots.mjs --set m4 --teren [--bez-otoczenia]` — ten sam skrypt w worktree z tagu
 `webgl-baseline`; czas kompilacji terenu na zimno: `__halo.terrainCompileMs` w demie.
 
+**Konstrukcja i atmosfera (port, zadanie 08):** `HaloStructure` rysuje NodeMaterial (`makeHaloStructureNodes` w
+`haloRingStructure.js`, 1:1 z dawnym GLSL: płyty, „miasto na ścianie” z tarasami i oknami, odcisk brył dachu z pozornymi
+cieniami, pasy świateł, oświetlenie analityczne z odbiciem otoczenia, powietrze na ścianach od środka). Wierzchołek pasów
+obrotowych (`haloStripVertexTSL`: atrybuty `aAlong` / `aProfile` / `aEdge`, instancja `iSeg`, RTE) dzielą z nim chmury
+(`makeHaloCloudNodes`) i powłoka powietrza (`makeHaloShellNodes`, `haloRingAtmosphere.js`). Górna ściana w FG to osobny
+wariant materiału (przerzedzenie `haloFgClip`: zanik dachu nad wąwozem i wycięcia nad halą / zatoką / statkiem z uniformów
+ustawianych w `update` / `setCutaway`), reszta bryły — drugi; oba z uniformami ringu (`haloRingU`) i powierzchni
+(`haloSurfU`) plus `uSegCells` obiektu. Reguły komórek dachu są czystymi funkcjami WGSL z regułami profilu w parametrach
+(`haloRoofIndCell`, `haloRoofPlot`, `haloRoofIndShadow`, `haloRoofInDock`…; `haloRoofTSL(ring.uniforms)` wiąże je
+z blokiem ringu i dokłada klasę sektora z tablicy `uSectorClass`) — na GPU zero rozbieżnych decyzji względem planu brył
+(`industrialCellRule` / `plotRule`). Chmury: przezroczyste, DoubleSide, `forceSinglePass` (jak ShaderMaterial w bazie),
+mieszanie premultiplikowane, `renderOrder` 30; powłoka: BackSide, kolor + cel · alfa, `renderOrder` 20. `HALO_GLSL_CLOUDCOVER`
+usunięte. Zrzuty części ringu: `node scripts/halo-ring-shots.mjs --set mid --czesci terrain,structure,structureTop,clouds,shell
+[--bez-otoczenia]` (ten sam skrypt w worktree z tagu; `__halo.compileMs` — czasy kompilacji siatek ringu na zimno), w grze
+`node scripts/webgpu/zrzuty.mjs --czesci-ringu` (warianty `__ring`, `__ring-tlo`, `__ring-fg`; sceny `ring-dach`,
+`ring-dach-z01`, `ring-habitat` pokazują dach w FG i habitat z dala od portu — przy porcie konstrukcji prawie nie widać).
+
 ## Płaszczyzna gry na środku wstęgi (decyzja użytkownika 2026-09-23)
 
 `flightLevel: 0.5` (domyślnie dla habitatu w stronę kosmosu): z = 0 przecina podłogę habitatu w
@@ -389,7 +406,10 @@ każdym kadłubem, scena kompleksu, port bez udawanego życia), `haloRingLandmar
 wariant Halo). Port WebGPU: `haloRingTSL.test.mjs` i `haloRingAsync.test.mjs` (06),
 `haloRingTerrainTSL.test.mjs` (07: definicja zestawu = bliźniak JS bit w bit, czyste funkcje zestawu,
 WGSL terenu budowany w Node — CDLOD w pętli, dwa bufory ringu, bez macierzy uv tekstur, rosnące stałe
-krawędzie smoothstep, wariant tylko z kroków powietrza, blok `haloSurfU`, wybór węzłów CDLOD).
+krawędzie smoothstep, wariant tylko z kroków powietrza, blok `haloSurfU`, wybór węzłów CDLOD),
+`haloRingStructureTSL.test.mjs` (08: konstrukcja i atmosfera bez GLSL, stan renderu jak dawny ShaderMaterial, WGSL pasów
+i wariantu FG, sole / progi / kolejność reguł dachu jak plan brył na CPU, warianty jakości atmosfery, zaokrąglenia haszy
+okien jak w bazie).
 
 ### Narzędzie: zrzuty prawdziwej gry
 
