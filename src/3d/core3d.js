@@ -9,15 +9,18 @@
 // (src/3d/tsl/zamiennik.js). Tylko WebGPU: bez adaptera renderer nie powstaje,
 // gra pokazuje komunikat (Core3D.ready → false, gpuUnsupported).
 import * as THREE from 'three/webgpu';
-import { Fn, texture, vec4 } from 'three/tsl';
+import { texture } from 'three/tsl';
 import { BLOOM_DEFAULTS } from './bloomConfig.js';
 import { Shockwave3DManager } from '../effects3d/shockwave3D.js';
 import { HULL_SDF_MAX_STEPS, HULL_SDF_OCCLUDER_FLOATS, HULL_SDF_SHADOW_GLSL, HULL_SDF_SHAFT_CAP } from './hullShadowSdf.js';
 import { sunShadowUniforms } from './sunShadowMask.js';
 import { installPlaceholders } from './tsl/zamiennik.js';
-import { acesGry, linearDoSrgb } from './tsl/kolorGry.js';
+import { BloomGry, MAX_HEAT_HAZE_SOURCES, createPostUniforms, createUberPost } from './tsl/postGry.js';
 
-const MAX_HEAT_HAZE_SOURCES = 24;
+// Brama znaczników czasu GPU (_gpuTimerGate): tyle zapytań musi zostać w puli three
+// (2 na pass), żeby zmieścić całą klatkę — dwa rendery podzielonego ekranu z modułami
+// (pieczenie map ringu, SDF kadłubów) i z zapasem na passy kolejnych zadań.
+const GPU_TIMER_FRAME_QUERIES = 512;
 // Zastępcze flagi warstw dla wolnej kamery (lot nad miastem): renderuj wszystko.
 const LAYERS_ALL_ACTIVE = Object.freeze({ planets: true, halo: true, ringPlanets: true, shields: true });
 const PLANET_RENDER_LAYER = 3;
@@ -307,134 +310,6 @@ function makeScenePass(name, bucket, layer, isOrtho, clearColor, clearDepth = tr
   return { name, bucket, layer, ortho: isOrtho, clearColor, clearDepth, enabled: true };
 }
 
-// Źródło GLSL „uber” (gorące powietrze do 24 źródeł, dyspersja dysz, ACES gry,
-// LinearTosRGB) — port do TSL w zadaniu 02. Na WebGPU nie powstaje z niego
-// materiał: post zadania 01 to uber-lite (_createPost: ACES gry + sRGB z
-// kolorGry.js), źródła gorącego powietrza zbierane są dalej i kasowane co klatkę.
-// Fale warpa usunięte (warp poza portem, USTALENIA §7).
-const UberPostShader = {
-  name: 'UberPostShader',
-  uniforms: {
-    tDiffuse: { value: null },
-    uTime: { value: 0 },
-    uSourceCount: { value: 0 },
-    uGlobalStrength: { value: 1.0 },
-    uAspect: { value: 1.0 },
-    uHeatSources: { value: Array.from({ length: MAX_HEAT_HAZE_SOURCES }, () => new THREE.Vector4(2, 2, 0, 0)) },
-    uHeatDirs: { value: Array.from({ length: MAX_HEAT_HAZE_SOURCES }, () => new THREE.Vector2(0, 0)) }
-  },
-  vertexShader: `precision highp float; varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-  fragmentShader: `
-    precision highp float;
-    uniform sampler2D tDiffuse;
-    varying vec2 vUv;
-
-    vec3 ACESFilmicToneMapping(vec3 color) {
-      return clamp((color * (2.51 * color + 0.03)) / (color * (2.43 * color + 0.59) + 0.14), 0.0, 1.0);
-    }
-    vec4 LinearTosRGB(in vec4 value) {
-      return vec4(mix(pow(value.rgb, vec3(0.41666)) * 1.055 - vec3(0.055), value.rgb * 12.92, vec3(lessThanEqual(value.rgb, vec3(0.0031308)))), value.a);
-    }
-
-    #ifdef HEAT_HAZE
-    uniform float uTime;
-    uniform int uSourceCount;
-    uniform float uGlobalStrength;
-    uniform float uAspect;
-    uniform vec4 uHeatSources[${MAX_HEAT_HAZE_SOURCES}];
-    uniform vec2 uHeatDirs[${MAX_HEAT_HAZE_SOURCES}];
-
-    float hash12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
-    float noise(vec2 p) { vec2 i = floor(p); vec2 f = fract(p); float a = hash12(i); float b = hash12(i + vec2(1.0, 0.0)); float c = hash12(i + vec2(0.0, 1.0)); float d = hash12(i + vec2(1.0, 1.0)); vec2 u = f * f * (3.0 - 2.0 * f); return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y; }
-    #endif
-
-    void main() {
-      vec2 uv = vUv;
-      vec2 distortion = vec2(0.0);   // izotropowe (wybuchy, rakiety, tarcze)
-      vec2 nozzleHaze = vec2(0.0);   // dysze — z mikroskopijna dyspersja
-
-      #ifdef HEAT_HAZE
-      // Przestrzen skorygowana aspektem: dystanse izotropowe na ekranie
-      // (radius zrodla jest w jednostkach osi v).
-      vec2 asp = vec2(uAspect, 1.0);
-
-      for (int i = 0; i < ${MAX_HEAT_HAZE_SOURCES}; i++) {
-        if (i >= uSourceCount) break;
-        vec4 src = uHeatSources[i];
-        float radius = max(0.0001, src.z);
-        vec2 p = (uv - src.xy) * asp;
-
-        // dir = kierunek wydechu w przestrzeni ekranu; (0,0) => zrodlo izotropowe
-        // (eksplozje, rakiety, trafienia w tarcze).
-        vec2 dir = uHeatDirs[i];
-        if (dot(dir, dir) > 0.25) {
-          // DYSZA — port maski zaklocen z dema plazmy (dema/silniki): radius =
-          // promien wylotu. Stozek 7R za dysza (szerokosc 1,25R -> 2,6R),
-          // najsilniej tuz za wylotem, zanik exp(-2,4 z / 10R) i gasniecie
-          // w drugiej polowie stozka; szum plynie w dol strumienia. Przesuniecie
-          // ~0,12 promienia dyszy na ekranie — gorace powietrze ma ledwie zyc,
-          // a nie falowac kadlubem (dawniej stozek 3,2R z kopem x3, do 0,022 UV).
-          // W grze dysza siedzi na krawedzi kadluba (w demie kadlub byl daleko
-          // przed dzwonem), wiec szczyt maski przesuniety ~1R za wylot — drga
-          // powietrze za rufa, nie poszycie wokol dyszy.
-          float along = dot(p, dir) / radius;
-          if (along < 0.4 || along > 7.2) continue;
-          float across = dot(p, vec2(-dir.y, dir.x)) / radius;
-          float halfW = mix(1.25, 2.6, clamp(along / 7.0, 0.0, 1.0));
-          float aw = abs(across) / halfW;
-          if (aw >= 1.0) continue;
-          float mask = exp(-along * 0.24)
-                     * (1.0 - smoothstep(0.85, 1.25, halfW / 1.8))
-                     * smoothstep(0.4, 1.6, along)
-                     * (1.0 - smoothstep(0.55, 1.0, aw));
-          vec2 nc = vec2(across * 2.2 + float(i) * 7.3, along * 0.9 - uTime * 9.9);
-          float nx = noise(nc) * 0.65 + noise(nc * 2.03 + vec2(7.1, 3.3)) * 0.35;
-          float ny = noise(nc + vec2(31.7, 11.9)) * 0.65 + noise(nc * 2.03 + vec2(17.3, 3.9)) * 0.35;
-          vec2 off = (vec2(nx, ny) * 2.0 - 1.0) * (mask * src.w * uGlobalStrength * radius * 0.12);
-          nozzleHaze += off / asp;
-          continue;
-        }
-
-        float maxExt = radius * 3.4;
-        if (abs(p.x) > maxExt || abs(p.y) > maxExt) continue;
-        float t = length(p) / radius;
-        if (t >= 1.0) continue;
-
-        // Źródło izotropowe — bez zmian: drobny szum adwektowany (dwie
-        // niezalezne skladowe zamiast pierscieni sin() i szwow fract()).
-        vec2 nc = vec2(-p.x, p.y) * (3.0 / radius);
-        nc.y -= uTime * 2.2;
-        nc.x += float(i) * 5.19;
-        float n1 = noise(nc) * 0.65 + noise(nc * 2.17 + 11.3) * 0.35;
-        float n2 = noise(nc * 1.31 + vec2(5.2, 8.7)) * 0.65 + noise(nc * 2.9 + vec2(1.7, 9.2)) * 0.35;
-        vec2 wob = vec2(n1, n2) - 0.5;
-
-        float fall = smoothstep(1.0, 0.15, t) * smoothstep(0.0, 0.1, t);
-        float ampl = src.w * fall * uGlobalStrength;
-        vec2 disp = vec2(-wob.x * 1.4, wob.y * 0.6) * (0.0035 * ampl);
-        distortion += disp / asp;
-      }
-      distortion = clamp(distortion, vec2(-0.022), vec2(0.022));
-      nozzleHaze = clamp(nozzleHaze, vec2(-0.012), vec2(0.012));
-      #endif
-
-      // Dysze: mikroskopijna dyspersja, jak w demie plazmy — tylko tyle, zeby
-      // gorace powietrze zylo. Poza strefa dysz jeden odczyt, jak dawniej.
-      vec4 sceneColor;
-      if (dot(nozzleHaze, nozzleHaze) > 1.0e-12) {
-        vec2 base = uv + distortion;
-        float cr = texture2D(tDiffuse, base + nozzleHaze * 0.82).r;
-        vec4 cg = texture2D(tDiffuse, base + nozzleHaze);
-        float cb = texture2D(tDiffuse, base + nozzleHaze * 1.22).b;
-        sceneColor = vec4(cr, cg.g, cb, cg.a);
-      } else {
-        sceneColor = texture2D(tDiffuse, uv + distortion);
-      }
-      gl_FragColor = LinearTosRGB(vec4(ACESFilmicToneMapping(sceneColor.rgb), sceneColor.a));
-    }
-  `
-};
-
 function recordRenderDbg(name, ms) {
   const fn = (typeof globalThis !== 'undefined') ? globalThis.__renderDbgRecord : null;
   if (typeof fn !== 'function') return;
@@ -486,9 +361,20 @@ export const Core3D = {
   // Flagi ustawiają właściciele: planet3d.assets.js (tym samym cullingiem, którym
   // chowa planety) i shield3D.js — zachowawczo, w razie wątpliwości true.
   layerActivity: { planets: true, halo: true, ringPlanets: true, shields: true },
-  // Bloom (BloomNode w RenderPipeline) — zadanie 02; do tego czasu null, a
-  // strojenie (bloomConfig.js, DevVFX.bloom) czeka w _getBloomConfig.
+  // Bloom: BloomGry (BloomNode three + zgodność z dawnym passem WebGL, tsl/postGry.js)
+  // w grafie postu; siła / promień / próg to uniformy (_applyBloomPassConfig co klatkę
+  // z bloomConfig.js albo tunera DevVFX.bloom), rozmiar = bufor rysowania ×
+  // resolutionScale w każdym renderze. Powstaje z urządzeniem (_createPost).
   bloomPass: null, bloomResolutionScale: BLOOM_DEFAULTS.resolutionScale, bloomBaseStrength: BLOOM_DEFAULTS.strength, bloomBaseThreshold: BLOOM_DEFAULTS.threshold,
+  // Post: dwa RenderPipeline zbudowane raz — z bloomem (_post) i bez (_postBezBloomu,
+  // perfToggles.bloom = false: bez kosztu passów bloomu, bez przebudowy przy
+  // przełączeniu). Wspólne uniformy „uber” (gorące powietrze, uHeatOn zamiast define).
+  _postBezBloomu: null, _postUniforms: null,
+  // Pomiar bloomu: jego passy lecą w updateBefore węzła, W ŚRODKU renderu postu —
+  // haki BloomGry liczą je do kubełka 'bloom', a _renderPost odejmuje je od 'post'.
+  _onBloomRenderBegin: null, _onBloomRenderEnd: null, _bloomT0: 0,
+  _bloomInfoBefore: { calls: 0, triangles: 0, points: 0, lines: 0 },
+  _bloomInfoDelta: { calls: 0, triangles: 0, points: 0, lines: 0, ms: 0 },
   msaaSamples: 0,
   // Zegar GPU. Timery per pass mierzą czas CPU wokół pracy asynchronicznej, więc
   // gdy wąskim gardłem staje się karta, blokada wypada w losowym draw callu i
@@ -502,6 +388,8 @@ export const Core3D = {
   gpuComputeMs: 0,
   _gpuTimerPending: { render: false, compute: false },
   _gpuTimerFrame: -1,
+  _gpuTimerGateFrame: -1,
+  _gpuTimestampFeature: false,
   _onGpuRenderTimestamp: null,
   _onGpuComputeTimestamp: null,
   _onGpuTimestampError: null,
@@ -638,12 +526,49 @@ export const Core3D = {
     info.other.lines = Math.max(0, info.total.lines - knownLines);
   },
 
+  // Strojenie bloomu na żywo: węzły strength / radius / threshold BloomNode to
+  // uniformy (.value — bez przebudowy pipeline'u), skala rozdzielczości wchodzi przy
+  // najbliższym renderze bloomu (BloomGry.setSize).
   _applyBloomPassConfig() {
-    if (!this.bloomPass) return;
+    const bloom = this.bloomPass;
+    if (!bloom) return;
     const cfg = this._getBloomConfig();
-    this.bloomPass.strength = cfg.strength;
-    this.bloomPass.radius = cfg.radius;
-    this.bloomPass.threshold = cfg.threshold;
+    bloom.strength.value = cfg.strength;
+    bloom.radius.value = cfg.radius;
+    bloom.threshold.value = cfg.threshold;
+    bloom.resolutionScale = cfg.resolutionScale;
+  },
+
+  // Haki pomiaru bloomu (przypięte raz w init — bez domknięć per klatka).
+  _bloomRenderBegin() {
+    this._readRenderInfoInto(this._bloomInfoBefore);
+    this._bloomT0 = performance.now();
+  },
+
+  _bloomRenderEnd() {
+    const ms = performance.now() - this._bloomT0;
+    const before = this._bloomInfoBefore;
+    const cur = this.renderer?.info?.render;
+    const d = this._bloomInfoDelta;
+    d.calls += Math.max(0, (Number(cur?.drawCalls) || 0) - before.calls);
+    d.triangles += Math.max(0, (Number(cur?.triangles) || 0) - before.triangles);
+    d.points += Math.max(0, (Number(cur?.points) || 0) - before.points);
+    d.lines += Math.max(0, (Number(cur?.lines) || 0) - before.lines);
+    d.ms += Math.max(0, ms);
+    this._addRenderInfoDelta('bloom', ms, before);
+  },
+
+  // Passy bloomu siedzą w przyroście renderu postu (updateBefore węzła) — już
+  // policzone w 'bloom', więc zdejmujemy je z 'post' (zostaje sam uber).
+  _takeBloomOutOfPost() {
+    const d = this._bloomInfoDelta;
+    const post = this.lastFrameRenderInfo?.post;
+    if (!post || !(d.calls > 0 || d.ms > 0)) return;
+    post.calls = Math.max(0, post.calls - d.calls);
+    post.triangles = Math.max(0, post.triangles - d.triangles);
+    post.points = Math.max(0, post.points - d.points);
+    post.lines = Math.max(0, post.lines - d.lines);
+    post.ms = Math.max(0, post.ms - d.ms);
   },
 
   // Część synchroniczna: scena, kamery, światła, cele renderu, passy — moduły
@@ -815,13 +740,15 @@ export const Core3D = {
     const bloomCfg = this._getBloomConfig();
     this.bloomResolutionScale = bloomCfg.resolutionScale;
 
-    // Handlery zegara GPU przypięte raz (bez domknięć per klatka).
+    // Handlery zegara GPU i pomiaru bloomu przypięte raz (bez domknięć per klatka).
     this._onGpuRenderTimestamp = (ms) => this._handleGpuTimestamp('render', ms);
     this._onGpuComputeTimestamp = (ms) => this._handleGpuTimestamp('compute', ms);
     this._onGpuTimestampError = () => {
       this._gpuTimerPending.render = false;
       this._gpuTimerPending.compute = false;
     };
+    this._onBloomRenderBegin = () => this._bloomRenderBegin();
+    this._onBloomRenderEnd = () => this._bloomRenderEnd();
 
     this._applyPassToggles();
     this.isInitialized = true;
@@ -904,6 +831,9 @@ export const Core3D = {
     renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.setClearColor(0x000000, 0);
     renderer.info.autoReset = false;
+    // Cecha timestamp-query (backend po init: trackTimestamp && hasFeature) — zapamiętana,
+    // bo brama znaczników (_gpuTimerGate) przełącza flagę backendu na pojedyncze klatki.
+    this._gpuTimestampFeature = renderer.backend?.trackTimestamp === true;
     installPlaceholders(renderer);
     this._guardPendingPipelines(renderer);
     renderer.setPixelRatio(this.pixelRatio);
@@ -927,20 +857,50 @@ export const Core3D = {
       return draw.call(this, renderObject, info);
     };
     backend.__core3dPendingPipelineGuard = true;
+    // three r183 połyka odrzucenie createRenderPipelineAsync (GPUPipelineError, np.
+    // „Vertex buffer count (9) exceeds the maximum number of vertex buffers (8)”):
+    // pusty catch, a błąd nie trafia do zakresu błędów walidacji — pipeline zostaje
+    // „w budowie” na zawsze i osłona wyżej po cichu pomija rysunek (zadanie 04:
+    // odłamki kadłubów znikały bez śladu). Błąd do konsoli (harness liczy go w
+    // `bledy`), raz na etykietę pipeline'u; rysunek dalej pominięty.
+    const device = backend.device;
+    if (device && typeof device.createRenderPipelineAsync === 'function' && !device.__core3dPipelineErrorLog) {
+      const createAsync = device.createRenderPipelineAsync.bind(device);
+      const reported = new Set();
+      device.createRenderPipelineAsync = (descriptor) => createAsync(descriptor).catch((err) => {
+        const label = descriptor?.label || '?';
+        if (!reported.has(label)) {
+          reported.add(label);
+          console.error(`[Core3D] pipeline „${label}” nie powstał: ${err?.message || err}`);
+        }
+        throw err;
+      });
+      device.__core3dPipelineErrorLog = true;
+    }
   },
 
-  // Post zadania 01 („uber-lite”): bufor sceny (MSAA rozwiązane do .texture) →
-  // ACES gry → LinearTosRGB → kanwa. Bloom i gorące powietrze — zadanie 02.
-  // outputColorTransform = false: renderer ma NoToneMapping i wyjście liniowe,
-  // transformacji three nie dokładamy (byłaby podwójna).
+  // Post (tsl/postGry.js), kolejność jak dawny łańcuch WebGL resolve → bloom → uber:
+  // bufor sceny (MSAA rozwiązane do .texture) → bloom (BloomGry z bloomConfig.js) →
+  // „uber”: gorące powietrze przesuwa odczyt sceny RAZEM z bloomem, dyspersja dysz,
+  // ACES gry → LinearTosRGB → kanwa. Dwa RenderPipeline (z bloomem i bez) zbudowane
+  // raz — perfToggles.bloom wybiera w _renderPost, bez przebudowy i bez kosztu
+  // bloomu, gdy wyłączony. outputColorTransform = false: renderer ma NoToneMapping
+  // i wyjście liniowe, transformacji three nie dokładamy (byłaby podwójna).
   _createPost(renderer) {
-    const sceneTexture = texture(this.composerTarget.texture);
-    const outputNode = Fn(() => {
-      const scene = sceneTexture.toVar();
-      return vec4(linearDoSrgb(acesGry(scene.rgb)), scene.a);
-    })();
-    const post = new THREE.RenderPipeline(renderer, outputNode);
+    const cfg = this._getBloomConfig();
+    const sceneTexture = this.composerTarget.texture;
+    const bloom = new BloomGry(texture(sceneTexture), cfg.strength, cfg.radius, cfg.threshold);
+    bloom.resolutionScale = cfg.resolutionScale;
+    bloom.onRenderBegin = this._onBloomRenderBegin;
+    bloom.onRenderEnd = this._onBloomRenderEnd;
+    const uniforms = createPostUniforms();
+    const post = new THREE.RenderPipeline(renderer, createUberPost({ sceneTexture, bloomTexture: bloom.getTextureNode(), uniforms }));
     post.outputColorTransform = false;
+    const postBezBloomu = new THREE.RenderPipeline(renderer, createUberPost({ sceneTexture, bloomTexture: null, uniforms }));
+    postBezBloomu.outputColorTransform = false;
+    this.bloomPass = bloom;
+    this._postUniforms = uniforms;
+    this._postBezBloomu = postBezBloomu;
     return post;
   },
 
@@ -948,6 +908,8 @@ export const Core3D = {
     try {
       try { this.planetHaloPass?.material?.dispose?.(); } catch { }
       try { this._post?.dispose?.(); } catch { }
+      try { this._postBezBloomu?.dispose?.(); } catch { }
+      try { this.bloomPass?.dispose?.(); } catch { }
       try { this.sunShadowTarget?.dispose?.(); } catch { }
       try { this.composerTarget?.dispose?.(); } catch { }
       try { this.refractionTarget?.dispose?.(); } catch { }
@@ -957,6 +919,9 @@ export const Core3D = {
     } catch { }
     this.isInitialized = false;
     this._post = null;
+    this._postBezBloomu = null;
+    this._postUniforms = null;
+    this.bloomPass = null;
     this.sunShadowTarget = null;
     sunShadowUniforms.uSunShadowMap.value = null;
     sunShadowUniforms.uSunShadowOn.value = 0;
@@ -981,10 +946,11 @@ export const Core3D = {
     if (this.renderPassOrtho) this.renderPassOrtho.enabled = t.orthoPass !== false;
     if (this.renderPassShields) this.renderPassShields.enabled = t.orthoPass !== false;
     if (this.renderPassFg) this.renderPassFg.enabled = t.fgPass !== false;
-    if (this.bloomPass) this.bloomPass.enabled = t.bloom !== false;
     if (this.shadowShaftsPass) this.shadowShaftsPass.enabled = t.shadowShafts !== false;
-    // Post (ACES gry + sRGB) jest zawsze. Mapa cienia: w WebGPU odświeżanie jest
-    // per światło (_requestSunShadowUpdate) — globalnie tylko włącznik.
+    // Post (ACES gry + sRGB) jest zawsze; bloom i gorące powietrze przełącza sam post
+    // (_renderPost: pipeline z bloomem albo bez, uHeatOn) — bez przebudowy.
+    // Mapa cienia: w WebGPU odświeżanie jest per światło (_requestSunShadowUpdate) —
+    // globalnie tylko włącznik.
     if (this.renderer?.shadowMap) this.renderer.shadowMap.enabled = t.threeShadows !== false;
     if (this.shadowCatcher) this.shadowCatcher.visible = t.threeShadows !== false;
     if (this.shadowCatcherFg) this.shadowCatcherFg.visible = (t.fgShadows !== false) && (t.threeShadows !== false);
@@ -1019,8 +985,8 @@ export const Core3D = {
     if ('shadows' in next) t.threeShadows = !!next.shadows;
     Object.assign(t, next);
     this._passTogglesDirty = true;
-    // heatHaze: gorące powietrze wróci w zadaniu 02 jako uniform (bez przebudowy
-    // pipeline'u); do tego czasu przełącznik tylko blokuje zbieranie źródeł.
+    // bloom / heatHaze czyta render() co klatkę (wybór pipeline'u postu, uniform
+    // uHeatOn) — przełączenie nie przebudowuje pipeline'ów.
     this._applyPassToggles();
     return this.getPerfStatus();
   },
@@ -1124,10 +1090,9 @@ export const Core3D = {
     if (this.planetHaloTarget) {
       this.planetHaloTarget.setSize(bufW, bufH);
     }
-    if (this.bloomPass && typeof this.bloomPass.setSize === 'function') {
-      const bScale = Math.max(0.1, Math.min(1, Number(this.bloomResolutionScale) || 1));
-      this.bloomPass.setSize(Math.floor(width * this.pixelRatio * bScale), Math.floor(height * this.pixelRatio * bScale));
-    }
+    // Bloom sam bierze rozmiar bufora rysowania w każdym renderze (BloomNode.updateBefore);
+    // tu tylko skala rozdzielczości (tuner zmienia bloomResolutionScale i woła resize).
+    if (this.bloomPass) this.bloomPass.resolutionScale = Math.max(0.1, Math.min(1, Number(this.bloomResolutionScale) || 1));
   },
 
   syncCamera(gameCamera, viewWidth, viewHeight, viewOffsetX = 0) {
@@ -1199,8 +1164,10 @@ export const Core3D = {
   },
 
   // Czy renderer mierzy czas GPU (cecha timestamp-query; PerfHUD pokazuje stan).
+  // Zapamiętane przy starcie urządzenia — brama (_gpuTimerGate) wyłącza
+  // backend.trackTimestamp na pojedyncze klatki.
   get gpuTimerSupported() {
-    return this.renderer?.backend?.trackTimestamp === true;
+    return this._gpuTimestampFeature === true;
   },
 
   // Zegar GPU: po klatce (koniec render / renderBackdrop) rozwiązanie zapytań —
@@ -1231,6 +1198,31 @@ export const Core3D = {
       else this.gpuComputeMs = ms;
     }
     this.renderer?.backend?.timestampQueryPool?.[type]?.timestamps?.clear?.();
+  },
+
+  // Brama znaczników czasu na granicy klatki rAF (start render / renderBackdrop).
+  // Pula three ma 2048 zapytań (2 na pass), a wynik zlecenia przychodzi po kilku–
+  // kilkudziesięciu klatkach (harness headless: ~70 klatek, ~200 ms); klatka to dziś
+  // ~25 passów (sceny, 12 bloomu, post), więc pula się przepełniała — three ostrzegało
+  // „Maximum number of queries exceeded”, a passy po przepełnieniu dostawały indeks
+  // null → pisały znaczniki do slotów 0/1 (psuły pierwszy pomiar paczki). Gdy w puli
+  // brak miejsca na całą klatkę: bez wiszącego zlecenia — nowe od razu (zeruje pulę
+  // synchronicznie), z wiszącym — ta klatka bez znaczników (backend.trackTimestamp =
+  // false: initTimestampQuery nic nie dopisuje do passów), wynik zlecenia odblokowuje.
+  // Zmierzone klatki zostają pełne; PerfHUD dostaje wynik rzadziej.
+  _gpuTimerGate() {
+    const renderer = this.renderer;
+    const backend = renderer?.backend;
+    if (!backend || this._gpuTimestampFeature !== true) return;
+    const frame = renderer.info.frame;
+    if (frame === this._gpuTimerGateFrame) return;
+    this._gpuTimerGateFrame = frame;
+    backend.trackTimestamp = true;
+    const pool = backend.timestampQueryPool?.render;
+    if (!pool || !(pool.maxQueries > 0)) return;
+    if (pool.maxQueries - pool.currentQueryIndex >= GPU_TIMER_FRAME_QUERIES) return;
+    if (!this._gpuTimerPending.render) this._gpuTimerPoll();
+    else backend.trackTimestamp = false;
   },
 
   _gpuTimerPoll() {
@@ -1366,6 +1358,7 @@ export const Core3D = {
     const renderer = this.renderer;
     const dbgEnabled = typeof globalThis !== 'undefined' && typeof globalThis.__renderDbgRecord === 'function';
     const tRenderTotal0 = performance.now();
+    this._gpuTimerGate();
 
     // Toggles zmieniają się tylko z panelu/presetu — aplikuj przy zmianie,
     // nie co klatkę (w środku jest m.in. traverse całej sceny po światłach).
@@ -1418,17 +1411,20 @@ export const Core3D = {
       this._renderPlanetHaloPrepass();
     }
 
-    // Bloom (02) dostanie tu konfigurację; bez passa — nic.
+    // Bloom: siła / promień / próg / skala z bloomConfig.js albo tunera (uniformy węzła).
     if (this.bloomPass && t.bloom !== false) this._applyBloomPassConfig();
 
     // Źródła gorącego powietrza: producenci (dysze, wybuchy, rakiety, tarcze)
     // tylko dorzucają, render zabiera wszystko, co uzbierało się od poprzedniej
-    // klatki, i kasuje licznik PRZY KONSUMPCJI (kasowanie u producenta gubiło
-    // źródła z ticku overlaya). Do zadania 02 post ich nie rysuje.
+    // klatki, do uniformów „uber” i kasuje licznik PRZY KONSUMPCJI (kasowanie u
+    // producenta gubiło źródła z ticku overlaya, który leci już PO tym passie).
+    // Mapowanie świat → ekran nie działa w wolnej kamerze 3D — tam bez zakłóceń.
+    const nowSec = (typeof performance !== 'undefined' ? performance.now() : Date.now()) * 0.001;
+    const heatEnabled = t.heatHaze !== false && !freePerspective;
+    this._updatePostUniforms(heatEnabled, heatEnabled ? this.heatHazeCount : 0, nowSec);
     this.heatHazeCount = 0;
 
     const tComposer0 = performance.now();
-    const nowSec = (typeof performance !== 'undefined' ? performance.now() : Date.now()) * 0.001;
     this._updateShockwaves(nowSec, t, layerActivity);
 
     // Scena → composerTarget (MSAA; backend rozwiązuje je do .texture na końcu
@@ -1488,13 +1484,46 @@ export const Core3D = {
     this._addRenderInfoDelta(pass.bucket, performance.now() - t0, before);
   },
 
-  // Post na kanwę (bieżący cel = null): uber-lite, od zadania 02 bloom i „uber”.
+  // Uniformy „uber” przed postem: źródła gorącego powietrza (≤ 24, dane z
+  // pushHeatHazeWorld), uHeatOn = perfToggles.heatHaze (dawny define HEAT_HAZE),
+  // zegar szumu, aspekt ekranu. nowSec niepodany = zegar bez zmian (tło menu).
+  _updatePostUniforms(heatOn, sourceCount, nowSec) {
+    const u = this._postUniforms;
+    if (!u) return;
+    const count = Math.max(0, Math.min(sourceCount | 0, this.heatHazeMaxSources | 0, MAX_HEAT_HAZE_SOURCES));
+    u.uHeatOn.value = heatOn ? 1 : 0;
+    u.uSourceCount.value = count;
+    u.uGlobalStrength.value = 1.0;
+    // Zawinięty zegar szumu: przy uTime·9,9 po godzinie gry hash tracił precyzję
+    // float32 (kanciasty szum). Skok wzoru co 10 min jest niewidoczny.
+    if (Number.isFinite(nowSec)) u.uTime.value = nowSec % 600;
+    u.uAspect.value = this.width / Math.max(1, this.height);
+    if (count > 0 && this.heatHazeSources && this.heatHazeDirs) {
+      const dst = u.uHeatSources.value;
+      const dstDirs = u.uHeatDirs.value;
+      const src = this.heatHazeSources;
+      const srcDirs = this.heatHazeDirs;
+      for (let i = 0; i < count; i++) {
+        const base = i * 4;
+        dst[i].set(src[base], src[base + 1], src[base + 2], src[base + 3]);
+        dstDirs[i].set(srcDirs[i * 2], srcDirs[i * 2 + 1]);
+      }
+    }
+  },
+
+  // Post na kanwę (bieżący cel = null): bloom (gdy włączony) i „uber”. Bloom liczy
+  // się w updateBefore swojego węzła W ŚRODKU post.render() — haki BloomGry zbierają
+  // jego passy do kubełka 'bloom', a _takeBloomOutOfPost zdejmuje je z 'post'.
   _renderPost() {
     const before = this._renderInfoBefore;
     this._readRenderInfoInto(before);
+    const d = this._bloomInfoDelta;
+    d.calls = 0; d.triangles = 0; d.points = 0; d.lines = 0; d.ms = 0;
+    const post = (this.perfToggles?.bloom === false && this._postBezBloomu) ? this._postBezBloomu : this._post;
     const t0 = performance.now();
-    this._post.render();
+    post.render();
     this._addRenderInfoDelta('post', performance.now() - t0, before);
+    this._takeBloomOutOfPost();
   },
 
   // Halo planet: głębia planet (warstwa 3, bez koloru) + poświaty (warstwa 5)
@@ -1616,13 +1645,14 @@ export const Core3D = {
   },
 
   // Tło menu głównego (menuBackdrop3D.js): ta sama scena, renderer i post co
-  // gra (ACES gry + sRGB; bloom od zadania 02), ale tylko warstwa
+  // gra (bloom z bloomConfig.js, ACES gry + sRGB), ale tylko warstwa
   // MENU_BACKDROP_LAYER i kamera kinowa tła. Bez passów gry, maski cieni,
   // refrakcji — przed startem gry nic ich nie zgłasza.
   renderBackdrop(camera) {
     if (!this.isInitialized || !this.gpuReady || !camera) return;
     const renderer = this.renderer;
     const tRenderTotal0 = performance.now();
+    this._gpuTimerGate();
     if (this._passTogglesDirty) {
       this._applyPassToggles();
       this._passTogglesDirty = false;
@@ -1645,6 +1675,8 @@ export const Core3D = {
     this._addRenderInfoDelta('bg', performance.now() - tRenderTotal0);
     camera.layers.mask = prevMask;
     if (this.bloomPass && this.perfToggles.bloom !== false) this._applyBloomPassConfig();
+    // Tło menu: bez źródeł gorącego powietrza (przed startem gry nic ich nie zgłasza).
+    this._updatePostUniforms(false, 0);
     renderer.setRenderTarget(null);
     this._renderPost();
     renderer.setClearColor(prevClearColor, prevClearAlpha);
@@ -1918,21 +1950,19 @@ export const Core3D = {
     const dirLen = Math.sqrt(dirX * dirX + dirY * dirY);
     if (dirLen > 0.0001) { dirX /= dirLen; dirY /= dirLen; } else { dirX = 0; dirY = 0; }
 
-    const isSplit = typeof window !== 'undefined' && window.splitScreenMode && this.activeCam2;
-    if (isSplit) {
-      this._pushHeatHazeForCamera(this.activeCam1, true, false, worldX, worldY, radiusWorld, strength, dirX, dirY);
-      this._pushHeatHazeForCamera(this.activeCam2, true, true, worldX, worldY, radiusWorld, strength, dirX, dirY);
-    } else {
-      this._pushHeatHazeForCamera(this.activeCam1, false, false, worldX, worldY, radiusWorld, strength, dirX, dirY);
-    }
+    // Źródło w UV całego kadru kamery gry. Podzielony ekran to dwa renderSingle
+    // pełnego kadru (drawHexShips3D wycina środek każdego) — dawna gałąź „pół
+    // ekranu na kamerę” z jednego renderu wkładała źródła w złe miejsce; zostaje
+    // kamera gracza 1 (drugi widok gorącego powietrza nie dostaje — jak dotąd).
+    this._pushHeatHazeForCamera(this.activeCam1, worldX, worldY, radiusWorld, strength, dirX, dirY);
 
     return true;
   },
 
-  // Metoda zamiast dwóch domknięć tworzonych przy każdym pushHeatHazeWorld.
-  _pushHeatHazeForCamera(camData, isSplit, isRightSide, worldX, worldY, radiusWorld, strength, dirX, dirY) {
+  // Metoda zamiast domknięcia tworzonego przy każdym pushHeatHazeWorld.
+  _pushHeatHazeForCamera(camData, worldX, worldY, radiusWorld, strength, dirX, dirY) {
     const zoom = Math.max(0.0001, camData.zoom || 1);
-    const camW = isSplit ? this.width / 2 : this.width;
+    const camW = this.width;
     const camH = this.height;
     const halfW = camW / 2 / zoom;
     const halfH = camH / 2 / zoom;
@@ -1943,10 +1973,10 @@ export const Core3D = {
     const worldW = halfW * 2;
     const worldH = halfH * 2;
 
-    let u = (worldX - left) / worldW;
+    const u = (worldX - left) / worldW;
     const v = (worldY - bottom) / worldH;
     // Promien w jednostkach osi v: shader koryguje os u przez uAspect,
-    // wiec mapowanie swiat->ekran jest izotropowe (takze w split-screen).
+    // wiec mapowanie swiat->ekran jest izotropowe.
     const rUv = radiusWorld / worldH;
     // Źródło o promieniu poniżej ~1,5 px nie zniekształca niczego widocznego,
     // a zajmuje jeden z 24 slotów (daleki zoom, mała jednostka).
@@ -1961,10 +1991,6 @@ export const Core3D = {
     const zoomNow = Math.max(0.0001, camW / worldW);
     const ampZoomScale = Math.max(0.22, Math.min(1.0, zoomNow));
     const amp = isNozzle ? strength : strength * ampZoomScale;
-
-    if (isSplit) {
-      u = isRightSide ? (u * 0.5 + 0.5) : (u * 0.5);
-    }
 
     // Stożek dyszy sięga 7,2 R w dół wydechu (2,6 R w bok), źródło izotropowe
     // ~3,4 promienia — cullujemy z zapasem.

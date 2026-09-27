@@ -9,84 +9,127 @@
 //    pierwszym odłamku, żywa trzyma, aż kamera odjedzie (jak sparkSystem3D),
 //  - jedna pula na grę (bez puli i tekstury na typ kadłuba jak odłamki heksów),
 //  - bez żaru — świecący okruch czytał się jak „odprysk” shadera, żar zostaje na kadłubie.
-import * as THREE from 'three';
+//  - materiał w TSL (port WebGPU, zadanie 04): jeden graf, jeden materiał na obie pule;
+//    maska słońca przez to samo miejsce importu co kadłuby (hexShips3D.tsl.js).
+import * as THREE from 'three/webgpu';
+import {
+  Fn, If, Discard, float, vec2, vec3, vec4, attribute, varying,
+  positionGeometry, normalGeometry, modelViewMatrix, cameraProjectionMatrix, frontFacing, screenCoordinate,
+  cos, sin, cross, dot, exp, floor, fract, max, min, mix, normalize, pow, select, smoothstep
+} from 'three/tsl';
 import { Core3D } from './core3d.js';
 import { createMetalDebrisGeometry } from './beamDebris3D.js';
 import { sceneOriginNearCamera } from './sceneOrigin.js';
-import { SUN_SHADOW_GLSL, sunShadowUniforms } from './sunShadowMask.js';
+import { makeUniforms } from './tsl/uniformy.js';
+import { sunFill, sunVisibility } from './hexShips3D.tsl.js';
 
 export const HULL_DEBRIS_CAPACITY = 8192;
 export const HULL_DEBRIS_LIFE = 8;
 // Kamera dalej od początku puli niż tyle — dane żywych odłamków przesuwamy do nowego.
 const REBASE_DIST = 60000;
 
-const VERTEX = `
-attribute float aFace;
-attribute vec3 aStart;
-attribute vec3 aVel;
-attribute vec4 aRot;
-attribute vec3 aInfo;
-attribute vec3 aColor;
-attribute vec4 aShape;
-uniform float uTime;
-varying vec3 vColor;
-varying float vAlpha;
-varying vec3 vNormal;
-varying vec3 vLocal;
-varying float vFace;
-void main() {
-  float age = uTime - aInfo.x;
-  float life = aInfo.z;
-  vColor = aColor; vFace = aFace; vLocal = position;
-  vNormal = vec3(0.0, 0.0, 1.0);
-  vAlpha = 0.0;
-  if (age < 0.0 || age >= life) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
-  vec3 center = aStart + aVel * ((1.0 - exp(-0.6 * age)) / 0.6);
-  float angle = aShape.w + aRot.w * age;
-  vec3 axis = normalize(aRot.xyz + vec3(1e-6, 0.0, 0.0));
-  float c = cos(angle), s = sin(angle);
-  vec3 p = position * aShape.xyz * aInfo.y;
-  vec3 n = normalize(normal / aShape.xyz);
-  vec3 rotated = p * c + cross(axis, p) * s + axis * dot(axis, p) * (1.0 - c);
-  // Normalna w układzie sceny (mesh bez obrotu) — światło słońca liczone w nim.
-  vNormal = n * c + cross(axis, n) * s + axis * dot(axis, n) * (1.0 - c);
-  vAlpha = 1.0 - smoothstep(life * 0.8, life, age);
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(center + rotated, 1.0);
-}
-`;
+// Materiał odłamków (dawny VERTEX/FRAGMENT GLSL): koziołkujące płyty i kształtowniki,
+// pozycje względem początku puli (mesh.position — modelViewMatrix z kontekstu,
+// highPrecision), koniec życia ditheringiem (instancji nie da się sortować per fragment).
+function createHullDebrisMaterial() {
+  const uniforms = makeUniforms({
+    uTime: 0,
+    uLightDir: new THREE.Vector3(0, 0, 1),
+    // Jaśniej niż kadłub: płyta z góry ma NdotL ≈ 0 (słońce w płaszczyźnie gry),
+    // a ciemny okruch na ciemnym kadłubie ginął.
+    uAmbient: 0.5,
+    uDiffuse: 1.25
+  });
+  const aFace = attribute('aFace', 'float');
+  const aStart = attribute('aStart', 'vec3');
+  const aVel = attribute('aVel', 'vec3');
+  const aRot = attribute('aRot', 'vec4');
+  const aInfo = attribute('aInfo', 'vec3');
+  const aColor = attribute('aColor', 'vec3');
+  const aShape = attribute('aShape', 'vec4');
 
-const FRAGMENT = `
-uniform vec3 uLightDir;
-uniform float uAmbient;
-uniform float uDiffuse;
-varying vec3 vColor;
-varying float vAlpha;
-varying vec3 vNormal;
-varying vec3 vLocal;
-varying float vFace;
-${SUN_SHADOW_GLSL}
-void main() {
-  // Nieprzezroczyste z testem głębi, koniec życia wygaszany ditheringiem (instancji
-  // przezroczystych nie da się sortować per fragment).
-  float noise = fract(sin(dot(floor(gl_FragCoord.xy), vec2(12.9898, 78.233))) * 43758.5453);
-  if (vAlpha <= 0.0 || noise > vAlpha) discard;
-  vec3 n = normalize(gl_FrontFacing ? vNormal : -vNormal);
-  float bare = smoothstep(0.7, 0.95, vFace);
-  vec3 paint = vColor * mix(1.0, 0.62, min(1.0, vFace * 1.8));
-  vec3 color = mix(paint, vec3(0.19, 0.22, 0.25), bare);
-  float scratch = pow(0.5 + 0.5 * sin(vLocal.x * 119.0 + vLocal.z * 19.0), 12.0);
-  color *= 1.0 - scratch * 0.12;
-  float sunVis = sunVisibility();
-  float diffuse = max(0.0, dot(n, uLightDir)) * sunVis;
-  float specular = pow(max(0.0, dot(n, normalize(uLightDir + vec3(0.0, 0.0, 1.0)))), 28.0) * sunVis;
-  gl_FragColor = vec4(color * (uAmbient * sunFill(sunVis) + diffuse * uDiffuse) + specular * mix(0.12, 0.45, bare), 1.0);
+  const age = uniforms.uTime.sub(aInfo.x);
+  const life = aInfo.z;
+  const angle = aShape.w.add(aRot.w.mul(age));
+  const axis = normalize(aRot.xyz.add(vec3(1e-6, 0.0, 0.0)));
+  const c = cos(angle);
+  const s = sin(angle);
+  const rodrigues = (v) => v.mul(c).add(cross(axis, v).mul(s)).add(axis.mul(dot(axis, v)).mul(float(1.0).sub(c)));
+
+  const vertexNode = Fn(() => {
+    const center = aStart.add(aVel.mul(float(1.0).sub(exp(age.mul(-0.6))).div(0.6)));
+    const p = positionGeometry.mul(aShape.xyz).mul(aInfo.y);
+    const clip = cameraProjectionMatrix.mul(modelViewMatrix.mul(vec4(center.add(rodrigues(p)), 1.0)));
+    // Poza życiem — poza obcięciem (vec4(2, 2, 2, 1) z GLSL).
+    return select(age.lessThan(0.0).or(age.greaterThanEqual(life)), vec4(2.0, 2.0, 2.0, 1.0), clip);
+  })();
+
+  // Normalna w układzie sceny (mesh bez obrotu) — światło słońca liczone w nim.
+  const vNormal = varying(rodrigues(normalize(normalGeometry.div(aShape.xyz))), 'vDebrisNormal');
+  const vAlpha = varying(float(1.0).sub(smoothstep(life.mul(0.8), life, age)), 'vDebrisAlpha');
+  const vLocal = varying(positionGeometry, 'vDebrisLocal');
+  const vFace = varying(aFace, 'vDebrisFace');
+  const vColor = varying(aColor, 'vDebrisColor');
+
+  const fragmentNode = Fn(() => {
+    // Szum ditheringu z piksela ekranu (w WebGPU oś y w dół — wzór inny niż w WebGL, to tylko dither).
+    const noise = fract(sin(dot(floor(screenCoordinate.xy), vec2(12.9898, 78.233))).mul(43758.5453));
+    If(vAlpha.lessThanEqual(0.0).or(noise.greaterThan(vAlpha)), () => {
+      Discard();
+    });
+    const n = normalize(select(frontFacing, vNormal, vNormal.negate())).toVar();
+    const bare = smoothstep(0.7, 0.95, vFace).toVar();
+    const paint = vColor.mul(mix(1.0, 0.62, min(1.0, vFace.mul(1.8))));
+    const color = mix(paint, vec3(0.19, 0.22, 0.25), bare).toVar();
+    const scratch = pow(sin(vLocal.x.mul(119.0).add(vLocal.z.mul(19.0))).mul(0.5).add(0.5), 12.0);
+    color.mulAssign(float(1.0).sub(scratch.mul(0.12)));
+    const L = uniforms.uLightDir;
+    const sunVis = sunVisibility().toVar();
+    const diffuse = max(0.0, dot(n, L)).mul(sunVis);
+    const specular = pow(max(0.0, dot(n, normalize(L.add(vec3(0.0, 0.0, 1.0))))), 28.0).mul(sunVis);
+    return vec4(color.mul(uniforms.uAmbient.mul(sunFill(sunVis)).add(diffuse.mul(uniforms.uDiffuse)))
+      .add(specular.mul(mix(0.12, 0.45, bare))), 1.0);
+  })();
+
+  const material = new THREE.NodeMaterial();
+  material.name = 'hull:plateDebris';
+  material.uniforms = uniforms;
+  material.lights = false;
+  material.fog = false;
+  material.side = THREE.DoubleSide;
+  material.vertexNode = vertexNode;
+  material.fragmentNode = fragmentNode;
+  return material;
 }
-`;
 
 const ATTRIBUTES = { aStart: 3, aVel: 3, aRot: 4, aInfo: 3, aColor: 3, aShape: 4 };
 
+// WebGPU: najwyżej 8 buforów wierzchołków na pipeline (maxVertexBuffers = 8 także
+// w adapterze), a każdy nieprzeplatany atrybut to osobny bufor. Pozycja, normalna
+// i aFace (stałe, per wierzchołek) idą jednym przeplatanym buforem: 1 + 6 atrybutów
+// instancji = 7. Z dziewięcioma pipeline nie powstawał (three r183 połyka ten błąd
+// createRenderPipelineAsync), a odłamki po cichu znikały.
+function interleaveStaticAttributes(geometry) {
+  const pos = geometry.getAttribute('position');
+  const nor = geometry.getAttribute('normal');
+  const face = geometry.getAttribute('aFace');
+  const n = pos.count;
+  const data = new Float32Array(n * 7);
+  for (let i = 0; i < n; i++) {
+    const o = i * 7;
+    data[o] = pos.getX(i); data[o + 1] = pos.getY(i); data[o + 2] = pos.getZ(i);
+    data[o + 3] = nor.getX(i); data[o + 4] = nor.getY(i); data[o + 5] = nor.getZ(i);
+    data[o + 6] = face.getX(i);
+  }
+  const buffer = new THREE.InterleavedBuffer(data, 7);
+  geometry.setAttribute('position', new THREE.InterleavedBufferAttribute(buffer, 3, 0));
+  geometry.setAttribute('normal', new THREE.InterleavedBufferAttribute(buffer, 3, 3));
+  geometry.setAttribute('aFace', new THREE.InterleavedBufferAttribute(buffer, 1, 6));
+  return geometry;
+}
+
 function createBatch(kind, capacity, material) {
-  const geometry = createMetalDebrisGeometry(kind);
+  const geometry = interleaveStaticAttributes(createMetalDebrisGeometry(kind));
   const arrays = {};
   for (const [name, width] of Object.entries(ATTRIBUTES)) {
     arrays[name] = new Float32Array(capacity * width);
@@ -116,20 +159,7 @@ export const HullDebris3D = {
   ensure() {
     if (this.batches) return true;
     if (!Core3D?.scene) return false;
-    this.material = new THREE.ShaderMaterial({
-      uniforms: {
-        uTime: { value: 0 },
-        uLightDir: { value: new THREE.Vector3(0, 0, 1) },
-        // Jaśniej niż kadłub: płyta z góry ma NdotL ≈ 0 (słońce w płaszczyźnie gry),
-        // a ciemny okruch na ciemnym kadłubie ginął.
-        uAmbient: { value: 0.5 },
-        uDiffuse: { value: 1.25 },
-        ...sunShadowUniforms
-      },
-      vertexShader: VERTEX,
-      fragmentShader: FRAGMENT,
-      side: THREE.DoubleSide
-    });
+    this.material = createHullDebrisMaterial();
     const plates = Math.max(1, Math.floor(HULL_DEBRIS_CAPACITY * 2 / 3));
     this.batches = [createBatch('plate', plates, this.material),
       createBatch('strut', Math.max(1, HULL_DEBRIS_CAPACITY - plates), this.material)];

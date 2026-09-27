@@ -241,26 +241,35 @@ test('sun shadow mask module shares uniform objects and keeps the backdrop tint'
 });
 
 test('lit surfaces lose the sun term and dim fill; lights, glow and heat stay', () => {
-  const hullFragment = shipsSource.match(/const HEX_FRAGMENT_SHADER = `([\s\S]*?)`;/)?.[1] || '';
-  const debrisFragment = shipsSource.match(/const DEBRIS_FRAGMENT_SHADER = `([\s\S]*?)`;/)?.[1] || '';
-  assert.ok(hullFragment && debrisFragment, 'hull shaders missing');
-  assert.match(hullFragment, /\$\{SUN_SHADOW_GLSL\}/);
-  assert.match(hullFragment, /float lightMul = uDayAmbient \* sunFill\(sunVis\) \+ dayDiffuse \* uDayDiffuseMul \* sunVis;/);
-  assert.match(hullFragment, /color \+= vec3\(spec \* uSpecularMul \* litMask \* sunVis\);/);
+  // Port WebGPU (zadanie 04): kadłuby, szczątki GPU, odłamki belek i smugi wraków w TSL.
+  // Maska słońca przez JEDNO miejsce importu (hexShips3D.tsl.js — do zadania 03 zastępnik
+  // z pełnym słońcem, potem funkcje z sunShadowMask.js); tu pilnujemy, KTÓRE człony ją czytają.
+  const tsl = readFileSync(new URL('../src/3d/hexShips3D.tsl.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const hullFragment = tsl.slice(tsl.indexOf('function hullFragmentNode(opts)'), tsl.indexOf('// Offset fragmentu od początku mesha'));
+  const debrisFragment = tsl.slice(tsl.indexOf('const fragmentNode = Fn(() => {\n    const suv'), tsl.indexOf('_debrisGraph = { vertexNode, fragmentNode };'));
+  assert.ok(hullFragment.length > 0 && debrisFragment.length > 0, 'hull graphs missing');
+  assert.match(hullFragment, /const sunVis = sunVisibility\(\)\.toVar\(\);/);
+  assert.match(hullFragment, /const lightMul = HULL_SHARED\.uDayAmbient\.mul\(sunFill\(sunVis\)\)\.add\(dayDiffuse\.mul\(HULL_SHARED\.uDayDiffuseMul\)\.mul\(sunVis\)\);/);
+  assert.match(hullFragment, /color\.addAssign\(vec3\(spec\.mul\(HULL_SHARED\.uSpecularMul\)\.mul\(litMask\)\.mul\(sunVis\)\)\);/);
   // Glow z koloru w pelnym sloncu — niebieskie elementy nie gasna w cieniu.
-  assert.match(hullFragment, /float isGlowing = step\(0\.6, sunlitColor\.b\) \* step\(sunlitColor\.r, 0\.5\);/);
+  assert.match(hullFragment, /const isGlowing = step\(0\.6, sunlitColor\.z\)\.mul\(step\(sunlitColor\.x, 0\.5\)\);/);
   // Odblask slonca w lakierze gasnie, odbicie nieba zostaje.
-  assert.match(hullFragment, /float lobe = \(pow\(RdotL, glintExp\)[\s\S]*?\(sheenExp \/ uLacquerC\.x\)\) \* sunVis;/);
+  assert.match(hullFragment, /const lobe = pow\(RdotL, glintExp\)[\s\S]*?\.mul\(sheenExp\.div\(L\.uLacquerC\.x\)\)\)\.mul\(sunVis\);/);
   // Swiatla statku, stres i zar NIE widza maski.
-  const lightsLoop = hullFragment.slice(hullFragment.indexOf('for (int i = 0; i < MAX_SHIP_LIGHTS'));
-  assert.ok(lightsLoop.length > 0 && !/sunVis/.test(lightsLoop), 'ship lights, stress and heat must ignore the mask');
-  assert.match(debrisFragment, /float lightMul = uDayAmbient \* sunFill\(sunVis\) \+ NdotL \* uDayDiffuseMul \* sunVis;/);
-  // Wspolne obiekty uniformow w materialach kadluba i odlamkow.
-  assert.ok((shipsSource.match(/\.\.\.sunShadowUniforms/g) || []).length >= 2, 'hull and debris materials must share mask uniforms');
+  const lightsLoop = hullFragment.slice(hullFragment.indexOf('Loop({ start: int(0), end: int(P.uShipLightCount)'));
+  assert.ok(lightsLoop.length > 0 && !/sunVis|sunFill|sunVisibility/.test(lightsLoop), 'ship lights, stress and heat must ignore the mask');
+  assert.match(debrisFragment, /const lightMul = uDayAmbient\.mul\(sunFill\(sunVis\)\)\.add\(NdotL\.mul\(uDayDiffuseMul\)\.mul\(sunVis\)\);/);
+  // Jedno miejsce importu maski dla kadłubów, odłamków belek i smug wraków.
+  assert.match(tsl, /export const sunVisibility = /);
+  assert.match(tsl, /export const sunFill = /);
+  assert.match(tsl, /export const sunShadeUnlit = /);
+  const plates = readFileSync(new URL('../src/3d/hullDebris3D.js', import.meta.url), 'utf8');
+  assert.match(plates, /import \{ sunFill, sunVisibility \} from '\.\/hexShips3D\.tsl\.js';/);
+  assert.match(plates, /uniforms\.uAmbient\.mul\(sunFill\(sunVis\)\)\.add\(diffuse\.mul\(uniforms\.uDiffuse\)\)/);
 
   const impostorSource = readFileSync(new URL('../src/3d/hexBodyImpostorBatch.js', import.meta.url), 'utf8');
-  assert.match(impostorSource, /sunShadeUnlit\(vColor/);
-  assert.match(impostorSource, /uniforms: \{ \.\.\.sunShadowUniforms \}/);
+  assert.match(impostorSource, /import \{ sunShadeUnlit \} from '\.\/hexShips3D\.tsl\.js';/);
+  assert.match(impostorSource, /sunShadeUnlit\(aColor\.mul\(/);
 
   const bridgeSource = readFileSync(new URL('../src/3d/bridge3D.js', import.meta.url), 'utf8');
   assert.match(bridgeSource, /float hullLight = uB3Light\.x \* sunFill\(sunVis\) \+ \(vB3Hull\.x - uB3Light\.x\) \* sunVis;/);

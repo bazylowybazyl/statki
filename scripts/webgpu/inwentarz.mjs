@@ -35,7 +35,7 @@ const SCOPE_RULES = [
 
 // Uwagi ręczne do tabel (to, czego skan nie wyczyta).
 const NOTES = {
-  'src/3d/core3d.js': 'serce portu: WebGPURenderer, passy sceny i post w TSL (zadanie 01); zostały źródła GLSL do portu: uber / gorące powietrze (02) i maska słońca (03); soczewka i fale warpa usunięte',
+  'src/3d/core3d.js': 'serce portu: WebGPURenderer, passy sceny (zadanie 01), post w TSL — bloom i uber z gorącym powietrzem w src/3d/tsl/postGry.js (zadanie 02); zostało źródło GLSL maski słońca (03); soczewka i fale warpa usunięte',
   'src/3d/hexShips3D.js': 'kadłuby = gałąź beam (BEAM_SKIN + HEX_FRAGMENT); gałąź heksów (HEX/ARMOR/DEBRIS, pula szczątków GPU) w grze rysuje tylko wyłączone asteroidy, ale stoją na niej mostki-demo, rdzen-demo i pomiar drżenia → port w zadaniu 04',
   'src/effects3d/overlay.js': 'DRUGI WebGLRenderer (overlay3D eksplozji + rakiety, własny composer i bloom) — zostaje w porcie, usuwa go zadanie 20',
   // Zastąpione efektami z dem WebGPU (decyzja użytkownika 2026-09-27, PLAN §1 p. 6) — nie przenosimy 1:1.

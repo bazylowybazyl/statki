@@ -44,14 +44,14 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 | 04 | Kadłuby (belki + heksy), lakier, impostory, szczątki | 03 | 05–14, 16, 19 | max | w toku (podagent, worktree `statki-wt/04`; maska słońca po 03 — zastępnik do scalenia) | | graf na wariant zamiast materiału na encję; miejsce na światła siatki (18) |
 | 05 | Planety, słońce, mgławica, gwiazdy, stacje | 03 | 04, 06–10, 12–20 | xhigh | czeka | | |
 | 06 | Ring 1/5: biblioteka TSL, pieczenie map, odczyt asynchroniczny, `halo_ring_demo` | 01 | 02–05, 12–20 | max | zrobione, scalone (070a407) | b7ecdc9…88d8df5 | kończy przejściową regresję terenu ringu z 01 |
-| 07 | Ring 2/5: teren + zestaw przemysłowy | 06 | 04, 05, 12–20 | xhigh | w toku (podagent, worktree `statki-wt/07` z gałęzi 06 — warsztat ringu; w grze po 01) | | |
-| 08 | Ring 3/5: struktura + atmosfera | 07 | j.w. | xhigh | czeka | | |
+| 07 | Ring 2/5: teren + zestaw przemysłowy | 06 | 04, 05, 12–20 | xhigh | zrobione, scalone (f735076) | 7b43733…96baa16 | |
+| 08 | Ring 3/5: struktura + atmosfera | 07 | j.w. | xhigh | w toku (podagent, worktree `statki-wt/08`) | | |
 | 09 | Ring 4/5: megastruktura + miasto (kopuły, landmarki, drzewa) | 08 | j.w. | xhigh | czeka | | |
 | 10 | Ring 5/5: K-7 + ringi-archetypy Marsa i Jowisza | 09 | j.w. | xhigh | czeka | | ring bez zamienników |
 | 11 | Tło menu + rozgrzewka pipeline'ów | 05, 10 | 12–20 | max | czeka | | nowy `menuBackdrop.test` |
-| 12 | Infrastruktura efektów GPU: compute w klatce, siatka świateł, zniekształcenia, Fx3D w TSL | 03 | 04–11, 13–16 | max | część 12-A w toku (podagent, worktree `statki-wt/12a`: czyste moduły `src/3d/fx/`); 12-B (wpięcie w Core3D) po 03 | | podstawa pod 17–19 (i przyszłe asteroidy) |
-| 13 | Silniki: MAIN, WARP (plazma), SIDE | 03 | 04–12, 14–20 | xhigh | czeka | | |
-| 14 | Tarcze i trafienia w tarczę | 03 | 04–13, 15–20 | xhigh | czeka | | |
+| 12 | Infrastruktura efektów GPU: compute w klatce, siatka świateł, zniekształcenia, Fx3D w TSL | 03 | 04–11, 13–16 | max | 12-A zrobione i scalone (moduły `src/3d/fx/`); 12-B (wpięcie w Core3D, Fx3D w TSL) czeka na 03 | 0f3d429…37953a6 | podstawa pod 17–19 (i przyszłe asteroidy) |
+| 13 | Silniki: MAIN, WARP (plazma), SIDE | 03 | 04–12, 14–20 | xhigh | w toku (podagent, worktree `statki-wt/13`; bloom po 02, iskry Fx3D po 12-B) | | |
+| 14 | Tarcze i trafienia w tarczę | 03 | 04–13, 15–20 | xhigh | w toku (podagent, worktree `statki-wt/14`; bloom po 02) | | |
 | 15 | Mostki, rdzenie, reaktory, światła (+ `mostki-demo`, `rdzen-demo`) | 04 | 05–14, 16–20 | xhigh | czeka | | |
 | 16 | Zniszczenie stacji (+ scena bazy `stacja-rozpad`) | 03 | 04–15, 17–19 | xhigh | czeka | | |
 | 17 | Broń 1/2 z dema `bronie-webgpu`: efekty wszystkich broni (pociski, smugi, trafienia, wiązki, PD, flak) | 12, 04 | 05–11, 13–16, 19 | max | czeka | | nowe efekty — ocena obrazu zamiast tolerancji; PD i flak z kanwy 2D do 3D |
@@ -59,6 +59,7 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 | 19 | Rakiety z dema `rakiety-webgpu`: dym GPU, dysze, kule ognia, Supernowa, iskry | 12 | 05–11, 13–18 | max | czeka | | lot rakiet zostaje w `rocketSystem3D` |
 | 20 | Koniec overlaya: wybuch reaktora w Core3D, usunięcie drugiego renderera | 17, 18, 19 | 13–16 | xhigh | czeka | | jeden renderer, jeden bloom |
 | 21 | Asteroidy z dema `asteroidy-webgpu` + kolizje z olbrzymami | 12, 04, 05 (+ commit dema) | 13–20 | max | czeka (demo gotowe, commit przy starcie zadania) | | zielone światło użytkownika; stare pole (zderzenia z małymi skałami, niszczenie, łup) znika — do decyzji użytkownika |
+| 21b | Fizyka wydobycia asteroid w grze (drony, piła, ładunki, urobek) — logika i demo od sesji „Asteroid lighting bug demo” | 21, 12 (+ commit dema) | 22–23 | max | czeka | | propozycja sesji fizyki skał; otwarte: kolizje odłamów, wpływ wybuchu, udźwig, ceny |
 | 22 | Warp „Nurt” z dema `warp-webgpu` (iteracja 2) | 12, 13 (+ commit dema) | 14–21 | max | czeka (demo gotowe, commit przy starcie zadania) | | „ready do wgrania, jak skończy sesję”; wygląd iteracji 2 jeszcze nieoceniony |
 | 23 | Wydajność i precyzja: A/B z tagiem, drżenie, kompilacja, pamięć | 04–22 | nie | max | czeka | | koszt portu osobno od kosztu nowych efektów |
 | 24 | Sprzątanie i domknięcie portu | 23 | nie | xhigh | czeka | | decyzje PLAN §12 p. 1, 3 |
@@ -318,3 +319,29 @@ Todo (2): „PORT poprawka 1 / 3 (TODO integracji)” w `tests/shipCore.test.mjs
   materiałów, 8504 linie. Testy na `main`: 1389 / 7 porażek bazowych / 2 todo + niestabilne pod obciążeniem całego
   zestawu (same przechodzą): `capitalAiFlight` („ship follows a moving target…”), `hullShadowSdf` („warstwy: wspólna dla
   świeżej floty…, LRU”).
+- **Część 12-A scalona do `main`** (0f3d429, 4eb03d8, dba17aa, d086021, 37953a6): `src/3d/fx/` — `lightGrid.js` (jedna siatka
+  świateł z trzech kopii dem; baza = wersja asteroid: wycinek koła reflektora, brzeg smoothstep², mapy cienia, profile
+  `FIELD` / `CAVE`; układ lokalny przy kamerze liczony w double; 2 bufory storage; uniformy w grupie `render`; odrzucanie
+  poza kadrem; naprawiony błąd wszystkich trzech kopii — przepełnienie granic komórek w `Int16Array` dla świateł daleko
+  poza kadrem; właściciel 0 = brak; tryb `optIn`: siatkę czytają tylko materiały z flagą `gridLights` — reszta ma WGSL
+  identyczny jak bez siatki), `fxLights.js` (błyski z nośnikiem, zero alokacji), `fxRandom.js` (mulberry32 dla efektów;
+  harness ziarni go razem z `reseed` — 09f968c), `noise.js` (szumy bit w bit jak w demach), `carrier.js` (paczka nośnika +
+  lustro CPU), `gpuPoolOrigin.js` (`FxPoolOrigin`: wspólny początek przy kamerze dla pul i siatki, przeskok co 20 tys. j.,
+  kernel przesunięcia, epoki zegarów co 600 s — każda pula GPU MUSI się zarejestrować), `distortion.js`
+  (`DistortionField`: fala, implozja, gorące powietrze z kierunkiem; jeden bufor, `DISTORT_CAP` 32). Opis:
+  `docs/webgpu/FX-INFRA.md`. Koszt CPU siatki: 1024 światła 0,7 ms, 1536 — 1,1 ms. Ryzyko: `ITEM_CAP` nasyci się w dużej
+  bitwie w polu asteroid (reflektory do 14 tys. j.) — ograniczyć reflektory do najbliższych / w kadrze (21). Testy na
+  `main`: 1434 / 7 porażek bazowych / 2 todo.
+- **Zadanie 07 scalone do `main`** (7b43733…96baa16; scalenie f735076): teren ringu (CDLOD z kaskadowym morphem w `Loop`,
+  strefy, parki, zabudowa z odciskiem zestawu, konstrukcja, cienie chmur i terenu, burze, woda, światła miast, powietrze)
+  i zestaw przemysłowy (`haloIndKitTSL`, liczby części z jednej definicji `kitParts` — bliźniak JS bit w bit; na GPU 0
+  rozbieżnych decyzji w 20 480 częściach) w TSL; uniformy powierzchni w bloku `haloSurfU`; GLSL terenu usunięty,
+  `HALO_GLSL_SURFACE` / `CLOUDCOVER` przeniesione do `haloRingGLSL.js` dla 08–09, `HALO_GLSL_INDKIT` zostaje dla miasta (09).
+  Sam teren vs WebGL: demo p1–p9 ≤ 0,105% pikseli > 8/255 (tylko krawędzie MSAA), Ultra ≤ 0,048%; gra `k7-hala__teren`
+  0,10% (harness `--teren-ringu`). Kompilacja terenu 0,4–1,3 s na zimno, 63–111 ms na ciepło (11: dodać teren do
+  rozgrzewki — dziś pierwsza klatka przy ringu kompiluje go na zimno). Nowe pułapki (PLAN §3 / `agents.md`): stałe
+  `smoothstep` z odwróconymi krawędziami są w WGSL błędem kompilacji (`haloSmooth`); `screenCoordinate` liczy y od góry
+  (`haloFragCoordGL` dla ditheru 1:1); tekstura bez uv dostaje osobny uniform mat3 — uv-atrapa; FXC liczy `a·b + c` z
+  jednym zaokrągleniem, DXC z dwoma — hasze z mnożenia i dodawania przez `haloFusedMulAddInt` (bit w bit z bazą);
+  `haloStormFlash` (`cyc·1,37`) może mieć tę samą rozbieżność (burze tylko na Jowiszu z ringiem Fable — dziś niewidoczne).
+  Inwentarz: port 41 plików z GLSL, 65 materiałów, 7979 linii. Testy na `main`: 1442 / 7 porażek bazowych / 2 todo.
