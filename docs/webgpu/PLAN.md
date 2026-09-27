@@ -118,6 +118,18 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   `shield3D.tsl.js`) albo bufor storage ze slotem na obiekt (wzór `HullLightStore`, 04). **uuid `InstancedMesh` wchodzi do
   klucza programu** — każdy `InstancedMesh` z własnym materiałem ma osobny NodeBuilder (dla pul: jeden mesh, nie mesh na
   encję).
+- **Pułapki z zadania 03 (three r183):** materiały (NodeBuilder — klucz zawiera `RenderContext.id`) i pipeline'y są
+  **per kontekst renderu**, a kontekst to stan załączników celu (`liczba:format:typ:próbki:głębia:stencil`,
+  `RenderContexts.get`) — cel pomocniczy, do którego rysują materiały sceny (snapshot refrakcji, halo), ma mieć format /
+  typ / MSAA / głębię `composerTarget`; inny format = budowa wszystkiego w kadrze na zimno przy pierwszym użyciu (fala:
+  po wyrównaniu +1 budowa i +1 pipeline — sama fala). **`DataArrayTexture.layerUpdates` backend WebGPU ignoruje** —
+  `needsUpdate` wgrywa wszystkie warstwy (SDF kadłubów 64 × 256² = 4 MB: ~3 ms CPU na pieczenie); jedna warstwa
+  `queue.writeTexture` (`Core3D.uploadTextureLayer`: ~0,04 ms). **`select()` w TSL generuje if/else** — odczyt tekstury
+  w gałęzi wykonuje się tylko przy jej warunku (maska wyłączona = zero odczytów). **Wbudowany materiał bez podmiany
+  obiektu:** `NodeLibrary.fromMaterial` kopiuje WSZYSTKIE wyliczalne pola na materiał węzłowy, więc własne pole
+  `setupLightingModel` / `outputNode` na `MeshStandardMaterial` działa (klucz programu: własny `customProgramCacheKey`
+  = klucz klasy + hak). Zagnieżdżone `Loop(n)` dostają ten sam indeks `i` — w bibliotekach nazywaj indeksy
+  (`Loop({ start, end, type: 'int', condition: '<', name })`).
 - **TSL, nie `wgslFn`.** Tekstowy WGSL tylko dla wyizolowanej czystej funkcji, gdy TSL jest naprawdę niewygodny — z
   uzasadnieniem w commicie (zamyka drogę do zapasowego backendu WebGL2).
 - **Pętle:** `Loop` w TSL, nie `for` w JS generujący kopie (`mx_noise_float` ×160 rozwinięte = 44 s kompilacji).
@@ -143,7 +155,16 @@ Biblioteka `SUN_SHADOW_GLSL` → funkcje TSL (`sunVisibility`, `sunFill`, `sunSh
 próbkowaniem po **`screenUV`** (w WebGPU oś Y ekranu rośnie w dół — nie przenosić `gl_FragCoord * texel` wprost;
 snapshot refrakcji w połowie rozdzielczości musi dalej trafiać w teksel). `applySunShadowToBuiltinMaterial`
 (`onBeforeCompile`) → materiał węzłowy z modelem oświetlenia mnożącym człon bezpośredni. `HULL_SDF_SHADOW_GLSL` →
-TSL w zgodzie z lustrem `traceHullShadowCpu` (test). Do zadania 03 maska jest wyłączona (`uSunShadowOn = 0`).
+TSL w zgodzie z lustrem `traceHullShadowCpu` (test).
+
+**Stan po zadaniu 03:** maska działa — pass TSL (`createShadowShaftsPass`: `QuadMesh` + NodeMaterial, dyski / kadłuby /
+ringi w `uniformArray`, marsz `hullSdfShadow`) i biblioteka TSL w `sunShadowMask.js` (wspólne węzły uniformów w grupie
+renderu, odczyt po `screenUV`). Maska w grze = baza WebGL co do bajtu (poza szumem ±1/255 i pojedynczymi pikselami SDF,
+`scripts/webgpu/maska-slonca.mjs` — tarcze, ringi, SDF kadłubów, pole). Wbudowane materiały: hak w polach materiału
+(`setupLightingModel` — `direct()` modelu klasy × `sunVisibility()`; `outputNode` — smuga), bez podmiany obiektu
+(NodeLibrary kopiuje pola materiału na odpowiednik węzłowy). `SUN_SHADOW_GLSL` zostaje w `sunShadowMaskGLSL.js` dla
+nieprzeniesionych ShaderMaterial (planety 05, mostek 15, skały 21, Z4/Z5/Z7). Snapshot refrakcji ma format bufora sceny
+(HalfFloat, MSAA, głębia — wspólny kontekst renderu, zero budów na zimno); fala obcina odczyt do [0, 1] jak dawny cel RGBA8.
 
 ## 6. Asynchroniczność
 
