@@ -43,7 +43,7 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 | 03 | Post 2/2: maska słońca, SDF kadłubów, refrakcja, fala uderzeniowa | 02 | 06 | max | czeka | | biblioteki dla 04–20 |
 | 04 | Kadłuby (belki + heksy), lakier, impostory, szczątki | 03 | 05–14, 16, 19 | max | w toku (podagent, worktree `statki-wt/04`; maska słońca po 03 — zastępnik do scalenia) | | graf na wariant zamiast materiału na encję; miejsce na światła siatki (18) |
 | 05 | Planety, słońce, mgławica, gwiazdy, stacje | 03 | 04, 06–10, 12–20 | xhigh | czeka | | |
-| 06 | Ring 1/5: biblioteka TSL, pieczenie map, odczyt asynchroniczny, `halo_ring_demo` | 01 | 02–05, 12–20 | max | scalanie z main i weryfikacja w grze (podagent, `statki-wt/06`) | b7ecdc9…c1ad3d2 | kończy przejściową regresję terenu ringu z 01 |
+| 06 | Ring 1/5: biblioteka TSL, pieczenie map, odczyt asynchroniczny, `halo_ring_demo` | 01 | 02–05, 12–20 | max | zrobione, scalone (070a407) | b7ecdc9…88d8df5 | kończy przejściową regresję terenu ringu z 01 |
 | 07 | Ring 2/5: teren + zestaw przemysłowy | 06 | 04, 05, 12–20 | xhigh | w toku (podagent, worktree `statki-wt/07` z gałęzi 06 — warsztat ringu; w grze po 01) | | |
 | 08 | Ring 3/5: struktura + atmosfera | 07 | j.w. | xhigh | czeka | | |
 | 09 | Ring 4/5: megastruktura + miasto (kopuły, landmarki, drzewa) | 08 | j.w. | xhigh | czeka | | |
@@ -73,7 +73,7 @@ Stan zamierzony na `main` w trakcie portu — nie „naprawiać” poza zadaniem
 | 01 | 02 | Post bez bloomu i gorącego powietrza (tylko ACES gry + sRGB); `perfToggles.bloom/heatHaze` bez skutku; `kalibracja__ortho` vs baza: >8/255 w 85,8% pikseli (sama poświata) | 02 |
 | 01 | 03 | Maska słońca wyłączona (`uSunShadowOn = 0`): bez cienia słońca na materiałach, smug tła i SDF kadłubów; fala uderzeniowa bez passa refrakcji | 03 |
 | 01 | 11 | Rozgrzewka tylko „nie rzuca”: pipeline'y kompilują się asynchronicznie przy pierwszym użyciu, osłona `backend.draw` pomija rysunek do gotowości (obiekt pojawia się 1–2 klatki później) | 11 (moduły przez `Core3D.prewarmPass`) |
-| 01 | 06 | Brak synchronicznego odczytu → mapa CPU ringu pusta (`heightAtUV` = 0): płyta ringu koliduje bez rzeźby terenu, LOD terenu bez wysokości, landmarki i kopuły stawiane bez mapy (stała wysokość z `haloRingLandmarks.js`) | 06 |
+| 01 | 06 | Brak synchronicznego odczytu → mapa CPU ringu pusta (`heightAtUV` = 0): płyta ringu koliduje bez rzeźby terenu, LOD terenu bez wysokości, landmarki i kopuły stawiane bez mapy (stała wysokość z `haloRingLandmarks.js`) | 06 — ZAMKNIĘTE (070a407): teren w koliderze po `ring.ready`, sprawdzone w grze |
 | 01 | 20 | Overlay efektów na własnym `WebGLRenderer` (jedyny drugi renderer; stare efekty overlaya działają bez zamienników) | 17–19 zabierają efekty, 20 usuwa overlay |
 | 01 | 17–19 | Pociski i błyski ze starego `weapon3DSystem` (materiały wbudowane — rysują się), smugi `slugTrail3D` (zamiennik), dym i iskry Fx3D (zamiennik do 12) | 12, 17–19 |
 | 01 | 22 | Soczewka i fale warpa usunięte (API jako no-op), skok działa bez efektu zgięcia | 22 (nowy warp) |
@@ -306,3 +306,15 @@ Todo (2): „PORT poprawka 1 / 3 (TODO integracji)” w `tests/shipCore.test.mjs
   (`capitalAiFlight` „ship follows a moving target…”, sam przechodzi 3/3) / 2 todo; `npm test` OK. **Po każdym scaleniu:**
   `bash scripts/webgpu/lf-po-scaleniu.sh` — `git merge` przy `core.autocrlf=true` zapisuje zmienione pliki z CRLF i 4
   strażniki padają fałszywie (827, 828, 939, 941 po scaleniu 01).
+- **Zadanie 06 scalone do `main`** (scalenie 070a407; na gałęzi po scaleniu 01: bc24e0b, f1aaa99, 88d8df5): ring w grze na
+  WebGPU — 5 scen harnessu (ring-z02, ring-z1, k7-hala, mars-ring, jowisz-ring) bez błędów, `ringReady`, zrzuty piksel w
+  piksel jak po 01 (materiały ringu to jeszcze zamienniki — 07–10). Kolider płyty dostaje teren dopiero po `ring.ready`
+  (`scripts/webgpu/ring-kolizje-gra.mjs`): Ziemia 7060/7060 próbek ≠ 0 (−128…216), Mars 7036/7036 (1,5…171), Jowisz
+  płaski pokład Fable (0…7) — wynik kolidera = `ring.terrainHeightAt`. Regresja „01 → 06” zamknięta. Czasy w grze:
+  kompilacja pieczenia 2,5–3,7 s w tle, teren w koliderze 2,2–4,5 s od wstania gry (ring Ziemi piecze się już w menu).
+  Adapter uniformów ringu = adapter z 01 (`src/3d/tsl/uniformy.js`, re-eksport w `haloUniformsAdapter.js`),
+  `createUniformBlock` zostaje w `src/3d/haloRing/`. Otwarte dla 11: menu nie czeka na `ring.ready` (ring dołącza
+  2–4,5 s po Ziemi), pusta scena `createHaloBakeWarmup` do usunięcia. Inwentarz po 06: port 42 pliki z GLSL, 66
+  materiałów, 8504 linie. Testy na `main`: 1389 / 7 porażek bazowych / 2 todo + niestabilne pod obciążeniem całego
+  zestawu (same przechodzą): `capitalAiFlight` („ship follows a moving target…”), `hullShadowSdf` („warstwy: wspólna dla
+  świeżej floty…, LRU”).
