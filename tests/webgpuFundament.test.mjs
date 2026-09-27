@@ -90,9 +90,12 @@ test('kolor gry: ACES Narkowicza bez ÷0,6 i LinearTosRGB — lustra CPU, funkcj
   assert.ok(Number.isFinite(linearDoSrgbCpu(-0.5)), 'ujemne wejście bez NaN');
   assert.equal(acesGry.shaderNode.layout.name, 'acesGry');
   assert.equal(linearDoSrgb.shaderNode.layout.name, 'linearDoSrgb');
-  // Post: RenderPipeline bez transformacji three (ACES gry to inna krzywa niż acesFilmicToneMapping).
-  assert.match(core, /return vec4\(linearDoSrgb\(acesGry\(scene\.rgb\)\), scene\.a\);/);
+  // Post (od zadania 02 w tsl/postGry.js): RenderPipeline bez transformacji three (ACES gry to
+  // inna krzywa niż acesFilmicToneMapping) — oba pipeline'y, z bloomem i bez.
+  const postGry = read('src/3d/tsl/postGry.js');
+  assert.match(postGry, /return vec4\(linearDoSrgb\(acesGry\(sceneColor\.rgb\)\), sceneColor\.a\);/);
   assert.match(core, /post\.outputColorTransform = false;/);
+  assert.match(core, /postBezBloomu\.outputColorTransform = false;/);
 });
 
 test('Core3D: tylko WebGPURenderer z limitami adaptera, bez zapasu WebGL2, konfiguracja jak na WebGL', () => {
