@@ -350,20 +350,71 @@ test('źródło stempla: pocisk, broń, id; rodziny 27 broni dema zgodne z tabel
   assert.equal(S.STAMP.valkyrie.kerf[S.S_ELONG], 2.4);
 });
 
-test('Yamato: 4 wtórne stemple opóźnione (0,08–0,49 s) w uv trafienia + przesunięcie w układzie kadłuba', () => {
+test('ctx.stamp receptur (17) → stampRecipe: krater z haka tej klatki pominięty, reszta na mapę; zdarzenie opóźnione jedzie z nośnikiem', async () => {
   fresh();
-  const e = fakeHull(1800, 806);
-  HullDamageMap.setSource('special_yamato_cannon');
-  HullDamageMap.onHullImpact(e, impactResult(e));
-  HullDamageMap.clearSource();
-  assert.equal(HullDamageMap._dCount, 4);
-  const q = HullDamageMap._qCount;
-  HullDamageMap.buildJobs(0.05);
-  assert.equal(HullDamageMap._dCount, 4, 'przed czasem nic');
-  HullDamageMap.buildJobs(0.6);
-  assert.equal(HullDamageMap._dCount, 0, 'wszystkie wystrzeliły');
-  assert.equal(HullDamageMap.stats.jobs, 1);
-  assert.ok(q >= 1);
+  const { ActiveCarrier } = await import('../src/game/carrierVelocity.js');
+  const { SimClock, CLOCK_SIM } = await import('../src/game/simClock.js');
+  HullBodies.onImpact = HullDamageMap.onHullImpact;
+  const e = npcAt(0, 0);
+  const hull = HullBodies.createHull(e, plate(420, 160));
+  try {
+    // Trafienie: krater z haka (źródło — armata), potem receptura trafienia w tym samym punkcie.
+    HullDamageMap.setSource('armata_mk1');
+    assert.equal(HullBodies.impact(e, 200, 0, 150, { x: -600, y: 0 }), true);
+    HullDamageMap.clearSource();
+    const q = HullDamageMap._qCount;
+    const hx = hullImpactResult.x, hy = hullImpactResult.y;
+    assert.equal(HullDamageMap.stampRecipe(e, hx, hy, 62, 3.2, 0.95, 0.76, 0), false, 'to samo trafienie: bez drugiego stempla');
+    assert.equal(HullDamageMap.stats.recipeDup, 1);
+    assert.equal(HullDamageMap._qCount, q);
+    // Inny punkt (wtórny wybuch, wiązka między taktami) — na mapę, parametry receptury.
+    assert.equal(HullDamageMap.stampRecipe(e, -150, 20, 55, 2.8, 0.9, 0.5, 0.3), true);
+    const st = lastStamp(HullDamageMap.slotOf(hull.dmgKey));
+    close(st.r, 55, 1e-3); close(st.heat, 2.8, 1e-6); close(st.rim, 0.5, 1e-6); close(st.ion, 0.3, 1e-6);
+    assert.equal(st.cut, 0, 'receptura nigdy nie robi przezroczystej dziury');
+    const uv = HullBodies.spriteUvAt(e, -150, 20);
+    close(st.u, uv.u, 1e-6); close(st.v, uv.v, 1e-6);
+    // Następna klatka: pamięć kraterów nie blokuje nowych trafień w to miejsce.
+    HullDamageMap.frame++;
+    assert.equal(HullDamageMap.stampRecipe(e, hx, hy, 62, 3.2, 0.95, 0.76, 0), true);
+    // Zdarzenie opóźnione (Yamato: punkt z chwili trafienia): kadłub przesunął się o v · dt nośnika.
+    ActiveCarrier.set({ vx: 300, vy: -100, t0: SimClock.now(CLOCK_SIM) - 0.2, clock: CLOCK_SIM });
+    try {
+      assert.equal(HullDamageMap.stampRecipe(e, -100, 0, 50, 2.8, 0.9, 0.5, 0.3), true);
+    } finally { ActiveCarrier.clear(); }
+    const moved = HullBodies.spriteUvAt(e, -100 + 60, -20);
+    const st2 = lastStamp(HullDamageMap.slotOf(hull.dmgKey));
+    close(st2.u, moved.u, 1e-6, 'u po przesunięciu nośnika'); close(st2.v, moved.v, 1e-6);
+    // Bez kadłuba belkowego (asteroida, tarcza, Hexlance z hull = null) — nic.
+    assert.equal(HullDamageMap.stampRecipe(null, 0, 0, 30, 3, 1, 0.5, 0), false);
+    assert.equal(HullDamageMap.stampRecipe({ x: 0, y: 0 }, 0, 0, 30, 3, 1, 0.5, 0), false);
+  } finally {
+    HullBodies.onImpact = null;
+    HullBodies.release(e);
+  }
+  // Fasada 17 podaje ctx.stamp mapie ran; płonąca wyrwa tli się stemplami żaru co 0,25 s.
+  const wfx = read('src/3d/weapons/weaponFx.js');
+  assert.match(wfx, /stamp\(hull, x, y, r, heat, scorch, hole, ion, dx, dy, elong\) \{ HullDamageMap\.stampRecipe\(hull, x, y, r, heat, scorch, hole, ion, dx, dy, elong\); \}/);
+  const { burnStep } = await import('../src/3d/weapons/recipes.js');
+  const { GpuFx } = await import('../src/3d/weapons/gpuFx.js');
+  const { FxPoolOrigin } = await import('../src/3d/fx/gpuPoolOrigin.js');
+  const { LightGrid } = await import('../src/3d/fx/lightGrid.js');
+  const { FxLights } = await import('../src/3d/fx/fxLights.js');
+  const { createTile2DTexture } = await import('../src/3d/fx/noise.js');
+  const gfx = new GpuFx({ origin: new FxPoolOrigin({ name: 'tstDmgBurn' }), noise: createTile2DTexture(32), grid: new LightGrid({ name: 'tstDmgBurnGrid' }) });
+  const calls = [];
+  const ctxB = { fx: gfx, lights: new FxLights(), time: 0, after() {}, shake() {}, stamp: (...a) => calls.push(a), burn() {}, hullInside() { return true; }, ricochet() {} };
+  const ent = { id: 7 };
+  const b = { entity: ent, x: 5, y: 6, nx: 0, ny: -1, age: 0.35, dur: 3.5, power: 1.6, pal: 'yamato', seed: 1, stampAcc: 0.24 };
+  burnStep(ctxB, b, 1 / 60);
+  assert.equal(calls.length, 1, 'stempel żaru co 0,25 s');
+  const k = 1.6 * (1 - 0.1) * (1 - 0.1);
+  const [he, hx2, hy2, hr, hheat, hscorch, hhole, hion] = calls[0];
+  assert.equal(he, ent); assert.equal(hx2, 5); assert.equal(hy2, 6);
+  close(hr, 18 * 1.6, 1e-9); close(hheat, 0.6 + 1.4 * k, 1e-9); close(hscorch, 0.04 * k, 1e-9);
+  assert.equal(hhole, 0, 'ogień nie powiększa leja'); assert.equal(hion, 0);
+  burnStep(ctxB, b, 1 / 60);
+  assert.equal(calls.length, 1, 'następny dopiero po 0,25 s');
 });
 
 test('stygnięcie: wzór zamknięty = całkowanie dema krokiem klatki; niezależne od podziału czasu', () => {

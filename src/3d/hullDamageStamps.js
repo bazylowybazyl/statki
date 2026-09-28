@@ -10,11 +10,12 @@
 // wzdłuż kierunku (1 = koło), mnożyć promień przez moc rozmiaru broni (`20 * I` w recepturze)].
 // Warianty: `impact` (trafienie), `kerf` (rzaz przebicia, co ~22 j. drogi w materiale),
 // `exit` (krater wylotu przestrzeliny — demo go nie stempluje, 18-A robi prawdziwy krater:
-// brzeg jak trafienie, mniejszy), `stuck` (zakleszczenie — Valkyrie). `secondary` — stemple
-// opóźnione (wtórne wybuchy Yamato: 4 w pierwszych 0,45 s).
+// brzeg jak trafienie, mniejszy), `stuck` (zakleszczenie — Valkyrie).
 //
-// Stemple NIE przechodzą przez bramkę LOD efektu: stawia je hak trafienia kadłuba
-// (HullBodies.onImpact → HullDamageMap), receptura 17 zostawia `ctx.stamp` pusty.
+// Tabela dotyczy KRATERÓW i RZAZÓW z haka trafienia kadłuba (HullBodies.onImpact → HullDamageMap),
+// które nie przechodzą przez bramkę LOD efektu. Stemple bez krateru (wtórne wybuchy Yamato, znaki
+// rzazu przebić, wiązka między taktami, żar płonącej wyrwy) biorą parametry wprost z receptur 17
+// (`ctx.stamp` → HullDamageMap.stampRecipe).
 
 /** Skala efektu z rozmiaru broni (dema/bronie-webgpu/arsenal.js: SIZE_POWER). */
 export const STAMP_SIZE_POWER = Object.freeze({ S: 0.8, M: 1.0, L: 1.25, Capital: 1.6 });
@@ -35,16 +36,7 @@ export const STAMP = Object.freeze({
   helios: Object.freeze({ impact: st(18, 2.9, 0.6, 0.5, 0, 1, 1) }),
   armata: Object.freeze({ impact: st(62, 3.2, 0.95, 0.76, 0) }),
   goliath: Object.freeze({ impact: st(48, 3.0, 0.9, 0.72, 0) }),
-  yamato: Object.freeze({
-    impact: st(130, 3.6, 1.0, 0.9, 0.4),
-    // recipes.js: T = [0,08, 0,19, 0,30, 0,43] + rand(0, 0,06); r = rand(40, 70) w odległości
-    // rand(120, 460) w losowym kierunku + 0,4 promienia wzdłuż normalnej (tu: pod prąd lotu).
-    secondary: Object.freeze({
-      times: Object.freeze([0.08, 0.19, 0.30, 0.43]), jitter: 0.06,
-      rMin: 40, rMax: 70, distMin: 120, distMax: 460, normal: 0.4,
-      stamp: st(55, 2.8, 0.9, 0.5, 0.3)
-    })
-  }),
+  yamato: Object.freeze({ impact: st(130, 3.6, 1.0, 0.9, 0.4) }),
   plasmaGatling: Object.freeze({ impact: st(34, 2.2, 0.55, 0.56, 0.8) }),
   hexlance: Object.freeze({ impact: st(70, 3.4, 1.0, 0.85, 0.2), kerf: st(34, 3.2, 0.9, 0.85, 0, 2.2) }),
   mjolnir: Object.freeze({ impact: st(80, 3.8, 1.0, 0.9, 0.5), kerf: st(38, 3.6, 1.0, 0.9, 0.2, 2.2), exit: st(56, 3.6, 1.0, 0.9, 0.3) }),

@@ -5,18 +5,20 @@
 // warstwa w uv rodzica), LRU, kolejka stempli, lista zadań kernela i krok klatki efektów
 // (`Core3D.addFxStep`). GPU (pula, kernel, próbkowanie w materiale): hullDamageMap.tsl.js.
 //
-// SKĄD STEMPLE (jedno źródło — stemple nie przechodzą przez bramkę LOD efektów):
-//   • hak `HullBodies.onImpact` → `onHullImpact(entity, r)` po każdym kraterze (`impact`) i rzazie
-//     (`cutSegment`, Hexlance). Punkt i uv z `hullImpactResult` (ten sam węzeł co krater);
-//   • rodzina broni: wołający ustawia źródło wokół trafienia — `setSource(pocisk | broń | id,
-//     wariant)` … `HullBodies.impact(...)` … `clearSource()` (jak ActiveCarrier; w grze robi to
-//     applyHexImpact w index.html). Bez źródła: krater = `generic`, rzaz = Hexlance;
-//   • 18-B / 17 (przebicia, wylot, zakleszczenie, znaki rzazu): wariant w `setSource` wokół
-//     `HullBodies.impact` (np. 'exit', 'stuck') albo wprost `stampAt(e, x, y, rodzina, wariant,
-//     dirX, dirY)` / `stampKerf(e, x0, y0, x1, y1, rodzina)` (bez krateru — sam obraz);
-//   • wtórne wybuchy Yamato — kolejka opóźniona tutaj (uv trafienia + przesunięcie w układzie
-//     kadłuba, klucz rodu zostaje, nawet gdy encja zginęła).
-// `ctx.stamp` receptur zadania 17 zostaje pusty (inaczej stemple dublowałyby się).
+// SKĄD STEMPLE:
+//   • KRATERY i RZAZY — hak `HullBodies.onImpact` → `onHullImpact(entity, r)` po każdym `impact` i
+//     `cutSegment` (Hexlance), bez bramki LOD efektów (każde trafienie zostawia ranę). Punkt i uv z
+//     `hullImpactResult` (ten sam węzeł co krater). Rodzinę broni podaje wołający:
+//     `setSource(pocisk | broń | id, wariant)` … `HullBodies.impact(...)` … `clearSource()` (jak
+//     ActiveCarrier; w grze robi to applyHexImpact w index.html). Bez źródła: krater = `generic`,
+//     rzaz = Hexlance;
+//   • RECEPTURY efektów (zadanie 17): `ctx.stamp` fasady WeaponFx → `stampRecipe(encja, x, y, …)` z
+//     parametrami receptury. Stempel w miejscu krateru z haka tej klatki jest pomijany (to samo
+//     trafienie), reszta idzie na mapę: wtórne wybuchy Yamato (zdarzenia opóźnione — w miejscu
+//     widocznych wybuchów, punkt przesunięty o ruch nośnika), rzazy i zakleszczenia przebić (18-B),
+//     wiązka ciągła między taktami obrażeń, żar płonącej wyrwy (`burnStep`);
+//   • bez krateru i bez receptury (narzędzia, 18-B): `stampAt(e, x, y, rodzina, wariant, dirX, dirY)`,
+//     `stampKerf(e, x0, y0, x1, y1, rodzina)`.
 //
 // Reguła „dziura albo krater” (§3.4): promień = krater zabił węzły ? max(receptura, promień
 // krateru + ½ komórki) : receptura. Przestrzelina PRZEZROCZYSTA (kanał otworu) tylko z małego
@@ -39,8 +41,10 @@ import { attributeArray, uniform } from 'three/tsl';
 import { Core3D } from './core3d.js';
 import { HullBodies } from '../game/hullBodies.js';
 import { fxRandom } from './fx/fxRandom.js';
+import { ActiveCarrier } from '../game/carrierVelocity.js';
+import { SimClock } from '../game/simClock.js';
 import {
-  STAMP, stampEntry, stampFamilyFor, stampPowerFor, stampFlakRadiusFor,
+  stampEntry, stampFamilyFor, stampPowerFor, stampFlakRadiusFor,
   S_R, S_HEAT, S_SCORCH, S_HOLE, S_ION, S_ELONG, S_POW
 } from './hullDamageStamps.js';
 import {
@@ -59,8 +63,8 @@ export const DMG_STAMP_CAP = 1024;
 export const DMG_SLOT_STAMP_CAP = 48;
 /** Zadań na klatkę (potęga dwójki ≥ liczby slotów). */
 export const DMG_JOB_CAP = 128;
-/** Stempli opóźnionych naraz (wtórne Yamato). */
-export const DMG_DELAY_CAP = 64;
+/** Kraterów z haka pamiętanych w klatce (pomijanie duplikatów ctx.stamp receptur). */
+export const DMG_HOOK_RING = 64;
 /** Przestrzelina przezroczysta tylko z kalibru o promieniu stempla ≤ tyle komórek silnika (§3.4). */
 export const DMG_SMALL_CALIBER_CELLS = 0.6;
 /** Wygaszanie osmalenia i przestrzelin przy naprawie R [1/s] (jak HP węzłów: 0,8 maxHp/s). */
@@ -136,12 +140,10 @@ export const HullDamageMap = {
   _qSlot: new Int32Array(DMG_STAMP_CAP),
   _qData: new Float32Array(DMG_STAMP_CAP * 12),
   _qCount: 0,
-  // Stemple opóźnione: czas (zegar efektów), klucz, rozmiar świata kadłuba, dane jak w kolejce.
-  _dTime: new Float64Array(DMG_DELAY_CAP),
-  _dKey: new Float64Array(DMG_DELAY_CAP),
-  _dWorld: new Float32Array(DMG_DELAY_CAP * 2),
-  _dData: new Float32Array(DMG_DELAY_CAP * 12),
-  _dCount: 0,
+  // Kratery z haka tej klatki (klucz, x, y, promień) — pierścień; klatka wpisu osobno.
+  _hookData: new Float64Array(DMG_HOOK_RING * 4),
+  _hookFrame: new Int32Array(DMG_HOOK_RING).fill(-1),
+  _hookHead: 0,
   // Źródło trafienia (setSource / clearSource).
   _src: { active: false, family: 'generic', variant: 'impact', power: 1, flakR: 0 },
   // GPU (leniwie): pula, bufory zadań i stempli, kernel, krok klatki efektów.
@@ -151,7 +153,7 @@ export const HullDamageMap = {
   stats: {
     poolBytes: TEXELS * DMG_TEXEL_BYTES, cpuCopyBytes: TEXELS * DMG_TEXEL_BYTES, slotsL: 0, slotsM: 0, slotsS: 0,
     stamps: 0, droppedStamps: 0, offView: 0, noSlot: 0, evictions: 0, downgrades: 0, upgrades: 0,
-    jobs: 0, threads: 0, dispatch: 0, heals: 0, delayed: 0
+    jobs: 0, threads: 0, dispatch: 0, heals: 0, recipeStamps: 0, recipeDup: 0
   },
 
   // ── Przydział ─────────────────────────────────────────────────────────────
@@ -363,10 +365,61 @@ export const HullDamageMap = {
       _p[P_U] = r.u;
       _p[P_V] = r.v;
       _p[P_CUT] = holeCut;
-      self._enqueueStamp(slot, hull);
+      if (self._enqueueStamp(slot, hull)) self._rememberHook(r.dmgKey, r.x, r.y, rad);
     }
-    const sec = STAMP[family]?.secondary;
-    if (sec && variant === 'impact' && !cut) self._scheduleSecondary(sec, slot, hull, r);
+  },
+
+  // Krater z haka w tej klatce (pierścień): receptura efektu trafienia (17) woła ctx.stamp w tym samym
+  // punkcie — ten stempel już jest (bez bramki LOD efektu), więc stampRecipe go pomija.
+  _rememberHook(key, x, y, r) {
+    const i = this._hookHead;
+    this._hookHead = (i + 1) % DMG_HOOK_RING;
+    const o = i * 4;
+    this._hookData[o] = key; this._hookData[o + 1] = x; this._hookData[o + 2] = y; this._hookData[o + 3] = r;
+    this._hookFrame[i] = this.frame;
+  },
+
+  _hookedHere(key, x, y, r) {
+    const H = this._hookData, F = this._hookFrame;
+    for (let i = 0; i < DMG_HOOK_RING; i++) {
+      if (F[i] !== this.frame) continue;
+      const o = i * 4;
+      if (H[o] !== key) continue;
+      const dx = H[o + 1] - x, dy = H[o + 2] - y;
+      const rr = Math.max(r, H[o + 3]);
+      if (dx * dx + dy * dy <= rr * rr) return true;
+    }
+    return false;
+  },
+
+  /**
+   * `ctx.stamp` receptur efektów broni (zadanie 17, src/3d/weapons/recipes.js): (encja kadłuba, punkt
+   * świata gry, promień, żar, osmalenie, brzeg rany, jony, kierunek, wydłużenie) — parametry wprost z
+   * receptury. Pomija stempel w miejscu krateru z haka tej klatki (trafienie już ostemplowane — hak nie
+   * zależy od bramki LOD efektu), resztę stempluje: wtórne wybuchy Yamato (zdarzenia opóźnione — punkt
+   * przesunięty o ruch nośnika od chwili trafienia), rzazy przebić (18-B), wiązkę ciągłą między taktami
+   * obrażeń, podtrzymanie żaru płonącej wyrwy (`burn`). Przestrzelina nigdy przezroczysta.
+   */
+  stampRecipe(entity, x, y, r, heat, scorch = 0, hole = 0, ion = 0, dirX = 0, dirY = 0, elong = 1) {
+    const hull = entity?.beamHull;
+    if (!hull || hull.entity !== entity || !(hull.dmgKey > 0) || !this.enabled) return false;
+    // Zdarzenie opóźnione: punkt świata z chwili trafienia — kadłub przez ten czas się przesunął.
+    const c = ActiveCarrier;
+    if (c.vx !== 0 || c.vy !== 0) {
+      const dt = SimClock.now(c.clock) - c.t0;
+      if (dt > 0 && dt < 5) { x += c.vx * dt; y += c.vy * dt; }
+    }
+    if (this._hookedHere(hull.dmgKey, x, y, r)) { this.stats.recipeDup++; return false; }
+    if (this._offView(x, y)) return false;
+    const slot = this.acquire(hull.dmgKey, hull.srcWidth * hull.scale, hull.srcHeight * hull.scale);
+    if (!slot) return false;
+    const uv = HullBodies.spriteUvAt(entity, x, y);
+    _p[P_U] = uv.u; _p[P_V] = uv.v; _p[P_R] = r;
+    _p[P_HEAT] = heat; _p[P_SCORCH] = scorch; _p[P_RIM] = hole; _p[P_CUT] = 0; _p[P_ION] = ion;
+    _p[P_DX] = dirX; _p[P_DY] = dirY; _p[P_EL] = elong > 1 ? elong : 1;
+    const ok = this._enqueueStamp(slot, hull);
+    if (ok) this.stats.recipeStamps++;
+    return ok;
   },
 
   /** HullBodies.onRepair: naprawa R wygasza osmalenie i przestrzeliny; koniec naprawy czyści mapę. */
@@ -480,62 +533,6 @@ export const HullDamageMap = {
     return true;
   },
 
-  // Wtórne wybuchy Yamato: uv trafienia + przesunięcie w układzie kadłuba (liczone teraz), klucz
-  // rodu i rozmiar kadłuba — stempel wychodzi po czasie, nawet gdy encja zginęła (wrak ma ten klucz).
-  _scheduleSecondary(sec, slot, hull, r) {
-    const dirX = _p[P_DX], dirY = _p[P_DY];
-    const dl = Math.sqrt(dirX * dirX + dirY * dirY);
-    // Normalna na zewnątrz ≈ pod prąd lotu (hak nie zna normalnej — krater już zabił węzły).
-    const nx = dl > 1e-9 ? -dirX / dl : 0;
-    const ny = dl > 1e-9 ? -dirY / dl : 0;
-    const e = sec.stamp;
-    for (let k = 0; k < sec.times.length; k++) {
-      if (this._dCount >= DMG_DELAY_CAP) { this.stats.droppedStamps++; return; }
-      const a = fxRandom.next() * Math.PI * 2;
-      const d = fxRandom.range(sec.distMin, sec.distMax);
-      _vec[0] = (Math.cos(a) + nx * sec.normal) * d;
-      _vec[1] = (Math.sin(a) + ny * sec.normal) * d;
-      uvDelta(hull);
-      const i = this._dCount++;
-      const o = i * 12;
-      const Q = this._dData;
-      this._dTime[i] = this._time + sec.times[k] + fxRandom.next() * sec.jitter;
-      this._dKey[i] = slot.key;
-      this._dWorld[i * 2] = slot.worldW;
-      this._dWorld[i * 2 + 1] = slot.worldH;
-      Q[o] = r.u + _uv.du; Q[o + 1] = r.v + _uv.dv; Q[o + 2] = fxRandom.range(sec.rMin, sec.rMax);
-      Q[o + 4] = e[S_HEAT]; Q[o + 5] = e[S_SCORCH]; Q[o + 6] = e[S_HOLE]; Q[o + 7] = e[S_ION];
-      this.stats.delayed++;
-    }
-  },
-
-  // Stemple opóźnione, których czas minął (zegar efektów) — do kolejki klatki.
-  _flushDelayed(now) {
-    let n = this._dCount;
-    const Q = this._dData;
-    for (let i = n - 1; i >= 0; i--) {
-      if (this._dTime[i] > now) continue;
-      const o = i * 12;
-      const slot = this.acquire(this._dKey[i], this._dWorld[i * 2], this._dWorld[i * 2 + 1]);
-      if (slot) {
-        _p[P_U] = Q[o]; _p[P_V] = Q[o + 1]; _p[P_R] = Q[o + 2]; _p[P_CUT] = 0;
-        _p[P_HEAT] = Q[o + 4]; _p[P_SCORCH] = Q[o + 5]; _p[P_RIM] = Q[o + 6]; _p[P_ION] = Q[o + 7];
-        _p[P_DX] = 0; _p[P_DY] = 0; _p[P_EL] = 1;
-        this._enqueueStamp(slot, null);
-      }
-      // Zamiana z ostatnim (kolejność bez znaczenia).
-      n--;
-      if (i !== n) {
-        this._dTime[i] = this._dTime[n];
-        this._dKey[i] = this._dKey[n];
-        this._dWorld[i * 2] = this._dWorld[n * 2];
-        this._dWorld[i * 2 + 1] = this._dWorld[n * 2 + 1];
-        Q.copyWithin(o, n * 12, n * 12 + 12);
-      }
-    }
-    this._dCount = n;
-  },
-
   // ── Zadania i dispatch ────────────────────────────────────────────────────
 
   _ensureGpu() {
@@ -565,7 +562,6 @@ export const HullDamageMap = {
   buildJobs(now) {
     this._time = now;
     const g = this._ensureGpu();
-    this._flushDelayed(now);
     const S = this.slots;
     const J = g.jobsU32;
     const JF = g.jobsF32;
@@ -695,7 +691,7 @@ export const HullDamageMap = {
    */
   update(ctx) {
     const now = Number(ctx?.time) || 0;
-    const work = this.slots.length > 0 && (this._qCount > 0 || this._dCount > 0 || this._anyWork());
+    const work = this.slots.length > 0 && (this._qCount > 0 || this._anyWork());
     const threads = work ? this.buildJobs(now) : 0;
     this._time = now;
     if (!work) { this.stats.jobs = 0; this.stats.threads = 0; }
@@ -758,11 +754,11 @@ export const HullDamageMap = {
     for (const s of this.slots) this._free(s);
     this._byKey.clear();
     this._qCount = 0;
-    this._dCount = 0;
+    this._hookFrame.fill(-1);
     this._src.active = false;
     const st = this.stats;
     st.stamps = 0; st.droppedStamps = 0; st.offView = 0; st.noSlot = 0; st.evictions = 0; st.downgrades = 0; st.upgrades = 0;
-    st.jobs = 0; st.threads = 0; st.dispatch = 0; st.heals = 0; st.delayed = 0;
+    st.jobs = 0; st.threads = 0; st.dispatch = 0; st.heals = 0; st.recipeStamps = 0; st.recipeDup = 0;
   }
 };
 

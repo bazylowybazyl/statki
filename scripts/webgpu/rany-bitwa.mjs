@@ -75,7 +75,7 @@ try {
     if (window.__stripShields) window.__stripShields();
     return { uHex: d.render3dHexUpdateTime, klatka: d.frameMs, rysowanie: d.drawTime, gpu: C.gpuFrameMs, compute: C.gpuComputeMs, fxCpu: C.fxStats?.cpuMs,
       swiatla: C.fxStats?.lights, sloty: st.slotsL + st.slotsM + st.slotsS, L: st.slotsL, M: st.slotsM, S: st.slotsS, watki: st.threads, dispatch: st.dispatch, zadania: st.jobs,
-      stemple: st.stamps, wypchniete: st.evictions, mniejsza: st.downgrades, wieksza: st.upgrades, brak: st.noSlot, przepadle: st.droppedStamps, pozaKadrem: st.offView,
+      stemple: st.stamps, receptury: st.recipeStamps, duplikaty: st.recipeDup, wypchniete: st.evictions, mniejsza: st.downgrades, wieksza: st.upgrades, brak: st.noSlot, przepadle: st.droppedStamps, pozaKadrem: st.offView,
       npc: (window.npcs || []).filter((n) => !n.dead).length, wraki: (window.wrecks || []).length }; })()`;
   const med = (arr, k) => { const v = arr.map((s) => Number(s[k])).filter(Number.isFinite).sort((a, b) => a - b); return v.length ? +v[Math.floor(v.length / 2)].toFixed(4) : null; };
   for (let b = 0; b < (alternate ? blocks * 2 : blocks); b++) {
@@ -95,7 +95,7 @@ try {
       mapa: on ? 'wł.' : 'wył.',
       uHex: med(samples, 'uHex'), klatka: med(samples, 'klatka'), gpu: med(samples, 'gpu'), compute: med(samples, 'compute'), fxCpu: med(samples, 'fxCpu'),
       swiatla: med(samples, 'swiatla'), sloty: last.sloty, L: last.L, M: last.M, S: last.S, watkiMed: med(samples, 'watki'), watkiMax: Math.max(...samples.map((s) => s.watki || 0)),
-      stempleNaS: +((last.stemple - s0.stemple) / blockSec).toFixed(1), wypchniete: last.wypchniete - s0.wypchniete, przepadle: last.przepadle - s0.przepadle,
+      stempleNaS: +((last.stemple - s0.stemple) / blockSec).toFixed(1), recepturyNaS: +((last.receptury - s0.receptury) / blockSec).toFixed(1), duplikatyNaS: +((last.duplikaty - s0.duplikaty) / blockSec).toFixed(1), wypchniete: last.wypchniete - s0.wypchniete, przepadle: last.przepadle - s0.przepadle,
       brak: last.brak - s0.brak, pozaKadrem: last.pozaKadrem - s0.pozaKadrem, npc: last.npc, wraki: last.wraki
     };
     result.bloki.push({ ...row, probki: samples });
