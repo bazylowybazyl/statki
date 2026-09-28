@@ -251,6 +251,10 @@ próbkowane tym samym przesuniętym UV (jak gorące powietrze). Bez clampów (ja
 bloomu (`BloomGry(hdrBezpieczny(texture(scena)))`) i na każdym odczycie sceny w „uber”. Skończone wartości bez zmian
 (też ujemne).
 
+**Alokacje:** bez obiektów na klatkę i na światło (zakresy wysyłki buforów siatki na stałe — `LightGrid`, 12-B); zostaje
+pakowanie liczb double przez V8 przy wywołaniach nieinlinowanych (`uniform.value = liczba` w `FxPoolOrigin.update`,
+argumenty `grid.addWorld`) — ~150 B stałe na klatkę i kilka–kilkanaście B na światło (test w `fxCore3D.test.mjs`).
+
 **Pomiar:** `Core3D.fxStats` (`cpuMs`, `dispatches` — `renderer.info.compute.frameCalls` klatki, `steps`, `lights`,
 `gridItems`, `gridBuilt`, `distortSources`, `distortLayer`), GPU compute — `Core3D.gpuComputeMs` (znaczniki czasu);
 PerfHUD: wiersz „Efekty GPU”; harness: `perf().fx` i `gpuComputeMs` w `wyniki.json`, `--wydajnosc`: `fxMs`,

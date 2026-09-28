@@ -119,6 +119,44 @@ test('światła efektów: błysk z tej klatki świeci od wieku 0 (starzenie po z
   assert.equal(fx.stats.lights, 0, 'wygasł');
 });
 
+// Bez obiektów na klatkę / światło. Zostaje pakowanie liczb double przez V8 przy wywołaniach
+// nieinlinowanych (uniform.value = liczba, argumenty addWorld) — kilkanaście B na światło, ~150 B
+// stałe na klatkę; próg łapie alokację obiektu na światło (≥ 40 B × 18 świateł na klatkę).
+test('klatka efektów ze światłami i źródłami: bez obiektów na klatkę (zakresy wysyłki siatki na stałe)', async () => {
+  const v8 = await import('node:v8');
+  const newSpaceUsed = () => v8.getHeapSpaceStatistics().find((s) => s.space_name === 'new_space').space_used_size;
+  const allocatedBytes = (fn, n) => {
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const before = newSpaceUsed();
+      for (let i = 0; i < n; i++) fn(i);
+      const delta = newSpaceUsed() - before;
+      if (delta >= 0) return delta;
+    }
+    return Infinity;
+  };
+  const fx = new FxFrame();
+  const r = fakeRenderer(1);
+  fx.attach(r);
+  const step = { name: 'swiatla', lights: (ctx) => { for (let k = 0; k < 16; k++) ctx.grid.addWorld(cam.x + k * 40, cam.y, 60, 300, 1, 0.5, 0.2, 0.5); } };
+  fx.addStep(step);
+  let t = 0;
+  const frame = (i) => {
+    r.info.frame++;
+    t += 16;
+    if ((i & 7) === 0) fx.lights.flash(cam.x, cam.y + 50, 1, 1, 1, 2, 250, 0.2, 2, 0.3, 40);
+    fx.lights.point(cam.x - 60, cam.y, 1, 0.8, 0.5, 1, 200, 30);
+    fx.distortionSources().shock(cam.x, cam.y, 200, 40, 6);
+    fx.frame(r, cam, null, 1920, 1080, false, t);
+    fx.commitDistortion(cam, 1920, 1080, false, r.info.frame);
+  };
+  for (let i = 0; i < 20000; i++) frame(i);
+  assert.ok(fx.stats.gridBuilt && fx.stats.lights >= 17);
+  const base = allocatedBytes(() => {}, 3000);
+  const used = allocatedBytes(frame, 3000);
+  assert.ok((used - base) / 3000 < 700, `klatka efektów: ${((used - base) / 3000).toFixed(0)} B na klatkę (18 świateł, 1 źródło)`);
+  assert.deepEqual(fx.grid.lightNode.value.updateRanges, [{ start: 0, count: fx.stats.lights * 16 }]);
+});
+
 test('zniekształcenia: kolejka żyje do końca klatki (podzielony ekran), zgłoszenie po renderze zaczyna nową', () => {
   const fx = new FxFrame();
   const F = fx.distortionSources();
