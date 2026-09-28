@@ -53,6 +53,13 @@ const WARIANTY = {
   dist: `(on) => { window.Core3D.setPerfToggles({ fxDistortion: !on }); }`,
   // Przełącznik ogólny Core3D (window.__kosztB = true/false) — do poprawek, które same czytają flagę.
   flaga: `(on) => { window.__kosztB = !!on; }`,
+  // Kopia kanwy 3D na kanwę 2D (drawHexShips3D: ctx.drawImage(#webgl-layer)) — B = bez kopii (obraz bez 3D;
+  // tylko pomiar kosztu, zadanie 23 krok 7). Czas samego wywołania drawImage (CPU) w window.__kopiaMs.
+  kopia: `(on) => { const P = CanvasRenderingContext2D.prototype;
+    if (!P.__kosztDI) { const orig = P.drawImage; P.__kosztDI = orig; const H = window.__harness; const now = H ? H.realNow : performance.now.bind(performance);
+      const acc = window.__kopiaMs = { ms: 0, n: 0 };
+      P.drawImage = function (src, ...r) { if (src === window.Core3D?.canvas) { if (window.__kosztBezKopii) return; const t0 = now(); try { return orig.call(this, src, ...r); } finally { acc.ms += now() - t0; acc.n++; } } return orig.call(this, src, ...r); }; }
+    window.__kosztBezKopii = !!on; }`,
   // Ring Ziemi — koszt części (B = część schowana; pomiar górnej granicy zysku, obraz się zmienia):
   // chmury, górna ściana (FG) i bryły dachu FG.
   chmury: `(on) => { const r = window.__haloRings?.entries?.find((e) => e.key === 'earth')?.ring; r?.group.traverse((o) => { if (o.name === 'HaloClouds') o.visible = !on; }); }`,
@@ -203,6 +210,10 @@ try {
       klatki: d.cpu.length, okna: d.okna
     };
     console.log(`${n.padEnd(14)} CPU ${wynik.pomiary[n].cpuMs} ms (okna ${wynik.pomiary[n].cpuMedOkien}, ${wynik.pomiary[n].cpuRozrzutOkien.join('…')}) p90 ${wynik.pomiary[n].cpuP90} | odstęp ${wynik.pomiary[n].okresMs} | GPU ${wynik.pomiary[n].gpuMs} | dc ${wynik.pomiary[n].drawCalls} | fx ${wynik.pomiary[n].fxCpuMs}`);
+  }
+  if (warianty.includes('kopia')) {
+    wynik.kopia = await ev(`(() => { const a = window.__kopiaMs; return a && a.n ? { msNaKopie: +(a.ms / a.n).toFixed(4), kopii: a.n } : null; })()`);
+    console.log('kopia #webgl-layer → #c (drawImage, CPU wywołania):', JSON.stringify(wynik.kopia));
   }
   // --graf: spis grafu sceny (węzły, widoczne gałęzie, rysowalne wg warstw, rzucający cień wg warstw) i czas
   // przejścia JS po widocznych gałęziach (mediana 50 powtórzeń) — koszt _projectObject na pass (zadanie 23).
@@ -378,6 +389,10 @@ try {
     wynik.zapisy = { klatki: frames, wywolanNaKlatke: +(suma[0] / frames).toFixed(1), kBNaKlatke: +(suma[1] / frames / 1024).toFixed(1), lista: lista.slice(0, 60).map(([k, n, b]) => [k, +(n / frames).toFixed(2), +(b / frames / 1024).toFixed(2)]) };
     console.log(`\nzapisy do kolejki: ${wynik.zapisy.wywolanNaKlatke} wywołań, ${wynik.zapisy.kBNaKlatke} KB na klatkę (${frames} klatek)`);
     for (const [k, n, kb] of wynik.zapisy.lista.slice(0, 40)) console.log(`  ${String(n).padStart(7)} × / ${String(kb).padStart(9)} KB  ${k}`);
+    // wszystkie wysyłki tekstur (writeTexture — pełne uploady tekstur danych, zadanie 23 krok 6)
+    wynik.zapisy.tekstury = lista.filter(([k]) => k.startsWith('T ')).map(([k, n, b]) => [k, +(n / frames).toFixed(3), +(b / frames / 1024).toFixed(2)]);
+    console.log(`\ntekstury (writeTexture): ${wynik.zapisy.tekstury.length} rodzajów`);
+    for (const [k, n, kb] of wynik.zapisy.tekstury.slice(0, 20)) console.log(`  ${String(n).padStart(7)} × / ${String(kb).padStart(9)} KB  ${k}`);
     // wg liczby wywołań (koszt stały writeBuffer w Chrome ~2 µs — dziesiątki małych zapisów uniformów)
     const wgLiczby = [...lista].sort((a, b) => b[1] - a[1]).slice(0, 40).map(([k, n, b]) => [k, +(n / frames).toFixed(2), +(b / frames / 1024).toFixed(2)]);
     wynik.zapisy.wgLiczby = wgLiczby;
