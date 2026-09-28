@@ -1,0 +1,1147 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Działo laserowe — demo WebGPU</title>
+<!--
+  Samodzielne demo WebGPU (three.js r183 z CDN, bez plików gry — działa także
+  otwarte z dysku). Pokazuje, co daje WebGPU przy strzałach: każdy pocisk,
+  błysk wylotu, trafienie, rozgrzany punkt pancerza i dysza to dynamiczne
+  światło (do 256 naraz), które oświetla kadłuby, skały i pył. Pył to
+  drobiny liczone na GPU (compute): pociski rozpychają go w locie, trafienia
+  wysyłają falę uderzeniową, drobiny odbijają się od skał i kadłubów.
+
+  Klawisz T przełącza „jak dziś w grze” (sam bloom, bez światła od strzałów)
+  i „WebGPU” (oświetlenie dynamiczne) — to jest porównanie A/B.
+
+  Uruchomienie: dwuklik (Chrome / Edge z WebGPU, potrzebny internet — three.js
+  idzie z CDN) albo `npx http-server` w katalogu repo i /dema/laser-webgpu.html.
+  NIE przez `npm run dev`: Vite przepisałby importy na swoje paczki three.
+
+  Parametry adresu: ?pyl=400000 (liczba drobin), ?webgl=1 (wymuś awaryjny WebGL2 —
+  bez iskier: ich compute trafia tam na ograniczenie transform feedback).
+  Konsola: __demo.aim(x, y), __demo.hold(lpm, ppm), __demo.fireSalvo(),
+  __demo.setAB(false), __demo.lookAt(x, y, zoom).
+
+  Światła liczone własną pętlą w TSL, nie TiledLighting: ten ma limit 8 świateł
+  na kafel 32 px, a salwa to wiele świateł blisko siebie (kwadratowe artefakty).
+  Trafienia liczone w płaszczyźnie XY (widok z góry: trafia to, co widać).
+-->
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden;
+    font-family: system-ui, "Segoe UI", sans-serif; color: #cfe0ff; }
+  canvas { display: block; }
+  #panel { position: fixed; top: 12px; left: 12px; width: 286px; box-sizing: border-box;
+    background: rgba(5, 10, 22, .84); border: 1px solid rgba(120, 170, 255, .22);
+    border-radius: 8px; padding: 12px 14px; font-size: 13px; line-height: 1.45; }
+  #panel.hidden { display: none; }
+  h1 { font-size: 14px; margin: 0 0 2px; letter-spacing: .06em; }
+  #backend { font-size: 12px; color: #8fb0d8; margin-bottom: 6px; }
+  #ab { display: block; width: 100%; margin: 6px 0 4px; padding: 9px 8px; border-radius: 6px;
+    border: 1px solid; font: 600 13px system-ui, sans-serif; cursor: pointer; text-align: left; }
+  #ab.on { background: rgba(255, 130, 60, .16); border-color: #ff9a5c; color: #ffd8bd; }
+  #ab.off { background: rgba(120, 140, 170, .10); border-color: #6b7d99; color: #b9c7dd; }
+  #abhint { font-size: 12px; color: #9fb3cf; margin-bottom: 8px; }
+  label { display: flex; align-items: center; gap: 6px; margin: 2px 0; cursor: pointer; }
+  .row { display: grid; grid-template-columns: 96px 1fr 38px; gap: 6px; align-items: center; margin: 4px 0; }
+  .row output { text-align: right; font: 12px ui-monospace, Consolas, monospace; }
+  select { background: #0b1426; color: #cfe0ff; border: 1px solid #2c4468; border-radius: 4px; }
+  .keys { color: #8ea5c6; font-size: 12px; margin-top: 8px; }
+  details summary { cursor: pointer; color: #9fb3cf; font-size: 12px; margin: 4px 0; }
+  #stats { font: 12px ui-monospace, Consolas, monospace; color: #9fe0a8; margin-top: 8px; white-space: pre; }
+  #err { position: fixed; left: 12px; right: 12px; bottom: 12px; color: #ffc4c4; background: rgba(50, 0, 0, .9);
+    padding: 10px; border-radius: 6px; font: 12px ui-monospace, monospace; white-space: pre-wrap; display: none; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.183.2/build/three.webgpu.js",
+    "three/webgpu": "https://cdn.jsdelivr.net/npm/three@0.183.2/build/three.webgpu.js",
+    "three/tsl": "https://cdn.jsdelivr.net/npm/three@0.183.2/build/three.tsl.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.183.2/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="panel">
+  <h1>DZIAŁO LASEROWE · WEBGPU</h1>
+  <div id="backend">uruchamianie…</div>
+  <button id="ab" class="on">T · Oświetlenie dynamiczne: WŁĄCZONE</button>
+  <div id="abhint">Strzały, trafienia i dysze świecą na kadłuby, skały i pył.</div>
+  <div class="keys" style="margin-top:0">LPM — strzał (przytrzymaj: seria) · PPM — wiązka · Spacja — salwa · H — panel</div>
+  <div id="stats"></div>
+  <details><summary>ustawienia i sterowanie</summary>
+  <label><input type="checkbox" id="c-dust" checked> pył fizyczny (P)</label>
+  <label><input type="checkbox" id="c-sparks" checked> iskry</label>
+  <label><input type="checkbox" id="c-enemy" checked> ogień wroga (E)</label>
+  <label><input type="checkbox" id="c-bloom" checked> bloom (B)</label>
+  <div class="row"><span>moc świateł</span><input type="range" id="s-light" min="0" max="3" step="0.05" value="1"><output id="o-light"></output></div>
+  <div class="row"><span>bloom</span><input type="range" id="s-bloom" min="0" max="2" step="0.05" value="0.8"><output id="o-bloom"></output></div>
+  <div class="row"><span>kolor lasera</span>
+    <select id="sel-color">
+      <option value="0">1 · czerwony</option>
+      <option value="1">2 · zielony</option>
+      <option value="2">3 · niebieski</option>
+      <option value="3">4 · fioletowy</option>
+    </select><span></span></div>
+  <div class="keys">1–4 kolor lasera · kółko — zoom · WASD / strzałki — kamera ·
+    T — oświetlenie dynamiczne · P — pył · E — ogień wroga · B — bloom</div>
+  </details>
+</div>
+<div id="err"></div>
+
+<script type="module">
+const errEl = document.getElementById('err');
+function showError(text) {
+  errEl.style.display = 'block';
+  errEl.textContent += `${text}\n`;
+  console.error(text);
+}
+window.addEventListener('error', (e) => showError(`JS: ${e.message} @ ${e.filename}:${e.lineno}`));
+window.addEventListener('unhandledrejection', (e) => showError(`Promise: ${e.reason?.stack || e.reason}`));
+
+const THREE = await import('three/webgpu');
+const {
+  Fn, uniform, uniformArray, float, vec2, vec3, vec4, color, Loop, If, select,
+  positionWorld, normalWorld, normalLocal, positionLocal, cameraPosition, uv,
+  instancedArray, instanceIndex, instancedBufferAttribute, varying, hash,
+  mx_noise_float, mx_fractal_noise_float, mix, smoothstep, saturate, exp, max,
+  dot, normalize, length, abs, fract, floor, atan, pass
+} = await import('three/tsl');
+const { bloom } = await import('three/addons/tsl/display/BloomNode.js');
+const { mergeVertices } = await import('three/addons/utils/BufferGeometryUtils.js');
+
+// ---------------------------------------------------------------------------
+// Renderer
+
+const params = new URLSearchParams(location.search);
+const forceWebGL = params.has('webgl') || !('gpu' in navigator);
+const renderer = new THREE.WebGPURenderer({ antialias: false, forceWebGL, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+document.body.appendChild(renderer.domElement);
+await renderer.init();
+const isWebGPU = renderer.backend.isWebGPUBackend === true;
+
+const DUST = Math.max(1000, Math.min(2000000, Number(params.get('pyl')) || (isWebGPU ? 250000 : 40000)));
+const SPARKS = isWebGPU ? 32768 : 8192;
+const MAX_LIGHTS = 256;
+const MAX_SEGS = 64;
+const MAX_WAVES = 16;
+const MAX_COLLIDERS = 48;
+const MAX_SPAWNS = 16;
+const MAX_QUADS = 512;
+const BOLT_Z = 65;
+
+document.getElementById('backend').textContent = isWebGPU
+  ? `WebGPU · pył: ${DUST.toLocaleString('pl-PL')} drobin`
+  : 'WebGPU niedostępne — tryb awaryjny WebGL2 (mniej drobin)';
+
+// ---------------------------------------------------------------------------
+// Wspólne uniformy: światła dynamiczne (strzały, trafienia, dysze)
+
+const lightPosArr = Array.from({ length: MAX_LIGHTS }, () => new THREE.Vector4());   // xyz, promień
+const lightColArr = Array.from({ length: MAX_LIGHTS }, () => new THREE.Vector4());   // rgb·moc, skala spadku
+const uLightPos = uniformArray(lightPosArr, 'vec4');
+const uLightCol = uniformArray(lightColArr, 'vec4');
+const uLightCount = uniform(0, 'int');
+const uShotLight = uniform(1);   // A/B: 0 = jak dziś (sam bloom), 1 = WebGPU
+const uShotGain = uniform(1);
+const uTime = uniform(0);
+const uDt = uniform(1 / 60);
+
+// Światło dynamiczne na powierzchni: Lambert + połysk Blinna-Phonga, okno
+// zasięgu (1 − (d/R)²)² razy 1 / (1 + (d/s)²). Dodawane jako emisja, więc
+// przechodzi przez bloom i ACES tak jak reszta sceny.
+// Wszystko, czego pętla używa, liczymy PRZED nią (.toVar()): wspólne węzły
+// (pozycja, normalna, kierunek do kamery) zbudowane pierwszy raz wewnątrz
+// If trafiłyby do jego zakresu i standardowe oświetlenie (słońce) czytałoby
+// je niezainicjalizowane, gdy w pętli nie ma świateł.
+const shotLight = Fn(([albedo, rough, metal, P, N]) => {
+  const sum = vec3(0).toVar();
+  const Pw = P.toVar();
+  const Nw = N.toVar();
+  const V = normalize(cameraPosition.sub(Pw)).toVar();
+  const shin = exp(rough.oneMinus().mul(5.5)).mul(4.0).toVar();
+  const f0 = mix(vec3(0.04), albedo, metal).toVar();
+  const kd = albedo.mul(metal.oneMinus()).toVar();
+  Loop(uLightCount, ({ i }) => {
+    const lp = uLightPos.element(i);
+    const lc = uLightCol.element(i);
+    const Lv = lp.xyz.sub(Pw);
+    const d = length(Lv);
+    If(d.lessThan(lp.w), () => {
+      const L = Lv.div(max(d, 0.001));
+      const x = d.div(lp.w);
+      const win = saturate(x.mul(x).oneMinus());
+      const ds = d.div(lc.w);
+      const att = win.mul(win).div(ds.mul(ds).add(1.0));
+      const ndl = saturate(dot(Nw, L));
+      const H = normalize(L.add(V));
+      const ndh = max(dot(Nw, H), 0.0001);
+      const spec = ndh.pow(shin).mul(shin.mul(0.03).add(0.4));
+      sum.addAssign(lc.xyz.mul(att.mul(ndl)).mul(kd.add(f0.mul(spec))));
+    });
+  });
+  return sum.mul(uShotLight.mul(uShotGain));
+});
+
+// Światło w ośrodku (pył): bez normalnej, samo tłumienie z odległością.
+const mediumLight = Fn(([P]) => {
+  const sum = vec3(0).toVar();
+  const Pw = P.toVar();
+  Loop(uLightCount, ({ i }) => {
+    const lp = uLightPos.element(i);
+    const lc = uLightCol.element(i);
+    const d = length(lp.xyz.sub(Pw));
+    If(d.lessThan(lp.w), () => {
+      const x = d.div(lp.w);
+      const win = saturate(x.mul(x).oneMinus());
+      const ds = d.div(lc.w);
+      sum.addAssign(lc.xyz.mul(win.mul(win).div(ds.mul(ds).add(1.0))));
+    });
+  });
+  return sum.mul(uShotLight.mul(uShotGain));
+});
+
+// ---------------------------------------------------------------------------
+// Materiały
+
+function hullMaterial(o) {
+  const m = new THREE.MeshStandardNodeMaterial();
+  const p = positionLocal.div(o.panel);
+  const uvp = select(abs(normalLocal.z).greaterThan(0.5), p.xy,
+    select(abs(normalLocal.x).greaterThan(0.5), p.yz, p.xz));
+  const cell = floor(uvp).add(1000.0);
+  const f = abs(fract(uvp).sub(0.5)).mul(2.0);
+  const line = smoothstep(0.88, 0.97, max(f.x, f.y));
+  const vari = hash(cell.x.mul(157.0).add(cell.y.mul(311.0)).add(o.seed)).mul(0.35).add(0.75);
+  const albedo = mix(color(o.base).mul(vari), color(o.line), line.mul(0.85));
+  const rough = float(o.rough).add(line.mul(0.15));
+  const metal = float(o.metal);
+  m.colorNode = albedo;
+  m.roughnessNode = rough;
+  m.metalnessNode = metal;
+  m.emissiveNode = shotLight(albedo, rough, metal, positionWorld, normalize(normalWorld));
+  return m;
+}
+
+function rockMaterial(o) {
+  const m = new THREE.MeshStandardNodeMaterial();
+  const p = positionLocal.mul(o.freq).add(vec3(o.seed));
+  const n1 = mx_fractal_noise_float(p, 4, 2.0, 0.5);
+  const n2 = mx_noise_float(p.mul(5.0));
+  const base = mix(color(o.a), color(o.b), saturate(n1.mul(1.2).add(0.5)));
+  const albedo0 = base.mul(n2.mul(0.18).add(0.9));
+  const vein = smoothstep(0.07, 0.0, abs(mx_noise_float(p.mul(1.7).add(vec3(13.1))))).mul(o.veins);
+  const albedo = mix(albedo0, color(o.vein), vein);
+  const rough = mix(float(0.93), float(0.3), vein);
+  const metal = mix(float(0.0), float(0.85), vein);
+  m.colorNode = albedo;
+  m.roughnessNode = rough;
+  m.metalnessNode = metal;
+  m.emissiveNode = shotLight(albedo, rough, metal, positionWorld, normalize(normalWorld));
+  return m;
+}
+
+function glowMaterial(rgb) {
+  const m = new THREE.MeshBasicNodeMaterial();
+  m.colorNode = vec3(rgb[0], rgb[1], rgb[2]);
+  return m;
+}
+
+// ---------------------------------------------------------------------------
+// Scena, kamera, światło stałe (ciemny kosmos — światło niosą strzały)
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(35, innerWidth / innerHeight, 10, 30000);
+const cam = { x: 0, y: 0, z: 3800, tz: 3800 };
+function syncCamera() {
+  camera.position.set(cam.x, cam.y - cam.z * 0.13, cam.z);
+  camera.lookAt(cam.x, cam.y, 0);
+}
+syncCamera();
+
+const sun = new THREE.DirectionalLight(0xc4d6ff, 0.85);
+sun.position.set(-0.9, 0.55, 1.1);
+scene.add(sun);
+const hemi = new THREE.HemisphereLight(0x2c3a66, 0x06080e, 0.45);
+hemi.position.set(0, 0, 1);
+scene.add(hemi);
+
+// Mgławica
+{
+  const m = new THREE.MeshBasicNodeMaterial();
+  const np = positionWorld.xy.mul(0.00016);
+  const n = mx_fractal_noise_float(vec3(np, 0.3), 5, 2.0, 0.5);
+  const n2 = mx_fractal_noise_float(vec3(np.mul(2.3), 4.1), 4, 2.0, 0.5);
+  const neb = mix(vec3(0.006, 0.008, 0.024), vec3(0.05, 0.018, 0.075), saturate(n.mul(0.9).add(0.45)))
+    .add(vec3(0.012, 0.035, 0.06).mul(saturate(n2.add(0.15))));
+  m.colorNode = neb;
+  const plane = new THREE.Mesh(new THREE.PlaneGeometry(60000, 40000), m);
+  plane.position.z = -7000;
+  plane.renderOrder = -10;
+  scene.add(plane);
+}
+
+// Gwiazdy (instancje sprite'ów, pozycje policzone raz na GPU)
+const STARS = 7000;
+const starBuf = instancedArray(STARS, 'vec4');
+const starInit = Fn(() => {
+  const i = instanceIndex;
+  starBuf.element(i).assign(vec4(
+    hash(i).sub(0.5).mul(36000),
+    hash(i.add(77777)).sub(0.5).mul(24000),
+    float(-6200).add(hash(i.add(15551)).mul(1500)),
+    hash(i.add(31337))
+  ));
+})().compute(STARS);
+{
+  const m = new THREE.SpriteNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  const s = starBuf.toAttribute();
+  const b = s.w;
+  m.positionNode = s.xyz;
+  m.scaleNode = b.mul(b).mul(34).add(10);
+  const q = uv().sub(0.5).mul(2.0);
+  const tw = mx_noise_float(vec3(s.x.mul(0.01), s.y.mul(0.01), uTime.mul(0.7))).mul(0.3).add(1.0);
+  const tint = mix(vec3(0.62, 0.76, 1.0), vec3(1.0, 0.9, 0.76), fract(b.mul(13.7)));
+  m.colorNode = tint.mul(exp(dot(q, q).mul(-6.0))).mul(b.mul(b).mul(b).mul(7.0).add(0.2)).mul(tw);
+  const stars = new THREE.Sprite(m);
+  stars.count = STARS;
+  stars.frustumCulled = false;
+  stars.renderOrder = -9;
+  scene.add(stars);
+}
+
+// ---------------------------------------------------------------------------
+// Okręty (proceduralne bryły; kolizje jako prostokąt w płaszczyźnie gry)
+
+function mulberry32(a) {
+  return () => {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const uBlink = uniform(0);
+function buildShip(o) {
+  const g = new THREE.Group();
+  const hull = hullMaterial({ base: o.base, line: o.line, metal: 0.3, rough: 0.5, panel: 46, seed: o.seed });
+  const dark = hullMaterial({ base: o.dark, line: o.line, metal: 0.25, rough: 0.64, panel: 30, seed: o.seed + 9 });
+  const add = (mat, w, h, d, x, y, z) => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    mesh.position.set(x, y, z);
+    g.add(mesh);
+    return mesh;
+  };
+  add(hull, 900, 210, 70, 0, 0, 0);
+  add(hull, 280, 150, 60, 580, 0, 0);
+  add(hull, 170, 86, 46, 790, 0, -2);
+  add(dark, 170, 290, 96, -520, 0, 4);
+  add(hull, 520, 58, 50, -40, 152, -6);
+  add(hull, 520, 58, 50, -40, -152, -6);
+  add(dark, 140, 92, 70, -260, 0, 62);
+  add(hull, 72, 132, 22, -270, 0, 106);
+  add(dark, 620, 26, 14, 60, 0, 42);
+  const rnd = mulberry32(o.seed);
+  for (let i = 0; i < 52; i++) {
+    const w = 18 + rnd() * 70;
+    const h = 14 + rnd() * 50;
+    const d = 8 + rnd() * 22;
+    add(rnd() < 0.5 ? dark : hull, w, h, d, -430 + rnd() * 920, (rnd() - 0.5) * 170, 35 + d * 0.5);
+  }
+  const nozMat = glowMaterial(o.engine);
+  for (const y of [-92, 0, 92]) {
+    const c = new THREE.Mesh(new THREE.CylinderGeometry(36, 42, 30, 20), nozMat);
+    c.rotation.z = Math.PI / 2;
+    c.position.set(-612, y, 4);
+    g.add(c);
+  }
+  const navR = new THREE.MeshBasicNodeMaterial();
+  navR.colorNode = vec3(6.0, 0.25, 0.15).mul(select(fract(uBlink).lessThan(0.12), float(1.0), float(0.08)));
+  const navG = new THREE.MeshBasicNodeMaterial();
+  navG.colorNode = vec3(0.2, 5.0, 0.6).mul(select(fract(uBlink.add(0.5)).lessThan(0.12), float(1.0), float(0.08)));
+  add(navR, 14, 14, 14, -60, 184, 20);
+  add(navG, 14, 14, 14, -60, -184, 20);
+  const turret = new THREE.Group();
+  turret.position.set(170, 0, 48);
+  g.add(turret);
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(50, 58, 30, 28), dark);
+  base.rotation.x = Math.PI / 2;
+  turret.add(base);
+  for (const y of [-12, 12]) {
+    const barrel = new THREE.Mesh(new THREE.BoxGeometry(175, 14, 14), hull);
+    barrel.position.set(96, y, 12);
+    turret.add(barrel);
+  }
+  g.scale.setScalar(o.scale);
+  g.position.set(o.x, o.y, 0);
+  g.rotation.z = o.angle;
+  scene.add(g);
+  return {
+    group: g, turret, x: o.x, y: o.y, angle: o.angle, scale: o.scale, engine: o.engine,
+    box: { x0: -610 * o.scale, x1: 880 * o.scale, y0: -182 * o.scale, y1: 182 * o.scale },
+    // Działa burtowe do salwy (układ lokalny okrętu).
+    hardpoints: [-260, -110, 40, 190].flatMap((x) => [[x, 152, 36], [x, -152, 36]])
+  };
+}
+
+const player = buildShip({ x: -1550, y: -420, angle: 0.14, scale: 1.0, seed: 11,
+  base: 0x6f7c8c, dark: 0x3a4250, line: 0x1a2029, engine: [0.9, 2.6, 7.5] });
+const enemy = buildShip({ x: 1650, y: 380, angle: Math.PI + 0.2, scale: 0.85, seed: 29,
+  base: 0x7d4b3b, dark: 0x3e2a25, line: 0x1d1210, engine: [7.0, 2.2, 0.6] });
+const ships = [player, enemy];
+
+// ---------------------------------------------------------------------------
+// Skały
+
+function ihash(x, y, z, s) {
+  let h = Math.imul(x | 0, 374761393) ^ Math.imul(y | 0, 668265263) ^ Math.imul(z | 0, 1274126177) ^ Math.imul(s | 0, 1911520717);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
+}
+function vnoise(x, y, z, s) {
+  const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z);
+  const xf = x - xi, yf = y - yi, zf = z - zi;
+  const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf), w = zf * zf * (3 - 2 * zf);
+  const l = (a, b, t) => a + (b - a) * t;
+  const c = (dx, dy, dz) => ihash(xi + dx, yi + dy, zi + dz, s);
+  return l(
+    l(l(c(0, 0, 0), c(1, 0, 0), u), l(c(0, 1, 0), c(1, 1, 0), u), v),
+    l(l(c(0, 0, 1), c(1, 0, 1), u), l(c(0, 1, 1), c(1, 1, 1), u), v), w);
+}
+function fbm(x, y, z, s) {
+  let a = 0.5, f = 1, sum = 0;
+  for (let o = 0; o < 5; o++) { sum += a * vnoise(x * f, y * f, z * f, s + o * 17); f *= 2.03; a *= 0.5; }
+  return sum;
+}
+function rockGeometry(seed, ex, ey, ez) {
+  let g = new THREE.IcosahedronGeometry(1, 12);
+  g.deleteAttribute('normal');
+  g.deleteAttribute('uv');
+  g = mergeVertices(g);
+  const pos = g.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+    const n = fbm(x * 1.3 + seed * 3.1, y * 1.3 + seed * 1.7, z * 1.3, seed);
+    const fine = fbm(x * 5.0, y * 5.0, z * 5.0 + seed, seed + 101) - 0.5;
+    const r = 0.62 + 0.62 * n + fine * 0.1;
+    pos.setXYZ(i, x * r * ex, y * r * ey, z * r * ez);
+  }
+  g.computeVertexNormals();
+  return g;
+}
+
+const rockMats = [
+  rockMaterial({ a: 0x3f3730, b: 0x8a7b6a, vein: 0xd08a45, veins: 0.7, freq: 2.2, seed: 1.3 }),
+  rockMaterial({ a: 0x262424, b: 0x5b5550, vein: 0xb97a45, veins: 0.4, freq: 2.8, seed: 7.9 }),
+  rockMaterial({ a: 0x5d6d7c, b: 0xaebfcd, vein: 0x9fdcff, veins: 0.3, freq: 1.8, seed: 4.2 })
+];
+const rockGeos = Array.from({ length: 8 }, (_, i) => rockGeometry(i * 13 + 5, 1 + (i % 3) * 0.18, 1 - (i % 2) * 0.12, 0.85));
+const rocks = [];
+{
+  const rnd = mulberry32(4242);
+  let tries = 0;
+  while (rocks.length < 24 && tries++ < 4000) {
+    const r = 45 + rnd() * rnd() * 170;
+    const x = -950 + rnd() * 2250;
+    const y = -1150 + rnd() * 2300;
+    const z = -30 + rnd() * 50;
+    if (rocks.some((k) => Math.hypot(k.x - x, k.y - y) < (k.r + r) * 1.15)) continue;
+    if (Math.hypot(x - player.x, y - player.y) < 1050 || Math.hypot(x - enemy.x, y - enemy.y) < 950) continue;
+    const mesh = new THREE.Mesh(rockGeos[rocks.length % rockGeos.length], rockMats[Math.floor(rnd() * 3)]);
+    mesh.position.set(x, y, z);
+    mesh.rotation.set(rnd() * 6.28, rnd() * 6.28, rnd() * 6.28);
+    mesh.scale.setScalar(r);
+    scene.add(mesh);
+    rocks.push({ x, y, z, r, mesh, spin: (rnd() - 0.5) * 0.12 });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Pył fizyczny (compute)
+
+const dustPos = instancedArray(DUST, 'vec4');   // xyz, ziarno
+const dustVel = instancedArray(DUST, 'vec4');
+// Pudło pyłu jedzie za kamerą (drobina, która z niego wyjdzie, wraca z drugiej strony).
+const uBoxC = uniform(new THREE.Vector3(0, 0, -120));
+const uBoxH = uniform(new THREE.Vector3(3000, 2000, 360));
+const segA = Array.from({ length: MAX_SEGS }, () => new THREE.Vector4());   // x0 y0 x1 y1
+const segB = Array.from({ length: MAX_SEGS }, () => new THREE.Vector4());   // siła, promień, kierunek xy
+const waveA = Array.from({ length: MAX_WAVES }, () => new THREE.Vector4()); // xyz, promień frontu
+const waveB = Array.from({ length: MAX_WAVES }, () => new THREE.Vector4()); // siła, szerokość
+const colA = Array.from({ length: MAX_COLLIDERS }, () => new THREE.Vector4()); // xyz, promień
+const uSegA = uniformArray(segA, 'vec4');
+const uSegB = uniformArray(segB, 'vec4');
+const uSegCount = uniform(0, 'int');
+const uWaveA = uniformArray(waveA, 'vec4');
+const uWaveB = uniformArray(waveB, 'vec4');
+const uWaveCount = uniform(0, 'int');
+const uCol = uniformArray(colA, 'vec4');
+const uColCount = uniform(0, 'int');
+
+const dustInit = Fn(() => {
+  const i = instanceIndex;
+  const r = vec3(hash(i), hash(i.add(911101)), hash(i.add(522211)));
+  dustPos.element(i).assign(vec4(r.sub(0.5).mul(uBoxH.mul(2.0)).add(uBoxC), hash(i.add(33331))));
+  dustVel.element(i).assign(vec4(0));
+})().compute(DUST);
+
+const dustStep = Fn(() => {
+  const idx = instanceIndex;
+  const P = dustPos.element(idx);
+  const p = P.xyz.toVar();
+  const v = dustVel.element(idx).xyz.toVar();
+  const seed = P.w.toVar();
+  // Ślad pocisku: rozpycha drobiny od osi lotu i trochę ciągnie za sobą.
+  Loop(uSegCount, ({ i }) => {
+    const a = uSegA.element(i);
+    const b = uSegB.element(i);
+    const ab = a.zw.sub(a.xy);
+    const t = saturate(dot(p.xy.sub(a.xy), ab).div(max(dot(ab, ab), 1.0)));
+    const off = p.xy.sub(a.xy.add(ab.mul(t)));
+    const d = length(off);
+    If(d.lessThan(b.y), () => {
+      const k = saturate(d.div(b.y).oneMinus());
+      const push = off.div(max(d, 0.5)).mul(k.mul(k)).add(b.zw.mul(k.mul(0.35)));
+      v.addAssign(vec3(push.mul(b.x).mul(uDt), 0.0));
+    });
+  });
+  // Fale uderzeniowe trafień.
+  Loop(uWaveCount, ({ i }) => {
+    const w = uWaveA.element(i);
+    const wb = uWaveB.element(i);
+    const off = p.sub(w.xyz);
+    const d = length(off);
+    const band = saturate(abs(d.sub(w.w)).div(wb.y).oneMinus());
+    v.addAssign(off.div(max(d, 1.0)).mul(band.mul(wb.x).mul(uDt)));
+  });
+  // Skały i kadłuby: drobina nie wchodzi do środka, odbija się.
+  Loop(uColCount, ({ i }) => {
+    const c = uCol.element(i);
+    const off = p.sub(c.xyz);
+    const d = length(off);
+    If(d.lessThan(c.w), () => {
+      const n = off.div(max(d, 0.01));
+      p.assign(c.xyz.add(n.mul(c.w)));
+      const vn = dot(v, n);
+      If(vn.lessThan(0.0), () => { v.subAssign(n.mul(vn.mul(1.6))); });
+    });
+  });
+  const q0 = p.mul(0.0011);
+  const turb = vec3(
+    mx_noise_float(q0.add(vec3(0.0, 0.0, uTime.mul(0.04)))),
+    mx_noise_float(q0.add(vec3(31.7, 5.3, uTime.mul(0.04)))),
+    mx_noise_float(q0.add(vec3(-9.1, 17.9, uTime.mul(0.04)))).mul(0.3)
+  );
+  v.addAssign(turb.mul(9.0).mul(uDt));
+  v.mulAssign(exp(uDt.mul(-0.85)));
+  p.addAssign(v.mul(uDt));
+  const qn = fract(p.sub(uBoxC).div(uBoxH.mul(2.0)).add(0.5));
+  dustPos.element(idx).assign(vec4(qn.sub(0.5).mul(uBoxH.mul(2.0)).add(uBoxC), seed));
+  dustVel.element(idx).assign(vec4(v, 0.0));
+})().compute(DUST);
+
+const uDustGain = uniform(0.12);
+const dust = (() => {
+  const m = new THREE.SpriteNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  const a = dustPos.toAttribute();
+  const seed = a.w;
+  m.positionNode = a.xyz;
+  // ~88% drobnych ziaren, ~12% miękkich kłębów (mgiełka).
+  const puff = select(seed.lessThan(0.12), float(1.0), float(0.0));
+  m.scaleNode = mix(seed.mul(9.0).add(6.0), seed.mul(300.0).add(30.0), puff);
+  const lit = varying(mediumLight(a.xyz).mul(uDustGain).mul(mix(float(1.0), float(0.35), puff)));
+  const base = mix(vec3(0.03, 0.036, 0.048).mul(seed.mul(0.8).add(0.5)), vec3(0.006, 0.008, 0.013), puff);
+  const q = uv().sub(0.5).mul(2.0);
+  const r2 = dot(q, q);
+  const mask = exp(r2.mul(-4.0)).mul(smoothstep(1.0, 0.75, r2));
+  m.colorNode = base.add(lit).mul(mask);
+  const s = new THREE.Sprite(m);
+  s.count = DUST;
+  s.frustumCulled = false;
+  s.renderOrder = 5;
+  scene.add(s);
+  return s;
+})();
+
+// ---------------------------------------------------------------------------
+// Iskry (compute, pula pierścieniowa, narodziny zgłaszane z CPU)
+
+const sparkPos = instancedArray(SPARKS, 'vec4');  // xyz, wiek
+const sparkVel = instancedArray(SPARKS, 'vec4');  // prędkość, czas życia
+const spA = Array.from({ length: MAX_SPAWNS }, () => new THREE.Vector4());  // xyz, liczba
+const spB = Array.from({ length: MAX_SPAWNS }, () => new THREE.Vector4());  // normalna, start w puli
+const spC = Array.from({ length: MAX_SPAWNS }, () => new THREE.Vector4());  // v min, v max, życie min, życie max
+const uSpA = uniformArray(spA, 'vec4');
+const uSpB = uniformArray(spB, 'vec4');
+const uSpC = uniformArray(spC, 'vec4');
+const uSpCount = uniform(0, 'int');
+const uSeed = uniform(0);
+
+const sparkStep = Fn(() => {
+  const idx = instanceIndex;
+  const fi = float(idx).toVar();
+  const pp = sparkPos.element(idx).toVar();
+  const vv = sparkVel.element(idx).toVar();
+  Loop(uSpCount, ({ i }) => {
+    const a = uSpA.element(i);
+    const b = uSpB.element(i);
+    const c = uSpC.element(i);
+    const rel = fi.sub(b.w).add(SPARKS).mod(SPARKS);
+    If(rel.lessThan(a.w), () => {
+      const s = fi.add(uSeed);
+      const h1 = hash(s.mul(3.0).add(1.0));
+      const h2 = hash(s.mul(5.0).add(2.0));
+      const h3 = hash(s.mul(7.0).add(3.0));
+      const h4 = hash(s.mul(11.0).add(4.0));
+      const h5 = hash(s.mul(13.0).add(5.0));
+      const rd = vec3(h1.mul(2.0).sub(1.0), h2.mul(2.0).sub(1.0), h3.mul(2.0).sub(1.0));
+      const dir = normalize(b.xyz.add(rd.mul(0.9)).add(vec3(0.0, 0.0, 0.001)));
+      pp.assign(vec4(a.xyz, 0.0));
+      vv.assign(vec4(dir.mul(mix(c.x, c.y, h4.mul(h4))), mix(c.z, c.w, h5)));
+    });
+  });
+  If(pp.w.lessThan(vv.w), () => {
+    const vel = vv.xyz.mul(exp(uDt.mul(-2.0)));
+    pp.assign(vec4(pp.xyz.add(vel.mul(uDt)), pp.w.add(uDt)));
+    vv.assign(vec4(vel, vv.w));
+  });
+  sparkPos.element(idx).assign(pp);
+  sparkVel.element(idx).assign(vv);
+})().compute(SPARKS);
+
+const sparks = (() => {
+  const m = new THREE.SpriteNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  const a = sparkPos.toAttribute();
+  const b = sparkVel.toAttribute();
+  const life = saturate(a.w.div(max(b.w, 0.001)));
+  const alive = select(a.w.lessThan(b.w), float(1.0), float(0.0));
+  const speed = length(b.xyz);
+  m.positionNode = a.xyz;
+  // Smuga wzdłuż prędkości (widok z góry: kąt w płaszczyźnie XY ≈ kąt na ekranie).
+  m.rotationNode = atan(b.y, b.x);
+  m.scaleNode = vec2(max(speed.mul(0.028), 6.0), mix(float(5.0), float(2.2), life)).mul(alive);
+  const fade = life.oneMinus();
+  const heat = mix(vec3(10.0, 8.0, 5.0), vec3(5.5, 1.2, 0.18), smoothstep(0.0, 0.55, life)).mul(fade.mul(fade));
+  const q = uv().sub(0.5).mul(2.0);
+  const mask = exp(q.x.mul(q.x).mul(-2.5).add(q.y.mul(q.y).mul(-9.0)));
+  m.colorNode = heat.mul(mask);
+  const s = new THREE.Sprite(m);
+  s.count = SPARKS;
+  s.frustumCulled = false;
+  s.renderOrder = 7;
+  scene.add(s);
+  return s;
+})();
+
+// ---------------------------------------------------------------------------
+// Pociski, wiązka, błyski, rozgrzane punkty — jedna partia kwadów
+
+const quadTint = new THREE.InstancedBufferAttribute(new Float32Array(MAX_QUADS * 4), 4);
+quadTint.setUsage(THREE.DynamicDrawUsage);
+const quads = (() => {
+  const m = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
+  const tint = instancedBufferAttribute(quadTint);
+  const q = uv().sub(0.5).mul(2.0);
+  // Pocisk / wiązka: rdzeń rozżarzony do bieli + poświata, zwężone końce.
+  const ay = q.y.mul(q.y);
+  const core = exp(ay.mul(-45.0));
+  const halo = exp(ay.mul(-4.0)).mul(0.32);
+  const ends = smoothstep(1.0, 0.5, abs(q.x));
+  const peak = max(tint.x, max(tint.y, tint.z));
+  const bolt = mix(tint.xyz, vec3(peak), core.mul(0.7)).mul(core.add(halo)).mul(ends);
+  // Błysk / rozgrzany punkt: okrągły.
+  const r2 = dot(q, q);
+  const round = tint.xyz.mul(exp(r2.mul(-7.0)).add(exp(r2.mul(-1.7)).mul(0.28))).mul(smoothstep(1.0, 0.8, r2));
+  m.colorNode = select(tint.w.lessThan(0.5), bolt, round);
+  const mesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), m, MAX_QUADS);
+  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  mesh.count = 0;
+  mesh.frustumCulled = false;
+  mesh.renderOrder = 8;
+  scene.add(mesh);
+  return mesh;
+})();
+
+// ---------------------------------------------------------------------------
+// Render: scena → bloom → ACES (tone mapping renderera w RenderPipeline)
+
+const pipeline = new THREE.RenderPipeline(renderer);
+const scenePass = pass(scene, camera, { samples: isWebGPU ? 4 : 0 });
+const sceneColor = scenePass.getTextureNode('output');
+const bloomNode = bloom(sceneColor, 0.8, 0.45, 0.85);
+pipeline.outputNode = sceneColor.add(bloomNode);
+
+renderer.compute(starInit);
+renderer.compute(dustInit);
+
+// ---------------------------------------------------------------------------
+// Symulacja strzałów (CPU) — trafienia liczone w płaszczyźnie gry
+
+const LASER = [
+  [1.0, 0.16, 0.1],
+  [0.2, 1.0, 0.32],
+  [0.25, 0.55, 1.0],
+  [0.78, 0.3, 1.0]
+];
+const ENEMY_COLOR = [0.35, 1.0, 0.25];
+const S = {
+  color: 0, dust: true, sparks: true, enemyFire: true, bloom: true, bloomStrength: 0.8,
+  mouse: { x: 0, y: 0, down: false, right: false }, aim: new THREE.Vector3(0, 0, 0),
+  keys: new Set(), time: 0, fireCd: 0, barrel: 0, enemyCd: 1.2, fps: 60, beamWaveCd: 0,
+  salvo: []
+};
+const bolts = [];
+const flashes = [];   // błyski wylotu i trafień
+const hotspots = [];
+const waves = [];
+const spawns = [];
+let sparkCursor = 0;
+let beam = null;
+
+const _v = new THREE.Vector3();
+function worldOf(obj, x, y, z) { return obj.localToWorld(_v.set(x, y, z)).clone(); }
+
+function barrelTip(ship, side) {
+  ship.group.updateMatrixWorld(true);
+  return worldOf(ship.turret, 190, side * 12, 12);
+}
+
+function aimTurret(ship, tx, ty) {
+  const a = Math.atan2(ty - ship.y, tx - ship.x);
+  ship.turret.rotation.z = a - ship.angle;
+}
+
+function fireBolt(from, dirX, dirY, rgb, owner, speed = 5200) {
+  const len = Math.hypot(dirX, dirY) || 1;
+  bolts.push({
+    x: from.x, y: from.y, dx: dirX / len, dy: dirY / len, speed, rgb, owner,
+    traveled: 0, range: 5200, len: 230, width: 15
+  });
+  flashes.push({ x: from.x, y: from.y, z: BOLT_Z, age: 0, life: 0.09, rgb, size: 120, power: 10, kind: 'muzzle' });
+}
+
+// Widok z góry: trafienie = to, co widać — koło skały w płaszczyźnie XY.
+function rayCircle(ox, oy, dx, dy, maxT, c) {
+  const mx = ox - c.x, my = oy - c.y;
+  const b = mx * dx + my * dy;
+  const cc = mx * mx + my * my - c.r * c.r * 0.72;
+  if (cc > 0 && b > 0) return -1;
+  const disc = b * b - cc;
+  if (disc < 0) return -1;
+  const t = -b - Math.sqrt(disc);
+  return (t >= 0 && t <= maxT) ? t : -1;
+}
+
+function rayShip(ox, oy, dx, dy, maxT, s) {
+  const ca = Math.cos(-s.angle), sa = Math.sin(-s.angle);
+  const lx = ca * (ox - s.x) - sa * (oy - s.y);
+  const ly = sa * (ox - s.x) + ca * (oy - s.y);
+  const ldx = ca * dx - sa * dy;
+  const ldy = sa * dx + ca * dy;
+  let tmin = 0, tmax = maxT, nx = 0, ny = 0;
+  const slab = (o, d, lo, hi, axis) => {
+    if (Math.abs(d) < 1e-9) return o >= lo && o <= hi;
+    let t1 = (lo - o) / d, t2 = (hi - o) / d, n = -1;
+    if (t1 > t2) { const t = t1; t1 = t2; t2 = t; n = 1; }
+    if (t1 > tmin) { tmin = t1; nx = axis === 0 ? n : 0; ny = axis === 1 ? n : 0; }
+    tmax = Math.min(tmax, t2);
+    return tmin <= tmax;
+  };
+  if (!slab(lx, ldx, s.box.x0, s.box.x1, 0)) return null;
+  if (!slab(ly, ldy, s.box.y0, s.box.y1, 1)) return null;
+  if (tmin <= 0) return null;
+  const c = Math.cos(s.angle), sn = Math.sin(s.angle);
+  return { t: tmin, nx: c * nx - sn * ny, ny: sn * nx + c * ny };
+}
+
+// Najbliższe trafienie promienia w płaszczyźnie pocisków.
+function castRay(ox, oy, dx, dy, maxT, owner) {
+  let best = null;
+  for (const r of rocks) {
+    const t = rayCircle(ox, oy, dx, dy, maxT, r);
+    if (t >= 0 && (!best || t < best.t)) {
+      const hx = ox + dx * t, hy = oy + dy * t;
+      const n = new THREE.Vector3(hx - r.x, hy - r.y, r.r * 0.45).normalize();
+      best = { t, x: hx, y: hy, z: BOLT_Z, n, rock: true };
+    }
+  }
+  for (const s of ships) {
+    if (s === owner) continue;
+    const h = rayShip(ox, oy, dx, dy, maxT, s);
+    if (h && (!best || h.t < best.t)) {
+      best = { t: h.t, x: ox + dx * h.t, y: oy + dy * h.t, z: 40, n: new THREE.Vector3(h.nx, h.ny, 0.45).normalize(), rock: false };
+    }
+  }
+  return best;
+}
+
+function spawnSparks(x, y, z, n, count, vmin, vmax, lmin, lmax) {
+  if (!S.sparks || spawns.length >= MAX_SPAWNS) return;
+  const c = Math.min(Math.floor(count), SPARKS >> 2);
+  if (c <= 0) return;
+  spawns.push({ x, y, z, nx: n.x, ny: n.y, nz: n.z, count: c, start: sparkCursor, vmin, vmax, lmin, lmax });
+  sparkCursor = (sparkCursor + c) % SPARKS;
+}
+
+function addHotspot(x, y, z, heat) {
+  for (const h of hotspots) {
+    if (Math.hypot(h.x - x, h.y - y) < 36) { h.heat = Math.min(1.6, h.heat + heat); return; }
+  }
+  if (hotspots.length > 90) hotspots.shift();
+  hotspots.push({ x, y, z, heat: Math.min(1.6, heat) });
+}
+
+function impact(hit, rgb, power = 1) {
+  const refl = hit.n.clone();
+  flashes.push({ x: hit.x, y: hit.y, z: hit.z + 10, age: 0, life: 0.45, rgb, size: 240 * power, power: 10 * power, kind: 'hit' });
+  addHotspot(hit.x, hit.y, hit.z + 4, 0.75 * power);
+  spawnSparks(hit.x, hit.y, hit.z, refl, 160 * power, 250, 1700, 0.25, 1.1);
+  if (waves.length >= MAX_WAVES) waves.shift();
+  waves.push({ x: hit.x, y: hit.y, z: hit.z, age: 0, life: 1.1, speed: 1150, strength: 1500 * power, width: 120 });
+}
+
+function fireSalvo() {
+  const rgb = LASER[S.color];
+  player.group.updateMatrixWorld(true);
+  player.hardpoints.forEach(([x, y, z], i) => {
+    S.salvo.push({ t: i * 0.035 + Math.random() * 0.02, from: [x, y, z] });
+  });
+  S.salvoColor = rgb;
+}
+
+// ---------------------------------------------------------------------------
+// Wejście
+
+const raycaster = new THREE.Raycaster();
+const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -BOLT_Z);
+function updateAim() {
+  if (S.aimLock) return;
+  const ndc = new THREE.Vector2((S.mouse.x / innerWidth) * 2 - 1, -(S.mouse.y / innerHeight) * 2 + 1);
+  raycaster.setFromCamera(ndc, camera);
+  raycaster.ray.intersectPlane(plane, S.aim);
+}
+const canvas = renderer.domElement;
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+canvas.addEventListener('pointermove', (e) => { S.mouse.x = e.clientX; S.mouse.y = e.clientY; S.aimLock = false; });
+canvas.addEventListener('pointerdown', (e) => {
+  S.mouse.x = e.clientX; S.mouse.y = e.clientY;
+  if (e.button === 0) { S.mouse.down = true; S.fireCd = 0; }
+  if (e.button === 2) S.mouse.right = true;
+});
+addEventListener('pointerup', (e) => {
+  if (e.button === 0) S.mouse.down = false;
+  if (e.button === 2) S.mouse.right = false;
+});
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  cam.tz = Math.min(5200, Math.max(900, cam.tz * Math.exp(e.deltaY * 0.0012)));
+}, { passive: false });
+
+const $ = (id) => document.getElementById(id);
+const abBtn = $('ab');
+function setAB(on) {
+  uShotLight.value = on ? 1 : 0;
+  abBtn.className = on ? 'on' : 'off';
+  abBtn.textContent = on ? 'T · Oświetlenie dynamiczne: WŁĄCZONE' : 'T · Oświetlenie dynamiczne: WYŁĄCZONE';
+  $('abhint').textContent = on
+    ? 'Strzały, trafienia i dysze świecą na kadłuby, skały i pył.'
+    : 'Jak dziś w grze: pociski i błyski świecą same (bloom), ale nie oświetlają otoczenia.';
+}
+abBtn.addEventListener('click', () => setAB(uShotLight.value < 0.5));
+function bindCheck(id, fn) { const el = $(id); el.addEventListener('change', () => fn(el.checked)); fn(el.checked); }
+bindCheck('c-dust', (v) => { S.dust = v; dust.visible = v; });
+if (!isWebGPU) { $('c-sparks').checked = false; $('c-sparks').disabled = true; }
+bindCheck('c-sparks', (v) => { S.sparks = v; sparks.visible = v; });
+bindCheck('c-enemy', (v) => { S.enemyFire = v; });
+bindCheck('c-bloom', (v) => { S.bloom = v; bloomNode.strength.value = v ? S.bloomStrength : 0; });
+function bindRange(id, out, fn) {
+  const el = $(id), o = $(out);
+  const upd = () => { const v = Number(el.value); o.textContent = v.toFixed(2); fn(v); };
+  el.addEventListener('input', upd);
+  upd();
+}
+bindRange('s-light', 'o-light', (v) => { uShotGain.value = v; });
+bindRange('s-bloom', 'o-bloom', (v) => { S.bloomStrength = v; if (S.bloom) bloomNode.strength.value = v; });
+$('sel-color').addEventListener('change', (e) => { S.color = Number(e.target.value); });
+
+function toggleCheck(id) { const el = $(id); el.checked = !el.checked; el.dispatchEvent(new Event('change')); }
+addEventListener('keydown', (e) => {
+  const k = e.key.toLowerCase();
+  S.keys.add(k);
+  if (k === 't') setAB(uShotLight.value < 0.5);
+  if (k === 'p') toggleCheck('c-dust');
+  if (k === 'e') toggleCheck('c-enemy');
+  if (k === 'b') toggleCheck('c-bloom');
+  if (k === 'h') $('panel').classList.toggle('hidden');
+  if (k >= '1' && k <= '4') { S.color = Number(k) - 1; $('sel-color').value = String(S.color); }
+  if (k === ' ') { e.preventDefault(); fireSalvo(); }
+});
+addEventListener('keyup', (e) => S.keys.delete(e.key.toLowerCase()));
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// ---------------------------------------------------------------------------
+// Klatka
+
+const _q = new THREE.Quaternion();
+const _m = new THREE.Matrix4();
+const _p = new THREE.Vector3();
+const _s = new THREE.Vector3();
+const _zAxis = new THREE.Vector3(0, 0, 1);
+let quadCount = 0;
+function pushQuad(x, y, z, angle, sx, sy, r, g, b, kind) {
+  if (quadCount >= MAX_QUADS) return;
+  _q.setFromAxisAngle(_zAxis, angle);
+  _m.compose(_p.set(x, y, z), _q, _s.set(sx, sy, 1));
+  quads.setMatrixAt(quadCount, _m);
+  quadTint.setXYZW(quadCount, r, g, b, kind);
+  quadCount++;
+}
+let lightCount = 0;
+function pushLight(x, y, z, radius, falloff, r, g, b) {
+  if (lightCount >= MAX_LIGHTS) return;
+  lightPosArr[lightCount].set(x, y, z, radius);
+  lightColArr[lightCount].set(r, g, b, falloff);
+  lightCount++;
+}
+
+function heatColor(h) {
+  // biało-żółty → pomarańcz → ciemna czerwień
+  const t = Math.min(1, h / 1.2);
+  return [0.9 + 5.5 * t * t, 0.12 + 3.2 * t * t * t, 0.02 + 1.6 * Math.pow(t, 4)];
+}
+
+let last = performance.now();
+let fpsAcc = 0, fpsFrames = 0;
+function frame(now) {
+  const dt = Math.min(0.05, Math.max(0.001, (now - last) / 1000));
+  last = now;
+  S.time += dt;
+  fpsAcc += dt; fpsFrames++;
+  if (fpsAcc > 0.5) { S.fps = fpsFrames / fpsAcc; fpsAcc = 0; fpsFrames = 0; }
+
+  // Kamera
+  const pan = 1400 * dt * (cam.z / 3600);
+  if (S.keys.has('w') || S.keys.has('arrowup')) cam.y += pan;
+  if (S.keys.has('s') || S.keys.has('arrowdown')) cam.y -= pan;
+  if (S.keys.has('a') || S.keys.has('arrowleft')) cam.x -= pan;
+  if (S.keys.has('d') || S.keys.has('arrowright')) cam.x += pan;
+  cam.z += (cam.tz - cam.z) * Math.min(1, dt * 8);
+  syncCamera();
+  updateAim();
+
+  for (const r of rocks) r.mesh.rotation.z += r.spin * dt;
+
+  // Gracz: wieża za kursorem, ogień
+  aimTurret(player, S.aim.x, S.aim.y);
+  const rgb = LASER[S.color];
+  S.fireCd -= dt;
+  if (S.mouse.down && S.fireCd <= 0) {
+    S.barrel = S.barrel ? 0 : 1;
+    const tip = barrelTip(player, S.barrel ? 1 : -1);
+    fireBolt(tip, S.aim.x - tip.x, S.aim.y - tip.y, rgb, player);
+    S.fireCd = 0.12;
+  }
+  for (let i = S.salvo.length - 1; i >= 0; i--) {
+    const sv = S.salvo[i];
+    sv.t -= dt;
+    if (sv.t <= 0) {
+      const from = worldOf(player.group, sv.from[0], sv.from[1], sv.from[2]);
+      fireBolt(from, S.aim.x - from.x, S.aim.y - from.y, S.salvoColor || rgb, player);
+      S.salvo.splice(i, 1);
+    }
+  }
+
+  // Wróg odpowiada ogniem
+  aimTurret(enemy, player.x, player.y);
+  S.enemyCd -= dt;
+  if (S.enemyFire && S.enemyCd <= 0) {
+    const tip = barrelTip(enemy, Math.random() < 0.5 ? -1 : 1);
+    const tx = player.x + (Math.random() - 0.5) * 700;
+    const ty = player.y + (Math.random() - 0.5) * 260;
+    fireBolt(tip, tx - tip.x, ty - tip.y, ENEMY_COLOR, enemy, 4300);
+    S.enemyCd = 0.7 + Math.random() * 0.9;
+  }
+
+  // Pociski
+  for (let i = bolts.length - 1; i >= 0; i--) {
+    const b = bolts[i];
+    const step = b.speed * dt;
+    const hit = castRay(b.x, b.y, b.dx, b.dy, step, b.owner);
+    if (hit) {
+      impact(hit, b.rgb, 1);
+      bolts.splice(i, 1);
+      continue;
+    }
+    b.x += b.dx * step;
+    b.y += b.dy * step;
+    b.traveled += step;
+    if (b.traveled > b.range) bolts.splice(i, 1);
+  }
+
+  // Wiązka ciągła (PPM)
+  beam = null;
+  if (S.mouse.right) {
+    const t1 = barrelTip(player, 1), t2 = barrelTip(player, -1);
+    const ox = (t1.x + t2.x) * 0.5, oy = (t1.y + t2.y) * 0.5;
+    let dx = S.aim.x - ox, dy = S.aim.y - oy;
+    const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
+    const hit = castRay(ox, oy, dx, dy, 3600, player);
+    const len = hit ? hit.t : 3600;
+    beam = { ox, oy, dx, dy, len, hit };
+    if (hit) {
+      addHotspot(hit.x, hit.y, hit.z + 4, dt * 1.4);
+      spawnSparks(hit.x, hit.y, hit.z, hit.n, 900 * dt, 200, 1300, 0.2, 0.8);
+      S.beamWaveCd -= dt;
+      if (S.beamWaveCd <= 0) {
+        if (waves.length >= MAX_WAVES) waves.shift();
+        waves.push({ x: hit.x, y: hit.y, z: hit.z, age: 0, life: 0.7, speed: 800, strength: 600, width: 80 });
+        S.beamWaveCd = 0.12;
+      }
+    }
+  }
+
+  // Wiek efektów
+  for (let i = flashes.length - 1; i >= 0; i--) { flashes[i].age += dt; if (flashes[i].age > flashes[i].life) flashes.splice(i, 1); }
+  for (let i = hotspots.length - 1; i >= 0; i--) { hotspots[i].heat -= dt * 0.32; if (hotspots[i].heat <= 0.02) hotspots.splice(i, 1); }
+  for (let i = waves.length - 1; i >= 0; i--) { waves[i].age += dt; if (waves[i].age > waves[i].life) waves.splice(i, 1); }
+
+  // --- Światła i kwady tej klatki
+  lightCount = 0;
+  quadCount = 0;
+  const flick = 0.85 + 0.15 * Math.sin(S.time * 83) * Math.sin(S.time * 37);
+  for (const f of flashes) {
+    const k = f.kind === 'hit' ? Math.exp(-f.age * 9) : Math.max(0, 1 - f.age / f.life);
+    const w = f.kind === 'hit' ? 0.35 : 0.25;   // domieszka bieli w błysku
+    const cr = f.rgb[0] * (1 - w) + w, cg = f.rgb[1] * (1 - w) + w, cb = f.rgb[2] * (1 - w) + w;
+    pushLight(f.x, f.y, f.z + 30, f.kind === 'hit' ? 800 : 520, f.kind === 'hit' ? 160 : 110,
+      cr * f.power * k, cg * f.power * k, cb * f.power * k);
+    const sz = f.size * (f.kind === 'hit' ? 0.7 + 0.5 * (1 - k) : 1);
+    pushQuad(f.x, f.y, f.z + 12, 0, sz, sz, cr * 4.5 * k, cg * 4.5 * k, cb * 4.5 * k, 1);
+  }
+  if (beam) {
+    const [r, g, b] = rgb;
+    const w = 26 + 8 * flick;
+    pushQuad(beam.ox + beam.dx * beam.len * 0.5, beam.oy + beam.dy * beam.len * 0.5, BOLT_Z + 2,
+      Math.atan2(beam.dy, beam.dx), beam.len, w, r * 9 * flick, g * 9 * flick, b * 9 * flick, 0);
+    const n = Math.min(22, Math.max(2, Math.floor(beam.len / 170)));
+    for (let i = 0; i <= n; i++) {
+      const t = (i / n) * beam.len;
+      pushLight(beam.ox + beam.dx * t, beam.oy + beam.dy * t, BOLT_Z + 20, 440, 110, r * 2.4 * flick, g * 2.4 * flick, b * 2.4 * flick);
+    }
+    pushQuad(beam.ox, beam.oy, BOLT_Z + 14, 0, 110, 110, r * 6, g * 6, b * 6, 1);
+    if (beam.hit) {
+      const h = beam.hit;
+      pushLight(h.x, h.y, h.z + 40, 720, 150, (r * 0.7 + 0.3) * 7 * flick, (g * 0.7 + 0.3) * 7 * flick, (b * 0.7 + 0.3) * 7 * flick);
+      pushQuad(h.x, h.y, h.z + 14, 0, 170 * flick, 170 * flick, (r * 0.6 + 0.4) * 5, (g * 0.6 + 0.4) * 5, (b * 0.6 + 0.4) * 5, 1);
+    }
+  }
+  for (const b of bolts) {
+    const [r, g, bl] = b.rgb;
+    pushQuad(b.x - b.dx * b.len * 0.5, b.y - b.dy * b.len * 0.5, BOLT_Z, Math.atan2(b.dy, b.dx), b.len, b.width, r * 8, g * 8, bl * 8, 0);
+    pushLight(b.x, b.y, BOLT_Z + 25, 680, 160, r * 3.6, g * 3.6, bl * 3.6);
+  }
+  for (const h of hotspots) {
+    const [r, g, b] = heatColor(h.heat);
+    const k = Math.min(1, h.heat);
+    pushQuad(h.x, h.y, h.z + 6, 0, 40 + 55 * k, 40 + 55 * k, r * 1.4, g * 1.4, b * 1.4, 1);
+    pushLight(h.x, h.y, h.z + 26, 300, 70, r * 0.55 * k, g * 0.55 * k, b * 0.55 * k);
+  }
+  // Dysze obu okrętów świecą na kadłub i pył za rufą.
+  for (const s of ships) {
+    const p = worldOf(s.group, -700, 0, 10);
+    const e = s.engine;
+    pushLight(p.x, p.y, p.z, 900 * s.scale, 220 * s.scale, e[0] * 0.28, e[1] * 0.28, e[2] * 0.28);
+  }
+  uLightCount.value = lightCount;
+  quads.count = quadCount;
+  quads.instanceMatrix.needsUpdate = true;
+  quadTint.needsUpdate = true;
+
+  // --- Dane dla pyłu: ślady pocisków, fale, przeszkody
+  let segs = 0;
+  for (const b of bolts) {
+    if (segs >= MAX_SEGS) break;
+    segA[segs].set(b.x - b.dx * b.len * 2.2, b.y - b.dy * b.len * 2.2, b.x, b.y);
+    segB[segs].set(900, 85, b.dx, b.dy);
+    segs++;
+  }
+  if (beam && segs < MAX_SEGS) {
+    segA[segs].set(beam.ox, beam.oy, beam.ox + beam.dx * beam.len, beam.oy + beam.dy * beam.len);
+    segB[segs].set(420, 70, beam.dx, beam.dy);
+    segs++;
+  }
+  uSegCount.value = segs;
+  waves.forEach((w, i) => {
+    const k = 1 - w.age / w.life;
+    waveA[i].set(w.x, w.y, w.z, w.speed * w.age);
+    waveB[i].set(w.strength * k, w.width, 0, 0);
+  });
+  uWaveCount.value = waves.length;
+  let cols = 0;
+  for (const r of rocks) {
+    if (cols >= MAX_COLLIDERS) break;
+    colA[cols++].set(r.x, r.y, r.z, r.r * 0.92);
+  }
+  for (const s of ships) {
+    for (const lx of [-480, -160, 160, 480, 740]) {
+      if (cols >= MAX_COLLIDERS) break;
+      const p = worldOf(s.group, lx, 0, 0);
+      colA[cols++].set(p.x, p.y, p.z, (lx === 740 ? 110 : 190) * s.scale);
+    }
+  }
+  uColCount.value = cols;
+
+  // --- Iskry: zgłoszenia narodzin
+  spawns.forEach((e, i) => {
+    spA[i].set(e.x, e.y, e.z, e.count);
+    spB[i].set(e.nx, e.ny, e.nz, e.start);
+    spC[i].set(e.vmin, e.vmax, e.lmin, e.lmax);
+  });
+  uSpCount.value = spawns.length;
+  uSeed.value = Math.floor(Math.random() * 1e6);
+  spawns.length = 0;
+
+  uTime.value = S.time;
+  uDt.value = dt;
+  uBoxC.value.set(cam.x, cam.y, -120);
+  uBlink.value = S.time * 0.8;
+
+  if (S.dust) renderer.compute(dustStep);
+  if (S.sparks) renderer.compute(sparkStep);
+  pipeline.render();
+
+  $('stats').textContent =
+    `FPS            ${S.fps.toFixed(0)}\n` +
+    `światła        ${lightCount} / ${MAX_LIGHTS}\n` +
+    `pociski        ${bolts.length}\n` +
+    `pył            ${S.dust ? DUST.toLocaleString('pl-PL') : 'wył.'}\n` +
+    `iskry (pula)   ${SPARKS.toLocaleString('pl-PL')}`;
+}
+
+renderer.setAnimationLoop(frame);
+
+// Sterowanie z konsoli (np. do zrzutów): __demo.fire(), __demo.salvo(), __demo.setAB(false)
+window.__demo = {
+  S, setAB, fireSalvo, rocks, ships,
+  aim: (x, y) => { S.aimLock = true; S.aim.set(x, y, BOLT_Z); },
+  hold: (left, right) => { S.mouse.down = !!left; S.mouse.right = !!right; },
+  lookAt: (x, y, zoom) => { cam.x = x; cam.y = y; if (zoom) cam.tz = cam.z = zoom; },
+  fire: () => { const tip = barrelTip(player, 1); fireBolt(tip, S.aim.x - tip.x, S.aim.y - tip.y, LASER[S.color], player); },
+  frame
+};
+</script>
+</body>
+</html>
