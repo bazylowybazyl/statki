@@ -128,42 +128,42 @@ test('planet star shader uses per-star parallax and warp stretch attributes', as
   assert.equal(buffers.size, 2, 'kwadrat + jeden bufor instancji (limit 8 buforów wierzchołków)');
 });
 
+// Warp „Nurt” (zadanie 22, src/3d/warp/stars.js): smugi płaskie wzdłuż kursu tylko ze stanu warpa
+// (WARP_STARS — pisze sterownik warpa), nie z prędkości lotu; dawne rozciąganie z WebGL i „bicz”
+// przy wyjściu usunięte (wyjście = front od dziobu).
 test('normal flight speed does not drive warp stretch in the star shader', () => {
   const graph = starGraphSource(starSources().tsl);
-  assert.doesNotMatch(graph, /max\(\s*u\.warpFactor\s*,\s*u\.speedFactor/);
-  assert.match(graph, /const stretchDrive = max\(u\.warpFactor, u\.exitWhipFactor\.mul\(u\.exitWhipStrength\)\);/);
-  assert.match(graph, /const stretch = float\(1\.0\)\.add\(stretchDrive\.mul\(u\.stretchStrength\)\.mul\(aLayerStretch\)\);/);
+  assert.doesNotMatch(graph, /speedFactor/);
+  assert.doesNotMatch(graph, /u\.warpFactor|u\.exitWhipFactor|u\.moveDir/, 'dawne rozciąganie z WebGL');
+  assert.match(graph, /const warpOn = W\.stretch\.greaterThan\(0\.001\);/);
+  assert.match(graph, /const L = st\.mul\(W\.stretchPx\)\.mul\(aLayerStretch\)\.toVar\(\);/);
 });
 
 test('warp star streak keeps the star head anchored at the original point', () => {
   const graph = starGraphSource(starSources().tsl);
-  // Głowa smugi w miejscu gwiazdy: środek punktu cofa się o pół boku wzdłuż kierunku skoku (viewportSize).
-  assert.match(graph, /const safeViewport = max\(u\.viewportSize, vec2\(1\.0\)\);/);
+  // Smuga w pikselach celu: głowa w gwieździe (alongPx od −w), ogon wstecz kursu (kierunek −heading).
   assert.match(graph, /const clipPosition = cameraProjectionMatrix\.mul\(mvPosition\)\.toVar\(\);/);
-  assert.match(graph, /clipPosition\.assign\(vec4\(clipPosition\.xy\.sub\(screenOffset\), clipPosition\.zw\)\);/);
-  assert.match(graph, /return vec4\(clipPosition\.xy\.add\(offset\), clipPosition\.zw\);/);
-  assert.match(graph, /suv\.assign\(vec2\(suv\.x\.sub\(0\.5\)\.div\(vStretch\), suv\.y\)\);/);
-  assert.doesNotMatch(graph, /stretch\.sub\(1\.0\)\.mul\(0\.5\)/);
-  assert.doesNotMatch(graph, /mvPosition\.xy\.sub\(u\.moveDir/);
-  // Kwadrat punktu z GL: bok gl_PointSize obcięty do ≥ 1 px (ALIASED_POINT_SIZE_RANGE w WebGL).
+  assert.match(graph, /const s0 = clipPosition\.xy\.div\(clipPosition\.w\)\.mul\(half\)\.toVar\(\);/);
+  assert.match(graph, /const dir = W\.heading\.negate\(\);/);
+  assert.match(graph, /const alongPx = g\.x\.add\(0\.5\)\.mul\(L\.add\(w\.mul\(2\.0\)\)\)\.sub\(w\);/);
+  assert.match(graph, /const pix = s0\.add\(dir\.mul\(alongPx\)\)\.add\(perp\.mul\(side\)\);/);
+  // Bez warpa: kwadrat punktu z GL — bok gl_PointSize obcięty do ≥ 1 px (ALIASED_POINT_SIZE_RANGE).
   assert.match(graph, /const quadSize = max\(pointSize, 1\.0\);/);
+  assert.match(graph, /out\.assign\(vec4\(clipPosition\.xy\.add\(offset\), clipPosition\.zw\)\);/);
 });
 
-test('warp exit uses a short whip pulse and preserves the last warp direction', () => {
+test('warp exit: front rzeczywistości od dziobu prostuje smugi (bez „bicza”)', async () => {
   const { js, tsl } = starSources();
   const graph = starGraphSource(tsl);
-  assert.match(js, /exitWhipFactor: uniform\(0\.0\), exitWhipStrength: uniform\(1\.75\)/);
-  assert.match(graph, /const vExitWhip = u\.exitWhipFactor;/);
-  assert.match(graph, /const whipFlash = float\(1\.0\)\.add\(vExitWhip\.mul\(1\.25\)\)/);
-  assert.match(js, /exitWhipTimer:\s*0/);
-  assert.match(js, /exitWhipDuration:\s*0\.34/);
-  assert.match(js, /this\.lastWarpState\s*===\s*'active'\s*&&\s*currentState\s*!==\s*'active'/);
-  assert.match(js, /this\.exitWhipTimer\s*=\s*this\.exitWhipDuration\s*;/);
-  assert.match(js, /Math\.pow\s*\(\s*whipT\s*,\s*2\.6\s*\)/);
-  assert.match(js, /this\.uniforms\.exitWhipFactor\.value\s*=\s*exitWhipFactor\s*;/);
-  assert.match(js, /lastWarpDirX/);
-  assert.match(js, /if\s*\(\s*this\.exitWhipTimer\s*>\s*0\s*\)\s*\{\s*dx\s*=\s*this\.lastWarpDirX\s*;\s*dy\s*=\s*this\.lastWarpDirY\s*;/);
-  assert.doesNotMatch(js, /this\.exitTimer\s*=\s*0\.8/);
+  assert.match(graph, /const real = W\.frontOn\.mul\(smoothstep\(W\.frontPx\.sub\(60\.0\), W\.frontPx\.add\(60\.0\), sAlong\)\);/);
+  assert.match(graph, /const st = W\.stretch\.mul\(float\(1\.0\)\.sub\(real\)\)\.toVar\(\);/);
+  assert.doesNotMatch(js, /exitWhipTimer|lastWarpState|lastWarpDirX/, 'StarSystem bez dawnego bicza');
+  // Krzywa dema: ładowanie 0,32·u², przestrzał ×1,4 przy kopnięciu, trzask do zera w 0,16 s po wyjściu.
+  const { warpStarStretch } = await import('../src/3d/warp/player.js');
+  assert.ok(Math.abs(warpStarStretch(0, 1, Infinity, 0.5, 1) - 0.32 * 0.25) < 1e-12);
+  assert.ok(Math.abs(warpStarStretch(1.12, 1, Infinity, 1, 1) - 1.4) < 1e-9);
+  assert.ok(Math.abs(warpStarStretch(3, 1, Infinity, 1, 1) - 1.0) < 1e-9);
+  assert.ok(warpStarStretch(5.08, 1, 5, 1, 1) > 0 && warpStarStretch(5.16, 1, 5, 1, 1) === 0);
 });
 
 test('oddalenie kamery nie zagęszcza gwiazd: wzór rośnie z kadrem poniżej zoomu odniesienia', async () => {

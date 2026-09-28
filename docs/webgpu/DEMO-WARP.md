@@ -126,8 +126,36 @@ w locie, 4 kroki na klatkę przy 60 Hz). Draw calle: ~20.
 
 ## Do portu w grze
 
-Integracja: sesja portu WebGPU (`docs/webgpu/PLAN.md`, zadanie 12 — wspólna infrastruktura
-efektów w Core3D). Demo nie jest nigdzie wpięte; wygląd czeka na ocenę usera.
+**Stan (zadanie 22, 2026-09-28): „Nurt” jest w grze** — `src/3d/warp/` (sterownik `WarpNurt`,
+opis w `agents.md`, Core3D „Warp „Nurt””). Co poszło gdzie i czym różni się od dema:
+- *Ośrodek* (`medium.js`): 1 mln drobin, krok 1/240 s przez `Core3D.addFxStep`, pass `warp` (warstwa 8)
+  po ring-planetach; śpi 4 s po ostatniej przegródce (poza warpem 0 kroków i 0 draw calli), przegródki
+  poza pudłem wokół kamery nie budzą go (`cullWarpFrameToView`); nowe ziarno po przebudzeniu i skoku
+  kamery; pudła z bieżącego zoomu (nie z najmniejszego zoomu sceny) — przy oddaleniu część drobin
+  przenosi się w nowy pas pudła. 120 Hz dalej niesprawdzone (krok 1/240 s jak w demie).
+- *Skok gracza* (`player.js`) na automacie gry `GameState.warp` (bez zmian rozgrywki). Ładowanie gry
+  trwa 0,8 s (demo 3 s): krzywe biegną po ułamku ładowania, naprężenie ×(3 / 0,8), wzbudzenie ×(3 / 0,8)^0,6.
+  Kopa i zoomu kamery z dema nie ma (kamera gry = `cameraRig.js`, bez offsetów poza rigiem) — zostaje
+  wstrząs (`camera.addShake`). Dawne efekty 2D warpa (cząstki, fale, ładowanie) usunięte.
+- *Przyloty NPC* (`arrivals.js`): warp-in piratów (`npc.state === 'warping_in'`) i wezwania
+  (`WarpNurt.arriveAll`) — rozgrywka zna okręt dopiero w chwili pojawienia się, więc wyrzut jest „teraz”
+  (bez zwiastuna i rozdarcia przed nim); pełna oś ze zwiastunem przez API (`planArrival` /
+  `planFleetArrival` + `attach` — harness, przyszłe wezwania z wyprzedzeniem). Okręt stoi tam, gdzie
+  postawiła go gra (w demie wysuwa się o 0,45 L) — ujście jak w demie, odsłanianie w czasie.
+- *Odlot NPC*: oś w `warpDrive.js` (`createWarpDeparture` / `sampleWarpDeparture`, 1:1 z dema), efekt
+  `WarpNurt.depart(npc, { drive })` — gra dziś nikogo tak nie odsyła (API gotowe).
+- *Zgięcie tła*: nie osobny pass, tylko materiał mgławicy (`skyBend.js`) — tło gry to jedna warstwa
+  (mgławica, gwiazdy, dół ringu), a gnie się tylko mgławica, jak w demie. Gwiazdy: smugi z `stars.js`.
+- *Duszki* (`sprites.js`) z kolanem bloomu (`bloomKnee.js`): bloom gry ma ×3 zgodności z WebGL, którego
+  demo nie ma — nadmiar ponad próg ×1/3, żeby poświata brzegów szczelin i błysków była jak w demie.
+- *Kadłub*: `uWarpA/B/C` per obiekt w materiale kadłuba (`hullWarp`); żar brzegu z alfy mipmapy sprite'a
+  (rozmyty brzeg sylwetki) zamiast SDF cienia — to samo miejsce, bez drugiej tekstury.
+- *Plazma WARP* z dysz: `warpPlume3D` gry (`entity.__warpNurtMode` dla NPC), nie duszki dema.
+- **Nie przeniesione:** soczewka świata (`worldLens.js` — ciała w widoku skoku; gra rysuje prawdziwy
+  świat, punkt wyjścia wyznacza rozgrywka), kopnięcie kamery, pokazowe planety / HUD dema.
+
+Integracja (plan sprzed zadania 22): sesja portu WebGPU (`docs/webgpu/PLAN.md`, zadanie 12 — wspólna
+infrastruktura efektów w Core3D).
 
 **Wejście z gry.**
 - Gracz (`GameState.warp`): ładowanie (0..1) → skok (chwila) → lot (bieg, prędkość widoczna) →
@@ -174,3 +202,8 @@ słoneczny i trasy, sceny, HUD.
 2. Nić zwiastuna: tylko wizual, czy też znacznik na radarze (rozmiar i kierunek przylotu)?
 3. Wyjście przed celem (brzeg tarczy przed dziobem) czy nad tarczą, jak w propozycji 1 (w grze
    z ringiem wygląda inaczej niż w demie)?
+
+Przyjęte w zadaniu 22 (brak notatki integracyjnej — do potwierdzenia przez usera): 1 — efekt czysto
+wizualny (wyrzut i ujście szczeliny bez obrażeń); 2 — nić zwiastuna bez radaru; 3 — wyjście przed celem
+jak w demie (brzeg tarczy przed dziobem, 260 px przed brzegiem) — dotyczy soczewki świata, której gra
+jeszcze nie ma; w grze punkt wyjścia wyznacza rozgrywka (bez zmian).

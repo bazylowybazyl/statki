@@ -14,6 +14,7 @@ import { resolveRingPlanetWorldRadius } from './ringScale.js';
 import { computeHaloRingLayout } from './haloRing/haloRingLayout.js';
 import { applySunShadowToBuiltinMaterial } from './sunShadowMask.js';
 import { uniformsAdapter } from './tsl/uniformy.js';
+import { WARP_STAR_CAMERA } from './warp/stars.js';
 import {
     STAR_PLANET_MASK_CAP,
     createStarGeometry,
@@ -204,16 +205,13 @@ const NebulaSystem = {
         const sunY = (window.SUN && window.SUN.y) || 0;
         this.mesh.position.x = sunX + (cx - sunX) * this.parallaxFactor;
         this.mesh.position.y = (-sunY) + ((-cy) - (-sunY)) * this.parallaxFactor;
-        if (window.warp) {
-            let targetWarp = window.warp.state === 'active' ? 1.0 : (window.warp.state === 'charging' && window.warp.chargeTime > 0 ? Math.min(1, window.warp.charge / window.warp.chargeTime) * 0.3 : 0);
-            this.uniforms.warpFactor.value += (targetWarp - this.uniforms.warpFactor.value) * 3.0 * dt;
-        }
+        // Warp (zadanie 22): mgławica bez dawnego rozjaśniania w skoku (uniform warpFactor = 0) —
+        // w warpie „Nurt” zgina ją soczewka bańki i szczelin (src/3d/warp/skyBend.js).
     }
 };
 
 const StarSystem = {
-    mesh: null, uniforms: null, count: 26000, worldScale: 220000, layerZ: -250, lastWarpState: 'idle',
-    exitWhipTimer: 0, exitWhipDuration: 0.34, lastWarpDirX: 0, lastWarpDirY: 1,
+    mesh: null, uniforms: null, count: 26000, worldScale: 220000, layerZ: -250,
     starCam: { x: 0, y: 0, lx: NaN, ly: NaN },
     init: function () {
         if (!Core3D.isInitialized) return;
@@ -267,13 +265,12 @@ const StarSystem = {
         this.uniforms.time.value += dt;
         if (this.mesh) this.mesh.position.set(cx, -cy, this.layerZ);
         // Kamera gwiazd: ruch kamery gry podzielony przez kompensację zoomu (przy
-        // oddaleniu wzór rośnie z kadrem zamiast gęstnieć). Widok skoku
-        // (warpWorldLens.js) zgłasza na następną klatkę limit prędkości wzoru
-        // w userData.starSpeedCap — przy prędkości warpa paralaksa to szum.
+        // oddaleniu wzór rośnie z kadrem zamiast gęstnieć). Warp „Nurt” (warpNurt.js)
+        // zgłasza w tej klatce limit prędkości wzoru (WARP_STAR_CAMERA.speedCap) — przy
+        // prędkości warpa paralaksa to szum.
         const zoomComp = starZoomCompensation(gameCamera.zoom);
         this.uniforms.zoomComp.value = zoomComp;
-        const speedCap = this.mesh ? (Number(this.mesh.userData.starSpeedCap) || 0) : 0;
-        if (this.mesh) this.mesh.userData.starSpeedCap = 0;
+        const speedCap = Number(WARP_STAR_CAMERA.speedCap) || 0;
         advanceStarCamera(this.starCam, cx, cy, zoomComp, speedCap > 0 ? speedCap * Math.max(0, dt) : 0);
         this.uniforms.cameraOffset.value.set(this.starCam.x, -this.starCam.y);
         this.uniforms.viewportSize.value.set(Core3D.width || window.innerWidth || 1, Core3D.height || window.innerHeight || 1);
@@ -292,46 +289,10 @@ const StarSystem = {
                 }
             }
         }
-        let dx = 0, dy = 1;
-        const interpShipPose = (typeof window !== 'undefined') ? window.__interpShipPose : null;
-        if (ship && ship.vel) {
-            const speed = Math.hypot(ship.vel.x, ship.vel.y);
-            if (speed > 10) { dx = ship.vel.x / speed; dy = ship.vel.y / speed; }
-            else if (interpShipPose && Number.isFinite(interpShipPose.angle)) { dx = Math.sin(interpShipPose.angle); dy = -Math.cos(interpShipPose.angle); }
-            else if (typeof ship.angle === 'number') { dx = Math.sin(ship.angle); dy = -Math.cos(ship.angle); }
-        }
-        let targetWarp = 0.0;
-        let exitWhipFactor = 0.0;
-        if (window.warp) {
-            const currentState = window.warp.state;
-            if (this.lastWarpState === 'active' && currentState !== 'active') this.exitWhipTimer = this.exitWhipDuration;
-            this.lastWarpState = currentState;
-            if (currentState === 'active') {
-                targetWarp = 1.0;
-                if (window.warp.dir) { dx = window.warp.dir.x; dy = window.warp.dir.y; }
-                const warpDirLen = Math.hypot(dx, dy);
-                if (warpDirLen > 0.001) { this.lastWarpDirX = dx / warpDirLen; this.lastWarpDirY = dy / warpDirLen; }
-            }
-            else if (currentState === 'charging' && window.warp.chargeTime > 0) targetWarp = Math.pow(Math.min(1, window.warp.charge / window.warp.chargeTime), 3.0) * 0.3;
-        }
-        if (this.exitWhipTimer > 0) {
-            dx = this.lastWarpDirX;
-            dy = this.lastWarpDirY;
-            this.exitWhipTimer = Math.max(0, this.exitWhipTimer - dt);
-            const whipT = Math.max(0, this.exitWhipTimer / this.exitWhipDuration);
-            const whipSnap = Math.pow(whipT, 2.6);
-            const whipRipple = Math.sin((1.0 - whipT) * Math.PI) * Math.pow(whipT, 1.4) * 0.42;
-            exitWhipFactor = Math.min(1.35, whipSnap + whipRipple);
-        }
-        this.uniforms.moveDir.value.set(dx, -dy);
-        this.uniforms.exitWhipFactor.value = exitWhipFactor;
-        const lerpSpeed = (exitWhipFactor > 0) ? 18.0 : 4.0;
-        this.uniforms.warpFactor.value += (targetWarp - this.uniforms.warpFactor.value) * lerpSpeed * dt;
-        let targetStarBrightness = 1.0;
-        if (window.warp && window.warp.state === 'active') targetStarBrightness = 0.4;
-        else if (window.warp && window.warp.state === 'charging' && window.warp.chargeTime > 0) targetStarBrightness = 1.0 - (Math.min(1, window.warp.charge / window.warp.chargeTime) * 0.6);
-        if (exitWhipFactor > 0) targetStarBrightness = 1.0 + exitWhipFactor * 0.75;
-        this.uniforms.globalBrightness.value += (targetStarBrightness - this.uniforms.globalBrightness.value) * (lerpSpeed * 1.5) * dt;
+        // Warp (zadanie 22): smugi i front wyjścia liczy warp „Nurt” (src/3d/warp/stars.js —
+        // WARP_STARS, pisze je warpNurt.js). Dawne rozciąganie z WebGL (warpFactor, moveDir,
+        // bicz przy wyjściu, przygaszanie gwiazd w skoku) usunięte — uniformy zostają w
+        // adapterze (narzędzia je znajdują), materiał ich nie czyta.
     }
 };
 
