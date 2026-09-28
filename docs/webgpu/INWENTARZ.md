@@ -22,8 +22,8 @@
 
 | zakres | pliki z GLSL | materiały | linie GLSL | oBC | odczyty | compile | wbudowane | clone / needsUpdate / defines | TSL / mieszane |
 |---|---:|---|---:|---:|---:|---:|---:|---|---|
-| **razem** | 15 | 27 (24 SM, 0 Raw, 3 ShaderPass) | 3081 | 0 | 2 | 3 | 29 | 4 / 13 / 5 | 95 / 0 |
-| port | 4 | 4 (3 SM, 0 Raw, 1 ShaderPass) | 361 | 0 | 2 | 3 | 20 | 4 / 7 / 0 | 91 / 0 |
+| **razem** | 15 | 27 (24 SM, 0 Raw, 3 ShaderPass) | 3081 | 0 | 2 | 2 | 29 | 4 / 13 / 5 | 97 / 0 |
+| port | 4 | 4 (3 SM, 0 Raw, 1 ShaderPass) | 361 | 0 | 2 | 2 | 20 | 4 / 7 / 0 | 93 / 0 |
 | warp | 0 | 0 (0 SM, 0 Raw, 0 ShaderPass) | 0 | 0 | 0 | 0 | 0 | 0 / 0 / 0 | 0 / 0 |
 | legacy | 1 | 5 (3 SM, 0 Raw, 2 ShaderPass) | 392 | 0 | 0 | 0 | 2 | 0 / 2 / 0 | 0 / 0 |
 | poza grą | 10 | 18 (18 SM, 0 Raw, 0 ShaderPass) | 2328 | 0 | 0 | 0 | 7 | 0 / 4 / 5 | 4 / 0 |
@@ -44,8 +44,9 @@ Tu: **27 miejsc tworzenia materiałów** (w tym 3 `ShaderPass`) w 13 plikach,
 | `src/effects3d/overlay.js` | 1 | 36 |  | WebGLRenderTarget |  |  | WebGLRenderer, EffectComposer, RenderPass, UnrealBloomPass, ShaderPass |  | · / · / · | GLSL | DRUGI WebGLRenderer (overlay3D eksplozji, własny composer i bloom; rakiety i iskry od zadania 19 w Core3D) — zostaje w porcie, usuwa go zadanie 20 |
 | `src/3d/sunShadowMaskGLSL.js` |  | 35 |  |  |  |  |  |  | · / · / · | GLSL | LEGACY: GLSL maski dla nieprzeniesionych ShaderMaterial (planety 05, mostek 15, Z4/Z5/Z7; asteroidy — 21 zrobione) — znika z ostatnim z nich (24) |
 | `Engineeffects.js` |  |  |  |  |  |  |  |  | · / · / · | — | tylko tekstury poświaty dysz SIDE (make*Texture); martwe getEngineVFX z własnym WebGLRenderer i shader usunięte (zadanie 13) |
-| `src/3d/asteroids/asteroidBelt.js` |  |  |  |  |  | 1 |  |  | · / · / · | TSL | pas asteroid z dema WebGPU (zadanie 21): klej klatki jako krok Core3D.fx, warstwy passów gry i tła |
+| `src/3d/asteroids/asteroidBelt.js` |  |  |  |  |  |  |  |  | · / · / · | TSL | pas asteroid z dema WebGPU (zadanie 21): klej klatki jako krok Core3D.fx, warstwy passów gry i tła |
 | `src/3d/asteroids/beltMedium.js` |  |  |  |  |  |  |  |  | · / · / · | TSL | ośrodek objętościowy pasa (zadanie 21) — czytają go skały, minerały, olbrzymy i kadłuby (hak hullVolume) |
+| `src/3d/asteroids/minedRocks.js` |  |  |  |  |  |  | gl.greaterThan |  | · / · / · | TSL |  |
 | `src/3d/asteroids/rockBank.js` |  |  |  | RenderTarget×2 | 1 |  | initRenderTarget |  | · / · / · | TSL |  |
 | `src/3d/asteroids/spotShadows.js` |  |  |  | RenderTarget |  |  |  |  | · / · / · | TSL |  |
 | `src/3d/coldWreckImpostors.js` |  |  |  |  |  |  |  |  | · / · / · | — | uśpione (wymaga hexGrid) |

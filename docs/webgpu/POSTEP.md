@@ -59,7 +59,7 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 | 19 | Rakiety z dema `rakiety-webgpu`: dym GPU, dysze, kule ognia, Supernowa, iskry | 12 | 05–11, 13–18 | max | zrobione, scalone (2adf8fb) | 877f8ac, 1d60e1e, 079805c, 2025ba7, b2dabc4, b697ae9 (scalenia `main` 144b0f7, 6f0774a, 26636ce) | lot w `rocketSystem3D`; fala `shockwave3D` i `weapon3DSystem.js` usunięte; DIST przez OR; receptura tarczy (propozycja) |
 | 20 | Koniec overlaya: wybuch reaktora w Core3D, usunięcie drugiego renderera | 17, 18, 19 | 13–16 | xhigh | w toku (podagent, worktree `statki-wt/20`; równolegle z 18-B/C — overlay ma już tylko wybuch reaktora) | | jeden renderer, jeden bloom |
 | 21 | Asteroidy z dema `asteroidy-webgpu` + kolizje z olbrzymami | 12, 04, 05 (+ commit dema) | 13–20 | max | zrobione, scalone (ee034ed); demo: 84198d3 | d6d7af1, 04cf318, 295f6fb, 55ea8d4, d9a27af, 41c62ac, 810c0a7, 111b917, 6ee3721, 7985de5, ab13869, ab22fb3, e7e824e | zielone światło użytkownika; pas w passach Core3D (18 modułów TSL), olbrzymy z kolizjami; stare pole (zderzenia z małymi skałami, niszczenie, łup) znika — do decyzji użytkownika |
-| 21b | Fizyka wydobycia asteroid w grze (drony, piła, ładunki, urobek) — logika i demo od sesji „Asteroid lighting bug demo” | 21, 12 (+ commit dema) | 22–23 | max | w toku (podagent, worktree `statki-wt/21b`; logika i demo: 84198d3) | | propozycja sesji fizyki skał; otwarte: kolizje odłamów, wpływ wybuchu, udźwig, ceny |
+| 21b | Fizyka wydobycia asteroid w grze (drony, piła, ładunki, urobek) — logika i demo od sesji „Asteroid lighting bug demo” | 21, 12 (+ commit dema) | 22–23 | max | zrobione, scalone (5cc94a7) — commity: 708bbdf, 87a883c, 9e1a8ba, 72f30ab, ce0f8b8, f3c573e (scalenia `main` b6cbe25, c5726c7) | | propozycja sesji fizyki skał; otwarte: kolizje odłamów, wpływ wybuchu, udźwig, ceny |
 | 22 | Warp „Nurt” z dema `warp-webgpu` (iteracja 2) | 12, 13 (+ commit dema) | 14–21 | max | zrobione, scalone (e9f4285); demo: 68cc081 | 97f97b2, de2ed96, 3e8c98d, 83b3735, 4b08a27 (scalenia `main` 3b93795, f43d903) | ośrodek 1 mln drobin w compute, poza warpem 0 kroków i 0 draw calli; stara soczewka i API usunięte; wygląd iteracji 2 do oceny użytkownika | | „ready do wgrania, jak skończy sesję”; wygląd iteracji 2 jeszcze nieoceniony |
 | 22b | Kop kamery przy skoku warpa i impuls zoomu przy wyjściu (z dema „Nurt”, w `cameraRig`) | 22 | 11, 18–21 | xhigh | zrobione, scalone (c7a7f6a) | 75af962, 8d3953f (scalenie `main` 575e550) | uwaga użytkownika do iteracji 1: wejście i wyjście „suche, bez kopa” |
 | 23 | Wydajność i precyzja: A/B z tagiem, drżenie, kompilacja, pamięć | 04–22 | nie | max | czeka | | koszt portu osobno od kosztu nowych efektów |
@@ -116,6 +116,8 @@ menu nie czeka na `ring.ready` (ring dołącza 2–4,5 s po Ziemi) i pusta scena
   z `main`;
 - pas asteroid: mapy cienia w jednym renderze atlasu zamiast renderu na mapę, koszt passów pasa przy dalekim zoomie,
   obrót stacji Wenus w harnessie zależy od liczby klatek ładowania (pas wydłuża ładowanie — szum `planeta-cien`) (21);
+- pierwsza klatka w gęstym polu ~400 ms = synchroniczna budowa ringu Marsa (`createArchRing` / `buildEcumeneRing` — pole
+  w promieniu 420 tys. j. od Marsa); sam pas ~40 ms (21b);
 - `LightGrid.add` przekracza limit wklejania V8 (~100 B obiektów na światło na producenta — wariant z buforem); kopie CPU
   buforów storage dymu i mgławicy rakiet ~71 MB; cień dymu rakiet na kadłubach (mapa gęstości gotowa, wymaga grafu
   kadłuba — po 18-C) (19);
@@ -135,6 +137,13 @@ stare komentarze w `src/3d/fx/lightGrid.js` (21).
 płaszczyzną), niszczenia i łupu ze skał (wydobycie — 21b), kontaktów skanera / radaru, namierzania ani holowania asteroid;
 otwarte: czy pioruny i olbrzymy mają zadawać obrażenia (dziś nie — olbrzymy odpychają, odbicie 0,3), omijanie olbrzymów
 przez AI (NPC ślizgają się po ścianie), rakiety / wiązki / wraki przelatują przez olbrzymy (zatrzymują się tylko pociski).
+
+**Wydobycie (21b) — do decyzji użytkownika:** ceny ładunków (tymczasowe S 8 / M 25 / L 80 / XL 250 CR, zestaw startowy S6 M4
+L3 XL1, ładunki nie liczą się do masy ładowni); ładownia Atlasa 20 t vs ~138 t rudy w jednej skale miedzi (r 650) —
+mniej rudy w skałach, większa ładownia czy osobny magazyn rudy; udźwig wiązki 450 t (z dema); kolizje odłamów z
+kadłubami (dziś nie); wpływ wybuchu na sąsiednie skały pola (dziś nie); czy przejmować każdą skałę PLAY, czy tylko złoża
+ze skanera. Sterowanie: `N` — tryb wydobycia (w trybie LPM lasery, PPM ładunek / PPM + przeciągnięcie piła, `L` wielkość,
+`F` detonacja, `T` wiązka — poza trybem `F` / `T` jak dawniej).
 
 **Decyzje wyglądu do potwierdzenia przez użytkownika:** odłamki paneli czarne jak w WebGL (`PANEL_SHARD_BASE_COLOR`, 16);
 `planeta-cien` bez kropkowanego łuku poświaty z bazy WebGL (05); fala uderzeniowa (03) — usunięta w 19 razem ze
@@ -787,3 +796,18 @@ Todo (2): „PORT poprawka 1 / 3 (TODO integracji)” w `tests/shipCore.test.mjs
   rejestrze), 23 (asynchroniczne kernele compute, ~200–250 ms CPU pierwszej klatki gry — nie kompilacja). Inwentarz z HEAD
   d62e275: port 4 pliki z GLSL, 4 materiały, 361 linii; razem 15 / 27 / 3081. Testy: 1605 / 5 porażek bazowych / 3 todo
   (+1 niestabilny pod obciążeniem w jednym przebiegu); `npm test` OK.
+- **Zadanie 21b scalone do `main`** (708bbdf, 87a883c, 9e1a8ba, 72f30ab, ce0f8b8, f3c573e; scalenia `main` b6cbe25, c5726c7;
+  scalenie 5cc94a7): fizyka skał z dema (`AsteroidMining`) jako system gry — krok w `physicsStep` (czas symulacji 120 Hz,
+  bez alokacji na krok; usypianie skał, tarcie obrotu w styku, rzadsze sprawdzenia rozpadu); platforma gracza
+  `src/game/asteroidMiningRig.js` (3 drony z laserami, piła na drucie między dwoma dronami, ładunki S–XL detonowane serią,
+  wiązka ściągająca, urobek w tonach surowców `resources.js` do ładowni; ciężka operacja najwyżej raz na klatkę); render
+  `src/3d/asteroids/minedRocks.js` (port dema: atlas 3D siatek ciał, zewnętrze `carve`, wnętrze raymarching, minerały, cień
+  reflektorów, okruchy) i `miningView.js` (drony TSL, wiązki, efekty z pul pasa); przejęte skały znikają z warstwy PLAY.
+  Ładunki = nowy przedmiot (`src/data/miningCharges.js`, rynek doku „Ładunki górnicze”). Koszt: przejęcie skały ~21 ms,
+  wybuch L ~22 ms (klatka maks. 29 ms), klatka po wybuchu 0,145 → 0,045 ms, cięcie laserem 0,08 ms, tryb bez pracy 0,01 ms.
+  Rozgrzewka (sprawy z 11): wpisy `pas asteroid: …` w `Core3D.warmup` — wszystkie mapy atlasu cienia naraz, krok iskier z
+  dt = 0, siatki wydobycia; `pas-pole` bez budów pasa, `pas-burza` 0 compute na zimno, `wydobycie-*` 0 budów. Harness 90
+  scen, 0 błędów, 0 zamienników; zrzuty gry obok sceny „Kopalnia” dema w `.tmp/webgpu/zadania/21b/proba1/`, `final/` —
+  **do oceny użytkownika**; pytania o ekonomię i fizykę wyżej („Wydobycie (21b) — do decyzji użytkownika”). Stary
+  `asteroidDestructor.js` — importuje go już tylko jeden test (notatka `AGENT:` dla 24). Testy: 1620 / 5 porażek bazowych /
+  3 todo; `npm test` OK.
