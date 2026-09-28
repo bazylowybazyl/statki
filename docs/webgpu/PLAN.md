@@ -139,6 +139,16 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   instancjonowane (kwadrat punktu z GL: bok ≥ 1 px, gl_PointCoord t w dół). Pusta `new Texture()` w WebGPU próbkuje
   (0, 0, 0, 0), w WebGL (0, 0, 0, 1). Harness: sceny porównywać w pełnych sesjach — `--sceny` z podzbiorem zmienia drogę
   kamery gwiazd (`advanceStarCamera` całkuje skoki kamery) i czas słońca (plamy), więc tło rozjeżdża się z bazą.
+- **Pułapki z zadania 12 (three r183):** **`renderer.lighting` renderer łapie w `init()`** (`new RenderLists(this.lighting)`)
+  — podmiana po `init()` nic nie zmienia (siatka świateł po cichu nie działała); system oświetlenia ustawiać PRZED
+  `await renderer.init()`. **Siatka bezpieczeństwa NaN / Inf:** nie `x != x` (WGSL pozwala zakładać brak NaN i zwinąć
+  porównanie) ani `max(min(x, a), 0)` (min / max z NaN oddają DRUGI argument — demo rakiet zamieniało NaN w 60 000, jasną
+  plamę po bloomie), tylko bity wykładnika: `floatBitsToUint(c) & 0x7f800000 == 0x7f800000` → 0 (`hdrBezpieczny`,
+  `postGry.js`; bez niej NaN kwadu 40 px zalewał przez bloom cały ekran — `efekty-kontrola.mjs`). **Zakresy wysyłki
+  atrybutów** (`addUpdateRange`) three czyści po każdej wysyłce (`clearUpdateRanges` → `length = 0`), a ponowne `push`
+  alokuje ~150 B na atrybut na klatkę — zakres na stałe z wyłączonym czyszczeniem (`liveAttribute`, `fxParticles3D.js`).
+  Tekstura per obiekt we wspólnym grafie: `FxMapNode` (jak `HullObjectTextureNode`, `texture().onObjectUpdate()` nie
+  działa).
 - **TSL, nie `wgslFn`.** Tekstowy WGSL tylko dla wyizolowanej czystej funkcji, gdy TSL jest naprawdę niewygodny — z
   uzasadnieniem w commicie (zamyka drogę do zapasowego backendu WebGL2).
 - **Pętle:** `Loop` w TSL, nie `for` w JS generujący kopie (`mx_noise_float` ×160 rozwinięte = 44 s kompilacji).
