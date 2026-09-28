@@ -509,6 +509,12 @@ export const EngineExhaustBatch = {
     return { nozzles: count, draws: count > 0 ? 4 : 0, lights: Math.min(lightCandidates.length, MAX_ENGINE_LIGHTS) };
   },
 
+  // Rozgrzewka (zadanie 11, Core3D.warmup): cztery warstwy puli (płomień i trzy poświaty) — pipeline'y
+  // przed pierwszą klatką gry (dawniej 4 budowy w niej). Tworzy pulę, jak pierwsza dysza.
+  warmupMeshes() {
+    return ensureBuilt() ? [flame.mesh, glow.mesh, ring.mesh, flare.mesh] : null;
+  },
+
   dispose() {
     for (const layer of [flame, glow, ring, flare]) {
       if (!layer) continue;
@@ -525,3 +531,6 @@ export const EngineExhaustBatch = {
     lightCandidates.length = 0;
   }
 };
+
+// Pipeline'y puli na ekranie ładowania (phase 'loading' — pula powstaje wtedy, jak przy pierwszej dyszy gry).
+Core3D.warmup?.add({ name: 'dysze SIDE', objects: () => EngineExhaustBatch.warmupMeshes(), phase: 'loading' });

@@ -16,6 +16,10 @@
 // nie rysuje, `mapsReady` = false, terrainHeightAt = 0 (host podpina kolizje z
 // terenem dopiero po `ring.ready`). setQuality() buduje nowy zestaw w tle i
 // podmienia go gotowy (stary rysuje się do końca), rebuild() zaczyna od pustego.
+// Zadanie 11: options.prewarm(obiekty, opcje) → Promise — host kompiluje pipeline'y
+// nowych brył w tle (Core3D.warmup), ZANIM trafią do `group` (bez niego pierwsza
+// klatka z ringiem budowała ~15 materiałów i czekała na ich synchroniczne
+// pipeline'y: 4–6 s przestoju); `ready` obejmuje tę rozgrzewkę.
 //
 // Płaszczyzna gry na środku wstęgi (flightLevel 0,5, domyślnie od 2026-09-23):
 // górna ściana z dachem leży NAD statkami → siatki `layers.fg` (jak suwnice
@@ -112,6 +116,14 @@ export function createHaloRing(options = {}) {
         await detail.init();
         if (gen !== buildGen) return false;
         const next = assemble(buildLayout, quality, maps, landmarks, domes);
+        // Pipeline'y brył w tle przed podpięciem (stare bryły przy setQuality rysują się dalej).
+        if (typeof state.options.prewarm === 'function') {
+          await prewarmParts(next, () => gen === buildGen);
+          if (gen !== buildGen) {
+            disposeSet(next, false);
+            return false;
+          }
+        }
         disposeParts();
         parts = next;
         attachParts();
@@ -200,22 +212,44 @@ export function createHaloRing(options = {}) {
 
   function disposeParts() {
     if (!parts) return;
+    disposeSet(parts, true);
+    parts = null;
+  }
+
+  // Zwolnienie zestawu brył (podpiętego albo porzuconego przed podpięciem); mapy
+  // porzuconego zestawu zwalnia finally budowy.
+  function disposeSet(set, withMaps) {
     for (const key of ['terrain', 'structure', 'structureTop', 'clouds', 'shell']) {
-      const part = parts[key];
+      const part = set[key];
       if (!part) continue;
       group.remove(part.mesh);
       part.dispose();
     }
-    group.remove(parts.mega.group);
-    parts.mega.dispose();
-    group.remove(parts.city.group);
-    parts.city.dispose();
-    for (const hall of parts.k7Halls || []) {
+    group.remove(set.mega.group);
+    set.mega.dispose();
+    group.remove(set.city.group);
+    set.city.dispose();
+    for (const hall of set.k7Halls || []) {
       group.remove(hall.root);
       hall.dispose();
     }
-    parts.maps.dispose();
-    parts = null;
+    if (withMaps) set.maps.dispose();
+  }
+
+  // Rozgrzewka zestawu brył przed podpięciem (zadanie 11, hak hosta options.prewarm):
+  // wszystkie bryły i dach hal K-7 w drugim stanie (statek w hali — przezroczysty).
+  function prewarmParts(set, alive) {
+    const prewarm = state.options.prewarm;
+    const objects = [set.terrain.mesh, set.structure.mesh, set.structureTop?.mesh, set.clouds.mesh, set.shell.mesh, set.mega.group, set.city.group];
+    for (const hall of set.k7Halls) objects.push(hall.root);
+    const jobs = [prewarm(objects.filter(Boolean), { name: `ring ${layout?.planetProfile?.key || 'halo'}: bryły`, alive })];
+    for (const hall of set.k7Halls) {
+      const v = hall.roofWarmVariant();
+      if (v.meshes.length) jobs.push(prewarm(v.meshes, { name: 'ring: dach K-7 przezroczysty', variant: v, alive }));
+    }
+    return Promise.all(jobs).catch((err) => {
+      console.warn('[HaloRing] rozgrzewka brył nie wyszła — pipeline’y powstaną przy pierwszym rysunku', err);
+    });
   }
 
   function applyVisible(part, visible) {

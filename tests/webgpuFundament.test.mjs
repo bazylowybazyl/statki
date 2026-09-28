@@ -246,7 +246,8 @@ test('rozgrzewka passa: compileAsync na celu sceny, kamera passa z warstwą, bez
   assert.match(body, /renderer\.setRenderTarget\(this\.composerTarget\);/);
   assert.match(body, /camera\.layers\.set\(layer\);/);
   assert.match(body, /o\.frustumCulled = false;/);
-  assert.match(body, /renderer\.compileAsync\(object3d, camera, object3d\.isScene \? null : this\.scene\)/);
+  // zadanie 11: przez compileAsyncNaCelu — głębia celu w kluczu pipeline'u (DIST bez głębi)
+  assert.match(body, /compileAsyncNaCelu\(renderer, object3d, camera, object3d\.isScene \? null : this\.scene\)/);
   assert.match(body, /return this\.ready\.then\(/, 'przed urządzeniem czeka na Core3D.ready');
   // Wywołania modułów: bez synchronicznego renderer.compile.
   // Efekty broni (zadanie 17 — dawniej weapon3DSystem.js): siatki pul przez prewarmPass w kroku Core3D.fx.

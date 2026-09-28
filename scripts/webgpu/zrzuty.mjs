@@ -5,8 +5,10 @@
 //
 //   node scripts/webgpu/zrzuty.mjs [--backend webgl|webgpu|oba] [--sceny menu,hud,…] [--out katalog]
 //        [--rozmiar 1920x1080] [--port 5340] [--baza katalog] [--powtorz N] [--wydajnosc] [--seed n]
-//        [--bok 24] [--tylko-wydajnosc] ["--chrome=--flaga …"]
+//        [--bok 24] [--tylko-wydajnosc] ["--chrome=--flaga …"] [--root <drzewo gry> [--commit id]]
 //
+// --root:    gra podawana z innego drzewa (np. eksport `main` — pomiar „przed” tym samym harnessem, zadanie 11);
+//            sceny i skrypt strony z tego repo, `--commit` trafia do podsumowania.
 // --teren-ringu: w ring-z02 / ring-z1 / k7-hala dodatkowo wariant `<scena>__teren` — tylko siatka terenu ringu
 //            (zadanie 07; reszta sceny Core3D ukryta). Dokłada klatki, więc porównuj z przebiegiem z tą samą opcją
 //            (baza: ten sam skrypt w worktree z tagu webgl-baseline, --backend webgl).
@@ -945,6 +947,9 @@ function gitInfo() {
   return { commit: git('rev-parse', '--short', 'HEAD'), dirty: !!git('status', '--porcelain', '--untracked-files=no') };
 }
 
+// Dane startu sesji (zadanie 11): chwile startu i przestoje klatek przed scenami — wyniki.json → `sesje`.
+const sessionInfos = [];
+
 async function runSession(session, backend, outDir, base) {
   const chrome = await startChrome({ width: W, height: H, extraArgs });
   const logs = await attachLogs(chrome);
@@ -952,6 +957,8 @@ async function runSession(session, backend, outDir, base) {
   const ev = (e, t = 180000) => evaluate(cdp, e, t);
   const results = [];
   const t0 = Date.now();
+  const sessionInfo = { sesja: session.id, backend };
+  sessionInfos.push(sessionInfo);
   try {
     const uuidStat = await prepareUuid(cdp);
     await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__HARNESS_SEED__ = ${seed};\n${INJECT}` });
@@ -960,9 +967,17 @@ async function runSession(session, backend, outDir, base) {
     if (!await waitFor(cdp, '!!(window.Core3D && window.Core3D.isInitialized && window.Core3D.gpuReady !== false && window.ship && window.__harness)', 240000, 400)) throw new Error('gra nie wstała (Core3D/ship/urządzenie)');
     checkUuid(uuidStat);
     const rendererKind = await ev('(() => { const r = window.Core3D.renderer; return r?.isWebGPURenderer ? (r.backend?.isWebGPUBackend ? "webgpu" : "webgpu-webgl2") : "webgl"; })()');
+    // Zadanie 11: przestoje (> 50 ms) w klatkach startu — tło menu od wczytania do gotowości, gra od kliknięcia
+    // (wszystkie klatki i same klatki gry) — oraz chwile startu (prawdziwy czas od nawigacji, __harness.marks).
+    const frameN = () => ev('window.__harness.frameLog?.n ?? 0');
+    const statsFrom = (f0, onlyGame = false) => ev(`(() => { const H = window.__harness; if (!H.frameStats) return null;
+      let k = ${f0}; if (${onlyGame}) { const L = H.frameLog; while (k < L.n && L.game[k % L.start.length] < 1) k++; }
+      return H.frameStats(k); })()`);
     if (!session.start) {
       if (!await waitFor(cdp, '!!(window.__menuBackdrop && window.__menuBackdrop.ready)', 240000, 400)) throw new Error('tło menu nie gotowe');
+      sessionInfo.menu = await statsFrom(0);
     } else {
+      const f0 = await frameN();
       if (session.start === 'single') await ev(`(() => { document.getElementById('btn-mode-single')?.click(); return true; })()`);
       else if (session.start === 'split') await ev(`(() => { window.DevScene.startSplit(); return true; })()`);
       if (!await waitFor(cdp, '(window.__frameId || 0) > 30', 300000, 400)) throw new Error('gra nie ruszyła (__frameId)');
@@ -972,7 +987,12 @@ async function runSession(session, backend, outDir, base) {
       if (session.ring && !await waitFor(cdp, `window.__harness.scene.ringReady('${session.ring}')`, 240000, 400)) throw new Error(`ring ${session.ring} bez map`);
       if (session.sprites && !await waitFor(cdp, 'window.DevScene.preloadHullSprites()', 120000, 250)) throw new Error('nie wczytano sprite’ów kadłubów');
       if (session.belt && !await waitFor(cdp, '!!(window.__asteroidBelt && window.__asteroidBelt.ready)', 180000, 400)) throw new Error('pas asteroid nie gotowy');
+      sessionInfo.start = await statsFrom(f0);
+      sessionInfo.startGra = await statsFrom(f0, true);
     }
+    sessionInfo.czasy = await ev('({ ...(window.__harness.marks || {}) })');
+    console.log(`  sesja ${session.id}: ${JSON.stringify(sessionInfo.czasy)}`
+      + ` | przestoje ${['menu', 'start', 'startGra'].filter((k) => sessionInfo[k]).map((k) => `${k} ${sessionInfo[k].przestoje}/${sessionInfo[k].klatki} (maks ${sessionInfo[k].maksMs} ms${sessionInfo[k].pipeline ? `, pipeline'y sync ${sessionInfo[k].pipeline.sync}, budowy w klatkach ${sessionInfo[k].pipeline.budowy ?? '-'}` : ''})`).join(', ')}`);
     // Od tej chwili strona dostaje klatki tylko na żądanie (step/frames) — powtarzalna liczba klatek.
     if (!args['bez-hold']) await ev('window.__harness.hold(true)');
     for (const id of session.scenes) {
@@ -981,6 +1001,7 @@ async function runSession(session, backend, outDir, base) {
       if (onlyScenes && !onlyScenes.has(id) && sc.capture !== false) continue;
       logs.clear();
       const ts = Date.now();
+      const sceneFrame0 = await frameN();
       let error = null;
       try {
         // Ziarno na starcie sceny (skrót nazwy): spawny losują rozrzut, a wcześniejsze klatki
@@ -996,6 +1017,10 @@ async function runSession(session, backend, outDir, base) {
       if (sc.capture === false) { console.log(`  ${id.padEnd(14)} ${error ? 'BŁĄD ' + error : '(bez zrzutu)'}`); continue; }
       const png = join(outDir, `${id}.png`);
       await screenshotPng(cdp, png);
+      // Przestoje w klatkach sceny do zrzutu (pierwsze użycie materiałów w kadrze — zadanie 11) i pipeline'y
+      // utworzone w tych klatkach (`pipeline.sync` / `syncLista`: materiały bez rozgrzewki).
+      let stalls = null;
+      try { stalls = await statsFrom(sceneFrame0); } catch { /* strona bez dziennika klatek */ }
       let census = null;
       try { census = await ev('window.__harness.scene.census()'); } catch (err) { census = { error: String(err?.message || err) }; }
       // Warianty „jeden pass Core3D” (tło / planety / ortho / FG) — zadania portu sprawdzają swój pass,
@@ -1072,10 +1097,10 @@ async function runSession(session, backend, outDir, base) {
       const errors = logs.errors().filter((l) => !IGNORE.some((re) => re.test(l)));
       const warnings = all.filter((l) => /^\[(warning|log:warning)\]/.test(l));
       const row = { scena: id, opis: sc.opis, sesja: session.id, backend, renderer: rendererKind, png: png.replace(repo + '\\', '').split('\\').join('/'),
-        sekundy: +((Date.now() - ts) / 1000).toFixed(1), blad: error, perf, hdr, stan: state, spis: census, bledy: errors, ostrzezenia: warnings };
+        sekundy: +((Date.now() - ts) / 1000).toFixed(1), blad: error, perf, hdr, stan: state, spis: census, przestoje: stalls, bledy: errors, ostrzezenia: warnings };
       results.push(row);
       const tag = error || errors.length ? 'BŁĄD' : 'ok';
-      console.log(`  ${id.padEnd(14)} ${tag.padEnd(5)} ${rendererKind} | ${perf?.drawCalls ?? '?'} dc, ${perf?.coreRenderMs ?? '?'} ms CPU, GPU ${perf?.gpuMs ?? '?'} ms | HDR max ${hdr?.max ?? '?'} >0,9 ${hdr?.overFraction ?? '?'} NaN ${hdr?.nanOrInf ?? '?'}${error ? ' | ' + error : ''}${errors.length ? ' | ' + errors.slice(0, 3).join(' ; ') : ''}`);
+      console.log(`  ${id.padEnd(14)} ${tag.padEnd(5)} ${rendererKind} | ${perf?.drawCalls ?? '?'} dc, ${perf?.coreRenderMs ?? '?'} ms CPU, GPU ${perf?.gpuMs ?? '?'} ms | HDR max ${hdr?.max ?? '?'} >0,9 ${hdr?.overFraction ?? '?'} NaN ${hdr?.nanOrInf ?? '?'}${stalls ? ` | przestoje ${stalls.przestoje}/${stalls.klatki} (maks ${stalls.maksMs} ms${stalls.pipeline?.sync ? `, pipeline'y sync ${stalls.pipeline.sync}` : ''}${stalls.pipeline?.budowy ? `, budowy ${stalls.pipeline.budowy}` : ''})` : ''}${error ? ' | ' + error : ''}${errors.length ? ' | ' + errors.slice(0, 3).join(' ; ') : ''}`);
     }
   } catch (err) {
     console.log(`  sesja ${session.id}: BŁĄD ${err.message}`);
@@ -1141,8 +1166,18 @@ async function runPerf(backend, outDir, base) {
 }
 
 // ── Przebieg ──────────────────────────────────────────────────────────────────
-const { server, base } = await startVite(port);
-const env = { when: new Date().toISOString(), ...gitInfo(), rozmiar: `${W}x${H}`, seed, losowanieUuid: uuidMode, chrome: extraArgs };
+// --root: gra z innego drzewa (np. eksport `main` do pomiaru „przed” tym samym harnessem); sceny i skrypt
+// strony z tego repo.
+const serveRoot = args.root ? resolve(args.root) : repo;
+async function startServer() {
+  if (serveRoot === repo) return startVite(port);
+  const { createServer } = await import('vite');
+  const srv = await createServer({ root: serveRoot, logLevel: 'error', server: { port, strictPort: false, hmr: false, watch: { ignored: ['**/*'] } } });
+  await srv.listen();
+  return { server: srv, base: `http://localhost:${srv.httpServer.address().port}` };
+}
+const { server, base } = await startServer();
+const env = { when: new Date().toISOString(), ...(serveRoot === repo ? gitInfo() : { root: serveRoot, commit: args.commit || null }), rozmiar: `${W}x${H}`, seed, losowanieUuid: uuidMode, chrome: extraArgs };
 console.log(`losowanie UUID three: ${uuidMode}${args.uuid ? '' : args.baza ? ' (jak baza)' : ' (domyślne)'}`);
 const summary = {};
 try {
@@ -1152,12 +1187,13 @@ try {
       mkdirSync(outDir, { recursive: true });
       console.log(`== ${backend}${repeats > 1 ? ` przebieg ${rep}/${repeats}` : ''} → ${outDir}`);
       const rows = [];
+      sessionInfos.length = 0;
       for (const session of SESSIONS) {
         if (args['tylko-wydajnosc']) break;
         if (onlyScenes && !session.scenes.some((s) => onlyScenes.has(s))) continue;
         rows.push(...await runSession(session, backend, outDir, base));
       }
-      writeJson(join(outDir, 'wyniki.json'), { ...env, backend, sceny: rows });
+      writeJson(join(outDir, 'wyniki.json'), { ...env, backend, sceny: rows, sesje: [...sessionInfos] });
       summary[`${backend}${repeats > 1 ? `/p${rep}` : ''}`] = { outDir, bledy: rows.filter((r) => r.blad || r.bledy?.length).map((r) => r.scena || r.sesja) };
     }
     if (args.wydajnosc) await runPerf(backend, join(outRoot, backend), base);

@@ -12,7 +12,11 @@
 //    CDP strona stoi, więc liczba klatek (i efekty liczone na klatkę: iskry, obrót stacji) jest
 //    powtarzalna. Bez „hold” (ładowanie) każda prawdziwa klatka jest dozwolona;
 //  - CSS bez animacji i przejść (menu, HUD) — inaczej zrzut łapie je w połowie.
-// window.__harness: clock, step(n), frames(n), hold(on), reseed(v), freeze(), realNow(), scene.
+//  - dziennik klatek (prawdziwy czas: start, CPU wywołań rAF, __frameId), chwile startu (urządzenie,
+//    tło menu, ring Ziemi, pierwsza klatka gry) i dziennik pipeline'ów (synchroniczne = przestój) —
+//    przestoje kompilacji w scenach (zadanie 11).
+// window.__harness: clock, step(n), frames(n), hold(on), reseed(v), freeze(), realNow(), scene,
+//   frameLog, marks, pipes, frameStats(od, do, próg).
 (() => {
   if (window.__harness) return;
   const SEED = Number(window.__HARNESS_SEED__ || 0x5eed1234) >>> 0;
@@ -46,11 +50,103 @@
   window.requestAnimationFrame = (cb) => { const id = ++rafSeq; pending.set(id, cb); return id; };
   window.cancelAnimationFrame = (id) => { pending.delete(id); };
 
+  // Dziennik klatek strony (zadanie 11 — przestoje kompilacji): prawdziwy start klatki, CPU jej
+  // wywołań rAF i __frameId gry. Seria = klatki bez przerwy harnessu (w trybie hold przerwa między
+  // komendami CDP zaczyna nową serię — jej długość to nie czas klatki). Okres klatki = start następnej
+  // w tej samej serii − start tej (obejmuje przestój kolejki GPU), ostatnia w serii: samo CPU.
+  const LOG = 32768;
+  const frameLog = { start: new Float64Array(LOG), cpu: new Float32Array(LOG), game: new Int32Array(LOG), seria: new Int32Array(LOG), n: 0, _seria: 0, _przerwa: true };
+  let inTick = false; // w wywołaniach rAF strony (dziennik pipeline'ów)
+  const logFrame = (t0, cpu) => {
+    const i = frameLog.n % LOG;
+    if (frameLog._przerwa) { frameLog._seria++; frameLog._przerwa = false; }
+    frameLog.start[i] = t0; frameLog.cpu[i] = cpu; frameLog.game[i] = window.__frameId | 0; frameLog.seria[i] = frameLog._seria;
+    frameLog.n++;
+  };
+  // Chwile startu (prawdziwy czas od nawigacji, pierwsza obserwacja co ~10 ms): urządzenie WebGPU, tło
+  // menu (pierwsza klatka, gotowe), ring Ziemi (mapy), pierwsza klatka gry.
+  const marks = {};
+  const markPoll = setInterval(() => {
+    try {
+      const m = (k, ok) => { if (marks[k] === undefined && ok) marks[k] = +realNow().toFixed(1); };
+      m('gpuReady', window.Core3D?.gpuReady === true);
+      m('menuPierwszaKlatka', (window.__menuBackdrop?.stats?.frames || 0) > 0);
+      m('menuGotowe', window.__menuBackdrop?.ready === true);
+      m('ringZiemi', !!window.__haloRings?.entries?.find((e) => e.key === 'earth')?.ring?.mapsReady);
+      m('graPierwszaKlatka', (window.__frameId | 0) >= 1);
+      if (marks.graPierwszaKlatka !== undefined && marks.ringZiemi !== undefined) clearInterval(markPoll);
+    } catch { /* strona się ładuje */ }
+  }, 10);
+  // Pipeline'y three (zadanie 11): każde utworzenie z numerem klatki dziennika — render synchronicznie
+  // w zwykłym renderze (sync: proces GPU kompiluje shader, strona staje przy najbliższym zapisie do
+  // kolejki) albo w tle z compileAsync; compute zawsze synchronicznie. Nazwa = typ:nazwa materiału @
+  // obiekt — co kompilowało się w przestoju (frameStats → `pipeline`, `lista[].pipeline`). Hak na
+  // backend.pipelineUtils po powstaniu urządzenia (na tagu WebGL pola nie ma — dziennik pusty).
+  const PIPE_MAX = 16384;
+  const pipes = { list: [], n: 0 };
+  const pipeName = (m, o) => `${m?.type || '?'}${m?.name ? ':' + m.name : ''} @ ${o?.type || '?'}${o?.name ? ':' + o.name : (o?.parent?.name ? ' w ' + o.parent.name : '')}`;
+  const pipeHook = setInterval(() => {
+    if (window.Core3D?.renderer?.isWebGLRenderer) clearInterval(pipeHook); // tag WebGL: bez dziennika
+    const pu = window.Core3D?.renderer?.backend?.pipelineUtils;
+    if (!pu || pu.__harnessHook) return;
+    clearInterval(pipeHook);
+    pu.__harnessHook = true;
+    const render = pu.createRenderPipeline;
+    const compute = pu.createComputePipeline;
+    const push = (e) => { pipes.n++; if (pipes.list.length < PIPE_MAX) pipes.list.push(e); };
+    // k = klatka dziennika w toku; poza wywołaniami rAF — następna (poza: true, leży w okresie poprzedniej)
+    pu.createRenderPipeline = function (ro, promises) {
+      push({ k: frameLog.n, poza: !inTick, sync: !promises, nazwa: pipeName(ro?.material, ro?.object) });
+      return render.call(this, ro, promises);
+    };
+    pu.createComputePipeline = function (p, b) {
+      push({ k: frameLog.n, poza: !inTick, sync: true, compute: true, nazwa: `compute${p?.computeProgram?.name ? ':' + p.computeProgram.name : ''}` });
+      return compute.call(this, p, b);
+    };
+    // Budowy NodeBuilder (graf TSL → WGSL, CPU): w klatce (render na zimno) albo poza nią (rozgrzewka w tle).
+    const be = window.Core3D.renderer.backend;
+    const createNB = be.createNodeBuilder;
+    be.createNodeBuilder = function (obj, rr) {
+      const b = createNB.call(this, obj, rr);
+      const build = b.build;
+      b.build = function (...a) {
+        const t0 = realNow();
+        try { return build.apply(this, a); } finally {
+          push({ k: frameLog.n, poza: !inTick, budowa: true, ms: +(realNow() - t0).toFixed(2), nazwa: pipeName(b.material, obj) });
+        }
+      };
+      return b;
+    };
+  }, 10);
+  // Pipeline'y i budowy NodeBuilder w klatkach [beg, end) (i po ostatniej, przed następną): render sync / w tle,
+  // compute; budowy w klatkach (render na zimno) i poza nimi (rozgrzewka w tle); nazwy synchronicznych i budów w klatce.
+  const pipeStats = (beg, end) => {
+    let sync = 0; let async = 0; let compute = 0; let budowy = 0; let budowyMs = 0; let budowyPoza = 0;
+    const by = new Map();
+    const nb = new Map();
+    for (const p of pipes.list) {
+      if (p.k < beg || p.k > end || (p.k === end && !p.poza)) continue;
+      if (p.budowa) {
+        if (p.poza) { budowyPoza++; continue; }
+        budowy++;
+        budowyMs += p.ms;
+        nb.set(p.nazwa, (nb.get(p.nazwa) || 0) + 1);
+        continue;
+      }
+      if (p.compute) compute++;
+      else if (p.sync) sync++;
+      else async++;
+      if (p.sync) by.set(p.nazwa, (by.get(p.nazwa) || 0) + 1);
+    }
+    const top = (m) => [...m].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([n, c]) => (c > 1 ? `${n} ×${c}` : n));
+    return { sync, async, compute, syncLista: top(by), budowy, budowyMs: +budowyMs.toFixed(1), budowyPoza, budowyLista: top(nb) };
+  };
+
   const waiters = [];
   const tick = () => {
     realRaf(tick);
     clock.frames++;
-    if (clock.hold && clock.budget <= 0) return;
+    if (clock.hold && clock.budget <= 0) { frameLog._przerwa = true; return; }
     if (clock.hold) clock.budget--;
     if (clock.mode === 'step') {
       if (clock.stepsLeft > 0) {
@@ -64,9 +160,13 @@
     const ts = clock.mode === 'real' ? realNow() : clock.t;
     const cbs = [...pending.values()];
     pending.clear();
+    const tFrame0 = realNow();
+    inTick = true;
     for (const cb of cbs) {
       try { cb(ts); } catch (err) { setTimeout(() => { throw err; }); }
     }
+    inTick = false;
+    logFrame(tFrame0, realNow() - tFrame0);
     for (let i = waiters.length - 1; i >= 0; i--) {
       const w = waiters[i];
       if (clock.gameFrames >= w.frame) { waiters.splice(i, 1); w.resolve(clock.gameFrames); }
@@ -339,9 +439,49 @@
     }
   };
 
+  // Przestoje w klatkach dziennika [from, to) (numery z frameLog.n): klatka dłuższa niż `thr` ms (okres albo
+  // CPU). Wynik: liczba klatek, przestojów, najdłuższy okres i CPU, suma nadwyżek ponad 1/60 s w przestojach,
+  // do 8 najdłuższych ({ k: numer w oknie, ms, cpu, gra: __frameId }).
+  const frameStats = (from = 0, to = null, thr = 50) => {
+    const end = Math.min(to ?? frameLog.n, frameLog.n);
+    const beg = Math.max(0, from, end - LOG);
+    const list = [];
+    let maxMs = 0; let maxCpu = 0; let over = 0;
+    for (let k = beg; k < end; k++) {
+      const i = k % LOG;
+      const j = (k + 1) % LOG;
+      const cpu = frameLog.cpu[i];
+      const ms = (k + 1 < end && frameLog.seria[j] === frameLog.seria[i]) ? frameLog.start[j] - frameLog.start[i] : cpu;
+      if (ms > maxMs) maxMs = ms;
+      if (cpu > maxCpu) maxCpu = cpu;
+      if (ms > thr) { list.push({ k: k - beg, ms: +ms.toFixed(1), cpu: +cpu.toFixed(1), gra: frameLog.game[i] }); over += ms - 1000 / 60; }
+    }
+    list.sort((a, b) => b.ms - a.ms);
+    const top = list.slice(0, 8);
+    // synchroniczne pipeline'y z okresu klatki przestoju (zwykle jego przyczyna): w jej wywołaniach rAF
+    // albo po nich, przed następną klatką
+    for (const e of top) {
+      const i = beg + e.k;
+      const inPeriod = pipes.list.filter((p) => (p.poza ? p.k === i + 1 : p.k === i));
+      const names = inPeriod.filter((p) => p.sync).map((p) => p.nazwa);
+      if (names.length) e.pipeline = names.length > 6 ? [...names.slice(0, 6), `… +${names.length - 6}`] : names;
+      // w tle (compileAsync: budowa NodeBuilder synchronicznie na CPU, pipeline w tle GPU)
+      const nAsync = inPeriod.filter((p) => !p.sync && !p.budowa).length;
+      if (nAsync) e.pipelineWTle = nAsync;
+      // budowy NodeBuilder w tym okresie (CPU): liczba i czas
+      const builds = inPeriod.filter((p) => p.budowa);
+      if (builds.length) e.budowy = `${builds.length} (${builds.reduce((s, p) => s + p.ms, 0).toFixed(0)} ms)`;
+    }
+    return { klatki: end - beg, przestoje: list.length, maksMs: +maxMs.toFixed(1), maksCpu: +maxCpu.toFixed(1), sumaMs: +over.toFixed(0), lista: top, pipeline: pipeStats(beg, end) };
+  };
+
   window.__harness = {
     clock,
     realNow,
+    frameLog,
+    marks,
+    frameStats,
+    pipes,
     scene,
     // n klatek po stepMs; Promise kończy się, gdy czas znów stoi
     step(n = 1, stepMs = 1000 / 60) {
