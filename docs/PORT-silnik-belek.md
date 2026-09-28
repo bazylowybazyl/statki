@@ -53,7 +53,10 @@ destruktor dostaje same ciała heksowe (`_hexDestructibles`, asteroidy).
   najbliższego węzła (HP węzła 320 = 4 heksy po 80), promień `heks · clamp(1,5 + √(dmg/80), 1,5, 5)`
   (heks = `cs / √hexPerNode`, w j. świata jak dawniej), wgniecenie wzdłuż pocisku. Bez promienia
   zerwań: pękają belki zabitych węzłów, reszta wg oparcia. Lekkie działa najpierw wgniatają;
-  dziurę (15 j.) robi dopiero kilka trafień w to samo miejsce.
+  dziurę (15 j.) robi dopiero kilka trafień w to samo miejsce. `opts.craterRadius` (zadanie 25c,
+  ciężka broń — promień leja rany z `hullDamageStamps.craterRadiusFor`): bez budżetu, każdy węzeł
+  w promieniu ginie (`D.applyImpact` `killRadius`, odrzut blachy z haszu węzła), zasięg dziury
+  w `hullImpactResult.crater`.
 - `HullBodies.probe(e, x, y)` — podparcie gniazd broni i rdzeni.
 - `HullBodies.cutSegment` — rzaz Hexlance (pas 35 j.); `cutOuterNode` — cięcie wraku w polu.
 - Sufit HP: `getHullStructuralState` → `HullBodies.structuralState` (żywe węzły / startowe).

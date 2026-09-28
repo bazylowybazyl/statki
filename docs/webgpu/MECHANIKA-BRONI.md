@@ -5,7 +5,8 @@
 > scalone 4e165fb). **18-B (gałąź `webgpu/18b`) wpięło je w grę** — pętla pocisków, sterowanie ogniem gracza, P2
 > i AI, HUD, seria Hexlance'a, efekty `kerf / exit / stuck / ricochet / charge` (§8); **18-D** — odrzut, wstrząs
 > i skala trafienia z danych broni (§8.4). Mapa ran — 18-C; stemple wejścia, rykoszetu, wylotu, zakleszczenia
-> i pasa rzazu z mechaniki 18-B — §8.6.
+> i pasa rzazu z mechaniki 18-B — §8.6. **25c** — krater na miarę rany (dziura w belkach = lej rany ciężkiej broni,
+> rakiety z małym kraterem), bilans — §9.
 
 ## 1. Zapytania kadłubów (`src/game/hullBodies.js`)
 
@@ -285,3 +286,62 @@ stempli; 30 strzałów Vulcana pod 5° — 12 trafień w kadłub = 12 stempli (7
 Receptura `kerf` w `WeaponFx.kerf` dostaje kadłub `null` (sam obraz). Testy: `tests/projectileMechanicsGame.test.mjs`
 (źródła i warianty kraterów, pasy rzazu z pętli gry), `tests/hullDamageMechanics.test.mjs` (wpisy tabeli przez
 hak), `tests/weaponFxPierce.test.mjs` (efekt rzazu bez stempla).
+
+## 9. Krater na miarę rany (zadanie 25c, 2026-09-28, gałąź `webgpu/25c`)
+
+Projekt: `PROJEKT-BRONI.md` §3.8. Lej rany nie jest większy niż prawdziwa dziura w belkach: ciężka broń robi krater
+o promieniu leja swojej receptury (`hullDamageStamps.js` — `lejRadius`, `craterRadiusFor`, pole `S_CRATER`), silnik
+zabija w nim wszystkie węzły (`D.applyImpact` `killRadius`, odrzut blachy z haszu — bez Math.random), mapa maluje lej
+tylko w zasięgu zabitych węzłów (kanał krateru teksela), reszta rany to żar i osmalenie.
+
+| Broń / wariant | promień krateru przy obrażeniach wzorcowych (przed: krater z budżetu 0,9·obr.) |
+|---|---|
+| Yamato (pocisk salwy) | 90,7 j. (przed: ~3 węzły, zasięg ≤ 35,7 j.) |
+| Mjolnir wejście / wylot | 55,8 / 39,1 j. (przed: ~7 / ~3,5 węzła) |
+| Valkyrie wejście / wylot / zakleszczenie | 24,4 / 16,6 / 20,0 j. (przed: ~1,4 / ~0,7 / ~0,7 węzła) |
+| armata | 35,4 j. (przed: 0 węzłów — 135 HP budżetu < ~300 HP węzła) |
+| rakiety, torpedy (rodzina `rocket`, 1000 obr. = 18 j., √ obrażeń) | missile_rack 18 j., fast 15 j., Osa 9,5 j., siege torpedo 16 j., Supernowa 36 j. (sufit 2×); przed: bez krateru (rakiety) / budżet (torpedy) |
+| Goliath, gatling plazmowy, lekka broń, wiązki, flak, rykoszet | bez zmian — krater z budżetu HP; lej rany tylko tam, gdzie ogień przebił kadłub |
+| Hexlance | bez zmian — rzaz 35 j. jest dziurą, lej znaków rzazu (22 j.) mieści się w pasie |
+| pas rzazu Mjolnira / Valkyrie (przejście przez materiał) | bez dziury (bez „ostrza”) — osmalony pas zamiast czarnego rowu |
+
+Bilans (`node scripts/bilans-broni.mjs --n 1000`, PRZED = kod z 9eb8da8 tym samym skryptem; trafienie w świeży kadłub
+w losowy punkt z losowego namiaru, 250 strzałów; seria = czas do zniszczenia, 40 prób, strzały w żywy węzeł najbliżej
+środka kadłuba, HP = min(HP − obrażenia, sufit) po każdym strzale):
+
+| Broń → cel | węzły / strzał | strata HP / strzał | seria: strzały (czas) do zniszczenia |
+|---|---|---|---|
+| Yamato (salwa 3 luf) → niszczyciel (151 węzłów) | 10,4 → 105,4 | 2550 → 3729 (rozpady 2% → 47%) | 2,0 → 1,9 salwy (10,0 → 9,8 s) |
+| Yamato → pancernik (742) | 10,6 → 212 | 2550 → 6142 (rozpady 2% → 40%) | 5,0 → 3,0 (25 → 15,3 s) |
+| Yamato → lotniskowiec (1640) | 10,2 → 187 | 2550 → 9795 | 17,0 → 6,8 (85 → 34 s) |
+| Yamato → superkapitał (3329) | 10,0 → 186 | 2550 → 10 110 | 34,0 → 13,3 (170 → 67 s) |
+| armata → fregata TN (40) | 0,6 → 7,1 | 150 → 419 | 8,0 → 3,8 (20 → 9,4 s) |
+| armata → niszczyciel TN (99) | 0,6 → 7,3 | 151 → 647 | 28,0 → 7,8 (70 → 19,4 s) |
+| armata → pancernik TN (843) | 0,2 → 7,6 | 150 → 237 | 80 → 64 (200 → 160 s) |
+| Mjolnir → pancernik | 12,8 → 29,1 (wylot 4,9 → 8,5) | 2500 → 2501 | 5 → 5 (55 s) |
+| Mjolnir → kolumna fregata + niszczyciel + pancernik | 36,2 → 76,4 | 6043 → 6060 (dps 549 → 551) | — |
+| Mjolnir → lotniskowiec | — | — | 16,9 → 13,8 (186 → 152 s) |
+| Valkyrie → fregata … superkapitał | 1,9–2,5 → 4,5–8,7 | 500 → 507–535 | niszczyciel 8,9 → 7,8 (29,4 → 25,7 s), pancernik 24,0 → 22,2 (78,7 → 72,9 s) |
+| Valkyrie → kolumna | 3,9 → 8,3 | 869 → 900 (dps 265 → 274) | — |
+| rakieta missile_rack → niszczyciel / pancernik TN | 0 → 2,5 / 2,9 | 1000 → 1000 | 5 → 5 / 12 → 12 |
+| Goliath, gatling plazmowy, Vulcan, Gatling S, Hexlance | bez zmian | bez zmian | bez zmian |
+
+Sufit strukturalny: obrażenia HP bez zmian, a `HullBodies.structuralState` (żywe / startowe węzły) spada z kraterami —
+przed 25c kratery były za małe, żeby sufit coś zmienił (w każdej serii czas = HP / obrażenia), po 25c przy Yamato i
+armacie to sufit zabiera większość HP średnich i dużych okrętów (salwa Yamato w lotniskowiec: 2550 obrażeń + sufit =
+9795 HP). Mjolnir, Valkyrie i rakiety zostają prawie w równowadze (krater ≈ obrażenia). Gracz (Atlas: 3121 węzłów,
+12 000 HP, wykładnik 2,35): węzeł ≈ 9 HP sufitu, krater armaty (~7 węzłów na krawędzi) ≈ 70 HP < 150 obrażeń — bez
+zmiany, dopóki ogień nie rozetnie kadłuba. Odrzucone: pełny krater Goliatha — seria w niszczyciel 94 → 21,8 strzału
+(30 → 7 s, szybciej niż Yamato), w pancernik 267 → 110 (85 → 35 s); armata na ⅔ leja (24,7 j.) — niszczyciel TN 28 → 12,6.
+
+Harness (sesja `galeria`, `--sceny` z ujęciami kraterów `galeria-krater-*`): salwa Yamato w burtę pancernika — 10 → 404
+węzły (kadłub przecięty na pół, odłam wrakiem), Mjolnir 14 → 32, armata 3 pociski 2 → 23, Goliath 6 pocisków 0 → 0;
+seria 8 pocisków armaty 4 → 71; Mjolnir przez kolumnę [25, 13, 13] → [32, 48, 31]. Sceny `bitwa`, `bitwa-blisko`,
+`wybuch`, `wraki` — stan gry i obraz = przed (180 kroków walki: trafienia w tarcze); rakiety z galerii (obrażenia 1)
+— krater 0,6 j. (nic nie ginie), rana bez czarnego leja (0,0024% pikseli > 8/255). Koszt: krater Yamato w lotniskowiec
+0,23 ms CPU (mediana), krok z rozpadem ≤ 0,64 ms.
+
+Testy: `tests/hullCraters.test.mjs` (jedno źródło promienia = próg materiału, wzorce = obrażenia broni, `killRadius`
+zabija dokładnie koło, bez Math.random i powtarzalnie, bez `killRadius` bit w bit jak dotąd, dziura od brzegu i rozpad,
+stemple mapy z zasięgiem dziury, rakieta), `hullDamageMap` (kanał krateru w lustrze CPU kernela i materiału: lej tylko
+w dziurze, osmalona blacha poza nią), `hullDamageMechanics`, `projectileMechanicsGame` (gra = wzorzec lotu z kraterami).
