@@ -18,7 +18,7 @@ import {
   normalize, dFdx, dFdy, mod, nodeObject
 } from 'three/tsl';
 import { BLOOM_DEFAULTS } from '../src/3d/bloomConfig.js';
-import { BLOOM_ZGODNOSC_WEBGL, BloomGry } from '../src/3d/tsl/postGry.js';
+import { BloomGry } from '../src/3d/tsl/postGry.js';
 import {
   STAR_PARALLAX_LAYERS,
   computeStarParallaxFactor,
@@ -753,10 +753,9 @@ export function createAtlasSprite(renderer) {
 
 // ---------------------------------------------------------------------------
 // Post HDR jak w grze: scena → cel HalfFloat z MSAA → bloom (BloomGry gry: BloomNode
-// z rozdzielczością × bloomScale jakości i kompozytem × BLOOM_ZGODNOSC_WEBGL — jak dawny
-// UnrealBloomPass dema w bazie WebGL; zadanie 10: bez × 3 bloom dema był 3 × słabszy niż
-// w tagu i jasne kadry nie dawały się porównać) → ACES (fit z uberPassa gry) + sRGB na
-// kanwę (RenderPipeline).
+// z rozdzielczością × bloomScale jakości) → ACES (fit z uberPassa gry) + sRGB na kanwę
+// (RenderPipeline). Bloom 1:1 jak gra od zadania 25b (bez × 3 dawnego UnrealBloomPass —
+// zadanie 10 miało go dla porównań z tagiem WebGL; gra i dema WebGPU liczą scena + bloom).
 export function createPost(renderer) {
   let sceneRT = null;
   let pipeline = null;
@@ -769,7 +768,7 @@ export function createPost(renderer) {
   const bloomNode = nodeObject(bloomGry);
 
   function build() {
-    const c = sceneTex.rgb.add(bloomNode.rgb.mul(BLOOM_ZGODNOSC_WEBGL).mul(uBloomOn));
+    const c = sceneTex.rgb.add(bloomNode.rgb.mul(uBloomOn));
     const out = vec4(linearDoSrgb(acesGry(max(c, vec3(0.0)).mul(uExposure))), 1.0);
     pipeline = new THREE.RenderPipeline(renderer, out);
     pipeline.outputColorTransform = false;

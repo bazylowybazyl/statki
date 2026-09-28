@@ -31,7 +31,6 @@ import {
   cross, sign, abs, uint
 } from 'three/tsl';
 import { BAND_VOXELS } from '../../game/asteroidGiants.js';
-import { beltBloomKnee } from './tslCommon.js';
 
 const DEPOSIT_CAP = 16;
 const CRATER_CAP = 64;
@@ -393,7 +392,7 @@ export class GiantView {
           col.addAssign(gc.mul(glow).mul(veins.mul(1.6).mul(glow).add(0.08)));
         });
       });
-      const out = beltBloomKnee(max(col, vec3(0.0)).mul(S.exposure)).toVar();
+      const out = max(col, vec3(0.0)).mul(S.exposure).toVar();
       if (S.volume) {
         const vv = S.volume.sample(sPos);
         out.assign(out.mul(vv.a).add(vv.rgb));

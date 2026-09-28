@@ -59,7 +59,6 @@ import { MAX_SHADER_SHIP_LIGHTS, NAV_LIGHT_CHASE } from '../game/shipLightRuntim
 import { HullLacquer, MAX_ENGINE_ZONES } from './hullLacquer.js';
 import { fieldDarkness, sunFill, sunShadeUnlit, sunVisibility } from './sunShadowMask.js';
 import { effectLightGrid, hullEffectLighting, hullWoundHeat, hullWoundSurface } from './hullDamageMap.tsl.js';
-import { warpBloomKnee } from './warp/bloomKnee.js';
 import { getBeltMedium } from './asteroids/beltMedium.js';
 import { zbierzZakres } from './zakresyWysylki.js';
 
@@ -508,11 +507,11 @@ function hullWarp(ctx, out, alpha) {
     const seamK = exp(sx.mul(sx).negate()).mul(seamOn).toVar();
     const blur = ctx.sprite.level(B.w).a;
     const rim = clamp(float(1.0).sub(blur).mul(2.0), 0.0, 1.0).toVar();
-    // Kolano bloomu (warp/bloomKnee.js): demo liczyło bloom bez ×3 gry.
-    const heat = warpBloomKnee(C.xyz.mul(rim.mul(rim).mul(0.85).add(rim.mul(0.15))));
+    // Barwy HDR 1:1 z dema (bloom gry jak w demach od zadania 25b — bez kolana).
+    const heat = C.xyz.mul(rim.mul(rim).mul(0.85).add(rim.mul(0.15)));
     // Szew świeci także nad częścią już / jeszcze schowaną: alfa = max(odsłonięcie, szew).
     const k = max(vis, seamK).toVar();
-    out.assign(out.add(heat).mul(vis).add(warpBloomKnee(B.xyz.mul(seamK))).div(max(k, 1e-4)));
+    out.assign(out.add(heat).mul(vis).add(B.xyz.mul(seamK)).div(max(k, 1e-4)));
     alpha.assign(alpha.mul(k));
     Discard(alpha.lessThan(0.004));
   });

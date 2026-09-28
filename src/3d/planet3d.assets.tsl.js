@@ -44,6 +44,7 @@ import {
   select, smoothstep, sqrt, step, distance, dFdx, dFdy, texture, varyingProperty
 } from 'three/tsl';
 import { uniformNode } from './tsl/uniformy.js';
+import { BLOOM_DEFAULTS } from './bloomConfig.js';
 import { WARP_STARS } from './warp/stars.js';
 import { WARP_SKY_BEND, warpSkyBendOffset } from './warp/skyBend.js';
 // ── Maska słońca: JEDNO miejsce dla planet, chmur, poświat, mgławicy i gwiazd ──
@@ -449,6 +450,8 @@ function buildRingAtmosphereGraph() {
 
 // ── Graf: słońce (dawny SUN_FRAGMENT) ──────────────────────────────────────────
 const SUN_KEYS = { uTime: 'float', uIsOcclusion: 'float' };
+/** Wzmocnienie nadmiaru ponad próg bloomu na kuli słońca (zadanie 25b: bloom bez ×3 — korona wraca). */
+export const SUN_BLOOM_NADMIAR = 3.0;
 
 function buildSunGraph() {
   const U = perObjectUniforms(SUN_KEYS);
@@ -474,6 +477,13 @@ function buildSunGraph() {
     const fb = float(1.0).sub(max(viewDot, 0.0)).toVar();
     const fresnel = fb.mul(fb).mul(fb);
     finalColor.addAssign(vec3(1.5, 0.75, 0.25).mul(fresnel));
+    // Korona = sama poświata bloomu kuli HDR. Zadanie 25b: bloom gry jak w demach (bez ×3 dawnego passu WebGL)
+    // zostawiał ~1/3 korony (znikała) — nadmiar luminancji ponad próg bloomu × SUN_BLOOM_NADMIAR (L' = p + 3·(L − p)),
+    // pod progiem bez zmian: poświata teksela 3L − 2p zamiast dawnych 3L (L = 2,7 → 78%); scena `slonce`: energia
+    // kadru wokół słońca 0,50 → 0,70 dawnej, tarcza jak dotąd.
+    const lum = dot(finalColor, vec3(0.2126, 0.7152, 0.0722)).toVar();
+    const nadmiar = max(lum.sub(BLOOM_DEFAULTS.threshold), 0.0);
+    finalColor.mulAssign(lum.add(nadmiar.mul(SUN_BLOOM_NADMIAR - 1)).div(max(lum, 1e-4)));
     // Dawna maska okluzji god rays (uIsOcclusion = 1: czysta biel) — nikt jej dziś nie włącza.
     return select(U.uIsOcclusion.equal(1.0), vec4(1.0), vec4(finalColor, 1.0));
   })();

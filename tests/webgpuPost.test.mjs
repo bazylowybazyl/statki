@@ -13,7 +13,7 @@ globalThis.window = globalThis.window || {};
 const THREE = await import('three/webgpu');
 const { texture } = await import('three/tsl');
 const { BLOOM_DEFAULTS } = await import('../src/3d/bloomConfig.js');
-const { BloomGry, BLOOM_ZGODNOSC_WEBGL, MAX_HEAT_HAZE_SOURCES, createPostUniforms, createUberPost } = await import('../src/3d/tsl/postGry.js');
+const { BloomGry, MAX_HEAT_HAZE_SOURCES, createPostUniforms, createUberPost } = await import('../src/3d/tsl/postGry.js');
 const { Core3D } = await import('../src/3d/core3d.js');
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
@@ -49,7 +49,7 @@ function makePost({ withBloom }) {
   return { bloom, fragment: buildWGSL(material) };
 }
 
-test('bloom: BloomNode = algorytm dawnego passu WebGL (three r183), różnice kompozytu skompensowane', () => {
+test('bloom: BloomNode = algorytm dawnego passu WebGL (three r183); od 25b bez ×3 kompozytu — jak dema WebGPU', () => {
   const unreal = readModule('three/addons/postprocessing/UnrealBloomPass.js');
   const node = readModule('three/addons/tsl/display/BloomNode.js');
   // Ten sam algorytm: jądra 6…22 z tymi samymi współczynnikami, 5 mipów połówkowych, bloomFactors,
@@ -65,12 +65,21 @@ test('bloom: BloomNode = algorytm dawnego passu WebGL (three r183), różnice ko
   assert.match(unreal, /this\.highPassUniforms\[ 'smoothWidth' \]\.value = 0\.01;/);
   assert.match(node, /this\.smoothWidth = uniform\( 0\.01 \);/);
   assert.match(node, /smoothstep\( this\.threshold, this\.threshold\.add\( this\.smoothWidth \), v \)/);
-  // Różnica 1: dawny kompozyt ×3,0 i alfa = max(rgb), dokładany blendem (ONE, ONE) — BloomNode bez ×3.
+  // Różnica 1: dawny kompozyt ×3,0 i alfa = max(rgb), dokładany blendem (ONE, ONE) — BloomNode bez ×3. Do zadania
+  // 25b gra mnożyła wyjście węzła przez 3 (BLOOM_ZGODNOSC_WEBGL, obraz 1:1 z bazą WebGL). Decyzja użytkownika
+  // 2026-09-28 („do poziomu dem”): bloom gry = bloom dem WebGPU — col + bloom(col, strength, radius, threshold) bez
+  // mnożnika, jak dema/bronie-webgpu, rakiety-webgpu, asteroidy-webgpu i warp-webgpu; efekty z dem 1:1, bez kolan.
+  // Alfa bloomu jak dawny blend (max(rgb)) zostaje.
   assert.match(unreal, /vec3 bloom = 3\.0 \* bloomStrength \* \(/);
   assert.match(unreal, /float bloomAlpha = max\( bloom\.r, max\( bloom\.g, bloom\.b \) \);/);
   assert.match(unreal, /premultipliedAlpha: true,\s*blending: AdditiveBlending/);
-  assert.match(node, /return sum\.mul\( this\.strength \);/, 'BloomNode dostał ×3 — zdejmij BLOOM_ZGODNOSC_WEBGL (postGry.js)');
-  assert.equal(BLOOM_ZGODNOSC_WEBGL, 3);
+  assert.match(node, /return sum\.mul\( this\.strength \);/, 'BloomNode dostał mnożnik kompozytu — gra (bloomCompute.js) i dema liczą strength × Σ mipów');
+  for (const demo of ['dema/bronie-webgpu.js', 'dema/rakiety-webgpu.js']) {
+    assert.match(read(demo), /bloom\([^;]*BLOOM_DEFAULTS\.strength, BLOOM_DEFAULTS\.radius, BLOOM_DEFAULTS\.threshold\)/, `${demo}: bloom dema z bloomConfig.js`);
+  }
+  const post = read('src/3d/tsl/postGry.js');
+  assert.match(post, /const b = level0\(bloomTexture, uvNode\)\.rgb\.toVar\(\);/, 'uber: bloom bez mnożnika (jak dema)');
+  assert.doesNotMatch(post, /BLOOM_ZGODNOSC_WEBGL = |bloomGain/, 'mnożnik zgodności z WebGL wrócił do postu');
   // Różnica 2: BloomNode liczy się raz na KLATKĘ i bierze rozmiar bufora rysowania co render.
   assert.match(node, /this\.updateBeforeType = NodeUpdateType\.FRAME;/);
   assert.match(node, /const size = renderer\.getDrawingBufferSize\( _size \);\s*this\.setSize\( size\.width, size\.height \);/);
@@ -141,8 +150,8 @@ test('uber w TSL: pętla po źródłach z uniformu int, czyste funkcje szumu, cl
   assert.equal((withBloom.match(/texture_2d<f32>/g) || []).length, 2);
   assert.equal((noBloom.match(/texture_2d<f32>/g) || []).length, 1);
   assert.doesNotMatch(withBloom, /mat3x3<f32>/);
-  // bloom × 3 (zgodność z dawnym passem), alfa + max(rgb) bloomu; wyjście ACES gry + sRGB
-  assert.match(withBloom, /\* vec3<f32>\( 3\.0 \)/);
+  // bloom 1:1 jak w demach (od zadania 25b — bez × 3 dawnego passu), alfa + max(rgb) bloomu; wyjście ACES gry + sRGB
+  assert.doesNotMatch(withBloom, /\* vec3<f32>\( 3\.0 \)/);
   assert.match(withBloom, /\.w \+ max\( nodeVar\d+\.x, max\( nodeVar\d+\.y, nodeVar\d+\.z \) \)/);
   assert.doesNotMatch(noBloom, /vec3<f32>\( 3\.0 \)/);
   assert.match(withBloom, /output\.color = vec4<f32>\( linearDoSrgb\( acesGry\( nodeVar\d+\.xyz \) \), nodeVar\d+\.w \);/);

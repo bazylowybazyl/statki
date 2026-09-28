@@ -10,7 +10,8 @@ import { uniformsAdapter } from '../src/3d/tsl/uniformy.js';
 import {
   PLANET_TSL_STATS, PLANET_GRAPH_KEYS, PLANET_MATERIAL_NAMES, STAR_PLANET_MASK_CAP, STAR_INSTANCE_STRIDE, STAR_INSTANCE_LAYOUT,
   createPlanetSurfaceMaterial, createPlanetCloudMaterial, createPlanetAtmosphereMaterial, createRingAtmosphereMaterial,
-  createSunMaterial, createNebulaMaterial, createStarMaterial, createStarGeometry, packStarInstances, getPlanetGraph
+  createSunMaterial, createNebulaMaterial, createStarMaterial, createStarGeometry, packStarInstances, getPlanetGraph,
+  SUN_BLOOM_NADMIAR
 } from '../src/3d/planet3d.assets.tsl.js';
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
@@ -167,6 +168,14 @@ test('chmury, poświaty, słońce: stan renderu jak dawny ShaderMaterial', () =>
   assert.equal(sun.transparent, false);
   assert.equal(sun.depthWrite, true);
   assert.equal(sun.name, PLANET_MATERIAL_NAMES.sun);
+});
+
+// Zadanie 25b (bloom gry jak w demach, bez ×3 dawnego passu WebGL): korona słońca to sama poświata bloomu kuli HDR i przy
+// ×1 znikała — nadmiar luminancji ponad próg bloomu × SUN_BLOOM_NADMIAR (L' = p + 3·(L − p)), pod progiem bez zmian.
+test('słońce: nadmiar ponad próg bloomu × SUN_BLOOM_NADMIAR (korona po zdjęciu ×3), pod progiem bez zmian', () => {
+  assert.equal(SUN_BLOOM_NADMIAR, 3);
+  const sun = buildWGSL(createSunMaterial({ uTime: { value: 1.5 }, uIsOcclusion: { value: 0 } })).fragment;
+  assert.match(sun, /(nodeVar\d+) = dot\( (nodeVar\d+), vec3<f32>\( 0\.2126, 0\.7152, 0\.0722 \) \);\s*\2 = \( \2 \* vec3<f32>\( \( \( \1 \+ \( max\( \( \1 - 0\.9 \), 0\.0 \) \* 2\.0 \) \) \/ max\( \1, 0\.0001 \) \) \) \);/);
 });
 
 test('słońce i hasze: funkcje z layoutem są czyste, bez pow z ujemną podstawą', () => {

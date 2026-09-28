@@ -289,9 +289,9 @@ Kod: `src/3d/hullDamageMap.js` (sloty, LRU, kolejka, zadania, krok klatki efekt�
 - **Otwarte (po scaleniu 19 i 22):** rakiety 3D (19) nie stemplują — trafienie to obrażenia HP przez
   `applyDamageToNPC`, bez krateru, a przypalenie poszycia z 19 to dym i duszek blasku; jeśli rakieta ma zostawiać ranę:
   `HullDamageMap.stampAt(kadłub, x, y, 'rocket')` w kroku 7 wybuchu (`src/3d/rockets/effects.js`; rodzina `rocket`
-  jest w tabeli). Bloom ×3 gry (PLAN §3, pułapki 22): brzeg rany (8–12) i poszycie oświetlone błyskami świecą w grze
-  mocniejszą poświatą niż w demie, tak jak efekty 17 i 19 — kolano `warpBloomKnee` na żarze rany i
-  `hullEffectLighting` to decyzja dla całej broni (23), nie tylko mapy ran. Galeria broni w harnessie naprawia rany
+  jest w tabeli). Bloom: do zadania 25b gra mnożyła bloom × 3 (brzeg rany 8–12 i poszycie oświetlone błyskami świeciły
+  mocniejszą poświatą niż w demie); od 25b bloom gry = bloom dema (PLAN §3), rany i światła efektów 1:1 z dema, bez
+  kolana. Galeria broni w harnessie naprawia rany
   celu przed każdym ujęciem (jak „naprawa przy zmianie broni” w demie).
 
 ## 4. Podział pracy, kolejność, testy
