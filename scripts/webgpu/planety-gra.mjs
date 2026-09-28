@@ -39,8 +39,9 @@ const VIEWS = [
   // w próżni obok statku; bez encji w `stations` (rozgrywki nie dotyka).
   { name: 'stacja-piracka', body: 'pirate', fill: 0.35, layers: [2] },
   // Gwiazdy rozciągnięte w skoku (smugi wzdłuż lotu, głowa w miejscu gwiazdy): warpFactor ustawiony wprost
-  // w uniformach StarSystemu — przy stojącym czasie (dt = 0) lerp w update() go nie rusza. Bez gry w stanie
-  // skoku: stara soczewka tagu (warpLensPass) zginałaby tło tylko na WebGL.
+  // w uniformach StarSystemu — przy stojącym czasie (dt = 0) lerp w update() go nie rusza. Od zadania 22
+  // shader gwiazd warpFactor nie czyta (smugi skoku z WARP_STARS, pisze je warp „Nurt”), więc na main ta
+  // scena = `gwiazdy`, a różnica z tagiem to zamierzona zmiana wyglądu (dawne rozciąganie z WebGL).
   { name: 'gwiazdy-skok', body: 'deep', zoom: 0.3, layers: [1], starWarp: 0.8 },
   { name: 'gwiazdy', body: 'deep', zoom: 0.3, layers: [1], starWarp: 0 }
 ];

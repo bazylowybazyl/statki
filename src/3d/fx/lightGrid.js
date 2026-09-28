@@ -3,7 +3,7 @@
 // SIATKA ŚWIATEŁ GRY — jedna wersja scalona z trzech kopii w demach WebGPU
 // (dema/asteroidy-webgpu/lights.js — stan z 2026-09-27, najpełniejszy;
 // dema/bronie-webgpu/lightGrid.js; dema/rakiety-webgpu/lights.js). Dema zostają na
-// swoich kopiach (ich sesje trwają). Różnice kopii i wybór: docs/webgpu/FX-INFRA.md §1.
+// swoich kopiach. Różnice kopii i wybór: docs/webgpu/FX-INFRA.md §1.
 //
 // Setki dynamicznych świateł (błyski luf, trafienia, żar, dysze rakiet, reflektory
 // i lampy statków, pioruny) → pula na CPU → siatka komórek w płaszczyźnie XY wokół
@@ -35,7 +35,7 @@
 //   L3 = cos stożka wewn., rozbłysk lampy, mapa cienia (1..n, 0 = bez), właściciel
 //        (materiał z `gridLightOwner` pomija światła swojego statku — własne lampy
 //        kadłuba liczy jego shader, a własne czerwone lampy przepalały eskortę na różowo).
-// Tłumienie jak światła pola gry (src/3d/fieldLights3D.js): okno do zera na zasięgu
+// Tłumienie jak dawne światła pola gry (fieldLights3D.js, usunięty w zadaniu 21): okno do zera na zasięgu
 // × 1/(1 + 4x²); stożek z miękkim brzegiem smoothstep² (bez „łopat wiatraka”).
 //
 // Bufory (limit storage na etap — PLAN §3): DWA na materiał / kernel — światła (vec4)
@@ -76,8 +76,8 @@ function permanentUpdateRange(attr) {
 // ---------------------------------------------------------------------------
 // Profile świateł pola statków (reflektory, światło dookoła, lampy pozycyjne).
 //
-// Z dema asteroid WebGPU (stan 2026-09-27) — na bazie FIELD_SHIP_LIGHTS z
-// src/3d/fieldLights3D.js (moduł WebGL), podkręcone pod światło wolumetryczne
+// Z dema asteroid WebGPU (stan 2026-09-27) — na bazie FIELD_SHIP_LIGHTS z dawnego
+// fieldLights3D.js (moduł WebGL, usunięty w zadaniu 21), podkręcone pod światło wolumetryczne
 // (prośby użytkownika 2026-09-27: „boczne lepsze niż w WebGL, bo tam ledwo
 // świeciły”, reflektory dalekie „delikatnie poszerz”):
 //   • spot  — reflektory dalekie (dziób): smuga w pyle z cieniem skał, stożek 36°;
@@ -576,7 +576,7 @@ export class GridLighting extends THREE.Lighting {
 }
 
 // ---------------------------------------------------------------------------
-// Światła pola statku (port FieldLights.addShip z src/3d/fieldLights3D.js przez
+// Światła pola statku (port FieldLights.addShip z dawnego fieldLights3D.js przez
 // dema/asteroidy-webgpu/lights.js) — bez alokacji na wywołanie po stronie siatki.
 
 const _one = [null];

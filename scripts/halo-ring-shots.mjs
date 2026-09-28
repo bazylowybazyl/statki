@@ -23,6 +23,7 @@ import { mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'vite';
+import { closeChrome } from '../dema/rdzen-cdp.js';
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((acc, a, i, all) => {
   if (a.startsWith('--')) acc.push([a.slice(2), all[i + 1] && !all[i + 1].startsWith('--') ? all[i + 1] : '1']);
@@ -248,7 +249,9 @@ async function evaluate(cdp, expression, timeout = 120000) {
 }
 
 // Profil headless Chrome w %TEMP% (75–300 MB: pamięć podręczna shaderów) — usuwany na końcu i przy
-// błędzie (dawniej zostawał po każdym uruchomieniu; 2026-09-28 dysk się zapełnił — zadanie 09).
+// błędzie wspólnym closeChrome (dema/rdzen-cdp.js: czeka na wyjście Chrome, potem kasuje profil;
+// dawniej zostawał po każdym uruchomieniu — 2026-09-28 dysk się zapełnił). removeChromeProfile to
+// już tylko synchroniczna siatka na nagłe wyjście procesu (process.on('exit') nie czeka na await).
 let chromeProfile = null;
 let chromeProc = null;
 function removeChromeProfile() {
@@ -383,20 +386,17 @@ async function main() {
     table.push(`| ${r.id} | ${r.mode} | ${r.calls} | ${(r.triangles / 1000).toFixed(0)} tys. | ${r.tiles} | ${r.ms1440} | ${r.fps1440} | ${r.hdr.p99.toFixed(2)} | ${r.hdr.max.toFixed(2)} | ${(r.hdr.overFraction * 100).toFixed(2)}% | ${r.hdr.nanOrInf} |`);
   }
   writeFileSync(join(outDir, 'results.md'), table.join('\n') + '\n');
-  ws.close();
-  chrome.kill();
-  await new Promise((ok) => { if (chrome.exitCode !== null) ok(); else { chrome.once('exit', ok); setTimeout(ok, 5000); } });
-  removeChromeProfile();
+  await closeChrome(chrome, ws, profile);
+  chromeProc = null;
+  chromeProfile = null;
   await server.close();
 }
 
 main().catch(async (err) => {
   console.error(err);
   // przeglądarka i jej profil nie zostają po błędzie
-  if (chromeProc && chromeProc.exitCode === null) {
-    try { chromeProc.kill(); } catch { /* */ }
-    await new Promise((ok) => { chromeProc.once('exit', ok); setTimeout(ok, 5000); });
-  }
-  removeChromeProfile();
+  if (chromeProc) await closeChrome(chromeProc, null, chromeProfile);
+  chromeProc = null;
+  chromeProfile = null;
   process.exit(1);
 });

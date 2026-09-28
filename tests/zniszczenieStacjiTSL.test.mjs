@@ -321,3 +321,36 @@ test('rozgrzewka cienia rozpadu: najwyżej jeden trzymacz cienia w scenie naraz'
   assert.match(q, /make\.cien = true;/);
   assert.equal(DESTRUCTION_TSL_INTERNALS.warmStats().shadowPending, 0);
 });
+
+// Zadanie 24: kawałek skorupy (Destruction3D.detachChunk → podział fragmentu) dostaje WŁASNE klony
+// geometrii i materiałów bryły. Flaga zasobu szablonu GLB (stations3D.js) nie może na nie przejść —
+// BufferGeometry.copy dzieli userData ze źródłem — inaczej DestructionDebrisManager nigdy ich nie
+// zwalniał (cała bryła stacji na kawałek, przy każdym rozpadzie).
+test('klony kawałka skorupy nie dziedziczą flagi zasobu szablonu i idą do zwolnienia', async () => {
+  const { cloneShellHierarchy } = DESTRUCTION_TSL_INTERNALS;
+  const { DebrisManager } = await import('../src/vfx/destructionDebrisManager.js');
+  const geometry = new THREE.BoxGeometry(1, 1, 1);
+  geometry.userData.__sharedTemplateAsset = true;
+  const material = new THREE.MeshStandardMaterial();
+  material.userData.__sharedTemplateAsset = true;
+  const root = new THREE.Group();
+  root.add(new THREE.Mesh(geometry, material));
+  const piece = cloneShellHierarchy(root);
+  const mesh = piece.children[0];
+  assert.notEqual(mesh.geometry, geometry, 'kawałek ma własną geometrię');
+  assert.notEqual(mesh.material, material, 'kawałek ma własny materiał');
+  assert.equal(mesh.geometry.userData.__sharedTemplateAsset, undefined, 'geometria kawałka bez flagi szablonu');
+  assert.equal(mesh.material.userData.__sharedTemplateAsset, undefined, 'materiał kawałka bez flagi szablonu');
+  assert.equal(geometry.userData.__sharedTemplateAsset, true, 'szablon zachowuje flagę');
+  assert.equal(material.userData.__sharedTemplateAsset, true);
+  const disposed = [];
+  for (const o of [geometry, material, mesh.geometry, mesh.material]) o.addEventListener('dispose', () => disposed.push(o));
+  const scene = new THREE.Scene();
+  scene.add(piece);
+  const dm = new DebrisManager();
+  dm.register(piece, scene, 1);
+  dm.update(2);
+  assert.deepEqual(disposed, [mesh.geometry, mesh.material], 'zwolnione klony kawałka, szablon nietknięty');
+  geometry.dispose();
+  material.dispose();
+});

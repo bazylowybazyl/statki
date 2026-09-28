@@ -60,19 +60,6 @@ const HTML = `
   <label style="display:flex;gap:6px;align-items:center;margin-top:8px"><input id="dt-use-3d-pirate" type="checkbox" /> 3D Pirate Station (hide 2D)</label>
 </div>
 <div class="group" id="stationsFramesGroup"><div class="row"><strong>Stacje (kadr per stacja)</strong> <span class="small muted">(zoom kamery na sprite)</span></div></div>
-<div class="group" id="warpVfxGroup">
-  <div class="row"><strong>Warp Wormhole VFX</strong> <span class="small muted">(soczewka statku)</span></div>
-  <div class="row"><label>Prog trybu pelnego</label><input id="warpLensThreshold" type="range" min="0" max="1" step="0.01"><input id="warpLensThresholdNum" type="number" min="0" max="1" step="0.01" style="width:72px;"><div class="val" id="warpLensThresholdVal"></div></div>
-  <div class="row"><label>Promien bazowy</label><input id="warpRadiusBase" type="range" min="0.05" max="0.6" step="0.005"><input id="warpRadiusBaseNum" type="number" min="0.05" max="0.6" step="0.005" style="width:72px;"><div class="val" id="warpRadiusBaseVal"></div></div>
-  <div class="row"><label>Promien - skala</label><input id="warpRadiusScale" type="range" min="0" max="0.3" step="0.005"><input id="warpRadiusScaleNum" type="number" min="0" max="0.3" step="0.005" style="width:72px;"><div class="val" id="warpRadiusScaleVal"></div></div>
-  <div class="row"><label>Masa bazowa</label><input id="warpMassBase" type="range" min="0" max="0.5" step="0.005"><input id="warpMassBaseNum" type="number" min="0" max="0.5" step="0.005" style="width:72px;"><div class="val" id="warpMassBaseVal"></div></div>
-  <div class="row"><label>Masa - skala</label><input id="warpMassScale" type="range" min="0" max="0.6" step="0.005"><input id="warpMassScaleNum" type="number" min="0" max="0.6" step="0.005" style="width:72px;"><div class="val" id="warpMassScaleVal"></div></div>
-  <div class="row"><label>Miekkosc krawedzi</label><input id="warpSoftness" type="range" min="0" max="1" step="0.01"><input id="warpSoftnessNum" type="number" min="0" max="1" step="0.01" style="width:72px;"><div class="val" id="warpSoftnessVal"></div></div>
-  <div class="row"><label>Przezroczystosc bazowa</label><input id="warpOpacityBase" type="range" min="0" max="1" step="0.01"><input id="warpOpacityBaseNum" type="number" min="0" max="1" step="0.01" style="width:72px;"><div class="val" id="warpOpacityBaseVal"></div></div>
-  <div class="row"><label>Przezroczystosc - skala</label><input id="warpOpacityScale" type="range" min="0" max="1" step="0.01"><input id="warpOpacityScaleNum" type="number" min="0" max="1" step="0.01" style="width:72px;"><div class="val" id="warpOpacityScaleVal"></div></div>
-  <div class="row"><label>Wydluzenie wzdluz lotu</label><input id="warpLensForwardStretch" type="range" min="0.1" max="2" step="0.01"><input id="warpLensForwardStretchNum" type="number" min="0.1" max="2" step="0.01" style="width:72px;"><div class="val" id="warpLensForwardStretchVal"></div></div>
-  <div class="row"><label>Offset wzdluz kadluba</label><input id="warpTailDepthExtra" type="range" min="-0.2" max="0.8" step="0.01"><input id="warpTailDepthExtraNum" type="number" min="-0.2" max="0.8" step="0.01" style="width:72px;"><div class="val" id="warpTailDepthExtraVal"></div></div>
-</div>
 <div class="group">
   <div class="row"><label><input id="toggleRuler" type="checkbox"> Miarka (okregi dystansu)</label></div>
   <div class="row"><label><input id="togglePlanetOrbits" type="checkbox"> Miarki planet (inner/outer/gravity)</label></div>
@@ -407,9 +394,7 @@ function wireDevToolsLogic() {
   window.Dev = window.Dev || {};
   window.Dev.station3DScale = DevConfig.station3DScale;
 
-  const WarpLensDefaults = window.__WARP_LENS_DEFAULTS || {};
   const DevVFX = window.DevVFX = window.DevVFX || {};
-  DevVFX.warpLens = Object.assign({}, WarpLensDefaults, DevVFX.warpLens || {});
 
   const DevTuning = window.DevTuning = window.DevTuning || {};
   const DEFAULT_HUD_OFFSETS = { centerY: 0, shieldY: 0, hpY: 0 };
