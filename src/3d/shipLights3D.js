@@ -1,13 +1,23 @@
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
+import {
+  Fn, If, Discard,
+  attribute, clamp, float, fract, length, max, mix, positionGeometry, pow, smoothstep, uniform, varying, vec4
+} from 'three/tsl';
 import { Core3D } from './core3d.js';
 import { sceneOriginNearCamera } from './sceneOrigin.js';
-import { MAX_NAV_LIGHT_SPRITES, NAV_LIGHT_CHASE, glslFloat } from '../game/shipLightRuntime.js';
+import { MAX_NAV_LIGHT_SPRITES, NAV_LIGHT_CHASE } from '../game/shipLightRuntime.js';
+import { uniformsAdapter } from './tsl/uniformy.js';
 
 // Billboardy blasku świateł pozycyjnych. Rysują się na warstwie 2 (pass FG)
 // i jak każda emisja nie czytają maski cienia (sunShadowMask.js), więc świecą
 // także w cieniu planety i rozświetlają wtedy kadłub pod sobą (blend addytywny).
 // Rdzeń wypycha luminancję HDR > progu bloomu (0.9), halo zostaje pod progiem
 // i działa jako miękki rozlew światła na pancerzu.
+//
+// Port WebGPU (zadanie 15): materiał w TSL (NodeMaterial), wzory 1:1 z dawnym
+// GLSL. InstancedMesh zostaje — three sam mnoży pozycję przez macierz instancji
+// (przy ≤ 1024 instancjach to bufor uniformów, powyżej — atrybut instancji),
+// a modelViewMatrix składa na CPU w double (renderer.highPrecision).
 const NAV_LIGHT_Z = 13;             // FG: nad kadłubem ortho, pod laserami (14+)
 const NAV_LIGHT_RENDER_ORDER = 52;  // bronie zaczynają się od 55
 
@@ -27,68 +37,47 @@ function getNavLightTuning() {
   return window.__shipLights3DTune;
 }
 
-const NAV_LIGHT_VERTEX_SHADER = `
-attribute vec3 aColor;
-attribute vec3 aParams;
-
-varying vec2 vLocal;
-varying vec3 vColor;
-varying vec3 vParams;
-
-void main() {
-  vLocal = position.xy;
-  vColor = aColor;
-  vParams = aParams;
-  gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position.xy, 0.0, 1.0);
-}
-`;
-
 // aParams: x = faza sekwencji (0..1 wzdłuż kadłuba), y = intensywność
 // (power * fade), z = coreFrac (promień rdzenia / promień halo).
-// Formuła chase MUSI być identyczna z pętlą lamp w HEX_FRAGMENT_SHADER
-// (hexShips3D) — stałe wstrzykiwane z NAV_LIGHT_CHASE.
-const NAV_LIGHT_FRAGMENT_SHADER = `
-uniform float uTime;
-uniform float uCoreGain;
-uniform float uHaloGain;
+// Formuła chase MUSI być identyczna z pętlą lamp kadłuba (hexShips3D.tsl.js) —
+// stałe z NAV_LIGHT_CHASE.
+function navLightFragment(U) {
+  const vLocal = varying(positionGeometry.xy, 'vNavLocal');
+  const vColor = varying(attribute('aColor', 'vec3'), 'vNavColor');
+  const vParams = varying(attribute('aParams', 'vec3'), 'vNavParams');
+  return Fn(() => {
+    const d = length(vLocal).toVar();
+    If(d.greaterThanEqual(1.0), () => {
+      Discard();
+    });
 
-varying vec2 vLocal;
-varying vec3 vColor;
-varying vec3 vParams;
+    const chase = fract(U.uTime.mul(NAV_LIGHT_CHASE.speed).add(vParams.x.mul(NAV_LIGHT_CHASE.phaseGain))).toVar();
+    const pulse = smoothstep(0.0, NAV_LIGHT_CHASE.attack, chase)
+      .mul(float(1.0).sub(smoothstep(NAV_LIGHT_CHASE.hold, NAV_LIGHT_CHASE.release, chase)));
+    const seq = mix(float(NAV_LIGHT_CHASE.rest), float(1.0), pulse);
 
-void main() {
-  float d = length(vLocal);
-  if (d >= 1.0) discard;
+    const coreFrac = max(0.02, vParams.z);
+    const core = float(1.0).sub(smoothstep(0.0, coreFrac.mul(1.6), d));
+    // max(0, 1 − d) ≥ 0: potęga bez ujemnej podstawy (NaN w WGSL).
+    const halo = pow(max(0.0, float(1.0).sub(d)), 2.4);
+    const intensity = vParams.y.mul(seq).toVar();
 
-  float chase = fract(uTime * ${glslFloat(NAV_LIGHT_CHASE.speed)} + vParams.x * ${glslFloat(NAV_LIGHT_CHASE.phaseGain)});
-  float pulse = smoothstep(0.0, ${glslFloat(NAV_LIGHT_CHASE.attack)}, chase)
-    * (1.0 - smoothstep(${glslFloat(NAV_LIGHT_CHASE.hold)}, ${glslFloat(NAV_LIGHT_CHASE.release)}, chase));
-  float seq = mix(${glslFloat(NAV_LIGHT_CHASE.rest)}, 1.0, pulse);
-
-  float coreFrac = max(0.02, vParams.z);
-  float core = 1.0 - smoothstep(0.0, coreFrac * 1.6, d);
-  float halo = pow(max(0.0, 1.0 - d), 2.4);
-  float intensity = vParams.y * seq;
-
-  vec3 col = vColor * intensity * (core * uCoreGain + halo * uHaloGain);
-  float alpha = clamp(intensity * (core + halo * 0.55), 0.0, 1.0);
-  gl_FragColor = vec4(col, alpha);
+    const col = vColor.mul(intensity).mul(core.mul(U.uCoreGain).add(halo.mul(U.uHaloGain)));
+    const alpha = clamp(intensity.mul(core.add(halo.mul(0.55))), 0.0, 1.0);
+    return vec4(col, alpha);
+  })();
 }
-`;
 
 // Początek układu instancji przy kamerze (sceneOrigin.js) — scratch bez alokacji.
 const _origin = { x: 0, y: 0 };
 
+// Zakres uploadu: WebGPU (three r183) wysyła atrybut z zakresami po zmianie
+// wersji; bez zakresów — cały bufor. Atrybuty mają domyślne użycie
+// (DynamicDrawUsage w backendzie WebGPU = pełny upload przy KAŻDYM renderze).
 function setAttrUpdateRange(attr, count) {
   if (!attr) return;
-  if (typeof attr.clearUpdateRanges === 'function') {
-    attr.clearUpdateRanges();
-    if (typeof attr.addUpdateRange === 'function' && count > 0) attr.addUpdateRange(0, count);
-    return;
-  }
-  if (!attr.updateRange) attr.updateRange = { offset: 0, count: -1 };
-  attr.updateRange.offset = 0;
-  attr.updateRange.count = count;
+  attr.clearUpdateRanges();
+  if (count > 0) attr.addUpdateRange(0, count);
 }
 
 export const ShipLights3D = {
@@ -115,36 +104,43 @@ export const ShipLights3D = {
     if (this.mesh || !Core3D.isInitialized || !Core3D.scene) return !!this.mesh;
 
     this.geometry = new THREE.PlaneGeometry(2, 2);
+    // Shader czyta tylko pozycję — bez normalnych i uv (mniej buforów wierzchołków).
+    this.geometry.deleteAttribute('normal');
+    this.geometry.deleteAttribute('uv');
     this.colorArray = new Float32Array(MAX_NAV_LIGHT_SPRITES * 3);
     this.paramsArray = new Float32Array(MAX_NAV_LIGHT_SPRITES * 3);
     const colorAttr = new THREE.InstancedBufferAttribute(this.colorArray, 3);
     const paramsAttr = new THREE.InstancedBufferAttribute(this.paramsArray, 3);
-    colorAttr.setUsage(THREE.DynamicDrawUsage);
-    paramsAttr.setUsage(THREE.DynamicDrawUsage);
     this.geometry.setAttribute('aColor', colorAttr);
     this.geometry.setAttribute('aParams', paramsAttr);
 
-    this.material = new THREE.ShaderMaterial({
-      uniforms: {
-        uTime: { value: 0 },
-        uCoreGain: { value: NAV_LIGHT_DEFAULTS.coreGain },
-        uHaloGain: { value: NAV_LIGHT_DEFAULTS.haloGain }
-      },
-      vertexShader: NAV_LIGHT_VERTEX_SHADER,
-      fragmentShader: NAV_LIGHT_FRAGMENT_SHADER,
-      transparent: true,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      depthTest: false,
-      side: THREE.DoubleSide
+    const U = uniformsAdapter({
+      uTime: uniform(0),
+      uCoreGain: uniform(NAV_LIGHT_DEFAULTS.coreGain),
+      uHaloGain: uniform(NAV_LIGHT_DEFAULTS.haloGain)
     });
+    const material = new THREE.NodeMaterial();
+    material.name = 'shipNavLights';
+    material.uniforms = U;
+    material.lights = false;
+    material.fog = false;
+    material.transparent = true;
+    material.blending = THREE.AdditiveBlending;
+    material.depthWrite = false;
+    material.depthTest = false;
+    material.side = THREE.DoubleSide;
+    // Przezroczysty DoubleSide WebGPU rysowałby dwa razy (tył, przód) — WebGL
+    // (ShaderMaterial) rysował raz.
+    material.forceSinglePass = true;
+    material.fragmentNode = navLightFragment(U);
+    this.material = material;
 
     this.mesh = new THREE.InstancedMesh(this.geometry, this.material, MAX_NAV_LIGHT_SPRITES);
+    this.mesh.name = 'SHIP_NAV_LIGHTS';
     this.mesh.count = 0;
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = NAV_LIGHT_RENDER_ORDER;
     this.mesh.layers.set(2);
-    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     Core3D.scene.add(this.mesh);
     return true;
   },

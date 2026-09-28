@@ -45,10 +45,16 @@
 //
 // Koszt: najwyżej 2 wywołania rysowania na rodzaj (konstrukcja + plazma),
 // tylko gdy jest widoczna instancja; bufory instancji bez alokacji na klatkę.
-import * as THREE from 'three';
+//
+// Port WebGPU (zadanie 15): materiały w TSL (reactor3D.tsl.js), graf raz na
+// rodzaj. Atrybuty wierzchołka modelu w jednym przeplecionym buforze (limit 8
+// buforów wierzchołków na pipeline), atrybuty instancji jak dawniej — osobne
+// tablice (upload tylko zmienionego zakresu po needsUpdate).
+import * as THREE from 'three/webgpu';
 import { CORE_STATE, coreStateRank, gridToLocal, localToWorld } from '../game/shipCore.js';
 import { CORE_FX_BANDS, CORE_FX_LAYER, coreStateBand } from './coreBands.js';
 import { REACTOR3D_KINDS, buildReactorModel } from './reactor3DShapes.js';
+import { createReactorPlasmaMaterial, createReactorStructMaterial } from './reactor3D.tsl.js';
 
 export const REACTOR3D_TUNE = {
   ambient: 0.05,        // wnętrze pod pancerzem: prawie ciemno
@@ -125,244 +131,29 @@ function parseColor(col, fallback) {
   return fallback;
 }
 
-const HASH_GLSL = /* glsl */`
-float r3Hash(float n) { return fract(sin(n * 127.1 + 311.7) * 43758.5453); }
-float r3Noise(float x) { float i = floor(x); float f = fract(x); float u = f * f * (3.0 - 2.0 * f); return mix(r3Hash(i), r3Hash(i + 1.0), u); }
-`;
-
-const INSTANCE_GLSL = /* glsl */`
-attribute vec4 iBasis;   // oś x modelu → scena (x, y), oś y modelu → scena (z, w)
-attribute vec4 iPos;     // środek w scenie WZGLĘDEM mesh.position (x, y), dach z, głębokość na jednostkę
-attribute vec4 iState;   // ciało plazmy, biel nici, faza obrotu, niestabilność
-attribute vec4 iState2;  // żar cewek, pęknięte (0–1), puls (0–1), obecność plazmy
-attribute vec4 iColor;   // barwa plazmy (L = 1), ziarno
-attribute vec4 iBreak;   // kierunek rozerwania (x, y modelu), półszerokość łuku, żar wraku (< 0 = żywy)
-`;
-
-const STRUCT_VERTEX = /* glsl */`
-attribute float aMat;
-attribute float aCoil;
-attribute float aAng;
-${INSTANCE_GLSL}
-varying vec3 vP;
-varying vec3 vN;
-varying float vMat;
-varying float vCoil;
-varying vec4 vState;
-varying vec4 vState2;
-varying vec4 vColor;
-varying vec4 vBreak;
-void main() {
-  vP = position;
-  vN = normal;
-  vMat = aMat;
-  vCoil = aCoil;
-  vState = iState;
-  vState2 = iState2;
-  vColor = iColor;
-  vBreak = iBreak;
-  vec2 xy = iPos.xy + position.x * iBasis.xy + position.y * iBasis.zw;
-  float z = iPos.z + position.z * iPos.w;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(xy, z, 1.0);
-}
-`;
-
-const STRUCT_FRAGMENT = /* glsl */`
-uniform vec3 uAlbedo[8];
-uniform vec2 uSpec[8];
-uniform vec4 uRing[2];      // R, z, ex, ey
-uniform int uRingCount;
-uniform vec3 uCoreLight;    // z, wzmocnienie, włączone (> 0,5)
-uniform vec3 uAccent;       // barwa akcentów (0 = barwa plazmy)
-uniform float uAccentL;
-uniform float uAmbient;
-uniform float uLightGain;
-uniform float uFalloff;
-uniform float uTime;
-uniform float uXray;
-varying vec3 vP;
-varying vec3 vN;
-varying float vMat;
-varying float vCoil;
-varying vec4 vState;
-varying vec4 vState2;
-varying vec4 vColor;
-varying vec4 vBreak;
-${HASH_GLSL}
-vec3 heatColor(float h) {
-  // ciemna czerwień → pomarańcz → żółć, w paśmie barwy (≤ ~1,2)
-  vec3 c = mix(vec3(0.30, 0.02, 0.0), vec3(1.0, 0.34, 0.05), smoothstep(0.0, 0.65, h));
-  return c * h + vec3(0.22, 0.18, 0.08) * smoothstep(0.75, 1.0, h);
-}
-void main() {
-  int mat = int(vMat + 0.5);
-  float burnt = vBreak.w;
-  bool dead = burnt >= 0.0;
-  float r = length(vP.xy);
-  float edgeGlow = 0.0;
-  if (dead && vBreak.z > 0.0) {
-    float a = atan(vP.y, vP.x);
-    float ad = atan(vBreak.y, vBreak.x);
-    float d = abs(mod(a - ad + 3.14159265, 6.2831853) - 3.14159265);
-    if (d < vBreak.z && r > 0.22 && r < 0.84) discard;
-    edgeGlow = (1.0 - smoothstep(0.0, 0.14, d - vBreak.z)) * step(0.22, r) * step(r, 0.86);
-  }
-  vec3 N = normalize(vN);
-  vec3 albedo = uAlbedo[mat];
-  float presence = vState2.w;
-  float pulse = vState2.z;
-  float I = vState.x * presence * uLightGain * (0.8 + 0.2 * pulse);
-  vec3 V = vec3(0.0, 0.0, 1.0);
-  float diff = 0.0;
-  float spec = 0.0;
-  for (int i = 0; i < 2; i++) {
-    if (i >= uRingCount) break;
-    vec4 ring = uRing[i];
-    float a = atan(vP.y / ring.w, vP.x / ring.z);
-    vec3 Q = vec3(cos(a) * ring.x * ring.z, sin(a) * ring.x * ring.w, ring.y);
-    vec3 L = Q - vP;
-    float d2 = dot(L, L);
-    L *= inversesqrt(max(d2, 1e-5));
-    float att = 1.0 / (1.0 + d2 * uFalloff);
-    diff += max(0.0, dot(N, L) * 0.8 + 0.2) * att;
-    spec += pow(max(0.0, dot(N, normalize(L + V))), uSpec[mat].x) * uSpec[mat].y * att;
-  }
-  if (uCoreLight.z > 0.5) {
-    vec3 L = vec3(0.0, 0.0, uCoreLight.x) - vP;
-    float d2 = dot(L, L);
-    L *= inversesqrt(max(d2, 1e-5));
-    float att = uCoreLight.y / (1.0 + d2 * uFalloff * 2.0);
-    diff += max(0.0, dot(N, L) * 0.8 + 0.2) * att;
-    spec += pow(max(0.0, dot(N, normalize(L + V))), uSpec[mat].x) * uSpec[mat].y * att;
-  }
-  vec3 pc = vColor.rgb;
-  vec3 col = albedo * (uAmbient + pc * diff * I) + pc * spec * I * 0.6;
-  if (mat == 2) {
-    float broken = step(r3Hash(vCoil + vColor.a * 17.0), vState2.y);
-    col *= mix(1.0, 0.35, broken);
-    col += heatColor(clamp(vState2.x + broken * 0.25, 0.0, 1.0)) * (0.65 + 0.35 * pulse) * presence;
-    float sparkT = floor(uTime * 24.0) + vCoil * 7.0 + vColor.a * 3.0;
-    col += broken * step(0.93, r3Hash(sparkT)) * vec3(1.0, 0.6, 0.25) * 0.8 * presence;
-  }
-  if (mat == 7) {
-    vec3 acc = (uAccent.r + uAccent.g + uAccent.b) > 0.0 ? uAccent : pc;
-    col = albedo * 0.2 + acc * uAccentL * (dead ? 0.0 : 1.0);
-  }
-  if (dead) {
-    col *= 0.55;
-    col += heatColor(burnt) * (mat == 2 ? 0.9 : 0.35);
-    col += vec3(1.0, 0.45, 0.12) * edgeGlow * (0.25 + 0.9 * burnt);
-  }
-  if (uXray > 0.5) col = col * 0.85 + vec3(0.03, 0.05, 0.07);
-  gl_FragColor = vec4(col, 1.0);
-}
-`;
-
-const PLASMA_VERTEX = /* glsl */`
-attribute vec3 aCenter;
-attribute float aTube;
-attribute float aRing;
-attribute vec2 aUV;
-${INSTANCE_GLSL}
-uniform float uCoilAng[${MAX_COILS}];
-uniform float uCoilCode[${MAX_COILS}];   // pierścień; + 10 = cewki brak (zawsze wycieka)
-uniform int uCoilCount;
-uniform float uTime;
-varying vec2 vUV;
-varying float vRing;
-varying float vFace;
-varying float vLeak;
-varying vec4 vState;
-varying vec4 vState2;
-varying vec4 vColor;
-${HASH_GLSL}
-void main() {
-  float ang = aUV.x * 6.2831853;
-  float leak = 0.0;
-  if (aRing < 1.5) {
-    for (int k = 0; k < ${MAX_COILS}; k++) {
-      if (k >= uCoilCount) break;
-      float code = uCoilCode[k];
-      if (abs(mod(code, 10.0) - aRing) > 0.5) continue;
-      bool broken = code >= 9.5 || r3Hash(float(k) + iColor.a * 17.0) < iState2.y;
-      if (!broken) continue;
-      float d = abs(mod(ang - uCoilAng[k] + 3.14159265, 6.2831853) - 3.14159265);
-      leak += exp(-d * d / 0.018);
+// Atrybuty wierzchołka modelu w jednym przeplecionym buforze (limit 8 buforów
+// wierzchołków na pipeline: konstrukcja miała 4–5 atrybutów wierzchołka + 6
+// instancji). Kopia — model rodzaju (reactor3DShapes) zostaje bez zmian.
+function interleaveGeometry(base, target) {
+  const entries = Object.entries(base.attributes);
+  const count = entries.length ? entries[0][1].count : 0;
+  let stride = 0;
+  for (const [, attr] of entries) stride += attr.itemSize;
+  const data = new Float32Array(count * stride);
+  const buffer = new THREE.InterleavedBuffer(data, stride);
+  let offset = 0;
+  for (const [name, attr] of entries) {
+    const size = attr.itemSize;
+    const src = attr.array;
+    for (let i = 0; i < count; i++) {
+      const o = i * stride + offset;
+      for (let k = 0; k < size; k++) data[o + k] = src[i * size + k];
     }
+    target.setAttribute(name, new THREE.InterleavedBufferAttribute(buffer, size, offset));
+    offset += size;
   }
-  float inst = iState.w;
-  float wob = (r3Noise(aUV.x * 14.0 + uTime * 2.3 + aRing * 5.0 + iColor.a * 9.0) - 0.5) * inst;
-  float tube = aTube * (1.0 + wob * 0.8 + min(leak, 1.5) * 0.7 * (0.6 + 0.4 * iState2.z));
-  vec3 p = aCenter + normal * tube;
-  vUV = aUV;
-  vRing = aRing;
-  vFace = normal.z;
-  vLeak = min(leak, 1.0);
-  vState = iState;
-  vState2 = iState2;
-  vColor = iColor;
-  vec2 xy = iPos.xy + p.x * iBasis.xy + p.y * iBasis.zw;
-  float z = iPos.z + p.z * iPos.w;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(xy, z, 1.0);
+  return target;
 }
-`;
-
-const PLASMA_FRAGMENT = /* glsl */`
-#define CORE_EDGE ${CORE_FX_BANDS.coreEdge.toFixed(3)}
-uniform float uRingDir[3];
-uniform float uStreaks;
-uniform float uFilament;
-uniform float uPacket;
-uniform float uFlicker;
-uniform float uTime;
-varying vec2 vUV;
-varying float vRing;
-varying float vFace;
-varying float vLeak;
-varying vec4 vState;
-varying vec4 vState2;
-varying vec4 vColor;
-${HASH_GLSL}
-void main() {
-  float presence = vState2.w;
-  if (presence <= 0.001) discard;
-  // Tylko górna połowa rury (ku kamerze, +z modelu). Baza instancji odbija
-  // oś y (scena ma odwrócone y), więc kolejność wierzchołków się odwraca —
-  // materiał jest dwustronny, a stronę wybiera normalna modelu, nie nawinięcie.
-  if (vFace < -0.02) discard;
-  int ri = int(vRing + 0.5);
-  float dir = ri == 0 ? uRingDir[0] : (ri == 1 ? uRingDir[1] : uRingDir[2]);
-  float u = vUV.x;
-  float phase = vState.z;
-  float inst = vState.w;
-  float pulse = vState2.z;
-  float face = clamp(vFace, 0.0, 1.0);
-  float fl = 1.0 - uFlicker * step(0.86, r3Hash(floor(uTime * 18.0) + vColor.a * 31.0));
-  // pasma plazmy krążące w pierścieniu (u kuli — falowanie powierzchni)
-  float s1 = 0.5 + 0.5 * sin(6.2831853 * (u * uStreaks - phase * dir));
-  float s2 = 0.5 + 0.5 * sin(6.2831853 * (u * (uStreaks * 2.0 + 1.0) - phase * dir * 1.7) + 1.3);
-  float flow = ri == 2 ? 0.7 + 0.3 * sin(uTime * 9.0 + vUV.y * 12.0) : pow(s1, 3.0) * 0.7 + pow(s2, 4.0) * 0.3;
-  // ciało w paśmie barwy (pod progiem bloomu)
-  float body = vState.x * presence * fl * (0.45 + 0.55 * flow) * (0.55 + 0.45 * face) * (0.85 + 0.15 * pulse);
-  body *= 1.0 + vLeak * 0.35;
-  // BIEL (8–12, ostro): tylko w pakietach plazmy na szczycie rury — linia z
-  // parametru v (góra rury: v = 0,25; kuli: v = 1), pakiet z fazy pasma.
-  // Ciągła nić przez cały obwód zalewała model bloomem.
-  float dv = ri == 2 ? (1.0 - vUV.y) : abs(vUV.y - 0.25);
-  float wv = uFilament * (1.0 + inst * 0.6) * (ri == 2 ? 5.0 : 1.0);
-  float line = 1.0 - smoothstep(wv * CORE_EDGE, wv, dv);
-  // w stopieniu pakietów przybywa, ale wolno — pełna biel na pierścieniu
-  // z bloomem zakrywała cały model
-  float pw = uPacket * (1.0 - 0.12 * inst);
-  float packet = ri == 2 ? 1.0 : smoothstep(pw, pw + 0.035, s1);
-  float white = line * packet * vState.y * presence * fl;
-  vec3 col = vColor.rgb * body + vec3(1.0, 0.97, 0.93) * white;
-  gl_FragColor = vec4(col, min(1.0, max(col.r, max(col.g, col.b))));
-}
-`;
-
-// Kolor i alfa ONE/ONE jak blend bloomu w three (coreFx3D FX_BLEND).
-const FX_BLEND = { blending: THREE.AdditiveBlending, premultipliedAlpha: true };
 
 /**
  * @param {object} options
@@ -389,12 +180,14 @@ export function createReactor3D(options = {}) {
     const bufs = {};
     for (const key of instAttrs) {
       const arr = new Float32Array(MAX_PER_KIND * 4);
-      bufs[key] = { arr, attr: new THREE.InstancedBufferAttribute(arr, 4).setUsage(THREE.DynamicDrawUsage) };
+      // Domyślne użycie: WebGPU wysyła zakres po needsUpdate (DynamicDrawUsage
+      // w backendzie WebGPU = pełny upload przy każdym renderze).
+      bufs[key] = { arr, attr: new THREE.InstancedBufferAttribute(arr, 4) };
     }
     const mkGeo = (base) => {
       const g = new THREE.InstancedBufferGeometry();
       g.index = base.index;
-      for (const [name, attr] of Object.entries(base.attributes)) g.setAttribute(name, attr);
+      interleaveGeometry(base, g);
       for (const key of instAttrs) g.setAttribute(key, bufs[key].attr);
       g.instanceCount = 0;
       return g;
@@ -405,26 +198,18 @@ export function createReactor3D(options = {}) {
       ringsU.push(new THREE.Vector4(r.R, r.z, r.ex, r.ey));
     }
     const albedo = model.palette.map(hexToLinear);
-    const structMat = new THREE.ShaderMaterial({
-      uniforms: {
-        uAlbedo: { value: albedo },
-        uSpec: { value: model.spec.map(([p, k]) => new THREE.Vector2(p, k)) },
-        uRing: { value: ringsU },
-        uRingCount: { value: model.rings.length },
-        uCoreLight: { value: new THREE.Vector3(model.coreLight?.z ?? 0, model.coreLight?.gain ?? 0, model.coreLight ? 1 : 0) },
-        uAccent: { value: model.accent ? hexToLinear(model.accent) : new THREE.Vector3(0, 0, 0) },
-        uAccentL: { value: T.accentL },
-        uAmbient: { value: T.ambient },
-        uLightGain: { value: T.lightGain },
-        uFalloff: { value: T.falloff },
-        uTime: { value: 0 },
-        uXray: { value: 0 }
-      },
-      vertexShader: STRUCT_VERTEX,
-      fragmentShader: STRUCT_FRAGMENT,
-      side: THREE.DoubleSide,
-      depthTest: true,
-      depthWrite: true
+    // Graf TSL raz na rodzaj (stałe rodzaju w jego uniformach).
+    const structMat = createReactorStructMaterial({
+      albedo,
+      spec: model.spec.map(([p, k]) => new THREE.Vector2(p, k)),
+      ring: ringsU,
+      ringCount: model.rings.length,
+      coreLight: new THREE.Vector3(model.coreLight?.z ?? 0, model.coreLight?.gain ?? 0, model.coreLight ? 1 : 0),
+      accent: model.accent ? hexToLinear(model.accent) : new THREE.Vector3(0, 0, 0),
+      accentL: T.accentL,
+      ambient: T.ambient,
+      lightGain: T.lightGain,
+      falloff: T.falloff
     });
     const coilAng = new Float32Array(MAX_COILS);
     const coilCode = new Float32Array(MAX_COILS);
@@ -432,25 +217,17 @@ export function createReactor3D(options = {}) {
       coilAng[k] = model.coils[k];
       coilCode[k] = model.coilRing[k];
     }
-    const plasmaMat = new THREE.ShaderMaterial({
-      uniforms: {
-        uCoilAng: { value: Array.from(coilAng) },
-        uCoilCode: { value: Array.from(coilCode) },
-        uCoilCount: { value: Math.min(MAX_COILS, model.coils.length) },
-        uRingDir: { value: [model.rings[0]?.dir ?? 1, model.rings[1]?.dir ?? 1, 1] },
-        uStreaks: { value: T.streaks },
-        uFilament: { value: T.filament },
-        uPacket: { value: T.packet },
-        uFlicker: { value: model.flicker || 0 },
-        uTime: { value: 0 }
-      },
-      vertexShader: PLASMA_VERTEX,
-      fragmentShader: PLASMA_FRAGMENT,
-      ...FX_BLEND,
-      side: THREE.DoubleSide,
-      transparent: true,
-      depthTest: true,
-      depthWrite: false
+    const plasmaMat = createReactorPlasmaMaterial({
+      coilAng: Array.from(coilAng),
+      coilCode: Array.from(coilCode),
+      coilCount: Math.min(MAX_COILS, model.coils.length),
+      ringDir: [model.rings[0]?.dir ?? 1, model.rings[1]?.dir ?? 1, 1],
+      streaks: T.streaks,
+      filament: T.filament,
+      packet: T.packet,
+      flicker: model.flicker || 0,
+      coreEdge: CORE_FX_BANDS.coreEdge,
+      maxCoils: MAX_COILS
     });
     const structGeo = mkGeo(model.structure);
     const plasmaGeo = mkGeo(model.plasma);
