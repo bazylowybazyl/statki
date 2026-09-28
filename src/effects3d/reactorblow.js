@@ -187,7 +187,7 @@ export const REACTOR_LOOK = Object.freeze({
   haloAmp: 4,
   haloQuad: 40,
   haloSpread: 1,
-  sparkGlow: 2,
+  sparkGlow: 1,
   sparkGlowMax: 40,
   sparkGlowAge0: 0.6,
   sparkGlowAge1: 1.2

@@ -711,6 +711,15 @@ const SCENES = {
          S.cam(X, Y, 1.2); await H.frames(2);
          H.reseed(0x20a8); triggerReactorBlow3D(X, Y, 180, { profile: 'cruiser' });
          await H.step(96); S.cam(X, Y, 1.2);`
+  },
+  'reaktor-duzy': {
+    opis: 'Wybuch reaktora największego okrętu (profil capital, rozmiar 810 — śmierć pancernika pirackiego jak w „wraki”) 2,5 s po wywołaniu: duże rozlane iskry, zoom 0,6',
+    hud: false, warm: 2, reaktorSam: true,
+    js: `await H.step(60);
+         const X = ${REAKTOR.x + 14000}, Y = ${REAKTOR.y + 10000};
+         S.cam(X, Y, 0.6); await H.frames(2);
+         H.reseed(0x20a9); triggerReactorBlow3D(X, Y, 810, { profile: 'capital' });
+         await H.step(150); S.cam(X, Y, 0.6);`
   }
 };
 
@@ -989,7 +998,7 @@ const SESSIONS = [
   { id: 'split', query: 'dev=1', start: 'split', sprites: true, scenes: ['split'] },
   { id: 'stacja', query: 'dev=1', start: 'single', scenes: ['stacja-przygotowanie', 'stacja-rozpad', 'stacja-odlamki', 'stacja-trojkaty', 'stacja-implozja', 'stacja-ciecie'] },
   // Zadanie 20: galeria faz wybuchu reaktora (osobna sesja — nie przesuwa scen innych sesji; baza z tagu).
-  { id: 'reaktor', query: 'dev=1', start: 'single', scenes: ['reaktor-przygotowanie', 'reaktor-ladowanie', 'reaktor-blysk', 'reaktor-iskry', 'reaktor-gasnie', 'reaktor-eskorta', 'reaktor-lancuch', 'reaktor-pozne', 'reaktor-pozne-blisko'] },
+  { id: 'reaktor', query: 'dev=1', start: 'single', scenes: ['reaktor-przygotowanie', 'reaktor-ladowanie', 'reaktor-blysk', 'reaktor-iskry', 'reaktor-gasnie', 'reaktor-eskorta', 'reaktor-lancuch', 'reaktor-pozne', 'reaktor-pozne-blisko', 'reaktor-duzy'] },
   { id: 'warp', query: 'dev=1', start: 'single', sprites: true, scenes: ['warp-ladowanie', 'warp-skok', 'warp-lot', 'warp-wyjscie', 'warp-po-wyjsciu', 'warp-zwiastun', 'warp-przylot', 'warp-odlot-ladowanie', 'warp-odlot'] },
   // Kop kamery przy warpie (zadanie 22-B): sekwencja klatek wokół skoku i wyjścia gracza.
   { id: 'warp-kop', query: 'dev=1', start: 'single', sprites: true,
