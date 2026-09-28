@@ -756,6 +756,150 @@ SCENES['galeria-hexlance'] = {
        calm(); S.cam(cx, T.y, 0.33);`
 };
 
+// ── Mechanika broni z dema (zadanie 18-B) ─────────────────────────────────────────────────────
+// Przebicia na wylot, zakleszczenie, rykoszety, seria trafień w jeden kadłub i ładowanie — sceny
+// na końcu sesji `galeria` (wcześniejsze ujęcia bez zmian klatek). Strzelnica: kolumna fregata →
+// niszczyciel → pancernik burtą do linii strzału, 2600 j. na południe od celu galerii; bez AI i
+// tarcz, HP 1e6 (sufit strukturalny nie zabija okrętów z dziurami) — strzały z PEŁNYMI
+// obrażeniami (kratery wejścia i wyjścia). Działa daleko przed kolumną: rozbłysk wylotu poza
+// kadrem. Diagnostyka w stan.diag: zabite węzły i obrażenia HP na kadłub, liczniki WeaponFx.
+// Obok dema: scripts/webgpu/bronie-demo.mjs --tryb zrzuty --bronie siege_railgun,special_valkyrie_railgun,vulcan_minigun.
+const MECH_DIAG = `const wfx = () => ({ ...window.WeaponFx.stats });
+  const dmg = () => ({ ...(window.HullDamageMap ? window.HullDamageMap.stats : {}) });
+  const dmgDiff = (a, b) => ({ stemple: (b.stamps || 0) - (a.stamps || 0), receptury: (b.recipeStamps || 0) - (a.recipeStamps || 0),
+    duplikaty: (b.recipeDup || 0) - (a.recipeDup || 0), poza: (b.offView || 0) - (a.offView || 0), przepadly: (b.droppedStamps || 0) - (a.droppedStamps || 0) });
+  const nodes = (L) => L.map((e) => (e.beamHull ? e.beamHull.body.activeNodes : 0));`;
+SCENES['galeria-strzelnica'] = {
+  opis: 'Bez zrzutu: kolumna fregata, niszczyciel, pancernik (burtą do strzału) 2600 j. od celu galerii — cele przebić (18-B)',
+  capture: false, warm: 2,
+  // Kąt ustawiany wprost (spawnAngle obraca tylko przesunięcie spawnu) — kadłub powstaje w kadrze z kątem encji.
+  js: `const T = window.__galeria.T; const y0 = T.y + 2600;
+       const put = (k, dx) => {
+         const r = spawnCallInShip(k, { mode: 'friendly', spawnPos: { x: T.x + dx, y: y0 } });
+         const e = Array.isArray(r) ? r[0] : r;
+         e.ai = null; e.hp = e.maxHp = 1e6; e.angle = Math.PI / 2; e.vx = 0; e.vy = 0;
+         if (e.shield) { e.shield.val = 0; e.shield.max = 0; }
+         return e;
+       };
+       window.__galeria.K = [put('frigate_pd', -700), put('destroyer', 0), put('pirate_battleship', 800)];
+       S.cam(T.x, y0, 0.4);
+       for (let i = 0; i < 400 && !S.hullsReady(); i++) await H.frames(2);
+       await H.step(2);`
+};
+// Mjolnir 25 000 j/s: działo 5000 j. przed fregatą — kolumna w 12.–16. klatce po strzale.
+SCENES['galeria-przebicie'] = {
+  opis: 'Mechanika 18-B: Mjolnir (pełne obrażenia) na wylot przez kolumnę fregata → niszczyciel → pancernik burtą — wejścia, rzaz, wyloty za burtami; 17 kl. po strzale (pocisk za pancernikiem), zoom 0,4',
+  hud: false, warm: 2,
+  js: `${GALERIA_POMOC}
+       ${MECH_DIAG}
+       await clear();
+       const K = G.K; const y0 = K[1].y;
+       const g = { ...gun(K[0].x - 5000, y0), modifiers: {} };
+       S.cam(K[1].x, y0, 0.4);
+       H.reseed(0x6a18b1);
+       const n0 = nodes(K); const s0 = wfx(); const d0 = dmg();
+       fire(g, 'siege_railgun', { x: K[2].x + 3000, y: y0 }, 'galeria:przebicie');
+       await H.step(17);
+       const s1 = wfx();
+       window.__galeria.przebicie = { n0, s0 };
+       window.__harnessDiag = { wezly: nodes(K).map((n, i) => n0[i] - n), wyjscia: s1.exits - s0.exits,
+         zakleszczenia: s1.stuck - s0.stuck, rzazEfekty: s1.kerfs - s0.kerfs, wejscia: s1.impacts - s0.impacts, mapaRan: dmgDiff(d0, dmg()) };
+       calm(); S.cam(K[1].x, y0, 0.4);`
+};
+SCENES['galeria-przebicie-po'] = {
+  opis: 'Mechanika 18-B: ta sama kolumna ~1 s po strzale Mjolnira — rozbłyski zgasły: kratery wejścia i wyjścia w trzech kadłubach, odłamki, dym za burtami; zoom 0,4',
+  hud: false, warm: 2,
+  js: `${MECH_DIAG}
+       const G = window.__galeria; const K = G.K; const y0 = K[1].y;
+       await H.step(45);
+       window.__harnessDiag = { wezly: nodes(K).map((n, i) => G.przebicie.n0[i] - n) };
+       S.cam(K[1].x, y0, 0.4);`
+};
+// Valkyrie 15 000 j/s, 260 j. materiału: 70 j. obok linii Mjolnira; działo 3000 j. przed fregatą.
+SCENES['galeria-przebicie-valkyrie'] = {
+  opis: 'Mechanika 18-B: Valkyrie (pełne obrażenia, 260 j. materiału, hamowanie 0,35) w kolumnę 70 j. obok dziury Mjolnira — na wylot przez fregatę i niszczyciel, grzęźnie w pancerniku (wybuch w kadłubie); 20 kl. po strzale, zoom 0,4',
+  hud: false, warm: 2,
+  js: `${GALERIA_POMOC}
+       ${MECH_DIAG}
+       await clear();
+       const K = G.K; const y0 = K[1].y + 70;
+       const g = { ...gun(K[0].x - 3000, y0), modifiers: {} };
+       S.cam(K[1].x, y0, 0.4);
+       H.reseed(0x6a18b2);
+       const n0 = nodes(K); const s0 = wfx(); const d0 = dmg();
+       fire(g, 'special_valkyrie_railgun', { x: K[2].x + 3000, y: y0 }, 'galeria:przebicie-valkyrie');
+       await H.step(20);
+       const s1 = wfx();
+       window.__harnessDiag = { wezly: nodes(K).map((n, i) => n0[i] - n), wyjscia: s1.exits - s0.exits,
+         zakleszczenia: s1.stuck - s0.stuck, rzazEfekty: s1.kerfs - s0.kerfs, wejscia: s1.impacts - s0.impacts, mapaRan: dmgDiff(d0, dmg()) };
+       calm(); S.cam(K[1].x, y0, 0.4);`
+};
+// Vulcan pod kątem ~5° do górnej burty (linia nad kolcami rufy, trafienie w krawędź pancerza
+// ~165 j. nad osią): kąt od normalnej ~85° > 65° — rykoszetuje ~60% trafień w gładką burtę
+// (hash numeru pocisku), reszta trafia.
+SCENES['galeria-rykoszet'] = {
+  opis: 'Mechanika 18-B: Vulcan pod płaskim kątem (~5°) w górną burtę pancernika — rykoszety z hasha numeru pocisku (obrażenia × 0,3, smugowce odbite), 30 strz. co 3 kl., zoom 0,9',
+  hud: false, warm: 2,
+  js: `${GALERIA_POMOC}
+       ${MECH_DIAG}
+       await clear();
+       const T = G.T; const a = 5 * Math.PI / 180; const ax = T.x + 150, ay = T.y - 165;
+       const g = gun(ax - 1600 * Math.cos(a), ay - 1600 * Math.sin(a));
+       S.cam(T.x - 150, T.y - 200, 0.9);
+       H.reseed(0x6a18b3);
+       const s0 = wfx(); const d0 = dmg();
+       for (let k = 0; k < 30; k++) { fire(g, 'vulcan_minigun', { x: ax, y: ay }, 'galeria:rykoszet'); await H.step(k < 29 ? 3 : 4); }
+       const s1 = wfx();
+       window.__harnessDiag = { rykoszety: s1.ricochets - s0.ricochets, trafienia: s1.impacts - s0.impacts, mapaRan: dmgDiff(d0, dmg()) };
+       calm(); S.cam(T.x - 150, T.y - 200, 0.9);`
+};
+SCENES['galeria-seria'] = {
+  opis: 'Mechanika 18-B: seria 8 pocisków armaty (pełne obrażenia) w jedno miejsce górnej burty pancernika — kratery narastają, płonące wyrwy; tuż po ostatnim trafieniu, zoom 0,9',
+  hud: false, warm: 2,
+  js: `${GALERIA_POMOC}
+       ${MECH_DIAG}
+       await clear();
+       const T = G.T; const g = { ...gun(T.x - 200, T.y - 1400), modifiers: {} };
+       S.cam(T.x - 200, T.y - 150, 0.9);
+       H.reseed(0x6a18b4);
+       const n0 = nodes([T]);
+       for (let k = 0; k < 8; k++) { fire(g, 'armata_mk1', { x: T.x - 200, y: T.y - 80 }, 'galeria:seria'); await H.step(12); }
+       await H.step(26);
+       window.__harnessDiag = { wezly: n0[0] - nodes([T])[0] };
+       calm(); S.cam(T.x - 200, T.y - 150, 0.9);`
+};
+SCENES['galeria-seria-po'] = {
+  opis: 'Mechanika 18-B: ten sam kadłub 2,5 s po serii — kratery zostają, wyrwy dopalają się (stygnięcie ran na mapie — 18-C), zoom 0,9',
+  hud: false, warm: 2,
+  js: `const T = window.__galeria.T; await H.step(150); T.hp = T.maxHp; S.cam(T.x - 200, T.y - 150, 0.9);`
+};
+SCENES['galeria-ladowanie'] = {
+  opis: 'Mechanika 18-B: Mjolnir na dwóch zaczepach special Atlasa — klawisz 2 (naciśnięcie), wieżyczki dochodzą do kursora, ładowanie 3 s na postoju (receptura ładowania); 60 kl. po starcie ładowania, zoom 0,6',
+  hud: false, warm: 2,
+  js: `${GALERIA_POMOC}
+       await clear();
+       DevScene.mountSpecial('siege_railgun', 2);
+       S.cam(ship.pos.x - 250, ship.pos.y, 0.6);
+       document.getElementById('c')?.dispatchEvent(new MouseEvent('mousemove', { clientX: 1900, clientY: 540, bubbles: true }));
+       H.reseed(0x6a18b5);
+       await H.step(2);
+       DevScene.fireSpecial();
+       let k = 0; for (; k < 180 && !DevScene.specialCharge().some((c) => c.charge >= 0); k++) await H.step(1);
+       await H.step(60);
+       window.__harnessDiag = { klatekDoStartu: k, ladowanie: DevScene.specialCharge() };
+       S.cam(ship.pos.x - 250, ship.pos.y, 0.6);`
+};
+SCENES['galeria-ladowanie-strzal'] = {
+  opis: 'Mechanika 18-B: ten sam Mjolnir po naładowaniu (3 s) — strzał, 3 kl. po wystrzale, zoom 0,35',
+  hud: false, warm: 2,
+  js: `let k = 0; for (; k < 400 && !DevScene.specialCharge().some((c) => c.cd > 0); k++) await H.step(1);
+       await H.step(3);
+       window.__harnessDiag = { klatekDoStrzalu: k, ladowanie: DevScene.specialCharge() };
+       S.cam(ship.pos.x, ship.pos.y, 0.35);`
+};
+const GALERIA_MECHANIKA = ['galeria-strzelnica', 'galeria-przebicie', 'galeria-przebicie-po', 'galeria-przebicie-valkyrie',
+  'galeria-rykoszet', 'galeria-seria', 'galeria-seria-po', 'galeria-ladowanie', 'galeria-ladowanie-strzal'];
+
 // Sesje = jedno wczytanie strony; sceny w sesji idą po kolei (kolejność ma znaczenie).
 const SESSIONS = [
   { id: 'menu', query: 'dev=1', start: null, scenes: ['menu'] },
@@ -776,8 +920,9 @@ const SESSIONS = [
   { id: 'warp-kop-wyl', query: 'dev=1', start: 'single', sprites: true,
     scenes: ['kopwyl-ladowanie', 'kopwyl-skok-012', 'kopwyl-skok-05', 'kopwyl-lot', 'kopwyl-wyjscie-007'] },
   // Galeria broni (zadanie 17): własna sesja — sceny bitwy w „kosmos” zostają bez zmian klatek.
+  // Mechanika z dema (18-B) na końcu sesji: przebicia, rykoszety, seria, ładowanie.
   { id: 'galeria', query: 'dev=1', start: 'single', sprites: true,
-    scenes: ['galeria-przygotowanie', 'galeria-broni', ...GALERIA_BRONI.map(([name]) => `galeria-${name}`), 'galeria-hexlance'] },
+    scenes: ['galeria-przygotowanie', 'galeria-broni', ...GALERIA_BRONI.map(([name]) => `galeria-${name}`), 'galeria-hexlance', ...GALERIA_MECHANIKA] },
   // Zadanie 21: pas asteroid z dema WebGPU (osobna sesja — nie przesuwa scen pozostałych; bazy WebGL brak: stare pole
   // było wyłączone, porównanie ze zrzutami dema — asteroidy-demo.mjs).
   { id: 'pas', query: 'dev=1', start: 'single', belt: true, scenes: ['pas-pole', 'pas-noc', 'pas-burza', 'pas-olbrzym'] }
