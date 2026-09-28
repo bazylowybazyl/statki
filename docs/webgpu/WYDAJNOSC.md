@@ -176,6 +176,23 @@ Harness (`zrzuty.mjs`, 18 sesji, dziennik klatek i pipeline'ów strony — `harn
 - **Propozycja (do zadania 24 albo decyzji):** szablony GLB stacji i ich rozgrzewka rozpadu (`Destruction3D.prebake` na
   szablonie — wypiek i klucze materiałów są współdzielone przez klony) na ekranie ładowania (`Core3D.warmup`), zanim
   gracz doleci do stacji; w grze dziś: jedno ~0,2 s szarpnięcie przy pierwszej stacji każdego modelu.
+- **Zadanie 25a (2026-09-28, gałąź `webgpu/25a`) — zrobione:** szablony GLB stacji (`prepareStations3D`: pass FG, pass
+  mapy cienia, wypiek i rozgrzewka rozpadu, bryły), stacja piracka (bryła gotowa z ekranu ładowania, stałe światła
+  latarni), rozpad (rejestr; pass cienia w tle — `Core3D.prewarmShadowPass`) i smugi dalekich kadłubów na ekranie
+  ładowania. Harness (17 sesji): pierwsze klatki gry 0 pipeline'ów synchronicznie i 0 budów NodeBuildera w każdej sesji
+  (było 2–8 / 2–23); sceny razem 34 → 3 pipeline'y sync i 98 → 4 budowy (zostają materiały tworzone przez sam harness
+  w `kalibracja`); pojawienie się stacji pirackiej 24–27 / 27–32 → 0, jej rozpad 6–15 / 18–23 → 0. Obraz: 166 ze 190
+  scen bit w bit (≤ 2/255), reszta ≤ 10/255 na ≤ 0,04% pikseli — te same piksele daje świeży przebieg `main` (szum
+  przebiegu bazowego), `planeta-cien` w znanym paśmie szumu. Ekran ładowania dłuższy o ~0,9 s (mediana, A/B na przemian
+  `start-gry.mjs --root-b`: 6,78 s vs 5,91 s od kliku do pierwszej klatki), pierwsza klatka gry 285 → 182 ms.
+- **Przestój „~15 klatek po teleporcie” to NIE kompilacja** (poprawka diagnozy wyżej): po 25a w jego klatce nie powstaje
+  żaden pipeline, budowa, tekstura ani bufor (dziennik wywołań WebGPU per klatka w `harness-strona.js` — pola `gpu` /
+  `gpuPrzed` przestoju: tylko zwykłe `writeBuffer` / `submit`, CPU klatki 2–3 ms), a przestój 200–270 ms zostaje —
+  w pierwszej scenie sesji po starcie gry (`warp-`, `kop-`, `kopwyl-`, `reaktor-ladowanie`, `galeria-broni`,
+  `galeria-rakiet`, `stacja-piracka`), jest też na `main` (w każdym przebiegu w części tych scen). Ślad Chrome (CDP tracing)
+  pokazuje czekanie kanwy 2D na GPU (`SharedContextRateLimiter`) w trybie zegara wirtualnego harnessu. W prawdziwym
+  czasie (teleport jak w scenach po 4 s gry, `main` i 25a): 0 klatek > 50 ms; pierwsze 300 klatek gry — te same 2 klatki
+  > 50 ms (pierwsza klatka) co na `main`.
 
 ## 7. Pamięć
 
@@ -257,8 +274,11 @@ pokazuje „Gra wymaga przeglądarki z WebGPU”, gra nie startuje na zapasie We
 - **Duża bitwa, ~0,7 ms CPU nad bazą:** tarcze (rysunek na tarczę, 5–12 × ~20 µs — kandydat do partii jak skóry: bufor
   slotu z trafieniami + geometria profilu instancjonowana per model kadłuba), pozostałe ~30 rysunków passu ortho
   (osobne materiały pul, rakiet, dysz SIDE), stały koszt 5–7 renderów sceny na klatkę.
-- **Przestoje > 100 ms po rozgrzewce** (5 scen harnessu) — pierwsza stacja modelu w kadrze (proces GPU kompiluje
-  materiały PBR stacji i trzymacze rozpadu); propozycja w § 6.
+- **Przestoje > 100 ms po rozgrzewce** w harnessie (~15 klatek po starcie pierwszej sceny sesji, 200–270 ms) — po
+  zadaniu 25a bez kompilacji (§ 6): czekanie kanwy 2D na GPU w zegarze wirtualnym, w prawdziwym czasie brak.
+- **Ekran ładowania +0,9 s** (zadanie 25a: kompilacje stacji, stacji pirackiej i rozpadu przeniesione z gry; CPU rejestru
+  ~0,8 s, z tego rozpad stacji ~0,5 s — 55 budów po 15–80 ms). Kandydat do rozgrzewki już w menu: szablony stacji
+  i rozpad (wczytane przy starcie strony) — w menu każda budowa to szarpnięcie tła, więc tylko z budżetem klatki.
 - Drżenie: dym rakiet przy 7 mln z2 0,029 px (mapa gęstości nad kadrem — propozycja w § 5), smugi przy z1,8 0,018 px.
 - Liczba buforów GPU rośnie o ~80–120 na cykl bitwy (≈ 0 MB) — do obserwacji w długiej sesji.
 - VRAM tekstur ~2,6 GB (8 × 8K planet 1,37 GB) — kompresja BC7 to osobne zadanie.
