@@ -278,6 +278,10 @@ rodzinę i wariant podaje `applyHexImpact(entity, x, y, damage, vel, shard, fxSo
 | Zakleszczenie | `applyBulletHullPass` | pocisk, `stuck` | `valkyrie.stuck` (r 40); receptura `stuck` z kadłubem — duplikat tej klatki pomija `_hookedHere` |
 | Pas rzazu | `applyBulletHullPass` | `HullDamageMap.stampKerf(e, pierwszy znak, ostatni znak, rodzina)` | `mjolnir.kerf`, `valkyrie.kerf` |
 
+W grze (harness, sesja `galeria`, diagnostyka `mapaRan` scen mechaniki): Mjolnir przez kolumnę — 21 stempli
+(3 wejścia, 3 wyloty, 15 znaków rzazu), 3 stemple receptur trafienia pominięte jako duplikaty kraterów; Valkyrie — 9
+stempli; 30 strzałów Vulcana pod 5° — 12 trafień w kadłub = 12 stempli (7 rykoszetów); 0 przepadłych, 0 poza kadrem.
+
 Receptura `kerf` w `WeaponFx.kerf` dostaje kadłub `null` (sam obraz). Testy: `tests/projectileMechanicsGame.test.mjs`
 (źródła i warianty kraterów, pasy rzazu z pętli gry), `tests/hullDamageMechanics.test.mjs` (wpisy tabeli przez
 hak), `tests/weaponFxPierce.test.mjs` (efekt rzazu bez stempla).

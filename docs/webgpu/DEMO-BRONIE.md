@@ -110,7 +110,8 @@ kopie `lightGrid.js` / `fxLights.js` / `noise.js` (w grze wspólne z `src/3d/fx/
   działek z decyzji gry (hash numeru pocisku — `hit.ric…`; smugowiec nadal kosmetyczny, nigdy w `bullets`),
   ładowanie Mjolnira i Valkyrie (`WeaponFx.charge`), seria Hexlance'a z danych, odrzut / wstrząs / `impactScale`
   z danych broni zamiast `FX_PROFILE`. Galeria: `galeria-przebicie`, `-przebicie-valkyrie`, `-rykoszet`, `-seria`,
-  `-ladowanie`. **Czeka:** mapa ran (`ctx.stamp`) — 18-C.
+  `-ladowanie`. Mapa ran (18-C) po scaleniu: krater wejścia / wylotu / zakleszczenia ze stemplem rodziny i wariantu,
+  rykoszet = płytkie osmalenie (`vulcan.ricochet`), pas rzazu przebicia z gry (`stampKerf`) — MECHANIKA §8.6.
 
 ## Znalezione przy okazji w grze (nie ruszane)
 

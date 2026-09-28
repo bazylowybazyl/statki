@@ -763,6 +763,9 @@ SCENES['galeria-hexlance'] = {
 // kadrem. Diagnostyka w stan.diag: zabite węzły i obrażenia HP na kadłub, liczniki WeaponFx.
 // Obok dema: scripts/webgpu/bronie-demo.mjs --tryb zrzuty --bronie siege_railgun,special_valkyrie_railgun,vulcan_minigun.
 const MECH_DIAG = `const wfx = () => ({ ...window.WeaponFx.stats });
+  const dmg = () => ({ ...(window.HullDamageMap ? window.HullDamageMap.stats : {}) });
+  const dmgDiff = (a, b) => ({ stemple: (b.stamps || 0) - (a.stamps || 0), receptury: (b.recipeStamps || 0) - (a.recipeStamps || 0),
+    duplikaty: (b.recipeDup || 0) - (a.recipeDup || 0), poza: (b.offView || 0) - (a.offView || 0), przepadly: (b.droppedStamps || 0) - (a.droppedStamps || 0) });
   const nodes = (L) => L.map((e) => (e.beamHull ? e.beamHull.body.activeNodes : 0));`;
 SCENES['galeria-strzelnica'] = {
   opis: 'Bez zrzutu: kolumna fregata, niszczyciel, pancernik (burtą do strzału) 2600 j. od celu galerii — cele przebić (18-B)',
@@ -792,13 +795,13 @@ SCENES['galeria-przebicie'] = {
        const g = { ...gun(K[0].x - 5000, y0), modifiers: {} };
        S.cam(K[1].x, y0, 0.4);
        H.reseed(0x6a18b1);
-       const n0 = nodes(K); const s0 = wfx();
+       const n0 = nodes(K); const s0 = wfx(); const d0 = dmg();
        fire(g, 'siege_railgun', { x: K[2].x + 3000, y: y0 }, 'galeria:przebicie');
        await H.step(17);
        const s1 = wfx();
        window.__galeria.przebicie = { n0, s0 };
        window.__harnessDiag = { wezly: nodes(K).map((n, i) => n0[i] - n), wyjscia: s1.exits - s0.exits,
-         zakleszczenia: s1.stuck - s0.stuck, rzazEfekty: s1.kerfs - s0.kerfs, wejscia: s1.impacts - s0.impacts };
+         zakleszczenia: s1.stuck - s0.stuck, rzazEfekty: s1.kerfs - s0.kerfs, wejscia: s1.impacts - s0.impacts, mapaRan: dmgDiff(d0, dmg()) };
        calm(); S.cam(K[1].x, y0, 0.4);`
 };
 SCENES['galeria-przebicie-po'] = {
@@ -821,12 +824,12 @@ SCENES['galeria-przebicie-valkyrie'] = {
        const g = { ...gun(K[0].x - 3000, y0), modifiers: {} };
        S.cam(K[1].x, y0, 0.4);
        H.reseed(0x6a18b2);
-       const n0 = nodes(K); const s0 = wfx();
+       const n0 = nodes(K); const s0 = wfx(); const d0 = dmg();
        fire(g, 'special_valkyrie_railgun', { x: K[2].x + 3000, y: y0 }, 'galeria:przebicie-valkyrie');
        await H.step(20);
        const s1 = wfx();
        window.__harnessDiag = { wezly: nodes(K).map((n, i) => n0[i] - n), wyjscia: s1.exits - s0.exits,
-         zakleszczenia: s1.stuck - s0.stuck, rzazEfekty: s1.kerfs - s0.kerfs, wejscia: s1.impacts - s0.impacts };
+         zakleszczenia: s1.stuck - s0.stuck, rzazEfekty: s1.kerfs - s0.kerfs, wejscia: s1.impacts - s0.impacts, mapaRan: dmgDiff(d0, dmg()) };
        calm(); S.cam(K[1].x, y0, 0.4);`
 };
 // Vulcan pod kątem ~5° do górnej burty (linia nad kolcami rufy, trafienie w krawędź pancerza
@@ -842,10 +845,10 @@ SCENES['galeria-rykoszet'] = {
        const g = gun(ax - 1600 * Math.cos(a), ay - 1600 * Math.sin(a));
        S.cam(T.x - 150, T.y - 200, 0.9);
        H.reseed(0x6a18b3);
-       const s0 = wfx();
+       const s0 = wfx(); const d0 = dmg();
        for (let k = 0; k < 30; k++) { fire(g, 'vulcan_minigun', { x: ax, y: ay }, 'galeria:rykoszet'); await H.step(k < 29 ? 3 : 4); }
        const s1 = wfx();
-       window.__harnessDiag = { rykoszety: s1.ricochets - s0.ricochets, trafienia: s1.impacts - s0.impacts };
+       window.__harnessDiag = { rykoszety: s1.ricochets - s0.ricochets, trafienia: s1.impacts - s0.impacts, mapaRan: dmgDiff(d0, dmg()) };
        calm(); S.cam(T.x - 150, T.y - 200, 0.9);`
 };
 SCENES['galeria-seria'] = {
