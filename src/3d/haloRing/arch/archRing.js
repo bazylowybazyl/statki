@@ -48,6 +48,12 @@ export function createArchRing(options = {}) {
   let layout = null;
   let uniforms = null;
   let parts = null;
+  // Zadanie 11: bryły trafiają do `group` dopiero po rozgrzewce pipeline'ów (hak hosta
+  // options.prewarm → Core3D.warmup) — dawniej pierwsza klatka przy Marsie / Jowiszu
+  // budowała ~13 materiałów na zimno (0,7–0,8 s przestoju w harnessie). Bez haka od razu.
+  let buildGen = 0;
+  let attached = false;
+  let readyPromise = Promise.resolve(true);
 
   function build() {
     layout = createHaloRingLayout(state.options);
@@ -65,8 +71,6 @@ export function createArchRing(options = {}) {
     const content = builder({ layout, uniforms, materials, geos, quality, seed: layout.seed, portLights: port.lights, portSolid: port.solid });
     const bg = [...content.bg];
     const fg = [...content.fg];
-    for (const o of bg) group.add(o);
-    for (const o of fg) group.add(o);
 
     const k7Halls = [];
     if (state.options.k7 !== false) {
@@ -88,17 +92,47 @@ export function createArchRing(options = {}) {
         const hall = new HaloPortK7({ ringLayout: layout, uniforms, layout: state.hallLayouts[i], angle, index: i, bays, style: layout.planetProfile.port });
         hall.update(0, {});
         hall.setBerthLamps();
-        group.add(hall.root);
         k7Halls.push(hall);
       });
     }
     parts = { quality, materials, geos, content, bg, fg, k7Halls, k7: k7Halls[0] || null };
     applyLayers();
     applySun();
+    attachAfterWarm();
+  }
+
+  // Podpięcie brył do `group` — po rozgrzewce ich pipeline'ów (albo od razu bez haka).
+  function attachAfterWarm() {
+    const gen = ++buildGen;
+    const p = parts;
+    const objects = [...p.bg, ...p.fg, ...p.k7Halls.map((h) => h.root)];
+    const attach = () => {
+      if (gen !== buildGen || parts !== p) return false;
+      for (const o of objects) group.add(o);
+      attached = true;
+      return true;
+    };
+    attached = false;
+    const prewarm = state.options.prewarm;
+    if (typeof prewarm !== 'function') {
+      readyPromise = Promise.resolve(attach());
+      return;
+    }
+    const alive = () => gen === buildGen;
+    const jobs = [prewarm(objects, { name: `ring ${layout.archetype}: bryły`, alive })];
+    for (const hall of p.k7Halls) {
+      const v = hall.roofWarmVariant();
+      if (v.meshes.length) jobs.push(prewarm(v.meshes, { name: 'ring: dach K-7 przezroczysty', variant: v, alive }));
+    }
+    readyPromise = Promise.all(jobs).catch((err) => {
+      console.warn('[ArchRing] rozgrzewka brył nie wyszła — pipeline’y powstaną przy pierwszym rysunku', err);
+    }).then(attach);
   }
 
   function disposeParts() {
     if (!parts) return;
+    buildGen++;
+    attached = false;
     for (const o of [...parts.bg, ...parts.fg]) {
       group.remove(o);
       if (o.geometry) o.geometry.dispose();
@@ -174,10 +208,11 @@ export function createArchRing(options = {}) {
     get layout() { return layout; },
     get uniforms() { return uniforms; },
     get quality() { return state.qualityKey; },
-    // Budowa synchroniczna (plan i teren na CPU, bez map GPU) — gotowy od razu;
+    // Budowa synchroniczna (plan i teren na CPU, bez map GPU); gotowość = bryły
+    // podpięte po rozgrzewce pipeline'ów (zadanie 11; bez haka prewarm — od razu).
     // API jak createHaloRing (ready / isReady), żeby klej gry nie rozróżniał ringów.
-    get ready() { return Promise.resolve(true); },
-    get isReady() { return true; },
+    get ready() { return readyPromise; },
+    get isReady() { return attached; },
     get error() { return null; },
 
     update(dt, view) {
@@ -263,7 +298,7 @@ export function createArchRing(options = {}) {
         activeTiles: 0,
         segments: 0,
         mapProgress: 1,
-        mapsReady: true,
+        mapsReady: attached,
         textureBytes: c.textureBytes || 0,
         terrainTriangles: c.triangles || 0,
         megaInstances: c.instances || 0,
@@ -272,7 +307,8 @@ export function createArchRing(options = {}) {
         archetype: layout.archetype
       };
     },
-    get mapsReady() { return true; },
+    // mapy CPU są od razu; „gotowy do pokazania” = bryły podpięte (menu, harness: ringReady)
+    get mapsReady() { return attached; },
     get k7() { return parts.k7; },
     get k7Halls() { return parts.k7Halls; },
     get k7Layout() { return state.k7Layout || null; },

@@ -519,20 +519,10 @@ function makeTarget(width, height, type, mipmaps) {
   return rt;
 }
 
-// Rozgrzewka dla tła menu (menuBackdrop3D.js) — ZGODNOŚĆ API. Na WebGPU klucz
-// pipeline'u zależy od formatu celu (rgba16float / rgba8unorm / rgba32float), więc
-// kompilacja na kanwie nic nie daje: HaloWorldMaps.init() kompiluje PRAWDZIWE
-// obiekty bake'u na PRAWDZIWYCH celach (compileAsync) przed pierwszym bake'iem, a
-// budowa ringu jest asynchroniczna (wątek główny wolny). Scena jest pusta —
-// `renderer.compileAsync(warm.scene, camera)` w tle menu kończy się od razu.
-// AGENT: zadanie 11 (tło menu) usuwa to wywołanie razem z tą funkcją.
-export function createHaloBakeWarmup() {
-  return {
-    scene: new THREE.Scene(),
-    dispose() {}
-  };
-}
-
+// Rozgrzewka pieczenia (port WebGPU, zadania 06 i 11): klucz pipeline'u zależy od formatu
+// celu (rgba16float / rgba8unorm / rgba32float), więc HaloWorldMaps.init() kompiluje
+// PRAWDZIWE obiekty bake'u na PRAWDZIWYCH celach (compileAsync) przed pierwszym bake'iem —
+// dawna scena rozgrzewki dla tła menu (createHaloBakeWarmup) usunięta w zadaniu 11.
 export class HaloWorldMaps {
   constructor(renderer, layout, quality) {
     this.renderer = renderer;

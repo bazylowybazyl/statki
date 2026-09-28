@@ -123,7 +123,13 @@ export class HaloRingGame {
       seed: spec.seed,
       profile: spec.profile,
       quality: this.qualityKey,
-      renderer: this.renderer
+      renderer: this.renderer,
+      // Pipeline'y brył w tle przed ich podpięciem (zadanie 11, src/3d/rozgrzewka.js): bryły jeszcze
+      // poza passem (warstwy nadane później) — kamera ze wszystkimi warstwami, cel i światła passów gry.
+      // Bez urządzenia Core3D (renderer spoza Core3D, testy) — bez rozgrzewki, podpięcie od razu.
+      prewarm: (objects, opts = {}) => (Core3D.gpuReady && Core3D.warmup
+        ? Core3D.warmup.now(objects, { ...opts, layer: 'all' })
+        : Promise.resolve(false))
     });
     ring.setLayers(HALO_GAME.layers);
     ring.group.rotation.z = e.place.rot;

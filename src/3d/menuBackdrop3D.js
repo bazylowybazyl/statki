@@ -1,12 +1,13 @@
 // Tło menu głównego (przed startem gry): Ziemia z ringiem „Halo” w kamerze
 // kinowej. Ring jest ringiem GRY (HaloRingGame.showcaseRing — mapy dopiekają
 // się już w menu, więc start przy Ziemi ma je gotowe), Ziemia i niebo to
-// shadery kamery kinowej z dema ringu (dema/halo_ring_demo_env.js) przeliczone
+// materiały kamery kinowej z dema ringu (dema/halo_ring_demo_env.js) przeliczone
 // na układ lokalny ringu: oświetla je to samo słońce co ring (uSunDir), cień
-// ringu na planecie liczy haloRingBlock. Render: Core3D.renderBackdrop — ta
-// sama scena, renderer, bloom i ACES co gra, tylko warstwa MENU_BACKDROP_LAYER
-// (passy gry jej nie widzą). Tekstury Ziemi są pożyczone od planety gry
-// (window.EARTH) — tło ich nie zwalnia.
+// ringu na planecie liczy haloRingBlock. Materiały w TSL (menuBackdrop3D.tsl.js,
+// port WebGPU — zadanie 11). Render: Core3D.renderBackdrop — ta sama scena,
+// renderer, bloom i ACES co gra, tylko warstwa MENU_BACKDROP_LAYER (passy gry
+// jej nie widzą). Tekstury Ziemi są pożyczone od planety gry (window.EARTH) —
+// tło ich nie zwalnia.
 //
 //   const bd = new MenuBackdrop3D({ haloRings });
 //   bd.start();                 // DOMContentLoaded, po initHaloRings
@@ -15,9 +16,8 @@
 //   bd.stop();                  // przed pierwszą klatką gry: ring wraca do gry
 import * as THREE from 'three';
 import { Core3D, MENU_BACKDROP_LAYER } from './core3d.js';
-import { HALO_GLSL_COMMON, HALO_GLSL_LIGHT } from './haloRing/haloRingGLSL.js';
 import { HALO_HDR } from './haloRing/haloRingConfig.js';
-import { createHaloBakeWarmup } from './haloRing/haloRingWorldGen.js';
+import { createMenuAtmosphereMaterial, createMenuEarthMaterial, createMenuSkyMaterial } from './menuBackdrop3D.tsl.js';
 
 const DEG = Math.PI / 180;
 
@@ -55,218 +55,6 @@ export const MENU_SHOT = Object.freeze({
 const smooth01 = (x) => (x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x));
 const easeOutCubic = (x) => 1 - Math.pow(1 - Math.min(1, Math.max(0, x)), 3);
 
-// ---------------------------------------------------------------------------
-// Shadery (port z dema: CINE_EARTH_*, CINE_ATM_FRAGMENT, SKY_*). Wszystko
-// w układzie ringu: punkt z uLocal (siatka → ring), kamera = uCamLocal
-// (ring.update), środek i promień planety = uPlanet, słońce = uSunDir.
-const LOCAL_VERTEX = /* glsl */`
-uniform mat4 uLocal;
-varying vec2 vUv;
-varying vec3 vPosL;
-void main() {
-  vUv = uv;
-  vPosL = (uLocal * vec4(position, 1.0)).xyz;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-}
-`;
-
-const EARTH_FRAGMENT = /* glsl */`
-${HALO_GLSL_COMMON}
-${HALO_GLSL_LIGHT}
-uniform sampler2D dayTexture;
-uniform sampler2D nightTexture;
-uniform sampler2D specularTexture;
-uniform sampler2D normalTexture;
-uniform sampler2D cloudTexture;
-uniform float uCloudShift;
-varying vec2 vUv;
-varying vec3 vPosL;
-float mbHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
-float mbNoise(vec3 x) {
-  vec3 i = floor(x); vec3 f = fract(x); f = f * f * (3.0 - 2.0 * f);
-  return mix(mix(mix(mbHash(i), mbHash(i + vec3(1.0, 0.0, 0.0)), f.x), mix(mbHash(i + vec3(0.0, 1.0, 0.0)), mbHash(i + vec3(1.0, 1.0, 0.0)), f.x), f.y),
-             mix(mix(mbHash(i + vec3(0.0, 0.0, 1.0)), mbHash(i + vec3(1.0, 0.0, 1.0)), f.x), mix(mbHash(i + vec3(0.0, 1.0, 1.0)), mbHash(i + vec3(1.0, 1.0, 1.0)), f.x), f.y), f.z);
-}
-void main() {
-  vec3 Ng = normalize(vPosL - uPlanet.xyz);
-  vec3 V = normalize(uCamLocal - vPosL);
-  vec3 L = uSunDir;
-  // mapa normalnych (rama z pochodnych, jak w grze)
-  vec3 mapN = texture2D(normalTexture, vUv).xyz * 2.0 - 1.0;
-  mapN.xy *= 0.9;
-  vec3 q0 = dFdx(vPosL);
-  vec3 q1 = dFdy(vPosL);
-  vec2 st0 = dFdx(vUv);
-  vec2 st1 = dFdy(vUv);
-  vec3 S = normalize(q0 * st1.t - q1 * st0.t + 1e-6);
-  vec3 T = normalize(-q0 * st1.s + q1 * st0.s + 1e-6);
-  vec3 N = normalize(mat3(S, T, Ng) * mapN);
-  float NgL = dot(Ng, L);
-  float NdL = dot(N, L);
-  float ringVis = haloRingBlock(vPosL + Ng * 8.0, L);
-  // detal z bliska: szum 3D na sferze (tekstura 8k to ~29 j./teksel)
-  float dn = mbNoise(Ng * uPlanet.w / 420.0) * 0.6 + mbNoise(Ng * uPlanet.w / 95.0) * 0.4;
-  float closeK = 1.0 - smoothstep(9000.0, 30000.0, length(uCamLocal - vPosL));
-  vec3 day = texture2D(dayTexture, vUv).rgb * (1.0 + (dn - 0.5) * 0.22 * closeK);
-  float water = smoothstep(0.08, 0.8, texture2D(specularTexture, vUv).r);
-  // Chmury płyną względem lądu: przesunięcie zawinięte fract() z gradientami
-  // nieprzesuniętego UV (tekstura chmur gry ma zawijanie clamp, a fract bez
-  // gradientów dawał szew mipmap na południku zawinięcia).
-  vec2 cGx = dFdx(vUv);
-  vec2 cGy = dFdy(vUv);
-  vec2 cuv = vec2(fract(vUv.x + uCloudShift), vUv.y);
-  float cRaw = dot(textureGrad(cloudTexture, cuv, cGx, cGy).rgb, vec3(0.299, 0.587, 0.114));
-  float cloud = smoothstep(0.1, 0.78, cRaw + (dn - 0.5) * 0.12 * closeK);
-  // cien chmur: odczyt przesuniety ku sloncu (warstwa ~1% promienia nad ziemia)
-  vec3 Lt = L - Ng * NgL;
-  vec2 shOff = vec2(dot(Lt, S), dot(Lt, T)) * 0.0009;
-  vec2 shUV = vec2(fract(cuv.x + shOff.x), cuv.y + shOff.y);
-  float cShadow = smoothstep(0.15, 0.8, dot(textureGrad(cloudTexture, shUV, cGx, cGy).rgb, vec3(0.299, 0.587, 0.114)));
-  float term = smoothstep(-0.06, 0.16, NgL);
-  vec3 sun = uSunColor * ringVis * term;
-  vec3 surf = day * 0.95 * (sun * max(NdL, 0.0) * (1.0 - cShadow * 0.55) + vec3(0.004, 0.006, 0.01));
-  // polysk oceanu (GGX, lekko szorstki)
-  vec3 H = normalize(L + V);
-  float a2 = 0.028;
-  float NdH = max(dot(Ng, H), 0.0);
-  float dd = NdH * NdH * (a2 - 1.0) + 1.0;
-  float fres = 0.02 + 0.98 * pow(1.0 - max(dot(Ng, V), 0.0), 5.0);
-  float glint = min(a2 / (3.14159 * dd * dd) * fres * 0.25 * max(NgL, 0.0), 12.0);
-  surf += sun * glint * water * (1.0 - cloud) * vec3(1.0, 0.95, 0.88);
-  // swiatla nocne (miasta Ziemi) po nocnej stronie i w cieniu ringu
-  vec3 night = texture2D(nightTexture, vUv).rgb;
-  float nightMask = 1.0 - smoothstep(-0.14, 0.04, NgL * ringVis);
-  surf += night * night * vec3(1.0, 0.72, 0.42) * 0.55 * nightMask * (1.0 - cloud * 0.8);
-  // chmury (ta sama tekstura co w grze)
-  vec3 cloudCol = vec3(0.74) * (sun * (0.35 + 0.65 * max(NgL, 0.0)) + vec3(0.005, 0.007, 0.012));
-  surf = mix(surf, cloudCol, cloud * 0.94);
-  // cienka atmosfera wzdluz promienia: blekit w dzien, zachod przy terminatorze
-  float mu = max(dot(Ng, V), 0.0);
-  float airmass = 1.0 / (mu + 0.045);
-  vec3 beta = vec3(0.020, 0.048, 0.115);
-  vec3 ext = exp(-beta * airmass);
-  float dayF = smoothstep(-0.1, 0.3, NgL);
-  float sunsetF = smoothstep(-0.2, 0.0, NgL) * (1.0 - smoothstep(0.0, 0.28, NgL));
-  vec3 scat = mix(vec3(0.30, 0.52, 1.0), vec3(1.0, 0.42, 0.16), sunsetF) * (dayF * 0.9 + sunsetF * 0.35) * ringVis;
-  surf = surf * ext + scat * uSunColor * (1.0 - ext) * 0.62;
-  gl_FragColor = vec4(max(surf, vec3(0.0)), 1.0);
-}
-`;
-
-// Poświata limbu: tylna ścianka powłoki, widoczna tylko poza tarczą planety.
-const ATMOSPHERE_FRAGMENT = /* glsl */`
-${HALO_GLSL_COMMON}
-${HALO_GLSL_LIGHT}
-uniform float uRa;
-varying vec2 vUv;
-varying vec3 vPosL;
-void main() {
-  vec3 ro = uCamLocal;
-  vec3 rd = normalize(vPosL - ro);
-  vec3 oc = ro - uPlanet.xyz;
-  float b = dot(oc, rd);
-  float c = dot(oc, oc) - uRa * uRa;
-  float disc = b * b - c;
-  if (disc <= 0.0) discard;
-  float sq = sqrt(disc);
-  float t0 = max(-b - sq, 0.0);
-  float t1 = -b + sq;
-  float R = uPlanet.w;
-  float cp = dot(oc, oc) - R * R;
-  float dp = b * b - cp;
-  if (dp > 0.0) { float tp = -b - sqrt(dp); if (tp > 0.0) t1 = min(t1, tp); }
-  if (t1 <= t0) discard;
-  float tm = clamp(-b, t0, t1);
-  vec3 pm = ro + rd * tm;
-  float hmin = max(length(pm - uPlanet.xyz) - R, 0.0);
-  float Hs = (uRa - R) * 0.22;
-  float tau = (t1 - t0) * exp(-hmin / Hs) / (uRa - R) * 0.9;
-  vec3 n = normalize(pm - uPlanet.xyz);
-  float nl = dot(n, uSunDir);
-  float dayF = smoothstep(-0.22, 0.25, nl);
-  float sunsetF = smoothstep(-0.28, -0.02, nl) * (1.0 - smoothstep(-0.02, 0.22, nl));
-  float ringVis = haloRingBlock(pm, uSunDir);
-  vec3 col = mix(vec3(0.26, 0.5, 1.0), vec3(1.0, 0.38, 0.12), sunsetF) * (dayF + sunsetF * 0.6) * ringVis;
-  vec3 glow = col * uSunColor * (1.0 - exp(-tau * vec3(0.35, 0.62, 1.0))) * 0.75;
-  gl_FragColor = vec4(glow, 1.0);
-}
-`;
-
-// Niebo na nieskończoności (xyww): gwiazdy w 3 warstwach, Droga Mleczna,
-// mgławica gry (ta sama tekstura co NebulaSystem) za planetą i tarcza słońca
-// HDR z poświatą. Siatka jest dzieckiem grupy ringu obróconym o azymut
-// kamery: niebo i słońce stoją względem kadru, a pod nimi płyną ring i planeta.
-const SKY_VERTEX = /* glsl */`
-varying vec3 vDir;
-void main() {
-  vDir = normalize(position);
-  vec4 clip = projectionMatrix * vec4(mat3(modelViewMatrix) * position, 1.0);
-  gl_Position = clip.xyww;
-}
-`;
-const SKY_FRAGMENT = /* glsl */`
-uniform vec3 uSunDir;
-uniform float uSunCore;
-uniform float uStars;
-uniform sampler2D uNebulaMap;
-uniform float uNebulaGain;
-uniform vec3 uNebC;
-uniform vec3 uNebR;
-uniform vec3 uNebU;
-uniform vec2 uNebHalf;
-varying vec3 vDir;
-float h31(vec3 p) { p = fract(p * 0.1031); p += dot(p, p.yzx + 33.33); return fract((p.x + p.y) * p.z); }
-float starLayer(vec3 d, float scale, float threshold) {
-  vec3 cp = d * scale;
-  vec3 cell = floor(cp);
-  vec3 local = fract(cp) - 0.5;
-  float seed = h31(cell);
-  vec3 jitter = vec3(h31(cell + 7.1), h31(cell + 3.7), h31(cell + 1.9)) - 0.5;
-  float radius = mix(0.05, 0.12, seed);
-  float core = 1.0 - smoothstep(radius * 0.2, radius, length(local - jitter * 0.6));
-  return core * step(threshold, seed);
-}
-float vh(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
-float vn(vec3 x) {
-  vec3 i = floor(x); vec3 f = fract(x); f = f * f * (3.0 - 2.0 * f);
-  return mix(mix(mix(vh(i), vh(i + vec3(1.0, 0.0, 0.0)), f.x), mix(vh(i + vec3(0.0, 1.0, 0.0)), vh(i + vec3(1.0, 1.0, 0.0)), f.x), f.y),
-             mix(mix(vh(i + vec3(0.0, 0.0, 1.0)), vh(i + vec3(1.0, 0.0, 1.0)), f.x), mix(vh(i + vec3(0.0, 1.0, 1.0)), vh(i + vec3(1.0, 1.0, 1.0)), f.x), f.y), f.z);
-}
-float fbm(vec3 p) { float s = 0.0; float a = 0.5; for (int i = 0; i < 5; i++) { s += a * vn(p); p = p * 2.03 + 1.7; a *= 0.5; } return s; }
-void main() {
-  vec3 d = normalize(vDir);
-  // Droga Mleczna: pasmo wokol wielkiego kola, oblok gwiazd + ciemne pasy pylu
-  vec3 bandN = normalize(vec3(0.31, -0.52, 0.8));
-  float lat = dot(d, bandN);
-  float band = exp(-lat * lat / (2.0 * 0.16 * 0.16));
-  float core = exp(-lat * lat / (2.0 * 0.05 * 0.05));
-  float cloud = fbm(d * 4.0 + 3.0);
-  float dust = smoothstep(0.52, 0.72, fbm(d * 9.0 + 11.0)) * core;
-  float glow = band * (0.35 + 0.9 * smoothstep(0.35, 0.75, cloud)) * (1.0 - dust * 0.85);
-  vec3 col = vec3(0.0005, 0.0008, 0.0016);
-  col += vec3(0.010, 0.013, 0.022) * glow;
-  col += vec3(0.013, 0.011, 0.010) * core * smoothstep(0.45, 0.8, cloud) * (1.0 - dust);
-  // mglawica gry: plat nieba za planeta (katy wokol uNebC), miekki brzeg
-  float nc = dot(d, uNebC);
-  if (uNebulaGain > 0.0 && nc > 0.05) {
-    vec2 nuv = vec2(atan(dot(d, uNebR), nc) / uNebHalf.x, atan(dot(d, uNebU), nc) / uNebHalf.y);
-    vec2 edge = smoothstep(vec2(1.0), vec2(0.45), abs(nuv));
-    if (edge.x * edge.y > 0.0) col += texture2D(uNebulaMap, nuv * 0.5 + 0.5).rgb * uNebulaGain * edge.x * edge.y;
-  }
-  float s1 = starLayer(d, 110.0, 0.985);
-  float s2 = starLayer(d.yzx + vec3(7.1, 3.7, 5.3), 240.0, 0.975 - band * 0.03);
-  float s3 = starLayer(d.zxy + vec3(1.9, 8.2, 4.4), 52.0, 0.996);
-  col += vec3(0.62, 0.74, 1.0) * s1 * 0.55 * uStars;
-  col += vec3(0.85, 0.9, 1.0) * s2 * 0.32 * uStars * (0.6 + band);
-  col += vec3(1.0, 0.86, 0.7) * s3 * 1.6 * uStars;
-  float sd = dot(d, uSunDir);
-  float disk = smoothstep(0.99996, 0.99999, sd);
-  float halo = pow(max(sd, 0.0), 1400.0) * 1.4 + pow(max(sd, 0.0), 90.0) * 0.06 + pow(max(sd, 0.0), 8.0) * 0.004;
-  // poswiata tylko poza tarcza: rdzen zostaje dokladnie w pasmie bieli (8-12)
-  col += vec3(1.0, 0.96, 0.9) * mix(halo, uSunCore, disk);
-  gl_FragColor = vec4(col, 1.0);
-}
-`;
 
 const TEXTURE_PATHS = Object.freeze({
   day: 'assets/planety/solar/earth/earth_color.jpg',
@@ -319,10 +107,12 @@ export class MenuBackdrop3D {
     this._onVisibility = () => this._sync();
   }
 
-  // Start w tle (menu zostaje responsywne): shader pieczenia map ringu
-  // kompilowany równolegle (KHR_parallel_shader_compile), potem ring gry
-  // (showcase), Ziemia i niebo, ich programy znów w tle — dopiero wtedy pętla
-  // renderu. Bez Core3D albo ringu — false (menu zostaje na tle CSS).
+  // Start w tle (menu zostaje responsywne, pod kurtyną .mm-curtain): ring gry
+  // (showcase — budowa asynchroniczna: pieczenie map, odczyt CPU, bryły, ich
+  // pipeline'y w tle przed podpięciem), równolegle Ziemia i niebo i ich
+  // pipeline'y (Core3D.warmup.now) oraz tekstury Ziemi w kolejce wgrywania —
+  // pętla renderu rusza dopiero z gotowym ringiem, więc pierwsza klatka menu nie
+  // kompiluje niczego. Bez Core3D albo ringu — false (menu zostaje na tle CSS).
   start() {
     if (this.running) return true;
     if (!Core3D.isInitialized || !this.haloRings) return false;
@@ -344,27 +134,11 @@ export class MenuBackdrop3D {
       if (!gpuOk) this.stop();
       return;
     }
-    const renderer = Core3D.renderer;
     const t0 = performance.now();
-    // 1) shader pieczenia map: kilka sekund w sterowniku, na pierwszym bake'u
-    //    zamrażał stronę — teraz w tle, program trafia do cache three
-    const warm = createHaloBakeWarmup();
-    try {
-      await renderer.compileAsync(warm.scene, this.camera);
-    } catch (err) {
-      console.warn('[MenuBackdrop3D] rozgrzewka shadera map nie wyszła — kompilacja przy bake’u', err);
-    }
-    this.stats.warmupMs = performance.now() - t0;
-    if (!this.running) { warm.dispose(); return; }
-    // 2) ring gry (budowa + pierwszy bake map niskich z gotowym programem)
-    const t1 = performance.now();
-    let ring = null;
-    try {
-      ring = this.haloRings.showcaseRing(this.planetKey);
-    } finally {
-      warm.dispose();
-    }
-    this.stats.ringBuildMs = performance.now() - t1;
+    // 1) ring gry: budowa asynchroniczna (pipeline'y pieczenia na prawdziwych
+    //    celach w HaloWorldMaps.init, bryły rozgrzewa hak prewarm HaloRingGame
+    //    przed podpięciem — Core3D.warmup)
+    const ring = this.haloRings.showcaseRing(this.planetKey);
     if (!ring) throw new Error('brak ringu planety ' + this.planetKey);
     this.ring = ring;
     ring.setLayers({ default: MENU_BACKDROP_LAYER, fg: MENU_BACKDROP_LAYER });
@@ -373,14 +147,19 @@ export class MenuBackdrop3D {
     ring.group.visible = true;
     this._textures = this._resolveTextures();
     this._objects = this._build(ring);
-    // 3) programy ringu, Ziemi i nieba w tle (pierwsza klatka bez przestoju)
-    const t2 = performance.now();
-    try {
-      await renderer.compileAsync(ring.group, this.camera, Core3D.scene);
-    } catch (err) {
-      console.warn('[MenuBackdrop3D] kompilacja materiałów w tle nie wyszła', err);
-    }
-    this.stats.compileMs = performance.now() - t2;
+    // 2) w czasie budowy ringu: pipeline'y Ziemi, poświaty i nieba (kamera kinowa,
+    //    warstwa tła); tekstury Ziemi wgrywa w wolnych chwilach kolejka Core3D
+    //    (pożyczone — planet3d.assets.js po wczytaniu, własne — _resolveTextures)
+    const o = this._objects;
+    const ownWarm = Core3D.warmup.now([o.earthGroup, o.sky], {
+      name: 'tło menu: Ziemia i niebo', camera: this.camera, layer: MENU_BACKDROP_LAYER, alive: () => this.running
+    }).then(() => { this.stats.warmupMs = performance.now() - t0; });
+    // 3) ring gotowy = bryły zbudowane, rozgrzane i podpięte (pusty ring przy
+    //    nieudanej budowie: tło rusza, ale gotowość czeka na mapy jak dawniej)
+    await ring.ready;
+    this.stats.ringBuildMs = performance.now() - t0;
+    await ownWarm;
+    this.stats.compileMs = performance.now() - t0;
     if (!this.running) return;
     this._live = true;
     this._last = performance.now();
@@ -457,7 +236,7 @@ export class MenuBackdrop3D {
     const u = src?.uniforms;
     const pick = (tex, path, srgb) => {
       if (tex?.isTexture) return tex;
-      const own = new THREE.TextureLoader().load(path);
+      const own = new THREE.TextureLoader().load(path, (t) => Core3D.queueTextureUpload(t));
       if (srgb) own.colorSpace = THREE.SRGBColorSpace;
       own.anisotropy = Core3D.getMaxAnisotropy();
       this._ownTextures.push(own);
@@ -476,40 +255,15 @@ export class MenuBackdrop3D {
     const L = ring.layout;
     const R = L.planetRadius;
     const tex = this._textures;
-    const ru = ring.uniforms;
     const materials = [];
     const geometries = [];
 
-    const earthUniforms = {
-      ...ru,
-      uLocal: { value: new THREE.Matrix4() },
-      dayTexture: { value: tex.day },
-      nightTexture: { value: tex.night },
-      specularTexture: { value: tex.spec },
-      normalTexture: { value: tex.normal },
-      cloudTexture: { value: tex.clouds },
-      uCloudShift: { value: 0 }
-    };
-    const earthMat = new THREE.ShaderMaterial({
-      name: 'MenuEarth',
-      uniforms: earthUniforms,
-      vertexShader: LOCAL_VERTEX,
-      fragmentShader: EARTH_FRAGMENT
-    });
-    const atmUniforms = { ...ru, uLocal: { value: new THREE.Matrix4() }, uRa: { value: R + 1250 } };
-    const atmMat = new THREE.ShaderMaterial({
-      name: 'MenuEarthAtmosphere',
-      uniforms: atmUniforms,
-      vertexShader: LOCAL_VERTEX,
-      fragmentShader: ATMOSPHERE_FRAGMENT,
-      side: THREE.BackSide,
-      transparent: true,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending
-    });
+    // Ziemia i poświata limbu: materiały TSL w układzie ringu (menuBackdrop3D.tsl.js)
+    const earthM = createMenuEarthMaterial(ring, tex);
+    const atmM = createMenuAtmosphereMaterial(ring, R + 1250);
     const sphere = new THREE.SphereGeometry(1, 192, 128);
     const atmSphere = new THREE.SphereGeometry((R + 1250) / R, 128, 96);
-    materials.push(earthMat, atmMat);
+    materials.push(earthM.material, atmM.material);
     geometries.push(sphere, atmSphere);
 
     // Grupa planety w grupie ringu: biegun (oś Y sfery) = oś ringu (Z).
@@ -518,43 +272,29 @@ export class MenuBackdrop3D {
     earthGroup.position.set(0, 0, L.planetCenterZ);
     earthGroup.rotation.x = Math.PI / 2;
     earthGroup.scale.setScalar(R);
-    const earth = new THREE.Mesh(sphere, earthMat);
-    const atmosphere = new THREE.Mesh(atmSphere, atmMat);
+    const earth = new THREE.Mesh(sphere, earthM.material);
+    const atmosphere = new THREE.Mesh(atmSphere, atmM.material);
     atmosphere.renderOrder = 6;
     earthGroup.add(earth, atmosphere);
 
     // Mgławica tła gry (NebulaSystem, planet3d.assets.js) — pożyczona tekstura.
     const nebulaMap = Core3D.scene.getObjectByName('Nebula')?.material?.uniforms?.map?.value || null;
-    const skyMat = new THREE.ShaderMaterial({
-      name: 'MenuSky',
-      uniforms: {
-        uSunDir: { value: new THREE.Vector3(1, 0, 0) },
-        uSunCore: { value: HALO_HDR.sunDisk },
-        uStars: { value: 1.0 },
-        uNebulaMap: { value: nebulaMap },
-        uNebulaGain: { value: 0 },
-        uNebC: { value: new THREE.Vector3(-1, 0, 0) },
-        uNebR: { value: new THREE.Vector3(0, -1, 0) },
-        uNebU: { value: new THREE.Vector3(0, 0, 1) },
-        uNebHalf: { value: new THREE.Vector2(1, 0.6) }
-      },
-      vertexShader: SKY_VERTEX,
-      fragmentShader: SKY_FRAGMENT,
-      side: THREE.BackSide,
-      depthTest: false,
-      depthWrite: false
-    });
+    const skyM = createMenuSkyMaterial({ nebulaMap, sunCore: HALO_HDR.sunDisk });
     const skyGeo = new THREE.SphereGeometry(1, 64, 32);
-    materials.push(skyMat);
+    materials.push(skyM.material);
     geometries.push(skyGeo);
-    const sky = new THREE.Mesh(skyGeo, skyMat);
+    if (skyM.placeholder) this._ownTextures.push(skyM.placeholder);
+    const sky = new THREE.Mesh(skyGeo, skyM.material);
     sky.name = 'MenuSky';
     sky.frustumCulled = false;
     sky.renderOrder = -1000;
 
     for (const obj of [earthGroup, sky]) obj.traverse((o) => o.layers.set(MENU_BACKDROP_LAYER));
     ring.group.add(earthGroup, sky);
-    return { earthGroup, earth, atmosphere, sky, earthUniforms, atmUniforms, skyUniforms: skyMat.uniforms, materials, geometries, spin: 0, cloudSpin: 0 };
+    return {
+      earthGroup, earth, atmosphere, sky, earthUniforms: earthM.uniforms, atmUniforms: atmM.uniforms, skyUniforms: skyM.uniforms,
+      hasNebula: !!nebulaMap, materials, geometries, spin: 0, cloudSpin: 0
+    };
   }
 
   // Tekstury Ziemi wczytane i wgrane (po jednej na klatkę, żeby upload 8K
@@ -589,7 +329,8 @@ export class MenuBackdrop3D {
     u.applyAxisAngle(c, roll);
     const half = s.nebulaHalfWidthDeg * DEG;
     su.uNebHalf.value.set(half, half / 1.6);
-    su.uNebulaGain.value = su.uNebulaMap.value ? s.nebulaGain : 0;
+    // bez mgławicy gry węzeł ma teksturę zastępczą — płat wyłączony
+    su.uNebulaGain.value = this._objects?.hasNebula ? s.nebulaGain : 0;
   }
 
   _frame(now) {

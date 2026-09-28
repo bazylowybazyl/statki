@@ -25770,6 +25770,11 @@
 
       await waitForPlanetsReady();
 
+      // Rozgrzewka pipeline'ów (src/3d/rozgrzewka.js, zadanie 11): reszta kolejki z menu i wpisy „na start gry”
+      // (dysze SIDE, światła pozycyjne, passy Core3D z tym, co już jest w scenie) — pierwsza klatka gry bez kompilacji.
+      setLoadingProgress(90, 'Kompilacja shaderów');
+      await Core3D.warmup?.flush({ timeoutMs: 4000 });
+
       setLoadingProgress(100, 'Start!');
       await nextFrame();
 

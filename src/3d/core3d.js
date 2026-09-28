@@ -23,6 +23,7 @@ import { installPlaceholders } from './tsl/zamiennik.js';
 import { uniformNode, uniformsAdapter } from './tsl/uniformy.js';
 import { BloomGry, MAX_HEAT_HAZE_SOURCES, createPostUniforms, createUberPost, hdrBezpieczny } from './tsl/postGry.js';
 import { FxFrame, FX_DISTORT_LAYER } from './fx/fxFrame.js';
+import { Rozgrzewka } from './rozgrzewka.js';
 
 // Brama znaczników czasu GPU (_gpuTimerGate): tyle zapytań musi zostać w puli three
 // (2 na pass), żeby zmieścić całą klatkę — dwa rendery podzielonego ekranu z modułami
@@ -871,7 +872,40 @@ export const Core3D = {
     this._scheduleTextureUpload();
     // Rozgrzewka kroków efektów zarejestrowanych przed urządzeniem (puste dispatche, prewarmPass).
     this.fx?.warmAll();
+    // Rejestr rozgrzewki pipeline'ów (src/3d/rozgrzewka.js, zadanie 11): wpisy modułów i passy Core3D w tle.
+    this._registerPassWarmups();
+    this.warmup.start();
     return true;
+  },
+
+  // Kamera i cel rozgrzewki dla warstwy passa (Core3D.warmup — src/3d/rozgrzewka.js), jak w prewarmPass:
+  // typ kamery passa warstwy ('all' = perspektywa), cel composerTarget (warstwa DIST — distortionTarget).
+  warmupCamera(layer, ortho) {
+    const isOrtho = typeof ortho === 'boolean' ? ortho : (layer !== 'all' && ORTHO_PASS_LAYERS.has(layer));
+    return this.getPassCamera(isOrtho);
+  },
+  warmupTarget(layer) {
+    return layer === FX_DISTORT_LAYER && this.distortionTarget ? this.distortionTarget : this.composerTarget;
+  },
+
+  // Passy Core3D w rejestrze rozgrzewki (zadanie 11). W tle menu: to, co już widać w passach tła i planet (mgławica,
+  // gwiazdy, planety, słońce, poświaty, ring-planety — przed pierwszą klatką gry culling niczego nie chowa), pre-pass
+  // głębi halo (materiał zastępczy) i pełnoekranowe quady halo i maski słońca. Na ekranie ładowania (flush) — wszystkie
+  // passy jeszcze raz (świat ortho, tarcze, FG). Tylko obiekty widoczne; rozgrzane wcześniej się nie powtarzają.
+  _registerPassWarmups() {
+    const w = this.warmup;
+    if (!w || w._passWarmups) return;
+    w._passWarmups = true;
+    const scene = () => this.scene;
+    for (const layer of [1, PLANET_RENDER_LAYER, PLANET_HALO_RENDER_LAYER, RING_PLANET_RENDER_LAYER]) {
+      w.add({ name: `Core3D: warstwa ${layer}`, objects: scene, layer, visible: false });
+    }
+    w.add({ name: 'Core3D: pre-pass głębi halo', objects: scene, layer: PLANET_RENDER_LAYER, visible: false, split: false, override: this.haloDepthMaskMaterial });
+    w.add({ name: 'Core3D: quad halo planet', objects: () => this.planetHaloPass?.quad });
+    w.add({ name: 'Core3D: quad maski słońca', objects: () => this.shadowShaftsPass?.quad, target: () => this.sunShadowTarget });
+    for (const layer of [0, SHIELD_RENDER_LAYER, 2, 1, PLANET_RENDER_LAYER, PLANET_HALO_RENDER_LAYER, RING_PLANET_RENDER_LAYER]) {
+      w.add({ name: `Core3D: warstwa ${layer} (start gry)`, objects: scene, layer, visible: false, phase: 'loading' });
+    }
   },
 
   _failGpu(reason) {
@@ -2193,3 +2227,7 @@ export const Core3D = {
   setShadowCatchersDebug(enabled = true) { },
   toggleShadowCatchersDebug() { }
 };
+
+// Rejestr rozgrzewki pipeline'ów (zadanie 11): moduły zgłaszają się przy imporcie — `Core3D.warmup.add({...})`
+// (src/3d/rozgrzewka.js, agents.md § Rozgrzewka); praca rusza przy gotowym urządzeniu (_initGpu).
+Core3D.warmup = new Rozgrzewka(Core3D);

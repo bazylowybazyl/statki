@@ -220,3 +220,6 @@ export const ShipLights3D = {
     this.paramsArray = null;
   }
 };
+
+// Pipeline świateł pozycyjnych na ekranie ładowania (zadanie 11, Core3D.warmup — dawniej budowa w pierwszej klatce gry).
+Core3D.warmup?.add({ name: 'światła pozycyjne statków', objects: () => (ShipLights3D._ensure() ? ShipLights3D.mesh : null), phase: 'loading' });
