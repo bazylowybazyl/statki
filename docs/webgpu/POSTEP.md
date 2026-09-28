@@ -49,7 +49,7 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 | 09 | Ring 4/5: megastruktura + miasto (kopuły, landmarki, drzewa) | 08 | j.w. | xhigh | w toku (podagent, worktree `statki-wt/09`) | | |
 | 10 | Ring 5/5: K-7 + ringi-archetypy Marsa i Jowisza | 09 | j.w. | xhigh | czeka | | ring bez zamienników |
 | 11 | Tło menu + rozgrzewka pipeline'ów | 05, 10 | 12–20 | max | czeka | | nowy `menuBackdrop.test` |
-| 12 | Infrastruktura efektów GPU: compute w klatce, siatka świateł, zniekształcenia, Fx3D w TSL | 03 | 04–11, 13–16 | max | 12-A zrobione i scalone (moduły `src/3d/fx/`); 12-B (wpięcie w Core3D, Fx3D w TSL) w toku (podagent, worktree `statki-wt/12b`, równolegle z 03 — zmiany `core3d.js` zwarte, scala `main` po 03) | 0f3d429…37953a6 | podstawa pod 17–19 (i przyszłe asteroidy) |
+| 12 | Infrastruktura efektów GPU: compute w klatce, siatka świateł, zniekształcenia, Fx3D w TSL | 03 | 04–11, 13–16 | max | zrobione, scalone (12-A: moduły `src/3d/fx/`; 12-B: 72ec255 — wpięcie w Core3D, Fx3D w TSL) | 0f3d429…37953a6 (12-A); 819fd85, 0c67d84, ebc4211, a029a03, 59e0571, 7168783 (12-B) | podstawa pod 17–19 (i przyszłe asteroidy) |
 | 13 | Silniki: MAIN, WARP (plazma), SIDE | 03 | 04–12, 14–20 | xhigh | zrobione, scalone (bd96586) | e844a7a, c85042f, 3ff03a4 (scalenia `main` 23ed7d5, 49e7fdf) | graf plazmy na pulę (0 budów przy skoku); iskry MAIN = Fx3D (sprawdzić po 12-B: `silniki.mjs --post` z Fx3D) |
 | 14 | Tarcze i trafienia w tarczę | 03 | 04–13, 15–20 | xhigh | zrobione, scalone (7703490) | 9b8dad0, 9b95df5, e566f74, 02d6f02 | graf na wariant + wartości per obiekt; trafienia w `uniformArray` pakowanej w `onObjectUpdate` |
 | 15 | Mostki, rdzenie, reaktory, światła (+ `mostki-demo`, `rdzen-demo`) | 04 | 05–14, 16–20 | xhigh | w toku (podagent, worktree `statki-wt/15`; maska w `bridge3D` = zastępnik do 03) | | |
@@ -77,7 +77,7 @@ Stan zamierzony na `main` w trakcie portu — nie „naprawiać” poza zadaniem
 | 01 | 11 | Rozgrzewka tylko „nie rzuca”: pipeline'y kompilują się asynchronicznie przy pierwszym użyciu, osłona `backend.draw` pomija rysunek do gotowości (obiekt pojawia się 1–2 klatki później) | 11 (moduły przez `Core3D.prewarmPass`) |
 | 01 | 06 | Brak synchronicznego odczytu → mapa CPU ringu pusta (`heightAtUV` = 0): płyta ringu koliduje bez rzeźby terenu, LOD terenu bez wysokości, landmarki i kopuły stawiane bez mapy (stała wysokość z `haloRingLandmarks.js`) | 06 — ZAMKNIĘTE (070a407): teren w koliderze po `ring.ready`, sprawdzone w grze |
 | 01 | 20 | Overlay efektów na własnym `WebGLRenderer` (jedyny drugi renderer; stare efekty overlaya działają bez zamienników) | 17–19 zabierają efekty, 20 usuwa overlay |
-| 01 | 17–19 | Pociski i błyski ze starego `weapon3DSystem` (materiały wbudowane — rysują się), smugi `slugTrail3D` (zamiennik), dym i iskry Fx3D (zamiennik do 12) | 12, 17–19 |
+| 01 | 17–19 | Pociski i błyski ze starego `weapon3DSystem` (materiały wbudowane — rysują się; cyjanowe głowy pocisków nie rysują się na WebGPU), smugi `slugTrail3D` (zamiennik); dym i iskry Fx3D — ZAMKNIĘTE w 12-B | 17–19 |
 | 01 | 22 | Soczewka i fale warpa usunięte (API jako no-op), skok działa bez efektu zgięcia | 22 (nowy warp) |
 | Faza 0 | 21 | Stare pole asteroid i tło pasa wyłączone (`?asteroidyStare`) | 21 (nowe asteroidy) |
 
@@ -450,3 +450,25 @@ Todo (2): „PORT poprawka 1 / 3 (TODO integracji)” w `tests/shipCore.test.mjs
   (`closeChrome` czeka na wyjście Chrome i kasuje profil). Skrypty dem z własnym startem Chrome (`halo-ring-shots.mjs`,
   `mostki-*.js`, `precyzja-drzenie.js` itd.) nadal zostawiają profile — do 24 (wspólny `closeChrome`); do tego czasu
   orkiestrator trzyma w tle pętlę kasującą profile starsze niż 45 min.
+- **Część 12-B scalona do `main`** (819fd85, 0c67d84, ebc4211, a029a03, 59e0571, 7168783; scalenia `main` 2d0c845, f28c3ee,
+  edf672e; scalenie 72ec255): Fx3D w TSL (`fxParticles3D.js`: 4 wspólne grafy wierzchołków BB / PLUME / CROSS / WASH + jeden
+  fragmentu, tekstura per obiekt `FxMapNode`, wysyłana tylko żywa część atrybutów; −67 linii GLSL); `Core3D.fx`
+  (`src/3d/fx/fxFrame.js`) = klatka efektów raz na rAF przed passami: spawn → początek pul → kernele przesunięcia → siatka
+  świateł → update; API `Core3D.addFxStep({ spawn, lights, update, warm })`, `fx.grid` / `fx.lights` / `fx.origin`,
+  wiersz „Efekty GPU” w PerfHUD. `GridLighting` w trybie „optIn” ustawiany PRZED `renderer.init()` (pułapka r183: three
+  zapamiętuje `renderer.lighting` w `init()`, podmiana po nim po cichu nie działa) — 67 programów WGSL identycznych z
+  siatką i bez. Zniekształcenia w „uber” (`Core3D.fxDistortion()` + warstwa DIST 10, cel RG HalfFloat,
+  `setDistortLayerActive`) w osobnej gałęzi — bez źródeł „uber” bit w bit jak 02. Siatka bezpieczeństwa NaN/±Inf
+  (`hdrBezpieczny`, test bitów wykładnika) na wejściu bloomu i przy odczytach sceny (kwad z NaN: 1600 px zamiast 1,78 mln).
+  Kontrola GPU `scripts/webgpu/efekty-kontrola.mjs` A–F OK. Koszt: pusta siatka +0,006–0,009 ms GPU na pełny kadr 1080p,
+  256 świateł +0,5 ms GPU / 0,25 ms CPU budowy; CPU pustej klatki efektów 0,005 ms, 0 dispatchy. Harness: zmiany tylko w
+  scenach z Fx3D; zamienniki bitwa 15 → 9, bitwa-blisko 12 → 8, wybuch 11 → 8, wraki 10 → 8, warp 10 → 9; `bitwa__ortho`
+  vs WebGL 1,30% → 1,02%. Iskry MAIN (`silniki.mjs --post` z Fx3D vs tag): HDR bitwa 0,016%, spoczynek 0,0056%, warp
+  0,0017%, gracz na dopalaczu 0,067% (> 0,05% — linie 1 px rasteryzują się w Dawn inaczej niż w ANGLE, WebGL dawał ujemny
+  HDR na brzegach linii; przyjęte). Decyzje: zegar efektów z klatką rAF (także w pauzie), kadr siatki = kadr kamery +15%
+  (split: suma), NaN/Inf → 0 (demo dawało 60 000 → plama), osie DIST ujednolicone (demo broni miało y odwrócone). Znalezione:
+  kwady WASH w Fx3D odwrócone tyłem (nie rysowały się też na WebGL — 1:1). Plan wpięcia dla 17/18/19/21:
+  `docs/webgpu/FX-INFRA.md` §9 (każda pula GPU rejestruje się w `Core3D.fx.origin` z kernelem przesunięcia, efekty jako
+  `addFxStep`, światła przez `fx.lights`, fale przez `fxDistortion()` / DIST; w 18 kadłuby czytają siatkę jawnie
+  `grid.loop`). Inwentarz z HEAD 72ec255: port 26 plików z GLSL, 43 materiały, 5082 linie. Testy: 1509 / 7 porażek
+  bazowych / 3 todo; `npm test` OK.
