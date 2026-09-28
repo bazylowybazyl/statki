@@ -5,19 +5,24 @@
 // Klatka: wejście → kamera → broń i pociski (gameplay 2D jak w grze) →
 // stany tarcz (updateShieldFx z shieldSystem.js) → zdarzenia pola → światła →
 // compute (pole, iskry, odłamki) → render (pass → bloom → tone mapping).
+// Współrzędne API (__demo) i encji: układ gry, y w dół; scena 3D: y = −y gry.
 // ============================================================
 import * as THREE from 'three/webgpu';
-import { pass } from 'three/tsl';
+import { pass, float, vec3, length, abs, fwidth, max } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
+import { updateShieldFx, setEntityShieldForcedOff } from '../shieldSystem.js';
 import { uTime, uDt, lights, BLOOM_GAME, clamp } from './tarcza-webgpu/wspolne.js';
 import { createSky } from './tarcza-webgpu/tlo.js';
 import { loadAtlasSprite, createAtlasHullMesh } from './tarcza-webgpu/kadlub.js';
 import { buildShip, placeShip, aimTurret, shipPoint } from './tarcza-webgpu/wrogowie.js';
+import { Tarcza } from './tarcza-webgpu/tarcza.js';
+import { sstepDown } from './tarcza-webgpu/czasza.js';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const TEST = params.get('test') === '1';
-const DEBUG = params.get('debug') || '';
+const DEBUG_FIELD = params.get('debug') === 'pole';
+const GRID_CELLS = clamp(Number(params.get('siatka')) || 512, 128, 1024);
 
 // ---------------------------------------------------------------------------
 // Błędy: na ekran i do konsoli (skrypt sprawdzający zbiera konsolę).
@@ -70,7 +75,7 @@ async function main() {
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(35, innerWidth / innerHeight, 10, 30000);
   const TAN_H = Math.tan(THREE.MathUtils.degToRad(35 / 2));
-  const cam = { x: 0, y: 300, z: 5200, tz: 5200, anchor: null };
+  const cam = { x: 0, y: 300, z: 5200, tz: 5200, anchor: { on: false, wx: 0, wy: 0, nx: 0, ny: 0 } };
   const ZOOM_MIN = 420, ZOOM_MAX = 24000;
   function syncCamera() {
     camera.position.set(cam.x, cam.y, cam.z);
@@ -97,19 +102,43 @@ async function main() {
   // Atlas (środek sceny, nieruchomy) — encja w konwencji gry: y w dół.
 
   const sprite = await loadAtlasSprite();
+  const SHIELD_MAX = 6000;
   const atlas = {
     x: 0, y: 0, angle: Number(params.get('kat')) || 0, type: 'atlas',
     visual: { spriteScale: sprite.scale },
-    hexGrid: { shards: sprite.shards, srcWidth: sprite.W, srcHeight: sprite.H }
+    hexGrid: { shards: sprite.shards, srcWidth: sprite.W, srcHeight: sprite.H },
+    shield: { val: SHIELD_MAX, max: SHIELD_MAX }
   };
   // Grupa w klatce lokalnej 3D: pozycja (x, −y), obrót −kąt (jak Core3D).
   const atlasGroup = new THREE.Group();
   atlasGroup.position.set(atlas.x, -atlas.y, 0);
   atlasGroup.rotation.z = -atlas.angle;
   scene.add(atlasGroup);
-  const atlasHull = createAtlasHullMesh(sprite);
+
+  // Znacznik widoku kontrolnego: górny kieł dziobu, piksel sprite'a (3180, 690)
+  // → klatka lokalna 3D (x, −y_grid). Poza osiami, więc łapie odbicie x i y.
+  const MARKER_R = 28;
+  const markerLocal = new THREE.Vector4(
+    (3180 - sprite.W / 2) * sprite.scale, -(690 - sprite.H / 2) * sprite.scale, MARKER_R, DEBUG_FIELD ? 1.0 : 0.0);
+
+  const shield = new Tarcza({
+    renderer, entity: atlas, group: atlasGroup, gridCells: GRID_CELLS, name: 'Atlas',
+    debugMarker: DEBUG_FIELD ? markerLocal : null
+  });
+
+  // Kadłub: w widoku kontrolnym pierścień znacznika liczony z pozycji lokalnej kwadu.
+  const hullExtra = DEBUG_FIELD ? (local) => {
+    const d = length(local.sub(shield.F.uMarker.xy));
+    const ring = sstepDown(2.2, 0.0, abs(d.sub(float(MARKER_R * 1.45))).div(max(fwidth(d), 1e-4)));
+    return vec3(5.0, 0.8, 4.4).mul(ring);
+  } : null;
+  const atlasHull = createAtlasHullMesh(sprite, hullExtra);
   atlasGroup.add(atlasHull.mesh);
   atlasGroup.updateMatrixWorld(true);
+
+  const profile = shield.profile;
+  console.log(`Tarcza Atlasa: maxR ${profile.maxR.toFixed(1)} j., minR ${profile.minR.toFixed(1)} j., odstęp ${profile.pad.toFixed(1)} j., ` +
+    `kadłub ${sprite.shards.length} komórek, siatka pola ${shield.describeGrid()}`);
 
   // -------------------------------------------------------------------------
   // Wrogowie: 3 mniejsze okręty na łuku 4–6 tys. j. od Atlasa, wieże w Atlasa.
@@ -144,12 +173,12 @@ async function main() {
   // Stan dema i wejście
 
   const S = {
-    time: 0, frames: 0, fps: 60, cpuMs: 0, gpuMs: 0, gpuComputeMs: 0,
-    keys: new Set(), mouse: { x: innerWidth / 2, y: innerHeight / 2, inside: false },
-    aim: new THREE.Vector3(), bloom: true, bloomStrength: BLOOM_GAME.strength
+    time: 0, frames: 0, fps: 60, cpuMs: 0, gpuMs: 0, gpuComputeMs: 0, pxPerUnit: 1,
+    keys: new Set(), mouse: { x: innerWidth / 2, y: innerHeight / 2 },
+    aim: new THREE.Vector3(), aimLock: false,
+    newFx: true, regen: 0.04, bloom: true, bloomStrength: BLOOM_GAME.strength
   };
 
-  const _ndc = new THREE.Vector2();
   // Punkt płaszczyzny z = planeZ pod pikselem ekranu (kamera patrzy prosto w dół).
   function screenToWorld(px, py, planeZ, out) {
     const nx = (px / innerWidth) * 2 - 1, ny = -(py / innerHeight) * 2 + 1;
@@ -162,6 +191,7 @@ async function main() {
     screenToWorld(S.mouse.x, S.mouse.y, 0, S.aim);
   }
 
+  const _wv = new THREE.Vector3();
   const canvas = renderer.domElement;
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   canvas.addEventListener('pointermove', (e) => { S.mouse.x = e.clientX; S.mouse.y = e.clientY; S.aimLock = false; });
@@ -169,13 +199,41 @@ async function main() {
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
     cam.tz = clamp(cam.tz * Math.exp(e.deltaY * 0.0012), ZOOM_MIN, ZOOM_MAX);
-    const p = screenToWorld(e.clientX, e.clientY, 0, new THREE.Vector3());
-    cam.anchor = { wx: p.x, wy: p.y, nx: (e.clientX / innerWidth) * 2 - 1, ny: -(e.clientY / innerHeight) * 2 + 1 };
+    const p = screenToWorld(e.clientX, e.clientY, 0, _wv);
+    const a = cam.anchor;
+    a.on = true; a.wx = p.x; a.wy = p.y;
+    a.nx = (e.clientX / innerWidth) * 2 - 1; a.ny = -(e.clientY / innerHeight) * 2 + 1;
   }, { passive: false });
+
+  function setNewFx(on) {
+    S.newFx = on;
+    const ab = $('ab');
+    ab.className = on ? 'on' : 'off';
+    ab.textContent = on ? 'T · Nowe efekty: WŁĄCZONE' : 'T · Jak dziś w grze (łaty trafień)';
+    if (!DEBUG_FIELD) shield.setMode(on ? 'new' : 'ref');
+  }
+  $('ab').addEventListener('click', () => setNewFx(!S.newFx));
+
+  function toggleShield() {
+    setEntityShieldForcedOff(atlas, !atlas._shieldForcedOff);
+    return !atlas._shieldForcedOff;
+  }
+  function breakShield() {
+    atlas.shield.val = 0;
+  }
+  function fullCharge() {
+    atlas.shield.val = atlas.shield.max;
+  }
+
   addEventListener('keydown', (e) => {
+    if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return;
     const k = e.key.toLowerCase();
     S.keys.add(k);
     if (k === 'h') $('panel').classList.toggle('hidden');
+    if (k === 't') setNewFx(!S.newFx);
+    if (k === 'o') toggleShield();
+    if (k === 'b') breakShield();
+    if (k === 'r') fullCharge();
   });
   addEventListener('keyup', (e) => S.keys.delete(e.key.toLowerCase()));
   addEventListener('resize', () => {
@@ -183,6 +241,8 @@ async function main() {
     camera.updateProjectionMatrix();
     renderer.setSize(innerWidth, innerHeight);
   });
+  const fieldToggle = $('c-field');
+  fieldToggle.addEventListener('change', () => { shield.showField = fieldToggle.checked; });
 
   function updateCamera(dt) {
     const pan = 1300 * dt * (cam.z / 3600);
@@ -191,15 +251,34 @@ async function main() {
     if (S.keys.has('s') || S.keys.has('arrowdown')) { cam.y -= pan; moved = true; }
     if (S.keys.has('a') || S.keys.has('arrowleft')) { cam.x -= pan; moved = true; }
     if (S.keys.has('d') || S.keys.has('arrowright')) { cam.x += pan; moved = true; }
-    if (moved) cam.anchor = null;
+    if (moved) cam.anchor.on = false;
     cam.z += (cam.tz - cam.z) * Math.min(1, dt * 8);
-    if (cam.anchor) {
-      const a = cam.anchor;
+    const a = cam.anchor;
+    if (a.on) {
       cam.x = a.wx - a.nx * cam.z * TAN_H * camera.aspect;
       cam.y = a.wy - a.ny * cam.z * TAN_H;
-      if (Math.abs(cam.tz - cam.z) < 0.5) cam.anchor = null;
+      if (Math.abs(cam.tz - cam.z) < 0.5) a.on = false;
     }
     syncCamera();
+    // Skala „zoom” gry: piksele ekranu na jednostkę w płaszczyźnie kadłuba.
+    S.pxPerUnit = (innerHeight * 0.5) / (cam.z * TAN_H);
+  }
+
+  // -------------------------------------------------------------------------
+  // Tarcza: HP (regeneracja po stronie dema, jak wołający w grze) i stany.
+
+  // Kolejność jak w grze: najpierw stan (val = 0 → breaking), potem ładowanie —
+  // regeneracja przed updateShieldFx podniosłaby HP z zera i pęknięcie by nie ruszyło.
+  function updateShieldState(dt) {
+    const sh = atlas.shield;
+    updateShieldFx(atlas, dt);
+    if (sh.state !== 'breaking' && sh.val < sh.max) sh.val = Math.min(sh.max, sh.val + sh.max * S.regen * dt);
+  }
+
+  // Trafienie w punkt gry (x, y): tarcza blokuje → registerShieldImpact + HP.
+  function hitAt(x, y, dmg = 100, cls = 'main') {
+    if (!shield.isBlocking()) return false;
+    return shield.registerHit(x, y, dmg, cls);
   }
 
   // -------------------------------------------------------------------------
@@ -225,7 +304,11 @@ async function main() {
       lights.push(p.x, p.y, p.z, 900 * s, 220 * s, g[0] * 0.28, g[1] * 0.28, g[2] * 0.28);
     }
 
+    updateShieldState(dt);
+    shield.update(dt, S.time, S.pxPerUnit);
+
     lights.commit();
+    shield.computeStep(dt);
     sky.fit(camera);
     pipeline.render();
 
@@ -236,17 +319,24 @@ async function main() {
     }
   }
 
-  // Statystyki (4 razy na sekundę — tekst panelu to jedyna alokacja poza startem).
+  // Panel: HP i statystyki (4 razy na sekundę — tekst to jedyna alokacja poza startem).
+  const hpFill = $('hpfill'), hpText = $('hptext');
   let statsAt = 0, fpsFrames = 0, fpsT = performance.now();
-  function updateStats(now) {
+  function updatePanel(now) {
     fpsFrames++;
     if (now - statsAt < 250) return;
     S.fps = fpsFrames * 1000 / Math.max(1, now - fpsT);
     fpsFrames = 0; fpsT = now; statsAt = now;
+    const sh = atlas.shield;
+    const life = sh.val / sh.max;
+    hpFill.style.width = `${(life * 100).toFixed(1)}%`;
+    hpFill.style.background = life < 0.35 ? 'linear-gradient(90deg, #b8322a, #ff7a55)' : 'linear-gradient(90deg, #3b6fd8, #7fb0ff)';
+    hpText.textContent = `tarcza: ${sh.state}${atlas._shieldForcedOff ? ' (wyłączona)' : ''} · HP ${Math.round(sh.val)} / ${sh.max} (${(life * 100).toFixed(0)}%)`;
     $('stats').textContent =
       `FPS              ${S.fps.toFixed(0)}\n` +
       `ms CPU (klatka)  ${S.cpuMs.toFixed(2)}\n` +
       `ms GPU           ${timestamps ? (S.gpuMs + S.gpuComputeMs).toFixed(2) + `  (compute ${S.gpuComputeMs.toFixed(2)})` : '—'}\n` +
+      `siatka pola      ${shield.describeGrid()}\n` +
       `światła          ${lights.count} / 256`;
   }
 
@@ -267,31 +357,52 @@ async function main() {
         device.queue.onSubmittedWorkDone().then(done);
       }
       last = now;
+      updatePanel(now);
       return;
     }
     if (TEST) return;
     const dt = clamp((now - last) / 1000, 0.001, 0.05);
     last = now;
     frame(dt);
-    updateStats(now);
+    updatePanel(now);
   });
+
+  // Widok kontrolny: kamera prosto nad znacznikiem (bez paralaksy czaszy).
+  if (DEBUG_FIELD) {
+    const wp = shield.localToWorld(markerLocal.x, markerLocal.y, new THREE.Vector2());
+    cam.x = wp.x; cam.y = -wp.y; cam.z = cam.tz = 1500;
+    syncCamera();
+  }
+  setNewFx(!DEBUG_FIELD);
+  if (!DEBUG_FIELD) shield.setMode('ref');
 
   window.__demo = {
     ready: true,
-    S, cam, atlas, enemies, renderer, scene, camera,
+    S, cam, atlas, enemies, shield, renderer, scene, camera,
     step(n = 1) {
       return new Promise((resolve) => {
         pendingSteps = Math.max(1, n | 0);
         stepDone = resolve;
       });
     },
+    hit: (x, y, dmg = 100, cls = 'main') => hitAt(x, y, dmg, cls),
+    setHP(u) { atlas.shield.val = clamp(u, 0, 1) * atlas.shield.max; return atlas.shield.val; },
+    breakShield,
+    toggleShield,
+    fullCharge,
+    setNewFx,
     lookAt(x, y, zoom) {
-      cam.x = x; cam.y = -y; cam.anchor = null;
+      cam.x = x; cam.y = -y; cam.anchor.on = false;
       if (zoom) cam.tz = cam.z = clamp(zoom, ZOOM_MIN, ZOOM_MAX);
       syncCamera();
     },
     stats() {
-      return { fps: S.fps, cpuMs: S.cpuMs, gpuMs: S.gpuMs, gpuComputeMs: S.gpuComputeMs, lights: lights.count };
+      const sh = atlas.shield;
+      return {
+        fps: S.fps, cpuMs: S.cpuMs, gpuMs: S.gpuMs, gpuComputeMs: S.gpuComputeMs, lights: lights.count,
+        state: sh.state, hp: sh.val, hpMax: sh.max, grid: shield.describeGrid(), domeVisible: shield.visible,
+        maxR: profile.maxR, minR: profile.minR, pad: profile.pad
+      };
     }
   };
 }

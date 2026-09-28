@@ -5,7 +5,8 @@
 // wydajność (SwiftShader: klatka ~0,5–2 s).
 //
 // Użycie: serwer `npx vite --port 5173 --strictPort` w tle, potem
-//   node scripts/tarcza-webgpu-dym.mjs [--url http://localhost:5173] [--tylko start,debug]
+//   node scripts/tarcza-webgpu-dym.mjs [--url http://localhost:5173] [--tylko start,trafienia,...]
+// Scenariusze: start, trafienia, salwa, wiazka, torpeda, pekniecie, gaszenie, ab, tarcza, debug.
 import { createRequire } from 'node:module';
 import { execSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
@@ -25,12 +26,13 @@ const FLAGS = ['--headless=new', '--enable-unsafe-webgpu', '--enable-features=Vu
   '--use-webgpu-adapter=swiftshader', '--enable-unsafe-swiftshader', '--use-angle=swiftshader'];
 
 const problems = [];
+const notes = [];
 let current = 'start';
 
 function isProblem(type, text) {
   if (type === 'error') return true;
   // Chromium zgłasza walidację WebGPU / WGSL jako ostrzeżenia konsoli.
-  if (type === 'warning' && /WebGPU|WGSL|GPUValidationError|Invalid|validation/i.test(text)) return true;
+  if (type === 'warning' && /WebGPU|WGSL|GPUValidationError|Invalid|validation|THREE\./i.test(text)) return true;
   return false;
 }
 
@@ -39,6 +41,7 @@ async function openPage(browser, query) {
   page.on('console', (m) => {
     const text = m.text();
     if (isProblem(m.type(), text)) problems.push(`[${current}] konsola ${m.type()}: ${text}`);
+    else if (/Tarcza Atlasa/.test(text)) notes.push(text);
   });
   page.on('pageerror', (e) => problems.push(`[${current}] wyjątek: ${e.message}`));
   page.on('requestfailed', (r) => problems.push(`[${current}] żądanie nieudane: ${r.url()}`));
@@ -47,37 +50,200 @@ async function openPage(browser, query) {
   await page.waitForFunction(() => window.__demo && (window.__demo.ready === true || window.__demo.error), null, { timeout: 180000 });
   const err = await page.evaluate(() => window.__demo.error || null);
   if (err) throw new Error(`demo nie wystartowało: ${err} ${await page.evaluate(() => window.__demo.detail || '')}`);
+  // Czyste zrzuty: panel schowany.
+  await page.evaluate(() => document.getElementById('panel').classList.add('hidden'));
   return page;
 }
 
-async function step(page, n) {
-  await page.evaluate((k) => window.__demo.step(k), n);
+const step = (page, n) => page.evaluate((k) => window.__demo.step(k), n);
+const shot = (page, name) => page.screenshot({ path: `${OUT}/${name}.png` });
+const has = (page, fn) => page.evaluate((f) => typeof window.__demo[f] === 'function', fn);
+const call = (page, expr) => page.evaluate(expr);
+const stats = (page) => page.evaluate(() => window.__demo.stats());
+
+async function maybe(page, fn, expr) {
+  if (await has(page, fn)) return call(page, expr);
+  notes.push(`[${current}] pominięto ${fn}() — jeszcze nie ma w demie`);
+  return undefined;
 }
 
-async function shot(page, name) {
-  await page.screenshot({ path: `${OUT}/${name}.png` });
+// Czeka (klatkami) na stan tarczy; zwraca, czy się doczekał.
+async function waitState(page, state, maxFrames, chunk = 6) {
+  for (let f = 0; f < maxFrames; f += chunk) {
+    const st = await stats(page);
+    if (st.state === state) return true;
+    await step(page, chunk);
+  }
+  return (await stats(page)).state === state;
 }
 
 const want = (name) => ONLY.length === 0 || ONLY.includes(name);
 
-const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium', args: FLAGS });
-const t0 = Date.now();
-try {
-  if (want('start')) {
-    current = 'start';
+const scenarios = {
+  async start(browser) {
     const page = await openPage(browser, 'test=1&siatka=256');
     await step(page, 2);
     await shot(page, '01-start');
-    const st = await page.evaluate(() => window.__demo.stats());
-    console.log('stats:', JSON.stringify(st));
+    const st = await stats(page);
+    notes.push(`[start] ${JSON.stringify(st)}`);
+    if (!(st.maxR > 850 && st.maxR < 1050)) problems.push(`[start] maxR ${st.maxR} poza oczekiwanym zakresem (~pół kadłuba + odstęp)`);
+    await page.close();
+  },
+
+  async trafienia(browser) {
+    const page = await openPage(browser, 'test=1&siatka=256');
+    await call(page, () => window.__demo.lookAt(0, 0, 2600));
+    await step(page, 2);
+    // Każda klasa trafienia w inny punkt obrysu (punkty gry, y w dół).
+    await call(page, () => {
+      const d = window.__demo;
+      d.hit(700, -200, 12, 'pd');
+      d.hit(-500, -300, 110, 'main');
+      d.hit(200, 380, 600, 'special');
+      d.hit(-850, 60, 250, 'shield');
+    });
+    await step(page, 3);
+    await shot(page, '02-trafienia-a');
+    await step(page, 10);
+    await shot(page, '02-trafienia-b');
+    await page.close();
+  },
+
+  async salwa(browser) {
+    const page = await openPage(browser, 'test=1&siatka=256');
+    await call(page, () => window.__demo.lookAt(0, -300, 3000));
+    await step(page, 2);
+    if (await has(page, 'salvo')) {
+      await call(page, () => { window.__demo.aim?.(600, -250); window.__demo.salvo(); });
+      await step(page, 24);
+      await shot(page, '03-salwa');
+      // Druga i trzecia salwa w to samo miejsce — przegrzanie aż do przebicia.
+      await call(page, () => window.__demo.salvo());
+      await step(page, 18);
+      await call(page, () => window.__demo.salvo());
+      await step(page, 18);
+      await shot(page, '03-salwa-przegrzanie');
+    } else notes.push('[salwa] pominięto — brak __demo.salvo');
+    await page.close();
+  },
+
+  async wiazka(browser) {
+    const page = await openPage(browser, 'test=1&siatka=256');
+    await call(page, () => window.__demo.lookAt(300, -200, 2200));
+    await step(page, 2);
+    if (await has(page, 'beam')) {
+      await call(page, () => window.__demo.beam(650, -230, true));
+      await step(page, 30);
+      await shot(page, '04-wiazka');
+      await call(page, () => window.__demo.beam(0, 0, false));
+      await step(page, 4);
+    } else notes.push('[wiazka] pominięto — brak __demo.beam');
+    await page.close();
+  },
+
+  async torpeda(browser) {
+    const page = await openPage(browser, 'test=1&siatka=256');
+    await call(page, () => window.__demo.lookAt(0, 0, 3200));
+    await step(page, 2);
+    await call(page, () => window.__demo.hit(-300, -420, 900, 'special'));
+    await step(page, 4);
+    await shot(page, '05-torpeda-a');
+    await step(page, 14);
+    await shot(page, '05-torpeda-b');
+    await page.close();
+  },
+
+  async pekniecie(browser) {
+    const page = await openPage(browser, 'test=1&siatka=256');
+    await call(page, () => window.__demo.lookAt(0, 0, 3200));
+    await step(page, 2);
+    await call(page, () => { window.__demo.hit(400, -300, 200, 'main'); window.__demo.breakShield(); });
+    await step(page, 3);
+    const st1 = await stats(page);
+    if (st1.state !== 'breaking') problems.push(`[pekniecie] oczekiwano 'breaking', jest '${st1.state}'`);
+    await shot(page, '06-pekniecie-a');
+    await step(page, 12);
+    await shot(page, '06-pekniecie-b');
+    if (!(await waitState(page, 'off', 60))) problems.push('[pekniecie] tarcza nie przeszła w off');
+    // Regeneracja do progu (20%) → ponowny rozruch.
+    await call(page, () => window.__demo.setHP(0.3));
+    if (!(await waitState(page, 'activating', 12, 2))) problems.push('[pekniecie] brak ponownego rozruchu (activating)');
+    await step(page, 8);
+    await shot(page, '06-rozruch');
+    if (!(await waitState(page, 'active', 90))) problems.push('[pekniecie] rozruch nie doszedł do active');
+    await page.close();
+  },
+
+  async gaszenie(browser) {
+    const page = await openPage(browser, 'test=1&siatka=256');
+    await call(page, () => window.__demo.lookAt(0, 0, 3200));
+    await step(page, 2);
+    await call(page, () => window.__demo.toggleShield());
+    await step(page, 6);
+    const st = await stats(page);
+    if (st.state !== 'deactivating' && st.state !== 'off') problems.push(`[gaszenie] oczekiwano deactivating/off, jest '${st.state}'`);
+    await shot(page, '07-gaszenie');
+    if (!(await waitState(page, 'off', 60))) problems.push('[gaszenie] tarcza nie zgasła');
+    await call(page, () => window.__demo.toggleShield());
+    await step(page, 8);
+    await shot(page, '07-wlaczenie');
+    if (!(await waitState(page, 'active', 90))) problems.push('[gaszenie] tarcza nie wróciła do active');
+    await page.close();
+  },
+
+  async ab(browser) {
+    const page = await openPage(browser, 'test=1&siatka=256');
+    await call(page, () => window.__demo.lookAt(0, 0, 2600));
+    await step(page, 2);
+    await call(page, () => window.__demo.setNewFx(false));
+    await call(page, () => { window.__demo.hit(500, -330, 120, 'main'); window.__demo.hit(-600, 250, 700, 'special'); });
+    await step(page, 5);
+    await shot(page, '08-ab-gra');
+    await call(page, () => window.__demo.setNewFx(true));
+    await call(page, () => { window.__demo.hit(500, -330, 120, 'main'); window.__demo.hit(-600, 250, 700, 'special'); });
+    await step(page, 5);
+    await shot(page, '08-ab-nowe');
+    await page.close();
+  },
+
+  async tarcza(browser) {
+    const page = await openPage(browser, 'test=1&siatka=256');
+    if (await has(page, 'shieldClash')) {
+      await call(page, () => window.__demo.lookAt(0, -2000, 7000));
+      await call(page, () => window.__demo.shieldClash(true));
+      await step(page, 60);
+      await shot(page, '09-tarcza-w-tarcze');
+    } else notes.push('[tarcza] pominięto — brak __demo.shieldClash');
+    await page.close();
+  },
+
+  async debug(browser) {
+    const page = await openPage(browser, 'test=1&debug=pole&siatka=256');
+    await step(page, 3);
+    await shot(page, '10-debug-pole');
     await page.close();
   }
-} catch (e) {
-  problems.push(`[${current}] przerwane: ${e.stack || e}`);
+};
+
+const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium', args: FLAGS });
+const t0 = Date.now();
+try {
+  for (const [name, fn] of Object.entries(scenarios)) {
+    if (!want(name)) continue;
+    current = name;
+    const ts = Date.now();
+    try {
+      await fn(browser);
+    } catch (e) {
+      problems.push(`[${name}] przerwane: ${e.stack || e}`);
+    }
+    console.log(`  ${name}: ${((Date.now() - ts) / 1000).toFixed(1)} s`);
+  }
 } finally {
   await browser.close();
 }
 
+for (const n of notes) console.log(n);
 console.log(`czas: ${((Date.now() - t0) / 1000).toFixed(1)} s, zrzuty: ${OUT}/`);
 if (problems.length) {
   console.log(`BŁĘDY (${problems.length}):`);
