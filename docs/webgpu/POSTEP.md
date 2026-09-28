@@ -444,3 +444,9 @@ Todo (2): „PORT poprawka 1 / 3 (TODO integracji)” w `tests/shipCore.test.mjs
   call, ~0,1 ms GPU (→ 23). Inwentarz z HEAD f487d2f: port 27 plików z GLSL, 44 materiały, 5149 linii, `onBeforeCompile`
   0. Testy: 1495 / 7 porażek bazowych / 3 todo; `npm test` OK. Po scaleniu: 05, 15 i 12-B scalają `main` i podmieniają
   zastępniki maski.
+- **Incydent 2026-09-28 ~01:50–02:15: dysk C: pełny** (harness 12-B padł z ENOSPC). Przyczyna: narzędzia CDP (`dema/rdzen-cdp.js`,
+  `scripts/webgpu/wspolne.mjs`, skrypty dem) zostawiały profil headless Chrome w `%TEMP%` po każdym przebiegu (~60 MB z
+  pamięcią shaderów) — ~1000 profili. Usunięte profile starsze niż 60 min (C: 0,08 → ~170 GB wolne); poprawka aa500c7
+  (`closeChrome` czeka na wyjście Chrome i kasuje profil). Skrypty dem z własnym startem Chrome (`halo-ring-shots.mjs`,
+  `mostki-*.js`, `precyzja-drzenie.js` itd.) nadal zostawiają profile — do 24 (wspólny `closeChrome`); do tego czasu
+  orkiestrator trzyma w tle pętlę kasującą profile starsze niż 45 min.
