@@ -464,6 +464,9 @@ export const Core3D = {
   // Promise (SPIKE 8); wynik = ms GPU ostatniej rozwiązanej klatki.
   gpuFrameMs: 0,
   gpuComputeMs: 0,
+  // Co którą klatkę rAF mierzyć czas GPU (znaczniki czasu kosztują CPU na każdy pass — zadanie 23);
+  // 1 = każda klatka (narzędzia pomiaru: koszt-klatki.mjs).
+  gpuTimerSampleEvery: 4,
   _gpuTimerPending: { render: false, compute: false },
   _gpuTimerFrame: -1,
   _gpuTimerGateFrame: -1,
@@ -1367,6 +1370,14 @@ export const Core3D = {
     const pools = backend.timestampQueryPool;
     if (firstOfFrame) {
       this._gpuTimerGateFrame = frame;
+      // Zadanie 23: znaczniki co N-tą klatkę (gpuTimerSampleEvery) — para zapytań na pass kosztowała
+      // ~5 µs CPU na pass (~0,13 ms klatki przy Ziemi, 25 passów z bloomem), a wynik i tak przychodzi
+      // z opóźnieniem kilku–kilkudziesięciu klatek (PerfHUD, harness). Klatka bez próbki: bez znaczników.
+      const every = Math.max(1, this.gpuTimerSampleEvery | 0);
+      if (every > 1 && (frame % every) !== 0) {
+        backend.trackTimestamp = false;
+        return;
+      }
       backend.trackTimestamp = true;
       const compute = pools?.compute;
       if (compute) {

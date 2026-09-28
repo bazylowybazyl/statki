@@ -265,7 +265,8 @@ test('zegar GPU: brama znaczników na granicy klatki — klatka bez pomiaru zami
   const pool = { maxQueries: 2048, currentQueryIndex: 0 };
   const backend = { trackTimestamp: true, timestampQueryPool: { render: pool } };
   const renderer = { info: { frame: 1 }, backend };
-  const fake = Object.assign(Object.create(Core3D), { renderer, _gpuTimerPending: { render: false, compute: false }, _gpuTimerGateFrame: -1, _gpuTimestampFeature: true });
+  // gpuTimerSampleEvery = 1: każda klatka z próbką (próbkowanie co N klatek — osobno niżej)
+  const fake = Object.assign(Object.create(Core3D), { renderer, _gpuTimerPending: { render: false, compute: false }, _gpuTimerGateFrame: -1, _gpuTimestampFeature: true, gpuTimerSampleEvery: 1 });
   // atrapa zlecenia: three zeruje pulę synchronicznie na starcie rozwiązywania
   fake._gpuTimerPollType = (type) => { polls++; backend.timestampQueryPool[type].currentQueryIndex = 0; fake._gpuTimerPending[type] = true; };
   fake._gpuTimerGate();
@@ -308,6 +309,20 @@ test('zegar GPU: brama znaczników na granicy klatki — klatka bez pomiaru zami
   renderer.info.frame = 6;
   fake._gpuTimerGate();
   assert.deepEqual([compute.trackTimestamp, compute.currentQueryIndex, polls], [true, 0, 4], 'compute bez miejsca, bez zlecenia — zlecenie od razu');
+  // Zadanie 23: próbka czasu GPU co gpuTimerSampleEvery klatek (znaczniki kosztują CPU na każdy pass) — klatka
+  // bez próbki idzie bez znaczników, także jej kolejne rendery; domyślnie co 4. klatkę.
+  assert.equal(Core3D.gpuTimerSampleEvery, 4);
+  fake.gpuTimerSampleEvery = 4;
+  fake._gpuTimerPending.render = false; fake._gpuTimerPending.compute = false;
+  pool.currentQueryIndex = 0; compute.currentQueryIndex = 0;
+  renderer.info.frame = 7;
+  fake._gpuTimerGate();
+  assert.equal(backend.trackTimestamp, false, 'klatka 7 — bez próbki');
+  fake._gpuTimerGate();
+  assert.equal(backend.trackTimestamp, false, 'drugi render klatki bez próbki — dalej bez znaczników');
+  renderer.info.frame = 8;
+  fake._gpuTimerGate();
+  assert.equal(backend.trackTimestamp, true, 'klatka 8 — próbka');
   // bez cechy timestamp-query brama nic nie włącza
   const noFeature = Object.assign(Object.create(Core3D), { renderer: { info: { frame: 9 }, backend: { trackTimestamp: false } }, _gpuTimestampFeature: false, _gpuTimerGateFrame: -1 });
   noFeature._gpuTimerGate();
