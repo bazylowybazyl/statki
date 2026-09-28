@@ -63,7 +63,7 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 | 21b | Fizyka wydobycia asteroid w grze (drony, piła, ładunki, urobek) — logika i demo od sesji „Asteroid lighting bug demo” | 21, 12 (+ commit dema) | 22–23 | max | zrobione, scalone (5cc94a7) — commity: 708bbdf, 87a883c, 9e1a8ba, 72f30ab, ce0f8b8, f3c573e (scalenia `main` b6cbe25, c5726c7) | | propozycja sesji fizyki skał; otwarte: kolizje odłamów, wpływ wybuchu, udźwig, ceny |
 | 22 | Warp „Nurt” z dema `warp-webgpu` (iteracja 2) | 12, 13 (+ commit dema) | 14–21 | max | zrobione, scalone (e9f4285); demo: 68cc081 | 97f97b2, de2ed96, 3e8c98d, 83b3735, 4b08a27 (scalenia `main` 3b93795, f43d903) | ośrodek 1 mln drobin w compute, poza warpem 0 kroków i 0 draw calli; stara soczewka i API usunięte; wygląd iteracji 2 do oceny użytkownika | | „ready do wgrania, jak skończy sesję”; wygląd iteracji 2 jeszcze nieoceniony |
 | 22b | Kop kamery przy skoku warpa i impuls zoomu przy wyjściu (z dema „Nurt”, w `cameraRig`) | 22 | 11, 18–21 | xhigh | zrobione, scalone (c7a7f6a) | 75af962, 8d3953f (scalenie `main` 575e550) | uwaga użytkownika do iteracji 1: wejście i wyjście „suche, bez kopa” |
-| 23 | Wydajność i precyzja: A/B z tagiem, drżenie, kompilacja, pamięć | 04–22 | nie | max | w toku (podagent, worktree `statki-wt/23`, GPU na wyłączność; najpierw poprawki z listy „Zebrane… 23”, potem pomiary) | | koszt portu osobno od kosztu nowych efektów |
+| 23 | Wydajność i precyzja: A/B z tagiem, drżenie, kompilacja, pamięć | 04–22 | nie | max | zrobione, scalone (b41e4de) | 8fc9e77…56012bf (21 commitów) | duża bitwa 54% → 84% FPS bazy WebGL (Core3D 4,02 → 1,47 ms); bloom compute bit w bit; raport `WYDAJNOSC.md`; otwarte: przestoje > 100 ms przy pierwszej stacji modelu, partie tarcz, kolano bloomu (A/B) |
 | 24 | Sprzątanie i domknięcie portu | 23 | nie | xhigh | czeka | | decyzje PLAN §12 p. 1, 3 |
 
 ## Regresje przejściowe (świadome)
@@ -75,15 +75,15 @@ Stan zamierzony na `main` w trakcie portu — nie „naprawiać” poza zadaniem
 | 01 | 24 | Nieprzeniesione `ShaderMaterial` rysują się magentą (`spis.zamienniki` w harnessie) | zadania 02–22 |
 | 01 | 03 | Maska słońca wyłączona (`uSunShadowOn = 0`): bez cienia słońca na materiałach, smug tła i SDF kadłubów; fala uderzeniowa bez passa refrakcji; kadłuby z 04 liczą pełne słońce (zastępnik `// AGENT: po 03` w `hexShips3D.tsl.js`) | 03 — ZAMKNIĘTE (f487d2f) |
 | 03 | 24 | `src/3d/sunShadowMaskGLSL.js` — napis GLSL maski dla nieprzeniesionych `ShaderMaterial` (Z4/Z5/Z7) | ostatni odbiorca; plik usuwa 24 |
-| 02 | 23 | Bloom = 12 osobnych `renderer.render()` (~0,9–1,0 ms CPU na render, GPU ~0,085 ms przy 1080p); znaczniki czasu ~15 µs CPU na pass | 23 |
+| 02 | 23 | Bloom = 12 osobnych `renderer.render()` (~0,9–1,0 ms CPU na render, GPU ~0,085 ms przy 1080p); znaczniki czasu ~15 µs CPU na pass | 23 — ZAMKNIĘTE (b41e4de): bloom = 12 kerneli w jednym passie compute, cele bit w bit |
 | 01 | 11 | Rozgrzewka tylko „nie rzuca”: pipeline'y kompilują się asynchronicznie przy pierwszym użyciu, osłona `backend.draw` pomija rysunek do gotowości (obiekt pojawia się 1–2 klatki później) | 11 — ZAMKNIĘTE (d62e275): rejestr `Core3D.warmup`; zostały: cień Destruction3D rozgrzewany rysunkiem (16), bryła stacji GLB, kernele compute synchronicznie na ekranie ładowania, pas 21b |
 | 01 | 06 | Brak synchronicznego odczytu → mapa CPU ringu pusta (`heightAtUV` = 0): płyta ringu koliduje bez rzeźby terenu, LOD terenu bez wysokości, landmarki i kopuły stawiane bez mapy (stała wysokość z `haloRingLandmarks.js`) | 06 — ZAMKNIĘTE (070a407): teren w koliderze po `ring.ready`, sprawdzone w grze |
 | 01 | 20 | Overlay efektów na własnym `WebGLRenderer` (jedyny drugi renderer; stare efekty overlaya działają bez zamienników) | 20 — ZAMKNIĘTE (df965d6): wybuch reaktora w Core3D, overlay usunięty, jedyny renderer w `core3d.js` |
 | 01 | 17–19 | Pociski i błyski ze starego `weapon3DSystem` (materiały wbudowane — rysują się; cyjanowe głowy pocisków nie rysują się na WebGPU), smugi `slugTrail3D` (zamiennik); dym i iskry Fx3D — ZAMKNIĘTE w 12-B | broń — ZAMKNIĘTE w 17 (753700e); rakiety — ZAMKNIĘTE w 19 (2adf8fb) |
-| 17 | 23 | Sceny `wraki` i `warp` rozjeżdżają się ze stanem bazy (46%): wizualia losują z `Math.random` gry (pierwsza różnica w `mainExhaust3D.spawnSpark` — liczba iskier zależy od zajętości banku Fx3D, którego broń już nie używa); rozgrywka sama bez zmian | 23 (wizualia na `fxRandom`, nowa baza `wraki` / `warp` / `galeria-*` z `main`) |
+| 17 | 23 | Sceny `wraki` i `warp` rozjeżdżają się ze stanem bazy (46%): wizualia losują z `Math.random` gry (pierwsza różnica w `mainExhaust3D.spawnSpark` — liczba iskier zależy od zajętości banku Fx3D, którego broń już nie używa); rozgrywka sama bez zmian | 23 — ZAMKNIĘTE (b41e4de): wizualia na `fxRandom`, nowa baza scen z nowymi efektami w `.tmp/webgpu/zadania/23/baza-main/` |
 | 01 | 22 | Soczewka i fale warpa usunięte (API jako no-op), skok działa bez efektu zgięcia | 22 — ZAMKNIĘTE (e9f4285) |
 | Faza 0 | 21 | Stare pole asteroid i tło pasa wyłączone (`?asteroidyStare`) | 21 — ZAMKNIĘTE (ee034ed): nowe pole z dema, stare usunięte |
-| 21 | 23 | Mapy cienia reflektorów w polu renderowane osobno na każdą mapę (budżet `maxShadowShips` = 2: gracz + najbliższy) | 23 (jeden render atlasu) |
+| 21 | 23 | Mapy cienia reflektorów w polu renderowane osobno na każdą mapę (budżet `maxShadowShips` = 2: gracz + najbliższy) | 23 — częściowo: cień pomijany bez rzucających; atlas w jednym renderze otwarty (24 / później) |
 
 ## Zebrane dla zadań 11, 23 i 24 (z raportów podagentów)
 
@@ -842,3 +842,27 @@ Todo (2): „PORT poprawka 1 / 3 (TODO integracji)” w `tests/shipCore.test.mjs
   przebazowania. Inwentarz z HEAD df965d6: **port 2 pliki z GLSL (`beamDebris3D.js` 64 linie — materiał tylko w demach
   destruktora, `sunShadowMaskGLSL.js` 35 — napis dla modułów poza grą), 1 materiał, 99 linii**; razem 13 / 24 / 2819;
   renderer tworzy się tylko w `core3d.js`. Testy: 1633 / 5 porażek bazowych / 3 todo; `npm test` OK.
+- **Użytkownik (rano 2026-09-28): duża bitwa na WebGPU 68 FPS vs ~200 FPS na WebGL** (PerfHUD: GPU 1,5 ms, Ortho 183 dc ·
+  5,6 ms CPU, U hex 2,6 ms, fizyka 2,9 ms/krok) → priorytet nr 1 zadania 23.
+- **Zadanie 23 scalone do `main`** (21 commitów 8fc9e77…56012bf; scalenie b41e4de): **duża bitwa (148 okrętów, A/B
+  naprzemiennie z tagiem, mediany 9 próbek): FPS main/tag 54% → 84% (146/79 → 198/167 FPS), Core3D 4,02 → 1,47 ms (tag
+  0,79–0,95), rysunki 117 → 49.** Poprawki bez zmiany obrazu (harness 191 zrzutów ≤ 2/255 po każdej): dane kadłuba w jednym
+  buforze storage ze slotem + skóry kadłubów rysowane partiami — jeden rysunek na zestaw tekstur (`src/3d/hullSkinBatch.js`;
+  ~145 rysunków skór → 5–8); klucz świateł three z pamięci (`src/3d/tsl/kluczSwiatel.js`), mapa cienia i łapacze pomijane
+  bez rzucających w kadrze cienia; jeden `writeBuffer` na bufor uniformów (295 → 213 wywołań na klatkę); **bloom = 12 kerneli
+  w jednym passie compute** (`src/3d/tsl/bloomCompute.js`; `scripts/webgpu/bloom-parzystosc.mjs`: 11 celów bit w bit z
+  `BloomNode`; CPU bloomu ~0,5 → 0,03 ms); spawn pul efektów i krok dymu rakiet w jednym passie compute; zakresy wysyłki
+  zamiast pełnych buforów, kopie CPU buforów liczonych tylko na GPU oddane (~140 MB); ringi Marsa i Jowisza budowane w
+  kawałkach (przestój 528 / 690 → ~200 ms); znaczniki czasu GPU co 4. klatkę; wizualia na `fxRandom` (nowa baza scen z
+  nowymi efektami: `.tmp/webgpu/zadania/23/baza-main/`); harness zapisuje błędy startu sesji. Fizyka na krok = baza (tag
+  2,6–3,4 ms/krok, main 2,9) — więcej na klatkę tylko przez dłuższą klatkę. Sceny bez ognia: CPU renderu +0,15–0,4 ms nad
+  bazą (stały koszt renderów / rysunków three), GPU 1,5–5× taniej. Drżenie (`scripts/webgpu/drzenie-gra.mjs`, w grze):
+  ≤ 0,008 px RMS poza smugami pocisków przy zoomie 1,8 (0,018 px — nie precyzja float32) i dymem rakiet przy 7 mln / zoomie 2
+  (0,029 px — mapa samocienia przesuwa się z kamerą). Start: urządzenie 3,7–4,2 s, pierwsza klatka gry 12,0–13,4 s. Pamięć
+  stabilna w 3 cyklach bitwa → sprzątanie; 8 tekstur planet 8K = 1,37 GB, tekstury razem ~2,6 GB VRAM. Kopia kanwy
+  `#webgl-layer` → `#c` ≤ 0,1 ms — rekomendacja: zostawić. Tylko WebGPU: w 3 wariantach bez WebGPU komunikat w menu, gra nie
+  startuje. **Niedomknięte:** CPU scen bez ognia +0,15–0,4 ms; 5 przestojów > 100 ms (120–213 ms, ~15 klatek po teleporcie
+  obok stacji — prawdopodobnie kompilacja materiałów pierwszej stacji modelu w procesie GPU → rozgrzać szablony stacji na
+  ekranie ładowania); drżenie smug i dymu nad progiem 0,01 px. Do decyzji użytkownika: kolano bloomu dla broni / rakiet / ran
+  (A/B w `.tmp/webgpu/zadania/23/kolano/` — np. `galeria-mjolnir` 69% pikseli >8/255), siatka mapy samocienia dymu. Raport:
+  `docs/webgpu/WYDAJNOSC.md`. Testy: 1662 / 5 porażek bazowych / 3 todo; `npm test` OK.

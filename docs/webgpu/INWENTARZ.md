@@ -22,8 +22,8 @@
 
 | zakres | pliki z GLSL | materiały | linie GLSL | oBC | odczyty | compile | wbudowane | clone / needsUpdate / defines | TSL / mieszane |
 |---|---:|---|---:|---:|---:|---:|---:|---|---|
-| **razem** | 13 | 24 (22 SM, 0 Raw, 2 ShaderPass) | 2819 | 0 | 2 | 2 | 29 | 4 / 13 / 5 | 99 / 0 |
-| port | 2 | 1 (1 SM, 0 Raw, 0 ShaderPass) | 99 | 0 | 2 | 2 | 20 | 4 / 7 / 0 | 95 / 0 |
+| **razem** | 13 | 24 (22 SM, 0 Raw, 2 ShaderPass) | 2819 | 0 | 2 | 2 | 29 | 4 / 13 / 5 | 102 / 0 |
+| port | 2 | 1 (1 SM, 0 Raw, 0 ShaderPass) | 99 | 0 | 2 | 2 | 20 | 4 / 7 / 0 | 98 / 0 |
 | warp | 0 | 0 (0 SM, 0 Raw, 0 ShaderPass) | 0 | 0 | 0 | 0 | 0 | 0 / 0 / 0 | 0 / 0 |
 | legacy | 1 | 5 (3 SM, 0 Raw, 2 ShaderPass) | 392 | 0 | 0 | 0 | 2 | 0 / 2 / 0 | 0 / 0 |
 | poza grą | 10 | 18 (18 SM, 0 Raw, 0 ShaderPass) | 2328 | 0 | 0 | 0 | 7 | 0 / 4 / 5 | 4 / 0 |
@@ -155,12 +155,12 @@ i pomiar drżenia (PLAN.md §1 p. 7). `coldWreckImpostors.js` / `coldWrecks.js` 
 
 `clone()` / `needsUpdate = true` (heurystyka: zmienna z „mat” w nazwie):
 
-- needsUpdate — src/3d/bridgeFx3D.js:300
-- needsUpdate — src/3d/hexShips3D.js:1406
+- needsUpdate — src/3d/bridgeFx3D.js:302
+- needsUpdate — src/3d/hexShips3D.js:1471
 - needsUpdate — src/3d/shipLights3D.js:202
 - needsUpdate — src/3d/sunShadowMask.js:205
-- clone — src/vfx/destruction3D.js:866
-- clone — src/vfx/destruction3D.js:1161
+- clone — src/vfx/destruction3D.js:875
+- clone — src/vfx/destruction3D.js:1170
 - clone — src/vfx/panelShardManager.js:301
 - clone — src/vfx/panelShardManager.js:310
 - needsUpdate — src/vfx/panelShardManager.js:150
@@ -190,6 +190,7 @@ i pomiar drżenia (PLAN.md §1 p. 7). `coldWreckImpostors.js` / `coldWrecks.js` 
 |---|---|
 | `tests/beamShips3D.test.mjs` | `src/3d/beamShips3D.js` |
 | `tests/beamSkinSurface3D.test.mjs` | `src/3d/beamShips3D.js` |
+| `tests/bloomCompute.test.mjs` | `src/3d/core3d.js` |
 | `tests/cargoContainers3D.test.mjs` | `src/3d/cargoContainers3D.js`, `src/3d/cargoDrones3D.js` |
 | `tests/fx3dTSL.test.mjs` | `src/3d/core3d.js` |
 | `tests/fxCore3D.test.mjs` | `src/3d/core3d.js` |
