@@ -236,26 +236,27 @@ Różnice względem dema (świadome):
   w tych samych miejscach i zoomie; burza powtarzalna (`STORM_STAGE`: ten sam los symulatora, piorun i błysk w chmurach) —
   bez niej fioletowa łuna zależy od chwilowego błysku w chmurach (rozproszenie 0,8).
 
-**Wydajność w grze** (headless Chrome, RTX 5080, 1920 × 1080, czas rzeczywisty; `asteroidy-gra.mjs --wydajnosc`:
-konfiguracje w świeżych stronach, 3 przebiegi na przemian, mediana median, w nawiasie rozrzut przebiegów; inne sesje
-pracowały na tym samym GPU/CPU — rozrzut duży, porównania tylko naprzemienne; PRZED budżetem map cienia i przed
-poprawką wysyłki buforów — stan końcowy niżej):
+**Wydajność w grze — stan końcowy** (po scaleniu 15–19 i 22; headless Chrome, RTX 5080, 1920 × 1080, czas
+rzeczywisty; `asteroidy-gra.mjs --wydajnosc`: konfiguracje w świeżych stronach, 3 przebiegi na przemian, mediana median,
+w nawiasie rozrzut przebiegów; inne sesje pracowały na tym samym GPU/CPU, a bitwa co przebieg toczy się inaczej —
+czasy klatki bitew są szumem, koszt pasa mierzy A/B niżej):
 
 | konfiguracja | klatka [ms] | CPU `Core3D` [ms] | GPU [ms] | CPU pasa [ms] | draw calle |
 |---|---|---|---|---|---:|
-| próżnia, sam gracz, zoom 0,12 | 3,21 (2,62–3,28) | 2,69 | 0,32 | — | 24 |
-| gęste pole, sam gracz, zoom 0,12 (6,5 tys. skał, 28 świateł) | 4,81 (3,88–5,79) | 4,20 (3,46–5,00) | 1,80 | 0,64 (0,51–0,69) | 53 |
-| gęste pole, zoom 1 (1522 skały, 6 map cienia) | 4,99 (4,60–6,89) | 4,25 | 1,50 | 0,49 | 55 |
-| bitwa 24 × 24 w próżni, zoom 0,12 | 10,42 (7,29–10,49) | 3,71 (2,92–4,16) | 0,66 | — | 85 |
-| bitwa 24 × 24 w gęstym polu, zoom 0,12 | 12,09 (9,63–15,78) | 6,27 (5,20–6,97) | 2,29 | 1,01 (0,95–1,30) | 118 |
+| próżnia, sam gracz, zoom 0,12 | 3,96 (3,93–3,96) | 3,18 | 0,33 | — | 24 |
+| gęste pole, sam gracz, zoom 0,12 (6,5 tys. skał, 28 świateł) | 5,37 (3,19–6,01) | 4,48 (2,82–5,07) | 1,85 | 0,67 (0,37–0,75) | 53 |
+| gęste pole, zoom 1 (1522 skały, 6 map cienia) | 5,45 (4,54–6,60) | 4,55 (3,87–5,22) | 1,49 | 0,51 (0,34–0,62) | 55 |
+| bitwa 24 × 24 w próżni, zoom 0,12 | 13,83 (10,25–15,59) | 5,97 (4,84–6,24) | 0,77 | — | 99 |
+| bitwa 24 × 24 w gęstym polu, zoom 0,12 | 8,09 (7,35–17,88) | 4,71 (4,40–8,38) | 2,34 | 0,70 (0,52–1,02) | 129 |
 
-A/B w jednej stronie (`asteroidy-gra.mjs --ab`, bitwa w polu, warianty na przemian): przed poprawkami pas kosztował
-~2–3 ms CPU `Core3D` i ~1,5 ms GPU, mapy cienia reflektorów ~0,1 ms CPU na mapę (w bitwie 11–12 map). Dwie poprawki:
-(1) bufory pasa bez `DynamicDrawUsage` — three r183 wysyłał je przy KAŻDYM renderze (~1 MB na klatkę przy zoomie 0,12),
-teraz tylko po `needsUpdate`; (2) budżet `maxShadowShips` = 2 (gracz + najbliższy statek: 3–7 map). Po nich narzut pasa
-w bitwie ~0,5–1,2 ms CPU `Core3D` (pełne mapy cienia +~0,8 ms), GPU bez zmian (~1,5 ms). Siatka świateł w bitwie do
-6,8 tys. elementów, 0 odrzuconych (`ITEM_CAP` 262 tys.). Do 23: mapy cienia w jednym renderze atlasu zamiast renderu na
-mapę, koszt passów pasa przy dalekim zoomie (kubełki LOD, 8 płatów mgły).
+A/B w jednej stronie (`asteroidy-gra.mjs --ab --rundy 3`, bitwa 24 × 24 w polu, warianty na przemian, mediany rund):
+bez pasa 2,93 ms CPU `Core3D` / 0,86 ms GPU; pas bez map cienia 3,36 / 2,29; pas domyślny (`maxShadowShips` 2: 4–7 map)
+3,80 / 2,28 (krok pasa 0,40 ms); pas z mapami dla wszystkich 6 statków (11–12 map) 5,21 / 2,30. Narzut pasa w bitwie:
+~0,9 ms CPU i ~1,4 ms GPU. Dwie poprawki po pierwszym pomiarze (przed nimi ~2–3 ms CPU): bufory pasa bez
+`DynamicDrawUsage` (three r183 wysyłał je przy KAŻDYM renderze, ~1 MB na klatkę przy zoomie 0,12) i budżet map cienia
+(każda mapa to osobny render atlasu, ~0,1–0,2 ms CPU). Siatka świateł w bitwie do 8,8 tys. elementów, 0 odrzuconych
+(`ITEM_CAP` 262 tys.). Do 23: mapy cienia w jednym renderze atlasu zamiast renderu na mapę, koszt passów pasa przy
+dalekim zoomie (kubełki LOD, 8 płatów mgły).
 
 ## Uproszczenia względem dema WebGL i braki
 
