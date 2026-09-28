@@ -354,10 +354,12 @@ test('ładowanie skoku: gwiazdy gry wydłużają się płasko wzdłuż lotu (bez
   }
   // Shader gwiazd gry: smugi wzdłuż moveDir (bez punktu zbiegu), wzór rośnie
   // z kadrem przy oddaleniu, kamera gwiazd z limitem od widoku skoku.
+  // Port WebGPU (zadanie 05): shader gwiazd to graf TSL (createStarMaterial, planet3d.assets.tsl.js).
   const src = readFileSync(new URL('../src/3d/planet3d.assets.js', import.meta.url), 'utf8');
-  assert.doesNotMatch(src, /starFocus/);
-  assert.match(src, /float angle = atan\(vDir\.y, vDir\.x\);/);
-  assert.match(src, /pos\.xy \*= zoomComp;/);
+  const tsl = readFileSync(new URL('../src/3d/planet3d.assets.tsl.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(src + tsl, /starFocus/);
+  assert.match(tsl, /const angle = atan\(vDir\.y, vDir\.x\);/);
+  assert.match(tsl, /const pos = vec3\(vec2\(posX, posY\)\.mul\(u\.zoomComp\), aPos\.z\);/);
   assert.match(src, /advanceStarCamera\(this\.starCam, cx, cy, zoomComp, speedCap > 0 \? speedCap \* Math\.max\(0, dt\) : 0\);/);
   assert.match(src, /this\.uniforms\.cameraOffset\.value\.set\(this\.starCam\.x, -this\.starCam\.y\);/);
 });
