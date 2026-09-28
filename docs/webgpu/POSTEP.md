@@ -52,7 +52,7 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 | 12 | Infrastruktura efektów GPU: compute w klatce, siatka świateł, zniekształcenia, Fx3D w TSL | 03 | 04–11, 13–16 | max | zrobione, scalone (12-A: moduły `src/3d/fx/`; 12-B: 72ec255 — wpięcie w Core3D, Fx3D w TSL) | 0f3d429…37953a6 (12-A); 819fd85, 0c67d84, ebc4211, a029a03, 59e0571, 7168783 (12-B) | podstawa pod 17–19 (i przyszłe asteroidy) |
 | 13 | Silniki: MAIN, WARP (plazma), SIDE | 03 | 04–12, 14–20 | xhigh | zrobione, scalone (bd96586) | e844a7a, c85042f, 3ff03a4 (scalenia `main` 23ed7d5, 49e7fdf) | graf plazmy na pulę (0 budów przy skoku); iskry MAIN = Fx3D (sprawdzić po 12-B: `silniki.mjs --post` z Fx3D) |
 | 14 | Tarcze i trafienia w tarczę | 03 | 04–13, 15–20 | xhigh | zrobione, scalone (7703490) | 9b8dad0, 9b95df5, e566f74, 02d6f02 | graf na wariant + wartości per obiekt; trafienia w `uniformArray` pakowanej w `onObjectUpdate` |
-| 15 | Mostki, rdzenie, reaktory, światła (+ `mostki-demo`, `rdzen-demo`) | 04 | 05–14, 16–20 | xhigh | w toku (podagent, worktree `statki-wt/15`; maska w `bridge3D` = zastępnik do 03) | | |
+| 15 | Mostki, rdzenie, reaktory, światła (+ `mostki-demo`, `rdzen-demo`) | 04 | 05–14, 16–20 | xhigh | zrobione, scalone (ca83cd4) | 90b73f3, 67f5d8b, 0d20cf4, b366146, 0c292d4, f1bf060, 5e383a0, e39d5ab, 172d1d3 (scalenia `main` 45a927b, 7286401, c60ee1c, 7f49da8, ab7ca8a) | −998 linii GLSL w 5 modułach; jeden graf bryły mostka na 11 rodzajów; obrażenia mostka w buforze storage (µs zamiast 0,7–1,3 ms); `bitwa__fg` i `split` 0% vs baza |
 | 16 | Zniszczenie stacji (+ scena bazy `stacja-rozpad`) | 03 | 04–15, 17–19 | xhigh | w toku (podagent, worktree `statki-wt/16`, tag w `statki-wt/tag16`) | | |
 | 17 | Broń 1/2 z dema `bronie-webgpu`: efekty wszystkich broni (pociski, smugi, trafienia, wiązki, PD, flak) | 12, 04 | 05–11, 13–16, 19 | max | w toku (podagent, worktree `statki-wt/17`, części 17-A…F wg `PROJEKT-BRONI.md` §4) | | nowe efekty — ocena obrazu zamiast tolerancji; PD i flak z kanwy 2D do 3D |
 | 18 | Broń 2/2: obrażenia z dema — mapa ran, przebicia, rykoszety, ładowanie, serie; światła efektów na poszyciu | 17, 04 | 05–11, 13–16, 19 | max | część 18-A zrobiona i scalona (4e165fb): moduły mechaniki + zapytania `HullBodies` bez wpięcia; zostają 18-B (wpięcie, po 17), 18-C (mapa ran, po 04 i 12), 18-D | 8eaa828…2da882d | zatwierdzona zmiana rozgrywki |
@@ -72,7 +72,7 @@ Stan zamierzony na `main` w trakcie portu — nie „naprawiać” poza zadaniem
 |---|---|---|---|
 | 01 | 24 | Nieprzeniesione `ShaderMaterial` rysują się magentą (`spis.zamienniki` w harnessie) | zadania 02–22 |
 | 01 | 03 | Maska słońca wyłączona (`uSunShadowOn = 0`): bez cienia słońca na materiałach, smug tła i SDF kadłubów; fala uderzeniowa bez passa refrakcji; kadłuby z 04 liczą pełne słońce (zastępnik `// AGENT: po 03` w `hexShips3D.tsl.js`) | 03 — ZAMKNIĘTE (f487d2f) |
-| 03 | 24 | `src/3d/sunShadowMaskGLSL.js` — napis GLSL maski dla nieprzeniesionych `ShaderMaterial` (mostek 15, skały 21, Z4/Z5/Z7) | ostatni odbiorca; plik usuwa 24 |
+| 03 | 24 | `src/3d/sunShadowMaskGLSL.js` — napis GLSL maski dla nieprzeniesionych `ShaderMaterial` (skały 21, Z4/Z5/Z7) | ostatni odbiorca; plik usuwa 24 |
 | 02 | 23 | Bloom = 12 osobnych `renderer.render()` (~0,9–1,0 ms CPU na render, GPU ~0,085 ms przy 1080p); znaczniki czasu ~15 µs CPU na pass | 23 |
 | 01 | 11 | Rozgrzewka tylko „nie rzuca”: pipeline'y kompilują się asynchronicznie przy pierwszym użyciu, osłona `backend.draw` pomija rysunek do gotowości (obiekt pojawia się 1–2 klatki później) | 11 (moduły przez `Core3D.prewarmPass`) |
 | 01 | 06 | Brak synchronicznego odczytu → mapa CPU ringu pusta (`heightAtUV` = 0): płyta ringu koliduje bez rzeźby terenu, LOD terenu bez wysokości, landmarki i kopuły stawiane bez mapy (stała wysokość z `haloRingLandmarks.js`) | 06 — ZAMKNIĘTE (070a407): teren w koliderze po `ring.ready`, sprawdzone w grze |
@@ -511,3 +511,21 @@ Todo (2): „PORT poprawka 1 / 3 (TODO integracji)” w `tests/shipCore.test.mjs
   resztkowe różnice krawędzi — FXC scala `mad` także w wierzchołkach, pochodne na czwórkach pikseli. `halo-ring-shots.mjs`
   kasuje swój profil Chrome, opcja `--repo` (baza dema z innego drzewa). Inwentarz z HEAD ab3c820: port 22 pliki z GLSL,
   29 materiałów, 3925 linii. Testy: 1524 / 7 porażek bazowych / 3 todo; `npm test` OK.
+- **Zadanie 15 scalone do `main`** (90b73f3, 67f5d8b, 0d20cf4, b366146, 0c292d4, f1bf060, 5e383a0, e39d5ab, 172d1d3; scalenia
+  `main` 45a927b, 7286401, c60ee1c, 7f49da8, ab7ca8a; scalenie ca83cd4): światła pozycyjne (`shipLights3D`), szczeliny okien
+  (`bridgeFx3D`), model mostka (`bridge3D` + `bridge3D.tsl.js`: bryła, cień na kadłubie GreaterDepth, okna), reaktor
+  (`reactor3D.tsl.js`) i efekty rdzenia (`coreFx3D.tsl.js`) w TSL, −998 linii GLSL. Mostek: jeden graf bryły na 11
+  rodzajów (Mesh + InstancedBufferGeometry, instancja = 30 liczb w jednym przeplecionym buforze, stałe rodzaju w
+  `uniformArray`), maska słońca z `sunShadowMask.js`. **Obrażenia mostka w buforze storage u32 z zakresami** zamiast
+  tekstury 768 × 512 (backend WebGPU ignoruje zakresy tekstur — każda zmiana = 1,5 MB): `benchDamageUpload` < 0,005–0,01 ms
+  zamiast 0,72–1,35 ms na klatkę ze zmianą. Harness vs `main`: 0 błędów, stan i draw calle równe, zamienniki −1 w 12
+  scenach (kalibracja, bitwa, warp, split bez zamienników); vs baza `bitwa__fg` 11,1% → 0%, `split` 4,49% → 0% (w
+  tolerancji), `bitwa` 15,7% → 0,62%, `k7-hala__fg` 3,8% (reszta K-7 → 10). Dema obok tagu: pasma HDR okien 10 kadłubów
+  równe, cień mostka na kadłubie 2,17% / 2,16% pikseli, rdzeń 0,33–1,27%, drżenie modelu ≤ 0,019 px (baza 0,021).
+  Narzędzia dem (`precyzja-drzenie`, `mostki3d-drzenie`, `mostki-shots`, `mostki3d-shots`) na WebGPU i kasują profile
+  Chrome. Pułapki (PLAN §3): `DynamicDrawUsage` = pełny `writeBuffer` przy każdym renderze (wysyłać tylko zakresy);
+  macierz `InstancedMesh` > 1024 synchronizowana raz na klatkę rAF (narzędzia z wieloma renderami w klatce);
+  `textureSample` w niejednolitym przepływie. Otwarte → 23: brama znaczników czasu liczy miejsce raz na klatkę rAF, a
+  dema renderują wiele razy (ostrzeżenie o przepełnieniu); żar krawędzi w demie rdzenia 1–3% ciemniejszy (materiał
+  kadłuba). Mostki i rdzenie na kadłubach belkowych nadal nieaktywne (etapy 4–5 portu belek). Inwentarz z HEAD ca83cd4:
+  port 19 plików z GLSL, 24 materiały, 3429 linii. Testy: 1531 / 7 porażek bazowych / 3 todo; `npm test` OK.
