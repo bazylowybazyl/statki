@@ -33,7 +33,10 @@
 import * as THREE from 'three';
 import { Core3D } from './core3d.js';
 import { sceneOriginNearCamera } from './sceneOrigin.js';
-import { SUN_SHADOW_GLSL, sunShadowUniforms } from './sunShadowMask.js';
+import { sunShadowUniforms } from './sunShadowMask.js';
+// AGENT: moduł Z4 poza grą (scripts/proxy-batch) — GLSL; przejdzie na TSL przy integracji (Z13, PLAN §12 p. 1),
+// wtedy parzystość z grafem kadłuba (hexShips3D.tsl.js). Napis maski GLSL wprost z biblioteki poza portem.
+import { SUN_SHADOW_GLSL } from './sunShadowMaskGLSL.js';
 import { acquireHullVisualTexture, releaseHullVisualTexture, getHullLightTuning } from './hexShips3D.js';
 import { TRAFFIC_HULLS, resolveTrafficHullId, trafficHullRenderSize } from '../data/trafficHulls.js';
 import { SHIP_EDITOR_DEFAULTS } from '../data/hardpointEditorDefaults.js';

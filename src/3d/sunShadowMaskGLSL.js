@@ -1,15 +1,17 @@
 // src/3d/sunShadowMaskGLSL.js
 //
-// LEGACY (port WebGPU): GLSL maski słońca dla ShaderMaterial jeszcze NIEPRZENIESIONYCH na
-// TSL. Na WebGPU takie materiały i tak rysują się magentowym zamiennikiem (tekst GLSL nie
-// jest kompilowany), ale ich moduły wklejają ten napis do swoich shaderów i muszą się
-// wczytać. Biblioteka maski gry to funkcje TSL w sunShadowMask.js (zadanie 03) — ten plik
-// jest tylko źródłem napisu `SUN_SHADOW_GLSL` (re-eksport w sunShadowMask.js).
+// GLSL maski słońca dla modułów POZA PORTEM WebGPU (decyzja użytkownika, PLAN §12 p. 1):
+// shipProxyBatch3D.js (Z4), cargoContainers3D.js / cargoDrones3D.js (Z5) i portBuildings/* (Z7)
+// przejdą na TSL (funkcje z sunShadowMask.js) przy swojej integracji — ostatni zgasza plik.
+// Na WebGPU ich ShaderMaterial rysują się magentowym zamiennikiem (tekst GLSL nie jest
+// kompilowany), ale moduły wklejają ten napis do swoich shaderów i muszą się wczytać.
+// Biblioteka maski GRY to funkcje TSL w sunShadowMask.js (zadanie 03); gra tego napisu nie używa.
 //
-// Użytkownicy (znikają przy porcie swoich materiałów): planet3d.assets.js (zadanie 05),
-// bridge3D.js (15), [asteroidy — zrobione w 21: stare pole usunięte, nowe w TSL],
-// shipProxyBatch3D.js (Z4), cargoContainers3D.js / cargoDrones3D.js (Z5),
-// portBuildings/* (Z7). Ostatni zgasza plik (zadanie 24).
+// AGENT: sunShadowMask.js re-eksportuje SUN_SHADOW_GLSL tylko dla budowli Z7
+// (portBuildings3D.js, portHullBuild3D.js importują go stamtąd) — to jedyna droga GLSL do grafu
+// importów gry (dozwolona w strażniku tests/graBezGlsl.test.mjs, lista POZA_PORTEM w
+// scripts/webgpu/grafGry.mjs). Po przepięciu importu Z7 na ten plik usuń re-eksport i wpis —
+// strażnik sam o to poprosi.
 //
 // Bez importów z sunShadowMask.js: tamten moduł re-eksportuje ten napis, więc import
 // w drugą stronę dałby cykl (dostęp do stałej przed inicjalizacją).
