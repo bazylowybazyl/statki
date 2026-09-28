@@ -4,7 +4,8 @@
 > §2, §4, §5): zapytania kadłubów, przebicia, rykoszety, ładowanie i serie jako moduły logiki (gałąź `webgpu/18a`,
 > scalone 4e165fb). **18-B (gałąź `webgpu/18b`) wpięło je w grę** — pętla pocisków, sterowanie ogniem gracza, P2
 > i AI, HUD, seria Hexlance'a, efekty `kerf / exit / stuck / ricochet / charge` (§8); **18-D** — odrzut, wstrząs
-> i skala trafienia z danych broni (§8.4). Mapa ran — 18-C.
+> i skala trafienia z danych broni (§8.4). Mapa ran — 18-C; stemple wejścia, rykoszetu, wylotu, zakleszczenia
+> i pasa rzazu z mechaniki 18-B — §8.6.
 
 ## 1. Zapytania kadłubów (`src/game/hullBodies.js`)
 
@@ -179,8 +180,8 @@ w `superweapon.js`); przepisane: `projectileTrajectory` (kadłub zatrzymuje wszy
 - `fireWeaponCore` nadaje pociskowi `serial: nextProjectileSerial()`, `mech: hasHullMechanics(def) ? def : null`
   (broń z `penDepth` albo `ricochet`: Mjolnir, Valkyrie, Vulcan, Gatling S) i `pen: null`.
 - Pocisk z `b.pen` najpierw kroczy `stepInsideHull`; zdarzenie obsługuje `applyBulletHullPass` (znaki rzazu →
-  `WeaponFx.kerf`, krater wyjścia / zakleszczenia przez `applyHexImpact` → `HullBodies.impact` BEZ HP, efekt
-  `pierceExit` / `pierceStuck`, nośnik = kadłub). W materiale (`PASS_INSIDE`) pocisk nie widzi innych kolizji
+  `WeaponFx.kerf` i pas na mapie ran, krater wyjścia / zakleszczenia przez `applyHexImpact` → `HullBodies.impact`
+  BEZ HP, efekt `pierceExit` / `pierceStuck`, nośnik = kadłub; stemple — §8.6). W materiale (`PASS_INSIDE`) pocisk nie widzi innych kolizji
   (kadłuby, asteroidy, płyta ringu, stacje); po wylocie kandydaci od punktu wyjścia.
 - Pętla kandydatów działa w przebiegach `hullPass` (≤ 12): drugi i kolejne tylko po wylocie z kadłuba w tym samym
   kroku (następny okręt w kolumnie). Odcinek kandydatów `[candX0, b.x]` — dla każdego innego pocisku `candX0 =
@@ -257,3 +258,26 @@ rusza po serii.
    gracza dochodzą do sufitu (w demie 10–12 px bez mnożnika).
 9. Stan przejścia przez materiał (`b.pen`) to jeden obiekt na pocisk przebijający (Mjolnir co 11 s, Valkyrie co
    3,3 s) — bez puli.
+10. Rykoszet zostawia na mapie ran płytkie osmalenie (wariant `ricochet` Vulcana / Gatlinga S), nie ranę trafienia
+    jak w demie — pocisk odbił się, poszycie jest tylko przypalone (§8.6).
+11. Pas rzazu przebicia stempluje gra (`stampKerf` co krok w materiale, gęstość mapy: co ≤ 22 j., ≤ 8 znaków na
+    krok), nie receptura efektu — mapa nie zależy od przerzedzenia i bramki kadru efektu (decyzja 4); receptura
+    `kerf` dostaje kadłub `null`, żeby nie stemplować drugi raz.
+
+### 8.6 Mapa ran (18-C) z mechaniką 18-B
+
+Scalenie `main` z 18-C (8f8013d): kratery stempluje hak `HullBodies.onImpact` → `HullDamageMap.onHullImpact`,
+rodzinę i wariant podaje `applyHexImpact(entity, x, y, damage, vel, shard, fxSource, fxVariant)` przez
+`HullDamageMap.setSource(fxSource, fxVariant)` … `clearSource()`.
+
+| Zdarzenie | Gdzie | Źródło, wariant | Wpis `hullDamageStamps.js` |
+|---|---|---|---|
+| Trafienie / wejście przebicia | `bulletsAndCollisionsStep` | pocisk, `impact` | rodzina broni, `impact` |
+| Rykoszet (Vulcan, Gatling S) | `bulletsAndCollisionsStep` | pocisk, `ricochet` | `vulcan.ricochet` = r 9, żar 0,9, osmalenie 0,3, bez brzegu i otworu, wydłużenie 2,6 wzdłuż lotu (nowy) |
+| Wylot | `applyBulletHullPass` | pocisk, `exit` | `mjolnir.exit` (r 56), `valkyrie.exit` (r 28) |
+| Zakleszczenie | `applyBulletHullPass` | pocisk, `stuck` | `valkyrie.stuck` (r 40); receptura `stuck` z kadłubem — duplikat tej klatki pomija `_hookedHere` |
+| Pas rzazu | `applyBulletHullPass` | `HullDamageMap.stampKerf(e, pierwszy znak, ostatni znak, rodzina)` | `mjolnir.kerf`, `valkyrie.kerf` |
+
+Receptura `kerf` w `WeaponFx.kerf` dostaje kadłub `null` (sam obraz). Testy: `tests/projectileMechanicsGame.test.mjs`
+(źródła i warianty kraterów, pasy rzazu z pętli gry), `tests/hullDamageMechanics.test.mjs` (wpisy tabeli przez
+hak), `tests/weaponFxPierce.test.mjs` (efekt rzazu bez stempla).

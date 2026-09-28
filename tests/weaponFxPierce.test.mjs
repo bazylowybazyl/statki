@@ -46,6 +46,22 @@ test('rzaz: co k-ty znak mechaniki jak w demie (Mjolnir ~104 j., Valkyrie ~66 j.
   WeaponFx.reset();
 });
 
+test('rzaz w efekcie bez stempla mapy ran: pas rzazu stempluje gra (stampKerf), receptura dostaje kadłub null', async () => {
+  const { HullDamageMap } = await import('../src/3d/hullDamageMap.js');
+  const orig = HullDamageMap.stampRecipe;
+  let withHull = 0;
+  HullDamageMap.stampRecipe = (e) => { if (e) withHull++; return false; };
+  try {
+    const k0 = stat('kerfs');
+    const hull = { beamHull: { dmgKey: 1 } };
+    assert.equal(WeaponFx.kerf(bullet('siege_railgun', 'rail'), 0, 0, 22, 0, 9, 25000, 0, hull), true);
+    assert.equal(WeaponFx.kerf(bullet('special_valkyrie_railgun', 'rail'), 0, 0, 22, 0, 9, 3000, 0, hull), true);
+    assert.ok(stat('kerfs') - k0 > 0, 'efekty rzazu są');
+    assert.equal(withHull, 0, 'bez drugiego stempla rzazu z receptury');
+  } finally { HullDamageMap.stampRecipe = orig; }
+  WeaponFx.reset();
+});
+
 test('wyjście i zakleszczenie: receptury rodziny (Valkyrie ma `stuck`, Mjolnir — trafienie w środku)', () => {
   noRandom(() => {
     const e0 = stat('exits'); const s0 = stat('stuck');

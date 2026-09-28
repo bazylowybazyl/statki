@@ -18,6 +18,7 @@ const Carrier = await import('../src/game/carrierVelocity.js');
 const { SimClock } = await import('../src/game/simClock.js');
 const { createShot, flyShot, ledgerFor } = await import('./helpers/hullFlight.mjs');
 const { readIndexHtml, loadIndexFunction } = await import('./helpers/indexSource.mjs');
+const { stampFamilyFor } = await import('../src/3d/hullDamageStamps.js');
 
 const html = readIndexHtml();
 const MJOLNIR = MASTER_WEAPONS.siege_railgun;
@@ -54,8 +55,14 @@ function withSeed(seed, fn) {
 
 // ---------------- pętla pocisków gry w piaskownicy ----------------
 const events = [];
-// Mapa ran (18-C): źródło stempla krateru — w piaskownicy bez mapy.
-const HullDamageMap = { setSource() {}, clearSource() {} };
+// Mapa ran (18-C) w piaskownicy: zapis źródeł kraterów (setSource przed HullBodies.impact) i pasów
+// rzazu (stampKerf) — rodzina ze źródła jak w prawdziwej mapie (hullDamageStamps.stampFamilyFor).
+const stamps = [];
+const HullDamageMap = {
+  setSource(src, variant = 'impact') { stamps.push({ type: 'source', family: stampFamilyFor(src), variant }); },
+  clearSource() { stamps.push({ type: 'clear' }); },
+  stampKerf(e, x0, y0, x1, y1, family) { stamps.push({ type: 'kerf', family, entity: e, x0, y0, x1, y1 }); return 1; }
+};
 const game = {
   bullets: [], npcs: [], wrecks: window.wrecks, ship: null, player2Ship: null, splitScreenMode: false,
   SpatialGrid: {
@@ -95,7 +102,7 @@ const game = {
   ricochetBounce: M.ricochetBounce,
   HIT_PENETRATE: M.HIT_PENETRATE, HIT_RICOCHET: M.HIT_RICOCHET, PASS_EXIT: M.PASS_EXIT, PASS_STUCK: M.PASS_STUCK, PASS_INSIDE: M.PASS_INSIDE,
   segmentCircleToi, getEntityShieldRadiusTowards: () => 0, isEntityShieldBlocking: () => false,
-  HullBodies, HullDamageMap, DestructorSystem: {}, registerShieldImpact() {}, shieldFxClassForBullet: () => 0,
+  HullBodies, HullDamageMap, stampFamilyFor, DestructorSystem: {}, registerShieldImpact() {}, shieldFxClassForBullet: () => 0,
   noteBridgeHit() {}, bridgeSimTime: 0,
   applyDamageToPlayer() {}, markPlayerDamage() {},
   applyDamageToNPC(npc, dmg) { npc.hpLost += dmg; },
@@ -107,7 +114,7 @@ const load = (header, name) => { game[name] = loadIndexFunction(html, header, na
 load('function removeBulletAt(index) {', 'removeBulletAt');
 load('function hullSweepImpact(entity, x0, y0, x1, y1, radius) {', 'hullSweepImpact');
 load('function hexSweepImpact(entity, x0, y0, x1, y1, radius) {', 'hexSweepImpact');
-load('function applyHexImpact(entity, x, y, damage, vel, shard, fxSource = null) {', 'applyHexImpact');
+load("function applyHexImpact(entity, x, y, damage, vel, shard, fxSource = null, fxVariant = 'impact') {", 'applyHexImpact');
 load('function writeImpactHit(out, entity, x, y, relVx, relVy, kind) {', 'writeImpactHit');
 load('function writeImpactRicochet(out, b, node) {', 'writeImpactRicochet');
 load('function applyBulletHullPass(b, pass) {', 'applyBulletHullPass');
@@ -122,6 +129,7 @@ function gameShot(def, x, y, dirX, dirY, serial) {
 // Lot w pętli gry: krok po kroku, dopóki pocisk jest w tablicy.
 function flyInGame(b, hulls, maxSteps = 1200) {
   events.length = 0;
+  stamps.length = 0;
   game.npcs.length = 0;
   game.npcs.push(...hulls);
   game.bullets.length = 0;
@@ -256,6 +264,56 @@ test('reszta arsenału jak dotąd: pierwszy kadłub zatrzymuje, pełne obrażeni
       assert.equal(hulls[1].hpLost, 0);
     } finally { releaseAll(hulls); }
   }
+});
+
+test('mapa ran (18-C): krater ze źródłem = pocisk i wariantem (wejście, wylot, zakleszczenie, rykoszet), pas rzazu przez stampKerf', () => {
+  const sources = () => stamps.filter((s) => s.type === 'source');
+  // Mjolnir przez kolumnę: wejście i wylot w każdym kadłubie, pasy rzazu rodziny mjolnir w materiale.
+  const col = hullsAt(LONG, [[0, 0], [700, 0], [1400, 0]]);
+  try {
+    const b = gameShot(MJOLNIR, -2000, 10, 1, 0, 7);
+    withSeed(7, () => flyInGame(b, col, 20));
+    assert.deepEqual(sources().map((s) => s.variant), ['impact', 'exit', 'impact', 'exit', 'impact', 'exit']);
+    assert.ok(sources().every((s) => s.family === 'mjolnir'));
+    assert.equal(stamps.filter((s) => s.type === 'clear').length, sources().length, 'źródło czyszczone po każdym kraterze');
+    const kerfs = stamps.filter((s) => s.type === 'kerf');
+    for (const e of col) assert.ok(kerfs.some((k) => k.entity === e), 'pas rzazu w każdym kadłubie');
+    for (const k of kerfs) {
+      assert.equal(k.family, 'mjolnir');
+      assert.ok(k.x1 > k.x0, 'odcinek wzdłuż lotu');
+      assert.ok(k.x0 >= k.entity.x - 230 && k.x1 <= k.entity.x + 230 && Math.abs(k.y0 - 10) < 1e-6, 'w materiale kadłuba');
+    }
+  } finally { releaseAll(col); }
+  // Valkyrie w grubym kadłubie: wejście, zakleszczenie.
+  const [thick] = hullsAt(THICK, [[0, 0]]);
+  try {
+    withSeed(5, () => flyInGame(gameShot(VALKYRIE, -2000, 10, 1, 0, 11), [thick]));
+    assert.deepEqual(sources().map((s) => `${s.family}:${s.variant}`), ['valkyrie:impact', 'valkyrie:stuck']);
+    assert.ok(stamps.some((s) => s.type === 'kerf' && s.family === 'valkyrie'));
+  } finally { releaseAll([thick]); }
+  // Vulcan na płaskim kącie: rykoszet = wariant `ricochet` (płytkie osmalenie), stop = `impact`.
+  const plateHull = hullsAt(plate(600, 200), [[0, 0]])[0];
+  try {
+    const a = 78 * Math.PI / 180;
+    let ric = 0;
+    for (let k = 0; k < 40; k++) {
+      const lx = -200 + 10 * k;
+      withSeed(5000 + k, () => flyInGame(gameShot(VULCAN, lx - Math.sin(a) * 900, 100 + Math.cos(a) * 900, Math.sin(a), -Math.cos(a), 5000 + k), [plateHull], 400));
+      const imp = events.find((x) => x.type === 'impact');
+      const [s] = sources();
+      assert.equal(s.family, 'vulcan');
+      assert.equal(s.variant, imp.ric ? 'ricochet' : 'impact');
+      if (imp.ric) ric++;
+    }
+    assert.ok(ric > 0, 'są rykoszety');
+  } finally { releaseAll([plateHull]); }
+  // Reszta arsenału: jedno trafienie, rodzina broni, bez pasów rzazu.
+  const two = hullsAt(LONG, [[0, 0], [700, 0]]);
+  try {
+    withSeed(9, () => flyInGame(gameShot(MASTER_WEAPONS.armata_mk1, -1500, 10, 1, 0, 42), two));
+    assert.deepEqual(sources().map((s) => `${s.family}:${s.variant}`), ['armata:impact']);
+    assert.equal(stamps.filter((s) => s.type === 'kerf').length, 0);
+  } finally { releaseAll(two); }
 });
 
 test('źródło: fireWeaponCore nadaje numer i dane mechaniki; pętla pocisków bierze decyzję z resolveHullHit', () => {

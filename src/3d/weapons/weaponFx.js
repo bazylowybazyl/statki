@@ -840,6 +840,10 @@ export const WeaponFx = {
    * najwyżej raz na podkrok 240 Hz (licznik zerowany po znaku), więc szybki pocisk znaczył co
    * v/240 j. (Mjolnir ~104 j., Valkyrie ~62 j.), nie co 22 j. — efekt bierze co k-ty znak
    * mechaniki (najwyżej KERF_PER_CALL na wywołanie, rozłożone po całym odcinku).
+   * Mapa ran: pas rzazu stempluje gra (HullDamageMap.stampKerf w applyBulletHullPass — każdy
+   * krok w materiale, bez bramki kadru efektu), więc receptura dostaje kadłub null (`ctx.stamp`
+   * bez celu) — bez drugiego stempla w miejscach znaków efektu. `hull` zostaje w podpisie jak
+   * w pierceExit / pierceStuck.
    */
   kerf(b, x, y, dx, dy, count, relVx, relVy, hull = null) {
     if (!this.available || !b || !(count > 0)) return false;
@@ -858,7 +862,7 @@ export const WeaponFx = {
       const s = Math.floor(k * stride);
       p.x = x + dx * s; p.y = y + dy * s;
       if (!this._inView(p.x, p.y, 400)) continue;
-      recipe.kerf(this.ctx, p, hull);
+      recipe.kerf(this.ctx, p, null);
       this.stats.kerfs++;
     }
     return true;

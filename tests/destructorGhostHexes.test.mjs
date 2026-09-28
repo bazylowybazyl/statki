@@ -297,7 +297,7 @@ test('game hit paths hand the found hex to applyImpact', () => {
   assert.match(bullets, /hullShard = hexSweep\.hitShard/);
   // Zadanie 18-B: krater wejścia z mnożnikiem mechaniki broni (rykoszet × 0,3; reszta arsenału
   // × 1 — obrażenia jak dotąd), encja trafienia jako realHit = hitNPC._realEntity || hitNPC;
-  // po heksie źródło stempla mapy ran (pocisk, 18-C).
+  // po heksie źródło stempla mapy ran (pocisk, 18-C) i wariant (rykoszet / trafienie, 18-B).
   assert.match(bullets, /const realHit = hitNPC\._realEntity \|\| hitNPC;/);
   assert.match(bullets, /applyHexImpact\(realHit, hitX, hitY, npcDamage \* entryK\.crater, [^;]*hitHexShard(?:, b(?:,[^;]*)?)?\)/);
 });

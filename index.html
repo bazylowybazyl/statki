@@ -856,6 +856,7 @@
     // Mapa ran na kadłubach (zadanie 18-C, src/3d/hullDamageMap.js): stempel z każdego krateru
     // i rzazu (hak po trafieniu), wygaszanie osmalenia przy naprawie R.
     import { HullDamageMap } from "./src/3d/hullDamageMap.js";
+    import { stampFamilyFor } from "./src/3d/hullDamageStamps.js";
     HullBodies.onImpact = HullDamageMap.onHullImpact;
     HullBodies.onRepair = HullDamageMap.onHullRepair;
     import { TowConstraintSystem } from "./src/game/towSystem.js";
@@ -8517,12 +8518,13 @@
     function hexSweepImpact(entity, x0, y0, x1, y1, radius) {
       return DestructorSystem.sweepImpact(entity, x0, y0, x1, y1, radius);
     }
-    function applyHexImpact(entity, x, y, damage, vel, shard, fxSource = null) {
+    function applyHexImpact(entity, x, y, damage, vel, shard, fxSource = null, fxVariant = 'impact') {
       // Kadłub na belkach: krater od najbliższego węzła punktu trafienia (sweep daje punkt wejścia).
-      // fxSource (pocisk albo broń) — rodzina stempla mapy ran dla haka HullBodies.onImpact (18-C).
+      // fxSource (pocisk albo broń) — rodzina stempla mapy ran dla haka HullBodies.onImpact (18-C);
+      // fxVariant — wariant stempla: 'impact', 'ricochet', 'exit', 'stuck' (przebicia 18-B).
       if (entity?.beamHull) {
         if (!fxSource) return HullBodies.impact(entity, x, y, damage, vel);
-        HullDamageMap.setSource(fxSource);
+        HullDamageMap.setSource(fxSource, fxVariant);
         try {
           return HullBodies.impact(entity, x, y, damage, vel);
         } finally {
@@ -10014,6 +10016,9 @@
     // węzłów — decyzja PROJEKT-BRONI §5 p. 2) i efekt wyjścia / zakleszczenia z receptury broni.
     // Nośnik efektów i kierunek krateru — kadłub (prędkość pocisku względem niego). Zwraca
     // true, gdy pocisk ugrzązł (wołający go usuwa).
+    // Mapa ran (18-C): krater wyjścia / zakleszczenia stempluje hak onImpact (źródło = pocisk,
+    // wariant 'exit' / 'stuck'), pas rzazu — HullDamageMap.stampKerf na drodze w materiale tego
+    // kroku (niezależnie od LOD efektu; receptura `kerf` dostaje kadłub null — bez drugiego stempla).
     const _passCarrier = createCarrier();
     const _passRelVel = { x: 0, y: 0 };
     function applyBulletHullPass(b, pass) {
@@ -10027,7 +10032,15 @@
       const carrier = writeCarrier(e, px, py, false, _passCarrier);
       _passRelVel.x = b.vx - carrier.vx;
       _passRelVel.y = b.vy - carrier.vy;
-      if (out && pass.craterDamage > 0) applyHexImpact(e, pass.x, pass.y, pass.craterDamage, _passRelVel, null);
+      if (pass.kerfs > 0 && e.beamHull) {
+        // Od pierwszego do ostatniego znaku kroku (jeden znak: odcinek pół kroku — sam kierunek
+        // wydłużenia stempla; stampKerf kładzie wtedy jeden znak na początku).
+        const k = pass.kerfs > 1 ? pass.kerfs - 1 : 0.5;
+        HullDamageMap.stampKerf(e, pass.kerfX, pass.kerfY, pass.kerfX + pass.kerfDX * k, pass.kerfY + pass.kerfDY * k, stampFamilyFor(b));
+      }
+      if (out && pass.craterDamage > 0) {
+        applyHexImpact(e, pass.x, pass.y, pass.craterDamage, _passRelVel, null, b, stuck ? 'stuck' : 'exit');
+      }
       if (WeaponFx.available) {
         ActiveCarrier.set(carrier);
         if (pass.kerfs > 0) {
@@ -19991,7 +20004,10 @@
             // Obrażenia w heks trafiony przez sweep (bez niego — sonda w punkcie trafienia);
             // kadłub na belkach — krater od punktu wejścia.
             if (hitNPC.hexGrid || hitNPC.beamHull) {
-              applyHexImpact(realHit, hitX, hitY, npcDamage * entryK.crater, _impactRelVel, hitHexShard, b);
+              // Źródło stempla mapy ran (18-C) — pocisk; rykoszet zostawia płytkie osmalenie
+              // (wariant `ricochet`, src/3d/hullDamageStamps.js), reszta — ranę trafienia.
+              applyHexImpact(realHit, hitX, hitY, npcDamage * entryK.crater, _impactRelVel, hitHexShard, b,
+                decision === HIT_RICOCHET ? 'ricochet' : 'impact');
               // Kierunek wyrzutu atmosfery, gdy padnie mostek (tunel ostrzału).
               noteBridgeHit(realHit, hitX, hitY, _impactRelVel.x, _impactRelVel.y, bridgeSimTime);
             }

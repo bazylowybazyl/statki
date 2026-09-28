@@ -258,9 +258,9 @@ Kod: `src/3d/hullDamageMap.js` (sloty, LRU, kolejka, zadania, krok klatki efekt�
   receptury: wtórne wybuchy Yamato (w miejscu widocznych wybuchów; punkt zdarzenia opóźnionego przesunięty o ruch
   nośnika od chwili trafienia — `ActiveCarrier` odtworzony przez `_runAfterQueue`), wiązka ciągła między taktami
   obrażeń (co klatkę, jak demo), żar płonącej wyrwy (`burnStep`: co 0,25 s stempel żaru `0,6 + 1,4·k` pod ogniem —
-  wyrwa tli się, póki płonie; demo tylko świeciło), rzazy i zakleszczenia przebić (18-B: receptury `kerf` / `stuck`
-  z encją kadłuba). Własna kolejka wtórnych stempli Yamato (pierwsza wersja 18-C) usunięta — dublowała receptury w
-  innych, losowych miejscach. Bitwa 24 × 24 bez tarcz z bronią 17: ~170 stempli/s, w tym ~75/s z receptur (głównie
+  wyrwa tli się, póki płonie; demo tylko świeciło), zakleszczenia przebić (18-B: receptura `stuck` z encją kadłuba
+  — przy kraterze `stuck` z haka pomijana; pas rzazu przebicia stempluje gra przez `stampKerf`, §6). Własna
+  kolejka wtórnych stempli Yamato (pierwsza wersja 18-C) usunięta — dublowała receptury w innych, losowych miejscach. Bitwa 24 × 24 bez tarcz z bronią 17: ~170 stempli/s, w tym ~75/s z receptur (głównie
   żar wyrw po armatach) i ~66/s pominiętych duplikatów.
 - **Dla 18-B:** przebicie — wariant w `setSource(…, 'exit' | 'stuck')` wokół krateru wyjścia / zakleszczenia (albo bez
   źródła = stempel ogólny; receptura `stuck` w tym samym punkcie wtedy się nie dubluje), znaki rzazu — receptura
@@ -379,6 +379,11 @@ Wpięcie i decyzje wykonawcy — szczegóły w `MECHANIKA-BRONI.md` §8. Względ
   zakleszczeniu.
 - **Testy §4 „Testy w 18”** — zrobione: `projectileTrajectory` przepisany, nowe `projectileMechanicsGame`,
   `weaponChargeGame`, `weaponFxPierce`, `weaponRecoilSource`, seria w `hexlanceBurst` (moduły 18-A:
-  `projectilePenetration`, `projectileRicochet`, `weaponCharge`, `hullSurfaceQueries`); `hullDamageMap` — 18-C.
+  `projectilePenetration`, `projectileRicochet`, `weaponCharge`, `hullSurfaceQueries`); `hullDamageMap` — 18-C,
+  stemple mechaniki: `hullDamageMechanics` i źródła kraterów w `projectileMechanicsGame`.
+- **Mapa ran (18-C, po scaleniu `main`)** — krater z wariantem w `setSource` przez 8. argument `applyHexImpact`:
+  wejście `impact`, rykoszet `ricochet` (nowy wpis `vulcan.ricochet`: płytkie osmalenie r 9, żar 0,9, bez brzegu rany,
+  wydłużone 2,6 wzdłuż lotu), wylot `exit`, zakleszczenie `stuck`; pas rzazu — `stampKerf` z gry co krok w materiale
+  (receptura `kerf` bez kadłuba, bez drugiego stempla). MECHANIKA §8.6.
 - **Harness** — sesja `galeria` + `galeria-przebicie`, `-przebicie-po`, `-przebicie-valkyrie`, `-rykoszet`, `-seria`,
   `-seria-po`, `-ladowanie`, `-ladowanie-strzal` (strzelnica: kolumna fregata → niszczyciel → pancernik burtą).

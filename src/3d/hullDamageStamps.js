@@ -10,7 +10,9 @@
 // wzdłuż kierunku (1 = koło), mnożyć promień przez moc rozmiaru broni (`20 * I` w recepturze)].
 // Warianty: `impact` (trafienie), `kerf` (rzaz przebicia, co ~22 j. drogi w materiale),
 // `exit` (krater wylotu przestrzeliny — demo go nie stempluje, 18-A robi prawdziwy krater:
-// brzeg jak trafienie, mniejszy), `stuck` (zakleszczenie — Valkyrie).
+// brzeg jak trafienie, mniejszy), `stuck` (zakleszczenie — Valkyrie), `ricochet` (rykoszet
+// Vulcana / Gatlinga, 18-B: płytkie osmalenie wydłużone wzdłuż lotu, bez brzegu rany — demo
+// stemplowało rykoszet jak zwykłe trafienie).
 //
 // Tabela dotyczy KRATERÓW i RZAZÓW z haka trafienia kadłuba (HullBodies.onImpact → HullDamageMap),
 // które nie przechodzą przez bramkę LOD efektu. Stemple bez krateru (wtórne wybuchy Yamato, znaki
@@ -31,7 +33,7 @@ const st = (r, heat, scorch, hole, ion, elong = 1, pow = 0) => Object.freeze([r,
  */
 export const STAMP = Object.freeze({
   tempest: Object.freeze({ impact: st(20, 2.6, 0.5, 0.62, 1.0, 1, 1) }),
-  vulcan: Object.freeze({ impact: st(7, 1.5, 0.35, 0.3, 0) }),
+  vulcan: Object.freeze({ impact: st(7, 1.5, 0.35, 0.3, 0), ricochet: st(9, 0.9, 0.3, 0, 0, 2.6) }),
   autocannon: Object.freeze({ impact: st(24, 2.4, 0.8, 0.64, 0, 1, 1) }),
   helios: Object.freeze({ impact: st(18, 2.9, 0.6, 0.5, 0, 1, 1) }),
   armata: Object.freeze({ impact: st(62, 3.2, 0.95, 0.76, 0) }),
