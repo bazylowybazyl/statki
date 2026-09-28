@@ -20,7 +20,8 @@ import {
 import { SUN_SHADOW_MAP_PLACEHOLDER, sunShadowUniforms } from './sunShadowMask.js';
 import { installPlaceholders } from './tsl/zamiennik.js';
 import { uniformNode, uniformsAdapter } from './tsl/uniformy.js';
-import { BloomGry, MAX_HEAT_HAZE_SOURCES, createPostUniforms, createUberPost, hdrBezpieczny } from './tsl/postGry.js';
+import { MAX_HEAT_HAZE_SOURCES, createPostUniforms, createUberPost } from './tsl/postGry.js';
+import { BloomGryCompute } from './tsl/bloomCompute.js';
 import { FxFrame, FX_DISTORT_LAYER } from './fx/fxFrame.js';
 import { Rozgrzewka, compileAsyncNaCelu } from './rozgrzewka.js';
 import { zainstalujKluczSwiatel } from './tsl/kluczSwiatel.js';
@@ -477,20 +478,18 @@ export const Core3D = {
   // chowa planety) i shield3D.js — zachowawczo, w razie wątpliwości true. Ośrodek
   // warpa (warstwa 8) — odwrotnie: tylko gdy sterownik warpa zgłosi go w tej klatce.
   layerActivity: { planets: true, halo: true, ringPlanets: true, shields: true, warp: false },
-  // Bloom: BloomGry (BloomNode three + zgodność z dawnym passem WebGL, tsl/postGry.js)
-  // w grafie postu; siła / promień / próg to uniformy (_applyBloomPassConfig co klatkę
-  // z bloomConfig.js albo tunera DevVFX.bloom), rozmiar = bufor rysowania ×
-  // resolutionScale w każdym renderze. Powstaje z urządzeniem (_createPost).
+  // Bloom: BloomGryCompute (algorytm BloomNode three = dawny pass WebGL, 12 kroków w jednym passie
+  // compute — tsl/bloomCompute.js, zadanie 23) liczony w _renderPost przed „uber”; siła / promień /
+  // próg to uniformy (_applyBloomPassConfig co klatkę z bloomConfig.js albo tunera DevVFX.bloom),
+  // rozmiar = bufor rysowania × resolutionScale w każdym renderze. Powstaje z urządzeniem (_createPost).
   bloomPass: null, bloomResolutionScale: BLOOM_DEFAULTS.resolutionScale, bloomBaseStrength: BLOOM_DEFAULTS.strength, bloomBaseThreshold: BLOOM_DEFAULTS.threshold,
   // Post: dwa RenderPipeline zbudowane raz — z bloomem (_post) i bez (_postBezBloomu,
   // perfToggles.bloom = false: bez kosztu passów bloomu, bez przebudowy przy
   // przełączeniu). Wspólne uniformy „uber” (gorące powietrze, uHeatOn zamiast define).
   _postBezBloomu: null, _postUniforms: null,
-  // Pomiar bloomu: jego passy lecą w updateBefore węzła, W ŚRODKU renderu postu —
-  // haki BloomGry liczą je do kubełka 'bloom', a _renderPost odejmuje je od 'post'.
+  // Pomiar bloomu: haki wokół passu compute (kubełek 'bloom', przed renderem postu).
   _onBloomRenderBegin: null, _onBloomRenderEnd: null, _bloomT0: 0,
   _bloomInfoBefore: { calls: 0, triangles: 0, points: 0, lines: 0 },
-  _bloomInfoDelta: { calls: 0, triangles: 0, points: 0, lines: 0, ms: 0 },
   msaaSamples: 0,
   // Zegar GPU. Timery per pass mierzą czas CPU wokół pracy asynchronicznej, więc
   // gdy wąskim gardłem staje się karta, blokada wypada w losowym draw callu i
@@ -653,7 +652,7 @@ export const Core3D = {
 
   // Strojenie bloomu na żywo: węzły strength / radius / threshold BloomNode to
   // uniformy (.value — bez przebudowy pipeline'u), skala rozdzielczości wchodzi przy
-  // najbliższym renderze bloomu (BloomGry.setSize).
+  // najbliższym renderze bloomu (BloomGryCompute._resize).
   _applyBloomPassConfig() {
     const bloom = this.bloomPass;
     if (!bloom) return;
@@ -672,29 +671,7 @@ export const Core3D = {
   },
 
   _bloomRenderEnd() {
-    const ms = performance.now() - this._bloomT0;
-    const before = this._bloomInfoBefore;
-    const cur = this.renderer?.info?.render;
-    const d = this._bloomInfoDelta;
-    d.calls += Math.max(0, (Number(cur?.drawCalls) || 0) - before.calls);
-    d.triangles += Math.max(0, (Number(cur?.triangles) || 0) - before.triangles);
-    d.points += Math.max(0, (Number(cur?.points) || 0) - before.points);
-    d.lines += Math.max(0, (Number(cur?.lines) || 0) - before.lines);
-    d.ms += Math.max(0, ms);
-    this._addRenderInfoDelta('bloom', ms, before);
-  },
-
-  // Passy bloomu siedzą w przyroście renderu postu (updateBefore węzła) — już
-  // policzone w 'bloom', więc zdejmujemy je z 'post' (zostaje sam uber).
-  _takeBloomOutOfPost() {
-    const d = this._bloomInfoDelta;
-    const post = this.lastFrameRenderInfo?.post;
-    if (!post || !(d.calls > 0 || d.ms > 0)) return;
-    post.calls = Math.max(0, post.calls - d.calls);
-    post.triangles = Math.max(0, post.triangles - d.triangles);
-    post.points = Math.max(0, post.points - d.points);
-    post.lines = Math.max(0, post.lines - d.lines);
-    post.ms = Math.max(0, post.ms - d.ms);
+    this._addRenderInfoDelta('bloom', performance.now() - this._bloomT0, this._bloomInfoBefore);
   },
 
   // Część synchroniczna: scena, kamery, światła, cele renderu, passy — moduły
@@ -1103,7 +1080,7 @@ export const Core3D = {
   },
 
   // Post (tsl/postGry.js), kolejność jak dawny łańcuch WebGL resolve → bloom → uber:
-  // bufor sceny (MSAA rozwiązane do .texture) → bloom (BloomGry z bloomConfig.js) →
+  // bufor sceny (MSAA rozwiązane do .texture) → bloom (BloomGryCompute z bloomConfig.js) →
   // „uber”: gorące powietrze przesuwa odczyt sceny RAZEM z bloomem, dyspersja dysz,
   // ACES gry → LinearTosRGB → kanwa. Dwa RenderPipeline (z bloomem i bez) zbudowane
   // raz — perfToggles.bloom wybiera w _renderPost, bez przebudowy i bez kosztu
@@ -1112,9 +1089,9 @@ export const Core3D = {
   _createPost(renderer) {
     const cfg = this._getBloomConfig();
     const sceneTexture = this.composerTarget.texture;
-    // Siatka bezpieczeństwa (12-B): NaN / ±Inf bufora sceny → 0 przed bloomem (i w „uber”) —
-    // pojedynczy NaN w HalfFloat rozlewał bloom na cały ekran.
-    const bloom = new BloomGry(hdrBezpieczny(texture(sceneTexture)), cfg.strength, cfg.radius, cfg.threshold);
+    // Siatka bezpieczeństwa (12-B): NaN / ±Inf bufora sceny → 0 przed bloomem (hdrBezpieczny w kernelu progu
+    // bloomCompute.js) i w „uber” — pojedynczy NaN w HalfFloat rozlewał bloom na cały ekran.
+    const bloom = new BloomGryCompute(sceneTexture, cfg.strength, cfg.radius, cfg.threshold);
     bloom.resolutionScale = cfg.resolutionScale;
     bloom.onRenderBegin = this._onBloomRenderBegin;
     bloom.onRenderEnd = this._onBloomRenderEnd;
@@ -1813,19 +1790,17 @@ export const Core3D = {
     }
   },
 
-  // Post na kanwę (bieżący cel = null): bloom (gdy włączony) i „uber”. Bloom liczy
-  // się w updateBefore swojego węzła W ŚRODKU post.render() — haki BloomGry zbierają
-  // jego passy do kubełka 'bloom', a _takeBloomOutOfPost zdejmuje je z 'post'.
+  // Post na kanwę (bieżący cel = null): bloom (gdy włączony — jeden pass compute, bloomCompute.js,
+  // kubełek 'bloom' przez haki) i „uber” (kubełek 'post').
   _renderPost() {
+    const bezBloomu = this.perfToggles?.bloom === false && !!this._postBezBloomu;
+    if (!bezBloomu && this.bloomPass) this.bloomPass.render(this.renderer);
     const before = this._renderInfoBefore;
     this._readRenderInfoInto(before);
-    const d = this._bloomInfoDelta;
-    d.calls = 0; d.triangles = 0; d.points = 0; d.lines = 0; d.ms = 0;
-    const post = (this.perfToggles?.bloom === false && this._postBezBloomu) ? this._postBezBloomu : this._post;
+    const post = bezBloomu ? this._postBezBloomu : this._post;
     const t0 = performance.now();
     post.render();
     this._addRenderInfoDelta('post', performance.now() - t0, before);
-    this._takeBloomOutOfPost();
   },
 
   // Klatka efektów GPU (fxFrame.js) — raz na klatkę rAF, kamera gracza 1 (w podzielonym ekranie

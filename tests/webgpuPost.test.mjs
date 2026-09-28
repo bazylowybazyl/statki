@@ -154,8 +154,10 @@ test('uber w TSL: pętla po źródłach z uniformu int, czyste funkcje szumu, cl
 test('Core3D: post = dwa RenderPipeline zbudowane raz, bez GLSL uber, uniformy postu przed postem', () => {
   assert.doesNotMatch(core, /UberPostShader|HEAT_HAZE: 1|#ifdef HEAT_HAZE|ShaderPass|texture2D\(tDiffuse/, 'GLSL „uber” usunięty (port w tsl/postGry.js)');
   const create = bodyOf(core, '  _createPost(renderer) {');
-  // 12-B: wejście bloomu przez siatkę bezpieczeństwa NaN / Inf (hdrBezpieczny, postGry.js)
-  assert.match(create, /new BloomGry\(hdrBezpieczny\(texture\(sceneTexture\)\), cfg\.strength, cfg\.radius, cfg\.threshold\)/);
+  // 12-B: wejście bloomu przez siatkę bezpieczeństwa NaN / Inf (hdrBezpieczny w kernelu progu); zadanie 23:
+  // bloom w jednym passie compute (bloomCompute.js — ten sam algorytm co BloomGry, tests/bloomCompute.test.mjs)
+  assert.match(create, /new BloomGryCompute\(sceneTexture, cfg\.strength, cfg\.radius, cfg\.threshold\)/);
+  assert.match(readFileSync(new URL('../src/3d/tsl/bloomCompute.js', import.meta.url), 'utf8'), /const texel = hdrBezpieczny\(texture\(sceneTexture, uvNode\)\)\.toVar\(\);/);
   assert.match(create, /bloom\.onRenderBegin = this\._onBloomRenderBegin;/);
   assert.equal((create.match(/new THREE\.RenderPipeline\(/g) || []).length, 2);
   assert.match(create, /bloomTexture: bloom\.getTextureNode\(\)/);
@@ -236,27 +238,30 @@ test('Core3D: strojenie bloomu (bloomConfig.js / DevVFX.bloom) = uniformy węzł
   assert.doesNotMatch(read('src/ui/bloomTunerPanel.js'), /bloomPass\.strength = /);
 });
 
-test('Core3D._renderPost: pipeline z bloomem albo bez (perfToggles.bloom), passy bloomu w kubełku bloom, nie w post', () => {
+// Zadanie 23: bloom = jeden pass compute (bloomCompute.js) PRZED „uber” — kubełek 'bloom' z haków (czas, bez
+// draw calli), 'post' = sam „uber”; przy perfToggles.bloom = false bez passu bloomu i pipeline bez bloomu.
+test('Core3D._renderPost: bloom (pass compute) przed postem w kubełku bloom, pipeline z bloomem albo bez (perfToggles.bloom)', () => {
   const info = { frame: 1, render: { drawCalls: 0, triangles: 0, points: 0, lines: 0 }, reset() {} };
   const fake = Object.assign(Object.create(Core3D), {
     renderer: { info }, lastFrameRenderInfo: null, perfToggles: { bloom: true },
     _renderInfoBefore: { calls: 0, triangles: 0, points: 0, lines: 0 },
-    _bloomInfoBefore: { calls: 0, triangles: 0, points: 0, lines: 0 },
-    _bloomInfoDelta: { calls: 0, triangles: 0, points: 0, lines: 0, ms: 0 }
+    _bloomInfoBefore: { calls: 0, triangles: 0, points: 0, lines: 0 }
   });
-  const withBloom = { renders: 0, render() { this.renders++; fake._bloomRenderBegin(); info.render.drawCalls += 12; info.render.triangles += 12; fake._bloomRenderEnd(); info.render.drawCalls += 1; info.render.triangles += 1; } };
-  const noBloom = { renders: 0, render() { this.renders++; info.render.drawCalls += 1; info.render.triangles += 1; } };
+  const seq = [];
+  fake.bloomPass = { render(r) { seq.push(r === fake.renderer ? 'bloom' : 'bloom?'); fake._bloomRenderBegin(); fake._bloomRenderEnd(); } };
+  const withBloom = { renders: 0, render() { this.renders++; seq.push('post'); info.render.drawCalls += 1; info.render.triangles += 1; } };
+  const noBloom = { renders: 0, render() { this.renders++; seq.push('bez'); info.render.drawCalls += 1; info.render.triangles += 1; } };
   fake._post = withBloom;
   fake._postBezBloomu = noBloom;
   fake._resetRenderInfoBuckets();
   fake._renderPost();
-  assert.equal(withBloom.renders, 1);
-  assert.deepEqual([fake.lastFrameRenderInfo.bloom.calls, fake.lastFrameRenderInfo.post.calls], [12, 1]);
-  assert.deepEqual([fake.lastFrameRenderInfo.bloom.triangles, fake.lastFrameRenderInfo.post.triangles], [12, 1]);
+  assert.deepEqual(seq, ['bloom', 'post'], 'bloom przed „uber”, na rendererze Core3D');
+  assert.deepEqual([fake.lastFrameRenderInfo.bloom.calls, fake.lastFrameRenderInfo.post.calls], [0, 1]);
+  assert.deepEqual([fake.lastFrameRenderInfo.bloom.triangles, fake.lastFrameRenderInfo.post.triangles], [0, 1]);
   fake.perfToggles.bloom = false;
   fake._resetRenderInfoBuckets();
   fake._renderPost();
-  assert.equal(noBloom.renders, 1);
+  assert.deepEqual(seq, ['bloom', 'post', 'bez'], 'bez bloomu: bez passu compute');
   assert.deepEqual([fake.lastFrameRenderInfo.bloom.calls, fake.lastFrameRenderInfo.post.calls], [0, 1]);
 });
 
