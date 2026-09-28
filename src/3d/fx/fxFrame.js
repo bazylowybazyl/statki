@@ -93,7 +93,12 @@ export class FxFrame {
   addStep(step) {
     if (!step || this.steps.includes(step)) return step;
     this.steps.push(step);
-    if (this.ready) this._warmStep(step);
+    if (this.ready) {
+      this._warmStep(step);
+      // pula zarejestrowana w początku pul po warmAll (np. iskry pasa na ekranie ładowania) — jej kernel
+      // przesunięcia kompilował się dopiero przy pierwszym przeskoku początku (zadanie 11)
+      this._warmShifts();
+    }
     return step;
   }
 
@@ -106,15 +111,26 @@ export class FxFrame {
   warmAll() {
     this.ready = true;
     for (let i = 0; i < this.steps.length; i++) this._warmStep(this.steps[i]);
-    // Kernele przesunięcia pul: dispatch z zerowym przesunięciem nic nie zmienia (element += 0).
-    if (!this.origin.pending && this.renderer) {
-      const E = this.origin._entries;
+    this._warmShifts();
+  }
+
+  // Kernele przesunięcia pul: dispatch z zerowym przesunięciem nic nie zmienia (element += 0). Uniform
+  // przesunięcia trzyma ostatni przeskok (zeruje go dopiero następny) — na czas rozgrzewki zero.
+  _warmShifts() {
+    if (this.origin.pending || !this.renderer) return;
+    const E = this.origin._entries;
+    const S = this.origin.shift?.value;
+    let sx = 0; let sy = 0; let sz = 0; let sw = 0;
+    if (S) { sx = S.x; sy = S.y; sz = S.z; sw = S.w; S.set(0, 0, 0, 0); }
+    try {
       for (let i = 0; i < E.length; i++) {
         const node = E[i].shiftNode;
         if (!node || this._warmed.has(node)) continue;
         this._warmed.add(node);
         try { this.renderer.compute(node, 1); } catch (err) { console.warn('[Core3D.fx] rozgrzewka kernela przesunięcia nie wyszła:', err?.message || err); }
       }
+    } finally {
+      if (S) S.set(sx, sy, sz, sw);
     }
   }
 
