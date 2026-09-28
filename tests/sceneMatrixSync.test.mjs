@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const core3d = readFileSync(new URL('../src/3d/core3d.js', import.meta.url), 'utf8');
-const shockwave = readFileSync(new URL('../src/effects3d/shockwave3D.js', import.meta.url), 'utf8');
+const smoke = readFileSync(new URL('../src/3d/rockets/smoke.js', import.meta.url), 'utf8');
+const sparks = readFileSync(new URL('../src/3d/rockets/sparks.js', import.meta.url), 'utf8');
 
-// Jedna scena obsługuje 6 RenderPassów + pre-pass halo + snapshot refrakcji, czyli
-// do 11 wywołań `renderer.render(scene, …)` na klatkę. Każde z nich woła
+// Jedna scena obsługuje 6 RenderPassów + pre-pass halo (dawniej też snapshot refrakcji fal —
+// usunięty w zadaniu 19), czyli kilka wywołań `renderer.render(scene, …)` na klatkę. Każde z nich woła
 // `scene.updateMatrixWorld()`, a ten ZAWSZE schodzi do wszystkich dzieci (także
 // niewidocznych) i dla każdego węzła z matrixAutoUpdate=true robi compose +
 // multiplyMatrices — nic się nie cache'uje między przejściami. Przy ~1000 węzłach
@@ -42,8 +43,8 @@ test('render() i renderBackdrop() robią jeden ręczny sync macierzy przed pierw
   assert.ok(syncIdx > 0, 'render() musi zsynchronizować macierze');
   assert.equal(renderBody.split('this._syncSceneMatrices()').length - 1, 1, 'jeden sync na render()');
   // Sync MUSI stać przed pierwszym przejściem sceny w klatce (maska cieni,
-  // pre-pass halo, refrakcja, passy sceny), inaczej czyta macierze z poprzedniej klatki.
-  for (const pass of ['this._renderSunShadowMask(', 'this._renderPlanetHaloPrepass()', 'this._updateShockwaves(', 'this._runScenePass(pass)']) {
+  // pre-pass halo, passy sceny), inaczej czyta macierze z poprzedniej klatki.
+  for (const pass of ['this._renderSunShadowMask(', 'this._renderPlanetHaloPrepass()', 'this._runScenePass(pass)']) {
     const at = renderBody.indexOf(pass);
     assert.ok(at > 0, `render() woła ${pass}`);
     assert.ok(syncIdx < at, `sync przed ${pass}`);
@@ -68,11 +69,11 @@ test('węzły ruszane W TRAKCIE render() odświeżają macierz same', () => {
     'shadowCatcherFg przesuwa się per pass'
   );
 
-  // Shockwave3DManager.update() skaluje fale w środku Core3D.render().
-  const updateBody = shockwave.slice(shockwave.indexOf('update(dt) {'), shockwave.indexOf('hasActive()'));
-  assert.match(
-    updateBody,
-    /wave\.mesh\.updateMatrixWorld\(\)/,
-    'fala skalowana po globalnym syncu musi odświeżyć swój węzeł'
-  );
+  // Pule kroków efektów (rakiety, zadanie 19) przestawiają początek w środku Core3D.render()
+  // (klatka efektów po globalnym syncu) — macierz świata liczą same.
+  assert.match(smoke, /m\.position\.set\(this\.origin\.x, this\.origin\.y, 0\);\s*m\.updateMatrix\(\);\s*m\.matrixWorld\.copy\(m\.matrix\);/,
+    'dym rakiet na początku pul odświeża swój węzeł');
+  assert.match(sparks, /m\.position\.set\(ox, oy, 0\);\s*m\.updateMatrix\(\);\s*m\.matrixWorld\.copy\(m\.matrix\);/,
+    'iskry na początku pul odświeżają swój węzeł');
+  assert.doesNotMatch(core3d, /_updateShockwaves|Shockwave3DManager|refractionTarget/, 'fala z refrakcją usunięta (zadanie 19)');
 });

@@ -40,10 +40,11 @@ test('kolizje statek-asteroida w physicsStep z prawdziwym dt, nie w render()', (
   assert.match(field, /DestructorSystem\.collideEntities\(ship, promotedEntity, dt, true\)/);
 });
 
-// Fala z refrakcją (window.trigger3DShockwave) zostaje wyłącznie dla rakiet
-// supernova (decyzja 2026-09-24): Yamato, wybuchy reaktorów i rozpad stacji jej
-// nie odpalają. Zapas heatHaze w reactorblow zostaje w kodzie (profile go
-// wyłączają) — pilnujemy, żeby po włączeniu był w osi sceny, jak u rakiet.
+// Fala z refrakcją (dawne window.trigger3DShockwave) była od 2026-09-24 tylko dla rakiet
+// supernova; od zadania 19 (port WebGPU) nie ma jej wcale — Yamato, wybuchy reaktorów
+// i rozpad stacji jej nie odpalają, a rakiety zgłaszają źródła zniekształceń Core3D.
+// Zapas heatHaze w reactorblow zostaje w kodzie (profile go wyłączają) — pilnujemy,
+// żeby po włączeniu był w osi sceny.
 const code = (path) => read(path).replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
 
 // Port WebGPU, zadanie 19: fale, implozja i gorące powietrze rakiet (także Supernowej) to źródła
@@ -64,6 +65,7 @@ test('haze reaktora w osi sceny (y3d = -yGry); rakiety i Supernowa przez znieksz
     assert.doesNotMatch(code(`src/effects3d/reactorProfiles/${f}.js`), /shockwave3D: \{|heatHaze: \{/, f);
   }
   assert.match(indexHtml, /Destruction3D\.init\(\{[\s\S]{0,400}?shockwaveManager: null,/, 'rozpad stacji bez fali');
+  assert.doesNotMatch(code('src/3d/core3d.js'), /Shockwave3DManager|trigger3DShockwave|refractionTarget/, 'Core3D bez fali z refrakcją');
 });
 
 test('dysza SIDE świeci w bloomie tylko przy manewrze (audyt 2026-09-26)', () => {

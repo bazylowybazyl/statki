@@ -14,7 +14,6 @@ import {
   smoothstep, sqrt, texture, uniform, uniformArray, uv, vec2, vec4
 } from 'three/tsl';
 import { BLOOM_DEFAULTS } from './bloomConfig.js';
-import { Shockwave3DManager } from '../effects3d/shockwave3D.js';
 import {
   HULL_SDF_MAX_STEPS, HULL_SDF_OCCLUDER_FLOATS, HULL_SDF_SHAFT_CAP, HullShadowSdf, createHullSdfPlaceholderTexture, hullSdfShadow
 } from './hullShadowSdf.js';
@@ -363,8 +362,6 @@ export const Core3D = {
   ready: gpuReadyPromise, gpuReady: false, gpuUnsupported: false, gpuError: null,
   shadowCatcher: null, shadowCatcherFg: null, shadowCatchersDebug: false,
   composerTarget: null, _scenePasses: null, _post: null,
-  refractionTarget: null, shockwave3DManager: null, _shockwavePrevTime: 0,
-  _refractionValid: false, _refractionFlip: false,
   planetHaloTarget: null, haloDepthMaskMaterial: null,
 
   renderPassBg: null, renderPassPlanets: null, planetHaloPass: null, renderPassRingPlanets: null, renderPassOrtho: null, renderPassShields: null, renderPassFg: null,
@@ -630,8 +627,8 @@ export const Core3D = {
     // przejsciami. Przy ~1000 wezlow (2 na cialo heksowe, pule asteroid, miasto
     // ringu) to byl caly rzad wielkosci pracy na darmo.
     // Aktualizujemy wiec macierze RECZNIE, raz na klatke, na gorze render().
-    // Kto rusza transformem PO tym momencie (syncCamera -> shadowCatcher,
-    // Shockwave3DManager.update), odswieza swoje wezly sam.
+    // Kto rusza transformem PO tym momencie (syncCamera -> shadowCatcher, pule
+    // krokow efektow — np. rakiety, src/3d/rockets/), odswieza swoje wezly sam.
     this.scene.matrixWorldAutoUpdate = false;
 
     const sun = new THREE.DirectionalLight(0x8b79ff, 0.1);
@@ -683,38 +680,9 @@ export const Core3D = {
       stencilBuffer: false,
       samples: rt.samples
     });
-    // Refrakcja w połowie rozdzielczości — to tylko źródło zniekształcenia
-    // dla shockwave; half-res jest niezauważalny, a tnie fill-rate 4×.
-    // Format, MSAA i głębia JAK composerTarget (w połowie rozdzielczości): three buduje
-    // materiały (NodeBuilder) i pipeline'y per kontekst renderu, a kontekst to właśnie
-    // format / typ / próbki / głębia celu — snapshot refrakcji (tło, świat ortho, tarcze)
-    // używa wtedy tych samych, już rozgrzanych programów co passy sceny (prewarmPass na
-    // composerTarget). Z dawnym RGBA8 bez MSAA pierwsza fala budowała na zimno wszystko,
-    // co było w kadrze (tarcze — uwaga z zadania 14). Wygląd jak na WebGL (cel RGBA8):
-    // materiał fali obcina odczyt do [0, 1] (shockwave3D.js). setMsaaEnabled trzyma
-    // próbki razem ze sceną.
-    this.refractionTarget = new THREE.RenderTarget(
-      Math.max(1, Math.floor(w0 * this.pixelRatio * 0.5)),
-      Math.max(1, Math.floor(h0 * this.pixelRatio * 0.5)),
-      {
-        minFilter: THREE.LinearFilter,
-        magFilter: THREE.LinearFilter,
-        format: THREE.RGBAFormat,
-        type: THREE.HalfFloatType,
-        depthBuffer: true,
-        stencilBuffer: false,
-        samples: rt.samples
-      }
-    );
-    this.shockwave3DManager = new Shockwave3DManager(this.scene, 8, this.refractionTarget);
-    this._shockwavePrevTime = 0;
-    if (typeof window !== 'undefined') {
-      window.trigger3DShockwave = (x, y, z, scale, life, colorHex) => {
-        if (this.shockwave3DManager) {
-          this.shockwave3DManager.spawn(x, y, z, scale, life, colorHex);
-        }
-      };
-    }
+    // Fala uderzeniowa z refrakcją (shockwave3D.js, snapshot sceny w połowie rozdzielczości)
+    // usunięta w zadaniu 19: fale, implozja i gorące powietrze idą przez zniekształcenia
+    // efektów (src/3d/fx/distortion.js — sama refrakcja, bez świecącego obrysu).
     // Maska widoczności słońca (sunShadowMask.js): rozmiar bufora sceny, żeby
     // piksel materiału trafiał w teksel 1:1 — w połowie rozdzielczości brzeg
     // kadłuba po stronie cienia łapał ciemną obwódkę z sąsiedniego teksela.
@@ -983,8 +951,6 @@ export const Core3D = {
       try { this.sunShadowTarget?.dispose?.(); } catch { }
       try { this.distortionTarget?.dispose?.(); } catch { }
       try { this.composerTarget?.dispose?.(); } catch { }
-      try { this.refractionTarget?.dispose?.(); } catch { }
-      try { this.shockwave3DManager?.dispose?.(); } catch { }
       try { this.planetHaloTarget?.dispose?.(); } catch { }
       try { this.haloDepthMaskMaterial?.dispose?.(); } catch { }
     } catch { }
@@ -999,9 +965,6 @@ export const Core3D = {
     // Węzeł tekstury nie przyjmuje null — materiały wracają do maski zastępczej.
     sunShadowUniforms.uSunShadowMap.value = SUN_SHADOW_MAP_PLACEHOLDER;
     sunShadowUniforms.uSunShadowOn.value = 0;
-    this.refractionTarget = null;
-    this.shockwave3DManager = null;
-    this._shockwavePrevTime = 0;
   },
 
   // Reczna aktualizacja macierzy sceny. Wolana raz na klatke zamiast raz na
@@ -1081,8 +1044,6 @@ export const Core3D = {
     applySamples(this.composerTarget);
     // Halo musi śledzić próbki sceny — rozjazd daje przerywaną obwódkę na limbie.
     applySamples(this.planetHaloTarget);
-    // Snapshot refrakcji w tym samym kontekście renderu co scena (programy i pipeline'y).
-    applySamples(this.refractionTarget);
 
     return this.getPerfStatus();
   },
@@ -1158,12 +1119,6 @@ export const Core3D = {
     if (this.sunShadowTarget) this.sunShadowTarget.setSize(bufW, bufH);
     if (this.distortionTarget) this.distortionTarget.setSize(bufW, bufH);
 
-    if (this.refractionTarget) {
-      this.refractionTarget.setSize(
-        Math.max(1, Math.floor(width * this.pixelRatio * 0.5)),
-        Math.max(1, Math.floor(height * this.pixelRatio * 0.5))
-      );
-    }
     if (this.planetHaloTarget) {
       this.planetHaloTarget.setSize(bufW, bufH);
     }
@@ -1506,7 +1461,6 @@ export const Core3D = {
     this.heatHazeCount = 0;
 
     const tComposer0 = performance.now();
-    this._updateShockwaves(nowSec, t, layerActivity);
 
     // Scena → composerTarget (MSAA; backend rozwiązuje je do .texture na końcu
     // każdego passa), potem post bez MSAA na kanwę.
@@ -1685,70 +1639,6 @@ export const Core3D = {
     renderer.render(scene, camera);
 
     camera.layers.mask = prevPerspLayerMask;
-  },
-
-  // Fale uderzeniowe (shockwave3D.js, materiał w TSL) i snapshot refrakcji —
-  // źródło ich zniekształcenia.
-  _updateShockwaves(nowSec, t, layerActivity) {
-    const manager = this.shockwave3DManager;
-    if (!manager) return;
-    const shockDt = this._shockwavePrevTime > 0
-      ? Math.max(1 / 240, Math.min(1 / 20, nowSec - this._shockwavePrevTime))
-      : 1 / 60;
-    this._shockwavePrevTime = nowSec;
-    manager.update(shockDt);
-
-    const hasActiveShockwaves = this.refractionTarget && manager.hasActive();
-    if (!hasActiveShockwaves) this._refractionValid = false;
-    this._refractionFlip = !this._refractionFlip;
-    // Snapshot refrakcji odświeżany co drugą klatkę (pierwsza fala wymusza świeży)
-    // — źródło szybkiego zniekształcenia nie potrzebuje 60 Hz, a każdy render
-    // to pełne przejścia sceny.
-    if (hasActiveShockwaves && (!this._refractionValid || this._refractionFlip)) {
-      this._refractionValid = true;
-      this._renderRefractionSnapshot(t, layerActivity);
-    }
-  },
-
-  // Snapshot tylko tła + świata ortho (+ tarcz). Warstwy planet/FG pomijamy —
-  // wewnątrz zniekształcenia shockwave ich brak jest niezauważalny, a FG potrafi
-  // nieść ~1000 draw calli (bronie/budynki), które tu dublowaliśmy przy każdej fali.
-  // Cel w tym samym kontekście renderu co composerTarget (format, MSAA, głębia —
-  // init()): te same programy i pipeline'y co passy sceny, bez budowy na zimno przy
-  // pierwszej fali. Materiały czytają maskę cieni po screenUV — połowa
-  // rozdzielczości trafia w maskę sama. Kamery jak na WebGL (tag): kadr zsynchronizowany
-  // z rozmiarem celu (połowa), bez zmian względem bazy.
-  _renderRefractionSnapshot(t, layerActivity) {
-    const renderer = this.renderer;
-    const target = this.refractionTarget;
-    const persp = this.cameraPersp;
-    const ortho = this.cameraOrtho;
-    const prevPerspLayerMask = persp.layers.mask;
-    const prevOrthoLayerMask = ortho.layers.mask;
-
-    this.shockwave3DManager.hideAll();
-    renderer.setRenderTarget(target);
-    renderer.setClearColor(0x000000, 0.0);
-    renderer.clear(true, true, true);
-    this.syncCamera(this.activeCam1, target.width, target.height);
-    this._readRenderInfoInto(this._renderInfoBefore);
-    if (t.bgPass !== false) {
-      persp.layers.set(1);
-      renderer.render(this.scene, persp);
-    }
-    if (t.orthoPass !== false) {
-      ortho.layers.set(0);
-      renderer.render(this.scene, ortho);
-      if (layerActivity.shields !== false) {
-        ortho.layers.set(SHIELD_RENDER_LAYER);
-        renderer.render(this.scene, ortho);
-      }
-    }
-    this._addRenderInfoDelta('refraction');
-
-    this.shockwave3DManager.showAll();
-    persp.layers.mask = prevPerspLayerMask;
-    ortho.layers.mask = prevOrthoLayerMask;
   },
 
   _publishRendererInfo() {
