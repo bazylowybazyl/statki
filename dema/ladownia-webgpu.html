@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>Ładownie à la Venator — demo WebGPU</title>
+<!--
+  Demo WebGPU (three.js r183 przez Vite: `npm run dev`, /dema/ladownia-webgpu.html).
+  Każdy kadłub gry dostaje ładownię: wrota „à la Venator” (dwie połowy grzbietu rozsuwają się
+  na boki), puste wnętrze z głębią (dno, ściany, lampy zapalane falą), kontenery 3D w slotach
+  modułów i drony przeładunkowe stacji (załadunek / rozładunek). Dane ładowni:
+  src/data/cargoBays.js, przeładunek: src/game/cargoBayOps.js, render: src/3d/cargo/*.tsl.js.
+  Opis i plan integracji: docs/webgpu/DEMO-LADOWNIA.md.
+
+  Parametry adresu: ?scena=galeria|otwieranie|zaladunek|rozladunek, ?kadlub=atlas (id z
+  CARGO_BAY_HULLS), ?test=1 (klatki tylko przez __demo.step), ?t=12 (czas sceny).
+  Konsola: __demo.scene(nazwa, kadlub), setTime(t), pause(b), lookAt(x, y, zoom), frame(),
+  tilt(stopnie), stats(), capacity(t_na_kontener).
+-->
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden;
+    font-family: system-ui, "Segoe UI", sans-serif; color: #d9e3ef; }
+  canvas { display: block; }
+  #panel { position: fixed; top: 12px; left: 12px; width: 330px; box-sizing: border-box; max-height: calc(100% - 24px);
+    overflow-y: auto; background: rgba(6, 10, 18, .86); border: 1px solid rgba(210, 160, 80, .25);
+    border-radius: 8px; padding: 11px 13px; font-size: 12.5px; line-height: 1.42; }
+  #panel.hidden { display: none; }
+  h1 { font-size: 13.5px; margin: 0 0 2px; letter-spacing: .06em; color: #f2d7a8; }
+  #backend { font-size: 11.5px; color: #97a8bf; margin-bottom: 7px; }
+  .scenes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin: 2px 0 6px; }
+  .scenes button, .speeds button { background: rgba(200, 150, 70, .10); color: #f0dcc0; border: 1px solid rgba(220, 170, 90, .32);
+    border-radius: 5px; padding: 6px 2px; font: 600 11.5px system-ui, sans-serif; cursor: pointer; }
+  .scenes button.on, .speeds button.on { border-color: #ffc27a; color: #fff1dc; background: rgba(255, 170, 90, .22); }
+  .hulls { display: flex; flex-wrap: wrap; gap: 3px; margin: 4px 0 6px; }
+  .hulls button { background: rgba(120, 150, 200, .10); color: #cfdcf0; border: 1px solid rgba(130, 160, 220, .28);
+    border-radius: 4px; padding: 3px 6px; font: 11px system-ui, sans-serif; cursor: pointer; }
+  .hulls button.on { border-color: #9cc4ff; background: rgba(120, 170, 255, .22); color: #fff; }
+  .hulls .fam { width: 100%; font-size: 10.5px; color: #7f91aa; margin-top: 2px; }
+  #door { display: block; width: 100%; margin: 4px 0; padding: 7px; border-radius: 6px; border: 1px solid #c79a55;
+    background: rgba(255, 170, 80, .12); color: #ffe4c2; font: 600 12px system-ui, sans-serif; cursor: pointer; text-align: left; }
+  .speeds { display: grid; grid-template-columns: repeat(5, 1fr); gap: 3px; margin: 4px 0; }
+  .views { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; margin: 2px 0 4px; }
+  .views button { background: rgba(120, 150, 200, .10); color: #cfdcf0; border: 1px solid rgba(130, 160, 220, .28);
+    border-radius: 4px; padding: 5px 2px; font: 11px system-ui, sans-serif; cursor: pointer; }
+  .views button.on { border-color: #9cc4ff; background: rgba(120, 170, 255, .22); color: #fff; }
+  #cap { font: 11.5px ui-monospace, Consolas, monospace; color: #e8d6b8; white-space: pre-wrap; margin-top: 6px;
+    background: rgba(255, 190, 110, .05); border-radius: 5px; padding: 6px 7px; }
+  #stats { font: 11px ui-monospace, Consolas, monospace; color: #9fe0a8; margin-top: 6px; white-space: pre; }
+  .keys { color: #8b9bb3; font-size: 11px; margin-top: 5px; }
+  details summary { cursor: pointer; color: #a9b8cd; font-size: 12px; margin: 7px 0 3px; }
+  label { display: flex; align-items: center; gap: 6px; margin: 2px 0; cursor: pointer; }
+  .row { display: grid; grid-template-columns: 120px minmax(0, 1fr) 44px; gap: 6px; align-items: center; margin: 3px 0; }
+  .row input[type=range] { width: 100%; min-width: 0; margin: 0; }
+  .row output { text-align: right; font: 11px ui-monospace, Consolas, monospace; }
+  select { background: #0d1524; color: #d9e3ef; border: 1px solid #34465f; border-radius: 4px; font-size: 11.5px; }
+  table.capt { width: 100%; border-collapse: collapse; font: 10.5px ui-monospace, Consolas, monospace; color: #cfd9e8; }
+  table.capt th { text-align: left; color: #8fa2bd; font-weight: 600; border-bottom: 1px solid #2a3850; padding: 2px 3px; }
+  table.capt td { padding: 1px 3px; border-bottom: 1px solid rgba(60, 80, 110, .25); }
+  table.capt td.n { text-align: right; }
+  #err { position: fixed; left: 12px; right: 12px; bottom: 12px; color: #ffc4c4; background: rgba(50, 0, 0, .9);
+    padding: 10px; border-radius: 6px; font: 12px ui-monospace, monospace; white-space: pre-wrap; display: none;
+    max-height: 40%; overflow: auto; }
+  #loading { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); padding: 6px 12px;
+    background: rgba(6, 10, 18, .86); border: 1px solid rgba(210, 160, 80, .25); border-radius: 6px; font-size: 12px; }
+  #nogpu { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; }
+  #nogpu div { max-width: 560px; background: rgba(20, 24, 40, .95); border: 1px solid #44507a; border-radius: 10px;
+    padding: 22px 26px; font-size: 14px; line-height: 1.55; }
+  #nogpu b { color: #ffd2a6; }
+</style>
+</head>
+<body>
+<div id="panel">
+  <h1>ŁADOWNIE À LA VENATOR · WEBGPU</h1>
+  <div id="backend">uruchamianie…</div>
+  <div class="scenes" id="scenes">
+    <button data-s="galeria">1 · Galeria</button>
+    <button data-s="otwieranie">2 · Wrota</button>
+    <button data-s="zaladunek">3 · Załadunek</button>
+    <button data-s="rozladunek">4 · Rozładunek</button>
+  </div>
+  <div class="hulls" id="hulls"></div>
+  <button id="door">O · otwórz / zamknij wrota</button>
+  <div class="views">
+    <button id="v-frame">F · cała scena</button>
+    <button id="v-bay">B · ładownia z bliska</button>
+    <button id="v-cine">C · kamera kinowa</button>
+  </div>
+  <div class="speeds" id="speeds">
+    <button data-v="0">❚❚</button>
+    <button data-v="0.5">×½</button>
+    <button data-v="1">×1</button>
+    <button data-v="2">×2</button>
+    <button data-v="4">×4</button>
+  </div>
+  <div id="cap"></div>
+  <div class="keys">kółko — zoom · przeciąganie / WASD — przesuw · C — kamera kinowa (Q/E obrót) ·
+    F — cała scena · B — ładownia z bliska · [ ] — poprzedni / następny kadłub · Spacja — pauza · H — panel</div>
+  <details id="table"><summary>pojemność wszystkich kadłubów</summary>
+    <div class="row"><span>ton na kontener</span>
+      <select id="sel-tons"></select><span></span></div>
+    <div id="captable"></div>
+  </details>
+  <details id="settings"><summary>ustawienia</summary>
+    <div class="row"><span>ładunek (sceny 3–4)</span><select id="sel-mix"></select><span></span></div>
+    <div class="row"><span>azymut słońca [°]</span><input type="range" id="s-sun" min="0" max="360" step="1" value="128"><output id="o-sun"></output></div>
+    <div class="row"><span>słońce cieni [°]</span><input type="range" id="s-elev" min="10" max="75" step="1" value="30"><output id="o-elev"></output></div>
+    <div class="row"><span>moc lamp</span><input type="range" id="s-lamp" min="0" max="3" step="0.05" value="1"><output id="o-lamp"></output></div>
+    <div class="row"><span>pochylenie kamery [°]</span><input type="range" id="s-tilt" min="0" max="60" step="1" value="0"><output id="o-tilt"></output></div>
+    <label><input type="checkbox" id="c-bloom" checked> bloom gry</label>
+    <label><input type="checkbox" id="c-shadows" checked> cienie ładunku</label>
+  </details>
+  <div id="stats"></div>
+</div>
+<div id="loading">wczytywanie sprite'ów kadłubów…</div>
+<div id="err"></div>
+<div id="nogpu"><div>
+  <b>WebGPU niedostępne.</b><br>
+  Demo ładowni rysuje wnętrza, wrota, kontenery i drony w TSL na WebGPU — potrzebuje przeglądarki
+  z WebGPU (Chrome / Edge 113+ na Windowsie z aktualnym sterownikiem). Sprawdź <code>chrome://gpu</code>.
+  <div id="nogpu-detail" style="margin-top:8px;color:#9fb3cf;font-size:12px"></div>
+</div></div>
+<script type="module" src="./ladownia-webgpu.js"></script>
+</body>
+</html>
