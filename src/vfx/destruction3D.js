@@ -336,6 +336,11 @@ function _scheduleWarm() {
         // Jedna paczka na wolną chwilę — budowy NodeBuildera są synchroniczne.
         const t0 = performance.now();
         while (_warmQueue.length && performance.now() - t0 < 12) {
+            // Trzymacz cienia: pipeline powstaje SYNCHRONICZNIE w passie mapy cienia następnej klatki (pass
+            // cienia nie ma compileAsync) — wszystkie naraz dawały przestój (~9 ms na pipeline, 8 × w jednej
+            // klatce: ~80 ms w harnessie). Najwyżej jeden trzymacz cienia w scenie naraz — następny po zdjęciu
+            // poprzedniego (zadanie 23).
+            if (_warmQueue[0].cien === true && _shadowWarmPending.length) break;
             const make = _warmQueue.shift();
             try {
                 const holder = make();
@@ -394,7 +399,7 @@ const _shadowWarmPending = [];
 function _queueShadowWarm(key, makeHolder) {
     if (_warmedKeys.has(key)) return;
     _warmedKeys.add(key);
-    _warmQueue.push(() => {
+    const make = () => {
         const holder = makeHolder();
         if (!holder || !_scene) return null;
         holder.layers.set(SHADOW_WARM_LAYER);
@@ -403,7 +408,9 @@ function _queueShadowWarm(key, makeHolder) {
         _scene.add(holder);
         _shadowWarmPending.push(holder);
         return null; // bez prewarmPass — to pass cienia
-    });
+    };
+    make.cien = true;
+    _warmQueue.push(make);
     _scheduleWarm();
 }
 
