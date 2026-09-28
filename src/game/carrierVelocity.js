@@ -91,7 +91,7 @@ export function createCarrier() {
 
 /**
  * Nośnik BIEŻĄCEJ serii spawnów. Czytają go przy narodzinach cząstek wszystkie
- * systemy efektów (Fx3D, CanvasVFX, SparkSystem3D, overlay 3D, FlakBurstVFX),
+ * systemy efektów (Fx3D, CanvasVFX, SparkSystem3D, overlay 3D, pule broni WeaponFx),
  * więc wołający ustawia go raz tuż przed serią (błysk, trafienie) i zdejmuje
  * tuż po niej — bez wołania w środku innych emiterów. Zdjęty = zero, czyli
  * efekt stoi w świecie jak dawniej (np. iskry dysz).

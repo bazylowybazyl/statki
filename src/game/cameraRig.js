@@ -44,7 +44,7 @@ export const CAMERA_RIG_DEFAULTS = Object.freeze({
   hostileRangeScale: 1.2, // wróg bliżej niż zasięg broni głównej × to = walka
   // Wstrząs (px ekranu)
   shakeScale: 0.5,      // camera.addShake(mag) → mag × to px
-  weaponShakeScale: 0.12, // wstrząs strzałów Weapon3DSystem → mag × to px
+  weaponShakeScale: 0.12, // wstrząs strzałów (WeaponFx, window.__weapon3dCameraShake) → mag × to px
   shakeMaxPx: 16,
   shakeHz: 12,
   // Zoom startowy: kadłub zajmuje taki ułamek szerokości ekranu
@@ -257,7 +257,7 @@ export function defaultShipZoom(viewW, hullLength, tune = CAMERA_RIG_DEFAULTS, m
 }
 
 // Amplituda wstrząsu w px: camera.addShake (bieżące mag po wygaszaniu)
-// + wstrząs strzałów z Weapon3DSystem, z sufitem.
+// + wstrząs strzałów z WeaponFx (window.__weapon3dCameraShake), z sufitem.
 export function cameraShakeAmplitudePx(cameraMag, weaponMag, tune = CAMERA_RIG_DEFAULTS) {
   const a = Math.max(0, finite(cameraMag, 0)) * tune.shakeScale
     + Math.max(0, finite(weaponMag, 0)) * tune.weaponShakeScale;

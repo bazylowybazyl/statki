@@ -3,52 +3,58 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 import { MASTER_WEAPONS } from '../src/data/weapons.js';
+import { WEAPON_FX } from '../src/3d/weapons/weaponFxTable.js';
+import { RECIPES } from '../src/3d/weapons/recipes.js';
+import { sliceFunction } from './helpers/indexSource.mjs';
 
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-const weapon3d = readFileSync(new URL('../src/3d/weapon3DSystem.js', import.meta.url), 'utf8');
+const weaponFx = readFileSync(new URL('../src/3d/weapons/weaponFx.js', import.meta.url), 'utf8');
 
-// Każdy strzał wiązką z fireWeaponCore dostaje wizual 3D (_triggerBeamFx reaguje
-// na `isBeam && detail.beam`). Wcześniej 2D było gaszone TYLKO dla wiązek
-// ciągłych, więc beam_pulse rysował się dwa razy: smuga na kanwie + płaszczyzna
-// w scenie. Ten test pilnuje, żeby warunek nie wrócił do wersji po beamMode.
-test('beams that render in 3D do not also spawn a canvas beam', () => {
-  assert.match(html, /const shouldRenderBeam2D = !weapon\.render3dOnly;/);
-  assert.doesNotMatch(html, /shouldRenderBeam2D\s*=\s*!\(weapon\.render3dOnly && weapon\.beamMode/);
-  // Strona 3D nie filtruje po trybie — łapie każdą wiązkę z eventu.
-  assert.match(weapon3d, /if \(isBeam && detail\?\.beam\) this\._triggerBeamFx\(detail\);/);
+// Wiązki rysuje tylko 3D (WeaponFx, src/3d/weapons/weaponFx.js — zadanie 17). Każdy strzał
+// wiązką z fireWeaponCore wysyła jedno zdarzenie szyny z danymi wiązki; kanwa nie rysuje
+// żadnej wiązki. Dawniej beam_pulse rysował się dwa razy (smuga na kanwie + płaszczyzna
+// w scenie), a laser PD tylko na kanwie — decyzja 2026-09-27: PD z kanwy 2D do 3D (efekty
+// z dema bronie-webgpu).
+test('wiązki bez ścieżki kanwy — każdy strzał wiązką idzie do WeaponFx', () => {
+  const fire = sliceFunction(html, 'window.fireWeaponCore = function (shooter, target, weaponId, muzzleData) {');
+  assert.ok(fire.length > 0);
+  assert.doesNotMatch(fire, /spawnLaserBeam\(/, 'smuga wiązki na kanwie wróciła');
+  assert.doesNotMatch(html, /shouldRenderBeam2D/);
+  assert.doesNotMatch(html, /function spawnLaserBeam\(/, 'martwy pomocnik smugi kanwy');
+  // Dane wiązki dla każdej wiązki, rodzaj efektu z klasy broni.
+  assert.match(fire, /const eventBeam = _beamEventScratch;/);
+  assert.match(fire, /eventBeam\.kind = pdBeam \? 'pd' : eventBeam\.mode;/);
+  // Strona 3D łapie każdą wiązkę ze zdarzenia: ciągła (stan na emitterUid), impuls, laser PD.
+  assert.match(weaponFx, /if \(detail\.isBeam && detail\.beam\) \{/);
+  assert.match(weaponFx, /kind === 'pd' \? BEAM\.PD : BEAM\.PULSE/);
 });
 
-// Bronie wiązkowe idące przez fireWeaponCore muszą mieć render3dOnly, inaczej
-// znowu polecą podwójnie.
-test('main-mount beam weapons are flagged render3dOnly', () => {
+// Każda broń wiązkowa (także laser PD na gnieździe aux) ma recepturę z konfiguracją wiązki.
+test('każda broń wiązkowa ma recepturę wiązki w tabeli efektów', () => {
   let checked = 0;
   for (const [id, def] of Object.entries(MASTER_WEAPONS)) {
     if (def.category !== 'beam') continue;
-    const mountType = String(def.mountType || '').toLowerCase();
-    // laser_pd_mk1 (aux): gracz strzela nim przez ciwsStep, NPC przez
-    // fireWeaponCore — tam klasa PD dostaje tylko smugę 2D, bez pulsu 3D
-    // (test niżej), więc duplikatu też nie ma.
-    if (mountType === 'aux') continue;
-    assert.equal(def.render3dOnly, true, `${id}: wiązka bez render3dOnly poleci 2D i 3D naraz`);
+    const entry = WEAPON_FX[id];
+    assert.ok(entry, `${id}: brak wpisu w WEAPON_FX`);
+    assert.ok(RECIPES[entry.fx]?.beam, `${id}: receptura ${entry.fx} bez wiązki`);
     checked++;
   }
-  assert.ok(checked >= 2, `spodziewano się co najmniej 2 wiązek głównych, sprawdzono ${checked}`);
+  assert.ok(checked >= 3, `spodziewano się co najmniej 3 wiązek (ciągła, impuls, PD), sprawdzono ${checked}`);
 });
 
-// Point-defence ma własną, czysto 2D ścieżkę — to NIE jest pozostałość.
-test('point-defence laser keeps its canvas-only beam path', () => {
-  assert.match(html, /function firePointDefenseLaser\(/);
-  assert.match(html, /spawnLaserBeam\(muzzle, beamEnd, LASER_PD_BEAM_WIDTH/);
-  assert.equal(MASTER_WEAPONS.laser_pd_mk1?.render3dOnly, undefined);
-  // NPC-owy laser PD w fireWeaponCore: smuga 2D tak, wizual pulse 3D nie.
-  assert.match(html, /const pdBeam = isPointDefenseWeapon\(weapon\);/);
-  assert.match(html, /if \(!pdBeam\) \{\s*const eventBeam = _beamEventScratch;/);
+// Laser PD gracza (ciwsStep, poza szyną strzałów): ten sam efekt 3D co PD NPC.
+test('laser PD gracza (ciwsStep) rysuje się w 3D, bez smugi kanwy', () => {
+  const fn = sliceFunction(html, 'function firePointDefenseLaser(');
+  assert.ok(fn.length > 0);
+  assert.match(fn, /WeaponFx\.pdLaser\(weaponId, muzzle\.x, muzzle\.y, beamEnd\.x, beamEnd\.y, ship, target\);/);
+  assert.doesNotMatch(fn, /spawnLaserBeam|spawnPointDefenseLaser/);
+  assert.doesNotMatch(html, /LASER_PD_BEAM_WIDTH/);
 });
 
-// Trafienia pocisków obsługuje overlay 3D; gałąź 2D była za flagą zabitą na
-// sztywno na false, więc nie wykonywała się nigdy.
+// Trafienia pocisków obsługuje 3D; gałąź 2D była za flagą zabitą na sztywno na false,
+// więc nie wykonywała się nigdy. Od zadania 17 także trafienia wiązek nie idą przez kanwę.
 test('dead canvas impact branch is gone', () => {
   assert.doesNotMatch(html, /CANVAS_IMPACT_VFX_ENABLED/);
-  // Trafienia wiązek nadal idą przez kanwę — ta ścieżka ma zostać.
-  assert.match(html, /window\.spawnWeaponImpactFromPreset = /);
+  assert.doesNotMatch(html, /impactFx\('beam'/);
+  assert.doesNotMatch(html, /window\.spawnWeaponImpactFromPreset = /);
 });
