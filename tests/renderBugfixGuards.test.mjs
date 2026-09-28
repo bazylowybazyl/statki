@@ -49,7 +49,12 @@ const code = (path) => read(path).replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\
 test('haze reaktora i rakiet w osi sceny (y3d = -yGry); fala z refrakcją tylko dla supernovy', () => {
   assert.match(read('src/effects3d/reactorblow.js'), /pushHeatHazeWorld\(expX, -expZ, -4,/);
   assert.match(read('src/effects3d/rocketSystem3D.js'), /pushHeatHazeWorld\(burst\.x, -burst\.z, -4,/);
-  assert.doesNotMatch(code('src/effects3d/yamato.js'), /trigger3DShockwave|sw3d\(/, 'Yamato bez fali');
+  // Yamato i reszta broni (zadanie 17): receptury z dema bronie-webgpu (src/3d/weapons/) — fala
+  // to zniekształcenie Core3D (pula DIST, sama refrakcja — decyzja 2026-09-27: efekty z dema),
+  // nigdy dawna fala overlaya trigger3DShockwave.
+  for (const f of ['recipes.js', 'weaponFx.js', 'gpuFx.js']) {
+    assert.doesNotMatch(code(`src/3d/weapons/${f}`), /trigger3DShockwave|sw3d\(/, `${f}: broń bez fali overlaya`);
+  }
   assert.doesNotMatch(code('src/effects3d/reactorblow.js'), /shockwave3D: \{|heatHaze: \{/, 'wybuchy reaktorów bez fali i haze');
   for (const f of ['stationChainProfile', 'stationCutProfile', 'stationFinalProfile']) {
     assert.doesNotMatch(code(`src/effects3d/reactorProfiles/${f}.js`), /shockwave3D: \{|heatHaze: \{/, f);
@@ -83,9 +88,10 @@ test('bloom overlaya: efekty tylko przez modyfikatory, bez zapisu/przywracania b
   const overlay = read('src/effects3d/overlay.js');
   assert.match(overlay, /setBloomModifier: \(key, modifier\) =>/);
   assert.match(overlay, /clearBloomModifier: \(key\) =>/);
-  const yamato = read('src/effects3d/yamato.js');
-  assert.match(yamato, /overlay\.setBloomModifier\(lease, YAMATO_BLOOM_SUPPRESSION\)/);
-  assert.doesNotMatch(yamato, /setBloomConfig|__yamatoBloomSuppression/);
+  // Yamato nie jest już w overlayu (zadanie 17 — receptura WeaponFx w Core3D): bez modyfikatora
+  // i bez zapisu konfiguracji bloomu.
+  const weaponFx = code('src/3d/weapons/weaponFx.js') + code('src/3d/weapons/recipes.js');
+  assert.doesNotMatch(weaponFx, /setBloomConfig|setBloomModifier|__yamatoBloomSuppression/);
   const nova = read('src/effects3d/supernovaMissileBlow.js');
   assert.doesNotMatch(nova, /_savedBloom|_activeNovaCount|setBloomConfig/);
   assert.match(nova, /_restoreBloom\(bloomLease\)/);

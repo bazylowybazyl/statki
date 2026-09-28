@@ -5,9 +5,10 @@
 //   exhaust  — dysze (src/3d/engineExhaustBatch.js)
 //   impostor — smugi dalekich / zimnych wraków (src/3d/hexBodyImpostorBatch.js)
 //   fx       — wspólny bank cząstek Fx3D (src/3d/fxParticles3D.js)
-//   bullets  — pociski: smuga, rdzeń, łuki jonowe (src/3d/weapon3DSystem.js)
-//   muzzle   — tani błysk wylotowy przy lufie (src/3d/weapon3DSystem.js)
-//   trails   — smuga gazu pocisku Yamato (src/3d/slugTrail3D.js, BulletTrails)
+//   (bullets / muzzle / trails — pociski, błyski wylotowe i smugi dawnego weapon3DSystem.js
+//   i slugTrail3D.js — usunięte z modułami w zadaniu 17 portu WebGPU. Efekty broni żyją dziś
+//   w pulach src/3d/weapons/ z początkiem przy kamerze (FxPoolOrigin, src/3d/fx/); pomiar
+//   ich drżenia wymaga nowych dopasowań siatek: wfxProjectiles, wfxTrails, wfxAdd.)
 //   sparks   — iskry trafień i tarcia (src/3d/sparkSystem3D.js, scena overlay)
 // Metoda i demo jak w dema/mostki3d-drzenie.js (model mostka, §8.12
 // docs/PORT-mostki.md): demo mostków w headless Chrome przez CDP, kamera co
@@ -30,10 +31,7 @@
 // .tmp/precyzja/przed/<moduł>.orig.js podawane aliasem Vite (resolve.alias)
 // — pliki w drzewie zostają nietknięte (inne sesje edytują równolegle).
 // Efekty w pomiarze stoją: Fx3D.update z dt = 0, dysze po rozbiegu (wygładzanie
-// ciągu idzie per wywołanie), błysk wylotowy odpalany co klatkę (stała suma
-// gasnących błysków; kadłuby dema nie mają wieżyczek, więc Turret2D.triggerShot
-// oddaje na ten czas stałą lufę), smuga po zniknięciu pocisku z zamrożonym
-// zegarem. Bloom wyłączony (perfToggles.bloom = false — post czyta go w każdym
+// ciągu idzie per wywołanie). Bloom wyłączony (perfToggles.bloom = false — post czyta go w każdym
 // renderze): piramida bloomu (×2) dawała jasnym efektom wzór co 2 px
 // przesunięcia i rozlewała błysk na pół ekranu. `--bloom` zostawia go włączonego.
 //
@@ -65,7 +63,7 @@ const variants = (args.variant && args.variant !== 'obie') ? [args.variant] : ['
 
 // Moduły podmieniane w wariancie „przed” (nazwa pliku w src/3d/).
 const PRZED_FILES = ['shipLights3D', 'bridgeFx3D', 'engineExhaustBatch', 'hexBodyImpostorBatch', 'fxParticles3D',
-  'weapon3DSystem', 'sparkSystem3D', 'slugTrail3D'];
+  'sparkSystem3D'];
 const przedDir = resolve(repo, '.tmp/precyzja/przed');
 // Pliki w toku u innych sesji — w OBU wariantach wersja z HEAD (alias), żeby
 // cudza praca w toku nie psuła pomiaru. `--pin none` wyłącza.
@@ -75,8 +73,8 @@ const pinDir = resolve(repo, '.tmp/precyzja/pin');
 // Start gracza w grze leży ok. (7,08 mln; 6,29 mln); 9,9 mln — krok float32 = 1 j.
 const FAR_7M = [7075238.77, 6289731.51];
 const FAR_99M = [9874885.3, 8289731.4];
-const MODULES = ['lights', 'windows', 'exhaust', 'impostor', 'fx', 'bullets', 'muzzle', 'trails', 'sparks'];
-const HULL_OF = { lights: 'atlas', muzzle: 'atlas' };
+const MODULES = ['lights', 'windows', 'exhaust', 'impostor', 'fx', 'sparks'];
+const HULL_OF = { lights: 'atlas' };
 // Zoom 1,8 / 0,9: krok kamery 1 px = 0,556 / 1,111 j. — niewspółmierny z siatką
 // float32 (0,5 j. przy 7 mln), jak ruch kamery w grze. Przy zoomie 2 krok
 // 0,5 j. trafia w siatkę i błąd samego zaokrąglenia kamery stoi w miejscu
@@ -307,11 +305,7 @@ async function probe(opts, analyze) {
     windows: (o) => o.name === 'BRIDGE_WINDOWS',
     exhaust: (o) => o.isMesh && vs(o).includes('attribute vec2 aPos') && (vs(o).includes('attribute vec2 aFlame') || (!!o.material?.uniforms?.uMap && vs(o).includes('attribute float aOpacity') && !vs(o).includes('aRot'))),
     impostor: (o) => o.isMesh && vs(o).includes('attribute vec2 aPos') && vs(o).includes('attribute float aRot') && vs(o).includes('attribute float aOpacity') && !vs(o).includes('aFlame'),
-    fx: (o) => typeof o.name === 'string' && o.name.startsWith('FX3D_'),
-    // weapon3DSystem: pociski 78–81, błyski wylotowe 82–83 (MeshBasicMaterial).
-    bullets: (o) => o.isInstancedMesh && o.renderOrder >= 78 && o.renderOrder <= 81 && !!o.material?.isMeshBasicMaterial,
-    muzzle: (o) => o.isInstancedMesh && (o.renderOrder === 82 || o.renderOrder === 83) && !!o.material?.isMeshBasicMaterial,
-    trails: (o) => o.name === 'BULLET_SLUG_TRAILS__WORLD_SPACE'
+    fx: (o) => typeof o.name === 'string' && o.name.startsWith('FX3D_')
   };
   const find = (mod) => {
     const out = [];
@@ -337,7 +331,7 @@ async function probe(opts, analyze) {
       return r;
     };
   }
-  // Cząstki stoją: syncProjectiles daje co klatkę dt ≥ 1 ms.
+  // Cząstki stoją: WeaponFx.sync (dawniej syncProjectiles) daje co klatkę dt ≥ 1 ms.
   if (Fx && !Fx.__precyzjaUpdate) {
     const origUpdate = Fx.update;
     Fx.__precyzjaUpdate = origUpdate;
@@ -352,7 +346,6 @@ async function probe(opts, analyze) {
     overlays: { grid: false, hardpoints: false, bridgeHexes: false, zone: false, aim: false, info: false } });
   api.model3d(false);
   if (Fx?.ready) Fx.reset();
-  window.BulletTrails?.reset?.();
   const t = api.sim.targets.find((e) => e.hullKey === opts.hull);
   const sun = window.SUN;
   const sun0 = sun ? { x: sun.x, y: sun.y } : null;
@@ -414,59 +407,6 @@ async function probe(opts, analyze) {
     Fx.arcs.spawn(at(-60, 45), at(-15, 60), 10, 6, [1.4, 1.8, 3.0]);
     // Wiek 1 s (alfa w pełni, łuk i iskry na miejscu), potem stop.
     for (let i = 0; i < 10; i++) Fx.__precyzjaUpdate.call(Fx, 0.1);
-  } else if (opts.module === 'bullets') {
-    // Pociski stoją (symulacja w pauzie): trzy style, w tym łuki jonowe.
-    const bc = { x: t.x - 40, y: t.y + 25 };
-    center = [bc.x, bc.y];
-    const mk = (key, dx, dy, ang, speed) => {
-      const vx = Math.cos(ang) * speed;
-      const vy = Math.sin(ang) * speed;
-      const x = bc.x + dx;
-      const y = bc.y + dy;
-      return { x, y, px: x - vx * 0.016, py: y - vy * 0.016, vx, vy, life: 100, vfxKey: key, weaponId: key, owner: 'player', r: 2 };
-    };
-    const list = [mk('vulcan', -50, -30, 0.4, 3200), mk('helios', 20, -45, -0.9, 2600), mk('tempest', -10, 20, 2.3, 3600), mk('vulcan', 55, 35, 1.7, 2900)];
-    api.sim.bullets.push(...list);
-    cleanup.push(() => { for (const b of list) { const i = api.sim.bullets.indexOf(b); if (i >= 0) api.sim.bullets.splice(i, 1); } });
-  } else if (opts.module === 'muzzle') {
-    // Kadłuby dema nie mają wieżyczek, więc na czas pomiaru Turret2D.triggerShot
-    // oddaje stałą lufę; dalej prawdziwa ścieżka weapon3DSystem
-    // (MuzzleFX3D.fire → spawnMuzzleFlash dla broni bez „bogatego” błysku).
-    // Strzał co klatkę: stała suma gasnących błysków (pula 192, najstarszy
-    // nadpisywany) — obraz ustalony po rozbiegu.
-    const T2 = window.Turret2D;
-    const muzzle = { x: t.x + 40, y: t.y - 20, angle: 0.7, scale: 1.6, color: '#ffc766', shake: 0 };
-    const trigger0 = T2.triggerShot;
-    T2.triggerShot = () => muzzle;
-    cleanup.push(() => { T2.triggerShot = trigger0; });
-    window.__precyzjaOnRender = () => {
-      window.dispatchEvent(new CustomEvent('game_weapon_fired', { detail: { weaponId: 'vulcan', x: muzzle.x, y: muzzle.y, shooter: t } }));
-    };
-    api.renderFrames(260);
-    // Materiał błysku ma vertexColors: true, a PlaneGeometry nie ma atrybutu
-    // color — barwa bierze przypadkową wartość domyślną atrybutu WebGL (tu
-    // czerń). Tylko w pomiarze: sama barwa instancji, jak w pociskach.
-    Core3D.scene.traverse((o) => {
-      if (MATCH.muzzle(o) && o.material.vertexColors) { o.material.vertexColors = false; o.material.needsUpdate = true; }
-    });
-    note = 'vertexColors wył. w pomiarze';
-    center = [muzzle.x + 12, muzzle.y + 10];
-  } else if (opts.module === 'trails') {
-    // Pocisk Yamato przelatuje po przekątnej i znika — smuga zostaje; potem
-    // zegar banku stop (wiek, dryf i meandry gazu stoją). Okno na KOŃCU smugi:
-    // wzdłuż jednolitej wstęgi przesunięcia nie widać (problem apertury).
-    const d = Math.SQRT1_2;
-    const x0 = t.x - 1100;
-    const y0 = t.y - 1100;
-    const b = { x: x0, y: y0, px: x0 - 150 * d, py: y0 - 150 * d, vx: 9000 * d, vy: 9000 * d, life: 100, vfxKey: 'special_yamato', weaponId: 'special_yamato', owner: 'player', r: 3 };
-    api.sim.bullets.push(b);
-    for (let i = 0; i < 20; i++) { b.px = b.x; b.py = b.y; b.x += 150 * d; b.y += 150 * d; api.renderFrames(1); }
-    const endX = b.x;
-    const endY = b.y;
-    const i = api.sim.bullets.indexOf(b);
-    if (i >= 0) api.sim.bullets.splice(i, 1);
-    api.renderFrames(1);          // endFrame domyka smugę
-    center = [endX - 40 * d, endY - 40 * d];
   }
   window.__precyzjaFreezeFx = true;
   api.renderFrames(2);
