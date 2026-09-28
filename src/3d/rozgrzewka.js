@@ -45,6 +45,26 @@
 // kolejkę bez czekania na bezczynność i czeka na pipeline'y (limit czasu). Siatka z tym samym materiałem
 // rozgrzana raz (bez wariantu) nie wraca do kolejki.
 
+// three r183: compileAsync bierze do klucza pipeline'u głębię i szablon RENDERERA (renderer.depth / stencil), a
+// zwykły render — CELU (renderTarget.depthBuffer / stencilBuffer). Na celu bez bufora głębi (pieczenie map i detalu
+// ringu, maska słońca, DIST) rozgrzewka robiła pipeline z Depth24Plus, a pierwszy prawdziwy rysunek — drugi,
+// synchronicznie (przestój). Renderer dostaje stan bieżącego celu na czas wywołania (część synchroniczna
+// compileAsync czyta te pola od razu). Każde compileAsync na celu innym niż ekran — przez tę funkcję.
+export function compileAsyncNaCelu(renderer, scene, camera, targetScene = null) {
+  const target = typeof renderer.getRenderTarget === 'function' ? renderer.getRenderTarget() : null;
+  if (!target || !('depth' in renderer)) return renderer.compileAsync(scene, camera, targetScene);
+  const depth = renderer.depth;
+  const stencil = renderer.stencil;
+  renderer.depth = target.depthBuffer !== false;
+  renderer.stencil = target.stencilBuffer === true;
+  try {
+    return renderer.compileAsync(scene, camera, targetScene);
+  } finally {
+    renderer.depth = depth;
+    renderer.stencil = stencil;
+  }
+}
+
 const MESHY = (o) => (o.isMesh || o.isLine || o.isPoints || o.isSprite) && !!o.material;
 const nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 const lowestLayer = (mask) => {
@@ -323,7 +343,7 @@ export class Rozgrzewka {
       else obj.traverse((o) => { if (o.frustumCulled) { o.frustumCulled = false; culled.push(o); } });
       if (spec.override && obj.isScene) obj.overrideMaterial = spec.override;
       renderer.setRenderTarget(target || null);
-      promise = renderer.compileAsync(obj, camera, scene);
+      promise = compileAsyncNaCelu(renderer, obj, camera, scene);
     } catch (err) {
       promise = Promise.reject(err);
     } finally {

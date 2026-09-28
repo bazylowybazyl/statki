@@ -22,7 +22,7 @@ import { installPlaceholders } from './tsl/zamiennik.js';
 import { uniformNode, uniformsAdapter } from './tsl/uniformy.js';
 import { BloomGry, MAX_HEAT_HAZE_SOURCES, createPostUniforms, createUberPost, hdrBezpieczny } from './tsl/postGry.js';
 import { FxFrame, FX_DISTORT_LAYER } from './fx/fxFrame.js';
-import { Rozgrzewka } from './rozgrzewka.js';
+import { Rozgrzewka, compileAsyncNaCelu } from './rozgrzewka.js';
 
 // Brama znaczników czasu GPU (_gpuTimerGate): tyle zapytań musi zostać w puli three
 // (2 na pass), żeby zmieścić całą klatkę — dwa rendery podzielonego ekranu z modułami
@@ -1780,11 +1780,12 @@ export const Core3D = {
     });
     camera.layers.set(layer);
     renderer.setRenderTarget(this.composerTarget);
-    // Warstwa DIST rysuje do własnego celu (RG HalfFloat bez MSAA i głębi) — inny klucz pipeline'u.
+    // Warstwa DIST rysuje do własnego celu (RG HalfFloat bez MSAA i głębi) — inny klucz pipeline'u
+    // (głębia celu, nie renderera: compileAsyncNaCelu).
     if (layer === FX_DISTORT_LAYER && this.distortionTarget) renderer.setRenderTarget(this.distortionTarget);
     let promise;
     try {
-      promise = renderer.compileAsync(object3d, camera, object3d.isScene ? null : this.scene);
+      promise = compileAsyncNaCelu(renderer, object3d, camera, object3d.isScene ? null : this.scene);
     } catch (err) {
       promise = Promise.reject(err);
     } finally {

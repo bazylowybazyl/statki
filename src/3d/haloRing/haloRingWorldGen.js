@@ -37,6 +37,7 @@ import { haloPortTileUniforms } from './haloRingUniforms.js';
 import { haloSectorFeatures, resolveHaloProfile } from './haloRingProfiles.js';
 import { HALO_LANDMARK } from './haloRingLandmarks.js';
 import { HALO_DOME } from './haloRingDomes.js';
+import { compileAsyncNaCelu } from '../rozgrzewka.js';
 
 const MAX_SECTORS = 32;
 const RIVERS = 3;
@@ -592,13 +593,14 @@ export class HaloWorldMaps {
     for (const [key, target] of jobs) {
       if (this.disposed) return;
       // compileAsync czyta cel synchronicznie (renderer już zainicjowany) — cel wraca
-      // PRZED czekaniem, żeby klatka gry w międzyczasie nie trafiła w cel bake'u
+      // PRZED czekaniem, żeby klatka gry w międzyczasie nie trafiła w cel bake'u; głębia celu
+      // (bez bufora głębi), nie renderera — inaczej bake tworzył drugi pipeline synchronicznie (zadanie 11)
       const prevTarget = r.getRenderTarget();
       this.quad.material = this.materials[key];
       r.setRenderTarget(target);
       let pending;
       try {
-        pending = r.compileAsync(this.scene, this.camera);
+        pending = compileAsyncNaCelu(r, this.scene, this.camera);
       } finally {
         r.setRenderTarget(prevTarget);
       }

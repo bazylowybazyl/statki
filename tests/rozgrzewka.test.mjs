@@ -213,3 +213,46 @@ test('Core3D: rejestr jako Core3D.warmup, start przy gotowym urządzeniu, passy 
   assert.match(read('src/3d/engineExhaustBatch.js'), /Core3D\.warmup\?\.add\(\{ name: 'dysze SIDE', objects: \(\) => EngineExhaustBatch\.warmupMeshes\(\), phase: 'loading' \}\);/);
   assert.match(read('src/3d/shipLights3D.js'), /Core3D\.warmup\?\.add\(\{ name: 'światła pozycyjne statków', objects: [^\n]*phase: 'loading' \}\);/);
 });
+
+test('compileAsyncNaCelu: głębia i szablon CELU na czas wywołania (jak zwykły render), potem stan renderera wraca', async () => {
+  const { compileAsyncNaCelu } = await import('../src/3d/rozgrzewka.js');
+  const seen = [];
+  let target = null;
+  const renderer = {
+    depth: true, stencil: false,
+    getRenderTarget: () => target,
+    compileAsync(scene, camera, targetScene) { seen.push({ depth: this.depth, stencil: this.stencil, targetScene }); return Promise.resolve('ok'); }
+  };
+  // cel bez bufora głębi (pieczenie, maska słońca, DIST): pipeline bez Depth24Plus
+  target = { depthBuffer: false, stencilBuffer: false };
+  assert.equal(await compileAsyncNaCelu(renderer, 'scena', 'kamera'), 'ok');
+  // cel z głębią i szablonem
+  target = { depthBuffer: true, stencilBuffer: true };
+  await compileAsyncNaCelu(renderer, 'scena', 'kamera', 'swiatla');
+  // ekran (bez celu): stan renderera bez zmian
+  target = null;
+  await compileAsyncNaCelu(renderer, 'scena', 'kamera');
+  assert.deepEqual(seen, [
+    { depth: false, stencil: false, targetScene: null },
+    { depth: true, stencil: true, targetScene: 'swiatla' },
+    { depth: true, stencil: false, targetScene: null }
+  ]);
+  assert.equal(renderer.depth, true);
+  assert.equal(renderer.stencil, false);
+  // wyjątek z compileAsync też przywraca stan
+  target = { depthBuffer: false };
+  renderer.compileAsync = () => { throw new Error('zly'); };
+  assert.throws(() => compileAsyncNaCelu(renderer, 's', 'k'), /zly/);
+  assert.equal(renderer.depth, true);
+});
+
+test('compileAsync w grze tylko przez compileAsyncNaCelu (klucz pipeline’u z głębią celu)', () => {
+  const files = ['src/3d/core3d.js', 'src/3d/rozgrzewka.js', 'src/3d/haloRing/haloRingWorldGen.js', 'src/3d/haloRing/haloRingDetail.js'];
+  for (const f of files) {
+    const code = read(f).split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+    const raw = [...code.matchAll(/\.compileAsync\(/g)].length;
+    // jedyne bezpośrednie wywołania: w samej funkcji pomocniczej (ekran i cel)
+    assert.equal(raw, f === 'src/3d/rozgrzewka.js' ? 2 : 0, `${f}: bezpośrednie compileAsync`);
+    if (f !== 'src/3d/rozgrzewka.js') assert.match(code, /compileAsyncNaCelu\(/, `${f}: przez compileAsyncNaCelu`);
+  }
+});
