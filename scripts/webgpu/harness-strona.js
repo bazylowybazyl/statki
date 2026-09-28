@@ -175,7 +175,23 @@
   realRaf(tick);
 
   let s = SEED;
+  // Licznik wywołań Math.random gry wg miejsca wywołania (zadanie 23, `zrzuty.mjs --losowania`): kto zużywa
+  // losowania gry w scenie — wizualia mają losować z fxRandom (warstwa efektów), inaczej przebieg bitwy
+  // zależy od obrazu (kadru, zoomu, zajętości pul). Stos tylko przy włączonym liczniku; ciąg liczb bez zmian.
+  let randTally = null;
+  const tallyCaller = () => {
+    const lim = Error.stackTraceLimit;
+    Error.stackTraceLimit = 4;
+    const st = String(new Error().stack || '').split('\n');
+    Error.stackTraceLimit = lim;
+    // [0] „Error”, [1] ta funkcja, [2] Math.random (harness), [3] wołający
+    const line = st[3] || st[st.length - 1] || '?';
+    const m = line.match(/at (?:(\S+) )?\(?(?:https?:\/\/[^/]+)?\/?([^?:)]+)(?:\?[^:)]*)?:(\d+):\d+\)?/);
+    const key = m ? `${m[2]}:${m[3]}${m[1] ? ' ' + m[1] : ''}` : line.trim().slice(0, 120);
+    randTally.set(key, (randTally.get(key) || 0) + 1);
+  };
   Math.random = () => {
+    if (randTally) tallyCaller();
     s = (s + 0x6D2B79F5) | 0;
     let t = Math.imul(s ^ (s >>> 15), 1 | s);
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
@@ -530,6 +546,16 @@
       s = v >>> 0;
       try { if (window.fxRandom && typeof window.fxRandom.seed === 'function') window.fxRandom.seed((v ^ 0x5eed5eed) >>> 0); } catch { /* bez efektów */ }
       return true;
+    },
+    // Licznik wywołań Math.random gry (zadanie 23): start() zeruje i włącza, stop() → { „plik:linia funkcja”: liczba }.
+    losowania: {
+      start() { randTally = new Map(); return true; },
+      stop() {
+        if (!randTally) return null;
+        const out = Object.fromEntries([...randTally].sort((a, b) => b[1] - a[1]));
+        randTally = null;
+        return out;
+      }
     },
     // czeka n prawdziwych klatek (czas wirtualny bez zmian w trybie 'frozen')
     frames(n = 1) {
