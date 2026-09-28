@@ -166,7 +166,9 @@ export const REACTOR_BLOW_PROFILES = Object.freeze({
  * Wygląd pod post gry (model w nagłówku reactorblow.tsl.js): odwzorowanie obrazu overlaya
  * (look), mnożniki wkładu per rodzaj (spark / core / ring / smoke), mnożniki wyjścia (out — rdzeń
  * i płaskie, outSpark, outSpike), sufity (cap — rdzeń pod progiem bloomu gry, capSpark), poświata
- * rdzenia z bloomu overlaya (haloAmp, haloQuad — najwyższe powiększenie kwadu, haloSpread).
+ * rdzenia z bloomu overlaya (haloAmp, haloQuad — najwyższe powiększenie kwadu, haloSpread),
+ * poświata pojedynczej iskry z mipów 0–1 bloomu overlaya (sparkGlow — względem jego wzmocnienia,
+ * sparkGlowMax — margines kwadu w px, sparkGlowAge0 → Age1 — narastanie z wiekiem iskry w s).
  * Dobrane do zrzutów bazy z tagu webgl-baseline (scripts/webgpu/zrzuty.mjs: sesja „reaktor”,
  * `wybuch`, `stacja-rozpad`, wariant `__reaktor`) — liczby: docs/webgpu/POSTEP.md (zadanie 20).
  * Strojenie na żywo: window.__reactorBlow3D.setLook({ … }).
@@ -184,7 +186,11 @@ export const REACTOR_LOOK = Object.freeze({
   capSpark: 1e4,
   haloAmp: 4,
   haloQuad: 40,
-  haloSpread: 1
+  haloSpread: 1,
+  sparkGlow: 2,
+  sparkGlowMax: 40,
+  sparkGlowAge0: 0.6,
+  sparkGlowAge1: 1.2
 });
 
 /** Światła wybuchu w siatce świateł efektów (rdzeń ładowania i rozbłysk): moc, zasięg / rozmiar kwadu, wysokość, rozpraszanie. */
@@ -318,6 +324,10 @@ export class ReactorBlow3D {
     if (Number.isFinite(look.haloAmp)) U.uHaloAmp.value = look.haloAmp;
     if (Number.isFinite(look.haloQuad)) U.uHaloQuad.value = Math.max(1, look.haloQuad);
     if (Number.isFinite(look.haloSpread)) U.uHaloSpread.value = look.haloSpread;
+    if (Number.isFinite(look.sparkGlow)) U.uSparkGlow.value = Math.max(0, look.sparkGlow);
+    if (Number.isFinite(look.sparkGlowMax)) U.uSparkGlowMax.value = Math.max(0, look.sparkGlowMax);
+    if (Number.isFinite(look.sparkGlowAge0)) U.uSparkGlowAge0.value = look.sparkGlowAge0;
+    if (Number.isFinite(look.sparkGlowAge1)) U.uSparkGlowAge1.value = look.sparkGlowAge1;
     return this;
   }
 

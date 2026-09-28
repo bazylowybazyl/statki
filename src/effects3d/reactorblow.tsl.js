@@ -31,8 +31,10 @@
 //     sufitem 0,88 — pod progiem bloomu gry (0,9), bo jego rozlew (7,65 × liniowo) spłaszczał
 //     stromy spadek jasności overlaya (sufit = biel ~229/255 zamiast 255 w środku kuli);
 //   • iskry i kolce (typy 4 i 3): świecą przez bloom gry (bez sufitu) z mnożnikami wyjścia
-//     (iskry 0,7, kolce 2) dobranymi do zrzutów bazy — model chmury iskier (poświata populacji)
-//     sprawdzony i odrzucony (gorszy od bloomu gry, patrz dziennik zadania 20).
+//     (iskry 0,7, kolce 2) dobranymi do zrzutów bazy; rozlanym iskrom (od 0,6 s życia) dochodzi
+//     poświata pojedynczej kreski z mipów 0–1 bloomu overlaya (świecące kulki zamiast cienkich
+//     kresek) — w gęstej, młodej chmurze jej suma przerastała białą kulę overlaya, więc tam nie
+//     wchodzi; model chmury iskier (poświata populacji) sprawdzony i odrzucony.
 // Liczby porównań: docs/webgpu/POSTEP.md (zadanie 20), sesja harnessu „reaktor”.
 //
 // Pułapki (PLAN §3): funkcje z setLayout są CZYSTE (uniformy parametrami); potęgi całkowite
@@ -153,7 +155,14 @@ export function createReactorUniforms() {
     // Poświata overlaya wokół rdzenia: amplituda (0 = bez), najwyższe powiększenie kwadu, skala σ.
     uHaloAmp: uniform(0),
     uHaloQuad: uniform(40),
-    uHaloSpread: uniform(1)
+    uHaloSpread: uniform(1),
+    // Poświata pojedynczej iskry i kolca (dwa najmniejsze mipy bloomu overlaya): amplituda względem
+    // wzmocnienia overlaya (0 = bez), najwyższy margines kwadu [px ekranu 1920], narastanie z wiekiem
+    // iskry [s] (od, do) — patrz sparkGlow niżej.
+    uSparkGlow: uniform(0),
+    uSparkGlowMax: uniform(40),
+    uSparkGlowAge0: uniform(0.6),
+    uSparkGlowAge1: uniform(1.2)
   };
 }
 
@@ -212,6 +221,47 @@ function coreHalo(px, py, side, spread) {
   return sum;
 }
 
+// ── Poświata iskry (dwa najmniejsze mipy bloomu overlaya) ──────────────────────────────────
+// Iskra to kreska: w poprzek (1 − 2|x|)³ (całka 0,25, wariancja 1/60 szerokości²), wzdłuż prawie
+// płaska (całka ≈ 0,8, wariancja ≈ 0,053 długości²). Bloom overlaya rozlewał ją gaussami mipów:
+// mipy 0–1 (σ 4,76 i 16,58 px) robiły świecącą kulkę wokół kreski (mipy 2–4 — szeroka łuna całej
+// chmury iskier, tę daje bloom gry z sumy iskier). Energia kreski w px² × wzmocnienie mipu.
+// Poświata narasta z wiekiem iskry (uSparkGlowAge0 → Age1): w gęstej, młodej chmurze overlay
+// nasycał SUMĘ do bieli (alfa i ACES na sumie), a suma poświat odwzorowanych osobno przerastała
+// jego białą kulę 2–4× — więc poświata wchodzi dopiero, gdy chmura się rozrzedzi (rozlane iskry).
+const SPARK_SHAPE_ENERGY = 0.2;
+const SPARK_VAR_ACROSS = 1 / 60;
+const SPARK_VAR_ALONG = 0.053;
+const SPARK_GLOW_SIGMA_PX = OVERLAY_BLOOM_SIGMA_PX.slice(0, 2);
+
+// Zasięg poświaty od środka kreski [px], w którym gauss mipu spada do progu widoczności.
+function sparkGlowReach(energy, varMax, spread) {
+  let reach = null;
+  for (const sigma of SPARK_GLOW_SIGMA_PX) {
+    const sk = spread.mul(sigma);
+    const v = sk.mul(sk).add(varMax);
+    const top = energy.mul(OVERLAY_BLOOM_GAIN).div(v.mul(2 * Math.PI * HALO_EPS));
+    const r = sqrt(v.mul(2.0).mul(max(log(max(top, 1.0)), 0.0)));
+    reach = reach ? max(reach, r) : r;
+  }
+  return reach;
+}
+
+// Poświata kreski w punkcie (dx w poprzek, dy wzdłuż) [px od środka]: suma gaussów mipów 0–1
+// (splot kształtu kreski z jądrem przybliżony gaussem o sumie wariancji), energia na px².
+function sparkGlow(dx, dy, varAcross, varAlong, spread) {
+  let sum = null;
+  for (const sigma of SPARK_GLOW_SIGMA_PX) {
+    const sk = spread.mul(sigma);
+    const s2 = sk.mul(sk);
+    const vx = s2.add(varAcross);
+    const vy = s2.add(varAlong);
+    const term = exp(dx.mul(dx).div(vx.mul(-2.0)).add(dy.mul(dy).div(vy.mul(-2.0)))).div(sqrt(vx.mul(vy)).mul(2 * Math.PI));
+    sum = sum ? sum.add(term) : term;
+  }
+  return sum.mul(OVERLAY_BLOOM_GAIN);
+}
+
 function additive(mat) {
   mat.transparent = true;
   mat.depthWrite = false;
@@ -249,6 +299,7 @@ export function createReactorFireMaterial(U) {
   const vColor = varyingProperty('vec3', 'vRbColor');
   const vParams = varyingProperty('vec4', 'vRbParams'); // alfa, typ, wiek/życie, bok rdzenia [px]
   const vQuad = varyingProperty('float', 'vRbQuad');    // powiększenie kwadu rdzenia (poświata)
+  const vSpark = varyingProperty('vec4', 'vRbSpark');   // kreska iskry: szerokość, długość, margines poświaty [px], waga poświaty
   const mat = additive(new THREE.NodeMaterial());
   mat.name = 'ReactorBlow:ogien';
   mat.vertexNode = Fn(() => {
@@ -270,6 +321,7 @@ export function createReactorFireMaterial(U) {
       const visible = float(1.0).toVar();
       const sidePx = float(0.0).toVar();
       const grow = float(1.0).toVar();
+      const spark = vec4(0.0).toVar();
       If(type.lessThan(4.5), () => {
         // KOLCE I ISKRY: opór z haszu chwili narodzin (wszystkie iskry jednego wybuchu mają ten sam).
         const drag = reactorHash(startTime).mul(2.0).add(3.5).toVar();
@@ -286,9 +338,22 @@ export function createReactorFireMaterial(U) {
         const dir = select(vlen.lessThan(0.1), vec2(0.0, 1.0), viewVel.xy.div(max(vlen, 1e-6))).toVar();
         const width = data.z;
         const stretch = data.z.mul(speed).mul(0.003);
-        const tailFactor = float(0.5).sub(q.y);
-        const sx = q.x.mul(width).toVar();
-        const sy = tailFactor.negate().mul(stretch).toVar();
+        // Kreska w px ekranu i poświata overlaya wokół niej (mipy 0–1): kwad poszerzony o margines
+        // na poświatę (najwyżej uSparkGlowMax), środek kwadu w środku kreski (dawniej głowa na
+        // pozycji, ogon za nią — ten sam kształt, gdy margines 0).
+        const pxPerUnit = cameraProjectionMatrix.element(0).x.mul(screenSize.x).mul(0.5).div(max(cameraProjectionMatrix.mul(mv).w, 1e-6)).toVar();
+        const wPx = width.mul(pxPerUnit);
+        const lPx = stretch.mul(pxPerUnit);
+        const spread = screenSize.x.div(1920.0);
+        const glowW = smoothstep(U.uSparkGlowAge0, max(U.uSparkGlowAge1, U.uSparkGlowAge0.add(1e-3)), age).mul(U.uSparkGlow);
+        const energy = max(col.x, max(col.y, col.z)).mul(alpha).mul(U.uGainSpark).mul(glowW)
+          .mul(SPARK_SHAPE_ENERGY).mul(wPx).mul(lPx);
+        const varMax = max(wPx.mul(wPx).mul(SPARK_VAR_ACROSS), lPx.mul(lPx).mul(SPARK_VAR_ALONG));
+        const marginPx = select(glowW.greaterThan(0.0), clamp(sparkGlowReach(energy, varMax, spread), 0.0, U.uSparkGlowMax.mul(spread)), float(0.0));
+        const margin = marginPx.div(max(pxPerUnit, 1e-6));
+        spark.assign(vec4(wPx, lPx, marginPx, glowW));
+        const sx = q.x.mul(width.add(margin.mul(2.0))).toVar();
+        const sy = stretch.mul(-0.5).add(q.y.mul(stretch.add(margin.mul(2.0)))).toVar();
         mv.xy.addAssign(vec2(sx.mul(dir.y).add(sy.mul(dir.x)), sx.negate().mul(dir.x).add(sy.mul(dir.y))));
         // Pas widoczny dawnej kamery overlaya.
         visible.assign(select(pos.z.lessThan(REACTOR_SLAB_MIN_Z).or(pos.z.greaterThan(REACTOR_SLAB_MAX_Z)), float(0.0), float(1.0)));
@@ -319,6 +384,7 @@ export function createReactorFireMaterial(U) {
       vColor.assign(col);
       vParams.assign(vec4(alpha, type, ageNorm, sidePx));
       vQuad.assign(grow);
+      vSpark.assign(spark);
       If(visible.greaterThan(0.5), () => {
         clip.assign(cameraProjectionMatrix.mul(mv));
       });
@@ -334,15 +400,33 @@ export function createReactorFireMaterial(U) {
     const dist = length(c).mul(2.0).toVar();
     const contrib = vec3(0.0).toVar();
     If(vType.lessThan(4.5), () => {
-      // KOLCE I ISKRY: poświata w poprzek, zaokrąglone końce, brokat w drugiej części życia.
-      const g = max(float(0.5).sub(abs(c.x)), 0.0).mul(2.0);
+      // KOLCE I ISKRY: poświata w poprzek, zaokrąglone końce, brokat w drugiej części życia —
+      // we współrzędnych dawnego kwadu kreski (kwad poszerzony o margines poświaty), plus
+      // poświata, jaką kreska miała od mipów 0–1 bloomu overlaya.
+      const wPx = vSpark.x;
+      const lPx = vSpark.y;
+      const mPx = vSpark.z;
+      const fullW = wPx.add(mPx.mul(2.0));
+      const fullL = lPx.add(mPx.mul(2.0));
+      const cO = vec2(c.x.mul(fullW).div(max(wPx, 1e-4)), c.y.mul(fullL).div(max(lPx, 1e-4))).toVar();
+      const g = max(float(0.5).sub(abs(cO.x)), 0.0).mul(2.0);
       const glowX = g.mul(g).mul(g);
-      const fadeY = float(1.0).sub(smoothstep(0.8, 1.0, vUv.y)).mul(smoothstep(0.0, 0.2, vUv.y));
-      const s = sin(U.uTime.mul(30.0).add(vColor.y.mul(100.0)).add(c.x.mul(10.0)));
-      const twinkle = s.mul(s);
+      const alongUv = cO.y.add(0.5);
+      const fadeY = float(1.0).sub(smoothstep(0.8, 1.0, alongUv)).mul(smoothstep(0.0, 0.2, alongUv));
+      const phase = U.uTime.mul(30.0).add(vColor.y.mul(100.0));
+      const s = sin(phase.add(cO.x.mul(10.0)));
       const twinkleBlend = smoothstep(0.05, 0.15, vAgeNorm);
-      const baseAlpha = glowX.mul(fadeY).mul(mix(1.0, twinkle, twinkleBlend));
-      contrib.assign(vColor.mul(baseAlpha.mul(vAlpha)).mul(U.uGainSpark));
+      const baseAlpha = glowX.mul(fadeY).mul(mix(1.0, s.mul(s), twinkleBlend));
+      const energyCol = vColor.mul(vAlpha).mul(U.uGainSpark).toVar();
+      contrib.assign(energyCol.mul(baseAlpha));
+      If(mPx.greaterThan(0.0), () => {
+        const s0 = sin(phase);
+        const tw0 = mix(1.0, s0.mul(s0), twinkleBlend);
+        const energy = energyCol.mul(tw0.mul(SPARK_SHAPE_ENERGY).mul(wPx).mul(lPx).mul(vSpark.w));
+        const glow = sparkGlow(c.x.mul(fullW), c.y.mul(fullL), wPx.mul(wPx).mul(SPARK_VAR_ACROSS),
+          lPx.mul(lPx).mul(SPARK_VAR_ALONG), screenSize.x.div(1920.0));
+        contrib.addAssign(energy.mul(glow));
+      });
     }).ElseIf(vType.lessThan(5.5), () => {
       // RDZEŃ: jądro, linia anamorficzna, aura — we współrzędnych dawnego kwadu (kwad powiększony
       // o miejsce na poświatę), plus poświata, jaką rdzeń miał od bloomu overlaya.

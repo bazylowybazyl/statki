@@ -475,6 +475,9 @@ test('strojenie wyglądu: domyślne REACTOR_LOOK w uniformach, rdzeń pod progie
   assert.equal(U.uCap.value, REACTOR_LOOK.cap);
   assert.equal(U.uOutSpark.value, REACTOR_LOOK.outSpark);
   assert.equal(U.uOutSpike.value, REACTOR_LOOK.outSpike);
+  assert.equal(U.uSparkGlow.value, REACTOR_LOOK.sparkGlow);
+  assert.ok(REACTOR_LOOK.sparkGlowAge0 < REACTOR_LOOK.sparkGlowAge1, 'poświata iskier narasta z wiekiem');
+  assert.ok(REACTOR_LOOK.sparkGlowMax > 0 && REACTOR_LOOK.sparkGlowMax <= 64, 'margines kwadu iskry ograniczony (koszt wypełnienia)');
   const threshold = Number(read('src/3d/bloomConfig.js').match(/threshold: ([0-9.]+),/)?.[1]);
   assert.ok(REACTOR_LOOK.cap < threshold, 'sufit rdzenia poniżej progu bloomu gry — poświatę liczy shader');
   assert.equal(OVERLAY_BLOOM_SIGMA_PX.length, 5);
