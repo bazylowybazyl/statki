@@ -67,7 +67,7 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 | 22b | Kop kamery przy skoku warpa i impuls zoomu przy wyjściu (z dema „Nurt”, w `cameraRig`) | 22 | 11, 18–21 | xhigh | zrobione, scalone (c7a7f6a) | 75af962, 8d3953f (scalenie `main` 575e550) | uwaga użytkownika do iteracji 1: wejście i wyjście „suche, bez kopa” |
 | 23 | Wydajność i precyzja: A/B z tagiem, drżenie, kompilacja, pamięć | 04–22 | nie | max | zrobione, scalone (b41e4de) | 8fc9e77…56012bf (21 commitów) | duża bitwa 54% → 84% FPS bazy WebGL (Core3D 4,02 → 1,47 ms); bloom compute bit w bit; raport `WYDAJNOSC.md`; otwarte: przestoje > 100 ms przy pierwszej stacji modelu, partie tarcz, kolano bloomu (A/B) |
 | 24 | Sprzątanie i domknięcie portu | 23 | nie | xhigh | zrobione, scalone (be51f3f), tag `webgpu-port` | 8998cbe, 0b3bb55, d3ce675, f40eaa4, d6adac1, efa140e, 041a7e7, 8640c5c, 9a6241d, 0f4823e | gra bez GLSL i API WebGL (strażnik `graBezGlsl`); −4 moduły legacy; wyciek kawałków stacji naprawiony |
-| 25a | Rozgrzewka stacji i wszystkiego przy ładowaniu gry (zero kompilacji w grze) | 11, 23 | 25b, 25c, 26 | max | w toku (worktree `statki-wt/25a`) | | przestoje > 100 ms przy pierwszej stacji modelu, cień Destruction3D |
+| 25a | Rozgrzewka stacji i wszystkiego przy ładowaniu gry (zero kompilacji w grze) | 11, 23 | 25b, 25c, 26 | max | zrobione na `webgpu/25a`, scalenie czeka (niezacommitowane `index.html` / `agents.md` innych sesji) | 1967f91, 4301bad, 57a1834, ef2d7a6 | przestoje > 100 ms przy pierwszej stacji modelu, cień Destruction3D |
 | 25b | Bloom gry do poziomu dem: bez ×3, bez kolan, stare emitery przestrojone do oceny | 17–22, 23 | 25a, 25c, 26 | xhigh | zrobione, scalone (c461e7f); wpis `agents.md` w łatce `.tmp/webgpu/zadania/25b/agents-md.patch` (plik w edycji innej sesji) | 5b9c37c, 9e0fc26, 7f14636 | nowa baza obrazu `.tmp/webgpu/zadania/25b/baza-main/`; do oceny: zrzuty gra ↔ demo i stare emitery |
 | 25c | Rany ↔ fizyka: fizyczna wyrwa tak duża jak lej rany (Yamato i ciężkie działa) | 18 | 25a, 25b, 26 | max | zrobione na `webgpu/25c`, scalenie czeka (niezacommitowane `index.html` / `agents.md` innych sesji w głównym katalogu); 5 pytań balansu do użytkownika | 3fa5d51, 51a45a5, 58fecae | zmiana rozgrywki — liczby balansu w raporcie |
 | 25d | Warp: mocniejszy tunel (więcej cząstek) + podbicie efektów przy zmianie biegu | 22 | — | xhigh | wstrzymane — sesja „przyjazdy i powroty w warpie” edytuje `src/3d/warp/*` | | |
@@ -946,3 +946,18 @@ usunąć wpis `POZA_PORTEM` (strażnik o to poprosi), `dema/kontenery.html` i `d
 - **Uwaga (2026-09-28, po 25b):** w głównym katalogu niezacommitowane zmiany innych sesji w `index.html` (+291 linii) psują
   4 strażniki: `playerDefaultLoadout` (2 — `loadLoadout` / fit do ładowni) i `renderPerfGates` (2 — pierścienie skanera przez
   bramkę kadru, receptura `WeaponFx` po bramce trafień); na czystym HEAD (c461e7f) przechodzą 26/26 — to sprawa tamtych sesji.
+- **Zadanie 25a zrobione na gałęzi** (`webgpu/25a`: 1967f91, 4301bad, 57a1834, ef2d7a6; scalenie czeka na commit innych sesji w
+  `index.html` / `agents.md`): pass mapy cienia rozgrzewany w tle (`Core3D.prewarmShadowPass`, opcja rejestru `shadow: true`),
+  szablony GLB stacji na ekranie ładowania (`prepareStations3D` przed pasem: wypiek i rozgrzewka rozpadu, pass FG, cień,
+  bryły), rozpad stacji przez rejestr (trzymacze po podpisie materiału — duplikaty łączone, flush 1,27 → 0,52–0,69 s),
+  stacja piracka gotowa z ekranu ładowania (stałe, zgaszone światła latarni — pojawienie się nie przebudowuje materiałów;
+  wygląd z własnego strumienia losowania), pule odłamków paneli i smugi dalekich kadłubów. **Harness: pierwsze klatki gry
+  0 pipeline'ów synchronicznych i 0 budów w 17 sesjach** (było 2–8 / 2–23); suma scen 34 / 98 → 3 / 4 (tylko kalibracja
+  harnessu); pojawienie się stacji pirackiej 24–27 / 27–32 → 0, jej rozpad 6–15 / 18–23 → 0; obraz 166 / 190 identycznych,
+  reszta = szum bazy. Przestoje > 100 ms ~15 klatek po starcie pierwszej sceny sesji (123–256 ms) to NIE kompilacja —
+  czekanie kanwy 2D na GPU w zegarze wirtualnym harnessu (są też na `main`; w czasie rzeczywistym 0 klatek > 50 ms) —
+  diagnoza z 23 („pierwsza stacja modelu”) poprawiona w `WYDAJNOSC.md`. Ekran ładowania +0,9 s (6,78 vs 5,91 s od kliknięcia
+  do pierwszej klatki), pierwsza klatka gry 285 → 182 ms. Do decyzji: rozgrzewka szablonów stacji i rozpadu już w menu z
+  budżetem klatki (−0,5–0,6 s ładowania, ryzyko szarpnięć tła menu); stałe światła latarni stacji pirackiej (+0,03–0,07 ms
+  GPU w scenach stacji) albo emisja w materiałach (zmienia wygląd). Kernele compute zostają synchroniczne na ekranie
+  ładowania (three r183). Testy: 1674 / 5 porażek bazowych / 3 todo.
