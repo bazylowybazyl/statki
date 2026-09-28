@@ -63,6 +63,20 @@ const RECORDER = `(() => {
       push({ k: inFrame ? idx : R.n, poza: !inFrame, sync: true, compute: true, nazwa: 'compute' + (p && p.computeProgram && p.computeProgram.name ? ':' + p.computeProgram.name : '') });
       return compute.call(this, p, b);
     };
+    // Budowy NodeBuilder (CPU): w klatce = render na zimno, poza nią = rozgrzewka w tle.
+    const be = r.backend;
+    const createNB = be.createNodeBuilder;
+    be.createNodeBuilder = function (obj, rr) {
+      const b = createNB.call(this, obj, rr);
+      const build = b.build;
+      b.build = function () {
+        const t0 = now();
+        try { return build.apply(this, arguments); } finally {
+          push({ k: inFrame ? idx : R.n, poza: !inFrame, budowa: true, ms: +(now() - t0).toFixed(2), nazwa: pipeName(b.material, obj) });
+        }
+      };
+      return b;
+    };
   }, 10);
   const mark = (k, ok) => { if (R.marks[k] === undefined && ok) R.marks[k] = +now().toFixed(1); };
   const poll = setInterval(() => {
@@ -105,23 +119,35 @@ function frameWindow(rec, a, b) {
   out.najdluzsze = out.najdluzsze.slice(0, 8);
   // pipeline'y utworzone w oknie; synchroniczne z okresu klatki przestoju (zwykle jego przyczyna): w jej
   // wywołaniach rAF albo po nich, przed następną klatką (poza rAF)
-  const pipes = (rec.pipes || []).filter((p) => p.k >= a && p.k <= b);
-  const by = new Map();
-  for (const p of pipes) if (p.sync) by.set(p.nazwa, (by.get(p.nazwa) || 0) + 1);
+  const all = (rec.pipes || []).filter((p) => p.k >= a && (p.k < b || (p.k === b && p.poza)));
+  const pipes = all.filter((p) => !p.budowa);
+  const builds = all.filter((p) => p.budowa && !p.poza);
+  const top = (list) => {
+    const m = new Map();
+    for (const p of list) m.set(p.nazwa, (m.get(p.nazwa) || 0) + 1);
+    return [...m].sort((x, y) => y[1] - x[1]).slice(0, 16).map(([n, c]) => (c > 1 ? `${n} ×${c}` : n));
+  };
   out.pipeline = {
     sync: pipes.filter((p) => p.sync && !p.compute).length,
     async: pipes.filter((p) => !p.sync).length,
     compute: pipes.filter((p) => p.compute).length,
-    syncLista: [...by].sort((x, y) => y[1] - x[1]).slice(0, 16).map(([n, c]) => (c > 1 ? `${n} ×${c}` : n))
+    syncLista: top(pipes.filter((p) => p.sync)),
+    // budowy NodeBuilder w klatkach (render na zimno) i poza nimi (rozgrzewka w tle)
+    budowy: builds.length,
+    budowyMs: +builds.reduce((s, p) => s + p.ms, 0).toFixed(1),
+    budowyPoza: all.filter((p) => p.budowa && p.poza).length,
+    budowyLista: top(builds)
   };
   for (const e of out.najdluzsze) {
     const i = a + e.k;
-    const inPeriod = pipes.filter((p) => (p.poza ? p.k === i + 1 : p.k === i));
+    const inPeriod = all.filter((p) => (p.poza ? p.k === i + 1 : p.k === i));
     const names = inPeriod.filter((p) => p.sync).map((p) => p.nazwa);
     if (names.length) e.pipeline = names.length > 6 ? [...names.slice(0, 6), `… +${names.length - 6}`] : names;
     // w tle (compileAsync: budowa NodeBuilder synchronicznie na CPU, pipeline w tle GPU)
-    const nAsync = inPeriod.filter((p) => !p.sync).length;
+    const nAsync = inPeriod.filter((p) => !p.sync && !p.budowa).length;
     if (nAsync) e.pipelineWTle = nAsync;
+    const nb = inPeriod.filter((p) => p.budowa);
+    if (nb.length) e.budowy = `${nb.length} (${nb.reduce((s, p) => s + p.ms, 0).toFixed(0)} ms)`;
   }
   return out;
 }
@@ -200,6 +226,7 @@ try {
       + ` | gra od kliku ${c.graOdKliku ?? '-'} ms, 1. klatka ${r.gra?.pierwszaKlatkaMs ?? '-'} ms (CPU ${r.gra?.pierwszaKlatkaCpu ?? '-'})`
       + ` | przestoje menu ${r.menu?.przestoje ?? '-'}/${r.menu?.klatki ?? '-'} (maks ${r.menu?.maksMs ?? '-'}), ładowanie ${r.ladowanie?.przestoje ?? '-'}/${r.ladowanie?.klatki ?? '-'} (maks ${r.ladowanie?.maksMs ?? '-'}), gra ${r.gra?.przestoje ?? '-'}/${r.gra?.klatki ?? '-'} (maks ${r.gra?.maksMs ?? '-'})`
       + ` | pipeline'y sync: przed menu ${r.przedMenu?.pipeline?.sync ?? '-'}, menu ${r.menu?.pipeline?.sync ?? '-'}, ładowanie ${r.ladowanie?.pipeline?.sync ?? '-'}, gra ${r.gra?.pipeline?.sync ?? '-'}`
+      + ` | budowy w klatkach: menu ${r.menu?.pipeline?.budowy ?? '-'}, gra ${r.gra?.pipeline?.budowy ?? '-'} (${r.gra?.pipeline?.budowyMs ?? '-'} ms)`
       + (r.bledy?.length ? ` | błędy: ${r.bledy.slice(0, 3).join(' ; ')}` : ''));
   }
 } finally {
@@ -227,7 +254,11 @@ const summary = {
   przedMenuPipelineSync: pick((r) => r.przedMenu?.pipeline?.sync),
   menuPipelineSync: pick((r) => r.menu?.pipeline?.sync),
   ladowaniePipelineSync: pick((r) => r.ladowanie?.pipeline?.sync),
-  graPipelineSync: pick((r) => r.gra?.pipeline?.sync)
+  graPipelineSync: pick((r) => r.gra?.pipeline?.sync),
+  // budowy NodeBuilder w klatkach (render na zimno)
+  menuBudowy: pick((r) => r.menu?.pipeline?.budowy),
+  graBudowy: pick((r) => r.gra?.pipeline?.budowy),
+  graBudowyMs: pick((r) => r.gra?.pipeline?.budowyMs)
 };
 mkdirSync(outDir, { recursive: true });
 const file = join(outDir, `start-${label}.json`);

@@ -103,21 +103,43 @@
       push({ k: frameLog.n, poza: !inTick, sync: true, compute: true, nazwa: `compute${p?.computeProgram?.name ? ':' + p.computeProgram.name : ''}` });
       return compute.call(this, p, b);
     };
+    // Budowy NodeBuilder (graf TSL → WGSL, CPU): w klatce (render na zimno) albo poza nią (rozgrzewka w tle).
+    const be = window.Core3D.renderer.backend;
+    const createNB = be.createNodeBuilder;
+    be.createNodeBuilder = function (obj, rr) {
+      const b = createNB.call(this, obj, rr);
+      const build = b.build;
+      b.build = function (...a) {
+        const t0 = realNow();
+        try { return build.apply(this, a); } finally {
+          push({ k: frameLog.n, poza: !inTick, budowa: true, ms: +(realNow() - t0).toFixed(2), nazwa: pipeName(b.material, obj) });
+        }
+      };
+      return b;
+    };
   }, 10);
-  // Pipeline'y utworzone w klatkach [beg, end) (i po ostatniej, przed następną): render sync / w tle,
-  // compute; nazwy synchronicznych (do 12).
+  // Pipeline'y i budowy NodeBuilder w klatkach [beg, end) (i po ostatniej, przed następną): render sync / w tle,
+  // compute; budowy w klatkach (render na zimno) i poza nimi (rozgrzewka w tle); nazwy synchronicznych i budów w klatce.
   const pipeStats = (beg, end) => {
-    let sync = 0; let async = 0; let compute = 0;
+    let sync = 0; let async = 0; let compute = 0; let budowy = 0; let budowyMs = 0; let budowyPoza = 0;
     const by = new Map();
+    const nb = new Map();
     for (const p of pipes.list) {
       if (p.k < beg || p.k > end || (p.k === end && !p.poza)) continue;
+      if (p.budowa) {
+        if (p.poza) { budowyPoza++; continue; }
+        budowy++;
+        budowyMs += p.ms;
+        nb.set(p.nazwa, (nb.get(p.nazwa) || 0) + 1);
+        continue;
+      }
       if (p.compute) compute++;
       else if (p.sync) sync++;
       else async++;
       if (p.sync) by.set(p.nazwa, (by.get(p.nazwa) || 0) + 1);
     }
-    const syncLista = [...by].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([n, c]) => (c > 1 ? `${n} ×${c}` : n));
-    return { sync, async, compute, syncLista };
+    const top = (m) => [...m].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([n, c]) => (c > 1 ? `${n} ×${c}` : n));
+    return { sync, async, compute, syncLista: top(by), budowy, budowyMs: +budowyMs.toFixed(1), budowyPoza, budowyLista: top(nb) };
   };
 
   const waiters = [];
@@ -444,8 +466,11 @@
       const names = inPeriod.filter((p) => p.sync).map((p) => p.nazwa);
       if (names.length) e.pipeline = names.length > 6 ? [...names.slice(0, 6), `… +${names.length - 6}`] : names;
       // w tle (compileAsync: budowa NodeBuilder synchronicznie na CPU, pipeline w tle GPU)
-      const nAsync = inPeriod.filter((p) => !p.sync).length;
+      const nAsync = inPeriod.filter((p) => !p.sync && !p.budowa).length;
       if (nAsync) e.pipelineWTle = nAsync;
+      // budowy NodeBuilder w tym okresie (CPU): liczba i czas
+      const builds = inPeriod.filter((p) => p.budowa);
+      if (builds.length) e.budowy = `${builds.length} (${builds.reduce((s, p) => s + p.ms, 0).toFixed(0)} ms)`;
     }
     return { klatki: end - beg, przestoje: list.length, maksMs: +maxMs.toFixed(1), maksCpu: +maxCpu.toFixed(1), sumaMs: +over.toFixed(0), lista: top, pipeline: pipeStats(beg, end) };
   };

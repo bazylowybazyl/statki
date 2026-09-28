@@ -837,7 +837,7 @@ async function runSession(session, backend, outDir, base) {
     }
     sessionInfo.czasy = await ev('({ ...(window.__harness.marks || {}) })');
     console.log(`  sesja ${session.id}: ${JSON.stringify(sessionInfo.czasy)}`
-      + ` | przestoje ${['menu', 'start', 'startGra'].filter((k) => sessionInfo[k]).map((k) => `${k} ${sessionInfo[k].przestoje}/${sessionInfo[k].klatki} (maks ${sessionInfo[k].maksMs} ms${sessionInfo[k].pipeline ? `, pipeline'y sync ${sessionInfo[k].pipeline.sync}` : ''})`).join(', ')}`);
+      + ` | przestoje ${['menu', 'start', 'startGra'].filter((k) => sessionInfo[k]).map((k) => `${k} ${sessionInfo[k].przestoje}/${sessionInfo[k].klatki} (maks ${sessionInfo[k].maksMs} ms${sessionInfo[k].pipeline ? `, pipeline'y sync ${sessionInfo[k].pipeline.sync}, budowy w klatkach ${sessionInfo[k].pipeline.budowy ?? '-'}` : ''})`).join(', ')}`);
     // Od tej chwili strona dostaje klatki tylko na żądanie (step/frames) — powtarzalna liczba klatek.
     if (!args['bez-hold']) await ev('window.__harness.hold(true)');
     for (const id of session.scenes) {
@@ -945,7 +945,7 @@ async function runSession(session, backend, outDir, base) {
         sekundy: +((Date.now() - ts) / 1000).toFixed(1), blad: error, perf, hdr, stan: state, spis: census, przestoje: stalls, bledy: errors, ostrzezenia: warnings };
       results.push(row);
       const tag = error || errors.length ? 'BŁĄD' : 'ok';
-      console.log(`  ${id.padEnd(14)} ${tag.padEnd(5)} ${rendererKind} | ${perf?.drawCalls ?? '?'} dc, ${perf?.coreRenderMs ?? '?'} ms CPU, GPU ${perf?.gpuMs ?? '?'} ms | HDR max ${hdr?.max ?? '?'} >0,9 ${hdr?.overFraction ?? '?'} NaN ${hdr?.nanOrInf ?? '?'}${stalls ? ` | przestoje ${stalls.przestoje}/${stalls.klatki} (maks ${stalls.maksMs} ms${stalls.pipeline?.sync ? `, pipeline'y sync ${stalls.pipeline.sync}` : ''})` : ''}${error ? ' | ' + error : ''}${errors.length ? ' | ' + errors.slice(0, 3).join(' ; ') : ''}`);
+      console.log(`  ${id.padEnd(14)} ${tag.padEnd(5)} ${rendererKind} | ${perf?.drawCalls ?? '?'} dc, ${perf?.coreRenderMs ?? '?'} ms CPU, GPU ${perf?.gpuMs ?? '?'} ms | HDR max ${hdr?.max ?? '?'} >0,9 ${hdr?.overFraction ?? '?'} NaN ${hdr?.nanOrInf ?? '?'}${stalls ? ` | przestoje ${stalls.przestoje}/${stalls.klatki} (maks ${stalls.maksMs} ms${stalls.pipeline?.sync ? `, pipeline'y sync ${stalls.pipeline.sync}` : ''}${stalls.pipeline?.budowy ? `, budowy ${stalls.pipeline.budowy}` : ''})` : ''}${error ? ' | ' + error : ''}${errors.length ? ' | ' + errors.slice(0, 3).join(' ; ') : ''}`);
     }
   } catch (err) {
     console.log(`  sesja ${session.id}: BŁĄD ${err.message}`);
