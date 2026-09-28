@@ -178,7 +178,7 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   `textureGrad` obojętne. **Wiersze parzystości GLSL ↔ TSL na wejściach jak w materiale:** FXC zwija stałe (w wierszu
   z `(x − 200) + 3,7` baza liczyła `x − 196,3`), więc syntetyczne przesunięcie potrafi dać fałszywą rozbieżność (kratka
   paneli: 57% → 100% po przejściu na `floor(…) + 3,7`). **Demo ringu:** `BloomNode` bez × 3 dawał bloom 3 × słabszy
-  niż `UnrealBloomPass` bazy (jasne kadry 20–45% pikseli > 8/255) — demo ma `BloomGry` jak gra.
+  niż `UnrealBloomPass` bazy (jasne kadry 20–45% pikseli > 8/255) — demo ma `BloomGry` jak gra (od 25b oba bez × 3).
 - **Pułapki z zadania 15 (three r183):** **`DynamicDrawUsage` na atrybucie = `writeBuffer` CAŁEGO bufora przy każdym
   `render()`, który go rysuje** (`Attributes.update` pomija wtedy porównanie wersji) — bufory pisane w biegu zostają
   przy domyślnym użyciu z `needsUpdate` i zakresami (`addUpdateRange`; backend wysyła tylko zakresy i sam czyści listę).
@@ -259,9 +259,8 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   pętla pomiaru rozgrzana kilkoma funkcjami (inaczej JIT wkleja mierzoną funkcję w pętlę) i minimum z kilku prób.
 - **Pułapki z zadania 22 (warp „Nurt”, efekty z dem):** **Dema liczą bloom `BloomNode` BEZ ×3 gry**
   (`BLOOM_ZGODNOSC_WEBGL`) — ten sam emiter HDR z dema świeci w grze 3× mocniejszą poświatą (brzegi szczelin i błyski
-  obrastały białą mgłą); bloom bierze cały teksel ponad progiem, więc kolano na luminancji (`src/3d/warp/bloomKnee.js`:
-  do progu bez zmian, nadmiar ×1/3) oddaje poświatę dema bez ruszania barw pod progiem — dotyczy każdego efektu z dem
-  (bronie, rakiety, asteroidy). **Ośrodek cząstek w pudle wokół kamery** z pudłem zależnym od zoomu: przy oddaleniu brzegi
+  obrastały białą mgłą). 22 i 21 kładły na barwy kolano na luminancji (nadmiar ponad próg × 1/3) — **od zadania 25b
+  nieaktualne**: gra liczy bloom jak dema (niżej), kolana usunięte. **Ośrodek cząstek w pudle wokół kamery** z pudłem zależnym od zoomu: przy oddaleniu brzegi
   zostają puste (drobiny nie wracają same do równej gęstości) — przyrost pudła przenosi udział drobin w nowy pas
   (`growShare`), a po przebudzeniu i skoku kamery (teleport, RTS) ośrodek od nowa (`reset` — jeden dispatch), inaczej ślad
   poprzedniego skoku (rozrzedzenie, warkocz, zebrana nić) zostaje w nowym miejscu. **Oś dema w krótszym czasie gry**
@@ -288,9 +287,8 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   `prewarmPass` pomija obiekty z `visible = false`** — rozgrzewka odsłania schowane siatki na czas kompilacji (inaczej
   pierwsze wejście w pole buduje pipeline'y w klatce). **Kolejka:** nieprzezroczyste idą przed przezroczystymi bez
   względu na `renderOrder` — skały tła, które mają przykryć przezroczystą zasłonę pola, są w kolejce przezroczystej
-  z `NoBlending` i zapisem głębi. **Bloom gry = bloom dema × 3** (`BLOOM_ZGODNOSC_WEBGL`) — pas kładzie kolano z 22
-  (`warpBloomKnee` jako `beltBloomKnee`, `src/3d/asteroids/tslCommon.js`) na barwę skał, minerałów, olbrzymów, piorunów,
-  duszków i iskier PRZED ośrodkiem; wartości barw zostały z dema. **Pułapka z 15
+  z `NoBlending` i zapisem głębi. Do zadania 25b bloom gry = bloom dema × 3 (`BLOOM_ZGODNOSC_WEBGL`) i pas kładł kolano
+  z 22 (`beltBloomKnee`) na barwy — od 25b bez kolana, wartości barw z dema 1:1. **Pułapka z 15
   (`DynamicDrawUsage` = wysyłka przy każdym renderze) siedziała też w modułach dema** — kubełki skał, minerały, mgła,
   rzucający cień: ~1 MB na klatkę; bez niej narzut pasa w bitwie 24 × 24 spadł z ~2–3 do ~0,5–1,2 ms CPU `Core3D`.
 - **Pułapki z zadania 20 (wybuch reaktora, koniec overlaya):** **Efektu z własnym złożeniem (osobny bloom, tone
@@ -321,6 +319,17 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   `haloFmaVec2` (10 — ten sam `fma` WGSL na wektorach, hasze archetypów).
 - **Pętle:** `Loop` w TSL, nie `for` w JS generujący kopie (`mx_noise_float` ×160 rozwinięte = 44 s kompilacji).
   Ciężkie funkcje: `Fn(...).setLayout(...)` — jedna funkcja WGSL zamiast wklejania.
+- **Decyzja z zadania 25b (użytkownik 2026-09-28: „do poziomu dem”) — bloom gry = bloom dem WebGPU.** Wszystkie dema
+  liczą `acesGame(col + bloom(col, strength, radius, threshold))` z tymi samymi 0,85 / 0,4 / 0,9 z `bloomConfig.js`, bez
+  kompozytu × 3 dawnego `UnrealBloomPass`; gra robi to samo (`postGry.js`: bloom dodawany bez mnożnika, `BLOOM_ZGODNOSC_WEBGL`
+  usunięte, alfa bloomu jak dawny blend). Bloom dokłada ~3 × strength energii teksela ponad progiem (dawniej ~9 ×).
+  Efekty z dem wchodzą 1:1 — **bez kolan** i bez mnożników kompensujących bloom. Stare emitery spoza dem (portowane 1:1
+  pod × 3: ring nocą, K-7, planety i słońce, dysze, lampy, mostki, tarcze, stacje, żar kadłubów) mają ~1/3 dawnej
+  poświaty — przestraja się tylko te, którym zamierzona poświata znika (podnieść nadmiar ponad progiem, części pod progiem
+  bez zmian — wzór: korona słońca, `SUN_BLOOM_NADMIAR`). Tag `webgl-baseline` przestaje być bazą obrazu scen z bloomem —
+  bazy po 25b z `main` (`README.md`). Pułapka pomiarowa kolana (zostaje jako wiedza): próg bloomu liczy się w POŁOWIE
+  rozdzielczości (średnia 2 × 2 tekseli), więc ściśnięcie wartości cienkich linii (smugi, iskry, laser PD) ku progowi
+  gasiło ich poświatę całkiem (laser PD: 0,3 energii dema), a sumy wielu warstw addytywnych pod progiem kolano omijało.
 - **Reguły z `agents.md` bez zmian:** HDR-first i próg bloomu 0,9; bez `pow()` z ujemną podstawą; clamp varyingów
   (MSAA + HalfFloat); `forceSinglePass: true` dla przezroczystych `DoubleSide` (WebGPU też rysuje je dwa razy);
   zero alokacji per klatka; zgłaszanie aktywności warstw 3/5/6/7; maska cienia słońca w materiałach oświetlanych.

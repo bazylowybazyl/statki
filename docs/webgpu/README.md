@@ -86,10 +86,10 @@ node scripts/webgpu/zrzuty.mjs --backend webgpu --out .tmp/webgpu/zadania/NN --b
 - Wynik: `.tmp/webgpu/zadania/NN/webgpu/` — `<scena>.png` (+ warianty „jedna warstwa” `<scena>__tlo|planety|ortho|fg`),
   `wyniki.json` (błędy i ostrzeżenia konsoli z walidacją WebGPU, draw calle i trójkąty per pass, ms CPU / GPU, HDR,
   **`spis`** — widoczne materiały per warstwa i liczba zamienników, stan świata), `porownanie-z-baza/`.
-- Baza z tagu: `.tmp/webgpu/baseline/webgl/p1/*.png` (116 zrzutów po zadaniu 24: Faza 0 + sceny dopisane w 08, 16 i 24 —
-  sesja „reaktor”), drugi przebieg `p2/`, szum `szum-p1-p2/`; liczby w `docs/webgpu/baseline.json` (w repo). Baza z `main`
-  dla scen z nowymi efektami — § „Dwie bazy” niżej. `spis.zamienniki` w grze = 0; niezerowy to regresja (ShaderMaterial
-  w grze — złapie go też `tests/graBezGlsl.test.mjs`).
+- Baza obrazu od zadania 25b: przebieg harnessu z `main` (§ „Bazy obrazu po zadaniu 25b” niżej). Baza z tagu (historyczna):
+  `.tmp/webgpu/baseline/webgl/p1/*.png` (116 zrzutów po zadaniu 24: Faza 0 + sceny dopisane w 08, 16 i 24 — sesja
+  „reaktor”), drugi przebieg `p2/`, szum `szum-p1-p2/`; liczby i `tolerancjaPortu` w `docs/webgpu/baseline.json` (w repo).
+  `spis.zamienniki` w grze = 0; niezerowy to regresja (ShaderMaterial w grze — złapie go też `tests/graBezGlsl.test.mjs`).
 
 ### Jak czytać porównanie
 
@@ -123,25 +123,31 @@ pula znaczników czasu, bloom raz na render w podzielonym ekranie (kod wyjścia 
 `node scripts/webgpu/gorace-powietrze.mjs [--root <worktree tagu>]` — kalibracja z czterema źródłami gorącego powietrza i bitwa
 z gorącym powietrzem i bez, ta sama scena na WebGL i WebGPU (porównanie: `porownaj.mjs`).
 
-### Dwie bazy: tag i `main`
+### Bazy obrazu po zadaniu 25b: `main`
 
-- **Sceny przeniesione 1:1 z WebGL** (menu, `hud`, ringi i K-7, planety i słońce, kalibracja, stacje i ich rozpad, wybuch
-  reaktora — sesja „reaktor”, podzielony ekran, warianty warstw) — baza z tagu `webgl-baseline`
-  (`.tmp/webgpu/baseline/webgl/p1`, liczby w `baseline.json`), próg: `tolerancjaPortu` albo mapa różnic (krawędzie).
-- **Sceny z efektami i systemami z dem WebGPU** (zadania 17–22: `galeria-*`, `bitwa`, `bitwa-blisko`, `wybuch`, `wraki`,
-  `warp*` / `kop*`, sesja „rakiety”, `pas-*`, `wydobycie-*`) — w tagu wyglądają inaczej (stare efekty albo ich brak), więc
-  ich bazą jest ostatni zatwierdzony przebieg harnessu na `main` (dziś `.tmp/webgpu/zadania/23/baza-main/webgpu` — 191 zrzutów
-  po zadaniu 23; przebieg końcowy zadania 24: `.tmp/webgpu/zadania/24/webgpu`). Porównanie:
-  `node scripts/webgpu/porownaj.mjs --a <baza main> --b <nowy przebieg> --out <katalog>`. Zmiana wyglądu takich scen = zrzuty
-  gry obok dema (`scripts/webgpu/bronie-demo.mjs --tryb zrzuty`, `dema/rakiety-webgpu.html?scenario=…&shot=1`,
-  `scripts/webgpu/asteroidy-demo.mjs`, `scripts/webgpu/wydobycie-gra.mjs --demo`) i ocena użytkownika; po akceptacji przebieg
-  z `main` staje się nową bazą (katalog z `OPIS.txt`: commit, polecenie, znany szum).
-- Znany szum obu baz: `planeta-cien` (obrót stacji Wenus zależy od liczby klatek ładowania — 0,24–0,52% pikseli > 2/255).
+Od zadania 25b (decyzja użytkownika 2026-09-28: „do poziomu dem”) gra liczy bloom jak dema WebGPU — bez × 3 dawnego passu
+WebGL (`postGry.js`, PLAN §3). Każde źródło ponad progiem bloomu świeci więc ~1/3 dawnej poświaty i **tag `webgl-baseline`
+przestaje być bazą obrazu scen z bloomem** (zostaje dla historii i scen bez emiterów ponad progiem — np. teren ringu,
+`hud`, `menu`).
+
+- **Baza wszystkich scen = ostatni zatwierdzony przebieg harnessu na `main`**: po 25b `.tmp/webgpu/zadania/25b/baza-main/webgpu`
+  (pełny przebieg, `OPIS.txt`: commit, polecenie, znany szum). Porównanie:
+  `node scripts/webgpu/porownaj.mjs --a <baza main> --b <nowy przebieg> --out <katalog>`; próg: `tolerancjaPortu`
+  z `baseline.json` (zostaje dla porównań `main` ↔ `main`) albo mapa różnic (krawędzie).
+- Zmiana wyglądu scen z efektami z dem (`galeria-*`, `bitwa*`, `wybuch`, `wraki`, `warp*` / `kop*`, sesja „rakiety”,
+  `pas-*`, `wydobycie-*`) = zrzuty gry obok dema (`scripts/webgpu/bronie-demo.mjs --tryb zrzuty`,
+  `scripts/webgpu/rakiety-demo.mjs`, `scripts/webgpu/asteroidy-demo.mjs`, `scripts/webgpu/wydobycie-gra.mjs --demo`,
+  `scripts/webgpu/warp-demo-zrzuty.mjs`) i ocena użytkownika; po akceptacji przebieg z `main` staje się nową bazą.
+- Bazy sprzed 25b (do porównań historycznych): tag `.tmp/webgpu/baseline/webgl/p1`, `main` po 23 / 24
+  (`.tmp/webgpu/zadania/23/baza-main/webgpu`, `.tmp/webgpu/zadania/24/webgpu`), `main` tuż przed 25b
+  (`.tmp/webgpu/zadania/25b/main/webgpu` — bloom × 3).
+- Znany szum: `planeta-cien` (obrót stacji Wenus zależy od liczby klatek ładowania — 0,24–0,52% pikseli > 2/255) i
+  pojedyncze piksele ≤ 9/255 w `kop*` / `k7-hala` / `bitwa` między przebiegami.
 
 ### Nowa scena bazy
 
-Scena, która pokazuje to, co przeszło z WebGL 1:1 (i ma sens porównanie ze starym rendererem), dostaje bazę z tagu — kroki
-niżej. Scena z nowymi efektami albo nowym systemem po porcie — bazę z `main` (przebieg harnessu na zatwierdzonym `main`,
+Od zadania 25b każda nowa scena dostaje bazę z `main` (bloom gry ≠ bloom tagu). Bazę z tagu (kroki niżej) robi się już tylko
+dla porównań historycznych ze starym rendererem. Scena z nowymi efektami albo nowym systemem po porcie — bazę z `main` (przebieg harnessu na zatwierdzonym `main`,
 wyżej), nie z tagu. Baza z tagu:
 
 1. Scena dopisana w `scripts/webgpu/zrzuty.mjs` na `main` (tylko harness, bez zmian w grze — haki `?dev` już są).
