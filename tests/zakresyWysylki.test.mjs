@@ -58,9 +58,13 @@ test('skóra kadłubów, odłamki i bryły dachu ringu: bez DynamicDrawUsage, zm
   const rebuild = skin.slice(skin.indexOf('function rebuildBeamSkinGeometry('), skin.indexOf('function setBeamSkinHeatClock('));
   assert.doesNotMatch(rebuild, /DynamicDrawUsage/, 'skóra kadłuba belkowego bez DynamicDrawUsage');
   const upd = skin.slice(skin.indexOf('function updateBeamSkinGeometry('), skin.indexOf('function updateBeamSkinMesh('));
-  assert.match(upd, /zbierzZakres\(position, range\.min \* 12, quads \* 12\);/);
-  assert.match(upd, /zbierzCaly\(position\);/);
+  // skóra w partii (hullSkinBatch.js, zadanie 23): zmienione czworokąty kopiowane do buforów partii
+  assert.match(upd, /data\.batch\.writeQuads\(data\.batchEntry, data\.positions, data\.shade, data\.heat, range\.min, range\.max\);/);
+  assert.match(upd, /data\.batch\.writeAll\(data\.batchEntry, data\.positions, data\.shade, data\.heat\);/);
   assert.doesNotMatch(upd, /needsUpdate = true|setAttrUpdateRange/, 'wszystkie ścieżki zapisu przez zbierany zakres');
+  const batch = code('src/3d/hullSkinBatch.js');
+  assert.doesNotMatch(batch, /DynamicDrawUsage|addUpdateRange|clearUpdateRanges/);
+  assert.match(batch, /zbierzZakresy\(this\.aPos, \(base \+ v0\) \* 3, \(v1 - v0\) \* 3\);/);
   const debris = code('src/3d/hullDebris3D.js');
   assert.doesNotMatch(debris, /DynamicDrawUsage|addUpdateRange|clearUpdateRanges/);
   assert.match(debris, /zbierzZakres\(attr, batch\.dirtyMin \* width,/);

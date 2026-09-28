@@ -52,7 +52,7 @@ import {
   float, int, uint, vec2, vec3, vec4, mat4, nodeObject,
   uniform, attribute, storage, varying,
   positionGeometry, positionLocal, modelWorldMatrix, modelViewMatrix, cameraProjectionMatrix, uv,
-  abs, clamp, cos, sin, dot, exp, fract, fwidth, length, max, min, mix, normalize, pow, select, smoothstep, sqrt, step,
+  abs, clamp, cos, sin, dot, exp, fract, fwidth, length, max, min, mix, normalize, pow, round, select, smoothstep, sqrt, step,
   renderGroup
 } from 'three/tsl';
 import { MAX_SHADER_SHIP_LIGHTS, NAV_LIGHT_CHASE } from '../game/shipLightRuntime.js';
@@ -278,8 +278,11 @@ export const HullLightStore = {
 // ekran pisze bufor dla każdego widoku), jedna wysyłka zakresu zajętych slotów.
 // Układ slotu (vec4): 0–3 macierz MV (kolumny), 4–7 macierz świata, 8 (uHasNormalMap, uRotation,
 // uLodOpacity, uBillboardLighting), 9 (uSpriteSize.xy, uDmgWorld.xy), 10 (uLightDir.xyz, uLacquerWeight),
-// 11 (uShipLightCount, uEngineZoneCount, uLightBase, uLacquerGlint), 12 uDmgSlot, 13 (uGridOwner),
+// 11 (uShipLightCount, uEngineZoneCount, uLightBase, uLacquerGlint), 12 uDmgSlot, 13 (uGridOwner, widoczność),
 // 14–16 uWarpA / uWarpB / uWarpC. Slot 0 = zera (trzymacze grafu, rozgrzewka, pula pełna).
+// Partie kadłubów (hullSkinBatch.js): numer slotu w atrybucie wierzchołka, siatka kadłuba (nośnik
+// macierzy i material.uniforms) poza sceną — zapis co render niezależnie od rodzica, z flagą widoczności
+// (niewidoczny kadłub zwija się w wierzchołku — bez przepisywania indeksów partii).
 export const HULL_OBJECT_SLOT_VEC4 = 17;
 export const HULL_OBJECT_SLOTS = 1024;
 const _hullMV = new THREE.Matrix4();
@@ -349,7 +352,9 @@ export const HullObjectStore = {
     let hi = -1;
     let n = 0;
     for (const [slot, mesh] of this._meshes) {
-      if (!mesh.visible || !mesh.parent) continue;
+      // siatka w partii (poza sceną): zapis zawsze — flaga widoczności zwija kadłub w wierzchołku
+      const batched = mesh.userData.hullBatched === true;
+      if (!batched && (!mesh.visible || !mesh.parent)) continue;
       const u = mesh.material?.uniforms;
       if (!u) continue;
       const o = slot * stride;
@@ -373,7 +378,7 @@ export const HullObjectStore = {
       A[o + 47] = u.uLacquerGlint.value;
       const ds = u.uDmgSlot.value;
       A[o + 48] = ds.x; A[o + 49] = ds.y; A[o + 50] = ds.z; A[o + 51] = ds.w;
-      A[o + 52] = u.uGridOwner.value; A[o + 53] = 0; A[o + 54] = 0; A[o + 55] = 0;
+      A[o + 52] = u.uGridOwner.value; A[o + 53] = mesh.visible ? 1 : 0; A[o + 54] = 0; A[o + 55] = 0;
       const wa = u.uWarpA.value; const wb = u.uWarpB.value; const wc = u.uWarpC.value;
       A[o + 56] = wa.x; A[o + 57] = wa.y; A[o + 58] = wa.z; A[o + 59] = wa.w;
       A[o + 60] = wb.x; A[o + 61] = wb.y; A[o + 62] = wb.z; A[o + 63] = wb.w;
@@ -395,11 +400,28 @@ export const HullObjectStore = {
 let _objectStoreNodes = null;
 function hullObjectStoreNodes() {
   if (_objectStoreNodes) return _objectStoreNodes;
-  const S = HullObjectStore.getNode();
   const slot = uniform(0, 'uint').onObjectUpdate(({ material }) => material.uniforms.uHullSlot.value);
+  _objectStoreNodes = objectStoreNodesFor(slot);
+  return _objectStoreNodes;
+}
+
+// Partie kadłubów (hullSkinBatch.js): slot z atrybutu wierzchołka aUvSlot.z (we fragmencie przez
+// varying — zaokrąglenie znosi interpolację stałej), uv sprite'a z aUvSlot.xy, jasność i żar z aShadeHeat.
+let _batchStoreNodes = null;
+function hullBatchStoreNodes() {
+  if (_batchStoreNodes) return _batchStoreNodes;
+  const uvSlot = attribute('aUvSlot', 'vec3');
+  _batchStoreNodes = objectStoreNodesFor(uint(round(uvSlot.z)));
+  _batchStoreNodes.uvSlot = uvSlot;
+  _batchStoreNodes.shadeHeat = attribute('aShadeHeat', 'vec3');
+  return _batchStoreNodes;
+}
+
+function objectStoreNodesFor(slot) {
+  const S = HullObjectStore.getNode();
   const base = slot.mul(uint(HULL_OBJECT_SLOT_VEC4));
   const v = (k) => S.element(base.add(uint(k)));
-  _objectStoreNodes = {
+  return {
     uHullSlot: slot,
     modelView: mat4(v(0), v(1), v(2), v(3)),
     modelWorld: mat4(v(4), v(5), v(6), v(7)),
@@ -419,9 +441,9 @@ function hullObjectStoreNodes() {
     uGridOwner: v(13).x,
     uWarpA: v(14),
     uWarpB: v(15),
-    uWarpC: v(16)
+    uWarpC: v(16),
+    hullVisible: v(13).y
   };
-  return _objectStoreNodes;
 }
 
 // ── Węzły per obiekt (wspólne dla wariantów kadłuba) ─────────────────────────
@@ -822,6 +844,28 @@ export function getHullVariant(name) {
         damage: true
       })
     };
+  } else if (name === 'beamBatch') {
+    // Partie skór (hullSkinBatch.js, zadanie 23): ten sam graf co 'beam', slot z atrybutu wierzchołka.
+    const P = hullBatchStoreNodes();
+    v = {
+      name,
+      side: THREE.DoubleSide,
+      positionNode: null,
+      positionView: P.modelView.mul(positionLocal).xyz,
+      hullVisible: P.hullVisible,
+      fragmentNode: hullFragmentNode({
+        perObject: P,
+        spriteUV: P.uvSlot.xy,
+        shade: P.shadeHeat.x,
+        stress: null,
+        heat: P.shadeHeat.yz,
+        localWorld: localWorldOf(positionGeometry, P.modelWorld),
+        lodOpacity: float(1.0),
+        heatDecay: HULL_SHARED.beamHeatDecay,
+        heatPeak: HULL_SHARED.beamHeatPeak,
+        damage: true
+      })
+    };
   } else if (name === 'hex') {
     const P = hullPerObjectNodes();
     v = {
@@ -899,10 +943,17 @@ export class HullNodeMaterial extends THREE.NodeMaterial {
     // Pozycja w przestrzeni widoku z bufora slotu (skóra belek) — three używa jej do pozycji w klipie
     // i do positionView we fragmencie (światła efektów, ośrodek pasa).
     this.hullPositionView = variant.positionView || null;
+    // Partia: niewidoczny kadłub (flaga slotu) zwinięty poza obcięcie — widoczny bez zmian co do bitu.
+    this.hullVisible = variant.hullVisible || null;
   }
 
   setupPositionView(builder) {
     return this.hullPositionView || super.setupPositionView(builder);
+  }
+
+  setupModelViewProjection(builder) {
+    const clip = super.setupModelViewProjection(builder);
+    return this.hullVisible ? select(this.hullVisible.greaterThan(0.5), clip, vec4(2.0, 2.0, 2.0, 1.0)) : clip;
   }
 }
 
@@ -1028,6 +1079,7 @@ export class HullDebrisNodeMaterial extends THREE.NodeMaterial {
 export const HULL_TSL_INTERNALS = Object.freeze({
   hullPerObjectNodes,
   hullObjectStoreNodes,
+  hullBatchStoreNodes,
   debrisGraph,
   smoothRev,
   HullObjectTextureNode,

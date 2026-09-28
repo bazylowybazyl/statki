@@ -62,3 +62,53 @@ export function zbierzZakres(attr, start, count) {
 export function zbierzCaly(attr) {
   zbierzZakres(attr, 0, attr.array.length);
 }
+
+// ── Wiele zakresów na wysyłkę (partie kadłubów, hullSkinBatch.js) ──────────────────────────────────────
+// Zmienione wycinki WIELU kadłubów w jednym buforze partii: jeden zakres od najniższego do najwyższego
+// wysyłałby dziury między nimi (całą partię). Tu lista rozłącznych zakresów — three wysyła każdy osobno
+// (WebGPUAttributeUtils.updateAttribute), po wysyłce lista pusta (atrybut bez przeplotu: jedna wysyłka na
+// wersję). Zapis stykający się z OSTATNIM zakresem go rozszerza (kolejne czworokąty tego samego kadłuba),
+// obiekty zakresów z puli atrybutu — bez alokacji na klatkę.
+
+function sentMulti() {
+  this.updateRanges.length = 0;
+  this.__zakresy.used = 0;
+}
+
+function stanMulti(attr) {
+  let s = attr.__zakresy;
+  if (s) return s;
+  s = attr.__zakresy = { pool: [], used: 0 };
+  attr.updateRanges.length = 0;
+  attr.clearUpdateRanges = sentMulti;
+  return s;
+}
+
+/** Dopisuje zakres [start, start + count) do listy wysyłki atrybutu (osobny zakres, gdy się nie styka). */
+export function zbierzZakresy(attr, start, count) {
+  if (!(count > 0)) return;
+  const s = stanMulti(attr);
+  const list = attr.updateRanges;
+  const end = start + count;
+  const last = list.length ? list[list.length - 1] : null;
+  if (last && start <= last.start + last.count && end >= last.start) {
+    const e = Math.max(last.start + last.count, end);
+    last.start = Math.min(last.start, start);
+    last.count = e - last.start;
+  } else {
+    const r = s.pool[s.used] || (s.pool[s.used] = { start: 0, count: 0 });
+    s.used++;
+    r.start = start;
+    r.count = count;
+    list.push(r);
+  }
+  attr.needsUpdate = true;
+}
+
+/** Cały atrybut do wysłania (lista zakresów zastąpiona jednym). */
+export function zbierzZakresyCaly(attr) {
+  const s = stanMulti(attr);
+  attr.updateRanges.length = 0;
+  s.used = 0;
+  zbierzZakresy(attr, 0, attr.array.length);
+}
