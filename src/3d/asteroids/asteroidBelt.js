@@ -92,6 +92,10 @@ export const ASTEROID_BELT_CONFIG = Object.freeze({
   // Reflektor daleki sięga 14 tys. j.: przy bitwie w polu siatka świateł (ITEM_CAP)
   // nasyciłaby się — budżet świateł statków (FX-INFRA §1, ryzyko 21).
   maxLitShips: 6,
+  // Mapy cienia skał dla reflektorów tylko tylu pierwszych z listy (gracz pierwszy, potem najbliżsi
+  // środka kadru); światła dalszych statków świecą bez cienia skał. Każda mapa to osobny render
+  // atlasu (koszt CPU) — pomiar A/B: scripts/webgpu/asteroidy-gra.mjs --ab.
+  maxShadowShips: 2,
   // Kadr świateł i świecących skał: półkadr × 1,4 + 800 (lightBox dema).
   lightBoxMul: 1.4,
   lightBoxPad: 800,
@@ -149,7 +153,7 @@ export class AsteroidBelt {
     this._litDist = [];
     this._owners = new WeakMap();
     this._nextOwner = 1;
-    this._shipLightOpts = { time: 0, owner: 0, shadows: null, floods: true, nav: true, profile: FIELD_SHIP_LIGHTS };
+    this._shipLightOpts = { time: 0, owner: 0, shadows: null, spotShadows: true, floods: true, nav: true, profile: FIELD_SHIP_LIGHTS };
     this._flashes = [];
     this._flashPool = [];
     this._rockLightBox = { x0: 0, y0: 0, x1: 0, y1: 0 };
@@ -387,6 +391,7 @@ export class AsteroidBelt {
     for (const layer of this.layers) layer.clear();
     this.fog.hideAll();
     this.volume.disable();
+    // Burza: pioruny i rozbłyski skał wyczyszczone, system zostaje włączony (wraca z polem).
     this.storm.setVisible(false);
     this.storm.setVisible(true);
     this.veil.setVisible(false);
@@ -605,6 +610,7 @@ export class AsteroidBelt {
       const x = Number(e.pos?.x ?? e.x);
       const y = Number(e.pos?.y ?? e.y);
       opts.profile = this.giants.roofAbove(x, y) ? CAVE_SHIP_LIGHTS : FIELD_SHIP_LIGHTS;
+      opts.spotShadows = i < this.cfg.maxShadowShips;
       addShipLights(grid, e, len, opts);
       list[i] = null;
     }

@@ -14,6 +14,8 @@
 //            w świeżej stronie, przebiegi na przemian (kolejność odwrócona co drugi); po 6 s rozbiegu 12 próbek
 //            co 1 s → mediana przebiegu; raport: mediana median i rozrzut (min–max) przebiegów. Bez --sceny
 //            same pomiary (sceny pomija).
+// --ab [--rundy 3] [--konfig bitwa-pole]: JEDNA strona z bitwą w polu, warianty pasa na przemian (pełny,
+//            mapy cienia dla domyślnych 2 statków, bez map cienia, bez pasa) — koszt części pasa bez szumu między stronami.
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -85,48 +87,106 @@ const PERF_KEYS = ['fps', 'klatka', 'p95', 'fizyka', 'rysowanie', 'coreRender', 
 
 const median = (xs) => { const v = xs.filter(Number.isFinite).sort((a, b) => a - b); return v.length ? v[Math.floor(v.length / 2)] : null; };
 
+// Jedna próbka pomiaru (PerfHUD, Core3D, pas) — wspólna dla --wydajnosc i --ab.
+const SAMPLE_JS = `(() => { const d = window.__PH?.display || {}; const C = window.Core3D; const r = window.__rendererInfo || {}; const B = window.__asteroidBelt;
+  return { fps: d.fps, klatka: d.frameMs, p95: d.frameP95, fizyka: d.physicsTime, rysowanie: d.drawTime,
+    coreRender: d.render3dCoreRenderTime, gpu: C.gpuFrameMs, gpuCompute: C.gpuComputeMs, fxMs: C.fxStats?.cpuMs,
+    pasMs: B.stats.cpuMs, drawCalls: r.calls, swiatla: C.fxStats?.lights, skaly: B.stats.rocks.reduce((a, b) => a + b, 0),
+    kolumny: B.stats.volumeColumns, mapy: B.stats.shadowMaps, aktywny: B.stats.active,
+    elementySiatki: C.fxStats?.gridItems, odrzucone: C.fx?.grid?.dropped,
+    npc: (window.npcs || []).filter((n) => !n.dead).length, pociski: (window.bullets || []).length }; })()`;
+
+// --ab: bitwa bok × bok w gęstym polu, JEDNA strona, warianty pasa na przemian (A/B zamiast gdybania:
+// wyłączanie podsystemów po kolei) — rundy × warianty, 3 s rozbiegu po przełączeniu, 8 próbek co 0,5 s.
+const AB_VARIANTS = [
+  { id: 'pelny', js: 'B.enabled = true; B.atlas.enabled = true; B.cfg.maxShadowShips = 99;' },
+  { id: 'domyslny', js: 'B.enabled = true; B.atlas.enabled = true; B.cfg.maxShadowShips = 2;' },
+  { id: 'bez-cieni', js: 'B.enabled = true; B.atlas.enabled = false; B.cfg.maxShadowShips = 99;' },
+  { id: 'bez-pasa', js: 'B.enabled = false; B.atlas.enabled = true; B.cfg.maxShadowShips = 99;' }
+];
+
+async function abPole(base) {
+  const rounds = Math.max(1, Number(args.rundy || 3));
+  const cfg = PERF_CONFIGS.find((c) => c.id === (args.konfig || 'bitwa-pole')) || PERF_CONFIGS.find((c) => c.id === 'bitwa-pole');
+  const chrome = await startChrome({ width: W, height: H });
+  const logs = await attachLogs(chrome);
+  const { cdp } = chrome;
+  const ev = (e, t = 240000) => evaluate(cdp, e, t);
+  const per = Object.fromEntries(AB_VARIANTS.map((v) => [v.id, []]));
+  try {
+    await openPerfPage(cdp, ev, base, cfg);
+    await sleep(6000);
+    for (let r = 0; r < rounds; r++) {
+      const order = r % 2 === 0 ? AB_VARIANTS : [...AB_VARIANTS].reverse();
+      for (const v of order) {
+        await ev(`(() => { const B = window.__asteroidBelt; ${v.js} return true; })()`);
+        await sleep(3000);
+        const samples = [];
+        for (let i = 0; i < 8; i++) { await sleep(500); samples.push(await ev(SAMPLE_JS)); }
+        const med = Object.fromEntries(PERF_KEYS.concat(['mapy', 'elementySiatki', 'odrzucone']).map((k) => [k, median(samples.map((s) => Number(s[k])))]));
+        per[v.id].push(med);
+        console.log(`  A/B ${v.id.padEnd(14)} runda ${r + 1}: klatka ${med.klatka} ms, rysowanie ${med.rysowanie}, Core3D ${med.coreRender} ms CPU, GPU ${med.gpu} ms, pas ${med.pasMs} ms, mapy ${med.mapy}, siatka ${med.elementySiatki} (odrzucone ${med.odrzucone}), ${med.drawCalls} dc, NPC ${med.npc}`);
+      }
+    }
+    const summary = {};
+    for (const v of AB_VARIANTS) {
+      const row = {};
+      for (const k of PERF_KEYS.concat(['mapy', 'elementySiatki', 'odrzucone'])) {
+        const xs = per[v.id].map((m) => m[k]).filter(Number.isFinite);
+        row[k] = xs.length ? { mediana: +median(xs).toFixed(3), min: +Math.min(...xs).toFixed(3), max: +Math.max(...xs).toFixed(3) } : null;
+      }
+      summary[v.id] = row;
+    }
+    return { konfig: cfg.id, rundy: rounds, podsumowanie: summary, rundySzczegoly: per, bledy: logs.errors().filter((l) => !IGNORE.some((re) => re.test(l))).slice(0, 20) };
+  } finally {
+    await chrome.close();
+  }
+}
+
+// Strona gry z harnessem (ziarno, osobne UUID three), start, pas gotowy, PerfHUD, miejsce i bitwa
+// z konfiguracji, czas rzeczywisty.
+async function openPerfPage(cdp, ev, base, cfg) {
+  await osobneLosowanieUuid(cdp);
+  await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__HARNESS_SEED__ = ${SEED};\n${INJECT}` });
+  await cdp.send('Page.navigate', { url: `${base}/index.html?dev=1` });
+  if (!await waitFor(cdp, '!!(window.Core3D && window.Core3D.isInitialized && window.Core3D.gpuReady !== false && window.ship && window.__harness)', 240000, 400)) throw new Error('gra nie wstała');
+  await ev(`(() => { document.getElementById('btn-mode-single')?.click(); return true; })()`);
+  if (!await waitFor(cdp, '(window.__frameId || 0) > 30', 300000, 400)) throw new Error('gra nie ruszyła');
+  if (!await waitFor(cdp, '!!(window.__asteroidBelt && window.__asteroidBelt.ready)', 120000, 400)) throw new Error('pas nie wstał');
+  await ev(`(async () => { const m = await import('/src/ui/perfHud.js'); window.__PH = m.PerfHUD; if (!m.PerfHUD.visible) m.PerfHUD.toggle(); return true; })()`);
+  const spawned = await ev(`(async () => { const S = window.__harness.scene, H = window.__harness; S.hideHud(true);
+    const W = await import('/dema/asteroidy-webgpu/world.js');
+    const at = ${cfg.where === 'pole' ? 'W.SPOTS.field' : JSON.stringify(DEEP)};
+    DevScene.teleport(at.x, at.y, 0);
+    const s = ship; let n = 0;
+    const put = (k, mode, x, y, a) => { const r = spawnCallInShip(k, { mode, spawnPos: { x: s.pos.x + x, y: s.pos.y + y }, spawnAngle: a }); n += Array.isArray(r) ? r.length : (r ? 1 : 0); };
+    if (${cfg.battle}) {
+      // ${PERF_SIDE} okrętów na stronę: 17% pancerników, reszta niszczyciele (jak zrzuty.mjs --wydajnosc)
+      const side = ${PERF_SIDE}, nb = Math.max(1, Math.round(side * 0.17)), nd = side - nb;
+      for (let i = 0; i < nd; i++) put('destroyer', 'pirate', 6000 + (i % 3) * 900, -((nd / 3) * 700) + Math.floor(i / 3) * 1400, Math.PI);
+      for (let i = 0; i < nb; i++) put('pirate_battleship', 'pirate', 9000, -(nb * 1300) + i * 2600, Math.PI);
+      for (let i = 0; i < nd; i++) put('destroyer', 'friendly', 800 - (i % 3) * 900, -((nd / 3) * 700) + Math.floor(i / 3) * 1400, 0);
+      for (let i = 0; i < nb; i++) put('battleship', 'friendly', -2600, -(nb * 1300) + i * 2600, 0);
+    }
+    S.cam(s.pos.x + ${cfg.battle ? 3500 : 0}, s.pos.y, ${cfg.zoom});
+    for (let i = 0; i < 900 && !S.hullsReady(); i++) await H.frames(2);
+    H.clock.mode = 'real';
+    return n; })()`, 300000);
+  return spawned;
+}
+
 async function perfOnce(base, cfg) {
   const chrome = await startChrome({ width: W, height: H });
   const logs = await attachLogs(chrome);
   const { cdp } = chrome;
   const ev = (e, t = 240000) => evaluate(cdp, e, t);
   try {
-    await osobneLosowanieUuid(cdp);
-    await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__HARNESS_SEED__ = ${SEED};\n${INJECT}` });
-    await cdp.send('Page.navigate', { url: `${base}/index.html?dev=1` });
-    if (!await waitFor(cdp, '!!(window.Core3D && window.Core3D.isInitialized && window.Core3D.gpuReady !== false && window.ship && window.__harness)', 240000, 400)) throw new Error('gra nie wstała');
-    await ev(`(() => { document.getElementById('btn-mode-single')?.click(); return true; })()`);
-    if (!await waitFor(cdp, '(window.__frameId || 0) > 30', 300000, 400)) throw new Error('gra nie ruszyła');
-    if (!await waitFor(cdp, '!!(window.__asteroidBelt && window.__asteroidBelt.ready)', 120000, 400)) throw new Error('pas nie wstał');
-    await ev(`(async () => { const m = await import('/src/ui/perfHud.js'); window.__PH = m.PerfHUD; if (!m.PerfHUD.visible) m.PerfHUD.toggle(); return true; })()`);
-    const spawned = await ev(`(async () => { const S = window.__harness.scene, H = window.__harness; S.hideHud(true);
-      const W = await import('/dema/asteroidy-webgpu/world.js');
-      const at = ${cfg.where === 'pole' ? 'W.SPOTS.field' : JSON.stringify(DEEP)};
-      DevScene.teleport(at.x, at.y, 0);
-      const s = ship; let n = 0;
-      const put = (k, mode, x, y, a) => { const r = spawnCallInShip(k, { mode, spawnPos: { x: s.pos.x + x, y: s.pos.y + y }, spawnAngle: a }); n += Array.isArray(r) ? r.length : (r ? 1 : 0); };
-      if (${cfg.battle}) {
-        // ${PERF_SIDE} okrętów na stronę: 17% pancerników, reszta niszczyciele (jak zrzuty.mjs --wydajnosc)
-        const side = ${PERF_SIDE}, nb = Math.max(1, Math.round(side * 0.17)), nd = side - nb;
-        for (let i = 0; i < nd; i++) put('destroyer', 'pirate', 6000 + (i % 3) * 900, -((nd / 3) * 700) + Math.floor(i / 3) * 1400, Math.PI);
-        for (let i = 0; i < nb; i++) put('pirate_battleship', 'pirate', 9000, -(nb * 1300) + i * 2600, Math.PI);
-        for (let i = 0; i < nd; i++) put('destroyer', 'friendly', 800 - (i % 3) * 900, -((nd / 3) * 700) + Math.floor(i / 3) * 1400, 0);
-        for (let i = 0; i < nb; i++) put('battleship', 'friendly', -2600, -(nb * 1300) + i * 2600, 0);
-      }
-      S.cam(s.pos.x + ${cfg.battle ? 3500 : 0}, s.pos.y, ${cfg.zoom});
-      for (let i = 0; i < 900 && !S.hullsReady(); i++) await H.frames(2);
-      H.clock.mode = 'real';
-      return n; })()`, 300000);
+    const spawned = await openPerfPage(cdp, ev, base, cfg);
     await sleep(6000);
     const samples = [];
     for (let i = 0; i < 12; i++) {
       await sleep(1000);
-      samples.push(await ev(`(() => { const d = window.__PH?.display || {}; const C = window.Core3D; const r = window.__rendererInfo || {}; const B = window.__asteroidBelt;
-        return { fps: d.fps, klatka: d.frameMs, p95: d.frameP95, fizyka: d.physicsTime, rysowanie: d.drawTime,
-          coreRender: d.render3dCoreRenderTime, gpu: C.gpuFrameMs, gpuCompute: C.gpuComputeMs, fxMs: C.fxStats?.cpuMs,
-          pasMs: B.stats.cpuMs, drawCalls: r.calls, swiatla: C.fxStats?.lights, skaly: B.stats.rocks.reduce((a, b) => a + b, 0),
-          kolumny: B.stats.volumeColumns, aktywny: B.stats.active,
-          npc: (window.npcs || []).filter((n) => !n.dead).length, pociski: (window.bullets || []).length }; })()`));
+      samples.push(await ev(SAMPLE_JS));
     }
     const med = Object.fromEntries(PERF_KEYS.map((k) => [k, median(samples.map((s) => Number(s[k])))]));
     const errors = logs.errors().filter((l) => !IGNORE.some((re) => re.test(l)));
@@ -167,6 +227,20 @@ async function wydajnosc(base) {
 async function main() {
   mkdirSync(outDir, { recursive: true });
   const { server, base } = await startVite(port);
+  if (args.ab) {
+    try {
+      const res = await abPole(base);
+      writeFileSync(join(outDir, 'ab.json'), JSON.stringify({ when: new Date().toISOString(), ...res }, null, 2) + '\n');
+      for (const [id, row] of Object.entries(res.podsumowanie)) {
+        const f = (k) => (row[k] ? `${row[k].mediana} (${row[k].min}–${row[k].max})` : '—');
+        console.log(`  ${id.padEnd(14)} klatka ${f('klatka')} | rysowanie ${f('rysowanie')} | Core3D ${f('coreRender')} | GPU ${f('gpu')} | pas ${f('pasMs')} | mapy ${f('mapy')} | dc ${f('drawCalls')}`);
+      }
+    } finally {
+      await server.close();
+    }
+    console.log('gotowe:', outDir);
+    return;
+  }
   if (args.wydajnosc && !args.sceny && !args.kolizja) {
     try {
       const res = await wydajnosc(base);
