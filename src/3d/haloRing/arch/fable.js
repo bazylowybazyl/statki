@@ -22,9 +22,9 @@ import {
 } from 'three/tsl';
 import { haloHash12, haloHash22, haloPureFn } from '../haloRingTSL.js';
 import { archLitTSL, archNodeMaterial } from './archTSL.js';
-import { ArchBatch, archHex, archRingTubeBoxes } from './archFrame.js';
+import { ArchBatch, archHex, archRingTubeBoxes, archRunSteps } from './archFrame.js';
 import { ArchLights, archBatchMesh, archHemisphere, archPointsMesh, archTreeGeometry } from './archMaterials.js';
-import { FAB_S, buildFableCity, buildFableDomes, buildFableStructure, createFablePlan, fableTubes } from './fablePlan.js';
+import { FAB_S, buildFableCitySteps, buildFableDomes, buildFableStructure, createFablePlan, fableTubes } from './fablePlan.js';
 
 const S = FAB_S;
 
@@ -389,8 +389,15 @@ function ringStrip(plan, u0, h0, u1, h1, nU, nH, segments, { across = 1, repU = 
 }
 
 
-export function buildFableRing({ layout, uniforms, materials, geos, quality, seed, portLights = [], portSolid = null }) {
+export function buildFableRing(args) {
+  return archRunSteps(buildFableRingSteps(args));
+}
+
+// Krokami (zadanie 23): mapa stref (~0,5 s CPU przy Jowiszu), miasto i kopuły z `yield` między częściami —
+// archRing.js kroczy je w klatkach gry (bez przestoju ~0,7 s przy pierwszym zbliżeniu); wynik jak buildFableRing.
+export function* buildFableRingSteps({ layout, uniforms, materials, geos, quality, seed, portLights = [], portSolid = null }) {
   const plan = createFablePlan(layout, seed);
+  yield;
   const bg = [];
   const fg = [];
   const disposables = [];
@@ -407,7 +414,7 @@ export function buildFableRing({ layout, uniforms, materials, geos, quality, see
   // ---- mapa stref + powierzchnia ----
   const ZW = 8192;
   const ZH = 256;
-  const zoneData = plan.bakeZoneMap(ZW, ZH);
+  const zoneData = yield* plan.bakeZoneMapSteps(ZW, ZH);
   const zoneTex = new THREE.DataTexture(zoneData, ZW, ZH, THREE.RGBAFormat);
   zoneTex.magFilter = THREE.NearestFilter;
   zoneTex.minFilter = THREE.NearestFilter;
@@ -429,6 +436,7 @@ export function buildFableRing({ layout, uniforms, materials, geos, quality, see
   floorMesh.frustumCulled = false;
   bg.push(floorMesh);
 
+  yield;
   // ---- kadłub i ściany (tekstury płyt dema) ----
   const hullTex = makePanelTextures('hull', (seed ^ 0x51) >>> 0);
   const wallTex = makePanelTextures('wall', (seed ^ 0x77) >>> 0);
@@ -454,6 +462,7 @@ export function buildFableRing({ layout, uniforms, materials, geos, quality, see
     g.setAttribute('aAtlas', new THREE.BufferAttribute(new Float32Array(g.getAttribute('position').count).fill(v), 1));
     return g;
   };
+  yield;
   const SEG = Math.round(768 * layout.circumference / (S * 2 * Math.PI * 8000));
   const circPanels = plan.CIRC / (420 * S);
   const wallRep = plan.CIRC / (300 * S);
@@ -481,6 +490,7 @@ export function buildFableRing({ layout, uniforms, materials, geos, quality, see
   bg.push(stripMesh([...hullBG, ...wallBG], materials.strip({ map: atlasMap, emap: atlasEmit, tint, emitGain: 1.4, varScale: 2000, atlas: true }), 'FableHull'));
   fg.push(stripMesh([...hullFG, ...wallFG], materials.strip({ map: atlasMap, emap: atlasEmit, tint, emitGain: 1.4, varScale: 2000, atlas: true, fg: true }), 'FableHullFG'));
 
+  yield;
   // ---- konstrukcja ----
   const st = buildFableStructure(plan, lights);
   const matBG = materials.instanced(false);
@@ -499,9 +509,11 @@ export function buildFableRing({ layout, uniforms, materials, geos, quality, see
   }
 
 
+  yield;
   // ---- miasto i drzewa per sektor ----
-  const city = buildFableCity(plan);
+  const city = yield* buildFableCitySteps(plan);
   const domes = buildFableDomes(plan, city.per, lights);
+  yield;
   const treeGeo = archTreeGeometry('cone');
   disposables.push(treeGeo);
   const treeMat = materials.instanced(false, true);
@@ -519,6 +531,7 @@ export function buildFableRing({ layout, uniforms, materials, geos, quality, see
     return d;
   });
 
+  yield;
   // ---- kopuły: szkło (instancje półkul), kratownice (linie), żebra (tory) ----
   const hemi = archHemisphere();
   disposables.push(hemi);

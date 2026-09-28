@@ -212,3 +212,13 @@ export const mix = (a, b, t) => a + (b - a) * t;
 export const smooth = (t) => t * t * (3 - 2 * t);
 export const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
 export const modp = (a, n) => ((a % n) + n) % n;
+
+// Budowa ringu-archetypu krokami (zadanie 23): ciężkie pętle budowy (mapa stref Fable, teren i zabudowa
+// dzielnic ECUMENE) są generatorami z `yield` co kilka ms pracy — klej gry (haloRingGame.js) kroczy je
+// w klatkach (createArchRing z buildInBackground), a wersje synchroniczne (testy, demo) biegną do końca tu.
+// Wynik ten sam: kroki nie zmieniają kolejności obliczeń.
+export function archRunSteps(gen) {
+  let r = gen.next();
+  while (!r.done) r = gen.next();
+  return r.value;
+}

@@ -26,10 +26,22 @@ import { createK7Layout, k7Frame } from '../haloPortK7Layout.js';
 import { haloBayLayouts } from '../haloPortBays.js';
 import { ArchMaterials, archBatchMesh, archUnitGeometries } from './archMaterials.js';
 import { buildArchPortBodies } from './archPort.js';
-import { buildEcumeneRing } from './ecumene.js';
-import { buildFableRing } from './fable.js';
+import { archRunSteps } from './archFrame.js';
+import { buildEcumeneRing, buildEcumeneRingSteps } from './ecumene.js';
+import { buildFableRing, buildFableRingSteps } from './fable.js';
 
 export const ARCH_BUILDERS = Object.freeze({ ecumene: buildEcumeneRing, fable: buildFableRing });
+const ARCH_BUILD_STEPS = Object.freeze({ ecumene: buildEcumeneRingSteps, fable: buildFableRingSteps });
+
+// Budowa w tle (zadanie 23, opcja buildInBackground — klej gry): budowa ringu to 0,4 s CPU przy Marsie
+// i 0,7 s przy Jowiszu (mapa stref, teren i zabudowa dzielnic) — dawniej w JEDNEJ klatce pierwszego
+// zbliżenia (przestój w gęstym polu przy Marsie). Kroki budowy (generatory ecumene.js / fable.js, `yield`
+// co kilka ms pracy) idą w klatkach gry: pumpBuild() najwyżej `maxSteps` kroków i do `ms` czasu
+// (performance.now; przy stojącym zegarze harnessu liczy się sam limit kroków). Kroki w Chrome (RTX 5080,
+// 7800X3D): mediana 0,7 ms (Mars) / 4,5 ms (Jowisz), najdłuższy ~19 ms (hale K-7, kopuły, atlas płyt);
+// budowa ~0,3 s (Mars) / ~0,8 s (Jowisz) CPU rozłożona na ~100–170 klatek. Wynik ten sam co budowa
+// synchroniczna (bez opcji: testy, demo) — kroki nie zmieniają kolejności obliczeń.
+export const ARCH_BUILD_BUDGET = Object.freeze({ ms: 4, maxSteps: 2 });
 
 const _inv = new THREE.Matrix4();
 const _camWorld = new THREE.Vector3();
@@ -54,21 +66,63 @@ export function createArchRing(options = {}) {
   let buildGen = 0;
   let attached = false;
   let readyPromise = Promise.resolve(true);
+  // Budowa w tle: { steps (generator), resolve (obietnica ready sprzed końca budowy) } albo null.
+  let job = null;
 
   function build() {
     layout = createHaloRingLayout(state.options);
     group.name = `ArchRing:${layout.archetype}`;
-    const builder = ARCH_BUILDERS[layout.archetype];
-    if (!builder) throw new Error(`createArchRing: nieznany archetyp ${layout.archetype}`);
+    if (!ARCH_BUILD_STEPS[layout.archetype]) throw new Error(`createArchRing: nieznany archetyp ${layout.archetype}`);
     const quality = HALO_QUALITY[state.qualityKey];
     if (!uniforms) uniforms = createHaloUniforms(layout);
     uniforms.uDetailScale.value = haloQualityLod(quality).detailScale;
+    const steps = buildSteps(quality);
+    if (state.options.buildInBackground) {
+      attached = false;
+      let resolve = null;
+      readyPromise = new Promise((r) => { resolve = r; });
+      job = { steps, resolve };
+      return;
+    }
+    archRunSteps(steps);
+  }
+
+  // Kroki budowy w tle (pumpBuild, klatki gry); true = budowa jeszcze trwa.
+  function pumpBuild(budget = ARCH_BUILD_BUDGET) {
+    const j = job;
+    if (!j) return false;
+    const t0 = performance.now();
+    for (let n = 0; n < budget.maxSteps; n++) {
+      let r;
+      try {
+        r = j.steps.next();
+      } catch (err) {
+        job = null;
+        console.error('[ArchRing] budowa ringu nie wyszła', err);
+        j.resolve(false);
+        return false;
+      }
+      if (r.done) {
+        job = null;
+        // attachAfterWarm (koniec kroków) podmienił readyPromise na rozgrzewkę — obietnica sprzed budowy
+        // (klej gry czeka na nią od utworzenia ringu) przechodzi w nią
+        j.resolve(readyPromise);
+        return false;
+      }
+      if (performance.now() - t0 >= budget.ms) break;
+    }
+    return true;
+  }
+
+  function* buildSteps(quality) {
+    const builder = ARCH_BUILD_STEPS[layout.archetype];
     const materials = new ArchMaterials(uniforms);
     const geos = archUnitGeometries();
     // port: bryły zatok i tranzytów (BG; światła trafiają do świateł ringu),
     // hale K-7 (BG + FG)
     const port = buildArchPortBodies(layout, layout.planetProfile.port, layout.archetype);
-    const content = builder({ layout, uniforms, materials, geos, quality, seed: layout.seed, portLights: port.lights, portSolid: port.solid });
+    yield;
+    const content = yield* builder({ layout, uniforms, materials, geos, quality, seed: layout.seed, portLights: port.lights, portSolid: port.solid });
     const bg = [...content.bg];
     const fg = [...content.fg];
 
@@ -87,13 +141,15 @@ export function createArchRing(options = {}) {
           return l;
         });
       }
-      haloPortComplexAngles().forEach((angle, i) => {
+      const angles = haloPortComplexAngles();
+      for (let i = 0; i < angles.length; i++) {
+        yield;
         const bays = state.bayLayouts.filter((b) => b.complex === i);
-        const hall = new HaloPortK7({ ringLayout: layout, uniforms, layout: state.hallLayouts[i], angle, index: i, bays, style: layout.planetProfile.port });
+        const hall = new HaloPortK7({ ringLayout: layout, uniforms, layout: state.hallLayouts[i], angle: angles[i], index: i, bays, style: layout.planetProfile.port });
         hall.update(0, {});
         hall.setBerthLamps();
         k7Halls.push(hall);
-      });
+      }
     }
     parts = { quality, materials, geos, content, bg, fg, k7Halls, k7: k7Halls[0] || null };
     applyLayers();
@@ -130,6 +186,12 @@ export function createArchRing(options = {}) {
   }
 
   function disposeParts() {
+    if (job) {
+      // budowa w tle przerwana (dispose, setQuality, rebuild): ready → false, części budowy do GC
+      const j = job;
+      job = null;
+      j.resolve(false);
+    }
     if (!parts) return;
     buildGen++;
     attached = false;
@@ -215,9 +277,15 @@ export function createArchRing(options = {}) {
     get isReady() { return attached; },
     get error() { return null; },
 
+    // Budowa w tle (buildInBackground): kroki na tę klatkę; true = jeszcze trwa. Klej gry woła co klatkę,
+    // także gdy ring poza kadrem.
+    pumpBuild,
+    get building() { return job !== null; },
+
     update(dt, view) {
       const camera = view.camera;
       uniforms.uTime.value += Math.max(0, Number(dt) || 0);
+      if (!parts) return; // budowa w tle jeszcze trwa
       group.updateMatrixWorld();
       _inv.copy(group.matrixWorld).invert();
       camera.getWorldPosition(_camWorld);
@@ -287,13 +355,14 @@ export function createArchRing(options = {}) {
 
     // Wysokość terenu w punkcie układu lokalnego (kolizje płyty, near kamery).
     terrainHeightAt(x, y, z) {
+      if (!parts) return 0; // przed końcem budowy w tle (klej gry podpina teren do kolizji po ready)
       let th = Math.atan2(y, x);
       if (th < 0) th += Math.PI * 2;
       return parts.content.heightAt(th, z);
     },
 
     get stats() {
-      const c = parts.content.stats || {};
+      const c = parts?.content?.stats || {};
       return {
         activeTiles: 0,
         segments: 0,
@@ -309,13 +378,13 @@ export function createArchRing(options = {}) {
     },
     // mapy CPU są od razu; „gotowy do pokazania” = bryły podpięte (menu, harness: ringReady)
     get mapsReady() { return attached; },
-    get k7() { return parts.k7; },
-    get k7Halls() { return parts.k7Halls; },
+    get k7() { return parts ? parts.k7 : null; },
+    get k7Halls() { return parts ? parts.k7Halls : []; },
     get k7Layout() { return state.k7Layout || null; },
     get bays() { return state.bayLayouts || []; },
-    get plan() { return { landmarks: parts.content.landmarks || [], domes: parts.content.domes || [], docks: [], transits: [] }; },
-    get landmarks() { return parts.content.landmarks || []; },
-    get domes() { return parts.content.domes || []; },
+    get plan() { return { landmarks: parts?.content.landmarks || [], domes: parts?.content.domes || [], docks: [], transits: [] }; },
+    get landmarks() { return parts?.content.landmarks || []; },
+    get domes() { return parts?.content.domes || []; },
 
     dispose() {
       disposeParts();
