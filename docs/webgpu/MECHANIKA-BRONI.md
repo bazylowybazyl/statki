@@ -1,10 +1,11 @@
-# Mechanika broni z dema w logice gry (zadanie 18-A)
+# Mechanika broni z dema w logice gry (zadanie 18-A, wpięcie 18-B, dane odrzutu 18-D)
 
-> Stan 2026-09-27, gałąź `webgpu/18a`. Część 18-A zadania 18 (`zadania/18-bron-obrazenia-z-dema.md`,
-> projekt: `PROJEKT-BRONI.md` §2, §4, §5): zapytania kadłubów, przebicia, rykoszety, ładowanie i serie
-> jako moduły logiki **bez wpięcia w grę**. Po scaleniu gra zachowuje się jak dotąd (żadna ścieżka gry nie woła
-> nowych funkcji ani nie czyta nowych pól danych). Wpięcie — 18-B (po 17), mapa ran — 18-C, odrzut / wstrząs /
-> skala trafienia z danych — 18-D.
+> Stan 2026-09-28. Część 18-A zadania 18 (`zadania/18-bron-obrazenia-z-dema.md`, projekt: `PROJEKT-BRONI.md`
+> §2, §4, §5): zapytania kadłubów, przebicia, rykoszety, ładowanie i serie jako moduły logiki (gałąź `webgpu/18a`,
+> scalone 4e165fb). **18-B (gałąź `webgpu/18b`) wpięło je w grę** — pętla pocisków, sterowanie ogniem gracza, P2
+> i AI, HUD, seria Hexlance'a, efekty `kerf / exit / stuck / ricochet / charge` (§8); **18-D** — odrzut, wstrząs
+> i skala trafienia z danych broni (§8.4). Mapa ran — 18-C; stemple wejścia, rykoszetu, wylotu, zakleszczenia
+> i pasa rzazu z mechaniki 18-B — §8.6.
 
 ## 1. Zapytania kadłubów (`src/game/hullBodies.js`)
 
@@ -55,7 +56,7 @@ Reguły (decyzje `PROJEKT-BRONI.md` §5 p. 1, 2, 7 i niżej „Decyzje 18-A”):
   obiekt na pocisk przebijający (Mjolnir, Valkyrie). Pocisk trzyma **ciało**, więc gdy statek zginie z
   pociskiem w środku (`convertToWreck`), krok liczy się dalej w kadłubie wraku.
 
-### Wpięcie w `bulletsAndCollisionsStep` (18-B) — kolejność ma znaczenie
+### Wpięcie w `bulletsAndCollisionsStep` (18-B, zrobione — §8.1) — kolejność ma znaczenie
 
 Wzorzec działający na prawdziwych kadłubach: `tests/helpers/hullFlight.mjs` (`flyShot`, używają go testy i skrypt
 bilansu).
@@ -101,9 +102,9 @@ bilansu).
 
 ## 4. Dane broni (`src/data/weapons.js`)
 
-Nowe pola, dziś nieczytane (grep: żadna ścieżka gry nie czyta `penDepth`, `penSpeedLoss`, `ricochet`,
-`recoil`, `shake`, `impactScale` z danych broni; `chargeTime` czyta tylko `superweapon.js` — wyłącznie z
-`hexlance_siege`; `burstCount` czyta `fireWeaponCore` i flak — Hexlance nie przechodzi przez `fireWeaponCore`):
+Nowe pola 18-A (w 18-A nieczytane; od 18-B / 18-D czytane: `penDepth`, `penSpeedLoss`, `ricochet` — pętla
+pocisków, `chargeTime` / `requiresStationary` — sterowanie ogniem gracza, P2 i AI, `burstCount` / `burstDelay`
+Hexlance'a — `superweapon.js`, `recoil` / `shake` / `impactScale` — `src/game/weaponFeel.js`):
 
 | Broń | Pola |
 |---|---|
@@ -113,7 +114,7 @@ Nowe pola, dziś nieczytane (grep: żadna ścieżka gry nie czyta `penDepth`, `p
 | `armata_mk1` | `recoil / shake` 15 / 8 → **12 / 6,5** (FX_PROFILE) |
 | `special_yamato_cannon` | `recoil / shake` 90 / 65 → **60 / 20** (FX_PROFILE) |
 | reszta z `FX_PROFILE` (`turret2D.js`) | `recoil / shake` dopisane 1:1 (rail, Vulcan, Helios, autokanon, CIWS, laser PD, flak ×4, rakiety ×6) |
-| warianty S/L, `ciws_mk2`, `hexlance_siege` | wartości rodziny z dema (`arsenal.js`) — **dziś gra daje im fallback 3 / 1,8** (`fxProfileFor`), więc po przełączeniu źródła w 18-D zmienią się na wartości dema |
+| warianty S/L, `ciws_mk2`, `hexlance_siege` | wartości rodziny z dema (`arsenal.js`) — do 18-D gra dawała im fallback 3 / 1,8 (`fxProfileFor`); od 18-D czyta dane (§8.4) |
 
 ## 5. Decyzje 18-A (samodzielne, do przejrzenia)
 
@@ -163,3 +164,124 @@ zmian (domyślne loadouty NPC nie mają Mjolnira ani Valkyrie; rykoszet dotyczy 
 grubość płyt 160 / 400, dziura po kraterze, uv pikseli, zgodność ze skórą, wgniecenie, wrak i odłam w uv rodzica,
 `hullImpactResult`, hak, brak `Math.random`), `projectilePenetration`, `projectileRicochet`, `weaponCharge`,
 `hexlanceBurst`, `hullBodies` (+ `dmgKey` wraków: śmierć, taran, łup, wybuch reaktora, nowy kadłub).
+
+18-B / 18-D: `projectileMechanicsGame` (prawdziwe `bulletsAndCollisionsStep` z index.html na kadłubach belkowych:
+Mjolnir = wzorzec 18-A co do węzła, Valkyrie stop na 3. kadłubie i zakleszczenie, rykoszety = decyzje wzorca,
+reszta arsenału jak dotąd), `weaponChargeGame` (gracz — funkcje z index.html, P2, AI, HUD, komunikaty),
+`weaponFxPierce` (rzaz, wyjście, zakleszczenie, `hit.through`, rykoszet z decyzji gry), `weaponRecoilSource`
+(dane → Turret2D, kanał strzałów, wstrząs trafienia × `impactScale`, bramka, Hexlance), `hexlanceBurst` (+ seria
+w `superweapon.js`); przepisane: `projectileTrajectory` (kadłub zatrzymuje wszystko poza bronią z `penDepth`),
+`weaponAim` (piaskownica P1: `fireSpecialLoadout`, ładowanie), `destructorGhostHexes` (regex krateru wejścia).
+
+## 8. Wpięcie w grę (18-B) i dane odrzutu (18-D) — stan 2026-09-28, gałąź `webgpu/18b`
+
+### 8.1 Pętla pocisków (`index.html` `bulletsAndCollisionsStep`)
+
+- `fireWeaponCore` nadaje pociskowi `serial: nextProjectileSerial()`, `mech: hasHullMechanics(def) ? def : null`
+  (broń z `penDepth` albo `ricochet`: Mjolnir, Valkyrie, Vulcan, Gatling S) i `pen: null`.
+- Pocisk z `b.pen` najpierw kroczy `stepInsideHull`; zdarzenie obsługuje `applyBulletHullPass` (znaki rzazu →
+  `WeaponFx.kerf` i pas na mapie ran, krater wyjścia / zakleszczenia przez `applyHexImpact` → `HullBodies.impact`
+  BEZ HP, efekt `pierceExit` / `pierceStuck`, nośnik = kadłub; stemple — §8.6). W materiale (`PASS_INSIDE`) pocisk nie widzi innych kolizji
+  (kadłuby, olbrzymy pasa asteroid, płyta ringu, stacje); po wylocie kandydaci od punktu wyjścia.
+- Pętla kandydatów działa w przebiegach `hullPass` (≤ 12): drugi i kolejne tylko po wylocie z kadłuba w tym samym
+  kroku (następny okręt w kolumnie). Odcinek kandydatów `[candX0, b.x]` — dla każdego innego pocisku `candX0 =
+  b.px` (arytmetyka identyczna jak przed 18-B). `skipsHull` pomija kadłub, w którym pocisk jest / z którego wyszedł.
+- Trafienie w kadłub: `writeImpactHit` (normalna przed kraterem) → dla `mech` na kadłubie belkowym
+  `resolveHullHit(b, mech, _impactHit, _impactRelVel, hitNode, …)` (`hitNode` — węzeł ze sweepa); przebicie →
+  `stepInsideHull` PRZED kraterem wejścia; rykoszet → `writeImpactRicochet` (obraz z `ricochetBounce`, ten sam
+  hash); obrażenia wejścia × `entryDamage` (rykoszet 0,3; ponowne wejście w ten sam kadłub — krater bez HP). Efekt
+  wejścia dostaje `hit.through` (pocisk leci dalej — smuga nie kończy się na wejściu) albo `hit.ric…`.
+- Cele bez kadłuba belkowego (myśliwce, heksy) i wszystkie bronie bez `mech` — ścieżka sprzed 18-B
+  (`shouldRemoveProjectileAfterImpact`).
+- A/B z b69c7ba (piaskownica pętli gry, 3 kadłuby, 200 strzałów 11 broni bez mechaniki, 3 ziarna): hash stanu
+  węzłów (active / hp / x / y), obrażenia HP i sekwencja zdarzeń (z normalnymi) **identyczne**; z Mjolnirem,
+  Valkyrie i Vulcanem — różne (oczekiwane). Harness: `bitwa`, `bitwa-blisko`, `wybuch`, `wraki`, `warp` — stan gry
+  (`stan.suma`, NPC, wraki, pociski) identyczny z `main` (domyślne loadouty NPC nie mają broni z mechaniką).
+- Piaskownica prawdziwej pętli gry (`tests/projectileMechanicsGame.test.mjs`) daje te same obrażenia, kratery
+  (liczba węzłów) i zdarzenia co wzorzec `tests/helpers/hullFlight.mjs`, więc liczby bilansu z §6 obowiązują grę
+  (`scripts/bilans-broni.mjs` po 18-B — wynik bit w bit jak przed).
+
+### 8.2 Ładowanie (`weaponCharge.js` → gracz, P2, AI, HUD)
+
+- Stan ładowania na hardpoincie: `getMountedWeaponAim(ship, loadout).charge` (`mountChargeState`), błąd
+  celowania wieżyczki po kroku: `aim.aimErr` (`stepMountedWeaponAim`).
+- Gracz: `_fireSpecialGroup(loadouts, manual)` dla broni z `chargeTime` tylko zgłasza (`requestMountCharge`);
+  `updateSpecialWeaponCooldowns` → `stepSpecialCharge` co krok fizyki (przed licznikiem przeładowania):
+  `stepMountCharge` → strzał (`fireSpecialLoadout` — ta sama salwa co dotąd), efekt `WeaponFx.charge` z wylotu
+  lufy i nośnikiem okrętu, komunikat (jeden na krok dla grupy). Klawisze 2 i 5 = naciśnięcie (`manual`),
+  auto-fire i spust pada zgłaszają co krok bez komunikatów. Naciśnięcie czeka do 1,5 s
+  (`MOUNT_REQUEST_HOLD`), aż wieżyczka dojdzie do celu (≤ 0,08 rad). Skok (`warp.isBusy()`), śmierć i zniszczony
+  zaczep przerywają. Ładowanie rusza dopiero po przeładowaniu (jak w demie).
+- P2: `WeaponController.tryFireSpecialWeapons` / `update` → `_stepSpecialCharge` (efekt przez `window.WeaponFx`).
+- AI: `capitalAI.processAutonomousWeapons` — działo gotowe, cel i czysta linia ognia → `stepNpcWeaponCharge`
+  (strzał po naładowaniu, `requiresStationary` z |v| i ω okrętu; bez celu — przerwane), efekt przez hak gry
+  `window.spawnWeaponChargeFx`. Domyślne loadouty NPC takich broni nie mają — ścieżka uśpiona.
+- HUD (`_specialHudFromEntries`): w trakcie ładowania pasek slotu = postęp ładowania (`charging: true`).
+- Komunikaty: „MJOLNIR: ŁADOWANIE — OKRĘT MUSI STAĆ” (start, broń ≥ 1 s), „…: WYMAGA POSTOJU OKRĘTU”
+  (naciśnięcie w ruchu, przerwanie ruchem), „…: BRAK WYCELOWANIA” (naciśnięcie wygasło, naładowane zgasło po 2 s).
+
+### 8.3 Seria Hexlance'a
+
+`prepareSuperweaponSalvo` = `buildHexlanceBurst(HEXLANCE_DEF, gniazda, superweaponState.queue)`: 4 strzały co
+0,25 s na gniazdo (Atlas: 1 gniazdo), podgląd ładowania przed każdym strzałem serii zostaje, przeładowanie 6 s
+rusza po serii.
+
+### 8.4 Odrzut, wstrząs, skala trafienia (18-D, `src/game/weaponFeel.js`)
+
+- `recoil` / `shake` z danych broni: Turret2D (odrzut lufy i wstrząs strzału — kanał `__weapon3dCameraShake`;
+  cache opisu broni śledzi pola), Hexlance (`camera.addShake(shake)`, `recoilOffset += recoil`). `FX_PROFILE`
+  w `turret2D.js` = same klucze wieżyczek. Zmiana względem gry sprzed 18-D tylko dla broni bez dawnego wpisu
+  FX_PROFILE (fallback 3 / 1,8 → wartości rodziny z dema): Tempest S/L 4 / 2,5, Helios S / Lance 6 / 3,
+  Gatling S 3 / 2, Autokanon L 8 / 4, CIWS Mk II 1,5 / 1.
+- `impactScale` (Mjolnir 5, Yamato 4,5, Valkyrie 3,5, plazmowy gatling 1,5, armata / Goliath 1, wiązki 0,4 / 0,7,
+  reszta 1): rozmiar efektu w bramce LOD trafienia pocisku (`spawnBulletImpactEffect`) i wstrząs receptury przy
+  trafieniu, wyjściu i zakleszczeniu (`WeaponFx._shakeScale`); cząstek receptur nie mnoży. Wstrząs trafienia
+  (gdy strzelał gracz albo oberwał; kamera: 0,5 px na jednostkę, sufit 16 px): Mjolnir 10 → 50 (5 → 16 px),
+  wyjście Mjolnira 8 → 40, Yamato 12 → 54 (6 → 16 px), Valkyrie 5 → 17,5 (2,5 → 8,75 px). Wiązki nie idą przez
+  bramkę pocisków — ich `impactScale` dziś nic nie zmienia.
+
+### 8.5 Decyzje 18-B / 18-D (samodzielne, do przejrzenia)
+
+1. Mechanika tylko na kadłubach belkowych; cel bez kadłuba (myśliwiec) i heksy — jak dotąd (Mjolnir przez
+   myśliwce dalej po staremu: `penetration` jako licznik celów bez kadłuba).
+2. Pocisk w materiale nie widzi innych kolizji w kroku; kolejny kadłub w tym samym kroku po wylocie (≤ 12 przebiegów).
+3. Krater wejścia z prędkością pocisku przed hamowaniem w materiale (wzorzec 18-A liczył po nim — różni się tylko
+   długość wektora wgniecenia Valkyrie; Mjolnir bez hamowania — identycznie).
+4. Rzaz na ekranie przerzedzony do gęstości dema (co v/240 j.: Mjolnir ~104 j., Valkyrie ~62 j.); licznik
+   mechaniki (co 22 j., krater nie zależy od rzazu) bez zmian. Bez tego kolumna kadłubów zalewała kadr bielą.
+5. Obraz rykoszetu tylko z decyzji gry; receptura Vulcana nie losuje już własnych rykoszetów (także na
+   asteroidach i stacjach — tam mechaniki nie ma). Smugowiec przepada, gdy bramka / budżet efektu odrzuci trafienie.
+6. Naciśnięcie broni z ładowaniem czeka do 1,5 s na wycelowanie wieżyczki (demo wymagało trzymania spustu);
+   komunikaty tylko dla naciśnięć i przerwań, jeden na krok dla grupy zaczepów.
+7. AI ładuje tylko przy widocznym celu i czystej linii ognia; cel znika — ładowanie gaśnie.
+8. `impactScale` mnoży wstrząs trafienia bez dodatkowego limitu (sufit 16 px robi kamera) — Mjolnir i Yamato
+   gracza dochodzą do sufitu (w demie 10–12 px bez mnożnika).
+9. Stan przejścia przez materiał (`b.pen`) to jeden obiekt na pocisk przebijający (Mjolnir co 11 s, Valkyrie co
+   3,3 s) — bez puli.
+10. Rykoszet zostawia na mapie ran płytkie osmalenie (wariant `ricochet` Vulcana / Gatlinga S), nie ranę trafienia
+    jak w demie — pocisk odbił się, poszycie jest tylko przypalone (§8.6).
+11. Pas rzazu przebicia stempluje gra (`stampKerf` co krok w materiale, gęstość mapy: co ≤ 22 j., ≤ 8 znaków na
+    krok), nie receptura efektu — mapa nie zależy od przerzedzenia i bramki kadru efektu (decyzja 4); receptura
+    `kerf` dostaje kadłub `null`, żeby nie stemplować drugi raz.
+
+### 8.6 Mapa ran (18-C) z mechaniką 18-B
+
+Scalenie `main` z 18-C (8f8013d): kratery stempluje hak `HullBodies.onImpact` → `HullDamageMap.onHullImpact`,
+rodzinę i wariant podaje `applyHexImpact(entity, x, y, damage, vel, shard, fxSource, fxVariant)` przez
+`HullDamageMap.setSource(fxSource, fxVariant)` … `clearSource()`.
+
+| Zdarzenie | Gdzie | Źródło, wariant | Wpis `hullDamageStamps.js` |
+|---|---|---|---|
+| Trafienie / wejście przebicia | `bulletsAndCollisionsStep` | pocisk, `impact` | rodzina broni, `impact` |
+| Rykoszet (Vulcan, Gatling S) | `bulletsAndCollisionsStep` | pocisk, `ricochet` | `vulcan.ricochet` = r 9, żar 0,9, osmalenie 0,3, bez brzegu i otworu, wydłużenie 2,6 wzdłuż lotu (nowy) |
+| Wylot | `applyBulletHullPass` | pocisk, `exit` | `mjolnir.exit` (r 56), `valkyrie.exit` (r 28) |
+| Zakleszczenie | `applyBulletHullPass` | pocisk, `stuck` | `valkyrie.stuck` (r 40); receptura `stuck` z kadłubem — duplikat tej klatki pomija `_hookedHere` |
+| Pas rzazu | `applyBulletHullPass` | `HullDamageMap.stampKerf(e, pierwszy znak, ostatni znak, rodzina)` | `mjolnir.kerf`, `valkyrie.kerf` |
+
+W grze (harness, sesja `galeria`, diagnostyka `mapaRan` scen mechaniki): Mjolnir przez kolumnę — 21 stempli
+(3 wejścia, 3 wyloty, 15 znaków rzazu), 3 stemple receptur trafienia pominięte jako duplikaty kraterów; Valkyrie — 9
+stempli; 30 strzałów Vulcana pod 5° — 12 trafień w kadłub = 12 stempli (7 rykoszetów); 0 przepadłych, 0 poza kadrem.
+
+Receptura `kerf` w `WeaponFx.kerf` dostaje kadłub `null` (sam obraz). Testy: `tests/projectileMechanicsGame.test.mjs`
+(źródła i warianty kraterów, pasy rzazu z pętli gry), `tests/hullDamageMechanics.test.mjs` (wpisy tabeli przez
+hak), `tests/weaponFxPierce.test.mjs` (efekt rzazu bez stempla).

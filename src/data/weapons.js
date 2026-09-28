@@ -14,8 +14,8 @@ import {
  * - cooldown: Czas między strzałami w sekundach
  *
  * Mechanika z dema bronie-webgpu (zadanie 18, docs/webgpu/PROJEKT-BRONI.md §2.3–2.6, §5) —
- * pola dopisane w 18-A, gra czyta je dopiero od 18-B/18-D (src/game/projectileMechanics.js,
- * src/game/weaponCharge.js):
+ * pola dopisane w 18-A, czytane od 18-B / 18-D (src/game/projectileMechanics.js,
+ * src/game/weaponCharge.js, src/game/weaponFeel.js):
  * - penetration: ile kadłubów pocisk może trafić (N-ty go zatrzymuje) — to samo pole co dawniej
  * - penDepth: budżet materiału przebicia [j.] (Infinity = bez limitu); brak = broń nie przebija
  * - penSpeedLoss: hamowanie w materiale, v·exp(−penSpeedLoss·6·t)
@@ -23,8 +23,11 @@ import {
  *   od normalnej z szansą `chance` (hash numeru pocisku, nie losowanie); kadłub dostaje
  *   `hullFrac` obrażeń
  * - chargeTime: ładowanie przed strzałem [s]; requiresStationary: ładowanie tylko na postoju
- * - recoil / shake: odrzut lufy i wstrząs kamery — wartości FX_PROFILE z src/vfx/turret2D.js
- *   (dziś to on jest źródłem; 18-D przełącza je na dane), warianty S/L jak w demie
+ * - recoil / shake: odrzut lufy wieżyczki i wstrząs kamery od strzału — JEDYNE źródło (18-D:
+ *   Turret2D i Hexlance czytają je stąd; dawna tabela FX_PROFILE w src/vfx/turret2D.js ma
+ *   już tylko klucze wieżyczek), liczby = dawne FX_PROFILE, warianty S/L jak w demie
+ * - impactScale: mnożnik rozmiaru efektu w bramce LOD trafienia i wstrząsu przy trafieniu
+ *   (18-D; obraz receptury bez zmian), brak = 1
  */
 
 export const MASTER_WEAPONS = {

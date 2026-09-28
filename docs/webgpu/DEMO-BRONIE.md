@@ -105,9 +105,13 @@ kopie `lightGrid.js` / `fxLights.js` / `noise.js` (w grze wspólne z `src/3d/fx/
 - **Galeria w grze:** `node scripts/webgpu/zrzuty.mjs --backend webgpu --sceny galeria-broni,galeria-armata,…`
   (sesja `galeria`: przegląd 15 rodzin naraz + ujęcie każdej rodziny + Hexlance), obok dema:
   `node scripts/webgpu/bronie-demo.mjs --tryb zrzuty --bronie <te same bronie>`.
-- **Czeka na 18:** przebicia (`kerf`, `exit`, `stuck` — Hexlance ma je już z gry), ładowanie Mjolnira i Valkyrie
-  (`WeaponFx.charge`, `createChargeState`), rykoszety (`ctx.ricochet` — dziś kosmetyczne, nigdy w `bullets`), mapa
-  ran (`ctx.stamp`), wstrząs z danych broni zamiast `FX_PROFILE` (18-D).
+- **Mechanika z dema w grze (18-B, 18-D — `docs/webgpu/MECHANIKA-BRONI.md` §8):** przebicia Mjolnira i Valkyrie
+  (`kerf`, `exit`, `stuck` przez `WeaponFx.kerf / pierceExit / pierceStuck`, rzaz w gęstości dema), rykoszety
+  działek z decyzji gry (hash numeru pocisku — `hit.ric…`; smugowiec nadal kosmetyczny, nigdy w `bullets`),
+  ładowanie Mjolnira i Valkyrie (`WeaponFx.charge`), seria Hexlance'a z danych, odrzut / wstrząs / `impactScale`
+  z danych broni zamiast `FX_PROFILE`. Galeria: `galeria-przebicie`, `-przebicie-valkyrie`, `-rykoszet`, `-seria`,
+  `-ladowanie`. Mapa ran (18-C) po scaleniu: krater wejścia / wylotu / zakleszczenia ze stemplem rodziny i wariantu,
+  rykoszet = płytkie osmalenie (`vulcan.ricochet`), pas rzazu przebicia z gry (`stampKerf`) — MECHANIKA §8.6.
 
 ## Znalezione przy okazji w grze (nie ruszane)
 
