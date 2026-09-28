@@ -1,12 +1,19 @@
-# Port WebGPU — jak prowadzić zadania
+# Port WebGPU — harness, bazy i sposób pracy
 
-Plan i uzasadnienia: `PLAN.md`. Stan zadań i dziennik: `POSTEP.md`. Zadania (samodzielne prompty): `zadania/NN-*.md`.
-Wyniki spike'u: `SPIKE.md`. Inwentarz shaderów: `INWENTARZ.md` (`node scripts/webgpu/inwentarz.mjs`).
+**Port zakończony** (zadania 01–24, 2026-09-28): gra na `main` ma tylko `WebGPURenderer` i TSL — bez GLSL i API WebGL
+(strażnik `tests/graBezGlsl.test.mjs`, zasady w `agents.md` § „Render: WebGPU + TSL”). Ten plik zostaje instrukcją harnessu
+zrzutów i baz obrazu na przyszłość; część o zadaniach i sesjach opisuje, jak prowadzono port (wzór dla podobnych prac).
 
-- Pracujemy na **`main`** (decyzja użytkownika 2026-09-27; bez gałęzi `webgpu/port`).
+Plan i uzasadnienia: `PLAN.md`. Stan zadań, dziennik i końcowe zestawienie z bazą: `POSTEP.md`. Zadania (samodzielne
+prompty): `zadania/NN-*.md`. Wyniki spike'u: `SPIKE.md`. Wydajność i precyzja: `WYDAJNOSC.md`. Inwentarz shaderów:
+`INWENTARZ.md` (`node scripts/webgpu/inwentarz.mjs`; graf i wzorce wspólne ze strażnikiem — `scripts/webgpu/grafGry.mjs`).
+
+- Pracujemy na **`main`** (decyzja użytkownika 2026-09-27; bez gałęzi `webgpu/port`); tag `webgpu-port` = ostatni commit
+  portu.
 - **Tag `webgl-baseline`** = ostatni stan gry na `WebGLRenderer` + harness zrzutów (kod gry identyczny z `d57cbdd`).
-  Z niego robi się bazy nowych scen i odpala dema spoza portu.
-- Od zadania 01 gra na `main` ma tylko WebGPU; nieprzeniesione materiały są **magentowe** do swojego zadania.
+  Z niego robi się bazy scen przeniesionych 1:1 i odpala dema spoza portu (stan sprzed WebGPU).
+- **Magenta** = zamiennik `ShaderMaterial` (`src/3d/tsl/zamiennik.js`): w grze nie występuje (`spis.zamienniki` = 0 we
+  wszystkich scenach), widać go tylko w demach modułów poza portem (Z4/Z5/Z7) na Core3D.
 
 ## Jedno zadanie = jedna sesja
 
@@ -79,8 +86,10 @@ node scripts/webgpu/zrzuty.mjs --backend webgpu --out .tmp/webgpu/zadania/NN --b
 - Wynik: `.tmp/webgpu/zadania/NN/webgpu/` — `<scena>.png` (+ warianty „jedna warstwa” `<scena>__tlo|planety|ortho|fg`),
   `wyniki.json` (błędy i ostrzeżenia konsoli z walidacją WebGPU, draw calle i trójkąty per pass, ms CPU / GPU, HDR,
   **`spis`** — widoczne materiały per warstwa i liczba zamienników, stan świata), `porownanie-z-baza/`.
-- Baza: `.tmp/webgpu/baseline/webgl/p1/*.png` (48), drugi przebieg `p2/`, szum `szum-p1-p2/`; liczby w
-  `docs/webgpu/baseline.json` (w repo).
+- Baza z tagu: `.tmp/webgpu/baseline/webgl/p1/*.png` (116 zrzutów po zadaniu 24: Faza 0 + sceny dopisane w 08, 16 i 24 —
+  sesja „reaktor”), drugi przebieg `p2/`, szum `szum-p1-p2/`; liczby w `docs/webgpu/baseline.json` (w repo). Baza z `main`
+  dla scen z nowymi efektami — § „Dwie bazy” niżej. `spis.zamienniki` w grze = 0; niezerowy to regresja (ShaderMaterial
+  w grze — złapie go też `tests/graBezGlsl.test.mjs`).
 
 ### Jak czytać porównanie
 
@@ -94,8 +103,7 @@ node scripts/webgpu/zrzuty.mjs --backend webgpu --out .tmp/webgpu/zadania/NN --b
 | w tolerancji portu | różnica ≤ `tolerancjaPortu` z `baseline.json` (od zadania 02: >8/255 w ≤ 0,05% pikseli, średnia ≤ 0,03) — „ten sam obraz, inny renderer” |
 | obok siebie | `<scena>-obok.png` (baza \| nowy \| mapa różnic, pół rozdzielczości), `<scena>-roznica.png` (pełna mapa: szarość = różnica × 4, czerwień > 32/255) |
 
-Scena z zamiennikami (`spis.zamienniki` > 0 w `wyniki.json`) nie musi być w tolerancji — patrz na jej warianty warstw.
-Regresje względem poprzedniego zadania: `node scripts/webgpu/porownaj.mjs --a .tmp/webgpu/zadania/<poprzednie>/webgpu --b .tmp/webgpu/zadania/NN/webgpu --out .tmp/webgpu/zadania/NN/vs-poprzednie`.
+Regresje względem poprzedniego przebiegu (albo bazy z `main`): `node scripts/webgpu/porownaj.mjs --a .tmp/webgpu/zadania/<poprzednie>/webgpu --b .tmp/webgpu/zadania/NN/webgpu --out .tmp/webgpu/zadania/NN/vs-poprzednie`.
 
 Tolerancję skalibrowano na `kalibracja__ortho` (mało sylwetek: 0,44% pikseli na krawędziach). Różnica renderer↔renderer to
 wyłącznie piksele sylwetek po resolve MSAA (~4% pikseli krawędzi, pokrycie o jedną próbkę) — scena gęstsza (ring, K-7,
@@ -115,17 +123,26 @@ pula znaczników czasu, bloom raz na render w podzielonym ekranie (kod wyjścia 
 `node scripts/webgpu/gorace-powietrze.mjs [--root <worktree tagu>]` — kalibracja z czterema źródłami gorącego powietrza i bitwa
 z gorącym powietrzem i bez, ta sama scena na WebGL i WebGPU (porównanie: `porownaj.mjs`).
 
-### Nowe efekty z dem (zadania 17–22)
+### Dwie bazy: tag i `main`
 
-Stare efekty broni i rakiet wyglądają inaczej niż nowe, więc sceny z nimi (`galeria-broni`, `galeria-rakiet`, bitwy)
-nie mają bazy w tagu. Sesja zadania kładzie zrzuty gry obok zrzutów dema (`scripts/webgpu/bronie-demo.mjs --tryb zrzuty`,
-`dema/rakiety-webgpu.html?scenario=…&shot=1`) i czeka na ocenę użytkownika; po akceptacji katalog przebiegu z `main`
-(np. `.tmp/webgpu/zadania/17/webgpu`) jest bazą tych scen dla kolejnych zadań (`porownaj.mjs --a <zatwierdzony> --b <nowy>`).
-Warianty bez broni i pozostałe sceny — dalej względem tagu.
+- **Sceny przeniesione 1:1 z WebGL** (menu, `hud`, ringi i K-7, planety i słońce, kalibracja, stacje i ich rozpad, wybuch
+  reaktora — sesja „reaktor”, podzielony ekran, warianty warstw) — baza z tagu `webgl-baseline`
+  (`.tmp/webgpu/baseline/webgl/p1`, liczby w `baseline.json`), próg: `tolerancjaPortu` albo mapa różnic (krawędzie).
+- **Sceny z efektami i systemami z dem WebGPU** (zadania 17–22: `galeria-*`, `bitwa`, `bitwa-blisko`, `wybuch`, `wraki`,
+  `warp*` / `kop*`, sesja „rakiety”, `pas-*`, `wydobycie-*`) — w tagu wyglądają inaczej (stare efekty albo ich brak), więc
+  ich bazą jest ostatni zatwierdzony przebieg harnessu na `main` (dziś `.tmp/webgpu/zadania/23/baza-main/webgpu` — 191 zrzutów
+  po zadaniu 23; przebieg końcowy zadania 24: `.tmp/webgpu/zadania/24/webgpu`). Porównanie:
+  `node scripts/webgpu/porownaj.mjs --a <baza main> --b <nowy przebieg> --out <katalog>`. Zmiana wyglądu takich scen = zrzuty
+  gry obok dema (`scripts/webgpu/bronie-demo.mjs --tryb zrzuty`, `dema/rakiety-webgpu.html?scenario=…&shot=1`,
+  `scripts/webgpu/asteroidy-demo.mjs`, `scripts/webgpu/wydobycie-gra.mjs --demo`) i ocena użytkownika; po akceptacji przebieg
+  z `main` staje się nową bazą (katalog z `OPIS.txt`: commit, polecenie, znany szum).
+- Znany szum obu baz: `planeta-cien` (obrót stacji Wenus zależy od liczby klatek ładowania — 0,24–0,52% pikseli > 2/255).
 
-### Nowa scena bazy (zadanie 16 i późniejsze)
+### Nowa scena bazy
 
-Baza sceny powstaje ZAWSZE na tagu (stary renderer), nigdy na `main` — chyba że scena pokazuje nowe efekty (wyżej):
+Scena, która pokazuje to, co przeszło z WebGL 1:1 (i ma sens porównanie ze starym rendererem), dostaje bazę z tagu — kroki
+niżej. Scena z nowymi efektami albo nowym systemem po porcie — bazę z `main` (przebieg harnessu na zatwierdzonym `main`,
+wyżej), nie z tagu. Baza z tagu:
 
 1. Scena dopisana w `scripts/webgpu/zrzuty.mjs` na `main` (tylko harness, bez zmian w grze — haki `?dev` już są).
 2. Worktree z tagu: `git worktree add ../statki-webgl webgl-baseline`, kopia `node_modules` jak wyżej (robocopy),
@@ -141,9 +158,13 @@ Całą bazę od nowa (np. nowa rozdzielczość): w worktree z tagu `zrzuty.mjs -
 
 ### Dema spoza portu
 
-`warp-demo`, `asteroidy.html`, `budowle-portowe` (Z7), `kontenery` (Z5), `scripts/proxy-batch` (Z4), `destruktor2d/3d`
-działają z tagu: w worktree z tagu `npm run dev` i adres jak dawniej. Dema `dema/*-webgpu*` (sesje równoległe) działają
-na `main` niezależnie od portu.
+Moduły poza grą przejdą na TSL przy swojej integracji (PLAN §12 p. 1). Do tego czasu pełny obraz dem na WebGL daje tag:
+`warp-demo` (na `main` usunięte w 22), `asteroidy.html`, `budowle-portowe` (Z7), `kontenery` (Z5), `scripts/proxy-batch` (Z4)
+— w worktree z tagu `npm run dev` i adres jak dawniej. Na `main` dema Z4/Z7 na Core3D rysują GLSL magentą (zamiennik),
+`kontenery` (własny `WebGLRenderer` + moduły TSL gry) nie działa, `destruktor2d/3d` działają (własny `WebGLRenderer`,
+`beamShips3D` / `beamDebris3D` w GLSL). `dema/station-destruction-sandbox.html` jest zepsute także na tagu (ścieżki `./src/…`
+względem `dema/` po przeniesieniu pliku; importuje usunięte `overlay.js`, `shockwave3D.js`, `stationDestructionEffects.js`).
+Dema `dema/*-webgpu*` i warsztaty przeniesionych modułów (`halo_ring_demo`, `mostki-demo`, `rdzen-demo`) działają na `main`.
 
 ## Pułapki środowiska
 
