@@ -853,6 +853,11 @@
     // Kadłuby statków, NPC i ich wraków: silnik belek (src/game/hullBodies.js).
     // Stary destruktor heksowy zostaje tylko dla asteroid (heksowe ciała skał).
     import { HullBodies } from "./src/game/hullBodies.js";
+    // Mapa ran na kadłubach (zadanie 18-C, src/3d/hullDamageMap.js): stempel z każdego krateru
+    // i rzazu (hak po trafieniu), wygaszanie osmalenia przy naprawie R.
+    import { HullDamageMap } from "./src/3d/hullDamageMap.js";
+    HullBodies.onImpact = HullDamageMap.onHullImpact;
+    HullBodies.onRepair = HullDamageMap.onHullRepair;
     import { TowConstraintSystem } from "./src/game/towSystem.js";
     import { createColdWreckSystem, THAW_RESULT } from "./src/game/coldWrecks.js";
     import { purgeFinishedNpcs } from "./src/game/npcListPurge.js";
@@ -8588,9 +8593,18 @@
     function hexSweepImpact(entity, x0, y0, x1, y1, radius) {
       return DestructorSystem.sweepImpact(entity, x0, y0, x1, y1, radius);
     }
-    function applyHexImpact(entity, x, y, damage, vel, shard) {
+    function applyHexImpact(entity, x, y, damage, vel, shard, fxSource = null) {
       // Kadłub na belkach: krater od najbliższego węzła punktu trafienia (sweep daje punkt wejścia).
-      if (entity?.beamHull) return HullBodies.impact(entity, x, y, damage, vel);
+      // fxSource (pocisk albo broń) — rodzina stempla mapy ran dla haka HullBodies.onImpact (18-C).
+      if (entity?.beamHull) {
+        if (!fxSource) return HullBodies.impact(entity, x, y, damage, vel);
+        HullDamageMap.setSource(fxSource);
+        try {
+          return HullBodies.impact(entity, x, y, damage, vel);
+        } finally {
+          HullDamageMap.clearSource();
+        }
+      }
       if (!shard) return DestructorSystem.applyImpact(entity, x, y, damage, vel);
       _hexImpactOpts.shard = shard;
       try {
@@ -9043,7 +9057,7 @@
             if (allowDamage && (!hitEntity.shield || hitEntity.shield.val <= 0)) {
               if (hitEntity.hexGrid || hitEntity.beamHull) {
                 const impactSpeed = Number.isFinite(speed) ? speed : Math.max(800, Number(weapon.baseRange) || 2000);
-                applyHexImpact(hitEntity, finalEndX, finalEndY, damage, { x: dirX * impactSpeed, y: dirY * impactSpeed }, beamHitShard);
+                applyHexImpact(hitEntity, finalEndX, finalEndY, damage, { x: dirX * impactSpeed, y: dirY * impactSpeed }, beamHitShard, weapon);
                 // Kierunek wyrzutu atmosfery, gdy padnie mostek (tunel wiązki).
                 noteBridgeHit(hitEntity, finalEndX, finalEndY, dirX * impactSpeed, dirY * impactSpeed, bridgeSimTime);
               }
@@ -19909,7 +19923,7 @@
             // Obrażenia w heks trafiony przez sweep (bez niego — sonda w punkcie trafienia);
             // kadłub na belkach — krater od punktu wejścia.
             if (hitNPC.hexGrid || hitNPC.beamHull) {
-              applyHexImpact(hitNPC._realEntity || hitNPC, hitX, hitY, npcDamage, _impactRelVel, hitHexShard);
+              applyHexImpact(hitNPC._realEntity || hitNPC, hitX, hitY, npcDamage, _impactRelVel, hitHexShard, b);
               // Kierunek wyrzutu atmosfery, gdy padnie mostek (tunel ostrzału).
               noteBridgeHit(hitNPC._realEntity || hitNPC, hitX, hitY, _impactRelVel.x, _impactRelVel.y, bridgeSimTime);
             }

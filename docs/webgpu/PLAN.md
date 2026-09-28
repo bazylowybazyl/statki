@@ -177,6 +177,20 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   synchroniczną tak (`precyzja-drzenie.js`: szczeliny okien przy starym początku układu, maska 0) — przed renderem
   pomiaru czekać na nową klatkę (`renderer.info.frame`). **`textureSample` w niejednolitym przepływie** (pętla z
   `Break` zależnym od danych — marsz cienia) to błąd WGSL — `texture(...).level(0)` (textureSampleLevel).
+- **Pułapki z zadania 18-C (three r183, mapa ran):** **bufor storage-singleton ma rozmiar od PIERWSZEGO wołającego** —
+  graf materiału kadłuba budował pulę ran przed kernelem (1 teksel zamiast 3,1 mln): kernel pisał poza bufor (dostęp
+  WebGPU jest „robust” — bez błędu, bez efektu), materiał czytał zera; rozmiar trzymać przy singletonie, nie w
+  argumencie. **Bufor tylko-GPU bez kopii CPU:** `StorageBufferAttribute` trzyma tablicę CPU (24 MB puli) — po
+  utworzeniu bufora GPU (`renderer.backend.get(attr).buffer`) three czyta `array` tylko przy zmianie `version`, więc
+  kopię można oddać; ALE `renderer.getArrayBufferAsync(attr)` kopiuje `array.byteLength` bajtów — narzędzia odczytu
+  muszą kopię zachować (`HullDamageMap.keepCpuCopy`). **`renderer.compute(węzeł, n)` przelicza i alokuje rozmiar siatki
+  grup przy każdej zmianie `n`** — dynamiczną liczbę wątków zaokrąglać (potęga dwójki, nadmiarowe wątki wychodzą na
+  pierwszym warunku). **Liczby double w argumentach wywołań nieinlinowanych V8 pakuje** (~16 B na liczbę; pomiar:
+  ~45 B na trafienie przy 13 argumentach) — ścieżki „na trafienie” podają parametry przez tablicę typowaną; odczyt pola
+  double przy dostępie megamorficznym też kopiuje liczbę (testy alokacji — przed testami z wieloma kształtami obiektów).
+  **Lej rany a przezroczystość:** demo ma w środku rany dziurę (widać kosmos, świeci sam pierścień brzegu);
+  bez przezroczystości (reguła „dziura albo krater”) środek musi być ciemny i nieświecący — inaczej tarcza bieli
+  8–10 HDR na całą średnicę i bloom zalewa pół kadłuba.
 - **TSL, nie `wgslFn`.** Tekstowy WGSL tylko dla wyizolowanej czystej funkcji, gdy TSL jest naprawdę niewygodny — z
   uzasadnieniem w commicie (zamyka drogę do zapasowego backendu WebGL2). Wyjątek z uzasadnieniem: `haloFma` (09).
 - **Pętle:** `Loop` w TSL, nie `for` w JS generujący kopie (`mx_noise_float` ×160 rozwinięte = 44 s kompilacji).

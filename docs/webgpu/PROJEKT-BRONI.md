@@ -230,6 +230,51 @@ brzeg rany 8–12 HDR.
 Demo bez puli: 125 × 2 MB = 250 MB. Pula (8 B/teksel): L 12 × 1 MB + M 32 × 256 KB + S 64 × 64 KB = 24 MB. Najgorszy
 compute: 20 gorących slotów L × 131 tys. tekseli = 2,6 mln wątków — zmierzyć „U hex” i compute w bitwie `--wydajnosc`.
 
+### 3.7 Stan po 18-C (2026-09-28) — różnice względem projektu
+Kod: `src/3d/hullDamageMap.js` (sloty, LRU, kolejka, zadania, krok klatki efektów, API), `src/3d/hullDamageMap.tsl.js`
+(pula, kernel, próbkowanie i wygląd rany w materiale, światła efektów, lustra CPU), `src/3d/hullDamageStamps.js`
+(tabela `STAMP` z wywołań `ctx.stamp` dema, rodzina broni ze źródła), haki w `hexShips3D.tsl.js` (tylko skóra belek:
+`damage: true`), holdery `uDmgSlot` / `uDmgWorld` / `uGridOwner` w `createHullUniforms`, `bind` w `updateBeamSkinMesh`;
+`hullBodies.js`: `hullImpactResult.dirX / dirY / len` i hak `onRepair`; `index.html`: haki `onImpact` / `onRepair` i
+7. argument `applyHexImpact` (źródło stempla). Testy: `tests/hullDamageMap.test.mjs`; narzędzie: `scripts/webgpu/rany-gra.mjs`.
+
+- **Teksel (§3.1):** słowo 0 bez zmian (`packHalf2x16(żar, jony)`), słowo 1 = 3 × unorm8 (osmalenie, **brzeg**, **otwór**)
+  zamiast `packUnorm2x16(osmalenie, przestrzelina)`: kształt rany z receptury (lej + żarzący się pierścień) i
+  przezroczystość to osobne kanały — reguła §3.4 bez fałszywych dziur, ale z wyglądem dema.
+- **Reguła „dziura albo krater” (§3.4):** promień jak w projekcie; kanał otworu = przestrzelina receptury tylko przy
+  `killed === 0` i `r ≤ 0,6 komórki` (Vulcan, CIWS, laser PD), inaczej 0; kanał brzegu = przestrzelina receptury
+  zawsze. `min(hole, 0,45)` z projektu odrzucone: szum brzegu dema dokłada do +0,31 (`jag·0,62`), więc 0,45 i tak
+  otwierało poszarpane dziury. Lej bez przezroczystości = ciemne (albedo × 0,08), NIEŚWIECĄCE dno — w demie była tam
+  dziura, więc świeci sam pierścień; świecący środek dawał tarczę bieli 8–10 HDR na całą średnicę (bloom zalewał pół
+  kadłuba — pomiar w grze).
+- **Źródło stempla:** zamiast pola w wyniku — „źródło otoczenia” jak `ActiveCarrier`: `setSource(pocisk | broń | id,
+  wariant)` … `HullBodies.impact` … `clearSource()`; w grze robi to `applyHexImpact` (7. argument: `b` / `weapon`).
+  Bez źródła: krater = stempel `generic`, rzaz (`cutSegment` — dziś tylko Hexlance) = znaki rzazu Hexlance'a wzdłuż
+  cięcia (kierunek i droga z `hullImpactResult`). Rodzina: `WEAPON_STAMP_FAMILY` (27 broni = kolumna `fx` z 17),
+  fallback po kategorii pocisku; moc rozmiaru jak `SIZE_POWER` dema; flak — promień 0,2 × `flakBurstRadius`.
+- **Dla 18-B / 17:** przebicie — wariant w `setSource(…, 'exit' | 'stuck')` wokół krateru wyjścia / zakleszczenia, znaki
+  rzazu w materiale — `stampKerf(e, x0, y0, x1, y1, rodzina)`, stempel bez krateru — `stampAt(e, x, y, rodzina,
+  wariant, dirX, dirY)`. `ctx.stamp` receptur 17 zostaje pusty (inaczej stemple podwójne i zależne od bramki LOD).
+  Wtórne wybuchy Yamato planuje mapa (kolejka opóźniona: uv trafienia + przesunięcie w układzie kadłuba, klucz rodu),
+  `burn` (ogień w wyrwie) to efekt 17 bez stempla.
+- **Przydział (§3.2):** jak w projekcie + klasa przy pierwszym stemplu rodu; gdy cała klasa w kadrze — slot mniejszej
+  klasy (licznik `downgrades`), potem brak (`noSlot`); chronione też sloty ze stemplami tej klatki; przejęty slot
+  czyści tylko swój **brudny prostokąt** (suma stempli od ostatniego czyszczenia), nie cały slot; trafienia dalej niż
+  pół kadru poza ekranem nie stemplują (`DMG_VIEW_MARGIN` — bitwa poza kadrem nie mieli slotów); kopia CPU puli
+  oddawana po utworzeniu bufora GPU (pamięć CPU 24 MB → 0).
+- **Kernel (§3.3):** jak w projekcie (lista zadań, wyszukiwanie binarne, jedno zadanie na slot), ale stygnięcie wzorem
+  zamkniętym `H·a·e^(−aΔ) / (a + b·H·(1 − e^(−aΔ)))` — dokładne dla dowolnego Δ: stygną tylko gorące sloty W KADRZE,
+  sloty poza kadrem nadrabiają jednym krokiem przy powrocie / stemplu; po `DMG_HOT_SEC` (6,3 s od sufitu żaru 6)
+  zadanie zeruje żar i jony, slot przestaje być gorący. Rozmiar dispatchu — potęga dwójki (three alokuje przy zmianie).
+- **Materiał (§3.5):** jak w projekcie (slot per obiekt przez holder + `perObject`, próbka dwuliniowa, `discard` tylko z
+  kanału otworu, żar = `max(żar skóry, żar rany)` + jony); osmalenie przyciemnia albedo przed wszystkimi światłami.
+- **Światła efektów (krok 5):** `hullEffectLighting` — model powierzchni dema broni (Lambert z zawinięciem 0,25,
+  Blinn–Phong 40, albedo 0,633, połysk × (1 − 0,8·osmalenie)) po `Core3D.fx.grid.loop` z pozycją z widoku (dokładna
+  przy 5–10 mln j.) i węzłem właściciela `uGridOwner` (0 = nic nie pomija; dla przyszłych świateł statków w siatce);
+  lampy statku zostają w payloadzie (bez zmian). Tylko skóra belek.
+- **Naprawa R:** hak `HullBodies.onRepair(e, dt, changed)` → wygaszanie osmalenia / brzegu / otworu 0,8 na s, koniec
+  naprawy (`changed = false`) czyści brudny prostokąt i zwalnia slot.
+
 ## 4. Podział pracy, kolejność, testy
 
 - **17-A** (bez zależności): tabela broni + test „27 broni ma recepturę”; `fxRandom`; pola szyny (`dirX/dirY`, dane PD w
