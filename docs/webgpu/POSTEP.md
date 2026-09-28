@@ -68,7 +68,7 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 | 23 | Wydajność i precyzja: A/B z tagiem, drżenie, kompilacja, pamięć | 04–22 | nie | max | zrobione, scalone (b41e4de) | 8fc9e77…56012bf (21 commitów) | duża bitwa 54% → 84% FPS bazy WebGL (Core3D 4,02 → 1,47 ms); bloom compute bit w bit; raport `WYDAJNOSC.md`; otwarte: przestoje > 100 ms przy pierwszej stacji modelu, partie tarcz, kolano bloomu (A/B) |
 | 24 | Sprzątanie i domknięcie portu | 23 | nie | xhigh | zrobione, scalone (be51f3f), tag `webgpu-port` | 8998cbe, 0b3bb55, d3ce675, f40eaa4, d6adac1, efa140e, 041a7e7, 8640c5c, 9a6241d, 0f4823e | gra bez GLSL i API WebGL (strażnik `graBezGlsl`); −4 moduły legacy; wyciek kawałków stacji naprawiony |
 | 25a | Rozgrzewka stacji i wszystkiego przy ładowaniu gry (zero kompilacji w grze) | 11, 23 | 25b, 25c, 26 | max | w toku (worktree `statki-wt/25a`) | | przestoje > 100 ms przy pierwszej stacji modelu, cień Destruction3D |
-| 25b | Bloom gry do poziomu dem: bez ×3, bez kolan, stare emitery przestrojone do oceny | 17–22, 23 | 25a, 25c, 26 | xhigh | w toku (worktree `statki-wt/25b`; kierunek zmieniony decyzją użytkownika) | | nowa baza obrazu z `main` |
+| 25b | Bloom gry do poziomu dem: bez ×3, bez kolan, stare emitery przestrojone do oceny | 17–22, 23 | 25a, 25c, 26 | xhigh | zrobione, scalone (c461e7f); wpis `agents.md` w łatce `.tmp/webgpu/zadania/25b/agents-md.patch` (plik w edycji innej sesji) | 5b9c37c, 9e0fc26, 7f14636 | nowa baza obrazu `.tmp/webgpu/zadania/25b/baza-main/`; do oceny: zrzuty gra ↔ demo i stare emitery |
 | 25c | Rany ↔ fizyka: fizyczna wyrwa tak duża jak lej rany (Yamato i ciężkie działa) | 18 | 25a, 25b, 26 | max | zrobione na `webgpu/25c`, scalenie czeka (niezacommitowane `index.html` / `agents.md` innych sesji w głównym katalogu); 5 pytań balansu do użytkownika | 3fa5d51, 51a45a5, 58fecae | zmiana rozgrywki — liczby balansu w raporcie |
 | 25d | Warp: mocniejszy tunel (więcej cząstek) + podbicie efektów przy zmianie biegu | 22 | — | xhigh | wstrzymane — sesja „przyjazdy i powroty w warpie” edytuje `src/3d/warp/*` | | |
 | 26 | Demo WebGPU ładowni: wrota à la Venator, pusta przestrzeń, kontenery 3D, drony (Z5 w TSL) | — | 25a–c | max | zrobione, scalone (demo `dema/ladownia-webgpu.html`) | c1c3435, 4756daf, f0142c7 | 9 pytań do użytkownika (tony na kontener, `cargoCap` z ładowni, strefy, wrota, drony) — `docs/webgpu/DEMO-LADOWNIA.md` |
@@ -929,3 +929,20 @@ usunąć wpis `POZA_PORTEM` (strażnik o to poprosi), `dema/kontenery.html` i `d
   Yamato 90,7 j. (salwa tnie pancernik na pół — 404 węzły), armata 35,4 j. (niszczyciel TN 70 → 19 s), Mjolnir 55,8 / 39,1,
   Valkyrie 24,4 / 16,6, rakiety 18 j.; Goliath bez dużego krateru; obrażenia HP bez zmian, rośnie zniszczenie struktury
   (sufit HP); `killRadius` w silniku belek — ścieżka bez niego bit w bit. Zrzuty `.tmp/webgpu/zadania/25c/obok/`.
+- **Zadanie 25b scalone do `main`** (5b9c37c, 9e0fc26, 7f14636; scalenie c461e7f): **bloom gry = bloom dem WebGPU** — `postGry.js`
+  dodaje bloom bez mnożnika (`BLOOM_ZGODNOSC_WEBGL` usunięte; `bloomConfig.js` bez zmian — dema biorą te same
+  `BLOOM_DEFAULTS`; ~3 × strength energii teksela ponad progiem zamiast ~9 ×); kolana usunięte (`src/3d/warp/bloomKnee.js`,
+  `beltBloomKnee` w 9 modułach pasa); warsztat ringu bez ×3. Pomiar kolana przed zmianą kierunku (niewdrożone): broń nadal
+  1,6–2,3× energii dema, cienkie linie traciły poświatę (laser PD 0,3×) — próg bloomu liczy się ze średniej 2×2. Stare
+  emitery: przestrojona tylko korona słońca (`SUN_BLOOM_NADMIAR = 3` — nadmiar ponad próg ×3, energia kadru 0,50 → 0,70
+  dawnej); słabsza, ale widoczna poświata: lampy K-7, światła pozycyjne, dysze MAIN / WARP, tarcze, okna mostków; bez zmian:
+  planety, stacje, menu; wybuchu reaktora nie stroiono (nowe demo). Harness 99 scen / 190 zrzutów, 0 błędów, 0 NaN; względem
+  `main` sprzed zmiany 67/190 w szumie, 123 zmienione (sceny ze źródłami ponad progiem). **Nowa baza obrazu:
+  `.tmp/webgpu/zadania/25b/baza-main/`** (tag `webgl-baseline` przestaje być bazą scen z bloomem; `docs/webgpu/README.md`).
+  Zrzuty gra ↔ demo i przed / po starych emiterów: `.tmp/webgpu/zadania/25b/obok-dema/` — **do oceny użytkownika**. Scalone
+  bez zmiany `agents.md` (plik z niezacommitowanymi zmianami innej sesji) — łatka `.tmp/webgpu/zadania/25b/agents-md.patch`
+  do nałożenia później; `docs/webgpu/DEMO-WARP.md` l. 167 (kolano) do poprawki po scaleniu sesji warpa. Dopięte przez
+  orkiestratora (21643fc): demo ładowni (26) importowało usuniętą stałą — bloom bez ×3, tryb test dema 0 błędów.
+- **Uwaga (2026-09-28, po 25b):** w głównym katalogu niezacommitowane zmiany innych sesji w `index.html` (+291 linii) psują
+  4 strażniki: `playerDefaultLoadout` (2 — `loadLoadout` / fit do ładowni) i `renderPerfGates` (2 — pierścienie skanera przez
+  bramkę kadru, receptura `WeaponFx` po bramce trafień); na czystym HEAD (c461e7f) przechodzą 26/26 — to sprawa tamtych sesji.
