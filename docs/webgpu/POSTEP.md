@@ -57,7 +57,7 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 | 17 | Broń 1/2 z dema `bronie-webgpu`: efekty wszystkich broni (pociski, smugi, trafienia, wiązki, PD, flak) | 12, 04 | 05–11, 13–16, 19 | max | zrobione, scalone (753700e) | 25123a4, e002a65, 5374728, 4e2d332, e575f23, 3992955, fae3257 (scalenia `main` 6ebbc29, 91d7964, 1bb1866, c243359) | 27 broni na recepturach dema (`src/3d/weapons/`, `WeaponFx`); PD i flak w 3D; −8 modułów; zero obiektów na strzał; nowe efekty — ocena obrazu zamiast tolerancji |
 | 18 | Broń 2/2: obrażenia z dema — mapa ran, przebicia, rykoszety, ładowanie, serie; światła efektów na poszyciu | 17, 04 | 05–11, 13–16, 19 | max | część 18-A zrobiona i scalona (4e165fb): moduły mechaniki + zapytania `HullBodies` bez wpięcia; zrobione, scalone: 18-A (4e165fb), 18-C (1dd742a), 18-B + 18-D (f088bac) | 8eaa828…2da882d (18-A); 18-C: 7e7fd3d…ee1fc5d; 18-B/D: 56fb84e, cb65bbc, ae676eb, 1ead12b, 0bee2ae | zatwierdzona zmiana rozgrywki; wygląd przebić / rykoszetów / ładowania / ran do oceny użytkownika |
 | 19 | Rakiety z dema `rakiety-webgpu`: dym GPU, dysze, kule ognia, Supernowa, iskry | 12 | 05–11, 13–18 | max | zrobione, scalone (2adf8fb) | 877f8ac, 1d60e1e, 079805c, 2025ba7, b2dabc4, b697ae9 (scalenia `main` 144b0f7, 6f0774a, 26636ce) | lot w `rocketSystem3D`; fala `shockwave3D` i `weapon3DSystem.js` usunięte; DIST przez OR; receptura tarczy (propozycja) |
-| 20 | Koniec overlaya: wybuch reaktora w Core3D, usunięcie drugiego renderera | 17, 18, 19 | 13–16 | xhigh | w toku (podagent, worktree `statki-wt/20`; równolegle z 18-B/C — overlay ma już tylko wybuch reaktora) | | jeden renderer, jeden bloom |
+| 20 | Koniec overlaya: wybuch reaktora w Core3D, usunięcie drugiego renderera | 17, 18, 19 | 13–16 | xhigh | zrobione, scalone (df965d6); wygląd wybuchu poza tolerancją — do oceny użytkownika | 36cd5de, 50891c4, 1c419f5, fee6883, 96f99d2 (scalenie `main` 121bd00) | jeden renderer, jeden bloom |
 | 21 | Asteroidy z dema `asteroidy-webgpu` + kolizje z olbrzymami | 12, 04, 05 (+ commit dema) | 13–20 | max | zrobione, scalone (ee034ed); demo: 84198d3 | d6d7af1, 04cf318, 295f6fb, 55ea8d4, d9a27af, 41c62ac, 810c0a7, 111b917, 6ee3721, 7985de5, ab13869, ab22fb3, e7e824e | zielone światło użytkownika; pas w passach Core3D (18 modułów TSL), olbrzymy z kolizjami; stare pole (zderzenia z małymi skałami, niszczenie, łup) znika — do decyzji użytkownika |
 | 21b | Fizyka wydobycia asteroid w grze (drony, piła, ładunki, urobek) — logika i demo od sesji „Asteroid lighting bug demo” | 21, 12 (+ commit dema) | 22–23 | max | zrobione, scalone (5cc94a7) — commity: 708bbdf, 87a883c, 9e1a8ba, 72f30ab, ce0f8b8, f3c573e (scalenia `main` b6cbe25, c5726c7) | | propozycja sesji fizyki skał; otwarte: kolizje odłamów, wpływ wybuchu, udźwig, ceny |
 | 22 | Warp „Nurt” z dema `warp-webgpu` (iteracja 2) | 12, 13 (+ commit dema) | 14–21 | max | zrobione, scalone (e9f4285); demo: 68cc081 | 97f97b2, de2ed96, 3e8c98d, 83b3735, 4b08a27 (scalenia `main` 3b93795, f43d903) | ośrodek 1 mln drobin w compute, poza warpem 0 kroków i 0 draw calli; stara soczewka i API usunięte; wygląd iteracji 2 do oceny użytkownika | | „ready do wgrania, jak skończy sesję”; wygląd iteracji 2 jeszcze nieoceniony |
@@ -77,7 +77,7 @@ Stan zamierzony na `main` w trakcie portu — nie „naprawiać” poza zadaniem
 | 02 | 23 | Bloom = 12 osobnych `renderer.render()` (~0,9–1,0 ms CPU na render, GPU ~0,085 ms przy 1080p); znaczniki czasu ~15 µs CPU na pass | 23 |
 | 01 | 11 | Rozgrzewka tylko „nie rzuca”: pipeline'y kompilują się asynchronicznie przy pierwszym użyciu, osłona `backend.draw` pomija rysunek do gotowości (obiekt pojawia się 1–2 klatki później) | 11 — ZAMKNIĘTE (d62e275): rejestr `Core3D.warmup`; zostały: cień Destruction3D rozgrzewany rysunkiem (16), bryła stacji GLB, kernele compute synchronicznie na ekranie ładowania, pas 21b |
 | 01 | 06 | Brak synchronicznego odczytu → mapa CPU ringu pusta (`heightAtUV` = 0): płyta ringu koliduje bez rzeźby terenu, LOD terenu bez wysokości, landmarki i kopuły stawiane bez mapy (stała wysokość z `haloRingLandmarks.js`) | 06 — ZAMKNIĘTE (070a407): teren w koliderze po `ring.ready`, sprawdzone w grze |
-| 01 | 20 | Overlay efektów na własnym `WebGLRenderer` (jedyny drugi renderer; stare efekty overlaya działają bez zamienników) | 17–19 zabierają efekty, 20 usuwa overlay |
+| 01 | 20 | Overlay efektów na własnym `WebGLRenderer` (jedyny drugi renderer; stare efekty overlaya działają bez zamienników) | 20 — ZAMKNIĘTE (df965d6): wybuch reaktora w Core3D, overlay usunięty, jedyny renderer w `core3d.js` |
 | 01 | 17–19 | Pociski i błyski ze starego `weapon3DSystem` (materiały wbudowane — rysują się; cyjanowe głowy pocisków nie rysują się na WebGPU), smugi `slugTrail3D` (zamiennik); dym i iskry Fx3D — ZAMKNIĘTE w 12-B | broń — ZAMKNIĘTE w 17 (753700e); rakiety — ZAMKNIĘTE w 19 (2adf8fb) |
 | 17 | 23 | Sceny `wraki` i `warp` rozjeżdżają się ze stanem bazy (46%): wizualia losują z `Math.random` gry (pierwsza różnica w `mainExhaust3D.spawnSpark` — liczba iskier zależy od zajętości banku Fx3D, którego broń już nie używa); rozgrywka sama bez zmian | 23 (wizualia na `fxRandom`, nowa baza `wraki` / `warp` / `galeria-*` z `main`) |
 | 01 | 22 | Soczewka i fale warpa usunięte (API jako no-op), skok działa bez efektu zgięcia | 22 — ZAMKNIĘTE (e9f4285) |
@@ -129,7 +129,9 @@ czytają go tło menu do 11, budowle Z7 spoza gry, narzędzie parzystości i tes
 narzędzia parzystości (08, 09); `beamDebris3D.js` — GLSL tylko w demach destruktora (04); brakujący
 `assets/effects/glow.png` (404 sprite'a blasku słońca, 05); wyciek `_cloneShellHierarchy` (`__sharedTemplateAsset` w
 klonach kawałków — nigdy niezwalniane, 16); skrypty dem z własnym startem Chrome bez sprzątania profilu → wspólny
-`closeChrome` (incydent dysku); `dema/kontenery.html` na `main` nie działa (poza portem, 06); martwe metody broni w `CanvasVFX` (17); pola starych efektów w puli
+`closeChrome` (incydent dysku); `dema/kontenery.html` na `main` nie działa (poza portem, 06); martwe metody broni w `CanvasVFX` (17); martwe `getProjectileImpactVfxPressure` w
+`canvasParticleSystem.js` (czyta `window.overlay3D`), `dema/station-destruction-sandbox.html` tylko z tagu, baza sesji
+„reaktor” z tagu do dopisania z `--powtorz 2` (pojedynczy przebieg w `.tmp/webgpu/zadania/20/baza-tag-reaktor/`) (20); pola starych efektów w puli
 `rocketSystem3D` i `Math.random` w `collisionSparks.js` (19); `asteroidDestructor.js`, nieużywany kod asteroid w `cicDisplay.js`,
 stare komentarze w `src/3d/fx/lightGrid.js` (21).
 
@@ -144,6 +146,13 @@ mniej rudy w skałach, większa ładownia czy osobny magazyn rudy; udźwig wiąz
 kadłubami (dziś nie); wpływ wybuchu na sąsiednie skały pola (dziś nie); czy przejmować każdą skałę PLAY, czy tylko złoża
 ze skanera. Sterowanie: `N` — tryb wydobycia (w trybie LPM lasery, PPM ładunek / PPM + przeciągnięcie piła, `L` wielkość,
 `F` detonacja, `T` wiązka — poza trybem `F` / `T` jak dawniej).
+
+**Wybuch reaktora (20) — do decyzji użytkownika:** wygląd poza tolerancją bazy (`wybuch` 37,4% >8/255, 0,31% >32; sam
+wybuch średnia 4,85; rozbłysk: mniejsza biała kula, final stacji bez zalania ekranu bielą, rdzeń maks. 228/255 zamiast
+255, słabsza linia anamorficzna) — dokładny wygląd dałby tylko drugi bloom (sprzeczne z „jeden bloom”); stacje przykrywają
+wybuch (warstwa FG po warstwie 0 — w bazie overlay leżał nad wszystkim): przenieść rdzeń i rozbłysk do FG?; pierścień
+fraktalny i ciemna fala były w bazie niewidoczne (kwady tyłem do kamery) — zostawione 1:1, włączone = mocny cyjanowy
+pierścień (podgląd `plaskie-kwady-tag-core3d-podglad.png`). Zrzuty: `.tmp/webgpu/zadania/20/obok/`.
 
 **Decyzje wyglądu do potwierdzenia przez użytkownika:** odłamki paneli czarne jak w WebGL (`PANEL_SHARD_BASE_COLOR`, 16);
 `planeta-cien` bez kropkowanego łuku poświaty z bazy WebGL (05); fala uderzeniowa (03) — usunięta w 19 razem ze
@@ -811,3 +820,24 @@ Todo (2): „PORT poprawka 1 / 3 (TODO integracji)” w `tests/shipCore.test.mjs
   **do oceny użytkownika**; pytania o ekonomię i fizykę wyżej („Wydobycie (21b) — do decyzji użytkownika”). Stary
   `asteroidDestructor.js` — importuje go już tylko jeden test (notatka `AGENT:` dla 24). Testy: 1620 / 5 porażek bazowych /
   3 todo; `npm test` OK.
+- **Zadanie 20 scalone do `main`** (36cd5de, 50891c4, 1c419f5, fee6883, 96f99d2; scalenie `main` 121bd00; scalenie df965d6):
+  **jeden renderer, jedna kanwa 3D, jeden bloom.** Wybuch reaktora w scenie Core3D (`reactorblow.js` + `reactorblow.tsl.js`,
+  `particlePool.js`): dwie pule (100 000 i 15 000) w passie ortho (warstwa 0), materiał TSL raz na pulę, ruch w
+  wierzchołkach, początek puli przy wybuchu, krok klatki efektów „reaktor” (rdzeń i rozbłysk świecą do siatki świateł,
+  gorące powietrze przez `fxDistortion()`); profile, czasy i kolejność `Math.random` bez zmian; oba wejścia
+  (`triggerReactorBlow3D` — śmierć okrętu, `Destruction3D` — rozpad stacji). Usunięte: `src/effects3d/overlay.js` (607 linii:
+  drugi `WebGLRenderer`, EffectComposer, bloom overlaya, `RestoreAlphaShader`), GLSL wybuchu (226) i `RestoreAlphaShader`
+  (36), wpięcie overlaya w `index.html` i `shipEntity.js`, kanwa `overlay3d`, parametry `overlay*` w `bloomConfig.js` i
+  tunerze (stare zapisy localStorage kasowane); kubełek PerfHUD „Overlay FX 3D” → „Rakiety (lot)”; `rdzen-demo` na Core3D;
+  `overlayContextMerge` = strażnik jednego renderera. Rozgrzewka przez rejestr (`warm` kroku; `prewarmPass` na
+  `compileAsyncNaCelu`) — pierwszy wybuch: 0 budów i 0 pipeline'ów w klatce gry. **Wygląd:** model = odwzorowanie obrazu
+  overlaya pod ACES / sRGB gry, poświata rdzenia w shaderze, rdzeń z sufitem 0,88 pod progiem bloomu gry, rozlanym iskrom od
+  0,6 s poświata o wzmocnieniu mipów 0–1 bloomu overlaya; poza tolerancją — pytania w „Wybuch reaktora (20) — do decyzji
+  użytkownika”. Wydajność (1080p): klatka bez wybuchu 1,61 ms, faza iskier (4063 cząstki) 1,38 ms / GPU 0,27 ms, trzy wybuchy
+  (12 189) 1,55 / 0,33 ms; pierwsza klatka pierwszego wybuchu +~3 ms (tag +2,6). Nowa sesja harnessu „reaktor” (9 scen,
+  wariant `__reaktor` — sam wybuch na czarnym tle), `scripts/webgpu/wybuch-reaktora.mjs`. Harness 94 sceny, 0 błędów, 0 NaN;
+  sceny bez wybuchu identyczne z `main` (poza szumem `planeta-cien` / `warp`); warianty warstw scen z wybuchem
+  (`__tlo` / `__planety` / `__fg`) nieporównywalne z bazą (tam kanwa overlaya leżała nad każdym wariantem) — do
+  przebazowania. Inwentarz z HEAD df965d6: **port 2 pliki z GLSL (`beamDebris3D.js` 64 linie — materiał tylko w demach
+  destruktora, `sunShadowMaskGLSL.js` 35 — napis dla modułów poza grą), 1 materiał, 99 linii**; razem 13 / 24 / 2819;
+  renderer tworzy się tylko w `core3d.js`. Testy: 1633 / 5 porażek bazowych / 3 todo; `npm test` OK.
