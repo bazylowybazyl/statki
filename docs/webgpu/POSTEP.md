@@ -47,8 +47,8 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 | 07 | Ring 2/5: teren + zestaw przemysłowy | 06 | 04, 05, 12–20 | xhigh | zrobione, scalone (f735076) | 7b43733…96baa16 | |
 | 08 | Ring 3/5: struktura + atmosfera | 07 | j.w. | xhigh | zrobione, scalone (979ed52) | 2c87915…fa8389b (scalenie `main` 60c7e4c) | nowe sceny bazy `ring-dach`, `ring-dach-z01`, `ring-habitat` (dopisane z tagu) |
 | 09 | Ring 4/5: megastruktura + miasto (kopuły, landmarki, drzewa) | 08 | j.w. | xhigh | zrobione, scalone (ab3c820) | 5e3a666, 09e4b09, 8b915ed (scalenia `main` 7ac8d07, 11aaa9e, eb3d21d) | `haloFma` (fma WGSL = `mad` FXC): ziarna i hasze brył bit w bit; `wgslFn` wyjątkowo (TSL r183 nie ma `fma`) |
-| 10 | Ring 5/5: K-7 + ringi-archetypy Marsa i Jowisza | 09 | j.w. | xhigh | w toku (podagent, worktree `statki-wt/10`) | | ring bez zamienników |
-| 11 | Tło menu + rozgrzewka pipeline'ów | 05, 10 | 12–20 | max | czeka | | nowy `menuBackdrop.test` |
+| 10 | Ring 5/5: K-7 + ringi-archetypy Marsa i Jowisza | 09 | j.w. | xhigh | zrobione, scalone (3794883) | 09b532c, f4d4bb5 (scalenie `main` 6092010) | ring bez zamienników i bez GLSL (poza `haloRingGLSL.js`: menu 11, Z7, narzędzie parzystości); K-7 = graf na ring; partie archetypów = Mesh + InstancedBufferGeometry; `haloFmaVec2` |
+| 11 | Tło menu + rozgrzewka pipeline'ów | 05, 10 | 12–20 | max | w toku (podagent, worktree `statki-wt/11`; rejestr rozgrzewki dla modułów 17–22) | | nowy `menuBackdrop.test` |
 | 12 | Infrastruktura efektów GPU: compute w klatce, siatka świateł, zniekształcenia, Fx3D w TSL | 03 | 04–11, 13–16 | max | zrobione, scalone (12-A: moduły `src/3d/fx/`; 12-B: 72ec255 — wpięcie w Core3D, Fx3D w TSL) | 0f3d429…37953a6 (12-A); 819fd85, 0c67d84, ebc4211, a029a03, 59e0571, 7168783 (12-B) | podstawa pod 17–19 (i przyszłe asteroidy) |
 | 13 | Silniki: MAIN, WARP (plazma), SIDE | 03 | 04–12, 14–20 | xhigh | zrobione, scalone (bd96586) | e844a7a, c85042f, 3ff03a4 (scalenia `main` 23ed7d5, 49e7fdf) | graf plazmy na pulę (0 budów przy skoku); iskry MAIN = Fx3D (sprawdzić po 12-B: `silniki.mjs --post` z Fx3D) |
 | 14 | Tarcze i trafienia w tarczę | 03 | 04–13, 15–20 | xhigh | zrobione, scalone (7703490) | 9b8dad0, 9b95df5, e566f74, 02d6f02 | graf na wariant + wartości per obiekt; trafienia w `uniformArray` pakowanej w `onObjectUpdate` |
@@ -87,7 +87,8 @@ Lista robocza orkiestratora — zadania 11 / 23 / 24 zaczynają od niej (i od dz
 
 **11 (rozgrzewka przed pierwszą klatką):** teren ringu na zimno 0,4–1,3 s (07); konstrukcja ringu 1,1–1,7 s na każdy z 2
 wariantów, chmury ~1,1 s, powłoka ~0,85 s (08); 9 materiałów megastruktury i miasta ~2–3 s razem (09); K-7 i archetypy
-(10); dysze SIDE — 4 pipeline'y w pierwszej klatce gry (13); materiał fali uderzeniowej (03 — pierwsza Supernowa);
+(10: K-7 0,07–0,29 s na materiał, ring Marsa 3,3 s / 13 materiałów, Jowisza 3,0 s); dysze SIDE — 4 pipeline'y w pierwszej
+klatce gry (13); materiał fali uderzeniowej (03 — pierwsza Supernowa);
 menu nie czeka na `ring.ready` (ring dołącza 2–4,5 s po Ziemi) i pusta scena `createHaloBakeWarmup` do usunięcia (06).
 
 **23 (wydajność, precyzja, poprawki renderu):**
@@ -103,9 +104,12 @@ menu nie czeka na `ring.ready` (ring dołącza 2–4,5 s po Ziemi) i pusta scena
 - żar krawędzi w demie rdzenia 1–3% ciemniejszy (materiał kadłuba, 15);
 - resztkowe różnice krawędzi ringu (FXC scala `mad` także w wierzchołkach, pochodne na czwórkach pikseli — 09);
 - pass maski słońca +1 draw call, ~0,1 ms GPU (03); cel refrakcji HalfFloat MSAA ~16 MB przy 1080p (03);
-- iskry MAIN na dopalaczu 0,067% vs tag (linie 1 px: Dawn vs ANGLE — przyjęte, 12-B).
+- iskry MAIN na dopalaczu 0,067% vs tag (linie 1 px: Dawn vs ANGLE — przyjęte, 12-B);
+- z-fighting współpłaszczyznowych brył tranzytów i zatok archetypów (`archPort.js`, migocze też w bazie — poprawka
+  geometrią) i krawędzie napisów K-7 (mipmapy atlasu w WebGPU?) — 10.
 
-**24 (sprzątanie):** `src/3d/sunShadowMaskGLSL.js` (po ostatnim odbiorcy); `HALO_GLSL_INDKIT` / `HALO_GLSL_STORM` tylko dla
+**24 (sprzątanie):** `src/3d/sunShadowMaskGLSL.js` (po ostatnim odbiorcy); `src/3d/haloRing/haloRingGLSL.js` (615 linii —
+czytają go tło menu do 11, budowle Z7 spoza gry, narzędzie parzystości i testy, 10); `HALO_GLSL_INDKIT` / `HALO_GLSL_STORM` tylko dla
 narzędzia parzystości (08, 09); `beamDebris3D.js` — GLSL tylko w demach destruktora (04); brakujący
 `assets/effects/glow.png` (404 sprite'a blasku słońca, 05); wyciek `_cloneShellHierarchy` (`__sharedTemplateAsset` w
 klonach kawałków — nigdy niezwalniane, 16); skrypty dem z własnym startem Chrome bez sprzątania profilu → wspólny
@@ -586,3 +590,20 @@ Todo (2): „PORT poprawka 1 / 3 (TODO integracji)” w `tests/shipCore.test.mjs
   (`startMercenaryMission` nie na `window`); `dema/station-destruction-sandbox.html` tylko z tagu. Narzędzie
   `scripts/webgpu/rozpad-stacji.mjs`. Inwentarz z HEAD 82573e5: port 17 plików z GLSL, 22 materiały, 3257 linii. Testy:
   1542 / 7 porażek bazowych / 3 todo; `npm test` OK.
+- **Zadanie 10 scalone do `main`** (09b532c, f4d4bb5; scalenie `main` 6092010; scalenie 3794883): hala K-7 (instancje z
+  kwaternionem i grupą ruchomą, płyty, napisy z atlasu, węże) i ringi-archetypy Marsa (ECUMENE) i Jowisza (Fable) —
+  instancje, pasy z atlasem, szkło, kratownice, światła pozycyjne, powierzchnie dzielnic — w TSL; `arch/archGLSL.js` →
+  `arch/archTSL.js`, −1067 linii GLSL. K-7: graf na ring (4 hale Ziemi = jeden NodeBuilder na rodzaj i stan), wartości hali
+  per obiekt (`onObjectUpdate`, tablice `k7Groups` / `k7Surf` o stałych nazwach, atlas przez `teksturaObiektu`). Archetypy:
+  partie = `Mesh` + `InstancedBufferGeometry` z jednym przeplecionym buforem (`InstancedMesh` = NodeBuilder na każdą z
+  ~40/~100 partii), światła pozycyjne = kwadraty instancjonowane, hasze okien / paneli / kratek i ziarno instancji przez
+  `haloFma` / nowe `haloFmaVec2` (parzystość GPU 100%, naiwnie 82,5–99,98%). **Harness vs baza:** `mars-ring` 0,036% (śr.
+  0,011), `jowisz-ring` 0,028%, `ring-z02` 0,034% — w tolerancji z wariantami; `k7-hala` 0,108% = miasto 09 w rogu 0,078%
+  (bit w bit jak po 09) + 0,030% (krawędzie strzałek i lampek), `__fg` 0,006%; `ring-dach` / `-z01` / `ring-habitat` 0,20 /
+  0,55 / 0,35% (gęste krawędzie; przed 10: 8,4 / 6,1 / 7,2%). **Zamienniki: 0 we wszystkich scenach gry poza `menu`** (3 w
+  tle menu → 11); 0 błędów, draw calle = `main`. Demo (tag vs port, bez otoczenia): hale i porty 0,05–0,42%, mediana
+  kadrów 0,66–1,12%, maks. 3,1% (`transit` Jowisza — krawędzie MSAA i z-fighting brył w `archPort.js`, migocze też w bazie).
+  Post dema = `BloomGry` ×3 (wcześniej 3× słabszy od bazy). Inwentarz z HEAD 3794883: port 12 plików z GLSL, 15
+  materiałów, 2197 linii. Testy: 1549 / 7 porażek bazowych / 3 todo; `npm test` OK.
+- **Limit sesji API (~04:00–04:40):** podagenci 17, 18-C, 19, 21, 22 przerwani w trakcie („session limit”) — wznowieni po
+  resecie (`SendMessage` do ich id, praca z niezacommitowanymi zmianami w worktree); 10 skończyło przed limitem.
