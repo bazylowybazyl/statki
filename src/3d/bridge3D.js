@@ -8,19 +8,26 @@
 // docs/PORT-mostki.md §8.
 //
 // RYSOWANIE (jeden renderer: Core3D; obiekty w podanej scenie):
-//   • model — InstancedMesh na rodzaj (BRIDGE3D_KIND_ORDER: Bellator, Iron
-//     Skull, Atlas rufowy i zapasowy, Custos, Hasta, Citadella, Colossus,
+//   • model — mesh instancjonowany na rodzaj (BRIDGE3D_KIND_ORDER: Bellator,
+//     Iron Skull, Atlas rufowy i zapasowy, Custos, Hasta, Citadella, Colossus,
 //     fregata i niszczyciel piratów, lokomotywa megafrachtowca): warstwa 0
 //     (pass ortho, jak kadłuby), renderOrder 12 — rysuje się tylko rodzaj,
 //     który ma widoczne instancje;
-//   • cień na kadłubie — jeden InstancedMesh prostokątów tuż POD kadłubem
-//     (renderOrder 11, test głębi GREATER): rysuje się tylko tam, gdzie
-//     kadłub zapisał głębię, więc jest przycięty do sylwetki i nie wpada
+//   • cień na kadłubie — jeden mesh instancjonowany prostokątów tuż POD
+//     kadłubem (renderOrder 11, test głębi GREATER): rysuje się tylko tam,
+//     gdzie kadłub zapisał głębię, więc jest przycięty do sylwetki i nie wpada
 //     w wyrwy. Kadłuby nie odbierają shadow map three.js — cień liczy marsz
 //     po mapie wysokości modelu w stronę słońca;
 //   • okna, lampy i listwy — jeden InstancedMesh na warstwie 2 (FG),
 //     addytywnie, bez maski cienia: świecą też w cieniu planety.
 //   Razem: widoczne rodzaje + 2 wywołania rysowania na całą flotę.
+//
+// PORT WEBGPU (zadanie 15): materiały w TSL (bridge3D.tsl.js) — jeden graf
+// i jeden materiał bryły na wszystkie rodzaje (stałe rodzaju we wspólnej
+// tablicy uniformów, rodzaj z danych instancji), meshe rodzajów i cienia to
+// zwykłe Mesh z InstancedBufferGeometry (bez uuid obiektu w kluczu programu —
+// jeden NodeBuilder i pipeline na całą flotę mostków). Dane instancji w jednym
+// przeplecionym buforze na mesh (limit 8 buforów wierzchołków na pipeline).
 //
 // ŚWIATŁO: ten sam kierunek co kadłub (uLightDir = normalize(słońce − statek,
 // z = 600) — słońce pada niemal poziomo) i te same stałe (otoczenie 0,24,
@@ -32,13 +39,16 @@
 // liczymy ze „słońca cieni” (ten sam azymut, wysokość shadowElevDeg) i kładziemy
 // go też na światło otoczenia (inaczej byłby niewidoczny).
 //
-// OBRAŻENIA: tekstura obrażeń (RGBA8, wiersz na instancję — duży mostek
-// zajmuje kilka kolejnych wierszy, blok leży w nich liniowo) trzyma stan
-// komórek siatki heksów pod modelem: żywa (+ HP), żar, maska martwych
-// sąsiadów, świeże cięcie. Fragment modelu nad martwą komórką znika (wyrwa),
-// brzeg przy martwym sąsiedzie ciemnieje i żarzy się jak brzeg rany kadłuba.
-// Wiersz odświeża się tylko, gdy w siatce zginął heks (ref shards /
-// activeStructuralCount) albo co REFRESH_SEC.
+// OBRAŻENIA: bufor obrażeń (storage u32 = RGBA8 w słowie, wiersz DAMAGE_W
+// komórek — duży mostek zajmuje kilka kolejnych wierszy, blok leży w nich
+// liniowo) trzyma stan komórek siatki heksów pod modelem: żywa (+ HP), żar,
+// maska martwych sąsiadów, świeże cięcie. Fragment modelu nad martwą komórką
+// znika (wyrwa), brzeg przy martwym sąsiedzie ciemnieje i żarzy się jak brzeg
+// rany kadłuba. Blok odświeża się tylko, gdy w siatce zginął heks (ref shards /
+// activeStructuralCount) albo co REFRESH_SEC, i na GPU idzie tylko on: jeden
+// zakres bufora na rekord (writeBuffer). Dawniej tekstura RGBA8 768 × 512 —
+// backend WebGPU ignoruje zakresy tekstur, więc każda zmiana wysyłałaby całe
+// 1,5 MB (docs/PORT-mostki.md §8).
 //
 // WRAK: finishBridgeKill (index.html) przekazuje heksy hulka wrakowi jako TE
 // SAME obiekty (spawnWreckEntity). Rekord trzyma heksy swoich komórek, więc
@@ -46,7 +56,7 @@
 // na wraku — zgaszony, z wyrwami (łup do holowania). Tak samo przy rozpadzie
 // kadłuba: część mostka na odłamku dostaje własny rekord.
 
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
 import { Core3D } from './core3d.js';
 import {
   BRIDGE_KILL_TIMELINE,
@@ -69,7 +79,19 @@ import {
   resolveBridgeModelKind
 } from './bridge3DShapes.js';
 import { bridgeHullFxScale, spawnBridgeRoomFlash } from './bridgeFx3D.js';
-import { SUN_SHADOW_GLSL, sunShadowUniforms } from './sunShadowMask.js';
+import { uniformsAdapter } from './tsl/uniformy.js';
+import {
+  B3_DAMAGE_W,
+  B3_KIND_SLOT,
+  B3_KIND_STRIDE,
+  B3_MODEL_LAYOUT,
+  B3_RECEIVER_LAYOUT,
+  createBridge3DNodes,
+  createBridgeEmitterMaterial,
+  createBridgeModelMaterial,
+  createBridgeReceiverMaterial,
+  setInstanceLayout
+} from './bridge3D.tsl.js';
 
 // ---------------------------------------------------------------------------
 // Strojenie (window.__bridge3DTune)
@@ -123,9 +145,11 @@ if (typeof window !== 'undefined') window.__bridge3DTune = BRIDGE3D_TUNE;
 // Stałe
 // ---------------------------------------------------------------------------
 
-const DAMAGE_W = 768;          // komórek w wierszu tekstury obrażeń
+const DAMAGE_W = B3_DAMAGE_W;  // komórek w wierszu bufora obrażeń (768)
 const DAMAGE_ROWS = 512;       // wierszy (rekord: ceil(komórki / DAMAGE_W) kolejnych)
 const DAMAGE_MAX_ROWS = 4;     // największy blok: 3072 komórki (lokomotywa ~2000)
+// Zakresów uploadu obrażeń na jedną wysyłkę; więcej — scalone w jeden obejmujący.
+const DAMAGE_RANGE_CAP = 64;
 const KIND_COUNT = BRIDGE3D_KIND_ORDER.length;
 export const BRIDGE3D_DAMAGE_LIMITS = Object.freeze({ width: DAMAGE_W, rows: DAMAGE_ROWS, maxRows: DAMAGE_MAX_ROWS });
 const RECEIVER_CAPACITY = 640;
@@ -136,7 +160,7 @@ const EMITTER_RENDER_ORDER = 51;   // jak okna bridgeFx3D; lampy pozycyjne 52
 const MODEL_LIFT = 0.06;           // podstawa modelu tuż nad płaszczyzną kadłuba
 const RECEIVER_Z = -0.6;           // pod kadłubem (0) i płytą pancerza (−0,25)
 const REFRESH_SEC = 1.0;           // okresowo tylko HP i żar bez śmierci heksa
-const ROW_RELEASE_SEC = 2;         // niewidziany gospodarz oddaje wiersz tekstury
+const ROW_RELEASE_SEC = 2;         // niewidziany gospodarz oddaje wiersz obrażeń
 const RECORD_TTL_SEC = 60;         // ...a po minucie rekord odchodzi całkiem
 const MAX_ROOM_FLASHES_PER_FRAME = 6;
 const DEG = Math.PI / 180;
@@ -192,446 +216,9 @@ function smooth01(e0, e1, x) {
 }
 
 // ---------------------------------------------------------------------------
-// GLSL
+// Shadery: bridge3D.tsl.js (port WebGPU, zadanie 15 — TSL, wzory 1:1 z dawnym
+// GLSL: bryła, cień na kadłubie z depthFunc GREATER, okna/lampy/listwy).
 // ---------------------------------------------------------------------------
-
-// Lustro HEAT_RAMP_GLSL z hexShips3D.js — ten sam metal ma tę samą barwę żaru
-// na kadłubie i na modelu.
-const B3_HEAT_RAMP_GLSL = `
-vec3 b3HeatRamp(float h) {
-  vec3 c = mix(vec3(0.55, 0.04, 0.01), vec3(1.0, 0.30, 0.04), smoothstep(0.0, 0.45, h));
-  c = mix(c, vec3(1.0, 0.70, 0.22), smoothstep(0.45, 0.75, h));
-  return mix(c, vec3(1.0, 0.93, 0.80), smoothstep(0.75, 1.0, h));
-}
-`;
-
-// Wspólne dla modelu i cienia: przestrzeń modelu → siatka heksów, komórka,
-// tekstura obrażeń, mapa wysokości, marsz cienia, AO. Lustro heksów:
-// hexCellOf / hexCellCenterXY / HEX_NEIGHBOR_DIRS w bridge3DShapes.js.
-// Deklaracje (vertex i fragment). vB3State.w = promień heksa siatki.
-const B3_DECL_GLSL = `
-#define B3_KINDS ${KIND_COUNT}
-#define B3_DAMAGE_W ${DAMAGE_W}
-#define B3_SHADOW_STEPS 32
-uniform highp sampler2D uB3Damage;
-uniform sampler2D uB3Height;
-uniform vec4 uB3HmBounds[B3_KINDS];
-uniform vec4 uB3HmRegion[B3_KINDS];
-uniform float uB3HmTop[B3_KINDS];
-uniform float uB3Detail[B3_KINDS];
-uniform vec4 uB3Shadow;
-uniform vec4 uB3Ao;
-
-flat varying vec4 vB3GridA;
-flat varying vec4 vB3GridB;
-flat varying vec4 vB3Dmg;
-flat varying vec4 vB3State;
-`;
-
-// Funkcje (tylko fragment — rozrzut marszu cienia liczy pochodne).
-const B3_FUNC_GLSL = `
-#define B3_HEXR (vB3State.w > 0.0 ? vB3State.w : 5.0)
-
-const vec2 B3_HEX_DIRS[6] = vec2[6](
-  vec2(0.8660254, 0.5), vec2(0.8660254, -0.5), vec2(0.0, -1.0),
-  vec2(-0.8660254, -0.5), vec2(-0.8660254, 0.5), vec2(0.0, 1.0));
-
-vec2 b3Grid(vec2 m) {
-  return vB3GridA.xy + vec2(dot(vB3GridA.zw, m), dot(vB3GridB.xy, m));
-}
-
-vec2 b3HexCell(vec2 g) {
-  float q = g.x * (2.0 / 3.0) / B3_HEXR;
-  float r = (g.y * 0.5773502692 - g.x / 3.0) / B3_HEXR;
-  float sc = -q - r;
-  float rq = floor(q + 0.5);
-  float rr = floor(r + 0.5);
-  float rs = floor(sc + 0.5);
-  float dq = abs(rq - q);
-  float dr = abs(rr - r);
-  float ds = abs(rs - sc);
-  if (dq > dr && dq > ds) rq = -rr - rs;
-  else if (dr > ds) rr = -rq - rs;
-  return vec2(rq, rr + (rq - mod(rq, 2.0)) * 0.5);
-}
-
-vec2 b3HexCenter(vec2 cr) {
-  return vec2(cr.x * 1.5 * B3_HEXR, (cr.y + 0.5 * mod(cr.x, 2.0)) * 1.7320508076 * B3_HEXR);
-}
-
-vec4 b3Cell(vec2 cr) {
-  vec2 lc = cr - vB3GridB.zw;
-  if (lc.x < 0.0 || lc.y < 0.0 || lc.x >= vB3Dmg.y || lc.y >= vB3Dmg.z) return vec4(0.0);
-  // Blok leży liniowo od wiersza vB3Dmg.x (duży mostek — kilka wierszy).
-  int idx = int(lc.x + lc.y * vB3Dmg.y + 0.5);
-  return texelFetch(uB3Damage, ivec2(idx % B3_DAMAGE_W, int(vB3Dmg.x + 0.5) + idx / B3_DAMAGE_W), 0);
-}
-
-// Skala detalu rodzaju (panele, brud, AO) względem Bellatora.
-float b3Detail() {
-  return uB3Detail[int(vB3State.z + 0.5)];
-}
-
-float b3Height(vec2 m) {
-  int k = int(vB3State.z + 0.5);
-  vec4 bb = uB3HmBounds[k];
-  vec2 t = (m - bb.xy) * bb.zw;
-  if (t.x <= 0.0 || t.y <= 0.0 || t.x >= 1.0 || t.y >= 1.0) return 0.0;
-  vec4 rg = uB3HmRegion[k];
-  // Wysokość w atlasie normalizowana do szczytu rodzaju (8 bitów na model).
-  float h = texture2D(uB3Height, rg.xy + t * rg.zw).r * uB3HmTop[k];
-  // Bez uszkodzeń nie szukamy heksa (typowy przypadek: 1 odczyt na krok).
-  if (h <= 0.02 || vB3Dmg.w < 0.5) return h;
-  return b3Cell(b3HexCell(b3Grid(m))).r > 0.2 ? h : 0.0;
-}
-
-// Rozrzut startu marszu cienia (zamiast pasków): szum przyklejony do modelu
-// w komórkach ~1 px ekranu (potęga 2 — stały przy drobnym zoomie). Szum
-// z gl_FragCoord stał w ekranie i „gotował się” na modelu przy ruchu kamery.
-// Wołać w jednolitym przepływie (pochodne), przed discard.
-float b3Dither(vec3 p) {
-  vec3 fw = fwidth(p);
-  float cell = exp2(ceil(log2(max(max(fw.x, fw.y), max(fw.z, 1e-3)))));
-  vec3 q = floor(p / cell);
-  return fract(52.9829189 * fract(dot(q.xy, vec2(0.06711056, 0.00583715)) + q.z * 0.0182));
-}
-
-// Marsz w stronę słońca cieni po mapie wysokości. p — punkt (przestrzeń M),
-// dir — jednostkowy azymut słońca (M, XY), jit — b3Dither. 1 = w pełni oświetlony.
-float b3Shadow(vec3 p, vec2 dir, float jit) {
-  int k = int(vB3State.z + 0.5);
-  float top = uB3HmTop[k];
-  float tanE = max(uB3Shadow.x, 0.05);
-  if (p.z >= top) return 1.0;
-  float maxT = (top - p.z) / tanE;
-  float stepT = max(0.45, maxT / float(B3_SHADOW_STEPS));
-  float t = stepT * (0.3 + 0.7 * jit);
-  float lit = 1.0;
-  for (int i = 0; i < B3_SHADOW_STEPS; i++) {
-    if (t > maxT) break;
-    float rayZ = p.z + t * tanE;
-    float h = b3Height(p.xy + dir * t);
-    lit = min(lit, clamp((rayZ - h) / (uB3Shadow.z * t + 0.3 * b3Detail()), 0.0, 1.0));
-    if (lit <= 0.001) break;
-    t += stepT;
-  }
-  return lit;
-}
-
-// Kontaktowe przyciemnienie: ile brył wokół punktu wystaje ponad niego.
-float b3Occlusion(vec3 p) {
-  float R = uB3Ao.x * b3Detail();
-  float occ = 0.0;
-  for (int i = 0; i < 8; i++) {
-    float a = float(i) * 0.7853982 + 0.3927;
-    float rr = (i % 2 == 0) ? R : R * 2.2;
-    vec2 q = p.xy + vec2(cos(a), sin(a)) * rr;
-    occ += clamp((b3Height(q) - p.z) / (rr * 1.2), 0.0, 1.0);
-  }
-  return 1.0 - uB3Ao.y * occ * 0.125;
-}
-`;
-
-const MODEL_VERT = `
-attribute float aMat;
-attribute float aModule;
-attribute vec4 aB3GridA;
-attribute vec4 aB3GridB;
-attribute vec4 aB3Dmg;
-attribute vec4 aB3State;
-attribute vec2 aB3Mask;
-attribute vec4 aB3Hull;
-uniform vec2 uB3Sun;
-${B3_DECL_GLSL}
-flat varying vec3 vB3Light;
-flat varying vec4 vB3Hull;
-varying vec3 vB3Pos;
-varying vec3 vB3Normal;
-varying vec3 vB3View;
-varying float vB3Mat;
-
-void main() {
-  vB3GridA = aB3GridA;
-  vB3GridB = aB3GridB;
-  vB3Dmg = aB3Dmg;
-  vB3State = aB3State;
-  vB3Pos = position;
-  vB3Normal = normal;
-  vB3Mat = aMat;
-  vB3Hull = aB3Hull;
-  // Pozycja: translacje instancji są względem początku przy kamerze
-  // (mesh.position), więc liczby są małe; duże przesunięcie siedzi
-  // w modelViewMatrix, które three składa na CPU w double. Przy współrzędnych
-  // świata ~10⁷ float32 w shaderze dawał skoki ~1 px — drżenie względem kadłuba.
-  mat4 mvI = modelViewMatrix * instanceMatrix;
-  vec4 mv = mvI * vec4(position, 1.0);
-  // Światło jak kadłub: kierunek do słońca z wysokością 600 (scena: y = −y
-  // świata). Słońce jest daleko — pozycja instancji w float32 wystarcza.
-  mat4 inst = modelMatrix * instanceMatrix;
-  vB3Light = normalize(transpose(mat3(inst)) * normalize(vec3(uB3Sun - inst[3].xy, 600.0)));
-  // Widok w przestrzeni kamery: ortho — prosto z góry (jak kadłub).
-  vec3 viewV = isOrthographic ? vec3(0.0, 0.0, 1.0) : -normalize(mv.xyz);
-  vB3View = transpose(mat3(mvI)) * viewV;
-  // Maska modułów (przyszły wizualny silnik destrukcji 3D): ukryty moduł znika.
-  float word = aModule < 24.0 ? aB3Mask.x : aB3Mask.y;
-  bool hidden = mod(floor(word / exp2(mod(aModule, 24.0))), 2.0) > 0.5;
-  gl_Position = hidden ? vec4(0.0, 0.0, -2.0, 1.0) : projectionMatrix * mv;
-}
-`;
-
-const MODEL_FRAG = `
-uniform vec3 uB3Palette[8];
-uniform vec2 uB3Spec[8];
-uniform vec3 uB3Light;
-uniform vec4 uB3Surface;
-uniform vec4 uB3Wound;
-uniform vec3 uB3Interior;
-uniform vec2 uB3Coat;
-${B3_DECL_GLSL}
-${B3_FUNC_GLSL}
-${B3_HEAT_RAMP_GLSL}
-${SUN_SHADOW_GLSL}
-flat varying vec3 vB3Light;
-flat varying vec4 vB3Hull;
-varying vec3 vB3Pos;
-varying vec3 vB3Normal;
-varying vec3 vB3View;
-varying float vB3Mat;
-
-float b3Hash(vec2 p) {
-  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
-}
-
-float b3Noise(vec2 p) {
-  vec2 i = floor(p);
-  vec2 f = fract(p);
-  f = f * f * (3.0 - 2.0 * f);
-  return mix(mix(b3Hash(i), b3Hash(i + vec2(1.0, 0.0)), f.x),
-             mix(b3Hash(i + vec2(0.0, 1.0)), b3Hash(i + vec2(1.0, 1.0)), f.x), f.y);
-}
-
-void main() {
-  float jit = b3Dither(vB3Pos);
-  // Wyrwa: heks siatki pod fragmentem zginął (albo należy już do innej encji).
-  vec2 g = b3Grid(vB3Pos.xy);
-  vec2 cr = b3HexCell(g);
-  vec4 cell = b3Cell(cr);
-  if (cell.r < 0.2) discard;
-  float hpFrac = clamp((cell.r * 255.0 - 64.0) / 191.0, 0.0, 1.0);
-
-  // Brzeg rany: odległość do krawędzi heksa, za którą leży martwy sąsiad.
-  float rim = 0.0;
-  int nmask = int(cell.b * 255.0 + 0.5);
-  if (nmask > 0) {
-    vec2 off = g - b3HexCenter(cr);
-    float ap = 0.8660254 * B3_HEXR;
-    for (int i = 0; i < 6; i++) {
-      if (((nmask >> i) & 1) == 1) {
-        float d = ap - dot(off, B3_HEX_DIRS[i]);
-        rim = max(rim, 1.0 - smoothstep(0.0, uB3Wound.x, d));
-      }
-    }
-  }
-
-  bool front = gl_FrontFacing;
-  vec3 N = normalize(front ? vB3Normal : -vB3Normal);
-  int mi = int(vB3Mat + 0.5);
-  vec3 albedo = uB3Palette[mi];
-
-  // Panele: szwy cegiełkowo na płaszczyźnie najbliższej ścianie, zmienność
-  // jasności paneli, brud nisko w zagłębieniach, nity (piraci).
-  vec3 an = abs(N);
-  vec2 suv = an.z > max(an.x, an.y) ? vB3Pos.xy : (an.x > an.y ? vB3Pos.yz : vB3Pos.xz);
-  float det = b3Detail();
-  // Panele w dwóch skalach: duże płyty (9 × 6 × detal) dzielone losowo na pół.
-  vec2 pp = suv / (vec2(9.0, 6.0) * det);
-  pp.x += floor(pp.y) * 0.37;
-  vec2 cell0 = floor(pp);
-  float split = b3Hash(cell0 + 17.0);
-  vec2 fp = fract(pp);
-  if (split > 0.55) { fp.x = fract(fp.x * 2.0); cell0.x += step(0.5, fract(pp.x)) * 0.5; }
-  vec2 dl = min(fp, 1.0 - fp);
-  vec2 fw = fwidth(pp) * vec2(split > 0.55 ? 2.0 : 1.0, 1.0) + vec2(1e-4);
-  float seam = max(1.0 - smoothstep(0.018, 0.018 + fw.x * 1.5, dl.x), 1.0 - smoothstep(0.025, 0.025 + fw.y * 1.5, dl.y));
-  float panel = b3Hash(cell0);
-  albedo *= (0.93 + 0.14 * panel) * (1.0 - uB3Surface.y * seam);
-  float grime = smoothstep(0.45, 0.9, b3Noise(vB3Pos.xy * (0.19 / det) + vec2(3.1, 7.7)));
-  float glassM = mi == 4 ? 0.0 : 1.0;
-  albedo = mix(albedo, uB3Palette[7], uB3Surface.z * grime * glassM);
-  // Piraci: łatanina płyt jak na sprite'cie — stal, ciemna stal albo rdza
-  // (per płyta), zacieki rdzy przy szwach, duże nity w narożnikach części płyt.
-  float plateM = (mi == 0 || mi == 1) ? 1.0 : 0.0;
-  if (uB3Coat.x > 0.0) {
-    float pick = b3Hash(cell0 + 3.7);
-    vec3 plate = pick < 0.56 ? albedo : (pick < 0.8 ? albedo * 0.7 : uB3Palette[3] * (0.7 + 0.45 * panel));
-    albedo = mix(albedo, plate, uB3Coat.x * plateM);
-    float streak = smoothstep(0.6, 0.82, b3Noise(vec2(vB3Pos.x * 0.9, vB3Pos.y * 0.18) / det + cell0 * 3.1) + seam * 0.25);
-    albedo = mix(albedo, uB3Palette[7], 0.55 * streak * uB3Coat.x * glassM);
-  }
-  if (uB3Surface.w > 0.5 && split <= 0.55 && b3Hash(cell0 + 9.1) > 0.45) {
-    vec2 cq = (fp - vec2(0.5)) * vec2(9.0, 6.0);
-    float rd = length(abs(cq) - vec2(3.5, 2.2));
-    float head = 1.0 - smoothstep(0.36, 0.5, rd);
-    float ring = smoothstep(0.36, 0.5, rd) * (1.0 - smoothstep(0.52, 0.7, rd));
-    float onTop = step(0.5, an.z) * plateM;
-    albedo = mix(albedo, uB3Palette[6] * 0.62, head * 0.6 * onTop);
-    albedo *= 1.0 - 0.45 * ring * onTop;
-  }
-
-  // Światło kadłuba (hexShips3D): otoczenie + rozproszone + połysk Blinna.
-  vec3 L = normalize(vB3Light);
-  vec3 V = normalize(vB3View);
-  float NdotL = dot(N, L);
-  vec2 sunDir = L.xy / max(length(L.xy), 1e-4);
-  // LOD (vB3Hull.y = 1): mała instancja — bez marszu cienia i AO.
-  bool full = vB3Hull.y < 0.5;
-  float sh = full ? b3Shadow(vB3Pos + (N * 0.35 + vec3(0.0, 0.0, 0.2)) * det, sunDir, jit) : 1.0;
-  float ao = full ? b3Occlusion(vB3Pos + vec3(0.0, 0.0, 0.05 * det)) : 1.0;
-  // Dach świeci jak kadłub w tym miejscu (vB3Hull.x = lightMul kadłuba pod
-  // środkiem strefy: otoczenie + poduszkowa normalna HEX_FRAGMENT_SHADER),
-  // ściany odchylone od pionu trochę mniej; słońce dokłada się na skosach.
-  // W cieniu planety/innego kadłuba (maska Core3D) zostaje przygaszone
-  // otoczenie — tak jak na kadłubie pod mostkiem; własny cień modelu gaśnie.
-  float sunVis = sunVisibility();
-  float hullLight = uB3Light.x * sunFill(sunVis) + (vB3Hull.x - uB3Light.x) * sunVis;
-  float amb = hullLight * (0.55 + 0.45 * max(N.z, 0.0)) * ao * mix(1.0, sh, uB3Shadow.w * sunVis);
-  float dif = max(0.0, NdotL) * uB3Light.y * sh * sunVis;
-  vec3 col = albedo * (amb + dif);
-  vec3 H = normalize(L + V);
-  vec2 sp = uB3Spec[mi];
-  col += vec3(pow(max(dot(N, H), 0.0), sp.x) * sp.y * uB3Light.z * smoothstep(-0.02, 0.08, NdotL) * sh * sunVis);
-  // Chłodne odbicie nieba (kadłuby mają lakier z odbiciem kosmosu — bez tego
-  // model wyglądał na matowy i cieplejszy od kadłuba). Szyby mocniej.
-  float fres = pow(1.0 - max(dot(N, V), 0.0), 5.0);
-  float skyK = uB3Coat.y * (mi == 4 ? 0.09 : 0.022 + 0.05 * fres) * (0.35 + 0.65 * max(N.z, 0.0)) * ao;
-  col += vec3(0.55, 0.75, 1.0) * skyK;
-
-  // Powierzchnia nie świeci: jasne skosy od słońca łagodnie dochodzą do
-  // ~0,86 (pod progiem bloomu 0,9 — bez poświaty wzdłuż sylwetki). Ponad
-  // próg wychodzi tylko żar brzegu wyrwy.
-  float lum = dot(col, vec3(0.2126, 0.7152, 0.0722));
-  if (lum > 0.62) col *= (0.62 + 0.24 * (1.0 - exp(-(lum - 0.62) / 0.24))) / lum;
-
-  // Brzeg wyrwy: przypalony; żar kadłuba (G, cały heks jak na kadłubie)
-  // i żar świeżego cięcia (A, cienka krawędź przy martwym sąsiedzie).
-  col *= 1.0 - max(rim * uB3Wound.y, (1.0 - hpFrac) * 0.3);
-  float hHull = cell.g * vB3State.y;
-  float hCut = cell.a * uB3Wound.z * vB3State.y * rim * rim;
-  float heat = max(hHull * (0.3 + 0.7 * rim), hCut);
-  float glowK = uB3Wound.w * (0.26 * heat + 0.74 * heat * heat * heat * heat);
-  col += b3HeatRamp(heat) * glowK;
-
-  // Tył ścian widoczny przez wyrwę (wolna kamera): ciemne wnętrze.
-  if (!front) col = uB3Interior * (0.35 + 0.65 * ao) + b3HeatRamp(heat) * glowK * 0.6;
-
-  gl_FragColor = vec4(col, vB3State.x);
-}
-`;
-
-const RECEIVER_VERT = `
-attribute vec4 aB3GridA;
-attribute vec4 aB3GridB;
-attribute vec4 aB3Dmg;
-attribute vec4 aB3State;
-uniform vec2 uB3Sun;
-${B3_DECL_GLSL}
-flat varying vec2 vB3SunDir;
-varying vec2 vB3Pos2;
-
-void main() {
-  vB3GridA = aB3GridA;
-  vB3GridB = aB3GridB;
-  vB3Dmg = aB3Dmg;
-  vB3State = aB3State;
-  int k = int(aB3State.z + 0.5);
-  vec4 bb = uB3HmBounds[k];
-  vec2 lo = bb.xy;
-  vec2 hi = bb.xy + 1.0 / bb.zw;
-  mat4 inst = modelMatrix * instanceMatrix;
-  vec3 Lm = normalize(transpose(mat3(inst)) * normalize(vec3(uB3Sun - inst[3].xy, 600.0)));
-  vec2 dir = Lm.xy / max(length(Lm.xy), 1e-4);
-  vB3SunDir = dir;
-  // Prostokąt: obrys modelu wydłużony w stronę od słońca o zasięg cienia.
-  vec2 off = -dir * (uB3HmTop[k] / max(uB3Shadow.x, 0.05));
-  float pad = uB3Ao.x * 2.5 * uB3Detail[k];
-  vec2 qlo = min(lo, lo + off) - vec2(pad);
-  vec2 qhi = max(hi, hi + off) + vec2(pad);
-  vec2 m = mix(qlo, qhi, position.xy + 0.5);
-  vB3Pos2 = m;
-  gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(m, ${RECEIVER_Z.toFixed(2)}, 1.0);
-}
-`;
-
-const RECEIVER_FRAG = `
-${B3_DECL_GLSL}
-${B3_FUNC_GLSL}
-${SUN_SHADOW_GLSL}
-flat varying vec2 vB3SunDir;
-varying vec2 vB3Pos2;
-
-void main() {
-  vec3 p = vec3(vB3Pos2, 0.0);
-  float sh = b3Shadow(p, vB3SunDir, b3Dither(p));
-  float ao = b3Occlusion(p);
-  // Bez słońca (cień planety — maska Core3D) mostek nie rzuca cienia, AO zostaje.
-  float dark = (1.0 - sh) * uB3Shadow.y * sunVisibility() + (1.0 - ao);
-  dark = min(dark, 0.8) * vB3State.x;
-  if (dark < 0.003) discard;
-  gl_FragColor = vec4(0.0, 0.0, 0.0, dark);
-}
-`;
-
-const EMIT_VERT = `
-attribute vec4 aParams;
-attribute vec3 aColor;
-attribute float aShape;
-varying vec2 vLocal;
-flat varying vec4 vParams;
-flat varying vec3 vColor;
-flat varying float vShape;
-
-void main() {
-  vParams = aParams;
-  vColor = aColor;
-  vShape = aShape;
-  vLocal = position.xy * vec2(2.0 * (aParams.y + aParams.w), 2.0 * (aParams.z + aParams.w));
-  gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position.xy, 0.0, 1.0);
-}
-`;
-
-// Rdzeń okna tuż nad progiem bloomu (0,9), poświata pod nim — świecą drobne
-// punkty, nie sylwetka (zakaz obwódki). Lampa: jak światła pozycyjne.
-const EMIT_FRAG = `
-uniform vec3 uCore;
-uniform vec3 uHalo;
-varying vec2 vLocal;
-flat varying vec4 vParams;
-flat varying vec3 vColor;
-flat varying float vShape;
-
-void main() {
-  int shape = int(vShape + 0.5);
-  float d;
-  if (shape == 1) {
-    d = length(vLocal) - vParams.y;
-  } else {
-    vec2 q = abs(vLocal) - vParams.yz + vec2(0.16);
-    d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - 0.16;
-  }
-  float aa = max(fwidth(d), 1e-4);
-  float core = 1.0 - smoothstep(-aa, aa, d);
-  float halo = shape == 1
-    ? pow(max(0.0, 1.0 - max(d, 0.0) / max(vParams.w, 1e-3)), 2.4) * (1.0 - core)
-    : exp(-max(d, 0.0) / max(vParams.w * 0.45, 1e-3)) * (1.0 - core);
-  float cg = shape == 0 ? uCore.x : (shape == 1 ? uCore.y : uCore.z);
-  float hg = shape == 0 ? uHalo.x : (shape == 1 ? uHalo.y : uHalo.z);
-  float I = vParams.x;
-  vec3 col = vColor * I * (core * cg + halo * hg);
-  float a = clamp(I * (core + halo * 0.5), 0.0, 1.0);
-  if (a < 0.002) discard;
-  gl_FragColor = vec4(col, a);
-}
-`;
 
 // ---------------------------------------------------------------------------
 // Rekord = jedna instancja modelu (jeden mostek jednego gospodarza)
@@ -730,7 +317,7 @@ function shardPhysicallyAlive(s) {
 /**
  * Tworzy rekord (dane CPU, bez three): mapowanie, blok komórek z heksami
  * gospodarza, sąsiedzi, emitery z heksami pod nimi. `kind` — zasób rodzaju
- * ({ index, name, model, emit }). Wiersz tekstury przydziela wołający.
+ * ({ index, name, model, emit }). Wiersz bufora obrażeń przydziela wołający.
  */
 export function createBridgeRecordCore(host, st, bridgeIndex, kind, row) {
   const grid = host.hexGrid;
@@ -818,13 +405,14 @@ export function createBridgeRecordCore(host, st, bridgeIndex, kind, row) {
 }
 
 /**
- * Odświeża stan komórek rekordu i zapisuje wiersz tekstury obrażeń (RGBA8):
+ * Odświeża stan komórek rekordu i zapisuje jego wiersze bufora obrażeń (RGBA8):
  *   R — 0: martwa / brak heksa; 64..255: żywa, HP 0..1,
  *   G — żar heksa (shardHeatNow) w chwili zapisu,
  *   B — maska martwych sąsiadów (6 bitów, kierunki HEX_NEIGHBOR_AXIAL),
  *   A — żar świeżego cięcia (sąsiad zginął) w chwili zapisu.
  * Zanik żaru od chwili zapisu liczy shader (vB3State.y). Zwraca true, gdy
- * bajty wiersza się zmieniły. `data` — cały bufor tekstury (szer. DAMAGE_W).
+ * bajty wiersza się zmieniły. `data` — bajty całego bufora obrażeń (widok
+ * Uint8Array na słowach u32 bufora storage; wiersz = DAMAGE_W komórek).
  */
 export function refreshBridgeRecordDamage(rec, grid, data, heatNow, rowStride = DAMAGE_W) {
   const n = rec.cellCount;
@@ -956,22 +544,31 @@ function prepareEmitterDelays(rec) {
 
 function makeInstanceAttr(geometry, name, itemSize, capacity) {
   const array = new Float32Array(capacity * itemSize);
+  // Domyślne użycie: WebGPU wysyła zakres po needsUpdate (DynamicDrawUsage
+  // w backendzie WebGPU three r183 = pełny upload przy każdym renderze).
   const attr = new THREE.InstancedBufferAttribute(array, itemSize);
-  attr.setUsage(THREE.DynamicDrawUsage);
   geometry.setAttribute(name, attr);
   return attr;
 }
 
+// Przepleciony bufor instancji (jeden bufor wierzchołków na wszystkie dane
+// instancji meshu — limit 8 buforów na pipeline). layout: bridge3D.tsl.js.
+function makeInstanceBuffer(geometry, layout, capacity) {
+  const buffer = new THREE.InstancedInterleavedBuffer(new Float32Array(capacity * layout.stride), layout.stride, 1);
+  setInstanceLayout(geometry, buffer, layout);
+  return buffer;
+}
+
 // Zakres uploadu bez alokacji: addUpdateRange tworzy obiekt {start, count}
 // przy każdym wywołaniu — trzymamy jeden na atrybut (three czyści listę po
-// wysłaniu, obiekt zostaje nasz).
+// wysłaniu, obiekt zostaje nasz). Bufor przepleciony: itemSize = stride.
 function commitAttr(attr, count) {
   if (count <= 0) return;
   const ranges = attr.updateRanges;
   if (Array.isArray(ranges)) {
     const r = attr.__b3Range || (attr.__b3Range = { start: 0, count: 0 });
     r.start = 0;
-    r.count = count * attr.itemSize;
+    r.count = count * (attr.isInterleavedBuffer ? attr.stride : attr.itemSize);
     ranges.length = 0;
     ranges.push(r);
   }
@@ -1129,153 +726,117 @@ export const Bridge3D = {
     });
     this.heightTex = buildHeightAtlas(this.kinds);
 
-    // Tekstura obrażeń: rekord dostaje ceil(komórki / DAMAGE_W) kolejnych wierszy.
-    const data = new Uint8Array(DAMAGE_W * DAMAGE_ROWS * 4);
-    const dtex = new THREE.DataTexture(data, DAMAGE_W, DAMAGE_ROWS, THREE.RGBAFormat, THREE.UnsignedByteType);
-    dtex.minFilter = THREE.NearestFilter;
-    dtex.magFilter = THREE.NearestFilter;
-    dtex.generateMipmaps = false;
-    dtex.flipY = false;
-    dtex.colorSpace = THREE.NoColorSpace;
-    dtex.needsUpdate = true;
+    // Bufor obrażeń (storage u32 = RGBA8 w słowie, bajty jak dawna tekstura):
+    // rekord dostaje ceil(komórki / DAMAGE_W) kolejnych wierszy. `data` to
+    // widok bajtowy na ten sam bufor (refreshBridgeRecordDamage pisze RGBA).
+    const words = new Uint32Array(DAMAGE_W * DAMAGE_ROWS);
+    const attr = new THREE.StorageBufferAttribute(words, 1);
+    const data = new Uint8Array(words.buffer);
     const ranges = [];
-    for (let i = 0; i < DAMAGE_ROWS * 2; i++) ranges.push({ start: 0, count: 0 });
-    this.damage = { tex: dtex, data, rowUsed: new Uint8Array(DAMAGE_ROWS), rowsUsed: 0, ranges, used: 0 };
-    // Pierwszy upload pełny, zanim pojawią się zakresy wierszy.
-    try { Core3D.renderer?.initTexture?.(dtex); Core3D.renderer?.initTexture?.(this.heightTex); } catch { /* bez renderera (testy) */ }
+    for (let i = 0; i < DAMAGE_RANGE_CAP; i++) ranges.push({ start: 0, count: 0 });
+    this.damage = { attr, words, data, rowUsed: new Uint8Array(DAMAGE_ROWS), rowsUsed: 0, ranges, used: 0, lo: Infinity, hi: -Infinity };
 
-    const U = {
-      uB3Damage: { value: dtex },
-      uB3Height: { value: this.heightTex },
-      uB3HmBounds: { value: this.kinds.map((k) => k.hmBounds) },
-      uB3HmRegion: { value: this.kinds.map((k) => k.hmRegion) },
-      uB3HmTop: { value: this.kinds.map((k) => k.model.bounds.zMax) },
-      uB3Detail: { value: this.kinds.map((k) => k.detail) },
-      uB3Shadow: { value: new THREE.Vector4() },
-      uB3Ao: { value: new THREE.Vector4() },
-      uB3Sun: { value: new THREE.Vector2() },
-      uB3Light: { value: new THREE.Vector3() },
-      uB3Wound: { value: new THREE.Vector4() },
-      // Maska widoczności słońca — wspólne obiekty z Core3D (sunShadowMask.js).
-      ...sunShadowUniforms
-    };
-    this.uniforms = U;
+    // Węzły wspólne: uniformy (grupa render), tablica rodzajów, bufor obrażeń.
+    const nodes = createBridge3DNodes({
+      kindCount: this.kinds.length, damageAttribute: attr, damageCount: words.length, heightTex: this.heightTex
+    });
+    this._nodes = nodes;
+    this._fillKindTable(nodes.kindValues);
+    // Adapter jak ShaderMaterial: U.uB3Shadow.value.set(…) (wartości węzłów).
+    this.uniforms = uniformsAdapter(nodes.U);
     this._syncUniforms();
 
-    // Model: InstancedMesh na rodzaj.
+    // Model: mesh instancjonowany na rodzaj, JEDEN materiał (graf) dla wszystkich.
+    const modelMaterial = createBridgeModelMaterial(nodes);
+    this._modelMaterial = modelMaterial;
     for (const K of this.kinds) {
       const m = K.model;
-      const geo = new THREE.BufferGeometry();
+      const geo = new THREE.InstancedBufferGeometry();
       geo.setAttribute('position', new THREE.BufferAttribute(m.positions, 3));
       geo.setAttribute('normal', new THREE.BufferAttribute(m.normals, 3));
       geo.setAttribute('aMat', new THREE.BufferAttribute(m.mat, 1));
       geo.setAttribute('aModule', new THREE.BufferAttribute(m.module, 1));
       geo.setIndex(new THREE.BufferAttribute(m.index, 1));
-      K.attrs = {
-        gridA: makeInstanceAttr(geo, 'aB3GridA', 4, K.capacity),
-        gridB: makeInstanceAttr(geo, 'aB3GridB', 4, K.capacity),
-        dmg: makeInstanceAttr(geo, 'aB3Dmg', 4, K.capacity),
-        state: makeInstanceAttr(geo, 'aB3State', 4, K.capacity),
-        mask: makeInstanceAttr(geo, 'aB3Mask', 2, K.capacity),
-        hull: makeInstanceAttr(geo, 'aB3Hull', 4, K.capacity)
-      };
-      const style = K.style;
-      const palette = style.palette.map((h) => new THREE.Vector3(...hexToLinear(h)));
-      const spec = MAT_SPEC.map(([e, mul]) => new THREE.Vector2(e, mul * style.spec));
-      const mat = new THREE.ShaderMaterial({
-        uniforms: {
-          ...U,
-          uB3Palette: { value: palette },
-          uB3Spec: { value: spec },
-          uB3Surface: { value: new THREE.Vector4(0, style.seams, style.grime, style.rivets) },
-          uB3Interior: { value: new THREE.Vector3(...hexToLinear(style.interior)) },
-          uB3Coat: { value: new THREE.Vector2(style.rust, style.sky) }
-        },
-        vertexShader: MODEL_VERT,
-        fragmentShader: MODEL_FRAG,
-        transparent: true,
-        depthWrite: true,
-        depthTest: true,
-        side: THREE.DoubleSide,
-        forceSinglePass: true
-      });
-      const mesh = new THREE.InstancedMesh(geo, mat, K.capacity);
+      K.inst = makeInstanceBuffer(geo, B3_MODEL_LAYOUT, K.capacity);
+      geo.instanceCount = 0;
+      const mesh = new THREE.Mesh(geo, modelMaterial);
       mesh.name = `BRIDGE3D_${K.name}`;
-      mesh.count = 0;
       mesh.frustumCulled = false;
       mesh.renderOrder = MODEL_RENDER_ORDER;
       mesh.castShadow = false;
       mesh.receiveShadow = false;
-      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       mesh.visible = false;
       scene.add(mesh);
       K.geometry = geo;
-      K.material = mat;
+      K.material = modelMaterial;
       K.mesh = mesh;
     }
 
     // Cień na kadłubie: prostokąty pod kadłubem, test głębi GREATER.
     {
-      const geo = new THREE.PlaneGeometry(1, 1);
-      const attrs = {
-        gridA: makeInstanceAttr(geo, 'aB3GridA', 4, RECEIVER_CAPACITY),
-        gridB: makeInstanceAttr(geo, 'aB3GridB', 4, RECEIVER_CAPACITY),
-        dmg: makeInstanceAttr(geo, 'aB3Dmg', 4, RECEIVER_CAPACITY),
-        state: makeInstanceAttr(geo, 'aB3State', 4, RECEIVER_CAPACITY)
-      };
-      const mat = new THREE.ShaderMaterial({
-        uniforms: { ...U },
-        vertexShader: RECEIVER_VERT,
-        fragmentShader: RECEIVER_FRAG,
-        transparent: true,
-        depthWrite: false,
-        depthTest: true,
-        depthFunc: THREE.GreaterDepth,
-        blending: THREE.NormalBlending
-      });
-      const mesh = new THREE.InstancedMesh(geo, mat, RECEIVER_CAPACITY);
+      const plane = new THREE.PlaneGeometry(1, 1);
+      const geo = new THREE.InstancedBufferGeometry();
+      geo.setAttribute('position', plane.getAttribute('position'));
+      geo.setIndex(plane.getIndex());
+      const inst = makeInstanceBuffer(geo, B3_RECEIVER_LAYOUT, RECEIVER_CAPACITY);
+      geo.instanceCount = 0;
+      const mat = createBridgeReceiverMaterial(nodes, RECEIVER_Z);
+      const mesh = new THREE.Mesh(geo, mat);
       mesh.name = 'BRIDGE3D_SHADOW';
-      mesh.count = 0;
       mesh.frustumCulled = false;
       mesh.renderOrder = RECEIVER_RENDER_ORDER;
-      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       mesh.visible = false;
       scene.add(mesh);
-      this.receiver = { geometry: geo, material: mat, mesh, attrs, count: 0, capacity: RECEIVER_CAPACITY };
+      this.receiver = { geometry: geo, material: mat, mesh, inst, count: 0, capacity: RECEIVER_CAPACITY };
     }
 
     // Okna, lampy, listwy: warstwa FG, addytywnie.
     {
       const geo = new THREE.PlaneGeometry(1, 1);
+      // Shader czyta tylko pozycję — bez normalnych i uv (mniej buforów wierzchołków).
+      geo.deleteAttribute('normal');
+      geo.deleteAttribute('uv');
       const attrs = {
         params: makeInstanceAttr(geo, 'aParams', 4, EMITTER_CAPACITY),
         color: makeInstanceAttr(geo, 'aColor', 3, EMITTER_CAPACITY),
         shape: makeInstanceAttr(geo, 'aShape', 1, EMITTER_CAPACITY)
       };
-      const mat = new THREE.ShaderMaterial({
-        uniforms: { uCore: { value: new THREE.Vector3() }, uHalo: { value: new THREE.Vector3() } },
-        vertexShader: EMIT_VERT,
-        fragmentShader: EMIT_FRAG,
-        transparent: true,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        depthTest: false,
-        side: THREE.FrontSide
-      });
+      const { material: mat } = createBridgeEmitterMaterial();
       const mesh = new THREE.InstancedMesh(geo, mat, EMITTER_CAPACITY);
       mesh.name = 'BRIDGE3D_WINDOWS';
       mesh.count = 0;
       mesh.frustumCulled = false;
       mesh.renderOrder = EMITTER_RENDER_ORDER;
       mesh.layers.set(2);
-      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       mesh.visible = false;
       scene.add(mesh);
       this.emitters = { geometry: geo, material: mat, mesh, attrs, count: 0, capacity: EMITTER_CAPACITY };
     }
+    this._syncUniforms();
     this._emitColors = Object.fromEntries(Object.entries(EMIT_COLOR_HEX).map(([k, v]) => [k, hexToLinear(v)]));
     this.ready = true;
     return true;
+  },
+
+  // Stałe rodzajów do wspólnej tablicy uniformów (układ: B3_KIND_SLOT).
+  _fillKindTable(values) {
+    for (const K of this.kinds) {
+      const base = K.index * B3_KIND_STRIDE;
+      const at = (slot) => values[base + slot];
+      const style = K.style;
+      at(B3_KIND_SLOT.bounds).copy(K.hmBounds);
+      at(B3_KIND_SLOT.region).copy(K.hmRegion);
+      at(B3_KIND_SLOT.topDetailCoat).set(K.model.bounds.zMax, K.detail, style.rust, style.sky);
+      at(B3_KIND_SLOT.surface).set(0, style.seams, style.grime, style.rivets);
+      const interior = hexToLinear(style.interior);
+      at(B3_KIND_SLOT.interior).set(interior[0], interior[1], interior[2], 0);
+      for (let i = 0; i < 8; i++) {
+        const c = hexToLinear(style.palette[i]);
+        const [e, mul] = MAT_SPEC[i];
+        at(B3_KIND_SLOT.palette + i).set(c[0], c[1], c[2], e);
+        at(B3_KIND_SLOT.specMul + i).set(mul * style.spec, 0, 0, 0);
+      }
+    }
   },
 
   _syncUniforms() {
@@ -1317,34 +878,39 @@ export const Bridge3D = {
     rec.row = -1;
   },
 
-  // Upload wierszy rekordu: jeden zakres na wiersz (three wysyła zakres jako
-  // prostokąt o wysokości 1 — nie może przechodzić przez koniec wiersza).
+  // Upload bloku rekordu: komórki leżą liniowo od początku jego pierwszego
+  // wiersza, więc cały blok to JEDEN zakres bufora (writeBuffer tylko jego).
   _markRows(rec) {
-    let left = rec.cellCount;
-    for (let i = 0; i < rec.rowCount && left > 0; i++) {
-      const n = Math.min(DAMAGE_W, left);
-      this._markRow(rec.row + i, n);
-      left -= n;
-    }
+    if (rec.row < 0 || !(rec.cellCount > 0)) return;
+    this._markRange(rec.row * DAMAGE_W, rec.cellCount);
   },
 
-  _markRow(row, texels) {
+  // Zakres [start, start + count) słów bufora obrażeń do wysłania. three czyści
+  // listę zakresów po wysyłce (updateAttribute), więc pusta lista = pula od nowa.
+  // Ponad DAMAGE_RANGE_CAP zakresów przed wysyłką — jeden obejmujący wszystkie
+  // (dalej zakres, więc wysyłka zawsze obejmie zmiany sprzed niej).
+  _markRange(start, count) {
     const d = this.damage;
-    const tex = d.tex;
+    const attr = d.attr;
+    const list = attr.updateRanges;
+    if (list.length === 0) { d.used = 0; d.lo = Infinity; d.hi = -Infinity; }
+    const end = start + count;
+    if (start < d.lo) d.lo = start;
+    if (end > d.hi) d.hi = end;
     if (d.used >= d.ranges.length) {
-      // Za dużo zakresów przed uploadem — cała tekstura.
-      tex.clearUpdateRanges();
-      d.used = 0;
-      tex.needsUpdate = true;
-      this._fullUpload = true;
-      return;
+      const r = d.ranges[0];
+      r.start = d.lo;
+      r.count = d.hi - d.lo;
+      list.length = 0;
+      list.push(r);
+      d.used = 1;
+    } else {
+      const r = d.ranges[d.used++];
+      r.start = start;
+      r.count = count;
+      list.push(r);
     }
-    if (this._fullUpload) { tex.needsUpdate = true; return; }
-    const r = d.ranges[d.used++];
-    r.start = row * DAMAGE_W * 4;
-    r.count = texels * 4;
-    tex.updateRanges.push(r);
-    tex.needsUpdate = true;
+    attr.needsUpdate = true;
     this.stats.rowUploads++;
   },
 
@@ -1565,7 +1131,6 @@ export const Bridge3D = {
     this._setOrigin(opts.camera, ctx);
 
     const dmg = this.damage;
-    if (dmg.tex.updateRanges.length === 0) { dmg.used = 0; this._fullUpload = false; }
     const kinds = this.kinds;
     for (let k = 0; k < kinds.length; k++) kinds[k].count = 0;
     this.receiver.count = 0;
@@ -1633,29 +1198,20 @@ export const Bridge3D = {
     for (let k = 0; k < kinds.length; k++) {
       const K = kinds[k];
       const n = K.count;
-      K.mesh.count = n;
+      K.geometry.instanceCount = n;
       K.mesh.visible = n > 0;
       this.stats.instances[K.index] = n;
       if (!n) continue;
       draws++;
-      commitAttr(K.mesh.instanceMatrix, n);
-      commitAttr(K.attrs.gridA, n);
-      commitAttr(K.attrs.gridB, n);
-      commitAttr(K.attrs.dmg, n);
-      commitAttr(K.attrs.state, n);
-      commitAttr(K.attrs.mask, n);
-      commitAttr(K.attrs.hull, n);
+      // Jeden przepleciony bufor instancji — jeden zakres.
+      commitAttr(K.inst, n);
     }
     const Rv = this.receiver;
-    Rv.mesh.count = Rv.count;
+    Rv.geometry.instanceCount = Rv.count;
     Rv.mesh.visible = Rv.count > 0;
     if (Rv.count) {
       draws++;
-      commitAttr(Rv.mesh.instanceMatrix, Rv.count);
-      commitAttr(Rv.attrs.gridA, Rv.count);
-      commitAttr(Rv.attrs.gridB, Rv.count);
-      commitAttr(Rv.attrs.dmg, Rv.count);
-      commitAttr(Rv.attrs.state, Rv.count);
+      commitAttr(Rv.inst, Rv.count);
     }
     const Em = this.emitters;
     Em.mesh.count = Em.count;
@@ -1747,20 +1303,24 @@ export const Bridge3D = {
 
     if (T.drawModel && K.count < K.capacity) {
       const n = K.count++;
-      writeInstance(K.mesh.instanceMatrix.array, n, ax, ay, bx, by, sz, rx, ry);
-      writeInstanceData(K.attrs, n, rec, fade, heatMul);
-      const mk = K.attrs.mask.array;
-      mk[n * 2] = rec.maskLo;
-      mk[n * 2 + 1] = rec.maskHi;
-      const hl = K.attrs.hull.array;
-      hl[n * 4] = hullLightAt(rec, host, pose, ctx);
-      hl[n * 4 + 1] = lod; hl[n * 4 + 2] = 0; hl[n * 4 + 3] = 0;
+      const L = B3_MODEL_LAYOUT;
+      const A = K.inst.array;
+      const o = n * L.stride;
+      writeInstance(A, o, ax, ay, bx, by, sz, rx, ry);
+      writeInstanceData(A, o, L, rec, fade, heatMul);
+      A[o + L.aB3Mask] = rec.maskLo;
+      A[o + L.aB3Mask + 1] = rec.maskHi;
+      A[o + L.aB3Hull] = hullLightAt(rec, host, pose, ctx);
+      A[o + L.aB3Hull + 1] = lod; A[o + L.aB3Hull + 2] = 0; A[o + L.aB3Hull + 3] = 0;
     }
     const Rv = this.receiver;
     if (T.receiver && !lod && Rv.count < Rv.capacity) {
       const n = Rv.count++;
-      writeInstance(Rv.mesh.instanceMatrix.array, n, ax, ay, bx, by, sz, rx, ry);
-      writeInstanceData(Rv.attrs, n, rec, fade, heatMul);
+      const L = B3_RECEIVER_LAYOUT;
+      const A = Rv.inst.array;
+      const o = n * L.stride;
+      writeInstance(A, o, ax, ay, bx, by, sz, rx, ry);
+      writeInstanceData(A, o, L, rec, fade, heatMul);
     }
 
     // Emitery: okna (gasną z heksem pod sobą i wg osi czasu), lampy, listwy.
@@ -1860,8 +1420,8 @@ export const Bridge3D = {
       if (rec.st && rec.host?.bridgeState === rec.st) rec.st.model3D = disabled ? false : rec.host.__bridge3DFull === true;
     }
     if (disabled) {
-      for (const K of this.kinds) { K.mesh.count = 0; K.mesh.visible = false; }
-      if (this.receiver) { this.receiver.mesh.count = 0; this.receiver.mesh.visible = false; }
+      for (const K of this.kinds) { K.geometry.instanceCount = 0; K.mesh.visible = false; }
+      if (this.receiver) { this.receiver.geometry.instanceCount = 0; this.receiver.mesh.visible = false; }
       if (this.emitters) { this.emitters.mesh.count = 0; this.emitters.mesh.visible = false; }
     }
   },
@@ -1899,8 +1459,10 @@ export const Bridge3D = {
     for (const K of this.kinds) {
       if (scene && K.mesh) scene.remove(K.mesh);
       K.geometry?.dispose?.();
-      K.material?.dispose?.();
     }
+    // Jeden materiał bryły na wszystkie rodzaje.
+    this._modelMaterial?.dispose?.();
+    this._modelMaterial = null;
     this.kinds = [];
     for (const part of [this.receiver, this.emitters]) {
       if (!part) continue;
@@ -1910,34 +1472,35 @@ export const Bridge3D = {
     }
     this.receiver = null;
     this.emitters = null;
-    this.damage?.tex?.dispose?.();
     this.heightTex?.dispose?.();
     this.damage = null;
     this.heightTex = null;
     this.uniforms = null;
+    this._nodes = null;
     this.scene = null;
     this.ready = false;
   }
 };
 
-function writeInstance(M, n, ax, ay, bx, by, sz, ox, oy) {
-  const o = n * 16;
-  M[o] = ax; M[o + 1] = ay; M[o + 2] = 0; M[o + 3] = 0;
-  M[o + 4] = bx; M[o + 5] = by; M[o + 6] = 0; M[o + 7] = 0;
-  M[o + 8] = 0; M[o + 9] = 0; M[o + 10] = sz; M[o + 11] = 0;
-  M[o + 12] = ox; M[o + 13] = oy; M[o + 14] = MODEL_LIFT; M[o + 15] = 1;
+// Transformacja instancji (dawne instanceMatrix: kolumny (ax, ay, 0), (bx, by,
+// 0), (0, 0, sz), przesunięcie (ox, oy, MODEL_LIFT)) w buforze przeplecionym:
+// iBasis = (ax, ay, bx, by), iOrg = (ox, oy, sz, MODEL_LIFT). o — początek
+// instancji w tablicy (n · stride); układ: bridge3D.tsl.js.
+function writeInstance(A, o, ax, ay, bx, by, sz, ox, oy) {
+  A[o] = ax; A[o + 1] = ay; A[o + 2] = bx; A[o + 3] = by;
+  A[o + 4] = ox; A[o + 5] = oy; A[o + 6] = sz; A[o + 7] = MODEL_LIFT;
 }
 
-function writeInstanceData(attrs, n, rec, fade, heatMul) {
+function writeInstanceData(A, o, L, rec, fade, heatMul) {
   const m = rec.map;
-  const A = attrs.gridA.array;
-  A[n * 4] = m.zgx; A[n * 4 + 1] = m.zgy; A[n * 4 + 2] = m.m00; A[n * 4 + 3] = m.m01;
-  const B = attrs.gridB.array;
-  B[n * 4] = m.m10; B[n * 4 + 1] = m.m11; B[n * 4 + 2] = rec.c0; B[n * 4 + 3] = rec.r0;
-  const D = attrs.dmg.array;
-  D[n * 4] = rec.row; D[n * 4 + 1] = rec.blockW; D[n * 4 + 2] = rec.blockH; D[n * 4 + 3] = rec.anyDead;
-  const S = attrs.state.array;
-  S[n * 4] = fade; S[n * 4 + 1] = heatMul; S[n * 4 + 2] = rec.kind.index; S[n * 4 + 3] = rec.hexR;
+  let k = o + L.aB3GridA;
+  A[k] = m.zgx; A[k + 1] = m.zgy; A[k + 2] = m.m00; A[k + 3] = m.m01;
+  k = o + L.aB3GridB;
+  A[k] = m.m10; A[k + 1] = m.m11; A[k + 2] = rec.c0; A[k + 3] = rec.r0;
+  k = o + L.aB3Dmg;
+  A[k] = rec.row; A[k + 1] = rec.blockW; A[k + 2] = rec.blockH; A[k + 3] = rec.anyDead;
+  k = o + L.aB3State;
+  A[k] = fade; A[k + 1] = heatMul; A[k + 2] = rec.kind.index; A[k + 3] = rec.hexR;
 }
 
 /**

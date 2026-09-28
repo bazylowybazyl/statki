@@ -120,6 +120,18 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   odczytach sceny „uber” — siatka bezpieczeństwa NaN / ±Inf → 0 (`hdrBezpieczny`, `postGry.js`). Pomiar: `Core3D.fxStats`
   (PerfHUD „Efekty GPU”), kontrola na GPU: `scripts/webgpu/efekty-kontrola.mjs`. Bank `Fx3D` (`fxParticles3D.js`) w TSL:
   cztery grafy (BB, PLUME, CROSS, WASH) wspólne dla systemów, tekstura per obiekt (`FxMapNode`).
+- **Zniszczenie stacji (zadanie 16, `src/vfx/`):** rozpad na trójkąty i implozja = dwa grafy TSL w `shatterMaterial.js`
+  (budowane raz, lekki `ShatterNodeMaterial` per mesh, wartości w `material.uniforms` przez `onObjectUpdate`, mapa per obiekt
+  `teksturaObiektu` z `src/3d/tsl/`); wierzchołki w `vertexNode`, więc pass cienia rysuje nieprzesuniętą bryłę jak dawny
+  `MeshDepthMaterial`. Kawałki skorupy po `detachChunk` tną się **maską TSL** (`maskNode` klonów, płaszczyzny per obiekt
+  rzutowane do widoku — ta sama reguła co `material.clippingPlanes` w WebGL), nie `ClippingGroup` (pułapka 18). Klony
+  materiałów GLB (wygaszenie bryły, kawałki) dostają węzły cienia oryginału (`_shareShadowNodes`). Rozgrzewka przy
+  `Destruction3D.prebake` (bryła stacji powstała): trójkąty, implozja, wygaszenie, kawałki — `prewarmPass` na trzymaczach z
+  układem geometrii bryły; pass cienia — trzymacze na warstwie 31 przez 2 klatki; pule odłamków paneli —
+  `PanelShardManager.prewarm`. Klatka rozpadu bez budowy materiałów (`scripts/webgpu/rozpad-stacji.mjs`). Odłamki paneli są
+  CZARNE jak w WebGL (pułapka 22) — barwy z `instanceColor` to decyzja wyglądu (kolor pul 0xffffff). Scena bazy
+  `stacja-rozpad` (sesja „stacja”, warianty `__3d` / `__fg-3d` bez overlaya); różnice na sylwetkach vs wnętrza:
+  `scripts/webgpu/krawedzie.mjs`.
 - **Nowe efekty broni i rakiet z dem** (`dema/bronie-webgpu`, `dema/rakiety-webgpu` — decyzja użytkownika 2026-09-27)
   zastępują stare (zadania 12, 17–20); wspólne klocki w `src/3d/fx/`. Starych efektów broni, rakiet, iskier i trafień nie
   przenosimy 1:1 ani nie poprawiamy — idą do wymiany. Rozgrywka zostaje w grze: dema dostają tylko zdarzenia (strzał,
@@ -167,13 +179,32 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   (`fwidth`) licz PRZED gałęziami: FXC w bazie spłaszczał gałęzie z pochodnymi, a w WGSL pochodna w rozbieżnej gałęzi jest
   nieokreślona; (16) wczesne `return` w `vertexNode` nie istnieje (main zwraca strukturę varyingów) — zagnieżdżone `If`
   z domyślnym wierzchołkiem `vec4(2, 2, 2, 1)` (poza bryłą obcinania) zachowują oszczędność dawnych `collapse(); return;`;
-  `cond.select(a, b)` TSL i tak buduje jako `if / else`; (17) wiele siatek jednego materiału (partie, dzielnice) — `Mesh`
-  z `InstancedBufferGeometry`, nie `InstancedMesh` (jego uuid wchodzi do klucza programu: osobny NodeBuilder na siatkę;
-  zadanie 10: ~100 partii ringu Fable); (18) `uniformArray` dostaje nazwę bufora z id węzła (`NodeBuffer_<id>`) — różne
-  egzemplarze grafu (trzy ringi, przebudowa jakości) dają różny WGSL i osobne moduły; `.setName('stała')` wspólny kod;
-  (19) `dFdy` TSL generuje `-dpdy` (oś y jak w GL) — dla `textureGrad` bez znaczenia, w formułach ze znakiem pamiętaj;
-  (20) wiersz parzystości GLSL ↔ TSL buduj na wejściach jak w materiale: FXC zwija stałe (`(x − 200) + 3,7` → `x − 196,3`),
-  więc syntetyczne przesunięcie potrafi zmienić zaokrąglenia (zadanie 10: kratka paneli 57% zamiast 100%).
+  `cond.select(a, b)` TSL i tak buduje jako `if / else`.
+- **Pułapki r183 z zadania 16 (cienie, cięcie, stan renderu):** (17) goły `NodeMaterial` na meshu z `castShadow` musi mieć
+  `map = null` (i `alphaMap = null`): pass cienia (`Renderer._getShadowNodes`) bierze `material.map !== null` za mapę —
+  `undefined` daje `texture(undefined)` i błąd budowy cienia (tak padał zamiennik `ShaderMaterial` rzucający cień);
+  (18) `material.clippingPlanes` WebGPURenderer ignoruje, a `ClippingGroup` wkłada płaszczyzny do `uniformArray` grupy
+  „render” z kontekstu obiektu, który ZBUDOWAŁ program — grupy o tym samym kluczu materiału i liczbie płaszczyzn tną się
+  płaszczyznami pierwszej; cięcie per obiekt = maska TSL (`maskNode`, płaszczyzny per obiekt w `onObjectUpdate`, wzór
+  `_getShellClipNodes` w `destruction3D.js`); (19) węzły passa cienia powstają PER OBIEKT materiału z `map`
+  (`reference('map', …, material)`), więc każdy świeży klon = budowa NodeBuildera cienia w klatce użycia — klon z tą samą
+  mapą może dostać wpis oryginału (`_shareShadowNodes`, pola prywatne three, z osłoną); (20) `compileAsync` nie rozgrzewa passa
+  cienia — trzymacz w scenie na nieużywanej warstwie (31: kamera cienia słońca ma `layers.enableAll`, żaden pass Core3D
+  jej nie rysuje) przez 2 klatki; (21) przezroczyste `DoubleSide` bez `forceSinglePass`: WebGPU rysuje WSZYSTKIE tyły, potem
+  wszystkie przody (`_renderTransparents`), WebGL tył + przód obiekt po obiekcie — nakładające się siatki mieszają się w innej
+  kolejności (wygaszenie bryły stacji, 5 klatek); (22) `vertexColors: true` bez atrybutu `color`: WebGL mnożył przez stałą
+  wartość atrybutu (0, 0, 0, 1) = czerń, WebGPU pomija vertexColors (biel); (23) mapa cienia słońca raz na klatkę ze
+  WSZYSTKIMI warstwami — łapacz cienia warstwy 0 (`Core3D.shadowCatcher`, z = −2) dostaje cień obiektów FG (stacje,
+  z ≈ −100 ± 300); w WebGL mapa cienia każdego passa miała tylko warstwy kamery passa (`WebGLShadowMap` testuje warstwy
+  kamery renderu), więc łapacz 0 cienia stacji nie widział. Widać to po rozpadzie stacji (cień bryły-ducha nad planetą) i
+  przy implozji — do decyzji w Core3D (zadanie 23), nie w materiałach.
+- **Pułapki TSL z zadania 10 (hala K-7, ringi-archetypy):** (24) wiele siatek jednego materiału (partie, dzielnice) —
+  `Mesh` z `InstancedBufferGeometry`, nie `InstancedMesh` (jego uuid wchodzi do klucza programu: osobny NodeBuilder na
+  siatkę; ~100 partii ringu Fable); (25) `uniformArray` dostaje nazwę bufora z id węzła (`NodeBuffer_<id>`) — różne
+  egzemplarze grafu (trzy ringi, przebudowa jakości) dają różny WGSL i osobne moduły; `.setName('stała')` = wspólny kod;
+  (26) `dFdy` TSL generuje `-dpdy` (oś y jak w GL) — dla `textureGrad` bez znaczenia, w formułach ze znakiem pamiętaj;
+  (27) wiersz parzystości GLSL ↔ TSL buduj na wejściach jak w materiale: FXC zwija stałe (`(x − 200) + 3,7` → `x − 196,3`),
+  więc syntetyczne przesunięcie potrafi zmienić zaokrąglenia (kratka paneli 57% zamiast 100%).
 
 ---
 
@@ -281,6 +312,10 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 
 ### Stacje i obiekty 3D
 - `updateStations3D(stations)` — synchronizacja stacji 2D -> 3D.
+- Zniszczenie stacji: `destroyStation3D` → `Destruction3D.shatter` (odłamki paneli + wygaszenie bryły), progi HP →
+  `Destruction3D.detachChunk` (fragment leci, pęka na kawałki z maską cięcia, potem odłamki). Materiały rozpadu w TSL
+  (`src/vfx/shatterMaterial.js`); nowa bryła stacji ma przejść przez `Destruction3D.prebake` (wypiek + rozgrzewka — bez niej
+  pierwszy rozpad buduje materiały w swojej klatce). Szablon GLB nietknięty: wygaszenie i kawałki pracują na klonach.
 - `updateWorld3D(dt, t)` — aktualizacja obiektów świata 3D.
 
 ### Statek gracza
@@ -303,7 +338,8 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 - `src/game/shipBridge.js` (strefy heksów, integralność, oś czasu), `src/game/shipBridgeRuntime.js` (klej gry), `src/3d/bridgeFx3D.js` (okna, wyrzut atmosfery). Opis: `docs/PORT-mostki.md`.
 - Utrata dowodzenia robi z NPC hulka (`isBridgeHulk`): `npcStep` pomija AI i model lotu, `applyDamageToNPC` i sufit heksów go nie ruszają, po `BRIDGE_KILL_TIMELINE.sequenceEnd` `finishBridgeKill` robi wrak BEZ losowego wybuchu reaktora. Nowe ścieżki śmierci / AI / celowania muszą to respektować.
 - AI celowo nie celuje w mostki (za szybko zabijałoby gracza) — tylko przyszli „bossowie”.
-- Model 3D mostka: `src/3d/bridge3D.js` (+ `bridge3DShapes.js`), `docs/PORT-mostki.md` §8. Wyrwy tylko z heksów 2D (tekstura obrażeń), nic nie zmienia gameplayu. Cień na kadłubie to prostokąt POD kadłubem z `depthFunc GREATER` — działa, bo kadłuby (renderOrder 10) piszą głębię w passie ortho na z ≈ 0; zmieniając głębię/z kadłubów, sprawdź cień mostka. `bridgeState.model3D` wyłącza szczeliny okien w `bridgeFx3D` (wyrzut atmosfery zostaje). Model przechodzi na wrak sam, po przynależności heksów — nie dokładaj haków w `finishBridgeKill`.
+- Model 3D mostka: `src/3d/bridge3D.js` (+ `bridge3DShapes.js`, graf TSL w `bridge3D.tsl.js`), `docs/PORT-mostki.md` §8. Wyrwy tylko z heksów 2D (bufor obrażeń), nic nie zmienia gameplayu. Cień na kadłubie to prostokąt POD kadłubem z `depthFunc GREATER` — działa, bo kadłuby (renderOrder 10) piszą głębię w passie ortho na z ≈ 0; zmieniając głębię/z kadłubów, sprawdź cień mostka. `bridgeState.model3D` wyłącza szczeliny okien w `bridgeFx3D` (wyrzut atmosfery zostaje). Model przechodzi na wrak sam, po przynależności heksów — nie dokładaj haków w `finishBridgeKill`.
+- Mostek na WebGPU (zadanie 15, `docs/PORT-mostki.md` §8.14): JEDEN graf i materiał bryły na wszystkie rodzaje — Mesh + `InstancedBufferGeometry` na rodzaj (nie `InstancedMesh`: jego uuid wchodzi do klucza programu), dane instancji w jednym przeplecionym buforze, stałe rodzaju (obrys, paleta, skala detalu) w tablicy `uniformArray` czytanej indeksem rodzaju z instancji. Obrażenia = bufor storage u32 (bajty RGBA8 w słowie, 768 × 512 komórek; `Bridge3D.damage.data` to widok bajtów), wysyłane tylko zakresami zmienionych bloków (`_markRange`) — tekstury backend WebGPU wysyła w całości (1,5 MB na każdą zmianę). Maska słońca z `sunShadowMask.js` (`sunVisibility` / `sunFill`) w jednym miejscu grafu; okna, lampy, szczeliny `bridgeFx3D` i światła pozycyjne `shipLights3D` maski nie czytają. Rdzenie z dem (`reactor3D.js`, `coreFx3D.js`, grafy w `*.tsl.js`) — w TSL, dalej niewpięte w grę.
 - **Nowy kadłub (nowy albo podmieniony sprite okrętu) = od razu mostek**: strefa w `BRIDGE_LAYOUT_PROPOSALS`, model w `bridge3DShapes.js`, paleta w `bridge3D.js` — checklista `docs/BRIEF-mostek-nowego-kadluba.md`. Mostki ma cała flota bojowa (Terra Nova, piraci, Atlas) i lokomotywa megafrachtowca; frachtowce cywilne i myśliwce nie.
 
 ### Silniki: MAIN, WARP, SIDE

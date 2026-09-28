@@ -173,6 +173,38 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   z `(x − 200) + 3,7` baza liczyła `x − 196,3`), więc syntetyczne przesunięcie potrafi dać fałszywą rozbieżność (kratka
   paneli: 57% → 100% po przejściu na `floor(…) + 3,7`). **Demo ringu:** `BloomNode` bez × 3 dawał bloom 3 × słabszy
   niż `UnrealBloomPass` bazy (jasne kadry 20–45% pikseli > 8/255) — demo ma `BloomGry` jak gra.
+- **Pułapki z zadania 15 (three r183):** **`DynamicDrawUsage` na atrybucie = `writeBuffer` CAŁEGO bufora przy każdym
+  `render()`, który go rysuje** (`Attributes.update` pomija wtedy porównanie wersji) — bufory pisane w biegu zostają
+  przy domyślnym użyciu z `needsUpdate` i zakresami (`addUpdateRange`; backend wysyła tylko zakresy i sam czyści listę).
+  **Częściowa aktualizacja danych czytanych jak tekstura** (wiersze obrażeń mostków): zakresy tekstur backend ignoruje
+  (każda zmiana = `writeTexture` całości: 768 × 512 RGBA8 = 1,5 MB, ~0,7 ms CPU), zakresy buforów honoruje — bufor
+  storage (`StorageBufferAttribute` + `storage(attr, 'uint', n).toReadOnly()`), bajty RGBA8 w słowie u32 (widok
+  `Uint8Array` na tym samym `ArrayBuffer`; przesunięcia w WGSL tylko na `u32` — `i32 >> i32` to błąd): blok ~1 KB,
+  < 0,005 ms (`benchDamageUpload` w `dema/mostki-demo.js`). Alternatywa z zadania 03 dla tekstur: własny
+  `queue.writeTexture` wycinka (`Core3D.uploadTextureLayer`). **Wiele meshy instancji z JEDNYM materiałem:** Mesh +
+  `InstancedBufferGeometry` (klucz geometrii strukturalny, `instanceCount` = liczba rysowanych) zamiast `InstancedMesh`
+  (uuid w kluczu), stałe rodzaju w `uniformArray` czytanej indeksem z danych instancji (mostki: 11 rodzajów, 1 graf).
+  **Macierz instancji `InstancedMesh` ponad 1024 instancje** (atrybut, nie bufor uniformów) three synchronizuje RAZ
+  NA KLATKĘ rAF (`InstanceNode`, `updateType` FRAME): w serii renderów w jednym zadaniu JS rysują się dane z pierwszego
+  — w grze (render raz na klatkę, podzielony ekran z tymi samymi danymi) bez skutków, w narzędziach z pętlą
+  synchroniczną tak (`precyzja-drzenie.js`: szczeliny okien przy starym początku układu, maska 0) — przed renderem
+  pomiaru czekać na nową klatkę (`renderer.info.frame`). **`textureSample` w niejednolitym przepływie** (pętla z
+  `Break` zależnym od danych — marsz cienia) to błąd WGSL — `texture(...).level(0)` (textureSampleLevel).
+- **Pułapki z zadania 16 (zniszczenie stacji, three r183):** **goły `NodeMaterial` z `castShadow` → `map = null`**
+  (`Renderer._getShadowNodes` bierze `map !== null`, także `undefined`, za mapę → `texture(undefined)`, błąd budowy passa
+  cienia). **`material.clippingPlanes` WebGPU ignoruje**, a **`ClippingGroup`** wkłada płaszczyzny do `uniformArray` grupy
+  „render” z kontekstu obiektu, który zbudował program — kilka grup o tym samym kluczu materiału i liczbie płaszczyzn tnie
+  płaszczyznami pierwszej; cięcie per obiekt = maska TSL (`maskNode` + płaszczyzny widoku w `onObjectUpdate`,
+  `destruction3D.js`) — ta sama reguła odrzucenia co WebGL, wspólny węzeł, zero budów na kawałek. **Węzły cienia per obiekt
+  materiału z mapą** (`reference('map', …, material)`) — każdy świeży klon to budowa NodeBuildera cienia; klon z tą samą
+  mapą dostaje wpis oryginału. **`compileAsync` nie rozgrzewa passa cienia** — trzymacz w scenie na warstwie 31 przez 2 klatki
+  (kamera cienia widzi wszystkie warstwy, passy Core3D nie). **Przezroczyste `DoubleSide`:** WebGPU rysuje wszystkie tyły,
+  potem wszystkie przody (`_renderTransparents`), WebGL tył + przód per obiekt. **`vertexColors` bez atrybutu `color`:**
+  WebGL — czerń (stała wartość atrybutu 0), WebGPU — biel (pomija). **Mapa cienia słońca ze wszystkimi warstwami raz na
+  klatkę** (01): łapacz cienia warstwy 0 (z = −2) dostaje cień obiektów FG (stacje); w WebGL mapa każdego passa miała tylko
+  warstwy kamery passa — łapacz 0 cienia stacji nie widział (po rozpadzie widać cień bryły-ducha nad planetą; decyzja w 23).
+  Obraz: sesja „stacja” w `zrzuty.mjs` (baza z tagu), sylwetki vs wnętrza — `scripts/webgpu/krawedzie.mjs`; klatka rozpadu
+  bez budów — `scripts/webgpu/rozpad-stacji.mjs`.
 - **TSL, nie `wgslFn`.** Tekstowy WGSL tylko dla wyizolowanej czystej funkcji, gdy TSL jest naprawdę niewygodny — z
   uzasadnieniem w commicie (zamyka drogę do zapasowego backendu WebGL2). Wyjątek z uzasadnieniem: `haloFma` (09),
   `haloFmaVec2` (10 — ten sam `fma` WGSL na wektorach, hasze archetypów).
