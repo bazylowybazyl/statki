@@ -122,7 +122,11 @@ export class FxFrame {
     if (!step.warm || this._warmed.has(step) || !this.renderer) return;
     this._warmed.add(step);
     try {
-      step.warm(this.ctx);
+      // Rejestr rozgrzewki (zadanie 11, Core3D.warmup.run): ta sama chwila i logika kroku, a czas i pipeline'y
+      // kroku (prewarmPass) w jednym miejscu — flush() ekranu ładowania czeka na nie.
+      const reg = this.core?.warmup;
+      if (reg && typeof reg.run === 'function') reg.run(`Core3D.fx: ${step.name || '?'}`, () => step.warm(this.ctx));
+      else step.warm(this.ctx);
     } catch (err) {
       console.warn(`[Core3D.fx] rozgrzewka kroku „${step.name || '?'}” nie wyszła:`, err?.message || err);
     }

@@ -86,6 +86,7 @@ export class Rozgrzewka {
     this._scheduled = false;
     this._flushing = 0;
     this._loadingOpen = false;   // po pierwszym flush() wpisy 'loading' idą od razu
+    this._current = null;        // wpis run() w toku — track() dopisuje mu obietnice
     this.stats = { wpisy: 0, gotowe: 0, siatki: 0, pominiete: 0, cpuMs: 0, maksZadanieMs: 0, bledy: 0, pierwszeMs: -1, ostatnieMs: -1, lista: [] };
   }
 
@@ -107,15 +108,54 @@ export class Rozgrzewka {
   }
 
   /**
-   * Kompilacja spoza rejestru (Core3D.prewarmPass — kadłuby, tarcze, efekty na ekranie ładowania): flush() czeka
-   * i na nią. Pierwsza klatka gry, która zapisuje do kolejki, gdy proces GPU jeszcze kompiluje, staje na nim.
+   * Istniejąca rozgrzewka modułu (jego funkcja, logika bez zmian) jako wpis rejestru — jedno miejsce z pomiarem:
+   * `fn()` idzie OD RAZU (tam, gdzie dotąd wołał ją właściciel), jej czas CPU i kompilacje zlecone w trakcie
+   * (`Core3D.prewarmPass` → track, zwrócona obietnica) liczą się do wpisu, flush() czeka na nie. Kroki Core3D.fx
+   * (`warm`) idą tędy same (FxFrame._warmStep); inna rozgrzewka modułu — jedna linia:
+   *   Core3D.warmup.run('tarcze', () => prewarmShields3D());
+   * Wyjątek z fn leci dalej (właściciel loguje jak dotąd). Wpis w stats.lista: { nazwa, cpuMs, ms, t }.
+   */
+  run(name, fn) {
+    const entry = { name: String(name || 'bez nazwy'), t0: nowMs(), promises: [] };
+    this.stats.wpisy++;
+    const prev = this._current;
+    this._current = entry;
+    let ret;
+    try {
+      ret = fn();
+    } finally {
+      this._current = prev;
+      const cpu = nowMs() - entry.t0;
+      this.stats.cpuMs += cpu;
+      if (cpu > this.stats.maksZadanieMs) this.stats.maksZadanieMs = +cpu.toFixed(1);
+      if (ret && typeof ret.then === 'function') entry.promises.push(this.track(ret).then(() => true, () => false));
+      Promise.all(entry.promises).then(() => {
+        const end = nowMs();
+        this.stats.gotowe++;
+        this.stats.ostatnieMs = +end.toFixed(1);
+        this._list({ nazwa: entry.name, cpuMs: +cpu.toFixed(1), ms: +(end - entry.t0).toFixed(1), t: +entry.t0.toFixed(1), modul: true });
+      });
+    }
+    return ret;
+  }
+
+  /**
+   * Kompilacja spoza kolejki (Core3D.prewarmPass — kadłuby, tarcze, kroki efektów): flush() czeka i na nią (pierwsza
+   * klatka gry zapisująca do kolejki, gdy proces GPU jeszcze kompiluje, staje na nim); w trakcie run() liczy się do wpisu.
    */
   track(promise) {
     if (!promise || typeof promise.then !== 'function') return promise;
     const tracked = Promise.resolve(promise).then(() => true, () => false);
     this._pending.add(tracked);
     tracked.then(() => this._pending.delete(tracked));
+    if (this._current) this._current.promises.push(tracked);
     return promise;
+  }
+
+  _list(row) {
+    const list = this.stats.lista;
+    list.push(row);
+    if (list.length > LISTA_MAX) list.shift();
   }
 
   /** Czy coś czeka albo kompiluje się w tle. */
@@ -384,9 +424,7 @@ export class Rozgrzewka {
       entry.ms = entry.t0 >= 0 ? end - entry.t0 : 0;
       this.stats.gotowe++;
       this.stats.ostatnieMs = +end.toFixed(1);
-      const list = this.stats.lista;
-      list.push({ nazwa: entry.name, siatki: entry.siatki, cpuMs: +entry.cpuMs.toFixed(1), ms: +entry.ms.toFixed(1), pilne: entry.urgent });
-      if (list.length > LISTA_MAX) list.shift();
+      this._list({ nazwa: entry.name, siatki: entry.siatki, cpuMs: +entry.cpuMs.toFixed(1), ms: +entry.ms.toFixed(1), t: +entry.t0.toFixed(1), pilne: entry.urgent });
       // pusta lista obietnic = wszystko już rozgrzane wcześniej
       entry._resolve(res.every(Boolean));
     });

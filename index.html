@@ -25489,12 +25489,14 @@
       setLoadingProgress(60, 'Kalibracja floty');
       await nextFrame();
       setLoadingProgress(70, 'Kompilacja shaderów broni');
+      // Rozgrzewki modułów przez rejestr (Core3D.warmup.run, zadanie 11): ta sama chwila i logika, czas i pipeline'y
+      // w jednym miejscu (flush niżej czeka na nie). Kroki Core3D.fx (broń, rakiety, iskry, warp, pas, mapa ran) — same.
       if (prewarmHexShips3D) {
-        prewarmHexShips3D({ canvas: hexShipsCanvas });
+        Core3D.warmup.run('kadłuby i Fx3D (hexShips3D)', () => prewarmHexShips3D({ canvas: hexShipsCanvas }));
       }
       // Tarcze: program obrysu kompilował się przy pierwszym wrogu (~200 ms) i po zniknięciu
       // ostatniej tarczy od nowa (shield3D.js, prewarmShields3D).
-      prewarmShields3D();
+      Core3D.warmup.run('tarcze (shield3D)', () => prewarmShields3D());
       await nextFrame();
 
       // Pas asteroid (zadanie 21): cień pól całego układu (~1 s — potem żadnego liczenia
@@ -25503,7 +25505,7 @@
         setLoadingProgress(72, 'Cień pól asteroid');
         await asteroidBelt.precompute((p) => setLoadingProgress(72 + p * 5, 'Cień pól asteroid'));
         setLoadingProgress(77, 'Pola asteroid');
-        await asteroidBelt.initGpu();
+        await Core3D.warmup.run('pas asteroid: start GPU (asteroidBelt)', () => asteroidBelt.initGpu());
         await nextFrame();
       }
 

@@ -89,6 +89,7 @@ test('tarcze: materiały-trzymacze obu wariantów, rozgrzewka na ekranie ładowa
   assert.match(fxPrewarm, /mesh\.visible = true;[\s\S]*flashMesh\.visible = true;[\s\S]*Core3D\.prewarmPass\(root, 7\)/, 'compileAsync pomija niewidoczne — pule odsłonięte na czas projekcji');
   assert.doesNotMatch(fxPrewarm, /\.dispose\(/);
   const loading = indexHtml.indexOf("setLoadingProgress(70, 'Kompilacja shaderów broni')");
-  const call = indexHtml.indexOf('prewarmShields3D();', loading);
-  assert.ok(loading > 0 && call > loading && call - loading < 600, 'prewarmShields3D na ekranie ładowania, obok shaderów broni');
+  // zadanie 11: wywołanie przez rejestr (Core3D.warmup.run('tarcze …', () => prewarmShields3D())) — ta sama chwila
+  const call = indexHtml.indexOf('prewarmShields3D()', loading);
+  assert.ok(loading > 0 && call > loading && call - loading < 900, 'prewarmShields3D na ekranie ładowania, obok shaderów broni');
 });

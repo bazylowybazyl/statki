@@ -256,3 +256,47 @@ test('compileAsync w grze tylko przez compileAsyncNaCelu (klucz pipeline’u z g
     if (f !== 'src/3d/rozgrzewka.js') assert.match(code, /compileAsyncNaCelu\(/, `${f}: przez compileAsyncNaCelu`);
   }
 });
+
+test('run: istniejąca rozgrzewka modułu od razu, jej kompilacje (track) i obietnica w jednym wpisie; flush czeka na nie', async () => {
+  const { core } = fakeCore();
+  const w = new Rozgrzewka(core);
+  w.start();
+  let resolveInner;
+  const inner = new Promise((r) => { resolveInner = r; });
+  let ran = false;
+  const ret = w.run('moduł X', () => { ran = true; w.track(inner); return 42; });
+  assert.equal(ran, true, 'od razu, w chwili właściciela');
+  assert.equal(ret, 42, 'wynik funkcji wraca bez zmian');
+  assert.equal(w.busy, true, 'kompilacja modułu w locie');
+  const flushed = w.flush({ timeoutMs: 2000 });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(w.stats.lista.some((x) => x.nazwa === 'moduł X'), false, 'wpis po pipeline’ach');
+  resolveInner();
+  await flushed;
+  await new Promise((r) => setTimeout(r, 0));
+  const row = w.stats.lista.find((x) => x.nazwa === 'moduł X');
+  assert.ok(row && row.modul === true && row.ms >= 0 && row.cpuMs >= 0 && row.t >= 0);
+  // obietnica zwrócona przez fn też się liczy; wyjątek leci do właściciela
+  const p = w.run('async', () => Promise.resolve('ok'));
+  assert.equal(await p, 'ok');
+  assert.throws(() => w.run('zly', () => { throw new Error('bum'); }), /bum/);
+});
+
+test('Core3D.fx: rozgrzewka kroku (warm) idzie przez rejestr — jedno miejsce dla broni, rakiet, iskier, warpa, pasa, mapy ran', async () => {
+  const { FxFrame } = await import('../src/3d/fx/fxFrame.js');
+  const fx = new FxFrame();
+  const names = [];
+  const core = { warmup: { run: (name, fn) => { names.push(name); return fn(); } } };
+  fx.attach({ compute() {}, lighting: null }, core);
+  let warmed = 0;
+  fx.addStep({ name: 'krokA', warm: () => { warmed++; } });
+  fx.warmAll();
+  fx.addStep({ name: 'krokB', warm: () => { warmed++; } });
+  assert.equal(warmed, 2);
+  assert.deepEqual(names, ['Core3D.fx: krokA', 'Core3D.fx: krokB']);
+  // index.html: kadłuby, tarcze i start GPU pasa przez Core3D.warmup.run (jedna linia na moduł)
+  const html = read('index.html');
+  assert.match(html, /Core3D\.warmup\.run\('kadłuby i Fx3D \(hexShips3D\)', \(\) => prewarmHexShips3D\(/);
+  assert.match(html, /Core3D\.warmup\.run\('tarcze \(shield3D\)', \(\) => prewarmShields3D\(\)\);/);
+  assert.match(html, /await Core3D\.warmup\.run\('pas asteroid: start GPU \(asteroidBelt\)', \(\) => asteroidBelt\.initGpu\(\)\);/);
+});
