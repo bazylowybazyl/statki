@@ -195,11 +195,17 @@ export class RocketFx {
     this.nebula.U.count.value = 0;
     renderer.compute(this.nebula.initNode, 1);
     const saved = [];
+    // Licznik instancji tak, jak w prawdziwym rysowaniu: pule na InstancedBufferGeometry
+    // (kadłubki, płomienie, duszki, kule ognia, łuki) — `geometry.instanceCount`, `mesh.count`
+    // zostaje 1; pule ze storage (dym, mapa gęstości, mgławica) — `mesh.count` ≥ 2. `count > 1`
+    // wchodzi do klucza obiektu renderu: podbity w rozgrzewce u puli, która rysuje z count = 1,
+    // dawał inny klucz i budowę NodeBuildera przy pierwszej salwie (kula ognia ~115 ms).
     const reveal = (m) => {
-      saved.push(m, m.visible, m.count, m.geometry.isInstancedBufferGeometry ? m.geometry.instanceCount : -1);
+      const inst = m.geometry.isInstancedBufferGeometry === true;
+      saved.push(m, m.visible, m.count, inst ? m.geometry.instanceCount : -1);
       m.visible = true;
-      if (m.count !== undefined) m.count = Math.max(2, m.count || 0);
-      if (m.geometry.isInstancedBufferGeometry) m.geometry.instanceCount = Math.max(2, m.geometry.instanceCount || 0);
+      if (inst) m.geometry.instanceCount = Math.max(2, m.geometry.instanceCount || 0);
+      else m.count = Math.max(2, m.count || 0);
     };
     reveal(smoke.densityMesh);
     const prev = renderer.getRenderTarget();
