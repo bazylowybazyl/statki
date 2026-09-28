@@ -13,11 +13,12 @@
 // kadłub jako walec). Do tego światło planety i niebo habitatu.
 //
 // Port WebGPU: biblioteka jest w TSL (haloRingTSL.js); teren (07), konstrukcja
-// i atmosfera (08), megastruktura i miasto (09) już jej nie używają. Zostaje dla
-// K-7 i ringów-archetypów (10: COMMON, NOISE, LIGHT, FG, FG_CLIP, TRANSIT, PORTSITES;
-// tło menu 11 — COMMON, LIGHT; budowle portowe Z7 poza portem) oraz narzędzia
+// i atmosfera (08), megastruktura i miasto (09), hala K-7 i ringi-archetypy (10) już
+// jej nie używają — w src/3d/haloRing/ nie ma innego GLSL. Zostaje dla tła menu
+// (menuBackdrop3D.js — COMMON, LIGHT; port w zadaniu 11), budowli portowych Z7 poza
+// portem (COMMON, NOISE, LIGHT — przejdą na TSL przy integracji) i narzędzia
 // parzystości GLSL ↔ TSL (scripts/webgpu/ring-tsl-parzystosc.mjs — jedyny użytkownik
-// HALO_GLSL_STORM, HALO_GLSL_AIR, HALO_GLSL_RTE i HALO_GLSL_INDKIT po 09).
+// HALO_GLSL_STORM, AIR, RTE, INDKIT oraz po 10 także FG, TRANSIT i PORTSITES; FG_CLIP usunięte w 10).
 // HALO_GLSL_SURFACE usunięte w 09 (ostatni użytkownicy: megastruktura i miasto).
 
 import { IND_EMIT, IND_MAT } from './haloRingIndustryKit.js';
@@ -525,17 +526,8 @@ float haloFgVisibility(vec3 p) {
 float haloFgVisibility(vec3 p) { return 1.0; }
 #endif
 `;
-// Tylko we fragmencie: przerzedzenie (dither) zamiast przezroczystosci —
-// bryly dachu nie wymagaja sortowania.
-export const HALO_GLSL_FG_CLIP = /* glsl */`
-void haloFgClip(vec3 p) {
-#ifdef HALO_FG
-  float v = haloFgVisibility(p);
-  float n = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
-  if (v < 0.999 && v <= n) discard;
-#endif
-}
-`;
+// (HALO_GLSL_FG_CLIP — przerzedzenie górnej ściany — usunięte w zadaniu 10: ostatni użytkownicy, ringi-archetypy,
+// mają haloFgClip z haloRingTSL.js.)
 
 export const HALO_GLSL_RTE = /* glsl */`
 // dr = r - floorMid (male liczby), dTheta = kat od katu odniesienia

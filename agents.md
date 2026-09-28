@@ -198,6 +198,13 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   z ≈ −100 ± 300); w WebGL mapa cienia każdego passa miała tylko warstwy kamery passa (`WebGLShadowMap` testuje warstwy
   kamery renderu), więc łapacz 0 cienia stacji nie widział. Widać to po rozpadzie stacji (cień bryły-ducha nad planetą) i
   przy implozji — do decyzji w Core3D (zadanie 23), nie w materiałach.
+- **Pułapki TSL z zadania 10 (hala K-7, ringi-archetypy):** (24) wiele siatek jednego materiału (partie, dzielnice) —
+  `Mesh` z `InstancedBufferGeometry`, nie `InstancedMesh` (jego uuid wchodzi do klucza programu: osobny NodeBuilder na
+  siatkę; ~100 partii ringu Fable); (25) `uniformArray` dostaje nazwę bufora z id węzła (`NodeBuffer_<id>`) — różne
+  egzemplarze grafu (trzy ringi, przebudowa jakości) dają różny WGSL i osobne moduły; `.setName('stała')` = wspólny kod;
+  (26) `dFdy` TSL generuje `-dpdy` (oś y jak w GL) — dla `textureGrad` bez znaczenia, w formułach ze znakiem pamiętaj;
+  (27) wiersz parzystości GLSL ↔ TSL buduj na wejściach jak w materiale: FXC zwija stałe (`(x − 200) + 3,7` → `x − 196,3`),
+  więc syntetyczne przesunięcie potrafi zmienić zaokrąglenia (kratka paneli 57% zamiast 100%).
 
 ---
 
@@ -238,7 +245,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 - Trzy RÓŻNE ringi (decyzja użytkownika 2026-09-27): Ziemia = silnik Halo (`createHaloRing`), Mars = ECUMENE, Jowisz = ring Fable — z dem `orbital_ring_demo(_2).html` w skali ×3 (`createArchRing`, `src/3d/haloRing/arch/`). Archetyp i geometria są w profilu (`haloRingProfiles.js`), a `createHaloRingLayout` rozdaje je kolizjom, ruchowi v2 i stacji-portowi. Hala K-7 i zatoki (stanowiska, kolizje) są wspólne, różni je tylko ubiór. Zmiana ringu Ziemi nie dotyka Marsa i Jowisza, i odwrotnie. Opis: `docs/PORT-halo-ring.md` § „Ringi-archetypy”.
 - Ring nie udaje życia (`docs/BRIEF-ring-halo.md` §1): bez ruchu zastępczego, zaparkowanych NPC i świateł aut — statki tylko z systemu ruchu.
 - Ring na WebGPU (zadanie 06): biblioteka TSL `src/3d/haloRing/haloRingTSL.js` (odpowiednik `haloRingGLSL.js`, który
-  zostaje tylko dla K-7 i archetypów (10), tła menu (11) i narzędzia parzystości), uniformy ringu
+  po zadaniu 10 zostaje tylko dla tła menu (11: COMMON, LIGHT), budowli Z7 poza portem i narzędzia parzystości), uniformy ringu
   w jednym bloku (`createHaloUniforms`, klucze i `.value` bez zmian), mapy świata i detal pieczone w TSL. **Budowa ringu
   jest asynchroniczna:** `createHaloRing` wraca od razu (układ i uniformy gotowe), bryły i mapa CPU dopiero po
   `await ring.ready` (compileAsync bake'u na prawdziwych celach → bake → odczyt CPU → plan budowli i kopuł z mapy →
@@ -278,6 +285,24 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   aliasing okien na budynkach 1–2 px (miasto z daleka, ściany pod ostrym kątem) — ten sam wzór, inne próbki.
   Zrzuty samych brył: dema `--czesci mega,city`, gry `zrzuty.mjs --czesci-ringu HaloMega_detail_box,…,HaloTrees`;
   baza dema z kopii tagu: `halo-ring-shots.mjs --repo <drzewo tagu>`.
+- Hala K-7 i ringi-archetypy w TSL (zadanie 10 — ring bez zamienników i bez GLSL poza `haloRingGLSL.js`): K-7
+  (`haloPortK7.js`) = GRAF NA RING, WARTOŚCI NA HALĘ: `k7Graphs(u)` buduje raz (cache po uniformach ringu) grafy
+  instancji, płyt, napisów i węży; cztery hale dostają lekkie NodeMaterial-e na tych samych węzłach (jeden NodeBuilder na
+  rodzaj i stan), wartości hali w `material.uniforms` — `uHub` / `uHallLights` / `uRoofOpacity` przez
+  `uniform().onObjectUpdate`, macierze grup ruchomych (suwnice, złączki) oraz emisja grup, lampy, paleta, emisja i
+  poświata w dwóch `uniformArray` pakowanych PER OBIEKT (`k7Groups`, `k7Surf` — stałe nazwy buforów), atlas napisów
+  węzłem tekstury per obiekt (`teksturaObiektu`, `src/3d/tsl/`). Dach (`K7RoofFade`) dalej przełącza `transparent` / `depthWrite` w
+  `update()` (drugi stan = drugi pipeline, raz). Nowa wartość per hala = holder w `k7Uniforms` + pakowanie / `perObject`,
+  nie nowy węzeł na halę. Archetypy (`arch/archTSL.js`, dawne `archGLSL.js`): partie instancji to `Mesh` z
+  `InstancedBufferGeometry` i JEDNYM przeplecionym buforem (macierz, barwa, aInst — `ARCH_INST_STRIDE`), NIE
+  `THREE.InstancedMesh` (uuid w kluczu programu = NodeBuilder na każdą z ~40 / ~100 partii); światła pozycyjne to
+  kwadraty instancjonowane (nie `THREE.Points`); dawne `defines` (FG, atlas, barwy w wierzchołkach) = warianty budowane
+  raz. Hasze okien / paneli / kratek i ziarno instancji liczą `a·b + c` przez `haloFma` / `haloFmaVec2` (zmierzone:
+  100% bit w bit z bazą, `ring-tsl-parzystosc.mjs` wiersze `arch*`). Powierzchnie ECUMENE / Fable: pola wody i typu to
+  czyste funkcje WGSL (uEcu w parametrze), pochodne linii Fable przed gałęziami stref, mapa stref NEAREST czytana
+  `textureLoad`. Demo `halo_ring_demo`: post = `BloomGry` z × `BLOOM_ZGODNOSC_WEBGL` jak gra (wcześniej bloom dema był
+  3 × słabszy niż w bazie — jasne kadry nie dawały się porównać); porównanie samego ringu z bazą z tagu:
+  `halo-ring-shots.mjs --czesci terrain,structure,structureTop,clouds,shell,mega,city,k7 --bez-otoczenia`.
 
 ### Menu główne i jego tło 3D
 - Tło menu przed startem gry = Ziemia z ringiem w kamerze kinowej: `MenuBackdrop3D` (`src/3d/menuBackdrop3D.js`). Ring to ring GRY wypożyczony przez `haloRings.showcaseRing('earth')` (mapy pieką się już w menu) i oddany `releaseShowcase` w `stopMenuBackdrop()` tuż przed pierwszą klatką gry (`startGame`). Nie twórz drugiego ringu dla menu.
