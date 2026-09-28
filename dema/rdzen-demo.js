@@ -16,7 +16,6 @@ import { createReactorBlowFactory } from '../src/effects3d/reactorblow.js';
 import { createCoreFx3D } from '../src/3d/coreFx3D.js';
 import { createReactor3D } from '../src/3d/reactor3D.js';
 import { Fx3D } from '../src/3d/fxParticles3D.js';
-import { MuzzleFX3D } from '../src/3d/muzzleFx3D.js';
 import { SparkSystem3D } from '../src/3d/sparkSystem3D.js';
 import { HULL_LACQUER_DEFAULTS } from '../src/3d/hullLacquer.js';
 import { MASTER_WEAPONS } from '../src/data/weapons.js';
@@ -929,11 +928,12 @@ function render(realDt, simFrameDt) {
   cullInfo.halfW = cullInfo.drawHalfW * 3; cullInfo.halfH = cullInfo.drawHalfH * 3;
   cullEmptyWrecks();
   const renderEntities = S.destructibles.filter((e) => !e.dead);
-  // Wspólny bank cząstek (iskry, błyski wylotowe, Hexlance) — w grze przesuwa
-  // go Weapon3DSystem.syncProjectiles, dokładnie raz na klatkę; demo nie ma
-  // systemu broni 3D, więc robi to tutaj (czas symulacji: pauza zatrzymuje iskry).
+  // Wspólny bank cząstek Fx3D (iskry rdzeni) — tu w czasie symulacji (pauza zatrzymuje
+  // iskry). updateHexShips3D niżej woła też WeaponFx.sync (efekty broni z dema
+  // bronie-webgpu: wystrzał armaty wybuchu wtórnego, wyładowanie kuli, rzaz strumienia —
+  // budżet klatki i krok Core3D.fx), który przesuwa ten sam bank zegarem klatki — tak jak
+  // dawniej Weapon3DSystem.syncProjectiles.
   Fx3D.update(simFrameDt);
-  MuzzleFX3D.beginFrame();
   const t1 = performance.now();
   updateHexShips3D(cam, renderEntities, cullInfo);
   drawHexShips3D(ctx2d, W, H);

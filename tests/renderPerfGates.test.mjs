@@ -89,15 +89,18 @@ test('kropki hardpointów NPC są tylko za DevFlags.showNpcHardpoints (domyślni
   assert.match(indexHtml, /if \(DevFlags\.showNpcHardpoints\) drawNpcHardpointOverlay\(ctx, npc, s\);/);
 });
 
-test('trafienia pocisków: efekt 3D i iskry dopiero po bramce kadru/rozmiaru', () => {
-  const fn = indexHtml.match(/function spawnBulletImpactEffect\(b, x, y, scale = 1\.0\) \{[\s\S]*?\n    }\n/)?.[0] || '';
+// Zadanie 17: trafienie = receptura rodziny z dema bronie-webgpu (WeaponFx.impact) zamiast
+// fabryk overlaya (trigger*3D) i iskier SparkSystem3D.burst — bramki kadru/rozmiaru i
+// cooldownu komórki zostają przed recepturą.
+test('trafienia pocisków: receptura WeaponFx dopiero po bramce kadru/rozmiaru i cooldownu', () => {
+  const fn = indexHtml.match(/function spawnBulletImpactEffect\(b, x, y, scale = 1\.0, hit = null\) \{[\s\S]*?\n    }\n/)?.[0] || '';
   assert.ok(fn.length > 0);
   const gate = fn.indexOf('impactFxScreenPx(x, y, fxSize) >= IMPACT_FX_MIN_PX');
   assert.ok(gate > 0, 'brak bramki rozmiaru/kadru przed efektem trafienia');
-  for (const trigger of ['triggerYamatoImpact3D(x', 'triggerArmataImpact3D(x', 'triggerRailgunExplosion3D(x', 'triggerAutocannonImpact3D(x']) {
-    assert.ok(fn.indexOf(trigger) > gate, `${trigger} musi stać za bramką`);
-  }
-  assert.ok(fn.indexOf('spark3D.burst(') > fn.indexOf('IMPACT_SPARK_MIN_PX'), 'iskry za bramką rozrzutu');
+  const cooldown = fn.indexOf('impactFxCooldownReady(');
+  assert.ok(cooldown > gate, 'cooldown komórki za bramką kadru');
+  assert.ok(fn.indexOf('WeaponFx.impact(') > cooldown, 'receptura trafienia musi stać za bramkami');
+  assert.doesNotMatch(fn, /trigger\w+3D\(|spark3D\.burst\(/, 'stare efekty trafień (overlay, iskry) wróciły');
 });
 
 // Port WebGPU (zadanie 01): renderer.shadowMap ma tylko enabled / type — mapa
@@ -182,7 +185,8 @@ test('stary panel skanera i radar: bez modelu kontaktów, gdy kokpit go chowa / 
 const readSrc = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
 test('wybuchy overlaya bez PointLight (scena bez materiałów oświetlanych, światło zmieniało klucz programu)', () => {
-  for (const path of ['src/effects3d/reactorblow.js', 'src/effects3d/supernovaMissileBlow.js', 'src/effects3d/yamato.js']) {
+  // (yamato.js usunięty w zadaniu 17 — trafienie Yamato to receptura WeaponFx w Core3D.)
+  for (const path of ['src/effects3d/reactorblow.js', 'src/effects3d/supernovaMissileBlow.js']) {
     assert.doesNotMatch(readSrc(path), /new THREE\.PointLight/, path);
   }
 });
@@ -215,12 +219,17 @@ test('warstwa raw rakiet i pule odłamków paneli: puste siatki są niewidoczne'
   assert.match(shards, /this\.mesh\.count = 0;\s*this\.mesh\.visible = false;/);
 });
 
-test('pociski 3D: barwy HDR raz na styl, upload tylko zajętego wycinka', () => {
-  const w3d = readSrc('src/3d/weapon3DSystem.js');
-  assert.doesNotMatch(w3d, /colorObj\.set\(style\./);
-  assert.match(w3d, /setColorAt\(instanceCount, styleHdr\.core\)/);
-  assert.match(w3d, /uploadInstancePrefix\(bulletInstances\.trails\.instanceMatrix, instanceCount, 16\)/);
-  assert.doesNotMatch(w3d, /bulletInstances\.heads\.instanceMatrix\.needsUpdate = true;\s*if \(bulletInstances\.trails\.instanceColor\)/);
+// Zadanie 17: pociski rysuje ProjectileSystem (src/3d/weapons/projectiles.js — style w jednym draw
+// callu, dawniej weapon3DSystem.js): barwa HDR z konfiguracji rodziny (raz na rodzinę i rozmiar
+// w WeaponFx), wysyłka tylko zajętej części bufora przez stałe zakresy (liveRange.js — bez obiektu
+// zakresu na klatkę).
+test('pociski 3D: barwy HDR raz na rodzinę, upload tylko zajętego wycinka', () => {
+  const proj = readSrc('src/3d/weapons/projectiles.js');
+  assert.match(proj, /if \(n > 0\) markRange\(this\.node\.value, 0, Math\.max\(2, n\) \* FLOATS\);/);
+  assert.doesNotMatch(proj, /addUpdateRange\(|needsUpdate = true/);
+  const wfx = readSrc('src/3d/weapons/weaponFx.js');
+  assert.match(wfx, /function projectileConf\(family, size\) \{[\s\S]*?_confCache\.get\(key\)/);
+  assert.match(readSrc('src/3d/weapons/liveRange.js'), /attr\.clearUpdateRanges = keepUpdateRanges;/);
 });
 
 test('overlay: adaptacja jakości z histerezą, pusta lista efektów nie zmienia skali', () => {

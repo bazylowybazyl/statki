@@ -81,10 +81,13 @@ test('fireWeaponCore nadaje szyną, CustomEvent zostaje tylko dla superbroni', (
   // Słuchacze obu źródeł.
   assert.match(html, /WeaponShotBus\.on\(onWeaponShotAudio\);/);
   assert.match(html, /window\.addEventListener\('game_weapon_fired', \(e\) => onWeaponShotAudio\(e\.detail\)\);/);
-  const w3d = read('../src/3d/weapon3DSystem.js');
-  assert.match(w3d, /WeaponShotBus\.on\(this\._shotBusListener\)/);
-  assert.match(w3d, /window\.addEventListener\('game_weapon_fired', this\._shotListener\)/);
-  assert.match(w3d, /WeaponShotBus\.off\(this\._shotBusListener\)/);
+  // Słuchacz 3D: WeaponFx (zadanie 17, dawniej weapon3DSystem.js) — tylko szyna. Hexlance woła
+  // efekty wprost z superweapon.js (WeaponFx.hexlanceFire), więc zdarzenia DOM superbroni efekty
+  // NIE słuchają (inaczej podwójny wylot).
+  const wfx = read('../src/3d/weapons/weaponFx.js');
+  assert.match(wfx, /WeaponShotBus\.on\(this\._busListener\)/);
+  assert.doesNotMatch(wfx, /addEventListener\('game_weapon_fired'/);
+  assert.match(read('../src/game/superweapon.js'), /WeaponFx\.hexlanceFire\(/);
 });
 
 // ---------------------------------------------------------------------------

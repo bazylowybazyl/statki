@@ -319,11 +319,21 @@ test('lit surfaces lose the sun term and dim fill; lights, glow and heat stay', 
 test('emitters and the Halo ring never read the sun shadow mask', () => {
   const read = (rel) => readFileSync(new URL(`../src/3d/${rel}`, import.meta.url), 'utf8');
   // Emisja swieci w cieniu jak poza nim — to one maja rozswietlac umbre.
-  for (const rel of ['weapon3DSystem.js', 'mainExhaust3D.js', 'warpPlume3D.js', 'engineExhaustBatch.js',
-    'fxParticles3D.js', 'railgunFx3D.js', 'slugTrail3D.js', 'muzzleFx3D.js', 'shipLights3D.js',
-    'shieldImpactFx.js', 'bridgeFx3D.js']) {
+  // Efekty broni (zadanie 17): pociski, smugi i wiązki z dema bronie-webgpu (src/3d/weapons/).
+  for (const rel of ['mainExhaust3D.js', 'warpPlume3D.js', 'engineExhaustBatch.js',
+    'fxParticles3D.js', 'shipLights3D.js', 'shieldImpactFx.js', 'bridgeFx3D.js',
+    'weapons/projectiles.js', 'weapons/trails.js', 'weapons/beams.js', 'weapons/recipes.js', 'weapons/weaponFx.js']) {
     assert.ok(!/sunShadowUniforms|SUN_SHADOW_GLSL|sunVisibility/.test(read(rel)), `${rel} must not read the sun shadow mask`);
   }
+  // Pule cząstek broni: emisja (ADD, SPARK, ARC, DIST) bez maski; oświetlane słońcem dym i odłamki
+  // gaszą człon słońca maską (sunVisibility), a otoczenie przez sunFill — jak materiały kadłubów.
+  const gpuFx = read('weapons/gpuFx.js');
+  const body = (name) => gpuFx.slice(gpuFx.indexOf(`  ${name}() {`), gpuFx.indexOf('\n  }\n', gpuFx.indexOf(`  ${name}() {`)));
+  for (const name of ['_addMaterial', '_sparkMaterial', '_distMaterial', '_arcMaterial']) {
+    assert.ok(!/sunVisibility|sunFill/.test(body(name)), `gpuFx ${name}: emisja nie czyta maski słońca`);
+  }
+  assert.match(body('_smokeMaterial'), /sunVisibility\(\)[\s\S]*sunFill\(sunVis\)/);
+  assert.match(body('_debrisMaterial'), /U\.sunCol\.mul\(0\.35\)\.mul\(shade\)\.mul\(sunVis\)/);
   // Ring ma wlasny model slonca (zacmienie + cien scian, slonce 49°).
   const ringFiles = ['haloRingGLSL.js', 'haloRingGame.js', 'index.js', 'haloRingTerrain.js', 'haloRingCity.js', 'haloRingMegastructure.js'];
   for (const rel of ringFiles) {

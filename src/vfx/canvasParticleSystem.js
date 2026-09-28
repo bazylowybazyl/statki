@@ -462,15 +462,25 @@ export const CanvasVFX = {
     ActiveCarrier.clear();
   },
 
+  // Wybuch 3D przy śmierci NPC / platformy (spawnExplosionPlasma, spawnDefaultHit): wybuch drona
+  // z dema bronie-webgpu (WeaponFx.droneBlast, zadanie 17 — dawniej fabryka trafienia działka
+  // w overlayu przez spawnProjectileImpact3D, usunięta z fabrykami trafień). Rozmiar jak dawniej.
+  _spawnDeathBlast3D(x, y, scale) {
+    const fx = typeof window !== 'undefined' ? window.WeaponFx : null;
+    if (!fx || !fx.available || !this.isWorldPointNearViewport(x, y, 260)) return;
+    const h = window.ship?.h || 250;
+    fx.droneBlast(x, y, h * 0.18 * Math.max(0.7, scale));
+  },
+
   spawnExplosionPlasma(x, y, scale = 1) {
-    this.spawnProjectileImpact3D('plasma', '#7cff9c', scale, x, y);
+    this._spawnDeathBlast3D(x, y, scale);
     if (!this.enabled) return;
     this.spawnParticle({ x, y }, { x: 0, y: 0 }, 0.1, '#AAFFAA', 4 * scale, true);
     this.spawnShockwave(x, y, { r: 2, maxR: 14 * scale, w: 2, maxLife: 0.15, color: 'rgba(124, 255, 124,' });
   },
-  
+
   spawnDefaultHit(x, y, scale = 1) {
-    this.spawnProjectileImpact3D('default', '#ffd86b', scale, x, y);
+    this._spawnDeathBlast3D(x, y, scale);
     if (!this.enabled) return;
     this.spawnParticle({ x, y }, { x: 0, y: 0 }, 0.15, '#fff5d6', 7 * scale, true);
     this.spawnShockwave(x, y, { r: 4 * scale, maxR: 45 * scale, w: 3 * scale, maxLife: 0.25, color: 'rgba(255, 220, 180,' });
