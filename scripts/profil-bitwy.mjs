@@ -7,6 +7,11 @@
 // --warm: najdłużej tyle sekund bitwy przed profilem (wcześniej, gdy wraków ≥ --wrecks),
 // --prof: sekundy profilu. Plik .cpuprofile (do DevTools → Performance) trafia do --out.
 // Uwaga: sam start Profilera pauzuje stronę na ~0,5 s — liczy się suma, nie pojedyncze klatki.
+// Zadanie 23 (port WebGPU): próbki mają też passy Core3D (draw calle, trójkąty, ms CPU passa) i GPU klatki;
+// --out z próbkami w probki.json; ten sam skrypt na tagu webgl-baseline (skopiuj z dema/rdzen-cdp.js —
+// kasuje profil Chrome) daje porównanie tag ↔ main. Rozbicie profilu: updateHexShips3D, render gry, render
+// Core3D (passy → three) i koszt three na obiekt (renderObject / _renderObjectDirect, łącznie po nazwie).
+//   --seed n: Math.random z ziarnem (mulberry32) — ta sama bitwa na obu wersjach (domyślnie bez).
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -22,10 +27,18 @@ const PROF = Number(arg('prof', 6));
 const ZOOM = Number(arg('zoom', 0.1));
 const WRECKS = Number(arg('wrecks', 90));
 const OUT = arg('out', join(tmpdir(), 'profil-bitwy'));
+const SEED = arg('seed', null);
 mkdirSync(OUT, { recursive: true });
 
 const { server, base } = await startVite(5293);
 const chrome = await startChrome({ width: 1920, height: 1080, webgpu: false });
+// --seed: Math.random z ziarnem przed skryptami strony (ta sama bitwa na tagu i na main — gra bez harnessu,
+// czas prawdziwy).
+if (SEED !== null) {
+  await chrome.cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => { let s = ${Number(SEED) >>> 0};
+    Math.random = () => { s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; })();` });
+}
+const samples = [];
 const { cdp, logs } = chrome;
 const ev = (expr) => evaluate(cdp, expr);
 const report = (label, value) => console.log(label.padEnd(10), typeof value === 'string' ? value : JSON.stringify(value));
@@ -33,10 +46,16 @@ const errors = () => logs.filter((l) => /^\[(error|exception)\]/.test(l) && !/Au
 
 const HUD_EXPR = `(() => { const d = window.__PH.display; const r = (v) => Math.round(v * 100) / 100;
   const live = window.npcs.filter((n) => !n.dead && !n.fighter), lod = window.__hexLodStats;
+  const P = window.__rendererInfo?.passes || window.Core3D?.lastFrameRenderInfo || {};
+  const pass = (k) => (P[k] ? [P[k].calls, Math.round((P[k].triangles || 0) / 1000), r(P[k].ms || 0)] : null);
+  const C = window.Core3D;
   return { fps: d.fps, klatka: r(d.frameMs), p95: r(d.frameP95), fizyka: r(d.physicsTime), rysowanie: r(d.drawTime),
     uHex: r(d.render3dHexUpdateTime), core: r(d.render3dCoreRenderTime), rakiety: r(d.rocketsTime),
     npc: live.length, wrogów: live.filter((n) => !n.friendly).length, wraki: window.wrecks.length,
-    pociski: (window.bullets || []).length, pełne: lod?.fullBodies, smugi: lod?.impostorBodies }; })()`;
+    pociski: (window.bullets || []).length, pełne: lod?.fullBodies, smugi: lod?.impostorBodies,
+    gpu: r(Number(C?.gpuFrameMs) || 0), composer: r(C?.lastFramePerf?.composerMs || 0), renderTotal: r(C?.lastFramePerf?.renderTotalMs || 0),
+    dc: window.__rendererInfo?.calls, ortho: pass('ortho'), fg: pass('fg'), bloom: pass('bloom'), post: pass('post'), tlo: pass('bg') || pass('tlo'),
+    fx: C?.fxStats ? [C.fxStats.dispatches, r(C.fxStats.cpuMs)] : null }; })()`;
 
 try {
   const ready = await navigateAndWait(cdp, `${base}/index.html?dev=1`,
@@ -73,6 +92,7 @@ try {
   while (Date.now() - t0 < WARM * 1000) {
     await sleep(5000);
     const d = await ev(HUD_EXPR);
+    samples.push({ t: Math.round((Date.now() - t0) / 1000), ...d });
     report(`t=${Math.round((Date.now() - t0) / 1000)}`, d);
     if (d.wraki >= WRECKS) break;
   }
@@ -84,6 +104,9 @@ try {
   await sleep(PROF * 1000);
   const { profile } = await cdp.send('Profiler.stop');
   const frames = (await ev('window.__frameId')) - f0;
+  // próbki po profilu (bez narzutu Profilera): stan bitwy w chwili pomiaru
+  for (let i = 0; i < 3; i++) { await sleep(1500); const d = await ev(HUD_EXPR); samples.push({ t: 'po', ...d }); report('po profilu', d); }
+  writeFileSync(join(OUT, 'probki.json'), JSON.stringify({ side: SIDE, zoom: ZOOM, seed: SEED, frames, samples }, null, 1));
   const file = join(OUT, `bitwa-${Date.now()}.cpuprofile`);
   writeFileSync(file, JSON.stringify(profile));
   report('profil', { klatek: frames, s: PROF, plik: file });
@@ -132,6 +155,23 @@ function analyze(profile, frames) {
   };
   breakdown('updateHexShips3D', 3, 0.01);
   breakdown('render', 1, 0.03);
+  // Core3D: renderSingle → render (core3d.js) → passy → three (głębiej: koszt na obiekt w WebGPURenderer)
+  breakdown('renderSingle', 6, 0.03);
+  // three: koszt na obiekt (łącznie po nazwie w całym drzewie — renderObject woła _renderObjectDirect)
+  const byName = new Map();
+  for (const n of nodes.values()) {
+    const fn = n.callFrame.functionName || '(anon)';
+    let dup = false;
+    for (let p = n.parent; p; p = p.parent) if (p.callFrame.functionName === fn) { dup = true; break; }
+    if (dup) continue;
+    byName.set(fn, (byName.get(fn) || 0) + n.total);
+  }
+  console.log('\n-- łącznie (inkluzywnie) wybrane funkcje three / Core3D (ms/klatkę):');
+  for (const fn of ['_renderScene', 'renderObjects', '_renderObjects', 'renderObject', '_renderObjectDirect', 'getRenderObject', 'updateForRender',
+    'getForRender', 'draw', 'setPipeline', 'setBindGroup', 'updateBefore', 'updateAfter', 'onObjectUpdate', 'needsRefresh', 'getNodeBuilderState',
+    'compute', 'writeBuffer', 'projectObject', '_projectObject', 'push', 'sort', 'beginRender', 'finishRender', 'updateMatrixWorld']) {
+    if (byName.has(fn)) console.log(`  ${pf(byName.get(fn)).padStart(7)}  ${fn}`);
+  }
   const self = new Map();
   for (const n of nodes.values()) { const k = nameOf(n); self.set(k, (self.get(k) || 0) + n.self); }
   console.log('\n-- self-time całej strony (ms/klatkę):');

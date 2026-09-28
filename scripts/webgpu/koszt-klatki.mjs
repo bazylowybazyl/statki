@@ -13,6 +13,11 @@
 // --ab:     warianty (A = stan wyjściowy, B = przełączony) z tablicy WARIANTY niżej; bez --ab — sam pomiar.
 // --okno:   klatek na okno wariantu (czas stoi: klatki na żądanie; czas rzeczywisty: tyle klatek gry).
 // --root:   gra z innego drzewa (np. worktree tagu — tylko warianty bez kodu Core3D z portu).
+// --bitwa s: (czas rzeczywisty) sekundy bitwy przed pomiarem, domyślnie 4.
+// --fazy N: koszt fazy WebGPURenderer na obiekt (µs na rysunek) w N klatkach — RenderObjects.get, węzły
+//           (needsRefresh, updateBefore/For/After), geometria, wiązania, pipeline, backend.draw — wg materiału.
+// --spis N: spis obiektów rysowanych w N klatkach wariantu A (pass Core3D | materiał | nazwa obiektu → liczba
+//           rysunków na klatkę) — skąd draw calle i koszt na obiekt w passach (zadanie 23, duża bitwa).
 import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, sleep, repo, osobneLosowanieUuid } from './wspolne.mjs';
@@ -139,7 +144,8 @@ try {
     return true; })()`);
   if (sc.real) {
     await ev(`(() => { window.__harness.hold(false); window.__harness.clock.mode = 'real'; return true; })()`);
-    await sleep(4000);
+    // --bitwa s: dłużej przed pomiarem (wraki, rozbite kadłuby — stan jak profil-bitwy.mjs po ~40 s)
+    await sleep(Math.max(4, Number(args.bitwa || 4)) * 1000);
   }
   // GPU klatki: własne zlecenie rozwiązania zapytań po klatce okna (wynik three = suma passów OSTATNIEJ
   // klatki paczki) — Core3D.gpuFrameMs przychodzi z opóźnieniem kilkudziesięciu klatek i przy przełączaniu
@@ -197,6 +203,77 @@ try {
       klatki: d.cpu.length, okna: d.okna
     };
     console.log(`${n.padEnd(14)} CPU ${wynik.pomiary[n].cpuMs} ms (okna ${wynik.pomiary[n].cpuMedOkien}, ${wynik.pomiary[n].cpuRozrzutOkien.join('…')}) p90 ${wynik.pomiary[n].cpuP90} | odstęp ${wynik.pomiary[n].okresMs} | GPU ${wynik.pomiary[n].gpuMs} | dc ${wynik.pomiary[n].drawCalls} | fx ${wynik.pomiary[n].fxCpuMs}`);
+  }
+  // --fazy N: fazy renderu obiektu (Renderer._renderObjectDirect) wg materiału, µs na rysunek.
+  if (Number(args.fazy) > 0) {
+    const nFrames = Number(args.fazy);
+    for (const w of warianty) await ev(`(${WARIANTY[w]})(false)`);
+    wynik.fazy = await ev(`(async () => {
+      const C = window.Core3D, R = C.renderer;
+      const H = window.__harness; const now = H ? H.realNow : performance.now.bind(performance);
+      const acc = new Map(); let cur = null;
+      const bump = (phase, dt) => { if (!cur) return; const e = acc.get(cur) || { n: 0 }; e[phase] = (e[phase] || 0) + dt; acc.set(cur, e); };
+      const wrap = (obj, name, phase) => { const o = obj[name]; obj[name] = function (...a) { const t0 = now(); try { return o.apply(this, a); } finally { bump(phase, now() - t0); } }; return () => { obj[name] = o; }; };
+      const undo = [
+        wrap(R._objects, 'get', 'get'),
+        wrap(R._nodes, 'needsRefresh', 'needsRefresh'),
+        wrap(R._nodes, 'updateBefore', 'updateBefore'),
+        wrap(R._geometries, 'updateForRender', 'geometrie'),
+        wrap(R._nodes, 'updateForRender', 'wezly'),
+        wrap(R._bindings, 'updateForRender', 'wiazania'),
+        wrap(R._pipelines, 'updateForRender', 'pipeline'),
+        wrap(R.backend, 'draw', 'draw'),
+        wrap(R._nodes, 'updateAfter', 'updateAfter')
+      ];
+      const od = R._renderObjectDirect;
+      R._renderObjectDirect = function (object, material, ...rest) {
+        const prev = cur; cur = material.name || material.type;
+        const t0 = now();
+        try { return od.call(this, object, material, ...rest); } finally {
+          const e = acc.get(cur) || { n: 0 }; e.n++; e.razem = (e.razem || 0) + now() - t0; acc.set(cur, e); cur = prev;
+        }
+      };
+      const frames = ${nFrames};
+      ${sc.real ? "for (let i = 0; i < frames; i++) await new Promise((ok) => requestAnimationFrame(() => ok()));" : "await window.__harness.frames(frames);"}
+      R._renderObjectDirect = od; for (const u of undo) u();
+      const out = {};
+      for (const [k, e] of acc) {
+        if (!e.n) continue;
+        const us = {}; for (const [p, v] of Object.entries(e)) if (p !== 'n') us[p] = +(v * 1000 / e.n).toFixed(2);
+        out[k] = { naKlatke: +(e.n / frames).toFixed(1), usNaRysunek: us };
+      }
+      return out; })()`);
+    const rows = Object.entries(wynik.fazy).sort((a, b) => b[1].naKlatke * (b[1].usNaRysunek.razem || 0) - a[1].naKlatke * (a[1].usNaRysunek.razem || 0));
+    console.log('fazy renderu obiektu (µs na rysunek; razem z zagnieżdżonymi renderami):');
+    for (const [k, v] of rows.slice(0, 14)) console.log(`  ${String(v.naKlatke).padStart(6)} × ${k}: ${JSON.stringify(v.usNaRysunek)}`);
+  }
+  // --spis N: obiekty rysowane w N klatkach (Renderer._renderObjectDirect), pass z Core3D._runScenePass.
+  if (Number(args.spis) > 0) {
+    const nFrames = Number(args.spis);
+    for (const w of warianty) await ev(`(${WARIANTY[w]})(false)`);
+    wynik.spis = await ev(`(async () => {
+      const C = window.Core3D, R = C.renderer;
+      const tally = new Map(); let pass = 'poza passem';
+      const origRun = C._runScenePass, origDirect = R._renderObjectDirect;
+      C._runScenePass = function (p) { const prev = pass; pass = p.bucket || '?'; try { return origRun.call(this, p); } finally { pass = prev; } };
+      R._renderObjectDirect = function (object, material, ...rest) {
+        const name = String(object.name || object.type).replace(/[0-9a-f]{8}-[0-9a-f-]{27}/g, '#').replace(/_\\d+$/, '_N');
+        const k = pass + ' | ' + (material.name || material.type) + ' | ' + name;
+        const H = window.__harness; const now = H ? H.realNow : performance.now.bind(performance);
+        const t0 = now();
+        try { return origDirect.call(this, object, material, ...rest); } finally {
+          const e = tally.get(k) || [0, 0]; e[0]++; e[1] += now() - t0; tally.set(k, e);
+        }
+      };
+      const frames = ${nFrames};
+      ${sc.real ? "for (let i = 0; i < frames; i++) await new Promise((ok) => requestAnimationFrame(() => ok()));" : "await window.__harness.frames(frames);"}
+      C._runScenePass = origRun; R._renderObjectDirect = origDirect;
+      const out = [...tally.entries()].map(([k, v]) => [k, +(v[0] / frames).toFixed(2), +(v[1] / frames).toFixed(3)]).sort((a, b) => b[2] - a[2]);
+      return out; })()`);
+    const perPass = new Map();
+    for (const [k, v, ms] of wynik.spis) { const p = k.split(' | ')[0]; const e = perPass.get(p) || [0, 0]; e[0] += v; e[1] += ms; perPass.set(p, e); }
+    console.log('spis — rysunki / ms CPU na klatkę wg passu (ms z zagnieżdżonymi renderami — bloom, cień):', JSON.stringify(Object.fromEntries([...perPass].map(([p, e]) => [p, [+e[0].toFixed(1), +e[1].toFixed(3)]]))));
+    for (const [k, v, ms] of wynik.spis.slice(0, 50)) console.log(`  ${String(v).padStart(7)} × ${String(ms).padStart(7)} ms  ${k}`);
   }
   // --zapisy N: zapisy do kolejki GPU (queue.writeBuffer / writeTexture) w N klatkach wariantu A —
   // liczba wywołań i bajty na klatkę, grupowane po etykiecie i rozmiarze bufora (skąd koszt „writeBuffer”).
