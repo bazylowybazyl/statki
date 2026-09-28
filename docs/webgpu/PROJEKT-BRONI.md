@@ -252,11 +252,20 @@ Kod: `src/3d/hullDamageMap.js` (sloty, LRU, kolejka, zadania, krok klatki efekt�
   Bez źródła: krater = stempel `generic`, rzaz (`cutSegment` — dziś tylko Hexlance) = znaki rzazu Hexlance'a wzdłuż
   cięcia (kierunek i droga z `hullImpactResult`). Rodzina: `WEAPON_STAMP_FAMILY` (27 broni = kolumna `fx` z 17),
   fallback po kategorii pocisku; moc rozmiaru jak `SIZE_POWER` dema; flak — promień 0,2 × `flakBurstRadius`.
-- **Dla 18-B / 17:** przebicie — wariant w `setSource(…, 'exit' | 'stuck')` wokół krateru wyjścia / zakleszczenia, znaki
-  rzazu w materiale — `stampKerf(e, x0, y0, x1, y1, rodzina)`, stempel bez krateru — `stampAt(e, x, y, rodzina,
-  wariant, dirX, dirY)`. `ctx.stamp` receptur 17 zostaje pusty (inaczej stemple podwójne i zależne od bramki LOD).
-  Wtórne wybuchy Yamato planuje mapa (kolejka opóźniona: uv trafienia + przesunięcie w układzie kadłuba, klucz rodu),
-  `burn` (ogień w wyrwie) to efekt 17 bez stempla.
+- **Receptury (17) — `ctx.stamp` → `HullDamageMap.stampRecipe`** (po scaleniu 17, prośba orkiestratora): stempel w
+  miejscu krateru z haka tej klatki (pierścień 64 kraterów: klucz rodu, punkt, promień) jest pomijany — to samo
+  trafienie, a hak stempluje bez bramki LOD i budżetu 48 receptur na klatkę; resztę mapa kładzie z parametrami
+  receptury: wtórne wybuchy Yamato (w miejscu widocznych wybuchów; punkt zdarzenia opóźnionego przesunięty o ruch
+  nośnika od chwili trafienia — `ActiveCarrier` odtworzony przez `_runAfterQueue`), wiązka ciągła między taktami
+  obrażeń (co klatkę, jak demo), żar płonącej wyrwy (`burnStep`: co 0,25 s stempel żaru `0,6 + 1,4·k` pod ogniem —
+  wyrwa tli się, póki płonie; demo tylko świeciło), rzazy i zakleszczenia przebić (18-B: receptury `kerf` / `stuck`
+  z encją kadłuba). Własna kolejka wtórnych stempli Yamato (pierwsza wersja 18-C) usunięta — dublowała receptury w
+  innych, losowych miejscach. Bitwa 24 × 24 bez tarcz z bronią 17: ~170 stempli/s, w tym ~75/s z receptur (głównie
+  żar wyrw po armatach) i ~66/s pominiętych duplikatów.
+- **Dla 18-B:** przebicie — wariant w `setSource(…, 'exit' | 'stuck')` wokół krateru wyjścia / zakleszczenia (albo bez
+  źródła = stempel ogólny; receptura `stuck` w tym samym punkcie wtedy się nie dubluje), znaki rzazu — receptura
+  `kerf` z encją kadłuba (albo `stampKerf(e, x0, y0, x1, y1, rodzina)`), stempel bez krateru i receptury —
+  `stampAt(e, x, y, rodzina, wariant, dirX, dirY)`.
 - **Przydział (§3.2):** jak w projekcie + klasa przy pierwszym stemplu rodu; kolejność: wolny slot swojej klasy →
   WOLNY slot większej (`upgrades`; nie wypycha dużych kadłubów — w bitwie niszczycieli S zapełnia się pierwsze) → LRU
   swojej klasy → mniejsza klasa (`downgrades`) → brak (`noSlot`); chronione też sloty ze stemplami tej klatki; przejęty slot
