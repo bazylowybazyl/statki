@@ -647,44 +647,49 @@ export function addShipLights(grid, entity, hullLength, ox, oy, opts) {
   _one[0] = entity;
   _emitters.length = 0;
   buildRoadLightWorldEmitters(_one, _emitterOptions);
+  // Reflektory wyłączone (`entity.roadLightsOff`, klawisz L gracza): bez dalekich
+  // i otoczenia — światło dookoła i lampy pozycyjne zostają.
+  const beamsOn = !entity.roadLightsOff;
   // Reflektory dalekie: ze znaczników `road` albo para na dziobie.
   _farCount = 0;
-  for (let i = 0; i < _emitters.length; i++) {
-    const em = _emitters[i];
-    if (!em.flood) pushFar(em.x, em.y, em.dir.x, em.dir.y);
-  }
-  if (!_farCount) {
-    const side = L * 0.035;
-    for (let s = -1; s <= 1; s += 2) pushFar(ex + fx * L * 0.47 - fy * side * s, ey + fy * L * 0.47 + fx * side * s, fx, fy);
-  }
   const a = _axis;
-  for (let i = 0; i < _farCount; i++) {
-    const f = _far[i];
-    spotAxis(f.dx, f.dy, sp.tiltDeg, a);
-    f.ax = a.ax; f.ay = a.ay; f.az = a.az;
-    far.n++;
-    far.x += f.x - ox; far.y += -(f.y - oy);
-    far.ax += a.ax; far.ay += a.ay; far.az += a.az;
-  }
-  far.x /= far.n; far.y /= far.n;
-  const al = Math.hypot(far.ax, far.ay, far.az) || 1;
-  far.ax /= al; far.ay /= al; far.az /= al;
-  far.coneDeg = sp.coneDeg;
-  far.range = range;
-  if (atlas && opts.spotShadows !== false) far.shadow = atlas.request(true, far.x, far.y, sp.z, far.ax, far.ay, far.az, sp.coneDeg, range);
-  const half = Math.max(1, Math.min(170, sp.coneDeg)) * Math.PI / 360;
-  const I = sp.intensity / Math.sqrt(_farCount);
-  for (let i = 0; i < _farCount; i++) {
-    const f = _far[i];
-    grid.add(
-      f.x - ox, -(f.y - oy), sp.z, range,
-      sp.color[0] * I * k, sp.color[1] * I * k, sp.color[2] * I * k,
-      sp.scatter ?? 1, f.ax, f.ay, f.az,
-      Math.cos(half), Math.cos(half * (sp.innerFrac ?? 0.45)), sp.flare ?? 1, far.shadow, owner
-    );
+  if (beamsOn) {
+    for (let i = 0; i < _emitters.length; i++) {
+      const em = _emitters[i];
+      if (!em.flood) pushFar(em.x, em.y, em.dir.x, em.dir.y);
+    }
+    if (!_farCount) {
+      const side = L * 0.035;
+      for (let s = -1; s <= 1; s += 2) pushFar(ex + fx * L * 0.47 - fy * side * s, ey + fy * L * 0.47 + fx * side * s, fx, fy);
+    }
+    for (let i = 0; i < _farCount; i++) {
+      const f = _far[i];
+      spotAxis(f.dx, f.dy, sp.tiltDeg, a);
+      f.ax = a.ax; f.ay = a.ay; f.az = a.az;
+      far.n++;
+      far.x += f.x - ox; far.y += -(f.y - oy);
+      far.ax += a.ax; far.ay += a.ay; far.az += a.az;
+    }
+    far.x /= far.n; far.y /= far.n;
+    const al = Math.hypot(far.ax, far.ay, far.az) || 1;
+    far.ax /= al; far.ay /= al; far.az /= al;
+    far.coneDeg = sp.coneDeg;
+    far.range = range;
+    if (atlas && opts.spotShadows !== false) far.shadow = atlas.request(true, far.x, far.y, sp.z, far.ax, far.ay, far.az, sp.coneDeg, range);
+    const half = Math.max(1, Math.min(170, sp.coneDeg)) * Math.PI / 360;
+    const I = sp.intensity / Math.sqrt(_farCount);
+    for (let i = 0; i < _farCount; i++) {
+      const f = _far[i];
+      grid.add(
+        f.x - ox, -(f.y - oy), sp.z, range,
+        sp.color[0] * I * k, sp.color[1] * I * k, sp.color[2] * I * k,
+        sp.scatter ?? 1, f.ax, f.ay, f.az,
+        Math.cos(half), Math.cos(half * (sp.innerFrac ?? 0.45)), sp.flare ?? 1, far.shadow, owner
+      );
+    }
   }
   // Reflektory otoczenia: rufa i burty (moc z lampy edytora, 1,5 = domyślna).
-  if (opts.floods !== false) {
+  if (beamsOn && opts.floods !== false) {
     const floodRange = Math.min(fl.maxRange, Math.max(fl.minRange, L * fl.rangeMul));
     const fh = Math.max(1, Math.min(170, fl.coneDeg)) * Math.PI / 360;
     for (let i = 0; i < _emitters.length; i++) {

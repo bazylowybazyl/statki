@@ -739,9 +739,11 @@ export const WarpNurt = {
       const e = rec.entity;
       if (e && e.dead && rec.kind === 'arrival') rec.entity = null;
       if (rec.kind === 'arrival') {
-        const fx = rec.fx;
-        // Okręt płynący (warp-in piratów): długość kadłuba znana dopiero po zbudowaniu siatki.
+        // Długość kadłuba znana dopiero po zbudowaniu siatki (warp-in piratów, wezwanie podpięte
+        // w chwili wyrzutu) — przeliczenie PRZED próbką: stan i maska kadłuba z tego samego obiektu
+        // (dawniej klatka przeliczenia szła bez maski odsłaniania).
         if (rec.entity && !rec.sized && rec.entity.beamHull) this._resize(rec);
+        const fx = rec.fx;
         const pose = rec.entity ? entityPose(rec.entity, this._pose) : null;
         const sh = warpArrivalFxState(fx, t, frame, camX, camY, pose);
         shake = Math.max(shake, sh);
@@ -764,7 +766,8 @@ export const WarpNurt = {
         let pose = null;
         if (e && !e.dead) {
           if (d.drive && t >= d.tDive) {
-            // Efekt prowadzi okręt w szczelinie (API — harness, przyszłe odloty).
+            // Efekt prowadzi okręt w szczelinie (POWRÓT skrzydła na Ziemię — src/game/supportWarp.js;
+            // harness). Okręt jest wtedy duchem (isCollidable = false), więc nikogo nie taranuje.
             const p = departFxPose(d, t, this._drivePose);
             if (Number.isFinite(e.x)) { e.x = p.x; e.y = p.y; e.vx = p.vx; e.vy = p.vy; }
             if (e.pos) { e.pos.x = p.x; e.pos.y = p.y; }
@@ -822,8 +825,14 @@ export const WarpNurt = {
     const old = rec.fx;
     const fresh = planWarpArrivalFx({
       x: old.x, y: old.y, angle: old.angle, hullLength: L, hullWidth: Wd, palette: old.pal.id,
-      pirate: old.pirate, moving: old.moving, burstTime: old.tBurst, entity: e, heraldExtra: 0
+      pirate: old.pirate, moving: old.moving, burstTime: old.tBurst, entity: e, heraldExtra: 0,
+      heraldReach: old.heraldReach
     });
+    // Te same przegródki ośrodka (stały indeks na GPU i jednorazowe pchnięcie w chwili wyrzutu):
+    // przeliczenie wypada zwykle klatkę po wyrzucie, gdy gra zbuduje kadłub podpiętego okrętu.
+    fresh.heraldSlot = old.heraldSlot;
+    fresh.pushSlot = old.pushSlot;
+    fresh.pushSlot.releaseT = fresh.tBurst + 0.02;
     if (rec.moving) {
       // Ujście przy dziobie w chwili pojawienia się okrętu (pozycja z pierwszej klatki).
       fresh.mx = rec.x0 + fresh.dirX * L * 0.5;
@@ -855,8 +864,10 @@ export const WarpNurt = {
   },
 
   /**
-   * Wezwanie z interfejsu (Rezerwa, panel wsparcia): wynik spawnCallInShip (encja albo lista) —
-   * każdy okręt kadłubowy wypada z tunelu w chwili pojawienia się (myśliwce bez efektu).
+   * Wezwanie bez zapowiedzi: wynik spawnCallInShip (encja albo lista) — każdy okręt kadłubowy
+   * wypada z tunelu w chwili pojawienia się (myśliwce bez efektu). Zwykłe wezwanie z zakładki
+   * wsparcia idzie z wyprzedzeniem (planArrival + attach, src/game/supportWarp.js); tędy tylko
+   * tryb LINIE i wezwania bez punktu albo przy pełnej puli przylotów.
    */
   arriveAll(result) {
     if (!result) return;
@@ -871,7 +882,8 @@ export const WarpNurt = {
   /**
    * Przylot zaplanowany (zwiastun → rozdarcie → wyrzut): efekt zaczyna się teraz w (x, y), wyrzut
    * po czasie zwiastuna i rozdarcia (albo `burstIn` s) — wołający stawia okręt w grze w chwili
-   * `rec.fx.tBurst` (czas WarpNurt.time) i podpina go `attach(rec, encja)`.
+   * `rec.fx.tBurst` (czas WarpNurt.time) i podpina go `attach(rec, encja)` (wezwania z zakładki
+   * wsparcia: src/game/supportWarp.js). o.heraldReach — nić krótsza (start przy Ziemi).
    */
   planArrival(o) {
     if (!this.initialized || this.arrivals.length >= ARRIVAL_CAP) return null;
@@ -879,7 +891,8 @@ export const WarpNurt = {
       x: o.x, y: o.y, angle: o.angle || 0, hullLength: o.hullLength, hullWidth: o.hullWidth,
       palette: o.palette || 'magenta', pirate: !!o.pirate, moving: false,
       startTime: Number.isFinite(o.burstIn) ? undefined : this.time + (Number(o.delay) || 0),
-      burstTime: Number.isFinite(o.burstIn) ? this.time + o.burstIn : undefined, heraldExtra: o.heraldExtra || 0
+      burstTime: Number.isFinite(o.burstIn) ? this.time + o.burstIn : undefined, heraldExtra: o.heraldExtra || 0,
+      heraldReach: o.heraldReach
     });
     const rec = { kind: 'arrival', fx, entity: null, sized: true, moving: false, x0: o.x, y0: o.y, burstShaken: false };
     this.arrivals.push(rec);

@@ -43,7 +43,9 @@ function newHullFx() {
  * Przylot okrętu (hullLength, hullWidth w j.) do (x, y) z kursem `angle` (świat gry) —
  * (x, y) = środek kadłuba w chwili wyrzutu. startTime — start zwiastuna; burstTime (zamiast
  * startTime) — wyrzut w tej chwili (zwiastun i rozdarcie przed nim). moving — okręt płynie
- * dalej po wyrzucie (odsłanianie płaszczyzną ujścia).
+ * dalej po wyrzucie (odsłanianie płaszczyzną ujścia). heraldReach — nić zwiastuna krótsza niż
+ * HERALD_REACH, gdy znane miejsce startu jest bliżej (wezwanie z Ziemi: nić zaczyna się przy
+ * niej, src/game/supportWarp.js).
  */
 export function planWarpArrivalFx(o) {
   const probe = createWarpArrival({ hullLength: o.hullLength, heraldExtra: o.heraldExtra });
@@ -70,6 +72,8 @@ export function planWarpArrivalFx(o) {
   a.pal = warpPalette(o.palette);
   a.pirate = !!o.pirate;
   a.moving = !!o.moving;
+  const reach = Number(o.heraldReach);
+  a.heraldReach = reach > 0 ? Math.max(L * 2, Math.min(HERALD_REACH, reach)) : HERALD_REACH;
   a.sample = {};
   // Przegródki ośrodka — NIE `a.herald` (to czas zwiastuna z createWarpArrival).
   a.heraldSlot = newWarpSlot();
@@ -101,14 +105,15 @@ export function warpArrivalFxState(a, t, frame, camX, camY, ship) {
   // --- zwiastun: nić do punktu wyjścia i punkt zbierania ---
   if (s.herald > 0.002) {
     const h = a.heraldSlot;
+    const reach = a.heraldReach || HERALD_REACH;
     h.on = true;
-    h.x = a.sx - a.dirX * HERALD_REACH - camX;
-    h.y = a.sy - a.dirY * HERALD_REACH - camY;
+    h.x = a.sx - a.dirX * reach - camX;
+    h.y = a.sy - a.dirY * reach - camY;
     h.angle = a.angle;
     h.vx = 0; h.vy = 0;
     h.R = L * 0.6;
     h.A = 0;
-    h.heraldLen = HERALD_REACH;
+    h.heraldLen = reach;
     h.heraldGain = s.herald * (a.pirate ? 1.2 : 1.0);
     h.pullR = L * 0.45;
     h.pullGain = s.herald;

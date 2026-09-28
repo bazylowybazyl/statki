@@ -102,44 +102,61 @@ const COMBAT_RADIUS = 2600;
 // fregata 2000). Horyzont rośnie z bieżącą prędkością, bo z prędkości
 // przelotowej ciężki okręt hamuje kilka kilometrów.
 // Sprawdza DWA kierunki (do celu i pędu) w JEDNYM zapytaniu do grida i cache'uje
-// wynik per klatkę (window.__frameId).
+// wynik per klatkę (window.__frameId). Najbliższą przeszkodę na kursie do celu
+// zapisuje w npc.__obsBlk — z niej capitalArriveControls liczy objazd.
+// `fresh` — policz bez cache i bez nadpisywania przeszkody (kierunek objazdu).
 const OBSTACLE_LOOK_MIN = 1500;
 const OBSTACLE_LOOK_MAX = 20000;
-function capitalObstacleSpeedCap(npc, d1x, d1y, d2x, d2y, spec) {
+const _obsScratch = { on: false, x: 0, y: 0, vx: 0, vy: 0, c: 0, along: Infinity };
+let _obsCap = Infinity;
+function considerObstacle(npc, o, ox, oy, oR, d1x, d1y, d2x, d2y, has2, look, brake, blk) {
+  const rx = ox - npc.x;
+  const ry = oy - npc.y;
+  const clearance = (npc.radius || 100) + oR + 150;
+  let along = rx * d1x + ry * d1y;
+  if (along > 0 && along <= look) {
+    const perp = Math.abs(-rx * d1y + ry * d1x);
+    if (perp <= clearance) {
+      const v = Math.sqrt(2 * brake * Math.max(0, along - clearance));
+      if (v < _obsCap) _obsCap = v;
+      if (along < blk.along) {
+        blk.on = true;
+        blk.x = ox;
+        blk.y = oy;
+        blk.vx = Number(o.vel?.x ?? o.vx) || 0;
+        blk.vy = Number(o.vel?.y ?? o.vy) || 0;
+        blk.c = clearance;
+        blk.along = along;
+      }
+    }
+  }
+  if (has2) {
+    along = rx * d2x + ry * d2y;
+    if (along > 0 && along <= look) {
+      const perp = Math.abs(-rx * d2y + ry * d2x);
+      if (perp <= clearance) {
+        const v = Math.sqrt(2 * brake * Math.max(0, along - clearance));
+        if (v < _obsCap) _obsCap = v;
+      }
+    }
+  }
+}
+function capitalObstacleSpeedCap(npc, d1x, d1y, d2x, d2y, spec, fresh = false) {
   const fid = window.__frameId;
-  if (fid && npc.__obsCapFid === fid && npc.__obsCapVal !== undefined) return npc.__obsCapVal;
+  if (!fresh && fid && npc.__obsCapFid === fid && npc.__obsCapVal !== undefined) return npc.__obsCapVal;
 
   const brake = spec ? spec.decel * 0.85 : 420;
   const speed = Math.hypot(npc.vx || 0, npc.vy || 0);
   const look = clampNum((speed * speed) / (2 * brake) + 600, OBSTACLE_LOOK_MIN, OBSTACLE_LOOK_MAX);
-  const myR = npc.radius || 100;
   const has2 = Number.isFinite(d2x) && (d2x !== 0 || d2y !== 0);
-  let cap = Infinity;
-  const consider = (ox, oy, oR) => {
-    const rx = ox - npc.x;
-    const ry = oy - npc.y;
-    const clearance = myR + oR + 150;
-    let along = rx * d1x + ry * d1y;
-    if (along > 0 && along <= look) {
-      const perp = Math.abs(-rx * d1y + ry * d1x);
-      if (perp <= clearance) {
-        const v = Math.sqrt(2 * brake * Math.max(0, along - clearance));
-        if (v < cap) cap = v;
-      }
-    }
-    if (has2) {
-      along = rx * d2x + ry * d2y;
-      if (along > 0 && along <= look) {
-        const perp = Math.abs(-rx * d2y + ry * d2x);
-        if (perp <= clearance) {
-          const v = Math.sqrt(2 * brake * Math.max(0, along - clearance));
-          if (v < cap) cap = v;
-        }
-      }
-    }
-  };
+  const blk = fresh ? _obsScratch : (npc.__obsBlk || (npc.__obsBlk = { on: false, x: 0, y: 0, vx: 0, vy: 0, c: 0, along: Infinity }));
+  blk.on = false;
+  blk.along = Infinity;
+  _obsCap = Infinity;
   const ship = window.ship;
-  if (ship && !ship.destroyed && ship.pos) consider(ship.pos.x, ship.pos.y, ship.radius || 220);
+  if (ship && !ship.destroyed && ship.pos) {
+    considerObstacle(npc, ship, ship.pos.x, ship.pos.y, ship.radius || 220, d1x, d1y, d2x, d2y, has2, look, brake, blk);
+  }
   if (window.queryAIGrid) {
     const q = window.queryAIGrid(npc.x, npc.y, look);
     const buf = q.buffer;
@@ -147,11 +164,49 @@ function capitalObstacleSpeedCap(npc, d1x, d1y, d2x, d2y, spec) {
     for (let i = 0; i < n; i++) {
       const o = buf[i];
       if (!o || o === npc || o.dead || o === ship || o.fighter) continue;
-      consider(o.x, o.y, o.radius || 100);
+      considerObstacle(npc, o, o.x, o.y, o.radius || 100, d1x, d1y, d2x, d2y, has2, look, brake, blk);
     }
   }
-  if (fid) { npc.__obsCapFid = fid; npc.__obsCapVal = cap; }
+  const cap = _obsCap;
+  if (!fresh && fid) { npc.__obsCapFid = fid; npc.__obsCapVal = cap; }
   return cap;
+}
+
+// Objazd przeszkody: gdy gracz albo inny okręt leży na prostej do celu BLIŻEJ niż
+// cel, lecimy do punktu na stycznej do jego okręgu bezpieczeństwa, po tej
+// stronie, po której leży cel. Sam ogranicznik prędkości kazał przed przeszkodą
+// hamować do zera — okręt, którego miejsce w szyku leżało po drugiej stronie
+// gracza, stawał przy nim na zawsze (prędkość 0, cel „za" graczem).
+const DETOUR_MARGIN = 1.15;
+const _detour = { x: 0, y: 0, dx: 0, dy: 0 };
+function computeObstacleDetour(npc, tx, ty, blk, out) {
+  const rx = blk.x - npc.x;
+  const ry = blk.y - npc.y;
+  const d = Math.hypot(rx, ry);
+  if (d < 1e-3) return false;
+  const ux = rx / d;
+  const uy = ry / d;
+  let side = Math.sign(ux * (ty - npc.y) - uy * (tx - npc.x));
+  if (side === 0) side = ((Number(npc.__formUid) || 1) & 1) ? 1 : -1;
+  const c = blk.c * DETOUR_MARGIN;
+  let a;
+  let len;
+  if (d > c) {
+    // Styczna do okręgu bezpieczeństwa po stronie celu.
+    a = side * Math.asin(c / d);
+    len = Math.max(600, Math.sqrt(d * d - c * c));
+  } else {
+    // Już w okręgu: w bok i trochę na zewnątrz.
+    a = side * (Math.PI / 2 + 0.35);
+    len = 800;
+  }
+  const cs = Math.cos(a);
+  const sn = Math.sin(a);
+  out.dx = ux * cs - uy * sn;
+  out.dy = ux * sn + uy * cs;
+  out.x = npc.x + out.dx * len;
+  out.y = npc.y + out.dy * len;
+  return true;
 }
 
 // Od jakiej odległości od punktu kadłub zaczyna odwracać się z kursu lotu na
@@ -179,27 +234,41 @@ function capitalArriveControls(npc, tx, ty, opts = {}) {
   if (Number(opts.speedMul) > 0) speedLimit *= Number(opts.speedMul);
 
   let approachCap = Infinity;
+  let aimX = tx;
+  let aimY = ty;
+  let aimArrival = arrival;
+  let refVx = Number(opts.matchVx) || 0;
+  let refVy = Number(opts.matchVy) || 0;
+  let face = Number.isFinite(opts.combatFacing) ? opts.combatFacing : NaN;
   if (!opts.noObstacleCap) {
     const invD = dist > 1e-4 ? 1 / dist : 0;
     const vlen = Math.hypot(npc.vx || 0, npc.vy || 0);
     const useVel = vlen > 40;
-    approachCap = capitalObstacleSpeedCap(
-      npc, dx * invD, dy * invD,
-      useVel ? (npc.vx || 0) / vlen : 0,
-      useVel ? (npc.vy || 0) / vlen : 0,
-      spec
-    );
+    const vdx = useVel ? (npc.vx || 0) / vlen : 0;
+    const vdy = useVel ? (npc.vy || 0) / vlen : 0;
+    approachCap = capitalObstacleSpeedCap(npc, dx * invD, dy * invD, vdx, vdy, spec);
+    // Przeszkoda przed celem — objazd po stycznej (punkt pośredni jedzie z nią).
+    const blk = npc.__obsBlk;
+    if (blk && blk.on && blk.along < dist - arrival && computeObstacleDetour(npc, tx, ty, blk, _detour)) {
+      aimX = _detour.x;
+      aimY = _detour.y;
+      aimArrival = 0;
+      refVx = blk.vx;
+      refVy = blk.vy;
+      approachCap = capitalObstacleSpeedCap(npc, _detour.dx, _detour.dy, vdx, vdy, spec, true);
+      // Objazd dziobem naprzód — ciężki kadłub ma słabe dysze boczne.
+      face = NaN;
+    }
   }
 
-  const face = Number.isFinite(opts.combatFacing) ? opts.combatFacing : NaN;
   const faceBlend = Number.isFinite(opts.faceBlend) ? opts.faceBlend : resolveFaceBlend(spec);
-  setFlightArrive(npc, tx, ty, {
-    arrival,
+  setFlightArrive(npc, aimX, aimY, {
+    arrival: aimArrival,
     speedLimit,
     approachCap,
     noBrake: opts.noBrake === true,
-    refVx: Number(opts.matchVx) || 0,
-    refVy: Number(opts.matchVy) || 0,
+    refVx,
+    refVy,
     face,
     faceNear: arrival,
     faceFar: arrival + faceBlend
@@ -314,10 +383,20 @@ function computeHoldPoint(npc, tk, target, idealRange, dt) {
   };
 }
 
-// Walka bez slotu floty: trzymaj dystans bojowy (bateria główna × osobowość,
-// dłuższy pod presją — jak flux w Starsectorze) na kotwiczonym namiarze. Daleko
-// od celu: dolot z bonusem przelotowym, dziobem do przodu.
-function engageTarget(npc, target, dt, arrival = 40) {
+// Pozycja miejsca w szyku „teraz" — getBattleSlot ekstrapoluje ją od chwili
+// przebudowy szyku (miejsce jedzie z graczem / okrętem flagowym).
+function slotPosX(slot) { return Number.isFinite(slot.cx) ? slot.cx : slot.x; }
+function slotPosY(slot) { return Number.isFinite(slot.cy) ? slot.cy : slot.y; }
+
+// Walka: trzymaj dystans bojowy (bateria główna × osobowość, dłuższy pod
+// presją — jak flux w Starsectorze) na kotwiczonym namiarze. Daleko od celu:
+// dolot z bonusem przelotowym, dziobem do przodu.
+// `slot` — miejsce w szyku ze smyczą postawy (fleetCoordinator): punkt
+// trzymania nie odejdzie od miejsca dalej niż slot.leash. Przy ESKORCIE okręt
+// walczy wokół swojego miejsca (eskorta — przy swoim okręcie flagowym), zamiast
+// gonić wroga przez pół mapy; przy ATAKU smycz eskorty jest dłuższa (poluje
+// w zasięgu swojej grupy).
+function engageTarget(npc, target, dt, arrival = 40, slot = null) {
   const tk = readTargetKinematics(target);
   const dist = Math.hypot(tk.x - npc.x, tk.y - npc.y);
   const combatFacing = resolveCombatFacing(npc, Math.atan2(tk.y - npc.y, tk.x - npc.x));
@@ -330,10 +409,28 @@ function engageTarget(npc, target, dt, arrival = 40) {
   const clearance = (Number(npc.radius) || 60) + (Number(target.radius) || 60) + 300;
   const band = resolveHoldRange(dist, idealRange, personality, pressure, clearance);
   const hold = computeHoldPoint(npc, tk, target, band.range, dt);
+  let matchVx = band.holding ? 0 : tk.vx;
+  let matchVy = band.holding ? 0 : tk.vy;
+  const leash = slot ? Number(slot.leash) : Infinity;
+  if (Number.isFinite(leash)) {
+    const sx = slotPosX(slot);
+    const sy = slotPosY(slot);
+    const dx = hold.x - sx;
+    const dy = hold.y - sy;
+    const d = Math.hypot(dx, dy);
+    if (d > leash) {
+      const k = leash / d;
+      hold.x = sx + dx * k;
+      hold.y = sy + dy * k;
+      // Na granicy smyczy jedziemy z miejscem w szyku, nie z celem.
+      matchVx = Number(slot.vx) || 0;
+      matchVy = Number(slot.vy) || 0;
+    }
+  }
   return capitalArriveControls(npc, hold.x, hold.y, {
     arrival,
-    matchVx: band.holding ? 0 : tk.vx,
-    matchVy: band.holding ? 0 : tk.vy,
+    matchVx,
+    matchVy,
     speedMode: dist > band.range * 1.5 ? 'cruise' : 'combat',
     combatFacing
   });
@@ -396,8 +493,9 @@ function tryRocketDodge(npc, dt) {
   }
 }
 
-// Dojście do slotu linii. Slot jedzie z frontem (i z wrogiem), więc pilot
-// dostaje jego prędkość — okręt płynie razem z linią, zamiast skokami ją gonić.
+// Dojście do slotu linii. Slot jedzie z frontem (i z wrogiem, albo z graczem
+// przy ESKORCIE), więc pilot dostaje jego prędkość — okręt płynie razem z linią,
+// zamiast skokami ją gonić.
 function goToSlot(npc, slot, combatFacing, arrival, target = null) {
   let speedMode = slot.phase === 'engage' ? 'combat' : 'cruise';
   if (target) {
@@ -405,7 +503,7 @@ function goToSlot(npc, slot, combatFacing, arrival, target = null) {
     const dist = Math.hypot(tk.x - npc.x, tk.y - npc.y);
     speedMode = dist > resolveCapitalIdealRange(npc, target) * 1.5 ? 'cruise' : 'combat';
   }
-  return capitalArriveControls(npc, slot.x, slot.y, {
+  return capitalArriveControls(npc, slotPosX(slot), slotPosY(slot), {
     arrival,
     speedMode,
     combatFacing,
@@ -414,20 +512,115 @@ function goToSlot(npc, slot, combatFacing, arrival, target = null) {
   });
 }
 
-// Czy okręt ze slotem linii może wyłamać się i walczyć na własną rękę:
-// w fazie zbliżania dopiero, gdy wróg jest praktycznie na jego dystansie
-// (flota idzie razem), w fazie walki — gdy cel jest w rozsądnym zasięgu.
-function shouldBreakFormation(npc, slot, target) {
-  if (!slot || slot.kind !== 'line') return true;
-  const tk = readTargetKinematics(target);
-  const dist = Math.hypot(tk.x - npc.x, tk.y - npc.y);
-  const ideal = resolveCapitalIdealRange(npc, target);
-  if (slot.phase === 'engage') return dist <= ideal * 1.6 + 1500;
-  return dist <= ideal * 1.15;
+// Szyk przelotowy (bez wroga): miejsce na pierścieniu grupy wokół gracza albo
+// eskorty wokół okrętu flagowego. Kadłub w kierunku marszu szyku — flota leci
+// jednym kursem; daleko od miejsca dziobem do przodu (pilot sam miesza kursy).
+// Wróg w zasięgu — działa na niego, miejsce w szyku zostaje.
+function goToCruiseSlot(npc, slot, target = null) {
+  const sx = slotPosX(slot);
+  const sy = slotPosY(slot);
+  const dist = Math.hypot(sx - npc.x, sy - npc.y);
+  let facing = Number.isFinite(slot.facing) ? slot.facing : NaN;
+  if (target) {
+    const tk = readTargetKinematics(target);
+    const d = Math.hypot(tk.x - npc.x, tk.y - npc.y);
+    if (d <= resolveCapitalIdealRange(npc, target) * 1.3) {
+      facing = resolveCombatFacing(npc, Math.atan2(tk.y - npc.y, tk.x - npc.x));
+    }
+  }
+  return capitalArriveControls(npc, sx, sy, {
+    arrival: Math.max(60, (Number(npc.radius) || 60) * 0.35),
+    matchVx: Number(slot.vx) || 0,
+    matchVy: Number(slot.vy) || 0,
+    speedMode: dist > 3000 ? 'travel' : 'cruise',
+    combatFacing: facing
+  });
 }
 
 function isProjectileTarget(t) {
   return !!t && (t.type === 'rocket' || t.type === 'torpedo');
+}
+
+const _reachScratch = { x: 0, y: 0, vx: 0, vy: 0 };
+
+// Czy okręt z miejscem w szyku może wyjść z niego, żeby walczyć:
+//  - w fazie zbliżania (front ATAKU) dopiero, gdy wróg jest praktycznie na jego
+//    dystansie — flota idzie razem;
+//  - poza nią — gdy cel jest w zasięgu reakcji liczonym od MIEJSCA (slot.engageR:
+//    przy ESKORCIE dystans bojowy + smycz — eskorta bije to, co zbliża się do jej
+//    grupy; przy ATAKU 1,6× dystansu + 1,5 km).
+function mayLeaveFormation(npc, slot, target) {
+  if (!slot) return true;
+  const tk = readTargetKinematics(target, _reachScratch);
+  if (slot.phase === 'advance' || slot.phase === 'search') {
+    return Math.hypot(tk.x - npc.x, tk.y - npc.y) <= resolveCapitalIdealRange(npc, target) * 1.15;
+  }
+  const reach = Number.isFinite(slot.engageR)
+    ? slot.engageR
+    : resolveCapitalIdealRange(npc, target) * 1.6 + 1500;
+  return Math.hypot(tk.x - slotPosX(slot), tk.y - slotPosY(slot)) <= reach;
+}
+
+// Cel ruchu eskorty: przy ESKORCIE grupa bije w cel swojego okrętu flagowego
+// (skupiony ogień, eskorta zostaje przy nim), o ile dosięgnie go ze swojego
+// miejsca. Przy ATAKU eskorta poluje na własny cel, a cel okrętu flagowego
+// bierze dopiero, gdy swojego nie ma.
+function pickGroupFocus(npc, slot, own) {
+  if (!slot || slot.role !== 'escort') return own;
+  const leader = slot.leader;
+  if (!leader || leader.dead) return own;
+  const lt = (leader.forceTarget && !leader.forceTarget.dead) ? leader.forceTarget : leader.target;
+  if (!lt || lt === own || lt.dead || lt.destroyed || isProjectileTarget(lt)) return own;
+  if (slot.stance === 'engage' && own) return own;
+  if (window.isEnemyUnit && !window.isEnemyUnit(npc, lt)) return own;
+  return mayLeaveFormation(npc, slot, lt) ? lt : own;
+}
+
+// Ruch okrętu w szyku floty — wspólny dla fregat, niszczycieli i pancerników:
+//  - flanka (ATAK, faza walki) — obejście dużego celu od tyłu;
+//  - walka: okręt bez miejsca w szyku walczy swobodnie; OKRĘT FLAGOWY trzyma
+//    swoje miejsce i wychodzi z niego tylko, gdy wróg wszedł za blisko; ESKORTA
+//    wychodzi, gdy cel jest w jej zasięgu reakcji (mayLeaveFormation) — zawsze
+//    na smyczy postawy (engageTarget);
+//  - inaczej dojście do miejsca w linii albo w szyku przelotowym.
+// Zwraca, co zrobił ('flank' | 'engage' | 'slot' | 'cruise'), albo null, gdy
+// nie ma ani celu, ani miejsca (mózg sam decyduje, co dalej).
+function steerWithFormation(npc, slot, target, dt, engageArrival, slotArrival) {
+  if (slot && slot.kind === 'flank') {
+    computeFlankControls(npc, slot);
+    return 'flank';
+  }
+  if (target) {
+    let engage;
+    if (!slot) {
+      engage = true;
+    } else if (slot.role === 'leader') {
+      const tk = readTargetKinematics(target, _reachScratch);
+      engage = Math.hypot(tk.x - npc.x, tk.y - npc.y) < resolveCapitalIdealRange(npc, target) * 0.6;
+    } else {
+      engage = mayLeaveFormation(npc, slot, target);
+    }
+    if (engage) {
+      engageTarget(npc, target, dt, engageArrival, slot);
+      return 'engage';
+    }
+  }
+  if (slot && slot.kind === 'line') {
+    let facing;
+    if (target) {
+      const tk = readTargetKinematics(target);
+      facing = resolveCombatFacing(npc, Math.atan2(tk.y - npc.y, tk.x - npc.x));
+    } else {
+      facing = resolveCombatFacing(npc, slot.facing);
+    }
+    goToSlot(npc, slot, facing, slotArrival, target);
+    return 'slot';
+  }
+  if (slot && slot.kind === 'cruise') {
+    goToCruiseSlot(npc, slot, target);
+    return 'cruise';
+  }
+  return null;
 }
 
 function entityVelX(e) { return Number(e?.vel?.x ?? e?.vx) || 0; }
@@ -1004,9 +1197,10 @@ export function processAutonomousWeapons(npc, dt) {
 // 3. MÓZGI NAWIGACYJNE
 // ============================================================================
 //
-// Każdy mózg decyduje GDZIE być i JAK stać (slot linii, flanka, dystans od
-// celu, eskorta), ustawia intencję przez capitalArriveControls/…Idle, a na
-// końcu commitCapitalFlight dokłada separację. Samym lotem zajmuje się pilot.
+// Każdy mózg decyduje GDZIE być i JAK stać (miejsce w szyku grupy, flanka,
+// dystans od celu, eskorta), ustawia intencję przez capitalArriveControls/…Idle,
+// a na końcu commitCapitalFlight dokłada separację. Samym lotem zajmuje się
+// pilot. Część wspólną (szyk, smycz postawy) robi steerWithFormation.
 
 export function aiFrigate(sim, npc, dt) {
   const isSupport = !!npc.supportData;
@@ -1041,7 +1235,7 @@ export function aiFrigate(sim, npc, dt) {
     // Cel z obrazu sytuacji floty (czujniki wszystkich okrętów strony + smycz
     // postawy). Dawne sztywne ~3,2 km sprawiało, że fregata nie widziała wroga,
     // którego gracz miał na radarze. Kiedy walczyć na własną rękę, a kiedy
-    // trzymać szyk, rozstrzyga niżej shouldBreakFormation.
+    // trzymać szyk, rozstrzyga niżej steerWithFormation (smycz miejsca w szyku).
     if (!bestTarget) bestTarget = window.aiPickTarget?.(npc) || null;
 
     npc.target = bestTarget || null;
@@ -1051,29 +1245,23 @@ export function aiFrigate(sim, npc, dt) {
   let target = (npc.forceTarget && !npc.forceTarget.dead) ? npc.forceTarget : npc.target;
   if (target && target.dead) target = null;
 
-  // Smycz eskorty: skrzydło wsparcia w ESKORCIE nie oddala się od lidera
-  // dalej niż promień obrony (ten sam, którym obraz sytuacji filtruje cele).
+  const slot = getBattleSlot(npc);
+
+  // Smycz eskorty bez miejsca w szyku (dowódca floty nie dał slotu): skrzydło
+  // wsparcia poza ATAKIEM nie oddala się od lidera dalej niż promień obrony.
+  // Z miejscem w szyku smycz niesie slot (leash / engageR postawy).
   const guardOrder = isSupport && (window.SupportWing?.order || 'guard') !== 'engage';
-  if (guardOrder && guardian && distToGuard > AWARENESS_CONFIG.guardRadius) {
+  if (!slot && guardOrder && guardian && distToGuard > AWARENESS_CONFIG.guardRadius) {
     target = null;
     npc.target = null;
   }
   // Rakieta jako cel to robota działek PD, nie powód, żeby cały kadłub
   // trzymał wokół niej dystans.
   const shipTarget = (target && !isProjectileTarget(target)) ? target : null;
+  const moveTarget = pickGroupFocus(npc, slot, shipTarget);
 
-  const slot = getBattleSlot(npc);
-
-  if (slot && slot.kind === 'flank' && !guardOrder) {
-    computeFlankControls(npc, slot);
-  } else if (shipTarget && shouldBreakFormation(npc, slot, shipTarget)) {
-    engageTarget(npc, shipTarget, dt, 30);
-  } else if (slot && slot.kind === 'line') {
-    const tk = shipTarget ? readTargetKinematics(shipTarget) : null;
-    const facing = tk
-      ? resolveCombatFacing(npc, Math.atan2(tk.y - npc.y, tk.x - npc.x))
-      : resolveCombatFacing(npc, slot.facing);
-    goToSlot(npc, slot, facing, 60, shipTarget);
+  if (steerWithFormation(npc, slot, moveTarget, dt, 30, 60)) {
+    // szyk, flanka albo walka na smyczy
   } else if (guardian) {
     // Eskorta: w promieniu eskorty dopasowujemy prędkość lidera (lecimy
     // razem, zamiast stawać i doganiać), dalej — dolot, szybki gdy daleko.
@@ -1110,34 +1298,26 @@ export function aiDestroyer(sim, npc, dt) {
   if (target && target.dead) target = null;
 
   const slot = getBattleSlot(npc);
+  const moveTarget = pickGroupFocus(npc, slot, target);
+  const mode = steerWithFormation(npc, slot, moveTarget, dt, 40, 55);
 
-  if (slot && slot.kind === 'flank') {
-    const flank = computeFlankControls(npc, slot);
+  if (mode === 'flank') {
     // Dopalacz na dojście do flanki (jak burn drive w Starsectorze).
-    if (flank.distToVictim > slot.dist * 2.2 && npc.boostCd <= 0) {
+    const tk = readTargetKinematics(slot.target);
+    if (Math.hypot(tk.x - npc.x, tk.y - npc.y) > slot.dist * 2.2 && npc.boostCd <= 0) {
       npc.boostT = npc.boostDur || 2.2;
       npc.boostCd = 12.0;
     }
-  } else if (target && !target.dead) {
-    const tk = readTargetKinematics(target);
-    const toAng = Math.atan2(tk.y - npc.y, tk.x - npc.x);
-    const combatFacing = resolveCombatFacing(npc, toAng);
-    const idealRange = resolveCapitalIdealRange(npc, target);
+  } else if (mode === 'engage') {
+    // Dopalacz na dolot do dalekiego celu (bez smyczy; na smyczy nie ma dokąd pędzić).
+    const tk = readTargetKinematics(moveTarget);
     const dist = Math.hypot(tk.x - npc.x, tk.y - npc.y);
-
-    if (dist > Math.max(2800, idealRange * 1.8) && npc.boostCd <= 0) {
+    if (!(slot && Number.isFinite(slot.leash))
+      && dist > Math.max(2800, resolveCapitalIdealRange(npc, moveTarget) * 1.8) && npc.boostCd <= 0) {
       npc.boostT = npc.boostDur || 2.5;
       npc.boostCd = 12.0;
     }
-
-    if (slot && slot.kind === 'line' && dist > idealRange * 0.7) {
-      goToSlot(npc, slot, combatFacing, 50, target);
-    } else {
-      engageTarget(npc, target, dt, 40);
-    }
-  } else if (slot && slot.kind === 'line') {
-    goToSlot(npc, slot, resolveCombatFacing(npc, slot.facing), 60);
-  } else {
+  } else if (!mode) {
     capitalIdleControls(npc);
   }
 
@@ -1156,24 +1336,11 @@ export function aiBattleship(sim, npc, dt) {
 
   const slot = getBattleSlot(npc);
 
-  if (target && !target.dead) {
-    const tk = readTargetKinematics(target);
-    const toAng = Math.atan2(tk.y - npc.y, tk.x - npc.x);
-    const dist = Math.hypot(tk.x - npc.x, tk.y - npc.y);
-    const idealRange = resolveCapitalIdealRange(npc, target);
-    const combatFacing = resolveCombatFacing(npc, toAng);
-
-    const tooClose = dist < idealRange * 0.6;
-    if (slot && slot.kind === 'line' && !tooClose) {
-      // Trzymaj slot w linii bitewnej — flota walczy jako front, nie karuzela.
-      goToSlot(npc, slot, combatFacing, Math.max(50, (npc.radius || 100) * 0.4), target);
-    } else {
-      // Samotny okręt (albo wróg wszedł za blisko): trzymaj dystans.
-      engageTarget(npc, target, dt, 40);
-    }
-  } else if (slot && slot.kind === 'line') {
-    goToSlot(npc, slot, resolveCombatFacing(npc, slot.facing), 80);
-  } else {
+  // Okręt flagowy grupy trzyma swoje miejsce w linii — flota walczy jako front,
+  // nie karuzela; wychodzi z niego (na smyczy postawy) tylko wtedy, gdy wróg
+  // wszedł za blisko. Samotny okręt (bez miejsca w szyku) trzyma dystans od celu.
+  const arrival = Math.max(50, (npc.radius || 100) * 0.4);
+  if (!steerWithFormation(npc, slot, target, dt, 40, arrival)) {
     capitalIdleControls(npc);
   }
 

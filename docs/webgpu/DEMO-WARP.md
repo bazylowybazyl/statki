@@ -155,13 +155,17 @@ opis w `agents.md`, Core3D „Warp „Nurt””). Co poszło gdzie i czym róż
   Opcja gracza „Kop kamery przy warpie” (menu → Sterowanie, `OPTIONS.cameraWarpKick`), strojenie `warp*` w
   `cameraRigTune` (F12 → Kamera panel). Tylko gracz 1 (P2 nie ma warpa) i kamera statku; poza nią oddalenie wraca
   do zoomu gracza (RTS bierze `cameraZoomBase`).
-- *Przyloty NPC* (`arrivals.js`): warp-in piratów (`npc.state === 'warping_in'`) i wezwania
-  (`WarpNurt.arriveAll`) — rozgrywka zna okręt dopiero w chwili pojawienia się, więc wyrzut jest „teraz”
-  (bez zwiastuna i rozdarcia przed nim); pełna oś ze zwiastunem przez API (`planArrival` /
-  `planFleetArrival` + `attach` — harness, przyszłe wezwania z wyprzedzeniem). Okręt stoi tam, gdzie
-  postawiła go gra (w demie wysuwa się o 0,45 L) — ujście jak w demie, odsłanianie w czasie.
+- *Przyloty NPC* (`arrivals.js`): warp-in piratów (`npc.state === 'warping_in'`) — wyrzut „teraz”
+  (rozgrywka zna okręt dopiero w chwili pojawienia się). Wezwania z zakładki wsparcia (2026-09-28,
+  `src/game/supportWarp.js`, `callInSupport` w index.html) — pełna oś jak w scenie 3 dema: przylot
+  planowany (`planArrival`), nić zwiastuna od strony Ziemi (piraci ze spawnera dev — od losowego pola pasa
+  asteroid; `heraldReach` skraca nić, gdy start jest bliżej niż 60 tys. j.), kurs przylotu = start →
+  punkt, a okręt powstaje w grze w chwili wyrzutu i dostaje `attach`. Okręt stoi tam, gdzie postawiła go
+  gra (w demie wysuwa się o 0,45 L) — ujście jak w demie, odsłanianie w czasie. Myśliwce, tryb LINIE
+  i wezwania bez punktu — `arriveAll` (wyrzut „teraz”).
 - *Odlot NPC*: oś w `warpDrive.js` (`createWarpDeparture` / `sampleWarpDeparture`, 1:1 z dema), efekt
-  `WarpNurt.depart(npc, { drive })` — gra dziś nikogo tak nie odsyła (API gotowe).
+  `WarpNurt.depart(npc, { drive })` — rozkaz skrzydła POWRÓT (obrót dziobem do Ziemi, ładowanie,
+  szczelina, okręt znika i wypada z gry bez wraku; magazynu floty jeszcze nie ma).
 - *Zgięcie tła*: nie osobny pass, tylko materiał mgławicy (`skyBend.js`) — tło gry to jedna warstwa
   (mgławica, gwiazdy, dół ringu), a gnie się tylko mgławica, jak w demie. Gwiazdy: smugi z `stars.js`.
 - *Duszki* (`sprites.js`) z kolanem bloomu (`bloomKnee.js`): bloom gry ma ×3 zgodności z WebGL, którego

@@ -808,7 +808,7 @@
       npcHasPhysicalThrusters,
       syncNpcFlightState
     } from "./src/game/flight/npcFlight.js";
-    import { stepShipFlight, usesShipFlightModel } from "./src/game/flight/shipFlightModel.js";
+    import { setFlightArrive, setFlightStop, stepShipFlight, usesShipFlightModel } from "./src/game/flight/shipFlightModel.js";
     import {
       createNpcCollisionBody,
       loadNpcCollisionBody,
@@ -816,7 +816,7 @@
       storeNpcCollisionBody
     } from "./src/game/npcCollisionBody.js";
     import { describeFleetAwareness, pickContactTarget } from "./src/ai/fleetAwareness.js";
-    import { getFleetPhase } from "./src/ai/fleetCoordinator.js";
+    import { describeFleetFormation, getFleetPhase } from "./src/ai/fleetCoordinator.js";
     import { applyNpcCommandIntent } from "./src/ai/npcCommandPilot.js";
     import {
       buildNormalCommandMenuItems,
@@ -1169,10 +1169,11 @@
       getCallInSpawnPolicy,
       normalizeCallInSpawnMode
     } from "./src/game/callInSpawnPolicy.js";
+    import { createSupportWarpCallIns, createSupportReturn, supportWarpCourse } from "./src/game/supportWarp.js";
     import { PLAYER_EDITOR_DEFAULTS, SHIP_EDITOR_DEFAULTS } from "./src/data/hardpointEditorDefaults.js";
     import { migratePirateSpriteLayout } from "./src/data/pirateSpriteMigration.js";
     import { createNpcHardpointRuntime } from "./src/game/npcHardpointRuntime.js";
-    import { buildEntityEngineFx } from "./src/data/engineFx.js";
+    import { buildEntityEngineFx, resolveEngineFx } from "./src/data/engineFx.js";
     import {
       BRIDGE_EVENT,
       applyBridgeHulkVisuals,
@@ -1504,7 +1505,7 @@
             if (!carrier) return;
             spawnCallInShip('fighter', { anchor: carrier, mode });
           } else {
-            WarpNurt.arriveAll(spawnCallInShip(key, { mode }));
+            callInSupport(key, { mode });
           }
           // Rozkaz skrzydła zostaje, jaki był (ATAK nie znika po przyzwaniu).
         });
@@ -1583,7 +1584,8 @@
         const mode = getSupportSpawnMode();
         // Rozkaz skrzydła zostaje, jaki był — dawniej każde przyzwanie
         // przestawiało CAŁE skrzydło na ESKORTĘ i kasowało kliknięty ATAK.
-        WarpNurt.arriveAll(spawnCallInShip(key, { spawnPos: world, pos: world, mode }));
+        // Przylot tunelem od Ziemi, okręt w grze w chwili wyrzutu (callInSupport).
+        callInSupport(key, { spawnPos: world, pos: world, mode });
       }
       mouse.left = false;
       mouse.click = false;
@@ -2729,7 +2731,7 @@
         const forward = (SUPPORT_FORMATION.lead + lineIndex * SUPPORT_FORMATION.lineGap);
         const leaderLocal = { x: forward, y: lateral };
         // local.x = wzdłuż dziobu, local.y = na burty — ta sama konwencja co
-        // skrzydłowi niżej i gałąź capitali. Dawne `leaderAng - PI/2` obracało
+        // skrzydłowi niżej. Dawne `leaderAng - PI/2` obracało
         // szyk o 90°: eskadry wisiały 1400 u z BOKU i ciągnęły się wzdłuż kadłuba.
         const leaderRotated = rotate(leaderLocal, leaderAng);
 
@@ -2746,29 +2748,36 @@
         };
       }
 
-      // Formacja abreast — capitale rozmieszczone na boki od gracza
+      // Okręty: szyk grup bojowych liczy dowódca floty (src/ai/fleetCoordinator.js
+      // + fleetFormation.js) i mózgi same do niego lecą. Tu tylko zapas na chwilę
+      // przed pierwszą przebudową szyku po wezwaniu: zwarty pierścień wokół lidera
+      // z luką przed dziobem. (Dawny szyk „abreast" stawiał okręty naprzemiennie
+      // na boki co 1500 j. — 60 wezwanych dawało linię na ±45 km.)
       const allCapitals = SupportWing.units.filter(u => u && !u.npc?.dead && u.type !== 'fighter');
       const capitalIndex = Math.max(0, allCapitals.indexOf(data));
       const capitalCount = Math.max(1, allCapitals.length);
-
-      // Symetryczne rozmieszczenie: 1→prawo, 2→lewo, 3→prawo dalej, 4→lewo dalej...
-      const side = (capitalIndex % 2 === 0) ? 1 : -1;
-      const tier = Math.floor(capitalIndex / 2) + 1;
-      const lateral = side * tier * SUPPORT_FORMATION.lateralGap;
-
-      // Lekki offset w przód/tył per typ (fregaty bliżej, pancerniki dalej)
-      const forward = SUPPORT_FORMATION.lead + lineIndex * SUPPORT_FORMATION.lineGap;
-
-      // local.x = wzdłuż dziobu, local.y = na burty. Obrót o SAM leaderAng
-      // (wcześniej -PI/2 obracał formację o 90° → okręty stawały przed/za dziobem
-      // zamiast po bokach).
-      const local = { x: forward, y: lateral };
-      const rotated = rotate(local, leaderAng);
-      return { x: leaderPos.x + rotated.x, y: leaderPos.y + rotated.y };
+      const ringRadius = Math.max(2600, (capitalCount * 900) / (Math.PI * 2));
+      const ringAngle = leaderAng + Math.PI / capitalCount + (Math.PI * 2 * capitalIndex) / capitalCount;
+      return {
+        x: leaderPos.x + Math.cos(ringAngle) * ringRadius,
+        y: leaderPos.y + Math.sin(ringAngle) * ringRadius
+      };
     }
 
     function setSupportOrder(order, opts = {}) {
       const normalized = order === 'engage' ? 'engage' : 'guard';
+      // Kliknięty rozkaz skrzydła obejmuje CAŁE skrzydło: okręty z pojedynczym
+      // rozkazem RTS (ruch, orbita, STÓJ) wracają do szyku swojej grupy — także
+      // przy ponownym kliknięciu tej samej postawy („zbiórka"). Samoczynny powrót
+      // do ESKORTY po bitwie (updateSupportWing) rozkazów RTS nie rusza.
+      if (opts.regroup) {
+        for (const data of SupportWing.units) {
+          const unit = data?.npc;
+          if (!unit || unit.dead || unit.__warpReturn) continue;
+          unit.command = null;
+          unit.forceTarget = null;
+        }
+      }
       if (SupportWing.order === normalized && !opts.force) return;
       SupportWing.order = normalized;
 
@@ -2803,19 +2812,23 @@
 
     window.CockpitSupport = {
       setFaction: faction => setSupportFaction(faction, { force: true }),
-      setOrder: order => setSupportOrder(order === 'engage' ? 'engage' : 'guard', { force: true }),
+      setOrder: order => setSupportOrder(order === 'engage' ? 'engage' : 'guard', { force: true, regroup: true }),
+      // POWRÓT — jednorazowy rozkaz, nie postawa: skrzydło skacze tunelem na Ziemię (niżej).
+      returnToEarth: () => returnSupportWingToEarth(),
       getFaction: () => getSupportFaction(),
       getOrder: () => SupportWing.order
     };
     setSupportFaction(SupportWing.faction, { force: true });
 
     function cleanupSupportWing() {
-      SupportWing.units = SupportWing.units.filter(data => data?.npc && !data.npc.dead);
+      // Martwe i wracające na Ziemię (rozkaz POWRÓT) wypadają ze skrzydła.
+      SupportWing.units = SupportWing.units.filter(data => data?.npc && !data.npc.dead && !data.npc.__warpReturn);
       SupportWing.units.forEach((data, idx) => { data.slotIndex = idx; });
     }
 
     function getFriendlyCarrierEntity() {
-      const carrierEntry = Fleet?.ships?.find(s => s?.type === 'carrier' && s.entity && !s.entity.dead);
+      // Lotniskowiec wracający na Ziemię już się nie liczy — można wezwać następny.
+      const carrierEntry = Fleet?.ships?.find(s => s?.type === 'carrier' && s.entity && !s.entity.dead && !s.entity.__warpReturn);
       return carrierEntry?.entity || null;
     }
 
@@ -3576,10 +3589,11 @@
       }
 
       // 3. Wykonanie AI
-      // Gdy koordynator dał slot bitewny (flota zaangażowana), wchodzimy w tryb
-      // bojowy NAWET bez bezpośredniego celu — mózg bojowy poleci do slotu w
-      // linii i tam sam namierzy wroga (obraz sytuacji floty). Bez tego
-      // support wing orbitował gracza (guard), zamiast formować front.
+      // Gdy dowódca floty dał miejsce w szyku (przelotowym wokół gracza albo
+      // bojowym), okręt prowadzi mózg bojowy NAWET bez bezpośredniego celu — leci
+      // do miejsca w swojej grupie, a broń (także PD) działa cały czas. Dawniej
+      // bez celu skrzydło szło do supportGuardSlot bez broni; ten zostaje dla
+      // myśliwców i na chwilę przed pierwszym szykiem po wezwaniu.
       const hasBattleSlot = window.getBattleSlot ? !!window.getBattleSlot(npc) : false;
       if (target || hasBattleSlot) {
         // --- TRYB BOJOWY ---
@@ -5229,6 +5243,7 @@
         driveShiftCueIntensity: driveState.shiftCueIntensity,
         driveShiftCueDanger: driveState.shiftCueDanger,
         driveAuto: driveState.auto,
+        roadLights: !ship?.roadLightsOff,
         driveShiftBoost: driveState.shiftBoostTimer > 0,
         driveSpeedLimit: driveState.speedLimit,
         driveModeMaxSpeed: driveState.modeMaxSpeed
@@ -7212,7 +7227,8 @@
     window.updateNpcHangars = updateNpcHangars;
 
     function spawnCarrierFighter(carrier, squadronId, idx, tube, slotInTube) {
-      if (!carrier || carrier.dead) return;
+      // Lotniskowiec w drodze na Ziemię (POWRÓT) już nikogo nie wypuszcza.
+      if (!carrier || carrier.dead || carrier.__warpReturn) return;
       if (tube?.hp?.destroyed) return;
       const tmpl = (squadronId === 'interceptor')
         ? (SUPPORT_SHIP_TEMPLATES.interceptor || SUPPORT_SHIP_TEMPLATES.fighter)
@@ -7852,6 +7868,238 @@
     window.spawnMegafreighterTrain = spawnMegafreighterTrain;
     window.spawnFriendlyCarrier = spawnFriendlyCarrier;
     window.spawnFriendlySupercapital = spawnFriendlySupercapital;
+
+    // === WEZWANIA I POWRÓT PRZEZ TUNEL WARPA „NURT” (src/game/supportWarp.js) ===
+    // Magazynu floty jeszcze nie ma, więc portem macierzystym wezwań jest Ziemia. Wezwanie z zakładki
+    // wsparcia: kurs przylotu Ziemia → punkt upuszczenia karty, nić zwiastuna od strony Ziemi,
+    // rozdarcie — a okręt staje w grze dopiero w chwili wyrzutu (demo warp-webgpu, scena 3).
+    // Piraci (spawner „Piraci”) przylatują z losowego pola pasa asteroid. Rozkaz POWRÓT: skrzydło
+    // obraca się dziobami do Ziemi, ładuje skok i znika w szczelinach — wypada z gry bez wraku,
+    // łupu i wybuchu.
+    function getSupportWarpHome() {
+      const earth = planets.find(p => p?.id === 'earth');
+      return earth && Number.isFinite(earth.x) && Number.isFinite(earth.y) ? earth : null;
+    }
+
+    // Losowy punkt pasa głównego (równomiernie po powierzchni pierścienia), najchętniej w gęstym
+    // polu skał (AsteroidBeltField.sampleMacro: cluster — pola zajmują ~15% pasa); bez pola po
+    // 48 losowaniach — dowolny punkt pasa, bez pasa — null.
+    const PIRATE_CALL_IN_FIELD_MIN = 0.25;
+    function pickPirateCallInOrigin() {
+      const belt = ASTEROID_BELT;
+      if (!belt || !(belt.outer > belt.inner)) return null;
+      const field = asteroidBelt?.field || null;
+      const r0sq = belt.inner * belt.inner;
+      const r1sq = belt.outer * belt.outer;
+      let first = null;
+      for (let i = 0; i < 48; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const r = Math.sqrt(r0sq + Math.random() * (r1sq - r0sq));
+        const x = SUN.x + Math.cos(a) * r;
+        const y = SUN.y + Math.sin(a) * r;
+        if (!first) first = { x, y };
+        if (!field) break;
+        if (field.sampleMacro(x, y).cluster > PIRATE_CALL_IN_FIELD_MIN) return { x, y };
+      }
+      return first;
+    }
+
+    // Wymiary kadłuba wezwania PRZED spawnem (szczelina i nić rosną z długością kadłuba) — tą samą
+    // drogą co budowa kadłuba (getNpcHexInitSource → HullBodies.createHull): profil renderu
+    // (getHullRenderSize) i proporcje sprite'a. Po wyrzucie efekt i tak przelicza się z kadłuba
+    // (WarpNurt.attach). null — myśliwce i wezwania bez kadłuba (spawn od razu, jak dawniej).
+    function estimateCallInHull(key, mode) {
+      const dev = DEV_HULL_SPAWNS[key];
+      let profileId = null;
+      let isPirate = false;
+      let spriteSrc = null;
+      if (dev) {
+        profileId = dev.hull;
+        isPirate = mode === 'pirate';
+      } else {
+        const capital = CAPITAL_SHIP_TEMPLATES[key] || null;
+        const template = capital || SUPPORT_SHIP_TEMPLATES[key];
+        if (!template) return null;
+        const policy = getCallInSpawnPolicy(mode, template);
+        profileId = getCallInHullFrame(capital ? key : resolveCallInTypeKey(key, template), policy, template);
+        isPirate = policy.isPirate;
+        spriteSrc = capital?.profile?.spriteSrc || null;
+      }
+      if (!profileId) return null;
+      const src = HULL_SPRITE_PATHS_BY_ID[profileId] || TRAFFIC_HULLS[profileId]?.sprite || null;
+      const sprite = src ? loadHullSprite(src) : (spriteSrc ? getCapitalShipSprite(spriteSrc) : null);
+      const ready = !!(sprite && sprite.ready && !sprite.error);
+      const size = getHullRenderSize(profileId, ready ? sprite.width : 0, ready ? sprite.height : 0);
+      return {
+        length: size.w,
+        width: size.h,
+        pirate: isPirate,
+        palette: isPirate ? 'crimson' : (resolveEngineFx(profileId).warpPalette || 'magenta')
+      };
+    }
+
+    // Okręt z tunelu stoi na kursie przylotu (Ziemia → punkt), w spoczynku w świecie — jak w demie.
+    // Wagony megafrachtowca obracają się tylko za sprzęgiem (desiredAngle = NaN zostaje).
+    function placeWarpCallIn(list, req) {
+      for (const e of list) {
+        if (!e || e.dead) continue;
+        e.angle = req.angle;
+        if (!e.towTrainChild) e.desiredAngle = req.angle;
+        e.angVel = 0;
+        e.vx = 0;
+        e.vy = 0;
+        if (e.vel) { e.vel.x = 0; e.vel.y = 0; }
+      }
+    }
+
+    const supportCallIns = createSupportWarpCallIns({
+      warp: WarpNurt,
+      spawn: (req) => {
+        const result = spawnCallInShip(req.key, req.opts);
+        // Skład megafrachtowca: głowa dostaje zaplanowany przylot, wagony wypadają w tej samej chwili.
+        if (result && !Array.isArray(result) && Array.isArray(result.towTrainModules)) return result.towTrainModules.slice();
+        return result;
+      },
+      isHull: (e) => !!e && typeof e === 'object' && !e.dead && !e.fighter && !e.isFighter,
+      onSpawned: placeWarpCallIn
+    });
+
+    // Wezwanie z zakładki wsparcia (kokpit: window.callInSupport). Z punktem upuszczenia — przylot
+    // tunelem z wyprzedzeniem (zwiastun → rozdarcie → wyrzut) od Ziemi, piraci od losowego pola
+    // pasa asteroid; okręt powstaje w chwili wyrzutu. Bez punktu (myśliwce z kliknięcia), bez
+    // kadłuba albo przy pełnej puli przylotów — spawn od razu i wyrzut „teraz”, jak dawniej.
+    // Zwraca { planned, eta [s], from: 'earth' | 'belt' } albo null.
+    function callInSupport(key, opts = {}) {
+      const mode = normalizeCallInSpawnMode(opts.mode ?? getSupportSpawnMode());
+      // Lotniskowiec Terra Novy jest jeden: kolejne wezwanie oddaje istniejący (spawnCapitalCallIn).
+      if (key === 'carrier' && mode === 'friendly' && getFriendlyCarrierEntity()) {
+        return { planned: false, eta: 0, existing: true };
+      }
+      const pos = opts.spawnPos || opts.pos || null;
+      const hull = (pos && Number.isFinite(pos.x) && Number.isFinite(pos.y)) ? estimateCallInHull(key, mode) : null;
+      if (hull) {
+        const home = hull.pirate ? pickPirateCallInOrigin() : getSupportWarpHome();
+        const fallbackAngle = hull.pirate ? Math.random() * Math.PI * 2 : (ship?.angle || 0);
+        const angle = home ? supportWarpCourse(home, pos, fallbackAngle) : fallbackAngle;
+        // Nić zwiastuna zaczyna się w miejscu startu, gdy to jest bliżej niż zasięg nici (60 tys. j.).
+        const homeDist = home ? Math.hypot(pos.x - home.x, pos.y - home.y) - (Number(home.r) || 0) : Infinity;
+        const at = { x: pos.x, y: pos.y };
+        const rec = supportCallIns.request({
+          x: at.x, y: at.y, angle, hullLength: hull.length, hullWidth: hull.width,
+          palette: hull.palette, pirate: hull.pirate, heraldReach: homeDist,
+          key, opts: { ...opts, mode, spawnPos: at, pos: at, angle, spawnAngle: angle }
+        });
+        if (rec) return { planned: true, eta: Math.max(0, rec.fx.tBurst - WarpNurt.time), from: hull.pirate ? 'belt' : 'earth' };
+      }
+      const result = spawnCallInShip(key, { ...opts, mode });
+      if (!result || (Array.isArray(result) && result.length === 0)) return null;
+      WarpNurt.arriveAll(result);
+      return { planned: false, eta: 0 };
+    }
+    window.callInSupport = callInSupport;
+
+    const supportReturn = createSupportReturn({
+      warp: WarpNurt,
+      origin: getSupportWarpHome,
+      hold: holdSupportReturnUnit,
+      keep: keepSupportReturnUnit,
+      dive: diveSupportReturnUnit,
+      remove: dematerializeSupportUnit
+    });
+
+    // Wracająca jednostka nie walczy i nie słucha RTS — steruje nią tylko powrót.
+    function releaseSupportReturnUnit(npc) {
+      npc.ai = null;
+      npc.command = null;
+      npc.target = null;
+      npc.forceTarget = null;
+      npc.combatDisabled = true;
+      npc.__battleSlot = null;
+      Selection.units.delete(npc);
+    }
+
+    function clearReturnFlightExtras(it) {
+      it.sepAx = 0;
+      it.sepAy = 0;
+      it.dodgeT = 0;
+      it.boost = false;
+    }
+
+    // Hamowanie i dziób do Ziemi (okręty: intencja modelu lotu; myśliwce i reszta — jak STÓJ RTS).
+    function holdSupportReturnUnit(npc, face, dt) {
+      npc.command = null;
+      if (usesShipFlightModel(npc)) {
+        clearReturnFlightExtras(setFlightStop(npc, face));
+        return;
+      }
+      softBrakeNpc(npc, dt, 1.35);
+      npc.desiredAngle = face;
+    }
+
+    // Ładowanie: punkt skoku i szczelina leżą w świecie przed dziobem — okręt trzyma pozycję
+    // z chwili startu ładowania (efekt poprowadzi go w szczelinę z tego miejsca).
+    function keepSupportReturnUnit(npc, x, y, face, dt) {
+      npc.command = null;
+      if (usesShipFlightModel(npc)) {
+        clearReturnFlightExtras(setFlightArrive(npc, x, y, { arrival: 0, speedMode: 'combat', face, faceNear: 0, faceFar: 0 }));
+        return;
+      }
+      softBrakeNpc(npc, dt, 2);
+      npc.desiredAngle = face;
+    }
+
+    // Wejście w szczelinę prowadzi efekt (WarpNurt.depart, drive): duch bez zderzeń i trafień,
+    // jak przylot 'warping_in'; resztkę obrotu dociągamy do kursu.
+    function diveSupportReturnUnit(npc, angle) {
+      npc.isCollidable = false;
+      npc.angle = angle;
+      npc.desiredAngle = angle;
+      npc.angVel = 0;
+      if (usesShipFlightModel(npc)) clearReturnFlightExtras(setFlightStop(npc, angle));
+    }
+
+    // Okręt zniknął w tunelu: wypada z gry bez wraku, łupu i wybuchu (magazynu floty jeszcze nie
+    // ma). Martwy NPC misji bez kadłuba wypada z npcs przy najbliższym purgeFinishedNpcs.
+    function dematerializeSupportUnit(npc) {
+      if (!npc || npc.dead) return;
+      npc.dead = true;
+      npc.removed = true;
+      npc.warpedOut = true;
+      npc.isCollidable = false;
+      npc.__warpNurtMode = null;
+      TowSystem.detachBody(npc, 'warp-return');
+      releaseNpcHexBody(npc);
+      const fleetIndex = Fleet.ships.findIndex(entry => entry?.entity === npc);
+      if (fleetIndex >= 0) Fleet.ships.splice(fleetIndex, 1);
+      forgetPurgedNpc(npc);
+    }
+
+    // Rozkaz POWRÓT (kokpit: CockpitSupport.returnToEarth): całe skrzydło — i myśliwce z hangarów
+    // wracających lotniskowców — skacze na Ziemię. Zwraca liczbę odesłanych jednostek.
+    function returnSupportWingToEarth() {
+      const list = [];
+      for (const data of SupportWing.units) {
+        const npc = data?.npc;
+        if (!npc || npc.dead || npc.__warpReturn || list.includes(npc)) continue;
+        list.push(npc);
+        const hangar = npc.__hangarFighters;
+        if (!Array.isArray(hangar)) continue;
+        for (const f of hangar) if (f && !f.dead && !f.__warpReturn && !list.includes(f)) list.push(f);
+      }
+      const count = supportReturn.begin(list);
+      for (const npc of list) if (npc.__warpReturn) releaseSupportReturnUnit(npc);
+      // Wracające jednostki nie należą już do skrzydła (szyk, rozkazy, panel Skrzydło).
+      cleanupSupportWing();
+      return count;
+    }
+    window.returnSupportWingToEarth = returnSupportWingToEarth;
+
+    // Klatka przed render(): spawn wezwań w klatce wyrzutu i kroki powrotów — zegar efektu
+    // (WarpNurt.time) przesuwa render tej klatki o `frameDt`.
+    function stepSupportWarp(frameDt) {
+      supportCallIns.flush(frameDt);
+      supportReturn.step(frameDt, frameDt);
+    }
 
     function initFleet() {
       Fleet.ships.length = 0;
@@ -9575,7 +9823,8 @@
     window.FleetAIDebug = () => {
       const phase = (side) => {
         const st = getFleetPhase(side);
-        return st ? { phase: st.phase, members: st.members, threats: st.threats, frontDist: Math.round(st.frontDist) || null } : null;
+        // groups — grupy bojowe (okręt flagowy + liczba eskort), src/ai/fleetFormation.js.
+        return st ? { phase: st.phase, members: st.members, threats: st.threats, frontDist: Math.round(st.frontDist) || null, groups: describeFleetFormation(side) } : null;
       };
       const out = { awareness: describeFleetAwareness(), friendly: phase('friendly'), pirate: phase('pirate'), wingOrder: SupportWing?.order };
       console.log(out);
@@ -14393,6 +14642,12 @@
       if (k === 'c') {
         flightAssist.damper = !flightAssist.damper;
         pushZoneMessage(flightAssist.damper ? 'Gravity Damper: ON' : 'Gravity Damper: OFF', 1.2);
+      }
+      // Reflektory (drogowe i otoczenia) gracza — lampy pozycyjne zostają. W trybie
+      // wydobycia L należy do platformy (miningKeyDown wyżej).
+      if (k === 'l' && !e.repeat && ship) {
+        ship.roadLightsOff = !ship.roadLightsOff;
+        pushZoneMessage(ship.roadLightsOff ? 'Reflektory: OFF' : 'Reflektory: ON', 1.2);
       }
       if (k === 'b') {
         setFlightStabilizerEnabled(!flightAssist.stabilizer);
@@ -22882,6 +23137,9 @@
       const tRockets0 = performance.now();
       if (window.rocketSystem3D) window.rocketSystem3D.update(frame);
       const rocketsMs = performance.now() - tRockets0;
+      // Wezwania i POWRÓT skrzydła tunelem warpa (src/game/supportWarp.js): spawn w klatce wyrzutu,
+      // duch i usunięcie odlatujących — przed render(), który przesuwa zegar efektu o `frame`.
+      stepSupportWarp(frame);
       render(alpha, frame);
       PerfHUD.addTiming('drawTime', performance.now() - tDraw0 - rocketsMs);
 
@@ -26884,10 +27142,10 @@
       applyQualitySelection();
     }
     if (supportGuardBtn) {
-      supportGuardBtn.addEventListener('click', () => setSupportOrder('guard', { force: true }));
+      supportGuardBtn.addEventListener('click', () => setSupportOrder('guard', { force: true, regroup: true }));
     }
     if (supportEngageBtn) {
-      supportEngageBtn.addEventListener('click', () => setSupportOrder('engage', { force: true }));
+      supportEngageBtn.addEventListener('click', () => setSupportOrder('engage', { force: true, regroup: true }));
     }
     if (supportFactionTerranBtn) {
       supportFactionTerranBtn.addEventListener('click', () => setSupportFaction('terran', { force: true }));

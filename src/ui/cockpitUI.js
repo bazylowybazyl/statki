@@ -93,7 +93,9 @@ const SUPPORT_FACTIONS = Object.freeze({
     ]
   }
 });
-const SUPPORT_ORDER_LABELS = Object.freeze({ guard: 'ESKORTA', engage: 'ATAK', hold: 'STÓJ' });
+// Postawy skrzydła. Trzeci przycisk, POWRÓT, to jednorazowy rozkaz (skok tunelem na Ziemię —
+// src/game/supportWarp.js), nie postawa: ESKORTA / ATAK zostaje dla kolejnych wezwań.
+const SUPPORT_ORDER_LABELS = Object.freeze({ guard: 'ESKORTA', engage: 'ATAK' });
 
 // Pasek broni: te same klawisze 1–6 co dotąd; stan z buildWeaponHudState() w index.html.
 const WEAPON_SLOTS = Object.freeze([
@@ -116,7 +118,12 @@ const TELLTALES = Object.freeze([
   { id: 'stab', label: 'STAB', color: '#60e8ff', title: 'Stabilizator kursu [B]' },
   { id: 'damp', label: 'DAMP', color: '#b58cff', title: 'Tłumik grawitacyjny [C]' },
   { id: 'boost', label: 'BOOST', color: '#ffb347', title: 'Dopalacz / boost po zmianie biegu' },
-  { id: 'warp', label: 'WARP', color: '#6fd3ff', title: 'Napęd warp [9]' }
+  { id: 'warp', label: 'WARP', color: '#6fd3ff', title: 'Napęd warp [9]' },
+  // Symbol świateł drogowych jak w aucie: reflektor z prostymi promieniami.
+  {
+    id: 'lights', label: 'ŚWIATŁA', color: '#4f9bff', title: 'Reflektory — wł./wył. [L]',
+    icon: '<svg viewBox="0 0 24 16" aria-hidden="true"><path d="M11 2.5c-3.2 0-5 2.5-5 5.5s1.8 5.5 5 5.5c1.2 0 2-.9 2-2.4V4.9c0-1.5-.8-2.4-2-2.4z" fill="currentColor"/><path d="M15.5 3.5h7M15.5 6.5h7M15.5 9.5h7M15.5 12.5h7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>'
+  }
 ]);
 const ALERT_TONES = Object.freeze({
   status: 'info', info: 'info', orbit: 'info',
@@ -424,7 +431,7 @@ function cockpitMarkup(devMode) {
             <footer class="panel-orders pointer-only" id="supportOrders">
               <button class="tech-button active" type="button" data-order="guard">ESKORTA</button>
               <button class="tech-button" type="button" data-order="engage">ATAK</button>
-              <button class="tech-button" type="button" data-order="hold">STÓJ</button>
+              <button class="tech-button" type="button" data-order="return" title="Skrzydło skacze tunelem warpa na Ziemię">POWRÓT</button>
             </footer>
             <div class="panel-hint no-pointer"><kbd>Alt</kbd> rozkazy skrzydła</div>
           </section>
@@ -902,7 +909,12 @@ export class CockpitUI {
       element.className = 'telltale';
       element.style.setProperty('--c', definition.color);
       element.title = definition.title;
-      element.textContent = definition.label;
+      if (definition.icon) {
+        element.classList.add('telltale-icon');
+        element.innerHTML = definition.icon;
+      } else {
+        element.textContent = definition.label;
+      }
       root.appendChild(element);
       this.telltaleEls.push({ definition, element, on: null, blink: null });
     }
@@ -919,6 +931,7 @@ export class CockpitUI {
         case 'damp': on = !!window.flightAssist?.damper; break;
         case 'boost': on = !!environment.boostActive || !!systems.driveShiftBoost; break;
         case 'warp': on = warpState === 'active' || warpState === 'charging'; blink = warpState === 'charging'; break;
+        case 'lights': on = systems.roadLights !== false; break;
         default: break;
       }
       if (item.on !== on) { item.on = on; item.element.classList.toggle('on', on); }
@@ -1690,10 +1703,26 @@ export class CockpitUI {
   }
 
   setSupportOrder(order) {
-    const normalized = order === 'engage' ? 'engage' : order === 'hold' ? 'hold' : 'guard';
+    if (order === 'return') {
+      this.returnSupportWing();
+      return;
+    }
+    const normalized = order === 'engage' ? 'engage' : 'guard';
     window.CockpitSupport?.setOrder?.(normalized);
     this.syncSupportOrderButtons(normalized);
     this.log(`Rozkaz skrzydła: ${SUPPORT_ORDER_LABELS[normalized]}`, 'orbit');
+  }
+
+  // POWRÓT: jednostki skrzydła obracają się dziobami do Ziemi, ładują skok i znikają w szczelinach
+  // warpa (magazynu floty jeszcze nie ma — wypadają z gry). Postawa skrzydła się nie zmienia.
+  returnSupportWing() {
+    const count = window.CockpitSupport?.returnToEarth?.() || 0;
+    if (!count) {
+      this.toast('Skrzydło: brak jednostek do odesłania', 'warn');
+      return;
+    }
+    this.toast(`POWRÓT — ${count} jedn. skacze na Ziemię`, 'good');
+    this.log(`Rozkaz skrzydła: POWRÓT — ${count} jedn. w tunelu na Ziemię`, 'orbit');
   }
 
   syncSupportOrderButtons(order) {
@@ -1941,14 +1970,25 @@ export class CockpitUI {
 
   spawnSupport(key, spawnPos) {
     const faction = SUPPORT_FACTIONS[this.supportFaction];
-    const result = window.spawnCallInShip?.(key, { mode: faction.mode, ...(spawnPos ? { spawnPos, pos: spawnPos } : {}) });
-    // Okręt wypada z tunelu warpa „Nurt” w chwili pojawienia się (sam wygląd, src/3d/warp/warpNurt.js).
-    if (result) window.WarpNurt?.arriveAll?.(result);
-    if (result) {
-      // Rozkaz skrzydła zostaje, jaki był — dawniej przyzwanie przestawiało całe
-      // skrzydło na ESKORTĘ i kasowało wcześniej kliknięty ATAK.
-      this.toast(`${faction.label}: ${key} — call-in`, 'good');
-      this.log(`Wsparcie ${faction.label}: przyzwano ${key}`, 'ok');
+    const name = faction.roster.find(item => item.key === key)?.name || key;
+    // Okręt przylatuje tunelem warpa „Nurt” od strony Ziemi (piraci — z losowego pola pasa
+    // asteroid): nić zwiastuna, rozdarcie, a w grze staje dopiero w chwili wyrzutu (index.html:
+    // callInSupport, src/game/supportWarp.js). Myśliwce (kliknięcie, bez punktu) — od razu.
+    const call = window.callInSupport?.(key, { mode: faction.mode, ...(spawnPos ? { spawnPos, pos: spawnPos } : {}) });
+    if (!call) return;
+    if (call.existing) {
+      this.toast(`${faction.label}: ${name} już jest w skrzydle`, 'warn');
+      return;
+    }
+    // Rozkaz skrzydła zostaje, jaki był — dawniej przyzwanie przestawiało całe
+    // skrzydło na ESKORTĘ i kasowało wcześniej kliknięty ATAK.
+    if (call.planned) {
+      const from = call.from === 'belt' ? 'z pasa asteroid' : 'z Ziemi';
+      this.toast(`${faction.label}: ${name} — skok ${from}`, 'good');
+      this.log(`Wsparcie ${faction.label}: ${name} w tunelu ${from}, wyjście za ${call.eta.toFixed(1).replace('.', ',')} s`, 'ok');
+    } else {
+      this.toast(`${faction.label}: ${name} — call-in`, 'good');
+      this.log(`Wsparcie ${faction.label}: przyzwano ${name}`, 'ok');
     }
   }
 

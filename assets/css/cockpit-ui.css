@@ -502,6 +502,9 @@ button:focus-visible,
   border-color: color-mix(in srgb, var(--c) 55%, transparent); color: var(--c); text-shadow: 0 0 6px var(--c);
   box-shadow: 0 0 10px color-mix(in srgb, var(--c) 35%, transparent), inset 0 0 6px color-mix(in srgb, var(--c) 18%, transparent);
 }
+.telltale-icon { display: inline-flex; align-items: center; padding: 1px 5px; }
+.telltale-icon svg { display: block; width: auto; height: 1.15em; }
+.telltale-icon.on svg { filter: drop-shadow(0 0 3px var(--c)); }
 .telltale.on.blink { animation: telltale-blink 0.9s steps(2, jump-none) infinite; }
 /* Komunikaty statku (pushZoneMessage, toasty) — nad klastrem, max 2 naraz. */
 .alert-line {

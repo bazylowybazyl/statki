@@ -139,8 +139,11 @@ test('escort order does not chase a fleet far from the player', () => {
     }
     stepShipFlight(escort, DT);
   }
-  assert.equal(Coord.getFleetPhase('friendly').phase, 'idle', 'ESKORTA nie rusza na wroga 40 km od gracza');
-  assert.ok(Math.hypot(escort.x, escort.y - 2000) < 1500, 'eskorta odpłynęła od gracza');
+  // Bez zagrożenia w smyczy eskorta leci w szyku przelotowym wokół gracza
+  // (src/ai/fleetFormation.js), zamiast ruszać na wroga.
+  assert.equal(Coord.getFleetPhase('friendly').phase, 'cruise', 'ESKORTA nie rusza na wroga 40 km od gracza');
+  assert.ok(Math.hypot(escort.x, escort.y) < 4000, `eskorta odpłynęła od gracza: ${Math.hypot(escort.x, escort.y).toFixed(0)} u`);
+  assert.equal(Coord.getBattleSlot(escort)?.kind, 'cruise');
 
   // Ten sam wróg w promieniu obrony — skrzydło przechwytuje.
   raider.x = 11000;

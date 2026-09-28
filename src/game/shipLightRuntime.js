@@ -175,8 +175,24 @@ export function getEntityLights(entity) {
     addAutoFloodMarkers(block, source.autoFlood !== false);
     normalizedLightsCache.set(source, block);
   }
+  // Reflektory wyłączone (`entity.roadLightsOff`, klawisz L gracza): ten sam blok bez
+  // lamp `road` i `flood` — pozycyjne i długość obrysu zostają. Wariant w cache per źródło.
+  if (entity.roadLightsOff) {
+    let dark = darkLightsCache.get(block);
+    if (dark === undefined) {
+      dark = {
+        [LIGHT_KINDS.POSITION]: block[LIGHT_KINDS.POSITION],
+        [LIGHT_KINDS.ROAD]: EMPTY_LIGHTS_BLOCK[LIGHT_KINDS.ROAD],
+        [LIGHT_KINDS.FLOOD]: EMPTY_LIGHTS_BLOCK[LIGHT_KINDS.FLOOD],
+        hullLenPx: block.hullLenPx
+      };
+      darkLightsCache.set(block, dark);
+    }
+    return dark;
+  }
   return block;
 }
+const darkLightsCache = new WeakMap();
 
 // Obrys kadłuba z lamp (px sprite'a, +X = dziób): pozycyjne leżą na krawędzi.
 function lightsOutline(block) {
