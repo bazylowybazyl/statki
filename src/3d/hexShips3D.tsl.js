@@ -57,15 +57,13 @@ import {
 } from 'three/tsl';
 import { MAX_SHADER_SHIP_LIGHTS, NAV_LIGHT_CHASE } from '../game/shipLightRuntime.js';
 import { HullLacquer, MAX_ENGINE_ZONES } from './hullLacquer.js';
+import { fieldDarkness, sunFill, sunShadeUnlit, sunVisibility } from './sunShadowMask.js';
 
 // ── Maska słońca: JEDNO miejsce importu dla kadłubów, szczątków i smug wraków ──
-// AGENT: po 03 — funkcje z sunShadowMask.js (sunVisibility, sunFill, fieldDarkness,
-// sunShadeUnlit w TSL). Do tego czasu maska wyłączona jak w grze po zadaniu 01
-// (uSunShadowOn = 0): pełne słońce, bez przygaszenia otoczenia i mroku pola.
-export const sunVisibility = () => float(1.0);
-export const sunFill = (/* vis */) => float(1.0);
-export const fieldDarkness = () => float(0.0);
-export const sunShadeUnlit = (color) => color;
+// Funkcje TSL z sunShadowMask.js (zadanie 03): próbka maski Core3D po screenUV na
+// wspólnych węzłach uniformów i tekstury — maska jest w grafie wariantu raz (graf na
+// wariant, nie na kadłub), wiązania wspólne dla wszystkich materiałów.
+export { fieldDarkness, sunFill, sunShadeUnlit, sunVisibility };
 
 // ── Stałe i narzędzia ───────────────────────────────────────────────────────
 

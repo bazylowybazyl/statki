@@ -61,6 +61,18 @@ export const CELL_WORDS = GRID_CELLS * 2;   // [start, liczba] na komórkę na p
 /** Dookólne: cos stożka zewnętrznego ≤ −1,5. */
 export const OMNI = -2;
 
+// Jeden zakres wysyłki na atrybut NA STAŁE (three czyści listę w clearUpdateRanges po wysyłce —
+// tu wyłączone, więc klatka bez alokacji zmienia tylko `count`). Pierwsza wysyłka (tworzenie
+// bufora) i tak kopiuje całą tablicę.
+function keepUpdateRanges() {}
+function permanentUpdateRange(attr) {
+  const range = { start: 0, count: attr.array.length };
+  attr.updateRanges.length = 0;
+  attr.updateRanges.push(range);
+  attr.clearUpdateRanges = keepUpdateRanges;
+  return range;
+}
+
 // ---------------------------------------------------------------------------
 // Profile świateł pola statków (reflektory, światło dookoła, lampy pozycyjne).
 //
@@ -106,6 +118,10 @@ export class LightGrid {
     this.indexNode = attributeArray(CELL_WORDS + ITEM_CAP, 'uint').setName(`${name}Index`).toReadOnly();
     this.lights = this.lightNode.value.array;     // Float32Array (LIGHT_CAP × 16)
     this.index = this.indexNode.value.array;      // Uint32Array (komórki + listy)
+    // Zakresy wysyłki na stałe (12-B): three czyści listę zakresów po każdej wysyłce, a ponowne
+    // addUpdateRange alokowało obiekt i tablicę na klatkę — build() zmienia tylko `count`.
+    this._lightRange = permanentUpdateRange(this.lightNode.value);
+    this._indexRange = permanentUpdateRange(this.indexNode.value);
     this._counts = new Uint32Array(GRID_CELLS);
     this._x0 = new Int16Array(LIGHT_CAP);
     this._x1 = new Int16Array(LIGHT_CAP);
@@ -328,14 +344,10 @@ export class LightGrid {
     }
     this.itemsUsed = total;
     this.dropped = dropped;
-    const la = this.lightNode.value;
-    la.clearUpdateRanges();
-    la.addUpdateRange(0, Math.max(1, n) * LIGHT_FLOATS);
-    la.needsUpdate = true;
-    const ia = this.indexNode.value;
-    ia.clearUpdateRanges();
-    ia.addUpdateRange(0, CELL_WORDS + total);
-    ia.needsUpdate = true;
+    this._lightRange.count = Math.max(1, n) * LIGHT_FLOATS;
+    this.lightNode.value.needsUpdate = true;
+    this._indexRange.count = CELL_WORDS + total;
+    this.indexNode.value.needsUpdate = true;
     const s = this.stats;
     s.lights = n;
     s.items = total;

@@ -9,13 +9,20 @@
 // (src/3d/tsl/zamiennik.js). Tylko WebGPU: bez adaptera renderer nie powstaje,
 // gra pokazuje komunikat (Core3D.ready → false, gpuUnsupported).
 import * as THREE from 'three/webgpu';
-import { texture } from 'three/tsl';
+import {
+  Continue, Fn, If, Loop, abs, clamp, dot, float, fract, int, length, max, screenCoordinate, screenSize, select,
+  smoothstep, sqrt, texture, uniform, uniformArray, uv, vec2, vec4
+} from 'three/tsl';
 import { BLOOM_DEFAULTS } from './bloomConfig.js';
 import { Shockwave3DManager } from '../effects3d/shockwave3D.js';
-import { HULL_SDF_MAX_STEPS, HULL_SDF_OCCLUDER_FLOATS, HULL_SDF_SHADOW_GLSL, HULL_SDF_SHAFT_CAP } from './hullShadowSdf.js';
-import { sunShadowUniforms } from './sunShadowMask.js';
+import {
+  HULL_SDF_MAX_STEPS, HULL_SDF_OCCLUDER_FLOATS, HULL_SDF_SHAFT_CAP, HullShadowSdf, createHullSdfPlaceholderTexture, hullSdfShadow
+} from './hullShadowSdf.js';
+import { SUN_SHADOW_MAP_PLACEHOLDER, sunShadowUniforms } from './sunShadowMask.js';
 import { installPlaceholders } from './tsl/zamiennik.js';
-import { BloomGry, MAX_HEAT_HAZE_SOURCES, createPostUniforms, createUberPost } from './tsl/postGry.js';
+import { uniformNode, uniformsAdapter } from './tsl/uniformy.js';
+import { BloomGry, MAX_HEAT_HAZE_SOURCES, createPostUniforms, createUberPost, hdrBezpieczny } from './tsl/postGry.js';
+import { FxFrame, FX_DISTORT_LAYER } from './fx/fxFrame.js';
 
 // Brama znaczników czasu GPU (_gpuTimerGate): tyle zapytań musi zostać w puli three
 // (2 na pass), żeby zmieścić całą klatkę — dwa rendery podzielonego ekranu z modułami
@@ -45,7 +52,7 @@ export const GPU_REQUIRED_LIMITS = Object.freeze([
 const SHIELD_RENDER_LAYER = 7;
 // Warstwy rysowane kamerą ortho (reszta — perspektywą): świat gry, ring-planety,
 // tarcze. Rozgrzewka passa (prewarmPass) bierze z tego kamerę dla warstwy.
-const ORTHO_PASS_LAYERS = new Set([0, RING_PLANET_RENDER_LAYER, SHIELD_RENDER_LAYER]);
+const ORTHO_PASS_LAYERS = new Set([0, RING_PLANET_RENDER_LAYER, SHIELD_RENDER_LAYER, FX_DISTORT_LAYER]);
 // Shadow shafts: WSZYSTKIE okludery są analityczne (dyski / pola odległości
 // kadłubów / pierścienie w world-space, liczone per piksel w shaderze passa).
 // Pass NIE mnoży już obrazu — pisze maskę widoczności słońca (sunShadowTarget,
@@ -84,193 +91,215 @@ export function resolveShadowShaftsQuality(level) {
   return { level: SHADOW_SHAFTS_QUALITY[norm] ? norm : 'medium', ...cfg };
 }
 
-// Źródło GLSL passa maski słońca — port do TSL w zadaniu 03 (docs/webgpu/zadania/
-// 03-post-cienie-refrakcja.md). Na WebGPU nie powstaje z niego żaden materiał:
-// do zadania 03 maska jest wyłączona (uSunShadowOn = 0, shadowShaftsPass = null),
-// a uniformy tego opisu pakuje _renderSunShadowMask dopiero przy passie TSL.
-function createShadowShaftsShader() {
-  return {
-    name: 'ShadowShaftsCompositeShader',
-    uniforms: {
-      uSunActive: { value: 0 },
-      uShaftGain: { value: 1 },
-      uSplitScreen: { value: 0 },
-      uSunWorld: { value: new THREE.Vector2(0, 0) },
-      uCamCenter: { value: new THREE.Vector2(0, 0) },
-      uCamCenter2: { value: new THREE.Vector2(0, 0) },
-      uViewWorldSize: { value: new THREE.Vector2(1, 1) },
-      uViewWorldSize2: { value: new THREE.Vector2(1, 1) },
-      uDiscLenMul: { value: 5.0 },
-      uDiscCount: { value: 0 },
-      uDiscs: { value: Array.from({ length: SHAFT_DISC_CAP }, () => new THREE.Vector4(0, 0, 0, 0)) },
-      uHullLenMul: { value: 3.0 },
-      uHullCount: { value: 0 },
-      uHullSteps: { value: 24 },
-      // Kadłuby: tablica warstw SDF (ustawiana w render() — klon tekstury
-      // z UniformsUtils nie dostawałby aktualizacji warstw) i A/M/C na statek,
-      // układ jak w HULL_SDF_SHADOW_GLSL (hullShadowSdf.js).
-      uHullSdf: { value: null },
-      uHullA: { value: Array.from({ length: SHAFT_HULL_CAP }, () => new THREE.Vector4(0, 0, 0, 0)) },
-      uHullM: { value: Array.from({ length: SHAFT_HULL_CAP }, () => new THREE.Vector4(0, 0, 0, 0)) },
-      uHullC: { value: Array.from({ length: SHAFT_HULL_CAP }, () => new THREE.Vector4(0, 0, 0, 0)) },
-      uRingCount: { value: 0 },
-      // uRings[i]: xy = środek (three-space), z = promień pasma, w = zasięg cienia
-      uRings: { value: Array.from({ length: SHAFT_RING_CAP }, () => new THREE.Vector4(0, 0, 0, 0)) },
-      // Pole przesłaniające słońce (gęste pola asteroid, asteroidFieldLight.js):
-      // tekstura transmitancji T (R8) wokół kamery; xy = róg prostokąta
-      // (three-space), zw = 1 / rozmiar. Mnoży widoczność w obu kanałach.
-      uFieldOcc: { value: null },
-      uFieldOccOn: { value: 0 },
-      uFieldOccRect: { value: new THREE.Vector4(0, 0, 1, 1) }
-    },
-    vertexShader: `precision highp float; varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-    fragmentShader: `
-      precision highp float;
-      uniform int uSunActive;
-      uniform float uShaftGain;
-      uniform int uSplitScreen;
-      uniform vec2 uSunWorld;
-      uniform vec2 uCamCenter;
-      uniform vec2 uCamCenter2;
-      uniform vec2 uViewWorldSize;
-      uniform vec2 uViewWorldSize2;
-      uniform float uDiscLenMul;
-      uniform int uDiscCount;
-      uniform vec4 uDiscs[${SHAFT_DISC_CAP}];
-      uniform int uRingCount;
-      uniform vec4 uRings[${SHAFT_RING_CAP}];
-      uniform sampler2D uFieldOcc;
-      uniform float uFieldOccOn;
-      uniform vec4 uFieldOccRect;
-      varying vec2 vUv;
-${HULL_SDF_SHADOW_GLSL}
+// Pole przesłaniające zastępcze (1×1, T = 1 = pełne słońce), dopóki właściciel pola nie
+// poda swojej tekstury: węzeł tekstury potrzebuje przy budowie tekstury tego samego rodzaju
+// (2D, filtr liniowy); przy uFieldOccOn = 0 i tak nic jej nie czyta.
+function createFieldOccPlaceholderTexture() {
+  const t = new THREE.DataTexture(new Uint8Array([255]), 1, 1, THREE.RedFormat, THREE.UnsignedByteType);
+  t.name = 'Core3D.sunOcclusionField:zastepcza';
+  t.magFilter = THREE.LinearFilter;
+  t.minFilter = THREE.LinearFilter;
+  t.generateMipmaps = false;
+  t.colorSpace = THREE.NoColorSpace;
+  t.unpackAlignment = 1;
+  t.needsUpdate = true;
+  return t;
+}
 
-      // Wyjscie = MASKA (sunShadowMask.js): R = cien powierzchni (tarcze
-      // + kadluby), G = smuga tla (R + ringi); 0 = pelne slonce.
-      void main() {
-        if (uSunActive == 0) {
-          gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
-          return;
-        }
+// Wyjście passa = MASKA (sunShadowMask.js): R = cień powierzchni (tarcze + kadłuby
+// + pole), G = smuga tła (R + ringi), B = mrok gęstego pola; 0 = pełne słońce.
+// Port 1:1 dawnego fragmentu GLSL (te same wzory w tej samej kolejności), bez gałęzi
+// podzielonego ekranu (split = dwa renderSingle, każdy liczy swoją maskę — zadanie 01).
+function shadowShaftsMaskNode(u) {
+  const uSunActive = uniformNode(u.uSunActive);
+  const uShaftGain = uniformNode(u.uShaftGain);
+  const uSunWorld = uniformNode(u.uSunWorld);
+  const uCamCenter = uniformNode(u.uCamCenter);
+  const uViewWorldSize = uniformNode(u.uViewWorldSize);
+  const uDiscLenMul = uniformNode(u.uDiscLenMul);
+  const uDiscCount = uniformNode(u.uDiscCount);
+  const uDiscs = uniformNode(u.uDiscs);
+  const uRingCount = uniformNode(u.uRingCount);
+  const uRings = uniformNode(u.uRings);
+  const uFieldOcc = uniformNode(u.uFieldOcc);
+  const uFieldOccOn = uniformNode(u.uFieldOccOn);
+  const uFieldOccRect = uniformNode(u.uFieldOccRect);
+  const hullUniforms = {
+    uHullSdf: uniformNode(u.uHullSdf), uHullCount: uniformNode(u.uHullCount), uHullSteps: uniformNode(u.uHullSteps),
+    uHullLenMul: uniformNode(u.uHullLenMul), uHullA: uniformNode(u.uHullA), uHullM: uniformNode(u.uHullM), uHullC: uniformNode(u.uHullC)
+  };
 
-        bool rightHalf = (uSplitScreen == 1 && vUv.x > 0.5);
-        vec2 localUv = (uSplitScreen == 1)
-          ? (rightHalf ? vec2((vUv.x - 0.5) * 2.0, vUv.y) : vec2(vUv.x * 2.0, vUv.y))
-          : vUv;
-        vec2 camC = rightHalf ? uCamCenter2 : uCamCenter;
-        vec2 viewWS = rightHalf ? uViewWorldSize2 : uViewWorldSize;
-        vec2 worldP = camC + (localUv - 0.5) * viewWS;
+  return Fn(() => {
+    const out = vec4(0.0, 0.0, 0.0, 1.0).toVar('maskOut');
+    If(uSunActive.notEqual(0), () => {
+      // UV kwadu WebGPU ma v = 0 u GÓRY celu; świat liczymy jak GLSL z v od dołu —
+      // wiersz 0 maski (góra) = największe y sceny, jak u materiałów czytających ją po
+      // screenUV (też od góry). Orientację pilnuje scripts/webgpu/maska-slonca.mjs.
+      const uvGl = vec2(uv().x, float(1.0).sub(uv().y));
+      const worldP = uCamCenter.add(uvGl.sub(0.5).mul(uViewWorldSize)).toVar('maskWorldP');
 
-        // Kierunek do slonca liczony PER PIKSEL (nie per kamera) — poprawna
-        // paralaksa smug przy okluderach blisko slonca.
-        vec2 toSun = uSunWorld - worldP;
-        float sunDist = length(toSun);
-        if (sunDist < 1.0) {
-          gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
-          return;
-        }
-        vec2 d = toSun / sunDist;
+      // Kierunek do słońca liczony PER PIKSEL (nie per kamera) — poprawna
+      // paralaksa smug przy okluderach blisko słońca.
+      const toSun = uSunWorld.sub(worldP).toVar();
+      const sunDist = length(toSun).toVar();
+      If(sunDist.greaterThanEqual(1.0), () => {
+        const d = toSun.div(sunDist).toVar();
+        const shadow = float(0.0).toVar('maskShadow');
+        const insideDisc = float(0.0).toVar();
 
-        float shadow = 0.0;
-        bool insideDisc = false;
-
-        // ── Dyski: planety, ksiezyce, najwieksze asteroidy ───────────────
-        // Wnetrze tarczy pomijane (along <= exitDist) — dzienna strona
-        // planety zostaje przy wlasnym oswietleniu z jej shadera.
-        // disc.w = sila cienia: planeta 1.0 (umbra), asteroida ~0.5 (skala
-        // skaly nie uzasadnia czarnej dziury w mglawicy).
-        for (int i = 0; i < ${SHAFT_DISC_CAP}; i++) {
-          if (i >= uDiscCount) break;
-          vec4 disc = uDiscs[i];
-          float discR = disc.z;
-          if (discR <= 0.0) continue;
-          vec2 axis = disc.xy - uSunWorld;
-          float axisLen = length(axis);
-          if (axisLen < 1.0) continue;
-          axis /= axisLen;
-          vec2 rel = worldP - disc.xy;
-          if (dot(rel, rel) < discR * discR) insideDisc = true;
-          float along = dot(rel, axis);
-          if (along <= 0.0) continue;
-          float perp = abs(dot(rel, vec2(-axis.y, axis.x)));
-          float exitDist = sqrt(max(discR * discR - perp * perp, 0.0));
-          if (along <= exitDist) continue;
-          float fallT = clamp((along - exitDist) / max(discR * uDiscLenMul, 1.0), 0.0, 1.0);
-          float fall = 1.0 - smoothstep(0.55, 1.0, fallT);
+        // ── Dyski: planety, księżyce, największe asteroidy ───────────────
+        // Wnętrze tarczy pomijane (along <= exitDist) — dzienna strona
+        // planety zostaje przy własnym oświetleniu z jej shadera.
+        // disc.w = siła cienia: planeta 1,0 (umbra), asteroida ~0,5 (skala
+        // skały nie uzasadnia czarnej dziury w mgławicy).
+        Loop({ start: int(0), end: uDiscCount, type: 'int', condition: '<', name: 'discIdx' }, ({ discIdx }) => {
+          const disc = uDiscs.element(discIdx).toVar();
+          const discR = disc.z.toVar();
+          If(discR.lessThanEqual(0.0), () => { Continue(); });
+          const axis = disc.xy.sub(uSunWorld).toVar();
+          const axisLen = length(axis).toVar();
+          If(axisLen.lessThan(1.0), () => { Continue(); });
+          axis.divAssign(axisLen);
+          const rel = worldP.sub(disc.xy).toVar();
+          If(dot(rel, rel).lessThan(discR.mul(discR)), () => { insideDisc.assign(1.0); });
+          const along = dot(rel, axis).toVar();
+          If(along.lessThanEqual(0.0), () => { Continue(); });
+          const perp = abs(dot(rel, vec2(axis.y.negate(), axis.x))).toVar();
+          const exitDist = sqrt(max(discR.mul(discR).sub(perp.mul(perp)), 0.0)).toVar();
+          If(along.lessThanEqual(exitDist), () => { Continue(); });
+          const fallT = clamp(along.sub(exitDist).div(max(discR.mul(uDiscLenMul), 1.0)), 0.0, 1.0).toVar();
+          const fall = float(1.0).sub(smoothstep(0.55, 1.0, fallT));
           // Rozmycie rośnie po ZNORMALIZOWANEJ długości smugi, więc po jej
           // skróceniu musi rosnąć wolniej — inaczej stożek rozlewa się na boki
           // zamiast być smugą.
-          float soft = discR * (0.04 + 0.14 * fallT);
-          float edge = 1.0 - smoothstep(discR - soft, discR + soft, perp);
-          shadow = max(shadow, edge * fall * max(disc.w, 0.0));
-        }
+          const soft = discR.mul(fallT.mul(0.14).add(0.04)).toVar();
+          const edge = float(1.0).sub(smoothstep(discR.sub(soft), discR.add(soft), perp));
+          shadow.assign(max(shadow, edge.mul(fall).mul(max(disc.w, 0.0))));
+        });
 
-        // ── Kadluby statkow: pole odleglosci sylwetki ───────────────────
-        // hullSdfShadow (hullShadowSdf.js) idzie po SDF kadluba promieniem
-        // do slonca, wiec smuga zaczyna sie na burcie i obejmuje kolce oraz
-        // rozwidlenia. Piksele na WLASNYM kadlubie sa pomijane — lancuch
-        // kapsul pomijal tylko wnetrze tej samej kapsuly i kazda rzucala cien
-        // na kadlub pod sasiednia.
+        // ── Kadłuby statków: pole odległości sylwetki ───────────────────
+        // hullSdfShadow (hullShadowSdf.js) idzie po SDF kadłuba promieniem
+        // do słońca, więc smuga zaczyna się na burcie i obejmuje kolce oraz
+        // rozwidlenia. Piksele na WŁASNYM kadłubie są pomijane — łańcuch
+        // kapsuł pomijał tylko wnętrze tej samej kapsuły i każda rzucała cień
+        // na kadłub pod sąsiednią.
         // Statek nie robi czarnej dziury jak planeta — smuga tylko przygasza.
-        shadow = max(shadow, hullSdfShadow(worldP, d, sunDist) * ${HULL_SHADOW_STRENGTH.toFixed(2)});
+        shadow.assign(max(shadow, hullSdfShadow(hullUniforms, worldP, d, sunDist).mul(HULL_SHADOW_STRENGTH)));
 
-        // ── Pole przeslaniajace slonce (gesty pas asteroid) ─────────────
-        // Transmitancja wzdluz promienia do slonca liczona na CPU; tu tylko
-        // mnozy widocznosc — kadluby, odlamki i skaly gry gasna w glebi pola.
-        // Kanal B = mrok pola (1 − T): w nim gasnie tez otoczenie (sunFill),
-        // bo w rdzeniu pola nie ma juz pylu oswietlonego sloncem.
-        float fieldDark = 0.0;
-        if (uFieldOccOn > 0.5) {
-          vec2 fuv = (worldP - uFieldOccRect.xy) * uFieldOccRect.zw;
-          if (fuv.x >= 0.0 && fuv.y >= 0.0 && fuv.x <= 1.0 && fuv.y <= 1.0) {
-            float fieldT = texture2D(uFieldOcc, fuv).r;
-            shadow = 1.0 - (1.0 - shadow) * fieldT;
-            fieldDark = 1.0 - fieldT;
-          }
-        }
+        // ── Pole przesłaniające słońce (gęsty pas asteroid) ─────────────
+        // Transmitancja wzdłuż promienia do słońca liczona na CPU; tu tylko
+        // mnoży widoczność — kadłuby, odłamki i skały gry gasną w głębi pola.
+        // Kanał B = mrok pola (1 − T): w nim gaśnie też otoczenie (sunFill),
+        // bo w rdzeniu pola nie ma już pyłu oświetlonego słońcem. Tekstura
+        // = DataTexture (v = 0 w pierwszym wierszu danych, y świata rośnie z v).
+        const fieldDark = float(0.0).toVar();
+        If(uFieldOccOn.greaterThan(0.5), () => {
+          const fuv = worldP.sub(uFieldOccRect.xy).mul(uFieldOccRect.zw).toVar();
+          If(fuv.x.greaterThanEqual(0.0).and(fuv.y.greaterThanEqual(0.0)).and(fuv.x.lessThanEqual(1.0)).and(fuv.y.lessThanEqual(1.0)), () => {
+            const fieldT = texture(uFieldOcc, fuv, float(0)).r.toVar();
+            shadow.assign(float(1.0).sub(float(1.0).sub(shadow).mul(fieldT)));
+            fieldDark.assign(float(1.0).sub(fieldT));
+          });
+        });
 
-        // Cien POWIERZCHNI (kanal R) konczy sie tutaj: tarcze + kadluby + pole.
-        float surfaceShadow = shadow;
+        // Cień POWIERZCHNI (kanał R) kończy się tutaj: tarcze + kadłuby + pole.
+        const surfaceShadow = float(shadow).toVar();
 
-        // ── Pierscienie (ring „Halo” wokol planety) — tylko smuga TLA ─────
-        // Okrag to sciana 2D ze sloncem w plaszczyznie gry. Ring liczy wlasne
-        // slonce (zacmienie + cien scian, slonce 49°) i ten okrag mu przeczy:
-        // gasil wewnetrzna polowe ringu i statki miedzy nim a planeta. Zostaje
-        // tylko w kanale tla (G).
-        // Piksele wewnatrz tarczy planety pomijamy: pas cienia ringu na
+        // ── Pierścienie (ring „Halo” wokół planety) — tylko smuga TŁA ─────
+        // Okrąg to ściana 2D ze słońcem w płaszczyźnie gry. Ring liczy własne
+        // słońce (zaćmienie + cień ścian, słońce 49°) i ten okrąg mu przeczy:
+        // gasił wewnętrzną połowę ringu i statki między nim a planetą. Zostaje
+        // tylko w kanale tła (G).
+        // Piksele wewnątrz tarczy planety pomijamy: pas cienia ringu na
         // POWIERZCHNI rysuje analityczny term w shaderze planety (uRingShadow*)
-        // — bez tego pas bylby liczony podwojnie.
-        if (!insideDisc) {
-          for (int i = 0; i < ${SHAFT_RING_CAP}; i++) {
-            if (i >= uRingCount) break;
-            vec4 ring = uRings[i];
-            float ringR = ring.z;
-            if (ringR <= 0.0) continue;
-            vec2 rel = worldP - ring.xy;
-            float b_ = dot(rel, d);
-            float c2 = dot(rel, rel) - ringR * ringR;
-            float disc_ = b_ * b_ - c2;
-            if (disc_ <= 0.0) continue;
-            float sq = sqrt(disc_);
-            // wewnatrz okregu: wyjscie w strone slonca; na zewnatrz: wejscie
-            float tHit = (c2 < 0.0) ? (-b_ + sq) : (-b_ - sq);
-            if (tHit <= 0.0 || tHit >= sunDist) continue;
-            float ringShade = (1.0 - smoothstep(0.0, max(ring.w, 1.0), tHit)) * 0.85;
-            shadow = max(shadow, ringShade);
-          }
-        }
+        // — bez tego pas byłby liczony podwójnie.
+        If(insideDisc.lessThan(0.5), () => {
+          Loop({ start: int(0), end: uRingCount, type: 'int', condition: '<', name: 'ringIdx' }, ({ ringIdx }) => {
+            const ring = uRings.element(ringIdx).toVar();
+            const ringR = ring.z.toVar();
+            If(ringR.lessThanEqual(0.0), () => { Continue(); });
+            const rel = worldP.sub(ring.xy).toVar();
+            const b = dot(rel, d).toVar();
+            const c2 = dot(rel, rel).sub(ringR.mul(ringR)).toVar();
+            const discriminant = b.mul(b).sub(c2).toVar();
+            If(discriminant.lessThanEqual(0.0), () => { Continue(); });
+            const sq = sqrt(discriminant).toVar();
+            // wewnątrz okręgu: wyjście w stronę słońca; na zewnątrz: wejście
+            const tHit = select(c2.lessThan(0.0), b.negate().add(sq), b.negate().sub(sq)).toVar();
+            If(tHit.lessThanEqual(0.0).or(tHit.greaterThanEqual(sunDist)), () => { Continue(); });
+            const ringShade = float(1.0).sub(smoothstep(0.0, max(ring.w, 1.0), tHit)).mul(0.85);
+            shadow.assign(max(shadow, ringShade));
+          });
+        });
 
-        float surfaceOut = clamp(surfaceShadow, 0.0, 1.0) * uShaftGain;
-        float backdropOut = clamp(shadow, 0.0, 1.0) * uShaftGain;
-        // Maska ma 8 bitow: dlugi gradient smugi na mglawicy robilby schodki.
-        // Statyczny szum ±0,5/255 (bez czasu — nie pelza), tylko pod smuga,
-        // zeby pelne slonce zostalo dokladnym zerem.
-        float dither = (fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) - 0.5) / 255.0;
-        surfaceOut = surfaceOut > 0.0 ? clamp(surfaceOut + dither, 0.0, 1.0) : 0.0;
-        backdropOut = backdropOut > 0.0 ? clamp(backdropOut + dither, 0.0, 1.0) : 0.0;
-        gl_FragColor = vec4(surfaceOut, backdropOut, clamp(fieldDark, 0.0, 1.0) * uShaftGain, 1.0);
-      }
-    `
+        const surfaceOut = clamp(surfaceShadow, 0.0, 1.0).mul(uShaftGain).toVar();
+        const backdropOut = clamp(shadow, 0.0, 1.0).mul(uShaftGain).toVar();
+        // Maska ma 8 bitów: długi gradient smugi na mgławicy robiłby schodki.
+        // Statyczny szum ±0,5/255 (bez czasu — nie pełza), tylko pod smugą,
+        // żeby pełne słońce zostało dokładnym zerem. Piksel jak gl_FragCoord
+        // WebGL (y od dołu celu) — ten sam wzór szumu co w bazie.
+        const fragCoordGl = vec2(screenCoordinate.x, screenSize.y.sub(screenCoordinate.y));
+        const dither = fract(float(52.9829189).mul(fract(dot(fragCoordGl, vec2(0.06711056, 0.00583715))))).sub(0.5).div(255.0).toVar();
+        surfaceOut.assign(select(surfaceOut.greaterThan(0.0), clamp(surfaceOut.add(dither), 0.0, 1.0), float(0.0)));
+        backdropOut.assign(select(backdropOut.greaterThan(0.0), clamp(backdropOut.add(dither), 0.0, 1.0), float(0.0)));
+        out.assign(vec4(surfaceOut, backdropOut, clamp(fieldDark, 0.0, 1.0).mul(uShaftGain), 1.0));
+      });
+    });
+    return out;
+  })();
+}
+
+// Pass maski widoczności słońca: QuadMesh + NodeMaterial do sunShadowTarget (RGBA8, bez
+// MSAA i głębi, NoBlending — quad nadpisuje każdy teksel). Uniformy w kształcie
+// `material.uniforms` (adapter uniformy.js) — _renderSunShadowMask ustawia `.value` jak na
+// WebGL; tablice (dyski, kadłuby A/M/C, ringi) to uniformArray (`.value` → Vector4 gry,
+// Vector4.set w miejscu, pakowane raz na render — jeden quad na render). Bufory uniformów
+// etapu fragmentów: grupa obiektu + 5 tablic = 6 (limit 12).
+export function createShadowShaftsPass() {
+  const v4 = (n) => Array.from({ length: n }, () => new THREE.Vector4(0, 0, 0, 0));
+  const uniforms = uniformsAdapter({
+    uSunActive: uniform(0, 'int'),
+    uShaftGain: uniform(1.0),
+    uSunWorld: uniform(new THREE.Vector2(0, 0)),
+    uCamCenter: uniform(new THREE.Vector2(0, 0)),
+    uViewWorldSize: uniform(new THREE.Vector2(1, 1)),
+    uDiscLenMul: uniform(5.0),
+    uDiscCount: uniform(0, 'int'),
+    uDiscs: uniformArray(v4(SHAFT_DISC_CAP), 'vec4'),
+    uHullLenMul: uniform(3.0),
+    uHullCount: uniform(0, 'int'),
+    uHullSteps: uniform(24, 'int'),
+    // Kadłuby: tablica warstw SDF (HullShadowSdf.texture — ustawiana w render(), do tego
+    // czasu zastępcza tego samego rodzaju) i A/M/C na statek, układ jak w hullSdfShadow.
+    uHullSdf: texture(createHullSdfPlaceholderTexture(), vec2(0.5)),
+    uHullA: uniformArray(v4(SHAFT_HULL_CAP), 'vec4'),
+    uHullM: uniformArray(v4(SHAFT_HULL_CAP), 'vec4'),
+    uHullC: uniformArray(v4(SHAFT_HULL_CAP), 'vec4'),
+    uRingCount: uniform(0, 'int'),
+    // uRings[i]: xy = środek (three-space), z = promień pasma, w = zasięg cienia
+    uRings: uniformArray(v4(SHAFT_RING_CAP), 'vec4'),
+    // Pole przesłaniające słońce (gęste pola asteroid): tekstura transmitancji T (R8)
+    // wokół kamery; xy = róg prostokąta (three-space), zw = 1 / rozmiar. Mnoży
+    // widoczność w obu kanałach.
+    uFieldOcc: texture(createFieldOccPlaceholderTexture(), vec2(0.5)),
+    uFieldOccOn: uniform(0.0),
+    uFieldOccRect: uniform(new THREE.Vector4(0, 0, 1, 1))
+  });
+  const material = new THREE.NodeMaterial();
+  material.name = 'Core3D.sunShadowMask';
+  material.uniforms = uniforms;
+  material.fragmentNode = shadowShaftsMaskNode(uniforms);
+  material.blending = THREE.NoBlending;
+  material.transparent = false;
+  material.depthTest = false;
+  material.depthWrite = false;
+  material.fog = false;
+  material.lights = false;
+  const quad = new THREE.QuadMesh(material);
+  quad.name = 'Core3D.sunShadowMask';
+  return {
+    name: 'shadowShafts', bucket: 'shafts', enabled: true, quad, material,
+    hullSdfPlaceholder: uniforms.uHullSdf.value, fieldOccPlaceholder: uniforms.uFieldOcc.value
   };
 }
 
@@ -340,10 +369,10 @@ export const Core3D = {
 
   renderPassBg: null, renderPassPlanets: null, planetHaloPass: null, renderPassRingPlanets: null, renderPassOrtho: null, renderPassShields: null, renderPassFg: null,
   heatHazeSources: null, heatHazeDirs: null, heatHazeCount: 0, heatHazeMaxSources: MAX_HEAT_HAZE_SOURCES, _heatHazeWorldScratch: new THREE.Vector3(),
-  // shadowShaftsPass pisze maskę widoczności słońca do sunShadowTarget (RGBA8,
-  // rozmiar bufora sceny, bez MSAA) — patrz sunShadowMask.js. Pass TSL powstaje
-  // w zadaniu 03; do tego czasu null, a maska wyłączona (uSunShadowOn = 0).
-  shadowShaftsPass: null, sunShadowTarget: null, _sunShadowTexelW: 1, _sunShadowTexelH: 1,
+  // shadowShaftsPass (QuadMesh + NodeMaterial, createShadowShaftsPass) pisze maskę
+  // widoczności słońca do sunShadowTarget (RGBA8, rozmiar bufora sceny, bez MSAA) —
+  // patrz sunShadowMask.js; materiały czytają ją po screenUV.
+  shadowShaftsPass: null, sunShadowTarget: null,
   // Światło z mapą cienia (słońce gry, planet3d.assets.js): odświeżane raz na
   // klatkę na starcie render() — w WebGPU cień jest per światło (SPIKE 9).
   _sunShadowLight: null,
@@ -393,7 +422,7 @@ export const Core3D = {
   _onGpuRenderTimestamp: null,
   _onGpuComputeTimestamp: null,
   _onGpuTimestampError: null,
-  perfToggles: { bloom: true, heatHaze: true, shadowShafts: true, threeShadows: true, bgPass: true, planetPass: true, orthoPass: true, fgPass: true, fgBuildings: true, fgStations: true, fgWeapons: true, fgShadows: true, enginePointLights: false },
+  perfToggles: { bloom: true, heatHaze: true, fxDistortion: true, shadowShafts: true, threeShadows: true, bgPass: true, planetPass: true, orthoPass: true, fgPass: true, fgBuildings: true, fgStations: true, fgWeapons: true, fgShadows: true, enginePointLights: false },
   shadowShaftsQuality: 'medium',
   _shaftCfg: resolveShadowShaftsQuality('medium'),
   _passTogglesDirty: true,
@@ -407,6 +436,12 @@ export const Core3D = {
   _renderInfoBucketNames: ['refraction', 'bg', 'planets', 'shafts', 'ortho', 'fg', 'bloom', 'post', 'other'],
   // window.__rendererInfo — jeden obiekt na sesję (harness i PerfHUD go czytają).
   _rendererInfoOut: { calls: 0, triangles: 0, points: 0, lines: 0, passes: null },
+  // Infrastruktura efektów GPU (zadanie 12-B, src/3d/fx/fxFrame.js, docs/webgpu/FX-INFRA.md): kroki
+  // compute raz na klatkę przed passami (addFxStep), początek pul i zegar efektów (fx.origin, fx.time),
+  // siatka świateł (fx.grid; renderer.lighting = GridLighting „optIn”), światła efektów (fx.lights),
+  // źródła zniekształceń w „uber” (fxDistortion()) i warstwa DIST (FX_DISTORT_LAYER → distortionTarget).
+  // fxStats — pomiar klatki (PerfHUD, harness).
+  fx: null, fxStats: null, distortionTarget: null,
 
   _getBloomConfig() {
     const bloom = (typeof window !== 'undefined' && window.DevVFX?.bloom) ? window.DevVFX.bloom : null;
@@ -615,28 +650,6 @@ export const Core3D = {
 
     const w0 = Math.max(1, window.innerWidth | 0);
     const h0 = Math.max(1, window.innerHeight | 0);
-    // Refrakcja w połowie rozdzielczości — to tylko źródło zniekształcenia
-    // dla shockwave; half-res jest niezauważalny, a tnie fill-rate 4×.
-    this.refractionTarget = new THREE.RenderTarget(
-      Math.max(1, Math.floor(w0 * this.pixelRatio * 0.5)),
-      Math.max(1, Math.floor(h0 * this.pixelRatio * 0.5)),
-      {
-        minFilter: THREE.LinearFilter,
-        magFilter: THREE.LinearFilter,
-        format: THREE.RGBAFormat,
-        depthBuffer: true,
-        stencilBuffer: false
-      }
-    );
-    this.shockwave3DManager = new Shockwave3DManager(this.scene, 8, this.refractionTarget);
-    this._shockwavePrevTime = 0;
-    if (typeof window !== 'undefined') {
-      window.trigger3DShockwave = (x, y, z, scale, life, colorHex) => {
-        if (this.shockwave3DManager) {
-          this.shockwave3DManager.spawn(x, y, z, scale, life, colorHex);
-        }
-      };
-    }
 
     const shadowGeo = new THREE.PlaneGeometry(500000, 500000);
     const shadowMat = new THREE.ShadowMaterial({ opacity: 0.6, color: 0x000000, transparent: true, depthWrite: false, depthTest: false });
@@ -669,6 +682,38 @@ export const Core3D = {
       stencilBuffer: false,
       samples: rt.samples
     });
+    // Refrakcja w połowie rozdzielczości — to tylko źródło zniekształcenia
+    // dla shockwave; half-res jest niezauważalny, a tnie fill-rate 4×.
+    // Format, MSAA i głębia JAK composerTarget (w połowie rozdzielczości): three buduje
+    // materiały (NodeBuilder) i pipeline'y per kontekst renderu, a kontekst to właśnie
+    // format / typ / próbki / głębia celu — snapshot refrakcji (tło, świat ortho, tarcze)
+    // używa wtedy tych samych, już rozgrzanych programów co passy sceny (prewarmPass na
+    // composerTarget). Z dawnym RGBA8 bez MSAA pierwsza fala budowała na zimno wszystko,
+    // co było w kadrze (tarcze — uwaga z zadania 14). Wygląd jak na WebGL (cel RGBA8):
+    // materiał fali obcina odczyt do [0, 1] (shockwave3D.js). setMsaaEnabled trzyma
+    // próbki razem ze sceną.
+    this.refractionTarget = new THREE.RenderTarget(
+      Math.max(1, Math.floor(w0 * this.pixelRatio * 0.5)),
+      Math.max(1, Math.floor(h0 * this.pixelRatio * 0.5)),
+      {
+        minFilter: THREE.LinearFilter,
+        magFilter: THREE.LinearFilter,
+        format: THREE.RGBAFormat,
+        type: THREE.HalfFloatType,
+        depthBuffer: true,
+        stencilBuffer: false,
+        samples: rt.samples
+      }
+    );
+    this.shockwave3DManager = new Shockwave3DManager(this.scene, 8, this.refractionTarget);
+    this._shockwavePrevTime = 0;
+    if (typeof window !== 'undefined') {
+      window.trigger3DShockwave = (x, y, z, scale, life, colorHex) => {
+        if (this.shockwave3DManager) {
+          this.shockwave3DManager.spawn(x, y, z, scale, life, colorHex);
+        }
+      };
+    }
     // Maska widoczności słońca (sunShadowMask.js): rozmiar bufora sceny, żeby
     // piksel materiału trafiał w teksel 1:1 — w połowie rozdzielczości brzeg
     // kadłuba po stronie cienia łapał ciemną obwódkę z sąsiedniego teksela.
@@ -682,8 +727,18 @@ export const Core3D = {
       stencilBuffer: false,
       samples: 0
     });
-    sunShadowUniforms.uSunShadowMap.value = this.sunShadowTarget.texture;
+    // Materiały wiążą cel maski dopiero po pierwszym jej narysowaniu (_renderSunShadowMask) —
+    // do tego czasu maska zastępcza i uSunShadowOn = 0.
+    sunShadowUniforms.uSunShadowMap.value = SUN_SHADOW_MAP_PLACEHOLDER;
     sunShadowUniforms.uSunShadowOn.value = 0;
+    // Efekty GPU (fxFrame.js): klatka efektów przeżywa ponowny init (kroki i pule zostają).
+    // Warstwa DIST: przesunięcie w px (osie sceny) w RG HalfFloat, rozmiar bufora sceny.
+    this.fx = this.fx || new FxFrame();
+    this.fxStats = this.fx.stats;
+    this.distortionTarget = new THREE.RenderTarget(w0, h0, {
+      format: THREE.RGFormat, type: THREE.HalfFloatType, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
+      generateMipmaps: false, depthBuffer: false, stencilBuffer: false, samples: 0
+    });
     // Pre-pass halo: głębia planet bez koloru (overrideMaterial, SPIKE 12).
     this.haloDepthMaskMaterial = new THREE.MeshBasicNodeMaterial({ color: 0x000000 });
     this.haloDepthMaskMaterial.name = 'Core3D.haloDepthMask';
@@ -712,8 +767,8 @@ export const Core3D = {
     // czyszczenia głębi — tarcza testuje głębię względem kadłubów zamiast kłaść
     // się na wszystkim.
     //
-    // Pass zgięcia tła (nowy warp, odłożony — PLAN §9) wejdzie zaraz po tle,
-    // przed planetami: zakrzywia tylko to, co leży daleko za statkiem.
+    // Pass zgięcia tła (nowy warp — zadanie 22) wejdzie zaraz po tle, przed
+    // planetami: zakrzywia tylko to, co leży daleko za statkiem (miejsce w render()).
     this.renderPassBg = makeScenePass('bg', 'bg', 1, false, true);
     this.renderPassPlanets = makeScenePass('planets', 'planets', PLANET_RENDER_LAYER, false, false);
     this.planetHaloPass = makeFullscreenBlendPass('Core3D.planetHaloBlend', 'planets', this.planetHaloTarget.texture, BLEND_ADD_ONE_ONE);
@@ -734,8 +789,9 @@ export const Core3D = {
     this.heatHazeSources = new Float32Array(this.heatHazeMaxSources * 4);
     this.heatHazeDirs = new Float32Array(this.heatHazeMaxSources * 2);
 
-    // Maska słońca (zadanie 03): pass TSL do sunShadowTarget. Do tego czasu brak.
-    this.shadowShaftsPass = null;
+    // Maska słońca: pass TSL do sunShadowTarget (graf budowany raz; urządzenia nie
+    // potrzebuje — pipeline powstaje przy pierwszym renderze).
+    this.shadowShaftsPass = createShadowShaftsPass();
 
     const bloomCfg = this._getBloomConfig();
     this.bloomResolutionScale = bloomCfg.resolutionScale;
@@ -792,6 +848,9 @@ export const Core3D = {
     });
     // Bez zapasowego backendu: nieudane urządzenie = odrzucone init(), nie WebGL2.
     renderer._getFallback = null;
+    // Siatka świateł jako system oświetlenia (tryb „optIn” — fxFrame.js) PRZED init():
+    // three r183 łapie renderer.lighting w init() (RenderLists) — podmiana później nic nie zmienia.
+    this.fx?.attach(renderer, this);
     // Liczniki per klatka zeruje render() — przy autoReset = true wewnętrzna pętla
     // renderera zerowałaby je co rAF (SPIKE 14).
     renderer.info.autoReset = false;
@@ -804,10 +863,14 @@ export const Core3D = {
     this._configureRenderer(renderer);
     this.renderer = renderer;
     this._post = this._createPost(renderer);
+    // Pieczenia SDF kadłubów wgrywają pojedyncze warstwy (uploadTextureLayer) zamiast całej tablicy.
+    HullShadowSdf.layerUploader = (tex, layer) => this.uploadTextureLayer(tex, layer);
     this.gpuReady = true;
     this._passTogglesDirty = true;
     this._applyPassToggles();
     this._scheduleTextureUpload();
+    // Rozgrzewka kroków efektów zarejestrowanych przed urządzeniem (puste dispatche, prewarmPass).
+    this.fx?.warmAll();
     return true;
   },
 
@@ -889,14 +952,19 @@ export const Core3D = {
   _createPost(renderer) {
     const cfg = this._getBloomConfig();
     const sceneTexture = this.composerTarget.texture;
-    const bloom = new BloomGry(texture(sceneTexture), cfg.strength, cfg.radius, cfg.threshold);
+    // Siatka bezpieczeństwa (12-B): NaN / ±Inf bufora sceny → 0 przed bloomem (i w „uber”) —
+    // pojedynczy NaN w HalfFloat rozlewał bloom na cały ekran.
+    const bloom = new BloomGry(hdrBezpieczny(texture(sceneTexture)), cfg.strength, cfg.radius, cfg.threshold);
     bloom.resolutionScale = cfg.resolutionScale;
     bloom.onRenderBegin = this._onBloomRenderBegin;
     bloom.onRenderEnd = this._onBloomRenderEnd;
     const uniforms = createPostUniforms();
-    const post = new THREE.RenderPipeline(renderer, createUberPost({ sceneTexture, bloomTexture: bloom.getTextureNode(), uniforms }));
+    // Zniekształcenia efektów (fxFrame.js): blok źródeł i warstwa DIST — wspólne dla obu pipeline'ów.
+    const distortion = this.fx ? this.fx.distortion.node : null;
+    const distortionLayer = this.distortionTarget ? this.distortionTarget.texture : null;
+    const post = new THREE.RenderPipeline(renderer, createUberPost({ sceneTexture, bloomTexture: bloom.getTextureNode(), uniforms, distortion, distortionLayer }));
     post.outputColorTransform = false;
-    const postBezBloomu = new THREE.RenderPipeline(renderer, createUberPost({ sceneTexture, bloomTexture: null, uniforms }));
+    const postBezBloomu = new THREE.RenderPipeline(renderer, createUberPost({ sceneTexture, bloomTexture: null, uniforms, distortion, distortionLayer }));
     postBezBloomu.outputColorTransform = false;
     this.bloomPass = bloom;
     this._postUniforms = uniforms;
@@ -907,10 +975,12 @@ export const Core3D = {
   _disposeComposerChain() {
     try {
       try { this.planetHaloPass?.material?.dispose?.(); } catch { }
+      try { this.shadowShaftsPass?.material?.dispose?.(); } catch { }
       try { this._post?.dispose?.(); } catch { }
       try { this._postBezBloomu?.dispose?.(); } catch { }
       try { this.bloomPass?.dispose?.(); } catch { }
       try { this.sunShadowTarget?.dispose?.(); } catch { }
+      try { this.distortionTarget?.dispose?.(); } catch { }
       try { this.composerTarget?.dispose?.(); } catch { }
       try { this.refractionTarget?.dispose?.(); } catch { }
       try { this.shockwave3DManager?.dispose?.(); } catch { }
@@ -922,8 +992,11 @@ export const Core3D = {
     this._postBezBloomu = null;
     this._postUniforms = null;
     this.bloomPass = null;
+    this.shadowShaftsPass = null;
     this.sunShadowTarget = null;
-    sunShadowUniforms.uSunShadowMap.value = null;
+    this.distortionTarget = null;
+    // Węzeł tekstury nie przyjmuje null — materiały wracają do maski zastępczej.
+    sunShadowUniforms.uSunShadowMap.value = SUN_SHADOW_MAP_PLACEHOLDER;
     sunShadowUniforms.uSunShadowOn.value = 0;
     this.refractionTarget = null;
     this.shockwave3DManager = null;
@@ -1007,6 +1080,8 @@ export const Core3D = {
     applySamples(this.composerTarget);
     // Halo musi śledzić próbki sceny — rozjazd daje przerywaną obwódkę na limbie.
     applySamples(this.planetHaloTarget);
+    // Snapshot refrakcji w tym samym kontekście renderu co scena (programy i pipeline'y).
+    applySamples(this.refractionTarget);
 
     return this.getPerfStatus();
   },
@@ -1080,6 +1155,7 @@ export const Core3D = {
     const bufH = Math.max(1, Math.floor(height * this.pixelRatio));
     if (this.composerTarget) this.composerTarget.setSize(bufW, bufH);
     if (this.sunShadowTarget) this.sunShadowTarget.setSize(bufW, bufH);
+    if (this.distortionTarget) this.distortionTarget.setSize(bufW, bufH);
 
     if (this.refractionTarget) {
       this.refractionTarget.setSize(
@@ -1258,23 +1334,14 @@ export const Core3D = {
     if (toggles.threeShadows !== false) light.shadow.needsUpdate = true;
   },
 
-  // Skala gl_FragCoord → UV maski cieni dla celu, do którego rysują materiały.
-  _setSunShadowTexelFor(target) {
-    const w = Math.max(1, Number(target?.width) || 1);
-    const h = Math.max(1, Number(target?.height) || 1);
-    sunShadowUniforms.uSunShadowTexel.value.set(1 / w, 1 / h);
-  },
-
   // Maska widoczności słońca (sunShadowMask.js): uniformy okluderów i jeden
   // quad do sunShadowTarget. Bez słońca, przy shaftach Off albo w wolnej kamerze
-  // maska jest wyłączona uniformem — materiały jej wtedy nie próbkują.
-  // Port WebGPU: pass TSL maski powstaje w zadaniu 03 (shadowShaftsPass z
-  // material.uniforms przez adapter i render(renderer, null, target)). Do tego
-  // czasu shadowShaftsPass = null — pierwsza bramka niżej wyłącza maskę co klatkę.
+  // maska jest wyłączona uniformem — materiały dostają wtedy pełne słońce.
+  // Materiały czytają maskę po screenUV (rozmiar aktualnego celu), więc snapshot
+  // refrakcji w połowie rozdzielczości nie potrzebuje osobnego teksela.
   _renderSunShadowMask(active, sun, shaftCfg) {
     const pass = this.shadowShaftsPass;
     const target = this.sunShadowTarget;
-    this._setSunShadowTexelFor(this.composerTarget);
     // Pole przesłaniające słońce to mechanika (ciemno w głębi pola), nie opcja
     // jakości: maska liczy się też przy wyłączonych smugach — wtedy bez tarcz,
     // kadłubów i ringów, sam term pola.
@@ -1288,8 +1355,9 @@ export const Core3D = {
     }
     const uShafts = pass.material.uniforms;
     uShafts.uFieldOccOn.value = fieldOn ? 1 : 0;
+    // Węzeł tekstury nie przyjmuje null — bez pola zastępcza (i tak nieczytana).
+    uShafts.uFieldOcc.value = fieldOn ? field.texture : pass.fieldOccPlaceholder;
     if (fieldOn) {
-      uShafts.uFieldOcc.value = field.texture;
       uShafts.uFieldOccRect.value.set(field.x0, field.y0, 1 / Math.max(1e-6, field.w), 1 / Math.max(1e-6, field.h));
     }
     const cam1 = this.activeCam1 || { x: 0, y: 0 };
@@ -1319,7 +1387,7 @@ export const Core3D = {
       ? Math.min(this.shaftHullCount | 0, Math.max(0, Number(shaftCfg.capsuleBudget) || SHAFT_HULL_CAP), SHAFT_HULL_CAP)
       : 0;
     uShafts.uHullCount.value = hullCount;
-    uShafts.uHullSdf.value = this.shaftHullTexture;
+    uShafts.uHullSdf.value = this.shaftHullTexture || pass.hullSdfPlaceholder;
     const hulls = this.shaftHulls;
     const hullA = uShafts.uHullA.value;
     const hullM = uShafts.uHullM.value;
@@ -1341,9 +1409,17 @@ export const Core3D = {
     }
     uShafts.uRingCount.value = ringCount;
 
-    const prevTarget = this.renderer.getRenderTarget();
-    pass.render(this.renderer, null, target);
-    this.renderer.setRenderTarget(prevTarget);
+    // Quad do celu maski (NoBlending, każdy teksel nadpisany — bez czyszczenia);
+    // kubełek 'shafts' w lastFrameRenderInfo (harness, PerfHUD).
+    const renderer = this.renderer;
+    const prevTarget = renderer.getRenderTarget();
+    const before = this._renderInfoBefore;
+    this._readRenderInfoInto(before);
+    const t0 = performance.now();
+    renderer.setRenderTarget(target);
+    pass.quad.render(renderer);
+    renderer.setRenderTarget(prevTarget);
+    this._addRenderInfoDelta(pass.bucket, performance.now() - t0, before);
     sunShadowUniforms.uSunShadowMap.value = target.texture;
     sunShadowUniforms.uSunShadowOn.value = 1;
     return true;
@@ -1386,6 +1462,10 @@ export const Core3D = {
     // Liczniki renderera zerujemy PRZED maską cieni, żeby jej quad trafił do
     // kubełka 'shafts' (pre-pass halo liczy się w 'other').
     this._beginRenderInfo();
+
+    // Klatka efektów GPU (raz na klatkę rAF, przed passami): kroki compute, początek pul,
+    // siatka świateł (fxFrame.js). Podzielony ekran: drugi renderSingle nic tu nie robi.
+    this._runFxFrame(freePerspective);
 
     const prevAutoClear = renderer.autoClear;
     const prevClearAlpha = renderer.getClearAlpha();
@@ -1437,12 +1517,23 @@ export const Core3D = {
       if (!this._scenePassHasContent(pass, layerActivity)) continue;
       this._runScenePass(pass);
       if (pass === this.renderPassBg) {
-        // Pass zgięcia tła (nowy warp) — zaraz po passie tła, przed planetami:
-        // zakrzywia tylko mgławicę i gwiazdy; planety, statki i FG kładą się na
-        // wierzchu, bloom liczy się z gotowego obrazu. Odłożone (PLAN §9) — nowy
-        // warp wejdzie tu od razu w TSL; stara soczewka i fale są usunięte.
+        // ── Pass zgięcia tła (nowy warp) — zadanie 22 („Nurt”); MIEJSCE, dziś puste ──
+        // Zaraz po passie tła, przed planetami: zakrzywia tylko mgławicę i gwiazdy
+        // (bańka gracza, wciąganie tła w szczeliny tuneli — `skyBend` z
+        // dema/warp-webgpu/post.js, DEMO-WARP.md § Do portu w grze); planety, statki
+        // i FG kładą się na wierzchu, bloom liczy się z gotowego obrazu.
+        // Jak wpiąć: WebGPU nie próbkuje celu, do którego właśnie rysuje — przy
+        // aktywnym zgięciu pass tła rysuje do własnego celu (jak dawny cel soczewki
+        // z tagu; ten sam kontekst renderu co composerTarget), a tu
+        // quad TSL (QuadMesh, jak planetHaloPass) kładzie go do composerTarget
+        // z przesuniętym UV (screenUV, v od góry). Bez zgięcia — pass tła jak dziś,
+        // zero kosztu. Fale warpa to źródła zniekształceń postu (zadanie 12,
+        // src/3d/fx/distortion.js), nie ten pass. Snapshot refrakcji
+        // (_renderRefractionSnapshot) rysuje tło bez zgięcia.
       }
     }
+    // Zniekształcenia efektów do „uber”: źródła rzutowane na kamerę tego renderu, warstwa DIST.
+    this._renderFxDistortion(freePerspective || t.fxDistortion === false);
     renderer.setRenderTarget(null);
     this._renderPost();
 
@@ -1526,6 +1617,48 @@ export const Core3D = {
     this._takeBloomOutOfPost();
   },
 
+  // Klatka efektów GPU (fxFrame.js) — raz na klatkę rAF, kamera gracza 1 (w podzielonym ekranie
+  // siatka świateł obejmuje też kadr gracza 2: window.camera2). Pomiar w fxStats.
+  _runFxFrame(freePerspective) {
+    const fx = this.fx;
+    if (!fx || !this.composerTarget) return;
+    const split = typeof window !== 'undefined' && !!window.splitScreenMode;
+    const cam2 = split && !freePerspective ? (window.camera2 || null) : null;
+    fx.frame(this.renderer, this.activeCam1, cam2, this.composerTarget.width, this.composerTarget.height, !!freePerspective, performance.now());
+  },
+
+  // Na każdy render: źródła zniekształceń rzutowane na kamerę tego renderu (blok „uber”) i warstwa
+  // DIST (FX_DISTORT_LAYER, kamera ortho) do distortionTarget — tylko gdy właściciel zgłosił w tej
+  // klatce zawartość (setDistortLayerActive), inaczej „uber” jej nie próbkuje (uDistLayerOn = 0).
+  _renderFxDistortion(off) {
+    const fx = this.fx;
+    const u = this._postUniforms;
+    if (!fx || !u || !this.composerTarget) return;
+    const w = this.composerTarget.width;
+    const h = this.composerTarget.height;
+    fx.commitDistortion(this.activeCam1, w, h, off, this.renderer?.info?.frame ?? 0);
+    const target = this.distortionTarget;
+    const layerOn = !off && fx.distortLayerActive === true && !!target;
+    fx.stats.distortLayer = layerOn;
+    u.uDistLayerOn.value = layerOn ? 1 : 0;
+    if (!layerOn) return;
+    const renderer = this.renderer;
+    const prevTarget = renderer.getRenderTarget();
+    const before = this._renderInfoBefore;
+    this._readRenderInfoInto(before);
+    const t0 = performance.now();
+    renderer.setRenderTarget(target);
+    renderer.setClearColor(0x000000, 0.0);
+    renderer.clear(true, false, false);
+    const camera = this.getPassCamera(true);
+    const prevMask = camera.layers.mask;
+    camera.layers.set(FX_DISTORT_LAYER);
+    renderer.render(this.scene, camera);
+    camera.layers.mask = prevMask;
+    renderer.setRenderTarget(prevTarget);
+    this._addRenderInfoDelta('ortho', performance.now() - t0, before);
+  },
+
   // Halo planet: głębia planet (warstwa 3, bez koloru) + poświaty (warstwa 5)
   // do planetHaloTarget; quad halo w passach sceny dokłada je addytywnie.
   _renderPlanetHaloPrepass() {
@@ -1551,8 +1684,8 @@ export const Core3D = {
     camera.layers.mask = prevPerspLayerMask;
   },
 
-  // Fale uderzeniowe (shockwave3D.js) i snapshot refrakcji — źródło ich
-  // zniekształcenia (materiał fali w TSL: zadanie 03).
+  // Fale uderzeniowe (shockwave3D.js, materiał w TSL) i snapshot refrakcji —
+  // źródło ich zniekształcenia.
   _updateShockwaves(nowSec, t, layerActivity) {
     const manager = this.shockwave3DManager;
     if (!manager) return;
@@ -1577,6 +1710,11 @@ export const Core3D = {
   // Snapshot tylko tła + świata ortho (+ tarcz). Warstwy planet/FG pomijamy —
   // wewnątrz zniekształcenia shockwave ich brak jest niezauważalny, a FG potrafi
   // nieść ~1000 draw calli (bronie/budynki), które tu dublowaliśmy przy każdej fali.
+  // Cel w tym samym kontekście renderu co composerTarget (format, MSAA, głębia —
+  // init()): te same programy i pipeline'y co passy sceny, bez budowy na zimno przy
+  // pierwszej fali. Materiały czytają maskę cieni po screenUV — połowa
+  // rozdzielczości trafia w maskę sama. Kamery jak na WebGL (tag): kadr zsynchronizowany
+  // z rozmiarem celu (połowa), bez zmian względem bazy.
   _renderRefractionSnapshot(t, layerActivity) {
     const renderer = this.renderer;
     const target = this.refractionTarget;
@@ -1589,9 +1727,6 @@ export const Core3D = {
     renderer.setRenderTarget(target);
     renderer.setClearColor(0x000000, 0.0);
     renderer.clear(true, true, true);
-    // Snapshot ma połowę rozdzielczości: materiały czytają maskę cieni po
-    // pikselu, więc skala teksela idzie za celem (i wraca niżej).
-    this._setSunShadowTexelFor(this.refractionTarget);
     this.syncCamera(this.activeCam1, target.width, target.height);
     this._readRenderInfoInto(this._renderInfoBefore);
     if (t.bgPass !== false) {
@@ -1609,7 +1744,6 @@ export const Core3D = {
     this._addRenderInfoDelta('refraction');
 
     this.shockwave3DManager.showAll();
-    this._setSunShadowTexelFor(this.composerTarget);
     persp.layers.mask = prevPerspLayerMask;
     ortho.layers.mask = prevOrthoLayerMask;
   },
@@ -1675,7 +1809,9 @@ export const Core3D = {
     this._addRenderInfoDelta('bg', performance.now() - tRenderTotal0);
     camera.layers.mask = prevMask;
     if (this.bloomPass && this.perfToggles.bloom !== false) this._applyBloomPassConfig();
-    // Tło menu: bez źródeł gorącego powietrza (przed startem gry nic ich nie zgłasza).
+    // Tło menu: bez zniekształceń efektów i bez źródeł gorącego powietrza (przed startem gry
+    // nic ich nie zgłasza).
+    this._renderFxDistortion(true);
     this._updatePostUniforms(false, 0);
     renderer.setRenderTarget(null);
     this._renderPost();
@@ -1717,6 +1853,8 @@ export const Core3D = {
     });
     camera.layers.set(layer);
     renderer.setRenderTarget(this.composerTarget);
+    // Warstwa DIST rysuje do własnego celu (RG HalfFloat bez MSAA i głębi) — inny klucz pipeline'u.
+    if (layer === FX_DISTORT_LAYER && this.distortionTarget) renderer.setRenderTarget(this.distortionTarget);
     let promise;
     try {
       promise = renderer.compileAsync(object3d, camera, object3d.isScene ? null : this.scene);
@@ -1731,6 +1869,35 @@ export const Core3D = {
       console.warn('[Core3D] rozgrzewka passa nie wyszła:', err?.message || err);
       return false;
     });
+  },
+
+  // Jedna warstwa tablicy tekstur (DataArrayTexture) prosto na GPU — queue.writeTexture tej
+  // warstwy. three r183 w WebGPU ignoruje texture.layerUpdates: needsUpdate wgrywa całą tablicę
+  // (SDF kadłubów: 64 × 256² R8 = 4 MB, zmierzone ~3 ms CPU na każde pieczenie; jedna warstwa
+  // to 64 KB). false = tablicy jeszcze nie ma na GPU albo czeka na pełne wgranie (needsUpdate
+  // w toku) — wołający ustawia needsUpdate jak dotąd. Zapis idzie do kolejki urządzenia przed
+  // najbliższym renderem (pieczenia lecą w updateHexShips3D, przed Core3D.render()).
+  uploadTextureLayer(texture, layer) {
+    const renderer = this.renderer;
+    const backend = renderer?.backend;
+    const queue = backend?.device?.queue;
+    const image = texture?.image;
+    const data = image?.data;
+    if (!queue || !data || !texture.isDataArrayTexture || !(layer >= 0) || layer >= (image.depth | 0)) return false;
+    const state = renderer._textures?.get?.(texture);
+    const gpu = backend.get(texture);
+    if (!state || state.initialized !== true || state.version !== texture.version || state.isDefaultTexture === true) return false;
+    if (!gpu?.texture) return false;
+    const texels = image.width * image.height;
+    const bytesPerTexel = data.byteLength / (texels * image.depth);
+    if (!(bytesPerTexel >= 1) || bytesPerTexel !== Math.floor(bytesPerTexel)) return false;
+    queue.writeTexture(
+      { texture: gpu.texture, mipLevel: 0, origin: { x: 0, y: 0, z: layer } },
+      data,
+      { offset: texels * bytesPerTexel * layer, bytesPerRow: image.width * bytesPerTexel, rowsPerImage: image.height },
+      { width: image.width, height: image.height, depthOrArrayLayers: 1 }
+    );
+    return true;
   },
 
   // Maks. anizotropia próbkowania tekstur — także przed utworzeniem renderera
@@ -1774,6 +1941,17 @@ export const Core3D = {
   },
 
   setShieldLayerActive(active) { this.layerActivity.shields = !!active; },
+
+  // ── Efekty GPU (zadanie 12-B, src/3d/fx/fxFrame.js — opis kroku i kontekstu tam) ──
+  // Krok { name, spawn?(ctx), lights?(ctx), update?(ctx), warm?(ctx) } raz na klatkę przed
+  // passami scen; warm raz przy gotowym urządzeniu (puste dispatche, prewarmPass siatek).
+  addFxStep(step) { return this.fx ? this.fx.addStep(step) : step; },
+  removeFxStep(step) { this.fx?.removeStep(step); },
+  // Źródła zniekształceń tej klatki w świecie gry (shock / implode / heat — distortion.js);
+  // dysze i tarcze zostają przy pushHeatHazeWorld.
+  fxDistortion() { return this.fx ? this.fx.distortionSources() : null; },
+  // Warstwa DIST (FX_DISTORT_LAYER): właściciel zgłasza co klatkę, czy ma widoczną zawartość.
+  setDistortLayerActive(active) { if (this.fx) this.fx.distortLayerActive = !!active; },
 
   // Pass sceny bez widocznej zawartości pomijamy w całości.
   _scenePassHasContent(pass, activity) {

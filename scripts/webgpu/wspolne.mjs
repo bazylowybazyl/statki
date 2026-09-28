@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import { createReadStream, existsSync, statSync, mkdirSync, writeFileSync } from 'node:fs';
 import { extname, join, normalize, resolve, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
-import { startVite, evaluate, sleep, repo, Cdp } from '../../dema/rdzen-cdp.js';
+import { startVite, evaluate, sleep, repo, Cdp, closeChrome } from '../../dema/rdzen-cdp.js';
 
 export { startVite, evaluate, sleep, repo };
 
@@ -45,7 +45,7 @@ export async function startChrome(o = {}) {
     } catch { /* czekam */ }
     if (!target) await sleep(250);
   }
-  if (!target) { chrome.kill(); throw new Error('Chrome nie wystartował'); }
+  if (!target) { await closeChrome(chrome, null, profile); throw new Error('Chrome nie wystartował'); }
   const ws = new WebSocket(target.webSocketDebuggerUrl);
   await new Promise((ok) => ws.addEventListener('open', ok));
   const cdp = new Cdp(ws);
@@ -62,7 +62,7 @@ export async function startChrome(o = {}) {
   await cdp.send('Emulation.setDeviceMetricsOverride', { width: W, height: H, deviceScaleFactor: 1, mobile: false });
   return {
     cdp, logs,
-    async close() { try { ws.close(); } catch { /* */ } try { chrome.kill(); } catch { /* */ } }
+    close: () => closeChrome(chrome, ws, profile) // usuwa też profil z %TEMP% (rdzen-cdp.js)
   };
 }
 

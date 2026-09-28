@@ -2,7 +2,7 @@
 // DevTools Protocol (WebSocket z Node 22, bez zależności). Wzorzec:
 // scripts/halo-ring-shots.mjs. Uruchamiają i sprzątają WŁASNE procesy.
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -87,7 +87,7 @@ export async function startChrome(o = {}) {
     } catch { /* czekam */ }
     if (!target) await sleep(250);
   }
-  if (!target) { chrome.kill(); throw new Error('Chrome nie wystartował'); }
+  if (!target) { await closeChrome(chrome, null, profile); throw new Error('Chrome nie wystartował'); }
   const ws = new WebSocket(target.webSocketDebuggerUrl);
   await new Promise((ok) => ws.addEventListener('open', ok));
   const cdp = new Cdp(ws);
@@ -104,8 +104,22 @@ export async function startChrome(o = {}) {
   await cdp.send('Emulation.setDeviceMetricsOverride', { width: W, height: H, deviceScaleFactor: 1, mobile: false });
   return {
     cdp, logs,
-    async close() { try { ws.close(); } catch { /* */ } try { chrome.kill(); } catch { /* */ } }
+    close: () => closeChrome(chrome, ws, profile)
   };
+}
+
+/**
+ * Zamyka Chrome i USUWA jego profil z %TEMP% (~60 MB z pamięcią shaderów na przebieg). Bez tego profile zostawały:
+ * 2026-09-28 w nocy ~1000 porzuconych profili zapełniło dysk C: (harness padł z ENOSPC).
+ */
+export async function closeChrome(chrome, ws, profile) {
+  try { ws?.close(); } catch { /* */ }
+  const exited = new Promise((ok) => { if (chrome.exitCode !== null || chrome.signalCode !== null) ok(); else chrome.once('exit', ok); });
+  try { chrome.kill(); } catch { /* */ }
+  await Promise.race([exited, sleep(5000)]);
+  if (profile) {
+    try { rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); } catch { /* zostaje w %TEMP% */ }
+  }
 }
 
 export async function navigateAndWait(cdp, url, readyExpr, timeoutMs = 120000) {
