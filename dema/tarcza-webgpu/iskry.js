@@ -30,7 +30,10 @@ export const SPARK_CLASS = {
 };
 export const SPARK_COUNT_SCALE = 6;
 
-export function createSparks({ renderer, group, profile, domeHeight, U, pool = 65536, name = 's' }) {
+let sparkSystems = 0;
+
+export function createSparks({ renderer, group, profile, domeHeight, U, pool = 65536 }) {
+  const fnId = sparkSystems++;   // nazwa funkcji WGSL: tylko ASCII
   const N = pool;
   const pos = instancedArray(N, 'vec4');   // xyz, wiek
   const vel = instancedArray(N, 'vec4');   // prędkość, życie (> 0 ślizg, < 0 lot)
@@ -70,7 +73,7 @@ export function createSparks({ renderer, group, profile, domeHeight, U, pool = 6
     return p1.mul(2.0).add(p2.sub(p0).mul(u))
       .add(p0.mul(2.0).sub(p1.mul(5.0)).add(p2.mul(4.0)).sub(p3).mul(u2))
       .add(p0.negate().add(p1.mul(3.0)).sub(p2.mul(3.0)).add(p3).mul(u3)).mul(0.5);
-  }).setLayout({ name: `profileR_${name}`, type: 'float', inputs: [{ name: 'th', type: 'float' }] });
+  }).setLayout({ name: `profileR${fnId}`, type: 'float', inputs: [{ name: 'th', type: 'float' }] });
 
   const step = Fn(() => {
     const idx = instanceIndex;
@@ -108,7 +111,8 @@ export function createSparks({ renderer, group, profile, domeHeight, U, pool = 6
         const vSlide = vec3(dirS.mul(speed.mul(0.35)), 0.0);
         p.assign(vec4(a.xyz, 0.0));
         v.assign(vec4(select(fly, vFly, vSlide), select(fly, life.mul(0.7).negate(), life)));
-        inf.assign(vec4(d.y, d.z.mul(h5.mul(0.6).add(0.7)), h6, 0.0));
+        // Żar < 0 = iskra z pancerza (paleta rozgrzanego metalu).
+        inf.assign(vec4(abs(d.y), d.z.mul(h5.mul(0.6).add(0.7)), h6, select(d.y.lessThan(0.0), float(1.0), float(0.0))));
       });
     });
 
@@ -163,7 +167,7 @@ export function createSparks({ renderer, group, profile, domeHeight, U, pool = 6
   const width = max(c.y.mul(mix(float(1.0), float(0.45), life)), uMinW);
   mat.scaleNode = vec2(lenW.add(uMinW.mul(2.0)), width).mul(alive);
   const fade = life.oneMinus();
-  const lColor = mix(vec3(1.0, 0.08, 0.04), U.color, U.life);
+  const lColor = select(c.w.greaterThan(0.5), vec3(1.0, 0.42, 0.1), mix(vec3(1.0, 0.08, 0.04), U.color, U.life));
   const q = uv().sub(0.5).mul(2.0);
   const core = exp(q.y.mul(q.y).mul(-26.0));
   const heatCol = mix(vec3(3.9, 4.1, 4.4), lColor.mul(2.3), smoothstep(0.0, 0.55, life));

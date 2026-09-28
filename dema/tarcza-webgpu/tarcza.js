@@ -129,9 +129,12 @@ export class Tarcza {
     group.add(this.mesh);
 
     // Iskry na powierzchni i odłamki pęknięcia (compute, pule tworzone raz).
-    this.sparks = createSparks({ renderer, group, profile: this.profile, domeHeight: height, U: this.U, pool: sparkPool, name });
+    this.sparks = createSparks({ renderer, group, profile: this.profile, domeHeight: height, U: this.U, pool: sparkPool });
     this.shards = createShards({ renderer, group, profile: this.profile, domeHeight: height, maxCount: shardMax });
     this.meanR = (this.profile.maxR + this.profile.minR) * 0.5;
+    this.breachReadAt = 0;
+    this.waveAcc = 0;
+    this.stepSize = 1 / 240;
     this.fadeK = 1;
     this.beamAcc = 0;
 
@@ -252,6 +255,33 @@ export class Tarcza {
     const power = clamp(0.25 + dmg / 260, 0.2, 2.0);
     this.sparks.spawnClass(cls, lx, ly, this.domeZ(lx, ly) + 2, R, power, FIELD_PARAMS.sparkMult, this.time);
   }
+  // Wiązka na tarczy: źródło ciągłe (siła co podkrok, pulsuje — promieniuje fale),
+  // energia co klatkę (długo trzymana w jednym miejscu przegrzewa je do przebicia),
+  // gorący punkt, strumień iskier.
+  beamOnShield(lx, ly, dt) {
+    if (this.mode === 'ref') return;
+    const radius = 42 * this.sizeK;
+    const r = Math.hypot(lx, ly) || 1;
+    const inset = Math.min(r * 0.25, radius * 0.6);
+    const ix = lx * (1 - inset / r), iy = ly * (1 - inset / r);
+    const weak = 1 - 0.5 * this.U.lowPower.value;
+    const force = -(3200 + 1600 * Math.sin(this.time * Math.PI * 2 * 7)) * weak;
+    // ~1 s wiązki w jednym miejscu przegrzewa pole do przebicia (przy progu 1,4).
+    this.pushSource(ix, iy, radius, force, 3.4, dt);
+    this.addHeat(ix, iy, 3.4 * dt);
+    this.beamSparks(ix, iy, dt);
+  }
+  // Iskry z pancerza (trafienie przez przebicie albo przy zgaszonej tarczy): lot, paleta metalu.
+  hullSparks(lx, ly, cls, dmg) {
+    if (!FIELD_PARAMS.sparksOn || FIELD_PARAMS.sparkMult <= 0) return;
+    const beam = cls === 'beam';
+    const n = beam ? dmg * 1.6 : (cls === 'special' ? 520 : (cls === 'pd' ? 18 : 90));
+    const r = Math.hypot(lx, ly) || 1;
+    this.sparks.spawn(lx, ly, 12, lx / r * 0.3, ly / r * 0.3, 1.0, n * FIELD_PARAMS.sparkMult,
+      beam ? 250 : 350, beam ? 900 : 1500, 0.25, beam ? 0.6 : 0.9, 1.0, -1.1, 2.6, 1.1, this.time);
+  }
+  breachAt(lx, ly) { return this.mode === 'new' && this.field.breachAt(lx, ly); }
+
   // Wiązka: strumień iskier z gorącego punktu (tempo na sekundę, akumulator).
   beamSparks(lx, ly, dt, rate = 900) {
     if (!FIELD_PARAMS.sparksOn || FIELD_PARAMS.sparkMult <= 0) return;
@@ -412,7 +442,10 @@ export class Tarcza {
 
     // Wyłączona tarcza: pole od zera przy następnym rozruchu.
     if (sh.state === 'off') {
-      if (!this.offReset) { this.field.reset(); this.clearHeat(); this.offReset = true; this.awakeUntil = -1; }
+      if (!this.offReset) {
+        this.field.reset(); this.field.clearBreachMap(); this.clearHeat();
+        this.offReset = true; this.awakeUntil = -1;
+      }
     } else {
       this.offReset = false;
     }
@@ -512,11 +545,20 @@ export class Tarcza {
     this.sparks.compute(this.time);
     this.shards.compute(this.time);
     if (awake) {
-      const c = Math.min(fp.waveSpeed, this.field.maxWaveSpeed(dt));
-      const n = this.field.substepsFor(dt, c);
+      // Stały krok fali (≤ 1/240 s, CFL), tyle kroków, ile trzeba — parami (ping-pong);
+      // reszta czasu przechodzi do następnej klatki. Zaległości ponad limit przepadają
+      // (poniżej ~20 kl./s fala zwalnia zamiast rozsadzać klatkę).
+      const c = Math.min(fp.waveSpeed, this.field.maxWaveSpeed());
+      const h = this.field.stepFor(c);
+      this.waveAcc += dt;
+      let pairs = Math.floor(this.waveAcc / (2 * h));
+      const maxPairs = this.field.maxSubsteps / 2;
+      if (pairs > maxPairs) { pairs = maxPairs; this.waveAcc = 0; } else this.waveAcc -= pairs * 2 * h;
+      const n = pairs * 2;
+      this.stepSize = h;
       P.uEvCount.value = this.evCount;
       P.uSrcCount.value = this.srcCount;
-      P.uDtSub.value = dt / n;
+      P.uDtSub.value = h;
       P.uC2.value = c * c;
       P.uDamp.value = fp.damping;
       P.uStiff.value = fp.stiffness;
@@ -531,6 +573,11 @@ export class Tarcza {
       P.uWDecay.value = Math.exp(-dt / Math.max(0.05, fp.waveTrail));
       this.field.step(dt, n);
       this.substeps = n;
+      // Mapa przebić dla gameplayu co ~0,1 s (asynchronicznie).
+      if (FIELD_PARAMS.energyOn && this.time >= this.breachReadAt) {
+        this.field.requestBreachMap();
+        this.breachReadAt = this.time + 0.1;
+      }
     } else {
       this.substeps = 0;
     }

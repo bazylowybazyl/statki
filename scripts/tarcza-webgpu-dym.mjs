@@ -114,15 +114,19 @@ const scenarios = {
     await call(page, () => window.__demo.lookAt(0, -300, 3000));
     await step(page, 2);
     if (await has(page, 'salvo')) {
-      await call(page, () => { window.__demo.aim?.(600, -250); window.__demo.salvo(); });
-      await step(page, 24);
+      // Trzy salwy w to samo miejsce (pociski lecą ~1 s) — przegrzanie aż do przebicia.
+      await call(page, () => { window.__demo.aim(600, -250); window.__demo.salvo(); });
+      await step(page, 20);
+      await call(page, () => window.__demo.salvo());
+      await step(page, 20);
+      await call(page, () => window.__demo.salvo());
+      await step(page, 34);
       await shot(page, '03-salwa');
-      // Druga i trzecia salwa w to samo miejsce — przegrzanie aż do przebicia.
-      await call(page, () => window.__demo.salvo());
-      await step(page, 18);
-      await call(page, () => window.__demo.salvo());
-      await step(page, 18);
+      await step(page, 30);
       await shot(page, '03-salwa-przegrzanie');
+      const st = await stats(page);
+      notes.push(`[salwa] trafienia w tarczę ${st.shieldHits}, przebicie: ${st.breach}`);
+      if (!(st.shieldHits > 20)) problems.push(`[salwa] za mało trafień w tarczę: ${st.shieldHits}`);
     } else notes.push('[salwa] pominięto — brak __demo.salvo');
     await page.close();
   },
@@ -132,9 +136,15 @@ const scenarios = {
     await call(page, () => window.__demo.lookAt(300, -200, 2200));
     await step(page, 2);
     if (await has(page, 'beam')) {
-      await call(page, () => window.__demo.beam(650, -230, true));
+      // Wiązka trzymana w jednym punkcie (górny kieł dziobu): przegrzanie → przebicie →
+      // wiązka przechodzi przez dziurę i pali pancerz.
+      await call(page, () => window.__demo.beam(560, -80, true));
       await step(page, 30);
       await shot(page, '04-wiazka');
+      await step(page, 70);
+      await shot(page, '04-wiazka-przebicie');
+      const st = await stats(page);
+      notes.push(`[wiazka] przebicie: ${st.breach}, trafienia w pancerz: ${st.hullHits}`);
       await call(page, () => window.__demo.beam(0, 0, false));
       await step(page, 4);
     } else notes.push('[wiazka] pominięto — brak __demo.beam');
@@ -209,10 +219,13 @@ const scenarios = {
   async tarcza(browser) {
     const page = await openPage(browser, 'test=1&siatka=256');
     if (await has(page, 'shieldClash')) {
-      await call(page, () => window.__demo.lookAt(0, -2000, 7000));
-      await call(page, () => window.__demo.shieldClash(true));
-      await step(page, 60);
+      await call(page, () => window.__demo.lookAt(0, -900, 3600));
+      await call(page, () => window.__demo.shieldClash(true, true));
+      await step(page, 40);
       await shot(page, '09-tarcza-w-tarcze');
+      const st = await stats(page);
+      notes.push(`[tarcza] faza ${st.clash}, punkty styku ${st.clashContacts}, tarcza wroga ${st.enemyShield} ${Math.round(st.enemyHp)}`);
+      if (st.clash === 'approach' && st.clashContacts === 0) problems.push('[tarcza] brak styku pól po szybkim starcie');
     } else notes.push('[tarcza] pominięto — brak __demo.shieldClash');
     await page.close();
   },

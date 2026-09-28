@@ -11,8 +11,8 @@
 //   ciepło (E, B, W, —) — energia trafień (dyfuzja + stygnięcie), przebicie
 //                        (rośnie, gdy E > próg; maleje, gdy E < 0,6 progu),
 //                        obwiednia aktywności fali (heksy „po przejściu fali”).
-// Klatka: wstrzyknięcie zdarzeń → n podkroków fali (krok z warunku CFL,
-// parzysta liczba, wynik w A) → rozmycie E wzdłuż x → rozmycie wzdłuż y +
+// Klatka: wstrzyknięcie zdarzeń → n podkroków fali (krok stały ≤ 1/240 s i z warunku
+// CFL, akumulator czasu, kroki parami — wynik w A) → rozmycie E wzdłuż x → wzdłuż y +
 // stygnięcie + przebicie + obwiednia + zapis tekstury (h, E, B, W).
 // Dyfuzja jako rozmycie gaussowskie σ² = 2·D·dt — dokładne rozwiązanie
 // równania ciepła, stabilne przy każdej rozdzielczości siatki.
@@ -264,9 +264,29 @@ export function createField(renderer, profile, longCells, P) {
     textureStore(tex, ivec2(i, j), vec4(wv.x, E, B, Wn));
   })().compute(N);
 
+  // Mapa przebić dla CPU: 64×64, maksimum B w bloku komórek (przepuszczanie pocisków).
+  const BM = 64;
+  const bx = Math.ceil(W / BM), by = Math.ceil(H / BM);
+  const breachMap = instancedArray(BM * BM, 'float');
+  const breachReduce = Fn(() => {
+    const id = int(instanceIndex);
+    const ci = id.mod(int(BM)).mul(int(bx)).toVar();
+    const cj = id.div(int(BM)).mul(int(by)).toVar();
+    const m = float(0).toVar();
+    Loop({ start: 0, end: by, type: 'int', condition: '<', name: 'rj' }, ({ rj }) => {
+      Loop({ start: 0, end: bx, type: 'int', condition: '<', name: 'ri' }, ({ ri }) => {
+        m.assign(max(m, heatA.element(at(ci.add(ri), cj.add(rj))).y));
+      });
+    });
+    breachMap.element(id).assign(m);
+  })().compute(BM * BM);
+  const breachCpu = new Float32Array(BM * BM);
+  let breachBusy = false;
+  let breachAny = false;
+
   // Tablice przebiegów dla każdej parzystej liczby podkroków (bez alokacji w klatce).
   const waveGroups = [];
-  for (let n = 2; n <= MAX_SUBSTEPS; n += 2) {
+  for (let n = 0; n <= MAX_SUBSTEPS; n += 2) {
     const arr = [inject];
     for (let k = 0; k < n; k++) arr.push(k % 2 === 0 ? stepAB : stepBA);
     arr.push(blurX, blurYUpdate);
@@ -276,27 +296,47 @@ export function createField(renderer, profile, longCells, P) {
   let needsInit = true;
   const field = {
     layout: L, tex, P, lastSubsteps: 0,
-    describe() { return `${W}×${H} (komórka ${L.cell.toFixed(2)} j.)`; },
-    // Podkroki z warunku CFL (Courant 0,5), parzyste, ≤ MAX_SUBSTEPS.
-    substepsFor(dt, c) {
-      const dtMax = 0.5 * L.cell / Math.max(c, 1);
-      let n = Math.ceil(dt / dtMax);
-      n = Math.max(2, Math.min(MAX_SUBSTEPS, n + (n & 1)));
-      return n;
-    },
-    maxWaveSpeed(dt) { return 0.5 * L.cell * MAX_SUBSTEPS / Math.max(dt, 1e-4); },
+    describe() { return `${W}×${H} · ${L.cell.toFixed(2)} j.`; },
+    // Stały krok fali: ≤ 1/240 s i z warunku CFL (Courant 0,5) dla tej siatki.
+    stepFor(c) { return Math.min(1 / 240, 0.5 * L.cell / Math.max(c, 1)); },
+    // Prędkość fali, przy której 60 kl./s mieści się w MAX_SUBSTEPS krokach.
+    maxWaveSpeed() { return 0.5 * L.cell * MAX_SUBSTEPS * 60; },
+    maxSubsteps: MAX_SUBSTEPS,
     reset() { renderer.compute(init); needsInit = false; },
+    // n — parzysta liczba podkroków (0..MAX_SUBSTEPS): wstrzyknięcie, n kroków fali, ciepło.
     step(dt, n) {
       if (needsInit) { renderer.compute(init); needsInit = false; }
       renderer.compute(waveGroups[n]);
       this.lastSubsteps = n;
     },
     blurRadiusFor(sigmaCells) { return Math.max(1, Math.min(MAX_BLUR, Math.ceil(sigmaCells * 3))); },
+    // Odczyt mapy przebić (asynchronicznie, nie częściej niż jeden naraz).
+    requestBreachMap() {
+      if (breachBusy) return;
+      breachBusy = true;
+      renderer.compute(breachReduce);
+      renderer.getArrayBufferAsync(breachMap.value).then((buf) => {
+        breachCpu.set(new Float32Array(buf, 0, BM * BM));
+        let any = false;
+        for (let i = 0; i < BM * BM; i++) if (breachCpu[i] > 0.5) { any = true; break; }
+        breachAny = any;
+      }).catch(() => {}).finally(() => { breachBusy = false; });
+    },
+    clearBreachMap() { breachCpu.fill(0); breachAny = false; },
+    // Przebicie w punkcie lokalnym (klatka 3D) wg ostatniego odczytu.
+    breachAt(lx, ly) {
+      if (!breachAny) return false;
+      const i = Math.floor((lx - L.x0) / L.cell / bx);
+      const j = Math.floor((ly - L.y0) / L.cell / by);
+      if (i < 0 || j < 0 || i >= BM || j >= BM) return false;
+      return breachCpu[j * BM + i] > 0.5;
+    },
+    get breachAny() { return breachAny; },
     dispose() {
       tex.dispose();
       maskTex.dispose();
-      for (const node of [init, inject, stepAB, stepBA, blurX, blurYUpdate]) node.dispose?.();
-      for (const b of [maskBuf, waveA, waveB, heatA, heatB]) b.value?.dispose?.();
+      for (const node of [init, inject, stepAB, stepBA, blurX, blurYUpdate, breachReduce]) node.dispose?.();
+      for (const b of [maskBuf, waveA, waveB, heatA, heatB, breachMap]) b.value?.dispose?.();
     }
   };
   return field;

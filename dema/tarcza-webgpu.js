@@ -14,9 +14,11 @@ import { updateShieldFx, setEntityShieldForcedOff } from '../shieldSystem.js';
 import { uTime, uDt, lights, uLightsOn, uLightGain, BLOOM_GAME, clamp } from './tarcza-webgpu/wspolne.js';
 import { createSky } from './tarcza-webgpu/tlo.js';
 import { loadAtlasSprite, createAtlasHullMesh } from './tarcza-webgpu/kadlub.js';
-import { buildShip, placeShip, aimTurret, shipPoint } from './tarcza-webgpu/wrogowie.js';
+import { buildShip, placeShip, aimTurret, shipPoint, footprintShards } from './tarcza-webgpu/wrogowie.js';
 import { Tarcza, FIELD_PARAMS } from './tarcza-webgpu/tarcza.js';
 import { sstepDown } from './tarcza-webgpu/czasza.js';
+import { createWeapons, WEAPONS } from './tarcza-webgpu/bronie.js';
+import { createClash } from './tarcza-webgpu/zderzenie.js';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -67,7 +69,6 @@ async function main() {
   // Błędy walidacji WebGPU / WGSL jako błędy konsoli (skrypt sprawdzający je liczy).
   device.addEventListener('uncapturederror', (e) => showError(`WebGPU: ${e.error?.message || e.error}`));
   const timestamps = renderer.backend.trackTimestamp === true;
-  $('backend').textContent = `WebGPU · ${timestamps ? 'pomiar GPU włączony' : 'bez pomiaru GPU (brak timestamp-query)'}`;
 
   // -------------------------------------------------------------------------
   // Scena i kamera z góry (jak w grze: perspektywa, fov 35°, prosto w dół)
@@ -154,11 +155,12 @@ async function main() {
 
   // -------------------------------------------------------------------------
   // Wrogowie: 3 mniejsze okręty na łuku 4–6 tys. j. od Atlasa, wieże w Atlasa.
+  // Środkowy ma własną tarczę-obrys (profil z sylwetki brył, ta sama droga co u Atlasa).
 
   const ENEMY_DEFS = [
-    { a: 32, d: 4700, scale: 0.55, seed: 29, base: 0x7d4b3b, dark: 0x3e2a25, line: 0x1d1210, engine: [7.0, 2.2, 0.6] },
-    { a: 93, d: 5300, scale: 0.6, seed: 41, base: 0x5d7760, dark: 0x2f3a31, line: 0x141a15, engine: [1.2, 6.5, 2.4], shield: true },
-    { a: 151, d: 4300, scale: 0.5, seed: 57, base: 0x6b6f86, dark: 0x33364a, line: 0x15161f, engine: [4.8, 1.4, 6.2] }
+    { a: 32, d: 4700, scale: 0.55, seed: 29, base: 0x7d4b3b, dark: 0x3e2a25, line: 0x1d1210, engine: [7.0, 2.2, 0.6], laser: [1.0, 0.16, 0.1] },
+    { a: 93, d: 5300, scale: 0.6, seed: 41, base: 0x5d7760, dark: 0x2f3a31, line: 0x141a15, engine: [1.2, 6.5, 2.4], laser: [0.25, 1.0, 0.32], shield: true },
+    { a: 151, d: 4300, scale: 0.5, seed: 57, base: 0x6b6f86, dark: 0x33364a, line: 0x15161f, engine: [4.8, 1.4, 6.2], laser: [0.8, 0.3, 1.0] }
   ];
   const enemies = ENEMY_DEFS.map((def) => {
     const ship = buildShip(def);
@@ -171,6 +173,22 @@ async function main() {
     scene.add(ship.group);
     return { def, ship, home: { x, y, angle: face } };
   });
+
+  const eIdx = ENEMY_DEFS.findIndex((d) => d.shield);
+  const eShip = enemies[eIdx].ship;
+  const eEnt = {
+    x: eShip.x, y: -eShip.y, angle: -eShip.angle, type: 'destroyer',
+    visual: { spriteScale: ENEMY_DEFS[eIdx].scale },
+    hexGrid: { shards: footprintShards(eShip.footprint, 12) },
+    shield: { val: 3000, max: 3000 }
+  };
+  const eGroup = new THREE.Group();
+  scene.add(eGroup);
+  const eShield = new Tarcza({ renderer, entity: eEnt, group: eGroup, gridCells: 192, name: 'wróg', sparkPool: 16384, shardMax: 1500 });
+  const clash = createClash({ atlas, atlasShield: shield, enemy: enemies[eIdx], eEnt, eShield, eGroup });
+  clash.syncEnemy();
+
+  const weapons = createWeapons({ scene, atlas, shield, sprite, enemies });
 
   // -------------------------------------------------------------------------
   // Render: pass sceny (MSAA 4) → bloom → tone mapping (RenderPipeline).
@@ -186,11 +204,12 @@ async function main() {
 
   const S = {
     time: 0, frames: 0, fps: 60, cpuMs: 0, gpuMs: 0, gpuComputeMs: 0, pxPerUnit: 1,
-    keys: new Set(), mouse: { x: innerWidth / 2, y: innerHeight / 2 },
+    keys: new Set(), mouse: { x: innerWidth / 2, y: innerHeight / 2, left: false, right: false },
     aim: new THREE.Vector3(), aimLock: false,
     newFx: true, regen: 0.04, bloom: true, bloomStrength: BLOOM_GAME.strength,
     lightsOn: true, glowOn: true, refrOn: true
   };
+  const input = { fire: false, beam: false, x: 0, y: 0 };
 
   // Punkt płaszczyzny z = planeZ pod pikselem ekranu (kamera patrzy prosto w dół).
   function screenToWorld(px, py, planeZ, out) {
@@ -200,14 +219,22 @@ async function main() {
     return out;
   }
   function updateAim() {
-    if (S.aimLock) return;
-    screenToWorld(S.mouse.x, S.mouse.y, 0, S.aim);
+    if (!S.aimLock) screenToWorld(S.mouse.x, S.mouse.y, 0, S.aim);
   }
 
   const _wv = new THREE.Vector3();
   const canvas = renderer.domElement;
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   canvas.addEventListener('pointermove', (e) => { S.mouse.x = e.clientX; S.mouse.y = e.clientY; S.aimLock = false; });
+  canvas.addEventListener('pointerdown', (e) => {
+    S.mouse.x = e.clientX; S.mouse.y = e.clientY; S.aimLock = false;
+    if (e.button === 0) { S.mouse.left = true; weapons.W.fireCd = 0; }
+    if (e.button === 2) S.mouse.right = true;
+  });
+  addEventListener('pointerup', (e) => {
+    if (e.button === 0) S.mouse.left = false;
+    if (e.button === 2) S.mouse.right = false;
+  });
   // Zoom do kursora: punkt świata pod kursorem zostaje pod kursorem.
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
@@ -223,8 +250,10 @@ async function main() {
   function applyFxToggles() {
     const on = S.newFx;
     uLightsOn.value = on && S.lightsOn ? 1 : 0;
-    shield.G.hullGlow.value = on && S.glowOn ? 1 : 0;
-    shield.G.refrOn.value = on && S.refrOn ? 1 : 0;
+    for (const sh of [shield, eShield]) {
+      sh.G.hullGlow.value = on && S.glowOn ? 1 : 0;
+      sh.G.refrOn.value = on && S.refrOn ? 1 : 0;
+    }
   }
   function setNewFx(on) {
     S.newFx = on;
@@ -232,21 +261,29 @@ async function main() {
     ab.className = on ? 'on' : 'off';
     ab.textContent = on ? 'T · Nowe efekty: WŁĄCZONE' : 'T · Jak dziś w grze (łaty trafień)';
     if (!DEBUG_FIELD) shield.setMode(on ? 'new' : 'ref');
+    eShield.setMode(on ? 'new' : 'ref');
     applyFxToggles();
   }
   $('ab').addEventListener('click', () => setNewFx(!S.newFx));
+
+  function setWeapon(n) {
+    if (!WEAPONS[n]) return;
+    weapons.W.weapon = n;
+    for (const b of document.querySelectorAll('#weapons button')) b.classList.toggle('on', Number(b.dataset.w) === n);
+  }
+  for (const b of document.querySelectorAll('#weapons button')) b.addEventListener('click', () => setWeapon(Number(b.dataset.w)));
 
   function toggleShield() {
     setEntityShieldForcedOff(atlas, !atlas._shieldForcedOff);
     return !atlas._shieldForcedOff;
   }
-  function breakShield() {
-    atlas.shield.val = 0;
-  }
-  function fullCharge() {
-    atlas.shield.val = atlas.shield.max;
-  }
+  function breakShield() { atlas.shield.val = 0; }
+  function fullCharge() { atlas.shield.val = atlas.shield.max; }
+  function aimGame(out) { return out.set(S.aim.x, -S.aim.y); }
+  const _aim2 = new THREE.Vector2();
+  function salvoAtAim() { aimGame(_aim2); weapons.salvo(_aim2.x, _aim2.y); }
 
+  function toggleCheck(id) { const el = $(id); el.checked = !el.checked; el.dispatchEvent(new Event('change')); }
   addEventListener('keydown', (e) => {
     if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return;
     const k = e.key.toLowerCase();
@@ -256,7 +293,11 @@ async function main() {
     if (k === 'o') toggleShield();
     if (k === 'b') breakShield();
     if (k === 'r') fullCharge();
-    if (k === 'p') { const el = $('c-sparks'); el.checked = !el.checked; el.dispatchEvent(new Event('change')); }
+    if (k === 'k') clash.toggle();
+    if (k === 'p') toggleCheck('c-sparks');
+    if (k === 'e') toggleCheck('c-enemy');
+    if (k >= '1' && k <= '4') setWeapon(Number(k));
+    if (k === ' ') { e.preventDefault(); salvoAtAim(); }
   });
   addEventListener('keyup', (e) => S.keys.delete(e.key.toLowerCase()));
   addEventListener('resize', () => {
@@ -264,7 +305,8 @@ async function main() {
     camera.updateProjectionMatrix();
     renderer.setSize(innerWidth, innerHeight);
   });
-  // Panel: przełączniki i suwaki pola.
+
+  // Panel: przełączniki i suwaki.
   function bindCheck(id, fn) { const el = $(id); el.addEventListener('change', () => fn(el.checked)); fn(el.checked); }
   // onChange: przebudowa (siatka pola) dopiero po puszczeniu suwaka, nie co krok.
   function bindRange(id, fn, fmt = (v) => v.toFixed(2), onChange = false) {
@@ -275,16 +317,20 @@ async function main() {
     if (onChange) el.addEventListener('change', upd);
     upd();
   }
-  bindCheck('c-field', (v) => { shield.showField = v; });
+  if (TEST) $('c-enemy').checked = false;   // test: bez losowego ognia
+  bindCheck('c-field', (v) => { shield.showField = v; eShield.showField = v; });
   bindCheck('c-lights', (v) => { S.lightsOn = v; applyFxToggles(); });
   bindCheck('c-glow', (v) => { S.glowOn = v; applyFxToggles(); });
   bindCheck('c-refr', (v) => { S.refrOn = v; applyFxToggles(); });
-  bindRange('s-refr', (v) => { shield.G.refr.value = v; });
-  bindRange('s-light', (v) => { uLightGain.value = v; });
   bindCheck('c-sparks', (v) => { FIELD_PARAMS.sparksOn = v; });
-  bindRange('s-sparks', (v) => { FIELD_PARAMS.sparkMult = v; });
+  bindCheck('c-bloom', (v) => { S.bloom = v; bloomNode.strength.value = v ? S.bloomStrength : 0; });
+  bindCheck('c-enemy', (v) => { weapons.W.enemyFire = v; });
   bindCheck('c-waves', (v) => { FIELD_PARAMS.wavesOn = v; });
   bindCheck('c-energy', (v) => { FIELD_PARAMS.energyOn = v; });
+  bindRange('s-refr', (v) => { shield.G.refr.value = v; eShield.G.refr.value = v; });
+  bindRange('s-light', (v) => { uLightGain.value = v; });
+  bindRange('s-sparks', (v) => { FIELD_PARAMS.sparkMult = v; });
+  bindRange('s-bloom', (v) => { S.bloomStrength = v; if (S.bloom) bloomNode.strength.value = v; });
   bindRange('s-wave', (v) => { FIELD_PARAMS.waveSpeed = v; }, (v) => v.toFixed(0));
   bindRange('s-damp', (v) => { FIELD_PARAMS.damping = v; }, (v) => v.toFixed(1));
   bindRange('s-cool', (v) => { FIELD_PARAMS.coolTime = v; }, (v) => v.toFixed(1));
@@ -292,6 +338,12 @@ async function main() {
   bindRange('s-regen', (v) => { S.regen = v / 100; }, (v) => v.toFixed(1));
   $('s-grid').value = String(GRID_CELLS);
   bindRange('s-grid', (v) => { shield.setGridCells(v); }, (v) => v.toFixed(0), true);
+  const TONE = { neutral: THREE.NeutralToneMapping, aces: THREE.ACESFilmicToneMapping, agx: THREE.AgXToneMapping };
+  $('sel-tone').addEventListener('change', (e) => {
+    renderer.toneMapping = TONE[e.target.value] || THREE.NeutralToneMapping;
+    pipeline.needsUpdate = true;
+  });
+  setWeapon(2);
 
   function updateCamera(dt) {
     const pan = 1300 * dt * (cam.z / 3600);
@@ -314,13 +366,12 @@ async function main() {
   }
 
   // -------------------------------------------------------------------------
-  // Tarcza: HP (regeneracja po stronie dema, jak wołający w grze) i stany.
-
+  // Tarcze: HP (regeneracja po stronie dema, jak wołający w grze) i stany.
   // Kolejność jak w grze: najpierw stan (val = 0 → breaking), potem ładowanie —
   // regeneracja przed updateShieldFx podniosłaby HP z zera i pęknięcie by nie ruszyło.
-  function updateShieldState(dt) {
-    const sh = atlas.shield;
-    updateShieldFx(atlas, dt);
+  function updateShieldState(ent, dt) {
+    const sh = ent.shield;
+    updateShieldFx(ent, dt);
     if (sh.state !== 'breaking' && sh.val < sh.max) sh.val = Math.min(sh.max, sh.val + sh.max * S.regen * dt);
   }
 
@@ -334,6 +385,7 @@ async function main() {
   // Klatka
 
   const _v = new THREE.Vector3();
+  const SHIELD_PAIRS = [[atlas, shield], [eEnt, eShield]];
   function frame(dt) {
     const t0 = performance.now();
     S.time += dt;
@@ -346,22 +398,35 @@ async function main() {
     lights.reset();
 
     // Wrogowie: wieże w Atlasa, dysze świecą na kadłub za rufą.
-    for (const e of enemies) {
+    for (let i = 0; i < enemies.length; i++) {
+      const e = enemies[i];
       aimTurret(e.ship, atlas.x, -atlas.y);
       const p = shipPoint(e.ship, -700, 0, 10, _v);
       const g = e.ship.engine, s = e.ship.scale;
       lights.push(p.x, p.y, p.z, 900 * s, 220 * s, g[0] * 0.28, g[1] * 0.28, g[2] * 0.28);
     }
 
-    updateShieldState(dt);
-    shield.update(dt, S.time, S.pxPerUnit);
-    // Załamanie: pochylenie normalnej → uv ekranu (ośrodek ~90 j. „grubości”).
-    shield.G.refrK.value = 90 * S.pxPerUnit / Math.max(1, innerHeight);
-    shield.G.aspect.value = camera.aspect;
-    if (S.newFx) shield.emitLights(dt);
+    // Broń: LPM wybrana broń z najbliższego wroga w kursor, PPM wiązka.
+    input.fire = S.mouse.left;
+    input.beam = S.mouse.right;
+    input.x = S.aim.x; input.y = -S.aim.y;
+    weapons.update(dt, S.time, input);
+    clash.update(dt);
+
+    for (let i = 0; i < SHIELD_PAIRS.length; i++) {
+      const ent = SHIELD_PAIRS[i][0], sh = SHIELD_PAIRS[i][1];
+      updateShieldState(ent, dt);
+      sh.update(dt, S.time, S.pxPerUnit);
+      // Załamanie: pochylenie normalnej → uv ekranu (ośrodek ~90 j. „grubości”).
+      sh.G.refrK.value = 90 * S.pxPerUnit / Math.max(1, innerHeight);
+      sh.G.aspect.value = camera.aspect;
+      if (S.newFx) sh.emitLights(dt);
+    }
+    weapons.emit(dt, S.time);
 
     lights.commit();
     shield.computeStep(dt);
+    eShield.computeStep(dt);
     sky.fit(camera);
     pipeline.render();
 
@@ -373,7 +438,7 @@ async function main() {
   }
 
   // Panel: HP i statystyki (4 razy na sekundę — tekst to jedyna alokacja poza startem).
-  const hpFill = $('hpfill'), hpText = $('hptext');
+  const hpFill = $('hpfill'), hpText = $('hptext'), statsEl = $('stats');
   let statsAt = 0, fpsFrames = 0, fpsT = performance.now();
   function updatePanel(now) {
     fpsFrames++;
@@ -384,16 +449,19 @@ async function main() {
     const life = sh.val / sh.max;
     hpFill.style.width = `${(life * 100).toFixed(1)}%`;
     hpFill.style.background = life < 0.35 ? 'linear-gradient(90deg, #b8322a, #ff7a55)' : 'linear-gradient(90deg, #3b6fd8, #7fb0ff)';
-    hpText.textContent = `tarcza: ${sh.state}${atlas._shieldForcedOff ? ' (wyłączona)' : ''} · HP ${Math.round(sh.val)} / ${sh.max} (${(life * 100).toFixed(0)}%)`;
-    $('stats').textContent =
-      `FPS              ${S.fps.toFixed(0)}\n` +
+    hpText.textContent = `tarcza: ${sh.state}${atlas._shieldForcedOff ? ' (wyłączona)' : ''} · HP ${Math.round(sh.val)} / ${sh.max} (${(life * 100).toFixed(0)}%)` +
+      (clash.C.phase !== 'idle' ? ` · K: ${clash.C.phase}` : '');
+    const W = renderer.domElement.width, H = renderer.domElement.height;
+    statsEl.textContent =
+      `FPS              ${S.fps.toFixed(0)}   (${W}×${H})\n` +
       `ms CPU (klatka)  ${S.cpuMs.toFixed(2)}\n` +
-      `ms GPU           ${timestamps ? (S.gpuMs + S.gpuComputeMs).toFixed(2) + `  (compute ${S.gpuComputeMs.toFixed(2)})` : '—'}\n` +
+      `ms GPU           ${timestamps ? (S.gpuMs + S.gpuComputeMs).toFixed(2) + `  (compute ${S.gpuComputeMs.toFixed(2)})` : '— (brak timestamp-query)'}\n` +
       `siatka pola      ${shield.describeGrid()}\n` +
-      `podkroki fali    ${shield.substeps}\n` +
-      `zdarzenia/klatkę ${shield.eventsLastFrame}\n` +
-      `żywe iskry (≈)   ${shield.sparks.live.toLocaleString('pl-PL')} / ${shield.sparks.pool.toLocaleString('pl-PL')}\n` +
-      `światła          ${lights.count} / 256`;
+      `krok fali        1/${Math.round(1 / shield.stepSize)} s × ${shield.substeps}\n` +
+      `zdarzenia/klatkę ${shield.eventsLastFrame + eShield.eventsLastFrame}\n` +
+      `żywe iskry (≈)   ${(shield.sparks.live + eShield.sparks.live).toLocaleString('pl-PL')} / ${shield.sparks.pool.toLocaleString('pl-PL')}\n` +
+      `światła          ${lights.count} / 256\n` +
+      `pociski          ${weapons.W.stats.bolts}   przez przebicie: ${weapons.W.stats.passed}`;
   }
 
   // -------------------------------------------------------------------------
@@ -403,10 +471,22 @@ async function main() {
   let pendingSteps = 0;
   let stepDone = null;
   let last = performance.now();
+  let frameErrors = 0;
+  // Wyjątek w klatce: na ekran i do konsoli, ale bez zawieszenia step() i bez
+  // zalewu komunikatów (po 30 błędach z rzędu pętla staje).
+  function safeFrame(dt) {
+    try {
+      frame(dt);
+      frameErrors = 0;
+    } catch (e) {
+      showError(`Klatka: ${e?.stack || e}`);
+      if (++frameErrors > 30) { renderer.setAnimationLoop(null); showError('Pętla zatrzymana po powtarzających się błędach.'); }
+    }
+  }
   renderer.setAnimationLoop((now) => {
     if (pendingSteps > 0) {
-      frame(1 / 60);
       pendingSteps--;
+      safeFrame(1 / 60);
       if (pendingSteps === 0 && stepDone) {
         const done = stepDone;
         stepDone = null;
@@ -419,7 +499,7 @@ async function main() {
     if (TEST) return;
     const dt = clamp((now - last) / 1000, 0.001, 0.05);
     last = now;
-    frame(dt);
+    safeFrame(dt);
     updatePanel(now);
   });
 
@@ -430,10 +510,13 @@ async function main() {
     syncCamera();
   }
   setNewFx(!DEBUG_FIELD);
+  $('backend').textContent = `WebGPU · ${timestamps ? 'pomiar czasu GPU włączony' : 'bez pomiaru czasu GPU (brak timestamp-query)'}`;
 
+  // ---------------------------------------------------------------------------
+  // Sterowanie z konsoli (x, y w układzie gry, y w dół).
   window.__demo = {
     ready: true,
-    S, cam, atlas, enemies, shield, renderer, scene, camera,
+    S, cam, atlas, enemies, shield, eShield, weapons, clash, renderer, scene, camera,
     step(n = 1) {
       return new Promise((resolve) => {
         pendingSteps = Math.max(1, n | 0);
@@ -441,6 +524,22 @@ async function main() {
       });
     },
     hit: (x, y, dmg = 100, cls = 'main') => hitAt(x, y, dmg, cls),
+    // Salwa wszystkich wrogów w punkt (domyślnie kursor / aim).
+    salvo(x, y) {
+      if (Number.isFinite(x) && Number.isFinite(y)) weapons.salvo(x, y);
+      else salvoAtAim();
+    },
+    beam(x, y, on = true) { weapons.setBeam(on, x, y); return on; },
+    aim(x, y) { S.aimLock = true; S.aim.set(x, -y, 0); },
+    fire(weapon = weapons.W.weapon, x, y) {
+      aimGame(_aim2);
+      const tx = Number.isFinite(x) ? x : _aim2.x, ty = Number.isFinite(y) ? y : _aim2.y;
+      const n = typeof weapon === 'string' ? ({ pd: 1, main: 2, special: 3 }[weapon] || 2) : weapon;
+      return weapons.fire(weapons.nearestEnemy(tx, ty), tx, ty, n);
+    },
+    setWeapon,
+    enemyFire(on) { const el = $('c-enemy'); el.checked = !!on; el.dispatchEvent(new Event('change')); },
+    shieldClash(on, fast = false) { return clash.toggle(on, fast); },
     setHP(u) { atlas.shield.val = clamp(u, 0, 1) * atlas.shield.max; return atlas.shield.val; },
     breakShield,
     toggleShield,
@@ -456,8 +555,11 @@ async function main() {
       return {
         fps: S.fps, cpuMs: S.cpuMs, gpuMs: S.gpuMs, gpuComputeMs: S.gpuComputeMs, lights: lights.count,
         state: sh.state, hp: sh.val, hpMax: sh.max, grid: shield.describeGrid(), domeVisible: shield.visible,
-        substeps: shield.substeps, events: shield.eventsLastFrame, mode: shield.mode,
-        sparks: shield.sparks.live, shards: shield.shards.count, shardsActive: shield.shards.active(S.time),
+        substeps: shield.substeps, events: shield.eventsLastFrame + eShield.eventsLastFrame, mode: shield.mode,
+        sparks: shield.sparks.live + eShield.sparks.live, shards: shield.shards.count, shardsActive: shield.shards.active(S.time),
+        bolts: weapons.W.stats.bolts, shieldHits: weapons.W.stats.shieldHits, hullHits: weapons.W.stats.hullHits,
+        passedBreach: weapons.W.stats.passed, breach: shield.field.breachAny,
+        clash: clash.C.phase, clashContacts: clash.C.contacts, enemyShield: eEnt.shield.state, enemyHp: eEnt.shield.val,
         maxR: profile.maxR, minR: profile.minR, pad: profile.pad
       };
     }
