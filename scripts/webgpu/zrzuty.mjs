@@ -29,7 +29,9 @@
 // --wydajnosc: dodatkowo bitwa w czasie rzeczywistym (CPU/GPU ms, draw calle) → <out>/<backend>/wydajnosc.json
 // --losowania: licznik wywołań Math.random gry wg miejsca wywołania, od startu sceny do zrzutu (wyniki.json →
 //            `losowania` sceny; zadanie 23 — wizualia losują z fxRandom). Ciąg liczb bez zmian, ale stos przy
-//            każdym losowaniu spowalnia stronę — nie łączyć z pomiarem wydajności.
+//            każdym losowaniu spowalnia stronę — nie łączyć z pomiarem wydajności. `--losowania efekty` liczy
+//            też generator efektów (fxRandom): `losowania` = { gra, efekty } — przesunięty ciąg efektów
+//            (inna liczba losowań przed iskrą / strugą) zmienia zrzut, choć gra stoi w tym samym stanie.
 // --uuid osobne|wspolne: skąd three bierze losowania na UUID. „osobne” — z własnego strumienia strony
 //            (osobneLosowanieUuid w wspolne.mjs): liczba obiektów three (u WebGPU tysiące węzłów TSL) nie
 //            przesuwa Math.random gry, więc WebGL i WebGPU generują ten sam świat (planety, wraki, warp).
@@ -1111,7 +1113,7 @@ async function runSession(session, backend, outDir, base) {
         // Ziarno na starcie sceny (skrót nazwy): spawny losują rozrzut, a wcześniejsze klatki
         // (ładowanie, czekanie na gotowość) zużywają losowania w zmiennej liczbie.
         const sceneSeed = [...id].reduce((h, ch) => Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0, 2166136261);
-        await ev(`(async () => { const S = window.__harness.scene, H = window.__harness; window.__harnessDiag = null; H.reseed(${sceneSeed});${args.losowania ? ' H.losowania.start();' : ''} S.hideHud(${!sc.hud});\n${sc.js}\n return true; })()`, 300000);
+        await ev(`(async () => { const S = window.__harness.scene, H = window.__harness; window.__harnessDiag = null; H.reseed(${sceneSeed});${args.losowania ? ` H.losowania.start(${args.losowania === 'efekty'});` : ''} S.hideHud(${!sc.hud});\n${sc.js}\n return true; })()`, 300000);
         await ev(`window.__harness.frames(${sc.warm || 30})`);
         await waitFor(cdp, 'window.__harness.scene.uploadsIdle()', 60000, 250);
         await ev('window.__harness.frames(10)');

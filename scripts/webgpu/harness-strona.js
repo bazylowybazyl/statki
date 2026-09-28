@@ -179,17 +179,24 @@
   // losowania gry w scenie — wizualia mają losować z fxRandom (warstwa efektów), inaczej przebieg bitwy
   // zależy od obrazu (kadru, zoomu, zajętości pul). Stos tylko przy włączonym liczniku; ciąg liczb bez zmian.
   let randTally = null;
-  const tallyCaller = () => {
+  // Ten sam licznik dla generatora efektów (`window.fxRandom`): kto zużywa ciąg efektów — przesunięcie
+  // ciągu (inna liczba losowań przed efektem) zmienia iskry i ziarna strug w zrzucie, choć gra stoi.
+  let fxTally = null;
+  const tallyCaller = (tally = randTally, skip = null) => {
     const lim = Error.stackTraceLimit;
-    Error.stackTraceLimit = 4;
+    Error.stackTraceLimit = skip ? 8 : 4;
     const st = String(new Error().stack || '').split('\n');
     Error.stackTraceLimit = lim;
     // [0] „Error”, [1] ta funkcja, [2] Math.random (harness), [3] wołający
-    const line = st[3] || st[st.length - 1] || '?';
+    let at = 3;
+    if (skip) while (at < st.length - 1 && skip.test(st[at])) at++;
+    const line = st[at] || st[st.length - 1] || '?';
     const m = line.match(/at (?:(\S+) )?\(?(?:https?:\/\/[^/]+)?\/?([^?:)]+)(?:\?[^:)]*)?:(\d+):\d+\)?/);
     const key = m ? `${m[2]}:${m[3]}${m[1] ? ' ' + m[1] : ''}` : line.trim().slice(0, 120);
-    randTally.set(key, (randTally.get(key) || 0) + 1);
+    tally.set(key, (tally.get(key) || 0) + 1);
   };
+  const FX_RANDOM_FRAME = /fxRandom\.js/;
+  let fxNextOrig = null;
   Math.random = () => {
     if (randTally) tallyCaller();
     s = (s + 0x6D2B79F5) | 0;
@@ -542,18 +549,42 @@
     // wczytania sprite'ów i budowy kadłubów) zużywają losowania w różnej kolejności.
     // Generator efektów (`window.fxRandom`, src/3d/fx/fxRandom.js — efekty nie zużywają Math.random gry) dostaje
     // to samo ziarno (przesunięte stałą), gdy już istnieje — powtarzalne efekty w scenach.
+    // Zegar banku iskier (`window.Fx3D.time`: migotanie iskier, skoki łuków) też od zera (zadanie 23): WeaponFx.sync
+    // (w tagu Weapon3DSystem) dokłada ≥ 1 ms na klatkę także przy stojącym czasie, więc faza migotania w zrzucie
+    // zależała od liczby klatek ładowania — innej w każdym przebiegu (do 0,06% pikseli > 8/255 w `bitwa__ortho`:
+    // iskry przy dyszach i ich blask; stan gry i wszystkie bufory poza barwą iskier bit w bit te same). Wiek
+    // cząstek liczą pule same — cofnięcie zegara zmienia tylko fazę migotania.
     reseed(v = SEED) {
       s = v >>> 0;
       try { if (window.fxRandom && typeof window.fxRandom.seed === 'function') window.fxRandom.seed((v ^ 0x5eed5eed) >>> 0); } catch { /* bez efektów */ }
+      try { if (window.Fx3D && typeof window.Fx3D.time === 'number') window.Fx3D.time = 0; } catch { /* bez banku iskier */ }
       return true;
     },
     // Licznik wywołań Math.random gry (zadanie 23): start() zeruje i włącza, stop() → { „plik:linia funkcja”: liczba }.
+    // stop() zwraca losowania gry; z efektami (start(true)) — { gra, efekty } (efekty: fxRandom wg wołającego).
     losowania: {
-      start() { randTally = new Map(); return true; },
+      start(zEfektami = false) {
+        randTally = new Map();
+        fxTally = null;
+        const fx = window.fxRandom;
+        if (zEfektami && fx && typeof fx.next === 'function') {
+          fxTally = new Map();
+          if (!fxNextOrig) fxNextOrig = Object.getPrototypeOf(fx).next;
+          fx.next = function () { if (fxTally) tallyCaller(fxTally, FX_RANDOM_FRAME); return fxNextOrig.call(this); };
+        }
+        return true;
+      },
       stop() {
         if (!randTally) return null;
-        const out = Object.fromEntries([...randTally].sort((a, b) => b[1] - a[1]));
+        const sort = (m) => Object.fromEntries([...m].sort((a, b) => b[1] - a[1]));
+        const out = sort(randTally);
         randTally = null;
+        if (fxTally) {
+          const efekty = sort(fxTally);
+          fxTally = null;
+          try { delete window.fxRandom.next; } catch { /* bez efektów */ }
+          return { gra: out, efekty };
+        }
         return out;
       }
     },
