@@ -1,7 +1,7 @@
 // src/3d/tsl/postGry.js
 //
 // Post gry w TSL (port WebGPU, zadanie 02 — docs/webgpu/zadania/02-post-bloom-uber.md):
-// bloom (BloomNode z three + poprawki zgodności z dawnym passem bloomu WebGL) i
+// bloom (algorytm BloomNode z three — od zadania 25b jak w demach WebGPU, bez ×3 dawnego passu WebGL) i
 // „uber”: gorące powietrze (do 24 źródeł: dysze z maską z dema plazmy i źródła
 // izotropowe — wybuchy, rakiety, tarcze), dyspersja dysz, ACES gry i LinearTosRGB
 // (kolorGry.js). Port 1:1 dawnego UberPostShader z core3d.js (bez fal warpa —
@@ -19,8 +19,13 @@
 // połówkowych (Math.round), jądra 6…22 z tymi samymi współczynnikami, bloomFactors
 // 1,0…0,2, lerp promienia, cele HalfFloat. Różnice (i co z nimi robimy):
 //  1. kompozyt: dawny pass mnożył sumę mipów przez 3,0 („backwards compatibility with
-//     previous alpha-based intensity”), BloomNode nie — BLOOM_ZGODNOSC_WEBGL = 3 mnoży
-//     wyjście węzła (siła z bloomConfig.js bez zmian, ~9 × strength energii jak dotąd);
+//     previous alpha-based intensity”), BloomNode nie. Do zadania 25b gra mnożyła wyjście
+//     węzła przez 3 (BLOOM_ZGODNOSC_WEBGL — obraz 1:1 z bazą WebGL). Od 25b (decyzja
+//     użytkownika 2026-09-28: „do poziomu dem”) bloom gry = bloom dem WebGPU: scena + bloom
+//     BEZ mnożnika, jak `acesGame(col + bloom(col, strength, radius, threshold))` w
+//     dema/bronie-webgpu, rakiety-webgpu, asteroidy-webgpu i warp-webgpu (siła, promień i próg
+//     z bloomConfig.js bez zmian — ~3 × strength energii teksela ponad progiem, dawniej ~9 ×);
+//     efekty z dem wychodzą 1:1, bez kolan (dawne warp/bloomKnee.js i beltBloomKnee);
 //  2. alfa: dawny kompozyt dawał max(rgb), BloomNode 3 × strength (stała) — alfę liczymy
 //     z rgb sami;
 //  3. rozmiar: BloomNode bierze bufor rysowania w KAŻDYM renderze (updateBefore) —
@@ -52,13 +57,6 @@ import { distortionOffset } from '../fx/distortion.js';
 
 /** Ile źródeł gorącego powietrza przyjmuje uber w klatce (Core3D.pushHeatHazeWorld). */
 export const MAX_HEAT_HAZE_SOURCES = 24;
-
-/**
- * Mnożnik wyjścia BloomNode do zgodności z dawnym passem bloomu WebGL (three r183):
- * tamten kompozyt liczył 3,0 × strength × Σ mipów, BloomNode strength × Σ mipów.
- * Strażnik: tests/webgpuPost.test.mjs (gdy three wyrówna węzły, test każe to zdjąć).
- */
-export const BLOOM_ZGODNOSC_WEBGL = 3.0;
 
 /**
  * BloomNode gry: rozmiar z bufora rysowania × resolutionScale (bloomConfig.js /
@@ -156,15 +154,15 @@ export function createPostUniforms() {
 
 /**
  * Węzeł wyjścia postu (RenderPipeline.outputNode, outputColorTransform = false):
- * scena (+ bloom × BLOOM_ZGODNOSC_WEBGL) próbkowana z przesunięciem gorącego powietrza,
- * ACES gry, LinearTosRGB. `bloomTexture` = bloomGry.getTextureNode() albo null (bloom
+ * scena (+ bloom 1:1, jak w demach WebGPU — zadanie 25b) próbkowana z przesunięciem gorącego
+ * powietrza, ACES gry, LinearTosRGB. `bloomTexture` = bloomGry.getTextureNode() albo null (bloom
  * wyłączony — osobny RenderPipeline, bez kosztu passów bloomu).
  * `distortion` — blok źródeł zniekształceń efektów (`DistortionField.node`, fxFrame.js) albo null,
  * `distortionLayer` — tekstura warstwy DIST (Core3D.distortionTarget: RG, px w osiach sceny) albo
  * null; warstwa wymaga bloku (rozmiar celu z jego nagłówka) i uniformu uDistLayerOn.
- * @param {{ sceneTexture: any, bloomTexture?: any, uniforms: Record<string, any>, bloomGain?: number, distortion?: any, distortionLayer?: any }} o
+ * @param {{ sceneTexture: any, bloomTexture?: any, uniforms: Record<string, any>, distortion?: any, distortionLayer?: any }} o
  */
-export function createUberPost({ sceneTexture, bloomTexture = null, uniforms, bloomGain = BLOOM_ZGODNOSC_WEBGL, distortion: fxBlock = null, distortionLayer = null }) {
+export function createUberPost({ sceneTexture, bloomTexture = null, uniforms, distortion: fxBlock = null, distortionLayer = null }) {
   const uTime = uniformNode(uniforms.uTime);
   const uSourceCount = uniformNode(uniforms.uSourceCount);
   const uGlobalStrength = uniformNode(uniforms.uGlobalStrength);
@@ -193,7 +191,8 @@ export function createUberPost({ sceneTexture, bloomTexture = null, uniforms, bl
   const sampleScene = (uvNode) => {
     const scene = hdrBezpieczny(level0(sceneBase, uvNode));
     if (!bloomTexture) return scene;
-    const b = level0(bloomTexture, uvNode).rgb.mul(bloomGain).toVar();
+    // Bloom 1:1 jak w demach (zadanie 25b; do 25b × 3 — BLOOM_ZGODNOSC_WEBGL), alfa + max(rgb) jak dawny blend.
+    const b = level0(bloomTexture, uvNode).rgb.toVar();
     return vec4(scene.rgb.add(b), scene.a.add(max(b.r, max(b.g, b.b))));
   };
   // Warstwa DIST (baza z jawnym UV — bez macierzy tekstury), tylko z blokiem źródeł (rozmiar celu).

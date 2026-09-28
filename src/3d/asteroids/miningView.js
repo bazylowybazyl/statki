@@ -11,8 +11,8 @@
 //     geometria (atrybut części) w instancjach Mesh + InstancedBufferGeometry (jeden
 //     przepleciony bufor instancji; nie InstancedMesh — uuid w kluczu programu). Światło
 //     jak skały pasa: słońce pola × transmitancja, otoczenie, światła siatki gry (bez
-//     własnych lamp dronów — właściciel DRONE_LIGHT_OWNER), pył ośrodka (`kolor · a + rgb`),
-//     kolano bloomu pasa.
+//     własnych lamp dronów — właściciel DRONE_LIGHT_OWNER), pył ośrodka (`kolor · a + rgb`);
+//     barwy 1:1 z dema (bloom gry jak w demach od zadania 25b).
 //   • WIĄZKI: paski od A do B (szerokość w świecie, w płaszczyźnie widoku z góry), rdzeń HDR
 //     + poświata, addytywnie z testem głębi (skała zasłania wiązkę w otworze).
 //   • EFEKTY: iskry i duszki pasa (asteroidBelt: sparks, glow), światło wybuchu w siatce
@@ -32,7 +32,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Core3D } from '../core3d.js';
 import { fxRandom } from '../fx/fxRandom.js';
 import { hexToLinear } from './rockMaterial.js';
-import { beltBloomKnee, permanentUpdateRange, markLiveRange } from './tslCommon.js';
+import { permanentUpdateRange, markLiveRange } from './tslCommon.js';
 import { GLOW_ROUND } from './glowSprites.js';
 import { MINING_FX } from '../../game/asteroidMiningRig.js';
 
@@ -190,7 +190,7 @@ class DroneMeshes {
       col.addAssign(albedo.mul(emitRow.x).mul(navK));
       const lens = select(pid.equal(8), vParam.y, float(0.0));
       col.addAssign(vec3(0.12, 0.5, 0.75).mul(lens));
-      const outc = beltBloomKnee(col.mul(S.exposure)).toVar();
+      const outc = col.mul(S.exposure).toVar();
       if (S.volume) {
         const v = S.volume.sample(P);
         outc.assign(outc.mul(v.a).add(v.rgb));
@@ -289,7 +289,7 @@ class BeamLines {
       // Końce łagodnie (bez prostokątnych krawędzi).
       const ends = max(float(0.0), float(1.0).sub(max(float(0.0), along.sub(0.97).mul(33.0))));
       const col = vCol.rgb.mul(core.add(halo)).mul(vCol.w).mul(ends);
-      return vec4(beltBloomKnee(col), 0.0);
+      return vec4(col, 0.0);
     })();
     this.material = mat;
     const mesh = new THREE.Mesh(ig, mat);

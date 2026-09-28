@@ -14,7 +14,6 @@ import { WarpFrame, WARP_FRAME_CAPS, newWarpSlot } from '../src/3d/warp/frame.js
 import {
   planWarpArrivalFx, warpArrivalFxState, planWarpDepartureFx, departFxPose, warpDepartureFxState, HERALD_REACH
 } from '../src/3d/warp/arrivals.js';
-import { warpBloomKneeScale, WARP_KNEE_THRESHOLD, WARP_KNEE_SLOPE } from '../src/3d/warp/bloomKnee.js';
 import { writeWarpSkyBend, clearWarpSkyBend, warpSkyBendCount, warpSkyBendOffsetCpu } from '../src/3d/warp/skyBend.js';
 import { WarpMedium, growShare } from '../src/3d/warp/medium.js';
 import { RiftSprites, GlowSprites, SmearPool } from '../src/3d/warp/sprites.js';
@@ -232,20 +231,18 @@ test('odlot (drive): punkt skoku przed dziobem, okręt prowadzony drogą z osi, 
   assert.equal(d.plasmaMode, 'active');
 });
 
-// ── kolano bloomu, zgięcie tła, pudło ośrodka, pule ─────────────────────────────────────────
+// ── bloom jak w demie, zgięcie tła, pudło ośrodka, pule ─────────────────────────────────────
 
-test('kolano bloomu: pod progiem bez zmian, nadmiar ×1/3 (demo liczyło bloom bez ×3 gry)', () => {
-  assert.equal(warpBloomKneeScale(0.5, 0.5, 0.5), 1);
-  assert.equal(warpBloomKneeScale(0.9, 0.9, 0.9), 1);
-  assert.ok(near(WARP_KNEE_SLOPE, 1 / 3));
-  const k = warpBloomKneeScale(8, 8, 8);
-  assert.ok(near(8 * k, WARP_KNEE_THRESHOLD + (8 - WARP_KNEE_THRESHOLD) / 3, 1e-9));
-  // Barwa (proporcje) zostaje — skala jedna dla trzech kanałów.
-  assert.ok(k > 0.3 && k < 0.5);
-  // Węzeł TSL stosowany w szczelinach, błyskach, smugach i na kadłubie (szew, żar).
-  assert.match(read('src/3d/warp/sprites.js'), /warpBloomKnee\(max\(col, vec3\(0\.0\)\)\)/);
-  assert.match(read('src/3d/warp/sprites.js'), /warpBloomKnee\(gB\.rgb\.mul\(shape\)\)/);
-  assert.match(read('src/3d/hexShips3D.tsl.js'), /warpBloomKnee\(B\.xyz\.mul\(seamK\)\)/);
+// Zadanie 25b (decyzja użytkownika 2026-09-28: „do poziomu dem”): bloom gry = bloom dema (bez ×3 dawnego passu
+// WebGL), więc szczeliny, błyski, smugi i szew / żar kadłuba mają barwy HDR 1:1 z dema — kolano z zadania 22
+// (warp/bloomKnee.js, nadmiar ponad próg × 1/3) usunięte.
+test('bloom jak w demie: duszki „Nurtu” i szew / żar kadłuba bez kolana (barwy HDR z dema 1:1)', () => {
+  const sprites = read('src/3d/warp/sprites.js');
+  const hull = read('src/3d/hexShips3D.tsl.js');
+  assert.doesNotMatch(sprites + hull, /BloomKnee|bloomKnee/);
+  assert.match(sprites, /return vec4\(max\(col, vec3\(0\.0\)\), 0\.0\);/);
+  assert.match(sprites, /return vec4\(gB\.rgb\.mul\(shape\), 0\.0\);/);
+  assert.match(hull, /\.add\(B\.xyz\.mul\(seamK\)\)/);
 });
 
 test('zgięcie tła (lustro CPU): bez zgłoszeń zero; bańka ściska przed i rozciąga za; szczelina wciąga ku osi', () => {

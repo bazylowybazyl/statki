@@ -18,7 +18,6 @@ import {
   Fn, float, vec2, vec3, vec4, attribute, uniform, positionGeometry, varyingProperty, uv, max,
   abs, exp, clamp, smoothstep, floor, fract, sin, dot, mix, length, select, nodeObject
 } from 'three/tsl';
-import { warpBloomKnee } from './bloomKnee.js';
 
 export const RIFT_CAP = 24;
 export const GLOW_CAP = 256;
@@ -136,7 +135,7 @@ export class RiftSprites {
       const glow = rD.rgb.mul(exp(max(ay.sub(wv), 0.0).div(glowW).negate()).mul(0.22)).mul(env).mul(tips)
         .mul(float(1.0).sub(smoothstep(rB.z.mul(0.6), rB.z, ay)));
       const col = rC.rgb.mul(edge).add(interior).add(glow).mul(rC.w);
-      return vec4(warpBloomKnee(max(col, vec3(0.0))), 0.0);
+      return vec4(max(col, vec3(0.0)), 0.0);
     })();
     this.material = mat;
     this.mesh = new THREE.Mesh(geo, mat);
@@ -217,7 +216,7 @@ export class GlowSprites {
       const ends = float(1.0).sub(smoothstep(float(1.0).sub(soft), 1.0, q.x.abs()));
       const line = exp(q.y.mul(q.y).mul(-10.0)).mul(ends);
       const shape = select(gB.w.lessThan(0.5), round, select(gB.w.lessThan(1.5), streak, line));
-      return vec4(warpBloomKnee(gB.rgb.mul(shape)), 0.0);
+      return vec4(gB.rgb.mul(shape), 0.0);
     })();
     this.material = mat;
     this.mesh = new THREE.Mesh(geo, mat);
@@ -303,7 +302,7 @@ function smearGraph() {
   const tex = nodeObject(raw);
   // Najjaśniej przy dziobie, gaśnie ku ogonowi smugi.
   const fade = t.x.mul(t.x).mul(t.x.mul(0.6).add(0.4));
-  _smearGraph = { fragmentNode: Fn(() => vec4(warpBloomKnee(uColor.mul(uK).mul(tex.a).mul(fade)), 0.0))() };
+  _smearGraph = { fragmentNode: Fn(() => vec4(uColor.mul(uK).mul(tex.a).mul(fade), 0.0))() };
   return _smearGraph;
 }
 

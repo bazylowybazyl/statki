@@ -9,8 +9,8 @@
 // w JEDNYM renderer.compute(lista) — jeden pass compute i jedno zgłoszenie; dispatch w passie to osobny
 // zakres użycia zasobów (WebGPU wstawia bariery), więc kolejność i zależności jak w passach renderu.
 //
-// Obraz 1:1 z BloomNode (ten sam algorytm co dawny UnrealBloomPass WebGL, postGry.js — zgodność ×3 zostaje
-// w „uber”): te same węzły TSL w tej samej kolejności działań — próg smoothstep(threshold, threshold +
+// Obraz 1:1 z BloomNode (ten sam algorytm co dawny UnrealBloomPass WebGL i bloom dem WebGPU; „uber” dodaje go
+// bez mnożnika od zadania 25b — postGry.js): te same węzły TSL w tej samej kolejności działań — próg smoothstep(threshold, threshold +
 // 0,01, luminancja) po siatce bezpieczeństwa HDR, jądra 6…22 z tymi samymi współczynnikami (0,39894 ·
 // e^(−i²/2σ²) / σ, σ = r / 3), przesunięcie direction · invSize · i, bloomFactors / lerpBloomFactor,
 // wyjście × strength; cele HalfFloat (rgba16float), rozmiary jak BloomNode.setSize (połowa bufora ×

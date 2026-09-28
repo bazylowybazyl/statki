@@ -21,8 +21,8 @@
 //
 // Zmiany względem dema (obraz ten sam): siatki pod grupą pola (Core3D.fx.origin) na
 // warstwie passa gry, pozycje instancji LOKALNE; głębia wnętrza przez modelViewMatrix
-// (double z CPU — grupa pola stoi na początku przy 6–10 mln j.); kolano bloomu pasa
-// (beltBloomKnee); bufory bez DynamicDrawUsage (stały zakres wysyłki — PLAN §3, zadanie 15),
+// (double z CPU — grupa pola stoi na początku przy 6–10 mln j.); barwy 1:1 z dema (bloom gry
+// jak w demach od zadania 25b); bufory bez DynamicDrawUsage (stały zakres wysyłki — PLAN §3, zadanie 15),
 // wątki kopiowania do atlasu zaokrąglone do potęgi dwójki (r183 przelicza siatkę grup przy
 // każdej zmianie liczby), wysyłka atlasu z budżetem komórek na klatkę, bez alokacji na klatkę.
 // Jeden materiał na zewnętrze i jeden na wnętrze (graf budowany raz — nowy materiał skały
@@ -39,7 +39,7 @@ import { RockNodeMaterial, hexToLinear } from './rockMaterial.js';
 import { ROCK_LODS, pickRockLod } from './rockBank.js';
 import { RockSet } from './rockLayers.js';
 import { MineralLayer, MineralMaterial } from './minerals.js';
-import { quatRotate, beltBloomKnee, permanentUpdateRange, markLiveRange } from './tslCommon.js';
+import { quatRotate, permanentUpdateRange, markLiveRange } from './tslCommon.js';
 import { ROCK_TYPES } from '../../game/asteroidRockKinds.js';
 
 export const MINED_ATLAS = Object.freeze([256, 256, 128]);
@@ -517,9 +517,9 @@ export class MinedRocks {
       const hr = cs.mul(2.4);
       const heat = V.hot.w.mul(exp(dot(hd, hd).div(hr.mul(hr)).negate())).toVar();
       col.addAssign(mix(vec3(2.6, 0.7, 0.12), vec3(6.0, 4.2, 2.4), heat.mul(heat)).mul(heat));
-      // Kolano bloomu dema (demo liczyło bloom bez ×3 gry), potem pył ośrodka jak nad skałą
+      // Barwa jak w demie (bloom gry = bloom dema od zadania 25b), potem pył ośrodka jak nad skałą
       // (do stropu warstwy skał) — kolejność jak w materiale skał pola.
-      const outc = beltBloomKnee(col.mul(S.exposure)).toVar();
+      const outc = col.mul(S.exposure).toVar();
       if (S.volume) {
         const v = S.volume.sample(vec3(P.xy, max(P.z, S.rockLayerTop)));
         outc.assign(outc.mul(v.a).add(v.rgb));

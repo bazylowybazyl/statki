@@ -19,7 +19,6 @@ import {
   positionGeometry, uv, varyingProperty, Loop, If, Return, Break, select, mix, smoothstep, clamp,
   sqrt, sin, cos, exp, max, length, normalize, cross, abs, pow
 } from 'three/tsl';
-import { beltBloomKnee } from './tslCommon.js';
 import { oddajKopieCpu } from '../tsl/kopiaCpu.js';
 
 export const SPARK_CAP = 1 << 15;
@@ -168,7 +167,7 @@ export class Sparks {
       const across = exp(q.y.mul(q.y).mul(-5.0));
       // smoothstep(1, 0,2, x) z dema = 1 − smoothstep(0,2, 1, x) (odwrócone stałe krawędzie w WGSL — PLAN §3).
       const along = float(1.0).sub(smoothstep(0.2, 1.0, abs(q.x))).mul(q.x.mul(0.35).add(0.65));
-      return vec4(beltBloomKnee(vCol.mul(across.mul(along)).mul(vK)), 0.0);
+      return vec4(vCol.mul(across.mul(along)).mul(vK), 0.0);
     })();
     this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
     this.mesh.frustumCulled = false;
