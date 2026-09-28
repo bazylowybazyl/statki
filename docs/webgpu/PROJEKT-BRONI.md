@@ -286,6 +286,13 @@ Kod: `src/3d/hullDamageMap.js` (sloty, LRU, kolejka, zadania, krok klatki efekt�
   lampy statku zostają w payloadzie (bez zmian). Tylko skóra belek.
 - **Naprawa R:** hak `HullBodies.onRepair(e, dt, changed)` → wygaszanie osmalenia / brzegu / otworu 0,8 na s, koniec
   naprawy (`changed = false`) czyści brudny prostokąt i zwalnia slot.
+- **Otwarte (po scaleniu 19 i 22):** rakiety 3D (19) nie stemplują — trafienie to obrażenia HP przez
+  `applyDamageToNPC`, bez krateru, a przypalenie poszycia z 19 to dym i duszek blasku; jeśli rakieta ma zostawiać ranę:
+  `HullDamageMap.stampAt(kadłub, x, y, 'rocket')` w kroku 7 wybuchu (`src/3d/rockets/effects.js`; rodzina `rocket`
+  jest w tabeli). Bloom ×3 gry (PLAN §3, pułapki 22): brzeg rany (8–12) i poszycie oświetlone błyskami świecą w grze
+  mocniejszą poświatą niż w demie, tak jak efekty 17 i 19 — kolano `warpBloomKnee` na żarze rany i
+  `hullEffectLighting` to decyzja dla całej broni (23), nie tylko mapy ran. Galeria broni w harnessie naprawia rany
+  celu przed każdym ujęciem (jak „naprawa przy zmianie broni” w demie).
 
 ## 4. Podział pracy, kolejność, testy
 
