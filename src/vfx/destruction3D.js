@@ -28,10 +28,12 @@
  */
 
 import * as THREE from 'three';
+import { bool, positionView, uniform } from 'three/tsl';
 import { bakeShatterGeometry, bakeShatterMesh } from './shatterShaderBake.js';
-import { createShatterMaterial } from './shatterMaterial.js';
+import { createShatterMaterial, createImplodeMaterial } from './shatterMaterial.js';
 import { DebrisManager } from './destructionDebrisManager.js';
 import { PanelShardManager } from './panelShardManager.js';
+import { Core3D } from '../3d/core3d.js';
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const TMP_OUT = new THREE.Vector3();
 const TMP_TANGENT = new THREE.Vector3();
@@ -48,36 +50,8 @@ const TMP_SAMPLE_BOX = new THREE.Box3();
 const TMP_SAMPLE_CENTER = new THREE.Vector3();
 const TMP_SAMPLE_SIZE = new THREE.Vector3();
 
-// ── Implosion (Tier 3) GLSL ─────────────────────────────────────────────────
-const IMPLODE_VERT = /* glsl */`
-uniform float uTime;
-uniform float uStartTime;
-uniform float uDuration;
-
-varying float vAlpha;
-
-float noise3(vec3 p) {
-    return fract(sin(dot(p, vec3(12.9898, 78.233, 45.164))) * 43758.5453);
-}
-
-void main() {
-    float t  = clamp((uTime - uStartTime) / max(0.001, uDuration), 0.0, 1.0);
-    float n  = noise3(position * 0.01) * 2.0 - 1.0;
-    float disp = sin(t * 3.14159 * 2.0 + n * 4.0) * 80.0 * (1.0 - t);
-    vec3  pos  = position + normal * disp;
-    pos       *= 1.0 - t * t;               // scale to zero
-    vAlpha     = 1.0 - t;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
-}
-`;
-const IMPLODE_FRAG = /* glsl */`
-uniform vec3  uColor;
-varying float vAlpha;
-void main() {
-    if (vAlpha < 0.01) discard;
-    gl_FragColor = vec4(uColor * vAlpha * 1.5, vAlpha);
-}
-`;
+// Implozja (Tier 3): materiał TSL w shatterMaterial.js (createImplodeMaterial — dawny GLSL
+// IMPLODE_VERT / IMPLODE_FRAG stąd, port WebGPU zadanie 16).
 
 // ── Dismantle section fake-physics state ─────────────────────────────────────
 class DismantleSection {
@@ -280,6 +254,217 @@ export const DESTRUCTION_PRESETS = {
         sparks:         250,
     },
 };
+
+// ── Rozgrzewka materiałów rozpadu (port WebGPU) ───────────────────────────────
+// Rozpad to zdarzenie jednorazowe, ale pierwsze rysowanie nowego materiału w WebGPU to budowa
+// NodeBuildera na CPU w klatce rozpadu (+ pipeline w tle, rysunek pominięty do gotowości). Klucz
+// programu = graf materiału + stan (przezroczystość, głębia, strona) + układ geometrii (nazwy
+// atrybutów, indeks) + receiveShadow + kontekst renderu (cel passa) — więc rozgrzewamy raz na
+// układ, przy wypieku bryły (prebake — bryła stacji dopiero co powstała), na trzymaczach poza
+// sceną: Core3D.prewarmPass (cel composerTarget, kamera passa z warstwą meshy, bez cullingu),
+// w wolnej chwili (requestIdleCallback), bez Math.random gry. Trzymacze zostają na zawsze
+// (NodeManager usuwa stan budowy, gdy ostatni obiekt przestaje go używać — jak trzymacze
+// programów w WebGL). Rozgrzewane: rozpad na trójkąty (wspólny graf), implozja (wspólny graf),
+// wygaszenie bryły (klony materiałów GLB z transparent / depthWrite = false — _beginRootFade)
+// i pule odłamków paneli (PanelShardManager.prewarm).
+const _warmHolders = [];
+const _warmedKeys = new Set();
+const _warmQueue = [];
+let _warmScheduled = false;
+
+function _layerOf(object3D) {
+    const mask = object3D.layers.mask >>> 0;
+    for (let i = 0; i < 32; i++) if (mask & (1 << i)) return i;
+    return 0;
+}
+
+// Podpis układu geometrii jak w kluczu programu three (RenderObject.getGeometryCacheKey) + typy
+// tablic (format bufora wierzchołków w pipeline).
+function _geometryLayoutKey(geo) {
+    let key = '';
+    for (const name of Object.keys(geo.attributes).sort()) {
+        const a = geo.attributes[name];
+        const arr = a.isInterleavedBufferAttribute ? a.data.array : a.array;
+        key += `${name}:${a.itemSize}:${a.normalized ? 'n' : ''}:${arr?.constructor?.name}:${a.isInterleavedBufferAttribute ? `${a.data.stride}/${a.offset}` : ''},`;
+    }
+    if (geo.index) key += 'index';
+    return key;
+}
+
+// Geometria-trzymacz: ten sam układ (nazwy, rozmiary, typy, przeplot), 3 zerowe wierzchołki
+// (trójkąt zdegenerowany) — klucz programu i format bufora jak w wypieczonej geometrii, bez
+// wgrywania jej setek tysięcy wierzchołków.
+function _layoutGeometry(src) {
+    const g = new THREE.BufferGeometry();
+    const interleaved = new Map();
+    for (const name of Object.keys(src.attributes)) {
+        const a = src.attributes[name];
+        if (a.isInterleavedBufferAttribute) {
+            let ib = interleaved.get(a.data);
+            if (!ib) {
+                ib = new THREE.InterleavedBuffer(new a.data.array.constructor(3 * a.data.stride), a.data.stride);
+                interleaved.set(a.data, ib);
+            }
+            g.setAttribute(name, new THREE.InterleavedBufferAttribute(ib, a.itemSize, a.offset, a.normalized));
+        } else {
+            g.setAttribute(name, new THREE.BufferAttribute(new a.array.constructor(3 * a.itemSize), a.itemSize, a.normalized));
+        }
+    }
+    if (src.index) g.setIndex(new THREE.BufferAttribute(new src.index.array.constructor(3), 1));
+    return g;
+}
+
+function _queueWarm(key, makeHolder) {
+    if (_warmedKeys.has(key)) return;
+    _warmedKeys.add(key);
+    _warmQueue.push(makeHolder);
+    _scheduleWarm();
+}
+
+function _scheduleWarm() {
+    if (_warmScheduled || !_warmQueue.length || typeof window === 'undefined' || !Core3D?.prewarmPass) return;
+    _warmScheduled = true;
+    const run = () => {
+        _warmScheduled = false;
+        if (!Core3D.gpuReady) {
+            if (Core3D.gpuUnsupported) { _warmQueue.length = 0; return; }
+            Core3D.ready?.then?.((ok) => { if (ok) _scheduleWarm(); });
+            return;
+        }
+        // Jedna paczka na wolną chwilę — budowy NodeBuildera są synchroniczne.
+        const t0 = performance.now();
+        while (_warmQueue.length && performance.now() - t0 < 12) {
+            const make = _warmQueue.shift();
+            try {
+                const holder = make();
+                if (holder) {
+                    _warmHolders.push(holder);
+                    Core3D.prewarmPass(holder, _layerOf(holder.isMesh ? holder : (holder.children[0] || holder)));
+                }
+            } catch (err) {
+                console.warn('[Destruction3D] rozgrzewka materiału rozpadu nie wyszła:', err?.message || err);
+            }
+        }
+        _scheduleWarm();
+    };
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 3000 });
+    else setTimeout(run, 50);
+}
+
+function _holderMesh(geometry, material, like) {
+    const holder = new THREE.Mesh(geometry, material);
+    holder.name = 'Destruction3D:warm';
+    holder.layers.mask = like.layers.mask;
+    holder.receiveShadow = like.receiveShadow;
+    holder.castShadow = false;
+    holder.frustumCulled = false;
+    return holder;
+}
+
+// ── Cień słońca klonów materiałów (port WebGPU) ──
+// Pass mapy cienia three r183 (Renderer._getShadowNodes) buduje węzły cienia PER OBIEKT materiału,
+// który ma `map` (reference('map', …, material) — alfa mapy), więc każdy świeży klon materiału GLB
+// (wygaszenie bryły, kawałki skorupy) = nowy klucz i budowa NodeBuildera cienia w klatce rozpadu
+// (~0,5–2,5 ms na klon). Klon dzieli tekstury z oryginałem, więc dostaje węzły cienia oryginału
+// (ta sama mapa — wynik identyczny, ten sam klucz). Pola prywatne three — bez nich zwykła budowa.
+function _shadowNodeCache() {
+    const r = Core3D?.renderer;
+    if (!r || typeof r._getShadowNodes !== 'function' || !(r._cacheShadowNodes instanceof WeakMap)) return null;
+    return r;
+}
+
+function _shareShadowNodes(clone, source) {
+    if (!clone || !source || clone === source || (clone.map ?? null) !== (source.map ?? null)) return;
+    const r = _shadowNodeCache();
+    if (!r) return;
+    try {
+        const entry = r._getShadowNodes(source);
+        r._cacheShadowNodes.set(clone, { ...entry, version: clone.version });
+    } catch { /* bez współdzielenia — zwykła budowa cienia */ }
+}
+
+// Pass cienia nie ma compileAsync: trzymacze cienia wchodzą do sceny na 2 klatki na warstwie 31
+// (tej warstwy nie rysuje żaden pass Core3D; kamera cienia słońca ma layers.enableAll), bez cullingu,
+// w początku świata — poza stożkiem kamery cienia (rysunek bez pikseli, budowa i pipeline zostają).
+const SHADOW_WARM_LAYER = 31;
+const _shadowWarmPending = [];
+
+function _queueShadowWarm(key, makeHolder) {
+    if (_warmedKeys.has(key)) return;
+    _warmedKeys.add(key);
+    _warmQueue.push(() => {
+        const holder = makeHolder();
+        if (!holder || !_scene) return null;
+        holder.layers.set(SHADOW_WARM_LAYER);
+        holder.castShadow = true;
+        holder.userData.__shadowWarmFrames = 2;
+        _scene.add(holder);
+        _shadowWarmPending.push(holder);
+        return null; // bez prewarmPass — to pass cienia
+    });
+    _scheduleWarm();
+}
+
+function _stepShadowWarm() {
+    for (let i = _shadowWarmPending.length - 1; i >= 0; i--) {
+        const h = _shadowWarmPending[i];
+        if (--h.userData.__shadowWarmFrames > 0) continue;
+        h.removeFromParent();          // bez dispose — stan budowy zostaje w cache
+        _warmHolders.push(h);
+        _shadowWarmPending.splice(i, 1);
+    }
+}
+
+// Klon materiału jak w _beginRootFade (transparent, bez zapisu głębi).
+function _fadeClone(src) {
+    const fade = _cloneOwnedMaterial(src);
+    fade.transparent = true;
+    fade.depthWrite = false;
+    _shareShadowNodes(fade, src);
+    return fade;
+}
+
+// Klon materiału jak kawałek skorupy (_cloneShellHierarchy + _createShellClipContext).
+function _shellPieceClone(src) {
+    const piece = src.clone();
+    const nodes = _getShellClipNodes();
+    piece.maskNode = nodes.mask;
+    piece.maskShadowNode = nodes.shadowMask;
+    _shareShadowNodes(piece, src);
+    return piece;
+}
+
+// Rozgrzewka dla wszystkich meshy bryły (po wypieku).
+function _prewarmForRoot(rootObject) {
+    if (typeof window === 'undefined') return;
+    rootObject.traverse((child) => {
+        if (!child.isMesh || !child.geometry || Array.isArray(child.material)) return;
+        const base = `${child.layers.mask}|${child.receiveShadow ? 1 : 0}|`;
+        const baked = child.geometry.__shatterBaked;
+        // Trójkąty i implozja: pass FG i pass cienia (mesh rzuca cień nieprzesuniętą bryłą — jak
+        // MeshDepthMaterial w WebGL; węzły cienia bez mapy — jeden klucz na układ geometrii).
+        if (baked) {
+            const key = `${base}${_geometryLayoutKey(baked)}`;
+            _queueWarm(`shatter|${key}`, () => _holderMesh(_layoutGeometry(baked), createShatterMaterial(), child));
+            _queueShadowWarm(`shatter-cien|${key}`, () => _holderMesh(_layoutGeometry(baked), createShatterMaterial(), child));
+        }
+        const implodeKey = `${base}${_geometryLayoutKey(child.geometry)}`;
+        _queueWarm(`implode|${implodeKey}`, () => _holderMesh(_layoutGeometry(child.geometry), createImplodeMaterial(), child));
+        _queueShadowWarm(`implode-cien|${implodeKey}`, () => _holderMesh(_layoutGeometry(child.geometry), createImplodeMaterial(), child));
+        const src = child.material;
+        if (!src?.clone || src.isNodeMaterial) return;
+        const mat = `${src.uuid}|${implodeKey}`;
+        // Wygaszenie bryły: pass FG i pass cienia (klon przezroczysty — inny klucz cienia niż oryginał).
+        _queueWarm(`fade|${mat}`, () => _holderMesh(_layoutGeometry(child.geometry), _fadeClone(src), child));
+        _queueShadowWarm(`fade-cien|${mat}`, () => _holderMesh(_layoutGeometry(child.geometry), _fadeClone(src), child));
+        // Kawałki skorupy po odpadnięciu fragmentu (klony z maską cięcia): pass FG; cień = węzły oryginału.
+        _queueWarm(`kawalek|${mat}`, () => {
+            const holder = _holderMesh(_layoutGeometry(child.geometry), _shellPieceClone(src), child);
+            holder.userData.__shellClip = null;
+            return holder;
+        });
+    });
+}
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
@@ -677,8 +862,10 @@ function _cloneShellHierarchy(rootObject) {
         }
         if (Array.isArray(src.material)) {
             dst.material = src.material.map(m => m?.clone?.() ?? m);
+            for (let m = 0; m < dst.material.length; m++) _shareShadowNodes(dst.material[m], src.material[m]);
         } else if (src.material?.clone) {
             dst.material = src.material.clone();
+            _shareShadowNodes(dst.material, src.material);
         }
         dst.frustumCulled = false;
         dst.castShadow = src.castShadow;
@@ -755,22 +942,64 @@ function _prepareShellSplit(rootObject, opts = {}) {
     return { shellRadius, pieceCount, defs };
 }
 
+// Cięcie kawałków skorupy (port WebGPU). W WebGL: renderer.localClippingEnabled + płaszczyzny
+// świata na klonach materiałów (material.clippingPlanes, suma, clipShadows = false) — shader
+// odrzucał fragment po złej stronie którejkolwiek płaszczyzny: dot(-pozycja widoku, n') > c'
+// (płaszczyzna rzutowana do widoku). WebGPURenderer ignoruje material.clippingPlanes, a jego
+// ClippingGroup w r183 bierze płaszczyzny do uniformArray grupy „render” z kontekstu obiektu,
+// który ZBUDOWAŁ program — kawałki o tym samym kluczu materiału (klony jednego materiału, ta
+// sama liczba płaszczyzn) cięły się płaszczyznami pierwszego kawałka. Tu to samo cięcie co w
+// WebGL jako maska TSL (maskNode — odrzucenie na starcie fragmentu, jak clipping_planes_fragment):
+// JEDEN wspólny węzeł dla wszystkich kawałków, płaszczyzny per obiekt (onObjectUpdate, grupa
+// „object”) rzutowane co rysunek do widoku kamery passa (jak WebGLClipping, w double na CPU).
+// Cień bez cięcia (maskShadowNode = prawda) — jak clipShadows = false.
+const SHELL_CLIP_NEVER = new THREE.Vector4(0, 0, 0, 1);   // dot(p, 0) > 1 — nigdy nie tnie
+const _clipPlaneScratch = new THREE.Plane();
+const _clipNormalMatrix = new THREE.Matrix3();
+
+function _shellClipViewPlane(object, camera, index) {
+    const ctx = object?.userData?.__shellClip;
+    const out = ctx?.viewPlanes?.[index];
+    if (!out) return SHELL_CLIP_NEVER;
+    const plane = ctx.worldPlanes[index];
+    if (!plane || !camera) return out.copy(SHELL_CLIP_NEVER);
+    _clipNormalMatrix.getNormalMatrix(camera.matrixWorldInverse);
+    _clipPlaneScratch.copy(plane).applyMatrix4(camera.matrixWorldInverse, _clipNormalMatrix);
+    const n = _clipPlaneScratch.normal;
+    return out.set(-n.x, -n.y, -n.z, _clipPlaneScratch.constant);
+}
+
+let _shellClipNodes = null;
+function _getShellClipNodes() {
+    if (_shellClipNodes) return _shellClipNodes;
+    const plane0 = uniform(new THREE.Vector4()).onObjectUpdate(({ object, camera }) => _shellClipViewPlane(object, camera, 0));
+    const plane1 = uniform(new THREE.Vector4()).onObjectUpdate(({ object, camera }) => _shellClipViewPlane(object, camera, 1));
+    // Zostaje, gdy fragment nie leży za żadną płaszczyzną (suma płaszczyzn, clipIntersection = false).
+    const keep = positionView.dot(plane0.xyz).lessThanEqual(plane0.w)
+        .and(positionView.dot(plane1.xyz).lessThanEqual(plane1.w));
+    _shellClipNodes = { mask: keep, shadowMask: bool(true) };
+    return _shellClipNodes;
+}
+
 function _createShellClipContext(rootObject, localPlanes) {
     const worldPlanes = localPlanes.map(p => p.clone());
-    const materials = [];
+    // Płaszczyzny widoku per kawałek (2 — tyle daje _buildShellSplitDefs), pisane w miejscu.
+    const ctx = { localPlanes, worldPlanes, viewPlanes: [new THREE.Vector4(), new THREE.Vector4()] };
+    const nodes = _getShellClipNodes();
     rootObject.traverse(child => {
         if (!child.isMesh) return;
         child.frustumCulled = false;
+        child.userData.__shellClip = ctx;
         const mats = Array.isArray(child.material) ? child.material : [child.material];
         for (const mat of mats) {
             if (!mat) continue;
-            mat.clippingPlanes = worldPlanes;
-            mat.clipIntersection = false;
-            mat.clipShadows = false;
-            materials.push(mat);
+            // Klon materiału kawałka (_cloneShellHierarchy) — wbudowany: NodeLibrary kopiuje
+            // pola na materiał węzłowy (wzór applySunShadowToBuiltinMaterial, zadanie 03).
+            mat.maskNode = nodes.mask;
+            mat.maskShadowNode = nodes.shadowMask;
         }
     });
-    return { localPlanes, worldPlanes, materials };
+    return ctx;
 }
 
 function _updateShellClipContext(rootObject, clipCtx) {
@@ -947,10 +1176,14 @@ function _beginRootFade(rootObject, worldTime, opts) {
         // samego modelu — także tworzonym później. Niszczony obiekt dostaje
         // własne klony; flaga zasobu szablonu nie przechodzi na klon (klon ma
         // zostać zwolniony razem z odłamkami).
+        const originals = child.material;
         child.material = Array.isArray(child.material)
             ? child.material.map(_cloneOwnedMaterial)
             : _cloneOwnedMaterial(child.material);
         const mats = Array.isArray(child.material) ? child.material : [child.material];
+        // Port WebGPU: klon rzuca cień węzłami oryginału (bez budowy cienia w klatce rozpadu).
+        const srcMats = Array.isArray(originals) ? originals : [originals];
+        for (let i = 0; i < mats.length; i++) _shareShadowNodes(mats[i], srcMats[i]);
         const snapshots = [];
         for (const mat of mats) {
             if (!mat) continue;
@@ -1051,6 +1284,9 @@ export const Destruction3D = {
      */
     prebake(rootObject3D) {
         bakeShatterMesh(rootObject3D);
+        // Port WebGPU: programy rozpadu tej bryły (trójkąty, implozja, wygaszenie) budowane
+        // w wolnej chwili teraz, nie w klatce rozpadu.
+        _prewarmForRoot(rootObject3D);
     },
 
     // ── Tier 1: GPU Shatter ────────────────────────────────────────────────
@@ -1398,6 +1634,7 @@ export const Destruction3D = {
      */
     update(worldTime, dt = 0.016) {
         _worldTime = worldTime;
+        if (_shadowWarmPending.length) _stepShadowWarm();
 
         // Update uTime on tracked shatter meshes (O(active) not O(all scene objects))
         for (const mesh of _shatterMeshes) {
@@ -1569,18 +1806,8 @@ export const Destruction3D = {
             if (!child.isMesh) return;
             const col = (child.material?.color) ?? new THREE.Color(0.6, 0.65, 0.7);
             child.__originalMaterial = child.material;
-            child.material = new THREE.ShaderMaterial({
-                uniforms: {
-                    uTime:      { value: _worldTime },
-                    uStartTime: { value: _worldTime },
-                    uDuration:  { value: dur },
-                    uColor:     { value: col.clone() },
-                },
-                vertexShader:   IMPLODE_VERT,
-                fragmentShader: IMPLODE_FRAG,
-                transparent:    true,
-                depthWrite:     false,
-            });
+            // Materiał TSL na wspólnym grafie (shatterMaterial.js) — przezroczysty, bez zapisu głębi.
+            child.material = createImplodeMaterial({ startTime: _worldTime, duration: dur, color: col });
             _shatterMeshes.add(child);   // track for uTime updates
         });
 
@@ -1624,3 +1851,17 @@ export const Destruction3D = {
         _listeners.clear();
     },
 };
+
+// Eksport pomocników portu WebGPU do testów (bez GPU): cięcie kawałków skorupy, współdzielenie
+// węzłów cienia klonów, rozgrzewka (klucze układu geometrii, trzymacze).
+export const DESTRUCTION_TSL_INTERNALS = Object.freeze({
+    shellClipViewPlane: _shellClipViewPlane,
+    getShellClipNodes: _getShellClipNodes,
+    createShellClipContext: _createShellClipContext,
+    shareShadowNodes: _shareShadowNodes,
+    geometryLayoutKey: _geometryLayoutKey,
+    layoutGeometry: _layoutGeometry,
+    fadeClone: _fadeClone,
+    shellPieceClone: _shellPieceClone,
+    warmStats: () => ({ keys: _warmedKeys.size, queued: _warmQueue.length, holders: _warmHolders.length, shadowPending: _shadowWarmPending.length }),
+});
