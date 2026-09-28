@@ -8,10 +8,10 @@
 // Współrzędne API (__demo) i encji: układ gry, y w dół; scena 3D: y = −y gry.
 // ============================================================
 import * as THREE from 'three/webgpu';
-import { pass, float, vec3, length, abs, fwidth, max } from 'three/tsl';
+import { pass, float, vec3, length, abs, fwidth, max, mix, smoothstep } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import { updateShieldFx, setEntityShieldForcedOff } from '../shieldSystem.js';
-import { uTime, uDt, lights, BLOOM_GAME, clamp } from './tarcza-webgpu/wspolne.js';
+import { uTime, uDt, lights, uLightsOn, uLightGain, BLOOM_GAME, clamp } from './tarcza-webgpu/wspolne.js';
 import { createSky } from './tarcza-webgpu/tlo.js';
 import { loadAtlasSprite, createAtlasHullMesh } from './tarcza-webgpu/kadlub.js';
 import { buildShip, placeShip, aimTurret, shipPoint } from './tarcza-webgpu/wrogowie.js';
@@ -126,12 +126,24 @@ async function main() {
     debugMarker: DEBUG_FIELD ? markerLocal : null
   });
 
-  // Kadłub: w widoku kontrolnym pierścień znacznika liczony z pozycji lokalnej kwadu.
-  const hullExtra = DEBUG_FIELD ? (local) => {
-    const d = length(local.sub(shield.P.uMarker.xy));
-    const ring = sstepDown(2.2, 0.0, abs(d.sub(float(MARKER_R * 1.45))).div(max(fwidth(d), 1e-4)));
-    return vec3(5.0, 0.8, 4.4).mul(ring);
-  } : null;
+  // Kadłub czyta stan pola w swojej pozycji lokalnej (ta sama klatka co siatka pola):
+  // emisja ∝ E + |fala| w barwie tarczy — pancerz pod rozgrzaną łatą błękitnieje, fala
+  // przebiega po nim jak odbicie. W widoku kontrolnym dochodzi pierścień znacznika.
+  const hullExtra = (local, albedo) => {
+    const P = shield.P, U = shield.U, G = shield.G;
+    const f = P.texNode.sample(local.sub(P.uOrigin).div(P.uSize));
+    const eN = max(f.y, 0.0).div(max(P.uThr, 0.05));
+    const glow = eN.mul(0.8).add(max(f.w, 0.0).mul(0.45)).add(abs(f.x).mul(0.012));
+    const lColor = mix(vec3(1.0, 0.08, 0.04), U.color, U.life);
+    const heat = mix(mix(lColor, vec3(1.25, 1.3, 1.4), smoothstep(0.42, 0.9, eN)), vec3(1.9, 0.62, 0.16), smoothstep(0.95, 1.45, eN));
+    let e = heat.mul(glow).mul(albedo.mul(1.6).add(0.035)).mul(G.hullGlow);
+    if (DEBUG_FIELD) {
+      const d = length(local.sub(P.uMarker.xy));
+      const ring = sstepDown(2.2, 0.0, abs(d.sub(float(MARKER_R * 1.45))).div(max(fwidth(d), 1e-4)));
+      e = e.add(vec3(5.0, 0.8, 4.4).mul(ring));
+    }
+    return e;
+  };
   const atlasHull = createAtlasHullMesh(sprite, hullExtra);
   atlasGroup.add(atlasHull.mesh);
   atlasGroup.updateMatrixWorld(true);
@@ -176,7 +188,8 @@ async function main() {
     time: 0, frames: 0, fps: 60, cpuMs: 0, gpuMs: 0, gpuComputeMs: 0, pxPerUnit: 1,
     keys: new Set(), mouse: { x: innerWidth / 2, y: innerHeight / 2 },
     aim: new THREE.Vector3(), aimLock: false,
-    newFx: true, regen: 0.04, bloom: true, bloomStrength: BLOOM_GAME.strength
+    newFx: true, regen: 0.04, bloom: true, bloomStrength: BLOOM_GAME.strength,
+    lightsOn: true, glowOn: true, refrOn: true
   };
 
   // Punkt płaszczyzny z = planeZ pod pikselem ekranu (kamera patrzy prosto w dół).
@@ -205,12 +218,21 @@ async function main() {
     a.nx = (e.clientX / innerWidth) * 2 - 1; a.ny = -(e.clientY / innerHeight) * 2 + 1;
   }, { passive: false });
 
+  // A/B: bez nowych efektów zostaje sama czasza z łatami (jak dziś w grze) — bez fal,
+  // energii, świateł, poświaty, załamania i iskier.
+  function applyFxToggles() {
+    const on = S.newFx;
+    uLightsOn.value = on && S.lightsOn ? 1 : 0;
+    shield.G.hullGlow.value = on && S.glowOn ? 1 : 0;
+    shield.G.refrOn.value = on && S.refrOn ? 1 : 0;
+  }
   function setNewFx(on) {
     S.newFx = on;
     const ab = $('ab');
     ab.className = on ? 'on' : 'off';
     ab.textContent = on ? 'T · Nowe efekty: WŁĄCZONE' : 'T · Jak dziś w grze (łaty trafień)';
     if (!DEBUG_FIELD) shield.setMode(on ? 'new' : 'ref');
+    applyFxToggles();
   }
   $('ab').addEventListener('click', () => setNewFx(!S.newFx));
 
@@ -253,6 +275,11 @@ async function main() {
     upd();
   }
   bindCheck('c-field', (v) => { shield.showField = v; });
+  bindCheck('c-lights', (v) => { S.lightsOn = v; applyFxToggles(); });
+  bindCheck('c-glow', (v) => { S.glowOn = v; applyFxToggles(); });
+  bindCheck('c-refr', (v) => { S.refrOn = v; applyFxToggles(); });
+  bindRange('s-refr', (v) => { shield.G.refr.value = v; });
+  bindRange('s-light', (v) => { uLightGain.value = v; });
   bindCheck('c-waves', (v) => { FIELD_PARAMS.wavesOn = v; });
   bindCheck('c-energy', (v) => { FIELD_PARAMS.energyOn = v; });
   bindRange('s-wave', (v) => { FIELD_PARAMS.waveSpeed = v; }, (v) => v.toFixed(0));
@@ -325,6 +352,10 @@ async function main() {
 
     updateShieldState(dt);
     shield.update(dt, S.time, S.pxPerUnit);
+    // Załamanie: pochylenie normalnej → uv ekranu (ośrodek ~90 j. „grubości”).
+    shield.G.refrK.value = 90 * S.pxPerUnit / Math.max(1, innerHeight);
+    shield.G.aspect.value = camera.aspect;
+    if (S.newFx) shield.emitLights(dt);
 
     lights.commit();
     shield.computeStep(dt);

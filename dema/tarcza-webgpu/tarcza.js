@@ -17,7 +17,7 @@ import {
   createFieldMaterial, MAX_HITS, sstepDown
 } from './czasza.js';
 import { createField, createFieldShared, MAX_EVENTS, MAX_SOURCES } from './pole.js';
-import { clamp } from './wspolne.js';
+import { clamp, lights as sceneLights } from './wspolne.js';
 
 // Liczby z src/3d/shield3D.js (model „niewidzialne pole”).
 export const SHIELD_FIELD_TUNING = {
@@ -52,6 +52,16 @@ const HIT_CLASS = {
   special: { radius: 115, impulse: 300, impulsePerDmg: 1.0, energy: 0.45, energyPerDmg: 0.0009 },
   shield: { radius: 70, impulse: 80, impulsePerDmg: 0.6, energy: 0.08, energyPerDmg: 0.0012 }
 };
+
+// Światło trafienia na klasę: czas życia [s], moc, zasięg i skala spadku [j.].
+const HIT_LIGHT = {
+  pd: { life: 0.12, power: 3.2, radius: 420, falloff: 95 },
+  main: { life: 0.34, power: 7.0, radius: 850, falloff: 170 },
+  special: { life: 0.95, power: 15.0, radius: 1700, falloff: 340 },
+  shield: { life: 0.5, power: 6.0, radius: 950, falloff: 210 }
+};
+const MAX_FLASHES = 64;
+const MAX_HOTSPOTS = 32;
 
 // Widok kontrolny: siatka pola (izolinie t z tekstury maski), czasza (izolinie t
 // z geometrii), pole (h czerwień/granat, E zieleń, B błękit) i pierścień znacznika.
@@ -133,6 +143,15 @@ export class Tarcza {
     this.substeps = 0;
     this.debugPulseAt = 0;
     this.offReset = false;
+
+    // Światła: błyski trafień i gorące punkty energii (pule, bez alokacji w klatce).
+    this.flashes = Array.from({ length: MAX_FLASHES }, () => ({ on: false, x: 0, y: 0, z: 0, age: 0, life: 1, power: 1, radius: 1, falloff: 1 }));
+    this.hotspots = Array.from({ length: MAX_HOTSPOTS }, () => ({ on: false, x: 0, y: 0, z: 0, e: 0 }));
+    this._lv = new THREE.Vector3();
+    this._lc = new THREE.Color();
+    this._hc = new THREE.Color();
+    this._heatWhite = new THREE.Color(1.25, 1.3, 1.4);
+    this._heatOrange = new THREE.Color(1.9, 0.62, 0.16);
   }
 
   get shield() { return this.entity.shield; }
@@ -204,8 +223,86 @@ export class Tarcza {
     const r = Math.hypot(lx, ly) || 1;
     const inset = Math.min(r * 0.25, radius * 0.6);
     const ix = lx * (1 - inset / r), iy = ly * (1 - inset / r);
-    this.pushEvent(ix, iy, radius, -(k.impulse + k.impulsePerDmg * dmg) * weak, (k.energy + k.energyPerDmg * dmg));
+    const energy = k.energy + k.energyPerDmg * dmg;
+    this.pushEvent(ix, iy, radius, -(k.impulse + k.impulsePerDmg * dmg) * weak, energy);
+    this.addFlash(lx, ly, cls, dmg);
+    this.addHeat(ix, iy, energy);
     this.wake(0);
+  }
+
+  // ── Światła trafień i rozgrzanych miejsc pola ─────────────────────────────
+  addFlash(lx, ly, cls, dmg) {
+    const k = HIT_LIGHT[cls] || HIT_LIGHT.main;
+    let f = null, oldest = -1;
+    for (let i = 0; i < MAX_FLASHES; i++) {
+      const c = this.flashes[i];
+      if (!c.on) { f = c; break; }
+      if (c.age / c.life > oldest) { oldest = c.age / c.life; f = c; }
+    }
+    const boost = 0.75 + 0.25 * Math.min(3, dmg / 120);
+    f.on = true; f.x = lx; f.y = ly; f.z = 40 + this.domeHeight * 0.25; f.age = 0;
+    f.life = k.life; f.power = k.power * boost * this.sizeK; f.radius = k.radius * this.sizeK; f.falloff = k.falloff * this.sizeK;
+  }
+  // Energia w pobliżu (90 j.) dokłada się do istniejącego punktu — jak hotspoty w demie lasera.
+  addHeat(lx, ly, energy) {
+    let free = null, weakest = null;
+    for (let i = 0; i < MAX_HOTSPOTS; i++) {
+      const h = this.hotspots[i];
+      if (!h.on) { if (!free) free = h; continue; }
+      const dx = h.x - lx, dy = h.y - ly;
+      if (dx * dx + dy * dy < 90 * 90) {
+        const w = energy / (h.e + energy);
+        h.x += (lx - h.x) * w; h.y += (ly - h.y) * w;
+        h.e = Math.min(6, h.e + energy);
+        return;
+      }
+      if (!weakest || h.e < weakest.e) weakest = h;
+    }
+    const h = free || weakest;
+    h.on = true; h.x = lx; h.y = ly; h.e = energy; h.z = 20 + this.domeZ(lx, ly);
+  }
+  // Światła tej klatki do wspólnej listy (świat 3D przez macierz grupy).
+  emitLights(dt, gain = 1) {
+    const U = this.U;
+    const life = U.life.value;
+    const base = this._lc.setRGB(1.0, 0.08, 0.04).lerp(U.color.value, life);
+    const cool = Math.exp(-dt / Math.max(0.05, FIELD_PARAMS.coolTime));
+    const thr = Math.max(0.05, FIELD_PARAMS.threshold);
+    const v = this._lv;
+    for (let i = 0; i < MAX_FLASHES; i++) {
+      const f = this.flashes[i];
+      if (!f.on) continue;
+      f.age += dt;
+      if (f.age >= f.life) { f.on = false; continue; }
+      const k = 1 - f.age / f.life;
+      const p = f.power * k * k * gain;
+      v.set(f.x, f.y, f.z);
+      this.group.localToWorld(v);
+      // Błysk: barwa tarczy z domieszką bieli.
+      sceneLights.push(v.x, v.y, v.z, f.radius, f.falloff,
+        (base.r * 0.6 + 0.4) * p, (base.g * 0.6 + 0.4) * p, (base.b * 0.6 + 0.4) * p);
+    }
+    const hc = this._hc;
+    for (let i = 0; i < MAX_HOTSPOTS; i++) {
+      const h = this.hotspots[i];
+      if (!h.on) continue;
+      h.e *= cool;
+      const eN = h.e / thr;
+      if (eN < 0.04 || !FIELD_PARAMS.energyOn) { h.on = false; continue; }
+      // Barwa jak energia na czaszy: błękit → biel → pomarańcz.
+      const w = clamp((eN - 0.42) / 0.48, 0, 1);
+      const o = clamp((eN - 0.95) / 0.5, 0, 1);
+      hc.copy(base).lerp(this._heatWhite, w * w * (3 - 2 * w));
+      hc.lerp(this._heatOrange, o * o * (3 - 2 * o));
+      const p = Math.min(eN, 2.2) * 2.4 * gain;
+      v.set(h.x, h.y, h.z);
+      this.group.localToWorld(v);
+      sceneLights.push(v.x, v.y, v.z, 700 * this.sizeK, 150 * this.sizeK, hc.r * p, hc.g * p, hc.b * p);
+    }
+  }
+  clearLights() {
+    for (const f of this.flashes) f.on = false;
+    for (const h of this.hotspots) h.on = false;
   }
   wake(extra) {
     const until = this.time + FIELD_PARAMS.coolTime * 6 + 2 + extra;
@@ -274,7 +371,7 @@ export class Tarcza {
 
     // Wyłączona tarcza: pole od zera przy następnym rozruchu.
     if (sh.state === 'off') {
-      if (!this.offReset) { this.field.reset(); this.offReset = true; this.awakeUntil = -1; }
+      if (!this.offReset) { this.field.reset(); this.clearLights(); this.offReset = true; this.awakeUntil = -1; }
     } else {
       this.offReset = false;
     }
@@ -345,7 +442,6 @@ export class Tarcza {
     if (!this.materials[mode]) return;
     this.mode = mode;
     this.mesh.material = this.materials[mode];
-    if (mode !== 'ref') this.wake(0);
   }
 
   // Compute pola: parametry z panelu, zdarzenia tej klatki, podkroki z CFL.

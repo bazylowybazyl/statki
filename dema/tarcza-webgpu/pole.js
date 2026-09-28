@@ -285,7 +285,7 @@ export function createField(renderer, profile, longCells, P) {
       return n;
     },
     maxWaveSpeed(dt) { return 0.5 * L.cell * MAX_SUBSTEPS / Math.max(dt, 1e-4); },
-    reset() { needsInit = true; },
+    reset() { renderer.compute(init); needsInit = false; },
     step(dt, n) {
       if (needsInit) { renderer.compute(init); needsInit = false; }
       renderer.compute(waveGroups[n]);

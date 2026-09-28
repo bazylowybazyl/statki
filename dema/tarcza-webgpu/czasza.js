@@ -9,12 +9,18 @@ import * as THREE from 'three/webgpu';
 import {
   Fn, uniform, uniformArray, float, vec2, vec3, vec4, attribute, positionGeometry, positionView,
   normalView, normalGeometry, normalize, abs, dot, pow, exp, max, min, mix, smoothstep, saturate, floor,
-  length, sin, step, fract, select, Loop, If, Discard, transformNormalToView, cameraViewMatrix
+  length, sin, step, fract, select, Loop, If, Discard, transformNormalToView, cameraViewMatrix,
+  viewportTexture, screenUV
 } from 'three/tsl';
 import { sampleShieldProfileRadius } from '../../shieldSystem.js';
 import { uTime, gnoise, hash12, SHIELD_FULL_COLOR, SHIELD_EDGE_COLOR } from './wspolne.js';
 
 export const MAX_HITS = 24;
+
+// Obraz sceny za czaszami (do załamania). JEDEN węzeł bazowy, próbki przez .sample(uv):
+// klony dzielą teksturę bazowego węzła, więc kopia bufora ramki jest jedna na render
+// dla wszystkich czasz (osobne viewportSharedTexture() kopiowałyby każdy osobno).
+const sceneBehind = viewportTexture();
 
 function clampJs(v, a, b) { return v < a ? a : (v > b ? b : v); }
 
@@ -293,7 +299,15 @@ export function createFieldLookUniforms(profile) {
     energyGlow: uniform(1.0),
     spec: uniform(1.0),
     lightDir: uniform(new THREE.Vector3(-0.45, 0.55, 0.7).normalize()), // w świecie
-    fade: uniform(1.0)            // wygaszanie całej czaszy (pęknięcie → odłamki)
+    fade: uniform(1.0),           // wygaszanie całej czaszy (pęknięcie → odłamki)
+    // Załamanie: siła (suwak), włącznik, skala pochylenia normalnej → uv ekranu
+    // (grubość ośrodka × piksele na jednostkę / wysokość ekranu), proporcje ekranu.
+    refr: uniform(1.0),
+    refrOn: uniform(1.0),
+    refrK: uniform(0.02),
+    aspect: uniform(16 / 9),
+    // Poświata pola na kadłubie (włącznik i tryb A/B).
+    hullGlow: uniform(1.0)
   };
 }
 
@@ -392,6 +406,22 @@ export function createFieldMaterial(U, P, G) {
     const sparkle = hash12(floor(obj.xy.mul(0.09)).add(vec2(floor(t.mul(24.0)), 0.0))).mul(0.6).add(0.4);
     const breachGlow = vec3(2.6, 1.05, 0.3).mul(rimB.mul(rimB)).mul(sparkle).mul(2.2);
 
+    // Załamanie: tło za czaszą przesunięte o pochylenie normalnej od fal (różnica
+    // względem gładkiej czaszy), lekka dyspersja barw. Tylko tam, gdzie pole widać.
+    const Nv0 = normalize(transformNormalToView(normalize(normalGeometry)));
+    const dN = Nv.sub(Nv0).toVar();
+    const refrMask = saturate(eN.mul(0.9).add(Wa.mul(0.9)).add(U.fieldVisibility.mul(0.3)))
+      .mul(hole.oneMinus()).mul(G.refrOn).toVar();
+    const off = vec2(dN.x.div(G.aspect), dN.y.negate()).mul(G.refrK.mul(G.refr)).mul(refrMask).toVar();
+    const bg = vec3(
+      sceneBehind.sample(screenUV.add(off.mul(1.12))).r,
+      sceneBehind.sample(screenUV.add(off)).g,
+      sceneBehind.sample(screenUV.add(off.mul(0.88))).b
+    );
+    // Ośrodek lekko barwi to, co przepuszcza (tym mocniej, im cieplej).
+    const tint = mix(vec3(1.0), lColor.mul(1.25).add(0.1), saturate(eN.mul(0.18).add(Wa.mul(0.1))));
+    const refracted = bg.mul(tint).mul(refrMask);
+
     const emis = lColor.mul(field.add(warn).mul(2.0))
       .add(lColor.mul(flow.mul(fres.add(rim.mul(0.6)).add(U.filmStrength)).mul(U.flowIntensity).mul(lit).mul(U.fieldVisibility)))
       .add(lColor.mul(glowW.mul(1.1)))
@@ -401,7 +431,8 @@ export function createFieldMaterial(U, P, G) {
       .mul(hole.oneMinus()).mul(flickLP)
       .add(breachGlow)
       .mul(G.fade).toVar();
-    return vec4(max(emis, vec3(0.0)), 0.0);
+    const a = refrMask.mul(G.fade);
+    return vec4(max(emis.add(refracted.mul(G.fade)), vec3(0.0)), a);
   })();
   return m;
 }
