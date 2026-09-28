@@ -241,7 +241,7 @@ export class GlowSprites {
     const C = this.c.array;
     A[o] = x; A[o + 1] = y; A[o + 2] = z; A[o + 3] = size;
     B[o] = r; B[o + 1] = g; B[o + 2] = b; B[o + 3] = shape;
-    const l = Math.hypot(dirX, dirY) || 1;
+    const l = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
     C[o] = dirX / l; C[o + 1] = dirY / l; C[o + 2] = stretch; C[o + 3] = soft;
   }
 

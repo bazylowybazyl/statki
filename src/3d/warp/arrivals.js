@@ -170,7 +170,9 @@ export function warpArrivalFxState(a, t, frame, camX, camY, ship) {
     if (!revealing && hull.heat < 0.003) hull.on = false;
     // Smuga sylwetki: pełna przy wyrzucie, gaśnie z prędkością.
     if (s.smear > 0.01) {
-      const speed = Math.hypot(Number(ship.vx) || 0, Number(ship.vy) || 0) || s.shipSpeed;
+      const svx = Number(ship.vx) || 0;
+      const svy = Number(ship.vy) || 0;
+      const speed = Math.sqrt(svx * svx + svy * svy) || s.shipSpeed;
       const total = 1 + Math.min(2.5, (speed * 0.14) / L + 0.45 * s.smear);
       frame.addSmear(a.entity, ship.x - camX, ship.y - camY, ship.angle, L, a.hullWidth, total, s.smear, pal);
     }

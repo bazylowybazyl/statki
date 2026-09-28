@@ -221,7 +221,7 @@ export const WarpNurt = {
       g.charge = warp.chargeTime > 0 ? Math.min(1, (Number(warp.charge) || 0) / warp.chargeTime) : 0;
       g.chargeTime = Number(warp.chargeTime) || 0.8;
       g.gear = warp.gear || 1;
-      g.speed = Math.hypot(pose.vx, pose.vy);
+      g.speed = Math.sqrt(pose.vx * pose.vx + pose.vy * pose.vy);
       g.angle = warp.state === 'active' && warp.dir && (warp.dir.x || warp.dir.y) ? Math.atan2(warp.dir.y, warp.dir.x) : pose.angle;
       g.x = pose.x;
       g.y = pose.y;
@@ -241,7 +241,7 @@ export const WarpNurt = {
     this.prevCamMY = this.camMY;
     let dx = camX - this.prevCamX;
     let dy = camY - this.prevCamY;
-    if (!Number.isFinite(dx) || !Number.isFinite(dy) || Math.hypot(dx, dy) > CAMERA_JUMP) {
+    if (!Number.isFinite(dx) || !Number.isFinite(dy) || dx * dx + dy * dy > CAMERA_JUMP * CAMERA_JUMP) {
       // Inne miejsce świata: ślad poprzedniego skoku (rozrzedzenie, warkocz) nie może tu zostać.
       dx = 0; dy = 0;
       this._reseed = true;
@@ -254,7 +254,7 @@ export const WarpNurt = {
       dy = Math.sin(player.angle) * vis * dt;
     } else {
       const cap = IDLE_FLOW_CAP * dt;
-      const dl = Math.hypot(dx, dy);
+      const dl = Math.sqrt(dx * dx + dy * dy);
       if (dl > cap) { const k = cap / dl; dx *= k; dy *= k; }
     }
     this.camMX += dx;
@@ -262,7 +262,7 @@ export const WarpNurt = {
     if (dt > 0) {
       this.flowX = dx / dt;
       this.flowY = dy / dt;
-      this.flow = Math.hypot(this.flowX, this.flowY);
+      this.flow = Math.sqrt(this.flowX * this.flowX + this.flowY * this.flowY);
     }
     med.camMX = this.camMX;
     med.camMY = this.camMY;
@@ -653,7 +653,7 @@ export const WarpNurt = {
     const p = this.player;
     let cap = 0;
     if (p.active || p.mode === 'exit') cap = STAR_SPEED_CAP;
-    else if (ship && ship.vel && Math.hypot(ship.vel.x, ship.vel.y) > STAR_SPEED_CAP) cap = STAR_SPEED_CAP;
+    else if (ship && ship.vel && ship.vel.x * ship.vel.x + ship.vel.y * ship.vel.y > STAR_SPEED_CAP * STAR_SPEED_CAP) cap = STAR_SPEED_CAP;
     WARP_STAR_CAMERA.speedCap = cap;
   },
 
@@ -778,7 +778,9 @@ export const WarpNurt = {
 
   _burstShake(fx, camX, camY) {
     if (!this.onShake) return;
-    const d = Math.hypot(fx.x - camX, fx.y - camY);
+    const ddx = fx.x - camX;
+    const ddy = fx.y - camY;
+    const d = Math.sqrt(ddx * ddx + ddy * ddy);
     const near = Math.max(0, 1 - d / Math.max(4000, fx.hullLength * 6));
     if (near <= 0) return;
     this.onShake(12 * (0.4 + 0.8 * fx.sizeScale) * near, 0.35);   // demo: 6 px × (0,4 + 0,8 s)
