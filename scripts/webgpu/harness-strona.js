@@ -155,6 +155,24 @@
       window.DevScene?.syncCamera?.();
       return true;
     },
+    // Kop kamery przy warpie (zadanie 22-B): stan kamery statku i riga (zoom gracza, mnożnik kopu,
+    // offset riga, cofnięcie, wiek impulsów) — sceny zapisują go do wyniki.json (stan.diag).
+    kop() {
+      const c = window.camera;
+      const r = window.CameraRig?.rig;
+      const base = Number(c.zoomBase) > 0 && c.zoom === c._zoomSpringOut ? c.zoomBase : c.zoom;
+      const f = (v, d = 3) => (Number.isFinite(v) ? +v.toFixed(d) : null);
+      return {
+        warp: window.warp?.state ?? null,
+        zoom: f(c.zoom, 5), zoomGracza: f(base, 5), cel: f(c.targetZoom, 5), mnoznik: f(c.zoom / base, 4),
+        offsetRiga: r ? [Math.round(r.offsetX), Math.round(r.offsetY)] : null,
+        cofniecie: r ? f(r.warpLagPx, 1) : null,
+        wiekSkoku: r ? f(r.warpKickAge) : null,
+        wiekWyjscia: r ? f(r.warpExitAge) : null,
+        trzymanie: r ? f(r.warpHold, 4) : null,
+        drzenie: r ? f(r.warpShakePx, 2) : null
+      };
+    },
     uploadsIdle() { return !(window.Core3D?._textureUploadQueue?.length); },
     ringReady(key = 'earth') {
       const e = window.__haloRings?.entries?.find((x) => x.key === key);
