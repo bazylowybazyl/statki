@@ -1,7 +1,8 @@
 // src/game/npcCollisionBody.js
 //
 // NPC w kolizjach ze światem: płyta ringu „Halo” (haloRingCollision.js)
-// i asteroidy (AsteroidField.checkShipBodyCollisions). Z12, 2026-09-26.
+// i olbrzymy pasa asteroid (BeltGiants.collideShip, asteroidBeltGiants.js — od
+// zadania 21 portu WebGPU; wcześniej skały starego pola). Z12, 2026-09-26.
 //
 // Kolizje ze światem ruszają statek przez pos/vel — tak żyje gracz (i P2).
 // NPC całkują ruch w x/y/vx/vy: npcStep, stepShipFlight (shipFlightModel.js)

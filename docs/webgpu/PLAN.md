@@ -264,6 +264,21 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   płaszczyzna, więc przesunięcie próbki o `off` px = `uv + dFdx(uv)·off.x + dFdy(uv)·off.y` w jej materiale (gałąź po
   jednolitym warunku — bez zgłoszeń shader liczy to co wcześniej). **Świeży kadłub (przylot) nie ma jeszcze SDF sylwetki**
   (`hullShadowSdf.js` piecze z budżetem) — żar brzegu z alfy mipmapy sprite'a (`sprite.level(log2(szerokość brzegu))`).
+- **Pułapki z zadania 21 (pas asteroid, three r183):** materiał z `lights = true` dostaje WSZYSTKIE światła sceny
+  Core3D (słońce z cieniem, otoczenie, punktowe) — demo ich nie miało; własny model oświetlenia gasi je w `direct()`
+  (`lightNode.light` istnieje tylko dla świateł three) i sam podaje swoje słońce znacznikiem (`BELT_SUN_LIGHT`,
+  `src/3d/asteroids/surfaceLighting.js`). **`positionWorld` przy 6–10 mln j. to float32** (skok ~0,5–1 j.) — mapy pola,
+  ośrodek, mgła i szum czytają pozycje LOKALNE (grupa pola przesunięta o `Core3D.fx.origin`, varying z pozycji instancji
+  albo środek płatu z CPU), `positionLocal` we fragmencie to varying pozycji po `positionNode`. **Kroki `Core3D.fx` idą
+  PO `_syncSceneMatrices()`** — krok, który przesuwa obiekty, sam woła `updateMatrixWorld`. **`compileAsync` /
+  `prewarmPass` pomija obiekty z `visible = false`** — rozgrzewka odsłania schowane siatki na czas kompilacji (inaczej
+  pierwsze wejście w pole buduje pipeline'y w klatce). **Kolejka:** nieprzezroczyste idą przed przezroczystymi bez
+  względu na `renderOrder` — skały tła, które mają przykryć przezroczystą zasłonę pola, są w kolejce przezroczystej
+  z `NoBlending` i zapisem głębi. **Bloom gry = bloom dema × 3** (`BLOOM_ZGODNOSC_WEBGL`) — pas kładzie kolano z 22
+  (`warpBloomKnee` jako `beltBloomKnee`, `src/3d/asteroids/tslCommon.js`) na barwę skał, minerałów, olbrzymów, piorunów,
+  duszków i iskier PRZED ośrodkiem; wartości barw zostały z dema. **Pułapka z 15
+  (`DynamicDrawUsage` = wysyłka przy każdym renderze) siedziała też w modułach dema** — kubełki skał, minerały, mgła,
+  rzucający cień: ~1 MB na klatkę; bez niej narzut pasa w bitwie 24 × 24 spadł z ~2–3 do ~0,5–1,2 ms CPU `Core3D`.
 - **TSL, nie `wgslFn`.** Tekstowy WGSL tylko dla wyizolowanej czystej funkcji, gdy TSL jest naprawdę niewygodny — z
   uzasadnieniem w commicie (zamyka drogę do zapasowego backendu WebGL2). Wyjątek z uzasadnieniem: `haloFma` (09),
   `haloFmaVec2` (10 — ten sam `fma` WGSL na wektorach, hasze archetypów).

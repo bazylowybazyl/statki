@@ -989,8 +989,8 @@
     window.ShieldFXPresets = SHIELD_IMPACT_PRESETS;
     import { initWorld3D, attachPirateStation3D, updateWorld3D } from "./src/3d/world3d.js";
     import { destroyStation3D } from "./src/3d/stations3D.js";
-    import { AsteroidField } from "./src/3d/asteroidField3D.js";
-    import { AsteroidBeltBackdrop } from "./src/3d/asteroidBeltBackdrop3D.js";
+    // Pas asteroid (zadanie 21): pola z dema WebGPU w passach Core3D, kolizje z olbrzymami.
+    import { createAsteroidBelt } from "./src/3d/asteroids/asteroidBelt.js";
     import {
       initHexShips3D,
       prewarmHexShips3D,
@@ -1057,7 +1057,6 @@
       isTargetWithinSensorRange,
       refreshScannerContactDistances,
       resolveShipSensors,
-      selectNearestAsteroidTargets,
       sortScannerContacts,
       sortScannerSweepContacts,
       targetPoint as scannerTargetPoint
@@ -1217,12 +1216,7 @@
     window.TIME_SCALE ??= TIME_SCALE;
     window.WORLD ??= WORLD;
     const TowSystem = new TowConstraintSystem({
-      iterations: 8,
-      onWake: (body) => {
-        if (body?.asteroidRef || Number.isFinite(Number(body?.worldX))) {
-          window.asteroidField?.wakeTowBody?.(body);
-        }
-      }
+      iterations: 8
     });
     window.TowSystem = TowSystem;
     window.attachTowRope = (bodyA, bodyB, options = {}) => TowSystem.attach(bodyA, bodyB, options);
@@ -5232,7 +5226,6 @@
           ship,
           npcs,
           SensorSystem,
-          asteroidField: window.asteroidField || null,
           asteroidRange: typeof getScannerAsteroidRange === 'function' ? getScannerAsteroidRange() : 60000,
           lockedTargets,
           selectedTarget: scannerSelectedTarget || lockedTarget,
@@ -9534,6 +9527,9 @@
     // z ustawień; zapis z localStorage czytany tutaj, bo jego odtworzenie w
     // OPTIONS idzie później (osobny DOMContentLoaded na końcu pliku).
     let haloRings = null;
+    // Pas asteroid (zadanie 21) — tworzony w starcie świata (DOMContentLoaded), GPU na
+    // ekranie ładowania (startGame).
+    let asteroidBelt = null;
     function initHaloRings() {
       if (!Core3D.isInitialized) Core3D.init();
       let saved = null;
@@ -9705,45 +9701,17 @@
         })();
       }
 
-      // Port WebGPU (decyzja użytkownika 2026-09-27, docs/webgpu/POSTEP.md): stare pole
-      // asteroid i tło pasa są WYŁĄCZONE na czas portu — nowe asteroidy wejdą z dem
-      // (dema/asteroidy*.html). Haki gry znoszą brak window.asteroidField / beltBackdrop.
-      // `?asteroidyStare` przywraca je do porównań na ścieżce WebGL.
-      const OLD_ASTEROIDS_ENABLED = new URLSearchParams(location.search).has('asteroidyStare');
-
-      // Pole asteroid (InstancedMesh) - 5 pasów: Main Belt, Greeks (L4), Trojans (L5),
-      // Hildas (rezonans 3:2 z Jowiszem), Kuiper Belt. Generowane raz, deterministycznie z seed.
-      if (OLD_ASTEROIDS_ENABLED && AsteroidField && !window.asteroidField) {
+      // Pas asteroid (zadanie 21, src/3d/asteroids/asteroidBelt.js): pola z dema WebGPU
+      // (skały pasm, minerały, olbrzymy, światło wolumetryczne, burze) w passach Core3D.
+      // Tu część CPU (pole, cień pól, plan olbrzymów + wykluczenia skał) — GPU i cień pól
+      // całego układu liczą się na ekranie ładowania (startGame). Kotwice pasów
+      // Lagrange'a i Hildas = planety w tej chwili (jak dawne pole).
+      if (!asteroidBelt) {
         try {
-          window.asteroidField = new AsteroidField({
-            seed: 0xA57E20,
-            planets,
-            sun: SUN,
-            auToWorld: getAuToWorldUnits(),
-            scene: Core3D.scene,
-          });
-          console.log(`[AsteroidField] spawned ${window.asteroidField.count} asteroids across ${window.asteroidField.pools.size} instanced pools`);
+          asteroidBelt = createAsteroidBelt({ planets, sun: SUN, auToWorld: getAuToWorldUnits() });
+          window.__asteroidBelt = asteroidBelt;
         } catch (err) {
-          console.error('[AsteroidField] init failed', err);
-        }
-      }
-
-      // Tło 3D pasów asteroid — proceduralne skały na warstwie tła (layer 1),
-      // pod sprite'owym polem gameplayu. Regiony liczone z tych samych
-      // BELT_DEFINITIONS i pozycji planet co AsteroidField wyżej.
-      if (OLD_ASTEROIDS_ENABLED && AsteroidBeltBackdrop && !window.beltBackdrop) {
-        try {
-          window.beltBackdrop = new AsteroidBeltBackdrop({
-            seed: 0xB4CD07,
-            planets,
-            sun: SUN,
-            auToWorld: getAuToWorldUnits(),
-            scene: Core3D.scene,
-            fovDeg: Core3D.cameraPersp ? Core3D.cameraPersp.fov : 35,
-          });
-          console.log(`[BeltBackdrop] ready: ${window.beltBackdrop.regions.length} belt regions`);
-        } catch (err) {
-          console.error('[BeltBackdrop] init failed', err);
+          console.error('[AsteroidBelt] start nie wyszedł', err);
         }
       }
     });
@@ -9753,9 +9721,9 @@
       return waitForCondition(() => planetScene3D || planetStationsReady, 2500);
     }
 
-    // Mgła pasa jest w całości PRZESTRZENNA (addytywne płaty pyłu w WebGL,
-    // asteroidBeltBackdrop3D) — pełnoekranowy wash 2D usunięty: gradient 'screen'
-    // szarzył cały kadr (łącznie z planetami w tle), a 8-bitowa kwantyzacja
+    // Mgła pasa jest w całości PRZESTRZENNA (płaty mgły, ośrodek objętościowy
+    // i zasłona pola — src/3d/asteroids/) — pełnoekranowy wash 2D usunięty: gradient
+    // 'screen' szarzył cały kadr (łącznie z planetami w tle), a 8-bitowa kwantyzacja
     // radialnego gradientu robiła koncentryczne prążki na ekranie.
 
 
@@ -14599,7 +14567,6 @@
     const scannerRevealFx = [];
     const scannerContacts = [];
     const scannerPassiveContacts = [];
-    const SCANNER_ASTEROID_CONTACT_LIMIT = 48;
     const SCANNER_PASSIVE_REFRESH_MS = 350;
     const SCANNER_CONTACT_REVEAL_DELAY = 0.22;
     const SCANNER_ACQUIRE_LEAD_TIME = 0.42;
@@ -14833,17 +14800,8 @@
         }
       }
 
-      if (includeAsteroids && asteroidRange > 0 && window.asteroidField?.queryRadius) {
-        const asteroids = window.asteroidField.queryRadius(ship.pos.x, ship.pos.y, asteroidRange) || [];
-        const nearestAsteroids = selectNearestAsteroidTargets(asteroids, {
-          centerX: ship.pos.x,
-          centerY: ship.pos.y,
-          limit: SCANNER_ASTEROID_CONTACT_LIMIT
-        });
-        for (const entry of nearestAsteroids) {
-          pushScannerContact(entry.asteroid, 'asteroid', 'resource', entry.distance, contacts);
-        }
-      }
+      // Asteroidy jako kontakty skanera (surowce) szły ze starego pola (usunięte w zadaniu 21);
+      // nowe pole nie ma rozgrywki małych skał — do decyzji użytkownika (docs/webgpu/POSTEP.md).
 
       return sweepSort ? sortScannerSweepContacts(contacts) : sortScannerContacts(contacts);
     }
@@ -15798,26 +15756,6 @@
       return best;
     }
 
-    function pickAsteroidTargetAtWorld(worldPoint) {
-      if (!worldPoint || !window.asteroidField?.queryRadius) return null;
-      const pickRadius = 900;
-      const asteroids = window.asteroidField.queryRadius(worldPoint.x, worldPoint.y, pickRadius) || [];
-      let best = null;
-      let bestDistSq = Infinity;
-      for (const asteroid of asteroids) {
-        if (!isTargetAlive(asteroid)) continue;
-        const dx = getTargetX(asteroid) - worldPoint.x;
-        const dy = getTargetY(asteroid) - worldPoint.y;
-        const distSq = dx * dx + dy * dy;
-        const hitR = getTargetRadius(asteroid) + 32;
-        if (distSq <= hitR * hitR && distSq < bestDistSq) {
-          bestDistSq = distSq;
-          best = asteroid;
-        }
-      }
-      return best;
-    }
-
     // Wraki są celem rozkazów tylko dla odzysku łupu, więc trafiamy w nie
     // dopiero gdy w punkcie nie ma żywego wroga.
     // Zimne wraki (coldWrecks) też są celami: rozkaz albo holowanie wybudza je
@@ -15848,8 +15786,6 @@
       if (enemy) return enemy;
       const wreck = pickWreckTargetAtWorld(worldPoint);
       if (wreck) return wreck;
-      const asteroid = pickAsteroidTargetAtWorld(worldPoint);
-      if (asteroid) return asteroid;
       let best = null;
       let bestDistSq = Infinity;
       for (const st of stations) {
@@ -19252,7 +19188,6 @@
 
     const _activeWrecksBuffer = [];
     const _sleepingWrecksBuffer = [];
-    const _activeAsteroidHexBuffer = [];
     // Cache list destruktora — budowane raz na klatkę renderu (rAF), współdzielone
     // przez wszystkie substepy fizyki tej klatki (patrz physicsStep).
     let _destrPrepFrameId = -1;
@@ -19271,10 +19206,6 @@
       for (let i = 0; i < npcList.length; i++) _dynamicDestructibles.push(npcList[i]);
       for (let i = 0; i < wreckList.length; i++) _dynamicDestructibles.push(wreckList[i]);
       if (p2Entity) _dynamicDestructibles.push(p2Entity);
-      if (window.asteroidField?.getActiveHexEntities) {
-        const asteroidHexes = window.asteroidField.getActiveHexEntities(_activeAsteroidHexBuffer);
-        for (let i = 0; i < asteroidHexes.length; i++) _dynamicDestructibles.push(asteroidHexes[i]);
-      }
       return _dynamicDestructibles;
     }
 
@@ -19779,35 +19710,17 @@
         if (profileBullet) secNpcHit += (performance.now() - tBulletSection0) * bulletProfileScale;
 
         tBulletSection0 = profileBullet ? performance.now() : 0;
-        // --- KOLIZJE Z ASTEROIDAMI (swept hit -> lazy hex promotion) ---
-        if (!hitNPC && window.asteroidField?.raycast && window.asteroidField?.applyDamageAt) {
-          const segX0 = Number.isFinite(b.px) ? b.px : b.x;
-          const segY0 = Number.isFinite(b.py) ? b.py : b.y;
-          const segX1 = b.x;
-          const segY1 = b.y;
-          const astHit = window.asteroidField.raycast(segX0, segY0, segX1, segY1, b.r || 0);
-
-          if (astHit?.asteroid?.alive) {
-            const tAst = Math.max(0, Math.min(1, Number(astHit.hitT ?? astHit.t) || 0));
-            const hitX = segX0 + (segX1 - segX0) * tAst;
-            const hitY = segY0 + (segY1 - segY0) * tAst;
-            const astDamage = Number.isFinite(b.damage) ? b.damage : 0;
-            // Kierunek uderzenia względem skały (pocisk niesie prędkość strzelca).
-            const astCarrier = writeCarrier(astHit.asteroid, hitX, hitY, false, _impactCarrier);
-            const astResult = window.asteroidField.applyDamageAt(astHit.asteroid, hitX, hitY, astDamage,
-              { x: b.vx - astCarrier.vx, y: b.vy - astCarrier.vy });
-
-            if (astResult?.hit || astResult?.destroyed) {
-              writeImpactHit(_impactHit, astHit.asteroid, hitX, hitY, b.vx - astCarrier.vx, b.vy - astCarrier.vy, 'asteroid');
-              ActiveCarrier.set(astCarrier);
-              spawnBulletImpactEffect(b, hitX, hitY, 0.9, _impactHit);
-              ActiveCarrier.clear();
-
-              if (shouldRemoveProjectileAfterImpact(b, true)) removeBulletAt(i);
-              if (profileBullet) secAst += (performance.now() - tBulletSection0) * bulletProfileScale;
-              continue;
-            }
-          }
+        // --- OLBRZYMY PASA ASTEROID (zadanie 21): skała olbrzyma w płaszczyźnie gry
+        // zatrzymuje pociski jak płyta ringu. Małe skały leżą pod płaszczyzną — pociski
+        // przelatują nad nimi (stare pole: trafienia, niszczenie i łup — usunięte). Ściany
+        // olbrzymów mają setki–tysiące j., pocisk ≤ ~170 j./krok — bez tunelowania.
+        // Trafienie jak w ring (17): kierunek z prędkości własnej pocisku, bez encji.
+        if (!hitNPC && asteroidBelt && asteroidBelt.giants.readyCount > 0 && asteroidBelt.pointBlocked(b.x, b.y)) {
+          writeImpactHit(_impactHit, null, b.x, b.y, b.vx - (Number(b.ivx) || 0), b.vy - (Number(b.ivy) || 0), 'asteroid');
+          spawnBulletImpactEffect(b, b.x, b.y, 0.9, _impactHit);
+          removeBulletAt(i);
+          if (profileBullet) secAst += (performance.now() - tBulletSection0) * bulletProfileScale;
+          continue;
         }
         if (profileBullet) secAst += (performance.now() - tBulletSection0) * bulletProfileScale;
 
@@ -22069,25 +21982,26 @@
     // Debug/profiling: pojedynczy krok fizyki z konsoli (działa też przy wstrzymanym rAF).
     window.__physicsStepOnce = (dt = PHYS_DT) => physicsStep(dt);
 
-    // Kolizje statków (gracz, P2, NPC) z asteroidami w 120 Hz z prawdziwym dt.
-    // Dawniej szły w render(): raz na klatkę renderu (tunelowanie przez skały
-    // zależne od fps), z dt 1/60 wpisanym na sztywno i PO wyliczeniu interpolacji,
-    // więc statek skakał o klatkę. Statki daleko od pasów odpadają w
-    // checkShipCollisions na teście pasm, bez zapytania do hasha.
+    // Kolizje statków (gracz, P2, NPC) z OLBRZYMAMI pasa asteroid (zadanie 21,
+    // src/game/asteroidBeltGiants.js) w 120 Hz: przekrój z = 0 siatki SDF, statek jako
+    // pięć kół wzdłuż osi kadłuba — wypchnięcie wzdłuż normalnej, prędkość w głąb skały
+    // odbita (0,3), bez obrażeń (jak demo). Małe skały leżą pod płaszczyzną gry — bez
+    // kolizji (stare pole z zderzeniami, niszczeniem i łupem usunięte).
     // NPC całkują ruch w x/y/vx/vy, a pos/vel mają najwyżej jako lustro, które
-    // nadpisuje następny krok — do kolizji ze światem (skały, ring) idą przez
+    // nadpisuje następny krok — do kolizji ze światem (olbrzymy, ring) idą przez
     // widok kinematyki (src/game/npcCollisionBody.js), wynik wraca do x/y/vx/vy.
+    // Kadłub belkowy dostaje nową pozycję encji w HullBodies.step (ruch encji, nie węzłów).
     const _npcCollisionBody = createNpcCollisionBody();
     function stepShipAsteroidCollisions(dt) {
-      const field = window.asteroidField;
-      if (!field) return;
-      if (ship && !ship.dead) field.checkShipCollisions(ship, dt);
-      if (player2Ship && !player2Ship.dead) field.checkShipCollisions(player2Ship, dt);
+      const belt = asteroidBelt;
+      if (!belt || belt.giants.readyCount === 0) return;
+      if (ship && !ship.dead) belt.collideShip(ship);
+      if (player2Ship && !player2Ship.dead && !player2Ship.destroyed) belt.collideShip(player2Ship);
       const body = _npcCollisionBody;
       for (let i = 0; i < npcs.length; i++) {
         const npc = npcs[i];
         if (!npcCollidesWithWorld(npc)) continue;
-        if (field.checkShipBodyCollisions(npc, loadNpcCollisionBody(body, npc), dt)) storeNpcCollisionBody(body, npc);
+        if (belt.collideShip(loadNpcCollisionBody(body, npc)) > 0) storeNpcCollisionBody(body, npc);
       }
     }
 
@@ -23257,18 +23171,15 @@
 
       tRender3dSub = performance.now();
       if (renderDbgEnabled) tRenderSection = tRender3dSub;
-      if (window.asteroidField) {
-        // Kolizje statków z asteroidami chodzą w physicsStep (stepShipAsteroidCollisions).
-        window.asteroidField.update(frameDt);
+      // Pas asteroid (zadanie 21): wejście klatki — dt gry (0 w pauzie) i statki do świateł
+      // pola. Liczenie (skały, ośrodek, burza, światła) idzie w kroku Core3D.fx przed passami;
+      // kolizje z olbrzymami w physicsStep (stepShipAsteroidCollisions).
+      if (asteroidBelt) {
+        asteroidBelt.prepareFrame(frameDt, ship, splitScreenMode ? player2Ship : null, npcs, PAUSED);
       }
-      // Tło 3D pasów: streaming chunków wokół kamery + immersja (ciemniej w głębi pasa).
-      // camNoShake — shake kamery nie powinien triggerować streamingu.
-      if (window.beltBackdrop) {
-        window.beltBackdrop.update(frameDt, camNoShake, ship && ship.pos ? ship.pos : null, W, H);
-      }
-      const render3dAsteroidsMs = performance.now() - tRender3dSub;
+      const render3dAsteroidsMs = asteroidBelt ? asteroidBelt.stats.cpuMs : (performance.now() - tRender3dSub);
       PerfHUD.addTiming('render3dAsteroidsUpdateTime', render3dAsteroidsMs);
-      if (renderDbgEnabled) RenderLiveDebug.record('asteroidField.update', render3dAsteroidsMs);
+      if (renderDbgEnabled) RenderLiveDebug.record('asteroidBelt', render3dAsteroidsMs);
 
       tRender3dSub = performance.now();
       if (renderDbgEnabled) tRenderSection = tRender3dSub;
@@ -23284,10 +23195,6 @@
       if (splitScreenMode && player2Ship && !player2Ship.destroyed) renderEntities.push(player2Ship);
       for (const npc of npcs) if (npc && !npc.dead) renderEntities.push(npc);
       for (const w of wrecks) if (w && !w.dead) renderEntities.push(w);
-      if (window.asteroidField?.getActiveHexEntities) {
-        const asteroidHexes = window.asteroidField.getActiveHexEntities(_activeAsteroidHexBuffer);
-        for (let i = 0; i < asteroidHexes.length; i++) renderEntities.push(asteroidHexes[i]);
-      }
 
       tRender3dSub = performance.now();
       if (renderDbgEnabled) tRenderSection = tRender3dSub;
@@ -23837,18 +23744,8 @@
 
         // === FOG OF WAR === (disabled — will be reimplemented later)
 
-        // === BELT AMBIENT DIM === Głębiej w pasie asteroid = ciemniejsza scena.
-        // Overlay leży nad światem (2D + WebGL pod spodem), ale pod HUD/celownikami.
-        {
-          const beltDim = window.beltBackdrop ? window.beltBackdrop.getAmbientDim() : 0;
-          if (beltDim > 0.004) {
-            ctx.save();
-            ctx.globalAlpha = 1;
-            ctx.fillStyle = `rgba(3, 5, 10, ${(beltDim * 0.12).toFixed(3)})`;
-            ctx.fillRect(0, 0, W, H);
-            ctx.restore();
-          }
-        }
+        // Mrok w głębi pasa asteroid robi pas w 3D (maska słońca Core3D i zasłona pola —
+        // zadanie 21); dawny pełnoekranowy przyciemniacz 2D starego tła pasa usunięty.
 
         // === UI / HUD Pass ===
         // Rysuj HUD na Canvasie TYLKO jeśli nie jesteśmy w menu
@@ -25599,6 +25496,16 @@
       // ostatniej tarczy od nowa (shield3D.js, prewarmShields3D).
       prewarmShields3D();
       await nextFrame();
+
+      // Pas asteroid (zadanie 21): cień pól całego układu (~1 s — potem żadnego liczenia
+      // w locie) i start GPU pasa (bank kształtów, szumy, materiały, rozgrzewka pipeline'ów).
+      if (asteroidBelt) {
+        setLoadingProgress(72, 'Cień pól asteroid');
+        await asteroidBelt.precompute((p) => setLoadingProgress(72 + p * 5, 'Cień pól asteroid'));
+        setLoadingProgress(77, 'Pola asteroid');
+        await asteroidBelt.initGpu();
+        await nextFrame();
+      }
 
       // Wstępna symulacja fizyki
       for (let i = 0; i < 60; i++) npcStep(PHYS_DT);
