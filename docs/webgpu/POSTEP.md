@@ -64,17 +64,16 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 | 22 | Warp „Nurt” z dema `warp-webgpu` (iteracja 2) | 12, 13 (+ commit dema) | 14–21 | max | zrobione, scalone (e9f4285); demo: 68cc081 | 97f97b2, de2ed96, 3e8c98d, 83b3735, 4b08a27 (scalenia `main` 3b93795, f43d903) | ośrodek 1 mln drobin w compute, poza warpem 0 kroków i 0 draw calli; stara soczewka i API usunięte; wygląd iteracji 2 do oceny użytkownika | | „ready do wgrania, jak skończy sesję”; wygląd iteracji 2 jeszcze nieoceniony |
 | 22b | Kop kamery przy skoku warpa i impuls zoomu przy wyjściu (z dema „Nurt”, w `cameraRig`) | 22 | 11, 18–21 | xhigh | zrobione, scalone (c7a7f6a) | 75af962, 8d3953f (scalenie `main` 575e550) | uwaga użytkownika do iteracji 1: wejście i wyjście „suche, bez kopa” |
 | 23 | Wydajność i precyzja: A/B z tagiem, drżenie, kompilacja, pamięć | 04–22 | nie | max | zrobione, scalone (b41e4de) | 8fc9e77…56012bf (21 commitów) | duża bitwa 54% → 84% FPS bazy WebGL (Core3D 4,02 → 1,47 ms); bloom compute bit w bit; raport `WYDAJNOSC.md`; otwarte: przestoje > 100 ms przy pierwszej stacji modelu, partie tarcz, kolano bloomu (A/B) |
-| 24 | Sprzątanie i domknięcie portu | 23 | nie | xhigh | w toku (podagent, worktree `statki-wt/24`) | | decyzje PLAN §12 p. 1, 3 |
-
+| 24 | Sprzątanie i domknięcie portu | 23 | nie | xhigh | zrobione, scalone (be51f3f), tag `webgpu-port` | 8998cbe, 0b3bb55, d3ce675, f40eaa4, d6adac1, efa140e, 041a7e7, 8640c5c, 9a6241d, 0f4823e | gra bez GLSL i API WebGL (strażnik `graBezGlsl`); −4 moduły legacy; wyciek kawałków stacji naprawiony |
 ## Regresje przejściowe (świadome)
 
 Stan zamierzony na `main` w trakcie portu — nie „naprawiać” poza zadaniem, które go kończy.
 
 | Od | Do | Co | Kończy |
 |---|---|---|---|
-| 01 | 24 | Nieprzeniesione `ShaderMaterial` rysują się magentą (`spis.zamienniki` w harnessie) | zadania 02–22 |
+| 01 | 24 | Nieprzeniesione `ShaderMaterial` rysują się magentą (`spis.zamienniki` w harnessie) | 24 — ZAMKNIĘTE (be51f3f): zamienniki 0 w 99 scenach; zamiennik zostaje jako bezpiecznik w biegu |
 | 01 | 03 | Maska słońca wyłączona (`uSunShadowOn = 0`): bez cienia słońca na materiałach, smug tła i SDF kadłubów; fala uderzeniowa bez passa refrakcji; kadłuby z 04 liczą pełne słońce (zastępnik `// AGENT: po 03` w `hexShips3D.tsl.js`) | 03 — ZAMKNIĘTE (f487d2f) |
-| 03 | 24 | `src/3d/sunShadowMaskGLSL.js` — napis GLSL maski dla nieprzeniesionych `ShaderMaterial` (Z4/Z5/Z7) | ostatni odbiorca; plik usuwa 24 |
+| 03 | 24 | `src/3d/sunShadowMaskGLSL.js` — napis GLSL maski dla nieprzeniesionych `ShaderMaterial` (Z4/Z5/Z7) | 24: plik poza grą dla Z4/Z5/Z7 (jedyny wpis `POZA_PORTEM` = re-eksport w `sunShadowMask.js` dla budowli Z7 — do czasu scalenia Z7) |
 | 02 | 23 | Bloom = 12 osobnych `renderer.render()` (~0,9–1,0 ms CPU na render, GPU ~0,085 ms przy 1080p); znaczniki czasu ~15 µs CPU na pass | 23 — ZAMKNIĘTE (b41e4de): bloom = 12 kerneli w jednym passie compute, cele bit w bit |
 | 01 | 11 | Rozgrzewka tylko „nie rzuca”: pipeline'y kompilują się asynchronicznie przy pierwszym użyciu, osłona `backend.draw` pomija rysunek do gotowości (obiekt pojawia się 1–2 klatki później) | 11 — ZAMKNIĘTE (d62e275): rejestr `Core3D.warmup`; zostały: cień Destruction3D rozgrzewany rysunkiem (16), bryła stacji GLB, kernele compute synchronicznie na ekranie ładowania, pas 21b |
 | 01 | 06 | Brak synchronicznego odczytu → mapa CPU ringu pusta (`heightAtUV` = 0): płyta ringu koliduje bez rzeźby terenu, LOD terenu bez wysokości, landmarki i kopuły stawiane bez mapy (stała wysokość z `haloRingLandmarks.js`) | 06 — ZAMKNIĘTE (070a407): teren w koliderze po `ring.ready`, sprawdzone w grze |
@@ -866,3 +865,43 @@ Todo (2): „PORT poprawka 1 / 3 (TODO integracji)” w `tests/shipCore.test.mjs
   ekranie ładowania); drżenie smug i dymu nad progiem 0,01 px. Do decyzji użytkownika: kolano bloomu dla broni / rakiet / ran
   (A/B w `.tmp/webgpu/zadania/23/kolano/` — np. `galeria-mjolnir` 69% pikseli >8/255), siatka mapy samocienia dymu. Raport:
   `docs/webgpu/WYDAJNOSC.md`. Testy: 1662 / 5 porażek bazowych / 3 todo; `npm test` OK.
+- **Zadanie 24 scalone do `main`** (8998cbe, 0b3bb55, d3ce675, f40eaa4, d6adac1, efa140e, 041a7e7, 8640c5c, 9a6241d, 0f4823e;
+  scalenie be51f3f): **gra bez GLSL i bez API WebGL** — strażnik `tests/graBezGlsl.test.mjs` (zastępuje `glslReservedWords`;
+  graf importów od `index.html`, 353 pliki, wspólny kod z inwentarzem w `scripts/webgpu/grafGry.mjs`; lista `POZA_PORTEM`
+  z powodami — wpis zbędny też daje porażkę; detektor sprawdzony w obie strony). Usunięte moduły legacy: `planet3d.proc.js`
+  (własny `WebGLRenderer` + EffectComposer, 392 linie GLSL), `voxelShips3D.js`, `stationDestructionEffects.js`,
+  `asteroidDestructor.js` (+ jego jedyny test; z `asteroidPhysics.js` zostało `ASTEROID_MATERIAL`); martwy kod: broń w
+  `CanvasVFX` (wyloty, trafienia, `spawnLaserBeam` / `drawBeams`, `getProjectileImpactVfxPressure`), pola starych efektów w
+  `rocketSystem3D`, pasy i skały w `cicDisplay`, panel „Warp Wormhole VFX” (`devTools`), kubełek `warpLens` (`liveDebug`),
+  sprite blasku słońca z brakującym `glow.png` (niewidoczny — `slonce` −1 draw call). Naprawiony wyciek: klony kawałków
+  skorupy stacji dziedziczyły `__sharedTemplateAsset` i nigdy nie były zwalniane (test regresji). `beamDebris3D.js`: geometria
+  odłamków → `src/3d/metalDebrisGeometry.js` (gra), pula GLSL zostaje dla dem destruktora (własny renderer, `AGENT:`);
+  `haloRingGLSL.js` poza grą (Z7 + narzędzie parzystości); zamiennik (magenta) zostaje jako bezpiecznik w biegu.
+  `agents.md` — sekcja „Render: WebGPU + TSL” zamiast „Port WebGPU (w toku)”, `docs/PORT-*.md` bez instrukcji GLSL,
+  `docs/webgpu/README.md` — port zakończony, bazy nowych scen z `main`. Baza sesji „reaktor” z tagu dopisana (`--powtorz 2`).
+  **Końcowy harness (99 scen, 190 zrzutów):** 0 błędów (także startu sesji), 0 NaN, zamienniki 0; wobec bazy `main` po 23:
+  188 / 190 identycznych (różni się tylko `planeta-cien` / `__fg` — szum obrotu stacji Wenus). Wobec tagu: `mars`, `jowisz`,
+  `split`, `kalibracja` w tolerancji; `menu` 0,34% i sceny ringu 0,1–0,56% (krawędzie MSAA / aliasing, 09–11);
+  `planeta-cien` (szum Wenus + łuk bazy WebGL, 05); `reaktor-*` 24–66% (wygląd wybuchu z 20 — decyzja użytkownika);
+  sesja `stacja` od 23 nieporównywalna z tagiem (los odłamków z `fxRandom`). Zestawienie:
+  `.tmp/webgpu/zadania/24/zestawienie.md`. Inwentarz z HEAD be51f3f: **port 0 plików z GLSL, 0 materiałów, 0 linii, 0
+  `onBeforeCompile`, 0 API WebGL**; poza portem 1 (35 linii — napis maski dla Z7), poza grą 9 plików / 14 materiałów / 1897
+  linii; razem 10 / 14 / 1932. Testy: 1665 / 5 porażek bazowych / 3 todo; `npm test` OK.
+
+## Port zakończony (2026-09-28)
+
+Zadania 01–24 (+ 21b, 22b) scalone do `main`, tag `webgpu-port` (lokalnie, bez push). Gra ma JEDEN renderer
+(`WebGPURenderer` three r183 w `src/3d/core3d.js`), materiały wyłącznie w TSL; grupa „port” inwentarza = 0 GLSL / 0
+`ShaderMaterial` / 0 API WebGL pod strażnikiem `tests/graBezGlsl.test.mjs`. Zasady renderu: `agents.md` § „Render: WebGPU +
+TSL”; harness i bazy (tag `webgl-baseline` dla scen przeniesionych 1:1, przebiegi z `main` dla nowych efektów):
+`docs/webgpu/README.md`; wydajność: `docs/webgpu/WYDAJNOSC.md`.
+
+W grze (poza portem 1:1): efekty 27 broni z dema `bronie-webgpu` + mapa ran + mechanika (przebicia, rykoszety, ładowanie,
+serie — zatwierdzona zmiana rozgrywki), rakiety z dema `rakiety-webgpu`, pas asteroid z dema `asteroidy-webgpu` z olbrzymami
+i wydobyciem (tryb `N`), warp „Nurt” z dema `warp-webgpu` z kopem kamery, wybuch reaktora w Core3D.
+
+Otwarte decyzje użytkownika — § „Zebrane dla zadań 11, 23 i 24” (wygląd efektów, wybuch reaktora, kolano bloomu, ekonomia
+wydobycia, rozgrywka pasa, warp — soczewka świata) oraz: mapa CIC bez pasów asteroid (kod usunięty — przywrócenie dla nowego
+pasa to mała funkcja). Prace po porcie: druga runda wydajności (duża bitwa 84% FPS WebGL: tarcze partiami, rozgrzewka
+szablonów stacji na ekranie ładowania, koszt na obiekt), sesja Z7 — przepiąć `SUN_SHADOW_GLSL` na `sunShadowMaskGLSL.js` i
+usunąć wpis `POZA_PORTEM` (strażnik o to poprosi), `dema/kontenery.html` i `dema/station-destruction-sandbox.html` nie działają.
