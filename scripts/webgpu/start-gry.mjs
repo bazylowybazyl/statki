@@ -7,6 +7,10 @@
 //
 //   node scripts/webgpu/start-gry.mjs [--root <repo gry, np. worktree tagu webgl-baseline>] [--powtorz 3]
 //        [--port 5358] [--out katalog] [--klatki 300] [--menu-ms 2000] [--etykieta nazwa] [--bez-rozbiegu]
+//        [--root-b <drugie repo> [--etykieta-b nazwa]]
+//
+// --root-b (zadanie 25a): porównanie A/B NA PRZEMIAN (A, B, A, B…; dwa serwery, rozbieg każdego) — obciążenie
+// maszyny zmienia bezwzględne czasy między seriami o sekundy, więc „przed / po” tylko w jednej serii naprzemiennej.
 //
 // Wynik: <out>/start-<etykieta>.json (przebiegi + mediany z rozrzutem) i podsumowanie na konsoli. Czasy
 // chwil liczone od nawigacji (performance.now strony): gpuReady (WebGPU), menuPierwszaKlatka, menuGotowe
@@ -208,62 +212,90 @@ const median = (values) => {
 };
 
 const { createServer } = await import('vite');
-const server = await createServer({ root, logLevel: 'error', server: { port, strictPort: false, hmr: false, watch: { ignored: ['**/*'] } } });
-await server.listen();
-const base = `http://localhost:${server.httpServer.address().port}`;
-const runs = [];
+// Serwery gry: A (--root) i — z --root-b — B; przebiegi NA PRZEMIAN.
+const rootB = args['root-b'] ? resolve(args['root-b']) : null;
+const labelB = rootB ? (args['etykieta-b'] || rootB.split(/[\\/]/).filter(Boolean).pop()) : null;
+async function serve(r, p) {
+  const server = await createServer({ root: r, logLevel: 'error', server: { port: p, strictPort: false, hmr: false, watch: { ignored: ['**/*'] } } });
+  await server.listen();
+  return { server, base: `http://localhost:${server.httpServer.address().port}` };
+}
+const sides = [{ label, root, runs: [] }];
+if (rootB) sides.push({ label: labelB, root: rootB, runs: [] });
+for (const [i, side] of sides.entries()) Object.assign(side, await serve(side.root, port + i));
+function logRun(i, side, r) {
+  const c = r.chwile || {};
+  console.log(`przebieg ${i} (${side.label}, ${r.renderer || '?'}): ${r.blad ? 'BŁĄD ' + r.blad : ''}`
+    + ` gpu ${c.gpuReady ?? '-'} | menu 1. klatka ${c.menuPierwszaKlatka ?? '-'} gotowe ${c.menuGotowe ?? '-'} | ring ${c.ringZiemi ?? '-'}`
+    + ` | gra od kliku ${c.graOdKliku ?? '-'} ms, 1. klatka ${r.gra?.pierwszaKlatkaMs ?? '-'} ms (CPU ${r.gra?.pierwszaKlatkaCpu ?? '-'})`
+    + ` | przestoje menu ${r.menu?.przestoje ?? '-'}/${r.menu?.klatki ?? '-'} (maks ${r.menu?.maksMs ?? '-'}), ładowanie ${r.ladowanie?.przestoje ?? '-'}/${r.ladowanie?.klatki ?? '-'} (maks ${r.ladowanie?.maksMs ?? '-'}), gra ${r.gra?.przestoje ?? '-'}/${r.gra?.klatki ?? '-'} (maks ${r.gra?.maksMs ?? '-'})`
+    + ` | pipeline'y sync: przed menu ${r.przedMenu?.pipeline?.sync ?? '-'}, menu ${r.menu?.pipeline?.sync ?? '-'}, ładowanie ${r.ladowanie?.pipeline?.sync ?? '-'}, gra ${r.gra?.pipeline?.sync ?? '-'}`
+    + ` | budowy w klatkach: menu ${r.menu?.pipeline?.budowy ?? '-'}, gra ${r.gra?.pipeline?.budowy ?? '-'} (${r.gra?.pipeline?.budowyMs ?? '-'} ms)`
+    + (r.warmup?.flush ? ` | flush ${r.warmup.flush.ms} ms (kolejka ${r.warmup.flush.kolejkaMs}, CPU ${r.warmup.flush.cpuMs})` : '')
+    + (r.bledy?.length ? ` | błędy: ${r.bledy.slice(0, 3).join(' ; ')}` : ''));
+}
 try {
   if (!args['bez-rozbiegu']) {
-    const warm = await runOnce(base, 0);
-    console.log(`rozbieg (${label}): ${warm.blad || 'ok'} — nie wchodzi do median`);
+    for (const side of sides) {
+      const warm = await runOnce(side.base, 0);
+      console.log(`rozbieg (${side.label}): ${warm.blad || 'ok'} — nie wchodzi do median`);
+    }
   }
   for (let i = 1; i <= repeats; i++) {
-    const r = await runOnce(base, i);
-    runs.push(r);
-    const c = r.chwile || {};
-    console.log(`przebieg ${i} (${label}, ${r.renderer || '?'}): ${r.blad ? 'BŁĄD ' + r.blad : ''}`
-      + ` gpu ${c.gpuReady ?? '-'} | menu 1. klatka ${c.menuPierwszaKlatka ?? '-'} gotowe ${c.menuGotowe ?? '-'} | ring ${c.ringZiemi ?? '-'}`
-      + ` | gra od kliku ${c.graOdKliku ?? '-'} ms, 1. klatka ${r.gra?.pierwszaKlatkaMs ?? '-'} ms (CPU ${r.gra?.pierwszaKlatkaCpu ?? '-'})`
-      + ` | przestoje menu ${r.menu?.przestoje ?? '-'}/${r.menu?.klatki ?? '-'} (maks ${r.menu?.maksMs ?? '-'}), ładowanie ${r.ladowanie?.przestoje ?? '-'}/${r.ladowanie?.klatki ?? '-'} (maks ${r.ladowanie?.maksMs ?? '-'}), gra ${r.gra?.przestoje ?? '-'}/${r.gra?.klatki ?? '-'} (maks ${r.gra?.maksMs ?? '-'})`
-      + ` | pipeline'y sync: przed menu ${r.przedMenu?.pipeline?.sync ?? '-'}, menu ${r.menu?.pipeline?.sync ?? '-'}, ładowanie ${r.ladowanie?.pipeline?.sync ?? '-'}, gra ${r.gra?.pipeline?.sync ?? '-'}`
-      + ` | budowy w klatkach: menu ${r.menu?.pipeline?.budowy ?? '-'}, gra ${r.gra?.pipeline?.budowy ?? '-'} (${r.gra?.pipeline?.budowyMs ?? '-'} ms)`
-      + (r.bledy?.length ? ` | błędy: ${r.bledy.slice(0, 3).join(' ; ')}` : ''));
+    for (const side of sides) {
+      const r = await runOnce(side.base, i);
+      side.runs.push(r);
+      logRun(i, side, r);
+    }
   }
 } finally {
-  await server.close();
+  for (const side of sides) await side.server.close();
 }
 
-const ok = runs.filter((r) => !r.blad);
-const pick = (f) => median(ok.map(f));
-const summary = {
-  gpuReady: pick((r) => r.chwile?.gpuReady),
-  menuPierwszaKlatka: pick((r) => r.chwile?.menuPierwszaKlatka),
-  menuGotowe: pick((r) => r.chwile?.menuGotowe),
-  ringZiemi: pick((r) => r.chwile?.ringZiemi),
-  graOdKliku: pick((r) => r.chwile?.graOdKliku),
-  graPierwszaKlatkaMs: pick((r) => r.gra?.pierwszaKlatkaMs),
-  graPierwszaKlatkaCpu: pick((r) => r.gra?.pierwszaKlatkaCpu),
-  menuPrzestoje: pick((r) => r.menu?.przestoje),
-  menuMaksMs: pick((r) => r.menu?.maksMs),
-  ladowaniePrzestoje: pick((r) => r.ladowanie?.przestoje),
-  ladowanieMaksMs: pick((r) => r.ladowanie?.maksMs),
-  graPrzestoje: pick((r) => r.gra?.przestoje),
-  graMaksMs: pick((r) => r.gra?.maksMs),
-  graSumaNadwyzekMs: pick((r) => r.gra?.sumaNadwyzekMs),
-  // pipeline'y utworzone synchronicznie (zwykły render — przestój kompilacji); na tagu WebGL brak dziennika
-  przedMenuPipelineSync: pick((r) => r.przedMenu?.pipeline?.sync),
-  menuPipelineSync: pick((r) => r.menu?.pipeline?.sync),
-  ladowaniePipelineSync: pick((r) => r.ladowanie?.pipeline?.sync),
-  graPipelineSync: pick((r) => r.gra?.pipeline?.sync),
-  // budowy NodeBuilder w klatkach (render na zimno)
-  menuBudowy: pick((r) => r.menu?.pipeline?.budowy),
-  graBudowy: pick((r) => r.gra?.pipeline?.budowy),
-  graBudowyMs: pick((r) => r.gra?.pipeline?.budowyMs)
-};
 mkdirSync(outDir, { recursive: true });
-const file = join(outDir, `start-${label}.json`);
-writeFileSync(file, JSON.stringify({ when: new Date().toISOString(), root, label, gameFrames, menuMs, mediany: summary, przebiegi: runs }, null, 2) + '\n');
-console.log('mediany (min–maks):');
-for (const [k, v] of Object.entries(summary)) if (v) console.log(`  ${k.padEnd(22)} ${v.mediana} (${v.min}–${v.maks}, n=${v.n})`);
-console.log('zapis:', file);
+for (const side of sides) {
+  const summary = summarize(side.runs);
+  const file = join(outDir, `start-${side.label}.json`);
+  writeFileSync(file, JSON.stringify({ when: new Date().toISOString(), root: side.root, label: side.label, naprzemiennie: sides.length > 1, gameFrames, menuMs, mediany: summary, przebiegi: side.runs }, null, 2) + '\n');
+  console.log(`mediany ${side.label} (min–maks):`);
+  for (const [k, v] of Object.entries(summary)) if (v) console.log(`  ${k.padEnd(22)} ${v.mediana} (${v.min}–${v.maks}, n=${v.n})`);
+  console.log('zapis:', file);
+}
 process.exit(0);
+
+function summarize(runs) {
+  const ok = runs.filter((r) => !r.blad);
+  const pick = (f) => median(ok.map(f));
+  const summary = {
+    gpuReady: pick((r) => r.chwile?.gpuReady),
+    menuPierwszaKlatka: pick((r) => r.chwile?.menuPierwszaKlatka),
+    menuGotowe: pick((r) => r.chwile?.menuGotowe),
+    ringZiemi: pick((r) => r.chwile?.ringZiemi),
+    graOdKliku: pick((r) => r.chwile?.graOdKliku),
+    graPierwszaKlatkaMs: pick((r) => r.gra?.pierwszaKlatkaMs),
+    graPierwszaKlatkaCpu: pick((r) => r.gra?.pierwszaKlatkaCpu),
+    menuPrzestoje: pick((r) => r.menu?.przestoje),
+    menuMaksMs: pick((r) => r.menu?.maksMs),
+    ladowaniePrzestoje: pick((r) => r.ladowanie?.przestoje),
+    ladowanieMaksMs: pick((r) => r.ladowanie?.maksMs),
+    graPrzestoje: pick((r) => r.gra?.przestoje),
+    graMaksMs: pick((r) => r.gra?.maksMs),
+    graSumaNadwyzekMs: pick((r) => r.gra?.sumaNadwyzekMs),
+    // pipeline'y utworzone synchronicznie (zwykły render — przestój kompilacji); na tagu WebGL brak dziennika
+    przedMenuPipelineSync: pick((r) => r.przedMenu?.pipeline?.sync),
+    menuPipelineSync: pick((r) => r.menu?.pipeline?.sync),
+    ladowaniePipelineSync: pick((r) => r.ladowanie?.pipeline?.sync),
+    graPipelineSync: pick((r) => r.gra?.pipeline?.sync),
+    // budowy NodeBuilder w klatkach (render na zimno)
+    menuBudowy: pick((r) => r.menu?.pipeline?.budowy),
+    graBudowy: pick((r) => r.gra?.pipeline?.budowy),
+    graBudowyMs: pick((r) => r.gra?.pipeline?.budowyMs),
+    // ekran ładowania (zadanie 25a): flush() rejestru rozgrzewki — od kliku do jego startu, czas, kolejka (CPU budów)
+    flushOdKliku: pick((r) => (r.warmup?.flush && Number.isFinite(r.chwile?.klik) ? r.warmup.flush.t - r.chwile.klik : NaN)),
+    flushMs: pick((r) => r.warmup?.flush?.ms),
+    flushKolejkaMs: pick((r) => r.warmup?.flush?.kolejkaMs),
+    flushCpuMs: pick((r) => r.warmup?.flush?.cpuMs),
+    flushSiatki: pick((r) => r.warmup?.flush?.siatki)
+  };
+  return summary;
+}
