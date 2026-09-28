@@ -102,7 +102,9 @@ test('WGSL kadłuba: tekstury per obiekt w liście aktualizacji, lampy w jednym 
     // klon tego samego węzła, to samo wiązanie tekstury (liczba tekstur w WGSL bez zmian).
     const keys = r.updateNodes.filter((n) => n.hullKey).map((n) => n.hullKey).sort();
     assert.deepEqual(keys, ['uNormalMap', 'uShapeMap', 'uSprite', 'uSprite'], v);
-    assert.ok((r.fragment.match(/: texture_2d<f32>/g) || []).length <= 6, `${v}: bez nowego wiązania tekstury`);
+    // Skóra belek: +1 wspólna tekstura — kafel szumu fxNoise poszarpanego brzegu rany (mapa ran, 18-C).
+    const texLimit = v === 'beam' ? 7 : 6;
+    assert.ok((r.fragment.match(/: texture_2d<f32>/g) || []).length <= texLimit, `${v}: bez nowego wiązania tekstury`);
     for (const stage of [r.vertex, r.fragment]) {
       assert.ok((stage.match(/var<uniform>/g) || []).length <= 12, `${v}: limit 12 buforów uniformów na etap`);
     }
