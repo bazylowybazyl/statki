@@ -55,13 +55,13 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 | 15 | Mostki, rdzenie, reaktory, światła (+ `mostki-demo`, `rdzen-demo`) | 04 | 05–14, 16–20 | xhigh | zrobione, scalone (ca83cd4) | 90b73f3, 67f5d8b, 0d20cf4, b366146, 0c292d4, f1bf060, 5e383a0, e39d5ab, 172d1d3 (scalenia `main` 45a927b, 7286401, c60ee1c, 7f49da8, ab7ca8a) | −998 linii GLSL w 5 modułach; jeden graf bryły mostka na 11 rodzajów; obrażenia mostka w buforze storage (µs zamiast 0,7–1,3 ms); `bitwa__fg` i `split` 0% vs baza |
 | 16 | Zniszczenie stacji (+ scena bazy `stacja-rozpad`) | 03 | 04–15, 17–19 | xhigh | zrobione, scalone (82573e5) | 2dd8c5f, e676d1b, b00dd2f (scalenia `main` 99d1f12, 05f429b) | klatka rozpadu bez budów (Neptun 64 → 4,9 ms); kawałki tną się maską TSL; sesja bazy „stacja” (5 scen, szum 0%); odłamki paneli czarne jak w WebGL (decyzja wyglądu) |
 | 17 | Broń 1/2 z dema `bronie-webgpu`: efekty wszystkich broni (pociski, smugi, trafienia, wiązki, PD, flak) | 12, 04 | 05–11, 13–16, 19 | max | zrobione, scalone (753700e) | 25123a4, e002a65, 5374728, 4e2d332, e575f23, 3992955, fae3257 (scalenia `main` 6ebbc29, 91d7964, 1bb1866, c243359) | 27 broni na recepturach dema (`src/3d/weapons/`, `WeaponFx`); PD i flak w 3D; −8 modułów; zero obiektów na strzał; nowe efekty — ocena obrazu zamiast tolerancji |
-| 18 | Broń 2/2: obrażenia z dema — mapa ran, przebicia, rykoszety, ładowanie, serie; światła efektów na poszyciu | 17, 04 | 05–11, 13–16, 19 | max | część 18-A zrobiona i scalona (4e165fb): moduły mechaniki + zapytania `HullBodies` bez wpięcia; 18-C (mapa ran, światła efektów na poszyciu) w toku (worktree `statki-wt/18c`); 18-B + 18-D (wpięcie mechaniki, odrzut z danych) w toku (worktree `statki-wt/18b`) | 8eaa828…2da882d | zatwierdzona zmiana rozgrywki |
+| 18 | Broń 2/2: obrażenia z dema — mapa ran, przebicia, rykoszety, ładowanie, serie; światła efektów na poszyciu | 17, 04 | 05–11, 13–16, 19 | max | część 18-A zrobiona i scalona (4e165fb): moduły mechaniki + zapytania `HullBodies` bez wpięcia; 18-C (mapa ran, światła efektów na poszyciu) zrobione i scalone (1dd742a); 18-B + 18-D (wpięcie mechaniki, odrzut z danych) w toku (worktree `statki-wt/18b`) | 8eaa828…2da882d | zatwierdzona zmiana rozgrywki |
 | 19 | Rakiety z dema `rakiety-webgpu`: dym GPU, dysze, kule ognia, Supernowa, iskry | 12 | 05–11, 13–18 | max | zrobione, scalone (2adf8fb) | 877f8ac, 1d60e1e, 079805c, 2025ba7, b2dabc4, b697ae9 (scalenia `main` 144b0f7, 6f0774a, 26636ce) | lot w `rocketSystem3D`; fala `shockwave3D` i `weapon3DSystem.js` usunięte; DIST przez OR; receptura tarczy (propozycja) |
 | 20 | Koniec overlaya: wybuch reaktora w Core3D, usunięcie drugiego renderera | 17, 18, 19 | 13–16 | xhigh | w toku (podagent, worktree `statki-wt/20`; równolegle z 18-B/C — overlay ma już tylko wybuch reaktora) | | jeden renderer, jeden bloom |
-| 21 | Asteroidy z dema `asteroidy-webgpu` + kolizje z olbrzymami | 12, 04, 05 (+ commit dema) | 13–20 | max | w toku (podagent, worktree `statki-wt/21`; demo zacommitowane: 84198d3) | | zielone światło użytkownika; stare pole (zderzenia z małymi skałami, niszczenie, łup) znika — do decyzji użytkownika |
-| 21b | Fizyka wydobycia asteroid w grze (drony, piła, ładunki, urobek) — logika i demo od sesji „Asteroid lighting bug demo” | 21, 12 (+ commit dema) | 22–23 | max | czeka (logika i demo zacommitowane: 84198d3) | | propozycja sesji fizyki skał; otwarte: kolizje odłamów, wpływ wybuchu, udźwig, ceny |
+| 21 | Asteroidy z dema `asteroidy-webgpu` + kolizje z olbrzymami | 12, 04, 05 (+ commit dema) | 13–20 | max | zrobione, scalone (ee034ed); demo: 84198d3 | d6d7af1, 04cf318, 295f6fb, 55ea8d4, d9a27af, 41c62ac, 810c0a7, 111b917, 6ee3721, 7985de5, ab13869, ab22fb3, e7e824e | zielone światło użytkownika; pas w passach Core3D (18 modułów TSL), olbrzymy z kolizjami; stare pole (zderzenia z małymi skałami, niszczenie, łup) znika — do decyzji użytkownika |
+| 21b | Fizyka wydobycia asteroid w grze (drony, piła, ładunki, urobek) — logika i demo od sesji „Asteroid lighting bug demo” | 21, 12 (+ commit dema) | 22–23 | max | w toku (podagent, worktree `statki-wt/21b`; logika i demo: 84198d3) | | propozycja sesji fizyki skał; otwarte: kolizje odłamów, wpływ wybuchu, udźwig, ceny |
 | 22 | Warp „Nurt” z dema `warp-webgpu` (iteracja 2) | 12, 13 (+ commit dema) | 14–21 | max | zrobione, scalone (e9f4285); demo: 68cc081 | 97f97b2, de2ed96, 3e8c98d, 83b3735, 4b08a27 (scalenia `main` 3b93795, f43d903) | ośrodek 1 mln drobin w compute, poza warpem 0 kroków i 0 draw calli; stara soczewka i API usunięte; wygląd iteracji 2 do oceny użytkownika | | „ready do wgrania, jak skończy sesję”; wygląd iteracji 2 jeszcze nieoceniony |
-| 22b | Kop kamery przy skoku warpa i impuls zoomu przy wyjściu (z dema „Nurt”, w `cameraRig`) | 22 | 11, 18–21 | xhigh | w toku (podagent, worktree `statki-wt/22b`) | | uwaga użytkownika do iteracji 1: wejście i wyjście „suche, bez kopa” |
+| 22b | Kop kamery przy skoku warpa i impuls zoomu przy wyjściu (z dema „Nurt”, w `cameraRig`) | 22 | 11, 18–21 | xhigh | zrobione, scalone (c7a7f6a) | 75af962, 8d3953f (scalenie `main` 575e550) | uwaga użytkownika do iteracji 1: wejście i wyjście „suche, bez kopa” |
 | 23 | Wydajność i precyzja: A/B z tagiem, drżenie, kompilacja, pamięć | 04–22 | nie | max | czeka | | koszt portu osobno od kosztu nowych efektów |
 | 24 | Sprzątanie i domknięcie portu | 23 | nie | xhigh | czeka | | decyzje PLAN §12 p. 1, 3 |
 
@@ -73,7 +73,7 @@ Stan zamierzony na `main` w trakcie portu — nie „naprawiać” poza zadaniem
 |---|---|---|---|
 | 01 | 24 | Nieprzeniesione `ShaderMaterial` rysują się magentą (`spis.zamienniki` w harnessie) | zadania 02–22 |
 | 01 | 03 | Maska słońca wyłączona (`uSunShadowOn = 0`): bez cienia słońca na materiałach, smug tła i SDF kadłubów; fala uderzeniowa bez passa refrakcji; kadłuby z 04 liczą pełne słońce (zastępnik `// AGENT: po 03` w `hexShips3D.tsl.js`) | 03 — ZAMKNIĘTE (f487d2f) |
-| 03 | 24 | `src/3d/sunShadowMaskGLSL.js` — napis GLSL maski dla nieprzeniesionych `ShaderMaterial` (skały 21, Z4/Z5/Z7) | ostatni odbiorca; plik usuwa 24 |
+| 03 | 24 | `src/3d/sunShadowMaskGLSL.js` — napis GLSL maski dla nieprzeniesionych `ShaderMaterial` (Z4/Z5/Z7) | ostatni odbiorca; plik usuwa 24 |
 | 02 | 23 | Bloom = 12 osobnych `renderer.render()` (~0,9–1,0 ms CPU na render, GPU ~0,085 ms przy 1080p); znaczniki czasu ~15 µs CPU na pass | 23 |
 | 01 | 11 | Rozgrzewka tylko „nie rzuca”: pipeline'y kompilują się asynchronicznie przy pierwszym użyciu, osłona `backend.draw` pomija rysunek do gotowości (obiekt pojawia się 1–2 klatki później) | 11 (moduły przez `Core3D.prewarmPass`) |
 | 01 | 06 | Brak synchronicznego odczytu → mapa CPU ringu pusta (`heightAtUV` = 0): płyta ringu koliduje bez rzeźby terenu, LOD terenu bez wysokości, landmarki i kopuły stawiane bez mapy (stała wysokość z `haloRingLandmarks.js`) | 06 — ZAMKNIĘTE (070a407): teren w koliderze po `ring.ready`, sprawdzone w grze |
@@ -81,7 +81,8 @@ Stan zamierzony na `main` w trakcie portu — nie „naprawiać” poza zadaniem
 | 01 | 17–19 | Pociski i błyski ze starego `weapon3DSystem` (materiały wbudowane — rysują się; cyjanowe głowy pocisków nie rysują się na WebGPU), smugi `slugTrail3D` (zamiennik); dym i iskry Fx3D — ZAMKNIĘTE w 12-B | broń — ZAMKNIĘTE w 17 (753700e); rakiety — ZAMKNIĘTE w 19 (2adf8fb) |
 | 17 | 23 | Sceny `wraki` i `warp` rozjeżdżają się ze stanem bazy (46%): wizualia losują z `Math.random` gry (pierwsza różnica w `mainExhaust3D.spawnSpark` — liczba iskier zależy od zajętości banku Fx3D, którego broń już nie używa); rozgrywka sama bez zmian | 23 (wizualia na `fxRandom`, nowa baza `wraki` / `warp` / `galeria-*` z `main`) |
 | 01 | 22 | Soczewka i fale warpa usunięte (API jako no-op), skok działa bez efektu zgięcia | 22 — ZAMKNIĘTE (e9f4285) |
-| Faza 0 | 21 | Stare pole asteroid i tło pasa wyłączone (`?asteroidyStare`) | 21 (nowe asteroidy) |
+| Faza 0 | 21 | Stare pole asteroid i tło pasa wyłączone (`?asteroidyStare`) | 21 — ZAMKNIĘTE (ee034ed): nowe pole z dema, stare usunięte |
+| 21 | 23 | Mapy cienia reflektorów w polu renderowane osobno na każdą mapę (budżet `maxShadowShips` = 2: gracz + najbliższy) | 23 (jeden render atlasu) |
 
 ## Zebrane dla zadań 11, 23 i 24 (z raportów podagentów)
 
@@ -110,6 +111,11 @@ menu nie czeka na `ring.ready` (ring dołącza 2–4,5 s po Ziemi) i pusta scena
   overlay) → `fxRandom` + nowa baza `wraki` / `warp` (17);
 - pass maski słońca +1 draw call, ~0,1 ms GPU (03); cel refrakcji HalfFloat MSAA ~16 MB przy 1080p (03);
 - iskry MAIN na dopalaczu 0,067% vs tag (linie 1 px: Dawn vs ANGLE — przyjęte, 12-B);
+- kolano bloomu z 22 (`bloomKnee.js`) na żarze rany i świetle poszycia (18-C) razem z efektami 17 / 19 — decyzja dla
+  całej broni (dema liczą bloom bez ×3 gry, więc w grze efekty świecą mocniej niż w demach); nowa baza `galeria-*` / `bitwa`
+  z `main`;
+- pas asteroid: mapy cienia w jednym renderze atlasu zamiast renderu na mapę, koszt passów pasa przy dalekim zoomie,
+  obrót stacji Wenus w harnessie zależy od liczby klatek ładowania (pas wydłuża ładowanie — szum `planeta-cien`) (21);
 - `LightGrid.add` przekracza limit wklejania V8 (~100 B obiektów na światło na producenta — wariant z buforem); kopie CPU
   buforów storage dymu i mgławicy rakiet ~71 MB; cień dymu rakiet na kadłubach (mapa gęstości gotowa, wymaga grafu
   kadłuba — po 18-C) (19);
@@ -122,7 +128,13 @@ narzędzia parzystości (08, 09); `beamDebris3D.js` — GLSL tylko w demach dest
 `assets/effects/glow.png` (404 sprite'a blasku słońca, 05); wyciek `_cloneShellHierarchy` (`__sharedTemplateAsset` w
 klonach kawałków — nigdy niezwalniane, 16); skrypty dem z własnym startem Chrome bez sprzątania profilu → wspólny
 `closeChrome` (incydent dysku); `dema/kontenery.html` na `main` nie działa (poza portem, 06); martwe metody broni w `CanvasVFX` (17); pola starych efektów w puli
-`rocketSystem3D` i `Math.random` w `collisionSparks.js` (19).
+`rocketSystem3D` i `Math.random` w `collisionSparks.js` (19); `asteroidDestructor.js`, nieużywany kod asteroid w `cicDisplay.js`,
+stare komentarze w `src/3d/fx/lightGrid.js` (21).
+
+**Zmiany rozgrywki do decyzji użytkownika (21, asteroidy):** nowe pole nie ma zderzeń i obrażeń od małych skał (leżą pod
+płaszczyzną), niszczenia i łupu ze skał (wydobycie — 21b), kontaktów skanera / radaru, namierzania ani holowania asteroid;
+otwarte: czy pioruny i olbrzymy mają zadawać obrażenia (dziś nie — olbrzymy odpychają, odbicie 0,3), omijanie olbrzymów
+przez AI (NPC ślizgają się po ścianie), rakiety / wiązki / wraki przelatują przez olbrzymy (zatrzymują się tylko pociski).
 
 **Decyzje wyglądu do potwierdzenia przez użytkownika:** odłamki paneli czarne jak w WebGL (`PANEL_SHARD_BASE_COLOR`, 16);
 `planeta-cien` bez kropkowanego łuku poświaty z bazy WebGL (05); fala uderzeniowa (03) — usunięta w 19 razem ze
@@ -173,11 +185,10 @@ gra musi prosić o więcej (w demie asteroid WebGPU już tak jest):
   Uwaga: `node --test tests/` na Node 22.20 NIE działa (`Cannot find module …\tests` — katalog nie jest
   już przeszukiwany); używać wzorca `"tests/*.test.mjs"`.
 
-Porażki bazowe (znane sprzed portu — nie naprawiać w ramach portu; `weaponAim.test.mjs:144` zniknęła w 17 — od 753700e jest ich 6):
+Porażki bazowe (znane sprzed portu — nie naprawiać w ramach portu; `weaponAim.test.mjs:144` zniknęła w 17, `asteroidHexAdapter.test.mjs:309` razem ze starym polem w 21 — od ee034ed jest ich 5):
 
 | Test | Plik |
 |---|---|
-| billboard-oriented asteroid impacts map to the visible local side | `tests/asteroidHexAdapter.test.mjs:309` |
 | HUD radar shell is compact and does not reserve an empty lower panel | `tests/hudRadarWiring.test.mjs:16` |
 | HUD radar exposes clickable tactical range controls | `tests/hudRadarWiring.test.mjs:24` |
 | X starts one scanner burst without scheduling recurring waves | `tests/scannerSingleBurst.test.mjs:5` |
@@ -681,3 +692,51 @@ Todo (2): „PORT poprawka 1 / 3 (TODO integracji)” w `tests/shipCore.test.mjs
   `withRawLayer` nieużywany (pilnuje go `overlayContextMerge` 1–3), martwa gałąź `useShockwave3D` w `reactorblow`.
   Inwentarz z HEAD 2adf8fb: port 6 plików z GLSL, 7 materiałów, 1165 linii. Testy: 1561 / 6 porażek bazowych / 3 todo;
   `npm test` OK.
+- **Część 18-C scalona do `main`** (7e7fd3d, d4c20d5, b8320cb, 86f2314, fdeb3fc, ef66506, 2bf83c8, 38b8d01, ee1fc5d; scalenia
+  `main` 942f1d5, cfaebf1, 51139f0, 4852806; scalenie 1dd742a): mapa ran z dema broni na skórze kadłubów belkowych
+  (`src/3d/hullDamageMap.js`, `hullDamageMap.tsl.js`, `hullDamageStamps.js`) — żar stygnący z bieli w czerwień, osmalenie,
+  lej (ciemne dno, brzeg 8–12 HDR; dziury robi geometria belek), przestrzeliny małego kalibru bez zniszczonego węzła,
+  poświata jonowa; w uv skóry (rana jedzie z odkształceniem), wrak i odłamy dziedziczą rany (`dmgKey`), naprawa R je
+  wygasza (hak `onRepair`). Pula slotów L/M/S z LRU w jednym buforze storage (24 MB GPU, kopia CPU oddana po wgraniu),
+  kernel w kroku efektów tylko dla slotów ze stemplami i gorących w kadrze (stygnięcie wzorem zamkniętym). Stemple: hak
+  `HullBodies.onImpact` po każdym kraterze i rzazie (rodzina z `HullDamageMap.setSource` — 7. argument `applyHexImpact`),
+  `ctx.stamp` receptur 17 → `stampRecipe` (duplikat krateru z tej klatki pomijany), API `stampAt` / `stampKerf` dla 18-B.
+  Światła efektów z siatki (12) jako dodatkowe światła poszycia (lampy statku bez zmian); lakier gaśnie na osmaleniu i w
+  leju; płonąca wyrwa tli się, póki płonie. Koszt (bitwa 24 × 24): compute +0,003 ms GPU, klatka GPU 0,63 vs 0,62 ms, krok
+  efektów CPU +0,04 ms, U hex bez mierzalnej zmiany. Harness 55 scen, 0 błędów, stan świata = `main`; obraz różni się
+  tylko przy trafieniach (bitwa 10,4% — błyski luf na poszyciu, Supernowa 27% — jej światło na pancerniku). Zrzuty obok
+  dema: `.tmp/webgpu/zadania/18c/rany-obok-dema.png`, `rany-gra/` — **do oceny użytkownika**. Testy: 1578 / 6 porażek
+  bazowych / 3 todo; `npm test` OK. **Dopięte przez orkiestratora** (2758313): trafienie rakiety w kadłub zostawia ranę
+  (stempel `rocket` w `src/3d/rockets/effects.js` — rakiety nie robią krateru, więc bez tego nie zostawiały śladu); harness
+  sesji rakiety 0 błędów, 0 NaN.
+- **Zadanie 22b scalone do `main`** (75af962, 8d3953f; scalenie `main` 575e550; scalenie c7a7f6a): kop kamery przy skoku
+  warpa i impulsy zoomu z dema „Nurt” W RIGU kamery (`src/game/cameraRig.js`: `stepCameraRigWarp` — oś w czasie gry, w
+  pauzie stoi; zdarzenia `noteCameraRigWarp` z `engageWarp` / `exitWarp`). Skok: kamera cofa się wzdłuż kursu o 140 px ×
+  impuls(0,05 / 0,42 s) PO sprężynie riga (szczyt 96 px po 0,11 s przy 1080 wierszach), zoom ×(1 − 0,1·impuls); ładowanie:
+  zoom lerp(1 → 0,55) po ułamku ładowania, drżenie do 4 px; wyjście: powrót 0,55 → 1 (easeOut³, 1,4 s) z impulsem +10%.
+  Zoom = przejściowy człon log(zoom) w sprężynie zoomu (`camera.zoom = zoomBase·e^człon`; zoom gracza i `targetZoom`
+  nietknięte — po wyjściu dokładnie zoom gracza). Warp „Nurt”: bańka z prędkością statku, nie kamery (inaczej przygasała
+  przy kopie). Opcja menu → Sterowanie „Kop kamery przy warpie” (`OPTIONS.cameraWarpKick`), strojenie `warp*` w
+  `cameraRigTune` (F12 → Kamera). Pomiar w grze = demo ±0,005 zoomu w 13 chwilach; sesje harnessu `warp-kop` i
+  `warp-kop-wyl` (A/B); zrzuty gry obok dema w `.tmp/webgpu/zadania/22b/obok-dema/` — **do oceny użytkownika**. Otwarte:
+  po skoku statek zostaje przed środkiem kadru ~0,5 s (demo ~0,2 s — sprężyna nawigacji riga), po wyjściu statek leci
+  dalej (demo staje). Testy: 1589 / 6 / 3; `npm test` OK.
+- **Zadanie 21 scalone do `main`** (d6d7af1…e7e824e; scalenia `main` ed4e2c0, 6702206, db70f87, cabeb69, fe4e126; scalenie
+  ee034ed): pas asteroid z dema w grze — 18 modułów TSL w `src/3d/asteroids/`, klej `asteroidBelt.js` jako krok `Core3D.fx`
+  w kolejności klatki dema; PLAY w passie gry pod płaszczyzną, RUBBLE / MID / DEEP i zasłona w passie tła; ośrodek
+  objętościowy (`beltMedium.js`) czytają skały, minerały, olbrzymy i kadłuby (hak `hullVolume`); mapa pola w masce słońca;
+  cień pól i start GPU na ekranie ładowania; z nieba dema tylko zasłona, nocna łuna i błyski burzy. **Rozgrywka:**
+  `src/game/asteroidBeltGiants.js` — 5 olbrzymów przy rdzeniach pasa (pierwszy = Labirynt dema), siatki SDF w workerach
+  (budowa, gdy kamera / statek < 420 tys. j.), kolidują gracz, P2 i NPC bez obrażeń (odbicie 0,3; Atlas 900 j/s w litą
+  skałę: 803 j. drogi zamiast 5400, nigdy w skale), pociski gasną w skale; małe skały bez kolizji. Usunięte:
+  `asteroidField3D`, `asteroidBeltBackdrop3D`, `asteroidBelt3D`, `rocks/*`, `beltDust3D`, `beltStorm3D`, `fieldLights3D`,
+  `asteroidHexAdapter` + 34 testy starego pola (przepisane na olbrzymy: npcWorldCollisions, bulletStepOverheads,
+  shadowShaftsQuality, renderBugfixGuards); −16 materiałów, −1955 linii GLSL. Poprawki wydajności: bufory pasa bez
+  `DynamicDrawUsage` (~1 MB uploadu na klatkę), mapy cienia skał tylko dla 2 statków, kolano bloomu z 22 na barwach pasa.
+  Koszt (A/B w jednej stronie, bitwa): pas +0,9 ms CPU Core3D, +1,4 ms GPU; gęste pole: GPU 1,5–1,85 ms, CPU pasa 0,5–0,7
+  ms. Zrzuty pola obok dema (pole, noc, burza, olbrzym) w `.tmp/webgpu/zadania/21/porownanie-demo-gra/` i kolizja
+  `gra/kolizja.png` — **do oceny użytkownika**; noc ciemniejsza niż w demie (gra nie ma flar dema). Harness: 59 scen, 0
+  błędów, pas bez zamienników, 118 zrzutów scen bez pola identycznych z `main`. Zmiany rozgrywki względem starego pola —
+  lista „do decyzji użytkownika” wyżej. Inwentarz z HEAD ee034ed: wszystkie pliki z GLSL 16 (było 24), materiały 30,
+  3281 linii; port bez zmian (6 / 7 / 1165). Testy: 1563 / **5** porażek bazowych (`asteroidHexAdapter:309` zniknęła
+  z modułem) / 3 todo; `npm test` OK.

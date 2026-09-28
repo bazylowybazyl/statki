@@ -41,6 +41,7 @@ import {
 import { buildHullSkinTopology, writeHullSkin, writeHullSkinQuads, clearHullSkinDirty } from './beamHullSkin.js';
 import { HullBodies, hullSpriteRotation } from '../game/hullBodies.js';
 import { HullDebris3D } from './hullDebris3D.js';
+import { HullDamageMap } from './hullDamageMap.js';
 
 // Materiały kadłubów (skóra belek, siatka heksów, płyta pancerza, szczątki GPU)
 // są w TSL: src/3d/hexShips3D.tsl.js — graf na wariant, wartości per encja
@@ -1023,6 +1024,11 @@ function createHullUniforms(entity, texture, normalTexture, shapeUniform, srcWid
       uShapeMap: shapeUniform,
       uLacquerWeight: { value: 0 },
       uLacquerGlint: { value: 1 },
+      // Mapa ran (skóra belek, zadanie 18-C): slot puli (base, w, h, on) z HullDamageMap.bind,
+      // rozmiar kadłuba w świecie (szum brzegu rany), właściciel świateł siatki (0 = żaden).
+      uDmgSlot: { value: new THREE.Vector4(0, 1, 1, 0) },
+      uDmgWorld: { value: new THREE.Vector2(1, 1) },
+      uGridOwner: { value: 0 },
       // Warp „Nurt” (zadanie 22): odsłanianie, szew i żar brzegu — wartości pisze sterownik
       // warpa w entity.__warpHullU ({ a, b, c } — Vector4, px sprite'a); bez nich wyłączone.
       uWarpA: warpHullHolder(entity, 'a'),
@@ -1704,6 +1710,8 @@ function updateBeamSkinMesh(entity, data, camX, camY, cameraZoom) {
   const bodyRadiusPx = Math.max(hull.srcWidth, hull.srcHeight) * 0.5 * entityScale * zoomPx;
   syncEntityLightUniforms(entity, data, hull, state.roadLightEmitters, bodyRadiusPx);
   syncEntityLacquer(entity, data, hull, entityScale, zoomPx);
+  // Mapa ran rodu (kadłub, wrak, odłamy — wspólny klucz): slot do materiału, widoczność dla LRU.
+  HullDamageMap.bind(hull.dmgKey, uniforms);
   uniforms.uRotation.value = theta;
 
   mesh.position.set(originX, originY, 0);
@@ -1799,6 +1807,8 @@ export function prewarmHexShips3D({ canvas = null } = {}) {
   if (!Core3D.isInitialized) Core3D.init(canvas);
   WeaponFx.prewarm();
   prewarmFx3D();
+  // Mapa ran: krok klatki efektów (kernel kompiluje się na ekranie ładowania, pula powstaje na GPU).
+  HullDamageMap.ensureStep();
   return true;
 }
 

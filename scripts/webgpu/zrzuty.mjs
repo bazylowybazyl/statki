@@ -34,6 +34,7 @@ import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, screenshotPng, writeJson, sleep, repo, osobneLosowanieUuid } from './wspolne.mjs';
 import { compareDirs } from './porownaj.mjs';
+import { BELT_SCENES, STORM_STAGE } from './asteroidy-gra.mjs';
 
 const args = parseArgs();
 const backends = (args.backend || 'webgl') === 'oba' ? ['webgl', 'webgpu'] : [args.backend || 'webgl'];
@@ -68,6 +69,18 @@ const PERF_SIDE = Math.max(2, Number(args.bok || 24));
 // Punkt w próżni między Ziemią a Wenus (~500 tys. j. od obu, z dala od stacji i ruchu).
 const DEEP = { x: 6210000, y: 5330000 };
 
+// Kop kamery przy warpie (zadanie 22-B): zoom gracza = zoom startu dema „Nurt” (trip.zoom0 =
+// min(W, 1,6·H) / 11 000 przy 1920×1080), więc kadr gry i dema jest porównywalny (--kop-zoom z:
+// inny zoom gracza). Start sesji: statek w próżni, opcja kopu (off = wariant A/B bez kopu),
+// ładowanie do 90%.
+const KOP_ZOOM = Number(args['kop-zoom']) > 0 ? Number(args['kop-zoom']) : 0.157;
+const kopSetup = (kick) => `DevScene.teleport(${DEEP.x - 250000}, ${DEEP.y + 150000}, -0.35); DevFlags.unlimitedWarp = true;
+         OPTIONS.cameraWarpKick = '${kick}'; S.shipCam(${KOP_ZOOM}); DevScene.aimWarp(-0.35);
+         for (let i = 0; i < 400 && !S.hullsReady(); i++) await H.frames(2);
+         H.reseed(0x22b1); await H.step(20); S.shipCam(${KOP_ZOOM}); warp.state = 'charging'; warp.charge = 0;
+         while (warp.state === 'charging' && warp.charge < 0.72 - 1e-6) await H.step(1);
+         window.__harnessDiag = S.kop();`;
+
 // Warianty scen z jednym zestawem warstw Core3D (__harness.scene.isolate): 1 tło, 3/5/6 planety
 // z halo i ring-planetami, 0/7 świat ortho z tarczami, 2 FG. Numery warstw zostają po porcie.
 const PASS_VARIANTS = [
@@ -83,10 +96,42 @@ const CZESCI_RINGU = args['czesci-ringu']
   ? (args['czesci-ringu'] === '1' ? ['HaloTerrain', 'HaloStructure', 'HaloStructure_topWall', 'HaloClouds', 'HaloAirShell'] : args['czesci-ringu'].split(','))
   : null;
 
+// Pas asteroid (zadanie 21): miejsca i zoom scen dema dema/asteroidy-webgpu (world.js dema w stronie — pole
+// dema = pole gry), wzory w BELT_SCENES (asteroidy-gra.mjs: te same sceny z diagnostyką, kolizją i wydajnością;
+// asteroidy-demo.mjs: zrzuty dema w tych miejscach). W = world.js dema, B = pas gry.
+const BELT_JS = (id, extra = '') => `const W = await import('/dema/asteroidy-webgpu/world.js'); const B = window.__asteroidBelt;
+         ${BELT_SCENES[id].js}
+         await H.step(2); S.cam(ship.pos.x, ship.pos.y, window.camera.zoom);${extra}`;
+
 // ── Sceny ─────────────────────────────────────────────────────────────────────
 // js: ciało funkcji async w stronie (S = pomocniki scen, H = zegar); hud: czy zostawić HUD DOM;
 // warm: prawdziwe klatki przy stojącym czasie przed zrzutem (kompilacja, wgrywanie tekstur).
 const SCENES = {
+  'pas-pole': {
+    opis: `Pas asteroid — ${BELT_SCENES.pole.opis}`,
+    hud: false, warm: 30, warstwy: true,
+    js: BELT_JS('pole')
+  },
+  'pas-noc': {
+    opis: `Pas asteroid — ${BELT_SCENES.noc.opis}`,
+    hud: false, warm: 30,
+    js: BELT_JS('noc')
+  },
+  'pas-burza': {
+    opis: `Pas asteroid — ${BELT_SCENES.burza.opis}; burza powtarzalna (STORM_STAGE: piorun przed dziobem, błysk w chmurach)`,
+    hud: false, warm: 30, warstwy: true,
+    js: BELT_JS('burza', `
+         await H.step(40);
+         { const sim = B.storm.sim, sx = ship.pos.x, sy = ship.pos.y, sa = ship.angle; const force = (x, y) => B.forceStrike(x, y);
+           await (async () => { ${STORM_STAGE} })(); }
+         await H.step(20);`)
+  },
+  'pas-olbrzym': {
+    opis: `Pas asteroid — ${BELT_SCENES.olbrzym.opis} (siatka SDF z workerów — czekanie w czasie rzeczywistym)`,
+    hud: false, warm: 30,
+    js: BELT_JS('olbrzym', `
+         for (let i = 0; i < 360 && !B.giants.entries.some((e) => e.id === 'warren' && e.view); i++) { await H.frames(2); await new Promise((r) => setTimeout(r, 500)); }`)
+  },
   menu: {
     opis: 'Menu główne: Ziemia z ringiem w kamerze kinowej (MenuBackdrop3D), intro po 150 klatkach',
     hud: true, warm: 60,
@@ -402,6 +447,104 @@ const SCENES = {
     js: `const X = ${DEEP.x - 250000}, Y = ${DEEP.y + 190000};
          await H.step(21); S.cam(X - 900, Y - 900, 0.13);`
   },
+  // ── Kop kamery przy warpie (zadanie 22-B) — osobna sesja „warp-kop”: sekwencja klatek wokół skoku
+  // i wyjścia gracza, kamera statku z rigiem i sprężyną zoomu (zoom gracza KOP_ZOOM ustawiony RAZ na
+  // starcie — bez S.shipCam między klatkami, kamera prowadzi się sama). Chwile liczone od klatki,
+  // w której automat pokazał skok / wyjście (wiek 0 — jak efekty „Nurtu”); te same chwile dema:
+  // warp-demo-zrzuty.mjs --kop. Stan kamery (zoom, offset riga, człon kopu) w wyniki.json → stan.diag.
+  // Sesja „warp-kop-wyl” — te same chwile przy opcji „Kop kamery przy warpie: Wył.” (A/B).
+  'kop-ladowanie': {
+    opis: 'Kop warpa: ładowanie 90% — zoom ×0,56 zoomu gracza (lerp(1, 0,55, smoothstep)), drżenie ładowania',
+    hud: false, warm: 20,
+    js: kopSetup('on')
+  },
+  'kop-skok-005': {
+    opis: 'Kop warpa: 0,05 s po skoku — statek wyrywa się do przodu (cofnięcie kamery ~79 px), zoom ×0,518 zoomu gracza',
+    hud: false, warm: 20,
+    js: `while (warp.state !== 'active') await H.step(1); await H.step(3); window.__harnessDiag = S.kop();`
+  },
+  'kop-skok-012': {
+    opis: 'Kop warpa: 0,12 s po skoku — szczyt: statek ~96 px przed kamerą, zoom ×0,517 zoomu gracza',
+    hud: false, warm: 20,
+    js: `await H.step(4); window.__harnessDiag = S.kop();`
+  },
+  'kop-skok-025': {
+    opis: 'Kop warpa: 0,25 s po skoku — kamera dogania statek',
+    hud: false, warm: 20,
+    js: `await H.step(8); window.__harnessDiag = S.kop();`
+  },
+  'kop-skok-05': {
+    opis: 'Kop warpa: 0,5 s po skoku — cofnięcie 43 px, wyprzedzenie riga rośnie z prędkością',
+    hud: false, warm: 20,
+    js: `await H.step(15); window.__harnessDiag = S.kop();`
+  },
+  'kop-skok-1': {
+    opis: 'Kop warpa: 1 s po skoku — kamera przed statkiem (wyprzedzenie riga), zoom ×0,55',
+    hud: false, warm: 20,
+    js: `await H.step(30); window.__harnessDiag = S.kop();`
+  },
+  'kop-lot': {
+    opis: 'Kop warpa: 2 s lotu — zoom ×0,55 zoomu gracza, statek ~⅓ ekranu od tylnej krawędzi',
+    hud: false, warm: 20,
+    js: `await H.step(60); window.__harnessDiag = S.kop();`
+  },
+  'kop-wyjscie-003': {
+    opis: 'Kop warpa: 0,03 s po wyjściu — impuls zoomu +10% na powrocie z ×0,55',
+    hud: false, warm: 20,
+    // Wyjście między klatkami: następna klatka jest klatką zdarzenia (wiek 0), potem 2 × 1/60 s.
+    js: `DevScene.exitWarp(); await H.step(3); window.__harnessDiag = S.kop();`
+  },
+  'kop-wyjscie-007': {
+    opis: 'Kop warpa: 0,07 s po wyjściu — szczyt impulsu, smugi gwiazd wróciły',
+    hud: false, warm: 20,
+    js: `await H.step(2); window.__harnessDiag = S.kop();`
+  },
+  'kop-wyjscie-02': {
+    opis: 'Kop warpa: 0,2 s po wyjściu — zoom ×0,74 w drodze do zoomu gracza',
+    hud: false, warm: 20,
+    js: `await H.step(8); window.__harnessDiag = S.kop();`
+  },
+  'kop-wyjscie-05': {
+    opis: 'Kop warpa: 0,5 s po wyjściu — zoom ×0,89',
+    hud: false, warm: 20,
+    js: `await H.step(18); window.__harnessDiag = S.kop();`
+  },
+  'kop-wyjscie-1': {
+    opis: 'Kop warpa: 1 s po wyjściu — zoom ×0,99',
+    hud: false, warm: 20,
+    js: `await H.step(30); window.__harnessDiag = S.kop();`
+  },
+  'kop-wyjscie-16': {
+    opis: `Kop warpa: 1,6 s po wyjściu — z powrotem zoom gracza (${KOP_ZOOM})`,
+    hud: false, warm: 20,
+    js: `await H.step(36); window.__harnessDiag = S.kop();`
+  },
+  // A/B: opcja „Wył.” — te same chwile (skok +0,12 / +0,5 s, lot, wyjście +0,07 s), kamera jak w zwykłym locie.
+  'kopwyl-ladowanie': {
+    opis: 'Bez kopu (opcja Wył.): ładowanie 90% — zoom gracza, bez drżenia',
+    hud: false, warm: 20,
+    js: kopSetup('off')
+  },
+  'kopwyl-skok-012': {
+    opis: 'Bez kopu (opcja Wył.): 0,12 s po skoku',
+    hud: false, warm: 20,
+    js: `while (warp.state !== 'active') await H.step(1); await H.step(7); window.__harnessDiag = S.kop();`
+  },
+  'kopwyl-skok-05': {
+    opis: 'Bez kopu (opcja Wył.): 0,5 s po skoku',
+    hud: false, warm: 20,
+    js: `await H.step(23); window.__harnessDiag = S.kop();`
+  },
+  'kopwyl-lot': {
+    opis: 'Bez kopu (opcja Wył.): 2 s lotu',
+    hud: false, warm: 20,
+    js: `await H.step(90); window.__harnessDiag = S.kop();`
+  },
+  'kopwyl-wyjscie-007': {
+    opis: 'Bez kopu (opcja Wył.): 0,07 s po wyjściu',
+    hud: false, warm: 20,
+    js: `DevScene.exitWarp(); await H.step(5); window.__harnessDiag = S.kop();`
+  },
   // Zadanie 16: rozpad stacji planet (GLB). Sesja „stacja” — osobna, nie przesuwa innych scen; baza z tagu
   // przez `baza.mjs --dopisz`. Stacja planety spoza ringów (Wenus, Merkury, Saturn, Uran — model stacji Ziemi)
   // stoi w środku planety na warstwie FG; rozpad woła te same funkcje co gra (destroyStation3D z tej samej
@@ -536,7 +679,10 @@ const GALERIA_POMOC = `const G = window.__galeria;
     const aux = MASTER_WEAPONS[id]?.mountType === 'aux';
     return window.fireWeaponCore(g, aim, id, { pos: { x: g.x, y: g.y }, dir: { x: dx / d, y: dy / d }, baseVel: { x: 0, y: 0 }, emitterUid: uid, pdTarget: aux ? G.T : null });
   };
-  const clear = async () => { for (const b of window.bullets) b.life = -1; await H.step(2); WFX?.reset(); noShield(); };
+  // Rany na kadłubie (mapa ran, 18-C) też od zera — jak „naprawa przy zmianie broni” w demie: obrażenia
+  // × 1e-6 trzymają kadłub w całości, ale mapa stempluje każde trafienie, więc bez tego ujęcie pokazywałoby
+  // rany wszystkich wcześniejszych rodzin w jednym miejscu.
+  const clear = async () => { for (const b of window.bullets) b.life = -1; window.HullDamageMap?.heal(G.T.beamHull?.dmgKey, 1); await H.step(2); WFX?.reset(); noShield(); };
   const calm = () => { camera.shakeMag = 0; camera.shakeTime = 0; if (WFX) WFX.weaponShake = 0; G.T.hp = G.T.maxHp; };`;
 for (const [i, [name, id, shots, gap, after, zoom]] of GALERIA_BRONI.entries()) {
   SCENES[`galeria-${name}`] = {
@@ -623,9 +769,18 @@ const SESSIONS = [
   { id: 'split', query: 'dev=1', start: 'split', sprites: true, scenes: ['split'] },
   { id: 'stacja', query: 'dev=1', start: 'single', scenes: ['stacja-przygotowanie', 'stacja-rozpad', 'stacja-odlamki', 'stacja-trojkaty', 'stacja-implozja', 'stacja-ciecie'] },
   { id: 'warp', query: 'dev=1', start: 'single', sprites: true, scenes: ['warp-ladowanie', 'warp-skok', 'warp-lot', 'warp-wyjscie', 'warp-po-wyjsciu', 'warp-zwiastun', 'warp-przylot', 'warp-odlot-ladowanie', 'warp-odlot'] },
+  // Kop kamery przy warpie (zadanie 22-B): sekwencja klatek wokół skoku i wyjścia gracza.
+  { id: 'warp-kop', query: 'dev=1', start: 'single', sprites: true,
+    scenes: ['kop-ladowanie', 'kop-skok-005', 'kop-skok-012', 'kop-skok-025', 'kop-skok-05', 'kop-skok-1', 'kop-lot',
+      'kop-wyjscie-003', 'kop-wyjscie-007', 'kop-wyjscie-02', 'kop-wyjscie-05', 'kop-wyjscie-1', 'kop-wyjscie-16'] },
+  { id: 'warp-kop-wyl', query: 'dev=1', start: 'single', sprites: true,
+    scenes: ['kopwyl-ladowanie', 'kopwyl-skok-012', 'kopwyl-skok-05', 'kopwyl-lot', 'kopwyl-wyjscie-007'] },
   // Galeria broni (zadanie 17): własna sesja — sceny bitwy w „kosmos” zostają bez zmian klatek.
   { id: 'galeria', query: 'dev=1', start: 'single', sprites: true,
-    scenes: ['galeria-przygotowanie', 'galeria-broni', ...GALERIA_BRONI.map(([name]) => `galeria-${name}`), 'galeria-hexlance'] }
+    scenes: ['galeria-przygotowanie', 'galeria-broni', ...GALERIA_BRONI.map(([name]) => `galeria-${name}`), 'galeria-hexlance'] },
+  // Zadanie 21: pas asteroid z dema WebGPU (osobna sesja — nie przesuwa scen pozostałych; bazy WebGL brak: stare pole
+  // było wyłączone, porównanie ze zrzutami dema — asteroidy-demo.mjs).
+  { id: 'pas', query: 'dev=1', start: 'single', belt: true, scenes: ['pas-pole', 'pas-noc', 'pas-burza', 'pas-olbrzym'] }
 ];
 
 // Ostrzeżenia/błędy bez znaczenia dla portu (środowisko headless, zasoby spoza renderu).
@@ -676,6 +831,7 @@ async function runSession(session, backend, outDir, base) {
       if (session.ring) await ev('(() => { window.__harness.scene.cam(window.ship.pos.x, window.ship.pos.y, 0.2); return true; })()');
       if (session.ring && !await waitFor(cdp, `window.__harness.scene.ringReady('${session.ring}')`, 240000, 400)) throw new Error(`ring ${session.ring} bez map`);
       if (session.sprites && !await waitFor(cdp, 'window.DevScene.preloadHullSprites()', 120000, 250)) throw new Error('nie wczytano sprite’ów kadłubów');
+      if (session.belt && !await waitFor(cdp, '!!(window.__asteroidBelt && window.__asteroidBelt.ready)', 180000, 400)) throw new Error('pas asteroid nie gotowy');
       sessionInfo.start = await statsFrom(f0);
       sessionInfo.startGra = await statsFrom(f0, true);
     }
@@ -838,10 +994,13 @@ async function runPerf(backend, outDir, base) {
           coreRender: d.render3dCoreRenderTime, coreRenderTotal: C.lastFramePerf?.renderTotalMs, gpu: C.gpuFrameMs, drawCalls: r.calls, trojkaty: r.triangles,
           fxMs: C.fxStats?.cpuMs, gpuCompute: C.gpuComputeMs,
           rakiety: window.rocketSystem3D?.activeRockets, rakietyFxMs: window.__rocketFx?.stats?.cpuMs, dym: window.__rocketFx?.smoke?.highWater,
-          npc: (window.npcs || []).filter((n) => !n.dead).length, pociski: (window.bullets || []).length, wraki: (window.wrecks || []).length }; })()`));
+          npc: (window.npcs || []).filter((n) => !n.dead).length, pociski: (window.bullets || []).length, wraki: (window.wrecks || []).length,
+          // Mapa ran (zadanie 18-C): zajęte sloty, wątki kernela w klatce, stemple od startu.
+          ranySloty: window.HullDamageMap ? window.HullDamageMap.stats.slotsL + window.HullDamageMap.stats.slotsM + window.HullDamageMap.stats.slotsS : null,
+          ranyWatki: window.HullDamageMap?.stats.threads ?? null, ranyStemple: window.HullDamageMap?.stats.stamps ?? null }; })()`));
     }
     const med = (k) => { const v = samples.map((s) => Number(s[k])).filter(Number.isFinite).sort((a, b) => a - b); return v.length ? +v[Math.floor(v.length / 2)].toFixed(3) : null; };
-    const summary = Object.fromEntries(['fps', 'klatka', 'p95', 'fizyka', 'rysowanie', 'uHex', 'coreRender', 'coreRenderTotal', 'gpu', 'fxMs', 'gpuCompute', 'drawCalls', 'trojkaty', 'rakiety', 'rakietyFxMs', 'dym', 'npc', 'pociski', 'wraki'].map((k) => [k, med(k)]));
+    const summary = Object.fromEntries(['fps', 'klatka', 'p95', 'fizyka', 'rysowanie', 'uHex', 'coreRender', 'coreRenderTotal', 'gpu', 'fxMs', 'gpuCompute', 'drawCalls', 'trojkaty', 'rakiety', 'rakietyFxMs', 'dym', 'npc', 'pociski', 'wraki', 'ranySloty', 'ranyWatki', 'ranyStemple'].map((k) => [k, med(k)]));
     const res = { backend, spawned, mediana: summary, probki: samples, bledy: logs.errors().filter((l) => !IGNORE.some((re) => re.test(l))).slice(0, 20) };
     writeJson(join(outDir, 'wydajnosc.json'), res);
     console.log(`  wydajność ${backend}: ${JSON.stringify(summary)}`);

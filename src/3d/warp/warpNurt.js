@@ -97,6 +97,8 @@ export const WarpNurt = {
   camMX: 0, camMY: 0, prevCamMX: 0, prevCamMY: 0,
   anchorMX: 0, anchorMY: 0,
   prevCamX: NaN, prevCamY: NaN,
+  // kamera gry względem statku gracza w poprzedniej klatce (offset riga w j. świata)
+  _camOffX: NaN, _camOffY: NaN,
   flow: 0, flowX: 0, flowY: 0,
   stepAcc: 0,
   wakeT: 0,
@@ -188,7 +190,8 @@ export const WarpNurt = {
 
   /**
    * Klatka efektu. o = { dt (czas gry — 0 w pauzie), cam (kamera gry bez wstrząsu: x, y, zoom),
-   * camShake (kamera renderu, ze wstrząsem), ship, warp (GameState.warp), npcs, zoneWarpMul }.
+   * camShake (kamera renderu, ze wstrząsem), camFollow (kamera statku bez przejścia — kamera =
+   * statek + offset riga), ship, warp (GameState.warp), npcs, zoneWarpMul }.
    */
   update(o) {
     if (!this.initialized || !this.enabled) return;
@@ -241,17 +244,42 @@ export const WarpNurt = {
     this.prevCamMY = this.camMY;
     let dx = camX - this.prevCamX;
     let dy = camY - this.prevCamY;
+    let jumped = false;
     if (!Number.isFinite(dx) || !Number.isFinite(dy) || dx * dx + dy * dy > CAMERA_JUMP * CAMERA_JUMP) {
       // Inne miejsce świata: ślad poprzedniego skoku (rozrzedzenie, warkocz) nie może tu zostać.
       dx = 0; dy = 0;
       this._reseed = true;
+      jumped = true;
     }
     this.prevCamX = camX;
     this.prevCamY = camY;
+    // Kamera gry względem statku (rig kamery: wyprzedzenie, kop warpa — zadanie 22-B). W skoku
+    // kamera ośrodka = widoczna droga STATKU + zmiana tego offsetu, jak w demie (kamera = statek +
+    // kurs · (wyprzedzenie − cofnięcie)): przy kopie statek odskakuje od drobin, a kamera go dogania,
+    // i statek względem ośrodka jedzie gładko. Bańka dostaje prędkość STATKU (przepływ kamery +
+    // ruch statku w kadrze, vRel = −zmiana offsetu / dt), smugi drobin — prędkość kamery (demo:
+    // bańka = ship.vx, smugi = prędkość kotwicy). Tylko przy kamerze statku bez przejścia (camFollow).
+    let offDX = 0;
+    let offDY = 0;
+    if (hasPlayer) {
+      const offX = camX - g.x;
+      const offY = camY - g.y;
+      if (o.camFollow && !jumped && Number.isFinite(this._camOffX)) {
+        offDX = offX - this._camOffX;
+        offDY = offY - this._camOffY;
+      }
+      this._camOffX = offX;
+      this._camOffY = offY;
+      g.vRelX = dt > 0 ? -offDX / dt : 0;
+      g.vRelY = dt > 0 ? -offDY / dt : 0;
+    } else {
+      this._camOffX = NaN;
+      this._camOffY = NaN;
+    }
     const vis = hasPlayer ? player.visibleFlow(t) : null;
     if (vis !== null) {
-      dx = Math.cos(player.angle) * vis * dt;
-      dy = Math.sin(player.angle) * vis * dt;
+      dx = Math.cos(player.angle) * vis * dt + offDX;
+      dy = Math.sin(player.angle) * vis * dt + offDY;
     } else {
       const cap = IDLE_FLOW_CAP * dt;
       const dl = Math.sqrt(dx * dx + dy * dy);

@@ -379,7 +379,7 @@ export const Core3D = {
   // klatkę na starcie render() — w WebGPU cień jest per światło (SPIKE 9).
   _sunShadowLight: null,
   // Analityczne okludery shaftów, zgłaszane co klatkę przez systemy gry:
-  // dyski (planet3d.assets + asteroidField3D), kapsuły (hexShips3D),
+  // dyski (planet3d.assets), kapsuły (hexShips3D),
   // pierścienie (ringi „Halo”, haloRingGame.js — Map po kluczu ringu, bez begin/reset).
   shaftDiscs: new Float32Array(SHAFT_DISC_CAP * 4), shaftDiscCount: 0,
   sunOcclusionField: null,
@@ -1844,7 +1844,7 @@ export const Core3D = {
   // (R, 1 = pełne słońce) na prostokącie w układzie sceny (x, −y świata).
   // Maska cienia mnoży nią widoczność słońca — wszystko, co czyta
   // sunVisibility()/sunShaftBackdrop(), ciemnieje w głębi pola. Właściciel
-  // (asteroidBelt3D) ustawia co klatkę, gdy mapa się przesunie.
+  // (pas asteroid, src/3d/asteroids/asteroidBelt.js) ustawia co klatkę.
   setSunOcclusionField(texture, x0, y0, w, h) {
     if (!texture) { this.sunOcclusionField = null; return; }
     const f = this.sunOcclusionField || (this.sunOcclusionField = { texture: null, x0: 0, y0: 0, w: 1, h: 1 });

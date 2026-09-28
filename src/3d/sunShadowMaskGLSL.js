@@ -7,7 +7,7 @@
 // jest tylko źródłem napisu `SUN_SHADOW_GLSL` (re-eksport w sunShadowMask.js).
 //
 // Użytkownicy (znikają przy porcie swoich materiałów): planet3d.assets.js (zadanie 05),
-// bridge3D.js (15), asteroidBeltBackdrop3D.js / rocks/* (stare i nowe asteroidy — 21),
+// bridge3D.js (15), [asteroidy — zrobione w 21: stare pole usunięte, nowe w TSL],
 // shipProxyBatch3D.js (Z4), cargoContainers3D.js / cargoDrones3D.js (Z5),
 // portBuildings/* (Z7). Ostatni zgasza plik (zadanie 24).
 //
