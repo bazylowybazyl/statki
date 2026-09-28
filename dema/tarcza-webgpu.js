@@ -256,6 +256,7 @@ async function main() {
     if (k === 'o') toggleShield();
     if (k === 'b') breakShield();
     if (k === 'r') fullCharge();
+    if (k === 'p') { const el = $('c-sparks'); el.checked = !el.checked; el.dispatchEvent(new Event('change')); }
   });
   addEventListener('keyup', (e) => S.keys.delete(e.key.toLowerCase()));
   addEventListener('resize', () => {
@@ -280,6 +281,8 @@ async function main() {
   bindCheck('c-refr', (v) => { S.refrOn = v; applyFxToggles(); });
   bindRange('s-refr', (v) => { shield.G.refr.value = v; });
   bindRange('s-light', (v) => { uLightGain.value = v; });
+  bindCheck('c-sparks', (v) => { FIELD_PARAMS.sparksOn = v; });
+  bindRange('s-sparks', (v) => { FIELD_PARAMS.sparkMult = v; });
   bindCheck('c-waves', (v) => { FIELD_PARAMS.wavesOn = v; });
   bindCheck('c-energy', (v) => { FIELD_PARAMS.energyOn = v; });
   bindRange('s-wave', (v) => { FIELD_PARAMS.waveSpeed = v; }, (v) => v.toFixed(0));
@@ -389,6 +392,7 @@ async function main() {
       `siatka pola      ${shield.describeGrid()}\n` +
       `podkroki fali    ${shield.substeps}\n` +
       `zdarzenia/klatkę ${shield.eventsLastFrame}\n` +
+      `żywe iskry (≈)   ${shield.sparks.live.toLocaleString('pl-PL')} / ${shield.sparks.pool.toLocaleString('pl-PL')}\n` +
       `światła          ${lights.count} / 256`;
   }
 
@@ -453,6 +457,7 @@ async function main() {
         fps: S.fps, cpuMs: S.cpuMs, gpuMs: S.gpuMs, gpuComputeMs: S.gpuComputeMs, lights: lights.count,
         state: sh.state, hp: sh.val, hpMax: sh.max, grid: shield.describeGrid(), domeVisible: shield.visible,
         substeps: shield.substeps, events: shield.eventsLastFrame, mode: shield.mode,
+        sparks: shield.sparks.live, shards: shield.shards.count, shardsActive: shield.shards.active(S.time),
         maxR: profile.maxR, minR: profile.minR, pad: profile.pad
       };
     }

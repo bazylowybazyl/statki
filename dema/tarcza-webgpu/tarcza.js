@@ -18,6 +18,8 @@ import {
 } from './czasza.js';
 import { createField, createFieldShared, MAX_EVENTS, MAX_SOURCES } from './pole.js';
 import { clamp, lights as sceneLights } from './wspolne.js';
+import { createSparks } from './iskry.js';
+import { createShards } from './odlamki.js';
 
 // Liczby z src/3d/shield3D.js (model „niewidzialne pole”).
 export const SHIELD_FIELD_TUNING = {
@@ -40,7 +42,9 @@ export const FIELD_PARAMS = {
   diffusion: 1000,     // j²/s — rozpływanie energii
   waveTrail: 0.9,      // s — jak długo heksy pamiętają przejście fali
   wavesOn: true,
-  energyOn: true
+  energyOn: true,
+  sparksOn: true,
+  sparkMult: 1.0
 };
 
 // Zdarzenie pola na klasę trafienia (klasy gry: pd / main / special / shield).
@@ -55,10 +59,12 @@ const HIT_CLASS = {
 
 // Światło trafienia na klasę: czas życia [s], moc, zasięg i skala spadku [j.].
 const HIT_LIGHT = {
-  pd: { life: 0.12, power: 3.2, radius: 420, falloff: 95 },
-  main: { life: 0.34, power: 7.0, radius: 850, falloff: 170 },
-  special: { life: 0.95, power: 15.0, radius: 1700, falloff: 340 },
-  shield: { life: 0.5, power: 6.0, radius: 950, falloff: 210 }
+  pd: { life: 0.12, power: 2.0, radius: 420, falloff: 95 },
+  main: { life: 0.34, power: 4.2, radius: 850, falloff: 170 },
+  special: { life: 0.95, power: 8.5, radius: 1700, falloff: 340 },
+  shield: { life: 0.5, power: 3.6, radius: 950, falloff: 210 },
+  // Pęknięcie: błysk całej czaszy.
+  break: { life: 0.7, power: 11.0, radius: 3400, falloff: 760 }
 };
 const MAX_FLASHES = 64;
 const MAX_HOTSPOTS = 32;
@@ -93,7 +99,7 @@ function createDebugMaterial(P) {
 }
 
 export class Tarcza {
-  constructor({ renderer, entity, group, gridCells = 512, debugMarker = null, name = 'tarcza' }) {
+  constructor({ renderer, entity, group, gridCells = 512, debugMarker = null, name = 'tarcza', sparkPool = 65536, shardMax = 6000 }) {
     this.renderer = renderer;
     this.entity = entity;
     this.group = group;
@@ -121,6 +127,13 @@ export class Tarcza {
     this.mesh.renderOrder = 10;
     this.mesh.frustumCulled = false;
     group.add(this.mesh);
+
+    // Iskry na powierzchni i odłamki pęknięcia (compute, pule tworzone raz).
+    this.sparks = createSparks({ renderer, group, profile: this.profile, domeHeight: height, U: this.U, pool: sparkPool, name });
+    this.shards = createShards({ renderer, group, profile: this.profile, domeHeight: height, maxCount: shardMax });
+    this.meanR = (this.profile.maxR + this.profile.minR) * 0.5;
+    this.fadeK = 1;
+    this.beamAcc = 0;
 
     // Pierścień trafień (jak syncHitBuffer w grze): sloty z czasem startu.
     this.slotStart = new Float32Array(MAX_HITS).fill(-999);
@@ -227,7 +240,29 @@ export class Tarcza {
     this.pushEvent(ix, iy, radius, -(k.impulse + k.impulsePerDmg * dmg) * weak, energy);
     this.addFlash(lx, ly, cls, dmg);
     this.addHeat(ix, iy, energy);
+    this.emitHitSparks(ix, iy, cls, dmg);
     this.wake(0);
+  }
+  // Iskry klasy trafienia z punktu na czaszy (skala efektu jak w grze: promień
+  // w miejscu trafienia zmieszany ze średnią statku).
+  emitHitSparks(lx, ly, cls, dmg) {
+    if (!FIELD_PARAMS.sparksOn || FIELD_PARAMS.sparkMult <= 0) return;
+    const r = Math.hypot(lx, ly);
+    const R = r * 0.7 + this.meanR * 0.3;
+    const power = clamp(0.25 + dmg / 260, 0.2, 2.0);
+    this.sparks.spawnClass(cls, lx, ly, this.domeZ(lx, ly) + 2, R, power, FIELD_PARAMS.sparkMult, this.time);
+  }
+  // Wiązka: strumień iskier z gorącego punktu (tempo na sekundę, akumulator).
+  beamSparks(lx, ly, dt, rate = 900) {
+    if (!FIELD_PARAMS.sparksOn || FIELD_PARAMS.sparkMult <= 0) return;
+    this.beamAcc += rate * FIELD_PARAMS.sparkMult * dt;
+    if (this.beamAcc < 8) return;
+    const n = Math.floor(this.beamAcc);
+    this.beamAcc -= n;
+    const r = Math.hypot(lx, ly) || 1;
+    const R = r * 0.7 + this.meanR * 0.3;
+    this.sparks.spawn(lx, ly, this.domeZ(lx, ly) + 2, lx / r, ly / r, 0.4, n,
+      0.9 * R, 2.1 * R, 0.35, 0.9, 0.3, 1.2, 3.2, 1.0, this.time);
   }
 
   // ── Światła trafień i rozgrzanych miejsc pola ─────────────────────────────
@@ -239,7 +274,7 @@ export class Tarcza {
       if (!c.on) { f = c; break; }
       if (c.age / c.life > oldest) { oldest = c.age / c.life; f = c; }
     }
-    const boost = 0.75 + 0.25 * Math.min(3, dmg / 120);
+    const boost = 0.8 + 0.2 * Math.min(2, dmg / 150);
     f.on = true; f.x = lx; f.y = ly; f.z = 40 + this.domeHeight * 0.25; f.age = 0;
     f.life = k.life; f.power = k.power * boost * this.sizeK; f.radius = k.radius * this.sizeK; f.falloff = k.falloff * this.sizeK;
   }
@@ -300,8 +335,8 @@ export class Tarcza {
       sceneLights.push(v.x, v.y, v.z, 700 * this.sizeK, 150 * this.sizeK, hc.r * p, hc.g * p, hc.b * p);
     }
   }
-  clearLights() {
-    for (const f of this.flashes) f.on = false;
+  // Zgaszona tarcza nie ma już rozgrzanych miejsc (błyski dopalają się same).
+  clearHeat() {
     for (const h of this.hotspots) h.on = false;
   }
   wake(extra) {
@@ -347,9 +382,11 @@ export class Tarcza {
     U.hitImpactRadius.value = U.baseHitRadius * tune.hitRadiusScale;
 
     // Zdarzenia pola z trafień tej klatki (wiązka działa jako źródło ciągłe).
-    for (let i = 0; i < this.fresh.length; i++) {
-      const f = this.fresh[i];
-      if (!f.beam) this.pushHitEvent(f.x, f.y, f.dmg, f.cls, U.lowPower.value);
+    if (this.mode !== 'ref') {
+      for (let i = 0; i < this.fresh.length; i++) {
+        const f = this.fresh[i];
+        if (!f.beam) this.pushHitEvent(f.x, f.y, f.dmg, f.cls, U.lowPower.value);
+      }
     }
     // Rozruch / gaszenie: czoło fali pcha pole (rozruch w górę, gaszenie w dół).
     const sweeping = sh.state === 'activating' || sh.state === 'deactivating';
@@ -358,6 +395,10 @@ export class Tarcza {
     if (sweeping) this.wake(0);
     if (lowPower > 0 || this.showField) this.wake(0);
     if (this.debugMarker) this.debugSources(dt, time);
+    this.G.fade.value = this.fadeK;
+    this.sparks.update(time);
+    this.sparks.uMinW.value = 1.3 / Math.max(1e-4, pxPerUnit);
+    this.sparks.uGroupRot.value = this.group.rotation.z;
 
     // Jak updateShields3D: stan off (albo stłumiona bez gaszenia) = brak kopuły;
     // nic się nie dzieje = zero draw calli.
@@ -371,7 +412,7 @@ export class Tarcza {
 
     // Wyłączona tarcza: pole od zera przy następnym rozruchu.
     if (sh.state === 'off') {
-      if (!this.offReset) { this.field.reset(); this.clearLights(); this.offReset = true; this.awakeUntil = -1; }
+      if (!this.offReset) { this.field.reset(); this.clearHeat(); this.offReset = true; this.awakeUntil = -1; }
     } else {
       this.offReset = false;
     }
@@ -416,6 +457,22 @@ export class Tarcza {
     }
   }
 
+  // Pęknięcie (nowy wygląd): heksy lecą od ostatniego trafienia, błysk i światło,
+  // snop iskier; czasza gaśnie od razu — odłamki ją zastępują.
+  onBreak(time) {
+    if (this.mode !== 'new') return;
+    const hx = this.lastHitLocal.x, hy = this.lastHitLocal.y;
+    this.shards.trigger(hx, hy, 1.0, time);
+    this.addFlash(hx, hy, 'break', 400);
+    this.addFlash(0, 0, 'break', 200);
+    if (FIELD_PARAMS.sparksOn) {
+      const r = Math.hypot(hx, hy) || 1;
+      this.sparks.spawn(hx, hy, this.domeZ(hx * 0.95, hy * 0.95) + 2, hx / r, hy / r, 0.6,
+        1400 * FIELD_PARAMS.sparkMult, 500, 2600, 0.5, 1.4, 0.55, 1.4, 3.6, 1.4, time);
+    }
+    this.fadeK = 0;
+  }
+
   // resolveHullFieldPhase z gry: rozruch/gaszenie = czoło fali, dopalenie po rozruchu.
   resolvePhase(time) {
     const sh = this.shield;
@@ -423,6 +480,8 @@ export class Tarcza {
     const ap = clamp(Number(sh.activationProgress) || 0, 0, 1);
     if (this.prevState !== st) {
       if (st === 'active' && this.prevState === 'activating') this.bootAt = time;
+      if (st === 'breaking') this.onBreak(time);
+      if (st === 'activating' || st === 'active') this.fadeK = 1;
       this.prevState = st;
     }
     const ph = this.phase;
@@ -449,6 +508,9 @@ export class Tarcza {
     const P = this.P, fp = FIELD_PARAMS;
     const awake = this.mode !== 'ref' && this.time < this.awakeUntil && this.shield.state !== 'off';
     this.eventsLastFrame = this.evCount;
+    // Iskry i odłamki żyją własnym życiem (także po zgaszeniu tarczy).
+    this.sparks.compute(this.time);
+    this.shards.compute(this.time);
     if (awake) {
       const c = Math.min(fp.waveSpeed, this.field.maxWaveSpeed(dt));
       const n = this.field.substepsFor(dt, c);
