@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>Tarcza nowej generacji — demo WebGPU</title>
+<!--
+  Demo WebGPU (three.js r183 przez Vite: `npm run dev`, /dema/tarcza-webgpu.html).
+  Tarcza Atlasa jako OŚRODEK, nie naklejka: stan pola liczony na GPU (fala,
+  energia, przebicie), pole świeci na otoczenie (światła trafień, poświata na
+  kadłubie), załamuje światło, iskry ślizgają się po czaszy, pęknięcie rozsypuje
+  czaszę na heksy. Obrys, stany i czasy z gry (shieldSystem.js).
+
+  Parametry adresu: ?test=1 (klatki tylko przez __demo.step), ?debug=pole
+  (widok kontrolny siatki pola), ?siatka=512 (jakość siatki pola), ?kat=0.3
+  (kąt Atlasa — sprawdzenie przekształceń).
+  Konsola: __demo.hit(x, y, dmg, klasa), salvo(), beam(x, y, on), setHP(u),
+  breakShield(), toggleShield(), lookAt(x, y, zoom), stats(), step(n).
+-->
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden;
+    font-family: system-ui, "Segoe UI", sans-serif; color: #cfe0ff; }
+  canvas { display: block; }
+  #panel { position: fixed; top: 12px; left: 12px; width: 318px; box-sizing: border-box; max-height: calc(100% - 24px);
+    overflow-y: auto; background: rgba(5, 10, 22, .84); border: 1px solid rgba(120, 170, 255, .22);
+    border-radius: 8px; padding: 11px 13px; font-size: 12.5px; line-height: 1.42; }
+  #panel.hidden { display: none; }
+  h1 { font-size: 13.5px; margin: 0 0 2px; letter-spacing: .06em; }
+  #backend { font-size: 11.5px; color: #8fb0d8; margin-bottom: 6px; }
+  #hpwrap { margin: 4px 0 6px; }
+  #hpbar { height: 9px; border-radius: 5px; background: rgba(90, 110, 150, .25); overflow: hidden; }
+  #hpfill { height: 100%; width: 100%; background: linear-gradient(90deg, #3b6fd8, #7fb0ff); transition: width .08s linear; }
+  #hptext { font: 11.5px ui-monospace, Consolas, monospace; color: #b8cdf0; margin-top: 3px; }
+  #ab { display: block; width: 100%; margin: 4px 0; padding: 8px; border-radius: 6px;
+    border: 1px solid; font: 600 12.5px system-ui, sans-serif; cursor: pointer; text-align: left; }
+  #ab.on { background: rgba(120, 200, 255, .12); border-color: #7cc4ff; color: #d6ecff; }
+  #ab.off { background: rgba(120, 140, 170, .10); border-color: #6b7d99; color: #b9c7dd; }
+  .weapons { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin: 4px 0 2px; }
+  .weapons button { background: rgba(80, 120, 200, .12); color: #cfe0ff; border: 1px solid rgba(120, 160, 230, .3);
+    border-radius: 4px; padding: 5px 2px; font: 11.5px system-ui, sans-serif; cursor: pointer; }
+  .weapons button.on { border-color: #ffc27a; color: #ffe2b8; background: rgba(255, 170, 90, .12); }
+  label { display: flex; align-items: center; gap: 6px; margin: 2px 0; cursor: pointer; }
+  .row { display: grid; grid-template-columns: 118px minmax(0, 1fr) 42px; gap: 6px; align-items: center; margin: 3px 0; }
+  .row input[type=range] { width: 100%; min-width: 0; margin: 0; }
+  .row output { text-align: right; font: 11.5px ui-monospace, Consolas, monospace; white-space: nowrap; }
+  select { background: #0b1426; color: #cfe0ff; border: 1px solid #2c4468; border-radius: 4px; }
+  .keys { color: #8ea5c6; font-size: 11.5px; margin-top: 4px; }
+  details summary { cursor: pointer; color: #9fb3cf; font-size: 12px; margin: 6px 0 3px; }
+  #stats { font: 11.5px ui-monospace, Consolas, monospace; color: #9fe0a8; margin-top: 6px; white-space: pre; }
+  #err { position: fixed; left: 12px; right: 12px; bottom: 12px; color: #ffc4c4; background: rgba(50, 0, 0, .9);
+    padding: 10px; border-radius: 6px; font: 12px ui-monospace, monospace; white-space: pre-wrap; display: none;
+    max-height: 40%; overflow: auto; }
+  #nogpu { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; }
+  #nogpu div { max-width: 560px; background: rgba(20, 24, 40, .95); border: 1px solid #44507a; border-radius: 10px;
+    padding: 22px 26px; font-size: 14px; line-height: 1.55; }
+  #nogpu b { color: #ffd2a6; }
+</style>
+</head>
+<body>
+<div id="panel">
+  <h1>TARCZA NOWEJ GENERACJI · WEBGPU</h1>
+  <div id="backend">uruchamianie…</div>
+  <div id="hpwrap">
+    <div id="hpbar"><div id="hpfill"></div></div>
+    <div id="hptext">tarcza: —</div>
+  </div>
+  <button id="ab" class="on">T · Nowe efekty: WŁĄCZONE</button>
+  <div class="weapons" id="weapons">
+    <button data-w="1">1 · PD</button>
+    <button data-w="2">2 · laser</button>
+    <button data-w="3">3 · torpeda</button>
+    <button data-w="4">4 · wiązka</button>
+  </div>
+  <div class="keys">LPM — strzał najbliższego wroga w kursor · PPM — wiązka ·
+    Spacja — salwa wszystkich · kółko — zoom · WASD — kamera · H — panel</div>
+  <div id="stats"></div>
+  <details id="settings"><summary>ustawienia</summary>
+    <label><input type="checkbox" id="c-field"> pokaż pole (stała widoczność)</label>
+    <label><input type="checkbox" id="c-waves" checked> fale</label>
+    <label><input type="checkbox" id="c-energy" checked> energia i przebicia</label>
+    <label><input type="checkbox" id="c-lights" checked> światła trafień</label>
+    <label><input type="checkbox" id="c-glow" checked> poświata pola na kadłubie</label>
+    <label><input type="checkbox" id="c-refr" checked> załamanie</label>
+    <label><input type="checkbox" id="c-sparks" checked> iskry (P)</label>
+    <label><input type="checkbox" id="c-bloom" checked> bloom</label>
+    <label><input type="checkbox" id="c-enemy" checked> ogień wrogów (E)</label>
+    <div class="row"><span>prędkość fali [j./s]</span><input type="range" id="s-wave" min="200" max="2400" step="50" value="900"><output id="o-wave"></output></div>
+    <div class="row"><span>tłumienie fali</span><input type="range" id="s-damp" min="0.2" max="6" step="0.1" value="1.6"><output id="o-damp"></output></div>
+    <div class="row"><span>stygnięcie [s]</span><input type="range" id="s-cool" min="0.5" max="8" step="0.1" value="2.6"><output id="o-cool"></output></div>
+    <div class="row"><span>próg przebicia</span><input type="range" id="s-thr" min="0.4" max="4" step="0.05" value="1.4"><output id="o-thr"></output></div>
+    <div class="row"><span>siła załamania</span><input type="range" id="s-refr" min="0" max="3" step="0.05" value="1"><output id="o-refr"></output></div>
+    <div class="row"><span>regeneracja HP [%/s]</span><input type="range" id="s-regen" min="0" max="25" step="0.5" value="4"><output id="o-regen"></output></div>
+    <div class="row"><span>jakość siatki pola</span><input type="range" id="s-grid" min="256" max="1024" step="128" value="512"><output id="o-grid"></output></div>
+    <div class="row"><span>liczba iskier [×]</span><input type="range" id="s-sparks" min="0" max="3" step="0.05" value="1"><output id="o-sparks"></output></div>
+    <div class="row"><span>moc świateł</span><input type="range" id="s-light" min="0" max="3" step="0.05" value="1"><output id="o-light"></output></div>
+    <div class="row"><span>bloom</span><input type="range" id="s-bloom" min="0" max="2" step="0.05" value="0.85"><output id="o-bloom"></output></div>
+    <div class="row"><span>tone mapping</span>
+      <select id="sel-tone">
+        <option value="neutral">Neutral</option>
+        <option value="aces">ACES</option>
+        <option value="agx">AgX</option>
+      </select><span></span></div>
+    <div class="keys">1–4 broń · O tarcza wł./wył. · B pęknięcie · R pełne naładowanie ·
+      K tarcza w tarczę · T nowe efekty (A/B) · P iskry · E ogień wrogów · H panel</div>
+  </details>
+</div>
+<div id="err"></div>
+<div id="nogpu"><div>
+  <b>WebGPU niedostępne.</b><br>
+  To demo liczy pole tarczy, iskry i odłamki w compute na GPU — potrzebuje
+  przeglądarki z WebGPU (Chrome / Edge 113+ na Windowsie z aktualnym sterownikiem).
+  Sprawdź <code>chrome://gpu</code> („WebGPU: Hardware accelerated”).
+  <div id="nogpu-detail" style="margin-top:8px;color:#9fb3cf;font-size:12px"></div>
+</div></div>
+<script type="module" src="./tarcza-webgpu.js"></script>
+</body>
+</html>
