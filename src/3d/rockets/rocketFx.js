@@ -27,6 +27,7 @@ import { RocketEffects } from './effects.js';
 import { fxNoise } from '../fx/noise.js';
 import { fxRandom } from '../fx/fxRandom.js';
 import { SparkSystem3D } from '../sparkSystem3D.js';
+import { oddajKopieCpu } from '../tsl/kopiaCpu.js';
 
 // Słońce efektów rakiet (demo: kierunek z pozycji słońca, 30° nad płaszczyzną gry).
 const SUN_ELEV = 30 * Math.PI / 180;
@@ -59,6 +60,12 @@ export class RocketFx {
     });
     this.meshes = [this.smoke.mesh, this.plumes.mesh, this.bodies.mesh, this.fireballs.mesh, this.arcs.mesh, this.nebula.mesh, this.glow.mesh];
     this.stats = { cpuMs: 0 };
+    // Bufory liczone tylko na GPU (dym ~48 MB, mgławica ~20 MB): kopie CPU oddawane, gdy bufory GPU
+    // już są (src/3d/tsl/kopiaCpu.js, zadanie 23). Kolejka zleceń dymu (q) zostaje — pisze ją CPU.
+    const s = this.smoke;
+    const n = this.nebula;
+    this._gpuOnly = [s.sP, s.sV, s.sC, s.sD, s.sL, s.sM, n.nA, n.nB, n.nC, n.nD, n.nE];
+    this._kopieCpu = this._gpuOnly.length;
     const self = this;
     this.step = {
       name: 'rakiety',
@@ -110,6 +117,7 @@ export class RocketFx {
 
   _update(ctx) {
     const t0 = performance.now();
+    if (this._kopieCpu > 0) this._kopieCpu = oddajKopieCpu(ctx.renderer, this._gpuOnly);
     const d = this.director;
     const origin = ctx.origin;
     const ox = origin.x;
@@ -223,6 +231,7 @@ export class RocketFx {
         if (saved[k + 3] >= 0) m.geometry.instanceCount = saved[k + 3];
       }
     }
+    this._kopieCpu = oddajKopieCpu(renderer, this._gpuOnly);
   }
 
   clear() {

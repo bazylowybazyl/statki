@@ -46,6 +46,7 @@ import { fxCarrierOffset, writeCarrierPacket } from '../fx/carrier.js';
 import { createShiftKernel } from '../fx/gpuPoolOrigin.js';
 import { sunVisibility, sunFill } from '../sunShadowMask.js';
 import { liveRangeAttribute, markRange } from './liveRange.js';
+import { oddajKopieCpu } from '../tsl/kopiaCpu.js';
 
 const sq = (x) => x.mul(x);
 
@@ -1183,6 +1184,8 @@ export class GpuFx {
    */
   update(renderer, dt, zoom) {
     const U = this.U;
+    // Stan cząstek pul liczy tylko GPU (~18 MB kopii CPU) — kopie oddane, gdy bufory już są (zadanie 23).
+    if (this._kopieCpu !== 0) this._kopieCpu = oddajKopieCpu(renderer, this._gpuOnly || (this._gpuOnly = this.poolList.map((p) => p.buf)));
     U.dt.value = dt;
     U.zoom.value = Math.max(1e-4, zoom);
     const P = this.pools;
@@ -1236,6 +1239,7 @@ export class GpuFx {
     renderer.compute(this.updateDebris, 1);
     renderer.compute(this.lightSmoke, 1);
     renderer.compute(this.lightDebris, 1);
+    this._kopieCpu = oddajKopieCpu(renderer, this._gpuOnly || (this._gpuOnly = this.poolList.map((p) => p.buf)));
     if (core?.prewarmPass) {
       for (const mesh of this.meshes) {
         const prev = mesh.visible;

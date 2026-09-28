@@ -20,6 +20,7 @@ import {
   sqrt, sin, cos, exp, max, length, normalize, cross, abs, pow
 } from 'three/tsl';
 import { beltBloomKnee } from './tslCommon.js';
+import { oddajKopieCpu } from '../tsl/kopiaCpu.js';
 
 export const SPARK_CAP = 1 << 15;
 const EMITTER_CAP = 24;
@@ -203,6 +204,8 @@ export class Sparks {
 
   update(dt, zoom) {
     const U = this.U;
+    // Iskry liczy tylko GPU — kopie CPU oddane, gdy bufory już są (zadanie 23).
+    if (this._kopieCpu !== 0) this._kopieCpu = oddajKopieCpu(this.renderer, this._gpuOnly || (this._gpuOnly = [this.pos, this.vel, this.col]));
     this.time += Math.max(0, dt);
     U.zoom.value = zoom;
     const n = this._queued;
