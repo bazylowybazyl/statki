@@ -243,6 +243,31 @@
       this.__hiddenByName = hidden;
       return keep.size;
     },
+    // Odwrotność onlyNamed: ukrywa obiekty sceny Core3D o podanych nazwach (z potomkami), reszta
+    // zostaje; null przywraca. Zadanie 20: warianty „bez wybuchu reaktora” (`__3d`, `__fg-3d`) —
+    // wybuch był na kanwie overlaya, od zadania 20 jest w scenie Core3D.
+    hideNamed(names = null) {
+      const C = window.Core3D;
+      if (!C?.scene) return false;
+      if (!names) {
+        for (const e of this.__hiddenNamed || []) {
+          delete e.o.visible;
+          e.o.visible = e.v;
+        }
+        this.__hiddenNamed = null;
+        return true;
+      }
+      const want = new Set(names);
+      const hidden = [];
+      C.scene.traverse((o) => {
+        if (!want.has(o.name)) return;
+        const e = { o, v: o.visible };
+        Object.defineProperty(o, 'visible', { configurable: true, get: () => false, set: (x) => { e.v = x; } });
+        hidden.push(e);
+      });
+      this.__hiddenNamed = hidden;
+      return hidden.length;
+    },
     // Spis widocznych obiektów sceny Core3D: warstwa → „typ materiału:nazwa” → obiekty / instancje.
     // Na WebGL mówi, które materiały składają scenę; na WebGPU liczy zamienniki: każdy ShaderMaterial /
     // RawShaderMaterial rysuje się tam zamiennikiem (src/3d/tsl/zamiennik.js — także zanim pierwszy raz
