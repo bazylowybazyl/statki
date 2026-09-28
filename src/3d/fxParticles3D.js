@@ -2,8 +2,10 @@
 //
 // Wspólny silnik cząstek dla efektów portowanych z dem (`dema/*.html`):
 // struct-of-arrays + instancing, zero alokacji w pętli klatki, jeden draw call
-// na system. Z tego korzystają `railgunFx3D.js` (Hexlance) i `muzzleFx3D.js`
-// (błyski wylotowe armat i dział jonowych).
+// na system. Korzystają: iskry dysz MAIN (`mainExhaust3D.js`), mostki, rdzenie,
+// warp, burza pasa. Efekty broni (dawniej `railgunFx3D.js`, `muzzleFx3D.js`) od
+// zadania 17 idą przez pule GPU z dema bronie-webgpu (`src/3d/weapons/`); bank
+// przesuwa raz na klatkę WeaponFx.sync (dawniej Weapon3DSystem.syncProjectiles).
 //
 // DLACZEGO JEDEN BANK, A NIE PULA NA EFEKT: pass Ortho jest związany submisją,
 // nie GPU (patrz notatki o draw callach). Dwa komplety tych samych systemów to
@@ -59,7 +61,7 @@ const RENDER_ORDER = {
   wash: 84,
   smoke: 85,    // NormalBlending — dym ma zakrywać kadłub, więc idzie pod żarem
   vapor: 86,
-  trail: 87,    // rezerwacja dla smugi Hexlance'a (railgunFx3D)
+  trail: 87,    // wolne (dawniej smuga Hexlance'a z railgunFx3D; dziś smugi WeaponFx)
   glow: 88,
   plume: 89,
   spark: 90,
@@ -979,7 +981,7 @@ export const Fx3D = {
 
   clearCarrier() { ActiveCarrier.clear(); },
 
-  // Wołane DOKŁADNIE RAZ na klatkę renderu (Weapon3DSystem.syncProjectiles).
+  // Wołane DOKŁADNIE RAZ na klatkę renderu (WeaponFx.sync z updateHexShips3D).
   update(dt) {
     if (!this.glow) return;
     // Wołane z updateHexShips3D po Core3D.syncCamera — kamera tej klatki.

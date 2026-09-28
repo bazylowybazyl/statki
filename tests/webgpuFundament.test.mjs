@@ -249,8 +249,9 @@ test('rozgrzewka passa: compileAsync na celu sceny, kamera passa z warstwą, bez
   assert.match(body, /renderer\.compileAsync\(object3d, camera, object3d\.isScene \? null : this\.scene\)/);
   assert.match(body, /return this\.ready\.then\(/, 'przed urządzeniem czeka na Core3D.ready');
   // Wywołania modułów: bez synchronicznego renderer.compile.
+  // Efekty broni (zadanie 17 — dawniej weapon3DSystem.js): siatki pul przez prewarmPass w kroku Core3D.fx.
   for (const [file, call] of [['src/3d/hexShips3D.js', 'Core3D.prewarmPass(Core3D.scene, 0);'], ['src/3d/shield3D.js', 'Core3D.prewarmPass(probe, 7);'],
-    ['src/3d/weapon3DSystem.js', 'Core3D.prewarmPass(Core3D.scene, 0);']]) {
+    ['src/3d/weapons/weaponFx.js', 'core.prewarmPass(mesh, 0);']]) {
     const src = read(file);
     assert.ok(src.includes(call), `${file}: ${call}`);
     assert.doesNotMatch(src, /renderer\.compile\(/, `${file}: synchroniczne compile`);

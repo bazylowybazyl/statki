@@ -45,12 +45,16 @@ test('muzzle points sit ahead of the turret body', () => {
   }
 });
 
-test('weapon fx keys match the ones weapon3DSystem asks for', () => {
+// Klucze, po których WeaponFx (zadanie 17, dawniej weapon3DSystem) szuka lufy strzelca
+// (Turret2D.triggerShot / findTurretSlot) — każda broń z recepturą ma klucz wieżyczki.
+test('weapon fx keys match the ones WeaponFx asks for; every weapon with a recipe has one', async () => {
   assert.equal(normalizeWeaponFxKey('railgun_mk1'), 'tempest');
   assert.equal(normalizeWeaponFxKey('flak_capital'), 'flak');
   assert.equal(normalizeWeaponFxKey('special_yamato_cannon'), 'yamato');
   assert.equal(normalizeWeaponFxKey('siege_railgun'), 'siegeRail');
   assert.equal(normalizeWeaponFxKey(''), '');
+  const { WEAPON_FX_IDS } = await import('../src/3d/weapons/weaponFxTable.js');
+  for (const id of WEAPON_FX_IDS) assert.ok(normalizeWeaponFxKey(id), `${id}: bez klucza wieżyczki`);
 });
 
 // Bufor rekordów jest pulowany — w bitwie idzie ich kilkaset na klatkę i nie

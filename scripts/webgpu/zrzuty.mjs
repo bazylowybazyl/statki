@@ -378,6 +378,121 @@ const SCENES = {
   }
 };
 
+// ── Galeria broni (zadanie 17) ────────────────────────────────────────────────────────────────
+// Efekty broni z dema bronie-webgpu w grze. Cel: pancernik (kadłub Iron Skull) bez AI — stoi;
+// sojuszniczy, żeby gracz go nie namierzał (ramka namiaru w kadrze); bez tarczy (val i max = 0:
+// wiązki kończą się na promieniu tarczy przy val > 0 także z DevFlags.globalShieldsOff — tak
+// liczy resolveBeamWorldHit), wstrząs kamery wyłączony (stały kadr), HP przywracane przed zrzutem
+// (bez paska). Działo = wroga platforma bez kadłuba (strzelec bez wieżyczek — wylot w punkcie
+// lufy, jak u myśliwca) z obrażeniami × 1e-6, więc kadłub zostaje cały między ujęciami. Strzał
+// idzie ścieżką NPC w grze: window.fireWeaponCore → szyna strzałów → WeaponFx; lot, trafienia
+// i zapalnik flaku liczy gra. Ujęcie rodziny: kilka strzałów w odstępach i zrzut tuż po ostatnim
+// (wylot, pociski w locie, smugi, trafienia) — przed nim czyste pule (WeaponFx.reset) i ziarno
+// ujęcia. Hexlance — ścieżka superbroni gracza (Atlas: ładowanie, salwa).
+// Obok: scripts/webgpu/bronie-demo.mjs --tryb zrzuty --bronie <te same bronie>.
+// Ujęcia: [nazwa, broń, strzałów, odstęp (klatki 60 Hz), klatek po ostatnim, zoom].
+const GALERIA_BRONI = [
+  ['yamato', 'special_yamato_cannon', 2, 24, 3, 0.8],
+  ['mjolnir', 'siege_railgun', 2, 24, 3, 0.8],
+  ['valkyrie', 'special_valkyrie_railgun', 3, 16, 3, 0.8],
+  ['goliath', 'special_goliath_autocannon', 6, 8, 2, 0.9],
+  ['gatling-plazmowy', 'special_plasma_gatling', 9, 6, 2, 0.9],
+  ['armata', 'armata_mk1', 3, 18, 3, 0.9],
+  ['tempest', 'tempest_ion_l', 3, 16, 3, 0.9],
+  ['helios', 'helios_laser', 4, 12, 2, 0.9],
+  ['autokanon', 'heavy_autocannon', 5, 9, 2, 0.9],
+  ['vulcan', 'vulcan_minigun', 12, 4, 2, 0.9],
+  ['wiazka-ciagla', 'beam_continuous', 40, 1, 1, 0.9],
+  ['wiazka-impuls', 'beam_pulse', 3, 14, 3, 0.9],
+  ['ciws', 'ciws_mk1', 14, 4, 2, 0.9],
+  ['laser-pd', 'laser_pd_mk1', 5, 11, 2, 0.9],
+  ['flak', 'flak_m', 3, 22, 4, 0.9]
+];
+const GALERIA_POMOC = `const G = window.__galeria;
+  const WFX = window.WeaponFx;
+  const gun = (x, y) => ({ id: 'galeria-dzialo', x, y, pos: { x, y }, vel: { x: 0, y: 0 }, vx: 0, vy: 0, angle: 0, angVel: 0, friendly: false, modifiers: { damage: 1e-6 } });
+  const noShield = () => { if (G.T.shield) { G.T.shield.val = 0; G.T.shield.max = 0; } };
+  // aim — cel (encja) albo punkt na kadłubie; laser PD dostaje zawsze kadłub (szybka ścieżka PD).
+  const fire = (g, id, aim, uid) => {
+    noShield();
+    const dx = aim.x - g.x, dy = aim.y - g.y, d = Math.hypot(dx, dy) || 1;
+    const aux = MASTER_WEAPONS[id]?.mountType === 'aux';
+    return window.fireWeaponCore(g, aim, id, { pos: { x: g.x, y: g.y }, dir: { x: dx / d, y: dy / d }, baseVel: { x: 0, y: 0 }, emitterUid: uid, pdTarget: aux ? G.T : null });
+  };
+  const clear = async () => { for (const b of window.bullets) b.life = -1; await H.step(2); WFX?.reset(); noShield(); };
+  const calm = () => { camera.shakeMag = 0; camera.shakeTime = 0; if (WFX) WFX.weaponShake = 0; G.T.hp = G.T.maxHp; };`;
+for (const [i, [name, id, shots, gap, after, zoom]] of GALERIA_BRONI.entries()) {
+  SCENES[`galeria-${name}`] = {
+    opis: `Galeria broni: ${id} — ${shots} strz. co ${gap} kl. w pancernik z 1050 j., zrzut ${after} kl. po ostatnim, zoom ${zoom}`,
+    hud: false, warm: 2,
+    js: `${GALERIA_POMOC}
+         await clear();
+         const T = G.T; const g = gun(T.x - 1050, T.y);
+         S.cam(T.x - 520, T.y, ${zoom});
+         H.reseed(${0x6a1100 + i});
+         for (let k = 0; k < ${shots}; k++) { fire(g, '${id}', T, 'galeria:${name}'); await H.step(k < ${shots - 1} ? ${gap} : ${after}); }
+         calm(); S.cam(T.x - 520, T.y, ${zoom});`
+  };
+}
+SCENES['galeria-przygotowanie'] = {
+  opis: 'Bez zrzutu: cel galerii broni — pancernik bez AI i tarczy, wstrząs kamery wyłączony',
+  capture: false, warm: 2,
+  js: `DevFlags.globalShieldsOff = true; DevFlags.disableCameraShake = true;
+       DevScene.teleport(${DEEP.x - 600000}, ${DEEP.y - 200000}, 0);
+       const r = spawnCallInShip('pirate_battleship', { mode: 'friendly', spawnPos: { x: ship.pos.x + 5200, y: ship.pos.y }, spawnAngle: Math.PI });
+       const T = Array.isArray(r) ? r[0] : r; T.ai = null;
+       window.__galeria = { T };
+       if (T.shield) { T.shield.val = 0; T.shield.max = 0; }
+       // Kursor w rogu: pod kursorem na środku kadru rósł namiar SINGLE (ramka w zrzucie).
+       document.getElementById('c')?.dispatchEvent(new MouseEvent('mousemove', { clientX: 24, clientY: 24, bubbles: true }));
+       S.cam(T.x - 520, T.y, 0.42);
+       for (let i = 0; i < 400 && !S.hullsReady(); i++) await H.frames(2);
+       await H.step(2);`
+};
+// Przegląd: 15 rodzin naraz z łuku 1250 j. wokół pancernika, każda w swój punkt kadłuba (elipsa wokół
+// środka po stronie działa). Lekkie kończą serię w klatce zrzutu, ciężkie (Yamato, Mjolnir, Valkyrie,
+// Armata, Tempest) wcześniej o `lag` klatek — ich rozbłysk wylotu (Mjolnir: ~1,3 tys. j.) zdążył zgasnąć
+// i nie zalewa kadru, zostają trafienia i smugi. [broń, strzałów, odstęp, lag]
+const GALERIA_PRZEGLAD = { yamato: [1, 1, 40], mjolnir: [1, 1, 50], valkyrie: [2, 16, 20], armata: [2, 18, 10], tempest: [2, 16, 6] };
+SCENES['galeria-broni'] = {
+  opis: 'Galeria broni: 15 rodzin naraz (działa Capital/L/M/S, wiązki, CIWS, laser PD, flak) z łuku wokół pancernika, zoom 0,42',
+  hud: false, warm: 2,
+  js: `${GALERIA_POMOC}
+       await clear();
+       const T = G.T;
+       const L = ${JSON.stringify(GALERIA_BRONI.map(([name, id, shots, gap]) => {
+         const o = GALERIA_PRZEGLAD[name];
+         return o ? [name, id, o[0], o[1], o[2]] : [name, id, shots, gap, 0];
+       }))};
+       const ang = (i) => Math.PI * (0.6 + 0.8 * i / (L.length - 1));
+       const guns = L.map((e, i) => gun(T.x + Math.cos(ang(i)) * 1250, T.y + Math.sin(ang(i)) * 1250));
+       const aims = L.map((e, i) => ({ x: T.x + Math.cos(ang(i)) * 300, y: T.y + Math.sin(ang(i)) * 140 }));
+       const end = Math.max(...L.map(([, , n, gap, lag]) => (n - 1) * gap + lag));
+       S.cam(T.x - 380, T.y, 0.42);
+       H.reseed(0x6a11ff);
+       for (let f = 0; f <= end; f++) {
+         L.forEach(([name, id, n, gap, lag], i) => { const k = f - (end - lag - (n - 1) * gap); if (k >= 0 && k <= (n - 1) * gap && k % gap === 0) fire(guns[i], id, aims[i], 'galeria-przeglad:' + name); });
+         await H.step(1);
+       }
+       await H.step(1);
+       calm(); S.cam(T.x - 380, T.y, 0.42);`
+};
+// Hexlance: superbroń gracza (Atlas) — dwa wciśnięcia (ładowanie 1,2 s, salwa 4 strzałów co 0,25 s).
+SCENES['galeria-hexlance'] = {
+  opis: 'Galeria broni: Hexlance gracza (ładowanie, salwa — lanca, smuga, igła, wejście w pancernik 5200 j. dalej), zoom 0,33',
+  hud: false, warm: 2,
+  js: `${GALERIA_POMOC}
+       await clear();
+       const T = G.T; const cx = ship.pos.x + 2900;
+       S.cam(cx, T.y, 0.33);
+       H.reseed(0x6a12ff);
+       Superweapon.tryFireSuperweapon(ship);
+       await H.step(80);
+       Superweapon.tryFireSuperweapon(ship);
+       await H.step(40);
+       calm(); S.cam(cx, T.y, 0.33);`
+};
+
 // Sesje = jedno wczytanie strony; sceny w sesji idą po kolei (kolejność ma znaczenie).
 const SESSIONS = [
   { id: 'menu', query: 'dev=1', start: null, scenes: ['menu'] },
@@ -388,6 +503,9 @@ const SESSIONS = [
   { id: 'kosmos', query: 'dev=1', start: 'single', sprites: true, scenes: ['kalibracja', 'kalibracja-sprzatanie', 'bitwa', 'bitwa-blisko', 'wybuch', 'wraki', 'warp'] },
   { id: 'split', query: 'dev=1', start: 'split', sprites: true, scenes: ['split'] },
   { id: 'stacja', query: 'dev=1', start: 'single', scenes: ['stacja-przygotowanie', 'stacja-rozpad', 'stacja-odlamki', 'stacja-trojkaty', 'stacja-implozja', 'stacja-ciecie'] },
+  // Galeria broni (zadanie 17): własna sesja — sceny bitwy w „kosmos” zostają bez zmian klatek.
+  { id: 'galeria', query: 'dev=1', start: 'single', sprites: true,
+    scenes: ['galeria-przygotowanie', 'galeria-broni', ...GALERIA_BRONI.map(([name]) => `galeria-${name}`), 'galeria-hexlance'] },
   // Zadanie 21: pas asteroid z dema WebGPU (osobna sesja — nie przesuwa scen pozostałych; bazy WebGL brak: stare pole
   // było wyłączone, porównanie ze zrzutami dema — asteroidy-demo.mjs).
   { id: 'pas', query: 'dev=1', start: 'single', belt: true, scenes: ['pas-pole', 'pas-noc', 'pas-burza', 'pas-olbrzym'] }

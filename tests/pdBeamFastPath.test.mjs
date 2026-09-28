@@ -110,16 +110,21 @@ function pdMuzzle(target, pdTarget = target) {
 
 const kinds = (log, kind) => log.filter((e) => e[0] === kind);
 
-test('PD z celem: tarcza celu, zero dostępów do npcs/stations/wrecks, jedna wiązka 2D, bez pulsu 3D', () => {
+// Decyzja 2026-09-27 (zadanie 17): laser PD z kanwy 2D do 3D — strzał wysyła dane wiązki
+// z `kind: 'pd'` (WeaponFx: wylot, impuls, trafienie z dema bronie-webgpu), bez smugi kanwy
+// i bez uid emitera (PD nie ma wiązki ciągłej).
+test('PD z celem: tarcza celu, zero dostępów do npcs/stations/wrecks, wizual 3D lasera PD, bez smugi 2D', () => {
   withSeededRandom(1, () => {
     const { h, shooter, shielded } = pdScene();
     const log = h.fire(shooter, shielded, 'laser_pd_mk1', pdMuzzle(shielded));
     assert.deepEqual(h.counters, { npcs: 0, stations: 0, wrecks: 0 }, 'strzał PD przeszukał świat');
     assert.equal(kinds(log, 'shieldFx').length, 1, 'efekt tarczy');
     assert.deepEqual(kinds(log, 'dmgNpc').map((e) => e[1]), ['shielded'], 'obrażenia w cel, nie w blocker po drodze');
-    assert.equal(kinds(log, 'beam2d').length, 1, 'jedna wiązka 2D');
+    assert.equal(kinds(log, 'beam2d').length, 0, 'bez smugi 2D');
     const ev = kinds(log, 'event')[0];
-    assert.equal(ev[5], null, 'PD nie wysyła wizualu pulse 3D');
+    assert.ok(ev[5], 'dane wiązki dla WeaponFx');
+    assert.equal(ev[5][7], 'pd', 'rodzaj efektu: laser PD (nie impuls wiązki głównej)');
+    assert.equal(ev[5][6], null, 'PD bez uid emitera');
   });
 });
 
@@ -145,19 +150,21 @@ test('PD z celem: myśliwiec trafiony, cel poza zasięgiem = pudło do pełnego 
     log = h.fire(shooter, far, 'laser_pd_mk1', pdMuzzle(far));
     assert.equal(kinds(log, 'dmgNpc').length, 0);
     assert.equal(kinds(log, 'hex').length, 0);
-    const beam = kinds(log, 'beam2d')[0];
-    assert.deepEqual(beam.slice(1, 5), [0, 0, 0, -1000], 'wiązka do pełnego zasięgu (1000 u)');
+    assert.equal(kinds(log, 'beam2d').length, 0);
+    const beam = kinds(log, 'event')[0][5];
+    assert.deepEqual(beam.slice(0, 4), [0, 0, 0, -1000], 'wiązka do pełnego zasięgu (1000 u)');
     assert.deepEqual(h.counters, { npcs: 0, stations: 0, wrecks: 0 });
   });
 });
 
-test('PD bez celu od AI idzie ścieżką ogólną (trafia blocker), ale nadal bez pulsu 3D', () => {
+test('PD bez celu od AI idzie ścieżką ogólną (trafia blocker), wizual lasera PD, nie impulsu', () => {
   withSeededRandom(4, () => {
     const { h, shooter, shielded } = pdScene();
     const log = h.fire(shooter, shielded, 'laser_pd_mk1', pdMuzzle(shielded, null));
     assert.ok(h.counters.npcs > 0, 'ścieżka ogólna skanuje świat');
     assert.deepEqual(kinds(log, 'dmgNpc').map((e) => e[1]), ['blocker']);
-    assert.equal(kinds(log, 'event')[0][5], null);
+    assert.equal(kinds(log, 'event')[0][5][7], 'pd');
+    assert.equal(kinds(log, 'beam2d').length, 0);
   });
 });
 
@@ -167,10 +174,11 @@ test('broń główna: ścieżka ogólna i wizual 3D bez zmian', () => {
     const log = h.fire(shooter, shielded, 'beam_pulse', pdMuzzle(shielded, null));
     assert.ok(h.counters.npcs > 0);
     assert.deepEqual(kinds(log, 'dmgNpc').map((e) => e[1]), ['blocker'], 'pierwszy obiekt na linii');
-    assert.equal(kinds(log, 'beam2d').length, 0, 'render3dOnly: bez smugi 2D');
+    assert.equal(kinds(log, 'beam2d').length, 0, 'bez smugi 2D');
     const ev = kinds(log, 'event')[0];
     assert.ok(ev[5], 'wizual 3D wiązki głównej zostaje');
     assert.equal(ev[5][6], 'npc:pd1:aux0');
+    assert.equal(ev[5][7], 'pulse');
   });
 });
 
