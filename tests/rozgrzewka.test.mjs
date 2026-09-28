@@ -315,3 +315,113 @@ test('Core3D.fx: rozgrzewka kroku (warm) idzie przez rejestr — jedno miejsce d
   assert.match(html, /Core3D\.warmup\.run\('tarcze \(shield3D\)', \(\) => prewarmShields3D\(\)\);/);
   assert.match(html, /await Core3D\.warmup\.run\('pas asteroid: start GPU \(asteroidBelt\)', \(\) => asteroidBelt\.initGpu\(\)\);/);
 });
+
+// Zadanie 25a: pass MAPY CIENIA w rejestrze (`shadow: true`) — siatki z castShadow przez Core3D.prewarmShadowPass
+// (kontekst passa cienia gry), osobno od passa sceny; droga niedostępna (false) → `fallback` wpisu.
+test('shadow: true — tylko castShadow, przez prewarmShadowPass, osobno od passa sceny; false → fallback', async () => {
+  const { core, calls } = fakeCore();
+  const shadowCalls = [];
+  let route = true;
+  core.prewarmShadowPass = (obj) => { shadowCalls.push(obj); return Promise.resolve(route); };
+  const w = new Rozgrzewka(core);
+  const caster = mesh('rzuca', 2, { castShadow: true });
+  const other = mesh('nie-rzuca', 2);
+  const group = new THREE.Group();
+  group.add(caster, other);
+  w.start();
+  const e = w.add({ name: 'cień', objects: group, shadow: true });
+  assert.equal(await e.promise, true);
+  assert.deepEqual(shadowCalls.map((o) => o.name), ['rzuca'], 'pass cienia rysuje tylko castShadow');
+  assert.equal(calls.length, 0, 'bez compileAsync passa sceny');
+  // ta sama siatka w passie sceny — osobne „rozgrzane”
+  const scene = w.add({ name: 'scena', objects: group, layer: 2 });
+  assert.equal(await scene.promise, true);
+  assert.deepEqual(calls.map((c) => c.obj.name), ['rzuca', 'nie-rzuca']);
+  // powtórka cienia — pominięta
+  const again = w.add({ name: 'cień 2', objects: caster, shadow: true });
+  assert.equal(await again.promise, true);
+  assert.equal(shadowCalls.length, 1);
+  // droga niedostępna: fallback dostaje siatkę, wpis false
+  route = false;
+  const fallen = [];
+  const other2 = mesh('zapas', 2, { castShadow: true });
+  const f = w.add({ name: 'zapas', objects: other2, shadow: true, fallback: (m) => fallen.push(m) });
+  assert.equal(await f.promise, false);
+  assert.deepEqual(fallen, [other2]);
+});
+
+// Zadanie 25a: Core3D.prewarmShadowPass — compileAsync w kontekście passa cienia gry: cel mapy cienia, kamera cienia
+// ze wszystkimi warstwami, scena z materiałem zastępczym cienia (ShadowPassMaterial), kontekst renderu z GŁĘBOKOŚCIĄ
+// wywołania passa cienia (1 — mapa rysuje się w passie sceny), stan renderera, kamery i siatek wraca.
+test('Core3D.prewarmShadowPass: głębokość 1 w kontekście, materiał zastępczy cienia, cel mapy — stan wraca', async () => {
+  const light = new THREE.DirectionalLight();
+  light.castShadow = true;
+  const holder = { _sunShadowLight: null };
+  Core3D.setSunShadowLight.call(holder, light);
+  const node = light.shadow.shadowNode;
+  assert.ok(node && node.passLayersMask === 0, 'PassShadowNode');
+  const shadowMap = { name: 'mapaCienia', depthBuffer: true, stencilBuffer: false };
+  node.shadowMap = shadowMap;
+  const seen = [];
+  let target = null;
+  const contexts = { get(rt, mrt, depth = 0) { seen.push({ ctx: true, rt, depth }); return {}; } };
+  const renderer = {
+    depth: true, stencil: false, shadowMap: { enabled: true }, _renderContexts: contexts, _mrt: null,
+    getRenderTarget: () => target,
+    setRenderTarget(t) { target = t; },
+    getMRT() { return this._mrt; },
+    compileAsync(scene, camera) {
+      // jak three r183: kontekst z celu i MRT, bez głębokości wywołania
+      this._renderContexts.get(target, this._mrt);
+      seen.push({ scene, override: scene.overrideMaterial, children: [...scene.children], mask: camera.layers.mask, camera, target,
+        flags: scene.children.map((m) => [m.visible, m.frustumCulled]) });
+      return Promise.resolve();
+    }
+  };
+  const fake = { gpuReady: true, renderer, _sunShadowLight: light, shadowCatcherFg: null, shadowCatcher: null, warmup: null,
+    _ensureSunShadowMap: Core3D._ensureSunShadowMap };
+  const caster = mesh('rzuca', 2, { castShadow: true, visible: false });
+  const other = mesh('nie-rzuca', 2);
+  const root = new THREE.Group();
+  root.add(caster, other);
+  assert.equal(await Core3D.prewarmShadowPass.call(fake, root), true);
+  const ctx = seen.find((s) => s.ctx);
+  assert.equal(ctx.depth, 1, 'kontekst głębokości passa cienia');
+  assert.equal(ctx.rt, shadowMap, 'cel mapy cienia');
+  const c = seen.find((s) => s.scene);
+  assert.equal(c.override?.isShadowPassMaterial, true, 'materiał zastępczy passa cienia');
+  assert.deepEqual(c.children.map((m) => m.name), ['rzuca'], 'tylko castShadow');
+  assert.deepEqual(c.flags, [[true, false]], 'widoczna i bez cullingu na czas wywołania');
+  assert.equal(c.camera, light.shadow.camera);
+  assert.equal(c.mask, 0xffffffff | 0, 'kamera cienia ze wszystkimi warstwami');
+  assert.equal(Object.prototype.hasOwnProperty.call(contexts, 'get'), true, 'własne get atrapy zostaje');
+  const ctx2 = contexts.get(null, null);
+  assert.equal(ctx2 && seen.at(-1).depth, 0, 'kolejne wywołania bez podmiany');
+  assert.equal(caster.parent, root, 'rodzic bez zmian');
+  assert.deepEqual([caster.visible, caster.frustumCulled], [false, true], 'flagi wracają');
+  assert.equal(target, null, 'cel wraca');
+  assert.equal(light.shadow.camera.layers.mask, 1, 'maska kamery cienia wraca');
+  assert.equal(fake._shadowWarmScene.children.length, 0);
+  assert.equal(fake._shadowWarmScene.overrideMaterial, null);
+  // bez słońca z cieniem / bez pól three — false (wołający rozgrzewa rysunkiem)
+  assert.equal(await Core3D.prewarmShadowPass.call({ ...fake, _sunShadowLight: null }, root), false);
+  assert.equal(await Core3D.prewarmShadowPass.call({ ...fake, renderer: { ...renderer, _renderContexts: null } }, root), false);
+});
+
+// Strażnik pól prywatnych three r183, na których stoi prewarmShadowPass (zadanie 25a): kontekst renderu z głębokością
+// wywołania w passie, compileAsync bez niej, mapa cienia rysowana renderer.render z materiałem zastępczym cienia.
+// Aktualizacja three = sprawdzić, czy mapa cienia nadal rysuje się w kontekście tej samej głębokości.
+test('three r183: kontekst renderu z głębokością wywołania (prewarmShadowPass)', () => {
+  const r = read('node_modules/three/src/renderers/common/Renderer.js');
+  const at = r.indexOf('_renderScene( scene, camera, useFrameBufferTarget = true ) {');
+  assert.ok(at > 0, 'Renderer._renderScene');
+  const renderScene = r.slice(at, at + 3000);
+  assert.match(renderScene, /this\._callDepth \+\+;[\s\S]*this\._renderContexts\.get\( renderTarget, this\._mrt, this\._callDepth \)/);
+  const compile = r.slice(r.indexOf('async compileAsync( scene, camera'), r.indexOf('async compileAsync( scene, camera') + 1500);
+  assert.match(compile, /const renderContext = this\._renderContexts\.get\( renderTarget, this\._mrt \);/);
+  const s = read('node_modules/three/src/nodes/lighting/ShadowNode.js');
+  assert.match(s, /scene\.overrideMaterial = getShadowMaterial\( light \);/);
+  assert.match(s, /renderer\.render\( scene, shadow\.camera \);/);
+  const rc = read('node_modules/three/src/renderers/common/RenderContexts.js');
+  assert.match(rc, /get\( renderTarget = null, mrt = null, callDepth = 0 \)/);
+});

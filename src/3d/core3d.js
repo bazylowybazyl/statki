@@ -11,7 +11,7 @@
 // gra pokazuje komunikat (Core3D.ready → false, gpuUnsupported).
 import * as THREE from 'three/webgpu';
 import {
-  Continue, Fn, If, Loop, abs, clamp, dot, float, fract, int, length, max, screenCoordinate, screenSize, select,
+  Continue, Fn, If, Loop, abs, clamp, dot, float, fract, getShadowMaterial, int, length, max, screenCoordinate, screenSize, select,
   smoothstep, sqrt, texture, uniform, uniformArray, uv, vec2, vec4
 } from 'three/tsl';
 import { BLOOM_DEFAULTS } from './bloomConfig.js';
@@ -41,7 +41,12 @@ const GPU_TIMER_RENDER_QUERIES = 128;
 const GPU_TIMER_FRAME_COMPUTE_QUERIES = 256;
 // Warstwa trzymaczy rozgrzewki passa cienia (destruction3D.js, SHADOW_WARM_LAYER: żaden pass Core3D
 // jej nie rysuje) — w mapie cienia FG, żeby pipeline cienia kawałków stacji powstał przed rozpadem.
+// Od zadania 25a tylko droga zapasowa: pass cienia kompiluje się w tle (prewarmShadowPass).
 const SHADOW_WARM_LAYER = 31;
+// Głębokość wywołania renderu (three r183 `Renderer._callDepth`), na której gra rysuje mapę cienia słońca:
+// odświeżenie idzie z updateBefore węzła cienia odbiorcy W passie sceny (render passa = 0, mapa = 1).
+// Kontekst renderu = stan załączników celu + ta głębokość, a jego id wchodzi do klucza NodeBuildera.
+const SHADOW_PASS_CALL_DEPTH = 1;
 // Przejście grafu sceny przy sprawdzaniu rzucających cień (passShadowNeeded) — stos bez alokacji na klatkę.
 const _shadowScanStack = [];
 const _shadowScanFrustum = new THREE.Frustum();
@@ -1998,6 +2003,105 @@ export const Core3D = {
     // flush() rejestru na ekranie ładowania czeka i na te pipeline'y (zadanie 11): pierwsza klatka gry
     // zapisująca do kolejki w trakcie ich kompilacji stawała na procesie GPU.
     return this.warmup ? this.warmup.track(done) : done;
+  },
+
+  // Pass mapy cienia słońca w tle (zadanie 25a; dawniej tylko rysunkiem — pułapka 20 w agents.md). Gra rysuje mapę
+  // w passie sceny (PassShadowNode.updateShadow z updateBefore odbiorcy): renderer.render(scena, kamera cienia) do
+  // celu mapy, materiał zastępczy ShadowPassMaterial z węzłami materiału obiektu (Renderer.renderObject — pozycja,
+  // mapa, maska, strona cienia), tylko obiekty z castShadow. Tu ten sam układ w compileAsync: osobna scena z tym
+  // samym materiałem zastępczym, siatki wstawione na czas wywołania (bez zmiany rodzica), kamera cienia ze
+  // wszystkimi warstwami, cel mapy cienia. Kontekst renderu three r183 = załączniki celu + GŁĘBOKOŚĆ wywołania, a
+  // jego id wchodzi do klucza NodeBuildera: compileAsync bierze głębokość 0, mapa cienia rysuje się na 1 — bez
+  // poprawki pierwszy cień budowałby wszystko od nowa. Pierwsze `_renderContexts.get` wywołania dostaje więc
+  // głębokość passa cienia (SHADOW_PASS_CALL_DEPTH). Promise<boolean>: false = bez słońca z cieniem, bez mapy
+  // albo bez pól three (wołający może rozgrzać rysunkiem jak dawniej); flush() rejestru czeka na pipeline'y.
+  prewarmShadowPass(object3d) {
+    if (!object3d) return Promise.resolve(false);
+    if (!this.gpuReady) {
+      if (this.gpuUnsupported) return Promise.resolve(false);
+      return this.ready.then((ok) => (ok ? this.prewarmShadowPass(object3d) : false));
+    }
+    const renderer = this.renderer;
+    const light = this._sunShadowLight;
+    const shadow = light && light.castShadow === true ? light.shadow : null;
+    const node = shadow ? shadow.shadowNode : null;
+    const contexts = renderer?._renderContexts;
+    if (!(node instanceof PassShadowNode) || renderer.shadowMap?.enabled !== true || typeof contexts?.get !== 'function') {
+      return Promise.resolve(false);
+    }
+    if (!node.shadowMap) this._ensureSunShadowMap();
+    const target = node.shadowMap;
+    if (!target) return Promise.resolve(false);
+    const meshes = [];
+    object3d.traverse((o) => {
+      if (o.castShadow === true && (o.isMesh || o.isLine || o.isPoints || o.isSprite) && o.material) meshes.push(o);
+    });
+    if (!meshes.length) return Promise.resolve(false);
+    const scene = this._shadowWarmScene || (this._shadowWarmScene = new THREE.Scene());
+    scene.name = 'Core3D:rozgrzewka cienia';
+    scene.overrideMaterial = getShadowMaterial(light);
+    const camera = shadow.camera;
+    const prevMask = camera.layers.mask;
+    const prevTarget = renderer.getRenderTarget();
+    const prevMrt = typeof renderer.getMRT === 'function' ? renderer.getMRT() : null;
+    const saved = new Array(meshes.length * 2);
+    for (let i = 0; i < meshes.length; i++) {
+      const m = meshes[i];
+      saved[i * 2] = m.visible;
+      saved[i * 2 + 1] = m.frustumCulled;
+      m.visible = true;
+      m.frustumCulled = false;
+      scene.children.push(m);
+    }
+    camera.layers.enableAll();
+    const get = contexts.get;
+    const ownGet = Object.prototype.hasOwnProperty.call(contexts, 'get');
+    const restoreGet = () => {
+      if (ownGet) contexts.get = get;
+      else delete contexts.get;
+    };
+    contexts.get = function (renderTarget, mrt) {
+      restoreGet();
+      return get.call(this, renderTarget, mrt, SHADOW_PASS_CALL_DEPTH);
+    };
+    let promise;
+    try {
+      if (prevMrt !== null && typeof renderer.setMRT === 'function') renderer.setMRT(null);
+      renderer.setRenderTarget(target);
+      promise = compileAsyncNaCelu(renderer, scene, camera);
+    } catch (err) {
+      promise = Promise.reject(err);
+    } finally {
+      restoreGet();
+      renderer.setRenderTarget(prevTarget);
+      if (prevMrt !== null && typeof renderer.setMRT === 'function') renderer.setMRT(prevMrt);
+      camera.layers.mask = prevMask;
+      scene.children.length = 0;
+      scene.overrideMaterial = null;
+      for (let i = 0; i < meshes.length; i++) {
+        meshes[i].visible = saved[i * 2];
+        meshes[i].frustumCulled = saved[i * 2 + 1];
+      }
+    }
+    const done = promise.then(() => true, (err) => {
+      console.warn('[Core3D] rozgrzewka passa cienia nie wyszła:', err?.message || err);
+      return false;
+    });
+    return this.warmup ? this.warmup.track(done) : done;
+  },
+
+  // Mapa cienia słońca powstaje przy budowie pierwszego odbiorcy (ShadowNode.setupShadow). Gdy żaden jeszcze się
+  // nie budował (np. łapacze schowane przez _passSunShadow przed rozgrzewką) — budowa łapacza FG (compileAsync).
+  _ensureSunShadowMap() {
+    const catcher = this.shadowCatcherFg || this.shadowCatcher;
+    if (!catcher || !this.renderer) return;
+    const visible = catcher.visible;
+    catcher.visible = true;
+    try {
+      this.prewarmPass(catcher, catcher === this.shadowCatcherFg ? 2 : 0);
+    } finally {
+      catcher.visible = visible;
+    }
   },
 
   // Jedna warstwa tablicy tekstur (DataArrayTexture) prosto na GPU — queue.writeTexture tej
