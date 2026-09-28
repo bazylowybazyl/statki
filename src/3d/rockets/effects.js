@@ -45,6 +45,7 @@ import { GLOW_ROUND } from './glow.js';
 import { fillRandom } from './rand.js';
 import { SimClock, CLOCK_RENDER, CLOCK_SIM } from '../../game/simClock.js';
 import { getEntityShieldRadiusTowards } from '../../../shieldSystem.js';
+import { HullDamageMap } from '../hullDamageMap.js';
 
 const TAU = Math.PI * 2;
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -611,6 +612,9 @@ export class RocketEffects {
     const ex = x + (onHull ? nx * R * 0.12 : 0);
     const ey = y + (onHull ? ny * R * 0.12 : 0);
     const sk = Math.sqrt(k);
+    // Rana na poszyciu (mapa ran, zadanie 18-C): rakieta nie robi krateru (obrażenia HP), więc stempel
+    // „rocket” w punkcie styku — żar i osmalenie jadą z kadłubem; poza kadrem odrzuca go sama mapa.
+    if (onHull) HullDamageMap.stampAt(onHull, x, y, 'rocket', 'impact', -nx, -ny);
     if (this._outside(ex, ey, EMIT_MARGIN + R * 3)) {
       // Poza kadrem: tylko światło (sięga w kadr) — bez dymu, iskier, odłamków i fali.
       this._flash(ex, ey, 1.2, cx, cy, BLAST_CORE, B.flash, 24 * k, 0.035, BLAST_HALO, B.flash, 210 * k, 0.08,
