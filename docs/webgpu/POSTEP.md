@@ -69,9 +69,9 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 | 24 | Sprzątanie i domknięcie portu | 23 | nie | xhigh | zrobione, scalone (be51f3f), tag `webgpu-port` | 8998cbe, 0b3bb55, d3ce675, f40eaa4, d6adac1, efa140e, 041a7e7, 8640c5c, 9a6241d, 0f4823e | gra bez GLSL i API WebGL (strażnik `graBezGlsl`); −4 moduły legacy; wyciek kawałków stacji naprawiony |
 | 25a | Rozgrzewka stacji i wszystkiego przy ładowaniu gry (zero kompilacji w grze) | 11, 23 | 25b, 25c, 26 | max | w toku (worktree `statki-wt/25a`) | | przestoje > 100 ms przy pierwszej stacji modelu, cień Destruction3D |
 | 25b | Bloom gry do poziomu dem: bez ×3, bez kolan, stare emitery przestrojone do oceny | 17–22, 23 | 25a, 25c, 26 | xhigh | w toku (worktree `statki-wt/25b`; kierunek zmieniony decyzją użytkownika) | | nowa baza obrazu z `main` |
-| 25c | Rany ↔ fizyka: fizyczna wyrwa tak duża jak lej rany (Yamato i ciężkie działa) | 18 | 25a, 25b, 26 | max | w toku (worktree `statki-wt/25c`) | | zmiana rozgrywki — liczby balansu w raporcie |
+| 25c | Rany ↔ fizyka: fizyczna wyrwa tak duża jak lej rany (Yamato i ciężkie działa) | 18 | 25a, 25b, 26 | max | zrobione na `webgpu/25c`, scalenie czeka (niezacommitowane `index.html` / `agents.md` innych sesji w głównym katalogu); 5 pytań balansu do użytkownika | 3fa5d51, 51a45a5, 58fecae | zmiana rozgrywki — liczby balansu w raporcie |
 | 25d | Warp: mocniejszy tunel (więcej cząstek) + podbicie efektów przy zmianie biegu | 22 | — | xhigh | wstrzymane — sesja „przyjazdy i powroty w warpie” edytuje `src/3d/warp/*` | | |
-| 26 | Demo WebGPU ładowni: wrota à la Venator, pusta przestrzeń, kontenery 3D, drony (Z5 w TSL) | — | 25a–c | max | w toku (worktree `statki-wt/26`) | | potem integracja z grą (ładownia, wydobycie, ruch v2) |
+| 26 | Demo WebGPU ładowni: wrota à la Venator, pusta przestrzeń, kontenery 3D, drony (Z5 w TSL) | — | 25a–c | max | zrobione, scalone (demo `dema/ladownia-webgpu.html`) | c1c3435, 4756daf, f0142c7 | 9 pytań do użytkownika (tony na kontener, `cargoCap` z ładowni, strefy, wrota, drony) — `docs/webgpu/DEMO-LADOWNIA.md` |
 ## Regresje przejściowe (świadome)
 
 Stan zamierzony na `main` w trakcie portu — nie „naprawiać” poza zadaniem, które go kończy.
@@ -912,3 +912,20 @@ wydobycia, rozgrywka pasa, warp — soczewka świata) oraz: mapa CIC bez pasów 
 pasa to mała funkcja). Prace po porcie: druga runda wydajności (duża bitwa 84% FPS WebGL: tarcze partiami, rozgrzewka
 szablonów stacji na ekranie ładowania, koszt na obiekt), sesja Z7 — przepiąć `SUN_SHADOW_GLSL` na `sunShadowMaskGLSL.js` i
 usunąć wpis `POZA_PORTEM` (strażnik o to poprosi), `dema/kontenery.html` i `dema/station-destruction-sandbox.html` nie działają.
+- **Zadanie 26 scalone do `main`** (c1c3435, 4756daf, f0142c7): demo WebGPU ładowni `dema/ladownia-webgpu.html` (sceny: galeria 14
+  kadłubów z otwartymi ładowniami, wrota — pętla ostrzeżenie / otwarcie / lampy falą / zamknięcie, załadunek i rozładunek
+  dronami; klawisze 1–4, O, R, F / B / C, `[` `]`). Wrota à la Venator w dwóch trybach: `over` (skrzydła unoszą się i
+  odkładają obok otworu — Atlas, Custos, Hasta, Colossus) i `pocket` (chowane pod poszycie — Bellator, Citadella, piraci,
+  frachtowce), na skrzydłach wycinek sprite'a (zamknięta ładownia = dzisiejszy statek). Wnętrze (dno ze znakami slotów,
+  żebra, lampy falą, cień krawędzi otworu), kontenery i drony Z5 w TSL w nowych plikach `src/3d/cargo/` (pliki Z5 bez
+  zmian), dane `src/data/cargoBays.js`, logika `src/game/cargoBayOps.js` (przeładunek modułami: 1×1×1 / 2×2×2 / 4×4×2).
+  450–540 FPS w demie (5,7 tys. kontenerów). Pojemność z geometrii (propozycja 2 t na kontener): Atlas 504 kontenery =
+  1008 t (dziś 20 t), Bellator 272 t, Citadella 1056 t, Colossus 1120 t, ciężki frachtowiec 6080 t, wagon megafrachtowca
+  19 712 t; frachtowce ruchu nie pasują do dzisiejszych klas (prom 2 kontenery vs 60 t) — propozycja: frachtowce ruchu przy
+  obecnych klasach, kontenery jako widok liczby. Plan integracji (9 kroków) i 9 pytań do użytkownika:
+  `docs/webgpu/DEMO-LADOWNIA.md`. Zrzuty: `.tmp/webgpu/zadania/26/`. Testy: 25 nowych (1690 / 5 / 3 w worktree).
+- **Zadanie 25c zrobione na gałęzi** (`webgpu/25c`: 3fa5d51, 51a45a5, 58fecae) — krater fizyczny na miarę leja rany; scalenie
+  czeka, bo w głównym katalogu inne sesje mają niezacommitowane `index.html` i `agents.md`. Liczby i pytania balansu:
+  Yamato 90,7 j. (salwa tnie pancernik na pół — 404 węzły), armata 35,4 j. (niszczyciel TN 70 → 19 s), Mjolnir 55,8 / 39,1,
+  Valkyrie 24,4 / 16,6, rakiety 18 j.; Goliath bez dużego krateru; obrażenia HP bez zmian, rośnie zniszczenie struktury
+  (sufit HP); `killRadius` w silniku belek — ścieżka bez niego bit w bit. Zrzuty `.tmp/webgpu/zadania/25c/obok/`.
