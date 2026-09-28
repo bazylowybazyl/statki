@@ -222,7 +222,8 @@ test('index.html: ring „Halo” zamiast starego ringu (render, kolizje, stacje
   // jakość z ustawień „Jakość planet i ringu”
   assert.match(html, /quality: window\.OPTIONS\?\.planetQuality/);
   const st3d = readFileSync(new URL('../src/3d/stations3D.js', import.meta.url), 'utf8');
-  assert.equal((st3d.match(/station\.ringPort\) continue;/g) || []).length, 2, 'stacja-port bez bryły 3D');
+  // initStations3D, updateStations3D i prepareStations3D (zadanie 25a — szablony na ekranie ładowania)
+  assert.equal((st3d.match(/station\.ringPort\) continue;/g) || []).length, 3, 'stacja-port bez bryły 3D');
   // domyślna infrastruktura stacji Ziemi / Marsa nie leży ikonami 2D na dachu hali K-7
   const infra = readFileSync(new URL('../src/ui/infrastructureUI.js', import.meta.url), 'utf8');
   assert.match(infra, /if \(inst\.stationRef\?\.ringPort\) continue;/);

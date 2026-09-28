@@ -42,7 +42,10 @@ const WIZUALIA = [
   'src/3d/fx/fxLights.js',
   'src/3d/hullDamageMap.js',
   'src/3d/asteroids/storm.js',
-  'src/3d/asteroids/miningView.js'
+  'src/3d/asteroids/miningView.js',
+  // zadanie 25a: wygląd stacji pirackiej (panele, okna) — własny strumień FxRandom ze stałym ziarnem (bryła powstaje
+  // na ekranie ładowania: nie zużywa ani Math.random gry, ani wspólnego fxRandom — tests/rozgrzewkaStacji.test.mjs)
+  'src/space/pirateStation/pirateStationFactory.js'
 ];
 
 test('wizualia gry nie wołają Math.random gry (fxRandom — warstwa efektów)', () => {

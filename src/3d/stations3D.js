@@ -9,6 +9,8 @@ import { fxRandom } from './fx/fxRandom.js';
 const loader = new GLTFLoader();
 const templateCache = new Map();
 const stationRecords = new Map();
+// prepareStations3D już było (ekran ładowania) — szablon wczytany później rozgrzewa się od razu.
+let stationsWarmRequested = false;
 
 let stationKeySequence = 0;
 const STATION_KEY_PROP = '__station3DKey';
@@ -46,7 +48,10 @@ function getTemplate(stationId, path) {
     return templateCache.get(path);
   }
 
-  const placeholder = { scene: null, materials: [], error: false, loading: true };
+  // loaded — Promise<boolean> (true = szablon gotowy, false = błąd): na nią czeka prepareStations3D (ekran ładowania).
+  let resolveLoaded = null;
+  const placeholder = { scene: null, materials: [], error: false, loading: true, warmed: false, loaded: null };
+  placeholder.loaded = new Promise((resolve) => { resolveLoaded = resolve; });
   templateCache.set(path, placeholder);
 
   loader.load(
@@ -101,16 +106,78 @@ function getTemplate(stationId, path) {
       placeholder.scene = scene;
       placeholder.materials = [];
       placeholder.loading = false;
+      // wczytany po ekranie ładowania (limit prepareStations3D) — rozgrzewka w tle, zanim stacja wejdzie w kadr
+      if (stationsWarmRequested) warmStationTemplate(placeholder, path);
+      resolveLoaded(true);
     },
     undefined,
     (err) => {
       console.warn('GLTFLoader error loading station:', path, err);
       placeholder.error = true;
       placeholder.loading = false;
+      resolveLoaded(false);
     }
   );
 
   return placeholder;
+}
+
+// ── Rozgrzewka stacji na ekranie ładowania (zadanie 25a) ──────────────────────────────────────────
+// Pierwsza stacja danego modelu w kadrze kompilowała w grze materiały GLB (pass FG i pass mapy cienia — pipeline'y
+// synchronicznie, budowy NodeBuilder), wypiekała rozpad (~115 ms CPU w pierwszej klatce gry) i zlecała rozgrzewkę
+// rozpadu, której pipeline'y proces GPU kompilował jeszcze kilkanaście klatek później (przestoje 120–210 ms).
+// Klony (SkeletonUtils.clone) dzielą z szablonem geometrię i materiały, więc wszystko to robi się RAZ na szablonie:
+// warstwa FG jak klony (klucze rozgrzewki rozpadu zawierają warstwę), wypiek + rozgrzewka rozpadu
+// (Destruction3D.prebake), pass FG szablonu i pass mapy cienia (rejestr Core3D.warmup — flush() ekranu ładowania
+// czeka na pipeline'y; tekstury GLB wgrywa kompilacja wiązań). Potem bryły stacji (initStations3D) — pierwsza
+// klatka gry tylko je ustawia. Szablon nigdy nie trafia do sceny.
+function warmStationTemplate(entry, path) {
+  if (!entry || entry.warmed || !entry.scene) return false;
+  entry.warmed = true;
+  const root = entry.scene;
+  Core3D.enableForeground3D(root);
+  root.updateMatrixWorld(true);
+  Destruction3D.prebake(root);
+  const reg = Core3D.warmup;
+  if (reg && typeof reg.add === 'function') {
+    const name = String(path).split('/').pop();
+    reg.add({ name: `stacje: bryła ${name}`, objects: root, layer: 2 });
+    reg.add({ name: `stacje: cień ${name}`, objects: root, shadow: true });
+  }
+  return true;
+}
+
+/**
+ * Ekran ładowania (startGame, przed Core3D.warmup.flush): szablony GLB modeli używanych przez stacje gry —
+ * czeka na wczytanie (zaczęte w initStations3D przy DOMContentLoaded; limit czasu), rozgrzewa je i składa bryły
+ * stacji. Zwraca liczbę rozgrzanych szablonów.
+ */
+export async function prepareStations3D(stations, { timeoutMs = 10000 } = {}) {
+  if (!Core3D.isInitialized || !Array.isArray(stations)) return 0;
+  stationsWarmRequested = true;
+  const byPath = new Map();
+  for (const station of stations) {
+    if (!station || isPirateStation(station) || station.ringPort) continue;
+    const urls = getModelUrlsForStation(station);
+    const path = urls ? urls.find(Boolean) : null;
+    if (path && !byPath.has(path)) byPath.set(path, getTemplate(station.id, path));
+  }
+  if (!byPath.size) return 0;
+  let timer = 0;
+  await Promise.race([
+    Promise.all([...byPath.values()].map((entry) => entry.loaded)),
+    new Promise((resolve) => { timer = setTimeout(resolve, timeoutMs); })
+  ]);
+  clearTimeout(timer);
+  let warmed = 0;
+  const build = () => {
+    for (const [path, entry] of byPath) if (warmStationTemplate(entry, path)) warmed++;
+    initStations3D(null, stations);
+  };
+  // pomiar CPU wypieku rozpadu i składania brył (wpis rejestru; kompilacje idą kolejką rejestru)
+  if (typeof Core3D.warmup?.run === 'function') Core3D.warmup.run('wypiek stacji: szablony i bryły', build);
+  else build();
+  return warmed;
 }
 
 function cloneTemplate(stationId, path) {

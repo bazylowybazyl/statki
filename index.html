@@ -989,7 +989,7 @@
     window.ShieldFX = ShieldImpactFX;
     window.ShieldFXPresets = SHIELD_IMPACT_PRESETS;
     import { initWorld3D, attachPirateStation3D, updateWorld3D } from "./src/3d/world3d.js";
-    import { destroyStation3D } from "./src/3d/stations3D.js";
+    import { destroyStation3D, prepareStations3D } from "./src/3d/stations3D.js";
     // Pas asteroid (zadanie 21): pola z dema WebGPU w passach Core3D, kolizje z olbrzymami.
     import { createAsteroidBelt } from "./src/3d/asteroids/asteroidBelt.js";
     // Wydobycie (zadanie 21b): ładunki górnicze gracza (magazynek platformy, ceny tymczasowe).
@@ -26078,6 +26078,11 @@
       // ostatniej tarczy od nowa (shield3D.js, prewarmShields3D).
       Core3D.warmup.run('tarcze (shield3D)', () => prewarmShields3D());
       await nextFrame();
+
+      // Stacje (zadanie 25a, stations3D.js): szablony GLB — wypiek i rozgrzewka rozpadu, pass FG i cień, bryły. Przed
+      // pasem: kompilacje stacji idą w wolnych chwilach rejestru, gdy strona czeka na pipeline'y pasa (flush niżej — reszta).
+      setLoadingProgress(71, 'Stacje');
+      await prepareStations3D(stations);
 
       // Pas asteroid (zadanie 21): cień pól całego układu (~1 s — potem żadnego liczenia
       // w locie) i start GPU pasa (bank kształtów, szumy, materiały, rozgrzewka pipeline'ów).
