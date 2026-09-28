@@ -25,6 +25,7 @@ import { join, resolve, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
+import { closeChrome } from './rdzen-cdp.js';
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((acc, a, i, all) => {
   if (a.startsWith('--')) acc.push([a.slice(2), all[i + 1] && !all[i + 1].startsWith('--') ? all[i + 1] : '1']);
@@ -114,6 +115,10 @@ async function probe(opts) {
   api.renderFrames(4);
   api.zoomModel(opts.hull, opts.zoom, opts.index || 0);
   api.renderFrames(4);
+  // WebGPU (port, zadanie 15): pipeline'y kompilują się asynchronicznie przy pierwszym
+  // rysunku, a pętla synchroniczna nie oddaje wątku — kilka klatek z oddaniem wątku,
+  // zanim model i cień wejdą do pomiaru.
+  for (let i = 0; i < 8; i++) { api.renderFrames(1); await new Promise((r) => setTimeout(r, 50)); }
   const hidden = [];
   Core3D.scene.traverse((o) => {
     const m = o.material;
@@ -123,6 +128,9 @@ async function probe(opts) {
       hidden.push(m);
     }
   });
+  // colorWrite to inny pipeline WebGPU (maska zapisu koloru) — też asynchronicznie;
+  // bez niego kadłub nie zapisałby głębi pod cień modelu.
+  for (let i = 0; i < 8; i++) { api.renderFrames(1); await new Promise((r) => setTimeout(r, 50)); }
   const c = document.getElementById('c');
   const g = c.getContext('2d', { willReadFrequently: true });
   const RW = 360;
@@ -133,22 +141,36 @@ async function probe(opts) {
     for (let i = 0, j = 0; j < L.length; i += 4, j++) L[j] = (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) * d[i + 3] / 255;
     return L;
   };
+  // Port WebGPU: macierz instancji InstancedMesh ponad 1024 instancje (okna i lampy
+  // modelu, atrybut) three wysyła raz na klatkę rAF (InstanceNode, updateType FRAME) —
+  // w serii renderów w jednym zadaniu JS okna zostałyby przy starym początku układu.
+  // Przed każdym renderem pomiaru nowa klatka renderera; pętla dema stoi (freeze).
+  const nextFrame = async () => {
+    const info = Core3D.renderer?.info;
+    const f0 = info?.frame;
+    for (let i = 0; i < 30; i++) {
+      await new Promise((ok) => requestAnimationFrame(() => ok()));
+      if (!info || info.frame !== f0) return;
+    }
+  };
+  api.freeze(true);
   const base = { x: api.cam.x, y: api.cam.y };
-  api.model3d(false); api.renderFrames(1);
+  api.model3d(false); await nextFrame(); api.renderFrames(1);
   const Loff = lumOf(g.getImageData(R.x, R.y, RW, RH).data);
-  api.model3d(true); api.renderFrames(2);
+  api.model3d(true); await nextFrame(); api.renderFrames(2);
   const Lon = lumOf(g.getImageData(R.x, R.y, RW, RH).data);
   const frames = [];
   let firstImg = null;
   for (let k = 0; k < opts.frames; k++) {
     api.cam.x = base.x + k / opts.zoom;
     api.cam.y = base.y + k / opts.zoom;
-    api.renderFrames(1);
+    await nextFrame(); api.renderFrames(1);
     const img = g.getImageData(R.x - k, R.y - k, RW, RH);
     if (!firstImg) firstImg = img;
     frames.push(lumOf(img.data));
   }
   for (const m of hidden) m.colorWrite = true;
+  api.freeze(false);
   Core3D.setPerfToggles(saved);
   if (sun && sun0) { sun.x = sun0.x; sun.y = sun0.y; }
 
@@ -272,8 +294,9 @@ const server = await createServer({ root: repo, logLevel: 'error', server: { por
 await server.listen();
 const base = `http://localhost:${server.httpServer.address().port}`;
 const dbgPort = 9400 + Math.floor(Math.random() * 400);
+const profile = join(tmpdir(), 'mostki3d-drzenie-' + Date.now());
 const chrome = spawn(CHROME, [
-  '--headless=new', `--remote-debugging-port=${dbgPort}`, `--user-data-dir=${join(tmpdir(), 'mostki3d-drzenie-' + Date.now())}`,
+  '--headless=new', `--remote-debugging-port=${dbgPort}`, `--user-data-dir=${profile}`,
   '--use-angle=d3d11', '--enable-gpu', '--ignore-gpu-blocklist', '--enable-webgl',
   '--disable-gpu-vsync', '--hide-scrollbars', `--window-size=${W},${H}`, 'about:blank'
 ], { stdio: 'ignore' });
@@ -319,6 +342,6 @@ try {
   console.log(`logi błędów: ${logs.length} → ${join(outDir, 'drzenie.json')}`);
   for (const l of logs.slice(0, 12)) console.log('  ', l);
   try { ws?.close(); } catch { /* już zamknięty */ }
-  chrome.kill();
+  await closeChrome(chrome, null, profile); // usuwa też profil z %TEMP%
   await server.close();
 }

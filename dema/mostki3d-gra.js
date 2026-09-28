@@ -13,6 +13,7 @@ import { join, resolve, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
+import { closeChrome } from './rdzen-cdp.js';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const outDir = join(repo, '.tmp/mostki3d');
@@ -51,7 +52,8 @@ const server = await createServer({ root: repo, logLevel: 'error', server: { por
 await server.listen();
 const base = `http://localhost:${server.httpServer.address().port}`;
 const dbgPort = 9400 + Math.floor(Math.random() * 400);
-const chrome = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${dbgPort}`, `--user-data-dir=${join(tmpdir(), 'gra-mostki3d-' + Date.now())}`,
+const profile = join(tmpdir(), 'gra-mostki3d-' + Date.now());
+const chrome = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${dbgPort}`, `--user-data-dir=${profile}`,
   '--use-angle=d3d11', '--enable-gpu', '--ignore-gpu-blocklist', '--enable-webgl', '--autoplay-policy=no-user-gesture-required',
   '--disable-gpu-vsync', '--hide-scrollbars', `--window-size=${W},${H}`, 'about:blank'], { stdio: 'ignore' });
 const logs = [];
@@ -170,6 +172,6 @@ try {
   console.log('logi błędów:', logs.length);
   for (const l of logs.slice(0, 12)) console.log('  ', l);
   try { ws?.close(); } catch { /* */ }
-  chrome.kill();
+  await closeChrome(chrome, null, profile); // usuwa też profil z %TEMP%
   await server.close();
 }

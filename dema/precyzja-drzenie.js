@@ -47,6 +47,7 @@ import { join, resolve, dirname, posix } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
+import { closeChrome } from './rdzen-cdp.js';
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((acc, a, i, all) => {
   if (a.startsWith('--')) acc.push([a.slice(2), all[i + 1] && !all[i + 1].startsWith('--') ? all[i + 1] : '1']);
@@ -300,7 +301,9 @@ async function probe(opts, analyze) {
   // modułu, ten sam wygląd).
   const vs = (o) => (typeof o.material?.vertexShader === 'string' ? o.material.vertexShader : '');
   const MATCH = {
-    lights: (o) => o.isInstancedMesh && o.name !== 'BRIDGE_WINDOWS' && !!o.material?.uniforms?.uTime && !!o.material?.uniforms?.uCoreGain && vs(o).includes('attribute vec3 aParams'),
+    // Port WebGPU (zadanie 15): billboardy świateł w TSL — bez tekstu GLSL, mesh ma nazwę.
+    lights: (o) => o.isInstancedMesh && (o.name === 'SHIP_NAV_LIGHTS'
+      || (o.name !== 'BRIDGE_WINDOWS' && !!o.material?.uniforms?.uTime && !!o.material?.uniforms?.uCoreGain && vs(o).includes('attribute vec3 aParams'))),
     windows: (o) => o.name === 'BRIDGE_WINDOWS',
     exhaust: (o) => o.isMesh && vs(o).includes('attribute vec2 aPos') && (vs(o).includes('attribute vec2 aFlame') || (!!o.material?.uniforms?.uMap && vs(o).includes('attribute float aOpacity') && !vs(o).includes('aRot'))),
     impostor: (o) => o.isMesh && vs(o).includes('attribute vec2 aPos') && vs(o).includes('attribute float aRot') && vs(o).includes('attribute float aOpacity') && !vs(o).includes('aFlame'),
@@ -369,6 +372,11 @@ async function probe(opts, analyze) {
   api.renderFrames(2);            // kamera dema jedzie za przesuniętym celem
   api.cam.x = t.x; api.cam.y = t.y; api.cam.zoom = opts.zoom;
   api.renderFrames(150);          // rozbieg: wygładzanie ciągu dysz (lerp per klatka)
+  // WebGPU kompiluje pipeline'y asynchronicznie przy pierwszym rysunku (osłona Core3D
+  // pomija rysunek do gotowości) — pętla synchroniczna nie oddaje wątku, więc moduł
+  // pierwszy raz widoczny w pomiarze (np. szczeliny okien po model3d(false)) nie
+  // narysowałby się wcale. Kilka klatek z oddaniem wątku.
+  for (let i = 0; i < 8; i++) { api.renderFrames(1); await new Promise((r) => setTimeout(r, 50)); }
 
   let center = null;
   let note = '';
@@ -541,10 +549,26 @@ async function probe(opts, analyze) {
     restore();
     return { summary: { error: 'brak zawartości modułu', meshes: target.length, instances, note } };
   }
+  // Port WebGPU: macierz instancji InstancedMesh ponad 1024 instancje (atrybut) three
+  // wysyła raz na klatkę rAF (InstanceNode, updateType FRAME), więc w serii renderów
+  // w jednym zadaniu JS rysują się dane z pierwszego — szczeliny okien stały przy
+  // starym początku układu (sceneOrigin.js) i wypadały z kadru (maska 0). Kamera
+  // i początek danych zmieniają się tu co render: przed każdym nowa klatka
+  // renderera, a pętla dema stoi (freeze), żeby między nimi nic nie rysowało.
+  const nextFrame = async () => {
+    const info = Core3D.renderer?.info;
+    const f0 = info?.frame;
+    for (let i = 0; i < 30; i++) {
+      await new Promise((ok) => requestAnimationFrame(() => ok()));
+      if (!info || info.frame !== f0) return;
+    }
+  };
+  api.freeze(true);
+  cleanup.push(() => api.freeze(false));
   api.cam.x = center[0];
   api.cam.y = center[1];
   api.cam.zoom = opts.zoom;
-  api.renderFrames(2);
+  await nextFrame(); api.renderFrames(2);
 
   const c = document.getElementById('c');
   const g = c.getContext('2d', { willReadFrequently: true });
@@ -555,7 +579,7 @@ async function probe(opts, analyze) {
     return L;
   };
   const base = { x: api.cam.x, y: api.cam.y };
-  api.renderFrames(1);
+  await nextFrame(); api.renderFrames(1);
   // Gdzie siedzi mesh modułu (po poprawce: przy kamerze; przed: w zerze).
   const meshPos = [+target[0].position.x.toFixed(2), +target[0].position.y.toFixed(2)];
   const pos64 = Fx?.glow?.p?.f?.pos instanceof Float64Array;
@@ -566,9 +590,9 @@ async function probe(opts, analyze) {
   for (let k = 0; k < opts.frames; k++) {
     api.cam.x = base.x + k / opts.zoom;
     api.cam.y = base.y + k / opts.zoom;
-    window.__precyzjaHide.off = true; api.renderFrames(1);
+    window.__precyzjaHide.off = true; await nextFrame(); api.renderFrames(1);
     const Loff = lumOf(g.getImageData(R.x - k, R.y - k, RW, RH).data);
-    window.__precyzjaHide.off = false; api.renderFrames(1);
+    window.__precyzjaHide.off = false; await nextFrame(); api.renderFrames(1);
     const img = g.getImageData(R.x - k, R.y - k, RW, RH);
     const Lk = lumOf(img.data);
     if (!firstImg) firstImg = img;
@@ -676,8 +700,9 @@ async function probeSparks(opts, analyze) {
 
 // --- przebieg -----------------------------------------------------------------
 const dbgPort = 9400 + Math.floor(Math.random() * 400);
+const profile = join(tmpdir(), 'precyzja-drzenie-' + Date.now());
 const chrome = spawn(CHROME, [
-  '--headless=new', `--remote-debugging-port=${dbgPort}`, `--user-data-dir=${join(tmpdir(), 'precyzja-drzenie-' + Date.now())}`,
+  '--headless=new', `--remote-debugging-port=${dbgPort}`, `--user-data-dir=${profile}`,
   '--use-angle=d3d11', '--enable-gpu', '--ignore-gpu-blocklist', '--enable-webgl',
   '--disable-gpu-vsync', '--hide-scrollbars', `--window-size=${W},${H}`, 'about:blank'
 ], { stdio: 'ignore' });
@@ -766,5 +791,5 @@ try {
   console.log(`logi błędów: ${logs.length} → ${join(outDir, 'drzenie.json')}`);
   for (const l of logs.slice(0, 12)) console.log('  ', l);
   try { ws?.close(); } catch { /* już zamknięty */ }
-  chrome.kill();
+  await closeChrome(chrome, null, profile); // usuwa też profil z %TEMP%
 }
