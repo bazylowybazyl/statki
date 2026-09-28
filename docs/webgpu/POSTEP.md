@@ -60,7 +60,8 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 | 20 | Koniec overlaya: wybuch reaktora w Core3D, usunięcie drugiego renderera | 17, 18, 19 | 13–16 | xhigh | czeka | | jeden renderer, jeden bloom |
 | 21 | Asteroidy z dema `asteroidy-webgpu` + kolizje z olbrzymami | 12, 04, 05 (+ commit dema) | 13–20 | max | w toku (podagent, worktree `statki-wt/21`; demo zacommitowane: 84198d3) | | zielone światło użytkownika; stare pole (zderzenia z małymi skałami, niszczenie, łup) znika — do decyzji użytkownika |
 | 21b | Fizyka wydobycia asteroid w grze (drony, piła, ładunki, urobek) — logika i demo od sesji „Asteroid lighting bug demo” | 21, 12 (+ commit dema) | 22–23 | max | czeka (logika i demo zacommitowane: 84198d3) | | propozycja sesji fizyki skał; otwarte: kolizje odłamów, wpływ wybuchu, udźwig, ceny |
-| 22 | Warp „Nurt” z dema `warp-webgpu` (iteracja 2) | 12, 13 (+ commit dema) | 14–21 | max | w toku (podagent, worktree `statki-wt/22`; demo zacommitowane: 68cc081; otwarte pytania dema → wariant czysto wizualny) | | „ready do wgrania, jak skończy sesję”; wygląd iteracji 2 jeszcze nieoceniony |
+| 22 | Warp „Nurt” z dema `warp-webgpu` (iteracja 2) | 12, 13 (+ commit dema) | 14–21 | max | zrobione, scalone (e9f4285); demo: 68cc081 | 97f97b2, de2ed96, 3e8c98d, 83b3735, 4b08a27 (scalenia `main` 3b93795, f43d903) | ośrodek 1 mln drobin w compute, poza warpem 0 kroków i 0 draw calli; stara soczewka i API usunięte; wygląd iteracji 2 do oceny użytkownika | | „ready do wgrania, jak skończy sesję”; wygląd iteracji 2 jeszcze nieoceniony |
+| 22b | Kop kamery przy skoku warpa i impuls zoomu przy wyjściu (z dema „Nurt”, w `cameraRig`) | 22 | 11, 18–21 | xhigh | w toku (podagent, worktree `statki-wt/22b`) | | uwaga użytkownika do iteracji 1: wejście i wyjście „suche, bez kopa” |
 | 23 | Wydajność i precyzja: A/B z tagiem, drżenie, kompilacja, pamięć | 04–22 | nie | max | czeka | | koszt portu osobno od kosztu nowych efektów |
 | 24 | Sprzątanie i domknięcie portu | 23 | nie | xhigh | czeka | | decyzje PLAN §12 p. 1, 3 |
 
@@ -79,7 +80,7 @@ Stan zamierzony na `main` w trakcie portu — nie „naprawiać” poza zadaniem
 | 01 | 20 | Overlay efektów na własnym `WebGLRenderer` (jedyny drugi renderer; stare efekty overlaya działają bez zamienników) | 17–19 zabierają efekty, 20 usuwa overlay |
 | 01 | 17–19 | Pociski i błyski ze starego `weapon3DSystem` (materiały wbudowane — rysują się; cyjanowe głowy pocisków nie rysują się na WebGPU), smugi `slugTrail3D` (zamiennik); dym i iskry Fx3D — ZAMKNIĘTE w 12-B | broń — ZAMKNIĘTE w 17 (753700e); rakiety — 19 |
 | 17 | 23 | Sceny `wraki` i `warp` rozjeżdżają się ze stanem bazy (46%): wizualia losują z `Math.random` gry (pierwsza różnica w `mainExhaust3D.spawnSpark` — liczba iskier zależy od zajętości banku Fx3D, którego broń już nie używa); rozgrywka sama bez zmian | 23 (wizualia na `fxRandom`, nowa baza `wraki` / `warp` / `galeria-*` z `main`) |
-| 01 | 22 | Soczewka i fale warpa usunięte (API jako no-op), skok działa bez efektu zgięcia | 22 (nowy warp) |
+| 01 | 22 | Soczewka i fale warpa usunięte (API jako no-op), skok działa bez efektu zgięcia | 22 — ZAMKNIĘTE (e9f4285) |
 | Faza 0 | 21 | Stare pole asteroid i tło pasa wyłączone (`?asteroidyStare`) | 21 (nowe asteroidy) |
 
 ## Zebrane dla zadań 11, 23 i 24 (z raportów podagentów)
@@ -121,7 +122,9 @@ klonach kawałków — nigdy niezwalniane, 16); skrypty dem z własnym startem C
 
 **Decyzje wyglądu do potwierdzenia przez użytkownika:** odłamki paneli czarne jak w WebGL (`PANEL_SHARD_BASE_COLOR`, 16);
 `planeta-cien` bez kropkowanego łuku poświaty z bazy WebGL (05); fala uderzeniowa — połowa kadru w snapshocie i cyjanowy
-obrys (03 → 19); warp: wariant czysto wizualny na 3 otwarte pytania dema (22).
+obrys (03 → 19); warp (22): wariant czysto wizualny na 3 otwarte pytania dema (wyrzut bez obrażeń, nić zwiastuna bez
+radaru, punkt wyjścia z rozgrywki), **soczewka świata z dema (przeloty obok planet) i „kop” kamery przy skoku NIE weszły**
+(kamerą rządzi `cameraRig` — został wstrząs), ładowanie w grze 0,8 s zamiast 3 s w demie (płaty wzmocnione).
 
 ## Środowisko (Krok 2, 2026-09-27)
 
@@ -630,3 +633,26 @@ Todo (2): „PORT poprawka 1 / 3 (TODO integracji)” w `tests/shipCore.test.mjs
   dla 18-C: `ctx.stamp` w `WeaponFx._createCtx` pusty (do wpięcia w mapę ran); dla 19: flaga warstwy zniekształceń łączona
   przez OR (dziś ostatni zapis wygrywa), przejąć rakiety z `bullets`. Inwentarz z HEAD 753700e: port 10 plików z GLSL, 12
   materiałów, 1794 linie. Testy: 1566 / **6** porażek bazowych (`weaponAim:144` zniknęła) / 3 todo; `npm test` OK.
+- **Zadanie 22 scalone do `main`** (97f97b2, de2ed96, 3e8c98d, 83b3735, 4b08a27; scalenia `main` 3b93795, f43d903; scalenie
+  e9f4285): warp „Nurt” w grze (`src/3d/warp/`, sterownik `WarpNurt` w `warpNurt.js`): ośrodek (`medium.js`, 1 mln drobin
+  w compute, krok 1/240 s, pass `warp` na warstwie 8; włącza się tylko przy bańce / szczelinie blisko kadru, zasypia 4 s
+  po ostatniej, po wybudzeniu i skoku kamery zaczyna od nowa, przy oddalaniu dosypuje drobiny na brzegi), skok gracza na
+  automacie `GameState.warp` (`player.js`), przyloty i odloty NPC (`arrivals.js`; oś odlotu = czysta funkcja
+  `createWarpDeparture` / `sampleWarpDeparture` w `warpDrive.js`, 1:1 z dema), szczeliny / błyski / smugi sylwetki
+  (`sprites.js`), płaskie smugi gwiazd i front wyjścia (`stars.js`), zgięcie mgławicy w jej materiale (`skyBend.js`), fale
+  = sama refrakcja, kadłub: odsłanianie / szew / żar brzegu (uniformy per obiekt; żar z mipmapy sprite'a — świeży okręt
+  nie ma jeszcze SDF), plazma WARP z `warpPlume3D`, kolano bloomu (`bloomKnee.js`: dema liczą bloom bez ×3 gry). Usunięte:
+  `warpLens3D`, `warpWorldLens`, `warpFx3D`, `warpLensPass`, no-opowe API warpa w Core3D, stare `dema/warp-demo.*` (zostają
+  na tagu), dawne efekty 2D warpa w `index.html`, testy `warpLens3D` / `warpSpace` / `warpWorldLens` (−364 linie GLSL; grupa
+  „warp” inwentarza = 0). Koszt (RTX 5080, 1080p): poza warpem 0 kroków compute i 0 draw calli (`passes.warp` = 0 w 41
+  scenach bez warpa); w locie rysowanie ośrodka ~0,57 ms + compute 0,24 ms (60 Hz) / ~0,1 ms (144 Hz) + reszta ~0,1 ms —
+  klatka GPU 1,01 ms (poza warpem 0,32 ms); 5 s po wyjściu wraca do 0,33 ms. Harness: 50 scen, 0 błędów, sceny bez warpa
+  identyczne z przebiegiem po 17 (lub w szumie); zrzuty gry obok dema (9 chwil: ładowanie, skok, lot, wyjście, po wyjściu,
+  zwiastun, przylot, ładowanie odlotu, odlot) w `.tmp/webgpu/zadania/22/obok-dema/` — **do oceny użytkownika**. Decyzje:
+  soczewka świata i kop kamery nie weszły (lista decyzji wyglądu); przyloty w rozgrywce z wyrzutem „od razu” (gra zna okręt
+  dopiero przy spawnie — pełna oś ze zwiastunem w API `planArrival` / `planFleetArrival`); odloty = gotowe API (gra nie
+  odsyła okrętów); ładowanie 0,8 s w grze (demo 3 s) — naprężenie ×3,75, wzbudzenie ×3,75^0,6. Otwarte → 23: krok ośrodka
+  przy fizyce 120 Hz niesprawdzony; split — efekty „Nurtu” tylko dla gracza 1. → 24: martwy panel „Warp Wormhole VFX”
+  (`devTools.js`), wpis `warpLens` w `liveDebug.js`, reguła `warp` w `inwentarz.mjs`, wzmianka w `planety-gra.mjs`.
+  Inwentarz z HEAD e9f4285: port 10 plików z GLSL, 12 materiałów, 1794 linie; razem 28 / 51 / 5865. Testy: 1544 / 6
+  porażek bazowych / 3 todo; `npm test` OK.

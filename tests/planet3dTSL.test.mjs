@@ -228,10 +228,13 @@ test('gwiazdy: kwadraty instancjonowane z jednym przeplecionym buforem danych, k
   // Zawinięcie wzoru jak GLSL mod (x − y·floor(x/y)), nie reszta z dzielenia WGSL.
   assert.match(vertex, /fn tsl_mod_float\( x : f32, y : f32 \) -> f32 \{ return x - y \* floor\( x \/ y \); \}/);
   // Dane gwiazdy stałe na kwadracie: varyingi płaskie.
-  for (const name of ['vStarBrightness', 'vStarColor', 'vStarStretch', 'vStarScreenSize', 'vStarPlanetMask']) {
+  for (const name of ['vStarBrightness', 'vStarColor', 'vStarPlanetMask']) {
     assert.match(fragment, new RegExp(`@interpolate\\( flat, either \\) ${name}`), name);
   }
   assert.ok(uniformBuffers(vertex) <= 4 && uniformBuffers(fragment) <= 4);
-  // discard na końcu, po próbce tekstury (jednolity przepływ dla pochodnych)
-  assert.ok(fragment.indexOf('textureSample(') < fragment.indexOf('discard'), 'próbka przed discard');
+  // Punkty: discard po próbce tekstury (jednolity przepływ dla pochodnych). Smugi warpa (zadanie
+  // 22) — profil analityczny, bez próbki; obie gałęzie po jednolitym warunku z uniformu warpa.
+  const sample = fragment.indexOf('textureSample(');
+  assert.ok(sample >= 0 && fragment.indexOf('discard', sample) > sample, 'próbka przed discard');
+  for (const name of ['vStarAlong', 'vStarSide', 'vStarLen', 'vStarWidth', 'vStarSt']) assert.match(vertex, new RegExp(name), name);
 });
