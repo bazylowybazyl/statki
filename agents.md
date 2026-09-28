@@ -65,7 +65,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   Core3D osłania `backend.draw` (`_guardPendingPipelines`: taki rysunek czeka klatkę, dwie). `renderer.info`: draw calle
   w `render.drawCalls` (reset raz na klatkę rAF). Zegar GPU: znaczniki czasu (`trackTimestamp`), jedno zapytanie w
   locie → `Core3D.gpuFrameMs`; mapa `timestamps` puli three nie jest czyszczona przez three — Core3D czyści ją po wyniku.
-- **Pułapki TSL z zadania 04** (reszta — w notce „TSL — pułapki sprawdzone w zadaniach 02, 06–08” niżej): **najwyżej 8
+- **Pułapki TSL z zadania 04** (reszta — w notce „TSL — pułapki sprawdzone w zadaniach 02, 06–09” niżej): **najwyżej 8
   buforów wierzchołków na pipeline** (`maxVertexBuffers` = 8 także w adapterze RTX 5080) — każdy nieprzeplatany atrybut
   to bufor, InstancedMesh dokłada macierz instancji (+ normalne); stałe atrybuty przeplataj, a materiał liczący pozycję
   sam (`vertexNode`) na InstancedMesh nadpisuje `setupPosition` (wzór `HullDebrisNodeMaterial`). three połyka błąd
@@ -133,7 +133,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   tryb bierze się z bazy, patrz nagłówek `zrzuty.mjs`); haki `?dev`: `window.DevScene.teleport / syncCamera /
   preloadHullSprites / startSplit`. Testy: `node --test "tests/*.test.mjs"` (wzorzec w cudzysłowie — `tests/` na Node 22
   nie działa).
-- **TSL — pułapki sprawdzone w zadaniach 02, 06–08:** (1) funkcja z `setLayout` musi być CZYSTA — three buforuje jej kod globalnie
+- **TSL — pułapki sprawdzone w zadaniach 02, 06–09:** (1) funkcja z `setLayout` musi być CZYSTA — three buforuje jej kod globalnie
   (klasa buildera → węzeł `Fn`), więc uniform / tekstura złapane w domknięciu wskazują w drugim materiale cudzy slot;
   uniformy jako parametry funkcji albo funkcja wklejana (bez layoutu) — wzór `HaloFn` / `haloRingTSL(u)` w
   `src/3d/haloRing/haloRingTSL.js`; (2) najwyżej **12 buforów uniformów na etap** (`maxUniformBuffersPerShaderStage`,
@@ -160,7 +160,14 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   `s / 23 + l · 0,37` — dwa; wariant wybieraj POMIAREM (wiersz parzystości GLSL ↔ TSL z dokładnym wyrażeniem to wskazówka,
   rozstrzyga porównanie zrzutów z bazą), nie z góry przez `haloFusedMulAddInt`; (13) ShaderMaterial w bazie miał
   `forceSinglePass = true` — przenosząc przezroczysty `DoubleSide` na NodeMaterial, ustaw `forceSinglePass: true` (inaczej
-  three rysuje tył i przód osobno).
+  three rysuje tył i przód osobno); (14) `a·b + c` z jednym zaokrągleniem dla DOWOLNEGO `a` (zadanie 09): `haloFma(a, b, c)`
+  / `haloFmaV2` (`haloRingTSL.js`) = wbudowane `fma()` WGSL (Tint → HLSL `mad` → DXC — ten sam rozkaz, na który FXC składał
+  GLSL w bazie; na GPU bit w bit, `ring-tsl-parzystosc.mjs` wiersze `*FmaWgsl`); TSL r183 nie ma `fma`, stąd `wgslFn`
+  (czysta funkcja — uzasadniony wyjątek). Kolejność argumentów = który iloczyn baza scaliła — z pomiaru; (15) pochodne
+  (`fwidth`) licz PRZED gałęziami: FXC w bazie spłaszczał gałęzie z pochodnymi, a w WGSL pochodna w rozbieżnej gałęzi jest
+  nieokreślona; (16) wczesne `return` w `vertexNode` nie istnieje (main zwraca strukturę varyingów) — zagnieżdżone `If`
+  z domyślnym wierzchołkiem `vec4(2, 2, 2, 1)` (poza bryłą obcinania) zachowują oszczędność dawnych `collapse(); return;`;
+  `cond.select(a, b)` TSL i tak buduje jako `if / else`.
 
 ---
 
@@ -186,7 +193,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 - Trzy RÓŻNE ringi (decyzja użytkownika 2026-09-27): Ziemia = silnik Halo (`createHaloRing`), Mars = ECUMENE, Jowisz = ring Fable — z dem `orbital_ring_demo(_2).html` w skali ×3 (`createArchRing`, `src/3d/haloRing/arch/`). Archetyp i geometria są w profilu (`haloRingProfiles.js`), a `createHaloRingLayout` rozdaje je kolizjom, ruchowi v2 i stacji-portowi. Hala K-7 i zatoki (stanowiska, kolizje) są wspólne, różni je tylko ubiór. Zmiana ringu Ziemi nie dotyka Marsa i Jowisza, i odwrotnie. Opis: `docs/PORT-halo-ring.md` § „Ringi-archetypy”.
 - Ring nie udaje życia (`docs/BRIEF-ring-halo.md` §1): bez ruchu zastępczego, zaparkowanych NPC i świateł aut — statki tylko z systemu ruchu.
 - Ring na WebGPU (zadanie 06): biblioteka TSL `src/3d/haloRing/haloRingTSL.js` (odpowiednik `haloRingGLSL.js`, który
-  zostaje tylko dla materiałów megastruktury, miasta, K-7 i archetypów do ich zadań 09–10), uniformy ringu
+  zostaje tylko dla K-7 i archetypów (10), tła menu (11) i narzędzia parzystości), uniformy ringu
   w jednym bloku (`createHaloUniforms`, klucze i `.value` bez zmian), mapy świata i detal pieczone w TSL. **Budowa ringu
   jest asynchroniczna:** `createHaloRing` wraca od razu (układ i uniformy gotowe), bryły i mapa CPU dopiero po
   `await ring.ready` (compileAsync bake'u na prawdziwych celach → bake → odczyt CPU → plan budowli i kopuł z mapy →
@@ -200,7 +207,8 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   `haloRingSurfaceTSL(u, su)`). Jedyny wariant kompilacji to kroki powietrza (`quality.airSteps`), reszta jakości w
   uniformach. Zestaw przemysłowy: `haloIndKitTSL(u)` (`haloRingIndustryKit.js`), liczby z jednej definicji `kitParts` —
   na liczbach = bliźniak JS `indKitPart` bit w bit (`tests/haloRingTerrainTSL.test.mjs`), na GPU zero rozbieżnych decyzji
-  (parzystość). `HALO_GLSL_SURFACE` jest w `haloRingGLSL.js` do 09 (`CLOUDCOVER` usunięte w 08), `HALO_GLSL_INDKIT` dla miasta do 09.
+  (parzystość). `HALO_GLSL_SURFACE` usunięte w 09 (`CLOUDCOVER` w 08), `HALO_GLSL_INDKIT` leży w `haloRingGLSL.js`
+  tylko dla narzędzia parzystości.
   Zrzuty samego terenu dema: `scripts/halo-ring-shots.mjs --teren [--bez-otoczenia]` (ten sam skrypt w worktree z tagu).
 - Konstrukcja i atmosfera w TSL (zadanie 08): `HaloStructure` = NodeMaterial z `makeHaloStructureNodes`
   (`haloRingStructure.js`, 1:1 z dawnym GLSL); wierzchołek pasów obrotowych `haloStripVertexTSL` dzielą konstrukcja, chmury
@@ -214,6 +222,17 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   z mieszaniem kolor + cel · alfa; warianty z jakości (kroki powietrza, oktawy chmur). Zrzuty części ringu: dema
   `scripts/halo-ring-shots.mjs --czesci terrain,structure,structureTop,clouds,shell`, gry `zrzuty.mjs --czesci-ringu`
   (sceny `ring-dach`, `ring-dach-z01`, `ring-habitat` — dach w FG i habitat z dala od portu).
+- Megastruktura i miasto w TSL (zadanie 09): bryły dachu (FG) i doków, szkło kopuł, pociągi, światła pozycyjne
+  (`haloRingMegastructure.js`) oraz ogrody, przemysł i drzewa (`haloRingCity.js`) = NodeMaterial 1:1 z dawnym GLSL;
+  fragment brył `makeHaloPrimFragment` wspólny (miasto: wariant ścian z położenia lokalnego). Dawne `defines` to warianty
+  budowane raz (dach nad płaszczyzną gry z `haloFgClip` / światła z `haloFgVisibility` vs doki bez), draw calle bez zmian.
+  Wczesne wyjścia wierzchołków (dawne `collapse(); return;`) = zagnieżdżone gałęzie z domyślnym wierzchołkiem poza bryłą
+  obcinania (mapy czyta tylko żywy wierzchołek — drzewo po mapie A, jak dawniej). Ziarna brył i hasze okien / paneli /
+  fasad megabudowli liczą `a·b + c` przez `haloFma` (fma WGSL — ten sam rozkaz mad, który składał FXC w bazie):
+  bez tego 28% brył świeciło innymi oknami (wzór losowany na nowo). Pozostałe różnice z bazą to piksele krawędzi i
+  aliasing okien na budynkach 1–2 px (miasto z daleka, ściany pod ostrym kątem) — ten sam wzór, inne próbki.
+  Zrzuty samych brył: dema `--czesci mega,city`, gry `zrzuty.mjs --czesci-ringu HaloMega_detail_box,…,HaloTrees`;
+  baza dema z kopii tagu: `halo-ring-shots.mjs --repo <drzewo tagu>`.
 
 ### Menu główne i jego tło 3D
 - Tło menu przed startem gry = Ziemia z ringiem w kamerze kinowej: `MenuBackdrop3D` (`src/3d/menuBackdrop3D.js`). Ring to ring GRY wypożyczony przez `haloRings.showcaseRing('earth')` (mapy pieką się już w menu) i oddany `releaseShowcase` w `stopMenuBackdrop()` tuż przed pierwszą klatką gry (`startGame`). Nie twórz drugiego ringu dla menu.
