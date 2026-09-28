@@ -68,6 +68,11 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   Core3D osłania `backend.draw` (`_guardPendingPipelines`: taki rysunek czeka klatkę, dwie). `renderer.info`: draw calle
   w `render.drawCalls` (reset raz na klatkę rAF). Zegar GPU: znaczniki czasu (`trackTimestamp`), jedno zapytanie w
   locie → `Core3D.gpuFrameMs`; mapa `timestamps` puli three nie jest czyszczona przez three — Core3D czyści ją po wyniku.
+  **Pierwszy rysunek materiału bez rozgrzewki = przestój:** zwykły render tworzy pipeline SYNCHRONICZNIE
+  (`createRenderPipeline`) — proces GPU kompiluje shader, a strona staje na nim przy najbliższym zapisie do kolejki
+  (w profilu wygląda to jak wielosekundowy `writeBuffer`: pierwsza klatka ringu w menu stała 4–5,6 s); `compileAsync`
+  robi to w tle (cały ring Marsa: 0,14 s CPU, klatki bez przestoju). Nowy obiekt z nowym materiałem → rejestr
+  rozgrzewki `Core3D.warmup` (§ „Rozgrzewka pipeline'ów” niżej, przy menu).
 - **Pułapki TSL z zadania 04** (reszta — w notce „TSL — pułapki sprawdzone w zadaniach 02, 06–09” niżej): **najwyżej 8
   buforów wierzchołków na pipeline** (`maxVertexBuffers` = 8 także w adapterze RTX 5080) — każdy nieprzeplatany atrybut
   to bufor, InstancedMesh dokłada macierz instancji (+ normalne); stałe atrybuty przeplataj, a materiał liczący pozycję
@@ -221,6 +226,17 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   (26) `dFdy` TSL generuje `-dpdy` (oś y jak w GL) — dla `textureGrad` bez znaczenia, w formułach ze znakiem pamiętaj;
   (27) wiersz parzystości GLSL ↔ TSL buduj na wejściach jak w materiale: FXC zwija stałe (`(x − 200) + 3,7` → `x − 196,3`),
   więc syntetyczne przesunięcie potrafi zmienić zaokrąglenia (kratka paneli 57% zamiast 100%).
+- **Pułapki r183 z zadania 11 (tło menu, rozgrzewka):** (28) tekstura z `minFilter = LinearFilter` i domyślnym
+  `generateMipmaps = true`: WebGL próbkuje SAM poziom 0 (dwuliniowo), a WebGPU three i tak generuje mipmapy
+  (`Textures.needsMipmaps` patrzy tylko na `generateMipmaps`) i daje samplerowi `mipmapFilter: 'linear'` — próbka z
+  pochodnymi jest trójliniowa (mgławica w tle menu: rozmyte włókna, 0,2% kadru > 8/255); parzystość z bazą —
+  `texture(…).level(0)` w materiale (albo `generateMipmaps = false` u właściciela tekstury); (29) zmienna TSL (`.toVar()`)
+  powstaje w WGSL w miejscu PIERWSZEGO użycia — pochodne (`dFdx`) policzone „przed” gałęzią, a użyte tylko w niej,
+  lądują w rozbieżnej gałęzi; przed `If` wymusza je jawne przypisanie (`const g = vec2(0).toVar(); g.assign(dFdx(uv))`);
+  (30) `compileAsync` bierze do klucza pipeline'u głębię i szablon RENDERERA (`renderer.depth` / `stencil`), a zwykły
+  render — CELU (`depthBuffer` / `stencilBuffer`): rozgrzewka na celu bez głębi (pieczenie map i detalu ringu, maska
+  słońca, DIST) dawała pipeline z Depth24Plus, a pierwszy rysunek tworzył drugi — synchronicznie. Każde `compileAsync`
+  na celu → `compileAsyncNaCelu(renderer, …)` (`src/3d/rozgrzewka.js`; pilnuje `tests/rozgrzewka.test.mjs`). (31) `compileAsync` woła `updateBefore` węzłów materiału (`_createObjectPipeline`): kompilacja quada postu RYSUJE passy BloomNode (zagnieżdżony render, ich pipeline’y synchronicznie) — dlatego post rozgrzewa się przy urządzeniu, pod kurtyną; nie wyłączać `updateBeforeType` na czas kompilacji — stan budowy zapamiętałby graf bez tego węzła (bloom przestałby się liczyć).
 
 ---
 
@@ -264,12 +280,17 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 - Trzy RÓŻNE ringi (decyzja użytkownika 2026-09-27): Ziemia = silnik Halo (`createHaloRing`), Mars = ECUMENE, Jowisz = ring Fable — z dem `orbital_ring_demo(_2).html` w skali ×3 (`createArchRing`, `src/3d/haloRing/arch/`). Archetyp i geometria są w profilu (`haloRingProfiles.js`), a `createHaloRingLayout` rozdaje je kolizjom, ruchowi v2 i stacji-portowi. Hala K-7 i zatoki (stanowiska, kolizje) są wspólne, różni je tylko ubiór. Zmiana ringu Ziemi nie dotyka Marsa i Jowisza, i odwrotnie. Opis: `docs/PORT-halo-ring.md` § „Ringi-archetypy”.
 - Ring nie udaje życia (`docs/BRIEF-ring-halo.md` §1): bez ruchu zastępczego, zaparkowanych NPC i świateł aut — statki tylko z systemu ruchu.
 - Ring na WebGPU (zadanie 06): biblioteka TSL `src/3d/haloRing/haloRingTSL.js` (odpowiednik `haloRingGLSL.js`, który
-  po zadaniu 10 zostaje tylko dla tła menu (11: COMMON, LIGHT), budowli Z7 poza portem i narzędzia parzystości), uniformy ringu
+  po zadaniu 11 zostaje tylko dla budowli Z7 poza portem i narzędzia parzystości — tło menu czyta już TSL), uniformy ringu
   w jednym bloku (`createHaloUniforms`, klucze i `.value` bez zmian), mapy świata i detal pieczone w TSL. **Budowa ringu
   jest asynchroniczna:** `createHaloRing` wraca od razu (układ i uniformy gotowe), bryły i mapa CPU dopiero po
   `await ring.ready` (compileAsync bake'u na prawdziwych celach → bake → odczyt CPU → plan budowli i kopuł z mapy →
-  `setCivic` → detal); `mapsReady` po odczycie, `terrainHeightAt` = 0 przed nim, `HaloRingGame` podpina teren do kolizji
-  i zeruje stanowiska K-7 po `ready`. Mapa CPU zgodna z WebGL do precyzji float (`scripts/webgpu/ring-mapa.mjs`),
+  `setCivic` → detal → rozgrzewka brył → podpięcie); `mapsReady` po odczycie, `terrainHeightAt` = 0 przed nim,
+  `HaloRingGame` podpina teren do kolizji i zeruje stanowiska K-7 po `ready`. **Bryły trafiają do `group` dopiero po
+  rozgrzewce** (zadanie 11): hak `options.prewarm(obiekty, opcje)` hosta — `HaloRingGame` przekazuje `Core3D.warmup.now`
+  z kamerą wszystkich warstw — kompiluje pipeline'y nowego zestawu (i dachu hal K-7 w drugim stanie, `roofWarmVariant`)
+  przed podpięciem; `ready` / `mapsReady` obejmują rozgrzewkę, ringi-archetypy (`createArchRing`) tak samo (bez haka —
+  od razu, jak demo). Nowa część ringu = obiekt w `prewarmParts` (index.js) / liście brył archetypu, inaczej jej
+  pierwsza klatka kompiluje się synchronicznie. Mapa CPU zgodna z WebGL do precyzji float (`scripts/webgpu/ring-mapa.mjs`),
   parzystość funkcji GLSL ↔ TSL: `scripts/webgpu/ring-tsl-parzystosc.mjs`, teren w koliderze gry:
   `scripts/webgpu/ring-kolizje-gra.mjs`; warsztat `dema/halo_ring_demo.html` na WebGPU.
 - Teren ringu w TSL (zadanie 07): `HaloTerrain` = NodeMaterial z `makeHaloTerrainNodes` (`haloRingTerrain.js`, 1:1 z
@@ -335,8 +356,11 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 
 ### Menu główne i jego tło 3D
 - Tło menu przed startem gry = Ziemia z ringiem w kamerze kinowej: `MenuBackdrop3D` (`src/3d/menuBackdrop3D.js`). Ring to ring GRY wypożyczony przez `haloRings.showcaseRing('earth')` (mapy pieką się już w menu) i oddany `releaseShowcase` w `stopMenuBackdrop()` tuż przed pierwszą klatką gry (`startGame`). Nie twórz drugiego ringu dla menu.
-- Render: `Core3D.renderBackdrop(camera)` — ta sama scena i post (bloom, ACES), tylko warstwa `MENU_BACKDROP_LAYER` (9; na czas menu ring ma na niej wszystkie siatki). Ziemia i niebo tła są dziećmi grupy ringu i liczą światło w układzie ringu (`uCamLocal`, `uSunDir`, `haloRingBlock`); tekstury Ziemi pożyczone od planety gry (`window.EARTH`), mgławica od `NebulaSystem`.
-- Start tła jest w tle: najpierw czeka na `Core3D.ready` (urządzenie WebGPU powstaje w tle), potem programy ringu/Ziemi/nieba `compileAsync` przed pierwszą klatką. Na WebGPU (zadanie 06) pipeline'y pieczenia map kompiluje sam `HaloWorldMaps.init()` na PRAWDZIWYCH celach bake'u (klucz pipeline'u zależy od formatu celu) w asynchronicznej budowie ringu; `createHaloBakeWarmup` to już pusta scena zgodności (zadanie 11 usunie wywołanie) — pilnuje `tests/menuBackdrop.test.mjs`.
+- Render: `Core3D.renderBackdrop(camera)` — ta sama scena i post (bloom, ACES), tylko warstwa `MENU_BACKDROP_LAYER` (9; na czas menu ring ma na niej wszystkie siatki). Ziemia i niebo tła są dziećmi grupy ringu i liczą światło w układzie ringu (`uCamLocal`, `uSunDir`, `haloRingBlock` z `haloRingTSL.js`); tekstury Ziemi pożyczone od planety gry (`window.EARTH`), mgławica od `NebulaSystem`. Materiały w TSL (`src/3d/menuBackdrop3D.tsl.js`, zadanie 11, 1:1 z dawnym GLSL — Ziemia z poświatą bit w bit z bazą WebGL); mgławica próbkowana z poziomu 0 (pułapka 28).
+- Start tła jest w tle, pod kurtyną (`.mm-curtain`): `Core3D.ready` → ring (`showcaseRing`: pieczenie map, odczyt CPU, bryły rozgrzane przed podpięciem — hak `prewarm`) i równolegle Ziemia, poświata i niebo w `Core3D.warmup.now(…, { camera: kamera kinowa, layer: MENU_BACKDROP_LAYER })` → pętla renderu dopiero z gotowym ringiem (`await ring.ready`) i rozgrzanym tłem: pierwsza klatka menu niczego nie kompiluje. Pipeline'y pieczenia map kompiluje sam `HaloWorldMaps.init()` na PRAWDZIWYCH celach bake'u (klucz pipeline'u zależy od formatu celu); dawna scena rozgrzewki `createHaloBakeWarmup` usunięta (11) — pilnuje `tests/menuBackdrop.test.mjs`.
+- **Rozgrzewka pipeline'ów (zadanie 11, `src/3d/rozgrzewka.js`, `Core3D.warmup`):** w WebGPU klucz pipeline'u to graf materiału + układ atrybutów + cel (format, próbki, głębia) + światła passa + typ kamery + stan (mieszanie, głębia, strona), więc rozgrzewa się PRAWDZIWE obiekty w PRAWDZIWYM celu. Moduł dopisuje się JEDNĄ linią (przy imporcie też — wpisy czekają na urządzenie, a funkcja `objects` woła się dopiero w chwili rozgrzewki):
+  `Core3D.warmup.add({ name: 'moje efekty', objects: () => MojaPula.warmupMeshes(), phase: 'loading' });`
+  Każda siatka poddrzewa to osobne zadanie: `compileAsync(siatka, kamera passa jej warstwy, Core3D.scene)` z celem `composerTarget` (warstwa DIST — `distortionTarget`), widoczna i bez cullingu tylko na czas wywołania. Opcje: `layer` (liczba albo `'all'` — obiekty jeszcze poza passem), `camera` (własna), `visible: false` (tylko to, co już widać — przegląd sceny), `variant: { apply(siatka) → przywróć }` (drugi stan materiału, np. przezroczystość), `target` / QuadMesh (pass pełnoekranowy — własna kamera, bez świateł sceny), `split: false` + `override` (cała scena z materiałem zastępczym — pre-pass halo), `alive: () => bool` (właściciel zwolnił obiekty), `phase: 'loading'` (pula, którą `objects()` tworzy — dopiero na ekranie ładowania, jak przy pierwszym użyciu w grze). Pilne `now(obiekty, opcje)` → Promise (tło menu, bryły ringu przed podpięciem) idą przed `add`. Praca w tle: `requestIdleCallback`, po jednej siatce (budowa NodeBuilder jest synchroniczna, ~1–95 ms), pipeline'y w tle GPU; `Core3D.warmup.flush()` w `startGame` (po `waitForPlanetsReady`) dokańcza kolejkę i czeka na pipeline'y (limit 4 s). Istniejąca rozgrzewka modułu (funkcja, logika bez zmian) — `Core3D.warmup.run(nazwa, () => …)`: idzie od razu, czas CPU i kompilacje zlecone w trakcie (`prewarmPass`, zwrócona obietnica) liczą się do wpisu, `flush()` czeka na nie; kroki `Core3D.fx` z `warm` idą przez rejestr same (`FxFrame._warmStep` — nowy krok efektów nie potrzebuje nic więcej). Wpisy dziś: post (uber z bloomem i bez — pilnie przy urządzeniu), passy Core3D (w menu: tło, planety, poświaty, ring-planety, pre-pass halo, quady halo i maski słońca; na ekranie ładowania wszystkie passy z tym, co jest w scenie), dysze SIDE (`engineExhaustBatch.js`), światła pozycyjne (`shipLights3D.js`), bryły ringów (hak `prewarm`), tło menu (`warmup.now`); kroki `Core3D.fx`: broń (`weapons`, 17), rakiety i iskry (`rakiety`, `iskry`, 19), warp (`warpNurt`, 22), pas asteroid (`asteroidBelt`, 21), mapa ran (`hullDamageMap`, 18-C); `run` w `startGame`: kadłuby i Fx3D (`prewarmHexShips3D`), tarcze (`prewarmShields3D`), start GPU pasa (`asteroidBelt.initGpu`). Miejsce dla 20 (wybuch reaktora w Core3D): krok `Core3D.fx` z `warm` (rejestr sam) albo jedna linia `run` / `add`. Każde `compileAsync` na celu przez `compileAsyncNaCelu` (pułapka 30). Pomiar: `Core3D.warmup.stats`, przestoje klatek — harness (`wyniki.json`: `przestoje` scen, `sesje`), start w prawdziwym czasie — `scripts/webgpu/start-gry.mjs [--root <worktree tagu>]`; oba liczą pipeline'y utworzone SYNCHRONICZNIE (`pipeline.sync`, `syncLista` = „materiał @ obiekt” — to, czego nikt nie rozgrzał; przestój przychodzi zwykle klatkę później, przy zapisie do kolejki). „Przed” tym samym harnessem: `zrzuty.mjs --root <eksport main>`. `Core3D.prewarmPass` zostaje dla modułów, które przełączają widoczność wokół wywołania (projekcja synchroniczna, cały pass naraz).
 - Style menu: `assets/css/main-menu.css` (osobny plik, wczytywany po `main.css`). JS menu szuka widoków po id i przycisków po klasie `menu-btn-styled` (pad/klawiatura); stare reguły tych klas neutralizuje `all: unset` w zasięgu `#main-menu`.
 
 ### Stacje i obiekty 3D

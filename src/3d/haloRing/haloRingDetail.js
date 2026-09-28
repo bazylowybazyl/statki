@@ -15,6 +15,7 @@ import * as THREE from 'three';
 import { NodeMaterial } from 'three/webgpu';
 import { Fn, Loop, float, vec2, vec4, uv, positionGeometry, abs, clamp } from 'three/tsl';
 import { haloGnoise2P, haloPureFn, haloWorleyP } from './haloRingTSL.js';
+import { compileAsyncNaCelu } from '../rozgrzewka.js';
 
 const SIZE = 1024;
 
@@ -128,13 +129,14 @@ export class HaloDetailTextures {
       if (typeof renderer.compileAsync === 'function') {
         for (let i = 0; i < 2; i++) {
           if (this._disposed) return;
-          // cel czytany synchronicznie — wraca przed czekaniem (klatka gry w międzyczasie)
+          // cel czytany synchronicznie — wraca przed czekaniem (klatka gry w międzyczasie); głębia celu
+          // (bez bufora głębi), nie renderera — inaczej bake tworzył drugi pipeline synchronicznie (zadanie 11)
           const prev = renderer.getRenderTarget();
           quad.material = materials[i];
           renderer.setRenderTarget(targets[i]);
           let pending;
           try {
-            pending = renderer.compileAsync(scene, camera);
+            pending = compileAsyncNaCelu(renderer, scene, camera);
           } finally {
             renderer.setRenderTarget(prev);
           }

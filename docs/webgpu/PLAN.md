@@ -264,6 +264,14 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   płaszczyzna, więc przesunięcie próbki o `off` px = `uv + dFdx(uv)·off.x + dFdy(uv)·off.y` w jej materiale (gałąź po
   jednolitym warunku — bez zgłoszeń shader liczy to co wcześniej). **Świeży kadłub (przylot) nie ma jeszcze SDF sylwetki**
   (`hullShadowSdf.js` piecze z budżetem) — żar brzegu z alfy mipmapy sprite'a (`sprite.level(log2(szerokość brzegu))`).
+- **Pułapki z zadania 11 (tło menu, rozgrzewka):** tekstura z `minFilter = LinearFilter` i domyślnym `generateMipmaps
+  = true` — WebGL próbkuje sam poziom 0, a three r183 na WebGPU i tak generuje mipmapy (`Textures.needsMipmaps` patrzy
+  tylko na `generateMipmaps`) i daje samplerowi `mipmapFilter: 'linear'` (trójliniowo) — w materiale `.level(0)` albo
+  `generateMipmaps = false` u właściciela (mgławica gry: pożyczona przez tło menu). Zmienna TSL (`toVar`) powstaje przy
+  pierwszym użyciu — pochodne liczone „przed” gałęzią, a użyte w niej, trafiają do gałęzi; przed `If` jawne `.assign()`.
+  Hipoteza do sprawdzenia w 23 (niezmierzona): mipmapy generowane przez three WebGPU (blit liniowy) mogą różnić się
+  treścią od `gl.generateMipmap` — stąd resztkowe różnice drobnych, oddalonych szczegółów (atlas K-7, ring z daleka
+  w menu: 0,38% kadru > 8/255 przy tych samych grafach).
 - **Pułapki z zadania 21 (pas asteroid, three r183):** materiał z `lights = true` dostaje WSZYSTKIE światła sceny
   Core3D (słońce z cieniem, otoczenie, punktowe) — demo ich nie miało; własny model oświetlenia gasi je w `direct()`
   (`lightNode.light` istnieje tylko dla świateł three) i sam podaje swoje słońce znacznikiem (`BELT_SUN_LIGHT`,
@@ -327,14 +335,36 @@ nieprzeniesionych ShaderMaterial (planety 05, mostek 15, skały 21, Z4/Z5/Z7). S
   bryły / hale K-7 / mapa CPU po `await ring.ready`; `HaloRingGame` podpina teren do kolizji po `ready`.
   Mapa CPU steruje kolizjami (`terrainHeightAt`), LOD terenu, rozstawieniem budowli i wysokością kamery — ring nie
   może zgłosić gotowości przed odczytem (inaczej zmienia się gameplay). Harness czeka na `mapsReady`.
-- **Rozgrzewka:** tło menu rozgrzewa pieczenie ringu i jego materiały przez `compileAsync` na tych samych obiektach
-  (klucz pipeline'u WebGPU ≠ klucz programu WebGL — `createHaloBakeWarmup` do przeprojektowania, zadanie 11).
+- **Rozgrzewka (zadanie 11 — rejestr `Core3D.warmup`, `src/3d/rozgrzewka.js`):** pierwszy zwykły rysunek nowego
+  materiału tworzy pipeline SYNCHRONICZNIE — proces GPU kompiluje shader, strona staje przy najbliższym zapisie do
+  kolejki (pierwsza klatka ringu w menu: 4–5,6 s „writeBuffer”; NodeBuilder całego ringu to tylko ~0,6 s CPU);
+  `compileAsync` = `createRenderPipelineAsync` w tle (ring Marsa: 0,14 s CPU, 0,5 s w tle, klatki bez przestoju).
+  Rejestr: moduł zgłasza PRAWDZIWE obiekty jedną linią (`add`, pilne `now` → Promise), rejestr kompiluje je siatka po
+  siatce w wolnych chwilach (`requestIdleCallback`; jedna budowa NodeBuilder na zadanie, ≤ ~95 ms) w celu passa
+  (`composerTarget` / `distortionTarget`), kamerą typu passa warstwy, ze światłami `Core3D.scene` (klucz NodeBuilder =
+  klucz passa gry — render bierze gotowy stan i pipeline, nowy jest tylko lekki RenderObject), widoczne i bez cullingu
+  tylko na czas wywołania (projekcja synchroniczna); warianty stanu materiału (`variant`), QuadMesh passów
+  pełnoekranowych, pre-pass z materiałem zastępczym (`split: false` + `override`), wpisy „na start gry”
+  (`phase: 'loading'`), `flush()` na ekranie ładowania (reszta kolejki + pipeline'y, limit 4 s). Istniejące
+  rozgrzewki modułów idą przez `run(nazwa, fn)` (ta sama chwila i logika; czas i pipeline'y we wpisie, flush czeka) —
+  kroki `Core3D.fx` z `warm` same (`FxFrame._warmStep`: broń, rakiety, iskry, warp, pas, mapa ran; 20 tak samo), kadłuby,
+  tarcze i start GPU pasa jedną linią w `startGame`. Ring: hak
+  `options.prewarm` budowy — bryły (i dach K-7 w drugim stanie) rozgrzane PRZED podpięciem, `ready` / `mapsReady` je
+  obejmują; tło menu rusza z gotowym ringiem i rozgrzaną Ziemią / niebem (`createHaloBakeWarmup` usunięte, pieczenie
+  rozgrzewa `HaloWorldMaps.init` na prawdziwych celach). Przestoje mierzy harness (dziennik klatek, `przestoje` scen,
+  `sesje`) i `scripts/webgpu/start-gry.mjs` (prawdziwy czas, `--root` = tag); oba spisują pipeline'y utworzone
+  synchronicznie (`pipeline.sync` / `syncLista` — co zostało do rozgrzania), a `zrzuty.mjs --root <eksport main>` mierzy
+  „przed” tym samym harnessem. Pass cienia rozgrzewa się tylko rysunkiem (pułapka 20 w agents.md) — rejestr go nie
+  obejmuje.
 - **`compileAsync` odtwarza pass, nie „wszystkie materiały sceny”** (źródło: `Renderer.compileAsync` →
   `_projectObject`): pomija obiekty `visible = false`, spoza warstw kamery i spoza frustum (chyba że
   `frustumCulled = false`), a pipeline kompiluje dla BIEŻĄCEGO celu (`renderer.setRenderTarget` — format, MSAA) i
   świateł widocznych w tym passie. Rozgrzewka modułu = `setRenderTarget(composerTarget)` + kamera passa z jego warstwą
   + obiekty widoczne w kadrze (albo `frustumCulled = false` na czas kompilacji). Rozgrzewka na kanwie (bgra8unorm,
-  bez MSAA) nic nie daje — pierwszy prawdziwy draw i tak skompiluje pipeline od nowa.
+  bez MSAA) nic nie daje — pierwszy prawdziwy draw i tak skompiluje pipeline od nowa. Głębię i szablon bierze
+  `compileAsync` z RENDERERA, a render z CELU — na celu bez głębi (pieczenie, maska słońca, DIST) rozgrzany pipeline
+  miał inny klucz niż rysunek (zadanie 11); każde `compileAsync` na celu przez `compileAsyncNaCelu`
+  (`src/3d/rozgrzewka.js`).
 - **Trzymacze programów zostają:** `NodeManager` usuwa stan budowy materiału, gdy ostatni obiekt przestaje go używać
   (`usedTimes === 0`), a `Pipelines` zwalniają nieużywane moduły shaderów — tak jak WebGL zwalniał programy. Próbki
   z rozgrzewki efektów (overlay, tarcze) dalej trzymamy bez `dispose` (test `shaderPrewarm` — odpowiednik w 14, 19, 20).
