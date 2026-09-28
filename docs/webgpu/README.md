@@ -102,8 +102,11 @@ wyłącznie piksele sylwetek po resolve MSAA (~4% pikseli krawędzi, pokrycie o 
 bitwa) może przekroczyć próg mimo zgodności; wtedy rozstrzyga mapa różnic (różnice tylko na sylwetkach, wnętrza ≤ 2/255).
 Szczegóły i pomiary: `baseline.json` → `tolerancjaPortu`.
 
-Sceny z flagą `bezOverlay` (sesja „stacja”, zadanie 16) mają dodatkowo `__3d` (klatka Core3D bez kanwy overlaya efektów)
-i `__fg-3d` (sama warstwa FG, bez overlaya i bez passów planet — quad poświaty planet nie podlega izolacji warstw). Scena gęsta
+Sceny z flagą `bezOverlay` (sesja „stacja”, zadanie 16) mają dodatkowo `__3d` (klatka Core3D bez wybuchu reaktora — w tagu
+kanwa overlaya efektów, od zadania 20 siatki wybuchu w Core3D) i `__fg-3d` (sama warstwa FG, bez wybuchu i bez passów planet
+— quad poświaty planet nie podlega izolacji warstw). Z `--reaktor` (zadanie 20) `wybuch` i `stacja-rozpad` dostają wariant
+`__reaktor` — sam wybuch reaktora na czarnym tle; sesja „reaktor” (galeria faz wybuchu) ma go zawsze. Baza wariantu: ten sam
+skrypt w katalogu z tagu `webgl-baseline`. Scena gęsta
 w krawędzie ponad progiem: `node scripts/webgpu/krawedzie.mjs --a <baza> --b <nowy> [--sceny …]` — ile różnic >8/255 leży na
 sylwetkach, a ile we wnętrzach.
 

@@ -36,7 +36,6 @@ const SCOPE_RULES = [
 const NOTES = {
   'src/3d/core3d.js': 'serce portu: WebGPURenderer, passy sceny (zadanie 01), post w TSL — bloom i uber z gorącym powietrzem w src/3d/tsl/postGry.js (zadanie 02); pass maski słońca w TSL (zadanie 03); fala z refrakcją i jej snapshot usunięte (zadanie 19 — zniekształcenia efektów); soczewka i fale warpa usunięte',
   'src/3d/hexShips3D.js': 'kadłuby = gałąź beam (BEAM_SKIN + HEX_FRAGMENT); gałąź heksów (HEX/ARMOR/DEBRIS, pula szczątków GPU) w grze rysuje tylko wyłączone asteroidy, ale stoją na niej mostki-demo, rdzen-demo i pomiar drżenia → port w zadaniu 04',
-  'src/effects3d/overlay.js': 'DRUGI WebGLRenderer (overlay3D eksplozji, własny composer i bloom; rakiety i iskry od zadania 19 w Core3D) — zostaje w porcie, usuwa go zadanie 20',
   // Zastąpione efektami z dem WebGPU (decyzja użytkownika 2026-09-27, PLAN §1 p. 6) — nie przenosimy 1:1.
   'src/3d/slugTrail3D.js': 'zastąpi TrailSystem z dema broni (zadanie 17)',
   'src/3d/muzzleFx3D.js': 'zastąpią receptury dema broni (zadanie 17)',
@@ -47,7 +46,7 @@ const NOTES = {
   'src/effects3d/armataImpact.js': 'scena overlay; zastąpią receptury dema broni (zadanie 17)',
   'src/effects3d/autocannonImpact.js': 'scena overlay; zastąpią receptury dema broni (zadanie 17)',
   'src/effects3d/rocketSystem3D.js': 'lot i trafienia rakiet (rozgrywka); wygląd — reżyser efektów z dema rakiet w Core3D (src/3d/rockets/, zadanie 19)',
-  'src/effects3d/reactorblow.js': 'scena overlay; port do Core3D w zadaniu 20',
+  'src/effects3d/reactorblow.js': 'wybuch reaktora w scenie Core3D (zadanie 20): pule particlePool.js, materiały TSL w reactorblow.tsl.js, wygląd dawnego overlaya pod post gry (reactorLook); overlay i drugi renderer usunięte',
   'src/3d/fxParticles3D.js': 'Fx3D: port 1:1 w zadaniu 12 (dysze MAIN, mostki, rdzenie)',
   'Engineeffects.js': 'tylko tekstury poświaty dysz SIDE (make*Texture); martwe getEngineVFX z własnym WebGLRenderer i shader usunięte (zadanie 13)',
   'src/3d/sunShadowMask.js': 'biblioteka maski słońca w TSL (screenUV) + hak wbudowanych materiałów (setupLightingModel / outputNode) — zadanie 03',

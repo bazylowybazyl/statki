@@ -338,9 +338,9 @@ const PERF_PANEL_HTML = `
     <div class="perf-bar" id="barRenderUi" style="width:0%;background:#e879f9"></div>
   </div>
 
-  <div class="perf-row"><span class="perf-label"> |- Overlay FX 3D</span><span class="perf-val" id="perfOverlayFx">--</span></div>
+  <div class="perf-row"><span class="perf-label"> |- Rakiety (lot)</span><span class="perf-val" id="perfRockets">--</span></div>
   <div class="perf-bar-bg">
-    <div class="perf-bar" id="barOverlayFx" style="width:0%;background:#fb923c"></div>
+    <div class="perf-bar" id="barRockets" style="width:0%;background:#fb923c"></div>
   </div>
 
   <div class="perf-row"><span class="perf-label">Ruch v2 (most)</span><span class="perf-val" id="perfTrafficBridge">--</span></div>
@@ -512,7 +512,7 @@ export const PerfHUD = {
     world3dTime: 0,
     hex3dTime: 0,
     vfxUpdateTime: 0,
-    overlayFxTime: 0,
+    rocketsTime: 0,
     // Koszt mostu ruchu v2 na głównym wątku (?trafficV2): wiadomości, kopia
     // rynku; w trybie awaryjnym także krok świata (co 5 s gry).
     trafficBridgeTime: 0,
@@ -626,7 +626,7 @@ export const PerfHUD = {
     world3dTime: 0,
     hex3dTime: 0,
     vfxUpdateTime: 0,
-    overlayFxTime: 0,
+    rocketsTime: 0,
     trafficBridgeTime: 0,
     contacts: 0,
     physicsSteps: 0,
@@ -681,7 +681,7 @@ export const PerfHUD = {
       'perfRender3dDraw',
       'perfRender2dWorld', 'perfRender2dNpc', 'perfRender2dPlayer',
       'perfRender2dProjectiles', 'perfRender2dVfx', 'perfRenderHud',
-      'perfRenderUi', 'perfOverlayFx'
+      'perfRenderUi', 'perfRockets'
     ],
     render3dDraw: [
       'perfRender3dCoreCall', 'perfRender3dCoreRender',
@@ -765,7 +765,7 @@ export const PerfHUD = {
       render2dVfx: document.getElementById('perfRender2dVfx'),
       renderHud: document.getElementById('perfRenderHud'),
       renderUi: document.getElementById('perfRenderUi'),
-      overlayFx: document.getElementById('perfOverlayFx'),
+      rockets: document.getElementById('perfRockets'),
       trafficBridge: document.getElementById('perfTrafficBridge'),
       shards: document.getElementById('perfShards'),
       contacts: document.getElementById('perfContacts'),
@@ -850,7 +850,7 @@ export const PerfHUD = {
       barRender2dVfx: document.getElementById('barRender2dVfx'),
       barRenderHud: document.getElementById('barRenderHud'),
       barRenderUi: document.getElementById('barRenderUi'),
-      barOverlayFx: document.getElementById('barOverlayFx'),
+      barRockets: document.getElementById('barRockets'),
       barTrafficBridge: document.getElementById('barTrafficBridge'),
       colStart: document.getElementById('perfColStart'),
       colStop: document.getElementById('perfColStop'),
@@ -1146,14 +1146,14 @@ export const PerfHUD = {
     this.display.drawTime = this.accum.drawTime / frames;
     this.display.trafficBridgeTime = this.accum.trafficBridgeTime / frames;
     // Untracked = klatka minus WSZYSTKIE mierzone buckety najwyższego poziomu
-    // (fizyka, rysowanie, deformacje destruktora, CanvasVFX update, overlay FX 3D,
+    // (fizyka, rysowanie, deformacje destruktora, CanvasVFX update, lot rakiet,
     // most ruchu v2 — w trybie awaryjnym krok świata leci właśnie w klatce).
     this.display.frameUntrackedTime = Math.max(0, this.display.frameMs
       - this.display.physicsTime
       - this.display.drawTime
       - this.display.deformTime
       - this.display.vfxUpdateTime
-      - this.display.overlayFxTime
+      - this.display.rocketsTime
       - this.display.trafficBridgeTime);
     this.display.renderPrepTime = this.accum.renderPrepTime / frames;
     this.display.render3dUpdateTime = this.accum.render3dUpdateTime / frames;
@@ -1183,7 +1183,7 @@ export const PerfHUD = {
     this.display.world3dTime = this.accum.world3dTime / frames;
     this.display.hex3dTime = this.accum.hex3dTime / frames;
     this.display.vfxUpdateTime = this.accum.vfxUpdateTime / frames;
-    this.display.overlayFxTime = this.accum.overlayFxTime / frames;
+    this.display.rocketsTime = this.accum.rocketsTime / frames;
     this.display.contacts = this.accum.contacts / frames;
     this.display.physicsSteps = this.accum.physicsSteps / frames;
     this.display.aiDecisionHz = this.accum.aiDecisionTicks / flushSeconds;
@@ -1451,7 +1451,7 @@ export const PerfHUD = {
     setMs(e.render2dVfx, d.render2dVfxTime);
     setMs(e.renderHud, d.renderHudTime);
     setMs(e.renderUi, d.renderUiTime);
-    setMs(e.overlayFx, d.overlayFxTime);
+    setMs(e.rockets, d.rocketsTime);
     setMs(e.trafficBridge, d.trafficBridgeTime);
     setBar(e.barFrameUntracked, d.frameUntrackedTime);
     setBar(e.barPhysics, d.physicsTime);
@@ -1515,7 +1515,7 @@ export const PerfHUD = {
     setBar(e.barRender2dVfx, d.render2dVfxTime);
     setBar(e.barRenderHud, d.renderHudTime);
     setBar(e.barRenderUi, d.renderUiTime);
-    setBar(e.barOverlayFx, d.overlayFxTime);
+    setBar(e.barRockets, d.rocketsTime);
     setBar(e.barTrafficBridge, d.trafficBridgeTime);
     if (e.shards) e.shards.textContent = d.sleepingShards > 0 ? `${d.shards} (${d.sleepingShards} zz)` : `${d.shards}`;
     if (e.contacts) e.contacts.textContent = `${Math.round(d.contacts)}`;
@@ -1702,7 +1702,7 @@ export const PerfHUD = {
     this.accum.world3dTime = 0;
     this.accum.hex3dTime = 0;
     this.accum.vfxUpdateTime = 0;
-    this.accum.overlayFxTime = 0;
+    this.accum.rocketsTime = 0;
     this.accum.trafficBridgeTime = 0;
     this.accum.contacts = 0;
     this.accum.physicsSteps = 0;

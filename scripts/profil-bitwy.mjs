@@ -34,7 +34,7 @@ const errors = () => logs.filter((l) => /^\[(error|exception)\]/.test(l) && !/Au
 const HUD_EXPR = `(() => { const d = window.__PH.display; const r = (v) => Math.round(v * 100) / 100;
   const live = window.npcs.filter((n) => !n.dead && !n.fighter), lod = window.__hexLodStats;
   return { fps: d.fps, klatka: r(d.frameMs), p95: r(d.frameP95), fizyka: r(d.physicsTime), rysowanie: r(d.drawTime),
-    uHex: r(d.render3dHexUpdateTime), core: r(d.render3dCoreRenderTime), overlay: r(d.overlayFxTime),
+    uHex: r(d.render3dHexUpdateTime), core: r(d.render3dCoreRenderTime), rakiety: r(d.rocketsTime),
     npc: live.length, wrogów: live.filter((n) => !n.friendly).length, wraki: window.wrecks.length,
     pociski: (window.bullets || []).length, pełne: lod?.fullBodies, smugi: lod?.impostorBodies }; })()`;
 

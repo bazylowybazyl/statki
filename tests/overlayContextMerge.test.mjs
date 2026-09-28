@@ -1,62 +1,80 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
-const overlayJs = readFileSync(new URL('../src/effects3d/overlay.js', import.meta.url), 'utf8');
-const indexHtml = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+// Strażnik JEDNEGO renderera (port WebGPU, zadanie 20). Historia: każde initOverlay tworzyło
+// własny THREE.WebGLRenderer, więc przy strzelaniu przeglądarka przełączała się między
+// trzema kontekstami na klatkę (Core3D + efekty + rakiety) — pomiar usera: „Overlay FX 3D”
+// 0,22 ms na postoju → 3,45 ms przy ogniu. Potem rakiety weszły do kontekstu efektów (warstwa
+// raw), w zadaniach 17–19 efekty broni, iskry, rakiety i Supernowa przeszły do sceny Core3D,
+// a w zadaniu 20 ostatni efekt overlaya (wybuch reaktora) i sam overlay (drugi renderer,
+// EffectComposer, bloom overlaya, kanwa `overlay3d`) zniknęły: jeden renderer, jedna kanwa 3D,
+// jeden bloom.
 
-// Każde wywołanie initOverlay tworzyło własny THREE.WebGLRenderer, więc przy
-// strzelaniu przeglądarka przełączała się między trzema kontekstami WebGL na
-// klatkę (Core3D + efekty + rakiety). Pomiar usera: „Overlay FX 3D" 0.22 ms na
-// postoju → 3.45 ms przy ogniu. Rakiety dzielą teraz kontekst z efektami.
+const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+const code = (src) => src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:'"`])\/\/[^\n]*/g, '$1 ');
+const indexHtml = read('index.html');
 
-test('overlay exposes a raw layer instead of a second renderer', () => {
-  assert.match(overlayJs, /withRawLayer = false/, 'initOverlay musi umieć drugą scenę');
-  assert.match(overlayJs, /const rawScene = withRawLayer \? new THREE\.Scene\(\) : null/);
-
-  // Fasada trzyma kształt API dawnego osobnego overlaya.
-  assert.match(overlayJs, /const rawLayer = rawScene \? \{/);
-  for (const member of ['scene: rawScene', 'tick: \\(\\) => \\{\\}', 'resize: \\(\\) => \\{\\}']) {
-    assert.match(overlayJs, new RegExp(member), `fasada musi mieć ${member}`);
+function jsFiles(dir, out = []) {
+  for (const name of readdirSync(dir)) {
+    const path = `${dir}/${name}`;
+    if (statSync(path).isDirectory()) jsFiles(path, out);
+    else if (/\.m?js$/.test(name)) out.push(path);
   }
-  assert.match(overlayJs, /rawScene, rawLayer,/, 'rawLayer musi wychodzić z initOverlay');
+  return out;
+}
 
-  // W całym module wolno stworzyć DOKŁADNIE jeden renderer.
-  const rendererCount = (overlayJs.match(/new THREE\.WebGLRenderer/g) || []).length;
-  assert.equal(rendererCount, 1, 'overlay.js nie może tworzyć drugiego renderera');
+test('w grze jeden renderer: WebGPURenderer tylko w core3d.js, żadnego WebGLRenderer', () => {
+  const root = fileURLToPath(new URL('../src', import.meta.url));
+  const webgl = [];
+  const webgpu = [];
+  for (const path of jsFiles(root)) {
+    const src = code(readFileSync(path, 'utf8'));
+    const rel = path.slice(root.length + 1).replace(/\\/g, '/');
+    if (/new\s+(THREE\.)?WebGLRenderer\s*\(/.test(src)) webgl.push(rel);
+    if (/new\s+(THREE\.)?WebGPURenderer\s*\(/.test(src)) webgpu.push(rel);
+  }
+  assert.deepEqual(webgl, [], 'WebGLRenderer w src/ (drugi kontekst obok Core3D)');
+  assert.deepEqual(webgpu, ['3d/core3d.js'], 'WebGPURenderer tylko w Core3D');
+  const page = code(indexHtml);
+  assert.doesNotMatch(page, /new\s+(THREE\.)?(WebGLRenderer|WebGPURenderer)\s*\(/, 'index.html tworzy renderer poza Core3D');
+  // Kanwy gry: warstwa 3D (#webgl-layer, Core3D) i 2D (#c) — kanwa overlaya efektów nie wraca.
+  const gameRoot = indexHtml.match(/<div id="game-root"[^>]*>([\s\S]*?)<\/div>/)?.[1] || '';
+  assert.deepEqual((gameRoot.match(/<canvas id="[^"]+"/g) || []).map((c) => c.slice(12, -1)), ['webgl-layer', 'c']);
+  assert.doesNotMatch(read('assets/css/main.css'), /overlay3d/, 'CSS kanwy overlaya');
 });
 
-test('raw layer renders after the composer, with its own depth clear', () => {
-  const tickSlice = overlayJs.slice(overlayJs.indexOf('function tick(dt)'), overlayJs.indexOf('function spawn('));
-
-  const composerIdx = tickSlice.indexOf('composer.render()');
-  const rawIdx = tickSlice.indexOf('renderer.render(rawScene, camera)');
-  assert.ok(composerIdx > 0 && rawIdx > 0, 'tick musi rysować obie warstwy');
-  assert.ok(rawIdx > composerIdx, 'warstwa raw idzie PO kompozytorze (dawny zIndex 21 nad 20)');
-
-  // Kompozytor kończy passem na kanwę — bez wyłączenia autoClear skasowałby efekty.
-  assert.match(tickSlice, /renderer\.autoClear = false;[\s\S]*renderer\.render\(rawScene/);
-  // Fullscreen quad zostawia zapis w buforze Z — bez clearDepth rakiety znikają.
-  assert.match(tickSlice, /renderer\.clearDepth\(\);[\s\S]*renderer\.render\(rawScene/);
-  // I autoClear musi wrócić, inaczej następna klatka nie wyczyści kanwy.
-  assert.match(tickSlice, /renderer\.render\(rawScene, camera\);[\s\S]*renderer\.autoClear = prevAutoClear/);
-});
-
-test('an empty raw scene does not keep the overlay awake', () => {
-  const tickSlice = overlayJs.slice(overlayJs.indexOf('function tick(dt)'), overlayJs.indexOf('function spawn('));
-  // Wczesne wyjście musi uwzględniać rakiety, inaczej znikają gdy nie ma efektów.
-  // Siatki rakiet wiszą w rawScene stale i chowają się, gdy są puste — liczy
-  // się widoczność, nie liczba dzieci.
-  assert.match(tickSlice, /const hasRawContent = !!\(rawScene && sceneHasVisibleContent\(rawScene\)\)/);
-  assert.match(tickSlice, /if \(effects\.length === 0 && !hasPersistentSceneContent && !hasRawContent\)/);
+test('overlay efektów usunięty: moduł, wpięcie w index.html, bloom overlaya', () => {
+  assert.equal(existsSync(new URL('../src/effects3d/overlay.js', import.meta.url)), false, 'src/effects3d/overlay.js');
+  const page = code(indexHtml);
+  assert.doesNotMatch(page, /initOverlay|startOverlay3D|overlay3D|resizeOverlay3D|rocketOverlay3D|splitOverlayContexts|overlayView|withRawLayer/);
+  assert.doesNotMatch(page, /EffectComposer|UnrealBloomPass/);
+  // Parametry bloomu overlaya (dawny drugi bloom) — bez odbiorcy, usunięte z bloomConfig i tunera.
+  assert.doesNotMatch(code(read('src/3d/bloomConfig.js')), /overlay/i);
+  const tuner = code(read('src/ui/bloomTunerPanel.js'));
+  assert.doesNotMatch(tuner, /overlay3D|'Overlay FX'|key: 'overlay/);
+  // Kubełek PerfHUD „Overlay FX 3D” — został sam lot rakiet (wybuchy liczy render Core3D).
+  const hud = read('src/ui/perfHud.js');
+  assert.doesNotMatch(hud, /overlayFxTime|Overlay FX 3D/);
+  assert.match(page, /PerfHUD\.addTiming\('rocketsTime', rocketsMs\);/);
 });
 
 // Port WebGPU, zadanie 19: rakiety (lot: rocketSystem3D, wygląd: src/3d/rockets/) i iskry
-// (SparkSystem3D) przeszły do sceny Core3D — overlay nie ma już warstwy raw rakiet ani iskier
-// (sam overlay i jego renderer odchodzą w zadaniu 20).
-test('rakiety i iskry w scenie Core3D, nie w overlayu (warstwa raw bez rakiet)', () => {
+// (SparkSystem3D) w scenie Core3D; zadanie 20: wybuch reaktora też (krok klatki efektów).
+test('rakiety, iskry i wybuch reaktora w scenie Core3D (kroki klatki efektów)', () => {
   assert.match(indexHtml, /SparkSystem3D\.init\(Core3D\.scene\);\s*initRocketSystem3D\(Core3D\.scene, \{ effects: createRocketFx\(Core3D\) \}\);/);
-  assert.doesNotMatch(indexHtml, /SparkSystem3D\.init\(ov\.scene\)/, 'iskry nie w scenie overlaya');
-  assert.doesNotMatch(indexHtml, /rocketOverlay3D|withRawLayer|splitOverlayContexts/, 'bez warstwy raw rakiet');
-  assert.doesNotMatch(overlayJs, /SparkSystem3D\.update\(/, 'tick overlaya nie prowadzi już zegara iskier');
+  assert.match(indexHtml, /window\.makeReactorBlow = createReactorBlowFactory\(Core3D\);/);
+  assert.match(indexHtml, /Destruction3D\.init\(\{\s*scene:\s*Core3D\.scene,\s*reactorFactory:\s*window\.makeReactorBlow,/);
+  const trigger = indexHtml.match(/function triggerReactorBlow3D\([^)]*\) \{[\s\S]*?\n    \}/)?.[0] || '';
+  assert.match(trigger, /window\.makeReactorBlow\?\.\(\{ x, y, size, \.\.\.options \}\);/);
+  const blow = code(read('src/effects3d/reactorblow.js'));
+  assert.match(blow, /core\.addFxStep\(this\.step\)/);
+  assert.doesNotMatch(blow, /overlay3D|\.spawn\(fx\)/);
+  // Rozpad stacji uruchamia wybuchy fabryką (bez oddawania efektu tickowi overlaya).
+  assert.doesNotMatch(code(read('src/vfx/destruction3D.js')), /overlay3D/);
+  // Demo rdzenia (warsztat reaktorów) na tej samej ścieżce.
+  const demo = code(read('dema/rdzen-demo.js'));
+  assert.doesNotMatch(demo, /initOverlay|overlay3D/);
+  assert.match(demo, /createReactorBlowFactory\(Core3D\)/);
 });

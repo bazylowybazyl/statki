@@ -15,6 +15,10 @@
 // --czesci-ringu [nazwy]: jak --teren-ringu, ale wybrane części ringu (zadanie 08; domyślnie teren, konstrukcja
 //            z górną ścianą FG, chmury i powłoka powietrza — nazwy siatek po przecinku) → wariant `<scena>__ring`,
 //            a w scenach z warstwami także `__ring-tlo` (warstwa 1) i `__ring-fg` (warstwa 2). Też dokłada klatki.
+// --reaktor: w `wybuch` i `stacja-rozpad` dodatkowo wariant `<scena>__reaktor` — sam wybuch reaktora na czarnym
+//            tle (zadanie 20: tag — kanwa overlaya efektów, Core3D — siatki wybuchu). Dokłada klatki, więc
+//            porównuj z przebiegiem z tą samą opcją (baza: ten sam skrypt w katalogu z tagu webgl-baseline).
+//            Sesja „reaktor” (galeria faz wybuchu) ma ten wariant zawsze.
 // --backend: nazywa katalog wyniku i dopisuje ?renderer=<backend> do adresu. Gra flagi NIE czyta (jedna ścieżka
 //            renderu: tag webgl-baseline = WebGL, main od zadania 01 = WebGPU) — faktyczny renderer zapisuje się
 //            w wyniki.json (pole `renderer`), więc pomyłka w etykiecie wychodzi od razu.
@@ -69,6 +73,10 @@ const PERF_SIDE = Math.max(2, Number(args.bok || 24));
 
 // Punkt w próżni między Ziemią a Wenus (~500 tys. j. od obu, z dala od stacji i ruchu).
 const DEEP = { x: 6210000, y: 5330000 };
+// Galeria wybuchu reaktora (zadanie 20): pusta przestrzeń, statek gracza 40 tys. j. obok (poza kadrem).
+const REAKTOR = { x: DEEP.x + 150000, y: DEEP.y - 350000 };
+// Siatki wybuchu reaktora w scenie Core3D (src/effects3d/reactorblow.js, od zadania 20).
+const REAKTOR_SIATKI = ['ReactorBlow:ogien', 'ReactorBlow:dym'];
 
 // Kop kamery przy warpie (zadanie 22-B): zoom gracza = zoom startu dema „Nurt” (trip.zoom0 =
 // min(W, 1,6·H) / 11 000 przy 1920×1080), więc kadr gry i dema jest porównywalny (--kop-zoom z:
@@ -277,8 +285,8 @@ const SCENES = {
          if (e) S.cam(e.x, e.y, 1.0);`
   },
   wybuch: {
-    opis: 'Zniszczenie największego pirata: wybuch 15 klatek po (overlay3D, fala uderzeniowa, iskry), zoom 0,5',
-    hud: false, warm: 30,
+    opis: 'Zniszczenie największego pirata: wybuch 15 klatek po (ładowanie wybuchu reaktora — do zadania 20 overlay3D, od 20 Core3D; iskry), zoom 0,5',
+    hud: false, warm: 30, reaktorOpcja: true,
     js: `const e = npcs.filter((n) => !n.dead && !n.friendly).sort((a, b) => (b.radius || 0) - (a.radius || 0))[0];
          if (e) { window.__harnessCel = { x: e.x, y: e.y }; H.reseed(0x3a11); applyDamageToNPC(e, 1e9, 'harness'); await H.step(15); S.cam(e.x, e.y, 0.5); }`
   },
@@ -571,8 +579,8 @@ const SCENES = {
          for (let i = 0; i < 600 && !S.uploadsIdle(); i++) await new Promise((r) => setTimeout(r, 100));`
   },
   'stacja-rozpad': {
-    opis: 'Rozpad stacji Wenus (destroyStation3D jak gra przy 0 HP): 4 klatki po — wygaszenie bryły (klony materiałów GLB, błysk emisji), odłamki paneli przy kadłubie, wybuch reaktora z overlaya; zoom 0,5',
-    hud: false, warm: 30, warstwy: true, bezOverlay: true,
+    opis: 'Rozpad stacji Wenus (destroyStation3D jak gra przy 0 HP): 4 klatki po — wygaszenie bryły (klony materiałów GLB, błysk emisji), odłamki paneli przy kadłubie, wybuch reaktora (do zadania 20 overlay, od 20 Core3D); zoom 0,5',
+    hud: false, warm: 30, warstwy: true, bezOverlay: true, reaktorOpcja: true,
     js: `const st = stations.find((s) => s.id === 'venus');
          S.cam(st.x, st.y, 0.5);
          await H.frames(3);
@@ -636,6 +644,83 @@ const SCENES = {
          const c = { x: 0, y: 0, n: 0 };
          for (const o of pieces()) { o.getWorldPosition(p); c.x += p.x; c.y -= p.y; c.n++; }
          if (c.n) S.cam(c.x / c.n, c.y / c.n, 0.8);`
+  },
+  // Zadanie 20: galeria faz wybuchu reaktora (do zadania 20 kanwa overlaya — drugi WebGLRenderer z bloomem
+  // 1,6 / 0,15 i składaniem `screen`; od 20 scena Core3D). Sesja „reaktor” — osobna (nie przesuwa scen innych
+  // sesji); baza z tagu (baza.mjs --dopisz). Wybuch w próżni wywołany jak w grze (triggerReactorBlow3D), kamera
+  // RTS na nim; każda scena ma wariant `__reaktor` — sam wybuch na czarnym tle. Ziarno tuż przed wybuchem
+  // i przed fazą rozbłysku (kolce i iskry losują z Math.random gry w chwili rozbłysku).
+  'reaktor-przygotowanie': {
+    opis: 'Bez zrzutu: statek gracza 40 tys. j. od punktu wybuchu, kamera RTS na punkcie',
+    capture: false, warm: 2,
+    js: `DevScene.teleport(${REAKTOR.x + 40000}, ${REAKTOR.y}, 0); S.cam(${REAKTOR.x}, ${REAKTOR.y}, 0.5); await H.frames(20);`
+  },
+  'reaktor-ladowanie': {
+    opis: 'Wybuch reaktora (profil capital, rozmiar 300): ładowanie 0,4 s po wywołaniu — rdzeń z linią anamorficzną, zoom 0,5',
+    hud: false, warm: 2, reaktorSam: true,
+    js: `S.cam(${REAKTOR.x}, ${REAKTOR.y}, 0.5); await H.frames(2);
+         H.reseed(0x20a1); triggerReactorBlow3D(${REAKTOR.x}, ${REAKTOR.y}, 300, { profile: 'capital' });
+         await H.step(24); S.cam(${REAKTOR.x}, ${REAKTOR.y}, 0.5);`
+  },
+  'reaktor-blysk': {
+    opis: 'Ten sam wybuch 0,95 s po wywołaniu (0,15 s po rozbłysku): błysk, pierścień, ciemna fala, kolce, świeże iskry, zoom 0,25',
+    hud: false, warm: 2, reaktorSam: true,
+    js: `H.reseed(0x20a2); await H.step(33); S.cam(${REAKTOR.x}, ${REAKTOR.y}, 0.25);`
+  },
+  'reaktor-iskry': {
+    opis: 'Ten sam wybuch 1,5 s po wywołaniu: gasnący błysk, rozlany pierścień i fala, iskry w locie, zoom 0,25',
+    hud: false, warm: 2, reaktorSam: true,
+    js: `await H.step(33); S.cam(${REAKTOR.x}, ${REAKTOR.y}, 0.25);`
+  },
+  'reaktor-gasnie': {
+    opis: 'Ten sam wybuch 3 s po wywołaniu: dogasające iskry, zoom 0,25',
+    hud: false, warm: 2, reaktorSam: true,
+    js: `await H.step(90); S.cam(${REAKTOR.x}, ${REAKTOR.y}, 0.25);`
+  },
+  'reaktor-eskorta': {
+    opis: 'Wybuch reaktora fregaty (profil escort, rozmiar 200) 0,45 s po wywołaniu (0,15 s po rozbłysku), zoom 0,5',
+    hud: false, warm: 2, reaktorSam: true,
+    js: `await H.step(90);
+         const X = ${REAKTOR.x - 9000}, Y = ${REAKTOR.y + 6000};
+         S.cam(X, Y, 0.5); await H.frames(2);
+         H.reseed(0x20a5); triggerReactorBlow3D(X, Y, 200, { profile: 'escort' });
+         await H.step(27); S.cam(X, Y, 0.5);`
+  },
+  'reaktor-lancuch': {
+    opis: 'Wybuch łańcuchowy stacji (profil chain, rozmiar 160) 0,12 s po wywołaniu: błysk, pierścień, kolce, iskry, zoom 0,8',
+    hud: false, warm: 2, reaktorSam: true,
+    js: `await H.step(120);
+         const X = ${REAKTOR.x + 9000}, Y = ${REAKTOR.y - 5000};
+         S.cam(X, Y, 0.8); await H.frames(2);
+         H.reseed(0x20a6); triggerReactorBlow3D(X, Y, 160, { profile: 'chain' });
+         await H.step(7); S.cam(X, Y, 0.8);`
+  },
+  'reaktor-pozne': {
+    opis: 'Wybuch reaktora (profil capital, rozmiar 300) 2 s po wywołaniu (1,2 s po rozbłysku): rzadkie iskry w locie — poświata pojedynczych iskier, zoom 0,6',
+    hud: false, warm: 2, reaktorSam: true,
+    js: `await H.step(60);
+         const X = ${REAKTOR.x}, Y = ${REAKTOR.y + 12000};
+         S.cam(X, Y, 0.6); await H.frames(2);
+         H.reseed(0x20a7); triggerReactorBlow3D(X, Y, 300, { profile: 'capital' });
+         await H.step(120); S.cam(X, Y, 0.6);`
+  },
+  'reaktor-pozne-blisko': {
+    opis: 'Wybuch reaktora niszczyciela (profil cruiser, rozmiar 180) 1,6 s po wywołaniu, zoom 1,2 — iskry z bliska',
+    hud: false, warm: 2, reaktorSam: true,
+    js: `await H.step(150);
+         const X = ${REAKTOR.x - 12000}, Y = ${REAKTOR.y - 9000};
+         S.cam(X, Y, 1.2); await H.frames(2);
+         H.reseed(0x20a8); triggerReactorBlow3D(X, Y, 180, { profile: 'cruiser' });
+         await H.step(96); S.cam(X, Y, 1.2);`
+  },
+  'reaktor-duzy': {
+    opis: 'Wybuch reaktora największego okrętu (profil capital, rozmiar 810 — śmierć pancernika pirackiego jak w „wraki”) 2,5 s po wywołaniu: duże rozlane iskry, zoom 0,6',
+    hud: false, warm: 2, reaktorSam: true,
+    js: `await H.step(60);
+         const X = ${REAKTOR.x + 14000}, Y = ${REAKTOR.y + 10000};
+         S.cam(X, Y, 0.6); await H.frames(2);
+         H.reseed(0x20a9); triggerReactorBlow3D(X, Y, 810, { profile: 'capital' });
+         await H.step(150); S.cam(X, Y, 0.6);`
   }
 };
 
@@ -919,6 +1004,8 @@ const SESSIONS = [
   { id: 'rakiety', query: 'dev=1', start: 'single', sprites: true, scenes: ['galeria-rakiet', 'galeria-rakiet-trafienie', 'galeria-rakiet-supernowa', 'galeria-rakiet-pozostalosc', 'galeria-rakiet-tarcza'] },
   { id: 'split', query: 'dev=1', start: 'split', sprites: true, scenes: ['split'] },
   { id: 'stacja', query: 'dev=1', start: 'single', scenes: ['stacja-przygotowanie', 'stacja-rozpad', 'stacja-odlamki', 'stacja-trojkaty', 'stacja-implozja', 'stacja-ciecie'] },
+  // Zadanie 20: galeria faz wybuchu reaktora (osobna sesja — nie przesuwa scen innych sesji; baza z tagu).
+  { id: 'reaktor', query: 'dev=1', start: 'single', scenes: ['reaktor-przygotowanie', 'reaktor-ladowanie', 'reaktor-blysk', 'reaktor-iskry', 'reaktor-gasnie', 'reaktor-eskorta', 'reaktor-lancuch', 'reaktor-pozne', 'reaktor-pozne-blisko', 'reaktor-duzy'] },
   { id: 'warp', query: 'dev=1', start: 'single', sprites: true, scenes: ['warp-ladowanie', 'warp-skok', 'warp-lot', 'warp-wyjscie', 'warp-po-wyjsciu', 'warp-zwiastun', 'warp-przylot', 'warp-odlot-ladowanie', 'warp-odlot'] },
   // Kop kamery przy warpie (zadanie 22-B): sekwencja klatek wokół skoku i wyjścia gracza.
   { id: 'warp-kop', query: 'dev=1', start: 'single', sprites: true,
@@ -1035,13 +1122,14 @@ async function runSession(session, backend, outDir, base) {
         await ev('window.__harness.scene.isolate(null)');
         await ev('window.__harness.frames(3)');
       }
-      // Warianty bez overlaya efektów (zadanie 16): wybuch reaktora z overlaya (własny WebGLRenderer do zadania 20,
-      // kanwa `canvas.overlay3d` nad grą) zalewa kadr rozpadu — `__3d` (cała klatka Core3D) i `__fg-3d` (sama warstwa
-      // FG: bryły stacji, odłamki, kawałki, cień słońca na łapaczu FG) pokazują materiały zadania. Ukrycie kanwy to
-      // tylko CSS (overlay dalej liczy). W `__fg-3d` także bez passów planet (perfToggles.planetPass): quad poświaty
-      // planet idzie poza kamerami passów, więc izolacja warstw go nie zdejmuje (poświata = zadanie 05).
+      // Warianty bez wybuchu reaktora (zadanie 16): wybuch (do zadania 20 kanwa `canvas.overlay3d` — własny
+      // WebGLRenderer nad grą; od 20 siatki ReactorBlow:* w scenie Core3D) zalewa kadr rozpadu — `__3d` (cała klatka
+      // Core3D) i `__fg-3d` (sama warstwa FG: bryły stacji, odłamki, kawałki, cień słońca na łapaczu FG) pokazują
+      // materiały zadania. Ukrycie kanwy to tylko CSS (overlay dalej liczy), siatki Core3D — widoczność na czas zrzutu.
+      // W `__fg-3d` także bez passów planet (perfToggles.planetPass): quad poświaty planet idzie poza kamerami passów,
+      // więc izolacja warstw go nie zdejmuje (poświata = zadanie 05).
       if (sc.bezOverlay) {
-        await ev(`(() => { for (const c of document.querySelectorAll('canvas.overlay3d')) c.style.visibility = 'hidden'; return true; })()`);
+        await ev(`(() => { for (const c of document.querySelectorAll('canvas.overlay3d')) c.style.visibility = 'hidden'; window.__harness.scene.hideNamed(${JSON.stringify(REAKTOR_SIATKI)}); return true; })()`);
         await ev('window.__harness.frames(3)');
         await screenshotPng(cdp, join(outDir, `${id}__3d.png`));
         await ev('window.__harness.scene.isolate([2])');
@@ -1050,7 +1138,41 @@ async function runSession(session, backend, outDir, base) {
         await screenshotPng(cdp, join(outDir, `${id}__fg-3d.png`));
         await ev('(() => { window.Core3D.setPerfToggles({ planetPass: true }); return true; })()');
         await ev('window.__harness.scene.isolate(null)');
-        await ev(`(() => { for (const c of document.querySelectorAll('canvas.overlay3d')) c.style.visibility = ''; return true; })()`);
+        await ev(`(() => { for (const c of document.querySelectorAll('canvas.overlay3d')) c.style.visibility = ''; window.__harness.scene.hideNamed(null); return true; })()`);
+        await ev('window.__harness.frames(3)');
+      }
+      // Zadanie 20: sam wybuch reaktora na czarnym tle (`__reaktor`) — sesja „reaktor” zawsze, `wybuch` i
+      // `stacja-rozpad` z opcją --reaktor. Tag (WebGL): kanwa overlaya (składana `screen`) nad czarnym tłem
+      // #game-root, kanwy gry (#c, warstwa 3D) ukryte. Core3D: tylko siatki wybuchu i czarna NIEPRZEZROCZYSTA płyta
+      // pod nimi (warstwa 0 — bez niej kanwa premultiplied pokazuje blask addytywny ~2× jaśniej), kanwa 2D ukryta.
+      if (sc.reaktorSam || (sc.reaktorOpcja && args.reaktor)) {
+        await ev(`(async () => {
+          const root = document.getElementById('game-root');
+          window.__harnessRootBg = root.style.background;
+          root.style.background = '#000';
+          document.getElementById('c').style.visibility = 'hidden';
+          if (document.querySelector('canvas.overlay3d')) { document.getElementById('webgl-layer').style.visibility = 'hidden'; return 'overlay'; }
+          let plate = window.__harnessCzern;
+          if (!plate) {
+            const url = performance.getEntriesByType('resource').map((e) => e.name).find((n) => /\\/three\\.js(\\?|$)|three\\.module\\.js/.test(n));
+            const T = await import(url);
+            plate = new T.Mesh(new T.PlaneGeometry(4000000, 4000000), new T.MeshBasicMaterial({ color: 0x000000 }));
+            plate.name = 'harness-czern'; plate.renderOrder = -1000; plate.layers.set(0); plate.frustumCulled = false;
+            window.__harnessCzern = plate;
+          }
+          plate.position.set(window.camera.x, -window.camera.y, -900);
+          window.Core3D.scene.add(plate); plate.updateMatrixWorld(true);
+          window.__harness.scene.onlyNamed(${JSON.stringify([...REAKTOR_SIATKI, 'harness-czern'])});
+          return 'core3d'; })()`);
+        await ev('window.__harness.frames(3)');
+        await screenshotPng(cdp, join(outDir, `${id}__reaktor.png`));
+        await ev(`(() => {
+          window.__harness.scene.onlyNamed(null);
+          window.__harnessCzern?.parent?.remove(window.__harnessCzern);
+          document.getElementById('game-root').style.background = window.__harnessRootBg || '';
+          document.getElementById('c').style.visibility = '';
+          document.getElementById('webgl-layer').style.visibility = '';
+          return true; })()`);
         await ev('window.__harness.frames(3)');
       }
       // --teren-ringu (zadanie 07): wariant `__teren` — tylko siatka terenu ringu Ziemi (reszta sceny

@@ -42,16 +42,18 @@ test('kolizje statek-olbrzym pasa w physicsStep z prawdziwym dt, nie w render()'
 // Fala z refrakcją (dawne window.trigger3DShockwave) była od 2026-09-24 tylko dla rakiet
 // supernova; od zadania 19 (port WebGPU) nie ma jej wcale — Yamato, wybuchy reaktorów
 // i rozpad stacji jej nie odpalają, a rakiety zgłaszają źródła zniekształceń Core3D.
-// Zapas heatHaze w reactorblow zostaje w kodzie (profile go wyłączają) — pilnujemy,
-// żeby po włączeniu był w osi sceny.
+// Zapas heatHaze w reactorblow zostaje w kodzie (profile go wyłączają) — od zadania 20 jako
+// gorące powietrze zniekształceń Core3D w ŚWIECIE gry (dawniej pushHeatHazeWorld w osi sceny).
 const code = (path) => read(path).replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
 
 // Port WebGPU, zadanie 19: fale, implozja i gorące powietrze rakiet (także Supernowej) to źródła
 // zniekształceń Core3D (src/3d/fx/distortion.js) zgłaszane w ŚWIECIE gry — oś y odwraca commit
 // źródeł (behawioralnie: tests/rocketFx.test.mjs); rakiety nie wołają już pushHeatHazeWorld ani
 // dawnej fali trigger3DShockwave (fala Supernowej = sama refrakcja, bez świecącego obrysu).
-test('haze reaktora w osi sceny (y3d = -yGry); rakiety i Supernowa przez zniekształcenia Core3D', () => {
-  assert.match(read('src/effects3d/reactorblow.js'), /pushHeatHazeWorld\(expX, -expZ, -4,/);
+test('haze reaktora w świecie gry (zniekształcenia Core3D); rakiety i Supernowa przez zniekształcenia Core3D', () => {
+  const blow = code('src/effects3d/reactorblow.js');
+  assert.match(blow, /field\.heat\(b\.x, b\.y, radius,/, 'haze reaktora: źródło zniekształceń w świecie gry (x, y)');
+  assert.doesNotMatch(blow, /pushHeatHazeWorld|trigger3DShockwave|useShockwave3D/, 'reaktor bez starego haze i fali');
   const rockets = code('src/effects3d/rocketSystem3D.js');
   assert.doesNotMatch(rockets, /pushHeatHazeWorld|trigger3DShockwave|makeSupernovaMissileBlow/, 'rakiety bez starego haze i fali');
   const fx = code('src/3d/rockets/effects.js');
@@ -93,10 +95,12 @@ test('dysza SIDE świeci w bloomie tylko przy manewrze (audyt 2026-09-26)', () =
   assert.ok(hdr * 2.5 > threshold * 1.5, `odpalona dysza SIDE (${hdr * 2.5}) ledwo nad progiem`);
 });
 
-test('bloom overlaya: efekty tylko przez modyfikatory, bez zapisu/przywracania bazy', () => {
-  const overlay = read('src/effects3d/overlay.js');
-  assert.match(overlay, /setBloomModifier: \(key, modifier\) =>/);
-  assert.match(overlay, /clearBloomModifier: \(key\) =>/);
+// Dawny bloom overlaya dostawał od efektów modyfikatory (Supernowa podbijała, Yamato przygaszało)
+// liczone co klatkę od bazy — bez zapisu/przywracania konfiguracji (dwa niezależne „zapisz /
+// przywróć” psuły bloom do końca sesji). Od zadania 20 overlaya nie ma; efekty ruszają post
+// Core3D tylko przez Core3D.fx.post (kasowany co klatkę), a konfiguracji bloomu nie zapisuje nikt.
+test('bloom tylko Core3D: efekty przez Core3D.fx.post, bez zapisu/przywracania bazy', () => {
+  assert.doesNotMatch(code('src/effects3d/reactorblow.js') + code('src/effects3d/reactorblow.tsl.js'), /setBloomConfig|setBloomModifier|DevVFX/);
   // Yamato nie jest już w overlayu (zadanie 17 — receptura WeaponFx w Core3D): bez modyfikatora
   // i bez zapisu konfiguracji bloomu.
   const weaponFx = code('src/3d/weapons/weaponFx.js') + code('src/3d/weapons/recipes.js');

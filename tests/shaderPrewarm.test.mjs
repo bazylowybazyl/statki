@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
 // wróciłoby niezauważone.
 
 const indexHtml = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-const overlay = readFileSync(new URL('../src/effects3d/overlay.js', import.meta.url), 'utf8');
+const reactorBlow = readFileSync(new URL('../src/effects3d/reactorblow.js', import.meta.url), 'utf8');
 const shield3d = readFileSync(new URL('../src/3d/shield3D.js', import.meta.url), 'utf8');
 
 function functionBody(source, signature) {
@@ -24,31 +24,30 @@ function functionBody(source, signature) {
   throw new Error(`niedomknięte ${signature}`);
 }
 
-test('overlay3D: prewarm renderuje kompozytor ze wszystkim widocznym i trzyma próbki bez dispose', () => {
-  const body = functionBody(overlay, 'function prewarm(');
-  assert.match(body, /o\.frustumCulled = false/, 'próbki poza kadrem obcinane — program by nie powstał');
-  assert.match(body, /o\.visible = true/, 'ukryte pule muszą przejść przez render (programy i bufory)');
-  assert.match(body, /composer\.render\(\)/, 'passy kompozytora (bloom, alfa) kompilują się tylko w przebiegu');
-  assert.match(body, /programKeepers\.push\(fx\)/, 'próbki trzymają programy przy życiu');
-  assert.doesNotMatch(body, /\.dispose\(/, 'dispose próbki zniszczyłby program, który ma trzymać');
-  assert.match(body, /renderer\.clear\(\)\s*;\s*\}\s*stats\.prewarmMs/, 'kanwa czyszczona w tym samym zadaniu — nic nie mignie');
-  assert.match(overlay, /rawScene, rawLayer, prewarm,/, 'prewarm w API overlaya');
+// Zadanie 20: overlay efektów (drugi WebGLRenderer z własną rozgrzewką kompozytora) usunięty —
+// wybuch reaktora ma pule w scenie Core3D i rozgrzewa je jego krok klatki efektów (warm: raz przy
+// gotowym urządzeniu): compileAsync pomija niewidoczne i obiekty bez instancji, więc obie siatki
+// odsłonięte na czas projekcji, cel composerTarget (prewarmPass warstwy 0), bez dispose.
+test('wybuch reaktora (Core3D): rozgrzewka kroku — obie pule odsłonięte, prewarmPass passa ortho, bez dispose', () => {
+  const warm = functionBody(reactorBlow, '  _warm(ctx) {');
+  assert.match(warm, /for \(const m of this\.meshes\)/);
+  assert.match(warm, /m\.visible = true;/, 'ukryte pule muszą przejść przez projekcję');
+  assert.match(warm, /m\.geometry\.instanceCount = 2;/, 'pula bez instancji nie ma czego rysować');
+  assert.match(warm, /core\.prewarmPass\(m, 0\)/, 'pass ortho (warstwa 0), cel composerTarget');
+  assert.match(warm, /finally \{ m\.visible = vis; m\.geometry\.instanceCount = ic; \}/, 'stan przywrócony');
+  assert.doesNotMatch(warm, /\.dispose\(/);
+  assert.match(reactorBlow, /name: 'reaktor'[\s\S]{0,300}warm: \(ctx\) => self\._warm\(ctx\)/);
+  // Fabryka powstaje przy starcie Core3D (krok rejestruje się od razu; warm przy gotowym urządzeniu).
+  const start = indexHtml.indexOf('SparkSystem3D.init(Core3D.scene);');
+  const factory = indexHtml.indexOf('window.makeReactorBlow = createReactorBlowFactory(Core3D);');
+  assert.ok(start > 0 && factory > start && factory - start < 1200, 'fabryka wybuchu przy starcie efektów Core3D');
 });
 
 // Zadanie 17: fabryk trafień broni w overlayu (rail, armata, działko, Yamato) już nie ma — trafienia
 // to receptury WeaponFx (pule GPU w Core3D, rozgrzewane krokiem Core3D.fx: kernele compute
-// i siatki przez prewarmPass). Overlay rozgrzewa to, co w nim zostało.
-test('gra: overlay rozgrzewany z pulami w scenie; efekty broni rozgrzewa krok Core3D.fx', () => {
-  const body = functionBody(indexHtml, 'function startOverlay3D(');
-  const call = body.indexOf('ov.prewarm?.()');
-  assert.ok(call > 0, 'startOverlay3D woła ov.prewarm');
-  assert.doesNotMatch(body, /makeRailgunExplosion|makeArmataImpact|makeAutocannonImpact|makeYamatoImpact/, 'fabryki trafień broni wróciły do overlaya');
-  // Pula reaktora musi już wisieć w scenie. Iskry, rakiety i Supernowa (port WebGPU, zadanie 19)
-  // są w scenie Core3D — rozgrzewa je krok efektów (test niżej).
-  for (const init of ['window.makeReactorBlow = reactorFactory(ov.scene)']) {
-    const at = body.indexOf(init);
-    assert.ok(at > 0 && at < call, `${init} przed rozgrzewką`);
-  }
+// i siatki przez prewarmPass). Zadanie 20: overlaya nie ma wcale.
+test('gra: efekty broni rozgrzewa krok Core3D.fx; overlay (i jego rozgrzewka) nie wraca', () => {
+  assert.doesNotMatch(indexHtml, /startOverlay3D|ov\.prewarm|makeRailgunExplosion|makeArmataImpact|makeAutocannonImpact|makeYamatoImpact/);
   const wfx = readFileSync(new URL('../src/3d/weapons/weaponFx.js', import.meta.url), 'utf8');
   assert.match(wfx, /warm\(c\) \{ self\.gpu\.warm\(c\.renderer, c\.core\); self\._warmSystems\(c\); \}/);
   assert.match(wfx, /core\.prewarmPass\(mesh, 0\)/);

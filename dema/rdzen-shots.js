@@ -141,7 +141,8 @@ const SCENARIOS = {
       await ev(`(async () => { const R = window.__rdzen; await R.runFrames(${Math.round(dur * 0.5 * 60)}, 60); R.pause(true); R.renderFrames(2); return true; })()`);
       await measure('meltdown-50', 1.8);
       // 70%: crescendo rdzenia przed błyskiem reactorblow (startuje chargeTime
-      // 0,8 s przed końcem — overlay to osobny renderer, pomiar HDR go nie widzi)
+      // 0,8 s przed końcem; od zadania 20 wybuch jest w scenie Core3D — pomiar HDR
+      // widzi też jego rdzeń ładowania, dawniej w overlayu poza pomiarem)
       await ev(`(async () => { const R = window.__rdzen; R.pause(false); await R.runFrames(${Math.round(dur * 0.2 * 60)}, 60); R.pause(true); R.renderFrames(2); return true; })()`);
       if (id === 'battleship') await shot('21-pasma-bellator-stopienie-70');
       await ev(`(async () => { const R = window.__rdzen; R.pause(false); await R.runFrames(${Math.round(dur * 0.2 * 60)}, 60); R.pause(true); R.renderFrames(2); return true; })()`);

@@ -270,7 +270,7 @@ test('strona: import map three/webgpu i three/tsl, Vite prebundluje razem, komun
   assert.match(start.slice(0, 300), /if \(Core3D\.gpuUnsupported\) \{ showWebGpuRequired\(\); return; \}/);
 });
 
-test('jeden renderer: modelBaker usunięty, w src żadnego WebGLRenderer poza overlayem (do zadania 20)', () => {
+test('jeden renderer: modelBaker usunięty, w src żadnego WebGLRenderer (overlay usunięty w zadaniu 20)', () => {
   assert.equal(existsSync(new URL('../src/3d/modelBaker.js', import.meta.url)), false);
   assert.doesNotMatch(read('src/ui/devTools.js'), /modelBaker|ModelBaker|btn-load-glb/);
   const root = fileURLToPath(new URL('../src', import.meta.url));
@@ -283,5 +283,5 @@ test('jeden renderer: modelBaker usunięty, w src żadnego WebGLRenderer poza ov
     }
   };
   walk(root);
-  assert.deepEqual(offenders.map((p) => p.slice(root.length + 1).replace(/\\/g, '/')), ['effects3d/overlay.js']);
+  assert.deepEqual(offenders.map((p) => p.slice(root.length + 1).replace(/\\/g, '/')), []);
 });
