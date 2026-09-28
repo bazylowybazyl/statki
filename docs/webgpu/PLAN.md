@@ -130,6 +130,23 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   `setupLightingModel` / `outputNode` na `MeshStandardMaterial` działa (klucz programu: własny `customProgramCacheKey`
   = klucz klasy + hak). Zagnieżdżone `Loop(n)` dostają ten sam indeks `i` — w bibliotekach nazywaj indeksy
   (`Loop({ start, end, type: 'int', condition: '<', name })`).
+- **Pułapki z zadania 15 (three r183):** **`DynamicDrawUsage` na atrybucie = `writeBuffer` CAŁEGO bufora przy każdym
+  `render()`, który go rysuje** (`Attributes.update` pomija wtedy porównanie wersji) — bufory pisane w biegu zostają
+  przy domyślnym użyciu z `needsUpdate` i zakresami (`addUpdateRange`; backend wysyła tylko zakresy i sam czyści listę).
+  **Częściowa aktualizacja danych czytanych jak tekstura** (wiersze obrażeń mostków): zakresy tekstur backend ignoruje
+  (każda zmiana = `writeTexture` całości: 768 × 512 RGBA8 = 1,5 MB, ~0,7 ms CPU), zakresy buforów honoruje — bufor
+  storage (`StorageBufferAttribute` + `storage(attr, 'uint', n).toReadOnly()`), bajty RGBA8 w słowie u32 (widok
+  `Uint8Array` na tym samym `ArrayBuffer`; przesunięcia w WGSL tylko na `u32` — `i32 >> i32` to błąd): blok ~1 KB,
+  < 0,005 ms (`benchDamageUpload` w `dema/mostki-demo.js`). Alternatywa z zadania 03 dla tekstur: własny
+  `queue.writeTexture` wycinka (`Core3D.uploadTextureLayer`). **Wiele meshy instancji z JEDNYM materiałem:** Mesh +
+  `InstancedBufferGeometry` (klucz geometrii strukturalny, `instanceCount` = liczba rysowanych) zamiast `InstancedMesh`
+  (uuid w kluczu), stałe rodzaju w `uniformArray` czytanej indeksem z danych instancji (mostki: 11 rodzajów, 1 graf).
+  **Macierz instancji `InstancedMesh` ponad 1024 instancje** (atrybut, nie bufor uniformów) three synchronizuje RAZ
+  NA KLATKĘ rAF (`InstanceNode`, `updateType` FRAME): w serii renderów w jednym zadaniu JS rysują się dane z pierwszego
+  — w grze (render raz na klatkę, podzielony ekran z tymi samymi danymi) bez skutków, w narzędziach z pętlą
+  synchroniczną tak (`precyzja-drzenie.js`: szczeliny okien przy starym początku układu, maska 0) — przed renderem
+  pomiaru czekać na nową klatkę (`renderer.info.frame`). **`textureSample` w niejednolitym przepływie** (pętla z
+  `Break` zależnym od danych — marsz cienia) to błąd WGSL — `texture(...).level(0)` (textureSampleLevel).
 - **TSL, nie `wgslFn`.** Tekstowy WGSL tylko dla wyizolowanej czystej funkcji, gdy TSL jest naprawdę niewygodny — z
   uzasadnieniem w commicie (zamyka drogę do zapasowego backendu WebGL2).
 - **Pętle:** `Loop` w TSL, nie `for` w JS generujący kopie (`mx_noise_float` ×160 rozwinięte = 44 s kompilacji).
