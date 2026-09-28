@@ -276,7 +276,8 @@ export class MiningRig {
     this.stock[ch.id] = (this.stock[ch.id] | 0) - 1;
     const depth = this.mining.probe(hit.body, px, py, pz).depth;
     const need = chargeForDepth(hit.body.material, depth);
-    this._say(`Ładunek ${ch.id} (${fmt1(ch.energy)}) ${Math.round(depth)} j. pod powierzchnią — do przebicia ≥ ${fmt1(need)}`);
+    // Płytko potrzeba ułamka energii — „≥ 0,0” myliło; najmniejsza pokazywana wartość 0,1.
+    this._say(`Ładunek ${ch.id} (${fmt1(ch.energy)}) ${Math.round(depth)} j. pod powierzchnią — do przebicia ≥ ${fmt1(Math.max(0.1, need))}`);
     return charge;
   }
 

@@ -278,6 +278,16 @@ export class MinedRocks {
     })().compute(STAGING_CELLS).setName('minedAtlasCopy');
   }
 
+  /** Siatki do rozgrzewki pipeline'ów (asteroidBelt._prewarm → Core3D.warmup): zewnętrze, wnętrze, minerały, okruchy. */
+  warmupMeshes() {
+    const list = [];
+    for (let i = 0; i < this.ext.length; i++) list.push(this.ext[i].mesh);
+    list.push(this.int.mesh);
+    if (this.minerals) list.push(this.minerals.group);
+    list.push(this.pebbleSet.group);
+    return list;
+  }
+
   /** Pusty dispatch kopiowania (rozgrzewka pipeline'u compute). */
   warm() {
     this.copyU.count.value = 0;

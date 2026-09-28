@@ -201,3 +201,63 @@ test('widok platformy: drony, lasery, wybuch → iskry, błysk, fala; pierście�
   assert.ok(glow.n > 0);
   void again;
 });
+
+test('widok platformy: zdarzenia z czasu poza kadrem (hide) nie odpalają się po powrocie', () => {
+  const rocks = [{ id: 78, x: 1500, y: 0, r: 280, d: 560, shape: 5, type: ROCK_TYPE_INDEX.ice, qx: 0, qy: 0, qz: 0, qw: 1, ax: 0, ay: 0, az: 1, spin: 0, phase: 0, sx: 1, sy: 1, sz: 1, seed: 0.6 }];
+  const m3 = new AsteroidMining({ radiusAt: lumpy, seed: 11 });
+  const field = { forEachRockInRect(b, x0, y0, x1, y1, md, cb) { for (const r of rocks) cb(r); return rocks.length; } };
+  const rig = new MiningRig({ mining: m3, field, playZ: (r) => -r.r * 1.45 });
+  const v2 = new MiningView({ parent: new THREE.Group(), layer: 0, shared, grid, sparks: { emitted: 0, emit() { this.emitted++; } } });
+  v2.attach(rig);
+  const ship = { x: 0, y: 0, angle: 0, len: 1800 };
+  rig.setEnabled(true);
+  rig.chargeIndex = 2;
+  rig.beginFrame();
+  rig.step(1 / 120, ship);
+  assert.ok(rig.plantCharge(1500, 0));
+  // Pole wychodzi z kadru; ładunek wybucha, gdy obraz jest schowany.
+  v2.hide();
+  rig.detonate();
+  rig.beginFrame();
+  rig.step(1 / 120, ship);
+  assert.ok(rig.fxWrite > 0, 'zdarzenie wybuchu w pierścieniu');
+  const frame = { dt: 1 / 60, time: 30, originX: 0, originY: 0, zoom: 0.4, ship: { x: 0, y: 0 }, sunT: () => 1 };
+  v2.update(frame);
+  assert.equal(v2.stats.blasts, 0, 'wybuch sprzed powrotu pominięty');
+  // Nowe zdarzenia po powrocie — jak zwykle.
+  rig.beginFrame();
+  assert.ok(rig.plantCharge(1500, 0));
+  rig.detonate();
+  rig.beginFrame();
+  rig.step(1 / 120, ship);
+  frame.time = 30.1;
+  v2.update(frame);
+  assert.ok(v2.stats.blasts >= 1, 'wybuch po powrocie widać');
+});
+
+test('rozgrzewka pasa: wszystkie mapy atlasu cienia, krok iskier (dt = 0), wydobycie osobnym wpisem rejestru', () => {
+  const src = stripComments(read('src/3d/asteroids/asteroidBelt.js'));
+  // compileAsync na celu atlasu tylko przez compileAsyncNaCelu (pułapka 30 — głębia celu w kluczu pipeline'u).
+  assert.equal((src.match(/\.compileAsync\(/g) || []).length, 0, 'bez bezpośredniego compileAsync');
+  assert.match(src, /compileAsyncNaCelu\(renderer, atlas\.scene/);
+  // Atlas: wszystkie mapy (każda ma własny materiał cienia) i siatki wycięć widoczne na czas kompilacji.
+  const shadow = src.slice(src.indexOf('_prewarmShadowAtlas() {'), src.indexOf('_prewarmCompute() {'));
+  assert.match(shadow, /for \(let i = 0; i < maps\.length; i\+\+\) \{\s*maps\[i\]\.mesh\.visible = v;\s*if \(maps\[i\]\.carved\) maps\[i\]\.carved\.mesh\.visible = v;/);
+  // Krok iskier z dt = 0 (burza: jeden compute na zimno), potem dt wraca.
+  const comp = src.slice(src.indexOf('_prewarmCompute() {'));
+  assert.match(comp, /S\.dt\.value = 0;\s*renderer\.compute\(this\.sparks\.stepNode\);\s*S\.dt\.value = dt;/);
+  // Wpisy rejestru (Core3D.warmup.run) — pas, wydobycie, atlas, compute.
+  const pre = src.slice(src.indexOf('async _prewarm() {'), src.indexOf('_prewarmShadowAtlas() {'));
+  assert.equal((pre.match(/run\('pas asteroid: /g) || []).length, 4);
+  assert.match(pre, /this\.mined\.warmupMeshes\(\)/);
+  assert.match(pre, /this\.miningView\.warmupMeshes\(\)/);
+  // Siatki wydobycia: zewnętrze (LOD), wnętrze, minerały, okruchy, drony, wiązki — wszystkie z warstwą passa gry.
+  const meshes = [];
+  for (const o of [...mined.warmupMeshes(), ...view.warmupMeshes()]) o.traverse((m) => { if (m.isMesh) meshes.push(m); });
+  const names = new Set(meshes.map((m) => m.material.name));
+  for (const n of ['AsteroidBelt:minedRocks', 'AsteroidBelt:minedInterior', 'AsteroidBelt:mineralsMined', 'AsteroidBelt:miningDrones', 'AsteroidBelt:miningBeams']) {
+    assert.ok(names.has(n), `rozgrzewka wydobycia: ${n}`);
+  }
+  assert.ok(meshes.some((m) => m.material === playMaterial), 'okruchy (materiał warstwy gry)');
+  assert.ok(meshes.every((m) => m.layers.mask === 1), 'warstwa passa gry (0)');
+});

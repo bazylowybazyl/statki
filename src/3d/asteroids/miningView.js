@@ -340,6 +340,7 @@ export class MiningView {
     this.sparks = sparks;
     this.rig = null;
     this._fxRead = 0;
+    this._stale = false;
     this._w = [0, 0, 0];
     this._shocks = [];
     for (let i = 0; i < SHOCK_CAP; i++) this._shocks.push({ x: 0, y: 0, t0: -1e9, life: 0, rMax: 0, width: 0, strength: 0 });
@@ -361,22 +362,17 @@ export class MiningView {
     this._fxRead = rig ? rig.fxWrite : 0;
   }
 
-  /** Warstwy na czas rozgrzewki: jedna instancja drona i wiązki (kompilacja programów). */
-  warmInstances() {
-    this.drones.begin();
-    this.drones.add(0, 0, 0, 0, 1, 0, 0, 0);
-    this.drones.add(0, 0, -5000, 0, 1, 0, 0, 0);
-    this.drones.commit(0);
-    this.beams.begin();
-    this.beams.add(0, 0, -5000, 1, 0, -5000, 1, 0, 0, 0, 1e-6);
-    this.beams.add(0, 0, -5000, 1, 0, -5000, 1, 0, 0, 0, 1e-6);
-    this.beams.commit();
+  /** Siatki do rozgrzewki pipeline'ów (asteroidBelt._prewarm → Core3D.warmup): drony i wiązki. */
+  warmupMeshes() {
+    return [this.drones.mesh, this.beams.mesh];
   }
 
   hide() {
     this.drones.begin(); this.drones.commit(this.time);
     this.beams.begin(); this.beams.commit();
     this.visible = false;
+    // Zdarzenia z czasu poza kadrem (wybuchy, błyski) nie odpalają się po powrocie.
+    this._stale = true;
   }
 
   /**
@@ -437,6 +433,7 @@ export class MiningView {
     this.drones.begin();
     this.beams.begin();
     if (!rig) { this.drones.commit(f.time); this.beams.commit(); return; }
+    if (this._stale) { this._fxRead = rig.fxWrite; this._stale = false; }
     this._drainFx(f);
     const sp = this.sparks;
     const dt = f.dt;

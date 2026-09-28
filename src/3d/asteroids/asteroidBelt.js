@@ -34,6 +34,7 @@
 
 import * as THREE from 'three/webgpu';
 import { Core3D } from '../core3d.js';
+import { compileAsyncNaCelu } from '../rozgrzewka.js';
 import { AsteroidBeltField, BELT_BAND } from '../../game/asteroidBeltField.js';
 import { FieldSunOcclusion } from '../../game/asteroidFieldLight.js';
 import { BeltGiants } from '../../game/asteroidBeltGiants.js';
@@ -297,45 +298,98 @@ export class AsteroidBelt {
   // Rozgrzewka pipeline'ów (PLAN §6): compileAsync odtwarza pass — obiekty widoczne,
   // cel composerTarget, kamera passa z warstwą. Siatki pola są ukryte do pierwszej
   // klatki w polu: na czas kompilacji widoczne (bez instancji nic nie rysują).
+  // Wpisy rejestru rozgrzewki (Core3D.warmup.run, zadanie 11): czas CPU i pipeline'y
+  // każdej części w statystykach, flush() ekranu ładowania czeka na nie.
   async _prewarm() {
     const root = this.root;
-    const shown = [];
-    root.traverse((o) => {
-      if ((o.isMesh) && o.visible === false) { o.visible = true; shown.push(o); }
-    });
-    const promises = [
+    const reg = Core3D.warmup;
+    const run = (name, fn) => (reg && typeof reg.run === 'function' ? reg.run(name, fn) : fn());
+    // Siatki wydobycia (zadanie 21b) osobnym wpisem — w passach pola zostają ukryte.
+    const mining = new Set();
+    const addMining = (list) => {
+      for (let i = 0; i < list.length; i++) list[i].traverse((o) => { if (o.isMesh) mining.add(o); });
+    };
+    if (this.mined) addMining(this.mined.warmupMeshes());
+    if (this.miningView) addMining(this.miningView.warmupMeshes());
+    const withShown = (pick, fn) => {
+      const shown = [];
+      root.traverse((o) => {
+        if (o.isMesh && o.visible === false && pick(o)) { o.visible = true; shown.push(o); }
+      });
+      try {
+        return fn();
+      } finally {
+        for (let i = 0; i < shown.length; i++) shown[i].visible = false;
+      }
+    };
+    const promises = [];
+    promises.push(run('pas asteroid: skały, minerały, mgła, burza, iskry (passy PLAY i BACK)', () => withShown((o) => !mining.has(o), () => Promise.all([
       Core3D.prewarmPass(root, BELT_LAYER_PLAY),
       Core3D.prewarmPass(root, BELT_LAYER_BACK)
-    ];
-    for (let i = 0; i < shown.length; i++) shown[i].visible = false;
-    // Atlas map cienia (własny cel i scena).
+    ]))));
+    if (mining.size) {
+      promises.push(run('pas asteroid: wydobycie (skały z wycięciami, wnętrze, minerały, okruchy, drony, wiązki)', () => withShown((o) => mining.has(o), () => {
+        const list = [];
+        for (const mesh of mining) list.push(Core3D.prewarmPass(mesh, BELT_LAYER_PLAY));
+        return Promise.all(list);
+      })));
+    }
+    promises.push(run('pas asteroid: atlas cieni reflektorów (wszystkie mapy, cień skał w wydobyciu)', () => this._prewarmShadowAtlas()));
+    run('pas asteroid: kernele compute (ośrodek, iskry, atlas wydobycia)', () => this._prewarmCompute());
+    await Promise.all(promises);
+  }
+
+  // Atlas map cienia (własny cel i scena): WSZYSTKIE mapy naraz — każda ma własny materiał
+  // cienia (pozycja lampy), więc osobną budowę NodeBuilder; rozgrzana tylko mapa 0 zostawiała
+  // 5 budów przy pierwszym wejściu w pole (zadanie 11: shadowCasters_2–6, ~12 ms). Do tego
+  // siatki cienia skał w wydobyciu (materiał cienia w trybie wycięć — zadanie 21b).
+  _prewarmShadowAtlas() {
     const renderer = this.renderer;
     const atlas = this.atlas;
+    const maps = atlas.maps;
+    if (!atlas.casters || !maps.length || !maps[0].mesh) return false;
+    const prev = renderer.getRenderTarget();
+    const setVisible = (v) => {
+      for (let i = 0; i < maps.length; i++) {
+        maps[i].mesh.visible = v;
+        if (maps[i].carved) maps[i].carved.mesh.visible = v;
+      }
+    };
     try {
-      const prev = renderer.getRenderTarget();
-      const m = atlas.maps[0];
-      m.mesh.visible = true;
-      // Cień skał w wydobyciu (materiał cienia w trybie wycięć — zadanie 21b).
-      if (m.carved) m.carved.mesh.visible = true;
+      setVisible(true);
       renderer.setRenderTarget(atlas.rt);
-      promises.push(renderer.compileAsync(atlas.scene, m.cam).catch(() => false));
-      m.mesh.visible = false;
-      if (m.carved) m.carved.mesh.visible = false;
-      renderer.setRenderTarget(prev);
+      return compileAsyncNaCelu(renderer, atlas.scene, maps[0].cam).catch((err) => {
+        console.warn('[AsteroidBelt] rozgrzewka atlasu cieni nie wyszła:', err?.message || err);
+        return false;
+      });
     } catch (err) {
       console.warn('[AsteroidBelt] rozgrzewka atlasu cieni nie wyszła:', err?.message || err);
+      return false;
+    } finally {
+      setVisible(false);
+      renderer.setRenderTarget(prev);
     }
-    // Kernele compute: puste dispatche (liczniki w uniformach = 0).
+  }
+
+  // Kernele compute: puste dispatche (liczniki w uniformach = 0, krok iskier z dt = 0).
+  _prewarmCompute() {
+    const renderer = this.renderer;
     try {
       renderer.compute(this.volume.node, 1);
-      this.sparks.U.count.value = 0;
+      const S = this.sparks.U;
+      S.count.value = 0;
       renderer.compute(this.sparks.spawnNode, 1);
+      // Krok iskier (burza, cięcie, wybuchy — zadanie 11: jeden compute na zimno w burzy).
+      // dt = 0 niczego nie zmienia (pula po czyszczeniu i tak martwa).
+      const dt = S.dt.value;
+      S.dt.value = 0;
+      renderer.compute(this.sparks.stepNode);
+      S.dt.value = dt;
       // Kopiowanie siatek ciał do atlasu wydobycia (licznik 0 — sam pipeline).
       this.mined?.warm();
     } catch (err) {
       console.warn('[AsteroidBelt] rozgrzewka compute nie wyszła:', err?.message || err);
     }
-    await Promise.all(promises);
   }
 
   _warmStep() {
