@@ -165,7 +165,7 @@ const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a
 /**
  * Lustro CPU wyglądu rany w materiale (testy pasm HDR): próbka D = { heat, ion, scorch, rim, cut },
  * szum (nz — przesunięcie brzegu, jag — osmalenie, n1 — jony) i migotanie. Zwraca { heat: [r, g, b],
- * ion: [r, g, b], hole, rim, scorch, burnt, cut: czy piksel odrzucony (przestrzelina) }.
+ * ion: [r, g, b], hole, rim, scorch, burnt, gloss (waga lakieru), cut: czy piksel odrzucony (przestrzelina) }.
  */
 export function woundGlowCpu(D, nz = 0, jag = 0, n1 = 0.5, flick = 1) {
   const cut = D.cut > 0.004 && smooth(0.52, 0.6, D.cut + nz) > 0.5;
@@ -178,7 +178,8 @@ export function woundGlowCpu(D, nz = 0, jag = 0, n1 = 0.5, flick = 1) {
   const a = smooth(0.02, 0.5, t) * 1.3, b = smooth(0.35, 1.4, t) * 2.4, c = smooth(1.2, 3.2, t) * 7.0;
   const heat = [(a + b + c) * flick, (a * 0.18 + b * 0.5 + c * 0.92) * flick, (a * 0.02 + b * 0.1 + c * 0.78) * flick];
   const k = D.ion * (n1 * 1.4 + 0.3) * flick;
-  return { heat, ion: [0.35 * k, 1.25 * k, 2.9 * k], hole, rim, scorch, burnt, cut };
+  const gloss = (1 - scorch * 0.85) * (1 - hole);
+  return { heat, ion: [0.35 * k, 1.25 * k, 2.9 * k], hole, rim, scorch, burnt, gloss, cut };
 }
 
 // ── Kernel ──────────────────────────────────────────────────────────────────
@@ -319,15 +320,18 @@ function noiseTexture() {
  * Hak `hullDamageSurface` skóry belek: rana z mapy w uv skóry (jedzie z odkształceniem).
  * P — węzły per obiekt kadłuba (uDmgSlot, uDmgWorld), uTime — czas wspólny (migotanie).
  * Ustawia ctx.albedo (osmalenie), ctx.woundHeat / ctx.woundIon (vec3, do hullDamageHeat),
- * ctx.woundScorch (połysk); przestrzelina małego kalibru → Discard().
+ * ctx.woundScorch (połysk świateł efektów), ctx.woundGloss (waga lakieru, hullDamageLacquer);
+ * przestrzelina małego kalibru → Discard().
  */
 export function hullWoundSurface(ctx, P, uTime, poolRO = hullDamagePool().ro) {
   const woundHeat = vec3(0.0).toVar();
   const woundIon = vec3(0.0).toVar();
   const woundScorch = float(0.0).toVar();
+  const woundGloss = float(1.0).toVar();
   ctx.woundHeat = woundHeat;
   ctx.woundIon = woundIon;
   ctx.woundScorch = woundScorch;
+  ctx.woundGloss = woundGloss;
   const slot = P.uDmgSlot;
   // Warunek jednolity (uniform obiektu): próbkowania szumu z pochodnymi w środku są dozwolone.
   If(slot.w.greaterThan(0.5), () => {
@@ -355,6 +359,8 @@ export function hullWoundSurface(ctx, P, uTime, poolRO = hullDamagePool().ro) {
     // środek dawał tarczę bieli 8–10 HDR na całą średnicę i bloom zalewał pół kadłuba.
     const burnt = mix(vec3(1.0), vec3(0.10, 0.085, 0.075), scorch).mul(float(1.0).sub(hole.mul(0.92)));
     ctx.albedo.mulAssign(burnt);
+    // Lakier (odbicie nieba) gaśnie na osmaleniu i w leju — jak połysk dema (× (1 − 0,8·osmalenie)).
+    woundGloss.assign(float(1.0).sub(scorch.mul(0.85)).mul(float(1.0).sub(hole)));
     // Żar: skala ciała czarnego (czerwień → pomarańcz → biel), mocniej na brzegu (demo hull.js).
     const t = D.heat.mul(rim.mul(2.2).add(scorch.mul(0.6)).add(0.25)).mul(float(1.0).sub(hole)).toVar();
     const heatCol = vec3(1.0, 0.18, 0.02).mul(smoothstep(0.02, 0.5, t).mul(1.3))

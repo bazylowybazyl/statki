@@ -487,6 +487,8 @@ test('pasma HDR rany (lustro CPU kernela i materiału): biały brzeg 8–12, sty
   assert.ok(maxRim >= 8 && maxRim <= 12, `brzeg świeżej rany ${maxRim.toFixed(2)} (8–12 HDR)`);
   assert.ok(center.hole > 0.99 && Math.max(...center.heat) < 1e-6, 'lej nie świeci (w demie była tam dziura)');
   assert.ok(center.burnt < 0.1, `lej ciemny: ${center.burnt}`);
+  assert.ok(center.gloss < 0.01, 'lej bez lakieru (odbicie nieba nie zależy od albedo — czarny lej lśniłby jak blacha)');
+  assert.equal(T.woundGlowCpu({ heat: 0, ion: 0, scorch: 0, rim: 0, cut: 0 }).gloss, 1, 'czysta blacha: pełny lakier');
   // Po 3 s: pomarańcz/czerwień (bez bieli), po czasie stygnięcia — pod progiem bloomu 0,9.
   let max3 = 0, maxCold = 0;
   for (let r = 0; r <= 1.5; r += 0.02) {
@@ -560,6 +562,9 @@ test('WGSL materiału: skóra belek czyta pulę ran i siatkę świateł (tylko o
   // Haki w hexShips3D.tsl.js: żar skóry przez hullDamageHeat (max), rany tylko skóra belek (damage: true).
   const tsl = read('src/3d/hexShips3D.tsl.js');
   assert.match(tsl, /finalColor\.addAssign\(hullDamageHeat\(ctx, heatRamp\(heat\)/);
+  // Lakier na ranie: mnożnik per piksel PO warunku jednolitym bloku lakieru (inaczej pochodne w niejednolitym przepływie).
+  assert.match(tsl, /const lacquerW = hullDamageLacquer\(ctx, lacquerW0\.mul\(shape\.z\)\)\.toVar\(\);/);
+  assert.ok(tsl.indexOf('If(lacquerW0.greaterThan(0.001)') < tsl.indexOf('const lacquerW = hullDamageLacquer('));
   assert.match(tsl, /damage: true/);
   assert.match(tsl, /damage: opts\.damage === true/);
 });

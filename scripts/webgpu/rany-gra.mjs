@@ -43,7 +43,8 @@ try {
     const f = join(out, `${name}.png`);
     await screenshotPng(cdp, f);
     const st = await ev('JSON.stringify(window.HullDamageMap.stats)');
-    result.zrzuty.push({ plik: `${name}.png`, opis, mapa: JSON.parse(st) });
+    const hull = await ev('JSON.stringify({ klucz: ship.beamHull?.dmgKey, wezly: ship.beamHull?.body.activeNodes, slot: !!window.HullDamageMap.slotOf(ship.beamHull?.dmgKey), zniszczony: !!ship.destroyed, hp: Math.round(ship.hull?.val ?? ship.hp ?? -1) })');
+    result.zrzuty.push({ plik: `${name}.png`, opis, mapa: JSON.parse(st), atlas: JSON.parse(hull) });
     console.log('zrzut', name, '—', opis);
   };
 

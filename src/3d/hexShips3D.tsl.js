@@ -305,6 +305,13 @@ function hullDamageHeat(ctx, skinGlow) {
   return ctx.damage ? hullWoundHeat(ctx, skinGlow) : skinGlow;
 }
 
+// Zadanie 18-C — waga lakieru na ranie: osmalona blacha i lej nie odbijają nieba (odbicie lakieru
+// nie zależy od albedo — czarny lej z pełnym lakierem wyglądał jak cała blacha; demo: połysk
+// × (1 − 0,8·osmalenie)). Mnożnik per piksel wchodzi do wagi po warunku jednolitym bloku lakieru.
+function hullDamageLacquer(ctx, weight) {
+  return ctx.damage ? weight.mul(ctx.woundGloss) : weight;
+}
+
 // Zadanie 18-C — światła efektów z siatki świateł (zadanie 12: błyski, trafienia, pociski,
 // wiązki) jako DODATKOWE światła poszycia (× albedo z osmaleniem, normalna ctx.worldNormal,
 // punkt z pozycji widoku — dokładny przy 5–10 mln j.). Lampy statku (payload) zostają w pętli wyżej.
@@ -417,7 +424,7 @@ function hullFragmentNode(opts) {
         // się w jednolitym przepływie (próbkowania z pochodnymi, fwidth), a
         // niejednolite „lacquerW > 0,001” z GLSL wybiera wynik na końcu (select).
         const shape = perObjectTexture('uShapeMap', PLACEHOLDER_SHAPE, spriteUV);
-        const lacquerW = lacquerW0.mul(shape.z).toVar();
+        const lacquerW = hullDamageLacquer(ctx, lacquerW0.mul(shape.z)).toVar();
         Loop({ start: int(0), end: int(P.uEngineZoneCount), type: 'int', condition: '<' }, ({ i }) => {
           const zone = lights.element(base.add(HULL_LIGHT_ZONE_OFFSET).add(i));
           lacquerW.mulAssign(smoothstep(zone.z, zone.z.mul(1.5), length(fragPx.sub(zone.xy))));
