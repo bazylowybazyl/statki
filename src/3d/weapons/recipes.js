@@ -752,15 +752,17 @@ RECIPES.hexlance = {
     // rozgrzany czubek leci z pociskiem (prędkość własna pocisku względem nośnika)
     E(ctx.fx.add, K.GLOW, 1, sp(x1, y1, _P), D).vel(p.rvx, -p.rvy).life(0.05, 0.05).s0(120, 120).s1(96, 96).colors(HEX_TIP0, HEX_TIP1).mix(12).fade(0.01, 0.8).grow(1).emit();
   },
-  impact(ctx, p, hull, hit) {
-    hexImpact(ctx, hit.x, hit.y, sv(p.vx, p.vy, _D), HEX_S, 0.85, HEX_IMPACT_SPARK);
+  // power — moc (1 = Hexlance; strumień reaktora z warsztatu rdzeni: 0,45–1 wg klasy, jak dawny
+  // RailgunFX3D.impact / kerf(…, 0,85 · moc)).
+  impact(ctx, p, hull, hit, power = 1) {
+    hexImpact(ctx, hit.x, hit.y, sv(p.vx, p.vy, _D), HEX_S, 0.85 * power, HEX_IMPACT_SPARK);
     ctx.stamp(hull, hit.x, hit.y, 70, 3.4, 1.0, 0.85, 0.2);
-    ctx.shake(8, 0.3);
+    ctx.shake(8 * power, 0.3);
   },
-  kerf(ctx, p, hull) {
-    kerf(ctx, p.x, p.y, sv(p.vx, p.vy, _D), HEX_S, 0.7, HEX_KERF_SPARK);
+  kerf(ctx, p, hull, power = 1) {
+    kerf(ctx, p.x, p.y, sv(p.vx, p.vy, _D), HEX_S, 0.7 * power, HEX_KERF_SPARK);
     ctx.stamp(hull, p.x, p.y, 34, 3.2, 0.9, 0.85, 0, p.vx, p.vy, 2.2);
-    ctx.lights.flash(p.x, p.y, 1.0, 0.7, 0.4, 6, 450, 0.12, 2, 0, 50);
+    ctx.lights.flash(p.x, p.y, 1.0, 0.7, 0.4, 6 * power, 450, 0.12, 2, 0, 50);
   },
   exit(ctx, p) {
     exitSpray(ctx, p.x, p.y, sv(p.vx, p.vy, _D), 1.2, HEX_S);

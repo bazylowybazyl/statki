@@ -185,7 +185,8 @@ test('stary panel skanera i radar: bez modelu kontaktów, gdy kokpit go chowa / 
 const readSrc = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
 test('wybuchy overlaya bez PointLight (scena bez materiałów oświetlanych, światło zmieniało klucz programu)', () => {
-  for (const path of ['src/effects3d/reactorblow.js', 'src/effects3d/supernovaMissileBlow.js', 'src/effects3d/yamato.js']) {
+  // (yamato.js usunięty w zadaniu 17 — trafienie Yamato to receptura WeaponFx w Core3D.)
+  for (const path of ['src/effects3d/reactorblow.js', 'src/effects3d/supernovaMissileBlow.js']) {
     assert.doesNotMatch(readSrc(path), /new THREE\.PointLight/, path);
   }
 });
@@ -213,12 +214,17 @@ test('warstwa raw rakiet i pule odłamków paneli: puste siatki są niewidoczne'
   assert.match(shards, /this\.mesh\.count = 0;\s*this\.mesh\.visible = false;/);
 });
 
-test('pociski 3D: barwy HDR raz na styl, upload tylko zajętego wycinka', () => {
-  const w3d = readSrc('src/3d/weapon3DSystem.js');
-  assert.doesNotMatch(w3d, /colorObj\.set\(style\./);
-  assert.match(w3d, /setColorAt\(instanceCount, styleHdr\.core\)/);
-  assert.match(w3d, /uploadInstancePrefix\(bulletInstances\.trails\.instanceMatrix, instanceCount, 16\)/);
-  assert.doesNotMatch(w3d, /bulletInstances\.heads\.instanceMatrix\.needsUpdate = true;\s*if \(bulletInstances\.trails\.instanceColor\)/);
+// Zadanie 17: pociski rysuje ProjectileSystem (src/3d/weapons/projectiles.js — style w jednym draw
+// callu, dawniej weapon3DSystem.js): barwa HDR z konfiguracji rodziny (raz na rodzinę i rozmiar
+// w WeaponFx), wysyłka tylko zajętej części bufora przez stałe zakresy (liveRange.js — bez obiektu
+// zakresu na klatkę).
+test('pociski 3D: barwy HDR raz na rodzinę, upload tylko zajętego wycinka', () => {
+  const proj = readSrc('src/3d/weapons/projectiles.js');
+  assert.match(proj, /if \(n > 0\) markRange\(this\.node\.value, 0, Math\.max\(2, n\) \* FLOATS\);/);
+  assert.doesNotMatch(proj, /addUpdateRange\(|needsUpdate = true/);
+  const wfx = readSrc('src/3d/weapons/weaponFx.js');
+  assert.match(wfx, /function projectileConf\(family, size\) \{[\s\S]*?_confCache\.get\(key\)/);
+  assert.match(readSrc('src/3d/weapons/liveRange.js'), /attr\.clearUpdateRanges = keepUpdateRanges;/);
 });
 
 test('overlay: adaptacja jakości z histerezą, pusta lista efektów nie zmienia skali', () => {

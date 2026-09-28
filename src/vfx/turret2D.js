@@ -4,7 +4,7 @@
 //
 // Powód: modele 3D wieżyczek niosły w passie FG po kilka oświetlanych draw calli
 // na broń, a przy zbliżeniu na flotę potrafiły spuchnąć klatkę na stałe (patrz
-// historia `_detachContainer` w weapon3DSystem.js). Gra jest ortograficzna i
+// historia `_detachContainer` w dawnym weapon3DSystem.js). Gra jest ortograficzna i
 // patrzy z góry, więc wieżyczka i tak była płaską sylwetką — tutaj rysujemy ją
 // wprost.
 //
@@ -28,7 +28,7 @@ import { MainWeaponSprite2D } from './mainWeaponSprite2D.js';
 import { PdWeaponSprite2D } from './pdWeaponSprite2D.js';
 import { mountedWeaponRenderAngle } from '../game/weaponAim.js';
 
-// Barwy odpowiadają materiałom Lambert z weapon3DSystem, rozjaśnione o ~1.6×,
+// Barwy odpowiadają materiałom Lambert z dawnego weapon3DSystem, rozjaśnione o ~1.6×,
 // bo na kanwie nie ma oświetlenia sceny, które je podbijało.
 const C = {
   base: '#5c6e8f',
@@ -40,7 +40,7 @@ const C = {
   detailAmber: '#7c6a4a'
 };
 
-// Skale przeniesione z weapon3DSystem — te same liczby, żeby wieżyczki nie
+// Skale przeniesione z dawnego weapon3DSystem — te same liczby, żeby wieżyczki nie
 // zmieniły rozmiaru względem kadłubów.
 const SCALE_BY_SIZE = Object.freeze({ Capital: 1.75, L: 1.02, M: 0.76, S: 0.52 });
 const CATEGORY_TRIM = Object.freeze({
@@ -360,7 +360,8 @@ function resolveSpec(weaponId, category) {
   return SPECS.fbDefault;
 }
 
-// Odrzut i wstrząs — te same liczby co WEAPON_FX_PROFILE w weapon3DSystem.
+// Odrzut i wstrząs — te same liczby co WEAPON_FX_PROFILE dawnego weapon3DSystem (wstrząs
+// strzałów dokłada dziś WeaponFx, src/3d/weapons/weaponFx.js).
 const FX_PROFILE = {
   vulcan_minigun: { key: 'vulcan', recoil: 3.0, shake: 2.0 },
   helios_laser: { key: 'helios', recoil: 6.0, shake: 3.0 },

@@ -503,6 +503,33 @@ export const WeaponFx = {
     return this._muzzle(w, x, y, shooter, Math.cos(angle), Math.sin(angle));
   },
 
+  /**
+   * Wylot receptury broni w punkcie — bez wieżyczki (bez odrzutu i szukania lufy) i bez sekwencji
+   * przed strzałem (cewki Tempesta leżą na lufie). Warsztat rdzeni (coreFx3D): wybuch wtórny =
+   * wystrzał armaty, kula plazmy = wyładowanie Tempesta (dawniej MuzzleFX3D.fire). Ten sam LOD
+   * i budżet klatki co wylot broni; poniżej progu bogatej receptury — nic (jak dawniej).
+   */
+  muzzleAt(weaponId, x, y, angle, scale = 1, carrier = null) {
+    if (!this.available) return false;
+    const w = weaponCtx(weaponId);
+    const recipe = RECIPES[w.fx];
+    if (!recipe?.muzzle || !this._inView(x, y, 400)) return false;
+    const m = _m;
+    m.x = x; m.y = y; m.angle = angle; m.scale = scale > 0 ? scale : 1;
+    const screenPx = 45 * m.scale * this._zoom();
+    if (screenPx < MUZZLE_RICH_PX || this._muzzleBudget <= 0) return false;
+    this._muzzleBudget--;
+    m.density = Math.max(0.35, Math.min(1, 0.35 + 0.65 * Math.min(1, screenPx / 40)));
+    ActiveCarrier.set(carrier);
+    try {
+      recipe.muzzle(this.ctx, m, w);
+      this.stats.muzzles++;
+    } finally {
+      ActiveCarrier.clear();
+    }
+    return true;
+  },
+
   // -------------------------------------------------------------------------
   // Wiązki (zdarzenia B–E)
 
@@ -780,6 +807,19 @@ export const WeaponFx = {
     return true;
   },
 
+  /**
+   * Wybuch drona z dema (promień `size`, jak zestrzelona rakieta): śmierć NPC i platformy
+   * (CanvasVFX.spawnExplosionPlasma / spawnDefaultHit — dawniej fabryka trafienia działka
+   * w overlayu). Liczy się do budżetu trafień klatki; ActiveCarrier ustawia wołający.
+   */
+  droneBlast(x, y, size = 42) {
+    if (!this.available || !(size > 0) || !this._inView(x, y, size * 4)) return false;
+    if (this._impactBudget <= 0) return false;
+    this._impactBudget--;
+    droneBlast(this.ctx, x, y, size);
+    return true;
+  },
+
   // -------------------------------------------------------------------------
   // Hexlance (zdarzenie K) — superweapon.js woła wprost
 
@@ -842,8 +882,12 @@ export const WeaponFx = {
     h.active = false;
   },
 
-  /** Wejście w kadłub: rozbłysk (raz na cel). relV — prędkość pocisku względem celu. */
-  hexlanceImpact(x, y, relVx, relVy, carrier) {
+  /**
+   * Wejście w kadłub: rozbłysk (raz na cel). relV — prędkość pocisku względem celu (albo sam
+   * kierunek). power — moc receptury (strumień reaktora: moc klasy rdzenia), shake — czy wolno
+   * trząść kamerą (strumień reaktora: nie, jak dawny RailgunFX3D).
+   */
+  hexlanceImpact(x, y, relVx, relVy, carrier = null, power = 1, shake = true) {
     if (!this.available || !this._inView(x, y, 1200)) return;
     const p = _imp;
     p.x = x; p.y = y; p.vx = relVx; p.vy = relVy;
@@ -851,16 +895,17 @@ export const WeaponFx = {
     const l = Math.sqrt(relVx * relVx + relVy * relVy) || 1;
     _hit.nx = -relVx / l; _hit.ny = -relVy / l;
     if (carrier) ActiveCarrier.set(carrier);
-    try { RECIPES.hexlance.impact(this.ctx, p, null, _hit); } finally { ActiveCarrier.clear(); }
+    this._shakeAllowed = shake;
+    try { RECIPES.hexlance.impact(this.ctx, p, null, _hit, power); } finally { ActiveCarrier.clear(); this._shakeAllowed = true; }
   },
 
-  /** Rzaz w kadłubie (co odstęp cięcia). */
-  hexlanceKerf(x, y, relVx, relVy, carrier) {
+  /** Rzaz w kadłubie (co odstęp cięcia). power — jak w hexlanceImpact. */
+  hexlanceKerf(x, y, relVx, relVy, carrier = null, power = 1) {
     if (!this.available || !this._inView(x, y, 800)) return;
     const p = _imp;
     p.x = x; p.y = y; p.vx = relVx; p.vy = relVy;
     if (carrier) ActiveCarrier.set(carrier);
-    try { RECIPES.hexlance.kerf(this.ctx, p, null); } finally { ActiveCarrier.clear(); }
+    try { RECIPES.hexlance.kerf(this.ctx, p, null, power); } finally { ActiveCarrier.clear(); }
   },
 
   /** Wyjście z kadłuba: stożek stopionego metalu za burtą. */

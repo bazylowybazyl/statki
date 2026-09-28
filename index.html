@@ -989,11 +989,9 @@
       captureColdWreckImpostor
     } from "./src/3d/hexShips3D.js";
     import { initOverlay as initOverlay3D } from "./src/effects3d/overlay.js";
-    import { createRailgunExplosionFactory } from "./src/effects3d/railgunExplosion.js";
-    import { createArmataImpactFactory } from "./src/effects3d/armataImpact.js";
-    import { createAutocannonImpactFactory } from "./src/effects3d/autocannonImpact.js";
+    // Fabryki trafień broni w overlayu (railgunExplosion, armataImpact, autocannonImpact, yamato)
+    // usunięte w zadaniu 17 — trafienia to receptury WeaponFx (src/3d/weapons/).
     import { createReactorBlowFactory } from "./src/effects3d/reactorblow.js";
-    import { createYamatoImpactFactory } from "./src/effects3d/yamato.js";
     import { createSupernovaMissileBlowFactory } from "./src/effects3d/supernovaMissileBlow.js";
     import { initRocketSystem3D } from "./src/effects3d/rocketSystem3D.js";
     // IMPORTUJEMY NOWY MODUL SUPERBRONI
@@ -5820,16 +5818,12 @@
 
     function startOverlay3D() {
       const init = initOverlay3D;
-      const railFactory = createRailgunExplosionFactory;
-      const armataFactory = createArmataImpactFactory;
-      const autocannonFactory = createAutocannonImpactFactory;
       const reactorFactory = createReactorBlowFactory;
-      const yamatoFactory = createYamatoImpactFactory;
       const supernovaFactory = createSupernovaMissileBlowFactory;
       const host = document.getElementById('game-root');
 
       // Musimy mieć: API z modułu + host z DOM + overlayView z tego skryptu
-      if (!init || !railFactory || !host || typeof overlayView === 'undefined') return false;
+      if (!init || !host || typeof overlayView === 'undefined') return false;
 
       // Rakiety dzielą kontekst WebGL z overlayem efektów. Osobny initOverlay
       // tworzył DRUGI WebGLRenderer (własna kanwa, własny stan sterownika) —
@@ -5861,18 +5855,8 @@
         }
         SparkSystem3D.init(ov.scene);
       }
-      window.makeRailgunExplosion = railFactory(ov.scene);
-      if (armataFactory) {
-        window.makeArmataImpact = armataFactory(ov.scene);
-      }
-      if (autocannonFactory) {
-        window.makeAutocannonImpact = autocannonFactory(ov.scene);
-      }
       if (reactorFactory) {
         window.makeReactorBlow = reactorFactory(ov.scene);
-      }
-      if (yamatoFactory) {
-        window.makeYamatoImpact = yamatoFactory(ov.scene);
       }
       // Init 3D destruction engine — scene + reactor factory. Bez menedżera fali:
       // fala z refrakcją zostaje wyłącznie dla rakiet supernova (2026-09-24),
@@ -5892,15 +5876,10 @@
         initRocketSystem3D(rocketOv.scene);
       }
       resizeOverlay3D();
-      // Rozgrzewka programów overlaya (overlay.js, prewarm): pule (iskry, Yamato, reaktor,
-      // supernowa, rakiety) wiszą w scenie; próbki z fabryk tworzących materiały na każdy
-      // wybuch zostają jako trzymacze programów — bez nich rail/armata/działko kompilowały
-      // się od nowa po każdej przerwie w strzelaniu.
-      const prewarmSamples = [];
-      if (window.makeRailgunExplosion) prewarmSamples.push(window.makeRailgunExplosion({ x: 0, y: 0, size: 40 }));
-      if (window.makeArmataImpact) prewarmSamples.push(window.makeArmataImpact({ x: 0, y: 0, size: 40 }));
-      if (window.makeAutocannonImpact) prewarmSamples.push(window.makeAutocannonImpact({ x: 0, y: 0, size: 40 }));
-      ov.prewarm?.(prewarmSamples);
+      // Rozgrzewka programów overlaya (overlay.js, prewarm): pule (iskry, reaktor, supernowa,
+      // rakiety) wiszą w scenie. Próbek fabryk trafień broni już nie ma (zadanie 17 — receptury
+      // WeaponFx rozgrzewa krok Core3D.fx).
+      ov.prewarm?.();
       if (splitContexts) rocketOv.prewarm?.();
       return true;
     }
@@ -5917,28 +5896,7 @@
       })();
     });
 
-    // Helper do spawnu eksplozji 3D
-    function triggerRailgunExplosion3D(x, y, size = ship.h * 0.22, options = {}) {
-      if (overlay3D && window.makeRailgunExplosion) {
-        const fx = window.makeRailgunExplosion({ x, y, size, ...options });
-        overlay3D.spawn(fx);
-      }
-    }
-
-    function triggerArmataImpact3D(x, y, size = ship.h * 0.3) {
-      if (overlay3D && window.makeArmataImpact) {
-        const fx = window.makeArmataImpact({ x, y, size });
-        overlay3D.spawn(fx);
-      }
-    }
-
-    function triggerAutocannonImpact3D(x, y, size = ship.h * 0.2, color = null, quality = 1) {
-      if (overlay3D && window.makeAutocannonImpact) {
-        const fx = window.makeAutocannonImpact({ x, y, size, color, quality });
-        overlay3D.spawn(fx);
-      }
-    }
-
+    // Wybuch reaktora w overlayu 3D (fabryki trafień broni usunięte w zadaniu 17).
     function triggerReactorBlow3D(x, y, size = ship.h * 0.35, options = {}) {
       if (overlay3D && window.makeReactorBlow) {
         const fx = window.makeReactorBlow({ x, y, size, ...options });
@@ -5946,28 +5904,7 @@
       }
     }
 
-    function resolveOverlayImpactQuality() {
-      const stats = window.overlay3D?.getStats?.();
-      const active = Number(stats?.activeEffects) || 0;
-      const renderMs = Number(stats?.lastRenderMs) || 0;
-      const pressure = Math.max(active / 70, renderMs / 6.5);
-      return Math.max(0.58, Math.min(1.15, 1 - Math.max(0, pressure - 0.32) * 0.22));
-    }
-
-    function triggerYamatoImpact3D(x, y, size = ship.h * 0.42, color = null, quality = null) {
-      if (overlay3D && window.makeYamatoImpact) {
-        const resolvedQuality = Number.isFinite(Number(quality)) ? Number(quality) : resolveOverlayImpactQuality();
-        const fx = window.makeYamatoImpact({ x, y, size, color, quality: resolvedQuality });
-        overlay3D.spawn(fx);
-      }
-    }
-
-    // Expose trigger functions on window so canvasParticleSystem and spawnBulletImpactEffect can find them
-    window.triggerRailgunExplosion3D = triggerRailgunExplosion3D;
-    window.triggerArmataImpact3D = triggerArmataImpact3D;
-    window.triggerAutocannonImpact3D = triggerAutocannonImpact3D;
     window.triggerReactorBlow3D = triggerReactorBlow3D;
-    window.triggerYamatoImpact3D = triggerYamatoImpact3D;
 
     // Resize: utrzymuj rozmiar overlayu = okna
     function resizeOverlay3D() {
@@ -9159,7 +9096,7 @@
               turnRate: weapon.turnRate ? (weapon.turnRate * Math.PI / 180) : 0,
               homingDelay: weapon.homingDelay || 0,
               vfxKey: weapon.id,
-              forceCanvas: !!weapon.forceCanvas,  // tells weapon3DSystem to skip 3D bullet render
+              forceCanvas: !!weapon.forceCanvas,  // WeaponFx.sync nie rysuje go w 3D (lot na kanwie)
               lockOwner: isP2Ship ? 'player2' : (isP1Ship ? 'player' : null)
             };
             // --- FLAK: dane zapalnika (obsługa w bulletsAndCollisionsStep) ---
