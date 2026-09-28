@@ -245,8 +245,9 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   `prewarmPass` pomija obiekty z `visible = false`** — rozgrzewka odsłania schowane siatki na czas kompilacji (inaczej
   pierwsze wejście w pole buduje pipeline'y w klatce). **Kolejka:** nieprzezroczyste idą przed przezroczystymi bez
   względu na `renderOrder` — skały tła, które mają przykryć przezroczystą zasłonę pola, są w kolejce przezroczystej
-  z `NoBlending` i zapisem głębi. **Bloom gry = bloom dema × 3** (`BLOOM_ZGODNOSC_WEBGL`) — emitery z dema (pioruny,
-  kryształy) świecą w grze mocniej niż w demie; wartości zostały z dema (wygląd wg zrzutów obok siebie). **Pułapka z 15
+  z `NoBlending` i zapisem głębi. **Bloom gry = bloom dema × 3** (`BLOOM_ZGODNOSC_WEBGL`) — pas kładzie kolano z 22
+  (`warpBloomKnee` jako `beltBloomKnee`, `src/3d/asteroids/tslCommon.js`) na barwę skał, minerałów, olbrzymów, piorunów,
+  duszków i iskier PRZED ośrodkiem; wartości barw zostały z dema. **Pułapka z 15
   (`DynamicDrawUsage` = wysyłka przy każdym renderze) siedziała też w modułach dema** — kubełki skał, minerały, mgła,
   rzucający cień: ~1 MB na klatkę; bez niej narzut pasa w bitwie 24 × 24 spadł z ~2–3 do ~0,5–1,2 ms CPU `Core3D`.
 - **TSL, nie `wgslFn`.** Tekstowy WGSL tylko dla wyizolowanej czystej funkcji, gdy TSL jest naprawdę niewygodny — z

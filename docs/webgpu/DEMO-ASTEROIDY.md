@@ -215,7 +215,8 @@ wydzielony z `volumetrics.js` jako jeden obiekt gry — czytają go skały, mine
 
 Różnice względem dema (świadome):
 - Złożenie: passy Core3D (PLAY i płytka mgła w passie gry, warstwa 0; RUBBLE/MID/DEEP, głęboka mgła i zasłona w passie
-  tła, warstwa 1), post gry (bloom ×3 `BLOOM_ZGODNOSC_WEBGL`, ACES gry) — nie `RenderPipeline` dema. Niebo gry z 05 (mgławica,
+  tła, warstwa 1), post gry (bloom ×3 `BLOOM_ZGODNOSC_WEBGL`, ACES gry; barwy pasa przez kolano bloomu z 22 —
+  `beltBloomKnee`, nadmiar ponad próg ×1/3 jak poświata dema) — nie `RenderPipeline` dema. Niebo gry z 05 (mgławica,
   gwiazdy) zamiast nieba dema; kwad dna ośrodka w passie gry z renderOrder −50 (przed efektami gry).
 - Współrzędne: początek przy kamerze z `Core3D.fx.origin` (przeskok 20 tys. j. jak w demie, ale wspólny z pulami efektów);
   shadery pasa bez `positionWorld` (varying pozycji lokalnej, środek płatu mgły z CPU, mapa pola i ośrodek w układzie

@@ -44,6 +44,12 @@ export const quatMul = Fn(([a, b]) => {
   return vec4(b.xyz.mul(a.w).add(a.xyz.mul(b.w)).add(cross(a.xyz, b.xyz)), a.w.mul(b.w).sub(dot(a.xyz, b.xyz)));
 }).setLayout({ name: 'beltQuatMul', type: 'vec4', inputs: [{ name: 'a', type: 'vec4' }, { name: 'b', type: 'vec4' }] });
 
+// Kolano bloomu efektów z dem (zadanie 22, src/3d/warp/bloomKnee.js): dema liczą bloom BEZ ×3
+// gry (BLOOM_ZGODNOSC_WEBGL) — nadmiar luminancji ponad próg ×1/3, pod progiem bez zmian, więc
+// poświata pasa wraca w pobliże dema. Pas kładzie je na barwę powierzchni i emiterów PRZED
+// ośrodkiem (ośrodek zostaje pod progiem — jak w 22).
+export { warpBloomKnee as beltBloomKnee } from '../warp/bloomKnee.js';
+
 // Zakres wysyłki bufora NA STAŁE (jak liveAttribute w fxParticles3D.js, LightGrid w
 // src/3d/fx/lightGrid.js): three czyści listę zakresów po każdej wysyłce, a ponowne
 // addUpdateRange alokowało obiekt i tablicę na klatkę. Tu jeden zakres na bufor —

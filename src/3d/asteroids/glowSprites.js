@@ -9,7 +9,7 @@
 
 import * as THREE from 'three/webgpu';
 import { Fn, float, vec2, vec3, vec4, attribute, uv, exp, max, length, mix, smoothstep, clamp } from 'three/tsl';
-import { permanentUpdateRange, markLiveRange } from './tslCommon.js';
+import { permanentUpdateRange, markLiveRange, beltBloomKnee } from './tslCommon.js';
 
 export const GLOW_ROUND = 0;
 export const GLOW_STREAK = 1;
@@ -71,7 +71,7 @@ export class GlowSprites {
       const streak = exp(q.y.mul(q.y).mul(-9.0)).mul(along.mul(along)).mul(float(1.0).sub(smoothstep(0.85, 1.0, length(q))));
       const shape = mix(round, streak, clamp(gB.w, 0.0, 1.0));
       const col = gB.rgb.mul(shape);
-      return vec4(col, 0.0);
+      return vec4(beltBloomKnee(col), 0.0);
     })();
     this.material = mat;
     this.mesh = new THREE.Mesh(geo, mat);

@@ -38,7 +38,7 @@ import {
 import { StormSimulator, sheetEnvelope, mulberry32 } from '../../game/asteroidStorms.js';
 import { ENERGY_TYPE } from '../../game/asteroidRockKinds.js';
 import { fxRandom } from '../fx/fxRandom.js';
-import { permanentUpdateRange, markLiveRange } from './tslCommon.js';
+import { permanentUpdateRange, markLiveRange, beltBloomKnee } from './tslCommon.js';
 import { GLOW_ROUND } from './glowSprites.js';
 
 const SEG_CAP = 6144;
@@ -246,7 +246,7 @@ class BoltBatch {
       const col = U.core.mul(core).mul(whiteK)
         .add(U.glow.mul(tint).mul(glow))
         .add(U.halo.mul(tint).mul(halo));
-      return vec4(max(col.mul(I), vec3(0.0)), 0.0);
+      return vec4(beltBloomKnee(max(col.mul(I), vec3(0.0))), 0.0);
     })();
     this.mesh = new THREE.Mesh(geo, mat);
     this.mesh.frustumCulled = false;

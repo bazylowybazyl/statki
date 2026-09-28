@@ -28,7 +28,7 @@ import {
   normalize, length, reflect, refract, fwidth, step, texture3D
 } from 'three/tsl';
 import { ROCK_TYPE_INDEX } from '../../game/asteroidRockKinds.js';
-import { quatRotate, quatMul, permanentUpdateRange, markLiveRange } from './tslCommon.js';
+import { quatRotate, quatMul, permanentUpdateRange, markLiveRange, beltBloomKnee } from './tslCommon.js';
 import { getBeltMedium } from './beltMedium.js';
 
 export const MINERAL_KIND = Object.freeze({ PRISM: 0, PLATE: 1, SHARD: 2 });
@@ -657,7 +657,7 @@ export class MineralMaterial extends THREE.NodeMaterial {
       const emitK = glowBase.add(core.mul(u.mul(0.75).add(0.25)).mul(0.7)).add(tipGain.mul(tipK).mul(tipK)).add(cloud.mul(0.2)).add(fil.mul(filK));
       col.addAssign(glow.mul(glowK).mul(this.glowGain).mul(charge).mul(emitK).mul(mix(0.45, 1.0, pixFade)));
       const a = clamp(alpha, 0.0, 1.0).toVar();
-      const out = max(col, vec3(0.0)).mul(S.exposure).toVar();
+      const out = beltBloomKnee(max(col, vec3(0.0)).mul(S.exposure)).toVar();
       if (!this.backdrop && S.volume) {
         // Pył przed minerałem: ta sama kolumna co nad skałą (do stropu warstwy
         // skał — rockMaterial.js, S.rockLayerTop).

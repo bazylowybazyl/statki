@@ -32,7 +32,7 @@ import {
   min, max, dot, cross, normalize, reflect, step, dFdx, dFdy, fwidth, diffuseColor, Discard, length
 } from 'three/tsl';
 import { ROCK_TYPES, SHAPE_COUNT } from '../../game/asteroidRockKinds.js';
-import { octTexUv, quatRotate, quatMul } from './tslCommon.js';
+import { octTexUv, quatRotate, quatMul, beltBloomKnee } from './tslCommon.js';
 import { SurfaceLightingModel } from './surfaceLighting.js';
 import { enableGridLights } from '../fx/lightGrid.js';
 
@@ -297,7 +297,8 @@ export class RockNodeMaterial extends THREE.NodeMaterial {
 
   setupOutput(builder, outputNode) {
     const S = this.S;
-    const col = outputNode.rgb.mul(S.exposure).mul(this.L.layerDim).toVar();
+    // Kolano bloomu dema (tslCommon.js): jasne żyły, kryształy i błyski ×1/3 ponad progiem.
+    const col = beltBloomKnee(outputNode.rgb.mul(S.exposure).mul(this.L.layerDim)).toVar();
     if (this.backdrop) {
       // Tło: zamglenie z głębokością w barwie pyłu w cieniu (gaśnie z mrokiem pola).
       const misc = this.V.misc;
