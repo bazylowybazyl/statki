@@ -54,6 +54,8 @@ function withSeed(seed, fn) {
 
 // ---------------- pętla pocisków gry w piaskownicy ----------------
 const events = [];
+// Mapa ran (18-C): źródło stempla krateru — w piaskownicy bez mapy.
+const HullDamageMap = { setSource() {}, clearSource() {} };
 const game = {
   bullets: [], npcs: [], wrecks: window.wrecks, ship: null, player2Ship: null, splitScreenMode: false,
   SpatialGrid: {
@@ -93,7 +95,7 @@ const game = {
   ricochetBounce: M.ricochetBounce,
   HIT_PENETRATE: M.HIT_PENETRATE, HIT_RICOCHET: M.HIT_RICOCHET, PASS_EXIT: M.PASS_EXIT, PASS_STUCK: M.PASS_STUCK, PASS_INSIDE: M.PASS_INSIDE,
   segmentCircleToi, getEntityShieldRadiusTowards: () => 0, isEntityShieldBlocking: () => false,
-  HullBodies, DestructorSystem: {}, registerShieldImpact() {}, shieldFxClassForBullet: () => 0,
+  HullBodies, HullDamageMap, DestructorSystem: {}, registerShieldImpact() {}, shieldFxClassForBullet: () => 0,
   noteBridgeHit() {}, bridgeSimTime: 0,
   applyDamageToPlayer() {}, markPlayerDamage() {},
   applyDamageToNPC(npc, dmg) { npc.hpLost += dmg; },
@@ -105,7 +107,7 @@ const load = (header, name) => { game[name] = loadIndexFunction(html, header, na
 load('function removeBulletAt(index) {', 'removeBulletAt');
 load('function hullSweepImpact(entity, x0, y0, x1, y1, radius) {', 'hullSweepImpact');
 load('function hexSweepImpact(entity, x0, y0, x1, y1, radius) {', 'hexSweepImpact');
-load('function applyHexImpact(entity, x, y, damage, vel, shard) {', 'applyHexImpact');
+load('function applyHexImpact(entity, x, y, damage, vel, shard, fxSource = null) {', 'applyHexImpact');
 load('function writeImpactHit(out, entity, x, y, relVx, relVy, kind) {', 'writeImpactHit');
 load('function writeImpactRicochet(out, b, node) {', 'writeImpactRicochet');
 load('function applyBulletHullPass(b, pass) {', 'applyBulletHullPass');

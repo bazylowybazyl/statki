@@ -195,10 +195,12 @@ export const hullSweepResult = { t: 0, worldX: 0, worldY: 0, projectileX: 0, pro
  * w kroku); radius — promień krateru / półszerokość rzazu [j.]; node — węzeł, od którego
  * zaczyna krater (najbliższy punktowi) albo węzeł wejścia rzazu — indeks ważny do rozpadu
  * w następnym kroku; u, v — uv sprite'a tego punktu (konwencja skóry, liczone PRZED
- * kraterem); x, y — punkt (świat gry; cut: wejście); dmgKey — klucz mapy ran kadłuba.
+ * kraterem); x, y — punkt (świat gry; cut: wejście); dmgKey — klucz mapy ran kadłuba;
+ * dirX, dirY — kierunek jednostkowy (impact: wektor `vel`, cut: odcinek; 0, 0 = brak), len — cut:
+ * droga od wejścia do końca odcinka (stemple rzazu mapy ran, 18-C), impact: 0.
  */
 export const hullImpactResult = {
-  kind: '', hit: false, killed: 0, radius: 0, node: -1, u: 0, v: 0, x: 0, y: 0, dmgKey: 0
+  kind: '', hit: false, killed: 0, radius: 0, node: -1, u: 0, v: 0, x: 0, y: 0, dmgKey: 0, dirX: 0, dirY: 0, len: 0
 };
 
 /** Wynik surfaceNormal() — normalna na zewnątrz (świat gry) i węzeł, przy którym ją liczono. */
@@ -227,6 +229,9 @@ export const HullBodies = {
   // (entity, hullImpactResult) — po impact() / cutSegment(), które coś trafiły (mapa ran,
   // wybuchy rakiet). Domyślnie brak: gra zachowuje się jak dawniej.
   onImpact: null,
+  // (entity, dt, changed) — po naprawie kadłuba w repair() (mapa ran: wygaszanie osmalenia
+  // i przestrzelin; changed = false — naprawa zakończona). Domyślnie brak.
+  onRepair: null,
 
   init() {
     if (this.ready) return this;
@@ -421,7 +426,9 @@ export const HullBodies = {
     for (const e of entities) {
       const hull = e?.beamHull;
       if (!hull || hull.entity !== e || hull.body.dead) continue;
-      if (repairBody(hull.body, dt)) any = true;
+      const changed = repairBody(hull.body, dt);
+      if (changed) any = true;
+      if (typeof this.onRepair === 'function') this.onRepair(e, dt, changed);
     }
     return any;
   },
@@ -512,6 +519,7 @@ export const HullBodies = {
     _impactVel.x = Number(vel?.x) || 0;
     _impactVel.y = -(Number(vel?.y) || 0);
     _impactVel.z = 0;
+    writeImpactDir(r, _impactVel.x, -_impactVel.y, 0);
     // Węzeł i uv PRZED kraterem: krater zaczyna od najbliższego żywego węzła w swoim promieniu
     // (silnik bierze promień nie mniejszy niż komórka konfiguracji), ten sam trafi do stempla.
     r.radius = Math.max(Number(D.config?.cellSize) || 0, _impactOpts.radius);
@@ -558,6 +566,7 @@ export const HullBodies = {
     r.y = hullSweepResult.worldY;
     r.node = _sweepOut.node;
     writeSpriteUv(hull, r.node, lx0 + (lx1 - lx0) * t, ly0 + (ly1 - ly0) * t, r);
+    writeImpactDir(r, x1 - x0, y1 - y0, 1 - t);
     const before = body.activeNodes;
     const killed = cutLocalBand(body, lx0, ly0, lx1, ly1, halfWidth);
     r.hit = killed > 0;
@@ -1032,6 +1041,20 @@ function resetImpactResult(kind, x, y) {
   r.x = x;
   r.y = y;
   r.dmgKey = 0;
+  r.dirX = 0;
+  r.dirY = 0;
+  r.len = 0;
+  return r;
+}
+
+// Kierunek (świat gry) do hullImpactResult: jednostkowy wektor (dx, dy) i droga `frac`·|d|
+// (cut: od wejścia do końca odcinka; impact: 0 — wektor to prędkość, nie droga).
+function writeImpactDir(r, dx, dy, frac) {
+  const l = Math.sqrt(dx * dx + dy * dy);
+  if (!(l > 1e-9)) return r;
+  r.dirX = dx / l;
+  r.dirY = dy / l;
+  r.len = frac > 0 ? l * frac : 0;
   return r;
 }
 

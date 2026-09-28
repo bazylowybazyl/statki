@@ -12,7 +12,6 @@ globalThis.window = globalThis.window || { innerWidth: 800, innerHeight: 600, de
 
 const mask = await import('../src/3d/sunShadowMask.js');
 const { Core3D, createShadowShaftsPass } = await import('../src/3d/core3d.js');
-const { Shockwave3DManager } = await import('../src/effects3d/shockwave3D.js');
 const { HullNodeMaterial, getHullVariant } = await import('../src/3d/hexShips3D.tsl.js');
 
 const canvas = { width: 1, height: 1, style: {}, addEventListener() {}, removeEventListener() {}, getContext() { return null; } };
@@ -205,48 +204,20 @@ test('Core3D.uploadTextureLayer: jedna warstwa tablicy przez queue.writeTexture,
   assert.equal(tex.version, state.get(tex).version, 'bez needsUpdate');
 });
 
-test('snapshot refrakcji w kontekście renderu sceny: format, MSAA i głębia composerTarget, MSAA przełączane razem', async () => {
-  // three buduje materiały i pipeline'y per kontekst renderu (stan załączników celu) — cel refrakcji
-  // o innym formacie budowałby wszystko w kadrze na zimno przy pierwszej fali (tarcze: uwaga z 14).
-  const src = (await import('node:fs')).readFileSync(new URL('../src/3d/core3d.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
-  const block = src.slice(src.indexOf('this.refractionTarget = new THREE.RenderTarget('), src.indexOf('this.shockwave3DManager = new Shockwave3DManager('));
-  assert.match(block, /type: THREE\.HalfFloatType/);
-  assert.match(block, /depthBuffer: true/);
-  assert.match(block, /samples: rt\.samples/);
-  assert.ok(src.indexOf('this.composerTarget = rt;') < src.indexOf('this.refractionTarget = new THREE.RenderTarget('), 'cel refrakcji po celu sceny');
+// Snapshot refrakcji i fala uderzeniowa (shockwave3D.js) usunięte w zadaniu 19 — fale rakiet
+// i Supernowej to źródła zniekształceń efektów (src/3d/fx/distortion.js). MSAA przełącza
+// dalej cel sceny razem z celem halo.
+test('MSAA przełączane razem: cel sceny i cel halo (bez celu refrakcji)', async () => {
+  const src = (await import('node:fs')).readFileSync(new URL('../src/3d/core3d.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(src, /refractionTarget|Shockwave3DManager|trigger3DShockwave/);
   const rt = (s) => ({ samples: s, disposed: 0, dispose() { this.disposed++; } });
   const core = Object.assign(Object.create(Core3D), {
-    msaaSamples: 4, composerTarget: rt(4), planetHaloTarget: rt(4), refractionTarget: rt(4), perfToggles: {}
+    msaaSamples: 4, composerTarget: rt(4), planetHaloTarget: rt(4), perfToggles: {}
   });
   core.setMsaaEnabled(false);
-  assert.deepEqual([core.composerTarget.samples, core.planetHaloTarget.samples, core.refractionTarget.samples], [0, 0, 0]);
-  assert.equal(core.refractionTarget.disposed, 1);
+  assert.deepEqual([core.composerTarget.samples, core.planetHaloTarget.samples], [0, 0]);
   core.setMsaaEnabled(true, 4);
-  assert.deepEqual([core.composerTarget.samples, core.planetHaloTarget.samples, core.refractionTarget.samples], [4, 4, 4]);
-});
-
-test('fala uderzeniowa: wspólny graf wszystkich fal (jeden program), odczyt celu refrakcji po screenUV z obcięciem jak RGBA8', () => {
-  const scene = new THREE.Scene();
-  const target = new THREE.RenderTarget(64, 32, { type: THREE.HalfFloatType, samples: 4 });
-  const manager = new Shockwave3DManager(scene, 3, target);
-  const mats = manager.waves.map((w) => w.mesh.material);
-  assert.equal(mats.length, 3);
-  assert.ok(mats.every((m) => m.isNodeMaterial && m.fragmentNode === mats[0].fragmentNode), 'graf na menedżera, nie na falę');
-  assert.equal(new Set(mats.map((m) => m.customProgramCacheKey())).size, 1, 'ten sam klucz programu');
-  // API aktualizacji bez zmian: material.uniforms.progress / uColor.
-  manager.spawn(0, 0, 0, 400, 1.2, 0x55ffff);
-  manager.update(0.3);
-  assert.ok(Math.abs(mats[0].uniforms.progress.value - 0.25) < 1e-9);
-  assert.equal(mats[0].uniforms.uColor.value.getHex(), 0x55ffff);
-  assert.equal(mats[0].transparent, true);
-  assert.equal(mats[0].depthTest, false);
-  const wgsl = buildWGSL(mats[0], { geometry: manager.waves[0].mesh.geometry }).fragment;
-  // Odczyt tła: fragCoord / rozmiar celu, z przesunięciem, poziom 0, obcięty do [0, 1].
-  assert.match(wgsl, /textureSampleLevel\( \w+, \w+_sampler, \( \( fragCoord\.xy \/ \w+\.\w+ \) \+ /);
-  assert.match(wgsl, /clamp\( \w+\.xyz, vec3<f32>\( 0\.0 \), vec3<f32>\( 1\.0 \) \)/);
-  // Fresnel z nieujemną podstawą potęgi (pow z ujemną podstawą = NaN w WGSL).
-  assert.match(wgsl, /pow\( max\( /);
-  manager.dispose();
+  assert.deepEqual([core.composerTarget.samples, core.planetHaloTarget.samples], [4, 4]);
 });
 
 test('kadłuby: maska w grafie wariantu (zastępnik pełnego słońca z 04 zdjęty)', async () => {

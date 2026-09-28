@@ -40,10 +40,10 @@
 // low ≥ high); próbkowania z pochodnymi (textureSample, fwidth) w jednolitym
 // przepływie sterowania — niejednolity warunek przez select() na końcu.
 //
-// Haki na przyszłe zadania (obraz dziś bez zmian):
-//  - zadanie 18: mapa ran (bufor storage, uniformy per obiekt dmgBase/dmgW/
-//    dmgH/dmgOn → perObject() niżej, próbkowanie po uv skóry, discard
-//    przestrzelin, żar = max(żar skóry, żar mapy)) — hullDamageSurface /
+// Haki zadań:
+//  - zadanie 18-C (skóra belek, `damage: true` wariantu): mapa ran (hullDamageMap.js: pula w
+//    buforze storage, slot per obiekt uDmgSlot → perObject() niżej, próbkowanie po uv skóry,
+//    discard przestrzelin małego kalibru, żar = max(żar skóry, żar rany)) — hullDamageSurface /
 //    hullDamageHeat; światła efektów z siatki świateł (12) — hullEffectLights;
 //  - zadanie 21: ośrodek światła wolumetrycznego nowych asteroid — hullVolume.
 import * as THREE from 'three/webgpu';
@@ -58,6 +58,8 @@ import {
 import { MAX_SHADER_SHIP_LIGHTS, NAV_LIGHT_CHASE } from '../game/shipLightRuntime.js';
 import { HullLacquer, MAX_ENGINE_ZONES } from './hullLacquer.js';
 import { fieldDarkness, sunFill, sunShadeUnlit, sunVisibility } from './sunShadowMask.js';
+import { effectLightGrid, hullEffectLighting, hullWoundHeat, hullWoundSurface } from './hullDamageMap.tsl.js';
+import { warpBloomKnee } from './warp/bloomKnee.js';
 
 // ── Maska słońca: JEDNO miejsce importu dla kadłubów, szczątków i smug wraków ──
 // Funkcje TSL z sunShadowMask.js (zadanie 03): próbka maski Core3D po screenUV na
@@ -277,32 +279,93 @@ function hullPerObjectNodes() {
     uEngineZoneCount: perObject('uEngineZoneCount', 'float', 0),
     uLightBase: perObject('uLightBase', 'float', 0),
     uLacquerWeight: perObject('uLacquerWeight', 'float', 0),
-    uLacquerGlint: perObject('uLacquerGlint', 'float', 1)
+    uLacquerGlint: perObject('uLacquerGlint', 'float', 1),
+    // Mapa ran (zadanie 18-C, hullDamageMap.js): slot (base, w, h, on) i rozmiar kadłuba w świecie
+    // (skala szumu brzegu); właściciel świateł siatki (0 = nic nie pomija).
+    uDmgSlot: perObject('uDmgSlot', 'vec4', new THREE.Vector4(0, 1, 1, 0)),
+    uDmgWorld: perObject('uDmgWorld', 'vec2', new THREE.Vector2(1, 1)),
+    uGridOwner: perObject('uGridOwner', 'float', 0),
+    // Warp „Nurt” (zadanie 22, hullWarp niżej): A = (linia odsłaniania, tryb ±1, linia szwu,
+    // szerokość szwu) [px sprite'a, x od środka ku dziobowi], B = (barwa szwu HDR, poziom mip
+    // pasa żaru), C = (barwa żaru HDR, włącznik).
+    uWarpA: perObject('uWarpA', 'vec4', new THREE.Vector4(-1e6, 1, -1e6, 1)),
+    uWarpB: perObject('uWarpB', 'vec4', new THREE.Vector4(0, 0, 0, 4)),
+    uWarpC: perObject('uWarpC', 'vec4', new THREE.Vector4(0, 0, 0, 0))
   };
   return _perObjectNodes;
 }
 
-// ── Haki (zadania 18 i 21) — dziś tożsamość, obraz bez zmian ────────────────
+// ── Warp „Nurt” (zadanie 22) ──────────────────────────────────────────────────
+// Wartości per kadłub (hexShips3D.js: createHullUniforms — trzymacze czytają
+// entity.__warpHullU, pisze je src/3d/warp/warpNurt.js); wyłączone = gałąź się nie
+// wykonuje (jednolity warunek z uniformu obiektu) i kadłub liczy to samo co przed 22.
+export const HULL_WARP_OFF = Object.freeze({
+  a: new THREE.Vector4(-1e6, 1, -1e6, 1),
+  b: new THREE.Vector4(0, 0, 0, 4),
+  c: new THREE.Vector4(0, 0, 0, 0)
+});
 
-// AGENT: zadanie 18 — mapa ran: uniformy per obiekt dmgBase/dmgW/dmgH/dmgOn
-// (perObject jak wyżej, wartości w material.uniforms — slot HullDamageMap),
-// próbkowanie po ctx.uv (uv skóry = uv sprite'a, v = 0 u góry obrazu),
-// osmalenie → ctx.albedo, przestrzelina `hole > 0,5` → Discard() (nie alfa:
-// zapis głębi i cień mostka), żar mapy do ctx.damageHeat (hullDamageHeat).
-function hullDamageSurface(/* ctx */) { }
-
-// AGENT: zadanie 18 — żar = max(żar skóry, żar mapy ran), jedno źródło na
-// piksel (brzeg rany 8–12 HDR, bez sumowania do przepalonej bieli).
-function hullDamageHeat(ctx, skinHeat) {
-  return skinHeat;
+// Przylot / wyjście / odlot (dema/warp-webgpu/hulls.js): ODSŁANIANIE frontem (widać część
+// kadłuba przed linią — wyjście od dziobu, albo za nią — odlot), SZEW (cienka gorąca linia
+// na linii frontu, także nad schowaną częścią — alfa szwu) i ŻAR BRZEGU (biel → pomarańcz →
+// wiśnia w pasie przy sylwetce). Pole odległości sylwetki z dema zastępuje tu rozmyta alfa
+// sprite'a (poziom mip ≈ szerokość pasa żaru): przy krawędzi ~0,5, w głębi 1 — ta sama
+// tekstura i wiązanie co sprite, jedna próbka z jawnym poziomem, bez nowych zasobów.
+// Sprite kadłuba: dziób w stronę +u (spriteRotation = 0 dla wszystkich profili).
+function hullWarp(ctx, out, alpha) {
+  const P = hullPerObjectNodes();
+  If(P.uWarpC.w.greaterThan(0.5), () => {
+    const A = P.uWarpA;
+    const B = P.uWarpB;
+    const C = P.uWarpC;
+    const lx = ctx.uv.x.sub(0.5).mul(P.uSpriteSize.x).toVar();
+    const edge = max(fwidth(lx), 0.5).mul(1.5);
+    const vis = smoothstep(edge.negate(), edge, lx.sub(A.x).mul(A.y)).toVar();
+    const sx = lx.sub(A.z).div(max(A.w, 0.5));
+    const seamOn = step(1e-4, B.x.add(B.y).add(B.z));
+    const seamK = exp(sx.mul(sx).negate()).mul(seamOn).toVar();
+    const blur = ctx.sprite.level(B.w).a;
+    const rim = clamp(float(1.0).sub(blur).mul(2.0), 0.0, 1.0).toVar();
+    // Kolano bloomu (warp/bloomKnee.js): demo liczyło bloom bez ×3 gry.
+    const heat = warpBloomKnee(C.xyz.mul(rim.mul(rim).mul(0.85).add(rim.mul(0.15))));
+    // Szew świeci także nad częścią już / jeszcze schowaną: alfa = max(odsłonięcie, szew).
+    const k = max(vis, seamK).toVar();
+    out.assign(out.add(heat).mul(vis).add(warpBloomKnee(B.xyz.mul(seamK))).div(max(k, 1e-4)));
+    alpha.assign(alpha.mul(k));
+    Discard(alpha.lessThan(0.004));
+  });
 }
 
-// AGENT: zadanie 18 — światła efektów z siatki świateł (zadanie 12): błyski,
-// trafienia, wiązki jako DODATKOWE światła poszycia (× albedo, normalna
-// ctx.worldNormal, pozycja świata z ctx.localWorld + ctx.originXY). Lampy
-// statku (payload) zostają w pętli niżej.
-function hullEffectLights(/* ctx */) {
-  return vec3(0.0);
+// ── Haki (zadania 18 i 21) ───────────────────────────────────────────────────
+
+// Zadanie 18-C — mapa ran (hullDamageMap.js / .tsl.js), tylko skóra belek (ctx.damage):
+// slot per obiekt (uDmgSlot: base, w, h, on — bez slotu nic nie czyta), próbka po ctx.uv
+// (uv skóry = uv sprite'a, v = 0 u góry obrazu — rana jedzie z odkształceniem), osmalenie →
+// ctx.albedo, przestrzelina małego kalibru → Discard() (nie alfa: zapis głębi i cień mostka),
+// żar i jony rany do ctx.woundHeat / ctx.woundIon (hullDamageHeat).
+function hullDamageSurface(ctx) {
+  if (ctx.damage) hullWoundSurface(ctx, hullPerObjectNodes(), HULL_SHARED.uTime);
+}
+
+// Zadanie 18-C — żar = max(żar skóry, żar rany) + poświata jonowa: jedno źródło żaru na piksel
+// (brzeg rany 8–12 HDR z mapy, zgniot skóry do szczytu HULL_BODY_CONFIG.heatGlowPeak).
+function hullDamageHeat(ctx, skinGlow) {
+  return ctx.damage ? hullWoundHeat(ctx, skinGlow) : skinGlow;
+}
+
+// Zadanie 18-C — waga lakieru na ranie: osmalona blacha i lej nie odbijają nieba (odbicie lakieru
+// nie zależy od albedo — czarny lej z pełnym lakierem wyglądał jak cała blacha; demo: połysk
+// × (1 − 0,8·osmalenie)). Mnożnik per piksel wchodzi do wagi po warunku jednolitym bloku lakieru.
+function hullDamageLacquer(ctx, weight) {
+  return ctx.damage ? weight.mul(ctx.woundGloss) : weight;
+}
+
+// Zadanie 18-C — światła efektów z siatki świateł (zadanie 12: błyski, trafienia, pociski,
+// wiązki) jako DODATKOWE światła poszycia (× albedo z osmaleniem, normalna ctx.worldNormal,
+// punkt z pozycji widoku — dokładny przy 5–10 mln j.). Lampy statku (payload) zostają w pętli wyżej.
+function hullEffectLights(ctx) {
+  if (!ctx.damage) return vec3(0.0);
+  return hullEffectLighting(ctx, effectLightGrid(), hullPerObjectNodes().uGridOwner);
 }
 
 // AGENT: zadanie 21 — volume.sample: ośrodek światła wolumetrycznego nowych
@@ -344,7 +407,7 @@ function hullFragmentNode(opts) {
       Discard();
     });
 
-    const ctx = { uv: spriteUV, albedo: armorRgb, alpha, damageHeat: float(0.0), localWorld: opts.localWorld };
+    const ctx = { uv: spriteUV, sprite, albedo: armorRgb, alpha, damageHeat: float(0.0), localWorld: opts.localWorld, damage: opts.damage === true };
     hullDamageSurface(ctx);
 
     const out = vec3(0.0).toVar();
@@ -409,7 +472,7 @@ function hullFragmentNode(opts) {
         // się w jednolitym przepływie (próbkowania z pochodnymi, fwidth), a
         // niejednolite „lacquerW > 0,001” z GLSL wybiera wynik na końcu (select).
         const shape = perObjectTexture('uShapeMap', PLACEHOLDER_SHAPE, spriteUV);
-        const lacquerW = lacquerW0.mul(shape.z).toVar();
+        const lacquerW = hullDamageLacquer(ctx, lacquerW0.mul(shape.z)).toVar();
         Loop({ start: int(0), end: int(P.uEngineZoneCount), type: 'int', condition: '<' }, ({ i }) => {
           const zone = lights.element(base.add(HULL_LIGHT_ZONE_OFFSET).add(i));
           lacquerW.mulAssign(smoothstep(zone.z, zone.z.mul(1.5), length(fragPx.sub(zone.xy))));
@@ -540,9 +603,9 @@ function hullFragmentNode(opts) {
       // pod progiem bloomu, a wiśnia tli się długo nisko.
       if (opts.heat) {
         const skinHeat = opts.heat.x.mul(exp(max(0.0, uTime.sub(opts.heat.y)).mul(opts.heatDecay).negate()));
-        const heat = hullDamageHeat(ctx, skinHeat).toVar();
+        const heat = skinHeat.toVar();
         const heat2 = heat.mul(heat).toVar();
-        finalColor.addAssign(heatRamp(heat).mul(opts.heatPeak.mul(heat.mul(0.26).add(heat2.mul(heat2).mul(0.74)))));
+        finalColor.addAssign(hullDamageHeat(ctx, heatRamp(heat).mul(opts.heatPeak.mul(heat.mul(0.26).add(heat2.mul(heat2).mul(0.74))))));
       }
 
       out.assign(finalColor);
@@ -550,6 +613,8 @@ function hullFragmentNode(opts) {
 
     const vol = hullVolume(ctx);
     out.assign(out.mul(vol.a).add(vol.rgb));
+
+    hullWarp(ctx, out, alpha);
 
     return vec4(out, alpha);
   })();
@@ -585,7 +650,9 @@ export function getHullVariant(name) {
         localWorld: localWorldOf(positionGeometry),
         lodOpacity: float(1.0),
         heatDecay: HULL_SHARED.beamHeatDecay,
-        heatPeak: HULL_SHARED.beamHeatPeak
+        heatPeak: HULL_SHARED.beamHeatPeak,
+        // Mapa ran i światła efektów na poszyciu (zadanie 18-C) — tylko kadłuby belkowe.
+        damage: true
       })
     };
   } else if (name === 'hex') {

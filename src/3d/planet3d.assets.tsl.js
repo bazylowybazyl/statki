@@ -26,7 +26,10 @@
 // w JEDNYM przeplecionym buforze instancji — limit 8 buforów wierzchołków, PLAN §3). Kwadrat
 // = kwadrat punktu z GL: środek w pozycji gwiazdy, bok gl_PointSize obcięty do ≥ 1 px (WebGL /
 // ANGLE: ALIASED_POINT_SIZE_RANGE 1…1024), gl_PointCoord z rogów (t w dół, jak w GL).
-// Rozciąganie w skoku (smugi, bicz przy wyjściu) przechodzi 1:1 razem z shaderem.
+// Rozciąganie w skoku: od zadania 22 smugi warpa „Nurt” (src/3d/warp/stars.js — płaskie wzdłuż
+// kursu, front wyjścia; dawne rozciąganie i „bicz” z WebGL usunięte). Zgięcie tła w warpie
+// liczy materiał mgławicy (src/3d/warp/skyBend.js). Bez warpa oba materiały liczą to samo co
+// przed 22 (gałęzie po jednolitych warunkach z uniformów).
 //
 // Zasady TSL portu (PLAN §3): funkcje z setLayout CZYSTE (tu tylko hasze i szum słońca);
 // próbkowanie tekstur i pochodne poza gałęziami — wybór wyniku przez select(); discard na końcu.
@@ -38,9 +41,11 @@ import {
   modelWorldMatrix, modelViewMatrix, cameraProjectionMatrix, cameraViewMatrix, cameraPosition,
   transformNormalToView, screenCoordinate, screenSize, viewportSize,
   abs, atan, clamp, cos, sin, dot, exp, floor, fract, length, max, min, mix, mod, normalize, pow,
-  select, smoothstep, sqrt, step, distance, dFdx, dFdy
+  select, smoothstep, sqrt, step, distance, dFdx, dFdy, texture, varyingProperty
 } from 'three/tsl';
 import { uniformNode } from './tsl/uniformy.js';
+import { WARP_STARS } from './warp/stars.js';
+import { WARP_SKY_BEND, warpSkyBendOffset } from './warp/skyBend.js';
 // ── Maska słońca: JEDNO miejsce dla planet, chmur, poświat, mgławicy i gwiazd ──
 // Biblioteka TSL maski (zadanie 03, sunShadowMask.js): odczyt po screenUV, wspólne węzły uniformów
 // w grupie renderu. Planety tła (perspektywa, z = −50 000) maski nie czytają (uSunShadowRecv = 0 —
@@ -554,8 +559,19 @@ export function createNebulaMaterial(u) {
   material.fog = false;
   material.depthWrite = false;
   material.depthTest = false;
+  // Zgięcie tła warpa „Nurt” (skyBend.js): próbka mgławicy z piksela przesuniętego o `off`
+  // [px celu] — mgławica to płaszczyzna, więc uv(p + off) = uv + J·off (pochodne uv w pikselu).
+  // Tekstura z chwili budowy (NebulaSystem jej nie podmienia; tło menu tylko ją pożycza).
+  const nebulaTex = u.map.value;
   material.fragmentNode = Fn(() => {
-    const color = u.map.rgb;
+    const uvS = uv().toVar();
+    const head = WARP_SKY_BEND.element(0);
+    If(head.x.add(head.y).greaterThan(0.5), () => {
+      const off = warpSkyBendOffset(screenCoordinate.xy);
+      const base = uv();
+      uvS.addAssign(dFdx(base).mul(off.x).add(dFdy(base).mul(off.y)));
+    });
+    const color = texture(nebulaTex, uvS).rgb;
     const boost = float(1.0).add(u.warpFactor.mul(0.8));
     // Tło dostaje długą smugę cienia z maski Core3D (sunShaftBackdrop).
     return vec4(sunShaftBackdrop(color.mul(boost)), 1.0);
@@ -613,10 +629,14 @@ export function createStarGeometry(arrays, count) {
 
 /**
  * Materiał gwiazd (dawne STARS_VERTEX / STARS_FRAGMENT) na węzłach adaptera `u` (pointTexture,
- * time, cameraOffset, containerSize, perspectiveScale, globalBrightness, warpFactor, moveDir,
- * stretchStrength, zoomComp, exitWhipFactor, exitWhipStrength, viewportSize, thinningStrength,
+ * time, cameraOffset, containerSize, perspectiveScale, globalBrightness, zoomComp, viewportSize,
  * baseSizeMul, planetMasks[STAR_PLANET_MASK_CAP]). Kwadrat punktu z GL: środek w pozycji gwiazdy,
  * bok gl_PointSize ≥ 1 px, gl_PointCoord z rogów.
+ * Warp (zadanie 22, src/3d/warp/stars.js — WARP_STARS): przy `stretch` > 0 gwiazda to płaska smuga
+ * wzdłuż kursu (głowa w miejscu gwiazdy, ogon do tyłu, długość stretch · stretchPx · mnożnik warstwy),
+ * front wyjścia prostuje smugi od dziobu (dema/warp-webgpu/stars.js). Dawne rozciąganie z WebGL
+ * (warpFactor, moveDir, bicz przy wyjściu — uniformy zostają w adapterze, shader ich nie czyta)
+ * usunięte. Bez warpa gałąź punktów liczy to samo co przed 22.
  */
 export function createStarMaterial(u) {
   const planetMasks = uniformNode(u.planetMasks);
@@ -651,74 +671,90 @@ export function createStarMaterial(u) {
     return m;
   })();
 
-  // Smugi w skoku: tylko warp i bicz przy wyjściu (nie zwykła prędkość lotu).
-  const stretchDrive = max(u.warpFactor, u.exitWhipFactor.mul(u.exitWhipStrength));
-  const stretch = float(1.0).add(stretchDrive.mul(u.stretchStrength).mul(aLayerStretch));
   const finalSize = aSize.mul(u.baseSizeMul).mul(aLayerSize);
   const distFactor = u.perspectiveScale.div(1000.0);
-  const pointSize = finalSize.mul(stretch).mul(distFactor);
-  const warpDir = select(length(u.moveDir).greaterThan(0.001), normalize(u.moveDir), vec2(0.0, 1.0));
+  const pointSize = finalSize.mul(distFactor);
+
+  // Warp „Nurt” (WARP_STARS, grupa renderu): jednolity warunek — bez warpa dawne punkty.
+  const W = WARP_STARS;
+  const warpOn = W.stretch.greaterThan(0.001);
+  const vAlong = varyingProperty('float', 'vStarAlong');
+  const vSide = varyingProperty('float', 'vStarSide');
+  const vLen = varyingProperty('float', 'vStarLen');
+  const vWidth = varyingProperty('float', 'vStarWidth');
+  const vSt = varyingProperty('float', 'vStarSt');
 
   const vertexNode = Fn(() => {
     const mvPosition = modelViewMatrix.mul(vec4(pos, 1.0));
     const clipPosition = cameraProjectionMatrix.mul(mvPosition).toVar();
-    const safeViewport = max(u.viewportSize, vec2(1.0));
-    // Głowa smugi zostaje w miejscu gwiazdy: środek punktu cofa się o pół jego boku.
-    If(stretchDrive.greaterThan(0.001), () => {
-      const screenOffset = warpDir.mul(vec2(pointSize.div(safeViewport.x), pointSize.div(safeViewport.y))).mul(clipPosition.w);
-      clipPosition.assign(vec4(clipPosition.xy.sub(screenOffset), clipPosition.zw));
+    const out = vec4(0.0).toVar();
+    If(warpOn, () => {
+      // Smuga PŁASKA w pikselach celu (y w górę): głowa w gwieździe, ogon wstecz kursu;
+      // front wyjścia — gwiazdy przed nim (wzdłuż kursu od statku) wracają do punktów.
+      const half = viewportSize.mul(0.5).toVar();
+      const s0 = clipPosition.xy.div(clipPosition.w).mul(half).toVar();
+      const sAlong = dot(s0.sub(W.shipPx), W.heading);
+      const real = W.frontOn.mul(smoothstep(W.frontPx.sub(60.0), W.frontPx.add(60.0), sAlong));
+      const st = W.stretch.mul(float(1.0).sub(real)).toVar();
+      // Szerokość jak w demie (rozmiar × 0,62, ≥ 0,55 px; smuga grubieje z rozciągnięciem ×(1 + st/4));
+      // bok punktu gry to ~1,6 × rozmiar dema — stąd 0,38.
+      const w = max(pointSize.mul(0.38).mul(st.mul(0.25).add(1.0)), 0.55).toVar();
+      const L = st.mul(W.stretchPx).mul(aLayerStretch).toVar();
+      const dir = W.heading.negate();
+      const perp = vec2(dir.y.negate(), dir.x);
+      const g = positionGeometry.xy;
+      const alongPx = g.x.add(0.5).mul(L.add(w.mul(2.0))).sub(w);
+      const side = g.y.mul(2.0).mul(w);
+      const pix = s0.add(dir.mul(alongPx)).add(perp.mul(side));
+      vAlong.assign(alongPx);
+      vSide.assign(side);
+      vLen.assign(L);
+      vWidth.assign(w);
+      vSt.assign(st);
+      out.assign(vec4(pix.div(half).mul(clipPosition.w), clipPosition.zw));
+    }).Else(() => {
+      // Kwadrat punktu: bok gl_PointSize obcięty do ≥ 1 px jak w WebGL (ALIASED_POINT_SIZE_RANGE).
+      const quadSize = max(pointSize, 1.0);
+      const offset = positionGeometry.xy.mul(quadSize).mul(2.0).div(viewportSize).mul(clipPosition.w);
+      out.assign(vec4(clipPosition.xy.add(offset), clipPosition.zw));
     });
-    // Kwadrat punktu: bok gl_PointSize obcięty do ≥ 1 px jak w WebGL (ALIASED_POINT_SIZE_RANGE).
-    const quadSize = max(pointSize, 1.0);
-    const offset = positionGeometry.xy.mul(quadSize).mul(2.0).div(viewportSize).mul(clipPosition.w);
-    return vec4(clipPosition.xy.add(offset), clipPosition.zw);
+    return out;
   })();
 
   const flat = (node, name) => varying(node, name).setInterpolation('flat', 'either');
   const vBrightness = flat(aBrightness.mul(aLayerBrightness), 'vStarBrightness');
   const vColor = flat(aColor, 'vStarColor');
-  const vStretch = flat(stretch, 'vStarStretch');
-  const vScreenSize = flat(pointSize, 'vStarScreenSize');
   const vPlanetMask = flat(planetMask, 'vStarPlanetMask');
   // gl_PointCoord: (0, 0) w lewym GÓRNYM rogu punktu (GL), t rośnie w dół.
   const vPointCoord = varying(vec2(positionGeometry.x.add(0.5), float(0.5).sub(positionGeometry.y)), 'vStarPointCoord');
 
   const fragmentNode = Fn(() => {
-    const rawUV = vPointCoord.sub(0.5).toVar();
-    const distFromCenter = length(rawUV);
-    const mask = float(1.0).sub(smoothstep(0.4, 0.5, distFromCenter)).toVar();
-    // vWarp / vExitWhip / vDir były varyingami z samych uniformów — tu wprost.
-    const vWarp = max(u.warpFactor, u.exitWhipFactor).toVar();
-    const vExitWhip = u.exitWhipFactor;
-    const vDir = warpDir;
-    const suv = vec2(rawUV).toVar();
-    const trailFade = float(1.0).toVar();
-    If(vWarp.greaterThan(0.01), () => {
-      const angle = atan(vDir.y, vDir.x);
-      const c = cos(angle).toVar();
-      const s = sin(angle).toVar();
-      // uv = mat2(c, s, −s, c) · uv (kolumny GLSL)
-      suv.assign(vec2(c.mul(suv.x).sub(s.mul(suv.y)), s.mul(suv.x).add(c.mul(suv.y))));
-      const tailFloor = mix(0.18, 0.06, clamp(vExitWhip, 0.0, 1.0));
-      trailFade.assign(mix(tailFloor, 1.0, smoothstep(0.0, 1.0, suv.x.add(0.5))));
-      suv.assign(vec2(suv.x.sub(0.5).div(vStretch), suv.y));
-      const maxSafeThin = max(1.0, vScreenSize.mul(0.4));
-      const actualThin = min(u.thinningStrength.mul(float(1.0).add(vExitWhip.mul(0.65))), maxSafeThin);
-      suv.assign(vec2(suv.x, suv.y.mul(float(1.0).add(min(vWarp, 1.25).mul(actualThin)))));
+    const out = vec4(0.0).toVar();
+    const twinkle = float(0.82).add(float(0.18).mul(sin(u.time.mul(3.0).add(vBrightness.mul(10.0))))).toVar();
+    If(warpOn, () => {
+      // Profil smugi dema (dema/warp-webgpu/stars.js): gauss w poprzek, ogon gaśnie; energia
+      // rozłożona na długość, barwa bieleje w skoku.
+      const da = max(max(vAlong.negate(), vAlong.sub(vLen)), 0.0);
+      const d2 = da.mul(da).add(vSide.mul(vSide)).div(max(vWidth.mul(vWidth), 1e-4));
+      const prof = exp(d2.mul(-2.6));
+      const taper = mix(float(1.0), float(0.08), clamp(vAlong.div(max(vLen, 1.0)), 0.0, 1.0));
+      const tint = mix(vColor, vec3(0.72, 0.86, 1.0), clamp(vSt.mul(W.warpTint).mul(0.75), 0.0, 1.0));
+      const energy = float(1.0).add(vSt.mul(0.9)).div(sqrt(float(1.0).add(vLen.div(max(vWidth.mul(3.0), 1.0)).mul(0.35))));
+      const a = prof.mul(taper).mul(vBrightness).mul(u.globalBrightness).toVar();
+      Discard(vPlanetMask.lessThan(0.5).or(a.lessThan(0.002)));
+      out.assign(vec4(sunShaftBackdrop(tint).mul(twinkle).mul(energy), a));
+    }).Else(() => {
+      const rawUV = vPointCoord.sub(0.5).toVar();
+      const distFromCenter = length(rawUV);
+      const mask = float(1.0).sub(smoothstep(0.4, 0.5, distFromCenter)).toVar();
+      const texUV = rawUV.add(0.5).toVar();
+      const tex = u.pointTexture.sample(texUV).toVar();
+      const finalColor = sunShaftBackdrop(vColor).toVar();
+      const outside = texUV.x.lessThan(0.0).or(texUV.x.greaterThan(1.0)).or(texUV.y.lessThan(0.0)).or(texUV.y.greaterThan(1.0));
+      Discard(mask.lessThan(0.01).or(vPlanetMask.lessThan(0.5)).or(outside).or(tex.a.lessThan(0.05)));
+      out.assign(vec4(finalColor.mul(twinkle), tex.a.mul(vBrightness).mul(u.globalBrightness).mul(mask)));
     });
-    const texUV = suv.add(0.5).toVar();
-    const tex = u.pointTexture.sample(texUV).toVar();
-    const twinkle = float(0.82).add(float(0.18).mul(sin(u.time.mul(3.0).add(vBrightness.mul(10.0)))));
-    const finalColor = mix(vColor, vec3(0.7, 0.85, 1.0), clamp(vWarp.mul(0.75), 0.0, 1.0)).toVar();
-    finalColor.assign(mix(finalColor, vec3(0.88, 0.94, 1.0), clamp(vExitWhip.mul(0.65), 0.0, 1.0)));
-    const whipFlash = float(1.0).add(vExitWhip.mul(1.25)).toVar();
-    finalColor.assign(sunShaftBackdrop(finalColor));
-    const outside = texUV.x.lessThan(0.0).or(texUV.x.greaterThan(1.0)).or(texUV.y.lessThan(0.0)).or(texUV.y.greaterThan(1.0));
-    Discard(mask.lessThan(0.01).or(vPlanetMask.lessThan(0.5)).or(outside).or(tex.a.lessThan(0.05)));
-    return vec4(
-      finalColor.mul(twinkle).mul(whipFlash),
-      tex.a.mul(vBrightness).mul(u.globalBrightness).mul(mask).mul(trailFade).mul(whipFlash)
-    );
+    return out;
   })();
 
   const material = new THREE.NodeMaterial();

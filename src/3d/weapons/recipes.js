@@ -1042,6 +1042,12 @@ export function burnStep(ctx, b, dt) {
   E(fx.spark, K.SPARK, 30 * dt * k, P, N).cone(1.2, 0.18).speed(60, 240).life(0.3, 0.8).drag(0.8, 0.8).color(2.8, 1.8, 0.8).x01(14, 0.32).x23(0.06, 1.2).emit();
   if (fxRandom.next() < 3 * dt) E(fx.dist, K.HEAT, 1, P, N).speed(30, 30).life(1.0, 1.0).s0(30 * pw, 30 * pw).s1(80 * pw, 80 * pw).alpha(0.5 * k, 0.5 * k).fade(0.1, 1.5).grow(0.5).emit();
   ctx.lights.point(b.x, b.y, pal.light[0], pal.light[1] * 0.75, pal.light[2] * 0.5, 2.2 * k * (0.75 + 0.25 * Math.sin(b.age * 23 + b.seed)), 220 * pw, 35);
+  // Mapa ran (18-C): wyrwa tli się, póki płonie — co 0,25 s lekki stempel żaru pod ogniem (gaśnie z ogniem).
+  b.stampAcc += dt;
+  if (b.stampAcc >= 0.25) {
+    b.stampAcc -= 0.25;
+    ctx.stamp(b.entity, b.x, b.y, 18 * pw, 0.6 + 1.4 * k, 0.04 * k, 0, 0);
+  }
 }
 
 /** Wybuch drona / zestrzelonej rakiety (PD, flak) — mały blast dema. */

@@ -41,6 +41,7 @@ import { SimClock, CLOCK_RENDER, CLOCK_SIM } from '../../game/simClock.js';
 import { MASTER_WEAPONS } from '../../data/weapons.js';
 import { getEntityWeaponTier, WEAPON_TIER_SCALE } from '../../data/ships.js';
 import { weaponImpactScale } from '../../game/weaponFeel.js';
+import { HullDamageMap } from '../hullDamageMap.js';
 
 // ---------------------------------------------------------------------------
 // Budżety i progi
@@ -146,7 +147,7 @@ function createAfter() {
   return { t: 0, kind: 0, a0: 0, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0, ref: null, cvx: 0, cvy: 0, ct0: 0, cclock: CLOCK_SIM };
 }
 function createBurner() {
-  return { active: false, entity: null, lx: 0, ly: 0, lnx: 0, lny: 0, x: 0, y: 0, nx: 0, ny: 0, age: 0, dur: 1, power: 1, pal: 'armata', seed: 0 };
+  return { active: false, entity: null, lx: 0, ly: 0, lnx: 0, lny: 0, x: 0, y: 0, nx: 0, ny: 0, age: 0, dur: 1, power: 1, pal: 'armata', seed: 0, stampAcc: 0 };
 }
 function createContBeam() {
   return {
@@ -295,8 +296,12 @@ export const WeaponFx = {
       after(delay, kind, a0, a1, a2, a3, a4, a5, ref) { self._scheduleAfter(delay, kind, a0, a1, a2, a3, a4, a5, ref); },
       /** Wstrząs kamery: camera.addShake porównany z tym, co zostało (addShake nadpisuje). */
       shake(mag, dur) { self._shake(mag, dur); },
-      /** Mapa ran na kadłubie — zadanie 18-C (tu pusto; wywołania receptur zostają). */
-      stamp() {},
+      /**
+       * Mapa ran na kadłubie (zadanie 18-C, HullDamageMap.stampRecipe): stempel w miejscu krateru z haka
+       * tej klatki pomija (trafienie już ostemplowane bez bramki LOD), resztę — wtórne Yamato, rzazy
+       * przebić, wiązkę między taktami, żar płonącej wyrwy — kładzie z parametrami receptury.
+       */
+      stamp(hull, x, y, r, heat, scorch, hole, ion, dx, dy, elong) { HullDamageMap.stampRecipe(hull, x, y, r, heat, scorch, hole, ion, dx, dy, elong); },
       /** Płonąca wyrwa w układzie trafionego kadłuba. */
       burn(hull, x, y, nx, ny, dur, power, pal) { self._burn(hull, x, y, nx, ny, dur, power, pal); },
       /** Czy punkt leży na poszyciu (łuki Tempesta) — tylko odczyt kadłuba. */
@@ -377,7 +382,7 @@ export const WeaponFx = {
     slot.entity = hull;
     slot.lx = dx * c + dy * s; slot.ly = -dx * s + dy * c;
     slot.lnx = nx * c + ny * s; slot.lny = -nx * s + ny * c;
-    slot.age = 0; slot.dur = dur; slot.power = power; slot.pal = pal;
+    slot.age = 0; slot.dur = dur; slot.power = power; slot.pal = pal; slot.stampAcc = 0;
     slot.seed = fxRandom.next() * 100;
   },
 

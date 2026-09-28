@@ -291,11 +291,13 @@ test('game hit paths hand the found hex to applyImpact', () => {
   assert.ok(beam.includes('window.fireWeaponCore = function'), 'pomocniki wiązki muszą stać przed fireWeaponCore');
   assert.match(beam, /findBeamHexShard\(pt\.hexGrid, gridX, gridY, beamHitRadSq\)/);
   assert.doesNotMatch(beam, /for \(let dr = -1; dr <= 1; dr\+\+\)/, 'the fixed 3x3 window is back in the beam raymarch');
-  assert.match(beam, /applyHexImpact\(hitEntity, finalEndX, finalEndY, damage, [^;]*beamHitShard\)/);
+  // Ostatni argument po heksie: źródło stempla mapy ran (broń / pocisk, zadanie 18-C).
+  assert.match(beam, /applyHexImpact\(hitEntity, finalEndX, finalEndY, damage, [^;]*beamHitShard(?:, weapon)?\)/);
   const bullets = html.slice(html.indexOf('function bulletsAndCollisionsStep('));
   assert.match(bullets, /hullShard = hexSweep\.hitShard/);
   // Zadanie 18-B: krater wejścia z mnożnikiem mechaniki broni (rykoszet × 0,3; reszta arsenału
-  // × 1 — obrażenia jak dotąd), encja trafienia jako realHit = hitNPC._realEntity || hitNPC.
+  // × 1 — obrażenia jak dotąd), encja trafienia jako realHit = hitNPC._realEntity || hitNPC;
+  // po heksie źródło stempla mapy ran (pocisk, 18-C).
   assert.match(bullets, /const realHit = hitNPC\._realEntity \|\| hitNPC;/);
-  assert.match(bullets, /applyHexImpact\(realHit, hitX, hitY, npcDamage \* entryK\.crater, [^;]*hitHexShard\)/);
+  assert.match(bullets, /applyHexImpact\(realHit, hitX, hitY, npcDamage \* entryK\.crater, [^;]*hitHexShard(?:, b(?:,[^;]*)?)?\)/);
 });
