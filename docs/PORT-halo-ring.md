@@ -364,9 +364,10 @@ Moduły kleju (poza nimi gra woła tylko to, co niżej):
 - **start**: `initHaloRings()` w DOMContentLoaded po `initPlanets3D` (jakość z `sc_planet_quality`);
 - **menu główne** (2026-09-26): tło menu (`src/3d/menuBackdrop3D.js`) wypożycza ring Ziemi od razu
   (`showcaseRing`), więc mapy pieką się w menu, a `startGame` oddaje ring (`releaseShowcase`) przed
-  pierwszą klatką. Shader pieczenia map kompiluje się ~5–8 s (ANGLE/D3D, bez cache GPU) i dawniej
-  zamrażał pierwszą klatkę gry przy Ziemi — tło rozgrzewa go `createHaloBakeWarmup` +
-  `renderer.compileAsync` (budowa ringu 8,3 s → 0,3 s na wątku głównym, zmierzone w headless);
+  pierwszą klatką. Port WebGPU (zadania 06, 11): pieczenie map kompiluje `HaloWorldMaps.init()` na
+  prawdziwych celach, bryły ringu rozgrzewa hak `prewarm` budowy (`Core3D.warmup`) przed podpięciem, a tło
+  rusza dopiero z gotowym ringiem — pierwsza klatka menu i gry przy Ziemi bez kompilacji (dawniej
+  `createHaloBakeWarmup` na WebGL; pierwsza klatka ringu na WebGPU bez rozgrzewki stała 4–5,6 s);
 - **render**: `haloRings.update(frameDt, cam, { sun, ship, quality, splitScreen })` po
   `updatePlanets3D`, przed `updateStations3D` i `updateHexShips3D` (tam `Core3D.render`); PerfHUD
   `render3dRingsUpdateTime`;
@@ -517,9 +518,10 @@ przed/po: różnica ~0 pikseli, te same draw calle).
   i 4 tranzyty, więc 5 kopuł z płyt przesuwa się wzdłuż dzielnicy albo za pas płyt); Fable: mapa stref 8192×256 na CPU 525–600 ms
   + miasto 120 ms (35 397 budynków, 94 218 drzew, 17 kopuł) — synchronicznie, przy leniwym
   tworzeniu ringu (< 420 tys. j. od planety).
-- **Rozgrzewka shaderów**: ringi-archetypy nie pieką map na GPU, więc `createHaloBakeWarmup`
-  i `tests/menuBackdrop.test.mjs` ich nie dotyczą; programy ECUMENE/Fable kompilują się przy
-  pierwszej klatce przy planecie (niezmierzone w ANGLE).
+- **Rozgrzewka shaderów** (zadanie 11): ringi-archetypy nie pieką map na GPU; ich bryły (i dach hal K-7
+  w drugim stanie) rozgrzewa ten sam hak `prewarm` co ring Ziemi — trafiają do `group` dopiero po
+  kompilacji w tle, `ready` / `mapsReady` = podpięte (pierwsza klatka przy Marsie / Jowiszu bez
+  0,7–0,8 s przestoju; sama budowa na CPU 0,4–0,6 s zostaje — synchroniczna, przy leniwym tworzeniu).
 - **Testy**: `haloRingProfiles.test.mjs` (Ziemia = liczby sprzed profili, archetypy i geometria,
   doki, K-7 styl ≠ stanowiska, geometria wszędzie), `haloRingArch.test.mjs` (rama, ląd dem, port
   wolny, konstrukcja w płycie kolizji, zatoki i tranzyty, pułapki ANGLE, klej gry);

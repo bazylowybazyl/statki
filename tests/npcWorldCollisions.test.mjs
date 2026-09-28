@@ -1,4 +1,5 @@
-// Z12 (2026-09-26): NPC realnie ograniczane przez płytę ringu „Halo” i asteroidy.
+// Z12 (2026-09-26): NPC realnie ograniczane przez płytę ringu „Halo” i asteroidy
+// (od zadania 21 portu WebGPU: olbrzymy pasa — skały starego pola odeszły).
 //
 // NPC całkują ruch w x/y/vx/vy (stepShipFlight, npcFlight, npcStep), a pos/vel
 // mają najwyżej jako lustro, które następny krok nadpisuje. Dawne pętle kolizji
@@ -22,8 +23,7 @@ import { HaloRingCollider, haloShipOutline } from '../src/game/haloRingCollision
 import { haloGameToLocal, haloLocalToGame } from '../src/game/haloRingPlanets.js';
 import { setFlightArrive, stepShipFlight } from '../src/game/flight/shipFlightModel.js';
 import { syncNpcFlightState } from '../src/game/flight/npcFlight.js';
-import { AsteroidField } from '../src/3d/asteroidField3D.js';
-import { resolveShipAsteroidCollision } from '../src/game/asteroidDestructor.js';
+import { wallBeltGiants } from './helpers/beltGiantWall.mjs';
 
 const DT = 1 / 120;
 const html = readIndexHtml();
@@ -214,24 +214,17 @@ test('ring: gracz bez zmian — pos/vel, ściany portu i komunikat przy uderzeni
 });
 
 // ---------------------------------------------------------------------------
-// Asteroidy
+// Olbrzymy pasa (zadanie 21 portu WebGPU — stare pole skał usunięte)
 // ---------------------------------------------------------------------------
 
-// BIG żelazna (promień kolizji 630) w (0, 0); pole bez GPU jak w
-// asteroidHexAdapter.test.mjs. Skała nieruchoma: impuls nie przesuwa świata.
-function makeRockField() {
-  const asteroid = { alive: true, type: 'iron', size: 'BIG', worldX: 0, worldY: 0, scale: 1500, vx: 0, vy: 0, hardness: 0.7 };
-  const field = Object.create(AsteroidField.prototype);
-  field.spatial = { forEachInRadius(_x, _y, _r, cb) { cb(asteroid); } };
-  field._isNearView = () => false;
-  field._promoteAsteroidToHex = () => null;
-  field._applyImpulseToAsteroid = () => {};
-  field.applyDamageAt = () => {};
-  field._flushAll = () => {};
-  return { field, asteroid };
+// Pas gry dla pętli z index.html: API AsteroidBelt (giants.readyCount, collideShip),
+// olbrzym-ściana — lita skała dla x ≥ 0 (tests/helpers/beltGiantWall.mjs).
+function makeBelt() {
+  const giants = wallBeltGiants('arch', 0, 0);
+  return { giants, collideShip: (body) => giants.collideShip(body) };
 }
 
-// Środowisko pętli: window gry (pole, obrażenia), przywracane po teście.
+// Środowisko pętli: window gry (obrażenia — olbrzym ich nie zadaje), przywracane po teście.
 function withGameWindow(win, fn) {
   const old = globalThis.window;
   globalThis.window = win;
@@ -248,6 +241,7 @@ function loadAsteroidStep(npcs, extra = {}) {
     ship: null,
     player2Ship: null,
     npcs,
+    asteroidBelt: null,
     _npcCollisionBody: createNpcCollisionBody(),
     ...helpers,
     ...extra
@@ -255,73 +249,66 @@ function loadAsteroidStep(npcs, extra = {}) {
   return loadIndexFunction(html, 'function stepShipAsteroidCollisions(dt) {', 'stepShipAsteroidCollisions', scope);
 }
 
-// Głębokość wejścia kadłuba w skałę (jak w kolizji) — świeży widok.
-function rockPenetration(npc, asteroid) {
-  const res = resolveShipAsteroidCollision(loadNpcCollisionBody(createNpcCollisionBody(), npc), asteroid);
-  return res?.collided ? Math.hypot(res.separationDx, res.separationDy) / 1.05 : 0;
-}
+// Kadłub kołowy (promień 300, bez w/h): dziób = x + 300. Wejście w ścianę x = 0.
+const noseIn = (npc) => Math.max(0, npc.x + npc.radius);
 
-// NPC leci przez środek skały do punktu za nią; ruch NPC, potem pętla kolizji.
-function flyIntoRock(npc, steps = 600) {
-  const { field, asteroid } = makeRockField();
+// NPC leci od −x do punktu za ścianą; ruch NPC, potem pętla kolizji (jak physicsStep).
+function flyIntoWall(npc, steps = 600) {
+  const belt = makeBelt();
   const damage = [];
-  const win = { asteroidField: field, applyDamageToNPC: (target, dmg, src) => damage.push({ target, dmg, src }) };
+  const win = { applyDamageToNPC: (target, dmg, src) => damage.push({ target, dmg, src }) };
   return withGameWindow(win, () => {
-    setFlightArrive(npc, -3000, 0, { speedMode: 'combat', arrival: 50 });
-    const stepRocks = loadAsteroidStep([npc]);
-    let minX = Infinity;
+    setFlightArrive(npc, 3000, 0, { speedMode: 'combat', arrival: 50 });
+    const stepRocks = loadAsteroidStep([npc], { asteroidBelt: belt });
+    let maxIn = 0;
     for (let i = 0; i < steps; i++) {
       stepShipFlight(npc, DT);
       stepRocks(DT);
-      minX = Math.min(minX, npc.x);
+      maxIn = Math.max(maxIn, noseIn(npc));
     }
     stepShipFlight(npc, DT); // kolejny krok ruchu po ostatniej kolizji
-    return { damage, minX, penetration: rockPenetration(npc, asteroid) };
+    return { belt, damage, maxIn, penetration: noseIn(npc) };
   });
 }
 
-test('asteroidy: NPC z samym x/vx odbija się od skały, obrażenia idą w encję NPC', () => {
-  const npc = makeDestroyer(2200, 0, { angle: Math.PI });
-  const { damage, minX, penetration } = flyIntoRock(npc);
-  assert.ok(damage.length > 0, 'zderzenie ze skałą');
-  assert.ok(damage.every((d) => d.target === npc && d.src === 'asteroid'), 'obrażenia w NPC, nie w widok kinematyki');
-  assert.ok(minX > 630, `kadłub nie przeszedł przez skałę (min x ${minX.toFixed(1)})`);
-  assert.ok(penetration < 1, `po kroku ruchu kadłub poza skałą (wejście ${penetration.toFixed(3)})`);
+test('olbrzymy: NPC z samym x/vx zatrzymuje się na ścianie, bez obrażeń', () => {
+  const npc = makeDestroyer(-2200, 0, { angle: 0 });
+  const { belt, damage, maxIn, penetration } = flyIntoWall(npc);
+  assert.ok(belt.giants.stats.collisions > 0, 'zderzenie ze ścianą');
+  assert.ok(maxIn < 4, `kadłub nie wszedł w skałę po kolizji (max ${maxIn.toFixed(2)} j.)`);
+  assert.ok(penetration < 8, `po kroku ruchu kadłub przy ścianie (wejście ${penetration.toFixed(2)} j.)`);
+  assert.equal(damage.length, 0, 'olbrzym nie zadaje obrażeń (jak w demie)');
   assert.equal(npc.pos, undefined, 'bez zakładania lustra pos/vel');
 });
 
-test('asteroidy: NPC z lustrem pos/vel — wypchnięcie w x/vx, lustro zgodne', () => {
-  const npc = makeDestroyer(2200, 0, { angle: Math.PI });
+test('olbrzymy: NPC z lustrem pos/vel — wypchnięcie w x/vx, lustro zgodne', () => {
+  const npc = makeDestroyer(-2200, 0, { angle: 0 });
   syncNpcFlightState(npc);
   delete npc.w; // syncNpcFlightState dopisuje wymiary — tu kadłub kołowy (promień)
   delete npc.h;
-  const { damage, minX, penetration } = flyIntoRock(npc);
-  assert.ok(damage.length > 0);
-  assert.ok(minX > 630, `kadłub nie przeszedł przez skałę (min x ${minX.toFixed(1)})`);
-  assert.ok(penetration < 1, `po kroku ruchu kadłub poza skałą (wejście ${penetration.toFixed(3)})`);
+  const { belt, maxIn } = flyIntoWall(npc);
+  assert.ok(belt.giants.stats.collisions > 0);
+  assert.ok(maxIn < 4, `kadłub nie wszedł w skałę po kolizji (max ${maxIn.toFixed(2)} j.)`);
   assert.deepEqual([npc.pos.x, npc.pos.y, npc.vel.x, npc.vel.y], [npc.x, npc.y, npc.vx, npc.vy]);
 });
 
-test('asteroidy: gracz bez zmian (pos/vel, obrażenia gracza), skok tranzytu NPC przelatuje', () => {
-  const { field, asteroid } = makeRockField();
-  const player = { pos: { x: 700, y: 0 }, vel: { x: -300, y: 0 }, radius: 300, angle: 0, isPlayer: true, mass: 800000 };
-  const warping = makeDestroyer(0, 500, { vx: 4000, vy: 0, phase: 'warping' });
-  const playerHits = [];
-  const npcHits = [];
-  const win = {
-    asteroidField: field,
-    ship: player,
-    applyDamageToPlayer: (dmg) => playerHits.push(dmg),
-    applyDamageToNPC: (target) => npcHits.push(target)
-  };
-  withGameWindow(win, () => loadAsteroidStep([warping], { ship: player })(DT));
-  assert.ok(Math.hypot(player.pos.x, player.pos.y) > 700, 'gracz wypchnięty przez pos');
-  assert.ok(player.vel.x > -300, 'prędkość gracza w skałę zgaszona');
+test('olbrzymy: gracz przez pos/vel, skok tranzytu NPC przelatuje, siatka w budowie nie koliduje', () => {
+  const belt = makeBelt();
+  const player = { pos: { x: -250, y: 0 }, vel: { x: 300, y: 0 }, radius: 300, angle: 0, isPlayer: true, mass: 800000 };
+  const warping = makeDestroyer(-100, 500, { vx: 4000, vy: 0, phase: 'warping' });
+  loadAsteroidStep([warping], { ship: player, asteroidBelt: belt })(DT);
+  assert.ok(player.pos.x + 300 < 3, `gracz wypchnięty przez pos (dziób ${(player.pos.x + 300).toFixed(2)})`);
+  assert.ok(Math.abs(player.vel.x - (300 - 1.3 * 300)) < 1e-6, 'prędkość gracza w skałę odbita (×0,3)');
   assert.equal(player.x, undefined, 'graczowi nie dopisujemy x/y');
-  assert.equal(playerHits.length, 1, 'obrażenia gracza przez applyDamageToPlayer');
-  assert.deepEqual([warping.x, warping.y, warping.vx], [0, 500, 4000], 'skok tranzytu bez kolizji');
-  assert.equal(npcHits.length, 0);
-  assert.equal(asteroid.alive, true);
+  assert.deepEqual([warping.x, warping.y, warping.vx], [-100, 500, 4000], 'skok tranzytu bez kolizji');
+  // Siatka olbrzyma jeszcze w workerach: pas bez gotowych olbrzymów nic nie robi.
+  belt.giants.entries[0].giant.ready = false;
+  const p2 = { pos: { x: -250, y: 0 }, vel: { x: 300, y: 0 }, radius: 300, angle: 0 };
+  loadAsteroidStep([], { ship: p2, asteroidBelt: belt })(DT);
+  assert.deepEqual([p2.pos.x, p2.vel.x], [-250, 300]);
+  // Bez pasa (świat bez pól) — też nic.
+  loadAsteroidStep([], { ship: p2, asteroidBelt: null })(DT);
+  assert.deepEqual([p2.pos.x, p2.vel.x], [-250, 300]);
 });
 
 // ---------------------------------------------------------------------------
@@ -332,9 +319,16 @@ test('widok kinematyki: ta sama kolizja co statek z pos/vel, zapis do x/y/vx/vy 
   const npc = { x: 850, y: -40, vx: -250, vy: 30, angle: 2.8, radius: 260, mass: 40000 };
   const asPlayerShape = { pos: { x: npc.x, y: npc.y }, vel: { x: npc.vx, y: npc.vy }, angle: npc.angle, radius: npc.radius, mass: npc.mass };
   const body = loadNpcCollisionBody(createNpcCollisionBody(), npc);
-  const rock = { alive: true, type: 'iron', size: 'L', worldX: 0, worldY: 0, scale: 1400, vx: 0, vy: 0 };
-  assert.deepEqual(resolveShipAsteroidCollision(body, rock), resolveShipAsteroidCollision(asPlayerShape, rock),
-    'brak w/h/rammingMass = zera w widoku, ta sama kolizja');
+  // Olbrzym-ściana na x ≥ 1000: kadłub (promień 260) wchodzi w nią ~90 j.
+  const giants = wallBeltGiants('arch', 1000, 0);
+  const probe = createNpcCollisionBody();
+  loadNpcCollisionBody(probe, npc);
+  const dView = giants.collideShip(probe);
+  const asShip = { pos: { ...asPlayerShape.pos }, vel: { ...asPlayerShape.vel }, angle: npc.angle, radius: npc.radius, mass: npc.mass };
+  const dShip = giants.collideShip(asShip);
+  assert.ok(dView > 50, 'kolizja z olbrzymem');
+  assert.equal(dView, dShip, 'brak w/h = zera w widoku, ta sama kolizja');
+  assert.deepEqual([probe.pos.x, probe.pos.y, probe.vel.x, probe.vel.y], [asShip.pos.x, asShip.pos.y, asShip.vel.x, asShip.vel.y]);
   const a = Array.from({ length: 8 }, () => ({ x: 0, y: 0 }));
   const b = Array.from({ length: 8 }, () => ({ x: 0, y: 0 }));
   assert.equal(haloShipOutline(body, a), haloShipOutline(asPlayerShape, b));

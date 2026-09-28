@@ -40,6 +40,8 @@ import { ActiveCarrier, createCarrier, writeCarrier, writeCarrierVelocity } from
 import { SimClock, CLOCK_RENDER, CLOCK_SIM } from '../../game/simClock.js';
 import { MASTER_WEAPONS } from '../../data/weapons.js';
 import { getEntityWeaponTier, WEAPON_TIER_SCALE } from '../../data/ships.js';
+import { weaponImpactScale } from '../../game/weaponFeel.js';
+import { HullDamageMap } from '../hullDamageMap.js';
 
 // ---------------------------------------------------------------------------
 // Budżety i progi
@@ -68,6 +70,10 @@ export const RICOCHET_CAP = 256;
 export const EXTERNAL_CAP = 16;
 /** Sufit wstrząsu strzałów (window.__weapon3dCameraShake.mag, jak dawny weapon3DSystem). */
 export const WEAPON_SHAKE_CAP = 18;
+/** Znaków rzazu pocisku przebijającego na jedno wywołanie (po przerzedzeniu jak w demie — niżej). */
+export const KERF_PER_CALL = 16;
+/** Podkrok symulacji pocisków dema [Hz]: najwyżej jeden znak rzazu na podkrok (odstęp v / 240). */
+const KERF_DEMO_HZ = 240;
 /** Zapas kadru dla efektów pocisków (ułamek kadru siatki Core3D.fx.view). */
 const VIEW_PAD = 600;
 
@@ -141,7 +147,7 @@ function createAfter() {
   return { t: 0, kind: 0, a0: 0, a1: 0, a2: 0, a3: 0, a4: 0, a5: 0, ref: null, cvx: 0, cvy: 0, ct0: 0, cclock: CLOCK_SIM };
 }
 function createBurner() {
-  return { active: false, entity: null, lx: 0, ly: 0, lnx: 0, lny: 0, x: 0, y: 0, nx: 0, ny: 0, age: 0, dur: 1, power: 1, pal: 'armata', seed: 0 };
+  return { active: false, entity: null, lx: 0, ly: 0, lnx: 0, lny: 0, x: 0, y: 0, nx: 0, ny: 0, age: 0, dur: 1, power: 1, pal: 'armata', seed: 0, stampAcc: 0 };
 }
 function createContBeam() {
   return {
@@ -168,9 +174,10 @@ function createExternal() {
   };
 }
 
-// Obiekty robocze (bez alokacji na zdarzenie)
+// Obiekty robocze (bez alokacji na zdarzenie). _hit.ric… — rykoszet rozstrzygnięty przez grę
+// (18-B, projectileMechanics.ricochetBounce): kierunek, prędkość i życie smugowca odbitego.
 const _m = { x: 0, y: 0, angle: 0, scale: 1, density: 1 };
-const _hit = { x: 0, y: 0, nx: 0, ny: -1 };
+const _hit = { x: 0, y: 0, nx: 0, ny: -1, ric: false, ricDirX: 0, ricDirY: 0, ricSpeed: 0, ricLife: 0 };
 const _imp = { x: 0, y: 0, vx: 0, vy: 0, rvx: 0, rvy: 0, power: 1, flakR: 0, style: 0, r: 1, g: 1, b: 1, width: 6, len: 16, flyAcc: 0 };
 const _carrier = createCarrier();
 const _carrier2 = createCarrier();
@@ -212,7 +219,10 @@ export const WeaponFx = {
   _prjOriginY: 0,
   _beamOriginX: 0,
   _beamOriginY: 0,
-  stats: { shots: 0, muzzles: 0, cheapMuzzles: 0, impacts: 0, cheapImpacts: 0, bullets: 0, beams: 0, pulses: 0, after: 0, droppedAfter: 0 },
+  stats: {
+    shots: 0, muzzles: 0, cheapMuzzles: 0, impacts: 0, cheapImpacts: 0, bullets: 0, beams: 0, pulses: 0, after: 0, droppedAfter: 0,
+    kerfs: 0, exits: 0, stuck: 0, ricochets: 0, charges: 0
+  },
 
   /** Czy moduł działa (urządzenie i scena gotowe). */
   get available() {
@@ -286,8 +296,12 @@ export const WeaponFx = {
       after(delay, kind, a0, a1, a2, a3, a4, a5, ref) { self._scheduleAfter(delay, kind, a0, a1, a2, a3, a4, a5, ref); },
       /** Wstrząs kamery: camera.addShake porównany z tym, co zostało (addShake nadpisuje). */
       shake(mag, dur) { self._shake(mag, dur); },
-      /** Mapa ran na kadłubie — zadanie 18-C (tu pusto; wywołania receptur zostają). */
-      stamp() {},
+      /**
+       * Mapa ran na kadłubie (zadanie 18-C, HullDamageMap.stampRecipe): stempel w miejscu krateru z haka
+       * tej klatki pomija (trafienie już ostemplowane bez bramki LOD), resztę — wtórne Yamato, rzazy
+       * przebić, wiązkę między taktami, żar płonącej wyrwy — kładzie z parametrami receptury.
+       */
+      stamp(hull, x, y, r, heat, scorch, hole, ion, dx, dy, elong) { HullDamageMap.stampRecipe(hull, x, y, r, heat, scorch, hole, ion, dx, dy, elong); },
       /** Płonąca wyrwa w układzie trafionego kadłuba. */
       burn(hull, x, y, nx, ny, dur, power, pal) { self._burn(hull, x, y, nx, ny, dur, power, pal); },
       /** Czy punkt leży na poszyciu (łuki Tempesta) — tylko odczyt kadłuba. */
@@ -298,13 +312,17 @@ export const WeaponFx = {
   },
 
   _shakeAllowed: true,
+  // Mnożnik wstrząsu receptury: przy trafieniu (impact, wyjście, zakleszczenie) = impactScale
+  // broni (zadanie 18-D, src/game/weaponFeel.js); poza trafieniem 1.
+  _shakeScale: 1,
 
   _shake(mag, dur) {
     if (!this._shakeAllowed || !(mag > 0)) return;
     const cam = typeof window !== 'undefined' ? window.camera : null;
     if (!cam || typeof cam.addShake !== 'function') return;
+    const m = mag * this._shakeScale;
     const left = cam.shakeDur > 0 ? cam.shakeMag * Math.max(0, cam.shakeTime / cam.shakeDur) : 0;
-    if (mag > left) cam.addShake(mag, dur);
+    if (m > left) cam.addShake(m, dur);
   },
 
   _hullInside(hull, x, y) {
@@ -364,7 +382,7 @@ export const WeaponFx = {
     slot.entity = hull;
     slot.lx = dx * c + dy * s; slot.ly = -dx * s + dy * c;
     slot.lnx = nx * c + ny * s; slot.lny = -nx * s + ny * c;
-    slot.age = 0; slot.dur = dur; slot.power = power; slot.pal = pal;
+    slot.age = 0; slot.dur = dur; slot.power = power; slot.pal = pal; slot.stampAcc = 0;
     slot.seed = fxRandom.next() * 100;
   },
 
@@ -403,6 +421,7 @@ export const WeaponFx = {
     R.ft0 = Core3D.fx.time;
     R.life = life; R.style = style; R.r = r; R.g = g; R.b = b; R.width = width; R.len = len;
     R.seed = fxRandom.next();
+    this.stats.ricochets++;
   },
 
   // -------------------------------------------------------------------------
@@ -745,9 +764,10 @@ export const WeaponFx = {
   impact(b, x, y, scale = 1, hit = null) {
     if (!this.available || !b) return false;
     this.stats.impacts++;
-    // koniec smugi pocisku w punkcie trafienia
+    // koniec smugi pocisku w punkcie trafienia — chyba że pocisk przebija kadłub i leci dalej
+    // (hit.through, 18-B: smuga kończy się w punkcie wyjścia / zakleszczenia)
     const st = b.__fx;
-    if (st && st.bullet === b) { st.endX = x; st.endY = y; st.endSet = true; }
+    if (st && st.bullet === b && !hit?.through) { st.endX = x; st.endY = y; st.endSet = true; }
     let family = projectileFamilyFor(b);
     const hx = hit ? hit.nx : 0; const hy = hit ? hit.ny : 0;
     const relVx = hit ? hit.relVx : (Number(b.vx) || 0) - (Number(b.ivx) || 0);
@@ -759,11 +779,21 @@ export const WeaponFx = {
       const vl = Math.sqrt(relVx * relVx + relVy * relVy);
       _hit.nx = vl > 1e-6 ? -relVx / vl : 0; _hit.ny = vl > 1e-6 ? -relVy / vl : -1;
     }
-    // wstrząs z trafień tylko dla gracza (strzelał albo oberwał) — bitwa NPC nie trzęsie kamerą
+    // Rykoszet rozstrzyga gra (hash numeru pocisku — decyzja i obraz z tego samego hasha).
+    if (hit?.ric) {
+      _hit.ric = true;
+      _hit.ricDirX = hit.ricDirX; _hit.ricDirY = hit.ricDirY;
+      _hit.ricSpeed = hit.ricSpeed; _hit.ricLife = hit.ricLife;
+    } else {
+      _hit.ric = false;
+    }
+    // wstrząs z trafień tylko dla gracza (strzelał albo oberwał) — bitwa NPC nie trzęsie kamerą;
+    // siła × impactScale broni (18-D — obraz receptury bez zmian)
     const player = typeof window !== 'undefined' ? window.ship : null;
     const p2 = typeof window !== 'undefined' ? window.player2Ship : null;
     const ent = hit?.entity || null;
     this._shakeAllowed = b.owner === 'player' || b.owner === 'player2' || (ent && (ent === player || ent === p2));
+    this._shakeScale = b.vfxKey ? weaponImpactScale(weaponCtx(b.vfxKey).def) : 1;
     try {
       if (!family) {
         // rakieta / torpeda w tablicy bullets: zestrzelona rakieta — mały wybuch (do 19),
@@ -792,6 +822,100 @@ export const WeaponFx = {
       recipe.impact(this.ctx, p, hull, _hit);
     } finally {
       this._shakeAllowed = true;
+      this._shakeScale = 1;
+      _hit.ric = false;
+    }
+    return true;
+  },
+
+  // -------------------------------------------------------------------------
+  // Przebicie (zadanie 18-B — logika: src/game/projectileMechanics.js, wpięcie w
+  // bulletsAndCollisionsStep): rzaz w materiale, wyjście za burtą, zakleszczenie. Receptury
+  // rodziny broni (`kerf`, `exit`, `stuck` — Mjolnir, Valkyrie). relV — prędkość pocisku
+  // względem kadłuba; ActiveCarrier (kadłub) ustawia wołający.
+
+  /**
+   * Znaki rzazu pocisku w materiale: `count` znaków od (x, y) co (dx, dy) (drogi 22 j. —
+   * PENETRATION_CONFIG.kerfStep); tylko w kadrze. Gęstość obrazu jak w demie: tam rzaz szedł
+   * najwyżej raz na podkrok 240 Hz (licznik zerowany po znaku), więc szybki pocisk znaczył co
+   * v/240 j. (Mjolnir ~104 j., Valkyrie ~62 j.), nie co 22 j. — efekt bierze co k-ty znak
+   * mechaniki (najwyżej KERF_PER_CALL na wywołanie, rozłożone po całym odcinku).
+   * Mapa ran: pas rzazu stempluje gra (HullDamageMap.stampKerf w applyBulletHullPass — każdy
+   * krok w materiale, bez bramki kadru efektu), więc receptura dostaje kadłub null (`ctx.stamp`
+   * bez celu) — bez drugiego stempla w miejscach znaków efektu. `hull` zostaje w podpisie jak
+   * w pierceExit / pierceStuck.
+   */
+  kerf(b, x, y, dx, dy, count, relVx, relVy, hull = null) {
+    if (!this.available || !b || !(count > 0)) return false;
+    const family = projectileFamilyFor(b);
+    const recipe = family ? RECIPES[family] : null;
+    if (!recipe?.kerf) return false;
+    const spd = Math.sqrt(relVx * relVx + relVy * relVy);
+    const markLen = Math.sqrt(dx * dx + dy * dy) || 22;
+    const every = Math.max(1, Math.round(spd / KERF_DEMO_HZ / markLen));
+    const n = Math.min(KERF_PER_CALL, Math.max(1, Math.round(count / every)));
+    const stride = count / n;
+    const p = _imp;
+    p.vx = relVx; p.vy = relVy; p.rvx = relVx; p.rvy = relVy;
+    p.power = SIZE_POWER[b.weaponSize] || 1;
+    for (let k = 0; k < n; k++) {
+      const s = Math.floor(k * stride);
+      p.x = x + dx * s; p.y = y + dy * s;
+      if (!this._inView(p.x, p.y, 400)) continue;
+      recipe.kerf(this.ctx, p, null);
+      this.stats.kerfs++;
+    }
+    return true;
+  },
+
+  /** Wyjście pocisku z kadłuba: stożek stopionego metalu za burtą (receptura `exit`). */
+  pierceExit(b, x, y, relVx, relVy, hull = null) {
+    return this._pierceEvent(b, x, y, relVx, relVy, hull, false);
+  },
+
+  /** Zakleszczenie w materiale: wybuch w kadłubie (receptura `stuck`, bez niej — `impact`). */
+  pierceStuck(b, x, y, relVx, relVy, hull = null) {
+    return this._pierceEvent(b, x, y, relVx, relVy, hull, true);
+  },
+
+  _pierceEvent(b, x, y, relVx, relVy, hull, stuck) {
+    if (!this.available || !b) return false;
+    const family = projectileFamilyFor(b);
+    const recipe = family ? RECIPES[family] : null;
+    if (!recipe) return false;
+    // pocisk kończy lot w materiale — smuga do punktu zakleszczenia
+    if (stuck) {
+      const st = b.__fx;
+      if (st && st.bullet === b) { st.endX = x; st.endY = y; st.endSet = true; }
+    }
+    if (!this._inView(x, y, 1200)) return false;
+    const p = _imp;
+    p.x = x; p.y = y;
+    p.vx = relVx; p.vy = relVy; p.rvx = relVx; p.rvy = relVy;
+    p.power = SIZE_POWER[b.weaponSize] || 1;
+    const player = typeof window !== 'undefined' ? window.ship : null;
+    const p2 = typeof window !== 'undefined' ? window.player2Ship : null;
+    this._shakeAllowed = b.owner === 'player' || b.owner === 'player2' || (hull && (hull === player || hull === p2));
+    this._shakeScale = b.vfxKey ? weaponImpactScale(weaponCtx(b.vfxKey).def) : 1;
+    try {
+      if (!stuck) {
+        if (!recipe.exit) return false;
+        recipe.exit(this.ctx, p, hull);
+        this.stats.exits++;
+      } else if (recipe.stuck) {
+        recipe.stuck(this.ctx, p, hull);
+        this.stats.stuck++;
+      } else if (recipe.impact) {
+        const vl = Math.sqrt(relVx * relVx + relVy * relVy);
+        _hit.x = x; _hit.y = y;
+        _hit.nx = vl > 1e-6 ? -relVx / vl : 0; _hit.ny = vl > 1e-6 ? -relVy / vl : -1;
+        _hit.ric = false;
+        recipe.impact(this.ctx, p, hull, _hit);
+        this.stats.stuck++;
+      }
+    } finally {
+      this._shakeAllowed = true;
+      this._shakeScale = 1;
     }
     return true;
   },
@@ -918,8 +1042,9 @@ export const WeaponFx = {
   },
 
   /**
-   * Ładowanie działa z czasem ładowania (Mjolnir, Valkyrie — mechanikę wpina 18-B):
-   * state z createChargeState() na działo.
+   * Ładowanie działa z czasem ładowania (Mjolnir, Valkyrie — logika: src/game/weaponCharge.js,
+   * wołają: index.html stepSpecialCharge (gracz), WeaponController (P2), hak NPC
+   * window.spawnWeaponChargeFx): state z createChargeState() na działo; u — postęp 0..1.
    */
   charge(weaponId, x, y, angle, scale, u, dt, state, carrier = null) {
     if (!this.available || !(dt > 0) || !state) return;
@@ -928,6 +1053,7 @@ export const WeaponFx = {
     _mz.x = x; _mz.y = y; _mz.angle = angle; _mz.scale = scale || 1;
     if (carrier) ActiveCarrier.set(carrier);
     try { recipe.charge(this.ctx, _mz, Math.max(0, Math.min(1, u)), dt, state); } finally { ActiveCarrier.clear(); }
+    this.stats.charges++;
   },
 
   createChargeState,

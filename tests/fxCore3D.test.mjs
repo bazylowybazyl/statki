@@ -202,6 +202,18 @@ test('kroki: rozgrzewka przy gotowym urządzeniu (raz), rejestracja po starcie r
   fx2.origin.register({ shiftNode: kernel, isLive: () => true });
   fx2.warmAll();
   assert.deepEqual(r2.computed, [[kernel, 1]]);
+  // pula zarejestrowana PO warmAll (iskry pasa na ekranie ładowania, zadanie 11): jej kernel rozgrzewa
+  // rejestracja kroku; uniform przesunięcia na czas rozgrzewki zero, potem wraca
+  const late = { count: 4 };
+  fx2.origin.register({ shiftNode: late, isLive: () => true });
+  fx2.origin.shift.value.set(3, 4, 5, 6);
+  let seen = null;
+  const compute = r2.compute;
+  r2.compute = function (node, n) { if (node === late) seen = fx2.origin.shift.value.toArray(); return compute.call(this, node, n); };
+  fx2.addStep({ name: 'pas', warm: () => {} });
+  assert.deepEqual(r2.computed.at(-1), [late, 1]);
+  assert.deepEqual(seen, [0, 0, 0, 0]);
+  assert.deepEqual(fx2.origin.shift.value.toArray(), [3, 4, 5, 6]);
   fx.removeStep(a);
   assert.deepEqual(fx.steps, [b]);
 });

@@ -7,7 +7,7 @@ const planetSource = readFileSync(new URL('../src/3d/planet3d.assets.js', import
 const shipsSource = readFileSync(new URL('../src/3d/hexShips3D.js', import.meta.url), 'utf8');
 const hullSdfSource = readFileSync(new URL('../src/3d/hullShadowSdf.js', import.meta.url), 'utf8');
 const ringSource = readFileSync(new URL('../src/3d/haloRing/haloRingGame.js', import.meta.url), 'utf8');
-const asteroidSource = readFileSync(new URL('../src/3d/asteroidField3D.js', import.meta.url), 'utf8');
+const beltSource = readFileSync(new URL('../src/3d/asteroids/asteroidBelt.js', import.meta.url), 'utf8');
 const gameSource = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 
 test('shadow shafts are fully analytic — screen-space mask is gone', () => {
@@ -176,11 +176,9 @@ test('hull shaft starts at the hull edge and only dims the scene', () => {
   // burta daje pelny cien, polcien rosnie z dystansem od statku.
   assert.ok(hullSdfSource.includes('const w = max(softMax.mul(clamp(t.div(span), 0.0, 1.0)), wMin).toVar();'));
   assert.ok(coreSource.includes('shadow.assign(max(shadow, hullSdfShadow(hullUniforms, worldP, d, sunDist).mul(HULL_SHADOW_STRENGTH)));'));
-  // Statek/asteroida tylko przygaszaja; umbra do czerni zostaje planetom.
+  // Statek tylko przygasza; umbra do czerni zostaje planetom.
   assert.match(coreSource, /const HULL_SHADOW_STRENGTH = 0\.55;/);
   assert.match(coreSource, /shadow\.assign\(max\(shadow, edge\.mul\(fall\)\.mul\(max\(disc\.w, 0\.0\)\)\)\);/);
-  assert.match(asteroidSource, /const ASTEROID_SHAFT_STRENGTH = 0\.5;/);
-  assert.match(asteroidSource, /pushShaftDiscWorld\(cache\[i\]\.x, cache\[i\]\.y, cache\[i\]\.r, ASTEROID_SHAFT_STRENGTH\)/);
 });
 
 test('planetary rings register analytic circle occluders', () => {
@@ -200,12 +198,13 @@ test('planetary rings register analytic circle occluders', () => {
     'ring occluder must be registered before the ring is built and before the view gate');
 });
 
-test('large asteroids push analytic discs with throttled selection', () => {
-  assert.match(asteroidSource, /_pushShaftOccluders\(\)/);
-  assert.match(asteroidSource, /Core3D\.pushShaftDiscWorld\(cache\[i\]\.x, cache\[i\]\.y, cache\[i\]\.r, ASTEROID_SHAFT_STRENGTH\)/);
-  assert.match(asteroidSource, /const MIN_RADIUS = 90;/);
-  assert.match(asteroidSource, /this\._shaftFrameCounter % 4 === 1/);
-  assert.ok(!asteroidSource.includes('occluderMesh'), 'asteroid sprite occluder twin should be gone');
+test('asteroid belt darkens the sun through the field map, rocks under the plane cast no shaft discs', () => {
+  // Zadanie 21: pas z dema WebGPU — mrok gęstego pola = mapa transmitancji pola w masce
+  // słońca (co klatkę, gdy mapa ważna); skały gry leżą POD płaszczyzną (z = −1,45 r),
+  // więc nie przesłaniają słońca statkom — dawne dyski dużych skał odeszły ze starym polem.
+  assert.match(beltSource, /if \(m\.valid\) Core3D\.setSunOcclusionField\(this\.fieldMap\.texture, /);
+  assert.match(beltSource, /Core3D\.clearSunOcclusionField\(\);/);
+  assert.ok(!beltSource.includes('pushShaftDiscWorld'), 'skały pasa bez dysków w smugach słońca');
 });
 
 test('escape menu exposes off/low/medium/high shadow shafts option', () => {
@@ -356,9 +355,6 @@ test('backdrop keeps the long shaft; ring-anchored bodies get eclipses', () => {
   // Gwiazdy: punkty i smugi warpa (zadanie 22) — obie gałęzie ze smugą tła.
   assert.match(planetTsl, /const finalColor = sunShaftBackdrop\(vColor\)\.toVar\(\);/);
   assert.match(planetTsl, /sunShaftBackdrop\(tint\)/);
-  const beltSource = readFileSync(new URL('../src/3d/asteroidBeltBackdrop3D.js', import.meta.url), 'utf8');
-  assert.match(beltSource, /col = sunShaftBackdrop\(col\);/);
-  assert.match(beltSource, /applySunShadowToBuiltinMaterial\(this\.dustMaterial, 'backdrop'\);/);
   // Planety tla (perspektywa, z = -50 000) nie czytaja maski liczonej w plaszczyznie gry.
   assert.match(planetSource, /uSunShadowRecv: \{ value: this\.isRingAnchored \? 1\.0 : 0\.0 \}/);
   // Planeta przy ringu: zaćmienie gasi dzień (terminator), chmury, poświatę; poświata limbu — do połowy.

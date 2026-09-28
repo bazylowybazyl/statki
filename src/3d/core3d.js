@@ -22,6 +22,7 @@ import { installPlaceholders } from './tsl/zamiennik.js';
 import { uniformNode, uniformsAdapter } from './tsl/uniformy.js';
 import { BloomGry, MAX_HEAT_HAZE_SOURCES, createPostUniforms, createUberPost, hdrBezpieczny } from './tsl/postGry.js';
 import { FxFrame, FX_DISTORT_LAYER } from './fx/fxFrame.js';
+import { Rozgrzewka, compileAsyncNaCelu } from './rozgrzewka.js';
 
 // Brama znaczników czasu GPU (_gpuTimerGate): tyle zapytań musi zostać w puli three
 // (2 na pass), żeby zmieścić całą klatkę — dwa rendery podzielonego ekranu z modułami
@@ -378,7 +379,7 @@ export const Core3D = {
   // klatkę na starcie render() — w WebGPU cień jest per światło (SPIKE 9).
   _sunShadowLight: null,
   // Analityczne okludery shaftów, zgłaszane co klatkę przez systemy gry:
-  // dyski (planet3d.assets + asteroidField3D), kapsuły (hexShips3D),
+  // dyski (planet3d.assets), kapsuły (hexShips3D),
   // pierścienie (ringi „Halo”, haloRingGame.js — Map po kluczu ringu, bez begin/reset).
   shaftDiscs: new Float32Array(SHAFT_DISC_CAP * 4), shaftDiscCount: 0,
   sunOcclusionField: null,
@@ -853,7 +854,60 @@ export const Core3D = {
     this._scheduleTextureUpload();
     // Rozgrzewka kroków efektów zarejestrowanych przed urządzeniem (puste dispatche, prewarmPass).
     this.fx?.warmAll();
+    // Rejestr rozgrzewki pipeline'ów (src/3d/rozgrzewka.js, zadanie 11): wpisy modułów i passy Core3D w tle.
+    this._registerPassWarmups();
+    this.warmup.start();
     return true;
+  },
+
+  // Kamera i cel rozgrzewki dla warstwy passa (Core3D.warmup — src/3d/rozgrzewka.js), jak w prewarmPass:
+  // typ kamery passa warstwy ('all' = perspektywa), cel composerTarget (warstwa DIST — distortionTarget).
+  warmupCamera(layer, ortho) {
+    const isOrtho = typeof ortho === 'boolean' ? ortho : (layer !== 'all' && ORTHO_PASS_LAYERS.has(layer));
+    return this.getPassCamera(isOrtho);
+  },
+  warmupTarget(layer) {
+    return layer === FX_DISTORT_LAYER && this.distortionTarget ? this.distortionTarget : this.composerTarget;
+  },
+
+  // Passy Core3D w rejestrze rozgrzewki (zadanie 11). W tle menu: to, co już widać w passach tła i planet (mgławica,
+  // gwiazdy, planety, słońce, poświaty, ring-planety — przed pierwszą klatką gry culling niczego nie chowa), pre-pass
+  // głębi halo (materiał zastępczy) i pełnoekranowe quady halo i maski słońca. Na ekranie ładowania (flush) — wszystkie
+  // passy jeszcze raz (świat ortho, tarcze, FG). Tylko obiekty widoczne; rozgrzane wcześniej się nie powtarzają.
+  _registerPassWarmups() {
+    const w = this.warmup;
+    if (!w || w._passWarmups) return;
+    w._passWarmups = true;
+    this._registerPostWarmups();
+    const scene = () => this.scene;
+    for (const layer of [1, PLANET_RENDER_LAYER, PLANET_HALO_RENDER_LAYER, RING_PLANET_RENDER_LAYER]) {
+      w.add({ name: `Core3D: warstwa ${layer}`, objects: scene, layer, visible: false });
+    }
+    w.add({ name: 'Core3D: pre-pass głębi halo', objects: scene, layer: PLANET_RENDER_LAYER, visible: false, split: false, override: this.haloDepthMaskMaterial });
+    w.add({ name: 'Core3D: quad halo planet', objects: () => this.planetHaloPass?.quad });
+    w.add({ name: 'Core3D: quad maski słońca', objects: () => this.shadowShaftsPass?.quad, target: () => this.sunShadowTarget });
+    for (const layer of [0, SHIELD_RENDER_LAYER, 2, 1, PLANET_RENDER_LAYER, PLANET_HALO_RENDER_LAYER, RING_PLANET_RENDER_LAYER]) {
+      w.add({ name: `Core3D: warstwa ${layer} (start gry)`, objects: scene, layer, visible: false, phase: 'loading' });
+    }
+  },
+
+  // Post (uber, bloom) przed pierwszą klatką — pilnie, zaraz przy urządzeniu, pod kurtyną menu (zadanie 11): quad
+  // RenderPipeline z bloomem i bez, na kanwie. three r183 woła w compileAsync `updateBefore` węzłów materiału, więc
+  // kompilacja „uber” RYSUJE też passy BloomNode (zagnieżdżony render — ich 7 pipeline'ów powstaje wtedy, synchronicznie,
+  // ale jeszcze przed tłem menu). Nie wyłączać `updateBeforeType` bloomu na czas kompilacji: stan budowy zapamiętałby
+  // graf bez bloomu. Bez tego post kompilował się w pierwszej klatce tła menu, a przy starcie gry przed nią —
+  // w pierwszej klatce gry (8 pipeline'ów, ~0,2 s).
+  _registerPostWarmups() {
+    const w = this.warmup;
+    const canvas = () => null;
+    const postQuad = (key) => () => {
+      const post = this[key];
+      if (!post?._quadMesh) return null;
+      if (typeof post._update === 'function') post._update();
+      return post._quadMesh;
+    };
+    w.now(postQuad('_post'), { name: 'Core3D: post (uber, bloom)', target: canvas });
+    w.now(postQuad('_postBezBloomu'), { name: 'Core3D: post bez bloomu', target: canvas });
   },
 
   _failGpu(reason) {
@@ -1746,11 +1800,12 @@ export const Core3D = {
     });
     camera.layers.set(layer);
     renderer.setRenderTarget(this.composerTarget);
-    // Warstwa DIST rysuje do własnego celu (RG HalfFloat bez MSAA i głębi) — inny klucz pipeline'u.
+    // Warstwa DIST rysuje do własnego celu (RG HalfFloat bez MSAA i głębi) — inny klucz pipeline'u
+    // (głębia celu, nie renderera: compileAsyncNaCelu).
     if (layer === FX_DISTORT_LAYER && this.distortionTarget) renderer.setRenderTarget(this.distortionTarget);
     let promise;
     try {
-      promise = renderer.compileAsync(object3d, camera, object3d.isScene ? null : this.scene);
+      promise = compileAsyncNaCelu(renderer, object3d, camera, object3d.isScene ? null : this.scene);
     } catch (err) {
       promise = Promise.reject(err);
     } finally {
@@ -1758,10 +1813,13 @@ export const Core3D = {
       camera.layers.mask = prevMask;
       renderer.setRenderTarget(prevTarget);
     }
-    return promise.then(() => true, (err) => {
+    const done = promise.then(() => true, (err) => {
       console.warn('[Core3D] rozgrzewka passa nie wyszła:', err?.message || err);
       return false;
     });
+    // flush() rejestru na ekranie ładowania czeka i na te pipeline'y (zadanie 11): pierwsza klatka gry
+    // zapisująca do kolejki w trakcie ich kompilacji stawała na procesie GPU.
+    return this.warmup ? this.warmup.track(done) : done;
   },
 
   // Jedna warstwa tablicy tekstur (DataArrayTexture) prosto na GPU — queue.writeTexture tej
@@ -1806,7 +1864,7 @@ export const Core3D = {
   // (R, 1 = pełne słońce) na prostokącie w układzie sceny (x, −y świata).
   // Maska cienia mnoży nią widoczność słońca — wszystko, co czyta
   // sunVisibility()/sunShaftBackdrop(), ciemnieje w głębi pola. Właściciel
-  // (asteroidBelt3D) ustawia co klatkę, gdy mapa się przesunie.
+  // (pas asteroid, src/3d/asteroids/asteroidBelt.js) ustawia co klatkę.
   setSunOcclusionField(texture, x0, y0, w, h) {
     if (!texture) { this.sunOcclusionField = null; return; }
     const f = this.sunOcclusionField || (this.sunOcclusionField = { texture: null, x0: 0, y0: 0, w: 1, h: 1 });
@@ -2073,3 +2131,7 @@ export const Core3D = {
   setShadowCatchersDebug(enabled = true) { },
   toggleShadowCatchersDebug() { }
 };
+
+// Rejestr rozgrzewki pipeline'ów (zadanie 11): moduły zgłaszają się przy imporcie — `Core3D.warmup.add({...})`
+// (src/3d/rozgrzewka.js, agents.md § Rozgrzewka); praca rusza przy gotowym urządzeniu (_initGpu).
+Core3D.warmup = new Rozgrzewka(Core3D);

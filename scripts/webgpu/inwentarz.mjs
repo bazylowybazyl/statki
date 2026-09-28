@@ -28,8 +28,7 @@ const QUIET = !!arg('cicho');
 // Kolejność ma znaczenie: pierwsze trafienie wygrywa.
 const SCOPE_RULES = [
   { re: /^src\/3d\/(warpLens3D|warpFx3D|warpWorldLens)\.js$|^src\/vfx\/warpLensPass\.js$/, tag: 'warp', label: 'poza portem — warp (nowy warp wejdzie w TSL)' },
-  { re: /^src\/3d\/(asteroidField3D|asteroidBeltBackdrop3D)\.js$/, tag: 'asteroidy-stare', label: 'poza portem — stare asteroidy' },
-  { re: /^src\/3d\/(asteroidBelt3D|beltDust3D|beltStorm3D|fieldLights3D)\.js$|^src\/3d\/rocks\//, tag: 'asteroidy-nowe', label: 'poza portem — nowe asteroidy (dema; wejdą z dema WebGPU)' },
+  // Asteroidy: stare pole, tło pasa i klej WebGL usunięte w zadaniu 21 — pas z dema WebGPU jest w porcie (src/3d/asteroids/).
   { re: /^planet3d\.proc\.js$/, tag: 'legacy', label: 'legacy — nieużywany (do usunięcia)' }
 ];
 
@@ -51,15 +50,15 @@ const NOTES = {
   'src/3d/fxParticles3D.js': 'Fx3D: port 1:1 w zadaniu 12 (dysze MAIN, mostki, rdzenie)',
   'Engineeffects.js': 'tylko tekstury poświaty dysz SIDE (make*Texture); martwe getEngineVFX z własnym WebGLRenderer i shader usunięte (zadanie 13)',
   'src/3d/sunShadowMask.js': 'biblioteka maski słońca w TSL (screenUV) + hak wbudowanych materiałów (setupLightingModel / outputNode) — zadanie 03',
-  'src/3d/sunShadowMaskGLSL.js': 'LEGACY: GLSL maski dla nieprzeniesionych ShaderMaterial (planety 05, mostek 15, skały 21, Z4/Z5/Z7) — znika z ostatnim z nich (24)',
+  'src/3d/sunShadowMaskGLSL.js': 'LEGACY: GLSL maski dla nieprzeniesionych ShaderMaterial (planety 05, mostek 15, Z4/Z5/Z7; asteroidy — 21 zrobione) — znika z ostatnim z nich (24)',
   'src/3d/hullShadowSdf.js': 'biblioteka SDF kadłubów; marsz w TSL (hullSdfShadow, zadanie 03); lustro CPU traceHullShadowCpu (test)',
   'src/3d/haloRing/haloRingWorldGen.js': 'pieczenie map + odczyt CPU (WebGPU: asynchronicznie, bez odwracania osi — zadanie 06)',
   'src/3d/menuBackdrop3D.js': 'rozgrzewka po kluczu programu WebGL — do przeprojektowania',
   'src/vfx/destruction3D.js': 'zniszczenie stacji',
   'src/vfx/shatterMaterial.js': 'zniszczenie stacji',
   'src/3d/coldWreckImpostors.js': 'uśpione (wymaga hexGrid)',
-  'src/3d/asteroidBeltBackdrop3D.js': 'tło pasa (ShaderMaterial + onBeforeCompile pyłu)',
-  'src/3d/asteroidField3D.js': 'sprite’y na MeshBasicMaterial + CAŁA rozgrywka asteroid; ciała heksowe rysuje hexShips3D'
+  'src/3d/asteroids/asteroidBelt.js': 'pas asteroid z dema WebGPU (zadanie 21): klej klatki jako krok Core3D.fx, warstwy passów gry i tła',
+  'src/3d/asteroids/beltMedium.js': 'ośrodek objętościowy pasa (zadanie 21) — czytają go skały, minerały, olbrzymy i kadłuby (hak hullVolume)'
 };
 
 // ── Pliki ─────────────────────────────────────────────────────────────────────
@@ -509,8 +508,6 @@ function sums(list) {
 const groups = {
   port: rows.filter((r) => r.zakres === 'port'),
   warp: rows.filter((r) => r.zakres === 'warp'),
-  'asteroidy-stare': rows.filter((r) => r.zakres === 'asteroidy-stare'),
-  'asteroidy-nowe': rows.filter((r) => r.zakres === 'asteroidy-nowe'),
   legacy: rows.filter((r) => r.zakres === 'legacy'),
   'poza grą': rows.filter((r) => r.zakres.startsWith('poza grą'))
 };
@@ -579,7 +576,7 @@ const md = `# Inwentarz portu WebGPU
 - **przebudowy** — \`material.clone()\` / \`material.needsUpdate = true\` / \`defines\`: w WebGPU każda nowa kombinacja = nowy pipeline.
 - **status** — \`GLSL\` (do przeniesienia), \`mieszany\` (w trakcie), \`TSL\` (przeniesiony), \`—\` (bez shaderów).
 - **zakres** — \`port\` = plik ładowany przez grę (graf importów od \`index.html\`) i nie wyłączony decyzją użytkownika;
-  \`warp\` / \`asteroidy-*\` = poza portem (decyzje 2026-09-27); \`poza grą\` = tylko dema / narzędzia / nieużywany.
+  \`warp\` = poza portem (decyzja 2026-09-27); \`poza grą\` = tylko dema / narzędzia / nieużywany.
 
 ## Sumy
 
@@ -604,16 +601,11 @@ ${fileTable(groups.port)}
 ### Warp
 ${fileTable(groups.warp)}
 
-### Stare asteroidy
-${fileTable(groups['asteroidy-stare'])}
-
-Uwaga: **ścieżka heksów w \`hexShips3D.js\`** (HEX/ARMOR/DEBRIS, pula szczątków GPU, \`createEntityMesh\`/\`updateEntityMesh\`) rysuje w grze
-tylko asteroidy (ciała heksowe, na czas portu wyłączone) — liczy się w wierszu \`src/3d/hexShips3D.js\` wyżej i przechodzi w zadaniu 04,
-bo stoją na niej warsztaty \`mostki-demo\`, \`rdzen-demo\` i pomiar drżenia (PLAN.md §1 p. 7).
-\`coldWreckImpostors.js\` / \`coldWrecks.js\` są uśpione (wymagają \`hexGrid\`).
-
-### Nowe asteroidy (dema; wejdą z dema WebGPU)
-${fileTable(groups['asteroidy-nowe'])}
+Asteroidy: stare pole (sprite'y + ciała heksowe), tło pasa i klej WebGL (\`asteroidBelt3D\`, \`rocks/*\`, \`beltDust3D\`,
+\`beltStorm3D\`, \`fieldLights3D\`) usunięte w zadaniu 21 — pas z dema WebGPU (\`src/3d/asteroids/\`) jest w porcie.
+Uwaga: **ścieżka heksów w \`hexShips3D.js\`** (HEX/ARMOR/DEBRIS, pula szczątków GPU, \`createEntityMesh\`/\`updateEntityMesh\`) po zadaniu 21
+nie ma w grze użytkownika (rysowała tylko ciała heksowe starych asteroid); stoją na niej warsztaty \`mostki-demo\`, \`rdzen-demo\`
+i pomiar drżenia (PLAN.md §1 p. 7). \`coldWreckImpostors.js\` / \`coldWrecks.js\` są uśpione (wymagają \`hexGrid\`).
 
 ### Legacy
 ${fileTable(groups.legacy)}

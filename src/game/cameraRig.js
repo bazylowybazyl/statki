@@ -16,6 +16,15 @@
 // - Zamrożony kursor (menu PPM, koło ŚPM, Alt, tablet, kursor poza kanwą)
 //   trzyma OSTATNI punkt patrzenia — nie zeruje go, więc nie ma skoku.
 //
+// - Kop warpa (zadanie 22-B, demo „Nurt”: dema/warp-webgpu/scenes.js — createTripScene /
+//   createFreeScene): przy skoku statek wyrywa się do przodu w kadrze, a kamera go dogania
+//   (cofnięcie kamery wzdłuż kursu, impuls PO sprężynie — kształt z dema), zoom −10% i wstrząs;
+//   na czas ładowania i skoku zoom × warpZoomOut, przy wyjściu impuls +10% i powrót do zoomu
+//   gracza w warpZoomReturn s. Zoom to przejściowy człon log(zoom) dla sprężyny zoomu
+//   (cameraZoom.js: camera.zoom = zoomBase · e^człon) — targetZoom gracza nietknięty.
+//   Oś kopu biegnie w czasie gry (w pauzie stoi): stepCameraRigWarp raz na klatkę przed
+//   zoomem i rigiem; zdarzenia z automatu warpa gracza: noteCameraRigWarp('kick' | 'exit').
+//
 // Dawniej (do 2026-09-27) kamera brała 2× odległość kursora od środka bez
 // limitu i bez wygładzania: statek wypadał z kadru, gdy kursor odjechał o ćwierć
 // ekranu (270 px w pionie przy 1080 p), a świat pod kursorem jechał 3× szybciej
@@ -48,7 +57,14 @@ export const CAMERA_RIG_DEFAULTS = Object.freeze({
   shakeMaxPx: 16,
   shakeHz: 12,
   // Zoom startowy: kadłub zajmuje taki ułamek szerokości ekranu
-  hullScreenFraction: 0.2
+  hullScreenFraction: 0.2,
+  // Kop warpa (demo „Nurt”, createTripScene — liczby dema). 0 / 1 wyłącza człon.
+  warpKickPx: 140,        // cofnięcie kamery przy skoku: 140 px × impuls(0,05 / 0,42 s) — szczyt ~96 px po 0,11 s (px przy kadrze 1080 wierszy)
+  warpZoomOut: 0.55,      // zoom na czas ładowania i skoku (× zoom gracza); 1 = bez oddalenia
+  warpZoomKick: 0.1,      // impuls zoomu przy skoku: × (1 − 0,1 · impuls(0,04 / 0,25 s))
+  warpZoomExit: 0.1,      // impuls zoomu przy wyjściu: × (1 + 0,1 · impuls(0,03 / 0,18 s))
+  warpZoomReturn: 1.4,    // s powrotu do zoomu gracza po wyjściu (easeOut³, liniowo w zoomie jak w demie)
+  warpChargeShakePx: 4    // drżenie w drugiej połowie ładowania [px] (demo: 4 · smooth(0,5, 1, ładowanie))
 });
 
 // Zakresy dla panelu strojenia i sanitizacji zapisu.
@@ -71,13 +87,41 @@ export const CAMERA_RIG_RANGES = Object.freeze({
   weaponShakeScale: [0, 2],
   shakeMaxPx: [0, 80],
   shakeHz: [1, 40],
-  hullScreenFraction: [0.03, 0.9]
+  hullScreenFraction: [0.03, 0.9],
+  warpKickPx: [0, 400],
+  warpZoomOut: [0.3, 1],
+  warpZoomKick: [0, 0.3],
+  warpZoomExit: [0, 0.3],
+  warpZoomReturn: [0.2, 4],
+  warpChargeShakePx: [0, 16]
 });
+
+// Impulsy kopu warpa (s): narastanie i zanik — stałe dema (dema/warp-webgpu/scenes.js).
+export const CAMERA_WARP_PULSES = Object.freeze({
+  lagRise: 0.05, lagFall: 0.42,          // cofnięcie kamery (statek wyrywa się do przodu)
+  kickZoomRise: 0.04, kickZoomFall: 0.25, // zoom −10% przy skoku
+  exitZoomRise: 0.03, exitZoomFall: 0.18  // zoom +10% przy wyjściu
+});
+// Po tylu sekundach impuls jest zerem (lag: 140 · e^(−4 / 0,42) ≈ 0,01 px).
+const WARP_PULSE_END = 4;
+// Oddalanie: mnożnik zoomu idzie za celem najwyżej tyle na sekundę. Krzywa ładowania (0,8 s gry:
+// do 0,84/s) przechodzi dokładnie, skok celu (np. powrót do kamery statku w skoku) to rampa ~0,3 s.
+const WARP_ZOOM_OUT_RATE = 1.5;
+// Kop w px przy kadrze tej wysokości (demo 1920×1080) — wyżej / niżej proporcjonalnie, jak wyprzedzenie.
+const WARP_KICK_REF_H = 1080;
 
 export const CAMERA_LOOK_MODES = Object.freeze(['auto', 'always', 'never']);
 
 export function normalizeCameraLookMode(mode) {
   return CAMERA_LOOK_MODES.includes(mode) ? mode : 'auto';
+}
+
+// Opcja „Kop kamery przy warpie” (menu → Sterowanie, localStorage sc_camera_warp_kick):
+// 'off' wyłącza cofnięcie kamery, impulsy i oddalenie zoomu warpa (wstrząsy zostają).
+export const CAMERA_WARP_KICK_MODES = Object.freeze(['on', 'off']);
+
+export function normalizeCameraWarpKickMode(mode) {
+  return mode === 'off' ? 'off' : 'on';
 }
 
 function clamp(value, min, max) {
@@ -108,9 +152,13 @@ export const cameraRigTune = createCameraRigTune();
 
 export function createCameraRig() {
   return {
-    // Offset kamery względem statku w px ekranu (kamera przed statkiem) i jego prędkość.
+    // Offset kamery względem statku w px ekranu (kamera przed statkiem): wynik riga = sprężyna
+    // + kop warpa, w kadrze. Stan sprężyny (springX/Y) i jego prędkość (velX/Y) osobno — kop
+    // idzie po sprężynie, nie przez nią.
     offsetX: 0,
     offsetY: 0,
+    springX: 0,
+    springY: 0,
     velX: 0,
     velY: 0,
     // Ostatni punkt patrzenia kursora, znormalizowany do pół ekranu (−1…1 na krawędzi).
@@ -124,7 +172,23 @@ export function createCameraRig() {
     combatReason: '',
     // Do podglądu w panelu: skąd wziął się ostatni cel offsetu.
     targetX: 0,
-    targetY: 0
+    targetY: 0,
+    // Kop warpa (stepCameraRigWarp). Wyjście na tę klatkę: człon log(zoom) dla sprężyny zoomu,
+    // cofnięcie kamery wzdłuż kursu [px] i drżenie ładowania [px].
+    warpZoomLog: 0,
+    warpLagPx: 0,
+    warpShakePx: 0,
+    warpDirX: 1,
+    warpDirY: 0,
+    // Stan: zdarzenia automatu czekające na krok, wiek impulsów [s] (< 0 = brak), mnożnik zoomu
+    // na czas skoku (1 = zoom gracza) i powrót po wyjściu (easeOut³ od warpRelFrom).
+    warpKickPending: false,
+    warpExitPending: false,
+    warpKickAge: -1,
+    warpExitAge: -1,
+    warpHold: 1,
+    warpRelFrom: 1,
+    warpRelAge: -1
   };
 }
 
@@ -151,6 +215,16 @@ export function cameraLookMagnitude(r, deadZone, exponent) {
 function smoothstep01(t) {
   const x = clamp(t, 0, 1);
   return x * x * (3 - 2 * x);
+}
+
+function easeOut3(t) {
+  const u = 1 - clamp(t, 0, 1);
+  return 1 - u * u * u;
+}
+
+/** Impuls 0 → 1 → 0 (demo: narasta w `rise`, gaśnie z czasem `fall`); szczyt po rise·ln((rise + fall) / rise). */
+export function cameraWarpPulse(t, rise, fall) {
+  return t <= 0 ? 0 : (1 - Math.exp(-t / rise)) * Math.exp(-t / fall);
 }
 
 // Jedna oś sprężyny krytycznej: x(t) = (x0 + (v0 + ωx0)t)·e^(−ωt), dokładnie
@@ -203,7 +277,8 @@ export function stepCameraRig(rig, input, tune = CAMERA_RIG_DEFAULTS) {
   const lookGain = tune.navLook + (tune.combatLook - tune.navLook) * w;
   let lookX = 0;
   let lookY = 0;
-  const r = Math.hypot(rig.lookNX, rig.lookNY);
+  // Math.sqrt, nie Math.hypot — ten alokuje w V8 (pułapka z zadania 17), a krok idzie co klatkę.
+  const r = Math.sqrt(rig.lookNX * rig.lookNX + rig.lookNY * rig.lookNY);
   if (lookGain > 0 && r > 1e-6) {
     const mag = cameraLookMagnitude(r, tune.lookDeadZone, tune.lookExponent) * lookGain;
     lookX = (rig.lookNX / r) * mag * halfW;
@@ -213,7 +288,7 @@ export function stepCameraRig(rig, input, tune = CAMERA_RIG_DEFAULTS) {
   // --- Wyprzedzenie z prędkości ---
   const vx = finite(input.velX, 0);
   const vy = finite(input.velY, 0);
-  const speed = Math.hypot(vx, vy);
+  const speed = Math.sqrt(vx * vx + vy * vy);
   const maxSpeed = Math.max(1, finite(input.maxSpeed, 1));
   const leadGain = tune.navLead + (tune.combatLead - tune.navLead) * w;
   let leadX = 0;
@@ -238,14 +313,113 @@ export function stepCameraRig(rig, input, tune = CAMERA_RIG_DEFAULTS) {
   // --- Sprężyna ---
   const omega = Math.max(0.05, tune.navOmega + (tune.combatOmega - tune.navOmega) * w);
   if (h > 0) {
-    springAxis(rig, 'offsetX', 'velX', targetX, omega, h);
-    springAxis(rig, 'offsetY', 'velY', targetY, omega, h);
+    springAxis(rig, 'springX', 'velX', targetX, omega, h);
+    springAxis(rig, 'springY', 'velY', targetY, omega, h);
   }
   // Gwarancja kadru także w trakcie ruchu (przestrzał z rozpędu, zmiana okna).
-  if (rig.offsetX > maxX) { rig.offsetX = maxX; if (rig.velX > 0) rig.velX = 0; }
-  else if (rig.offsetX < -maxX) { rig.offsetX = -maxX; if (rig.velX < 0) rig.velX = 0; }
-  if (rig.offsetY > maxY) { rig.offsetY = maxY; if (rig.velY > 0) rig.velY = 0; }
-  else if (rig.offsetY < -maxY) { rig.offsetY = -maxY; if (rig.velY < 0) rig.velY = 0; }
+  if (rig.springX > maxX) { rig.springX = maxX; if (rig.velX > 0) rig.velX = 0; }
+  else if (rig.springX < -maxX) { rig.springX = -maxX; if (rig.velX < 0) rig.velX = 0; }
+  if (rig.springY > maxY) { rig.springY = maxY; if (rig.velY > 0) rig.velY = 0; }
+  else if (rig.springY < -maxY) { rig.springY = -maxY; if (rig.velY < 0) rig.velY = 0; }
+
+  // --- Kop warpa: kamera cofa się wzdłuż kursu (statek wyrywa się do przodu), PO sprężynie —
+  // impuls ma kształt z dema (sprężyna ω 3–8/s zjadłaby szczyt po 0,11 s). Kadr pilnuje sumy.
+  // Px dema przy 1080 wierszach — w innym kadrze proporcjonalnie (jak wyprzedzenie).
+  const lag = finite(rig.warpLagPx, 0) * (halfH * 2 / WARP_KICK_REF_H);
+  rig.offsetX = clamp(rig.springX - finite(rig.warpDirX, 0) * lag, -maxX, maxX);
+  rig.offsetY = clamp(rig.springY - finite(rig.warpDirY, 0) * lag, -maxY, maxY);
+  return rig;
+}
+
+// Zdarzenie automatu warpa gracza (index.html: engageWarp → 'kick', exitWarp → 'exit'). Rozgrywka
+// tylko zgłasza — impuls rusza w najbliższym stepCameraRigWarp (czas gry, raz na klatkę).
+export function noteCameraRigWarp(rig, event) {
+  if (!rig) return;
+  if (event === 'kick') rig.warpKickPending = true;
+  else if (event === 'exit') rig.warpExitPending = true;
+}
+
+// Krok kopu warpa o `input.dt` s CZASU GRY (0 w pauzie — oś stoi), raz na klatkę renderu PRZED
+// zoomem (updateCameraZoom bierze warpZoomLog) i rigiem (stepCameraRig bierze warpLagPx).
+// input:
+//   dt              — czas gry tej klatki
+//   state, charge   — automat warpa gracza: 'idle' | 'charging' | 'active', ładowanie 0..1
+//   dirX, dirY      — kurs skoku (jednostkowy; świat = ekran, y w dół)
+//   enabled         — opcja „Kop kamery przy warpie” i kamera statku; false: zdarzenia przepadają,
+//                     oddalenie wraca do zoomu gracza (rozpoczęte impulsy dobiegają końca)
+//   suspend         — zoom prowadzi przejście kamery (fokus stacji / edytor): kop znika od razu
+//                     (przejście startuje z zoomu na ekranie, więc bez skoku)
+// Wynik w rig: warpZoomLog (człon log(zoom)), warpLagPx, warpShakePx, warpDirX/Y.
+export function stepCameraRigWarp(rig, input, tune = CAMERA_RIG_DEFAULTS) {
+  const dt = Math.max(0, finite(input.dt, 0));
+  const on = input.enabled !== false;
+  const P = CAMERA_WARP_PULSES;
+  if (input.suspend === true) {
+    rig.warpKickPending = false;
+    rig.warpExitPending = false;
+    rig.warpKickAge = -1;
+    rig.warpExitAge = -1;
+    rig.warpHold = 1;
+    rig.warpRelAge = -1;
+    rig.warpZoomLog = 0;
+    rig.warpLagPx = 0;
+    rig.warpShakePx = 0;
+    return rig;
+  }
+
+  // Wiek impulsów, potem nowe zdarzenia (przy wyłączonym kopie przepadają). Klatka zdarzenia ma
+  // wiek 0 — jak efekty warpa „Nurt” (player.js: kickT / exitT = czas klatki, w której automat
+  // pierwszy raz pokazał skok / wyjście), więc kamera i efekt idą w tym samym czasie.
+  if (rig.warpKickAge >= 0) { rig.warpKickAge += dt; if (rig.warpKickAge > WARP_PULSE_END) rig.warpKickAge = -1; }
+  if (rig.warpExitAge >= 0) { rig.warpExitAge += dt; if (rig.warpExitAge > WARP_PULSE_END) rig.warpExitAge = -1; }
+  if (rig.warpKickPending) { rig.warpKickPending = false; if (on) rig.warpKickAge = 0; }
+  if (rig.warpExitPending) { rig.warpExitPending = false; if (on) rig.warpExitAge = 0; }
+
+  // Kurs (cofnięcie kamery idzie wzdłuż niego).
+  const dx = finite(input.dirX, 0);
+  const dy = finite(input.dirY, 0);
+  const dl = Math.sqrt(dx * dx + dy * dy);
+  if (dl > 1e-6) { rig.warpDirX = dx / dl; rig.warpDirY = dy / dl; }
+
+  // Oddalenie na czas ładowania i skoku: mnożnik zoomu liniowo jak `zf` dema — ładowanie
+  // lerp(1, warpZoomOut, smoothstep(ładowanie)), skok warpZoomOut, poza nimi 1 (zoom gracza).
+  const state = input.state;
+  const charge = clamp(finite(input.charge, 0), 0, 1);
+  const zoomOut = clamp(finite(tune.warpZoomOut, 1), 0.05, 1);
+  let target = 1;
+  if (on) {
+    if (state === 'active') target = zoomOut;
+    else if (state === 'charging') target = 1 + (zoomOut - 1) * smoothstep01(charge);
+  }
+  if (target < rig.warpHold - 1e-9) {
+    // oddalanie: za celem z limitem tempa (ładowanie — po krzywej dema, skok celu — rampa)
+    rig.warpHold = Math.max(target, rig.warpHold - WARP_ZOOM_OUT_RATE * dt);
+    rig.warpRelAge = -1;
+  } else if (target > rig.warpHold + 1e-9 || rig.warpRelAge >= 0) {
+    // powrót do zoomu gracza: easeOut³ w warpZoomReturn s od chwili rozpoczęcia (demo: wyjście
+    // lerp(0,55, 1, easeOut³(t / 1,4))); cel czytany co klatkę — jego zmiana nie daje skoku
+    // klatka rozpoczęcia ma wiek 0 (jak impuls wyjścia)
+    if (rig.warpRelAge < 0) { rig.warpRelAge = 0; rig.warpRelFrom = rig.warpHold; }
+    else rig.warpRelAge += dt;
+    const u = easeOut3(rig.warpRelAge / Math.max(0.05, finite(tune.warpZoomReturn, 1.4)));
+    rig.warpHold = rig.warpRelFrom + (target - rig.warpRelFrom) * u;
+    if (u >= 1) { rig.warpHold = target; rig.warpRelAge = -1; }
+  }
+
+  // Impulsy: zoom −10% przy skoku, +10% przy wyjściu; cofnięcie kamery przy skoku.
+  const kickZoom = rig.warpKickAge >= 0 ? cameraWarpPulse(rig.warpKickAge, P.kickZoomRise, P.kickZoomFall) : 0;
+  const exitZoom = rig.warpExitAge >= 0 ? cameraWarpPulse(rig.warpExitAge, P.exitZoomRise, P.exitZoomFall) : 0;
+  const f = rig.warpHold
+    * (1 - finite(tune.warpZoomKick, 0) * kickZoom)
+    * (1 + finite(tune.warpZoomExit, 0) * exitZoom);
+  rig.warpZoomLog = f > 0 && f !== 1 ? Math.log(Math.max(1e-3, f)) : 0;
+  rig.warpLagPx = rig.warpKickAge >= 0
+    ? Math.max(0, finite(tune.warpKickPx, 0)) * cameraWarpPulse(rig.warpKickAge, P.lagRise, P.lagFall)
+    : 0;
+  // Drżenie w drugiej połowie ładowania (wstrząs kopu i wyjścia to camera.addShake — warp „Nurt”).
+  rig.warpShakePx = on && state === 'charging'
+    ? Math.max(0, finite(tune.warpChargeShakePx, 0)) * smoothstep01((charge - 0.5) / 0.5)
+    : 0;
   return rig;
 }
 
@@ -257,10 +431,12 @@ export function defaultShipZoom(viewW, hullLength, tune = CAMERA_RIG_DEFAULTS, m
 }
 
 // Amplituda wstrząsu w px: camera.addShake (bieżące mag po wygaszaniu)
-// + wstrząs strzałów z WeaponFx (window.__weapon3dCameraShake), z sufitem.
-export function cameraShakeAmplitudePx(cameraMag, weaponMag, tune = CAMERA_RIG_DEFAULTS) {
+// + wstrząs strzałów z WeaponFx (window.__weapon3dCameraShake) + `extraPx` wprost w px
+// (drżenie ładowania warpa: rig.warpShakePx), z sufitem.
+export function cameraShakeAmplitudePx(cameraMag, weaponMag, tune = CAMERA_RIG_DEFAULTS, extraPx = 0) {
   const a = Math.max(0, finite(cameraMag, 0)) * tune.shakeScale
-    + Math.max(0, finite(weaponMag, 0)) * tune.weaponShakeScale;
+    + Math.max(0, finite(weaponMag, 0)) * tune.weaponShakeScale
+    + Math.max(0, finite(extraPx, 0));
   return Math.min(Math.max(0, tune.shakeMaxPx), a);
 }
 

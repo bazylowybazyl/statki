@@ -222,6 +222,20 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   Do 23/24: wizualia na `fxRandom`. **Wiązki kończą się na promieniu tarczy przy `shield.val > 0` także z
   `DevFlags.globalShieldsOff`** (`resolveBeamWorldHit` patrzy na `val`, pociski na `isEntityShieldBlocking`) — sceny z
   wyłączonymi tarczami zerują `val` celu (galeria broni).
+- **Pułapki z zadania 18-C (three r183, mapa ran):** **bufor storage-singleton ma rozmiar od PIERWSZEGO wołającego** —
+  graf materiału kadłuba budował pulę ran przed kernelem (1 teksel zamiast 3,1 mln): kernel pisał poza bufor (dostęp
+  WebGPU jest „robust” — bez błędu, bez efektu), materiał czytał zera; rozmiar trzymać przy singletonie, nie w
+  argumencie. **Bufor tylko-GPU bez kopii CPU:** `StorageBufferAttribute` trzyma tablicę CPU (24 MB puli) — po
+  utworzeniu bufora GPU (`renderer.backend.get(attr).buffer`) three czyta `array` tylko przy zmianie `version`, więc
+  kopię można oddać; ALE `renderer.getArrayBufferAsync(attr)` kopiuje `array.byteLength` bajtów — narzędzia odczytu
+  muszą kopię zachować (`HullDamageMap.keepCpuCopy`). **`renderer.compute(węzeł, n)` przelicza i alokuje rozmiar siatki
+  grup przy każdej zmianie `n`** — dynamiczną liczbę wątków zaokrąglać (potęga dwójki, nadmiarowe wątki wychodzą na
+  pierwszym warunku). **Liczby double w argumentach wywołań nieinlinowanych V8 pakuje** (~16 B na liczbę; pomiar:
+  ~45 B na trafienie przy 13 argumentach) — ścieżki „na trafienie” podają parametry przez tablicę typowaną; odczyt pola
+  double przy dostępie megamorficznym też kopiuje liczbę (testy alokacji — przed testami z wieloma kształtami obiektów).
+  **Lej rany a przezroczystość:** demo ma w środku rany dziurę (widać kosmos, świeci sam pierścień brzegu);
+  bez przezroczystości (reguła „dziura albo krater”) środek musi być ciemny i nieświecący — inaczej tarcza bieli
+  8–10 HDR na całą średnicę i bloom zalewa pół kadłuba.
 - **Pułapki z zadania 19 (three r183, V8):** **`InstancedMesh` w r183 stosuje macierz instancji PRZED `positionNode`**
   (własny `positionNode` ją nadpisuje) — pule z własnym ruchem: zwykły `Mesh` z `InstancedBufferGeometry` i własnymi
   atrybutami instancji (`src/3d/rockets/`). **`mesh.count` trzymać 0 albo ≥ 2** (przejście 1 ↔ > 1 przebudowuje potok);
@@ -250,6 +264,29 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   płaszczyzna, więc przesunięcie próbki o `off` px = `uv + dFdx(uv)·off.x + dFdy(uv)·off.y` w jej materiale (gałąź po
   jednolitym warunku — bez zgłoszeń shader liczy to co wcześniej). **Świeży kadłub (przylot) nie ma jeszcze SDF sylwetki**
   (`hullShadowSdf.js` piecze z budżetem) — żar brzegu z alfy mipmapy sprite'a (`sprite.level(log2(szerokość brzegu))`).
+- **Pułapki z zadania 11 (tło menu, rozgrzewka):** tekstura z `minFilter = LinearFilter` i domyślnym `generateMipmaps
+  = true` — WebGL próbkuje sam poziom 0, a three r183 na WebGPU i tak generuje mipmapy (`Textures.needsMipmaps` patrzy
+  tylko na `generateMipmaps`) i daje samplerowi `mipmapFilter: 'linear'` (trójliniowo) — w materiale `.level(0)` albo
+  `generateMipmaps = false` u właściciela (mgławica gry: pożyczona przez tło menu). Zmienna TSL (`toVar`) powstaje przy
+  pierwszym użyciu — pochodne liczone „przed” gałęzią, a użyte w niej, trafiają do gałęzi; przed `If` jawne `.assign()`.
+  Hipoteza do sprawdzenia w 23 (niezmierzona): mipmapy generowane przez three WebGPU (blit liniowy) mogą różnić się
+  treścią od `gl.generateMipmap` — stąd resztkowe różnice drobnych, oddalonych szczegółów (atlas K-7, ring z daleka
+  w menu: 0,38% kadru > 8/255 przy tych samych grafach).
+- **Pułapki z zadania 21 (pas asteroid, three r183):** materiał z `lights = true` dostaje WSZYSTKIE światła sceny
+  Core3D (słońce z cieniem, otoczenie, punktowe) — demo ich nie miało; własny model oświetlenia gasi je w `direct()`
+  (`lightNode.light` istnieje tylko dla świateł three) i sam podaje swoje słońce znacznikiem (`BELT_SUN_LIGHT`,
+  `src/3d/asteroids/surfaceLighting.js`). **`positionWorld` przy 6–10 mln j. to float32** (skok ~0,5–1 j.) — mapy pola,
+  ośrodek, mgła i szum czytają pozycje LOKALNE (grupa pola przesunięta o `Core3D.fx.origin`, varying z pozycji instancji
+  albo środek płatu z CPU), `positionLocal` we fragmencie to varying pozycji po `positionNode`. **Kroki `Core3D.fx` idą
+  PO `_syncSceneMatrices()`** — krok, który przesuwa obiekty, sam woła `updateMatrixWorld`. **`compileAsync` /
+  `prewarmPass` pomija obiekty z `visible = false`** — rozgrzewka odsłania schowane siatki na czas kompilacji (inaczej
+  pierwsze wejście w pole buduje pipeline'y w klatce). **Kolejka:** nieprzezroczyste idą przed przezroczystymi bez
+  względu na `renderOrder` — skały tła, które mają przykryć przezroczystą zasłonę pola, są w kolejce przezroczystej
+  z `NoBlending` i zapisem głębi. **Bloom gry = bloom dema × 3** (`BLOOM_ZGODNOSC_WEBGL`) — pas kładzie kolano z 22
+  (`warpBloomKnee` jako `beltBloomKnee`, `src/3d/asteroids/tslCommon.js`) na barwę skał, minerałów, olbrzymów, piorunów,
+  duszków i iskier PRZED ośrodkiem; wartości barw zostały z dema. **Pułapka z 15
+  (`DynamicDrawUsage` = wysyłka przy każdym renderze) siedziała też w modułach dema** — kubełki skał, minerały, mgła,
+  rzucający cień: ~1 MB na klatkę; bez niej narzut pasa w bitwie 24 × 24 spadł z ~2–3 do ~0,5–1,2 ms CPU `Core3D`.
 - **Pułapki z zadania 20 (wybuch reaktora, koniec overlaya):** **Efektu z własnym złożeniem (osobny bloom, tone
   mapping, blend kanwy) nie przeniesiesz mnożnikami barw.** Overlay pokazywał nad grą ≈ `alfa · sRGB(ACES(1,2 · H))`
   (`mix-blend-mode: screen`, alfa = min(1; 1,5 · max H)) — ciemne partie gasły do zera, a jego bloom (1,6 / próg 0,15,
@@ -321,17 +358,39 @@ nieprzeniesionych ShaderMaterial (planety 05, mostek 15, skały 21, Z4/Z5/Z7). S
   bryły / hale K-7 / mapa CPU po `await ring.ready`; `HaloRingGame` podpina teren do kolizji po `ready`.
   Mapa CPU steruje kolizjami (`terrainHeightAt`), LOD terenu, rozstawieniem budowli i wysokością kamery — ring nie
   może zgłosić gotowości przed odczytem (inaczej zmienia się gameplay). Harness czeka na `mapsReady`.
-- **Rozgrzewka:** tło menu rozgrzewa pieczenie ringu i jego materiały przez `compileAsync` na tych samych obiektach
-  (klucz pipeline'u WebGPU ≠ klucz programu WebGL — `createHaloBakeWarmup` do przeprojektowania, zadanie 11).
+- **Rozgrzewka (zadanie 11 — rejestr `Core3D.warmup`, `src/3d/rozgrzewka.js`):** pierwszy zwykły rysunek nowego
+  materiału tworzy pipeline SYNCHRONICZNIE — proces GPU kompiluje shader, strona staje przy najbliższym zapisie do
+  kolejki (pierwsza klatka ringu w menu: 4–5,6 s „writeBuffer”; NodeBuilder całego ringu to tylko ~0,6 s CPU);
+  `compileAsync` = `createRenderPipelineAsync` w tle (ring Marsa: 0,14 s CPU, 0,5 s w tle, klatki bez przestoju).
+  Rejestr: moduł zgłasza PRAWDZIWE obiekty jedną linią (`add`, pilne `now` → Promise), rejestr kompiluje je siatka po
+  siatce w wolnych chwilach (`requestIdleCallback`; jedna budowa NodeBuilder na zadanie, ≤ ~95 ms) w celu passa
+  (`composerTarget` / `distortionTarget`), kamerą typu passa warstwy, ze światłami `Core3D.scene` (klucz NodeBuilder =
+  klucz passa gry — render bierze gotowy stan i pipeline, nowy jest tylko lekki RenderObject), widoczne i bez cullingu
+  tylko na czas wywołania (projekcja synchroniczna); warianty stanu materiału (`variant`), QuadMesh passów
+  pełnoekranowych, pre-pass z materiałem zastępczym (`split: false` + `override`), wpisy „na start gry”
+  (`phase: 'loading'`), `flush()` na ekranie ładowania (reszta kolejki + pipeline'y, limit 4 s). Istniejące
+  rozgrzewki modułów idą przez `run(nazwa, fn)` (ta sama chwila i logika; czas i pipeline'y we wpisie, flush czeka) —
+  kroki `Core3D.fx` z `warm` same (`FxFrame._warmStep`: broń, rakiety, iskry, warp, pas, mapa ran; 20 tak samo), kadłuby,
+  tarcze i start GPU pasa jedną linią w `startGame`. Ring: hak
+  `options.prewarm` budowy — bryły (i dach K-7 w drugim stanie) rozgrzane PRZED podpięciem, `ready` / `mapsReady` je
+  obejmują; tło menu rusza z gotowym ringiem i rozgrzaną Ziemią / niebem (`createHaloBakeWarmup` usunięte, pieczenie
+  rozgrzewa `HaloWorldMaps.init` na prawdziwych celach). Przestoje mierzy harness (dziennik klatek, `przestoje` scen,
+  `sesje`) i `scripts/webgpu/start-gry.mjs` (prawdziwy czas, `--root` = tag); oba spisują pipeline'y utworzone
+  synchronicznie (`pipeline.sync` / `syncLista` — co zostało do rozgrzania), a `zrzuty.mjs --root <eksport main>` mierzy
+  „przed” tym samym harnessem. Pass cienia rozgrzewa się tylko rysunkiem (pułapka 20 w agents.md) — rejestr go nie
+  obejmuje.
 - **`compileAsync` odtwarza pass, nie „wszystkie materiały sceny”** (źródło: `Renderer.compileAsync` →
   `_projectObject`): pomija obiekty `visible = false`, spoza warstw kamery i spoza frustum (chyba że
   `frustumCulled = false`), a pipeline kompiluje dla BIEŻĄCEGO celu (`renderer.setRenderTarget` — format, MSAA) i
   świateł widocznych w tym passie. Rozgrzewka modułu = `setRenderTarget(composerTarget)` + kamera passa z jego warstwą
   + obiekty widoczne w kadrze (albo `frustumCulled = false` na czas kompilacji). Rozgrzewka na kanwie (bgra8unorm,
-  bez MSAA) nic nie daje — pierwszy prawdziwy draw i tak skompiluje pipeline od nowa.
+  bez MSAA) nic nie daje — pierwszy prawdziwy draw i tak skompiluje pipeline od nowa. Głębię i szablon bierze
+  `compileAsync` z RENDERERA, a render z CELU — na celu bez głębi (pieczenie, maska słońca, DIST) rozgrzany pipeline
+  miał inny klucz niż rysunek (zadanie 11); każde `compileAsync` na celu przez `compileAsyncNaCelu`
+  (`src/3d/rozgrzewka.js`).
 - **Trzymacze programów zostają:** `NodeManager` usuwa stan budowy materiału, gdy ostatni obiekt przestaje go używać
   (`usedTimes === 0`), a `Pipelines` zwalniają nieużywane moduły shaderów — tak jak WebGL zwalniał programy. Próbki
-  z rozgrzewki efektów (overlay, tarcze) dalej trzymamy bez `dispose` (test `shaderPrewarm` — odpowiednik w 14, 19, 20).
+  z rozgrzewki efektów (wybuch reaktora, tarcze) dalej trzymamy bez `dispose` (test `shaderPrewarm` — odpowiednik w 14, 19, 20).
 - Odczyty tworzą bufor mapowany na każde wywołanie (bez puli) — nie w pętli klatki.
 
 ## 7. Weryfikacja

@@ -9,6 +9,8 @@ import { MASTER_WEAPONS } from '../src/data/weapons.js';
 import { createPdBeamHit, resolvePdBeamHit } from '../src/game/pdBeamFastPath.js';
 import { isPointDefenseWeapon } from '../src/ai/pointDefenseTargeting.js';
 import { spatialCellKey } from '../src/game/spatialCellKey.js';
+import { nextProjectileSerial, hasHullMechanics } from '../src/game/projectileMechanics.js';
+import { chargeTimeOf, mountChargeState, requestMountCharge } from '../src/game/weaponCharge.js';
 import { CARRIER_SCOPE } from './helpers/carrierScope.mjs';
 
 globalThis.window = {};
@@ -159,13 +161,18 @@ test('P1 index firing paths use the same simulated mount state as the shared con
     // na `MuzzleFX3D is not defined` w fireRailBarrel, a potem na brakach salwy).
     ctx.barrelsPerShotOf = barrelsPerShotOf;
     ctx.queueSalvoBarrels = queueSalvoBarrels;
+    // Zadanie 18-B: strzał zaczepu special wydzielony do fireSpecialLoadout (wspólny z ładowaniem),
+    // broń z `chargeTime` tylko zgłasza strzał (weaponCharge.js).
+    ctx.chargeTimeOf = chargeTimeOf;
+    ctx.mountChargeState = mountChargeState;
+    ctx.requestMountCharge = requestMountCharge;
     const slice = (header) => {
       const start = source.indexOf(header);
       return source.slice(start, source.indexOf('\n    function ', start + 1));
     };
     const code = group === 'main'
       ? slice('    function fireRailBarrel(')
-      : `${slice('    function fireSpecialBarrel(')}\n${slice('    function _fireSpecialGroup(')}`;
+      : `${slice('    function fireSpecialBarrel(')}\n${slice('    function fireSpecialLoadout(')}\n${slice('    function _fireSpecialGroup(')}`;
     vm.runInNewContext(code, ctx);
     if (group === 'main') ctx.fireRailBarrel(0);
     else assert.equal(ctx._fireSpecialGroup(f.loadouts), true);
@@ -205,6 +212,8 @@ function firingCore(ship, owner = 'player') {
     getTargetX: target => target.x, getTargetY: target => target.y,
     isFlakWeapon: () => false, getPotentialPlanetaryRingTargets: null, DESTRUCTOR_CONFIG: {},
     createPdBeamHit, resolvePdBeamHit, isPointDefenseWeapon, spatialCellKey,
+    // Zadanie 18-B: numer pocisku (hash rykoszetu) i dane mechaniki kadłuba na pocisku.
+    nextProjectileSerial, hasHullMechanics,
     getEntityShieldBlockingRadiusTowards: () => 0, findBeamHexShard: () => null, DestructorSystem: {},
     CustomEvent: class { constructor(type, data) { Object.assign(this, data); } },
     // Rdzeń nadaje szyną strzałów; detail.beam to obiekt wspólny — kopiujemy.

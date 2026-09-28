@@ -15,8 +15,9 @@
 //   • zdarzenia opóźnione (`ctx.after`) bez domknięć: rodzaj + liczby, obsługa w `runAfter`;
 //   • stan ładowania Hexlance'a / Mjolnira / Valkyrie na działo (demo: `ctx._chargeT` —
 //     jeden na wszystkie działa);
-//   • rykoszet Vulcana kosmetyczny przez `ctx.ricochet` (smugowiec bez trafień, zasady dema:
-//     kąt > ~65° od normalnej, szansa 0,6 — decyzję mechaniczną z hasha wpina 18-B);
+//   • rykoszet Vulcana kosmetyczny przez `ctx.ricochet` (smugowiec bez trafień); decyzję
+//     (zasady dema: kąt > ~65° od normalnej, szansa 0,6) podejmuje gra z hasha numeru pocisku
+//     i podaje w `hit.ric…` razem z obrazem z tego samego hasha (zadanie 18-B);
 //   • `ctx.stamp` (mapa ran) w 17 pusty — wywołania zostają dla 18-C.
 //
 // Wejście w świecie gry (x, y, kąt); scena = (x, −y), kierunek (cos a, −sin a).
@@ -356,19 +357,17 @@ RECIPES.vulcan = {
 };
 
 /**
- * Rykoszet przy płaskim kącie: smugowiec odbija się z iskrą (działka). Kosmetyczny —
- * decyzję mechaniczną (hash numeru pocisku, obrażenia × 0,3) wpina 18-B.
+ * Rykoszet przy płaskim kącie: smugowiec odbija się z iskrą (działka). Kosmetyczny (nigdy w
+ * `bullets`); o rykoszecie rozstrzyga gra (zadanie 18-B, projectileMechanics.resolveHullHit:
+ * kąt padania > ~65° od normalnej, hash numeru pocisku ≤ 0,6 — obrażenia × 0,3), a kierunek,
+ * prędkość i życie smugowca liczy ricochetBounce z TEGO SAMEGO hasha (hit.ric…). Demo losowało
+ * decyzję i obraz przy każdym trafieniu.
  */
 function ricochet(ctx, p, hit) {
-  const l = Math.sqrt(p.vx * p.vx + p.vy * p.vy) || 1;
-  const dx = p.vx / l; const dy = p.vy / l;
-  const dn = dx * hit.nx + dy * hit.ny;
-  if (dn < -0.42 || fxRandom.next() > 0.6) return;
-  const rx = dx - 2 * dn * hit.nx; const ry = dy - 2 * dn * hit.ny;
-  const a = Math.atan2(ry, rx) + rand(-0.15, 0.15);
-  const spd = l * rand(0.35, 0.6);
-  ctx.ricochet(hit.x + hit.nx * 3, hit.y + hit.ny * 3, Math.cos(a) * spd, Math.sin(a) * spd,
-    p.style, p.r * 0.7, p.g * 0.7, p.b * 0.7, p.width * 0.8, p.len * 0.7, rand(0.2, 0.45));
+  if (!hit.ric) return;
+  const spd = Math.max(0, Number(hit.ricSpeed) || 0);
+  ctx.ricochet(hit.x + hit.nx * 3, hit.y + hit.ny * 3, hit.ricDirX * spd, hit.ricDirY * spd,
+    p.style, p.r * 0.7, p.g * 0.7, p.b * 0.7, p.width * 0.8, p.len * 0.7, hit.ricLife);
 }
 
 // ── CIĘŻKI AUTOKANON (M, L) ──────────────────────────────────────────────────
@@ -1043,6 +1042,12 @@ export function burnStep(ctx, b, dt) {
   E(fx.spark, K.SPARK, 30 * dt * k, P, N).cone(1.2, 0.18).speed(60, 240).life(0.3, 0.8).drag(0.8, 0.8).color(2.8, 1.8, 0.8).x01(14, 0.32).x23(0.06, 1.2).emit();
   if (fxRandom.next() < 3 * dt) E(fx.dist, K.HEAT, 1, P, N).speed(30, 30).life(1.0, 1.0).s0(30 * pw, 30 * pw).s1(80 * pw, 80 * pw).alpha(0.5 * k, 0.5 * k).fade(0.1, 1.5).grow(0.5).emit();
   ctx.lights.point(b.x, b.y, pal.light[0], pal.light[1] * 0.75, pal.light[2] * 0.5, 2.2 * k * (0.75 + 0.25 * Math.sin(b.age * 23 + b.seed)), 220 * pw, 35);
+  // Mapa ran (18-C): wyrwa tli się, póki płonie — co 0,25 s lekki stempel żaru pod ogniem (gaśnie z ogniem).
+  b.stampAcc += dt;
+  if (b.stampAcc >= 0.25) {
+    b.stampAcc -= 0.25;
+    ctx.stamp(b.entity, b.x, b.y, 18 * pw, 0.6 + 1.4 * k, 0.04 * k, 0, 0);
+  }
 }
 
 /** Wybuch drona / zestrzelonej rakiety (PD, flak) — mały blast dema. */

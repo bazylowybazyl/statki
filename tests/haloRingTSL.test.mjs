@@ -14,7 +14,8 @@ import {
   HALO_TSL_FUNCTIONS, haloRingTSL, haloRingSurfaceTSL, haloHashI, haloGnoise3, haloGnoise2P, haloWorleyP, haloAirIntegrateFn
 } from '../src/3d/haloRing/haloRingTSL.js';
 import { createUniformBlock, nodeOf } from '../src/3d/haloRing/haloUniformsAdapter.js';
-import { HaloWorldMaps, createHaloBakeWarmup, haloCpuMapSize, haloUnpackReadback, makeHaloBakeMaterial } from '../src/3d/haloRing/haloRingWorldGen.js';
+import * as WorldGen from '../src/3d/haloRing/haloRingWorldGen.js';
+import { HaloWorldMaps, haloCpuMapSize, haloUnpackReadback, makeHaloBakeMaterial } from '../src/3d/haloRing/haloRingWorldGen.js';
 import { HALO_QUALITY } from '../src/3d/haloRing/haloRingConfig.js';
 import { haloLowbias, haloHashI as haloHashICpu } from '../src/3d/haloRing/haloRingRoofPlan.js';
 import { RING_PLANET_WORLD_RADII } from '../src/3d/ringScale.js';
@@ -283,10 +284,9 @@ test('odczyt: dopełnienie wierszy do 256 B usunięte, flipY dla celów w orient
   assert.throws(() => haloUnpackReadback(new Float32Array(10), w, h));
 });
 
-test('rozgrzewka tła menu: pusta scena zgodności (kompilację robi HaloWorldMaps.init na celach bake)', () => {
-  const warm = createHaloBakeWarmup();
-  assert.equal(warm.scene.children.length, 0);
-  assert.doesNotThrow(() => warm.dispose());
+test('rozgrzewka pieczenia: bez sceny zgodności tła menu (kompilację robi HaloWorldMaps.init na celach bake)', () => {
+  // zadanie 11 usunęło createHaloBakeWarmup — bryły ringu rozgrzewa hak prewarm budowy (tests/menuBackdrop.test.mjs)
+  assert.equal(WorldGen.createHaloBakeWarmup, undefined);
 });
 
 test('SURFACE i CLOUDCOVER w TSL: próbkowanie detalu, wzory, pokrycie chmur (wklejane, bez funkcji WGSL z uniformami)', () => {

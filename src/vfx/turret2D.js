@@ -27,6 +27,7 @@ import { SpecialWeaponSprite2D } from './specialWeaponSprite2D.js';
 import { MainWeaponSprite2D } from './mainWeaponSprite2D.js';
 import { PdWeaponSprite2D } from './pdWeaponSprite2D.js';
 import { mountedWeaponRenderAngle } from '../game/weaponAim.js';
+import { weaponRecoil, weaponShake } from '../game/weaponFeel.js';
 
 // Barwy odpowiadają materiałom Lambert z dawnego weapon3DSystem, rozjaśnione o ~1.6×,
 // bo na kanwie nie ma oświetlenia sceny, które je podbijało.
@@ -360,36 +361,38 @@ function resolveSpec(weaponId, category) {
   return SPECS.fbDefault;
 }
 
-// Odrzut i wstrząs — te same liczby co WEAPON_FX_PROFILE dawnego weapon3DSystem (wstrząs
-// strzałów dokłada dziś WeaponFx, src/3d/weapons/weaponFx.js).
+// Klucz efektu wieżyczki (dopasowanie strzału do rekordu, barwa błysku). Odrzut i wstrząs
+// strzału NIE są już tutaj: jedno źródło to dane broni (`recoil` / `shake` w MASTER_WEAPONS,
+// src/game/weaponFeel.js — zadanie 18-D); dawne liczby tej tabeli (FX_PROFILE, jak w
+// weapon3DSystem) 18-A przepisało do danych 1:1, warianty S/L, CIWS Mk II i Hexlance — z dema.
 const FX_PROFILE = {
-  vulcan_minigun: { key: 'vulcan', recoil: 3.0, shake: 2.0 },
-  helios_laser: { key: 'helios', recoil: 6.0, shake: 3.0 },
-  railgun_mk1: { key: 'tempest', recoil: 4.0, shake: 2.5 },
-  railgun_mk2: { key: 'tempest', recoil: 4.0, shake: 2.5 },
-  armata_mk1: { key: 'armata', recoil: 12.0, shake: 6.5 },
-  beam_continuous: { key: 'beam', recoil: 1.0, shake: 1.5 },
-  beam_pulse: { key: 'beam', recoil: 6.0, shake: 3.5 },
-  special_goliath_autocannon: { key: 'goliath', recoil: 20.0, shake: 10.0 },
-  special_plasma_gatling: { key: 'plasmaGatling', recoil: 15.0, shake: 8.0 },
-  special_valkyrie_railgun: { key: 'tempest', recoil: 20.0, shake: 12.0 },
-  special_yamato_cannon: { key: 'yamato', recoil: 60.0, shake: 20.0 },
-  tempest_ion_mk1: { key: 'tempest', recoil: 4.0, shake: 2.5 },
-  tempest_ion_mk2: { key: 'tempest', recoil: 4.0, shake: 2.5 },
-  heavy_autocannon: { key: 'autocannon', recoil: 8.0, shake: 4.0 },
-  ciws_mk1: { key: 'ciws', recoil: 1.5, shake: 1.0 },
-  laser_pd_mk1: { key: 'laserPD', recoil: 0.5, shake: 0.3 },
-  flak_s: { key: 'flak', recoil: 3.5, shake: 1.8 },
-  flak_m: { key: 'flak', recoil: 5.0, shake: 2.6 },
-  flak_l: { key: 'flak', recoil: 8.0, shake: 4.2 },
-  flak_capital: { key: 'flak', recoil: 14.0, shake: 7.5 },
-  missile_rack: { key: 'rocket', recoil: 4.0, shake: 2.0 },
-  fast_missile_rack: { key: 'rocket', recoil: 3.0, shake: 1.5 },
-  supernova_missile: { key: 'torpedo', recoil: 9.0, shake: 5.0 },
-  siege_torpedo: { key: 'torpedo', recoil: 6.0, shake: 3.0 },
-  siege_torpedo_mk2: { key: 'torpedo', recoil: 8.0, shake: 4.0 },
-  torpedo_salvo: { key: 'torpedo', recoil: 5.0, shake: 2.5 },
-  siege_railgun: { key: 'siegeRail', recoil: 120.0, shake: 80.0 }
+  vulcan_minigun: { key: 'vulcan' },
+  helios_laser: { key: 'helios' },
+  railgun_mk1: { key: 'tempest' },
+  railgun_mk2: { key: 'tempest' },
+  armata_mk1: { key: 'armata' },
+  beam_continuous: { key: 'beam' },
+  beam_pulse: { key: 'beam' },
+  special_goliath_autocannon: { key: 'goliath' },
+  special_plasma_gatling: { key: 'plasmaGatling' },
+  special_valkyrie_railgun: { key: 'tempest' },
+  special_yamato_cannon: { key: 'yamato' },
+  tempest_ion_mk1: { key: 'tempest' },
+  tempest_ion_mk2: { key: 'tempest' },
+  heavy_autocannon: { key: 'autocannon' },
+  ciws_mk1: { key: 'ciws' },
+  laser_pd_mk1: { key: 'laserPD' },
+  flak_s: { key: 'flak' },
+  flak_m: { key: 'flak' },
+  flak_l: { key: 'flak' },
+  flak_capital: { key: 'flak' },
+  missile_rack: { key: 'rocket' },
+  fast_missile_rack: { key: 'rocket' },
+  supernova_missile: { key: 'torpedo' },
+  siege_torpedo: { key: 'torpedo' },
+  siege_torpedo_mk2: { key: 'torpedo' },
+  torpedo_salvo: { key: 'torpedo' },
+  siege_railgun: { key: 'siegeRail' }
 };
 
 // Barwy błysku wylotowego — przeniesione z `muzzleColor` builderów 3D.
@@ -426,12 +429,10 @@ export function normalizeWeaponFxKey(weaponId) {
   return id;
 }
 
-function fxProfileFor(weaponId) {
+function fxKeyFor(weaponId) {
   const id = String(weaponId || '').toLowerCase();
   const direct = FX_PROFILE[id];
-  if (direct) return direct;
-  const key = normalizeWeaponFxKey(id);
-  return { key, recoil: 3.0, shake: 1.8 };
+  return direct ? direct.key : normalizeWeaponFxKey(id);
 }
 
 // ── Kompilacja sylwetek do Path2D (raz na sylwetkę) ─────────────────────────
@@ -544,7 +545,8 @@ function indexRecordForEntity(entity, rec) {
 // Wynik triggerShot — jeden obiekt, ważny do następnego wywołania (wołający
 // czyta go od razu: błysk, odrzut, wstrząs). `entity` = kadłub z wieżyczką,
 // z którego błysk bierze prędkość (nośnik); wołający nie zatrzymuje referencji.
-const _shotResult = { x: 0, y: 0, angle: 0, scale: 1, color: '#b8d7ff', shake: 0, entity: null };
+// recoil / shake — odrzut zadany wieżyczce i wstrząs strzału z danych broni (18-D).
+const _shotResult = { x: 0, y: 0, angle: 0, scale: 1, color: '#b8d7ff', shake: 0, recoil: 0, entity: null };
 
 function getRecoilState(entity, uid) {
   let perEntity = recoilByEntity.get(entity);
@@ -563,7 +565,7 @@ function getRecoilState(entity, uid) {
 function pushRecord(entity, keys, info, wx, wy, ang, scale) {
   let rec = frameRecords[frameCount];
   if (!rec) {
-    rec = { entity: null, uid: '', key: '', spec: null, fxKey: '', weaponId: '', wx: 0, wy: 0, ang: 0, scale: 1, state: null };
+    rec = { entity: null, uid: '', key: '', spec: null, fxKey: '', weaponId: '', recoil: 0, shake: 0, wx: 0, wy: 0, ang: 0, scale: 1, state: null };
     frameRecords[frameCount] = rec;
   }
   frameCount++;
@@ -575,6 +577,8 @@ function pushRecord(entity, keys, info, wx, wy, ang, scale) {
   rec.spec = info.spec;
   rec.fxKey = info.fxKey;
   rec.weaponId = info.weaponId;
+  rec.recoil = info.recoil;
+  rec.shake = info.shake;
   rec.wx = wx;
   rec.wy = wy;
   rec.ang = ang;
@@ -605,26 +609,31 @@ function shouldRenderTurret(def) {
 // ── Cache per broń i per slot ───────────────────────────────────────────────
 // sync() leci co klatkę dla każdej encji w pudle cullingu hexShips3D. Dawniej
 // KAŻDA wieżyczka składała uid (`npc_wep_3_…`) i klucz rekordu z konkatenacji,
-// a resolveSpec / fxProfileFor / weaponScale / shouldRenderTurret robiły
+// a resolveSpec / fxKeyFor / weaponScale / shouldRenderTurret robiły
 // toLowerCase + serię includes — przy 200 okrętach ~15 000 stringów na klatkę,
 // także przy dalekim zoomie, gdzie draw() i tak wszystko chowa. Definicja broni
 // i slot są stabilne, więc liczymy to raz. WeakMap zamiast pól na obiektach
-// gry: loadout gracza jest zapisywany.
+// gry: loadout gracza jest zapisywany. Odrzut i wstrząs — z danych broni (18-D).
 const defInfoCache = new WeakMap();
 
 function getDefInfo(def) {
   let info = defInfoCache.get(def);
   if (info === undefined || info.id !== def.id || info.category !== def.category
-    || info.size !== def.size || info.mountType !== def.mountType) {
+    || info.size !== def.size || info.mountType !== def.mountType
+    || info.recoilSrc !== def.recoil || info.shakeSrc !== def.shake) {
     info = {
       id: def.id,
       category: def.category,
       size: def.size,
       mountType: def.mountType,
+      recoilSrc: def.recoil,
+      shakeSrc: def.shake,
       renders: shouldRenderTurret(def),
       spec: resolveSpec(def.id, def.category),
-      fxKey: fxProfileFor(def.id).key,
+      fxKey: fxKeyFor(def.id),
       weaponId: String(def.id || ''),
+      recoil: weaponRecoil(def),
+      shake: weaponShake(def),
       scale: weaponScale(def.size, def.category)
     };
     defInfoCache.set(def, info);
@@ -851,9 +860,9 @@ export const Turret2D = {
 
     if (!best) return null;
 
-    const profile = fxProfileFor(best.weaponId);
+    // Odrzut i wstrząs z danych broni (rekord niesie je z getDefInfo — src/game/weaponFeel.js).
     const st = best.state;
-    const kick = Math.max(0.1, profile.recoil);
+    const kick = Math.max(0.1, best.recoil);
     st.housing = Math.min(st.housing + kick * 0.4, kick * 3.0);
     st.barrel = Math.max(st.barrel, kick);
 
@@ -876,8 +885,9 @@ export const Turret2D = {
     out.y = best.wy + mx * sinA + my * cosA;
     out.angle = best.ang;
     out.scale = best.scale;
-    out.color = MUZZLE_COLOR[profile.key] || '#b8d7ff';
-    out.shake = Math.max(0, profile.shake);
+    out.color = MUZZLE_COLOR[best.fxKey] || '#b8d7ff';
+    out.shake = Math.max(0, best.shake);
+    out.recoil = kick;
     out.entity = best.entity || null;
     return out;
   },

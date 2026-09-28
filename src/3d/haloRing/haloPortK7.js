@@ -796,6 +796,23 @@ export class HaloPortK7 {
 
   setVisible(v) { this.root.visible = !!v; }
 
+  // Rozgrzewka (zadanie 11, Core3D.warmup): dach w stanie „statek w hali” — przezroczysty, bez zapisu
+  // głębi (update() przełącza go przy roofFade) — ten sam graf, drugi pipeline. { meshes, apply → przywróć }.
+  roofWarmVariant() {
+    const meshes = this.meshes.fg.filter((m) => m.material === this.matRoof || m === this.platesRoof);
+    return {
+      meshes,
+      apply(mesh) {
+        const m = mesh.material;
+        const transparent = m.transparent;
+        const depthWrite = m.depthWrite;
+        m.transparent = true;
+        m.depthWrite = false;
+        return () => { m.transparent = transparent; m.depthWrite = depthWrite; };
+      }
+    };
+  }
+
   // pozy obsługi stanowisk: Map berthId → {bridge, trolley, lower, clamp, extension, lock, flow, vent}
   setServicePoses(poses) {
     const P = this._pose;
