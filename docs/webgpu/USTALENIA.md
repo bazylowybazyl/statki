@@ -61,6 +61,11 @@ Testy: `npm test` uruchamia tylko `scripts/tests` (32 zestawy). Katalog `tests/`
 - **Narzędzia CDP bez zależności:** `dema/rdzen-cdp.js` (Vite + headless Chrome z `C:/Program Files/...`, flagi `--use-angle=d3d11 --enable-gpu --ignore-gpu-blocklist --enable-unsafe-webgpu`, zbieranie konsoli i wyjątków), `scripts/dym-gry-belki.mjs` (steruje PRAWDZIWĄ grą: `?dev`, menu → single, scenariusze taran / bitwa, zrzuty, błędy konsoli), `scripts/halo-ring-shots.mjs` (zrzuty ringu + draw calle, trójkąty, ms/klatkę, histogram HDR, błędy shaderów), `dema/rdzen-shots.js`, `scripts/proxy-batch/*`, `dema/precyzja-drzenie.js` (pomiar drżenia 3D względem kadłuba przy 5–10 mln j.). Wyniki idą do `.tmp/` (w `.gitignore`).
 - **Istniejący kod WebGPU:** solver sprężyn `src/game/destructorGpuSoftBody.js` i `destructorGpuSoftBody3D.js` ma własne `GPUDevice` i asynchroniczny odczyt (`mapAsync`). Zostaje, jak jest — dwa urządzenia (renderer + solver) mogą działać obok siebie.
 - **Lustra CPU shaderów:** `traceHullShadowCpu` (`hullShadowSdf.js`, test `tests/hullShadowSdf.test.mjs`), `dema/rdzen-softbody-cpu.js`. Wersja TSL musi zgadzać się z lustrem tak jak GLSL.
+- **Dema WebGPU (TSL, three r183), sprawdzone działające wzorce:** `dema/laser-webgpu.html`
+  (własna pętla 256 świateł w TSL zamiast `TiledLighting`, pył i iskry w compute, pociski, wiązka,
+  salwa, przełącznik A/B), `dema/gazy-webgpu.html` (siatka płynu w compute + zapis do
+  `StorageTexture`, osobny cel MRT „fx” dla efektów addytywnych, złożenie z głębią sceny),
+  `dema/tlo-kosmosu-webgpu.html` (mgławica z własnego szumu 2D, eksport PNG). Pułapki: §9.
 - **Electron 33** (Chromium 130), strona z własnego schematu `app://` oznaczonego jako `secure` (`electron/main.js`) — kontekst bezpieczny, WebGPU powinno działać; produkcyjny build to `vite build` → `dist/`.
 
 ## 6. Kontekst wydajności
@@ -84,4 +89,41 @@ Testy: `npm test` uruchamia tylko `scripts/tests` (32 zestawy). Katalog `tests/`
 
 ## 8. Środowisko weryfikacji
 
-WebGPU trzeba sprawdzać na prawdziwym GPU (lokalnie, Windows). W kontenerze chmurowym Claude Code WebGPU nie nadaje się do weryfikacji: SwiftShader daje adapter tylko z flagami (`--enable-unsafe-webgpu --use-webgpu-adapter=swiftshader`), a urządzenie ginie po pierwszym `submit`. Test kopiowania canvasa WebGPU na canvas 2D był tam przez to niekonkluzywny — do sprawdzenia lokalnie.
+WebGPU trzeba sprawdzać na prawdziwym GPU (lokalnie, Windows) — wydajność i wygląd ocenia się
+tylko tam. W kontenerze chmurowym działa jedynie sprawdzenie poprawności, wolno: pełny Chromium
+(`/opt/pw-browsers/chromium`, Playwright) z flagami `--headless=new --enable-unsafe-webgpu
+--enable-features=Vulkan --use-vulkan=swiftshader --use-webgpu-adapter=swiftshader
+--enable-unsafe-swiftshader --use-angle=swiftshader` daje działające urządzenie (compute, zapis do
+tekstur, odczyt pikseli). Bez `--use-vulkan=swiftshader` urządzenie ginie po pierwszym `submit`.
+Klatki warto wtedy wołać ręcznie (bez `setAnimationLoop`), jedna po drugiej.
+
+## 9. Pułapki TSL (r183) — wyłapane przy demach WebGPU
+
+1. **Zakres węzłów w `If` / `Loop`.** Wspólny węzeł (pozycja, normalna, kierunek do kamery)
+   zbudowany pierwszy raz WEWNĄTRZ `If` albo `Loop` trafia do tego zakresu; oświetlenie
+   standardowe czyta go potem niezainicjalizowanego (czarne bryły). Wszystko, czego używa pętla,
+   licz przed nią i utrwal `.toVar()`.
+2. **Zagnieżdżone `Loop`** mają domyślnie ten sam licznik `i`. Nadawaj nazwy:
+   `Loop({ start: 0, end: n, type: 'int', condition: '<', name: 'k' }, ({ k }) => …)`.
+3. **Szumy MaterialX** (`mx_noise_*`, `mx_fractal_noise_*`) wołane w wielu miejscach rozdmuchują
+   shader i kompilacja trwa bardzo długo (na słabszych sterownikach: utrata kontekstu). Własny
+   szum 2D jako funkcja z `.setLayout({ name, type, inputs })` kompiluje się do jednej funkcji WGSL.
+4. **Minus z JS przed węzłem** (`-node.mul(2)`) daje `NaN` w shaderze. Używaj `.negate()` albo
+   `node.mul(-2)`.
+5. **Tekstury celów renderowania mają v = 0 u GÓRY** w obu backendach (GL odwraca v, żeby
+   zgadzał się z WebGPU). Przy próbkowaniu celu współrzędnymi liczonymi ze świata odwróć v.
+   `StorageTexture` nie jest odwracana: wiersz 0 = v 0.
+6. **MRT:** dodatkowe wyjścia mają domyślnie `NoBlending`. Dla efektów addytywnych w osobnym celu:
+   `mrtNode.setBlendMode('fx', new THREE.BlendMode(THREE.MaterialBlending))`, a materiał nadpisuje
+   wyjścia przez `material.mrtNode = mrt({ output: vec4(0), fx: … })`.
+7. **Głębia z przebiegu MSAA** jest teksturą wielopróbkową — do odczytu głębi (`getViewZNode`)
+   renderuj przebieg bez MSAA i wygładzaj na końcu (`fxaa` z `examples/jsm/tsl/display/FXAANode.js`,
+   `pipeline.outputColorTransform = false` + `renderOutput`).
+8. **Render do `RenderTarget`** (`renderer.setRenderTarget(rt); renderer.render(…)`) jest liniowy,
+   bez tone mappingu i sRGB — dobre na mapy pośrednie.
+9. **Eksport / odczyt pikseli:** nie ustawiaj `colorSpace = SRGBColorSpace` na celu, do którego
+   potok już koduje sRGB (podwójne kodowanie, sprany obraz). `readRenderTargetPixelsAsync`
+   w WebGPU zwraca wiersze wyrównane do 256 B, w WebGL od dołu.
+10. **Compute → tekstura:** `StorageTexture` z `type = HalfFloatType` (rgba16float), zapis
+    `textureStore(tex, ivec2(x, y), v)` w compute, odczyt `texture(tex, uv)` z filtrowaniem
+    w zwykłym materiale. Ping-pong buforów najprościej: przebieg do bufora „out” + przebieg kopii.
