@@ -1006,9 +1006,9 @@
     import { HUDSystem } from "./src/ui/hudSystem.js";
     import { InfrastructureUI } from "./src/ui/infrastructureUI.js";
     import { CanvasVFX } from "./src/vfx/canvasParticleSystem.js";
-    import { MuzzleFX3D } from "./src/3d/muzzleFx3D.js";
     import { Turret2D } from "./src/vfx/turret2D.js";
-    import { FlakBurstVFX } from "./src/vfx/flakBurstVfx.js";
+    // Efekty broni z dema bronie-webgpu (zadanie 17): wylot, pocisk, smuga, trafienie, wiązki, PD, flak.
+    import { WeaponFx } from "./src/3d/weapons/weaponFx.js";
     import {
       FLAK_TUNING,
       collectFlakBurstHits,
@@ -1017,7 +1017,6 @@
       isFlakWeapon,
       resolveFlakProfile
     } from "./src/game/flakSystem.js";
-    window.FlakBurstVFX = FlakBurstVFX;
     import { SparkSystem3D } from './src/3d/sparkSystem3D.js';
     // Import z efektem ubocznym: podpina iskry tarcia pod zdarzenie 'grind'
     // CollisionFX. Destructor nie woła już SparkSystem3D bezpośrednio.
@@ -8643,16 +8642,19 @@
     const _beamHits = [];
     const _beamWorldHit = { dist: 0, entity: null, kind: null, shard: null };
     const _pdBeamHit = createPdBeamHit();
-    const _beam2dEnd = { x: 0, y: 0 };
     const _fireAimPoint = { x: 0, y: 0 };
     // Nośniki strzału (src/game/carrierVelocity.js): lufa strzelca i trafiony
     // kadłub — efekty lecą z nimi zamiast zostawać w świecie.
     const _fireCarrier = createCarrier();
     const _hitCarrier = createCarrier();
-    const _beam2dOpts = { life: 0.12, colorOuter: null, colorInner: '#ffffff', glowColor: null, glowBlur: 20 };
     // Dane wiązki dla zdarzenia strzału — jeden obiekt: słuchacze czytają go
-    // synchronicznie i niczego z niego nie zatrzymują (Weapon3DSystem kopiuje liczby).
-    const _beamEventScratch = { startX: 0, startY: 0, endX: 0, endY: 0, width: 5, mode: 'pulse', emitterUid: null };
+    // synchronicznie i niczego z niego nie zatrzymują (WeaponFx kopiuje liczby; encję
+    // trafienia trzyma najwyżej do końca efektu). kind: 'continuous' | 'pulse' | 'pd';
+    // hitEntity + nx, ny — trafiony kadłub i normalna powierzchni (tylko dla efektu).
+    const _beamEventScratch = {
+      startX: 0, startY: 0, endX: 0, endY: 0, width: 5, mode: 'pulse', kind: 'pulse', emitterUid: null,
+      hitEntity: null, nx: 0, ny: 0
+    };
     const PD_BEAM_DEPS = {
       shieldBlockingRadiusTowards: getEntityShieldBlockingRadiusTowards,
       sweepImpact: (entity, x0, y0, x1, y1, radius) => (entity?.beamHull
@@ -8994,44 +8996,41 @@
           const finalEndX = muzzleData.pos.x + dirX * hitDist;
           const finalEndY = muzzleData.pos.y + dirY * hitDist;
 
-          // Kazdy strzal wiazka broni glownej dostaje wizual 3D w Weapon3DSystem._triggerBeamFx.
-          // Warunek gasil 2D TYLKO dla wiazek ciaglych, wiec beam_pulse lecial
-          // podwojnie: raz jako smuga na kanwie, raz jako plaszczyzna w scenie.
-          // Wiazki PD (klasa aux) maja JEDEN wizual — tania smuge 2D, bez pulsu 3D
-          // (tysiace strzalow na sekunde to byly tysiace grup meshy w scenie).
-          const shouldRenderBeam2D = !weapon.render3dOnly;
-          if (shouldRenderBeam2D) {
-            _beam2dEnd.x = finalEndX;
-            _beam2dEnd.y = finalEndY;
-            _beam2dOpts.life = weapon.duration || 0.12;
-            _beam2dOpts.colorOuter = weapon.vfxColor;
-            _beam2dOpts.glowColor = weapon.vfxColor;
-            // Smuga wiązki jedzie z lufą (nośnik), zamiast zostawać za okrętem.
-            ActiveCarrier.set(writeCarrierVelocity(inheritVx, inheritVy, shotClock, SimClock.sim, _fireCarrier));
-            spawnLaserBeam(muzzleData.pos, _beam2dEnd, weapon.size === 'L' ? 12 : 5, _beam2dOpts);
-            ActiveCarrier.clear();
-          }
-
-          if (!pdBeam) {
-            const eventBeam = _beamEventScratch;
-            eventBeam.startX = muzzleData.pos.x;
-            eventBeam.startY = muzzleData.pos.y;
-            eventBeam.endX = finalEndX;
-            eventBeam.endY = finalEndY;
-            eventBeam.width = weapon.size === 'L' ? 12 : 5;
-            eventBeam.mode = weapon.beamMode || 'pulse';
-            eventBeam.emitterUid = (muzzleData?.emitterUid != null)
+          // Każdy strzał wiązką — także laser PD (decyzja 2026-09-27: PD z kanwy 2D do 3D, efekty
+          // z dema bronie-webgpu) — dostaje wizual 3D w WeaponFx (src/3d/weapons/weaponFx.js) ze
+          // zdarzenia szyny: ciągła (stan na emitterUid), impuls, laser PD (`kind: 'pd'`). Kanwa
+          // nie rysuje już żadnej wiązki. Dane trafienia (encja, normalna powierzchni) — tylko dla
+          // efektu; normalna PRZED kraterem (applyHexImpact niżej).
+          const eventBeam = _beamEventScratch;
+          eventBeam.startX = muzzleData.pos.x;
+          eventBeam.startY = muzzleData.pos.y;
+          eventBeam.endX = finalEndX;
+          eventBeam.endY = finalEndY;
+          eventBeam.width = weapon.size === 'L' ? 12 : 5;
+          eventBeam.mode = weapon.beamMode || 'pulse';
+          eventBeam.kind = pdBeam ? 'pd' : eventBeam.mode;
+          eventBeam.emitterUid = pdBeam
+            ? null
+            : ((muzzleData?.emitterUid != null)
               ? String(muzzleData.emitterUid)
-              : computeAutoBeamEmitterUid(shooter, weapon, muzzleData);
-            beamEventData = eventBeam;
+              : computeAutoBeamEmitterUid(shooter, weapon, muzzleData));
+          eventBeam.hitEntity = hitEntity ? (hitEntity._realEntity || hitEntity) : null;
+          eventBeam.nx = -dirX;
+          eventBeam.ny = -dirY;
+          if (eventBeam.hitEntity?.beamHull) {
+            const n = HullBodies.surfaceNormal(eventBeam.hitEntity, finalEndX, finalEndY, dirX, dirY);
+            if (Number.isFinite(n.nx) && Number.isFinite(n.ny) && (n.nx !== 0 || n.ny !== 0)) {
+              eventBeam.nx = n.nx;
+              eventBeam.ny = n.ny;
+            }
           }
+          beamEventData = eventBeam;
 
           if (hitEntity) {
             const applyPlayerDamage = window.applyDamageToPlayer || applyDamageToPlayer;
             const applyNpcDamage = window.applyDamageToNPC || applyDamageToNPC;
             const applyStationDamage = window.applyDamageToStation || applyDamageToStation;
             const applyPlatformDamage = window.applyDamageToPlatform || applyDamageToPlatform;
-            const impactFx = window.spawnWeaponImpactFromPreset || ((...a) => CanvasVFX.spawnWeaponImpactFromPreset?.(...a));
             const aggro = window.triggerMercAggro || triggerMercAggro;
 
             const shooterFriendlyFlag = shooter?.friendly === true;
@@ -9083,14 +9082,9 @@
               }
             }
 
-            // Tarcza ma wlasne VFX (ripple + czasteczki + banka) — VFX uderzenia
-            // broni jest efektem trafienia w PANCERZ i na polu wyglada obco.
-            if (!beamBlockedByShield) {
-              // Iskry i błysk trafienia jadą z trafionym kadłubem.
-              ActiveCarrier.set(writeCarrier(hitEntity, finalEndX, finalEndY, false, _hitCarrier));
-              impactFx('beam', weapon.vfxColor, 1.0, finalEndX, finalEndY);
-              ActiveCarrier.clear();
-            }
+            // Tarcza ma własne VFX (ripple + cząsteczki + bańka) — efekt trafienia wiązki
+            // (WeaponFx: iskry, żar, dym przy trafieniu) jest efektem trafienia w PANCERZ.
+            if (beamBlockedByShield) eventBeam.hitEntity = null;
           }
         } else {
           // --- LOGIKA POCISKÓW I RAKIET ---
@@ -9187,8 +9181,8 @@
       }
 
       // 4. Efekty wizualne wystrzału i dźwięk — szyna strzałów zamiast zdarzenia
-      // DOM per strzał (src/game/weaponShotBus.js; słuchacze: audio i Weapon3DSystem).
-      // Weapon3DSystem szuka lufy (błysk, odrzut, wstrząs) tylko na kadłubie
+      // DOM per strzał (src/game/weaponShotBus.js; słuchacze: audio i WeaponFx —
+      // src/3d/weapons/weaponFx.js). WeaponFx szuka lufy (błysk, odrzut, wstrząs) tylko na kadłubie
       // strzelca — inaczej strzał myśliwca trafiał w najbliższą wieżyczkę
       // tego samego typu na dowolnym okręcie.
       WeaponShotBus.emit(
@@ -9203,6 +9197,8 @@
         Math.cos(baseAngle),
         Math.sin(baseAngle)
       );
+      // Scratch wiązki nie trzyma trafionej encji do następnego strzału.
+      if (beamEventData) beamEventData.hitEntity = null;
 
       // Zwracamy obliczony czas przeładowania
       return cd;
@@ -9814,31 +9810,21 @@
     window.CANVAS_WEAPON_VFX_ENABLED = true;
     CanvasVFX.init();
     CanvasVFX.enabled = true;
-    FlakBurstVFX.init();
     window.spawnParticle = (...args) => CanvasVFX.spawnParticle(...args);
     window.spawnShockwave = (...args) => CanvasVFX.spawnShockwave(...args);
-    window.spawnWeaponImpactFromPreset = (...args) => CanvasVFX.spawnWeaponImpactFromPreset?.(...args);
     function isCanvasWeaponVfxEnabled() { return window.CANVAS_WEAPON_VFX_ENABLED !== false; }
 
-    function resolveProjectileImpact3DKey(b) {
-      const rawKey = String(b?.vfxKey || b?.weaponId || b?.weaponName || '').toLowerCase();
-      if (rawKey.includes('yamato')) return 'yamato';
-      if (b?.type === 'plasma' || b?.type === 'rocket' || b?.type === 'torpedo' || b?.type === 'armata') return 'armata';
-      if (b?.type === 'rail') return 'rail';
-      return 'default';
-    }
 
     // ── Bramka efektów trafień 3D ────────────────────────────────────────────
     // spawnBulletImpactEffect woła fizyka (120 Hz) dla KAŻDEGO trafienia pocisku
     // w bitwie — także kilka ekranów dalej i przy dalekim zoomie, gdzie błysk ma
-    // 1–3 px. Każdy efekt overlaya to kilkanaście–kilkadziesiąt draw calli i nowe
-    // materiały, a limit 96 efektów wyrzucał wtedy te, które BYŁO widać. Ta sama
-    // rodzina bramek co CanvasVFX.spawnProjectileImpact3D (kadr + cooldown per
-    // komórka), plus próg rozmiaru ekranowego i obie kamery split-screenu.
-    // Bez alokacji: klucz komórki cooldownu jest liczbą.
+    // 1–3 px. Dawniej każdy efekt overlaya to były draw calle i nowe materiały;
+    // dziś receptura WeaponFx (zadanie 17) to paczki w pulach GPU z budżetem klatki —
+    // bramka nie marnuje ich na efekty niewidoczne albo nałożone w jednym miejscu:
+    // kadr + cooldown per komórka ekranu, próg rozmiaru ekranowego i obie kamery
+    // split-screenu. Bez alokacji: klucz komórki cooldownu jest liczbą.
     const IMPACT_FX_MARGIN_PX = 260;
     const IMPACT_FX_MIN_PX = 3;      // bazowy rozmiar efektu na ekranie
-    const IMPACT_SPARK_MIN_PX = 2;   // rozrzut iskier na ekranie
     const IMPACT_FX_CELL_PX = 24;    // komórka cooldownu ≈ 24 px ekranu (min. 60 j.)
     const _impactFxLastMs = new Map();
 
@@ -9917,48 +9903,30 @@
       return out;
     }
 
-    function spawnBulletImpactEffect(b, x, y, scale = 1.0, hit = null) {
-      const impactKey = resolveProjectileImpact3DKey(b);
-      // Trafienia pociskow ida wylacznie przez overlay 3D ponizej. Kanwa 2D ma
-      // wlasna sciezke dla trafien wiazek (spawnWeaponImpactFromPreset).
+    // Trafienie pocisku: receptura rodziny broni z dema bronie-webgpu (WeaponFx, zadanie 17 —
+    // wybuch, iskry, dym, łuki, fala, światło; iskry receptur zastąpiły SparkSystem3D.burst).
+    // Bramki bez zmian: rozmiar efektu na ekranie (kadr, obie kamery split-screenu) i cooldown
+    // komórki ekranu per rodzaj — skupiony ogień w jeden kadłub nie sypie dziesiątek efektów
+    // w tym samym miejscu. Rodzaj bramki: 0 Yamato (bez cooldownu), 1 ciężkie (armata, goliath,
+    // autokanon, flak, torpeda), 2 energia / railguny, 3 lekkie (Vulcan, CIWS).
+    function impactFxKindOf(b) {
+      const key = String(b?.vfxKey || '');
+      if (key === 'special_yamato_cannon') return 0;
+      const t = b?.type;
+      if (t === 'armata' || t === 'flak' || t === 'torpedo' || t === 'rocket' || key === 'special_goliath_autocannon'
+        || key === 'heavy_autocannon' || key === 'heavy_autocannon_l') return 1;
+      if (t === 'rail' || t === 'plasma') return 2;
+      return 3;
+    }
+    const IMPACT_FX_SIZE = [2.4, 1.5, 1.2, 1.0];
+    const IMPACT_FX_COOLDOWN_MS = [0, 28, 8, 42];
 
-      if (window.overlay3D) {
-        const baseSize = 40 * scale;
-        // Rodzaj efektu: 0 yamato, 1 armata, 2 rail, 3 autocannon. Cooldowny jak
-        // w CanvasVFX.shouldSpawnProjectileImpact3D; yamato bez cooldownu.
-        let fxKind = 3;
-        let fxSize = baseSize;
-        let fxCooldownMs = 42;
-        if (impactKey === 'yamato') {
-          fxKind = 0; fxSize = baseSize * 2.4; fxCooldownMs = 0;
-        } else if (b.type === 'plasma' || b.type === 'rocket' || b.type === 'torpedo' || b.type === 'armata') {
-          fxKind = 1; fxSize = baseSize * 1.5; fxCooldownMs = 28;
-        } else if (b.type === 'rail') {
-          fxKind = 2; fxSize = baseSize * 1.2; fxCooldownMs = 8;
-        }
-        if (impactFxScreenPx(x, y, fxSize) >= IMPACT_FX_MIN_PX && impactFxCooldownReady(fxKind, fxCooldownMs, x, y)) {
-          if (fxKind === 0) {
-            if (window.triggerYamatoImpact3D) triggerYamatoImpact3D(x, y, fxSize, b.color || b.vfxColor);
-          } else if (fxKind === 1) {
-            if (window.triggerArmataImpact3D) triggerArmataImpact3D(x, y, fxSize);
-          } else if (fxKind === 2) {
-            if (window.triggerRailgunExplosion3D) triggerRailgunExplosion3D(x, y, fxSize);
-          } else if (window.triggerAutocannonImpact3D) {
-            triggerAutocannonImpact3D(x, y, fxSize, b.color || b.vfxColor);
-          }
-        }
-        // GPU sparks alongside 3D effects — tylko gdy ich rozrzut (prędkość ×
-        // życie 0.3 s) jest na ekranie widoczny.
-        const spark3D = SparkSystem3D;
-        if (spark3D && spark3D.isInitialized) {
-          const isHeavy = (b.weaponSize === 'L' || b.weaponSize === 'Capital');
-          const sparkSpeed = isHeavy ? 400 * scale : 280 * scale;
-          if (impactFxScreenPx(x, y, sparkSpeed * 0.3) >= IMPACT_SPARK_MIN_PX) {
-            const sparkCount = isHeavy ? Math.round(16 * scale) : Math.round(8 * scale);
-            const sparkSize = isHeavy ? 0.6 : 0.4;
-            spark3D.burst(x, y, sparkCount, sparkSpeed, 0.3, sparkSize);
-          }
-        }
+    function spawnBulletImpactEffect(b, x, y, scale = 1.0, hit = null) {
+      if (!WeaponFx.available) return;
+      const fxKind = impactFxKindOf(b);
+      const fxSize = 40 * scale * IMPACT_FX_SIZE[fxKind];
+      if (impactFxScreenPx(x, y, fxSize) >= IMPACT_FX_MIN_PX && impactFxCooldownReady(fxKind, IMPACT_FX_COOLDOWN_MS[fxKind], x, y)) {
+        WeaponFx.impact(b, x, y, scale, hit);
       }
     }
     window.spawnBulletImpactEffect = spawnBulletImpactEffect;
@@ -13576,9 +13544,6 @@
       slider('Mysz: czułość', 0.3, 2.0, 0.05, OPTIONS.controls, 'mouseSensitivity');
       // brak opcji odwrócenia osi zgodnie z prośbą
       hudEndPanel();
-    }
-    function spawnLaserBeam(start, end, width, opts = {}) {
-      if (CanvasVFX.spawnLaserBeam) { CanvasVFX.spawnLaserBeam(start, end, width, opts); return; }
     }
 
     // =============== Input ===============
@@ -18266,30 +18231,8 @@
         const targetToPass = isTargetAlive(aim.target) ? aim.target : null;
         if (mainAutoFire && lockedTargets.length && !targetToPass) continue;
         const cd = window.fireWeaponCore(ship, targetToPass, weaponData.id, muzzle);
-
-        // Efekty wizualne wystrzału (Muzzle flash) z lufy gracza
-        // Armata i Tempest Ion mają własny błysk 3D z dema
-        // (src/3d/muzzleFx3D.js) — kanwowy rozbłysk pod nim to druga
-        // warstwa tego samego efektu w tym samym punkcie.
-        if (weaponData.category !== 'beam' && !MuzzleFX3D.handles(weaponData.id)) {
-          const isHeavyWeapon = (weaponData.size === 'L' || weaponData.size === 'Capital');
-          const muzzleScale = isHeavyWeapon ? 1.8 : 1.0;
-          // Błysk leci z lufą w 100% (nośnik: prędkość wylotu, poza fizyczna strzału).
-          const flashCarrier = writeCarrier(ship, muzzle.pos.x, muzzle.pos.y, false, _fireCarrier);
-          if (weaponData.category === 'torpedo') {
-            // Torpedo launch: smoke + directional flame
-            CanvasVFX.spawnArmataMuzzle(muzzle.pos, muzzle.dir, muzzle.baseVel, muzzleScale * 1.5, flashCarrier);
-          } else if (weaponData.category === 'superweapon' || weaponData.id === 'siege_railgun') {
-            // Siege railgun: massive rail flash + screen shake handled elsewhere
-            CanvasVFX.spawnRailMuzzle(muzzle.pos, muzzle.dir, muzzle.baseVel, muzzleScale * 2.0, flashCarrier);
-          } else if (weaponData.category === 'armata' || weaponData.category === 'plasma') {
-            CanvasVFX.spawnArmataMuzzle(muzzle.pos, muzzle.dir, muzzle.baseVel, muzzleScale, flashCarrier);
-          } else if (weaponData.category === 'autocannon') {
-            CanvasVFX.spawnAutocannonMuzzle(muzzle.pos, muzzle.dir, muzzle.baseVel, muzzleScale, flashCarrier);
-          } else {
-            CanvasVFX.spawnRailMuzzle(muzzle.pos, muzzle.dir, muzzle.baseVel, muzzleScale, flashCarrier);
-          }
-        }
+        // Błysk wylotowy: receptura broni w WeaponFx (szyna strzałów z fireWeaponCore) — kanwowy
+        // rozbłysk pod nią byłby drugą warstwą tego samego efektu (zadanie 17).
 
         maxCooldown = Math.max(maxCooldown, cd || rail.cdMax);
       }
@@ -18306,7 +18249,6 @@
     const LASER_PD_FIRE_INTERVAL = 0.18;
     const LASER_PD_DAMAGE = 16;
     const LASER_PD_RANGE = 620;
-    const LASER_PD_BEAM_WIDTH = 6;
 
     // Wspólny bufor wrogich rakiet/torped na bieżący krok fizyki. Budowany raz
     // w ciwsStep, używany przez działka PD oraz przez intercept CIWS w
@@ -18436,23 +18378,18 @@
               // Zestrzelona rakieta: jej odłamki lecą w układzie wyrzutni (ivx).
               ActiveCarrier.set(writeCarrierVelocity(target.ivx, target.ivy, target.clock, SimClock.sim, _hitCarrier));
               spawnBulletImpactEffect(target, target.x, target.y, 1.2);
-              spawnPointDefenseLaserHit(target.x, target.y);
-              const lDir = { x: Math.cos(gun.angle), y: Math.sin(gun.angle) };
-              const lMuz = { x: base.x + lDir.x * 6, y: base.y + lDir.y * 6 };
-              ActiveCarrier.set(writeCarrierVelocity(baseVel.x, baseVel.y, CLOCK_RENDER, SimClock.sim, _fireCarrier));
-              spawnLaserBeam(lMuz, { x: target.x, y: target.y }, LASER_PD_BEAM_WIDTH, {
-                life: 0.09, colorOuter: stats?.color || 'rgba(110,200,255,0.9)',
-                colorInner: 'rgba(250,255,255,1.0)', glowColor: stats?.color || 'rgba(90,180,255,0.95)',
-                glowBlur: 22, outerWidthMul: 1.05, innerWidthMul: 0.45
-              });
-              spawnPointDefenseLaserMuzzle(lMuz, lDir, baseVel);
               ActiveCarrier.clear();
+              // Laser PD w 3D (WeaponFx, zadanie 17 — dawniej smuga na kanwie): wylot z wieżyczki,
+              // impuls do rakiety, trafienie.
+              const lcx = Math.cos(gun.angle);
+              const lcy = Math.sin(gun.angle);
+              WeaponFx.pdLaser(weaponId, base.x + lcx * 6, base.y + lcy * 6, target.x, target.y, ship, null);
               target.life = -1; // znika też z _pdEnemyRocketBuffer (checki life<=0)
               removeBulletAt(rIdx);
             }
             gun.cd = fireInterval;
           } else {
-            firePointDefenseLaser(gun, base, baseVel, target, pdDef, fireInterval);
+            firePointDefenseLaser(gun, base, baseVel, target, pdDef, fireInterval, weaponId);
           }
         } else {
           fireCIWSGun(gun, base, baseVel, wDef, fireInterval);
@@ -18488,21 +18425,13 @@
         color: wDef?.vfxColor,
         type: 'ciws'
       });
-      // Błysk jedzie z wieżyczką (nośnik), dawniej brał 10% prędkości okrętu.
-      ActiveCarrier.set(writeCarrierVelocity(baseVel.x, baseVel.y, CLOCK_RENDER, SimClock.sim, _fireCarrier));
-      spawnParticle(
-        { x: px, y: py },
-        { x: dir.x * 120, y: dir.y * 120 },
-        0.06,
-        '#ffdf9e',
-        2.0,
-        true
-      );
-      ActiveCarrier.clear();
+      // Błysk wylotu z receptury CIWS (WeaponFx, zadanie 17 — dawniej cząstka kanwy): lufa
+      // z rekordu wieżyczki p_aux, nośnik — wieżyczka.
+      WeaponFx.pdShot(wDef?.id || 'ciws_mk1', px, py, shotAngle, ship);
       gun.cd = fireInterval ?? CIWS_FIRE_INTERVAL;
     }
 
-    function firePointDefenseLaser(gun, base, baseVel, target, stats, fireInterval) {
+    function firePointDefenseLaser(gun, base, baseVel, target, stats, fireInterval, weaponId = 'laser_pd_mk1') {
       const dir = { x: Math.cos(gun.angle), y: Math.sin(gun.angle) };
       const muzzle = { x: base.x + dir.x * 6, y: base.y + dir.y * 6 };
       const toTarget = { x: target.x - muzzle.x, y: target.y - muzzle.y };
@@ -18514,21 +18443,10 @@
       const distance = clamp(Math.hypot(toTarget.x, toTarget.y), 0, range);
       const beamEnd = { x: muzzle.x + dir.x * distance, y: muzzle.y + dir.y * distance };
 
-      // Wiązka i błysk wylotu jadą z wieżyczką, trafienie — z celem.
-      ActiveCarrier.set(writeCarrierVelocity(baseVel.x, baseVel.y, CLOCK_RENDER, SimClock.sim, _fireCarrier));
-      spawnLaserBeam(muzzle, beamEnd, LASER_PD_BEAM_WIDTH, {
-        life: 0.09,
-        colorOuter: stats?.color || 'rgba(110,200,255,0.9)',
-        colorInner: 'rgba(250,255,255,1.0)',
-        glowColor: stats?.color || 'rgba(90,180,255,0.95)',
-        glowBlur: 22,
-        outerWidthMul: 1.05,
-        innerWidthMul: 0.45
-      });
-      spawnPointDefenseLaserMuzzle(muzzle, dir, baseVel);
-      ActiveCarrier.set(writeCarrier(target, beamEnd.x, beamEnd.y, false, _hitCarrier));
-      spawnPointDefenseLaserHit(beamEnd.x, beamEnd.y);
-      ActiveCarrier.clear();
+      // Laser PD w 3D (WeaponFx, zadanie 17 — decyzja 2026-09-27: PD z kanwy do 3D, efekty
+      // z dema bronie-webgpu): wylot z wieżyczki, impuls do celu, trafienie. Wiązka jedzie
+      // z wieżyczką (nośnik), trafienie — z celem.
+      WeaponFx.pdLaser(weaponId, muzzle.x, muzzle.y, beamEnd.x, beamEnd.y, ship, target);
       applyDamageToNPC(target, damage, 'laser_pd');
       gun.cd = fireInterval ?? LASER_PD_FIRE_INTERVAL;
     }
@@ -18579,31 +18497,9 @@
         });
       }
 
-      ActiveCarrier.set(writeCarrierVelocity(baseVel.x, baseVel.y, CLOCK_RENDER, SimClock.sim, _fireCarrier));
-      spawnFlakMuzzle(muzzle, dir, baseVel, wDef);
-      ActiveCarrier.clear();
+      // Wylot flaku z receptury (WeaponFx, zadanie 17 — dawniej cząstki kanwy).
+      WeaponFx.pdShot(wDef.id, muzzle.x, muzzle.y, gun.angle, ship);
       gun.cd = fireInterval ?? (wDef.cooldown || CIWS_FIRE_INTERVAL);
-    }
-
-    // Wylot flaku: krótki, gruby blask + kilka niedopalonych ziaren prochu.
-    // Prędkość wieżyczki dokłada nośnik (ActiveCarrier od wołającego).
-    function spawnFlakMuzzle(pos, dir, baseVel, wDef) {
-      if (!isCanvasWeaponVfxEnabled()) return;
-      const scale = wDef.size === 'Capital' ? 2.2 : (wDef.size === 'L' ? 1.5 : (wDef.size === 'M' ? 1.1 : 0.8));
-      const angle = Math.atan2(dir.y, dir.x);
-      spawnParticle({ x: pos.x, y: pos.y }, { x: dir.x * 140, y: dir.y * 140 }, 0.09, '#ffe6b0', 7 * scale, true);
-      for (let i = 0; i < 5; i++) {
-        const aa = angle + (Math.random() - 0.5) * 0.5;
-        const speed = 220 + Math.random() * 180;
-        spawnParticle(
-          { x: pos.x + Math.cos(aa) * 6 * scale, y: pos.y + Math.sin(aa) * 6 * scale },
-          { x: Math.cos(aa) * speed, y: Math.sin(aa) * speed },
-          0.14 + Math.random() * 0.12,
-          (Math.random() < 0.4) ? '#fff0c8' : '#ffb347',
-          (1.8 + Math.random() * 2.0) * scale,
-          true
-        );
-      }
     }
 
     // ========================================================================
@@ -18668,63 +18564,17 @@
         rb.life = -1;   // sprząta go własna iteracja pętli pocisków
       }
 
-      // 3. Efekt: pęknięcie 2D (port prototypu) + cięższy akcent 3D dla L/Capital.
-      // Pęknięcie leci w układzie wyrzutni (pęd pocisku odziedziczony po okręcie),
-      // odłamki dostają część prędkości pocisku WZGLĘDEM niego — flak z pędzącego
-      // okrętu pęka tak, jak z nieruchomego.
+      // 3. Efekt: pęknięcie z dema bronie-webgpu (WeaponFx, zadanie 17 — kula odłamków, czarny
+      // kłąb z ognistym jądrem, fala; dawniej FlakBurstVFX na kanwie + armata 3D dla L/Capital).
+      // Pęknięcie leci w układzie wyrzutni (pęd pocisku odziedziczony po okręcie) — flak
+      // z pędzącego okrętu pęka tak, jak z nieruchomego.
       const shellIvx = Number(b.ivx) || 0;
       const shellIvy = Number(b.ivy) || 0;
       ActiveCarrier.set(writeCarrierVelocity(shellIvx, shellIvy, b.clock, SimClock.sim, _impactCarrier));
-      FlakBurstVFX.spawn(b.x, b.y, { radius, vx: b.vx - shellIvx, vy: b.vy - shellIvy });
-      if (radius >= 240 && window.triggerArmataImpact3D) {
-        window.triggerArmataImpact3D(b.x, b.y, Math.min(260, radius * 0.5));
-      }
+      WeaponFx.flakBurst(b, b.x, b.y, radius);
       ActiveCarrier.clear();
       if (window.AudioSys) AudioSys.playSound('explosion');
     }
-
-    // Prędkość wieżyczki dokłada nośnik (ActiveCarrier ustawiony przez wołającego) —
-    // tu tylko ruch własny iskier.
-    function spawnPointDefenseLaserMuzzle(pos, dir, baseVel) {
-      if (!isCanvasWeaponVfxEnabled()) return;
-      const tangential = { x: -dir.y, y: dir.x };
-      for (let i = 0; i < 3; i++) {
-        const spread = (Math.random() - 0.5) * 0.6;
-        const vel = {
-          x: dir.x * (220 + Math.random() * 80) + tangential.x * spread * 80,
-          y: dir.y * (220 + Math.random() * 80) + tangential.y * spread * 80
-        };
-        spawnParticle(
-          { x: pos.x, y: pos.y },
-          vel,
-          0.08 + Math.random() * 0.05,
-          '#8fe4ff',
-          2.2 + Math.random() * 0.8,
-          true
-        );
-      }
-    }
-
-    function spawnPointDefenseLaserHit(x, y) {
-      if (!isCanvasWeaponVfxEnabled()) return;
-      for (let i = 0; i < 12; i++) {
-        const a = Math.random() * Math.PI * 2;
-        const speed = 160 + Math.random() * 200;
-        spawnParticle(
-          { x, y },
-          { x: Math.cos(a) * speed, y: Math.sin(a) * speed },
-          0.16 + Math.random() * 0.14,
-          '#78d9ff',
-          1.4 + Math.random() * 1.6,
-          true
-        );
-      }
-      spawnParticle({ x, y }, { x: 0, y: 0 }, 0.05, '#ffffff', 4.4, true);
-      spawnShockwave(x, y, { r: 5, maxR: 70, w: 2.4, maxLife: 0.35, color: 'rgba(110,200,255,' });
-    }
-
-
-
 
     function handlePlayerDestroyed() {
       if (ship.destroyed) return;
@@ -22553,7 +22403,6 @@
       // >>> TO JEST KLUCZOWE - ODDZIELNA AKTUALIZACJA WIZUALIÓW <<<
       const tVfxUpdate0 = performance.now();
       CanvasVFX.update(frame);
-      FlakBurstVFX.update(frame);
       PerfHUD.addTiming('vfxUpdateTime', performance.now() - tVfxUpdate0);
       // >>> BEZ TEGO CZĄSTECZKI STOJĄ W MIEJSCU <<<
 
@@ -23371,11 +23220,11 @@
       let cam = { x: camBaseX, y: camBaseY, zoom: camBaseZoom };
       // Wstrząs w PX EKRANU (dawniej w jednostkach świata: 18 j. to 3 px przy
       // zoomie 0,15 i 58 px przy 3,2), gładkim szumem zamiast białego co klatkę.
-      // camera.addShake + wstrząs strzałów z Weapon3DSystem ruszają CAŁĄ klatką
+      // camera.addShake + wstrząs strzałów z WeaponFx ruszają CAŁĄ klatką
       // (wspólne `cam`) — dawniej ten drugi dokładał tylko Core3D.syncCamera:
       // kadłuby i pociski 3D drgały, a wieżyczki, myśliwce i znaczniki z kanwy 2D
       // stały w miejscu. Wartość strzałów jest z poprzedniej klatki
-      // (syncProjectiles liczy ją później).
+      // (WeaponFx.sync liczy ją później).
       const weaponShake = window.__weapon3dCameraShake;
       if (!DevFlags.disableCameraShake) {
         const addShakeMag = (camera.shakeMag > 0 && camera.shakeDur > 0)
@@ -24037,9 +23886,7 @@
         // === VFX Pass ===
         CanvasVFX.drawBeams(ctx, cam);
         CanvasVFX.drawParticles(ctx, cam);
-        // Pęknięcia flaku idą po cząstkach: dym ma przykryć iskry, a ogień
-        // i odłamki dopalić się addytywnie na wierzchu.
-        FlakBurstVFX.draw(ctx, cam);
+        // Pęknięcia flaku i laser PD są w 3D (WeaponFx, zadanie 17).
 
         PerfHUD.addTiming('render2dVfxTime', performance.now() - tRender2dSection);
         tRender2dSection = performance.now();

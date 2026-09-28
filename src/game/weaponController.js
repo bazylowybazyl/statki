@@ -3,7 +3,7 @@
 // Extracts firing logic from index.html into reusable instances
 import { getMountedWeaponAim, mountedWeaponBase, stepMountedWeaponAim } from './weaponAim.js';
 import { Turret2D } from '../vfx/turret2D.js';
-import { createCarrier, writeCarrier, writePointVelocity } from './carrierVelocity.js';
+import { writePointVelocity } from './carrierVelocity.js';
 
 const AIM_GROUPS = ['main', 'missile', 'special', 'special_missile'];
 const EMPTY_WEAPONS = [];
@@ -13,7 +13,6 @@ const _aimPoint = { x: 0, y: 0 };
 // więc wyprzedzenie liczymy względem niej.
 const _aimVel = { x: 0, y: 0 };
 const _muzzleOffset = { x: 0, y: 0 };
-const _muzzleCarrier = createCarrier();
 
 // OPTYMALIZACJA: Pre-alokowany obiekt, używany wielokrotnie podczas wyliczania Muzzle.
 // Zabija to powstawanie setek tysięcy obiektów na sekundę dla Garbage Collectora.
@@ -311,29 +310,8 @@ export class WeaponController {
       if (this.autoFire && this.lockedTargets.length && !targetToPass) continue;
       const cd = window.fireWeaponCore(ship, targetToPass, weaponData.id, muzzle);
 
-      // Muzzle flash VFX
-      // Armata i Tempest Ion mają własny błysk 3D z dema
-      // (src/3d/muzzleFx3D.js) — kanwowy rozbłysk pod nim to druga
-      // warstwa tego samego efektu w tym samym punkcie.
-      const CanvasVFX = window.CanvasVFX;
-      const rich3D = window.MuzzleFX3D?.handles(weaponData.id) === true;
-      if (CanvasVFX && !rich3D && weaponData.category !== 'beam') {
-        const isHeavy = (weaponData.size === 'L' || weaponData.size === 'Capital');
-        const muzzleScale = isHeavy ? 1.8 : 1.0;
-        // Błysk leci z lufą (nośnik: prędkość wylotu, poza fizyczna strzału).
-        const carrier = writeCarrier(ship, muzzle.pos.x, muzzle.pos.y, false, _muzzleCarrier);
-        if (weaponData.category === 'torpedo') {
-          CanvasVFX.spawnArmataMuzzle(muzzle.pos, muzzle.dir, muzzle.baseVel, muzzleScale * 1.5, carrier);
-        } else if (weaponData.category === 'superweapon' || weaponData.id === 'siege_railgun') {
-          CanvasVFX.spawnRailMuzzle(muzzle.pos, muzzle.dir, muzzle.baseVel, muzzleScale * 2.0, carrier);
-        } else if (weaponData.category === 'armata' || weaponData.category === 'plasma') {
-          CanvasVFX.spawnArmataMuzzle(muzzle.pos, muzzle.dir, muzzle.baseVel, muzzleScale, carrier);
-        } else if (weaponData.category === 'autocannon') {
-          CanvasVFX.spawnAutocannonMuzzle(muzzle.pos, muzzle.dir, muzzle.baseVel, muzzleScale, carrier);
-        } else {
-          CanvasVFX.spawnRailMuzzle(muzzle.pos, muzzle.dir, muzzle.baseVel, muzzleScale, carrier);
-        }
-      }
+      // Błysk wylotowy: receptura broni w WeaponFx (src/3d/weapons/weaponFx.js) ze zdarzenia
+      // szyny strzałów z fireWeaponCore — kanwowy rozbłysk pod nią byłby drugą warstwą (zadanie 17).
 
       maxCooldown = Math.max(maxCooldown, cd || this.rail.cdMax);
     }

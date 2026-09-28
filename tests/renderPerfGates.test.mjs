@@ -89,15 +89,18 @@ test('kropki hardpointów NPC są tylko za DevFlags.showNpcHardpoints (domyślni
   assert.match(indexHtml, /if \(DevFlags\.showNpcHardpoints\) drawNpcHardpointOverlay\(ctx, npc, s\);/);
 });
 
-test('trafienia pocisków: efekt 3D i iskry dopiero po bramce kadru/rozmiaru', () => {
+// Zadanie 17: trafienie = receptura rodziny z dema bronie-webgpu (WeaponFx.impact) zamiast
+// fabryk overlaya (trigger*3D) i iskier SparkSystem3D.burst — bramki kadru/rozmiaru i
+// cooldownu komórki zostają przed recepturą.
+test('trafienia pocisków: receptura WeaponFx dopiero po bramce kadru/rozmiaru i cooldownu', () => {
   const fn = indexHtml.match(/function spawnBulletImpactEffect\(b, x, y, scale = 1\.0, hit = null\) \{[\s\S]*?\n    }\n/)?.[0] || '';
   assert.ok(fn.length > 0);
   const gate = fn.indexOf('impactFxScreenPx(x, y, fxSize) >= IMPACT_FX_MIN_PX');
   assert.ok(gate > 0, 'brak bramki rozmiaru/kadru przed efektem trafienia');
-  for (const trigger of ['triggerYamatoImpact3D(x', 'triggerArmataImpact3D(x', 'triggerRailgunExplosion3D(x', 'triggerAutocannonImpact3D(x']) {
-    assert.ok(fn.indexOf(trigger) > gate, `${trigger} musi stać za bramką`);
-  }
-  assert.ok(fn.indexOf('spark3D.burst(') > fn.indexOf('IMPACT_SPARK_MIN_PX'), 'iskry za bramką rozrzutu');
+  const cooldown = fn.indexOf('impactFxCooldownReady(');
+  assert.ok(cooldown > gate, 'cooldown komórki za bramką kadru');
+  assert.ok(fn.indexOf('WeaponFx.impact(') > cooldown, 'receptura trafienia musi stać za bramkami');
+  assert.doesNotMatch(fn, /trigger\w+3D\(|spark3D\.burst\(/, 'stare efekty trafień (overlay, iskry) wróciły');
 });
 
 // Port WebGPU (zadanie 01): renderer.shadowMap ma tylko enabled / type — mapa
