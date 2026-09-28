@@ -103,32 +103,126 @@ test('trafienia pocisków: receptura WeaponFx dopiero po bramce kadru/rozmiaru i
   assert.doesNotMatch(fn, /trigger\w+3D\(|spark3D\.burst\(/, 'stare efekty trafień (overlay, iskry) wróciły');
 });
 
-// Port WebGPU (zadanie 01): renderer.shadowMap ma tylko enabled / type — mapa
-// cienia odświeża się per światło. Słońce gry zgłasza się do Core3D, a render()
-// raz na klatkę (na starcie, przed pierwszym odbiorcą) ustawia autoUpdate = false
-// i needsUpdate = true. Dawne dwa odświeżenia z WebGL (przed ortho i FG) są
-// zbędne: ShadowNode i tak aktualizuje najwyżej raz na klatkę rAF (SPIKE 9).
-test('Core3D: mapa cienia słońca per światło, odświeżana raz na klatkę na starcie render()', async () => {
+// Port WebGPU: renderer.shadowMap ma tylko enabled / type — mapa cienia odświeża się
+// per światło. Zadanie 23: semantyka WebGLShadowMap z bazy — mapa rysowana tuż przed
+// passem ortho (rzucający z warstwy 0) i FG (warstwa 2 + trzymacze rozgrzewki cienia 31),
+// odbiorcy passa czytają świeżą mapę; planety — ostatnią. ShadowNode three r183 (raz na
+// klatkę rAF, wszystkie warstwy kamery cienia) dawał łapaczowi warstwy 0 cień stacji z FG.
+test('Core3D: mapa cienia słońca per pass (warstwy passa jak WebGLShadowMap) — PassShadowNode', async () => {
   assert.doesNotMatch(core3d, /shadowMap\.(autoUpdate|needsUpdate)\s*=/, 'WebGL-owe flagi mapy cienia wróciły');
   const renderAt = core3d.indexOf('\n  render() {');
-  const requestAt = core3d.indexOf('this._requestSunShadowUpdate(t);', renderAt);
   const chainAt = core3d.indexOf('for (const pass of this._scenePasses)', renderAt);
-  assert.ok(renderAt > 0 && requestAt > renderAt && requestAt < chainAt, 'odświeżenie mapy przed passami sceny');
+  const runAt = core3d.indexOf('this._runScenePass(pass);', chainAt);
+  const orthoAt = core3d.indexOf('if (pass === this.renderPassOrtho) this._passSunShadow(t, 1 << pass.layer, this.shadowCatcher, false);', chainAt);
+  const fgAt = core3d.indexOf('else if (pass === this.renderPassFg) this._passSunShadow(t, (1 << pass.layer) | (1 << SHADOW_WARM_LAYER), this.shadowCatcherFg, true);', chainAt);
+  assert.ok(renderAt > 0 && orthoAt > chainAt && fgAt > orthoAt && runAt > fgAt, 'odświeżenie mapy w pętli passów, przed passem ortho i FG');
+  assert.equal(core3d.slice(renderAt, chainAt).includes('_requestSunShadowUpdate('), false, 'bez dawnego odświeżenia raz na klatkę na starcie render()');
   const planets = readFileSync(new URL('../src/3d/planet3d.assets.js', import.meta.url), 'utf8');
   assert.match(planets, /Core3D\.setSunShadowLight\?\.\(this\.sunLight\);/);
-  // Zachowanie: needsUpdate tylko przy włączonych cieniach, autoUpdate zawsze wyłączony.
+  // Zachowanie: własny węzeł cienia, needsUpdate tylko przy włączonych cieniach, autoUpdate zawsze wyłączony.
   globalThis.window = globalThis.window || {};
+  const THREE = await import('three/webgpu');
   const { Core3D } = await import('../src/3d/core3d.js');
-  const light = { isLight: true, castShadow: true, shadow: { autoUpdate: true, needsUpdate: false } };
+  const light = new THREE.DirectionalLight(0xffffff, 1);
+  light.castShadow = true;
+  light.shadow.camera.layers.enableAll();
   const core = Object.create(Core3D);
   core.setSunShadowLight(light);
   assert.equal(light.shadow.autoUpdate, false);
-  core._requestSunShadowUpdate({ threeShadows: false });
+  const node = light.shadow.shadowNode;
+  assert.ok(node instanceof THREE.ShadowNode && node.constructor.type === 'PassShadowNode', 'własny węzeł cienia światła');
+  core.setSunShadowLight(light);
+  assert.equal(light.shadow.shadowNode, node, 'drugie zgłoszenie nie podmienia węzła');
+  core._requestSunShadowUpdate({ threeShadows: false }, 1);
   assert.equal(light.shadow.needsUpdate, false, 'cienie wyłączone — bez odświeżania');
-  core._requestSunShadowUpdate({ threeShadows: true });
+  core._requestSunShadowUpdate({ threeShadows: true }, (1 << 2) | (1 << 31));
   assert.equal(light.shadow.needsUpdate, true);
+  // updateBefore: odświeżenie tylko na żądanie, rzucający z warstw passa, maska kamery cienia wraca.
+  const masks = [];
+  node.shadowMap = { depthTexture: { version: 3 } };
+  node.updateShadow = () => { masks.push(light.shadow.camera.layers.mask); node._depthVersionCached = 3; };
+  node.updateBefore({});
+  assert.deepEqual(masks, [((1 << 2) | (1 << 31)) | 0], 'mapa FG: warstwa 2 + trzymacze rozgrzewki cienia');
+  assert.equal(light.shadow.camera.layers.mask, -1, 'maska kamery cienia przywrócona (enableAll)');
+  assert.equal(light.shadow.needsUpdate, false, 'odświeżone — do następnego żądania');
+  node.updateBefore({});
+  assert.equal(masks.length, 1, 'bez żądania (np. pass planet) — ostatnia mapa, bez rysowania');
+  core._requestSunShadowUpdate({ threeShadows: true }, 1 << 0);
+  node.updateBefore({});
+  assert.deepEqual(masks.slice(1), [1], 'mapa ortho: tylko warstwa 0');
   core.setSunShadowLight(null);
   assert.equal(core._sunShadowLight, null);
+});
+
+// Zadanie 23 (duża bitwa): mapa cienia przed passem z łapaczem tylko, gdy wyjdzie niepusta (rzucający w kadrze
+// cienia na warstwach passa) albo czyta ją inny odbiorca; łapacz bez mapy (alfa 0) nie jest rysowany.
+// FG (ostatnia mapa klatki — czytają ją planety) pomijany dopiero przy mapie znanej jako pusta.
+test('Core3D: mapa cienia i łapacz pomijane bez rzucających (obraz bez zmian: łapacz rysowałby alfę 0)', async () => {
+  globalThis.window = globalThis.window || {};
+  const THREE = await import('three/webgpu');
+  const { Core3D } = await import('../src/3d/core3d.js');
+  const core = Object.create(Core3D);
+  core.shadowPassStats = { updated: 0, skipped: 0 };
+  core._shadowMapEmpty = false;
+  core.renderer = { coordinateSystem: THREE.WebGPUCoordinateSystem };
+  core.scene = new THREE.Scene();
+  const light = new THREE.DirectionalLight(0xffffff, 1);
+  light.castShadow = true;
+  light.position.set(0, 0, 1000);
+  core.scene.add(light, light.target);
+  const cam = light.shadow.camera;
+  cam.left = -500; cam.right = 500; cam.top = 500; cam.bottom = -500; cam.near = 1; cam.far = 5000;
+  cam.coordinateSystem = THREE.WebGPUCoordinateSystem;
+  cam.updateProjectionMatrix();
+  core.setSunShadowLight(light);
+  const catcher = new THREE.Mesh(new THREE.PlaneGeometry(10, 10), new THREE.MeshBasicMaterial());
+  catcher.receiveShadow = true;
+  core.scene.add(catcher);
+  const t = { threeShadows: true, fgShadows: true };
+  const run = (mask, last) => { light.shadow.needsUpdate = false; core.scene.updateMatrixWorld(); core._passSunShadow(t, mask, catcher, last); return [catcher.visible, light.shadow.needsUpdate]; };
+  // FG, mapa nieznana (pierwsza klatka) — odświeżenie (wyjdzie pusta), potem pomijanie
+  assert.deepEqual(run(4, true), [true, true], 'FG: mapa nieznana — odświeżenie');
+  assert.deepEqual(run(4, true), [false, false], 'FG: mapa pusta, bez rzucających — bez mapy i łapacza');
+  // ortho bez rzucających: zawsze pomijany (nie jest ostatnią mapą klatki)
+  assert.deepEqual(run(1, false), [false, false]);
+  // rzucający na warstwie 2 w kadrze cienia
+  const box = new THREE.Mesh(new THREE.BoxGeometry(20, 20, 20), new THREE.MeshBasicMaterial());
+  box.castShadow = true;
+  box.layers.set(2);
+  core.scene.add(box);
+  assert.deepEqual(run(4, true), [true, true], 'FG: rzucający w kadrze — mapa i łapacz');
+  assert.deepEqual(run(1, false), [false, false], 'ortho: rzucający tylko na warstwie 2 — pominięty');
+  // rzucający poza kadrem cienia: mapa wyszłaby pusta — ale ostatnia mapa miała rzucającego: jedno odświeżenie
+  box.position.set(100000, 0, 0);
+  assert.deepEqual(run(4, true), [true, true], 'FG: mapa z rzucającym — odświeżenie do pustej');
+  assert.deepEqual(run(4, true), [false, false], 'FG: rzucający poza kadrem cienia — pominięty');
+  // bez frustumCulled — zachowawczo potrzebna
+  box.frustumCulled = false;
+  assert.deepEqual(run(4, true), [true, true]);
+  box.frustumCulled = true;
+  // niewidoczny rodzic ukrywa rzucającego (jak _projectObject)
+  box.position.set(0, 0, 0);
+  const group = new THREE.Group();
+  group.visible = false;
+  group.add(box);
+  core.scene.add(group);
+  run(4, true);
+  assert.deepEqual(run(4, true), [false, false], 'niewidoczna gałąź — bez rzucających');
+  // inny odbiorca cienia na warstwach passa czyta mapę — zawsze odświeżana
+  const recv = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial());
+  recv.receiveShadow = true;
+  core.scene.add(recv);
+  assert.deepEqual(run(1, false), [true, true], 'odbiorca na warstwie 0 — mapa ortho odświeżana');
+  core.scene.remove(recv);
+  // przełączniki wydajności cienia — dawny przepływ (bez sprawdzania)
+  const t2 = { threeShadows: true, fgShadows: false };
+  light.shadow.needsUpdate = false;
+  core._passSunShadow(t2, 4, catcher, true);
+  assert.equal(light.shadow.needsUpdate, true);
+  assert.ok(core.shadowPassStats.skipped >= 4 && core.shadowPassStats.updated >= 5);
+  // źródło: wywołania w pętli passów i dawny przepływ żądania mapy w środku
+  assert.match(core3d, /if \(need \|\| \(last && this\._shadowMapEmpty !== true\)\) \{/);
+  assert.match(core3d, /shadow\.updateMatrices\(light\);/);
 });
 
 test('Core3D: puste passy planet/halo/ring-planet/tarcz są pomijane', () => {

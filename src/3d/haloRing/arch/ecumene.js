@@ -21,7 +21,7 @@ import { PORT_PAD_H } from '../haloRingRoofPlan.js';
 import { haloHash12, haloPureFn } from '../haloRingTSL.js';
 import { uniformsAdapter } from '../haloUniformsAdapter.js';
 import { archLitTSL, archNodeMaterial } from './archTSL.js';
-import { ArchBatch, archHex, archRingTubeBoxes } from './archFrame.js';
+import { ArchBatch, archHex, archRingTubeBoxes, archRunSteps } from './archFrame.js';
 import { ArchLights, archBatchMesh, archHemisphere, archPointsMesh, archTreeGeometry } from './archMaterials.js';
 import {
   ECU_DISTRICTS,
@@ -30,7 +30,7 @@ import {
   ECU_TUBES,
   ECU_TYPE_PALETTE,
   buildEcumeneDomes,
-  buildEcumeneInstances,
+  buildEcumeneInstancesSteps,
   buildEcumeneStructure,
   createEcumenePlan
 } from './ecumenePlan.js';
@@ -321,8 +321,9 @@ function makeSignAtlas(plan) {
   return t;
 }
 
-// Siatka powierzchni dzielnicy p: (s, z) → punkt z wysokością terenu planu.
-function districtSurface(plan, p, cell) {
+// Siatka powierzchni dzielnicy p: (s, z) → punkt z wysokością terenu planu. Krokami (zadanie 23):
+// `yield` co 24 rzędy terenu i po normalnych (~3–7 ms pracy na krok przy Marsie).
+function* districtSurfaceSteps(plan, p, cell) {
   const { R, LEN, HW } = plan;
   const k = plan.sectors[p].district;
   const ns = Math.max(8, Math.ceil(LEN / cell));
@@ -351,6 +352,7 @@ function districtSurface(plan, p, cell) {
       ecu[e++] = s;
       ecu[e++] = k;
     }
+    if (i % 24 === 23) yield;
   }
   const idx = [];
   for (let i = 0; i < ns; i++) {
@@ -365,7 +367,9 @@ function districtSurface(plan, p, cell) {
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   g.setAttribute('aEcu', new THREE.BufferAttribute(ecu, 2));
   g.setIndex(idx);
+  yield;
   g.computeVertexNormals();
+  yield;
   // normalne mają patrzeć od planety (habitat na zewnątrz)
   const n = g.getAttribute('normal');
   const p0 = new THREE.Vector3().fromBufferAttribute(g.getAttribute('position'), 0);
@@ -442,8 +446,15 @@ function domeRootMatrix(plan, d, out) {
   return out;
 }
 
-export function buildEcumeneRing({ layout, uniforms, materials, geos, quality, seed, portLights = [], portSolid = null }) {
+export function buildEcumeneRing(args) {
+  return archRunSteps(buildEcumeneRingSteps(args));
+}
+
+// Krokami (zadanie 23): dzielnice, zabudowa i kopuły z `yield` między częściami — archRing.js kroczy je
+// w klatkach gry (bez przestoju ~0,4 s przy pierwszym zbliżeniu do Marsa); wynik jak buildEcumeneRing.
+export function* buildEcumeneRingSteps({ layout, uniforms, materials, geos, quality, seed, portLights = [], portSolid = null }) {
   const plan = createEcumenePlan(layout, seed);
+  yield;
   const bg = [];
   const fg = [];
   const disposables = [];
@@ -462,15 +473,16 @@ export function buildEcumeneRing({ layout, uniforms, materials, geos, quality, s
   const cell = quality?.gridDiv >= 64 ? 48 : 64;
   const surfaces = [];
   for (let p = 0; p < plan.N; p++) {
-    const mesh = new THREE.Mesh(districtSurface(plan, p, cell), surfaceMat);
+    const mesh = new THREE.Mesh(yield* districtSurfaceSteps(plan, p, cell), surfaceMat);
     mesh.name = `EcumeneSurface_${p}`;
     bg.push(mesh);
     surfaces.push(mesh);
   }
 
   // ---- zabudowa, przemysł, lasy, parki, kopuły ----
-  const inst = buildEcumeneInstances(plan);
+  const inst = yield* buildEcumeneInstancesSteps(plan);
   const domes = buildEcumeneDomes(plan, inst.per, lights);
+  yield;
   const treeGeo = archTreeGeometry('ico');
   disposables.push(treeGeo);
   const matBG = materials.instanced(false);
@@ -500,11 +512,13 @@ export function buildEcumeneRing({ layout, uniforms, materials, geos, quality, s
     }
   }
   if (portSolid) st.bg.append(portSolid);
+  yield;
   const stBG = archBatchMesh(st.bg, geos.box, matBG);
   const stFG = archBatchMesh(st.fg, geos.box, materials.instanced(true));
   if (stBG) bg.push(stBG);
   if (stFG) fg.push(stFG);
 
+  yield;
   // ---- powłoka (profil dema) ----
   const panel = makeEcumenePanelTexture(seed);
   const black = blackTexture();
@@ -523,6 +537,7 @@ export function buildEcumeneRing({ layout, uniforms, materials, geos, quality, s
   bg.push(shellMeshBG);
   fg.push(shellMeshFG);
 
+  yield;
   // ---- tablice sektorów (+z, patrzą w kamerę gry) ----
   let signMesh = null;
   const atlas = makeSignAtlas(plan);
@@ -572,6 +587,7 @@ export function buildEcumeneRing({ layout, uniforms, materials, geos, quality, s
     return new THREE.Vector3((plan.R - 190 * S) * Math.cos(a), (plan.R - 190 * S) * Math.sin(a), 1130 * S);
   });
 
+  yield;
   // ---- kopuły: szkło, kratownica, żebra, kołnierz, dno, ścieżka, staw ----
   const hemi = archHemisphere();
   disposables.push(hemi);

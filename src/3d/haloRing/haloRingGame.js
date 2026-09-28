@@ -129,7 +129,10 @@ export class HaloRingGame {
       // Bez urządzenia Core3D (renderer spoza Core3D, testy) — bez rozgrzewki, podpięcie od razu.
       prewarm: (objects, opts = {}) => (Core3D.gpuReady && Core3D.warmup
         ? Core3D.warmup.now(objects, { ...opts, layer: 'all' })
-        : Promise.resolve(false))
+        : Promise.resolve(false)),
+      // Ringi-archetypy (Mars, Jowisz) budują się krokami w klatkach (pumpBuild niżej) — dawniej 0,4–0,7 s
+      // CPU w jednej klatce pierwszego zbliżenia (zadanie 23). Ring Ziemi ma własną budowę asynchroniczną.
+      buildInBackground: true
     });
     ring.setLayers(HALO_GAME.layers);
     ring.group.rotation.z = e.place.rot;
@@ -232,6 +235,8 @@ export class HaloRingGame {
       if (!e.ring && Math.hypot(dx, dy) < HALO_GAME.activateDistance) this._ensureRing(e);
       const ring = e.ring;
       if (!ring) continue;
+      // budowa ringu-archetypu w tle: kroki co klatkę, także poza kadrem (archRing.js, ARCH_BUILD_BUDGET)
+      if (ring.pumpBuild) ring.pumpBuild();
       // podzielony ekran: ring liczy RTE dla jednej kamery — drugi kadr by go przesunął
       const reach = L.radii.max + HALO_GAME.hallReach + HALO_GAME.viewMargin;
       const inView = !opts.splitScreen && Math.abs(dx) < halfW + reach && Math.abs(dy) < halfH + reach;

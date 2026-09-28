@@ -154,8 +154,10 @@ test('uber w TSL: pętla po źródłach z uniformu int, czyste funkcje szumu, cl
 test('Core3D: post = dwa RenderPipeline zbudowane raz, bez GLSL uber, uniformy postu przed postem', () => {
   assert.doesNotMatch(core, /UberPostShader|HEAT_HAZE: 1|#ifdef HEAT_HAZE|ShaderPass|texture2D\(tDiffuse/, 'GLSL „uber” usunięty (port w tsl/postGry.js)');
   const create = bodyOf(core, '  _createPost(renderer) {');
-  // 12-B: wejście bloomu przez siatkę bezpieczeństwa NaN / Inf (hdrBezpieczny, postGry.js)
-  assert.match(create, /new BloomGry\(hdrBezpieczny\(texture\(sceneTexture\)\), cfg\.strength, cfg\.radius, cfg\.threshold\)/);
+  // 12-B: wejście bloomu przez siatkę bezpieczeństwa NaN / Inf (hdrBezpieczny w kernelu progu); zadanie 23:
+  // bloom w jednym passie compute (bloomCompute.js — ten sam algorytm co BloomGry, tests/bloomCompute.test.mjs)
+  assert.match(create, /new BloomGryCompute\(sceneTexture, cfg\.strength, cfg\.radius, cfg\.threshold\)/);
+  assert.match(readFileSync(new URL('../src/3d/tsl/bloomCompute.js', import.meta.url), 'utf8'), /const texel = hdrBezpieczny\(texture\(sceneTexture, uvNode\)\)\.toVar\(\);/);
   assert.match(create, /bloom\.onRenderBegin = this\._onBloomRenderBegin;/);
   assert.equal((create.match(/new THREE\.RenderPipeline\(/g) || []).length, 2);
   assert.match(create, /bloomTexture: bloom\.getTextureNode\(\)/);
@@ -236,27 +238,30 @@ test('Core3D: strojenie bloomu (bloomConfig.js / DevVFX.bloom) = uniformy węzł
   assert.doesNotMatch(read('src/ui/bloomTunerPanel.js'), /bloomPass\.strength = /);
 });
 
-test('Core3D._renderPost: pipeline z bloomem albo bez (perfToggles.bloom), passy bloomu w kubełku bloom, nie w post', () => {
+// Zadanie 23: bloom = jeden pass compute (bloomCompute.js) PRZED „uber” — kubełek 'bloom' z haków (czas, bez
+// draw calli), 'post' = sam „uber”; przy perfToggles.bloom = false bez passu bloomu i pipeline bez bloomu.
+test('Core3D._renderPost: bloom (pass compute) przed postem w kubełku bloom, pipeline z bloomem albo bez (perfToggles.bloom)', () => {
   const info = { frame: 1, render: { drawCalls: 0, triangles: 0, points: 0, lines: 0 }, reset() {} };
   const fake = Object.assign(Object.create(Core3D), {
     renderer: { info }, lastFrameRenderInfo: null, perfToggles: { bloom: true },
     _renderInfoBefore: { calls: 0, triangles: 0, points: 0, lines: 0 },
-    _bloomInfoBefore: { calls: 0, triangles: 0, points: 0, lines: 0 },
-    _bloomInfoDelta: { calls: 0, triangles: 0, points: 0, lines: 0, ms: 0 }
+    _bloomInfoBefore: { calls: 0, triangles: 0, points: 0, lines: 0 }
   });
-  const withBloom = { renders: 0, render() { this.renders++; fake._bloomRenderBegin(); info.render.drawCalls += 12; info.render.triangles += 12; fake._bloomRenderEnd(); info.render.drawCalls += 1; info.render.triangles += 1; } };
-  const noBloom = { renders: 0, render() { this.renders++; info.render.drawCalls += 1; info.render.triangles += 1; } };
+  const seq = [];
+  fake.bloomPass = { render(r) { seq.push(r === fake.renderer ? 'bloom' : 'bloom?'); fake._bloomRenderBegin(); fake._bloomRenderEnd(); } };
+  const withBloom = { renders: 0, render() { this.renders++; seq.push('post'); info.render.drawCalls += 1; info.render.triangles += 1; } };
+  const noBloom = { renders: 0, render() { this.renders++; seq.push('bez'); info.render.drawCalls += 1; info.render.triangles += 1; } };
   fake._post = withBloom;
   fake._postBezBloomu = noBloom;
   fake._resetRenderInfoBuckets();
   fake._renderPost();
-  assert.equal(withBloom.renders, 1);
-  assert.deepEqual([fake.lastFrameRenderInfo.bloom.calls, fake.lastFrameRenderInfo.post.calls], [12, 1]);
-  assert.deepEqual([fake.lastFrameRenderInfo.bloom.triangles, fake.lastFrameRenderInfo.post.triangles], [12, 1]);
+  assert.deepEqual(seq, ['bloom', 'post'], 'bloom przed „uber”, na rendererze Core3D');
+  assert.deepEqual([fake.lastFrameRenderInfo.bloom.calls, fake.lastFrameRenderInfo.post.calls], [0, 1]);
+  assert.deepEqual([fake.lastFrameRenderInfo.bloom.triangles, fake.lastFrameRenderInfo.post.triangles], [0, 1]);
   fake.perfToggles.bloom = false;
   fake._resetRenderInfoBuckets();
   fake._renderPost();
-  assert.equal(noBloom.renders, 1);
+  assert.deepEqual(seq, ['bloom', 'post', 'bez'], 'bez bloomu: bez passu compute');
   assert.deepEqual([fake.lastFrameRenderInfo.bloom.calls, fake.lastFrameRenderInfo.post.calls], [0, 1]);
 });
 
@@ -265,9 +270,10 @@ test('zegar GPU: brama znaczników na granicy klatki — klatka bez pomiaru zami
   const pool = { maxQueries: 2048, currentQueryIndex: 0 };
   const backend = { trackTimestamp: true, timestampQueryPool: { render: pool } };
   const renderer = { info: { frame: 1 }, backend };
-  const fake = Object.assign(Object.create(Core3D), { renderer, _gpuTimerPending: { render: false, compute: false }, _gpuTimerGateFrame: -1, _gpuTimestampFeature: true });
+  // gpuTimerSampleEvery = 1: każda klatka z próbką (próbkowanie co N klatek — osobno niżej)
+  const fake = Object.assign(Object.create(Core3D), { renderer, _gpuTimerPending: { render: false, compute: false }, _gpuTimerGateFrame: -1, _gpuTimestampFeature: true, gpuTimerSampleEvery: 1 });
   // atrapa zlecenia: three zeruje pulę synchronicznie na starcie rozwiązywania
-  fake._gpuTimerPoll = () => { polls++; pool.currentQueryIndex = 0; fake._gpuTimerPending.render = true; };
+  fake._gpuTimerPollType = (type) => { polls++; backend.timestampQueryPool[type].currentQueryIndex = 0; fake._gpuTimerPending[type] = true; };
   fake._gpuTimerGate();
   assert.deepEqual([backend.trackTimestamp, polls], [true, 0], 'miejsce jest — bez zmian');
   pool.currentQueryIndex = 1800; renderer.info.frame = 2;
@@ -283,6 +289,45 @@ test('zegar GPU: brama znaczników na granicy klatki — klatka bez pomiaru zami
   renderer.info.frame = 4;
   fake._gpuTimerGate();
   assert.deepEqual([backend.trackTimestamp, polls, pool.currentQueryIndex], [true, 2, 0], 'wynik przyszedł — pomiar wraca');
+  // Zadanie 23: seria renderów w JEDNEJ klatce rAF (dema, narzędzia) — miejsce sprawdzane przy każdym
+  // renderze (na jeden pełny render), nie tylko na granicy klatki.
+  fake._gpuTimerPending.render = false;
+  pool.currentQueryIndex = 1990;
+  fake._gpuTimerGate();
+  assert.deepEqual([backend.trackTimestamp, polls, pool.currentQueryIndex], [true, 3, 0], 'kolejny render tej klatki bez miejsca — zlecenie od razu');
+  pool.currentQueryIndex = 1990;
+  fake._gpuTimerGate();
+  assert.deepEqual([backend.trackTimestamp, polls], [false, 3], 'zlecenie w locie — reszta klatki bez znaczników (zamiast przepełnienia)');
+  pool.currentQueryIndex = 100;
+  fake._gpuTimerGate();
+  assert.equal(backend.trackTimestamp, false, 'do końca klatki bez znaczników');
+  // Pula compute: własny znacznik puli, render dalej mierzony.
+  const compute = { maxQueries: 2048, currentQueryIndex: 1900, trackTimestamp: true };
+  backend.timestampQueryPool.compute = compute;
+  fake._gpuTimerPending.render = false;
+  fake._gpuTimerPending.compute = true;
+  renderer.info.frame = 5;
+  pool.currentQueryIndex = 0;
+  fake._gpuTimerGate();
+  assert.deepEqual([backend.trackTimestamp, compute.trackTimestamp], [true, false], 'compute bez miejsca i ze zleceniem w locie — bez znaczników compute');
+  fake._gpuTimerPending.compute = false;
+  renderer.info.frame = 6;
+  fake._gpuTimerGate();
+  assert.deepEqual([compute.trackTimestamp, compute.currentQueryIndex, polls], [true, 0, 4], 'compute bez miejsca, bez zlecenia — zlecenie od razu');
+  // Zadanie 23: próbka czasu GPU co gpuTimerSampleEvery klatek (znaczniki kosztują CPU na każdy pass) — klatka
+  // bez próbki idzie bez znaczników, także jej kolejne rendery; domyślnie co 4. klatkę.
+  assert.equal(Core3D.gpuTimerSampleEvery, 4);
+  fake.gpuTimerSampleEvery = 4;
+  fake._gpuTimerPending.render = false; fake._gpuTimerPending.compute = false;
+  pool.currentQueryIndex = 0; compute.currentQueryIndex = 0;
+  renderer.info.frame = 7;
+  fake._gpuTimerGate();
+  assert.equal(backend.trackTimestamp, false, 'klatka 7 — bez próbki');
+  fake._gpuTimerGate();
+  assert.equal(backend.trackTimestamp, false, 'drugi render klatki bez próbki — dalej bez znaczników');
+  renderer.info.frame = 8;
+  fake._gpuTimerGate();
+  assert.equal(backend.trackTimestamp, true, 'klatka 8 — próbka');
   // bez cechy timestamp-query brama nic nie włącza
   const noFeature = Object.assign(Object.create(Core3D), { renderer: { info: { frame: 9 }, backend: { trackTimestamp: false } }, _gpuTimestampFeature: false, _gpuTimerGateFrame: -1 });
   noFeature._gpuTimerGate();

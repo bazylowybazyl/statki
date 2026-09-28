@@ -34,6 +34,7 @@
 // Krok stały (1/240 s) — sterownik, render dosuwa drobiny o `lag` (czas od ostatniego kroku).
 
 import * as THREE from 'three/webgpu';
+import { oddajKopieCpu } from '../tsl/kopiaCpu.js';
 import {
   Fn, float, int, uint, vec2, vec3, vec4, uniform, uniformArray, instancedArray,
   instanceIndex, hash, Loop, If, Return, select, mix, smoothstep, clamp, floor, abs,
@@ -676,11 +677,14 @@ export class WarpMedium {
     renderer.compute(this.stepNode, 1);
     U.count.value = c;
     U.initCount.value = ic;
+    this._kopieCpu = oddajKopieCpu(renderer, this._gpuOnly || (this._gpuOnly = [this.pos, this.vel, this.aux, this.vis]));
   }
 
   /** Jeden krok symulacji; shift — przesunięcie kamery ośrodka w scenie od poprzedniego kroku. */
   step(renderer, dt, time, shiftX, shiftY) {
     if (!this.count || !renderer) return;
+    // Drobiny liczy tylko GPU — kopie CPU (~52 MB przy milionie) oddane, gdy bufory już są (zadanie 23).
+    if (this._kopieCpu !== 0) this._kopieCpu = oddajKopieCpu(renderer, this._gpuOnly || (this._gpuOnly = [this.pos, this.vel, this.aux, this.vis]));
     const U = this.U;
     const cfg = this.cfg;
     U.dt.value = dt;

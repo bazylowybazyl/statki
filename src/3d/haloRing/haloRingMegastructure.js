@@ -36,6 +36,7 @@ import { HALO_HDR, haloQualityLod } from './haloRingConfig.js';
 import { HALO_INSTANCE_STRIDE, HALO_LIGHT_STRIDE, HALO_PRIM_NAMES, HALO_TRAIN_STRIDE } from './haloRingRoofPlan.js';
 import { HALO_PI, haloFma, haloFmaV2, haloHash12, haloPureFn, haloRingTSL, haloSmooth } from './haloRingTSL.js';
 import { nodeOf } from './haloUniformsAdapter.js';
+import { zbierzZakres } from '../zakresyWysylki.js';
 
 // Kroki powietrza brył, szkła i drzew (dawne AIR_STEPS 4 materiałów megastruktury i miasta).
 export const HALO_MEGA_AIR_STEPS = 4;
@@ -666,7 +667,8 @@ function makeDome() {
   return g;
 }
 
-// Instancjonowana bryła z dynamicznym buforem (wybrane segmenty).
+// Instancjonowana bryła z buforem wybranych segmentów — wysyłka tylko po zmianie wyboru (bez DynamicDrawUsage:
+// three r183 wysyłał wtedy cały bufor przy każdym renderze — przy Ziemi bryły dachu i doków ~1,8 MB na klatkę, zadanie 23).
 function makeInstanced(base, capacity, material) {
   const geo = new THREE.InstancedBufferGeometry();
   geo.index = base.index;
@@ -674,7 +676,6 @@ function makeInstanced(base, capacity, material) {
   geo.setAttribute('normal', base.getAttribute('normal'));
   const data = new Float32Array(capacity * HALO_INSTANCE_STRIDE);
   const buf = new THREE.InstancedInterleavedBuffer(data, HALO_INSTANCE_STRIDE);
-  buf.setUsage(THREE.DynamicDrawUsage);
   geo.setAttribute('iPos', new THREE.InterleavedBufferAttribute(buf, 4, 0));
   geo.setAttribute('iSize', new THREE.InterleavedBufferAttribute(buf, 4, 4));
   geo.setAttribute('iQuat', new THREE.InterleavedBufferAttribute(buf, 4, 8));
@@ -794,8 +795,8 @@ export class HaloMegastructure {
       lightGeo.setAttribute('position', quad.getAttribute('position'));
       const lcap = Math.max(16, src.total);
       const ldata = new Float32Array(lcap * HALO_LIGHT_STRIDE);
+      // bez DynamicDrawUsage — wysyłka po zmianie wyboru (_fillLights), jak bryły (zadanie 23)
       const lbuf = new THREE.InstancedInterleavedBuffer(ldata, HALO_LIGHT_STRIDE);
-      lbuf.setUsage(THREE.DynamicDrawUsage);
       lightGeo.setAttribute('iL0', new THREE.InterleavedBufferAttribute(lbuf, 4, 0));
       lightGeo.setAttribute('iL1', new THREE.InterleavedBufferAttribute(lbuf, 4, 4));
       lightGeo.instanceCount = 0;
@@ -893,9 +894,7 @@ export class HaloMegastructure {
       }
       inst.count = o / HALO_INSTANCE_STRIDE;
       inst.geo.instanceCount = inst.count;
-      inst.buf.needsUpdate = true;
-      inst.buf.clearUpdateRanges();
-      inst.buf.addUpdateRange(0, o);
+      zbierzZakres(inst.buf, 0, o);
       total += inst.count;
     }
     return total;
@@ -912,9 +911,7 @@ export class HaloMegastructure {
     }
     L.count = o / HALO_LIGHT_STRIDE;
     L.geo.instanceCount = L.count;
-    L.buf.needsUpdate = true;
-    L.buf.clearUpdateRanges();
-    L.buf.addUpdateRange(0, o);
+    zbierzZakres(L.buf, 0, o);
   }
 
   update(frustum, camLocal) {

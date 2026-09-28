@@ -93,6 +93,12 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   WebGL patrzył tylko na liczbę świateł danego typu. Przełączanie `light.visible` w biegu (pule świateł) = przebudowa
   materiałów oświetlanych przy każdej nowej kombinacji. Dziś światła silników (`perfToggles.enginePointLights`) i trafień
   (`BEAM_ENABLE_IMPACT_LIGHT`) są wyłączone — przy włączaniu: stały zbiór świateł, gaszenie przez `intensity = 0`.
+- **Wiele obiektów jednego rodzaju i serie przebiegów (zadanie 23):** rysunek w three r183 kosztuje ~15–25 µs CPU
+  (przegląd wszystkich wiązań grupy „object”, węzły per obiekt), `renderer.render()` ~40 µs. Dane per obiekt → bufor
+  storage ze slotem (`HullObjectStore`, `HullLightStore`), obiekty z tym samym zestawem tekstur → partia (jeden rysunek,
+  slot w atrybucie wierzchołka, `hullSkinBatch.js`); serie przebiegów pełnoekranowych → kernele w jednym
+  `renderer.compute(lista)` (`tsl/bloomCompute.js`); atrybuty zmieniane co klatkę → zakresy (`zakresyWysylki.js`), nie
+  `DynamicDrawUsage` (w WebGPU = pełna wysyłka przy każdym renderze).
 - **Limit 12 buforów uniformów na etap shadera** (twardy — adapter RTX 5080 też daje 12; potwierdzone w zadaniu 06 i w
   demie asteroid): każdy `uniformArray` i każda grupa uniformów to osobny bufor. Duże materiały pakują uniformy w JEDEN
   blok (`createUniformBlock` w `src/3d/haloRing/`, stała nazwa bloku = wspólne programy dla wielu instancji).
@@ -506,7 +512,11 @@ na kadłubach belkowych (18), cień dymu rakiet (19) — wszystko wymaga materia
 4. **`Texture.updateRanges` ignorowane przez backend WebGPU** — częściowe aktualizacje tekstur (np. wiersze obrażeń
    mostków) stają się pełnym uploadem; mierzyć (zadania 04, 15, 23).
 5. **Koszt CPU backendu WebGPU** przy wielu małych draw callach — gra jest ograniczona przez CPU w dużych bitwach
-   (fizyka); sam port nie przyspieszy klatki. Mierzyć, nie obiecywać (zadanie 23).
+   (fizyka); sam port nie przyspieszy klatki. Mierzyć, nie obiecywać (zadanie 23). **Zmierzone (zadanie 23,
+   `WYDAJNOSC.md`):** three r183 ~15–25 µs CPU na rysunek i ~40 µs na `render()` (3–5 × WebGL); duża bitwa przed
+   poprawkami 54% FPS bazy (Core3D 4,0 ms vs 0,95), po — 84% (1,47 ms vs 0,79): partie skór kadłubów + slot storage,
+   bloom compute, klucz świateł, jeden zapis na bufor uniformów, cień bez rzucających pominięty. Sceny bez ognia: CPU
+   +0,15…0,4 ms nad bazą, GPU 1,5–5 × taniej. Zostało: tarcze (rysunek na tarczę), spawn pul efektów per pula.
 6. **Przepisywanie testów-strażników** może je osłabić — zasada: odpowiednik TSL albo test zachowania, nigdy samo
    usunięcie; lustra CPU zostają.
 7. **Równoległe sesje** (ruch v2 Z-zadania, dema `dema/*-webgpu/` powstające obok) mogą dotykać `core3d.js`,

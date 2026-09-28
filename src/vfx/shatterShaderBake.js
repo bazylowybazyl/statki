@@ -21,6 +21,8 @@
  */
 
 import * as THREE from 'three';
+// Losowość warstwy efektów (zadanie 23): wizualia nie zużywają Math.random gry — przebieg rozgrywki nie zależy od obrazu.
+import { fxRandom } from '../3d/fx/fxRandom.js';
 
 const _v0 = new THREE.Vector3();
 const _v1 = new THREE.Vector3();
@@ -93,7 +95,7 @@ function buildShardSpawnData(nonIndexed, triCount) {
     const kind = new Uint8Array(count);
 
     for (let i = 0; i < count; i++) {
-        const pick = Math.random() * totalArea;
+        const pick = fxRandom.next() * totalArea;
         let triIndex = 0;
         while (triIndex < triCount - 1 && cdf[triIndex] < pick) triIndex++;
 
@@ -105,9 +107,9 @@ function buildShardSpawnData(nonIndexed, triCount) {
         normals[out] = triNormals[triBase];
         normals[out + 1] = triNormals[triBase + 1];
         normals[out + 2] = triNormals[triBase + 2];
-        seeds[out] = Math.random();
-        seeds[out + 1] = Math.random();
-        seeds[out + 2] = Math.random();
+        seeds[out] = fxRandom.next();
+        seeds[out + 1] = fxRandom.next();
+        seeds[out + 2] = fxRandom.next();
         areaWeights[i] = clampInt(Math.round(Math.sqrt(triAreas[triIndex] / Math.max(0.0001, avgArea)) * 100), 55, 165) / 100;
         kind[i] = (i < panelCount) ? 0 : 1;
     }
@@ -144,9 +146,9 @@ export function bakeShatterGeometry(geo) {
 
         // Per-triangle random direction (drift + spin axis seed)
         _rand.set(
-            Math.random() - 0.5,
-            Math.random() - 0.5,
-            Math.random() - 0.5
+            fxRandom.next() - 0.5,
+            fxRandom.next() - 0.5,
+            fxRandom.next() - 0.5
         );
         if (_rand.lengthSq() < 1e-6) _rand.set(1, 0, 0);
         _rand.normalize();

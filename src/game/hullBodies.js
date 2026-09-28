@@ -25,6 +25,8 @@ import { activeRegion, markSkinDirty } from './beamActiveRegion3D.js';
 import { areTowBodiesCollisionDisabled } from './towSystem.js';
 import { transferSalvageToWreck, clearSalvage } from './salvage.js';
 import { CollisionFX, impactEvent, grindEvent } from '../vfx/collisionFx.js';
+// Losowość warstwy efektów (zadanie 23): wizualia nie zużywają Math.random gry — przebieg rozgrywki nie zależy od obrazu.
+import { fxRandom } from '../3d/fx/fxRandom.js';
 
 // Odstęp heksów dawnego destruktora (px sprite'a) — jednostka, w której strojono HP
 // kadłubów, kratery i łup. Węzeł siatki `cellPx` liczy się za (cellPx / HEX_PITCH_PX)²
@@ -1401,8 +1403,8 @@ function onNodeDebris(body, i, wx, wy, wz, vx, vy) {
   if (!hull || typeof window === 'undefined' || typeof window.spawnHullDebris !== 'function') return;
   const s = body.nodeStore;
   // Rozmiar jak odłamki dema: ~0,9–1,8 komórki (siatka gry = siatka dema, 15 j.).
-  const scale = body.cellSize * (0.9 + Math.random() * 0.9);
-  const structural = s.beamCount[i] > s.localBeamCount[i] && Math.random() < 0.4;
+  const scale = body.cellSize * (0.9 + fxRandom.next() * 0.9);
+  const structural = s.beamCount[i] > s.localBeamCount[i] && fxRandom.next() < 0.4;
   window.spawnHullDebris(wx, -wy, vx, -vy, s.r[i], s.g[i], s.b[i], scale, structural);
 }
 

@@ -19,7 +19,7 @@
 // zabudowa — w kamerze gry to, co leży nad płaszczyzną, zasłaniałoby dok.
 import { HALO_PORT, haloPortSites } from '../haloRingConfig.js';
 import { PORT_PAD_H } from '../haloRingRoofPlan.js';
-import { ArchBatch, archBeamMatrix, archHex, archMatrix, archPoint, archRng, clamp, mix, modp, smooth } from './archFrame.js';
+import { ArchBatch, archBeamMatrix, archHex, archMatrix, archPoint, archRng, archRunSteps, clamp, mix, modp, smooth } from './archFrame.js';
 
 export const ECU_S = 3;
 const S = ECU_S;
@@ -229,6 +229,11 @@ const WARM = [2.6 * 0.5, 1.65 * 0.5, 0.65 * 0.5];        // assets.glow
 const RED = [3.8 * 0.36, 0.12 * 0.36, 0.035 * 0.36];     // assets.red
 
 export function buildEcumeneInstances(plan) {
+  return archRunSteps(buildEcumeneInstancesSteps(plan));
+}
+
+// Krokami (zadanie 23): `yield` po każdej dzielnicy (~6 ms pracy) — budowa w klatkach (archRing.js).
+export function* buildEcumeneInstancesSteps(plan) {
   const { layout, R, LEN, HW, sectors, stretch } = plan;
   const m = new Array(16);
   // drzewo = jedna bryła (korona + pień, archTreeGeometry): skala x/z = 2 ×
@@ -392,6 +397,7 @@ export function buildEcumeneInstances(plan) {
         }
       }
     }
+    yield;
   }
   return { per, stats };
 }

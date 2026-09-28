@@ -125,8 +125,10 @@ test('hex fragment: piksel sprite\'a = uv × rozmiar sprite\'a, lampy czytane ze
   assert.match(tsl, /lights\.element\(base\.add\(HULL_LIGHT_ZONE_OFFSET\)\.add\(i\)\)/);
   assert.equal(HULL_LIGHT_SLOT_VEC4, MAX_SHADER_SHIP_LIGHTS * 3 + MAX_ENGINE_ZONES);
   assert.equal(HULL_LIGHT_ZONE_OFFSET, MAX_SHADER_SHIP_LIGHTS * 3);
-  // W WGSL pętla lamp kończy się na liczniku z uniformu obiektu.
-  assert.match(built.beam.fragment, /for \( var i : i32 = 0; i < i32\( object\.\w+ \); i \+\+ \)/);
+  // W WGSL pętla lamp kończy się na liczniku per kadłub: skóra belek — z bufora slotu (zadanie 23), heksy —
+  // z uniformu obiektu.
+  assert.match(built.beam.fragment, /for \( var i : i32 = 0; i < i32\( hullObjects\.value\[ \( \w+ \+ 11u \) \]\.x \); i \+\+ \)/);
+  assert.match(built.hex.fragment, /for \( var i : i32 = 0; i < i32\( object\.\w+ \); i \+\+ \)/);
 });
 
 test('lakier stoi po isGlowing i przed pętlą świateł', () => {
@@ -144,8 +146,9 @@ test('lakier stoi po isGlowing i przed pętlą świateł', () => {
 
 test('każdy wariant podaje offset fragmentu od początku mesha w kierunkach świata; środek statku z macierzy modelu', () => {
   // Dawne vWorldXY − vOriginXY: modelMatrix · (lokalnie, w = 0) — bez odejmowania dwóch pozycji ~7 mln j.
-  assert.match(tsl, /varying\(modelWorldMatrix\.mul\(vec4\(localPos\.xy, 0\.0, 0\.0\)\)\.xy, 'vHullLocalWorld'\)/);
-  assert.match(built.beam.vertex, /vHullLocalWorld = \( object\.\w+ \* vec4<f32>\( position\.xy, 0\.0, 0\.0 \) \)\.xy;/);
+  assert.match(tsl, /const localWorldOf = \(localPos, world = modelWorldMatrix\) => varying\(world\.mul\(vec4\(localPos\.xy, 0\.0, 0\.0\)\)\.xy, 'vHullLocalWorld'\);/);
+  // skóra belek: macierz świata z bufora slotu (zadanie 23) — ten sam iloczyn mat4 × vec4
+  assert.match(built.beam.vertex, /vHullLocalWorld = \( mat4x4<f32>\( hullObjects\.value\[ \( \w+ \+ 4u \) \], hullObjects\.value\[ \( \w+ \+ 5u \) \], hullObjects\.value\[ \( \w+ \+ 6u \) \], hullObjects\.value\[ \( \w+ \+ 7u \) \] \) \* vec4<f32>\( position\.xy, 0\.0, 0\.0 \) \)\.xy;/);
   assert.match(built.armor.vertex, /vHullLocalWorld = \( object\.\w+ \* vec4<f32>\( position\.xy, 0\.0, 0\.0 \) \)\.xy;/);
   // Siatka heksów: pozycja PO instancjonowaniu (instanceMatrix · wierzchołek).
   const hv = built.hex.vertex;
@@ -324,4 +327,66 @@ test('pula szczątków GPU: graf wspólny dla pul, przezroczysty, bez głębi, D
   // Martwy odłamek poza obcięciem (vec4(2, 2, 2, 1) z GLSL), pozycja świata przez modelViewMatrix.
   assert.match(r.vertex, /vec4<f32>\( 2\.0, 2\.0, 2\.0, 1\.0 \)/);
   assert.deepEqual(r.updateNodes.filter((n) => n.hullKey).map((n) => n.hullKey), ['uSprite']);
+});
+
+// Zadanie 23 (duża bitwa: ~23 µs CPU na rysunek kadłuba w three r183 — wiązania i ~20 węzłów OBJECT):
+// wszystko, co zmienia się per kadłub skóry belek, leży w buforze storage slotu (HullObjectStore) —
+// macierz model-widok liczona jak highpModelViewMatrix three (double na CPU, float32 w buforze), macierz
+// świata i 17 wartości z material.uniforms; w grupie „object” tylko numer slotu (stały).
+test('skóra belek: dane per kadłub w buforze slotu — w grupie „object” sam slot, pozycja jak three', async () => {
+  const { HullObjectStore, HULL_OBJECT_SLOT_VEC4 } = await import('../src/3d/hexShips3D.tsl.js');
+  const b = built.beam;
+  const objStruct = (b.vertex.match(/struct objectStruct \{[\s\S]*?\}/) || [''])[0];
+  assert.doesNotMatch(objStruct, /mat4x4|mat3x3/, 'bez macierzy modelu w uniformach obiektu');
+  // węzły OBJECT poza teksturami per kadłub (sprite, normalne, kształt lakieru — hullKey)
+  const objNodes = b.updateNodes.filter((n) => n.isUniformNode && !n.hullKey && n.updateType === THREE.NodeUpdateType.OBJECT);
+  assert.equal(objNodes.length, 1, 'jeden węzeł OBJECT (slot) zamiast ~20');
+  const oldObj = built.armor.updateNodes.filter((n) => n.isUniformNode && !n.hullKey && n.updateType === THREE.NodeUpdateType.OBJECT);
+  assert.ok(oldObj.length >= 10, `płyta pancerza dalej na uniformach obiektu (${oldObj.length})`);
+  assert.match(b.vertex, /var<storage, read> hullObjects\b/);
+  // positionView = MV slotu × vec4(positionLocal, 1) (jak modelViewMatrix × positionLocal), klip jak three
+  assert.match(b.vertex, /v_positionView = \( mat4x4<f32>\( hullObjects\.value\[ \( \w+ \+ 0u \) \], hullObjects\.value\[ \( \w+ \+ 1u \) \], hullObjects\.value\[ \( \w+ \+ 2u \) \], hullObjects\.value\[ \( \w+ \+ 3u \) \] \) \* vec4<f32>\( positionLocal, 1\.0 \) \)\.xyz;/);
+  assert.match(b.vertex, /= \( render\.cameraProjectionMatrix \* vec4<f32>\( varyings\.v_positionView, 1\.0 \) \);/);
+  // płyta pancerza i heksy bez zmian (uniformy obiektu)
+  assert.match((built.armor.vertex.match(/struct objectStruct \{[\s\S]*?\}/) || [''])[0], /mat4x4/);
+
+  // commit: te same liczby co three (Float32 z Matrix4.multiplyMatrices), zakres slotów do wysyłki
+  const mat = new HullNodeMaterial('beam', holders({ uHullSlot: { value: 0 }, uRotation: { value: 0.75 }, uLightBase: { value: 42 },
+    uDmgSlot: { value: new THREE.Vector4(5, 6, 7, 1) }, uDmgWorld: { value: new THREE.Vector2(900, 400) }, uGridOwner: { value: 3 },
+    uWarpA: { value: new THREE.Vector4(1, 2, 3, 4) }, uWarpB: { value: new THREE.Vector4(5, 6, 7, 8) }, uWarpC: { value: new THREE.Vector4(9, 10, 11, 12) } }));
+  const mesh = new THREE.Mesh(beamGeometry(), mat);
+  const scene = new THREE.Scene();
+  scene.add(mesh);
+  mesh.position.set(7075238.77, -6289731.51, 0);
+  mesh.rotation.set(0, 0, -1.234);
+  scene.updateMatrixWorld();
+  const cam = new THREE.OrthographicCamera(-960, 960, 540, -540, 0.1, 5000);
+  cam.position.set(7075100.25, -6289650.5, 1000);
+  const slot = HullObjectStore.acquire(mesh);
+  assert.ok(slot >= 1, 'slot 0 zarezerwowany (zera)');
+  mat.uniforms.uHullSlot.value = slot;
+  assert.equal(HullObjectStore.commit(cam), 1);
+  const A = HullObjectStore.attribute.array;
+  const o = slot * HULL_OBJECT_SLOT_VEC4 * 4;
+  const mv = new THREE.Matrix4().multiplyMatrices(cam.matrixWorldInverse, mesh.matrixWorld);
+  assert.deepEqual(Array.from(A.subarray(o, o + 16)), Array.from(new Float32Array(mv.elements)), 'MV jak highpModelViewMatrix three');
+  assert.deepEqual(Array.from(A.subarray(o + 16, o + 32)), Array.from(new Float32Array(mesh.matrixWorld.elements)), 'macierz świata');
+  assert.equal(A[o + 33], Math.fround(0.75));
+  assert.equal(A[o + 46], 42);
+  assert.deepEqual(Array.from(A.subarray(o + 48, o + 53)), [5, 6, 7, 1, 3]);
+  assert.deepEqual(Array.from(A.subarray(o + 56, o + 68)), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+  const r = HullObjectStore.attribute.updateRanges[0];
+  assert.ok(r && r.start <= o && r.start + r.count >= o + HULL_OBJECT_SLOT_VEC4 * 4, 'zakres wysyłki obejmuje slot');
+  // niewidoczny — bez zapisu; zwolniony slot wraca do puli
+  mesh.visible = false;
+  assert.equal(HullObjectStore.commit(cam), 0);
+  HullObjectStore.release(slot);
+  assert.equal(HullObjectStore.acquire(new THREE.Mesh()), slot, 'slot ponownie użyty');
+  HullObjectStore.release(slot);
+  // klej: slot przy tworzeniu skóry, zwolnienie z materiałem, zapis przed passem ortho
+  assert.match(source, /material\.uniforms\.uHullSlot\.value = HullObjectStore\.acquire\(mesh\);/);
+  assert.match(source, /HullObjectStore\.release\(hullSlot\.value\);/);
+  assert.match(source, /Core3D\.addPassHook\('ortho', \(camera\) => \{ HullObjectStore\.commit\(camera\); \}\);/);
+  const core = read('src/3d/core3d.js');
+  assert.match(core, /const hooks = this\._passHooks \? this\._passHooks\[pass\.name\] : null;\n\s*if \(hooks\) for \(let i = 0; i < hooks\.length; i\+\+\) hooks\[i\]\(camera, pass\);\n\s*renderer\.render\(this\.scene, camera\);/);
 });

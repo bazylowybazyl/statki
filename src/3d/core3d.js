@@ -20,14 +20,59 @@ import {
 import { SUN_SHADOW_MAP_PLACEHOLDER, sunShadowUniforms } from './sunShadowMask.js';
 import { installPlaceholders } from './tsl/zamiennik.js';
 import { uniformNode, uniformsAdapter } from './tsl/uniformy.js';
-import { BloomGry, MAX_HEAT_HAZE_SOURCES, createPostUniforms, createUberPost, hdrBezpieczny } from './tsl/postGry.js';
+import { MAX_HEAT_HAZE_SOURCES, createPostUniforms, createUberPost } from './tsl/postGry.js';
+import { BloomGryCompute } from './tsl/bloomCompute.js';
 import { FxFrame, FX_DISTORT_LAYER } from './fx/fxFrame.js';
 import { Rozgrzewka, compileAsyncNaCelu } from './rozgrzewka.js';
+import { zainstalujKluczSwiatel } from './tsl/kluczSwiatel.js';
 
 // Brama znaczników czasu GPU (_gpuTimerGate): tyle zapytań musi zostać w puli three
 // (2 na pass), żeby zmieścić całą klatkę — dwa rendery podzielonego ekranu z modułami
 // (pieczenie map ringu, SDF kadłubów) i z zapasem na passy kolejnych zadań.
 const GPU_TIMER_FRAME_QUERIES = 512;
+// Kolejny render w tej samej klatce rAF (dema i narzędzia renderują wiele razy na klatkę —
+// mostki-demo, rdzen-demo, pomiary w pętli): miejsce na jeden pełny render (~25 passów sceny,
+// bloomu i postu po 2 zapytania + rendery modułów). Zadanie 23: brama liczyła miejsce tylko raz
+// na klatkę, więc seria renderów przepełniała pulę three („Maximum number of queries exceeded”).
+const GPU_TIMER_RENDER_QUERIES = 128;
+// Pula compute (renderer.compute: 2 zapytania na wywołanie) — klatka gry to dziś ~10–30 wywołań
+// (efekty broni, rakiety, ośrodek warpa, pas asteroid, mapa ran, przesunięcia pul).
+const GPU_TIMER_FRAME_COMPUTE_QUERIES = 256;
+// Warstwa trzymaczy rozgrzewki passa cienia (destruction3D.js, SHADOW_WARM_LAYER: żaden pass Core3D
+// jej nie rysuje) — w mapie cienia FG, żeby pipeline cienia kawałków stacji powstał przed rozpadem.
+const SHADOW_WARM_LAYER = 31;
+// Przejście grafu sceny przy sprawdzaniu rzucających cień (passShadowNeeded) — stos bez alokacji na klatkę.
+const _shadowScanStack = [];
+const _shadowScanFrustum = new THREE.Frustum();
+const _shadowScanMatrix = new THREE.Matrix4();
+
+// Czy mapa cienia passa (rzucający z warstw `mask`) wyjdzie niepusta albo czyta ją ktoś poza łapaczem —
+// warunek jak Renderer._projectObject three r183 dla kamery cienia (widoczne gałęzie, warstwy, kadr cienia;
+// rysują tylko siatki, linie, punkty i sprite'y — światło słońca też ma castShadow) i filtr passa cienia
+// (castShadow). Zachowawczo: LOD (zmienia dzieci pod kamerą), odbiorca cienia inny niż łapacz, rzucający
+// bez testu kadru — „potrzebna”.
+function passShadowNeeded(scene, mask, catcher, frustum) {
+  const stack = _shadowScanStack;
+  let n = 0;
+  let need = false;
+  stack[n++] = scene;
+  while (n > 0) {
+    const o = stack[--n];
+    stack[n] = null;
+    if (o.visible === false) continue;
+    if ((o.layers.mask & mask) !== 0) {
+      if (o.isLOD === true || (o.receiveShadow === true && o !== catcher)) { need = true; break; }
+      if (o.castShadow === true && (o.isMesh || o.isLine || o.isPoints || o.isSprite)) {
+        if (!o.frustumCulled) { need = true; break; }
+        if (o.isSprite ? frustum.intersectsSprite(o) : frustum.intersectsObject(o)) { need = true; break; }
+      }
+    }
+    const ch = o.children;
+    for (let i = 0; i < ch.length; i++) stack[n++] = ch[i];
+  }
+  while (n > 0) stack[--n] = null;
+  return need;
+}
 // Zastępcze flagi warstw dla wolnej kamery (lot nad miastem): renderuj wszystko poza
 // ośrodkiem warpa (liczony wokół kamery gry w płaszczyźnie gry).
 const LAYERS_ALL_ACTIVE = Object.freeze({ planets: true, halo: true, ringPlanets: true, shields: true, warp: false });
@@ -307,6 +352,41 @@ export function createShadowShaftsPass() {
   };
 }
 
+// Mapa cienia słońca PER PASS (zadanie 23) — semantyka WebGLShadowMap z bazy: mapa rysowana tuż przed
+// passem, który ją czyta, z rzucającymi TYLKO z warstw kamery tego passa (Core3D: przed passem ortho —
+// warstwa 0, przed FG — warstwa 2 i trzymacze rozgrzewki cienia, SHADOW_WARM_LAYER); pozostałe passy
+// (planety, ring-planety) czytają ostatnią mapę, jak na WebGL. ShadowNode three r183 odświeża mapę
+// najwyżej raz na klatkę rAF i rysuje wszystkie warstwy kamery cienia (gra: layers.enableAll) — łapacz
+// cienia warstwy 0 (z = −2) dostawał cień obiektów FG (stacje, rozpad stacji: cień bryły-ducha nad
+// planetą), a drugi widok podzielonego ekranu — mapę z kamery pierwszego. Tu odświeżenie tylko na
+// żądanie Core3D (`shadow.needsUpdate` przed passem), warstwy z `passLayersMask`.
+class PassShadowNode extends THREE.ShadowNode {
+  static get type() {
+    return 'PassShadowNode';
+  }
+
+  constructor(light) {
+    super(light);
+    /** Maska warstw rzucających dla następnego odświeżenia (0 = warstwy kamery cienia bez zmian). */
+    this.passLayersMask = 0;
+  }
+
+  updateBefore(frame) {
+    const shadow = this.shadow;
+    if (shadow.needsUpdate !== true) return;
+    const layers = shadow.camera.layers;
+    const saved = layers.mask;
+    if (this.passLayersMask !== 0) layers.mask = this.passLayersMask;
+    try {
+      this.updateShadow(frame);
+    } finally {
+      layers.mask = saved;
+    }
+    // Pierwsze odświeżenie tworzy mapę (nowa wersja tekstury głębi) — needsUpdate zostaje na następny pass, jak w three.
+    if (this.shadowMap && this.shadowMap.depthTexture.version === this._depthVersionCached) shadow.needsUpdate = false;
+  }
+}
+
 const BLEND_ADD_ONE_ONE = {
   blending: THREE.CustomBlending,
   blendEquation: THREE.AddEquation,
@@ -378,6 +458,11 @@ export const Core3D = {
   // Światło z mapą cienia (słońce gry, planet3d.assets.js): odświeżane raz na
   // klatkę na starcie render() — w WebGPU cień jest per światło (SPIKE 9).
   _sunShadowLight: null,
+  // Scalone wysyłki buforów uniformów (_coalesceUniformUploads): bufory z ≥ 2 zakresami, oszczędzone zapisy.
+  uniformUploadStats: { merged: 0, savedWrites: 0 },
+  // Odświeżenia mapy cienia przed passami z łapaczem: wykonane / pominięte bez rzucających (_passSunShadow).
+  shadowPassStats: { updated: 0, skipped: 0 },
+  _shadowMapEmpty: false,
   // Analityczne okludery shaftów, zgłaszane co klatkę przez systemy gry:
   // dyski (planet3d.assets), kapsuły (hexShips3D),
   // pierścienie (ringi „Halo”, haloRingGame.js — Map po kluczu ringu, bez begin/reset).
@@ -393,20 +478,18 @@ export const Core3D = {
   // chowa planety) i shield3D.js — zachowawczo, w razie wątpliwości true. Ośrodek
   // warpa (warstwa 8) — odwrotnie: tylko gdy sterownik warpa zgłosi go w tej klatce.
   layerActivity: { planets: true, halo: true, ringPlanets: true, shields: true, warp: false },
-  // Bloom: BloomGry (BloomNode three + zgodność z dawnym passem WebGL, tsl/postGry.js)
-  // w grafie postu; siła / promień / próg to uniformy (_applyBloomPassConfig co klatkę
-  // z bloomConfig.js albo tunera DevVFX.bloom), rozmiar = bufor rysowania ×
-  // resolutionScale w każdym renderze. Powstaje z urządzeniem (_createPost).
+  // Bloom: BloomGryCompute (algorytm BloomNode three = dawny pass WebGL, 12 kroków w jednym passie
+  // compute — tsl/bloomCompute.js, zadanie 23) liczony w _renderPost przed „uber”; siła / promień /
+  // próg to uniformy (_applyBloomPassConfig co klatkę z bloomConfig.js albo tunera DevVFX.bloom),
+  // rozmiar = bufor rysowania × resolutionScale w każdym renderze. Powstaje z urządzeniem (_createPost).
   bloomPass: null, bloomResolutionScale: BLOOM_DEFAULTS.resolutionScale, bloomBaseStrength: BLOOM_DEFAULTS.strength, bloomBaseThreshold: BLOOM_DEFAULTS.threshold,
   // Post: dwa RenderPipeline zbudowane raz — z bloomem (_post) i bez (_postBezBloomu,
   // perfToggles.bloom = false: bez kosztu passów bloomu, bez przebudowy przy
   // przełączeniu). Wspólne uniformy „uber” (gorące powietrze, uHeatOn zamiast define).
   _postBezBloomu: null, _postUniforms: null,
-  // Pomiar bloomu: jego passy lecą w updateBefore węzła, W ŚRODKU renderu postu —
-  // haki BloomGry liczą je do kubełka 'bloom', a _renderPost odejmuje je od 'post'.
+  // Pomiar bloomu: haki wokół passu compute (kubełek 'bloom', przed renderem postu).
   _onBloomRenderBegin: null, _onBloomRenderEnd: null, _bloomT0: 0,
   _bloomInfoBefore: { calls: 0, triangles: 0, points: 0, lines: 0 },
-  _bloomInfoDelta: { calls: 0, triangles: 0, points: 0, lines: 0, ms: 0 },
   msaaSamples: 0,
   // Zegar GPU. Timery per pass mierzą czas CPU wokół pracy asynchronicznej, więc
   // gdy wąskim gardłem staje się karta, blokada wypada w losowym draw callu i
@@ -418,6 +501,9 @@ export const Core3D = {
   // Promise (SPIKE 8); wynik = ms GPU ostatniej rozwiązanej klatki.
   gpuFrameMs: 0,
   gpuComputeMs: 0,
+  // Co którą klatkę rAF mierzyć czas GPU (znaczniki czasu kosztują CPU na każdy pass — zadanie 23);
+  // 1 = każda klatka (narzędzia pomiaru: koszt-klatki.mjs).
+  gpuTimerSampleEvery: 4,
   _gpuTimerPending: { render: false, compute: false },
   _gpuTimerFrame: -1,
   _gpuTimerGateFrame: -1,
@@ -566,7 +652,7 @@ export const Core3D = {
 
   // Strojenie bloomu na żywo: węzły strength / radius / threshold BloomNode to
   // uniformy (.value — bez przebudowy pipeline'u), skala rozdzielczości wchodzi przy
-  // najbliższym renderze bloomu (BloomGry.setSize).
+  // najbliższym renderze bloomu (BloomGryCompute._resize).
   _applyBloomPassConfig() {
     const bloom = this.bloomPass;
     if (!bloom) return;
@@ -585,29 +671,7 @@ export const Core3D = {
   },
 
   _bloomRenderEnd() {
-    const ms = performance.now() - this._bloomT0;
-    const before = this._bloomInfoBefore;
-    const cur = this.renderer?.info?.render;
-    const d = this._bloomInfoDelta;
-    d.calls += Math.max(0, (Number(cur?.drawCalls) || 0) - before.calls);
-    d.triangles += Math.max(0, (Number(cur?.triangles) || 0) - before.triangles);
-    d.points += Math.max(0, (Number(cur?.points) || 0) - before.points);
-    d.lines += Math.max(0, (Number(cur?.lines) || 0) - before.lines);
-    d.ms += Math.max(0, ms);
-    this._addRenderInfoDelta('bloom', ms, before);
-  },
-
-  // Passy bloomu siedzą w przyroście renderu postu (updateBefore węzła) — już
-  // policzone w 'bloom', więc zdejmujemy je z 'post' (zostaje sam uber).
-  _takeBloomOutOfPost() {
-    const d = this._bloomInfoDelta;
-    const post = this.lastFrameRenderInfo?.post;
-    if (!post || !(d.calls > 0 || d.ms > 0)) return;
-    post.calls = Math.max(0, post.calls - d.calls);
-    post.triangles = Math.max(0, post.triangles - d.triangles);
-    post.points = Math.max(0, post.points - d.points);
-    post.lines = Math.max(0, post.lines - d.lines);
-    post.ms = Math.max(0, post.ms - d.ms);
+    this._addRenderInfoDelta('bloom', performance.now() - this._bloomT0, this._bloomInfoBefore);
   },
 
   // Część synchroniczna: scena, kamery, światła, cele renderu, passy — moduły
@@ -935,8 +999,45 @@ export const Core3D = {
     this._gpuTimestampFeature = renderer.backend?.trackTimestamp === true;
     installPlaceholders(renderer);
     this._guardPendingPipelines(renderer);
+    // Klucz węzła świateł pamiętany z podpisem świateł (zadanie 23): three liczył go od nowa przy każdym
+    // render() (~10–15 µs; 12 passów bloomu, post, maska, passy sceny) — ten sam klucz, bez przeliczania.
+    zainstalujKluczSwiatel();
+    this._coalesceUniformUploads(renderer);
     renderer.setPixelRatio(this.pixelRatio);
     renderer.setSize(Math.max(1, this.width | 0), Math.max(1, this.height | 0), false);
+  },
+
+  // three r183 (WebGPUBindingUtils.updateBinding) wysyła KAŻDY zmieniony uniform bufora osobnym
+  // queue.writeBuffer — zakres na uniform, bez scalania. Grupa „object” materiału węzłowego to kilka
+  // zapisów na rysunek (macierze, czas, stan tarczy…): duża bitwa ~300 wywołań writeBuffer na klatkę,
+  // ~2,5 µs każde (zadanie 23). Tu zakresy bufora scalone w JEDEN [najniższy, najwyższy) — bajty pomiędzy
+  // są na GPU takie same jak w kopii CPU bufora (UniformsGroup pisze wartość do kopii CPU i dopisuje jej
+  // zakres; bufor GPU powstaje wyzerowany jak kopia), więc stan GPU po zapisie jest bit w bit ten sam.
+  // Bez zakresów (bufor tablicy uniformów — pełna wysyłka) i jeden zakres — ścieżka three.
+  _coalesceUniformUploads(renderer) {
+    const utils = renderer?.backend?.bindingUtils;
+    if (!utils || typeof utils.updateBinding !== 'function' || utils.__core3dUniformCoalesce) return;
+    const orig = utils.updateBinding;
+    const stats = this.uniformUploadStats;
+    utils.__core3dUniformCoalesce = true;
+    utils.updateBinding = function (binding) {
+      const ranges = binding.updateRanges;
+      const n = ranges ? ranges.length : 0;
+      const array = n > 1 ? binding.buffer : null;
+      if (n < 2 || !ArrayBuffer.isView(array)) return orig.call(this, binding);
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (let i = 0; i < n; i++) {
+        const r = ranges[i];
+        if (r.start < lo) lo = r.start;
+        const end = r.start + r.count;
+        if (end > hi) hi = end;
+      }
+      const buffer = this.backend.get(binding).buffer;
+      this.backend.device.queue.writeBuffer(buffer, lo * array.BYTES_PER_ELEMENT, array, lo, hi - lo);
+      stats.merged++;
+      stats.savedWrites += n - 1;
+    };
   },
 
   // three r183: compileAsync wkłada do cache pipeline, którego obiekt GPU dopiero
@@ -979,7 +1080,7 @@ export const Core3D = {
   },
 
   // Post (tsl/postGry.js), kolejność jak dawny łańcuch WebGL resolve → bloom → uber:
-  // bufor sceny (MSAA rozwiązane do .texture) → bloom (BloomGry z bloomConfig.js) →
+  // bufor sceny (MSAA rozwiązane do .texture) → bloom (BloomGryCompute z bloomConfig.js) →
   // „uber”: gorące powietrze przesuwa odczyt sceny RAZEM z bloomem, dyspersja dysz,
   // ACES gry → LinearTosRGB → kanwa. Dwa RenderPipeline (z bloomem i bez) zbudowane
   // raz — perfToggles.bloom wybiera w _renderPost, bez przebudowy i bez kosztu
@@ -988,9 +1089,9 @@ export const Core3D = {
   _createPost(renderer) {
     const cfg = this._getBloomConfig();
     const sceneTexture = this.composerTarget.texture;
-    // Siatka bezpieczeństwa (12-B): NaN / ±Inf bufora sceny → 0 przed bloomem (i w „uber”) —
-    // pojedynczy NaN w HalfFloat rozlewał bloom na cały ekran.
-    const bloom = new BloomGry(hdrBezpieczny(texture(sceneTexture)), cfg.strength, cfg.radius, cfg.threshold);
+    // Siatka bezpieczeństwa (12-B): NaN / ±Inf bufora sceny → 0 przed bloomem (hdrBezpieczny w kernelu progu
+    // bloomCompute.js) i w „uber” — pojedynczy NaN w HalfFloat rozlewał bloom na cały ekran.
+    const bloom = new BloomGryCompute(sceneTexture, cfg.strength, cfg.radius, cfg.threshold);
     bloom.resolutionScale = cfg.resolutionScale;
     bloom.onRenderBegin = this._onBloomRenderBegin;
     bloom.onRenderEnd = this._onBloomRenderEnd;
@@ -1309,52 +1410,125 @@ export const Core3D = {
   // synchronicznie), z wiszącym — ta klatka bez znaczników (backend.trackTimestamp =
   // false: initTimestampQuery nic nie dopisuje do passów), wynik zlecenia odblokowuje.
   // Zmierzone klatki zostają pełne; PerfHUD dostaje wynik rzadziej.
+  // Zadanie 23: miejsce sprawdzane też przy KAŻDYM kolejnym renderze tej samej klatki rAF (dema i
+  // narzędzia renderują wiele razy na klatkę — brama raz na klatkę przepuszczała całą serię i pula się
+  // przepełniała) i w puli compute (osobny znacznik puli — compute nie gasi znaczników renderu).
   _gpuTimerGate() {
     const renderer = this.renderer;
     const backend = renderer?.backend;
     if (!backend || this._gpuTimestampFeature !== true) return;
     const frame = renderer.info.frame;
-    if (frame === this._gpuTimerGateFrame) return;
-    this._gpuTimerGateFrame = frame;
-    backend.trackTimestamp = true;
-    const pool = backend.timestampQueryPool?.render;
+    const firstOfFrame = frame !== this._gpuTimerGateFrame;
+    const pools = backend.timestampQueryPool;
+    if (firstOfFrame) {
+      this._gpuTimerGateFrame = frame;
+      // Zadanie 23: znaczniki co N-tą klatkę (gpuTimerSampleEvery) — para zapytań na pass kosztowała
+      // ~5 µs CPU na pass (~0,13 ms klatki przy Ziemi, 25 passów z bloomem), a wynik i tak przychodzi
+      // z opóźnieniem kilku–kilkudziesięciu klatek (PerfHUD, harness). Klatka bez próbki: bez znaczników.
+      const every = Math.max(1, this.gpuTimerSampleEvery | 0);
+      if (every > 1 && (frame % every) !== 0) {
+        backend.trackTimestamp = false;
+        return;
+      }
+      backend.trackTimestamp = true;
+      const compute = pools?.compute;
+      if (compute) {
+        compute.trackTimestamp = true;
+        if (compute.maxQueries - compute.currentQueryIndex < GPU_TIMER_FRAME_COMPUTE_QUERIES) {
+          if (!this._gpuTimerPending.compute) this._gpuTimerPollType('compute');
+          else compute.trackTimestamp = false;
+        }
+      }
+    } else if (backend.trackTimestamp !== true) {
+      return; // ta klatka już bez znaczników
+    }
+    const pool = pools?.render;
     if (!pool || !(pool.maxQueries > 0)) return;
-    if (pool.maxQueries - pool.currentQueryIndex >= GPU_TIMER_FRAME_QUERIES) return;
-    if (!this._gpuTimerPending.render) this._gpuTimerPoll();
+    const need = firstOfFrame ? GPU_TIMER_FRAME_QUERIES : GPU_TIMER_RENDER_QUERIES;
+    if (pool.maxQueries - pool.currentQueryIndex >= need) return;
+    if (!this._gpuTimerPending.render) this._gpuTimerPollType('render');
     else backend.trackTimestamp = false;
   },
 
   _gpuTimerPoll() {
-    const renderer = this.renderer;
-    const backend = renderer?.backend;
+    const backend = this.renderer?.backend;
     if (!backend || backend.trackTimestamp !== true) return;
-    const pools = backend.timestampQueryPool;
-    const pending = this._gpuTimerPending;
-    if (!pending.render && pools?.render) {
-      pending.render = true;
-      renderer.resolveTimestampsAsync('render').then(this._onGpuRenderTimestamp, this._onGpuTimestampError);
-    }
-    if (!pending.compute && pools?.compute) {
-      pending.compute = true;
-      renderer.resolveTimestampsAsync('compute').then(this._onGpuComputeTimestamp, this._onGpuTimestampError);
-    }
+    this._gpuTimerPollType('render');
+    this._gpuTimerPollType('compute');
   },
 
-  // Słońce gry z mapą cienia (planet3d.assets.js, DirectSun) zgłasza się tu.
-  // W WebGPU odświeżanie mapy jest per światło (renderer.shadowMap ma tylko
-  // enabled / type): autoUpdate = false, needsUpdate raz na starcie render().
-  // ShadowNode i tak aktualizuje najwyżej raz na klatkę rAF (SPIKE 9) — dawne
-  // dwa odświeżenia z WebGL (przed ortho i FG) są zbędne.
+  // Jedno zlecenie w locie na typ puli (render / compute); zlecenie zeruje pulę synchronicznie.
+  _gpuTimerPollType(type) {
+    const renderer = this.renderer;
+    const pool = renderer?.backend?.timestampQueryPool?.[type];
+    const pending = this._gpuTimerPending;
+    if (!pool || pending[type]) return;
+    pending[type] = true;
+    renderer.resolveTimestampsAsync(type).then(
+      type === 'render' ? this._onGpuRenderTimestamp : this._onGpuComputeTimestamp,
+      this._onGpuTimestampError
+    );
+  },
+
+  // Słońce gry z mapą cienia (planet3d.assets.js, DirectSun) zgłasza się tu —
+  // przed pierwszym renderem (węzeł cienia światła powstaje przy budowie pierwszego
+  // odbiorcy). W WebGPU odświeżanie mapy jest per światło (renderer.shadowMap ma
+  // tylko enabled / type): autoUpdate = false, własny węzeł cienia (PassShadowNode)
+  // i odświeżenie przed passem ortho i FG z warstwami passa, jak na WebGL (zadanie 23).
   setSunShadowLight(light) {
     this._sunShadowLight = (light && light.isLight && light.shadow) ? light : null;
-    if (this._sunShadowLight) this._sunShadowLight.shadow.autoUpdate = false;
+    if (!this._sunShadowLight) return;
+    const shadow = this._sunShadowLight.shadow;
+    shadow.autoUpdate = false;
+    if (!(shadow.shadowNode instanceof PassShadowNode)) shadow.shadowNode = new PassShadowNode(this._sunShadowLight);
   },
 
-  _requestSunShadowUpdate(toggles) {
+  // Mapa cienia przed passem sceny: rzucający z warstw `layersMask` (kamera passa), odbiorcy tego passa
+  // czytają świeżą mapę; passy bez żądania — ostatnią (planety, ring-planety — jak na WebGL).
+  _requestSunShadowUpdate(toggles, layersMask) {
     const light = this._sunShadowLight;
     if (!light || !light.castShadow || !light.shadow) return;
     light.shadow.autoUpdate = false;
-    if (toggles.threeShadows !== false) light.shadow.needsUpdate = true;
+    if (toggles.threeShadows === false) return;
+    const node = light.shadow.shadowNode;
+    if (node instanceof PassShadowNode) node.passLayersMask = layersMask | 0;
+    light.shadow.needsUpdate = true;
+  },
+
+  // Mapa cienia przed passem z łapaczem (zadanie 23, duża bitwa): bez rzucających w kadrze cienia i bez
+  // innych odbiorców na warstwach passa mapa wyszłaby pusta, a łapacz (ShadowMaterial: alfa = krycie ×
+  // (1 − cień)) rysowałby alfę 0 — obraz bez zmian. Wtedy bez odświeżenia mapy (przejście sceny kamerą
+  // cienia, pass głębi: ~75 µs) i bez rysunku łapacza (~25 µs). Mapę z końca klatki (FG) czytają później
+  // planety — FG pomijamy tylko, gdy mapa jest już pusta (ostatnie odświeżenie bez rzucających).
+  // Przełączniki wydajności cienia (threeShadows / fgShadows wyłączone) — dawny przepływ.
+  _passSunShadow(t, mask, catcher, last) {
+    const light = this._sunShadowLight;
+    const shadow = light && light.castShadow ? light.shadow : null;
+    if (!shadow || !catcher || t.threeShadows === false || t.fgShadows === false) {
+      this._requestSunShadowUpdate(t, mask);
+      this._shadowMapEmpty = false;
+      return;
+    }
+    // Kadr kamery cienia jak w passie cienia three (ShadowNode.renderShadow → updateMatrices, frustum z
+    // projekcji × odwrotności świata). Przed pierwszym renderem cienia (inny układ współrzędnych kamery) —
+    // bez testu kadru (mapa „potrzebna”).
+    shadow.updateMatrices(light);
+    const cam = shadow.camera;
+    let need = true;
+    if (cam.coordinateSystem === this.renderer.coordinateSystem) {
+      _shadowScanMatrix.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+      _shadowScanFrustum.setFromProjectionMatrix(_shadowScanMatrix, cam.coordinateSystem, cam.reversedDepth);
+      need = passShadowNeeded(this.scene, mask, catcher, _shadowScanFrustum);
+    }
+    if (need || (last && this._shadowMapEmpty !== true)) {
+      if (catcher.visible !== true) catcher.visible = true;
+      this._requestSunShadowUpdate(t, mask);
+      this._shadowMapEmpty = !need;
+      this.shadowPassStats.updated++;
+    } else {
+      if (catcher.visible !== false) catcher.visible = false;
+      this.shadowPassStats.skipped++;
+    }
   },
 
   // Maska widoczności słońca (sunShadowMask.js): uniformy okluderów i jeden
@@ -1498,8 +1672,7 @@ export const Core3D = {
     renderer.autoClear = false;
     renderer.toneMapping = THREE.NoToneMapping;
 
-    // Mapa cienia słońca: raz na klatkę, zanim pierwszy odbiorca ją przeczyta.
-    this._requestSunShadowUpdate(t);
+    // Mapa cienia słońca: per pass (przed ortho i FG, warstwy passa) — w pętli passów niżej.
 
     // Maska widoczności słońca — PRZED pre-passem halo i passami sceny, bo
     // czytają ją materiały (kadłuby, tło, planety przy ringu, atmosfery).
@@ -1539,6 +1712,10 @@ export const Core3D = {
       if (!this._scenePassHasContent(pass, layerActivity)) continue;
       // Zgięcie tła warpa (zadanie 22) nie ma tu passa: w demie gnie się tylko mgławica, a pass tła
       // gry niesie też gwiazdy i dolną część ringu — zgina ją materiał mgławicy (skyBend.js).
+      // Mapa cienia słońca przed passami z odbiorcami (łapacze cienia warstw 0 i 2, stacje FG) — z
+      // rzucającymi z warstw TEGO passa, jak WebGLShadowMap w bazie (PassShadowNode, zadanie 23).
+      if (pass === this.renderPassOrtho) this._passSunShadow(t, 1 << pass.layer, this.shadowCatcher, false);
+      else if (pass === this.renderPassFg) this._passSunShadow(t, (1 << pass.layer) | (1 << SHADOW_WARM_LAYER), this.shadowCatcherFg, true);
       this._runScenePass(pass);
     }
     // Zniekształcenia efektów do „uber”: źródła rzutowane na kamerę tego renderu, warstwa DIST.
@@ -1579,6 +1756,8 @@ export const Core3D = {
       }
       const camera = this.getPassCamera(pass.ortho);
       camera.layers.set(pass.layer);
+      const hooks = this._passHooks ? this._passHooks[pass.name] : null;
+      if (hooks) for (let i = 0; i < hooks.length; i++) hooks[i](camera, pass);
       renderer.render(this.scene, camera);
     }
     this._addRenderInfoDelta(pass.bucket, performance.now() - t0, before);
@@ -1611,19 +1790,17 @@ export const Core3D = {
     }
   },
 
-  // Post na kanwę (bieżący cel = null): bloom (gdy włączony) i „uber”. Bloom liczy
-  // się w updateBefore swojego węzła W ŚRODKU post.render() — haki BloomGry zbierają
-  // jego passy do kubełka 'bloom', a _takeBloomOutOfPost zdejmuje je z 'post'.
+  // Post na kanwę (bieżący cel = null): bloom (gdy włączony — jeden pass compute, bloomCompute.js,
+  // kubełek 'bloom' przez haki) i „uber” (kubełek 'post').
   _renderPost() {
+    const bezBloomu = this.perfToggles?.bloom === false && !!this._postBezBloomu;
+    if (!bezBloomu && this.bloomPass) this.bloomPass.render(this.renderer);
     const before = this._renderInfoBefore;
     this._readRenderInfoInto(before);
-    const d = this._bloomInfoDelta;
-    d.calls = 0; d.triangles = 0; d.points = 0; d.lines = 0; d.ms = 0;
-    const post = (this.perfToggles?.bloom === false && this._postBezBloomu) ? this._postBezBloomu : this._post;
+    const post = bezBloomu ? this._postBezBloomu : this._post;
     const t0 = performance.now();
     post.render();
     this._addRenderInfoDelta('post', performance.now() - t0, before);
-    this._takeBloomOutOfPost();
   },
 
   // Klatka efektów GPU (fxFrame.js) — raz na klatkę rAF, kamera gracza 1 (w podzielonym ekranie
@@ -1901,6 +2078,23 @@ export const Core3D = {
   // Krok { name, spawn?(ctx), lights?(ctx), update?(ctx), warm?(ctx) } raz na klatkę przed
   // passami scen; warm raz przy gotowym urządzeniu (puste dispatche, prewarmPass siatek).
   addFxStep(step) { return this.fx ? this.fx.addStep(step) : step; },
+
+  // Haki przed passem sceny (zadanie 23): fn(camera, pass) tuż przed renderer.render passa o tej nazwie
+  // ('ortho', 'fg', …) — z kamerą TEGO passa (podzielony ekran: raz na widok). Wzór: zapis danych per
+  // kadłub z macierzą model-widok (HullObjectStore, hexShips3D.tsl.js).
+  _passHooks: null,
+  addPassHook(passName, fn) {
+    if (typeof fn !== 'function') return fn;
+    const hooks = this._passHooks || (this._passHooks = {});
+    const list = hooks[passName] || (hooks[passName] = []);
+    if (!list.includes(fn)) list.push(fn);
+    return fn;
+  },
+  removePassHook(passName, fn) {
+    const list = this._passHooks?.[passName];
+    const i = list ? list.indexOf(fn) : -1;
+    if (i >= 0) list.splice(i, 1);
+  },
   removeFxStep(step) { this.fx?.removeStep(step); },
   // Źródła zniekształceń tej klatki w świecie gry (shock / implode / heat — distortion.js);
   // dysze i tarcze zostają przy pushHeatHazeWorld.

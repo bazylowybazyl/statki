@@ -599,8 +599,9 @@ test('WGSL materiału: skóra belek czyta pulę ran i siatkę świateł (tylko o
   assert.ok((beam.match(/var<uniform>/g) || []).length <= 12, 'limit 12 buforów uniformów na etap');
   assert.doesNotMatch(beam, /mat3x3<f32>/, 'szum rany bez macierzy uv (jawne uv)');
   assert.match(beam, /unpack2x16float/, 'żar i jony z f16');
-  // Rana tylko przy slocie (warunek jednolity z uniformu obiektu) i jedno źródło żaru (max ze skórą).
-  assert.match(beam, /if \( \( object\.\w+\.w > 0\.5 \) \)/);
+  // Rana tylko przy slocie (warunek jednolity: slot ran z bufora danych kadłuba — indeks z uniformu obiektu,
+  // zadanie 23) i jedno źródło żaru (max ze skórą).
+  assert.match(beam, /if \( \( hullObjects\.value\[ \( \w+ \+ 12u \) \]\.w > 0\.5 \) \)/);
   assert.match(beam, /max\( \(?[^;]*heat|max\(/);
   for (const v of [armor]) {
     assert.doesNotMatch(v, /hullDamagePool|fxGrid/, 'płyta pancerza bez mapy ran i świateł efektów');

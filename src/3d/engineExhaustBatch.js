@@ -34,6 +34,8 @@ import { Core3D } from './core3d.js';
 import { sceneOriginNearCamera } from './sceneOrigin.js';
 import { uniformsAdapter } from './tsl/uniformy.js';
 import { makeFlareTexture, makeGlowTexture, makeRingTexture } from '../../Engineeffects.js';
+// Losowość warstwy efektów (zadanie 23): wizualia nie zużywają Math.random gry — przebieg rozgrywki nie zależy od obrazu.
+import { fxRandom } from './fx/fxRandom.js';
 
 const MAX_NOZZLES = 4096;
 
@@ -272,7 +274,7 @@ export function createExhaustState(opts = {}) {
     colorTempK: Number.isFinite(Number(opts.colorTempK)) ? Number(opts.colorTempK) : 8000,
     curve: Number.isFinite(Number(opts.curve)) ? Number(opts.curve) : 1.8,
     // Własny zegar dyszy — bez tego cała flota pulsowałaby w jednym rytmie.
-    time: Math.random() * 100
+    time: fxRandom.next() * 100
   };
 }
 

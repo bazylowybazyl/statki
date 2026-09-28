@@ -65,6 +65,9 @@ export const BLOOM_ZGODNOSC_WEBGL = 3.0;
  * tuner), aktualizacja raz na render (podzielony ekran = dwa rendery w klatce),
  * haki pomiaru (kubełek 'bloom' w Core3D — bloom renderuje się w updateBefore, czyli
  * W ŚRODKU renderu postu).
+ * Od zadania 23 gra liczy bloom BloomGryCompute (bloomCompute.js — ten sam algorytm w jednym
+ * passie compute zamiast 12 renderów); BloomGry zostaje wzorcem parzystości
+ * (scripts/webgpu/bloom-parzystosc.mjs: cele bit w bit) i testów zgodności z dawnym passem WebGL.
  */
 export class BloomGry extends BloomNode {
   static get type() {

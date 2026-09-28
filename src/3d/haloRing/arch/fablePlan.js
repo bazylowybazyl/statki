@@ -13,7 +13,7 @@
 // K-7 i zatoki w płaszczyźnie gry; płyty doków i osłona jak w ECUMENE.
 import { haloPortSites } from '../haloRingConfig.js';
 import { PORT_PAD_H } from '../haloRingRoofPlan.js';
-import { ArchBatch, archHex, archHslLinear, archMatrix, archPoint, clamp, smoothstep } from './archFrame.js';
+import { ArchBatch, archHex, archHslLinear, archMatrix, archPoint, archRunSteps, clamp, smoothstep } from './archFrame.js';
 
 export const FAB_S = 3;
 const S = FAB_S;
@@ -354,6 +354,10 @@ export function createFablePlan(layout, seed = layout.seed) {
 
   // Mapa stref (tekstura dema: r = typ·16 + 8, g = gęstość, b = extra).
   function bakeZoneMap(width, height) {
+    return archRunSteps(bakeZoneMapSteps(width, height));
+  }
+  // Krokami (zadanie 23): `yield` co 2 rzędy (8192 × 256 przy Jowiszu: ~0,5 s pracy w ~130 krokach).
+  function* bakeZoneMapSteps(width, height) {
     const data = new Uint8Array(width * height * 4);
     for (let y = 0; y < height; y++) {
       const u = ((y + 0.5) / height - 0.5) * W;
@@ -366,6 +370,7 @@ export function createFablePlan(layout, seed = layout.seed) {
         data[i + 2] = Math.round(clamp(z.e, 0, 1) * 255);
         data[i + 3] = 255;
       }
+      if ((y & 1) === 1) yield;
     }
     return data;
   }
@@ -378,7 +383,7 @@ export function createFablePlan(layout, seed = layout.seed) {
   return {
     layout, R, W, HW, N, span, LEN, CIRC, stretch, seed, S,
     sectors, secs, domes, sites, subRng, fbm, hash1,
-    zoneAt, zoneWithPort, bakeZoneMap, portClass, locate, sToTheta, theta0, heightAt, inDome, domeHit: _domeHit,
+    zoneAt, zoneWithPort, bakeZoneMap, bakeZoneMapSteps, portClass, locate, sToTheta, theta0, heightAt, inDome, domeHit: _domeHit,
     urban: ZONE_URBAN
   };
 }
@@ -388,6 +393,11 @@ export function createFablePlan(layout, seed = layout.seed) {
 const GREENS = [[0.10, 0.30, 0.08], [0.14, 0.34, 0.10], [0.07, 0.24, 0.07], [0.20, 0.36, 0.09], [0.32, 0.30, 0.10]];
 
 export function buildFableCity(plan) {
+  return archRunSteps(buildFableCitySteps(plan));
+}
+
+// Krokami (zadanie 23): `yield` co 64 komórki wzdłuż ringu (~3 ms pracy przy Jowiszu).
+export function* buildFableCitySteps(plan) {
   const { R, W, HW, CIRC, N, LEN } = plan;
   const rng = plan.subRng('city');
   const m = new Array(16);
@@ -418,6 +428,7 @@ export function buildFableCity(plan) {
     list.push16(m, color, 0, 0, 0.02, 0);
   };
   for (let i = 0; i < CELLS_S; i++) {
+    if (i && (i & 63) === 0) yield;
     const s0 = i * CELL;
     const sc = s0 + CELL * 0.5;
     const k = Math.min(N - 1, Math.floor(sc / LEN));

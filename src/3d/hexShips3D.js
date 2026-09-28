@@ -36,11 +36,13 @@ import {
   HULL_WARP_OFF,
   HullDebrisNodeMaterial,
   HullLightStore,
-  HullNodeMaterial
+  HullNodeMaterial,
+  HullObjectStore
 } from './hexShips3D.tsl.js';
 import { buildHullSkinTopology, writeHullSkin, writeHullSkinQuads, clearHullSkinDirty } from './beamHullSkin.js';
 import { HullBodies, hullSpriteRotation } from '../game/hullBodies.js';
 import { HullDebris3D } from './hullDebris3D.js';
+import { HullSkinBatch } from './hullSkinBatch.js';
 import { HullDamageMap } from './hullDamageMap.js';
 
 // Materiały kadłubów (skóra belek, siatka heksów, płyta pancerza, szczątki GPU)
@@ -775,6 +777,15 @@ function disposeMeshData(data) {
     HullLightStore.release(data.lightSlot);
     data.lightSlot = -1;
   }
+  if (data.batchEntry) {
+    data.batch.remove(data.batchEntry);
+    data.batchEntry = null;
+  }
+  const hullSlot = data.mesh?.material?.uniforms?.uHullSlot;
+  if (hullSlot && hullSlot.value > 0) {
+    HullObjectStore.release(hullSlot.value);
+    hullSlot.value = 0;
+  }
 }
 
 const GPU_DEBRIS_MAX = 10000;
@@ -1033,8 +1044,62 @@ function createHullUniforms(entity, texture, normalTexture, shapeUniform, srcWid
       // warpa w entity.__warpHullU ({ a, b, c } — Vector4, px sprite'a); bez nich wyłączone.
       uWarpA: warpHullHolder(entity, 'a'),
       uWarpB: warpHullHolder(entity, 'b'),
-      uWarpC: warpHullHolder(entity, 'c')
+      uWarpC: warpHullHolder(entity, 'c'),
+      // Skóra belek (zadanie 23): slot w HullObjectStore — wartości wyżej i macierze kadłuba trafiają
+      // do bufora storage przed passem ortho; w grupie „object” materiału zostaje tylko ten numer.
+      uHullSlot: { value: 0 }
   };
+}
+
+// Partie skór kadłubów (hullSkinBatch.js, zadanie 23): jeden rysunek na zestaw tekstur (sprite albo obraz
+// kadłuba, mapa normalnych, mapa kształtu lakieru) — ~145 rysunków skór w dużej bitwie → kilka. Siatka
+// kadłuba (data.mesh) zostaje nośnikiem transformacji i material.uniforms (dane slotu), ale nie jest w scenie.
+const _skinBatches = new Map();
+const _batchImgIds = new WeakMap();
+let _batchImgNext = 1;
+function batchImgId(img) {
+  if (!img) return 0;
+  let id = _batchImgIds.get(img);
+  if (!id) { id = _batchImgNext++; _batchImgIds.set(img, id); }
+  return id;
+}
+
+function acquireSkinBatch(data) {
+  const key = `${batchImgId(data.visualImageRef || data.armorImageRef)}|${batchImgId(data.normalMapRef)}|${batchImgId(data.shapeImageRef)}`;
+  let batch = _skinBatches.get(key);
+  if (batch) return batch;
+  // Tekstury partii (własne referencje — kadłub i jego tekstury mogą zniknąć wcześniej niż partia)
+  const texture = data.visualImageRef ? acquireSharedVisualTexture(data.visualImageRef) : createManagedTexture(data.armorImageRef);
+  const normal = data.normalMapRef ? createManagedTexture(data.normalMapRef, true) : null;
+  const shape = data.shapeImageRef ? HullLacquer.acquireShapeUniform(data.shapeImageRef) : HullLacquer.flatShapeUniform;
+  const material = new HullNodeMaterial('beamBatch', {
+    uSprite: { value: texture || HULL_EMPTY_SPRITE_TEXTURE },
+    uNormalMap: { value: normal || HULL_FLAT_NORMAL_TEXTURE },
+    uShapeMap: shape
+  });
+  batch = new HullSkinBatch(key, material);
+  batch.owned = { visualImageRef: data.visualImageRef, texture, normal, shapeImageRef: data.shapeImageRef };
+  batch.mesh.visible = false;
+  Core3D.scene.add(batch.mesh);
+  _skinBatches.set(key, batch);
+  return batch;
+}
+
+// Widoczność partii: bez widocznego kadłuba poza listą rysowania (three liczyłby jej wiązania co klatkę,
+// a niewidoczne kadłuby i tak zwija wierzchołek). Wołane po pętli kadłubów (widoczność nośników ustalona).
+function syncSkinBatches() {
+  for (const batch of _skinBatches.values()) {
+    const vis = batch.anyVisible();
+    if (batch.mesh.visible !== vis) batch.mesh.visible = vis;
+  }
+}
+
+// Zapis slotów HullObjectStore przed passem ortho (kamera TEGO passa — macierz model-widok jak three).
+let _hullObjectHook = false;
+function ensureHullObjectHook() {
+  if (_hullObjectHook || typeof Core3D.addPassHook !== 'function') return;
+  Core3D.addPassHook('ortho', (camera) => { HullObjectStore.commit(camera); });
+  _hullObjectHook = true;
 }
 
 function warpHullHolder(entity, key) {
@@ -1525,10 +1590,13 @@ function createBeamSkinMesh(entity) {
   const material = new HullNodeMaterial('beam',
     createHullUniforms(entity, texture, normalTexture, shapeUniform, hull.srcWidth, hull.srcHeight));
   const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
+  ensureHullObjectHook();
+  // Nośnik transformacji i danych slotu — rysuje go partia (hullSkinBatch.js), siatka poza sceną.
+  mesh.userData.hullBatched = true;
+  material.uniforms.uHullSlot.value = HullObjectStore.acquire(mesh);
   mesh.frustumCulled = false;
   mesh.renderOrder = 10;
   mesh.castShadow = false;
-  Core3D.scene.add(mesh);
   const data = {
     kind: 'beam',
     mesh,
@@ -1555,8 +1623,11 @@ function createBeamSkinMesh(entity) {
     lodMode: HEX_LOD.FULL,
     renderedHexCount: 0,
     // Slot lamp i stref dysz w HullLightStore (-1 = brak).
-    lightSlot: -1
+    lightSlot: -1,
+    batch: null,
+    batchEntry: null
   };
+  data.batch = acquireSkinBatch(data);
   rebuildBeamSkinGeometry(data);
   state.entityMeshes.set(entity, data);
   return data;
@@ -1569,20 +1640,16 @@ function rebuildBeamSkinGeometry(data) {
   data.positions = new Float32Array(vertices * 3);
   data.shade = new Float32Array(vertices);
   data.heat = new Float32Array(vertices * 2);
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.BufferAttribute(data.positions, 3).setUsage(THREE.DynamicDrawUsage));
-  geometry.setAttribute('aShade', new THREE.BufferAttribute(data.shade, 1).setUsage(THREE.DynamicDrawUsage));
-  geometry.setAttribute('aHeat', new THREE.BufferAttribute(data.heat, 2).setUsage(THREE.DynamicDrawUsage));
-  geometry.setAttribute('uv', new THREE.BufferAttribute(topo.uvs, 2));
-  geometry.setIndex(new THREE.BufferAttribute(topo.indices, 1));
-  data.mesh.geometry.dispose();
-  data.mesh.geometry = geometry;
   data.topo = topo;
   setBeamSkinHeatClock(topo);
   data.visibleQuads = writeHullSkin(body, topo, data.positions, data.shade, data.heat);
   clearHullSkinDirty(body);
   data.needsFullWrite = false;
   body.meshDirty = false;
+  // Partia (zadanie 23): stary wpis (poprzednia topologia) znika, nowy na końcu partii z całą skórą —
+  // wysyłka tylko zmienionych czworokątów w kolejnych klatkach (zbierzZakresy partii).
+  if (data.batchEntry) data.batch.remove(data.batchEntry);
+  data.batchEntry = data.batch.add(data.mesh.material.uniforms.uHullSlot.value, topo, data.positions, data.shade, data.heat, data.mesh);
 }
 
 // Żar narożników skóry liczony na chwilę zapisu — zegar renderera (performance.now, jak
@@ -1602,8 +1669,6 @@ function updateBeamSkinGeometry(data) {
   }
   if (!body.meshDirty && !data.needsFullWrite) return;
   setBeamSkinHeatClock(topo);
-  const geometry = data.mesh.geometry;
-  const position = geometry.attributes.position, shade = geometry.attributes.aShade, heat = geometry.attributes.aHeat;
   const region = body._region;
   if (!data.needsFullWrite && region && region.store === body.nodeStore && !region.dirtyAll) {
     if (region.dirtyCount > 0) {
@@ -1611,25 +1676,14 @@ function updateBeamSkinGeometry(data) {
         region.dirty, region.dirtyCount, _beamSkinRange);
       clearHullSkinDirty(body);
       if (range.max >= range.min) {
-        const quads = range.max - range.min + 1;
-        setAttrUpdateRange(position, range.min * 12, quads * 12);
-        setAttrUpdateRange(shade, range.min * 4, quads * 4);
-        setAttrUpdateRange(heat, range.min * 8, quads * 8);
-        position.needsUpdate = true;
-        shade.needsUpdate = true;
-        heat.needsUpdate = true;
+        data.batch.writeQuads(data.batchEntry, data.positions, data.shade, data.heat, range.min, range.max);
       }
     }
     data.visibleQuads = body.activeNodes;
   } else {
     data.visibleQuads = writeHullSkin(body, topo, data.positions, data.shade, data.heat);
     clearHullSkinDirty(body);
-    setAttrUpdateRange(position, 0, -1);
-    setAttrUpdateRange(shade, 0, -1);
-    setAttrUpdateRange(heat, 0, -1);
-    position.needsUpdate = true;
-    shade.needsUpdate = true;
-    heat.needsUpdate = true;
+    data.batch.writeAll(data.batchEntry, data.positions, data.shade, data.heat);
   }
   data.needsFullWrite = false;
   body.meshDirty = false;
@@ -1718,6 +1772,8 @@ function updateBeamSkinMesh(entity, data, camX, camY, cameraZoom) {
   mesh.rotation.set(0, 0, theta);
   mesh.scale.set(1, 1, 1);
   mesh.visible = data.visibleQuads > 0;
+  // nośnik poza sceną (partia) — macierz świata jak z scene.updateMatrixWorld (dziecko sceny)
+  mesh.updateMatrixWorld();
 
   if (mesh.visible) DrawCallStats.addHexBody(1, !allowsSolidArmorLod(entity));
   lodFrameStats.totalStructuralHexes += body.activeNodes;
@@ -1755,13 +1811,21 @@ function hullVariantProbes() {
   const armor = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new HullNodeMaterial('armor', holders()));
   armor.renderOrder = 9;
   armor.position.z = -0.25;
-  for (const m of [beam, armor]) {
+  // partia skór (zadanie 23): ten sam układ atrybutów co HullSkinBatch
+  const batchGeo = new THREE.BufferGeometry();
+  batchGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0]), 3));
+  batchGeo.setAttribute('aShadeHeat', new THREE.BufferAttribute(new Float32Array(12), 3));
+  batchGeo.setAttribute('aUvSlot', new THREE.BufferAttribute(new Float32Array([0, 1, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0]), 3));
+  batchGeo.setIndex(new THREE.BufferAttribute(new Uint32Array([0, 1, 2, 0, 2, 3]), 1));
+  const batchProbe = new THREE.Mesh(batchGeo, new HullNodeMaterial('beamBatch', holders()));
+  batchProbe.renderOrder = 10;
+  for (const m of [beam, armor, batchProbe]) {
     m.name = `hullProbe:${m.material.name}`;
     m.frustumCulled = false;
     m.visible = false;
     Core3D.scene.add(m);
   }
-  _hullProbes = [beam, armor];
+  _hullProbes = [beam, armor, batchProbe];
   return _hullProbes;
 }
 
@@ -2018,6 +2082,8 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
     if (data.mesh?.visible) data.mesh.visible = false;
     if (data.armorMesh?.visible) data.armorMesh.visible = false;
   }
+  // Partie skór: widoczność po ustaleniu widoczności wszystkich nośników (kadr, pudło rozgrzania).
+  syncSkinBatches();
 
   // Okludery shadow shafts: sylwetka kadłuba jako pole odległości
   // (hullShadowSdf.js). Shader passa idzie po nim promieniem do słońca, więc

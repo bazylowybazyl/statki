@@ -27,6 +27,11 @@
 //            osobne sesje w worktree podają bazę z głównego katalogu (tam jest .tmp/).
 // --powtorz: N przebiegów (p1…pN) — do progu szumu bazy.
 // --wydajnosc: dodatkowo bitwa w czasie rzeczywistym (CPU/GPU ms, draw calle) → <out>/<backend>/wydajnosc.json
+// --losowania: licznik wywołań Math.random gry wg miejsca wywołania, od startu sceny do zrzutu (wyniki.json →
+//            `losowania` sceny; zadanie 23 — wizualia losują z fxRandom). Ciąg liczb bez zmian, ale stos przy
+//            każdym losowaniu spowalnia stronę — nie łączyć z pomiarem wydajności. `--losowania efekty` liczy
+//            też generator efektów (fxRandom): `losowania` = { gra, efekty } — przesunięty ciąg efektów
+//            (inna liczba losowań przed iskrą / strugą) zmienia zrzut, choć gra stoi w tym samym stanie.
 // --uuid osobne|wspolne: skąd three bierze losowania na UUID. „osobne” — z własnego strumienia strony
 //            (osobneLosowanieUuid w wspolne.mjs): liczba obiektów three (u WebGPU tysiące węzłów TSL) nie
 //            przesuwa Math.random gry, więc WebGL i WebGPU generują ten sam świat (planety, wraki, warp).
@@ -1037,6 +1042,14 @@ function gitInfo() {
 // Dane startu sesji (zadanie 11): chwile startu i przestoje klatek przed scenami — wyniki.json → `sesje`.
 const sessionInfos = [];
 
+// Błędy i ostrzeżenia z dziennika konsoli od wczytania strony do pierwszej sceny sesji (zadanie 23) —
+// wyniki.json → `sesje[].bledy` / `ostrzezenia`; podsumowanie liczy sesję z błędami startu jak scenę z błędami.
+function captureSessionLogs(info, logs) {
+  const all = logs.all().filter((l) => !IGNORE.some((re) => re.test(l)));
+  info.bledy = logs.errors().filter((l) => !IGNORE.some((re) => re.test(l))).slice(0, 40);
+  info.ostrzezenia = all.filter((l) => /^\[(warning|log:warning)\]/.test(l)).slice(0, 40);
+}
+
 async function runSession(session, backend, outDir, base) {
   const chrome = await startChrome({ width: W, height: H, extraArgs });
   const logs = await attachLogs(chrome);
@@ -1078,8 +1091,14 @@ async function runSession(session, backend, outDir, base) {
       sessionInfo.startGra = await statsFrom(f0, true);
     }
     sessionInfo.czasy = await ev('({ ...(window.__harness.marks || {}) })');
+    // Zadanie 23: błędy i ostrzeżenia STARTU sesji (od wczytania do pierwszej sceny — tło menu, ekran ładowania,
+    // pierwsze klatki gry). Sceny czyszczą dziennik na swoim starcie (logs.clear), więc bez tego błąd pipeline'u
+    // z pierwszej klatki gry ginął (zadanie 13: płomień SIDE z 12 buforami wierzchołków).
+    captureSessionLogs(sessionInfo, logs);
     console.log(`  sesja ${session.id}: ${JSON.stringify(sessionInfo.czasy)}`
-      + ` | przestoje ${['menu', 'start', 'startGra'].filter((k) => sessionInfo[k]).map((k) => `${k} ${sessionInfo[k].przestoje}/${sessionInfo[k].klatki} (maks ${sessionInfo[k].maksMs} ms${sessionInfo[k].pipeline ? `, pipeline'y sync ${sessionInfo[k].pipeline.sync}, budowy w klatkach ${sessionInfo[k].pipeline.budowy ?? '-'}` : ''})`).join(', ')}`);
+      + ` | przestoje ${['menu', 'start', 'startGra'].filter((k) => sessionInfo[k]).map((k) => `${k} ${sessionInfo[k].przestoje}/${sessionInfo[k].klatki} (maks ${sessionInfo[k].maksMs} ms${sessionInfo[k].pipeline ? `, pipeline'y sync ${sessionInfo[k].pipeline.sync}, budowy w klatkach ${sessionInfo[k].pipeline.budowy ?? '-'}` : ''})`).join(', ')}`
+      + (sessionInfo.bledy.length ? ` | BŁĘDY STARTU (${sessionInfo.bledy.length}): ${sessionInfo.bledy.slice(0, 3).join(' ; ')}` : '')
+      + (sessionInfo.ostrzezenia.length ? ` | ostrzeżenia startu: ${sessionInfo.ostrzezenia.length}` : ''));
     // Od tej chwili strona dostaje klatki tylko na żądanie (step/frames) — powtarzalna liczba klatek.
     if (!args['bez-hold']) await ev('window.__harness.hold(true)');
     for (const id of session.scenes) {
@@ -1094,7 +1113,7 @@ async function runSession(session, backend, outDir, base) {
         // Ziarno na starcie sceny (skrót nazwy): spawny losują rozrzut, a wcześniejsze klatki
         // (ładowanie, czekanie na gotowość) zużywają losowania w zmiennej liczbie.
         const sceneSeed = [...id].reduce((h, ch) => Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0, 2166136261);
-        await ev(`(async () => { const S = window.__harness.scene, H = window.__harness; window.__harnessDiag = null; H.reseed(${sceneSeed}); S.hideHud(${!sc.hud});\n${sc.js}\n return true; })()`, 300000);
+        await ev(`(async () => { const S = window.__harness.scene, H = window.__harness; window.__harnessDiag = null; H.reseed(${sceneSeed});${args.losowania ? ` H.losowania.start(${args.losowania === 'efekty'});` : ''} S.hideHud(${!sc.hud});\n${sc.js}\n return true; })()`, 300000);
         await ev(`window.__harness.frames(${sc.warm || 30})`);
         await waitFor(cdp, 'window.__harness.scene.uploadsIdle()', 60000, 250);
         await ev('window.__harness.frames(10)');
@@ -1104,6 +1123,9 @@ async function runSession(session, backend, outDir, base) {
       if (sc.capture === false) { console.log(`  ${id.padEnd(14)} ${error ? 'BŁĄD ' + error : '(bez zrzutu)'}`); continue; }
       const png = join(outDir, `${id}.png`);
       await screenshotPng(cdp, png);
+      // --losowania (zadanie 23): kto wołał Math.random gry od startu sceny do zrzutu (plik:linia funkcja → liczba).
+      let losowania = null;
+      if (args.losowania) { try { losowania = await ev('window.__harness.losowania.stop()'); } catch { /* strona bez licznika */ } }
       // Przestoje w klatkach sceny do zrzutu (pierwsze użycie materiałów w kadrze — zadanie 11) i pipeline'y
       // utworzone w tych klatkach (`pipeline.sync` / `syncLista`: materiały bez rozgrzewki).
       let stalls = null;
@@ -1219,14 +1241,16 @@ async function runSession(session, backend, outDir, base) {
       const errors = logs.errors().filter((l) => !IGNORE.some((re) => re.test(l)));
       const warnings = all.filter((l) => /^\[(warning|log:warning)\]/.test(l));
       const row = { scena: id, opis: sc.opis, sesja: session.id, backend, renderer: rendererKind, png: png.replace(repo + '\\', '').split('\\').join('/'),
-        sekundy: +((Date.now() - ts) / 1000).toFixed(1), blad: error, perf, hdr, stan: state, spis: census, przestoje: stalls, bledy: errors, ostrzezenia: warnings };
+        sekundy: +((Date.now() - ts) / 1000).toFixed(1), blad: error, perf, hdr, stan: state, spis: census, przestoje: stalls, bledy: errors, ostrzezenia: warnings, ...(losowania ? { losowania } : {}) };
       results.push(row);
       const tag = error || errors.length ? 'BŁĄD' : 'ok';
       console.log(`  ${id.padEnd(14)} ${tag.padEnd(5)} ${rendererKind} | ${perf?.drawCalls ?? '?'} dc, ${perf?.coreRenderMs ?? '?'} ms CPU, GPU ${perf?.gpuMs ?? '?'} ms | HDR max ${hdr?.max ?? '?'} >0,9 ${hdr?.overFraction ?? '?'} NaN ${hdr?.nanOrInf ?? '?'}${stalls ? ` | przestoje ${stalls.przestoje}/${stalls.klatki} (maks ${stalls.maksMs} ms${stalls.pipeline?.sync ? `, pipeline'y sync ${stalls.pipeline.sync}` : ''}${stalls.pipeline?.budowy ? `, budowy ${stalls.pipeline.budowy}` : ''})` : ''}${error ? ' | ' + error : ''}${errors.length ? ' | ' + errors.slice(0, 3).join(' ; ') : ''}`);
     }
   } catch (err) {
     console.log(`  sesja ${session.id}: BŁĄD ${err.message}`);
-    results.push({ sesja: session.id, backend, blad: String(err.message), bledy: logs.errors().slice(0, 20) });
+    // Start sesji padł przed pierwszą sceną — jego dziennik też do `sesje` (zadanie 23).
+    if (!sessionInfo.bledy) captureSessionLogs(sessionInfo, logs);
+    results.push({ sesja: session.id, backend, blad: String(err.message), bledy: logs.errors().filter((l) => !IGNORE.some((re) => re.test(l))).slice(0, 20) });
   } finally {
     await chrome.close();
   }
@@ -1316,7 +1340,14 @@ try {
         rows.push(...await runSession(session, backend, outDir, base));
       }
       writeJson(join(outDir, 'wyniki.json'), { ...env, backend, sceny: rows, sesje: [...sessionInfos] });
-      summary[`${backend}${repeats > 1 ? `/p${rep}` : ''}`] = { outDir, bledy: rows.filter((r) => r.blad || r.bledy?.length).map((r) => r.scena || r.sesja) };
+      summary[`${backend}${repeats > 1 ? `/p${rep}` : ''}`] = {
+        outDir,
+        bledy: rows.filter((r) => r.blad || r.bledy?.length).map((r) => r.scena || r.sesja),
+        // Zadanie 23: sesje z błędami na starcie (przed pierwszą sceną).
+        bledyStartu: sessionInfos.filter((s) => s.bledy?.length).map((s) => `${s.sesja} (${s.bledy.length})`)
+      };
+      const startErr = summary[`${backend}${repeats > 1 ? `/p${rep}` : ''}`].bledyStartu;
+      if (startErr.length) console.log(`UWAGA: błędy na starcie sesji: ${startErr.join(', ')} — wyniki.json → sesje[].bledy`);
     }
     if (args.wydajnosc) await runPerf(backend, join(outRoot, backend), base);
   }

@@ -515,6 +515,34 @@ export class SmokeSystem {
 
   /** Krok symulacji istniejących cząstek (przed emisją nowych). */
   step(renderer, dt, time) {
+    const L = this._stepList(dt, time, this._lista || (this._lista = []));
+    for (let k = 0; k < L.length; k++) renderer.compute(L[k], this.highWater);
+    this._afterStep(time);
+  }
+
+  /**
+   * Krok i emisja tej klatki w JEDNYM passie compute (zadanie 23): podkroki (ten sam kernel, te same
+   * uniformy) i emisja (osobne uniformy: spawnCount, head) jedną listą — dispatch w passie to osobny zakres
+   * użycia bufora cząstek, kolejność i wynik jak osobne wywołania.
+   */
+  stepAndEmit(renderer, dt, time) {
+    const L = this._lista || (this._lista = []);
+    L.length = 0;
+    // krok tylko przy dt > 0 — jak dawne wywołanie step() z rocketFx (zegar, wygasanie puli)
+    if (dt > 0) {
+      this._stepList(dt, time, L);
+      this._afterStep(time);
+    }
+    const n = this._prepareEmit();
+    if (n) L.push(this.emitNode);
+    if (L.length === 1) renderer.compute(L[0]);
+    else if (L.length > 1) renderer.compute(L);
+    if (n) this._afterEmit(n, time);
+  }
+
+  // Lista podkroków (kernel kroku n razy, wątków = highWater); pusta, gdy nic nie żyje albo dt = 0.
+  _stepList(dt, time, L) {
+    L.length = 0;
     this.time = time;
     this.U.turbTime.value = (time * 0.018) % 1;
     const U = this.U;
@@ -524,9 +552,14 @@ export class SmokeSystem {
       const n = Math.max(1, Math.min(4, Math.ceil(dt / (1 / 60))));
       U.dt.value = dt / n;
       U.count.value = this.highWater;
-      for (let k = 0; k < n; k++) renderer.compute(this.stepNode, this.highWater);
+      this.stepNode.count = this.highWater;
+      for (let k = 0; k < n; k++) L.push(this.stepNode);
       this.stats.steps = n;
     }
+    return L;
+  }
+
+  _afterStep(time) {
     // Pula wygasła w całości → od zera (krótszy dispatch i rysowanie).
     if (this.highWater > 0 && this.spawnCount === 0 && time - this.lastSpawnTime > this.maxLife + 0.5) {
       this.highWater = 0;
@@ -540,8 +573,16 @@ export class SmokeSystem {
    * rama klatki, przed origin.update) i wpisuje je do pierścienia.
    */
   emit(renderer, time) {
-    const n = this.spawnCount;
+    const n = this._prepareEmit();
     if (!n) return;
+    renderer.compute(this.emitNode, n);
+    this._afterEmit(n, time);
+  }
+
+  // Zlecenia do bufora kolejki (układ lokalny bieżącego początku) i uniformy emisji; zwraca liczbę zleceń.
+  _prepareEmit() {
+    const n = this.spawnCount;
+    if (!n) return 0;
     const ox = this.origin.x;
     const oy = this.origin.y;
     const G = this._q;
@@ -559,7 +600,11 @@ export class SmokeSystem {
     this.q.value.needsUpdate = true;
     this.U.spawnCount.value = n;
     this.U.head.value = this.head;
-    renderer.compute(this.emitNode, n);
+    this.emitNode.count = n;
+    return n;
+  }
+
+  _afterEmit(n, time) {
     this.head = (this.head + n) % SMOKE_CAP;
     this.highWater = Math.min(SMOKE_CAP, Math.max(this.highWater, this.head === 0 ? SMOKE_CAP : this.head));
     if (this.head < n) this.highWater = SMOKE_CAP;

@@ -21,6 +21,8 @@ const { acesGryCpu, linearDoSrgbCpu } = await import('../src/3d/tsl/kolorGry.js'
 const { STATION_CHAIN_REACTOR_PROFILE } = await import('../src/effects3d/reactorProfiles/stationChainProfile.js');
 const { STATION_CUT_REACTOR_PROFILE } = await import('../src/effects3d/reactorProfiles/stationCutProfile.js');
 const { STATION_FINAL_REACTOR_PROFILE } = await import('../src/effects3d/reactorProfiles/stationFinalProfile.js');
+// Losowania wybuchu z warstwy efektów (zadanie 23) — nie z Math.random gry.
+const { fxRandom } = await import('../src/3d/fx/fxRandom.js');
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const code = (p) => read(p).replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
@@ -199,13 +201,15 @@ function frameAt(ms) {
   core.steps[0].update(ctx);
 }
 
-test('wybuch: fazy i losowania jak dawny efekt overlaya (ta sama kolejność Math.random), układ overlay → scena', () => {
+test('wybuch: fazy i losowania jak dawny efekt overlaya (ta sama kolejność losowań — z fxRandom, nie z Math.random gry), układ overlay → scena', () => {
   blow.clear();
   const realRandom = Math.random;
   const x = 6123456.5, y = 5212345.25, size = 300;
   const cfg = REACTOR_BLOW_PROFILES.capital;
   try {
-    Math.random = mulberry(0x20a2);
+    // Zadanie 23: wybuch nie sięga po Math.random gry (strojenie wyglądu nie zmienia przebiegu bitwy).
+    Math.random = () => { throw new Error('Math.random gry w wybuchu reaktora'); };
+    fxRandom.seed(0x20a2);
     clockMs = 10000;
     assert.equal(blow.spawn(x, y, size, 'capital'), true);
     // Rdzeń ładowania od razu, w środku wybuchu (lokalnie względem początku puli).
@@ -222,8 +226,9 @@ test('wybuch: fazy i losowania jak dawny efekt overlaya (ta sama kolejność Mat
     assert.equal(fire.mesh.matrixWorld.elements[12], Math.round(x));
     // Ładowanie: nic nowego, bez losowań.
     let calls = 0;
-    const counted = mulberry(0x20a2);
-    Math.random = () => { calls++; return counted(); };
+    fxRandom.seed(0x20a2);
+    const realNext = Object.getPrototypeOf(fxRandom).next;
+    fxRandom.next = function () { calls++; return realNext.call(this); };
     frameAt(10000 + 500);
     assert.equal(calls, 0);
     assert.equal(fire.pool.highWater, 1);
@@ -260,6 +265,7 @@ test('wybuch: fazy i losowania jak dawny efekt overlaya (ta sama kolejność Mat
     assert.equal(fire.pool.highWater, 0, 'bezczynna pula wraca na start');
   } finally {
     Math.random = realRandom;
+    delete fxRandom.next;
     blow.clear();
   }
 });
@@ -268,8 +274,8 @@ test('kilka wybuchów w klatce: losowania od najnowszego do najstarszego (jak p�
   blow.clear();
   const realRandom = Math.random;
   try {
-    const seq = mulberry(7);
-    Math.random = seq;
+    Math.random = () => { throw new Error('Math.random gry w wybuchu reaktora'); };
+    fxRandom.seed(7);
     clockMs = 20000;
     blow.spawn(0, 0, 100, 'fighter');
     blow.spawn(5000, 0, 100, 'fighter');

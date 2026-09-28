@@ -34,6 +34,8 @@ import { createShatterMaterial, createImplodeMaterial } from './shatterMaterial.
 import { DebrisManager } from './destructionDebrisManager.js';
 import { PanelShardManager } from './panelShardManager.js';
 import { Core3D } from '../3d/core3d.js';
+// Losowość warstwy efektów (zadanie 23): wizualia nie zużywają Math.random gry — przebieg rozgrywki nie zależy od obrazu.
+import { fxRandom } from '../3d/fx/fxRandom.js';
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const TMP_OUT = new THREE.Vector3();
 const TMP_TANGENT = new THREE.Vector3();
@@ -334,6 +336,11 @@ function _scheduleWarm() {
         // Jedna paczka na wolną chwilę — budowy NodeBuildera są synchroniczne.
         const t0 = performance.now();
         while (_warmQueue.length && performance.now() - t0 < 12) {
+            // Trzymacz cienia: pipeline powstaje SYNCHRONICZNIE w passie mapy cienia następnej klatki (pass
+            // cienia nie ma compileAsync) — wszystkie naraz dawały przestój (~9 ms na pipeline, 8 × w jednej
+            // klatce: ~80 ms w harnessie). Najwyżej jeden trzymacz cienia w scenie naraz — następny po zdjęciu
+            // poprzedniego (zadanie 23).
+            if (_warmQueue[0].cien === true && _shadowWarmPending.length) break;
             const make = _warmQueue.shift();
             try {
                 const holder = make();
@@ -392,7 +399,7 @@ const _shadowWarmPending = [];
 function _queueShadowWarm(key, makeHolder) {
     if (_warmedKeys.has(key)) return;
     _warmedKeys.add(key);
-    _warmQueue.push(() => {
+    const make = () => {
         const holder = makeHolder();
         if (!holder || !_scene) return null;
         holder.layers.set(SHADOW_WARM_LAYER);
@@ -401,7 +408,9 @@ function _queueShadowWarm(key, makeHolder) {
         _scene.add(holder);
         _shadowWarmPending.push(holder);
         return null; // bez prewarmPass — to pass cienia
-    });
+    };
+    make.cien = true;
+    _warmQueue.push(make);
     _scheduleWarm();
 }
 
@@ -525,7 +534,7 @@ function _shatterSingle(mesh, opts, worldTime) {
             _scheduleCallback(i * burstSpacing, () => {
                 if (!_reactorFactory) return;
                 const radius = 10 + i * 8;
-                const angle = Math.random() * Math.PI * 2;
+                const angle = fxRandom.next() * Math.PI * 2;
                 // Wybuch reaktora w scenie Core3D (zadanie 20) — fabryka sama go uruchamia.
                 _reactorFactory({
                     x: overlayPos.x + Math.cos(angle) * radius,
@@ -563,7 +572,7 @@ function _sampleObjectMeshWorldPoint(object3D, opts = {}) {
         TMP_SAMPLE_BOX.getSize(TMP_SAMPLE_SIZE);
         const weight = Math.max(1, Math.min(12000, TMP_SAMPLE_SIZE.length()));
         totalWeight += weight;
-        if (Math.random() * totalWeight <= weight) {
+        if (fxRandom.next() * totalWeight <= weight) {
             if (!chosenCenter) chosenCenter = new THREE.Vector3();
             if (!chosenSize) chosenSize = new THREE.Vector3();
             chosenCenter.copy(TMP_SAMPLE_CENTER);
@@ -573,9 +582,9 @@ function _sampleObjectMeshWorldPoint(object3D, opts = {}) {
     if (!chosenCenter || !chosenSize) return null;
     const jitter = THREE.MathUtils.clamp(opts.burstMeshJitter ?? 0.14, 0, 0.35);
     return chosenCenter.clone().add(new THREE.Vector3(
-        (Math.random() - 0.5) * chosenSize.x * jitter,
-        (Math.random() - 0.5) * chosenSize.y * jitter,
-        (Math.random() - 0.5) * chosenSize.z * jitter
+        (fxRandom.next() - 0.5) * chosenSize.x * jitter,
+        (fxRandom.next() - 0.5) * chosenSize.y * jitter,
+        (fxRandom.next() - 0.5) * chosenSize.z * jitter
     ));
 }
 
@@ -593,10 +602,10 @@ function _computeBurstWorldPos(object3D, opts = {}, phase = 0) {
         TMP_OUT.subVectors(crackOrigin, center);
         TMP_OUT.z *= 0.18;
     } else {
-        TMP_OUT.set(Math.random() - 0.5, Math.random() - 0.5, (Math.random() - 0.5) * 0.18);
+        TMP_OUT.set(fxRandom.next() - 0.5, fxRandom.next() - 0.5, (fxRandom.next() - 0.5) * 0.18);
     }
     if (TMP_OUT.lengthSq() < 1e-4) {
-        TMP_OUT.set(Math.random() - 0.5, Math.random() - 0.5, (Math.random() - 0.5) * 0.18);
+        TMP_OUT.set(fxRandom.next() - 0.5, fxRandom.next() - 0.5, (fxRandom.next() - 0.5) * 0.18);
     }
     TMP_OUT.normalize();
 
@@ -605,7 +614,7 @@ function _computeBurstWorldPos(object3D, opts = {}, phase = 0) {
     TMP_TANGENT.normalize();
 
     const surfaceBias = THREE.MathUtils.clamp(Number(opts.burstSurfaceBias) || 0.42, 0.12, 0.9);
-    const jitter = radius * (Number(opts.burstSurfaceJitter) || 0.14) * (0.45 + phase * 0.65) * (Math.random() - 0.5);
+    const jitter = radius * (Number(opts.burstSurfaceJitter) || 0.14) * (0.45 + phase * 0.65) * (fxRandom.next() - 0.5);
 
     return center
         .addScaledVector(TMP_OUT, radius * surfaceBias)
@@ -735,7 +744,7 @@ function _computePlanarDetachVelocity(centerPos, originPos, speed, planarBias = 
     const outDir = new THREE.Vector3().subVectors(centerPos, originPos);
     outDir.z *= planarBias;
     if (outDir.lengthSq() < 1e-4) {
-        outDir.set(Math.random() - 0.5, Math.random() - 0.5, (Math.random() - 0.5) * planarBias);
+        outDir.set(fxRandom.next() - 0.5, fxRandom.next() - 0.5, (fxRandom.next() - 0.5) * planarBias);
     }
     outDir.normalize();
     return outDir.multiplyScalar(speed);
@@ -795,7 +804,7 @@ function _spawnShellSplitBursts(rootObject, defs, opts = {}, shellRadius = 1) {
             phase
         );
         if (sequential) {
-            const jitter = (Math.random() - 0.5) * spacingBase * 0.28;
+            const jitter = (fxRandom.next() - 0.5) * spacingBase * 0.28;
             _scheduleCallback(Math.max(0, delayBase + i * spacingBase + jitter), spawn);
         } else {
             spawn();
@@ -811,7 +820,7 @@ function _applyBurstImpulse(object3D, vel, angVel, opts, burstIndex = 0, burstCo
     TMP_OUT.subVectors(center, origin);
     TMP_OUT.z *= 0.18;
     if (TMP_OUT.lengthSq() < 1e-4) {
-        TMP_OUT.set(Math.random() - 0.5, Math.random() - 0.5, (Math.random() - 0.5) * 0.18);
+        TMP_OUT.set(fxRandom.next() - 0.5, fxRandom.next() - 0.5, (fxRandom.next() - 0.5) * 0.18);
     }
     TMP_OUT.normalize();
 
@@ -821,15 +830,15 @@ function _applyBurstImpulse(object3D, vel, angVel, opts, burstIndex = 0, burstCo
 
     const kickBase = opts.preBurstImpulse ?? 18;
     const kick = kickBase * (0.78 + phase * 0.52);
-    const tangentKick = kickBase * (0.08 + phase * 0.08) * (Math.random() - 0.5);
+    const tangentKick = kickBase * (0.08 + phase * 0.08) * (fxRandom.next() - 0.5);
     vel.addScaledVector(TMP_OUT, kick);
     vel.addScaledVector(TMP_TANGENT, tangentKick);
-    vel.z += (Math.random() - 0.5) * kickBase * 0.035;
+    vel.z += (fxRandom.next() - 0.5) * kickBase * 0.035;
 
     const angKick = (opts.preBurstAngularKick ?? 0.035) * (0.85 + phase * 0.55);
-    angVel.x += (Math.random() - 0.5) * angKick;
-    angVel.y += (Math.random() - 0.5) * angKick;
-    angVel.z += (Math.random() - 0.5) * angKick;
+    angVel.x += (fxRandom.next() - 0.5) * angKick;
+    angVel.y += (fxRandom.next() - 0.5) * angKick;
+    angVel.z += (fxRandom.next() - 0.5) * angKick;
 
     const maxSpeed = opts.maxCarrierSpeed ?? 240;
     if (vel.length() > maxSpeed) vel.setLength(maxSpeed);
@@ -888,9 +897,9 @@ function _makePlane(normal, negate = false) {
 
 function _buildShellSplitDefs(count) {
     const pieceCount = Math.max(2, Math.min(4, count | 0));
-    const baseAngle = Math.random() * Math.PI * 2;
-    TMP_SHELL_AXIS_A.set(Math.cos(baseAngle), Math.sin(baseAngle), (Math.random() - 0.5) * 0.18).normalize();
-    TMP_SHELL_AXIS_B.set(-TMP_SHELL_AXIS_A.y, TMP_SHELL_AXIS_A.x, (Math.random() - 0.5) * 0.14).normalize();
+    const baseAngle = fxRandom.next() * Math.PI * 2;
+    TMP_SHELL_AXIS_A.set(Math.cos(baseAngle), Math.sin(baseAngle), (fxRandom.next() - 0.5) * 0.18).normalize();
+    TMP_SHELL_AXIS_B.set(-TMP_SHELL_AXIS_A.y, TMP_SHELL_AXIS_A.x, (fxRandom.next() - 0.5) * 0.14).normalize();
 
     const aPos = TMP_SHELL_AXIS_A.clone();
     const aNeg = TMP_SHELL_AXIS_A.clone().multiplyScalar(-1);
@@ -1036,13 +1045,13 @@ function _spawnShellSplit(rootObject, opts, worldTime, baseVelocity = null, base
         const pieceVel = (baseVelocity ? baseVelocity.clone() : new THREE.Vector3())
             .multiplyScalar(0.88)
             .addScaledVector(TMP_SHELL_DIR, (opts.shellPieceKick ?? 42) * (0.92 + i * 0.08));
-        pieceVel.z += (Math.random() - 0.5) * (opts.shellPieceKick ?? 42) * 0.018;
+        pieceVel.z += (fxRandom.next() - 0.5) * (opts.shellPieceKick ?? 42) * 0.018;
 
         const pieceAng = (baseAngular ? baseAngular.clone() : new THREE.Vector3()).multiplyScalar(0.38);
         const shellSpin = opts.shellPieceSpin ?? 0.18;
-        pieceAng.x += (Math.random() - 0.5) * shellSpin;
-        pieceAng.y += (Math.random() - 0.5) * shellSpin;
-        pieceAng.z += (Math.random() - 0.5) * shellSpin;
+        pieceAng.x += (fxRandom.next() - 0.5) * shellSpin;
+        pieceAng.y += (fxRandom.next() - 0.5) * shellSpin;
+        pieceAng.z += (fxRandom.next() - 0.5) * shellSpin;
 
         const pieceOpts = {
             ...opts,
@@ -1410,13 +1419,13 @@ export const Destruction3D = {
         const vel = Array.isArray(opts.detachVelocity)
             ? new THREE.Vector3(opts.detachVelocity[0] ?? 0, opts.detachVelocity[1] ?? 0, opts.detachVelocity[2] ?? 0)
             : _computePlanarDetachVelocity(detachedCenter, stationCenter, baseSpeed, 0.10);
-        vel.z += (Math.random() - 0.5) * baseSpeed * 0.006;
+        vel.z += (fxRandom.next() - 0.5) * baseSpeed * 0.006;
 
         const spinRate = opts.spin ?? 0.12;
         const angVel = new THREE.Vector3(
-            (Math.random() - 0.5) * spinRate,
-            (Math.random() - 0.5) * spinRate,
-            (Math.random() - 0.5) * spinRate
+            (fxRandom.next() - 0.5) * spinRate,
+            (fxRandom.next() - 0.5) * spinRate,
+            (fxRandom.next() - 0.5) * spinRate
         );
 
         const ds = new DismantleSection(detachedRoot, vel, angVel, _scene, {
@@ -1487,7 +1496,7 @@ export const Destruction3D = {
         const pool = candidates.length > 1 ? candidates.slice(0, -1) : candidates;
         // Pick randomly from the smaller half so tiny detail pieces go first
         const halfLen = Math.max(1, Math.ceil(pool.length * 0.6));
-        const pick    = pool[Math.floor(Math.random() * halfLen)];
+        const pick    = pool[Math.floor(fxRandom.next() * halfLen)];
         const mesh    = pick.mesh;
         mesh.__detached = true;
 
@@ -1510,15 +1519,15 @@ export const Destruction3D = {
         // ── 4. Velocity: outward from station centre + upward bias ────────
         const stationCenter = new THREE.Vector3();
         stationRoot.getWorldPosition(stationCenter);
-        const baseSpeed = (opts.velocity ?? 125) * (0.75 + Math.random() * 0.35);
+        const baseSpeed = (opts.velocity ?? 125) * (0.75 + fxRandom.next() * 0.35);
         const vel = _computePlanarDetachVelocity(detachedCenter, stationCenter, baseSpeed, 0.12);
-        vel.z += (Math.random() - 0.5) * baseSpeed * 0.008;
+        vel.z += (fxRandom.next() - 0.5) * baseSpeed * 0.008;
 
-        const spinRate = 0.08 + Math.random() * 0.10;
+        const spinRate = 0.08 + fxRandom.next() * 0.10;
         const angVel = new THREE.Vector3(
-            (Math.random() - 0.5) * spinRate,
-            (Math.random() - 0.5) * spinRate,
-            (Math.random() - 0.5) * spinRate
+            (fxRandom.next() - 0.5) * spinRate,
+            (fxRandom.next() - 0.5) * spinRate,
+            (fxRandom.next() - 0.5) * spinRate
         );
 
         const shatterDelay = opts.shatterDelay ?? THREE.MathUtils.clamp(6.2 + chunkRadius * 0.0075, 6.8, 12.0);
@@ -1584,7 +1593,7 @@ export const Destruction3D = {
                 chainBurstDuration: opts.detachChainBurstDuration ?? 1.35,
                 chainBurstRadius: opts.detachChainBurstRadius ?? THREE.MathUtils.clamp(chunkRadius * 0.22, 70, 180),
                 chainBurstSize: opts.detachChainBurstSize ?? THREE.MathUtils.clamp(0.55 + chunkRadius * 0.002, 0.7, 1.45),
-                breakupBurstSize: opts.detachBurstSize ?? (18 + Math.random() * 18),
+                breakupBurstSize: opts.detachBurstSize ?? (18 + fxRandom.next() * 18),
             },
             'carrier',
             0.3
@@ -1760,13 +1769,13 @@ export const Destruction3D = {
                 const spread = Math.max(40, opts.finalSecondaryBurstSpread ?? 120);
                 const burstSize = size * Math.max(0.08, opts.finalSecondaryBurstSizeMul ?? 0.22);
                 for (let i = 0; i < secondaryBursts; i++) {
-                    const angle = (Math.PI * 2 * i) / Math.max(1, secondaryBursts) + Math.random() * 0.35;
-                    const radius = spread * (0.72 + Math.random() * 0.4);
+                    const angle = (Math.PI * 2 * i) / Math.max(1, secondaryBursts) + fxRandom.next() * 0.35;
+                    const radius = spread * (0.72 + fxRandom.next() * 0.4);
                     _scheduleCallback(0.06 + i * 0.05, () => {
                         _reactorFactory({
                             x: worldPos.x + Math.cos(angle) * radius,
                             y: overlayY + Math.sin(angle) * radius,
-                            size: burstSize * (0.9 + Math.random() * 0.35),
+                            size: burstSize * (0.9 + fxRandom.next() * 0.35),
                             profile: 'chain',
                         });
                     });

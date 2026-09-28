@@ -2,6 +2,8 @@
 
 import { SimClock, CLOCK_RENDER, CLOCK_SIM } from '../game/simClock.js';
 import { ActiveCarrier } from '../game/carrierVelocity.js';
+// Losowość warstwy efektów (zadanie 23): wizualia nie zużywają Math.random gry — przebieg rozgrywki nie zależy od obrazu.
+import { fxRandom } from '../3d/fx/fxRandom.js';
 
 // NOSNIK (src/game/carrierVelocity.js): czastka, blysk, fala i wiazka rodza sie
 // z predkoscia kadluba, z ktorego wyszly, i rysuja sie w  pos + v * (T - t0)
@@ -269,8 +271,8 @@ export const CanvasVFX = {
     else if (key === 'helios') cooldownMs = 34;
 
     if (pressure > 0.65) {
-      if (['autocannon', 'ciws', 'vulcan', 'default', 'plasma', 'pulse'].includes(key)) { if (Math.random() < Math.min(0.9, (pressure - 0.5) * 1.05)) return false; }
-      else if (key === 'helios') { if (Math.random() < Math.min(0.75, (pressure - 0.55) * 0.85)) return false; }
+      if (['autocannon', 'ciws', 'vulcan', 'default', 'plasma', 'pulse'].includes(key)) { if (fxRandom.next() < Math.min(0.9, (pressure - 0.5) * 1.05)) return false; }
+      else if (key === 'helios') { if (fxRandom.next() < Math.min(0.75, (pressure - 0.55) * 0.85)) return false; }
     }
     if (pressure > 0.5) cooldownMs *= Math.min(3.4, 1 + (pressure - 0.45) * 2.1);
     if (cooldownMs <= 0) return true;
@@ -341,10 +343,10 @@ export const CanvasVFX = {
         // Fallback: canvas sparks
         const sparks = Math.round((fx.sparkCount || 12) * scale * 0.5);
         for (let i = 0; i < sparks; i++) {
-          const a = Math.random() * Math.PI * 2;
-          const speed = (fx.sparkSpeed?.[0] || 200) + Math.random() * ((fx.sparkSpeed?.[1] || 360) - (fx.sparkSpeed?.[0] || 200));
-          const size = (fx.sparkSize?.[0] || 1.4) + Math.random() * ((fx.sparkSize?.[1] || 2.6) - (fx.sparkSize?.[0] || 1.4));
-          this.spawnParticle({ x, y }, { x: Math.cos(a) * speed, y: Math.sin(a) * speed }, 0.24 + Math.random() * 0.2, this.resolveAlphaColor(fx.color, 0.85, fx.color), size * scale, true);
+          const a = fxRandom.next() * Math.PI * 2;
+          const speed = (fx.sparkSpeed?.[0] || 200) + fxRandom.next() * ((fx.sparkSpeed?.[1] || 360) - (fx.sparkSpeed?.[0] || 200));
+          const size = (fx.sparkSize?.[0] || 1.4) + fxRandom.next() * ((fx.sparkSize?.[1] || 2.6) - (fx.sparkSize?.[0] || 1.4));
+          this.spawnParticle({ x, y }, { x: Math.cos(a) * speed, y: Math.sin(a) * speed }, 0.24 + fxRandom.next() * 0.2, this.resolveAlphaColor(fx.color, 0.85, fx.color), size * scale, true);
         }
       }
       if (this.enabled) {
@@ -380,10 +382,10 @@ export const CanvasVFX = {
       // Fallback: canvas sparks if GPU system not ready
       const sparks = Math.round((fx.sparkCount || 12) * scale * sizeMul);
       for (let i = 0; i < sparks; i++) {
-        const a = Math.random() * Math.PI * 2;
-        const speed = (fx.sparkSpeed?.[0] || 200) + Math.random() * ((fx.sparkSpeed?.[1] || 360) - (fx.sparkSpeed?.[0] || 200));
-        const size = (fx.sparkSize?.[0] || 1.4) + Math.random() * ((fx.sparkSize?.[1] || 2.6) - (fx.sparkSize?.[0] || 1.4));
-        this.spawnParticle({ x, y }, { x: Math.cos(a) * speed, y: Math.sin(a) * speed }, 0.2 + Math.random() * 0.18, this.resolveAlphaColor(fx.color, 0.9, fx.color), size * scale * sizeMul, true);
+        const a = fxRandom.next() * Math.PI * 2;
+        const speed = (fx.sparkSpeed?.[0] || 200) + fxRandom.next() * ((fx.sparkSpeed?.[1] || 360) - (fx.sparkSpeed?.[0] || 200));
+        const size = (fx.sparkSize?.[0] || 1.4) + fxRandom.next() * ((fx.sparkSize?.[1] || 2.6) - (fx.sparkSize?.[0] || 1.4));
+        this.spawnParticle({ x, y }, { x: Math.cos(a) * speed, y: Math.sin(a) * speed }, 0.2 + fxRandom.next() * 0.18, this.resolveAlphaColor(fx.color, 0.9, fx.color), size * scale * sizeMul, true);
       }
     }
 
@@ -392,9 +394,9 @@ export const CanvasVFX = {
     if (fx.smoke && fx.smokeColor) {
       const smokeCount = Math.round(fx.smoke * scale * sizeMul);
       for (let i = 0; i < smokeCount; i++) {
-        const a = Math.random() * Math.PI * 2;
-        const speed = 60 + Math.random() * 100;
-        this.spawnParticle({ x, y }, { x: Math.cos(a) * speed, y: Math.sin(a) * speed }, 0.32 + Math.random() * 0.24, fx.smokeColor, 3 * scale * sizeMul, false);
+        const a = fxRandom.next() * Math.PI * 2;
+        const speed = 60 + fxRandom.next() * 100;
+        this.spawnParticle({ x, y }, { x: Math.cos(a) * speed, y: Math.sin(a) * speed }, 0.32 + fxRandom.next() * 0.24, fx.smokeColor, 3 * scale * sizeMul, false);
       }
     }
     // Core flash — canvas
@@ -417,9 +419,9 @@ export const CanvasVFX = {
       this.spawnParticleXY(pos.x + dir.x * i * 12 * scale, pos.y + dir.y * i * 12 * scale, dir.x * 60, dir.y * 60, 0.06, '#bfe7ff', (14 - i * 4) * scale, true);
     }
     for (let i = 0; i < 12; i++) {
-      const aa = angle + (Math.random() - 0.5) * 0.25;
-      const speed = (500 + Math.random() * 300) * scale;
-      this.spawnParticleXY(pos.x, pos.y, Math.cos(aa) * speed, Math.sin(aa) * speed, 0.15 + Math.random() * 0.1, '#ffffff', (1.5 + Math.random() * 2.0) * scale, false);
+      const aa = angle + (fxRandom.next() - 0.5) * 0.25;
+      const speed = (500 + fxRandom.next() * 300) * scale;
+      this.spawnParticleXY(pos.x, pos.y, Math.cos(aa) * speed, Math.sin(aa) * speed, 0.15 + fxRandom.next() * 0.1, '#ffffff', (1.5 + fxRandom.next() * 2.0) * scale, false);
     }
     ActiveCarrier.clear();
   },
@@ -430,14 +432,14 @@ export const CanvasVFX = {
     const angle = Math.atan2(dir.y, dir.x);
     this.spawnParticleXY(pos.x, pos.y, dir.x * 160, dir.y * 160, 0.16, '#ffd6a0', 9 * scale, true);
     for (let i = 0; i < 10; i++) {
-      const aa = angle + (Math.random() - 0.5) * 0.38;
-      const speed = 260 + Math.random() * 140;
-      this.spawnParticleXY(pos.x + Math.cos(aa) * 8 * scale, pos.y + Math.sin(aa) * 8 * scale, Math.cos(aa) * speed, Math.sin(aa) * speed, 0.16 + Math.random() * 0.14, (Math.random() < 0.5) ? '#ffbe7a' : '#ffcfa0', (2.6 + Math.random() * 2.8) * scale, true);
+      const aa = angle + (fxRandom.next() - 0.5) * 0.38;
+      const speed = 260 + fxRandom.next() * 140;
+      this.spawnParticleXY(pos.x + Math.cos(aa) * 8 * scale, pos.y + Math.sin(aa) * 8 * scale, Math.cos(aa) * speed, Math.sin(aa) * speed, 0.16 + fxRandom.next() * 0.14, (fxRandom.next() < 0.5) ? '#ffbe7a' : '#ffcfa0', (2.6 + fxRandom.next() * 2.8) * scale, true);
     }
     for (let i = 0; i < 4; i++) {
-      const aa = angle + (Math.random() - 0.5) * 0.25;
-      const speed = 120 + Math.random() * 60;
-      this.spawnParticleXY(pos.x + Math.cos(aa) * 4 * scale, pos.y + Math.sin(aa) * 4 * scale, Math.cos(aa) * speed, Math.sin(aa) * speed, 0.3 + Math.random() * 0.18, '#d76926', 1.8 * scale, false);
+      const aa = angle + (fxRandom.next() - 0.5) * 0.25;
+      const speed = 120 + fxRandom.next() * 60;
+      this.spawnParticleXY(pos.x + Math.cos(aa) * 4 * scale, pos.y + Math.sin(aa) * 4 * scale, Math.cos(aa) * speed, Math.sin(aa) * speed, 0.3 + fxRandom.next() * 0.18, '#d76926', 1.8 * scale, false);
     }
     this.spawnShockwave(pos.x, pos.y, { r: 10 * scale, maxR: 80 * scale, w: 2.6 * scale, maxLife: 0.3, color: 'rgba(255,170,90,' });
     ActiveCarrier.clear();
@@ -449,14 +451,14 @@ export const CanvasVFX = {
     const angle = Math.atan2(dir.y, dir.x);
     this.spawnParticleXY(pos.x, pos.y, dir.x * 220, dir.y * 220, 0.12, '#ffdba6', 7 * scale, true);
     for (let i = 0; i < 8; i++) {
-      const aa = angle + (Math.random() - 0.5) * 0.32;
-      const speed = 300 + Math.random() * 180;
-      this.spawnParticleXY(pos.x + Math.cos(aa) * 6 * scale, pos.y + Math.sin(aa) * 6 * scale, Math.cos(aa) * speed, Math.sin(aa) * speed, 0.16 + Math.random() * 0.12, (Math.random() < 0.35) ? '#ffe6b0' : '#ffbf6b', (1.6 + Math.random() * 1.6) * scale, true);
+      const aa = angle + (fxRandom.next() - 0.5) * 0.32;
+      const speed = 300 + fxRandom.next() * 180;
+      this.spawnParticleXY(pos.x + Math.cos(aa) * 6 * scale, pos.y + Math.sin(aa) * 6 * scale, Math.cos(aa) * speed, Math.sin(aa) * speed, 0.16 + fxRandom.next() * 0.12, (fxRandom.next() < 0.35) ? '#ffe6b0' : '#ffbf6b', (1.6 + fxRandom.next() * 1.6) * scale, true);
     }
     for (let i = 0; i < 4; i++) {
-      const aa = angle + (Math.random() - 0.5) * 0.2;
-      const speed = 120 + Math.random() * 60;
-      this.spawnParticleXY(pos.x + Math.cos(aa) * 4 * scale, pos.y + Math.sin(aa) * 4 * scale, Math.cos(aa) * speed, Math.sin(aa) * speed, 0.24 + Math.random() * 0.18, '#6b7cff', 1.4 * scale, false);
+      const aa = angle + (fxRandom.next() - 0.5) * 0.2;
+      const speed = 120 + fxRandom.next() * 60;
+      this.spawnParticleXY(pos.x + Math.cos(aa) * 4 * scale, pos.y + Math.sin(aa) * 4 * scale, Math.cos(aa) * speed, Math.sin(aa) * speed, 0.24 + fxRandom.next() * 0.18, '#6b7cff', 1.4 * scale, false);
     }
     this.spawnShockwave(pos.x, pos.y, { r: 8 * scale, maxR: 70 * scale, w: 2.2 * scale, maxLife: 0.22, color: 'rgba(255,200,120,' });
     ActiveCarrier.clear();
@@ -619,7 +621,7 @@ export const CanvasVFX = {
       projectInto(p.x + (p.cvx ? p.cvx * ce : 0), p.y + (p.cvy ? p.cvy * ce : 0), cam, s);
       if (s.x < -50 || s.x > vw + 50 || s.y < -50 || s.y > vh + 50) continue;
       ctx.strokeStyle = `rgba(180, 240, 255, ${t * 0.8})`;
-      ctx.lineWidth = (1 + Math.random()) * cam.zoom;
+      ctx.lineWidth = (1 + fxRandom.next()) * cam.zoom;
       const len = p.size * t * 2.0 * cam.zoom;
       const ax = Math.cos(p.angle) * len;
       const ay = Math.sin(p.angle) * len;
@@ -631,7 +633,7 @@ export const CanvasVFX = {
         const progress = i / segments;
         const tx = x1 + (x2 - x1) * progress;
         const ty = y1 + (y2 - y1) * progress;
-        const noise = (Math.random() - 0.5) * p.size * 0.4 * t * cam.zoom;
+        const noise = (fxRandom.next() - 0.5) * p.size * 0.4 * t * cam.zoom;
         if (i < segments) ctx.lineTo(tx - Math.sin(p.angle) * noise, ty + Math.cos(p.angle) * noise);
         else ctx.lineTo(x2, y2);
       }
@@ -729,7 +731,7 @@ export const CanvasVFX = {
       coreGrad.addColorStop(0, 'rgba(255, 255, 255, 0.55)'); coreGrad.addColorStop(1, 'rgba(255, 255, 255, 1.0)');
       ctx.fillStyle = coreGrad;
       ctx.beginPath(); ctx.roundRect(-lenPx / 2, -width / 2, lenPx, width, width / 2); ctx.fill();
-      if (Math.random() < 0.3) this.spawnLightningSpark({ x: rx + (Math.random()-0.5)*10, y: ry + (Math.random()-0.5)*10 }, 0.3, 18, Math.random() * Math.PI * 2);
+      if (fxRandom.next() < 0.3) this.spawnLightningSpark({ x: rx + (fxRandom.next()-0.5)*10, y: ry + (fxRandom.next()-0.5)*10 }, 0.3, 18, fxRandom.next() * Math.PI * 2);
       ctx.restore();
       return;
     }

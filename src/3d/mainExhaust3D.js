@@ -35,6 +35,9 @@ import {
 } from 'three/tsl';
 import { Core3D } from './core3d.js';
 import { Fx3D, makeBasis, coneDir } from './fxParticles3D.js';
+// Losowość warstwy efektów (zadanie 23): Math.random gry przesuwał się o iskry dysz, a ich liczba zależy od
+// kadru i zajętości banku Fx3D — przebieg bitwy zależał od obrazu.
+import { fxRandom } from './fx/fxRandom.js';
 import { uniformsAdapter } from './tsl/uniformy.js';
 import { blendAddytywnePremul } from './tsl/mieszanie.js';
 import {
@@ -161,7 +164,7 @@ function makeJetMaterial(atlasTex) {
 
 const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
 const lerp = (a, b, t) => a + (b - a) * t;
-const rand = (a, b) => a + Math.random() * (b - a);
+const rand = (a, b) => a + fxRandom.next() * (b - a);
 // migotanie ognia — dwa niewspółmierne sinusy czytają się jak szum, a kosztują nic
 const flicker = (t, seed) => 0.55 + 0.45 * Math.sin(t * 13.7 + seed) * Math.sin(t * 7.31 + seed * 2.13);
 
@@ -313,7 +316,7 @@ export function createMainExhaustState(opts = {}) {
   const throttle = clamp01(Number(opts.throttle) || 0);
   return {
     owner: -1,
-    seed: Number.isFinite(opts.seed) ? opts.seed : Math.random() * 100,
+    seed: Number.isFinite(opts.seed) ? opts.seed : fxRandom.next() * 100,
     running: true,
     boosting: false,
     // Statek wchodzący w kadr ma już rozgrzany silnik — bez rozruchu od zera.
@@ -323,9 +326,9 @@ export function createMainExhaustState(opts = {}) {
     fresh: true,
     prevX: 0, prevY: 0,
     velX: 0, velY: 0,
-    accJet: Math.random(),
-    accTail: Math.random(),
-    accSpark: Math.random()
+    accJet: fxRandom.next(),
+    accTail: fxRandom.next(),
+    accSpark: fxRandom.next()
   };
 }
 
@@ -375,8 +378,8 @@ function kick(state, p, S, palIdx, grad, str) {
   const L = p.lengthMul;
   const W = p.widthMul;
   const J = p.jetGain;
-  spawnJet(p.x, p.y, p.dirX, p.dirY, 0.55, 12 * S, (72 + 40 * str) * S * L, 9 * S * W, 20 * S * W, palIdx, grad, 1.0 * str * J, Math.random(), 0, state.owner);
-  spawnJet(p.x, p.y, p.dirX, p.dirY, 0.40, 8 * S, (46 + 26 * str) * S * L, 16 * S * W, 36 * S * W, palIdx, grad, 0.55 * str * J, Math.random(), 0, state.owner);
+  spawnJet(p.x, p.y, p.dirX, p.dirY, 0.55, 12 * S, (72 + 40 * str) * S * L, 9 * S * W, 20 * S * W, palIdx, grad, 1.0 * str * J, fxRandom.next(), 0, state.owner);
+  spawnJet(p.x, p.y, p.dirX, p.dirY, 0.40, 8 * S, (46 + 26 * str) * S * L, 16 * S * W, 36 * S * W, palIdx, grad, 0.55 * str * J, fxRandom.next(), 0, state.owner);
   if (!(p.sparkMul > 0) || !Fx3D.spark) return;
   const n = Math.min(sparkBudgetLeft(), Math.round(40 * str * p.sparkMul));
   for (let i = 0; i < n; i++) spawnSpark(state, p.x, p.y, p.dirX, p.dirY, S, 1, palIdx, 0, 0, 50, 220, rand(0.3, 1.1));
@@ -492,7 +495,7 @@ export const MainExhaust3D = {
         const ago = a / T.jetRate;
         spawnJet(x, y, dirX, dirY, 0.09, 6 * S, (18 + 55 * pw) * S * L * gl * rand(0.85, 1.15),
           (4 + 6 * pw) * S * W, (9 + 14 * pw) * S * W, palIdx, grad,
-          T.jetAlpha * clamp01(pw) * ga * J, Math.random(), ago - dt, own);
+          T.jetAlpha * clamp01(pw) * ga * J, fxRandom.next(), ago - dt, own);
       }
       state.accJet = a;
 
@@ -503,7 +506,7 @@ export const MainExhaust3D = {
         const ago = a / T.tailRate;
         spawnJet(x, y, dirX, dirY, 0.32, 12 * S, (40 + 75 * pw) * S * L * rand(0.9, 1.1),
           (5 + 4 * pw) * S * W, (9 + 10 * pw) * S * W, palIdx, grad,
-          T.tailAlpha * clamp01(pw) * J, Math.random(), ago - dt, own);
+          T.tailAlpha * clamp01(pw) * J, fxRandom.next(), ago - dt, own);
       }
       state.accTail = a;
 

@@ -308,3 +308,16 @@ test('pliki zadania 16 bez GLSL (port zamknięty)', () => {
   }
   assert.doesNotMatch(read('src/vfx/destruction3D.js'), /mat\.clippingPlanes\s*=/, 'cięcie maską TSL, nie material.clippingPlanes');
 });
+
+// Zadanie 23: trzymacze rozgrzewki CIENIA (pass mapy cienia nie ma compileAsync — pipeline powstaje
+// synchronicznie w następnej klatce) po jednym naraz: wszystkie w jednej wolnej chwili dawały przestój
+// ~80 ms (8 pipeline'ów ShadowMaterial w klatce, harness: wydobycie-skala).
+test('rozgrzewka cienia rozpadu: najwyżej jeden trzymacz cienia w scenie naraz', () => {
+  const src = read('src/vfx/destruction3D.js');
+  const run = src.slice(src.indexOf('function _scheduleWarm() {'), src.indexOf('function _holderMesh('));
+  assert.match(run, /if \(_warmQueue\[0\]\.cien === true && _shadowWarmPending\.length\) break;/);
+  assert.ok(run.indexOf('.cien === true') < run.indexOf('_warmQueue.shift()'), 'sprawdzenie przed zdjęciem z kolejki');
+  const q = src.slice(src.indexOf('function _queueShadowWarm('), src.indexOf('function _stepShadowWarm('));
+  assert.match(q, /make\.cien = true;/);
+  assert.equal(DESTRUCTION_TSL_INTERNALS.warmStats().shadowPending, 0);
+});
