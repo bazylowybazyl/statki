@@ -7,8 +7,8 @@
 // → sRGB, jak post Core3D). Układ sceny jak Core3D: (x, −y gry, z w górę), kamera z góry.
 // ============================================================
 import * as THREE from 'three/webgpu';
-import { float, max, nodeObject, pass, uniform, vec3, vec4 } from 'three/tsl';
-import { BLOOM_ZGODNOSC_WEBGL, BloomGry, hdrBezpieczny } from '../src/3d/tsl/postGry.js';
+import { max, nodeObject, pass, uniform, vec3, vec4 } from 'three/tsl';
+import { BloomGry, hdrBezpieczny } from '../src/3d/tsl/postGry.js';
 import { acesGry, linearDoSrgb } from '../src/3d/tsl/kolorGry.js';
 import { BLOOM_DEFAULTS } from '../src/3d/bloomConfig.js';
 import {
@@ -87,7 +87,7 @@ async function main() {
     shadows: new CargoShadows(scene, 4096)
   };
 
-  // Post: pass (MSAA 4, HalfFloat) → siatka bezpieczeństwa HDR → bloom gry (BloomGry ×3) → ACES gry → sRGB.
+  // Post: pass (MSAA 4, HalfFloat) → siatka bezpieczeństwa HDR → bloom gry (jak w demach, bez ×3 — zadanie 25b) → ACES gry → sRGB.
   const pipeline = new THREE.RenderPipeline(renderer);
   const scenePass = pass(scene, camera, { samples: 4 });
   const sceneColor = hdrBezpieczny(scenePass.getTextureNode('output'));
@@ -95,7 +95,7 @@ async function main() {
   const bloomNode = nodeObject(bloomGry);
   const uBloomOn = uniform(1);
   const uExposure = uniform(1);
-  const lin = sceneColor.rgb.add(bloomNode.rgb.mul(float(BLOOM_ZGODNOSC_WEBGL)).mul(uBloomOn));
+  const lin = sceneColor.rgb.add(bloomNode.rgb.mul(uBloomOn));
   pipeline.outputNode = vec4(linearDoSrgb(acesGry(max(lin, vec3(0.0)).mul(uExposure))), 1.0);
   pipeline.outputColorTransform = false;
 
