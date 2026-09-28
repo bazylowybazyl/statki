@@ -108,14 +108,14 @@ const meshesOf = (hall) => {
 
 // ---------------------------------------------------------------------------
 
-test('K-7 i archetypy: bez GLSL w src/3d/haloRing (poza haloRingGLSL.js dla tła menu, Z7 i narzędzia parzystości)', () => {
+test('K-7 i archetypy: bez GLSL w src/3d/haloRing (poza haloRingGLSL.js dla budowli Z7 i narzędzia parzystości)', () => {
   const files = ['haloPortK7.js', 'arch/archTSL.js', 'arch/archMaterials.js', 'arch/ecumene.js', 'arch/fable.js', 'arch/archRing.js'];
   for (const f of files) {
     const src = read(`src/3d/haloRing/${f}`);
     assert.doesNotMatch(src, /\/\* glsl \*\/|new THREE\.ShaderMaterial|gl_FragColor|gl_Position|from '\.\/haloRingGLSL\.js'|from '\.\.\/haloRingGLSL\.js'/, `${f}: bez GLSL`);
   }
-  // archGLSL.js usunięty; w katalogu ringu GLSL ma tylko haloRingGLSL.js (tło menu — zadanie 11, budowle Z7 poza
-  // portem, narzędzie parzystości GLSL ↔ TSL)
+  // archGLSL.js usunięty; w katalogu ringu GLSL ma tylko haloRingGLSL.js (poza grą: budowle Z7 poza portem,
+  // narzędzie parzystości GLSL ↔ TSL; tło menu czyta TSL od zadania 11)
   assert.throws(() => read('src/3d/haloRing/arch/archGLSL.js'));
   assert.match(read('src/3d/haloRing/haloRingGLSL.js'), /export const HALO_GLSL_COMMON = /);
 });
