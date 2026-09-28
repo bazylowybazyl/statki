@@ -46,7 +46,7 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 | 06 | Ring 1/5: biblioteka TSL, pieczenie map, odczyt asynchroniczny, `halo_ring_demo` | 01 | 02–05, 12–20 | max | zrobione, scalone (070a407) | b7ecdc9…88d8df5 | kończy przejściową regresję terenu ringu z 01 |
 | 07 | Ring 2/5: teren + zestaw przemysłowy | 06 | 04, 05, 12–20 | xhigh | zrobione, scalone (f735076) | 7b43733…96baa16 | |
 | 08 | Ring 3/5: struktura + atmosfera | 07 | j.w. | xhigh | zrobione, scalone (979ed52) | 2c87915…fa8389b (scalenie `main` 60c7e4c) | nowe sceny bazy `ring-dach`, `ring-dach-z01`, `ring-habitat` (dopisane z tagu) |
-| 09 | Ring 4/5: megastruktura + miasto (kopuły, landmarki, drzewa) | 08 | j.w. | xhigh | w toku (podagent, worktree `statki-wt/09`) | | |
+| 09 | Ring 4/5: megastruktura + miasto (kopuły, landmarki, drzewa) | 08 | j.w. | xhigh | zrobione, scalone (ab3c820) | 5e3a666, 09e4b09, 8b915ed (scalenia `main` 7ac8d07, 11aaa9e, eb3d21d) | `haloFma` (fma WGSL = `mad` FXC): ziarna i hasze brył bit w bit; `wgslFn` wyjątkowo (TSL r183 nie ma `fma`) |
 | 10 | Ring 5/5: K-7 + ringi-archetypy Marsa i Jowisza | 09 | j.w. | xhigh | czeka | | ring bez zamienników |
 | 11 | Tło menu + rozgrzewka pipeline'ów | 05, 10 | 12–20 | max | czeka | | nowy `menuBackdrop.test` |
 | 12 | Infrastruktura efektów GPU: compute w klatce, siatka świateł, zniekształcenia, Fx3D w TSL | 03 | 04–11, 13–16 | max | zrobione, scalone (12-A: moduły `src/3d/fx/`; 12-B: 72ec255 — wpięcie w Core3D, Fx3D w TSL) | 0f3d429…37953a6 (12-A); 819fd85, 0c67d84, ebc4211, a029a03, 59e0571, 7168783 (12-B) | podstawa pod 17–19 (i przyszłe asteroidy) |
@@ -494,3 +494,19 @@ Todo (2): „PORT poprawka 1 / 3 (TODO integracji)” w `tests/shipCore.test.mjs
   `dema/asteroidy.html` i `dema/warp-demo.html` (WebGL, poza portem) dostają mgławicę i gwiazdy z TSL — nietestowane.
   Inwentarz z HEAD 2245c90: port 25 plików z GLSL, 36 materiałów, 4891 linii. Testy: 1515 / 7 porażek bazowych / 3 todo;
   `npm test` OK.
+- **Zadanie 09 scalone do `main`** (5e3a666, 09e4b09, 8b915ed; scalenia `main` 7ac8d07, 11aaa9e, eb3d21d; scalenie ab3c820):
+  megastruktura (bryły dachu FG i doków, szkło kopuł, pociągi, światła dachu i doków) i miasto (ogrody, przemysł, drzewa)
+  w TSL; fragment brył `makeHaloPrimFragment` wspólny, dawne `defines` (HALO_FG, PRIM_FACE_FROM_LOCAL) = warianty
+  budowane raz, wczesne `collapse(); return;` w wierzchołkach = zagnieżdżone gałęzie (mapy czyta tylko żywy
+  wierzchołek), pochodne (`fwidth`) przed gałęziami. −966 linii GLSL, −7 miejsc `ShaderMaterial`; `HALO_GLSL_SURFACE`
+  usunięty, `HALO_GLSL_INDKIT` tylko dla narzędzia parzystości (K-7 i archetypy go nie czytają). **`haloFma`**
+  (`haloRingTSL.js`, wbudowane `fma()` WGSL przez `wgslFn` — TSL r183 nie ma `fma`; Tint → HLSL `mad`, ten sam rozkaz
+  co FXC w bazie): bez niego fasady megabudowli nocą świeciły innymi oknami (71,7% ziaren zgodnych), z nim ziarna i
+  hasze okien / paneli / fasad 100% bit w bit (`lm2_night` 0,65% → 0,14%). Zgodność (same bryły, demo): miasto z bliska
+  ≤ 0,0012%, dachy / porty / megabudowle 0,07–1,25% (p9 2,3% — krawędzie MSAA, aliasing okien 1–2 px), miasto nocą
+  0,010%, Ultra 0,02–0,46%; gra `__ring`: k7-hala 0,049%, ring-dach 0,060%, ring-dach-z01 0,39%, ring-habitat 0,107%.
+  Draw calle = 08, HDR i NaN jak w bazie, 0 błędów walidacji; zamienniki `ring-z02` 35 → 24, `k7-hala` 32 → 21 (reszta
+  = K-7 → 10). Kompilacja na zimno 0,12–0,50 s na materiał (→ 11: rozgrzewka 9 materiałów, ~2–3 s). Hipoteza do 23:
+  resztkowe różnice krawędzi — FXC scala `mad` także w wierzchołkach, pochodne na czwórkach pikseli. `halo-ring-shots.mjs`
+  kasuje swój profil Chrome, opcja `--repo` (baza dema z innego drzewa). Inwentarz z HEAD ab3c820: port 22 pliki z GLSL,
+  29 materiałów, 3925 linii. Testy: 1524 / 7 porażek bazowych / 3 todo; `npm test` OK.
