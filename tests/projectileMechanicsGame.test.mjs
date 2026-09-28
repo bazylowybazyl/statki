@@ -19,6 +19,7 @@ const { SimClock } = await import('../src/game/simClock.js');
 const { createShot, flyShot, ledgerFor } = await import('./helpers/hullFlight.mjs');
 const { readIndexHtml, loadIndexFunction } = await import('./helpers/indexSource.mjs');
 const { stampFamilyFor } = await import('../src/3d/hullDamageStamps.js');
+const { craterOptsFor } = await import('../src/game/hullCraters.js');
 
 const html = readIndexHtml();
 const MJOLNIR = MASTER_WEAPONS.siege_railgun;
@@ -102,7 +103,7 @@ const game = {
   ricochetBounce: M.ricochetBounce,
   HIT_PENETRATE: M.HIT_PENETRATE, HIT_RICOCHET: M.HIT_RICOCHET, PASS_EXIT: M.PASS_EXIT, PASS_STUCK: M.PASS_STUCK, PASS_INSIDE: M.PASS_INSIDE,
   segmentCircleToi, getEntityShieldRadiusTowards: () => 0, isEntityShieldBlocking: () => false,
-  HullBodies, HullDamageMap, stampFamilyFor, DestructorSystem: {}, registerShieldImpact() {}, shieldFxClassForBullet: () => 0,
+  HullBodies, HullDamageMap, stampFamilyFor, craterOptsFor, DestructorSystem: {}, registerShieldImpact() {}, shieldFxClassForBullet: () => 0,
   noteBridgeHit() {}, bridgeSimTime: 0,
   applyDamageToPlayer() {}, markPlayerDamage() {},
   applyDamageToNPC(npc, dmg) { npc.hpLost += dmg; },

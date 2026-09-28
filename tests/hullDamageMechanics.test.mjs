@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 
 globalThis.window = globalThis.window || {};
 window.wrecks = [];
-const { HullDamageMap } = await import('../src/3d/hullDamageMap.js');
+const { HullDamageMap, DMG_STAMP_FLOATS } = await import('../src/3d/hullDamageMap.js');
 const S = await import('../src/3d/hullDamageStamps.js');
 
 const close = (a, b, tol, msg = '') => assert.ok(Math.abs(a - b) <= tol, `${msg} ${a} != ${b} (±${tol})`);
@@ -21,15 +21,16 @@ function fakeHull(W, H) {
 }
 function lastStamp(slot) {
   const i = HullDamageMap._qCount - 1;
-  const Q = HullDamageMap._qData, o = i * 12;
+  const Q = HullDamageMap._qData, o = i * DMG_STAMP_FLOATS;
   return {
-    r: Q[o + 2] * slot.worldH, cut: Q[o + 3], heat: Q[o + 4], scorch: Q[o + 5], rim: Q[o + 6], ion: Q[o + 7], el: Q[o + 10]
+    r: Q[o + 2] * slot.worldH, cut: Q[o + 3], heat: Q[o + 4], scorch: Q[o + 5], rim: Q[o + 6], ion: Q[o + 7], el: Q[o + 10],
+    hole: Q[o + 12] * slot.worldH
   };
 }
 function stampFrom(e, src, variant, killed = 0) {
   const r = {
     kind: 'impact', hit: true, killed, radius: 15, node: 0, u: 0.5, v: 0.5, x: 0, y: 0,
-    dmgKey: e.beamHull.dmgKey, dirX: 1, dirY: 0, len: 0
+    dmgKey: e.beamHull.dmgKey, dirX: 1, dirY: 0, len: 0, crater: killed > 0 ? 15 : 0
   };
   const q = HullDamageMap._qCount;
   HullDamageMap.setSource(src, variant);
@@ -78,4 +79,7 @@ test('wylot i zakleszczenie przebić: wpisy rodzin Mjolnira i Valkyrie; rodzina 
   close(stampFrom(e, mj, 'stuck', 3).r, S.STAMP.mjolnir.impact[S.S_R], 1e-3, 'Mjolnir bez `stuck` — trafienie');
   close(stampFrom(e, { vfxKey: 'armata_mk1', type: 'armata' }, 'ricochet', 3).r, S.STAMP.armata.impact[S.S_R], 1e-3,
     'rodzina bez rykoszetu — trafienie');
+  // Lej tylko w prawdziwej dziurze (25c): stempel niesie zasięg zabitych węzłów krateru, bez krateru — 0.
+  close(stampFrom(e, vk, 'stuck', 3).hole, 15, 1e-3, 'zakleszczenie: lej w dziurze krateru');
+  assert.equal(stampFrom(e, vk, 'exit', 0).hole, 0, 'wylot bez zabitych węzłów: bez leja');
 });

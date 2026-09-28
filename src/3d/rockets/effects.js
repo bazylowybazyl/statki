@@ -45,7 +45,7 @@ import { GLOW_ROUND } from './glow.js';
 import { fillRandom } from './rand.js';
 import { SimClock, CLOCK_RENDER, CLOCK_SIM } from '../../game/simClock.js';
 import { getEntityShieldRadiusTowards } from '../../../shieldSystem.js';
-import { HullDamageMap } from '../hullDamageMap.js';
+import { rocketHullContact } from '../../game/hullCraters.js';
 
 const TAU = Math.PI * 2;
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -522,7 +522,8 @@ export class RocketEffects {
   /**
    * Styk głowicy z poszyciem (przed obrażeniami — krater zabija węzły): pierwszy materiał
    * kadłuba celu na ostatnim odcinku lotu, lekko przedłużonym. Tylko odczyt (HullBodies).
-   * (x0, y0) → (x1, y1) — odcinek klatki (świat gry), (x1, y1) = punkt zapalnika.
+   * (x0, y0) → (x1, y1) — odcinek klatki (świat gry), (x1, y1) = punkt zapalnika. Ten sam
+   * punkt bierze krater gry (src/game/hullCraters.js rocketHullContact, zadanie 25c).
    */
   prepareContact(r, x0, y0, x1, y1) {
     const ct = this._contact;
@@ -530,31 +531,12 @@ export class RocketEffects {
     ct.rocket = r.index;
     const target = r.target;
     const HB = typeof window !== 'undefined' ? window.HullBodies : null;
-    if (!target || target._isPositionTarget || !HB || !target.beamHull || typeof HB.traceThrough !== 'function') return;
-    let dx = x1 - x0;
-    let dy = y1 - y0;
-    let d = Math.sqrt(dx * dx + dy * dy);
-    if (!(d > 1e-6)) {
-      dx = this.hc[r.index]; dy = this.hs[r.index]; d = 1;
-    }
-    const ux = dx / d;
-    const uy = dy / d;
-    // Wstecz do początku odcinka + zapas, w przód o ~2 odcinki (bez skoku wizualnego).
-    const back = d + 30;
-    const fwd = Math.min(220, d * 2 + 40);
-    const sx = x1 - ux * back;
-    const sy = y1 - uy * back;
-    const ex = x1 + ux * fwd;
-    const ey = y1 + uy * fwd;
-    const tr = HB.traceThrough(target, sx, sy, ex, ey, 0);
-    if (!tr || tr.entryT < 0) return;
-    const t = tr.entryT;
-    const cx = sx + (ex - sx) * t;
-    const cy = sy + (ey - sy) * t;
-    const n = HB.surfaceNormal(target, cx, cy, ux, uy);
-    ct.x = cx; ct.y = cy;
-    ct.nx = Number(n?.nx) || -ux;
-    ct.ny = Number(n?.ny) || -uy;
+    if (!target || target._isPositionTarget) return;
+    const c = rocketHullContact(HB, target, x0, y0, x1, y1, this.hc[r.index], this.hs[r.index]);
+    if (!c.valid) return;
+    ct.x = c.x; ct.y = c.y;
+    ct.nx = c.nx;
+    ct.ny = c.ny;
     ct.valid = true;
   }
 
@@ -612,9 +594,8 @@ export class RocketEffects {
     const ex = x + (onHull ? nx * R * 0.12 : 0);
     const ey = y + (onHull ? ny * R * 0.12 : 0);
     const sk = Math.sqrt(k);
-    // Rana na poszyciu (mapa ran, zadanie 18-C): rakieta nie robi krateru (obrażenia HP), więc stempel
-    // „rocket” w punkcie styku — żar i osmalenie jadą z kadłubem; poza kadrem odrzuca go sama mapa.
-    if (onHull) HullDamageMap.stampAt(onHull, x, y, 'rocket', 'impact', -nx, -ny);
+    // Rana na poszyciu (mapa ran): od zadania 25c rakieta robi mały krater (index.html
+    // applyRocketHullImpact) — ranę stempluje hak krateru w tym samym punkcie styku; tu sam obraz.
     if (this._outside(ex, ey, EMIT_MARGIN + R * 3)) {
       // Poza kadrem: tylko światło (sięga w kadr) — bez dymu, iskier, odłamków i fali.
       this._flash(ex, ey, 1.2, cx, cy, BLAST_CORE, B.flash, 24 * k, 0.035, BLAST_HALO, B.flash, 210 * k, 0.08,

@@ -6,7 +6,9 @@
 //   → przebicie: stepInsideHull w tym samym kroku (droga liczona w nienaruszonym materiale),
 //     potem obrażenia wejścia (krater + HP), krater wyjścia / zakleszczenia (bez HP) i dalsze
 //     kandydaty od punktu wyjścia.
-// Tryb 'old' = dzisiejsza gra: pierwszy kadłub zatrzymuje pocisk (krater + HP).
+// Tryb 'old' = gra sprzed 18-B: pierwszy kadłub zatrzymuje pocisk (krater z budżetu HP + HP).
+// Kratery trybu gry — jak applyHexImpact: ciężka broń robi krater na miarę rany (zadanie 25c,
+// src/game/hullCraters.js craterOptsFor), reszta — krater z budżetu HP.
 // Bez tarcz, efektów i nośników efektów — tylko to, co liczy mechanika. Używają go testy
 // projectilePenetration / projectileRicochet i skrypt bilansu scripts/bilans-broni.mjs.
 
@@ -16,6 +18,8 @@ import {
   HIT_RICOCHET, HIT_PENETRATE, PASS_EXIT, PASS_STUCK
 } from '../../src/game/projectileMechanics.js';
 import { writePointVelocity } from '../../src/game/carrierVelocity.js';
+// Krater na miarę rany ciężkiej broni (zadanie 25c) — jak applyHexImpact w index.html.
+import { craterOptsFor } from '../../src/game/hullCraters.js';
 
 export function createShot(def, x, y, dirX, dirY, serial = 0, extra = {}) {
   const l = Math.hypot(dirX, dirY) || 1;
@@ -46,9 +50,11 @@ function relVelAt(b, e, x, y) {
   return _rel;
 }
 
-function crater(e, x, y, dmg, b, ledger) {
+// Krater trafienia (wariant: 'impact' | 'ricochet' | 'exit' | 'stuck') — źródło = pocisk, jak w grze;
+// variant null = krater z budżetu HP (tryb 'old': gra sprzed 18-B, porównania bilansu 18-A).
+function crater(e, x, y, dmg, b, ledger, variant = 'impact') {
   if (!(dmg > 0) || !HullBodies.hasHull(e)) return 0;
-  HullBodies.impact(e, x, y, dmg, relVelAt(b, e, x, y));
+  HullBodies.impact(e, x, y, dmg, relVelAt(b, e, x, y), variant ? craterOptsFor(b, variant, dmg) : null);
   const k = hullImpactResult.killed;
   ledgerFor(ledger, e).killed += k;
   return k;
@@ -60,14 +66,14 @@ function applyPass(pass, b, ledger, log) {
   if (e) ledgerFor(ledger, e).kerfs += pass.kerfs;
   if (pass.event === PASS_STUCK) {
     if (e) ledgerFor(ledger, e).stuck++;
-    const killed = crater(e, pass.x, pass.y, pass.craterDamage, b, ledger);
+    const killed = crater(e, pass.x, pass.y, pass.craterDamage, b, ledger, 'stuck');
     log.push({ type: 'stuck', entity: e, x: pass.x, y: pass.y, crater: pass.craterDamage, killed, kerfs: pass.kerfs });
     b.dead = true;
     return true;
   }
   if (pass.event === PASS_EXIT) {
     if (e) ledgerFor(ledger, e).exits++;
-    const killed = crater(e, pass.x, pass.y, pass.craterDamage, b, ledger);
+    const killed = crater(e, pass.x, pass.y, pass.craterDamage, b, ledger, 'exit');
     log.push({ type: 'exit', entity: e, x: pass.x, y: pass.y, crater: pass.craterDamage, killed, kerfs: pass.kerfs, damage: b.damage });
   }
   return false;
@@ -106,7 +112,7 @@ export function flyShot(b, def, hulls, opts = {}) {
       const rel = relVelAt(b, e, x, y);
       const rec = ledgerFor(ledger, e);
       if (legacy) {
-        crater(e, x, y, b.damage, b, ledger);
+        crater(e, x, y, b.damage, b, ledger, null);
         rec.hp += b.damage;
         rec.entries++;
         log.push({ type: 'hit', entity: e, x, y, damage: b.damage });
@@ -118,7 +124,7 @@ export function flyShot(b, def, hulls, opts = {}) {
       const k = entryDamage(b, def, decision);
       const hpIn = b.damage * k.hp, craterIn = b.damage * k.crater;
       if (decision === HIT_RICOCHET) {
-        crater(e, x, y, craterIn, b, ledger);
+        crater(e, x, y, craterIn, b, ledger, 'ricochet');
         rec.hp += hpIn;
         rec.ricochets++;
         log.push({ type: 'ricochet', entity: e, x, y, damage: hpIn, nx: n.nx, ny: n.ny });

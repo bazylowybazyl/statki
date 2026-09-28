@@ -4,11 +4,13 @@
 // Port mapy uszkodzeń dema broni (dema/bronie-webgpu/hull.js: stempel, stygnięcie, osmalenie,
 // przestrzelina z brzegiem, poświata jonowa) na pulę slotów w JEDNYM buforze storage:
 //
-//   • teksel 8 B (uvec2): x = packHalf2x16(żar, jony), y = osmalenie | brzeg << 8 | otwór << 16
-//     (unorm 8 bit). Żar w f16 — w 8 bitach nie stygnie przy 144 FPS (PROJEKT §3.1). „Brzeg”
-//     (kształt rany z receptury: pierścień żaru wokół środka) i „otwór” (przezroczystość) to osobne
-//     kanały: przestrzelina przezroczysta tylko z małego kalibru bez krateru, dziury po kraterze
-//     i rzazie robi geometria belek (reguła „dziura albo krater”, §3.4);
+//   • teksel 8 B (uvec2): x = packHalf2x16(żar, jony), y = osmalenie | brzeg << 8 | otwór << 16 |
+//     krater << 24 (unorm 8 bit). Żar w f16 — w 8 bitach nie stygnie przy 144 FPS (PROJEKT §3.1).
+//     „Brzeg” (kształt rany z receptury: pierścień żaru wokół środka) i „otwór” (przezroczystość)
+//     to osobne kanały: przestrzelina przezroczysta tylko z małego kalibru bez krateru, dziury po
+//     kraterze i rzazie robi geometria belek (reguła „dziura albo krater”, §3.4). „Krater” (zadanie
+//     25c) = prawdziwa dziura w belkach (koło o promieniu zasięgu zabitych węzłów, pas rzazu): tylko
+//     tam materiał maluje lej (ciemne dno) — poza nią środek rany to żar i osmalenie;
 //   • slot = prostokąt w×h tekseli w uv sprite'a kadłuba (konwencja skóry: v = 0 u góry obrazu),
 //     klasy L/M/S (hullDamageMap.js); materiał dostaje (base, w, h, on) per obiekt;
 //   • kernel z listą zadań (jedno zadanie na slot na klatkę — bez wyścigów): wątek znajduje
@@ -63,8 +65,11 @@ export const DMG_HEAT_EPS = 0.02;
 
 /** Słowa u32 zadania: 4 × uvec4 (początek, slot, prostokąt, stemple, liczby float jako bity). */
 export const DMG_JOB_VEC4 = 4;
-/** vec4 stempla: A (u, v, promień / H świata, otwór), B (żar, osmalenie, brzeg, jony), C (kierunek uv, wydłużenie, ziarno). */
-export const DMG_STAMP_VEC4 = 3;
+/**
+ * vec4 stempla: A (u, v, promień / H świata, otwór), B (żar, osmalenie, brzeg, jony), C (kierunek uv,
+ * wydłużenie, ziarno), D (promień prawdziwej dziury / H świata — 0 = bez dziury, 0, 0, 0).
+ */
+export const DMG_STAMP_VEC4 = 4;
 
 /** Flagi zadania. */
 export const DMG_FLAG_CLEAR = 1;
@@ -105,10 +110,10 @@ export function _resetHullDamagePoolForTests() { _pool = null; }
 const q8 = (v) => uint(round(clamp(v, 0.0, 1.0).mul(255.0)));
 const u8 = (w, shift) => float(w.shiftRight(uint(shift)).bitAnd(uint(255))).div(255.0);
 
-/** Teksel (uvec2) → { heat, ion, scorch, rim, cut } (węzły float). */
+/** Teksel (uvec2) → { heat, ion, scorch, rim, cut, crater } (węzły float). */
 function decodeTexel(t) {
   const hi = unpackHalf2x16(t.x);
-  return { heat: hi.x, ion: hi.y, scorch: u8(t.y, 0), rim: u8(t.y, 8), cut: u8(t.y, 16) };
+  return { heat: hi.x, ion: hi.y, scorch: u8(t.y, 0), rim: u8(t.y, 8), cut: u8(t.y, 16), crater: u8(t.y, 24) };
 }
 
 /** Stygnięcie żaru o Δ [s] — wzór zamknięty (czysta funkcja, parametry przez argumenty). */
@@ -132,17 +137,23 @@ export function damageHotSeconds(h0 = DMG_HEAT_MAX, eps = DMG_HEAT_EPS) {
 }
 
 /**
- * Lustro CPU stempla kernela (testy): teksel T = { heat, ion, scorch, rim, cut } w punkcie uv (cx, cy)
- * slotu, stempel A = [u, v, r/H, otwór], B = [żar, osmalenie, brzeg, jony], C = [kierunek uv, wydłużenie,
- * ziarno], aspect = W/H kadłuba. Te same wzory co createHullDamageKernel (bez kwantyzacji teksela;
- * sufit żaru DMG_HEAT_MAX kernel kładzie po wszystkich stemplach zadania — tu robi to wołający).
+ * Lustro CPU stempla kernela (testy): teksel T = { heat, ion, scorch, rim, cut, crater } w punkcie uv
+ * (cx, cy) slotu, stempel A = [u, v, r/H, otwór], B = [żar, osmalenie, brzeg, jony], C = [kierunek uv,
+ * wydłużenie, ziarno], D = [promień dziury / H, …] (opcjonalny), aspect = W/H kadłuba, slotH — wysokość
+ * slotu w tekselach (brzeg kanału krateru: jeden teksel). Te same wzory co createHullDamageKernel (bez
+ * kwantyzacji teksela; sufit żaru DMG_HEAT_MAX kernel kładzie po wszystkich stemplach zadania — tu robi
+ * to wołający).
  */
-export function damageStampCpu(T, A, B, C, cx, cy, aspect) {
+export function damageStampCpu(T, A, B, C, cx, cy, aspect, D = null, slotH = 128) {
   const dx = (cx - A[0]) * aspect;
   const dy = cy - A[1];
   const el = Math.max(C[2], 1);
   const reach = A[2] * DMG_STAMP_REACH * el;
   if (!(Math.abs(dx) < reach && Math.abs(dy) < reach)) return T;
+  if (D && D[0] > 0) {
+    const k = Math.min(1, Math.max(0, (D[0] - Math.hypot(dx, dy)) * slotH + 0.5));
+    T.crater = Math.max(T.crater || 0, k);
+  }
   const al = dx * C[0] + dy * C[1];
   const ac = dy * C[0] - dx * C[1];
   const ang = Math.atan2(ac, al);
@@ -163,23 +174,25 @@ export function damageStampCpu(T, A, B, C, cx, cy, aspect) {
 const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
 /**
- * Lustro CPU wyglądu rany w materiale (testy pasm HDR): próbka D = { heat, ion, scorch, rim, cut },
+ * Lustro CPU wyglądu rany w materiale (testy pasm HDR): próbka D = { heat, ion, scorch, rim, cut, crater },
  * szum (nz — przesunięcie brzegu, jag — osmalenie, n1 — jony) i migotanie. Zwraca { heat: [r, g, b],
- * ion: [r, g, b], hole, rim, scorch, burnt, gloss (waga lakieru), cut: czy piksel odrzucony (przestrzelina) }.
+ * ion: [r, g, b], lej (kształt leja z receptury), hole (lej w prawdziwej dziurze), rim, scorch, burnt,
+ * gloss (waga lakieru), cut: czy piksel odrzucony (przestrzelina) }.
  */
 export function woundGlowCpu(D, nz = 0, jag = 0, n1 = 0.5, flick = 1) {
   const cut = D.cut > 0.004 && smooth(0.52, 0.6, D.cut + nz) > 0.5;
   const holeF = D.rim + nz;
-  const hole = smooth(0.52, 0.6, holeF);
-  const rim = smooth(0.18, 0.5, holeF) * (1 - hole);
+  const lej = smooth(0.52, 0.6, holeF);
+  const hole = lej * Math.min(1, Math.max(0, D.crater || 0));
+  const rim = smooth(0.18, 0.5, holeF) * (1 - lej);
   const scorch = Math.min(1, Math.max(0, D.scorch + jag * 0.35));
   const burnt = (1 + (0.10 - 1) * scorch) * (1 - hole * 0.92);
-  const t = D.heat * (rim * 2.2 + scorch * 0.6 + 0.25) * (1 - hole);
+  const t = D.heat * (rim * 2.2 + scorch * 0.6 + 0.25) * (1 - lej);
   const a = smooth(0.02, 0.5, t) * 1.3, b = smooth(0.35, 1.4, t) * 2.4, c = smooth(1.2, 3.2, t) * 7.0;
   const heat = [(a + b + c) * flick, (a * 0.18 + b * 0.5 + c * 0.92) * flick, (a * 0.02 + b * 0.1 + c * 0.78) * flick];
   const k = D.ion * (n1 * 1.4 + 0.3) * flick;
   const gloss = (1 - scorch * 0.85) * (1 - hole);
-  return { heat, ion: [0.35 * k, 1.25 * k, 2.9 * k], hole, rim, scorch, burnt, gloss, cut };
+  return { heat, ion: [0.35 * k, 1.25 * k, 2.9 * k], lej, hole, rim, scorch, burnt, gloss, cut };
 }
 
 // ── Kernel ──────────────────────────────────────────────────────────────────
@@ -224,9 +237,10 @@ export function createHullDamageKernel(pool, jobs, stamps, U, jobCap) {
     const scorch = T.scorch.toVar();
     const rim = T.rim.toVar();
     const cut = T.cut.toVar();
+    const crater = T.crater.toVar();
     const flags = J1.w.toVar();
     If(flags.bitAnd(uint(DMG_FLAG_CLEAR)).notEqual(uint(0)), () => {
-      heat.assign(0.0); ion.assign(0.0); scorch.assign(0.0); rim.assign(0.0); cut.assign(0.0);
+      heat.assign(0.0); ion.assign(0.0); scorch.assign(0.0); rim.assign(0.0); cut.assign(0.0); crater.assign(0.0);
     });
     const coolDt = uintBitsToFloat(J2.w).toVar();
     If(coolDt.greaterThan(0.0), () => {
@@ -241,12 +255,14 @@ export function createHullDamageKernel(pool, jobs, stamps, U, jobCap) {
       scorch.assign(max(scorch.sub(heal), 0.0));
       rim.assign(max(rim.sub(heal), 0.0));
       cut.assign(max(cut.sub(heal), 0.0));
+      crater.assign(max(crater.sub(heal), 0.0));
     });
     // Stemple (port FxHull kernel dema): odległość w jednostkach wysokości kadłuba, obrys z
     // harmonicznymi kąta i ziarnem stempla, rdzeń e^(−2,6r²), poświata e^(−0,9r²).
     const aspect = uintBitsToFloat(J2.z).toVar();
+    const slotH = float(J0.w).toVar();
     const cx = float(x).add(0.5).div(float(J0.z)).toVar();
-    const cy = float(y).add(0.5).div(float(J0.w)).toVar();
+    const cy = float(y).add(0.5).div(slotH).toVar();
     Loop({ start: J2.x, end: J2.x.add(J2.y), type: 'uint', condition: '<', name: 'dmgStamp' }, ({ dmgStamp }) => {
       const k = dmgStamp.mul(uint(DMG_STAMP_VEC4)).toVar();
       const A = stamps.element(k).toVar();
@@ -255,6 +271,12 @@ export function createHullDamageKernel(pool, jobs, stamps, U, jobCap) {
       const dy = cy.sub(A.y).toVar();
       const reach = A.z.mul(DMG_STAMP_REACH).mul(max(C.z, 1.0));
       If(abs(dx).lessThan(reach).and(abs(dy).lessThan(reach)), () => {
+        // Prawdziwa dziura (zadanie 25c): koło o promieniu zasięgu zabitych węzłów (bez wydłużenia i
+        // falowania obrysu — dziura w belkach), brzeg jeden teksel. Tu i tylko tu materiał maluje lej.
+        const Dv = stamps.element(k.add(uint(3))).toVar();
+        If(Dv.x.greaterThan(0.0), () => {
+          crater.assign(max(crater, clamp(Dv.x.sub(length(vec2(dx, dy))).mul(slotH).add(0.5), 0.0, 1.0)));
+        });
         const al = dx.mul(C.x).add(dy.mul(C.y));
         const ac = dy.mul(C.x).sub(dx.mul(C.y));
         const ang = atan(ac, al).toVar();
@@ -277,7 +299,8 @@ export function createHullDamageKernel(pool, jobs, stamps, U, jobCap) {
       });
     });
     heat.assign(min(heat, DMG_HEAT_MAX));
-    const w1 = q8(scorch).bitOr(q8(rim).shiftLeft(uint(8))).bitOr(q8(cut).shiftLeft(uint(16)));
+    const w1 = q8(scorch).bitOr(q8(rim).shiftLeft(uint(8))).bitOr(q8(cut).shiftLeft(uint(16)))
+      .bitOr(q8(crater).shiftLeft(uint(24)));
     pool.element(idx).assign(uvec2(packHalf2x16(vec2(heat, ion)), w1));
   })().compute(1).setName('hullDamageMap');
 }
@@ -307,7 +330,7 @@ export function sampleHullDamage(poolRO, slot, uvNode) {
   const d = at(x0, y1);
   const e = at(x1, y1);
   const bl = (k) => mix(mix(a[k], b[k], f.x), mix(d[k], e[k], f.x), f.y).toVar();
-  return { heat: bl('heat'), ion: bl('ion'), scorch: bl('scorch'), rim: bl('rim'), cut: bl('cut') };
+  return { heat: bl('heat'), ion: bl('ion'), scorch: bl('scorch'), rim: bl('rim'), cut: bl('cut'), crater: bl('crater') };
 }
 
 let _noise = null;
@@ -350,8 +373,11 @@ export function hullWoundSurface(ctx, P, uTime, poolRO = hullDamagePool().ro) {
     });
     // Kształt rany z receptury: środek (lej) i żarzący się brzeg.
     const holeF = D.rim.add(nz).toVar();
-    const hole = smoothstep(0.52, 0.6, holeF).toVar();
-    const rim = smoothstep(0.18, 0.5, holeF).mul(float(1.0).sub(hole)).toVar();
+    const lej = smoothstep(0.52, 0.6, holeF).toVar();
+    // Lej (ciemne dno) tylko w prawdziwej dziurze w belkach (kanał krateru, zadanie 25c): poza nią
+    // środek rany jest osmalony i nie świeci, ale to blacha, nie dziura.
+    const hole = lej.mul(D.crater).toVar();
+    const rim = smoothstep(0.18, 0.5, holeF).mul(float(1.0).sub(lej)).toVar();
     const scorch = clamp(D.scorch.add(jag.mul(0.35)), 0.0, 1.0).toVar();
     woundScorch.assign(scorch);
     // Osmalenie → albedo. Lej (otwór bez przezroczystości) to ciemne, NIEŚWIECĄCE wnętrze — w demie
@@ -362,7 +388,7 @@ export function hullWoundSurface(ctx, P, uTime, poolRO = hullDamagePool().ro) {
     // Lakier (odbicie nieba) gaśnie na osmaleniu i w leju — jak połysk dema (× (1 − 0,8·osmalenie)).
     woundGloss.assign(float(1.0).sub(scorch.mul(0.85)).mul(float(1.0).sub(hole)));
     // Żar: skala ciała czarnego (czerwień → pomarańcz → biel), mocniej na brzegu (demo hull.js).
-    const t = D.heat.mul(rim.mul(2.2).add(scorch.mul(0.6)).add(0.25)).mul(float(1.0).sub(hole)).toVar();
+    const t = D.heat.mul(rim.mul(2.2).add(scorch.mul(0.6)).add(0.25)).mul(float(1.0).sub(lej)).toVar();
     const heatCol = vec3(1.0, 0.18, 0.02).mul(smoothstep(0.02, 0.5, t).mul(1.3))
       .add(vec3(1.0, 0.5, 0.1).mul(smoothstep(0.35, 1.4, t).mul(2.4)))
       .add(vec3(1.0, 0.92, 0.78).mul(smoothstep(1.2, 3.2, t).mul(7.0)));

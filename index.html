@@ -865,6 +865,7 @@
     // i rzazu (hak po trafieniu), wygaszanie osmalenia przy naprawie R.
     import { HullDamageMap } from "./src/3d/hullDamageMap.js";
     import { stampFamilyFor } from "./src/3d/hullDamageStamps.js";
+    import { craterOptsFor, rocketCraterHit } from "./src/game/hullCraters.js";
     HullBodies.onImpact = HullDamageMap.onHullImpact;
     HullBodies.onRepair = HullDamageMap.onHullRepair;
     import { TowConstraintSystem } from "./src/game/towSystem.js";
@@ -8468,11 +8469,14 @@
       // Kadłub na belkach: krater od najbliższego węzła punktu trafienia (sweep daje punkt wejścia).
       // fxSource (pocisk albo broń) — rodzina stempla mapy ran dla haka HullBodies.onImpact (18-C);
       // fxVariant — wariant stempla: 'impact', 'ricochet', 'exit', 'stuck' (przebicia 18-B).
+      // Ciężka broń (zadanie 25c): krater na miarę rany — promień leja stempla tej broni
+      // (craterOptsFor → hullDamageStamps.craterRadiusFor), dziura w belkach = lej na mapie ran.
       if (entity?.beamHull) {
         if (!fxSource) return HullBodies.impact(entity, x, y, damage, vel);
+        const craterOpts = craterOptsFor(fxSource, fxVariant, damage);
         HullDamageMap.setSource(fxSource, fxVariant);
         try {
-          return HullBodies.impact(entity, x, y, damage, vel);
+          return HullBodies.impact(entity, x, y, damage, vel, craterOpts);
         } finally {
           HullDamageMap.clearSource();
         }
@@ -8485,6 +8489,18 @@
         _hexImpactOpts.shard = null;
       }
     }
+
+    // Wybuch rakiety na poszyciu (zadanie 25c): mały krater na miarę rany rodziny `rocket` (missile_rack:
+    // promień leja 18 j.) w punkcie styku głowicy — tym samym co obraz wybuchu (src/game/hullCraters.js
+    // rocketHullContact); stempel mapy ran z haka krateru. Woła rocketSystem3D._onHit, gdy tarcza
+    // celu nie blokuje; obrażenia HP rakieta zadaje jak dotąd. Zwraca liczbę zabitych węzłów.
+    const _rocketHullVel = { x: 0, y: 0 };
+    window.applyRocketHullImpact = function (target, x0, y0, x1, y1, damage, weaponDef, relVx, relVy) {
+      if (!target?.beamHull) return 0;
+      _rocketHullVel.x = Number(relVx) || 0;
+      _rocketHullVel.y = Number(relVy) || 0;
+      return rocketCraterHit(HullBodies, target, x0, y0, x1, y1, damage, weaponDef || 'rocket', _rocketHullVel, applyHexImpact);
+    };
 
     // --- Trafienia wiązek: pomocniki modułowe (bez domknięć i tablic per strzał) ---
     // Dawniej każda wiązka budowała 3 tablice, 4 domknięcia, obiekt na kandydata
