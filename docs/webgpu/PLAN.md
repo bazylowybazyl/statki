@@ -214,7 +214,12 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   (`tests/weaponRecipes.test.mjs`, `tests/pulseBeamPoolLimit.test.mjs`). **Liczba instancji siatki 1 ↔ > 1 zmienia
   klucz programu** — rysunek instancjonowany trzyma `mesh.count ≥ 2` (druga instancja pusta, niewidoczna).
   **Receptury z losowaniem**: własny strumień `fxRandom` — `Math.random` w efektach przesuwa sekwencję losowań gry
-  (rozrzut, zapalniki). **Wiązki kończą się na promieniu tarczy przy `shield.val > 0` także z
+  (rozrzut, zapalniki). Stare moduły wizualne nadal losują z `Math.random` gry (`mainExhaust3D`, `rand` / `coneDir`
+  banku `Fx3D`, `shieldImpactFx`, efekty rakiet, overlay), a liczba ich losowań zależy od stanu pul (budżet iskier
+  banku `Fx3D`), zoomu i kadru — przebieg bitwy zależy więc od wizualiów: po 17 (bronie nie zajmują już banku `Fx3D`)
+  iskry dysz MAIN dostają więcej budżetu i deterministyczna bitwa 48 okrętów rozjeżdża się z `main` od 2. klatki
+  (ślad losowań: pierwsza różnica w `mainExhaust3D.spawnSpark`; wywołania logiki gry identyczne do tego miejsca).
+  Do 23/24: wizualia na `fxRandom`. **Wiązki kończą się na promieniu tarczy przy `shield.val > 0` także z
   `DevFlags.globalShieldsOff`** (`resolveBeamWorldHit` patrzy na `val`, pociski na `isEntityShieldBlocking`) — sceny z
   wyłączonymi tarczami zerują `val` celu (galeria broni).
 - **TSL, nie `wgslFn`.** Tekstowy WGSL tylko dla wyizolowanej czystej funkcji, gdy TSL jest naprawdę niewygodny — z
