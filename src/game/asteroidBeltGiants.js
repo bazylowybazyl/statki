@@ -20,7 +20,9 @@
 // Do gotowości olbrzym nie koliduje (jak ring przed `ready`).
 //
 // KOLIZJE (jak `collideShipWithGiants` dema): przekrój z = 0 siatki SDF, statek jako
-// pięć kół wzdłuż osi kadłuba (promień 0,46 szerokości). Wypchnięcie o głębokość wbicia
+// koła wzdłuż osi kadłuba (promień 0,46 szerokości; Atlas — pięć kół jak w demie, długie
+// kadłuby gęściej, koło nie większe niż pasmo SDF olbrzyma — szerokie kadłuby dostają
+// trzy koła w poprzek). Wypchnięcie o głębokość wbicia
 // wzdłuż normalnej SDF, składowa prędkości w głąb skały odbita ze współczynnikiem 0,3
 // (v −= 1,3 · vn · n) — bez obrażeń (demo ich nie ma; decyzja do oceny użytkownika).
 // Ruch encji: gracz / P2 przez pos / vel, NPC przez widok kinematyki
@@ -246,6 +248,7 @@ export class BeltGiants {
     const h = Number(body.h) > 0 ? Number(body.h) : Math.max(60, rad * 2);
     const L = Math.max(w, 1);
     const R = Math.max(10, h * this.cfg.hullCircleRadius);
+    const span = Math.max(0, L * 0.5 - R);
     let maxDepth = 0;
     for (let i = 0; i < this.entries.length; i++) {
       const e = this.entries[i];
@@ -255,19 +258,30 @@ export class BeltGiants {
       const a = Number(body.angle) || 0;
       const fx = Math.cos(a);
       const fy = Math.sin(a);
-      for (let k = -2; k <= 2; k++) {
-        const off = k * Math.max(0, L * 0.5 - R) / 2;
-        const hit = giant.collideCircle(body.pos.x + fx * off, body.pos.y + fy * off, R, this._hit);
-        if (!hit) continue;
-        body.pos.x += hit.nx * hit.depth;
-        body.pos.y += hit.ny * hit.depth;
-        if (hit.depth > maxDepth) maxDepth = hit.depth;
-        const vel = body.vel;
-        if (vel) {
-          const vn = vel.x * hit.nx + vel.y * hit.ny;
-          if (vn < 0) {
-            vel.x -= vn * hit.nx * this.cfg.bounce;
-            vel.y -= vn * hit.ny * this.cfg.bounce;
+      // Koło nie większe niż pasmo SDF: dalej od powierzchni siatka się nasyca (SDF =
+      // pasmo, gradient 0), więc większe koło wbijałoby się o R − pasmo bez wypchnięcia
+      // (megafrachtowiec przy Szczelinie). Szeroki kadłub = trzy koła w poprzek.
+      const rC = Math.min(R, giant.band - giant.plan.voxel * 0.5);
+      const side = R - rC;
+      const nS = side > 1 ? 3 : 1;
+      // Koła wzdłuż osi co ≤ 0,75 promienia (Atlas: 5 kół jak w demie; długie kadłuby więcej).
+      const nA = Math.min(16, Math.max(5, Math.ceil((2 * span) / (0.75 * rC)) + 1));
+      for (let k = 0; k < nA; k++) {
+        const off = -span + (2 * span * k) / (nA - 1);
+        for (let s = 0; s < nS; s++) {
+          const lat = nS > 1 ? (s - 1) * side : 0;
+          const hit = giant.collideCircle(body.pos.x + fx * off - fy * lat, body.pos.y + fy * off + fx * lat, rC, this._hit);
+          if (!hit) continue;
+          body.pos.x += hit.nx * hit.depth;
+          body.pos.y += hit.ny * hit.depth;
+          if (hit.depth > maxDepth) maxDepth = hit.depth;
+          const vel = body.vel;
+          if (vel) {
+            const vn = vel.x * hit.nx + vel.y * hit.ny;
+            if (vn < 0) {
+              vel.x -= vn * hit.nx * this.cfg.bounce;
+              vel.y -= vn * hit.ny * this.cfg.bounce;
+            }
           }
         }
       }

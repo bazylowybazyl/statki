@@ -151,25 +151,48 @@ async function main() {
   console.log('gotowe:', outDir);
 }
 
-// Statek gracza leci z prędkością 900 j/s wprost na ścianę Labiryntu (środek bryły):
-// bez kolizji wszedłby w skałę; z kolizją zostaje przy ścianie, składowa w głąb odbita.
+// Statek gracza leci z prędkością 900 j/s wprost na skałę Labiryntu. Cel = pierwsza lita
+// skała (SDF < −200 j. na z = 0) na jednym z wierszy skanu od lewej krawędzi bryły; start
+// z dziobem 1500 j. przed nią. Bez kolizji statek przeleciałby 5400 j. (w głąb skały);
+// z kolizją koła kadłuba (jak collideShip: 5 kół wzdłuż osi) zostają przy ścianie —
+// wbicie = max(R − SDF) po kołach po każdej porcji kroków (oczekiwane ≲ krok ruchu).
 async function kolizja(ev, cdp) {
-  await ev(`(async () => { const W = window.__W; const g = W.FIELD_GIANTS[0]; const S = window.__harness.scene;
-    const B = window.__asteroidBelt; const e = B.giants.entries.find((q) => q.id === 'warren');
-    // start 1,4 półszerokości na lewo od środka, lot w prawo (w stronę środka bryły)
-    const x = g.x - e.halfX * 1.25, y = g.y; DevScene.teleport(x, y, 0); S.cam(x, y, 0.08); return true; })()`);
-  await ev('window.__harness.frames(4)');
-  const before = await ev(`(() => { const s = window.ship; const B = window.__asteroidBelt; const e = B.giants.entries.find((q) => q.id === 'warren'); return { x: s.pos.x, y: s.pos.y, sdf: e.giant.sampleWorld(s.pos.x, s.pos.y, 0) }; })()`);
+  const setup = await ev(`(async () => { const S = window.__harness.scene;
+    const B = window.__asteroidBelt; const e = B.giants.entries.find((q) => q.id === 'warren'); const G = e.giant;
+    const s = window.ship; const L = Math.max(s.w || 0, 1); const R = Math.max(10, (s.h || 0) * B.giants.cfg.hullCircleRadius);
+    let hit = null;
+    for (const dy of [0, 1500, -1500, 3000, -3000, 4500, -4500, 6000, -6000]) {
+      const y = G.y + dy;
+      for (let x = G.x - e.halfX - 1000; x < G.x + e.halfX; x += 40) {
+        if (G.sampleWorld(x, y, 0) < -200) { hit = { x, y }; break; }
+      }
+      if (hit) break;
+    }
+    if (!hit) return { blad: 'brak litej skały na skanie' };
+    const x = hit.x - L * 0.5 - 1500; const y = hit.y;
+    DevScene.teleport(x, y, 0); S.cam(hit.x - 400, y, 0.14);
+    return { cel: { x: Math.round(hit.x), y: Math.round(hit.y) }, start: { x: Math.round(x), y: Math.round(y) }, L: Math.round(L), R: Math.round(R) }; })()`);
+  if (setup.blad) { console.log('  kolizja: ' + setup.blad); return setup; }
+  await ev('window.__harness.step(2)');
+  const probe = `(() => { const s = window.ship; const B = window.__asteroidBelt; const G = B.giants.entries.find((q) => q.id === 'warren').giant;
+    const L = ${setup.L}, R = ${setup.R}; const fx = Math.cos(s.angle), fy = Math.sin(s.angle); let pen = -Infinity;
+    for (let k = -2; k <= 2; k++) { const off = k * Math.max(0, L * 0.5 - R) / 2; pen = Math.max(pen, R - G.sampleWorld(s.pos.x + fx * off, s.pos.y + fy * off, 0)); }
+    return { x: +s.pos.x.toFixed(1), y: +s.pos.y.toFixed(1), vx: +s.vel.x.toFixed(1), vy: +s.vel.y.toFixed(1), wbicie: +pen.toFixed(1), kolizje: B.giants.stats.collisions }; })()`;
+  const before = await ev(probe);
   const trace = [];
   for (let k = 0; k < 24; k++) {
-    await ev(`(() => { const s = window.ship; s.vel.x = 900; s.vel.y = 0; s.angle = 0; return true; })()`);
+    await ev(`(() => { const s = window.ship; s.vel.x = 900; s.vel.y = 0; s.angle = 0; s.angVel = 0; return true; })()`);
     await ev('window.__harness.step(15)');
-    trace.push(await ev(`(() => { const s = window.ship; const e = window.__asteroidBelt.giants.entries.find((q) => q.id === 'warren'); return { x: +s.pos.x.toFixed(1), y: +s.pos.y.toFixed(1), vx: +s.vel.x.toFixed(1), sdf: +e.giant.sampleWorld(s.pos.x, s.pos.y, 0).toFixed(1), kolizje: window.__asteroidBelt.giants.stats.collisions }; })()`));
+    trace.push(await ev(probe));
   }
+  const last = trace[trace.length - 1];
+  await ev(`(() => { window.__harness.scene.cam(window.ship.pos.x + ${setup.L} * 0.5, window.ship.pos.y, 0.14); return true; })()`);
+  await ev('window.__harness.frames(6)');
   await screenshotPng(cdp, join(outDir, 'kolizja.png'));
-  const minSdf = Math.min(...trace.map((t) => t.sdf));
-  console.log(`  kolizja: start sdf ${before.sdf.toFixed(0)} j., min sdf środka ${minSdf.toFixed(0)} j., kolizje ${trace[trace.length - 1].kolizje}`);
-  return { before, trace, minSdf };
+  const maxPen = Math.max(...trace.map((t) => t.wbicie));
+  const droga = last.x - before.x;
+  console.log(`  kolizja: cel ${setup.cel.x}, ${setup.cel.y} | L ${setup.L} R ${setup.R} | droga ${droga.toFixed(0)} j. (bez kolizji 5400) | max wbicie ${maxPen.toFixed(1)} j. | kolizje ${last.kolizje}`);
+  return { ...setup, before, trace, maxPen, droga };
 }
 
 // Uruchomienie tylko wprost (asteroidy-demo.mjs importuje stąd STORM_STAGE).
