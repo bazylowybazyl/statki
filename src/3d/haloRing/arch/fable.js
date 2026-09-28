@@ -5,204 +5,231 @@
 // w demie), szczegół (drogi, arterie, pola, lądowiska, światła miast) na
 // piksel. Bez udawanego ruchu (smugi aut i impulsy maglevu dema wypadają —
 // ring nie udaje życia, docs/BRIEF-ring-halo.md §1).
+//
+// Port WebGPU (zadanie 10): powierzchnia habitatu w TSL (dawne FAB_SURFACE_VERTEX /
+// _FRAGMENT 1:1). Pochodne linii (fwidth w fabLineAA) liczone przed gałęziami stref — baza
+// WebGL (FXC) spłaszczała gałęzie, w WGSL pochodna w rozbieżnej gałęzi (granica stref) jest
+// nieokreślona. Mapa stref RGBA8 z NEAREST: odczyt textureLoad z zawinięciem (TSL). Szkło
+// i żebra kopuł — partie instancji archetypów (archBatchMesh), bez THREE.InstancedMesh.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
-  HALO_GLSL_COMMON,
-  HALO_GLSL_FG,
-  HALO_GLSL_FG_CLIP,
-  HALO_GLSL_LIGHT,
-  HALO_GLSL_NOISE,
-  HALO_GLSL_TRANSIT
-} from '../haloRingGLSL.js';
-import { ARCH_GLSL_LIT, ARCH_GLSL_SABS } from './archGLSL.js';
+  Fn, If, Discard,
+  float, vec2, vec3, vec4,
+  attribute, varyingProperty, uniform, texture, positionGeometry, normalGeometry,
+  modelViewMatrix, cameraProjectionMatrix,
+  abs, clamp, floor, fract, fwidth, length, max, min, mix, normalize, sin, smoothstep, step
+} from 'three/tsl';
+import { haloHash12, haloHash22, haloPureFn } from '../haloRingTSL.js';
+import { archLitTSL, archNodeMaterial } from './archTSL.js';
+import { ArchBatch, archHex, archRingTubeBoxes } from './archFrame.js';
 import { ArchLights, archBatchMesh, archHemisphere, archPointsMesh, archTreeGeometry } from './archMaterials.js';
-import { archHex, archRingTubeBoxes } from './archFrame.js';
 import { FAB_S, buildFableCity, buildFableDomes, buildFableStructure, createFablePlan, fableTubes } from './fablePlan.js';
 
 const S = FAB_S;
 
 // ---------------------------------------------------------------------------
-// Powierzchnia habitatu (SURFACE_FRAG dema, x 3).
-const FAB_SURFACE_VERTEX = /* glsl */`
-${HALO_GLSL_COMMON}
-attribute vec2 aRing;       // s od początku sektora 0, u (= z)
-varying vec3 vPos;
-varying vec3 vN;
-varying vec2 vRing;
-void main() {
-  vPos = position;
-  vN = normal;
-  vRing = aRing;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-}
-`;
+// Powierzchnia habitatu (SURFACE_FRAG dema, × 3). Szum wartości — czysta funkcja (hasz z
+// wejść całkowitych: floor(p)).
+const fabNoise = haloPureFn('fabNoise', 'float', [['p', 'vec2']], (a) => {
+  const i = floor(a.p).toVar();
+  const f0 = fract(a.p).toVar();
+  const f = f0.mul(f0).mul(vec2(3.0).sub(f0.mul(2.0))).toVar();
+  const ha = haloHash12(i);
+  const hb = haloHash12(i.add(vec2(1.0, 0.0)));
+  const hc = haloHash12(i.add(vec2(0.0, 1.0)));
+  const hd = haloHash12(i.add(vec2(1.0, 1.0)));
+  return mix(mix(ha, hb, f.x), mix(hc, hd, f.x), f.y);
+});
+const fabFbm3 = haloPureFn('fabFbm3', 'float', [['p', 'vec2']], (a) =>
+  fabNoise(a.p).mul(0.5).add(fabNoise(a.p.mul(2.03)).mul(0.25)).add(fabNoise(a.p.mul(4.07)).mul(0.125)).div(0.875));
+// linia z antyaliasingiem: fw = fwidth(x) policzone wcześniej (przed gałęziami)
+const fabLineAA = (x, fw, w) => float(1.0).sub(smoothstep(float(w).sub(fw), float(w).add(fw), abs(x)));
+// siatka: złożona współrzędna f = min(fract(p / cell)·cell, cell − …) i jej pochodne (vec2)
+const fabFold = (p, cell) => {
+  const f = fract(p.div(cell)).mul(cell).toVar();
+  return min(f, vec2(cell).sub(f));
+};
+const fabGridAA = (f, fw, w) => max(fabLineAA(f.x, fw.x, w), fabLineAA(f.y, fw.y, w));
+const fw2 = (f) => vec2(fwidth(f.x), fwidth(f.y));
 
-const FAB_SURFACE_FRAGMENT = /* glsl */`
-${HALO_GLSL_COMMON}
-${HALO_GLSL_NOISE}
-${HALO_GLSL_LIGHT}
-${HALO_GLSL_TRANSIT}
-${ARCH_GLSL_LIT}
-${ARCH_GLSL_SABS}
-uniform sampler2D uZone;
-uniform vec4 uFab;          // obwód (s), W, komórka siatki, S
-varying vec3 vPos;
-varying vec3 vN;
-varying vec2 vRing;
+// Materiał powierzchni (dawne FAB_SURFACE_*): zone — tekstura stref (węzeł texture z uv-atrapą),
+// fab — uniform vec4 (obwód s, W, komórka siatki, S).
+export function makeFableSurfaceNodes({ u, zone, fab }) {
+  const { H, U, archNight, archShade, archWater, archSAbs } = archLitTSL(u);
+  const vPosV = varyingProperty('vec3', 'vArchPos');
+  const vNV = varyingProperty('vec3', 'vArchN');
+  const vRingV = varyingProperty('vec2', 'vFabRing');
+  const vertexNode = Fn(() => {
+    const position = positionGeometry;
+    vPosV.assign(position);
+    vNV.assign(normalGeometry);
+    vRingV.assign(attribute('aRing', 'vec2'));   // s od początku sektora 0, u (= z)
+    return cameraProjectionMatrix.mul(modelViewMatrix.mul(vec4(position, 1.0)));
+  })();
+  const fragmentNode = Fn(() => {
+    const vPos = vec3(vPosV).toVar();
+    If(H.haloInTransitCut(archSAbs(vPos), vPos.z), () => { Discard(); });
+    const Sc = fab.w;
+    const ring = vec2(vRingV).toVar();
+    const rd = ring.div(Sc).toVar();                     // współrzędne dema (m)
+    const jit = haloHash22(floor(rd.div(5.0))).sub(0.5).mul(9.0).mul(Sc).toVar();
+    const zuv = vec2(ring.x.add(jit.x).div(fab.x), ring.y.add(jit.y).div(fab.y).add(0.5));
+    const zm = zone.sample(zuv).toVar();
+    const type = floor(zm.r.mul(255.0).div(16.0)).toVar();
+    const dens = zm.g.toVar();
+    const extra = zm.b.toVar();
+    const n = normalize(vNV).toVar();
+    const night = archNight(vPos).toVar();
+    const dist = length(U.uCamLocal.sub(vPos)).toVar();
+    const farBoost = float(1.0).add(float(3.0).mul(smoothstep(Sc.mul(2500.0), Sc.mul(16000.0), dist))).toVar();
+    const albedo = vec3(0.2).toVar();
+    const emissive = vec3(0.0).toVar();
+    const cell = fab.z;
+    const cellId = floor(ring.div(cell)).toVar();
+    const cellHash = haloHash12(cellId).toVar();
+    const n1 = fabFbm3(rd.mul(0.01)).toVar();
+    const n2 = fabNoise(rd.mul(0.15)).toVar();
+    const isUrban = float(0.0).toVar();
+    const water = float(0.0).toVar();       // bool jako 0/1
+    const waterDepth = float(0.0).toVar();
+    // ---- pochodne linii przed gałęziami stref (patrz nagłówek)
+    const gPark = fabFold(rd.add(vec2(n1.mul(40.0), 0.0)), 180.0).toVar();
+    const gParkFw = fw2(gPark).toVar();
+    const gFarm = fabFold(rd.add(vec2(0.0, 30.0)), 150.0).toVar();
+    const gFarmFw = fw2(gFarm).toVar();
+    const gCell = fabFold(ring, cell).toVar();
+    const gCellFw = fw2(gCell).toVar();
+    const gFine = fabFold(rd, 28.0).toVar();
+    const gFineFw = fw2(gFine).toVar();
+    const gPad = fabFold(ring, 120.0).toVar();
+    const gPadFw = fw2(gPad).toVar();
+    const padCell = cell.mul(3.0).toVar();
+    const padId = floor(ring.div(padCell)).toVar();
+    const pc = fract(ring.div(padCell)).sub(0.5).mul(padCell).toVar();
+    const pr = length(pc).div(Sc).toVar();
+    // fwidth(pr − c) osobno dla każdego pierścienia (jak fwidth argumentu fabLineAA w bazie)
+    const pr52 = pr.sub(52.0).toVar();
+    const pr30 = pr.sub(30.0).toVar();
+    const pr8 = pr.sub(8.0).toVar();
+    const pr52Fw = fwidth(pr52).toVar();
+    const pr30Fw = fwidth(pr30).toVar();
+    const pr8Fw = fwidth(pr8).toVar();
+    const hwX = abs(rd.y).sub(280.0).toVar();
+    const hwFw = fwidth(hwX).toVar();
+    const hwLaneX = abs(hwX).sub(10.0).toVar();
+    const hwLaneFw = fwidth(hwLaneX).toVar();
+    const crossX = fract(rd.x.div(1600.0)).mul(1600.0).sub(800.0).toVar();
+    const crossFw = fwidth(crossX).toVar();
+    const railFw = fwidth(rd.y).toVar();
+    const railLineX = abs(rd.y).sub(3.5).toVar();
+    const railLineFw = fwidth(railLineX).toVar();
 
-float fabLineAA(float x, float w) { float fw = fwidth(x); return 1.0 - smoothstep(w - fw, w + fw, abs(x)); }
-float fabGrid(vec2 p, float cell, float w) {
-  vec2 f = fract(p / cell) * cell;
-  f = min(f, cell - f);
-  return max(fabLineAA(f.x, w), fabLineAA(f.y, w));
+    If(type.lessThan(0.5), () => {
+      water.assign(1.0);
+      waterDepth.assign(smoothstep(0.2, 1.0, extra));
+    }).ElseIf(type.lessThan(1.5), () => {
+      albedo.assign(mix(vec3(0.075, 0.17, 0.045), vec3(0.14, 0.24, 0.07), n1).mul(float(0.85).add(float(0.3).mul(n2))));
+      const path = fabGridAA(gPark, gParkFw, 2.2);
+      albedo.assign(mix(albedo, vec3(0.32, 0.29, 0.24), path.mul(0.8)));
+    }).ElseIf(type.lessThan(2.5), () => {
+      const can = fabNoise(rd.mul(0.35)).mul(0.5).add(fabNoise(rd.mul(0.9)).mul(0.5));
+      albedo.assign(mix(vec3(0.02, 0.07, 0.02), vec3(0.06, 0.15, 0.045), can).mul(float(0.7).add(float(0.5).mul(n1))));
+    }).ElseIf(type.lessThan(3.5), () => {
+      const fid = floor(rd.add(vec2(0.0, 30.0)).div(vec2(150.0, 95.0))).toVar();
+      const fh = haloHash12(fid.add(7.0)).toVar();
+      albedo.assign(fh.lessThan(0.25).select(vec3(0.22, 0.24, 0.07), fh.lessThan(0.5).select(vec3(0.10, 0.20, 0.05),
+        fh.lessThan(0.75).select(vec3(0.30, 0.21, 0.09), vec3(0.16, 0.26, 0.09)))));
+      albedo.mulAssign(float(0.85).add(float(0.15).mul(sin(rd.y.mul(2.2).add(fh.mul(10.0))))));
+      const fb = fabGridAA(gFarm, gFarmFw, 3.0);
+      albedo.assign(mix(albedo, vec3(0.28, 0.25, 0.2), fb.mul(0.7)));
+    }).ElseIf(type.lessThan(4.5), () => {
+      albedo.assign(mix(vec3(0.15, 0.22, 0.06), vec3(0.24, 0.27, 0.10), n1).mul(float(0.85).add(float(0.3).mul(n2))));
+    }).ElseIf(type.lessThan(5.5), () => {
+      isUrban.assign(1.0);
+      const sh = haloHash12(floor(rd.div(14.0)).add(3.0));
+      albedo.assign(mix(vec3(0.30, 0.27, 0.24), vec3(0.42, 0.36, 0.30), sh).mul(float(0.75).add(float(0.25).mul(n2))));
+      albedo.assign(mix(albedo, vec3(0.12, 0.2, 0.08), smoothstep(0.55, 0.8, fabNoise(rd.mul(0.08))).mul(0.6)));
+    }).ElseIf(type.lessThan(6.5), () => {
+      isUrban.assign(1.0);
+      albedo.assign(mix(vec3(0.20, 0.20, 0.21), vec3(0.34, 0.33, 0.32), cellHash).mul(float(0.8).add(float(0.2).mul(n2))));
+    }).ElseIf(type.lessThan(7.5), () => {
+      isUrban.assign(1.0);
+      albedo.assign(mix(vec3(0.13, 0.14, 0.17), vec3(0.24, 0.25, 0.28), cellHash).mul(float(0.8).add(float(0.2).mul(n2))));
+    }).ElseIf(type.lessThan(8.5), () => {
+      isUrban.assign(1.0);
+      albedo.assign(mix(vec3(0.17, 0.15, 0.13), vec3(0.28, 0.26, 0.23), cellHash).mul(float(0.8).add(float(0.2).mul(n2))));
+      const stripe = step(0.92, fract(ring.x.div(cell))).mul(step(0.5, haloHash12(cellId.add(11.0))));
+      albedo.assign(mix(albedo, vec3(0.6, 0.45, 0.05), stripe.mul(0.5)));
+    }).ElseIf(type.lessThan(9.5), () => {
+      isUrban.assign(1.0);
+      albedo.assign(vec3(0.30, 0.31, 0.32).mul(float(0.85).add(float(0.2).mul(n2))));
+      const padMask = float(1.0).sub(step(0.5, padId.x.add(padId.y.mul(2.0)).sub(floor(padId.x.add(padId.y.mul(2.0)).div(3.0)).mul(3.0)))).toVar();
+      const padRing = padMask.mul(fabLineAA(pr52, pr52Fw, 2.5).add(fabLineAA(pr30, pr30Fw, 1.5)).add(fabLineAA(pr8, pr8Fw, 3.0))).toVar();
+      albedo.assign(mix(albedo, vec3(0.65, 0.6, 0.2), clamp(padRing, 0.0, 1.0).mul(0.8)));
+      emissive.addAssign(vec3(0.9, 0.35, 0.1).mul(clamp(padRing, 0.0, 1.0)).mul(float(0.4).add(float(0.6).mul(night))).mul(U.uLayers.y).mul(padMask));
+    }).ElseIf(type.lessThan(10.5), () => {
+      isUrban.assign(1.0);
+      albedo.assign(mix(vec3(0.12, 0.15, 0.20), vec3(0.22, 0.26, 0.32), cellHash).mul(float(0.85).add(float(0.2).mul(n2))));
+      const glowLine = fabGridAA(gCell, gCellFw, Sc.mul(1.2)).mul(step(0.6, haloHash12(cellId.add(21.0))));
+      emissive.addAssign(vec3(0.1, 0.6, 0.9).mul(glowLine).mul(float(0.3).add(float(0.7).mul(night))).mul(U.uLayers.y));
+    }).ElseIf(type.lessThan(11.5), () => {
+      albedo.assign(vec3(0.36, 0.36, 0.35).mul(float(0.85).add(float(0.2).mul(n2))));
+      albedo.mulAssign(float(1.0).sub(fabGridAA(gFine, gFineFw, 0.8).mul(0.25)));
+    }).ElseIf(type.lessThan(12.5), () => {
+      albedo.assign(vec3(0.48, 0.42, 0.29).mul(float(0.9).add(float(0.2).mul(n2))));
+    }).Else(() => {
+      // płyta doku gry: beton z siatką 120 j.
+      albedo.assign(vec3(0.26, 0.27, 0.285).mul(float(0.9).add(float(0.12).mul(haloHash12(floor(ring.div(120.0)))))));
+      albedo.mulAssign(float(1.0).sub(fabGridAA(gPad, gPadFw, 1.5).mul(0.35)));
+    });
+    // drogi i kwartały w strefach miejskich
+    const road = fabGridAA(gCell, gCellFw, Sc.mul(5.0)).mul(isUrban).toVar();
+    const roadCenter = fabGridAA(gCell, gCellFw, Sc.mul(0.35)).mul(isUrban).toVar();
+    albedo.assign(mix(albedo, vec3(0.05, 0.05, 0.055), road));
+    albedo.assign(mix(albedo, vec3(0.5, 0.45, 0.25), roadCenter.mul(0.6)));
+    // arterie wzdłuż ringu (u = ±280) i w poprzek co 1600, tor maglevu na osi
+    const hw = fabLineAA(hwX, hwFw, 20.0).toVar();
+    const hwLane = fabLineAA(hwX, hwFw, 0.6).add(fabLineAA(hwLaneX, hwLaneFw, 0.5)).toVar();
+    const crossHw = fabLineAA(crossX, crossFw, 14.0).toVar();
+    const hwCol = water.greaterThan(0.5).select(vec3(0.22, 0.22, 0.24), vec3(0.06, 0.06, 0.065));
+    const onPad = step(12.5, type).toVar();
+    const arter = max(hw, crossHw).mul(float(1.0).sub(onPad));
+    albedo.assign(mix(albedo, hwCol, arter));
+    albedo.assign(mix(albedo, vec3(0.55, 0.5, 0.3), clamp(hwLane, 0.0, 1.0).mul(hw).mul(0.7).mul(float(1.0).sub(onPad))));
+    const rail = fabLineAA(rd.y, railFw, 9.0).mul(float(1.0).sub(onPad)).toVar();
+    const railLine = fabLineAA(railLineX, railLineFw, 0.5);
+    albedo.assign(mix(albedo, vec3(0.18, 0.19, 0.21), rail));
+    albedo.assign(mix(albedo, vec3(0.45, 0.47, 0.5), railLine.mul(rail)));
+    // światła miast (noc): okna kwartałów, latarnie
+    const lightsOn = U.uLayers.y.mul(float(0.06).add(float(0.94).mul(night))).toVar();
+    If(isUrban.greaterThan(0.5), () => {
+      const warm = haloHash12(cellId.add(1.0)).toVar();
+      const winCol = mix(vec3(1.0, 0.80, 0.55), vec3(0.70, 0.85, 1.0), step(0.55, warm)).toVar();
+      If(type.greaterThan(7.5).and(type.lessThan(8.5)), () => { winCol.assign(mix(vec3(1.0, 0.65, 0.3), vec3(0.9, 0.9, 0.8), warm)); });
+      If(type.greaterThan(9.5).and(type.lessThan(10.5)), () => { winCol.assign(vec3(0.6, 0.85, 1.0)); });
+      const mid = fabFbm3(rd.mul(0.006).add(7.0)).toVar();
+      const fine = fabNoise(rd.mul(0.5)).mul(0.5).add(haloHash12(floor(rd.div(4.0))).mul(0.5));
+      const sparkle = step(0.965, haloHash12(floor(rd.div(7.0)).add(3.0)));
+      const blockGlow = dens.mul(float(0.25).add(float(0.75).mul(cellHash))).mul(float(0.35).add(float(0.65).mul(mid))).mul(float(0.4).add(float(0.6).mul(fine)));
+      const intensity = type.greaterThan(6.5).and(type.lessThan(7.5)).select(float(0.8),
+        type.greaterThan(9.5).and(type.lessThan(10.5)).select(float(0.6), float(0.4)));
+      emissive.addAssign(winCol.mul(blockGlow.mul(intensity).mul(farBoost).add(sparkle.mul(0.9).mul(dens).mul(float(0.5).add(float(0.5).mul(mid)))))
+        .mul(lightsOn).mul(float(1.0).sub(road)));
+      emissive.addAssign(vec3(1.0, 0.75, 0.4).mul(road).mul(0.14).mul(lightsOn));
+    });
+    emissive.addAssign(vec3(1.0, 0.8, 0.5).mul(hw.add(crossHw)).mul(0.10).mul(lightsOn).mul(float(1.0).sub(onPad)));
+    const col = vec3(0.0).toVar();
+    If(water.greaterThan(0.5), () => {
+      col.assign(archWater(vPos, n, rd, vec3(0.008, 0.035, 0.07), vec3(0.03, 0.15, 0.19), waterDepth));
+      col.addAssign(vec3(0.4, 0.35, 0.3).mul(0.02).mul(night).mul(U.uLayers.y));
+    }).Else(() => {
+      col.assign(archShade(vPos, n, albedo, 0.0));
+    });
+    return vec4(col.add(emissive), 1.0);
+  })();
+  return { vertexNode, fragmentNode };
 }
-float fabNoise(vec2 p) {
-  vec2 i = floor(p);
-  vec2 f = fract(p);
-  f = f * f * (3.0 - 2.0 * f);
-  float a = haloHash12(i);
-  float b = haloHash12(i + vec2(1.0, 0.0));
-  float c = haloHash12(i + vec2(0.0, 1.0));
-  float d = haloHash12(i + vec2(1.0, 1.0));
-  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
-}
-float fabFbm3(vec2 p) { return (fabNoise(p) * 0.5 + fabNoise(p * 2.03) * 0.25 + fabNoise(p * 4.07) * 0.125) / 0.875; }
-
-void main() {
-  if (haloInTransitCut(archSAbs(vPos), vPos.z)) discard;
-  float Sc = uFab.w;
-  vec2 ring = vRing;
-  vec2 rd = ring / Sc;                     // wspolrzedne dema (m)
-  vec2 jit = (haloHash22(floor(rd / 5.0)) - 0.5) * 9.0 * Sc;
-  vec2 zuv = vec2((ring.x + jit.x) / uFab.x, (ring.y + jit.y) / uFab.y + 0.5);
-  vec4 zm = texture2D(uZone, zuv);
-  float type = floor(zm.r * 255.0 / 16.0);
-  float dens = zm.g;
-  float extra = zm.b;
-  vec3 n = normalize(vN);
-  float night = archNight(vPos);
-  float dist = length(uCamLocal - vPos);
-  float farBoost = 1.0 + 3.0 * smoothstep(2500.0 * Sc, 16000.0 * Sc, dist);
-  vec3 albedo = vec3(0.2);
-  vec3 emissive = vec3(0.0);
-  float cell = uFab.z;
-  vec2 cellId = floor(ring / cell);
-  float cellHash = haloHash12(cellId);
-  float n1 = fabFbm3(rd * 0.01);
-  float n2 = fabNoise(rd * 0.15);
-  float isUrban = 0.0;
-  bool water = false;
-  float waterDepth = 0.0;
-  if (type < 0.5) {
-    water = true;
-    waterDepth = smoothstep(0.2, 1.0, extra);
-  } else if (type < 1.5) {
-    albedo = mix(vec3(0.075, 0.17, 0.045), vec3(0.14, 0.24, 0.07), n1) * (0.85 + 0.3 * n2);
-    float path = fabGrid(rd + vec2(n1 * 40.0, 0.0), 180.0, 2.2);
-    albedo = mix(albedo, vec3(0.32, 0.29, 0.24), path * 0.8);
-  } else if (type < 2.5) {
-    float can = fabNoise(rd * 0.35) * 0.5 + fabNoise(rd * 0.9) * 0.5;
-    albedo = mix(vec3(0.02, 0.07, 0.02), vec3(0.06, 0.15, 0.045), can) * (0.7 + 0.5 * n1);
-  } else if (type < 3.5) {
-    vec2 fid = floor((rd + vec2(0.0, 30.0)) / vec2(150.0, 95.0));
-    float fh = haloHash12(fid + 7.0);
-    vec3 c1 = vec3(0.22, 0.24, 0.07);
-    vec3 c2 = vec3(0.10, 0.20, 0.05);
-    vec3 c3 = vec3(0.30, 0.21, 0.09);
-    vec3 c4 = vec3(0.16, 0.26, 0.09);
-    albedo = fh < 0.25 ? c1 : fh < 0.5 ? c2 : fh < 0.75 ? c3 : c4;
-    albedo *= 0.85 + 0.15 * sin(rd.y * 2.2 + fh * 10.0);
-    float fb = fabGrid(rd + vec2(0.0, 30.0), 150.0, 3.0);
-    albedo = mix(albedo, vec3(0.28, 0.25, 0.2), fb * 0.7);
-  } else if (type < 4.5) {
-    albedo = mix(vec3(0.15, 0.22, 0.06), vec3(0.24, 0.27, 0.10), n1) * (0.85 + 0.3 * n2);
-  } else if (type < 5.5) {
-    isUrban = 1.0;
-    float sh = haloHash12(floor(rd / 14.0) + 3.0);
-    albedo = mix(vec3(0.30, 0.27, 0.24), vec3(0.42, 0.36, 0.30), sh) * (0.75 + 0.25 * n2);
-    albedo = mix(albedo, vec3(0.12, 0.2, 0.08), smoothstep(0.55, 0.8, fabNoise(rd * 0.08)) * 0.6);
-  } else if (type < 6.5) {
-    isUrban = 1.0;
-    albedo = mix(vec3(0.20, 0.20, 0.21), vec3(0.34, 0.33, 0.32), cellHash) * (0.8 + 0.2 * n2);
-  } else if (type < 7.5) {
-    isUrban = 1.0;
-    albedo = mix(vec3(0.13, 0.14, 0.17), vec3(0.24, 0.25, 0.28), cellHash) * (0.8 + 0.2 * n2);
-  } else if (type < 8.5) {
-    isUrban = 1.0;
-    albedo = mix(vec3(0.17, 0.15, 0.13), vec3(0.28, 0.26, 0.23), cellHash) * (0.8 + 0.2 * n2);
-    float stripe = step(0.92, fract(ring.x / cell)) * step(0.5, haloHash12(cellId + 11.0));
-    albedo = mix(albedo, vec3(0.6, 0.45, 0.05), stripe * 0.5);
-  } else if (type < 9.5) {
-    isUrban = 1.0;
-    albedo = vec3(0.30, 0.31, 0.32) * (0.85 + 0.2 * n2);
-    float padCell = cell * 3.0;
-    vec2 padId = floor(ring / padCell);
-    vec2 pc = (fract(ring / padCell) - 0.5) * padCell;
-    float pr = length(pc) / Sc;
-    float padMask = 1.0 - step(0.5, padId.x + 2.0 * padId.y - 3.0 * floor((padId.x + 2.0 * padId.y) / 3.0));
-    float padRing = padMask * (fabLineAA(pr - 52.0, 2.5) + fabLineAA(pr - 30.0, 1.5) + fabLineAA(pr - 8.0, 3.0));
-    albedo = mix(albedo, vec3(0.65, 0.6, 0.2), clamp(padRing, 0.0, 1.0) * 0.8);
-    emissive += vec3(0.9, 0.35, 0.1) * clamp(padRing, 0.0, 1.0) * (0.4 + 0.6 * night) * uLayers.y * padMask;
-  } else if (type < 10.5) {
-    isUrban = 1.0;
-    albedo = mix(vec3(0.12, 0.15, 0.20), vec3(0.22, 0.26, 0.32), cellHash) * (0.85 + 0.2 * n2);
-    float glowLine = fabGrid(ring, cell, 1.2 * Sc) * step(0.6, haloHash12(cellId + 21.0));
-    emissive += vec3(0.1, 0.6, 0.9) * glowLine * (0.3 + 0.7 * night) * uLayers.y;
-  } else if (type < 11.5) {
-    albedo = vec3(0.36, 0.36, 0.35) * (0.85 + 0.2 * n2);
-    albedo *= 1.0 - fabGrid(rd, 28.0, 0.8) * 0.25;
-  } else if (type < 12.5) {
-    albedo = vec3(0.48, 0.42, 0.29) * (0.9 + 0.2 * n2);
-  } else {
-    // plyta doku gry: beton z siatka 120 j.
-    albedo = vec3(0.26, 0.27, 0.285) * (0.9 + 0.12 * haloHash12(floor(ring / 120.0)));
-    albedo *= 1.0 - fabGrid(ring, 120.0, 1.5) * 0.35;
-  }
-  // drogi i kwartaly w strefach miejskich
-  float road = fabGrid(ring, cell, 5.0 * Sc) * isUrban;
-  float roadCenter = fabGrid(ring, cell, 0.35 * Sc) * isUrban;
-  albedo = mix(albedo, vec3(0.05, 0.05, 0.055), road);
-  albedo = mix(albedo, vec3(0.5, 0.45, 0.25), roadCenter * 0.6);
-  // arterie wzdluz ringu (u = +-280) i w poprzek co 1600, tor maglevu na osi
-  float hw = fabLineAA(abs(rd.y) - 280.0, 20.0);
-  float hwLane = fabLineAA(abs(rd.y) - 280.0, 0.6) + fabLineAA(abs(abs(rd.y) - 280.0) - 10.0, 0.5);
-  float crossHw = fabLineAA(fract(rd.x / 1600.0) * 1600.0 - 800.0, 14.0);
-  vec3 hwCol = water ? vec3(0.22, 0.22, 0.24) : vec3(0.06, 0.06, 0.065);
-  float onPad = step(12.5, type);
-  float arter = max(hw, crossHw) * (1.0 - onPad);
-  albedo = mix(albedo, hwCol, arter);
-  albedo = mix(albedo, vec3(0.55, 0.5, 0.3), clamp(hwLane, 0.0, 1.0) * hw * 0.7 * (1.0 - onPad));
-  float rail = fabLineAA(rd.y, 9.0) * (1.0 - onPad);
-  float railLine = fabLineAA(abs(rd.y) - 3.5, 0.5);
-  albedo = mix(albedo, vec3(0.18, 0.19, 0.21), rail);
-  albedo = mix(albedo, vec3(0.45, 0.47, 0.5), railLine * rail);
-  // swiatla miast (noc): okna kwartalow, latarnie
-  float lightsOn = uLayers.y * (0.06 + 0.94 * night);
-  if (isUrban > 0.5) {
-    float warm = haloHash12(cellId + 1.0);
-    vec3 winCol = mix(vec3(1.0, 0.80, 0.55), vec3(0.70, 0.85, 1.0), step(0.55, warm));
-    if (type > 7.5 && type < 8.5) winCol = mix(vec3(1.0, 0.65, 0.3), vec3(0.9, 0.9, 0.8), warm);
-    if (type > 9.5 && type < 10.5) winCol = vec3(0.6, 0.85, 1.0);
-    float mid = fabFbm3(rd * 0.006 + 7.0);
-    float fine = fabNoise(rd * 0.5) * 0.5 + haloHash12(floor(rd / 4.0)) * 0.5;
-    float sparkle = step(0.965, haloHash12(floor(rd / 7.0) + 3.0));
-    float blockGlow = dens * (0.25 + 0.75 * cellHash) * (0.35 + 0.65 * mid) * (0.4 + 0.6 * fine);
-    float intensity = (type > 6.5 && type < 7.5) ? 0.8 : (type > 9.5 && type < 10.5) ? 0.6 : 0.4;
-    emissive += winCol * (blockGlow * intensity * farBoost + sparkle * 0.9 * dens * (0.5 + 0.5 * mid)) * lightsOn * (1.0 - road);
-    emissive += vec3(1.0, 0.75, 0.4) * road * 0.14 * lightsOn;
-  }
-  emissive += vec3(1.0, 0.8, 0.5) * (hw + crossHw) * 0.10 * lightsOn * (1.0 - onPad);
-  vec3 col;
-  if (water) {
-    col = archWater(vPos, n, rd, vec3(0.008, 0.035, 0.07), vec3(0.03, 0.15, 0.19), waterDepth);
-    col += vec3(0.4, 0.35, 0.3) * 0.02 * night * uLayers.y;
-  } else {
-    col = archShade(vPos, n, albedo, 0.0);
-  }
-  gl_FragColor = vec4(col + emissive, 1.0);
-}
-`;
 
 // Tekstury płyt (makePanelTextures dema): mapa, emisja (okna ścian), bez chropowatości.
 function makePanelTextures(kind, seedTag, size = 1024) {
@@ -389,19 +416,18 @@ export function buildFableRing({ layout, uniforms, materials, geos, quality, see
   zoneTex.generateMipmaps = false;
   zoneTex.needsUpdate = true;
   disposables.push(zoneTex);
-  const surfMat = new THREE.ShaderMaterial({
-    name: 'FableSurface',
-    uniforms: { ...uniforms, uZone: { value: zoneTex }, uFab: { value: new THREE.Vector4(plan.CIRC, plan.W, plan.CIRC / Math.round(plan.CIRC / (56 * S)), S) } },
-    vertexShader: FAB_SURFACE_VERTEX,
-    fragmentShader: FAB_SURFACE_FRAGMENT
-  });
+  // uZone: węzeł tekstury z uv-atrapą (próbkowanie z uv w materiale; bez macierzy uv), uFab: obwód (s),
+  // W, komórka siatki, S
+  const uZone = texture(zoneTex, vec2(0.0));
+  const uFab = uniform(new THREE.Vector4(plan.CIRC, plan.W, plan.CIRC / Math.round(plan.CIRC / (56 * S)), S));
+  const surfMat = archNodeMaterial('FableSurface', makeFableSurfaceNodes({ u: uniforms, zone: uZone, fab: uFab }), {}, { ...uniforms, uZone, uFab });
   disposables.push(surfMat);
   const segSurf = Math.round(plan.CIRC / 110);
   const floorGeo = ringStrip(plan, -HW, 0, HW, 0, 0, 1, segSurf, { across: 6, extraRing: true });
-  const floor = new THREE.Mesh(floorGeo, surfMat);
-  floor.name = 'FableSurface';
-  floor.frustumCulled = false;
-  bg.push(floor);
+  const floorMesh = new THREE.Mesh(floorGeo, surfMat);
+  floorMesh.name = 'FableSurface';
+  floorMesh.frustumCulled = false;
+  bg.push(floorMesh);
 
   // ---- kadłub i ściany (tekstury płyt dema) ----
   const hullTex = makePanelTextures('hull', (seed ^ 0x51) >>> 0);
@@ -497,10 +523,8 @@ export function buildFableRing({ layout, uniforms, materials, geos, quality, see
   const hemi = archHemisphere();
   disposables.push(hemi);
   const tints = { FOREST: [0.55, 0.78, 0.95], TROPICAL: [0.55, 0.85, 0.85], BOTANICAL: [0.7, 0.8, 0.95], RECREATION: [0.65, 0.8, 1.0], WILDERNESS: [0.5, 0.75, 0.9], AQUATIC: [0.45, 0.8, 1.0] };
-  const glass = new THREE.InstancedMesh(hemi, materials.glass({ alpha: 0.15 }), Math.max(1, domes.length));
-  glass.count = domes.length;
-  glass.renderOrder = 30;
-  glass.name = 'FableDomeGlass';
+  // szkło: partia instancji półkul (barwa instancji = odcień szkła wg typu kopuły)
+  const glassBatch = new ArchBatch('FableDomeGlass');
   const unitTorus = new THREE.TorusGeometry(1, 0.011, 6, 96);
   unitTorus.deleteAttribute('uv');
   disposables.push(unitTorus);
@@ -525,9 +549,8 @@ export function buildFableRing({ layout, uniforms, materials, geos, quality, see
       0, 0, 0, 1
     );
     tmp.copy(frame).scale(v.set(d.r, d.r, d.r));
-    glass.setMatrixAt(i, tmp);
     const tc = tints[d.type] || tints.FOREST;
-    glass.setColorAt(i, new THREE.Color(tc[0], tc[1], tc[2]));
+    glassBatch.push16(tmp.elements, tc, 0, 0, 0, 0);
     const wire = d.r > 350 * S ? wireGeo4 : wireGeo3;
     const wp = wire.getAttribute('position');
     for (let q = 0; q < wp.count; q++) {
@@ -548,10 +571,11 @@ export function buildFableRing({ layout, uniforms, materials, geos, quality, see
     rot.makeRotationX(Math.PI * 0.5).setPosition(0, d.r * d.sunk + 4.5, 0);
     ribMats.push(frame.clone().multiply(rot).scale(v.set(d.baseR, d.baseR, d.baseR * 1.8)));
   });
-  glass.instanceMatrix.needsUpdate = true;
-  if (glass.instanceColor) glass.instanceColor.needsUpdate = true;
-  glass.computeBoundingSphere();
-  if (domes.length) bg.push(glass);
+  const glass = archBatchMesh(glassBatch, hemi, materials.glass({ alpha: 0.15 }));
+  if (glass) {
+    glass.renderOrder = 30;
+    bg.push(glass);
+  }
   if (linePos.length) {
     const lg = new THREE.BufferGeometry();
     lg.setAttribute('position', new THREE.Float32BufferAttribute(linePos, 3));
@@ -561,19 +585,11 @@ export function buildFableRing({ layout, uniforms, materials, geos, quality, see
     bg.push(lines);
   }
   if (ribMats.length) {
-    const ribs = new THREE.InstancedMesh(unitTorus.clone(), matBG, ribMats.length);
-    const a = new Float32Array(ribMats.length * 4);
     const rc = archHex(0xc9ced6);
-    ribMats.forEach((mm, i) => {
-      ribs.setMatrixAt(i, mm);
-      ribs.setColorAt(i, new THREE.Color(rc[0], rc[1], rc[2]));
-      a.set([0, 0.2, 0.6, 0], i * 4);
-    });
-    ribs.geometry.setAttribute('aInst', new THREE.InstancedBufferAttribute(a, 4));
-    ribs.instanceMatrix.needsUpdate = true;
-    ribs.computeBoundingSphere();
-    ribs.name = 'FableDomeRibs';
-    bg.push(ribs);
+    const ribBatch = new ArchBatch('FableDomeRibs');
+    for (const mm of ribMats) ribBatch.push16(mm.elements, rc, 0, 0.2, 0.6, 0);
+    const ribs = archBatchMesh(ribBatch, unitTorus, matBG);
+    if (ribs) bg.push(ribs);
   }
 
   // ---- światła pozycyjne ----

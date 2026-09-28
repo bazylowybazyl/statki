@@ -170,12 +170,13 @@ test('a·b + c z jednym zaokrągleniem (haloFusedMulAddInt): stała rozbita na d
 test('teren: materiał węzłowy bez GLSL, jedna definicja wierzchołków i fragmentu, bez mgły i tone mappingu', () => {
   const src = read('src/3d/haloRing/haloRingTerrain.js');
   assert.doesNotMatch(src, /\/\* glsl \*\/|new THREE\.ShaderMaterial|gl_FragColor|gl_Position|from '\.\/haloRingGLSL\.js'/, 'haloRingTerrain.js bez GLSL');
-  // GLSL powierzchni dla materiałów 09 jest w haloRingGLSL.js (nie w module terenu); pokrycie
-  // chmur (CLOUDCOVER) zniknęło z portem atmosfery (08 — tests/haloRingStructureTSL.test.mjs)
+  // GLSL powierzchni (HALO_GLSL_SURFACE) zniknął z portem megastruktury i miasta (09 —
+  // tests/haloRingMegaCityTSL.test.mjs), pokrycie chmur (CLOUDCOVER) z atmosferą (08); moduły
+  // ringu biorą próbkowanie map z haloRingSurfaceTSL (haloRingTSL.js), nie z modułu terenu
   const glsl = read('src/3d/haloRing/haloRingGLSL.js');
-  assert.match(glsl, /export const HALO_GLSL_SURFACE = /);
+  assert.doesNotMatch(glsl, /export const HALO_GLSL_SURFACE/);
   for (const f of ['haloRingAtmosphere.js', 'haloRingCity.js', 'haloRingMegastructure.js', 'haloRingStructure.js']) {
-    assert.doesNotMatch(read(`src/3d/haloRing/${f}`), /from '\.\/haloRingTerrain\.js'/, `${f}: GLSL powierzchni z haloRingGLSL.js`);
+    assert.doesNotMatch(read(`src/3d/haloRing/${f}`), /from '\.\/haloRingTerrain\.js'/, `${f}: powierzchnia z haloRingSurfaceTSL`);
   }
   const { terrain, layout } = makeTerrain();
   const m = terrain.material;

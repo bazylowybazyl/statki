@@ -12,7 +12,7 @@
 //
 // Wspólne z silnikiem Halo: układ (createHaloRingLayout z geometrią archetypu
 // z profilu — ten sam dostają kolizje, ruch v2 i stacja-port), uniformy
-// i model światła (haloRingGLSL.js), hala K-7 z zatokami (standard stanowisk)
+// i model światła (haloRingTSL.js), hala K-7 z zatokami (standard stanowisk)
 // i reguły FG (górna ściana nad płaszczyzną gry: zanik przy dużym
 // powiększeniu, schowanie nad wąwozem habitatu, wycięcia nad graczem).
 // Własne: cała reszta ringu (ecumene.js / fable.js) i bryły zatok i tranzytów
