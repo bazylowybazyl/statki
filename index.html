@@ -9198,7 +9198,10 @@
         muzzleData.pos.y,
         weapon.category === 'beam',
         weapon.beamMode || null,
-        beamEventData
+        beamEventData,
+        // Kierunek lufy (bez rozrzutu) — efekt strzelca bez wieżyczki (myśliwiec).
+        Math.cos(baseAngle),
+        Math.sin(baseAngle)
       );
 
       // Zwracamy obliczony czas przeładowania
@@ -9882,7 +9885,39 @@
       return true;
     }
 
-    function spawnBulletImpactEffect(b, x, y, scale = 1.0) {
+    // Dane trafienia dla efektu (zadanie 17, PROJEKT-BRONI §1.2 G/H): punkt, normalna
+    // powierzchni na zewnątrz (świat gry), trafiona encja (łuki Tempesta po poszyciu) i
+    // prędkość pocisku względem niej. Jeden obiekt — efekt czyta go synchronicznie.
+    // Kadłub na belkach: normalna z HullBodies.surfaceNormal (wołać PRZED kraterem);
+    // inne ciała — promieniście od środka; bez ciała (płyta ringu, rakieta) — pod prąd.
+    const _impactHit = { x: 0, y: 0, nx: 0, ny: -1, entity: null, relVx: 0, relVy: 0, kind: 'none' };
+    function writeImpactHit(out, entity, x, y, relVx, relVy, kind) {
+      out.x = x;
+      out.y = y;
+      out.entity = entity || null;
+      out.relVx = Number(relVx) || 0;
+      out.relVy = Number(relVy) || 0;
+      out.kind = kind || 'none';
+      const vl = Math.hypot(out.relVx, out.relVy);
+      let nx = vl > 1e-9 ? -out.relVx / vl : 0;
+      let ny = vl > 1e-9 ? -out.relVy / vl : -1;
+      if (entity?.beamHull) {
+        const n = HullBodies.surfaceNormal(entity, x, y, out.relVx, out.relVy);
+        if (Number.isFinite(n.nx) && Number.isFinite(n.ny) && (n.nx !== 0 || n.ny !== 0)) { nx = n.nx; ny = n.ny; }
+      } else if (entity) {
+        const ex = Number(entity.pos?.x ?? entity.x);
+        const ey = Number(entity.pos?.y ?? entity.y);
+        const dx = x - ex;
+        const dy = y - ey;
+        const dl = Math.hypot(dx, dy);
+        if (Number.isFinite(dl) && dl > 1e-6) { nx = dx / dl; ny = dy / dl; }
+      }
+      out.nx = nx;
+      out.ny = ny;
+      return out;
+    }
+
+    function spawnBulletImpactEffect(b, x, y, scale = 1.0, hit = null) {
       const impactKey = resolveProjectileImpact3DKey(b);
       // Trafienia pociskow ida wylacznie przez overlay 3D ponizej. Kanwa 2D ma
       // wlasna sciezke dla trafien wiazek (spawnWeaponImpactFromPreset).
@@ -19905,6 +19940,8 @@
             const hitCarrier = writeCarrier(hitNPC, hitX, hitY, false, _impactCarrier);
             _impactRelVel.x = b.vx - hitCarrier.vx;
             _impactRelVel.y = b.vy - hitCarrier.vy;
+            // Normalna powierzchni dla efektu trafienia — PRZED kraterem (krater zabija węzły).
+            writeImpactHit(_impactHit, hitNPC._realEntity || hitNPC, hitX, hitY, _impactRelVel.x, _impactRelVel.y, 'hull');
 
             // Obrażenia w heks trafiony przez sweep (bez niego — sonda w punkcie trafienia);
             // kadłub na belkach — krater od punktu wejścia.
@@ -19923,7 +19960,7 @@
             }
 
             ActiveCarrier.set(hitCarrier);
-            spawnBulletImpactEffect(b, hitX, hitY, 1.0);
+            spawnBulletImpactEffect(b, hitX, hitY, 1.0, _impactHit);
             ActiveCarrier.clear();
 
             if (shouldRemoveProjectileAfterImpact(b, !!(hitNPC.hexGrid || hitNPC.beamHull))) removeBulletAt(i);
@@ -19958,8 +19995,9 @@
               { x: b.vx - astCarrier.vx, y: b.vy - astCarrier.vy });
 
             if (astResult?.hit || astResult?.destroyed) {
+              writeImpactHit(_impactHit, astHit.asteroid, hitX, hitY, b.vx - astCarrier.vx, b.vy - astCarrier.vy, 'asteroid');
               ActiveCarrier.set(astCarrier);
-              spawnBulletImpactEffect(b, hitX, hitY, 0.9);
+              spawnBulletImpactEffect(b, hitX, hitY, 0.9, _impactHit);
               ActiveCarrier.clear();
 
               if (shouldRemoveProjectileAfterImpact(b, true)) removeBulletAt(i);
@@ -19974,7 +20012,8 @@
         // --- RING „HALO”: płyta podłogi w płaszczyźnie gry zatrzymuje pociski
         // (tranzyty otwarte). Pocisk ≤ ~170 j./krok, płyta ≥ ~450 j. — bez tunelowania.
         if (haloRings && haloRings.pointInSlab(b.x, b.y)) {
-          spawnBulletImpactEffect(b, b.x, b.y, 0.95);
+          writeImpactHit(_impactHit, null, b.x, b.y, b.vx - (Number(b.ivx) || 0), b.vy - (Number(b.ivy) || 0), 'ring');
+          spawnBulletImpactEffect(b, b.x, b.y, 0.95, _impactHit);
           removeBulletAt(i);
           if (profileBullet) secRing += (performance.now() - tBulletSection0) * bulletProfileScale;
           continue;
@@ -19996,7 +20035,10 @@
               applyDamageToPlatform(p, b.damage || 0);
               triggerMercAggro('platform_hit');
               if (platShielded) registerShieldImpact(p, b.x, b.y, b.damage || 0, shieldFxClassForBullet(b));
-              else spawnBulletImpactEffect(b, b.x, b.y, 1.0);
+              else {
+                writeImpactHit(_impactHit, p, b.x, b.y, b.vx - (Number(b.ivx) || 0), b.vy - (Number(b.ivy) || 0), 'platform');
+                spawnBulletImpactEffect(b, b.x, b.y, 1.0, _impactHit);
+              }
               removeBulletAt(i);
               hitPlatform = true;
               break;
@@ -20019,7 +20061,10 @@
             applyDamageToStation(st, b.damage || 0);
             if (mercMission?.station === st) triggerMercAggro('station_hit');
             if (stShielded) registerShieldImpact(st, b.x, b.y, b.damage || 0, shieldFxClassForBullet(b));
-            else spawnBulletImpactEffect(b, b.x, b.y, 1.0);
+            else {
+              writeImpactHit(_impactHit, st, b.x, b.y, b.vx - (Number(b.ivx) || 0), b.vy - (Number(b.ivy) || 0), 'station');
+              spawnBulletImpactEffect(b, b.x, b.y, 1.0, _impactHit);
+            }
             removeBulletAt(i);
             break;
           }

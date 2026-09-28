@@ -90,7 +90,7 @@ test('kropki hardpointów NPC są tylko za DevFlags.showNpcHardpoints (domyślni
 });
 
 test('trafienia pocisków: efekt 3D i iskry dopiero po bramce kadru/rozmiaru', () => {
-  const fn = indexHtml.match(/function spawnBulletImpactEffect\(b, x, y, scale = 1\.0\) \{[\s\S]*?\n    }\n/)?.[0] || '';
+  const fn = indexHtml.match(/function spawnBulletImpactEffect\(b, x, y, scale = 1\.0, hit = null\) \{[\s\S]*?\n    }\n/)?.[0] || '';
   assert.ok(fn.length > 0);
   const gate = fn.indexOf('impactFxScreenPx(x, y, fxSize) >= IMPACT_FX_MIN_PX');
   assert.ok(gate > 0, 'brak bramki rozmiaru/kadru przed efektem trafienia');
