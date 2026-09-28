@@ -234,6 +234,7 @@ export class RockBody {
     // Licznik urobku ostatniego kopania (drobinki odłupane laserem trafiają tam).
     this.digOut = null;
     this.dirtyBox = null;
+    this._dirtyArr = null;
     this.userData = null;
   }
 
@@ -413,8 +414,12 @@ export class RockBody {
     this.asleep = false;
     this.sleep = 0;
     const b = this.dirtyBox;
-    if (!b) this.dirtyBox = [i0, j0, k0, i1, j1, k1];
-    else {
+    if (!b) {
+      // Render zeruje dirtyBox po wysłaniu zmian — tablica wraca (bez nowej na kopnięcie).
+      const a = this._dirtyArr || (this._dirtyArr = [0, 0, 0, 0, 0, 0]);
+      a[0] = i0; a[1] = j0; a[2] = k0; a[3] = i1; a[4] = j1; a[5] = k1;
+      this.dirtyBox = a;
+    } else {
       if (i0 < b[0]) b[0] = i0; if (j0 < b[1]) b[1] = j0; if (k0 < b[2]) b[2] = k0;
       if (i1 > b[3]) b[3] = i1; if (j1 > b[4]) b[4] = j1; if (k1 > b[5]) b[5] = k1;
     }

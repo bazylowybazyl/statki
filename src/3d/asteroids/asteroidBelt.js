@@ -56,6 +56,10 @@ import { GiantView } from './giants.js';
 import { BeltFog } from './fog.js';
 import { GlowSprites } from './glowSprites.js';
 import { BeltVeil } from './beltVeil.js';
+import { MinedRocks } from './minedRocks.js';
+import { MiningView } from './miningView.js';
+import { AsteroidMining } from '../../game/asteroidMining.js';
+import { MiningRig } from '../../game/asteroidMiningRig.js';
 
 /** Warstwy passów Core3D: gra (ortho) i tło (perspektywa). */
 export const BELT_LAYER_PLAY = 0;
@@ -159,6 +163,16 @@ export class AsteroidBelt {
     this._rockLightBox = { x0: 0, y0: 0, x1: 0, y1: 0 };
     this._rockLightCount = 0;
     this._pendingViews = 0;
+    // Wydobycie (zadanie 21b): fizyka skał + platforma gracza (logika — src/game/) i ich
+    // obraz (minedRocks.js, miningView.js); powstają w initGpu (kształty z banku GPU).
+    this.mining = null;
+    this.rig = null;
+    this.mined = null;
+    this.miningView = null;
+    this._takenVersion = -1;
+    this._minedFrame = { zoom: 1, originX: 0, originY: 0, camX: 0, camY: 0 };
+    this._miningFrame = { dt: 0, time: 0, originX: 0, originY: 0, zoom: 1, ship: null, sunT: null };
+    this._miningShip = { x: 0, y: 0 };
     this.sunT = (x, y) => nightKnee(this.occlusion.transmittance(x, y));
     this.stats = {
       active: false, cpuMs: 0, lights: 0, shipLights: 0, rockLights: 0, rocks: [0, 0, 0, 0], minerals: 0,
@@ -252,6 +266,18 @@ export class AsteroidBelt {
     this.sparks = new Sparks({ renderer, parent: root, layer: BELT_LAYER_PLAY });
     this.storm = new StormSystem({ parent: root, layer: BELT_LAYER_PLAY, field: this.field, shared, sparks: this.sparks });
     this.fog = new BeltFog({ renderer, bgParent: root, fgParent: root, bgLayer: BELT_LAYER_BACK, fgLayer: BELT_LAYER_PLAY, field: this.field, grid: this.grid, fieldMap: this.fieldMap });
+    // Wydobycie (zadanie 21b): fizyka skał liczy siatki ciał z promienia kształtów banku
+    // (odczyt CPU po pieczeniu); platforma gracza bierze skały z danych pola (te same, które
+    // rysuje warstwa PLAY) — przejęte id chowa warstwa (wspólny zbiór `hidden`).
+    this.mining = new AsteroidMining({ radiusAt: (shape, x, y, z) => this.bank.radiusAt(shape, x, y, z), seed: 0x51A7 });
+    this.rig = new MiningRig({ mining: this.mining, field: this.field, playZ: this.playZ, sunT: this.sunT, timeSource: () => this.time });
+    this.playLayer.hidden = this.rig.taken;
+    this.mined = new MinedRocks({
+      renderer, parent: root, layer: BELT_LAYER_PLAY, bank: this.bank, shared, playMaterial, grid: this.grid,
+      mining: this.mining, mineralTemplates: this.mineralTemplates, shadows: this.atlas, sunT: this.sunT
+    });
+    this.miningView = new MiningView({ parent: root, layer: BELT_LAYER_PLAY, shared, grid: this.grid, sparks: this.sparks });
+    this.miningView.attach(this.rig);
     Core3D.scene.add(root);
     // Początek pul: pole trzyma go, dopóki coś jest wczytane; żywe iskry przesuwa kernel.
     const origin = fx.origin;
@@ -289,9 +315,12 @@ export class AsteroidBelt {
       const prev = renderer.getRenderTarget();
       const m = atlas.maps[0];
       m.mesh.visible = true;
+      // Cień skał w wydobyciu (materiał cienia w trybie wycięć — zadanie 21b).
+      if (m.carved) m.carved.mesh.visible = true;
       renderer.setRenderTarget(atlas.rt);
       promises.push(renderer.compileAsync(atlas.scene, m.cam).catch(() => false));
       m.mesh.visible = false;
+      if (m.carved) m.carved.mesh.visible = false;
       renderer.setRenderTarget(prev);
     } catch (err) {
       console.warn('[AsteroidBelt] rozgrzewka atlasu cieni nie wyszła:', err?.message || err);
@@ -301,6 +330,8 @@ export class AsteroidBelt {
       renderer.compute(this.volume.node, 1);
       this.sparks.U.count.value = 0;
       renderer.compute(this.sparks.spawnNode, 1);
+      // Kopiowanie siatek ciał do atlasu wydobycia (licznik 0 — sam pipeline).
+      this.mined?.warm();
     } catch (err) {
       console.warn('[AsteroidBelt] rozgrzewka compute nie wyszła:', err?.message || err);
     }
@@ -399,6 +430,9 @@ export class AsteroidBelt {
     this.glow.commit();
     this.atlas.clear();
     for (const e of this.giants.entries) if (e.view) e.view.setVisible(false);
+    // Wydobycie: ciała zostają w fizyce, obraz znika z kadrem.
+    this.mined?.hide();
+    this.miningView?.hide();
     Core3D.clearSunOcclusionField();
     this.stats.active = false;
   }
@@ -440,11 +474,25 @@ export class AsteroidBelt {
     const f = this._frame;
     this._updateSun();
     this.shared.time.value = this.time;
+    // Skały przejęte przez wydobycie (wspólny zbiór `hidden` warstwy PLAY i platformy):
+    // zmiana zbioru = przebudowa koszyków warstwy.
+    const rig = this.rig;
+    if (rig && rig.takenVersion !== this._takenVersion) {
+      this._takenVersion = rig.takenVersion;
+      this.playLayer._version++;
+    }
     // Skały: komórki z budżetem (dzielonym na warstwy), LOD per skała.
     f.time = this.time;
     f.budgetMs = this.cfg.budgetMs / Math.max(1, this.layers.length);
     for (const layer of this.layers) layer.update(f);
     this.field.endFrame(this.cfg.maxCachedCells);
+    // Skały w wydobyciu: atlas siatek ciał (wysyłka zmian), instancje zewnętrza i wnętrza,
+    // okruchy — przed zbieraniem rzucających cień.
+    if (this.mined) {
+      const mf = this._minedFrame;
+      mf.zoom = v.zoom; mf.originX = ox; mf.originY = oy; mf.camX = v.x; mf.camY = v.y;
+      this.mined.update(mf);
+    }
     // Olbrzymy: budowa w workerach przy kadrze / statku, widoki GPU, przekrój pod stropem.
     this._updateGiants(dt, ox, oy);
     // Mapa pola nad kadrem (słońce, pył, lód, burze): mgła, ośrodek, maska Core3D.
@@ -469,8 +517,10 @@ export class AsteroidBelt {
     atlas.begin();
     const shipLights = this._addShipLights(grid);
     atlas.gather(this.playLayer);
+    if (this.mined) atlas.gatherCarved(this.mined.shadowData, this.mined.shadowCount);
     this.storm.addLights(grid, ox, oy);
     this._addRockLights(grid, ox, oy);
+    this.miningView?.addLights(grid, ox, oy, this.time);
     const st = this.stats;
     st.shipLights = shipLights;
     st.cpuMs = performance.now() - t0;
@@ -496,10 +546,20 @@ export class AsteroidBelt {
     vf.originX = ox; vf.originY = oy;
     this.volume.update(vf);
     this.volume.compute();
+    // Platforma wydobywcza: drony, wiązki, iskry cięcia i zdarzenia (przed krokiem iskier).
+    if (this.miningView) {
+      const mv = this._miningFrame;
+      const ship = this._in.ship;
+      mv.dt = this._dt; mv.time = this.time; mv.originX = ox; mv.originY = oy; mv.zoom = v.zoom;
+      if (ship && ship.pos) { this._miningShip.x = ship.pos.x; this._miningShip.y = ship.pos.y; mv.ship = this._miningShip; } else mv.ship = null;
+      mv.sunT = this.sunT;
+      this.miningView.update(mv);
+    }
     this.sparks.update(this._dt, v.zoom);
-    // Duszki: błyski i żar w miejscach uderzeń piorunów.
+    // Duszki: błyski i żar w miejscach uderzeń piorunów, żar cięcia i ładunki wydobycia.
     this.glow.begin();
     this.storm.addGlows(this.glow, ox, oy);
+    this.miningView?.addGlows(this.glow, ox, oy);
     this.glow.commit();
     this._updateVeil();
     // Pole przesłaniające maski słońca Core3D (kadłuby, odłamki: sunVisibility / sunFill)

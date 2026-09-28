@@ -146,6 +146,11 @@ export class ShadowAtlas {
       const base = geoms[m.main ? 3 : 2];
       const data = new Float32Array(CARVE_CAP * CARVE_FLOATS);
       const buffer = new THREE.InstancedInterleavedBuffer(data, CARVE_FLOATS, 1);
+      // Stały zakres wysyłki (bez obiektu zakresu na klatkę — jak rzucający z pola).
+      const range = { start: 0, count: data.length };
+      buffer.updateRanges.length = 0;
+      buffer.updateRanges.push(range);
+      buffer.clearUpdateRanges = keepRanges;
       const ig = new THREE.InstancedBufferGeometry();
       ig.setIndex(base.index);
       ig.setAttribute('position', base.getAttribute('position'));
@@ -159,7 +164,7 @@ export class ShadowAtlas {
       mesh.visible = false;
       mesh.name = `AsteroidBelt:shadowCastersMined_${i}`;
       this.scene.add(mesh);
-      m.carved = { data, buffer, geo: ig, mesh, count: 0 };
+      m.carved = { data, buffer, range, geo: ig, mesh, count: 0 };
     }
   }
 
@@ -302,8 +307,7 @@ export class ShadowAtlas {
       const C = m.carved;
       C.geo.instanceCount = C.count;
       if (C.count) {
-        C.buffer.clearUpdateRanges();
-        C.buffer.addUpdateRange(0, C.count * CARVE_FLOATS);
+        C.range.count = C.count * CARVE_FLOATS;
         C.buffer.needsUpdate = true;
         this.stats.casters += C.count;
       }
