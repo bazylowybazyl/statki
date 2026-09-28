@@ -12,7 +12,10 @@
 //    CDP strona stoi, więc liczba klatek (i efekty liczone na klatkę: iskry, obrót stacji) jest
 //    powtarzalna. Bez „hold” (ładowanie) każda prawdziwa klatka jest dozwolona;
 //  - CSS bez animacji i przejść (menu, HUD) — inaczej zrzut łapie je w połowie.
-// window.__harness: clock, step(n), frames(n), hold(on), reseed(v), freeze(), realNow(), scene.
+//  - dziennik klatek (prawdziwy czas: start, CPU wywołań rAF, __frameId) i chwile startu (urządzenie,
+//    tło menu, ring Ziemi, pierwsza klatka gry) — przestoje kompilacji w scenach (zadanie 11).
+// window.__harness: clock, step(n), frames(n), hold(on), reseed(v), freeze(), realNow(), scene,
+//   frameLog, marks, frameStats(od, do, próg).
 (() => {
   if (window.__harness) return;
   const SEED = Number(window.__HARNESS_SEED__ || 0x5eed1234) >>> 0;
@@ -46,11 +49,38 @@
   window.requestAnimationFrame = (cb) => { const id = ++rafSeq; pending.set(id, cb); return id; };
   window.cancelAnimationFrame = (id) => { pending.delete(id); };
 
+  // Dziennik klatek strony (zadanie 11 — przestoje kompilacji): prawdziwy start klatki, CPU jej
+  // wywołań rAF i __frameId gry. Seria = klatki bez przerwy harnessu (w trybie hold przerwa między
+  // komendami CDP zaczyna nową serię — jej długość to nie czas klatki). Okres klatki = start następnej
+  // w tej samej serii − start tej (obejmuje przestój kolejki GPU), ostatnia w serii: samo CPU.
+  const LOG = 32768;
+  const frameLog = { start: new Float64Array(LOG), cpu: new Float32Array(LOG), game: new Int32Array(LOG), seria: new Int32Array(LOG), n: 0, _seria: 0, _przerwa: true };
+  const logFrame = (t0, cpu) => {
+    const i = frameLog.n % LOG;
+    if (frameLog._przerwa) { frameLog._seria++; frameLog._przerwa = false; }
+    frameLog.start[i] = t0; frameLog.cpu[i] = cpu; frameLog.game[i] = window.__frameId | 0; frameLog.seria[i] = frameLog._seria;
+    frameLog.n++;
+  };
+  // Chwile startu (prawdziwy czas od nawigacji, pierwsza obserwacja co ~10 ms): urządzenie WebGPU, tło
+  // menu (pierwsza klatka, gotowe), ring Ziemi (mapy), pierwsza klatka gry.
+  const marks = {};
+  const markPoll = setInterval(() => {
+    try {
+      const m = (k, ok) => { if (marks[k] === undefined && ok) marks[k] = +realNow().toFixed(1); };
+      m('gpuReady', window.Core3D?.gpuReady === true);
+      m('menuPierwszaKlatka', (window.__menuBackdrop?.stats?.frames || 0) > 0);
+      m('menuGotowe', window.__menuBackdrop?.ready === true);
+      m('ringZiemi', !!window.__haloRings?.entries?.find((e) => e.key === 'earth')?.ring?.mapsReady);
+      m('graPierwszaKlatka', (window.__frameId | 0) >= 1);
+      if (marks.graPierwszaKlatka !== undefined && marks.ringZiemi !== undefined) clearInterval(markPoll);
+    } catch { /* strona się ładuje */ }
+  }, 10);
+
   const waiters = [];
   const tick = () => {
     realRaf(tick);
     clock.frames++;
-    if (clock.hold && clock.budget <= 0) return;
+    if (clock.hold && clock.budget <= 0) { frameLog._przerwa = true; return; }
     if (clock.hold) clock.budget--;
     if (clock.mode === 'step') {
       if (clock.stepsLeft > 0) {
@@ -64,9 +94,11 @@
     const ts = clock.mode === 'real' ? realNow() : clock.t;
     const cbs = [...pending.values()];
     pending.clear();
+    const tFrame0 = realNow();
     for (const cb of cbs) {
       try { cb(ts); } catch (err) { setTimeout(() => { throw err; }); }
     }
+    logFrame(tFrame0, realNow() - tFrame0);
     for (let i = waiters.length - 1; i >= 0; i--) {
       const w = waiters[i];
       if (clock.gameFrames >= w.frame) { waiters.splice(i, 1); w.resolve(clock.gameFrames); }
@@ -321,9 +353,33 @@
     }
   };
 
+  // Przestoje w klatkach dziennika [from, to) (numery z frameLog.n): klatka dłuższa niż `thr` ms (okres albo
+  // CPU). Wynik: liczba klatek, przestojów, najdłuższy okres i CPU, suma nadwyżek ponad 1/60 s w przestojach,
+  // do 8 najdłuższych ({ k: numer w oknie, ms, cpu, gra: __frameId }).
+  const frameStats = (from = 0, to = null, thr = 50) => {
+    const end = Math.min(to ?? frameLog.n, frameLog.n);
+    const beg = Math.max(0, from, end - LOG);
+    const list = [];
+    let maxMs = 0; let maxCpu = 0; let over = 0;
+    for (let k = beg; k < end; k++) {
+      const i = k % LOG;
+      const j = (k + 1) % LOG;
+      const cpu = frameLog.cpu[i];
+      const ms = (k + 1 < end && frameLog.seria[j] === frameLog.seria[i]) ? frameLog.start[j] - frameLog.start[i] : cpu;
+      if (ms > maxMs) maxMs = ms;
+      if (cpu > maxCpu) maxCpu = cpu;
+      if (ms > thr) { list.push({ k: k - beg, ms: +ms.toFixed(1), cpu: +cpu.toFixed(1), gra: frameLog.game[i] }); over += ms - 1000 / 60; }
+    }
+    list.sort((a, b) => b.ms - a.ms);
+    return { klatki: end - beg, przestoje: list.length, maksMs: +maxMs.toFixed(1), maksCpu: +maxCpu.toFixed(1), sumaMs: +over.toFixed(0), lista: list.slice(0, 8) };
+  };
+
   window.__harness = {
     clock,
     realNow,
+    frameLog,
+    marks,
+    frameStats,
     scene,
     // n klatek po stepMs; Promise kończy się, gdy czas znów stoi
     step(n = 1, stepMs = 1000 / 60) {
