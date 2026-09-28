@@ -3,7 +3,14 @@
 // Extracts firing logic from index.html into reusable instances
 import { getMountedWeaponAim, mountedWeaponBase, stepMountedWeaponAim } from './weaponAim.js';
 import { Turret2D } from '../vfx/turret2D.js';
-import { createCarrier, writeCarrier, writePointVelocity } from './carrierVelocity.js';
+import { writePointVelocity, writeCarrier, createCarrier } from './carrierVelocity.js';
+import {
+  chargeTimeOf, mountChargeState, requestMountCharge, stepMountCharge, cancelMountCharge,
+  CHARGE_FIRE, CHARGE_CHARGING
+} from './weaponCharge.js';
+
+// Nośnik efektu ładowania (lufa okrętu) — jeden obiekt na moduł.
+const _chargeCarrier = createCarrier();
 
 const AIM_GROUPS = ['main', 'missile', 'special', 'special_missile'];
 const EMPTY_WEAPONS = [];
@@ -13,7 +20,6 @@ const _aimPoint = { x: 0, y: 0 };
 // więc wyprzedzenie liczymy względem niej.
 const _aimVel = { x: 0, y: 0 };
 const _muzzleOffset = { x: 0, y: 0 };
-const _muzzleCarrier = createCarrier();
 
 // OPTYMALIZACJA: Pre-alokowany obiekt, używany wielokrotnie podczas wyliczania Muzzle.
 // Zabija to powstawanie setek tysięcy obiektów na sekundę dla Garbage Collectora.
@@ -311,29 +317,8 @@ export class WeaponController {
       if (this.autoFire && this.lockedTargets.length && !targetToPass) continue;
       const cd = window.fireWeaponCore(ship, targetToPass, weaponData.id, muzzle);
 
-      // Muzzle flash VFX
-      // Armata i Tempest Ion mają własny błysk 3D z dema
-      // (src/3d/muzzleFx3D.js) — kanwowy rozbłysk pod nim to druga
-      // warstwa tego samego efektu w tym samym punkcie.
-      const CanvasVFX = window.CanvasVFX;
-      const rich3D = window.MuzzleFX3D?.handles(weaponData.id) === true;
-      if (CanvasVFX && !rich3D && weaponData.category !== 'beam') {
-        const isHeavy = (weaponData.size === 'L' || weaponData.size === 'Capital');
-        const muzzleScale = isHeavy ? 1.8 : 1.0;
-        // Błysk leci z lufą (nośnik: prędkość wylotu, poza fizyczna strzału).
-        const carrier = writeCarrier(ship, muzzle.pos.x, muzzle.pos.y, false, _muzzleCarrier);
-        if (weaponData.category === 'torpedo') {
-          CanvasVFX.spawnArmataMuzzle(muzzle.pos, muzzle.dir, muzzle.baseVel, muzzleScale * 1.5, carrier);
-        } else if (weaponData.category === 'superweapon' || weaponData.id === 'siege_railgun') {
-          CanvasVFX.spawnRailMuzzle(muzzle.pos, muzzle.dir, muzzle.baseVel, muzzleScale * 2.0, carrier);
-        } else if (weaponData.category === 'armata' || weaponData.category === 'plasma') {
-          CanvasVFX.spawnArmataMuzzle(muzzle.pos, muzzle.dir, muzzle.baseVel, muzzleScale, carrier);
-        } else if (weaponData.category === 'autocannon') {
-          CanvasVFX.spawnAutocannonMuzzle(muzzle.pos, muzzle.dir, muzzle.baseVel, muzzleScale, carrier);
-        } else {
-          CanvasVFX.spawnRailMuzzle(muzzle.pos, muzzle.dir, muzzle.baseVel, muzzleScale, carrier);
-        }
-      }
+      // Błysk wylotowy: receptura broni w WeaponFx (src/3d/weapons/weaponFx.js) ze zdarzenia
+      // szyny strzałów z fireWeaponCore — kanwowy rozbłysk pod nią byłby drugą warstwą (zadanie 17).
 
       maxCooldown = Math.max(maxCooldown, cd || this.rail.cdMax);
     }
@@ -385,6 +370,19 @@ export class WeaponController {
     return Number(window.fireWeaponCore(ship, target, weapon.id, _muzzleScratch)) || 0;
   }
 
+  // Strzał zaczepu special teraz: pierwsza lufa od razu, reszta salwy (`barrelsPerShot`)
+  // z kolejki w update(); przeładowanie z fireWeaponCore.
+  fireSpecialLoadout(loadout, hp, slot, emitterPrefix) {
+    const weapon = loadout.weapon;
+    const aim = getMountedWeaponAim(this.ship, loadout);
+    const barrels = barrelsPerShotOf(weapon);
+    const start = Number(aim.nextBarrel) || 0;
+    aim.nextBarrel = start + barrels;
+    const cd = this.fireSpecialBarrel(loadout, hp, slot, start, emitterPrefix, barrels > 1);
+    hp.specialCd = Math.max(0.01, cd || Number(weapon.cooldown) || 0.25);
+    queueSalvoBarrels(hp, weapon.id, start, barrels);
+  }
+
   tryFireSpecialWeapons() {
     const standardSpecials = this.specialWeapons;
     const specialMissiles = this.specialMissileWeapons;
@@ -409,21 +407,54 @@ export class WeaponController {
         const cdLeft = Math.max(0, Number(hp.specialCd) || 0);
         if (cdLeft > 0) continue;
 
+        // Broń z ładowaniem (Mjolnir, Valkyrie — zadanie 18-B): naciśnięcie tylko zgłasza
+        // strzał; ładowanie i strzał w update() (stepMountCharge).
+        if (chargeTimeOf(weapon) > 0) {
+          requestMountCharge(mountChargeState(getMountedWeaponAim(ship, loadout)), false);
+          fired = true;
+          continue;
+        }
+
         // Salwa: `barrelsPerShot` luf na jedno naciśnięcie. Pierwsza idzie
         // od razu, reszta z kolejki w `updateCooldowns`.
-        const aim = getMountedWeaponAim(ship, loadout);
-        const barrels = barrelsPerShotOf(weapon);
-        const start = Number(aim.nextBarrel) || 0;
-        aim.nextBarrel = start + barrels;
-
-        const cd = this.fireSpecialBarrel(loadout, hp, i, start, emitterPrefix, barrels > 1);
-        hp.specialCd = Math.max(0.01, cd || Number(weapon.cooldown) || 0.25);
-        queueSalvoBarrels(hp, weapon.id, start, barrels);
+        this.fireSpecialLoadout(loadout, hp, i, emitterPrefix);
         fired = true;
       }
     }
 
     return fired;
+  }
+
+  // Krok ładowania zaczepu (update, przed licznikiem przeładowania): strzał po naładowaniu,
+  // efekt ładowania z receptury (WeaponFx.charge), przerwanie przy skoku i śmierci.
+  _stepSpecialCharge(loadout, hp, slot, emitterPrefix, dt, blocked) {
+    const ship = this.ship;
+    const weapon = loadout.weapon;
+    const aim = getMountedWeaponAim(ship, loadout);
+    const st = mountChargeState(aim);
+    if (blocked || hp.destroyed || !ship || ship.dead || ship.destroyed) {
+      if (st.charge >= 0 || st.want > 0) cancelMountCharge(st);
+      return;
+    }
+    const vx = Number(ship.vel?.x ?? ship.vx) || 0;
+    const vy = Number(ship.vel?.y ?? ship.vy) || 0;
+    const res = stepMountCharge(st, dt, {
+      aimErr: aim.aimErr,
+      speed: Math.sqrt(vx * vx + vy * vy),
+      angVel: Number(ship.angVel) || 0,
+      ready: !(Number(hp.specialCd) > 0)
+    }, weapon);
+    if (res === CHARGE_FIRE) {
+      this.fireSpecialLoadout(loadout, hp, slot, emitterPrefix);
+    } else if (res === CHARGE_CHARGING) {
+      const fx = typeof window !== 'undefined' ? window.WeaponFx : null;
+      if (fx?.available && dt > 0) {
+        const m = this.computeMountedMuzzle(loadout, Number(aim.nextBarrel) || 0);
+        if (!st.fx) st.fx = fx.createChargeState();
+        fx.charge(weapon.id, m.pos.x, m.pos.y, aim.angle, 1, st.u, dt, st.fx,
+          writeCarrier(ship, m.pos.x, m.pos.y, false, _chargeCarrier));
+      }
+    }
   }
 
   tryFireBuiltInWeapons() {
@@ -522,6 +553,11 @@ export class WeaponController {
         const loadout = specials[i];
         const hp = loadout?.hp;
         if (!hp) continue;
+        // Broń z ładowaniem (18-B): krok ładowania przed licznikiem przeładowania — strzał
+        // ustawia specialCd tak jak tryFireSpecialWeapons przed update().
+        if (loadout.weapon && chargeTimeOf(loadout.weapon) > 0) {
+          this._stepSpecialCharge(loadout, hp, i, emitterPrefix, dt, warpBusy);
+        }
         // Reszta salwy wielolufowej. Domknięcie powstaje TYLKO gdy kolejka
         // coś trzyma — czyli przez ~30 ms po strzale, a nie co klatkę.
         if (hp.salvo && hp.salvo.length) {

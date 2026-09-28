@@ -227,3 +227,36 @@ Faza 1 = można zaczynać od razu (równolegle). Faza 2 = po zależnościach.
   tryb LOAD/UNLOAD, zegar postoju i wpis stanowiska; tryb „stary sprite” = płyty maski; kontenery nad wyrwą —
   `cargoDeckMask(…, (x, y) => HullBodies.probe(e, x, y))` przy zmianie `structuralState` (łup: później). Testy: npm test OK,
   node --test te same 7 znanych porażek. Nie zrobione: suwnice pasów MEGA i dźwig K-7 (wszędzie drony).
+- 2026-09-27 Z7 (faza 1): moduły + demo zrobione (bez commita), w grze nic nie wpięte; ocena wyglądu u użytkownika.
+  `src/3d/portBuildings/` (opis `docs/PORT-budowle-portowe.md`). STOCZNIA przerobiona wg szkicu użytkownika (pierwsza
+  wersja z suwnicami, żurawiem i suchym dokiem odrzucona): galeria z taśmą kontenerów wzdłuż ringu (dwa podajniki) i trzon
+  z taśmą do piasty; 2 pochylnie po bokach trzonu (kadłub rośnie z `slipStatesFromYard(yard)`: stępka → wręgi → poszycie →
+  wyposażenie), kadłub buduje RÓJ DRONÓW (`portShipyardSwarm.js`: rekordy `CARGO_DRONE`, moduły z taśmy przez stację,
+  liczba wg etapu, wejście/zejście z roju bez przeskoków), JEDEN dźwig na pochylnię (bloki ze stacji taśmy); piasta z placami
+  postoju / refitu w formacie K-7 — Ziemia: okrąg z wypustkami (capital pod Atlasa, L, nosiciel, M), Mars/Jowisz: litera U
+  z otwartym basenem (`style.shipyardHub`); refit dronami ze składu przy rdzeniu. Kontenery i drony rysują renderery Z5
+  (`yard.pushCargo(CargoContainers3D, CargoDrones3D, portModuleCargoPose(ramka, stacja))`). Hangar postojowy (bębny B-5 +
+  windy capital/mega, `planHangarCapacity` — Saturn 472 → 512, Uran 336 → 368; bramy IN/OUT, statek znika pod dachem FG,
+  kolejka) i boje redy z `buildPortParking` (Z2) bez zmian. Adapter `portModuleTraffic`: place = dok `shipyard-pads`
+  rola `military` + `service: 'refit'`, pochylnie = `yards`, hangar = `hangars`, bryły = `solids`; `K7CollisionWorld`.
+  Render przez Core3D (BG/FG jak K-7, dane względem korzenia / `sceneOriginNearCamera`, światło `space` z maską cieni albo
+  `halo` = model ringu, oba kompilują się). Demo `dema/budowle-portowe.html` (widoki 1–9, style, ×60), zrzuty
+  `node dema/budowle-portowe-shots.js`; testy `tests/portBuildings.test.mjs` (25). npm test OK, node --test te same 7 znanych
+  porażek. Uwagi: Z8 — `portModuleFrame` + styl w kształcie `profile.port` (+ `buildings.shipyardHub`); Z13 — hangar: wejście
+  = `hangars[0].entry` (do `buildPortParking(…, { hangar })`), zejście z pochylni = `yards[i].launch*`, okręt po produkcji
+  na dok `shipyard-pads`. Do decyzji: rozmiar hangaru (Saturn 2 rzędy 9,9 × 8,6 tys. j.), małe pochylnie dla fregat, kto
+  przydziela refit, miejsca na ringu (stocznia 6,9 tys. j. szer. + hangar po obu stronach kompleksu = ≥ 6 prostokątów
+  `HALO_PORT_RECTS`), dalszy bieg taśmy wzdłuż ringu (od zatok / K-7).
+- 2026-09-27 Z6: zrobione (bez commita). Decyzja użytkownika: nie „skórka”, tylko INNE ringi z dem — Mars = ECUMENE
+  (`dema/orbital_ring_demo.html`), Jowisz = ring Fable (`_2.html`), habitat na zewnątrz, ląd 1:1 z dem w skali ×3, doki =
+  hala K-7 + zatoki (stanowiska i kolizje bez zmian, ubiór jak w demach). `createArchRing` (`src/3d/haloRing/arch/`, API
+  `createHaloRing`), archetyp + geometria w profilu (`haloRingProfiles.js`) → `createHaloRingLayout` → kolizje, ruch v2,
+  stacja-port. Ziemia i tło menu bez zmian (zrzuty ~0 różnicy). Ring Jowisza: `HALO_RING_PLANETS.jupiter` (ziarno 6151,
+  3π/4), promień planety 48 000 (`ringScale.js`). Udział ringu w klatce gry: Ziemia 16, Mars 20, Jowisz 22 draw calle,
+  update 0,04–0,12 ms. Opis: `docs/PORT-halo-ring.md` § „Ringi-archetypy”. Uwagi: Z2/Z3/Z13 — podłogi Marsa i Jowisza
+  z nowej geometrii (Mars obwiednia 33 488–35 250, podłoga 35 088, stacja 38 670; Jowisz 52 070–54 750, stacja 57 552;
+  `haloPortTraffic.test` przepięty na 35 088); Z7 — `port.buildings` Marsa/Jowisza zostaje `vault/berm`
+  i `radiator/pipes`, paleta `k7Palette` z dem (można przestroić budowle pod ECUMENE/Fable). Do decyzji: promień
+  Jowisza 48 000 tymczasowy; Io na ~60 tys. wpada w ring/port/redę (`systemMap.js`, propozycja ~85 tys.); mapa stref
+  Fable liczy się synchronicznie ~0,6 s przy pierwszym podejściu (worker?); martwe gałęzie „skórki” Marsa/Jowisza
+  w silniku Halo do usunięcia.

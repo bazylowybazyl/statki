@@ -1,8 +1,10 @@
 // Ring „Halo” w grze (port do gry 2026-09-25): klej między grą (świat 2D,
 // Core3D) a modułem ringu (createHaloRing). Opis: docs/PORT-halo-ring.md.
 //
-//  - ring Ziemi i Marsa (ta sama bryła, promień planety i ziarno z
-//    src/game/haloRingPlanets.js): grupa w środku planety, obrócona tak, żeby
+//  - ringi Ziemi (Halo), Marsa (ECUMENE) i Jowisza (Fable) — archetyp,
+//    promień planety i ziarno z profilu i src/game/haloRingPlanets.js; Mars
+//    i Jowisz to inne ringi (src/3d/haloRing/arch/, decyzja użytkownika
+//    2026-09-27) z tym samym API; grupa w środku planety, obrócona tak, żeby
 //    port leżał pod kątem dawnej stacji; tworzony leniwie, gdy kadr się zbliży;
 //  - BG (warstwa 1, pod statkami), górna ściana z dachem i suwnice K-7 w FG
 //    (warstwa 2) — kolejność passów Core3D;
@@ -19,6 +21,8 @@
 import * as THREE from 'three';
 import { Core3D } from '../core3d.js';
 import { createHaloRing } from './index.js';
+import { createArchRing } from './arch/archRing.js';
+import { resolveHaloProfile } from './haloRingProfiles.js';
 import { resolveHaloQuality } from './haloRingConfig.js';
 import { K7RoofFade, k7HubToWorld } from './haloPortK7Layout.js';
 import { haloXfPoint } from './haloPortBays.js';
@@ -50,7 +54,9 @@ function footprintHub(owner) {
 
 export class HaloRingGame {
   constructor({ planets = [], quality = 'high', renderer = null, scene = null } = {}) {
-    this.renderer = renderer || Core3D.renderer;
+    // Renderer Core3D powstaje asynchronicznie (urządzenie WebGPU) — bierzemy go
+    // w chwili budowy ringu, nie przy konstrukcji (kolidery działają od razu).
+    this._renderer = renderer;
     this.scene = scene || Core3D.scene;
     this.qualityKey = resolveHaloQuality(quality);
     this.camera = new THREE.PerspectiveCamera(35, 1, 100, 500000);
@@ -95,15 +101,38 @@ export class HaloRingGame {
     return this.entries.find((e) => e.key === key)?.ring || null;
   }
 
+  get renderer() {
+    return this._renderer || Core3D.renderer;
+  }
+
+  set renderer(value) {
+    this._renderer = value || null;
+  }
+
   _ensureRing(e) {
     if (e.ring) return e.ring;
+    // Pieczenie map potrzebuje gotowego urządzenia — bez niego ring poczeka
+    // (update() spróbuje w następnej klatce).
+    if (!this.renderer) return null;
     const spec = HALO_RING_PLANETS[e.key];
-    const ring = createHaloRing({
+    // Mars = ECUMENE, Jowisz = ring Fable (arch/): inne ringi niż Ziemia,
+    // to samo API, geometria przekroju z profilu (jak kolizje i ruch v2)
+    const archetype = resolveHaloProfile(spec.profile).archetype || 'halo';
+    const ring = (archetype === 'halo' ? createHaloRing : createArchRing)({
       planetRadius: resolveRingPlanetWorldRadius(e.planet),
       seed: spec.seed,
       profile: spec.profile,
       quality: this.qualityKey,
-      renderer: this.renderer
+      renderer: this.renderer,
+      // Pipeline'y brył w tle przed ich podpięciem (zadanie 11, src/3d/rozgrzewka.js): bryły jeszcze
+      // poza passem (warstwy nadane później) — kamera ze wszystkimi warstwami, cel i światła passów gry.
+      // Bez urządzenia Core3D (renderer spoza Core3D, testy) — bez rozgrzewki, podpięcie od razu.
+      prewarm: (objects, opts = {}) => (Core3D.gpuReady && Core3D.warmup
+        ? Core3D.warmup.now(objects, { ...opts, layer: 'all' })
+        : Promise.resolve(false)),
+      // Ringi-archetypy (Mars, Jowisz) budują się krokami w klatkach (pumpBuild niżej) — dawniej 0,4–0,7 s
+      // CPU w jednej klatce pierwszego zbliżenia (zadanie 23). Ring Ziemi ma własną budowę asynchroniczną.
+      buildInBackground: true
     });
     ring.setLayers(HALO_GAME.layers);
     ring.group.rotation.z = e.place.rot;
@@ -112,14 +141,21 @@ export class HaloRingGame {
     this.scene.add(ring.group);
     e.ring = ring;
     e.sunAz = NaN;
-    // stanowiska wolne: statków ruchu jeszcze nie ma (ring nie udaje życia),
-    // dokowanie gracza w hali K-7 przyjdzie z automatem portu
-    for (const hall of ring.k7Halls) {
-      for (const b of hall.layout.berths) { b.occupied = null; b.reserved = null; }
-      for (const lane of hall.layout.lanes || []) lane.reserved = null;
-      hall.setBerthLamps();
-    }
-    e.collider.setTerrain((lx, ly) => ring.terrainHeightAt(lx, ly, 0));
+    // Ring Ziemi buduje się asynchronicznie (port WebGPU: mapa CPU z odczytu
+    // asynchronicznego, hale K-7 po nim) — stanowiska i teren w kolizjach dopiero
+    // po zbudowaniu; do tego czasu kolider zna samą płytę (jak przed powstaniem
+    // ringu), nigdy pustej mapy (wysokość 0 zamiast rzeźby).
+    Promise.resolve(ring.ready).then((ok) => {
+      if (!ok || e.ring !== ring) return;
+      // stanowiska wolne: statków ruchu jeszcze nie ma (ring nie udaje życia),
+      // dokowanie gracza w hali K-7 przyjdzie z automatem portu
+      for (const hall of ring.k7Halls) {
+        for (const b of hall.layout.berths) { b.occupied = null; b.reserved = null; }
+        for (const lane of hall.layout.lanes || []) lane.reserved = null;
+        hall.setBerthLamps();
+      }
+      e.collider.setTerrain((lx, ly) => ring.terrainHeightAt(lx, ly, 0));
+    });
     this.stats.rings = this.entries.filter((v) => v.ring).length;
     return ring;
   }
@@ -199,6 +235,8 @@ export class HaloRingGame {
       if (!e.ring && Math.hypot(dx, dy) < HALO_GAME.activateDistance) this._ensureRing(e);
       const ring = e.ring;
       if (!ring) continue;
+      // budowa ringu-archetypu w tle: kroki co klatkę, także poza kadrem (archRing.js, ARCH_BUILD_BUDGET)
+      if (ring.pumpBuild) ring.pumpBuild();
       // podzielony ekran: ring liczy RTE dla jednej kamery — drugi kadr by go przesunął
       const reach = L.radii.max + HALO_GAME.hallReach + HALO_GAME.viewMargin;
       const inView = !opts.splitScreen && Math.abs(dx) < halfW + reach && Math.abs(dy) < halfH + reach;

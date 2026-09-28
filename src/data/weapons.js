@@ -12,6 +12,22 @@ import {
  * - size: 'S', 'M', 'L', 'Capital' (wymagany rozmiar hardpointu)
  * - baseRange: Twardy zasięg w jednostkach silnika (silnik sam wyliczy life pocisku: range/speed)
  * - cooldown: Czas między strzałami w sekundach
+ *
+ * Mechanika z dema bronie-webgpu (zadanie 18, docs/webgpu/PROJEKT-BRONI.md §2.3–2.6, §5) —
+ * pola dopisane w 18-A, czytane od 18-B / 18-D (src/game/projectileMechanics.js,
+ * src/game/weaponCharge.js, src/game/weaponFeel.js):
+ * - penetration: ile kadłubów pocisk może trafić (N-ty go zatrzymuje) — to samo pole co dawniej
+ * - penDepth: budżet materiału przebicia [j.] (Infinity = bez limitu); brak = broń nie przebija
+ * - penSpeedLoss: hamowanie w materiale, v·exp(−penSpeedLoss·6·t)
+ * - ricochet: { cosMax, chance, hullFrac } — rykoszet przy kącie padania ponad acos(cosMax)
+ *   od normalnej z szansą `chance` (hash numeru pocisku, nie losowanie); kadłub dostaje
+ *   `hullFrac` obrażeń
+ * - chargeTime: ładowanie przed strzałem [s]; requiresStationary: ładowanie tylko na postoju
+ * - recoil / shake: odrzut lufy wieżyczki i wstrząs kamery od strzału — JEDYNE źródło (18-D:
+ *   Turret2D i Hexlance czytają je stąd; dawna tabela FX_PROFILE w src/vfx/turret2D.js ma
+ *   już tylko klucze wieżyczek), liczby = dawne FX_PROFILE, warianty S/L jak w demie
+ * - impactScale: mnożnik rozmiaru efektu w bramce LOD trafienia i wstrząsu przy trafieniu
+ *   (18-D; obraz receptury bez zmian), brak = 1
  */
 
 export const MASTER_WEAPONS = {
@@ -22,36 +38,43 @@ export const MASTER_WEAPONS = {
     id: 'railgun_mk1', name: 'Tempest Ion Mk I', mountType: 'main', category: 'rail', size: 'M',
     baseDamage: 8, baseRange: 10000, baseSpeed: 7000, cooldown: 1.0, spread: 0.02,
     penetration: 1, energyCost: 6, vfxColor: '#00ccff',
+    recoil: 4, shake: 2.5,
     barrelsPerShot: 1, model3D: 'tempest_ion', render3dOnly: true
   },
   railgun_mk2: {
     id: 'railgun_mk2', name: 'Tempest Ion Mk II', mountType: 'main', category: 'rail', size: 'M',
     baseDamage: 10, baseRange: 14000, baseSpeed: 8000, cooldown: 0.8, spread: 0.018,
     penetration: 2, energyCost: 8, vfxColor: '#55deff',
+    recoil: 4, shake: 2.5,
     barrelsPerShot: 2, model3D: 'tempest_ion', render3dOnly: true
   },
   vulcan_minigun: {
     id: 'vulcan_minigun', name: 'Vulcan Minigun', mountType: 'main', category: 'autocannon', size: 'M',
     baseDamage: 4, baseRange: 5000, baseSpeed: 4000, cooldown: 0.07, spread: 0.04,
     penetration: 0, energyCost: 5, vfxColor: '#ffaa00',
+    recoil: 3, shake: 2,
+    ricochet: { cosMax: 0.42, chance: 0.6, hullFrac: 0.3 },
     model3D: 'vulcan_minigun', render3dOnly: true
   },
   helios_laser: {
     id: 'helios_laser', name: 'Helios Laser', mountType: 'main', category: 'plasma', size: 'M',
     baseDamage: 12, baseRange: 15000, baseSpeed: 10000, cooldown: 0.55, spread: 0.01,
     penetration: 1, energyCost: 7, vfxColor: '#ff003c',
+    recoil: 6, shake: 3,
     model3D: 'helios_laser', render3dOnly: true
   },
   heavy_autocannon: {
     id: 'heavy_autocannon', name: 'Heavy Autocannon', mountType: 'main', category: 'autocannon', size: 'M',
     baseDamage: 28, baseRange: 7000, baseSpeed: 3000, cooldown: 0.5, spread: 0.04,
-    penetration: 1, energyCost: 5, vfxColor: '#ffcc8a'
+    penetration: 1, energyCost: 5, vfxColor: '#ffcc8a',
+    recoil: 8, shake: 4
   },
   armata_mk1: {
     id: 'armata_mk1', name: 'Armata Oblężnicza', mountType: 'main', category: 'armata', size: 'L',
     baseDamage: 150, baseRange: 7000, baseSpeed: 2500, cooldown: 2.5, spread: 0.005,
     explodeRadius: 140, energyCost: 14, vfxColor: '#ff5500',
-    recoil: 15, shake: 8, impactScale: 1.0, barrelsPerShot: 1,
+    // recoil / shake z FX_PROFILE (było 15 / 8 — nieczytane; decyzja §5 p. 5)
+    recoil: 12, shake: 6.5, impactScale: 1.0, barrelsPerShot: 1,
     model3D: 'armata_mk1', render3dOnly: true
   },
   beam_continuous: {
@@ -79,12 +102,14 @@ export const MASTER_WEAPONS = {
     id: 'tempest_ion_s', name: 'Tempest Ion — Lekki', mountType: 'main', category: 'rail', size: 'S',
     baseDamage: 5, baseRange: 8000, baseSpeed: 7500, cooldown: 0.7, spread: 0.024,
     penetration: 1, energyCost: 4, vfxColor: '#7fe8ff',
+    recoil: 4, shake: 2.5,
     barrelsPerShot: 1, model3D: 'tempest_ion', render3dOnly: true
   },
   tempest_ion_l: {
     id: 'tempest_ion_l', name: 'Tempest Ion — Ciężki', mountType: 'main', category: 'rail', size: 'L',
     baseDamage: 24, baseRange: 16000, baseSpeed: 9000, cooldown: 1.4, spread: 0.011,
     penetration: 3, energyCost: 14, vfxColor: '#33b5ff',
+    recoil: 4, shake: 2.5,
     barrelsPerShot: 1, model3D: 'tempest_ion', render3dOnly: true
   },
   // --- Helios (plasma / laser) ---  (M = helios_laser)
@@ -92,12 +117,14 @@ export const MASTER_WEAPONS = {
     id: 'helios_laser_s', name: 'Helios Laser — Lekki', mountType: 'main', category: 'plasma', size: 'S',
     baseDamage: 7, baseRange: 10000, baseSpeed: 11000, cooldown: 0.45, spread: 0.012,
     penetration: 1, energyCost: 5, vfxColor: '#ff5a7a',
+    recoil: 6, shake: 3,
     model3D: 'helios_laser', render3dOnly: true
   },
   helios_lance_l: {
     id: 'helios_lance_l', name: 'Helios Lance — Ciężki', mountType: 'main', category: 'plasma', size: 'L',
     baseDamage: 30, baseRange: 18000, baseSpeed: 10000, cooldown: 0.8, spread: 0.008,
     penetration: 2, energyCost: 12, vfxColor: '#ff2a52',
+    recoil: 6, shake: 3,
     model3D: 'helios_laser', render3dOnly: true
   },
   // --- Autocannon (Vulcan / Heavy) ---  (M = vulcan_minigun / heavy_autocannon)
@@ -105,12 +132,15 @@ export const MASTER_WEAPONS = {
     id: 'gatling_s', name: 'Gatling — Lekki', mountType: 'main', category: 'autocannon', size: 'S',
     baseDamage: 3, baseRange: 4500, baseSpeed: 4200, cooldown: 0.06, spread: 0.05,
     penetration: 0, energyCost: 3, vfxColor: '#ffcf99',
+    recoil: 3, shake: 2,
+    ricochet: { cosMax: 0.42, chance: 0.6, hullFrac: 0.3 },
     model3D: 'vulcan_minigun', render3dOnly: true
   },
   heavy_autocannon_l: {
     id: 'heavy_autocannon_l', name: 'Heavy Autocannon — Oblężniczy', mountType: 'main', category: 'autocannon', size: 'L',
     baseDamage: 60, baseRange: 9000, baseSpeed: 3200, cooldown: 0.7, spread: 0.03,
     penetration: 2, energyCost: 9, vfxColor: '#ffb066',
+    recoil: 8, shake: 4,
     model3D: 'heavy_autocannon', render3dOnly: true
   },
 
@@ -120,17 +150,20 @@ export const MASTER_WEAPONS = {
   ciws_mk1: { 
     id: 'ciws_mk1', name: 'CIWS Mk I', mountType: 'aux', category: 'ciws', size: 'S',
     baseDamage: 12, baseRange: 1500, baseSpeed: 2000, cooldown: 0.06, spread: 0.10,
-    energyCost: 2, vfxColor: '#8cffd0'
+    energyCost: 2, vfxColor: '#8cffd0',
+    recoil: 1.5, shake: 1
   },
   laser_pd_mk1: {
     id: 'laser_pd_mk1', name: 'Helios PD Laser', mountType: 'aux', category: 'beam', size: 'S',
     baseDamage: 16, baseRange: 1000, baseSpeed: Infinity, cooldown: 0.18, duration: 0.09, spread: 0.0,
-    energyCost: 3, vfxColor: 'rgba(110,200,255,0.9)'
+    energyCost: 3, vfxColor: 'rgba(110,200,255,0.9)',
+    recoil: 0.5, shake: 0.3
   },
   ciws_mk2: {
     id: 'ciws_mk2', name: 'CIWS Mk II', mountType: 'aux', category: 'ciws', size: 'M',
     baseDamage: 18, baseRange: 2200, baseSpeed: 2400, cooldown: 0.05, spread: 0.09,
-    energyCost: 3, vfxColor: '#8cffd0'
+    energyCost: 3, vfxColor: '#8cffd0',
+    recoil: 1.5, shake: 1
   },
 
   // --------------------------------------------------------------------------
@@ -155,7 +188,7 @@ export const MASTER_WEAPONS = {
     baseDamage: 110, baseRange: 1900, baseSpeed: 1500, cooldown: 0.85, spread: 0.05,
     energyCost: 3, vfxColor: '#ffcf6b',
     flakBurstRadius: 95, flakFuseRadius: 34, flakFalloff: 0.35, flakHullFactor: 0.10,
-    burstCount: 1,
+    burstCount: 1, recoil: 3.5, shake: 1.8,
     description: 'Lekka zapora burtowa. Kopuła rażenia ~40 u: gasi przechwytywacz, cięższy myśliwiec tylko obrywa.'
   },
   flak_m: {
@@ -163,7 +196,7 @@ export const MASTER_WEAPONS = {
     baseDamage: 200, baseRange: 2600, baseSpeed: 1650, cooldown: 1.0, spread: 0.07,
     energyCost: 5, vfxColor: '#ffc258',
     flakBurstRadius: 170, flakFuseRadius: 46, flakFalloff: 0.35, flakHullFactor: 0.12,
-    burstCount: 2,
+    burstCount: 2, recoil: 5, shake: 2.6,
     description: 'Dwupociskowa salwa. Rozbija parę myśliwców naraz i rozprasza szyk podejścia.'
   },
   flak_l: {
@@ -171,7 +204,7 @@ export const MASTER_WEAPONS = {
     baseDamage: 300, baseRange: 3600, baseSpeed: 1800, cooldown: 1.3, spread: 0.10,
     energyCost: 8, vfxColor: '#ffb347',
     flakBurstRadius: 270, flakFuseRadius: 62, flakFalloff: 0.35, flakHullFactor: 0.14,
-    burstCount: 3,
+    burstCount: 3, recoil: 8, shake: 4.2,
     description: 'Trzy pęknięcia na salwę. Kasuje cały klucz myśliwców i strąca nadlatujące rakiety.'
   },
   flak_capital: {
@@ -179,7 +212,7 @@ export const MASTER_WEAPONS = {
     baseDamage: 460, baseRange: 5200, baseSpeed: 1900, cooldown: 1.9, spread: 0.16,
     energyCost: 14, vfxColor: '#ffa726',
     flakBurstRadius: 480, flakFuseRadius: 92, flakFalloff: 0.35, flakHullFactor: 0.16,
-    burstCount: 5,
+    burstCount: 5, recoil: 14, shake: 7.5,
     description: 'Ściana pięciu pęknięć po pół kilometra każde. Jedna salwa wymiata całą nadlatującą eskadrę.'
   },
 
@@ -189,12 +222,14 @@ export const MASTER_WEAPONS = {
   missile_rack: { 
     id: 'missile_rack', name: 'Cruise Missile Rack', mountType: 'missile', category: 'rocket', size: 'M',
     baseDamage: 1000, baseRange: 24000, baseSpeed: 1800, cooldown: 2.5, ammo: 20,
-    turnRate: 900, homingDelay: 0.2, explosionRadius: 72, vfxColor: '#ffbb77' 
+    turnRate: 900, homingDelay: 0.2, explosionRadius: 72, vfxColor: '#ffbb77',
+    recoil: 4, shake: 2
   },
   fast_missile_rack: {
     id: 'fast_missile_rack', name: 'Fast Missile Rack', mountType: 'missile', category: 'rocket', size: 'S',
     baseDamage: 700, baseRange: 12000, baseSpeed: 3200, cooldown: 1.6, ammo: 28,
     turnRate: 1560, homingDelay: 0.08, explosionRadius: 42, vfxColor: '#ffd27a',
+    recoil: 3, shake: 1.5,
     bodyScale: 0.56, exhaustScale: 0.6, fireScale: 0.58, smokeScale: 0.55, explosionVisualScale: 0.72,
     proximityRadius: 58, terminalRadius: 150, reacquireRadius: 420,
     reacquireTurnMultiplier: 2.75, reacquireSpeedFactor: 0.5, terminalSpeedFactor: 0.62,
@@ -218,6 +253,7 @@ export const MASTER_WEAPONS = {
     id: 'supernova_missile', name: 'Supernova Missile', mountType: 'special_missile', category: 'rocket', size: 'Capital',
     baseDamage: 10000, baseRange: 42000, baseSpeed: 3600, cooldown: 6.0, ammo: 8,
     turnRate: 980, homingDelay: 0.06, explosionRadius: 132, vfxColor: '#ff7cf2',
+    recoil: 9, shake: 5,
     bodyScale: 1.95, exhaustScale: 1.5, fireScale: 1.6, smokeScale: 1.45, explosionVisualScale: 2.15,
     proximityRadius: 98, terminalRadius: 260, reacquireRadius: 760,
     reacquireTurnMultiplier: 2.9, reacquireSpeedFactor: 0.44, terminalSpeedFactor: 0.58,
@@ -276,20 +312,25 @@ export const MASTER_WEAPONS = {
     id: 'special_valkyrie_railgun', name: 'Valkyrie Railgun (Special)', mountType: 'special', category: 'rail', size: 'Capital',
     baseDamage: 500, baseRange: 25000, baseSpeed: 15000, cooldown: 3.0, spread: 0.001,
     penetration: 3, energyCost: 40, vfxColor: '#ff00ff',
-    recoil: 60, shake: 45, impactScale: 3.5,
+    // Ładowanie 0,28 s jak w demie (§5 p. 4); 260 j. materiału — fregaty i niszczyciele
+    // w burtę na wylot, w kapitałach zakleszczenie. recoil / shake z FX_PROFILE (było 60 / 45).
+    chargeTime: 0.28, penDepth: 260, penSpeedLoss: 0.35,
+    recoil: 20, shake: 12, impactScale: 3.5,
     model3D: 'special_valkyrie_railgun', render3dOnly: true
   },
   special_yamato_cannon: {
     id: 'special_yamato_cannon', name: 'Bateria Główna Klasy YAMATO', mountType: 'special', category: 'plasma', size: 'Capital',
     baseDamage: 850, baseRange: 20000, baseSpeed: 9000, cooldown: 5.0, spread: 0.005,
     penetration: 5, energyCost: 75, vfxColor: '#00ffff',
-    recoil: 90, shake: 65, impactScale: 4.5, barrelsPerShot: 3,
+    // recoil / shake z FX_PROFILE (było 90 / 65 — nieczytane)
+    recoil: 60, shake: 20, impactScale: 4.5, barrelsPerShot: 3,
     model3D: 'special_yamato_cannon', render3dOnly: true
   },
   hexlance_siege: {
     id: 'hexlance_siege', name: 'Hexlance Siege Cannon', mountType: 'builtin', category: 'superweapon', size: 'Capital',
     baseDamage: 9999, baseRange: 60000, baseSpeed: 12000, cooldown: 6.0, chargeTime: 1.2,
-    burstCount: 4, burstDelay: 0.25, energyCost: 200, vfxColor: '#d0eaff'
+    burstCount: 4, burstDelay: 0.25, energyCost: 200, vfxColor: '#d0eaff',
+    recoil: 0, shake: 14
   },
 
   // ==========================================================================
@@ -299,14 +340,14 @@ export const MASTER_WEAPONS = {
     id: 'siege_torpedo', name: 'Siege Torpedo Mk I', mountType: 'missile', category: 'torpedo', size: 'L',
     baseDamage: 800, baseRange: 60000, baseSpeed: 600, cooldown: 12.0, ammo: 6,
     turnRate: 80, homingDelay: 1.0, vfxColor: '#ff4444',
-    explosionRadius: 200, armorPen: 3,
+    explosionRadius: 200, armorPen: 3, recoil: 6, shake: 3,
     description: 'Heavy anti-capital torpedo. Slow but devastating. Visible on enemy sensors.'
   },
   siege_torpedo_mk2: {
     id: 'siege_torpedo_mk2', name: 'Siege Torpedo Mk II', mountType: 'missile', category: 'torpedo', size: 'Capital',
     baseDamage: 1400, baseRange: 80000, baseSpeed: 500, cooldown: 18.0, ammo: 4,
     turnRate: 60, homingDelay: 1.5, vfxColor: '#ff2222',
-    explosionRadius: 350, armorPen: 5,
+    explosionRadius: 350, armorPen: 5, recoil: 8, shake: 4,
     description: 'Capital-grade siege torpedo. Extremely powerful but slow and easy to intercept.'
   },
   torpedo_salvo: {
@@ -314,13 +355,15 @@ export const MASTER_WEAPONS = {
     baseDamage: 250, baseRange: 45000, baseSpeed: 800, cooldown: 15.0, ammo: 12,
     turnRate: 120, homingDelay: 0.8, vfxColor: '#ff8844',
     burstCount: 6, burstDelay: 0.3,
-    explosionRadius: 120,
+    explosionRadius: 120, recoil: 5, shake: 2.5,
     description: 'Launches a salvo of 6 lighter torpedoes. Harder to intercept all of them.'
   },
   siege_railgun: {
     id: 'siege_railgun', name: 'Mjolnir Siege Railgun', mountType: 'special', category: 'rail', size: 'Capital',
     baseDamage: 2500, baseRange: 100000, baseSpeed: 25000, cooldown: 8.0, chargeTime: 3.0,
     spread: 0.0005, penetration: 10, energyCost: 120, vfxColor: '#aaffff',
+    // Przebija wszystko na drodze bez utraty energii (≤ 10 kadłubów, jak demo: pen 1e6).
+    penDepth: Infinity, penSpeedLoss: 0,
     recoil: 120, shake: 80, impactScale: 5.0,
     requiresStationary: true,
     description: 'Extreme range railgun. Ship must be stationary to fire. Devastating single-shot damage.'

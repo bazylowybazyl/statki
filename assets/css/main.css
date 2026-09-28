@@ -312,8 +312,7 @@
       z-index: 10;
     }
 
-    /* nie obejmuj overlayu 3D */
-    canvas:not(#c):not(.overlay3d) {
+    canvas:not(#c) {
       pointer-events: none !important;
       position: absolute;
       inset: 0;
@@ -1925,14 +1924,6 @@
 
     .hp-row[data-hp-type="special"] {
       border-left: 3px solid #ef4444;
-    }
-
-/* Overlay 3D musi być nad głównym canvasem (#c) */
-    canvas.overlay3d {
-      position: absolute;
-      inset: 0;
-      pointer-events: none !important;
-      z-index: 30 !important;
     }
 
 :root {

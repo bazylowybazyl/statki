@@ -3,12 +3,16 @@
  *
  * Trzy warstwy, każda z inną rolą:
  *  1. SKÓRA — oryginalny mesh .glb, jedzie po polu deformacji węzłów (FFD)
- *     i znika tam, gdzie węzeł zginął. Identyczna zasada jak w voxelShips3D.
+ *     i znika tam, gdzie węzeł zginął.
  *  2. BELKI — linie kolorowane typem i naprężeniem. Nie wymagają żadnej logiki
  *     widoczności: leżą wewnątrz kadłuba, więc bufor głębi chowa je za skórą,
  *     a przez wyrwę widać je same. To jest podgląd konstrukcji rodem z BeamNG.
  *  3. WĘZŁY — małe sześciany, głównie dla ciał BEZ modelu (wtedy siatka belek
  *     i węzłów jest całym ich wyglądem).
+ *
+ * AGENT: moduł poza grą (dema destruktor2d.html / destruktor3d.html na własnym WebGLRenderer) —
+ * GLSL i ShaderMaterial zostają do integracji destruktorów z Core3D, wtedy przejście na TSL
+ * (decyzja użytkownika, PLAN §12 p. 1; razem z pulą odłamków beamDebris3D.js).
  */
 
 import * as THREE from 'three';

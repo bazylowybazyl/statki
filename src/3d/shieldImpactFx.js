@@ -19,8 +19,16 @@
 // Jedna instancja = jedna wstęga (RIBBON_SEGMENTS quadów), billboard w płaszczyźnie
 // XY świata 3D — tej samej, w której leżą kopuły tarcz (y3d = -yGry).
 // ============================================================
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
+import {
+    Fn, Discard, float, vec2, vec3, vec4, uniform, attribute, varying,
+    positionGeometry, modelViewMatrix, cameraProjectionMatrix,
+    clamp, exp, fract, length, max, mix, pow, select, sin, smoothstep, sqrt, step
+} from 'three/tsl';
 import { Core3D } from './core3d.js';
+import { uniformsAdapter } from './tsl/uniformy.js';
+// Losowość warstwy efektów (zadanie 23): wizualia nie zużywają Math.random gry — przebieg rozgrywki nie zależy od obrazu.
+import { fxRandom } from './fx/fxRandom.js';
 
 // Wstęga: 16 quadów = 17 przekrojów = 34 wierzchołki, 96 indeksów.
 // Indeksy idą segment po segmencie, więc drawRange ucina ogon od tyłu (LOD).
@@ -91,197 +99,188 @@ const PRESETS = {
 
 const DEFAULT_COLOR = new THREE.Color('#5992f7');
 
-const VERTEX_SHADER = /* glsl */`
-uniform float uTime;
-uniform float uTrailScale;    // LOD: rozciągnięcie kroku, gdy rysujemy mniej segmentów
-uniform float uMinHalfWidth;  // podłoga grubości w jednostkach świata (~2 px)
+// ── Materiały (TSL, port WebGPU — zadanie 14) ───────────────────────────────
+// Obraz 1:1 z dawnego GLSL: te same wzory w tej samej kolejności. Oba materiały to
+// singletony (jedna pula na grę), więc uniformy są ich własnymi węzłami (adapter
+// `material.uniforms.X.value` z src/3d/tsl/uniformy.js). DoubleSide + przezroczystość
+// = forceSinglePass (WebGPU rysowałby siatkę dwa razy — agents.md). Odstępstwa od
+// GLSL tylko tam, gdzie WebGL mógł dać NaN (podstawy potęg i pierwiastek obcięte do
+// ≥ 0 — wartości dla żywych cząstek bez zmian).
 
-attribute vec3  iOrigin;
-attribute vec3  iVel;
-attribute float iBirth;
-attribute float iLife;
-attribute vec4  iShape;   // x=typ, y=półgrubość, z=rozpiętość ogona [s], w=seed
-attribute vec2  iWobble;  // x=amplituda, y=częstotliwość
-attribute vec3  iColor;
+// Wstęga: wierzchołki przekroju (x = pozycja na wstędze 0..1, y = bok ±1),
+// dane cząstki z atrybutów instancji.
+function createRibbonMaterial() {
+    const U = {
+        uTime: uniform(0),
+        uTrailScale: uniform(1),     // LOD: rozciągnięcie kroku, gdy rysujemy mniej segmentów
+        uMinHalfWidth: uniform(0.5)  // podłoga grubości w jednostkach świata (~2 px)
+    };
+    const iOrigin = attribute('iOrigin', 'vec3');
+    const iVel = attribute('iVel', 'vec3');
+    const iBirth = attribute('iBirth', 'float');
+    const iLife = attribute('iLife', 'float');
+    const iShape = attribute('iShape', 'vec4');   // x=typ, y=półgrubość, z=rozpiętość ogona [s], w=seed
+    const iWobble = attribute('iWobble', 'vec2'); // x=amplituda, y=częstotliwość
+    const iColor = attribute('iColor', 'vec3');
 
-varying vec3  vColor;
-varying float vAlpha;
-varying float vSide;
+    const seg = positionGeometry.x;   // 0 = głowa, 1 = koniec ogona
+    const side = positionGeometry.y;  // -1 / +1
 
-// Opór ośrodka per typ: wstęga leci daleko, iskra hamuje szybko,
-// łuk praktycznie stoi przy powierzchni tarczy.
-float dragFor(float t) {
-    return t < 0.5 ? 2.6 : (t < 1.5 ? 5.2 : 8.5);
+    const life = max(iLife, 1e-3);
+    const tHead = U.uTime.sub(iBirth);
+    const dead = tHead.lessThan(0.0).or(tHead.greaterThan(life));
+
+    // Opór ośrodka per typ: wstęga leci daleko, iskra hamuje szybko,
+    // łuk praktycznie stoi przy powierzchni tarczy.
+    const typeId = iShape.x;
+    const seed = iShape.w;
+    const k = select(typeId.lessThan(0.5), float(2.6), select(typeId.lessThan(1.5), float(5.2), float(8.5)));
+
+    const speed2 = length(iVel.xy);
+    const fwd = select(speed2.greaterThan(1e-4), iVel.xy.div(speed2), vec2(1.0, 0.0));
+    const rightDir = vec2(fwd.y.negate(), fwd.x);
+
+    // Analityczny tor: całka z v0*exp(-k*t) + poprzeczne falowanie. Falowanie
+    // narasta od zera — wstęga wychodzi z tarczy prosto, dopiero potem się wije.
+    const samplePos = (t0) => {
+        const t = max(t0, 0.0);
+        const p = iOrigin.add(iVel.mul(float(1.0).sub(exp(k.negate().mul(t))).div(k)));
+        const phase = seed.mul(6.2831853);
+        const env = float(1.0).sub(exp(t.negate().mul(6.0)));
+        const w = sin(iWobble.y.mul(t).add(phase)).mul(0.68)
+            .add(sin(iWobble.y.mul(0.43).mul(t).add(phase.mul(2.7))).mul(0.32));
+        return vec3(p.xy.add(rightDir.mul(w.mul(iWobble.x).mul(env))), p.z);
+    };
+
+    // uTrailScale = RIBBON_SEGMENTS / rysowane segmenty: drawRange ucina indeksy od
+    // końca wstęgi, a przeskalowanie rozciąga pozostałe przekroje na całą długość
+    // ogona — kształt się nie zmienia z oddaleniem, spada tylko koszt wierzchołków.
+    const u = clamp(seg.mul(U.uTrailScale), 0.0, 1.0);
+    const span = iShape.z;
+    const dtSeg = span.mul(U.uTrailScale).div(RIBBON_SEGMENTS);
+    const pA = samplePos(tHead.sub(u.mul(span)));
+    const pB = samplePos(tHead.sub(u.mul(span)).sub(dtSeg));
+
+    const tang = pA.xy.sub(pB.xy);
+    const tl = length(tang);
+    const dir = select(tl.greaterThan(1e-5), tang.div(tl), fwd);
+    const nrm = vec2(dir.y.negate(), dir.x);
+
+    const ageHead = tHead.div(life);
+    const taper = pow(max(0.0, float(1.0).sub(u)), 0.6);
+    const nose = float(0.65).add(smoothstep(0.0, 0.07, u).mul(0.35));
+    const lifeFade = pow(max(0.0, float(1.0).sub(ageHead)), 1.25);
+    // Podłoga grubości PRZED zwężeniami: z daleka wstęga schodzi poniżej piksela
+    // i stroboskopuje, ale ogon nadal ma się zwężać do zera.
+    const halfW0 = max(iShape.y, U.uMinHalfWidth).mul(taper).mul(nose).mul(lifeFade);
+
+    const alpha0 = pow(max(0.0, float(1.0).sub(ageHead)), 1.8)
+        .mul(smoothstep(0.0, 0.04, tHead))
+        .mul(mix(1.0, 0.35, u));
+
+    // MACKI (0) — grube, głowa rozbielona, ogon w kolorze tarczy; ISKRY (1) — cienkie,
+    // prawie białe; WYŁADOWANIA (2) — migotanie i poszarpana grubość wzdłuż ogona.
+    const white = vec3(1.0);
+    const isTendril = typeId.lessThan(0.5);
+    const isSpark = typeId.lessThan(1.5);
+    const colTendril = mix(mix(iColor, white, 0.70).mul(3.0), iColor.mul(1.25), clamp(u.mul(1.15), 0.0, 1.0));
+    const colSpark = mix(mix(iColor, white, 0.88).mul(4.6), iColor.mul(0.85), clamp(u.mul(1.6), 0.0, 1.0));
+    const colArc = mix(iColor, white, 0.82).mul(6.0);
+    const color = select(isTendril, colTendril, select(isSpark, colSpark, colArc));
+    const flicker = step(0.14, fract(tHead.mul(32.0).add(seed.mul(91.0)))).mul(1.6);
+    const alpha = select(isTendril, alpha0, select(isSpark, alpha0.mul(0.85), alpha0.mul(flicker)));
+    const hash11 = (x) => fract(sin(x.mul(127.1)).mul(43758.5453));
+    const halfW = select(isSpark, halfW0, halfW0.mul(float(0.35).add(hash11(u.mul(43.0).add(seed.mul(77.0))).mul(0.65))));
+
+    // pA jest w układzie LOKALNYM siatki (frameOrigin w JS) — duża translacja świata
+    // siedzi w modelViewMatrix, policzonej na CPU w double (renderer.highPrecision).
+    const local = vec3(pA.xy.add(nrm.mul(halfW.mul(side))), pA.z);
+    const clip = cameraProjectionMatrix.mul(modelViewMatrix.mul(vec4(local, 1.0)));
+
+    const vColor = varying(select(dead, vec3(0.0), color), 'vFxColor');
+    const vAlpha = varying(select(dead, float(0.0), alpha), 'vFxAlpha');
+    const vSide = varying(side, 'vFxSide');
+
+    const material = new THREE.NodeMaterial();
+    material.name = 'ShieldImpactRibbons';
+    material.uniforms = uniformsAdapter(U);
+    material.vertexNode = select(dead, vec4(2.0, 2.0, 2.0, 1.0), clip);
+    material.fragmentNode = Fn(() => {
+        Discard(vAlpha.lessThanEqual(0.002));
+        const e = float(1.0).sub(vSide.mul(vSide)).toVar();
+        Discard(e.lessThanEqual(0.0));
+        return vec4(vColor, pow(max(e, 0.0), 1.3).mul(vAlpha));
+    })();
+    material.transparent = true;
+    material.blending = THREE.AdditiveBlending;
+    material.depthWrite = false;
+    material.depthTest = false;
+    material.side = THREE.DoubleSide;
+    material.forceSinglePass = true;
+    material.lights = false;
+    material.fog = false;
+    return material;
 }
-
-float hash11(float p) {
-    return fract(sin(p * 127.1) * 43758.5453);
-}
-
-// Analityczny tor: całka z v0*exp(-k*t) + poprzeczne falowanie.
-vec3 samplePos(float t, float k, vec2 rightDir, float seed) {
-    t = max(t, 0.0);
-    vec3 p = iOrigin + iVel * ((1.0 - exp(-k * t)) / k);
-    float phase = seed * 6.2831853;
-    // Falowanie narasta od zera — wstęga wychodzi z tarczy prosto, dopiero
-    // potem zaczyna wić się jak w prototypie (curl noise).
-    float env = 1.0 - exp(-t * 6.0);
-    float w = sin(iWobble.y * t + phase) * 0.68
-            + sin(iWobble.y * 0.43 * t + phase * 2.7) * 0.32;
-    p.xy += rightDir * (w * iWobble.x * env);
-    return p;
-}
-
-void main() {
-    float seg  = position.x;   // 0 = głowa, 1 = koniec ogona
-    float side = position.y;   // -1 / +1
-
-    vColor = vec3(0.0);
-    vAlpha = 0.0;
-    vSide  = side;
-
-    float life  = max(iLife, 1e-3);
-    float tHead = uTime - iBirth;
-    if (tHead < 0.0 || tHead > life) {
-        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
-        return;
-    }
-
-    float typeId = iShape.x;
-    float seed   = iShape.w;
-    float k      = dragFor(typeId);
-
-    float speed2 = length(iVel.xy);
-    vec2 fwd  = speed2 > 1e-4 ? iVel.xy / speed2 : vec2(1.0, 0.0);
-    vec2 rightDir = vec2(-fwd.y, fwd.x);
-
-    // uTrailScale = RIBBON_SEGMENTS / rysowane segmenty. Przy LOD drawRange
-    // ucina indeksy od końca wstęgi, a to przeskalowanie rozciąga pozostałe
-    // przekroje na całą długość ogona: kształt efektu nie zmienia się wraz
-    // z oddaleniem, spada wyłącznie koszt wierzchołków.
-    float u = clamp(seg * uTrailScale, 0.0, 1.0);   // 0 = głowa, 1 = koniec ogona
-    float span = iShape.z;
-    float dtSeg = span * uTrailScale / ${RIBBON_SEGMENTS}.0;
-    vec3 pA = samplePos(tHead - u * span, k, rightDir, seed);
-    vec3 pB = samplePos(tHead - u * span - dtSeg, k, rightDir, seed);
-
-    vec2 tang = pA.xy - pB.xy;
-    float tl = length(tang);
-    vec2 dir = tl > 1e-5 ? tang / tl : fwd;
-    vec2 nrm = vec2(-dir.y, dir.x);
-
-    float ageHead = tHead / life;
-    float taper   = pow(max(0.0, 1.0 - u), 0.6);
-    float nose    = 0.65 + 0.35 * smoothstep(0.0, 0.07, u);
-    float lifeFade = pow(max(0.0, 1.0 - ageHead), 1.25);
-    // Podłoga grubości wchodzi PRZED zwężeniami: przy dalekim zoomie wstęga
-    // schodzi poniżej piksela i zaczyna stroboskopować, ale ogon nadal ma się
-    // zwężać do zera, a nie zamieniać w równy pasek.
-    float halfW = max(iShape.y, uMinHalfWidth) * taper * nose * lifeFade;
-
-    vAlpha = pow(max(0.0, 1.0 - ageHead), 1.8)
-           * smoothstep(0.0, 0.04, tHead)
-           * mix(1.0, 0.35, u);
-
-    vec3 white = vec3(1.0);
-    if (typeId < 0.5) {
-        // MACKI — grube wstęgi, głowa rozbielona, ogon w kolorze tarczy.
-        vColor = mix(mix(iColor, white, 0.70) * 3.0, iColor * 1.25, clamp(u * 1.15, 0.0, 1.0));
-    } else if (typeId < 1.5) {
-        // ISKRY — cienkie, prawie białe, gasnące w barwę tarczy.
-        vColor = mix(mix(iColor, white, 0.88) * 4.6, iColor * 0.85, clamp(u * 1.6, 0.0, 1.0));
-        vAlpha *= 0.85;
-    } else {
-        // WYŁADOWANIA — migotanie i poszarpana grubość wzdłuż ogona.
-        vColor = mix(iColor, white, 0.82) * 6.0;
-        vAlpha *= step(0.14, fract(tHead * 32.0 + seed * 91.0)) * 1.6;
-        halfW  *= 0.35 + 0.65 * hash11(u * 43.0 + seed * 77.0);
-    }
-
-    // pA jest w układzie LOKALNYM siatki (patrz frameOrigin w JS) — duża
-    // translacja świata siedzi w modelViewMatrix, policzona na CPU w float64.
-    vec3 local = vec3(pA.xy + nrm * (halfW * side), pA.z);
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(local, 1.0);
-}
-`;
-
-const FRAGMENT_SHADER = /* glsl */`
-varying vec3  vColor;
-varying float vAlpha;
-varying float vSide;
-
-void main() {
-    if (vAlpha <= 0.002) discard;
-    float e = 1.0 - vSide * vSide;
-    if (e <= 0.0) discard;
-    gl_FragColor = vec4(vColor, pow(e, 1.3) * vAlpha);
-}
-`;
 
 // ── Bańka: rozbłysk w miejscu trafienia ─────────────────────────────────────
 // „Mały wybuch" w kolorze tarczy: gorące jądro + rozchodząca się powłoka.
 // Kamera jest ortho z góry, więc quad leży płasko w XY — żadnego billboardowania.
-const FLASH_VERTEX = /* glsl */`
-uniform float uTime;
+function createFlashMaterial() {
+    const U = { uTime: uniform(0) };
+    const fOrigin = attribute('fOrigin', 'vec3');
+    const fParams = attribute('fParams', 'vec4');   // x=birth, y=life, z=promień, w=moc
+    const fColor = attribute('fColor', 'vec3');
 
-attribute vec3  fOrigin;
-attribute vec4  fParams;   // x=birth, y=life, z=promień, w=moc
-attribute vec3  fColor;
-
-varying vec2  vP;
-varying vec3  vFlashColor;
-varying float vAge;
-varying float vPower;
-
-void main() {
-    float life = max(fParams.y, 1e-3);
-    float age = (uTime - fParams.x) / life;
-
-    vP = position.xy * 2.0;
-    vFlashColor = fColor;
-    vAge = age;
-    vPower = fParams.w;
-
-    if (age < 0.0 || age > 1.0) {
-        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
-        return;
-    }
+    const life = max(fParams.y, 1e-3);
+    const age = U.uTime.sub(fParams.x).div(life);
+    const dead = age.lessThan(0.0).or(age.greaterThan(1.0));
 
     // Bańka wyskakuje i zwalnia — sqrt daje mocne pierwsze klatki.
-    float r = fParams.z * (0.42 + 0.58 * sqrt(age));
-    vec3 local = fOrigin + vec3(position.xy * (r * 2.0), 0.0);
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(local, 1.0);
+    const r = fParams.z.mul(float(0.42).add(sqrt(max(age, 0.0)).mul(0.58)));
+    const local = fOrigin.add(vec3(positionGeometry.xy.mul(r.mul(2.0)), 0.0));
+    const clip = cameraProjectionMatrix.mul(modelViewMatrix.mul(vec4(local, 1.0)));
+
+    const vP = varying(positionGeometry.xy.mul(2.0), 'vFlashP');
+    const vFlashColor = varying(fColor, 'vFlashColor');
+    const vAge = varying(age, 'vFlashAge');
+    const vPower = varying(fParams.w, 'vFlashPower');
+
+    const material = new THREE.NodeMaterial();
+    material.name = 'ShieldImpactFlash';
+    material.uniforms = uniformsAdapter(U);
+    material.vertexNode = select(dead, vec4(2.0, 2.0, 2.0, 1.0), clip);
+    material.fragmentNode = Fn(() => {
+        Discard(vAge.lessThan(0.0).or(vAge.greaterThan(1.0)));
+        const d = length(vP).toVar();
+        Discard(d.greaterThan(1.0));
+        const fade = max(float(1.0).sub(vAge), 0.0).toVar();
+
+        // Jądro gaśnie szybciej niż powłoka — po rozbłysku zostaje sam pierścień.
+        const core = exp(d.negate().mul(d).mul(7.0)).mul(pow(fade, 3.0)).toVar();
+
+        const shellPos = mix(0.12, 0.90, sqrt(max(vAge, 0.0)));
+        const shellW = mix(0.40, 0.10, vAge);
+        const shellD = d.sub(shellPos).div(shellW).toVar();
+        const shell = exp(shellD.negate().mul(shellD)).mul(pow(fade, 1.5)).mul(0.75).toVar();
+
+        // Jądro rozbielone, powłoka czysto w barwie tarczy.
+        const col = mix(vFlashColor, vec3(1.0), 0.62).mul(core.mul(5.0))
+            .add(vFlashColor.mul(shell.mul(2.6)));
+
+        const a = clamp(core.add(shell).mul(vPower), 0.0, 1.0).toVar();
+        Discard(a.lessThanEqual(0.002));
+        return vec4(col, a);
+    })();
+    material.transparent = true;
+    material.blending = THREE.AdditiveBlending;
+    material.depthWrite = false;
+    material.depthTest = false;
+    material.side = THREE.DoubleSide;
+    material.forceSinglePass = true;
+    material.lights = false;
+    material.fog = false;
+    return material;
 }
-`;
-
-const FLASH_FRAGMENT = /* glsl */`
-varying vec2  vP;
-varying vec3  vFlashColor;
-varying float vAge;
-varying float vPower;
-
-void main() {
-    if (vAge < 0.0 || vAge > 1.0) discard;
-    float d = length(vP);
-    if (d > 1.0) discard;
-
-    // Jądro gaśnie szybciej niż powłoka — po rozbłysku zostaje sam pierścień.
-    float core = exp(-d * d * 7.0) * pow(1.0 - vAge, 3.0);
-
-    float shellPos = mix(0.12, 0.90, sqrt(vAge));
-    float shellW   = mix(0.40, 0.10, vAge);
-    float shellD   = (d - shellPos) / shellW;
-    float shell    = exp(-shellD * shellD) * pow(1.0 - vAge, 1.5) * 0.75;
-
-    // Jądro rozbielone, powłoka czysto w barwie tarczy.
-    vec3 col = mix(vFlashColor, vec3(1.0), 0.62) * (core * 5.0)
-             + vFlashColor * (shell * 2.6);
-
-    float a = clamp((core + shell) * vPower, 0.0, 1.0);
-    if (a <= 0.002) discard;
-    gl_FragColor = vec4(col, a);
-}
-`;
 
 const FLASH_MAX = 192;
 const HAZE_MAX = 4;
@@ -375,7 +374,7 @@ function flushAttributes(geo, names, lo, hi) {
 }
 
 function randRange(range) {
-    return range[0] + Math.random() * (range[1] - range[0]);
+    return range[0] + fxRandom.next() * (range[1] - range[0]);
 }
 
 // Przesunięcie układu lokalnego pod nowe ognisko walki. Puli pustej nie ma co
@@ -444,20 +443,7 @@ export const ShieldImpactFX = {
         geometry.setAttribute('iWobble', new THREE.InstancedBufferAttribute(iWobble, 2));
         geometry.setAttribute('iColor', new THREE.InstancedBufferAttribute(iColor, 3));
 
-        material = new THREE.ShaderMaterial({
-            vertexShader: VERTEX_SHADER,
-            fragmentShader: FRAGMENT_SHADER,
-            uniforms: {
-                uTime: { value: 0 },
-                uTrailScale: { value: 1 },
-                uMinHalfWidth: { value: 0.5 }
-            },
-            transparent: true,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false,
-            depthTest: false,
-            side: THREE.DoubleSide
-        });
+        material = createRibbonMaterial();
 
         mesh = new THREE.Mesh(geometry, material);
         mesh.frustumCulled = false;
@@ -500,16 +486,7 @@ export const ShieldImpactFX = {
         flashGeometry.setAttribute('fParams', new THREE.InstancedBufferAttribute(fParams, 4));
         flashGeometry.setAttribute('fColor', new THREE.InstancedBufferAttribute(fColor, 3));
 
-        flashMaterial = new THREE.ShaderMaterial({
-            vertexShader: FLASH_VERTEX,
-            fragmentShader: FLASH_FRAGMENT,
-            uniforms: { uTime: { value: 0 } },
-            transparent: true,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false,
-            depthTest: false,
-            side: THREE.DoubleSide
-        });
+        flashMaterial = createFlashMaterial();
 
         flashMesh = new THREE.Mesh(flashGeometry, flashMaterial);
         flashMesh.frustumCulled = false;
@@ -554,6 +531,28 @@ export const ShieldImpactFX = {
      */
     hasVisibleContent() {
         return !!((mesh && mesh.visible) || (flashMesh && flashMesh.visible));
+    },
+
+    /**
+     * Rozgrzewka pipeline'ów wstęg i baniek dla passa tarcz (ekran ładowania,
+     * prewarmShields3D). Pule są ukryte do pierwszego trafienia, a compileAsync pomija
+     * niewidoczne obiekty — na czas projekcji (synchronicznej, gdy urządzenie jest
+     * gotowe) obie siatki są widoczne. Materiały to stałe singletony: stan budowy i
+     * pipeline żyją do końca sesji.
+     */
+    prewarm() {
+        if (!this.isInitialized || !root) return false;
+        const ribbonsVisible = mesh.visible;
+        const flashVisible = flashMesh.visible;
+        mesh.visible = true;
+        flashMesh.visible = true;
+        try {
+            Core3D.prewarmPass(root, 7);
+        } finally {
+            mesh.visible = ribbonsVisible;
+            flashMesh.visible = flashVisible;
+        }
+        return true;
     },
 
     /**
@@ -633,14 +632,14 @@ export const ShieldImpactFX = {
             const slot = idx;
             idx = (idx + 1) % MAX_PARTICLES;
 
-            const r = Math.random();
+            const r = fxRandom.next();
             const typeId = r < preset.mix[0] ? 0 : (r < preset.mix[1] ? 1 : 2);
 
             // Kierunek wyrzutu.
             let axX, axY, spread;
             if (preset.tangential && typeId !== 2) {
                 // Tarcza o tarczę: plazma tryska w bok, lekko odchylona od kadłuba.
-                const side = Math.random() < 0.5 ? -1 : 1;
+                const side = fxRandom.next() < 0.5 ? -1 : 1;
                 axX = tanX * side + outX * 0.30;
                 axY = tanY * side + outY * 0.30;
                 spread = preset.spread;
@@ -654,7 +653,7 @@ export const ShieldImpactFX = {
             }
             const axLen = Math.hypot(axX, axY) || 1;
             const axAngle = Math.atan2(axY / axLen, axX / axLen);
-            const angle = axAngle + (Math.random() - 0.5) * 2 * spread;
+            const angle = axAngle + (fxRandom.next() - 0.5) * 2 * spread;
 
             // Iskry są szybsze i krótsze, łuki wolne i przyklejone do tarczy.
             const typeSpeed = typeId === 1 ? 1.35 : (typeId === 2 ? 0.85 : 1.0);
@@ -668,7 +667,7 @@ export const ShieldImpactFX = {
             iOrigin[s3] = o.x - frameOx;
             iOrigin[s3 + 1] = frameOy - o.y;
             // Delikatne rozwarstwienie w z, żeby wstęgi nie leżały w jednej płaszczyźnie.
-            iOrigin[s3 + 2] = 1.4 + Math.random() * 0.4;
+            iOrigin[s3 + 2] = 1.4 + fxRandom.next() * 0.4;
 
             iVel[s3] = Math.cos(angle) * speed + inhX;
             iVel[s3 + 1] = -(Math.sin(angle) * speed + inhY);
@@ -679,15 +678,15 @@ export const ShieldImpactFX = {
 
             const s4 = slot * 4;
             iShape[s4] = typeId;
-            iShape[s4 + 1] = widthBase * typeWidth * (0.7 + Math.random() * 0.6);
+            iShape[s4 + 1] = widthBase * typeWidth * (0.7 + fxRandom.next() * 0.6);
             // Rozpiętość ogona w sekundach + losowe skrócenie części wstęg
             // (prototyp robił to samo przez randomLengthFactor w shaderze).
-            iShape[s4 + 2] = life * preset.trailFactor * (0.45 + Math.random() * 0.55);
-            iShape[s4 + 3] = Math.random();
+            iShape[s4 + 2] = life * preset.trailFactor * (0.45 + fxRandom.next() * 0.55);
+            iShape[s4 + 3] = fxRandom.next();
 
             const s2 = slot * 2;
-            iWobble[s2] = wobbleAmp * (typeId === 2 ? 1.8 : 1.0) * (0.4 + Math.random() * 1.2);
-            iWobble[s2 + 1] = (typeId === 2 ? 26 : 7) * (0.6 + Math.random() * 0.9);
+            iWobble[s2] = wobbleAmp * (typeId === 2 ? 1.8 : 1.0) * (0.4 + fxRandom.next() * 1.2);
+            iWobble[s2 + 1] = (typeId === 2 ? 26 : 7) * (0.6 + fxRandom.next() * 0.9);
 
             iColor[s3] = cr;
             iColor[s3 + 1] = cg;
@@ -719,7 +718,7 @@ export const ShieldImpactFX = {
         fOrigin[s3 + 1] = frameOy - o.y;
         fOrigin[s3 + 2] = 1.2;
 
-        const life = (preset.flashLife || 0.2) * (0.85 + Math.random() * 0.3);
+        const life = (preset.flashLife || 0.2) * (0.85 + fxRandom.next() * 0.3);
         const s4 = slot * 4;
         fParams[s4] = now;
         fParams[s4 + 1] = life;

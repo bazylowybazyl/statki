@@ -2,8 +2,10 @@
 
 import { SimClock, CLOCK_RENDER, CLOCK_SIM } from '../game/simClock.js';
 import { ActiveCarrier } from '../game/carrierVelocity.js';
+// Losowość warstwy efektów (zadanie 23): wizualia nie zużywają Math.random gry — przebieg rozgrywki nie zależy od obrazu.
+import { fxRandom } from '../3d/fx/fxRandom.js';
 
-// NOSNIK (src/game/carrierVelocity.js): czastka, blysk, fala i wiazka rodza sie
+// NOSNIK (src/game/carrierVelocity.js): czastka, blysk i fala rodza sie
 // z predkoscia kadluba, z ktorego wyszly, i rysuja sie w  pos + v * (T - t0)
 // z zegara gry. Ruch i opor wlasny czastki (update) dzialaja WZGLEDEM nosnika —
 // dym z lufy pedzacego okretu wyglada jak na postoju. Nosnik ustawia wolajacy
@@ -25,7 +27,6 @@ function carrierElapsed(clock, t0) {
 const _sScratch = { x: 0, y: 0 };
 const _prevScratch = { x: 0, y: 0 };
 const _pScratch = { x: 0, y: 0 };
-const _carrierScratch = { vx: 0, vy: 0, t0: 0, clock: CLOCK_SIM };
 // Smuga pocisku kanwy = ruch wzgledem strzelca w tym czasie (jak w 3D).
 const BULLET_STREAK_DT = 1 / 120;
 
@@ -48,7 +49,6 @@ export const CanvasVFX = {
   nextParticleIndex: 0,
   shockwaves: [],
   lightningParticles: [],
-  projectileImpact3DThrottle: new Map(),
 
   WEAPON_VFX_PRESETS: {
     rail: { color: '#9cc9ff', len: 32, widthOuter: 12, widthInner: 4, glowBlur: 22, sparkCount: 18, sparkSpeed: [260, 420], sparkSize: [1.6, 2.4], shock: { r: 12, maxR: 120, w: 3.0, life: 0.32 } },
@@ -75,9 +75,7 @@ export const CanvasVFX = {
     this.activeParticles = [];
     for (let i = 0; i < this.MAX_PARTICLES; i++) {
       this.particlePool.push({
-        pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 }, life: 0, age: 0, color: '#fff', size: 1, flash: false, beam: false,
-        start: { x: 0, y: 0 }, end: { x: 0, y: 0 }, width: 0, alpha: 1, fadeWithLife: true,
-        glowColor: null, colorOuter: null, colorInner: null, glowBlur: 0, outerWidthMul: 1, innerWidthMul: 1, active: false,
+        pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 }, life: 0, age: 0, color: '#fff', size: 1, flash: false, active: false,
         _activeIdx: -1,
         // nosnik: predkosc (swiat gry), czas pozy, zegar
         cvx: 0, cvy: 0, ct0: 0, clock: CLOCK_SIM
@@ -93,15 +91,6 @@ export const CanvasVFX = {
   setCarrier(carrier) { ActiveCarrier.set(carrier); },
 
   clearCarrier() { ActiveCarrier.clear(); },
-
-  // Nosnik z samej predkosci (wolajacy bez encji): poza fizyczna, zegar fizyki.
-  _carrierFromVelocity(v) {
-    _carrierScratch.vx = Number(v?.x) || 0;
-    _carrierScratch.vy = Number(v?.y) || 0;
-    _carrierScratch.t0 = SimClock.sim;
-    _carrierScratch.clock = CLOCK_SIM;
-    return _carrierScratch;
-  },
 
   hexToRgb(hex) {
     if (!hex || typeof hex !== 'string') return null;
@@ -156,9 +145,7 @@ export const CanvasVFX = {
     }
     p.pos.x = x; p.pos.y = y; p.vel.x = vx; p.vel.y = vy;
     p.life = life; p.age = 0; p.color = color || '#ffb677'; p.size = size || 2;
-    p.flash = !!flash; p.beam = false; p.alpha = 1; p.fadeWithLife = true;
-    p.colorOuter = null; p.colorInner = null; p.glowColor = null; p.glowBlur = 0;
-    p.outerWidthMul = 1; p.innerWidthMul = 1; p.active = true;
+    p.flash = !!flash; p.active = true;
     p.cvx = _carrier.vx; p.cvy = _carrier.vy; p.ct0 = _carrier.t0; p.clock = _carrier.clock;
     p._activeIdx = CanvasVFX.activeParticles.length;
     CanvasVFX.activeParticles.push(p);
@@ -182,31 +169,6 @@ export const CanvasVFX = {
       x: pos.x, y: pos.y, life: life, maxLife: life, size: size, angle: angle, age: 0,
       cvx: _carrier.vx, cvy: _carrier.vy, ct0: _carrier.t0, clock: _carrier.clock
     });
-  },
-
-  spawnLaserBeam(start, end, width, opts = {}) {
-    if (!CanvasVFX.enabled) return;
-    const p = CanvasVFX.particlePool[CanvasVFX.nextParticleIndex];
-    if (p.active) {
-      const idx = p._activeIdx;
-      const last = CanvasVFX.activeParticles[CanvasVFX.activeParticles.length - 1];
-      CanvasVFX.activeParticles[idx] = last;
-      last._activeIdx = idx;
-      CanvasVFX.activeParticles.pop();
-    }
-    p.pos.x = start.x; p.pos.y = start.y; p.vel.x = 0; p.vel.y = 0;
-    p.life = opts?.life ?? 0.12; p.age = 0; p.flash = false; p.beam = true;
-    p.start.x = start.x; p.start.y = start.y; p.end.x = end.x; p.end.y = end.y;
-    p.width = width; p.alpha = opts?.alpha ?? 1;
-    p.fadeWithLife = opts?.fadeWithLife; p.colorOuter = opts?.colorOuter ?? null;
-    p.colorInner = opts?.colorInner ?? null; p.glowColor = opts?.glowColor ?? null;
-    p.glowBlur = opts?.glowBlur ?? 0; p.outerWidthMul = opts?.outerWidthMul ?? 1;
-    p.innerWidthMul = opts?.innerWidthMul ?? 1; p.size = 0; p.color = '#fff'; p.active = true;
-    // Wiazka (0,12 s) jedzie z lufa — cala, oba konce.
-    p.cvx = _carrier.vx; p.cvy = _carrier.vy; p.ct0 = _carrier.t0; p.clock = _carrier.clock;
-    p._activeIdx = CanvasVFX.activeParticles.length;
-    CanvasVFX.activeParticles.push(p);
-    CanvasVFX.nextParticleIndex = (CanvasVFX.nextParticleIndex + 1) % CanvasVFX.MAX_PARTICLES;
   },
 
   resolveBulletVfxKey(rawKey, type) {
@@ -245,232 +207,25 @@ export const CanvasVFX = {
     return { ...preset, key: preset.key, color: resolvedColor, glowColor: preset.glowColor || resolvedColor, trailColor: preset.trailColor || resolvedColor, shockColorPrefix: this.rgbaPrefixFromHex(preset.shockColor || resolvedColor, 'rgba(255,200,150,') };
   },
 
-  getProjectileImpactVfxPressure() {
-    const overlayStats = (typeof window !== 'undefined' && window.overlay3D && typeof window.overlay3D.getStats === 'function') ? window.overlay3D.getStats() : null;
-    const active = Number(overlayStats?.activeEffects) || 0;
-    const renderMs = Number(overlayStats?.lastRenderMs) || 0;
-    const dropped = Number(overlayStats?.droppedEffects) || 0;
-    return { active, renderMs, pressure: Math.max(Math.max(0, active / 180), Math.max(0, renderMs / 10), Math.max(0, dropped > 0 ? 0.35 : 0)) };
-  },
-
-  resolveImpactColorInt(color, fallback = 0xb0f2ff) {
-    const rgb = this.hexToRgb(color);
-    if (!rgb) return fallback;
-    return ((rgb.r & 255) << 16) | ((rgb.g & 255) << 8) | (rgb.b & 255);
-  },
-
-  shouldSpawnProjectileImpact3D(presetKey, x, y) {
-    const key = String(presetKey || 'default').toLowerCase();
-    const pressure = this.getProjectileImpactVfxPressure().pressure;
-    let cooldownMs = 0;
-    if (key === 'autocannon' || key === 'ciws' || key === 'vulcan') cooldownMs = 42;
-    else if (key === 'plasma' || key === 'pulse' || key === 'default') cooldownMs = 28;
-    else if (key === 'rail' || key === 'tempest') cooldownMs = 8;
-    else if (key === 'helios') cooldownMs = 34;
-
-    if (pressure > 0.65) {
-      if (['autocannon', 'ciws', 'vulcan', 'default', 'plasma', 'pulse'].includes(key)) { if (Math.random() < Math.min(0.9, (pressure - 0.5) * 1.05)) return false; }
-      else if (key === 'helios') { if (Math.random() < Math.min(0.75, (pressure - 0.55) * 0.85)) return false; }
-    }
-    if (pressure > 0.5) cooldownMs *= Math.min(3.4, 1 + (pressure - 0.45) * 2.1);
-    if (cooldownMs <= 0) return true;
-    
-    const cellX = Math.round((Number(x) || 0) / 60);
-    const cellY = Math.round((Number(y) || 0) / 60);
-    const bucketKey = `${key}:${cellX}:${cellY}`;
-    const nowMs = performance.now();
-    const lastMs = this.projectileImpact3DThrottle.get(bucketKey) || 0;
-    if ((nowMs - lastMs) < cooldownMs) return false;
-    
-    this.projectileImpact3DThrottle.set(bucketKey, nowMs);
-    if (this.projectileImpact3DThrottle.size > 2048) {
-      const threshold = nowMs - 400;
-      for (const [k, t] of this.projectileImpact3DThrottle) { if (t < threshold) this.projectileImpact3DThrottle.delete(k); }
-    }
-    return true;
-  },
-
-  spawnProjectileImpact3D(presetKey, color, scale = 1, x = 0, y = 0) {
-    const key = String(presetKey || 'default').toLowerCase();
-    if (key === 'beam' || key === 'laser') return;
-    if (!this.isWorldPointNearViewport(x, y, 260)) return;
-    if (!this.shouldSpawnProjectileImpact3D(key, x, y)) return;
-    
-    const pressure = this.getProjectileImpactVfxPressure().pressure;
-    const quality = Math.max(0.16, Math.min(1, 1 - Math.max(0, pressure - 0.35) * 1.15));
+  // Wybuch 3D przy śmierci NPC / platformy (spawnExplosionPlasma, spawnDefaultHit): wybuch drona
+  // z dema bronie-webgpu (WeaponFx.droneBlast, zadanie 17 — dawniej fabryka trafienia działka
+  // w overlayu przez spawnProjectileImpact3D, usunięta z fabrykami trafień). Rozmiar jak dawniej.
+  _spawnDeathBlast3D(x, y, scale) {
+    const fx = typeof window !== 'undefined' ? window.WeaponFx : null;
+    if (!fx || !fx.available || !this.isWorldPointNearViewport(x, y, 260)) return;
     const h = window.ship?.h || 250;
-
-    // Torpedo: massive armata-style explosion
-    if (key === 'torpedo' && window.triggerArmataImpact3D) {
-      window.triggerArmataImpact3D(x, y, h * 0.5 * Math.max(1.0, scale));
-      // Double explosion for visual weight
-      if (window.triggerRailgunExplosion3D) window.triggerRailgunExplosion3D(x, y, h * 0.35 * scale, { sparkCount: 16, sparkColor: this.resolveImpactColorInt(color || '#ff4444', 0xff4444) });
-    }
-    // Siege railgun: devastating rail explosion
-    else if (key === 'siege' && window.triggerRailgunExplosion3D) {
-      window.triggerRailgunExplosion3D(x, y, h * 0.6 * Math.max(1.2, scale), { sparkCount: 24, sparkColor: this.resolveImpactColorInt(color || '#aaffff', 0xaaffff) });
-    }
-    // Superweapon (hexlance): biggest effect
-    else if (key === 'superweapon') {
-      if (window.triggerRailgunExplosion3D) window.triggerRailgunExplosion3D(x, y, h * 0.7 * scale, { sparkCount: 32, sparkColor: this.resolveImpactColorInt(color || '#d0eaff', 0xd0eaff) });
-      if (window.triggerArmataImpact3D) window.triggerArmataImpact3D(x, y, h * 0.5 * scale);
-    }
-    else if (key === 'helios' && window.triggerAutocannonImpact3D) window.triggerAutocannonImpact3D(x, y, h * 0.2 * Math.max(0.72, scale), color || '#ff003c', quality);
-    else if ((key === 'rail' || key === 'tempest') && window.triggerRailgunExplosion3D) window.triggerRailgunExplosion3D(x, y, h * 0.2 * Math.max(0.65, scale), { sparkCount: key === 'tempest' ? 10 : 4, sparkColor: this.resolveImpactColorInt(color, key === 'tempest' ? 0x9bf5ff : 0xb0f2ff) });
-    else if (['armata', 'rocket', 'missile', 'flak', 'broadside'].includes(key) && window.triggerArmataImpact3D) window.triggerArmataImpact3D(x, y, h * 0.28 * Math.max(0.75, scale));
-    else if (window.triggerAutocannonImpact3D) window.triggerAutocannonImpact3D(x, y, h * 0.18 * Math.max(0.7, scale), color, quality);
-  },
-
-  // === HYBRID VFX DISPATCH ===
-  // weaponSize: 'S' | 'M' → canvas 2D only (cheap, many per frame)
-  // weaponSize: 'L' | 'Capital' → Three.js 3D + canvas sparks (expensive, cinematic)
-  spawnWeaponImpact(presetKey, color, scale = 1, x = 0, y = 0, weaponSize = 'M') {
-    const isHeavy = (weaponSize === 'L' || weaponSize === 'Capital');
-    if (isHeavy) {
-      // L/Capital: Three.js 3D impact (the hero effect) + GPU sparks for fill
-      this.spawnProjectileImpact3D(presetKey, color, scale * (weaponSize === 'Capital' ? 1.5 : 1.0), x, y);
-      const fx = this.buildBulletVfxInstance(presetKey, color);
-      // GPU spark supplement for heavy weapons
-      const spark3D = typeof window !== 'undefined' && window.SparkSystem3D;
-      if (spark3D && spark3D.isInitialized) {
-        const sparkCount = Math.round((fx.sparkCount || 12) * scale * 0.5);
-        const avgSpeed = ((fx.sparkSpeed?.[0] || 200) + (fx.sparkSpeed?.[1] || 360)) * 0.5;
-        const avgSize = ((fx.sparkSize?.[0] || 1.4) + (fx.sparkSize?.[1] || 2.6)) * 0.5;
-        spark3D.burst(x, y, sparkCount, avgSpeed * scale, 0.35, avgSize * scale * 0.5);
-      } else if (this.enabled) {
-        // Fallback: canvas sparks
-        const sparks = Math.round((fx.sparkCount || 12) * scale * 0.5);
-        for (let i = 0; i < sparks; i++) {
-          const a = Math.random() * Math.PI * 2;
-          const speed = (fx.sparkSpeed?.[0] || 200) + Math.random() * ((fx.sparkSpeed?.[1] || 360) - (fx.sparkSpeed?.[0] || 200));
-          const size = (fx.sparkSize?.[0] || 1.4) + Math.random() * ((fx.sparkSize?.[1] || 2.6) - (fx.sparkSize?.[0] || 1.4));
-          this.spawnParticle({ x, y }, { x: Math.cos(a) * speed, y: Math.sin(a) * speed }, 0.24 + Math.random() * 0.2, this.resolveAlphaColor(fx.color, 0.85, fx.color), size * scale, true);
-        }
-      }
-      if (this.enabled) {
-        // Heavier shockwave for Capital — canvas
-        const shockScale = weaponSize === 'Capital' ? 1.8 : 1.2;
-        this.spawnShockwave(x, y, { r: (fx.shock?.r || 10) * scale * shockScale, maxR: (fx.shock?.maxR || 100) * scale * shockScale, w: (fx.shock?.w || 2.6) * scale * shockScale, maxLife: (fx.shock?.life || 0.32) * 1.3, color: fx.shockColorPrefix });
-      }
-    } else {
-      // S/M: Canvas 2D only — no Three.js overhead, fast and lightweight
-      this._spawnCanvasOnlyImpact(presetKey, color, scale, x, y, weaponSize);
-    }
-  },
-
-  // Legacy compat — existing callers without weaponSize
-  spawnWeaponImpactFromPreset(presetKey, color, scale = 1, x = 0, y = 0) {
-    this.spawnWeaponImpact(presetKey, color, scale, x, y, 'M');
-  },
-
-  // Canvas-only impact for S/M weapons — GPU sparks + canvas shockwave/flash
-  _spawnCanvasOnlyImpact(presetKey, color, scale = 1, x = 0, y = 0, weaponSize = 'M') {
-    if (!this.isWorldPointNearViewport(x, y, 200)) return;
-    const fx = this.buildBulletVfxInstance(presetKey, color);
-    const sizeMul = weaponSize === 'S' ? 0.5 : 1.0;
-
-    // GPU GLSL sparks — replace canvas particles
-    const spark3D = typeof window !== 'undefined' && window.SparkSystem3D;
-    if (spark3D && spark3D.isInitialized) {
-      const sparkCount = Math.round((fx.sparkCount || 12) * scale * sizeMul);
-      const avgSpeed = ((fx.sparkSpeed?.[0] || 200) + (fx.sparkSpeed?.[1] || 360)) * 0.5;
-      const avgSize = ((fx.sparkSize?.[0] || 1.4) + (fx.sparkSize?.[1] || 2.6)) * 0.5;
-      spark3D.burst(x, y, sparkCount, avgSpeed * scale, 0.3, avgSize * scale * sizeMul * 0.5);
-    } else if (this.enabled) {
-      // Fallback: canvas sparks if GPU system not ready
-      const sparks = Math.round((fx.sparkCount || 12) * scale * sizeMul);
-      for (let i = 0; i < sparks; i++) {
-        const a = Math.random() * Math.PI * 2;
-        const speed = (fx.sparkSpeed?.[0] || 200) + Math.random() * ((fx.sparkSpeed?.[1] || 360) - (fx.sparkSpeed?.[0] || 200));
-        const size = (fx.sparkSize?.[0] || 1.4) + Math.random() * ((fx.sparkSize?.[1] || 2.6) - (fx.sparkSize?.[0] || 1.4));
-        this.spawnParticle({ x, y }, { x: Math.cos(a) * speed, y: Math.sin(a) * speed }, 0.2 + Math.random() * 0.18, this.resolveAlphaColor(fx.color, 0.9, fx.color), size * scale * sizeMul, true);
-      }
-    }
-
-    if (!this.enabled) return;
-    // Canvas smoke stays as-is
-    if (fx.smoke && fx.smokeColor) {
-      const smokeCount = Math.round(fx.smoke * scale * sizeMul);
-      for (let i = 0; i < smokeCount; i++) {
-        const a = Math.random() * Math.PI * 2;
-        const speed = 60 + Math.random() * 100;
-        this.spawnParticle({ x, y }, { x: Math.cos(a) * speed, y: Math.sin(a) * speed }, 0.32 + Math.random() * 0.24, fx.smokeColor, 3 * scale * sizeMul, false);
-      }
-    }
-    // Core flash — canvas
-    this.spawnParticle({ x, y }, { x: 0, y: 0 }, 0.12, this.resolveAlphaColor(fx.color, 1, '#ffffff'), (6 + (fx.widthInner || 4)) * 0.7 * scale * sizeMul, true);
-    // Shockwave — canvas
-    const shockScale = weaponSize === 'S' ? 0.6 : 1.0;
-    this.spawnShockwave(x, y, { r: (fx.shock?.r || 10) * scale * shockScale, maxR: (fx.shock?.maxR || 100) * scale * shockScale, w: (fx.shock?.w || 2.6) * scale * shockScale, maxLife: (fx.shock?.life || 0.32) * (weaponSize === 'S' ? 0.7 : 1.0), color: fx.shockColorPrefix });
-  },
-
-  // Błyski wylotowe kanwy. Lufa oddaje im CAŁĄ swoją prędkość (nośnik) — dawniej
-  // 8–20%, więc przy 10 000 j/s rozbłysk zostawał tysiące jednostek za okrętem.
-  // `carrier` (src/game/carrierVelocity.js) niesie też czas pozy i zegar; bez
-  // niego nośnikiem jest `baseVel` w zegarze fizyki.
-  spawnRailMuzzle(pos, dir, baseVel, scale = 1, carrier = null) {
-    if (!this.enabled) return;
-    ActiveCarrier.set(carrier || this._carrierFromVelocity(baseVel));
-    this.spawnParticleXY(pos.x, pos.y, 0, 0, 0.08, '#ffffff', 22 * scale, true);
-    const angle = Math.atan2(dir.y, dir.x);
-    for (let i = 0; i < 3; i++) {
-      this.spawnParticleXY(pos.x + dir.x * i * 12 * scale, pos.y + dir.y * i * 12 * scale, dir.x * 60, dir.y * 60, 0.06, '#bfe7ff', (14 - i * 4) * scale, true);
-    }
-    for (let i = 0; i < 12; i++) {
-      const aa = angle + (Math.random() - 0.5) * 0.25;
-      const speed = (500 + Math.random() * 300) * scale;
-      this.spawnParticleXY(pos.x, pos.y, Math.cos(aa) * speed, Math.sin(aa) * speed, 0.15 + Math.random() * 0.1, '#ffffff', (1.5 + Math.random() * 2.0) * scale, false);
-    }
-    ActiveCarrier.clear();
-  },
-
-  spawnArmataMuzzle(pos, dir, baseVel, scale = 1, carrier = null) {
-    if (!this.enabled) return;
-    ActiveCarrier.set(carrier || this._carrierFromVelocity(baseVel));
-    const angle = Math.atan2(dir.y, dir.x);
-    this.spawnParticleXY(pos.x, pos.y, dir.x * 160, dir.y * 160, 0.16, '#ffd6a0', 9 * scale, true);
-    for (let i = 0; i < 10; i++) {
-      const aa = angle + (Math.random() - 0.5) * 0.38;
-      const speed = 260 + Math.random() * 140;
-      this.spawnParticleXY(pos.x + Math.cos(aa) * 8 * scale, pos.y + Math.sin(aa) * 8 * scale, Math.cos(aa) * speed, Math.sin(aa) * speed, 0.16 + Math.random() * 0.14, (Math.random() < 0.5) ? '#ffbe7a' : '#ffcfa0', (2.6 + Math.random() * 2.8) * scale, true);
-    }
-    for (let i = 0; i < 4; i++) {
-      const aa = angle + (Math.random() - 0.5) * 0.25;
-      const speed = 120 + Math.random() * 60;
-      this.spawnParticleXY(pos.x + Math.cos(aa) * 4 * scale, pos.y + Math.sin(aa) * 4 * scale, Math.cos(aa) * speed, Math.sin(aa) * speed, 0.3 + Math.random() * 0.18, '#d76926', 1.8 * scale, false);
-    }
-    this.spawnShockwave(pos.x, pos.y, { r: 10 * scale, maxR: 80 * scale, w: 2.6 * scale, maxLife: 0.3, color: 'rgba(255,170,90,' });
-    ActiveCarrier.clear();
-  },
-
-  spawnAutocannonMuzzle(pos, dir, baseVel, scale = 1, carrier = null) {
-    if (!this.enabled) return;
-    ActiveCarrier.set(carrier || this._carrierFromVelocity(baseVel));
-    const angle = Math.atan2(dir.y, dir.x);
-    this.spawnParticleXY(pos.x, pos.y, dir.x * 220, dir.y * 220, 0.12, '#ffdba6', 7 * scale, true);
-    for (let i = 0; i < 8; i++) {
-      const aa = angle + (Math.random() - 0.5) * 0.32;
-      const speed = 300 + Math.random() * 180;
-      this.spawnParticleXY(pos.x + Math.cos(aa) * 6 * scale, pos.y + Math.sin(aa) * 6 * scale, Math.cos(aa) * speed, Math.sin(aa) * speed, 0.16 + Math.random() * 0.12, (Math.random() < 0.35) ? '#ffe6b0' : '#ffbf6b', (1.6 + Math.random() * 1.6) * scale, true);
-    }
-    for (let i = 0; i < 4; i++) {
-      const aa = angle + (Math.random() - 0.5) * 0.2;
-      const speed = 120 + Math.random() * 60;
-      this.spawnParticleXY(pos.x + Math.cos(aa) * 4 * scale, pos.y + Math.sin(aa) * 4 * scale, Math.cos(aa) * speed, Math.sin(aa) * speed, 0.24 + Math.random() * 0.18, '#6b7cff', 1.4 * scale, false);
-    }
-    this.spawnShockwave(pos.x, pos.y, { r: 8 * scale, maxR: 70 * scale, w: 2.2 * scale, maxLife: 0.22, color: 'rgba(255,200,120,' });
-    ActiveCarrier.clear();
+    fx.droneBlast(x, y, h * 0.18 * Math.max(0.7, scale));
   },
 
   spawnExplosionPlasma(x, y, scale = 1) {
-    this.spawnProjectileImpact3D('plasma', '#7cff9c', scale, x, y);
+    this._spawnDeathBlast3D(x, y, scale);
     if (!this.enabled) return;
     this.spawnParticle({ x, y }, { x: 0, y: 0 }, 0.1, '#AAFFAA', 4 * scale, true);
     this.spawnShockwave(x, y, { r: 2, maxR: 14 * scale, w: 2, maxLife: 0.15, color: 'rgba(124, 255, 124,' });
   },
-  
+
   spawnDefaultHit(x, y, scale = 1) {
-    this.spawnProjectileImpact3D('default', '#ffd86b', scale, x, y);
+    this._spawnDeathBlast3D(x, y, scale);
     if (!this.enabled) return;
     this.spawnParticle({ x, y }, { x: 0, y: 0 }, 0.15, '#fff5d6', 7 * scale, true);
     this.spawnShockwave(x, y, { r: 4 * scale, maxR: 45 * scale, w: 3 * scale, maxLife: 0.25, color: 'rgba(255, 220, 180,' });
@@ -489,7 +244,6 @@ export const CanvasVFX = {
         p.active = false;
         continue;
       }
-      if (p.beam) continue;
       p.vel.x *= 0.98; p.vel.y *= 0.98; p.vel.y += 8 * dt;
       p.pos.x += p.vel.x * dt; p.pos.y += p.vel.y * dt;
     }
@@ -512,38 +266,6 @@ export const CanvasVFX = {
     }
   },
 
-  drawBeams(ctx, cam) {
-    for (const p of this.activeParticles) {
-      if (!p.beam) continue;
-      const ce = carrierElapsed(p.clock, p.ct0);
-      const ox = p.cvx ? p.cvx * ce : 0;
-      const oy = p.cvy ? p.cvy * ce : 0;
-      const s1 = window.worldToScreen(p.start.x + ox, p.start.y + oy, cam);
-      const s2 = window.worldToScreen(p.end.x + ox, p.end.y + oy, cam);
-      const alphaFactor = Math.max(0, Math.min(1, 1 - p.age / Math.max(p.life, 0.0001)));
-      const fade = (p.fadeWithLife === false) ? p.alpha : p.alpha * alphaFactor;
-      if (fade <= 0) continue;
-
-      ctx.save();
-      ctx.globalAlpha = fade * 0.5;
-      ctx.lineCap = 'round';
-      ctx.strokeStyle = p.glowColor || 'rgba(120,180,255,0.9)';
-      ctx.lineWidth = p.width * cam.zoom * p.outerWidthMul * 2.5;
-      ctx.beginPath(); ctx.moveTo(s1.x, s1.y); ctx.lineTo(s2.x, s2.y); ctx.stroke();
-      
-      ctx.globalAlpha = fade;
-      ctx.strokeStyle = p.colorOuter || 'rgba(160,210,255,0.7)';
-      ctx.lineWidth = p.width * cam.zoom * p.outerWidthMul;
-      ctx.beginPath(); ctx.moveTo(s1.x, s1.y); ctx.lineTo(s2.x, s2.y); ctx.stroke();
-      
-      ctx.lineCap = 'butt';
-      ctx.strokeStyle = p.colorInner || 'rgba(220,240,255,1.0)';
-      ctx.lineWidth = p.width * cam.zoom * p.innerWidthMul;
-      ctx.beginPath(); ctx.moveTo(s1.x, s1.y); ctx.lineTo(s2.x, s2.y); ctx.stroke();
-      ctx.restore();
-    }
-  },
-
   drawParticles(ctx, cam) {
     ctx.save();
     let drawn = 0;
@@ -551,7 +273,7 @@ export const CanvasVFX = {
     const vh = window.H || ctx.canvas.height;
     const s = _pScratch;
     for (const p of this.activeParticles) {
-      if (p.flash || p.beam) continue;
+      if (p.flash) continue;
       // ODRZUTY PRZED BUDZETEM. Wczesniej `drawn++` szlo przed testem kadru, wiec
       // eksplozja poza ekranem wyczerpywala limit 4500 i wycinala czastki, ktore
       // gracz naprawde widzi. Kolejnosc: najtanszy test (rozmiar) -> rzut -> kadr
@@ -609,7 +331,7 @@ export const CanvasVFX = {
       projectInto(p.x + (p.cvx ? p.cvx * ce : 0), p.y + (p.cvy ? p.cvy * ce : 0), cam, s);
       if (s.x < -50 || s.x > vw + 50 || s.y < -50 || s.y > vh + 50) continue;
       ctx.strokeStyle = `rgba(180, 240, 255, ${t * 0.8})`;
-      ctx.lineWidth = (1 + Math.random()) * cam.zoom;
+      ctx.lineWidth = (1 + fxRandom.next()) * cam.zoom;
       const len = p.size * t * 2.0 * cam.zoom;
       const ax = Math.cos(p.angle) * len;
       const ay = Math.sin(p.angle) * len;
@@ -621,7 +343,7 @@ export const CanvasVFX = {
         const progress = i / segments;
         const tx = x1 + (x2 - x1) * progress;
         const ty = y1 + (y2 - y1) * progress;
-        const noise = (Math.random() - 0.5) * p.size * 0.4 * t * cam.zoom;
+        const noise = (fxRandom.next() - 0.5) * p.size * 0.4 * t * cam.zoom;
         if (i < segments) ctx.lineTo(tx - Math.sin(p.angle) * noise, ty + Math.cos(p.angle) * noise);
         else ctx.lineTo(x2, y2);
       }
@@ -719,7 +441,7 @@ export const CanvasVFX = {
       coreGrad.addColorStop(0, 'rgba(255, 255, 255, 0.55)'); coreGrad.addColorStop(1, 'rgba(255, 255, 255, 1.0)');
       ctx.fillStyle = coreGrad;
       ctx.beginPath(); ctx.roundRect(-lenPx / 2, -width / 2, lenPx, width, width / 2); ctx.fill();
-      if (Math.random() < 0.3) this.spawnLightningSpark({ x: rx + (Math.random()-0.5)*10, y: ry + (Math.random()-0.5)*10 }, 0.3, 18, Math.random() * Math.PI * 2);
+      if (fxRandom.next() < 0.3) this.spawnLightningSpark({ x: rx + (fxRandom.next()-0.5)*10, y: ry + (fxRandom.next()-0.5)*10 }, 0.3, 18, fxRandom.next() * Math.PI * 2);
       ctx.restore();
       return;
     }

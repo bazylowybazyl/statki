@@ -304,8 +304,8 @@ export function buildK7Scene(layout, ringInfo = {}) {
   }
   label(labels, 'K-7 / CAPITAL GATE', 0, l.frontZ + 510, 1420, 120, LC.capital);
   // ściany z zewnątrz (styl planety): pod płaszczyzną lotu, poza halą
-  if (style.walls === 'berm') buildBermWalls(f, l);
-  else if (style.walls === 'pipes') buildPipeWalls(f, l);
+  if (style.walls === 'ecumene') buildEcumeneWalls(f, l);
+  else if (style.walls === 'fable') buildFableWalls(f, l);
 
   // ---- suwnice i węże paliwowe (K-7 CraneSystem + FuelHoseSystem)
   const cranes = [];
@@ -317,12 +317,13 @@ export function buildK7Scene(layout, ringInfo = {}) {
 
 
   // ---- dach (K-7 buildRoof) — osobny zestaw, zanika przy statku w hali;
-  // styl z profilu planety: 'k7' (Ziemia), 'vault' (Mars: sklepienie łukowe
-  // z regolitem), 'radiator' (Jowisz: pola radiatorów, rury, zbiorniki)
+  // styl z profilu planety: 'k7' (Ziemia), 'ecumene' (Mars: wolny port
+  // KEPLER z dema ECUMENE), 'fable' (Jowisz: płyty, radiatory i hangary
+  // z dema ringu Fable)
   f.set = 'roof';
   plate(plates, l.footprint, 711, 82, M.dark, 'roof');
-  if (style.roof === 'vault') buildVaultRoof(f, l);
-  else if (style.roof === 'radiator') buildRadiatorRoof(f, l);
+  if (style.roof === 'ecumene') buildEcumeneRoof(f, l);
+  else if (style.roof === 'fable') buildFableRoof(f, l);
   else buildK7Roof(f, l);
   f.set = 'bg';
 
@@ -366,111 +367,130 @@ function buildK7Roof(f, l) {
   for (let z = 850; z < l.bodyEndZ; z += 480) f.box(0, 840, z, 16, 9, 125, M.white);
 }
 
-// Mars: sklepienie łukowe nad halą — żebra co 520 j. (łuk w płaszczyźnie
-// x-y, 8 odcinków), między nimi poszycie z regolitu pasami na przemian,
-// świetlik wzdłuż grzbietu. Wysokości K-7 (×0,42 nad płaszczyzną lotu):
-// grzbiet ~1000 → z ≈ 370 (kamera przy zoomie 3,2 wisi 535 j. nad z = 0).
-function buildVaultRoof(f, l) {
+// Mars (ECUMENE, wolny port KEPLER z dema): płaski pokład dachu z jasnymi
+// belkami poprzecznymi, słupy z cięgnami skośnymi do krawędzi (trim.beam
+// dema), złote głowice, ciepłe listwy wzdłuż krawędzi, zimna oś; wieża
+// kontroli z zimną latarnią przy ścianie tylnej. Wysokości K-7 (×0,42 nad
+// płaszczyzną lotu): szczyt ≤ ~1 100 → z < 435.
+function buildEcumeneRoof(f, l) {
   const M = K7_MAT;
-  const base = 793;
-  const rise = 190;
-  const n = 8;
-  const arch = (half) => Array.from({ length: n + 1 }, (_, k) => {
-    const u = (k / n) * 2 - 1;
-    return [u * half, base + rise * (1 - u * u)];
-  });
   const zs = [];
   for (let z = l.backZ + 220; z < l.frontZ - 140; z += 520) zs.push(z);
-  zs.forEach((z, i) => {
+  for (const z of zs) {
     const half = l.halfWidthAt(z) - 55;
-    const pts = arch(half);
-    for (let k = 0; k < n; k++) f.beam([pts[k][0], pts[k][1], z], [pts[k + 1][0], pts[k + 1][1], z], 34, M.pale, 60);
-    // stopy żeber na koronie ścian
-    for (const side of [-1, 1]) f.box(side * (half - 20), 800, z, 70, 30, 90, M.yellow);
-    const zn = zs[i + 1];
-    if (zn === undefined) return;
-    const zc = (z + zn) * 0.5;
-    const halfC = l.halfWidthAt(zc) - 55;
-    const pc = arch(halfC);
-    for (let k = 0; k < n; k++) {
-      f.beam([pc[k][0], pc[k][1] - 8, zc], [pc[k + 1][0], pc[k + 1][1] - 8, zc], 16, k % 2 ? M.dark : M.hose, zn - z - 60);
+    f.box(0, 812, z, half * 2, 34, 38, M.pale);
+    // słupy nad ścianami z cięgnami do środka dachu (jak słupki pomostów KEPLER)
+    for (const side of [-1, 1]) {
+      const xp = side * (half - 60);
+      f.box(xp, 900, z, 26, 150, 26, M.pale);
+      f.box(xp, 978, z, 58, 12, 58, M.copper);
+      f.beam([xp, 970, z], [side * (half * 0.42), 830, z], 16, M.steel);
+      f.box(xp - side * 30, 822, z, 14, 6, 480, M.warm);
     }
-    // świetlik na grzbiecie (szkło świeci nocą)
-    f.box(0, base + rise - 2, zc, 220, 10, zn - z - 140, M.glass);
-  });
-  // śluzy i anteny na koronie sklepienia
-  for (const z of [1660, 4260]) {
-    f.box(0, base + rise + 20, z, 260, 40, 200, M.pale);
-    f.cyl(0, base + rise + 70, z, 12, 60, M.steel);
+  }
+  // pola paneli między belkami (stalowy błękit dema) i zimna oś
+  for (let i = 0; i + 1 < zs.length; i++) {
+    const zc = (zs[i] + zs[i + 1]) * 0.5;
+    const half = Math.min(l.halfWidthAt(zs[i]), l.halfWidthAt(zs[i + 1])) - 120;
+    for (let x = -half; x < half - 200; x += 640) {
+      const w = Math.min(600, half - x);
+      f.box(x + w / 2, 800, zc, w - 30, 16, 440, i % 2 ? M.steel : M.hose);
+    }
+  }
+  f.box(0, 832, (l.backZ + l.bodyEndZ) * 0.5, 22, 6, l.bodyEndZ - l.backZ - 700, M.cyan);
+  // wieża kontroli z latarnią (zimne światło jak wieża portu dema)
+  const tz = l.backZ + 420;
+  f.box(0, 880, tz, 460, 150, 380, M.steel);
+  f.box(0, 962, tz, 500, 22, 420, M.dark);
+  f.box(0, 1030, tz, 14, 130, 14, M.pale);
+  f.box(0, 1100, tz, 22, 16, 22, M.cyan);
+  // moduły technologiczne na narożnikach (złote pasy)
+  for (const x of [-(l.halfWidth - 900), l.halfWidth - 900]) {
+    for (const z of [1900, 4300]) {
+      f.box(x, 850, z, 520, 80, 700, M.dark);
+      f.box(x, 895, z, 480, 10, 660, M.copper);
+    }
   }
 }
 
-// Jowisz: dach przemysłowy — belki jak w K-7, na nich cztery pola
-// radiatorów (żebra wzdłuż hali, kolektory), rury na osi, zbiorniki
-// w narożnikach i pochodnia przy ścianie tylnej.
-function buildRadiatorRoof(f, l) {
+// Jowisz (ring Fable): dach z ciemnych płyt kadłuba, pola radiatorów (ciemne
+// lamele z czerwonym żarem), hangary serwisowe z bursztynowymi bramami,
+// anteny z czerwonymi światłami, wieże kontroli z cyjanowymi oknami.
+function buildFableRoof(f, l) {
   const M = K7_MAT;
   for (let z = l.backZ + 220; z < l.frontZ - 140; z += 520) {
     const half = l.halfWidthAt(z) - 55;
-    f.box(0, 819, z, half * 2, 62, 43, M.pale);
-    for (const side of [-1, 1]) f.box(side * (half - 30), 848, z, 82, 19, 66, M.yellow);
+    f.box(0, 816, z, half * 2, 50, 60, M.dark);
+    for (const side of [-1, 1]) f.box(side * (half - 40), 846, z, 70, 14, 70, M.hose);
   }
   const zMid = (l.backZ + l.bodyEndZ) * 0.5;
-  const len = l.bodyEndZ - l.backZ - 1500;
-  for (const xc of [-(l.halfWidth - 1150), -(l.halfWidth - 2550), l.halfWidth - 2550, l.halfWidth - 1150]) {
-    for (let k = -6; k <= 6; k++) f.box(xc + k * 72, 880, zMid, 14, 160, len, M.copper);
-    f.cyl(xc, 812, zMid, 28, len + 200, M.steel, [Math.PI / 2, 0, 0]);
-    f.box(xc, 962, zMid, 13 * 72, 8, 40, M.yellow);
+  const len = l.bodyEndZ - l.backZ - 1600;
+  // pola radiatorów: lamele w poprzek osi hali (grafit), czerwony żar na
+  // krawędziach (widać go z kamery gry), kolektory wzdłuż końców lamel
+  for (const xc of [-(l.halfWidth - 1300), l.halfWidth - 1300]) {
+    for (let k = 0; k < 16; k++) {
+      const z = zMid - len * 0.5 + (k + 0.5) * (len / 16);
+      f.box(xc, 880, z, 1500, 150, 16, M.hose);
+      f.box(xc, 958, z, 1480, 6, 8, M.red);
+    }
+    for (const sx of [-1, 1]) f.box(xc + sx * 770, 870, zMid, 40, 110, len + 60, M.dark);
   }
-  for (const x of [-230, 0, 230]) f.cyl(x, 830, (l.backZ + l.frontZ) * 0.5, 24, l.frontZ - l.backZ - 1100, M.copper, [Math.PI / 2, 0, 0]);
-  for (const x of [-(l.halfWidth - 380), l.halfWidth - 380]) {
-    for (const z of [l.backZ + 460, l.bodyEndZ - 420]) {
-      f.cyl(x, 870, z, 230, 150, M.pale);
-      f.cyl(x, 947, z, 238, 10, M.yellow);
-      f.cyl(x, 952, z, 90, 18, M.steel);
+  // hangary serwisowe z bramami (bursztyn)
+  for (const x of [-900, 900]) {
+    for (const z of [1500, 3900]) {
+      f.box(x, 870, z, 620, 110, 520, M.steel);
+      f.box(x, 870, z + 262, 440, 60, 6, M.warm);
     }
   }
-  // pochodnia: komin z czerwonym światłem na szczycie
-  const fx = l.halfWidth - 900;
-  const fz = l.backZ + 200;
-  f.cyl(fx, 960, fz, 20, 330, M.steel);
-  f.box(fx, 1130, fz, 44, 10, 44, M.red);
+  // wieże kontroli (cyjanowe okna) i anteny z czerwonymi światłami
+  for (const x of [-360, 360]) {
+    f.cyl(x, 900, l.backZ + 520, 40, 180, M.steel);
+    f.box(x, 1000, l.backZ + 520, 150, 20, 150, M.dark);
+    f.box(x, 1000, l.backZ + 520 + 76, 120, 10, 4, M.cyan);
+  }
+  for (const [x, z] of [[-(l.halfWidth - 300), 1100], [l.halfWidth - 300, 1100], [-(l.halfWidth - 300), l.bodyEndZ - 500], [l.halfWidth - 300, l.bodyEndZ - 500]]) {
+    f.cyl(x, 900, z, 8, 230, M.steel);
+    f.box(x, 1020, z, 26, 14, 26, M.red);
+  }
 }
 
-// Mars: nasypy z regolitu wzdłuż ścian bocznych (osłona) — pochyłe płyty
-// od pokładu do tuż pod płaszczyzną lotu, poza halą (statki lecą nad nimi).
-function buildBermWalls(f, l) {
+// Mars (ECUMENE): żebra na zewnątrz ścian bocznych jak żebra powłoki dema
+// (stal, co 390 j.), skośne belki między nimi, złote głowice, czerwone
+// znaczniki — pod płaszczyzną lotu, poza halą.
+function buildEcumeneWalls(f, l) {
   const M = K7_MAT;
   const z0 = 700;
   const z1 = l.bodyEndZ - 200;
-  const zc = (z0 + z1) * 0.5;
-  const d = z1 - z0;
   for (const side of [-1, 1]) {
-    const xi = side * (l.halfWidth + 40);
-    const xo = side * (l.halfWidth + 460);
-    f.beam([xo, -140, zc], [xi, 96, zc], 70, M.orange, d);
-    f.beam([xo + side * 120, -150, zc], [xo - side * 40, -40, zc], 60, M.dark, d);
-    // listwa ostrzegawcza na koronie nasypu
-    f.box(side * (l.halfWidth + 60), 98, zc, 40, 6, d, M.cyan);
+    const x = side * (l.halfWidth + 60);
+    let k = 0;
+    for (let z = z0; z <= z1; z += 390, k++) {
+      f.box(x, -20, z, 70, 230, 44, M.steel);
+      f.box(x, 98, z, 90, 10, 60, M.copper);
+      if (k % 3 === 0) f.box(x + side * 38, 80, z, 10, 12, 10, M.red);
+      if (z + 390 <= z1) {
+        f.beam([x + side * 30, -110, z], [x + side * 30, 70, z + 390], 18, M.pale);
+        f.beam([x + side * 30, 70, z], [x + side * 30, -110, z + 390], 18, M.dark);
+      }
+    }
   }
 }
 
-// Jowisz: rurociągi na zewnątrz ścian bocznych (pod płaszczyzną lotu)
-// z podporami co 400 j.
-function buildPipeWalls(f, l) {
+// Jowisz (Fable): rurociągi (stal i ciemny metal) wzdłuż ścian, lamele
+// radiatorów pod nimi, światła pozycyjne czerwone/zielone — pod płaszczyzną.
+function buildFableWalls(f, l) {
   const M = K7_MAT;
   const z0 = 700;
   const z1 = l.bodyEndZ - 200;
   const zc = (z0 + z1) * 0.5;
   for (const side of [-1, 1]) {
     const x = side * (l.halfWidth + 70);
-    for (const [y, r, mat] of [[30, 26, M.copper], [66, 20, M.steel], [98, 14, M.copper]]) {
-      f.cyl(x + side * (y - 30) * 0.4, y, zc, r, z1 - z0, mat, [Math.PI / 2, 0, 0]);
+    for (const [y, r, mat] of [[40, 22, M.hose], [80, 16, M.steel]]) {
+      f.cyl(x + side * (y - 40) * 0.3, y, zc, r, z1 - z0, mat, [Math.PI / 2, 0, 0]);
     }
-    for (let z = z0 + 100; z < z1; z += 400) {
-      f.box(x + side * 12, 20, z, 90, 110, 16, M.dark);
-      f.box(x + side * 12, 104, z, 96, 8, 30, M.yellow);
-    }
+    for (let z = z0 + 60; z < z1; z += 120) f.box(x + side * 60, -40, z, 60, 110, 6, M.black);
+    for (let z = z0 + 100; z < z1; z += 400) f.box(x + side * 20, 20, z, 80, 100, 16, M.dark);
+    for (let z = z0; z <= z1; z += 800) f.box(x + side * 44, 100, z, 12, 12, 12, side > 0 ? M.green : M.red);
   }
 }
 

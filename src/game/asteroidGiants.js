@@ -15,7 +15,7 @@
 // Siatka: Uint8, wąskie pasmo ±BAND_VOXELS wokseli wokół powierzchni
 // (wartość 128 = powierzchnia). Liczona najpierw zgrubnie (co 4 woksele),
 // dokładnie tylko w komórkach przy powierzchni. Ta sama tablica idzie do GPU
-// (tekstura 3D R8, raymarching w giantRock3D.js) i zostaje na CPU (kolizje,
+// (tekstura 3D R8, raymarching w src/3d/asteroids/giants.js) i zostaje na CPU (kolizje,
 // test „czy nad statkiem jest strop” dla przekroju widoku).
 //
 // Moduł bez three i DOM-u (worker: asteroidGiantWorker.js, testy:

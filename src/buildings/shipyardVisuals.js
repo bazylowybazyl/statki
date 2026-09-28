@@ -1,3 +1,6 @@
+// Losowość warstwy efektów (zadanie 23): wizualia nie zużywają Math.random gry — przebieg rozgrywki nie zależy od obrazu.
+import { fxRandom } from '../3d/fx/fxRandom.js';
+
 const DOCKS_COUNT = 1;
 
 const PALETTE = {
@@ -35,7 +38,7 @@ export function initShipyardState(inst) {
         docks: Array.from({ length: DOCKS_COUNT }, (_, i) => ({
             id: i,
             phase: 0,
-            progress: Math.random() * 0.2,
+            progress: fxRandom.next() * 0.2,
             cranePos: 0,
             transportArmPos: 0,
             shipPos: 0,
@@ -291,19 +294,19 @@ function drawSmartLaserHeads(ctx, dock, startX, startY, fighterSize, spacing, gr
                     ctx.lineTo(headX, scanY + (dock.phase === 0 ? 4 : -4));
                     ctx.stroke();
 
-                    if (Math.random() > 0.5) {
+                    if (fxRandom.next() > 0.5) {
                         ctx.fillStyle = '#fff';
                         ctx.fillRect(headX - 1, scanY + (dock.phase === 0 ? 2 : -2), 2, 2);
                         ctx.fillStyle = laserColor;
                     }
 
-                    if (Math.random() < 0.3) {
+                    if (fxRandom.next() < 0.3) {
                         dock.particles.push({
                             x: headX,
                             y: scanY,
-                            vx: (Math.random() - 0.5) * 2,
-                            vy: (Math.random() - 0.5) * 2,
-                            life: 0.5 + Math.random() * 0.5,
+                            vx: (fxRandom.next() - 0.5) * 2,
+                            vy: (fxRandom.next() - 0.5) * 2,
+                            life: 0.5 + fxRandom.next() * 0.5,
                             color: laserColor
                         });
                     }

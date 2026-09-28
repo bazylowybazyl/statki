@@ -397,12 +397,14 @@ zostają w 2D (heksy strefy), model tylko je pokazuje. Wpięty do gry.
 
 | plik | rola |
 |---|---|
-| `src/3d/bridge3DShapes.js` | geometria bez three i DOM: bryły (bloki z fazami i skosami, kopuły i elipsy, rury, kolce), rzędy okien na skosach, **11 modeli** (`KIND_DEFS` — rozmiar projektowy liczony ze strefy i skali render/PNG, `bridgePngMap` do czytania cech ze sprite'a), moduły, mapa wysokości, matematyka heksów (lustro GLSL) |
-| `src/3d/bridge3D.js` | rysowanie i stan: `Bridge3D.attach(scene)` / `update(entities, opts)`, shadery, rekordy instancji, tekstura obrażeń (duży mostek = kilka kolejnych wierszy), okna/lampy na FG, przejście na wrak, palety `BRIDGE3D_KIND_STYLE`, strojenie `window.__bridge3DTune` |
+| `src/3d/bridge3DShapes.js` | geometria bez three i DOM: bryły (bloki z fazami i skosami, kopuły i elipsy, rury, kolce), rzędy okien na skosach, **11 modeli** (`KIND_DEFS` — rozmiar projektowy liczony ze strefy i skali render/PNG, `bridgePngMap` do czytania cech ze sprite'a), moduły, mapa wysokości, matematyka heksów (lustro shadera) |
+| `src/3d/bridge3D.js` | rysowanie i stan: `Bridge3D.attach(scene)` / `update(entities, opts)`, rekordy instancji, bufor obrażeń (duży mostek = kilka kolejnych wierszy), okna/lampy na FG, przejście na wrak, palety `BRIDGE3D_KIND_STYLE`, strojenie `window.__bridge3DTune` |
+| `src/3d/bridge3D.tsl.js` | graf TSL (port WebGPU, §8.14): bryła (jeden materiał na wszystkie rodzaje), cień na kadłubie, okna i lampy; układy danych instancji `B3_MODEL_LAYOUT` / `B3_RECEIVER_LAYOUT`, tablica stałych rodzajów `B3_KIND_SLOT` |
 | `src/3d/bridgeFx3D.js` | bez zmian w wyrzucie atmosfery; **szczeliny okien pomija**, gdy `bridgeState.model3D === true`; eksport `spawnBridgeRoomFlash` i `bridgeHullFxScale` (wspólne z modelem) |
 | `src/game/shipBridge.js` | strefy całej floty w `BRIDGE_LAYOUT_PROPOSALS`, zapas od dział `bridgeZoneMargin`, `opts.hullKey` → `bridgeState.hullKey` |
 | `src/game/shipBridgeRuntime.js` | `normalizeBridgeHullKey` (id gracza → klucz edytora), `resolveBridgeHullKey` (NPC, tylko lokomotywa składu) |
-| `tests/bridge3D.test.mjs` | 16 testów: geometria każdego rodzaju (skończona, w strefie, wysokość względem strefy, nawinięcie, moduły), okna na skosach widocznych z góry, model stoi na swojej strefie i mieści się w teksturze obrażeń, paleta każdego rodzaju, przydział kolejnych wierszy, heksy vs destruktor, blok komórek, wiersz obrażeń i maska sąsiadów, baza instancji vs `bridgeGridToWorld`, wrak i rozpad, oś czasu okien, wyłączanie szczelin |
+| `tests/bridge3D.test.mjs` | 17 testów: geometria każdego rodzaju (skończona, w strefie, wysokość względem strefy, nawinięcie, moduły), okna na skosach widocznych z góry, model stoi na swojej strefie i mieści się w buforze obrażeń, paleta każdego rodzaju, przydział kolejnych wierszy i zakresy wysyłki, bajty komórki vs słowo u32 shadera, heksy vs destruktor, blok komórek, wiersz obrażeń i maska sąsiadów, baza instancji vs `bridgeGridToWorld`, wrak i rozpad, oś czasu okien, wyłączanie szczelin |
+| `tests/mostkiRdzenieTSL.test.mjs` | WGSL modelu, cienia, okien, świateł pozycyjnych i rdzeni zbudowany w Node: limity (≤ 12 buforów uniformów na etap, ≤ 8 buforów wierzchołków), jeden materiał bryły na wszystkie rodzaje, cień z `GreaterDepth`, mieszanie ONE/ONE rdzeni |
 | `tests/shipBridge.test.mjs`, `tests/shipBridgeRuntime.test.mjs` | strefy vs hardpointy/silniki (zapas wg klasy), rozmiar sprite'ów z pliku, klucze kadłubów gracza i NPC |
 | `dema/mostki-demo.*` | model w demie (`M` / „Model 3D”), 10 kadłubów (`HULLS` w `mostki-hulls.js`), hulk → wrak po 4 s jak `finishBridgeKill`, API: `damageBridge`, `killBridge`, `zoomModel`, `freeCam`, `measureWindows3D`, `bench174({ counts })` |
 | `dema/mostki3d-shots.js` | zrzuty i pomiary (headless Chrome przez CDP) → `.tmp/mostki3d/`; `--only bench` = 174 okręty: stara flota i mieszana (wszystkie rodzaje) |
@@ -448,7 +450,7 @@ w dwóch skalach, brud; piraci: płyty stal/ciemna stal/rdza, zacieki, nity).
   w vertex shaderze z `window.SUN`; te same stałe (otoczenie 0,24, rozproszone
   1,18, połysk Blinna 0,30 — `SHIP_LIGHT_DEFAULTS`).
 - **Dach świeci jak kadłub pod strefą** (`hullLightAt` — lustro „poduszkowej”
-  normalnej `HEX_FRAGMENT_SHADER`), skosy od słońca dostają rozproszone, ściany
+  normalnej skóry kadłuba, dziś graf TSL w `hexShips3D.tsl.js`), skosy od słońca dostają rozproszone, ściany
   odchylone mniej otoczenia. Zmierzone (HDR, bez bloomu) dach modelu / namalowana
   strefa w tym samym miejscu: Bellator 0,262 / 0,263, Iron Skull 0,039 / 0,052,
   Atlas 0,066 / 0,032 (Atlas ma ciemny kręgosłup na sprite'cie).
@@ -462,7 +464,7 @@ w dwóch skalach, brud; piraci: płyty stal/ciemna stal/rdza, zacieki, nity).
   poszerzonej o teksel, żeby cienkie maszty nie przepadały), miękki półcień
   rosnący z odległością, plus AO u stóp brył. Na modelu cień kładzie się też na
   otoczenie (`selfShadowAmbient` 0,55).
-- **Cień na kadłubie** (kadłuby nie odbierają shadow map): jeden `InstancedMesh`
+- **Cień na kadłubie** (kadłuby nie odbierają shadow map): jeden mesh instancji
   prostokątów tuż POD kadłubem (z = −0,6) z testem głębi `GREATER` — rysuje się
   tylko tam, gdzie coś bliżej kamery zapisało głębię, czyli **dokładnie na
   sylwetce kadłuba i nigdy w wyrwach**, bez stencila. Prostokąt = obrys modelu
@@ -472,16 +474,16 @@ w dwóch skalach, brud; piraci: płyty stal/ciemna stal/rdza, zacieki, nity).
 
 ### 8.4 Obrażenia z 2D (wyrwy)
 
-Tekstura obrażeń RGBA8 768 × 512, **wiersz na instancję**; wiersz = blok
+Bufor obrażeń 768 × 512 komórek (RGBA8 — od portu WebGPU bajty w słowie u32
+bufora storage zamiast tekstury, §8.14), **wiersz na instancję**; wiersz = blok
 komórek siatki heksów pod modelem (obrys mapy wysokości + pierścień zapasu;
 Bellator 21 × 11, Iron Skull 20 × 14, Atlas 37 × 10 i 20 × 9). Blok większy
 niż wiersz leży liniowo w kilku **kolejnych** wierszach (`rowCount`,
 przydział first-fit `_allocRows`, najwyżej `DAMAGE_MAX_ROWS` = 4): Colossus
-2 wiersze (~1000 komórek), lokomotywa 4 (~2300); shader liczy teksel
-z indeksu komórki (`idx % 768`, wiersz + `idx / 768`), upload idzie jednym
-zakresem na wiersz (three wysyła zakres jako prostokąt o wysokości 1):
+2 wiersze (~1000 komórek), lokomotywa 4 (~2300); shader czyta słowo
+`wiersz · 768 + idx`, wysyłka idzie jednym zakresem na blok rekordu:
 
-| kanał | znaczenie |
+| kanał (bajt słowa, R najmłodszy) | znaczenie |
 |---|---|
 | R | 0 = martwa / brak heksa; 64..255 = żywa, HP 0..1 (przypalenie uszkodzonych) |
 | G | żar heksa kadłuba (`shardHeatNow`) w chwili zapisu — ten sam kanał co `_heatWoundRim` |
@@ -499,7 +501,8 @@ z modelu kadłuba-matki. Komórka pod modelem, która nie jest heksem mostka
 („fartuch” z kadłuba), też otwiera wyrwę.
 Wiersz odświeża się, gdy w siatce zginął heks (`shards` / `activeStructuralCount`),
 a okresowo (HP, żar bez śmierci heksa) co 1 s tylko dla rysowanych — fazy
-rozłożone po rekordach. Upload tylko zmienionych wierszy (`updateRanges`).
+rozłożone po rekordach. Wysyłka tylko zmienionych bloków (`updateRanges` bufora,
+pula zakresów bez alokacji).
 
 ### 8.5 Okna, lampy, listwy
 
@@ -546,14 +549,15 @@ zgaszone (oś czasu minęła), wyrwy dalej idą za heksami wraku.
 **Rozpad** (heksy mostka w odłamku): rekord kadłuba-matki pokazuje swoje
 komórki, na odłamku powstaje rekord-siostra (te same komórki, osobny wiersz,
 utrata zasilania) — model pęka razem z kadłubem. Rekord bez żywych heksów
-odchodzi od razu; gospodarz niewidziany 2 s oddaje wiersz tekstury (dostaje nowy,
+odchodzi od razu; gospodarz niewidziany 2 s oddaje wiersz bufora obrażeń (dostaje nowy,
 gdy wróci), po 60 s rekord odchodzi. Gospodarz, który żyje i ma heksy, ale nie
 ma go na liście (lot nad Ring City rysuje sam statek gracza), zatrzymuje rekord.
 
 ### 8.7 Wydajność
 
 Wywołania rysowania: **widoczne rodzaje + 2 na całą flotę** — po jednym
-`InstancedMesh` na rodzaj z widocznymi instancjami (z 11) w passie ortho + cień
+meshu instancji na rodzaj z widocznymi instancjami (z 11; od portu WebGPU
+jeden wspólny materiał i pipeline, §8.14) w passie ortho + cień
 na kadłubie (1, ortho) + okna (1, FG).
 Zero alokacji w klatce (typowane bufory, pule zakresów uploadu, wspólna tabela
 sąsiadów); `addUpdateRange` z three alokuje obiekt — zastąpione własnym zakresem.
@@ -632,7 +636,7 @@ Zrzuty w `.tmp/mostki3d/`: `raport_<kadłub>_zblizenia.png` (cały / uszkodzony
 (z daleka; Atlas także „padł rufowy — dowodzi zapasowy”), `raport_free3d.png`,
 `bitwa_174_flota.png`. Pułapka pomiarowa: demo podmienia `performance.now` na
 zegar wirtualny — wewnętrzne ms (`Bridge3D.stats.cpuMs`, `Core3D.lastFramePerf`)
-wychodzą tam 0; demo mierzy `realNow`. Czas GPU (EXT timer) wymaga oddania
+wychodzą tam 0; demo mierzy `realNow`. Czas GPU (na WebGPU znaczniki czasu, `Core3D.gpuFrameMs`) wymaga oddania
 wątku między klatkami; przy małych kosztach porównywać z wariantem „nic”.
 
 ### 8.11 Otwarte kwestie
@@ -692,7 +696,8 @@ już małe liczby.
 (ortho: `cam.x`, `−cam.y`; free3d: pozycja kamery; awaryjnie środek `cull`)
 trafia do `mesh.position` wszystkich 6 meshy, a translacje instancji — bryły,
 cień na kadłubie, okna — są względem niego (małe liczby). Shadery:
-`projectionMatrix * modelViewMatrix * instanceMatrix * p`. Kierunek światła
+`projectionMatrix * modelViewMatrix * instanceMatrix * p` (od zadania 15 graf TSL z węzłem
+`modelViewMatrix` — przy `highPrecision` składany na CPU w double, §8.14). Kierunek światła
 dalej z `modelMatrix * instanceMatrix` (słońce jest daleko, ±0,5 j. bez
 znaczenia); kierunek widoku w przestrzeni kamery (ortho: prosto z góry, jak
 `viewDir` kadłuba). Przy okazji: rozrzut startu marszu cienia był z
@@ -764,6 +769,71 @@ i niszczyciel piratów, lokomotywa megafrachtowca (tabele w §2 i §8.2).
   p99 1,21. Powierzchnia > 0,9 bez okien: 0 px. W grze (`mostki3d-gra.js`):
   każdy typ dostaje strefę, rekord i `model3D`, wagony i moduł ogonowy — nic;
   ciężka flota piracka ma teraz 5 niszczycieli z modelami.
+
+### 8.14 Port WebGPU (zadanie 15, 2026-09-28)
+
+Model, cień na kadłubie, okna i lampy (`bridge3D.tsl.js`), szczeliny okien
+(`bridgeFx3D.js`) i światła pozycyjne (`shipLights3D.js`) są w TSL, GLSL
+usunięty (razem z rdzeniami z dem: `reactor3D.tsl.js`, `coreFx3D.tsl.js` —
+~1000 linii GLSL w pięciu modułach). Obraz 1:1 z bazą WebGL (tag
+`webgl-baseline`): logika, stałe i kolejność rysowania bez zmian.
+
+- **Jeden graf bryły na wszystkie rodzaje.** Dawniej `ShaderMaterial` na rodzaj
+  ze stałymi w `#define` — w WebGPU każdy rodzaj byłby osobnym NodeBuilderem
+  i pipeline'em (a `InstancedMesh` i tak wnosi uuid do klucza programu). Teraz
+  rodzaj = zwykły Mesh z `InstancedBufferGeometry` (własna geometria i bufor
+  instancji, `instanceCount` = rysowane), materiał wspólny, stałe rodzaju
+  (obrys, region, detal/rdza/niebo, powierzchnia, wnętrze, paleta 8 barw
+  z wykładnikami połysku, mnożniki połysku) w tablicy `uniformArray`
+  (`B3_KIND_STRIDE` = 21 vec4 na rodzaj, `B3_KIND_SLOT`), indeks rodzaju
+  w danych instancji. Instancja = 30 liczb w JEDNYM przeplecionym buforze
+  (`B3_MODEL_LAYOUT`: baza 2 × 2 + początek, siatka heksów, obrażenia, stan,
+  światło kadłuba, maska modułów) — limit 8 buforów wierzchołków z zapasem.
+- **Obrażenia w buforze storage.** Backend WebGPU ignoruje zakresy tekstur:
+  dawna tekstura 768 × 512 RGBA8 szłaby w całości (1,5 MB) przy każdej zmianie.
+  Bufor `StorageBufferAttribute(Uint32Array)` z tymi samymi bajtami (RGBA8
+  w słowie, `Bridge3D.damage.data` to widok bajtów — `refreshBridgeRecordDamage`
+  bez zmian), shader rozpakowuje przesunięciami `u32`; zakresy bufora three
+  honoruje: jeden na blok rekordu, pula `DAMAGE_RANGE_CAP` = 64, ponad nią jeden
+  obejmujący. Pomiar (`benchDamageUpload` w demie, ostrzał mostka do utraty
+  dowodzenia, 3 rundy, CPU wysyłki w klatce ze zmianą, mediana / p90):
+
+  | kadłub (blok) | bufor, zakresy (dziś) | tekstura 1,5 MB (port wprost) | bufor bez zakresów |
+  |---|---|---|---|
+  | Bellator (924 B) | < 0,005 / 0,005 ms | 0,72–0,74 / 1,09–1,26 ms | 0,72–0,75 / 1,08–1,29 ms |
+  | Colossus (3,5 KB) | 0,005 / ≤ 0,01 ms | 0,72–1,21 / 1,06–1,44 ms | 0,72–1,21 / 1,07–1,46 ms |
+  | lokomotywa (9,7 KB) | 0,01 / 0,015 ms | 1,25–1,35 / 1,45–1,72 ms | 1,24–1,33 / 1,40–1,72 ms |
+
+  Zmiana przychodzi w ~11–15% klatek ostrzału jednego mostka; w bitwie
+  z wieloma mostkami prawie w każdej — tekstura kosztowałaby 0,7–1,3 ms CPU
+  (plus kopia 1,5 MB na GPU) co klatkę. Kopie idą w kolejce poza passami
+  (znaczniki czasu GPU passów ich nie widzą).
+- **Maska słońca** z `sunShadowMask.js` w jednym miejscu grafu: światło kadłuba
+  pod modelem jak kadłub (otoczenie × `sunFill`, reszta × `sunVisibility`),
+  człon rozproszony × `sunVisibility`, cień na kadłubie mnoży ciemnienie przez
+  `sunVisibility` (w cieniu planety bez drugiego cienia). Okna, lampy,
+  szczeliny i światła pozycyjne maski nie czytają.
+- **Cień na kadłubie** bez zmian (`GreaterDepth` na głębi kadłubów, renderOrder
+  10 → 11 → 12). Sprawdzone w demie obok tagu: udział cienia (kadr z cieniem −
+  bez, piksele > 8/255) port 2,07–2,17%, baza 2,16%; sam cień (bez bryły) 12,67% /
+  12,63%. Pasma HDR okien modelu (`mostki3d-shots.js`, 10 kadłubów) jak w bazie:
+  piksele okien, > 0,9, p50, p99 i max równe albo ±1–2% (np. Bellator 2781 / 2782
+  px, 316 / 316 > 0,9, max 1,40 / 1,40), powierzchnia bez NaN; szczeliny
+  `bridgeFx3D`: 604 / 601 px, max 1,6853 w obu. Zrzuty modelu (cały, uszkodzony,
+  free3d) różnią się od bazy krawędziami i fazą lamp — narzędzie puszcza zegar
+  w czasie rzeczywistym; w stałym czasie wirtualnym (Hasta) 0,24–0,42% pikseli.
+- **Drżenie** (§8.12) na WebGPU: model (`mostki3d-drzenie.js`) RMS 0,004–0,019 px,
+  max ≤ 0,026 (baza 0,004–0,021 / ≤ 0,029); światła pozycyjne i szczeliny
+  (`precyzja-drzenie.js`) jak w bazie: światła 0,002–0,005 / ≤ 0,011 px (baza
+  0,002–0,003 / ≤ 0,006), szczeliny 0,023–0,070 / ≤ 0,124 px (baza 0,023–0,063 /
+  ≤ 0,113), maski ±3,5%. Narzędzia czekają przed renderem pomiaru
+  na nową klatkę rAF: macierz instancji `InstancedMesh` ponad 1024 instancje
+  three wysyła raz na klatkę (PLAN.md §3, pułapki z zadania 15) — w pętli
+  synchronicznej szczeliny stały przy starym początku układu (maska 0).
+- Testy: `tests/bridge3D.test.mjs` (zakresy wysyłki, bajty vs słowo u32),
+  `tests/mostkiRdzenieTSL.test.mjs` (WGSL w Node: limity, jeden materiał bryły,
+  `GreaterDepth`, ONE/ONE rdzeni), `tests/shipLights3D.test.mjs`,
+  `tests/shadowShaftsQuality.test.mjs` (maska w grafie TSL mostka).
 
 ## Aneks: benchmark
 

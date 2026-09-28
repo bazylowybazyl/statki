@@ -66,6 +66,7 @@
   <div id="hud-controls">
     <button id="btn-settings">Ustawienia</button>
     <a class="mode-link" href="./destruktor3d.html">← Tryb 3D (GLB)</a>
+    <a class="mode-link" href="./dema/destruktor2d-webgpu.html">Ta sama scena na GPU →</a>
     <button id="btn-telemetry">Telemetria</button>
   </div>
   <div class="panel" id="panel-left">
@@ -74,7 +75,7 @@
 
     <h2>LOT — ATLAS</h2>
     <div class="legend"><kbd>W/S</kbd> ciąg / wstecz · <kbd>A/D</kbd> obrót · <kbd>Q/E</kbd> w bok<br>
-      <kbd>Shift</kbd> dopalacz · <kbd>X</kbd> hamulec · <kbd>LPM</kbd> laser · <kbd>PPM</kbd> rakiety</div>
+      <kbd>Shift</kbd> dopalacz do 40 000 j./s · <kbd>X</kbd> hamulec (<kbd>Shift+X</kbd> szybki) · <kbd>LPM</kbd> laser · <kbd>PPM</kbd> rakiety</div>
     <div class="row"><label><input type="checkbox" id="cb-assist" checked> Stabilizacja dryfu i obrotu</label></div>
 
     <h2>KUKŁA</h2>
@@ -85,6 +86,7 @@
       <option value="terran_carrier">Lotniskowiec Terran</option>
       <option value="pirate_destroyer">Niszczyciel piracki</option>
       <option value="long_haul_freighter">Frachtowiec daleki</option>
+      <option value="none">brak (tylko ściana)</option>
     </select></div>
     <div class="row"><label for="opt-pose">Ustawienie</label><select id="opt-pose">
       <option value="90" selected>burtą (90°)</option>
@@ -99,8 +101,18 @@
     </select></div>
     <button class="wide" id="btn-reset">↺ Nowa kukła, Atlas na starcie (R)</button>
 
+    <h2>ŚCIANA</h2>
+    <div class="row"><label for="opt-wall">Niezniszczalna ściana</label><select id="opt-wall">
+      <option value="0">brak</option>
+      <option value="3000">3 000 j. przed dziobem</option>
+      <option value="20000">20 000 j.</option>
+      <option value="60000" selected>60 000 j.</option>
+      <option value="120000">120 000 j.</option>
+    </select></div>
+    <div class="legend">Statyczne ciało (nieruchome, bez zgniotu i obrażeń) w poprzek kursu Atlasa, za kukłą. Do testów rozbicia do zera: <kbd>Shift</kbd> rozpędza do 40 000 j./s w ~2 s (droga ~40 000 j.). Kukła „brak” zostawia pusty tor.</div>
+
     <h2>TARAN</h2>
-    <div class="row"><label>Prędkość [j./s]</label><input type="range" id="sl-speed" min="50" max="4000" step="50" value="800"><output id="o-speed">800</output></div>
+    <div class="row"><label>Prędkość [j./s]</label><input type="range" id="sl-speed" min="50" max="40000" step="50" value="800"><output id="o-speed">800</output></div>
     <button class="wide" id="btn-ram">Taran w kukłę (T)</button>
     <div class="legend">T zawsze zaczyna od nowej sceny, więc próby są powtarzalne. Można też wlecieć ręcznie.</div>
 
@@ -185,7 +197,7 @@
   </div>
 
   <div class="panel" id="panel-help">
-    <kbd>W/S</kbd> ciąg &nbsp;|&nbsp; <kbd>A/D</kbd> obrót &nbsp;|&nbsp; <kbd>Q/E</kbd> w bok &nbsp;|&nbsp; <kbd>Shift</kbd> dopalacz &nbsp;|&nbsp; <kbd>X</kbd> hamulec
+    <kbd>W/S</kbd> ciąg &nbsp;|&nbsp; <kbd>A/D</kbd> obrót &nbsp;|&nbsp; <kbd>Q/E</kbd> w bok &nbsp;|&nbsp; <kbd>Shift</kbd> dopalacz 40k &nbsp;|&nbsp; <kbd>X</kbd> hamulec (<kbd>Shift+X</kbd> szybki)
     &nbsp;|&nbsp; <kbd>LPM</kbd> laser &nbsp;|&nbsp; <kbd>PPM</kbd> rakiety<br>
     <kbd>T</kbd> taran w kukłę &nbsp;|&nbsp; <kbd>R</kbd> reset &nbsp;|&nbsp; <kbd>Z</kbd> zwolnione tempo &nbsp;|&nbsp; <kbd>P</kbd> pauza &nbsp;|&nbsp; <kbd>V</kbd> kamera &nbsp;|&nbsp; <kbd>B</kbd> belki
   </div>
@@ -221,6 +233,20 @@ const ATLAS_MASS = 800000;              // SHIP_PHYSICS.PLAYER_MASS w grze
 const DUMMY_TINT = [1.0, 0.8, 0.74];    // kukła-Atlas odróżnia się od gracza
 const DUMMY_GAP = 420;                  // odstęp dziobu od kukły na starcie
 const FIXED_DT = 1 / 120;
+// Dopalacz dema: 40 000 j./s w ~2 s. Przy tej prędkości krok 120 Hz to 333 j.,
+// więc ściana jest gruba (inaczej węzły dziobu przeskoczyłyby ją w jednym kroku).
+const DEMO_FLIGHT = Object.freeze({ ...PLANAR_FLIGHT_DEFAULTS, boostSpeed: 40000, boostAccel: 20000 });
+const WALL_THICK = 1200, WALL_HEIGHT = 4800;
+// Styk węzłów gniecie najwyżej ~0,65 odległości styku na krok, więc przy dużej drodze
+// na krok kadłub przegniata się przez ścianę na wylot. Szybki krok dzielimy na podkroki
+// o drodze ≤ SUBSTEP_TRAVEL. Pomiar taranu Atlasa w ścianę (węzły za ścianą / 3121):
+// bez podkroków 5000 j./s staje, 10 000 przelatuje; 30 j. — 20 000: 1526, 40 000: 1666;
+// 8 j. — wszystkie prędkości ≤ 38 (Atlas rozbity do 1–11 węzłów), do ~65 ms/krok przy 40 000.
+const URL_OPTS = new URLSearchParams(location.search);
+const SUBSTEP_TRAVEL = Number(URL_OPTS.get('substep')) || 8;
+const MAX_SUBSTEPS = Number(URL_OPTS.get('maxsub')) || 50;
+const PHYSICS_BUDGET_MS = 40;   // ciężkie zderzenie zwalnia symulację zamiast zamrażać kartę
+const WORLD_SPAN = 400000;
 
 // ============================== SCENA ==============================
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -238,15 +264,15 @@ let viewHeight = 4200;
 const cameraCenter = new THREE.Vector2(600, 0);
 
 {
-  const grid = new THREE.GridHelper(80000, 160, 0x16304f, 0x0b1a2e);
+  const grid = new THREE.GridHelper(WORLD_SPAN, WORLD_SPAN / 500, 0x16304f, 0x0b1a2e);
   grid.rotation.x = Math.PI / 2;
   grid.position.z = -20;
   scene.add(grid);
-  const N = 2400;
+  const N = 60000;
   const pos = new Float32Array(N * 3);
   for (let i = 0; i < N; i++) {
-    pos[i * 3] = (Math.random() - 0.5) * 80000;
-    pos[i * 3 + 1] = (Math.random() - 0.5) * 80000;
+    pos[i * 3] = (Math.random() - 0.5) * WORLD_SPAN;
+    pos[i * 3 + 1] = (Math.random() - 0.5) * WORLD_SPAN;
     pos[i * 3 + 2] = -30;
   }
   const geo = new THREE.BufferGeometry();
@@ -274,7 +300,7 @@ const val = (id) => Number(el(id).value);
 let cfg = null;
 let cellSize = 15;
 let bodies = [];
-let atlas = null, dummy = null;
+let atlas = null, dummy = null, wall = null;
 let simTime = 0, accumulator = 0, paused = false, timeScale = 1, slowMo = false;
 let followMode = 'atlas';
 let contactTime = 0, contactActive = false, physicsPeakMs = 0, frameSimMs = 0, frameWallMs = 0;
@@ -329,6 +355,40 @@ function hullStructure(hull) {
   return structure;
 }
 
+// Ściana: płyta komórka w komórkę (1 piksel = 1 węzeł), bez wręgów i grodzi — i tak
+// jest statyczna, belki tylko by ją obciążały. Skóra: stal z pasami ostrzegawczymi.
+let wallTexture = null;
+function wallStructure() {
+  const key = `wall|${cellSize}`;
+  let structure = structureCache.get(key);
+  if (structure) return structure;
+  if (!wallTexture) {
+    wallTexture = document.createElement('canvas');
+    wallTexture.width = 128;
+    wallTexture.height = 512;
+    const g = wallTexture.getContext('2d');
+    g.fillStyle = '#1c1f24';
+    g.fillRect(0, 0, 128, 512);
+    g.fillStyle = '#d9a820';
+    for (let y = -128; y < 512; y += 64) {
+      g.beginPath(); g.moveTo(0, y); g.lineTo(128, y + 128); g.lineTo(128, y + 160); g.lineTo(0, y + 32); g.fill();
+    }
+    g.fillStyle = '#4a525d';
+    g.fillRect(20, 0, 88, 512);
+  }
+  const w = Math.max(4, Math.round(WALL_THICK / cellSize)), h = Math.max(4, Math.round(WALL_HEIGHT / cellSize));
+  const data = new Uint8ClampedArray(w * h * 4);
+  for (let i = 0; i < w * h; i++) {
+    data[i * 4] = 110; data[i * 4 + 1] = 118; data[i * 4 + 2] = 130; data[i * 4 + 3] = 255;
+  }
+  structure = buildSpriteBeamStructure({ width: w, height: h, data }, {
+    key: 'wall', textureSource: wallTexture, worldLength: w * cellSize, cellsAlong: w,
+    frameStride: 0, bulkheadEvery: 0
+  });
+  structureCache.set(key, structure);
+  return structure;
+}
+
 // ============================== BUDOWA SCENY ==============================
 function applySlidersToConfig() {
   if (!cfg) return;
@@ -352,10 +412,11 @@ function makeConfig() {
 async function resetScene() {
   ready = false;
   cellSize = 1800 / val('opt-res');
-  const [atlasHull, dummyHull] = await Promise.all([loadHull('atlas'), loadHull(el('opt-dummy').value)]);
+  const dummyId = el('opt-dummy').value;
+  const [atlasHull, dummyHull] = await Promise.all([loadHull('atlas'), dummyId === 'none' ? null : loadHull(dummyId)]);
   const atlasStructure = hullStructure(atlasHull);
-  let dummyStructure = cloneBeamStructure(hullStructure(dummyHull));
-  if (dummyHull.id === 'atlas') dummyStructure.spriteSkin = { ...dummyStructure.spriteSkin, tint: DUMMY_TINT };
+  const dummyStructure = dummyHull ? cloneBeamStructure(hullStructure(dummyHull)) : null;
+  if (dummyHull?.id === 'atlas') dummyStructure.spriteSkin = { ...dummyStructure.spriteSkin, tint: DUMMY_TINT };
 
   for (const b of bodies) b.dead = true;
   BeamShips3D.sync([], camera, simTime);
@@ -372,17 +433,33 @@ async function resetScene() {
   // Gęstość jak w grze: Atlas 800 000; kukła ta sama blacha, więc masa z pola kadłuba.
   const density = ATLAS_MASS / atlasStructure.mass;
   atlas = D.createBody(cloneBeamStructure(atlasStructure), { name: 'Atlas', massMultiplier: density });
-  dummy = D.createBody(dummyStructure, { name: 'kukła', massMultiplier: density * val('opt-mass') });
-  const pose = val('opt-pose') * Math.PI / 180;
-  setPlanarHeading(dummy, pose);
-  // Kukła na osi dziobu: odstęp liczony od zasięgu obróconego kadłuba wzdłuż X.
-  const ab = atlas._localBounds, db = dummy._localBounds;
-  const c = Math.cos(pose), s = Math.sin(pose);
-  const reachX = Math.abs(c) * db[3] + Math.abs(s) * db[4];
-  const centerX = c * db[0] - s * db[1], centerY = s * db[0] + c * db[1];
-  dummy.pos.x = ab[0] + ab[3] + DUMMY_GAP + reachX - centerX;
-  dummy.pos.y = -centerY;
-  bodies = [atlas, dummy];
+  bodies = [atlas];
+  const ab = atlas._localBounds;
+  let frontX = ab[0] + ab[3];   // najdalszy punkt na osi dziobu (Atlas albo kukła)
+  dummy = null;
+  if (dummyStructure) {
+    dummy = D.createBody(dummyStructure, { name: 'kukła', massMultiplier: density * val('opt-mass') });
+    const pose = val('opt-pose') * Math.PI / 180;
+    setPlanarHeading(dummy, pose);
+    // Kukła na osi dziobu: odstęp liczony od zasięgu obróconego kadłuba wzdłuż X.
+    const db = dummy._localBounds;
+    const c = Math.cos(pose), s = Math.sin(pose);
+    const reachX = Math.abs(c) * db[3] + Math.abs(s) * db[4];
+    const centerX = c * db[0] - s * db[1], centerY = s * db[0] + c * db[1];
+    dummy.pos.x = ab[0] + ab[3] + DUMMY_GAP + reachX - centerX;
+    dummy.pos.y = -centerY;
+    frontX = dummy.pos.x + centerX + reachX;
+    bodies.push(dummy);
+  }
+  wall = null;
+  const wallDist = val('opt-wall');
+  if (wallDist > 0) {
+    wall = D.createBody(cloneBeamStructure(wallStructure()), { name: 'ściana', static: true });
+    const wb = wall._localBounds;
+    wall.pos.x = Math.max(ab[0] + ab[3] + wallDist, frontX + DUMMY_GAP) + wb[3] - wb[0];
+    wall.pos.y = -wb[1];
+    bodies.push(wall);
+  }
 
   simTime = 0;
   accumulator = 0;
@@ -400,14 +477,16 @@ async function resetScene() {
 function ram() {
   const speed = val('sl-speed');
   return resetScene().then(() => {
-    const dx = dummy.pos.x - atlas.pos.x, dy = dummy.pos.y - atlas.pos.y;
+    const target = ramTarget();
+    const dx = target ? target.pos.x - atlas.pos.x : 1, dy = target ? target.pos.y - atlas.pos.y : 0;
     const heading = Math.atan2(dy, dx);
     setPlanarHeading(atlas, heading);
     atlas.vel.x = Math.cos(heading) * speed;
     atlas.vel.y = Math.sin(heading) * speed;
     D.wake(atlas, 60);
     paused = false;
-    toast(`Taran ${speed} j./s — ${el('opt-dummy').selectedOptions[0].textContent.toLowerCase()}, ${el('opt-pose').selectedOptions[0].textContent}`, 2200);
+    const what = dummy ? `${el('opt-dummy').selectedOptions[0].textContent.toLowerCase()}, ${el('opt-pose').selectedOptions[0].textContent}` : 'ściana';
+    toast(`Taran ${speed} j./s — ${what}`, 2200);
   });
 }
 
@@ -445,7 +524,7 @@ bindSlider('sl-dmg', 'o-dmg', () => {});
 bindSlider('sl-radius', 'o-radius', () => {});
 bindSlider('sl-time', 'o-time', (v) => { timeScale = v; slowMo = false; });
 
-for (const id of ['opt-dummy', 'opt-pose', 'opt-mass', 'opt-res', 'opt-frame', 'opt-bulkhead', 'cb-local']) {
+for (const id of ['opt-dummy', 'opt-pose', 'opt-mass', 'opt-wall', 'opt-res', 'opt-frame', 'opt-bulkhead', 'cb-local']) {
   el(id).addEventListener('change', () => { resetScene().catch(fail); renderer.domElement.focus({ preventScroll: true }); });
 }
 el('btn-reset').addEventListener('click', () => resetScene().catch(fail));
@@ -553,13 +632,23 @@ renderer.domElement.addEventListener('wheel', (e) => {
 
 // ============================== KAMERA ==============================
 const _target = new THREE.Vector2();
+const _lastTarget = new THREE.Vector2();
+let lastTargetValid = false;
 function updateCamera(dt) {
   const live = (b) => b && !b.dead;
+  let tracking = true;
   if (followMode === 'atlas' && live(atlas)) _target.set(atlas.pos.x, atlas.pos.y);
   else if (followMode === 'dummy' && live(dummy)) _target.set(dummy.pos.x, dummy.pos.y);
   else if (followMode === 'pair' && live(atlas) && live(dummy)) _target.set((atlas.pos.x + dummy.pos.x) / 2, (atlas.pos.y + dummy.pos.y) / 2);
-  else _target.copy(cameraCenter);
-  if (followMode !== 'free') cameraCenter.lerp(_target, 1 - Math.exp(-dt * 6));
+  else { _target.copy(cameraCenter); tracking = false; }
+  if (followMode !== 'free' && tracking) {
+    // Kamera najpierw jedzie z celem (przy 40 000 j./s sama sprężyna zostawałaby ~7000 j. w tyle),
+    // sprężyna dociąga resztę. Skok celu (reset sceny) zostaje sprężynie.
+    if (lastTargetValid && _target.distanceTo(_lastTarget) < 4000) cameraCenter.add(_target).sub(_lastTarget);
+    cameraCenter.lerp(_target, 1 - Math.exp(-dt * 6));
+  }
+  _lastTarget.copy(_target);
+  lastTargetValid = tracking;
   const aspect = window.innerWidth / window.innerHeight;
   camera.left = -viewHeight * aspect / 2;
   camera.right = viewHeight * aspect / 2;
@@ -580,6 +669,24 @@ function pruneBodies() {
   if (changed) bodies = bodies.filter((b) => !b.dead);
 }
 
+let lastSubsteps = 1;
+// Jeden krok 120 Hz; zwraca, czy był styk w którymkolwiek podkroku.
+function physicsStep(dt) {
+  let maxSpeed = 0;
+  for (const b of bodies) if (!b.dead && !b.static) maxSpeed = Math.max(maxSpeed, Math.hypot(b.vel.x, b.vel.y));
+  const n = Math.min(MAX_SUBSTEPS, Math.max(1, Math.ceil(maxSpeed * dt / SUBSTEP_TRAVEL)));
+  const h = dt / n;
+  let contact = false;
+  for (let i = 0; i < n; i++) {
+    D.integrate(h, bodies);
+    weapons.update(h, bodies);
+    D.update(h, bodies);
+    if (D.perf.contacts > 0) contact = true;
+  }
+  lastSubsteps = n;
+  return contact;
+}
+
 function frame() {
   requestAnimationFrame(frame);
   const now = performance.now();
@@ -594,19 +701,18 @@ function frame() {
     let steps = 0;
     while (accumulator >= FIXED_DT && steps < 6) {
       readPlanarFlightInput(keys, flightInput);
-      applyPlanarFlightControls(atlas, flightInput, FIXED_DT, PLANAR_FLIGHT_DEFAULTS, el('cb-assist').checked);
-      D.integrate(FIXED_DT, bodies);
+      if (flightInput.boost && flightInput.throttle === 0) flightInput.throttle = 1;   // sam Shift też rozpędza
+      applyPlanarFlightControls(atlas, flightInput, FIXED_DT, DEMO_FLIGHT, el('cb-assist').checked);
       weapons.triggers(FIXED_DT, atlas, weaponInput.laser, weaponInput.missile, val('sl-dmg'), val('sl-radius'));
-      weapons.update(FIXED_DT, bodies);
-      D.update(FIXED_DT, bodies);
-      contactActive = D.perf.contacts > 0;
+      contactActive = physicsStep(FIXED_DT);
       if (contactActive && closingSpeed() > cfg.crushSpeedThreshold) contactTime += FIXED_DT;
       simTime += FIXED_DT;
       simulated += FIXED_DT;
       accumulator -= FIXED_DT;
       steps++;
+      if (performance.now() - physicsStart > PHYSICS_BUDGET_MS) break;
     }
-    if (steps === 6 && accumulator >= FIXED_DT) accumulator = 0;
+    if (accumulator >= FIXED_DT) accumulator = 0;
     pruneBodies();
   }
   const physicsMs = performance.now() - physicsStart;
@@ -631,12 +737,20 @@ function frame() {
 
 function speedOf(b) { return b && !b.dead ? Math.hypot(b.vel.x, b.vel.y) : 0; }
 
-// Prędkość zbliżania Atlasa i kukły wzdłuż linii środków (NaN, gdy któregoś brak).
+// Cel tarana i pomiarów: kukła, a bez niej ściana.
+function ramTarget() {
+  if (dummy && !dummy.dead) return dummy;
+  return wall && !wall.dead ? wall : null;
+}
+
+// Prędkość zbliżania Atlasa i celu: do kukły wzdłuż linii środków, do ściany wzdłuż jej normalnej (+X).
 function closingSpeed() {
-  if (!atlas || !dummy || atlas.dead || dummy.dead) return NaN;
-  const dx = dummy.pos.x - atlas.pos.x, dy = dummy.pos.y - atlas.pos.y;
+  const target = ramTarget();
+  if (!atlas || atlas.dead || !target) return NaN;
+  if (target === wall) return atlas.vel.x;
+  const dx = target.pos.x - atlas.pos.x, dy = target.pos.y - atlas.pos.y;
   const len = Math.hypot(dx, dy) || 1;
-  return ((atlas.vel.x - dummy.vel.x) * dx + (atlas.vel.y - dummy.vel.y) * dy) / len;
+  return ((atlas.vel.x - target.vel.x) * dx + (atlas.vel.y - target.vel.y) * dy) / len;
 }
 
 function updateStats() {
@@ -644,7 +758,7 @@ function updateStats() {
   const set = (id, v) => { el(id).textContent = v; };
   set('st-fps', paused ? 'PAUZA' : String(fpsValue));
   set('st-state', !ready ? 'BUDOWA…' : paused ? 'PAUZA (P)' : atlas?.dead ? 'ATLAS ZNISZCZONY — R' : contactActive ? 'STYK' : slowMo ? 'ZWOLNIONE ×0,2' : 'LOT');
-  set('st-phys', `${p.lastUpdateMs.toFixed(2)} ms`);
+  set('st-phys', `${p.lastUpdateMs.toFixed(2)} ms${lastSubsteps > 1 ? ` ×${lastSubsteps}` : ''}`);
   set('st-solver', `${p.lastSolverMs.toFixed(2)} ms`);
   set('st-col', `${p.lastCollisionMs.toFixed(2)} ms`);
   set('st-split', `${p.lastSplitMs.toFixed(2)} ms`);
@@ -679,14 +793,13 @@ window.__demo2d = {
   get bodies() { return bodies; },
   get atlas() { return atlas; },
   get dummy() { return dummy; },
+  get wall() { return wall; },
   get config() { return cfg; },
   reset: () => resetScene(),
   ram: () => ram(),
   step(steps = 1) {
     for (let i = 0; i < steps; i++) {
-      D.integrate(FIXED_DT, bodies);
-      weapons.update(FIXED_DT, bodies);
-      D.update(FIXED_DT, bodies);
+      physicsStep(FIXED_DT);
       simTime += FIXED_DT;
     }
     pruneBodies();

@@ -11,511 +11,633 @@
 // ZMIENI się wybór, zakresy segmentów kopiuje się do dynamicznego bufora
 // (gotowe widoki subarray, zero alokacji). Pozycja w shaderze względem kamery
 // (RTE): (segment − refS) liczone na liczbach całkowitych, jak pasy konstrukcji.
+//
+// Port WebGPU (zadanie 09): materiały w TSL (NodeMaterial), 1:1 z dawnym GLSL
+// (PRIM_VERTEX, TRAIN_VERTEX, HALO_PRIM_FRAGMENT, GLASS_FRAGMENT, LIGHT_VERTEX /
+// LIGHT_FRAGMENT). Fragment brył (makeHaloPrimFragment) dzielą megastruktura i miasto
+// (haloRingCity.js). Dawne `defines` to warianty budowane raz: HALO_FG (dach nad
+// płaszczyzną gry: przerzedzenie i wycięcia — haloFgClip / haloFgVisibility) i
+// PRIM_FACE_FROM_LOCAL (budynki 8-wierzchołkowe miasta) jako parametry JS, kroki powietrza
+// stałe (4). Funkcje wspólne z biblioteki ringu (haloRingTSL — uniformy ringu w bloku
+// `haloRingU`, powierzchni w `haloSurfU`). Pochodne (fwidth) liczone poza gałęziami —
+// baza WebGL (FXC) spłaszczała gałęzie z pochodnymi, więc sąsiedzi w czwórce pikseli mieli
+// wartości; w WGSL pochodna w rozbieżnej gałęzi jest nieokreślona.
 import * as THREE from 'three';
+import { NodeMaterial } from 'three/webgpu';
 import {
-  HALO_GLSL_AIR,
-  HALO_GLSL_COMMON,
-  HALO_GLSL_FG,
-  HALO_GLSL_FG_CLIP,
-  HALO_GLSL_LIGHT,
-  HALO_GLSL_NOISE,
-  HALO_GLSL_RTE
-} from './haloRingGLSL.js';
+  Fn, If, Discard,
+  float, int, vec2, vec3, vec4,
+  attribute, varyingProperty, uniform, positionGeometry, normalGeometry,
+  cameraViewMatrix, cameraProjectionMatrix, modelWorldMatrix,
+  abs, asin, atan, clamp, cos, cross, dot, exp, floor, fract, fwidth, length, max, min, mix, mod, normalize, reflect, sign, sin,
+  smoothstep, step
+} from 'three/tsl';
 import { HALO_HDR, haloQualityLod } from './haloRingConfig.js';
-import { HALO_GLSL_SURFACE } from './haloRingTerrain.js';
 import { HALO_INSTANCE_STRIDE, HALO_LIGHT_STRIDE, HALO_PRIM_NAMES, HALO_TRAIN_STRIDE } from './haloRingRoofPlan.js';
+import { HALO_PI, haloFma, haloFmaV2, haloHash12, haloPureFn, haloRingTSL, haloSmooth } from './haloRingTSL.js';
+import { nodeOf } from './haloUniformsAdapter.js';
+import { zbierzZakres } from '../zakresyWysylki.js';
 
-const f3 = (a) => a.map((x) => x.toFixed(3)).join(', ');
+// Kroki powietrza brył, szkła i drzew (dawne AIR_STEPS 4 materiałów megastruktury i miasta).
+export const HALO_MEGA_AIR_STEPS = 4;
 
-const PRIM_VERTEX = /* glsl */`
-${HALO_GLSL_COMMON}
-${HALO_GLSL_NOISE}
-${HALO_GLSL_RTE}
-${HALO_GLSL_SURFACE}
-uniform float uSegCells;
-uniform vec2 uGeomFade;        // odleglosc: pelny detal / brak detalu
-attribute vec4 iPos;           // segment, wzdluz [j.], dr, z
-attribute vec4 iSize;          // x, y, z, material (+256 = punkt orientacyjny, bez zaniku)
-attribute vec4 iQuat;
-varying vec3 vRel;
-varying vec3 vNormal;
-varying vec3 vLocal;           // wspolrzedne bryly [j.] (z od podstawy)
-varying vec3 vLocalN;
-varying vec3 vSize;
-varying float vMat;
-varying float vSeed;
+const r3 = (x) => +x.toFixed(3);   // stałe jak w dawnym GLSL (f3: 3 miejsca po przecinku)
+const NAV_WHITE = HALO_HDR.navWhite;
 
-vec3 qrot(vec4 q, vec3 v) {
-  vec3 t = 2.0 * cross(q.xyz, v);
-  return v + q.w * t + cross(q.xyz, t);
+// x⁵ i x² mnożeniem (baza WebGL: FXC rozwijał pow(x, 5.0) / pow(x, 2.0) w mnożenia — dla
+// podstawy tuż poniżej zera wynik bez NaN; pow w WGSL to exp2(n·log2 x) = NaN dla x < 0).
+const pow5 = (x) => {
+  const x2 = x.mul(x).toVar();
+  return x2.mul(x2).mul(x);
+};
+const sq = (x) => {
+  const v = float(x).toVar();
+  return v.mul(v);
+};
+
+// Obrót wektora kwaternionem (czysta funkcja WGSL).
+export const haloQrot = haloPureFn('haloQrot', 'vec3', [['q', 'vec4'], ['v', 'vec3']], (a) => {
+  const t = cross(a.q.xyz, a.v).mul(2.0).toVar();
+  return a.v.add(t.mul(a.q.w)).add(cross(a.q.xyz, t));
+});
+
+// ---------------------------------------------------------------------------
+// Varyingi brył (dawne vRel, vNormal, vLocal, vLocalN, vSize, vMat, vSeed; PRIM_FACE_FROM_LOCAL:
+// baza lokalna bryły w świecie vEx, vEy, vEz). Jeden zestaw na materiał (wierzchołek i fragment).
+export function haloPrimVaryings({ faceFromLocal = false } = {}) {
+  const v = {
+    rel: varyingProperty('vec3', 'vHaloRel'),
+    normal: varyingProperty('vec3', 'vHaloNormal'),
+    local: varyingProperty('vec3', 'vHaloLocal'),
+    localN: varyingProperty('vec3', 'vHaloLocalN'),
+    size: varyingProperty('vec3', 'vHaloSize'),
+    mat: varyingProperty('float', 'vHaloMat'),
+    seed: varyingProperty('float', 'vHaloSeed')
+  };
+  if (faceFromLocal) {
+    v.ex = varyingProperty('vec3', 'vHaloEx');
+    v.ey = varyingProperty('vec3', 'vHaloEy');
+    v.ez = varyingProperty('vec3', 'vHaloEz');
+  }
+  return v;
 }
 
-void main() {
-  float cells = iPos.x * uSegCells - uGridInfo.w;
-  cells -= uGridInfo.z * floor(cells / uGridInfo.z + 0.5);
-  float sRel = cells * uGridInfo.x + iPos.y;
-  float dTheta = sRel / uFloorDims.z;
-  vec3 anchor = haloRelFromPolar(dTheta, iPos.z, iPos.w);
-  float th = uRefBasis.z + dTheta;
-  vec3 et = vec3(-sin(th), cos(th), 0.0);
-  vec3 er = vec3(cos(th), sin(th), 0.0);
-  float mat = iSize.w;
-  float seed = fract(iPos.y * 0.01737 + iPos.x * 0.61803 + iPos.w * 0.0131);
-  // zanik detalu z odlegloscia: obiekty znikaja po kolei (prog z haszu),
-  // dach i tak rysuje ich odcisk z cieniem
-  float fade = mat > 255.5 ? 1.0 : 1.0 - smoothstep(uGeomFade.x, uGeomFade.y, length(anchor));
-  float keep = step(seed * 0.999, fade);
-  vec3 local = position * iSize.xyz * keep;
-  vec3 lr = qrot(iQuat, local);
-  vec3 rel = anchor + et * lr.x + er * lr.y + vec3(0.0, 0.0, lr.z);
-  vec3 nl = normalize(normal / max(iSize.xyz, vec3(1e-3)));
-  vec3 nr = qrot(iQuat, nl);
-  vRel = rel;
-  vNormal = et * nr.x + er * nr.y + vec3(0.0, 0.0, nr.z);
-  vLocal = position * iSize.xyz;
-  vLocalN = normal;
-  vSize = iSize.xyz;
-  vMat = mat - 256.0 * floor((mat + 0.5) / 256.0);
-  vSeed = seed;
-  gl_Position = haloProjectRel(rel);
-}
-`;
-
-const TRAIN_VERTEX = /* glsl */`
-${HALO_GLSL_COMMON}
-${HALO_GLSL_RTE}
-attribute vec4 iTrainA;        // d od krawedzi, s0, predkosc, dlugosc wagonu
-attribute vec4 iTrainB;        // indeks wagonu, szerokosc, wysokosc, wariant
-uniform vec4 uTrainLane;       // rim, sigma, z dachu + estakada, obwod L
-varying vec3 vRel;
-varying vec3 vNormal;
-varying vec3 vLocal;
-varying vec3 vLocalN;
-varying vec3 vSize;
-varying float vMat;
-varying float vSeed;
-void main() {
-  float L = uTrainLane.w;
-  float dir = sign(iTrainA.z);
-  float carLen = iTrainA.w;
-  float sAbs = iTrainA.y + mod(iTrainA.z * uTime, L) - dir * iTrainB.x * (carLen + 6.0);
-  float sRel = mod(sAbs - uRefBasis.w + 0.5 * L, L) - 0.5 * L;
-  float r = uTrainLane.x - uTrainLane.y * iTrainA.x;
-  float dTheta = sRel / uFloorDims.z;
-  vec3 anchor = haloRelFromPolar(dTheta, r - uFloorDims.z, uTrainLane.z);
-  float th = uRefBasis.z + dTheta;
-  vec3 et = vec3(-sin(th), cos(th), 0.0);
-  vec3 er = vec3(cos(th), sin(th), 0.0);
-  vec3 size = vec3(carLen, iTrainB.y, iTrainB.z);
-  vec3 lp = position * size;
-  vRel = anchor + et * lp.x + er * lp.y + vec3(0.0, 0.0, lp.z);
-  vNormal = et * normal.x + er * normal.y + vec3(0.0, 0.0, normal.z);
-  vLocal = lp * vec3(dir, 1.0, 1.0);
-  vLocalN = normal * vec3(dir, 1.0, 1.0);
-  vSize = size;
-  // wagon czolowy ma reflektory: material 13 (pociag) + 32 * (1 = czolo)
-  vMat = 13.0 + (iTrainB.x < 0.5 ? 32.0 : 0.0);
-  vSeed = fract(iTrainA.y * 0.0137);
-  gl_Position = haloProjectRel(vRel);
-}
-`;
-
-export const HALO_PRIM_FRAGMENT = /* glsl */`
-${HALO_GLSL_COMMON}
-${HALO_GLSL_NOISE}
-${HALO_GLSL_LIGHT}
-${HALO_GLSL_AIR}
-${HALO_GLSL_FG}
-${HALO_GLSL_FG_CLIP}
-varying vec3 vRel;
-varying vec3 vNormal;
-varying vec3 vLocal;
-varying vec3 vLocalN;
-varying vec3 vSize;
-varying float vMat;
-varying float vSeed;
-#ifdef PRIM_FACE_FROM_LOCAL
-// bryly 8-wierzcholkowe (budynki miasta): sciana z polozenia lokalnego,
-// baza lokalna bryly w swiecie przekazana z wierzcholka
-varying vec3 vEx;
-varying vec3 vEy;
-varying vec3 vEz;
-#endif
-
-// paleta z profilu planety (uMegaPal, haloRingProfiles.js): kod materialu
-// = indeks (0 jasny dach, 1 sredni, 2 ciemny, 3 bialy panel, 4 rdza, 5 stal
-// kratownic, 6 zolty, 7 szklo, 8 poklad zatoki, 9 tunel, 10-12 kontenery,
-// 13 pociag, 14-15 fasady, 16-23 przemysl, 24-28 megabudowle, 29 radiator)
-vec3 palette(float pal, float seed) {
-  int i = int(clamp(floor(pal + 0.5), 0.0, 29.0));
-  return uMegaPal[i];
+// Bryły dachu i doków (dawny PRIM_VERTEX): instancja = (segment, wzdłuż, dr, z), rozmiar + kod
+// materiału (+256 = punkt orientacyjny bez zaniku), kwaternion. Zanik detalu z odległością:
+// obiekty znikają po kolei (próg z haszu), dach i tak rysuje ich odcisk z cieniem.
+export function makeHaloPrimVertex({ u, su, segCells, geomFade, v }) {
+  const H = haloRingTSL(u);
+  const U = H.uniforms;
+  const gridInfo = nodeOf(su.uGridInfo);
+  if (!gridInfo) throw new Error('makeHaloPrimVertex: brak uGridInfo w uniformach powierzchni');
+  return Fn(() => {
+    const iPos = attribute('iPos', 'vec4');     // segment, wzdłuż [j.], dr, z
+    const iSize = attribute('iSize', 'vec4');   // x, y, z, materiał (+256 = punkt orientacyjny, bez zaniku)
+    const iQuat = attribute('iQuat', 'vec4');
+    const position = positionGeometry;
+    const normal = normalGeometry;
+    const cells = iPos.x.mul(segCells).sub(gridInfo.w).toVar();
+    cells.subAssign(gridInfo.z.mul(floor(cells.div(gridInfo.z).add(0.5))));
+    const sRel = cells.mul(gridInfo.x).add(iPos.y).toVar();
+    const dTheta = sRel.div(U.uFloorDims.z).toVar();
+    const anchor = H.haloRelFromPolar(dTheta, iPos.z, iPos.w).toVar();
+    const th = U.uRefBasis.z.add(dTheta).toVar();
+    const et = vec3(sin(th).negate(), cos(th), 0.0).toVar();
+    const er = vec3(cos(th), sin(th), 0.0).toVar();
+    const mat = iSize.w.toVar();
+    // ziarno bryły jak mad w bazie WebGL: (z·0,0131) + ((segment·0,61803) + wzdłuż·0,01737), oba z jednym zaokrągleniem —
+    // okna fasad i panele biorą z niego hasz (1 ULP = inne okna całej bryły; wprost 71,7% ziaren bit w bit)
+    const seed = fract(haloFma(iPos.w, 0.0131, haloFma(iPos.x, 0.61803, iPos.y.mul(0.01737)))).toVar();
+    const fade = mat.greaterThan(255.5).select(float(1.0), float(1.0).sub(smoothstep(geomFade.x, geomFade.y, length(anchor))));
+    const keep = step(seed.mul(0.999), fade);
+    const local = position.mul(iSize.xyz).mul(keep);
+    const lr = haloQrot(iQuat, local).toVar();
+    const rel = anchor.add(et.mul(lr.x)).add(er.mul(lr.y)).add(vec3(0.0, 0.0, lr.z)).toVar();
+    const nl = normalize(normal.div(max(iSize.xyz, vec3(1e-3))));
+    const nr = haloQrot(iQuat, nl).toVar();
+    v.rel.assign(rel);
+    v.normal.assign(et.mul(nr.x).add(er.mul(nr.y)).add(vec3(0.0, 0.0, nr.z)));
+    v.local.assign(position.mul(iSize.xyz));
+    v.localN.assign(normal);
+    v.size.assign(iSize.xyz);
+    v.mat.assign(mat.sub(float(256.0).mul(floor(mat.add(0.5).div(256.0)))));
+    v.seed.assign(seed);
+    return H.haloProjectRel(rel);
+  })();
 }
 
-void main() {
-  vec3 rel = vRel;
-  float dist = length(rel);
-  vec3 V = -rel / max(dist, 1e-3);
-  vec3 p = uCamLocal + rel;
-  haloFgClip(p);
-#ifdef PRIM_FACE_FROM_LOCAL
-  vec3 qn = vLocal / max(vSize, vec3(1e-3));
-  vec3 dq = vec3(0.5 - abs(qn.x), 0.5 - abs(qn.y), min(qn.z, 1.0 - qn.z)) * vSize;
-  vec3 lN = dq.z < min(dq.x, dq.y) ? vec3(0.0, 0.0, qn.z > 0.5 ? 1.0 : -1.0)
-    : (dq.x < dq.y ? vec3(sign(qn.x), 0.0, 0.0) : vec3(0.0, sign(qn.y), 0.0));
-  vec3 N = normalize(vEx * lN.x + vEy * lN.y + vEz * lN.z);
-#else
-  vec3 lN = vLocalN;
-  vec3 N = normalize(vNormal);
-#endif
-  // dekodowanie kodu materialu na liczbach calkowitych z zapasem 0,5:
-  // mod()/dzielenie w ANGLE/D3D ida przez przyblizone odwrotnosci i 64/32
-  // potrafi dac 1,9999 -> zla paleta (brazowe dachy szarych bryl)
-  float matI = floor(vMat + 0.5);
-  float emitK = floor((matI + 0.5) / 32.0);
-  float pal = matI - 32.0 * emitK;
-  vec3 base = palette(pal, vSeed);
-  // megabudowle: jedna barwa na budowle (czesci nie rozjezdzaja sie w laty)
-  base *= pal > 23.5 ? 0.96 + 0.08 * vSeed : 0.85 + 0.3 * vSeed;
-  bool top = lN.z > 0.5;
-  if (top && pal > 13.5 && pal < 14.5) base = uMegaPal[30] * (0.8 + 0.4 * vSeed);   // dach-ogrod
-  if (top && pal > 14.5 && pal < 15.5) base = uMegaPal[31];                                          // dachowka
-  // krawedzie bryly: fazka jasniejsza, szczeliny paneli ciemniejsze
-  vec3 halfS = vSize * vec3(0.5, 0.5, 1.0);
-  vec3 lc = vec3(vLocal.x, vLocal.y, vLocal.z - 0.5 * vSize.z);
-  vec3 edgeD3 = halfS * vec3(1.0, 1.0, 0.5) - abs(lc);
-  float edgeD = top ? min(edgeD3.x, edgeD3.y) : min(abs(lN.x) > 0.5 ? edgeD3.y : edgeD3.x, edgeD3.z);
-  float fw = max(fwidth(vLocal.x) + fwidth(vLocal.y) + fwidth(vLocal.z), 1e-3);
-  float bevel = 1.0 - smoothstep(0.0, 1.8 + fw, edgeD);
-  vec2 fuv = top ? vLocal.xy : vec2(abs(lN.x) > 0.5 ? vLocal.y : vLocal.x, vLocal.z);
-  // plyty rosna z bryla: kontener ma drobne panele, sciana doku - wielkie
-  vec2 panelS = vec2(9.0, 7.0) * clamp(min(vSize.x, min(vSize.y, vSize.z)) / 40.0, 1.0, 8.0);
-  vec2 pg = abs(fract(fuv / panelS) - 0.5);
-  float seamW = 0.03 + fw * 0.08;
-  // szczeliny paneli: 1 na szczelinie, gasna z odlegloscia (srednia ~bez zmian)
-  float seamLine = smoothstep(0.5 - seamW, 0.5, max(pg.x, pg.y)) * (1.0 - smoothstep(0.6, 2.5, fw));
-  float panel = haloHash12(floor(fuv / panelS) + vSeed * 91.0);
-  vec3 albedo = base * (0.9 + 0.2 * mix(panel, 0.5, smoothstep(0.6, 2.5, fw)));
-  albedo *= 1.0 - 0.45 * seamLine;
-  albedo = mix(albedo, albedo * 1.6 + 0.02, bevel * 0.6);
-  // kontakt z dachem: przy podstawie ciemniej
-  float ao = mix(0.5, 1.0, smoothstep(0.0, 10.0, vLocal.z)) * (top ? 1.0 : 0.92);
-  // ---- przemysl (M4 v2): walce i hale z zestawu dzialki (haloRingIndustryKit.js)
-  float tH = vLocal.z / max(vSize.z, 1e-3);
-  float ang = atan(vLocal.y, vLocal.x);
-  float indEmit = 0.0;
-  if (pal > 16.5 && pal < 17.5) {
-    // chlodnia: beton z pionowymi smugami, u gory ciemny otwor
-    float streak = haloHash12(vec2(floor(ang * 9.0), vSeed * 31.0));
-    albedo = top ? vec3(0.012, 0.013, 0.015) : base * (0.82 + 0.2 * streak) * (0.88 + 0.12 * smoothstep(0.0, 0.25, tH));
-  } else if (pal > 17.5 && pal < 18.5) {
-    if (top) {
-      // dach szedowy: pasy swietlikow co 9 j. (jasne szklo / ciemna blacha)
-      float saw = fract(vLocal.x / 9.0);
-      float glassS = 1.0 - step(0.38, saw);
-      albedo = mix(vec3(0.20, 0.21, 0.22), vec3(0.03, 0.04, 0.05), glassS * (1.0 - smoothstep(0.8, 2.5, fw)));
-      albedo = mix(albedo, vec3(0.11), smoothstep(0.8, 2.5, fw));
-      indEmit = glassS * (1.0 - smoothstep(0.8, 2.5, fw));
+// Wagony maglevu na dachu (dawny TRAIN_VERTEX): pozycja z czasu (pociągi zostają — część
+// megastruktury, nie ruch statków), wagon czołowy z reflektorami.
+export function makeHaloTrainVertex({ u, trainLane, v }) {
+  const H = haloRingTSL(u);
+  const U = H.uniforms;
+  return Fn(() => {
+    const iTrainA = attribute('iTrainA', 'vec4');   // d od krawędzi, s0, prędkość, długość wagonu
+    const iTrainB = attribute('iTrainB', 'vec4');   // indeks wagonu, szerokość, wysokość, wariant
+    const position = positionGeometry;
+    const normal = normalGeometry;
+    const L = trainLane.w;
+    const dir = sign(iTrainA.z).toVar();
+    const carLen = iTrainA.w.toVar();
+    const sAbs = iTrainA.y.add(mod(iTrainA.z.mul(U.uTime), L)).sub(dir.mul(iTrainB.x).mul(carLen.add(6.0))).toVar();
+    const sRel = mod(sAbs.sub(U.uRefBasis.w).add(L.mul(0.5)), L).sub(L.mul(0.5)).toVar();
+    const r = trainLane.x.sub(trainLane.y.mul(iTrainA.x)).toVar();
+    const dTheta = sRel.div(U.uFloorDims.z).toVar();
+    const anchor = H.haloRelFromPolar(dTheta, r.sub(U.uFloorDims.z), trainLane.z).toVar();
+    const th = U.uRefBasis.z.add(dTheta).toVar();
+    const et = vec3(sin(th).negate(), cos(th), 0.0).toVar();
+    const er = vec3(cos(th), sin(th), 0.0).toVar();
+    const size = vec3(carLen, iTrainB.y, iTrainB.z).toVar();
+    const lp = position.mul(size).toVar();
+    const rel = anchor.add(et.mul(lp.x)).add(er.mul(lp.y)).add(vec3(0.0, 0.0, lp.z)).toVar();
+    v.rel.assign(rel);
+    v.normal.assign(et.mul(normal.x).add(er.mul(normal.y)).add(vec3(0.0, 0.0, normal.z)));
+    v.local.assign(lp.mul(vec3(dir, 1.0, 1.0)));
+    v.localN.assign(normal.mul(vec3(dir, 1.0, 1.0)));
+    v.size.assign(size);
+    // wagon czołowy ma reflektory: materiał 13 (pociąg) + 32 · (1 = czoło)
+    v.mat.assign(float(13.0).add(iTrainB.x.lessThan(0.5).select(float(32.0), float(0.0))));
+    v.seed.assign(fract(iTrainA.y.mul(0.0137)));
+    return H.haloProjectRel(rel);
+  })();
+}
+
+// ---------------------------------------------------------------------------
+// Fragment brył megastruktury i miasta (dawny HALO_PRIM_FRAGMENT). Paleta z profilu planety
+// (uMegaPal, haloRingProfiles.js): kod materiału = indeks (0 jasny dach, 1 średni, 2 ciemny,
+// 3 biały panel, 4 rdza, 5 stal kratownic, 6 żółty, 7 szkło, 8 pokład zatoki, 9 tunel, 10–12
+// kontenery, 13 pociąg, 14–15 fasady, 16–23 przemysł, 24–28 megabudowle, 29 radiator).
+// fg — dach nad płaszczyzną gry (dawne HALO_FG), faceFromLocal — bryły 8-wierzchołkowe miasta
+// (ściana z położenia lokalnego, baza bryły z varyingów; dawne PRIM_FACE_FROM_LOCAL).
+export function makeHaloPrimFragment({ u, v, fg = false, faceFromLocal = false, airSteps = HALO_MEGA_AIR_STEPS }) {
+  const H = haloRingTSL(u);
+  const U = H.uniforms;
+  const megaPal = nodeOf(u.uMegaPal);
+  const megaSky = nodeOf(u.uMegaSky);
+  if (!megaPal || !megaSky) throw new Error('makeHaloPrimFragment: brak uMegaPal / uMegaSky w uniformach ringu');
+  const inRange = (x, lo, hi) => x.greaterThan(lo).and(x.lessThan(hi));
+  return Fn(() => {
+    const rel = vec3(v.rel).toVar();
+    const dist = length(rel).toVar();
+    const V = rel.negate().div(max(dist, 1e-3)).toVar();
+    const p = U.uCamLocal.add(rel).toVar();
+    H.haloFgClip(p, fg);
+    const vLocal = vec3(v.local).toVar();
+    const vSize = vec3(v.size).toVar();
+    const vSeed = float(v.seed).toVar();
+    const lN = vec3(0.0).toVar();
+    const N = vec3(0.0).toVar();
+    if (faceFromLocal) {
+      const qn = vLocal.div(max(vSize, vec3(1e-3))).toVar();
+      const dq = vec3(float(0.5).sub(abs(qn.x)), float(0.5).sub(abs(qn.y)), min(qn.z, float(1.0).sub(qn.z))).mul(vSize).toVar();
+      lN.assign(dq.z.lessThan(min(dq.x, dq.y)).select(
+        vec3(0.0, 0.0, qn.z.greaterThan(0.5).select(float(1.0), float(-1.0))),
+        dq.x.lessThan(dq.y).select(vec3(sign(qn.x), 0.0, 0.0), vec3(0.0, sign(qn.y), 0.0))
+      ));
+      N.assign(normalize(v.ex.mul(lN.x).add(v.ey.mul(lN.y)).add(v.ez.mul(lN.z))));
     } else {
-      float band = step(0.45, tH) * step(tH, 0.7);
-      albedo = mix(base, vec3(0.03, 0.035, 0.04), band * 0.8);
+      lN.assign(v.localN);
+      N.assign(normalize(v.normal));
     }
-  } else if (pal > 18.5 && pal < 19.5) {
-    // komin: ciemny, u gory pasy czerwono-biale (ostrzegawcze)
-    float rb = step(0.80, tH) * step(tH, 0.97);
-    float white = step(0.5, fract((tH - 0.80) / 0.17 * 3.0 * 0.5));
-    albedo = mix(base, mix(vec3(0.20, 0.03, 0.02), vec3(0.28), white), rb);
-    if (top) albedo = vec3(0.01);
-  } else if (pal > 19.5 && pal < 20.5) {
-    // zbiornik: obrecze co 6 j., czesc zbiornikow szara
-    albedo = base * mix(1.0, 0.72, step(0.62, vSeed));
-    float ring = 1.0 - smoothstep(0.3, 0.3 + fw, abs(fract(vLocal.z / 6.0) - 0.5) * 6.0 - 2.6);
-    albedo *= 1.0 - 0.18 * ring * (top ? 0.0 : 1.0);
-    if (top) albedo *= 0.85 + 0.15 * smoothstep(vSize.x * 0.5, vSize.x * 0.35, length(vLocal.xy));
-  } else if (pal > 20.5 && pal < 21.5) {
-    // silos: pionowe szwy segmentow
-    float seamS = 1.0 - smoothstep(0.02, 0.04 + fw * 0.02, abs(fract(ang * 16.0 / 6.2832) - 0.5) - 0.44);
-    albedo = base * (1.0 - 0.2 * seamS * (top ? 0.0 : 1.0));
-  } else if (pal > 21.5 && pal < 22.5) {
-    // kontenery: kolor per kontener (12,2 × 2,6 j. na stos), zebra blach
-    vec2 cc = floor(vec2(vLocal.x / 12.2, vLocal.z / 2.6) + 40.0);
-    float kc = haloHash12(cc + vec2(floor(vLocal.y / 6.5), vSeed * 17.0));
-    vec3 cc3 = kc < 0.25 ? vec3(0.19, 0.06, 0.035) : (kc < 0.5 ? vec3(0.03, 0.08, 0.15) : (kc < 0.75 ? vec3(0.16, 0.12, 0.05) : vec3(0.26)));
-    float rib = step(0.5, fract(vLocal.x / 0.8)) * (1.0 - smoothstep(0.3, 1.0, fw));
-    float gap = 1.0 - smoothstep(0.08, 0.08 + fw * 0.2, abs(fract(vLocal.x / 12.2) - 0.5) - 0.42);
-    albedo = cc3 * (0.9 + 0.1 * rib) * (1.0 - 0.6 * gap);
-  }
+    // dekodowanie kodu materiału na liczbach całkowitych z zapasem 0,5 (mod()/dzielenie w ANGLE/D3D
+    // szły przez przybliżone odwrotności: 64/32 potrafiło dać 1,9999 → zła paleta)
+    const matI = floor(float(v.mat).add(0.5)).toVar();
+    const emitK = floor(matI.add(0.5).div(32.0)).toVar();
+    const pal = matI.sub(emitK.mul(32.0)).toVar();
+    const base = megaPal.element(int(clamp(floor(pal.add(0.5)), 0.0, 29.0))).toVar();
+    // megabudowle: jedna barwa na budowlę (części nie rozjeżdżają się w łaty)
+    base.mulAssign(pal.greaterThan(23.5).select(float(0.96).add(float(0.08).mul(vSeed)), float(0.85).add(float(0.3).mul(vSeed))));
+    const top = lN.z.greaterThan(0.5).toVar();
+    If(top.and(inRange(pal, 13.5, 14.5)), () => { base.assign(megaPal.element(30).mul(float(0.8).add(float(0.4).mul(vSeed)))); });   // dach-ogród
+    If(top.and(inRange(pal, 14.5, 15.5)), () => { base.assign(megaPal.element(31)); });                                              // dachówka
+    // krawędzie bryły: fazka jaśniejsza, szczeliny paneli ciemniejsze
+    const halfS = vSize.mul(vec3(0.5, 0.5, 1.0)).toVar();
+    const lc = vec3(vLocal.x, vLocal.y, vLocal.z.sub(float(0.5).mul(vSize.z))).toVar();
+    const edgeD3 = halfS.mul(vec3(1.0, 1.0, 0.5)).sub(abs(lc)).toVar();
+    const edgeD = top.select(min(edgeD3.x, edgeD3.y), min(abs(lN.x).greaterThan(0.5).select(edgeD3.y, edgeD3.x), edgeD3.z)).toVar();
+    const fw = max(fwidth(vLocal.x).add(fwidth(vLocal.y)).add(fwidth(vLocal.z)), 1e-3).toVar();
+    const bevel = float(1.0).sub(smoothstep(0.0, float(1.8).add(fw), edgeD)).toVar();
+    const fuv = top.select(vLocal.xy, vec2(abs(lN.x).greaterThan(0.5).select(vLocal.y, vLocal.x), vLocal.z)).toVar();
+    // pochodne fasady megabudowli (gałąź emisji 7) poza gałęziami — patrz nagłówek
+    const fcFw = max(vec2(fwidth(fuv.x.div(5.0)), fwidth(vLocal.z.div(4.5))), vec2(1e-4)).toVar();
+    const bzFw = max(fwidth(vLocal.z.div(54.0)), 1e-4).toVar();
+    // płyty rosną z bryłą: kontener ma drobne panele, ściana doku — wielkie
+    const panelS = vec2(9.0, 7.0).mul(clamp(min(vSize.x, min(vSize.y, vSize.z)).div(40.0), 1.0, 8.0)).toVar();
+    const pg = abs(fract(fuv.div(panelS)).sub(0.5)).toVar();
+    const seamW = float(0.03).add(fw.mul(0.08)).toVar();
+    // szczeliny paneli: 1 na szczelinie, gasną z odległością (średnia ~bez zmian)
+    const seamLine = smoothstep(float(0.5).sub(seamW), 0.5, max(pg.x, pg.y)).mul(float(1.0).sub(smoothstep(0.6, 2.5, fw))).toVar();
+    // hasze z (komórka + ziarno·k) przez fma jak mad w bazie (haloFma — zmierzone: 100% bit w bit)
+    const panel = haloHash12(haloFmaV2(vSeed, 91.0, floor(fuv.div(panelS))));
+    const albedo = base.mul(float(0.9).add(float(0.2).mul(mix(panel, 0.5, smoothstep(0.6, 2.5, fw))))).toVar();
+    albedo.mulAssign(float(1.0).sub(float(0.45).mul(seamLine)));
+    albedo.assign(mix(albedo, albedo.mul(1.6).add(0.02), bevel.mul(0.6)));
+    // kontakt z dachem: przy podstawie ciemniej
+    const ao = mix(0.5, 1.0, smoothstep(0.0, 10.0, vLocal.z)).mul(top.select(float(1.0), float(0.92))).toVar();
+    // ---- przemysł (M4 v2): walce i hale z zestawu działki (haloRingIndustryKit.js)
+    const tH = vLocal.z.div(max(vSize.z, 1e-3)).toVar();
+    const ang = atan(vLocal.y, vLocal.x).toVar();
+    const indEmit = float(0.0).toVar();
+    If(inRange(pal, 16.5, 17.5), () => {
+      // chłodnia: beton z pionowymi smugami, u góry ciemny otwór
+      const streak = haloHash12(vec2(floor(ang.mul(9.0)), vSeed.mul(31.0)));
+      albedo.assign(top.select(vec3(0.012, 0.013, 0.015),
+        base.mul(float(0.82).add(float(0.2).mul(streak))).mul(float(0.88).add(float(0.12).mul(smoothstep(0.0, 0.25, tH))))));
+    }).ElseIf(inRange(pal, 17.5, 18.5), () => {
+      If(top, () => {
+        // dach szedowy: pasy świetlików co 9 j. (jasne szkło / ciemna blacha)
+        const saw = fract(vLocal.x.div(9.0));
+        const glassS = float(1.0).sub(step(0.38, saw)).toVar();
+        const near = float(1.0).sub(smoothstep(0.8, 2.5, fw)).toVar();
+        albedo.assign(mix(vec3(0.20, 0.21, 0.22), vec3(0.03, 0.04, 0.05), glassS.mul(near)));
+        albedo.assign(mix(albedo, vec3(0.11), smoothstep(0.8, 2.5, fw)));
+        indEmit.assign(glassS.mul(near));
+      }).Else(() => {
+        const band = step(0.45, tH).mul(step(tH, 0.7));
+        albedo.assign(mix(base, vec3(0.03, 0.035, 0.04), band.mul(0.8)));
+      });
+    }).ElseIf(inRange(pal, 18.5, 19.5), () => {
+      // komin: ciemny, u góry pasy czerwono-białe (ostrzegawcze)
+      const rb = step(0.80, tH).mul(step(tH, 0.97));
+      const white = step(0.5, fract(tH.sub(0.80).div(0.17).mul(3.0).mul(0.5)));
+      albedo.assign(mix(base, mix(vec3(0.20, 0.03, 0.02), vec3(0.28), white), rb));
+      If(top, () => { albedo.assign(vec3(0.01)); });
+    }).ElseIf(inRange(pal, 19.5, 20.5), () => {
+      // zbiornik: obręcze co 6 j., część zbiorników szara
+      albedo.assign(base.mul(mix(1.0, 0.72, step(0.62, vSeed))));
+      const ring = float(1.0).sub(smoothstep(0.3, float(0.3).add(fw), abs(fract(vLocal.z.div(6.0)).sub(0.5)).mul(6.0).sub(2.6)));
+      albedo.mulAssign(float(1.0).sub(float(0.18).mul(ring).mul(top.select(float(0.0), float(1.0)))));
+      If(top, () => {
+        albedo.mulAssign(float(0.85).add(float(0.15).mul(haloSmooth(vSize.x.mul(0.5), vSize.x.mul(0.35), length(vLocal.xy)))));
+      });
+    }).ElseIf(inRange(pal, 20.5, 21.5), () => {
+      // silos: pionowe szwy segmentów
+      const seamS = float(1.0).sub(smoothstep(0.02, float(0.04).add(fw.mul(0.02)), abs(fract(ang.mul(16.0).div(6.2832)).sub(0.5)).sub(0.44)));
+      albedo.assign(base.mul(float(1.0).sub(float(0.2).mul(seamS).mul(top.select(float(0.0), float(1.0))))));
+    }).ElseIf(inRange(pal, 21.5, 22.5), () => {
+      // kontenery: kolor per kontener (12,2 × 2,6 j. na stos), żebra blach
+      const cc = floor(vec2(vLocal.x.div(12.2), vLocal.z.div(2.6)).add(40.0)).toVar();
+      const kc = haloHash12(vec2(cc.x.add(floor(vLocal.y.div(6.5))), haloFma(vSeed, 17.0, cc.y))).toVar();
+      const cc3 = kc.lessThan(0.25).select(vec3(0.19, 0.06, 0.035),
+        kc.lessThan(0.5).select(vec3(0.03, 0.08, 0.15), kc.lessThan(0.75).select(vec3(0.16, 0.12, 0.05), vec3(0.26))));
+      const rib = step(0.5, fract(vLocal.x.div(0.8))).mul(float(1.0).sub(smoothstep(0.3, 1.0, fw)));
+      const gap = float(1.0).sub(smoothstep(0.08, float(0.08).add(fw.mul(0.2)), abs(fract(vLocal.x.div(12.2)).sub(0.5)).sub(0.42)));
+      albedo.assign(cc3.mul(float(0.9).add(float(0.1).mul(rib))).mul(float(1.0).sub(float(0.6).mul(gap))));
+    });
 
-  vec3 emit = vec3(0.0);
-  float facadeGlass = 0.0;
-  vec3 L = uSunDir;
-  vec3 sunVis = haloSunVisibility(p + N * 2.0, L);
-  // „góra” bryły: w powietrzu habitatu kierunek mieszkańców, poza nim +Z
-  bool inAir = haloAltitude(p) > -60.0 && haloAltitude(p) < uFloorDims.w && p.z < uRingZ.y && p.z > uRingZ.z;
-  vec3 upW = inAir ? haloUp(p) : vec3(0.0, 0.0, 1.0);
-  float dayG = haloLuma(haloPlanetTransmit(p, L)) * smoothstep(-0.02, 0.12, dot(upW, L));
-  float night = (1.0 - smoothstep(0.02, 0.25, haloLuma(sunVis) * max(dot(upW, L) + 0.2, 0.0))) * (1.0 - 0.9 * dayG * (inAir ? 1.0 : 0.0));
-  float emitType = emitK;
-  bool side = !top && abs(lN.z) < 0.5;
-  if (pal > 12.5 && pal < 13.5) {
-    // pociag: pas okien + reflektory czola
-    float head = emitK - 2.0 * floor((emitK + 0.5) * 0.5) > 0.5 ? 1.0 : 0.0;
-    float band = side ? (1.0 - smoothstep(1.2, 1.6, abs(vLocal.z - vSize.z * 0.55) / 1.4)) : 0.0;
-    float win = step(0.45, fract(vLocal.x / 5.0)) * band;
-    emit += vec3(0.55, 0.82, 1.25) * win * (0.35 + 0.65 * night);
-    float front = head * step(0.5, lN.x) * (1.0 - smoothstep(2.0, 3.0, abs(vLocal.z - vSize.z * 0.5)));
-    emit += vec3(${f3([HALO_HDR.navWhite, HALO_HDR.navWhite, HALO_HDR.navWhite * 0.95])}) * front * 0.6;
-  } else if (emitType > 0.5 && emitType < 2.5 && side) {
-    // okna w rzedach (co 6 j., na wielkich bryłach co 30 j.); noca czesc swieci
-    float big = step(150.0, vSize.z);
-    vec2 wgS = mix(vec2(4.0, 6.0), vec2(16.0, 30.0), big);
-    vec2 wg = vec2(fuv.x / wgS.x, (vLocal.z - 4.0) / wgS.y);
-    vec2 wc = floor(wg);
-    vec2 wf = fract(wg);
-    float frame = step(0.2, wf.x) * step(wf.x, 0.8) * step(0.25, wf.y) * step(wf.y, 0.75) * step(0.0, vLocal.z - 4.0) * step(vLocal.z, vSize.z - 4.0);
-    float lit = step(0.55, haloHash12(wc + vSeed * 57.0));
-    float aa = 1.0 - smoothstep(0.4, 1.2, fw / (4.0 * uDetailScale));
-    vec3 wcol = emitType < 1.5 ? uHdrWarm : uHdrCool;
-    emit += wcol * frame * lit * night * mix(0.28, 1.0, aa) * 0.9 * uLayers.y * uNightLights;
-    albedo = mix(albedo, vec3(0.02, 0.025, 0.03), frame * aa * 0.8);
-  } else if (emitType > 2.5 && emitType < 3.5) {
-    emit += uHdrStrip * 0.9;
-  } else if (emitType > 3.5 && emitType < 4.5) {
-    // sodowe lampy na gornych krawedziach
-    float lamp = top ? (1.0 - smoothstep(0.0, 2.5 + fw, min(edgeD3.x, edgeD3.y))) * step(0.72, fract(fuv.x / 14.0 + vSeed)) : 0.0;
-    emit += uHdrSodium * lamp * night;
-  } else if (emitType > 4.5 && emitType < 5.5 && top) {
-    // podloga tunelu tranzytu (poklady zatok maja typ 6): obrys, pasy, plamy reflektorow
-    vec2 q = vLocal.xy;
-    vec2 berth = abs(q) - vec2(1000.0, 460.0);
-    float outline = 1.0 - smoothstep(3.0, 6.0 + fw, abs(max(berth.x, berth.y)));
-    float lanes = (1.0 - smoothstep(1.5, 3.0 + fw, abs(abs(q.y) - 560.0))) * step(0.5, fract(q.x / 60.0));
-    float center = (1.0 - smoothstep(1.5, 3.0 + fw, abs(q.y))) * step(0.6, fract(q.x / 40.0));
-    vec3 paint = vec3(0.34, 0.26, 0.06);
-    albedo = mix(albedo, paint, max(outline, max(lanes, center)) * 0.85);
-    // swiatlo nocne: poswiata od scian (reflektory na scianach bocznych i tylnej)
-    // + latarnie wzdluz pasow prowadzacych, kazda inna
-    vec2 hb = 0.5 * vSize.xy;
-    float wallWash = exp(-(hb.x - 180.0 - abs(q.x)) / 160.0) * 0.5 + exp(-(q.y + hb.y) / 200.0) * 0.6;
-    float px = floor(q.x / 200.0);
-    vec2 lampP = vec2((px + 0.5) * 200.0, sign(q.y) * 560.0);
-    float lampK = 0.5 + 0.8 * haloHash12(vec2(px, sign(q.y)) + vSeed * 13.0);
-    float post = exp(-dot(q - lampP, q - lampP) / (2.0 * 45.0 * 45.0)) * lampK;
-    emit += vec3(0.9, 0.62, 0.34) * (wallWash * 0.22 + post * 0.3) * night + uHdrStrip * outline * 0.25 * night;
-  } else if (emitType > 5.5 && emitType < 6.5 && top) {
-    // poklad otwartej zatoki: bez znaczen (stanowiska K-7 rysuje render
-    // kompleksu), noca poswiata reflektorow scian bocznych i tylnej
-    vec2 q = vLocal.xy;
-    vec2 hb = 0.5 * vSize.xy;
-    float wallWash = exp(-(hb.x - abs(q.x)) / 220.0) * 0.55 + exp(-(q.y + hb.y) / 260.0) * 0.6;
-    emit += vec3(0.9, 0.62, 0.34) * wallWash * 0.24 * night;
-  } else if (emitType > 6.5 && emitType < 7.5 && side) {
-    // fasada megabudowli (ECUMENE): kondygnacje 4,5 j., przesla 5 j., szklo
-    // w ramach (cieplej: braz, chlodnej: stal), pas stropu co 12 kondygnacji.
-    // Swiatla nocne w trzech skalach: okno -> grupa 3 x 3 okien (zapalona
-    // lub nie) -> pas 12 kondygnacji; kazda skala to srednia poprzedniej,
-    // wiec z daleka wieza nie zlewa sie w jednolita tafle ani nie migocze
-    float faceId = abs(lN.x) > 0.5 ? (lN.x > 0.0 ? 1.0 : 2.0) : (lN.y > 0.0 ? 3.0 : 4.0);
-    bool coolF = pal > 27.5 && pal < 28.5;
-    vec2 fc = vec2(fuv.x / 5.0, vLocal.z / 4.5);
-    vec2 cid = floor(fc);
-    vec2 cf = fract(fc);
-    vec2 fwc = max(vec2(fwidth(fc.x), fwidth(fc.y)), vec2(1e-4));
-    float fwm = max(fwc.x, fwc.y);
-    float farA = smoothstep(0.35, 0.85, fwm / uDetailScale);
-    float farB = smoothstep(0.35, 0.85, fwm / (3.0 * uDetailScale));
-    float gx = smoothstep(0.16 - fwc.x, 0.16 + fwc.x, cf.x) * (1.0 - smoothstep(0.84 - fwc.x, 0.84 + fwc.x, cf.x));
-    float gy = smoothstep(0.24 - fwc.y, 0.24 + fwc.y, cf.y) * (1.0 - smoothstep(0.86 - fwc.y, 0.86 + fwc.y, cf.y));
-    float bz = vLocal.z / 54.0;
-    float fwb = max(fwidth(bz), 1e-4);
-    float slab = (1.0 - smoothstep(0.03 - fwb, 0.03 + fwb, abs(fract(bz + 0.5) - 0.5))) * (1.0 - smoothstep(0.2, 0.6, fwb));
-    float glaz = mix(gx * gy, 0.42, farA) * (1.0 - slab);
-    vec3 glassTint = coolF ? vec3(0.32, 0.41, 0.45) : vec3(0.46, 0.38, 0.30);
-    albedo = mix(base * 1.15, base * glassTint * 0.55, glaz);
-    albedo = mix(albedo, albedo * 1.6 + 0.02, bevel * 0.6);
-    facadeGlass = glaz;
-    // aktywnosc pasa 12 kondygnacji -> grupy 3 x 3 okien -> okna
-    float band = floor(cid.y / 12.0);
-    float bAct = 0.12 + 0.4 * haloHash12(vec2(band, faceId * 7.3 + vSeed * 13.0));
-    vec2 gid = floor(cid / 3.0);
-    float gOn = step(haloHash12(gid + vec2(faceId * 17.3, vSeed * 23.0)), bAct);
-    float pOn = mix(0.06, 0.8, gOn);
-    float on = step(haloHash12(cid + vec2(faceId * 31.7, vSeed * 57.0)), pOn);
-    float fl13 = cid.y - 13.0 * floor((cid.y + 0.5) / 13.0);
-    float lum = mix(0.5, 0.7, step(fl13, 7.5)) + 0.25 * haloHash12(cid + vec2(3.3, faceId));
-    vec2 gf = fract(cid / 3.0 + cf / 3.0);
-    vec2 fwg = fwc / 3.0;
-    float ggx = smoothstep(0.08 - fwg.x, 0.08 + fwg.x, gf.x) * (1.0 - smoothstep(0.92 - fwg.x, 0.92 + fwg.x, gf.x));
-    float ggy = smoothstep(0.1 - fwg.y, 0.1 + fwg.y, gf.y) * (1.0 - smoothstep(0.9 - fwg.y, 0.9 + fwg.y, gf.y));
-    float litA = on * lum * gx * gy;
-    float litB = pOn * 0.302 / 0.67 * ggx * ggy;
-    float litC = (bAct * 0.8 + (1.0 - bAct) * 0.06) * 0.302;
-    float lit = mix(mix(litA, litB, farA), litC, farB) * (1.0 - slab);
-    vec3 wcol = coolF ? uHdrCool : uHdrWarm;
-    emit += wcol * lit * night * 0.95 * uLayers.y * uNightLights;
-  }
-  if (pal > 25.5 && pal < 26.5) {
-    // pas swietlny megabudowli (korona, wejscie): cieply, noca pelny
-    emit += vec3(1.25, 0.98, 0.58) * mix(0.35, 1.0, night) * uLayers.y * uNightLights;
-  }
-  if (vSize.z > 150.0 && side && pal < 23.5) {
-    // wielkie bryly (doki): zebra poziome co 60 j. i pilastry co 120 j.
-    float ribZ = 1.0 - smoothstep(1.5, 1.5 + fw, abs(fract(vLocal.z / 60.0) - 0.5) * 60.0 - 27.0);
-    float pil = 1.0 - smoothstep(3.0, 3.0 + fw, abs(fract(fuv.x / 120.0) - 0.5) * 120.0 - 54.0);
-    albedo *= 1.0 - 0.35 * max(ribZ, pil * 0.6);
-  }
-  if (pal > 8.5 && pal < 9.5 && side) {
-    // tunel: zebra co 30 j., miedzy nimi przeszklenie z cieplym wnetrzem noca
-    float rib = 1.0 - smoothstep(2.0, 3.5 + fw, abs(fract(vLocal.z / 30.0) - 0.5) * 30.0 - 12.0);
-    albedo = mix(vec3(0.02, 0.03, 0.04), albedo, rib);
-    emit += uHdrWarm * (1.0 - rib) * night * 0.35;
-  }
-
-  if (pal > 17.5 && pal < 18.5) emit += uHdrWarm * indEmit * night * 0.35 * uLayers.y * uNightLights;
-  if (pal > 28.5 && pal < 29.5 && side) {
-    // panel radiatora (Jowisz): zebra co 4 j., noca slaby zar goracego metalu
-    float ribR = step(0.5, fract(fuv.x / 4.0)) * (1.0 - smoothstep(0.6, 2.0, fw));
-    albedo *= 0.85 + 0.3 * ribR;
-    float hot = smoothstep(0.1, 0.9, tH) * (0.6 + 0.4 * vSeed);
-    emit += vec3(0.95, 0.22, 0.06) * hot * (0.12 + 0.35 * night) * uLayers.y;
-  }
-  if (pal > 18.5 && pal < 19.5) {
-    // swiatlo przeszkodowe na szczycie komina (miga)
-    float beacon = step(0.96, tH) * (lN.z > 0.5 ? 1.0 : step(0.985, tH)) * (0.5 + 0.5 * step(0.5, fract(uTime * 0.8 + vSeed)));
-    emit += vec3(1.25, 0.12, 0.06) * beacon;
-  }
-  float NdL = max(dot(N, L), 0.0);
-  float NdV = max(dot(N, V), 1e-3);
-  vec3 H = normalize(L + V);
-  float rough = pal > 6.5 && pal < 7.5 ? 0.12 : (pal > 12.5 ? 0.25 : 0.45);
-  if (pal > 23.5 && pal < 24.5) rough = 0.55;                 // kamien
-  rough = mix(rough, 0.12, facadeGlass);                      // szklo fasady
-  float a2 = rough * rough;
-  float NdH = max(dot(N, H), 0.0);
-  float dd = NdH * NdH * (a2 - 1.0) + 1.0;
-  vec3 F0 = vec3(mix(pal > 6.5 && pal < 7.5 ? 0.08 : 0.05, 0.08, facadeGlass));
-  vec3 Fs = F0 + (1.0 - F0) * pow(1.0 - max(dot(H, V), 0.0), 5.0);
-  vec3 spec = Fs * min(a2 / (HALO_PI * dd * dd) * 0.25 / NdV, 6.0) * NdL;
-  vec3 amb = haloPlanetshine(p, N) + vec3(uNightAmbient);
-  if (inAir) amb += haloSkyAmbient(p, N);
-  // swiatlo odbite od dachu (jasny metal pod spodem)
-  amb += vec3(0.020, 0.021, 0.023) * haloLuma(sunVis) * max(L.z, 0.0) * max(-N.z * 0.5 + 0.5, 0.0);
-  vec3 color = albedo * ao * (uSunColor * sunVis * NdL + amb) + uSunColor * sunVis * spec * 0.6;
-  // odbicie nieba: szklo (mocno) i metal (slabo); w habitacie niebo, w kosmosie czern
-  {
-    vec3 R = reflect(-V, N);
-    float up = clamp(dot(R, upW), -1.0, 1.0);
-    vec3 skyR = inAir
-      ? mix(uMegaSky[0], uMegaSky[1], clamp(up, 0.0, 1.0)) * haloLuma(haloSunVisibility(p + upW * 600.0, L)) * max(dot(upW, L) + 0.3, 0.0)
-      : vec3(0.004, 0.005, 0.008);
-    skyR = mix(skyR, vec3(0.03, 0.035, 0.03), smoothstep(0.05, -0.2, up));
-    float glassK = max(pal > 6.5 && pal < 7.5 ? 1.0 : 0.25, facadeGlass);
-    float Fr = 0.04 + 0.96 * pow(1.0 - NdV, 5.0);
-    color += skyR * mix(0.08, 1.0, Fr) * glassK * (side ? 1.0 : 0.6);
-  }
-  color += emit;
-  color = haloApplyAir(color, rel, haloIGN(gl_FragCoord.xy));
-  gl_FragColor = vec4(max(color, vec3(0.0)), 1.0);
+    const emit = vec3(0.0).toVar();
+    const facadeGlass = float(0.0).toVar();
+    const L = U.uSunDir;
+    const sunVis = H.haloSunVisibility(p.add(N.mul(2.0)), L).toVar();
+    // „góra” bryły: w powietrzu habitatu kierunek mieszkańców, poza nim +Z
+    const alt = H.haloAltitude(p).toVar();
+    const inAir = alt.greaterThan(-60.0).and(alt.lessThan(U.uFloorDims.w)).and(p.z.lessThan(U.uRingZ.y)).and(p.z.greaterThan(U.uRingZ.z)).toVar();
+    const upW = inAir.select(H.haloUp(p), vec3(0.0, 0.0, 1.0)).toVar();
+    const dayG = H.haloLuma(H.haloPlanetTransmit(p, L)).mul(smoothstep(-0.02, 0.12, dot(upW, L))).toVar();
+    const night = float(1.0).sub(smoothstep(0.02, 0.25, H.haloLuma(sunVis).mul(max(dot(upW, L).add(0.2), 0.0))))
+      .mul(float(1.0).sub(float(0.9).mul(dayG).mul(inAir.select(float(1.0), float(0.0))))).toVar();
+    const emitType = emitK;
+    const side = top.not().and(abs(lN.z).lessThan(0.5)).toVar();
+    If(inRange(pal, 12.5, 13.5), () => {
+      // pociąg: pas okien + reflektory czoła
+      const head = emitK.sub(float(2.0).mul(floor(emitK.add(0.5).mul(0.5)))).greaterThan(0.5).select(float(1.0), float(0.0));
+      const band = side.select(float(1.0).sub(smoothstep(1.2, 1.6, abs(vLocal.z.sub(vSize.z.mul(0.55))).div(1.4))), float(0.0));
+      const win = step(0.45, fract(vLocal.x.div(5.0))).mul(band);
+      emit.addAssign(vec3(0.55, 0.82, 1.25).mul(win).mul(float(0.35).add(float(0.65).mul(night))));
+      const front = head.mul(step(0.5, lN.x)).mul(float(1.0).sub(smoothstep(2.0, 3.0, abs(vLocal.z.sub(vSize.z.mul(0.5))))));
+      emit.addAssign(vec3(r3(NAV_WHITE), r3(NAV_WHITE), r3(NAV_WHITE * 0.95)).mul(front).mul(0.6));
+    }).ElseIf(emitType.greaterThan(0.5).and(emitType.lessThan(2.5)).and(side), () => {
+      // okna w rzędach (co 6 j., na wielkich bryłach co 30 j.); nocą część świeci
+      const big = step(150.0, vSize.z);
+      const wgS = mix(vec2(4.0, 6.0), vec2(16.0, 30.0), big).toVar();
+      const wg = vec2(fuv.x.div(wgS.x), vLocal.z.sub(4.0).div(wgS.y)).toVar();
+      const wc = floor(wg).toVar();
+      const wf = fract(wg).toVar();
+      const frame = step(0.2, wf.x).mul(step(wf.x, 0.8)).mul(step(0.25, wf.y)).mul(step(wf.y, 0.75))
+        .mul(step(0.0, vLocal.z.sub(4.0))).mul(step(vLocal.z, vSize.z.sub(4.0))).toVar();
+      const lit = step(0.55, haloHash12(haloFmaV2(vSeed, 57.0, wc)));
+      const aa = float(1.0).sub(smoothstep(0.4, 1.2, fw.div(float(4.0).mul(U.uDetailScale)))).toVar();
+      const wcol = emitType.lessThan(1.5).select(U.uHdrWarm, U.uHdrCool);
+      emit.addAssign(wcol.mul(frame).mul(lit).mul(night).mul(mix(0.28, 1.0, aa)).mul(0.9).mul(U.uLayers.y).mul(U.uNightLights));
+      albedo.assign(mix(albedo, vec3(0.02, 0.025, 0.03), frame.mul(aa).mul(0.8)));
+    }).ElseIf(emitType.greaterThan(2.5).and(emitType.lessThan(3.5)), () => {
+      emit.addAssign(U.uHdrStrip.mul(0.9));
+    }).ElseIf(emitType.greaterThan(3.5).and(emitType.lessThan(4.5)), () => {
+      // sodowe lampy na górnych krawędziach
+      const lamp = top.select(
+        float(1.0).sub(smoothstep(0.0, float(2.5).add(fw), min(edgeD3.x, edgeD3.y))).mul(step(0.72, fract(fuv.x.div(14.0).add(vSeed)))),
+        float(0.0));
+      emit.addAssign(U.uHdrSodium.mul(lamp).mul(night));
+    }).ElseIf(emitType.greaterThan(4.5).and(emitType.lessThan(5.5)).and(top), () => {
+      // podłoga tunelu tranzytu (pokłady zatok mają typ 6): obrys, pasy, plamy reflektorów
+      const q = vLocal.xy.toVar();
+      const berth = abs(q).sub(vec2(1000.0, 460.0)).toVar();
+      const outline = float(1.0).sub(smoothstep(3.0, float(6.0).add(fw), abs(max(berth.x, berth.y)))).toVar();
+      const lanes = float(1.0).sub(smoothstep(1.5, float(3.0).add(fw), abs(abs(q.y).sub(560.0)))).mul(step(0.5, fract(q.x.div(60.0))));
+      const center = float(1.0).sub(smoothstep(1.5, float(3.0).add(fw), abs(q.y))).mul(step(0.6, fract(q.x.div(40.0))));
+      const paint = vec3(0.34, 0.26, 0.06);
+      albedo.assign(mix(albedo, paint, max(outline, max(lanes, center)).mul(0.85)));
+      // światło nocne: poświata od ścian (reflektory na ścianach bocznych i tylnej)
+      // + latarnie wzdłuż pasów prowadzących, każda inna
+      const hb = vSize.xy.mul(0.5).toVar();
+      const wallWash = exp(hb.x.sub(180.0).sub(abs(q.x)).negate().div(160.0)).mul(0.5)
+        .add(exp(q.y.add(hb.y).negate().div(200.0)).mul(0.6)).toVar();
+      const px = floor(q.x.div(200.0)).toVar();
+      const lampP = vec2(px.add(0.5).mul(200.0), sign(q.y).mul(560.0));
+      const lampK = float(0.5).add(float(0.8).mul(haloHash12(haloFmaV2(vSeed, 13.0, vec2(px, sign(q.y))))));
+      const dl = q.sub(lampP).toVar();
+      const post = exp(dot(dl, dl).negate().div(2.0 * 45.0 * 45.0)).mul(lampK);
+      emit.addAssign(vec3(0.9, 0.62, 0.34).mul(wallWash.mul(0.22).add(post.mul(0.3))).mul(night).add(U.uHdrStrip.mul(outline).mul(0.25).mul(night)));
+    }).ElseIf(emitType.greaterThan(5.5).and(emitType.lessThan(6.5)).and(top), () => {
+      // pokład otwartej zatoki: bez znaczeń (stanowiska K-7 rysuje render kompleksu),
+      // nocą poświata reflektorów ścian bocznych i tylnej
+      const q = vLocal.xy.toVar();
+      const hb = vSize.xy.mul(0.5).toVar();
+      const wallWash = exp(hb.x.sub(abs(q.x)).negate().div(220.0)).mul(0.55).add(exp(q.y.add(hb.y).negate().div(260.0)).mul(0.6));
+      emit.addAssign(vec3(0.9, 0.62, 0.34).mul(wallWash).mul(0.24).mul(night));
+    }).ElseIf(emitType.greaterThan(6.5).and(emitType.lessThan(7.5)).and(side), () => {
+      // fasada megabudowli (ECUMENE): kondygnacje 4,5 j., przęsła 5 j., szkło w ramach (cieplej:
+      // brąz, chłodnej: stal), pas stropu co 12 kondygnacji. Światła nocne w trzech skalach:
+      // okno → grupa 3 × 3 okien (zapalona lub nie) → pas 12 kondygnacji; każda skala to średnia
+      // poprzedniej, więc z daleka wieża nie zlewa się w jednolitą taflę ani nie migocze
+      const faceId = abs(lN.x).greaterThan(0.5).select(lN.x.greaterThan(0.0).select(float(1.0), float(2.0)),
+        lN.y.greaterThan(0.0).select(float(3.0), float(4.0))).toVar();
+      const coolF = inRange(pal, 27.5, 28.5).toVar();
+      const fc = vec2(fuv.x.div(5.0), vLocal.z.div(4.5)).toVar();
+      const cid = floor(fc).toVar();
+      const cf = fract(fc).toVar();
+      const fwc = fcFw;
+      const fwm = max(fwc.x, fwc.y).toVar();
+      const farA = smoothstep(0.35, 0.85, fwm.div(U.uDetailScale)).toVar();
+      const farB = smoothstep(0.35, 0.85, fwm.div(float(3.0).mul(U.uDetailScale))).toVar();
+      const gx = smoothstep(float(0.16).sub(fwc.x), float(0.16).add(fwc.x), cf.x)
+        .mul(float(1.0).sub(smoothstep(float(0.84).sub(fwc.x), float(0.84).add(fwc.x), cf.x))).toVar();
+      const gy = smoothstep(float(0.24).sub(fwc.y), float(0.24).add(fwc.y), cf.y)
+        .mul(float(1.0).sub(smoothstep(float(0.86).sub(fwc.y), float(0.86).add(fwc.y), cf.y))).toVar();
+      const bz = vLocal.z.div(54.0);
+      const fwb = bzFw;
+      const slab = float(1.0).sub(smoothstep(float(0.03).sub(fwb), float(0.03).add(fwb), abs(fract(bz.add(0.5)).sub(0.5))))
+        .mul(float(1.0).sub(smoothstep(0.2, 0.6, fwb))).toVar();
+      const glaz = mix(gx.mul(gy), 0.42, farA).mul(float(1.0).sub(slab)).toVar();
+      const glassTint = coolF.select(vec3(0.32, 0.41, 0.45), vec3(0.46, 0.38, 0.30));
+      albedo.assign(mix(base.mul(1.15), base.mul(glassTint).mul(0.55), glaz));
+      albedo.assign(mix(albedo, albedo.mul(1.6).add(0.02), bevel.mul(0.6)));
+      facadeGlass.assign(glaz);
+      // aktywność pasa 12 kondygnacji → grupy 3 × 3 okien → okna
+      const band = floor(cid.y.div(12.0));
+      // ściana·7,3 + ziarno·13: baza scala iloczyn ziarna (mad(ziarno, 13, ściana·7,3); odwrotnie 82,6% bit w bit)
+      const bAct = float(0.12).add(float(0.4).mul(haloHash12(vec2(band, haloFma(vSeed, 13.0, faceId.mul(7.3)))))).toVar();
+      const gid = floor(cid.div(3.0));
+      const gOn = step(haloHash12(vec2(haloFma(faceId, 17.3, gid.x), haloFma(vSeed, 23.0, gid.y))), bAct);
+      const pOn = mix(0.06, 0.8, gOn).toVar();
+      const on = step(haloHash12(vec2(haloFma(faceId, 31.7, cid.x), haloFma(vSeed, 57.0, cid.y))), pOn);
+      const fl13 = cid.y.sub(float(13.0).mul(floor(cid.y.add(0.5).div(13.0))));
+      const lum = mix(0.5, 0.7, step(fl13, 7.5)).add(float(0.25).mul(haloHash12(cid.add(vec2(3.3, faceId)))));
+      const gf = fract(cid.div(3.0).add(cf.div(3.0))).toVar();
+      const fwg = fwc.div(3.0).toVar();
+      const ggx = smoothstep(float(0.08).sub(fwg.x), float(0.08).add(fwg.x), gf.x)
+        .mul(float(1.0).sub(smoothstep(float(0.92).sub(fwg.x), float(0.92).add(fwg.x), gf.x)));
+      const ggy = smoothstep(float(0.1).sub(fwg.y), float(0.1).add(fwg.y), gf.y)
+        .mul(float(1.0).sub(smoothstep(float(0.9).sub(fwg.y), float(0.9).add(fwg.y), gf.y)));
+      const litA = on.mul(lum).mul(gx).mul(gy);
+      const litB = pOn.mul(0.302).div(0.67).mul(ggx).mul(ggy);
+      const litC = bAct.mul(0.8).add(float(1.0).sub(bAct).mul(0.06)).mul(0.302);
+      const lit = mix(mix(litA, litB, farA), litC, farB).mul(float(1.0).sub(slab));
+      const wcol = coolF.select(U.uHdrCool, U.uHdrWarm);
+      emit.addAssign(wcol.mul(lit).mul(night).mul(0.95).mul(U.uLayers.y).mul(U.uNightLights));
+    });
+    If(inRange(pal, 25.5, 26.5), () => {
+      // pas świetlny megabudowli (korona, wejście): ciepły, nocą pełny
+      emit.addAssign(vec3(1.25, 0.98, 0.58).mul(mix(0.35, 1.0, night)).mul(U.uLayers.y).mul(U.uNightLights));
+    });
+    If(vSize.z.greaterThan(150.0).and(side).and(pal.lessThan(23.5)), () => {
+      // wielkie bryły (doki): żebra poziome co 60 j. i pilastry co 120 j.
+      const ribZ = float(1.0).sub(smoothstep(1.5, float(1.5).add(fw), abs(fract(vLocal.z.div(60.0)).sub(0.5)).mul(60.0).sub(27.0)));
+      const pil = float(1.0).sub(smoothstep(3.0, float(3.0).add(fw), abs(fract(fuv.x.div(120.0)).sub(0.5)).mul(120.0).sub(54.0)));
+      albedo.mulAssign(float(1.0).sub(float(0.35).mul(max(ribZ, pil.mul(0.6)))));
+    });
+    If(inRange(pal, 8.5, 9.5).and(side), () => {
+      // tunel: żebra co 30 j., między nimi przeszklenie z ciepłym wnętrzem nocą
+      const rib = float(1.0).sub(smoothstep(2.0, float(3.5).add(fw), abs(fract(vLocal.z.div(30.0)).sub(0.5)).mul(30.0).sub(12.0))).toVar();
+      albedo.assign(mix(vec3(0.02, 0.03, 0.04), albedo, rib));
+      emit.addAssign(U.uHdrWarm.mul(float(1.0).sub(rib)).mul(night).mul(0.35));
+    });
+    If(inRange(pal, 17.5, 18.5), () => {
+      emit.addAssign(U.uHdrWarm.mul(indEmit).mul(night).mul(0.35).mul(U.uLayers.y).mul(U.uNightLights));
+    });
+    If(inRange(pal, 28.5, 29.5).and(side), () => {
+      // panel radiatora (Jowisz): żebra co 4 j., nocą słaby żar gorącego metalu
+      const ribR = step(0.5, fract(fuv.x.div(4.0))).mul(float(1.0).sub(smoothstep(0.6, 2.0, fw)));
+      albedo.mulAssign(float(0.85).add(float(0.3).mul(ribR)));
+      const hot = smoothstep(0.1, 0.9, tH).mul(float(0.6).add(float(0.4).mul(vSeed)));
+      emit.addAssign(vec3(0.95, 0.22, 0.06).mul(hot).mul(float(0.12).add(float(0.35).mul(night))).mul(U.uLayers.y));
+    });
+    If(inRange(pal, 18.5, 19.5), () => {
+      // światło przeszkodowe na szczycie komina (miga)
+      const beacon = step(0.96, tH).mul(lN.z.greaterThan(0.5).select(float(1.0), step(0.985, tH)))
+        .mul(float(0.5).add(float(0.5).mul(step(0.5, fract(U.uTime.mul(0.8).add(vSeed))))));
+      emit.addAssign(vec3(1.25, 0.12, 0.06).mul(beacon));
+    });
+    const NdL = max(dot(N, L), 0.0).toVar();
+    const NdV = max(dot(N, V), 1e-3).toVar();
+    const Hv = normalize(L.add(V)).toVar();
+    const rough = inRange(pal, 6.5, 7.5).select(float(0.12), pal.greaterThan(12.5).select(float(0.25), float(0.45))).toVar();
+    If(inRange(pal, 23.5, 24.5), () => { rough.assign(0.55); });   // kamień
+    rough.assign(mix(rough, 0.12, facadeGlass));                    // szkło fasady
+    const a2 = rough.mul(rough).toVar();
+    const NdH = max(dot(N, Hv), 0.0).toVar();
+    const dd = NdH.mul(NdH).mul(a2.sub(1.0)).add(1.0).toVar();
+    const F0 = vec3(mix(inRange(pal, 6.5, 7.5).select(float(0.08), float(0.05)), 0.08, facadeGlass)).toVar();
+    const Fs = F0.add(vec3(1.0).sub(F0).mul(pow5(float(1.0).sub(max(dot(Hv, V), 0.0))))).toVar();
+    const spec = Fs.mul(min(a2.div(float(HALO_PI).mul(dd).mul(dd)).mul(0.25).div(NdV), 6.0)).mul(NdL).toVar();
+    const amb = H.haloPlanetshine(p, N).add(vec3(U.uNightAmbient)).toVar();
+    If(inAir, () => { amb.addAssign(H.haloSkyAmbient(p, N)); });
+    // światło odbite od dachu (jasny metal pod spodem)
+    amb.addAssign(vec3(0.020, 0.021, 0.023).mul(H.haloLuma(sunVis)).mul(max(L.z, 0.0)).mul(max(N.z.negate().mul(0.5).add(0.5), 0.0)));
+    const color = albedo.mul(ao).mul(U.uSunColor.mul(sunVis).mul(NdL).add(amb)).add(U.uSunColor.mul(sunVis).mul(spec).mul(0.6)).toVar();
+    // odbicie nieba: szkło (mocno) i metal (słabo); w habitacie niebo, w kosmosie czerń
+    const R = reflect(V.negate(), N).toVar();
+    const up = clamp(dot(R, upW), -1.0, 1.0).toVar();
+    const skyR = vec3(0.004, 0.005, 0.008).toVar();
+    If(inAir, () => {
+      skyR.assign(mix(megaSky.element(0), megaSky.element(1), clamp(up, 0.0, 1.0))
+        .mul(H.haloLuma(H.haloSunVisibility(p.add(upW.mul(600.0)), L))).mul(max(dot(upW, L).add(0.3), 0.0)));
+    });
+    skyR.assign(mix(skyR, vec3(0.03, 0.035, 0.03), haloSmooth(0.05, -0.2, up)));
+    const glassK = max(inRange(pal, 6.5, 7.5).select(float(1.0), float(0.25)), facadeGlass);
+    const Fr = float(0.04).add(float(0.96).mul(pow5(float(1.0).sub(NdV))));
+    color.addAssign(skyR.mul(mix(0.08, 1.0, Fr)).mul(glassK).mul(side.select(float(1.0), float(0.6))));
+    color.addAssign(emit);
+    color.assign(H.haloApplyAir(color, rel, H.haloIGN(H.haloFragCoordGL()), airSteps));
+    return vec4(max(color, vec3(0.0)), 1.0);
+  })();
 }
-`;
 
-// Szkło kopuł-biosfer (haloRingDomes.js): półkula przezroczysta, żebra
-// (południki i równoleżniki) i drobna siatka rombów z położenia na kopule,
-// Fresnel z odbiciem nieba habitatu, odblask słońca, nocą ciepła poświata
-// wnętrza. Paleta instancji = typ wnętrza (barwa szkła), emisja = ciepłe
-// wnętrze. Jedna siatka na wszystkie kopuły (1 draw call), bez zapisu głębi.
-const GLASS_FRAGMENT = /* glsl */`
-${HALO_GLSL_COMMON}
-${HALO_GLSL_NOISE}
-${HALO_GLSL_LIGHT}
-${HALO_GLSL_AIR}
-varying vec3 vRel;
-varying vec3 vNormal;
-varying vec3 vLocal;
-varying vec3 vLocalN;
-varying vec3 vSize;
-varying float vMat;
-varying float vSeed;
-
-float glassLine(float x, float w, float fw) {
-  float d = abs(fract(x + 0.5) - 0.5);
-  return 1.0 - smoothstep(w, w + fw, d);
+// ---------------------------------------------------------------------------
+// Szkło kopuł-biosfer (haloRingDomes.js; dawny GLASS_FRAGMENT): półkula przezroczysta, żebra
+// (południki i równoleżniki) i drobna siatka rombów z położenia na kopule, Fresnel z odbiciem
+// nieba habitatu, odblask słońca, nocą ciepła poświata wnętrza. Paleta instancji = typ wnętrza
+// (barwa szkła), emisja = ciepłe wnętrze. Jedna siatka na wszystkie kopuły (1 draw call), bez
+// zapisu głębi.
+export function makeHaloGlassFragment({ u, v, airSteps = HALO_MEGA_AIR_STEPS }) {
+  const H = haloRingTSL(u);
+  const U = H.uniforms;
+  const megaSky = nodeOf(u.uMegaSky);
+  const glassLine = (x, w, fwv) => float(1.0).sub(smoothstep(w, float(w).add(fwv), abs(fract(x.add(0.5)).sub(0.5))));
+  return Fn(() => {
+    const rel = vec3(v.rel).toVar();
+    const dist = length(rel).toVar();
+    const V = rel.negate().div(max(dist, 1e-3)).toVar();
+    const p = U.uCamLocal.add(rel).toVar();
+    const N = normalize(v.normal).toVar();
+    const NdV = dot(N, V).toVar();
+    If(NdV.lessThan(0.0), () => {
+      N.assign(N.negate());
+      NdV.assign(NdV.negate());
+    });
+    const matI = floor(float(v.mat).add(0.5)).toVar();
+    const warmK = floor(matI.add(0.5).div(32.0)).toVar();
+    const type = matI.sub(warmK.mul(32.0)).toVar();
+    // położenie na kopule: wysokość kątowa (0 u podstawy) i azymut
+    const q = vec3(v.local).div(max(vec3(v.size), vec3(1e-3))).toVar();
+    const zq = clamp(q.z, 0.0, 1.0).toVar();
+    const el = asin(zq).div(1.5707963).toVar();
+    const az = atan(q.y, q.x).div(6.2831853).toVar();
+    // fwidth azymutu bez skoku na szwie ±π
+    const fwAz = min(fwidth(az), fwidth(fract(az.add(0.5)))).toVar();
+    const fwEl = fwidth(el).toVar();
+    const nMer = 16.0;
+    const nPar = 6.0;
+    const g = vec2(az.mul(nMer), el.mul(nPar)).toVar();
+    const fwg = vec2(fwAz.mul(nMer), fwEl.mul(nPar)).add(1e-4).toVar();
+    // żebra: południki (gasną przy szczycie, gdzie się zbiegają) i równoleżniki
+    const mer = glassLine(g.x, 0.035, fwg.x).mul(float(1.0).sub(smoothstep(0.82, 0.95, zq)));
+    const par = glassLine(g.y, 0.05, fwg.y).toVar();
+    const rib = max(mer, par).toVar();
+    // drobna siatka rombów (geodezyjna), z daleka średnia zamiast migotania
+    const g2 = g.mul(vec2(3.0, 3.0)).toVar();
+    const fw2 = max(fwg.x, fwg.y).mul(3.0).toVar();
+    const mesh = max(glassLine(g2.x.add(g2.y), 0.04, fw2), glassLine(g2.x.sub(g2.y), 0.04, fw2)).toVar();
+    mesh.assign(mix(mesh, 0.18, smoothstep(0.25, 0.8, fw2)).mul(float(1.0).sub(smoothstep(0.85, 0.97, zq))));
+    // barwa szkła wg typu wnętrza (las, tropiki, ogród, rekreacja, dzicz, woda)
+    const tint = vec3(0.55, 0.78, 0.95).toVar();
+    If(type.greaterThan(0.5).and(type.lessThan(1.5)), () => { tint.assign(vec3(0.55, 0.85, 0.85)); });
+    If(type.greaterThan(1.5).and(type.lessThan(2.5)), () => { tint.assign(vec3(0.70, 0.82, 0.95)); });
+    If(type.greaterThan(2.5).and(type.lessThan(3.5)), () => { tint.assign(vec3(0.65, 0.80, 1.00)); });
+    If(type.greaterThan(3.5).and(type.lessThan(4.5)), () => { tint.assign(vec3(0.50, 0.75, 0.90)); });
+    If(type.greaterThan(4.5), () => { tint.assign(vec3(0.45, 0.80, 1.00)); });
+    If(type.greaterThan(5.5), () => { tint.assign(vec3(0.62, 0.72, 0.80)); });   // miasto pod kopułą (Mars)
+    tint.mulAssign(U.uDomeTint);
+    const L = U.uSunDir;
+    const sunVis = H.haloSunVisibility(p.add(N.mul(2.0)), L).toVar();
+    const upW = H.haloUp(p).toVar();
+    const dayG = H.haloLuma(H.haloPlanetTransmit(p, L)).mul(smoothstep(-0.02, 0.12, dot(upW, L))).toVar();
+    const night = float(1.0).sub(smoothstep(0.02, 0.25, H.haloLuma(sunVis).mul(max(dot(upW, L).add(0.2), 0.0))))
+      .mul(float(1.0).sub(float(0.9).mul(dayG))).toVar();
+    const fres = float(0.04).add(float(0.96).mul(pow5(float(1.0).sub(NdV)))).toVar();
+    // odbicie nieba habitatu (jak szkło megastruktury)
+    const R = reflect(V.negate(), N).toVar();
+    const up = clamp(dot(R, upW), -1.0, 1.0).toVar();
+    const skyR = mix(megaSky.element(0), megaSky.element(1), clamp(up, 0.0, 1.0))
+      .mul(H.haloLuma(H.haloSunVisibility(p.add(upW.mul(600.0)), L))).mul(max(dot(upW, L).add(0.3), 0.0)).toVar();
+    skyR.assign(mix(skyR, vec3(0.03, 0.035, 0.03), haloSmooth(0.05, -0.2, up)));
+    const Hv = normalize(L.add(V)).toVar();
+    const NdL = max(dot(N, L), 0.0).toVar();
+    const NdH = max(dot(N, Hv), 0.0).toVar();
+    const a2 = float(0.012);
+    const dd = NdH.mul(NdH).mul(a2.sub(1.0)).add(1.0).toVar();
+    const spec = min(a2.div(float(HALO_PI).mul(dd).mul(dd)).mul(0.25).div(max(NdV, 0.05)), 8.0).mul(NdL).toVar();
+    const amb = H.haloSkyAmbient(p, N).add(vec3(U.uNightAmbient)).toVar();
+    const glassC = tint.mul(0.05).mul(U.uSunColor.mul(sunVis).mul(NdL).add(amb)).add(skyR.mul(mix(0.25, 1.0, fres))).toVar();
+    glassC.addAssign(U.uSunColor.mul(sunVis).mul(spec).mul(fres).mul(0.9));
+    // rama: jasny metal, oświetlony
+    const frameC = vec3(0.26, 0.27, 0.28).mul(U.uSunColor.mul(sunVis).mul(float(0.35).add(float(0.65).mul(NdL))).add(amb)).toVar();
+    const warmC = warmK.greaterThan(0.5).select(vec3(1.0, 0.78, 0.52), vec3(0.62, 0.8, 1.0)).toVar();
+    // nocą poświata wnętrza na szkle (słaba, przy podstawie) i lampy na żebrach
+    const lowK = float(1.0).sub(zq).mul(float(1.0).sub(zq));
+    glassC.addAssign(warmC.mul(0.06).mul(night).mul(U.uLayers.y).mul(U.uNightLights).mul(float(0.25).add(float(0.75).mul(lowK))));
+    frameC.addAssign(warmC.mul(0.35).mul(night).mul(U.uLayers.y).mul(U.uNightLights).mul(par).mul(step(fract(g.x.mul(2.0)), 0.12)));
+    const frameK = max(rib, mesh.mul(0.55));
+    const color = mix(glassC, frameC, frameK).toVar();
+    const alpha = clamp(float(0.12).add(float(0.5).mul(fres)).add(float(0.8).mul(rib)).add(float(0.4).mul(mesh)).add(float(0.06).mul(night)), 0.0, 0.95);
+    color.assign(H.haloApplyAir(color, rel, H.haloIGN(H.haloFragCoordGL()), airSteps));
+    return vec4(max(color, vec3(0.0)), alpha);
+  })();
 }
 
-void main() {
-  vec3 rel = vRel;
-  float dist = length(rel);
-  vec3 V = -rel / max(dist, 1e-3);
-  vec3 p = uCamLocal + rel;
-  vec3 N = normalize(vNormal);
-  float NdV = dot(N, V);
-  if (NdV < 0.0) { N = -N; NdV = -NdV; }
-  float matI = floor(vMat + 0.5);
-  float warmK = floor((matI + 0.5) / 32.0);
-  float type = matI - 32.0 * warmK;
-  // polozenie na kopule: wysokosc katowa (0 u podstawy) i azymut
-  vec3 q = vLocal / max(vSize, vec3(1e-3));
-  float zq = clamp(q.z, 0.0, 1.0);
-  float el = asin(zq) / 1.5707963;
-  float az = atan(q.y, q.x) / 6.2831853;
-  // fwidth azymutu bez skoku na szwie +-pi
-  float fwAz = min(fwidth(az), fwidth(fract(az + 0.5)));
-  float fwEl = fwidth(el);
-  float nMer = 16.0;
-  float nPar = 6.0;
-  vec2 g = vec2(az * nMer, el * nPar);
-  vec2 fwg = vec2(fwAz * nMer, fwEl * nPar) + 1e-4;
-  // zebra: poludniki (gasna przy szczycie, gdzie sie zbiegaja) i rownolezniki
-  float mer = glassLine(g.x, 0.035, fwg.x) * (1.0 - smoothstep(0.82, 0.95, zq));
-  float par = glassLine(g.y, 0.05, fwg.y);
-  float rib = max(mer, par);
-  // drobna siatka rombow (geodezyjna), z daleka srednia zamiast migotania
-  vec2 g2 = g * vec2(3.0, 3.0);
-  float fw2 = max(fwg.x, fwg.y) * 3.0;
-  float mesh = max(glassLine(g2.x + g2.y, 0.04, fw2), glassLine(g2.x - g2.y, 0.04, fw2));
-  mesh = mix(mesh, 0.18, smoothstep(0.25, 0.8, fw2)) * (1.0 - smoothstep(0.85, 0.97, zq));
-  // barwa szkla wg typu wnetrza (las, tropiki, ogrod, rekreacja, dzicz, woda)
-  vec3 tint = vec3(0.55, 0.78, 0.95);
-  if (type > 0.5 && type < 1.5) tint = vec3(0.55, 0.85, 0.85);
-  if (type > 1.5 && type < 2.5) tint = vec3(0.70, 0.82, 0.95);
-  if (type > 2.5 && type < 3.5) tint = vec3(0.65, 0.80, 1.00);
-  if (type > 3.5 && type < 4.5) tint = vec3(0.50, 0.75, 0.90);
-  if (type > 4.5) tint = vec3(0.45, 0.80, 1.00);
-  if (type > 5.5) tint = vec3(0.62, 0.72, 0.80);   // miasto pod kopula (Mars)
-  tint *= uDomeTint;
-  vec3 L = uSunDir;
-  vec3 sunVis = haloSunVisibility(p + N * 2.0, L);
-  vec3 upW = haloUp(p);
-  float dayG = haloLuma(haloPlanetTransmit(p, L)) * smoothstep(-0.02, 0.12, dot(upW, L));
-  float night = (1.0 - smoothstep(0.02, 0.25, haloLuma(sunVis) * max(dot(upW, L) + 0.2, 0.0))) * (1.0 - 0.9 * dayG);
-  float fres = 0.04 + 0.96 * pow(1.0 - NdV, 5.0);
-  // odbicie nieba habitatu (jak szklo megastruktury)
-  vec3 R = reflect(-V, N);
-  float up = clamp(dot(R, upW), -1.0, 1.0);
-  vec3 skyR = mix(uMegaSky[0], uMegaSky[1], clamp(up, 0.0, 1.0)) * haloLuma(haloSunVisibility(p + upW * 600.0, L)) * max(dot(upW, L) + 0.3, 0.0);
-  skyR = mix(skyR, vec3(0.03, 0.035, 0.03), smoothstep(0.05, -0.2, up));
-  vec3 H = normalize(L + V);
-  float NdL = max(dot(N, L), 0.0);
-  float NdH = max(dot(N, H), 0.0);
-  float a2 = 0.012;
-  float dd = NdH * NdH * (a2 - 1.0) + 1.0;
-  float spec = min(a2 / (HALO_PI * dd * dd) * 0.25 / max(NdV, 0.05), 8.0) * NdL;
-  vec3 amb = haloSkyAmbient(p, N) + vec3(uNightAmbient);
-  vec3 glassC = tint * 0.05 * (uSunColor * sunVis * NdL + amb) + skyR * mix(0.25, 1.0, fres);
-  glassC += uSunColor * sunVis * spec * fres * 0.9;
-  // rama: jasny metal, oswietlony
-  vec3 frameC = vec3(0.26, 0.27, 0.28) * (uSunColor * sunVis * (0.35 + 0.65 * NdL) + amb);
-  vec3 warmC = warmK > 0.5 ? vec3(1.0, 0.78, 0.52) : vec3(0.62, 0.8, 1.0);
-  // noca poswiata wnetrza na szkle (slaba, przy podstawie) i lampy na zebrach
-  float lowK = (1.0 - zq) * (1.0 - zq);
-  glassC += warmC * 0.06 * night * uLayers.y * uNightLights * (0.25 + 0.75 * lowK);
-  frameC += warmC * 0.35 * night * uLayers.y * uNightLights * par * step(fract(g.x * 2.0), 0.12);
-  float frameK = max(rib, mesh * 0.55);
-  vec3 color = mix(glassC, frameC, frameK);
-  float alpha = clamp(0.12 + 0.5 * fres + 0.8 * rib + 0.4 * mesh + 0.06 * night, 0.0, 0.95);
-  color = haloApplyAir(color, rel, haloIGN(gl_FragCoord.xy));
-  gl_FragColor = vec4(max(color, vec3(0.0)), alpha);
+// ---------------------------------------------------------------------------
+// Billboardy świateł pozycyjnych (dawne LIGHT_VERTEX / LIGHT_FRAGMENT): stały rozmiar w świecie,
+// ale nie mniejszy niż ~1,6 px (z daleka ring obrysowują migające punkty); fg — dach nad
+// płaszczyzną gry (widoczność górnej połowy wstęgi, dawne HALO_FG).
+export function makeHaloLightNodes({ u, su, segCells, pixelAngle, fg = false }) {
+  const H = haloRingTSL(u);
+  const U = H.uniforms;
+  const gridInfo = nodeOf(su.uGridInfo);
+  const vQuad = varyingProperty('vec2', 'vHaloQuad');
+  const vCol = varyingProperty('vec3', 'vHaloCol');
+  const vertexNode = Fn(() => {
+    const iL0 = attribute('iL0', 'vec4');   // segment, wzdłuż, dr, z
+    const iL1 = attribute('iL1', 'vec4');   // rozmiar, faza, barwa, tryb
+    const position = positionGeometry;
+    const cells = iL0.x.mul(segCells).sub(gridInfo.w).toVar();
+    cells.subAssign(gridInfo.z.mul(floor(cells.div(gridInfo.z).add(0.5))));
+    const sRel = cells.mul(gridInfo.x).add(iL0.y).toVar();
+    const rel = H.haloRelFromPolar(sRel.div(U.uFloorDims.z), iL0.z, iL0.w).toVar();
+    const world = modelWorldMatrix.mul(vec4(rel, 0.0)).xyz;
+    const view = cameraViewMatrix.mul(vec4(world, 0.0)).xyz.toVar();
+    const dist = max(view.z.negate(), 1.0);
+    const sizeMin = float(1.6).mul(pixelAngle).mul(dist);
+    const size = max(iL1.x, sizeMin).toVar();
+    // tryby migania
+    const t = U.uTime;
+    const ph = iL1.y;
+    const mode = iL1.w;
+    const k = float(1.0).toVar();
+    If(mode.lessThan(0.5), () => {
+      k.assign(sq(max(0.0, float(1.0).sub(fract(t.mul(0.9).add(ph)).mul(7.0)))));
+    }).ElseIf(mode.lessThan(1.5), () => {
+      k.assign(1.0);
+    }).ElseIf(mode.lessThan(2.5), () => {
+      k.assign(float(0.5).add(float(0.5).mul(sin(float(6.2831853).mul(t.mul(0.45).add(ph))))));
+    }).Else(() => {
+      k.assign(sq(max(0.0, float(1.0).sub(fract(t.mul(0.35).sub(ph.mul(4.0))).mul(5.0)))).mul(0.95).add(0.05));
+    });
+    const c = iL1.z;
+    const col = vec3(r3(NAV_WHITE), r3(NAV_WHITE * 0.97), r3(NAV_WHITE * 0.92)).toVar();
+    If(c.greaterThan(0.5), () => { col.assign(vec3(1.25, 0.1, 0.06)); });
+    If(c.greaterThan(1.5), () => { col.assign(U.uHdrStrip); });
+    If(c.greaterThan(2.5), () => { col.assign(U.uHdrWarm.mul(1.2)); });
+    If(c.greaterThan(3.5), () => { col.assign(vec3(0.1, 1.2, 0.35)); });
+    // z daleka (rozmiar podbity do min. piksela) energia maleje, żeby tysiące punktów nie zalały bloomu
+    const far = clamp(iL1.x.div(size), 0.2, 1.0);
+    vCol.assign(col.mul(k).mul(far).mul(H.haloFgVisibility(U.uCamLocal.add(rel), fg)));
+    vQuad.assign(position.xy);
+    const xy = view.xy.add(position.xy.mul(size).mul(float(0.6).add(float(0.4).mul(k))));
+    return cameraProjectionMatrix.mul(vec4(xy, view.z, 1.0));
+  })();
+  const fragmentNode = Fn(() => {
+    const q = vec2(vQuad).toVar();
+    const r2 = dot(q, q);
+    const a = exp(r2.negate().mul(5.0)).sub(0.0067).toVar();
+    If(a.lessThanEqual(0.0), () => { Discard(); });
+    return vec4(vec3(vCol).mul(a), 0.0);
+  })();
+  return { vertexNode, fragmentNode };
 }
-`;
+
+// NodeMaterial ringu ze stanem renderu jak dawny ShaderMaterial (bez mgły sceny i tone mappingu
+// materiału — jak ShaderMaterial w bazie WebGL); `uniforms` — podgląd wartości jak dawniej.
+export function haloNodeMaterial(name, { vertexNode, fragmentNode }, state, uniforms) {
+  const m = new NodeMaterial();
+  m.name = name;
+  m.vertexNode = vertexNode;
+  m.fragmentNode = fragmentNode;
+  m.fog = false;
+  m.toneMapped = false;
+  Object.assign(m, state);
+  m.uniforms = uniforms;
+  return m;
+}
 
 // Półkula szkła gęstsza niż prymityw kopuły (duże promienie, gładki obrys).
 function makeGlassDome() {
@@ -525,63 +647,6 @@ function makeGlassDome() {
   g.computeVertexNormals();
   return g;
 }
-
-// Billboardy świateł pozycyjnych: stały rozmiar w świecie, ale nie mniejszy
-// niż ~1,6 px (z daleka ring obrysowują migające punkty).
-const LIGHT_VERTEX = /* glsl */`
-${HALO_GLSL_COMMON}
-${HALO_GLSL_RTE}
-${HALO_GLSL_SURFACE}
-${HALO_GLSL_FG}
-uniform float uSegCells;
-uniform float uPixelAngle;     // 2 tan(fov/2) / wysokosc kadru [px]
-attribute vec4 iL0;            // segment, wzdluz, dr, z
-attribute vec4 iL1;            // rozmiar, faza, barwa, tryb
-varying vec2 vQuad;
-varying vec3 vCol;
-void main() {
-  float cells = iL0.x * uSegCells - uGridInfo.w;
-  cells -= uGridInfo.z * floor(cells / uGridInfo.z + 0.5);
-  float sRel = cells * uGridInfo.x + iL0.y;
-  vec3 rel = haloRelFromPolar(sRel / uFloorDims.z, iL0.z, iL0.w);
-  vec3 view = mat3(viewMatrix) * (mat3(modelMatrix) * rel);
-  float dist = max(-view.z, 1.0);
-  float sizeMin = 1.6 * uPixelAngle * dist;
-  float size = max(iL1.x, sizeMin);
-  // tryby migania
-  float t = uTime;
-  float ph = iL1.y;
-  float mode = iL1.w;
-  float k = 1.0;
-  if (mode < 0.5) k = pow(max(0.0, 1.0 - fract(t * 0.9 + ph) * 7.0), 2.0);
-  else if (mode < 1.5) k = 1.0;
-  else if (mode < 2.5) k = 0.5 + 0.5 * sin(6.2831853 * (t * 0.45 + ph));
-  else k = pow(max(0.0, 1.0 - fract(t * 0.35 - ph * 4.0) * 5.0), 2.0) * 0.95 + 0.05;
-  float c = iL1.z;
-  vec3 col = vec3(${f3([HALO_HDR.navWhite, HALO_HDR.navWhite * 0.97, HALO_HDR.navWhite * 0.92])});
-  if (c > 0.5) col = vec3(1.25, 0.1, 0.06);
-  if (c > 1.5) col = uHdrStrip;
-  if (c > 2.5) col = uHdrWarm * 1.2;
-  if (c > 3.5) col = vec3(0.1, 1.2, 0.35);
-  // z daleka (rozmiar podbity do min. piksela) energia maleje, zeby tysiace
-  // punktow nie zalaly bloomu
-  float far = clamp(iL1.x / size, 0.2, 1.0);
-  vCol = col * k * far * haloFgVisibility(uCamLocal + rel);
-  vQuad = position.xy;
-  view.xy += position.xy * size * (0.6 + 0.4 * k);
-  gl_Position = projectionMatrix * vec4(view, 1.0);
-}
-`;
-const LIGHT_FRAGMENT = /* glsl */`
-varying vec2 vQuad;
-varying vec3 vCol;
-void main() {
-  float r2 = dot(vQuad, vQuad);
-  float a = exp(-r2 * 5.0) - 0.0067;
-  if (a <= 0.0) discard;
-  gl_FragColor = vec4(vCol * a, 0.0);
-}
-`;
 
 function makeBox() {
   const g = new THREE.BoxGeometry(1, 1, 1);
@@ -602,7 +667,8 @@ function makeDome() {
   return g;
 }
 
-// Instancjonowana bryła z dynamicznym buforem (wybrane segmenty).
+// Instancjonowana bryła z buforem wybranych segmentów — wysyłka tylko po zmianie wyboru (bez DynamicDrawUsage:
+// three r183 wysyłał wtedy cały bufor przy każdym renderze — przy Ziemi bryły dachu i doków ~1,8 MB na klatkę, zadanie 23).
 function makeInstanced(base, capacity, material) {
   const geo = new THREE.InstancedBufferGeometry();
   geo.index = base.index;
@@ -610,7 +676,6 @@ function makeInstanced(base, capacity, material) {
   geo.setAttribute('normal', base.getAttribute('normal'));
   const data = new Float32Array(capacity * HALO_INSTANCE_STRIDE);
   const buf = new THREE.InstancedInterleavedBuffer(data, HALO_INSTANCE_STRIDE);
-  buf.setUsage(THREE.DynamicDrawUsage);
   geo.setAttribute('iPos', new THREE.InterleavedBufferAttribute(buf, 4, 0));
   geo.setAttribute('iSize', new THREE.InterleavedBufferAttribute(buf, 4, 4));
   geo.setAttribute('iQuat', new THREE.InterleavedBufferAttribute(buf, 4, 8));
@@ -631,22 +696,26 @@ export class HaloMegastructure {
     // zasięg detalu z LOD jakości (ultra: dalej); pojemność buforów detalu
     // rośnie z zasięgiem (więcej segmentów w kadrze naraz)
     const lod = haloQualityLod(quality);
-    this._geomFade = { value: new THREE.Vector2(lod.geomFade[0], lod.geomFade[1]) };
+    // uniformy obiektu (TSL): `.value` jak dawne { value } — ten sam kod aktualizacji
+    this._geomFade = uniform(new THREE.Vector2(lod.geomFade[0], lod.geomFade[1]));
     this._detailSegs = Math.round(72 * Math.max(1, lod.geomFade[1] / 20000));
-    // dach nad płaszczyzną gry (flightLevel liczbowy): materiały z HALO_FG
-    const fgDefines = layout.flightLevel !== 'roof' ? { HALO_FG: 1 } : {};
-    const common = { ...uniforms, ...surfaceUniforms, uSegCells: { value: domain.segCells } };
-    const primMaterial = (defines) => new THREE.ShaderMaterial({
-      name: 'HaloMegaPrims',
-      uniforms: { ...common, uGeomFade: this._geomFade },
-      vertexShader: PRIM_VERTEX,
-      fragmentShader: HALO_PRIM_FRAGMENT,
-      defines: { AIR_STEPS: 4, ...defines },
-      // (θ̂, r̂, ẑ) jest lewoskrętny → odbicie zmienia nawinięcie trójkątów
-      side: THREE.BackSide
-    });
-    this.material = primMaterial(fgDefines);          // dach (detal)
-    this.landmarkMaterial = primMaterial({});         // doki
+    this._segCells = uniform(domain.segCells);
+    this._pixelAngle = uniform(2 * Math.tan(17.5 * Math.PI / 180) / 1080);
+    // dach nad płaszczyzną gry (flightLevel liczbowy): warianty z HALO_FG
+    const fg = layout.flightLevel !== 'roof';
+    const u = uniforms;
+    const su = surfaceUniforms;
+    const inspect = (extra) => ({ ...uniforms, ...surfaceUniforms, uSegCells: this._segCells, ...extra });
+    // (θ̂, r̂, ẑ) jest lewoskrętny → odbicie zmienia nawinięcie trójkątów
+    const primMaterial = (withFg) => {
+      const v = haloPrimVaryings();
+      return haloNodeMaterial('HaloMegaPrims', {
+        vertexNode: makeHaloPrimVertex({ u, su, segCells: this._segCells, geomFade: this._geomFade, v }),
+        fragmentNode: makeHaloPrimFragment({ u, v, fg: withFg })
+      }, { side: THREE.BackSide }, inspect({ uGeomFade: this._geomFade }));
+    };
+    this.material = primMaterial(fg);             // dach (detal)
+    this.landmarkMaterial = primMaterial(false);  // doki
     const bases = [makeBox(), makeCylinder(), makeDome()];
     this._bases = bases;
     const makeSet = (key, material) => HALO_PRIM_NAMES.map((name, p) => {
@@ -667,16 +736,13 @@ export class HaloMegastructure {
     // szkło kopuł-biosfer: osobna siatka przezroczysta (po bryłach, bez zapisu
     // głębi), wybierana razem z punktami orientacyjnymi (te same segmenty)
     const gsrc = plan.glass;
-    this.glassMaterial = new THREE.ShaderMaterial({
-      name: 'HaloDomeGlass',
-      uniforms: { ...common, uGeomFade: this._geomFade },
-      vertexShader: PRIM_VERTEX,
-      fragmentShader: GLASS_FRAGMENT,
-      defines: { AIR_STEPS: 4 },
-      side: THREE.BackSide,
-      transparent: true,
-      depthWrite: false
-    });
+    {
+      const v = haloPrimVaryings();
+      this.glassMaterial = haloNodeMaterial('HaloDomeGlass', {
+        vertexNode: makeHaloPrimVertex({ u, su, segCells: this._segCells, geomFade: this._geomFade, v }),
+        fragmentNode: makeHaloGlassFragment({ u, v })
+      }, { side: THREE.BackSide, transparent: true, depthWrite: false }, inspect({ uGeomFade: this._geomFade }));
+    }
     this._glassBase = makeGlassDome();
     this.glass = makeInstanced(this._glassBase, Math.max(4, gsrc?.total || 0), this.glassMaterial);
     this.glass.mesh.name = 'HaloMega_domeGlass';
@@ -697,47 +763,40 @@ export class HaloMegastructure {
     trainGeo.setAttribute('iTrainB', new THREE.InterleavedBufferAttribute(tbuf, 4, 4));
     trainGeo.instanceCount = plan.trainCount;
     trainGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e9);
-    this.trainMaterial = new THREE.ShaderMaterial({
-      name: 'HaloMegaTrains',
-      uniforms: {
-        ...common,
-        uTrainLane: { value: new THREE.Vector4(layout.radii.rim, layout.sigma, layout.z.roof + 12, layout.circumference) }
-      },
-      vertexShader: TRAIN_VERTEX,
-      fragmentShader: HALO_PRIM_FRAGMENT,
-      defines: { AIR_STEPS: 4, ...fgDefines },
-      side: THREE.BackSide
-    });
+    this._trainLane = uniform(new THREE.Vector4(layout.radii.rim, layout.sigma, layout.z.roof + 12, layout.circumference));
+    {
+      const v = haloPrimVaryings();
+      this.trainMaterial = haloNodeMaterial('HaloMegaTrains', {
+        vertexNode: makeHaloTrainVertex({ u, trainLane: this._trainLane, v }),
+        fragmentNode: makeHaloPrimFragment({ u, v, fg })
+      }, { side: THREE.BackSide }, inspect({ uTrainLane: this._trainLane }));
+    }
     this.trains = new THREE.Mesh(trainGeo, this.trainMaterial);
     this.trains.name = 'HaloMega_trains';
     this.trains.frustumCulled = false;
     this.group.add(this.trains);
 
-    // światła pozycyjne: dach (FG) i doki (BG)
+    // światła pozycyjne: dach (FG) i doki (BG); mieszanie (ONE, ONE), alfa celu bez zmian
     const quad = new THREE.PlaneGeometry(2, 2);
     this._quad = quad;
-    const lightMaterial = (defines) => new THREE.ShaderMaterial({
-      name: 'HaloMegaLights',
-      uniforms: { ...common, uPixelAngle: this._pixelAngle || (this._pixelAngle = { value: 2 * Math.tan(17.5 * Math.PI / 180) / 1080 }) },
-      vertexShader: LIGHT_VERTEX,
-      fragmentShader: LIGHT_FRAGMENT,
-      defines,
-      transparent: true,
-      depthWrite: false,
-      blending: THREE.CustomBlending,
-      blendSrc: THREE.OneFactor,
-      blendDst: THREE.OneFactor,
-      blendSrcAlpha: THREE.ZeroFactor,
-      blendDstAlpha: THREE.OneFactor
-    });
+    const lightMaterial = (withFg) => haloNodeMaterial('HaloMegaLights',
+      makeHaloLightNodes({ u, su, segCells: this._segCells, pixelAngle: this._pixelAngle, fg: withFg }), {
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.CustomBlending,
+        blendSrc: THREE.OneFactor,
+        blendDst: THREE.OneFactor,
+        blendSrcAlpha: THREE.ZeroFactor,
+        blendDstAlpha: THREE.OneFactor
+      }, inspect({ uPixelAngle: this._pixelAngle }));
     const makeLights = (src, material, name) => {
       const lightGeo = new THREE.InstancedBufferGeometry();
       lightGeo.index = quad.index;
       lightGeo.setAttribute('position', quad.getAttribute('position'));
       const lcap = Math.max(16, src.total);
       const ldata = new Float32Array(lcap * HALO_LIGHT_STRIDE);
+      // bez DynamicDrawUsage — wysyłka po zmianie wyboru (_fillLights), jak bryły (zadanie 23)
       const lbuf = new THREE.InstancedInterleavedBuffer(ldata, HALO_LIGHT_STRIDE);
-      lbuf.setUsage(THREE.DynamicDrawUsage);
       lightGeo.setAttribute('iL0', new THREE.InterleavedBufferAttribute(lbuf, 4, 0));
       lightGeo.setAttribute('iL1', new THREE.InterleavedBufferAttribute(lbuf, 4, 4));
       lightGeo.instanceCount = 0;
@@ -753,8 +812,8 @@ export class HaloMegastructure {
         views: Array.from({ length: plan.segCount }, (_, s) => src.data.subarray(src.offsets[s] * HALO_LIGHT_STRIDE, (src.offsets[s] + src.counts[s]) * HALO_LIGHT_STRIDE))
       };
     };
-    this.lightMaterial = lightMaterial(fgDefines);
-    this.landmarkLightMaterial = lightMaterial({});
+    this.lightMaterial = lightMaterial(fg);
+    this.landmarkLightMaterial = lightMaterial(false);
     this.lights = makeLights(plan.lights, this.lightMaterial, 'HaloMega_lights');
     this.landmarkLights = makeLights(plan.landmarkLights, this.landmarkLightMaterial, 'HaloMega_dockLights');
     this.lightMesh = this.lights.mesh;
@@ -835,9 +894,7 @@ export class HaloMegastructure {
       }
       inst.count = o / HALO_INSTANCE_STRIDE;
       inst.geo.instanceCount = inst.count;
-      inst.buf.needsUpdate = true;
-      inst.buf.clearUpdateRanges();
-      inst.buf.addUpdateRange(0, o);
+      zbierzZakres(inst.buf, 0, o);
       total += inst.count;
     }
     return total;
@@ -854,9 +911,7 @@ export class HaloMegastructure {
     }
     L.count = o / HALO_LIGHT_STRIDE;
     L.geo.instanceCount = L.count;
-    L.buf.needsUpdate = true;
-    L.buf.clearUpdateRanges();
-    L.buf.addUpdateRange(0, o);
+    zbierzZakres(L.buf, 0, o);
   }
 
   update(frustum, camLocal) {

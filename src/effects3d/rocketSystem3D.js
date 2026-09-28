@@ -1,20 +1,27 @@
 /**
- * 3D Rocket System — full physics, fire/smoke GPU particles, explosions.
+ * 3D Rocket System — LOT rakiet (fizyka, naprowadzanie, zapalnik, obrażenia).
  * Ported from rakiety.html RocketManager + integration layer.
  *
- * Coordinate convention (overlay scene, Y-up):
- *   game world (x, y) → overlay (x, 0, y)
- *   height above ground → overlay Y
+ * Wygląd (port WebGPU, zadanie 19): efekty z dema `dema/rakiety-webgpu` w scenie Core3D —
+ * src/3d/rockets/ (dym GPU z samocieniem, płomienie z dyskami Macha, kadłubki, kule ognia,
+ * iskry, łuki, Supernowa z pozostałością). Ten moduł zgłasza reżyserowi efektów zdarzenia
+ * (`effects`: onLaunch / onIgnite / onFly / prepareContact / onDetonate / update); dawne
+ * cząstki RocketFireGPU / RocketSmokeGPU, siatka kadłubków w scenie overlaya, gorące
+ * powietrze wybuchów i wybuch Supernowej z overlaya odeszły. Lot, naprowadzanie, trafienia
+ * i obrażenia bez zmian (tests/rocketGuidance.test.mjs); bez `effects` (testy w Node)
+ * rakiety latają bez obrazu.
+ *
+ * Coordinate convention (lot, Y-up jak dawny overlay):
+ *   game world (x, y) → (x, 0, y)
+ *   height above ground → Y
  *
  * Usage in index.html:
- *   import { initRocketSystem3D, fireRocket3D, updateRocketSystem3D } ...
- *   initRocketSystem3D(overlay3D.scene)
- *   // every frame: updateRocketSystem3D(dt)
- *   // on fire:     fireRocket3D(gameX, gameY, target, damage, weaponDef, 'blue')
+ *   import { initRocketSystem3D } ...
+ *   initRocketSystem3D(Core3D.scene, { effects: createRocketFx(Core3D) })
+ *   // every frame (przed render()): window.rocketSystem3D.update(dt)
+ *   // on fire:     window.rocketSystem3D.fire(gameX, gameY, target, damage, weaponDef, 'blue', vx, vy)
  */
 import * as THREE from "three";
-import { RocketFireGPU, FlameSettings } from "./rocketFireGPU.js";
-import { RocketSmokeGPU } from "./rocketSmokeGPU.js";
 import { isEntityShieldBlocking } from "../../shieldSystem.js";
 import { shieldImpactClass } from "../data/weapons.js";
 import { SimClock } from "../game/simClock.js";
@@ -29,7 +36,7 @@ import { SimClock } from "../game/simClock.js";
  * przed zmianą. Układu świadomie NIE dopasowujemy do ruchu celu — rakieta
  * zyskałaby prędkość celu nawet strzelana z postoju. Prowadzenie liczy ruch celu
  * względem układu, a znany dryf układu kompensuje w całości; zasięg = droga własna.
- * Ogień i dym z dyszy dziedziczą układ (nośnik GPU).
+ * Dym z dyszy dziedziczy układ (nośnik cząstki w src/3d/rockets/smoke.js).
  */
 
 /* ═══════════════════════════════════════════════════
@@ -65,19 +72,14 @@ const ROCKET = Object.freeze({
 });
 
 /* ── Reusable temp vectors (allocated once) ── */
-const _dummy     = new THREE.Object3D();
 const _force     = new THREE.Vector3();
 const _forward   = new THREE.Vector3();
 const _drag      = new THREE.Vector3();
 const _targetDir = new THREE.Vector3();
 const _qTarget   = new THREE.Quaternion();
-const _exhaustP  = new THREE.Vector3();
 const _BASE_FWD  = new THREE.Vector3(0, 1, 0);  // rocket nose in local space
-const _VISUAL_FWD = new THREE.Vector3(0, 0, 1);
 const _renderDir = new THREE.Vector3();
-const _renderQuat = new THREE.Quaternion();
 const _leadAim2D = { x: 0, y: 0, t: 0 };
-const _colorScratch = new THREE.Color();
 // Scratch prowadzenia (bez obiektów per rakieta per klatka).
 const _leadPos = { x: 0, y: 0 };
 const _leadVel = { x: 0, y: 0 };
@@ -155,17 +157,6 @@ function resolveRocketProfile(weaponDef) {
         terminalRadius,
         Math.max(terminalRadius * 4.0, 2400)
     );
-    const fireVfx = String(weaponDef?.rocketFireVfx || '').toLowerCase();
-    const smokeVfx = String(weaponDef?.rocketSmokeVfx || '').toLowerCase();
-    const explosionVfx = String(weaponDef?.rocketExplosionVfx || '').toLowerCase();
-    let bodyColorHex = null;
-    if (weaponDef?.rocketBodyColor) {
-        try {
-            bodyColorHex = new THREE.Color(weaponDef.rocketBodyColor).getHex();
-        } catch {
-            bodyColorHex = null;
-        }
-    }
     return {
         desiredSpeed,
         maxRange,
@@ -207,21 +198,10 @@ function resolveRocketProfile(weaponDef) {
             0,
             0.5
         ),
+        // Wygląd rakiety (płomień, dym, kule ognia, Supernowa) czyta reżyser efektów z dema
+        // (src/3d/rockets/) wprost z weaponDef; w profilu lotu zostaje tylko skala kadłubka.
         bodyScale: THREE.MathUtils.clamp(Number(weaponDef?.bodyScale) || 1, 0.35, 3.0),
-        exhaustScale: THREE.MathUtils.clamp(Number(weaponDef?.exhaustScale) || 1, 0.35, 3.0),
-        fireScale: THREE.MathUtils.clamp(Number(weaponDef?.fireScale) || 1, 0.2, 3.0),
-        smokeScale: THREE.MathUtils.clamp(Number(weaponDef?.smokeScale) || 1, 0.2, 3.0),
-        explosionVisualScale: THREE.MathUtils.clamp(Number(weaponDef?.explosionVisualScale) || 1, 0.25, 4.0),
-        hitRadius: proximityRadius,
-        bodyColorHex,
-        fireVfxType: fireVfx === 'supernova' ? 10 : 0,
-        smokeVfxType: smokeVfx === 'chemical' ? 2 : 1,
-        explosionCoreType: explosionVfx === 'supernova' ? 13 : 3,
-        explosionSparkType: explosionVfx === 'supernova' ? 14 : 4,
-        shockwaveType: explosionVfx === 'supernova' ? 15 : 5,
-        anamorphicType: explosionVfx === 'supernova' ? 16 : 0,
-        fractalRingType: explosionVfx === 'supernova' ? 17 : 0,
-        explosionStyle: explosionVfx === 'supernova' ? 'supernova' : 'default'
+        hitRadius: proximityRadius
     };
 }
 
@@ -233,36 +213,18 @@ let instance = null;
    ═══════════════════════════════════════════════════ */
 
 class RocketSystem3D {
-    constructor(overlayScene) {
-        this.scene      = overlayScene;
+    /**
+     * @param {object|null} scene scena (zgodność API — lot jej nie potrzebuje; obraz rysuje
+     *   reżyser efektów w scenie Core3D)
+     * @param {object} [opts]
+     * @param {object|null} [opts.effects] reżyser efektów (src/3d/rockets/effects.js —
+     *   `createRocketFx(Core3D).director`); null = lot bez obrazu (testy w Node)
+     */
+    constructor(scene, opts = {}) {
+        this.scene      = scene;
         this.globalTime = 0;
-
-        /* ── GPU particle systems ── */
-        this.fireGPU  = new RocketFireGPU(overlayScene, 300000);
-        this.smokeGPU = new RocketSmokeGPU(overlayScene, 200000);
-        this.heatHazeBursts = [];
         this.activeRockets = 0;
-
-        /* ── Rocket body InstancedMesh ── */
-        const geo = new THREE.CylinderGeometry(
-            ROCKET.bodyRadTop, ROCKET.bodyRadBot, ROCKET.bodyLength, 8
-        );
-        geo.rotateX(Math.PI * 0.5);
-        const mat = new THREE.MeshBasicMaterial({
-            color: 0xe6e6e6,
-            depthWrite: false,
-            depthTest: false,
-            transparent: true,
-            opacity: 0.98,
-            toneMapped: false
-        });
-        this.mesh = new THREE.InstancedMesh(geo, mat, ROCKET.maxRockets);
-        this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-        this.mesh.frustumCulled = false;
-        this.mesh.renderOrder = 1002;
-        // Widoczna tylko z żywą rakietą — overlay pomija pustą warstwę raw.
-        this.mesh.visible = false;
-        overlayScene.add(this.mesh);
+        this.effects    = opts?.effects || null;
 
         /* ── Rocket data pool ── */
         this.rockets = [];
@@ -273,7 +235,6 @@ class RocketSystem3D {
                 position:       new THREE.Vector3(),
                 velocity:       new THREE.Vector3(),
                 quaternion:     new THREE.Quaternion(),
-                prevExhaustPos: new THREE.Vector3(),
                 target:         null,
                 state:          "EJECTED",
                 timeSinceLaunch: 0,
@@ -299,19 +260,6 @@ class RocketSystem3D {
                 leadHorizon: 0,
                 terminalLeadHorizon: 0,
                 bodyScale: 1,
-                exhaustScale: 1,
-                fireScale: 1,
-                smokeScale: 1,
-                explosionVisualScale: 1,
-                bodyColorHex: null,
-                fireVfxType: 0,
-                smokeVfxType: 1,
-                explosionCoreType: 3,
-                explosionSparkType: 4,
-                shockwaveType: 5,
-                anamorphicType: 0,
-                fractalRingType: 0,
-                explosionStyle: "default",
                 didImpactDamage:false,
                 weaponDef:      null,
                 launchPos:      new THREE.Vector3(),
@@ -329,11 +277,7 @@ class RocketSystem3D {
                 bornSim:        0,
                 frameSynced:    false
             });
-            _dummy.position.set(0, -999999, 0);
-            _dummy.updateMatrix();
-            this.mesh.setMatrixAt(i, _dummy.matrix);
         }
-        this.mesh.instanceMatrix.needsUpdate = true;
     }
 
     /* ─────────────────── FIRE ─────────────────── */
@@ -358,7 +302,6 @@ class RocketSystem3D {
 
         r.active = true;
         this.activeRockets++;
-        this.mesh.visible = true;
         // Game coords → overlay: X stays, game-Y → overlay-Z, height=0
         r.position.set(gameX, 0, gameY);
         r.frameVel.set(Number(launchVx) || 0, 0, Number(launchVy) || 0);
@@ -405,19 +348,6 @@ class RocketSystem3D {
         r.leadHorizon = profile.leadHorizon;
         r.terminalLeadHorizon = profile.terminalLeadHorizon;
         r.bodyScale = profile.bodyScale;
-        r.exhaustScale = profile.exhaustScale;
-        r.fireScale = profile.fireScale;
-        r.smokeScale = profile.smokeScale;
-        r.explosionVisualScale = profile.explosionVisualScale;
-        r.bodyColorHex = profile.bodyColorHex;
-        r.fireVfxType = profile.fireVfxType;
-        r.smokeVfxType = profile.smokeVfxType;
-        r.explosionCoreType = profile.explosionCoreType;
-        r.explosionSparkType = profile.explosionSparkType;
-        r.shockwaveType = profile.shockwaveType;
-        r.anamorphicType = profile.anamorphicType;
-        r.fractalRingType = profile.fractalRingType;
-        r.explosionStyle = profile.explosionStyle;
         r.didImpactDamage = false;
         r.hitShield       = false;
         r.weaponDef       = weaponDef;
@@ -427,7 +357,6 @@ class RocketSystem3D {
         r.reacquireUntil = 0;
         r.terminalEnteredAtDist = Infinity;
         r.missGrowTime = 0;
-        r.prevExhaustPos.copy(r.position);
 
         // Nos w stronę celu przesuniętego o ruch względem układu wyrzutni.
         _leadFrame.x = r.frameVel.x;
@@ -452,13 +381,8 @@ class RocketSystem3D {
             }
         }
 
-        // Color per-instance (scratch — bez alokacji per strzał)
-        const col = Number.isFinite(r.bodyColorHex)
-            ? r.bodyColorHex
-            : (colorTheme === "red" ? 0xff3333 : 0x3377ff);
-        _colorScratch.setHex(col);
-        this.mesh.setColorAt(r.index, _colorScratch);
-        if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+        // Wygląd: wyrzut (obłok pary, błysk) — barwa pasa kadłubka ze strony (colorTheme).
+        if (this.effects) this.effects.onLaunch(r, colorTheme);
     }
 
     /* ─────────────────── UPDATE ─────────────────── */
@@ -467,27 +391,13 @@ class RocketSystem3D {
         if (dt <= 0) return;
         dt = Math.min(dt, 0.05);
         this.globalTime += dt;
-
-        // Update GPU particle clocks FIRST (so spawned particles get correct time)
-        this.fireGPU.update(this.globalTime);
-        this.smokeGPU.update(this.globalTime);
-        this._updateHeatHaze(dt);
-
-        // Pass zoom and DPR from the main game camera so smoke tracks the
-        // real orthographic view instead of the intermediate overlay model.
-        const zoom = window.camera?.zoom ?? 1;
-        this.smokeGPU.material.uniforms.u_zoom.value = zoom;
-        this.smokeGPU.material.uniforms.u_dpr.value = window._overlayDpr ?? (window.devicePixelRatio || 1);
-
-        let matricesUpdated = false;
+        const fx = this.effects;
         const R  = ROCKET;
-        const FS = FlameSettings;
 
-        // Pusta pula → nie iteruj 2000 slotów (commit i tak domknie ogony poniżej).
+        // Pusta pula → nie iteruj 2000 slotów.
         for (let i = 0; this.activeRockets > 0 && i < R.maxRockets; i++) {
             const r = this.rockets[i];
             if (!r.active) continue;
-            matricesUpdated = true;
             r.timeSinceLaunch += dt;
 
             /* ── State transition: EJECTED → POWERED ── */
@@ -495,6 +405,7 @@ class RocketSystem3D {
                 if (r.velocity.y < -5 * WS || r.timeSinceLaunch > r.ignitionDelay) {
                     r.state = "POWERED";
                     r.currentThrust = r.maxThrust;
+                    if (fx) fx.onIgnite(r);
                 }
             }
 
@@ -704,7 +615,7 @@ class RocketSystem3D {
                 if (r.velocity.y > 0) r.velocity.y *= 0.2;
             }
 
-            /* ── Instance matrix ── */
+            /* ── Kierunek kadłubka (wygląd: kurs w płaszczyźnie gry) ── */
             _renderDir.copy(_forward);
             if (_renderDir.lengthSq() < 1e-6) {
                 _renderDir.copy(r.visualDir);
@@ -712,74 +623,9 @@ class RocketSystem3D {
                 _renderDir.normalize();
                 r.visualDir.copy(_renderDir);
             }
-            _renderQuat.setFromUnitVectors(_VISUAL_FWD, _renderDir);
 
-            _dummy.position.copy(r.position);
-            _dummy.quaternion.copy(_renderQuat);
-            _dummy.scale.setScalar(r.bodyScale || 1);
-            _dummy.updateMatrix();
-            this.mesh.setMatrixAt(r.index, _dummy.matrix);
-
-            /* ── Exhaust position (behind rocket: local -Z for top-down visual) ── */
-            _exhaustP.set(0, 0, -R.exhaustOffset * (r.exhaustScale || 1)).applyMatrix4(_dummy.matrix);
-
-            /* ── Spawn FIRE particles ── */
-            // Ogień i dym jadą w układzie rakiety (nośnik GPU) — z pokładu wyrzutni
-            // smuga wygląda jak przy strzale z postoju.
-            this.fireGPU.setCarrier(r.frameVel.x, r.frameVel.z);
-            this.smokeGPU.setCarrier(r.frameVel.x, r.frameVel.z);
-            if (r.currentThrust > 0) {
-                const dist = _exhaustP.distanceTo(r.prevExhaustPos);
-                // OPTIMIZATION: cap reduced 15→8. Supernova (speed=3600) was hitting 15 every frame,
-                // spawning 15 fire + 8 smoke = 23 particles/frame/rocket. With 8 ammo burst-firing this
-                // meant 184 particles/frame just from exhaust, tanking FPS.
-                // Per-weapon override: weaponDef.exhaustStepCap (e.g. fighter micro-missile uses 2).
-                const stepsCap = (r.weaponDef?.exhaustStepCap) || 8;
-                const steps = Math.min(stepsCap, Math.ceil(dist / Math.max(R.exhaustGap, 0.3)));
-                const exhaustScale = Math.max(0.35, r.exhaustScale || 1);
-                const fireLifeMul = r.weaponDef?.fireParticleLifeMul || 1.0;
-                const skipSmoke = !!r.weaponDef?.skipSmoke;
-
-                for (let s = 0; s < steps; s++) {
-                    const jt = (s + Math.random() * 0.4 - 0.2) / steps;
-                    const t  = Math.max(0, Math.min(1, jt));
-                    const sx = r.prevExhaustPos.x + (_exhaustP.x - r.prevExhaustPos.x) * t;
-                    const sy = r.prevExhaustPos.y + (_exhaustP.y - r.prevExhaustPos.y) * t;
-                    const sz = r.prevExhaustPos.z + (_exhaustP.z - r.prevExhaustPos.z) * t;
-
-                    const vx = -_renderDir.x * R.exhaustVel * exhaustScale * FS.velMult + (Math.random() - 0.5) * R.exhaustSpread * exhaustScale;
-                    const vy = (-12 * WS) + (Math.random() - 0.5) * R.exhaustSpread * exhaustScale * 0.18;
-                    const vz = -_renderDir.z * R.exhaustVel * exhaustScale * FS.velMult + (Math.random() - 0.5) * R.exhaustSpread * exhaustScale;
-
-                    this.fireGPU.spawn(sx, sy, sz, vx, vy, vz,
-                        Math.max(0.1, r.fireScale || 1),
-                        Math.max(0.08, (FS.life + Math.random() * 0.05) * THREE.MathUtils.lerp(0.78, 1.0, Math.min(1, r.fireScale || 1)) * fireLifeMul),
-                        r.fireVfxType || 0);
-
-                    if (!skipSmoke && (s & 1) === 0) {
-                        this.smokeGPU.spawn(
-                            sx, sy, sz,
-                            -_renderDir.x * R.exhaustVel * 0.18 * exhaustScale + (Math.random() - 0.5) * R.exhaustSpread * 1.4 * exhaustScale,
-                            4 + Math.random() * 10,
-                            -_renderDir.z * R.exhaustVel * 0.18 * exhaustScale + (Math.random() - 0.5) * R.exhaustSpread * 1.4 * exhaustScale,
-                            Math.max(0.15, r.smokeScale || 1),
-                            Math.max(0.5, (1.6 + Math.random() * 1.4) * THREE.MathUtils.lerp(0.72, 1.0, Math.min(1, r.smokeScale || 1))),
-                            r.smokeVfxType || 1
-                        );
-                    }
-                }
-            } else if (r.state === "EJECTED" && Math.random() > 0.5) {
-                // Cold-launch smoke puff (downward)
-                this.smokeGPU.spawn(
-                    _exhaustP.x, _exhaustP.y, _exhaustP.z,
-                    0, -20 * WS, 0,
-                    Math.max(0.15, r.smokeScale || 1), Math.max(0.18, 0.3 * Math.max(0.6, r.smokeScale || 1)), r.smokeVfxType || 1
-                );
-            }
-
-            r.prevExhaustPos.copy(_exhaustP);
-            this.fireGPU.setCarrier(0, 0);
-            this.smokeGPU.setCarrier(0, 0);
+            /* ── Wygląd lotu: smuga porcji gazu wzdłuż odcinka dyszy (src/3d/rockets/) ── */
+            if (fx) fx.onFly(r, dt);
 
             const traveled = r.travelDistance;
 
@@ -817,6 +663,9 @@ class RocketSystem3D {
                     // Detonate at the closest-approach point, not wherever the step ended.
                     r.position.x = cx;
                     r.position.z = cz;
+                    // Wygląd: punkt i normalna poszycia wzdłuż odcinka lotu — przed obrażeniami
+                    // (krater zabija węzły). Tylko odczyt kadłuba, bez losowania.
+                    if (fx && !isPointTarget) fx.prepareContact(r, x1, z1, cx, cz);
                     this._onHit(r);
                     this._explode(r);
                     continue;
@@ -836,54 +685,12 @@ class RocketSystem3D {
             }
         }
 
-        if (matricesUpdated) this.mesh.instanceMatrix.needsUpdate = true;
-        this.mesh.visible = this.activeRockets > 0;
-
-        // Jeden upload zakresów na klatkę zamiast pełnych buforów per spawn.
-        this.fireGPU.commit();
-        this.smokeGPU.commit();
+        // Wygląd: zegar reżysera efektów (dym jedzie z rakietą co do kroku), sekwencje
+        // Supernowej, płonące odłamki, przypalenia.
+        if (fx) fx.update(dt);
     }
 
     /* ─────────────────── DAMAGE ─────────────────── */
-
-    _spawnHeatHazeBurst(x, z, radiusStart, radiusEnd, strength, life) {
-        this.heatHazeBursts.push({
-            x,
-            z,
-            age: 0,
-            life: Math.max(0.05, life || 0.6),
-            radiusStart: Math.max(1, radiusStart || 1),
-            radiusEnd: Math.max(1, radiusEnd || radiusStart || 1),
-            strength: Math.max(0, strength || 0)
-        });
-    }
-
-    _updateHeatHaze(dt) {
-        if (!this.heatHazeBursts.length) return;
-        const core = window.Core3D;
-        if (!core?.pushHeatHazeWorld || !core?.beginHeatHazeFrame) {
-            this.heatHazeBursts.length = 0;
-            return;
-        }
-
-        for (let i = this.heatHazeBursts.length - 1; i >= 0; i--) {
-            const burst = this.heatHazeBursts[i];
-            burst.age += dt;
-            if (burst.age >= burst.life) this.heatHazeBursts.splice(i, 1);
-        }
-        if (!this.heatHazeBursts.length) return;
-
-        // Licznik zrodel kasuje pass w Core3D.render() — tutaj tylko dorzucamy.
-        for (let i = 0; i < this.heatHazeBursts.length; i++) {
-            const burst = this.heatHazeBursts[i];
-            const t = THREE.MathUtils.clamp(burst.age / Math.max(0.001, burst.life), 0, 1);
-            const easeOut = 1.0 - Math.pow(1.0 - t, 3.0);
-            const radius = THREE.MathUtils.lerp(burst.radiusStart, burst.radiusEnd, easeOut);
-            const amp = Math.max(0, burst.strength * Math.pow(1.0 - t, 1.4));
-            // burst.z = Y gry (płaszczyzna XZ overlaya); Core3D chce y3d = -yGry.
-            if (amp > 0.001) core.pushHeatHazeWorld(burst.x, -burst.z, -4, radius, amp);
-        }
-    }
 
     _onHit(r) {
         const target = r.target;
@@ -972,183 +779,26 @@ class RocketSystem3D {
     _explode(r) {
         if (r.active) this.activeRockets = Math.max(0, this.activeRockets - 1);
         r.active = false;
-        _dummy.position.set(0, -999999, 0);
-        _dummy.updateMatrix();
-        this.mesh.setMatrixAt(r.index, _dummy.matrix);
 
         const ex = r.position.x;
-        const ey = Math.max(r.position.y, 0);
         const ez = r.position.z;
-        const eS = WS * Math.max(0.1, Number(FlameSettings.explosionSize) || 1.0) * Math.max(0.25, r.explosionVisualScale || 1);
         this._applyBlastDamage(r, ex, ez);
 
-        // Trafienie w tarczę: obrażenia obszarowe policzone, ale kula ognia
-        // i dym nie mają czego oblepiać — pole ma własny zestaw efektów.
-        if (r.hitShield) {
-            r.hitShield = false;
-            return;
-        }
-
-        // Nośnik wybuchu: trafiony kadłub (kula ognia jedzie z nim), a wybuch
-        // w próżni (koniec zasięgu, punkt) — układ rakiety.
+        // Wygląd wybuchu (src/3d/rockets/effects.js): głowica na polu tarczy — receptura
+        // tarczy (pole ma też własne wstęgi i bańkę), na kadłubie — kula ognia z nośnikiem
+        // trafionego kadłuba, w próżni (koniec zasięgu, punkt) — w układzie rakiety;
+        // Supernowa — implozja, błysk, fala, pozostałość.
+        const hitShield = !!r.hitShield;
+        r.hitShield = false;
         const hitEntity = r.didImpactDamage && r.target && !r.target._isPositionTarget ? r.target : null;
-        if (hitEntity) readTargetVelocity2D(hitEntity, _leadFrame);
-        else { _leadFrame.x = r.frameVel.x; _leadFrame.y = r.frameVel.z; }
-        this.fireGPU.setCarrier(_leadFrame.x, _leadFrame.y);
-        this.smokeGPU.setCarrier(_leadFrame.x, _leadFrame.y);
-        try {
-            this._spawnExplosionFx(r, ex, ey, ez, eS);
-        } finally {
-            this.fireGPU.setCarrier(0, 0);
-            this.smokeGPU.setCarrier(0, 0);
-        }
-    }
-
-    _spawnExplosionFx(r, ex, ey, ez, eS) {
-        const coreType = r.explosionCoreType || 3;
-        const sparkType = r.explosionSparkType || 4;
-        const shockwaveType = r.shockwaveType || 5;
-        const anamorphicType = r.anamorphicType || 0;
-        const fractalRingType = r.fractalRingType || 0;
-        const smokeType = r.smokeVfxType || 1;
-
-        if (r.explosionStyle === "supernova") {
-            const triggerShockwave = window.trigger3DShockwave;
-            const useShockwave3D = typeof triggerShockwave === "function";
-            if (useShockwave3D) {
-                const shockwaveScale = Math.max(
-                    420,
-                    (Number(r.blastRadius) || 48) * 10 * Math.max(0.9, r.explosionVisualScale || 1)
-                );
-                triggerShockwave(
-                    ex,
-                    -ez,
-                    0,
-                    shockwaveScale,
-                    1.2,
-                    0x55ffff
-                );
-            }
-            const overlaySpawn = window.overlay3D?.spawn;
-            const supernovaFactory = window.makeSupernovaMissileBlow;
-            if (typeof overlaySpawn === "function" && typeof supernovaFactory === "function") {
-                const novaSize = Math.max(
-                    22,
-                    20 * Math.max(0.6, r.explosionVisualScale || 1) * Math.sqrt(Math.max(1, (r.blastRadius || 48) / 48))
-                );
-                const fx = supernovaFactory({ x: ex, y: ez, size: novaSize });
-                overlaySpawn.call(window.overlay3D, fx);
-                return;
-            }
-
-            // Closer to nova.html: anamorphic flash + fractal ring + heat haze, with smoke heavily reduced.
-            const flashSize = Math.max(22, 360 * eS);
-            const ringSize = Math.max(34, 540 * eS);
-
-            if (anamorphicType) {
-                this.fireGPU.spawn(ex, ey + 4 * eS, ez, 0, 0, 0, flashSize, 0.95, anamorphicType);
-            }
-            if (fractalRingType) {
-                this.fireGPU.spawn(ex, ey + 2 * eS, ez, 0, 0, 0, ringSize, 1.2, fractalRingType);
-            }
-
-            this.fireGPU.spawn(ex, ey + 2 * eS, ez, 0, 0, 0, 220 * eS, 0.16, coreType);
-            this.fireGPU.spawn(ex, ey + 9 * eS, ez, 0, 0, 0, 300 * eS, 0.4, coreType);
-
-            for (let j = 0; j < 46; j++) {
-                const spd = (2200 + Math.random() * 5200) * eS;
-                const theta = Math.random() * Math.PI * 2;
-                const phi = Math.acos(2 * Math.random() - 1);
-                const vx = spd * Math.sin(phi) * Math.cos(theta);
-                const vy = spd * Math.cos(phi) * 0.45;
-                const vz = spd * Math.sin(phi) * Math.sin(theta);
-                this.fireGPU.spawn(
-                    ex, ey + 6 * eS, ez,
-                    vx, vy, vz,
-                    (10 + Math.random() * 18) * eS,
-                    0.45 + Math.random() * 0.35,
-                    sparkType
-                );
-            }
-
-            this.fireGPU.spawn(ex, ey + 1, ez, 0, 0, 0, Math.max(0.5, eS * 1.45), 0.8, shockwaveType);
-            this.fireGPU.spawn(ex, ey + 1, ez, 0, 0, 0, Math.max(0.32, eS * 0.92), 1.25, shockwaveType);
-
-            if (!useShockwave3D) {
-                this._spawnHeatHazeBurst(
-                    ex,
-                    ez,
-                    Math.max(80, r.blastRadius * 0.9),
-                    Math.max(260, r.blastRadius * 5.5),
-                    4.8,
-                    0.85
-                );
-            }
-        } else {
-            // 1. FLASH — one big, short burst
-            this.fireGPU.spawn(ex, ey, ez, 0, 0, 0, 250 * eS, 0.1, coreType);
-
-            // 2. CORE EXPLOSION — many fire particles
-            for (let j = 0; j < 80; j++) {
-                const spd   = (500 + Math.random() * 3500) * eS;
-                const theta = Math.random() * Math.PI * 2;
-                const phi   = Math.acos(2 * Math.random() - 1);
-                const vx = spd * Math.sin(phi) * Math.cos(theta);
-                const vy = spd * Math.cos(phi);
-                const vz = spd * Math.sin(phi) * Math.sin(theta);
-
-                this.fireGPU.spawn(ex, ey, ez, vx, vy, vz,
-                    (30 + Math.random() * 40) * eS,
-                    0.2 + Math.random() * 0.4, coreType);
-            }
-
-            // 3. SPARKS — fast, stretched shrapnel
-            for (let j = 0; j < 60; j++) {
-                const spd   = (2000 + Math.random() * 5000) * eS;
-                const theta = Math.random() * Math.PI * 2;
-                const phi   = Math.acos(2 * Math.random() - 1);
-                const vx = spd * Math.sin(phi) * Math.cos(theta);
-                const vy = spd * Math.cos(phi);
-                const vz = spd * Math.sin(phi) * Math.sin(theta);
-
-                this.fireGPU.spawn(ex, ey, ez, vx, vy, vz,
-                    (5 + Math.random() * 10) * eS,
-                    0.3 + Math.random() * 0.3, sparkType);
-            }
-
-            // 4. SMOKE — warm haze rising upward
-            for (let j = 0; j < 18; j++) {
-                const spd   = (100 + Math.random() * 1500) * eS;
-                const theta = Math.random() * Math.PI * 2;
-                const phi   = Math.acos(2 * Math.random() - 1);
-                const vx = spd * Math.sin(phi) * Math.cos(theta);
-                const vy = spd * Math.cos(phi) + 50 * eS;
-                const vz = spd * Math.sin(phi) * Math.sin(theta);
-
-                this.smokeGPU.spawn(ex, ey, ez, vx, vy, vz,
-                    (65 * eS + Math.random() * 110 * eS),
-                    0.7 + Math.random() * 0.7, smokeType);
-            }
-
-            // 5. SHOCKWAVE — expanding flat ring in XZ plane
-            this.fireGPU.spawn(ex, ey + 1, ez, 0, 0, 0,
-                Math.max(0.2, eS),
-                0.5 + Math.random() * 0.2,
-                shockwaveType);
-        }
-
+        if (this.effects) this.effects.onDetonate(r, ex, ez, hitEntity, hitShield);
     }
 
     /* ─────────────────── DISPOSE ─────────────────── */
 
     dispose() {
-        this.fireGPU.dispose();
-        this.smokeGPU.dispose();
-        this.mesh.geometry.dispose();
-        this.mesh.material.dispose();
-        if (this.mesh.parent) this.mesh.parent.remove(this.mesh);
         instance = null;
-        if (window.rocketSystem3D === this) window.rocketSystem3D = null;
+        if (typeof window !== "undefined" && window.rocketSystem3D === this) window.rocketSystem3D = null;
     }
 }
 
@@ -1156,10 +806,19 @@ class RocketSystem3D {
    PUBLIC API  (module exports + window globals)
    ═══════════════════════════════════════════════════ */
 
-export function initRocketSystem3D(overlayScene) {
+/**
+ * @param {object|null} scene scena (zgodność API; obraz rysuje reżyser efektów w Core3D)
+ * @param {object} [opts] { effects } — `createRocketFx(Core3D)` (src/3d/rockets/rocketFx.js)
+ *   albo sam reżyser; bez niego lot bez obrazu (testy w Node)
+ */
+export function initRocketSystem3D(scene, opts = {}) {
     if (instance) instance.dispose();
-    instance = new RocketSystem3D(overlayScene);
-    window.rocketSystem3D = instance;
+    const fx = opts?.effects || null;
+    const director = fx && fx.director ? fx.director : fx;
+    instance = new RocketSystem3D(scene, { effects: director });
+    // Klatka efektów czyta pulę slotów rakiet (kadłubki, płomienie, światła dysz, ślady w dymie).
+    if (fx && typeof fx.attachRockets === "function") fx.attachRockets(instance.rockets);
+    if (typeof window !== "undefined") window.rocketSystem3D = instance;
     return instance;
 }
 

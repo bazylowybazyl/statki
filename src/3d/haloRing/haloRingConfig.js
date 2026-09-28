@@ -40,7 +40,8 @@ export const HALO_GEOMETRY_DEFAULTS = Object.freeze({
 
 export const HALO_LIMITS = Object.freeze({
   width: [3000, 12000],
-  wallHeight: [800, 2100],
+  // 100: niskie krawędzie ECUMENE (Mars, 162); suwak dema Halo zostaje 800–2100
+  wallHeight: [100, 2100],
   floorTiltDeg: [0, 20],
   flightLevel: [0, 1],
   sectorCount: [8, 32]

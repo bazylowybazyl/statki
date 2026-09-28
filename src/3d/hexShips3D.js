@@ -2,16 +2,13 @@
 import { refreshHexBodyCache, DestructorSystem, isPackedShardBoundary, DESTRUCTOR_CONFIG, shardHeatNow } from '../game/destructor.js';
 import { Core3D } from './core3d.js';
 import { EngineVfxSystem } from './engineVfxSystem.js';
-import { Weapon3DSystem } from './weapon3DSystem.js';
+import { WeaponFx } from './weapons/weaponFx.js';
 import { Fx3D } from './fxParticles3D.js';
-import { RailgunFX3D } from './railgunFx3D.js';
-import { BulletTrails } from './slugTrail3D.js';
 import { MainExhaust3D } from './mainExhaust3D.js';
 import { WarpPlume3D } from './warpPlume3D.js';
 import { Turret2D } from '../vfx/turret2D.js';
 import {
   MAX_SHADER_SHIP_LIGHTS,
-  NAV_LIGHT_CHASE,
   buildCombinedShipLightShaderPayload,
   buildNavLightClusters,
   buildPositionLightWorldSprites,
@@ -19,7 +16,6 @@ import {
   buildShipLightShaderPayload,
   computeRoadEmitterReach,
   createRoadEmitterReach,
-  glslFloat,
   hasEntityLightSource,
   roadEmittersMayReach
 } from '../game/shipLightRuntime.js';
@@ -31,477 +27,31 @@ import { prepareColdWreckImpostor, pushColdWreckImpostors } from './coldWreckImp
 import { COLD_WRECK_CONFIG } from '../game/coldWrecks.js';
 import { HullLacquer, MAX_ENGINE_ZONES, computeEngineZones } from './hullLacquer.js';
 import { HULL_SDF_OCCLUDER_FLOATS, HullShadowSdf, packHullShaftOccluder } from './hullShadowSdf.js';
-import { SUN_SHADOW_GLSL, sunShadowUniforms } from './sunShadowMask.js';
+import {
+  DEBRIS_SHARED,
+  HULL_EMPTY_SPRITE_TEXTURE,
+  HULL_FLAT_NORMAL_TEXTURE,
+  HULL_LIGHT_ZONE_OFFSET,
+  HULL_SHARED,
+  HULL_WARP_OFF,
+  HullDebrisNodeMaterial,
+  HullLightStore,
+  HullNodeMaterial,
+  HullObjectStore
+} from './hexShips3D.tsl.js';
 import { buildHullSkinTopology, writeHullSkin, writeHullSkinQuads, clearHullSkinDirty } from './beamHullSkin.js';
 import { HullBodies, hullSpriteRotation } from '../game/hullBodies.js';
 import { HullDebris3D } from './hullDebris3D.js';
+import { HullSkinBatch } from './hullSkinBatch.js';
+import { HullDamageMap } from './hullDamageMap.js';
 
-const HEX_VERTEX_SHADER = `
-attribute vec2 aGridPos;
-attribute float aStress;
-// aHeat = (szczyt żaru 0-1, znacznik czasu w sekundach). Zanik liczy fragment
-// z uTime — CPU nie chodzi po shardach, żeby wygaszać rozżarzenie.
-attribute vec2 aHeat;
-
-uniform vec2 uSpriteSize;
-
-varying vec2 vSpriteUV;
-varying float vStress;
-varying vec2 vHeat;
-varying vec2 vWorldXY;
-varying vec2 vOriginXY;
-
-void main() {
-  vStress = aStress;
-  vHeat = aHeat;
-  vSpriteUV = (aGridPos + position.xy) / uSpriteSize;
-  vec4 localPos = instanceMatrix * vec4(position.xy, 0.0, 1.0);
-  // Pozycja w świecie dla lakieru (kierunek do oka pseudo-perspektywy)
-  // i środek statku (obłoki odbić przesuwają się z pozycją statku).
-  vWorldXY = (modelMatrix * localPos).xy;
-  vOriginXY = modelMatrix[3].xy;
-  vec4 mvPosition = modelViewMatrix * localPos;
-  gl_Position = projectionMatrix * mvPosition;
-}
-`;
-
-const ARMOR_VERTEX_SHADER = `
-varying vec2 vSpriteUV;
-varying float vStress;
-varying vec2 vHeat;
-varying vec2 vWorldXY;
-varying vec2 vOriginXY;
-
-void main() {
-  vStress = 0.0;
-  // Płyta pancerza to jeden quad na cały kadłub — nie ma na niej pojedynczego
-  // heksa, któremu można by przypisać żar. Rozżarzone heksy wnętrza renderują
-  // się nad nią osobno (patrz shouldRenderHybridShard).
-  vHeat = vec2(0.0);
-  vSpriteUV = uv;
-  vWorldXY = (modelMatrix * vec4(position, 1.0)).xy;
-  vOriginXY = modelMatrix[3].xy;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-}
-`;
-
-// Rampa temperatury żaru (ciało doskonale czarne w skrócie): wiśnia →
-// pomarańcz → żółć → biel. Wspólna dla kadłuba i odłamków, żeby ten sam metal
-// miał tę samą barwę w obu miejscach. Barwa jest znormalizowana (kanał ≤ 1) —
-// jasność dokłada wywołujący, bo kadłub i odłamki leżą w innych pasmach HDR.
-const HEAT_RAMP_GLSL = `
-vec3 heatRamp(float h) {
-  vec3 c = mix(vec3(0.55, 0.04, 0.01), vec3(1.0, 0.30, 0.04), smoothstep(0.0, 0.45, h));
-  c = mix(c, vec3(1.0, 0.70, 0.22), smoothstep(0.45, 0.75, h));
-  return mix(c, vec3(1.0, 0.93, 0.80), smoothstep(0.75, 1.0, h));
-}
-`;
-
-const HEX_FRAGMENT_SHADER = `
-#define MAX_SHIP_LIGHTS ${MAX_SHADER_SHIP_LIGHTS}
-#define MAX_ENGINE_ZONES ${MAX_ENGINE_ZONES}
-uniform sampler2D uSprite;
-uniform sampler2D uNormalMap;
-uniform int uHasNormalMap;
-uniform float uStressTint;
-uniform float uHeatDecay;
-uniform float uHeatPeak;
-uniform vec3 uLightDir;
-uniform float uRotation;
-uniform float uTerminatorStart;
-uniform float uTerminatorEnd;
-uniform float uNightMin;
-uniform float uNightBandStart;
-uniform float uNightBandEnd;
-uniform vec3 uNightTint;
-uniform float uDayAmbient;
-uniform float uDayDiffuseMul;
-uniform float uSpecularMul;
-uniform int uIsOcclusion;
-uniform int uBillboardLighting;
-uniform float uLodOpacity;
-uniform vec2 uSpriteSize;
-uniform float uTime;
-uniform int uShipLightCount;
-uniform vec4 uShipLightData[MAX_SHIP_LIGHTS];
-uniform vec4 uShipLightColor[MAX_SHIP_LIGHTS];
-uniform vec4 uShipLightExtra[MAX_SHIP_LIGHTS];
-// Lakier (hullLacquer.js). uShapeMap: RG = normalna XY sprite'a, B = waga.
-uniform sampler2D uShapeMap;
-uniform sampler2D uLacquerEnv;
-uniform sampler2D uLacquerSky;
-uniform float uLacquerWeight;
-uniform float uLacquerGlint;
-uniform vec4 uLacquerA;
-uniform vec4 uLacquerB;
-uniform vec4 uLacquerC;
-uniform vec4 uLacquerD;
-uniform vec4 uLacquerE;
-uniform int uEngineZoneCount;
-uniform vec4 uEngineZones[MAX_ENGINE_ZONES];
-
-varying vec2 vSpriteUV;
-varying float vStress;
-varying vec2 vHeat;
-varying vec2 vWorldXY;
-varying vec2 vOriginXY;
-${HEAT_RAMP_GLSL}
-${SUN_SHADOW_GLSL}
-void main() {
-  if (vSpriteUV.x < -0.01 || vSpriteUV.x > 1.01 ||
-      vSpriteUV.y < -0.01 || vSpriteUV.y > 1.01) discard;
-
-  vec4 armor = texture2D(uSprite, vSpriteUV);
-  vec3 color = armor.rgb;
-  float alpha = armor.a * uLodOpacity;
-
-  if (alpha < 0.01) discard;
-
-  // --- MASKA OKLUZJI: Sylwetki zgĹ‚aszajÄ… siÄ™ jako BIAĹE (1.0), czyli blokery Ĺ›wiatĹ‚a ---
-  if (uIsOcclusion == 1) {
-      gl_FragColor = vec4(1.0, 1.0, 1.0, alpha);
-      return;
-  }
-
-  if (uBillboardLighting == 1) {
-      gl_FragColor = vec4(sunShadeUnlit(color), alpha);
-      return;
-  }
-
-  vec3 localNormal;
-  if (uHasNormalMap == 1) {
-    vec4 nTex = texture2D(uNormalMap, vSpriteUV);
-    localNormal = normalize(nTex.rgb * 2.0 - 1.0);
-  } else {
-    vec2 p = vSpriteUV * 2.0 - 1.0;
-    localNormal = normalize(vec3(p.x * 0.45, -p.y * 0.45, 1.0));
-  }
-
-  float c = cos(uRotation);
-  float s = sin(uRotation);
-  vec3 worldNormal = normalize(vec3(
-      localNormal.x * c - localNormal.y * s,
-      localNormal.x * s + localNormal.y * c,
-      localNormal.z
-  ));
-
-  float NdotL = dot(worldNormal, uLightDir);
-  float dayDiffuse = max(0.0, NdotL);
-  // Cień planety albo innego kadłuba (maska Core3D, sunShadowMask.js) gasi
-  // słońce: rozproszone, połysk i odblask lakieru, a otoczenie przygasa do
-  // uSunShadowFill. Światła statku, glow, stres i żar ran świecą w cieniu
-  // jak poza nim.
-  float sunVis = sunVisibility();
-  vec3 sunlitColor = color * (uDayAmbient + dayDiffuse * uDayDiffuseMul);
-  float lightMul = uDayAmbient * sunFill(sunVis) + dayDiffuse * uDayDiffuseMul * sunVis;
-  color *= lightMul;
-
-  vec3 viewDir = vec3(0.0, 0.0, 1.0);
-  vec3 halfVector = normalize(uLightDir + viewDir);
-  float spec = pow(max(dot(worldNormal, halfVector), 0.0), 32.0);
-  float litMask = smoothstep(-0.02, 0.08, NdotL);
-  color += vec3(spec * uSpecularMul * litMask * sunVis);
-  sunlitColor += vec3(spec * uSpecularMul * litMask);
-
-  // Glow (niebieskie elementy sprite'a) liczony z koloru w PEŁNYM słońcu —
-  // bez cienia sunlitColor == color, więc poza cieniem nic się nie zmienia.
-  float isGlowing = step(0.6, sunlitColor.b) * step(sunlitColor.r, 0.5);
-  // W mroku gęstego pola asteroid glow przygasa (zostaje ~30%) — inaczej niebieski
-  // kadłub świecił w całkowitej ciemności jak w słońcu.
-  float fieldLit = 1.0 - fieldDarkness();
-  vec3 finalColor = color + (sunlitColor * isGlowing * 1.5) * (0.3 + 0.7 * fieldLit);
-
-  vec2 fragPx = vSpriteUV * uSpriteSize;
-
-  // --- LAKIER: odbicie kosmosu + odblask słońca (hullLacquer.js) ---
-  // Stoi PO isGlowing: niebieskawe odbicie policzone przed nim podbiłoby cały
-  // kadłub ×2,5. Waga gaśnie przy sylwetce (jasna obwódka czytała się jak
-  // tarcza) i w strefach dysz — silniki zostają matowe.
-  float lacquerW = uLacquerWeight * uLacquerA.x;
-  if (lacquerW > 0.001) {
-    vec4 shape = texture2D(uShapeMap, vSpriteUV);
-    lacquerW *= shape.b;
-    for (int i = 0; i < MAX_ENGINE_ZONES; i++) {
-      if (i >= uEngineZoneCount) break;
-      vec4 zone = uEngineZones[i];
-      lacquerW *= smoothstep(zone.z, zone.z * 1.5, length(fragPx - zone.xy));
-    }
-    if (lacquerW > 0.001) {
-      vec3 coatN = uHasNormalMap == 1
-        ? localNormal
-        : vec3(shape.rg, sqrt(max(0.0, 1.0 - dot(shape.rg, shape.rg))));
-      vec3 N = normalize(vec3(coatN.x * c - coatN.y * s, coatN.x * s + coatN.y * c, coatN.z));
-      // Patrzymy prosto z góry, jak kamera ortho — kierunek NIE zależy od kamery.
-      // Oko pseudo-perspektywy jechało z look-aheadem i zoomem kamery, więc odblask
-      // słońca pływał po kadłubie. Zmienność na płaskich płytach dają obłoki niżej.
-      float NdotV = max(N.z, 0.001);
-      vec3 R = vec3(2.0 * NdotV * N.xy, 2.0 * NdotV * N.z - 1.0);
-      float fresnel = uLacquerA.y + (1.0 - uLacquerA.y) * pow(1.0 - NdotV, 5.0);
-      // Podwójna paraboloida: zenit w środku tekstury, horyzont na okręgu.
-      // Dolna półkula (tło pod statkiem) gaśnie — z niej brała się obwódka.
-      vec2 envUV = 0.5 + 0.5 * R.xy / (1.0 + abs(R.z));
-      float hemi = smoothstep(-0.35, 0.15, R.z);
-      vec4 envTex = texture2D(uLacquerEnv, envUV);
-      vec3 env = (min(envTex.rgb * uLacquerA.z, vec3(uLacquerA.w)) + envTex.a * uLacquerB.x) * hemi;
-      vec3 envBlur = min(textureLod(uLacquerEnv, envUV, uLacquerC.z).rgb * uLacquerA.z, vec3(uLacquerA.w)) * hemi;
-      // Bliskie obłoki zakotwiczone w świecie. Kamera jedzie za statkiem, więc
-      // daleki kosmos stoi w miejscu — ruch daje dopiero ta warstwa: pozycja
-      // statku × drift przesuwa odbicie po kadłubie przy locie, offset w kadłubie
-      // trzyma skalę 1:1, a R.xy/R.z wygina je na krzywiznach.
-      vec2 skyP = vOriginXY * uLacquerD.y + (vWorldXY - vOriginXY)
-        + R.xy * (uLacquerD.z / max(R.z, 0.05));
-      vec2 skyUV = skyP * uLacquerD.x;
-      float skyW = smoothstep(0.02, 0.3, R.z) * uLacquerE.z * uLacquerD.w;
-      vec3 skyTex = texture2D(uLacquerSky, skyUV).rgb;
-      float skyLum = dot(skyTex, vec3(0.2126, 0.7152, 0.0722));
-      env += skyTex * (skyW * (1.0 + uLacquerE.x * smoothstep(0.35, 0.8, skyLum)));
-      envBlur += textureLod(uLacquerSky, skyUV, uLacquerE.y).rgb * skyW;
-      // Specular AA: gdzie normalna szybko zmienia się na ekranie, płat się
-      // poszerza i ciemnieje (energia ~stała), zamiast migotać iskrami.
-      vec3 dN = fwidth(N);
-      float nVar = dot(dN, dN);
-      float glintExp = uLacquerB.z / (1.0 + uLacquerB.z * nVar);
-      float sheenExp = uLacquerC.x / (1.0 + uLacquerC.x * nVar);
-      // „Słońce odblasków”: azymut prawdziwego słońca, podniesione o uLacquerC.w
-      // (rad). Słońce gry leży w płaszczyźnie, więc przy widoku z góry odblask
-      // wymagałby pochylenia ~45°, a tyle jest tylko na wygaszonej krawędzi.
-      // Odblask zależy wyłącznie od położenia statku względem słońca i obrotu.
-      vec2 sunXY = uLightDir.xy / max(length(uLightDir.xy), 1e-4);
-      vec3 glintL = vec3(sunXY * cos(uLacquerC.w), sin(uLacquerC.w));
-      float RdotL = max(dot(R, glintL), 0.0);
-      float lobe = (pow(RdotL, glintExp) * uLacquerB.y * (glintExp / uLacquerB.z) * uLacquerGlint
-        + pow(RdotL, sheenExp) * uLacquerB.w * (sheenExp / uLacquerC.x)) * sunVis;
-      // Odbicie kosmosu w lakierze gaśnie w mroku pola (pył zasłania niebo).
-      // Odblask słońca też gaśnie w mroku pola (× fieldLit, a sunVis już ≈ T):
-      // wąski płat ma szczyt tak wysoki, że przy przepuszczalności 0,6% dawał
-      // cienką, jasną kreskę przez kadłub w „całkowitej ciemności” (A/B 2026-09-26).
-      vec3 coat = fresnel * (env + lobe) * fieldLit + armor.rgb * envBlur * uLacquerC.y * fieldLit;
-      finalColor = finalColor * (1.0 - fresnel * lacquerW) + coat * lacquerW;
-    }
-  }
-
-  for (int i = 0; i < MAX_SHIP_LIGHTS; i++) {
-    if (i >= uShipLightCount) break;
-    vec4 lightData = uShipLightData[i];
-    vec4 lightColor = uShipLightColor[i];
-    vec4 lightExtra = uShipLightExtra[i];
-
-    vec2 toFrag = fragPx - lightData.xy;
-    float distPx = length(toFrag);
-    float radiusPx = max(0.5, lightData.z);
-    float power = max(0.0, lightData.w);
-    vec3 lampColor = lightColor.rgb;
-    float lightType = lightColor.a;
-
-    // Typ 2: grupa lamp pozycyjnych INNEGO statku — sama poświata na pancerzu
-    // (lampy są na tamtym kadłubie), zasięg w lightExtra.z, moc = średnia
-    // sekwencji w cyklu (stała, bez migania payloadu).
-    if (lightType > 1.5 && lightType < 2.5) {
-      float xr = clamp(distPx / max(1.0, lightExtra.z), 0.0, 1.0);
-      float spill = 1.0 - xr * xr;
-      // Oświetla pancerz (× albedo), nie maluje go jednolitym kolorem — błysk
-      // burzy wydobywa z mroku detal kadłuba (przy średnim albedo ~0,2 to te
-      // same 0,09 co dawniej płaski rozlew czerwieni lamp).
-      finalColor += lampColor * power * spill * spill * (armor.rgb * 0.35 + 0.02);
-      continue;
-    }
-
-    // Sekwencja "pasa startowego": ta sama formuła co billboardy blasku
-    // (shipLights3D) — stałe wstrzyknięte z NAV_LIGHT_CHASE, znak "+" daje
-    // przebieg od dziobu (+X sprite'a) ku rufie.
-    float localPhase = clamp(lightData.x / max(1.0, uSpriteSize.x), 0.0, 1.0);
-    float chase = fract(uTime * ${glslFloat(NAV_LIGHT_CHASE.speed)} + localPhase * ${glslFloat(NAV_LIGHT_CHASE.phaseGain)});
-    float chasePulse = smoothstep(0.0, ${glslFloat(NAV_LIGHT_CHASE.attack)}, chase)
-      * (1.0 - smoothstep(${glslFloat(NAV_LIGHT_CHASE.hold)}, ${glslFloat(NAV_LIGHT_CHASE.release)}, chase));
-    float sequenceMul = mix(${glslFloat(NAV_LIGHT_CHASE.rest)}, 1.35, chasePulse);
-    if (lightType > 0.5) sequenceMul = 1.0;
-
-    float core = smoothstep(radiusPx, 0.0, distPx);
-    // Lampa pozycyjna rozlewa się szerzej po pancerzu niż reflektor (2026-09-26:
-    // „mocniej świeciły i rozświetlały co nieco”): 9 promieni zamiast 7.
-    float isNav = step(lightType, 0.5);
-    float glow = smoothstep(radiusPx * mix(7.0, 9.0, isNav), 0.0, distPx);
-    finalColor += lampColor * power * sequenceMul * (core * 1.15 + glow * mix(0.50, 0.62, isNav));
-
-    // Zasięg 0 = lampa bez stożka na tym kadłubie (własny reflektor otoczenia).
-    if (lightType > 0.5 && lightExtra.z > 0.0) {
-      vec2 dir = normalize(lightExtra.xy);
-      float along = dot(toFrag, dir);
-      float coneCos = clamp(lightExtra.w, -0.98, 0.999);
-      float rangePx = max(radiusPx * 2.0, lightExtra.z);
-      float frontMask = step(0.0, along);
-      float rangeMask = 1.0 - smoothstep(rangePx * 0.18, rangePx, along);
-      // Reflektor otoczenia innego statku: zanik jak światło pola (okno do zera
-      // × 1/(1 + k x²)) — płaskie „do 18% zasięgu pełne” malowało sąsiedni
-      // kadłub równą szarością.
-      if (lightType > 2.5) {
-        float xr = clamp(along / rangePx, 0.0, 1.0);
-        float win = 1.0 - xr * xr;
-        rangeMask = win * win / (1.0 + 6.0 * xr * xr);
-      }
-      float angleCos = dot(normalize(toFrag + dir * 0.001), dir);
-      float coneMask = smoothstep(coneCos, min(0.999, coneCos + 0.16), angleCos);
-      float nearMask = 1.0 - smoothstep(radiusPx * 0.8, radiusPx * 2.2, distPx);
-      float beam = frontMask * rangeMask * coneMask * (1.0 - nearMask);
-      // Reflektor otoczenia z zanikiem potrzebuje więcej mocy na bliskim kadłubie.
-      finalColor += lampColor * power * beam * (lightType > 2.5 ? 0.3 : 0.16);
-    }
-  }
-
-  float stress = clamp(vStress / 20.0, 0.0, 1.0);
-  vec3 stressGlow = vec3(1.0, 0.25, 0.05) * stress * uStressTint * 3.5;
-  finalColor += stressGlow;
-
-  // ŻAR brzegu rany i powierzchni tarcia. Kanał niezależny od stresu: gaśnie
-  // z własnym zegarem, więc blacha stygnie także wtedy, gdy siatka już śpi
-  // i po wypaleniu plastycznym (aStress jest wtedy zerowy).
-  // Jasność ~ 0.26h + 0.74h^4 (Stefan-Boltzmann w skrócie): świeży żar sięga
-  // uHeatPeak (8-12, przepalona biel z bloomem), h = 0.45 daje ~1.3 — nasycony
-  // pomarańcz tuż pod progiem bloomu — a wiśnia tli się długo nisko.
-  float heat = vHeat.x * exp(-max(0.0, uTime - vHeat.y) * uHeatDecay);
-  float heat2 = heat * heat;
-  finalColor += heatRamp(heat) * (uHeatPeak * (0.26 * heat + 0.74 * heat2 * heat2));
-
-  gl_FragColor = vec4(finalColor, alpha);
-}
-`;
-
-// Skóra kadłuba na belkach (hullBodies.js, beamHullSkin.js): czworokąt na węzeł,
-// wierzchołki w układzie ciała (mesh.position = początek ciała w świecie), UV w
-// konwencji tekstur heksów. Fragment = shader kadłubów heksowych z jasnością blachy.
-const BEAM_SKIN_VERTEX_SHADER = `
-attribute float aShade;
-// aHeat jak u heksów: (szczyt żaru 0-1, znacznik czasu w sekundach).
-attribute vec2 aHeat;
-
-varying vec2 vSpriteUV;
-varying float vStress;
-varying vec2 vHeat;
-varying vec2 vWorldXY;
-varying vec2 vOriginXY;
-varying float vShade;
-
-void main() {
-  vStress = 0.0;
-  vHeat = aHeat;
-  vShade = aShade;
-  vSpriteUV = uv;
-  vec4 localPos = vec4(position.xy, 0.0, 1.0);
-  vWorldXY = (modelMatrix * localPos).xy;
-  vOriginXY = modelMatrix[3].xy;
-  gl_Position = projectionMatrix * modelViewMatrix * localPos;
-}
-`;
-
-const BEAM_SKIN_ARMOR_SAMPLE = 'vec4 armor = texture2D(uSprite, vSpriteUV);';
-if (HEX_FRAGMENT_SHADER.split(BEAM_SKIN_ARMOR_SAMPLE).length !== 2) {
-  throw new Error('hexShips3D: shader skóry belek nie znalazł próbkowania pancerza w HEX_FRAGMENT_SHADER');
-}
-const BEAM_SKIN_FRAGMENT_SHADER = HEX_FRAGMENT_SHADER
-  .replace('varying vec2 vOriginXY;', 'varying vec2 vOriginXY;\nvarying float vShade;')
-  .replace(BEAM_SKIN_ARMOR_SAMPLE, `${BEAM_SKIN_ARMOR_SAMPLE}\n  armor.rgb *= vShade;`);
-
-const DEBRIS_VERTEX_SHADER = `
-attribute vec2 aGridPos;
-attribute vec2 aStartPos;
-attribute vec2 aStartVel;
-attribute vec3 aRotationData;
-attribute vec2 aTimeData;
-// Żar w chwili oderwania. Odłamek stygnie od SWOJEGO wieku — jest już poza
-// siatką, więc nie ma skąd wziąć znacznika czasu kadłuba.
-attribute float aHeat;
-
-uniform vec2 uSpriteSize;
-uniform float uTime;
-
-varying vec2 vSpriteUV;
-varying float vAlpha;
-varying float vAge;
-varying float vEdge;
-varying float vHeat;
-
-void main() {
-  float age = uTime - aTimeData.x;
-  vAge = age;
-  vHeat = aHeat;
-  // Geometria odłamka to CircleGeometry(25, 6) — promień znormalizowany daje
-  // maskę urwanej krawędzi, na której zbiera się żar.
-  vEdge = length(position.xy) / 25.0;
-
-  float lifetime = aTimeData.y;
-  if (age < 0.0 || lifetime <= 0.0 || age > lifetime) {
-    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
-    return;
-  }
-
-  float k = 0.16;
-  float distMul = (1.0 - exp(-k * age)) / k;
-
-  vec2 currentPos = aStartPos + aStartVel * distMul;
-  float currentAngle = aRotationData.x + aRotationData.y * age;
-  float currentScale = aRotationData.z;
-
-  // Keep the torn metal readable, then fade smoothly near the end of its life.
-  vAlpha = 1.0 - smoothstep(lifetime * 0.72, lifetime, age);
-  if (vAlpha <= 0.01) {
-    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
-    return;
-  }
-
-  vSpriteUV = (aGridPos + position.xy) / uSpriteSize;
-
-  float c = cos(currentAngle);
-  float s = sin(currentAngle);
-  vec2 scaledPos = position.xy * currentScale;
-  vec2 rotatedPos = vec2(
-    scaledPos.x * c - scaledPos.y * s,
-    scaledPos.x * s + scaledPos.y * c
-  );
-
-  vec3 worldPosition = vec3(currentPos.x + rotatedPos.x, -(currentPos.y + rotatedPos.y), 0.0);
-  gl_Position = projectionMatrix * viewMatrix * vec4(worldPosition, 1.0);
-}
-`;
-
-const DEBRIS_FRAGMENT_SHADER = `
-uniform sampler2D uSprite;
-uniform vec3 uLightDir;
-uniform float uDayAmbient;
-uniform float uDayDiffuseMul;
-uniform float uHeatDecay;
-uniform float uHeatTint;
-
-varying vec2 vSpriteUV;
-varying float vAlpha;
-varying float vAge;
-varying float vEdge;
-varying float vHeat;
-${HEAT_RAMP_GLSL}
-${SUN_SHADOW_GLSL}
-void main() {
-  if (vSpriteUV.x < -0.01 || vSpriteUV.x > 1.01 || vSpriteUV.y < -0.01 || vSpriteUV.y > 1.01) discard;
-
-  vec4 color = texture2D(uSprite, vSpriteUV);
-  if (color.a < 0.01) discard;
-
-  vec2 p = vSpriteUV * 2.0 - 1.0;
-  vec3 normal = normalize(vec3(p.x * 0.45, -p.y * 0.45, 1.0));
-  float NdotL = max(0.0, dot(normal, uLightDir));
-  // Cień (maska Core3D) gasi słońce i przygasza otoczenie — żar krawędzi niżej zostaje.
-  float sunVis = sunVisibility();
-  float lightMul = uDayAmbient * sunFill(sunVis) + NdotL * uDayDiffuseMul * sunVis;
-
-  gl_FragColor = vec4(color.rgb * lightMul, color.a * vAlpha);
-
-  // Żar siedzi na URWANYCH KRAWĘDZIACH — środek płata zdążył oddać ciepło
-  // w blachę, brzeg nie miał komu. Jasność LINIOWA i niska (debrisHeatGlow ~1):
-  // odłamki zostają w paśmie barwy, bez białego szczytu — główny żar ma być
-  // na kadłubie, na brzegu wyrwy.
-  float edge = smoothstep(0.5, 1.0, vEdge);
-  float heat = vHeat * exp(-vAge * uHeatDecay);
-  gl_FragColor.rgb += heatRamp(heat) * heat * uHeatTint * (0.35 + 0.65 * edge);
-}
-`;
+// Materiały kadłubów (skóra belek, siatka heksów, płyta pancerza, szczątki GPU)
+// są w TSL: src/3d/hexShips3D.tsl.js — graf na wariant, wartości per encja
+// w material.uniforms (obiekty `{ value }` jak w ShaderMaterial), lampy statku
+// i strefy dysz w buforze storage HullLightStore (slot na kadłub). Port WebGPU,
+// zadanie 04: kod aktualizacji niżej pisze `material.uniforms.X.value` jak dawniej;
+// wartości wspólne dla wszystkich kadłubów (czas, strojenie światła, żar) idą raz
+// na klatkę do HULL_SHARED.
 
 const state = {
   entityMeshes: new Map(),
@@ -975,21 +525,13 @@ function createManagedTexture(source, isLinearData = false) {
     (typeof HTMLCanvasElement !== 'undefined' && source instanceof HTMLCanvasElement) ||
     (typeof OffscreenCanvas !== 'undefined' && source instanceof OffscreenCanvas);
   const texture = isCanvas ? new THREE.CanvasTexture(source) : new THREE.Texture(source);
-  const width = Number(source?.width ?? source?.naturalWidth ?? 0) || 0;
-  const height = Number(source?.height ?? source?.naturalHeight ?? 0) || 0;
-  const isPowerOfTwo = width > 0 && height > 0 && THREE.MathUtils.isPowerOfTwo(width) && THREE.MathUtils.isPowerOfTwo(height);
-  const isWebGL2 = !!Core3D?.renderer?.capabilities?.isWebGL2;
-  const canUseMipmaps = isWebGL2 || isPowerOfTwo;
+  // WebGPU (jak dawniej WebGL2) ma mipmapy także dla tekstur NPOT (sprite'y
+  // kadłubów), więc zawsze trilinear + anizotropia do 4.
   texture.flipY = false;
   texture.magFilter = THREE.LinearFilter;
-  texture.minFilter = canUseMipmaps ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter;
-  texture.generateMipmaps = canUseMipmaps;
-  if (canUseMipmaps && Core3D?.renderer?.capabilities?.getMaxAnisotropy) {
-    const maxAnisotropy = Core3D.renderer.capabilities.getMaxAnisotropy();
-    texture.anisotropy = Math.max(1, Math.min(4, maxAnisotropy || 1));
-  } else {
-    texture.anisotropy = 1;
-  }
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.generateMipmaps = true;
+  texture.anisotropy = Math.max(1, Math.min(4, Core3D.getMaxAnisotropy() || 1));
   texture.colorSpace = isLinearData ? THREE.LinearSRGBColorSpace : THREE.SRGBColorSpace;
   texture.needsUpdate = true;
   return texture;
@@ -1030,12 +572,26 @@ export function getHullLightTuning() {
   return getShipLightTuning();
 }
 
-function createLightUniformArray() {
-  return Array.from({ length: MAX_SHADER_SHIP_LIGHTS }, () => new THREE.Vector4());
+// Slot kadłuba w buforze lamp i stref dysz (HullLightStore, hexShips3D.tsl.js).
+// Potrzebny tylko, gdy są lampy albo strefy — zwalniany przy zerze obu i przy
+// zwolnieniu mesha. Pula pełna: kadłub rysuje się bez lamp i stref (liczniki 0),
+// a zapis ponawia się w kolejnej klatce (podpis lamp / strefy nie są zapamiętane).
+function ensureHullLightSlot(data) {
+  if (data.lightSlot >= 0) return true;
+  const slot = HullLightStore.acquire();
+  if (slot < 0) return false;
+  data.lightSlot = slot;
+  data.mesh.material.uniforms.uLightBase.value = slot * HullLightStore.slotVec4;
+  return true;
 }
 
-function createEngineZoneArray() {
-  return Array.from({ length: MAX_ENGINE_ZONES }, () => new THREE.Vector4());
+function releaseHullLightSlotIfUnused(data) {
+  const uniforms = data?.mesh?.material?.uniforms;
+  if (!(data?.lightSlot >= 0) || !uniforms) return;
+  if (uniforms.uShipLightCount.value > 0 || uniforms.uEngineZoneCount.value > 0) return;
+  HullLightStore.release(data.lightSlot);
+  data.lightSlot = -1;
+  uniforms.uLightBase.value = 0;
 }
 
 // Lakier nie dotyczy pierścienia ani asteroid (te wychodzą z shadera wcześniej).
@@ -1075,16 +631,26 @@ function syncEntityLacquer(entity, data, grid, entityScale, zoomPx) {
     data.zoneMul === zoneMul
   ) return;
   const zones = computeEngineZones(main, side, grid, tune);
-  const out = uniforms.uEngineZones.value;
-  for (let i = 0; i < MAX_ENGINE_ZONES; i++) {
-    const zone = zones[i];
-    if (zone) out[i].set(zone.x, zone.y, zone.r, 0);
-    else out[i].set(0, 0, 0, 0);
+  const zoneCount = Math.min(MAX_ENGINE_ZONES, zones.length);
+  if (zoneCount > 0 && !ensureHullLightSlot(data)) {
+    // Pula pełna: bez stref (lakier także na dyszach) — ponowna próba w następnej klatce.
+    uniforms.uEngineZoneCount.value = 0;
+    return;
   }
-  uniforms.uEngineZoneCount.value = zones.length;
-  // Tablica 20 vec4 nie ma cache w setterze three — przy zerze stref shader jej
-  // nie czyta (pętla kończy się na uEngineZoneCount), więc nie wysyłamy jej co draw.
-  uniforms.uEngineZones.needsUpdate = zones.length > 0;
+  // Strefy w slocie kadłuba (od HULL_LIGHT_ZONE_OFFSET); shader czyta je tylko do
+  // uEngineZoneCount, więc zapis i wysyłka dotyczą samych zmienionych stref.
+  if (zoneCount > 0) {
+    const arr = HullLightStore.array();
+    const base = HullLightStore.slotFloatOffset(data.lightSlot) + HULL_LIGHT_ZONE_OFFSET * 4;
+    for (let i = 0; i < zoneCount; i++) {
+      const zone = zones[i];
+      const o = base + i * 4;
+      arr[o] = zone.x; arr[o + 1] = zone.y; arr[o + 2] = zone.r; arr[o + 3] = 0;
+    }
+    HullLightStore.markDirty(data.lightSlot, HULL_LIGHT_ZONE_OFFSET, zoneCount);
+  }
+  uniforms.uEngineZoneCount.value = zoneCount;
+  if (zoneCount === 0) releaseHullLightSlotIfUnused(data);
   data.zoneMainRef = main;
   data.zoneSideRef = side;
   data.zoneSrcW = data.srcWidth;
@@ -1100,15 +666,6 @@ function syncEntityLacquer(entity, data, grid, entityScale, zoomPx) {
 // każdej encji w pudle cullingu.
 const SHIP_LIGHT_SHADER_MIN_PX = 4;
 const SHIP_LIGHTS_OFF_SIGNATURE = '__lights_off__';
-
-// Tablice lamp (3 × 32 vec4) wysyłane są przy KAŻDYM drawie kadłuba (materiał
-// per encja, setter tablic three nie ma cache). Przy zerze lamp shader ich nie
-// czyta — pętla kończy się na uShipLightCount — więc upload pomijamy.
-function setShipLightArraysUpload(uniforms, enabled) {
-  uniforms.uShipLightData.needsUpdate = enabled;
-  uniforms.uShipLightColor.needsUpdate = enabled;
-  uniforms.uShipLightExtra.needsUpdate = enabled;
-}
 
 // Pudło zasięgu emiterów poszerzone o grupy lamp pozycyjnych (koło zasięgu).
 function extendReachWithOmniLights(reach, lights) {
@@ -1130,7 +687,6 @@ function extendReachWithOmniLights(reach, lights) {
 function syncEntityLightUniforms(entity, data, grid, externalRoadLights = null, bodyRadiusPx = Infinity) {
   const uniforms = data?.mesh?.material?.uniforms;
   if (!uniforms?.uShipLightCount) return;
-  uniforms.uTime.value = state.lastTime * 0.001;
 
   // Emitery drogowe liczą się tylko, gdy któryś może sięgnąć pudła encji —
   // dawniej jeden emiter gdziekolwiek w pudle rozgrzania (np. reflektory gracza)
@@ -1142,7 +698,7 @@ function syncEntityLightUniforms(entity, data, grid, externalRoadLights = null, 
   if (bodyRadiusPx < SHIP_LIGHT_SHADER_MIN_PX || (!hasExternalRoadLights && !hasEntityLightSource(entity))) {
     if (data.lightSignature !== SHIP_LIGHTS_OFF_SIGNATURE) {
       uniforms.uShipLightCount.value = 0;
-      setShipLightArraysUpload(uniforms, false);
+      releaseHullLightSlotIfUnused(data);
       data.lightSignature = SHIP_LIGHTS_OFF_SIGNATURE;
     }
     return;
@@ -1154,41 +710,49 @@ function syncEntityLightUniforms(entity, data, grid, externalRoadLights = null, 
     : buildShipLightShaderPayload(entity, grid, MAX_SHADER_SHIP_LIGHTS);
   if (payload.signature === data.lightSignature) return;
 
-  uniforms.uShipLightCount.value = payload.count;
-  setShipLightArraysUpload(uniforms, payload.count > 0);
-  const dataUniforms = uniforms.uShipLightData.value;
-  const colorUniforms = uniforms.uShipLightColor.value;
-  const extraUniforms = uniforms.uShipLightExtra.value;
-
-  for (let i = 0; i < MAX_SHADER_SHIP_LIGHTS; i++) {
-    const light = payload.lights[i];
-    if (!light) {
-      dataUniforms[i].set(0, 0, 0, 0);
-      colorUniforms[i].set(0, 0, 0, 0);
-      extraUniforms[i].set(0, -1, 0, 0);
-      continue;
-    }
-    const coneRad = Math.max(1, Math.min(179, Number(light.coneDeg) || 40)) * Math.PI / 360;
-    dataUniforms[i].set(light.pos.x, light.pos.y, light.radiusPx, light.power);
-    // Typ w shaderze: 0 lampa pozycyjna, 1 reflektor dziobu (też zewnętrzny),
-    // 2 rozlew grupy lamp innego statku (bez rdzenia), 3 reflektor otoczenia
-    // (własny: sama lampa; innego statku: stożek z zanikiem z odległością).
-    colorUniforms[i].set(
-      light.color.r,
-      light.color.g,
-      light.color.b,
-      light.kind === 'omni' ? 2 : light.kind === 'flood' ? 3 : light.kind === 'road' ? 1 : 0
-    );
-    // Własny reflektor otoczenia świeci NA ZEWNĄTRZ: stożek na własnym
-    // pancerzu malował białe kliny na płetwach (zostaje lampa: rdzeń + poświata).
-    const ownFlood = light.kind === 'flood' && !light.external;
-    extraUniforms[i].set(
-      Number(light.dir?.x) || 0,
-      Number(light.dir?.y) || -1,
-      ownFlood ? 0 : (Number(light.rangePx) || 0),
-      Math.cos(coneRad)
-    );
+  // Lampy w slocie kadłuba (HullLightStore): 3 vec4 na lampę, tylko `count`
+  // pierwszych (pętla w shaderze kończy się na uShipLightCount) — wysyłka na GPU
+  // raz, przy zmianie podpisu, nie przy każdym rysowaniu.
+  const count = Math.min(MAX_SHADER_SHIP_LIGHTS, payload.count | 0);
+  if (count > 0 && !ensureHullLightSlot(data)) {
+    uniforms.uShipLightCount.value = 0;
+    data.lightSignature = null; // pula pełna — ponowna próba w następnej klatce
+    return;
   }
+  if (count > 0) {
+    const arr = HullLightStore.array();
+    const base = HullLightStore.slotFloatOffset(data.lightSlot);
+    for (let i = 0; i < count; i++) {
+      const o = base + i * 12;
+      const light = payload.lights[i];
+      if (!light) {
+        arr[o] = 0; arr[o + 1] = 0; arr[o + 2] = 0; arr[o + 3] = 0;
+        arr[o + 4] = 0; arr[o + 5] = 0; arr[o + 6] = 0; arr[o + 7] = 0;
+        arr[o + 8] = 0; arr[o + 9] = -1; arr[o + 10] = 0; arr[o + 11] = 0;
+        continue;
+      }
+      const coneRad = Math.max(1, Math.min(179, Number(light.coneDeg) || 40)) * Math.PI / 360;
+      // Dane: pozycja w pikselach sprite'a, promień, moc.
+      arr[o] = light.pos.x; arr[o + 1] = light.pos.y; arr[o + 2] = light.radiusPx; arr[o + 3] = light.power;
+      // Barwa i typ w shaderze: 0 lampa pozycyjna, 1 reflektor dziobu (też zewnętrzny),
+      // 2 rozlew grupy lamp innego statku (bez rdzenia), 3 reflektor otoczenia
+      // (własny: sama lampa; innego statku: stożek z zanikiem z odległością).
+      arr[o + 4] = light.color.r;
+      arr[o + 5] = light.color.g;
+      arr[o + 6] = light.color.b;
+      arr[o + 7] = light.kind === 'omni' ? 2 : light.kind === 'flood' ? 3 : light.kind === 'road' ? 1 : 0;
+      // Własny reflektor otoczenia świeci NA ZEWNĄTRZ: stożek na własnym
+      // pancerzu malował białe kliny na płetwach (zostaje lampa: rdzeń + poświata).
+      const ownFlood = light.kind === 'flood' && !light.external;
+      arr[o + 8] = Number(light.dir?.x) || 0;
+      arr[o + 9] = Number(light.dir?.y) || -1;
+      arr[o + 10] = ownFlood ? 0 : (Number(light.rangePx) || 0);
+      arr[o + 11] = Math.cos(coneRad);
+    }
+    HullLightStore.markDirty(data.lightSlot, 0, count * 3);
+  }
+  uniforms.uShipLightCount.value = count;
+  if (count === 0) releaseHullLightSlotIfUnused(data);
 
   data.lightSignature = payload.signature;
 }
@@ -1209,6 +773,19 @@ function disposeMeshData(data) {
   else data.texture?.dispose?.();
   data.normalTexture?.dispose?.();
   if (data.shapeImageRef) HullLacquer.releaseShapeUniform(data.shapeImageRef);
+  if (data.lightSlot >= 0) {
+    HullLightStore.release(data.lightSlot);
+    data.lightSlot = -1;
+  }
+  if (data.batchEntry) {
+    data.batch.remove(data.batchEntry);
+    data.batchEntry = null;
+  }
+  const hullSlot = data.mesh?.material?.uniforms?.uHullSlot;
+  if (hullSlot && hullSlot.value > 0) {
+    HullObjectStore.release(hullSlot.value);
+    hullSlot.value = 0;
+  }
 }
 
 const GPU_DEBRIS_MAX = 10000;
@@ -1240,24 +817,16 @@ class GpuDebrisPool {
     this.geometry.setAttribute('aGridPos', new THREE.InstancedBufferAttribute(this.gridPosArray, 2));
     this.geometry.setAttribute('aHeat', new THREE.InstancedBufferAttribute(this.heatArray, 1));
 
-    this.material = new THREE.ShaderMaterial({
-      uniforms: {
-        uSprite: { value: createManagedTexture(gridRef.armorImage) },
-        uSpriteSize: { value: new THREE.Vector2(gridRef.srcWidth || 1, gridRef.srcHeight || 1) },
-        uTime: { value: 0 },
-        uLightDir: { value: new THREE.Vector3(0, 0, 1) },
-        uDayAmbient: { value: SHIP_LIGHT_DEFAULTS.dayAmbient },
-        uDayDiffuseMul: { value: SHIP_LIGHT_DEFAULTS.dayDiffuseMul },
-        uHeatDecay: { value: DESTRUCTOR_CONFIG.heatDecay },
-        uHeatTint: { value: DESTRUCTOR_CONFIG.debrisHeatGlow },
-        ...sunShadowUniforms
-      },
-      vertexShader: DEBRIS_VERTEX_SHADER,
-      fragmentShader: DEBRIS_FRAGMENT_SHADER,
-      transparent: true,
-      depthWrite: false,
-      depthTest: false,
-      side: THREE.DoubleSide
+    // Materiał TSL (hexShips3D.tsl.js, graf wspólny dla pul): wartości puli
+    // w `uniforms`; zanik i siła żaru wspólne (DEBRIS_SHARED, updateTime).
+    // Przezroczysty, bez głębi, DoubleSide w jednym przejściu.
+    this.material = new HullDebrisNodeMaterial({
+      uSprite: { value: createManagedTexture(gridRef.armorImage) },
+      uSpriteSize: { value: new THREE.Vector2(gridRef.srcWidth || 1, gridRef.srcHeight || 1) },
+      uTime: { value: 0 },
+      uLightDir: { value: new THREE.Vector3(0, 0, 1) },
+      uDayAmbient: { value: SHIP_LIGHT_DEFAULTS.dayAmbient },
+      uDayDiffuseMul: { value: SHIP_LIGHT_DEFAULTS.dayDiffuseMul }
     });
 
     this.mesh = new THREE.InstancedMesh(this.geometry, this.material, GPU_DEBRIS_MAX);
@@ -1360,6 +929,11 @@ const GpuDebrisManager = {
 
   updateTime(time) {
     this.globalTime = time;
+    // Żar odłamków respektuje ten sam przełącznik co żar kadłuba (wspólne dla pul).
+    DEBRIS_SHARED.uHeatDecay.value = Math.max(0, Number(DESTRUCTOR_CONFIG.heatDecay) || 0);
+    DEBRIS_SHARED.uHeatTint.value = this.heatTintEnabled
+      ? Math.max(0, Number(DESTRUCTOR_CONFIG.debrisHeatGlow) || 0)
+      : 0;
     const sun = typeof window !== 'undefined' ? window.SUN : null;
     const camera = typeof window !== 'undefined' ? window.camera : null;
     for (const pool of this.pools.values()) {
@@ -1371,11 +945,6 @@ const GpuDebrisManager = {
         pool.currentIndex = 0;
       }
       pool.material.uniforms.uTime.value = time;
-      // Żar odłamków respektuje ten sam przełącznik co żar kadłuba.
-      pool.material.uniforms.uHeatDecay.value = Math.max(0, Number(DESTRUCTOR_CONFIG.heatDecay) || 0);
-      pool.material.uniforms.uHeatTint.value = this.heatTintEnabled
-        ? Math.max(0, Number(DESTRUCTOR_CONFIG.debrisHeatGlow) || 0)
-        : 0;
       if (sun && camera && pool.mesh.count > 0) {
         const dx = sun.x - camera.x;
         const dy = -(sun.y - camera.y);
@@ -1434,65 +1003,111 @@ function createEntityMesh(entity) {
     ? HullLacquer.acquireShapeUniform(shapeImageRef)
     : HullLacquer.flatShapeUniform;
 
-  const material = new THREE.ShaderMaterial({
-    uniforms: createHullUniforms(entity, texture, normalTexture, shapeUniform, grid.srcWidth, grid.srcHeight),
-    vertexShader: HEX_VERTEX_SHADER,
-    fragmentShader: HEX_FRAGMENT_SHADER,
-    transparent: true,
-    depthWrite: true,
-    depthTest: true,
-    side: THREE.FrontSide
-  });
+  // Graf wariantu „hex” (hexShips3D.tsl.js): przezroczysty, z zapisem głębi, FrontSide.
+  const material = new HullNodeMaterial('hex',
+    createHullUniforms(entity, texture, normalTexture, shapeUniform, grid.srcWidth, grid.srcHeight));
 
   return finishEntityMesh(entity, grid, shards, count, geometry, material, texture, visualImage,
     shapeImageRef, normalTexture, baseRadius);
 }
 
-// Uniformy materiału kadłuba — wspólne dla siatki heksów, płyty pancerza i skóry belek.
+// Wartości per encja materiału kadłuba (siatka heksów, płyta pancerza, skóra belek):
+// obiekty `{ value }` czytane per obiekt przez graf wariantu (hexShips3D.tsl.js).
+// Płyta pancerza dzieli je z siatką heksów (spread) poza uLodOpacity. Wartości
+// wspólne dla wszystkich kadłubów (czas, strojenie światła, żar, lakier, maska
+// słońca) są w węzłach grafu — tu ich nie ma. Lampy i strefy dysz: slot w
+// HullLightStore (uLightBase), liczniki uShipLightCount / uEngineZoneCount.
 function createHullUniforms(entity, texture, normalTexture, shapeUniform, srcWidth, srcHeight) {
   return {
-      uSprite: { value: texture },
-      uNormalMap: { value: normalTexture },
+      uSprite: { value: texture || HULL_EMPTY_SPRITE_TEXTURE },
+      uNormalMap: { value: normalTexture || HULL_FLAT_NORMAL_TEXTURE },
       uHasNormalMap: { value: normalTexture ? 1 : 0 },
-      uStressTint: { value: 0.30 },
-      uHeatDecay: { value: DESTRUCTOR_CONFIG.heatDecay },
-      uHeatPeak: { value: DESTRUCTOR_CONFIG.heatGlowPeak },
       uLightDir: { value: new THREE.Vector3(0, 0, 1) },
       uRotation: { value: 0.0 },
       uSpriteSize: { value: new THREE.Vector2(srcWidth || 1, srcHeight || 1) },
-      uTerminatorStart: { value: SHIP_LIGHT_DEFAULTS.terminatorStart },
-      uTerminatorEnd: { value: SHIP_LIGHT_DEFAULTS.terminatorEnd },
-      uNightMin: { value: SHIP_LIGHT_DEFAULTS.nightMin },
-      uNightBandStart: { value: SHIP_LIGHT_DEFAULTS.nightBandStart },
-      uNightBandEnd: { value: SHIP_LIGHT_DEFAULTS.nightBandEnd },
-      uNightTint: { value: new THREE.Vector3(SHIP_LIGHT_DEFAULTS.nightTintR, SHIP_LIGHT_DEFAULTS.nightTintG, SHIP_LIGHT_DEFAULTS.nightTintB) },
-      uDayAmbient: { value: SHIP_LIGHT_DEFAULTS.dayAmbient },
-      uDayDiffuseMul: { value: SHIP_LIGHT_DEFAULTS.dayDiffuseMul },
-      uSpecularMul: { value: SHIP_LIGHT_DEFAULTS.specularMul },
-      uIsOcclusion: { value: 0 },
       uBillboardLighting: { value: usesBillboardLighting(entity) ? 1 : 0 },
       uLodOpacity: { value: 1 },
-      uTime: { value: 0 },
-      // needsUpdate:false = bez uploadu, dopóki count = 0 (patrz setShipLightArraysUpload).
       uShipLightCount: { value: 0 },
-      uShipLightData: { value: createLightUniformArray(), needsUpdate: false },
-      uShipLightColor: { value: createLightUniformArray(), needsUpdate: false },
-      uShipLightExtra: { value: createLightUniformArray(), needsUpdate: false },
+      uEngineZoneCount: { value: 0 },
+      uLightBase: { value: 0 },
+      // Mapa kształtu lakieru: obiekt `{ value }` wspólny dla kadłubów z tym samym
+      // sprite'em (HullLacquer.acquireShapeUniform) — pieczenie podmienia teksturę wszystkim.
       uShapeMap: shapeUniform,
       uLacquerWeight: { value: 0 },
       uLacquerGlint: { value: 1 },
-      uEngineZoneCount: { value: 0 },
-      uEngineZones: { value: createEngineZoneArray(), needsUpdate: false },
-      // Wspólne obiekty — strojenie lakieru to jeden zapis na klatkę dla wszystkich.
-      uLacquerEnv: HullLacquer.uniforms.uLacquerEnv,
-      uLacquerSky: HullLacquer.uniforms.uLacquerSky,
-      uLacquerA: HullLacquer.uniforms.uLacquerA,
-      uLacquerB: HullLacquer.uniforms.uLacquerB,
-      uLacquerC: HullLacquer.uniforms.uLacquerC,
-      uLacquerD: HullLacquer.uniforms.uLacquerD,
-      uLacquerE: HullLacquer.uniforms.uLacquerE,
-      // Maska widoczności słońca — wspólne obiekty z Core3D (sunShadowMask.js).
-      ...sunShadowUniforms
+      // Mapa ran (skóra belek, zadanie 18-C): slot puli (base, w, h, on) z HullDamageMap.bind,
+      // rozmiar kadłuba w świecie (szum brzegu rany), właściciel świateł siatki (0 = żaden).
+      uDmgSlot: { value: new THREE.Vector4(0, 1, 1, 0) },
+      uDmgWorld: { value: new THREE.Vector2(1, 1) },
+      uGridOwner: { value: 0 },
+      // Warp „Nurt” (zadanie 22): odsłanianie, szew i żar brzegu — wartości pisze sterownik
+      // warpa w entity.__warpHullU ({ a, b, c } — Vector4, px sprite'a); bez nich wyłączone.
+      uWarpA: warpHullHolder(entity, 'a'),
+      uWarpB: warpHullHolder(entity, 'b'),
+      uWarpC: warpHullHolder(entity, 'c'),
+      // Skóra belek (zadanie 23): slot w HullObjectStore — wartości wyżej i macierze kadłuba trafiają
+      // do bufora storage przed passem ortho; w grupie „object” materiału zostaje tylko ten numer.
+      uHullSlot: { value: 0 }
+  };
+}
+
+// Partie skór kadłubów (hullSkinBatch.js, zadanie 23): jeden rysunek na zestaw tekstur (sprite albo obraz
+// kadłuba, mapa normalnych, mapa kształtu lakieru) — ~145 rysunków skór w dużej bitwie → kilka. Siatka
+// kadłuba (data.mesh) zostaje nośnikiem transformacji i material.uniforms (dane slotu), ale nie jest w scenie.
+const _skinBatches = new Map();
+const _batchImgIds = new WeakMap();
+let _batchImgNext = 1;
+function batchImgId(img) {
+  if (!img) return 0;
+  let id = _batchImgIds.get(img);
+  if (!id) { id = _batchImgNext++; _batchImgIds.set(img, id); }
+  return id;
+}
+
+function acquireSkinBatch(data) {
+  const key = `${batchImgId(data.visualImageRef || data.armorImageRef)}|${batchImgId(data.normalMapRef)}|${batchImgId(data.shapeImageRef)}`;
+  let batch = _skinBatches.get(key);
+  if (batch) return batch;
+  // Tekstury partii (własne referencje — kadłub i jego tekstury mogą zniknąć wcześniej niż partia)
+  const texture = data.visualImageRef ? acquireSharedVisualTexture(data.visualImageRef) : createManagedTexture(data.armorImageRef);
+  const normal = data.normalMapRef ? createManagedTexture(data.normalMapRef, true) : null;
+  const shape = data.shapeImageRef ? HullLacquer.acquireShapeUniform(data.shapeImageRef) : HullLacquer.flatShapeUniform;
+  const material = new HullNodeMaterial('beamBatch', {
+    uSprite: { value: texture || HULL_EMPTY_SPRITE_TEXTURE },
+    uNormalMap: { value: normal || HULL_FLAT_NORMAL_TEXTURE },
+    uShapeMap: shape
+  });
+  batch = new HullSkinBatch(key, material);
+  batch.owned = { visualImageRef: data.visualImageRef, texture, normal, shapeImageRef: data.shapeImageRef };
+  batch.mesh.visible = false;
+  Core3D.scene.add(batch.mesh);
+  _skinBatches.set(key, batch);
+  return batch;
+}
+
+// Widoczność partii: bez widocznego kadłuba poza listą rysowania (three liczyłby jej wiązania co klatkę,
+// a niewidoczne kadłuby i tak zwija wierzchołek). Wołane po pętli kadłubów (widoczność nośników ustalona).
+function syncSkinBatches() {
+  for (const batch of _skinBatches.values()) {
+    const vis = batch.anyVisible();
+    if (batch.mesh.visible !== vis) batch.mesh.visible = vis;
+  }
+}
+
+// Zapis slotów HullObjectStore przed passem ortho (kamera TEGO passa — macierz model-widok jak three).
+let _hullObjectHook = false;
+function ensureHullObjectHook() {
+  if (_hullObjectHook || typeof Core3D.addPassHook !== 'function') return;
+  Core3D.addPassHook('ortho', (camera) => { HullObjectStore.commit(camera); });
+  _hullObjectHook = true;
+}
+
+function warpHullHolder(entity, key) {
+  return {
+    get value() {
+      const w = entity ? entity.__warpHullU : null;
+      return w ? w[key] : HULL_WARP_OFF[key];
+    }
   };
 }
 
@@ -1553,15 +1168,7 @@ function finishEntityMesh(entity, grid, shards, count, geometry, material, textu
   const armorGeometry = new THREE.PlaneGeometry(grid.srcWidth || 1, grid.srcHeight || 1);
   armorGeometry.translate(-(Number(grid?.pivot?.x) || 0), -(Number(grid?.pivot?.y) || 0), 0);
   const armorUniforms = { ...material.uniforms, uLodOpacity: { value: 0 } };
-  const armorMaterial = new THREE.ShaderMaterial({
-    uniforms: armorUniforms,
-    vertexShader: ARMOR_VERTEX_SHADER,
-    fragmentShader: HEX_FRAGMENT_SHADER,
-    transparent: true,
-    depthWrite: true,
-    depthTest: true,
-    side: THREE.FrontSide
-  });
+  const armorMaterial = new HullNodeMaterial('armor', armorUniforms);
   const armorMesh = new THREE.Mesh(armorGeometry, armorMaterial);
   armorMesh.frustumCulled = false;
   armorMesh.renderOrder = entity?.isRingSegment ? -1 : 9;
@@ -1599,7 +1206,9 @@ function finishEntityMesh(entity, grid, shards, count, geometry, material, textu
     hexOpacity: 1,
     armorOpacity: 0,
     renderedHexCount: count,
-    needsInstanceRefresh: true
+    needsInstanceRefresh: true,
+    // Slot lamp i stref dysz w HullLightStore (-1 = brak).
+    lightSlot: -1
   };
   state.entityMeshes.set(entity, data);
   return data;
@@ -1746,13 +1355,9 @@ function updateEntityMesh(entity, data, camX, camY, cameraZoom) {
     }
   }
 
-  // Zegar kadłuba. Zanik żaru i sekwencja świateł pozycyjnych liczą się w
-  // shaderze z uTime, więc musi jechać KAŻDEJ klatki i dla każdego mesha —
-  // syncEntityLightUniforms potrafi wyjść wcześniej. Płyta pancerza dzieli te
-  // same obiekty uniformów (spread w createEntityMesh kopiuje referencje), więc
-  // jeden zapis wystarczy na obie siatki.
+  // Zegar kadłuba (zanik żaru, sekwencja świateł pozycyjnych) to wspólny węzeł
+  // HULL_SHARED.uTime — jeden zapis na klatkę w updateHexShips3D dla wszystkich.
   const nowSec = state.lastTime * 0.001;
-  mesh.material.uniforms.uTime.value = nowSec;
 
   if (!!grid.meshDirty || data.needsInstanceRefresh) {
     const stressAttr = data.stressAttr;
@@ -1875,25 +1480,8 @@ function updateEntityMesh(entity, data, camX, camY, cameraZoom) {
     grid.meshDirtyEnd = -1;
   }
 
-  // Tuning uniformy: aplikuj tylko gdy epoka tuningu się zmieniła dla tego mesha.
-  // _tuneEpoch jest odświeżany raz na klatkę w updateHexShips3D (refreshTuneEpoch()).
-  if (data._tuneEpoch !== _tuneEpoch) {
-    const tune = _tuneSnapshot;
-    mesh.material.uniforms.uTerminatorStart.value = clamp(tune.terminatorStart, -1.0, 0.9);
-    mesh.material.uniforms.uTerminatorEnd.value = clamp(tune.terminatorEnd, -0.8, 1.0);
-    mesh.material.uniforms.uNightMin.value = clamp(tune.nightMin, 0.0, 0.8);
-    mesh.material.uniforms.uNightBandStart.value = clamp(tune.nightBandStart, -1.0, 0.8);
-    mesh.material.uniforms.uNightBandEnd.value = clamp(tune.nightBandEnd, -0.8, 1.0);
-    mesh.material.uniforms.uNightTint.value.set(
-      clamp(tune.nightTintR, 0.0, 0.3),
-      clamp(tune.nightTintG, 0.0, 0.3),
-      clamp(tune.nightTintB, 0.0, 0.3)
-    );
-    mesh.material.uniforms.uDayAmbient.value = clamp(tune.dayAmbient, 0.0, 1.0);
-    mesh.material.uniforms.uDayDiffuseMul.value = clamp(tune.dayDiffuseMul, 0.0, 3.0);
-    mesh.material.uniforms.uSpecularMul.value = clamp(tune.specularMul, 0.0, 1.5);
-    data._tuneEpoch = _tuneEpoch;
-  }
+  // Strojenie światła (panel), glow naprężenia i żar heksów (DESTRUCTOR_CONFIG)
+  // to wspólne węzły HULL_SHARED — zapis raz na klatkę w syncHullSharedUniforms.
 
   const sun = typeof window !== 'undefined' ? window.SUN : null;
   if (sun) {
@@ -1903,13 +1491,6 @@ function updateEntityMesh(entity, data, camX, camY, cameraZoom) {
     mesh.material.uniforms.uLightDir.value.set(dx, dy, 600).normalize();
   }
 
-  mesh.material.uniforms.uStressTint.value = state.damageTintEnabled ? 0.30 : 0.0;
-  // Żar chodzi pod tym samym przełącznikiem co glow stresu, ale jasność bierze
-  // z configu (suwak "heat glow peak" w panelu destruktora).
-  mesh.material.uniforms.uHeatDecay.value = Math.max(0, Number(DESTRUCTOR_CONFIG.heatDecay) || 0);
-  mesh.material.uniforms.uHeatPeak.value = state.damageTintEnabled
-    ? Math.max(0, Number(DESTRUCTOR_CONFIG.heatGlowPeak) || 0)
-    : 0.0;
   if (mesh.material.uniforms.uBillboardLighting) {
     mesh.material.uniforms.uBillboardLighting.value = usesBillboardLighting(entity) ? 1 : 0;
   }
@@ -2003,21 +1584,19 @@ function createBeamSkinMesh(entity) {
   const normalTexture = hull.normalMapImage ? createManagedTexture(hull.normalMapImage, true) : null;
   const shapeImageRef = (visualImage && allowsHullLacquer(entity)) ? visualImage : null;
   const shapeUniform = shapeImageRef ? HullLacquer.acquireShapeUniform(shapeImageRef) : HullLacquer.flatShapeUniform;
-  const material = new THREE.ShaderMaterial({
-    uniforms: createHullUniforms(entity, texture, normalTexture, shapeUniform, hull.srcWidth, hull.srcHeight),
-    vertexShader: BEAM_SKIN_VERTEX_SHADER,
-    fragmentShader: BEAM_SKIN_FRAGMENT_SHADER,
-    transparent: true,
-    depthWrite: true,
-    depthTest: true,
-    // Zgnieciony czworokąt potrafi się przewrócić — z FrontSide zostałaby dziura.
-    side: THREE.DoubleSide
-  });
+  // Graf wariantu „beam” (hexShips3D.tsl.js): przezroczysty, z zapisem głębi,
+  // DoubleSide w jednym przejściu (zgnieciony czworokąt potrafi się przewrócić —
+  // z FrontSide zostałaby dziura).
+  const material = new HullNodeMaterial('beam',
+    createHullUniforms(entity, texture, normalTexture, shapeUniform, hull.srcWidth, hull.srcHeight));
   const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
+  ensureHullObjectHook();
+  // Nośnik transformacji i danych slotu — rysuje go partia (hullSkinBatch.js), siatka poza sceną.
+  mesh.userData.hullBatched = true;
+  material.uniforms.uHullSlot.value = HullObjectStore.acquire(mesh);
   mesh.frustumCulled = false;
   mesh.renderOrder = 10;
   mesh.castShadow = false;
-  Core3D.scene.add(mesh);
   const data = {
     kind: 'beam',
     mesh,
@@ -2042,8 +1621,13 @@ function createBeamSkinMesh(entity) {
     pivotY: hull.pivot.y,
     baseRadius: hull.cellSize * 0.5,
     lodMode: HEX_LOD.FULL,
-    renderedHexCount: 0
+    renderedHexCount: 0,
+    // Slot lamp i stref dysz w HullLightStore (-1 = brak).
+    lightSlot: -1,
+    batch: null,
+    batchEntry: null
   };
+  data.batch = acquireSkinBatch(data);
   rebuildBeamSkinGeometry(data);
   state.entityMeshes.set(entity, data);
   return data;
@@ -2056,20 +1640,16 @@ function rebuildBeamSkinGeometry(data) {
   data.positions = new Float32Array(vertices * 3);
   data.shade = new Float32Array(vertices);
   data.heat = new Float32Array(vertices * 2);
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.BufferAttribute(data.positions, 3).setUsage(THREE.DynamicDrawUsage));
-  geometry.setAttribute('aShade', new THREE.BufferAttribute(data.shade, 1).setUsage(THREE.DynamicDrawUsage));
-  geometry.setAttribute('aHeat', new THREE.BufferAttribute(data.heat, 2).setUsage(THREE.DynamicDrawUsage));
-  geometry.setAttribute('uv', new THREE.BufferAttribute(topo.uvs, 2));
-  geometry.setIndex(new THREE.BufferAttribute(topo.indices, 1));
-  data.mesh.geometry.dispose();
-  data.mesh.geometry = geometry;
   data.topo = topo;
   setBeamSkinHeatClock(topo);
   data.visibleQuads = writeHullSkin(body, topo, data.positions, data.shade, data.heat);
   clearHullSkinDirty(body);
   data.needsFullWrite = false;
   body.meshDirty = false;
+  // Partia (zadanie 23): stary wpis (poprzednia topologia) znika, nowy na końcu partii z całą skórą —
+  // wysyłka tylko zmienionych czworokątów w kolejnych klatkach (zbierzZakresy partii).
+  if (data.batchEntry) data.batch.remove(data.batchEntry);
+  data.batchEntry = data.batch.add(data.mesh.material.uniforms.uHullSlot.value, topo, data.positions, data.shade, data.heat, data.mesh);
 }
 
 // Żar narożników skóry liczony na chwilę zapisu — zegar renderera (performance.now, jak
@@ -2089,8 +1669,6 @@ function updateBeamSkinGeometry(data) {
   }
   if (!body.meshDirty && !data.needsFullWrite) return;
   setBeamSkinHeatClock(topo);
-  const geometry = data.mesh.geometry;
-  const position = geometry.attributes.position, shade = geometry.attributes.aShade, heat = geometry.attributes.aHeat;
   const region = body._region;
   if (!data.needsFullWrite && region && region.store === body.nodeStore && !region.dirtyAll) {
     if (region.dirtyCount > 0) {
@@ -2098,25 +1676,14 @@ function updateBeamSkinGeometry(data) {
         region.dirty, region.dirtyCount, _beamSkinRange);
       clearHullSkinDirty(body);
       if (range.max >= range.min) {
-        const quads = range.max - range.min + 1;
-        setAttrUpdateRange(position, range.min * 12, quads * 12);
-        setAttrUpdateRange(shade, range.min * 4, quads * 4);
-        setAttrUpdateRange(heat, range.min * 8, quads * 8);
-        position.needsUpdate = true;
-        shade.needsUpdate = true;
-        heat.needsUpdate = true;
+        data.batch.writeQuads(data.batchEntry, data.positions, data.shade, data.heat, range.min, range.max);
       }
     }
     data.visibleQuads = body.activeNodes;
   } else {
     data.visibleQuads = writeHullSkin(body, topo, data.positions, data.shade, data.heat);
     clearHullSkinDirty(body);
-    setAttrUpdateRange(position, 0, -1);
-    setAttrUpdateRange(shade, 0, -1);
-    setAttrUpdateRange(heat, 0, -1);
-    position.needsUpdate = true;
-    shade.needsUpdate = true;
-    heat.needsUpdate = true;
+    data.batch.writeAll(data.batchEntry, data.positions, data.shade, data.heat);
   }
   data.needsFullWrite = false;
   body.meshDirty = false;
@@ -2188,40 +1755,25 @@ function updateBeamSkinMesh(entity, data, camX, camY, cameraZoom) {
   updateBeamSkinGeometry(data);
 
   const uniforms = mesh.material.uniforms;
-  uniforms.uTime.value = state.lastTime * 0.001;
-  if (data._tuneEpoch !== _tuneEpoch) {
-    const tune = _tuneSnapshot;
-    uniforms.uTerminatorStart.value = clamp(tune.terminatorStart, -1.0, 0.9);
-    uniforms.uTerminatorEnd.value = clamp(tune.terminatorEnd, -0.8, 1.0);
-    uniforms.uNightMin.value = clamp(tune.nightMin, 0.0, 0.8);
-    uniforms.uNightBandStart.value = clamp(tune.nightBandStart, -1.0, 0.8);
-    uniforms.uNightBandEnd.value = clamp(tune.nightBandEnd, -0.8, 1.0);
-    uniforms.uNightTint.value.set(
-      clamp(tune.nightTintR, 0.0, 0.3),
-      clamp(tune.nightTintG, 0.0, 0.3),
-      clamp(tune.nightTintB, 0.0, 0.3)
-    );
-    uniforms.uDayAmbient.value = clamp(tune.dayAmbient, 0.0, 1.0);
-    uniforms.uDayDiffuseMul.value = clamp(tune.dayDiffuseMul, 0.0, 3.0);
-    uniforms.uSpecularMul.value = clamp(tune.specularMul, 0.0, 1.5);
-    data._tuneEpoch = _tuneEpoch;
-  }
+  // Czas, strojenie światła i żar skóry belek (HULL_BODY_CONFIG — żar belek to
+  // wyłącznie zgniot i brzeg rany ZDERZENIA; heatGlowPeak destruktora zostaje
+  // heksom) to wspólne węzły HULL_SHARED (syncHullSharedUniforms).
   const sun = typeof window !== 'undefined' ? window.SUN : null;
   if (sun) uniforms.uLightDir.value.set(sun.x - ex, -(sun.y - ey), 600).normalize();
-  uniforms.uStressTint.value = state.damageTintEnabled ? 0.30 : 0.0;
-  // Żar skóry belek: zanik z silnika (ten sam, którym węzły liczą „podniesienie”).
-  uniforms.uHeatDecay.value = Math.max(0, Number(HullBodies.config.heatDecay) || 0);
-  uniforms.uHeatPeak.value = state.damageTintEnabled ? Math.max(0, Number(DESTRUCTOR_CONFIG.heatGlowPeak) || 0) : 0.0;
   uniforms.uBillboardLighting.value = usesBillboardLighting(entity) ? 1 : 0;
   const bodyRadiusPx = Math.max(hull.srcWidth, hull.srcHeight) * 0.5 * entityScale * zoomPx;
   syncEntityLightUniforms(entity, data, hull, state.roadLightEmitters, bodyRadiusPx);
   syncEntityLacquer(entity, data, hull, entityScale, zoomPx);
+  // Mapa ran rodu (kadłub, wrak, odłamy — wspólny klucz): slot do materiału, widoczność dla LRU.
+  HullDamageMap.bind(hull.dmgKey, uniforms);
   uniforms.uRotation.value = theta;
 
   mesh.position.set(originX, originY, 0);
   mesh.rotation.set(0, 0, theta);
   mesh.scale.set(1, 1, 1);
   mesh.visible = data.visibleQuads > 0;
+  // nośnik poza sceną (partia) — macierz świata jak z scene.updateMatrixWorld (dziecko sceny)
+  mesh.updateMatrixWorld();
 
   if (mesh.visible) DrawCallStats.addHexBody(1, !allowsSolidArmorLod(entity));
   lodFrameStats.totalStructuralHexes += body.activeNodes;
@@ -2236,13 +1788,65 @@ export function initHexShips3D({ canvas = null } = {}) {
   return true;
 }
 
-// Bank cząstek dem (błyski wylotowe armat i dział jonowych + Hexlance) ma
-// dziesięć własnych programów shaderowych. Bez kompilacji na ekranie
-// ładowania pierwszy strzał każdej rodziny broni gubi klatkę.
+// Trzymacze grafów kadłubów: jeden ukryty mesh na wariant (skóra belek, płyta
+// pancerza) z materiałem, którego nie zwalniamy. NodeManager usuwa stan budowy
+// materiału (i pipeline), gdy ostatni obiekt przestaje go używać — bez trzymacza
+// śmierć ostatniego kadłuba w kadrze kosztowałaby pełną przebudowę grafu przy
+// następnym spawnie. Rozgrzewka (prewarmPass) buduje je na ekranie ładowania,
+// więc pierwszy kadłub bierze gotowy pipeline. Siatka heksów (InstancedMesh)
+// ma w kluczu three uuid obiektu — trzymacz nic by jej nie dał.
+let _hullProbes = null;
+function hullVariantProbes() {
+  if (_hullProbes) return _hullProbes;
+  if (!Core3D.scene) return [];
+  const beamGeo = new THREE.BufferGeometry();
+  beamGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0]), 3));
+  beamGeo.setAttribute('aShade', new THREE.BufferAttribute(new Float32Array([1, 1, 1, 1]), 1));
+  beamGeo.setAttribute('aHeat', new THREE.BufferAttribute(new Float32Array(8), 2));
+  beamGeo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array([0, 1, 1, 1, 1, 0, 0, 0]), 2));
+  beamGeo.setIndex([0, 1, 2, 0, 2, 3]);
+  const holders = () => createHullUniforms(null, null, null, HullLacquer.flatShapeUniform, 1, 1);
+  const beam = new THREE.Mesh(beamGeo, new HullNodeMaterial('beam', holders()));
+  beam.renderOrder = 10;
+  const armor = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new HullNodeMaterial('armor', holders()));
+  armor.renderOrder = 9;
+  armor.position.z = -0.25;
+  // partia skór (zadanie 23): ten sam układ atrybutów co HullSkinBatch
+  const batchGeo = new THREE.BufferGeometry();
+  batchGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0]), 3));
+  batchGeo.setAttribute('aShadeHeat', new THREE.BufferAttribute(new Float32Array(12), 3));
+  batchGeo.setAttribute('aUvSlot', new THREE.BufferAttribute(new Float32Array([0, 1, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0]), 3));
+  batchGeo.setIndex(new THREE.BufferAttribute(new Uint32Array([0, 1, 2, 0, 2, 3]), 1));
+  const batchProbe = new THREE.Mesh(batchGeo, new HullNodeMaterial('beamBatch', holders()));
+  batchProbe.renderOrder = 10;
+  for (const m of [beam, armor, batchProbe]) {
+    m.name = `hullProbe:${m.material.name}`;
+    m.frustumCulled = false;
+    m.visible = false;
+    Core3D.scene.add(m);
+  }
+  _hullProbes = [beam, armor, batchProbe];
+  return _hullProbes;
+}
+
+function disposeHullVariantProbes() {
+  if (!_hullProbes) return;
+  for (const m of _hullProbes) {
+    m.parent?.remove(m);
+    m.geometry.dispose();
+    m.material.dispose();
+  }
+  _hullProbes = null;
+}
+
+// Bank cząstek Fx3D (iskry dysz, mostki, rdzenie) ma własne programy shaderowe. Bez
+// kompilacji na ekranie ładowania pierwsze użycie gubi klatkę. Efekty broni (WeaponFx,
+// pule GPU z dema bronie-webgpu) rozgrzewa krok Core3D.fx (warm: kernele + prewarmPass).
 function prewarmFx3D() {
+  // Core3D.renderer istnieje dopiero przy gotowym urządzeniu WebGPU.
   if (!Fx3D.ensure() || !Core3D.renderer || !Core3D.cameraOrtho) return false;
   const meshes = Fx3D.meshes;
-  for (const trail of [RailgunFX3D.prewarm(), BulletTrails.prewarm(), MainExhaust3D.prewarm()]) {
+  for (const trail of [MainExhaust3D.prewarm()]) {
     if (trail) meshes.push(trail);
   }
   // Plazma warpa: raymarch to najcięższy program w grze — bez tego pierwszy
@@ -2250,17 +1854,25 @@ function prewarmFx3D() {
   meshes.push(...WarpPlume3D.prewarm());
   // Odłamki kadłubów na belkach: program gotowy przed pierwszym trafieniem.
   meshes.push(...HullDebris3D.prewarm());
+  // Kadłuby (graf na wariant): pipeline skóry belek i płyty pancerza przed
+  // pierwszym NPC; trzymacze zostają w scenie ukryte.
+  meshes.push(...hullVariantProbes());
   const prev = meshes.map((m) => m.visible);
   for (const m of meshes) m.visible = true;
-  Core3D.renderer.compile(Core3D.scene, Core3D.cameraOrtho);
+  // compileAsync bez blokowania (Core3D.prewarmPass: cel composerTarget, warstwa
+  // ortho, bez cullingu); projekcja idzie synchronicznie, więc widoczność można
+  // przywrócić zaraz po wywołaniu. Błąd tylko do konsoli.
+  Core3D.prewarmPass(Core3D.scene, 0);
   meshes.forEach((m, i) => { m.visible = prev[i]; });
   return true;
 }
 
 export function prewarmHexShips3D({ canvas = null } = {}) {
   if (!Core3D.isInitialized) Core3D.init(canvas);
-  Weapon3DSystem.prewarmShaders();
+  WeaponFx.prewarm();
   prewarmFx3D();
+  // Mapa ran: krok klatki efektów (kernel kompiluje się na ekranie ładowania, pula powstaje na GPU).
+  HullDamageMap.ensureStep();
   return true;
 }
 
@@ -2271,18 +1883,33 @@ export function resizeHexShips3D(width, height) {
 export function setHexDamageTintEnabled(enabled) {
   state.damageTintEnabled = enabled !== false;
   GpuDebrisManager.heatTintEnabled = state.damageTintEnabled;
-  for (const [, data] of state.entityMeshes) {
-    const uniforms = data?.mesh?.material?.uniforms;
-    if (uniforms?.uStressTint) {
-      uniforms.uStressTint.value = state.damageTintEnabled ? 0.30 : 0.0;
-    }
-    if (uniforms?.uHeatPeak) {
-      uniforms.uHeatPeak.value = state.damageTintEnabled
-        ? Math.max(0, Number(DESTRUCTOR_CONFIG.heatGlowPeak) || 0)
-        : 0.0;
-    }
-  }
+  // Glow naprężenia i szczyt żaru to wspólne węzły — jeden zapis dla wszystkich kadłubów.
+  syncHullSharedUniforms();
   return state.damageTintEnabled;
+}
+
+// Wartości wspólne kadłubów (węzły HULL_SHARED, hexShips3D.tsl.js): raz na klatkę
+// zamiast per mesh. Strojenie światła z panelu (window.__shipLightTune) tylko przy
+// zmianie epoki; żar pod przełącznikiem glow stresu, jasność z configu (suwaki
+// „heat glow peak”): skóra belek — HULL_BODY_CONFIG, heksy — DESTRUCTOR_CONFIG.
+let _appliedTuneEpoch = -1;
+function syncHullSharedUniforms() {
+  const shared = HULL_SHARED;
+  shared.uTime.value = state.lastTime * 0.001;
+  // Epoka 0 = migawka strojenia jeszcze pusta (NaN) — do pierwszego refreshTuneEpoch.
+  if (_tuneEpoch > 0 && _appliedTuneEpoch !== _tuneEpoch) {
+    const tune = _tuneSnapshot;
+    shared.uDayAmbient.value = clamp(tune.dayAmbient, 0.0, 1.0);
+    shared.uDayDiffuseMul.value = clamp(tune.dayDiffuseMul, 0.0, 3.0);
+    shared.uSpecularMul.value = clamp(tune.specularMul, 0.0, 1.5);
+    _appliedTuneEpoch = _tuneEpoch;
+  }
+  const tint = state.damageTintEnabled;
+  shared.uStressTint.value = tint ? 0.30 : 0.0;
+  shared.beamHeatDecay.value = Math.max(0, Number(HullBodies.config.heatDecay) || 0);
+  shared.beamHeatPeak.value = tint ? Math.max(0, Number(HullBodies.config.heatGlowPeak) || 0) : 0.0;
+  shared.hexHeatDecay.value = Math.max(0, Number(DESTRUCTOR_CONFIG.heatDecay) || 0);
+  shared.hexHeatPeak.value = tint ? Math.max(0, Number(DESTRUCTOR_CONFIG.heatGlowPeak) || 0) : 0.0;
 }
 
 export function isHexDamageTintEnabled() {
@@ -2312,9 +1939,10 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
 
   Core3D.syncCamera(viewCamera);
 
-  // Raz na klatkę: aktualizujemy migawkę globalnego tuningu, by per-mesh
-  // updateEntityMesh mogło pominąć 9 zapisów uniformów gdy nic się nie zmieniło.
+  // Raz na klatkę: migawka globalnego strojenia (epoka) i wspólne węzły kadłubów
+  // (czas, strojenie, żar) — jeden zapis dla wszystkich materiałów.
   refreshTuneEpoch();
+  syncHullSharedUniforms();
 
   // Lakier: wspólne uniformy, tekstury odbić i kolejka pieczenia map
   // kształtu (jeden sprite na klatkę). Nic z kamery — odbicia zależą tylko od
@@ -2440,6 +2068,10 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
     hasRenderable = true;
   }
 
+  // Lampy i strefy dysz zapisane w tej klatce: jedna wersja bufora storage
+  // (zakresy zmienionych slotów idą na GPU przy pierwszym rysowaniu kadłuba).
+  HullLightStore.commit();
+
   // Pudło rozgrzania: mesh ma istnieć, zanim encja wejdzie w kadr (bez
   // przycięcia na tworzeniu), ale nic tu nie liczymy i nie rysujemy.
   for (const entity of visibleHex) {
@@ -2450,6 +2082,8 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
     if (data.mesh?.visible) data.mesh.visible = false;
     if (data.armorMesh?.visible) data.armorMesh.visible = false;
   }
+  // Partie skór: widoczność po ustaleniu widoczności wszystkich nośników (kadr, pudło rozgrzania).
+  syncSkinBatches();
 
   // Okludery shadow shafts: sylwetka kadłuba jako pole odległości
   // (hullShadowSdf.js). Shader passa idzie po nim promieniem do słońca, więc
@@ -2541,7 +2175,9 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null, col
   // Wygaszanie odrzutu — raz na klatke, niezaleznie od liczby passow 2D
   // (split-screen rysuje ten sam bufor dwa razy).
   Turret2D.update();
-  Weapon3DSystem.syncProjectiles((typeof window !== 'undefined' && Array.isArray(window.bullets)) ? window.bullets : []);
+  // Efekty broni (zadanie 17): pociski, smugi, lot, wstrząs strzałów, bank Fx3D — raz na klatkę
+  // renderu, po Turret2D.sync (lufy wiązek ciągłych i błysków z rekordów tej klatki).
+  WeaponFx.sync((typeof window !== 'undefined' && Array.isArray(window.bullets)) ? window.bullets : []);
 
   GpuDebrisManager.heatTintEnabled = state.damageTintEnabled;
   GpuDebrisManager.updateTime(now * 0.001);
@@ -2680,6 +2316,16 @@ export function invalidateHexShipEntity3D(entity) {
   return true;
 }
 
+/**
+ * Sprite kadłuba encji (tekstura z mipmapami, flipY = false) — smuga sylwetki warpa
+ * (src/3d/warp/warpNurt.js). null, gdy encja nie ma jeszcze siatki.
+ */
+export function getEntityHullSprite(entity) {
+  const data = entity ? state.entityMeshes.get(entity) : null;
+  const tex = data?.mesh?.material?.uniforms?.uSprite?.value;
+  return (tex && tex.isTexture && tex !== HULL_EMPTY_SPRITE_TEXTURE) ? tex : null;
+}
+
 // === ZIMNE WRAKI (src/game/coldWrecks.js) ===
 
 function getWreckImpostorEnterPx() {
@@ -2747,10 +2393,11 @@ export function disposeHexShips3D() {
   GpuDebrisManager.dispose();
   HullDebris3D.dispose();
   EngineVfxSystem.disposeAll();
-  Weapon3DSystem.disposeAll();
+  WeaponFx.reset();
   Turret2D.clear();
   ShipLights3D.dispose();
   HullShadowSdf.reset();
+  disposeHullVariantProbes();
   state.navLightSprites.length = 0;
   state.navLightClusters.length = 0;
   state.frameId = 0;

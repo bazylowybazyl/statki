@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 
 // Strażnicy poprawek z audytu rysowania (2026-09-23): każda z tych bramek
 // zdejmuje pracę, której nie widać na ekranie (daleki zoom, poza kadrem,
@@ -89,20 +89,140 @@ test('kropki hardpointów NPC są tylko za DevFlags.showNpcHardpoints (domyślni
   assert.match(indexHtml, /if \(DevFlags\.showNpcHardpoints\) drawNpcHardpointOverlay\(ctx, npc, s\);/);
 });
 
-test('trafienia pocisków: efekt 3D i iskry dopiero po bramce kadru/rozmiaru', () => {
-  const fn = indexHtml.match(/function spawnBulletImpactEffect\(b, x, y, scale = 1\.0\) \{[\s\S]*?\n    }\n/)?.[0] || '';
+// Zadanie 17: trafienie = receptura rodziny z dema bronie-webgpu (WeaponFx.impact) zamiast
+// fabryk overlaya (trigger*3D) i iskier SparkSystem3D.burst — bramki kadru/rozmiaru i
+// cooldownu komórki zostają przed recepturą.
+test('trafienia pocisków: receptura WeaponFx dopiero po bramce kadru/rozmiaru i cooldownu', () => {
+  const fn = indexHtml.match(/function spawnBulletImpactEffect\(b, x, y, scale = 1\.0, hit = null\) \{[\s\S]*?\n    }\n/)?.[0] || '';
   assert.ok(fn.length > 0);
   const gate = fn.indexOf('impactFxScreenPx(x, y, fxSize) >= IMPACT_FX_MIN_PX');
   assert.ok(gate > 0, 'brak bramki rozmiaru/kadru przed efektem trafienia');
-  for (const trigger of ['triggerYamatoImpact3D(x', 'triggerArmataImpact3D(x', 'triggerRailgunExplosion3D(x', 'triggerAutocannonImpact3D(x']) {
-    assert.ok(fn.indexOf(trigger) > gate, `${trigger} musi stać za bramką`);
-  }
-  assert.ok(fn.indexOf('spark3D.burst(') > fn.indexOf('IMPACT_SPARK_MIN_PX'), 'iskry za bramką rozrzutu');
+  const cooldown = fn.indexOf('impactFxCooldownReady(');
+  assert.ok(cooldown > gate, 'cooldown komórki za bramką kadru');
+  assert.ok(fn.indexOf('WeaponFx.impact(') > cooldown, 'receptura trafienia musi stać za bramkami');
+  assert.doesNotMatch(fn, /trigger\w+3D\(|spark3D\.burst\(/, 'stare efekty trafień (overlay, iskry) wróciły');
 });
 
-test('Core3D: shadow mapa odświeżana ręcznie tylko przed passami ortho i FG', () => {
-  assert.match(core3d, /shadowMap\.autoUpdate = false;/);
-  assert.match(core3d, /if \(pass === this\.renderPassOrtho \|\| pass === this\.renderPassFg\) shadowMap\.needsUpdate = true;/);
+// Port WebGPU: renderer.shadowMap ma tylko enabled / type — mapa cienia odświeża się
+// per światło. Zadanie 23: semantyka WebGLShadowMap z bazy — mapa rysowana tuż przed
+// passem ortho (rzucający z warstwy 0) i FG (warstwa 2 + trzymacze rozgrzewki cienia 31),
+// odbiorcy passa czytają świeżą mapę; planety — ostatnią. ShadowNode three r183 (raz na
+// klatkę rAF, wszystkie warstwy kamery cienia) dawał łapaczowi warstwy 0 cień stacji z FG.
+test('Core3D: mapa cienia słońca per pass (warstwy passa jak WebGLShadowMap) — PassShadowNode', async () => {
+  assert.doesNotMatch(core3d, /shadowMap\.(autoUpdate|needsUpdate)\s*=/, 'WebGL-owe flagi mapy cienia wróciły');
+  const renderAt = core3d.indexOf('\n  render() {');
+  const chainAt = core3d.indexOf('for (const pass of this._scenePasses)', renderAt);
+  const runAt = core3d.indexOf('this._runScenePass(pass);', chainAt);
+  const orthoAt = core3d.indexOf('if (pass === this.renderPassOrtho) this._passSunShadow(t, 1 << pass.layer, this.shadowCatcher, false);', chainAt);
+  const fgAt = core3d.indexOf('else if (pass === this.renderPassFg) this._passSunShadow(t, (1 << pass.layer) | (1 << SHADOW_WARM_LAYER), this.shadowCatcherFg, true);', chainAt);
+  assert.ok(renderAt > 0 && orthoAt > chainAt && fgAt > orthoAt && runAt > fgAt, 'odświeżenie mapy w pętli passów, przed passem ortho i FG');
+  assert.equal(core3d.slice(renderAt, chainAt).includes('_requestSunShadowUpdate('), false, 'bez dawnego odświeżenia raz na klatkę na starcie render()');
+  const planets = readFileSync(new URL('../src/3d/planet3d.assets.js', import.meta.url), 'utf8');
+  assert.match(planets, /Core3D\.setSunShadowLight\?\.\(this\.sunLight\);/);
+  // Zachowanie: własny węzeł cienia, needsUpdate tylko przy włączonych cieniach, autoUpdate zawsze wyłączony.
+  globalThis.window = globalThis.window || {};
+  const THREE = await import('three/webgpu');
+  const { Core3D } = await import('../src/3d/core3d.js');
+  const light = new THREE.DirectionalLight(0xffffff, 1);
+  light.castShadow = true;
+  light.shadow.camera.layers.enableAll();
+  const core = Object.create(Core3D);
+  core.setSunShadowLight(light);
+  assert.equal(light.shadow.autoUpdate, false);
+  const node = light.shadow.shadowNode;
+  assert.ok(node instanceof THREE.ShadowNode && node.constructor.type === 'PassShadowNode', 'własny węzeł cienia światła');
+  core.setSunShadowLight(light);
+  assert.equal(light.shadow.shadowNode, node, 'drugie zgłoszenie nie podmienia węzła');
+  core._requestSunShadowUpdate({ threeShadows: false }, 1);
+  assert.equal(light.shadow.needsUpdate, false, 'cienie wyłączone — bez odświeżania');
+  core._requestSunShadowUpdate({ threeShadows: true }, (1 << 2) | (1 << 31));
+  assert.equal(light.shadow.needsUpdate, true);
+  // updateBefore: odświeżenie tylko na żądanie, rzucający z warstw passa, maska kamery cienia wraca.
+  const masks = [];
+  node.shadowMap = { depthTexture: { version: 3 } };
+  node.updateShadow = () => { masks.push(light.shadow.camera.layers.mask); node._depthVersionCached = 3; };
+  node.updateBefore({});
+  assert.deepEqual(masks, [((1 << 2) | (1 << 31)) | 0], 'mapa FG: warstwa 2 + trzymacze rozgrzewki cienia');
+  assert.equal(light.shadow.camera.layers.mask, -1, 'maska kamery cienia przywrócona (enableAll)');
+  assert.equal(light.shadow.needsUpdate, false, 'odświeżone — do następnego żądania');
+  node.updateBefore({});
+  assert.equal(masks.length, 1, 'bez żądania (np. pass planet) — ostatnia mapa, bez rysowania');
+  core._requestSunShadowUpdate({ threeShadows: true }, 1 << 0);
+  node.updateBefore({});
+  assert.deepEqual(masks.slice(1), [1], 'mapa ortho: tylko warstwa 0');
+  core.setSunShadowLight(null);
+  assert.equal(core._sunShadowLight, null);
+});
+
+// Zadanie 23 (duża bitwa): mapa cienia przed passem z łapaczem tylko, gdy wyjdzie niepusta (rzucający w kadrze
+// cienia na warstwach passa) albo czyta ją inny odbiorca; łapacz bez mapy (alfa 0) nie jest rysowany.
+// FG (ostatnia mapa klatki — czytają ją planety) pomijany dopiero przy mapie znanej jako pusta.
+test('Core3D: mapa cienia i łapacz pomijane bez rzucających (obraz bez zmian: łapacz rysowałby alfę 0)', async () => {
+  globalThis.window = globalThis.window || {};
+  const THREE = await import('three/webgpu');
+  const { Core3D } = await import('../src/3d/core3d.js');
+  const core = Object.create(Core3D);
+  core.shadowPassStats = { updated: 0, skipped: 0 };
+  core._shadowMapEmpty = false;
+  core.renderer = { coordinateSystem: THREE.WebGPUCoordinateSystem };
+  core.scene = new THREE.Scene();
+  const light = new THREE.DirectionalLight(0xffffff, 1);
+  light.castShadow = true;
+  light.position.set(0, 0, 1000);
+  core.scene.add(light, light.target);
+  const cam = light.shadow.camera;
+  cam.left = -500; cam.right = 500; cam.top = 500; cam.bottom = -500; cam.near = 1; cam.far = 5000;
+  cam.coordinateSystem = THREE.WebGPUCoordinateSystem;
+  cam.updateProjectionMatrix();
+  core.setSunShadowLight(light);
+  const catcher = new THREE.Mesh(new THREE.PlaneGeometry(10, 10), new THREE.MeshBasicMaterial());
+  catcher.receiveShadow = true;
+  core.scene.add(catcher);
+  const t = { threeShadows: true, fgShadows: true };
+  const run = (mask, last) => { light.shadow.needsUpdate = false; core.scene.updateMatrixWorld(); core._passSunShadow(t, mask, catcher, last); return [catcher.visible, light.shadow.needsUpdate]; };
+  // FG, mapa nieznana (pierwsza klatka) — odświeżenie (wyjdzie pusta), potem pomijanie
+  assert.deepEqual(run(4, true), [true, true], 'FG: mapa nieznana — odświeżenie');
+  assert.deepEqual(run(4, true), [false, false], 'FG: mapa pusta, bez rzucających — bez mapy i łapacza');
+  // ortho bez rzucających: zawsze pomijany (nie jest ostatnią mapą klatki)
+  assert.deepEqual(run(1, false), [false, false]);
+  // rzucający na warstwie 2 w kadrze cienia
+  const box = new THREE.Mesh(new THREE.BoxGeometry(20, 20, 20), new THREE.MeshBasicMaterial());
+  box.castShadow = true;
+  box.layers.set(2);
+  core.scene.add(box);
+  assert.deepEqual(run(4, true), [true, true], 'FG: rzucający w kadrze — mapa i łapacz');
+  assert.deepEqual(run(1, false), [false, false], 'ortho: rzucający tylko na warstwie 2 — pominięty');
+  // rzucający poza kadrem cienia: mapa wyszłaby pusta — ale ostatnia mapa miała rzucającego: jedno odświeżenie
+  box.position.set(100000, 0, 0);
+  assert.deepEqual(run(4, true), [true, true], 'FG: mapa z rzucającym — odświeżenie do pustej');
+  assert.deepEqual(run(4, true), [false, false], 'FG: rzucający poza kadrem cienia — pominięty');
+  // bez frustumCulled — zachowawczo potrzebna
+  box.frustumCulled = false;
+  assert.deepEqual(run(4, true), [true, true]);
+  box.frustumCulled = true;
+  // niewidoczny rodzic ukrywa rzucającego (jak _projectObject)
+  box.position.set(0, 0, 0);
+  const group = new THREE.Group();
+  group.visible = false;
+  group.add(box);
+  core.scene.add(group);
+  run(4, true);
+  assert.deepEqual(run(4, true), [false, false], 'niewidoczna gałąź — bez rzucających');
+  // inny odbiorca cienia na warstwach passa czyta mapę — zawsze odświeżana
+  const recv = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial());
+  recv.receiveShadow = true;
+  core.scene.add(recv);
+  assert.deepEqual(run(1, false), [true, true], 'odbiorca na warstwie 0 — mapa ortho odświeżana');
+  core.scene.remove(recv);
+  // przełączniki wydajności cienia — dawny przepływ (bez sprawdzania)
+  const t2 = { threeShadows: true, fgShadows: false };
+  light.shadow.needsUpdate = false;
+  core._passSunShadow(t2, 4, catcher, true);
+  assert.equal(light.shadow.needsUpdate, true);
+  assert.ok(core.shadowPassStats.skipped >= 4 && core.shadowPassStats.updated >= 5);
+  // źródło: wywołania w pętli passów i dawny przepływ żądania mapy w środku
+  assert.match(core3d, /if \(need \|\| \(last && this\._shadowMapEmpty !== true\)\) \{/);
+  assert.match(core3d, /shadow\.updateMatrices\(light\);/);
 });
 
 test('Core3D: puste passy planet/halo/ring-planet/tarcz są pomijane', () => {
@@ -121,11 +241,24 @@ test('hexShips3D: pudło rysowania oddzielone od pudła rozgrzania', () => {
   assert.match(indexHtml, /_hexCullInfo\.drawHalfW = viewHalfW;/);
 });
 
-test('hexShips3D: tablice lamp i stref dysz bez uploadu, gdy są puste', () => {
-  assert.match(hexShips, /uShipLightData: \{ value: createLightUniformArray\(\), needsUpdate: false \}/);
-  assert.match(hexShips, /uEngineZones: \{ value: createEngineZoneArray\(\), needsUpdate: false \}/);
-  assert.match(hexShips, /uniforms\.uEngineZones\.needsUpdate = zones\.length > 0;/);
-  assert.match(hexShips, /setShipLightArraysUpload\(uniforms, payload\.count > 0\);/);
+// Port WebGPU (zadanie 04): tablice lamp i stref dysz nie są już uniformami per
+// materiał (w WebGL wysyłane przy każdym rysowaniu, stąd needsUpdate: false przy
+// zerze). Leżą w jednym buforze storage (HullLightStore) — slot na kadłub, zapis
+// i wysyłka tylko przy zmianie podpisu lamp / układu dysz, nigdy przy rysowaniu.
+test('hexShips3D: lampy i strefy dysz w buforze storage — wysyłka tylko przy zmianie, pusty kadłub bez slotu', () => {
+  const lights = hexShips.slice(hexShips.indexOf('function syncEntityLightUniforms('), hexShips.indexOf('function disposeMeshData('));
+  assert.ok(lights.length > 0);
+  // Podpis bez zmian = wyjście przed zapisem.
+  assert.ok(lights.indexOf('if (payload.signature === data.lightSignature) return;') < lights.indexOf('HullLightStore.markDirty('));
+  assert.match(lights, /HullLightStore\.markDirty\(data\.lightSlot, 0, count \* 3\);/);
+  // Zero lamp (i stref) = slot wraca do puli; shader i tak czyta tylko do licznika.
+  assert.match(lights, /if \(count === 0\) releaseHullLightSlotIfUnused\(data\);/);
+  const lacquer = hexShips.slice(hexShips.indexOf('function syncEntityLacquer('), hexShips.indexOf('// Lampy w shaderze kadłuba'));
+  assert.ok(lacquer.indexOf('data.zoneMul === zoneMul') < lacquer.indexOf('HullLightStore.markDirty('), 'strefy tylko przy zmianie układu');
+  assert.match(lacquer, /HullLightStore\.markDirty\(data\.lightSlot, HULL_LIGHT_ZONE_OFFSET, zoneCount\);/);
+  // Jedna wersja bufora na klatkę (zakresy zmienionych slotów).
+  assert.equal((hexShips.match(/HullLightStore\.commit\(\);/g) || []).length, 1);
+  assert.match(hexShips, /HullLightStore\.release\(data\.lightSlot\);/);
 });
 
 test('shield3D: próg kopuły = próg cząstek ShieldImpactFX (9 px)', async () => {
@@ -145,43 +278,82 @@ test('stary panel skanera i radar: bez modelu kontaktów, gdy kokpit go chowa / 
 
 const readSrc = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
-test('wybuchy overlaya bez PointLight (scena bez materiałów oświetlanych, światło zmieniało klucz programu)', () => {
-  for (const path of ['src/effects3d/reactorblow.js', 'src/effects3d/supernovaMissileBlow.js', 'src/effects3d/yamato.js']) {
-    assert.doesNotMatch(readSrc(path), /new THREE\.PointLight/, path);
+test('wybuchy bez PointLight (światło zmieniało klucz programu) — światło przez siatkę świateł efektów', () => {
+  // (yamato.js usunięty w zadaniu 17 — trafienie Yamato to receptura WeaponFx w Core3D.)
+  // Wybuch reaktora (zadanie 20, scena Core3D): światło rdzenia i rozbłysku idzie do siatki
+  // świateł efektów (ctx.grid.addWorld w kroku `lights`), nie do świateł sceny three.
+  for (const path of ['src/effects3d/reactorblow.js', 'src/effects3d/reactorblow.tsl.js']) {
+    assert.doesNotMatch(readSrc(path), /PointLight|SpotLight/, path);
   }
+  assert.match(readSrc('src/effects3d/reactorblow.js'), /grid\.addWorld\(b\.x, b\.y, L\.z, range,/);
+  // Rakiety i Supernowa (port WebGPU, zadanie 19): światła wybuchów, dysz i łuków idą do
+  // siatki świateł efektów Core3D (grid.addWorld), nie do świateł sceny three.
+  for (const f of ['effects', 'rocketFx', 'smoke', 'fireballs', 'missileBodies', 'nebula', 'arcs', 'glow', 'plumes', 'sparks']) {
+    assert.doesNotMatch(readSrc(`src/3d/rockets/${f}.js`), /PointLight|SpotLight/, f);
+  }
+  assert.match(readSrc('src/3d/rockets/effects.js'), /grid\.addWorld\(/);
 });
 
-test('martwe: bez regl z unpkg, soczewka warpu bez własnego kontekstu WebGL (pass Core3D)', () => {
+test('martwe: bez regl z unpkg, warp „Nurt” bez własnego kontekstu i bez próbkowania gotowej klatki (Core3D)', () => {
   assert.doesNotMatch(indexHtml, /unpkg\.com\/regl/);
-  // Soczewka to pass Core3D na tle (warpLens3D.js) — żadnego trzeciego
-  // kontekstu ani uploadu całej kanwy 2D jako tekstury co klatkę.
-  const lens = readSrc('src/vfx/warpLensPass.js');
-  assert.doesNotMatch(lens, /WarpBlackHole|getContext\(|texImage2D/);
-  assert.match(lens, /Core3D\.setWarpLensWorld\(/);
-  assert.match(core3d, /this\.warpLensPass = new FullScreenBlendPass\(createWarpLensShader\(\)/);
+  // Zadanie 22: stara soczewka (warpLensPass / warpLens3D / warpWorldLens / warpFx3D) usunięta
+  // razem z no-opami API Core3D; nowy warp to moduły src/3d/warp/ na scenie i kroku efektów Core3D.
+  assert.doesNotMatch(indexHtml, /import[^;]*warpLensPass|updateWarpLens3D\(/);
+  assert.doesNotMatch(core3d, /import[^;]*warpLens3D|setWarpLensWorld\(|pushWarpSpaceWorld\(|setWarpViewWorld\(/);
+  assert.doesNotMatch(core3d, /warpLensTarget|warpStarTarget|_prepareWarpLens|createWarpLensShader/);
+  const nurt = readSrc('src/3d/warp/warpNurt.js');
+  for (const file of ['warpNurt.js', 'medium.js', 'sprites.js', 'skyBend.js', 'stars.js']) {
+    const src = readSrc(`src/3d/warp/${file}`);
+    // Jeden renderer (Core3D), bez kanwy 2D jako tekstury i bez celu z gotową klatką („jajko”).
+    assert.doesNotMatch(src, /new THREE\.(WebGPURenderer|WebGLRenderer)|getContext\(|texImage2D|composerTarget\.texture/, file);
+  }
+  assert.match(nurt, /Core3D\.addFxStep\(/);
+  assert.match(nurt, /Core3D\.setWarpLayerActive\(/);
+  assert.match(core3d, /this\.renderPassWarp = makeScenePass\('warp', 'warp', WARP_MEDIUM_RENDER_LAYER, false, false, false\);/);
+  assert.match(core3d, /if \(pass === this\.renderPassWarp\) return activity\.warp === true;/);
 });
 
-test('warstwa raw rakiet i pule odłamków paneli: puste siatki są niewidoczne', () => {
-  assert.match(readSrc('src/effects3d/rocketFireGPU.js'), /this\.mesh\.visible = this\.highWater > 0;/);
-  assert.match(readSrc('src/effects3d/rocketSmokeGPU.js'), /this\.points\.visible = this\.highWater > 0;/);
-  assert.match(readSrc('src/effects3d/rocketSystem3D.js'), /this\.mesh\.visible = this\.activeRockets > 0;/);
+test('pule rakiet (Core3D) i odłamków paneli: puste siatki są niewidoczne', () => {
+  // Port WebGPU, zadanie 19: rakiety rysują pule w scenie Core3D (src/3d/rockets/); pusta pula
+  // nie wchodzi do passa (zachowanie: tests/rocketFx.test.mjs).
+  for (const f of ['fireballs', 'glow', 'missileBodies', 'plumes', 'sparks']) {
+    assert.match(readSrc(`src/3d/rockets/${f}.js`), /this\.mesh\.visible = n > 0;/, f);
+  }
+  assert.match(readSrc('src/3d/rockets/arcs.js'), /this\.mesh\.visible = this\.highWater > 0;/);
+  assert.match(readSrc('src/3d/rockets/nebula.js'), /this\.mesh\.visible = this\.highWater > 1;/);
+  const smoke = readSrc('src/3d/rockets/smoke.js');
+  assert.match(smoke, /this\.mesh\.visible = n > 1;/);
+  assert.match(smoke, /this\.densityMesh\.visible = n > 1;/);
+  assert.doesNotMatch(readSrc('src/effects3d/rocketSystem3D.js'), /this\.mesh\b/, 'lot rakiet bez własnej siatki');
   const shards = readSrc('src/vfx/panelShardManager.js');
   assert.match(shards, /if \(this\.activeCount === 0\) return;/);
   assert.match(shards, /this\.mesh\.count = 0;\s*this\.mesh\.visible = false;/);
 });
 
-test('pociski 3D: barwy HDR raz na styl, upload tylko zajętego wycinka', () => {
-  const w3d = readSrc('src/3d/weapon3DSystem.js');
-  assert.doesNotMatch(w3d, /colorObj\.set\(style\./);
-  assert.match(w3d, /setColorAt\(instanceCount, styleHdr\.core\)/);
-  assert.match(w3d, /uploadInstancePrefix\(bulletInstances\.trails\.instanceMatrix, instanceCount, 16\)/);
-  assert.doesNotMatch(w3d, /bulletInstances\.heads\.instanceMatrix\.needsUpdate = true;\s*if \(bulletInstances\.trails\.instanceColor\)/);
+// Zadanie 17: pociski rysuje ProjectileSystem (src/3d/weapons/projectiles.js — style w jednym draw
+// callu, dawniej weapon3DSystem.js): barwa HDR z konfiguracji rodziny (raz na rodzinę i rozmiar
+// w WeaponFx), wysyłka tylko zajętej części bufora przez stałe zakresy (liveRange.js — bez obiektu
+// zakresu na klatkę).
+test('pociski 3D: barwy HDR raz na rodzinę, upload tylko zajętego wycinka', () => {
+  const proj = readSrc('src/3d/weapons/projectiles.js');
+  assert.match(proj, /if \(n > 0\) markRange\(this\.node\.value, 0, Math\.max\(2, n\) \* FLOATS\);/);
+  assert.doesNotMatch(proj, /addUpdateRange\(|needsUpdate = true/);
+  const wfx = readSrc('src/3d/weapons/weaponFx.js');
+  assert.match(wfx, /function projectileConf\(family, size\) \{[\s\S]*?_confCache\.get\(key\)/);
+  assert.match(readSrc('src/3d/weapons/liveRange.js'), /attr\.clearUpdateRanges = keepUpdateRanges;/);
 });
 
-test('overlay: adaptacja jakości z histerezą, pusta lista efektów nie zmienia skali', () => {
-  const overlay = readSrc('src/effects3d/overlay.js');
-  assert.match(overlay, /const TIER_UPGRADE_HOLD_MS = 1500;/);
-  assert.doesNotMatch(overlay, /Math\.max\(targetScale, 0\.76\)/);
+// Zadanie 20: overlay (i jego adaptacja jakości — skala, pomijanie klatek, zrzucanie efektów)
+// usunięty; wybuch reaktora rysuje Core3D. Pule 100 000 / 15 000 slotów: rysowany tylko zapisany
+// zakres [0, highWater), pusta pula niewidoczna, wysyłka tylko zapisanego wycinka
+// (zachowanie: tests/reactorBlow.test.mjs).
+test('pule wybuchu reaktora: puste niewidoczne, instancje do highWater, wysyłka wycinka', () => {
+  const pool = readSrc('src/effects3d/particlePool.js');
+  assert.match(pool, /if \(mesh && mesh\.visible\) mesh\.visible = false;/);
+  assert.match(pool, /if \(geo && geo\.instanceCount !== this\.highWater\) geo\.instanceCount = this\.highWater;/);
+  assert.match(pool, /attr\.clearUpdateRanges = confirm;/, 'zakresy wysyłki na stałe (bez alokacji na klatkę)');
+  assert.doesNotMatch(pool.replace(/\/\/[^\n]*/g, ' '), /addUpdateRange\(|DynamicDrawUsage/);
+  assert.equal(existsSync(new URL('../src/effects3d/overlay.js', import.meta.url)), false);
 });
 
 test('CIC: bez renderu świata 3D pod planszą', () => {
@@ -203,5 +375,9 @@ test('spawn floty: budżet initHexBody na klatkę + rozgrzanie tekstury i lakier
 test('tekstury planet: dekodowanie po pobraniu i upload z kolejki Core3D', () => {
   assert.match(core3d, /queueTextureUpload\(texture\) \{/);
   assert.match(core3d, /this\.renderer\.initTexture\(texture\);/);
+  // WebGPU: initTexture wymaga gotowego urządzenia — kolejka czeka na Core3D.ready
+  // (tekstury planet zgłaszają się, zanim urządzenie powstanie).
+  const schedule = core3d.slice(core3d.indexOf('_scheduleTextureUpload() {'), core3d.indexOf('_pumpTextureUpload() {'));
+  assert.match(schedule, /if \(!this\.gpuReady\) \{[\s\S]*?this\.ready\.then\(/);
   assert.match(readSrc('src/3d/planet3d.assets.js'), /textureLoader\.load\(path, prewarmLoadedTexture\)/);
 });

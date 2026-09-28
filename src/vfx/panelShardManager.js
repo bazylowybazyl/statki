@@ -56,6 +56,11 @@ const STYLE_DEFAULTS = Object.freeze({
     }),
 });
 
+// Kolor materiału pul (patrz konstruktor PanelShardManager): czerń jak w WebGL.
+const PANEL_SHARD_BASE_COLOR = 0x000000;
+// Pule leżą na warstwie FG (Core3D.enableForeground3D) — pass FG, kamera perspektywy.
+const PANEL_SHARD_LAYER = 2;
+
 function colorLuma(color) {
     return color.r * 0.2126 + color.g * 0.7152 + color.b * 0.0722;
 }
@@ -262,15 +267,22 @@ export class PanelShardManager {
         this.scene.add(this.group);
         if (Core3D?.enableForeground3D) Core3D.enableForeground3D(this.group);
 
+        // Barwa odłamków = obraz z WebGL (port WebGPU, zadanie 16): `vertexColors: true` przy
+        // geometrii BEZ atrybutu `color` — WebGL czytał wtedy stałą wartość atrybutu (0, 0, 0, 1),
+        // więc kolor × instanceColor dawał CZARNE odłamki (tak wyglądają w grze na tagu
+        // webgl-baseline, scena stacja-odlamki). WebGPU pomija vertexColors bez atrybutu (biel),
+        // przez co odłamki świeciły barwą instanceColor (część > 0,9 — w bloomie). Czarny kolor
+        // materiału zostawia wygląd z WebGL; barwy z _buildMaterialInfo (instanceColor) to
+        // zamysł z kodu, nigdy niewidziany w grze — przywrócenie: color 0xffffff (decyzja wyglądu).
         const solidMaterial = new THREE.MeshBasicMaterial({
-            color: 0xffffff,
+            color: PANEL_SHARD_BASE_COLOR,
             vertexColors: true,
             transparent: true,
             opacity: 0.98,
             toneMapped: false,
         });
         const emissiveMaterial = new THREE.MeshBasicMaterial({
-            color: 0xffffff,
+            color: PANEL_SHARD_BASE_COLOR,
             vertexColors: true,
             transparent: true,
             opacity: 0.98,
@@ -302,6 +314,31 @@ export class PanelShardManager {
         }
         // Stała lista zamiast Object.values() dwa razy na klatkę.
         this._allPools = [...Object.values(this._solidPools), ...Object.values(this._emissivePools)];
+        this.prewarm();
+    }
+
+    // Port WebGPU: każdy InstancedMesh ma w kluczu programu swój uuid (three r183), więc
+    // 8 pul = 8 budów NodeBuildera przy PIERWSZYM rozpadzie (pule są puste i niewidoczne do
+    // pierwszego odłamka). Rozgrzewka raz, w wolnej chwili po gotowości urządzenia: pula
+    // widoczna tylko na czas compileAsync (projekcja synchroniczna — Core3D.prewarmPass).
+    prewarm() {
+        if (typeof window === 'undefined' || !Core3D?.prewarmPass || !Core3D.ready?.then) return;
+        const run = () => {
+            if (!Core3D.gpuReady) return;
+            for (let i = 0; i < this._allPools.length; i++) {
+                const mesh = this._allPools[i].mesh;
+                if (!mesh.parent) continue; // zwolniona (disposeAll)
+                const wasVisible = mesh.visible;
+                mesh.visible = true;
+                Core3D.prewarmPass(mesh, PANEL_SHARD_LAYER);
+                mesh.visible = wasVisible;
+            }
+        };
+        Core3D.ready.then((ok) => {
+            if (!ok) return;
+            if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 3000 });
+            else setTimeout(run, 50);
+        });
     }
 
     update(dt) {

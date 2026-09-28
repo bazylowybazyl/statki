@@ -1,7 +1,9 @@
 # Port ringu „Halo” do gry — notatka (M5 2026-09-23, port 2026-09-25)
 
 > Stan: **podpięty do gry 2026-09-25** (§ „W grze” niżej) — ring Ziemi i Marsa, stacja-port
-> w hali K-7, kolizje, tryb jakości „Ultra”; stary ring (`planetaryRing3D.js`, `ringCity*.js`)
+> w hali K-7, kolizje, tryb jakości „Ultra”. **Od 2026-09-27 (Z6) Mars i Jowisz mają INNE ringi**
+> (ECUMENE i Fable z dem, § „Ringi-archetypy”); ten dokument poza tą sekcją opisuje ring Halo
+> Ziemi. Stary ring (`planetaryRing3D.js`, `ringCity*.js`)
 > usunięty. Demo `dema/halo_ring_demo.html` zostaje warsztatem ringu. Decyzje użytkownika:
 > `docs/BRIEF-ring-halo.md` §1 (habitat w stronę kosmosu, port ringu zastępuje stację Ziemi,
 > stacje docelowo w deep space, **płaszczyzna gry na środku wstęgi, doki wpięte w podłogę
@@ -41,6 +43,91 @@ halo.setCutaway(1, { x: shipX - earth.x, y: -shipY + earth.y, a: 1350, b: 1350, 
 Moduł nie tworzy renderera ani canvasu (renderer tylko do bake'u map przy starcie). Pozycje liczone
 względem kamery (RTE) z `group.matrixWorld` — ring może stać przy Ziemi setki tysięcy j. od początku układu.
 
+**WebGPU (port, zadanie 06):** renderer to `WebGPURenderer`, a budowa ringu jest asynchroniczna —
+`createHaloRing` zwraca ring od razu (`layout`, `uniforms`, pusta `group`), bryły i mapa CPU powstają po
+kompilacji pipeline'ów bake'u, bake'u mapy niskiej, odczycie `readRenderTargetPixelsAsync`, planie
+megabudowli i kopuł z tej mapy i `setCivic`. Host czeka na `await ring.ready` (true = gotowe) zanim sięgnie
+po `terrainHeightAt` (przed odczytem 0), `k7Halls`, `landmarks`; `mapsReady` = bryły + mapa CPU + pełna mapa.
+`setQuality` buduje nowy zestaw w tle i podmienia gotowy; `ringi-archetypy` (`createArchRing`) są gotowe od
+razu (`ready` rozwiązane — plan i teren liczą się na CPU, bez map GPU). Biblioteka shaderów: `haloRingTSL.js`
+(`haloRingTSL(ring.uniforms)` → funkcje jak w GLSL, np. `H.haloSunVisibility(p, L)`). Adapter
+`material.uniforms` jest wspólny (`src/3d/tsl/uniformy.js`), przy ringu zostaje blok uniformów
+(`createUniformBlock`, `haloUniformsAdapter.js`). Sprawdzenie w grze, że kolider płyty dostaje teren z mapy
+CPU po `ready` (wysokości ≠ 0, `pointInSlab`, `constrainShip`): `node scripts/webgpu/ring-kolizje-gra.mjs
+--ring earth|mars|jupiter`.
+
+**Teren (port, zadanie 07):** `HaloTerrain` rysuje NodeMaterial (`makeHaloTerrainNodes` w `haloRingTerrain.js`,
+1:1 z dawnym GLSL: CDLOD z kaskadowym morphem w `Loop`, strefy, parki, zabudowa z odciskiem zestawu
+przemysłowego, konstrukcja, cień chmur i terenu, burze, woda, światła miast, powietrze). Uniformy powierzchni
+(`terrain.surfaceUniforms`: mapy A/B/C, detal, wzory, CDLOD, `uExposedLines`) leżą w bloku `haloSurfU`, klucze
+i `.value` jak dawniej, mapy i detal to węzły `texture()` (`syncMaps` podmienia `.value` po dopieczeniu pełnej
+mapy). Wariant kompilacji tylko z liczby kroków powietrza (`quality.airSteps`), więc zmiana jakości = nowy
+materiał (i tak powstaje w `setQuality`). Zestaw przemysłowy w TSL: `haloIndKitTSL(ring.uniforms)`
+(`haloRingIndustryKit.js`) — liczby z definicji `kitParts`, która na liczbach JS daje bliźniaka `indKitPart`
+bit w bit. Zrzuty samego terenu (porównanie z bazą WebGL z tagu, póki reszta ringu to zamienniki 08–10):
+`node scripts/halo-ring-shots.mjs --set m4 --teren [--bez-otoczenia]` — ten sam skrypt w worktree z tagu
+`webgl-baseline`; czas kompilacji terenu na zimno: `__halo.terrainCompileMs` w demie.
+
+**Konstrukcja i atmosfera (port, zadanie 08):** `HaloStructure` rysuje NodeMaterial (`makeHaloStructureNodes` w
+`haloRingStructure.js`, 1:1 z dawnym GLSL: płyty, „miasto na ścianie” z tarasami i oknami, odcisk brył dachu z pozornymi
+cieniami, pasy świateł, oświetlenie analityczne z odbiciem otoczenia, powietrze na ścianach od środka). Wierzchołek pasów
+obrotowych (`haloStripVertexTSL`: atrybuty `aAlong` / `aProfile` / `aEdge`, instancja `iSeg`, RTE) dzielą z nim chmury
+(`makeHaloCloudNodes`) i powłoka powietrza (`makeHaloShellNodes`, `haloRingAtmosphere.js`). Górna ściana w FG to osobny
+wariant materiału (przerzedzenie `haloFgClip`: zanik dachu nad wąwozem i wycięcia nad halą / zatoką / statkiem z uniformów
+ustawianych w `update` / `setCutaway`), reszta bryły — drugi; oba z uniformami ringu (`haloRingU`) i powierzchni
+(`haloSurfU`) plus `uSegCells` obiektu. Reguły komórek dachu są czystymi funkcjami WGSL z regułami profilu w parametrach
+(`haloRoofIndCell`, `haloRoofPlot`, `haloRoofIndShadow`, `haloRoofInDock`…; `haloRoofTSL(ring.uniforms)` wiąże je
+z blokiem ringu i dokłada klasę sektora z tablicy `uSectorClass`) — na GPU zero rozbieżnych decyzji względem planu brył
+(`industrialCellRule` / `plotRule`). Chmury: przezroczyste, DoubleSide, `forceSinglePass` (jak ShaderMaterial w bazie),
+mieszanie premultiplikowane, `renderOrder` 30; powłoka: BackSide, kolor + cel · alfa, `renderOrder` 20. `HALO_GLSL_CLOUDCOVER`
+usunięte. Zrzuty części ringu: `node scripts/halo-ring-shots.mjs --set mid --czesci terrain,structure,structureTop,clouds,shell
+[--bez-otoczenia]` (ten sam skrypt w worktree z tagu; `__halo.compileMs` — czasy kompilacji siatek ringu na zimno), w grze
+`node scripts/webgpu/zrzuty.mjs --czesci-ringu` (warianty `__ring`, `__ring-tlo`, `__ring-fg`; sceny `ring-dach`,
+`ring-dach-z01`, `ring-habitat` pokazują dach w FG i habitat z dala od portu — przy porcie konstrukcji prawie nie widać).
+
+**Megastruktura i miasto (port, zadanie 09):** `HaloMegastructure` rysuje NodeMaterial-e z `haloRingMegastructure.js`
+(1:1 z dawnym GLSL): bryły (`makeHaloPrimVertex` — segment + wzdłuż względem refS, kwaternion, zanik detalu z haszu;
+fragment `makeHaloPrimFragment` — paleta `uMegaPal`, fazki i szczeliny paneli, przemysł, okna nocą, pokłady tunelu i
+zatok, fasady megabudowli w trzech skalach świateł, radiatory, światło analityczne i odbicie nieba, powietrze 4 kroki),
+szkło kopuł (`makeHaloGlassFragment` — przezroczyste BackSide bez zapisu głębi, renderOrder 30), pociągi
+(`makeHaloTrainVertex`) i billboardy świateł (`makeHaloLightNodes` — min. 1,6 px, mieszanie ONE/ONE, alfa celu bez
+zmian, renderOrder 40). Dawne `defines` to warianty budowane raz: dach nad płaszczyzną gry (`HALO_FG` → `haloFgClip`
+we fragmencie brył i pociągów, `haloFgVisibility` w wierzchołkach świateł) i doki bez niego. `HaloCity` —
+`makeHaloGardenVertex` (8-wierzchołkowe prostopadłościany, dwie iteracje odwrócenia skrzywienia ulic w `Loop`),
+`makeHaloIndustryVertex` (zestaw działki z `haloIndKitTSL`), `makeHaloTreeVertex` / `makeHaloTreeFragment` (slot z
+`instanceIndex`, gatunek z mapy A); fragment budynków = fragment brył (ogrody: ściana z położenia lokalnego, baza bryły
+z varyingów). Wczesne wyjścia wierzchołków to zagnieżdżone gałęzie z wierzchołkiem poza bryłą obcinania. Ziarna brył i
+hasze (panele, okna, lampy tunelu, kontenery, fasady) liczą `a·b + c` przez `haloFma` (fma WGSL = mad FXC w bazie).
+Zgodność z bazą WebGL z tagu (same bryły megastruktury i miasta, `--czesci mega,city`): miasto z bliska ≤ 0,0012%
+pikseli > 8/255, dachy, porty i megabudowle 0,07–1,25%, kadr kinowy z dalekim miastem (p9) 2,3% (krawędzie MSAA, aliasing okien na budynkach 1–2 px), w grze
+`__ring` 0,05–0,39%; draw calle i HDR jak w bazie. Czas kompilacji na zimno (`__halo.compileMs`): bryły dachu / doków,
+pociągi, ogrody, przemysł 0,22–0,50 s każdy, szkło 0,14–0,28 s, drzewa 0,12–0,25 s, światła < 0,06 s.
+`HALO_GLSL_SURFACE` usunięty; `HALO_GLSL_INDKIT` został w `haloRingGLSL.js` tylko dla narzędzia parzystości.
+
+**Hala K-7 i ringi-archetypy (port, zadanie 10 — ring bez zamienników):** `HaloPortK7` rysuje NodeMaterial-e z grafów
+`k7Graphs(ring.uniforms)` (1:1 z dawnym GLSL: instancje z kwaternionem, skalą pionową i grupą ruchomą, płyty K-7 ze
+spoinami, śrubami i zaciekami, lampy hal w pętli, emisja stanu i złączek, napisy z atlasu, węże z żebrami). Graf jest
+jeden na ring (cztery hale kompleksów = jeden NodeBuilder na rodzaj materiału i stan), wartości hali (macierz huba,
+lampy hal nocą, nieprzezroczystość dachu, macierze suwnic i złączek, paleta i emisja z profilu) czytane przy rysowaniu
+obiektu z `material.uniforms` (`onObjectUpdate`; tablice pakowane per obiekt w `k7Groups` / `k7Surf`). Zanik dachu
+(`K7RoofFade`) przełącza jak dawniej `transparent` / `depthWrite` materiałów dachu. Archetypy (`arch/archTSL.js`, dawne
+`archGLSL.js`): instancje (ECUMENE: fasady z oknami; Fable: 9 rodzajów budynków; płyty, radiatory, woda, światła HDR),
+pasy z atlasem płyt, szkło kopuł, kratownice, światła pozycyjne jako kwadraty instancjonowane; powierzchnie dzielnic
+ECUMENE i habitatu Fable w `ecumene.js` / `fable.js`. Partie instancji to `Mesh` z `InstancedBufferGeometry` (jeden
+przepleciony bufor: macierz, barwa, aInst) zamiast `InstancedMesh` — jeden NodeBuilder na materiał zamiast na partię.
+Hasze okien, paneli i kratek oraz ziarno instancji przez `haloFma` / `haloFmaVec2` (fma WGSL = mad bazy; parzystość na
+GPU 100%, wiersze `arch*` w `ring-tsl-parzystosc.mjs`). Porównanie samego ringu z tagiem bez planety i nieba dema:
+`node scripts/halo-ring-shots.mjs --planet mars|jupiter --set profile --czesci terrain,structure,structureTop,clouds,shell,mega,city,k7
+--bez-otoczenia [--repo <drzewo tagu>]` (dla archetypów `--czesci` nie ukrywa części ringu — ukrywa hale K-7, gdy nie
+ma `k7`). Post dema = `BloomGry` gry z kompozytem × 3 (jak dawny `UnrealBloomPass`; wcześniej bloom dema był 3 × słabszy).
+Zgodność bez otoczenia (tag → port, piksele > 8/255): hale K-7 i porty 0,05–0,42%, dzielnice, kopuły i kadry kinowe
+0,5–3,1% (krawędzie MSAA siatek 1 px, korony drzew, kratownice). Tranzyty archetypów (`archPort.js`) mają bryły
+współpłaszczyznowe — pasek światła 4 j. wpuszczony w ścianę tunelu (lico na x = hw jak lico ściany) i narożniki ramy
+portalu (rama boczna i czarna belka dolna o tych samych y) — ten z-fighting migocze też w bazie, a WebGPU rozstrzyga go
+inaczej (scena `transit` 2–3%); poprawka to geometria (odsunięcie lic), nie shader. Kompilacja na zimno
+(`__halo.compileMs`): materiały K-7 0,07–0,29 s, powierzchnia ECUMENE 0,51 s, Fable 0,87 s, bryły dzielnic i powłoki
+0,23–0,61 s, szkło, kratownice, drzewa i światła 0,03–0,19 s.
+
 ## Płaszczyzna gry na środku wstęgi (decyzja użytkownika 2026-09-23)
 
 `flightLevel: 0.5` (domyślnie dla habitatu w stronę kosmosu): z = 0 przecina podłogę habitatu w
@@ -75,7 +162,7 @@ dachu. Skutki dla portu:
   z górami przy ścianach, HEPHAESTUS = krajobraz, DAEDALUS = szkło). **Osłona**: nad płytą doku
   i portalu tranzytu (od płyty do górnej ściany, w pasie płyty wzdłuż ringu) teren zostaje niski
   — w kamerze gry to, co leży nad płaszczyzną gry, jest bliżej kamery i zasłoniłoby dok. Tranzyty
-  bez stref. Liczone w bake'u map (`haloPortZones` w `haloRingGLSL.js` / `haloRingWorldGen.js`),
+  bez stref. Liczone w bake'u map (`haloPortZones` z `haloPortSitesTSL` w `haloRingTSL.js`, pieczenie w `haloRingWorldGen.js`),
   kawałki miasta 3D biorą te same zasięgi;
 - dolna ściana od środka jest bliżej kamery (z = −2 700 zamiast −5 750) — widać ją większą.
 
@@ -249,8 +336,9 @@ w pikselach (`HaloCityChunkSet`), płynne znikanie w shaderze — bez twardej gr
 ## W grze (port 2026-09-25)
 
 Moduły kleju (poza nimi gra woła tylko to, co niżej):
-- `src/3d/haloRing/haloRingGame.js` — `HaloRingGame`: ring Ziemi i Marsa (ta sama bryła, promień
-  planety z `resolveRingPlanetWorldRadius`, ziarno 1337 / 4099), grupa w środku planety obrócona
+- `src/3d/haloRing/haloRingGame.js` — `HaloRingGame`: ringi Ziemi, Marsa i Jowisza (promień
+  planety z `resolveRingPlanetWorldRadius`, ziarno 1337 / 4099 / 6151; Ziemia = `createHaloRing`,
+  Mars i Jowisz = `createArchRing`, § „Ringi-archetypy”), grupa w środku planety obrócona
   tak, żeby port wypadł pod kątem dawnej stacji (`haloRingRotation`); tworzony leniwie, gdy środek
   kadru jest bliżej planety niż 420 tys. j. (bake map przy pierwszym podejściu). Co klatkę renderu:
   kamera = replika `Core3D.cameraPersp` TEJ klatki (FOV, wysokość z bufora composera i zoomu,
@@ -276,9 +364,10 @@ Moduły kleju (poza nimi gra woła tylko to, co niżej):
 - **start**: `initHaloRings()` w DOMContentLoaded po `initPlanets3D` (jakość z `sc_planet_quality`);
 - **menu główne** (2026-09-26): tło menu (`src/3d/menuBackdrop3D.js`) wypożycza ring Ziemi od razu
   (`showcaseRing`), więc mapy pieką się w menu, a `startGame` oddaje ring (`releaseShowcase`) przed
-  pierwszą klatką. Shader pieczenia map kompiluje się ~5–8 s (ANGLE/D3D, bez cache GPU) i dawniej
-  zamrażał pierwszą klatkę gry przy Ziemi — tło rozgrzewa go `createHaloBakeWarmup` +
-  `renderer.compileAsync` (budowa ringu 8,3 s → 0,3 s na wątku głównym, zmierzone w headless);
+  pierwszą klatką. Port WebGPU (zadania 06, 11): pieczenie map kompiluje `HaloWorldMaps.init()` na
+  prawdziwych celach, bryły ringu rozgrzewa hak `prewarm` budowy (`Core3D.warmup`) przed podpięciem, a tło
+  rusza dopiero z gotowym ringiem — pierwsza klatka menu i gry przy Ziemi bez kompilacji (dawniej
+  `createHaloBakeWarmup` na WebGL; pierwsza klatka ringu na WebGPU bez rozgrzewki stała 4–5,6 s);
 - **render**: `haloRings.update(frameDt, cam, { sun, ship, quality, splitScreen })` po
   `updatePlanets3D`, przed `updateStations3D` i `updateHexShips3D` (tam `Core3D.render`); PerfHUD
   `render3dRingsUpdateTime`;
@@ -358,7 +447,18 @@ osie tranzytów co 90°, strefy, kołnierz w kolizjach), `haloPortTraffic.test.m
 ruchu v2), `haloPortBays.test.mjs` (zatoki: stanowiska, pasy, aleja, kadłuby gracza, dokowanie
 każdym kadłubem, scena kompleksu, port bez udawanego życia), `haloRingLandmarks.test.mjs`
 (megabudowle: sektory, place pod płaszczyzną gry i z dala od portu, teren, bryły na placu,
-wariant Halo).
+wariant Halo). Port WebGPU: `haloRingTSL.test.mjs` i `haloRingAsync.test.mjs` (06),
+`haloRingTerrainTSL.test.mjs` (07: definicja zestawu = bliźniak JS bit w bit, czyste funkcje zestawu,
+WGSL terenu budowany w Node — CDLOD w pętli, dwa bufory ringu, bez macierzy uv tekstur, rosnące stałe
+krawędzie smoothstep, wariant tylko z kroków powietrza, blok `haloSurfU`, wybór węzłów CDLOD),
+`haloRingStructureTSL.test.mjs` (08: konstrukcja i atmosfera bez GLSL, stan renderu jak dawny ShaderMaterial, WGSL pasów
+i wariantu FG, sole / progi / kolejność reguł dachu jak plan brył na CPU, warianty jakości atmosfery, zaokrąglenia haszy
+okien jak w bazie), `haloRingMegaCityTSL.test.mjs` (09: megastruktura i miasto bez GLSL, stan renderu jak dawny
+ShaderMaterial, limity WebGPU — bufory uniformów, wierzchołków, varyingi — WGSL wariantów FG / doków / ogrodów, wczesne
+wyjścia wierzchołków, fma w ziarnach i haszach brył, LOD z jakości), `haloRingK7ArchTSL.test.mjs` (10: K-7 i archetypy
+bez GLSL, graf K-7 na ring i pakowanie tablic hali per obiekt, wierzchołek instancji K-7 = bliźniak JS z
+`haloPortK7.test.mjs`, partie archetypów bez `InstancedMesh`, kwadraty świateł, stany renderu jak dawne ShaderMaterial,
+limity WebGPU, pochodne przed gałęziami, hasze przez fma, czyste funkcje pól ECUMENE, mapa stref Fable `textureLoad`).
 
 ### Narzędzie: zrzuty prawdziwej gry
 
@@ -375,6 +475,63 @@ trwa 1–2 min (skrypt czeka do 4 min i wypisuje postęp ładowania).
   `haloRingBlock` z kamery kinowej dema.
 - kokpit: przycisk lotu nad ringiem (dawny `RingCityFlight`) wyłączony z opisem „w przygotowaniu”
   — docelowo kamera kinowa dema (`dema/halo_ring_demo.js`, dynamiczny near).
+
+## Ringi-archetypy: Mars = ECUMENE, Jowisz = Fable (Z6, 2026-09-27)
+
+Decyzja użytkownika (2026-09-26/27): ringi Marsa i Jowisza oraz ich doki mają być **kompletnie
+inne niż ring Ziemi**, nie przemalowane — z dem `dema/orbital_ring_demo.html` (ECUMENE) i
+`dema/orbital_ring_demo_2.html` (ring Fable). Wybory: Mars = ECUMENE, Jowisz = Fable; habitat
+**na zewnątrz jak Ziemia**; doki = **hala K-7 + zatoki w stylu dema** (te same stanowiska,
+kolizje i ruch v2); ląd **dokładnie jak w demach**. Ziemia i tło menu bez zmian (zrzuty dema
+przed/po: różnica ~0 pikseli, te same draw calle).
+
+- **Profil** (`haloRingProfiles.js`): `archetype` (`'halo' | 'ecumene' | 'fable'`) + `geometry`
+  (nadpisuje `HALO_GEOMETRY_DEFAULTS`). `createHaloRingLayout` bierze geometrię z profilu, więc
+  kolizje (`haloRingLayoutFor`), ruch v2 (`buildHaloPortTrafficLayout`, `ringRouter`) i stacja-port
+  (`computeHaloPortStation`) dostają ją same. Plan sektorów z dema: ECUMENE 12 dzielnic
+  (port = THARSIS), Fable 24 sektory = 2 × 12 stref dema (port = GALILEO).
+- **Geometria** (dema × 3): Mars szerokość 6 720, ściany 162, kadłub 1 600 → obwiednia 33 488 –
+  35 088 (podłoga) – 35 250, stacja-port na R 38 670; Jowisz (promień 48 000) szerokość 5 940,
+  ściany 780, kadłub 1 900 → 52 070 – 53 970 – 54 750, stacja na R 57 552. Długość dzielnicy =
+  obwód / liczba sektorów (rozciągnięcie względem dema 1,44 ECUMENE, 1,12 Fable): wymiary
+  bezwzględne × 3, ułamki długości × rozciągnięcie, częstotliwości szumu / 3.
+- **Render** (`src/3d/haloRing/arch/`): `archRing.js` (`createArchRing`, API jak `createHaloRing`:
+  hale K-7, reguły FG, wycięcia, słońce, jakość, `terrainHeightAt`), `ecumene.js` + `ecumenePlan.js`,
+  `fable.js` + `fablePlan.js` (plan = czysta matematyka, bez Three), `archPort.js` (zatoki
+  i tranzyty w wymiarach `HALO_PORT` / `HALO_TRANSIT`, ubrane w styl dema), `archFrame.js`
+  (rama punktu: X wzdłuż, Y od planety, Z = −oś; partie instancji), `archTSL.js` (shadery w TSL
+  od zadania 10; dawne `archGLSL.js`), `archMaterials.js`. Uniformy i model światła wspólne z Halo
+  (`createHaloUniforms`, `haloRingTSL.js`). Pozycje lokalne względem grupy ringu (≤ 60 tys.), pozycja
+  na ekranie przez `modelViewMatrix` (precyzja). Materiały instancji rozróżniają rodzaj w `aInst` (fasady ECUMENE,
+  budynki Fable, panele, radiatory, woda, blask HDR); ziarno kwantowane (bez szumu z varyingu).
+- **Hala K-7** zostaje (stanowiska, kolizje), zmienia się ubiór: `port.roof/walls/bays` =
+  `'ecumene'` (panele stal/rura, stopnie, miedziane czapy) albo `'fable'` (pola radiatorów
+  z czerwonym pasem, kolektory). Płyty portu (`portClass`): 2 = pusta płaska płyta, 1 = pas
+  ochronny tylko z niską zabudową — bez drzew i budynków w zatokach/tranzytach.
+- **Ring nie udaje życia**: bez smug ruchu i impulsów maglevu z dema Fable; światła miast stoją.
+- **Budżet** (headless Chrome, 1920×1080): udział ringu w klatce gry przy porcie (z ringiem −
+  bez) Ziemia 16, **Mars 20, Jowisz 22** draw calle; całość Mars 48; Jowisz 78, bo bez ringu jest
+  już 56 (pule asteroid w pobliżu — nie ring). `haloRings.update` 0,04–0,12 ms. W demie: Mars
+  6 partii + K-7 11, Jowisz 7 + K-7 12 (konstrukcja, rury i bryły portu jedną partią na stronę,
+  atlas pasów kadłuba/ścian, LOD kopuł i tablic po zasięgu kamery). Budowa: plan ECUMENE
+  110–145 ms (5 092 budynki, 28 610 drzew, 12 kopuł — w demie port był jeden, tu 4 kompleksy
+  i 4 tranzyty, więc 5 kopuł z płyt przesuwa się wzdłuż dzielnicy albo za pas płyt); Fable: mapa stref 8192×256 na CPU 525–600 ms
+  + miasto 120 ms (35 397 budynków, 94 218 drzew, 17 kopuł) — synchronicznie, przy leniwym
+  tworzeniu ringu (< 420 tys. j. od planety).
+- **Rozgrzewka shaderów** (zadanie 11): ringi-archetypy nie pieką map na GPU; ich bryły (i dach hal K-7
+  w drugim stanie) rozgrzewa ten sam hak `prewarm` co ring Ziemi — trafiają do `group` dopiero po
+  kompilacji w tle, `ready` / `mapsReady` = podpięte (pierwsza klatka przy Marsie / Jowiszu bez
+  0,7–0,8 s przestoju; sama budowa na CPU 0,4–0,6 s zostaje — synchroniczna, przy leniwym tworzeniu).
+- **Testy**: `haloRingProfiles.test.mjs` (Ziemia = liczby sprzed profili, archetypy i geometria,
+  doki, K-7 styl ≠ stanowiska, geometria wszędzie), `haloRingArch.test.mjs` (rama, ląd dem, port
+  wolny, konstrukcja w płycie kolizji, zatoki i tranzyty, pułapki ANGLE, klej gry);
+  `scripts/tests/haloPortTraffic.test.mjs` — podłoga Marsa 35 088.
+- **Demo**: `dema/halo_ring_demo.html?planet=mars|jupiter` (zrzuty `scripts/halo-ring-shots.mjs
+  --planet mars|jupiter`).
+- **Otwarte**: promień Jowisza 48 000 tymczasowy (`ringScale.js`); księżyc Io na orbicie ~60 tys.
+  wpada w ring/port/redę (`systemMap.js`, poza Z6 — propozycja ~85 tys.); mapa stref Fable może
+  iść do workera; w silniku Halo zostały nieużywane gałęzie dawnej „skórki” Marsa/Jowisza (siarka,
+  linie, burza, kratery, kaniony, miasto kopuł, landmarki przemysłowe, kit 7, zatoki „berm”).
 
 ## Po porcie (gameplay)
 

@@ -434,3 +434,88 @@ test('external road lights skip ships outside the cone', () => {
 
   assert.equal(payload.count, 0);
 });
+
+// Payload świateł zewnętrznych wybiera najbliższe sięgające światła bez sortowania
+// wszystkich kandydatów (bufor K najbliższych). Wzorzec: filtr + stabilny sort
+// całej listy + pierwsze K — tak liczyła wersja sprzed optymalizacji.
+test('światła zewnętrzne: K najbliższych sięgających, remis → wcześniejsze (jak stabilny sort)', () => {
+  let seed = 4242;
+  const rnd = () => { seed = (Math.imul(seed, 1103515245) + 12345) >>> 0; return seed / 4294967296; };
+  const grid = { srcWidth: 100, srcHeight: 100 };
+  const reachOmni = (l, t) => {
+    const reach = Math.max(1, Number(l.rangeWorld) || 1) + t.radius;
+    const dx = t.x - l.x, dy = t.y - l.y;
+    return dx * dx + dy * dy <= reach * reach;
+  };
+  const reachRoad = (e, t) => {
+    const dx = t.x - e.x, dy = t.y - e.y;
+    const along = dx * e.dir.x + dy * e.dir.y;
+    const range = Math.max(1, Number(e.rangeWorld) || 1);
+    if (along < -t.radius || along > range + t.radius) return false;
+    const perpSq = Math.max(0, dx * dx + dy * dy - along * along);
+    const cone = Math.max(0, along) * Math.tan(Math.max(8, Math.min(160, e.coneDeg)) * Math.PI / 360) + t.radius;
+    return perpSq <= cone * cone;
+  };
+  const expected = (list, t, test, k) => list
+    .map((l, i) => ({ l, i, d: (t.x - l.x) ** 2 + (t.y - l.y) ** 2 }))
+    .filter(({ l }) => l.owner !== t && l.power > 0 && test(l, t))
+    .sort((a, b) => a.d - b.d)
+    .slice(0, k)
+    .map(({ l }) => `external:${l.ownerId}:${l.id}`);
+  // Siatka punktów (0, 50, 100 …) daje remisy odległości — sprawdzają kolejność.
+  const snap = () => Math.round((rnd() - 0.5) * 16) * 50;
+  let checked = 0;
+  for (let scene = 0; scene < 300; scene++) {
+    const target = { id: 't', x: 0, y: 0, angle: 0, radius: 20 + rnd() * 200, editorLights: { position: [], road: [] } };
+    const owner = {};
+    const omni = Array.from({ length: Math.floor(rnd() * 40) }, (_, i) => ({
+      owner: rnd() < 0.05 ? target : owner, ownerId: `o${i % 7}`, id: `nav${i}`,
+      x: snap(), y: snap(), rangeWorld: 50 + rnd() * 400, power: rnd() < 0.05 ? 0 : 1 + rnd(), mean: 0.44,
+      color: { r: 1, g: 0, b: 0 }
+    }));
+    const emitters = Array.from({ length: Math.floor(rnd() * 40) }, (_, i) => {
+      const a = Math.floor(rnd() * 8) * Math.PI / 4;
+      return {
+        owner: rnd() < 0.05 ? target : owner, ownerId: `e${i % 5}`, id: `road${i}`,
+        x: snap(), y: snap(), dir: { x: Math.cos(a), y: Math.sin(a) },
+        rangeWorld: 100 + rnd() * 600, coneDeg: 8 + rnd() * 150, radiusWorld: 10, power: 3, color: { r: 1, g: 1, b: 1 }
+      };
+    });
+    const payload = buildCombinedShipLightShaderPayload(target, grid, emitters, { externalOmniLights: omni });
+    const got = payload.lights.filter((l) => l.external).map((l) => l.id);
+    const want = [...expected(omni, target, reachOmni, 4), ...expected(emitters, target, reachRoad, 8)];
+    assert.deepEqual(got, want, `scena ${scene}`);
+    checked += want.length;
+  }
+  assert.ok(checked > 1000, `za mało wybranych świateł w próbie: ${checked}`);
+});
+
+test('własne lampy: wynik z cache per encja, przeliczany po zmianie skali, siatki albo źródła', () => {
+  const lights = {
+    position: [{ id: 'p1', x: 10, y: -20, color: '#ff2b2b', power: 0.8, radius: 4 }],
+    road: [{ id: 'r1', x: -30, y: 40, color: '#ffffff', power: 3, radius: 14, deg: 90, range: 800, coneDeg: 40 }]
+  };
+  const entity = { editorLights: lights, __hardpointScale: 1 };
+  const grid = { srcWidth: 200, srcHeight: 100, pivot: { x: 5, y: -3 } };
+  const a = buildShipLightShaderPayload(entity, grid);
+  a.lights.push({ id: 'obcy' }); // wynik należy do wołającego — cache tego nie widzi
+  const b = buildShipLightShaderPayload(entity, grid);
+  assert.equal(b.count, 2);
+  assert.deepEqual(b.lights.map((l) => l.id), ['r1', 'p1']);
+  assert.equal(b.signature, buildShipLightShaderPayload({ editorLights: lights, __hardpointScale: 1 }, grid).signature);
+
+  entity.__hardpointScale = 2;
+  const scaled = buildShipLightShaderPayload(entity, grid);
+  assert.notEqual(scaled.signature, b.signature, 'skala hardpointu');
+  assert.equal(scaled.lights[1].radiusPx, 8);
+
+  grid.pivot = { x: 6, y: -3 };
+  const moved = buildShipLightShaderPayload(entity, grid);
+  assert.notEqual(moved.signature, scaled.signature, 'pivot siatki');
+  assert.equal(moved.lights[1].pos.x, scaled.lights[1].pos.x + 1);
+
+  entity.editorLights = { ...lights, position: [{ ...lights.position[0], x: 11 }] };
+  const relit = buildShipLightShaderPayload(entity, grid);
+  assert.notEqual(relit.signature, moved.signature, 'nowe źródło lamp');
+  assert.deepEqual(relit, buildShipLightShaderPayload({ editorLights: entity.editorLights, __hardpointScale: 2 }, grid));
+});

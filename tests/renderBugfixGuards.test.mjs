@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-// Strażnicy poprawek błędów z audytu rysowania (2026-09-23). Część to regexy
-// w stylu repo (index.html i moduły z WebGL nie wczytają się w node), a polityka
-// degradacji heks-asteroid jest testowana behawioralnie.
+// Strażnicy poprawek błędów z audytu rysowania (2026-09-23): regexy w stylu repo
+// (index.html i moduły z WebGL nie wczytają się w node). Testy degradacji heks-asteroid
+// odeszły ze starym polem (zadanie 21 portu WebGPU).
 
 // CRLF → LF: regexy niżej liczą na `\n`, a checkout z core.autocrlf daje CRLF.
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
@@ -29,45 +29,88 @@ test('paski HP/tarczy tylko przy uszkodzeniu (koniec tautologii)', () => {
   assert.match(indexHtml, /const showShield = shieldMax > 0 && shieldVal < shieldMax - 0\.5;/);
 });
 
-test('kolizje statek-asteroida w physicsStep z prawdziwym dt, nie w render()', () => {
+test('kolizje statek-olbrzym pasa w physicsStep z prawdziwym dt, nie w render()', () => {
   const render = indexHtml.match(/function render\(alpha, frameDt\) \{[\s\S]*?\n    }\n/)?.[0] || '';
   assert.ok(render.length > 0);
-  assert.doesNotMatch(render, /checkShipCollisions\(/);
+  assert.doesNotMatch(render, /collideShip\(/);
   assert.match(indexHtml, /stepShipAsteroidCollisions\(dt\);/);
-  assert.match(indexHtml, /field\.checkShipCollisions\(ship, dt\)/);
-  const field = read('src/3d/asteroidField3D.js');
-  assert.match(field, /checkShipCollisions\(ship, dt = 1 \/ 60\)/);
-  assert.match(field, /DestructorSystem\.collideEntities\(ship, promotedEntity, dt, true\)/);
+  // Zadanie 21: stare pole (sprite'y + heksy) usunięte — kolizje tylko z olbrzymami pasa (SDF).
+  assert.match(indexHtml, /belt\.collideShip\(ship\)/);
+  assert.doesNotMatch(indexHtml, /asteroidField|OLD_ASTEROIDS_ENABLED|asteroidyStare/);
 });
 
-// Fala z refrakcją (window.trigger3DShockwave) zostaje wyłącznie dla rakiet
-// supernova (decyzja 2026-09-24): Yamato, wybuchy reaktorów i rozpad stacji jej
-// nie odpalają. Zapas heatHaze w reactorblow zostaje w kodzie (profile go
-// wyłączają) — pilnujemy, żeby po włączeniu był w osi sceny, jak u rakiet.
+// Fala z refrakcją (dawne window.trigger3DShockwave) była od 2026-09-24 tylko dla rakiet
+// supernova; od zadania 19 (port WebGPU) nie ma jej wcale — Yamato, wybuchy reaktorów
+// i rozpad stacji jej nie odpalają, a rakiety zgłaszają źródła zniekształceń Core3D.
+// Zapas heatHaze w reactorblow zostaje w kodzie (profile go wyłączają) — od zadania 20 jako
+// gorące powietrze zniekształceń Core3D w ŚWIECIE gry (dawniej pushHeatHazeWorld w osi sceny).
 const code = (path) => read(path).replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
 
-test('haze reaktora i rakiet w osi sceny (y3d = -yGry); fala z refrakcją tylko dla supernovy', () => {
-  assert.match(read('src/effects3d/reactorblow.js'), /pushHeatHazeWorld\(expX, -expZ, -4,/);
-  assert.match(read('src/effects3d/rocketSystem3D.js'), /pushHeatHazeWorld\(burst\.x, -burst\.z, -4,/);
-  assert.doesNotMatch(code('src/effects3d/yamato.js'), /trigger3DShockwave|sw3d\(/, 'Yamato bez fali');
+// Port WebGPU, zadanie 19: fale, implozja i gorące powietrze rakiet (także Supernowej) to źródła
+// zniekształceń Core3D (src/3d/fx/distortion.js) zgłaszane w ŚWIECIE gry — oś y odwraca commit
+// źródeł (behawioralnie: tests/rocketFx.test.mjs); rakiety nie wołają już pushHeatHazeWorld ani
+// dawnej fali trigger3DShockwave (fala Supernowej = sama refrakcja, bez świecącego obrysu).
+test('haze reaktora w świecie gry (zniekształcenia Core3D); rakiety i Supernowa przez zniekształcenia Core3D', () => {
+  const blow = code('src/effects3d/reactorblow.js');
+  assert.match(blow, /field\.heat\(b\.x, b\.y, radius,/, 'haze reaktora: źródło zniekształceń w świecie gry (x, y)');
+  assert.doesNotMatch(blow, /pushHeatHazeWorld|trigger3DShockwave|useShockwave3D/, 'reaktor bez starego haze i fali');
+  const rockets = code('src/effects3d/rocketSystem3D.js');
+  assert.doesNotMatch(rockets, /pushHeatHazeWorld|trigger3DShockwave|makeSupernovaMissileBlow/, 'rakiety bez starego haze i fali');
+  const fx = code('src/3d/rockets/effects.js');
+  assert.match(fx, /field\.shock\(this\.sx\[i\] \+ S\[o \+ 6\] \* a, this\.sy\[i\] \+ S\[o \+ 7\] \* a,/, 'fala w świecie gry (x, y), nie w osi sceny');
+  assert.match(fx, /field\.implode\(this\.nvx\[i\], this\.nvy\[i\],/);
+  assert.match(fx, /field\.heat\(this\.hx\[i\] \+ H\[o \+ 3\] \* a, this\.hy\[i\] \+ H\[o \+ 4\] \* a,/);
+  // Yamato i reszta broni (zadanie 17): receptury z dema bronie-webgpu (src/3d/weapons/) — fala
+  // to zniekształcenie Core3D (pula DIST, sama refrakcja — decyzja 2026-09-27: efekty z dema),
+  // nigdy dawna fala overlaya trigger3DShockwave.
+  for (const f of ['recipes.js', 'weaponFx.js', 'gpuFx.js']) {
+    assert.doesNotMatch(code(`src/3d/weapons/${f}`), /trigger3DShockwave|sw3d\(/, `${f}: broń bez fali overlaya`);
+  }
   assert.doesNotMatch(code('src/effects3d/reactorblow.js'), /shockwave3D: \{|heatHaze: \{/, 'wybuchy reaktorów bez fali i haze');
   for (const f of ['stationChainProfile', 'stationCutProfile', 'stationFinalProfile']) {
     assert.doesNotMatch(code(`src/effects3d/reactorProfiles/${f}.js`), /shockwave3D: \{|heatHaze: \{/, f);
   }
   assert.match(indexHtml, /Destruction3D\.init\(\{[\s\S]{0,400}?shockwaveManager: null,/, 'rozpad stacji bez fali');
-  assert.match(code('src/effects3d/rocketSystem3D.js'), /explosionStyle === "supernova"\) \{\s*const triggerShockwave = window\.trigger3DShockwave;/);
+  assert.doesNotMatch(code('src/3d/core3d.js'), /Shockwave3DManager|trigger3DShockwave|refractionTarget/, 'Core3D bez fali z refrakcją');
 });
 
-test('bloom overlaya: efekty tylko przez modyfikatory, bez zapisu/przywracania bazy', () => {
-  const overlay = read('src/effects3d/overlay.js');
-  assert.match(overlay, /setBloomModifier: \(key, modifier\) =>/);
-  assert.match(overlay, /clearBloomModifier: \(key\) =>/);
-  const yamato = read('src/effects3d/yamato.js');
-  assert.match(yamato, /overlay\.setBloomModifier\(lease, YAMATO_BLOOM_SUPPRESSION\)/);
-  assert.doesNotMatch(yamato, /setBloomConfig|__yamatoBloomSuppression/);
-  const nova = read('src/effects3d/supernovaMissileBlow.js');
-  assert.doesNotMatch(nova, /_savedBloom|_activeNovaCount|setBloomConfig/);
-  assert.match(nova, /_restoreBloom\(bloomLease\)/);
+test('dysza SIDE świeci w bloomie tylko przy manewrze (audyt 2026-09-26)', () => {
+  // Barwa płomienia = rdzeń ENGINE_HDR (biały) / brzeg z kelwinów (kanał ≤ 1)
+  // × bloomGain gracza (domyślnie 1,1) × ENGINE_HDR, całość × (1 + 1,5 · ciąg).
+  // Przy 2,4 każda z 8 dysz bocznych Atlasa świeciła w spoczynku jak lampa,
+  // a odpalona zalewała burtę białą plamą.
+  const threshold = Number(read('src/3d/bloomConfig.js').match(/threshold: ([0-9.]+),/)?.[1]);
+  const hdr = Number(read('src/3d/engineExhaustBatch.js').match(/const ENGINE_HDR = ([0-9.]+);/)?.[1]);
+  const defaultBloomGain = Number(indexHtml.match(/vfx: \{ colorTempK: \d+, bloomGain: ([0-9.]+),/)?.[1]);
+  assert.ok(threshold > 0 && hdr > 0 && defaultBloomGain > 0);
+  // Filtr bloomu patrzy na luminancję: brzeg z kelwinów (domyślnie 8000 K + 4000 K · ciąg)
+  // ma ją ≤ 0,90 kanału maksymalnego, rdzeń jest biały.
+  const EDGE_LUM = 0.9;
+  const lum = (mult) => Math.max(hdr, hdr * Math.max(1, defaultBloomGain) * EDGE_LUM) * mult;
+  assert.ok(lum(1) < threshold, `pilot SIDE w spoczynku (${lum(1).toFixed(2)}) ponad progiem ${threshold}`);
+  // Lot bez manewru: moveGlow ≤ 0,48 → ciąg dyszy bocznej ≤ 0,48 · 0,55.
+  const cruise = lum(1 + 1.5 * 0.48 * 0.55);
+  assert.ok(cruise < threshold, `dysza SIDE w samym locie (${cruise.toFixed(2)}) ponad progiem ${threshold}`);
+  // Pełny manewr ma wyraźnie błysnąć.
+  assert.ok(hdr * 2.5 > threshold * 1.5, `odpalona dysza SIDE (${hdr * 2.5}) ledwo nad progiem`);
+});
+
+// Dawny bloom overlaya dostawał od efektów modyfikatory (Supernowa podbijała, Yamato przygaszało)
+// liczone co klatkę od bazy — bez zapisu/przywracania konfiguracji (dwa niezależne „zapisz /
+// przywróć” psuły bloom do końca sesji). Od zadania 20 overlaya nie ma; efekty ruszają post
+// Core3D tylko przez Core3D.fx.post (kasowany co klatkę), a konfiguracji bloomu nie zapisuje nikt.
+test('bloom tylko Core3D: efekty przez Core3D.fx.post, bez zapisu/przywracania bazy', () => {
+  assert.doesNotMatch(code('src/effects3d/reactorblow.js') + code('src/effects3d/reactorblow.tsl.js'), /setBloomConfig|setBloomModifier|DevVFX/);
+  // Yamato nie jest już w overlayu (zadanie 17 — receptura WeaponFx w Core3D): bez modyfikatora
+  // i bez zapisu konfiguracji bloomu.
+  const weaponFx = code('src/3d/weapons/weaponFx.js') + code('src/3d/weapons/recipes.js');
+  assert.doesNotMatch(weaponFx, /setBloomConfig|setBloomModifier|__yamatoBloomSuppression/);
+  // Supernowa (zadanie 19) nie jest już w overlayu: podbicie bloomu i przygaszenie idą przez
+  // Core3D.fx.post (kasowane co klatkę efektów), bez zapisu/przywracania konfiguracji bloomu.
+  const rocketFx = code('src/3d/rockets/rocketFx.js');
+  assert.match(rocketFx, /if \(d\.bloomBoost > post\.bloomBoost\) post\.bloomBoost = d\.bloomBoost;/);
+  assert.doesNotMatch(rocketFx, /setBloomConfig|DevVFX/);
+  assert.match(code('src/3d/fx/fxFrame.js'), /this\.post\.exposure = 1;\s*this\.post\.bloomBoost = 0;/, 'post efektów kasowany co klatkę');
 });
 
 test('updateEntityMesh: po przebudowie mesh wskazuje nowy obiekt; nowe dane przed zwolnieniem starych', () => {
@@ -93,13 +136,18 @@ test('panel skanera: przyciski akcji budowane raz na cel (klik nie ginie), schow
   assert.match(src, /if \(runtime\.enabled === false\) return;\s*render\(\);/);
 });
 
-test('cząstki rakiet: zakresy uploadu kumulowane, zawinięcie bez pełnego bufora', () => {
-  for (const path of ['src/effects3d/rocketFireGPU.js', 'src/effects3d/rocketSmokeGPU.js']) {
-    const src = read(path);
-    assert.doesNotMatch(src, /clearUpdateRanges\(\);\s*attr\.addUpdateRange\(start, count\);/, path);
-    assert.match(src, /if \(this\.activeIndex === 0\) this\._pushDirtySpan\(\);/, path);
-    assert.doesNotMatch(src, /_dirtyWrapped/, path);
+// Port WebGPU, zadanie 19: dawne RocketFireGPU / RocketSmokeGPU zastąpił dym compute z dema
+// rakiet; pierścienie z wysyłką zakresów (iskry, łuki) mają test zachowania w
+// tests/rocketFx.test.mjs („pierścień: zawinięcie = dwa wycinki, bez pełnego bufora”).
+test('cząstki rakiet: stare pule uploadu CPU zastąpione (dym compute, pierścienie z zakresami)', () => {
+  const rockets = code('src/effects3d/rocketSystem3D.js');
+  assert.doesNotMatch(rockets, /RocketFireGPU|RocketSmokeGPU|fireGPU|smokeGPU/);
+  assert.match(code('src/3d/rockets/smoke.js'), /this\._qRange\.count = n \* 16;/, 'zlecenia dymu: jeden zakres na stałe, tylko zapisana część');
+  for (const path of ['src/3d/rockets/sparks.js', 'src/3d/rockets/arcs.js']) {
+    assert.match(code(path), /import \{ ringAttr, RingUpload \} from '\.\/ringUpload\.js';/, `${path}: pierścień przez ringUpload`);
+    assert.doesNotMatch(code(path), /_wrapped|addUpdateRange/, `${path}: bez pełnego bufora po zawinięciu`);
   }
+  assert.match(code('src/3d/rockets/ringUpload.js'), /at\.clearUpdateRanges = \(\) => \{\};/, 'zakresy na stałe (bez push na klatkę)');
 });
 
 test('destrukcja stacji nie rusza zasobów szablonu GLB', () => {
@@ -109,92 +157,4 @@ test('destrukcja stacji nie rusza zasobów szablonu GLB', () => {
   const debris = read('src/vfx/destructionDebrisManager.js');
   assert.match(debris, /!child\.geometry\.userData\?\.__sharedTemplateAsset/);
   assert.match(debris, /!m\.userData\?\.__sharedTemplateAsset/);
-});
-
-// ── Heks-asteroidy: degradacja i zwalnianie areny (behawioralnie) ────────────
-
-async function makeField() {
-  const { AsteroidField } = await import('../src/3d/asteroidField3D.js');
-  const field = Object.create(AsteroidField.prototype);
-  field.sunX = 0;
-  field.sunY = 0;
-  field._beltBandList = [{ minR: 100000, maxR: 120000 }];
-  field.activeHexAsteroids = new Set();
-  field.activeHexById = new Map();
-  field._hexDemoteBuffer = [];
-  field._nextHexDemoteCheckMs = 0;
-  field.shown = [];
-  field._showAsteroidInstance = (a) => { field.shown.push(a); a._instancedHidden = false; };
-  return field;
-}
-
-function makeHexAsteroid(overrides = {}) {
-  const asteroid = { id: 7, alive: true, worldX: 110000, worldY: 0, scale: 400, _instancedHidden: true };
-  const entity = {
-    asteroidRef: asteroid,
-    vx: 0,
-    vy: 0,
-    __shipNearMs: 0,
-    __promotedAtMs: 0,
-    hexGrid: { shards: new Array(10).fill({}), activeStructuralCount: 10, baseStructuralCount: 10 }
-  };
-  asteroid.hexEntity = entity;
-  Object.assign(entity, overrides);
-  return { asteroid, entity };
-}
-
-function withWindow(camera, fn) {
-  const prev = globalThis.window;
-  globalThis.window = { innerWidth: 1920, innerHeight: 1080, camera, splitScreenMode: false };
-  try { return fn(); } finally {
-    if (prev === undefined) delete globalThis.window;
-    else globalThis.window = prev;
-  }
-}
-
-test('pasma pasów: statek daleko od pasów nie robi zapytania kolizji', async () => {
-  const field = await makeField();
-  assert.equal(field._isNearAnyBelt(110000, 0, 1000), true);
-  assert.equal(field._isNearAnyBelt(50000, 0, 1000), false);
-  assert.equal(field._isNearAnyBelt(0, 125000, 9000), true, 'margines obejmuje dryf');
-  field._beltBandList = [];
-  assert.equal(field._isNearAnyBelt(0, 0, 0), true, 'bez danych o pasmach — zachowawczo');
-});
-
-test('degradacja: tylko nietknięta, stojąca, bezczynna i poza kadrem', async () => {
-  const field = await makeField();
-  const farCam = { x: 0, y: 0, zoom: 1 };
-  const nowMs = 60000;
-  withWindow(farCam, () => {
-    const ok = makeHexAsteroid();
-    assert.equal(field._canDemoteHexAsteroid(ok.entity, nowMs), true);
-
-    const damaged = makeHexAsteroid();
-    damaged.entity.hexGrid.activeStructuralCount = 9;
-    assert.equal(field._canDemoteHexAsteroid(damaged.entity, nowMs), false, 'uszkodzonej nie ruszamy');
-
-    const recent = makeHexAsteroid({ __shipNearMs: nowMs - 1000 });
-    assert.equal(field._canDemoteHexAsteroid(recent.entity, nowMs), false, 'statek był niedawno obok');
-
-    const moving = makeHexAsteroid({ vx: 30 });
-    assert.equal(field._canDemoteHexAsteroid(moving.entity, nowMs), false, 'wciąż dryfuje');
-  });
-  withWindow({ x: 110000, y: 0, zoom: 1 }, () => {
-    const visible = makeHexAsteroid();
-    assert.equal(field._canDemoteHexAsteroid(visible.entity, nowMs), false, 'bez podmiany na oczach gracza');
-  });
-});
-
-test('degradacja zwalnia encję: dead, poza listami, instancja z powrotem widoczna', async () => {
-  const field = await makeField();
-  const { asteroid, entity } = makeHexAsteroid();
-  field.activeHexAsteroids.add(entity);
-  field.activeHexById.set(asteroid.id, entity);
-  withWindow({ x: 0, y: 0, zoom: 1 }, () => field._demoteIdleHexAsteroids(60000));
-  assert.equal(entity.dead, true);
-  assert.equal(entity.isCollidable, false);
-  assert.equal(field.activeHexAsteroids.size, 0);
-  assert.equal(field.activeHexById.size, 0);
-  assert.equal(asteroid.hexEntity, null);
-  assert.deepEqual(field.shown, [asteroid]);
 });

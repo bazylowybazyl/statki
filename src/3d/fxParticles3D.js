@@ -2,8 +2,10 @@
 //
 // Wspólny silnik cząstek dla efektów portowanych z dem (`dema/*.html`):
 // struct-of-arrays + instancing, zero alokacji w pętli klatki, jeden draw call
-// na system. Z tego korzystają `railgunFx3D.js` (Hexlance) i `muzzleFx3D.js`
-// (błyski wylotowe armat i dział jonowych).
+// na system. Korzystają: iskry dysz MAIN (`mainExhaust3D.js`), mostki, rdzenie,
+// warp, burza pasa. Efekty broni (dawniej `railgunFx3D.js`, `muzzleFx3D.js`) od
+// zadania 17 idą przez pule GPU z dema bronie-webgpu (`src/3d/weapons/`); bank
+// przesuwa raz na klatkę WeaponFx.sync (dawniej Weapon3DSystem.syncProjectiles).
 //
 // DLACZEGO JEDEN BANK, A NIE PULA NA EFEKT: pass Ortho jest związany submisją,
 // nie GPU (patrz notatki o draw callach). Dwa komplety tych samych systemów to
@@ -29,12 +31,26 @@
 // i prędkości recept działają na ruch WŁASNY, względem nośnika — dym z lufy
 // Atlasa przy 10 000 j/s wygląda jak przy postoju. Zerowy nośnik (domyślny)
 // = zachowanie sprzed zmiany, np. iskry dysz, które mają zostawać za statkiem.
+//
+// MATERIAŁY W TSL (port WebGPU, zadanie 12-B): cztery grafy wierzchołków (BB,
+// PLUME, CROSS, WASH) i jeden graf fragmentu, budowane RAZ na moduł i wspólne dla
+// wszystkich systemów banku (PLAN §3 — klucz materiału węzłowego to id węzłów;
+// nowy graf = pełna budowa NodeBuilder). Systemy różni tekstura (per obiekt:
+// FxMapNode czyta `material.uniforms.map.value` rysowanego obiektu) i mieszanie
+// (stan pipeline'u, nie programu). Łuki i iskry (`LineBasicMaterial`) biblioteka
+// WebGPU konwertuje sama. Wzory 1:1 z dawnym GLSL.
 
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
+import {
+  Fn, If, Discard, attribute, varying, uv, vec2, vec3, vec4, cos, sin, cross, length, max, normalize, select,
+  positionGeometry, modelViewMatrix, modelPosition, cameraPosition, cameraViewMatrix, cameraProjectionMatrix
+} from 'three/tsl';
 import { Core3D } from './core3d.js';
 import { sceneOriginNearCamera } from './sceneOrigin.js';
 import { SimClock, CLOCK_RENDER } from '../game/simClock.js';
 import { ActiveCarrier } from '../game/carrierVelocity.js';
+// Losowość warstwy efektów (zadanie 23): wizualia nie zużywają Math.random gry — przebieg rozgrywki nie zależy od obrazu.
+import { fxRandom } from './fx/fxRandom.js';
 
 /* ============================================================================
    WARSTWY Z I KOLEJNOŚĆ RYSOWANIA
@@ -47,7 +63,7 @@ const RENDER_ORDER = {
   wash: 84,
   smoke: 85,    // NormalBlending — dym ma zakrywać kadłub, więc idzie pod żarem
   vapor: 86,
-  trail: 87,    // rezerwacja dla smugi Hexlance'a (railgunFx3D)
+  trail: 87,    // wolne (dawniej smuga Hexlance'a z railgunFx3D; dziś smugi WeaponFx)
   glow: 88,
   plume: 89,
   spark: 90,
@@ -62,7 +78,7 @@ export const FX_RENDER_ORDER = RENDER_ORDER;
    ========================================================================== */
 export const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
 export const lerp = (a, b, t) => a + (b - a) * t;
-export const rand = (a, b) => a + Math.random() * (b - a);
+export const rand = (a, b) => a + fxRandom.next() * (b - a);
 export function smoothstep(e0, e1, x) {
   const t = clamp01((x - e0) / (e1 - e0 || 1e-6));
   return t * t * (3 - 2 * t);
@@ -84,8 +100,8 @@ export function makeBasis(dir) {
 // w osi Z: w widoku ortho z góry ruch w Z jest NIEWIDOCZNY, więc rozrzut ma
 // iść po płaszczyźnie gry, a nie „w ekran".
 export function coneDir(out, dir, spread, flat = 1) {
-  const theta = spread * Math.sqrt(Math.random());
-  const phi = Math.random() * Math.PI * 2;
+  const theta = spread * Math.sqrt(fxRandom.next());
+  const phi = fxRandom.next() * Math.PI * 2;
   const st = Math.sin(theta);
   const ct = Math.cos(theta);
   out.copy(dir).multiplyScalar(ct)
@@ -307,30 +323,41 @@ class Pool {
   }
 }
 
-function instancedQuad(attrs, capacity, vertexShader, fragmentShader, uniforms, blending) {
+// Wysyłka na GPU tylko żywej części bufora (WebGPU honoruje zakresy atrybutów;
+// bez nich co klatkę szła cała pula — iskry 5200 × 6 liczb × 2 atrybuty). Jeden
+// zakres na atrybut NA STAŁE: three czyści listę po każdej wysyłce
+// (clearUpdateRanges → length = 0), a ponowne push alokowało ~150 B na atrybut na
+// klatkę — więc czyszczenie jest tu wyłączone, a klatka zmienia tylko `count`.
+function keepUpdateRanges() {}
+function liveAttribute(attr) {
+  const range = { start: 0, count: attr.array.length };
+  attr.updateRanges.length = 0;
+  attr.updateRanges.push(range);
+  attr.clearUpdateRanges = keepUpdateRanges;
+  attr.__fxRange = range;
+  return attr;
+}
+function markLive(attr, count) {
+  if (!(count > 0)) return;
+  attr.__fxRange.count = Math.min(count, attr.array.length);
+  attr.needsUpdate = true;
+}
+
+function instancedQuad(attrs, capacity, graph, texture, blending, name) {
   const base = new THREE.PlaneGeometry(1, 1);
   const geo = new THREE.InstancedBufferGeometry();
   geo.index = base.index;
   geo.setAttribute('position', base.attributes.position);
   geo.setAttribute('uv', base.attributes.uv);
   const bufs = {};
-  for (const [name, size] of attrs) {
-    const a = new THREE.InstancedBufferAttribute(new Float32Array(capacity * size), size);
+  for (const [attrName, size] of attrs) {
+    const a = liveAttribute(new THREE.InstancedBufferAttribute(new Float32Array(capacity * size), size));
     a.setUsage(THREE.DynamicDrawUsage);
-    geo.setAttribute(name, a);
-    bufs[name] = a;
+    geo.setAttribute(attrName, a);
+    bufs[attrName] = a;
   }
   geo.instanceCount = 0;
-  const mat = new THREE.ShaderMaterial({
-    uniforms,
-    vertexShader,
-    fragmentShader,
-    transparent: true,
-    blending,
-    depthTest: false,        // pass Ortho układa broń wyłącznie renderOrderem
-    depthWrite: false,
-    toneMapped: false
-  });
+  const mat = new FxQuadMaterial(graph, texture, blending, name);
   const mesh = new THREE.Mesh(geo, mat);
   mesh.frustumCulled = false;
   return { geo, mat, mesh, bufs };
@@ -352,43 +379,153 @@ export function sp() {
   return SP;
 }
 
-/* --- bilboardy: dym, opary, rdzeń rozbłysku, żagwie --------------------- */
-const BB_VERT = /* glsl */`
-  attribute vec3 iPos;
-  attribute vec3 iCol;
-  attribute vec3 iData;          // x: rozmiar, y: obrót, z: alfa
-  varying vec2 vUv;
-  varying vec3 vCol;
-  varying float vA;
-  void main() {
-    vUv = uv; vCol = iCol; vA = iData.z;
-    vec4 mv = modelViewMatrix * vec4(iPos, 1.0);   // iPos względem mesh.position
-    float c = cos(iData.y), s = sin(iData.y);
-    vec2 p = position.xy * iData.x;
-    mv.xy += vec2(p.x * c - p.y * s, p.x * s + p.y * c);
-    gl_Position = projectionMatrix * mv;
-  }`;
-const BB_FRAG = /* glsl */`
-  uniform sampler2D map;
-  varying vec2 vUv;
-  varying vec3 vCol;
-  varying float vA;
-  void main() {
-    vec4 t = texture2D(map, vUv);
-    float a = t.a * vA;
-    if (a < 0.002) discard;
-    gl_FragColor = vec4(vCol * t.rgb, a);
-  }`;
+/* ============================================================================
+   MATERIAŁY W TSL — cztery grafy wierzchołków + wspólny fragment
+   ========================================================================== */
+// Tekstura rysowanego obiektu (dym, poświata, gwiazda, jęzor, krzyż) — jeden węzeł
+// we wspólnym grafie fragmentu. `texture().onObjectUpdate()` w three r183 nie
+// działa (TextureNode.setup zeruje updateType bez macierzy uv — agents.md), więc
+// updateType na stałe OBJECT i własne update() (wzór HullObjectTextureNode, 04).
+// Zastępcza przy budowie: 8-bitowa z filtrem liniowym (ścieżka textureSample,
+// jak prawdziwe tekstury banku) — biała, więc obiekt bez mapy rysuje sam kolor.
+const FX_MAP_FALLBACK = (() => {
+  const t = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1, THREE.RGBAFormat);
+  t.magFilter = THREE.LinearFilter;
+  t.minFilter = THREE.LinearFilter;
+  t.generateMipmaps = false;
+  t.needsUpdate = true;
+  return t;
+})();
 
+class FxMapNode extends THREE.TextureNode {
+  static get type() {
+    return 'FxMapNode';
+  }
+
+  get updateType() {
+    return THREE.NodeUpdateType.OBJECT;
+  }
+
+  set updateType(_value) { /* stałe OBJECT — patrz wyżej */ }
+
+  update(frame) {
+    const value = frame.material?.uniforms?.map?.value;
+    this.value = (value && value.isTexture === true) ? value : FX_MAP_FALLBACK;
+  }
+}
+
+// Atrybuty instancji (nazwy jak w dawnym GLSL); iData: BB — rozmiar, obrót, alfa;
+// kwady zorientowane — długość, szerokość, alfa.
+const I_POS = attribute('iPos', 'vec3');
+const I_DIR = attribute('iDir', 'vec3');
+const I_DATA = attribute('iData', 'vec3');
+
+let _graphs = null;
+function fxGraphs() {
+  if (_graphs) return _graphs;
+  const vCol = varying(attribute('iCol', 'vec3'), 'vFxCol');
+  const vA = varying(I_DATA.z, 'vFxA');
+  const map = new FxMapNode(FX_MAP_FALLBACK, uv());
+
+  // Fragment (dawny BB_FRAG, wspólny dla wszystkich systemów).
+  const fragment = Fn(() => {
+    const t = map.toVar();
+    const a = t.a.mul(vA).toVar();
+    If(a.lessThan(0.002), () => {
+      Discard();
+    });
+    return vec4(vCol.mul(t.rgb), a);
+  })();
+
+  // Bilboardy: dym, opary, rdzeń rozbłysku, żagwie. iPos względem mesh.position
+  // (początek przy kamerze) — modelViewMatrix z kontekstu (highPrecision, double na CPU).
+  const bb = Fn(() => {
+    const mv = modelViewMatrix.mul(vec4(I_POS, 1.0)).toVar();
+    const c = cos(I_DATA.y).toVar();
+    const s = sin(I_DATA.y).toVar();
+    const p = positionGeometry.xy.mul(I_DATA.x).toVar();
+    mv.xy.addAssign(vec2(p.x.mul(c).sub(p.y.mul(s)), p.x.mul(s).add(p.y.mul(c))));
+    return cameraProjectionMatrix.mul(mv);
+  })();
+
+  // (a) jęzor ognia — wzdłuż osi lufy, obracany ku kamerze. Kierunek do kamery od
+  // punktu świata: różnica dużych liczb najpierw (±0,5 j. float32 nic tu nie znaczy).
+  const plume = Fn(() => {
+    const axis = normalize(I_DIR).toVar();
+    const toCam = normalize(cameraPosition.sub(modelPosition).sub(I_POS)).toVar();
+    const side = cross(axis, toCam).toVar();
+    const l = length(side).toVar();
+    side.assign(select(l.greaterThan(1e-4), side.div(max(l, 1e-4)), vec3(1.0, 0.0, 0.0)));
+    const p = I_POS.add(axis.mul(positionGeometry.y.add(0.5).mul(I_DATA.x))).add(side.mul(positionGeometry.x.mul(I_DATA.y)));
+    return cameraProjectionMatrix.mul(modelViewMatrix.mul(vec4(p, 1.0)));
+  })();
+
+  // (b) krzyż rozbłysku — bilboard obrócony tak, by oś X leżała wzdłuż lufy NA EKRANIE
+  // (mat3(viewMatrix) · kierunek = viewMatrix · vec4(kierunek, 0)).
+  const crossQuad = Fn(() => {
+    const mv = modelViewMatrix.mul(vec4(I_POS, 1.0)).toVar();
+    const a = cameraViewMatrix.mul(vec4(normalize(I_DIR), 0.0)).xy.toVar();
+    const l = length(a).toVar();
+    a.assign(select(l.greaterThan(1e-4), a.div(max(l, 1e-4)), vec2(1.0, 0.0)));
+    const pt = vec2(positionGeometry.x.mul(I_DATA.x), positionGeometry.y.mul(I_DATA.y)).toVar();
+    mv.xy.addAssign(vec2(pt.x.mul(a.x).sub(pt.y.mul(a.y)), pt.x.mul(a.y).add(pt.y.mul(a.x))));
+    return cameraProjectionMatrix.mul(mv);
+  })();
+
+  // (c) rozlanie światła po poszyciu — leży płasko w płaszczyźnie gry (XY) i wybiega
+  // do przodu. W demach płaszczyzną było XZ.
+  const wash = Fn(() => {
+    const f = vec3(I_DIR.x, I_DIR.y, 0.0).toVar();
+    const l = length(f).toVar();
+    f.assign(select(l.greaterThan(1e-4), f.div(max(l, 1e-4)), vec3(1.0, 0.0, 0.0)));
+    const r = vec3(f.y.negate(), f.x, 0.0);
+    const p = I_POS.add(f.mul(positionGeometry.y.add(0.5).mul(I_DATA.x))).add(r.mul(positionGeometry.x.mul(I_DATA.y)));
+    return cameraProjectionMatrix.mul(modelViewMatrix.mul(vec4(p, 1.0)));
+  })();
+
+  _graphs = { fragment, map, bb, plume, cross: crossQuad, wash };
+  return _graphs;
+}
+
+/**
+ * Materiał systemu banku: wspólny graf (`vertex` z fxGraphs, wspólny fragment),
+ * własna tekstura (`uniforms.map.value`) i mieszanie. Stan jak dawny ShaderMaterial:
+ * przezroczysty, bez testu i zapisu głębi (pass Ortho układa broń wyłącznie
+ * renderOrderem), bez tone mappingu, FrontSide.
+ */
+class FxQuadMaterial extends THREE.NodeMaterial {
+  static get type() {
+    return 'FxQuadMaterial';
+  }
+
+  constructor(vertexNode, texture, blending, name) {
+    super();
+    const g = fxGraphs();
+    this.isFxQuadMaterial = true;
+    this.name = name;
+    this.uniforms = { map: { value: texture } };
+    this.vertexNode = vertexNode;
+    this.fragmentNode = g.fragment;
+    this.transparent = true;
+    this.blending = blending;
+    this.depthTest = false;
+    this.depthWrite = false;
+    this.toneMapped = false;
+    this.lights = false;
+    this.fog = false;
+  }
+}
+
+/* --- bilboardy: dym, opary, rdzeń rozbłysku, żagwie --------------------- */
 class BillboardSystem {
-  constructor(scene, texture, blending, capacity, renderOrder = 1) {
+  constructor(scene, texture, blending, capacity, renderOrder = 1, name = 'Fx3D:bb') {
     this.p = new Pool(capacity, {
       pos: 3, vel: 3, t: 2, drag: 1, size: 2, rot: 2, c0: 3, c1: 3, mix: 1, a: 3, grow: 1,
       ...CARRIER_FIELDS
     }, ['pos', 'ct']);
     const q = instancedQuad(
       [['iPos', 3], ['iCol', 3], ['iData', 3]], capacity,
-      BB_VERT, BB_FRAG, { map: { value: texture } }, blending
+      fxGraphs().bb, texture, blending, name
     );
     Object.assign(this, q);
     this.mesh.renderOrder = renderOrder;
@@ -459,7 +596,7 @@ class BillboardSystem {
     }
     this.geo.instanceCount = n;
     this.mesh.visible = n > 0;
-    if (n > 0) { this.bufs.iPos.needsUpdate = true; this.bufs.iCol.needsUpdate = true; this.bufs.iData.needsUpdate = true; }
+    if (n > 0) { markLive(this.bufs.iPos, n * 3); markLive(this.bufs.iCol, n * 3); markLive(this.bufs.iData, n * 3); }
   }
   reset() { this.p.count = 0; this.geo.instanceCount = 0; this.mesh.visible = false; }
   dispose() {
@@ -470,69 +607,18 @@ class BillboardSystem {
 }
 
 /* --- kwady zorientowane -------------------------------------------------
-   Jedna klasa, trzy vertex shadery. Różni je wyłącznie sposób ustawienia
-   quada w świecie: wzdłuż lufy ku kamerze, wzdłuż lufy na ekranie, płasko
-   w płaszczyźnie gry.
+   Jedna klasa, trzy grafy wierzchołków (fxGraphs: plume, cross, wash). Różni
+   je wyłącznie sposób ustawienia quada w świecie: wzdłuż lufy ku kamerze,
+   wzdłuż lufy na ekranie, płasko w płaszczyźnie gry.
    ----------------------------------------------------------------------- */
-const ORIENT_HEAD = /* glsl */`
-  attribute vec3 iPos;
-  attribute vec3 iDir;
-  attribute vec3 iCol;
-  attribute vec3 iData;          // x: długość, y: szerokość, z: alfa
-  varying vec2 vUv;
-  varying vec3 vCol;
-  varying float vA;
-`;
-
-// (a) jęzor ognia — wzdłuż osi lufy, obracany ku kamerze. iPos jest względem
-// mesh.position (początek przy kamerze): kierunek do kamery od punktu świata,
-// różnica dużych liczb najpierw (dokładna), ±0,5 j. float32 nic tu nie znaczy.
-const PLUME_VERT = ORIENT_HEAD + /* glsl */`
-  void main() {
-    vUv = uv; vCol = iCol; vA = iData.z;
-    vec3 axis = normalize(iDir);
-    vec3 toCam = normalize((cameraPosition - modelMatrix[3].xyz) - iPos);
-    vec3 side = cross(axis, toCam);
-    float l = length(side);
-    side = l > 1e-4 ? side / l : vec3(1.0, 0.0, 0.0);
-    vec3 p = iPos + axis * ((position.y + 0.5) * iData.x) + side * (position.x * iData.y);
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
-  }`;
-
-// (b) krzyż rozbłysku — bilboard obrócony tak, by oś X leżała wzdłuż lufy NA EKRANIE
-const CROSS_VERT = ORIENT_HEAD + /* glsl */`
-  void main() {
-    vUv = uv; vCol = iCol; vA = iData.z;
-    vec4 mv = modelViewMatrix * vec4(iPos, 1.0);
-    vec2 a = (mat3(viewMatrix) * normalize(iDir)).xy;
-    float l = length(a);
-    a = l > 1e-4 ? a / l : vec2(1.0, 0.0);
-    vec2 pt = vec2(position.x * iData.x, position.y * iData.y);
-    mv.xy += vec2(pt.x * a.x - pt.y * a.y, pt.x * a.y + pt.y * a.x);
-    gl_Position = projectionMatrix * mv;
-  }`;
-
-// (c) rozlanie światła po poszyciu — leży płasko w płaszczyźnie gry (XY)
-// i wybiega do przodu. W demach płaszczyzną było XZ.
-const WASH_VERT = ORIENT_HEAD + /* glsl */`
-  void main() {
-    vUv = uv; vCol = iCol; vA = iData.z;
-    vec3 f = vec3(iDir.x, iDir.y, 0.0);
-    float l = length(f);
-    f = l > 1e-4 ? f / l : vec3(1.0, 0.0, 0.0);
-    vec3 r = vec3(-f.y, f.x, 0.0);
-    vec3 p = iPos + f * ((position.y + 0.5) * iData.x) + r * (position.x * iData.y);
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
-  }`;
-
 class OrientedQuadSystem {
-  constructor(scene, texture, capacity, vertexShader, renderOrder = 4, fadePow = 2.0, fadeIn = 0.10) {
+  constructor(scene, texture, capacity, vertexNode, renderOrder = 4, fadePow = 2.0, fadeIn = 0.10, name = 'Fx3D:quad') {
     this.fadePow = fadePow;
     this.fadeIn = fadeIn;
     this.p = new Pool(capacity, { pos: 3, dir: 3, t: 2, len: 2, wid: 2, col: 3, a: 1, ...CARRIER_FIELDS }, ['pos', 'ct']);
     const q = instancedQuad(
       [['iPos', 3], ['iDir', 3], ['iCol', 3], ['iData', 3]], capacity,
-      vertexShader, BB_FRAG, { map: { value: texture } }, THREE.AdditiveBlending
+      vertexNode, texture, THREE.AdditiveBlending, name
     );
     Object.assign(this, q);
     this.mesh.renderOrder = renderOrder;
@@ -590,8 +676,8 @@ class OrientedQuadSystem {
     this.geo.instanceCount = n;
     this.mesh.visible = n > 0;
     if (n > 0) {
-      this.bufs.iPos.needsUpdate = true; this.bufs.iDir.needsUpdate = true;
-      this.bufs.iCol.needsUpdate = true; this.bufs.iData.needsUpdate = true;
+      markLive(this.bufs.iPos, n * 3); markLive(this.bufs.iDir, n * 3);
+      markLive(this.bufs.iCol, n * 3); markLive(this.bufs.iData, n * 3);
     }
   }
   reset() { this.p.count = 0; this.geo.instanceCount = 0; this.mesh.visible = false; }
@@ -623,8 +709,8 @@ class ArcSystem {
     this.p = new Pool(capacity, { a: 3, b: 3, t: 2, col: 3, jit: 1, seed: 1, ...CARRIER_FIELDS }, ['a', 'b', 'ct']);
     const verts = capacity * segs * 2;
     const geo = new THREE.BufferGeometry();
-    this.posAttr = new THREE.BufferAttribute(new Float32Array(verts * 3), 3);
-    this.colAttr = new THREE.BufferAttribute(new Float32Array(verts * 3), 3);
+    this.posAttr = liveAttribute(new THREE.BufferAttribute(new Float32Array(verts * 3), 3));
+    this.colAttr = liveAttribute(new THREE.BufferAttribute(new Float32Array(verts * 3), 3));
     this.posAttr.setUsage(THREE.DynamicDrawUsage);
     this.colAttr.setUsage(THREE.DynamicDrawUsage);
     geo.setAttribute('position', this.posAttr);
@@ -632,7 +718,7 @@ class ArcSystem {
     geo.setDrawRange(0, 0);
     this.geo = geo;
     this.mat = new THREE.LineBasicMaterial({
-      vertexColors: true, transparent: true, blending: THREE.AdditiveBlending,
+      name: 'Fx3D:arcs', vertexColors: true, transparent: true, blending: THREE.AdditiveBlending,
       depthWrite: false, depthTest: false, toneMapped: false
     });
     this.lines = new THREE.LineSegments(geo, this.mat);
@@ -652,7 +738,7 @@ class ArcSystem {
     f.t[i2] = 0; f.t[i2 + 1] = life;
     f.col[i3] = col[0]; f.col[i3 + 1] = col[1]; f.col[i3 + 2] = col[2];
     f.jit[i] = jitter;
-    f.seed[i] = (Math.random() * 65535) | 0;
+    f.seed[i] = (fxRandom.next() * 65535) | 0;
     writeCarrierFields(f, i);
   }
   update(dt, time) {
@@ -714,7 +800,7 @@ class ArcSystem {
     }
     this.geo.setDrawRange(0, w);
     this.lines.visible = w > 0;
-    if (w > 0) { this.posAttr.needsUpdate = true; this.colAttr.needsUpdate = true; }
+    if (w > 0) { markLive(this.posAttr, w * 3); markLive(this.colAttr, w * 3); }
   }
   reset() { this.p.count = 0; this.geo.setDrawRange(0, 0); this.lines.visible = false; }
   dispose() {
@@ -731,15 +817,15 @@ class SparkSystem {
     // misc: [dł. smugi, faza migotania], cool: [docelowy mnożnik G, B]
     this.p = new Pool(capacity, { pos: 3, vel: 3, t: 2, drag: 1, col: 3, misc: 2, cool: 2, ...CARRIER_FIELDS }, ['pos', 'ct']);
     const geo = new THREE.BufferGeometry();
-    this.posAttr = new THREE.BufferAttribute(new Float32Array(capacity * 6), 3);
-    this.colAttr = new THREE.BufferAttribute(new Float32Array(capacity * 6), 3);
+    this.posAttr = liveAttribute(new THREE.BufferAttribute(new Float32Array(capacity * 6), 3));
+    this.colAttr = liveAttribute(new THREE.BufferAttribute(new Float32Array(capacity * 6), 3));
     this.posAttr.setUsage(THREE.DynamicDrawUsage);
     this.colAttr.setUsage(THREE.DynamicDrawUsage);
     geo.setAttribute('position', this.posAttr);
     geo.setAttribute('color', this.colAttr);
     geo.setDrawRange(0, 0);
     this.mat = new THREE.LineBasicMaterial({
-      vertexColors: true, transparent: true, blending: THREE.AdditiveBlending,
+      name: 'Fx3D:sparks', vertexColors: true, transparent: true, blending: THREE.AdditiveBlending,
       depthWrite: false, depthTest: false, toneMapped: false
     });
     this.lines = new THREE.LineSegments(geo, this.mat);
@@ -760,7 +846,7 @@ class SparkSystem {
     f.t[i2] = 0; f.t[i2 + 1] = life;
     f.drag[i] = drag;
     f.col[i3] = col[0]; f.col[i3 + 1] = col[1]; f.col[i3 + 2] = col[2];
-    f.misc[i2] = streak; f.misc[i2 + 1] = Math.random() * 6.28;
+    f.misc[i2] = streak; f.misc[i2 + 1] = fxRandom.next() * 6.28;
     f.cool[i2] = coolG; f.cool[i2 + 1] = coolB;
     writeCarrierFields(f, i);
   }
@@ -816,7 +902,7 @@ class SparkSystem {
     }
     this.geo.setDrawRange(0, n * 2);
     this.lines.visible = n > 0;
-    if (n > 0) { this.posAttr.needsUpdate = true; this.colAttr.needsUpdate = true; }
+    if (n > 0) { markLive(this.posAttr, n * 6); markLive(this.colAttr, n * 6); }
   }
   reset() { this.p.count = 0; this.geo.setDrawRange(0, 0); this.lines.visible = false; }
   dispose() {
@@ -868,13 +954,14 @@ export const Fx3D = {
     if (!this.available) return false;
     const scene = Core3D.scene;
     const tex = makeTextures();
-    this.smoke = new BillboardSystem(scene, tex.smoke, THREE.NormalBlending, CAPACITY.smoke, RENDER_ORDER.smoke);
-    this.vapor = new BillboardSystem(scene, tex.smoke, THREE.AdditiveBlending, CAPACITY.vapor, RENDER_ORDER.vapor);
-    this.glow = new BillboardSystem(scene, tex.glow, THREE.AdditiveBlending, CAPACITY.glow, RENDER_ORDER.glow);
-    this.star = new BillboardSystem(scene, tex.flare, THREE.AdditiveBlending, CAPACITY.star, RENDER_ORDER.star);
-    this.wash = new OrientedQuadSystem(scene, tex.plume, CAPACITY.wash, WASH_VERT, RENDER_ORDER.wash, 1.7);
-    this.plume = new OrientedQuadSystem(scene, tex.plume, CAPACITY.plume, PLUME_VERT, RENDER_ORDER.plume, 2.0);
-    this.cross = new OrientedQuadSystem(scene, tex.cross, CAPACITY.cross, CROSS_VERT, RENDER_ORDER.cross, 2.6);
+    const g = fxGraphs();
+    this.smoke = new BillboardSystem(scene, tex.smoke, THREE.NormalBlending, CAPACITY.smoke, RENDER_ORDER.smoke, 'Fx3D:smoke');
+    this.vapor = new BillboardSystem(scene, tex.smoke, THREE.AdditiveBlending, CAPACITY.vapor, RENDER_ORDER.vapor, 'Fx3D:vapor');
+    this.glow = new BillboardSystem(scene, tex.glow, THREE.AdditiveBlending, CAPACITY.glow, RENDER_ORDER.glow, 'Fx3D:glow');
+    this.star = new BillboardSystem(scene, tex.flare, THREE.AdditiveBlending, CAPACITY.star, RENDER_ORDER.star, 'Fx3D:star');
+    this.wash = new OrientedQuadSystem(scene, tex.plume, CAPACITY.wash, g.wash, RENDER_ORDER.wash, 1.7, 0.10, 'Fx3D:wash');
+    this.plume = new OrientedQuadSystem(scene, tex.plume, CAPACITY.plume, g.plume, RENDER_ORDER.plume, 2.0, 0.10, 'Fx3D:plume');
+    this.cross = new OrientedQuadSystem(scene, tex.cross, CAPACITY.cross, g.cross, RENDER_ORDER.cross, 2.6, 0.10, 'Fx3D:cross');
     this.spark = new SparkSystem(scene, CAPACITY.spark, RENDER_ORDER.spark);
     this.arcs = new ArcSystem(scene, CAPACITY.arcs, 13, RENDER_ORDER.arcs);
     return true;
@@ -896,7 +983,7 @@ export const Fx3D = {
 
   clearCarrier() { ActiveCarrier.clear(); },
 
-  // Wołane DOKŁADNIE RAZ na klatkę renderu (Weapon3DSystem.syncProjectiles).
+  // Wołane DOKŁADNIE RAZ na klatkę renderu (WeaponFx.sync z updateHexShips3D).
   update(dt) {
     if (!this.glow) return;
     // Wołane z updateHexShips3D po Core3D.syncCamera — kamera tej klatki.

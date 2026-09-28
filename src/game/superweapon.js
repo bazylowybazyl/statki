@@ -1,13 +1,26 @@
 /**
  * Moduł Superbroni (Hexlance) - W pełni zintegrowany z Hardpointami
+ *
+ * Cykl: pierwsze naciśnięcie — ładowanie `chargeTime` (1,2 s), drugie w oknie „armed” — seria
+ * `burstCount` strzałów z każdego gniazda co `burstDelay` (dane broni: 4 × 0,25 s, zadanie 18-B;
+ * dawniej jeden strzał na gniazdo), przeładowanie `cooldown` po serii. Obrażenia tylko
+ * strukturalne (rzaz HullBodies.cutSegment → sufit HP od zabitych węzłów). Wstrząs strzału z
+ * danych (`shake`, src/game/weaponFeel.js — 18-D).
  */
 
 import { MASTER_WEAPONS } from '../data/weapons.js';
-import { RailgunFX3D } from '../3d/railgunFx3D.js';
+import { WeaponFx } from '../3d/weapons/weaponFx.js';
 import { createCarrier, writeCarrier } from './carrierVelocity.js';
+import { buildHexlanceBurst } from './weaponCharge.js';
+import { weaponRecoil, weaponShake } from './weaponFeel.js';
+// Losowość warstwy efektów (zadanie 23): wizualia nie zużywają Math.random gry — przebieg rozgrywki nie zależy od obrazu.
+import { fxRandom } from '../3d/fx/fxRandom.js';
 
 // Nośniki (src/game/carrierVelocity.js): lufa okrętu — ładowanie, rozbłysk,
-// smuga i prędkość pocisku; trafiony kadłub — rozbłysk wejścia i rzaz.
+// smuga i prędkość pocisku; trafiony kadłub — rozbłysk wejścia, rzaz i wyjście.
+// Efekty: receptura Hexlance'a z dema bronie-webgpu (WeaponFx, zadanie 17 — dawniej
+// RailgunFX3D): ładowanie szynami, lanca plazmy, płatki sabotu, smuga, igła, wejście,
+// rzaz, wyjście za burtą.
 const _muzzleCarrier = createCarrier();
 const _targetCarrier = createCarrier();
 
@@ -78,17 +91,17 @@ class MainSpark {
     constructor(x, y, vx, vy) {
         this.x = x; this.y = y;
         const baseAngle = Math.atan2(vy, vx);
-        const spread = (Math.random() - 0.5) * 2.5; 
+        const spread = (fxRandom.next() - 0.5) * 2.5; 
         const angle = baseAngle + spread;
-        const frameSpeed = Math.random() * 8 + 2; 
+        const frameSpeed = fxRandom.next() * 8 + 2; 
         const worldSpeed = frameSpeed * 60; 
         this.vx = Math.cos(angle) * worldSpeed;
         this.vy = Math.sin(angle) * worldSpeed;
         this.life = 1.0; 
-        this.decay = Math.random() * 0.05 + 0.02; 
+        this.decay = fxRandom.next() * 0.05 + 0.02; 
         this.decayPerSec = this.decay * 60;
-        this.size = VFX_CONFIG.newMinSize + Math.random() * (VFX_CONFIG.newMaxSize - VFX_CONFIG.newMinSize);
-        this.color = VFX_CONFIG.colors[Math.floor(Math.random() * VFX_CONFIG.colors.length)];
+        this.size = VFX_CONFIG.newMinSize + fxRandom.next() * (VFX_CONFIG.newMaxSize - VFX_CONFIG.newMinSize);
+        this.color = VFX_CONFIG.colors[Math.floor(fxRandom.next() * VFX_CONFIG.colors.length)];
     }
     update(dt) {
         this.x += this.vx * dt;
@@ -115,13 +128,13 @@ class MainSpark {
 class BgSpark {
     constructor(x, y, vx, vy) {
         this.x = x; this.y = y; this.vx = vx; this.vy = vy;
-        this.life = 0.2 + Math.random() * 0.3; 
+        this.life = 0.2 + fxRandom.next() * 0.3; 
         this.maxLife = this.life;
         const bgColors = ['#ffffff', '#e0f7fa', '#85c1ff'];
-        this.color = bgColors[Math.floor(Math.random() * bgColors.length)];
-        this.size = VFX_CONFIG.oldMinSize + Math.random() * (VFX_CONFIG.oldMaxSize - VFX_CONFIG.oldMinSize);
-        this.drag = 0.90 + Math.random() * 0.06;
-        this.curve = (Math.random() - 0.5) * 6.0;
+        this.color = bgColors[Math.floor(fxRandom.next() * bgColors.length)];
+        this.size = VFX_CONFIG.oldMinSize + fxRandom.next() * (VFX_CONFIG.oldMaxSize - VFX_CONFIG.oldMinSize);
+        this.drag = 0.90 + fxRandom.next() * 0.06;
+        this.curve = (fxRandom.next() - 0.5) * 6.0;
     }
     update(dt) {
         if (this.curve) {
@@ -178,24 +191,26 @@ function getMuzzlePos(ship, cannonIndex) {
 
 function spawnChargeEffect(targetPos) {
     if (window.spawnParticle) {
-        const angle = Math.random() * Math.PI * 2;
-        const dist = 40 + Math.random() * 50; 
+        const angle = fxRandom.next() * Math.PI * 2;
+        const dist = 40 + fxRandom.next() * 50; 
         const startX = targetPos.x + Math.cos(angle) * dist;
         const startY = targetPos.y + Math.sin(angle) * dist;
-        const life = 0.2 + Math.random() * 0.15;
+        const life = 0.2 + fxRandom.next() * 0.15;
         const speed = dist / life; 
         const vx = -Math.cos(angle) * speed;
         const vy = -Math.sin(angle) * speed;
-        window.spawnParticle({ x: startX, y: startY }, { x: vx, y: vy }, life, '#cceeff', 1.5 + Math.random() * 1.5, false);
+        window.spawnParticle({ x: startX, y: startY }, { x: vx, y: vy }, life, '#cceeff', 1.5 + fxRandom.next() * 1.5, false);
     }
 }
 
 function fireSingleMount(ship, cannonIndex) {
     const m = getMuzzlePos(ship, cannonIndex);
     const angle = Math.atan2(m.dir.y, m.dir.x);
-    const fx3d = RailgunFX3D.available;
-    superweaponState.recoilOffset = Math.min(25, superweaponState.recoilOffset + 12);
-    if (window.camera && window.camera.addShake) window.camera.addShake(fx3d ? 14 : 8, fx3d ? 0.4 : 0.25);
+    const fx3d = WeaponFx.available;
+    // Odrzut i wstrząs z danych broni (zadanie 18-D, src/game/weaponFeel.js): Hexlance ma
+    // `recoil: 0` (lufa wtopiona w kil, bez wieżyczki) i `shake: 14` (dawniej 14 wpisane tutaj).
+    superweaponState.recoilOffset = Math.min(25, superweaponState.recoilOffset + weaponRecoil(HEXLANCE_DEF));
+    if (window.camera && window.camera.addShake) window.camera.addShake(weaponShake(HEXLANCE_DEF), fx3d ? 0.4 : 0.25);
     window.dispatchEvent(new CustomEvent('game_weapon_fired', {
         detail: { weaponId: 'hexlance', x: m.x, y: m.y }
     }));
@@ -213,14 +228,16 @@ function fireSingleMount(ship, cannonIndex) {
         angle: angle,
         // Smuga 3D: uchwyt emitera, odstęp między fontannami na rzazie
         // i cele, w które pocisk już wszedł (rozbłysk wejścia raz na kadłub).
-        slug: null, cutCd: 0, bitten: null
+        slug: null, cutCd: 0, bitten: null,
+        // Kadłub, w którym pocisk jest (wyjście za burtą), i punkt ostatniego rzazu.
+        inside: null, exitX: 0, exitY: 0
     };
     hexlanceProjectiles.push(proj);
     if (fx3d) {
-        RailgunFX3D.fire(m.x, m.y, m.dir.x, m.dir.y, 1, carrier);
+        WeaponFx.hexlanceFire(m.x, m.y, m.dir.x, m.dir.y, carrier);
         // Smuga startuje z lufy, nie ze środka pierwszego kroku — inaczej po
         // wystrzale zostaje dziura długości jednej klatki lotu (200 jednostek).
-        proj.slug = RailgunFX3D.beginSlug(m.x, m.y, m.dir.x, m.dir.y, Math.hypot(proj.vx, proj.vy), carrier);
+        proj.slug = WeaponFx.hexlanceBegin(m.x, m.y, proj.vx, proj.vy, carrier.vx, carrier.vy);
     }
     // Cały stary rozbłysk 2D — biała cząstka kanwy, pierścień uderzeniowy
     // i iskry — zostaje WYŁĄCZNIE jako zapas, gdy warstwa 3D jest niedostępna.
@@ -231,24 +248,21 @@ function fireSingleMount(ship, cannonIndex) {
     if (window.spawnShockwave) window.spawnShockwave(m.x, m.y, { maxR: 80, maxLife: 0.12, w: 4, color: 'rgba(133, 193, 255,' });
     for(let i=0; i<12; i++) localParticles.push(new MainSpark(m.x, m.y, m.dir.x, m.dir.y));
     for (let i = 0; i < 60; i++) {
-        const spread = (Math.random() - 0.5) * 1.4;
+        const spread = (fxRandom.next() - 0.5) * 1.4;
         const sparkAngle = angle + spread;
-        const speed = 1000 + Math.random() * 1500;
+        const speed = 1000 + fxRandom.next() * 1500;
         localParticles.push(new BgSpark(m.x, m.y, Math.cos(sparkAngle) * speed + ship.vel.x, Math.sin(sparkAngle) * speed + ship.vel.y));
     }
 }
 
+// Seria z danych broni (zadanie 18-B, PROJEKT-BRONI §2.5, §5 p. 3): `burstCount` strzałów
+// z każdego gniazda co `burstDelay` (Hexlance 4 × 0,25 s), gniazdo po gnieździe
+// (buildHexlanceBurst, src/game/weaponCharge.js). Opóźnienia WZGLĘDNE — tak czyta je pętla
+// w updateSuperweapon (dawniej narastające 0, d, 2d… przy czytaniu względnym dawały 0, d, 3d,
+// 6d przy 3+ gniazdach). Przeładowanie rusza po opróżnieniu kolejki (jak dotąd).
 function prepareSuperweaponSalvo(ship) {
-    superweaponState.queue = [];
-    const delay = superweaponState.shotDelay;
     const mounts = getActiveMounts(ship);
-    let currentDelay = 0;
-    
-    // Built-in fires directly from the hardpoint pivot, one shot per mount.
-    for (let cannonIndex = 0; cannonIndex < mounts.length; cannonIndex++) {
-        superweaponState.queue.push({ cannonIndex, delay: currentDelay });
-        currentDelay += delay;
-    }
+    buildHexlanceBurst(HEXLANCE_DEF, mounts.length, superweaponState.queue);
     superweaponState.cooldown = superweaponState.cooldownMax;
 }
 
@@ -289,10 +303,10 @@ export function updateSuperweapon(dt, ship, aimPos) {
         // Ładowanie na każdym built-in hardpoincie
         for (let i = 0; i < mounts.length; i++) {
             const m = getMuzzlePos(ship, i);
-            // RailgunFX3D pokazuje energię biegnącą szynami w głąb kadłuba;
+            // Receptura ładowania pokazuje energię biegnącą szynami w głąb kadłuba;
             // stary efekt zasysał cząstki do lufy i dublowałby się z nią.
-            if (RailgunFX3D.available) {
-                RailgunFX3D.charge(m.x, m.y, m.dir.x, m.dir.y, dt, chargeU, writeCarrier(ship, m.x, m.y, false, _muzzleCarrier));
+            if (WeaponFx.available) {
+                WeaponFx.hexlanceCharge(m.x, m.y, m.dir.x, m.dir.y, dt, chargeU, writeCarrier(ship, m.x, m.y, false, _muzzleCarrier), i);
             }
             else for(let k=0; k<3; k++) spawnChargeEffect(m);
         }
@@ -315,8 +329,8 @@ export function updateSuperweapon(dt, ship, aimPos) {
         const nextShot = superweaponState.queue[0];
         if (nextShot.delay > 0 && nextShot.delay <= 0.22) {
              const m = getMuzzlePos(ship, nextShot.cannonIndex);
-             if (RailgunFX3D.available) {
-                 RailgunFX3D.charge(m.x, m.y, m.dir.x, m.dir.y, dt, 1, writeCarrier(ship, m.x, m.y, false, _muzzleCarrier));
+             if (WeaponFx.available) {
+                 WeaponFx.hexlanceCharge(m.x, m.y, m.dir.x, m.dir.y, dt, 1, writeCarrier(ship, m.x, m.y, false, _muzzleCarrier), nextShot.cannonIndex);
              }
              else for(let k=0; k<3; k++) spawnChargeEffect(m);
         }
@@ -351,9 +365,11 @@ export function updateSuperweapon(dt, ship, aimPos) {
         // Smuga świata idzie za pociskiem: emiter dostaje CAŁY przebyty odcinek,
         // więc próbki lądują co ~120 jednostek niezależnie od długości klatki.
         if (proj.slug) {
-            RailgunFX3D.stepSlug(proj.slug, prevX, prevY, proj.x, proj.y,
-                proj.vx, proj.vy, proj.vx, proj.vy);
+            WeaponFx.hexlanceStep(proj.slug, prevX, prevY, proj.x, proj.y, proj.vx, proj.vy);
         }
+        // Czy pocisk ciął w tym kroku kadłub, w którym był (wyjście za burtą = pierwszy
+        // krok bez rzazu w tym kadłubie — efekt w punkcie ostatniego rzazu).
+        let cutInside = false;
 
         if (window.DestructorSystem && window.npcs) {
             const targets = [...window.npcs, ...(window.wrecks || [])];
@@ -405,7 +421,7 @@ export function updateSuperweapon(dt, ship, aimPos) {
                     // lanca) należy się WEJŚCIU w dany kadłub, raz na cel; dalej
                     // sypie już sam rzaz, dławiony odstępem, żeby cięcie przez
                     // pancernik nie zamieniło się w stroboskop.
-                    if (bitFrac >= 0 && RailgunFX3D.available) {
+                    if (bitFrac >= 0 && WeaponFx.available) {
                         if (!proj.bitten) proj.bitten = new Set();
                         // Rozbłysk i rzaz jadą z trafionym kadłubem; kierunek
                         // wyrzutu z prędkości pocisku WZGLĘDEM celu.
@@ -415,19 +431,34 @@ export function updateSuperweapon(dt, ship, aimPos) {
                         if (!proj.bitten.has(t)) {
                             proj.bitten.add(t);
                             proj.cutCd = 0.05;
-                            RailgunFX3D.impact(biteX, biteY, relVx, relVy, 0.85, hitCarrier);
+                            WeaponFx.hexlanceImpact(biteX, biteY, relVx, relVy, hitCarrier);
                         } else if (proj.cutCd <= 0) {
                             proj.cutCd = 0.05;
-                            RailgunFX3D.kerf(biteX, biteY, relVx, relVy, 0.7, hitCarrier);
+                            WeaponFx.hexlanceKerf(biteX, biteY, relVx, relVy, hitCarrier);
                         }
+                        proj.inside = t;
+                        proj.exitX = biteX;
+                        proj.exitY = biteY;
+                        cutInside = true;
                     }
                 }
             }
         }
 
+        // Wyjście z kadłuba: pierwszy krok bez rzazu w kadłubie, który pocisk ciął — stożek
+        // stopionego metalu za burtą w punkcie ostatniego rzazu (nośnik: ten kadłub).
+        if (proj.inside && !cutInside) {
+            const t = proj.inside;
+            proj.inside = null;
+            if (WeaponFx.available) {
+                const exitCarrier = writeCarrier(t, proj.exitX, proj.exitY, false, _targetCarrier);
+                WeaponFx.hexlanceExit(proj.exitX, proj.exitY, proj.vx - exitCarrier.vx, proj.vy - exitCarrier.vy, exitCarrier);
+            }
+        }
+
         if (proj.life <= 0 || proj.traveled > superweaponState.range) {
             // Historia smugi gaśnie dalej sama; zwalniamy tylko slot żywej głowy.
-            if (proj.slug) RailgunFX3D.endSlug(proj.slug, proj.x, proj.y, proj.vx, proj.vy);
+            if (proj.slug) WeaponFx.hexlanceEnd(proj.slug, proj.x, proj.y);
             hexlanceProjectiles.splice(i, 1);
         }
     }
@@ -439,7 +470,7 @@ export function updateSuperweapon(dt, ship, aimPos) {
 }
 
 export function drawSuperweapon(ctx, camera, ship, worldToScreen, aimPos, visualState = null) {
-    // Smuga i głowica pocisku żyją w 3D (RailgunFX3D). Kanwa dorysowuje tylko
+    // Smuga i głowica pocisku żyją w 3D (WeaponFx). Kanwa dorysowuje tylko
     // te pociski, które nie dostały emitera 3D — dwa ślady na jednym pocisku
     // rozjeżdżałyby się przy każdej zmianie zoomu.
     drawHexlanceProjectiles(ctx, camera, worldToScreen);
@@ -470,7 +501,7 @@ function drawHexlanceProjectiles(ctx, camera, worldToScreen) {
     ctx.lineJoin = 'round';
 
     for (const proj of hexlanceProjectiles) {
-        if (proj.slug) continue;                 // ten pocisk rysuje RailgunFX3D
+        if (proj.slug) continue;                 // ten pocisk rysuje WeaponFx
         const screen = worldToScreen(proj.x, proj.y, camera);
         ctx.save();
         ctx.translate(screen.x, screen.y);
@@ -517,7 +548,7 @@ function drawHexlanceProjectiles(ctx, camera, worldToScreen) {
                 let jitterY = 0;
                 if (t > 0.7) {
                     const chaosFactor = (t - 0.7) / 0.3; 
-                    jitterY = (Math.random() - 0.5) * 40 * chaosFactor * zoom;
+                    jitterY = (fxRandom.next() - 0.5) * 40 * chaosFactor * zoom;
                     currentAmp *= (1 + chaosFactor * 2); 
                 }
                 const py = Math.sin(px * waveFreq * 0.1 + phaseOffset) * currentAmp + jitterY;

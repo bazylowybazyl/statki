@@ -25,6 +25,8 @@ import { activeRegion, markSkinDirty } from './beamActiveRegion3D.js';
 import { areTowBodiesCollisionDisabled } from './towSystem.js';
 import { transferSalvageToWreck, clearSalvage } from './salvage.js';
 import { CollisionFX, impactEvent, grindEvent } from '../vfx/collisionFx.js';
+// Losowość warstwy efektów (zadanie 23): wizualia nie zużywają Math.random gry — przebieg rozgrywki nie zależy od obrazu.
+import { fxRandom } from '../3d/fx/fxRandom.js';
 
 // Odstęp heksów dawnego destruktora (px sprite'a) — jednostka, w której strojono HP
 // kadłubów, kratery i łup. Węzeł siatki `cellPx` liczy się za (cellPx / HEX_PITCH_PX)²
@@ -58,6 +60,14 @@ export const HULL_BODY_CONFIG = {
   heatGain: 1,
   heatSpeed: 150,           // j./s zbliżania, przy których zgniatana blacha jest biała
   heatDecay: 0.35,          // 1/s — ten sam zanik co DESTRUCTOR_CONFIG.heatDecay (shader kadłuba)
+  // Szczyt HDR żaru skóry (uHeatPeak w hexShips3D.js; jasność = szczyt × (0,26h + 0,74h⁴)).
+  // Dawniej 9 z DESTRUCTOR_CONFIG: zgniatana powierzchnia (h = heatContact 0,35) stała na
+  // progu bloomu (0,92), brzeg rany (h = 1) świecił bielą HDR 9 i bloom (×~7,5 energii)
+  // zalewał zgniot. Pomiar A/B 2026-09-26: po poprawce iskier to żar dawał ~¾ nadmiarowej
+  // jasności styku (przy 4,5). Przy 2,5 pierścień brzegu (h ≈ 0,55 → 0,53) i powierzchnia
+  // (0,26) tlą się pomarańczem pod progiem, a bielą z małą poświatą świeci tylko świeży brzeg
+  // rany — deformacja zostaje czytelna.
+  heatGlowPeak: 2.5,
 
   // --- trafienia: krater ---
   // Budżet HP = craterHpPerDamage · obrażenia, schodzi z węzłów od najbliższego (HP węzła =
@@ -69,6 +79,16 @@ export const HULL_BODY_CONFIG = {
   craterRefDamage: 80,      // obrażenia, przy których promień rośnie o heks
   hitReachCells: 0.55,      // promień węzła dla pocisków i wiązek (koła pokrywają płytę bez szpar)
   probeReachCells: 0.8,     // sonda punktowa (podparcie gniazd broni i rdzeni)
+
+  // --- zapytania powierzchni (tylko odczyt: surfaceNormal, traceThrough, spriteUvAt) ---
+  // Marsz przez materiał: punkt jest „w środku”, gdy żywy węzeł leży bliżej niż ten promień.
+  // Koła 0,55 z trafień zostawiają w pełnej płycie dziurki przy narożnikach komórek
+  // (narożnik jest 0,707 komórki od czterech węzłów) — sonda punktowa musi je przykryć.
+  traceReachCells: 0.72,
+  traceRefineSteps: 4,      // połowienia przejścia materiał ↔ próżnia (krok marszu / 16)
+  normalProbeCells: 2,      // węzeł normalnej: najbliższy żywy w tym promieniu od punktu trafienia
+  normalWindowCells: 2.5,   // okno gradientu zajętości: koło o tym promieniu w komórkach siatki
+  uvProbeCells: 1.5,        // węzeł uv, gdy wołający go nie podał
 
   // --- zdarzenia zderzeń (CollisionFX, jak DESTRUCTOR_CONFIG) ---
   contactHoldSec: 0.1,      // okno „para w styku” dla AI (hasContact)
@@ -159,9 +179,40 @@ const _sweepOut = { t: Infinity, node: -1 };
 const _impactVel = { x: 0, y: 0, z: 0 };
 const _impactOpts = { radius: 0, hpBudget: 0, damageFraction: 1 };
 const _nodeWorld = { x: 0, y: 0 };
+// Zapytania powierzchni mają własne scratche: syncBodyPose pisze do _pose i _local.
+const _qPose = { x: 0, y: 0, theta: 0, c: 1, s: 0 };
+const _qLocal = { x: 0, y: 0 };
+const _qEnd = { x: 0, y: 0 };
+
+// Klucz mapy ran (18-C): kolejny numer kadłuba, dziedziczony przez wraki i odłamy.
+let _nextDmgKey = 0;
 
 /** Wynik sweep() — współdzielony, ważny do następnego wywołania. */
 export const hullSweepResult = { t: 0, worldX: 0, worldY: 0, projectileX: 0, projectileY: 0, node: -1, hitShard: null };
+
+/**
+ * Wynik impact() / cutSegment() — współdzielony, ważny do następnego wywołania.
+ * kind: 'impact' | 'cut'; hit — jak zwrot funkcji (cut: zniszczono coś); killed — ubytek
+ * żywych węzłów ciała w tym wywołaniu (krater + utrata oparcia; rozpad liczy się dopiero
+ * w kroku); radius — promień krateru / półszerokość rzazu [j.]; node — węzeł, od którego
+ * zaczyna krater (najbliższy punktowi) albo węzeł wejścia rzazu — indeks ważny do rozpadu
+ * w następnym kroku; u, v — uv sprite'a tego punktu (konwencja skóry, liczone PRZED
+ * kraterem); x, y — punkt (świat gry; cut: wejście); dmgKey — klucz mapy ran kadłuba;
+ * dirX, dirY — kierunek jednostkowy (impact: wektor `vel`, cut: odcinek; 0, 0 = brak), len — cut:
+ * droga od wejścia do końca odcinka (stemple rzazu mapy ran, 18-C), impact: 0.
+ */
+export const hullImpactResult = {
+  kind: '', hit: false, killed: 0, radius: 0, node: -1, u: 0, v: 0, x: 0, y: 0, dmgKey: 0, dirX: 0, dirY: 0, len: 0
+};
+
+/** Wynik surfaceNormal() — normalna na zewnątrz (świat gry) i węzeł, przy którym ją liczono. */
+export const hullNormalResult = { nx: 0, ny: 0, node: -1 };
+
+/** Wynik traceThrough() — pierwszy ciągły odcinek materiału na odcinku zapytania. */
+export const hullTraceResult = { solidLen: 0, entryT: -1, exitT: -1, node: -1 };
+
+/** Wynik spriteUvAt() — uv sprite'a w konwencji skóry (v = 0 to górny wiersz obrazu). */
+export const hullUvResult = { u: 0, v: 0, ok: false, node: -1 };
 
 // ============================ SYSTEM ============================
 
@@ -177,6 +228,12 @@ export const HullBodies = {
   _structures: new WeakMap(),
   _seam: new Float32Array(64),
   onWreckSpawned: null,       // (wreckEntity, parentEntity) — gra: listy, łup, ładunek
+  // (entity, hullImpactResult) — po impact() / cutSegment(), które coś trafiły (mapa ran,
+  // wybuchy rakiet). Domyślnie brak: gra zachowuje się jak dawniej.
+  onImpact: null,
+  // (entity, dt, changed) — po naprawie kadłuba w repair() (mapa ran: wygaszanie osmalenia
+  // i przestrzelin; changed = false — naprawa zakończona). Domyślnie brak.
+  onRepair: null,
 
   init() {
     if (this.ready) return this;
@@ -291,6 +348,9 @@ export const HullBodies = {
       hexPerNode: structure.hexPerNode,  // dawne heksy na węzeł (krater, łup, tempo cięcia)
       massScale: mass / body.mass,       // masa gry na jednostkę masy zderzeń (przy budowie)
       isFragment: false,
+      // Klucz mapy ran: nowy kadłub = nowy numer; wrak i odłamy dziedziczą go (makeWreckEntity),
+      // więc rany rodu leżą w jednej warstwie w uv rodzica.
+      dmgKey: ++_nextDmgKey,
       radius: 0,
       revision: 0,
       shieldCells: null,
@@ -368,7 +428,9 @@ export const HullBodies = {
     for (const e of entities) {
       const hull = e?.beamHull;
       if (!hull || hull.entity !== e || hull.body.dead) continue;
-      if (repairBody(hull.body, dt)) any = true;
+      const changed = repairBody(hull.body, dt);
+      if (changed) any = true;
+      if (typeof this.onRepair === 'function') this.onRepair(e, dt, changed);
     }
     return any;
   },
@@ -438,13 +500,16 @@ export const HullBodies = {
   /**
    * Trafienie w punkt (świat gry): krater nearest-first z budżetem HP ∝ obrażeniom,
    * wgniecenie wzdłuż wektora pocisku. opts.radius — promień krateru w j. świata (np. wybuch).
-   * Zwraca, czy trafienie objęło jakikolwiek węzeł.
+   * Zwraca, czy trafienie objęło jakikolwiek węzeł. Szczegóły (węzeł, uv, zabite węzły,
+   * klucz mapy ran) w `hullImpactResult`.
    */
   impact(entity, x, y, damage, vel = null, opts = null) {
+    const r = resetImpactResult('impact', x, y);
     const hull = entity?.beamHull;
     if (!hull || hull.entity !== entity || hull.body.dead) return false;
+    r.dmgKey = hull.dmgKey;
     const dmg = Math.max(0, Number(damage) || 0);
-    if (dmg <= 0) return this.probe(entity, x, y);
+    if (dmg <= 0) return (r.hit = this.probe(entity, x, y));
     const body = hull.body;
     syncBodyPose(hull);
     // Promień w heksach (strojenie heksowe), odstęp heksa w j. świata = komórka / √(heksy na węzeł).
@@ -456,22 +521,37 @@ export const HullBodies = {
     _impactVel.x = Number(vel?.x) || 0;
     _impactVel.y = -(Number(vel?.y) || 0);
     _impactVel.z = 0;
+    writeImpactDir(r, _impactVel.x, -_impactVel.y, 0);
+    // Węzeł i uv PRZED kraterem: krater zaczyna od najbliższego żywego węzła w swoim promieniu
+    // (silnik bierze promień nie mniejszy niż komórka konfiguracji), ten sam trafi do stempla.
+    r.radius = Math.max(Number(D.config?.cellSize) || 0, _impactOpts.radius);
+    toLocal(hull, entityPose(hull, _qPose), x, y, _qLocal);
+    r.node = D.probeLocal2D(body, _qLocal.x, _qLocal.y, r.radius);
+    writeSpriteUv(hull, r.node, _qLocal.x, _qLocal.y, r);
+    const before = body.activeNodes;
     const hit = D.applyImpact(body, x, -y, 0, dmg, _impactVel, _impactOpts);
+    r.hit = hit;
+    r.killed = before - body.activeNodes;
     if (hit && entity.isWreck) {
       entity._wreckSleeping = false;
       entity._wreckSleepTimer = 0;
       entity._lastImpactMs = this.simTime * 1000;
     }
+    if (hit && typeof this.onImpact === 'function') this.onImpact(entity, r);
     return hit;
   },
 
   /**
    * Rzaz (Hexlance): niszczy żywe węzły w pasie o półszerokości `halfWidth` wokół odcinka
-   * (świat gry). Zwraca liczbę zniszczonych węzłów; pierwszy punkt wejścia w `hullSweepResult`.
+   * (świat gry). Zwraca liczbę zniszczonych węzłów; pierwszy punkt wejścia w `hullSweepResult`,
+   * węzeł i uv wejścia w `hullImpactResult` (kind 'cut').
    */
   cutSegment(entity, x0, y0, x1, y1, halfWidth) {
+    const r = resetImpactResult('cut', x0, y0);
     const hull = entity?.beamHull;
     if (!hull || hull.entity !== entity || hull.body.dead) return 0;
+    r.dmgKey = hull.dmgKey;
+    r.radius = halfWidth;
     const body = hull.body;
     syncBodyPose(hull);
     const pose = entityPose(hull, _pose);
@@ -484,7 +564,155 @@ export const HullBodies = {
     hullSweepResult.t = t;
     hullSweepResult.worldX = hullSweepResult.projectileX = x0 + (x1 - x0) * t;
     hullSweepResult.worldY = hullSweepResult.projectileY = y0 + (y1 - y0) * t;
-    return cutLocalBand(body, lx0, ly0, lx1, ly1, halfWidth);
+    r.x = hullSweepResult.worldX;
+    r.y = hullSweepResult.worldY;
+    r.node = _sweepOut.node;
+    writeSpriteUv(hull, r.node, lx0 + (lx1 - lx0) * t, ly0 + (ly1 - ly0) * t, r);
+    writeImpactDir(r, x1 - x0, y1 - y0, 1 - t);
+    const before = body.activeNodes;
+    const killed = cutLocalBand(body, lx0, ly0, lx1, ly1, halfWidth);
+    r.hit = killed > 0;
+    r.killed = before - body.activeNodes;
+    if (killed > 0 && typeof this.onImpact === 'function') this.onImpact(entity, r);
+    return killed;
+  },
+
+  /**
+   * Normalna powierzchni na zewnątrz w punkcie trafienia (świat gry, y w dół): gradient
+   * zajętości żywych węzłów w kole `normalWindowCells` komórek siatki wokół najbliższego
+   * węzła. Tylko odczyt, bez losowania — wołać PRZED impact() (krater zabija węzły).
+   * Normalna nie patrzy w stronę lotu (dir): trafienie „od tyłu” cienkiej krawędzi daje
+   * styczną. Brak węzła albo zerowy gradient (pręt 1 komórki) → −kierunek (dirX, dirY),
+   * a bez kierunku — promieniście od kotwicy encji. Wynik w `out` (domyślnie hullNormalResult).
+   */
+  surfaceNormal(entity, x, y, dirX = 0, dirY = 0, out = hullNormalResult) {
+    out.node = -1;
+    const dl = Math.sqrt(dirX * dirX + dirY * dirY);
+    const ux = dl > 1e-12 ? dirX / dl : 0, uy = dl > 1e-12 ? dirY / dl : 0;
+    const hull = entity?.beamHull;
+    let found = false;
+    if (hull && hull.entity === entity && !hull.body.dead) {
+      const body = hull.body, s = body.nodeStore, cs = body.cellSize;
+      const pose = entityPose(hull, _qPose);
+      toLocal(hull, pose, x, y, _qLocal);
+      const i = D.probeLocal2D(body, _qLocal.x, _qLocal.y, C.normalProbeCells * cs);
+      if (i >= 0) {
+        out.node = i;
+        const cells = D._latticeIndex(body).cells, active = s.active, d = body.dims;
+        const ix = s.ix[i], iy = s.iy[i];
+        const R = C.normalWindowCells, R2 = R * R, w = Math.floor(R);
+        let gx = 0, gy = 0;
+        for (let dy = -w; dy <= w; dy++) {
+          const cy = iy + dy;
+          for (let dx = -w; dx <= w; dx++) {
+            if ((dx === 0 && dy === 0) || dx * dx + dy * dy > R2) continue;
+            const cx = ix + dx;
+            if (cx < 0 || cy < 0 || cx >= d.x || cy >= d.y) continue;       // poza siatką = próżnia
+            const j = cells[cx + cy * d.x];
+            if (j >= 0 && active[j]) { gx -= dx; gy -= dy; }                  // od materiału na zewnątrz
+          }
+        }
+        const gl = Math.sqrt(gx * gx + gy * gy);
+        if (gl > 1e-9) {
+          const lx = gx / gl, ly = gy / gl;
+          let nx = pose.c * lx - pose.s * ly;              // układ ciała → świat gry (y w dół)
+          let ny = -(pose.s * lx + pose.c * ly);
+          const along = nx * ux + ny * uy;
+          if (along > 0) {                                 // normalna z kierunkiem lotu: styczna
+            nx -= along * ux; ny -= along * uy;
+            const tl = Math.sqrt(nx * nx + ny * ny);
+            if (tl > 1e-6) { nx /= tl; ny /= tl; found = true; }
+          } else found = true;
+          if (found) { out.nx = nx; out.ny = ny; }
+        }
+      }
+    }
+    if (found) return out;
+    if (dl > 1e-12) { out.nx = -ux; out.ny = -uy; return out; }
+    const rx = entity ? x - entityPosX(entity) : 0, ry = entity ? y - entityPosY(entity) : 0;
+    const rl = Math.sqrt(rx * rx + ry * ry);
+    out.nx = rl > 1e-9 ? rx / rl : 1;
+    out.ny = rl > 1e-9 ? ry / rl : 0;
+    return out;
+  },
+
+  /**
+   * Przejście przez materiał wzdłuż odcinka (świat gry): marsz co pół komórki sondą
+   * żywych węzłów (promień `traceReachCells` · komórka + radius), przejścia doprecyzowane
+   * połowieniem. Liczy PIERWSZY ciągły odcinek materiału: entryT — początek (0, gdy
+   * odcinek zaczyna się w środku; −1 — brak materiału), exitT — wyjście (−1 = materiał
+   * trwa do końca odcinka), solidLen — jego długość [j.], node — ostatni węzeł w materiale.
+   * Tylko odczyt. Zwraca `out` (domyślnie hullTraceResult) albo null bez kadłuba.
+   */
+  traceThrough(entity, x0, y0, x1, y1, radius = 0, out = hullTraceResult) {
+    out.solidLen = 0;
+    out.entryT = -1;
+    out.exitT = -1;
+    out.node = -1;
+    const hull = entity?.beamHull;
+    if (!hull || hull.entity !== entity || hull.body.dead) return null;
+    const body = hull.body, cs = body.cellSize;
+    const pose = entityPose(hull, _qPose);
+    toLocal(hull, pose, x0, y0, _qLocal);
+    toLocal(hull, pose, x1, y1, _qEnd);
+    const ax = _qLocal.x, ay = _qLocal.y, dx = _qEnd.x - ax, dy = _qEnd.y - ay;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    const reach = C.traceReachCells * cs + Math.max(0, Number(radius) || 0);
+    const n = Math.max(1, Math.ceil(len / (cs * 0.5)));
+    let prevT = 0;
+    let prevNode = D.probeLocal2D(body, ax, ay, reach);
+    if (prevNode >= 0) { out.entryT = 0; out.node = prevNode; }
+    for (let k = 1; k <= n; k++) {
+      const t = k / n;
+      const node = D.probeLocal2D(body, ax + dx * t, ay + dy * t, reach);
+      const inside = node >= 0;
+      if (inside !== (prevNode >= 0)) {
+        // Połowienie przejścia między próbkami (lo = strona prevNode, hi = strona node).
+        let lo = prevT, hi = t;
+        for (let r = 0; r < C.traceRefineSteps; r++) {
+          const m = (lo + hi) * 0.5;
+          const mn = D.probeLocal2D(body, ax + dx * m, ay + dy * m, reach);
+          if ((mn >= 0) === inside) hi = m;
+          else { lo = m; if (mn >= 0) out.node = mn; }
+        }
+        if (inside) {
+          if (out.entryT < 0) out.entryT = hi;
+        } else if (out.entryT >= 0) {
+          out.exitT = lo;
+          out.solidLen = (lo - out.entryT) * len;
+          return out;
+        }
+      }
+      if (inside) out.node = node;
+      prevNode = node;
+      prevT = t;
+    }
+    if (out.entryT >= 0) out.solidLen = (1 - out.entryT) * len;
+    return out;
+  },
+
+  /**
+   * UV sprite'a punktu (świat gry) w konwencji skóry kadłuba (beamHullSkin: v = 0 to górny
+   * wiersz obrazu): cx = ix + 0,5 + (l − x_węzła)/cs, u = cx · pitch / W, v = (ny − cy) · pitch / H.
+   * Przesunięcie liczone względem węzła (podanego `nodeHint` albo najbliższego w
+   * `uvProbeCells`), więc uv jedzie z wgnieceniem jak skóra. Wraki i odłamy leżą w uv
+   * rodzica (węzły zachowują ix/iy). ok = false: brak węzła w pobliżu (uv ze spoczynku).
+   */
+  spriteUvAt(entity, x, y, nodeHint = -1, out = hullUvResult) {
+    out.u = 0;
+    out.v = 0;
+    out.ok = false;
+    out.node = -1;
+    const hull = entity?.beamHull;
+    if (!hull || hull.entity !== entity) return out;
+    const body = hull.body, s = body.nodeStore;
+    toLocal(hull, entityPose(hull, _qPose), x, y, _qLocal);
+    let i = Number.isInteger(nodeHint) && nodeHint >= 0 && nodeHint < s.count ? nodeHint : -1;
+    if (i < 0 && !body.dead) i = D.probeLocal2D(body, _qLocal.x, _qLocal.y, C.uvProbeCells * body.cellSize);
+    writeSpriteUv(hull, i, _qLocal.x, _qLocal.y, out);
+    out.ok = i >= 0;
+    out.node = i;
+    return out;
   },
 
   /** Cięcie wraku w polu: zdejmuje do `count` żywych węzłów najbliżej punktu (świat gry). */
@@ -661,6 +889,10 @@ export const HullBodies = {
   },
 
   sweepResult: hullSweepResult,
+  impactResult: hullImpactResult,
+  normalResult: hullNormalResult,
+  traceResult: hullTraceResult,
+  uvResult: hullUvResult,
 
   /** Wrak z CAŁEGO kadłuba encji (śmierć statku). Kadłub przechodzi na nową encję wraku. */
   convertToWreck(entity) {
@@ -779,6 +1011,53 @@ function toLocal(hull, pose, wx, wy, out) {
   out.x = pose.c * dx + pose.s * dy + anchorLocalX(hull);
   out.y = -pose.s * dx + pose.c * dy + anchorLocalY(hull);
   return out;
+}
+
+// UV sprite'a punktu (układ ciała) w konwencji skóry gry (beamHullSkin.js, v = 0 u góry
+// obrazu). Węzeł i: komórka (ix, iy) + przesunięcie punktu względem BIEŻĄCEJ pozycji węzła
+// (uv jedzie z wgnieceniem); i < 0: spoczynek siatki (środek komórki = latticeMin + (i+½)·cs).
+function writeSpriteUv(hull, i, lx, ly, out) {
+  const body = hull.body, s = body.nodeStore, cs = body.cellSize;
+  let cx, cy;
+  if (i >= 0) {
+    cx = s.ix[i] + 0.5 + (lx - s.x[i]) / cs;
+    cy = s.iy[i] + 0.5 + (ly - s.y[i]) / cs;
+  } else {
+    cx = (lx - body.latticeMin.x) / cs;
+    cy = (ly - body.latticeMin.y) / cs;
+  }
+  out.u = cx * hull.pixelPitch / hull.srcWidth;
+  out.v = (hull.ny - cy) * hull.pixelPitch / hull.srcHeight;
+  return out;
+}
+
+function resetImpactResult(kind, x, y) {
+  const r = hullImpactResult;
+  r.kind = kind;
+  r.hit = false;
+  r.killed = 0;
+  r.radius = 0;
+  r.node = -1;
+  r.u = 0;
+  r.v = 0;
+  r.x = x;
+  r.y = y;
+  r.dmgKey = 0;
+  r.dirX = 0;
+  r.dirY = 0;
+  r.len = 0;
+  return r;
+}
+
+// Kierunek (świat gry) do hullImpactResult: jednostkowy wektor (dx, dy) i droga `frac`·|d|
+// (cut: od wejścia do końca odcinka; impact: 0 — wektor to prędkość, nie droga).
+function writeImpactDir(r, dx, dy, frac) {
+  const l = Math.sqrt(dx * dx + dy * dy);
+  if (!(l > 1e-9)) return r;
+  r.dirX = dx / l;
+  r.dirY = dy / l;
+  r.len = frac > 0 ? l * frac : 0;
+  return r;
 }
 
 // Ciało ← poza encji (bez prędkości). Zwraca R·anchorLocal w _local (do prędkości).
@@ -1124,8 +1403,8 @@ function onNodeDebris(body, i, wx, wy, wz, vx, vy) {
   if (!hull || typeof window === 'undefined' || typeof window.spawnHullDebris !== 'function') return;
   const s = body.nodeStore;
   // Rozmiar jak odłamki dema: ~0,9–1,8 komórki (siatka gry = siatka dema, 15 j.).
-  const scale = body.cellSize * (0.9 + Math.random() * 0.9);
-  const structural = s.beamCount[i] > s.localBeamCount[i] && Math.random() < 0.4;
+  const scale = body.cellSize * (0.9 + fxRandom.next() * 0.9);
+  const structural = s.beamCount[i] > s.localBeamCount[i] && fxRandom.next() < 0.4;
   window.spawnHullDebris(wx, -wy, vx, -vy, s.r[i], s.g[i], s.b[i], scale, structural);
 }
 
@@ -1206,6 +1485,7 @@ function makeWreckEntity(parent, body, parentHull) {
     hexPerNode: parentHull.hexPerNode,
     massScale,
     isFragment: true,
+    dmgKey: parentHull.dmgKey,         // rany rodzica (wrak z całego kadłuba, odłamy, wybuch reaktora)
     radius: body.radius,
     revision: 0,
     shieldCells: null,

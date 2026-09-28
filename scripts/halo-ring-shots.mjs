@@ -1,21 +1,39 @@
 // Automatyczne zrzuty dema ringu Halo (brief §13–§14): Vite + headless Chrome
 // przez CDP (bez zależności — WebSocket z Node 22). Dla każdego ujęcia:
 // zrzut PNG, draw calle, trójkąty, ms/klatkę, histogram HDR, błędy shaderów.
+// Port WebGPU (zadanie 06): demo na WebGPURenderer — nazwa GPU z adaptera
+// (window.__halo.gpu), błędy walidacji WebGPU z domeny Log, czas budowy ringu
+// (kompilacja + pieczenie + odczyt) i liczba zamienników materiałów (07–10).
+//
+// Zadanie 07: --teren — tylko teren ringu (struktura, dach, chmury, powłoka powietrza,
+// megastruktura, miasto i hale K-7 ukryte; otoczenie dema zostaje) — porównanie
+// terenu z bazą WebGL z tagu, póki reszta ringu to zamienniki (08–10). Ten sam
+// skrypt działa w worktree z tagu webgl-baseline (demo na WebGLRenderer).
+// Zadanie 08: --czesci terrain,structure,structureTop,clouds,shell[,mega,city,k7] — tylko
+// wymienione części ringu (reszta ukryta jak w --teren; --teren = --czesci terrain);
+// wynik i czasy kompilacji materiałów (window.__halo.compileMs) w results.json.
 //
 //   node scripts/halo-ring-shots.mjs --set m2 --out .tmp/halo-ring/m2
 //   node scripts/halo-ring-shots.mjs --only p1,p8 --size 2560x1440
+//   node scripts/halo-ring-shots.mjs --set m4 --teren --out .tmp/halo-ring/m4-teren
+//   node scripts/halo-ring-shots.mjs --set mid --czesci terrain,structure,structureTop,clouds,shell --out .tmp/halo-ring/mid-08
+//   node scripts/halo-ring-shots.mjs --repo ../statki-wt/tag13 --set miasto --port 5360 --out .tmp/halo-ring/miasto-tag
 import { spawn } from 'node:child_process';
-import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'vite';
+import { closeChrome } from '../dema/rdzen-cdp.js';
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((acc, a, i, all) => {
   if (a.startsWith('--')) acc.push([a.slice(2), all[i + 1] && !all[i + 1].startsWith('--') ? all[i + 1] : '1']);
   return acc;
 }, []));
-const repo = resolve(new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
-const outDir = resolve(repo, args.out || '.tmp/halo-ring');
+// --repo <katalog>: serwuj demo z innego drzewa (np. worktree z tagu webgl-baseline — baza WebGL
+// bez kopiowania skryptu; zadanie 09). Wyniki (--out) względem bieżącego repo.
+const here = resolve(new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
+const repo = args.repo ? resolve(args.repo) : here;
+const outDir = resolve(here, args.out || '.tmp/halo-ring');
 mkdirSync(outDir, { recursive: true });
 const [W, H] = (args.size || '1920x1080').split('x').map(Number);
 const quality = args.quality || 'high';
@@ -150,7 +168,10 @@ const SETS = {
   landmarks: ['lm0_gate', 'lm1_terrace', 'lm2_crown', 'lm4_bridge', 'lm6_glass_gate', 'lm2_night', 'lm0_game_z045', 'lm2_game_z02',
     'lm1_game_z1', 'lm5_game_night_z045', 'p6', 'p9', 'm4_city_z1', 'k7_docked_z035'],
   domes: ['dome0_tropical', 'dome5_aquatic', 'dome9_wild', 'dome3_botanical', 'dome0_night', 'dome0_game_z045', 'dome2_game_z1',
-    'lm0_gate', 'lm3_park_night', 'lm0_game_z045', 'p6', 'm4_city_z1']
+    'lm0_gate', 'lm3_park_night', 'lm0_game_z045', 'p6', 'm4_city_z1'],
+  // zadanie 09 (megastruktura i miasto w TSL): miasto dniem i nocą, przemysł, dach z detalem, pociągi i światłami
+  miasto: ['m4_city_z1', 'm4_city_night_z1', 'm4_glass_z02', 'city_garden_z034', 'city_heph_z034', 'city_heph_z089',
+    'm3_port_night_z02', 'm3_roof_z02', 'm3_roof_z1', 'mid_roof_z1', 'mid_roof_z03', 'p5', 'p7', 'p9']
 };
 
 // Profile planet (Z6, 2026-09-26): --planet mars|jupiter|earth — ring z profilem
@@ -227,20 +248,41 @@ async function evaluate(cdp, expression, timeout = 120000) {
   return res.result.value;
 }
 
+// Profil headless Chrome w %TEMP% (75–300 MB: pamięć podręczna shaderów) — usuwany na końcu i przy
+// błędzie wspólnym closeChrome (dema/rdzen-cdp.js: czeka na wyjście Chrome, potem kasuje profil;
+// dawniej zostawał po każdym uruchomieniu — 2026-09-28 dysk się zapełnił). removeChromeProfile to
+// już tylko synchroniczna siatka na nagłe wyjście procesu (process.on('exit') nie czeka na await).
+let chromeProfile = null;
+let chromeProc = null;
+function removeChromeProfile() {
+  if (chromeProc && chromeProc.exitCode === null) { try { chromeProc.kill(); } catch { /* */ } }
+  if (!chromeProfile) return;
+  try { rmSync(chromeProfile, { recursive: true, force: true, maxRetries: 10, retryDelay: 150 }); } catch { /* zablokowany */ }
+  chromeProfile = null;
+}
+process.on('exit', removeChromeProfile);
+
 async function main() {
-  const server = await createServer({ root: repo, logLevel: 'error', server: { port: 5230, strictPort: false } });
+  const server = await createServer({
+    root: repo, logLevel: 'error',
+    server: { port: Number(args.port) || 5230, strictPort: false, hmr: false, watch: { ignored: ['**/*'] } },
+    // bez tego pierwsze wykrycie three/webgpu i three/tsl przeładowuje stronę
+    optimizeDeps: { include: ['three', 'three/webgpu', 'three/tsl'] }
+  });
   await server.listen();
   const port = server.config.server.port;
   const base = `http://localhost:${server.httpServer.address().port}`;
   void port;
   const profile = join(tmpdir(), `halo-shots-${Date.now()}`);
+  chromeProfile = profile;
   const dbgPort = 9333 + Math.floor(Math.random() * 500);
   const chrome = spawn(CHROME, [
     '--headless=new', `--remote-debugging-port=${dbgPort}`, `--user-data-dir=${profile}`,
-    '--use-angle=d3d11', '--enable-gpu', '--ignore-gpu-blocklist', '--enable-webgl',
+    '--use-angle=d3d11', '--enable-gpu', '--ignore-gpu-blocklist', '--enable-webgl', '--enable-unsafe-webgpu',
     '--disable-gpu-vsync', '--disable-frame-rate-limit', '--hide-scrollbars',
     `--window-size=${W},${H}`, 'about:blank'
   ], { stdio: 'ignore' });
+  chromeProc = chrome;
   let target = null;
   for (let i = 0; i < 60 && !target; i++) {
     try {
@@ -256,12 +298,20 @@ async function main() {
   const logs = [];
   cdp.on((msg) => {
     if (msg.method === 'Runtime.consoleAPICalled' && (msg.params.type === 'error' || msg.params.type === 'warning')) {
-      logs.push(`[${msg.params.type}] ${msg.params.args.map((a) => a.value ?? a.description ?? '').join(' ')}`.slice(0, 2000));
+      const text = msg.params.args.map((a) => a.value ?? a.description ?? '').join(' ');
+      // zamiennik gry ostrzega raz na nieprzeniesiony materiał — liczy je `zamienniki`, to nie błąd
+      if (!text.startsWith('[Zamiennik]')) logs.push(`[${msg.params.type}] ${text}`.slice(0, 2000));
     }
     if (msg.method === 'Runtime.exceptionThrown') logs.push(`[exception] ${msg.params.exceptionDetails?.exception?.description || msg.params.exceptionDetails?.text}`);
+    // walidacja WebGPU / WGSL przychodzi przez domenę Log, nie przez console
+    if (msg.method === 'Log.entryAdded' && (msg.params.entry.level === 'error' || msg.params.entry.level === 'warning')) {
+      const e = msg.params.entry;
+      if (!/favicon|powerPreference/.test(`${e.text} ${e.url || ''}`)) logs.push(`[log:${e.level}] ${e.source}: ${e.text}${e.url ? ` (${e.url})` : ''}`.slice(0, 2000));
+    }
   });
   await cdp.send('Page.enable');
   await cdp.send('Runtime.enable');
+  await cdp.send('Log.enable');
 
   const results = [];
   for (const shot of shots) {
@@ -270,6 +320,8 @@ async function main() {
     const url = `${base}/dema/halo_ring_demo.html?${q}`;
     await cdp.send('Emulation.setDeviceMetricsOverride', { width: W, height: H, deviceScaleFactor: 1, mobile: false });
     const t0 = Date.now();
+    // stara strona nie może odpowiedzieć „gotowe” za nową (wolne ładowanie)
+    try { await evaluate(cdp, 'window.__halo = undefined, true'); } catch { /* pierwsza strona */ }
     await cdp.send('Page.navigate', { url });
     let ready = false;
     for (let i = 0; i < 600 && !ready; i++) {
@@ -291,6 +343,16 @@ async function main() {
       continue;
     }
     const bakeMs = Date.now() - t0;
+    const keepParts = args.czesci ? args.czesci.split(',').filter(Boolean) : (args.teren ? ['terrain'] : null);
+    if (keepParts) {
+      // części ringu spoza listy ukryte; hale K-7 (cullHalls ustawia visible co klatkę) — na warstwę,
+      // której nie widzi żadna kamera; --bez-otoczenia: także planeta, niebo, tło i duszki dema
+      await evaluate(cdp, `(() => { const r = window.__halo.ring; const keep = new Set(${JSON.stringify(keepParts)});
+        for (const k of ['terrain', 'structure', 'structureTop', 'clouds', 'shell', 'mega', 'city']) if (!keep.has(k)) r.setVisible(k, false);
+        if (!keep.has('k7')) for (const h of r.k7Halls || []) h.root.traverse((o) => o.layers.set(30));
+        if (${args['bez-otoczenia'] ? 'true' : 'false'}) for (const o of r.group.parent.children) if (o !== r.group) o.visible = false;
+        return true; })()`);
+    }
     const frame = await evaluate(cdp, 'window.__halo.renderFrames(4)');
     const stats = await evaluate(cdp, 'window.__halo.stats()');
     const hdr = await evaluate(cdp, 'window.__halo.measureHDR(480)');
@@ -302,15 +364,19 @@ async function main() {
     await sleep(300);
     await evaluate(cdp, 'window.dispatchEvent(new Event("resize")), window.__halo.renderFrames(3), true');
     const ms = await evaluate(cdp, 'window.__halo.bench(24)');
-    const gpu = await evaluate(cdp, `(() => { const gl = document.getElementById('view').getContext('webgl2'); const e = gl.getExtension('WEBGL_debug_renderer_info'); return e ? gl.getParameter(e.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER); })()`);
+    const gpu = await evaluate(cdp, 'window.__halo.gpu');
+    const build = await evaluate(cdp, '({ buildMs: window.__halo.buildMs, bake: window.__halo.bake, placeholders: window.__halo.placeholders, terrainCompileMs: window.__halo.terrainCompileMs ?? null, compileMs: window.__halo.compileMs ?? null })');
     const row = {
       id: shot.id, preset: stats.preset, mode: stats.mode, calls: frame.calls, triangles: frame.triangles,
-      tiles: stats.activeTiles, segments: stats.segments, textureMB: +(stats.textureBytes / 1048576).toFixed(0),
+      tiles: stats.activeTiles, segments: stats.segments, shellActive: stats.shellActive ?? null, textureMB: +(stats.textureBytes / 1048576).toFixed(0),
       ms1440: +ms.toFixed(2), fps1440: +(1000 / ms).toFixed(0), bakeMs, near: stats.near, hdr, gpu,
-      errors: stats.errors, logs: logs.slice()
+      buildMs: build.buildMs, bake: build.bake, placeholders: build.placeholders, terrainCompileMs: build.terrainCompileMs,
+      compileMs: build.compileMs, errors: stats.errors, logs: logs.slice()
     };
     results.push(row);
-    console.log(`${shot.id.padEnd(18)} calls ${String(row.calls).padStart(3)}  tris ${(row.triangles / 1000).toFixed(0).padStart(5)}k  ${row.ms1440} ms (${row.fps1440} FPS @1440p)  HDR max ${hdr.max.toFixed(2)} >0.9: ${(hdr.overFraction * 100).toFixed(2)}%  NaN ${hdr.nanOrInf}  err ${row.errors.length + row.logs.length}`);
+    const compiled = build.compileMs ? Object.entries(build.compileMs).map(([k, v]) => `${k.replace(/^Halo/, '')} ${v == null ? '—' : Math.round(v)}`).join(', ') : null;
+    console.log(`${shot.id.padEnd(18)} calls ${String(row.calls).padStart(3)}  tris ${(row.triangles / 1000).toFixed(0).padStart(5)}k  ${row.ms1440} ms (${row.fps1440} FPS @1440p)  HDR max ${hdr.max.toFixed(2)} >0.9: ${(hdr.overFraction * 100).toFixed(2)}%  NaN ${hdr.nanOrInf}  budowa ${Math.round(row.buildMs || 0)} ms  ${compiled ? `kompilacja [ms] ${compiled}` : `teren (kompilacja) ${row.terrainCompileMs == null ? '—' : Math.round(row.terrainCompileMs) + ' ms'}`}  zamienniki ${row.placeholders?.built ?? "?"}  err ${row.errors.length + row.logs.length}`);
+    for (const l of [...row.errors, ...row.logs].slice(0, 4)) console.log(`    ${l.slice(0, 300)}`);
   }
   writeFileSync(join(outDir, 'results.json'), JSON.stringify(results, null, 2));
   const table = ['| ujęcie | tryb | draw calle | trójkąty | kafle | ms @1440p | FPS @1440p | HDR p99 | HDR max | >0,9 | NaN |', '|---|---|---|---|---|---|---|---|---|---|---|'];
@@ -320,12 +386,17 @@ async function main() {
     table.push(`| ${r.id} | ${r.mode} | ${r.calls} | ${(r.triangles / 1000).toFixed(0)} tys. | ${r.tiles} | ${r.ms1440} | ${r.fps1440} | ${r.hdr.p99.toFixed(2)} | ${r.hdr.max.toFixed(2)} | ${(r.hdr.overFraction * 100).toFixed(2)}% | ${r.hdr.nanOrInf} |`);
   }
   writeFileSync(join(outDir, 'results.md'), table.join('\n') + '\n');
-  ws.close();
-  chrome.kill();
+  await closeChrome(chrome, ws, profile);
+  chromeProc = null;
+  chromeProfile = null;
   await server.close();
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   console.error(err);
+  // przeglądarka i jej profil nie zostają po błędzie
+  if (chromeProc) await closeChrome(chromeProc, null, chromeProfile);
+  chromeProc = null;
+  chromeProfile = null;
   process.exit(1);
 });

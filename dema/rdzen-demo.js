@@ -4,19 +4,17 @@
 //   ?shot=1 (bez paneli, do zrzutów)  ?cpuSoft=1 (lustro solvera zamiast WebGPU)
 //
 // Stos renderu jak w grze: fizyka 2D (destruktor, 120 Hz) → updateHexShips3D →
-// drawHexShips3D (Core3D: bloom, ACES, pasma HDR 1:1) → overlay3D z prawdziwą
-// fabryką reactorblow.js (tak jak triggerReactorBlow3D w index.html) → HUD 2D.
+// drawHexShips3D (Core3D: bloom, ACES, pasma HDR 1:1; wybuch reaktora z prawdziwej
+// fabryki reactorblow.js w scenie Core3D, jak triggerReactorBlow3D w index.html) → HUD 2D.
 // Rdzenie: src/game/shipCore.js (logika), src/3d/coreFx3D.js (żar i wyrzuty).
 import { Core3D } from '../src/3d/core3d.js';
 import { initHexShips3D, updateHexShips3D, drawHexShips3D, resizeHexShips3D } from '../src/3d/hexShips3D.js';
 import { DestructorSystem, DESTRUCTOR_CONFIG, setHexShips3DActive, disposeHexBody } from '../src/game/destructor.js';
 import { DestructorGpuSoftBody } from '../src/game/destructorGpuSoftBody.js';
-import { initOverlay } from '../src/effects3d/overlay.js';
-import { createReactorBlowFactory } from '../src/effects3d/reactorblow.js';
+import { createReactorBlowFactory, REACTOR_BLOW_PROFILES } from '../src/effects3d/reactorblow.js';
 import { createCoreFx3D } from '../src/3d/coreFx3D.js';
 import { createReactor3D } from '../src/3d/reactor3D.js';
 import { Fx3D } from '../src/3d/fxParticles3D.js';
-import { MuzzleFX3D } from '../src/3d/muzzleFx3D.js';
 import { SparkSystem3D } from '../src/3d/sparkSystem3D.js';
 import { HULL_LACQUER_DEFAULTS } from '../src/3d/hullLacquer.js';
 import { MASTER_WEAPONS } from '../src/data/weapons.js';
@@ -44,9 +42,9 @@ window.addEventListener('error', (e) => reportError(`JS: ${e.message} @ ${e.file
 window.addEventListener('unhandledrejection', (e) => reportError(`Promise: ${e.reason?.stack || e.reason}`));
 
 const PHYS_DT = 1 / 120;
-// chargeTime profili reactorblow.js (niewyeksportowane): wizualny wybuch
-// startujemy tyle przed końcem odliczania, żeby błysk wypadł na detonację.
-const BLOW_CHARGE = { fighter: 0.05, escort: 0.3, cruiser: 0.55, capital: 0.8 };
+// chargeTime profili reactorblow.js: wizualny wybuch startujemy tyle przed końcem
+// odliczania, żeby błysk wypadł na detonację.
+const BLOW_CHARGE = Object.fromEntries(Object.entries(REACTOR_BLOW_PROFILES).map(([k, p]) => [k, p.chargeTime]));
 
 const DEMO_WEAPONS = [
   'railgun_mk2', 'heavy_autocannon', 'vulcan_minigun', 'tempest_ion_l', 'helios_laser',
@@ -135,7 +133,7 @@ function log(text, cls = '') {
 }
 
 // ---------------------------------------------------------------------------
-// Render: Core3D + hexShips3D + overlay (reactorblow)
+// Render: Core3D + hexShips3D (wybuch reaktora w scenie Core3D — reactorblow)
 const root = $('root');
 const canvas2d = $('c');
 const ctx2d = canvas2d.getContext('2d');
@@ -152,19 +150,18 @@ window.Core3D = Core3D;
 // Słońce daleko (jak w grze: kierunek światła kadłubów, shadow shafts).
 window.SUN = { x: -52000, y: -30000, r: 823 };
 
-const overlayView = { viewport: { w: W, h: H }, zoom: S.cam.zoom, center: { x: 0, y: 0 } };
-const overlay3D = initOverlay({ host: root, getView: () => overlayView });
-window.overlay3D = overlay3D;
-window.makeReactorBlow = createReactorBlowFactory(overlay3D.scene);
-// Iskry trafień i tarcia jak w grze (index.html: SparkSystem3D.init(ov.scene));
-// aktualizuje je overlay3D.tick, a coreFx3D sypie z tej puli przy cięciu i topieniu.
-SparkSystem3D.init(overlay3D.scene);
+// Wybuch reaktora jak w grze (port WebGPU, zadanie 20): pule cząstek w scenie Core3D, krok
+// klatki efektów (render Core3D) — bez overlaya z własnym WebGLRenderer.
+window.makeReactorBlow = createReactorBlowFactory(Core3D);
+// Iskry trafień i tarcia jak w grze (index.html: SparkSystem3D.init(Core3D.scene)) — krok
+// klatki efektów Core3D; coreFx3D sypie z tej puli przy cięciu i topieniu.
+SparkSystem3D.init(Core3D.scene);
 window.SparkSystem3D = SparkSystem3D;
 
 // Wybuch reaktora jak triggerReactorBlow3D w grze. Fali z refrakcją już nie ma:
-// profile reactorblow.js mają shockwave3D/heatHaze = null (tylko supernova).
+// profile reactorblow.js mają shockwave3D/heatHaze = null.
 function spawnReactorBlow(opts) {
-  overlay3D.spawn(window.makeReactorBlow(opts));
+  window.makeReactorBlow(opts);
 }
 
 // Modele reaktora (pod pancerzem, widoczne przez wyrwę) i żar/wyrzuty — oba na
@@ -929,19 +926,16 @@ function render(realDt, simFrameDt) {
   cullInfo.halfW = cullInfo.drawHalfW * 3; cullInfo.halfH = cullInfo.drawHalfH * 3;
   cullEmptyWrecks();
   const renderEntities = S.destructibles.filter((e) => !e.dead);
-  // Wspólny bank cząstek (iskry, błyski wylotowe, Hexlance) — w grze przesuwa
-  // go Weapon3DSystem.syncProjectiles, dokładnie raz na klatkę; demo nie ma
-  // systemu broni 3D, więc robi to tutaj (czas symulacji: pauza zatrzymuje iskry).
+  // Wspólny bank cząstek Fx3D (iskry rdzeni) — tu w czasie symulacji (pauza zatrzymuje
+  // iskry). updateHexShips3D niżej woła też WeaponFx.sync (efekty broni z dema
+  // bronie-webgpu: wystrzał armaty wybuchu wtórnego, wyładowanie kuli, rzaz strumienia —
+  // budżet klatki i krok Core3D.fx), który przesuwa ten sam bank zegarem klatki — tak jak
+  // dawniej Weapon3DSystem.syncProjectiles.
   Fx3D.update(simFrameDt);
-  MuzzleFX3D.beginFrame();
   const t1 = performance.now();
   updateHexShips3D(cam, renderEntities, cullInfo);
   drawHexShips3D(ctx2d, W, H);
   const t2 = performance.now();
-  overlayView.viewport.w = W; overlayView.viewport.h = H;
-  overlayView.zoom = cam.zoom; overlayView.center.x = cam.x; overlayView.center.y = cam.y;
-  overlay3D.tick(realDt);
-  const t3 = performance.now();
 
   const view = { camX: cam.x, camY: cam.y, zoom: cam.zoom, W, H };
   const aim = aimPoint();
@@ -952,15 +946,14 @@ function render(realDt, simFrameDt) {
   const t4 = performance.now();
   S.lastFrameMs = t4 - t0;
   S.frameMsAvg = S.frameMsAvg * 0.9 + realDt * 1000 * 0.1;
-  S.perf = { update3d: t2 - t1, overlay: t3 - t2, overlay2d: t4 - t3, total: t4 - t0 };
+  S.perf = { update3d: t2 - t1, overlay2d: t4 - t2, total: t4 - t0 };
   updateHud(cores);
   updateAlarm(cores, realDt);
 }
 
 function renderInfo() {
   const r = Core3D.lastFrameRenderInfo?.total || Core3D.renderer?.info?.render || {};
-  const o = overlay3D.renderer?.info?.render || {};
-  return { calls: r.calls || 0, tris: r.triangles || 0, ovCalls: o.calls || 0 };
+  return { calls: r.calls || 0, tris: r.triangles || 0 };
 }
 
 function updateHud(cores) {
@@ -968,10 +961,10 @@ function updateHud(cores) {
   if (bodyCls.contains('shot') && !bodyCls.contains('hud')) return;
   const t = target();
   const ri = renderInfo();
-  const ov = overlay3D.getStats();
+  const rb = window.__reactorBlow3D?.stats || { blasts: 0, cpuMs: 0 };
   const lines = [];
   lines.push(`<b>RDZEŃ</b>  ${(1000 / Math.max(1, S.frameMsAvg)).toFixed(0)} FPS · klatka ${S.frameMsAvg.toFixed(1)} ms · Core3D ${(Core3D.lastFramePerf?.renderTotalMs || 0).toFixed(1)} ms`);
-  lines.push(`draw calle ${ri.calls} (Core3D) + ${ri.ovCalls} (overlay ${ov.lastRenderMs.toFixed(1)} ms) · FX rdzeni ${coreFx.stats.drawCalls} · wyrzuty ${coreFx.stats.vents} · model ${reactor3D.stats.instances} (${reactor3D.stats.drawCalls} dc)`);
+  lines.push(`draw calle ${ri.calls} (Core3D, z wybuchami reaktora: ${rb.blasts}, ${rb.cpuMs.toFixed(2)} ms CPU) · FX rdzeni ${coreFx.stats.drawCalls} · wyrzuty ${coreFx.stats.vents} · model ${reactor3D.stats.instances} (${reactor3D.stats.drawCalls} dc)`);
   lines.push(`solver: ${softBodyMode()} · krok 120 Hz · czas ×${S.timeScale.toFixed(2)}${S.paused ? ' · PAUZA' : ''} · sim ${S.simTime.toFixed(1)} s`);
   if (t) {
     const hp = t.isPlayer ? `${Math.round(t.hull.val)}/${t.hull.max}` : `${Math.round(Math.max(0, t.hp))}/${t.maxHp}`;
@@ -1133,7 +1126,6 @@ addEventListener('resize', () => {
   canvas2d.width = W; canvas2d.height = H;
   glCanvas.width = W; glCanvas.height = H;
   resizeHexShips3D(W, H);
-  overlay3D.resize();
 });
 
 function togglePause() {
@@ -1348,17 +1340,24 @@ async function runBrowserBench() {
 
 // ---------------------------------------------------------------------------
 // API dla zrzutów (CDP) i konsoli
-function measureHDR({ x0 = 0, y0 = 0, w = W, h = H } = {}) {
+// Histogram HDR bufora sceny (Core3D.composerTarget: HalfFloat po resolve MSAA,
+// przed bloomem i ACES). Port WebGPU (zadanie 15): odczyt asynchroniczny, wiersz 0
+// = GÓRA celu (y0 od góry jak w pikselach ekranu), wiersze wyrównane do 256 B.
+async function measureHDR({ x0 = 0, y0 = 0, w = W, h = H } = {}) {
   const renderer = Core3D.renderer;
-  const rt = Core3D.postTarget;
+  const rt = Core3D.composerTarget;
   const bloomWas = Core3D.perfToggles.bloom;
   Core3D.setPerfToggles({ bloom: false });
   render(0, 0);
-  const px = Math.max(1, Math.floor(w)), py = Math.max(1, Math.floor(h));
-  const buf = new Uint16Array(px * py * 4);
-  const yGl = rt.height - Math.floor(y0) - py;
-  renderer.readRenderTargetPixels(rt, Math.floor(x0), Math.max(0, yGl), px, py, buf);
+  const pr = Core3D.pixelRatio || 1;
+  const x = Math.max(0, Math.min(rt.width - 1, Math.floor(x0 * pr)));
+  const y = Math.max(0, Math.min(rt.height - 1, Math.floor(y0 * pr)));
+  const px = Math.max(1, Math.min(rt.width - x, Math.floor(w * pr)));
+  const py = Math.max(1, Math.min(rt.height - y, Math.floor(h * pr)));
+  const buf = await renderer.readRenderTargetPixelsAsync(rt, x, y, px, py);
   Core3D.setPerfToggles({ bloom: bloomWas });
+  const isHalf = buf instanceof Uint16Array;
+  const rowElems = Math.ceil((px * 4 * buf.BYTES_PER_ELEMENT) / 256) * 256 / buf.BYTES_PER_ELEMENT;
   const half = (v) => {
     const s = (v & 0x8000) ? -1 : 1;
     const e = (v >> 10) & 0x1f;
@@ -1367,10 +1366,12 @@ function measureHDR({ x0 = 0, y0 = 0, w = W, h = H } = {}) {
     if (e === 31) return f ? NaN : s * Infinity;
     return s * Math.pow(2, e - 15) * (1 + f / 1024);
   };
+  const ch = (o) => (isHalf ? half(buf[o]) : buf[o]);
   const lums = [];
   let nan = 0, over09 = 0, band = 0, white = 0, max = 0;
   for (let i = 0; i < px * py; i++) {
-    const r = half(buf[i * 4]), g = half(buf[i * 4 + 1]), b = half(buf[i * 4 + 2]);
+    const o = Math.floor(i / px) * rowElems + (i % px) * 4;
+    const r = ch(o), g = ch(o + 1), b = ch(o + 2);
     const L = 0.2126 * r + 0.7152 * g + 0.0722 * b;
     if (!Number.isFinite(L)) { nan++; continue; }
     lums.push(L);
@@ -1422,7 +1423,7 @@ function sampleFrames(seconds) {
     const tick = () => {
       const now = performance.now();
       const ri = renderInfo();
-      samples.push({ dt: now - prev, core: Core3D.lastFramePerf?.renderTotalMs || 0, js: S.lastFrameMs, calls: ri.calls, ovCalls: ri.ovCalls, ovMs: overlay3D.getStats().lastRenderMs, tris: ri.tris });
+      samples.push({ dt: now - prev, core: Core3D.lastFramePerf?.renderTotalMs || 0, js: S.lastFrameMs, calls: ri.calls, rbMs: window.__reactorBlow3D?.stats?.cpuMs || 0, tris: ri.tris });
       prev = now;
       if (now - t0 < seconds * 1000) requestAnimationFrame(tick);
       else {
@@ -1433,8 +1434,8 @@ function sampleFrames(seconds) {
           frames: samples.length,
           frameMsAvg: +avg('dt').toFixed(2), frameMsP95: +pct('dt', 0.95).toFixed(2), frameMsMax: +pct('dt', 1).toFixed(2),
           jsMsAvg: +avg('js').toFixed(2), jsMsMax: +pct('js', 1).toFixed(2),
-          core3dMsAvg: +avg('core').toFixed(2), overlayMsAvg: +avg('ovMs').toFixed(2), overlayMsMax: +pct('ovMs', 1).toFixed(2),
-          callsAvg: Math.round(avg('calls')), callsMax: pct('calls', 1), overlayCallsMax: pct('ovCalls', 1), trisMax: pct('tris', 1)
+          core3dMsAvg: +avg('core').toFixed(2), reactorMsAvg: +avg('rbMs').toFixed(2), reactorMsMax: +pct('rbMs', 1).toFixed(2),
+          callsAvg: Math.round(avg('calls')), callsMax: pct('calls', 1), trisMax: pct('tris', 1)
         });
       }
     };
@@ -1607,6 +1608,9 @@ window.__rdzen = {
 (async () => {
   try {
     await loadHullAssets();
+    // Port WebGPU: urządzenie powstaje w tle (Core3D.ready) — zrzuty czekają na
+    // __rdzen.ready, więc najpierw renderer (bez niego klatki Core3D są puste).
+    if (!(await Core3D.ready)) reportError(`WebGPU: ${Core3D.gpuError || 'brak urządzenia'}`);
     initPanel();
     buildScene(S.sceneId);
     $('loading').style.display = 'none';

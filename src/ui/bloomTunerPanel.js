@@ -26,14 +26,8 @@ const CONTROL_SECTIONS = Object.freeze([
       { label: 'Resolution', min: 0.5, max: 1.0, step: 0.01, key: 'resolutionScale' }
     ]
   },
-  {
-    title: 'Overlay FX',
-    controls: [
-      { label: 'FX Strength', min: 0, max: 5, step: 0.01, key: 'overlayStrength' },
-      { label: 'FX Radius', min: 0, max: 2, step: 0.01, key: 'overlayRadius' },
-      { label: 'FX Threshold', min: 0, max: 2, step: 0.01, key: 'overlayThreshold' }
-    ]
-  },
+  // (Sekcja „Overlay FX” usunięta w zadaniu 20 portu WebGPU — overlay efektów z własnym
+  // bloomem zniknął, wybuch reaktora świeci przez bloom Core3D.)
   {
     title: 'Planets',
     controls: [
@@ -71,9 +65,10 @@ function ensureBloomState() {
   bloom.radius = clamp(toNumber(bloom.radius, BLOOM_DEFAULTS.radius), 0, 2);
   bloom.threshold = clamp(toNumber(bloom.threshold, BLOOM_DEFAULTS.threshold), 0, 2);
   bloom.resolutionScale = clamp(toNumber(bloom.resolutionScale, BLOOM_DEFAULTS.resolutionScale), 0.5, 1.0);
-  bloom.overlayStrength = clamp(toNumber(bloom.overlayStrength, BLOOM_DEFAULTS.overlayStrength), 0, 5);
-  bloom.overlayRadius = clamp(toNumber(bloom.overlayRadius, BLOOM_DEFAULTS.overlayRadius), 0, 2);
-  bloom.overlayThreshold = clamp(toNumber(bloom.overlayThreshold, BLOOM_DEFAULTS.overlayThreshold), 0, 2);
+  // Zapisy sprzed zadania 20 mogą mieć pola overlay* (dawny bloom overlaya) — bez odbiorcy.
+  delete bloom.overlayStrength;
+  delete bloom.overlayRadius;
+  delete bloom.overlayThreshold;
   bloom.planetBloomMultiplier = clamp(toNumber(bloom.planetBloomMultiplier, BLOOM_DEFAULTS.planetBloomMultiplier), 0, 5);
 
   devVfx.planetBloomMultiplier = bloom.planetBloomMultiplier;
@@ -100,9 +95,6 @@ function saveBloomState(bloom) {
       radius: bloom.radius,
       threshold: bloom.threshold,
       resolutionScale: bloom.resolutionScale,
-      overlayStrength: bloom.overlayStrength,
-      overlayRadius: bloom.overlayRadius,
-      overlayThreshold: bloom.overlayThreshold,
       planetBloomMultiplier: bloom.planetBloomMultiplier
     }));
   } catch {
@@ -124,21 +116,9 @@ function applyBloomState(bloom) {
         core3d.resize(core3d.width || window.innerWidth, core3d.height || window.innerHeight);
       }
     }
-    if (typeof core3d._applyBloomPassConfig === 'function') {
-      core3d._applyBloomPassConfig();
-    } else if (core3d.bloomPass) {
-      core3d.bloomPass.strength = bloom.strength;
-      core3d.bloomPass.radius = bloom.radius;
-      core3d.bloomPass.threshold = bloom.threshold;
-    }
-  }
-
-  if (window.overlay3D?.setBloomConfig) {
-    window.overlay3D.setBloomConfig({
-      strength: bloom.overlayStrength,
-      radius: bloom.overlayRadius,
-      threshold: bloom.overlayThreshold
-    });
+    // Core3D czyta DevVFX.bloom co klatkę (_applyBloomPassConfig: uniformy węzła
+    // bloomu, bez przebudowy) — tu tylko natychmiastowe zastosowanie.
+    if (typeof core3d._applyBloomPassConfig === 'function') core3d._applyBloomPassConfig();
   }
 }
 
@@ -260,9 +240,6 @@ function createPanel(state) {
         radius: state.radius,
         threshold: state.threshold,
         resolutionScale: state.resolutionScale,
-        overlayStrength: state.overlayStrength,
-        overlayRadius: state.overlayRadius,
-        overlayThreshold: state.overlayThreshold,
         planetBloomMultiplier: state.planetBloomMultiplier
       }
     };
@@ -341,9 +318,6 @@ export function initBloomTunerPanel(options = {}) {
       radius: bloomState.radius,
       threshold: bloomState.threshold,
       resolutionScale: bloomState.resolutionScale,
-      overlayStrength: bloomState.overlayStrength,
-      overlayRadius: bloomState.overlayRadius,
-      overlayThreshold: bloomState.overlayThreshold,
       planetBloomMultiplier: bloomState.planetBloomMultiplier
     }),
     set: (next = {}) => {
@@ -352,9 +326,6 @@ export function initBloomTunerPanel(options = {}) {
         if (next.radius != null) bloomState.radius = clamp(toNumber(next.radius, bloomState.radius), 0, 2);
         if (next.threshold != null) bloomState.threshold = clamp(toNumber(next.threshold, bloomState.threshold), 0, 2);
         if (next.resolutionScale != null) bloomState.resolutionScale = clamp(toNumber(next.resolutionScale, bloomState.resolutionScale), 0.5, 1.0);
-        if (next.overlayStrength != null) bloomState.overlayStrength = clamp(toNumber(next.overlayStrength, bloomState.overlayStrength), 0, 5);
-        if (next.overlayRadius != null) bloomState.overlayRadius = clamp(toNumber(next.overlayRadius, bloomState.overlayRadius), 0, 2);
-        if (next.overlayThreshold != null) bloomState.overlayThreshold = clamp(toNumber(next.overlayThreshold, bloomState.overlayThreshold), 0, 2);
         if (next.planetBloomMultiplier != null) bloomState.planetBloomMultiplier = clamp(toNumber(next.planetBloomMultiplier, bloomState.planetBloomMultiplier), 0, 5);
         saveBloomState(bloomState);
         applyBloomState(bloomState);

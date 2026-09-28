@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- Ścieżki assetów gry (assets/…, src/…) są względne do katalogu głównego. -->
+<base href="/">
+<title>Asteroidy WebGPU — demo</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { --ink: #d6e2e8; --muted: #7d919b; --line: #9fc6d626; --panel: #070d13e6; --accent: #7cc9ff; --warn: #f0b060; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #030406; overflow: hidden; color: var(--ink); font: 12px/1.35 "Segoe UI", system-ui, sans-serif; }
+  #root { position: fixed; inset: 0; overflow: hidden; background: #030406; }
+  #root canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; outline: none; cursor: crosshair; }
+  #root canvas#labels { pointer-events: none; }
+  #hud { position: fixed; left: 10px; top: 10px; z-index: 40; padding: 8px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; font: 11px/1.45 ui-monospace, Consolas, monospace; min-width: 330px; pointer-events: none; white-space: pre; }
+  #hud b { color: var(--accent); font-weight: 600; }
+  #panel { position: fixed; right: 10px; top: 10px; z-index: 40; width: 350px; max-height: calc(100vh - 20px); overflow-y: auto; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+  #panel h1 { font-size: 13px; margin: 0 0 2px; letter-spacing: .06em; }
+  #panel .sub { color: var(--muted); margin-bottom: 8px; }
+  #panel h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 12px 0 6px; font-weight: 600; }
+  .scenes { display: grid; grid-template-columns: 1fr; gap: 4px; }
+  .scenes button { text-align: left; padding: 6px 9px; font-size: 12.5px; }
+  .scenes button small { display: block; color: var(--muted); font-size: 11px; }
+  .row { display: flex; align-items: center; gap: 8px; margin: 5px 0; }
+  .row label { flex: 0 0 104px; color: var(--muted); }
+  .row input[type=range] { flex: 1 1 auto; min-width: 0; }
+  .row output { flex: 0 0 58px; text-align: right; font-variant-numeric: tabular-nums; }
+  .checks { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 8px; }
+  .checks label { display: flex; align-items: center; gap: 5px; }
+  .buttons { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0; }
+  .focus { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .focus button { padding: 3px 7px; font-size: 11px; }
+  button { background: #0e1a24; color: var(--ink); border: 1px solid #2a4252; border-radius: 4px; padding: 5px 9px; font: inherit; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.on { background: #173247; border-color: var(--accent); color: #fff; }
+  #stats { font: 11px/1.5 ui-monospace, Consolas, monospace; white-space: pre; color: var(--ink); background: #02070bcc; border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; overflow-x: auto; }
+  #stats b { color: var(--accent); font-weight: 600; }
+  .hint { color: var(--muted); font-size: 11px; margin-top: 6px; }
+  #errors { position: fixed; left: 50%; bottom: 10px; transform: translateX(-50%); z-index: 60; max-width: 70vw; max-height: 40vh; overflow: auto; padding: 8px; background: #2a0b0bee; border: 1px solid #a33; border-radius: 6px; font: 11px ui-monospace, monospace; white-space: pre-wrap; display: none; }
+  #loading { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 70; padding: 10px 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+  body.shot #panel, body.shot #hud { display: none; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<div id="hud">ładowanie…</div>
+<div id="loading">Start WebGPU…</div>
+<div id="errors"></div>
+<div id="panel">
+  <h1>ASTEROIDY WebGPU — DEMO</h1>
+  <div class="sub">Nowe pole asteroid na WebGPURenderer + TSL: te same sceny co demo WebGL, do tego światło wolumetryczne (smugi reflektorów głównych i bocznych w pyle, z cieniami skał), setki świateł dynamicznych, nowe pioruny i iskry liczone na GPU.</div>
+  <div class="scenes">
+    <button data-scene="gallery">1 · Galeria typów<small>skała neutralna, 7 rud i skała energetyczna, minerały · ← → zbliżenie</small></button>
+    <button data-scene="shapes">2 · Galeria kształtów<small>10 rodzin: owalne, podwójne, dyski, odłamy, gruzowiska… · ← →</small></button>
+    <button data-scene="giants">3 · Olbrzymy: tunele, szczeliny, jaskinie<small>5 brył 18–62 tys. j. · ▶ przelot = autopilot, W/S/A/D przejmuje · ← → Enter</small></button>
+    <button data-scene="giantField">4 · Olbrzym w polu<small>Labirynt na obrzeżu gęstego pola — Enter = przelot tunelem</small></button>
+    <button data-scene="field">5 · Gęste pole (Main Belt)<small>Atlas w rdzeniu pola · W/S/A/D lot, kółko zoom</small></button>
+    <button data-scene="flight">6 · Przelot: od słońca w głąb pola<small>obrzeże z wypełniacza, rudy głębiej, coraz ciemniej</small></button>
+    <button data-scene="deep">7 · Głąb pola (noc)<small>słońce przesłonięte — świecą reflektory i skały</small></button>
+    <button data-scene="sparse">8 · Rzadki pas<small>zwykły pas poza polami, pełne słońce</small></button>
+    <button data-scene="kuiper">9 · Pas Kuipera (lód)<small>rdzeń lodowego pola</small></button>
+    <button data-scene="storm">0 · Burza energetyczna<small>pioruny między skałami i w pył, błyski w chmurach · P = piorun</small></button>
+    <button data-scene="mining">Kopalnia (G)<small>skała testowa, drony z laserami, ładunki, wiązka ściągająca — fizyka wydobycia</small></button>
+  </div>
+  <h2>Kopalnia — fizyka skał</h2>
+  <div class="buttons">
+    <button id="b-mine-mode" title="Tryb kopalni w bieżącej scenie (G)">Tryb kopalni (G)</button>
+    <button id="b-detonate" title="Detonacja wszystkich ładunków (F)">Detonacja (F)</button>
+    <button id="b-tractor" title="Wiązka ściągająca do ładowni Atlasa (T)">Wiązka (T)</button>
+    <button id="b-scan" title="Skaner: rdzeń, ruda pod kursorem, potrzebny ładunek (K)">Skaner (K)</button>
+  </div>
+  <div class="buttons">
+    <button data-charge="0" title="0,5 — lód, kryształ, małe skały">Ładunek S</button>
+    <button data-charge="1" title="2">M</button>
+    <button data-charge="2" title="8">L</button>
+    <button data-charge="3" title="32 — tytan, żelazo, duże skały">XL</button>
+  </div>
+  <div class="buttons">
+    <button data-mine-type="ice">lód</button>
+    <button data-mine-type="crystal">kryształ</button>
+    <button data-mine-type="silicon">krzem</button>
+    <button data-mine-type="rock">skała</button>
+    <button data-mine-type="copper">miedź</button>
+    <button data-mine-type="iron">żelazo</button>
+    <button data-mine-type="titan">tytan</button>
+    <button data-mine-type="uran">uran</button>
+    <button data-mine-type="energy">energetyczna</button>
+  </div>
+  <div class="hint">Tryb kopalni: LPM (trzymaj, przeciągaj) — trzy drony tną laserami (skała pola pod kursorem przechodzi do fizyki), Shift + przeciągnięcie LPM — piła wzdłuż linii (przecina skałę na wylot), PPM — ładunek w dnie otworu (C zmienia wielkość), F — detonacja, T — wiązka ściągająca do Atlasa, K — skaner (rdzeń, ruda pod kursorem, ładunek potrzebny do przebicia). Z wierzchu skała ma mało rudy, rdzeń prawie czystą — dokop się albo wysadź rdzeń i złap odłamki. Lód i kryształ pękają od małego ładunku na drobnicę, tytan i żelazo potrzebują dużego i pękają na kilka brył; za słaby ładunek pęka tylko w środku.</div>
+  <div id="focus" class="focus"></div>
+  <div class="buttons">
+    <button id="b-strike" title="Piorun przed dziobem Atlasa (P)">Piorun (P)</button>
+    <button id="b-explode" title="Wybuch przed dziobem Atlasa">Wybuch</button>
+    <button id="b-barrage" title="Kilka wybuchów w polu naraz">Salwa wybuchów</button>
+    <button id="b-zoom1">Zoom 1</button>
+  </div>
+  <h2>Statystyki</h2>
+  <div id="stats">…</div>
+  <h2>Przełączniki</h2>
+  <div class="checks">
+    <label><input type="checkbox" id="t-volume" checked> smugi świateł (V)</label>
+    <label><input type="checkbox" id="t-shadows" checked> cień skał w smugach</label>
+    <label><input type="checkbox" id="t-shiplights" checked> światła statku (L)</label>
+    <label><input type="checkbox" id="t-floods" checked> reflektory boczne</label>
+    <label><input type="checkbox" id="t-navglow" checked> czerwień lamp</label>
+    <label><input type="checkbox" id="t-dynlights" checked> światła dynamiczne</label>
+    <label><input type="checkbox" id="t-rocklights" checked> świecące skały</label>
+    <label><input type="checkbox" id="t-storm" checked> burze</label>
+    <label><input type="checkbox" id="t-sunocc" checked> słońce przesłonięte (O)</label>
+    <label><input type="checkbox" id="t-fog" checked> mgła (N)</label>
+    <label><input type="checkbox" id="t-bloom" checked> bloom (B)</label>
+    <label><input type="checkbox" id="t-escort" checked> eskorta</label>
+    <label><input type="checkbox" id="t-back" checked> skały tła</label>
+    <label><input type="checkbox" id="t-detail" checked> detal z bliska</label>
+    <label><input type="checkbox" id="t-veins" checked> żyły rud</label>
+  </div>
+  <h2>Suwaki</h2>
+  <div class="row"><label>gęstość pyłu</label><input id="s-voldens" type="range" min="0" max="3" step="0.05" value="1"><output id="o-voldens"></output></div>
+  <div class="row"><label>jasność smug</label><input id="s-volgain" type="range" min="0" max="3" step="0.05" value="1"><output id="o-volgain"></output></div>
+  <div class="row"><label>liczba świateł</label><input id="s-lights" type="range" min="0" max="1024" step="8" value="64"><output id="o-lights"></output></div>
+  <div class="row"><label>prędkość lotu</label><input id="s-speed" type="range" min="100" max="8000" step="50" value="1400"><output id="o-speed"></output></div>
+  <h2>Światło i mgła</h2>
+  <div class="row"><label>moc słońca</label><input id="s-sun" type="range" min="0.5" max="5" step="0.05" value="1.9"><output id="o-sun"></output></div>
+  <div class="row"><label>otoczenie</label><input id="s-amb" type="range" min="0" max="3" step="0.05" value="1"><output id="o-amb"></output></div>
+  <div class="row"><label>gęstość mgły</label><input id="s-fog" type="range" min="0" max="3" step="0.05" value="1"><output id="o-fog"></output></div>
+  <div class="row"><label>jasność mgły</label><input id="s-fogb" type="range" min="0" max="3" step="0.05" value="1"><output id="o-fogb"></output></div>
+  <div class="hint">W/S — ciąg, A/D — obrót, Q/E — boczny ruch, Shift — dopalacz. Kółko — zoom (0,035–3,2; przy olbrzymach od 0,012), Z — zoom 1, X — najdalej. LPM — wybuch w punkcie kursora, PPM — strzał. P — piorun przed dziobem. W galeriach klik = zbliżenie, przeciąganie przesuwa widok. H — ukryj panele. Liczba świateł = światła statków, piorunów, wybuchów, pocisków i świecących skał, dopełnione flarami dryfującymi w polu.</div>
+</div>
+<script type="module" src="/dema/asteroidy-webgpu.js"></script>
+</body>
+</html>

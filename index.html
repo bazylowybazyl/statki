@@ -19,9 +19,9 @@
         // Panele deweloperskie, layouty HUD i ustawienia grafiki.
         dev: [
           'devConfig', 'devFlags', 'devBloomPanel', 'devRingColors',
-          'devDestructorConfig', 'devDestructorMassConfig',
+          'devDestructorConfig', 'devDestructorMassConfig', 'devCameraRig',
           'perfHudCollapsedSections', 'statki.scannerOverview.layout.v1',
-          'sc_shadow_shafts', 'sc_planet_quality', 'sc_hull_lacquer', 'sc_audio'
+          'sc_shadow_shafts', 'sc_planet_quality', 'sc_hull_lacquer', 'sc_audio', 'sc_camera_look'
         ]
       };
       const ALL_KEYS = [...SAVE_KEYS.ship, ...SAVE_KEYS.dev];
@@ -377,6 +377,23 @@
             </div>
             <div class="mm-group">
               <div class="mm-group-title">Sterowanie</div>
+              <div class="mm-field">
+                <div class="mm-field-label">Kamera za kursorem</div>
+                <div class="menu-chip-group" role="group" aria-label="Kamera za kursorem">
+                  <button class="menu-chip" data-camera-look="auto">Auto</button>
+                  <button class="menu-chip" data-camera-look="always">Zawsze</button>
+                  <button class="menu-chip" data-camera-look="never">Nigdy</button>
+                </div>
+                <p class="mm-note">Auto: w walce kamera zagląda za kursorem, poza walką stoi i wyprzedza lot. Zawsze = jak w walce, Nigdy = jak poza walką.</p>
+              </div>
+              <div class="mm-field">
+                <div class="mm-field-label">Kop kamery przy warpie</div>
+                <div class="menu-chip-group" role="group" aria-label="Kop kamery przy warpie">
+                  <button class="menu-chip" data-camera-warp-kick="on">Wł.</button>
+                  <button class="menu-chip" data-camera-warp-kick="off">Wył.</button>
+                </div>
+                <p class="mm-note">Wł.: przy skoku statek wyrywa się do przodu w kadrze, na czas skoku kamera się oddala, po wyjściu wraca do ustawionego zoomu. Wył.: kamera w warpie jak w zwykłym locie.</p>
+              </div>
               <p class="mm-note">Lista skrótów: menu główne → Sterowanie. Przypisywanie klawiszy — wkrótce.</p>
             </div>
           </div>
@@ -422,7 +439,7 @@
           <header class="mm-panel-head"><span class="mm-panel-kicker">Dane projektu</span><h2>Twórcy</h2></header>
           <div class="mm-panel-body mm-credits">
             <div class="mm-credit"><span>Autor</span><b>Szymon Bogdanowicz</b></div>
-            <div class="mm-credit"><span>Render</span><b>Three.js · WebGL 2</b></div>
+            <div class="mm-credit"><span>Render</span><b>Three.js · WebGPU</b></div>
             <div class="mm-credit"><span>Fizyka</span><b>JavaScript + WebGPU</b></div>
             <div class="mm-credit"><span>Wersja</span><b>0.0.1 alpha</b></div>
           </div>
@@ -686,6 +703,8 @@
 {
   "imports": {
     "three": "./node_modules/three/build/three.module.js",
+    "three/webgpu": "./node_modules/three/build/three.webgpu.js",
+    "three/tsl": "./node_modules/three/build/three.tsl.js",
     "three/addons/": "./node_modules/three/examples/jsm/"
   }
 }
@@ -842,6 +861,12 @@
     // Kadłuby statków, NPC i ich wraków: silnik belek (src/game/hullBodies.js).
     // Stary destruktor heksowy zostaje tylko dla asteroid (heksowe ciała skał).
     import { HullBodies } from "./src/game/hullBodies.js";
+    // Mapa ran na kadłubach (zadanie 18-C, src/3d/hullDamageMap.js): stempel z każdego krateru
+    // i rzazu (hak po trafieniu), wygaszanie osmalenia przy naprawie R.
+    import { HullDamageMap } from "./src/3d/hullDamageMap.js";
+    import { stampFamilyFor } from "./src/3d/hullDamageStamps.js";
+    HullBodies.onImpact = HullDamageMap.onHullImpact;
+    HullBodies.onRepair = HullDamageMap.onHullRepair;
     import { TowConstraintSystem } from "./src/game/towSystem.js";
     import { createColdWreckSystem, THAW_RESULT } from "./src/game/coldWrecks.js";
     import { purgeFinishedNpcs } from "./src/game/npcListPurge.js";
@@ -932,7 +957,12 @@
     import { shouldRemoveProjectileAfterImpact, stepProjectileKinematics } from "./src/game/projectileTrajectory.js";
     import { FixedStepCadence } from "./src/game/fixedStepCadence.js";
     import { stepDecay120 } from "./src/game/stepDecay.js";
-    import { stepCameraZoom, wheelDeltaPx } from "./src/game/cameraZoom.js";
+    import { stepCameraZoom, cameraZoomBase, wheelDeltaPx } from "./src/game/cameraZoom.js";
+    import {
+      cameraRigTune, createCameraRig, stepCameraRig, noteCameraRigCombat, normalizeCameraLookMode,
+      defaultShipZoom, cameraShakeAmplitudePx, sampleCameraShakePx, noteCameraRigWarp, stepCameraRigWarp,
+      normalizeCameraWarpKickMode
+    } from "./src/game/cameraRig.js";
     import { isFriendlyLineOfFireBlocked } from "./src/ai/lineOfFire.js";
     import { PhysicsBridge } from "./src/physics/physicsBridge.js";
     import { TrafficBridge } from "./src/game/trafficBridge.js";
@@ -960,8 +990,12 @@
     window.ShieldFXPresets = SHIELD_IMPACT_PRESETS;
     import { initWorld3D, attachPirateStation3D, updateWorld3D } from "./src/3d/world3d.js";
     import { destroyStation3D } from "./src/3d/stations3D.js";
-    import { AsteroidField } from "./src/3d/asteroidField3D.js";
-    import { AsteroidBeltBackdrop } from "./src/3d/asteroidBeltBackdrop3D.js";
+    // Pas asteroid (zadanie 21): pola z dema WebGPU w passach Core3D, kolizje z olbrzymami.
+    import { createAsteroidBelt } from "./src/3d/asteroids/asteroidBelt.js";
+    // Wydobycie (zadanie 21b): ładunki górnicze gracza (magazynek platformy, ceny tymczasowe).
+    import { MINING_CHARGES, createMiningChargeStock } from "./src/data/miningCharges.js";
+    import { chargeForDepth } from "./src/game/asteroidMaterials.js";
+    import { ROCK_TYPE_LABELS_PL } from "./src/game/asteroidRockKinds.js";
     import {
       initHexShips3D,
       prewarmHexShips3D,
@@ -973,14 +1007,11 @@
       isColdFreezeVisuallySafe,
       captureColdWreckImpostor
     } from "./src/3d/hexShips3D.js";
-    import { initOverlay as initOverlay3D } from "./src/effects3d/overlay.js";
-    import { createRailgunExplosionFactory } from "./src/effects3d/railgunExplosion.js";
-    import { createArmataImpactFactory } from "./src/effects3d/armataImpact.js";
-    import { createAutocannonImpactFactory } from "./src/effects3d/autocannonImpact.js";
+    // Wybuch reaktora w scenie Core3D (port WebGPU, zadanie 20 — dawny overlay efektów z własnym
+    // WebGLRenderer usunięty; trafienia broni to receptury WeaponFx, rakiety src/3d/rockets/).
     import { createReactorBlowFactory } from "./src/effects3d/reactorblow.js";
-    import { createYamatoImpactFactory } from "./src/effects3d/yamato.js";
-    import { createSupernovaMissileBlowFactory } from "./src/effects3d/supernovaMissileBlow.js";
     import { initRocketSystem3D } from "./src/effects3d/rocketSystem3D.js";
+    import { createRocketFx } from "./src/3d/rockets/rocketFx.js";
     // IMPORTUJEMY NOWY MODUL SUPERBRONI
     import * as Superweapon from "./src/game/superweapon.js";
     window.Superweapon = Superweapon;
@@ -991,9 +1022,12 @@
     import { HUDSystem } from "./src/ui/hudSystem.js";
     import { InfrastructureUI } from "./src/ui/infrastructureUI.js";
     import { CanvasVFX } from "./src/vfx/canvasParticleSystem.js";
-    import { MuzzleFX3D } from "./src/3d/muzzleFx3D.js";
+    // Losowość warstwy efektów (zadanie 23): cząstki kanwy (ślady pocisków, iskry wyrzutni i startu
+    // myśliwca) i wariacja tonu dźwięku nie zużywają Math.random gry — przebieg bitwy nie zależy od obrazu.
+    import { fxRandom } from "./src/3d/fx/fxRandom.js";
     import { Turret2D } from "./src/vfx/turret2D.js";
-    import { FlakBurstVFX } from "./src/vfx/flakBurstVfx.js";
+    // Efekty broni z dema bronie-webgpu (zadanie 17): wylot, pocisk, smuga, trafienie, wiązki, PD, flak.
+    import { WeaponFx } from "./src/3d/weapons/weaponFx.js";
     import {
       FLAK_TUNING,
       collectFlakBurstHits,
@@ -1002,7 +1036,6 @@
       isFlakWeapon,
       resolveFlakProfile
     } from "./src/game/flakSystem.js";
-    window.FlakBurstVFX = FlakBurstVFX;
     import { SparkSystem3D } from './src/3d/sparkSystem3D.js';
     // Import z efektem ubocznym: podpina iskry tarcia pod zdarzenie 'grind'
     // CollisionFX. Destructor nie woła już SparkSystem3D bezpośrednio.
@@ -1031,7 +1064,6 @@
       isTargetWithinSensorRange,
       refreshScannerContactDistances,
       resolveShipSensors,
-      selectNearestAsteroidTargets,
       sortScannerContacts,
       sortScannerSweepContacts,
       targetPoint as scannerTargetPoint
@@ -1041,6 +1073,17 @@
     import { WeaponController } from "./src/game/weaponController.js";
     import { getMountedWeaponAim } from "./src/game/weaponAim.js";
     import { barrelsPerShotOf, queueSalvoBarrels, drainSalvoQueue } from "./src/game/weaponController.js";
+    // Mechanika broni z dema (zadanie 18-B): przebicia i rykoszety (bulletsAndCollisionsStep),
+    // ładowanie Mjolnira / Valkyrie (zaczepy special); skala trafienia z danych broni (18-D).
+    import {
+      nextProjectileSerial, hasHullMechanics, resolveHullHit, entryDamage, stepInsideHull, skipsHull, ricochetBounce,
+      HIT_PENETRATE, HIT_RICOCHET, PASS_EXIT, PASS_STUCK, PASS_INSIDE
+    } from "./src/game/projectileMechanics.js";
+    import {
+      chargeTimeOf, mountChargeState, requestMountCharge, stepMountCharge, cancelMountCharge,
+      CHARGE_FIRE, CHARGE_CHARGING
+    } from "./src/game/weaponCharge.js";
+    import { weaponImpactScale } from "./src/game/weaponFeel.js";
     import { MASTER_WEAPONS, WEAPON_ICON_PATHS, WEAPON_SIZE_LABEL, getWeaponSizeRank, weaponFitsHardpointSize, shieldImpactClass } from "./src/data/weapons.js";
     import {
       addHangarSquadronMount,
@@ -1062,14 +1105,16 @@
       resolveHullRenderProfileId,
       getHullRenderProfile,
       getHullRenderSize,
-      getWeaponTierForHull
+      getWeaponTierForHull,
+      HULL_RENDER_PROFILES,
+      HULL_RENDER_WORLD_SCALE
     } from "./src/data/ships.js";
     import {
       PLAYER_HULL_MARKET,
       PLAYER_HULL_MARKET_ORDER
     } from "./src/data/playerHullMarket.js";
     import { publishGameState } from "./src/game/gameState.js";
-    import { updateWarpLens3D } from "./src/vfx/warpLensPass.js";
+    import { WarpNurt } from "./src/3d/warp/warpNurt.js";
     import { createPlayerHullCatalog } from "./src/data/playerHullCatalog.js";
     import {
       targetingStrokeGlass,
@@ -1168,6 +1213,9 @@
     import interStationShuttleImg from "./assets/inter_station_shuttle.png";
     import containerShipImg from "./assets/container_ship.png";
     import longHaulFreighterImg from "./assets/long_haul_freighter.png";
+    // Kadłuby ruchu v2 (górnicy, tankowce, holowniki…) — sprite'y ładowane
+    // leniwie, dopiero gdy taki NPC się pojawi (dziś: spawn z DevTools).
+    import { TRAFFIC_HULLS } from "./src/data/trafficHulls.js";
 
     if (CAPITAL_SHIP_TEMPLATES_DATA?.carrier?.profile) {
       CAPITAL_SHIP_TEMPLATES_DATA.carrier.profile.spriteSrc = terranCarrierImg;
@@ -1186,12 +1234,7 @@
     window.TIME_SCALE ??= TIME_SCALE;
     window.WORLD ??= WORLD;
     const TowSystem = new TowConstraintSystem({
-      iterations: 8,
-      onWake: (body) => {
-        if (body?.asteroidRef || Number.isFinite(Number(body?.worldX))) {
-          window.asteroidField?.wakeTowBody?.(body);
-        }
-      }
+      iterations: 8
     });
     window.TowSystem = TowSystem;
     window.attachTowRope = (bodyA, bodyB, options = {}) => TowSystem.attach(bodyA, bodyB, options);
@@ -1249,6 +1292,23 @@
         BridgeFx3D.attach(Core3D.scene);
         // Model 3D mostka (docs/PORT-mostki.md §8) — ta sama scena, bez renderera.
         Bridge3D.attach(Core3D.scene);
+        // Iskry trafień i tarcia oraz rakiety (lot: rocketSystem3D; wygląd z dema
+        // rakiety-webgpu: src/3d/rockets/) — w scenie Core3D, jako kroki klatki efektów
+        // (port WebGPU, zadanie 19; dawniej scena i warstwa raw overlaya).
+        SparkSystem3D.init(Core3D.scene);
+        initRocketSystem3D(Core3D.scene, { effects: createRocketFx(Core3D) });
+        // Warp „Nurt” (src/3d/warp/, zadanie 22): ośrodek (compute), szczeliny, błyski, gwiazdy,
+        // zgięcie mgławicy, fale — sam wygląd, słucha automatu warpa i przylotów NPC.
+        WarpNurt.init();
+        // Wybuch reaktora (śmierć okrętu, rozpad stacji): pule cząstek w passie ortho Core3D, krok
+        // klatki efektów (zadanie 20). Rozpad stacji (Destruction3D) sypie te same wybuchy; bez
+        // menedżera fali — fala z refrakcją (shockwave3D) usunięta w zadaniu 19.
+        window.makeReactorBlow = createReactorBlowFactory(Core3D);
+        window.Destruction3D.init({
+          scene:            Core3D.scene,
+          reactorFactory:   window.makeReactorBlow,
+          shockwaveManager: null,
+        });
       }
     }
 
@@ -1293,6 +1353,7 @@
     ]);
     const SUPPORT_CLICK_TYPES = new Set([
       'fighter',
+      'interceptor',
       'carrier_fighter'
     ]);
 
@@ -1309,7 +1370,23 @@
       carrier: 'capital',
       supercapital: 'capital',
       atlas: 'capital',
-      megafreighter: 'capital'
+      megafreighter: 'capital',
+      // Kadłuby cywilne z rosteru dev (spawnDevHull).
+      'freighter-small': 'frigate',
+      'freighter-medium': 'destroyer',
+      'freighter-large': 'battleship',
+      'freighter-capital': 'capital',
+      heavy_harvester: 'destroyer',
+      belter: 'frigate',
+      surveyor: 'frigate',
+      refinery_tender: 'battleship',
+      tanker: 'battleship',
+      salvage_hauler: 'destroyer',
+      construction_tug: 'frigate',
+      repair_drone: 'frigate',
+      distress_beacon_ship: 'destroyer',
+      smuggler: 'frigate',
+      pirate_raider: 'destroyer'
     });
     const SUPPORT_LINE_TIER_MAX = Object.freeze({
       frigate: 40,
@@ -1427,7 +1504,7 @@
             if (!carrier) return;
             spawnCallInShip('fighter', { anchor: carrier, mode });
           } else {
-            spawnCallInShip(key, { mode });
+            WarpNurt.arriveAll(spawnCallInShip(key, { mode }));
           }
           // Rozkaz skrzydła zostaje, jaki był (ATAK nie znika po przyzwaniu).
         });
@@ -1506,7 +1583,7 @@
         const mode = getSupportSpawnMode();
         // Rozkaz skrzydła zostaje, jaki był — dawniej każde przyzwanie
         // przestawiało CAŁE skrzydło na ESKORTĘ i kasowało kliknięty ATAK.
-        spawnCallInShip(key, { spawnPos: world, pos: world, mode });
+        WarpNurt.arriveAll(spawnCallInShip(key, { spawnPos: world, pos: world, mode }));
       }
       mouse.left = false;
       mouse.click = false;
@@ -1634,7 +1711,7 @@
       for (let i = 0; i < count; i++) {
         const t = count === 1 ? 0.5 : i / (count - 1);
         const pos = { x: startWorld.x + dx * t, y: startWorld.y + dy * t };
-        spawnCallInShip(key, { spawnPos: pos, pos, mode, singleModule: true });
+        WarpNurt.arriveAll(spawnCallInShip(key, { spawnPos: pos, pos, mode, singleModule: true }));
       }
       toast(`LINIA: ${count}x ${key}`);
     }
@@ -1703,6 +1780,10 @@
       vfx: { colorTempK: 8000, bloomGain: 1.1, engineGain: 1.0 },
       audio: { master: 0.8, sfx: 1.0, music: 0.7 },
       controls: { mouseSensitivity: 1.0 }, // bez odwracania osi
+      // Kamera za kursorem: 'auto' (tylko w walce) | 'always' | 'never' — src/game/cameraRig.js.
+      cameraLook: 'auto',
+      // Kop kamery przy warpie (skok, wyjście, oddalenie zoomu): 'on' | 'off' — src/game/cameraRig.js.
+      cameraWarpKick: 'on',
       planetQuality: 'medium',
       shadowShafts: 'medium'
     };
@@ -1894,7 +1975,7 @@
       if (!ctx || !buffer) return;
 
       // Losowa wariacja tonu (żeby seria nie brzmiała sztucznie)
-      const rate = pitchVar ? 1.0 + (Math.random() - 0.5) * 2 * pitchVar : 1.0;
+      const rate = pitchVar ? 1.0 + (fxRandom.next() - 0.5) * 2 * pitchVar : 1.0;
       const dist = (Number.isFinite(x) && Number.isFinite(y)) ? Math.hypot(x - camera.x, y - camera.y) : 0;
       const durationMs = (Number(buffer.duration) || 0) / rate * 1000;
       const voiceVolume = shotVoiceLimiter.admit(soundKey, performance.now(), volume, dist, durationMs);
@@ -2185,6 +2266,24 @@
       return !!mainMenuEl && !mainMenuEl.classList.contains('hidden');
     }
 
+    // --- TYLKO WEBGPU (docs/webgpu/PLAN.md §2, decyzja użytkownika 2026-09-27) ---
+    // Core3D tworzy renderer dopiero, gdy przeglądarka da adapter WebGPU; bez
+    // niego (Core3D.ready → false) gra nie startuje, a menu mówi dlaczego.
+    function showWebGpuRequired() {
+      if (document.getElementById('mm-webgpu-required')) return;
+      const note = document.createElement('div');
+      note.id = 'mm-webgpu-required';
+      note.className = 'mm-webgpu-required';
+      note.setAttribute('role', 'alert');
+      note.textContent = 'Gra wymaga przeglądarki z WebGPU';
+      document.getElementById('menu-home-view')?.prepend(note);
+      for (const id of ['btn-continue', 'btn-new-game', 'btn-mode-single', 'btn-mode-split']) {
+        const btn = document.getElementById(id);
+        if (btn) btn.disabled = true;
+      }
+    }
+    Core3D.ready?.then((ok) => { if (!ok) showWebGpuRequired(); });
+
     // --- TŁO MENU: Ziemia z ringiem (src/3d/menuBackdrop3D.js) ---
     // Renderuje przed startem gry, póki menu widać (edytor i nakładki
     // split-screen je chowają), a po „Start” jeszcze pod ekranem ładowania.
@@ -2369,13 +2468,6 @@
         skillSlotsEl.appendChild(slot);
       });
     }
-
-    // Model widoku overlayu (ortho nad światem 2D)
-    const overlayView = {
-      center: { x: 0, y: 0 },
-      viewport: { w: innerWidth, h: innerHeight },
-      zoom: 1.0
-    };
 
     // Ile jednostek świata ma 1 AU. Helper leżał kiedyś w bloku warp lens, ale
     // korzysta z niego cała skala świata (orbity, granice, radar), nie sam efekt.
@@ -4180,7 +4272,7 @@
     if (previousPlayer.controller) shipOverrides.controller = previousPlayer.controller;
     if (previousPlayer.aiController) shipOverrides.aiController = previousPlayer.aiController;
 
-    Game.player = createShipEntity({ world: WORLD, overlayView, overrides: shipOverrides });
+    Game.player = createShipEntity({ world: WORLD, overrides: shipOverrides });
     let ship = Game.player;
     ship.isPlayer = true;
     ship.friendly = true;
@@ -4208,9 +4300,6 @@
         }
       }
     }
-
-    overlayView.center.x = ship.pos.x;
-    overlayView.center.y = ship.pos.y;
 
     let rocketAmmo = 0;
     let rocketAmmoMax = 0;
@@ -5154,7 +5243,6 @@
           ship,
           npcs,
           SensorSystem,
-          asteroidField: window.asteroidField || null,
           asteroidRange: typeof getScannerAsteroidRange === 'function' ? getScannerAsteroidRange() : 60000,
           lockedTargets,
           selectedTarget: scannerSelectedTarget || lockedTarget,
@@ -5255,6 +5343,11 @@
         const hp = loadout?.hp;
         const wpn = loadout?.weapon;
         if (!hp || !wpn) continue;
+        // Ładowanie (Mjolnir, Valkyrie — 18-B): pasek slotu pokazuje postęp ładowania.
+        if (chargeTimeOf(wpn) > 0) {
+          const st = getMountedWeaponAim(ship, loadout).charge;
+          if (st && st.charge >= 0) return { weapon: wpn, charge: clamp(Number(st.u) || 0, 0, 1), charging: true };
+        }
         const cdLeft = Math.max(0, Number(hp.specialCd) || 0);
         const cdMax = Math.max(0.01, Number(wpn.cooldown) || cdLeft || 0.25);
         if (cdLeft < bestCdLeft) {
@@ -5380,6 +5473,10 @@
       // Płynny zoom (src/game/cameraZoom.js): prędkość sprężyny w log/s i kotwica
       // zoomu RTS pod kursorem (px od środka kadru). Krok raz na klatkę: updateCameraZoom.
       zoomVel: 0,
+      // Zoom gracza (stan sprężyny) i przejściowy człon log(zoom) kopu warpa (cameraRig.js,
+      // updateCameraWarpKick): camera.zoom = zoomBase · e^zoomImpulseLog.
+      zoomBase: 1.0,
+      zoomImpulseLog: 0,
       zoomAnchor: { active: false, dx: 0, dy: 0 },
       manualZoom: false,
       shakeMag: 0,
@@ -5399,6 +5496,8 @@
       focusZoom: 1.0,
       focusArrived: false,
       transition: null,
+      returnZoom: null,
+      returnManualZoom: false,
       addShake(mag, dur) {
         if (DevFlags && DevFlags.disableCameraShake) {
           this.shakeMag = 0;
@@ -5415,7 +5514,8 @@
         this.focusStation = null;
         this.targetX = this.x;
         this.targetY = this.y;
-        this.targetZoom = this.zoom;
+        // Zoom gracza bez kopu warpa: oddalenie skoku wraca poza kamerą statku do niego (bez skoku).
+        this.targetZoom = cameraZoomBase(this);
         this.zoomVel = 0;
         this.transition = null;
         this.focusArrived = false;
@@ -5428,14 +5528,10 @@
         this.focusArrived = false;
         this.lastPointerX = null;
         this.lastPointerY = null;
-        const tx = ship.pos.x;
-        const ty = ship.pos.y;
-        const tz = clamp(this.zoom, this.minZoom, this.maxZoom);
-        this.beginTransition(tx, ty, tz, 0.75, () => {
-          this.targetX = tx;
-          this.targetY = ty;
-          this.targetZoom = tz;
-        });
+        // Przejście do statku prowadzi tylko pozycję, a jego cel co klatkę
+        // przestawia render() na żywy cel kamery (statek + offset) — koniec nie
+        // skacze. Zoom zostaje sprężynie (kółko działa w trakcie przejścia).
+        this.beginTransition(ship.pos.x, ship.pos.y, this.targetZoom, 0.75);
         this.manualZoom = true;
       },
       toggleRtsMode() {
@@ -5460,6 +5556,7 @@
       },
       focusOnStation(station) {
         if (!station) return;
+        this.rememberShipZoom();
         this.focusStation = station;
         this.mode = 'focus';
         this.focusArrived = false;
@@ -5476,8 +5573,16 @@
           this.focusArrived = true;
         });
       },
+      // Zoom gracza sprzed fokusu stacji/edytora — clearFocus do niego wraca
+      // (dawniej wracał do defaultZoom i gubił ustawienie kółkiem).
+      rememberShipZoom() {
+        if (this.mode !== 'ship') return;
+        this.returnZoom = this.targetZoom;
+        this.returnManualZoom = this.manualZoom;
+      },
       focusOnInfrastructure(station, layout) {
         if (!station) return;
+        this.rememberShipZoom();
         this.focusStation = station;
         this.mode = 'infrastructure';
         this.focusArrived = false;
@@ -5499,17 +5604,94 @@
           this.focusStation = null;
           this.mode = 'ship';
           this.focusArrived = false;
-          this.manualZoom = false;
-          this.targetZoom = this.defaultZoom;
+          const returnZoom = Number(this.returnZoom);
+          this.targetZoom = returnZoom > 0 ? returnZoom : this.defaultZoom;
           this.targetX = ship.pos.x;
           this.targetY = ship.pos.y;
           this.beginTransition(this.targetX, this.targetY, this.targetZoom, 0.6);
+          this.manualZoom = returnZoom > 0 ? !!this.returnManualZoom : false;
+          this.returnZoom = null;
           this.lastPointerX = null;
           this.lastPointerY = null;
         }
       }
     };
     publishGameState({ camera });
+
+    // --- Kamera statku: postawy nawigacja / walka (src/game/cameraRig.js) ---
+    // Offset kamery względem statku w px ekranu; krok raz na klatkę w render().
+    // Strojenie: cameraRigTune (panel dev F12 → Kamera, zapis tylko z ?dev).
+    const cameraRig = createCameraRig();
+    window.CameraRig = { rig: cameraRig, tune: cameraRigTune };
+    const _cameraShakePx = { x: 0, y: 0 };
+    // Wejście riga pisane co klatkę w render() — jeden obiekt, bez alokacji.
+    const _cameraRigInput = {
+      dt: 0, holdDt: 0, viewW: 1, viewH: 1, mouseX: 0, mouseY: 0,
+      lookFrozen: true, lookEnabled: true, velX: 0, velY: 0, maxSpeed: 1, mode: 'auto'
+    };
+    let _cameraHostileScanAt = 0;
+    let _cameraHostileNear = false;
+
+    function noteCameraCombat(reason) {
+      noteCameraRigCombat(cameraRig, cameraRigTune, reason);
+    }
+    // Strzał gracza: cały rdzeń broni idzie szyną (strzelec w detail.shooter),
+    // Hexlance — zdarzeniem DOM bez strzelca (superbroń ma tylko gracz).
+    WeaponShotBus.on((detail) => {
+      if (detail && detail.shooter === ship) noteCameraCombat('strzał');
+    });
+    window.addEventListener('game_weapon_fired', (e) => {
+      if (e?.detail?.weaponId === 'hexlance') noteCameraCombat('strzał');
+    });
+
+    // Sygnały trwające: wrogi cel na namiarze albo wróg w zasięgu broni głównej
+    // (× hostileRangeScale). Skan NPC co 250 ms, nie co klatkę.
+    function sampleCameraCombatSignals(nowMs) {
+      if (lockedTarget && isHostileNpc(lockedTarget)) {
+        noteCameraCombat('cel na namiarze');
+        return;
+      }
+      const locks = Array.isArray(lockedTargets) ? lockedTargets : null;
+      for (let i = 0; locks && i < locks.length; i++) {
+        if (isHostileNpc(locks[i])) {
+          noteCameraCombat('cel na namiarze');
+          return;
+        }
+      }
+      if (nowMs >= _cameraHostileScanAt) {
+        _cameraHostileScanAt = nowMs + 250;
+        _cameraHostileNear = false;
+        const scale = Number(cameraRigTune.hostileRangeScale) || 0;
+        const ranges = scale > 0 ? getPlayerMainWeaponRanges() : null;
+        let range = 0;
+        if (ranges) for (let i = 0; i < ranges.length; i++) if (ranges[i] > range) range = ranges[i];
+        const list = Array.isArray(window.npcs) ? window.npcs : npcs;
+        if (range > 0 && ship && ship.pos && Array.isArray(list)) {
+          const lim = range * scale;
+          const lim2 = lim * lim;
+          for (let i = 0; i < list.length; i++) {
+            const n = list[i];
+            if (!n || n.dead || n.isWreck || n.isBridgeHulk) continue;
+            const dx = (Number(n.x) || 0) - ship.pos.x;
+            const dy = (Number(n.y) || 0) - ship.pos.y;
+            if (dx * dx + dy * dy > lim2) continue;
+            if (isHostileNpc(n)) { _cameraHostileNear = true; break; }
+          }
+        }
+      }
+      if (_cameraHostileNear) noteCameraCombat('wróg w zasięgu');
+    }
+
+    // Kursor zajęty interfejsem: kamera trzyma ostatni punkt patrzenia (nie zeruje
+    // go — dawniej Alt zerował offset w jednej klatce i obraz skakał).
+    function isCameraLookFrozen() {
+      return isHudPointerMode()
+        || !mouse.overCanvas
+        || !!worldCommandMenu.open
+        || !!targetingMode.wheelOpen
+        || !!stationUI.open
+        || !!CICDisplay.active;
+    }
 
     function computeStationFocusTarget(station) {
       if (!station) return { x: camera.x, y: camera.y, zoom: camera.zoom };
@@ -5544,9 +5726,6 @@
       return { x, y, zoom, screenX, screenY };
     }
 
-    // Model widoku overlayu już istnieje – dopasuj początkowy zoom do kamery
-    overlayView.zoom = camera.zoom;
-
     function updateCameraTarget(dt) {
       // Ship camera is resolved later in render() using interpolated position
       // to avoid jitter. Only non-ship modes are updated here.
@@ -5577,8 +5756,6 @@
           }
         } else {
           camera.clearFocus();
-          // Wracamy do statku - render() przejmie pozycję
-          camera.targetZoom = camera.defaultZoom;
         }
       } else if (camera.mode === 'infrastructure') {
         const st = camera.focusStation;
@@ -5596,47 +5773,48 @@
           }
         } else {
           camera.clearFocus();
-          camera.targetZoom = camera.defaultZoom;
         }
       }
 
-      if (camera.transition) {
-        const tr = camera.transition;
-        tr.elapsed = Math.min(tr.elapsed + dt, tr.duration);
-        const t = tr.duration <= 0 ? 1 : tr.elapsed / tr.duration;
-        const eased = smoothstep01(t);
-        camera.x = lerp(tr.startX, tr.targetX, eased);
-        camera.y = lerp(tr.startY, tr.targetY, eased);
-        camera.zoom = lerp(tr.startZoom, tr.targetZoom, eased);
-        if (tr.elapsed >= tr.duration - 1e-6) {
-          camera.x = tr.targetX;
-          camera.y = tr.targetY;
-          camera.zoom = tr.targetZoom;
-          const onComplete = tr.onComplete;
-          camera.transition = null;
-          if (typeof onComplete === 'function') onComplete();
-        }
-      } else {
-        // --- WYGLADZANIE RUCHU KAMERY ---
-        // ZMIANA: Ruszamy kamerą tutaj TYLKO jeśli NIE jesteśmy w trybie statku.
-        // Pozycją statku steruje teraz render(), co eliminuje drgania przy interpolacji.
-
-        if (camera.mode !== 'ship') {
-          const posLerp = Math.min(1, dt * 6);
-          camera.x += (camera.targetX - camera.x) * posLerp;
-          camera.y += (camera.targetY - camera.y) * posLerp;
-        }
-        // Zoom goni targetZoom w updateCameraZoom — raz na klatkę renderu, nie tu:
-        // w krokach fizyki stał w klatkach bez kroku i przeskakiwał przy 2–3 krokach.
-      }
+      // Przejścia kamery i dojazd fokusu idą w stepCameraTransition, a zoom
+      // w updateCameraZoom — raz na klatkę renderu, nie tu: w krokach fizyki
+      // stały w klatkach bez kroku i przeskakiwały przy 2–3 krokach naraz.
 
       camera.zoom = clamp(camera.zoom, camera.minZoom, camera.maxZoom);
       mouse.dx = 0;
       mouse.dy = 0;
     }
-    // Bezpieczna, odroczona inicjalizacja overlayu 3D
-    let overlay3D = null;
-    let rocketOverlay3D = null;
+
+    // Przejście kamery (wyjście z RTS, fokus i powrót z edytora stacji) oraz dojazd
+    // trybów fokusu — raz na klatkę renderu, z render() (tam przejście do statku
+    // dostaje świeży cel: statek + offset riga). Przejście 'ship' prowadzi tylko
+    // pozycję; zoom zostaje sprężynie w updateCameraZoom.
+    function stepCameraTransition(dt) {
+      const tr = camera.transition;
+      if (tr) {
+        tr.elapsed = Math.min(tr.elapsed + dt, tr.duration);
+        const t = tr.duration <= 0 ? 1 : tr.elapsed / tr.duration;
+        const eased = smoothstep01(t);
+        const ownsZoom = tr.kind !== 'ship';
+        camera.x = lerp(tr.startX, tr.targetX, eased);
+        camera.y = lerp(tr.startY, tr.targetY, eased);
+        if (ownsZoom) camera.zoom = lerp(tr.startZoom, tr.targetZoom, eased);
+        if (tr.elapsed >= tr.duration - 1e-6) {
+          camera.x = tr.targetX;
+          camera.y = tr.targetY;
+          if (ownsZoom) camera.zoom = tr.targetZoom;
+          const onComplete = tr.onComplete;
+          camera.transition = null;
+          if (typeof onComplete === 'function') onComplete();
+        }
+      } else if (camera.mode !== 'ship' && camera.mode !== 'rts') {
+        // RTS ma cel = pozycja (pan w fizyce, interpolowany prevCameraState).
+        const posLerp = 1 - Math.exp(-6 * dt);
+        camera.x += (camera.targetX - camera.x) * posLerp;
+        camera.y += (camera.targetY - camera.y) * posLerp;
+      }
+      camera.zoom = clamp(camera.zoom, camera.minZoom, camera.maxZoom);
+    }
 
     window.addEventListener('resize', () => {
       W = canvas.width = innerWidth;
@@ -5673,169 +5851,15 @@
           camera.transition.targetZoom = target.zoom;
         }
       }
-      resizeOverlay3D();
     });
 
-    function startOverlay3D() {
-      const init = initOverlay3D;
-      const railFactory = createRailgunExplosionFactory;
-      const armataFactory = createArmataImpactFactory;
-      const autocannonFactory = createAutocannonImpactFactory;
-      const reactorFactory = createReactorBlowFactory;
-      const yamatoFactory = createYamatoImpactFactory;
-      const supernovaFactory = createSupernovaMissileBlowFactory;
-      const host = document.getElementById('game-root');
-
-      // Musimy mieć: API z modułu + host z DOM + overlayView z tego skryptu
-      if (!init || !railFactory || !host || typeof overlayView === 'undefined') return false;
-
-      // Rakiety dzielą kontekst WebGL z overlayem efektów. Osobny initOverlay
-      // tworzył DRUGI WebGLRenderer (własna kanwa, własny stan sterownika) —
-      // przy strzelaniu „Overlay FX 3D" skakało z 0.22 do 3.45 ms. Awaryjny
-      // powrót do dwóch kontekstów: window.DevFlags.splitOverlayContexts = true
-      // przed startem gry.
-      const splitContexts = !!(window.DevFlags && window.DevFlags.splitOverlayContexts);
-      const ov = init({ host, getView: () => overlayView, withRawLayer: !splitContexts });
-      overlay3D = ov;
-      window.overlay3D = ov;
-      const rocketOv = splitContexts
-        ? init({
-            host,
-            getView: () => overlayView,
-            mode: 'raw',
-            zIndex: 21,
-            useBloom: false,
-            useAlphaPass: false,
-            adaptiveQuality: false,
-            updateSparkSystem: false,
-            baseRenderScale: 1.0
-          })
-        : ov.rawLayer;
-      rocketOverlay3D = rocketOv;
-      window.rocketOverlay3D = rocketOv;
-      if (SparkSystem3D) {
-        if (SparkSystem3D.isInitialized) {
-          SparkSystem3D.dispose();
-        }
-        SparkSystem3D.init(ov.scene);
-      }
-      window.makeRailgunExplosion = railFactory(ov.scene);
-      if (armataFactory) {
-        window.makeArmataImpact = armataFactory(ov.scene);
-      }
-      if (autocannonFactory) {
-        window.makeAutocannonImpact = autocannonFactory(ov.scene);
-      }
-      if (reactorFactory) {
-        window.makeReactorBlow = reactorFactory(ov.scene);
-      }
-      if (yamatoFactory) {
-        window.makeYamatoImpact = yamatoFactory(ov.scene);
-      }
-      // Init 3D destruction engine — scene + reactor factory. Bez menedżera fali:
-      // fala z refrakcją zostaje wyłącznie dla rakiet supernova (2026-09-24),
-      // więc rozpad stacji (shatter/implodeMass) jej nie odpala.
-      if (window.Destruction3D) {
-        window.Destruction3D.init({
-          scene:            window.Core3D?.scene,
-          reactorFactory:   window.makeReactorBlow,
-          shockwaveManager: null,
-        });
-      }
-      if (supernovaFactory) {
-        window.makeSupernovaMissileBlow = supernovaFactory(ov.scene);
-      }
-      // 3D Rocket System (fire/smoke GPU particles + physics)
-      if (initRocketSystem3D) {
-        initRocketSystem3D(rocketOv.scene);
-      }
-      resizeOverlay3D();
-      // Rozgrzewka programów overlaya (overlay.js, prewarm): pule (iskry, Yamato, reaktor,
-      // supernowa, rakiety) wiszą w scenie; próbki z fabryk tworzących materiały na każdy
-      // wybuch zostają jako trzymacze programów — bez nich rail/armata/działko kompilowały
-      // się od nowa po każdej przerwie w strzelaniu.
-      const prewarmSamples = [];
-      if (window.makeRailgunExplosion) prewarmSamples.push(window.makeRailgunExplosion({ x: 0, y: 0, size: 40 }));
-      if (window.makeArmataImpact) prewarmSamples.push(window.makeArmataImpact({ x: 0, y: 0, size: 40 }));
-      if (window.makeAutocannonImpact) prewarmSamples.push(window.makeAutocannonImpact({ x: 0, y: 0, size: 40 }));
-      ov.prewarm?.(prewarmSamples);
-      if (splitContexts) rocketOv.prewarm?.();
-      return true;
-    }
-
-    // Moduły <script type="module"> wykonują się po parsowaniu DOM, więc
-    // DOMContentLoaded zwykle wystarczy. Dla pewności dodajemy krótki polling.
-    window.addEventListener('DOMContentLoaded', () => {
-      if (startOverlay3D()) return;
-      let tries = 0;
-      const maxTries = 120; // ~2 sekundy przy 60 FPS
-      (function poll() {
-        if (startOverlay3D() || tries++ > maxTries) return;
-        requestAnimationFrame(poll);
-      })();
-    });
-
-    // Helper do spawnu eksplozji 3D
-    function triggerRailgunExplosion3D(x, y, size = ship.h * 0.22, options = {}) {
-      if (overlay3D && window.makeRailgunExplosion) {
-        const fx = window.makeRailgunExplosion({ x, y, size, ...options });
-        overlay3D.spawn(fx);
-      }
-    }
-
-    function triggerArmataImpact3D(x, y, size = ship.h * 0.3) {
-      if (overlay3D && window.makeArmataImpact) {
-        const fx = window.makeArmataImpact({ x, y, size });
-        overlay3D.spawn(fx);
-      }
-    }
-
-    function triggerAutocannonImpact3D(x, y, size = ship.h * 0.2, color = null, quality = 1) {
-      if (overlay3D && window.makeAutocannonImpact) {
-        const fx = window.makeAutocannonImpact({ x, y, size, color, quality });
-        overlay3D.spawn(fx);
-      }
-    }
-
+    // Wybuch reaktora (świat gry) — pule cząstek w scenie Core3D (src/effects3d/reactorblow.js,
+    // zadanie 20; fabryka tworzona przy starcie Core3D, rozgrzewa ją krok klatki efektów).
     function triggerReactorBlow3D(x, y, size = ship.h * 0.35, options = {}) {
-      if (overlay3D && window.makeReactorBlow) {
-        const fx = window.makeReactorBlow({ x, y, size, ...options });
-        overlay3D.spawn(fx);
-      }
+      window.makeReactorBlow?.({ x, y, size, ...options });
     }
 
-    function resolveOverlayImpactQuality() {
-      const stats = window.overlay3D?.getStats?.();
-      const active = Number(stats?.activeEffects) || 0;
-      const renderMs = Number(stats?.lastRenderMs) || 0;
-      const pressure = Math.max(active / 70, renderMs / 6.5);
-      return Math.max(0.58, Math.min(1.15, 1 - Math.max(0, pressure - 0.32) * 0.22));
-    }
-
-    function triggerYamatoImpact3D(x, y, size = ship.h * 0.42, color = null, quality = null) {
-      if (overlay3D && window.makeYamatoImpact) {
-        const resolvedQuality = Number.isFinite(Number(quality)) ? Number(quality) : resolveOverlayImpactQuality();
-        const fx = window.makeYamatoImpact({ x, y, size, color, quality: resolvedQuality });
-        overlay3D.spawn(fx);
-      }
-    }
-
-    // Expose trigger functions on window so canvasParticleSystem and spawnBulletImpactEffect can find them
-    window.triggerRailgunExplosion3D = triggerRailgunExplosion3D;
-    window.triggerArmataImpact3D = triggerArmataImpact3D;
-    window.triggerAutocannonImpact3D = triggerAutocannonImpact3D;
     window.triggerReactorBlow3D = triggerReactorBlow3D;
-    window.triggerYamatoImpact3D = triggerYamatoImpact3D;
-
-    // Resize: utrzymuj rozmiar overlayu = okna
-    function resizeOverlay3D() {
-      overlayView.viewport.w = innerWidth;
-      overlayView.viewport.h = innerHeight;
-      if (overlay3D) overlay3D.resize();
-      if (rocketOverlay3D) rocketOverlay3D.resize();
-    }
-
-    resizeOverlay3D();
 
     // === Ship sprite ===
     const USE_SHIP_SPRITE = true;
@@ -5913,7 +5937,7 @@
     function getHullSpriteForNpc(npc) {
       const hullProfileId = getNpcHullRenderProfileId(npc);
       if (!hullProfileId) return null;
-      const src = HULL_SPRITE_PATHS_BY_ID[hullProfileId] || null;
+      const src = HULL_SPRITE_PATHS_BY_ID[hullProfileId] || TRAFFIC_HULLS[hullProfileId]?.sprite || null;
       if (!src) return null;
       const sprite = loadHullSprite(src);
       if (!sprite || !sprite.ready || sprite.error) return null;
@@ -6189,8 +6213,6 @@
       if (!hasSavedShipPosition && ship) {
         ship.pos.x = centerX;
         ship.pos.y = centerY;
-        overlayView.center.x = centerX;
-        overlayView.center.y = centerY;
       }
     }
 
@@ -6804,9 +6826,6 @@
         camera.y = spawnPos.y;
         camera.targetX = spawnPos.x;
         camera.targetY = spawnPos.y;
-
-        overlayView.center.x = spawnPos.x;
-        overlayView.center.y = spawnPos.y;
       }
     }
 
@@ -7809,6 +7828,14 @@
       if (templateKey === 'megafreighter') {
         return spawnCapitalCallIn('megafreighter', { ...opts, mode });
       }
+      // Frachtowce i kadłuby ruchu v2 (roster dev „Niezależni”/„Piraci”).
+      if (DEV_HULL_SPAWNS[templateKey]) {
+        const pos = opts.spawnPos || opts.pos || {
+          x: ship.pos.x + Math.cos(ship.angle || 0) * 3000,
+          y: ship.pos.y + Math.sin(ship.angle || 0) * 3000
+        };
+        return spawnDevHull(templateKey, { ...opts, spawnPos: pos, mode });
+      }
       return spawnSupportShip(templateKey, { ...opts, mode });
     }
 
@@ -8280,6 +8307,62 @@
       'mercenary': { radius: 25, speed: 100, hp: 100, color: '#ff6633', weapon: 'gun', isCollidable: true }
     };
 
+    // --- DevTools: spawn kadłubów bez szablonu wsparcia ---
+    // Frachtowce cargoFleet i kadłuby ruchu v2 (TRAFFIC_HULLS). Bez AI i broni:
+    // `mission` = nie znikają za DESPAWN_RADIUS i słuchają rozkazów RTS.
+    // Bojowe typy (fregaty, niszczyciele, kapitały) idą przez spawnCallInShip.
+    const DEV_HULL_SPAWNS = Object.freeze({
+      'freighter-small': { hull: 'inter_station_shuttle', type: 'freighter-small', hp: 400, speed: 210 },
+      'freighter-medium': { hull: 'container_ship', type: 'freighter-medium', hp: 900, speed: 175 },
+      'freighter-large': { hull: 'long_haul_freighter', type: 'freighter-large', hp: 1600, speed: 140 },
+      'freighter-capital': { hull: 'heavy_freighter', type: 'freighter-capital', hp: 4000, speed: 115 },
+      heavy_harvester: { hull: 'heavy_harvester', hp: 1500, speed: 120 },
+      belter: { hull: 'belter', hp: 500, speed: 180 },
+      surveyor: { hull: 'surveyor', hp: 500, speed: 220 },
+      refinery_tender: { hull: 'refinery_tender', hp: 1800, speed: 120 },
+      tanker: { hull: 'tanker', hp: 1600, speed: 140 },
+      salvage_hauler: { hull: 'salvage_hauler', hp: 1400, speed: 150 },
+      construction_tug: { hull: 'construction_tug', hp: 700, speed: 170 },
+      repair_drone: { hull: 'repair_drone', hp: 200, speed: 260 },
+      distress_beacon_ship: { hull: 'distress_beacon_ship', hp: 600, speed: 200 },
+      smuggler: { hull: 'smuggler', hp: 600, speed: 240, pirate: true },
+      pirate_raider: { hull: 'pirate_raider', hp: 1400, speed: 220, pirate: true }
+    });
+
+    function spawnDevHull(key, opts = {}) {
+      const def = DEV_HULL_SPAWNS[key];
+      const pos = opts.spawnPos || opts.pos;
+      if (!def || !pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return null;
+      const mode = opts.mode || (def.pirate ? 'pirate' : 'dummy');
+      const npc = makeNPCBase({ x: pos.x, y: pos.y }, {
+        hp: def.hp,
+        maxSpeed: def.speed,
+        accel: def.speed * 0.6,
+        turn: 1.2,
+        friction: 0.99,
+        radius: Math.round((HULL_RENDER_PROFILES[def.hull]?.radius || 100) * HULL_RENDER_WORLD_SCALE),
+        isCollidable: true
+      });
+      npc.id = `dev-hull:${key}:${Math.random().toString(36).slice(2, 8)}`;
+      npc.type = def.type || def.hull;
+      npc.shipFrame = def.hull;
+      npc.devHull = true;
+      npc.mission = true;
+      npc.combatDisabled = true;
+      npc.friendly = mode === 'friendly';
+      npc.isPirate = mode === 'pirate';
+      npc.color = npc.friendly ? '#7cff91' : (npc.isPirate ? '#ff5c7c' : '#9fb6c8');
+      npc.displayName = key;
+      npc.angle = Number.isFinite(opts.spawnAngle) ? opts.spawnAngle : (Math.random() * Math.PI * 2);
+      npc.desiredAngle = npc.angle;
+      npc.weapons = { main: [], aux: [], missile: [], hangar: [], special: [], special_missile: [], builtin: [] };
+      npcs.push(npc);
+      return npc;
+    }
+
+    window.DEV_HULL_SPAWN_KEYS = Object.keys(DEV_HULL_SPAWNS);
+    window.spawnDevHull = spawnDevHull;
+
     // ============================================================================
     // TRYBY CELOWNIKA — wpływają wyłącznie na wybór celów, nigdy na statystyki broni.
     // ============================================================================
@@ -8381,9 +8464,19 @@
     function hexSweepImpact(entity, x0, y0, x1, y1, radius) {
       return DestructorSystem.sweepImpact(entity, x0, y0, x1, y1, radius);
     }
-    function applyHexImpact(entity, x, y, damage, vel, shard) {
+    function applyHexImpact(entity, x, y, damage, vel, shard, fxSource = null, fxVariant = 'impact') {
       // Kadłub na belkach: krater od najbliższego węzła punktu trafienia (sweep daje punkt wejścia).
-      if (entity?.beamHull) return HullBodies.impact(entity, x, y, damage, vel);
+      // fxSource (pocisk albo broń) — rodzina stempla mapy ran dla haka HullBodies.onImpact (18-C);
+      // fxVariant — wariant stempla: 'impact', 'ricochet', 'exit', 'stuck' (przebicia 18-B).
+      if (entity?.beamHull) {
+        if (!fxSource) return HullBodies.impact(entity, x, y, damage, vel);
+        HullDamageMap.setSource(fxSource, fxVariant);
+        try {
+          return HullBodies.impact(entity, x, y, damage, vel);
+        } finally {
+          HullDamageMap.clearSource();
+        }
+      }
       if (!shard) return DestructorSystem.applyImpact(entity, x, y, damage, vel);
       _hexImpactOpts.shard = shard;
       try {
@@ -8436,16 +8529,19 @@
     const _beamHits = [];
     const _beamWorldHit = { dist: 0, entity: null, kind: null, shard: null };
     const _pdBeamHit = createPdBeamHit();
-    const _beam2dEnd = { x: 0, y: 0 };
     const _fireAimPoint = { x: 0, y: 0 };
     // Nośniki strzału (src/game/carrierVelocity.js): lufa strzelca i trafiony
     // kadłub — efekty lecą z nimi zamiast zostawać w świecie.
     const _fireCarrier = createCarrier();
     const _hitCarrier = createCarrier();
-    const _beam2dOpts = { life: 0.12, colorOuter: null, colorInner: '#ffffff', glowColor: null, glowBlur: 20 };
     // Dane wiązki dla zdarzenia strzału — jeden obiekt: słuchacze czytają go
-    // synchronicznie i niczego z niego nie zatrzymują (Weapon3DSystem kopiuje liczby).
-    const _beamEventScratch = { startX: 0, startY: 0, endX: 0, endY: 0, width: 5, mode: 'pulse', emitterUid: null };
+    // synchronicznie i niczego z niego nie zatrzymują (WeaponFx kopiuje liczby; encję
+    // trafienia trzyma najwyżej do końca efektu). kind: 'continuous' | 'pulse' | 'pd';
+    // hitEntity + nx, ny — trafiony kadłub i normalna powierzchni (tylko dla efektu).
+    const _beamEventScratch = {
+      startX: 0, startY: 0, endX: 0, endY: 0, width: 5, mode: 'pulse', kind: 'pulse', emitterUid: null,
+      hitEntity: null, nx: 0, ny: 0
+    };
     const PD_BEAM_DEPS = {
       shieldBlockingRadiusTowards: getEntityShieldBlockingRadiusTowards,
       sweepImpact: (entity, x0, y0, x1, y1, radius) => (entity?.beamHull
@@ -8787,44 +8883,41 @@
           const finalEndX = muzzleData.pos.x + dirX * hitDist;
           const finalEndY = muzzleData.pos.y + dirY * hitDist;
 
-          // Kazdy strzal wiazka broni glownej dostaje wizual 3D w Weapon3DSystem._triggerBeamFx.
-          // Warunek gasil 2D TYLKO dla wiazek ciaglych, wiec beam_pulse lecial
-          // podwojnie: raz jako smuga na kanwie, raz jako plaszczyzna w scenie.
-          // Wiazki PD (klasa aux) maja JEDEN wizual — tania smuge 2D, bez pulsu 3D
-          // (tysiace strzalow na sekunde to byly tysiace grup meshy w scenie).
-          const shouldRenderBeam2D = !weapon.render3dOnly;
-          if (shouldRenderBeam2D) {
-            _beam2dEnd.x = finalEndX;
-            _beam2dEnd.y = finalEndY;
-            _beam2dOpts.life = weapon.duration || 0.12;
-            _beam2dOpts.colorOuter = weapon.vfxColor;
-            _beam2dOpts.glowColor = weapon.vfxColor;
-            // Smuga wiązki jedzie z lufą (nośnik), zamiast zostawać za okrętem.
-            ActiveCarrier.set(writeCarrierVelocity(inheritVx, inheritVy, shotClock, SimClock.sim, _fireCarrier));
-            spawnLaserBeam(muzzleData.pos, _beam2dEnd, weapon.size === 'L' ? 12 : 5, _beam2dOpts);
-            ActiveCarrier.clear();
-          }
-
-          if (!pdBeam) {
-            const eventBeam = _beamEventScratch;
-            eventBeam.startX = muzzleData.pos.x;
-            eventBeam.startY = muzzleData.pos.y;
-            eventBeam.endX = finalEndX;
-            eventBeam.endY = finalEndY;
-            eventBeam.width = weapon.size === 'L' ? 12 : 5;
-            eventBeam.mode = weapon.beamMode || 'pulse';
-            eventBeam.emitterUid = (muzzleData?.emitterUid != null)
+          // Każdy strzał wiązką — także laser PD (decyzja 2026-09-27: PD z kanwy 2D do 3D, efekty
+          // z dema bronie-webgpu) — dostaje wizual 3D w WeaponFx (src/3d/weapons/weaponFx.js) ze
+          // zdarzenia szyny: ciągła (stan na emitterUid), impuls, laser PD (`kind: 'pd'`). Kanwa
+          // nie rysuje już żadnej wiązki. Dane trafienia (encja, normalna powierzchni) — tylko dla
+          // efektu; normalna PRZED kraterem (applyHexImpact niżej).
+          const eventBeam = _beamEventScratch;
+          eventBeam.startX = muzzleData.pos.x;
+          eventBeam.startY = muzzleData.pos.y;
+          eventBeam.endX = finalEndX;
+          eventBeam.endY = finalEndY;
+          eventBeam.width = weapon.size === 'L' ? 12 : 5;
+          eventBeam.mode = weapon.beamMode || 'pulse';
+          eventBeam.kind = pdBeam ? 'pd' : eventBeam.mode;
+          eventBeam.emitterUid = pdBeam
+            ? null
+            : ((muzzleData?.emitterUid != null)
               ? String(muzzleData.emitterUid)
-              : computeAutoBeamEmitterUid(shooter, weapon, muzzleData);
-            beamEventData = eventBeam;
+              : computeAutoBeamEmitterUid(shooter, weapon, muzzleData));
+          eventBeam.hitEntity = hitEntity ? (hitEntity._realEntity || hitEntity) : null;
+          eventBeam.nx = -dirX;
+          eventBeam.ny = -dirY;
+          if (eventBeam.hitEntity?.beamHull) {
+            const n = HullBodies.surfaceNormal(eventBeam.hitEntity, finalEndX, finalEndY, dirX, dirY);
+            if (Number.isFinite(n.nx) && Number.isFinite(n.ny) && (n.nx !== 0 || n.ny !== 0)) {
+              eventBeam.nx = n.nx;
+              eventBeam.ny = n.ny;
+            }
           }
+          beamEventData = eventBeam;
 
           if (hitEntity) {
             const applyPlayerDamage = window.applyDamageToPlayer || applyDamageToPlayer;
             const applyNpcDamage = window.applyDamageToNPC || applyDamageToNPC;
             const applyStationDamage = window.applyDamageToStation || applyDamageToStation;
             const applyPlatformDamage = window.applyDamageToPlatform || applyDamageToPlatform;
-            const impactFx = window.spawnWeaponImpactFromPreset || ((...a) => CanvasVFX.spawnWeaponImpactFromPreset?.(...a));
             const aggro = window.triggerMercAggro || triggerMercAggro;
 
             const shooterFriendlyFlag = shooter?.friendly === true;
@@ -8836,7 +8929,7 @@
             if (allowDamage && (!hitEntity.shield || hitEntity.shield.val <= 0)) {
               if (hitEntity.hexGrid || hitEntity.beamHull) {
                 const impactSpeed = Number.isFinite(speed) ? speed : Math.max(800, Number(weapon.baseRange) || 2000);
-                applyHexImpact(hitEntity, finalEndX, finalEndY, damage, { x: dirX * impactSpeed, y: dirY * impactSpeed }, beamHitShard);
+                applyHexImpact(hitEntity, finalEndX, finalEndY, damage, { x: dirX * impactSpeed, y: dirY * impactSpeed }, beamHitShard, weapon);
                 // Kierunek wyrzutu atmosfery, gdy padnie mostek (tunel wiązki).
                 noteBridgeHit(hitEntity, finalEndX, finalEndY, dirX * impactSpeed, dirY * impactSpeed, bridgeSimTime);
               }
@@ -8876,14 +8969,9 @@
               }
             }
 
-            // Tarcza ma wlasne VFX (ripple + czasteczki + banka) — VFX uderzenia
-            // broni jest efektem trafienia w PANCERZ i na polu wyglada obco.
-            if (!beamBlockedByShield) {
-              // Iskry i błysk trafienia jadą z trafionym kadłubem.
-              ActiveCarrier.set(writeCarrier(hitEntity, finalEndX, finalEndY, false, _hitCarrier));
-              impactFx('beam', weapon.vfxColor, 1.0, finalEndX, finalEndY);
-              ActiveCarrier.clear();
-            }
+            // Tarcza ma własne VFX (ripple + cząsteczki + bańka) — efekt trafienia wiązki
+            // (WeaponFx: iskry, żar, dym przy trafieniu) jest efektem trafienia w PANCERZ.
+            if (beamBlockedByShield) eventBeam.hitEntity = null;
           }
         } else {
           // --- LOGIKA POCISKÓW I RAKIET ---
@@ -8958,8 +9046,15 @@
               turnRate: weapon.turnRate ? (weapon.turnRate * Math.PI / 180) : 0,
               homingDelay: weapon.homingDelay || 0,
               vfxKey: weapon.id,
-              forceCanvas: !!weapon.forceCanvas,  // tells weapon3DSystem to skip 3D bullet render
-              lockOwner: isP2Ship ? 'player2' : (isP1Ship ? 'player' : null)
+              forceCanvas: !!weapon.forceCanvas,  // WeaponFx.sync nie rysuje go w 3D (lot na kanwie)
+              lockOwner: isP2Ship ? 'player2' : (isP1Ship ? 'player' : null),
+              // Mechanika z dema (zadanie 18-B, src/game/projectileMechanics.js): numer pocisku —
+              // ziarno decyzji rykoszetu i jego obrazu (hash, bez Math.random); mech — dane broni
+              // z przebiciem (`penDepth`) albo rykoszetem, null = trafienie w kadłub jak dotąd;
+              // pen — stan przejścia przez materiał (tworzy go resolveHullHit).
+              serial: nextProjectileSerial(),
+              mech: hasHullMechanics(weapon) ? weapon : null,
+              pen: null
             };
             // --- FLAK: dane zapalnika (obsługa w bulletsAndCollisionsStep) ---
             // Zwykłe przypisania zamiast spreadu obiektu tymczasowego per pocisk.
@@ -8980,8 +9075,8 @@
       }
 
       // 4. Efekty wizualne wystrzału i dźwięk — szyna strzałów zamiast zdarzenia
-      // DOM per strzał (src/game/weaponShotBus.js; słuchacze: audio i Weapon3DSystem).
-      // Weapon3DSystem szuka lufy (błysk, odrzut, wstrząs) tylko na kadłubie
+      // DOM per strzał (src/game/weaponShotBus.js; słuchacze: audio i WeaponFx —
+      // src/3d/weapons/weaponFx.js). WeaponFx szuka lufy (błysk, odrzut, wstrząs) tylko na kadłubie
       // strzelca — inaczej strzał myśliwca trafiał w najbliższą wieżyczkę
       // tego samego typu na dowolnym okręcie.
       WeaponShotBus.emit(
@@ -8991,8 +9086,13 @@
         muzzleData.pos.y,
         weapon.category === 'beam',
         weapon.beamMode || null,
-        beamEventData
+        beamEventData,
+        // Kierunek lufy (bez rozrzutu) — efekt strzelca bez wieżyczki (myśliwiec).
+        Math.cos(baseAngle),
+        Math.sin(baseAngle)
       );
+      // Scratch wiązki nie trzyma trafionej encji do następnego strzału.
+      if (beamEventData) beamEventData.hitEntity = null;
 
       // Zwracamy obliczony czas przeładowania
       return cd;
@@ -9000,10 +9100,19 @@
 
     function updateSpecialWeaponCooldowns(dt) {
       const specials = getCombinedSpecialLoadouts(Game.player);
+      // Komunikat ładowania — jeden na krok dla całej grupy (zaczepy tej samej broni zgłaszają to samo).
+      let chargeEvent = '';
+      let chargeWeapon = null;
       for (let i = 0; i < specials.length; i++) {
         const loadout = specials[i];
         const hp = loadout?.hp;
         if (!hp) continue;
+        // Broń z ładowaniem (18-B): krok ładowania przed licznikiem przeładowania — strzał
+        // ustawia specialCd tak jak _fireSpecialGroup (które idzie przed tą funkcją).
+        if (loadout.weapon && chargeTimeOf(loadout.weapon) > 0) {
+          const ev = stepSpecialCharge(loadout, hp, i, dt);
+          if (ev && !chargeEvent) { chargeEvent = ev; chargeWeapon = loadout.weapon; }
+        }
         // Reszta salwy wielolufowej. Domknięcie powstaje TYLKO gdy kolejka
         // coś trzyma — czyli przez ~30 ms po strzale, a nie co klatkę.
         if (hp.salvo && hp.salvo.length) {
@@ -9014,6 +9123,70 @@
         if (current <= 0) continue;
         hp.specialCd = Math.max(0, current - dt);
       }
+      if (chargeEvent) pushSpecialChargeMessage(chargeWeapon, chargeEvent);
+    }
+
+    // Ładowanie broni z `chargeTime` (zadanie 18-B, src/game/weaponCharge.js): Mjolnir 3 s
+    // tylko na postoju (|v| ≤ 30 j/s, |ω| ≤ 0,05 rad/s), Valkyrie 0,28 s. Klawisz 2 / auto-fire /
+    // spust pada zgłaszają strzał (_fireSpecialGroup), ładowanie idzie tu co krok fizyki:
+    // start przy błędzie celowania wieżyczki ≤ 0,08 rad, strzał po naładowaniu przy ≤ 0,03 rad
+    // (naciśnięcie czeka do 1,5 s, aż wieżyczka dojdzie), ruch przerywa ładowanie Mjolnira.
+    // Efekt ładowania — receptura broni (WeaponFx.charge); skok i śmierć przerywają. Zwraca
+    // zdarzenie dla komunikatu (st.event: 'start' | 'moving' | 'aim' | '').
+    const _chargeCarrier = createCarrier();
+    function stepSpecialCharge(loadout, hp, slot, dt) {
+      const weapon = loadout.weapon;
+      const aim = getMountedWeaponAim(ship, loadout);
+      const st = mountChargeState(aim);
+      if (!p1WeaponCtrl || !ship || ship.dead || ship.destroyed || hp.destroyed || warp.isBusy()) {
+        if (st.charge >= 0 || st.want > 0) cancelMountCharge(st);
+        return '';
+      }
+      const vx = Number(ship.vel?.x) || 0;
+      const vy = Number(ship.vel?.y) || 0;
+      const res = stepMountCharge(st, dt, {
+        aimErr: aim.aimErr,
+        speed: Math.sqrt(vx * vx + vy * vy),
+        angVel: Number(ship.angVel) || 0,
+        ready: !(Number(hp.specialCd) > 0)
+      }, weapon);
+      if (res === CHARGE_FIRE) {
+        fireSpecialLoadout(loadout, hp, slot);
+      } else if (res === CHARGE_CHARGING && WeaponFx.available && dt > 0) {
+        const m = p1WeaponCtrl.computeMountedMuzzle(loadout, Number(aim.nextBarrel) || 0);
+        if (!st.fx) st.fx = WeaponFx.createChargeState();
+        WeaponFx.charge(weapon.id, m.pos.x, m.pos.y, aim.angle, 1, st.u, dt, st.fx,
+          writeCarrier(ship, m.pos.x, m.pos.y, false, _chargeCarrier));
+      }
+      return st.event;
+    }
+
+    // Komunikaty ładowania (po naciśnięciu klawisza i przy przerwaniu): krótka nazwa broni.
+    function pushSpecialChargeMessage(weapon, event) {
+      const name = String(weapon?.name || weapon?.id || 'BROŃ').split(/[\s(]/)[0].toUpperCase();
+      const stationary = weapon?.requiresStationary === true;
+      if (event === 'start') {
+        if (chargeTimeOf(weapon) >= 1) {
+          pushZoneMessage(stationary ? `${name}: ŁADOWANIE — OKRĘT MUSI STAĆ` : `${name}: ŁADOWANIE`, 1.6);
+        }
+      } else if (event === 'moving') {
+        pushZoneMessage(`${name}: WYMAGA POSTOJU OKRĘTU`, 1.6);
+      } else if (event === 'aim') {
+        pushZoneMessage(`${name}: BRAK WYCELOWANIA`, 1.4);
+      }
+    }
+
+    // Strzał zaczepu special teraz: pierwsza lufa od razu, reszta salwy (`barrelsPerShot`)
+    // z kolejki w updateSpecialWeaponCooldowns; przeładowanie z fireWeaponCore.
+    function fireSpecialLoadout(loadout, hp, slot) {
+      const weapon = loadout.weapon;
+      const aim = getMountedWeaponAim(ship, loadout);
+      const barrels = barrelsPerShotOf(weapon);
+      const start = Number(aim.nextBarrel) || 0;
+      aim.nextBarrel = start + barrels;
+      const cd = fireSpecialBarrel(loadout, hp, slot, start, barrels > 1);
+      hp.specialCd = Math.max(0.01, cd || Number(weapon.cooldown) || 0.25);
+      queueSalvoBarrels(hp, weapon.id, start, barrels);
     }
 
     // Jeden strzał z jednej lufy zaczepu `special`. Cel i kąt liczymy
@@ -9030,7 +9203,8 @@
       return Number(window.fireWeaponCore(ship, target, weapon.id, muzzle)) || 0;
     }
 
-    function _fireSpecialGroup(loadouts) {
+    // manual — naciśnięcie klawisza (komunikaty ładowania); auto-fire i spust pada — bez.
+    function _fireSpecialGroup(loadouts, manual = false) {
       if (!loadouts.length) return false;
       let fired = false;
       if (!p1WeaponCtrl) return false;
@@ -9047,27 +9221,28 @@
         const cdLeft = Math.max(0, Number(hp.specialCd) || 0);
         if (cdLeft > 0) continue;
 
+        // Broń z ładowaniem (Mjolnir, Valkyrie — 18-B): tylko zgłoszenie strzału, ładowanie
+        // i strzał w kroku fizyki (stepSpecialCharge).
+        if (chargeTimeOf(weapon) > 0) {
+          requestMountCharge(mountChargeState(getMountedWeaponAim(ship, loadout)), manual);
+          fired = true;
+          continue;
+        }
+
         // Salwa: `barrelsPerShot` luf na jedno naciśnięcie. Pierwsza idzie
         // od razu, reszta z kolejki w `updateSpecialWeaponCooldowns`.
-        const aim = getMountedWeaponAim(ship, loadout);
-        const barrels = barrelsPerShotOf(weapon);
-        const start = Number(aim.nextBarrel) || 0;
-        aim.nextBarrel = start + barrels;
-
-        const cd = fireSpecialBarrel(loadout, hp, i, start, barrels > 1);
-        hp.specialCd = Math.max(0.01, cd || Number(weapon.cooldown) || 0.25);
-        queueSalvoBarrels(hp, weapon.id, start, barrels);
+        fireSpecialLoadout(loadout, hp, i);
         fired = true;
       }
       return fired;
     }
 
-    function tryFireMountedSpecialWeapons() {
-      return _fireSpecialGroup(Game.player?.weapons?.[HP.SPECIAL] || []);
+    function tryFireMountedSpecialWeapons(manual = false) {
+      return _fireSpecialGroup(Game.player?.weapons?.[HP.SPECIAL] || [], manual);
     }
 
-    function tryFireSpecialMissiles() {
-      return _fireSpecialGroup(Game.player?.weapons?.[HP.SPECIAL_MISSILE] || []);
+    function tryFireSpecialMissiles(manual = false) {
+      return _fireSpecialGroup(Game.player?.weapons?.[HP.SPECIAL_MISSILE] || [], manual);
     }
 
     // Hexlance jest DWUTAKTOWY: pierwsze 4 rozpoczyna ładowanie (1,2 s), dopiero
@@ -9199,6 +9374,29 @@
       window.fireWeaponCore(owner, target, weaponDef.id, muzzle);
       muzzle.pdTarget = null;
       muzzle.baseVel = _adapterBaseVel;
+    };
+
+    // Efekt ładowania działa NPC (zadanie 18-B — capitalAI.stepNpcWeaponCharge; dziś żaden
+    // domyślny loadout NPC nie ma broni z `chargeTime`): wylot z gniazda jak w spawnBulletAdapter,
+    // kąt wieżyczki AI, receptura broni (WeaponFx.charge), stan efektu na dziale.
+    const _npcChargeCarrier = createCarrier();
+    window.spawnWeaponChargeFx = function (owner, weapon, u, dt) {
+      if (!WeaponFx.available || !owner || !weapon?.def) return;
+      let x = owner.x;
+      let y = owner.y;
+      const hp = weapon.hpOffset;
+      if (hp && hp.x !== undefined) {
+        const angle = (owner.angle || 0) + (Number(owner.capitalProfile?.spriteRotation) || 0);
+        const c = Math.cos(angle);
+        const s = Math.sin(angle);
+        const hpX = hp.x * getEntityHardpointScaleX(owner);
+        const hpY = hp.y * getEntityHardpointScaleY(owner);
+        x = owner.x + (hpX * c - hpY * s);
+        y = owner.y + (hpX * s + hpY * c);
+      }
+      if (!weapon.chargeFx) weapon.chargeFx = WeaponFx.createChargeState();
+      const a = Number.isFinite(weapon.visualAngle) ? weapon.visualAngle : (owner.angle || 0);
+      WeaponFx.charge(weapon.def.id, x, y, a, 1, u, dt, weapon.chargeFx, writeCarrier(owner, x, y, false, _npcChargeCarrier));
     };
 
     // Uid emitera (wiązka ciągła trzyma się po nim swojej lufy). Liczony raz na
@@ -9389,6 +9587,9 @@
     // z ustawień; zapis z localStorage czytany tutaj, bo jego odtworzenie w
     // OPTIONS idzie później (osobny DOMContentLoaded na końcu pliku).
     let haloRings = null;
+    // Pas asteroid (zadanie 21) — tworzony w starcie świata (DOMContentLoaded), GPU na
+    // ekranie ładowania (startGame).
+    let asteroidBelt = null;
     function initHaloRings() {
       if (!Core3D.isInitialized) Core3D.init();
       let saved = null;
@@ -9431,8 +9632,6 @@
       camera.y = y;
       camera.targetX = x;
       camera.targetY = y;
-      overlayView.center.x = x;
-      overlayView.center.y = y;
       return { x, y, heading };
     }
     window.HaloRingDebug = {
@@ -9464,6 +9663,69 @@
         camera: { x: Math.round(camera.x), y: Math.round(camera.y), zoom: camera.zoom }
       })
     };
+    // Harness zrzutów portu WebGPU (scripts/webgpu/zrzuty.mjs) — tylko z ?dev, rozgrywki nie
+    // zmienia: teleport statku gracza (jak HaloRingDebug.goto, z kamerą i środkiem overlaya).
+    if (new URLSearchParams(location.search).has('dev')) {
+      window.DevScene = Object.assign(window.DevScene || {}, {
+        teleport(x, y, heading = ship.angle) {
+          ship.pos.x = x; ship.pos.y = y; ship.vel.x = 0; ship.vel.y = 0;
+          if (Number.isFinite(heading)) ship.angle = heading;
+          camera.x = camera.targetX = x;
+          camera.y = camera.targetY = y;
+          return { x, y };
+        },
+        // Kamera RTS rysuje się z interpolacji prevCameraState → camera (stan zapisywany
+        // w krokach fizyki); przy zatrzymanym czasie harness ustawia oba punkty naraz.
+        syncCamera() {
+          camera.transition = null;
+          prevCameraState.x = camera.x;
+          prevCameraState.y = camera.y;
+          return true;
+        },
+        // Sprite'y kadłubów wczytane z góry: kadłub NPC powstaje w drawNPCPretty, gdy sprite
+        // jest gotowy — bez tego kolejność tworzenia ciał zależała od kolejności wczytania.
+        preloadHullSprites() {
+          const entries = Object.values(HULL_SPRITE_PATHS_BY_ID).map((src) => loadHullSprite(src)).filter(Boolean);
+          return entries.every((e) => e.ready || e.error);
+        },
+        // Galeria broni (zadanie 18-B): broń na zaczepach special gracza bez ładowni (wszystkie
+        // albo `count` pierwszych) i strzał jak klawisz 2 — ładowanie Mjolnira / Valkyrie w kadrze.
+        mountSpecial(weaponId, count = Infinity) {
+          let n = 0;
+          for (const hp of Game.player.hardpoints) {
+            if (hp.type !== HP.SPECIAL || hp.destroyed) continue;
+            setHardpointMount(hp, n < count ? weaponId : null, { skipInventory: true });
+            if (n < count) n++;
+          }
+          syncWeaponSystems();
+          return n;
+        },
+        fireSpecial() {
+          return tryFireMountedSpecialWeapons(true);
+        },
+        // Stan ładowania zaczepów special (charge < 0 — bezczynne, u — postęp, cd — przeładowanie).
+        specialCharge() {
+          return (Game.player.weapons?.[HP.SPECIAL] || []).map((l) => {
+            const st = getMountedWeaponAim(ship, l).charge;
+            return { weapon: l.weapon?.id || null, charge: st ? st.charge : -1, u: st ? st.u : 0, cd: Number(l.hp?.specialCd) || 0 };
+          });
+        },
+        // Warp „Nurt” (zadanie 22): kursor w kierunku `heading` od środka ekranu — ładowanie warpa
+        // obraca statek ku kursorowi (automat gry), więc kurs skoku w harnessie jest powtarzalny.
+        aimWarp(heading) {
+          mouse.x = W / 2 + Math.cos(heading) * 400;
+          mouse.y = H / 2 + Math.sin(heading) * 400;
+          return true;
+        },
+        // Wyjście z warpa jak klawisz gracza (attemptWarp w stanie active).
+        exitWarp() {
+          if (warp.state !== 'active') return false;
+          warp.state = 'idle';
+          exitWarp();
+          return true;
+        }
+      });
+    }
     function applyHaloRingDevSpawn() {
       const params = new URLSearchParams(location.search);
       const targetKey = String(params.get('haloTest') || '').toLowerCase();
@@ -9517,39 +9779,17 @@
         })();
       }
 
-      // Pole asteroid (InstancedMesh) - 5 pasów: Main Belt, Greeks (L4), Trojans (L5),
-      // Hildas (rezonans 3:2 z Jowiszem), Kuiper Belt. Generowane raz, deterministycznie z seed.
-      if (AsteroidField && !window.asteroidField) {
+      // Pas asteroid (zadanie 21, src/3d/asteroids/asteroidBelt.js): pola z dema WebGPU
+      // (skały pasm, minerały, olbrzymy, światło wolumetryczne, burze) w passach Core3D.
+      // Tu część CPU (pole, cień pól, plan olbrzymów + wykluczenia skał) — GPU i cień pól
+      // całego układu liczą się na ekranie ładowania (startGame). Kotwice pasów
+      // Lagrange'a i Hildas = planety w tej chwili (jak dawne pole).
+      if (!asteroidBelt) {
         try {
-          window.asteroidField = new AsteroidField({
-            seed: 0xA57E20,
-            planets,
-            sun: SUN,
-            auToWorld: getAuToWorldUnits(),
-            scene: Core3D.scene,
-          });
-          console.log(`[AsteroidField] spawned ${window.asteroidField.count} asteroids across ${window.asteroidField.pools.size} instanced pools`);
+          asteroidBelt = createAsteroidBelt({ planets, sun: SUN, auToWorld: getAuToWorldUnits() });
+          window.__asteroidBelt = asteroidBelt;
         } catch (err) {
-          console.error('[AsteroidField] init failed', err);
-        }
-      }
-
-      // Tło 3D pasów asteroid — proceduralne skały na warstwie tła (layer 1),
-      // pod sprite'owym polem gameplayu. Regiony liczone z tych samych
-      // BELT_DEFINITIONS i pozycji planet co AsteroidField wyżej.
-      if (AsteroidBeltBackdrop && !window.beltBackdrop) {
-        try {
-          window.beltBackdrop = new AsteroidBeltBackdrop({
-            seed: 0xB4CD07,
-            planets,
-            sun: SUN,
-            auToWorld: getAuToWorldUnits(),
-            scene: Core3D.scene,
-            fovDeg: Core3D.cameraPersp ? Core3D.cameraPersp.fov : 35,
-          });
-          console.log(`[BeltBackdrop] ready: ${window.beltBackdrop.regions.length} belt regions`);
-        } catch (err) {
-          console.error('[BeltBackdrop] init failed', err);
+          console.error('[AsteroidBelt] start nie wyszedł', err);
         }
       }
     });
@@ -9559,9 +9799,9 @@
       return waitForCondition(() => planetScene3D || planetStationsReady, 2500);
     }
 
-    // Mgła pasa jest w całości PRZESTRZENNA (addytywne płaty pyłu w WebGL,
-    // asteroidBeltBackdrop3D) — pełnoekranowy wash 2D usunięty: gradient 'screen'
-    // szarzył cały kadr (łącznie z planetami w tle), a 8-bitowa kwantyzacja
+    // Mgła pasa jest w całości PRZESTRZENNA (płaty mgły, ośrodek objętościowy
+    // i zasłona pola — src/3d/asteroids/) — pełnoekranowy wash 2D usunięty: gradient
+    // 'screen' szarzył cały kadr (łącznie z planetami w tle), a 8-bitowa kwantyzacja
     // radialnego gradientu robiła koncentryczne prążki na ekranie.
 
 
@@ -9569,31 +9809,21 @@
     window.CANVAS_WEAPON_VFX_ENABLED = true;
     CanvasVFX.init();
     CanvasVFX.enabled = true;
-    FlakBurstVFX.init();
     window.spawnParticle = (...args) => CanvasVFX.spawnParticle(...args);
     window.spawnShockwave = (...args) => CanvasVFX.spawnShockwave(...args);
-    window.spawnWeaponImpactFromPreset = (...args) => CanvasVFX.spawnWeaponImpactFromPreset?.(...args);
     function isCanvasWeaponVfxEnabled() { return window.CANVAS_WEAPON_VFX_ENABLED !== false; }
 
-    function resolveProjectileImpact3DKey(b) {
-      const rawKey = String(b?.vfxKey || b?.weaponId || b?.weaponName || '').toLowerCase();
-      if (rawKey.includes('yamato')) return 'yamato';
-      if (b?.type === 'plasma' || b?.type === 'rocket' || b?.type === 'torpedo' || b?.type === 'armata') return 'armata';
-      if (b?.type === 'rail') return 'rail';
-      return 'default';
-    }
 
     // ── Bramka efektów trafień 3D ────────────────────────────────────────────
     // spawnBulletImpactEffect woła fizyka (120 Hz) dla KAŻDEGO trafienia pocisku
     // w bitwie — także kilka ekranów dalej i przy dalekim zoomie, gdzie błysk ma
-    // 1–3 px. Każdy efekt overlaya to kilkanaście–kilkadziesiąt draw calli i nowe
-    // materiały, a limit 96 efektów wyrzucał wtedy te, które BYŁO widać. Ta sama
-    // rodzina bramek co CanvasVFX.spawnProjectileImpact3D (kadr + cooldown per
-    // komórka), plus próg rozmiaru ekranowego i obie kamery split-screenu.
-    // Bez alokacji: klucz komórki cooldownu jest liczbą.
+    // 1–3 px. Dawniej każdy efekt overlaya to były draw calle i nowe materiały;
+    // dziś receptura WeaponFx (zadanie 17) to paczki w pulach GPU z budżetem klatki —
+    // bramka nie marnuje ich na efekty niewidoczne albo nałożone w jednym miejscu:
+    // kadr + cooldown per komórka ekranu, próg rozmiaru ekranowego i obie kamery
+    // split-screenu. Bez alokacji: klucz komórki cooldownu jest liczbą.
     const IMPACT_FX_MARGIN_PX = 260;
     const IMPACT_FX_MIN_PX = 3;      // bazowy rozmiar efektu na ekranie
-    const IMPACT_SPARK_MIN_PX = 2;   // rozrzut iskier na ekranie
     const IMPACT_FX_CELL_PX = 24;    // komórka cooldownu ≈ 24 px ekranu (min. 60 j.)
     const _impactFxLastMs = new Map();
 
@@ -9640,48 +9870,133 @@
       return true;
     }
 
-    function spawnBulletImpactEffect(b, x, y, scale = 1.0) {
-      const impactKey = resolveProjectileImpact3DKey(b);
-      // Trafienia pociskow ida wylacznie przez overlay 3D ponizej. Kanwa 2D ma
-      // wlasna sciezke dla trafien wiazek (spawnWeaponImpactFromPreset).
+    // Dane trafienia dla efektu (zadanie 17, PROJEKT-BRONI §1.2 G/H): punkt, normalna
+    // powierzchni na zewnątrz (świat gry), trafiona encja (łuki Tempesta po poszyciu) i
+    // prędkość pocisku względem niej. Jeden obiekt — efekt czyta go synchronicznie.
+    // Kadłub na belkach: normalna z HullBodies.surfaceNormal (wołać PRZED kraterem);
+    // inne ciała — promieniście od środka; bez ciała (płyta ringu, rakieta) — pod prąd.
+    // through — pocisk przebija kadłub i leci dalej (18-B: smuga nie kończy się na wejściu);
+    // ric… — rykoszet rozstrzygnięty przez grę (kierunek, prędkość, życie smugowca odbitego —
+    // ten sam hash co decyzja, writeImpactRicochet).
+    const _impactHit = {
+      x: 0, y: 0, nx: 0, ny: -1, entity: null, relVx: 0, relVy: 0, kind: 'none',
+      through: false, ric: false, ricDirX: 0, ricDirY: 0, ricSpeed: 0, ricLife: 0
+    };
+    function writeImpactHit(out, entity, x, y, relVx, relVy, kind) {
+      out.x = x;
+      out.y = y;
+      out.entity = entity || null;
+      out.relVx = Number(relVx) || 0;
+      out.relVy = Number(relVy) || 0;
+      out.kind = kind || 'none';
+      out.through = false;
+      out.ric = false;
+      const vl = Math.hypot(out.relVx, out.relVy);
+      let nx = vl > 1e-9 ? -out.relVx / vl : 0;
+      let ny = vl > 1e-9 ? -out.relVy / vl : -1;
+      if (entity?.beamHull) {
+        const n = HullBodies.surfaceNormal(entity, x, y, out.relVx, out.relVy);
+        if (Number.isFinite(n.nx) && Number.isFinite(n.ny) && (n.nx !== 0 || n.ny !== 0)) { nx = n.nx; ny = n.ny; }
+      } else if (entity) {
+        const ex = Number(entity.pos?.x ?? entity.x);
+        const ey = Number(entity.pos?.y ?? entity.y);
+        const dx = x - ex;
+        const dy = y - ey;
+        const dl = Math.hypot(dx, dy);
+        if (Number.isFinite(dl) && dl > 1e-6) { nx = dx / dl; ny = dy / dl; }
+      }
+      out.nx = nx;
+      out.ny = ny;
+      return out;
+    }
 
-      if (window.overlay3D) {
-        const baseSize = 40 * scale;
-        // Rodzaj efektu: 0 yamato, 1 armata, 2 rail, 3 autocannon. Cooldowny jak
-        // w CanvasVFX.shouldSpawnProjectileImpact3D; yamato bez cooldownu.
-        let fxKind = 3;
-        let fxSize = baseSize;
-        let fxCooldownMs = 42;
-        if (impactKey === 'yamato') {
-          fxKind = 0; fxSize = baseSize * 2.4; fxCooldownMs = 0;
-        } else if (b.type === 'plasma' || b.type === 'rocket' || b.type === 'torpedo' || b.type === 'armata') {
-          fxKind = 1; fxSize = baseSize * 1.5; fxCooldownMs = 28;
-        } else if (b.type === 'rail') {
-          fxKind = 2; fxSize = baseSize * 1.2; fxCooldownMs = 8;
+    // Rykoszet (zadanie 18-B): obraz smugowca odbitego z TEGO SAMEGO hasha co decyzja
+    // (projectileMechanics.ricochetBounce — numer pocisku i węzeł trafienia, bez losowania):
+    // kierunek od normalnej z rozrzutem ±0,15 rad, prędkość × 0,35–0,6 względem kadłuba, życie
+    // 0,2–0,45 s. Wołać po writeImpactHit (normalna i prędkość względna w `out`).
+    const _ricRelVel = { x: 0, y: 0 };
+    function writeImpactRicochet(out, b, node) {
+      _ricRelVel.x = out.relVx;
+      _ricRelVel.y = out.relVy;
+      const r = ricochetBounce(b, out, _ricRelVel, node);
+      out.ric = true;
+      out.ricDirX = r.dirX;
+      out.ricDirY = r.dirY;
+      out.ricSpeed = Math.sqrt(out.relVx * out.relVx + out.relVy * out.relVy) * r.speedFactor;
+      out.ricLife = r.life;
+      return out;
+    }
+
+    // Przebicie (zadanie 18-B): zdarzenie kroku pocisku w materiale kadłuba (stepInsideHull) —
+    // znaki rzazu (efekt co 22 j. drogi), krater wyjścia / zakleszczenia (HullBodies.impact z
+    // budżetem craterDamage, BEZ obrażeń HP: HP spada przez sufit strukturalny od zabitych
+    // węzłów — decyzja PROJEKT-BRONI §5 p. 2) i efekt wyjścia / zakleszczenia z receptury broni.
+    // Nośnik efektów i kierunek krateru — kadłub (prędkość pocisku względem niego). Zwraca
+    // true, gdy pocisk ugrzązł (wołający go usuwa).
+    // Mapa ran (18-C): krater wyjścia / zakleszczenia stempluje hak onImpact (źródło = pocisk,
+    // wariant 'exit' / 'stuck'), pas rzazu — HullDamageMap.stampKerf na drodze w materiale tego
+    // kroku (niezależnie od LOD efektu; receptura `kerf` dostaje kadłub null — bez drugiego stempla).
+    const _passCarrier = createCarrier();
+    const _passRelVel = { x: 0, y: 0 };
+    function applyBulletHullPass(b, pass) {
+      const ev = pass.event;
+      const e = pass.entity;
+      const stuck = ev === PASS_STUCK;
+      const out = stuck || ev === PASS_EXIT;
+      if (!e || (!out && !(pass.kerfs > 0))) return stuck;
+      const px = out ? pass.x : b.x;
+      const py = out ? pass.y : b.y;
+      const carrier = writeCarrier(e, px, py, false, _passCarrier);
+      _passRelVel.x = b.vx - carrier.vx;
+      _passRelVel.y = b.vy - carrier.vy;
+      if (pass.kerfs > 0 && e.beamHull) {
+        // Od pierwszego do ostatniego znaku kroku (jeden znak: odcinek pół kroku — sam kierunek
+        // wydłużenia stempla; stampKerf kładzie wtedy jeden znak na początku).
+        const k = pass.kerfs > 1 ? pass.kerfs - 1 : 0.5;
+        HullDamageMap.stampKerf(e, pass.kerfX, pass.kerfY, pass.kerfX + pass.kerfDX * k, pass.kerfY + pass.kerfDY * k, stampFamilyFor(b));
+      }
+      if (out && pass.craterDamage > 0) {
+        applyHexImpact(e, pass.x, pass.y, pass.craterDamage, _passRelVel, null, b, stuck ? 'stuck' : 'exit');
+      }
+      if (WeaponFx.available) {
+        ActiveCarrier.set(carrier);
+        if (pass.kerfs > 0) {
+          WeaponFx.kerf(b, pass.kerfX, pass.kerfY, pass.kerfDX, pass.kerfDY, pass.kerfs, _passRelVel.x, _passRelVel.y, e);
         }
-        if (impactFxScreenPx(x, y, fxSize) >= IMPACT_FX_MIN_PX && impactFxCooldownReady(fxKind, fxCooldownMs, x, y)) {
-          if (fxKind === 0) {
-            if (window.triggerYamatoImpact3D) triggerYamatoImpact3D(x, y, fxSize, b.color || b.vfxColor);
-          } else if (fxKind === 1) {
-            if (window.triggerArmataImpact3D) triggerArmataImpact3D(x, y, fxSize);
-          } else if (fxKind === 2) {
-            if (window.triggerRailgunExplosion3D) triggerRailgunExplosion3D(x, y, fxSize);
-          } else if (window.triggerAutocannonImpact3D) {
-            triggerAutocannonImpact3D(x, y, fxSize, b.color || b.vfxColor);
-          }
-        }
-        // GPU sparks alongside 3D effects — tylko gdy ich rozrzut (prędkość ×
-        // życie 0.3 s) jest na ekranie widoczny.
-        const spark3D = SparkSystem3D;
-        if (spark3D && spark3D.isInitialized) {
-          const isHeavy = (b.weaponSize === 'L' || b.weaponSize === 'Capital');
-          const sparkSpeed = isHeavy ? 400 * scale : 280 * scale;
-          if (impactFxScreenPx(x, y, sparkSpeed * 0.3) >= IMPACT_SPARK_MIN_PX) {
-            const sparkCount = isHeavy ? Math.round(16 * scale) : Math.round(8 * scale);
-            const sparkSize = isHeavy ? 0.6 : 0.4;
-            spark3D.burst(x, y, sparkCount, sparkSpeed, 0.3, sparkSize);
-          }
-        }
+        if (ev === PASS_EXIT) WeaponFx.pierceExit(b, pass.x, pass.y, _passRelVel.x, _passRelVel.y, e);
+        else if (stuck) WeaponFx.pierceStuck(b, pass.x, pass.y, _passRelVel.x, _passRelVel.y, e);
+        ActiveCarrier.clear();
+      }
+      return stuck;
+    }
+
+    // Trafienie pocisku: receptura rodziny broni z dema bronie-webgpu (WeaponFx, zadanie 17 —
+    // wybuch, iskry, dym, łuki, fala, światło; iskry receptur zastąpiły SparkSystem3D.burst).
+    // Bramki bez zmian: rozmiar efektu na ekranie (kadr, obie kamery split-screenu) i cooldown
+    // komórki ekranu per rodzaj — skupiony ogień w jeden kadłub nie sypie dziesiątek efektów
+    // w tym samym miejscu. Rodzaj bramki: 0 Yamato (bez cooldownu), 1 ciężkie (armata, goliath,
+    // autokanon, flak, torpeda), 2 energia / railguny, 3 lekkie (Vulcan, CIWS).
+    function impactFxKindOf(b) {
+      const key = String(b?.vfxKey || '');
+      if (key === 'special_yamato_cannon') return 0;
+      const t = b?.type;
+      if (t === 'armata' || t === 'flak' || t === 'torpedo' || t === 'rocket' || key === 'special_goliath_autocannon'
+        || key === 'heavy_autocannon' || key === 'heavy_autocannon_l') return 1;
+      if (t === 'rail' || t === 'plasma') return 2;
+      return 3;
+    }
+    const IMPACT_FX_SIZE = [2.4, 1.5, 1.2, 1.0];
+    const IMPACT_FX_COOLDOWN_MS = [0, 28, 8, 42];
+
+    // Rozmiar efektu w bramce × impactScale broni (dane — zadanie 18-D, src/game/weaponFeel.js):
+    // ciężkie trafienia (Mjolnir 5, Yamato 4,5, Valkyrie 3,5) widać z dalszego zoomu, lekkie
+    // wiązki (0,4–0,7) znikają wcześniej. Obrazu receptury skala nie zmienia (jak w demie).
+    function spawnBulletImpactEffect(b, x, y, scale = 1.0, hit = null) {
+      if (!WeaponFx.available) return;
+      const fxKind = impactFxKindOf(b);
+      const fxSize = 40 * scale * IMPACT_FX_SIZE[fxKind] * (b?.vfxKey ? weaponImpactScale(WEAPONS[b.vfxKey]) : 1);
+      if (impactFxScreenPx(x, y, fxSize) >= IMPACT_FX_MIN_PX && impactFxCooldownReady(fxKind, IMPACT_FX_COOLDOWN_MS[fxKind], x, y)) {
+        WeaponFx.impact(b, x, y, scale, hit);
       }
     }
     window.spawnBulletImpactEffect = spawnBulletImpactEffect;
@@ -10962,6 +11277,10 @@
         ...persistedOwnedHulls.map(normalizePlayerHullId)
       ])
     };
+    // Ładunki górnicze S / M / L / XL (zadanie 21b): magazynek platformy wydobywczej —
+    // przedmiot gracza poza masą ładowni (jak ładownia: bez zapisu w localStorage), zestaw
+    // startowy z src/data/miningCharges.js, dokupowany w doku (rynek → Ładunki górnicze).
+    PLAYER.miningCharges = createMiningChargeStock();
 
     // Chip okrętu (src/data/chips.js). Gracz: PLAYER.hullChips[aktywny kadłub],
     // NPC: opcjonalne entity.chips (Set albo tablica). Pytają o to pętle broni —
@@ -11222,6 +11541,55 @@
       pane.appendChild(resourcesCard);
 
       pane.appendChild(buildTradeMarketCard());
+      pane.appendChild(buildMiningChargesCard());
+    }
+
+    // Ładunki górnicze (zadanie 21b): dok sprzedaje je po cenie stałej (TYMCZASOWEJ —
+    // src/data/miningCharges.js, do decyzji użytkownika), bez zapasu stacji; trafiają do
+    // magazynka platformy wydobywczej (PLAYER.miningCharges), nie do ładowni.
+    function buildMiningChargesCard() {
+      const card = document.createElement('div');
+      card.className = 'station-card-aero trade-mining-charges';
+      const header = document.createElement('div');
+      header.className = 'card-header';
+      const title = document.createElement('div');
+      title.className = 'card-title';
+      title.textContent = 'Ładunki górnicze';
+      header.appendChild(title);
+      const badge = document.createElement('span');
+      badge.className = 'card-badge';
+      badge.textContent = 'Wydobycie';
+      header.appendChild(badge);
+      card.appendChild(header);
+      const desc = document.createElement('p');
+      desc.className = 'card-desc';
+      desc.textContent = 'Ładunki do skał pasa (tryb wydobycia: N, PPM na skale, F — detonacja). Kruchy lód pęka od małego, tytan potrzebuje ciężkiego.';
+      card.appendChild(desc);
+      const actions = document.createElement('div');
+      actions.className = 'card-actions';
+      for (const ch of MINING_CHARGES) {
+        const btn = document.createElement('button');
+        btn.className = 'card-action';
+        btn.dataset.miningCharge = ch.id;
+        btn.addEventListener('click', () => {
+          if (PLAYER.credits < ch.price) { toast('Za mało kredytów'); return; }
+          PLAYER.credits -= ch.price;
+          PLAYER.miningCharges[ch.id] = (PLAYER.miningCharges[ch.id] | 0) + 1;
+          updateTradeCards(stationUI.station);
+        });
+        actions.appendChild(btn);
+      }
+      card.appendChild(actions);
+      return card;
+    }
+
+    function updateMiningChargesCard(pane) {
+      pane?.querySelectorAll('button[data-mining-charge]').forEach(btn => {
+        const ch = MINING_CHARGES.find(c => c.id === btn.dataset.miningCharge);
+        if (!ch) return;
+        btn.textContent = `${ch.id} (${ch.label}) · ${ch.price} CR · masz ${PLAYER.miningCharges[ch.id] | 0}`;
+        btn.disabled = PLAYER.credits < ch.price;
+      });
     }
 
     // Stacja skupuje poniżej i sprzedaje powyżej wartości bazowej z resources.js.
@@ -11876,6 +12244,7 @@
     function updateTradeCards(station) {
       updateTradeResourceTable(station);
       const pane = stationOverlayDom.panels.trade;
+      updateMiningChargesCard(pane);
       const table = pane?.querySelector('.trade-market-table');
       if (!table) return;
       const econ = getTradeEconomy(station);
@@ -13300,9 +13669,6 @@
       // brak opcji odwrócenia osi zgodnie z prośbą
       hudEndPanel();
     }
-    function spawnLaserBeam(start, end, width, opts = {}) {
-      if (CanvasVFX.spawnLaserBeam) { CanvasVFX.spawnLaserBeam(start, end, width, opts); return; }
-    }
 
     // =============== Input ===============
     const input = { main: 0, leftSide: 0, rightSide: 0, retro: 0, torque: 0 };
@@ -13924,6 +14290,8 @@
       if (isMainMenuVisible()) return;
       const k = e.key.toLowerCase();
       keys[k] = true;
+      // Wydobycie (zadanie 21b): N — tryb; w trybie T / L / F należą do platformy.
+      if (miningKeyDown(k)) { updateInput(); return; }
       const inRtsMode = camera.mode === 'rts';
       if (!inRtsMode && warp.state === 'active' && k === 'w') {
         shiftWarpGearUp();
@@ -13967,7 +14335,7 @@
           specialAutoFire = !specialAutoFire;
           pushZoneMessage(specialAutoFire ? 'BROŃ SPECJALNA: AUTO-FIRE ON' : 'BROŃ SPECJALNA: AUTO-FIRE OFF', 1.5);
         } else {
-          tryFireMountedSpecialWeapons();
+          tryFireMountedSpecialWeapons(true);
         }
       }
       if (e.code === 'Digit3' && !stationUI.open && !CICDisplay.active && !e.repeat) {
@@ -13991,7 +14359,7 @@
           specialMissileAutoFire = !specialMissileAutoFire;
           pushZoneMessage(specialMissileAutoFire ? 'SPECIAL MISSILE: AUTO-FIRE ON' : 'SPECIAL MISSILE: AUTO-FIRE OFF', 1.5);
         } else {
-          tryFireSpecialMissiles();
+          tryFireSpecialMissiles(true);
         }
       }
       if ((e.code === 'Digit6' || e.code === 'Numpad6') && !stationUI.open && !CICDisplay.active) {
@@ -14404,7 +14772,6 @@
     const scannerRevealFx = [];
     const scannerContacts = [];
     const scannerPassiveContacts = [];
-    const SCANNER_ASTEROID_CONTACT_LIMIT = 48;
     const SCANNER_PASSIVE_REFRESH_MS = 350;
     const SCANNER_CONTACT_REVEAL_DELAY = 0.22;
     const SCANNER_ACQUIRE_LEAD_TIME = 0.42;
@@ -14638,17 +15005,8 @@
         }
       }
 
-      if (includeAsteroids && asteroidRange > 0 && window.asteroidField?.queryRadius) {
-        const asteroids = window.asteroidField.queryRadius(ship.pos.x, ship.pos.y, asteroidRange) || [];
-        const nearestAsteroids = selectNearestAsteroidTargets(asteroids, {
-          centerX: ship.pos.x,
-          centerY: ship.pos.y,
-          limit: SCANNER_ASTEROID_CONTACT_LIMIT
-        });
-        for (const entry of nearestAsteroids) {
-          pushScannerContact(entry.asteroid, 'asteroid', 'resource', entry.distance, contacts);
-        }
-      }
+      // Asteroidy jako kontakty skanera (surowce) szły ze starego pola (usunięte w zadaniu 21);
+      // nowe pole nie ma rozgrywki małych skał — do decyzji użytkownika (docs/webgpu/POSTEP.md).
 
       return sweepSort ? sortScannerSweepContacts(contacts) : sortScannerContacts(contacts);
     }
@@ -15603,26 +15961,6 @@
       return best;
     }
 
-    function pickAsteroidTargetAtWorld(worldPoint) {
-      if (!worldPoint || !window.asteroidField?.queryRadius) return null;
-      const pickRadius = 900;
-      const asteroids = window.asteroidField.queryRadius(worldPoint.x, worldPoint.y, pickRadius) || [];
-      let best = null;
-      let bestDistSq = Infinity;
-      for (const asteroid of asteroids) {
-        if (!isTargetAlive(asteroid)) continue;
-        const dx = getTargetX(asteroid) - worldPoint.x;
-        const dy = getTargetY(asteroid) - worldPoint.y;
-        const distSq = dx * dx + dy * dy;
-        const hitR = getTargetRadius(asteroid) + 32;
-        if (distSq <= hitR * hitR && distSq < bestDistSq) {
-          bestDistSq = distSq;
-          best = asteroid;
-        }
-      }
-      return best;
-    }
-
     // Wraki są celem rozkazów tylko dla odzysku łupu, więc trafiamy w nie
     // dopiero gdy w punkcie nie ma żywego wroga.
     // Zimne wraki (coldWrecks) też są celami: rozkaz albo holowanie wybudza je
@@ -15653,8 +15991,6 @@
       if (enemy) return enemy;
       const wreck = pickWreckTargetAtWorld(worldPoint);
       if (wreck) return wreck;
-      const asteroid = pickAsteroidTargetAtWorld(worldPoint);
-      if (asteroid) return asteroid;
       let best = null;
       let bestDistSq = Infinity;
       for (const st of stations) {
@@ -17017,6 +17353,8 @@
       if (CICDisplay.active) {
         CICDisplay.onMouseMove(e.clientX, e.clientY, e.movementX || 0, e.movementY || 0);
       }
+      // Wydobycie: podgląd linii piły (PPM + przeciągnięcie).
+      miningMouseMove(e);
       // Aktualizacja hover w kole wyboru celownika.
       if (targetingMode.wheelOpen && targetingMode.wheelMouseStart) {
         const dx = mouse.x - targetingMode.wheelMouseStart.x;
@@ -17076,6 +17414,10 @@
       mouse.overCanvas = false;
       mouse.left = false;
       mouse.right = false;
+      miningInput.laserDown = false;
+      miningInput.rightDown = false;
+      miningInput.sawDrag = false;
+      getMiningRig()?.clearSawPreview();
       mouse.click = false;
       targetingMode.pointerConfirmArmed = false;
       closeWorldCommandMenu();
@@ -17118,6 +17460,14 @@
       if (CICDisplay.active) {
         CICDisplay.onMouseDown(e.clientX, e.clientY, e.button);
         if (e.button === 2) e.preventDefault();
+        return;
+      }
+      // Tryb wydobycia (zadanie 21b): LPM — lasery dronów, PPM — ładunek / piła.
+      if (miningMouseDown(e)) {
+        e.preventDefault();
+        mouse.left = false;
+        mouse.click = false;
+        closeWorldCommandMenu();
         return;
       }
       if (worldCommandMenu.open && e.button === 0) {
@@ -17190,7 +17540,6 @@
         } else {
           camera.targetZoom = Math.abs(camera.targetZoom - camera.defaultZoom) < 0.03 ? camera.altZoom : camera.defaultZoom;
           camera.manualZoom = true;
-          if (camera.transition && camera.transition.kind === 'ship') camera.transition = null;
           zoomIndicator.show(camera.targetZoom);
         }
       }
@@ -17213,6 +17562,7 @@
         }
       }
       if (CICDisplay.active) { CICDisplay.onMouseUp(e.clientX, e.clientY, e.button); return; }
+      if (miningMouseUp(e)) { e.preventDefault(); mouse.right = false; return; }
       if (e.button === 2 && worldCommandMenu.open) {
         e.preventDefault();
         mouse.right = false;
@@ -17306,7 +17656,6 @@
         }
         camera.targetZoom = clamp(camera.targetZoom * f, camera.minZoom, camera.maxZoom);
         camera.manualZoom = true;
-        if (camera.transition && camera.transition.kind === 'ship') camera.transition = null;
       }
       zoomIndicator.show(camera.targetZoom);
     }, { passive: false });
@@ -17390,7 +17739,6 @@
             } else {
               camera.targetZoom = clamp(camera.targetZoom * (1 - zoomSpeed), camera.minZoom, camera.maxZoom);
               camera.manualZoom = true;
-              if (camera.transition && camera.transition.kind === 'ship') camera.transition = null;
             }
           }
           if (btn(5)) {
@@ -17399,7 +17747,6 @@
             } else {
               camera.targetZoom = clamp(camera.targetZoom * (1 + zoomSpeed), camera.minZoom, camera.maxZoom);
               camera.manualZoom = true;
-              if (camera.transition && camera.transition.kind === 'ship') camera.transition = null;
             }
           }
 
@@ -17607,8 +17954,8 @@
       ActiveCarrier.set(launch);
       spawnParticle({ x: gunWorld.x, y: gunWorld.y }, { x: baseDir.x * 120, y: baseDir.y * 120 }, 0.14, '#b4ffb4', 3.2, true);
       for (let k = 0; k < 6; k++) {
-        const aa = Math.atan2(baseDir.y, baseDir.x) + (Math.random() - 0.5) * 0.9;
-        spawnParticle({ x: gunWorld.x + Math.cos(aa) * 6, y: gunWorld.y + Math.sin(aa) * 6 }, { x: Math.cos(aa) * 160, y: Math.sin(aa) * 160 }, 0.14 + Math.random() * 0.06, '#a8ff9a', 1.1, true);
+        const aa = Math.atan2(baseDir.y, baseDir.x) + (fxRandom.next() - 0.5) * 0.9;
+        spawnParticle({ x: gunWorld.x + Math.cos(aa) * 6, y: gunWorld.y + Math.sin(aa) * 6 }, { x: Math.cos(aa) * 160, y: Math.sin(aa) * 160 }, 0.14 + fxRandom.next() * 0.06, '#a8ff9a', 1.1, true);
       }
       ActiveCarrier.clear();
     }
@@ -17693,13 +18040,13 @@
 
       if (window.spawnParticle) {
         for (let i = 0; i < 6; i++) {
-          const spread = (Math.random() - 0.5) * 0.5;
+          const spread = (fxRandom.next() - 0.5) * 0.5;
           const px = launch.nx * Math.cos(spread) - launch.ny * Math.sin(spread);
           const py = launch.nx * Math.sin(spread) + launch.ny * Math.cos(spread);
           window.spawnParticle(
             { x: launch.x, y: launch.y },
-            { x: frame.vx - px * (180 + Math.random() * 220), y: frame.vy - py * (180 + Math.random() * 220) },
-            0.35, '#cfe8ff', 2 + Math.random() * 3, true
+            { x: frame.vx - px * (180 + fxRandom.next() * 220), y: frame.vy - py * (180 + fxRandom.next() * 220) },
+            0.35, '#cfe8ff', 2 + fxRandom.next() * 3, true
           );
         }
       }
@@ -17993,30 +18340,8 @@
         const targetToPass = isTargetAlive(aim.target) ? aim.target : null;
         if (mainAutoFire && lockedTargets.length && !targetToPass) continue;
         const cd = window.fireWeaponCore(ship, targetToPass, weaponData.id, muzzle);
-
-        // Efekty wizualne wystrzału (Muzzle flash) z lufy gracza
-        // Armata i Tempest Ion mają własny błysk 3D z dema
-        // (src/3d/muzzleFx3D.js) — kanwowy rozbłysk pod nim to druga
-        // warstwa tego samego efektu w tym samym punkcie.
-        if (weaponData.category !== 'beam' && !MuzzleFX3D.handles(weaponData.id)) {
-          const isHeavyWeapon = (weaponData.size === 'L' || weaponData.size === 'Capital');
-          const muzzleScale = isHeavyWeapon ? 1.8 : 1.0;
-          // Błysk leci z lufą w 100% (nośnik: prędkość wylotu, poza fizyczna strzału).
-          const flashCarrier = writeCarrier(ship, muzzle.pos.x, muzzle.pos.y, false, _fireCarrier);
-          if (weaponData.category === 'torpedo') {
-            // Torpedo launch: smoke + directional flame
-            CanvasVFX.spawnArmataMuzzle(muzzle.pos, muzzle.dir, muzzle.baseVel, muzzleScale * 1.5, flashCarrier);
-          } else if (weaponData.category === 'superweapon' || weaponData.id === 'siege_railgun') {
-            // Siege railgun: massive rail flash + screen shake handled elsewhere
-            CanvasVFX.spawnRailMuzzle(muzzle.pos, muzzle.dir, muzzle.baseVel, muzzleScale * 2.0, flashCarrier);
-          } else if (weaponData.category === 'armata' || weaponData.category === 'plasma') {
-            CanvasVFX.spawnArmataMuzzle(muzzle.pos, muzzle.dir, muzzle.baseVel, muzzleScale, flashCarrier);
-          } else if (weaponData.category === 'autocannon') {
-            CanvasVFX.spawnAutocannonMuzzle(muzzle.pos, muzzle.dir, muzzle.baseVel, muzzleScale, flashCarrier);
-          } else {
-            CanvasVFX.spawnRailMuzzle(muzzle.pos, muzzle.dir, muzzle.baseVel, muzzleScale, flashCarrier);
-          }
-        }
+        // Błysk wylotowy: receptura broni w WeaponFx (szyna strzałów z fireWeaponCore) — kanwowy
+        // rozbłysk pod nią byłby drugą warstwą tego samego efektu (zadanie 17).
 
         maxCooldown = Math.max(maxCooldown, cd || rail.cdMax);
       }
@@ -18033,7 +18358,6 @@
     const LASER_PD_FIRE_INTERVAL = 0.18;
     const LASER_PD_DAMAGE = 16;
     const LASER_PD_RANGE = 620;
-    const LASER_PD_BEAM_WIDTH = 6;
 
     // Wspólny bufor wrogich rakiet/torped na bieżący krok fizyki. Budowany raz
     // w ciwsStep, używany przez działka PD oraz przez intercept CIWS w
@@ -18163,23 +18487,18 @@
               // Zestrzelona rakieta: jej odłamki lecą w układzie wyrzutni (ivx).
               ActiveCarrier.set(writeCarrierVelocity(target.ivx, target.ivy, target.clock, SimClock.sim, _hitCarrier));
               spawnBulletImpactEffect(target, target.x, target.y, 1.2);
-              spawnPointDefenseLaserHit(target.x, target.y);
-              const lDir = { x: Math.cos(gun.angle), y: Math.sin(gun.angle) };
-              const lMuz = { x: base.x + lDir.x * 6, y: base.y + lDir.y * 6 };
-              ActiveCarrier.set(writeCarrierVelocity(baseVel.x, baseVel.y, CLOCK_RENDER, SimClock.sim, _fireCarrier));
-              spawnLaserBeam(lMuz, { x: target.x, y: target.y }, LASER_PD_BEAM_WIDTH, {
-                life: 0.09, colorOuter: stats?.color || 'rgba(110,200,255,0.9)',
-                colorInner: 'rgba(250,255,255,1.0)', glowColor: stats?.color || 'rgba(90,180,255,0.95)',
-                glowBlur: 22, outerWidthMul: 1.05, innerWidthMul: 0.45
-              });
-              spawnPointDefenseLaserMuzzle(lMuz, lDir, baseVel);
               ActiveCarrier.clear();
+              // Laser PD w 3D (WeaponFx, zadanie 17 — dawniej smuga na kanwie): wylot z wieżyczki,
+              // impuls do rakiety, trafienie.
+              const lcx = Math.cos(gun.angle);
+              const lcy = Math.sin(gun.angle);
+              WeaponFx.pdLaser(weaponId, base.x + lcx * 6, base.y + lcy * 6, target.x, target.y, ship, null);
               target.life = -1; // znika też z _pdEnemyRocketBuffer (checki life<=0)
               removeBulletAt(rIdx);
             }
             gun.cd = fireInterval;
           } else {
-            firePointDefenseLaser(gun, base, baseVel, target, pdDef, fireInterval);
+            firePointDefenseLaser(gun, base, baseVel, target, pdDef, fireInterval, weaponId);
           }
         } else {
           fireCIWSGun(gun, base, baseVel, wDef, fireInterval);
@@ -18215,21 +18534,13 @@
         color: wDef?.vfxColor,
         type: 'ciws'
       });
-      // Błysk jedzie z wieżyczką (nośnik), dawniej brał 10% prędkości okrętu.
-      ActiveCarrier.set(writeCarrierVelocity(baseVel.x, baseVel.y, CLOCK_RENDER, SimClock.sim, _fireCarrier));
-      spawnParticle(
-        { x: px, y: py },
-        { x: dir.x * 120, y: dir.y * 120 },
-        0.06,
-        '#ffdf9e',
-        2.0,
-        true
-      );
-      ActiveCarrier.clear();
+      // Błysk wylotu z receptury CIWS (WeaponFx, zadanie 17 — dawniej cząstka kanwy): lufa
+      // z rekordu wieżyczki p_aux, nośnik — wieżyczka.
+      WeaponFx.pdShot(wDef?.id || 'ciws_mk1', px, py, shotAngle, ship);
       gun.cd = fireInterval ?? CIWS_FIRE_INTERVAL;
     }
 
-    function firePointDefenseLaser(gun, base, baseVel, target, stats, fireInterval) {
+    function firePointDefenseLaser(gun, base, baseVel, target, stats, fireInterval, weaponId = 'laser_pd_mk1') {
       const dir = { x: Math.cos(gun.angle), y: Math.sin(gun.angle) };
       const muzzle = { x: base.x + dir.x * 6, y: base.y + dir.y * 6 };
       const toTarget = { x: target.x - muzzle.x, y: target.y - muzzle.y };
@@ -18241,21 +18552,10 @@
       const distance = clamp(Math.hypot(toTarget.x, toTarget.y), 0, range);
       const beamEnd = { x: muzzle.x + dir.x * distance, y: muzzle.y + dir.y * distance };
 
-      // Wiązka i błysk wylotu jadą z wieżyczką, trafienie — z celem.
-      ActiveCarrier.set(writeCarrierVelocity(baseVel.x, baseVel.y, CLOCK_RENDER, SimClock.sim, _fireCarrier));
-      spawnLaserBeam(muzzle, beamEnd, LASER_PD_BEAM_WIDTH, {
-        life: 0.09,
-        colorOuter: stats?.color || 'rgba(110,200,255,0.9)',
-        colorInner: 'rgba(250,255,255,1.0)',
-        glowColor: stats?.color || 'rgba(90,180,255,0.95)',
-        glowBlur: 22,
-        outerWidthMul: 1.05,
-        innerWidthMul: 0.45
-      });
-      spawnPointDefenseLaserMuzzle(muzzle, dir, baseVel);
-      ActiveCarrier.set(writeCarrier(target, beamEnd.x, beamEnd.y, false, _hitCarrier));
-      spawnPointDefenseLaserHit(beamEnd.x, beamEnd.y);
-      ActiveCarrier.clear();
+      // Laser PD w 3D (WeaponFx, zadanie 17 — decyzja 2026-09-27: PD z kanwy do 3D, efekty
+      // z dema bronie-webgpu): wylot z wieżyczki, impuls do celu, trafienie. Wiązka jedzie
+      // z wieżyczką (nośnik), trafienie — z celem.
+      WeaponFx.pdLaser(weaponId, muzzle.x, muzzle.y, beamEnd.x, beamEnd.y, ship, target);
       applyDamageToNPC(target, damage, 'laser_pd');
       gun.cd = fireInterval ?? LASER_PD_FIRE_INTERVAL;
     }
@@ -18306,31 +18606,9 @@
         });
       }
 
-      ActiveCarrier.set(writeCarrierVelocity(baseVel.x, baseVel.y, CLOCK_RENDER, SimClock.sim, _fireCarrier));
-      spawnFlakMuzzle(muzzle, dir, baseVel, wDef);
-      ActiveCarrier.clear();
+      // Wylot flaku z receptury (WeaponFx, zadanie 17 — dawniej cząstki kanwy).
+      WeaponFx.pdShot(wDef.id, muzzle.x, muzzle.y, gun.angle, ship);
       gun.cd = fireInterval ?? (wDef.cooldown || CIWS_FIRE_INTERVAL);
-    }
-
-    // Wylot flaku: krótki, gruby blask + kilka niedopalonych ziaren prochu.
-    // Prędkość wieżyczki dokłada nośnik (ActiveCarrier od wołającego).
-    function spawnFlakMuzzle(pos, dir, baseVel, wDef) {
-      if (!isCanvasWeaponVfxEnabled()) return;
-      const scale = wDef.size === 'Capital' ? 2.2 : (wDef.size === 'L' ? 1.5 : (wDef.size === 'M' ? 1.1 : 0.8));
-      const angle = Math.atan2(dir.y, dir.x);
-      spawnParticle({ x: pos.x, y: pos.y }, { x: dir.x * 140, y: dir.y * 140 }, 0.09, '#ffe6b0', 7 * scale, true);
-      for (let i = 0; i < 5; i++) {
-        const aa = angle + (Math.random() - 0.5) * 0.5;
-        const speed = 220 + Math.random() * 180;
-        spawnParticle(
-          { x: pos.x + Math.cos(aa) * 6 * scale, y: pos.y + Math.sin(aa) * 6 * scale },
-          { x: Math.cos(aa) * speed, y: Math.sin(aa) * speed },
-          0.14 + Math.random() * 0.12,
-          (Math.random() < 0.4) ? '#fff0c8' : '#ffb347',
-          (1.8 + Math.random() * 2.0) * scale,
-          true
-        );
-      }
     }
 
     // ========================================================================
@@ -18395,63 +18673,17 @@
         rb.life = -1;   // sprząta go własna iteracja pętli pocisków
       }
 
-      // 3. Efekt: pęknięcie 2D (port prototypu) + cięższy akcent 3D dla L/Capital.
-      // Pęknięcie leci w układzie wyrzutni (pęd pocisku odziedziczony po okręcie),
-      // odłamki dostają część prędkości pocisku WZGLĘDEM niego — flak z pędzącego
-      // okrętu pęka tak, jak z nieruchomego.
+      // 3. Efekt: pęknięcie z dema bronie-webgpu (WeaponFx, zadanie 17 — kula odłamków, czarny
+      // kłąb z ognistym jądrem, fala; dawniej FlakBurstVFX na kanwie + armata 3D dla L/Capital).
+      // Pęknięcie leci w układzie wyrzutni (pęd pocisku odziedziczony po okręcie) — flak
+      // z pędzącego okrętu pęka tak, jak z nieruchomego.
       const shellIvx = Number(b.ivx) || 0;
       const shellIvy = Number(b.ivy) || 0;
       ActiveCarrier.set(writeCarrierVelocity(shellIvx, shellIvy, b.clock, SimClock.sim, _impactCarrier));
-      FlakBurstVFX.spawn(b.x, b.y, { radius, vx: b.vx - shellIvx, vy: b.vy - shellIvy });
-      if (radius >= 240 && window.triggerArmataImpact3D) {
-        window.triggerArmataImpact3D(b.x, b.y, Math.min(260, radius * 0.5));
-      }
+      WeaponFx.flakBurst(b, b.x, b.y, radius);
       ActiveCarrier.clear();
       if (window.AudioSys) AudioSys.playSound('explosion');
     }
-
-    // Prędkość wieżyczki dokłada nośnik (ActiveCarrier ustawiony przez wołającego) —
-    // tu tylko ruch własny iskier.
-    function spawnPointDefenseLaserMuzzle(pos, dir, baseVel) {
-      if (!isCanvasWeaponVfxEnabled()) return;
-      const tangential = { x: -dir.y, y: dir.x };
-      for (let i = 0; i < 3; i++) {
-        const spread = (Math.random() - 0.5) * 0.6;
-        const vel = {
-          x: dir.x * (220 + Math.random() * 80) + tangential.x * spread * 80,
-          y: dir.y * (220 + Math.random() * 80) + tangential.y * spread * 80
-        };
-        spawnParticle(
-          { x: pos.x, y: pos.y },
-          vel,
-          0.08 + Math.random() * 0.05,
-          '#8fe4ff',
-          2.2 + Math.random() * 0.8,
-          true
-        );
-      }
-    }
-
-    function spawnPointDefenseLaserHit(x, y) {
-      if (!isCanvasWeaponVfxEnabled()) return;
-      for (let i = 0; i < 12; i++) {
-        const a = Math.random() * Math.PI * 2;
-        const speed = 160 + Math.random() * 200;
-        spawnParticle(
-          { x, y },
-          { x: Math.cos(a) * speed, y: Math.sin(a) * speed },
-          0.16 + Math.random() * 0.14,
-          '#78d9ff',
-          1.4 + Math.random() * 1.6,
-          true
-        );
-      }
-      spawnParticle({ x, y }, { x: 0, y: 0 }, 0.05, '#ffffff', 4.4, true);
-      spawnShockwave(x, y, { r: 5, maxR: 70, w: 2.4, maxLife: 0.35, color: 'rgba(110,200,255,' });
-    }
-
-
-
 
     function handlePlayerDestroyed() {
       if (ship.destroyed) return;
@@ -18471,6 +18703,9 @@
 
     function applyDamageToPlayer(amount, opts = {}) {
       const bypassShield = !!opts?.bypassShield;
+      // Kamera przechodzi w postawę walki od trafienia; `combat: false` mają
+      // obrażenia spoza walki (sufit kadłuba po zderzeniu, asteroidy).
+      if (amount > 0 && opts?.combat !== false) noteCameraCombat('trafienie');
       const prevHull = ship.hull.val;
       if (!bypassShield && isEntityShieldBlocking(ship)) { const s = Math.min(ship.shield.val, amount); ship.shield.val -= s; amount -= s; ship.shield.regenTimer = ship.shield.regenDelay; }
       if (amount > 0) ship.hull.val = Math.max(0, ship.hull.val - amount);
@@ -19072,10 +19307,10 @@
           const ratioAdjusted = Math.pow(Math.max(0, Math.min(1, shipState.ratio)), playerHexLossExponent);
           const shipHullCap = Math.max(0, ship.hull.max * ratioAdjusted);
           if (ship.hull.val > shipHullCap + 0.25) {
-            applyDamageToPlayer(ship.hull.val - shipHullCap, { bypassShield: true });
+            applyDamageToPlayer(ship.hull.val - shipHullCap, { bypassShield: true, combat: false });
           }
           if (!ship.destroyed && shipState.active <= 0 && ship.hull.val > 0) {
-            applyDamageToPlayer(ship.hull.val + 1, { bypassShield: true });
+            applyDamageToPlayer(ship.hull.val + 1, { bypassShield: true, combat: false });
           }
         }
       }
@@ -19173,7 +19408,6 @@
 
     const _activeWrecksBuffer = [];
     const _sleepingWrecksBuffer = [];
-    const _activeAsteroidHexBuffer = [];
     // Cache list destruktora — budowane raz na klatkę renderu (rAF), współdzielone
     // przez wszystkie substepy fizyki tej klatki (patrz physicsStep).
     let _destrPrepFrameId = -1;
@@ -19192,10 +19426,6 @@
       for (let i = 0; i < npcList.length; i++) _dynamicDestructibles.push(npcList[i]);
       for (let i = 0; i < wreckList.length; i++) _dynamicDestructibles.push(wreckList[i]);
       if (p2Entity) _dynamicDestructibles.push(p2Entity);
-      if (window.asteroidField?.getActiveHexEntities) {
-        const asteroidHexes = window.asteroidField.getActiveHexEntities(_activeAsteroidHexBuffer);
-        for (let i = 0; i < asteroidHexes.length; i++) _dynamicDestructibles.push(asteroidHexes[i]);
-      }
       return _dynamicDestructibles;
     }
 
@@ -19272,13 +19502,13 @@
           continue;
         }
         CanvasVFX.spawnParticleXY(
-          px + (Math.random() - 0.5) * 3, py + (Math.random() - 0.5) * 3,
-          -rvx * 0.02 + (Math.random() - 0.5) * 10, -rvy * 0.02 + (Math.random() - 0.5) * 10,
+          px + (fxRandom.next() - 0.5) * 3, py + (fxRandom.next() - 0.5) * 3,
+          -rvx * 0.02 + (fxRandom.next() - 0.5) * 10, -rvy * 0.02 + (fxRandom.next() - 0.5) * 10,
           isTorpedo ? 0.5 : 0.28, trailColor, isTorpedo ? 2.0 : 1.0, false
         );
         // Extra engine glow for torpedoes
         if (isTorpedo) {
-          CanvasVFX.spawnParticleXY(px, py, (Math.random() - 0.5) * 20, (Math.random() - 0.5) * 20, 0.3, '#ffaa33', 1.5, false);
+          CanvasVFX.spawnParticleXY(px, py, (fxRandom.next() - 0.5) * 20, (fxRandom.next() - 0.5) * 20, 0.3, '#ffaa33', 1.5, false);
         }
         // Bright additive head glow for canvas-only fighter missiles.
         if (b.forceCanvas) {
@@ -19387,6 +19617,7 @@
       const bulletProfileStride = !PerfHUD.visible ? 0 : (bullets.length >= 64 ? 8 : (bullets.length >= 16 ? 4 : 1));
       const bulletProfileScale = bulletProfileStride || 1;
 
+      bulletLoop:
       for (let i = bullets.length - 1; i >= 0; i--) {
         const profileBullet = bulletProfileStride > 0 && (i % bulletProfileStride) === 0;
         let tBulletSection0 = profileBullet ? performance.now() : 0;
@@ -19498,16 +19729,45 @@
         if (profileBullet) secIntercept += (performance.now() - tBulletSection0) * bulletProfileScale;
 
         tBulletSection0 = profileBullet ? performance.now() : 0;
+        // --- PRZEBICIA (zadanie 18-B, src/game/projectileMechanics.js) ---
+        // Pocisk w materiale kadłuba (Mjolnir, Valkyrie): droga w materiale, hamowanie, znaki
+        // rzazu, potem wyjście (krater wyjścia, lot dalej — kandydaci od punktu wyjścia) albo
+        // zakleszczenie (krater, pocisk znika). W materiale — bez innych kolizji w tym kroku.
+        // Odcinek kandydatów zaczyna się w b.px/b.py (każdy inny pocisk — jak dotąd).
+        let candX0 = b.px;
+        let candY0 = b.py;
+        if (b.pen) {
+          const pass = stepInsideHull(b, b.mech);
+          if (applyBulletHullPass(b, pass)) {
+            removeBulletAt(i);
+            if (profileBullet) secNpcHit += (performance.now() - tBulletSection0) * bulletProfileScale;
+            continue;
+          }
+          if (pass.event === PASS_EXIT) {
+            candX0 = pass.x;
+            candY0 = pass.y;
+          } else if (pass.event === PASS_INSIDE) {
+            if (profileBullet) secNpcHit += (performance.now() - tBulletSection0) * bulletProfileScale;
+            continue;
+          }
+        }
+
         // --- GLOWNA PETLA KOLIZJI ---
+        // Przebieg po kandydatach na odcinku [candX0, b.x]; drugi i kolejny tylko dla pocisku,
+        // który w tym kroku przebił kadłub na wylot (następny kadłub za burtą w tym samym kroku).
         let hitNPC = null;
+        for (let hullPass = 0; hullPass < 12; hullPass++) {
         let didHitShield = false;
         let didHitHex = false;
         // Heks znaleziony przez sweepImpact — idzie wprost do applyImpact.
         let hitHexShard = null;
+        // Węzeł wejścia w kadłub na belkach (sweep) — ziarno decyzji rykoszetu (hash z numerem pocisku).
+        let hitNode = -1;
+        hitNPC = null;
 
         const targetsCount = SpatialGrid.getPotentialTargetsAlongSegment(
-          b.px,
-          b.py,
+          candX0,
+          candY0,
           b.x,
           b.y,
           Number(b.r) || 0
@@ -19523,6 +19783,8 @@
 
           const realNpc = npc._realEntity || npc;
           if (b.source && b.source === realNpc) continue;
+          // Kadłub, w którym pocisk jest albo z którego w tym kroku wyszedł (przebicie).
+          if (b.pen && skipsHull(b, realNpc)) continue;
           // Filtr drużynowy USUNIĘTY żeby aktywować Friendly Fire.
           // const isPlayerBullet = b.owner === 'player' || b.owner === 'player2';
           // if (npc._isPlayerShip && isPlayerBullet) continue;
@@ -19531,21 +19793,22 @@
 
           const bulletR = Number(b.r) || 0;
           const hullR = (Number(npc.radius) || 0) + bulletR;
-          const hullBroadT = segmentCircleToi(b.px, b.py, b.x, b.y, npc.x, npc.y, hullR);
+          const hullBroadT = segmentCircleToi(candX0, candY0, b.x, b.y, npc.x, npc.y, hullR);
           // Tarcza najpierw — tani test, a jej t przycina sweep po heksach niżej.
           const shieldR = npc._blkShieldR || 0;
           let shieldT = -1;
           if (shieldR > 0) {
             const dirShieldR = getEntityShieldRadiusTowards(npc._realEntity || npc, b.x, b.y) * (npc._blkShieldProg || 0);
             if (dirShieldR > 0) {
-              shieldT = segmentCircleToi(b.px, b.py, b.x, b.y, npc.x, npc.y, dirShieldR + bulletR);
+              shieldT = segmentCircleToi(candX0, candY0, b.x, b.y, npc.x, npc.y, dirShieldR + bulletR);
             }
           }
           let hullT = hullBroadT;
           let hullIsHex = false;
           let hullShard = null;
-          let hullImpactX = hullT >= 0 ? b.px + (b.x - b.px) * hullT : b.x;
-          let hullImpactY = hullT >= 0 ? b.py + (b.y - b.py) * hullT : b.y;
+          let hullNode = -1;
+          let hullImpactX = hullT >= 0 ? candX0 + (b.x - candX0) * hullT : b.x;
+          let hullImpactY = hullT >= 0 ? candY0 + (b.y - candY0) * hullT : b.y;
           const hullSweepable = !!(realNpc.beamHull || realNpc.hexGrid);
           if (hullBroadT >= 0 && hullSweepable) {
             // Heks wygrywa tylko PRZED wejściem w tarczę (remis → tarcza) i przed
@@ -19557,10 +19820,10 @@
             let hexSweep = null;
             const sweepFn = realNpc.beamHull ? hullSweepImpact : hexSweepImpact;
             if (sweepLimit >= 1) {
-              hexSweep = sweepFn(realNpc, b.px, b.py, b.x, b.y, bulletR);
+              hexSweep = sweepFn(realNpc, candX0, candY0, b.x, b.y, bulletR);
             } else if (sweepLimit > 0) {
-              hexSweep = sweepFn(realNpc, b.px, b.py,
-                b.px + (b.x - b.px) * sweepLimit, b.py + (b.y - b.py) * sweepLimit, bulletR);
+              hexSweep = sweepFn(realNpc, candX0, candY0,
+                candX0 + (b.x - candX0) * sweepLimit, candY0 + (b.y - candY0) * sweepLimit, bulletR);
             }
             hullT = hexSweep ? (sweepLimit >= 1 ? hexSweep.t : hexSweep.t * sweepLimit) : -1;
             hullIsHex = hullT >= 0;
@@ -19569,6 +19832,7 @@
               hullImpactY = hexSweep.worldY;
               // Wynik sweepa jest statyczny — następny kandydat go nadpisze.
               hullShard = hexSweep.hitShard;
+              hullNode = Number.isInteger(hexSweep.node) ? hexSweep.node : -1;
             }
           }
 
@@ -19579,8 +19843,8 @@
           if (shieldT >= 0 && (candidateT < 0 || shieldT <= candidateT)) {
             candidateT = shieldT;
             candidateShield = true;
-            candidateImpactX = b.px + (b.x - b.px) * shieldT;
-            candidateImpactY = b.py + (b.y - b.py) * shieldT;
+            candidateImpactX = candX0 + (b.x - candX0) * shieldT;
+            candidateImpactY = candY0 + (b.y - candY0) * shieldT;
           }
           if (candidateT < 0 || candidateT >= hitT) continue;
 
@@ -19589,11 +19853,13 @@
           didHitShield = candidateShield;
           didHitHex = !candidateShield && hullIsHex;
           hitHexShard = didHitHex ? hullShard : null;
+          hitNode = didHitHex ? hullNode : -1;
           hitX = candidateImpactX;
           hitY = candidateImpactY;
         }
 
-        if (hitNPC) {
+        if (!hitNPC) break;
+        {
           // Flak trafiony bezpośrednio (np. w tarczę, zanim zadziałał zapalnik)
           // i tak pęka — obrażenia rozchodzą się jako odłamki, nie jako trafienie.
           if (b.type === 'flak' && b.flakBurstRadius) {
@@ -19602,7 +19868,7 @@
             detonateFlakShell(b);
             removeBulletAt(i);
             if (profileBullet) secNpcHit += (performance.now() - tBulletSection0) * bulletProfileScale;
-            continue;
+            continue bulletLoop;
           }
           const _rawDmg = Number.isFinite(b.damage) ? b.damage : 0;
           // CIWS/laser_pd: 100% vs myśliwce, 20% vs hull/tarcza statków
@@ -19652,10 +19918,11 @@
             // ZATRZYMAJ I USUN POCISK
             removeBulletAt(i);
             if (profileBullet) secNpcHit += (performance.now() - tBulletSection0) * bulletProfileScale;
-            continue;
+            continue bulletLoop;
 
           } else if (!shieldActive && hexHit) {
             // Tarcza nie działa, trafiono w kadłub -> OBRAŻENIA
+            const realHit = hitNPC._realEntity || hitNPC;
 
             // Nośnik trafionego punktu kadłuba (ruch + obrót): kierunek wgniecenia
             // i tunelu mostka z prędkości pocisku WZGLĘDEM niego (pocisk niesie
@@ -19664,68 +19931,94 @@
             const hitCarrier = writeCarrier(hitNPC, hitX, hitY, false, _impactCarrier);
             _impactRelVel.x = b.vx - hitCarrier.vx;
             _impactRelVel.y = b.vy - hitCarrier.vy;
+            // Normalna powierzchni dla efektu trafienia — PRZED kraterem (krater zabija węzły).
+            writeImpactHit(_impactHit, realHit, hitX, hitY, _impactRelVel.x, _impactRelVel.y, 'hull');
+
+            // Mechanika z dema (zadanie 18-B): bronie z przebiciem albo rykoszetem (`b.mech`) na
+            // kadłubie belkowym — rykoszet (płaski kąt, hash numeru pocisku: obrażenia × 0,3,
+            // pocisk znika, smugowiec z tego samego hasha), przebicie (droga w materiale liczona
+            // PRZED kraterem wejścia, potem wyjście / zakleszczenie) albo stop. Reszta — jak dotąd.
+            const mech = (b.mech && realHit.beamHull) ? b.mech : null;
+            let decision = null;
+            let pass = null;
+            if (mech) {
+              decision = resolveHullHit(b, mech, _impactHit, _impactRelVel, hitNode, realHit, hitX, hitY);
+              if (decision === HIT_PENETRATE) {
+                pass = stepInsideHull(b, mech);
+                _impactHit.through = pass.event !== PASS_STUCK;
+              } else if (decision === HIT_RICOCHET) {
+                writeImpactRicochet(_impactHit, b, hitNode);
+              }
+            }
+            const entryK = entryDamage(b, mech, decision);
 
             // Obrażenia w heks trafiony przez sweep (bez niego — sonda w punkcie trafienia);
             // kadłub na belkach — krater od punktu wejścia.
             if (hitNPC.hexGrid || hitNPC.beamHull) {
-              applyHexImpact(hitNPC._realEntity || hitNPC, hitX, hitY, npcDamage, _impactRelVel, hitHexShard);
+              // Źródło stempla mapy ran (18-C) — pocisk; rykoszet zostawia płytkie osmalenie
+              // (wariant `ricochet`, src/3d/hullDamageStamps.js), reszta — ranę trafienia.
+              applyHexImpact(realHit, hitX, hitY, npcDamage * entryK.crater, _impactRelVel, hitHexShard, b,
+                decision === HIT_RICOCHET ? 'ricochet' : 'impact');
               // Kierunek wyrzutu atmosfery, gdy padnie mostek (tunel ostrzału).
-              noteBridgeHit(hitNPC._realEntity || hitNPC, hitX, hitY, _impactRelVel.x, _impactRelVel.y, bridgeSimTime);
+              noteBridgeHit(realHit, hitX, hitY, _impactRelVel.x, _impactRelVel.y, bridgeSimTime);
             }
 
-            // Routing obrażeń: gracz vs NPC
-            if (hitNPC._isPlayerShip) {
-              applyDamageToPlayer(npcDamage);
-            } else {
-              if (b.owner === 'player' || b.owner === 'player2') markPlayerDamage(hitNPC);
-              applyDamageToNPC(hitNPC, npcDamage, b.type);
+            // Routing obrażeń: gracz vs NPC. Ponowne wejście pocisku w ten sam kadłub (wklęsła
+            // sylwetka) — krater tak, HP drugi raz nie (entryK.hp = 0, decyzja 18-A).
+            if (entryK.hp > 0) {
+              if (hitNPC._isPlayerShip) {
+                applyDamageToPlayer(npcDamage * entryK.hp);
+              } else {
+                if (b.owner === 'player' || b.owner === 'player2') markPlayerDamage(hitNPC);
+                applyDamageToNPC(hitNPC, npcDamage * entryK.hp, b.type);
+              }
             }
 
             ActiveCarrier.set(hitCarrier);
-            spawnBulletImpactEffect(b, hitX, hitY, 1.0);
+            spawnBulletImpactEffect(b, hitX, hitY, 1.0, _impactHit);
             ActiveCarrier.clear();
 
-            if (shouldRemoveProjectileAfterImpact(b, !!(hitNPC.hexGrid || hitNPC.beamHull))) removeBulletAt(i);
+            if (decision === HIT_PENETRATE) {
+              // Rzaz, wyjście albo zakleszczenie w tym samym kroku (droga od punktu wejścia).
+              if (applyBulletHullPass(b, pass)) {
+                removeBulletAt(i);
+                if (profileBullet) secNpcHit += (performance.now() - tBulletSection0) * bulletProfileScale;
+                continue bulletLoop;
+              }
+              if (pass.event === PASS_EXIT) {
+                // Wylot za burtą: następny kadłub na reszcie odcinka tego kroku.
+                candX0 = pass.x;
+                candY0 = pass.y;
+                continue;
+              }
+              if (profileBullet) secNpcHit += (performance.now() - tBulletSection0) * bulletProfileScale;
+              continue bulletLoop;
+            }
+            if (mech || shouldRemoveProjectileAfterImpact(b, !!(hitNPC.hexGrid || hitNPC.beamHull))) removeBulletAt(i);
             if (profileBullet) secNpcHit += (performance.now() - tBulletSection0) * bulletProfileScale;
-            continue;
+            continue bulletLoop;
           } else {
             // Pocisk minął wszystko (np. dziura we wraku, albo minął tarczę gdy była wyłączona)
             hitNPC = null;
             if (profileBullet) secNpcHit += (performance.now() - tBulletSection0) * bulletProfileScale;
-            continue;
+            continue bulletLoop;
           }
         }
+        } // for hullPass — kolejny przebieg tylko po wylocie z kadłuba (przebicie, 18-B)
         if (profileBullet) secNpcHit += (performance.now() - tBulletSection0) * bulletProfileScale;
 
         tBulletSection0 = profileBullet ? performance.now() : 0;
-        // --- KOLIZJE Z ASTEROIDAMI (swept hit -> lazy hex promotion) ---
-        if (!hitNPC && window.asteroidField?.raycast && window.asteroidField?.applyDamageAt) {
-          const segX0 = Number.isFinite(b.px) ? b.px : b.x;
-          const segY0 = Number.isFinite(b.py) ? b.py : b.y;
-          const segX1 = b.x;
-          const segY1 = b.y;
-          const astHit = window.asteroidField.raycast(segX0, segY0, segX1, segY1, b.r || 0);
-
-          if (astHit?.asteroid?.alive) {
-            const tAst = Math.max(0, Math.min(1, Number(astHit.hitT ?? astHit.t) || 0));
-            const hitX = segX0 + (segX1 - segX0) * tAst;
-            const hitY = segY0 + (segY1 - segY0) * tAst;
-            const astDamage = Number.isFinite(b.damage) ? b.damage : 0;
-            // Kierunek uderzenia względem skały (pocisk niesie prędkość strzelca).
-            const astCarrier = writeCarrier(astHit.asteroid, hitX, hitY, false, _impactCarrier);
-            const astResult = window.asteroidField.applyDamageAt(astHit.asteroid, hitX, hitY, astDamage,
-              { x: b.vx - astCarrier.vx, y: b.vy - astCarrier.vy });
-
-            if (astResult?.hit || astResult?.destroyed) {
-              ActiveCarrier.set(astCarrier);
-              spawnBulletImpactEffect(b, hitX, hitY, 0.9);
-              ActiveCarrier.clear();
-
-              if (shouldRemoveProjectileAfterImpact(b, true)) removeBulletAt(i);
-              if (profileBullet) secAst += (performance.now() - tBulletSection0) * bulletProfileScale;
-              continue;
-            }
-          }
+        // --- OLBRZYMY PASA ASTEROID (zadanie 21): skała olbrzyma w płaszczyźnie gry
+        // zatrzymuje pociski jak płyta ringu. Małe skały leżą pod płaszczyzną — pociski
+        // przelatują nad nimi (stare pole: trafienia, niszczenie i łup — usunięte). Ściany
+        // olbrzymów mają setki–tysiące j., pocisk ≤ ~170 j./krok — bez tunelowania.
+        // Trafienie jak w ring (17): kierunek z prędkości własnej pocisku, bez encji.
+        if (!hitNPC && asteroidBelt && asteroidBelt.giants.readyCount > 0 && asteroidBelt.pointBlocked(b.x, b.y)) {
+          writeImpactHit(_impactHit, null, b.x, b.y, b.vx - (Number(b.ivx) || 0), b.vy - (Number(b.ivy) || 0), 'asteroid');
+          spawnBulletImpactEffect(b, b.x, b.y, 0.9, _impactHit);
+          removeBulletAt(i);
+          if (profileBullet) secAst += (performance.now() - tBulletSection0) * bulletProfileScale;
+          continue;
         }
         if (profileBullet) secAst += (performance.now() - tBulletSection0) * bulletProfileScale;
 
@@ -19733,7 +20026,8 @@
         // --- RING „HALO”: płyta podłogi w płaszczyźnie gry zatrzymuje pociski
         // (tranzyty otwarte). Pocisk ≤ ~170 j./krok, płyta ≥ ~450 j. — bez tunelowania.
         if (haloRings && haloRings.pointInSlab(b.x, b.y)) {
-          spawnBulletImpactEffect(b, b.x, b.y, 0.95);
+          writeImpactHit(_impactHit, null, b.x, b.y, b.vx - (Number(b.ivx) || 0), b.vy - (Number(b.ivy) || 0), 'ring');
+          spawnBulletImpactEffect(b, b.x, b.y, 0.95, _impactHit);
           removeBulletAt(i);
           if (profileBullet) secRing += (performance.now() - tBulletSection0) * bulletProfileScale;
           continue;
@@ -19755,7 +20049,10 @@
               applyDamageToPlatform(p, b.damage || 0);
               triggerMercAggro('platform_hit');
               if (platShielded) registerShieldImpact(p, b.x, b.y, b.damage || 0, shieldFxClassForBullet(b));
-              else spawnBulletImpactEffect(b, b.x, b.y, 1.0);
+              else {
+                writeImpactHit(_impactHit, p, b.x, b.y, b.vx - (Number(b.ivx) || 0), b.vy - (Number(b.ivy) || 0), 'platform');
+                spawnBulletImpactEffect(b, b.x, b.y, 1.0, _impactHit);
+              }
               removeBulletAt(i);
               hitPlatform = true;
               break;
@@ -19778,7 +20075,10 @@
             applyDamageToStation(st, b.damage || 0);
             if (mercMission?.station === st) triggerMercAggro('station_hit');
             if (stShielded) registerShieldImpact(st, b.x, b.y, b.damage || 0, shieldFxClassForBullet(b));
-            else spawnBulletImpactEffect(b, b.x, b.y, 1.0);
+            else {
+              writeImpactHit(_impactHit, st, b.x, b.y, b.vx - (Number(b.ivx) || 0), b.vy - (Number(b.ivy) || 0), 'station');
+              spawnBulletImpactEffect(b, b.x, b.y, 1.0, _impactHit);
+            }
             removeBulletAt(i);
             break;
           }
@@ -19923,7 +20223,8 @@
               npc.isCollidable = true;
               npc.vx *= 0.1;
               npc.vy *= 0.1;
-              spawnShockwave(npc.x, npc.y, { maxR: 600, maxLife: 0.5, color: 'rgba(255, 100, 100,' });
+              // Przylot widać w warpie „Nurt” (WarpNurt: wyrzut z tunelu w chwili warp-in) — dawny
+              // czerwony pierścień 2D i smuga cząstek usunięte w zadaniu 22.
               if (npc.type === 'battleship') camera.addShake(8, 0.4);
               else camera.addShake(3, 0.2);
               npc.warpData = null;
@@ -19935,12 +20236,6 @@
               npc.vy = dirY * npc.warpData.speed;
               npc.desiredAngle = Math.atan2(npc.vy, npc.vx);
               npcRotationStep(npc, dt, frameNorm);
-
-              spawnParticle(
-                { x: npc.x, y: npc.y },
-                { x: -dirX * 500, y: -dirY * 500 },
-                0.2, '#ffaaaa', 4, false
-              );
 
               npc.x += npc.vx * dt;
               npc.y += npc.vy * dt;
@@ -20379,8 +20674,11 @@
     setWarpGear(1, true);
 
     function exitWarp() {
-      spawnShockwave(ship.pos.x, ship.pos.y, { maxR: 1200, maxLife: 0.7 });
+      // Wyjście widać w warpie „Nurt” (src/3d/warp/player.js: front, fala refrakcji, błysk, szew
+      // i żar) — dawny świecący pierścień 2D (spawnShockwave) usunięty w zadaniu 22.
       camera.addShake(18, 0.22);
+      // Kamera (cameraRig.js): impuls zoomu +10% i powrót do zoomu gracza — zdarzenie dla riga.
+      noteCameraRigWarp(cameraRig, 'exit');
 
       warp.entryProgress = 0;
 
@@ -20562,13 +20860,10 @@
       if (DevFlags.unlimitedWarp) {
         warp.fuel = warp.fuelMax;
       }
-
-      // Efekty wizualne
-      spawnParticle({ x: ship.pos.x, y: ship.pos.y }, { x: 0, y: 0 }, 0.14, '#bfe7ff', 8, true);
-      for (let i = 0; i < 18; i++) {
-        const a = Math.random() * Math.PI * 2;
-        spawnParticle({ x: ship.pos.x, y: ship.pos.y }, { x: Math.cos(a) * 320, y: Math.sin(a) * 320 }, 0.18 + Math.random() * 0.18, '#cce6ff', 1.4, false);
-      }
+      // Skok widać w warpie „Nurt” (src/3d/warp/player.js: kop — smugi gwiazd, fala, błysk za
+      // rufą, ośrodek); dawny rozprysk cząstek 2D usunięty w zadaniu 22. Kamera (cameraRig.js):
+      // statek wyrywa się do przodu w kadrze, zoom −10% — zdarzenie dla riga.
+      noteCameraRigWarp(cameraRig, 'kick');
     }
 	const _p1ForceScratch = { localFx: 0, localFy: 0, localTorque: 0 };
 	const _p2ForceScratch = { localFx: 0, localFy: 0, localTorque: 0 };
@@ -21905,6 +22200,8 @@
       // Ring „Halo” (Ziemia, Mars): płyta podłogi przecina płaszczyznę gry,
       // przez ring prowadzą tranzyty; ściany hal K-7 i zatok portu dla graczy.
       stepShipRingCollisions(dt);
+      // Wydobycie skał (zadanie 21b): drony, piła, ładunki, wiązka i fizyka skał w czasie gry.
+      stepAsteroidMining(dt);
 
       tPhysSection0 = performance.now();
       // Listy destruktora budujemy RAZ na klatkę renderu — między substepami tej
@@ -21985,26 +22282,316 @@
     // Debug/profiling: pojedynczy krok fizyki z konsoli (działa też przy wstrzymanym rAF).
     window.__physicsStepOnce = (dt = PHYS_DT) => physicsStep(dt);
 
-    // Kolizje statków (gracz, P2, NPC) z asteroidami w 120 Hz z prawdziwym dt.
-    // Dawniej szły w render(): raz na klatkę renderu (tunelowanie przez skały
-    // zależne od fps), z dt 1/60 wpisanym na sztywno i PO wyliczeniu interpolacji,
-    // więc statek skakał o klatkę. Statki daleko od pasów odpadają w
-    // checkShipCollisions na teście pasm, bez zapytania do hasha.
+    // Kolizje statków (gracz, P2, NPC) z OLBRZYMAMI pasa asteroid (zadanie 21,
+    // src/game/asteroidBeltGiants.js) w 120 Hz: przekrój z = 0 siatki SDF, statek jako
+    // pięć kół wzdłuż osi kadłuba — wypchnięcie wzdłuż normalnej, prędkość w głąb skały
+    // odbita (0,3), bez obrażeń (jak demo). Małe skały leżą pod płaszczyzną gry — bez
+    // kolizji (stare pole z zderzeniami, niszczeniem i łupem usunięte).
     // NPC całkują ruch w x/y/vx/vy, a pos/vel mają najwyżej jako lustro, które
-    // nadpisuje następny krok — do kolizji ze światem (skały, ring) idą przez
+    // nadpisuje następny krok — do kolizji ze światem (olbrzymy, ring) idą przez
     // widok kinematyki (src/game/npcCollisionBody.js), wynik wraca do x/y/vx/vy.
+    // Kadłub belkowy dostaje nową pozycję encji w HullBodies.step (ruch encji, nie węzłów).
     const _npcCollisionBody = createNpcCollisionBody();
     function stepShipAsteroidCollisions(dt) {
-      const field = window.asteroidField;
-      if (!field) return;
-      if (ship && !ship.dead) field.checkShipCollisions(ship, dt);
-      if (player2Ship && !player2Ship.dead) field.checkShipCollisions(player2Ship, dt);
+      const belt = asteroidBelt;
+      if (!belt || belt.giants.readyCount === 0) return;
+      if (ship && !ship.dead) belt.collideShip(ship);
+      if (player2Ship && !player2Ship.dead && !player2Ship.destroyed) belt.collideShip(player2Ship);
       const body = _npcCollisionBody;
       for (let i = 0; i < npcs.length; i++) {
         const npc = npcs[i];
         if (!npcCollidesWithWorld(npc)) continue;
-        if (field.checkShipBodyCollisions(npc, loadNpcCollisionBody(body, npc), dt)) storeNpcCollisionBody(body, npc);
+        if (belt.collideShip(loadNpcCollisionBody(body, npc)) > 0) storeNpcCollisionBody(body, npc);
       }
+    }
+
+    // ================= WYDOBYCIE SKAŁ (zadanie 21b) =================
+    // Platforma wydobywcza gracza: src/game/asteroidMiningRig.js (logika — drony, piła,
+    // ładunki, wiązka, urobek) na fizyce skał src/game/asteroidMining.js; obraz: pas
+    // (src/3d/asteroids/minedRocks.js, miningView.js). Tu: tryb wydobycia (N), wejście,
+    // krok w physicsStep (czas symulacji — w pauzie stoi), urobek do ładowni, HUD.
+    //   N — tryb wydobycia (w pasie); w trybie: LPM trzymany — lasery dronów na skale pod
+    //   kursorem (przeciąganie = bruzda), PPM — ładunek w dnie otworu, PPM + przeciągnięcie —
+    //   piła wzdłuż linii, L — wielkość ładunku, F — detonacja, T — wiązka ściągająca.
+    const miningInput = { active: false, laserDown: false, rightDown: false, rightSX: 0, rightSY: 0, rightWX: 0, rightWY: 0, sawDrag: false };
+    const _miningPose = { x: 0, y: 0, angle: 0, len: 1800 };
+    const MINING_SAW_DRAG_PX = 26;
+
+    function getMiningRig() {
+      return asteroidBelt && asteroidBelt.rig ? asteroidBelt.rig : null;
+    }
+
+    // Callbacki platformy: urobek do ładowni (pełne tony, udźwig kadłuba), wolne miejsce,
+    // magazynek ładunków gracza, wstrząs kamery przy wybuchu blisko statku.
+    function wireAsteroidMining() {
+      const rig = getMiningRig();
+      if (!rig || rig.__wired) return;
+      rig.__wired = true;
+      rig.stock = PLAYER.miningCharges;
+      rig.onCargo = (key, tonnes) => {
+        const accepted = addToPlayerCargo({ [key]: tonnes });
+        return Number(accepted[key]) || 0;
+      };
+      rig.cargoFree = () => getPlayerCargoFree();
+      rig.onBlast = (x, y, energy) => {
+        const d = Math.hypot(x - ship.pos.x, y - ship.pos.y);
+        const k = Math.max(0, 1 - d / 9000);
+        if (k > 0.05) camera.addShake(Math.min(26, 5 + 5 * Math.sqrt(Math.max(0, energy))) * k, 0.35);
+      };
+      window.__asteroidMining = rig;
+    }
+
+    function setMiningMode(on, quiet = false) {
+      const rig = getMiningRig();
+      const next = !!on && !!rig;
+      if (on && !rig) {
+        if (!quiet) pushZoneMessage('WYDOBYCIE: platforma niegotowa (pas asteroid się ładuje)', 1.8);
+        return false;
+      }
+      if (miningInput.active === next) return next;
+      miningInput.active = next;
+      miningInput.laserDown = false;
+      miningInput.rightDown = false;
+      miningInput.sawDrag = false;
+      if (rig) {
+        wireAsteroidMining();
+        rig.setEnabled(next);
+        if (!next) rig.pointer(0, 0, false);
+      }
+      if (!quiet) pushZoneMessage(next ? 'WYDOBYCIE: ON — LPM laser · PPM ładunek / piła · F detonacja · T wiązka · L rozmiar' : 'WYDOBYCIE: OFF', next ? 3 : 1.2, { label: 'KOPALNIA' });
+      return next;
+    }
+    window.setMiningMode = setMiningMode;
+
+    // Klatka (przed krokami fizyki): budżet ciężkich operacji (przejęcie skały, wybuch —
+    // jedna na klatkę), kursor dronów, tryb gaśnie przy stacji / warpie / RTS / śmierci.
+    function beginAsteroidMiningFrame() {
+      const rig = getMiningRig();
+      if (!rig) return;
+      rig.beginFrame();
+      // (RTS nie wyłącza trybu — mysz należy wtedy do RTS, lasery gasną z puszczonym LPM.)
+      if (miningInput.active && (ship.destroyed || ship.dead || stationUI.open || warp.state === 'active' || splitScreenMode)) {
+        setMiningMode(false, true);
+      }
+      if (!miningInput.active) return;
+      // Cel narzucony (harness, narzędzia: window.__miningAim = { x, y, down }) albo kursor.
+      const aim = window.__miningAim;
+      if (aim && Number.isFinite(aim.x) && Number.isFinite(aim.y)) {
+        rig.pointer(aim.x, aim.y, !!aim.down);
+        return;
+      }
+      const zoomNow = Math.max(0.0001, Number(camera.zoom) || 1);
+      const vp = getViewportForCamera(camera);
+      const wx = camera.x + (mouse.x - (vp.x + vp.w / 2)) / zoomNow;
+      const wy = camera.y + (mouse.y - (vp.y + vp.h / 2)) / zoomNow;
+      rig.pointer(wx, wy, miningInput.laserDown && mouse.overCanvas !== false);
+    }
+
+    function stepAsteroidMining(dt) {
+      const rig = getMiningRig();
+      if (!rig || !ship || !ship.pos) return;
+      const pose = _miningPose;
+      pose.x = ship.pos.x;
+      pose.y = ship.pos.y;
+      pose.angle = Number(ship.angle) || 0;
+      pose.len = Number(ship.w) > 0 ? Number(ship.w) : 1800;
+      rig.step(dt, pose);
+    }
+
+    // Wejście myszy w trybie wydobycia (zwraca true = zdarzenie obsłużone).
+    function miningMouseDown(e) {
+      if (!miningInput.active || !gameStarted || stationUI.open || CICDisplay.active || camera.mode === 'rts') return false;
+      if (e.button === 0) {
+        miningInput.laserDown = true;
+        return true;
+      }
+      if (e.button === 2) {
+        const rect = canvas.getBoundingClientRect();
+        const w = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+        miningInput.rightDown = true;
+        miningInput.sawDrag = false;
+        miningInput.rightSX = e.clientX; miningInput.rightSY = e.clientY;
+        miningInput.rightWX = w.x; miningInput.rightWY = w.y;
+        return true;
+      }
+      return false;
+    }
+
+    function miningMouseMove(e) {
+      if (!miningInput.active || !miningInput.rightDown) return;
+      const rig = getMiningRig();
+      if (!rig) return;
+      if (Math.hypot(e.clientX - miningInput.rightSX, e.clientY - miningInput.rightSY) >= MINING_SAW_DRAG_PX) miningInput.sawDrag = true;
+      if (!miningInput.sawDrag) return;
+      const rect = canvas.getBoundingClientRect();
+      const w = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+      rig.previewSaw(miningInput.rightWX, miningInput.rightWY, w.x, w.y);
+    }
+
+    function miningMouseUp(e) {
+      if (!miningInput.active) return false;
+      const rig = getMiningRig();
+      if (e.button === 0) {
+        const was = miningInput.laserDown;
+        miningInput.laserDown = false;
+        return was;
+      }
+      if (e.button === 2 && miningInput.rightDown) {
+        miningInput.rightDown = false;
+        if (!rig) return true;
+        const rect = canvas.getBoundingClientRect();
+        const w = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+        if (miningInput.sawDrag) rig.startSaw(miningInput.rightWX, miningInput.rightWY, w.x, w.y);
+        else rig.plantCharge(w.x, w.y);
+        miningInput.sawDrag = false;
+        rig.clearSawPreview();
+        return true;
+      }
+      return false;
+    }
+
+    // Klawisze trybu wydobycia (N przełącza zawsze; T / L / F tylko w trybie).
+    function miningKeyDown(k) {
+      if (k === 'n') {
+        if (stationUI.open || camera.mode === 'rts') return false;
+        setMiningMode(!miningInput.active);
+        return true;
+      }
+      if (!miningInput.active) return false;
+      const rig = getMiningRig();
+      if (!rig) return false;
+      if (k === 't') {
+        const on = rig.toggleTractor();
+        pushZoneMessage(on ? 'WIĄZKA ŚCIĄGAJĄCA: ON' : 'WIĄZKA ŚCIĄGAJĄCA: OFF', 1.2, { label: 'KOPALNIA' });
+        return true;
+      }
+      if (k === 'l') {
+        const ch = rig.cycleCharge(1);
+        pushZoneMessage(`ŁADUNEK: ${ch.id} (${ch.label}, energia ${String(ch.energy).replace('.', ',')}) · w magazynku ${PLAYER.miningCharges[ch.id] | 0}`, 1.6, { label: 'KOPALNIA' });
+        return true;
+      }
+      if (k === 'f') {
+        const n = rig.detonate();
+        if (n) pushZoneMessage(`DETONACJA: ${n} ${n === 1 ? 'ładunek' : 'ładunków'}`, 1.2, { label: 'KOPALNIA' });
+        return true;
+      }
+      return false;
+    }
+
+    // HUD trybu wydobycia (kanwa 2D): skaner (rdzenie ciał, skład pod kursorem, ładunki)
+    // i panel stanu (narzędzia, ładunki, ładownia, komunikaty platformy).
+    const _miningMsgScratch = [];
+    let _miningHudCacheT = -1;
+    let _miningHudLines = [];
+    let _miningHudW = 0;
+    // Bufory skanera (bez alokacji na klatkę): punkt świata, punkt ekranu, trafienie promienia, kreska.
+    const _miningOverlayC = [0, 0, 0];
+    const _miningOverlayS = { x: 0, y: 0 };
+    const _miningOverlayHit = {};
+    const _miningOverlayDash = [6, 5];
+    const _miningOverlayNoDash = [];
+    // Liczba z przecinkiem (jedno miejsce po przecinku); wymaganie ładunku — najmniej 0,1 („≥ 0,0” myliło).
+    function fmtMining1(v) { return (Math.round(v * 10) / 10).toFixed(1).replace('.', ','); }
+    function fmtMiningNeed(v) { return fmtMining1(Math.max(0.1, v)); }
+    // Rdzeń rysuje ciało, które go zawiera; gdy nie ma go żadne (wykopany) — ciało
+    // pierwotne (pokolenie 0) tej skały, żeby znacznik nie znikał przy dnie otworu.
+    function miningBodyHoldsCore(b) { return b.sample(b.core.x, b.core.y, b.core.z) >= 0.3; }
+    function miningCoreHeldElsewhere(bodies, b) {
+      for (let i = 0; i < bodies.length; i++) {
+        const o = bodies[i];
+        if (o !== b && o.sourceId === b.sourceId && o.core && miningBodyHoldsCore(o)) return true;
+      }
+      return false;
+    }
+    function drawMiningOverlay(renderCtx, cam) {
+      const rig = getMiningRig();
+      if (!rig || !miningInput.active) return;
+      renderCtx.save();
+      renderCtx.font = '600 12px ui-monospace, Consolas, monospace';
+      renderCtx.textAlign = 'center';
+      const zoomNow = Math.max(0.0001, Number(cam?.zoom) || 1);
+      const m = rig.mining;
+      const c = _miningOverlayC;
+      const s = _miningOverlayS;
+      const bodies = m.bodies;
+      for (let bi = 0; bi < bodies.length; bi++) {
+        const b = bodies[bi];
+        if (!b.core || !b.oreTypeId) continue;
+        if (!miningBodyHoldsCore(b)) {
+          if (b.generation > 0) continue;
+          if (miningCoreHeldElsewhere(bodies, b)) continue;
+        }
+        b.localToWorld(b.core.x, b.core.y, b.core.z, c);
+        worldToScreenInto(c[0], -c[1], cam, s);
+        const rr = Math.max(8, b.core.r * zoomNow);
+        if (s.x < -rr || s.y < -rr || s.x > W + rr || s.y > H + rr) continue;
+        renderCtx.setLineDash(_miningOverlayDash);
+        renderCtx.strokeStyle = 'rgba(255,200,120,0.85)';
+        renderCtx.lineWidth = 1.5;
+        renderCtx.beginPath(); renderCtx.arc(s.x, s.y, rr, 0, Math.PI * 2); renderCtx.stroke();
+        renderCtx.setLineDash(_miningOverlayNoDash);
+        const res = RESOURCES[b.oreRes];
+        const top = m.raycast(c[0], c[1], 6000, 0, 0, -1, 1e6, null, _miningOverlayHit);
+        const depth = top ? Math.max(0, top.z - c[2]) : 0;
+        const need = chargeForDepth(b.material, depth + b.core.r * 0.3);
+        renderCtx.fillStyle = 'rgba(255,215,150,0.95)';
+        renderCtx.fillText(`RDZEŃ · ${res ? res.label.toLowerCase() : b.oreTypeId}`, s.x, s.y - rr - 18);
+        renderCtx.fillStyle = 'rgba(210,225,235,0.85)';
+        renderCtx.fillText(`głęb. ${Math.round(depth)} j. · ładunek z rdzenia ≥ ${fmtMiningNeed(need)}`, s.x, s.y - rr - 4);
+      }
+      const charges = rig.charges;
+      for (let i = 0; i < charges.length; i++) {
+        const ch = charges[i];
+        if (!ch.body.alive) continue;
+        ch.body.localToWorld(ch.local[0], ch.local[1], ch.local[2], c);
+        worldToScreenInto(c[0], -c[1], cam, s);
+        renderCtx.fillStyle = 'rgba(255,120,100,0.95)';
+        renderCtx.fillText(ch.id, s.x, s.y - 16);
+      }
+      const hv = rig.hover;
+      if (hv && hv.hit && hv.hit.body && hv.hit.body.alive) {
+        worldToScreenInto(hv.hit.x, -hv.hit.y, cam, s);
+        const res = RESOURCES[hv.hit.body.oreRes];
+        renderCtx.textAlign = 'left';
+        renderCtx.fillStyle = 'rgba(200,235,255,0.95)';
+        renderCtx.fillText(`${hv.probe.zone} · ruda ${Math.round(hv.probe.ore * 100)}%${res ? ` (${res.short})` : ''}`, s.x + 16, s.y + 4);
+        renderCtx.fillStyle = 'rgba(170,190,205,0.85)';
+        renderCtx.fillText(`ładunek tu: ≥ ${fmtMiningNeed(hv.need)} · ${ROCK_TYPE_LABELS_PL[hv.hit.body.typeId] || hv.hit.body.typeId}`, s.x + 16, s.y + 19);
+      }
+      // Panel stanu (tekst przeliczany co 0,1 s czasu platformy).
+      if (_miningHudCacheT < 0 || rig.time - _miningHudCacheT >= 0.1 || rig.time < _miningHudCacheT) {
+        _miningHudCacheT = rig.time;
+        const ch = rig.charge;
+        const st = PLAYER.miningCharges;
+        const cap = Number(getPlayerHullDef(PLAYER.activeHullId)?.cargoCap) || 0;
+        const ores = [];
+        for (const key of Object.keys(rig.totals.ore)) {
+          const t = rig.totals.ore[key];
+          if (t > 0) ores.push(`${RESOURCES[key]?.short || key} ${Math.round(t)} t`);
+        }
+        const lines = [];
+        lines.push(`KOPALNIA (N) · LPM laser dronów · PPM ładunek ${ch.id} (L) · PPM↔ piła · F detonacja · T wiązka ${rig.tractorOn ? 'WŁ.' : 'wył.'}`);
+        lines.push(`ładunki: S ${st.S | 0} · M ${st.M | 0} · L ${st.L | 0} · XL ${st.XL | 0} · osadzone ${rig.charges.length}`);
+        lines.push(`ładownia ${Math.round(getBagMass(PLAYER.cargo))} / ${Math.round(cap)} · urobek: ${ores.length ? ores.join(' · ') : '—'} · skała płonna ${fmtMining1(rig.totals.waste)} t${rig.totals.lostOre > 0 ? ` · przepadło ${Math.round(rig.totals.lostOre)} t rudy` : ''}`);
+        for (const msg of rig.recentMessages(3, _miningMsgScratch)) lines.push(`› ${msg}`);
+        _miningHudLines = lines;
+        // Szerokość panelu razem z tekstem (measureText to obiekt — nie co klatkę).
+        renderCtx.font = '600 12px ui-monospace, Consolas, monospace';
+        let wMax = 0;
+        for (let i = 0; i < lines.length; i++) wMax = Math.max(wMax, renderCtx.measureText(lines[i]).width);
+        _miningHudW = wMax;
+      }
+      renderCtx.textAlign = 'left';
+      renderCtx.font = '600 12px ui-monospace, Consolas, monospace';
+      const x0 = 22, y0 = 118;
+      const lh = 17;
+      renderCtx.fillStyle = 'rgba(6,12,18,0.62)';
+      renderCtx.fillRect(x0 - 10, y0 - 15, _miningHudW + 20, _miningHudLines.length * lh + 10);
+      for (let i = 0; i < _miningHudLines.length; i++) {
+        renderCtx.fillStyle = i === 0 ? 'rgba(255,214,140,0.98)' : (i < 3 ? 'rgba(210,228,238,0.92)' : 'rgba(170,210,235,0.85)');
+        renderCtx.fillText(_miningHudLines[i], x0, y0 + i * lh);
+      }
+      renderCtx.restore();
     }
 
     // Ring „Halo” (src/game/haloRingCollision.js): płyta podłogi z terenem
@@ -22033,42 +22620,6 @@
       }
     }
 
-    // ======= Efekty VFX =======
-    function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
-      if (progress <= 0) return;
-      const eased = smoothstep01(progress);
-      const baseAlpha = 0.3 + 0.5 * eased;
-      const glowR = radius * (0.65 + 0.25 * eased);
-      const ringR = radius * (0.9 + 0.35 * eased);
-      const lineBase = (6 + 22 * eased) * spriteScale;
-      const arcLine = (10 + 18 * eased) * spriteScale;
-
-      ctx.save();
-      ctx.globalCompositeOperation = 'lighter';
-
-      const glow = ctx.createRadialGradient(0, 0, glowR * 0.35, 0, 0, glowR);
-      glow.addColorStop(0, `rgba(186,232,255,${baseAlpha})`);
-      glow.addColorStop(1, 'rgba(125,211,252,0)');
-      ctx.fillStyle = glow;
-      ctx.beginPath(); ctx.arc(0, 0, glowR, 0, Math.PI * 2); ctx.fill();
-
-      ctx.lineWidth = lineBase;
-      ctx.strokeStyle = `rgba(125,211,252,${0.35 + 0.4 * eased})`;
-      ctx.beginPath(); ctx.arc(0, 0, ringR, 0, Math.PI * 2); ctx.stroke();
-
-      const segments = 4;
-      const arcLen = Math.PI * (0.22 + 0.4 * eased);
-      ctx.lineWidth = arcLine;
-      ctx.strokeStyle = `rgba(206,244,255,${0.45 + 0.45 * eased})`;
-      for (let i = 0; i < segments; i++) {
-        const offset = (vfxTime * 1.4 + i / segments) * Math.PI * 2;
-        ctx.beginPath();
-        ctx.arc(0, 0, ringR, offset, offset + arcLen);
-        ctx.stroke();
-      }
-
-      ctx.restore();
-    }
     // ============== SPLIT SCREEN STATE (early declaration) ==============
     let splitScreenMode = false;
     let player2Ship = null;
@@ -22139,14 +22690,35 @@
     }
     saveState();
     // Zoom kamery raz na klatkę renderu (czas klatki), tuż przed render(): sprężyna
-    // w log(zoom) z src/game/cameraZoom.js. Przejścia kamery (fokus stacji, wyjście
-    // z RTS) same prowadzą zoom w updateCameraTarget — wtedy sprężyna stoi.
+    // w log(zoom) z src/game/cameraZoom.js. Przejścia do fokusu (edytor stacji)
+    // same prowadzą zoom w stepCameraTransition — wtedy sprężyna stoi; przejście
+    // do statku ('ship': wyjście z RTS, powrót z fokusu) prowadzi tylko pozycję.
     // W RTS kamera jedzie tak, by punkt świata pod kotwicą (kursor z ostatniego
     // ząbka) został w miejscu; ten sam przesuw dostaje prevCameraState, więc
     // interpolacja pozycji go nie rozmywa.
+    // Kop warpa (src/game/cameraRig.js, demo „Nurt”): oś impulsów w CZASIE GRY (w pauzie stoi),
+    // raz na klatkę przed zoomem i rigiem — człon log(zoom) dla updateCameraZoom, cofnięcie
+    // kamery dla stepCameraRig i drżenie ładowania z tego samego stanu. Tylko gracz 1 (P2 nie ma
+    // warpa); poza kamerą statku i przy opcji „Wył.” oddalenie wraca do zoomu gracza.
+    const _cameraWarpInput = { dt: 0, state: 'idle', charge: 0, dirX: 1, dirY: 0, enabled: true, suspend: false };
+    function updateCameraWarpKick(gameDt) {
+      const w = _cameraWarpInput;
+      w.dt = gameDt;
+      w.state = warp.state;
+      w.charge = warp.chargeTime > 0 ? (Number(warp.charge) || 0) / warp.chargeTime : 0;
+      const dir = warp.dir;
+      if (dir && (dir.x || dir.y)) { w.dirX = dir.x; w.dirY = dir.y; }
+      else if (ship) { w.dirX = Math.cos(ship.angle); w.dirY = Math.sin(ship.angle); }
+      w.enabled = normalizeCameraWarpKickMode(OPTIONS.cameraWarpKick) === 'on'
+        && camera.mode === 'ship' && !!ship && !ship.destroyed;
+      // Zoom prowadzi przejście (fokus stacji, edytor) — kop znika od razu, jak w updateCameraZoom.
+      w.suspend = !!(camera.transition && camera.transition.kind !== 'ship');
+      stepCameraRigWarp(cameraRig, w, cameraRigTune);
+      camera.zoomImpulseLog = cameraRig.warpZoomLog;
+    }
     function updateCameraZoom(dt) {
       const anchor = camera.zoomAnchor;
-      if (camera.transition) {
+      if (camera.transition && camera.transition.kind !== 'ship') {
         camera.zoomVel = 0;
         anchor.active = false;
         return;
@@ -22174,6 +22746,7 @@
       if (PAUSED) {
         saveState();
         updateCameraTarget(frame);
+        updateCameraWarpKick(0);
         updateCameraZoom(frame);
         zoomIndicator.update(frame);
         // Pauza: poza gracza = fizyczna, efekty niesione nośnikiem stoją razem z nim.
@@ -22182,13 +22755,8 @@
         render(0, frame);
         // Rakiet NIE aktualizujemy w pauzie: update() to ich lot, trafienia
         // (_onHit → applyDamageTo*) i wybuchy — leciały i zadawały obrażenia przy
-        // zatrzymanej grze. Overlay dalej rysuje je zamrożone.
-        if (overlay3D) {
-          overlay3D.tick(frame);
-        }
-        if (rocketOverlay3D) {
-          rocketOverlay3D.tick(frame);
-        }
+        // zatrzymanej grze. Core3D dalej rysuje je zamrożone (zegar ich efektów stoi).
+        // Wybuchy reaktora biegną w klatce efektów Core3D (render wyżej) — jak dawny tick overlaya.
         if (firstFrameResolver) {
           firstFrameResolver();
           firstFrameResolver = null;
@@ -22209,6 +22777,8 @@
       // 120 Hz / 6 ticków = deterministyczne 20 Hz niezależne od rAF monitora.
       const plannedSteps = Math.min(10, Math.floor(acc / PHYS_DT));
       const frameLogicDt = Math.max(PHYS_DT, plannedSteps * PHYS_DT);
+      // Wydobycie (zadanie 21b): kursor dronów i budżet ciężkich operacji na klatkę.
+      beginAsteroidMiningFrame();
       while (acc >= PHYS_DT && steps < 10) {
         prevCameraState.x = camera.x;
         prevCameraState.y = camera.y;
@@ -22266,7 +22836,6 @@
       // >>> TO JEST KLUCZOWE - ODDZIELNA AKTUALIZACJA WIZUALIÓW <<<
       const tVfxUpdate0 = performance.now();
       CanvasVFX.update(frame);
-      FlakBurstVFX.update(frame);
       PerfHUD.addTiming('vfxUpdateTime', performance.now() - tVfxUpdate0);
       // >>> BEZ TEGO CZĄSTECZKI STOJĄ W MIEJSCU <<<
 
@@ -22276,6 +22845,7 @@
         camera.shakeTime -= frame;
         if (camera.shakeTime <= 0) camera.shakeMag = 0;
       }
+      updateCameraWarpKick(frame);
       updateCameraZoom(frame);
       zoomIndicator.update(frame);
       updatePlayerStatusUI();
@@ -22307,8 +22877,13 @@
       // Bezpiecznik: nośnik ustawia się tylko na czas serii spawnów — wyjątek
       // między set/clear nie może nieść kolejnych efektów cudzą prędkością.
       ActiveCarrier.clear();
+      // Rakiety (lot, trafienia, zdarzenia efektów) PRZED render(): rysuje je Core3D w tej
+      // samej klatce (src/3d/rockets/ — zadanie 19; dawniej overlay po render()).
+      const tRockets0 = performance.now();
+      if (window.rocketSystem3D) window.rocketSystem3D.update(frame);
+      const rocketsMs = performance.now() - tRockets0;
       render(alpha, frame);
-      PerfHUD.addTiming('drawTime', performance.now() - tDraw0);
+      PerfHUD.addTiming('drawTime', performance.now() - tDraw0 - rocketsMs);
 
       // WAŻNE: Eksportujemy globalne zmienne dla modułu superweapon
       window.camera = camera;
@@ -22316,17 +22891,10 @@
       window.spawnShockwave = spawnShockwave;
       window.worldToScreen = worldToScreen;
 
-      // Efektowe renderery 3D (eksplozje/rakiety) — osobne konteksty WebGL poza
-      // Core3D. Mierzone do własnego bucketu, żeby nie ginęły w "Untracked".
-      const tOverlayFx0 = performance.now();
-      if (window.rocketSystem3D) window.rocketSystem3D.update(frame);
-      if (overlay3D) {
-        overlay3D.tick(frame);
-      }
-      if (rocketOverlay3D) {
-        rocketOverlay3D.tick(frame);
-      }
-      PerfHUD.addTiming('overlayFxTime', performance.now() - tOverlayFx0);
+      // Lot rakiet (wyżej, przed render()) we własnym kubełku, żeby nie ginął w "Untracked".
+      // (Dawny overlay efektów z własnym kontekstem WebGL usunięty w zadaniu 20 — wybuchy
+      // reaktora liczy klatka efektów Core3D, czyli render.)
+      PerfHUD.addTiming('rocketsTime', rocketsMs);
       if (firstFrameResolver) {
         firstFrameResolver();
         firstFrameResolver = null;
@@ -22938,7 +23506,7 @@
         return;
       }
 
-      if ((npc.type === 'destroyer' || npc.type === 'battleship' || npc.isCapitalShip || npc.isCargoVan || (npc.type && npc.type.includes('frigate'))) && !npc.hexGrid && !npc.beamHull && !npc.dead) {
+      if ((npc.type === 'destroyer' || npc.type === 'battleship' || npc.isCapitalShip || npc.isCargoVan || npc.devHull || (npc.type && npc.type.includes('frigate'))) && !npc.hexGrid && !npc.beamHull && !npc.dead) {
         const sprite = getHullSpriteForNpc(npc) || (npc.capitalSprite && npc.capitalSprite.ready ? npc.capitalSprite : null);
         const nowMs = performance.now();
         if (sprite && sprite.ready && !sprite.error && !(npc.__hexInitRetryAtMs > nowMs) && hexInitBudgetAllows()) {
@@ -22979,6 +23547,26 @@
     }
     // ============== END SPLIT SCREEN RENDER ==============
 
+    // Warp „Nurt” (src/3d/warp/warpNurt.js): jeden obiekt wejścia na grę (bez alokacji na klatkę).
+    const _warpNurtCtx = { dt: 0, cam: null, camShake: null, camFollow: false, ship: null, warp: null, npcs: null };
+    function _warpNurtFrame(dt, camNoShake, camShake) {
+      const o = _warpNurtCtx;
+      o.dt = dt;
+      o.cam = camNoShake;
+      o.camShake = camShake;
+      // Kamera = statek + offset riga (ośrodek w skoku idzie za zmianą offsetu: wyprzedzenie, kop).
+      o.camFollow = camera.mode === 'ship' && !camera.transition;
+      o.ship = ship;
+      o.warp = warp;
+      o.npcs = npcs;
+      return o;
+    }
+    // Wstrząs efektu warpa (kop przy skoku, wyrzut okrętu z tunelu) — nie słabszy od bieżącego.
+    WarpNurt.onShake = (mag, dur) => {
+      const cur = (camera.shakeDur > 0) ? camera.shakeMag * Math.max(0, camera.shakeTime / camera.shakeDur) : 0;
+      if (mag > cur) camera.addShake(mag, dur);
+    };
+
     function render(alpha, frameDt) {
       const tRenderProfile0 = performance.now();
       let tRenderProfileSection = tRenderProfile0;
@@ -23016,49 +23604,46 @@
         ciws: interpCIWSAngles
       };
 
-      // --- LOGIKA KAMERY (POPRAWIONA) ---
-      // Przeniesiona do render(), aby używać interpPos i uniknąć drgań (jitter)
-
-      if (camera.mode === 'ship' && !camera.transition) {
-        let targetCamX, targetCamY;
-        const lookAheadFactor = 2.0;
-        const centerX = W * 0.5;
-        const centerY = H * 0.5;
-        const zoomSafe = Math.max(0.1, camera.zoom || 1);
-        // Tryb interfejsu (Alt w kokpicie) = wolna mysz: kamera nie wychyla się za kursorem.
-        const freeMouse = splitScreenMode || isHudPointerMode();
-        const mouseOffsetX = freeMouse ? 0 : (mouse.x - centerX) * lookAheadFactor / zoomSafe;
-        const mouseOffsetY = freeMouse ? 0 : (mouse.y - centerY) * lookAheadFactor / zoomSafe;
-
-        // Velocity-based camera lead — zawsze ~15% szerokości ekranu, niezależnie
-        // od zooma i prędkości hulla. Trzymany w PX EKRANU (na świat: / zoomSafe):
-        // w jednostkach świata lead gonił nowy zoom przez ~1 s i statek odpływał
-        // po ekranie przy każdym zoomie w locie.
-        const _cvls = ship.__camVelLead || (ship.__camVelLead = { x: 0, y: 0 });
-        const _cvSpd = Math.hypot(ship.vel.x, ship.vel.y);
-        // Aktualny v_max tego hulla (z drag physics) — lead normalizowany do niego
-        const _cvHullVmax = Math.max(100, Number(driveState?.modeMaxSpeed) || (SHIP_PHYSICS.SPEED / Math.max(1e-6, -Math.log(SHIP_PHYSICS.LINEAR_FRICTION) * 60)));
-        // Max lead = 15% szerokości viewportu, w px
-        const _cvMaxLead = W * 0.15;
-        const _cvNorm = Math.min(_cvSpd, _cvHullVmax) / _cvHullVmax;
-        // Wolniejszy lerp = mniej agresywna kamera (czas ~0.5s)
-        const _cvLerp = 1 - Math.exp(-2 * (frameDt || 0.016));
-        if (_cvSpd > 1) {
-          _cvls.x += ((ship.vel.x / _cvSpd) * _cvNorm * _cvMaxLead - _cvls.x) * _cvLerp;
-          _cvls.y += ((ship.vel.y / _cvSpd) * _cvNorm * _cvMaxLead - _cvls.y) * _cvLerp;
+      // --- KAMERA STATKU (src/game/cameraRig.js) ---
+      // W render(), bo bierze interpPos (bez drgań interpolacji). Kamera = statek
+      // + offset riga w px ekranu: w nawigacji wyprzedza lot, w walce zagląda za
+      // kursorem. Rig kroczy także w trakcie przejścia (wyjście z RTS, powrót
+      // z edytora stacji) — przejście goni żywy cel, więc jego koniec nie skacze.
+      if (camera.mode === 'ship') {
+        const zoomSafe = Math.max(camera.minZoom || 1e-4, camera.zoom || 1);
+        sampleCameraCombatSignals(performance.now());
+        // Wyprzedzenie normalizowane do v_max bieżącego trybu napędu.
+        const hullVmax = Math.max(100, Number(driveState?.modeMaxSpeed) || (SHIP_PHYSICS.SPEED / Math.max(1e-6, -Math.log(SHIP_PHYSICS.LINEAR_FRICTION) * 60)));
+        const rigIn = _cameraRigInput;
+        rigIn.dt = frameDt || 0;
+        rigIn.holdDt = PAUSED ? 0 : (frameDt || 0);
+        rigIn.viewW = W;
+        rigIn.viewH = H;
+        rigIn.mouseX = mouse.x;
+        rigIn.mouseY = mouse.y;
+        rigIn.lookFrozen = isCameraLookFrozen();
+        rigIn.lookEnabled = !splitScreenMode;
+        rigIn.velX = ship.vel.x;
+        rigIn.velY = ship.vel.y;
+        rigIn.maxSpeed = hullVmax;
+        rigIn.mode = OPTIONS.cameraLook;
+        stepCameraRig(cameraRig, rigIn, cameraRigTune);
+        const rigX = interpPos.x + cameraRig.offsetX / zoomSafe;
+        const rigY = interpPos.y + cameraRig.offsetY / zoomSafe;
+        camera.targetX = rigX;
+        camera.targetY = rigY;
+        if (camera.transition) {
+          camera.transition.targetX = rigX;
+          camera.transition.targetY = rigY;
         } else {
-          _cvls.x *= (1 - _cvLerp);
-          _cvls.y *= (1 - _cvLerp);
+          camera.x = rigX;
+          camera.y = rigY;
         }
-
-        targetCamX = interpPos.x + mouseOffsetX + _cvls.x / zoomSafe;
-        targetCamY = interpPos.y + mouseOffsetY + _cvls.y / zoomSafe;
-
-        camera.x = targetCamX;
-        camera.y = targetCamY;
-        camera.targetX = targetCamX;
-        camera.targetY = targetCamY;
-        if (!camera.manualZoom) camera.targetZoom = camera.defaultZoom;
+        if (!camera.manualZoom) {
+          // Zoom startowy z długości kadłuba (Atlas 1800 j. przy stałym 1,0 zajmował cały ekran).
+          camera.defaultZoom = defaultShipZoom(W, Math.max(Number(ship.w) || 0, Number(ship.h) || 0), cameraRigTune, camera.minZoom, camera.maxZoom);
+          camera.targetZoom = camera.defaultZoom;
+        }
       } else if (camera.mode === 'focus') {
         const st = camera.focusStation;
         if (st) {
@@ -23073,6 +23658,7 @@
           camera.clearFocus();
         }
       }
+      stepCameraTransition(frameDt || 0);
 
       let camBaseX = camera.x;
       let camBaseY = camera.y;
@@ -23084,32 +23670,31 @@
 
       const camNoShake = { x: camBaseX, y: camBaseY, zoom: camBaseZoom };
       let cam = { x: camBaseX, y: camBaseY, zoom: camBaseZoom };
-      if (!DevFlags.disableCameraShake && camera.shakeMag > 0) {
-        const t = camera.shakeTime / camera.shakeDur;
-        const mag = camera.shakeMag * Math.max(0, t);
-        cam.x += (Math.random() * 2 - 1) * mag;
-        cam.y += (Math.random() * 2 - 1) * mag;
-      }
-      // Wstrząs od strzałów (Weapon3DSystem) rusza CAŁĄ klatką, jak camera.addShake.
-      // Dawniej dokładał go tylko Core3D.syncCamera: kadłuby i pociski 3D drgały,
-      // a wieżyczki, myśliwce i znaczniki z kanwy 2D stały w miejscu — warstwy
-      // się rozjeżdżały. Wartość jest z poprzedniej klatki (syncProjectiles liczy
-      // ją później), co przy losowym drganiu jest niezauważalne.
+      // Wstrząs w PX EKRANU (dawniej w jednostkach świata: 18 j. to 3 px przy
+      // zoomie 0,15 i 58 px przy 3,2), gładkim szumem zamiast białego co klatkę.
+      // camera.addShake + wstrząs strzałów z WeaponFx ruszają CAŁĄ klatką
+      // (wspólne `cam`) — dawniej ten drugi dokładał tylko Core3D.syncCamera:
+      // kadłuby i pociski 3D drgały, a wieżyczki, myśliwce i znaczniki z kanwy 2D
+      // stały w miejscu. Wartość strzałów jest z poprzedniej klatki
+      // (WeaponFx.sync liczy ją później).
       const weaponShake = window.__weapon3dCameraShake;
-      if (!DevFlags.disableCameraShake && weaponShake) {
-        cam.x += Number(weaponShake.x) || 0;
-        cam.y += Number(weaponShake.y) || 0;
+      if (!DevFlags.disableCameraShake) {
+        const addShakeMag = (camera.shakeMag > 0 && camera.shakeDur > 0)
+          ? camera.shakeMag * Math.max(0, camera.shakeTime / camera.shakeDur)
+          : 0;
+        const weaponShakeMag = weaponShake ? (Number(weaponShake.mag) || 0) : 0;
+        // + drżenie ładowania warpa (kop warpa w rigu, px) — pod tym samym sufitem.
+        const shakePx = cameraShakeAmplitudePx(addShakeMag, weaponShakeMag, cameraRigTune, cameraRig.warpShakePx);
+        if (shakePx > 0) {
+          sampleCameraShakePx(shakePx, vfxTime, cameraRigTune, _cameraShakePx);
+          cam.x += _cameraShakePx.x / cam.zoom;
+          cam.y += _cameraShakePx.y / cam.zoom;
+        }
       }
 
       window.__splitCamera2 = (splitScreenMode && camera2 && player2Ship && !player2Ship.destroyed)
         ? { x: camera2.x, y: camera2.y, zoom: camera2.zoom }
         : null;
-
-      overlayView.center.x = cam.x;
-      overlayView.center.y = cam.y;
-      overlayView.viewport.w = W;
-      overlayView.viewport.h = H;
-      overlayView.zoom = cam.zoom;
 
       if (renderDbgEnabled) {
         RenderLiveDebug.record('cameraPrep', tRenderSection > 0 ? (performance.now() - tRenderSection) : 0);
@@ -23125,6 +23710,9 @@
       // 1. Zaktualizuj wszystkie obiekty 3D na podstawie logiki gry
       let tRender3dSub = performance.now();
       if (renderDbgEnabled) tRenderSection = tRender3dSub;
+      // Warp „Nurt” (src/3d/warp/warpNurt.js): przed planetami — ustawia na tę klatkę limit
+      // kamery gwiazd, smugi gwiazd, zgięcie mgławicy, ośrodek i efekty przylotów NPC.
+      WarpNurt.update(_warpNurtFrame(PAUSED ? 0 : frameDt, camNoShake, cam));
       if (window.updatePlanets3D) window.updatePlanets3D(frameDt, camNoShake);
       const render3dPlanetsMs = performance.now() - tRender3dSub;
       PerfHUD.addTiming('render3dPlanetsUpdateTime', render3dPlanetsMs);
@@ -23162,18 +23750,15 @@
 
       tRender3dSub = performance.now();
       if (renderDbgEnabled) tRenderSection = tRender3dSub;
-      if (window.asteroidField) {
-        // Kolizje statków z asteroidami chodzą w physicsStep (stepShipAsteroidCollisions).
-        window.asteroidField.update(frameDt);
+      // Pas asteroid (zadanie 21): wejście klatki — dt gry (0 w pauzie) i statki do świateł
+      // pola. Liczenie (skały, ośrodek, burza, światła) idzie w kroku Core3D.fx przed passami;
+      // kolizje z olbrzymami w physicsStep (stepShipAsteroidCollisions).
+      if (asteroidBelt) {
+        asteroidBelt.prepareFrame(frameDt, ship, splitScreenMode ? player2Ship : null, npcs, PAUSED);
       }
-      // Tło 3D pasów: streaming chunków wokół kamery + immersja (ciemniej w głębi pasa).
-      // camNoShake — shake kamery nie powinien triggerować streamingu.
-      if (window.beltBackdrop) {
-        window.beltBackdrop.update(frameDt, camNoShake, ship && ship.pos ? ship.pos : null, W, H);
-      }
-      const render3dAsteroidsMs = performance.now() - tRender3dSub;
+      const render3dAsteroidsMs = asteroidBelt ? asteroidBelt.stats.cpuMs : (performance.now() - tRender3dSub);
       PerfHUD.addTiming('render3dAsteroidsUpdateTime', render3dAsteroidsMs);
-      if (renderDbgEnabled) RenderLiveDebug.record('asteroidField.update', render3dAsteroidsMs);
+      if (renderDbgEnabled) RenderLiveDebug.record('asteroidBelt', render3dAsteroidsMs);
 
       tRender3dSub = performance.now();
       if (renderDbgEnabled) tRenderSection = tRender3dSub;
@@ -23189,10 +23774,6 @@
       if (splitScreenMode && player2Ship && !player2Ship.destroyed) renderEntities.push(player2Ship);
       for (const npc of npcs) if (npc && !npc.dead) renderEntities.push(npc);
       for (const w of wrecks) if (w && !w.dead) renderEntities.push(w);
-      if (window.asteroidField?.getActiveHexEntities) {
-        const asteroidHexes = window.asteroidField.getActiveHexEntities(_activeAsteroidHexBuffer);
-        for (let i = 0; i < asteroidHexes.length; i++) renderEntities.push(asteroidHexes[i]);
-      }
 
       tRender3dSub = performance.now();
       if (renderDbgEnabled) tRenderSection = tRender3dSub;
@@ -23258,11 +23839,8 @@
       PerfHUD.addTiming('render3dShieldsUpdateTime', render3dShieldsMs);
       if (renderDbgEnabled) RenderLiveDebug.record('updateShields3D', render3dShieldsMs);
 
-      // Soczewka skoku: pass Core3D na samym tle (src/vfx/warpLensPass.js),
-      // więc parametry muszą trafić do Core3D PRZED drawHexShips3D.
-      tRender3dSub = performance.now();
-      updateWarpLens3D(interpPos, interpAngle, frameDt);
-      if (renderDbgEnabled) RenderLiveDebug.record('warpLens', performance.now() - tRender3dSub);
+      // Warp „Nurt” (WarpNurt.update wyżej, przed planetami) zastąpił dawną soczewkę skoku
+      // (warpLensPass.js — usunięta w zadaniu 22 razem z warpLens3D / warpWorldLens / warpFx3D).
       PerfHUD.addTiming('render3dUpdateTime', performance.now() - tRenderProfileSection);
       tRenderProfileSection = performance.now();
 
@@ -23475,6 +24053,8 @@
         tRender2dSection = performance.now();
 
         drawActiveCommandMarkers(ctx, cam, interpPos);
+        // Wydobycie (zadanie 21b): skaner rdzeni i panel platformy w trybie wydobycia.
+        drawMiningOverlay(ctx, cam);
 
         if (Selection.units.size) {
           ctx.save();
@@ -23573,17 +24153,8 @@
 
           // --- 1. OBLICZANIE ACTIVE THRUSTERS ---
           // Gdy statek gracza jest renderowany w 3D, pomijamy 2D exhausty, bo nakładają się na kadłub.
-          // --- 2. Rysowanie Warp Glow (ładowanie) ---
-          let warpGlowProgress = 0;
-          if (warp.state === 'charging') {
-            warpGlowProgress = clamp(warp.charge / warp.chargeTime, 0, 1);
-          } else if (warp.state === 'active' && warp.entryProgress < 1) {
-            warpGlowProgress = 1 - smoothstep01(warp.entryProgress);
-          }
-          if (warpGlowProgress > 0) {
-            const chargeRadius = Math.max(visualW, visualH) * 0.7;
-            drawWarpChargeEffectLocal(warpGlowProgress, chargeRadius, spriteScale);
-          }
+          // --- 2. Ładowanie warpa: bez dawnego świecącego pierścienia na kanwie 2D — bańkę
+          // pokazuje ośrodek warpa „Nurt” (src/3d/warp/, zadanie 22).
 
           // --- 3. Rysowanie KADLUBA ---
           if (ship.hexGrid || ship.beamHull) {
@@ -23745,29 +24316,16 @@
         CanvasVFX.drawLightnings(ctx, cam);
 
         // === VFX Pass ===
-        CanvasVFX.drawBeams(ctx, cam);
         CanvasVFX.drawParticles(ctx, cam);
-        // Pęknięcia flaku idą po cząstkach: dym ma przykryć iskry, a ogień
-        // i odłamki dopalić się addytywnie na wierzchu.
-        FlakBurstVFX.draw(ctx, cam);
+        // Pęknięcia flaku i laser PD są w 3D (WeaponFx, zadanie 17).
 
         PerfHUD.addTiming('render2dVfxTime', performance.now() - tRender2dSection);
         tRender2dSection = performance.now();
 
         // === FOG OF WAR === (disabled — will be reimplemented later)
 
-        // === BELT AMBIENT DIM === Głębiej w pasie asteroid = ciemniejsza scena.
-        // Overlay leży nad światem (2D + WebGL pod spodem), ale pod HUD/celownikami.
-        {
-          const beltDim = window.beltBackdrop ? window.beltBackdrop.getAmbientDim() : 0;
-          if (beltDim > 0.004) {
-            ctx.save();
-            ctx.globalAlpha = 1;
-            ctx.fillStyle = `rgba(3, 5, 10, ${(beltDim * 0.12).toFixed(3)})`;
-            ctx.fillRect(0, 0, W, H);
-            ctx.restore();
-          }
-        }
+        // Mrok w głębi pasa asteroid robi pas w 3D (maska słońca Core3D i zasłona pola —
+        // zadanie 21); dawny pełnoekranowy przyciemniacz 2D starego tła pasa usunięty.
 
         // === UI / HUD Pass ===
         // Rysuj HUD na Canvasie TYLKO jeśli nie jesteśmy w menu
@@ -25437,6 +25995,8 @@
     };
     async function startGame() {
       if (gameStarted) return;
+      // Tylko WebGPU: bez adaptera gra nie startuje (komunikat w menu).
+      if (Core3D.gpuUnsupported) { showWebGpuRequired(); return; }
 
       // Tło menu: najazd kamery na Ziemię, menu zjeżdża; render tła trwa pod
       // ekranem ładowania aż do stopMenuBackdrop() przed pierwszą klatką gry.
@@ -25509,19 +26069,38 @@
       setLoadingProgress(60, 'Kalibracja floty');
       await nextFrame();
       setLoadingProgress(70, 'Kompilacja shaderów broni');
+      // Rozgrzewki modułów przez rejestr (Core3D.warmup.run, zadanie 11): ta sama chwila i logika, czas i pipeline'y
+      // w jednym miejscu (flush niżej czeka na nie). Kroki Core3D.fx (broń, rakiety, iskry, warp, pas, mapa ran) — same.
       if (prewarmHexShips3D) {
-        prewarmHexShips3D({ canvas: hexShipsCanvas });
+        Core3D.warmup.run('kadłuby i Fx3D (hexShips3D)', () => prewarmHexShips3D({ canvas: hexShipsCanvas }));
       }
       // Tarcze: program obrysu kompilował się przy pierwszym wrogu (~200 ms) i po zniknięciu
       // ostatniej tarczy od nowa (shield3D.js, prewarmShields3D).
-      prewarmShields3D();
+      Core3D.warmup.run('tarcze (shield3D)', () => prewarmShields3D());
       await nextFrame();
+
+      // Pas asteroid (zadanie 21): cień pól całego układu (~1 s — potem żadnego liczenia
+      // w locie) i start GPU pasa (bank kształtów, szumy, materiały, rozgrzewka pipeline'ów).
+      if (asteroidBelt) {
+        setLoadingProgress(72, 'Cień pól asteroid');
+        await asteroidBelt.precompute((p) => setLoadingProgress(72 + p * 5, 'Cień pól asteroid'));
+        setLoadingProgress(77, 'Pola asteroid');
+        await Core3D.warmup.run('pas asteroid: start GPU (asteroidBelt)', () => asteroidBelt.initGpu());
+        // Platforma wydobywcza (zadanie 21b): urobek do ładowni, magazynek ładunków gracza.
+        wireAsteroidMining();
+        await nextFrame();
+      }
 
       // Wstępna symulacja fizyki
       for (let i = 0; i < 60; i++) npcStep(PHYS_DT);
       setLoadingProgress(80, 'Rozruch silników');
 
       await waitForPlanetsReady();
+
+      // Rozgrzewka pipeline'ów (src/3d/rozgrzewka.js, zadanie 11): reszta kolejki z menu i wpisy „na start gry”
+      // (dysze SIDE, światła pozycyjne, passy Core3D z tym, co już jest w scenie) — pierwsza klatka gry bez kompilacji.
+      setLoadingProgress(90, 'Kompilacja shaderów');
+      await Core3D.warmup?.flush({ timeoutMs: 4000 });
 
       setLoadingProgress(100, 'Start!');
       await nextFrame();
@@ -25982,6 +26561,18 @@
       setMenuView('home');
     });
 
+    // Harness zrzutów portu WebGPU — tylko z ?dev: podzielony ekran bez przydziału padów.
+    if (new URLSearchParams(location.search).has('dev')) {
+      window.DevScene = Object.assign(window.DevScene || {}, {
+        startSplit(p1 = PLAYER.activeHullId, p2 = PLAYER.activeHullId) {
+          splitScreenMode = true;
+          window.splitScreenMode = true;
+          if (mainMenuEl) mainMenuEl.classList.add('hidden');
+          return startSplitScreenGame(p1, p2);
+        }
+      });
+    }
+
     async function startSplitScreenGame(p1HullKey, p2HullKey) {
       // Start the game normally first
       await startGame();
@@ -26008,7 +26599,7 @@
       const sizeW = initialSize.w;
       const sizeH = initialSize.h;
       player2Ship = createShipEntity({
-        world: WORLD, overlayView, overrides: {
+        world: WORLD, overrides: {
           w: sizeW, h: sizeH
         }
       });
@@ -26420,18 +27011,73 @@
       updateLacquerUI();
     });
 
+    // --- KAMERA ZA KURSOREM (src/game/cameraRig.js) ---
+
+    function updateCameraLookUI() {
+      const current = normalizeCameraLookMode(window.OPTIONS && window.OPTIONS.cameraLook);
+      document.querySelectorAll('[data-camera-look]').forEach(btn => {
+        const isActive = (btn.dataset.cameraLook === current);
+        btn.classList.toggle('active', isActive);
+        btn.setAttribute('aria-pressed', isActive);
+      });
+    }
+
+    document.querySelectorAll('[data-camera-look]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const mode = normalizeCameraLookMode(e.currentTarget.dataset.cameraLook);
+        if (window.OPTIONS) window.OPTIONS.cameraLook = mode;
+        try { localStorage.setItem('sc_camera_look', mode); } catch { }
+        updateCameraLookUI();
+      });
+    });
+
+    // Skrypt modułu biegnie po sparsowaniu DOM — przyciski już są.
+    try {
+      const savedCameraLook = localStorage.getItem('sc_camera_look');
+      if (savedCameraLook) OPTIONS.cameraLook = normalizeCameraLookMode(savedCameraLook);
+    } catch { }
+    updateCameraLookUI();
+
+    // --- KOP KAMERY PRZY WARPIE (src/game/cameraRig.js: stepCameraRigWarp) ---
+
+    function updateCameraWarpKickUI() {
+      const current = normalizeCameraWarpKickMode(window.OPTIONS && window.OPTIONS.cameraWarpKick);
+      document.querySelectorAll('[data-camera-warp-kick]').forEach(btn => {
+        const isActive = (btn.dataset.cameraWarpKick === current);
+        btn.classList.toggle('active', isActive);
+        btn.setAttribute('aria-pressed', isActive);
+      });
+    }
+
+    document.querySelectorAll('[data-camera-warp-kick]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const mode = normalizeCameraWarpKickMode(e.currentTarget.dataset.cameraWarpKick);
+        if (window.OPTIONS) window.OPTIONS.cameraWarpKick = mode;
+        try { localStorage.setItem('sc_camera_warp_kick', mode); } catch { }
+        updateCameraWarpKickUI();
+      });
+    });
+
+    try {
+      const savedWarpKick = localStorage.getItem('sc_camera_warp_kick');
+      if (savedWarpKick) OPTIONS.cameraWarpKick = normalizeCameraWarpKickMode(savedWarpKick);
+    } catch { }
+    updateCameraWarpKickUI();
+
   </script>
 
   <script type="module">
     import { initDevTools } from './src/ui/devTools.js';
     import { initBloomTunerPanel } from './src/ui/bloomTunerPanel.js';
     import { initDestructorConfigPanel } from './src/ui/destructorConfigPanel.js';
+    import { initCameraTunerPanel } from './src/ui/cameraTunerPanel.js';
 
     window.addEventListener('DOMContentLoaded', () => {
       setTimeout(() => {
         initDevTools();
         initBloomTunerPanel({ enableHotkey: false });
         initDestructorConfigPanel();
+        initCameraTunerPanel();
       }, 100);
     });
   </script>

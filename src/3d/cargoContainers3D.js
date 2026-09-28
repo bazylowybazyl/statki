@@ -64,7 +64,10 @@ import {
   isHazmatCargo
 } from '../data/cargoContainers.js';
 import { RESOURCE_KEYS, RESOURCES } from '../data/resources.js';
-import { SUN_SHADOW_GLSL, sunShadowUniforms } from './sunShadowMask.js';
+import { sunShadowUniforms } from './sunShadowMask.js';
+// AGENT: moduł Z5 poza grą (dema/kontenery) — GLSL; przejdzie na TSL przy integracji ruchu v2 (PLAN §12 p. 1).
+// Napis maski GLSL wprost z biblioteki poza portem (gra ładuje tylko TSL z sunShadowMask.js).
+import { SUN_SHADOW_GLSL } from './sunShadowMaskGLSL.js';
 
 // ---------------------------------------------------------------------------
 // Strojenie (window.__cargo3DTune)

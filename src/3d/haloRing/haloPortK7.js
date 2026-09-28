@@ -10,8 +10,29 @@
 //
 // Draw calle: BG ≤ 5, FG ≤ 6 niezależnie od liczby brył. Pozycje przez
 // modelViewMatrix (liczone w double po stronie CPU), więc bez drgań.
+//
+// Port WebGPU (zadanie 10): materiały w TSL (NodeMaterial), 1:1 z dawnym GLSL
+// (K7_INSTANCE_*, K7_PLATE_*, K7_LABEL_*, K7_HOSE_*, GLSL_K7_SURFACE). GRAF NA RING,
+// WARTOŚCI NA HALĘ (PLAN §3): cztery hale ringu dzielą jeden graf na rodzaj materiału
+// (k7Graphs(u) — jeden NodeBuilder na rodzaj i stan, nie na halę), każda hala ma lekkie
+// NodeMaterial-e z tymi samymi węzłami, a wartości hali siedzą w `material.uniforms`
+// (zwykłe obiekty { value }, kod aktualizacji bez zmian). Węzły czytają je przy rysowaniu
+// obiektu: `uniform().onObjectUpdate` (uHub, uHallLights, uRoofOpacity), tablice (macierze
+// grup ruchomych, emisja grup, lampy, paleta, emisja, poświata) w dwóch uniformArray
+// pakowanych per obiekt (onObjectUpdate — domyślnie tablica pakuje się raz na render(),
+// wtedy wszystkie hale passa dostałyby dane jednej), atlas napisów — węzeł tekstury per
+// obiekt (`teksturaObiektu`; `texture().onObjectUpdate()` w r183 nie działa).
 import * as THREE from 'three';
-import { HALO_GLSL_COMMON, HALO_GLSL_LIGHT, HALO_GLSL_NOISE } from './haloRingGLSL.js';
+import {
+  Fn, If, Loop, Discard,
+  float, int, vec2, vec3, vec4, mat3, mat4,
+  attribute, varyingProperty, uniform, uniformArray, positionGeometry, normalGeometry,
+  modelViewMatrix, cameraProjectionMatrix,
+  abs, clamp, dot, exp, floor, fract, fwidth, length, max, min, mix, normalize, pow, sin, smoothstep, step
+} from 'three/tsl';
+import { teksturaObiektu, teksturaZastepcza } from '../tsl/teksturaObiektu.js';
+import { HALO_PI, haloHash12, haloRingTSL } from './haloRingTSL.js';
+import { haloNodeMaterial, haloQrot } from './haloRingMegastructure.js';
 import { K7_ABOVE_SCALE, K7_HEIGHTS, k7Frame, k7HeightToZ, k7Phase } from './haloPortK7Layout.js';
 import { K7_INSTANCE_STRIDE, K7_MAT, buildK7Scene } from './haloPortK7Build.js';
 import { haloFrameToFrame, haloXfPoint } from './haloPortBays.js';
@@ -19,7 +40,7 @@ import { resolveHaloProfile } from './haloRingProfiles.js';
 
 const MAX_GROUPS = 40;   // 4 suwnice × 6 grup + 8 złączek + grupa 0
 const MAX_LAMPS = 10;    // lampy hali (4) + po trzy nad każdą z 2 zatok kompleksu (pasy MEGA, grzebień)
-const f3 = (a) => a.map((x) => x.toFixed(4)).join(', ');
+const r4 = (x) => +x.toFixed(4);   // stałe jak dawne literały GLSL (f3: 4 miejsca)
 const srgb = (hex) => {
   const c = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
   return [c((hex >> 16) & 255), c((hex >> 8) & 255), c(hex & 255)];
@@ -40,291 +61,335 @@ export function k7StylePalette(style) {
   };
 }
 
-const GLSL_K7_SURFACE = /* glsl */`
-uniform mat4 uHub;                 // hub (z odwzorowaną wysokością) → układ ringu
-uniform vec3 uGroupEmit[${MAX_GROUPS}];
-uniform float uRoofOpacity;
-uniform vec4 uHallLights;          // x: moc lamp hali, y: moc dnia (0..1), z: czas
-uniform vec4 uLamps[${MAX_LAMPS}];        // lampy hali i zatok: xyz w hubie, w: 0 brak, 1 ciepla, 2 zimna
-varying vec3 vRing;
-varying vec3 vHub;
-varying vec3 vHubN;
-varying vec3 vN;
-varying vec3 vLocal;
-varying vec3 vLocalN;
-varying vec3 vSize;
-varying float vMat;
-varying float vGroup;
+// ---------------------------------------------------------------------------
+// Tablice hali w grafie (uniformArray vec4, pakowane przy rysowaniu obiektu):
+//  - K7_GROUPS_BLOCK — macierze grup ruchomych (40 × 4 kolumny), tylko wierzchołki instancji;
+//  - K7_SURF_BLOCK — emisja grup (40), lampy (10), paleta (14), emisja K-7 (5), poświata szkła (2).
+// Stałe nazwy buforów: trzy ringi dzielą ten sam WGSL (jeden moduł i pipeline na rodzaj).
+export const K7_GROUPS_BLOCK = 'k7Groups';
+export const K7_SURF_BLOCK = 'k7Surf';
+export const K7_SURF_LAYOUT = Object.freeze({
+  emit: 0,
+  lamps: MAX_GROUPS,
+  pal: MAX_GROUPS + MAX_LAMPS,
+  k7Emit: MAX_GROUPS + MAX_LAMPS + K7_PAL_SIZE,
+  glow: MAX_GROUPS + MAX_LAMPS + K7_PAL_SIZE + 5,
+  length: MAX_GROUPS + MAX_LAMPS + K7_PAL_SIZE + 5 + 2
+});
+const S = K7_SURF_LAYOUT;
 
-uniform vec3 uK7Pal[${K7_PAL_SIZE}];       // paleta hali z profilu planety
-uniform vec3 uK7Emit[5];               // cyjan, ciepla, biel, czerwien, zielen
-uniform vec3 uK7Glow[2];               // poswiata szkla: stala, nocna
-vec3 k7Palette(float m) {
-  int i = int(clamp(floor(m + 0.5), 0.0, ${K7_PAL_SIZE}.0));
-  return i < ${K7_PAL_SIZE} ? uK7Pal[i] : vec3(0.02, 0.022, 0.025);
-}
-vec3 k7Emit(float m) {
-  return uK7Emit[int(clamp(floor(m + 0.5) - 14.0, 0.0, 4.0))];
-}
-// Płyty jak tekstura K-7: 3 × 4 płyty na kafel 260 j. (pokład 4 × 4), jaśniejsza
-// krawędź od góry-lewej, ciemna spoina, śruby w narożnikach, zacieki.
-float k7Plates(vec2 uv, bool deck, float fw, out float highlight) {
-  vec2 cells = deck ? vec2(4.0, 4.0) : vec2(3.0, 4.0);
-  vec2 g = uv / 260.0 * cells;
-  vec2 id = floor(g);
-  vec2 fcell = fract(g);
-  vec2 psz = 260.0 / cells;
-  vec2 d = min(fcell, 1.0 - fcell) * psz;           // odleglosc od krawedzi plyty [j.]
-  float aa = fw * 1.2 + 0.2;
-  float seam = 1.0 - smoothstep(0.35, 0.35 + aa, min(d.x, d.y));
-  highlight = (1.0 - smoothstep(0.7, 0.7 + aa, fcell.x * psz.x)) + (1.0 - smoothstep(0.7, 0.7 + aa, (1.0 - fcell.y) * psz.y));
-  highlight *= 1.0 - seam;
-  float v = haloHash12(id + (deck ? 17.0 : 3.0));
-  vec2 b = abs(fcell * psz - 4.4);
-  vec2 b2 = abs((1.0 - fcell) * psz - 4.4);
-  float bolt = 1.0 - smoothstep(0.7, 0.7 + aa, min(min(length(b), length(b2)), min(length(vec2(b.x, b2.y)), length(vec2(b2.x, b.y)))));
-  vec2 sc = fcell - vec2(0.8, 0.7);
-  float stain = exp(-dot(sc, sc) * 9.0) * haloHash12(id + 5.0);
-  float detail = 1.0 - smoothstep(0.8, 3.0, fw);
-  // jasność płyt jak w teksturze K-7 (sRGB → liniowo): ściany 167–195/255,
-  // pokład 66–85/255 na ciemnym tle — pokład ciemny, oznakowanie jasne
-  float base = deck ? mix(0.11, 0.17, v) : mix(0.42, 0.56, v);
-  return base * (1.0 - seam * 0.55 * detail) * (1.0 - bolt * 0.5 * detail) * (1.0 - stain * 0.25);
-}
-// Lampy hali nad stanowiskami kapitalnymi (K-7 miało PointLighty; 4 stanowiska
-// od 2026-09-23), na zewnątrz od osi stanowiska o 310 j. jak w K-7, i po trzy
-// nad każdą otwartą zatoką kompleksu (dwa pasy MEGA, grzebień).
-vec3 k7HallLight(vec3 hubP, vec3 N) {
-  vec3 acc = vec3(0.0);
-  for (int i = 0; i < ${MAX_LAMPS}; i++) {
-    vec4 Lp = uLamps[i];
-    vec3 dv = Lp.xyz - hubP;
-    float d = length(dv);
-    float fall = 1.0 / (1.0 + (d / 520.0) * (d / 520.0));
-    float win = (1.0 - smoothstep(1500.0, 2450.0, d)) * step(0.5, Lp.w);
-    vec3 col = Lp.w < 1.5 ? vec3(1.0, 0.78, 0.55) : vec3(0.66, 0.85, 0.92);
-    // N w ukladzie huba: y = gora
-    acc += col * fall * win * max(dot(N, dv / max(d, 1.0)), 0.0);
-  }
-  return acc;
+function packK7Groups(frame, node) {
+  const mats = frame?.material?.uniforms?.uGroup?.value;
+  const out = node.value;
+  if (!mats || !out || typeof out.length !== 'number') return undefined; // budowa (bez klatki)
+  for (let i = 0; i < MAX_GROUPS; i++) out.set(mats[i].elements, i * 16);
+  return undefined;
 }
 
-vec4 k7Shade(vec3 albedo0, float m, vec3 hubN, bool top, vec2 fuv, float fw, float matEmitGroup) {
-  vec3 N = normalize(vN);
-  vec3 p = vRing;
-  vec3 V = normalize(uCamLocal - p);
-  vec3 L = uSunDir;
-  bool plated = m < 5.5;
-  bool deck = (m > 5.5 && m < 6.5) || m > 19.5;
-  float hl = 0.0;
-  vec3 albedo = albedo0;
-  if (plated || deck) albedo *= k7Plates(fuv, deck, fw, hl);
-  if (m > 19.5) albedo = vec3(0.012, 0.017, 0.021) * k7Plates(fuv, true, fw, hl);   // pole stanowiska
-  float rough = m > 6.5 && m < 7.5 ? 0.38 : (m > 9.5 && m < 10.5 ? 0.45 : (m > 10.5 && m < 11.5 ? 0.2 : 0.72));
-  float metal = m > 6.5 && m < 7.5 ? 0.86 : (plated ? 0.5 : 0.1);
-  vec3 sunVis = haloSunVisibility(p + N * 2.0, L);
-  float NdL = max(dot(N, L), 0.0);
-  float NdV = max(dot(N, V), 1e-3);
-  vec3 H = normalize(L + V);
-  float a2 = rough * rough;
-  float NdH = max(dot(N, H), 0.0);
-  float dd = NdH * NdH * (a2 - 1.0) + 1.0;
-  vec3 F0 = mix(vec3(0.04), albedo, metal);
-  vec3 Fs = F0 + (1.0 - F0) * pow(1.0 - max(dot(H, V), 0.0), 5.0);
-  vec3 spec = Fs * min(a2 / (HALO_PI * dd * dd) * 0.25 / NdV, 6.0) * NdL;
-  // wypelnienie jak AmbientLight obiektow 3D gry + swiatlo planety + lampy hali
-  vec3 amb = vec3(0.050, 0.056, 0.066) * (0.55 + 0.45 * max(hubN.y, 0.0)) + haloPlanetshine(p, N) + vec3(uNightAmbient);
-  amb += k7HallLight(vHub, hubN) * uHallLights.x;
-  vec3 diffuse = albedo * (1.0 - metal * 0.7);
-  vec3 color = diffuse * (uSunColor * sunVis * NdL + amb) + uSunColor * sunVis * spec * 0.8;
-  // krawedz plyt lapie swiatlo (jasna faza z tekstury K-7)
-  color += albedo * hl * 0.25 * (haloLuma(sunVis) * NdL + 0.2);
-  // odbicie otoczenia: kosmos czarny, planeta ponizej
-  color += F0 * (0.02 + 0.05 * (1.0 - max(N.z, 0.0))) * (1.0 - rough);
-  if (m > 13.5 && m < 18.5) color = k7Emit(m) * (0.85 + 0.15 * sin(uHallLights.z * 2.0 + vHub.x * 0.01));
-  if (m > 18.5 && m < 19.5) color = uGroupEmit[int(matEmitGroup + 0.5)];
-  if (m > 10.5 && m < 11.5) color += uK7Glow[0] + uK7Glow[1] * (0.3 + 0.7 * (1.0 - uHallLights.y));
-  return vec4(max(color, vec3(0.0)), 1.0);
+// wektor (Vector3 / Vector4) do slotu vec4 tablicy (bez domknięć — wołane przy każdym rysowaniu hali)
+function putVec(out, v, i) {
+  const o = i * 4;
+  out[o] = v.x; out[o + 1] = v.y; out[o + 2] = v.z; out[o + 3] = v.w ?? 0;
 }
-`;
 
-const K7_INSTANCE_VERTEX = /* glsl */`
-${HALO_GLSL_COMMON}
-uniform mat4 uHub;
-uniform mat4 uGroup[${MAX_GROUPS}];
-attribute vec4 iA;     // srodek xyz, skala pionowa
-attribute vec4 iB;     // rozmiar xyz, material
-attribute vec4 iQ;     // kwaternion
-attribute vec4 iC;     // grupa
-varying vec3 vRing;
-varying vec3 vHub;
-varying vec3 vHubN;
-varying vec3 vN;
-varying vec3 vLocal;
-varying vec3 vLocalN;
-varying vec3 vSize;
-varying float vMat;
-varying float vGroup;
-vec3 qrot(vec4 q, vec3 v) {
-  vec3 t = 2.0 * cross(q.xyz, v);
-  return v + q.w * t + cross(q.xyz, t);
+function packK7Surf(frame, node) {
+  const U = frame?.material?.uniforms;
+  const out = node.value;
+  if (!U?.uGroupEmit || !out || typeof out.length !== 'number') return undefined;
+  const emit = U.uGroupEmit.value;
+  for (let i = 0; i < MAX_GROUPS; i++) putVec(out, emit[i], S.emit + i);
+  const lamps = U.uLamps.value;
+  for (let i = 0; i < MAX_LAMPS; i++) putVec(out, lamps[i], S.lamps + i);
+  const pal = U.uK7Pal.value;
+  for (let i = 0; i < K7_PAL_SIZE; i++) putVec(out, pal[i], S.pal + i);
+  const k7e = U.uK7Emit.value;
+  for (let i = 0; i < 5; i++) putVec(out, k7e[i], S.k7Emit + i);
+  const glow = U.uK7Glow.value;
+  for (let i = 0; i < 2; i++) putVec(out, glow[i], S.glow + i);
+  return undefined;
 }
-void main() {
-  vec3 lp = position * iB.xyz;
-  vec3 r = qrot(iQ, lp);
-  r.y *= iA.w;
-  vec3 hubP = iA.xyz + r;
-  vec3 nl = normalize(normal / max(iB.xyz, vec3(1e-3)));
-  vec3 nr = qrot(iQ, nl);
-  nr.y /= max(iA.w, 1e-3);
-  int g = int(iC.x + 0.5);
-  mat4 G = uGroup[g];
-  vec4 gp = G * vec4(hubP, 1.0);
-  vec3 gn = normalize(mat3(G) * nr);
-  vHub = gp.xyz;
-  vHubN = gn;
-  vRing = (uHub * gp).xyz;
-  vN = normalize(mat3(uHub) * gn);
-  vLocal = lp;
-  vLocalN = normal;
-  vSize = iB.xyz;
-  vMat = iB.w;
-  vGroup = iC.x;
-  gl_Position = projectionMatrix * modelViewMatrix * gp;
-}
-`;
 
-const K7_INSTANCE_FRAGMENT = /* glsl */`
-${HALO_GLSL_COMMON}
-${HALO_GLSL_NOISE}
-${HALO_GLSL_LIGHT}
-${GLSL_K7_SURFACE}
-void main() {
-  float m = floor(vMat + 0.5);
-  bool top = vLocalN.y > 0.5;
-  vec3 kn = abs(vLocalN);
-  vec2 fuv = kn.y > 0.55 ? vLocal.xz : (kn.x > 0.55 ? vLocal.zy : vLocal.xy);
-  float fw = fwidth(fuv.x) + fwidth(fuv.y);
-  vec4 c = k7Shade(k7Palette(m), m, normalize(vHubN), top, fuv, fw, vGroup);
-  gl_FragColor = vec4(c.rgb, uRoofOpacity);
-}
-`;
+// Wartość per obiekt z material.uniforms[klucz].value rysowanego obiektu.
+const perObject = (init, key) => uniform(init).onObjectUpdate(({ material }) => material?.uniforms?.[key]?.value);
 
-const K7_PLATE_VERTEX = /* glsl */`
-${HALO_GLSL_COMMON}
-uniform mat4 uHub;
-attribute float aMat;
-varying vec3 vRing;
-varying vec3 vHub;
-varying vec3 vHubN;
-varying vec3 vN;
-varying vec3 vLocal;
-varying vec3 vLocalN;
-varying vec3 vSize;
-varying float vMat;
-varying float vGroup;
-void main() {
-  vHub = position;
-  vHubN = normal;
-  vRing = (uHub * vec4(position, 1.0)).xyz;
-  vN = normalize(mat3(uHub) * normal);
-  vLocal = position;
-  vLocalN = normal;
-  vSize = vec3(1.0);
-  vMat = aMat;
-  vGroup = 0.0;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-}
-`;
-const K7_PLATE_FRAGMENT = /* glsl */`
-${HALO_GLSL_COMMON}
-${HALO_GLSL_NOISE}
-${HALO_GLSL_LIGHT}
-${GLSL_K7_SURFACE}
-void main() {
-  float m = floor(vMat + 0.5);
-  vec2 fuv = abs(vLocalN.y) > 0.5 ? vLocal.xz : (abs(vLocalN.x) > 0.5 ? vLocal.zy : vLocal.xy);
-  float fw = fwidth(fuv.x) + fwidth(fuv.y);
-  vec4 c = k7Shade(k7Palette(m), m, vLocalN, vLocalN.y > 0.5, fuv, fw, 0.0);
-  gl_FragColor = vec4(c.rgb, uRoofOpacity);
-}
-`;
+// Atlas napisów per obiekt (każda hala ma swój): `teksturaObiektu` (src/3d/tsl/teksturaObiektu.js —
+// `texture().onObjectUpdate()` w three r183 NIE działa). Zastępcza przy budowie: filtr liniowy (TSL
+// wybiera ścieżkę próbkowania z tekstury obecnej przy BUDOWIE), (0, 0, 0, 0) = brak napisu.
 
-// Napisy na pokładzie: atlas (biały tekst w alfie), kolor per czworokąt.
-const K7_LABEL_VERTEX = /* glsl */`
-${HALO_GLSL_COMMON}
-uniform mat4 uHub;
-attribute vec3 aColor;
-varying vec2 vUv;
-varying vec3 vColor;
-varying vec3 vRing;
-varying vec3 vN;
-void main() {
-  vUv = uv;
-  vColor = aColor;
-  vRing = (uHub * vec4(position, 1.0)).xyz;
-  vN = normalize(mat3(uHub) * normal);
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-}
-`;
-const K7_LABEL_FRAGMENT = /* glsl */`
-${HALO_GLSL_COMMON}
-${HALO_GLSL_NOISE}
-${HALO_GLSL_LIGHT}
-uniform sampler2D uAtlas;
-uniform vec4 uHallLights;
-varying vec2 vUv;
-varying vec3 vColor;
-varying vec3 vRing;
-varying vec3 vN;
-void main() {
-  float a = texture(uAtlas, vUv).a;
-  if (a < 0.02) discard;
-  vec3 N = normalize(vN);
-  vec3 sunVis = haloSunVisibility(vRing + N * 2.0, uSunDir);
-  float NdL = max(dot(N, uSunDir), 0.0);
-  vec3 amb = vec3(0.05, 0.056, 0.066) + haloPlanetshine(vRing, N);
-  vec3 col = vColor * (uSunColor * sunVis * NdL + amb) * 0.9;
-  gl_FragColor = vec4(col * a, a);
-}
-`;
+// x⁵ mnożeniem (baza WebGL: FXC rozwijał pow(x, 5.0) w mnożenia — dla podstawy tuż poniżej
+// zera bez NaN; pow w WGSL to exp2(n·log2 x) = NaN dla x < 0).
+const pow5 = (x) => {
+  const x2 = x.mul(x).toVar();
+  return x2.mul(x2).mul(x);
+};
+const inRange = (x, lo, hi) => x.greaterThan(lo).and(x.lessThan(hi));
 
-// Węże paliwowe: rura z żebrami gumy (tekstura K-7: pierścienie co 1/16).
-const K7_HOSE_VERTEX = /* glsl */`
-${HALO_GLSL_COMMON}
-uniform mat4 uHub;
-varying vec2 vUv;
-varying vec3 vRing;
-varying vec3 vN;
-void main() {
-  vUv = uv;
-  vRing = (uHub * vec4(position, 1.0)).xyz;
-  vN = normalize(mat3(uHub) * normal);
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+// ---------------------------------------------------------------------------
+// Grafy K-7 ringu (dawne GLSL_K7_SURFACE + K7_INSTANCE_* / K7_PLATE_* / K7_LABEL_* / K7_HOSE_*),
+// budowane RAZ na uniformy ringu (cache po obiekcie uniformów — przebudowa ringu przy zmianie
+// jakości trzyma te same uniformy, więc i grafy). Każda hala dostaje materiały z tymi węzłami.
+const K7_GRAPHS = new WeakMap();
+
+export function k7Graphs(u) {
+  let G = K7_GRAPHS.get(u);
+  if (G) return G;
+  const H = haloRingTSL(u);
+  const U = H.uniforms;
+  // wartości hali (per obiekt)
+  const hub = perObject(new THREE.Matrix4(), 'uHub');
+  const hallLights = perObject(new THREE.Vector4(), 'uHallLights');
+  const roofOpacity = perObject(1, 'uRoofOpacity');
+  const groups = uniformArray(Array.from({ length: MAX_GROUPS * 4 }, () => new THREE.Vector4()), 'vec4').setName(K7_GROUPS_BLOCK);
+  groups.onObjectUpdate(packK7Groups);
+  const surf = uniformArray(Array.from({ length: S.length }, () => new THREE.Vector4()), 'vec4').setName(K7_SURF_BLOCK);
+  surf.onObjectUpdate(packK7Surf);
+  const hub3 = mat3(hub);
+
+  // Paleta hali (dawne k7Palette / k7Emit): kody 0–13 z palety, dalej stała ciemna barwa.
+  const k7Palette = (m) => {
+    const i = int(clamp(floor(m.add(0.5)), 0.0, float(K7_PAL_SIZE))).toVar();
+    return i.lessThan(K7_PAL_SIZE).select(surf.element(int(S.pal).add(min(i, int(K7_PAL_SIZE - 1)))).xyz, vec3(0.02, 0.022, 0.025));
+  };
+  const k7Emit = (m) => surf.element(int(S.k7Emit).add(int(clamp(floor(m.add(0.5)).sub(14.0), 0.0, 4.0)))).xyz;
+
+  // Płyty jak tekstura K-7: 3 × 4 płyty na kafel 260 j. (pokład 4 × 4), jaśniejsza
+  // krawędź od góry-lewej, ciemna spoina, śruby w narożnikach, zacieki (dawne k7Plates;
+  // parametr out highlight → pole `hl` wyniku).
+  const k7Plates = (uv, deck, fw) => {
+    const cells = deck.select(vec2(4.0, 4.0), vec2(3.0, 4.0)).toVar();
+    const g = uv.div(260.0).mul(cells).toVar();
+    const id = floor(g).toVar();
+    const fcell = fract(g).toVar();
+    const psz = vec2(260.0).div(cells).toVar();
+    const d = min(fcell, vec2(1.0).sub(fcell)).mul(psz).toVar();   // odległość od krawędzi płyty [j.]
+    const aa = fw.mul(1.2).add(0.2).toVar();
+    const seam = float(1.0).sub(smoothstep(0.35, float(0.35).add(aa), min(d.x, d.y))).toVar();
+    const hl = float(1.0).sub(smoothstep(0.7, float(0.7).add(aa), fcell.x.mul(psz.x)))
+      .add(float(1.0).sub(smoothstep(0.7, float(0.7).add(aa), float(1.0).sub(fcell.y).mul(psz.y)))).toVar();
+    hl.mulAssign(float(1.0).sub(seam));
+    const v = haloHash12(id.add(deck.select(float(17.0), float(3.0)))).toVar();
+    const b = abs(fcell.mul(psz).sub(4.4)).toVar();
+    const b2 = abs(vec2(1.0).sub(fcell).mul(psz).sub(4.4)).toVar();
+    const bolt = float(1.0).sub(smoothstep(0.7, float(0.7).add(aa),
+      min(min(length(b), length(b2)), min(length(vec2(b.x, b2.y)), length(vec2(b2.x, b.y)))))).toVar();
+    const sc = fcell.sub(vec2(0.8, 0.7)).toVar();
+    const stain = exp(dot(sc, sc).negate().mul(9.0)).mul(haloHash12(id.add(5.0))).toVar();
+    const detail = float(1.0).sub(smoothstep(0.8, 3.0, fw)).toVar();
+    // jasność płyt jak w teksturze K-7 (sRGB → liniowo): ściany 167–195/255,
+    // pokład 66–85/255 na ciemnym tle — pokład ciemny, oznakowanie jasne
+    const base = deck.select(mix(0.11, 0.17, v), mix(0.42, 0.56, v));
+    const value = base.mul(float(1.0).sub(seam.mul(0.55).mul(detail))).mul(float(1.0).sub(bolt.mul(0.5).mul(detail)))
+      .mul(float(1.0).sub(stain.mul(0.25))).toVar();
+    return { value, hl };
+  };
+
+  // Lampy hali nad stanowiskami kapitalnymi (K-7 miało PointLighty; 4 stanowiska
+  // od 2026-09-23), na zewnątrz od osi stanowiska o 310 j. jak w K-7, i po trzy
+  // nad każdą otwartą zatoką kompleksu (dwa pasy MEGA, grzebień).
+  const k7HallLight = (hubP, N) => {
+    const acc = vec3(0.0).toVar();
+    Loop({ start: 0, end: MAX_LAMPS, type: 'int', condition: '<', name: 'k7Lamp' }, ({ k7Lamp }) => {
+      const Lp = surf.element(int(S.lamps).add(k7Lamp)).toVar();
+      const dv = Lp.xyz.sub(hubP).toVar();
+      const d = length(dv).toVar();
+      const fall = float(1.0).div(float(1.0).add(d.div(520.0).mul(d.div(520.0))));
+      const win = float(1.0).sub(smoothstep(1500.0, 2450.0, d)).mul(step(0.5, Lp.w));
+      const col = Lp.w.lessThan(1.5).select(vec3(1.0, 0.78, 0.55), vec3(0.66, 0.85, 0.92));
+      // N w układzie huba: y = góra
+      acc.addAssign(col.mul(fall).mul(win).mul(max(dot(N, dv.div(max(d, 1.0))), 0.0)));
+    });
+    return acc;
+  };
+
+  // Cieniowanie (dawne k7Shade): v — varyingi materiału (ring, n, hub), group — indeks emisji grupy.
+  const k7Shade = (v, albedo0, m, hubN, fuv, fw, group) => {
+    const N = normalize(v.n).toVar();
+    const p = vec3(v.ring).toVar();
+    const V = normalize(U.uCamLocal.sub(p)).toVar();
+    const L = U.uSunDir;
+    const plated = m.lessThan(5.5).toVar();
+    const deck = inRange(m, 5.5, 6.5).or(m.greaterThan(19.5)).toVar();
+    const plates = k7Plates(fuv, deck, fw);
+    const hl = float(0.0).toVar();
+    const albedo = vec3(albedo0).toVar();
+    If(plated.or(deck), () => {
+      albedo.mulAssign(plates.value);
+      hl.assign(plates.hl);
+    });
+    If(m.greaterThan(19.5), () => { albedo.assign(vec3(0.012, 0.017, 0.021).mul(plates.value)); });   // pole stanowiska
+    const rough = inRange(m, 6.5, 7.5).select(float(0.38), inRange(m, 9.5, 10.5).select(float(0.45),
+      inRange(m, 10.5, 11.5).select(float(0.2), float(0.72)))).toVar();
+    const metal = inRange(m, 6.5, 7.5).select(float(0.86), plated.select(float(0.5), float(0.1))).toVar();
+    const sunVis = H.haloSunVisibility(p.add(N.mul(2.0)), L).toVar();
+    const NdL = max(dot(N, L), 0.0).toVar();
+    const NdV = max(dot(N, V), 1e-3).toVar();
+    const Hv = normalize(L.add(V)).toVar();
+    const a2 = rough.mul(rough).toVar();
+    const NdH = max(dot(N, Hv), 0.0).toVar();
+    const dd = NdH.mul(NdH).mul(a2.sub(1.0)).add(1.0).toVar();
+    const F0 = mix(vec3(0.04), albedo, metal).toVar();
+    const Fs = F0.add(vec3(1.0).sub(F0).mul(pow5(float(1.0).sub(max(dot(Hv, V), 0.0))))).toVar();
+    const spec = Fs.mul(min(a2.div(float(HALO_PI).mul(dd).mul(dd)).mul(0.25).div(NdV), 6.0)).mul(NdL).toVar();
+    // wypełnienie jak AmbientLight obiektów 3D gry + światło planety + lampy hali
+    const amb = vec3(0.050, 0.056, 0.066).mul(float(0.55).add(float(0.45).mul(max(hubN.y, 0.0))))
+      .add(H.haloPlanetshine(p, N)).add(vec3(U.uNightAmbient)).toVar();
+    amb.addAssign(k7HallLight(v.hub, hubN).mul(hallLights.x));
+    const diffuse = albedo.mul(float(1.0).sub(metal.mul(0.7)));
+    const color = diffuse.mul(U.uSunColor.mul(sunVis).mul(NdL).add(amb)).add(U.uSunColor.mul(sunVis).mul(spec).mul(0.8)).toVar();
+    // krawędź płyt łapie światło (jasna faza z tekstury K-7)
+    color.addAssign(albedo.mul(hl).mul(0.25).mul(H.haloLuma(sunVis).mul(NdL).add(0.2)));
+    // odbicie otoczenia: kosmos czarny, planeta poniżej
+    color.addAssign(F0.mul(float(0.02).add(float(0.05).mul(float(1.0).sub(max(N.z, 0.0))))).mul(float(1.0).sub(rough)));
+    If(inRange(m, 13.5, 18.5), () => {
+      color.assign(k7Emit(m).mul(float(0.85).add(float(0.15).mul(sin(hallLights.z.mul(2.0).add(v.hub.x.mul(0.01)))))));
+    });
+    If(inRange(m, 18.5, 19.5), () => { color.assign(surf.element(int(S.emit).add(int(group.add(0.5)))).xyz); });
+    If(inRange(m, 10.5, 11.5), () => {
+      color.addAssign(surf.element(S.glow).xyz.add(surf.element(S.glow + 1).xyz.mul(float(0.3).add(float(0.7).mul(float(1.0).sub(hallLights.y))))));
+    });
+    return max(color, vec3(0.0));
+  };
+
+  const k7Varyings = () => ({
+    ring: varyingProperty('vec3', 'vK7Ring'),
+    hub: varyingProperty('vec3', 'vK7Hub'),
+    hubN: varyingProperty('vec3', 'vK7HubN'),
+    n: varyingProperty('vec3', 'vK7N'),
+    local: varyingProperty('vec3', 'vK7Local'),
+    localN: varyingProperty('vec3', 'vK7LocalN'),
+    mat: varyingProperty('float', 'vK7Mat'),
+    group: varyingProperty('float', 'vK7Group')
+  });
+
+  // ---- instancje (dawne K7_INSTANCE_VERTEX / _FRAGMENT)
+  const vi = k7Varyings();
+  const instanceVertex = Fn(() => {
+    const iA = attribute('iA', 'vec4');     // środek xyz, skala pionowa
+    const iB = attribute('iB', 'vec4');     // rozmiar xyz, materiał
+    const iQ = attribute('iQ', 'vec4');     // kwaternion
+    const iC = attribute('iC', 'vec4');     // grupa
+    const lp = positionGeometry.mul(iB.xyz).toVar();
+    const r = haloQrot(iQ, lp).toVar();
+    const hubP = iA.xyz.add(vec3(r.x, r.y.mul(iA.w), r.z)).toVar();
+    const nl = normalize(normalGeometry.div(max(iB.xyz, vec3(1e-3)))).toVar();
+    const nr0 = haloQrot(iQ, nl).toVar();
+    const nr = vec3(nr0.x, nr0.y.div(max(iA.w, 1e-3)), nr0.z).toVar();
+    const g4 = int(iC.x.add(0.5)).mul(4).toVar();
+    const c0 = groups.element(g4).toVar();
+    const c1 = groups.element(g4.add(1)).toVar();
+    const c2 = groups.element(g4.add(2)).toVar();
+    const c3 = groups.element(g4.add(3)).toVar();
+    const gp = mat4(c0, c1, c2, c3).mul(vec4(hubP, 1.0)).toVar();
+    const gn = normalize(mat3(c0.xyz, c1.xyz, c2.xyz).mul(nr)).toVar();
+    vi.hub.assign(gp.xyz);
+    vi.hubN.assign(gn);
+    vi.ring.assign(hub.mul(gp).xyz);
+    vi.n.assign(normalize(hub3.mul(gn)));
+    vi.local.assign(lp);
+    vi.localN.assign(normalGeometry);
+    vi.mat.assign(iB.w);
+    vi.group.assign(iC.x);
+    return cameraProjectionMatrix.mul(modelViewMatrix.mul(gp));
+  })();
+  const instanceFragment = Fn(() => {
+    const m = floor(vi.mat.add(0.5)).toVar();
+    const localN = vec3(vi.localN).toVar();
+    const local = vec3(vi.local).toVar();
+    const kn = abs(localN).toVar();
+    const fuv = kn.y.greaterThan(0.55).select(local.xz, kn.x.greaterThan(0.55).select(local.zy, local.xy)).toVar();
+    const fw = fwidth(fuv.x).add(fwidth(fuv.y)).toVar();
+    const c = k7Shade(vi, k7Palette(m), m, normalize(vi.hubN), fuv, fw, vi.group);
+    return vec4(c, roofOpacity);
+  })();
+
+  // ---- pokład, fartuchy, dach (dawne K7_PLATE_VERTEX / _FRAGMENT)
+  const vp = k7Varyings();
+  const plateVertex = Fn(() => {
+    const aMat = attribute('aMat', 'float');
+    const position = positionGeometry;
+    const normal = normalGeometry;
+    vp.hub.assign(position);
+    vp.hubN.assign(normal);
+    vp.ring.assign(hub.mul(vec4(position, 1.0)).xyz);
+    vp.n.assign(normalize(hub3.mul(normal)));
+    vp.local.assign(position);
+    vp.localN.assign(normal);
+    vp.mat.assign(aMat);
+    return cameraProjectionMatrix.mul(modelViewMatrix.mul(vec4(position, 1.0)));
+  })();
+  const plateFragment = Fn(() => {
+    const m = floor(vp.mat.add(0.5)).toVar();
+    const localN = vec3(vp.localN).toVar();
+    const local = vec3(vp.local).toVar();
+    const fuv = abs(localN.y).greaterThan(0.5).select(local.xz, abs(localN.x).greaterThan(0.5).select(local.zy, local.xy)).toVar();
+    const fw = fwidth(fuv.x).add(fwidth(fuv.y)).toVar();
+    const c = k7Shade(vp, k7Palette(m), m, localN, fuv, fw, float(0.0));
+    return vec4(c, roofOpacity);
+  })();
+
+  // ---- napisy na pokładzie (dawne K7_LABEL_*): atlas (biały tekst w alfie), kolor per czworokąt
+  const vUv = varyingProperty('vec2', 'vK7Uv');
+  const vColor = varyingProperty('vec3', 'vK7Color');
+  const vl = { ring: varyingProperty('vec3', 'vK7Ring'), n: varyingProperty('vec3', 'vK7N') };
+  const atlas = teksturaObiektu('uAtlas', teksturaZastepcza(0, 0, 0, 0), vUv);
+  const labelVertex = Fn(() => {
+    const position = positionGeometry;
+    vUv.assign(attribute('uv', 'vec2'));
+    vColor.assign(attribute('aColor', 'vec3'));
+    vl.ring.assign(hub.mul(vec4(position, 1.0)).xyz);
+    vl.n.assign(normalize(hub3.mul(normalGeometry)));
+    return cameraProjectionMatrix.mul(modelViewMatrix.mul(vec4(position, 1.0)));
+  })();
+  const labelFragment = Fn(() => {
+    const a = atlas.a.toVar();
+    If(a.lessThan(0.02), () => { Discard(); });
+    const N = normalize(vl.n).toVar();
+    const ring = vec3(vl.ring).toVar();
+    const sunVis = H.haloSunVisibility(ring.add(N.mul(2.0)), U.uSunDir).toVar();
+    const NdL = max(dot(N, U.uSunDir), 0.0);
+    const amb = vec3(0.05, 0.056, 0.066).add(H.haloPlanetshine(ring, N));
+    const col = vec3(vColor).mul(U.uSunColor.mul(sunVis).mul(NdL).add(amb)).mul(0.9).toVar();
+    return vec4(col.mul(a), a);
+  })();
+
+  // ---- węże paliwowe (dawne K7_HOSE_*): rura z żebrami gumy (tekstura K-7: pierścienie co 1/16)
+  const vhUv = varyingProperty('vec2', 'vK7Uv');
+  const vh = { ring: varyingProperty('vec3', 'vK7Ring'), n: varyingProperty('vec3', 'vK7N') };
+  const hoseVertex = Fn(() => {
+    const position = positionGeometry;
+    vhUv.assign(attribute('uv', 'vec2'));
+    vh.ring.assign(hub.mul(vec4(position, 1.0)).xyz);
+    vh.n.assign(normalize(hub3.mul(normalGeometry)));
+    return cameraProjectionMatrix.mul(modelViewMatrix.mul(vec4(position, 1.0)));
+  })();
+  const hoseColor = srgb(0x565b58).map(r4);
+  const hoseFragment = Fn(() => {
+    const N = normalize(vh.n).toVar();
+    const ring = vec3(vh.ring).toVar();
+    const V = normalize(U.uCamLocal.sub(ring)).toVar();
+    const uvh = vec2(vhUv).toVar();
+    const rib = step(0.75, fract(uvh.y.mul(16.0)));
+    const braid = step(0.9, fract(uvh.x.add(uvh.y.mul(2.0)).mul(16.0)));
+    const albedo = vec3(...hoseColor).mul(mix(1.0, 0.45, rib)).mul(mix(1.0, 1.2, braid)).mul(0.8).toVar();
+    const sunVis = H.haloSunVisibility(ring.add(N.mul(2.0)), U.uSunDir).toVar();
+    const NdL = max(dot(N, U.uSunDir), 0.0);
+    const Hv = normalize(U.uSunDir.add(V));
+    const spec = pow(max(dot(N, Hv), 0.0), 24.0).mul(0.08).toVar();
+    const amb = vec3(0.05, 0.056, 0.066).add(H.haloPlanetshine(ring, N));
+    const col = albedo.mul(U.uSunColor.mul(sunVis).mul(NdL).add(amb)).add(U.uSunColor.mul(sunVis).mul(spec));
+    return vec4(col, 1.0);
+  })();
+
+  G = {
+    instance: { vertexNode: instanceVertex, fragmentNode: instanceFragment },
+    plate: { vertexNode: plateVertex, fragmentNode: plateFragment },
+    label: { vertexNode: labelVertex, fragmentNode: labelFragment },
+    hose: { vertexNode: hoseVertex, fragmentNode: hoseFragment },
+    nodes: { hub, hallLights, roofOpacity, groups, surf, atlas }
+  };
+  K7_GRAPHS.set(u, G);
+  return G;
 }
-`;
-const K7_HOSE_FRAGMENT = /* glsl */`
-${HALO_GLSL_COMMON}
-${HALO_GLSL_NOISE}
-${HALO_GLSL_LIGHT}
-varying vec2 vUv;
-varying vec3 vRing;
-varying vec3 vN;
-void main() {
-  vec3 N = normalize(vN);
-  vec3 V = normalize(uCamLocal - vRing);
-  float rib = step(0.75, fract(vUv.y * 16.0));
-  float braid = step(0.9, fract((vUv.x + vUv.y * 2.0) * 16.0));
-  vec3 albedo = vec3(${f3(srgb(0x565b58))}) * mix(1.0, 0.45, rib) * mix(1.0, 1.2, braid) * 0.8;
-  vec3 sunVis = haloSunVisibility(vRing + N * 2.0, uSunDir);
-  float NdL = max(dot(N, uSunDir), 0.0);
-  vec3 H = normalize(uSunDir + V);
-  float spec = pow(max(dot(N, H), 0.0), 24.0) * 0.08;
-  vec3 amb = vec3(0.05, 0.056, 0.066) + haloPlanetshine(vRing, N);
-  vec3 col = albedo * (uSunColor * sunVis * NdL + amb) + uSunColor * sunVis * spec;
-  gl_FragColor = vec4(col, 1.0);
-}
-`;
 
 // ---------------------------------------------------------------------------
 function makeUnitCylinder() {
@@ -591,18 +656,17 @@ export class HaloPortK7 {
     this._torus = new THREE.TorusGeometry(1, 0.13, 6, 24);
     const bases = { box: this._box, cyl: this._cyl, torus: this._torus };
 
+    // materiały hali: lekkie NodeMaterial-e na wspólnych grafach ringu (k7Graphs), wartości
+    // hali w material.uniforms (podgląd jak dawniej: uniformy ringu + hali)
+    const graphs = k7Graphs(uniforms);
+    this._graphs = graphs;
     this.materials = [];
-    const instMat = (uni, opts = {}) => {
-      const m = new THREE.ShaderMaterial({
-        name: 'K7Instances',
-        uniforms: uni,
-        vertexShader: K7_INSTANCE_VERTEX,
-        fragmentShader: K7_INSTANCE_FRAGMENT,
-        ...opts
-      });
+    const nodeMat = (name, graph, uni, state = {}) => {
+      const m = haloNodeMaterial(name, graph, state, uni);
       this.materials.push(m);
       return m;
     };
+    const instMat = (uni, opts = {}) => nodeMat('K7Instances', graphs.instance, uni, opts);
     this.matBg = instMat(common);
     this.matFg = instMat(common);
     this.matRoof = instMat(commonRoof, { transparent: true });
@@ -624,11 +688,7 @@ export class HaloPortK7 {
       }
     }
     // pokład, fartuchy, most / dach
-    const plateMat = (uni, opts = {}) => {
-      const m = new THREE.ShaderMaterial({ name: 'K7Plates', uniforms: uni, vertexShader: K7_PLATE_VERTEX, fragmentShader: K7_PLATE_FRAGMENT, ...opts });
-      this.materials.push(m);
-      return m;
-    };
+    const plateMat = (uni, opts = {}) => nodeMat('K7Plates', graphs.plate, uni, opts);
     const bgPlates = scene.plates.filter((p) => p.set !== 'roof');
     const roofPlates = scene.plates.filter((p) => p.set === 'roof');
     this.platesBg = new THREE.Mesh(makePlates(bgPlates), plateMat(common));
@@ -647,11 +707,8 @@ export class HaloPortK7 {
     const atlas = makeLabelAtlas(scene.labels);
     if (atlas) {
       this.atlas = atlas;
-      const lm = new THREE.ShaderMaterial({
-        name: 'K7Labels',
-        uniforms: { ...uniforms, ...this.k7Uniforms, uAtlas: { value: atlas.tex } },
-        vertexShader: K7_LABEL_VERTEX,
-        fragmentShader: K7_LABEL_FRAGMENT,
+      // mieszanie (ONE, ONE_MINUS_SRC_ALPHA) z kolorem · alfa w shaderze; alfa celu tak samo
+      const lm = nodeMat('K7Labels', graphs.label, { ...uniforms, ...this.k7Uniforms, uAtlas: { value: atlas.tex } }, {
         transparent: true,
         depthWrite: false,
         blending: THREE.CustomBlending,
@@ -661,7 +718,6 @@ export class HaloPortK7 {
         polygonOffsetFactor: -2,
         polygonOffsetUnits: -2
       });
-      this.materials.push(lm);
       this.labels = new THREE.Mesh(makeLabelMesh(scene.labels, atlas), lm);
       this.labels.name = 'K7_labels';
       this.labels.frustumCulled = true;
@@ -718,7 +774,7 @@ export class HaloPortK7 {
     g.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
     g.setIndex(idx);
     g.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 2000), 4000);
-    const m = new THREE.ShaderMaterial({ name: 'K7Hoses', uniforms: this.matFg.uniforms, vertexShader: K7_HOSE_VERTEX, fragmentShader: K7_HOSE_FRAGMENT });
+    const m = haloNodeMaterial('K7Hoses', this._graphs.hose, {}, this.matFg.uniforms);
     this.materials.push(m);
     this.hoseMesh = new THREE.Mesh(g, m);
     this.hoseMesh.name = 'K7_hoses';
@@ -739,6 +795,23 @@ export class HaloPortK7 {
   }
 
   setVisible(v) { this.root.visible = !!v; }
+
+  // Rozgrzewka (zadanie 11, Core3D.warmup): dach w stanie „statek w hali” — przezroczysty, bez zapisu
+  // głębi (update() przełącza go przy roofFade) — ten sam graf, drugi pipeline. { meshes, apply → przywróć }.
+  roofWarmVariant() {
+    const meshes = this.meshes.fg.filter((m) => m.material === this.matRoof || m === this.platesRoof);
+    return {
+      meshes,
+      apply(mesh) {
+        const m = mesh.material;
+        const transparent = m.transparent;
+        const depthWrite = m.depthWrite;
+        m.transparent = true;
+        m.depthWrite = false;
+        return () => { m.transparent = transparent; m.depthWrite = depthWrite; };
+      }
+    };
+  }
 
   // pozy obsługi stanowisk: Map berthId → {bridge, trolley, lower, clamp, extension, lock, flow, vent}
   setServicePoses(poses) {

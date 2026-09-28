@@ -29,7 +29,8 @@ import {
   CARGO_VIEW_GLSL,
   CargoContainers3D
 } from './cargoContainers3D.js';
-import { SUN_SHADOW_GLSL } from './sunShadowMask.js';
+// AGENT: moduł Z5 poza grą (dema/kontenery) — GLSL; przejdzie na TSL przy integracji ruchu v2 (PLAN §12 p. 1).
+import { SUN_SHADOW_GLSL } from './sunShadowMaskGLSL.js';
 import {
   CARGO_DRONE,
   CARGO_DRONE_STRIDE,

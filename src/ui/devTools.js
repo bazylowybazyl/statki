@@ -60,19 +60,6 @@ const HTML = `
   <label style="display:flex;gap:6px;align-items:center;margin-top:8px"><input id="dt-use-3d-pirate" type="checkbox" /> 3D Pirate Station (hide 2D)</label>
 </div>
 <div class="group" id="stationsFramesGroup"><div class="row"><strong>Stacje (kadr per stacja)</strong> <span class="small muted">(zoom kamery na sprite)</span></div></div>
-<div class="group" id="warpVfxGroup">
-  <div class="row"><strong>Warp Wormhole VFX</strong> <span class="small muted">(soczewka statku)</span></div>
-  <div class="row"><label>Prog trybu pelnego</label><input id="warpLensThreshold" type="range" min="0" max="1" step="0.01"><input id="warpLensThresholdNum" type="number" min="0" max="1" step="0.01" style="width:72px;"><div class="val" id="warpLensThresholdVal"></div></div>
-  <div class="row"><label>Promien bazowy</label><input id="warpRadiusBase" type="range" min="0.05" max="0.6" step="0.005"><input id="warpRadiusBaseNum" type="number" min="0.05" max="0.6" step="0.005" style="width:72px;"><div class="val" id="warpRadiusBaseVal"></div></div>
-  <div class="row"><label>Promien - skala</label><input id="warpRadiusScale" type="range" min="0" max="0.3" step="0.005"><input id="warpRadiusScaleNum" type="number" min="0" max="0.3" step="0.005" style="width:72px;"><div class="val" id="warpRadiusScaleVal"></div></div>
-  <div class="row"><label>Masa bazowa</label><input id="warpMassBase" type="range" min="0" max="0.5" step="0.005"><input id="warpMassBaseNum" type="number" min="0" max="0.5" step="0.005" style="width:72px;"><div class="val" id="warpMassBaseVal"></div></div>
-  <div class="row"><label>Masa - skala</label><input id="warpMassScale" type="range" min="0" max="0.6" step="0.005"><input id="warpMassScaleNum" type="number" min="0" max="0.6" step="0.005" style="width:72px;"><div class="val" id="warpMassScaleVal"></div></div>
-  <div class="row"><label>Miekkosc krawedzi</label><input id="warpSoftness" type="range" min="0" max="1" step="0.01"><input id="warpSoftnessNum" type="number" min="0" max="1" step="0.01" style="width:72px;"><div class="val" id="warpSoftnessVal"></div></div>
-  <div class="row"><label>Przezroczystosc bazowa</label><input id="warpOpacityBase" type="range" min="0" max="1" step="0.01"><input id="warpOpacityBaseNum" type="number" min="0" max="1" step="0.01" style="width:72px;"><div class="val" id="warpOpacityBaseVal"></div></div>
-  <div class="row"><label>Przezroczystosc - skala</label><input id="warpOpacityScale" type="range" min="0" max="1" step="0.01"><input id="warpOpacityScaleNum" type="number" min="0" max="1" step="0.01" style="width:72px;"><div class="val" id="warpOpacityScaleVal"></div></div>
-  <div class="row"><label>Wydluzenie wzdluz lotu</label><input id="warpLensForwardStretch" type="range" min="0.1" max="2" step="0.01"><input id="warpLensForwardStretchNum" type="number" min="0.1" max="2" step="0.01" style="width:72px;"><div class="val" id="warpLensForwardStretchVal"></div></div>
-  <div class="row"><label>Offset wzdluz kadluba</label><input id="warpTailDepthExtra" type="range" min="-0.2" max="0.8" step="0.01"><input id="warpTailDepthExtraNum" type="number" min="-0.2" max="0.8" step="0.01" style="width:72px;"><div class="val" id="warpTailDepthExtraVal"></div></div>
-</div>
 <div class="group">
   <div class="row"><label><input id="toggleRuler" type="checkbox"> Miarka (okregi dystansu)</label></div>
   <div class="row"><label><input id="togglePlanetOrbits" type="checkbox"> Miarki planet (inner/outer/gravity)</label></div>
@@ -104,29 +91,6 @@ const HTML = `
   <div class="small muted">Dodatnia wartosc = w gore, ujemna = w dol.</div>
 </div>
 <div class="group">
-  <div class="row"><strong>Bake 3D Model (.glb)</strong></div>
-
-  <div class="row">
-    <label>Korekta dziobu (deg):</label>
-    <input type="number" id="dt-glb-rot" value="0" style="background:#060e1c; color:#fff; border:1px solid #2a3a5a; padding:4px; border-radius:4px; flex:1; text-align: right;">
-  </div>
-
-  <div class="row">
-    <label>Kadr (Zoom tla):</label>
-    <input type="number" id="dt-glb-zoom" value="1.0" step="0.1" style="background:#060e1c; color:#fff; border:1px solid #2a3a5a; padding:4px; border-radius:4px; flex:1; text-align: right;">
-  </div>
-
-  <div class="row">
-    <label>Skala statku w grze (x):</label>
-    <input type="number" id="dt-glb-scale" value="1.0" step="0.1" style="background:#060e1c; color:#fff; border:1px solid #2a3a5a; padding:4px; border-radius:4px; flex:1; text-align: right;">
-  </div>
-
-  <div class="row">
-    <input type="file" id="dt-file-glb" accept=".glb,.gltf" style="display:none">
-    <button id="btn-load-glb" class="dt-btn" style="width:100%">Wybierz i wypal statek (GLB)</button>
-  </div>
-</div>
-<div class="group">
   <div class="row"><strong>Edytor hardpointow</strong></div>
   <div class="row">
     <button id="btn-hardpoint-editor" class="dt-btn" style="width:100%">Edytor</button>
@@ -143,6 +107,9 @@ const HTML = `
   </div>
   <div class="row">
     <button id="btn-destructor-panel" class="dt-btn" style="width:100%">Destructor panel</button>
+  </div>
+  <div class="row">
+    <button id="btn-camera-panel" class="dt-btn" style="width:100%">Kamera panel</button>
   </div>
   <div class="small muted">Otwiera panele suwakow z polami liczbowymi.</div>
 </div>
@@ -209,6 +176,55 @@ const HTML = `
     <button id="dt-spawn-support-fleet-btn" class="dt-btn" style="width:100%;">Spawn support fleet</button>
   </div>
   <div class="small muted">Piraci i wsparcie spawnuja sie przed dziobem gracza.</div>
+  <div class="dt-row" style="align-items:center; margin-top:8px; gap:6px;">
+    <select id="dt-spawn-unit-type" style="flex:2; background:#060e1c; color:#fff; border:1px solid #2a3a5a; padding:4px; border-radius:4px;">
+      <optgroup label="Frachtowce">
+        <option value="hull:freighter-small">Wahadlowiec (maly)</option>
+        <option value="hull:freighter-medium" selected>Kontenerowiec (sredni)</option>
+        <option value="hull:freighter-large">Frachtowiec dalekiego zasiegu</option>
+        <option value="hull:freighter-capital">Ciezki frachtowiec</option>
+        <option value="call:megafreighter">Megafrachtowiec (sklad)</option>
+      </optgroup>
+      <optgroup label="Cywilne / przemysl">
+        <option value="hull:heavy_harvester">Ciezki zbieracz</option>
+        <option value="hull:belter">Belter</option>
+        <option value="hull:surveyor">Zwiadowca geologiczny</option>
+        <option value="hull:refinery_tender">Rafineria</option>
+        <option value="hull:tanker">Tankowiec</option>
+        <option value="hull:salvage_hauler">Zlomiarz</option>
+        <option value="hull:construction_tug">Holownik budowlany</option>
+        <option value="hull:repair_drone">Dron naprawczy</option>
+        <option value="hull:distress_beacon_ship">Statek ratunkowy</option>
+      </optgroup>
+      <optgroup label="Piraci (bez broni)">
+        <option value="hull:smuggler">Przemytnik</option>
+        <option value="hull:pirate_raider">Rajder</option>
+      </optgroup>
+      <optgroup label="Bojowe">
+        <option value="call:fighter">Mysliwce (eskadra)</option>
+        <option value="call:interceptor">Przechwytywacze (eskadra)</option>
+        <option value="call:frigate_pd">Fregata PD</option>
+        <option value="call:frigate_laser">Fregata laserowa</option>
+        <option value="call:destroyer">Niszczyciel</option>
+        <option value="call:battleship">Pancernik</option>
+        <option value="call:pirate_battleship">Pancernik piracki</option>
+        <option value="call:carrier">Lotniskowiec</option>
+        <option value="call:supercapital">Superkapital</option>
+        <option value="call:atlas">Atlas</option>
+      </optgroup>
+    </select>
+    <select id="dt-spawn-unit-side" style="flex:1; background:#060e1c; color:#fff; border:1px solid #2a3a5a; padding:4px; border-radius:4px;">
+      <option value="auto" selected>Strona: auto</option>
+      <option value="friendly">Sojusznik</option>
+      <option value="pirate">Pirat</option>
+      <option value="dummy">Neutralny</option>
+    </select>
+  </div>
+  <div class="dt-row" style="align-items:center; margin-top:6px; gap:6px;">
+    <input id="dt-spawn-unit-count" type="number" min="1" max="20" value="1" style="width:56px; background:#060e1c; color:#fff; border:1px solid #2a3a5a; padding:4px; border-radius:4px;">
+    <button id="dt-spawn-unit-btn" class="dt-btn" style="flex:1;">Spawn jednostki</button>
+  </div>
+  <div class="small muted">Jednostki cywilne bez AI i broni — dryfuja, sluchaja rozkazow RTS.</div>
 </div>
 <div class="group">
   <div class="row"><strong>Konfiguracja</strong></div>
@@ -318,8 +334,7 @@ function wireDevToolsLogic() {
     cbGlobalShields: 'dt-global-shields',
     cbSunDir: 'dt-show-sundir', cbShake: 'dt-disable-shake', cbPlanetStations3D: 'dt-use-planet-stations',
     cbPirate3D: 'dt-use-3d-pirate', btnCopy: 'btnCopy', btnReset: 'btnReset', cfgOut: 'cfgOut',
-    fileGlb: 'dt-file-glb', btnLoadGlb: 'btn-load-glb', glbRot: 'dt-glb-rot', glbZoom: 'dt-glb-zoom', glbScale: 'dt-glb-scale',
-    btnHardpointEditor: 'btn-hardpoint-editor', btnBloomPanel: 'btn-bloom-panel', btnRingColorPanel: 'btn-ring-color-panel', btnDestructorPanel: 'btn-destructor-panel',
+    btnHardpointEditor: 'btn-hardpoint-editor', btnBloomPanel: 'btn-bloom-panel', btnRingColorPanel: 'btn-ring-color-panel', btnDestructorPanel: 'btn-destructor-panel', btnCameraPanel: 'btn-camera-panel',
     cbDamageTint: 'dt-toggle-damage-tint',
     btnPerfTools: 'btn-perf-tools', perfPanel: 'dt-perf-panel', perfStatus: 'dt-perf-status',
     perfBloom: 'dt-perf-bloom', perfHeat: 'dt-perf-heat', perfBg: 'dt-perf-bg', perfOrtho: 'dt-perf-ortho',
@@ -333,6 +348,8 @@ function wireDevToolsLogic() {
     spawnPirateHeavyFleetBtn: 'dt-spawn-pirate-heavy-fleet-btn',
     spawnEnemyFightersBtn: 'dt-spawn-enemy-fighters-btn',
     spawnSupportFleetBtn: 'dt-spawn-support-fleet-btn',
+    spawnUnitType: 'dt-spawn-unit-type', spawnUnitSide: 'dt-spawn-unit-side',
+    spawnUnitCount: 'dt-spawn-unit-count', spawnUnitBtn: 'dt-spawn-unit-btn',
     hudCenterY: 'dt-hud-center-y', hudCenterYNum: 'dt-hud-center-y-num', hudCenterYVal: 'dt-hud-center-y-val',
     hudShieldY: 'dt-hud-shield-y', hudShieldYNum: 'dt-hud-shield-y-num', hudShieldYVal: 'dt-hud-shield-y-val',
     hudHpY: 'dt-hud-hp-y', hudHpYNum: 'dt-hud-hp-y-num', hudHpYVal: 'dt-hud-hp-y-val',
@@ -377,9 +394,7 @@ function wireDevToolsLogic() {
   window.Dev = window.Dev || {};
   window.Dev.station3DScale = DevConfig.station3DScale;
 
-  const WarpLensDefaults = window.__WARP_LENS_DEFAULTS || {};
   const DevVFX = window.DevVFX = window.DevVFX || {};
-  DevVFX.warpLens = Object.assign({}, WarpLensDefaults, DevVFX.warpLens || {});
 
   const DevTuning = window.DevTuning = window.DevTuning || {};
   const DEFAULT_HUD_OFFSETS = { centerY: 0, shieldY: 0, hpY: 0 };
@@ -910,56 +925,6 @@ function wireDevToolsLogic() {
         saveLS();
       });
     }
-    if (ui.btnLoadGlb && ui.fileGlb) {
-      ui.btnLoadGlb.addEventListener('click', () => ui.fileGlb.click());
-
-      ui.fileGlb.addEventListener('change', async (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        
-        const originalText = ui.btnLoadGlb.textContent;
-        ui.btnLoadGlb.textContent = "Wypalanie... Czekaj";
-        ui.btnLoadGlb.disabled = true;
-
-      try {
-          const rotInput = document.getElementById('dt-glb-rot');
-          const zoomInput = document.getElementById('dt-glb-zoom');
-          const scaleInput = document.getElementById('dt-glb-scale');
-          const degrees = rotInput ? (parseFloat(rotInput.value) || 0) : 0; 
-          const radians = degrees * (Math.PI / 180);
-          
-          const camZoom = zoomInput ? (parseFloat(zoomInput.value) || 1.0) : 1.0;
-          const shipScale = scaleInput ? (parseFloat(scaleInput.value) || 1.0) : 1.0;
-
-          const { ModelBaker } = await import('../3d/modelBaker.js');
-          
-          // Odbieramy obiekt { albedo, normal }
-          const bakedData = await ModelBaker.bakeFromFile(file, 1024, radians, camZoom);
-          
-          if (window.ship && window.HullBodies) {
-              // --- WAŻNE: Ustawiamy skalę PRZED wygenerowaniem fizyki! ---
-              window.ship.visual.spriteScale = shipScale;
-
-              // Kadłub na belkach z upieczonego obrazu: albedo = kształt i tekstura skóry,
-              // normal mapa idzie do materiału kadłuba (hexShips3D przebuduje mesh).
-              window.HullBodies.release(window.ship);
-              window.HullBodies.createHull(window.ship, bakedData.albedo, {
-                visualImage: bakedData.albedo,
-                normalMapImage: bakedData.normal
-              });
-              
-              console.log(`Model GLB załadowany! Obrót: ${degrees}°, Kadr: ${camZoom}x, Skala Gry: ${shipScale}x`);
-          }
-
-        } catch (err) {
-          console.error('Blad podczas bake GLB:', err);
-        } finally {
-          ui.btnLoadGlb.textContent = originalText;
-          ui.btnLoadGlb.disabled = false;
-          ui.fileGlb.value = ''; 
-        }
-      });
-    }
 
     if (ui.btnHardpointEditor) {
       ui.btnHardpointEditor.addEventListener('click', async () => {
@@ -976,6 +941,14 @@ function wireDevToolsLogic() {
       ui.btnBloomPanel.addEventListener('click', () => {
         if (window.__bloomPanel && typeof window.__bloomPanel.toggle === 'function') {
           window.__bloomPanel.toggle();
+        }
+      });
+    }
+
+    if (ui.btnCameraPanel) {
+      ui.btnCameraPanel.addEventListener('click', () => {
+        if (window.__cameraPanel && typeof window.__cameraPanel.toggle === 'function') {
+          window.__cameraPanel.toggle();
         }
       });
     }
@@ -1147,6 +1120,42 @@ function wireDevToolsLogic() {
         }
         if (typeof window.toast === 'function') window.toast('Flota wsparcia przybyla');
         console.log('[DevTools] Spawn support fleet');
+      });
+    }
+
+    if (ui.spawnUnitBtn) {
+      ui.spawnUnitBtn.addEventListener('click', () => {
+        const ship = window.ship;
+        const [kind, key] = String(ui.spawnUnitType?.value || '').split(':');
+        const side = ui.spawnUnitSide?.value || 'auto';
+        const mode = side === 'auto' ? undefined : side;
+        const count = Math.max(1, Math.min(20, Math.round(Number(ui.spawnUnitCount?.value) || 1)));
+        const spawnFn = kind === 'hull' ? window.spawnDevHull : window.spawnCallInShip;
+        if (!ship?.pos || !key || typeof spawnFn !== 'function') {
+          console.warn('[DevTools] Brak window.ship lub API spawnu (spawnDevHull / spawnCallInShip).');
+          return;
+        }
+
+        // Szereg w poprzek kursu, przed dziobem gracza.
+        const angle = Number(ship.angle) || 0;
+        const big = kind === 'call' && ['carrier', 'supercapital', 'atlas', 'megafreighter'].includes(key);
+        const spawnDist = big ? 6000 : 3000;
+        const spacing = big ? 2200 : 900;
+        const cx = (Number(ship.pos.x) || 0) + Math.cos(angle) * spawnDist;
+        const cy = (Number(ship.pos.y) || 0) + Math.sin(angle) * spawnDist;
+        const px = -Math.sin(angle);
+        const py = Math.cos(angle);
+        let spawned = 0;
+        for (let i = 0; i < count; i++) {
+          const off = (i - (count - 1) * 0.5) * spacing;
+          const pos = { x: cx + px * off, y: cy + py * off };
+          const opts = { spawnPos: pos, pos, spawnAngle: angle + Math.PI, singleModule: false };
+          if (mode) opts.mode = mode;
+          const result = spawnFn(key, opts);
+          if (Array.isArray(result) ? result.length : result) spawned++;
+        }
+        if (typeof window.toast === 'function') window.toast(`Spawn: ${count}x ${key}${spawned < count ? ` (udane: ${spawned})` : ''}`);
+        console.log(`[DevTools] Spawn ${kind}:${key} x${count} (${mode || 'auto'}) -> ${spawned}`);
       });
     }
 

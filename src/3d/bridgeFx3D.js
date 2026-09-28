@@ -10,16 +10,23 @@
 // w cieniu planety. Rdzeń okna tuż nad progiem bloomu (0,9), poświata pod nim:
 // świecą drobne punkty, nie sylwetka (zakaz obwódki: memory hull-lacquer).
 // Z oddali okna gasną (długość okna na ekranie < ~1 px), żeby statek nie
-// dostawał mglistej plamy.
+// dostawał mglistej plamy. Materiał w TSL (port WebGPU, zadanie 15).
 //
 // WYRZUT ATMOSFERY: w próżni to strumień, nie kłąb — krótki błysk
 // rozszczelnienia, wąski strumień wzdłuż tunelu ostrzału (plume), gaz
 // rozlatujący się szybko i gasnący bez dymu, iskry i kryształki lodu.
 // Siłę i czas daje oś BRIDGE_KILL_TIMELINE (sampleVentStrength).
 
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
+import {
+  Fn, If, Discard,
+  abs, attribute, clamp, exp, float, fwidth, length, max, min, positionGeometry, smoothstep, uniform, varying, vec2, vec4
+} from 'three/tsl';
 import { Fx3D, FX_PLANE_Z, coneDir, makeBasis, sp } from './fxParticles3D.js';
 import { sceneOriginNearCamera } from './sceneOrigin.js';
+import { uniformsAdapter } from './tsl/uniformy.js';
+// Losowość warstwy efektów (zadanie 23): wizualia nie zużywają Math.random gry — przebieg rozgrywki nie zależy od obrazu.
+import { fxRandom } from './fx/fxRandom.js';
 import {
   BRIDGE_KILL_TIMELINE,
   bridgeGridToWorld,
@@ -48,46 +55,37 @@ export const BRIDGE_FX_TUNE = {
   ventGain: 1.0      // jasność strumienia
 };
 
-const WINDOW_VERT = `
-attribute vec4 aParams;   // x: jasność, y: pół-długość, z: pół-szerokość, w: zasięg poświaty (j. świata)
-attribute vec3 aColor;
-varying vec2 vLocal;
-varying vec4 vParams;
-varying vec3 vColor;
-void main() {
-  vParams = aParams;
-  vColor = aColor;
-  vLocal = position.xy * vec2(2.0 * (aParams.y + aParams.w), 2.0 * (aParams.z + aParams.w));
-  gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position.xy, 0.0, 1.0);
+// Szczelina okna (port WebGPU, zadanie 15: TSL, wzory 1:1 z dawnym GLSL).
+// aParams: x — jasność, y — pół-długość, z — pół-szerokość, w — zasięg poświaty
+// (j. świata). Pozycję instancji mnoży three (InstancedMesh; modelViewMatrix
+// w double — renderer.highPrecision).
+function windowFragment(U) {
+  const aParams = attribute('aParams', 'vec4');
+  const vParams = varying(aParams, 'vWinParams');
+  const vColor = varying(attribute('aColor', 'vec3'), 'vWinColor');
+  const vLocal = varying(positionGeometry.xy.mul(vec2(aParams.y.add(aParams.w).mul(2.0), aParams.z.add(aParams.w).mul(2.0))), 'vWinLocal');
+  return Fn(() => {
+    // Odległość ze znakiem od prostokąta szczeliny okna.
+    const q = abs(vLocal).sub(vParams.yz).toVar();
+    const d = length(max(q, 0.0)).add(min(max(q.x, q.y), 0.0)).toVar();
+    const aa = max(fwidth(d), 1e-4).toVar();
+    const core = float(1.0).sub(smoothstep(aa.negate(), aa, d)).toVar();
+    const halo = exp(max(d, 0.0).negate().div(max(vParams.w.mul(0.4), 1e-3))).mul(float(1.0).sub(core)).toVar();
+    const I = vParams.x;
+    const col = vColor.mul(I).mul(core.mul(U.uCoreGain).add(halo.mul(U.uHaloGain)));
+    const a = clamp(I.mul(core.add(halo.mul(0.5))), 0.0, 1.0).toVar();
+    If(a.lessThan(0.002), () => {
+      Discard();
+    });
+    return vec4(col, a);
+  })();
 }
-`;
 
-const WINDOW_FRAG = `
-uniform float uCoreGain;
-uniform float uHaloGain;
-varying vec2 vLocal;
-varying vec4 vParams;
-varying vec3 vColor;
-void main() {
-  // Odległość ze znakiem od prostokąta szczeliny okna.
-  vec2 q = abs(vLocal) - vParams.yz;
-  float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0);
-  float aa = max(fwidth(d), 1e-4);
-  float core = 1.0 - smoothstep(-aa, aa, d);
-  float halo = exp(-max(d, 0.0) / max(vParams.w * 0.4, 1e-3)) * (1.0 - core);
-  float I = vParams.x;
-  vec3 col = vColor * I * (core * uCoreGain + halo * uHaloGain);
-  float a = clamp(I * (core + halo * 0.5), 0.0, 1.0);
-  if (a < 0.002) discard;
-  gl_FragColor = vec4(col, a);
-}
-`;
-
+// Zakres uploadu (WebGPU wysyła zakresy po zmianie wersji; atrybuty mają
+// domyślne użycie — DynamicDrawUsage = pełny upload przy każdym renderze).
 function setAttrRange(attr, count) {
-  if (typeof attr.clearUpdateRanges === 'function') {
-    attr.clearUpdateRanges();
-    if (count > 0) attr.addUpdateRange(0, count);
-  }
+  attr.clearUpdateRanges();
+  if (count > 0) attr.addUpdateRange(0, count);
 }
 
 function smooth01(e0, e1, x) {
@@ -146,33 +144,36 @@ export const BridgeFx3D = {
     if (!scene) return false;
     this.scene = scene;
     this.geometry = new THREE.PlaneGeometry(1, 1);
+    // Shader czyta tylko pozycję — bez normalnych i uv (mniej buforów wierzchołków).
+    this.geometry.deleteAttribute('normal');
+    this.geometry.deleteAttribute('uv');
     this.params = new Float32Array(WINDOW_CAP * 4);
     this.colors = new Float32Array(WINDOW_CAP * 3);
     const pAttr = new THREE.InstancedBufferAttribute(this.params, 4);
     const cAttr = new THREE.InstancedBufferAttribute(this.colors, 3);
-    pAttr.setUsage(THREE.DynamicDrawUsage);
-    cAttr.setUsage(THREE.DynamicDrawUsage);
     this.geometry.setAttribute('aParams', pAttr);
     this.geometry.setAttribute('aColor', cAttr);
-    this.material = new THREE.ShaderMaterial({
-      uniforms: {
-        uCoreGain: { value: BRIDGE_FX_TUNE.coreGain },
-        uHaloGain: { value: BRIDGE_FX_TUNE.haloGain }
-      },
-      vertexShader: WINDOW_VERT,
-      fragmentShader: WINDOW_FRAG,
-      transparent: true,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      depthTest: false
+    const U = uniformsAdapter({
+      uCoreGain: uniform(BRIDGE_FX_TUNE.coreGain),
+      uHaloGain: uniform(BRIDGE_FX_TUNE.haloGain)
     });
+    const material = new THREE.NodeMaterial();
+    material.name = 'bridgeWindowSlits';
+    material.uniforms = U;
+    material.lights = false;
+    material.fog = false;
+    material.transparent = true;
+    material.blending = THREE.AdditiveBlending;
+    material.depthWrite = false;
+    material.depthTest = false;
+    material.fragmentNode = windowFragment(U);
+    this.material = material;
     this.mesh = new THREE.InstancedMesh(this.geometry, this.material, WINDOW_CAP);
     this.mesh.name = 'BRIDGE_WINDOWS';
     this.mesh.count = 0;
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = WINDOW_RENDER_ORDER;
     this.mesh.layers.set(2);
-    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.mesh.visible = false;
     scene.add(this.mesh);
     return true;
@@ -367,9 +368,9 @@ export const BridgeFx3D = {
       makeBasis(_dir);
       for (let i = 0; i < 30; i++) {
         coneDir(_d, _dir, 0.5, 0.18);
-        const v = (180 + Math.random() * 480) * S;
+        const v = (180 + fxRandom.next() * 480) * S;
         _v.set(_d.x * v + vx, _d.y * v + vy, _d.z * v);
-        Fx3D.spark.spawn(_pos, _v, 0.35 + Math.random() * 0.7, 0.9 + Math.random() * 0.8, (4 + Math.random() * 9) * S,
+        Fx3D.spark.spawn(_pos, _v, 0.35 + fxRandom.next() * 0.7, 0.9 + fxRandom.next() * 0.8, (4 + fxRandom.next() * 9) * S,
           [4.2, 2.8, 1.4], 0.35, 0.08);
       }
     }
@@ -397,29 +398,29 @@ export const BridgeFx3D = {
     if (count > 14) count = 14;
     for (let i = 0; i < count; i++) {
       coneDir(_d, _dir, 0.18 + 0.2 * (1 - strength), 0.2);
-      const v = (340 + Math.random() * 420) * S * (0.45 + 0.55 * strength);
+      const v = (340 + fxRandom.next() * 420) * S * (0.45 + 0.55 * strength);
       const o = sp();
-      o.x = _pos.x + _d.x * Math.random() * 10 * S;
-      o.y = _pos.y + _d.y * Math.random() * 10 * S;
+      o.x = _pos.x + _d.x * fxRandom.next() * 10 * S;
+      o.y = _pos.y + _d.y * fxRandom.next() * 10 * S;
       o.z = _pos.z;
       o.vx = _d.x * v + vx; o.vy = _d.y * v + vy; o.vz = 0;
-      o.life = 0.5 + Math.random() * 0.5; o.drag = 1.5;
-      o.s0 = (5 + Math.random() * 5) * S; o.s1 = (34 + Math.random() * 40) * S;
-      o.rot = Math.random() * 6.283; o.vrot = (Math.random() - 0.5) * 1.5;
+      o.life = 0.5 + fxRandom.next() * 0.5; o.drag = 1.5;
+      o.s0 = (5 + fxRandom.next() * 5) * S; o.s1 = (34 + fxRandom.next() * 40) * S;
+      o.rot = fxRandom.next() * 6.283; o.vrot = (fxRandom.next() - 0.5) * 1.5;
       o.r0 = 0.7; o.g0 = 0.8; o.b0 = 0.95;
       o.r1 = 0.1; o.g1 = 0.13; o.b1 = 0.2; o.mix = 2.4;
       o.alpha = 0.36 + 0.34 * strength; o.fadeIn = 0.02; o.fadeOut = 1.35; o.grow = 0.55;
       Fx3D.vapor.spawn(o);
     }
     // Kryształki lodu — pojedyncze, szybko gasnące punkty w strumieniu.
-    const glints = Math.random() < strength ? 2 : (Math.random() < strength ? 1 : 0);
+    const glints = fxRandom.next() < strength ? 2 : (fxRandom.next() < strength ? 1 : 0);
     for (let i = 0; i < glints; i++) {
       coneDir(_d, _dir, 0.3, 0.2);
-      const v = (280 + Math.random() * 360) * S;
+      const v = (280 + fxRandom.next() * 360) * S;
       const o = sp();
       o.x = _pos.x; o.y = _pos.y; o.z = _pos.z + 0.5;
       o.vx = _d.x * v + vx; o.vy = _d.y * v + vy; o.vz = 0;
-      o.life = 0.25 + Math.random() * 0.35; o.drag = 1.1;
+      o.life = 0.25 + fxRandom.next() * 0.35; o.drag = 1.1;
       o.s0 = 1.3 * S; o.s1 = 0.6 * S;
       o.r0 = 2.2; o.g0 = 2.5; o.b0 = 3.0;
       o.r1 = 0.4; o.g1 = 0.5; o.b1 = 0.7; o.mix = 5;

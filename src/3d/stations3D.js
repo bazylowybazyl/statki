@@ -3,6 +3,8 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { Core3D } from './core3d.js';
 import { Destruction3D } from '../vfx/destruction3D.js';
+// Losowość warstwy efektów (zadanie 23): wizualia nie zużywają Math.random gry — przebieg rozgrywki nie zależy od obrazu.
+import { fxRandom } from './fx/fxRandom.js';
 
 const loader = new GLTFLoader();
 const templateCache = new Map();
@@ -51,7 +53,7 @@ function getTemplate(stationId, path) {
     path,
     (gltf) => {
       const scene = gltf.scene;
-      const maxAnisotropy = Core3D.renderer ? Core3D.renderer.capabilities.getMaxAnisotropy() : 4;
+      const maxAnisotropy = Core3D.getMaxAnisotropy();
 
       const toRemove = [];
 
@@ -248,7 +250,7 @@ function ensureStationRecord(station) {
       group: null,
       modelGroup: null,
       geometryRadius: 1,
-      spinOffset: Math.random() * Math.PI * 2,
+      spinOffset: fxRandom.next() * Math.PI * 2,
       lastRenderedScale: null,
       lastTargetRadius: null,
       lastPivotKey: null,

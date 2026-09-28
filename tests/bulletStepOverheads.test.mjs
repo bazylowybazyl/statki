@@ -8,8 +8,9 @@ import {
   filterCirclesTouchingBounds,
   stationCollisionRadius
 } from '../src/game/bulletStepFilters.js';
-import { AsteroidField } from '../src/3d/asteroidField3D.js';
+import { BeltGiants } from '../src/game/asteroidBeltGiants.js';
 import { CanvasVFX } from '../src/vfx/canvasParticleSystem.js';
+import { fxRandom } from '../src/3d/fx/fxRandom.js';
 import { DestructorSystem, disposeHexBody } from '../src/game/destructor.js';
 import { makeDestructorHull } from './helpers/destructorHull.mjs';
 import { readIndexHtml, sliceFunction, loadIndexFunction } from './helpers/indexSource.mjs';
@@ -61,44 +62,31 @@ test('pętla pocisków czyta listy kroku zamiast wszystkich stacji i platform', 
 });
 
 // ---------------------------------------------------------------------------
-// Raycast asteroid: early-out poza pasem, bez domknięcia i obiektu per kandydat
+// Olbrzymy pasa (zadanie 21 — stare pole z raycastem skał usunięte): pocisk pyta
+// o skałę tylko przy gotowej siatce, najpierw obrys, potem jedna próbka SDF.
 
-function fieldWithBelt(minR, maxR, asteroids) {
-  const field = Object.create(AsteroidField.prototype);
-  field.sunX = 0;
-  field.sunY = 0;
-  field._beltBandList = [{ minR, maxR }];
-  field.calls = 0;
-  field.spatial = {
-    forEachInRadius(x, y, r, cb) {
-      field.calls++;
-      for (const a of asteroids) cb(a);
-    }
-  };
-  return field;
-}
-
-test('raycast daleko od pasów zwraca null bez wejścia w hash', () => {
-  const rock = { alive: true, worldX: 150000, worldY: 0, scale: 50 };
-  const field = fieldWithBelt(140000, 160000, [rock]);
-  assert.equal(field.raycast(0, 0, 100, 0, 2), null);
-  assert.equal(field.calls, 0, 'forEachInRadius nie może być wołane poza pasem');
-
-  const hit = field.raycast(149000, 0, 151000, 0, 2);
-  assert.equal(field.calls, 1);
-  assert.equal(hit?.asteroid, rock);
-  const again = field.raycast(149000, 0, 151000, 0, 2);
-  assert.equal(again, hit, 'wynik to wspólny obiekt (bez alokacji per trafienie)');
+test('pocisk sprawdza skałę olbrzyma tylko przy gotowej siatce, bez starego pola', () => {
+  const step = sliceFunction(html, 'function bulletsAndCollisionsStep(dt, emitTrails = true, trailDt = dt) {');
+  assert.match(step, /!hitNPC && asteroidBelt && asteroidBelt\.giants\.readyCount > 0 && asteroidBelt\.pointBlocked\(b\.x, b\.y\)/);
+  assert.doesNotMatch(step, /asteroidField/);
 });
 
-test('raycast przekazuje do hasha funkcję modułową, nie nowe domknięcie', () => {
-  const seen = [];
-  const field = fieldWithBelt(0, 1e9, []);
-  field.spatial.forEachInRadius = (x, y, r, cb) => { seen.push(cb); };
-  field.raycast(0, 0, 100, 0);
-  field.raycast(0, 0, 200, 0);
-  assert.equal(seen.length, 2);
-  assert.equal(seen[0], seen[1]);
+test('pointBlocked: poza obrysem olbrzyma bez próbki SDF', () => {
+  const giants = new BeltGiants({ field: null, sites: [{ id: 'arch', seed: 1, x: 0, y: 0 }] });
+  let samples = 0;
+  let inside = false;
+  giants.entries[0].giant = {
+    ready: true,
+    containsWorld: () => inside,
+    sampleWorld: () => { samples++; return -100; }
+  };
+  assert.equal(giants.pointBlocked(50000, 0), false);
+  assert.equal(samples, 0, 'poza obrysem bez próbkowania siatki');
+  inside = true;
+  assert.equal(giants.pointBlocked(10, 0), true);
+  assert.equal(samples, 1);
+  giants.entries[0].giant.ready = false;
+  assert.equal(giants.pointBlocked(10, 0), false, 'siatka w budowie — pocisk leci');
 });
 
 // ---------------------------------------------------------------------------
@@ -124,7 +112,8 @@ test('liczba porcji smugi zależy od czasu klatki, nie od liczby kroków fizyki'
 test('porcje smugi leżą wzdłuż drogi pocisku w tej klatce, bez obiektów pozycji', () => {
   const spawns = [];
   const spawnBulletTrail = loadIndexFunction(html, 'function spawnBulletTrail(b, count, frameDt) {', 'spawnBulletTrail', {
-    CanvasVFX: { spawnParticleXY: (...args) => spawns.push(args) }
+    CanvasVFX: { spawnParticleXY: (...args) => spawns.push(args) },
+    fxRandom
   });
   spawnBulletTrail({ type: 'autocannon', x: 100, y: 50, vx: 1200, vy: 0 }, 2, 2 / 120);
   assert.equal(spawns.length, 2);

@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { DestructorSystem, DESTRUCTOR_CONFIG } from '../src/game/destructor.js';
-import { resolveShipAsteroidCollision } from '../src/game/asteroidDestructor.js';
 
 const HEX_R = DESTRUCTOR_CONFIG.gridDivisions;
 const HEX_SPACING = HEX_R * 1.5;
@@ -271,36 +270,4 @@ test('mass dominance changes how much, not which rules apply', () => {
     heavyAdvantage > lightAdvantage,
     `wieksza przewaga masy = glebsze wgniecenie (${lightAdvantage} -> ${heavyAdvantage})`
   );
-});
-
-test('legacy big asteroid fallback stops a fast ship instead of rebounding it away from the asteroid', () => {
-  const asteroid = {
-    alive: true,
-    type: 'iron',
-    size: 'BIG',
-    worldX: 0,
-    worldY: 0,
-    scale: 1500,
-    vx: 0,
-    vy: 0,
-    hardness: 0.7
-  };
-  const ship = {
-    pos: { x: 600, y: 0 },
-    vel: { x: -500, y: 0 },
-    w: 3000,
-    h: 1000,
-    radius: 500,
-    angle: 0,
-    mass: 800000
-  };
-
-  const result = resolveShipAsteroidCollision(ship, asteroid);
-
-  assert.ok(result?.collided);
-  assert.ok(
-    Math.abs(result.shipVx) < 80,
-    `ship normal velocity should be absorbed by the massive asteroid, got vx=${result.shipVx}`
-  );
-  assert.ok(result.shipDamage > 2500, `massive hard crash should heavily damage the ship, got ${result.shipDamage}`);
 });

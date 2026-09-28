@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- Ścieżki assetów gry (assets/…, src/…) są względne do katalogu głównego. -->
+<base href="/">
+<title>Bronie WebGPU — demo</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { --ink: #d6e2e8; --muted: #7d919b; --line: #9fc6d626; --panel: #070d13e6; --accent: #7cc9ff; --hot: #ffb870; --warn: #f0b060; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #020305; overflow: hidden; color: var(--ink); font: 12px/1.35 "Segoe UI", system-ui, sans-serif; }
+  #root { position: fixed; inset: 0; overflow: hidden; background: #020305; }
+  #root canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; outline: none; cursor: crosshair; }
+  #hud { position: fixed; left: 10px; top: 10px; z-index: 40; padding: 8px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; font: 11px/1.45 ui-monospace, Consolas, monospace; min-width: 300px; max-width: 460px; pointer-events: none; white-space: pre-wrap; }
+  #hud b { color: var(--accent); font-weight: 600; }
+  #hud .w { color: var(--hot); font-size: 13px; font-weight: 600; }
+  #panel { position: fixed; right: 10px; top: 10px; z-index: 40; width: 360px; max-height: calc(100vh - 20px); overflow-y: auto; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+  #panel h1 { font-size: 13px; margin: 0 0 2px; letter-spacing: .06em; }
+  #panel .sub { color: var(--muted); margin-bottom: 8px; }
+  #panel h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 10px 0 5px; font-weight: 600; }
+  .grp { margin: 4px 0 6px; }
+  .grp .lbl { color: var(--muted); font-size: 10px; letter-spacing: .08em; margin-bottom: 3px; }
+  .gallery { display: flex; flex-wrap: wrap; gap: 4px; }
+  .gallery button { padding: 4px 7px; font-size: 11px; }
+  .gallery button.on { border-color: var(--hot); color: #fff; background: #2a1a0c; box-shadow: 0 0 0 1px #ffb87044 inset; }
+  .row { display: flex; align-items: center; gap: 8px; margin: 5px 0; }
+  .row label { flex: 0 0 104px; color: var(--muted); }
+  .row input[type=range] { flex: 1 1 auto; min-width: 0; }
+  .row output { flex: 0 0 52px; text-align: right; font-variant-numeric: tabular-nums; }
+  .checks { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 8px; }
+  .checks label { display: flex; align-items: center; gap: 5px; }
+  .buttons { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0; }
+  button { background: #0e1a24; color: var(--ink); border: 1px solid #2a4252; border-radius: 4px; padding: 5px 9px; font: inherit; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.on { border-color: var(--accent); background: #10283a; color: #fff; }
+  #stats { font: 11px/1.5 ui-monospace, Consolas, monospace; white-space: pre; color: var(--ink); background: #02070bcc; border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; }
+  #stats b { color: var(--accent); font-weight: 600; }
+  .hint { color: var(--muted); font-size: 11px; margin-top: 6px; }
+  #errors { position: fixed; left: 50%; bottom: 10px; transform: translateX(-50%); z-index: 60; max-width: 70vw; max-height: 40vh; overflow: auto; padding: 8px; background: #2a0b0bee; border: 1px solid #a33; border-radius: 6px; font: 11px ui-monospace, monospace; white-space: pre-wrap; display: none; }
+  #loading { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 70; padding: 10px 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+  body.shot #panel, body.shot #hud { display: none; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<div id="hud">ładowanie…</div>
+<div id="loading">Start WebGPU…</div>
+<div id="errors"></div>
+<div id="panel">
+  <h1>BRONIE WebGPU — DEMO</h1>
+  <div class="sub">Działa (Capital, L, M, S), obrona punktowa i lasery z gry na WebGPURenderer + TSL: cząstki liczone na GPU (compute), dym oświetlany błyskami, światła efektów na kadłubach, rany stygnące na poszyciu, zniekształcenie powietrza.</div>
+  <div class="buttons">
+    <button id="b-show" title="Po kolei wszystkie bronie (G)">Pokaz wszystkich (G)</button>
+    <button id="b-fire" title="Ogień ciągły (F)">Ogień auto (F)</button>
+    <button id="b-slow" title="Zwolnienie ×0,2 (T)">Zwolnienie (T)</button>
+    <button id="b-pause" title="Pauza (P)">Pauza (P)</button>
+  </div>
+  <div id="gallery"></div>
+  <h2>Kamera</h2>
+  <div class="buttons" id="cams">
+    <button data-cam="auto">Całość (1)</button>
+    <button data-cam="muzzle">Wylot (2)</button>
+    <button data-cam="target">Cel (3)</button>
+    <button data-cam="follow">Za pociskiem (4)</button>
+  </div>
+  <div class="buttons">
+    <button id="b-mounts" title="Para gniazd przy dziobie / wszystkie gniazda typu (M)">Gniazda: para (M)</button>
+    <button id="b-repair" title="Czysty kadłub celu (R)">Napraw cel (R)</button>
+  </div>
+  <h2>Suwaki</h2>
+  <div class="row"><label>tempo czasu</label><input id="s-time" type="range" min="0.03" max="1" step="0.01" value="1"><output id="o-time"></output></div>
+  <div class="row"><label>bloom</label><input id="s-bloom" type="range" min="0" max="2" step="0.05" value="1"><output id="o-bloom"></output></div>
+  <div class="row"><label>słońce</label><input id="s-sun" type="range" min="0" max="3" step="0.05" value="1"><output id="o-sun"></output></div>
+  <div class="row"><label>światła efektów</label><input id="s-lights" type="range" min="0" max="3" step="0.05" value="1"><output id="o-lights"></output></div>
+  <h2>Przełączniki</h2>
+  <div class="checks">
+    <label><input type="checkbox" id="t-bloom" checked> bloom (B)</label>
+    <label><input type="checkbox" id="t-dist" checked> zniekształcenie (V)</label>
+    <label><input type="checkbox" id="t-lights" checked> światła efektów (L)</label>
+    <label><input type="checkbox" id="t-smokelight" checked> dym oświetlany</label>
+    <label><input type="checkbox" id="t-damage" checked> rany na kadłubie</label>
+    <label><input type="checkbox" id="t-shake" checked> wstrząs kamery</label>
+    <label><input type="checkbox" id="t-trails" checked> smugi</label>
+    <label><input type="checkbox" id="t-sky" checked> gwiazdy</label>
+    <label><input type="checkbox" id="t-repair" checked> naprawa przy zmianie broni</label>
+  </div>
+  <h2>Statystyki</h2>
+  <div id="stats">…</div>
+  <div class="hint">LPM (przytrzymaj) — ogień w punkt kursora. Kółko — zoom, PPM/ŚPM + przeciągnij — kamera swobodna, Z — „Całość”. Tab / Shift+Tab — następna / poprzednia broń. M — gniazda: para / jedno / wszystkie. H — ukryj panele. Adres: <code>?bron=railgun_mk1&amp;kam=muzzle&amp;tempo=0.3&amp;gniazda=one&amp;pokaz=0</code>. Opis: docs/webgpu/DEMO-BRONIE.md.</div>
+</div>
+<script type="module" src="/dema/bronie-webgpu.js"></script>
+</body>
+</html>

@@ -8,7 +8,9 @@ import { readFileSync } from 'node:fs';
 
 const read = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const html = read('../index.html');
-const weapon3D = read('../src/3d/weapon3DSystem.js');
+// Słuchacz 3D strzałów: WeaponFx (efekty broni z dema bronie-webgpu, zadanie 17 — dawniej
+// src/3d/weapon3DSystem.js).
+const weaponFx = read('../src/3d/weapons/weaponFx.js');
 const core3d = read('../src/3d/core3d.js');
 
 function sliceFunction(source, header) {
@@ -29,9 +31,10 @@ test('weapon-fired events carry the shooter and the 3D listener looks only at it
   assert.ok(emitAt > 0, 'fireWeaponCore musi nadawać szyną strzałów');
   assert.match(html.slice(emitAt, emitAt + 200), /WeaponShotBus\.emit\(\s*weapon\.id,\s*shooter,/, 'detail musi nieść strzelca');
 
-  assert.match(weapon3D, /_triggerShotByWorldPoint\(weaponKey, shotX, shotY, detail\.shooter/);
-  assert.match(weapon3D, /Turret2D\.triggerShot\(weaponKey, shotX, shotY, shooter\)/);
-  assert.match(weapon3D, /Turret2D\.findTurretKey\([^;]*detail\?\.shooter/);
+  // Lufa, odrzut i wstrząs tylko z wieżyczek strzelca (wylot i wiązka ciągła).
+  assert.match(weaponFx, /this\._muzzle\(w, x, y, detail\.shooter \|\| null, detail\.dirX, detail\.dirY\)/);
+  assert.match(weaponFx, /Turret2D\.triggerShot\(key, x, y, shooter\)/);
+  assert.match(weaponFx, /Turret2D\.findTurretSlot\([^;]*detail\.shooter/);
 });
 
 // Wstrząs od strzałów dokładał tylko Core3D.syncCamera — sceny Three drgały,
@@ -39,8 +42,10 @@ test('weapon-fired events carry the shooter and the 3D listener looks only at it
 test('weapon camera shake moves the shared camera, not just the Three scenes', () => {
   const sync = sliceFunction(core3d, 'syncCamera(gameCamera, viewWidth, viewHeight, viewOffsetX = 0) {');
   assert.doesNotMatch(sync, /shake\?\.[xy]/, 'syncCamera nie może sam dokładać wstrząsu');
+  // Od 2026-09-27 wstrząs strzałów wchodzi amplitudą (`mag`) do wspólnego
+  // wstrząsu w px ekranu (src/game/cameraRig.js), a ten przesuwa `cam`.
   assert.match(html,
-    /const weaponShake = window\.__weapon3dCameraShake;[\s\S]{0,160}cam\.x \+= Number\(weaponShake\.x\)/);
+    /const weaponShake = window\.__weapon3dCameraShake;[\s\S]{0,700}Number\(weaponShake\.mag\)[\s\S]{0,400}cam\.x \+= _cameraShakePx\.x \/ cam\.zoom/);
 });
 
 test('only the hangar-launch spawnFighter remains', () => {

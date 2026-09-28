@@ -67,15 +67,15 @@ export function resolveFlightLevel(value) {
 // Plan sektorów dla dowolnej liczby: proporcje z profilu planety (Ziemia:
 // HALO_SECTOR_MIX, od 2026-09-23 bez sektorów przemysłowych — przemysł tylko
 // wokół doków), bez dwóch takich samych typów obok siebie, deterministycznie
-// z seeda. Sektor 0 (port) to krajobraz górski. Dla 16 — plan ręczny profilu
-// (haloRingProfiles.js).
+// z seeda. Sektor 0 (port) to krajobraz górski. Liczba = długość planu
+// ręcznego profilu (Ziemia 16, ECUMENE 12, Fable 24) — plan ręczny.
 export function buildHaloSectorPlan(count, seed, profileKey) {
   const profile = resolveHaloProfile(profileKey);
   const mix = profile.sectorMix;
   const biomes = profile.landscapeBiomes;
   const n = Math.round(clamp(Number(count) || 16, HALO_LIMITS.sectorCount[0], HALO_LIMITS.sectorCount[1]));
   const rand = mulberry32(hashSeed(seed, 0x51c7));
-  if (n === 16 && profile.sectorPlan.length === 16) {
+  if (n === profile.sectorPlan.length) {
     return profile.sectorPlan.map((entry, index) => jitterClimate({ ...entry, index }, rand));
   }
   const kinds = Object.keys(mix).filter((type) => mix[type] > 0);
@@ -214,7 +214,10 @@ export function habitatVisibleStripBrief(floorRadius, width, wallHeight, cameraH
 }
 
 export function createHaloRingLayout(options = {}) {
-  const g = HALO_GEOMETRY_DEFAULTS;
+  // profil planety (haloRingProfiles.js): plan sektorów i geometria archetypu
+  // (Mars = ECUMENE, Jowisz = Fable) — opcje wywołania mają pierwszeństwo
+  const profile = resolveHaloProfile(options.profile);
+  const g = { ...HALO_GEOMETRY_DEFAULTS, ...(profile.geometry || {}) };
   const planetRadius = Math.max(2000, Number(options.planetRadius) || g.planetRadius);
   const seed = (Number(options.seed) >>> 0) || 1337;
   const width = clampToLimit(options.width, 'width', g.width);
@@ -323,8 +326,6 @@ export function createHaloRingLayout(options = {}) {
     return { kind, index: i, a, b, length: len, normal: { r: -dz / len, z: dr / len } };
   });
 
-  // profil planety (haloRingProfiles.js): plan sektorów, kaniony, palety…
-  const profile = resolveHaloProfile(options.profile);
   const plan = buildHaloSectorPlan(sectorCount, seed, profile);
   const sectorSpan = HALO_TAU / plan.length;
   const sectorStart = HALO_STATION_ANGLE - sectorSpan * 0.5;
@@ -442,6 +443,8 @@ export function createHaloRingLayout(options = {}) {
     // profil planety (haloRingProfiles.js) — nie mylić z polem profile = przekrój (r, z)
     planetProfile: profile,
     profileKey: profile.key,
+    // silnik ringu z profilu: 'halo' | 'ecumene' | 'fable'
+    archetype: profile.archetype || 'halo',
     planetRadius,
     width,
     wallHeight,
