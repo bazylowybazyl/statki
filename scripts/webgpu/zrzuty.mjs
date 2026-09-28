@@ -35,6 +35,7 @@ import { execFileSync } from 'node:child_process';
 import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, screenshotPng, writeJson, sleep, repo, osobneLosowanieUuid } from './wspolne.mjs';
 import { compareDirs } from './porownaj.mjs';
 import { BELT_SCENES, STORM_STAGE } from './asteroidy-gra.mjs';
+import { MINING_STAGES } from './wydobycie-gra.mjs';
 
 const args = parseArgs();
 const backends = (args.backend || 'webgl') === 'oba' ? ['webgl', 'webgpu'] : [args.backend || 'webgl'];
@@ -900,6 +901,12 @@ SCENES['galeria-ladowanie-strzal'] = {
 const GALERIA_MECHANIKA = ['galeria-strzelnica', 'galeria-przebicie', 'galeria-przebicie-po', 'galeria-przebicie-valkyrie',
   'galeria-rykoszet', 'galeria-seria', 'galeria-seria-po', 'galeria-ladowanie', 'galeria-ladowanie-strzal'];
 
+// Wydobycie skał (zadanie 21b): etapy z wydobycie-gra.mjs (skała testowa jak scena „Kopalnia”
+// dema → lasery → piła → ładunek + detonacja → wiązka), po kolei w jednej sesji.
+for (const [id, st] of Object.entries(MINING_STAGES)) {
+  SCENES[`wydobycie-${id}`] = { opis: `Wydobycie — ${st.opis}`, hud: false, warm: 10, js: st.js };
+}
+
 // Sesje = jedno wczytanie strony; sceny w sesji idą po kolei (kolejność ma znaczenie).
 const SESSIONS = [
   { id: 'menu', query: 'dev=1', start: null, scenes: ['menu'] },
@@ -925,7 +932,10 @@ const SESSIONS = [
     scenes: ['galeria-przygotowanie', 'galeria-broni', ...GALERIA_BRONI.map(([name]) => `galeria-${name}`), 'galeria-hexlance', ...GALERIA_MECHANIKA] },
   // Zadanie 21: pas asteroid z dema WebGPU (osobna sesja — nie przesuwa scen pozostałych; bazy WebGL brak: stare pole
   // było wyłączone, porównanie ze zrzutami dema — asteroidy-demo.mjs).
-  { id: 'pas', query: 'dev=1', start: 'single', belt: true, scenes: ['pas-pole', 'pas-noc', 'pas-burza', 'pas-olbrzym'] }
+  { id: 'pas', query: 'dev=1', start: 'single', belt: true, scenes: ['pas-pole', 'pas-noc', 'pas-burza', 'pas-olbrzym'] },
+  // Zadanie 21b: wydobycie w polu (osobna sesja; bazy WebGL brak — porównanie ze sceną Kopalnia
+  // dema: wydobycie-gra.mjs --demo).
+  { id: 'wydobycie', query: 'dev=1', start: 'single', belt: true, scenes: Object.keys(MINING_STAGES).map((id) => `wydobycie-${id}`) }
 ];
 
 // Ostrzeżenia/błędy bez znaczenia dla portu (środowisko headless, zasoby spoza renderu).

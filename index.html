@@ -992,6 +992,10 @@
     import { destroyStation3D } from "./src/3d/stations3D.js";
     // Pas asteroid (zadanie 21): pola z dema WebGPU w passach Core3D, kolizje z olbrzymami.
     import { createAsteroidBelt } from "./src/3d/asteroids/asteroidBelt.js";
+    // Wydobycie (zadanie 21b): ładunki górnicze gracza (magazynek platformy, ceny tymczasowe).
+    import { MINING_CHARGES, createMiningChargeStock } from "./src/data/miningCharges.js";
+    import { chargeForDepth } from "./src/game/asteroidMaterials.js";
+    import { ROCK_TYPE_LABELS_PL } from "./src/game/asteroidRockKinds.js";
     import {
       initHexShips3D,
       prewarmHexShips3D,
@@ -11344,6 +11348,10 @@
         ...persistedOwnedHulls.map(normalizePlayerHullId)
       ])
     };
+    // Ładunki górnicze S / M / L / XL (zadanie 21b): magazynek platformy wydobywczej —
+    // przedmiot gracza poza masą ładowni (jak ładownia: bez zapisu w localStorage), zestaw
+    // startowy z src/data/miningCharges.js, dokupowany w doku (rynek → Ładunki górnicze).
+    PLAYER.miningCharges = createMiningChargeStock();
 
     // Chip okrętu (src/data/chips.js). Gracz: PLAYER.hullChips[aktywny kadłub],
     // NPC: opcjonalne entity.chips (Set albo tablica). Pytają o to pętle broni —
@@ -11604,6 +11612,55 @@
       pane.appendChild(resourcesCard);
 
       pane.appendChild(buildTradeMarketCard());
+      pane.appendChild(buildMiningChargesCard());
+    }
+
+    // Ładunki górnicze (zadanie 21b): dok sprzedaje je po cenie stałej (TYMCZASOWEJ —
+    // src/data/miningCharges.js, do decyzji użytkownika), bez zapasu stacji; trafiają do
+    // magazynka platformy wydobywczej (PLAYER.miningCharges), nie do ładowni.
+    function buildMiningChargesCard() {
+      const card = document.createElement('div');
+      card.className = 'station-card-aero trade-mining-charges';
+      const header = document.createElement('div');
+      header.className = 'card-header';
+      const title = document.createElement('div');
+      title.className = 'card-title';
+      title.textContent = 'Ładunki górnicze';
+      header.appendChild(title);
+      const badge = document.createElement('span');
+      badge.className = 'card-badge';
+      badge.textContent = 'Wydobycie';
+      header.appendChild(badge);
+      card.appendChild(header);
+      const desc = document.createElement('p');
+      desc.className = 'card-desc';
+      desc.textContent = 'Ładunki do skał pasa (tryb wydobycia: N, PPM na skale, F — detonacja). Kruchy lód pęka od małego, tytan potrzebuje ciężkiego.';
+      card.appendChild(desc);
+      const actions = document.createElement('div');
+      actions.className = 'card-actions';
+      for (const ch of MINING_CHARGES) {
+        const btn = document.createElement('button');
+        btn.className = 'card-action';
+        btn.dataset.miningCharge = ch.id;
+        btn.addEventListener('click', () => {
+          if (PLAYER.credits < ch.price) { toast('Za mało kredytów'); return; }
+          PLAYER.credits -= ch.price;
+          PLAYER.miningCharges[ch.id] = (PLAYER.miningCharges[ch.id] | 0) + 1;
+          updateTradeCards(stationUI.station);
+        });
+        actions.appendChild(btn);
+      }
+      card.appendChild(actions);
+      return card;
+    }
+
+    function updateMiningChargesCard(pane) {
+      pane?.querySelectorAll('button[data-mining-charge]').forEach(btn => {
+        const ch = MINING_CHARGES.find(c => c.id === btn.dataset.miningCharge);
+        if (!ch) return;
+        btn.textContent = `${ch.id} (${ch.label}) · ${ch.price} CR · masz ${PLAYER.miningCharges[ch.id] | 0}`;
+        btn.disabled = PLAYER.credits < ch.price;
+      });
     }
 
     // Stacja skupuje poniżej i sprzedaje powyżej wartości bazowej z resources.js.
@@ -12258,6 +12315,7 @@
     function updateTradeCards(station) {
       updateTradeResourceTable(station);
       const pane = stationOverlayDom.panels.trade;
+      updateMiningChargesCard(pane);
       const table = pane?.querySelector('.trade-market-table');
       if (!table) return;
       const econ = getTradeEconomy(station);
@@ -14303,6 +14361,8 @@
       if (isMainMenuVisible()) return;
       const k = e.key.toLowerCase();
       keys[k] = true;
+      // Wydobycie (zadanie 21b): N — tryb; w trybie T / L / F należą do platformy.
+      if (miningKeyDown(k)) { updateInput(); return; }
       const inRtsMode = camera.mode === 'rts';
       if (!inRtsMode && warp.state === 'active' && k === 'w') {
         shiftWarpGearUp();
@@ -17364,6 +17424,8 @@
       if (CICDisplay.active) {
         CICDisplay.onMouseMove(e.clientX, e.clientY, e.movementX || 0, e.movementY || 0);
       }
+      // Wydobycie: podgląd linii piły (PPM + przeciągnięcie).
+      miningMouseMove(e);
       // Aktualizacja hover w kole wyboru celownika.
       if (targetingMode.wheelOpen && targetingMode.wheelMouseStart) {
         const dx = mouse.x - targetingMode.wheelMouseStart.x;
@@ -17423,6 +17485,10 @@
       mouse.overCanvas = false;
       mouse.left = false;
       mouse.right = false;
+      miningInput.laserDown = false;
+      miningInput.rightDown = false;
+      miningInput.sawDrag = false;
+      getMiningRig()?.clearSawPreview();
       mouse.click = false;
       targetingMode.pointerConfirmArmed = false;
       closeWorldCommandMenu();
@@ -17465,6 +17531,14 @@
       if (CICDisplay.active) {
         CICDisplay.onMouseDown(e.clientX, e.clientY, e.button);
         if (e.button === 2) e.preventDefault();
+        return;
+      }
+      // Tryb wydobycia (zadanie 21b): LPM — lasery dronów, PPM — ładunek / piła.
+      if (miningMouseDown(e)) {
+        e.preventDefault();
+        mouse.left = false;
+        mouse.click = false;
+        closeWorldCommandMenu();
         return;
       }
       if (worldCommandMenu.open && e.button === 0) {
@@ -17559,6 +17633,7 @@
         }
       }
       if (CICDisplay.active) { CICDisplay.onMouseUp(e.clientX, e.clientY, e.button); return; }
+      if (miningMouseUp(e)) { e.preventDefault(); mouse.right = false; return; }
       if (e.button === 2 && worldCommandMenu.open) {
         e.preventDefault();
         mouse.right = false;
@@ -22196,6 +22271,8 @@
       // Ring „Halo” (Ziemia, Mars): płyta podłogi przecina płaszczyznę gry,
       // przez ring prowadzą tranzyty; ściany hal K-7 i zatok portu dla graczy.
       stepShipRingCollisions(dt);
+      // Wydobycie skał (zadanie 21b): drony, piła, ładunki, wiązka i fizyka skał w czasie gry.
+      stepAsteroidMining(dt);
 
       tPhysSection0 = performance.now();
       // Listy destruktora budujemy RAZ na klatkę renderu — między substepami tej
@@ -22297,6 +22374,295 @@
         if (!npcCollidesWithWorld(npc)) continue;
         if (belt.collideShip(loadNpcCollisionBody(body, npc)) > 0) storeNpcCollisionBody(body, npc);
       }
+    }
+
+    // ================= WYDOBYCIE SKAŁ (zadanie 21b) =================
+    // Platforma wydobywcza gracza: src/game/asteroidMiningRig.js (logika — drony, piła,
+    // ładunki, wiązka, urobek) na fizyce skał src/game/asteroidMining.js; obraz: pas
+    // (src/3d/asteroids/minedRocks.js, miningView.js). Tu: tryb wydobycia (N), wejście,
+    // krok w physicsStep (czas symulacji — w pauzie stoi), urobek do ładowni, HUD.
+    //   N — tryb wydobycia (w pasie); w trybie: LPM trzymany — lasery dronów na skale pod
+    //   kursorem (przeciąganie = bruzda), PPM — ładunek w dnie otworu, PPM + przeciągnięcie —
+    //   piła wzdłuż linii, L — wielkość ładunku, F — detonacja, T — wiązka ściągająca.
+    const miningInput = { active: false, laserDown: false, rightDown: false, rightSX: 0, rightSY: 0, rightWX: 0, rightWY: 0, sawDrag: false };
+    const _miningPose = { x: 0, y: 0, angle: 0, len: 1800 };
+    const MINING_SAW_DRAG_PX = 26;
+
+    function getMiningRig() {
+      return asteroidBelt && asteroidBelt.rig ? asteroidBelt.rig : null;
+    }
+
+    // Callbacki platformy: urobek do ładowni (pełne tony, udźwig kadłuba), wolne miejsce,
+    // magazynek ładunków gracza, wstrząs kamery przy wybuchu blisko statku.
+    function wireAsteroidMining() {
+      const rig = getMiningRig();
+      if (!rig || rig.__wired) return;
+      rig.__wired = true;
+      rig.stock = PLAYER.miningCharges;
+      rig.onCargo = (key, tonnes) => {
+        const accepted = addToPlayerCargo({ [key]: tonnes });
+        return Number(accepted[key]) || 0;
+      };
+      rig.cargoFree = () => getPlayerCargoFree();
+      rig.onBlast = (x, y, energy) => {
+        const d = Math.hypot(x - ship.pos.x, y - ship.pos.y);
+        const k = Math.max(0, 1 - d / 9000);
+        if (k > 0.05) camera.addShake(Math.min(26, 5 + 5 * Math.sqrt(Math.max(0, energy))) * k, 0.35);
+      };
+      window.__asteroidMining = rig;
+    }
+
+    function setMiningMode(on, quiet = false) {
+      const rig = getMiningRig();
+      const next = !!on && !!rig;
+      if (on && !rig) {
+        if (!quiet) pushZoneMessage('WYDOBYCIE: platforma niegotowa (pas asteroid się ładuje)', 1.8);
+        return false;
+      }
+      if (miningInput.active === next) return next;
+      miningInput.active = next;
+      miningInput.laserDown = false;
+      miningInput.rightDown = false;
+      miningInput.sawDrag = false;
+      if (rig) {
+        wireAsteroidMining();
+        rig.setEnabled(next);
+        if (!next) rig.pointer(0, 0, false);
+      }
+      if (!quiet) pushZoneMessage(next ? 'WYDOBYCIE: ON — LPM laser · PPM ładunek / piła · F detonacja · T wiązka · L rozmiar' : 'WYDOBYCIE: OFF', next ? 3 : 1.2, { label: 'KOPALNIA' });
+      return next;
+    }
+    window.setMiningMode = setMiningMode;
+
+    // Klatka (przed krokami fizyki): budżet ciężkich operacji (przejęcie skały, wybuch —
+    // jedna na klatkę), kursor dronów, tryb gaśnie przy stacji / warpie / RTS / śmierci.
+    function beginAsteroidMiningFrame() {
+      const rig = getMiningRig();
+      if (!rig) return;
+      rig.beginFrame();
+      // (RTS nie wyłącza trybu — mysz należy wtedy do RTS, lasery gasną z puszczonym LPM.)
+      if (miningInput.active && (ship.destroyed || ship.dead || stationUI.open || warp.state === 'active' || splitScreenMode)) {
+        setMiningMode(false, true);
+      }
+      if (!miningInput.active) return;
+      // Cel narzucony (harness, narzędzia: window.__miningAim = { x, y, down }) albo kursor.
+      const aim = window.__miningAim;
+      if (aim && Number.isFinite(aim.x) && Number.isFinite(aim.y)) {
+        rig.pointer(aim.x, aim.y, !!aim.down);
+        return;
+      }
+      const zoomNow = Math.max(0.0001, Number(camera.zoom) || 1);
+      const vp = getViewportForCamera(camera);
+      const wx = camera.x + (mouse.x - (vp.x + vp.w / 2)) / zoomNow;
+      const wy = camera.y + (mouse.y - (vp.y + vp.h / 2)) / zoomNow;
+      rig.pointer(wx, wy, miningInput.laserDown && mouse.overCanvas !== false);
+    }
+
+    function stepAsteroidMining(dt) {
+      const rig = getMiningRig();
+      if (!rig || !ship || !ship.pos) return;
+      const pose = _miningPose;
+      pose.x = ship.pos.x;
+      pose.y = ship.pos.y;
+      pose.angle = Number(ship.angle) || 0;
+      pose.len = Number(ship.w) > 0 ? Number(ship.w) : 1800;
+      rig.step(dt, pose);
+    }
+
+    // Wejście myszy w trybie wydobycia (zwraca true = zdarzenie obsłużone).
+    function miningMouseDown(e) {
+      if (!miningInput.active || !gameStarted || stationUI.open || CICDisplay.active || camera.mode === 'rts') return false;
+      if (e.button === 0) {
+        miningInput.laserDown = true;
+        return true;
+      }
+      if (e.button === 2) {
+        const rect = canvas.getBoundingClientRect();
+        const w = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+        miningInput.rightDown = true;
+        miningInput.sawDrag = false;
+        miningInput.rightSX = e.clientX; miningInput.rightSY = e.clientY;
+        miningInput.rightWX = w.x; miningInput.rightWY = w.y;
+        return true;
+      }
+      return false;
+    }
+
+    function miningMouseMove(e) {
+      if (!miningInput.active || !miningInput.rightDown) return;
+      const rig = getMiningRig();
+      if (!rig) return;
+      if (Math.hypot(e.clientX - miningInput.rightSX, e.clientY - miningInput.rightSY) >= MINING_SAW_DRAG_PX) miningInput.sawDrag = true;
+      if (!miningInput.sawDrag) return;
+      const rect = canvas.getBoundingClientRect();
+      const w = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+      rig.previewSaw(miningInput.rightWX, miningInput.rightWY, w.x, w.y);
+    }
+
+    function miningMouseUp(e) {
+      if (!miningInput.active) return false;
+      const rig = getMiningRig();
+      if (e.button === 0) {
+        const was = miningInput.laserDown;
+        miningInput.laserDown = false;
+        return was;
+      }
+      if (e.button === 2 && miningInput.rightDown) {
+        miningInput.rightDown = false;
+        if (!rig) return true;
+        const rect = canvas.getBoundingClientRect();
+        const w = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+        if (miningInput.sawDrag) rig.startSaw(miningInput.rightWX, miningInput.rightWY, w.x, w.y);
+        else rig.plantCharge(w.x, w.y);
+        miningInput.sawDrag = false;
+        rig.clearSawPreview();
+        return true;
+      }
+      return false;
+    }
+
+    // Klawisze trybu wydobycia (N przełącza zawsze; T / L / F tylko w trybie).
+    function miningKeyDown(k) {
+      if (k === 'n') {
+        if (stationUI.open || camera.mode === 'rts') return false;
+        setMiningMode(!miningInput.active);
+        return true;
+      }
+      if (!miningInput.active) return false;
+      const rig = getMiningRig();
+      if (!rig) return false;
+      if (k === 't') {
+        const on = rig.toggleTractor();
+        pushZoneMessage(on ? 'WIĄZKA ŚCIĄGAJĄCA: ON' : 'WIĄZKA ŚCIĄGAJĄCA: OFF', 1.2, { label: 'KOPALNIA' });
+        return true;
+      }
+      if (k === 'l') {
+        const ch = rig.cycleCharge(1);
+        pushZoneMessage(`ŁADUNEK: ${ch.id} (${ch.label}, energia ${String(ch.energy).replace('.', ',')}) · w magazynku ${PLAYER.miningCharges[ch.id] | 0}`, 1.6, { label: 'KOPALNIA' });
+        return true;
+      }
+      if (k === 'f') {
+        const n = rig.detonate();
+        if (n) pushZoneMessage(`DETONACJA: ${n} ${n === 1 ? 'ładunek' : 'ładunków'}`, 1.2, { label: 'KOPALNIA' });
+        return true;
+      }
+      return false;
+    }
+
+    // HUD trybu wydobycia (kanwa 2D): skaner (rdzenie ciał, skład pod kursorem, ładunki)
+    // i panel stanu (narzędzia, ładunki, ładownia, komunikaty platformy).
+    const _miningMsgScratch = [];
+    let _miningHudCacheT = -1;
+    let _miningHudLines = [];
+    let _miningHudW = 0;
+    // Bufory skanera (bez alokacji na klatkę): punkt świata, punkt ekranu, trafienie promienia, kreska.
+    const _miningOverlayC = [0, 0, 0];
+    const _miningOverlayS = { x: 0, y: 0 };
+    const _miningOverlayHit = {};
+    const _miningOverlayDash = [6, 5];
+    const _miningOverlayNoDash = [];
+    // Liczba z przecinkiem (jedno miejsce po przecinku); wymaganie ładunku — najmniej 0,1 („≥ 0,0” myliło).
+    function fmtMining1(v) { return (Math.round(v * 10) / 10).toFixed(1).replace('.', ','); }
+    function fmtMiningNeed(v) { return fmtMining1(Math.max(0.1, v)); }
+    // Rdzeń rysuje ciało, które go zawiera; gdy nie ma go żadne (wykopany) — ciało
+    // pierwotne (pokolenie 0) tej skały, żeby znacznik nie znikał przy dnie otworu.
+    function miningBodyHoldsCore(b) { return b.sample(b.core.x, b.core.y, b.core.z) >= 0.3; }
+    function miningCoreHeldElsewhere(bodies, b) {
+      for (let i = 0; i < bodies.length; i++) {
+        const o = bodies[i];
+        if (o !== b && o.sourceId === b.sourceId && o.core && miningBodyHoldsCore(o)) return true;
+      }
+      return false;
+    }
+    function drawMiningOverlay(renderCtx, cam) {
+      const rig = getMiningRig();
+      if (!rig || !miningInput.active) return;
+      renderCtx.save();
+      renderCtx.font = '600 12px ui-monospace, Consolas, monospace';
+      renderCtx.textAlign = 'center';
+      const zoomNow = Math.max(0.0001, Number(cam?.zoom) || 1);
+      const m = rig.mining;
+      const c = _miningOverlayC;
+      const s = _miningOverlayS;
+      const bodies = m.bodies;
+      for (let bi = 0; bi < bodies.length; bi++) {
+        const b = bodies[bi];
+        if (!b.core || !b.oreTypeId) continue;
+        if (!miningBodyHoldsCore(b)) {
+          if (b.generation > 0) continue;
+          if (miningCoreHeldElsewhere(bodies, b)) continue;
+        }
+        b.localToWorld(b.core.x, b.core.y, b.core.z, c);
+        worldToScreenInto(c[0], -c[1], cam, s);
+        const rr = Math.max(8, b.core.r * zoomNow);
+        if (s.x < -rr || s.y < -rr || s.x > W + rr || s.y > H + rr) continue;
+        renderCtx.setLineDash(_miningOverlayDash);
+        renderCtx.strokeStyle = 'rgba(255,200,120,0.85)';
+        renderCtx.lineWidth = 1.5;
+        renderCtx.beginPath(); renderCtx.arc(s.x, s.y, rr, 0, Math.PI * 2); renderCtx.stroke();
+        renderCtx.setLineDash(_miningOverlayNoDash);
+        const res = RESOURCES[b.oreRes];
+        const top = m.raycast(c[0], c[1], 6000, 0, 0, -1, 1e6, null, _miningOverlayHit);
+        const depth = top ? Math.max(0, top.z - c[2]) : 0;
+        const need = chargeForDepth(b.material, depth + b.core.r * 0.3);
+        renderCtx.fillStyle = 'rgba(255,215,150,0.95)';
+        renderCtx.fillText(`RDZEŃ · ${res ? res.label.toLowerCase() : b.oreTypeId}`, s.x, s.y - rr - 18);
+        renderCtx.fillStyle = 'rgba(210,225,235,0.85)';
+        renderCtx.fillText(`głęb. ${Math.round(depth)} j. · ładunek z rdzenia ≥ ${fmtMiningNeed(need)}`, s.x, s.y - rr - 4);
+      }
+      const charges = rig.charges;
+      for (let i = 0; i < charges.length; i++) {
+        const ch = charges[i];
+        if (!ch.body.alive) continue;
+        ch.body.localToWorld(ch.local[0], ch.local[1], ch.local[2], c);
+        worldToScreenInto(c[0], -c[1], cam, s);
+        renderCtx.fillStyle = 'rgba(255,120,100,0.95)';
+        renderCtx.fillText(ch.id, s.x, s.y - 16);
+      }
+      const hv = rig.hover;
+      if (hv && hv.hit && hv.hit.body && hv.hit.body.alive) {
+        worldToScreenInto(hv.hit.x, -hv.hit.y, cam, s);
+        const res = RESOURCES[hv.hit.body.oreRes];
+        renderCtx.textAlign = 'left';
+        renderCtx.fillStyle = 'rgba(200,235,255,0.95)';
+        renderCtx.fillText(`${hv.probe.zone} · ruda ${Math.round(hv.probe.ore * 100)}%${res ? ` (${res.short})` : ''}`, s.x + 16, s.y + 4);
+        renderCtx.fillStyle = 'rgba(170,190,205,0.85)';
+        renderCtx.fillText(`ładunek tu: ≥ ${fmtMiningNeed(hv.need)} · ${ROCK_TYPE_LABELS_PL[hv.hit.body.typeId] || hv.hit.body.typeId}`, s.x + 16, s.y + 19);
+      }
+      // Panel stanu (tekst przeliczany co 0,1 s czasu platformy).
+      if (_miningHudCacheT < 0 || rig.time - _miningHudCacheT >= 0.1 || rig.time < _miningHudCacheT) {
+        _miningHudCacheT = rig.time;
+        const ch = rig.charge;
+        const st = PLAYER.miningCharges;
+        const cap = Number(getPlayerHullDef(PLAYER.activeHullId)?.cargoCap) || 0;
+        const ores = [];
+        for (const key of Object.keys(rig.totals.ore)) {
+          const t = rig.totals.ore[key];
+          if (t > 0) ores.push(`${RESOURCES[key]?.short || key} ${Math.round(t)} t`);
+        }
+        const lines = [];
+        lines.push(`KOPALNIA (N) · LPM laser dronów · PPM ładunek ${ch.id} (L) · PPM↔ piła · F detonacja · T wiązka ${rig.tractorOn ? 'WŁ.' : 'wył.'}`);
+        lines.push(`ładunki: S ${st.S | 0} · M ${st.M | 0} · L ${st.L | 0} · XL ${st.XL | 0} · osadzone ${rig.charges.length}`);
+        lines.push(`ładownia ${Math.round(getBagMass(PLAYER.cargo))} / ${Math.round(cap)} · urobek: ${ores.length ? ores.join(' · ') : '—'} · skała płonna ${fmtMining1(rig.totals.waste)} t${rig.totals.lostOre > 0 ? ` · przepadło ${Math.round(rig.totals.lostOre)} t rudy` : ''}`);
+        for (const msg of rig.recentMessages(3, _miningMsgScratch)) lines.push(`› ${msg}`);
+        _miningHudLines = lines;
+        // Szerokość panelu razem z tekstem (measureText to obiekt — nie co klatkę).
+        renderCtx.font = '600 12px ui-monospace, Consolas, monospace';
+        let wMax = 0;
+        for (let i = 0; i < lines.length; i++) wMax = Math.max(wMax, renderCtx.measureText(lines[i]).width);
+        _miningHudW = wMax;
+      }
+      renderCtx.textAlign = 'left';
+      renderCtx.font = '600 12px ui-monospace, Consolas, monospace';
+      const x0 = 22, y0 = 118;
+      const lh = 17;
+      renderCtx.fillStyle = 'rgba(6,12,18,0.62)';
+      renderCtx.fillRect(x0 - 10, y0 - 15, _miningHudW + 20, _miningHudLines.length * lh + 10);
+      for (let i = 0; i < _miningHudLines.length; i++) {
+        renderCtx.fillStyle = i === 0 ? 'rgba(255,214,140,0.98)' : (i < 3 ? 'rgba(210,228,238,0.92)' : 'rgba(170,210,235,0.85)');
+        renderCtx.fillText(_miningHudLines[i], x0, y0 + i * lh);
+      }
+      renderCtx.restore();
     }
 
     // Ring „Halo” (src/game/haloRingCollision.js): płyta podłogi z terenem
@@ -22484,6 +22850,8 @@
       // 120 Hz / 6 ticków = deterministyczne 20 Hz niezależne od rAF monitora.
       const plannedSteps = Math.min(10, Math.floor(acc / PHYS_DT));
       const frameLogicDt = Math.max(PHYS_DT, plannedSteps * PHYS_DT);
+      // Wydobycie (zadanie 21b): kursor dronów i budżet ciężkich operacji na klatkę.
+      beginAsteroidMiningFrame();
       while (acc >= PHYS_DT && steps < 10) {
         prevCameraState.x = camera.x;
         prevCameraState.y = camera.y;
@@ -23768,6 +24136,8 @@
         tRender2dSection = performance.now();
 
         drawActiveCommandMarkers(ctx, cam, interpPos);
+        // Wydobycie (zadanie 21b): skaner rdzeni i panel platformy w trybie wydobycia.
+        drawMiningOverlay(ctx, cam);
 
         if (Selection.units.size) {
           ctx.save();
@@ -25800,6 +26170,8 @@
         await asteroidBelt.precompute((p) => setLoadingProgress(72 + p * 5, 'Cień pól asteroid'));
         setLoadingProgress(77, 'Pola asteroid');
         await Core3D.warmup.run('pas asteroid: start GPU (asteroidBelt)', () => asteroidBelt.initGpu());
+        // Platforma wydobywcza (zadanie 21b): urobek do ładowni, magazynek ładunków gracza.
+        wireAsteroidMining();
         await nextFrame();
       }
 

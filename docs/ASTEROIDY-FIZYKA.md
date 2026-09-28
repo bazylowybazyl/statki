@@ -5,9 +5,10 @@ rdzenia** (skała miedzi ma z zewnątrz mało miedzi, a rdzeń to czysta miedź 
 odłamki**; skały mają się zachowywać **inaczej niż stal** — kruche jak lód albo mocne jak tytan, jedne potrzebują
 mniejszego ładunku, inne większego.
 
-Stan: logika w grze gotowa jako moduł bez three (`src/game/asteroidMining.js` + `asteroidMaterials.js`, testy
+Stan: logika jako moduł bez three (`src/game/asteroidMining.js` + `asteroidMaterials.js`, testy
 `tests/asteroidMining.test.mjs`), render i sterowanie w demie WebGPU (`dema/asteroidy-webgpu`, scena **Kopalnia**,
-klawisz G). W grze jeszcze nie wpięte — patrz § „Wpięcie do gry”.
+klawisz G) i **w grze od zadania 21b** (platforma `src/game/asteroidMiningRig.js`, render `src/3d/asteroids/
+minedRocks.js` + `miningView.js`, tryb wydobycia `N`) — patrz § „W grze”.
 
 ## Dlaczego nie silnik belek
 
@@ -99,19 +100,30 @@ otworze przy rdzeniu sięga wylotu otworu — wystarczy mniejszy (dlatego najpie
 ```js
 const mining = new AsteroidMining({ radiusAt: (shape, x, y, z) => bank.radiusAt(shape, x, y, z) });
 const body = mining.activate(rockRecord, { z, time, sunT, anchored: true }); // skała pola → ciało
-const hit = mining.raycast(ox, oy, oz, dx, dy, dz);        // przestrzeń skał; { body, x, y, z, nx.., ore }
+const hit = mining.raycast(ox, oy, oz, dx, dy, dz, maxD?, tylko?, out?); // przestrzeń skał; { body, x, y, z, nx.., ore }
 mining.laser(hit.body, hit.x, hit.y, hit.z, dx, dy, dz, moc, dt, urobek);
 mining.slice(body, px, py, pz, nx, ny, nz, szczelina, przesuw?, urobek);
 const res = mining.detonate(body, x, y, z, E, straty);     // { outcome, rc, rf, bodies, pebbles, gravel, … }
-mining.tractor(tx, ty, tz, zasięg, udźwig, chwyt, dt, urobek); // → złapane
-mining.step(dt);                                            // masa, rozpady po cięciu, ruch, zderzenia
+mining.tractor(tx, ty, tz, zasięg, udźwig, chwyt, dt, urobek, siła?, maxRudy?); // → złapane (tablica do następnego wywołania)
+mining.step(dt);                                            // masa, rozpady po cięciu, ruch, zderzenia, uśpienie
+mining.wake(obiekt);                                        // obudź ciało / okruch ruszane z zewnątrz
 mining.probe(body, x, y, z); mining.summary(body);          // skaner: ruda, strefa, głębokość, rdzeń
-mining.drainEvents();                                       // wybuchy, rozpady, zbiórka — do efektów
+mining.drainEvents();                                       // wybuchy, rozpady, zbiórka (tablica do następnego wywołania)
 // render: mining.bodies (fill/ore/orig, version, dirtyBox, origin(), q), mining.pebbles (p, q, r, type)
 ```
 
 Urobek: `createYield()` → `{ ore: { [surowiec]: t }, waste, lost }`. Koszt (Node, 1 rdzeń): budowa ciała 10–30 ms,
 wybuch 10–60 ms (jednorazowo), krok symulacji po wybuchu ~0,07 ms, render ciał ~0,1 ms CPU na klatkę.
+
+**Zmiany pod grę (21b, bez zmiany wyniku operacji):** ciała i okruchy **zasypiają** po `sleepTime` (0,6 s) w spoczynku
+(`sleepSpeed` 3 j./s, `sleepSpin` 0,003 rad/s) — śpiące nie ruszają się i nie zderzają ze sobą, śpiący przy styku z
+czuwającym jest nieruchomy, budzi go kopanie, wybuch, wiązka albo uderzenie (> 2 · `sleepSpeed`); obrót w styku
+gaśnie (`contactSpin` 3/s — zderzenia nie mają momentu, zaklinowane odłamy kręciły się ~10 s i nie zasypiały: 0,3 ms na
+krok bez końca). Sprawdzenie rozpadu najwyżej co `splitCheckInterval` (0,2 s — etykietowanie całej siatki ~1 ms), masa
+po kopaniu co `massRecomputeInterval` (0,25 s), punkty powierzchni odświeża przeliczenie masy. Okruch–okruch:
+zamiatanie po x zamiast O(n²). Bez alokacji na krok: `raycast` z obiektem `out`, `drainEvents` / `tractor` na tablicach
+wielokrotnego użytku, zwarte `RockBody.sample` (bajtkod < 460 B — V8 wkleja je w marsz promienia; wcześniej każda
+próbka lasera zwracała liczbę przez stertę), `sqrt` zamiast `Math.hypot`.
 
 ## Render w demie (`dema/asteroidy-webgpu/`)
 
@@ -137,24 +149,60 @@ Shift + przeciągnięcie LPM — piła wzdłuż linii (pas po pasie, rozpad po p
 ładunek w dnie otworu pod kursorem, C — wielkość ładunku, F — detonacja, T — wiązka ściągająca, K — skaner; przyciski
 typów stawiają skałę testową (lód … tytan, energetyczna).
 
-## Wpięcie do gry (propozycja zadania po 21)
+## W grze (zadanie 21b portu WebGPU)
 
-1. Moduł pasa w Core3D (zadanie 21) daje: `bank.radiusAt`, `zOf` warstwy PLAY, transmitancję słońca, `playLayer.hide`.
-2. `AsteroidMining` jako system gry (krok w `physicsStep` albo w `render()` z czasem symulacji — skały są pod
-   płaszczyzną, nie kolidują z kadłubami). Zdarzenia (`drainEvents`) → efekty z `src/3d/fx/` (wybuch, iskry, światła).
-3. Render: `minedRocks.js` do `src/3d/asteroids/` (atlas + materiały; te same passy co skały PLAY).
-4. Drony: system gry z drone'ami 3D (zadanie modeli), sterowanie z UI (cel, bruzda, piła); w demie `miningRig.js` to
-   wzór zachowania.
-5. Ekonomia: urobek → ładownia (`cargo`, `resources.js`), ładunki jako przedmiot (S/M/L/XL), udźwig wiązki z modułu
-   statku. Stare `asteroidDestructor.js` / heksy asteroid / `asteroidPhysics.js` HEX_* odchodzą (zadanie 24).
+- **Logika:** `AsteroidMining` (fizyka skał) i `MiningRig` (`src/game/asteroidMiningRig.js` — platforma gracza, bez
+  three / DOM, testy `tests/asteroidMiningRig.test.mjs`) tworzy pas w `initGpu` (`asteroidBelt.mining` / `.rig`;
+  kształty z banku GPU po pieczeniu). Krok w `physicsStep` (`stepAsteroidMining`, 120 Hz, czas symulacji — w pauzie
+  stoi; stałe są na sekundę, wykładniki od dt), `rig.beginFrame()` z pętli gry przed krokami: **ciężka operacja
+  (przejęcie skały, wybuch) najwyżej jedna na klatkę** — kolejne ładunki wybuchają w następnych klatkach (seria),
+  przejęcie przy osadzaniu ładunku czeka klatkę. Bez `Math.random` (losowania z id ciała).
+- **Skały pola:** przejmowana jest skała pasma PLAY pod celem z DANYCH pola (`AsteroidBeltField.forEachRockInRect` —
+  najwyższy wierzch w obrysie; z = `belt.playZ`, faza obrotu z zegara shadera skał `belt.time`, transmitancja słońca
+  `belt.sunT`), zakotwiczona (platforma gasi obrót i dryf). Id przejętych skał = `rig.taken` = `playLayer.hidden`
+  (znikają z warstwy, cieni, piorunów i świateł). Ciała i okruchy dalej niż 60 tys. j. od statku są zwalniane —
+  nietknięta skała wraca do pola, naruszona zostaje „rozebrana”.
+- **Drony:** trzy (`MINING_RIG_CONFIG`): dok na grzbiecie statku, przy pracy krąg 300 j. nad celem na z = 170 (wiązki
+  pod kątem), moc 1,5 × `digVolumeRate`, zasięg pracy 9 tys. j. od statku; przy pile dwa drony trzymają drut nad linią
+  cięcia (cięcie co 0,1 s czasu symulacji — tempo 380 / (0,2 + twardość) j./s), trzeci może ciąć laserem.
+- **Ładunki:** S 0,5 · M 2 · L 8 · XL 32 z magazynka gracza `PLAYER.miningCharges` (`src/data/miningCharges.js`,
+  zestaw startowy S 6 · M 4 · L 3 · XL 1), najwyżej 8 osadzonych naraz; osadzony w dnie otworu pod kursorem
+  (0,6 promienia lasera pod trafieniem). **Ceny tymczasowe** (do decyzji): S 8 · M 25 · L 80 · XL 250 CR (~E^0,8) —
+  karta „Ładunki górnicze” na rynku doku, bez zapasu stacji, poza masą ładowni.
+- **Urobek:** ruda z lasera (drobinki odłupane laserem też) i złapanych odłamów w pełnych tonach surowców
+  `resources.js` do ładowni gracza (`addToPlayerCargo`, udźwig kadłuba — Atlas 20), ułamki czekają na pełną tonę,
+  skała płonna odpada. Pełna ładownia: urobek laserów przepada (komunikat), wiązka nie łapie odłamu z rudą ponad
+  wolne miejsce (czeka przy statku). Wiązka ściągająca: zasięg 3600 j., **udźwig 450 t** (najcięższy odłam — do
+  decyzji), chwyt 260 j.
+- **Sterowanie** (`index.html`, blok „WYDOBYCIE SKAŁ”): `N` — tryb wydobycia (gaśnie przy stacji, skoku, śmierci,
+  podzielonym ekranie); w trybie **LPM trzymany** — lasery na skale pod kursorem (przeciąganie = bruzda), **PPM** —
+  ładunek, **PPM + przeciągnięcie** — piła wzdłuż linii, `L` — wielkość ładunku, `F` — detonacja (zamiast rakiet), `T`
+  — wiązka. HUD na kanwie 2D: skaner (rdzeń ciała z głębokością i ładunkiem potrzebnym z rdzenia, skład i ładunek pod
+  kursorem, osadzone ładunki), panel (narzędzia, magazynek, ładownia, urobek, ostatnie komunikaty platformy). Wybuch
+  blisko statku trzęsie kamerą.
+- **Render:** `src/3d/asteroids/minedRocks.js` (port dema — atlas 3D, zewnętrze w trybie `carve`, wnętrze raymarching z
+  głębią przez `modelViewMatrix`, minerały i cień w trybie wycięć, okruchy `RockSet`; wysyłka atlasu z budżetem 300 tys.
+  komórek / 4 wysyłek na klatkę) i `miningView.js` (drony z części, wiązki, efekty zdarzeń: iskry i duszki pasa, światło
+  wybuchu w siatce gry z krzywą dema, fala = refrakcja `fxDistortion().shock`). Obraz w krokach `Core3D.fx` pasa.
+- **Koszt** (gra, czas rzeczywisty, RTX 5080, 1080p, GPU/CPU dzielone z innymi sesjami — `wydobycie-gra.mjs --koszt`):
+  przejęcie skały r ≈ 300–600 ~18 ms (najdłuższa klatka 18 ms), wybuch L ~28 ms (klatka maks. 40 ms < 50), klatka po
+  wybuchu 0,13–0,25 ms CPU platformy + skał w wydobyciu (15 ciał, 21 okruchów; do ~0,1 ms, gdy odłamy zasną),
+  cięcie laserem ~0,09 ms (skoki do ~4 ms przy sprawdzeniu rozpadu co 0,2 s), tryb bez pracy 0,015 ms, bez trybu 0.
+- **Zrzuty obok dema:** `scripts/webgpu/wydobycie-gra.mjs` (etapy skała → laser → piła → ładunek → urobek w miejscu
+  sceny „pole” z tą samą skałą testową co Kopalnia dema; `--demo` — te same etapy w demie), sesja `wydobycie` w
+  `zrzuty.mjs`.
 
-**Otwarte (do decyzji użytkownika):** czy odłamy mają zderzać się z kadłubami (dziś pod płaszczyzną — nie), czy
-wybuch w polu ma ruszać sąsiednie skały, udźwig wiązki i ceny ładunków, czy skały pola w ogóle mają być przejmowane
-wszystkie czy tylko „złoża” oznaczone skanerem.
+**Otwarte (do decyzji użytkownika — w grze wariant najprostszy):** odłamy nie zderzają się z kadłubami (leżą pod
+płaszczyzną jak skały PLAY), wybuch nie rusza sąsiednich skał pola, udźwig wiązki 450 t (z dema), ceny ładunków
+tymczasowe, przejmowana jest każda skała PLAY (nie tylko „złoża” ze skanera), ładownia Atlasa (20 t) mieści ułamek
+rudy jednej skały (miedź r 650: ~140 t rudy) — skala ton fizyki vs udźwig kadłubów do ustalenia.
 
 ## Braki (świadomie na później)
 
-- Zderzenia przybliżone (punkty powierzchni vs pole zapełnienia, bez momentu); odłamy nie zderzają się ze skałami
-  pola ani z kadłubami.
-- Dron-piła to w demie sam drut i rozżarzona szczelina (bez modelu drona); drony to proste sześciokątne dyski.
+- Zderzenia przybliżone (punkty powierzchni vs pole zapełnienia, bez momentu — obrót gasi tarcie w styku); odłamy
+  nie zderzają się ze skałami pola ani z kadłubami.
+- Dron-piła to w demie sam drut i rozżarzona szczelina (bez modelu drona); drony to proste sześciokątne dyski. W grze
+  (21b) drut trzymają dwa drony platformy (bryła z części: kadłub, pas, ramiona z gondolami, światła, kopuła).
 - Pył z wybuchu i cięcia nie trafia do ośrodka (smugi) — tylko iskry i światło.
+- Kopanie laserem (`dig` — za duże na wklejenie) i sprawdzenie rozpadu co 0,2 s tworzą drobne obiekty (~80 B na
+  klatkę gry przy pracy trzech laserów); bezczynna platforma — zero.

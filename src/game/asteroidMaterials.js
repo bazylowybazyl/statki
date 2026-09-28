@@ -137,7 +137,24 @@ export const MINING_CONFIG = Object.freeze({
   laserRadius: 70,
   laserBite: 0.35,
   // Co ile zdjętej objętości (w komórkach) sprawdzać, czy skała się rozpadła.
-  splitCheckCells: 4
+  splitCheckCells: 4,
+  // …i najczęściej co tyle sekund na ciało: sprawdzenie to etykietowanie całej siatki
+  // (~1 ms przy 48³); trzy lasery zdejmują kilkadziesiąt komórek na sekundę, więc bez
+  // odstępu sprawdzenie szło prawie co krok (0,7 ms na krok fizyki gry, 120 Hz).
+  splitCheckInterval: 0.2,
+  // Uśpienie: ciało / okruch wolniejsze niż sleepSpeed [j./s] i sleepSpin [rad/s] przez
+  // sleepTime [s] stoi (bez ruchu i bez zderzeń między śpiącymi); budzi je kopanie,
+  // wybuch, wiązka albo uderzenie (względna prędkość > 2 · sleepSpeed). Odłamy po wybuchu
+  // klinują się o siebie — bez tego zderzenia kosztowały ~0,3 ms na krok bez końca.
+  sleepSpeed: 3,
+  sleepSpin: 0.003,
+  sleepTime: 0.6,
+  // Tarcie w styku (1/s): obrót ciał i okruchów, które się dotykają, gaśnie — zderzenia
+  // nie mają momentu, więc zaklinowane odłamy kręciły się w miejscu ~10 s (i nie zasypiały).
+  contactSpin: 3,
+  // Masa, środek masy i bezwładność ciała po kopaniu najczęściej co tyle sekund (pełny
+  // przegląd siatki ~0,6 ms przy 48³; laser zmienia siatkę w każdym kroku fizyki).
+  massRecomputeInterval: 0.25
 });
 
 /** Materiał typu (indeks ROCK_TYPES albo nazwa): gęstość, twardość, pękanie, skład. */
