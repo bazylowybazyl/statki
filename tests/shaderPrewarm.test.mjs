@@ -43,12 +43,27 @@ test('gra: overlay rozgrzewany próbkami fabryk tworzących materiały na każdy
     const at = body.indexOf(`prewarmSamples.push(window.${factory}(`);
     assert.ok(at > 0 && at < call, `próbka ${factory} przed rozgrzewką`);
   }
-  // Pule (iskry, Yamato, reaktor, supernowa, rakiety) muszą już wisieć w scenie.
-  for (const init of ['SparkSystem3D.init(ov.scene)', 'window.makeYamatoImpact = yamatoFactory(ov.scene)',
-    'window.makeReactorBlow = reactorFactory(ov.scene)', 'initRocketSystem3D(rocketOv.scene)']) {
+  // Pule (Yamato, reaktor) muszą już wisieć w scenie. Iskry, rakiety i Supernowa (port WebGPU,
+  // zadanie 19) są w scenie Core3D — rozgrzewa je krok efektów (niżej).
+  for (const init of ['window.makeYamatoImpact = yamatoFactory(ov.scene)', 'window.makeReactorBlow = reactorFactory(ov.scene)']) {
     const at = body.indexOf(init);
     assert.ok(at > 0 && at < call, `${init} przed rozgrzewką`);
   }
+});
+
+test('rakiety i iskry (Core3D): rozgrzewka kroków efektów — compute, mapa gęstości, pule odsłonięte', () => {
+  const rocketFx = readFileSync(new URL('../src/3d/rockets/rocketFx.js', import.meta.url), 'utf8');
+  const warm = functionBody(rocketFx, '  _warm(ctx) {');
+  // Kernele compute (dispatch z count 0 kompiluje pipeline), pass mapy gęstości i wszystkie
+  // siatki rakiet w passie sceny (compileAsync pomija niewidoczne — odsłonięte na czas projekcji).
+  assert.match(warm, /computeAsync|compute\(/);
+  assert.match(warm, /m\.visible = true;/);
+  assert.match(warm, /ctx\.core\.prewarmPass\(m, 0\)/);
+  assert.doesNotMatch(warm, /\.dispose\(/);
+  assert.match(rocketFx, /name: 'rakiety'[\s\S]{0,200}warm: \(ctx\) => self\._warm\(ctx\)/);
+  const sparks = readFileSync(new URL('../src/3d/sparkSystem3D.js', import.meta.url), 'utf8');
+  assert.match(sparks, /name: 'iskry'/);
+  assert.match(sparks, /m\.visible = true;[\s\S]{0,200}ctx\.core\.prewarmPass\(m, 0\)/);
 });
 
 test('tarcze: materiały-trzymacze obu wariantów, rozgrzewka na ekranie ładowania', () => {

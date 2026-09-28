@@ -69,6 +69,10 @@ export class FxFrame {
     };
     // Pomiar klatki (PerfHUD, harness): CPU kroku, dispatche compute, światła i wpisy siatki, źródła zniekształceń.
     this.stats = { cpuMs: 0, dispatches: 0, steps: 0, lights: 0, gridItems: 0, gridBuilt: false, distortSources: 0, distortLayer: false };
+    // Post tej klatki od efektów (zadanie 19 — Supernowa z dema rakiet): przygaszenie obrazu
+    // (mnożnik w gałęzi efektów „uber”, 1 = bez zmian) i dodatek do siły bloomu. Kasowane na
+    // starcie każdej klatki efektów; kroki biorą min / max.
+    this.post = { exposure: 1, bloomBoost: 0 };
   }
 
   /**
@@ -182,6 +186,8 @@ export class FxFrame {
     ctx.time = this.time;
     ctx.dt = dt;
     ctx.frame = frameId;
+    this.post.exposure = 1;
+    this.post.bloomBoost = 0;
     const steps = this.steps;
     const n = steps.length;
     // 1. paczki z CPU (stara rama)

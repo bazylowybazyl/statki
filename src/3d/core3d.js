@@ -568,7 +568,8 @@ export const Core3D = {
     const bloom = this.bloomPass;
     if (!bloom) return;
     const cfg = this._getBloomConfig();
-    bloom.strength.value = cfg.strength;
+    // Podbicie bloomu od efektów tej klatki (błysk Supernowej — Core3D.fx.post, zadanie 19).
+    bloom.strength.value = cfg.strength + (Number(this.fx?.post?.bloomBoost) || 0);
     bloom.radius.value = cfg.radius;
     bloom.threshold.value = cfg.threshold;
     bloom.resolutionScale = cfg.resolutionScale;
@@ -1637,6 +1638,8 @@ export const Core3D = {
     const w = this.composerTarget.width;
     const h = this.composerTarget.height;
     fx.commitDistortion(this.activeCam1, w, h, off, this.renderer?.info?.frame ?? 0);
+    // Przygaszenie od efektów (implozja Supernowej, fx.post — gałąź efektów „uber”).
+    if (u.uFxExposure) u.uFxExposure.value = off ? 1 : (Number(fx.post?.exposure) || 1);
     const target = this.distortionTarget;
     const layerOn = !off && fx.distortLayerActive === true && !!target;
     fx.stats.distortLayer = layerOn;
