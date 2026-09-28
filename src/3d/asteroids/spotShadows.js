@@ -103,7 +103,6 @@ export class ShadowAtlas {
       const base = geoms[m.main ? mainLod : smallLod];
       const data = new Float32Array(CASTER_CAP * FLOATS);
       const buffer = new THREE.InstancedInterleavedBuffer(data, FLOATS, 1);
-      buffer.setUsage(THREE.DynamicDrawUsage);
       const range = { start: 0, count: data.length };
       buffer.updateRanges.length = 0;
       buffer.updateRanges.push(range);
@@ -147,7 +146,6 @@ export class ShadowAtlas {
       const base = geoms[m.main ? 3 : 2];
       const data = new Float32Array(CARVE_CAP * CARVE_FLOATS);
       const buffer = new THREE.InstancedInterleavedBuffer(data, CARVE_FLOATS, 1);
-      buffer.setUsage(THREE.DynamicDrawUsage);
       const ig = new THREE.InstancedBufferGeometry();
       ig.setIndex(base.index);
       ig.setAttribute('position', base.getAttribute('position'));

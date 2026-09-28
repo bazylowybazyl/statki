@@ -174,9 +174,7 @@ export class BeltFog {
     const U = this.U;
     const geo = new THREE.PlaneGeometry(1, 1, GRID, GRID);
     const macroAttr = new THREE.BufferAttribute(new Float32Array((GRID + 1) * (GRID + 1) * 3), 3);
-    macroAttr.setUsage(THREE.DynamicDrawUsage);
     geo.setAttribute('aMacro', macroAttr);
-    geo.getAttribute('position').setUsage(THREE.DynamicDrawUsage);
     const S = {
       base: uniform(new THREE.Vector2()),
       scale: uniform(def.scale),

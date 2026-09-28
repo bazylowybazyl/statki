@@ -47,7 +47,10 @@ export const quatMul = Fn(([a, b]) => {
 // Zakres wysyłki bufora NA STAŁE (jak liveAttribute w fxParticles3D.js, LightGrid w
 // src/3d/fx/lightGrid.js): three czyści listę zakresów po każdej wysyłce, a ponowne
 // addUpdateRange alokowało obiekt i tablicę na klatkę. Tu jeden zakres na bufor —
-// klatka zmienia tylko jego `count`.
+// klatka zmienia tylko jego `count`. Bufory pasa zostają przy domyślnym użyciu (BEZ
+// DynamicDrawUsage): three r183 przy DynamicDraw wysyła bufor przy KAŻDYM renderze, który
+// go rysuje (Attributes.update pomija porównanie wersji — PLAN §3, zadanie 15), a tu
+// wysyłka idzie tylko po `needsUpdate` (markLiveRange).
 function keepUpdateRanges() {}
 
 /** Bufor / atrybut z jednym stałym zakresem wysyłki; zwraca obiekt zakresu. */

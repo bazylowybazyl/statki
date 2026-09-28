@@ -26,10 +26,7 @@ export class GlowSprites {
     this.a = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 4), 4);
     this.b = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 4), 4);
     this.c = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 4), 4);
-    this._ranges = [this.a, this.b, this.c].map((at) => {
-      at.setUsage(THREE.DynamicDrawUsage);
-      return permanentUpdateRange(at);
-    });
+    this._ranges = [this.a, this.b, this.c].map((at) => permanentUpdateRange(at));
     geo.setAttribute('gA', this.a);
     geo.setAttribute('gB', this.b);
     geo.setAttribute('gC', this.c);

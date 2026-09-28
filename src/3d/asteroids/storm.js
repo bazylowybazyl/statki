@@ -164,10 +164,7 @@ class BoltBatch {
     this.a = new THREE.InstancedBufferAttribute(new Float32Array(SEG_CAP * 4), 4);
     this.b = new THREE.InstancedBufferAttribute(new Float32Array(SEG_CAP * 4), 4);
     this.c = new THREE.InstancedBufferAttribute(new Float32Array(SEG_CAP * 4), 4);
-    this._ranges = [this.a, this.b, this.c].map((at) => {
-      at.setUsage(THREE.DynamicDrawUsage);
-      return permanentUpdateRange(at);
-    });
+    this._ranges = [this.a, this.b, this.c].map((at) => permanentUpdateRange(at));
     geo.setAttribute('bA', this.a);
     geo.setAttribute('bB', this.b);
     geo.setAttribute('bC', this.c);

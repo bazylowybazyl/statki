@@ -700,7 +700,6 @@ export class MineralLayer {
     this.kinds = geoms.map((base, i) => {
       const data = new Float32Array(capacity * this.floats);
       const buffer = new THREE.InstancedInterleavedBuffer(data, this.floats, 1);
-      buffer.setUsage(THREE.DynamicDrawUsage);
       const range = permanentUpdateRange(buffer);
       const ig = new THREE.InstancedBufferGeometry();
       for (const n of ['position', 'normal', 'aU', 'aBary', 'aKind']) ig.setAttribute(n, base.getAttribute(n));

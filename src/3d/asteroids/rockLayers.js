@@ -39,7 +39,6 @@ class LodBuckets {
       const capacity = i > maxLod ? 1 : (capacities[i] ?? 64);
       const data = new Float32Array(capacity * FLOATS);
       const buffer = new THREE.InstancedInterleavedBuffer(data, FLOATS, 1);
-      buffer.setUsage(THREE.DynamicDrawUsage);
       const range = permanentUpdateRange(buffer);
       const ig = new THREE.InstancedBufferGeometry();
       ig.setIndex(base.index);
