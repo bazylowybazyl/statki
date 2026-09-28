@@ -342,8 +342,9 @@ export const WARP_FLYBY_DEFAULTS = Object.freeze({
  * z wielkością ciała widzianego z kursu (promień / (promień + odległość kursu od
  * powierzchni)) — mijana z bliska planeta zwalnia mocno, daleki mały księżyc
  * wcale; pas wzdłuż kursu (gauss) szerszy dla ciał dalej od kursu, więc statek
- * zwalnia z wyprzedzeniem i płynnie. Widok skoku przybliża się, gdy statek
- * zwalnia (warpLensScale w warpWorldLens.js) — stąd planeta płynnie rośnie.
+ * zwalnia z wyprzedzeniem i płynnie. W dawnym warpie widok skoku przybliżał się,
+ * gdy statek zwalniał (soczewka świata — usunięta w zadaniu 22; gra jej nie woła,
+ * zostaje dla dema i testów).
  * along — ciało przed statkiem wzdłuż kursu (ujemne: za rufą), lateral —
  * odległość środka ciała od kursu, radius — promień ciała (jednostki świata).
  */
