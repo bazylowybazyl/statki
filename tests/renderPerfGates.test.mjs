@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 
 // Strażnicy poprawek z audytu rysowania (2026-09-23): każda z tych bramek
 // zdejmuje pracę, której nie widać na ekranie (daleki zoom, poza kadrem,
@@ -184,11 +184,14 @@ test('stary panel skanera i radar: bez modelu kontaktów, gdy kokpit go chowa / 
 
 const readSrc = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
-test('wybuchy overlaya bez PointLight (scena bez materiałów oświetlanych, światło zmieniało klucz programu)', () => {
+test('wybuchy bez PointLight (światło zmieniało klucz programu) — światło przez siatkę świateł efektów', () => {
   // (yamato.js usunięty w zadaniu 17 — trafienie Yamato to receptura WeaponFx w Core3D.)
-  for (const path of ['src/effects3d/reactorblow.js']) {
-    assert.doesNotMatch(readSrc(path), /new THREE\.PointLight/, path);
+  // Wybuch reaktora (zadanie 20, scena Core3D): światło rdzenia i rozbłysku idzie do siatki
+  // świateł efektów (ctx.grid.addWorld w kroku `lights`), nie do świateł sceny three.
+  for (const path of ['src/effects3d/reactorblow.js', 'src/effects3d/reactorblow.tsl.js']) {
+    assert.doesNotMatch(readSrc(path), /PointLight|SpotLight/, path);
   }
+  assert.match(readSrc('src/effects3d/reactorblow.js'), /grid\.addWorld\(b\.x, b\.y, L\.z, range,/);
   // Rakiety i Supernowa (port WebGPU, zadanie 19): światła wybuchów, dysz i łuków idą do
   // siatki świateł efektów Core3D (grid.addWorld), nie do świateł sceny three.
   for (const f of ['effects', 'rocketFx', 'smoke', 'fireballs', 'missileBodies', 'nebula', 'arcs', 'glow', 'plumes', 'sparks']) {
@@ -246,10 +249,17 @@ test('pociski 3D: barwy HDR raz na rodzinę, upload tylko zajętego wycinka', ()
   assert.match(readSrc('src/3d/weapons/liveRange.js'), /attr\.clearUpdateRanges = keepUpdateRanges;/);
 });
 
-test('overlay: adaptacja jakości z histerezą, pusta lista efektów nie zmienia skali', () => {
-  const overlay = readSrc('src/effects3d/overlay.js');
-  assert.match(overlay, /const TIER_UPGRADE_HOLD_MS = 1500;/);
-  assert.doesNotMatch(overlay, /Math\.max\(targetScale, 0\.76\)/);
+// Zadanie 20: overlay (i jego adaptacja jakości — skala, pomijanie klatek, zrzucanie efektów)
+// usunięty; wybuch reaktora rysuje Core3D. Pule 100 000 / 15 000 slotów: rysowany tylko zapisany
+// zakres [0, highWater), pusta pula niewidoczna, wysyłka tylko zapisanego wycinka
+// (zachowanie: tests/reactorBlow.test.mjs).
+test('pule wybuchu reaktora: puste niewidoczne, instancje do highWater, wysyłka wycinka', () => {
+  const pool = readSrc('src/effects3d/particlePool.js');
+  assert.match(pool, /if \(mesh && mesh\.visible\) mesh\.visible = false;/);
+  assert.match(pool, /if \(geo && geo\.instanceCount !== this\.highWater\) geo\.instanceCount = this\.highWater;/);
+  assert.match(pool, /attr\.clearUpdateRanges = confirm;/, 'zakresy wysyłki na stałe (bez alokacji na klatkę)');
+  assert.doesNotMatch(pool.replace(/\/\/[^\n]*/g, ' '), /addUpdateRange\(|DynamicDrawUsage/);
+  assert.equal(existsSync(new URL('../src/effects3d/overlay.js', import.meta.url)), false);
 });
 
 test('CIC: bez renderu świata 3D pod planszą', () => {

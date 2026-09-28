@@ -988,9 +988,8 @@
       isColdFreezeVisuallySafe,
       captureColdWreckImpostor
     } from "./src/3d/hexShips3D.js";
-    import { initOverlay as initOverlay3D } from "./src/effects3d/overlay.js";
-    // Fabryki trafień broni w overlayu (railgunExplosion, armataImpact, autocannonImpact, yamato)
-    // usunięte w zadaniu 17 — trafienia to receptury WeaponFx (src/3d/weapons/).
+    // Wybuch reaktora w scenie Core3D (port WebGPU, zadanie 20 — dawny overlay efektów z własnym
+    // WebGLRenderer usunięty; trafienia broni to receptury WeaponFx, rakiety src/3d/rockets/).
     import { createReactorBlowFactory } from "./src/effects3d/reactorblow.js";
     import { initRocketSystem3D } from "./src/effects3d/rocketSystem3D.js";
     import { createRocketFx } from "./src/3d/rockets/rocketFx.js";
@@ -1274,6 +1273,15 @@
         // Warp „Nurt” (src/3d/warp/, zadanie 22): ośrodek (compute), szczeliny, błyski, gwiazdy,
         // zgięcie mgławicy, fale — sam wygląd, słucha automatu warpa i przylotów NPC.
         WarpNurt.init();
+        // Wybuch reaktora (śmierć okrętu, rozpad stacji): pule cząstek w passie ortho Core3D, krok
+        // klatki efektów (zadanie 20). Rozpad stacji (Destruction3D) sypie te same wybuchy; bez
+        // menedżera fali — fala z refrakcją (shockwave3D) usunięta w zadaniu 19.
+        window.makeReactorBlow = createReactorBlowFactory(Core3D);
+        window.Destruction3D.init({
+          scene:            Core3D.scene,
+          reactorFactory:   window.makeReactorBlow,
+          shockwaveManager: null,
+        });
       }
     }
 
@@ -2431,13 +2439,6 @@
         skillSlotsEl.appendChild(slot);
       });
     }
-
-    // Model widoku overlayu (ortho nad światem 2D)
-    const overlayView = {
-      center: { x: 0, y: 0 },
-      viewport: { w: innerWidth, h: innerHeight },
-      zoom: 1.0
-    };
 
     // Ile jednostek świata ma 1 AU. Helper leżał kiedyś w bloku warp lens, ale
     // korzysta z niego cała skala świata (orbity, granice, radar), nie sam efekt.
@@ -4242,7 +4243,7 @@
     if (previousPlayer.controller) shipOverrides.controller = previousPlayer.controller;
     if (previousPlayer.aiController) shipOverrides.aiController = previousPlayer.aiController;
 
-    Game.player = createShipEntity({ world: WORLD, overlayView, overrides: shipOverrides });
+    Game.player = createShipEntity({ world: WORLD, overrides: shipOverrides });
     let ship = Game.player;
     ship.isPlayer = true;
     ship.friendly = true;
@@ -4270,9 +4271,6 @@
         }
       }
     }
-
-    overlayView.center.x = ship.pos.x;
-    overlayView.center.y = ship.pos.y;
 
     let rocketAmmo = 0;
     let rocketAmmoMax = 0;
@@ -5690,9 +5688,6 @@
       return { x, y, zoom, screenX, screenY };
     }
 
-    // Model widoku overlayu już istnieje – dopasuj początkowy zoom do kamery
-    overlayView.zoom = camera.zoom;
-
     function updateCameraTarget(dt) {
       // Ship camera is resolved later in render() using interpolated position
       // to avoid jitter. Only non-ship modes are updated here.
@@ -5782,8 +5777,6 @@
       }
       camera.zoom = clamp(camera.zoom, camera.minZoom, camera.maxZoom);
     }
-    // Bezpieczna, odroczona inicjalizacja overlayu 3D
-    let overlay3D = null;
 
     window.addEventListener('resize', () => {
       W = canvas.width = innerWidth;
@@ -5820,73 +5813,15 @@
           camera.transition.targetZoom = target.zoom;
         }
       }
-      resizeOverlay3D();
     });
 
-    function startOverlay3D() {
-      const init = initOverlay3D;
-      const reactorFactory = createReactorBlowFactory;
-      const host = document.getElementById('game-root');
-
-      // Musimy mieć: API z modułu + host z DOM + overlayView z tego skryptu
-      if (!init || !host || typeof overlayView === 'undefined') return false;
-
-      // Rakiety i iskry są od zadania 19 w scenie Core3D (src/3d/rockets/, SparkSystem3D —
-      // init przy starcie Core3D): overlay nie ma już warstwy raw rakiet ani iskier.
-      const ov = init({ host, getView: () => overlayView });
-      overlay3D = ov;
-      window.overlay3D = ov;
-      if (reactorFactory) {
-        window.makeReactorBlow = reactorFactory(ov.scene);
-      }
-      // Init 3D destruction engine — scene + reactor factory. Bez menedżera fali:
-      // fala z refrakcją (shockwave3D) usunięta w zadaniu 19 — rozpad stacji
-      // (shatter/implodeMass) jej nie odpala.
-      if (window.Destruction3D) {
-        window.Destruction3D.init({
-          scene:            window.Core3D?.scene,
-          reactorFactory:   window.makeReactorBlow,
-          shockwaveManager: null,
-        });
-      }
-      resizeOverlay3D();
-      // Rozgrzewka programów overlaya (overlay.js, prewarm): pula reaktora wisi w scenie. Próbek
-      // fabryk trafień broni już nie ma (zadanie 17 — receptury WeaponFx rozgrzewa krok Core3D.fx),
-      // iskry, rakiety i Supernowa są w scenie Core3D (zadanie 19 — rozgrzewają je kroki efektów).
-      ov.prewarm?.();
-      return true;
-    }
-
-    // Moduły <script type="module"> wykonują się po parsowaniu DOM, więc
-    // DOMContentLoaded zwykle wystarczy. Dla pewności dodajemy krótki polling.
-    window.addEventListener('DOMContentLoaded', () => {
-      if (startOverlay3D()) return;
-      let tries = 0;
-      const maxTries = 120; // ~2 sekundy przy 60 FPS
-      (function poll() {
-        if (startOverlay3D() || tries++ > maxTries) return;
-        requestAnimationFrame(poll);
-      })();
-    });
-
-    // Wybuch reaktora w overlayu 3D (fabryki trafień broni usunięte w zadaniu 17).
+    // Wybuch reaktora (świat gry) — pule cząstek w scenie Core3D (src/effects3d/reactorblow.js,
+    // zadanie 20; fabryka tworzona przy starcie Core3D, rozgrzewa ją krok klatki efektów).
     function triggerReactorBlow3D(x, y, size = ship.h * 0.35, options = {}) {
-      if (overlay3D && window.makeReactorBlow) {
-        const fx = window.makeReactorBlow({ x, y, size, ...options });
-        overlay3D.spawn(fx);
-      }
+      window.makeReactorBlow?.({ x, y, size, ...options });
     }
 
     window.triggerReactorBlow3D = triggerReactorBlow3D;
-
-    // Resize: utrzymuj rozmiar overlayu = okna
-    function resizeOverlay3D() {
-      overlayView.viewport.w = innerWidth;
-      overlayView.viewport.h = innerHeight;
-      if (overlay3D) overlay3D.resize();
-    }
-
-    resizeOverlay3D();
 
     // === Ship sprite ===
     const USE_SHIP_SPRITE = true;
@@ -6240,8 +6175,6 @@
       if (!hasSavedShipPosition && ship) {
         ship.pos.x = centerX;
         ship.pos.y = centerY;
-        overlayView.center.x = centerX;
-        overlayView.center.y = centerY;
       }
     }
 
@@ -6855,9 +6788,6 @@
         camera.y = spawnPos.y;
         camera.targetX = spawnPos.x;
         camera.targetY = spawnPos.y;
-
-        overlayView.center.x = spawnPos.x;
-        overlayView.center.y = spawnPos.y;
       }
     }
 
@@ -9546,8 +9476,6 @@
       camera.y = y;
       camera.targetX = x;
       camera.targetY = y;
-      overlayView.center.x = x;
-      overlayView.center.y = y;
       return { x, y, heading };
     }
     window.HaloRingDebug = {
@@ -9588,8 +9516,6 @@
           if (Number.isFinite(heading)) ship.angle = heading;
           camera.x = camera.targetX = x;
           camera.y = camera.targetY = y;
-          overlayView.center.x = x;
-          overlayView.center.y = y;
           return { x, y };
         },
         // Kamera RTS rysuje się z interpolacji prevCameraState → camera (stan zapisywany
@@ -22198,9 +22124,7 @@
         // Rakiet NIE aktualizujemy w pauzie: update() to ich lot, trafienia
         // (_onHit → applyDamageTo*) i wybuchy — leciały i zadawały obrażenia przy
         // zatrzymanej grze. Core3D dalej rysuje je zamrożone (zegar ich efektów stoi).
-        if (overlay3D) {
-          overlay3D.tick(frame);
-        }
+        // Wybuchy reaktora biegną w klatce efektów Core3D (render wyżej) — jak dawny tick overlaya.
         if (firstFrameResolver) {
           firstFrameResolver();
           firstFrameResolver = null;
@@ -22332,14 +22256,10 @@
       window.spawnShockwave = spawnShockwave;
       window.worldToScreen = worldToScreen;
 
-      // Efektowy renderer 3D overlaya (eksplozje) — osobny kontekst WebGL poza Core3D
-      // (do zadania 20) — i lot rakiet (wyżej, przed render()) w jednym kubełku, żeby nie
-      // ginęły w "Untracked".
-      const tOverlayFx0 = performance.now();
-      if (overlay3D) {
-        overlay3D.tick(frame);
-      }
-      PerfHUD.addTiming('overlayFxTime', performance.now() - tOverlayFx0 + rocketsMs);
+      // Lot rakiet (wyżej, przed render()) we własnym kubełku, żeby nie ginął w "Untracked".
+      // (Dawny overlay efektów z własnym kontekstem WebGL usunięty w zadaniu 20 — wybuchy
+      // reaktora liczy klatka efektów Core3D, czyli render.)
+      PerfHUD.addTiming('rocketsTime', rocketsMs);
       if (firstFrameResolver) {
         firstFrameResolver();
         firstFrameResolver = null;
@@ -23137,12 +23057,6 @@
       window.__splitCamera2 = (splitScreenMode && camera2 && player2Ship && !player2Ship.destroyed)
         ? { x: camera2.x, y: camera2.y, zoom: camera2.zoom }
         : null;
-
-      overlayView.center.x = cam.x;
-      overlayView.center.y = cam.y;
-      overlayView.viewport.w = W;
-      overlayView.viewport.h = H;
-      overlayView.zoom = cam.zoom;
 
       if (renderDbgEnabled) {
         RenderLiveDebug.record('cameraPrep', tRenderSection > 0 ? (performance.now() - tRenderSection) : 0);
@@ -26044,7 +25958,7 @@
       const sizeW = initialSize.w;
       const sizeH = initialSize.h;
       player2Ship = createShipEntity({
-        world: WORLD, overlayView, overrides: {
+        world: WORLD, overrides: {
           w: sizeW, h: sizeH
         }
       });

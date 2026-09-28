@@ -160,7 +160,7 @@ export function refreshShipGeometry(ship) {
 
 // Zoptymalizowany konstruktor statku (unikamy deepMerge dla szybkoĹ›ci)
 export function createShipEntity(options = {}) {
-  const { world, overlayView, overrides } = options;
+  const { world, overrides } = options;
   
   const ship = {
     w: 450, h: 250, radius: 220,
@@ -199,11 +199,6 @@ export function createShipEntity(options = {}) {
 
   configureShipGeometry(ship);
   ship.inertia = (1 / 12) * ship.mass * ((ship.w * ship.w) + (ship.h * ship.h));
-
-  if (overlayView) {
-    overlayView.center.x = ship.pos.x;
-    overlayView.center.y = ship.pos.y;
-  }
 
   return ship;
 }

@@ -4,15 +4,14 @@
 //   ?shot=1 (bez paneli, do zrzutów)  ?cpuSoft=1 (lustro solvera zamiast WebGPU)
 //
 // Stos renderu jak w grze: fizyka 2D (destruktor, 120 Hz) → updateHexShips3D →
-// drawHexShips3D (Core3D: bloom, ACES, pasma HDR 1:1) → overlay3D z prawdziwą
-// fabryką reactorblow.js (tak jak triggerReactorBlow3D w index.html) → HUD 2D.
+// drawHexShips3D (Core3D: bloom, ACES, pasma HDR 1:1; wybuch reaktora z prawdziwej
+// fabryki reactorblow.js w scenie Core3D, jak triggerReactorBlow3D w index.html) → HUD 2D.
 // Rdzenie: src/game/shipCore.js (logika), src/3d/coreFx3D.js (żar i wyrzuty).
 import { Core3D } from '../src/3d/core3d.js';
 import { initHexShips3D, updateHexShips3D, drawHexShips3D, resizeHexShips3D } from '../src/3d/hexShips3D.js';
 import { DestructorSystem, DESTRUCTOR_CONFIG, setHexShips3DActive, disposeHexBody } from '../src/game/destructor.js';
 import { DestructorGpuSoftBody } from '../src/game/destructorGpuSoftBody.js';
-import { initOverlay } from '../src/effects3d/overlay.js';
-import { createReactorBlowFactory } from '../src/effects3d/reactorblow.js';
+import { createReactorBlowFactory, REACTOR_BLOW_PROFILES } from '../src/effects3d/reactorblow.js';
 import { createCoreFx3D } from '../src/3d/coreFx3D.js';
 import { createReactor3D } from '../src/3d/reactor3D.js';
 import { Fx3D } from '../src/3d/fxParticles3D.js';
@@ -43,9 +42,9 @@ window.addEventListener('error', (e) => reportError(`JS: ${e.message} @ ${e.file
 window.addEventListener('unhandledrejection', (e) => reportError(`Promise: ${e.reason?.stack || e.reason}`));
 
 const PHYS_DT = 1 / 120;
-// chargeTime profili reactorblow.js (niewyeksportowane): wizualny wybuch
-// startujemy tyle przed końcem odliczania, żeby błysk wypadł na detonację.
-const BLOW_CHARGE = { fighter: 0.05, escort: 0.3, cruiser: 0.55, capital: 0.8 };
+// chargeTime profili reactorblow.js: wizualny wybuch startujemy tyle przed końcem
+// odliczania, żeby błysk wypadł na detonację.
+const BLOW_CHARGE = Object.fromEntries(Object.entries(REACTOR_BLOW_PROFILES).map(([k, p]) => [k, p.chargeTime]));
 
 const DEMO_WEAPONS = [
   'railgun_mk2', 'heavy_autocannon', 'vulcan_minigun', 'tempest_ion_l', 'helios_laser',
@@ -134,7 +133,7 @@ function log(text, cls = '') {
 }
 
 // ---------------------------------------------------------------------------
-// Render: Core3D + hexShips3D + overlay (reactorblow)
+// Render: Core3D + hexShips3D (wybuch reaktora w scenie Core3D — reactorblow)
 const root = $('root');
 const canvas2d = $('c');
 const ctx2d = canvas2d.getContext('2d');
@@ -151,19 +150,18 @@ window.Core3D = Core3D;
 // Słońce daleko (jak w grze: kierunek światła kadłubów, shadow shafts).
 window.SUN = { x: -52000, y: -30000, r: 823 };
 
-const overlayView = { viewport: { w: W, h: H }, zoom: S.cam.zoom, center: { x: 0, y: 0 } };
-const overlay3D = initOverlay({ host: root, getView: () => overlayView });
-window.overlay3D = overlay3D;
-window.makeReactorBlow = createReactorBlowFactory(overlay3D.scene);
-// Iskry trafień i tarcia jak w grze (index.html: SparkSystem3D.init(ov.scene));
-// aktualizuje je overlay3D.tick, a coreFx3D sypie z tej puli przy cięciu i topieniu.
-SparkSystem3D.init(overlay3D.scene);
+// Wybuch reaktora jak w grze (port WebGPU, zadanie 20): pule cząstek w scenie Core3D, krok
+// klatki efektów (render Core3D) — bez overlaya z własnym WebGLRenderer.
+window.makeReactorBlow = createReactorBlowFactory(Core3D);
+// Iskry trafień i tarcia jak w grze (index.html: SparkSystem3D.init(Core3D.scene)) — krok
+// klatki efektów Core3D; coreFx3D sypie z tej puli przy cięciu i topieniu.
+SparkSystem3D.init(Core3D.scene);
 window.SparkSystem3D = SparkSystem3D;
 
 // Wybuch reaktora jak triggerReactorBlow3D w grze. Fali z refrakcją już nie ma:
-// profile reactorblow.js mają shockwave3D/heatHaze = null (tylko supernova).
+// profile reactorblow.js mają shockwave3D/heatHaze = null.
 function spawnReactorBlow(opts) {
-  overlay3D.spawn(window.makeReactorBlow(opts));
+  window.makeReactorBlow(opts);
 }
 
 // Modele reaktora (pod pancerzem, widoczne przez wyrwę) i żar/wyrzuty — oba na
@@ -938,10 +936,6 @@ function render(realDt, simFrameDt) {
   updateHexShips3D(cam, renderEntities, cullInfo);
   drawHexShips3D(ctx2d, W, H);
   const t2 = performance.now();
-  overlayView.viewport.w = W; overlayView.viewport.h = H;
-  overlayView.zoom = cam.zoom; overlayView.center.x = cam.x; overlayView.center.y = cam.y;
-  overlay3D.tick(realDt);
-  const t3 = performance.now();
 
   const view = { camX: cam.x, camY: cam.y, zoom: cam.zoom, W, H };
   const aim = aimPoint();
@@ -952,15 +946,14 @@ function render(realDt, simFrameDt) {
   const t4 = performance.now();
   S.lastFrameMs = t4 - t0;
   S.frameMsAvg = S.frameMsAvg * 0.9 + realDt * 1000 * 0.1;
-  S.perf = { update3d: t2 - t1, overlay: t3 - t2, overlay2d: t4 - t3, total: t4 - t0 };
+  S.perf = { update3d: t2 - t1, overlay2d: t4 - t2, total: t4 - t0 };
   updateHud(cores);
   updateAlarm(cores, realDt);
 }
 
 function renderInfo() {
   const r = Core3D.lastFrameRenderInfo?.total || Core3D.renderer?.info?.render || {};
-  const o = overlay3D.renderer?.info?.render || {};
-  return { calls: r.calls || 0, tris: r.triangles || 0, ovCalls: o.calls || 0 };
+  return { calls: r.calls || 0, tris: r.triangles || 0 };
 }
 
 function updateHud(cores) {
@@ -968,10 +961,10 @@ function updateHud(cores) {
   if (bodyCls.contains('shot') && !bodyCls.contains('hud')) return;
   const t = target();
   const ri = renderInfo();
-  const ov = overlay3D.getStats();
+  const rb = window.__reactorBlow3D?.stats || { blasts: 0, cpuMs: 0 };
   const lines = [];
   lines.push(`<b>RDZEŃ</b>  ${(1000 / Math.max(1, S.frameMsAvg)).toFixed(0)} FPS · klatka ${S.frameMsAvg.toFixed(1)} ms · Core3D ${(Core3D.lastFramePerf?.renderTotalMs || 0).toFixed(1)} ms`);
-  lines.push(`draw calle ${ri.calls} (Core3D) + ${ri.ovCalls} (overlay ${ov.lastRenderMs.toFixed(1)} ms) · FX rdzeni ${coreFx.stats.drawCalls} · wyrzuty ${coreFx.stats.vents} · model ${reactor3D.stats.instances} (${reactor3D.stats.drawCalls} dc)`);
+  lines.push(`draw calle ${ri.calls} (Core3D, z wybuchami reaktora: ${rb.blasts}, ${rb.cpuMs.toFixed(2)} ms CPU) · FX rdzeni ${coreFx.stats.drawCalls} · wyrzuty ${coreFx.stats.vents} · model ${reactor3D.stats.instances} (${reactor3D.stats.drawCalls} dc)`);
   lines.push(`solver: ${softBodyMode()} · krok 120 Hz · czas ×${S.timeScale.toFixed(2)}${S.paused ? ' · PAUZA' : ''} · sim ${S.simTime.toFixed(1)} s`);
   if (t) {
     const hp = t.isPlayer ? `${Math.round(t.hull.val)}/${t.hull.max}` : `${Math.round(Math.max(0, t.hp))}/${t.maxHp}`;
@@ -1133,7 +1126,6 @@ addEventListener('resize', () => {
   canvas2d.width = W; canvas2d.height = H;
   glCanvas.width = W; glCanvas.height = H;
   resizeHexShips3D(W, H);
-  overlay3D.resize();
 });
 
 function togglePause() {
@@ -1431,7 +1423,7 @@ function sampleFrames(seconds) {
     const tick = () => {
       const now = performance.now();
       const ri = renderInfo();
-      samples.push({ dt: now - prev, core: Core3D.lastFramePerf?.renderTotalMs || 0, js: S.lastFrameMs, calls: ri.calls, ovCalls: ri.ovCalls, ovMs: overlay3D.getStats().lastRenderMs, tris: ri.tris });
+      samples.push({ dt: now - prev, core: Core3D.lastFramePerf?.renderTotalMs || 0, js: S.lastFrameMs, calls: ri.calls, rbMs: window.__reactorBlow3D?.stats?.cpuMs || 0, tris: ri.tris });
       prev = now;
       if (now - t0 < seconds * 1000) requestAnimationFrame(tick);
       else {
@@ -1442,8 +1434,8 @@ function sampleFrames(seconds) {
           frames: samples.length,
           frameMsAvg: +avg('dt').toFixed(2), frameMsP95: +pct('dt', 0.95).toFixed(2), frameMsMax: +pct('dt', 1).toFixed(2),
           jsMsAvg: +avg('js').toFixed(2), jsMsMax: +pct('js', 1).toFixed(2),
-          core3dMsAvg: +avg('core').toFixed(2), overlayMsAvg: +avg('ovMs').toFixed(2), overlayMsMax: +pct('ovMs', 1).toFixed(2),
-          callsAvg: Math.round(avg('calls')), callsMax: pct('calls', 1), overlayCallsMax: pct('ovCalls', 1), trisMax: pct('tris', 1)
+          core3dMsAvg: +avg('core').toFixed(2), reactorMsAvg: +avg('rbMs').toFixed(2), reactorMsMax: +pct('rbMs', 1).toFixed(2),
+          callsAvg: Math.round(avg('calls')), callsMax: pct('calls', 1), trisMax: pct('tris', 1)
         });
       }
     };

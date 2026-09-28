@@ -523,16 +523,16 @@ function _shatterSingle(mesh, opts, worldTime) {
         const burstSize = opts.burstSize ?? 14;
         for (let i = 0; i < burstPulses; i++) {
             _scheduleCallback(i * burstSpacing, () => {
-                if (!_reactorFactory || typeof window === 'undefined' || !window.overlay3D?.spawn) return;
+                if (!_reactorFactory) return;
                 const radius = 10 + i * 8;
                 const angle = Math.random() * Math.PI * 2;
-                const burstFx = _reactorFactory({
+                // Wybuch reaktora w scenie Core3D (zadanie 20) — fabryka sama go uruchamia.
+                _reactorFactory({
                     x: overlayPos.x + Math.cos(angle) * radius,
                     y: overlayPos.y + Math.sin(angle) * radius,
                     size: burstSize * (1.0 + i * 0.22),
                     profile: 'fighter',
                 });
-                if (burstFx) window.overlay3D.spawn(burstFx);
             });
         }
     }
@@ -677,7 +677,7 @@ function _resolveBurstProfile(kind, worldRadius, opts = {}) {
 function _spawnBurstAtWorldPos(worldPos, worldRadius, opts = {}, kind = 'breakup', phase = 0) {
     if (!worldPos) return;
     if (_spawnStationEffectAtWorldPos(worldPos, worldRadius, opts, kind, phase)) return;
-    if (!_reactorFactory || typeof window === 'undefined' || !window.overlay3D?.spawn) return;
+    if (!_reactorFactory) return;
     const profile = _resolveBurstProfile(kind, worldRadius, opts);
     const baseSize =
         kind === 'shellFinal' ? 18 :
@@ -687,13 +687,12 @@ function _spawnBurstAtWorldPos(worldPos, worldRadius, opts = {}, kind = 'breakup
         kind === 'shellFinal' ? 1.35 :
         kind === 'shellSplit' ? 1.65 :
         kind === 'carrier' ? 0.95 : 1.0;
-    const fx = _reactorFactory({
+    _reactorFactory({
         x: worldPos.x,
         y: -worldPos.y,
         size: (opts.breakupBurstSize ?? baseSize) * sizeMul * THREE.MathUtils.clamp(0.95 + worldRadius * 0.022, 1.0, 3.2) * (0.88 + phase * 0.24),
         profile,
     });
-    if (fx) window.overlay3D.spawn(fx);
 }
 
 function _estimateObjectWorldRadius(object3D) {
@@ -743,7 +742,7 @@ function _computePlanarDetachVelocity(centerPos, originPos, speed, planarBias = 
 }
 
 function _spawnDetachBurst(object3D, opts, burstIndex = 0, burstCount = 1) {
-    if ((!_stationEffects || !_isStationExplosionPreset(opts)) && (!_reactorFactory || typeof window === 'undefined' || !window.overlay3D?.spawn)) return;
+    if ((!_stationEffects || !_isStationExplosionPreset(opts)) && !_reactorFactory) return;
     const worldRadius = _estimateObjectWorldRadius(object3D);
     const phase = burstCount > 0 ? (burstIndex / Math.max(1, burstCount - 1)) : 0;
     const burstWorldPos = _computeBurstWorldPos(object3D, opts, phase);
@@ -758,7 +757,7 @@ function _spawnDetachBurst(object3D, opts, burstIndex = 0, burstCount = 1) {
 
 function _spawnBreakupBurst(object3D, opts = {}, kind = 'breakup') {
     if (!object3D) return;
-    if ((!_stationEffects || !_isStationExplosionPreset(opts)) && (!_reactorFactory || typeof window === 'undefined' || !window.overlay3D?.spawn)) return;
+    if ((!_stationEffects || !_isStationExplosionPreset(opts)) && !_reactorFactory) return;
     const worldRadius = _estimateObjectWorldRadius(object3D);
     const phase = kind === 'shellSplit' ? 0.75 : kind === 'shellFinal' ? 1.0 : 0.35;
     const burstWorldPos = _computeBurstWorldPos(object3D, opts, phase);
@@ -1265,7 +1264,7 @@ export const Destruction3D = {
      * Must be called once before using any other method.
      * @param {object} cfg
      * @param {THREE.Scene}  cfg.scene
-     * @param {Function}     [cfg.reactorFactory]   createReactorBlowFactory(scene) return value
+     * @param {Function}     [cfg.reactorFactory]   createReactorBlowFactory(Core3D) — spawn({ x, y, size, profile }) uruchamia wybuch
      * @param {object}       [cfg.shockwaveManager] Shockwave3DManager instance
      * @param {object}       [cfg.stationEffects] station destruction effects manager
      */
@@ -1747,18 +1746,16 @@ export const Destruction3D = {
         // Sparks via reactorFactory
         if (!stationFinalHandled && _reactorFactory && sparks > 0) {
             const size = Math.sqrt(sparks) * 6;
-            const fx = _reactorFactory({
+            // Wybuch reaktora w scenie Core3D (zadanie 20): fabryka sama go uruchamia i prowadzi
+            // (krok klatki efektów), dawniej efekt trzeba było oddać tickowi overlaya.
+            _reactorFactory({
                 x:       worldPos.x,
                 y:       overlayY,
                 size,
                 profile: reactorProfile,
             });
-            // Register with overlay so the effect gets update() called each frame
-            if (fx && typeof window !== 'undefined' && window.overlay3D?.spawn) {
-                window.overlay3D.spawn(fx);
-            }
 
-            if (reactorProfile === 'final' && typeof window !== 'undefined' && window.overlay3D?.spawn) {
+            if (reactorProfile === 'final') {
                 const secondaryBursts = Math.max(0, opts.finalSecondaryBursts ?? 0);
                 const spread = Math.max(40, opts.finalSecondaryBurstSpread ?? 120);
                 const burstSize = size * Math.max(0.08, opts.finalSecondaryBurstSizeMul ?? 0.22);
@@ -1766,13 +1763,12 @@ export const Destruction3D = {
                     const angle = (Math.PI * 2 * i) / Math.max(1, secondaryBursts) + Math.random() * 0.35;
                     const radius = spread * (0.72 + Math.random() * 0.4);
                     _scheduleCallback(0.06 + i * 0.05, () => {
-                        const burstFx = _reactorFactory({
+                        _reactorFactory({
                             x: worldPos.x + Math.cos(angle) * radius,
                             y: overlayY + Math.sin(angle) * radius,
                             size: burstSize * (0.9 + Math.random() * 0.35),
                             profile: 'chain',
                         });
-                        if (burstFx) window.overlay3D.spawn(burstFx);
                     });
                 }
             }

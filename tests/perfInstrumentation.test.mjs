@@ -168,11 +168,11 @@ test('PerfHUD exposes the untracked frame gap in the panel', () => {
   assert.ok(indexHtml.includes('id="barFrameUntracked"'), 'barFrameUntracked is missing');
   assert.ok(indexHtml.includes('frameUntrackedTime'), 'frameUntrackedTime display state is missing');
   // Untracked = klatka minus wszystkie mierzone buckety najwyższego poziomu
-  // (fizyka, rysowanie, deformacje destruktora, CanvasVFX, overlay FX 3D).
+  // (fizyka, rysowanie, deformacje destruktora, CanvasVFX, lot rakiet — dawny kubełek overlaya).
   assert.ok(indexHtml.includes('this.display.frameUntrackedTime = Math.max(0, this.display.frameMs'), 'frame gap calculation is missing');
   assert.ok(indexHtml.includes('- this.display.physicsTime'), 'frame gap should subtract physics time');
   assert.ok(indexHtml.includes('- this.display.drawTime'), 'frame gap should subtract draw time');
-  assert.ok(indexHtml.includes('- this.display.overlayFxTime'), 'frame gap should subtract overlay FX time');
+  assert.ok(indexHtml.includes('- this.display.rocketsTime'), 'frame gap should subtract rocket flight time');
 });
 
 test('PerfHUD exposes enemy versus allied NPC counts', () => {
