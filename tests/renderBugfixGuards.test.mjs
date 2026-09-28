@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-// Strażnicy poprawek błędów z audytu rysowania (2026-09-23). Część to regexy
-// w stylu repo (index.html i moduły z WebGL nie wczytają się w node), a polityka
-// degradacji heks-asteroid jest testowana behawioralnie.
+// Strażnicy poprawek błędów z audytu rysowania (2026-09-23): regexy w stylu repo
+// (index.html i moduły z WebGL nie wczytają się w node). Testy degradacji heks-asteroid
+// odeszły ze starym polem (zadanie 21 portu WebGPU).
 
 // CRLF → LF: regexy niżej liczą na `\n`, a checkout z core.autocrlf daje CRLF.
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
@@ -29,15 +29,14 @@ test('paski HP/tarczy tylko przy uszkodzeniu (koniec tautologii)', () => {
   assert.match(indexHtml, /const showShield = shieldMax > 0 && shieldVal < shieldMax - 0\.5;/);
 });
 
-test('kolizje statek-asteroida w physicsStep z prawdziwym dt, nie w render()', () => {
+test('kolizje statek-olbrzym pasa w physicsStep z prawdziwym dt, nie w render()', () => {
   const render = indexHtml.match(/function render\(alpha, frameDt\) \{[\s\S]*?\n    }\n/)?.[0] || '';
   assert.ok(render.length > 0);
-  assert.doesNotMatch(render, /checkShipCollisions\(/);
+  assert.doesNotMatch(render, /collideShip\(/);
   assert.match(indexHtml, /stepShipAsteroidCollisions\(dt\);/);
-  assert.match(indexHtml, /field\.checkShipCollisions\(ship, dt\)/);
-  const field = read('src/3d/asteroidField3D.js');
-  assert.match(field, /checkShipCollisions\(ship, dt = 1 \/ 60\)/);
-  assert.match(field, /DestructorSystem\.collideEntities\(ship, promotedEntity, dt, true\)/);
+  // Zadanie 21: stare pole (sprite'y + heksy) usunięte — kolizje tylko z olbrzymami pasa (SDF).
+  assert.match(indexHtml, /belt\.collideShip\(ship\)/);
+  assert.doesNotMatch(indexHtml, /asteroidField|OLD_ASTEROIDS_ENABLED|asteroidyStare/);
 });
 
 // Fala z refrakcją (window.trigger3DShockwave) zostaje wyłącznie dla rakiet
@@ -130,92 +129,4 @@ test('destrukcja stacji nie rusza zasobów szablonu GLB', () => {
   const debris = read('src/vfx/destructionDebrisManager.js');
   assert.match(debris, /!child\.geometry\.userData\?\.__sharedTemplateAsset/);
   assert.match(debris, /!m\.userData\?\.__sharedTemplateAsset/);
-});
-
-// ── Heks-asteroidy: degradacja i zwalnianie areny (behawioralnie) ────────────
-
-async function makeField() {
-  const { AsteroidField } = await import('../src/3d/asteroidField3D.js');
-  const field = Object.create(AsteroidField.prototype);
-  field.sunX = 0;
-  field.sunY = 0;
-  field._beltBandList = [{ minR: 100000, maxR: 120000 }];
-  field.activeHexAsteroids = new Set();
-  field.activeHexById = new Map();
-  field._hexDemoteBuffer = [];
-  field._nextHexDemoteCheckMs = 0;
-  field.shown = [];
-  field._showAsteroidInstance = (a) => { field.shown.push(a); a._instancedHidden = false; };
-  return field;
-}
-
-function makeHexAsteroid(overrides = {}) {
-  const asteroid = { id: 7, alive: true, worldX: 110000, worldY: 0, scale: 400, _instancedHidden: true };
-  const entity = {
-    asteroidRef: asteroid,
-    vx: 0,
-    vy: 0,
-    __shipNearMs: 0,
-    __promotedAtMs: 0,
-    hexGrid: { shards: new Array(10).fill({}), activeStructuralCount: 10, baseStructuralCount: 10 }
-  };
-  asteroid.hexEntity = entity;
-  Object.assign(entity, overrides);
-  return { asteroid, entity };
-}
-
-function withWindow(camera, fn) {
-  const prev = globalThis.window;
-  globalThis.window = { innerWidth: 1920, innerHeight: 1080, camera, splitScreenMode: false };
-  try { return fn(); } finally {
-    if (prev === undefined) delete globalThis.window;
-    else globalThis.window = prev;
-  }
-}
-
-test('pasma pasów: statek daleko od pasów nie robi zapytania kolizji', async () => {
-  const field = await makeField();
-  assert.equal(field._isNearAnyBelt(110000, 0, 1000), true);
-  assert.equal(field._isNearAnyBelt(50000, 0, 1000), false);
-  assert.equal(field._isNearAnyBelt(0, 125000, 9000), true, 'margines obejmuje dryf');
-  field._beltBandList = [];
-  assert.equal(field._isNearAnyBelt(0, 0, 0), true, 'bez danych o pasmach — zachowawczo');
-});
-
-test('degradacja: tylko nietknięta, stojąca, bezczynna i poza kadrem', async () => {
-  const field = await makeField();
-  const farCam = { x: 0, y: 0, zoom: 1 };
-  const nowMs = 60000;
-  withWindow(farCam, () => {
-    const ok = makeHexAsteroid();
-    assert.equal(field._canDemoteHexAsteroid(ok.entity, nowMs), true);
-
-    const damaged = makeHexAsteroid();
-    damaged.entity.hexGrid.activeStructuralCount = 9;
-    assert.equal(field._canDemoteHexAsteroid(damaged.entity, nowMs), false, 'uszkodzonej nie ruszamy');
-
-    const recent = makeHexAsteroid({ __shipNearMs: nowMs - 1000 });
-    assert.equal(field._canDemoteHexAsteroid(recent.entity, nowMs), false, 'statek był niedawno obok');
-
-    const moving = makeHexAsteroid({ vx: 30 });
-    assert.equal(field._canDemoteHexAsteroid(moving.entity, nowMs), false, 'wciąż dryfuje');
-  });
-  withWindow({ x: 110000, y: 0, zoom: 1 }, () => {
-    const visible = makeHexAsteroid();
-    assert.equal(field._canDemoteHexAsteroid(visible.entity, nowMs), false, 'bez podmiany na oczach gracza');
-  });
-});
-
-test('degradacja zwalnia encję: dead, poza listami, instancja z powrotem widoczna', async () => {
-  const field = await makeField();
-  const { asteroid, entity } = makeHexAsteroid();
-  field.activeHexAsteroids.add(entity);
-  field.activeHexById.set(asteroid.id, entity);
-  withWindow({ x: 0, y: 0, zoom: 1 }, () => field._demoteIdleHexAsteroids(60000));
-  assert.equal(entity.dead, true);
-  assert.equal(entity.isCollidable, false);
-  assert.equal(field.activeHexAsteroids.size, 0);
-  assert.equal(field.activeHexById.size, 0);
-  assert.equal(asteroid.hexEntity, null);
-  assert.deepEqual(field.shown, [asteroid]);
 });

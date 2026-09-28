@@ -6,47 +6,10 @@ import { BeltGiants, planBeltGiantSites, BELT_GIANTS_CONFIG } from '../src/game/
 import { buildGiantPlan, GiantRock, GIANT_PRESET_IDS, fillGiantGrid } from '../src/game/asteroidGiants.js';
 import { createNpcCollisionBody, loadNpcCollisionBody, storeNpcCollisionBody } from '../src/game/npcCollisionBody.js';
 import * as DEMO from '../dema/asteroidy-webgpu/world.js';
+import { wallGiant, syncBuilderFactory, wallBeltGiants } from './helpers/beltGiantWall.mjs';
 
-// Olbrzym z siatką syntetyczną: lita ściana dla x lokalnego ≥ 0, próżnia po lewej
-// (normalna SDF = (−1, 0)). Plan prawdziwego presetu, siatka bez sekund liczenia bryły.
-function wallGiant(presetId, seed, x, y) {
-  const plan = buildGiantPlan(presetId, seed);
-  const g = new GiantRock(plan, x, y);
-  const { nx, ny, nz, ext } = g.dims;
-  const v = plan.voxel;
-  for (let k = 0; k < nz; k++) {
-    for (let j = 0; j < ny; j++) {
-      for (let i = 0; i < nx; i++) {
-        const sdf = -(i * v - ext[0]);
-        g.grid[(k * ny + j) * nx + i] = Math.max(1, Math.min(255, Math.round(128 + (sdf / g.band) * 127)));
-      }
-    }
-  }
-  g.ready = true;
-  return g;
-}
-
-// GiantBuilder zastępczy: siatka od razu (bez workerów), licznik budów.
-function syncBuilderFactory(make, counter) {
-  return () => ({
-    build(id, seed, x, y) {
-      counter.n++;
-      const giant = make(id, seed, x, y);
-      return { giant, promise: Promise.resolve(giant) };
-    },
-    dispose() {}
-  });
-}
-
-function wallBelt(presetId = 'arch', x = 1000, y = -2000, counter = { n: 0 }) {
-  const giants = new BeltGiants({
-    field: null,
-    sites: [{ id: presetId, seed: 1, x, y }],
-    createBuilder: syncBuilderFactory(wallGiant, counter)
-  });
-  giants.requestNear(x, y);
-  return giants;
-}
+// Olbrzym-ściana (lita skała dla x lokalnego ≥ 0) — tests/helpers/beltGiantWall.mjs.
+const wallBelt = (presetId = 'arch', x = 1000, y = -2000, counter = { n: 0 }) => wallBeltGiants(presetId, x, y, counter);
 
 function atlasBody(x, y, vx = 900) {
   return { pos: { x, y }, vel: { x: vx, y: 0 }, angle: 0, w: 1800, h: 806, radius: 0 };

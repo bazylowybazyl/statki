@@ -9769,9 +9769,9 @@
       return waitForCondition(() => planetScene3D || planetStationsReady, 2500);
     }
 
-    // Mgła pasa jest w całości PRZESTRZENNA (addytywne płaty pyłu w WebGL,
-    // asteroidBeltBackdrop3D) — pełnoekranowy wash 2D usunięty: gradient 'screen'
-    // szarzył cały kadr (łącznie z planetami w tle), a 8-bitowa kwantyzacja
+    // Mgła pasa jest w całości PRZESTRZENNA (płaty mgły, ośrodek objętościowy
+    // i zasłona pola — src/3d/asteroids/) — pełnoekranowy wash 2D usunięty: gradient
+    // 'screen' szarzył cały kadr (łącznie z planetami w tle), a 8-bitowa kwantyzacja
     // radialnego gradientu robiła koncentryczne prążki na ekranie.
 
 

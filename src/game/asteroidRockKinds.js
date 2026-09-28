@@ -12,7 +12,7 @@ import { ASTEROID_TYPES } from '../data/asteroidTypes.js';
 
 /**
  * Typy skał pola: indeksy 0–6 = ASTEROID_TYPES (rudy gry), 7 = skała neutralna.
- * Stare pole (asteroidField3D.js) zna tylko rudy — neutralna żyje wyłącznie tu.
+ * Dane gry (asteroidTypes.js) znają tylko rudy — neutralna żyje wyłącznie tu.
  */
 // 8 = skała ENERGETYCZNA: naładowana, wywołuje burze (asteroidStorms.js) —
 // powstaje tylko w komórkach burz gęstych pól, nie ze składu pasa.
