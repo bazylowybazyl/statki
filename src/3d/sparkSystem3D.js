@@ -1,217 +1,88 @@
 // src/3d/sparkSystem3D.js
-import * as THREE from 'three';
+//
+// ISKRY TRAFIEŃ I TARCIA — API gry bez zmian (`init`, `emit(pX, pY, vX, vY, life, size, gain)`,
+// `burst`, `update`, `grindingBurst`, `grindingSeam`, `setColor`, `dispose`), od zadania 19
+// na puli iskier z dema rakiet (src/3d/rockets/sparks.js) w scenie Core3D — dawniej
+// ShaderMaterial w scenie overlaya (osobny WebGLRenderer).
+//
+// Różnice względem dawnego modułu:
+//   • barwa PER ISKRA: `burst(..., kolor)` barwi tylko swoją serię (dawniej przestawiał
+//     jedną globalną barwę wszystkich żywych iskier — „wszystkie pomarańczowe” albo
+//     wszystkie w barwie ostatniej serii); `emit` bierze barwę domyślną (`setColor`,
+//     domyślnie dawna 0xff4d00) albo jawną [r, g, b] liniową jako 8. argument;
+//   • losowość z fxRandom (warstwa efektów), nie z Math.random gry;
+//   • czas: zegar efektów Core3D (biegnie też w pauzie, jak dawny tick overlaya), początek
+//     pul i epoki z Core3D.fx.origin (FxPoolOrigin) — `update(dt)` zostaje dla zgodności
+//     (bez Core3D, np. testy w Node: zegar wewnętrzny).
+//
+// NOŚNIK (src/game/carrierVelocity.js): iskra trafienia rodzi się z prędkością trafionego
+// kadłuba i leci z nim (ActiveCarrier przy narodzinach, pozycja z zegara gry SimClock);
+// opór działa już tylko na jej ruch własny.
+
+import { SparkPool } from './rockets/sparks.js';
+import { SPARK_COLORS } from './rockets/palette.js';
+import { Core3D } from './core3d.js';
 import { sceneOriginNearCamera } from './sceneOrigin.js';
 import { SimClock } from '../game/simClock.js';
 import { ActiveCarrier } from '../game/carrierVelocity.js';
+import { fxRandom } from './fx/fxRandom.js';
 
-// NOŚNIK (src/game/carrierVelocity.js): iskra trafienia rodzi się z prędkością
-// trafionego kadłuba i leci z nim (w próżni nic jej nie zatrzyma); opór 0,5/s
-// działa już tylko na jej ruch własny. Atrybut iCarrier = (vx, vy świata, czas
-// pozy względem epoki puli, zegar), uniformy = „teraz” obu zegarów gry.
-// Epoka: pusta pula bierze bieżący czas, żywa przesuwa ją po CARRIER_EPOCH_SPAN
-// (float32 na GPU — czas gry rośnie godzinami).
-const CARRIER_EPOCH_SPAN = 600;
-
-const sparkVertexShader = /* glsl */`
-  uniform float uTime;
-  uniform float uCarrierRender;
-  uniform float uCarrierSim;
-
-  attribute vec3 iPosition;
-  attribute vec3 iVelocity;
-  attribute float iStartTime;
-  attribute float iLifeTime;
-  attribute float iSize;
-  attribute vec4 iCarrier;
-  attribute float iGain;
-
-  varying float vAge;
-  varying vec2 vUv;
-  varying float vSpeed;
-  varying float vStartTime;
-  varying float vGain;
-
-  void main() {
-    vUv = uv;
-    vStartTime = iStartTime;
-    vGain = iGain;
-
-    // Guard: Bezpieczne cull-owanie (unikamy czarnych kwadratow na niektorych sterownikach GPU)
-    if (iLifeTime <= 0.0) {
-      gl_Position = vec4(2.0, 2.0, 2.0, 1.0); // Odcina wierzcholek poza ekranem
-      vAge = 2.0;
-      vSpeed = 0.0;
-      return;
-    }
-
-    float age = (uTime - iStartTime) / iLifeTime;
-    vAge = age;
-
-    if (age < 0.0 || age > 1.0) {
-      gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
-      return;
-    }
-
-    float timeAlive = uTime - iStartTime;
-    float drag = 0.5;
-    vec3 currentVel = iVelocity * exp(-drag * timeAlive);
-    vec3 currentPos = iPosition + iVelocity * (1.0 - exp(-drag * timeAlive)) / drag;
-    // Nośnik: przesunięcie z kadłubem (smuga iskry zostaje z ruchu własnego).
-    float carrierNow = iCarrier.w > 0.5 ? uCarrierRender : uCarrierSim;
-    currentPos.xz += iCarrier.xy * (carrierNow - iCarrier.z);
-
-    // FIZYKA GRY: Y to u nas Z w WebGL! Przelaczamy fizyke na plaszczyzne XZ
-    float speed = length(currentVel.xz);
-    vSpeed = speed;
-    float visualSpeed = min(speed, 1400.0);
-    float visualSize = clamp(iSize, 0.12, 0.9);
-
-    vec2 fwd2 = (speed > 0.01) ? normalize(currentVel.xz) : vec2(1.0, 0.0);
-    vec2 right2 = vec2(-fwd2.y, fwd2.x);
-
-    float thickness = min(((3.0 + visualSpeed * 0.0012) * (1.0 - age * 0.6)) * visualSize, 9.0);
-    float sparkLength = min((visualSpeed * 0.018 + 12.0) * visualSize, 95.0);
-
-    // Offset geometryczny quada
-    vec2 offset = fwd2 * (position.x * sparkLength) + right2 * (position.y * thickness);
-
-    // Rzutowanie na plaszczyzne XZ dla kamery Orthographic (patrzacej w dol).
-    // Pozycje sa wzgledem mesh.position (poczatek puli, patrz emit) - duzy
-    // kawalek skladany w modelViewMatrix na CPU w double, float32 tu dostaje
-    // male liczby (swiat lezy przy 5-10 mln j.).
-    vec3 localPos = vec3(currentPos.x + offset.x, currentPos.y, currentPos.z + offset.y);
-
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(localPos, 1.0);
-  }
-`;
-
-const sparkFragmentShader = /* glsl */`
-  uniform float uTime;
-  uniform vec3 uSparkColor;
-
-  varying float vAge;
-  varying vec2 vUv;
-  varying float vSpeed;
-  varying float vStartTime;
-  varying float vGain;
-
-  void main() {
-    if (vAge < 0.0 || vAge > 1.0) discard;
-
-    float intensity = 1.0 - vUv.x;
-    float edge = sin(vUv.y * 3.14159);
-    intensity *= pow(edge, 1.5);
-    intensity *= (1.0 - pow(vAge, 2.0));
-
-    float flicker = 0.6 + 0.4 * sin(uTime * 60.0 + vStartTime * 123.45);
-    intensity *= mix(1.0, flicker, smoothstep(0.2, 0.8, vAge));
-
-    vec3 colorWhite = vec3(1.0, 1.0, 1.0);
-    vec3 colorCore  = mix(colorWhite, uSparkColor, 0.5);
-    vec3 colorMid   = uSparkColor;
-    vec3 colorCool  = vec3(0.5, 0.1, 0.0);
-    vec3 colorDead  = vec3(0.1, 0.02, 0.0);
-
-    vec3 color;
-    if      (vAge < 0.1) color = mix(colorWhite, colorCore, vAge / 0.1);
-    else if (vAge < 0.3) color = mix(colorCore, colorMid, (vAge - 0.1) / 0.2);
-    else if (vAge < 0.7) color = mix(colorMid, colorCool, (vAge - 0.3) / 0.4);
-    else                 color = mix(colorCool, colorDead, (vAge - 0.7) / 0.3);
-
-    float boost = mix(4.0, 0.5, pow(vAge, 0.5));
-
-    // vGain: jasność serii (emit, argument gain). Iskry trafień mają 1, tarcie
-    // kadłubów mniej — pod bloomem overlaya (próg 0,15) każda iskra świeci.
-    gl_FragColor = vec4(color * intensity * boost * vGain, intensity);
-  }
-`;
-
-const MAX_SPARKS = 20000;
-const DEFAULT_COLOR = new THREE.Color(0xff4d00);
 const MIN_SPARK_SIZE = 0.12;
 const MAX_SPARK_SIZE = 0.9;
 const MIN_SPARK_LIFE = 0.05;
 const MAX_SPARK_LIFE = 0.9;
+/** Opór ruchu własnego iskier API (dawny shader: drag 0,5). */
+const API_SPARK_DRAG = 0.5;
 const MAX_GRINDING_VISUAL_ENERGY = 650;
 // Energia wyrzutu snopu tarcia z prędkości styku (j./s): sufit 650 przy ~240 j./s.
 // Dawniej liczona z IMPULSU (masa × prędkość) — przy masach kadłubów na belkach
-// (10⁵–10⁶) sufit był osiągany przy każdym dotyku, więc dosunięcie burtą
-// sypało jak taran.
+// (10⁵–10⁶) sufit był osiągany przy każdym dotyku, więc dosunięcie burtą sypało jak taran.
 const GRIND_ENERGY_PER_SPEED = 2.7;
 
-let mesh = null;
-let material = null;
-let geometry = null;
-let iPositions, iVelocities, iStartTimes, iLifeTimes, iSizes, iCarriers, iGains;
-let carrierEpoch = 0;
-let idx = 0;
-let isDirty = false;
-let globalTime = 0;
-// Pula 20 000 iskier wisiala w scenie od startu gry z `frustumCulled = false`,
-// wiec karta liczyla vertex shader dla wszystkich slotow na kazda klatke, nawet
-// gdy nikt nie strzelal. Trzymamy high-water uzytych slotow, moment wygasniecia
-// najdluzszej iskry i zakres dotknietych indeksow — dzieki temu instanceCount
-// spada do 0, siatka znika ze sceny, a upload obejmuje tylko zapisany wycinek.
-let highWater = 0;
-let liveUntil = -Infinity;
-let dirtyLo = -1;
-let dirtyHi = -1;
-// Poczatek ukladu puli przy kamerze gry (x, z sceny overlay = x, y swiata).
-// Swiat lezy przy 5-10 mln j., gdzie float32 ma krok 0,5 j.: bezwzgledne
-// iPosition drgaly na GPU ~1 px x zoom, a ruch iskry szedl skokami po 0,5 j.
-// Poczatek jest "lepki": pusta pula bierze go od kamery przy pierwszej iskrze,
-// zywa trzyma go, az kamera odjedzie o SPARK_REBASE_DIST (rebaseSparks w
-// update), wiec zapisanych danych zwykle nie trzeba przesuwac (iskra zyje
-// <= 0,9 s). Iskry daleko od kamery maja wieksze liczby — i tak ich nie widac.
-const SPARK_REBASE_DIST = 100000;
-let originX = 0;
-let originZ = 0;
+let pool = null;
+let step = null;
+let ownClock = 0;          // bez Core3D.fx (Node, narzędzia): zegar z update(dt)
 const _camOrigin = { x: 0, y: 0 };
+// Barwa domyślna (liniowa) i robocza barwa serii burst.
+const _defaultColor = [SPARK_COLORS.game[0], SPARK_COLORS.game[1], SPARK_COLORS.game[2]];
+const _burstColor = [0, 0, 0];
 
-function cameraOrigin() {
-  const o = sceneOriginNearCamera(_camOrigin);
-  // Scena Core3D ma (x, -y) swiata; overlay: x = x, z = y swiata.
-  o.y = -o.y;
-  return o;
+function clamp(v, a, b) {
+  return Math.min(b, Math.max(a, v));
 }
 
-function setSparkOrigin(x, z) {
-  originX = x;
-  originZ = z;
-  mesh.position.set(x, 0, z);
+function srgbToLinear(c) {
+  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
 }
 
-// Przesuwa epokę czasów nośnika żywych iskier (rzadkie: po CARRIER_EPOCH_SPAN).
-function rebaseCarrierEpoch(epoch) {
-  const shift = carrierEpoch - epoch;
-  for (let i = 0; i < highWater; i++) iCarriers[i * 4 + 2] += shift;
-  if (highWater > 0) {
-    dirtyLo = 0;
-    if (dirtyHi < highWater - 1) dirtyHi = highWater - 1;
-    isDirty = true;
+/** '#rrggbb' / liczba / THREE.Color → liniowe [r, g, b] w `out`. */
+function colorToLinear(hex, out) {
+  if (hex && typeof hex === 'object' && Number.isFinite(hex.r)) {
+    out[0] = hex.r; out[1] = hex.g; out[2] = hex.b;
+    return out;
   }
-  carrierEpoch = epoch;
+  const v = typeof hex === 'number' ? hex : parseInt(String(hex).replace('#', ''), 16);
+  if (!Number.isFinite(v)) { out[0] = _defaultColor[0]; out[1] = _defaultColor[1]; out[2] = _defaultColor[2]; return out; }
+  out[0] = srgbToLinear(((v >> 16) & 255) / 255);
+  out[1] = srgbToLinear(((v >> 8) & 255) / 255);
+  out[2] = srgbToLinear((v & 255) / 255);
+  return out;
 }
 
-// Przesuwa zywe iskry do nowego poczatku (caly uzyty zakres na GPU).
-function rebaseSparks(x, z) {
-  const dx = originX - x;
-  const dz = originZ - z;
-  for (let i = 0; i < highWater; i++) {
-    iPositions[i * 3] += dx;
-    iPositions[i * 3 + 2] += dz;
-  }
-  if (highWater > 0) {
-    dirtyLo = 0;
-    if (dirtyHi < highWater - 1) dirtyHi = highWater - 1;
-    isDirty = true;
-  }
-  setSparkOrigin(x, z);
+// Początek pul Core3D przed pierwszą klatką efektów (iskra wysypana przed pierwszym renderem):
+// ustawiamy go od kamery — bez tego dane lokalne liczone od (0, 0) rozjechałyby się przy
+// inicjalizacji początku (FxPoolOrigin nie przesuwa danych przy pierwszym ustawieniu).
+function ensureOrigin() {
+  const o = pool?.origin;
+  if (!o || o.initialized) return;
+  const c = sceneOriginNearCamera(_camOrigin);
+  o.update(c.x, c.y, Number(Core3D.fx?.time) || 0, SimClock.sim, SimClock.render);
+  pool.fxTime = o.timeFx.value;
 }
 
 // Aproksymacja krzywej Gaussa (od -1.0 do 1.0)
 function randomGaussian() {
-  return ((Math.random() + Math.random() + Math.random()) / 1.5) - 1.0;
+  return ((fxRandom.next() + fxRandom.next() + fxRandom.next()) / 1.5) - 1.0;
 }
 
 // Kształt snopu tarcia z prędkości styku: energia wyrzutu i udział normalnej
@@ -229,9 +100,9 @@ function grindShape(approachSpeed, slideSpeed) {
 // Kierunek glowny snopu: normalna + znos z poslizgu.
 const _mainDir = { x: 0, y: 0 };
 function grindMainDir(normalX, normalY, tangentX, tangentY, bounceRatio) {
-  let mDx = normalX * (bounceRatio + 0.1) + tangentX * (1.0 - bounceRatio);
-  let mDy = normalY * (bounceRatio + 0.1) + tangentY * (1.0 - bounceRatio);
-  const mLen = Math.hypot(mDx, mDy) || 1;
+  const mDx = normalX * (bounceRatio + 0.1) + tangentX * (1.0 - bounceRatio);
+  const mDy = normalY * (bounceRatio + 0.1) + tangentY * (1.0 - bounceRatio);
+  const mLen = Math.sqrt(mDx * mDx + mDy * mDy) || 1;
   _mainDir.x = mDx / mLen;
   _mainDir.y = mDy / mLen;
   return _mainDir;
@@ -247,23 +118,24 @@ function emitGrindCluster(x, y, normalX, normalY, tangentX, tangentY, count, vis
   const mDy = mainDir.y;
 
   for (let i = 0; i < count; i++) {
-    const weight = Math.pow(Math.random(), 2.0);
+    const r = fxRandom.next();
+    const weight = r * r;
     const scatterAmount = (1.0 - weight) * 2.0;
 
-    // Rozrzut na plaszczyznie 2D (Y w WebGL to tutaj fizycznie Z)
-    const pX = x + tangentX * randomGaussian() * spreadRadius + normalX * Math.random() * 20;
-    const pY = y + tangentY * randomGaussian() * spreadRadius + normalY * Math.random() * 20;
+    // Rozrzut na plaszczyznie 2D
+    const pX = x + tangentX * randomGaussian() * spreadRadius + normalX * fxRandom.next() * 20;
+    const pY = y + tangentY * randomGaussian() * spreadRadius + normalY * fxRandom.next() * 20;
 
     const dX = mDx + tangentX * randomGaussian() * scatterAmount + normalX * Math.abs(randomGaussian()) * scatterAmount;
     const dY = mDy + tangentY * randomGaussian() * scatterAmount + normalY * Math.abs(randomGaussian()) * scatterAmount;
-    const dLen = Math.hypot(dX, dY) || 1;
+    const dLen = Math.sqrt(dX * dX + dY * dY) || 1;
 
-    const speed = 180 + (visualEnergy * 0.18) + (weight * visualEnergy * 0.28) + Math.random() * 260;
+    const speed = 180 + (visualEnergy * 0.18) + (weight * visualEnergy * 0.28) + fxRandom.next() * 260;
 
     const vX = (dX / dLen) * speed + baseVx;
     const vY = (dY / dLen) * speed + baseVy;
 
-    const lifeTime = 0.1 + (weight * 0.5) + Math.random() * 0.2;
+    const lifeTime = 0.1 + (weight * 0.5) + fxRandom.next() * 0.2;
     const size = 0.18 + weight * 0.42;
 
     SparkSystem3D.emit(pX, pY, vX, vY, lifeTime, size, gain);
@@ -273,173 +145,106 @@ function emitGrindCluster(x, y, normalX, normalY, tangentX, tangentY, count, vis
 export const SparkSystem3D = {
   isInitialized: false,
 
+  /** Pula (src/3d/rockets/sparks.js) — iskry rakiet wysypuje ją reżyser efektów. */
+  get pool() { return pool; },
+
+  /**
+   * Pula w scenie Core3D (warstwa 0, pass ortho). `scene` — dawniej scena overlaya; gdy
+   * Core3D jest zainicjowany, iskry idą zawsze do jego sceny (overlay i jego renderer
+   * odchodzą — zadanie 20), inaczej do podanej (testy w Node).
+   */
   init(scene) {
     if (this.isInitialized) return;
-
-    const baseGeo = new THREE.BufferGeometry();
-    const verts = new Float32Array([
-      0, -0.5, 0,  1, -0.5, 0,  1, 0.5, 0,
-      0, -0.5, 0,  1, 0.5, 0,   0, 0.5, 0
-    ]);
-    const uvs = new Float32Array([
-      0, 0,  1, 0,  1, 1,
-      0, 0,  1, 1,  0, 1
-    ]);
-    baseGeo.setAttribute('position', new THREE.BufferAttribute(verts, 3));
-    baseGeo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-
-    geometry = new THREE.InstancedBufferGeometry();
-    geometry.setAttribute('position', baseGeo.getAttribute('position'));
-    geometry.setAttribute('uv', baseGeo.getAttribute('uv'));
-    geometry.instanceCount = 0;
-
-    iPositions  = new Float32Array(MAX_SPARKS * 3);
-    iVelocities = new Float32Array(MAX_SPARKS * 3);
-    iStartTimes = new Float32Array(MAX_SPARKS).fill(-999.0);
-    iLifeTimes  = new Float32Array(MAX_SPARKS);
-    iSizes      = new Float32Array(MAX_SPARKS);
-    iCarriers   = new Float32Array(MAX_SPARKS * 4);
-    iGains      = new Float32Array(MAX_SPARKS).fill(1.0);
-
-    geometry.setAttribute('iPosition',  new THREE.InstancedBufferAttribute(iPositions, 3));
-    geometry.setAttribute('iVelocity',  new THREE.InstancedBufferAttribute(iVelocities, 3));
-    geometry.setAttribute('iStartTime', new THREE.InstancedBufferAttribute(iStartTimes, 1));
-    geometry.setAttribute('iLifeTime',  new THREE.InstancedBufferAttribute(iLifeTimes, 1));
-    geometry.setAttribute('iSize',      new THREE.InstancedBufferAttribute(iSizes, 1));
-    geometry.setAttribute('iCarrier',   new THREE.InstancedBufferAttribute(iCarriers, 4));
-    geometry.setAttribute('iGain',      new THREE.InstancedBufferAttribute(iGains, 1));
-    carrierEpoch = SimClock.sim;
-
-    material = new THREE.ShaderMaterial({
-      vertexShader: sparkVertexShader,
-      fragmentShader: sparkFragmentShader,
-      uniforms: {
-        uTime:       { value: 0.0 },
-        uCarrierRender: { value: 0.0 },
-        uCarrierSim:    { value: 0.0 },
-        uSparkColor: { value: DEFAULT_COLOR.clone() }
-      },
-      transparent: true,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      depthTest: false,
-      side: THREE.DoubleSide
-    });
-
-    mesh = new THREE.Mesh(geometry, material);
-    mesh.visible = false;
-    mesh.frustumCulled = false;
-    mesh.renderOrder = 900;
-    mesh.layers.set(0);
-    scene.add(mesh);
-
+    const useCore = !!(Core3D.isInitialized && Core3D.scene && Core3D.fx);
+    const target = useCore ? Core3D.scene : scene;
+    if (!target) return;
+    pool = new SparkPool({ scene: target, origin: useCore ? Core3D.fx.origin : null });
+    ownClock = 0;
+    if (useCore) {
+      step = {
+        name: 'iskry',
+        update(ctx) {
+          const cam = ctx.core?.activeCam1;
+          const zoom = Math.max(1e-4, Number(cam?.zoom) || 1);
+          pool.update(ctx.origin.timeFx.value, zoom, ctx.origin.x, ctx.origin.y);
+        },
+        warm(ctx) {
+          const m = pool.mesh;
+          const vis = m.visible;
+          const ic = m.geometry.instanceCount;
+          m.visible = true;
+          m.geometry.instanceCount = 2;
+          try { ctx.core.prewarmPass(m, 0); } finally { m.visible = vis; m.geometry.instanceCount = ic; }
+        }
+      };
+      Core3D.addFxStep(step);
+    }
     this.isInitialized = true;
   },
 
   // vx, vy = ruch WŁASNY iskry; prędkość kadłuba dokłada ActiveCarrier (nośnik
   // ustawiony przez wołającego wokół serii, np. trafienia w pędzący okręt).
   // gain = jasność iskry (1 = iskra trafienia; tarcie kadłubów podaje mniej).
-  emit(gameX, gameY, vx, vy, life, size, gain = 1) {
-    if (!this.isInitialized) return;
-    if (highWater === 0) {
-      const o = cameraOrigin();
-      setSparkOrigin(o.x, o.y);
-      carrierEpoch = SimClock.sim;
-    }
-    const i = idx;
-    const i3 = i * 3;
-    const i4 = i * 4;
-
-    // Przerzucenie osi z 2D na 3D, wzgledem poczatku puli (originX/Z)
-    iPositions[i3]     = gameX - originX;
-    iPositions[i3 + 1] = 0.5; // Wysokosc (leciutko nad podloga by nie klipowac)
-    iPositions[i3 + 2] = gameY - originZ;
-
-    iVelocities[i3]     = vx;
-    iVelocities[i3 + 1] = 0;
-    iVelocities[i3 + 2] = vy;
-
-    // Overlay: x = x świata, z = y świata — prędkość nośnika bez odwracania osi.
+  // color — opcjonalnie [r, g, b] liniowe (inaczej barwa domyślna, setColor).
+  emit(gameX, gameY, vx, vy, life, size, gain = 1, color = null) {
+    if (!this.isInitialized || !pool) return;
+    ensureOrigin();
+    const c = color || _defaultColor;
+    const clampedLife = clamp(Number.isFinite(life) ? life : 0.25, MIN_SPARK_LIFE, MAX_SPARK_LIFE);
+    const clampedSize = clamp(size !== undefined && Number.isFinite(size) ? size : 0.5, MIN_SPARK_SIZE, MAX_SPARK_SIZE);
+    const g = Number.isFinite(gain) ? Math.max(0, gain) : 1;
     const cvx = ActiveCarrier.vx;
     const cvy = ActiveCarrier.vy;
-    const carried = cvx !== 0 || cvy !== 0;
-    iCarriers[i4]     = cvx;
-    iCarriers[i4 + 1] = cvy;
-    iCarriers[i4 + 2] = carried ? ActiveCarrier.t0 - carrierEpoch : 0;
-    iCarriers[i4 + 3] = ActiveCarrier.clock;
+    pool.emit(gameX, gameY, vx, vy, clampedLife, clampedSize, API_SPARK_DRAG, c[0], c[1], c[2], g,
+      cvx, cvy, ActiveCarrier.t0, ActiveCarrier.clock);
+  },
 
-    const clampedLife = THREE.MathUtils.clamp(Number.isFinite(life) ? life : 0.25, MIN_SPARK_LIFE, MAX_SPARK_LIFE);
-    iStartTimes[i] = globalTime;
-    iLifeTimes[i]  = clampedLife;
-    iSizes[i]      = THREE.MathUtils.clamp(size !== undefined ? size : 0.5, MIN_SPARK_SIZE, MAX_SPARK_SIZE);
-    iGains[i]      = Number.isFinite(gain) ? Math.max(0, gain) : 1;
+  /**
+   * Iskra efektów rakiet (bez przycięcia życia i rozmiaru z API, własny opór i barwa):
+   * ŚWIAT gry, nośnik (cvx, cvy) z czasem pozy t0 w zegarze `clock` (CLOCK_*).
+   */
+  emitRaw(x, y, vx, vy, life, size, drag, r, g, b, gain = 1, cvx = 0, cvy = 0, t0 = 0, clock = 0) {
+    if (!this.isInitialized || !pool) return;
+    ensureOrigin();
+    pool.emit(x, y, vx, vy, life, size, drag, r, g, b, gain, cvx, cvy, t0, clock);
+  },
 
-    if (i + 1 > highWater) highWater = i + 1;
-    if (dirtyLo < 0 || i < dirtyLo) dirtyLo = i;
-    if (i > dirtyHi) dirtyHi = i;
-    const diesAt = globalTime + clampedLife;
-    if (diesAt > liveUntil) liveUntil = diesAt;
+  /**
+   * Wpis roboczy puli (pola jak argumenty emitRaw, ŚWIAT gry) dla pętli klatki efektów
+   * rakiet — zapis bez przekazywania liczb przez argumenty; potem pushStaged(). null, gdy
+   * pula nie istnieje.
+   */
+  stage() {
+    if (!this.isInitialized || !pool) return null;
+    ensureOrigin();
+    return pool.s;
+  },
 
-    idx = (idx + 1) % MAX_SPARKS;
-    isDirty = true;
+  pushStaged() {
+    if (pool) pool.push();
   },
 
   burst(gameX, gameY, count, speed, life, size, colorHex) {
-    if(colorHex) this.setColor(colorHex);
+    const color = colorHex ? colorToLinear(colorHex, _burstColor) : null;
     for (let n = 0; n < count; n++) {
-      const angle = Math.random() * Math.PI * 2;
-      const spd = speed * (0.4 + Math.random() * 0.6);
+      const angle = fxRandom.next() * Math.PI * 2;
+      const spd = speed * (0.4 + fxRandom.next() * 0.6);
       const vx = Math.cos(angle) * spd;
       const vy = Math.sin(angle) * spd;
-      const l = life * (0.6 + Math.random() * 0.4);
-      const s = size * (0.6 + Math.random() * 0.4);
-      this.emit(gameX, gameY, vx, vy, l, s);
+      const l = life * (0.6 + fxRandom.next() * 0.4);
+      const s = size * (0.6 + fxRandom.next() * 0.4);
+      this.emit(gameX, gameY, vx, vy, l, s, 1, color);
     }
   },
 
+  /**
+   * Zgodność: dawniej krok zegara iskier (tick overlaya). W grze czas i wysyłkę prowadzi
+   * krok efektów Core3D; bez niego (Node, narzędzia) — zegar wewnętrzny.
+   */
   update(dt) {
-    if (!this.isInitialized) return;
-    globalTime += dt;
-    material.uniforms.uTime.value = globalTime;
-
-    // Kamera odjechala od poczatku zywej puli — przesuniecie danych (rzadkie).
-    if (highWater > 0) {
-      const o = cameraOrigin();
-      if (Math.abs(o.x - originX) > SPARK_REBASE_DIST || Math.abs(o.y - originZ) > SPARK_REBASE_DIST) rebaseSparks(o.x, o.y);
-      if (SimClock.sim - carrierEpoch > CARRIER_EPOCH_SPAN) rebaseCarrierEpoch(SimClock.sim);
-    }
-    material.uniforms.uCarrierRender.value = SimClock.render - carrierEpoch;
-    material.uniforms.uCarrierSim.value = SimClock.sim - carrierEpoch;
-
-    if (isDirty) {
-      const attrs = geometry.attributes;
-      const lo = dirtyLo;
-      const count = dirtyHi - lo + 1;
-      const list = [attrs.iPosition, attrs.iVelocity, attrs.iStartTime, attrs.iLifeTime, attrs.iSize, attrs.iCarrier, attrs.iGain];
-      for (const attr of list) {
-        const items = attr.itemSize || 1;
-        // Zakresy z klatek bez uploadu kumuluja sie (three czysci je dopiero po
-        // wgraniu) — po progu wracamy do pelnego bufora.
-        if (attr.updateRanges && attr.updateRanges.length >= 8) attr.clearUpdateRanges();
-        else if (attr.addUpdateRange) attr.addUpdateRange(lo * items, count * items);
-        attr.needsUpdate = true;
-      }
-      dirtyLo = -1;
-      dirtyHi = -1;
-      isDirty = false;
-    }
-
-    const live = globalTime < liveUntil;
-    if (mesh.visible !== live) mesh.visible = live;
-    if (live) {
-      if (geometry.instanceCount !== highWater) geometry.instanceCount = highWater;
-    } else if (highWater !== 0) {
-      // Pusta pula wraca na start — kolejna seria zajmie tylko tyle slotow, ile
-      // naprawde potrzebuje, zamiast ciagnac stary high-water do konca sesji.
-      highWater = 0;
-      idx = 0;
-      geometry.instanceCount = 0;
-    }
+    if (!this.isInitialized || !pool || step) return;
+    ownClock += Number(dt) > 0 ? Number(dt) : 0;
+    pool.update(ownClock, 1);
   },
 
   // Tarcie i zderzenia kadłubów. `count` = ile iskier wysypać TERAZ: budżet
@@ -497,13 +302,15 @@ export const SparkSystem3D = {
     // Szew jest juz pokryty probkami, wiec kazdy snop ma tylko domknac luke do
     // sasiada — rozrzut z energii (grindingBurst) rozmazalby je jeden na drugim.
     const lastBase = (n - 1) * 4;
-    const seamLength = Math.hypot(points[lastBase] - points[0], points[lastBase + 1] - points[1]);
+    const sdx = points[lastBase] - points[0];
+    const sdy = points[lastBase + 1] - points[1];
+    const seamLength = Math.sqrt(sdx * sdx + sdy * sdy);
     const spreadRadius = Math.max(4, (seamLength / (n - 1)) * 0.5);
 
     // Podział przez skumulowany próg z losowym przesunięciem: suma udziałów to
     // DOKŁADNIE `total`, a przy budżecie mniejszym niż liczba punktów iskry nie
     // lecą co krok z tych samych punktów szwu (stały próg faworyzował końce).
-    const offset = Math.random();
+    const offset = fxRandom.next();
     let emitted = 0;
     for (let p = 0; p < n; p++) {
       const base = p * 4;
@@ -521,27 +328,17 @@ export const SparkSystem3D = {
     }
   },
 
+  /** Barwa domyślna kolejnych iskier `emit` bez jawnej barwy (żywe iskry jej nie zmieniają). */
   setColor(hex) {
-    if (!material) return;
-    material.uniforms.uSparkColor.value.set(hex);
+    colorToLinear(hex, _defaultColor);
   },
 
   dispose() {
-    if (mesh && mesh.parent) mesh.parent.remove(mesh);
-    if (geometry) geometry.dispose();
-    if (material) material.dispose();
-    mesh = null; geometry = null; material = null;
-    iPositions = null; iVelocities = null; iStartTimes = null; iLifeTimes = null; iSizes = null; iCarriers = null; iGains = null;
-    carrierEpoch = 0;
-    idx = 0;
-    isDirty = false;
-    globalTime = 0;
-    highWater = 0;
-    liveUntil = -Infinity;
-    dirtyLo = -1;
-    dirtyHi = -1;
-    originX = 0;
-    originZ = 0;
+    if (step) { Core3D.removeFxStep(step); step = null; }
+    if (pool) pool.dispose();
+    pool = null;
+    ownClock = 0;
+    _defaultColor[0] = SPARK_COLORS.game[0]; _defaultColor[1] = SPARK_COLORS.game[1]; _defaultColor[2] = SPARK_COLORS.game[2];
     this.isInitialized = false;
   }
 };

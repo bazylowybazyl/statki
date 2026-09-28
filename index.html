@@ -992,8 +992,8 @@
     // Fabryki trafień broni w overlayu (railgunExplosion, armataImpact, autocannonImpact, yamato)
     // usunięte w zadaniu 17 — trafienia to receptury WeaponFx (src/3d/weapons/).
     import { createReactorBlowFactory } from "./src/effects3d/reactorblow.js";
-    import { createSupernovaMissileBlowFactory } from "./src/effects3d/supernovaMissileBlow.js";
     import { initRocketSystem3D } from "./src/effects3d/rocketSystem3D.js";
+    import { createRocketFx } from "./src/3d/rockets/rocketFx.js";
     // IMPORTUJEMY NOWY MODUL SUPERBRONI
     import * as Superweapon from "./src/game/superweapon.js";
     window.Superweapon = Superweapon;
@@ -1260,6 +1260,11 @@
         BridgeFx3D.attach(Core3D.scene);
         // Model 3D mostka (docs/PORT-mostki.md §8) — ta sama scena, bez renderera.
         Bridge3D.attach(Core3D.scene);
+        // Iskry trafień i tarcia oraz rakiety (lot: rocketSystem3D; wygląd z dema
+        // rakiety-webgpu: src/3d/rockets/) — w scenie Core3D, jako kroki klatki efektów
+        // (port WebGPU, zadanie 19; dawniej scena i warstwa raw overlaya).
+        SparkSystem3D.init(Core3D.scene);
+        initRocketSystem3D(Core3D.scene, { effects: createRocketFx(Core3D) });
         // Warp „Nurt” (src/3d/warp/, zadanie 22): ośrodek (compute), szczeliny, błyski, gwiazdy,
         // zgięcie mgławicy, fale — sam wygląd, słucha automatu warpa i przylotów NPC.
         WarpNurt.init();
@@ -5772,7 +5777,6 @@
     }
     // Bezpieczna, odroczona inicjalizacja overlayu 3D
     let overlay3D = null;
-    let rocketOverlay3D = null;
 
     window.addEventListener('resize', () => {
       W = canvas.width = innerWidth;
@@ -5815,48 +5819,22 @@
     function startOverlay3D() {
       const init = initOverlay3D;
       const reactorFactory = createReactorBlowFactory;
-      const supernovaFactory = createSupernovaMissileBlowFactory;
       const host = document.getElementById('game-root');
 
       // Musimy mieć: API z modułu + host z DOM + overlayView z tego skryptu
       if (!init || !host || typeof overlayView === 'undefined') return false;
 
-      // Rakiety dzielą kontekst WebGL z overlayem efektów. Osobny initOverlay
-      // tworzył DRUGI WebGLRenderer (własna kanwa, własny stan sterownika) —
-      // przy strzelaniu „Overlay FX 3D" skakało z 0.22 do 3.45 ms. Awaryjny
-      // powrót do dwóch kontekstów: window.DevFlags.splitOverlayContexts = true
-      // przed startem gry.
-      const splitContexts = !!(window.DevFlags && window.DevFlags.splitOverlayContexts);
-      const ov = init({ host, getView: () => overlayView, withRawLayer: !splitContexts });
+      // Rakiety i iskry są od zadania 19 w scenie Core3D (src/3d/rockets/, SparkSystem3D —
+      // init przy starcie Core3D): overlay nie ma już warstwy raw rakiet ani iskier.
+      const ov = init({ host, getView: () => overlayView });
       overlay3D = ov;
       window.overlay3D = ov;
-      const rocketOv = splitContexts
-        ? init({
-            host,
-            getView: () => overlayView,
-            mode: 'raw',
-            zIndex: 21,
-            useBloom: false,
-            useAlphaPass: false,
-            adaptiveQuality: false,
-            updateSparkSystem: false,
-            baseRenderScale: 1.0
-          })
-        : ov.rawLayer;
-      rocketOverlay3D = rocketOv;
-      window.rocketOverlay3D = rocketOv;
-      if (SparkSystem3D) {
-        if (SparkSystem3D.isInitialized) {
-          SparkSystem3D.dispose();
-        }
-        SparkSystem3D.init(ov.scene);
-      }
       if (reactorFactory) {
         window.makeReactorBlow = reactorFactory(ov.scene);
       }
       // Init 3D destruction engine — scene + reactor factory. Bez menedżera fali:
-      // fala z refrakcją zostaje wyłącznie dla rakiet supernova (2026-09-24),
-      // więc rozpad stacji (shatter/implodeMass) jej nie odpala.
+      // fala z refrakcją (shockwave3D) usunięta w zadaniu 19 — rozpad stacji
+      // (shatter/implodeMass) jej nie odpala.
       if (window.Destruction3D) {
         window.Destruction3D.init({
           scene:            window.Core3D?.scene,
@@ -5864,19 +5842,11 @@
           shockwaveManager: null,
         });
       }
-      if (supernovaFactory) {
-        window.makeSupernovaMissileBlow = supernovaFactory(ov.scene);
-      }
-      // 3D Rocket System (fire/smoke GPU particles + physics)
-      if (initRocketSystem3D) {
-        initRocketSystem3D(rocketOv.scene);
-      }
       resizeOverlay3D();
-      // Rozgrzewka programów overlaya (overlay.js, prewarm): pule (iskry, reaktor, supernowa,
-      // rakiety) wiszą w scenie. Próbek fabryk trafień broni już nie ma (zadanie 17 — receptury
-      // WeaponFx rozgrzewa krok Core3D.fx).
+      // Rozgrzewka programów overlaya (overlay.js, prewarm): pula reaktora wisi w scenie. Próbek
+      // fabryk trafień broni już nie ma (zadanie 17 — receptury WeaponFx rozgrzewa krok Core3D.fx),
+      // iskry, rakiety i Supernowa są w scenie Core3D (zadanie 19 — rozgrzewają je kroki efektów).
       ov.prewarm?.();
-      if (splitContexts) rocketOv.prewarm?.();
       return true;
     }
 
@@ -5907,7 +5877,6 @@
       overlayView.viewport.w = innerWidth;
       overlayView.viewport.h = innerHeight;
       if (overlay3D) overlay3D.resize();
-      if (rocketOverlay3D) rocketOverlay3D.resize();
     }
 
     resizeOverlay3D();
@@ -22142,12 +22111,9 @@
         render(0, frame);
         // Rakiet NIE aktualizujemy w pauzie: update() to ich lot, trafienia
         // (_onHit → applyDamageTo*) i wybuchy — leciały i zadawały obrażenia przy
-        // zatrzymanej grze. Overlay dalej rysuje je zamrożone.
+        // zatrzymanej grze. Core3D dalej rysuje je zamrożone (zegar ich efektów stoi).
         if (overlay3D) {
           overlay3D.tick(frame);
-        }
-        if (rocketOverlay3D) {
-          rocketOverlay3D.tick(frame);
         }
         if (firstFrameResolver) {
           firstFrameResolver();
@@ -22266,8 +22232,13 @@
       // Bezpiecznik: nośnik ustawia się tylko na czas serii spawnów — wyjątek
       // między set/clear nie może nieść kolejnych efektów cudzą prędkością.
       ActiveCarrier.clear();
+      // Rakiety (lot, trafienia, zdarzenia efektów) PRZED render(): rysuje je Core3D w tej
+      // samej klatce (src/3d/rockets/ — zadanie 19; dawniej overlay po render()).
+      const tRockets0 = performance.now();
+      if (window.rocketSystem3D) window.rocketSystem3D.update(frame);
+      const rocketsMs = performance.now() - tRockets0;
       render(alpha, frame);
-      PerfHUD.addTiming('drawTime', performance.now() - tDraw0);
+      PerfHUD.addTiming('drawTime', performance.now() - tDraw0 - rocketsMs);
 
       // WAŻNE: Eksportujemy globalne zmienne dla modułu superweapon
       window.camera = camera;
@@ -22275,17 +22246,14 @@
       window.spawnShockwave = spawnShockwave;
       window.worldToScreen = worldToScreen;
 
-      // Efektowe renderery 3D (eksplozje/rakiety) — osobne konteksty WebGL poza
-      // Core3D. Mierzone do własnego bucketu, żeby nie ginęły w "Untracked".
+      // Efektowy renderer 3D overlaya (eksplozje) — osobny kontekst WebGL poza Core3D
+      // (do zadania 20) — i lot rakiet (wyżej, przed render()) w jednym kubełku, żeby nie
+      // ginęły w "Untracked".
       const tOverlayFx0 = performance.now();
-      if (window.rocketSystem3D) window.rocketSystem3D.update(frame);
       if (overlay3D) {
         overlay3D.tick(frame);
       }
-      if (rocketOverlay3D) {
-        rocketOverlay3D.tick(frame);
-      }
-      PerfHUD.addTiming('overlayFxTime', performance.now() - tOverlayFx0);
+      PerfHUD.addTiming('overlayFxTime', performance.now() - tOverlayFx0 + rocketsMs);
       if (firstFrameResolver) {
         firstFrameResolver();
         firstFrameResolver = null;

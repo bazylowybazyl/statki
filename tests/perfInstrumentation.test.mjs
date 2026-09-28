@@ -317,7 +317,6 @@ test('Core3D exposes renderer.info deltas per render pass', () => {
     '_runScenePass(pass)',
     "this._addRenderInfoDelta(pass.bucket, performance.now() - t0, before);",
     "this._addRenderInfoDelta('post', performance.now() - t0, before);",
-    "this._addRenderInfoDelta('refraction');",
     '_addRenderInfoDelta',
     '_resetRenderInfoBuckets',
     'target.calls = Number(src?.drawCalls) || 0;',
@@ -329,6 +328,9 @@ test('Core3D exposes renderer.info deltas per render pass', () => {
   for (const snippet of requiredCore3dSnippets) {
     assert.ok(core3dJs.includes(snippet), `${snippet} is missing from Core3D draw-call instrumentation`);
   }
+  // Snapshot refrakcji fali (shockwave3D) usunięty w zadaniu 19 — kubełek „refraction” zostaje
+  // (PerfHUD i harness czytają listę kubełków), bez pomiaru.
+  assert.ok(!core3dJs.includes("this._addRenderInfoDelta('refraction');"), 'snapshot refrakcji wrócił');
   assert.ok(!core3dJs.includes('_wrapRenderInfoPass'), 'passy nie są już owijane — mierzy runner');
   // Kubełki: nazwy czyta harness (zrzuty.mjs → perf.passes) i PerfHUD (ri.passes).
   for (const name of ['refraction', 'bg', 'planets', 'shafts', 'ortho', 'fg', 'bloom', 'post', 'other']) {
