@@ -24,9 +24,10 @@ import { shipyardSolidList } from './portShipyardLayout.js';
 import { hangarSolidList } from './portHangarLayout.js';
 
 /**
- * Rola stanowisk suchego doku: ani terminal (`civil`), ani postój floty
- * (`military`) — findBerth z rolą ich nie wybiera, placeFleetStock też nie.
- * Remont / przezbrojenie przydziela gracz albo przyszły dyspozytor napraw.
+ * Rola „tylko serwis”: ani terminal (`civil`), ani postój floty (`military`) —
+ * findBerth z rolą ich nie wybiera, placeFleetStock też nie. Place stoczni
+ * domyślnie są postojem floty (okręt po produkcji) z możliwością refitu;
+ * `role: PORT_SERVICE_ROLE` robi z nich place wyłącznie remontowe.
  */
 export const PORT_SERVICE_ROLE = 'service';
 
@@ -99,11 +100,11 @@ function trafficBerth(b, dockId, role, frame, station, extra) {
 /**
  * Budowla w formacie ruchu v2. `layout` — createShipyardLayout / createHangarLayout,
  * opcje: frame (ramka w układzie gry — patrz portRingModuleFrame z obrotem),
- * station ({ x, y } gry — środek gospodarza), stationId, role (suchy dok,
- * domyślnie PORT_SERVICE_ROLE).
+ * station ({ x, y } gry — środek gospodarza), stationId, role (place stoczni,
+ * domyślnie BERTH_ROLE.MILITARY — postój floty po produkcji, refit).
  * Wynik: {
- *   docks:   [dok z berths] — tylko to, na czym się cumuje (suchy dok);
- *            findBerth / reserveBerth / berthOccupancy biorą go bez zmian,
+ *   docks:   [dok z berths] — tylko to, na czym się cumuje (place piasty stoczni:
+ *            `service: 'refit'`); findBerth / reserveBerth / berthOccupancy bez zmian,
  *   yards:   [pochylnia: pozycja kadłuba, kurs zejścia, punkt zejścia] — stocznia,
  *   hangars: [{ id, capacity, entry, exit, queue }] — hangar (wejście = punkt
  *            przechwytu pod dachem: `buildPortParking(…, { hangar: { x, y, capacity } })`),
@@ -119,17 +120,25 @@ export function portModuleTraffic(layout, options = {}) {
   const origin = portHubToGame(frame, station, 0, layout.backZ || 0);
   const axis = Math.atan2(-frame.ty, frame.tx);
   if (layout.kind === 'shipyard') {
-    const role = options.role || PORT_SERVICE_ROLE;
-    const dockBerth = layout.berths.find((b) => b.kind === 'drydock');
-    if (dockBerth) {
-      const dockId = `${sid}:${dockBerth.id}`;
-      const d = layout.drydock;
-      const c = portHubToGame(frame, station, d.x, (d.z0 + d.z1) / 2);
+    const role = options.role || BERTH_ROLE.MILITARY;
+    const pads = layout.berths.filter((b) => b.kind === 'pad');
+    if (pads.length) {
+      const dockId = `${sid}:${layout.id}:PADS`;
+      const h = layout.hub;
+      const c = portHubToGame(frame, station, h.x, h.z);
+      let x0 = Infinity;
+      let x1 = -Infinity;
+      let z0 = Infinity;
+      let z1 = -Infinity;
+      for (const b of pads) {
+        x0 = Math.min(x0, b.x - b.width / 2); x1 = Math.max(x1, b.x + b.width / 2);
+        z0 = Math.min(z0, b.z - b.length / 2); z1 = Math.max(z1, b.z + b.length / 2);
+      }
       out.docks.push({
-        id: dockId, stationId: sid, kind: 'drydock', role, module: layout.id,
-        x: c.x, y: c.y, angle: axis, length: 2 * d.halfWidth, width: d.z1 - d.z0,
+        id: dockId, stationId: sid, kind: 'shipyard-pads', role, module: layout.id,
+        x: c.x, y: c.y, angle: axis, length: x1 - x0, width: z1 - z0,
         attachedToRing: frame.floorR > 0,
-        berths: [trafficBerth(dockBerth, dockId, role, frame, station, { service: 'drydock', hall: 'SUCHY DOK' })]
+        berths: pads.map((b) => trafficBerth(b, dockId, role, frame, station, { service: 'refit', refit: true, ring: b.ring, hall: `STOCZNIA ${layout.id}` }))
       });
     }
     for (const b of layout.berths) {
@@ -183,8 +192,9 @@ export function portModuleSolids(layout) {
 
 /**
  * Świat kolizji budowli w jej układzie (K7CollisionWorld — SAT jak w hali K-7).
- * Skrzydła drzwi suchego doku to przedmioty ruchome: `setDoorsOpen(col, true)`
- * wyłącza je (refresh z off), statek wlatuje.
+ * Bryły z flagą `door` (skrzydła drzwi) to przedmioty ruchome:
+ * `setPortModuleDoorsOpen(col, true)` wyłącza je (refresh z off). Stocznia
+ * i hangar drzwi dziś nie mają.
  */
 export function buildPortModuleCollision(layout) {
   const col = new K7CollisionWorld();
@@ -197,6 +207,17 @@ export function buildPortModuleCollision(layout) {
 }
 export function setPortModuleDoorsOpen(col, open) {
   for (const item of col?.doors || []) col.refresh(item, !!open);
+}
+
+/**
+ * Poza stanowiska dla renderów ładunku Z5 (CargoContainers3D / CargoDrones3D):
+ * początek układu budowli w grze i kąt osi x układu — rekordy w układzie budowli
+ * (u = x, v = z) trafiają wtedy na swoje miejsce (pushShipyardSwarm).
+ */
+export function portModuleCargoPose(frame, station, out = {}) {
+  portHubToGame(frame, station, 0, 0, out);
+  out.angle = Math.atan2(-frame.ty, frame.tx);
+  return out;
 }
 
 /** Obrys budowli (układ gry) — np. do czynnika „w porcie” modelu lotu i kamery. */

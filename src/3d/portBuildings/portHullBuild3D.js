@@ -17,9 +17,9 @@ import { HALO_GLSL_COMMON, HALO_GLSL_LIGHT, HALO_GLSL_NOISE } from '../haloRing/
 import { k7HeightToZ } from '../haloRing/haloPortK7Layout.js';
 import { SUN_SHADOW_GLSL } from '../sunShadowMask.js';
 import { TRAFFIC_HULLS, trafficHullRenderSize } from '../../data/trafficHulls.js';
-import { HULL_BUILD_STAGES } from './portShipyardLayout.js';
+import { HULL_BUILD_STAGES, SHIPYARD_HULL_Y } from './portShipyardLayout.js';
 
-export const HULL_BUILD_Y = 110;
+export const HULL_BUILD_Y = SHIPYARD_HULL_Y;
 
 // Tekstury: host (gra) podaje dostawcę — (hullId) → { texture, flipY } z tego
 // samego obrazka co NPC (acquireHullVisualTexture); bez niego moduł ładuje sam.
@@ -141,12 +141,16 @@ void main() {
   float painted = step(vUv.x + (hbHash(cell * 1.7 + 3.0 + uBuild.z) - 0.5) * 0.08, mix(-0.1, 1.1, paintFront));
   // szkielet: stepka, wregi (co 24 j.), wzdluzniki (co 30 j.)
   float fw = fwidth(hu.x) + fwidth(hu.y);
-  float keel = step(vUv.x, keelLen) * (1.0 - smoothstep(5.0, 5.0 + fw, abs(hu.y)));
+  // szerokosci linii nie mniej niz ~pol piksela (z daleka szkielet nie znika)
+  float keelW = max(5.0, fw * 0.9);
+  float ribW = min(max(2.2, fw * 0.45), 6.0);
+  float strW = min(max(1.4, fw * 0.35), 5.0);
+  float keel = step(vUv.x, keelLen) * (1.0 - smoothstep(keelW, keelW + fw, abs(hu.y)));
   float ribD = abs(fract(hu.x / 24.0 + 0.5) - 0.5) * 24.0;
   float grown = step(0.0005, frameFront) * step(vUv.x, frameFront);
-  float rib = (1.0 - smoothstep(2.2, 2.2 + fw, ribD)) * grown;
+  float rib = (1.0 - smoothstep(ribW, ribW + fw, ribD)) * grown;
   float strD = abs(fract(hu.y / 30.0 + 0.5) - 0.5) * 30.0;
-  float stringer = (1.0 - smoothstep(1.4, 1.4 + fw, strD)) * grown;
+  float stringer = (1.0 - smoothstep(strW, strW + fw, strD)) * grown;
   float frame = max(keel, max(rib, stringer)) * inside;
   if (plated < 0.5 && frame < 0.5) discard;
   vec3 base;

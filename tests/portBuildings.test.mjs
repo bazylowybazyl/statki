@@ -1,6 +1,7 @@
-// Budowle portowe (Z7): stocznia z suchym dokiem, hangar postojowy, boje redy.
-// Układy (czysta matematyka), adapter do ruchu v2, kolizje, dane scen i render
-// na atrapie bez WebGL. node --test tests/portBuildings.test.mjs
+// Budowle portowe (Z7): stocznia (szkic użytkownika 2026-09-27 — taśma, pochylnie
+// z rojem dronów i jednym dźwigiem, piasta z placami postoju / refitu), hangar
+// postojowy, boje redy. Układy (czysta matematyka), rój, adapter do ruchu v2,
+// kolizje, dane scen i render na atrapie bez WebGL. node --test tests/portBuildings.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -17,15 +18,26 @@ import { PORT_PALETTE_SIZE, resolvePortBuildingStyle } from '../src/3d/portBuild
 import {
   HULL_BUILD_STAGES,
   SHIPYARD_ATLAS,
-  SHIPYARD_SPEC,
   createShipyardLayout,
   hullBuildFront,
   hullBuildStage,
-  shipyardDrydockBerth,
   shipyardHullFits,
+  shipyardPadPoly,
+  shipyardPads,
   shipyardSolidList,
   slipStatesFromYard
 } from '../src/3d/portBuildings/portShipyardLayout.js';
+import {
+  CRATE,
+  CRATE_STRIDE,
+  SWARM_HEAVY,
+  SWARM_TUNE,
+  SWARM_Z,
+  createShipyardSwarm,
+  pushShipyardSwarm,
+  stepShipyardSwarm
+} from '../src/3d/portBuildings/portShipyardSwarm.js';
+import { CARGO_DRONE, CARGO_DRONE_STRIDE } from '../src/game/cargoPortOps.js';
 import { HANGAR_SPEC, createHangarLayout, hangarQueuePoint, hangarSolidList, planHangarCapacity } from '../src/3d/portBuildings/portHangarLayout.js';
 import {
   PORT_SERVICE_ROLE,
@@ -33,6 +45,7 @@ import {
   portGameToHub,
   portHeadingToGame,
   portHubToGame,
+  portModuleCargoPose,
   portModuleFootprintGame,
   portModuleFrame,
   portModuleTraffic,
@@ -40,7 +53,7 @@ import {
   setPortModuleDoorsOpen
 } from '../src/3d/portBuildings/portModuleTraffic.js';
 import { BUOY_KIND, BUOY_ROLE, buildPortBuoys, buoyFlash } from '../src/3d/portBuildings/portBuoyLayout.js';
-import { PB_FX, PB_MAX_GROUPS, PB_STRIDE, buildHangarScene, buildShipyardScene } from '../src/3d/portBuildings/portBuildingScene.js';
+import { PB_FX, PB_MAX_GROUPS, PB_STRIDE, YARD_CH, buildHangarScene, buildShipyardScene } from '../src/3d/portBuildings/portBuildingScene.js';
 
 const STYLES = ['earth', 'mars', 'jupiter'];
 const ring = createHaloRingLayout({});
@@ -94,88 +107,137 @@ test('styl megadoku (Z8): własny obiekt w kształcie profile.port + blok buildi
 });
 
 // ---------------------------------------------------------------------------
-test('stocznia: 2 pochylnie + suchy dok, stanowiska w formacie K-7', () => {
+// Stocznia wg szkicu użytkownika (2026-09-27): galeria z taśmą wzdłuż ringu,
+// trzon, dwie pochylnie po bokach, piasta — okrąg z wypustkami albo litera U.
+const SHIPYARD_VARIANTS = [{}, { slips: 1 }, { slips: 3 }, { slips: 4 }, { hub: 'u' }, { hub: 'u', slips: 4 }];
+const padOf = (b) => (b.kind === 'pad' ? shipyardPadPoly(b) : k7BoxPoly(b.x, b.z, b.padBeam, b.padLength));
+
+test('stocznia: galeria z taśmą, trzon, pochylnie po bokach, piasta okrąg (Ziemia) / U (inne frakcje)', () => {
+  assert.deepEqual(STYLES.map((k) => resolvePortBuildingStyle(k).shipyardHub), ['radial', 'u', 'u']);
   const l = createShipyardLayout({ id: 'Y-1' });
   assert.equal(l.slips.length, 2, 'SHIPYARD_MODEL.slots = 2 pochylnie');
-  assert.ok(l.drydock);
-  assert.deepEqual(l.berths.map((b) => [b.size, b.kind]), [['SLIP', 'slip'], ['SLIP', 'slip'], ['CAPITAL', 'drydock']]);
+  assert.deepEqual(l.slips.map((s) => s.side), [-1, 1], 'po obu stronach trzonu');
+  for (const s of l.slips) {
+    assert.ok(Math.abs(s.x) - s.width / 2 >= l.spine.x1, `${s.id} obok trzonu, nie na nim`);
+    assert.ok(s.z0 > l.gallery.z1 && s.z1 < l.hub.z, 'między galerią a piastą');
+  }
+  // piasta Ziemi: okrąg z wypustkami (capital, 2 × L, 2 × nosiciel) i wewnętrzne place M
+  assert.equal(l.hub.kind, 'radial');
+  assert.deepEqual(l.hub.prongs.map((p) => Math.round(p.angle * 180 / Math.PI)), [0, -60, 60, -120, 120]);
+  assert.deepEqual([l.capacity.CAPITAL, l.capacity.L, l.capacity.M], [3, 2, 4]);
   for (const b of l.berths) {
     for (const k of K7_FIELDS) assert.ok(b[k] !== undefined, `${b.id}: brak pola ${k}`);
     assert.ok(b.approach || b.launch, `${b.id}: podejście / zejście`);
-    assert.ok(b.x - b.width / 2 >= l.x0 - 1e-6 && b.x + b.width / 2 <= l.x1 + 1e-6, `${b.id} poza obrysem w x`);
-    assert.ok(b.z - b.length / 2 >= l.backZ && b.z + b.length / 2 <= l.frontZ, `${b.id} poza obrysem w z`);
+    for (const p of padOf(b)) assert.ok(p.x >= l.x0 - 1e-6 && p.x <= l.x1 + 1e-6 && p.z >= l.backZ && p.z <= l.frontZ + 1e-6, `${b.id} poza obrysem`);
   }
-  // pochylnia: dziobem w kosmos (+z); suchy dok: dziobem do ściany tylnej (jak capital K-7)
-  assert.ok(Math.abs(l.berths[0].angle - Math.PI / 2) < 1e-9);
-  assert.ok(Math.abs(shipyardDrydockBerth(l).angle + Math.PI / 2) < 1e-9);
-  // warianty: 4 pochylnie bez doku, sam suchy dok
-  const four = createShipyardLayout({ slips: 4, drydock: false });
-  assert.equal(four.slips.length, 4);
-  assert.equal(four.drydock, null);
-  const dockOnly = createShipyardLayout({ slips: 0 });
-  assert.equal(dockOnly.slips.length, 0);
-  assert.ok(dockOnly.drydock);
-  assert.equal(dockOnly.workshop, null);
+  // place: dziobem ku środkowi piasty, podejście z zewnątrz
+  for (const b of shipyardPads(l)) {
+    const toHub = Math.atan2(l.hub.z - b.z, l.hub.x - b.x);
+    assert.ok(Math.abs(Math.atan2(Math.sin(b.angle - toHub), Math.cos(b.angle - toHub))) < 1e-9, `${b.id} dziobem do piasty`);
+    assert.ok(Math.hypot(b.approach.from.x - l.hub.x, b.approach.from.z - l.hub.z) > Math.hypot(b.x - l.hub.x, b.z - l.hub.z));
+  }
+  // inne frakcje: litera U — basen z capital i L, M na zewnątrz ramion
+  const u = createShipyardLayout({ hub: 'u' });
+  assert.equal(u.hub.kind, 'u');
+  assert.equal(u.hub.arms.length, 2);
+  assert.deepEqual([u.capacity.CAPITAL, u.capacity.L, u.capacity.M], [2, 4, 8]);
+  const inBasin = (b) => b.x > u.hub.basin.x0 && b.x < u.hub.basin.x1 && b.z > u.hub.basin.z0;
+  assert.ok(shipyardPads(u).filter((b) => b.ring === 'basin').every(inBasin));
+  assert.ok(shipyardPads(u).filter((b) => b.ring === 'arm').every((b) => !inBasin(b)));
+  // taśma: dwa podajniki z galerii (wzdłuż ringu), schodzą się w trzonie, koniec przy rdzeniu / terminalu
+  for (const lay of [l, u]) {
+    const [a, b] = lay.belt.feeds;
+    const len = (p) => p.slice(1).reduce((acc, q, i) => acc + Math.hypot(q[0] - p[i][0], q[1] - p[i][1]), 0);
+    assert.ok(Math.abs(len(a) - len(b)) < 1e-6, 'podajniki równej długości (kontenery na przemian)');
+    assert.deepEqual(a.at(-1), [lay.belt.end.x, lay.belt.end.z]);
+    assert.ok(a[0][1] === lay.belt.stubZ && a[0][1] > lay.gallery.z0 && a[0][1] < lay.gallery.z1, 'początek w galerii ringu');
+    assert.ok(a[0][0] < lay.slips[0].x - lay.slips[0].width / 2 && b[0][0] > lay.slips[1].x + lay.slips[1].width / 2, 'galeria szersza niż pochylnie');
+  }
+  assert.ok(l.belt.end.z < l.hub.z - l.hub.core, 'taśma kończy się przed rdzeniem');
+  assert.ok(u.belt.end.z < u.hub.terminal.z - u.hub.terminal.d / 2, 'taśma kończy się przed terminalem U');
 });
 
-test('stocznia: każda klasa okrętu mieści się na pochylni, Atlas w suchym doku', () => {
+test('stocznia: każda klasa okrętu mieści się na pochylni; Atlas na placu capital, nosiciel na swoim', () => {
   const l = createShipyardLayout({});
   for (const cls of Object.values(WARSHIP_CLASSES)) {
     const fp = hullFootprint(cls.hull);
+    const size = trafficHullRenderSize(cls.hull);
     for (const b of l.berths.filter((v) => v.kind === 'slip')) {
       assert.ok(shipyardHullFits(b, { length: fp.length, beam: fp.width }), `${cls.id} (${fp.length} × ${fp.width}) na ${b.id}`);
-      // sprite kadłuba (render) też mieści się na polu
-      const size = trafficHullRenderSize(cls.hull);
       assert.ok(size.w <= b.padLength && size.h <= b.padBeam, `sprite ${cls.hull} na polu ${b.id}`);
     }
   }
-  const dock = shipyardDrydockBerth(l);
   assert.deepEqual(SHIPYARD_ATLAS, { length: K7_ATLAS.w, beam: K7_ATLAS.h });
-  assert.ok(shipyardHullFits(dock, SHIPYARD_ATLAS), 'Atlas 1800 × 806 w suchym doku');
-  // standard pola capital K-7 (maxLength 2050, maxBeam 1030)
-  assert.equal(dock.maxLength, 2050);
-  assert.equal(dock.maxBeam, 1030);
-  assert.ok(dock.padLength >= K7_ATLAS.w + 300 && dock.padBeam >= K7_ATLAS.h + 300);
-  assert.ok(dock.x - dock.padBeam / 2 >= l.drydock.x - l.drydock.halfWidth && dock.x + dock.padBeam / 2 <= l.drydock.x + l.drydock.halfWidth);
+  const pads = shipyardPads(l);
+  const capital = pads.filter((b) => b.maxBeam >= 1000);
+  assert.equal(capital.length, 1);
+  assert.ok(shipyardHullFits(capital[0], SHIPYARD_ATLAS), 'Atlas 1800 × 806 na placu capital (refit)');
+  assert.equal(capital[0].maxLength, 2050, 'standard capital K-7');
+  const carrier = hullFootprint('terran_carrier');
+  const carrierSprite = trafficHullRenderSize('terran_carrier');
+  const carrierPads = pads.filter((b) => b.size === 'CAPITAL' && b.maxBeam < 1000);
+  assert.equal(carrierPads.length, 2);
+  for (const b of carrierPads) {
+    assert.ok(shipyardHullFits(b, { length: carrier.length, beam: carrier.width }));
+    assert.ok(carrierSprite.w <= b.padLength && carrierSprite.h <= b.padBeam, 'sprite nosiciela na polu');
+  }
+  const u = createShipyardLayout({ hub: 'u' });
+  assert.ok(shipyardPads(u).some((b) => shipyardHullFits(b, SHIPYARD_ATLAS)), 'U: capital w basenie');
 });
 
-test('stocznia: pola rozłączne, bryły nie wchodzą na pola, pas zejścia i wjazd do doku wolne', () => {
-  for (const opts of [{}, { slips: 4, drydock: false }, { slips: 1 }]) {
+test('stocznia: pola rozłączne, bryły poza polami i taśmą, zejście z pochylni i podejścia wolne', () => {
+  for (const opts of SHIPYARD_VARIANTS) {
     const l = createShipyardLayout(opts);
+    const tag = JSON.stringify(opts);
     for (let i = 0; i < l.berths.length; i++) {
       for (let j = i + 1; j < l.berths.length; j++) {
-        assert.ok(!k7ConvexOverlap(padPoly(l.berths[i]), padPoly(l.berths[j])), `${l.berths[i].id} × ${l.berths[j].id}`);
+        assert.ok(!k7ConvexOverlap(padOf(l.berths[i]), padOf(l.berths[j])), `${tag}: ${l.berths[i].id} × ${l.berths[j].id}`);
       }
     }
     const solids = shipyardSolidList(l).filter(inShipBand);
-    // zejście nosiciela (najszerszy) z pochylni prosto w kosmos
-    const carrier = hullFootprint(WARSHIP_CLASSES.carrier.hull);
-    for (const b of l.berths.filter((v) => v.kind === 'slip')) {
-      const lane = lanePoly(b.x, b.z - carrier.length / 2, b.launch.to.z, carrier.width + 20);
-      for (const s of solids) assert.ok(!k7ConvexOverlap(lane, solidPoly(s)), `zejście ${b.id} przez ${s.id}`);
+    const beltPolys = [
+      k7BoxPoly(0, (l.belt.stubZ + l.belt.end.z) / 2, l.belt.housing, l.belt.end.z - l.belt.stubZ),
+      k7BoxPoly(0, l.belt.stubZ, 2 * l.belt.stub.x1, l.belt.housing)
+    ];
+    for (const s of solids) {
+      const sp = solidPoly(s);
+      for (const b of l.berths) assert.ok(!k7ConvexOverlap(sp, padOf(b)), `${tag}: ${s.id} na ${b.id}`);
+      for (const bp of beltPolys) assert.ok(!k7ConvexOverlap(sp, bp), `${tag}: ${s.id} na taśmie`);
     }
-    const dock = l.berths.find((v) => v.kind === 'drydock');
-    if (!dock) continue;
-    // wjazd Atlasa z przedpola na pole — skrzydła drzwi (door) zamknięte blokują, otwarte nie
-    const lane = lanePoly(dock.x, dock.z - K7_ATLAS.w / 2, dock.approach.from.z, K7_ATLAS.h + 20);
-    const blocking = solids.filter((s) => k7ConvexOverlap(lane, solidPoly(s)));
-    assert.ok(blocking.length > 0 && blocking.every((s) => s.door), `wjazd do doku blokują tylko drzwi: ${blocking.map((s) => s.id)}`);
+    for (const b of l.berths) {
+      if (b.kind === 'pad') {
+        assert.ok(!k7ConvexOverlap(beltPolys[0], padOf(b)), `${tag}: taśma przez ${b.id}`);
+        // podejście do placu (korytarz szerokości maxBeam) bez brył poza własną wieżą
+        const a = b.approach.from;
+        const len = Math.hypot(a.x - b.x, a.z - b.z);
+        const corr = k7BoxPoly((a.x + b.x) / 2, (a.z + b.z) / 2, len, b.maxBeam, b.angle);
+        for (const s of solids) if (s.id !== `PAD TOWER ${b.id}`) assert.ok(!k7ConvexOverlap(corr, solidPoly(s)), `${tag}: podejście ${b.id} przez ${s.id}`);
+      } else {
+        // zejście nosiciela (najszerszy) z pochylni ku piaście
+        const carrier = hullFootprint(WARSHIP_CLASSES.carrier.hull);
+        const lane = lanePoly(b.x, b.z - carrier.length / 2, b.launch.to.z, carrier.width + 20);
+        for (const s of solids) assert.ok(!k7ConvexOverlap(lane, solidPoly(s)), `${tag}: zejście ${b.id} przez ${s.id}`);
+      }
+    }
   }
 });
 
-test('suwnice: żaden profil nie grubszy niż 1/20 rozpiętości mostu', () => {
-  const l = createShipyardLayout({});
-  for (const s of l.slips) {
-    const g = s.gantry;
-    for (const p of [g.leg, g.girder, g.girderH]) assert.ok(p <= g.span / 20 + 1e-9, `pochylnia ${s.id}: ${p} > ${g.span}/20`);
-    // most wisi nad płaszczyzną gry (FG), nogi stoją poza polem (kadłub między nimi)
-    assert.ok(g.legTop > K7_HEIGHTS.hullTop + 200);
-    assert.ok(g.span / 2 > s.padBeam / 2);
+test('dźwig: jeden na pochylnię, profil ≤ 1/20 rozpiętości, wysięgnik nad stację taśmy', () => {
+  for (const opts of [{}, { hub: 'u', slips: 4 }]) {
+    const l = createShipyardLayout(opts);
+    const sc = buildShipyardScene(l, resolvePortBuildingStyle('earth'));
+    assert.equal(sc.rig.slips.length, l.slips.length);
+    assert.equal(sc.groups.filter((g) => g.kind === 'crane-bridge').length, l.slips.length, 'jeden most na pochylnię');
+    for (const s of l.slips) {
+      const C = s.crane;
+      for (const p of [C.leg, C.girder, C.girderH]) assert.ok(p <= C.span / 20 + 1e-9, `${s.id}: ${p} > ${C.span}/20`);
+      assert.ok(C.legTop > K7_HEIGHTS.hullTop + 200, 'most nad płaszczyzną gry (FG)');
+      assert.ok(C.span / 2 > s.padBeam / 2, 'nogi poza polem kadłuba');
+      assert.equal(C.tipX, s.station.x, 'wysięgnik sięga stacji taśmy');
+      assert.ok(Math.abs(C.innerRail) < Math.abs(C.outerRail) && Math.abs(C.tipX) < Math.abs(C.innerRail), 'wysięgnik nad trzonem');
+      assert.ok(s.rack.slots.length >= SWARM_TUNE.perSlip + SWARM_TUNE.welders, 'stojak na cały rój');
+    }
   }
-  const G = l.drydock.gantry;
-  for (const p of [G.girder, G.girderH]) assert.ok(p <= G.span / 20 + 1e-9, `suchy dok: ${p} > ${G.span}/20`);
-  for (const t of l.towers) assert.ok(t.mast <= t.jib / 20 + 1e-9, 'żuraw: maszt ≤ wysięgnik / 20');
-  assert.equal(SHIPYARD_SPEC.slip.maxBeam, 480);
 });
 
 test('budowa kadłuba: etapy po kolei, czoło 0 → 1 w każdym etapie, stan z rejestru stoczni', () => {
@@ -207,6 +269,149 @@ test('budowa kadłuba: etapy po kolei, czoło 0 → 1 w każdym etapie, stan z r
   assert.deepEqual(slipStatesFromYard(null, 1), [null]);
 });
 
+// ---------------------------------------------------------------------------
+// Rój dronów, taśma, dźwig (portShipyardSwarm.js)
+const BUILDING = [{ hullId: 'terran_carrier', classId: 'carrier', progress: 0.5 }, { hullId: 'terran_frigate', classId: 'frigate', progress: 0.2 }];
+function maxStep(sw, t0, frames, stateAt) {
+  let prev = null;
+  let worst = 0;
+  for (let f = 0; f < frames; f++) {
+    stepShipyardSwarm(sw, t0 + f / 60, stateAt(f));
+    const D = sw.drones;
+    if (prev) {
+      for (let k = 0; k < sw.droneCount; k++) {
+        const o = k * CARGO_DRONE_STRIDE;
+        worst = Math.max(worst, Math.hypot(D[o] - prev[o], D[o + 1] - prev[o + 1], D[o + 2] - prev[o + 2]));
+      }
+    }
+    prev = D.slice(0, sw.droneCount * CARGO_DRONE_STRIDE);
+  }
+  return worst;
+}
+
+test('rój: drony w rekordach Z5, liczba wg etapu, w obrysie stoczni, ładunek tylko w chwytaku', () => {
+  const l = createShipyardLayout({});
+  const sw = createShipyardSwarm(l);
+  const pad = shipyardPads(l).find((b) => b.maxBeam >= 1000);
+  stepShipyardSwarm(sw, 400, { slips: BUILDING, refit: [{ pad, length: 1800, beam: 806, work: 1 }] });
+  const perSlip = SWARM_TUNE.perSlip + SWARM_TUNE.welders;
+  assert.equal(sw.droneCount, l.slips.length * perSlip + sw.depots.length * SWARM_TUNE.refitDrones, 'wszystkie drony (w roju i na stojakach)');
+  assert.equal(sw.stats.active, SWARM_TUNE.active.plating + SWARM_TUNE.welding.plating + SWARM_TUNE.active.frames + SWARM_TUNE.welding.frames + SWARM_TUNE.refitDrones);
+  let carrying = 0;
+  for (let t = 400; t < 460; t += 0.5) {
+    stepShipyardSwarm(sw, t, { slips: BUILDING, refit: [{ pad, length: 1800, beam: 806, work: 1 }] });
+    const D = sw.drones;
+    let c = 0;
+    for (let k = 0; k < sw.droneCount; k++) {
+      const o = k * CARGO_DRONE_STRIDE;
+      const x = D[o + CARGO_DRONE.U];
+      const z = D[o + CARGO_DRONE.V];
+      const h = D[o + CARGO_DRONE.Z];
+      assert.ok(x >= l.x0 && x <= l.x1 && z >= l.backZ && z <= l.frontZ, `dron ${k} poza stocznią (${x}, ${z})`);
+      assert.ok(h >= SWARM_Z.deck && h <= SWARM_Z.refitCruise + 60, `dron ${k} na wysokości ${h}`);
+      if (D[o + CARGO_DRONE.CARRY] > 0.5) {
+        c++;
+        assert.ok(D[o + CARGO_DRONE.RES] >= 0, 'niesie surowiec');
+      }
+    }
+    assert.equal(sw.carriedCount, c, 'kontener na haku = dron z ładunkiem');
+    carrying += c;
+  }
+  assert.ok(carrying > 0, 'rój nosi moduły');
+  // pochylnia bez kadłuba: rój na stojaku (po powrocie), dźwig w bazie
+  const idle = createShipyardSwarm(l);
+  stepShipyardSwarm(idle, 10, { slips: [null, null] });
+  assert.equal(idle.stats.active, 0);
+  for (let k = 0; k < l.slips.length * perSlip; k++) {
+    const z = idle.drones[k * CARGO_DRONE_STRIDE + CARGO_DRONE.Z];
+    assert.equal(z, SWARM_Z.rack, 'dron na stojaku');
+  }
+  assert.ok(idle.cranes.every((c, i) => c.z === l.slips[i].crane.homeZ && !c.carrying));
+});
+
+test('rój: ruch ciągły — praca, wejście do roju i powrót na stojak bez przeskoków', () => {
+  const l = createShipyardLayout({ hub: 'u' });
+  const sw = createShipyardSwarm(l);
+  const pad = shipyardPads(l).find((b) => b.maxBeam >= 1000);
+  const refit = [{ pad, length: 1800, beam: 806, work: 1 }];
+  // prędkość szczytowa odcinka ≈ 1,5 × przelot (wygładzenie), klatka 1/60 s
+  const limit = 1.6 * Math.max(SWARM_TUNE.speed, SWARM_TUNE.refitSpeed) / 60 + 1;
+  assert.ok(maxStep(sw, 200, 3600, () => ({ slips: BUILDING, refit })) < limit, 'praca');
+  assert.ok(maxStep(sw, 300, 3600, (f) => ({ slips: f < 600 ? [null, null] : BUILDING, refit: f < 600 ? [] : refit })) < limit, 'wejście do roju');
+  assert.ok(maxStep(sw, 400, 3600, (f) => ({ slips: f < 60 ? BUILDING : [null, null], refit: f < 60 ? refit : [] })) < limit, 'powrót na stojak');
+  // po powrocie wszyscy na stojakach
+  stepShipyardSwarm(sw, 400 + 3600 / 60 + 90, { slips: [null, null] });
+  assert.equal(sw.stats.active, 0);
+});
+
+test('taśma: kontenery na trasie podajników, windy na końcach, dźwig kursuje stacja ↔ czoło', () => {
+  const l = createShipyardLayout({});
+  const sw = createShipyardSwarm(l);
+  stepShipyardSwarm(sw, 123.4, { slips: BUILDING, refit: [] });
+  const K = sw.crates;
+  let onBelt = 0;
+  for (let i = 0; i < sw.crateCount; i++) {
+    const o = i * CRATE_STRIDE;
+    if (K[o + CRATE.DECK] !== SWARM_Z.belt) continue;
+    onBelt++;
+    const x = K[o];
+    const z = K[o + 1];
+    const onStub = Math.abs(z - l.belt.stubZ) < 1e-6 && Math.abs(x) <= l.belt.stub.x1 + 1e-6;
+    const onSpine = Math.abs(x) < 25 && z >= l.belt.stubZ - 1e-6 && z <= l.belt.end.z + 1e-6;
+    assert.ok(onStub || onSpine, `kontener taśmy poza trasą (${x}, ${z})`);
+    if (K[o + CRATE.CLIP] > -1e8) assert.ok(K[o + CRATE.Z] <= SWARM_Z.belt, 'winda: wyjeżdża spod pokładu');
+  }
+  assert.ok(onBelt > 60, `kontenerów na taśmie ${onBelt}`);
+  assert.equal(stepShipyardSwarm(sw, 124, { slips: BUILDING, belt: false }).crateCount < sw.crates.length, true);
+  // dźwig: w zakresie szyn, wysięgnik nad stacją przy chwycie, blok tylko w drodze
+  const s0 = l.slips[0];
+  let sawTip = false;
+  let sawFront = false;
+  for (let t = 0; t < SWARM_TUNE.cranePeriod; t += 0.25) {
+    stepShipyardSwarm(sw, 1000 + t, { slips: BUILDING });
+    const c = sw.cranes[0];
+    assert.ok(c.z >= s0.crane.z0 - 1e-6 && c.z <= s0.crane.z1 + 1e-6, 'most na szynach');
+    const minX = Math.min(s0.crane.tipX, s0.x);
+    const maxX = Math.max(s0.crane.tipX, s0.x);
+    assert.ok(c.x >= minX - 1e-6 && c.x <= maxX + 1e-6, 'wózek między stacją a osią kadłuba');
+    if (Math.abs(c.x - s0.crane.tipX) < 1 && c.hookY < 100) sawTip = true;
+    if (Math.abs(c.x - s0.x) < 1 && c.carrying && c.hookY < 250) sawFront = true;
+  }
+  assert.ok(sawTip && sawFront, 'chwyt przy taśmie i odłożenie na kadłubie');
+});
+
+test('rój przez Z5: rekordy trafiają do CargoDrones3D / CargoContainers3D w pozie budowli', () => {
+  const l = createShipyardLayout({ backZ: 0 });
+  const sw = createShipyardSwarm(l);
+  stepShipyardSwarm(sw, 50, { slips: BUILDING });
+  const frame = portModuleFrame(1200, -3400, 0.7);
+  const station = { x: 5_100_000, y: -2_300_000 };
+  const pose = portModuleCargoPose(frame, station);
+  const got = { drones: [], crates: [], deck: [] };
+  const C = {
+    ready: true,
+    setDeckZ(z) { got.deck.push(z); },
+    pushBerthContainer(p, u, v, z, yaw, unit, grid, res, seed, clip, light, kind) {
+      const c = Math.cos(p.angle);
+      const s = Math.sin(p.angle);
+      got.crates.push({ x: p.x + u * c - v * s, y: p.y + u * s + v * c, u, v, kind, unit });
+      return true;
+    }
+  };
+  const D = { ready: true, pushDrone(p, rec, o) { got.drones.push({ u: rec[o], v: rec[o + 1], p }); return true; } };
+  const n = pushShipyardSwarm(sw, C, D, pose, 50);
+  assert.equal(n, sw.droneCount);
+  assert.equal(got.crates.length, sw.crateCount + sw.carriedCount);
+  // (u, v) = (x, z) układu budowli → ten sam punkt gry co portHubToGame
+  for (const c of got.crates.slice(0, 20)) {
+    const g = portHubToGame(frame, station, c.u, c.v);
+    assert.ok(Math.abs(g.x - c.x) < 1e-6 && Math.abs(g.y - c.y) < 1e-6);
+  }
+  assert.ok(got.crates.some((c) => c.unit === SWARM_HEAVY), 'blok dźwigu');
+  assert.ok(got.deck.every(Number.isFinite));
+});
+
+// ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 test('hangar: pojemność dla portów bez ringu z planu § 2 (parking max przy ×60)', () => {
   // Saturn 472, Uran 336, Ceres 317, Jowisz 266, Westa 123, Wenus 93, Merkury 78
@@ -282,7 +487,7 @@ test('hangar: kolejka od bramy IN na zewnątrz, punkty kolejki na pasie', () => 
 });
 
 // ---------------------------------------------------------------------------
-test('adapter: suchy dok = stanowisko roli service (findBerth), pochylnie i hangar w układzie gry', () => {
+test('adapter: place piasty = dok floty z refitem (findBerth), pochylnie w układzie gry', () => {
   const l = createShipyardLayout({ id: 'Y-1' });
   const station = { id: 'saturn', x: 5_100_000, y: -2_300_000 };
   const frame = portModuleFrame(-4000, 9000, -Math.PI / 2);
@@ -290,28 +495,38 @@ test('adapter: suchy dok = stanowisko roli service (findBerth), pochylnie i hang
   assert.equal(t.docks.length, 1);
   assert.equal(t.yards.length, 2);
   const dock = t.docks[0];
-  assert.equal(dock.role, PORT_SERVICE_ROLE);
-  const berth = dock.berths[0];
-  const src = shipyardDrydockBerth(l);
-  const g = portHubToGame(frame, station, src.x, src.z);
-  assert.ok(Math.abs(berth.x - g.x) < 1e-6 && Math.abs(berth.y - g.y) < 1e-6);
-  assert.ok(Math.abs(berth.angle - portHeadingToGame(frame, src.angle)) < 1e-9);
-  assert.equal(berth.cls, 'capital');
-  assert.ok(hullFitsBerth(berth, 'terran_carrier'));
+  assert.equal(dock.kind, 'shipyard-pads');
+  assert.equal(dock.role, BERTH_ROLE.MILITARY, 'postój floty po produkcji');
+  assert.equal(dock.berths.length, shipyardPads(l).length);
+  for (const [i, berth] of dock.berths.entries()) {
+    const src = shipyardPads(l)[i];
+    const g = portHubToGame(frame, station, src.x, src.z);
+    assert.ok(Math.abs(berth.x - g.x) < 1e-6 && Math.abs(berth.y - g.y) < 1e-6);
+    assert.ok(Math.abs(berth.angle - portHeadingToGame(frame, src.angle)) < 1e-9);
+    assert.equal(berth.service, 'refit');
+    assert.equal(berth.role, BERTH_ROLE.MILITARY);
+  }
   const layout = { stationId: 'saturn', docks: t.docks, berths: t.docks.flatMap((d) => d.berths) };
-  assert.equal(findBerth(layout, 'terran_carrier', 0, { role: PORT_SERVICE_ROLE })?.berth, berth);
-  assert.equal(findBerth(layout, 'terran_carrier', 0, { role: BERTH_ROLE.MILITARY }), null, 'zapas floty nie staje w suchym doku');
-  assert.equal(findBerth(layout, 'container_ship', 0, { role: BERTH_ROLE.CIVIL }), null, 'kurs cywilny nie staje w suchym doku');
-  // pochylnia: kurs zejścia = dziób w kosmos (+z układu → w grze +y przy kącie −π/2)
+  const carrierBerth = findBerth(layout, 'terran_carrier', 0, { role: BERTH_ROLE.MILITARY })?.berth;
+  assert.ok(carrierBerth && hullFitsBerth(carrierBerth, 'terran_carrier'), 'nosiciel znajduje plac');
+  assert.ok(findBerth(layout, 'terran_frigate', 0, { role: BERTH_ROLE.MILITARY }), 'fregata znajduje plac');
+  assert.equal(findBerth(layout, 'container_ship', 0, { role: BERTH_ROLE.CIVIL }), null, 'kurs cywilny nie staje w stoczni');
+  // wyłącznie serwis: rola PORT_SERVICE_ROLE (flota ich nie wybiera)
+  const svc = portModuleTraffic(l, { frame, station, role: PORT_SERVICE_ROLE });
+  const svcLayout = { docks: svc.docks, berths: svc.docks.flatMap((d) => d.berths) };
+  assert.equal(findBerth(svcLayout, 'terran_frigate', 0, { role: BERTH_ROLE.MILITARY }), null);
+  assert.ok(findBerth(svcLayout, 'terran_frigate', 0, { role: PORT_SERVICE_ROLE }));
+  // pochylnia: kurs zejścia = dziób ku piaście (+z układu → w grze +y przy kącie −π/2)
   const yardA = t.yards[0];
   assert.ok(Math.abs(yardA.angle - Math.PI / 2) < 1e-9);
   assert.ok(yardA.launchY > yardA.y);
   // odwrotność: gra → układ
-  const back = portGameToHub(frame, station, berth.x, berth.y);
+  const src = shipyardPads(l)[0];
+  const back = portGameToHub(frame, station, dock.berths[0].x, dock.berths[0].y);
   assert.ok(Math.abs(back.x - src.x) < 1e-6 && Math.abs(back.z - src.z) < 1e-6);
-  // bryły w grze z zakresem wysokości
-  assert.ok(t.solids.length > 5 && t.solids.every((s) => s.points.length === 4 && s.y1 > s.y0));
-  assert.equal(t.solids.filter((s) => s.door).length, 2);
+  // bryły w grze z zakresem wysokości, bez drzwi
+  assert.ok(t.solids.length > 10 && t.solids.every((s) => s.points.length === 4 && s.y1 > s.y0));
+  assert.equal(t.solids.filter((s) => s.door).length, 0);
 });
 
 test('adapter na ringu: ramka k7Frame z obrotem grupy (Mars −π), tył na płycie podłogi', () => {
@@ -359,23 +574,27 @@ test('adapter: hangar jako punkt wejścia redy portu bez ringu (portParking, Z2)
   assert.ok(spots.some((s) => s.kind !== 'hangar'), 'nadmiar ponad hangar stoi na redzie');
 });
 
-test('kolizje: zamknięte drzwi suchego doku blokują wjazd, otwarte przepuszczają', () => {
-  const l = createShipyardLayout({});
-  const col = buildPortModuleCollision(l);
-  const dock = shipyardDrydockBerth(l);
-  assert.equal(col.doors.length, 2);
-  // Atlas na osi pasa, dziobem w dok, w otworze drzwi
-  const hull = k7BoxPoly(dock.x, l.drydock.door.z, K7_ATLAS.h - 40, 600);
-  assert.ok(String(col.test(hull)).startsWith('DOOR'), 'drzwi zamknięte');
-  setPortModuleDoorsOpen(col, true);
-  assert.equal(col.test(hull), null, 'drzwi otwarte');
-  setPortModuleDoorsOpen(col, false);
-  assert.ok(col.test(hull));
-  // ściany boczne doku zatrzymują kadłub przesunięty w bok
-  setPortModuleDoorsOpen(col, true);
-  assert.ok(col.test(k7BoxPoly(dock.x + l.drydock.halfWidth, dock.z, 400, 600)));
+test('kolizje: rdzeń piasty, kołnierz i wieże blokują, place i pokład nie', () => {
+  for (const hub of ['radial', 'u']) {
+    const l = createShipyardLayout({ hub });
+    const col = buildPortModuleCollision(l);
+    assert.equal(col.doors.length, 0);
+    // kadłub na każdym placu: wolny (wieże serwisowe stoją obok pola)
+    for (const b of shipyardPads(l)) {
+      const hull = k7BoxPoly(b.x, b.z, Math.min(b.maxLength, 600), Math.min(b.maxBeam, 300), b.angle);
+      assert.equal(col.test(hull), null, `${hub}: plac ${b.id}`);
+    }
+    // kadłub na pochylni i nad trzonem: pokład, nie przeszkoda
+    for (const s of l.slips) assert.equal(col.test(k7BoxPoly(s.x, s.z, 400, 900)), null);
+    assert.equal(col.test(k7BoxPoly(0, (l.spine.rootZ1 + l.slips[0].z1) / 2, 300, 600)), null, 'nad trzonem');
+    // rdzeń / terminal i kołnierz zatrzymują
+    const core = l.hub.kind === 'radial' ? { x: 0, z: l.hub.z } : l.hub.terminal;
+    assert.ok(String(col.test(k7BoxPoly(core.x, core.z, 200, 200))).match(/CORE|TERMINAL/));
+    assert.ok(String(col.test(k7BoxPoly(l.spine.collar.x, l.spine.collar.z, 200, 200))).startsWith('COLLAR'));
+  }
   const hc = buildPortModuleCollision(createHangarLayout({ capacity: 200 }));
   assert.equal(hc.doors.length, 0);
+  setPortModuleDoorsOpen(hc, true);
 });
 
 // ---------------------------------------------------------------------------
@@ -455,28 +674,37 @@ function checkScene(sc, label) {
   return n;
 }
 
-test('sceny: dane instancji skończone, grupy w limicie, style zmieniają wygląd, nie układ', () => {
-  const yard = createShipyardLayout({});
-  const four = createShipyardLayout({ slips: 3 });
+test('sceny: dane instancji skończone, grupy w limicie, style zmieniają wygląd, piasta wg frakcji', () => {
   const hangar = createHangarLayout({ capacity: 472, rows: 2 });
   const counts = {};
   for (const key of STYLES) {
     const style = resolvePortBuildingStyle(key);
+    const yard = createShipyardLayout({ hub: style.shipyardHub });
+    const four = createShipyardLayout({ hub: style.shipyardHub, slips: 4 });
     const y = buildShipyardScene(yard, style);
     counts[key] = checkScene(y, `stocznia ${key}`);
-    checkScene(buildShipyardScene(four, style), `stocznia ×3 ${key}`);
+    checkScene(buildShipyardScene(four, style), `stocznia ×4 ${key}`);
     const h = buildHangarScene(hangar, style);
     checkScene(h, `hangar ${key}`);
     assert.equal(h.rig.drums.length, hangar.drums.length, 'grupa obrotu na każdy bęben');
     assert.equal(y.rig.slips.length, 2);
-    assert.equal(y.rig.dock.doors.length, 6, '3 skrzydła drzwi na stronę');
-    // dach suchego doku w zestawie roof (zanika), mosty suwnic w FG
-    assert.ok(y.sets.roof.box.length > 0 || y.plates.some((p) => p.set === 'roof'));
-    assert.ok(y.sets.fg.box.length > 0);
+    assert.ok(y.rig.slips.every((s) => s.crane.bridge && s.crane.trolley && s.crane.hoist && s.crane.cables), 'jeden dźwig z grupami');
+    // dźwigi, wieże, kołnierz i rdzeń w FG; pokład, taśma, place w BG
+    assert.ok(y.sets.fg.box.length > 0 && y.sets.bg.box.length > y.sets.fg.box.length);
+    assert.equal(y.sets.roof.box.length + y.plates.filter((p) => p.set === 'roof').length, 0, 'stocznia bez dachu zanikającego');
+    // lampy placów: flagi bitowe kanałów zajętości i refitu (tryb show)
+    const fx = [];
+    for (const data of Object.values(y.sets.bg)) for (let i = 0; i < data.length; i += PB_STRIDE) fx.push([data[i + 17], data[i + 19]]);
+    assert.ok(fx.some(([m, c]) => m === PB_FX.show && c === YARD_CH.padsBusy));
+    assert.ok(fx.some(([m, c]) => m === PB_FX.show && c === YARD_CH.padsRefit));
+    assert.ok(fx.some(([m]) => m === PB_FX.chase), 'światła biegnące taśmy');
   }
-  // rodziny mają inne dachy (liczba brył różna), układ stanowisk ten sam
+  // Ziemia (okrąg) i Mars / Jowisz (U) — inny kształt; Mars i Jowisz — inne dachy
   assert.notEqual(counts.earth, counts.mars);
   assert.notEqual(counts.mars, counts.jupiter);
+  // kanały: 4 pochylnie × 3 + 4 kanały piasty mieszczą się w 16
+  assert.equal(YARD_CH.slipBase(3) + 2 < YARD_CH.refitOn, true);
+  assert.ok(Math.max(YARD_CH.refitOn, YARD_CH.padsBusy, YARD_CH.belt, YARD_CH.padsRefit) < 16);
 });
 
 // ---------------------------------------------------------------------------
@@ -511,38 +739,52 @@ const { Core3D } = await import('../src/3d/core3d.js');
 const { PortShipyard3D, PortHangar3D } = await import('../src/3d/portBuildings/portBuildings3D.js');
 const { PortBuoys3D } = await import('../src/3d/portBuildings/portBuoys3D.js');
 
-test('render stoczni: warstwy BG/FG, suwnica idzie za czołem budowy, dach zanika, drzwi w kieszeniach', () => {
+test('render stoczni: warstwy BG/FG, dźwig z pozy roju, kadłub w budowie, lampy placów, rój przez Z5', () => {
   const frame = portModuleFrame(0, 0, -Math.PI / 2);
-  const yard = new PortShipyard3D({ layout: createShipyardLayout({ backZ: 0 }), style: 'mars', frame });
+  const layout = createShipyardLayout({ backZ: 0, hub: 'u' });
+  const yard = new PortShipyard3D({ layout, style: 'mars', frame });
   yard.setLayers(1, 2);
-  assert.ok(yard.meshes.bg.length >= 3 && yard.meshes.fg.length >= 2 && yard.meshes.roof.length >= 1);
+  assert.ok(yard.meshes.bg.length >= 3 && yard.meshes.fg.length >= 2);
   for (const m of yard.meshes.bg) assert.ok(m.layers.isEnabled(1) && !m.layers.isEnabled(2));
-  for (const m of [...yard.meshes.fg, ...yard.meshes.roof]) assert.ok(m.layers.isEnabled(2));
+  for (const m of yard.meshes.fg) assert.ok(m.layers.isEnabled(2));
   assert.equal(yard.root.matrixAutoUpdate, false);
   const G = yard.uniforms.uGroup.value;
-  const bridgeA = yard.rig.slips[0].gantries[0].bridge;
-  const zAt = (p) => {
-    yard.update(0, { slips: [{ hullId: 'terran_carrier', classId: 'carrier', progress: p }, null] });
-    return G[bridgeA].elements[14];
-  };
-  const z1 = zAt(0.4);
-  const z2 = zAt(0.8);
-  assert.ok(z2 > z1, `suwnica A za czołem poszycia: ${z1} → ${z2}`);
+  const bridge = yard.rig.slips[0].crane.bridge;
+  const trolley = yard.rig.slips[0].crane.trolley;
+  const slips = [{ hullId: 'terran_carrier', classId: 'carrier', progress: 0.6 }, null];
+  const zs = new Set();
+  for (let k = 0; k < 60; k++) {
+    yard.update(1, { slips });
+    const cr = yard.swarm.cranes[0];
+    // macierz mostu = poza dźwigu z roju (z), wózek = x dźwigu
+    assert.ok(Math.abs(G[bridge].elements[14] - cr.z) < 1e-6);
+    assert.ok(Math.abs(G[trolley].elements[12] - cr.x) < 1e-6);
+    zs.add(Math.round(cr.z));
+  }
+  assert.ok(zs.size > 10, 'dźwig jeździ');
   // kadłub w budowie: czworokąt w wymiarach sprite'a kadłuba
   const hull = yard.hulls[0];
   const size = trafficHullRenderSize('terran_carrier');
   assert.equal(hull.hullLength, size.w);
   assert.equal(hull.hullBeam, size.h);
-  // dach suchego doku: zanik (statek w środku) chowa siatki dachu
-  yard.update(0, { drydock: { doors: 1, roofFade: 1, work: 1 } });
-  assert.ok(yard.meshes.roof.every((m) => !m.visible));
-  yard.update(0, { drydock: { doors: 0, roofFade: 0, work: 0 } });
-  assert.ok(yard.meshes.roof.every((m) => m.visible));
-  // drzwi: skrzydło przesuwa się o (openX − closedX) przy pełnym otwarciu
-  yard.update(0, { drydock: { doors: 1, roofFade: 0 } });
-  const leaf = yard.rig.dock.doors.find((d) => d.leaf === 2);
-  assert.ok(Math.abs(G[leaf.group].elements[12] - (leaf.openX - leaf.closedX)) < 1e-6);
-  assert.ok(yard.drawCalls <= 16, `draw calle stoczni: ${yard.drawCalls}`);
+  // lampy placów: flagi bitowe zajętości / refitu z mapy placów
+  const pads = shipyardPads(layout);
+  yard.update(0, { pads: { [pads[0].id]: 1, [pads[2].id]: 2 }, refit: [{ pad: pads[2].id, length: 600, beam: 250 }] });
+  const chan = (i) => yard.uniforms.uChan.value[i >> 2].getComponent(i & 3);
+  assert.equal(chan(YARD_CH.padsBusy), 1 + 4);
+  assert.equal(chan(YARD_CH.padsRefit), 4);
+  assert.ok(chan(YARD_CH.refitOn) > 0, 'skład refitu pracuje');
+  // bez stanu placów w klatce — flagi zostają
+  yard.update(0.1, {});
+  assert.equal(chan(YARD_CH.padsBusy), 5);
+  // rój przez atrapę Z5
+  const seen = { drones: 0, crates: 0 };
+  const C = { ready: true, setDeckZ() {}, pushBerthContainer() { seen.crates++; return true; } };
+  const D = { ready: true, pushDrone() { seen.drones++; return true; } };
+  yard.pushCargo(C, D, portModuleCargoPose(frame, { x: 0, y: 0 }));
+  assert.equal(seen.drones, yard.swarm.droneCount);
+  assert.equal(seen.crates, yard.swarm.crateCount + yard.swarm.carriedCount);
+  assert.ok(yard.drawCalls <= 12, `draw calle stoczni: ${yard.drawCalls}`);
   yard.dispose();
 });
 

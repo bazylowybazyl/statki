@@ -1,6 +1,6 @@
 // Budowle portowe (Z7, docs/PLAN-ruch-v2-w-grze.md): HAK STYLU per planeta.
 //
-// Te same moduły (stocznia z suchym dokiem, hangar postojowy, boje redy) stoją
+// Te same moduły (stocznia z placami refitu, hangar postojowy, boje redy) stoją
 // na ringach Ziemi, Marsa i Jowisza i na megadokach planet bez ringu (Z8).
 // Decyzja użytkownika 2026-09-26: ringi Marsa i Jowisza ORAZ ICH DOKI wyglądają
 // inaczej niż Ziemia — budowle biorą więc styl doków z profilu planety
@@ -90,7 +90,9 @@ function keyOf(input, port) {
  *   glow     2 × [r, g, b] (poświata szkła: stała, nocna),
  *   labels   kolory napisów na pokładzie (#rrggbb),
  *   buoy     { civil, military, queue: [r, g, b] HDR, period, flashes, flash },
- *   weld     [r, g, b] HDR iskry spawania (małe punkty — nad progiem bloomu).
+ *   weld     [r, g, b] HDR iskry spawania (małe punkty — nad progiem bloomu),
+ *   shipyardHub  kształt piasty stoczni: 'radial' (Ziemia — okrąg z wypustkami)
+ *            albo 'u' (inne frakcje — litera U), createShipyardLayout({ hub }).
  */
 export function resolvePortBuildingStyle(input = 'earth') {
   const port = portStyleOf(input);
@@ -131,6 +133,8 @@ export function resolvePortBuildingStyle(input = 'earth') {
     labels,
     buoy,
     // łuk spawalniczy: niebieskawa biel, drobne punkty (≤ 3 px) nad progiem 0,9
-    weld: asTriple(over.weld, [4.2, 4.6, 6.2])
+    weld: asTriple(over.weld, [4.2, 4.6, 6.2]),
+    // szkic użytkownika 2026-09-27: stocznie frakcji różnią się piastą
+    shipyardHub: over.shipyardHub === 'radial' || over.shipyardHub === 'u' ? over.shipyardHub : (family === 'k7' ? 'radial' : 'u')
   });
 }

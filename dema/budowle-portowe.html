@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <!-- Ścieżki tekstur gry (assets/…) są względne do katalogu głównego. -->
 <base href="/">
-<title>Budowle portowe — stocznia, hangar, boje (Z7)</title>
+<title>Budowle portowe — stocznia z rojem dronów, hangar, boje (Z7)</title>
 <style>
   :root { --ink: #d6e2e8; --muted: #7d919b; --line: #9fc6d626; --panel: #070d13e6; --accent: #7cc9ff; --warn: #f0b060; }
   * { box-sizing: border-box; }
@@ -41,7 +41,7 @@
 <body>
 <div id="root">
   <canvas id="webgl-layer"></canvas>
-  <canvas id="c" tabindex="0" aria-label="Budowle portowe: stocznia z suchym dokiem, hangar postojowy, boje redy"></canvas>
+  <canvas id="c" tabindex="0" aria-label="Budowle portowe: stocznia z rojem dronów i placami refitu, hangar postojowy, boje redy"></canvas>
 </div>
 <div id="hud">ładowanie…</div>
 <div id="caption"></div>
@@ -56,10 +56,10 @@
   <h2>Czas</h2>
   <div class="btns" id="speeds"></div>
   <div class="row"><label>budowa (pochylnie)</label><input id="build" type="range" min="0" max="1" step="0.001" value="0"><output id="build-out">auto</output></div>
-  <div class="hint">Suwak nadpisuje postęp obu pochylni galerii (0 = auto: kadłuby rosną z czasem, przy ×60 fregata schodzi w ~minutę).</div>
+  <div class="hint">Suwak nadpisuje postęp obu pochylni galerii (0 = auto: kadłuby rosną z czasem, fregata schodzi w ~minutę, nosiciel w ~16 min). Gotowy okręt zjeżdża pasem na plac piasty.</div>
   <h2>Warstwy i ruch</h2>
   <div class="checks" id="toggles"></div>
-  <div class="hint">Mysz: przeciąganie = przesuw, kółko = zoom (w kinie: PPM = orbita). Klawisze 1–9 = widoki, spacja = pauza, R = dach suchego doku.</div>
+  <div class="hint">Mysz: przeciąganie = przesuw, kółko = zoom (w kinie: przeciąganie = orbita). Klawisze 1–9 = widoki, spacja = pauza.</div>
 </div>
 <script type="module" src="/dema/budowle-portowe.js"></script>
 </body>

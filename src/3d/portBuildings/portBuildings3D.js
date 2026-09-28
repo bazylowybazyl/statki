@@ -1,7 +1,9 @@
-// Render budowli portowych (Z7): stocznia z suchym dokiem i hangar postojowy.
-// Dane brył z portBuildingScene.js (bez Three), tu: instancje (prostopadłościan,
-// walec, torus) w zestawach BG / FG / dach, płyty, napisy, grupy ruchome
-// (macierze co klatkę), kanały efektów i kadłuby w budowie (portHullBuild3D.js).
+// Render budowli portowych (Z7): stocznia (pochylnie, dźwigi, piasta z placami
+// postoju i refitu) i hangar postojowy. Dane brył z portBuildingScene.js (bez
+// Three), tu: instancje (prostopadłościan, walec, torus) w zestawach BG / FG /
+// dach, płyty, napisy, grupy ruchome (macierze co klatkę), kanały efektów,
+// kadłuby w budowie (portHullBuild3D.js) i rój dronów z taśmą
+// (portShipyardSwarm.js — rysują je renderery Z5, pushCargo).
 //
 // Zasady (AGENTS.md): bez własnego renderera — obiekty trafiają do sceny
 // gospodarza (Core3D.scene albo grupa ringu), warstwy ustawia gospodarz
@@ -36,7 +38,8 @@ import {
   buildHangarScene,
   buildShipyardScene
 } from './portBuildingScene.js';
-import { HULL_BUILD_STAGES, hullBuildFront } from './portShipyardLayout.js';
+import { HULL_BUILD_STAGES, shipyardPads } from './portShipyardLayout.js';
+import { createShipyardSwarm, pushShipyardSwarm, stepShipyardSwarm } from './portShipyardSwarm.js';
 import { PortHullBuild3D } from './portHullBuild3D.js';
 
 const TAU = Math.PI * 2;
@@ -769,7 +772,8 @@ export class PortBuilding3D {
 }
 
 // ---------------------------------------------------------------------------
-// Stocznia z suchym dokiem
+// Stocznia: pochylnie z kadłubami w budowie, jeden dźwig na pochylnię, rój
+// dronów i taśma (portShipyardSwarm.js — rysowane przez Z5), place postoju / refitu
 
 const _m = new THREE.Matrix4();
 const _m2 = new THREE.Matrix4();
@@ -782,8 +786,12 @@ const _yAxis = new THREE.Vector3(0, 1, 0);
  * Stan stoczni na klatkę (update):
  *   slips     [{ hullId, classId, progress } | null] — slipStatesFromYard(yard)
  *   launch    [0..1] — światła zejścia pochylni (opcjonalnie; domyślnie przy progress ≥ 1)
- *   drydock   { doors 0..1, roofFade 0..1, work 0..1, service 0/1 }
- *   daylight  0 noc .. 1 dzień (lampy hal)
+ *   pads      { [id placu]: 1 zajęty | 2 refit } — lampy placów (brak = bez zmian)
+ *   refit     [{ pad (plac albo id), length, beam, work 0..1 }] — refit okrętu na
+ *             placu: drony ze składu przy rdzeniu (brak = bez zmian)
+ *   belt      false — taśma stoi
+ *   daylight  0 noc .. 1 dzień (lampy)
+ * Rój i taśmę rysuje gospodarz przez Z5: pushCargo(CargoContainers3D, CargoDrones3D, pose).
  */
 export class PortShipyard3D extends PortBuilding3D {
   constructor(opts) {
@@ -796,138 +804,71 @@ export class PortShipyard3D extends PortBuilding3D {
       this.meshes.bg.push(h.mesh);
     }
     this.slipState = this.layout.slips.map(() => null);
-    // wygładzone pozy suwnic pochylni: [pochylnia][suwnica] = { z, tx, hy }
-    this._gantryPose = this.layout.slips.map((s) => s.gantry.homeZ.map((z) => ({ z, tx: 0, hy: s.gantry.legTop - 30 })));
-    this._dock = { doors: 0, work: 0 };
-    this._towerAngle = this.rig.towers.map((_, i) => 0.6 * i);
+    this.swarm = createShipyardSwarm(this.layout, { seed: opts.seed });
+    this.pads = shipyardPads(this.layout);
+    this._padById = new Map(this.pads.map((p) => [p.id, p]));
+    this._padBits = { busy: 0, refit: 0 };
+    this._refit = [];
+    this._refitPool = [];
+    this._belt = true;
     this.update(0, {});
   }
 
-  _slipGantries(dt, i) {
+  /** Plac piasty po id (albo sam plac). */
+  pad(idOrPad) {
+    if (!idOrPad) return null;
+    return typeof idOrPad === 'string' ? this._padById.get(idOrPad) || null : idOrPad;
+  }
+
+  _slipChannels(i) {
     const s = this.layout.slips[i];
     const st = this.slipState[i];
-    const G = this.uniforms.uGroup.value;
-    const t = this.time;
-    const rig = this.rig.slips[i];
-    const hull = this.hulls[i];
+    const job = this.swarm.slips[i];
     const base = YARD_CH.slipBase(i);
     const p = st ? clamp01(st.progress) : 0;
     const building = !!st && p < 0.999;
-    const len = hull.hullLength || s.padLength * 0.8;
-    const beam = hull.hullBeam || s.padBeam * 0.5;
-    const stern = s.z - len / 2;
-    const front = building ? hullBuildFront(p) : 0;
-    const zFront = stern + front * len;
     const stage = !building ? 'idle' : p < HULL_BUILD_STAGES.keel[1] ? 'keel' : p < HULL_BUILD_STAGES.frames[1] ? 'frames' : p < HULL_BUILD_STAGES.plating[1] ? 'plating' : 'outfit';
-    let flags = 0;
-    for (let k = 0; k < rig.gantries.length; k++) {
-      const g = rig.gantries[k];
-      const home = s.gantry.homeZ[k];
-      let z = home;
-      let tx = 0;
-      let hy = g.top - 30;         // zblocze u góry
-      if (building) {
-        if (k === 0) {
-          // A: nad czołem budowy, wózek przesuwa się nad burtami, zblocze pracuje
-          z = zFront + 50 * Math.sin(t * 0.61 + i);
-          tx = beam * 0.32 * Math.sin(t * 0.43 + i * 1.7);
-          const lowering = stage === 'frames' || stage === 'plating';
-          const cyc = (t * 0.11 + i * 0.37) % 1;
-          hy = lowering ? 150 + 140 * (0.5 + 0.5 * Math.cos(cyc * TAU)) : g.top - 30;
-          if (stage === 'plating' && cyc < 0.5) flags |= 1;
-        } else {
-          // B: kursuje z blokiem między halą prefabrykacji a czołem budowy
-          const cyc = ((t / 26) + i * 0.41) % 1;
-          const zb = Math.max(home, zFront - 260);
-          let u;
-          if (cyc < 0.35) u = smooth(cyc / 0.35);
-          else if (cyc < 0.5) u = 1;
-          else if (cyc < 0.85) u = 1 - smooth((cyc - 0.5) / 0.35);
-          else u = 0;
-          z = home + (zb - home) * u;
-          tx = -beam * 0.2;
-          const loaded = cyc < 0.43 || cyc > 0.9;
-          hy = (cyc > 0.36 && cyc < 0.49) || cyc > 0.88 ? 190 : g.top - 60;
-          if (loaded && (stage === 'frames' || stage === 'plating')) flags |= 2;
-        }
-      }
-      // wygładzenie (bez skoków przy zmianie etapu)
-      const prev = this._gantryPose[i][k];
-      prev.z = dt > 0 ? approach(prev.z, z, 2.2, dt) : z;
-      prev.tx = dt > 0 ? approach(prev.tx, tx, 2.2, dt) : tx;
-      prev.hy = dt > 0 ? approach(prev.hy, hy, 2.6, dt) : hy;
-      G[g.bridge].makeTranslation(s.x, 0, prev.z);
-      G[g.trolley].copy(G[g.bridge]).multiply(_m.makeTranslation(prev.tx, 0, 0));
-      G[g.hoist].copy(G[g.trolley]).multiply(_m.makeTranslation(0, k7HeightToZ(prev.hy), 0));
-      const z0 = k7HeightToZ(prev.hy + 10);
-      const z1 = k7HeightToZ(g.top + 40);
-      const cl = Math.max(1, z1 - z0);
-      _m2.makeScale(1, cl / K7_ABOVE_SCALE, 1);
-      G[g.cables].copy(G[g.trolley]).multiply(_m.makeTranslation(0, (z0 + z1) / 2, 0)).multiply(_m2);
-    }
     const work = !building ? 0 : stage === 'keel' ? 0.6 : stage === 'outfit' ? 0.35 : 1;
     this._setChan(base, work);
-    this._setChan(base + 1, (zFront - s.z0) / s.padLength);
+    this._setChan(base + 1, clamp01((job.front - s.z0) / s.length));
     const launch = Number.isFinite(this._launch?.[i]) ? this._launch[i] : (st && p >= 0.999 ? 1 : 0);
     this._setChan(base + 2, launch);
-    this._setChan(base + 3, flags);
   }
 
-  _towers(dt) {
+  // Dźwigi z pozy roju (portShipyardSwarm: kursy stacja taśmy ↔ czoło budowy).
+  _cranes() {
     const G = this.uniforms.uGroup.value;
-    for (let i = 0; i < this.rig.towers.length; i++) {
-      const r = this.rig.towers[i];
-      const t = this.layout.towers[i];
-      const cyc = (this.time / 38 + i * 0.3) % 1;
-      // obrót między pochylniami (wysięgnik nad jedną, potem nad drugą)
-      const target = Math.PI / 2 + 1.15 * Math.sin(cyc * TAU);
-      this._towerAngle[i] = dt > 0 ? approach(this._towerAngle[i], target, 0.9, dt) : target;
-      const a = this._towerAngle[i];
-      _q.setFromAxisAngle(_yAxis, a);
-      _v.set(t.x, k7HeightToZ(t.height), t.z);
-      G[r.slew].compose(_v, _q, _one);
-      const rad = 180 + (t.jib - 260) * (0.5 + 0.5 * Math.sin(this.time * 0.19 + i));
-      G[r.trolley].copy(G[r.slew]).multiply(_m.makeTranslation(rad, 0, 0));
-      const drop = (60 + 240 * (0.5 + 0.5 * Math.sin(this.time * 0.27 + i * 2))) * K7_ABOVE_SCALE;
-      G[r.hook].copy(G[r.trolley]).multiply(_m.makeTranslation(0, -drop, 0));
+    for (let i = 0; i < this.layout.slips.length; i++) {
+      const s = this.layout.slips[i];
+      const r = this.rig.slips[i].crane;
+      const cr = this.swarm.cranes[i];
+      G[r.bridge].makeTranslation(s.x, 0, cr.z);
+      G[r.trolley].copy(G[r.bridge]).multiply(_m.makeTranslation(cr.x - s.x, 0, 0));
+      G[r.hoist].copy(G[r.trolley]).multiply(_m.makeTranslation(0, k7HeightToZ(cr.hookY), 0));
+      const z0 = k7HeightToZ(cr.hookY + 14);
+      const z1 = k7HeightToZ(r.top + 34);
+      const cl = Math.max(1, z1 - z0);
+      _m2.makeScale(1, cl / K7_ABOVE_SCALE, 1);
+      G[r.cables].copy(G[r.trolley]).multiply(_m.makeTranslation(0, (z0 + z1) / 2, 0)).multiply(_m2);
     }
   }
 
-  _drydock(dt, d) {
-    const rig = this.rig.dock;
-    const dock = this.layout.drydock;
-    if (!rig || !dock) return;
-    const G = this.uniforms.uGroup.value;
-    const doors = clamp01(Number(d?.doors) || 0);
-    const work = clamp01(Number(d?.work) || 0);
-    this._dock.doors = dt > 0 ? approach(this._dock.doors, doors, 3, dt) : doors;
-    this._dock.work = dt > 0 ? approach(this._dock.work, work, 2, dt) : work;
-    const o = smooth(this._dock.doors);
-    for (const leaf of rig.doors) {
-      // skrzydła wchodzą do kieszeni po kolei (teleskop): najbliższe osi rusza pierwsze
-      const k = leaf.leaf;
-      const u = clamp01(o * 1.25 - (2 - k) * 0.12);
-      G[leaf.group].makeTranslation((leaf.openX - leaf.closedX) * u, 0, 0);
+  _refitState(list) {
+    const out = this._refit;
+    out.length = 0;
+    if (!list) return out;
+    for (let k = 0; k < list.length; k++) {
+      const e = list[k];
+      const pad = this.pad(e?.pad);
+      if (!pad) continue;
+      const o = this._refitPool[out.length] || (this._refitPool[out.length] = { pad: null, length: 0, beam: 0, work: 1 });
+      o.pad = pad;
+      o.length = Number(e.length) || pad.maxLength;
+      o.beam = Number(e.beam) || pad.maxBeam;
+      o.work = e.work ?? 1;
+      out.push(o);
     }
-    const len = dock.z1 - dock.z0;
-    const w = this._dock.work;
-    for (let k = 0; k < rig.gantries.length; k++) {
-      const g = rig.gantries[k];
-      const home = dock.gantry.homeZ[k];
-      const sweep = dock.z0 + 500 + (len - 1000) * (0.5 + 0.5 * Math.sin(this.time * 0.07 + k * Math.PI));
-      const z = home + (sweep - home) * w;
-      const x = dock.x + (dock.halfWidth * 0.45) * Math.sin(this.time * 0.23 + k * 2.1) * w;
-      G[g.bridge].makeTranslation(0, 0, z);
-      G[g.trolley].copy(G[g.bridge]).multiply(_m.makeTranslation(x, 0, 0));
-      const hy = dock.gantry.y + 60 - (200 * w) * (0.6 + 0.4 * Math.sin(this.time * 0.5 + k));
-      G[g.head].copy(G[g.trolley]).multiply(_m.makeTranslation(0, k7HeightToZ(hy), 0));
-    }
-    const front = 0.5 + 0.42 * Math.sin(this.time * 0.07);
-    this._setChan(YARD_CH.dockWork, w);
-    this._setChan(YARD_CH.dockFront, front);
-    this._setChan(YARD_CH.dockDoors, this._dock.doors);
-    this._setChan(YARD_CH.dockStatus, d?.service ? 1 : (w > 0.05 ? 1 : 0));
-    this._applyRoofFade(Number(d?.roofFade) || 0);
+    return out;
   }
 
   /** Stan klatki (patrz opis klasy). */
@@ -943,11 +884,37 @@ export class PortShipyard3D extends PortBuilding3D {
       for (const h of this.hulls) h.setState(h.state, this.time);
     }
     this._launch = state.launch || null;
+    if (state.belt !== undefined) this._belt = state.belt !== false;
+    if (state.refit !== undefined) this._refitState(state.refit);
+    if (state.pads) {
+      let busy = 0;
+      let refit = 0;
+      for (let i = 0; i < this.pads.length; i++) {
+        const v = state.pads[this.pads[i].id];
+        if (v === 1 || v === 2) busy += 2 ** i;
+        if (v === 2) refit += 2 ** i;
+      }
+      this._padBits.busy = busy;
+      this._padBits.refit = refit;
+    }
+    stepShipyardSwarm(this.swarm, this.time, { slips: this.slipState, refit: this._refit, belt: this._belt });
     this.uniforms.uGroup.value[0].identity();
-    for (let i = 0; i < this.layout.slips.length; i++) this._slipGantries(dt, i);
-    this._towers(dt);
-    this._drydock(dt, state.drydock || this._lastDock || NO_STATE);
-    if (state.drydock) this._lastDock = state.drydock;
+    for (let i = 0; i < this.layout.slips.length; i++) this._slipChannels(i);
+    this._cranes();
+    let depots = 0;
+    for (let i = 0; i < this.swarm.depots.length; i++) if (this.swarm.depots[i].pad) depots += 2 ** i;
+    this._setChan(YARD_CH.refitOn, depots);
+    this._setChan(YARD_CH.padsBusy, this._padBits.busy);
+    this._setChan(YARD_CH.belt, this._belt ? 1 : 0);
+    this._setChan(YARD_CH.padsRefit, this._padBits.refit);
+  }
+
+  /**
+   * Rój dronów, taśma, stacje i ładunek dźwigów przez renderery Z5 (po ich
+   * begin(), przed end()). pose — portModuleCargoPose(ramka ruchu, stacja).
+   */
+  pushCargo(containers, drones, pose) {
+    return pushShipyardSwarm(this.swarm, containers, drones, pose, this.time);
   }
 
   dispose() {

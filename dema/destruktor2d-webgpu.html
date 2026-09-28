@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Destruktor 2D — belki na GPU</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    overflow: hidden; background: #04050a;
+    color: #9fe8b8; font-family: 'Consolas', 'Courier New', monospace;
+  }
+  canvas { display: block; width: 100%; height: 100%; }
+  canvas:focus { outline: none; }
+  #ui { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
+  .panel {
+    position: absolute;
+    background: rgba(6, 10, 18, 0.84);
+    border: 1px solid #1d3a5f;
+    border-radius: 8px;
+    padding: 12px 14px;
+    backdrop-filter: blur(3px);
+    pointer-events: auto;
+    font-size: 11px;
+    line-height: 1.5;
+  }
+  #panel-left { top: 50px; left: 14px; width: 262px; max-height: calc(100% - 80px); overflow-y: auto; }
+  #panel-stats { top: 50px; right: 14px; width: 262px; max-height: calc(100% - 80px); overflow-y: auto; color: #7fc9ff; }
+  #hud-controls { position: absolute; top: 12px; left: 14px; right: 14px; display: flex; justify-content: space-between; gap: 8px; }
+  #hud-controls button, #hud-controls a { pointer-events: auto; }
+  .panel.folded { display: none; }
+  @media (max-width: 1000px) {
+    #panel-left:not(.open), #panel-stats:not(.open) { display: none; }
+    #panel-help { left: 14px !important; font-size: 10px; }
+  }
+  #panel-help { bottom: 14px; left: 318px; right: 290px; color: #8aa3c0; pointer-events: none; }
+  h1 { font-size: 14px; margin: 0 0 8px 0; color: #6fb7ff; letter-spacing: 1px; }
+  h2 { font-size: 11px; margin: 10px 0 4px 0; color: #57d78a; }
+  .row { display: flex; justify-content: space-between; align-items: center; margin: 3px 0; gap: 8px; }
+  .row label { flex: 1; color: #b7cdd9; }
+  .row output { width: 58px; text-align: right; color: #ffd479; }
+  input[type=range] { flex: 1.3; min-width: 0; accent-color: #2f81f7; height: 14px; }
+  select, button, a.mode-link {
+    background: #0d1930; color: #cfe4ff; border: 1px solid #2b4a77;
+    border-radius: 4px; font-family: inherit; font-size: 11px; padding: 3px 8px; cursor: pointer;
+    text-decoration: none;
+  }
+  select { max-width: 150px; }
+  button:hover, a.mode-link:hover { background: #17325c; }
+  button.wide { width: 100%; margin-top: 5px; }
+  button.show { text-align: left; border-color: #3d6fa8; background: #102544; }
+  button.show:hover { background: #1b3a66; }
+  #stats div { display: flex; justify-content: space-between; gap: 8px; }
+  #stats span:last-child { color: #ffd479; text-align: right; }
+  #stats .gpu span:last-child { color: #8dffb0; }
+  .legend { margin-top: 6px; font-size: 10px; color: #8aa3c0; }
+  #toast {
+    position: absolute; top: 46%; left: 50%; transform: translate(-50%, -50%);
+    background: rgba(10, 22, 44, 0.92); border: 1px solid #2f81f7;
+    padding: 14px 26px; border-radius: 8px; font-size: 13px; color: #cfe4ff;
+    pointer-events: none; opacity: 0; transition: opacity 0.25s; z-index: 30; max-width: 70vw; text-align: center;
+  }
+  #fatal { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; z-index: 40;
+    background: #04050a; color: #ffb4a8; font-size: 14px; padding: 40px; text-align: center; white-space: pre-wrap; }
+  kbd { background: #14243d; border: 1px solid #2b4a77; border-radius: 3px; padding: 0 4px; color: #ffd479; }
+</style>
+</head>
+<body>
+<canvas id="view" tabindex="0" aria-label="Scena 2D na WebGPU — sterowanie Atlasem"></canvas>
+
+<div id="ui">
+  <div id="hud-controls">
+    <button id="btn-settings">Ustawienia</button>
+    <a class="mode-link" href="../destruktor2d.html">← Ta sama scena na CPU</a>
+    <button id="btn-telemetry">Telemetria</button>
+  </div>
+  <div class="panel" id="panel-left">
+    <h1>DESTRUKTOR 2D — FIZYKA NA GPU</h1>
+    <div class="legend">Te same kadłuby, belki i prawa zgniotu co demo CPU, ale cały krok fizyki liczą compute shadery WGSL (Gauss-Seidel z kolorowaniem belek, kontakty z siatki świata, zgniot, broń). Render czyta bufory fizyki bez kopii przez CPU.</div>
+
+    <h2>POKAZ — CO DAJE GPU</h2>
+    <button class="wide show" id="show-fine">1 · Taran w siatce 3,75 j. (97 tys. węzłów)</button>
+    <button class="wide show" id="show-fleet">2 · Flota 84 kadłubów + 6 taranów</button>
+    <button class="wide show" id="show-strain">3 · Naprężenia belek na żywo (×0,2)</button>
+    <button class="wide show" id="show-wall">4 · Ściana przy 20 000 j./s</button>
+    <div class="legend">Każdy pokaz liczy pełny solver co krok 120 Hz. Porównaj czas „GPU fizyka” w telemetrii z demem CPU (link u góry).</div>
+
+    <h2>SCENA</h2>
+    <div class="row"><label for="opt-scene">Scenariusz</label><select id="opt-scene">
+      <option value="ram" selected>Atlas + kukła</option>
+      <option value="fleet">Flota (72 kadłuby)</option>
+      <option value="fleet-ram">Flota + 6 taranów</option>
+    </select></div>
+
+    <h2>LOT — ATLAS</h2>
+    <div class="legend"><kbd>W/S</kbd> ciąg / wstecz · <kbd>A/D</kbd> obrót · <kbd>Q/E</kbd> w bok<br>
+      <kbd>Shift</kbd> dopalacz do 40 000 j./s · <kbd>X</kbd> hamulec · <kbd>LPM</kbd> laser · <kbd>PPM</kbd> rakiety</div>
+    <div class="row"><label><input type="checkbox" id="cb-assist" checked> Stabilizacja dryfu i obrotu</label></div>
+
+    <h2>KUKŁA</h2>
+    <div class="row"><label for="opt-dummy">Kadłub</label><select id="opt-dummy">
+      <option value="atlas" selected>Atlas (kopia)</option>
+      <option value="pirate_battleship">Pancernik piracki</option>
+      <option value="terran_battleship">Pancernik Terran</option>
+      <option value="terran_carrier">Lotniskowiec Terran</option>
+      <option value="pirate_destroyer">Niszczyciel piracki</option>
+      <option value="long_haul_freighter">Frachtowiec daleki</option>
+      <option value="none">brak (tylko ściana)</option>
+    </select></div>
+    <div class="row"><label for="opt-pose">Ustawienie</label><select id="opt-pose">
+      <option value="90" selected>burtą (90°)</option>
+      <option value="135">skos (135°)</option>
+      <option value="180">dziobem w dziób</option>
+      <option value="0">rufą do Atlasa</option>
+    </select></div>
+    <div class="row"><label for="opt-mass">Masa kukły ×</label><select id="opt-mass">
+      <option value="0.25">0,25</option><option value="0.5">0,5</option>
+      <option value="1" selected>1 (naturalna)</option>
+      <option value="2">2</option><option value="4">4</option><option value="8">8</option>
+    </select></div>
+    <button class="wide" id="btn-reset">↺ Nowa kukła, Atlas na starcie (R)</button>
+
+    <h2>ŚCIANA</h2>
+    <div class="row"><label for="opt-wall">Niezniszczalna ściana</label><select id="opt-wall">
+      <option value="0">brak</option>
+      <option value="3000">3 000 j. przed dziobem</option>
+      <option value="20000">20 000 j.</option>
+      <option value="60000" selected>60 000 j.</option>
+      <option value="120000">120 000 j.</option>
+    </select></div>
+
+    <h2>TARAN</h2>
+    <div class="row"><label>Prędkość [j./s]</label><input type="range" id="sl-speed" min="50" max="40000" step="50" value="800"><output id="o-speed">800</output></div>
+    <button class="wide" id="btn-ram">Taran w kukłę (T)</button>
+
+    <h2>TEMPO</h2>
+    <div class="row"><label>Tempo symulacji</label><input type="range" id="sl-time" min="0.05" max="1" step="0.05" value="1"><output id="o-time">1</output></div>
+    <div class="legend"><kbd>Z</kbd> zwolnione tempo ×0,2 · <kbd>P</kbd> pauza</div>
+
+    <h2>KONSTRUKCJA</h2>
+    <div class="row"><label for="opt-res">Siatka Atlasa</label><select id="opt-res">
+      <option value="90">90 komórek (20 j.)</option>
+      <option value="120" selected>120 komórek (15 j.)</option>
+      <option value="160">160 komórek (11 j.)</option>
+      <option value="240">240 (7,5 j. jak heksy gry)</option>
+      <option value="480">480 (3,75 j.)</option>
+      <option value="960">960 (1,9 j.) — tylko GPU</option>
+    </select></div>
+    <div class="row"><label for="opt-frame">Wręgi co N węzłów</label><select id="opt-frame">
+      <option value="1">1 (gęsto)</option>
+      <option value="2" selected>2</option>
+      <option value="4">4 (rzadko)</option>
+      <option value="0">brak wręgów</option>
+    </select></div>
+    <div class="row"><label for="opt-bulkhead">Gródź co N kolumn</label><select id="opt-bulkhead">
+      <option value="5">5 (gęsto)</option>
+      <option value="8" selected>8</option>
+      <option value="14">14 (rzadko)</option>
+      <option value="0">brak grodzi</option>
+    </select></div>
+    <div class="legend">Solver zawsze pełny: każdy krok liczy wszystkie belki wszystkich kadłubów (CPU ma do tego solver lokalny). Zmiana resetuje scenę.</div>
+
+    <h2>MATERIAŁ</h2>
+    <div class="row"><label>Opór zgniotu</label><input type="range" id="sl-yield" min="0" max="2000000" step="50000" value="300000"><output id="o-yield">300k</output></div>
+    <div class="row"><label>Sztywność ×</label><input type="range" id="sl-stiff" min="0.2" max="1.6" step="0.05" value="1"><output id="o-stiff">1</output></div>
+    <div class="row"><label>Wytrzymałość ×</label><input type="range" id="sl-break" min="0.2" max="3.0" step="0.1" value="0.6"><output id="o-break">0.6</output></div>
+    <div class="row"><label>Plastyczność</label><input type="range" id="sl-plastic" min="0" max="1" step="0.05" value="0.55"><output id="o-plastic">0.55</output></div>
+    <div class="row"><label>Iteracje solvera</label><input type="range" id="sl-iters" min="1" max="16" step="1" value="3"><output id="o-iters">3</output></div>
+    <div class="row"><label>Transfer zgniotu</label><input type="range" id="sl-crush" min="0.1" max="1" step="0.05" value="0.85"><output id="o-crush">0.85</output></div>
+
+    <h2>BROŃ</h2>
+    <div class="row"><label>Siła uzbrojenia</label><input type="range" id="sl-dmg" min="50" max="1500" step="25" value="450"><output id="o-dmg">450</output></div>
+    <div class="row"><label>Promień eksplozji [komórki]</label><input type="range" id="sl-radius" min="1" max="9" step="0.5" value="3"><output id="o-radius">3</output></div>
+
+    <h2>WIDOK</h2>
+    <div class="row"><label for="opt-follow">Kamera (V)</label><select id="opt-follow">
+      <option value="atlas" selected>za Atlasem</option>
+      <option value="dummy">za kukłą</option>
+      <option value="pair">oba kadłuby</option>
+      <option value="free">swobodna</option>
+    </select></div>
+    <div class="row"><label><input type="checkbox" id="cb-skin" checked> Sprite (skóra)</label></div>
+    <div class="row"><label><input type="checkbox" id="cb-beams"> Podgląd belek</label></div>
+    <div class="row"><label><input type="checkbox" id="cb-strain"> Naprężenia belek (G)</label></div>
+    <div class="row"><label><input type="checkbox" id="cb-nodes"> Podgląd węzłów</label></div>
+    <div class="row"><label><input type="checkbox" id="cb-heat" checked> Żar blachy (jak w grze)</label></div>
+    <div class="legend">Kółko: przybliżenie · środkowy przycisk: przesuwanie widoku · <kbd>B</kbd> belki · <kbd>G</kbd> naprężenia · <kbd>K</kbd> sprite · <kbd>N</kbd> naprawa</div>
+  </div>
+
+  <div class="panel" id="panel-stats">
+    <h1>TELEMETRIA</h1>
+    <div id="stats">
+      <div><span>FPS</span><span id="st-fps">—</span></div>
+      <div><span>Stan</span><span id="st-state">—</span></div>
+      <div class="gpu"><span>GPU fizyka / klatkę</span><span id="st-gpu-phys">—</span></div>
+      <div class="gpu"><span>&nbsp;&nbsp;na krok 120 Hz</span><span id="st-gpu-step">—</span></div>
+      <div class="gpu"><span>GPU render / klatkę</span><span id="st-gpu-render">—</span></div>
+      <div class="gpu"><span>CPU: kodowanie klatki</span><span id="st-encode">—</span></div>
+      <div class="gpu"><span>Dispatchy / klatkę</span><span id="st-dispatch">—</span></div>
+      <div><span>Kroki × podkroki</span><span id="st-substeps">—</span></div>
+      <div><span>Tempo symulacji</span><span id="st-sim-rate">—</span></div>
+      <div><span>Kontakty / pary</span><span id="st-contacts">—</span></div>
+      <div><span>Zgniecione węzły / kl.</span><span id="st-crush">—</span></div>
+      <div><span>Czas zgniatania</span><span id="st-contact-time">—</span></div>
+      <div><span>Prędkość Atlasa</span><span id="st-speed">—</span></div>
+      <div><span>Prędkość kukły</span><span id="st-dummy-speed">—</span></div>
+      <div><span>Prędkość zbliżania</span><span id="st-closing">—</span></div>
+      <div><span>Atlas: węzły</span><span id="st-atlas-nodes">—</span></div>
+      <div><span>Kukła: węzły</span><span id="st-dummy-nodes">—</span></div>
+      <div><span>Ciała / wraki</span><span id="st-bodies">—</span></div>
+      <div><span>Węzły / belki (całość)</span><span id="st-lattice">—</span></div>
+      <div><span>Kolory belek (GS)</span><span id="st-colors">—</span></div>
+      <div><span>Zerwania łącznie</span><span id="st-broken">—</span></div>
+      <div><span>Odłamki</span><span id="st-debris">0</span></div>
+      <div><span>Trafienia: laser / rakiety</span><span id="st-hits">0 / 0</span></div>
+      <div><span>Budowa sceny</span><span id="st-build">—</span></div>
+    </div>
+    <div class="legend">Czasy GPU ze znaczników czasu (timestamp-query) — czysta praca karty. Stan ciał wraca na CPU z opóźnieniem 1–3 klatek (telemetria, liczba podkroków); kamera i render czytają go bez opóźnienia, na GPU.</div>
+  </div>
+
+  <div class="panel" id="panel-help">
+    <kbd>W/S</kbd> ciąg &nbsp;|&nbsp; <kbd>A/D</kbd> obrót &nbsp;|&nbsp; <kbd>Q/E</kbd> w bok &nbsp;|&nbsp; <kbd>Shift</kbd> dopalacz 40k &nbsp;|&nbsp; <kbd>X</kbd> hamulec
+    &nbsp;|&nbsp; <kbd>LPM</kbd> laser &nbsp;|&nbsp; <kbd>PPM</kbd> rakiety<br>
+    <kbd>1–4</kbd> pokazy &nbsp;|&nbsp; <kbd>T</kbd> taran &nbsp;|&nbsp; <kbd>R</kbd> reset &nbsp;|&nbsp; <kbd>Z</kbd> zwolnione tempo &nbsp;|&nbsp; <kbd>P</kbd> pauza &nbsp;|&nbsp; <kbd>V</kbd> kamera &nbsp;|&nbsp; <kbd>B</kbd> belki &nbsp;|&nbsp; <kbd>G</kbd> naprężenia
+  </div>
+</div>
+
+<div id="toast"></div>
+<div id="fatal"></div>
+
+<script type="module" src="./destruktor2d-webgpu/main.js"></script>
+</body>
+</html>
