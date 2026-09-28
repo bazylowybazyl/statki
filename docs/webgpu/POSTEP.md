@@ -62,7 +62,7 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 | 21b | Fizyka wydobycia asteroid w grze (drony, piła, ładunki, urobek) — logika i demo od sesji „Asteroid lighting bug demo” | 21, 12 (+ commit dema) | 22–23 | max | zrobione, scalone (5cc94a7) — commity: 708bbdf, 87a883c, 9e1a8ba, 72f30ab, ce0f8b8, f3c573e (scalenia `main` b6cbe25, c5726c7) | | propozycja sesji fizyki skał; otwarte: kolizje odłamów, wpływ wybuchu, udźwig, ceny |
 | 22 | Warp „Nurt” z dema `warp-webgpu` (iteracja 2) | 12, 13 (+ commit dema) | 14–21 | max | zrobione, scalone (e9f4285); demo: 68cc081 | 97f97b2, de2ed96, 3e8c98d, 83b3735, 4b08a27 (scalenia `main` 3b93795, f43d903) | ośrodek 1 mln drobin w compute, poza warpem 0 kroków i 0 draw calli; stara soczewka i API usunięte; wygląd iteracji 2 do oceny użytkownika | | „ready do wgrania, jak skończy sesję”; wygląd iteracji 2 jeszcze nieoceniony |
 | 22b | Kop kamery przy skoku warpa i impuls zoomu przy wyjściu (z dema „Nurt”, w `cameraRig`) | 22 | 11, 18–21 | xhigh | zrobione, scalone (c7a7f6a) | 75af962, 8d3953f (scalenie `main` 575e550) | uwaga użytkownika do iteracji 1: wejście i wyjście „suche, bez kopa” |
-| 23 | Wydajność i precyzja: A/B z tagiem, drżenie, kompilacja, pamięć | 04–22 | nie | max | czeka | | koszt portu osobno od kosztu nowych efektów |
+| 23 | Wydajność i precyzja: A/B z tagiem, drżenie, kompilacja, pamięć | 04–22 | nie | max | w toku (podagent, worktree `statki-wt/23`, GPU na wyłączność; najpierw poprawki z listy „Zebrane… 23”, potem pomiary) | | koszt portu osobno od kosztu nowych efektów |
 | 24 | Sprzątanie i domknięcie portu | 23 | nie | xhigh | czeka | | decyzje PLAN §12 p. 1, 3 |
 
 ## Regresje przejściowe (świadome)
