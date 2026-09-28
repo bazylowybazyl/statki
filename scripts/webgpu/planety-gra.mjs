@@ -37,7 +37,12 @@ const VIEWS = [
   { name: 'stacja-wenus', body: 'station:venus', fill: 0.3, layers: [2] },
   // Stacja piracka powstaje dopiero z misją najemnika — tu wprost przez world3d.js (ten sam moduł co gra),
   // w próżni obok statku; bez encji w `stations` (rozgrywki nie dotyka).
-  { name: 'stacja-piracka', body: 'pirate', fill: 0.35, layers: [2] }
+  { name: 'stacja-piracka', body: 'pirate', fill: 0.35, layers: [2] },
+  // Gwiazdy rozciągnięte w skoku (smugi wzdłuż lotu, głowa w miejscu gwiazdy): warpFactor ustawiony wprost
+  // w uniformach StarSystemu — przy stojącym czasie (dt = 0) lerp w update() go nie rusza. Bez gry w stanie
+  // skoku: stara soczewka tagu (warpLensPass) zginałaby tło tylko na WebGL.
+  { name: 'gwiazdy-skok', body: 'deep', zoom: 0.3, layers: [1], starWarp: 0.8 },
+  { name: 'gwiazdy', body: 'deep', zoom: 0.3, layers: [1], starWarp: 0 }
 ];
 
 const { createServer } = await import('vite');
@@ -106,6 +111,14 @@ try {
       const S = window.__harness.scene;
       const view = ${JSON.stringify(view)};
       let x, y, r;
+      if (view.body === 'deep') {
+        // Próżnia (jak DEEP w zrzuty.mjs); gwiazdy gry: obiekt z uniformami StarSystemu (Points na WebGL, Mesh na WebGPU).
+        const stars = window.Core3D.scene.children.find((o) => o.material?.uniforms?.stretchStrength && o.material.uniforms.cameraOffset);
+        if (!stars) return { blad: 'brak gwiazd' };
+        stars.material.uniforms.warpFactor.value = view.starWarp;
+        S.cam(6210000, 5330000, view.zoom);
+        return { x: 6210000, y: 5330000, zoom: view.zoom, warpFactor: view.starWarp };
+      }
       if (view.body === 'pirate') {
         if (!window.__harnessPirat) {
           const world = await import('/src/3d/world3d.js');
