@@ -432,10 +432,13 @@ async function main() {
 
     S.cpuMs = S.cpuMs * 0.9 + (performance.now() - t0) * 0.1;
     if (timestamps && (S.frames % 8) === 0) {
-      renderer.resolveTimestampsAsync('render').then((ms) => { if (Number.isFinite(ms)) S.gpuMs = ms; });
-      renderer.resolveTimestampsAsync('compute').then((ms) => { if (Number.isFinite(ms)) S.gpuComputeMs = ms; });
+      renderer.resolveTimestampsAsync('render').then(onGpuRender);
+      renderer.resolveTimestampsAsync('compute').then(onGpuCompute);
     }
   }
+  // Czasy GPU ostatniej klatki (znaczniki czasu) — funkcje tworzone raz.
+  function onGpuRender(ms) { if (Number.isFinite(ms)) S.gpuMs = ms; }
+  function onGpuCompute(ms) { if (Number.isFinite(ms)) S.gpuComputeMs = ms; }
 
   // Panel: HP i statystyki (4 razy na sekundę — tekst to jedyna alokacja poza startem).
   const hpFill = $('hpfill'), hpText = $('hptext'), statsEl = $('stats');

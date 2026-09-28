@@ -33,6 +33,7 @@ export const WEAPONS = {
   4: { name: 'wiązka', cls: 'main', dps: 560, kind: 'beam' }
 };
 const PD_COLOR = [1.0, 0.62, 0.22];
+const BEAM_HIT = { beam: true };   // opcje trafienia wiązki (stały obiekt — bez alokacji co 0,1 s)
 const TORP_COLOR = [1.0, 0.55, 0.25];
 
 function createQuads(scene) {
@@ -300,7 +301,7 @@ export function createWeapons({ scene, atlas, shield, sprite, enemies }) {
       shield.beamOnShield(_loc.x, _loc.y, dt);
       B.impactCd -= dt;
       if (B.impactCd <= 0) {
-        shield.registerHit(B.hx, B.hy, w.dps * 0.1, 'main', { beam: true });
+        shield.registerHit(B.hx, B.hy, w.dps * 0.1, 'main', BEAM_HIT);
         B.impactCd += 0.1;
         W.stats.shieldHits++;
       }

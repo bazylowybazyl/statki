@@ -283,6 +283,15 @@ export function createField(renderer, profile, longCells, P) {
   const breachCpu = new Float32Array(BM * BM);
   let breachBusy = false;
   let breachAny = false;
+  // Obsługa odczytu — funkcje tworzone raz (bez domknięć w każdej klatce).
+  const onBreachRead = (buf) => {
+    breachCpu.set(new Float32Array(buf, 0, BM * BM));
+    let any = false;
+    for (let i = 0; i < BM * BM; i++) if (breachCpu[i] > 0.5) { any = true; break; }
+    breachAny = any;
+  };
+  const onBreachFail = () => {};
+  const onBreachDone = () => { breachBusy = false; };
 
   // Tablice przebiegów dla każdej parzystej liczby podkroków (bez alokacji w klatce).
   const waveGroups = [];
@@ -315,12 +324,7 @@ export function createField(renderer, profile, longCells, P) {
       if (breachBusy) return;
       breachBusy = true;
       renderer.compute(breachReduce);
-      renderer.getArrayBufferAsync(breachMap.value).then((buf) => {
-        breachCpu.set(new Float32Array(buf, 0, BM * BM));
-        let any = false;
-        for (let i = 0; i < BM * BM; i++) if (breachCpu[i] > 0.5) { any = true; break; }
-        breachAny = any;
-      }).catch(() => {}).finally(() => { breachBusy = false; });
+      renderer.getArrayBufferAsync(breachMap.value).then(onBreachRead, onBreachFail).finally(onBreachDone);
     },
     clearBreachMap() { breachCpu.fill(0); breachAny = false; },
     // Przebicie w punkcie lokalnym (klatka 3D) wg ostatniego odczytu.
