@@ -102,11 +102,9 @@ export class RocketFx {
     const dt = d.pendingDt;
     d.pendingDt = 0;
     const smoke = this.smoke;
-    if (dt > 0) {
-      if (smoke.highWater > 0) d.fillForces(this.rockets, Number(cam?.x) || 0, Number(cam?.y) || 0, origin.x, origin.y);
-      smoke.step(ctx.renderer, dt, d.time);
-    }
-    smoke.emit(ctx.renderer, d.time);
+    if (dt > 0 && smoke.highWater > 0) d.fillForces(this.rockets, Number(cam?.x) || 0, Number(cam?.y) || 0, origin.x, origin.y);
+    // Podkroki dymu i emisja jednym passem compute (zadanie 23).
+    smoke.stepAndEmit(ctx.renderer, dt, d.time);
   }
 
   _lights(ctx) {

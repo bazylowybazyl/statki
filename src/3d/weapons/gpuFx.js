@@ -330,9 +330,6 @@ export class GpuFx {
       dt: uniform(0).setName('wfxDt'),
       zoom: uniform(1).setName('wfxZoom'),
       spawnTime: uniform(0).setName('wfxSpawnTime'),
-      seedBase: uniform(0, 'uint').setName('wfxSeed'),
-      spawnTotal: uniform(0, 'uint').setName('wfxSpawnTotal'),
-      burstCount: uniform(0, 'uint').setName('wfxBurstCount'),
       ambient: uniform(new THREE.Vector3(0.05, 0.055, 0.07)).setName('wfxAmbient'),
       sunDir: uniform(new THREE.Vector3(0.3, 0.5, 0.8).normalize()).setName('wfxSunDir'),
       sunCol: uniform(new THREE.Vector3(0.6, 0.58, 0.55)).setName('wfxSunCol'),
@@ -347,6 +344,15 @@ export class GpuFx {
       arc: new Pool(this, 'arc', CAPS.arc, STRIDE.arc, CARRIER_AT.arc)
     };
     this.poolList = [this.pools.add, this.pools.spark, this.pools.smoke, this.pools.debris, this.pools.dist, this.pools.arc];
+    // Uniformy spawnu PER PULA (zadanie 23): kernele spawnu wszystkich pul idą jedną listą w jednym passie
+    // compute — wartości (liczba paczek, wątków, ziarno) muszą być osobne dla każdego kernela listy.
+    for (const pool of this.poolList) {
+      pool.uSpawn = {
+        seedBase: uniform(0, 'uint').setName('wfxSeed'),
+        spawnTotal: uniform(0, 'uint').setName('wfxSpawnTotal'),
+        burstCount: uniform(0, 'uint').setName('wfxBurstCount')
+      };
+    }
     this.add = this.pools.add;
     this.spark = this.pools.spark;
     this.smoke = this.pools.smoke;
@@ -381,7 +387,7 @@ export class GpuFx {
     const tf = t.toFloat().toVar();
     // Wyszukiwanie binarne: ostatnia paczka z firstIndex ≤ t.
     const lo = uint(0).toVar();
-    const hi = U.burstCount.toVar();
+    const hi = pool.uSpawn.burstCount.toVar();
     Loop({ start: 0, end: BSEARCH_STEPS, type: 'int', condition: '<', name: 'wfxSearch' }, () => {
       If(hi.sub(lo).greaterThan(uint(1)), () => {
         const mid = lo.add(hi).shiftRight(uint(1)).toVar();
@@ -394,7 +400,7 @@ export class GpuFx {
     const h = B(0).toVar();
     const local = tf.sub(h.x).toVar();
     const slot = uint(h.z.add(local)).bitAnd(uint(pool.cap - 1)).toVar();
-    const seed = t.add(U.seedBase).toVar();
+    const seed = t.add(pool.uSpawn.seedBase).toVar();
     const R = (k) => hash(seed.mul(uint(23)).add(uint(k)));
     const b1 = B(1).toVar(); const b2 = B(2).toVar(); const b3 = B(3).toVar();
     const b4 = B(4).toVar(); const b5 = B(5).toVar(); const b6 = B(6).toVar();
@@ -424,14 +430,14 @@ export class GpuFx {
   _buildSpawn() {
     const U = this.U;
     const P = this.pools;
-    const guard = () => { If(instanceIndex.greaterThanEqual(U.spawnTotal), () => { Return(); }); };
+    const guard = (pool) => { If(instanceIndex.greaterThanEqual(pool.uSpawn.spawnTotal), () => { Return(); }); };
     const wr = (pool, c, k, value) => pool.buf.element(c.slot.mul(uint(pool.stride)).add(uint(k))).assign(value);
     const wc = (pool, c) => wr(pool, c, pool.carrierAt, c.carrier);
 
     // ADD: p0 pos+narodziny, p1 v+życie, p2 s0 s1 rot0 spin (orient: l0 l1 w0 w1),
     // p3 c0+alfa, p4 c1+mix, p5 opór grow fadeIn fadeOut, p6 rodzaj dir.xy ziarno, p7 nośnik.
     this.spawnAdd = Fn(() => {
-      guard();
+      guard(P.add);
       const c = this._spawnCommon(P.add);
       const isOri = c.kind.equal(float(K.CROSS)).or(c.kind.equal(float(K.PLUME)));
       const sizes = select(isOri, c.b4, vec4(c.s0, c.s1, c.R(13).mul(6.2831853), c.R(14).sub(0.5).mul(2.0).mul(c.b9.z)));
@@ -448,7 +454,7 @@ export class GpuFx {
     // SPARK: p0 pos+wiek, p1 v+życie, p2 barwa+faza, p3 opór smuga coolG coolB,
     // p4 szerokość[px] sprężystość ziarno rodzaj, p5 nośnik. extra = (smuga, coolG, coolB, px).
     this.spawnSpark = Fn(() => {
-      guard();
+      guard(P.spark);
       const c = this._spawnCommon(P.spark);
       const px = select(c.b11.w.greaterThan(0.0), c.b11.w, float(1.6));
       const bright = mix(float(0.75), float(1.25), c.R(16));
@@ -464,7 +470,7 @@ export class GpuFx {
     // stygnięcia, p5 opór grow fadeIn fadeOut, p6 światło+ziarno, p7 kier. światła+turb.,
     // p8 nośnik. extra = (turbulencja, stygnięcie żaru [1/s]).
     this.spawnSmoke = Fn(() => {
-      guard();
+      guard(P.smoke);
       const c = this._spawnCommon(P.smoke);
       wr(P.smoke, c, 0, vec4(c.p.add(c.v.mul(c.pre)), c.pre));
       wr(P.smoke, c, 1, vec4(c.v, c.life));
@@ -480,7 +486,7 @@ export class GpuFx {
     // DEBRIS: p0 pos+wiek, p1 v+życie, p2 rozmiar rot spin ziarno, p3 żar+stygnięcie,
     // p4 albedo+rodzaj, p5 światło+opór, p6 nośnik. extra = (stygnięcie, sprężystość).
     this.spawnDebris = Fn(() => {
-      guard();
+      guard(P.debris);
       const c = this._spawnCommon(P.debris);
       wr(P.debris, c, 0, vec4(c.p.add(c.v.mul(c.pre)), c.pre));
       wr(P.debris, c, 1, vec4(c.v, c.life));
@@ -493,7 +499,7 @@ export class GpuFx {
 
     // DIST: p0 pos+narodziny, p1 v+życie, p2 s0 s1 siła rodzaj, p3 fadeIn fadeOut grow ziarno, p4 nośnik.
     this.spawnDist = Fn(() => {
-      guard();
+      guard(P.dist);
       const c = this._spawnCommon(P.dist);
       wr(P.dist, c, 0, vec4(c.p, U.spawnTime.sub(c.pre)));
       wr(P.dist, c, 1, vec4(c.v, c.life));
@@ -505,7 +511,7 @@ export class GpuFx {
     // ARC: p0 A+narodziny, p1 B+życie, p2 barwa+amplituda, p3 szer.[px] ziarno, p4 nośnik.
     // B = A + kierunek·dystans (prędkość = dystans). extra = (amplituda, px).
     this.spawnArc = Fn(() => {
-      guard();
+      guard(P.arc);
       const c = this._spawnCommon(P.arc);
       const bpt = c.p.add(c.d.mul(c.speed));
       wr(P.arc, c, 0, vec4(c.p, U.spawnTime.sub(c.pre)));
@@ -1159,20 +1165,29 @@ export class GpuFx {
     let spawned = 0;
     let dispatches = 0;
     const pools = this.poolList;
+    // Kernele spawnu pul z paczkami w JEDNYM passie compute (zadanie 23): uniformy per pula (pool.uSpawn),
+    // ziarna w tej samej kolejności co dotąd; wątków = count węzła (liczba cząstek paczek puli).
+    const L = this._spawnList || (this._spawnList = []);
+    L.length = 0;
     for (let k = 0; k < pools.length; k++) {
       const pool = pools[k];
       if (!pool.burstCount) continue;
       const used = pool.burstCount * BSTRIDE;
       markRange(pool.burstNode.value, 0, used * 4);
-      U.burstCount.value = pool.burstCount;
-      U.spawnTotal.value = pool.total;
-      U.seedBase.value = (this.frameSeed = (this.frameSeed + 0x9E3779B1) >>> 0);
-      renderer.compute(this._spawnNodes[k], pool.total);
+      const u = pool.uSpawn;
+      u.burstCount.value = pool.burstCount;
+      u.spawnTotal.value = pool.total;
+      u.seedBase.value = (this.frameSeed = (this.frameSeed + 0x9E3779B1) >>> 0);
+      const node = this._spawnNodes[k];
+      node.count = pool.total;
+      L.push(node);
       dispatches++;
       spawned += pool.total;
       pool.burstCount = 0;
       pool.total = 0;
     }
+    if (L.length === 1) renderer.compute(L[0]);
+    else if (L.length > 1) renderer.compute(L);
     this.stats.spawned = spawned;
     this.stats.dispatches = dispatches;
     return dispatches;
@@ -1239,9 +1254,10 @@ export class GpuFx {
    * pipeline'y siatek pul w passie ortho / DIST (Core3D.prewarmPass).
    */
   warm(renderer, core) {
-    const U = this.U;
-    U.burstCount.value = 0;
-    U.spawnTotal.value = 0;
+    for (const pool of this.poolList) {
+      pool.uSpawn.burstCount.value = 0;
+      pool.uSpawn.spawnTotal.value = 0;
+    }
     for (const node of this._spawnNodes) renderer.compute(node, 1);
     renderer.compute(this.updateSpark, 1);
     renderer.compute(this.updateSmoke, 1);
