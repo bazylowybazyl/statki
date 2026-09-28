@@ -290,3 +290,31 @@ dziobu, rogu, po obrocie; grubość płyty 160/400; uv wycięcia `NOTCHED`), `pr
 6. **`impactScale`:** mnożnik rozmiaru w bramce LOD trafienia i wstrząsu przy trafieniu; receptur nie mnożyć.
 7. **Postój dla `requiresStationary`:** `|v| ≤ 30` j/s i `|ω| ≤ 0,05` rad/s; **limit przebitych kadłubów** = istniejące
    pole `penetration`.
+
+## 6. Stan po 18-B i 18-D (2026-09-28, gałąź `webgpu/18b`)
+
+Wpięcie i decyzje wykonawcy — szczegóły w `MECHANIKA-BRONI.md` §8. Względem projektu:
+
+- **§2.3 wpięcie przebić / rykoszetów** — jak w projekcie, plus: pocisk niesie `mech` (dane broni z mechaniką,
+  reszta arsenału omija nowy kod), pętla kandydatów w przebiegach `hullPass` (następny kadłub za burtą w tym samym
+  kroku), pocisk w materiale nie widzi innych kolizji, krater wyjścia / zakleszczenia w `applyBulletHullPass`
+  (bez HP). Ścieżka bez mechaniki bit w bit jak przed 18-B (A/B stanu węzłów).
+- **§1.2 N (Mjolnir, Valkyrie)** — efekty `kerf / exit / stuck` przez `WeaponFx.kerf / pierceExit / pierceStuck`;
+  rzaz przerzedzony do gęstości dema (co v/240 j. — demo znaczyło najwyżej raz na podkrok 240 Hz).
+- **Rykoszet** (§5 p. 1) — obraz w recepturze Vulcana wyłącznie z `hit.ric…` (decyzja i obraz z jednego hasha);
+  receptura przestała losować rykoszety `fxRandom` na każdym trafieniu.
+- **§2.4 ładowanie** — naciśnięcie / auto-fire zgłasza, krok fizyki ładuje; naciśnięcie czeka do 1,5 s na
+  wycelowanie wieżyczki (demo: trzymany spust), HUD pokazuje postęp, komunikaty po naciśnięciu; AI z hakiem
+  efektu `window.spawnWeaponChargeFx` (ścieżka uśpiona — NPC nie mają takich broni).
+- **§2.5 seria** — z danych (`buildHexlanceBurst`), bez zmian w danych (`burstCount` 4 — pomiar §2.8 / MECHANIKA §6:
+  +53–57% straty na naciśnięcie, nie ×4; nie zmniejszam).
+- **§2.6 odrzut / wstrząs** — `fxProfileFor` zastąpione opisem broni w Turret2D (`recoil` / `shake` z danych przez
+  `src/game/weaponFeel.js`), FX_PROFILE = klucze. Wstrząs receptur (`ctx.shake` → `camera.addShake`, zadanie 17)
+  zostaje częścią obrazu z dema; wstrząs strzału z danych idzie kanałem strzałów (`__weapon3dCameraShake`) jak
+  dawniej z FX_PROFILE. `impactScale` — bramka LOD trafienia pocisku i wstrząs receptury przy trafieniu / wyjściu /
+  zakleszczeniu.
+- **Testy §4 „Testy w 18”** — zrobione: `projectileTrajectory` przepisany, nowe `projectileMechanicsGame`,
+  `weaponChargeGame`, `weaponFxPierce`, `weaponRecoilSource`, seria w `hexlanceBurst` (moduły 18-A:
+  `projectilePenetration`, `projectileRicochet`, `weaponCharge`, `hullSurfaceQueries`); `hullDamageMap` — 18-C.
+- **Harness** — sesja `galeria` + `galeria-przebicie`, `-przebicie-po`, `-przebicie-valkyrie`, `-rykoszet`, `-seria`,
+  `-seria-po`, `-ladowanie`, `-ladowanie-strzal` (strzelnica: kolumna fregata → niszczyciel → pancernik burtą).
