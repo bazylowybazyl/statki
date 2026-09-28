@@ -251,6 +251,74 @@ const SCENES = {
          S.cam(ship.pos.x, ship.pos.y, 0.5);
          const c2 = window.camera2, p2 = window.player2Ship;
          if (c2 && p2) { c2.transition = null; c2.x = c2.targetX = p2.pos.x; c2.y = c2.targetY = p2.pos.y; c2.zoom = c2.targetZoom = 0.5; }`
+  },
+  // ── Warp „Nurt” (zadanie 22) — osobna sesja (świeża strona: nie przesuwa scen innych sesji). Skok
+  // gracza na automacie gry (ładowanie 0,8 s → skok → lot → wyjście), kamera statku zoom 0,1; przylot
+  // i odlot NPC przez API WarpNurt (plan z wyprzedzeniem: zwiastun → szczelina → wyrzut), kamera RTS.
+  // Nowe sceny — bez bazy w tagu (inny warp); zestawienie obok zrzutów dema: warp-demo-zrzuty.mjs.
+  'warp-ladowanie': {
+    opis: 'Warp „Nurt”: ładowanie gracza (75%) — płaty ośrodka (turkus z przodu, pomarańcz z tyłu), gwiazdy płasko, soczewka mgławicy, plazma WARP; zoom 0,1',
+    hud: false, warm: 20,
+    js: `DevScene.teleport(${DEEP.x - 250000}, ${DEEP.y + 150000}, -0.35); DevFlags.unlimitedWarp = true; S.shipCam(0.1); DevScene.aimWarp(-0.35);
+         for (let i = 0; i < 400 && !S.hullsReady(); i++) await H.frames(2);
+         H.reseed(0x22a1); await H.step(20); warp.state = 'charging'; warp.charge = 0; await H.step(36); S.shipCam(0.1);`
+  },
+  'warp-skok': {
+    opis: 'Warp „Nurt”: 0,2 s po kopnięciu — smugi gwiazd z przestrzałem, fala w punkcie skoku (refrakcja), błysk za rufą, ośrodek rusza',
+    hud: false, warm: 20,
+    js: `await H.step(24); S.shipCam(0.1);`
+  },
+  'warp-lot': {
+    opis: 'Warp „Nurt”: podróż (1,5 s po skoku) — opływ bańki, strugi w talii, pomarańczowy warkocz, płaskie smugi gwiazd',
+    hud: false, warm: 20,
+    js: `await H.step(90); S.shipCam(0.1);`
+  },
+  'warp-wyjscie': {
+    opis: 'Warp „Nurt”: wyjście (0,1 s) — front od dziobu: smugi gwiazd wracają do punktów, bańka zapada się, szew i żar brzegu, błysk przy dziobie, fala',
+    hud: false, warm: 20,
+    js: `DevScene.exitWarp(); await H.step(6); S.shipCam(0.1);`
+  },
+  'warp-po-wyjsciu': {
+    opis: 'Warp „Nurt”: 0,75 s po wyjściu — biały → pomarańczowy żar brzegu kadłuba, ośrodek gaśnie',
+    hud: false, warm: 20,
+    js: `await H.step(39); S.shipCam(0.1);`
+  },
+  'warp-zwiastun': {
+    opis: 'Przylot NPC tunelem (plan z wyprzedzeniem, WarpNurt.planArrival): zwiastun 2,5 s — nić ośrodka do punktu wyjścia, punkt zbierania, szczelina się otwiera; kamera RTS 0,13',
+    hud: false, warm: 20,
+    js: `DevScene.teleport(${DEEP.x - 250000}, ${DEEP.y + 190000}, -0.35);
+         const X = ${DEEP.x - 250000}, Y = ${DEEP.y + 190000};
+         S.cam(X - 900, Y - 900, 0.13); H.reseed(0x22b2); await H.step(30);
+         window.__warpRec = WarpNurt.planArrival({ x: X - 2300, y: Y - 1700, angle: -0.5, hullLength: 1560, hullWidth: 620, palette: 'magenta', burstIn: 3.0 });
+         await H.step(150); S.cam(X - 900, Y - 900, 0.13);`
+  },
+  'warp-przylot': {
+    opis: 'Przylot NPC: wyrzut (0,15 s) — superkapitał wypada z szczeliny: odsłanianie od dziobu, szew, żar, smuga sylwetki, błysk i linia blasku w ujściu, fala, iskry ośrodka',
+    hud: false, warm: 20,
+    js: `const X = ${DEEP.x - 250000}, Y = ${DEEP.y + 190000};
+         await H.step(30);
+         const at = { x: X - 2300, y: Y - 1700 };
+         const r = spawnCallInShip('supercapital', { mode: 'friendly', spawnPos: at, pos: at, spawnAngle: -0.5 });
+         const npc = Array.isArray(r) ? r[0] : r; window.__warpNpc = npc;
+         if (npc) { npc.angle = -0.5; npc.vx = 0; npc.vy = 0; npc.command = { type: 'hold', faceAngle: -0.5 }; WarpNurt.attach(window.__warpRec, npc); }
+         for (let i = 0; i < 400 && !S.hullsReady(); i++) await H.frames(2);
+         if (npc) WarpNurt.attach(window.__warpRec, npc);
+         await H.step(9); S.cam(X - 900, Y - 900, 0.13);`
+  },
+  'warp-odlot-ladowanie': {
+    opis: 'Odlot NPC tunelem (WarpNurt.depart): ładowanie — punkt skoku przed dziobem, ośrodek zbierany, szczelina otwiera się przed dziobem',
+    hud: false, warm: 20,
+    js: `const X = ${DEEP.x - 250000}, Y = ${DEEP.y + 190000};
+         await H.step(150);
+         const npc = window.__warpNpc; window.__warpDep = npc ? WarpNurt.depart(npc, { drive: true }) : null;
+         const d = window.__warpDep?.fx; const n = d ? Math.round((d.tDive - 0.15 - WarpNurt.time) * 60) : 60;
+         await H.step(Math.max(1, n)); S.cam(X - 900, Y - 900, 0.13);`
+  },
+  'warp-odlot': {
+    opis: 'Odlot NPC: wejście w szczelinę (0,2 s) — kadłub znika od dziobu za płaszczyzną ujścia, smuga, błysk w ujściu, fala',
+    hud: false, warm: 20,
+    js: `const X = ${DEEP.x - 250000}, Y = ${DEEP.y + 190000};
+         await H.step(21); S.cam(X - 900, Y - 900, 0.13);`
   }
 };
 
@@ -262,7 +330,8 @@ const SESSIONS = [
   { id: 'mars', query: 'dev=1&haloTest=mars&haloAt=port', start: 'single', ring: 'mars', scenes: ['mars-ring'] },
   { id: 'jowisz', query: 'dev=1&haloTest=jupiter&haloAt=port', start: 'single', ring: 'jupiter', scenes: ['jowisz-ring'] },
   { id: 'kosmos', query: 'dev=1', start: 'single', sprites: true, scenes: ['kalibracja', 'kalibracja-sprzatanie', 'bitwa', 'bitwa-blisko', 'wybuch', 'wraki', 'warp'] },
-  { id: 'split', query: 'dev=1', start: 'split', sprites: true, scenes: ['split'] }
+  { id: 'split', query: 'dev=1', start: 'split', sprites: true, scenes: ['split'] },
+  { id: 'warp', query: 'dev=1', start: 'single', sprites: true, scenes: ['warp-ladowanie', 'warp-skok', 'warp-lot', 'warp-wyjscie', 'warp-po-wyjsciu', 'warp-zwiastun', 'warp-przylot', 'warp-odlot-ladowanie', 'warp-odlot'] }
 ];
 
 // Ostrzeżenia/błędy bez znaczenia dla portu (środowisko headless, zasoby spoza renderu).
