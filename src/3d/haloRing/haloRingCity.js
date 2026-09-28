@@ -14,18 +14,26 @@
 // zbiorniki, silosy, kotłownia z kominem, chłodnia, rafineria, kontenery).
 //
 // Draw calle: 1 (ogrody/szkło) + 1 (przemysł) + 1 (drzewa).
+//
+// Port WebGPU (zadanie 09): materiały w TSL (NodeMaterial), 1:1 z dawnym GLSL (GARDEN_VERTEX,
+// INDUSTRY_VERTEX, TREE_VERTEX / TREE_FRAGMENT). Fragment budynków = fragment brył megastruktury
+// (makeHaloPrimFragment, haloRingMegastructure.js; ogrody — wariant ścian z położenia lokalnego,
+// dawne PRIM_FACE_FROM_LOCAL). Wczesne wyjścia wierzchołków (dawne collapse(); return;) to
+// zagnieżdżone gałęzie — wierzchołek bez bryły zostaje poza bryłą obcinania, a mapy i detal
+// czyta tylko ten, który jeszcze żyje (tańszy od liczenia wszystkiego). Zestaw przemysłowy
+// z haloIndKitTSL (haloRingIndustryKit.js), mapy i detal z haloRingSurfaceTSL.
 import * as THREE from 'three';
 import {
-  HALO_GLSL_AIR,
-  HALO_GLSL_COMMON,
-  HALO_GLSL_LIGHT,
-  HALO_GLSL_NOISE,
-  HALO_GLSL_RTE
-} from './haloRingGLSL.js';
+  Fn, If, Loop,
+  float, int, vec2, vec3, vec4,
+  attribute, varyingProperty, uniform, instanceIndex, positionGeometry, normalGeometry,
+  abs, clamp, cos, dot, floor, fract, length, max, mix, mod, normalize, sin, smoothstep, step
+} from 'three/tsl';
 import { HALO_TAU, haloPortSites, haloQualityLod } from './haloRingConfig.js';
-import { HALO_GLSL_SURFACE } from './haloRingGLSL.js';
-import { HALO_PRIM_FRAGMENT } from './haloRingMegastructure.js';
-import { HALO_GLSL_INDKIT, IND_PARTS } from './haloRingIndustryKit.js';
+import { HALO_MEGA_AIR_STEPS, haloNodeMaterial, haloPrimVaryings, makeHaloPrimFragment } from './haloRingMegastructure.js';
+import { IND_PARTS, haloIndKitTSL } from './haloRingIndustryKit.js';
+import { haloFma, haloHash12, haloHash22, haloRingSurfaceTSL, haloRingTSL, haloSmooth, haloWrapI } from './haloRingTSL.js';
+import { nodeOf } from './haloUniformsAdapter.js';
 
 export const HALO_CITY = Object.freeze({
   gardenChunkBlocks: 4,      // kwartały ogrodu (140 j.) na kawałek
@@ -44,392 +52,401 @@ export const HALO_CITY = Object.freeze({
   fadeFar: 30000
 });
 
-const GLSL_FLOOR_FRAME = /* glsl */`
-vec3 cityFloorRel(float sRel, float t, float h) {
-  float dr = (uFloorLine.x - uFloorDims.z) + uFloorLine.z * t + uHabitat.x * h;
-  float z = uFloorLine.y + uFloorLine.w * t;
-  return haloRelFromPolar(sRel / uFloorDims.z, dr, z);
-}
-void cityFrame(float sRel, out vec3 ex, out vec3 ey, out vec3 ez) {
-  float th = uRefBasis.z + sRel / uFloorDims.z;
-  vec3 er = vec3(cos(th), sin(th), 0.0);
-  ex = vec3(-sin(th), cos(th), 0.0);
-  ey = er * uFloorLine.z + vec3(0.0, 0.0, uFloorLine.w);
-  ez = uHabitat.x * (er * uFloorLine.w - vec3(0.0, 0.0, uFloorLine.z));
-}
-vec4 cityVarLod(int k, float sRel, float t) {
-  float T = uVarN[k];
-  return textureLod(uDetail2, vec2(sRel / T + uVarOff[k], t / T), 2.0);
-}
-// kwartał bezwzględny → numer względem kwartału odniesienia (−n/2 .. n/2)
-float cityRelBlock(float blockAbs, int bk) {
-  float n = uPatN[bk];
-  float rel = haloWrapI(blockAbs - uPatI[bk], n);
-  return rel >= n * 0.5 ? rel - n : rel;
-}
-`;
-
-// ---- ogrody i szkło: prostopadłościan 8-wierzchołkowy × (bryła + uskok)
-const GARDEN_VERTEX = /* glsl */`
-${HALO_GLSL_COMMON}
-${HALO_GLSL_NOISE}
-${HALO_GLSL_RTE}
-${HALO_GLSL_SURFACE}
-${GLSL_FLOOR_FRAME}
-uniform vec4 uCityGrid;        // kwartały na kawałek, rzędy kwartałów, —, zanik miasta
-uniform float uPixelAngle;
-uniform vec2 uBldPx;         // budynek opada miedzy N a M px (LOD jakosci)
-attribute vec4 aLot;           // kwartał w kawałku, rząd kwartałów, działka (0..5), piętro (0/1)
-attribute float iChunk;        // pierwszy kwartał (bezwzględny) kawałka
-varying vec3 vRel;
-varying vec3 vNormal;
-varying vec3 vLocal;
-varying vec3 vLocalN;
-varying vec3 vSize;
-varying float vMat;
-varying float vSeed;
-varying vec3 vEx;
-varying vec3 vEy;
-varying vec3 vEz;
-
-void collapse() {
-  gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
-  vRel = vec3(0.0); vNormal = vec3(0.0, 0.0, 1.0); vLocal = vec3(0.0); vLocalN = vec3(0.0, 0.0, 1.0);
-  vSize = vec3(1.0); vMat = 0.0; vSeed = 0.0; vEx = vec3(1.0, 0.0, 0.0); vEy = vec3(0.0, 1.0, 0.0); vEz = vec3(0.0, 0.0, 1.0);
-}
-
-void main() {
-  float T = uPatT[0];
-  float blockT = ${HALO_CITY.gardenBlockT}.0;
-  float blockAbs = iChunk + aLot.x;
-  if (blockAbs > uPatN[0] - 0.5 || uCityGrid.w < 0.01) { collapse(); return; }
-  float rel = cityRelBlock(blockAbs, 0);
-  float lx = aLot.z - 3.0 * floor((aLot.z + 0.5) / 3.0);
-  float ly = floor((aLot.z + 0.5) / 3.0);
-  float tier = aLot.w;
-  float cLot = rel + (lx + 0.5) / 3.0;
-  float tbLot = aLot.y + (ly + 0.5) / 2.0;
-  // odwrócenie skrzywienia ulic miasta-ogrodu (dwie iteracje), jak w terenie
-  float sRel = (cLot - uPatF[0]) * T;
-  float t = tbLot * blockT;
-  vec4 Bw = textureLod(uMapB, haloMapUV(sRel + uRefBasis.w, t), 0.0);
-  if (Bw.g > 0.01) {
-    for (int it = 0; it < 2; it++) {
-      float warpS = cityVarLod(0, sRel, t).b * 0.35 * Bw.g;
-      float warpT = cityVarLod(1, sRel, t).b * 0.3 * Bw.g;
-      sRel = (cLot - uPatF[0] - warpS) * T;
-      t = (tbLot - warpT) * blockT;
-      Bw = textureLod(uMapB, haloMapUV(sRel + uRefBasis.w, t), 0.0);
+// Podłoga miasta (dawne GLSL_FLOOR_FRAME): punkt (sRel, t, h) względem kamery, baza lokalna
+// podłogi, zmienność barw z mipem 2 i numer kwartału względem odniesienia. Wklejane (tekstura
+// detalu i tablice uniformów powierzchni). Jeden obiekt na parę (ring, powierzchnia).
+const floorCache = new WeakMap();
+function cityFloorTSL(u, su) {
+  let F = floorCache.get(su);
+  if (F && F.u === u) return F;
+  const H = haloRingTSL(u);
+  const U = H.uniforms;
+  const S = haloRingSurfaceTSL(u, su);
+  const detail2 = S.textures.detail2;
+  const varN = nodeOf(su.uVarN);
+  const varOff = nodeOf(su.uVarOff);
+  const patI = nodeOf(su.uPatI);
+  const patN = nodeOf(su.uPatN);
+  const comp = ['x', 'y', 'z', 'w'];
+  F = {
+    u, H, U, S,
+    floorRel(sRel, t, h) {
+      const dr = U.uFloorLine.x.sub(U.uFloorDims.z).add(U.uFloorLine.z.mul(t)).add(U.uHabitat.x.mul(h));
+      const z = U.uFloorLine.y.add(U.uFloorLine.w.mul(t));
+      return H.haloRelFromPolar(float(sRel).div(U.uFloorDims.z), dr, z);
+    },
+    // baza podłogi: ex wzdłuż, ey w poprzek (styczna podłogi), ez ku powietrzu (σ)
+    frame(sRel) {
+      const th = U.uRefBasis.z.add(float(sRel).div(U.uFloorDims.z)).toVar();
+      const er = vec3(cos(th), sin(th), 0.0).toVar();
+      return {
+        ex: vec3(sin(th).negate(), cos(th), 0.0).toVar(),
+        ey: er.mul(U.uFloorLine.z).add(vec3(0.0, 0.0, U.uFloorLine.w)).toVar(),
+        ez: U.uHabitat.x.mul(er.mul(U.uFloorLine.w).sub(vec3(0.0, 0.0, U.uFloorLine.z))).toVar()
+      };
+    },
+    varLod(k, sRel, t) {
+      const T = varN[comp[k]];
+      return detail2.sample(vec2(float(sRel).div(T).add(varOff[comp[k]]), float(t).div(T))).level(2.0);
+    },
+    // kwartał bezwzględny → numer względem kwartału odniesienia (−n/2 .. n/2)
+    relBlock(blockAbs, bk) {
+      const n = patN.element(bk);
+      const rel = haloWrapI(float(blockAbs).sub(patI.element(bk)), n).toVar();
+      return rel.greaterThanEqual(n.mul(0.5)).select(rel.sub(n), rel);
     }
-  }
-  float typeInd = Bw.b;
-  float typeGlass = Bw.a;
-  if (typeInd > 0.5 || t < 30.0 || t > uFloorDims.y - 30.0) { collapse(); return; }
-  vec2 uvMap = haloMapUV(sRel + uRefBasis.w, t);
-  vec4 A = textureLod(uMapA, uvMap, 0.0);
-  vec4 C = textureLod(uMapC, uvMap, 0.0);
-  float water = 1.0 - smoothstep(-0.6, 0.6, A.r);
-  float cityMask = smoothstep(0.25, 0.5, C.g + cityVarLod(1, sRel, t).b * 0.15) * (1.0 - water);
-  vec2 bid = vec2(blockAbs, aLot.y);
-  vec2 lot = vec2(lx, ly);
-  float lotH = haloHash12(bid * 7.0 + lot + 3.0);
-  float bh = haloHash12(bid + 0.5);
-  float park = step(bh, 0.24);
-  if (park > 0.5 || cityMask < 0.5) { collapse(); return; }
-  float lotHt = 0.35 + 0.65 * fract(lotH * 13.7);
-  float height = mix(10.0 + 60.0 * lotHt * lotHt, 40.0 + 250.0 * lotHt * lotHt, typeGlass);
-  vec2 foot = vec2(T / 3.0, blockT / 2.0) * 0.72;
-  vec3 size = vec3(foot, height + 8.0);
-  float base = max(A.r, 0.0) - 8.0;
-  vec2 offT = vec2(0.0);
-  if (tier > 0.5) {
-    float tall = step(0.55, lotHt) * step(fract(lotH * 5.3), mix(0.6, 0.95, typeGlass));
-    if (tall < 0.5) { collapse(); return; }
-    base += height + 8.0;
-    size = vec3(foot * mix(0.55, 0.62, fract(lotH * 3.7)), height * mix(0.35, 0.7, fract(lotH * 9.1)));
-    offT = (vec2(fract(lotH * 2.3), fract(lotH * 4.9)) - 0.5) * (foot - size.xy) * 0.8;
-  }
-  vec3 anchor = cityFloorRel(sRel + offT.x, t + offT.y, base);
-  // płynne znikanie: wysokość maleje, gdy budynek ma < ~1,5 px (dach z mapy zostaje)
-  float px = (height + 8.0) / max(length(anchor), 1.0) / uPixelAngle;
-  float k = smoothstep(uBldPx.x, uBldPx.y, px) * uCityGrid.w;
-  if (k < 0.02) { collapse(); return; }
-  size.z *= k;
-  vec3 ex;
-  vec3 ey;
-  vec3 ez;
-  cityFrame(sRel, ex, ey, ez);
-  vec3 lp = position * size;
-  vRel = anchor + ex * lp.x + ey * lp.y + ez * lp.z;
-  vNormal = ez;
-  vLocal = lp;
-  vLocalN = vec3(0.0, 0.0, 1.0);
-  vSize = size;
-  vEx = ex;
-  vEy = ey;
-  vEz = ez;
-  float greenRoof = step(0.72, fract(lotH * 7.3)) * step(lotH, 0.86);
-  float pal = typeGlass > 0.5 ? 7.0 : (lotH > 0.86 ? 15.0 : (greenRoof > 0.5 ? 14.0 : (lotH > 0.5 ? 3.0 : 0.0)));
-  if (tier > 0.5 && typeGlass > 0.5) pal = 7.0;
-  float emit = typeGlass > 0.5 ? 2.0 : 1.0;
-  vMat = pal + 32.0 * emit;
-  vSeed = lotH;
-  gl_Position = haloProjectRel(vRel);
-}
-`;
-
-// ---- przemysł: zestaw działki (2 prostopadłościany + 3 walce)
-const INDUSTRY_VERTEX = /* glsl */`
-${HALO_GLSL_COMMON}
-${HALO_GLSL_NOISE}
-${HALO_GLSL_RTE}
-${HALO_GLSL_SURFACE}
-${GLSL_FLOOR_FRAME}
-${HALO_GLSL_INDKIT}
-uniform vec4 uCityGrid;
-uniform float uPixelAngle;
-uniform vec2 uBldPx;
-attribute vec4 aLot;           // kwartał w kawałku, rząd kwartałów, działka (0..5), część (0..4)
-attribute float aPrim;         // 0 prostopadłościan, 1 walec
-attribute float iChunk;
-varying vec3 vRel;
-varying vec3 vNormal;
-varying vec3 vLocal;
-varying vec3 vLocalN;
-varying vec3 vSize;
-varying float vMat;
-varying float vSeed;
-
-void collapse() {
-  gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
-  vRel = vec3(0.0); vNormal = vec3(0.0, 0.0, 1.0); vLocal = vec3(0.0); vLocalN = vec3(0.0, 0.0, 1.0);
-  vSize = vec3(1.0); vMat = 0.0; vSeed = 0.0;
+  };
+  floorCache.set(su, F);
+  return F;
 }
 
-void main() {
-  if (uCityGrid.w < 0.01) { collapse(); return; }
-  float T = uPatT[1];
-  float blockT = ${HALO_CITY.industryBlockT}.0;
-  float blockAbs = iChunk + aLot.x;
-  if (blockAbs > uPatN[1] - 0.5) { collapse(); return; }
-  float lx = aLot.z - 3.0 * floor((aLot.z + 0.5) / 3.0);
-  float ly = floor((aLot.z + 0.5) / 3.0);
-  vec2 bid = vec2(blockAbs, aLot.y);
-  vec2 lot = vec2(lx, ly);
-  float lotH = haloHash12(bid * 7.0 + lot + 3.0);
-  int part = int(aLot.w + 0.5);
-  vec4 KA;
-  vec4 KB;
-  indKitPart(lotH, part, KA, KB);
-  // część nieużywana w tym rodzaju zakładu albo zły prymityw: tanio do kosza
-  bool wantCyl = part >= 2;
-  if (KB.y < 0.01 || (aPrim > 0.5) != wantCyl) { collapse(); return; }
-  float rel = cityRelBlock(blockAbs, 1);
-  float cLot = rel + (lx + 0.5) / 3.0;
-  float tbLot = aLot.y + (ly + 0.5) / 2.0;
-  float sRel = (cLot - uPatF[1]) * T;
-  float t = tbLot * blockT;
-  vec2 uvMap = haloMapUV(sRel + uRefBasis.w, t);
-  vec4 Bw = textureLod(uMapB, uvMap, 0.0);
-  if (Bw.b <= 0.5 || t < 40.0 || t > uFloorDims.y - 40.0) { collapse(); return; }
-  vec4 A = textureLod(uMapA, uvMap, 0.0);
-  vec4 C = textureLod(uMapC, uvMap, 0.0);
-  float water = 1.0 - smoothstep(-0.6, 0.6, A.r);
-  float cityMask = smoothstep(0.25, 0.5, C.g + cityVarLod(1, sRel, t).b * 0.15) * (1.0 - water);
-  if (cityMask < 0.5) { collapse(); return; }
-  float base = max(A.r, 0.0) - 2.0 + KB.x;
-  vec3 anchor = cityFloorRel(sRel + KA.x, t + KA.y, base);
-  float px = (KB.y + KB.x) / max(length(anchor), 1.0) / uPixelAngle;
-  float k = smoothstep(uBldPx.x, uBldPx.y, px) * uCityGrid.w;
-  if (k < 0.02) { collapse(); return; }
-  vec3 lp;
-  vec3 ln;
-  vec3 size;
-  if (aPrim < 0.5) {
-    size = vec3(KA.z, KA.w, KB.y * k);
-    lp = position * size;
-    ln = normal;
-  } else {
-    float tt = position.z;
-    float rs = indCylRadius(KB.w, tt);
-    float h = KB.y * k;
-    lp = vec3(position.xy * KA.z * rs, tt * h);
-    ln = normal;
-    if (abs(ln.z) < 0.5) {
-      float sl = indCylSlope(KB.w, tt) * KA.z / max(h, 1.0);
-      ln = normalize(vec3(ln.xy, -sl));
-    }
-    size = vec3(KA.z * 2.0, KA.z * 2.0, h);
-  }
-  vec3 ex;
-  vec3 ey;
-  vec3 ez;
-  cityFrame(sRel + KA.x, ex, ey, ez);
-  vRel = anchor + ex * lp.x + ey * lp.y + ez * lp.z;
-  vNormal = normalize(ex * ln.x + ey * ln.y + ez * ln.z);
-  vLocal = lp;
-  vLocalN = ln;
-  vSize = size;
-  vMat = KB.z;
-  vSeed = fract(lotH * 17.0 + float(part) * 0.31);
-  gl_Position = haloProjectRel(vRel);
+// Wierzchołek poza bryłą obcinania (dawne collapse()): trójkąty zwiniętej bryły nie rysują się.
+const COLLAPSED = [2.0, 2.0, 2.0, 1.0];
+
+// ---- ogrody i szkło: prostopadłościan 8-wierzchołkowy × (bryła + uskok) — dawny GARDEN_VERTEX.
+// cityGrid = (kwartały na kawałek, rzędy kwartałów, —, zanik miasta), bldPx = budynek opada między
+// N a M px (LOD jakości). Varyingi z haloPrimVaryings({ faceFromLocal: true }).
+export function makeHaloGardenVertex({ u, su, cityGrid, pixelAngle, bldPx, v }) {
+  const F = cityFloorTSL(u, su);
+  const { H, U, S } = F;
+  const { mapA, mapB, mapC } = S.textures;
+  const patT = nodeOf(su.uPatT);
+  const patF = nodeOf(su.uPatF);
+  const patN = nodeOf(su.uPatN);
+  const blockT = HALO_CITY.gardenBlockT;
+  return Fn(() => {
+    const aLot = attribute('aLot', 'vec4');         // kwartał w kawałku, rząd kwartałów, działka (0..5), piętro (0/1)
+    const iChunk = attribute('iChunk', 'float');    // pierwszy kwartał (bezwzględny) kawałka
+    const out = vec4(...COLLAPSED).toVar();
+    const T = patT.element(0).toVar();
+    const blockAbs = iChunk.add(aLot.x).toVar();
+    If(blockAbs.lessThanEqual(patN.element(0).sub(0.5)).and(cityGrid.w.greaterThanEqual(0.01)), () => {
+      const rel = F.relBlock(blockAbs, 0).toVar();
+      const lx = aLot.z.sub(float(3.0).mul(floor(aLot.z.add(0.5).div(3.0)))).toVar();
+      const ly = floor(aLot.z.add(0.5).div(3.0)).toVar();
+      const tier = aLot.w.toVar();
+      const cLot = rel.add(lx.add(0.5).div(3.0)).toVar();
+      const tbLot = aLot.y.add(ly.add(0.5).div(2.0)).toVar();
+      // odwrócenie skrzywienia ulic miasta-ogrodu (dwie iteracje), jak w terenie
+      const sRel = cLot.sub(patF.element(0)).mul(T).toVar();
+      const t = tbLot.mul(blockT).toVar();
+      const Bw = mapB.sample(H.haloMapUV(sRel.add(U.uRefBasis.w), t)).level(0.0).toVar();
+      If(Bw.y.greaterThan(0.01), () => {
+        Loop(2, () => {
+          const warpS = F.varLod(0, sRel, t).z.mul(0.35).mul(Bw.y).toVar();
+          const warpT = F.varLod(1, sRel, t).z.mul(0.3).mul(Bw.y).toVar();
+          sRel.assign(cLot.sub(patF.element(0)).sub(warpS).mul(T));
+          t.assign(tbLot.sub(warpT).mul(blockT));
+          Bw.assign(mapB.sample(H.haloMapUV(sRel.add(U.uRefBasis.w), t)).level(0.0));
+        });
+      });
+      const typeInd = Bw.z.toVar();
+      const typeGlass = Bw.w.toVar();
+      If(typeInd.lessThanEqual(0.5).and(t.greaterThanEqual(30.0)).and(t.lessThanEqual(U.uFloorDims.y.sub(30.0))), () => {
+        const uvMap = H.haloMapUV(sRel.add(U.uRefBasis.w), t).toVar();
+        const A = mapA.sample(uvMap).level(0.0).toVar();
+        const C = mapC.sample(uvMap).level(0.0).toVar();
+        const water = float(1.0).sub(smoothstep(-0.6, 0.6, A.x));
+        const cityMask = smoothstep(0.25, 0.5, C.y.add(F.varLod(1, sRel, t).z.mul(0.15))).mul(float(1.0).sub(water)).toVar();
+        const bid = vec2(blockAbs, aLot.y).toVar();
+        const lot = vec2(lx, ly);
+        const lotH = haloHash12(bid.mul(7.0).add(lot).add(3.0)).toVar();
+        const bh = haloHash12(bid.add(0.5));
+        const park = step(bh, 0.24).toVar();
+        If(park.lessThanEqual(0.5).and(cityMask.greaterThanEqual(0.5)), () => {
+          const lotHt = float(0.35).add(float(0.65).mul(fract(lotH.mul(13.7)))).toVar();
+          const height = mix(float(10.0).add(float(60.0).mul(lotHt).mul(lotHt)), float(40.0).add(float(250.0).mul(lotHt).mul(lotHt)), typeGlass).toVar();
+          const foot = vec2(T.div(3.0), blockT / 2.0).mul(0.72).toVar();
+          const size = vec3(foot, height.add(8.0)).toVar();
+          const base = max(A.x, 0.0).sub(8.0).toVar();
+          const offT = vec2(0.0).toVar();
+          // uskok (piętro 1): tylko na wyższych działkach
+          const tall = step(0.55, lotHt).mul(step(fract(lotH.mul(5.3)), mix(0.6, 0.95, typeGlass)));
+          If(tier.lessThanEqual(0.5).or(tall.greaterThanEqual(0.5)), () => {
+            If(tier.greaterThan(0.5), () => {
+              base.addAssign(height.add(8.0));
+              size.assign(vec3(foot.mul(mix(0.55, 0.62, fract(lotH.mul(3.7)))), height.mul(mix(0.35, 0.7, fract(lotH.mul(9.1))))));
+              offT.assign(vec2(fract(lotH.mul(2.3)), fract(lotH.mul(4.9))).sub(0.5).mul(foot.sub(size.xy)).mul(0.8));
+            });
+            const anchor = F.floorRel(sRel.add(offT.x), t.add(offT.y), base).toVar();
+            // płynne znikanie: wysokość maleje, gdy budynek ma < ~1,5 px (dach z mapy zostaje)
+            const px = height.add(8.0).div(max(length(anchor), 1.0)).div(pixelAngle);
+            const k = smoothstep(bldPx.x, bldPx.y, px).mul(cityGrid.w).toVar();
+            If(k.greaterThanEqual(0.02), () => {
+              size.assign(vec3(size.xy, size.z.mul(k)));
+              const { ex, ey, ez } = F.frame(sRel);
+              const lp = positionGeometry.mul(size).toVar();
+              const relP = anchor.add(ex.mul(lp.x)).add(ey.mul(lp.y)).add(ez.mul(lp.z)).toVar();
+              v.rel.assign(relP);
+              v.local.assign(lp);
+              v.size.assign(size);
+              v.ex.assign(ex);
+              v.ey.assign(ey);
+              v.ez.assign(ez);
+              const greenRoof = step(0.72, fract(lotH.mul(7.3))).mul(step(lotH, 0.86));
+              const pal = typeGlass.greaterThan(0.5).select(float(7.0), lotH.greaterThan(0.86).select(float(15.0),
+                greenRoof.greaterThan(0.5).select(float(14.0), lotH.greaterThan(0.5).select(float(3.0), float(0.0))))).toVar();
+              If(tier.greaterThan(0.5).and(typeGlass.greaterThan(0.5)), () => { pal.assign(7.0); });
+              const emit = typeGlass.greaterThan(0.5).select(float(2.0), float(1.0));
+              v.mat.assign(pal.add(float(32.0).mul(emit)));
+              v.seed.assign(lotH);
+              out.assign(H.haloProjectRel(relP));
+            });
+          });
+        });
+      });
+    });
+    return out;
+  })();
 }
-`;
+
+// ---- przemysł: zestaw działki (2 prostopadłościany + 3 walce) — dawny INDUSTRY_VERTEX.
+export function makeHaloIndustryVertex({ u, su, cityGrid, pixelAngle, bldPx, v }) {
+  const F = cityFloorTSL(u, su);
+  const { H, U, S } = F;
+  const K = haloIndKitTSL(u);
+  const { mapA, mapB, mapC } = S.textures;
+  const patT = nodeOf(su.uPatT);
+  const patF = nodeOf(su.uPatF);
+  const patN = nodeOf(su.uPatN);
+  const blockT = HALO_CITY.industryBlockT;
+  return Fn(() => {
+    const aLot = attribute('aLot', 'vec4');       // kwartał w kawałku, rząd kwartałów, działka (0..5), część (0..4)
+    const aPrim = attribute('aPrim', 'float');    // 0 prostopadłościan, 1 walec
+    const iChunk = attribute('iChunk', 'float');
+    const out = vec4(...COLLAPSED).toVar();
+    const T = patT.element(1).toVar();
+    const blockAbs = iChunk.add(aLot.x).toVar();
+    If(cityGrid.w.greaterThanEqual(0.01).and(blockAbs.lessThanEqual(patN.element(1).sub(0.5))), () => {
+      const lx = aLot.z.sub(float(3.0).mul(floor(aLot.z.add(0.5).div(3.0)))).toVar();
+      const ly = floor(aLot.z.add(0.5).div(3.0)).toVar();
+      const bid = vec2(blockAbs, aLot.y).toVar();
+      const lot = vec2(lx, ly);
+      const lotH = haloHash12(bid.mul(7.0).add(lot).add(3.0)).toVar();
+      const part = int(aLot.w.add(0.5)).toVar();
+      const kit = K.indKitPart(lotH, part).toVar();
+      const KA = kit.element(0).toVar();
+      const KB = kit.element(1).toVar();
+      // część nieużywana w tym rodzaju zakładu albo zły prymityw: tanio do kosza
+      const wantCyl = part.greaterThanEqual(int(2));
+      If(KB.y.greaterThanEqual(0.01).and(aPrim.greaterThan(0.5).equal(wantCyl)), () => {
+        const rel = F.relBlock(blockAbs, 1).toVar();
+        const cLot = rel.add(lx.add(0.5).div(3.0));
+        const tbLot = aLot.y.add(ly.add(0.5).div(2.0));
+        const sRel = cLot.sub(patF.element(1)).mul(T).toVar();
+        const t = tbLot.mul(blockT).toVar();
+        const uvMap = H.haloMapUV(sRel.add(U.uRefBasis.w), t).toVar();
+        const Bw = mapB.sample(uvMap).level(0.0).toVar();
+        If(Bw.z.greaterThan(0.5).and(t.greaterThanEqual(40.0)).and(t.lessThanEqual(U.uFloorDims.y.sub(40.0))), () => {
+          const A = mapA.sample(uvMap).level(0.0).toVar();
+          const C = mapC.sample(uvMap).level(0.0).toVar();
+          const water = float(1.0).sub(smoothstep(-0.6, 0.6, A.x));
+          const cityMask = smoothstep(0.25, 0.5, C.y.add(F.varLod(1, sRel, t).z.mul(0.15))).mul(float(1.0).sub(water)).toVar();
+          If(cityMask.greaterThanEqual(0.5), () => {
+            const base = max(A.x, 0.0).sub(2.0).add(KB.x).toVar();
+            const anchor = F.floorRel(sRel.add(KA.x), t.add(KA.y), base).toVar();
+            const px = KB.y.add(KB.x).div(max(length(anchor), 1.0)).div(pixelAngle);
+            const k = smoothstep(bldPx.x, bldPx.y, px).mul(cityGrid.w).toVar();
+            If(k.greaterThanEqual(0.02), () => {
+              const lp = vec3(0.0).toVar();
+              const ln = vec3(0.0).toVar();
+              const size = vec3(0.0).toVar();
+              If(aPrim.lessThan(0.5), () => {
+                size.assign(vec3(KA.z, KA.w, KB.y.mul(k)));
+                lp.assign(positionGeometry.mul(size));
+                ln.assign(normalGeometry);
+              }).Else(() => {
+                const tt = positionGeometry.z.toVar();
+                const rs = K.indCylRadius(KB.w, tt);
+                const h = KB.y.mul(k).toVar();
+                lp.assign(vec3(positionGeometry.xy.mul(KA.z).mul(rs), tt.mul(h)));
+                ln.assign(normalGeometry);
+                If(abs(ln.z).lessThan(0.5), () => {
+                  const sl = K.indCylSlope(KB.w, tt).mul(KA.z).div(max(h, 1.0));
+                  ln.assign(normalize(vec3(ln.xy, sl.negate())));
+                });
+                size.assign(vec3(KA.z.mul(2.0), KA.z.mul(2.0), h));
+              });
+              const { ex, ey, ez } = F.frame(sRel.add(KA.x));
+              const relP = anchor.add(ex.mul(lp.x)).add(ey.mul(lp.y)).add(ez.mul(lp.z)).toVar();
+              v.rel.assign(relP);
+              v.normal.assign(normalize(ex.mul(ln.x).add(ey.mul(ln.y)).add(ez.mul(ln.z))));
+              v.local.assign(lp);
+              v.localN.assign(ln);
+              v.size.assign(size);
+              v.mat.assign(KB.z);
+              // ziarno części jak mad w bazie: lotH·17 z jednym zaokrągleniem (haloFma; odwrotna kolejność 80,4% bit w bit)
+              v.seed.assign(fract(haloFma(lotH, 17.0, float(part).mul(0.31))));
+              out.assign(H.haloProjectRel(relP));
+            });
+          });
+        });
+      });
+    });
+    return out;
+  })();
+}
 
 // Drzewa: slot siatki wokół kamery (co 16 j.), gęstość z mapy lasu (też
 // kępy i pojedyncze drzewa parków), nabrzeży i ogrodów miasta. Gatunek z
 // klimatu (geometria: makeTreeKit): chłód → iglaste, tropiki i ciepłe plaże
 // → palmy, nad rzeką i losowo → topole, reszta liściaste (część w odmianach
-// ozdobnych: miedź, złoto — więcej w chłodniejszych sektorach).
-const TREE_VERTEX = /* glsl */`
-${HALO_GLSL_COMMON}
-${HALO_GLSL_NOISE}
-${HALO_GLSL_RTE}
-${HALO_GLSL_SURFACE}
-${GLSL_FLOOR_FRAME}
-uniform vec4 uTreeGrid;        // sloty wzdluz, sloty w poprzek, krok [j.], t srodka siatki
-uniform float uPixelAngle;
-uniform float uTreePx;       // drzewo rysowane od N px (LOD jakosci)
-attribute float aSpecies;      // -1 pien (wspolny), 0 lisciaste, 1 iglaste, 2 topola, 3 palma
-varying vec3 vRel;
-varying vec3 vNormal;
-varying vec3 vCol;
-varying float vPart;
-void collapse() {
-  gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
-  vRel = vec3(0.0); vNormal = vec3(0.0, 0.0, 1.0); vCol = vec3(0.0); vPart = 0.0;
+// ozdobnych: miedź, złoto — więcej w chłodniejszych sektorach). Dawne TREE_VERTEX /
+// TREE_FRAGMENT; treeGrid = (sloty wzdłuż, sloty w poprzek, krok [j.], t środka siatki),
+// treePx = drzewo rysowane od N px (LOD jakości).
+export function haloTreeVaryings() {
+  return {
+    rel: varyingProperty('vec3', 'vHaloRel'),
+    normal: varyingProperty('vec3', 'vHaloNormal'),
+    col: varyingProperty('vec3', 'vHaloCol'),
+    part: varyingProperty('float', 'vHaloPart')
+  };
 }
-// gatunek z klimatu (A: h, odleglosc od rzeki, wilgoc, temperatura) i losu slotu
-float treeSpecies(vec4 A, float r3, float r4) {
-  float coldK = 1.0 - smoothstep(0.36, 0.48, A.a);
-  float palmK = max(smoothstep(0.68, 0.8, A.a) * smoothstep(0.45, 0.6, A.b),
-    smoothstep(0.6, 0.66, A.a) * smoothstep(14.0, 5.0, A.r) * smoothstep(0.55, 0.7, A.b));
-  float poplarK = 0.1 + 0.35 * smoothstep(60.0, 15.0, A.g);
-  if (r3 < coldK) return 1.0;
-  if (r4 < palmK) return 3.0;
-  if (r4 > 1.0 - poplarK) return 2.0;
-  return 0.0;
-}
-void main() {
-  float NS = uTreeGrid.x;
-  float NT = uTreeGrid.y;
-  float step0 = uTreeGrid.z;
-  float id = float(gl_InstanceID);
-  float iT = floor((id + 0.5) / NS);
-  float iS = id - NS * iT;
-  // siatka zakotwiczona w swiecie: indeks wzgledem punktu odniesienia
-  float cellS = floor(uRefBasis.w / step0) - floor(NS * 0.5) + iS;
-  float cellT = floor(uTreeGrid.w / step0) - floor(NT * 0.5) + iT;
-  vec2 cid = vec2(mod(cellS, 65536.0), cellT);
-  vec2 j = haloHash22(cid + 0.37);
-  float sAbsCell = (cellS + j.x) * step0;
-  float sRel = sAbsCell - uRefBasis.w;
-  float t = (cellT + j.y) * step0;
-  vec2 uvMap = haloMapUV(sRel + uRefBasis.w, t);
-  vec4 A = textureLod(uMapA, uvMap, 0.0);
-  float r3 = haloHash12(cid + 13.3);
-  float r4 = haloHash12(cid + 17.9);
-  float species = treeSpecies(A, r3, r4);
-  // wierzcholki innych gatunkow do kosza zaraz po mapie A (tanio)
-  if (aSpecies > -0.5 && abs(aSpecies - species) > 0.5) { collapse(); return; }
-  vec4 B = textureLod(uMapB, uvMap, 0.0);
-  vec4 C = textureLod(uMapC, uvMap, 0.0);
-  float h = A.r;
-  float water = 1.0 - smoothstep(0.2, 1.5, h);
-  float snowy = smoothstep(0.12, 0.04, A.a) + smoothstep(700.0, 900.0, h);
-  float forest = C.r;
-  float urban = C.g;
-  float riverBank = smoothstep(40.0, 10.0, A.g) * (1.0 - water);
-  float density = max(forest * 0.9, max(riverBank * 0.35, (1.0 - urban) * 0.12 * B.g));
-  density *= (1.0 - water) * (1.0 - clamp(snowy, 0.0, 1.0)) * (1.0 - C.b) * step(8.0, t) * step(t, uFloorDims.y - 8.0);
-  float r1 = haloHash12(cid + 5.1);
-  float r2 = haloHash12(cid + 9.7);
-  if (r1 >= density) { collapse(); return; }
-  // wymiary gatunku: wysokosc [j.], pien (promien, wysokosc) w ulamkach wysokosci
-  float height = mix(7.0, 15.0, r2);
-  vec2 trunk = vec2(0.05, 0.5);
-  if (species > 2.5) { height = mix(9.0, 17.0, r2); trunk = vec2(0.024, 0.93); }
-  else if (species > 1.5) { height = mix(12.0, 22.0, r2); trunk = vec2(0.03, 0.2); }
-  else if (species > 0.5) { height = mix(9.5, 20.0, r2); trunk = vec2(0.035, 0.3); }
-  vec3 anchor = cityFloorRel(sRel, t, max(h, 0.0) - 1.0);
-  if (height / max(length(anchor), 1.0) <= uTreePx * uPixelAngle) { collapse(); return; }
-  vec3 ex;
-  vec3 ey;
-  vec3 ez;
-  cityFrame(sRel, ex, ey, ez);
-  vec3 lp = position;
-  vec3 nl = normal;
-  if (aSpecies < -0.5) {
-    lp = vec3(lp.xy * trunk.x, lp.z * trunk.y) * height;
-  } else {
-    float wj = mix(0.85, 1.2, fract(r2 * 7.7 + r3));
-    lp = vec3(lp.xy * wj, lp.z) * height;
-    nl = normalize(vec3(nl.xy / wj, nl.z));
-  }
-  // palma: pien lekko wygiety, pioropusz na jego szczycie
-  if (species > 2.5) {
-    float zc = aSpecies < -0.5 ? position.z : 1.0;
-    float ang = r4 * 97.0;
-    lp.xy += vec2(cos(ang), sin(ang)) * (0.04 + 0.1 * r3) * height * zc * zc;
-  }
-  float yaw = fract(r1 * 13.7 + r3) * 6.2831;
-  vec2 cs = vec2(cos(yaw), sin(yaw));
-  lp.xy = vec2(cs.x * lp.x - cs.y * lp.y, cs.y * lp.x + cs.x * lp.y);
-  nl.xy = vec2(cs.x * nl.x - cs.y * nl.y, cs.y * nl.x + cs.x * nl.y);
-  vec3 rel = anchor + ex * lp.x + ey * lp.y + ez * lp.z;
-  vRel = rel;
-  vNormal = ex * nl.x + ey * nl.y + ez * nl.z;
-  // barwy (albedo liniowe): lisciaste wg wilgoci i suszy, czesc w odmianach
-  // ozdobnych; iglaste sine, topola jasniejsza, palma zolto-zielona na jasnym pniu
-  vec3 leaf = mix(vec3(0.030, 0.052, 0.018), vec3(0.020, 0.040, 0.016), A.b);
-  leaf = mix(leaf, vec3(0.055, 0.050, 0.020), smoothstep(0.7, 0.9, A.a) * (1.0 - A.b));
-  vec3 bark = vec3(0.035, 0.025, 0.016);
-  if (species < 0.5) {
-    float orn = 0.06 + 0.2 * smoothstep(0.56, 0.44, A.a);
-    float ro = fract(r2 * 13.1 + r4 * 3.7);
-    if (ro < orn) leaf = ro < orn * 0.5 ? vec3(0.072, 0.028, 0.014) : vec3(0.080, 0.062, 0.016);
-  } else if (species < 1.5) {
-    leaf = vec3(0.012, 0.028, 0.018);
-    bark = vec3(0.028, 0.019, 0.013);
-  } else if (species < 2.5) {
-    leaf = mix(leaf, vec3(0.040, 0.064, 0.020), 0.5);
-  } else {
-    leaf = vec3(0.038, 0.064, 0.020);
-    bark = vec3(0.075, 0.062, 0.044);
-  }
-  vCol = aSpecies < -0.5 ? bark : leaf * uLeafTint * (0.75 + 0.5 * r2);
-  vPart = aSpecies < -0.5 ? 0.0 : 1.0;
-  gl_Position = haloProjectRel(rel);
-}
-`;
 
-const TREE_FRAGMENT = /* glsl */`
-${HALO_GLSL_COMMON}
-${HALO_GLSL_NOISE}
-${HALO_GLSL_LIGHT}
-${HALO_GLSL_AIR}
-varying vec3 vRel;
-varying vec3 vNormal;
-varying vec3 vCol;
-varying float vPart;
-void main() {
-  vec3 rel = vRel;
-  vec3 p = uCamLocal + rel;
-  vec3 N = normalize(vNormal);
-  vec3 V = -normalize(rel);
-  vec3 L = uSunDir;
-  vec3 up = haloUp(p);
-  vec3 sunVis = haloSunVisibility(p + up * 2.0, L);
-  float wrap = vPart > 0.5 ? 0.35 : 0.0;
-  float NdL = max((dot(N, L) + wrap) / (1.0 + wrap), 0.0);
-  float trans = vPart > 0.5 ? pow(max(dot(-V, L), 0.0), 4.0) * 0.25 : 0.0;
-  float ao = vPart > 0.5 ? 0.7 + 0.3 * max(dot(N, up), 0.0) : 0.6;
-  vec3 amb = haloSkyAmbient(p, N) + vec3(uNightAmbient);
-  vec3 color = vCol * ao * (uSunColor * sunVis * (NdL + trans) + amb);
-  color = haloApplyAir(color, rel, haloIGN(gl_FragCoord.xy));
-  gl_FragColor = vec4(max(color, vec3(0.0)), 1.0);
+export function makeHaloTreeVertex({ u, su, treeGrid, pixelAngle, treePx, v }) {
+  const F = cityFloorTSL(u, su);
+  const { H, U, S } = F;
+  const { mapA, mapB, mapC } = S.textures;
+  // gatunek z klimatu (A: h, odległość od rzeki, wilgoć, temperatura) i losu slotu
+  const treeSpecies = (A, r3, r4) => {
+    const coldK = float(1.0).sub(smoothstep(0.36, 0.48, A.w));
+    const palmK = max(smoothstep(0.68, 0.8, A.w).mul(smoothstep(0.45, 0.6, A.z)),
+      smoothstep(0.6, 0.66, A.w).mul(haloSmooth(14.0, 5.0, A.x)).mul(smoothstep(0.55, 0.7, A.z)));
+    const poplarK = float(0.1).add(float(0.35).mul(haloSmooth(60.0, 15.0, A.y)));
+    return r3.lessThan(coldK).select(float(1.0),
+      r4.lessThan(palmK).select(float(3.0), r4.greaterThan(float(1.0).sub(poplarK)).select(float(2.0), float(0.0))));
+  };
+  return Fn(() => {
+    const aSpecies = attribute('aSpecies', 'float');   // −1 pień (wspólny), 0 liściaste, 1 iglaste, 2 topola, 3 palma
+    const out = vec4(...COLLAPSED).toVar();
+    const NS = treeGrid.x;
+    const NT = treeGrid.y;
+    const step0 = treeGrid.z;
+    const id = float(instanceIndex).toVar();
+    const iT = floor(id.add(0.5).div(NS)).toVar();
+    const iS = id.sub(NS.mul(iT)).toVar();
+    // siatka zakotwiczona w świecie: indeks względem punktu odniesienia
+    const cellS = floor(U.uRefBasis.w.div(step0)).sub(floor(NS.mul(0.5))).add(iS).toVar();
+    const cellT = floor(treeGrid.w.div(step0)).sub(floor(NT.mul(0.5))).add(iT).toVar();
+    const cid = vec2(mod(cellS, 65536.0), cellT).toVar();
+    const j = haloHash22(cid.add(0.37)).toVar();
+    const sAbsCell = cellS.add(j.x).mul(step0);
+    const sRel = sAbsCell.sub(U.uRefBasis.w).toVar();
+    const t = cellT.add(j.y).mul(step0).toVar();
+    const uvMap = H.haloMapUV(sRel.add(U.uRefBasis.w), t).toVar();
+    const A = mapA.sample(uvMap).level(0.0).toVar();
+    const r3 = haloHash12(cid.add(13.3)).toVar();
+    const r4 = haloHash12(cid.add(17.9)).toVar();
+    const species = treeSpecies(A, r3, r4).toVar();
+    // wierzchołki innych gatunków do kosza zaraz po mapie A (tanio)
+    If(aSpecies.lessThanEqual(-0.5).or(abs(aSpecies.sub(species)).lessThanEqual(0.5)), () => {
+      const B = mapB.sample(uvMap).level(0.0).toVar();
+      const C = mapC.sample(uvMap).level(0.0).toVar();
+      const h = A.x.toVar();
+      const water = float(1.0).sub(smoothstep(0.2, 1.5, h)).toVar();
+      const snowy = haloSmooth(0.12, 0.04, A.w).add(smoothstep(700.0, 900.0, h));
+      const forest = C.x;
+      const urban = C.y;
+      const riverBank = haloSmooth(40.0, 10.0, A.y).mul(float(1.0).sub(water));
+      const density = max(forest.mul(0.9), max(riverBank.mul(0.35), float(1.0).sub(urban).mul(0.12).mul(B.y))).toVar();
+      density.mulAssign(float(1.0).sub(water).mul(float(1.0).sub(clamp(snowy, 0.0, 1.0))).mul(float(1.0).sub(C.z))
+        .mul(step(8.0, t)).mul(step(t, U.uFloorDims.y.sub(8.0))));
+      const r1 = haloHash12(cid.add(5.1)).toVar();
+      const r2 = haloHash12(cid.add(9.7)).toVar();
+      If(r1.lessThan(density), () => {
+        // wymiary gatunku: wysokość [j.], pień (promień, wysokość) w ułamkach wysokości
+        const height = mix(7.0, 15.0, r2).toVar();
+        const trunk = vec2(0.05, 0.5).toVar();
+        If(species.greaterThan(2.5), () => {
+          height.assign(mix(9.0, 17.0, r2));
+          trunk.assign(vec2(0.024, 0.93));
+        }).ElseIf(species.greaterThan(1.5), () => {
+          height.assign(mix(12.0, 22.0, r2));
+          trunk.assign(vec2(0.03, 0.2));
+        }).ElseIf(species.greaterThan(0.5), () => {
+          height.assign(mix(9.5, 20.0, r2));
+          trunk.assign(vec2(0.035, 0.3));
+        });
+        const anchor = F.floorRel(sRel, t, max(h, 0.0).sub(1.0)).toVar();
+        If(height.div(max(length(anchor), 1.0)).greaterThan(treePx.mul(pixelAngle)), () => {
+          const { ex, ey, ez } = F.frame(sRel);
+          const lp = vec3(positionGeometry).toVar();
+          const nl = vec3(normalGeometry).toVar();
+          If(aSpecies.lessThan(-0.5), () => {
+            lp.assign(vec3(lp.xy.mul(trunk.x), lp.z.mul(trunk.y)).mul(height));
+          }).Else(() => {
+            const wj = mix(0.85, 1.2, fract(r2.mul(7.7).add(r3))).toVar();
+            lp.assign(vec3(lp.xy.mul(wj), lp.z).mul(height));
+            nl.assign(normalize(vec3(nl.xy.div(wj), nl.z)));
+          });
+          // palma: pień lekko wygięty, pióropusz na jego szczycie
+          If(species.greaterThan(2.5), () => {
+            const zc = aSpecies.lessThan(-0.5).select(positionGeometry.z, float(1.0)).toVar();
+            const ang = r4.mul(97.0).toVar();
+            lp.assign(vec3(lp.xy.add(vec2(cos(ang), sin(ang)).mul(float(0.04).add(float(0.1).mul(r3))).mul(height).mul(zc).mul(zc)), lp.z));
+          });
+          const yaw = fract(r1.mul(13.7).add(r3)).mul(6.2831).toVar();
+          const cs = vec2(cos(yaw), sin(yaw)).toVar();
+          lp.assign(vec3(cs.x.mul(lp.x).sub(cs.y.mul(lp.y)), cs.y.mul(lp.x).add(cs.x.mul(lp.y)), lp.z));
+          nl.assign(vec3(cs.x.mul(nl.x).sub(cs.y.mul(nl.y)), cs.y.mul(nl.x).add(cs.x.mul(nl.y)), nl.z));
+          const relP = anchor.add(ex.mul(lp.x)).add(ey.mul(lp.y)).add(ez.mul(lp.z)).toVar();
+          v.rel.assign(relP);
+          v.normal.assign(ex.mul(nl.x).add(ey.mul(nl.y)).add(ez.mul(nl.z)));
+          // barwy (albedo liniowe): liściaste wg wilgoci i suszy, część w odmianach
+          // ozdobnych; iglaste sine, topola jaśniejsza, palma żółto-zielona na jasnym pniu
+          const leaf = mix(vec3(0.030, 0.052, 0.018), vec3(0.020, 0.040, 0.016), A.z).toVar();
+          leaf.assign(mix(leaf, vec3(0.055, 0.050, 0.020), smoothstep(0.7, 0.9, A.w).mul(float(1.0).sub(A.z))));
+          const bark = vec3(0.035, 0.025, 0.016).toVar();
+          If(species.lessThan(0.5), () => {
+            const orn = float(0.06).add(float(0.2).mul(haloSmooth(0.56, 0.44, A.w))).toVar();
+            const ro = fract(r2.mul(13.1).add(r4.mul(3.7))).toVar();
+            If(ro.lessThan(orn), () => {
+              leaf.assign(ro.lessThan(orn.mul(0.5)).select(vec3(0.072, 0.028, 0.014), vec3(0.080, 0.062, 0.016)));
+            });
+          }).ElseIf(species.lessThan(1.5), () => {
+            leaf.assign(vec3(0.012, 0.028, 0.018));
+            bark.assign(vec3(0.028, 0.019, 0.013));
+          }).ElseIf(species.lessThan(2.5), () => {
+            leaf.assign(mix(leaf, vec3(0.040, 0.064, 0.020), 0.5));
+          }).Else(() => {
+            leaf.assign(vec3(0.038, 0.064, 0.020));
+            bark.assign(vec3(0.075, 0.062, 0.044));
+          });
+          v.col.assign(aSpecies.lessThan(-0.5).select(bark, leaf.mul(U.uLeafTint).mul(float(0.75).add(float(0.5).mul(r2)))));
+          v.part.assign(aSpecies.lessThan(-0.5).select(float(0.0), float(1.0)));
+          out.assign(H.haloProjectRel(relP));
+        });
+      });
+    });
+    return out;
+  })();
 }
-`;
+
+export function makeHaloTreeFragment({ u, v, airSteps = HALO_MEGA_AIR_STEPS }) {
+  const H = haloRingTSL(u);
+  const U = H.uniforms;
+  return Fn(() => {
+    const rel = vec3(v.rel).toVar();
+    const p = U.uCamLocal.add(rel).toVar();
+    const N = normalize(v.normal).toVar();
+    const V = normalize(rel).negate().toVar();
+    const L = U.uSunDir;
+    const up = H.haloUp(p).toVar();
+    const sunVis = H.haloSunVisibility(p.add(up.mul(2.0)), L).toVar();
+    const leafy = float(v.part).greaterThan(0.5).toVar();
+    const wrap = leafy.select(float(0.35), float(0.0)).toVar();
+    const NdL = max(dot(N, L).add(wrap).div(float(1.0).add(wrap)), 0.0);
+    // prześwit liści: pow(max(dot(−V, L), 0), 4) mnożeniem (jak FXC w bazie)
+    const back = max(dot(V.negate(), L), 0.0).toVar();
+    const back2 = back.mul(back);
+    const trans = leafy.select(back2.mul(back2).mul(0.25), float(0.0));
+    const ao = leafy.select(float(0.7).add(float(0.3).mul(max(dot(N, up), 0.0))), float(0.6));
+    const amb = H.haloSkyAmbient(p, N).add(vec3(U.uNightAmbient)).toVar();
+    const color = vec3(v.col).mul(ao).mul(U.uSunColor.mul(sunVis).mul(NdL.add(trans)).add(amb)).toVar();
+    color.assign(H.haloApplyAir(color, rel, H.haloIGN(H.haloFragCoordGL()), airSteps));
+    return vec4(max(color, vec3(0.0)), 1.0);
+  })();
+}
 
 // Prostopadłościan 8-wierzchołkowy (ściana w shaderze z położenia lokalnego):
 // x, y ∈ [−0,5; 0,5], z ∈ [0; 1].
@@ -871,37 +888,37 @@ export class HaloCity {
     this.group = new THREE.Group();
     this.group.name = 'HaloCity';
     const common = { ...uniforms, ...surfaceUniforms };
+    const u = uniforms;
+    const su = surfaceUniforms;
     const side = layout.sigma > 0 ? THREE.FrontSide : THREE.BackSide;
-    this.pixelAngle = { value: 2 * Math.tan(17.5 * Math.PI / 180) / 1080 };
+    // uniformy obiektu (TSL): `.value` jak dawne { value } — ten sam kod aktualizacji
+    this.pixelAngle = uniform(2 * Math.tan(17.5 * Math.PI / 180) / 1080);
     const Wf = layout.floor.length;
     const C = HALO_CITY;
     // progi LOD z jakości (tryb ultra: dalej, więcej kawałków i drzew)
     const lod = haloQualityLod(quality);
     this.lod = lod;
-    this.bldPx = { value: new THREE.Vector2(lod.buildingPixels[0], lod.buildingPixels[1]) };
-    this.treePx = { value: lod.treePixels };
+    this.bldPx = uniform(new THREE.Vector2(lod.buildingPixels[0], lod.buildingPixels[1]));
+    this.treePx = uniform(lod.treePixels);
     const gRows = Math.ceil(Wf / C.gardenBlockT);
     const iRows = Math.ceil(Wf / C.industryBlockT);
+    // wektory siatek zmieniane w miejscu (zanik miasta, t środka siatki drzew) — węzły je czytają
     this.gardenGrid = new THREE.Vector4(C.gardenChunkBlocks, gRows, 0, 1);
     this.industryGrid = new THREE.Vector4(C.industryChunkBlocks, iRows, 1, 1);
+    const gardenGridU = uniform(this.gardenGrid);
+    const industryGridU = uniform(this.industryGrid);
 
-    const gardenMat = new THREE.ShaderMaterial({
-      name: 'HaloCity_garden',
-      uniforms: { ...common, uCityGrid: { value: this.gardenGrid }, uPixelAngle: this.pixelAngle, uBldPx: this.bldPx },
-      vertexShader: GARDEN_VERTEX,
-      fragmentShader: HALO_PRIM_FRAGMENT,
-      defines: { AIR_STEPS: 4, PRIM_FACE_FROM_LOCAL: 1 },
-      side
-    });
+    const gv = haloPrimVaryings({ faceFromLocal: true });
+    const gardenMat = haloNodeMaterial('HaloCity_garden', {
+      vertexNode: makeHaloGardenVertex({ u, su, cityGrid: gardenGridU, pixelAngle: this.pixelAngle, bldPx: this.bldPx, v: gv }),
+      fragmentNode: makeHaloPrimFragment({ u, v: gv, faceFromLocal: true })
+    }, { side }, { ...common, uCityGrid: gardenGridU, uPixelAngle: this.pixelAngle, uBldPx: this.bldPx });
     const gardenGeo = makeGardenChunk(C.gardenChunkBlocks, gRows);
-    const industryMat = new THREE.ShaderMaterial({
-      name: 'HaloCity_industry',
-      uniforms: { ...common, uCityGrid: { value: this.industryGrid }, uPixelAngle: this.pixelAngle, uBldPx: this.bldPx },
-      vertexShader: INDUSTRY_VERTEX,
-      fragmentShader: HALO_PRIM_FRAGMENT,
-      defines: { AIR_STEPS: 4 },
-      side
-    });
+    const iv = haloPrimVaryings();
+    const industryMat = haloNodeMaterial('HaloCity_industry', {
+      vertexNode: makeHaloIndustryVertex({ u, su, cityGrid: industryGridU, pixelAngle: this.pixelAngle, bldPx: this.bldPx, v: iv }),
+      fragmentNode: makeHaloPrimFragment({ u, v: iv })
+    }, { side }, { ...common, uCityGrid: industryGridU, uPixelAngle: this.pixelAngle, uBldPx: this.bldPx });
     const industryGeo = makeIndustryChunk(C.industryChunkBlocks, iRows);
     this.materials = [gardenMat, industryMat];
     this.buildings = [];
@@ -930,14 +947,12 @@ export class HaloCity {
     this._tree = makeTreeKit();
     const tns = lod.treeGrid;
     this.treeGrid = new THREE.Vector4(tns, tns, 16, 0);
-    this.treeMaterial = new THREE.ShaderMaterial({
-      name: 'HaloTrees',
-      uniforms: { ...common, uTreeGrid: { value: this.treeGrid }, uPixelAngle: this.pixelAngle, uTreePx: this.treePx },
-      vertexShader: TREE_VERTEX,
-      fragmentShader: TREE_FRAGMENT,
-      defines: { AIR_STEPS: 4 },
-      side
-    });
+    const treeGridU = uniform(this.treeGrid);
+    const tv = haloTreeVaryings();
+    this.treeMaterial = haloNodeMaterial('HaloTrees', {
+      vertexNode: makeHaloTreeVertex({ u, su, treeGrid: treeGridU, pixelAngle: this.pixelAngle, treePx: this.treePx, v: tv }),
+      fragmentNode: makeHaloTreeFragment({ u, v: tv })
+    }, { side }, { ...common, uTreeGrid: treeGridU, uPixelAngle: this.pixelAngle, uTreePx: this.treePx });
     this.trees = new THREE.Mesh(instancedTrees(this._tree, tns * tns), this.treeMaterial);
     this.trees.name = 'HaloTrees';
     this.trees.frustumCulled = false;

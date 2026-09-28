@@ -149,8 +149,19 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   alokuje ~150 B na atrybut na klatkę — zakres na stałe z wyłączonym czyszczeniem (`liveAttribute`, `fxParticles3D.js`).
   Tekstura per obiekt we wspólnym grafie: `FxMapNode` (jak `HullObjectTextureNode`, `texture().onObjectUpdate()` nie
   działa).
+- **Pułapki z zadania 09 (ring: megastruktura i miasto):** **`a·b + c` dla dowolnego `a`** (niecałkowitego — ziarno bryły,
+  z) przez wbudowane **`fma()` WGSL** (`haloFma` / `haloFmaV2` w `haloRingTSL.js`, `wgslFn` — TSL r183 nie ma `fma`): Tint
+  zamienia je na HLSL `mad`, DXC na ten sam rozkaz, na który FXC składał GLSL w bazie — na GPU bit w bit (wiersze
+  `*FmaWgsl` w `ring-tsl-parzystosc.mjs`; wprost 71,7% ziaren brył, 28% brył z innym wzorem okien). Kolejność argumentów
+  z pomiaru (`ściana·7,3 + ziarno·13` → `fma(ziarno, 13, ściana·7,3)`, odwrotnie 82,6%). **Pochodne przed gałęziami:**
+  FXC spłaszczał gałęzie z `fwidth`, w WGSL pochodna w rozbieżnej gałęzi jest nieokreślona. **Wczesne wyjście z
+  wierzchołków** (`collapse(); return;`) = zagnieżdżone `If` z domyślnym `vec4(2, 2, 2, 1)` (main zwraca strukturę
+  varyingów — `Return()` się nie da). **Reszta różnic z bazą** (do 1,2% pikseli > 8/255 w kadrach gęstego miasta,
+  budynki 1–2 px): krawędzie MSAA i aliasing okien — pozycje wierzchołków różnią się o ULP (FXC scala `mad` także w
+  wierzchołkach, `haloRelFromPolar`), a pochodne liczone na czwórkach pikseli mogą brać inny wiersz czwórki
+  (hipoteza: ANGLE rysuje cele odwrócone w pionie; do sprawdzenia w 23 — `dpdxFine` / operacje na czwórkach).
 - **TSL, nie `wgslFn`.** Tekstowy WGSL tylko dla wyizolowanej czystej funkcji, gdy TSL jest naprawdę niewygodny — z
-  uzasadnieniem w commicie (zamyka drogę do zapasowego backendu WebGL2).
+  uzasadnieniem w commicie (zamyka drogę do zapasowego backendu WebGL2). Wyjątek z uzasadnieniem: `haloFma` (09).
 - **Pętle:** `Loop` w TSL, nie `for` w JS generujący kopie (`mx_noise_float` ×160 rozwinięte = 44 s kompilacji).
   Ciężkie funkcje: `Fn(...).setLayout(...)` — jedna funkcja WGSL zamiast wklejania.
 - **Reguły z `agents.md` bez zmian:** HDR-first i próg bloomu 0,9; bez `pow()` z ujemną podstawą; clamp varyingów
