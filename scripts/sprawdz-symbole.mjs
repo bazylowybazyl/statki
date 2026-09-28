@@ -27,7 +27,7 @@ const MODULY = [
   'src/ui/liveDebug.js',
   'src/ui/targetingReticles.js',
   'src/data/playerHullCatalog.js',
-  'src/vfx/warpLensPass.js',
+  'src/3d/warp/warpNurt.js',
   'src/game/gameState.js'
 ];
 

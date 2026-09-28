@@ -28,11 +28,15 @@ import { FxFrame, FX_DISTORT_LAYER } from './fx/fxFrame.js';
 // (2 na pass), żeby zmieścić całą klatkę — dwa rendery podzielonego ekranu z modułami
 // (pieczenie map ringu, SDF kadłubów) i z zapasem na passy kolejnych zadań.
 const GPU_TIMER_FRAME_QUERIES = 512;
-// Zastępcze flagi warstw dla wolnej kamery (lot nad miastem): renderuj wszystko.
-const LAYERS_ALL_ACTIVE = Object.freeze({ planets: true, halo: true, ringPlanets: true, shields: true });
+// Zastępcze flagi warstw dla wolnej kamery (lot nad miastem): renderuj wszystko poza
+// ośrodkiem warpa (liczony wokół kamery gry w płaszczyźnie gry).
+const LAYERS_ALL_ACTIVE = Object.freeze({ planets: true, halo: true, ringPlanets: true, shields: true, warp: false });
 const PLANET_RENDER_LAYER = 3;
 const PLANET_HALO_RENDER_LAYER = 5;
 const RING_PLANET_RENDER_LAYER = 6;
+// Ośrodek warpa „Nurt” (src/3d/warp/medium.js): pass perspektywiczny po planetach, przed
+// passem ortho — rysowany tylko, gdy sterownik warpa zgłosi aktywność (setWarpLayerActive).
+export const WARP_MEDIUM_RENDER_LAYER = 8;
 // Tło menu głównego (menuBackdrop3D.js): Ziemia z ringiem w kamerze kinowej.
 // Rysuje ją tylko renderBackdrop — passy gry tej warstwy nie widzą.
 export const MENU_BACKDROP_LAYER = 9;
@@ -367,7 +371,7 @@ export const Core3D = {
   _refractionValid: false, _refractionFlip: false,
   planetHaloTarget: null, haloDepthMaskMaterial: null,
 
-  renderPassBg: null, renderPassPlanets: null, planetHaloPass: null, renderPassRingPlanets: null, renderPassOrtho: null, renderPassShields: null, renderPassFg: null,
+  renderPassBg: null, renderPassPlanets: null, planetHaloPass: null, renderPassRingPlanets: null, renderPassWarp: null, renderPassOrtho: null, renderPassShields: null, renderPassFg: null,
   heatHazeSources: null, heatHazeDirs: null, heatHazeCount: 0, heatHazeMaxSources: MAX_HEAT_HAZE_SOURCES, _heatHazeWorldScratch: new THREE.Vector3(),
   // shadowShaftsPass (QuadMesh + NodeMaterial, createShadowShaftsPass) pisze maskę
   // widoczności słońca do sunShadowTarget (RGBA8, rozmiar bufora sceny, bez MSAA) —
@@ -388,8 +392,9 @@ export const Core3D = {
   // widocznego. Pusty pass to i tak pełny obchód grafu sceny, a do celu MSAA
   // także resolve + invalidate (three robi je na końcu KAŻDEGO render()).
   // Flagi ustawiają właściciele: planet3d.assets.js (tym samym cullingiem, którym
-  // chowa planety) i shield3D.js — zachowawczo, w razie wątpliwości true.
-  layerActivity: { planets: true, halo: true, ringPlanets: true, shields: true },
+  // chowa planety) i shield3D.js — zachowawczo, w razie wątpliwości true. Ośrodek
+  // warpa (warstwa 8) — odwrotnie: tylko gdy sterownik warpa zgłosi go w tej klatce.
+  layerActivity: { planets: true, halo: true, ringPlanets: true, shields: true, warp: false },
   // Bloom: BloomGry (BloomNode three + zgodność z dawnym passem WebGL, tsl/postGry.js)
   // w grafie postu; siła / promień / próg to uniformy (_applyBloomPassConfig co klatkę
   // z bloomConfig.js albo tunera DevVFX.bloom), rozmiar = bufor rysowania ×
@@ -433,7 +438,7 @@ export const Core3D = {
   _renderInfoBefore: { calls: 0, triangles: 0, points: 0, lines: 0 },
   _renderInfoStart: { calls: 0, triangles: 0, points: 0, lines: 0 },
   _renderInfoFrame: -1,
-  _renderInfoBucketNames: ['refraction', 'bg', 'planets', 'shafts', 'ortho', 'fg', 'bloom', 'post', 'other'],
+  _renderInfoBucketNames: ['refraction', 'bg', 'planets', 'shafts', 'warp', 'ortho', 'fg', 'bloom', 'post', 'other'],
   // window.__rendererInfo — jeden obiekt na sesję (harness i PerfHUD go czytają).
   _rendererInfoOut: { calls: 0, triangles: 0, points: 0, lines: 0, passes: null },
   // Infrastruktura efektów GPU (zadanie 12-B, src/3d/fx/fxFrame.js, docs/webgpu/FX-INFRA.md): kroki
@@ -767,12 +772,19 @@ export const Core3D = {
     // czyszczenia głębi — tarcza testuje głębię względem kadłubów zamiast kłaść
     // się na wszystkim.
     //
-    // Pass zgięcia tła (nowy warp — zadanie 22) wejdzie zaraz po tle, przed
-    // planetami: zakrzywia tylko to, co leży daleko za statkiem (miejsce w render()).
+    // Warp „Nurt” (zadanie 22, src/3d/warp/): ośrodek (miliony drobin, compute) to pass
+    // PERSPEKTYWICZNY warstwy 8 po planetach, przed ortho — pod płaszczyzną gry, addytywnie
+    // (głębia = paralaksa), tylko gdy sterownik warpa zgłosi aktywność (setWarpLayerActive).
+    // Zgięcie tła (bańka, szczeliny) liczy materiał mgławicy (skyBend.js) — zgina się tylko ona,
+    // jak w demie; osobnego passa zgięcia i celu pośredniego nie ma. Fale warpa = źródła
+    // zniekształceń „uber” (fxDistortion, zadanie 12). Szczeliny, błyski, smugi sylwetki —
+    // warstwa 0 (ortho); odsłanianie, szew i żar — materiał kadłuba (hexShips3D.tsl.js).
     this.renderPassBg = makeScenePass('bg', 'bg', 1, false, true);
     this.renderPassPlanets = makeScenePass('planets', 'planets', PLANET_RENDER_LAYER, false, false);
     this.planetHaloPass = makeFullscreenBlendPass('Core3D.planetHaloBlend', 'planets', this.planetHaloTarget.texture, BLEND_ADD_ONE_ONE);
     this.renderPassRingPlanets = makeScenePass('ringPlanets', 'planets', RING_PLANET_RENDER_LAYER, true, false);
+    // Bez czyszczenia głębi: ośrodek jej nie testuje ani nie pisze (ortho i tak ją czyści).
+    this.renderPassWarp = makeScenePass('warp', 'warp', WARP_MEDIUM_RENDER_LAYER, false, false, false);
     this.renderPassOrtho = makeScenePass('ortho', 'ortho', 0, true, false);
     this.renderPassShields = makeScenePass('shields', 'ortho', SHIELD_RENDER_LAYER, true, false, false);
     this.renderPassFg = makeScenePass('fg', 'fg', 2, false, false);
@@ -781,6 +793,7 @@ export const Core3D = {
       this.renderPassPlanets,
       this.planetHaloPass,
       this.renderPassRingPlanets,
+      this.renderPassWarp,
       this.renderPassOrtho,
       this.renderPassShields,
       this.renderPassFg
@@ -1515,22 +1528,9 @@ export const Core3D = {
       if (!pass || pass.enabled === false) continue;
       // Pusty pass (planety poza kadrem, zero widocznych tarcz) = zero pracy.
       if (!this._scenePassHasContent(pass, layerActivity)) continue;
+      // Zgięcie tła warpa (zadanie 22) nie ma tu passa: w demie gnie się tylko mgławica, a pass tła
+      // gry niesie też gwiazdy i dolną część ringu — zgina ją materiał mgławicy (skyBend.js).
       this._runScenePass(pass);
-      if (pass === this.renderPassBg) {
-        // ── Pass zgięcia tła (nowy warp) — zadanie 22 („Nurt”); MIEJSCE, dziś puste ──
-        // Zaraz po passie tła, przed planetami: zakrzywia tylko mgławicę i gwiazdy
-        // (bańka gracza, wciąganie tła w szczeliny tuneli — `skyBend` z
-        // dema/warp-webgpu/post.js, DEMO-WARP.md § Do portu w grze); planety, statki
-        // i FG kładą się na wierzchu, bloom liczy się z gotowego obrazu.
-        // Jak wpiąć: WebGPU nie próbkuje celu, do którego właśnie rysuje — przy
-        // aktywnym zgięciu pass tła rysuje do własnego celu (jak dawny cel soczewki
-        // z tagu; ten sam kontekst renderu co composerTarget), a tu
-        // quad TSL (QuadMesh, jak planetHaloPass) kładzie go do composerTarget
-        // z przesuniętym UV (screenUV, v od góry). Bez zgięcia — pass tła jak dziś,
-        // zero kosztu. Fale warpa to źródła zniekształceń postu (zadanie 12,
-        // src/3d/fx/distortion.js), nie ten pass. Snapshot refrakcji
-        // (_renderRefractionSnapshot) rysuje tło bez zgięcia.
-      }
     }
     // Zniekształcenia efektów do „uber”: źródła rzutowane na kamerę tego renderu, warstwa DIST.
     this._renderFxDistortion(freePerspective || t.fxDistortion === false);
@@ -1942,6 +1942,10 @@ export const Core3D = {
 
   setShieldLayerActive(active) { this.layerActivity.shields = !!active; },
 
+  // Ośrodek warpa „Nurt” (warstwa 8, src/3d/warp/warpNurt.js): właściciel zgłasza co klatkę, czy
+  // ośrodek jest widoczny — bez zgłoszenia pass warpa nic nie kosztuje (zero draw calli).
+  setWarpLayerActive(active) { this.layerActivity.warp = !!active; },
+
   // ── Efekty GPU (zadanie 12-B, src/3d/fx/fxFrame.js — opis kroku i kontekstu tam) ──
   // Krok { name, spawn?(ctx), lights?(ctx), update?(ctx), warm?(ctx) } raz na klatkę przed
   // passami scen; warm raz przy gotowym urządzeniu (puste dispatche, prewarmPass siatek).
@@ -1959,34 +1963,15 @@ export const Core3D = {
     if (pass === this.planetHaloPass) return activity.halo !== false;
     if (pass === this.renderPassRingPlanets) return activity.ringPlanets !== false;
     if (pass === this.renderPassShields) return activity.shields !== false;
+    if (pass === this.renderPassWarp) return activity.warp === true;
     return true;
   },
 
-  // ── Warp: poza portem (decyzja użytkownika 2026-09-27, USTALENIA §7) ─────────
-  // Stara soczewka skoku (warpLens3D.js), zgięcie tła, widok skoku (kropla /
-  // bańka Alcubierre'a), gwiazdy na warstwie 8 i fale w „uber” nie mają passa na
-  // WebGPU. API zostaje z tymi samymi sygnaturami — gra woła setWarpLensWorld /
-  // clearWarpLens co klatkę (src/vfx/warpLensPass.js), dema warpa resztę — ale
-  // niczego nie rysuje ani nie zapamiętuje. Zgłoszenia push* zwracają false
-  // (nic nie przyjęto do rysowania). Nowy warp wejdzie od razu w TSL: pass
-  // zgięcia tła w render() zaraz po passie tła (miejsce opisane tam).
-  setWarpLensWorld(worldX, worldY, angle, radiusAlong, radiusAcross, swallow) { },
-
-  clearWarpLens() { },
-
-  setWarpViewWorld(worldX, worldY, radiusPx, beta, angle, o = {}) { },
-
-  clearWarpView() { },
-
-  // Widok skoku wygaszał shafty na klatkę — bez widoku skoku nic do wygaszania.
-  suppressShadowShafts(amount = 1) { },
-
-  pushWarpSpaceWorld(type, worldX, worldY, angle, a, b, strength) { return false; },
-
-  pushWarpWaveWorld(type, worldX, worldY, radius, width, amp, angle = 0) { return false; },
-
-  // Gwiazdy gry zostają na warstwie tła (1) — warstwa 8 wolna do nowego warpa.
-  setWarpStarsObject(obj) { },
+  // Dawne API soczewki warpa (setWarpLensWorld, clearWarpLens, setWarpViewWorld, clearWarpView,
+  // suppressShadowShafts, pushWarpSpaceWorld, pushWarpWaveWorld, setWarpStarsObject — no-opy od
+  // zadania 01) usunięte w zadaniu 22 razem z warpLens3D / warpWorldLens / warpFx3D /
+  // warpLensPass. Warp „Nurt”: setWarpLayerActive (ośrodek), addFxStep (krok compute),
+  // fxDistortion (fale), materiał mgławicy i gwiazd (skyBend.js, stars.js), materiał kadłuba.
 
   beginShaftHullFrame() { this.shaftHullCount = 0; },
 
