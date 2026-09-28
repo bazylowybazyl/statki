@@ -3,21 +3,26 @@
 // habitat na zewnątrz. Powierzchnia dzielnic liczy typ terenu, wodę,
 // kwartały, arterie i ścieżki tymi samymi wzorami co tekstury dema, ale na
 // piksel (ostro przy każdym zoomie gry). Wszystko w układzie lokalnym ringu.
+//
+// Port WebGPU (zadanie 10): powierzchnia dzielnic w TSL (dawne ECU_SURFACE_VERTEX /
+// _FRAGMENT 1:1; pola wody i typu terenu jako czyste funkcje WGSL z uEcu w parametrze),
+// szkło kopuł, żebra i dno kopuł — partie instancji archetypów (archBatchMesh), bez
+// THREE.InstancedMesh (PLAN §3).
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
-  HALO_GLSL_COMMON,
-  HALO_GLSL_FG,
-  HALO_GLSL_FG_CLIP,
-  HALO_GLSL_LIGHT,
-  HALO_GLSL_NOISE,
-  HALO_GLSL_PORTSITES,
-  HALO_GLSL_TRANSIT
-} from '../haloRingGLSL.js';
+  Fn, If, Loop, Discard,
+  float, vec2, vec3, vec4,
+  attribute, varyingProperty, uniform, uniformArray, positionGeometry, normalGeometry,
+  modelViewMatrix, cameraProjectionMatrix,
+  abs, clamp, cos, floor, fract, length, max, min, mix, normalize, pow, sign, sin, smoothstep, step
+} from 'three/tsl';
 import { PORT_PAD_H } from '../haloRingRoofPlan.js';
-import { ARCH_GLSL_LIT, ARCH_GLSL_SABS } from './archGLSL.js';
+import { haloHash12, haloPureFn } from '../haloRingTSL.js';
+import { uniformsAdapter } from '../haloUniformsAdapter.js';
+import { archLitTSL, archNodeMaterial } from './archTSL.js';
+import { ArchBatch, archHex, archRingTubeBoxes } from './archFrame.js';
 import { ArchLights, archBatchMesh, archHemisphere, archPointsMesh, archTreeGeometry } from './archMaterials.js';
-import { archHex, archRingTubeBoxes } from './archFrame.js';
 import {
   ECU_DISTRICTS,
   ECU_S,
@@ -33,179 +38,201 @@ import {
 const S = ECU_S;
 
 // ---------------------------------------------------------------------------
-// Powierzchnia dzielnic (tekstury createSectorTextures dema, na piksel).
-const ECU_SURFACE_VERTEX = /* glsl */`
-${HALO_GLSL_COMMON}
-attribute vec2 aEcu;        // s w dzielnicy, id dzielnicy (dema)
-varying vec3 vPos;
-varying vec3 vN;
-varying vec2 vEcu;
-void main() {
-  vPos = position;
-  vN = normal;
-  vEcu = aEcu;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-}
-`;
+// Powierzchnia dzielnic (tekstury createSectorTextures dema, na piksel). Funkcje pól czyste
+// (setLayout): uEcu (LEN dzielnicy, S, W, —) w parametrze, bez uniformów w domknięciu (PLAN §3).
+const sel = (k, i) => abs(k.sub(i)).lessThan(0.5);
+const ecuEllipse = haloPureFn('ecuEllipse', 'float', [['q', 'vec2'], ['c', 'vec2'], ['r', 'vec2']], (a) =>
+  length(a.q.sub(a.c).div(a.r)).sub(1.0).mul(min(a.r.x, a.r.y)));
+const ecuMod = haloPureFn('ecuMod', 'float', [['a', 'float'], ['n', 'float']], (a) =>
+  a.a.sub(a.n.mul(floor(a.a.div(a.n)))));
 
-const ECU_SURFACE_FRAGMENT = /* glsl */`
-${HALO_GLSL_COMMON}
-${HALO_GLSL_NOISE}
-${HALO_GLSL_LIGHT}
-${HALO_GLSL_TRANSIT}
-${HALO_GLSL_PORTSITES}
-${ARCH_GLSL_LIT}
-${ARCH_GLSL_SABS}
-uniform vec4 uEcu;          // LEN dzielnicy, S, W, -
-uniform vec3 uEcuPal[10];   // barwy typow (liniowo)
-varying vec3 vPos;
-varying vec3 vN;
-varying vec2 vEcu;
-
-float ecuEllipse(vec2 q, vec2 c, vec2 r) { return (length((q - c) / r) - 1.0) * min(r.x, r.y); }
-float ecuMod(float a, float n) { return a - n * floor(a / n); }
-
-float ecuWater(vec2 q, float k) {
-  float L = uEcu.x;
-  float Sc = uEcu.y;
-  float s = q.x;
-  float z = q.y;
-  float d = 1e5;
-  if (abs(k - 1.0) < 0.5) d = ecuEllipse(q, vec2(L * 0.54, 30.0 * Sc), vec2(720.0, 265.0) * Sc) + sin(s * 0.007 / Sc) * 12.0 * Sc;
-  if (abs(k - 2.0) < 0.5) {
-    d = ecuEllipse(q, vec2(L * 0.52, -30.0 * Sc), vec2(1570.0, 655.0) * Sc) + sin(s * 0.009 / Sc + z * 0.007 / Sc) * 23.0 * Sc;
-    d = max(d, -ecuEllipse(q, vec2(L * 0.58, 100.0 * Sc), vec2(230.0, 155.0) * Sc));
-  }
-  if (abs(k - 3.0) < 0.5) d = abs(z - 130.0 * Sc * sin(s * 0.0028 / Sc)) - 32.0 * Sc;
-  if (abs(k - 5.0) < 0.5) d = abs(z - 130.0 * Sc * sin(s * 0.0021 / Sc)) - 68.0 * Sc;
-  if (abs(k - 6.0) < 0.5) d = abs(z + 490.0 * Sc) - 46.0 * Sc;
-  if (abs(k - 8.0) < 0.5) d = abs(z - 200.0 * Sc * sin(s * 0.0009 / Sc)) - 45.0 * Sc;
-  if (abs(k - 9.0) < 0.5) {
-    d = ecuEllipse(q, vec2(L * 0.51, 0.0), vec2(L * 0.47, 745.0 * Sc)) + sin(s * 0.006 / Sc + z * 0.009 / Sc) * 17.0 * Sc;
-    d = max(d, -ecuEllipse(q, vec2(L * 0.57, 10.0 * Sc), vec2(340.0, 210.0) * Sc));
-    d = max(d, -ecuEllipse(q, vec2(L * 0.31, -220.0 * Sc), vec2(150.0, 95.0) * Sc));
-  }
-  if (abs(k - 11.0) < 0.5) d = min(ecuEllipse(q, vec2(L * 0.59, 0.0), vec2(620.0, 250.0) * Sc), abs(z - 210.0 * Sc * sin(s * 0.0018 / Sc)) - 40.0 * Sc);
+const ecuWater = haloPureFn('ecuWater', 'float', [['q', 'vec2'], ['k', 'float'], ['ecu', 'vec4']], (a) => {
+  const L = a.ecu.x;
+  const Sc = a.ecu.y;
+  const s = a.q.x;
+  const z = a.q.y;
+  const k = a.k;
+  const d = float(1e5).toVar();
+  If(sel(k, 1.0), () => {
+    d.assign(ecuEllipse(a.q, vec2(L.mul(0.54), Sc.mul(30.0)), vec2(720.0, 265.0).mul(Sc)).add(sin(s.mul(0.007).div(Sc)).mul(12.0).mul(Sc)));
+  });
+  If(sel(k, 2.0), () => {
+    d.assign(ecuEllipse(a.q, vec2(L.mul(0.52), Sc.mul(-30.0)), vec2(1570.0, 655.0).mul(Sc))
+      .add(sin(s.mul(0.009).div(Sc).add(z.mul(0.007).div(Sc))).mul(23.0).mul(Sc)));
+    d.assign(max(d, ecuEllipse(a.q, vec2(L.mul(0.58), Sc.mul(100.0)), vec2(230.0, 155.0).mul(Sc)).negate()));
+  });
+  If(sel(k, 3.0), () => { d.assign(abs(z.sub(float(130.0).mul(Sc).mul(sin(s.mul(0.0028).div(Sc))))).sub(Sc.mul(32.0))); });
+  If(sel(k, 5.0), () => { d.assign(abs(z.sub(float(130.0).mul(Sc).mul(sin(s.mul(0.0021).div(Sc))))).sub(Sc.mul(68.0))); });
+  If(sel(k, 6.0), () => { d.assign(abs(z.add(Sc.mul(490.0))).sub(Sc.mul(46.0))); });
+  If(sel(k, 8.0), () => { d.assign(abs(z.sub(float(200.0).mul(Sc).mul(sin(s.mul(0.0009).div(Sc))))).sub(Sc.mul(45.0))); });
+  If(sel(k, 9.0), () => {
+    d.assign(ecuEllipse(a.q, vec2(L.mul(0.51), 0.0), vec2(L.mul(0.47), Sc.mul(745.0)))
+      .add(sin(s.mul(0.006).div(Sc).add(z.mul(0.009).div(Sc))).mul(17.0).mul(Sc)));
+    d.assign(max(d, ecuEllipse(a.q, vec2(L.mul(0.57), Sc.mul(10.0)), vec2(340.0, 210.0).mul(Sc)).negate()));
+    d.assign(max(d, ecuEllipse(a.q, vec2(L.mul(0.31), Sc.mul(-220.0)), vec2(150.0, 95.0).mul(Sc)).negate()));
+  });
+  If(sel(k, 11.0), () => {
+    d.assign(min(ecuEllipse(a.q, vec2(L.mul(0.59), 0.0), vec2(620.0, 250.0).mul(Sc)),
+      abs(z.sub(float(210.0).mul(Sc).mul(sin(s.mul(0.0018).div(Sc))))).sub(Sc.mul(40.0))));
+  });
   return d;
-}
+});
 
-float ecuType(vec2 q, float k, float water) {
-  float L = uEcu.x;
-  float Sc = uEcu.y;
-  float HW = uEcu.z * 0.5;
-  float s = q.x;
-  float z = q.y;
-  float t = 0.0;
-  if (water < 0.0) {
-    t = 3.0;
-  } else if (abs(z) > HW - 38.0 * Sc) {
-    t = 7.0;
-  } else if (abs(abs(z) - 850.0 * Sc) < 19.0 * Sc) {
-    t = 6.0;
-  } else if (water < 28.0 * Sc && (abs(k - 1.0) < 0.5 || abs(k - 2.0) < 0.5 || abs(k - 9.0) < 0.5 || abs(k - 11.0) < 0.5)) {
-    t = 8.0;
-  } else {
-    if (abs(k - 1.0) < 0.5) t = ecuEllipse(q, vec2(L * 0.51, 0.0), vec2(1600.0, 670.0) * Sc) < 0.0 ? 1.0 : 0.0;
-    if (abs(k - 2.0) < 0.5) t = (ecuEllipse(q, vec2(L * 0.1, 610.0 * Sc), vec2(400.0, 140.0) * Sc) < 0.0 || ecuEllipse(q, vec2(L * 0.9, -610.0 * Sc), vec2(340.0, 160.0) * Sc) < 0.0) ? 0.0 : 2.0;
-    if (abs(k - 3.0) < 0.5) t = abs(z - 130.0 * Sc * sin(s * 0.0028 / Sc)) < 115.0 * Sc ? 1.0 : 0.0;
-    if (abs(k - 4.0) < 0.5) t = 1.0;
-    if (abs(k - 5.0) < 0.5) t = 4.0;
-    if (abs(k - 6.0) < 0.5 || abs(k - 7.0) < 0.5 || abs(k - 10.0) < 0.5) t = 5.0;
-    if (abs(k - 8.0) < 0.5) t = abs(z - 200.0 * Sc * sin(s * 0.0009 / Sc)) < 110.0 * Sc ? 1.0 : 0.0;
-    if (abs(k - 9.0) < 0.5) t = 2.0;
-    if (abs(k - 11.0) < 0.5) t = sin(s * 0.0028 / Sc) + cos(z * 0.009 / Sc) > 0.65 ? 0.0 : 2.0;
-    if (k < 0.5 && ecuEllipse(q, vec2(L * 0.48, -30.0 * Sc), vec2(330.0, 230.0) * Sc) < 0.0) t = 7.0;
-    if (t < 0.5 || abs(t - 5.0) < 0.5) {
-      if (ecuMod(s, 76.0 * Sc) < 12.0 * Sc || ecuMod(z + 850.0 * Sc, 88.0 * Sc) < 12.0 * Sc) t = 6.0;
-    }
-  }
+const ecuType = haloPureFn('ecuType', 'float', [['q', 'vec2'], ['k', 'float'], ['water', 'float'], ['ecu', 'vec4']], (a) => {
+  const L = a.ecu.x;
+  const Sc = a.ecu.y;
+  const HW = a.ecu.z.mul(0.5);
+  const s = a.q.x;
+  const z = a.q.y;
+  const k = a.k;
+  const t = float(0.0).toVar();
+  If(a.water.lessThan(0.0), () => {
+    t.assign(3.0);
+  }).ElseIf(abs(z).greaterThan(HW.sub(Sc.mul(38.0))), () => {
+    t.assign(7.0);
+  }).ElseIf(abs(abs(z).sub(Sc.mul(850.0))).lessThan(Sc.mul(19.0)), () => {
+    t.assign(6.0);
+  }).ElseIf(a.water.lessThan(Sc.mul(28.0)).and(sel(k, 1.0).or(sel(k, 2.0)).or(sel(k, 9.0)).or(sel(k, 11.0))), () => {
+    t.assign(8.0);
+  }).Else(() => {
+    If(sel(k, 1.0), () => {
+      t.assign(ecuEllipse(a.q, vec2(L.mul(0.51), 0.0), vec2(1600.0, 670.0).mul(Sc)).lessThan(0.0).select(float(1.0), float(0.0)));
+    });
+    If(sel(k, 2.0), () => {
+      t.assign(ecuEllipse(a.q, vec2(L.mul(0.1), Sc.mul(610.0)), vec2(400.0, 140.0).mul(Sc)).lessThan(0.0)
+        .or(ecuEllipse(a.q, vec2(L.mul(0.9), Sc.mul(-610.0)), vec2(340.0, 160.0).mul(Sc)).lessThan(0.0)).select(float(0.0), float(2.0)));
+    });
+    If(sel(k, 3.0), () => {
+      t.assign(abs(z.sub(float(130.0).mul(Sc).mul(sin(s.mul(0.0028).div(Sc))))).lessThan(Sc.mul(115.0)).select(float(1.0), float(0.0)));
+    });
+    If(sel(k, 4.0), () => { t.assign(1.0); });
+    If(sel(k, 5.0), () => { t.assign(4.0); });
+    If(sel(k, 6.0).or(sel(k, 7.0)).or(sel(k, 10.0)), () => { t.assign(5.0); });
+    If(sel(k, 8.0), () => {
+      t.assign(abs(z.sub(float(200.0).mul(Sc).mul(sin(s.mul(0.0009).div(Sc))))).lessThan(Sc.mul(110.0)).select(float(1.0), float(0.0)));
+    });
+    If(sel(k, 9.0), () => { t.assign(2.0); });
+    If(sel(k, 11.0), () => {
+      t.assign(sin(s.mul(0.0028).div(Sc)).add(cos(z.mul(0.009).div(Sc))).greaterThan(0.65).select(float(0.0), float(2.0)));
+    });
+    If(k.lessThan(0.5).and(ecuEllipse(a.q, vec2(L.mul(0.48), Sc.mul(-30.0)), vec2(330.0, 230.0).mul(Sc)).lessThan(0.0)), () => { t.assign(7.0); });
+    If(t.lessThan(0.5).or(sel(t, 5.0)), () => {
+      If(ecuMod(s, Sc.mul(76.0)).lessThan(Sc.mul(12.0)).or(ecuMod(z.add(Sc.mul(850.0)), Sc.mul(88.0)).lessThan(Sc.mul(12.0))), () => { t.assign(6.0); });
+    });
+  });
   return t;
-}
+});
 
-vec3 ecuPal(float t) {
-  vec3 c = uEcuPal[0];
-  for (int i = 1; i < 10; i++) {
-    if (abs(t - float(i)) < 0.5) c = uEcuPal[i];
-  }
-  return c;
-}
-vec3 ecuLin(vec3 srgb255) {
-  vec3 c = clamp(srgb255 / 255.0, 0.0, 1.0);
-  return pow(c, vec3(2.2));
-}
+// sRGB 0–255 → liniowo (pow 2,2 jak w demie)
+const ecuLin = (srgb255) => pow(clamp(srgb255.div(255.0), 0.0, 1.0), vec3(2.2));
+// iloczyn stałych zwinięty jak w kompilatorze GLSL bazy (float32)
+const f32mul = (a, b) => Math.fround(Math.fround(a) * Math.fround(b));
+const F32_8x414 = f32mul(8.0, 4.14);
+const F32_3x414 = f32mul(3.0, 4.14);
 
-void main() {
-  float sAbs = archSAbs(vPos);
-  float z = vPos.z;
-  if (haloInTransitCut(sAbs, z)) discard;
-  float Sc = uEcu.y;
-  float L = uEcu.x;
-  float k = floor(vEcu.y + 0.5);
-  vec2 q = vec2(vEcu.x, z);
-  float water = ecuWater(q, k);
-  float t = ecuType(q, k, water);
-  // plyty portu (miejsca kompleksow i tranzytow: plasko, beton)
-  float tFloor = z - uRingZ.z;
-  float pad = haloPortPad(sAbs, tFloor, L, 0.0, 60.0);
-  vec3 n = normalize(vN);
-  vec3 emit = vec3(0.0);
-  vec3 col;
-  // szum teksela dema (4 m x S) i wzory typow
-  vec2 texel = floor(q / (4.14 * Sc));
-  float nz = (haloHash12(texel + k * 131.0) - 0.5) * 14.0 + sin(q.x * 0.019 / Sc + z * 0.011 / Sc) * 3.0;
-  if (abs(t - 4.0) < 0.5) nz += sin(floor(q.x / (180.0 * Sc)) * 16.0 + floor((z + uEcu.z * 0.5) / (220.0 * Sc)) * 8.0) * 19.0 + (ecuMod(z, 12.0 * Sc) < 4.0 * Sc ? -9.0 : 4.0);
-  if (abs(t - 2.0) < 0.5 || abs(t - 1.0) < 0.5) nz += sin(q.x * 0.018 / Sc) * cos(z * 0.022 / Sc) * 7.0;
-  vec3 base255 = ecuPal(t);
-  // kwartaly: slady budynkow w siatce katastralnej (76 x 88 dema)
-  if (t < 0.5 || abs(t - 5.0) < 0.5 || abs(t - 6.0) < 0.5) {
-    float ci = floor(q.x / (76.0 * Sc));
-    float sc0 = 38.0 * Sc + ci * 76.0 * Sc;
-    float cj = floor((z + 806.0 * Sc + 44.0 * Sc) / (88.0 * Sc));
-    float zc0 = -806.0 * Sc + cj * 88.0 * Sc;
-    vec2 cc = vec2(sc0, zc0);
-    float tc = ecuType(cc, k, ecuWater(cc, k));
-    if ((tc < 0.5 || abs(tc - 5.0) < 0.5) && abs(q.x - sc0) < 26.0 * Sc && abs(z - zc0) < 30.0 * Sc && cj >= 0.0 && zc0 < 820.0 * Sc) {
-      float v = 67.0 + haloHash12(vec2(ci, cj) + k * 17.0) * 38.0;
-      base255 = vec3(v, v + 7.0, v + 9.0);
-      nz *= 0.3;
-    }
-    float r2 = haloHash12(vec2(ci, cj) + k * 29.0 + 3.0);
-    if ((tc < 0.5 || abs(tc - 5.0) < 0.5) && r2 > 0.57 && abs(q.x - sc0) < 30.0 * Sc && abs(z - (zc0 - 37.0 * Sc)) < 1.3 * Sc) {
-      emit += r2 > 0.7 ? vec3(0.15, 0.27, 0.29) : vec3(0.32, 0.22, 0.12);
-    }
-  }
-  col = ecuLin(base255 + nz);
-  // arterie z = +-850: asfalt, przerywana os, oswietlenie od frontu
-  float azd = abs(abs(z) - 850.0 * Sc);
-  if (azd < 18.0 * Sc && water >= 0.0) {
-    col = ecuLin(vec3(34.0, 44.0, 50.0) + nz * 0.3);
-    float dash = step(ecuMod(q.x, 8.0 * 4.14 * Sc), 3.0 * 4.14 * Sc);
-    if (azd < 0.9 * Sc) col = mix(col, ecuLin(vec3(168.0, 170.0, 153.0)), dash);
-  }
-  if (abs(abs(z + 15.0 * Sc * sign(z)) - 850.0 * Sc) < 1.1 * Sc) emit += vec3(0.30, 0.19, 0.07);
-  // sciezki spacerowe w parkach i lasach (bez brodzenia)
-  if ((abs(k - 1.0) < 0.5 || abs(k - 2.0) < 0.5 || abs(k - 4.0) < 0.5 || abs(k - 9.0) < 0.5 || abs(k - 11.0) < 0.5) && water > 25.0 * Sc) {
-    for (int lane = 0; lane < 3; lane++) {
-      float fl = float(lane);
-      float zt = -620.0 * Sc + fl * 580.0 * Sc + sin(q.x * 0.0026 / Sc + fl) * 95.0 * Sc;
-      if (abs(z - zt) < 2.5 * Sc) col = ecuLin(vec3(146.0, 149.0, 122.0));
-    }
-  }
-  if (pad > 0.5) {
-    vec2 g = abs(fract(vec2(sAbs, z) / 120.0) - 0.5);
-    float line = 1.0 - smoothstep(0.46, 0.49, max(g.x, g.y));
-    col = ecuLin(uEcuPal[9] * (0.92 + 0.1 * haloHash12(floor(vec2(sAbs, z) / 120.0))) - line * 18.0);
-  }
-  float night = archNight(vPos);
-  if (water < 0.0 && pad < 0.5) {
-    col = archWater(vPos, n, q, vec3(0.018, 0.092, 0.093) * 0.6, vec3(0.06, 0.15, 0.17), clamp(-water / (60.0 * Sc), 0.0, 1.0));
-  } else {
-    col = archShade(vPos, n, col, 0.0);
-  }
-  col += emit * 0.9 * (0.3 + 0.7 * night) * uLayers.y;
-  gl_FragColor = vec4(col, 1.0);
+// Materiał powierzchni dzielnic (dawne ECU_SURFACE_*): ecu — uniform vec4 (LEN, S, W, —),
+// pal — uniformArray 10 × vec3 (barwy typów, sRGB 0–255).
+export function makeEcumeneSurfaceNodes({ u, ecu, pal }) {
+  const { H, U, archNight, archShade, archWater, archSAbs } = archLitTSL(u);
+  const vPosV = varyingProperty('vec3', 'vArchPos');
+  const vNV = varyingProperty('vec3', 'vArchN');
+  const vEcuV = varyingProperty('vec2', 'vEcu');
+  const vertexNode = Fn(() => {
+    const position = positionGeometry;
+    vPosV.assign(position);
+    vNV.assign(normalGeometry);
+    vEcuV.assign(attribute('aEcu', 'vec2'));   // s w dzielnicy, id dzielnicy (dema)
+    return cameraProjectionMatrix.mul(modelViewMatrix.mul(vec4(position, 1.0)));
+  })();
+  const ecuPal = (t) => {
+    const c = vec3(pal.element(0)).toVar();
+    Loop({ start: 1, end: 10, type: 'int', condition: '<', name: 'ecuPalI' }, ({ ecuPalI }) => {
+      If(abs(t.sub(float(ecuPalI))).lessThan(0.5), () => { c.assign(pal.element(ecuPalI)); });
+    });
+    return c;
+  };
+  const fragmentNode = Fn(() => {
+    const vPos = vec3(vPosV).toVar();
+    const sAbs = archSAbs(vPos).toVar();
+    const z = vPos.z.toVar();
+    If(H.haloInTransitCut(sAbs, z), () => { Discard(); });
+    const Sc = ecu.y;
+    const L = ecu.x;
+    const k = floor(vEcuV.y.add(0.5)).toVar();
+    const q = vec2(vEcuV.x, z).toVar();
+    const water = ecuWater(q, k, ecu).toVar();
+    const t = ecuType(q, k, water, ecu).toVar();
+    // płyty portu (miejsca kompleksów i tranzytów: płasko, beton)
+    const tFloor = z.sub(U.uRingZ.z).toVar();
+    const pad = H.haloPortPad(sAbs, tFloor, L, 0.0, 60.0).toVar();
+    const n = normalize(vNV).toVar();
+    const emit = vec3(0.0).toVar();
+    // szum teksela dema (4 m × S) i wzory typów
+    const texel = floor(q.div(Sc.mul(4.14))).toVar();
+    const nz = haloHash12(texel.add(k.mul(131.0))).sub(0.5).mul(14.0).add(sin(q.x.mul(0.019).div(Sc).add(z.mul(0.011).div(Sc))).mul(3.0)).toVar();
+    If(sel(t, 4.0), () => {
+      nz.addAssign(sin(floor(q.x.div(Sc.mul(180.0))).mul(16.0).add(floor(z.add(ecu.z.mul(0.5)).div(Sc.mul(220.0))).mul(8.0))).mul(19.0)
+        .add(ecuMod(z, Sc.mul(12.0)).lessThan(Sc.mul(4.0)).select(float(-9.0), float(4.0))));
+    });
+    If(sel(t, 2.0).or(sel(t, 1.0)), () => {
+      nz.addAssign(sin(q.x.mul(0.018).div(Sc)).mul(cos(z.mul(0.022).div(Sc))).mul(7.0));
+    });
+    const base255 = ecuPal(t).toVar();
+    // kwartały: ślady budynków w siatce katastralnej (76 × 88 dema)
+    If(t.lessThan(0.5).or(sel(t, 5.0)).or(sel(t, 6.0)), () => {
+      const ci = floor(q.x.div(Sc.mul(76.0))).toVar();
+      const sc0 = Sc.mul(38.0).add(ci.mul(76.0).mul(Sc)).toVar();
+      const cj = floor(z.add(Sc.mul(806.0)).add(Sc.mul(44.0)).div(Sc.mul(88.0))).toVar();
+      const zc0 = Sc.mul(-806.0).add(cj.mul(88.0).mul(Sc)).toVar();
+      const cc = vec2(sc0, zc0).toVar();
+      const tc = ecuType(cc, k, ecuWater(cc, k, ecu), ecu).toVar();
+      const house = tc.lessThan(0.5).or(sel(tc, 5.0)).toVar();
+      If(house.and(abs(q.x.sub(sc0)).lessThan(Sc.mul(26.0))).and(abs(z.sub(zc0)).lessThan(Sc.mul(30.0)))
+        .and(cj.greaterThanEqual(0.0)).and(zc0.lessThan(Sc.mul(820.0))), () => {
+        const v = float(67.0).add(haloHash12(vec2(ci, cj).add(k.mul(17.0))).mul(38.0)).toVar();
+        base255.assign(vec3(v, v.add(7.0), v.add(9.0)));
+        nz.mulAssign(0.3);
+      });
+      const r2 = haloHash12(vec2(ci, cj).add(k.mul(29.0)).add(3.0)).toVar();
+      If(house.and(r2.greaterThan(0.57)).and(abs(q.x.sub(sc0)).lessThan(Sc.mul(30.0))).and(abs(z.sub(zc0.sub(Sc.mul(37.0)))).lessThan(Sc.mul(1.3))), () => {
+        emit.addAssign(r2.greaterThan(0.7).select(vec3(0.15, 0.27, 0.29), vec3(0.32, 0.22, 0.12)));
+      });
+    });
+    const col = ecuLin(base255.add(nz)).toVar();
+    // arterie z = ±850: asfalt, przerywana oś, oświetlenie od frontu
+    const azd = abs(abs(z).sub(Sc.mul(850.0))).toVar();
+    If(azd.lessThan(Sc.mul(18.0)).and(water.greaterThanEqual(0.0)), () => {
+      col.assign(ecuLin(vec3(34.0, 44.0, 50.0).add(nz.mul(0.3))));
+      // 8 · 4,14 i 3 · 4,14 zwinięte jak stałe GLSL w bazie (mnożenie w float32)
+      const dash = step(ecuMod(q.x, float(F32_8x414).mul(Sc)), float(F32_3x414).mul(Sc));
+      If(azd.lessThan(Sc.mul(0.9)), () => { col.assign(mix(col, ecuLin(vec3(168.0, 170.0, 153.0)), dash)); });
+    });
+    If(abs(abs(z.add(Sc.mul(15.0).mul(sign(z)))).sub(Sc.mul(850.0))).lessThan(Sc.mul(1.1)), () => { emit.addAssign(vec3(0.30, 0.19, 0.07)); });
+    // ścieżki spacerowe w parkach i lasach (bez brodzenia)
+    If(sel(k, 1.0).or(sel(k, 2.0)).or(sel(k, 4.0)).or(sel(k, 9.0)).or(sel(k, 11.0)).and(water.greaterThan(Sc.mul(25.0))), () => {
+      Loop({ start: 0, end: 3, type: 'int', condition: '<', name: 'ecuLane' }, ({ ecuLane }) => {
+        const fl = float(ecuLane);
+        const zt = Sc.mul(-620.0).add(fl.mul(580.0).mul(Sc)).add(sin(q.x.mul(0.0026).div(Sc).add(fl)).mul(95.0).mul(Sc));
+        If(abs(z.sub(zt)).lessThan(Sc.mul(2.5)), () => { col.assign(ecuLin(vec3(146.0, 149.0, 122.0))); });
+      });
+    });
+    If(pad.greaterThan(0.5), () => {
+      const sz = vec2(sAbs, z).toVar();
+      const g = abs(fract(sz.div(120.0)).sub(0.5));
+      const line = float(1.0).sub(smoothstep(0.46, 0.49, max(g.x, g.y)));
+      col.assign(ecuLin(vec3(pal.element(9)).mul(float(0.92).add(float(0.1).mul(haloHash12(floor(sz.div(120.0)))))).sub(line.mul(18.0))));
+    });
+    const night = archNight(vPos).toVar();
+    If(water.lessThan(0.0).and(pad.lessThan(0.5)), () => {
+      col.assign(archWater(vPos, n, q, vec3(0.018, 0.092, 0.093).mul(0.6), vec3(0.06, 0.15, 0.17), clamp(water.negate().div(Sc.mul(60.0)), 0.0, 1.0)));
+    }).Else(() => {
+      col.assign(archShade(vPos, n, col, 0.0));
+    });
+    col.addAssign(emit.mul(0.9).mul(float(0.3).add(float(0.7).mul(night))).mul(U.uLayers.y));
+    return vec4(col, 1.0);
+  })();
+  return { vertexNode, fragmentNode };
 }
-`;
 
 // Tekstura płyt metalu (createPanelTexture dema): mapa + chropowatość w jednym.
 function makeEcumenePanelTexture(seed) {
@@ -254,8 +281,13 @@ function makeEcumenePanelTexture(seed) {
   return t;
 }
 
+// Czarna mapa emisji (powłoka bez okien). Filtr liniowy: TSL wybiera ścieżkę próbkowania z tekstury
+// przy budowie (NEAREST = textureLoad) — 1 × 1, więc obraz ten sam co przy NEAREST w bazie.
 function blackTexture() {
   const t = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1);
+  t.magFilter = THREE.LinearFilter;
+  t.minFilter = THREE.LinearFilter;
+  t.generateMipmaps = false;
   t.needsUpdate = true;
   return t;
 }
@@ -420,17 +452,12 @@ export function buildEcumeneRing({ layout, uniforms, materials, geos, quality, s
   const zTop = layout.z.topIn;
 
   // ---- powierzchnia dzielnic ----
-  const surfUniforms = {
-    ...uniforms,
-    uEcu: { value: new THREE.Vector4(plan.LEN, S, plan.W, 0) },
-    uEcuPal: { value: ECU_TYPE_PALETTE.map((c) => new THREE.Vector3(...c)) }
-  };
-  const surfaceMat = new THREE.ShaderMaterial({
-    name: 'EcumeneSurface',
-    uniforms: surfUniforms,
-    vertexShader: ECU_SURFACE_VERTEX,
-    fragmentShader: ECU_SURFACE_FRAGMENT
-  });
+  // uEcu: LEN dzielnicy, S, W, —; uEcuPal: barwy typów (sRGB 0–255), tablica ze stałą nazwą bufora
+  // (ten sam WGSL przy przebudowie ringu)
+  const uEcu = uniform(new THREE.Vector4(plan.LEN, S, plan.W, 0));
+  const uEcuPal = uniformArray(ECU_TYPE_PALETTE.map((c) => new THREE.Vector3(...c)), 'vec3').setName('ecuPal');
+  const surfaceMat = archNodeMaterial('EcumeneSurface', makeEcumeneSurfaceNodes({ u: uniforms, ecu: uEcu, pal: uEcuPal }), {},
+    { ...uniforms, ...uniformsAdapter({ uEcu, uEcuPal }) });
   disposables.push(surfaceMat);
   const cell = quality?.gridDiv >= 64 ? 48 : 64;
   const surfaces = [];
@@ -549,10 +576,8 @@ export function buildEcumeneRing({ layout, uniforms, materials, geos, quality, s
   const hemi = archHemisphere();
   disposables.push(hemi);
   const domeM = new THREE.Matrix4();
-  const glassMesh = new THREE.InstancedMesh(hemi, materials.glass({ alpha: 0.1 }), Math.max(1, domes.length));
-  glassMesh.count = domes.length;
-  glassMesh.renderOrder = 30;
-  glassMesh.name = 'EcumeneDomeGlass';
+  // szkło: partia instancji półkul (barwa instancji = odcień szkła)
+  const glassBatch = new ArchBatch('EcumeneDomeGlass');
   const glassTint = archHex(0x83a9ab);
   // kratownica: linie półkuli w układzie ringu (jedno wywołanie)
   const wire = new THREE.WireframeGeometry(hemi);
@@ -585,8 +610,7 @@ export function buildEcumeneRing({ layout, uniforms, materials, geos, quality, s
   const domeBatches = { rib: [], collar: [], floor: [], walk: [], pond: [] };
   domes.forEach((d, i) => {
     domeRootMatrix(plan, d, domeM);
-    glassMesh.setMatrixAt(i, domeM);
-    glassMesh.setColorAt(i, new THREE.Color().setRGB(glassTint[0], glassTint[1], glassTint[2]));
+    glassBatch.push16(domeM.elements, glassTint, 0, 0, 0, 0);
     for (let q = 0; q < wp.count; q++) {
       v.fromBufferAttribute(wp, q).multiplyScalar(1.002).applyMatrix4(domeM);
       linePos.set([v.x, v.y, v.z], (i * wp.count + q) * 3);
@@ -600,10 +624,11 @@ export function buildEcumeneRing({ layout, uniforms, materials, geos, quality, s
       new THREE.Vector3(d.type === 5 ? 0.68 : 0.34, 1, d.type === 5 ? 0.57 : 0.27)));
     domeBatches.pond.push(pm);
   });
-  glassMesh.instanceMatrix.needsUpdate = true;
-  if (glassMesh.instanceColor) glassMesh.instanceColor.needsUpdate = true;
-  glassMesh.computeBoundingSphere();
-  if (domes.length) bg.push(glassMesh);
+  const glassMesh = archBatchMesh(glassBatch, hemi, materials.glass({ alpha: 0.1 }));
+  if (glassMesh) {
+    glassMesh.renderOrder = 30;
+    bg.push(glassMesh);
+  }
   const lineGeo = new THREE.BufferGeometry();
   lineGeo.setAttribute('position', new THREE.BufferAttribute(linePos, 3));
   lineGeo.computeBoundingSphere();
@@ -612,18 +637,10 @@ export function buildEcumeneRing({ layout, uniforms, materials, geos, quality, s
   if (domes.length) bg.push(lattice);
   const domeInst = (list, geo, color, kind, p1, name, mat = matBG) => {
     if (!list.length) return;
-    const mesh = new THREE.InstancedMesh(geo.clone(), mat, list.length);
-    const a = new Float32Array(list.length * 4);
-    list.forEach((mm, i) => {
-      mesh.setMatrixAt(i, mm);
-      mesh.setColorAt(i, new THREE.Color().setRGB(color[0], color[1], color[2]));
-      a.set([kind, 0.3, p1, 0], i * 4);
-    });
-    mesh.geometry.setAttribute('aInst', new THREE.InstancedBufferAttribute(a, 4));
-    mesh.instanceMatrix.needsUpdate = true;
-    mesh.computeBoundingSphere();
-    mesh.name = name;
-    bg.push(mesh);
+    const batch = new ArchBatch(name);
+    for (const mm of list) batch.push16(mm.elements, color, kind, 0.3, p1, 0);
+    const mesh = archBatchMesh(batch, geo, mat);
+    if (mesh) bg.push(mesh);
   };
   // żebra, kołnierz, dno i ścieżka kopuły w jednej bryle (barwy w wierzchołkach)
   const tintGeo = (g, hex) => {

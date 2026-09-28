@@ -15,10 +15,10 @@ import {
   positionLocal, positionWorld, positionView, positionGeometry, normalView, normalWorld, cameraPosition,
   cameraViewMatrix, cameraProjectionMatrix, modelViewMatrix, modelWorldMatrix, screenCoordinate,
   instancedBufferAttribute, abs, floor, fract, sqrt, exp, pow, min, max, clamp, mix, step, smoothstep, dot, length,
-  normalize, dFdx, dFdy, mod
+  normalize, dFdx, dFdy, mod, nodeObject
 } from 'three/tsl';
-import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import { BLOOM_DEFAULTS } from '../src/3d/bloomConfig.js';
+import { BLOOM_ZGODNOSC_WEBGL, BloomGry } from '../src/3d/tsl/postGry.js';
 import {
   STAR_PARALLAX_LAYERS,
   computeStarParallaxFactor,
@@ -752,8 +752,11 @@ export function createAtlasSprite(renderer) {
 }
 
 // ---------------------------------------------------------------------------
-// Post HDR jak w grze: scena → cel HalfFloat z MSAA → bloom (BloomNode, liczby
-// z bloomConfig.js) → ACES (fit z uberPassa gry) + sRGB na kanwę (RenderPipeline).
+// Post HDR jak w grze: scena → cel HalfFloat z MSAA → bloom (BloomGry gry: BloomNode
+// z rozdzielczością × bloomScale jakości i kompozytem × BLOOM_ZGODNOSC_WEBGL — jak dawny
+// UnrealBloomPass dema w bazie WebGL; zadanie 10: bez × 3 bloom dema był 3 × słabszy niż
+// w tagu i jasne kadry nie dawały się porównać) → ACES (fit z uberPassa gry) + sRGB na
+// kanwę (RenderPipeline).
 export function createPost(renderer) {
   let sceneRT = null;
   let pipeline = null;
@@ -762,10 +765,11 @@ export function createPost(renderer) {
   const uExposure = uniform(1.0);
   const uBloomOn = uniform(1.0);
   const sceneTex = texture(new THREE.Texture());
-  const bloomNode = bloom(sceneTex, BLOOM_DEFAULTS.strength, BLOOM_DEFAULTS.radius, BLOOM_DEFAULTS.threshold);
+  const bloomGry = new BloomGry(sceneTex, BLOOM_DEFAULTS.strength, BLOOM_DEFAULTS.radius, BLOOM_DEFAULTS.threshold);
+  const bloomNode = nodeObject(bloomGry);
 
   function build() {
-    const c = sceneTex.rgb.add(bloomNode.rgb.mul(uBloomOn));
+    const c = sceneTex.rgb.add(bloomNode.rgb.mul(BLOOM_ZGODNOSC_WEBGL).mul(uBloomOn));
     const out = vec4(linearDoSrgb(acesGry(max(c, vec3(0.0)).mul(uExposure))), 1.0);
     pipeline = new THREE.RenderPipeline(renderer, out);
     pipeline.outputColorTransform = false;
@@ -782,8 +786,9 @@ export function createPost(renderer) {
   return {
     state,
     get sceneTarget() { return sceneRT; },
-    configure({ msaa }) {
+    configure({ msaa, bloomResolution }) {
       samples = msaa;
+      if (Number.isFinite(bloomResolution)) bloomGry.resolutionScale = bloomResolution;
     },
     resize(w, h) { alloc(w, h); },
     begin() {
