@@ -177,6 +177,21 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   synchroniczną tak (`precyzja-drzenie.js`: szczeliny okien przy starym początku układu, maska 0) — przed renderem
   pomiaru czekać na nową klatkę (`renderer.info.frame`). **`textureSample` w niejednolitym przepływie** (pętla z
   `Break` zależnym od danych — marsz cienia) to błąd WGSL — `texture(...).level(0)` (textureSampleLevel).
+- **Pułapki z zadania 16 (zniszczenie stacji, three r183):** **goły `NodeMaterial` z `castShadow` → `map = null`**
+  (`Renderer._getShadowNodes` bierze `map !== null`, także `undefined`, za mapę → `texture(undefined)`, błąd budowy passa
+  cienia). **`material.clippingPlanes` WebGPU ignoruje**, a **`ClippingGroup`** wkłada płaszczyzny do `uniformArray` grupy
+  „render” z kontekstu obiektu, który zbudował program — kilka grup o tym samym kluczu materiału i liczbie płaszczyzn tnie
+  płaszczyznami pierwszej; cięcie per obiekt = maska TSL (`maskNode` + płaszczyzny widoku w `onObjectUpdate`,
+  `destruction3D.js`) — ta sama reguła odrzucenia co WebGL, wspólny węzeł, zero budów na kawałek. **Węzły cienia per obiekt
+  materiału z mapą** (`reference('map', …, material)`) — każdy świeży klon to budowa NodeBuildera cienia; klon z tą samą
+  mapą dostaje wpis oryginału. **`compileAsync` nie rozgrzewa passa cienia** — trzymacz w scenie na warstwie 31 przez 2 klatki
+  (kamera cienia widzi wszystkie warstwy, passy Core3D nie). **Przezroczyste `DoubleSide`:** WebGPU rysuje wszystkie tyły,
+  potem wszystkie przody (`_renderTransparents`), WebGL tył + przód per obiekt. **`vertexColors` bez atrybutu `color`:**
+  WebGL — czerń (stała wartość atrybutu 0), WebGPU — biel (pomija). **Mapa cienia słońca ze wszystkimi warstwami raz na
+  klatkę** (01): łapacz cienia warstwy 0 (z = −2) dostaje cień obiektów FG (stacje); w WebGL mapa każdego passa miała tylko
+  warstwy kamery passa — łapacz 0 cienia stacji nie widział (po rozpadzie widać cień bryły-ducha nad planetą; decyzja w 23).
+  Obraz: sesja „stacja” w `zrzuty.mjs` (baza z tagu), sylwetki vs wnętrza — `scripts/webgpu/krawedzie.mjs`; klatka rozpadu
+  bez budów — `scripts/webgpu/rozpad-stacji.mjs`.
 - **TSL, nie `wgslFn`.** Tekstowy WGSL tylko dla wyizolowanej czystej funkcji, gdy TSL jest naprawdę niewygodny — z
   uzasadnieniem w commicie (zamyka drogę do zapasowego backendu WebGL2). Wyjątek z uzasadnieniem: `haloFma` (09).
 - **Pętle:** `Loop` w TSL, nie `for` w JS generujący kopie (`mx_noise_float` ×160 rozwinięte = 44 s kompilacji).
