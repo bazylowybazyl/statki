@@ -135,8 +135,26 @@ opis w `agents.md`, Core3D „Warp „Nurt””). Co poszło gdzie i czym róż
   przenosi się w nowy pas pudła. 120 Hz dalej niesprawdzone (krok 1/240 s jak w demie).
 - *Skok gracza* (`player.js`) na automacie gry `GameState.warp` (bez zmian rozgrywki). Ładowanie gry
   trwa 0,8 s (demo 3 s): krzywe biegną po ułamku ładowania, naprężenie ×(3 / 0,8), wzbudzenie ×(3 / 0,8)^0,6.
-  Kopa i zoomu kamery z dema nie ma (kamera gry = `cameraRig.js`, bez offsetów poza rigiem) — zostaje
-  wstrząs (`camera.addShake`). Dawne efekty 2D warpa (cząstki, fale, ładowanie) usunięte.
+  Wstrząs kopu i wyjścia przez `camera.addShake`. Dawne efekty 2D warpa (cząstki, fale, ładowanie) usunięte.
+- *Kop kamery* (zadanie 22-B, 2026-09-28) — w rigu kamery gry (`src/game/cameraRig.js`: `stepCameraRigWarp`,
+  zdarzenia `noteCameraRigWarp` z `engageWarp` / `exitWarp`), liczby z `createTripScene`: przy skoku kamera cofa
+  się wzdłuż kursu o 140 px × impuls(0,05 / 0,42 s) (szczyt 96 px po 0,11 s; px przy 1080 wierszach, wyżej
+  proporcjonalnie) PO sprężynie riga, zoom × (1 − 0,1 · impuls(0,04 / 0,25)); na czas ładowania zoom
+  lerp(1, 0,55, smoothstep(ładowanie)) (po ułamku ładowania gry), w skoku ×0,55; przy wyjściu lerp(0,55, 1,
+  easeOut³(t / 1,4)) · (1 + 0,1 · impuls(0,03 / 0,18)); drżenie 4 px · smoothstep(0,5, 1, ładowanie). Zoom to
+  przejściowy człon log(zoom) sprężyny zoomu (`camera.zoom = zoomBase · e^człon`) — względem zoomu GRACZA
+  (kółko w skoku działa, po wyjściu wraca dokładnie do niego), `targetZoom` nietknięty. **Wyprzedzenia 0,26 pół
+  ekranu z dema nie ma osobno** — w warpie działa wyprzedzenie riga z prędkości (nawigacja 0,35, walka 0,12 pół
+  ekranu; sprężyna 3–8/s, rozpęd warpa 0,9 s), więc statek zostaje przed środkiem kadru ~0,5 s (demo ~0,2 s), a
+  po wyjściu wyprzedzenie zostaje, dopóki statek leci (gra nie zatrzymuje statku po wyjściu, demo tak). Ośrodek
+  widzi ruch kamery względem statku (`WarpNurt.update`: kamera ośrodka = widoczna droga statku + zmiana offsetu,
+  `camFollow` przy kamerze statku bez przejścia) — przy kopie statek odskakuje od drobin, kamera go dogania. Jak w
+  demie: bańka dostaje prędkość widoczną STATKU (przepływ kamery + `vRel` = −zmiana offsetu / dt), smugi drobin —
+  prędkość kamery, rozciągnięcie gwiazd — prędkość widoczną statku (`player.js`). Pułapka: bańka z prędkością
+  kamery (−34 tys. j/s przez pierwsze klatki kopu przy zoomie 0,08) odwracała opływ — przygaszona bańka i warkocz.
+  Opcja gracza „Kop kamery przy warpie” (menu → Sterowanie, `OPTIONS.cameraWarpKick`), strojenie `warp*` w
+  `cameraRigTune` (F12 → Kamera panel). Tylko gracz 1 (P2 nie ma warpa) i kamera statku; poza nią oddalenie wraca
+  do zoomu gracza (RTS bierze `cameraZoomBase`).
 - *Przyloty NPC* (`arrivals.js`): warp-in piratów (`npc.state === 'warping_in'`) i wezwania
   (`WarpNurt.arriveAll`) — rozgrywka zna okręt dopiero w chwili pojawienia się, więc wyrzut jest „teraz”
   (bez zwiastuna i rozdarcia przed nim); pełna oś ze zwiastunem przez API (`planArrival` /
@@ -152,7 +170,7 @@ opis w `agents.md`, Core3D „Warp „Nurt””). Co poszło gdzie i czym róż
   (rozmyty brzeg sylwetki) zamiast SDF cienia — to samo miejsce, bez drugiej tekstury.
 - *Plazma WARP* z dysz: `warpPlume3D` gry (`entity.__warpNurtMode` dla NPC), nie duszki dema.
 - **Nie przeniesione:** soczewka świata (`worldLens.js` — ciała w widoku skoku; gra rysuje prawdziwy
-  świat, punkt wyjścia wyznacza rozgrywka), kopnięcie kamery, pokazowe planety / HUD dema.
+  świat, punkt wyjścia wyznacza rozgrywka), pokazowe planety / HUD dema.
 
 Integracja (plan sprzed zadania 22): sesja portu WebGPU (`docs/webgpu/PLAN.md`, zadanie 12 — wspólna
 infrastruktura efektów w Core3D).
@@ -161,7 +179,8 @@ infrastruktura efektów w Core3D).
 - Gracz (`GameState.warp`): ładowanie (0..1) → skok (chwila) → lot (bieg, prędkość widoczna) →
   wyjście (chwila). Liczby z `scenes.js` (`createTripScene`) to specyfikacja: kamera 0,55 zoomu
   przy ładowaniu, kop 140 px / zoom (impuls 0,05 / 0,42 s), wyprzedzenie 0,26 pół ekranu, przy
-  wyjściu impuls zoomu +10% i powrót w 1,4 s; gwiazdy `0,32·ładowanie²` → przestrzał 1,4 → 1 →
+  wyjściu impuls zoomu +10% i powrót w 1,4 s (w grze od 22-B — „Kop kamery” wyżej; bez osobnego
+  wyprzedzenia 0,26); gwiazdy `0,32·ładowanie²` → przestrzał 1,4 → 1 →
   0 w 0,16 s (front 18 000 → −18 000 j. w 0,22 s); przepływ ośrodka w locie 16 / 21 tys. j/s
   (bieg I / II; WIDOCZNY, nie prawdziwa prędkość warpa); `setFade(6)` od wyjścia +0,1 s przez
   1,5 s; soczewka świata jak w propozycji 1 plus: β → 0 w 0,3 s z `(1−u)^2,2`, pozycja statku

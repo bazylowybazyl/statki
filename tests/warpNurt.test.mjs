@@ -407,3 +407,46 @@ test('Core3D: pass ośrodka po ring-planetach, bez treści pomijany; brak dawneg
   assert.match(nurt, /_wake\(\) \{\n {4}this\.awake = true;[\s\S]*?this\._reseed = true;/);
   assert.match(nurt, /if \(this\._reseed\) \{[\s\S]*?medium\.reset\(renderer\);/);
 });
+
+test('ośrodek w skoku: kamera ośrodka = widoczna droga statku + zmiana offsetu kamery gry (kop warpa, 22-B)', async () => {
+  // Demo: kamera = statek + kurs · (wyprzedzenie − cofnięcie), ośrodek zakotwiczony w kamerze — przy
+  // kopie statek odskakuje od drobin, kamera go dogania. Sterownik bez GPU (Core3D zaślepiony).
+  const { Core3D } = await import('../src/3d/core3d.js');
+  const { WarpNurt } = await import('../src/3d/warp/warpNurt.js');
+  Core3D.isInitialized = true;
+  Core3D.scene = new THREE.Scene();
+  Core3D.addFxStep = () => {};
+  WarpNurt.init({ count: 4096 });
+  assert.equal(WarpNurt.initialized, true);
+  const ship = { pos: { x: 5000, y: 0 }, x: 5000, y: 0, vel: { x: 0, y: 0 }, angle: 0, w: 1800, h: 800 };
+  const warp = { state: 'active', charge: 0.8, chargeTime: 0.8, gear: 1, dir: { x: 1, y: 0 } };
+  const cam = { x: 5000, y: 0, zoom: 0.2 };
+  const o = { dt: 1 / 60, cam, camShake: cam, camFollow: true, ship, warp, npcs: [] };
+  // 0,6 s lotu: przepływ widoczny ustalony (bieg I — 16 tys. j/s).
+  for (let i = 0; i < 36; i++) WarpNurt.update(o);
+  const step = () => { const m = WarpNurt.camMX; WarpNurt.update(o); return WarpNurt.camMX - m; };
+  const flowStep = WARP_FLOW.gear1 / 60;
+  const bub = WarpNurt.player.bubble;
+  assert.ok(near(step(), flowStep, 1e-6), 'kamera przy statku: sam przepływ');
+  cam.x += 50;   // kamera cofa się / wysuwa względem statku (kop, wyprzedzenie riga, zoom)
+  assert.ok(near(step(), flowStep + 50, 1e-6), 'zmiana offsetu kamery idzie do ośrodka');
+  // Smugi drobin biorą prędkość kamery ośrodka, bańka — prędkość widoczną statku (demo: ship.vx).
+  assert.ok(near(WarpNurt.flowX, WARP_FLOW.gear1 + 50 * 60, 1e-6));
+  assert.ok(near(bub.vx, WARP_FLOW.gear1, 1e-6) && near(bub.vy, 0, 1e-9), `bańka ${bub.vx}`);
+  o.camFollow = false;   // RTS / przejście kamery: offset nie jest kamerą statku
+  cam.x += 50;
+  assert.ok(near(step(), flowStep, 1e-6), 'poza kamerą statku sam przepływ');
+  o.camFollow = true;
+  assert.ok(near(step(), flowStep, 1e-6), 'powrót bez skoku (offset z poprzedniej klatki)');
+  // Pauza: przepływu brak, ale ruch kamery względem statku (zoom w pauzie) dalej w ośrodku.
+  o.dt = 0;
+  cam.x -= 20;
+  assert.ok(near(step(), -20, 1e-6));
+  // Skok kamery (inne miejsce świata): ośrodek od nowa, bez przeniesienia offsetu.
+  o.dt = 1 / 60;
+  cam.x += 100000;
+  assert.ok(near(step(), flowStep, 1e-6), 'skok kamery nie przesuwa ośrodka o offset');
+  assert.ok(near(bub.vx, WARP_FLOW.gear1, 1e-6));
+  const html = read('index.html');
+  assert.match(html, /o\.camFollow = camera\.mode === 'ship' && !camera\.transition;/);
+});
