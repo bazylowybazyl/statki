@@ -12,10 +12,10 @@
 - **`src/3d/world3d.js`** — obiekty świata 3D (np. piracka stacja), podpinane do `Core3D.scene`.
 - **`src/3d/stations3D.js`** — stacje 3D, podpinane do `Core3D.scene`.
 - **`planet3d.assets.js`** — aktywna warstwa planet/słońca (API globalne: `initPlanets3D`, `updatePlanets3D`, `drawPlanets3D`).
-- **`planet3d.proc.js`** — wariant legacy/proceduralny (nie używać jako głównej ścieżki bez wyraźnej potrzeby).
 - **`src/3d/haloRing/`** — ring „Halo” Ziemi i Marsa (teren, miasta, megastruktura, port K-7); klej gry `haloRingGame.js`, kolizje `src/game/haloRingCollision.js`. Opis: `docs/PORT-halo-ring.md`.
 - **`src/game/hullBodies.js`** — kadłuby statków, NPC i wraków na silniku belek (`src/game/destructorBeams3D.js`, tryb płaski): budowa ze sprite'a, synchronizacja ruchu, trafienia, wraki. Opis: `docs/PORT-silnik-belek.md`.
 - **`src/3d/asteroids/`** — pas asteroid z dema WebGPU (skały, minerały, olbrzymy, ośrodek objętościowy, burze, mgła, skały w wydobyciu i drony platformy); klej `asteroidBelt.js` (krok `Core3D.fx`), rozgrywka pola w `src/game/asteroid*.js` (kolizje z olbrzymami: `asteroidBeltGiants.js`, wydobycie: `asteroidMining.js` + `asteroidMiningRig.js`). Opis: § „Pas asteroid” niżej.
+- **`src/3d/fx/`, `src/3d/weapons/`, `src/3d/rockets/`, `src/3d/warp/`** — efekty z dem WebGPU: infrastruktura efektów GPU (klatka `Core3D.fx`, siatka świateł, zniekształcenia, początek pul), broń (`WeaponFx`), rakiety (reżyser `RocketEffects`), warp „Nurt” (`WarpNurt`). Opisy: § „Miejsca do pracy” (Core3D), „Efekty broni”, „Rakiety”, „Wybuch reaktora”.
 - **`src/game/destructor.js`** — stary silnik heksów; od zadania 21 (stare asteroidy usunięte) w grze nie tworzy ciał — zostaje dla mostków/rdzeni/zimnych wraków na `hexGrid` do ich portu.
 - **`src/game/shipEntity.js`** — konfiguracja i geometria statku gracza (fizyka wejścia, offsety, thrusters, hardpointy).
 - **`package.json`** — serwer dev i zależności.
@@ -40,38 +40,62 @@
 
 ---
 
-## Port WebGPU (w toku)
+## Render: WebGPU + TSL
 
-Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; jak prowadzić zadania: `docs/webgpu/README.md`.
+Port renderu z WebGL na WebGPU jest zakończony (zadania 01–24, 2026-09-28). Historia, decyzje i pomiary: `docs/webgpu/`
+(`PLAN.md`, `POSTEP.md`, `WYDAJNOSC.md`, `README.md`); obraz sprzed portu — tag `webgl-baseline`.
 
-- **Jedna ścieżka (decyzja użytkownika 2026-09-27):** od zadania 01 `Core3D` ma tylko `WebGPURenderer` (`three/webgpu`),
-  bez flagi wyboru backendu. Stary `WebGLRenderer` zostaje wyłącznie w tagu `webgl-baseline` (baza porównań, dema spoza
-  portu). Praca na `main`.
-- **GLSL usuwamy:** zadanie, które przenosi moduł, kasuje jego GLSL w tym samym commicie. **Nowego GLSL ani
-  `ShaderMaterial` nie piszemy** — nowy kod renderu tylko w TSL (`three/tsl`, materiały węzłowe), wspólne pomocniki w
-  `src/3d/tsl/`. Konwencje (adapter `material.uniforms`, graf węzłów współdzielony zamiast materiału na encję, rozgrzewka
-  passów, światła, precyzja): `PLAN.md` §3–§6.
-- **Magenta = nieprzeniesiony materiał.** Każdy `ShaderMaterial` bez portu rysuje się magentowym zamiennikiem (licznik
-  w harnessie) — to stan przejściowy, nie błąd do obchodzenia.
-- **Core3D na WebGPU (zadanie 01):** tylko WebGPU — przed rendererem `navigator.gpu.requestAdapter()`, bez adaptera
-  renderer nie powstaje, `Core3D.ready` → `false`, menu pokazuje „Gra wymaga przeglądarki z WebGPU” (bez zapasu WebGL2:
-  `_getFallback = null`). `init()` jest synchroniczne jak dawniej (scena, kamery, cele → `isInitialized`), urządzenie
-  powstaje w tle: `Core3D.gpuReady` / `Core3D.ready` bramkują render, kompilację i wgrywanie tekstur, a
-  `Core3D.renderer` istnieje dopiero przy gotowym urządzeniu. Limity z adaptera (`GPU_REQUIRED_LIMITS`),
-  `highPrecision = true`, wyjście liniowe bez tone mappingu (ACES gry i sRGB w poście, `src/3d/tsl/kolorGry.js`,
-  `outputColorTransform = false`). Zamiennik: `src/3d/tsl/zamiennik.js`; adapter `material.uniforms`:
-  `src/3d/tsl/uniformy.js`. Anizotropia tekstur: `Core3D.getMaxAnisotropy()` (WebGPURenderer nie ma `capabilities`).
-- **Kompilacja w WebGPU:** `renderer.compile` to alias `compileAsync` — zamiast niego `Core3D.prewarmPass(obiekt,
-  warstwa)` (cel `composerTarget`, kamera passa z warstwą, bez cullingu; nie blokuje). three r183: pipeline z
-  `compileAsync` siedzi w cache, zanim GPU go odda — zwykły draw tego samego klucza wołał `setPipeline(undefined)`;
-  Core3D osłania `backend.draw` (`_guardPendingPipelines`: taki rysunek czeka klatkę, dwie). `renderer.info`: draw calle
-  w `render.drawCalls` (reset raz na klatkę rAF). Zegar GPU: znaczniki czasu (`trackTimestamp`), jedno zapytanie w
-  locie → `Core3D.gpuFrameMs`; mapa `timestamps` puli three nie jest czyszczona przez three — Core3D czyści ją po wyniku.
-  **Pierwszy rysunek materiału bez rozgrzewki = przestój:** zwykły render tworzy pipeline SYNCHRONICZNIE
-  (`createRenderPipeline`) — proces GPU kompiluje shader, a strona staje na nim przy najbliższym zapisie do kolejki
-  (w profilu wygląda to jak wielosekundowy `writeBuffer`: pierwsza klatka ringu w menu stała 4–5,6 s); `compileAsync`
-  robi to w tle (cały ring Marsa: 0,14 s CPU, klatki bez przestoju). Nowy obiekt z nowym materiałem → rejestr
-  rozgrzewki `Core3D.warmup` (§ „Rozgrzewka pipeline'ów” niżej, przy menu).
+- **Jeden renderer, jeden język shaderów.** `Core3D` tworzy wyłącznie `WebGPURenderer` (`three/webgpu`, three r183); materiały
+  i shadery tylko w **TSL** (`three/tsl`, materiały węzłowe), wspólne pomocniki w `src/3d/tsl/`. W plikach ładowanych przez grę
+  nie ma GLSL, `ShaderMaterial` / `RawShaderMaterial`, `onBeforeCompile`, `WebGLRenderer`, celów WebGL ani `EffectComposer` —
+  pilnuje `tests/graBezGlsl.test.mjs` (graf importów od `index.html`, wzorce i lista wyjątków `POZA_PORTEM` w
+  `scripts/webgpu/grafGry.mjs`; inwentarz `node scripts/webgpu/inwentarz.mjs` liczy to samo). Tekstowy WGSL (`wgslFn`) tylko
+  dla wyizolowanej czystej funkcji, gdy TSL naprawdę nie wystarcza — z uzasadnieniem w commicie (dziś `haloFma` / `haloFmaVec2`:
+  `fma()` WGSL, TSL r183 go nie ma).
+- **Moduły poza grą** — ruch v2 (Z4 `shipProxyBatch3D`, Z5 `cargoContainers3D` / `cargoDrones3D`, Z7 `portBuildings/*`) i dema
+  destruktora (`beamShips3D`, pula `beamDebris3D`, własny `WebGLRenderer`) — mają jeszcze GLSL i przejdą na TSL przy swojej
+  integracji (notatki `AGENT:` w plikach). ShaderMaterial na Core3D rysuje się **magentowym zamiennikiem**
+  (`src/3d/tsl/zamiennik.js` — bezpiecznik w biegu: ostrzeżenie raz na nazwę, harness liczy `spis.zamienniki`; w grze 0).
+- **Tylko WebGPU:** przed rendererem `navigator.gpu.requestAdapter()`; bez adaptera renderer nie powstaje, `Core3D.ready` →
+  `false`, menu pokazuje „Gra wymaga przeglądarki z WebGPU” (bez zapasu WebGL2: `_getFallback = null`). `init()` jest
+  synchroniczne (scena, kamery, cele → `isInitialized`), urządzenie powstaje w tle: `Core3D.gpuReady` / `Core3D.ready`
+  bramkują render, kompilację i wgrywanie tekstur, a `Core3D.renderer` istnieje dopiero przy gotowym urządzeniu. Limity z
+  adaptera (`GPU_REQUIRED_LIMITS`), `highPrecision = true`, wyjście liniowe bez tone mappingu (ACES gry i sRGB w poście —
+  `src/3d/tsl/kolorGry.js`, `outputColorTransform = false`). Anizotropia tekstur: `Core3D.getMaxAnisotropy()`
+  (WebGPURenderer nie ma `capabilities`).
+- **Graf węzłów raz, wartości per obiekt** (`docs/webgpu/PLAN.md` §3): klucz programu materiału węzłowego to id jego węzłów,
+  więc graf buduje się RAZ na moduł / rodzaj / wariant (NodeBuilder kosztuje ~1–12 ms CPU), a obiekty dostają lekkie
+  materiały na WSPÓLNYCH węzłach (`clone()` materiału węzłowego kopiuje referencje węzłów — ten sam klucz). Wartości per
+  obiekt: `material.uniforms` (obiekty `{ value }`, adapter `src/3d/tsl/uniformy.js` — kod aktualizacji jak dawniej) czytane
+  przez `uniform().onObjectUpdate`, bufory storage ze slotem (`HullObjectStore`, `HullLightStore`) albo atrybuty instancji;
+  tekstura per obiekt — `teksturaObiektu` (`src/3d/tsl/`), `HullObjectTextureNode`. `defines` i `needsUpdate` w biegu = nowy
+  pipeline przy każdej kombinacji → gałąź z uniformem (`If` / `select`) albo osobny materiał budowany raz. Klucz materiałów
+  oświetlanych zawiera id każdego widocznego światła passa — nie przełączaj `light.visible` w biegu (stały zbiór świateł,
+  gaszenie przez `intensity = 0`).
+- **Kompilacja i rozgrzewka:** pierwszy zwykły rysunek nowego materiału tworzy pipeline SYNCHRONICZNIE — proces GPU
+  kompiluje shader, a strona staje na nim przy najbliższym zapisie do kolejki (w profilu wygląda to jak wielosekundowy
+  `writeBuffer`: pierwsza klatka ringu w menu stała 4–5,6 s); `compileAsync` robi to w tle. Nowy obiekt z nowym materiałem →
+  rejestr `Core3D.warmup` (§ „Rozgrzewka pipeline'ów” przy menu) albo `Core3D.prewarmPass(obiekt, warstwa)` (cel
+  `composerTarget`, kamera passa z warstwą, bez cullingu). `renderer.compile` to alias `compileAsync`; każde `compileAsync` na
+  celu przez `compileAsyncNaCelu` (pułapka 30). three r183 wkłada pipeline z `compileAsync` do cache, zanim GPU go odda —
+  zwykły rysunek tego klucza wołał `setPipeline(undefined)`; Core3D osłania `backend.draw` (`_guardPendingPipelines`: taki
+  rysunek czeka klatkę, dwie) i loguje połknięte błędy `createRenderPipelineAsync`. `renderer.info`: draw calle w
+  `render.drawCalls` (reset raz na klatkę rAF). Zegar GPU: znaczniki czasu (`trackTimestamp`) co `gpuTimerSampleEvery` klatek,
+  jedno zapytanie w locie → `Core3D.gpuFrameMs`; mapę `timestamps` puli three czyści Core3D (three tego nie robi).
+- **Weryfikacja:** harness zrzutów `node scripts/webgpu/zrzuty.mjs --backend webgpu --out .tmp/webgpu/<katalog> --baza
+  .tmp/webgpu/baseline/webgl/p1` (sceny deterministyczne; błędy konsoli z walidacją WebGPU, draw calle per pass, HDR, spis
+  materiałów z `spis.zamienniki`; `--uuid osobne` = UUID three z osobnego strumienia — bez tego tysiące węzłów TSL przesuwają
+  `Math.random` gry i świat wychodzi inny niż w bazie; tryb bierze się z bazy). **Bazy:** sceny przeniesione 1:1 (menu, ring,
+  K-7, planety, słońce, kalibracja, stacje, wybuch reaktora, podzielony ekran) — z tagu `webgl-baseline`; sceny z nowymi
+  efektami z dem (galeria broni i rakiet, bitwy, wraki, warp, pas asteroid, wydobycie) — z zatwierdzonego przebiegu `main`
+  (`scripts/webgpu/porownaj.mjs --a <baza main> --b <nowy>`); szczegóły: `docs/webgpu/README.md`. Haki `?dev`:
+  `window.DevScene.teleport / syncCamera / preloadHullSprites / startSplit`. Testy: `node --test "tests/*.test.mjs"` (wzorzec w
+  cudzysłowie — `tests/` na Node 22 nie działa) i `npm test`.
+
+### Pułapki three r183 / TSL / WGSL (sprawdzone w porcie)
+
+Zanim napiszesz materiał albo pass — przeczytaj. Numery (1)–(31) przywołują inne miejsca (PLAN, komentarze w kodzie).
+
 - **Pułapki TSL z zadania 04** (reszta — w notce „TSL — pułapki sprawdzone w zadaniach 02, 06–09” niżej): **najwyżej 8
   buforów wierzchołków na pipeline** (`maxVertexBuffers` = 8 także w adapterze RTX 5080) — każdy nieprzeplatany atrybut
   to bufor, InstancedMesh dokłada macierz instancji (+ normalne); stałe atrybuty przeplataj, a materiał liczący pozycję
@@ -88,98 +112,8 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   `AdditiveBlending` bez premultiplied ma te same czynniki w WebGL r183 i WebGPU. `discard` w WGSL (Tint na D3D12:
   „demote to helper”) NIE kończy wykonania — ciężka pętla po `discard` (raymarch) liczy się dalej; pętlę za flagą (wzór
   plume w `warpPlume3D.js`). Punkty (`gl_PointSize`) → kwady na instancjach, rozmiar w px przez `viewportSize`.
-  `zrzuty.mjs` zbiera błędy per scena — błąd pipeline'u z pierwszej klatki gry (przed pierwszą sceną) nie trafia do
-  `bledy`; `scripts/webgpu/silniki.mjs` wypisuje „start gry”.
-- **Post (zadanie 02, `src/3d/tsl/postGry.js`):** kolejność jak dawny łańcuch resolve → bloom → uber. Bloom od zadania 23
-  = `BloomGryCompute` (`src/3d/tsl/bloomCompute.js`: te same 12 kroków jako kernele w JEDNYM `renderer.compute(lista)`,
-  cele bit w bit jak BloomNode — `scripts/webgpu/bloom-parzystosc.mjs`; liczony w `_renderPost` przed „uber”), wcześniej
-  `BloomGry` (BloomNode three, ten sam algorytm co dawny pass WebGL; BloomNode r183 nie ma ×3 kompozytu —
-  `BLOOM_ZGODNOSC_WEBGL = 3`, alfa = max(rgb) bloomu jak przy dawnym blendzie; liczony raz na RENDER, bo podzielony ekran to
-  dwa `renderSingle` w klatce; rozmiar = bufor rysowania × `resolutionScale`). „Uber” próbkuje scenę i bloom tym samym
-  przesuniętym UV (gorące powietrze do 24 źródeł, dyspersja dysz), potem ACES gry i sRGB. Dwa `RenderPipeline` zbudowane
-  raz: z bloomem i bez (`perfToggles.bloom`, czytane w każdym renderze), gorące powietrze = uniform `uHeatOn` — przełączniki
-  bez przebudowy. Strojenie bloomu = uniformy węzła (`_applyBloomPassConfig` co klatkę, tuner `?dev`). Kubełek `bloom`
-  mierzą haki wokół passu compute, `post` = sam uber. Znaczniki czasu GPU: brama na granicy
-  klatki (`_gpuTimerGate`) — pula three (2048 zapytań) nie przepełnia się przy wolnym wyniku.
-- **Maska słońca, SDF kadłubów, refrakcja (zadanie 03):** pass maski = `QuadMesh` + NodeMaterial (`createShadowShaftsPass`
-  w `core3d.js`, marsz po SDF — `hullSdfShadow` w `hullShadowSdf.js`); materiały czytają maskę funkcjami TSL z
-  `sunShadowMask.js` po **`screenUV`** (rozmiar AKTUALNEGO celu — cel w innej rozdzielczości trafia sam, bez teksela).
-  Cele pomocnicze, do których rysują materiały SCENY (halo), mają format / typ / MSAA /
-  głębię `composerTarget`: three buduje materiały (NodeBuilder) i pipeline'y per KONTEKST renderu, a kontekst to stan
-  załączników celu — inny format = budowa wszystkiego w kadrze na zimno przy pierwszym użyciu. Tablice warstw
-  (`DataArrayTexture`): three r183 w WebGPU ignoruje `layerUpdates` i na `needsUpdate` wgrywa całą tablicę (SDF
-  kadłubów 4 MB, ~3 ms CPU) — jedna warstwa przez `Core3D.uploadTextureLayer` (hak `HullShadowSdf.layerUploader`).
-  Parzystość maski z bazą WebGL w grze: `scripts/webgpu/maska-slonca.mjs --root <worktree tagu>`. Fala z refrakcją
-  (`shockwave3D.js`, snapshot sceny) usunięta w zadaniu 19 — fale idą przez zniekształcenia efektów. Gorące powietrze w podzielonym ekranie ma tylko widok gracza 1 (źródła w UV
-  kamery gracza 1; na WebGL widok 1 miał je przesunięte, widok 2 — żadnych).
-- **Infrastruktura efektów GPU (zadanie 12, `src/3d/fx/`, opis `docs/webgpu/FX-INFRA.md`)** — `Core3D.fx` (`fxFrame.js`)
-  raz na klatkę rAF na starcie `render()`, przed passami (podzielony ekran: drugi `renderSingle` nic nie robi): kroki
-  `Core3D.addFxStep({ name, spawn?(ctx), lights?(ctx), update?(ctx), warm?(ctx) })` → początek pul przy kamerze i zegary
-  (`ctx.origin` = `FxPoolOrigin`; **pula GPU MUSI się w nim zarejestrować** z kernelem `createShiftKernel`, inaczej początek
-  przestawia się pod jej danymi) → siatka świateł → update. Zegar efektów `ctx.time` / `Core3D.fx.time` biegnie z klatką
-  rAF jak `Fx3D.time` (krok ≤ 0,1 s, także w pauzie). `warm` idzie raz przy gotowym urządzeniu: puste dispatche kerneli +
-  `Core3D.prewarmPass(siatka, warstwa)`. **Siatka świateł** (`Core3D.fx.grid`): `renderer.lighting = GridLighting` w trybie
-  „optIn”, ustawiony PRZED `renderer.init()` (three r183 łapie `lighting` w init — podmiana później nic nie zmienia);
-  czytają ją tylko materiały z `gridLights = true` (`enableGridLights(mat, owner)`) — reszta ma WGSL i obraz bez zmian.
-  Światła efektów: `Core3D.fx.lights.flash(...)` / `.point(...)` (świat gry, nośnik z `ActiveCarrier`), własne światła kroku
-  w `lights(ctx)` przez `ctx.grid.addWorld(...)`. **Zniekształcenia** („uber”, gałąź tylko przy źródłach): fala / implozja /
-  gorące powietrze — `Core3D.fxDistortion().shock / implode / heat(...)` (świat gry, co klatkę przed renderem; dysze i
-  tarcze zostają przy `pushHeatHazeWorld`); warstwa DIST — siatki na `FX_DISTORT_LAYER` (10) piszą przesunięcie w px (osie
-  sceny, RG) do `Core3D.distortionTarget`, właściciel co klatkę `Core3D.setDistortLayerActive(bool)`. Przed bloomem i w
-  odczytach sceny „uber” — siatka bezpieczeństwa NaN / ±Inf → 0 (`hdrBezpieczny`, `postGry.js`). Pomiar: `Core3D.fxStats`
-  (PerfHUD „Efekty GPU”), kontrola na GPU: `scripts/webgpu/efekty-kontrola.mjs`. Bank `Fx3D` (`fxParticles3D.js`) w TSL:
-  cztery grafy (BB, PLUME, CROSS, WASH) wspólne dla systemów, tekstura per obiekt (`FxMapNode`).
-- **Zniszczenie stacji (zadanie 16, `src/vfx/`):** rozpad na trójkąty i implozja = dwa grafy TSL w `shatterMaterial.js`
-  (budowane raz, lekki `ShatterNodeMaterial` per mesh, wartości w `material.uniforms` przez `onObjectUpdate`, mapa per obiekt
-  `teksturaObiektu` z `src/3d/tsl/`); wierzchołki w `vertexNode`, więc pass cienia rysuje nieprzesuniętą bryłę jak dawny
-  `MeshDepthMaterial`. Kawałki skorupy po `detachChunk` tną się **maską TSL** (`maskNode` klonów, płaszczyzny per obiekt
-  rzutowane do widoku — ta sama reguła co `material.clippingPlanes` w WebGL), nie `ClippingGroup` (pułapka 18). Klony
-  materiałów GLB (wygaszenie bryły, kawałki) dostają węzły cienia oryginału (`_shareShadowNodes`). Rozgrzewka przy
-  `Destruction3D.prebake` (bryła stacji powstała): trójkąty, implozja, wygaszenie, kawałki — `prewarmPass` na trzymaczach z
-  układem geometrii bryły; pass cienia — trzymacze na warstwie 31 przez 2 klatki; pule odłamków paneli —
-  `PanelShardManager.prewarm`. Klatka rozpadu bez budowy materiałów (`scripts/webgpu/rozpad-stacji.mjs`). Odłamki paneli są
-  CZARNE jak w WebGL (pułapka 22) — barwy z `instanceColor` to decyzja wyglądu (kolor pul 0xffffff). Scena bazy
-  `stacja-rozpad` (sesja „stacja”, warianty `__3d` / `__fg-3d` bez wybuchu reaktora); różnice na sylwetkach vs wnętrza:
-  `scripts/webgpu/krawedzie.mjs`.
-- **Nowe efekty broni i rakiet z dem** (`dema/bronie-webgpu`, `dema/rakiety-webgpu` — decyzja użytkownika 2026-09-27)
-  zastępują stare (zadania 12, 17–20); wspólne klocki w `src/3d/fx/`. Broń (zadanie 17): `src/3d/weapons/` — § „Efekty broni” niżej. Starych efektów broni, rakiet, iskier i trafień nie
-  przenosimy 1:1 ani nie poprawiamy — idą do wymiany. Rozgrywka zostaje w grze: dema dostają tylko zdarzenia (strzał,
-  lot, trafienie).
-- **Rakiety (zadanie 19, `src/3d/rockets/`, opis `docs/webgpu/DEMO-RAKIETY.md` § Port w grze):** lot, naprowadzanie,
-  trafienia i obrażenia zostają w `rocketSystem3D.js`; wygląd z dema `rakiety-webgpu` to reżyser `RocketEffects`
-  (`effects.js`) na zdarzeniach lotu (`onLaunch / onIgnite / onFly / prepareContact / onDetonate / update`) i krok efektów
-  „rakiety” (`rocketFx.js`): dym compute (mapa gęstości, samocień, światło z siatki, siła śladu tylko w dymie > 0,8 s),
-  płomienie, kadłubki (słońce × `sunVisibility` + siatka), kule ognia, łuki, mgławica Supernowej, duszki, światła →
-  `grid.addWorld`, fale / implozja / gorące powietrze → `Core3D.fxDistortion()`. Zegar reżysera = suma dt lotu rakiet
-  (w pauzie stoi); pozycje w świecie gry (double), do GPU względem `Core3D.fx.origin`. Supernowa przygasza obraz
-  i podbija bloom przez `Core3D.fx.post` (exposure = min, bloomBoost = max; FxFrame kasuje co klatkę). Losowość efektów
-  z fxRandom — `Math.random` gry (wyrzut) bez zmian. **Zero alokacji na klatkę i rakietę:** w pętlach klatki bez liczb
-  zmiennoprzecinkowych w argumentach / wyniku wywołań (V8 opakowuje je w obiekty, gdy nie wklei funkcji) — wpisy robocze
-  pul (`pool.s` + `push()`), bufor świateł (`stageLights` / `flushLights`), kinematyka rakiet w tablicach (`_kin`),
-  liczby losowe `fillRandom` (ten sam ciąg co fxRandom), `Math.sqrt` zamiast `Math.hypot`. Harness: sesja „rakiety”.
-- **Wybuch reaktora (zadanie 20, `src/effects3d/reactorblow.js`, materiały `reactorblow.tsl.js`, pule `particlePool.js`):**
-  overlay efektów (drugi `WebGLRenderer`, własny bloom 1,6 / próg 0,15, kanwa składana `screen`) usunięty — wybuch żyje
-  w scenie Core3D: pule ognia (100 000) i dymu (15 000) w passie ortho (warstwa 0), materiał TSL raz na pulę, ruch
-  analityczny w wierzchołkach, początek puli przy wybuchu (przestawiany, gdy pula bezczynna), krok efektów „reaktor”
-  (fazy, światło rdzenia i rozbłysku → `grid.addWorld`, wysyłka zapisanych wycinków pul, rozgrzewka `prewarmPass`).
-  Wejścia bez zmian: `triggerReactorBlow3D` (śmierć okrętu), `Destruction3D` (`reactorFactory` — rozpad stacji),
-  `window.makeReactorBlow({ x, y, size, profile })`; profile i czasy 1:1, losowania z `Math.random` gry w dawnej
-  kolejności (przebieg sceny jak w bazie). Wygląd dawnego złożenia pod post gry: `reactorLook` (odwrotność ACES i sRGB
-  gry z obrazu overlaya), poświata rdzenia z bloomu overlaya liczona w shaderze, rdzeń z sufitem 0,88 pod progiem bloomu
-  gry, iskry i kolce przez bloom gry, rozlane iskry (od 0,6 s) z poświatą kreski z mipów 0–1 bloomu overlaya
-  (`REACTOR_LOOK`; na żywo `window.__reactorBlow3D.setLook`). Płaskie kwady (pierścień,
-  fala dymu) były w overlayu odwrócone tyłem i niewidoczne — zostają 1:1 (FrontSide; podgląd `setFlatVisible(true)`).
-  Harness: sesja „reaktor”, wariant `__reaktor` (`--reaktor`: sam wybuch na czarnym tle, baza — ten sam skrypt w tagu).
-- **Stara soczewka warpa i stare asteroidy nie przechodzą** — zastępują je nowe z dem WebGPU (`dema/warp-webgpu` →
-  zadanie 22: warp „Nurt” w grze, opis w „Warp „Nurt”” niżej; `dema/asteroidy-webgpu` → zadanie 21: stare pole, tło
-  pasa i klej WebGL usunięte, pas w `src/3d/asteroids/`, opis w „Pas asteroid” niżej). Moduły ruchu v2 spoza gry
-  (Z4/Z5/Z7) przechodzą na TSL przy swojej integracji.
-- **Weryfikacja:** `node scripts/webgpu/zrzuty.mjs --backend webgpu --out .tmp/webgpu/zadania/NN --baza .tmp/webgpu/baseline/webgl/p1`
-  (sceny deterministyczne, porównanie z bazą WebGL, spis zamienników; `--uuid osobne` = UUID three z osobnego strumienia,
-  bez tego tysiące węzłów TSL przesuwają `Math.random` gry i świat — planety, wraki, warp — wychodzi inny niż w bazie;
-  tryb bierze się z bazy, patrz nagłówek `zrzuty.mjs`); haki `?dev`: `window.DevScene.teleport / syncCamera /
-  preloadHullSprites / startSplit`. Testy: `node --test "tests/*.test.mjs"` (wzorzec w cudzysłowie — `tests/` na Node 22
-  nie działa).
+  Błąd pipeline'u z pierwszej klatki gry (przed pierwszą sceną harnessu) — w dzienniku startu sesji `zrzuty.mjs`
+  (od zadania 23).
 - **TSL — pułapki sprawdzone w zadaniach 02, 06–09:** (1) funkcja z `setLayout` musi być CZYSTA — three buforuje jej kod globalnie
   (klasa buildera → węzeł `Fn`), więc uniform / tekstura złapane w domknięciu wskazują w drugim materiale cudzy slot;
   uniformy jako parametry funkcji albo funkcja wklejana (bez layoutu) — wzór `HaloFn` / `haloRingTSL(u)` w
@@ -228,11 +162,12 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   jej nie rysuje) przez 2 klatki; (21) przezroczyste `DoubleSide` bez `forceSinglePass`: WebGPU rysuje WSZYSTKIE tyły, potem
   wszystkie przody (`_renderTransparents`), WebGL tył + przód obiekt po obiekcie — nakładające się siatki mieszają się w innej
   kolejności (wygaszenie bryły stacji, 5 klatek); (22) `vertexColors: true` bez atrybutu `color`: WebGL mnożył przez stałą
-  wartość atrybutu (0, 0, 0, 1) = czerń, WebGPU pomija vertexColors (biel); (23) mapa cienia słońca raz na klatkę ze
-  WSZYSTKIMI warstwami — łapacz cienia warstwy 0 (`Core3D.shadowCatcher`, z = −2) dostaje cień obiektów FG (stacje,
-  z ≈ −100 ± 300); w WebGL mapa cienia każdego passa miała tylko warstwy kamery passa (`WebGLShadowMap` testuje warstwy
-  kamery renderu), więc łapacz 0 cienia stacji nie widział. Widać to po rozpadzie stacji (cień bryły-ducha nad planetą) i
-  przy implozji — do decyzji w Core3D (zadanie 23), nie w materiałach.
+  wartość atrybutu (0, 0, 0, 1) = czerń, WebGPU pomija vertexColors (biel); (23) ShadowNode three r183 odświeża mapę cienia
+  najwyżej raz na klatkę rAF ze WSZYSTKIMI warstwami kamery cienia — łapacz cienia warstwy 0 (`Core3D.shadowCatcher`, z = −2)
+  dostawał cień obiektów FG (stacje: cień bryły-ducha nad planetą po rozpadzie), a drugi widok podzielonego ekranu mapę z
+  kamery pierwszego; w WebGL mapa każdego passa miała tylko warstwy kamery passa (`WebGLShadowMap`). Naprawione w Core3D
+  (zadanie 23): własny `PassShadowNode` słońca, odświeżenie przed passem ortho (warstwa 0) i FG (warstwa 2 + trzymacze 31)
+  z warstwami passa — nowe światło z cieniem zgłaszaj przez `Core3D.setSunShadowLight`.
 - **Pułapki TSL z zadania 10 (hala K-7, ringi-archetypy):** (24) wiele siatek jednego materiału (partie, dzielnice) —
   `Mesh` z `InstancedBufferGeometry`, nie `InstancedMesh` (jego uuid wchodzi do klucza programu: osobny NodeBuilder na
   siatkę; ~100 partii ringu Fable); (25) `uniformArray` dostaje nazwę bufora z id węzła (`NodeBuffer_<id>`) — różne
@@ -384,6 +319,19 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   `Destruction3D.detachChunk` (fragment leci, pęka na kawałki z maską cięcia, potem odłamki). Materiały rozpadu w TSL
   (`src/vfx/shatterMaterial.js`); nowa bryła stacji ma przejść przez `Destruction3D.prebake` (wypiek + rozgrzewka — bez niej
   pierwszy rozpad buduje materiały w swojej klatce). Szablon GLB nietknięty: wygaszenie i kawałki pracują na klonach.
+- Materiały rozpadu w TSL (`src/vfx/`, zadanie 16): rozpad na trójkąty i implozja = dwa grafy w `shatterMaterial.js` (budowane
+  raz, lekki `ShatterNodeMaterial` per mesh, wartości w `material.uniforms` przez `onObjectUpdate`, mapa per obiekt
+  `teksturaObiektu`); wierzchołki w `vertexNode`, więc pass cienia rysuje nieprzesuniętą bryłę jak dawny `MeshDepthMaterial`.
+  Kawałki skorupy po `detachChunk` tną się **maską TSL** (`maskNode` klonów, płaszczyzny per obiekt rzutowane do widoku — ta
+  sama reguła co `material.clippingPlanes` w WebGL), nie `ClippingGroup` (pułapka 18). Klony materiałów GLB (wygaszenie bryły,
+  kawałki) dostają węzły cienia oryginału (`_shareShadowNodes`). Geometria i materiały kawałka (`_cloneShellHierarchy`) to jego
+  WŁASNE klony, bez flagi zasobu szablonu `__sharedTemplateAsset` — `DestructionDebrisManager` zwalnia je z odłamkami (szablonu
+  GLB, wspólnego dla wszystkich stacji modelu, nie wolno). Rozgrzewka przy `Destruction3D.prebake`: trójkąty, implozja,
+  wygaszenie, kawałki — `prewarmPass` na trzymaczach z układem geometrii bryły; pass cienia — trzymacze na warstwie 31 przez
+  2 klatki (najwyżej jeden naraz); pule odłamków paneli — `PanelShardManager.prewarm`. Klatka rozpadu bez budowy materiałów
+  (`scripts/webgpu/rozpad-stacji.mjs`). Odłamki paneli są CZARNE jak w WebGL (pułapka 22) — barwy z `instanceColor` to decyzja
+  wyglądu (kolor pul 0xffffff). Harness: sesja „stacja” (warianty `__3d` / `__fg-3d` bez wybuchu reaktora); różnice na
+  sylwetkach vs wnętrza: `scripts/webgpu/krawedzie.mjs`.
 - `updateWorld3D(dt, t)` — aktualizacja obiektów świata 3D.
 
 ### Statek gracza
@@ -436,14 +384,42 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 - **Odrzut, wstrząs, skala trafienia — tylko dane broni** (`recoil`, `shake`, `impactScale` w `MASTER_WEAPONS`, odczyt przez `src/game/weaponFeel.js`, zadanie 18-D): Turret2D (odrzut lufy, wstrząs strzału → `window.__weapon3dCameraShake`), Hexlance, bramka `spawnBulletImpactEffect` (rozmiar × `impactScale`) i `WeaponFx.impact` (wstrząs trafienia × `impactScale`). `FX_PROFILE` w `turret2D.js` trzyma już tylko klucze wieżyczek — nie dopisuj tam liczb.
 
 ### Efekty broni (WeaponFx, `src/3d/weapons/` — port WebGPU, zadanie 17)
-- Wszystkie 27 broni (działa Capital/L/M/S, wiązki, CIWS, laser PD, flak) mają efekty z dema `bronie-webgpu`; dawne `weapon3DSystem.js` (dziś tylko łącznik wstrząsu dla `supernovaMissileBlow.js` do zadania 19), `slugTrail3D.js`, `muzzleFx3D.js`, `railgunFx3D.js`, fabryki trafień overlaya i `FlakBurstVFX` są usunięte. Efekt to tylko obraz: strzał, lot, trafienie i obrażenia liczy gra.
+- Wszystkie 27 broni (działa Capital/L/M/S, wiązki, CIWS, laser PD, flak) mają efekty z dema `bronie-webgpu`; dawne `weapon3DSystem.js`, `slugTrail3D.js`, `muzzleFx3D.js`, `railgunFx3D.js`, fabryki trafień overlaya, `FlakBurstVFX` i metody broni `CanvasVFX` (wyloty, trafienia, wiązki kanwy) są usunięte (zadania 17, 19, 24). Efekt to tylko obraz: strzał, lot, trafienie i obrażenia liczy gra.
 - Moduły: `weaponFxTable.js` (`WEAPON_FX`: broń → rodzina receptury, `SIZE_POWER`, `projectileFamilyFor` dla pocisków spoza tabeli), `recipes.js` (receptury rodzin: `preFire`, `muzzle`, `projectile(size)`, `fly`, `impact`, `charge`, `kerf`, `exit`, `stuck`, `burst`, `beam`), `gpuFx.js` (pule ADD / SPARK / SMOKE / DEBRIS / DIST / ARC — paczki rozwijane w kernelu, nośnik w paczce, początek przy kamerze), `projectiles.js` (8 stylów, jeden draw call), `trails.js` (smugi), `beams.js` (wiązka ciągła, impuls, laser PD), `weaponFx.js` (fasada `WeaponFx`).
 - Zdarzenia: strzał = `WeaponShotBus.emit` z `fireWeaponCore` (kierunek lufy `dirX/dirY`; wiązka: `_beamEventScratch` z `kind` continuous / pulse / pd, trafiona encja i normalna powierzchni sprzed krateru); lot = `WeaponFx.sync(bullets)` raz na klatkę renderu (`updateHexShips3D`, po `Turret2D.sync`); trafienie = `spawnBulletImpactEffect(b, x, y, scale, hit)` (dane z `writeImpactHit` — normalna, encja, prędkość względna) za bramkami kadru / rozmiaru i cooldownu komórki; PD gracza (`ciwsStep`, poza szyną) → `WeaponFx.pdShot` / `pdLaser`, pęknięcie flaku → `flakBurst`, Hexlance (`superweapon.js`) → `hexlanceCharge / Fire / Begin / Step / End / Impact / Kerf / Exit`, warsztat rdzeni (`coreFx3D.js`) → `muzzleAt`, `hexlanceImpact / Kerf` z mocą klasy, śmierć NPC (`CanvasVFX.spawnExplosionPlasma`) → `droneBlast`. Kanwa nie rysuje wiązek ani błysków broni.
 - **Nowa broń:** dane w `MASTER_WEAPONS` (`src/data/weapons.js`, z `recoil` / `shake`, opcjonalnie `impactScale`, a mechanika z dema — `penDepth` / `penSpeedLoss` / `ricochet` / `chargeTime`) + wpis w `WEAPON_FX` (istniejąca rodzina albo nowa receptura) + klucz wieżyczki (`normalizeWeaponFxKey`, `FX_PROFILE` w `turret2D.js` — sam klucz). Testy `weaponFxTable` / `weaponRecipes` / `beamRenderPath` / `weaponRecoilSource` pilnują, że każda broń ma recepturę (wiązka — `beam`) i odrzut / wstrząs w danych.
-- **Nowa receptura:** paczki przez budowniczego puli `E(pool, rodzaj, n, P, D).speed(a, b)…emit()` (metody budowniczego zostają krótkie — V8 wkleja je, łańcuch nie alokuje), losowanie tylko `fxRandom` (nigdy `Math.random` — sekwencja rozgrywki; stare wizualia — `mainExhaust3D`, `rand` / `coneDir` banku `Fx3D`, `shieldImpactFx`, wybuch reaktora — jeszcze losują z `Math.random` gry i przez to przebieg bitwy zależy od nich, PLAN §3), zdarzenia opóźnione `ctx.after(opóźnienie, AFTER.RODZAJ, liczby…, encja)` bez domknięć, światła przez `ctx.lights.flash / point` (siatka świateł), wstrząs `ctx.shake` (wylot — `camera.addShake` porównany z resztą; trafienie — tylko gdy gracz strzelał albo oberwał). Barwy w pasmach HDR (rdzenie i błyski > 0,9, ciała 0,3–1,3, smugi: ciało ≤ 1,4); w gorących pętlach `Math.sqrt`, nie `Math.hypot` (alokuje), liczby double do niewklejonych wywołań przez `Float64Array`.
+- **Nowa receptura:** paczki przez budowniczego puli `E(pool, rodzaj, n, P, D).speed(a, b)…emit()` (metody budowniczego zostają krótkie — V8 wkleja je, łańcuch nie alokuje), losowanie tylko `fxRandom` (nigdy `Math.random` — to sekwencja rozgrywki; od zadania 23 wszystkie wizualia gry losują z fxRandom, pilnuje `tests/wizualiaFxRandom.test.mjs`), zdarzenia opóźnione `ctx.after(opóźnienie, AFTER.RODZAJ, liczby…, encja)` bez domknięć, światła przez `ctx.lights.flash / point` (siatka świateł), wstrząs `ctx.shake` (wylot — `camera.addShake` porównany z resztą; trafienie — tylko gdy gracz strzelał albo oberwał). Barwy w pasmach HDR (rdzenie i błyski > 0,9, ciała 0,3–1,3, smugi: ciało ≤ 1,4); w gorących pętlach `Math.sqrt`, nie `Math.hypot` (alokuje), liczby double do niewklejonych wywołań przez `Float64Array`.
 - Budżety: pełnych wylotów i trafień po 48 na klatkę (ponad — tani błysk), LOD wylotu po rozmiarze wieżyczki na ekranie, impulsy w pierścieniu `PULSE_CAP` (1024), stany pocisków 4096, zdarzenia opóźnione 512. Dym i odłamki czytają maskę słońca (`sunVisibility`), emisja nie.
 - Mechanika z dema (zadanie 18-B, logika w grze — § „Pociski, kolizje, efekty”): przebicie → `WeaponFx.kerf` (znaki rzazu przerzedzone jak w demie: najwyżej jeden na podkrok 240 Hz, co v/240 j.), `pierceExit`, `pierceStuck` (receptury `kerf / exit / stuck`, nośnik = kadłub), trafienie wejścia z `hit.through` (smuga leci dalej); rykoszet tylko z decyzji gry (`hit.ric…` — kierunek, prędkość i życie smugowca z tego samego hasha, receptura Vulcana już nie losuje); ładowanie → `WeaponFx.charge`.
 - Mapa ran (18-C) z mechaniką 18-B: `ctx.stamp` → `HullDamageMap.stampRecipe`. Kratery stempluje hak `HullBodies.onImpact` ze źródłem z `applyHexImpact(…, shard, pocisk, wariant)`: wejście `impact`, rykoszet `ricochet` (płytkie osmalenie Vulcana / Gatlinga, `hullDamageStamps.js`), wylot `exit`, zakleszczenie `stuck` (receptura `stuck` z encją kadłuba — duplikat z tej klatki pomijany). Pas rzazu przebicia stempluje gra (`HullDamageMap.stampKerf` w `applyBulletHullPass`, każdy krok w materiale, bez bramki kadru efektu), a receptura `kerf` w `WeaponFx.kerf` dostaje kadłub `null` — bez drugiego stempla.
+
+### Rakiety (`src/3d/rockets/`, port WebGPU zadanie 19; opis `docs/webgpu/DEMO-RAKIETY.md` § Port w grze)
+- Lot, naprowadzanie, trafienia i obrażenia zostają w `src/effects3d/rocketSystem3D.js` (profil lotu z `weaponDef`, pula
+  rakiet bez pól wyglądu); obraz z dema `rakiety-webgpu` to reżyser `RocketEffects` (`effects.js`) na zdarzeniach lotu
+  (`onLaunch / onIgnite / onFly / prepareContact / onDetonate / update`) i krok efektów „rakiety” (`rocketFx.js`): dym compute
+  (mapa gęstości, samocień, światło z siatki, siła śladu tylko w dymie > 0,8 s), płomienie, kadłubki (słońce × `sunVisibility`
+  + siatka), kule ognia, łuki, mgławica Supernowej, duszki, światła → `grid.addWorld`, fale / implozja / gorące powietrze →
+  `Core3D.fxDistortion()`. Rodzaj efektów i barwy reżyser bierze z `weaponDef` (`palette.js`: Supernowa, szybka rakieta,
+  `bodyScale`). Zegar reżysera = suma dt lotu rakiet (w pauzie stoi); pozycje w świecie gry (double), do GPU względem
+  `Core3D.fx.origin`. Supernowa przygasza obraz i podbija bloom przez `Core3D.fx.post` (exposure = min, bloomBoost = max;
+  FxFrame kasuje co klatkę). Losowość efektów z fxRandom — `Math.random` gry (wyrzut) bez zmian.
+- **Zero alokacji na klatkę i rakietę:** w pętlach klatki bez liczb zmiennoprzecinkowych w argumentach / wyniku wywołań (V8
+  opakowuje je w obiekty, gdy nie wklei funkcji) — wpisy robocze pul (`pool.s` + `push()`), bufor świateł (`stageLights` /
+  `flushLights`), kinematyka rakiet w tablicach (`_kin`), liczby losowe `fillRandom` (ten sam ciąg co fxRandom), `Math.sqrt`
+  zamiast `Math.hypot`. Harness: sesja „rakiety”.
+
+### Wybuch reaktora (`src/effects3d/reactorblow.js`, port WebGPU zadanie 20)
+- Wybuch żyje w scenie Core3D (dawny overlay efektów — drugi `WebGLRenderer` z własnym bloomem 1,6 / próg 0,15 i kanwą
+  składaną `screen` — usunięty): pule ognia (100 000) i dymu (15 000) w passie ortho (warstwa 0, `particlePool.js`), materiał
+  TSL raz na pulę (`reactorblow.tsl.js`), ruch analityczny w wierzchołkach, początek puli przy wybuchu (przestawiany, gdy pula
+  bezczynna), krok efektów „reaktor” (fazy, światło rdzenia i rozbłysku → `grid.addWorld`, wysyłka zapisanych wycinków pul,
+  rozgrzewka `prewarmPass`). Wejścia: `triggerReactorBlow3D` (śmierć okrętu), `Destruction3D` (`reactorFactory` — rozpad
+  stacji), `window.makeReactorBlow({ x, y, size, profile })`; profile i czasy 1:1 z bazy, losowania z fxRandom (zadanie 23).
+- Wygląd dawnego złożenia pod post gry: `reactorLook` (odwrotność ACES i sRGB gry z obrazu overlaya), poświata rdzenia z
+  bloomu overlaya liczona w shaderze, rdzeń z sufitem 0,88 pod progiem bloomu gry, iskry i kolce przez bloom gry, rozlane
+  iskry (od 0,6 s) z poświatą kreski z mipów 0–1 bloomu overlaya (`REACTOR_LOOK`; na żywo `window.__reactorBlow3D.setLook`).
+  Płaskie kwady (pierścień, fala dymu) były w overlayu odwrócone tyłem i niewidoczne — zostają 1:1 (FrontSide; podgląd
+  `setFlatVisible(true)`). Harness: sesja „reaktor”, wariant `__reaktor` (sam wybuch na czarnym tle; baza z tagu).
 
 ### Nośnik prędkości: pociski i efekty lecą z tym, z czego wyszły
 - Pocisk dziedziczy 100% prędkości lufy (ruch + obrót kadłuba, `writePointVelocity`, `src/game/carrierVelocity.js`) i niesie znaczniki: `ivx/ivy` (odziedziczona część), `clock` (gracz/P2 — `CLOCK_RENDER`, reszta `CLOCK_SIM`), `bornSim` (czas pozy lufy). Nowe źródło pocisków robi to samo — bez znaczników smuga, zasięg i kierunek trafienia liczą się w świecie.
@@ -479,20 +455,46 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
    - Modyfikacje renderera, passów scen (runner `_runScenePass`: tło → planety → halo → ring-planety → ortho → tarcze → FG, wszystko do `composerTarget` HalfFloat MSAA 4, czyszczona tylko głębia) i postu (`RenderPipeline`) rób wyłącznie tutaj.
    - Bloom jest JEDEN — w poście Core3D (od zadania 20 bez overlaya i jego bloomu). Parametry (strength/radius/threshold) żyją w `src/3d/bloomConfig.js` — jedyne źródło prawdy; tuner (panel Bloom) nadpisuje je trwale tylko z `?dev` w URL (stare zapisy `overlay*` tuner kasuje).
    - Bloom przepuszcza przez próg CAŁY teksel (nie nadmiar) i dokłada ~9 × strength jego energii (radius tylko przesuwa wagę między mipami; rozmycia gubią ~3%): Core3D 0,85 → ~7,5× (dawny overlay3D: 1,6 przy progu 0,15 → ~14× prawie wszystkiego). Jasność nowego emitera dobieraj z tym w głowie. Core3D od zadania 02: algorytm BloomNode + ×3 `BLOOM_ZGODNOSC_WEBGL` — obraz 1:1 z dawnym `UnrealBloomPass` (strażnik różnic three: `tests/webgpuPost.test.mjs`); od zadania 23 liczony compute (`BloomGryCompute`, `tests/bloomCompute.test.mjs`).
+   - Post (`src/3d/tsl/postGry.js`): scena (`composerTarget`) → bloom → „uber” → kanwa, jako `RenderPipeline`. Bloom =
+     `BloomGryCompute` (`src/3d/tsl/bloomCompute.js`: 12 kroków BloomNode jako kernele w JEDNYM `renderer.compute(lista)`, cele
+     bit w bit — `scripts/webgpu/bloom-parzystosc.mjs`), liczony raz na RENDER (podzielony ekran = dwa `renderSingle`), rozmiar =
+     bufor rysowania × `resolutionScale`, alfa = max(rgb) bloomu jak przy dawnym blendzie. „Uber” próbkuje scenę i bloom tym
+     samym przesuniętym UV (gorące powietrze do 24 źródeł, dyspersja dysz, zniekształcenia efektów), potem ACES gry i sRGB;
+     przed bloomem i w odczytach sceny siatka bezpieczeństwa NaN / ±Inf → 0 (`hdrBezpieczny` — test bitów wykładnika, nie
+     `x != x` ani min / max). Dwa `RenderPipeline` zbudowane raz — z bloomem i bez (`perfToggles.bloom`, czytane w każdym
+     renderze), gorące powietrze = uniform `uHeatOn`: przełączniki bez przebudowy. Strojenie bloomu = uniformy
+     (`_applyBloomPassConfig` co klatkę, tuner `?dev`). Gorące powietrze w podzielonym ekranie ma tylko widok gracza 1.
+   - Efekty GPU (`src/3d/fx/`, opis `docs/webgpu/FX-INFRA.md`): `Core3D.fx` (`fxFrame.js`) raz na klatkę rAF na starcie
+     `render()`, przed passami (drugi `renderSingle` podzielonego ekranu nic nie robi): kroki
+     `Core3D.addFxStep({ name, spawn?(ctx), lights?(ctx), update?(ctx), warm?(ctx) })` → początek pul przy kamerze i zegary
+     (`ctx.origin` = `FxPoolOrigin`; **pula GPU MUSI się w nim zarejestrować** z kernelem `createShiftKernel`, inaczej początek
+     przestawia się pod jej danymi) → siatka świateł → update. Zegar efektów `ctx.time` / `Core3D.fx.time` biegnie z klatką
+     rAF (krok ≤ 0,1 s, także w pauzie). `warm` idzie przez rejestr rozgrzewki (puste dispatche kerneli + `prewarmPass`).
+     **Siatka świateł** (`Core3D.fx.grid`): `renderer.lighting = GridLighting` w trybie „optIn”, ustawiony PRZED
+     `renderer.init()` (three r183 łapie `lighting` w init — podmiana później nic nie zmienia); czytają ją tylko materiały z
+     `gridLights = true` (`enableGridLights(mat, owner)`) — reszta ma WGSL i obraz bez zmian. Światła efektów:
+     `Core3D.fx.lights.flash(...)` / `.point(...)` (świat gry, nośnik z `ActiveCarrier`), własne światła kroku przez
+     `ctx.grid.addWorld(...)`. **Zniekształcenia** (gałąź „uber” tylko przy źródłach): fala / implozja / gorące powietrze —
+     `Core3D.fxDistortion().shock / implode / heat(...)` (świat gry, co klatkę przed renderem; dysze i tarcze zostają przy
+     `pushHeatHazeWorld`); warstwa DIST — siatki na `FX_DISTORT_LAYER` (10) piszą przesunięcie w px (osie sceny, RG) do
+     `Core3D.distortionTarget`, właściciel co klatkę `Core3D.setDistortLayerActive(bool)`. Pomiar: `Core3D.fxStats` (PerfHUD
+     „Efekty GPU”), kontrola na GPU: `scripts/webgpu/efekty-kontrola.mjs`. Bank `Fx3D` (`fxParticles3D.js`): cztery grafy
+     (BB, PLUME, CROSS, WASH) wspólne dla systemów, tekstura per obiekt (`FxMapNode`).
    - Pipeline jest HDR-first: emitery (pociski, beamy, dysze) mnożą kolory >1.0, próg bloomu ~0.9 odcina zwykłe powierzchnie. Nowe efekty, które mają świecić, muszą wypychać luminancję >1.
    - Nie duplikuj postprocessingu w innych modułach. Nowe efekty GPU: compute przez `Core3D.addFxStep` (raz na klatkę, przed passami), światła przez siatkę (`Core3D.fx.lights` / `ctx.grid`), refrakcja przez `Core3D.fxDistortion()` albo warstwę DIST (`FX_DISTORT_LAYER`) — nie własne `renderer.compute` w pętli gry, własne cele ani passy (`docs/webgpu/FX-INFRA.md` §10).
    - Passy planet (warstwa 3), halo (5), ring-planet (6) i tarcz (7) są pomijane, gdy nikt nie zgłosi na nich widocznej zawartości (`Core3D.layerActivity`). Dodając obiekt na te warstwy, zgłaszaj go co klatkę (`Core3D.markPlanetLayersActive` / `Core3D.setShieldLayerActive`) — inaczej zniknie.
-   - Mapa cienia słońca: w WebGPU odświeżanie jest per światło (`renderer.shadowMap` ma tylko `enabled` / `type`). Słońce gry zgłasza się `Core3D.setSunShadowLight(light)`, a `render()` raz na klatkę, na starcie, ustawia `light.shadow.autoUpdate = false; needsUpdate = true` — ShadowNode i tak aktualizuje najwyżej raz na klatkę rAF (kamera cienia z `layers.enableAll()` widzi rzucających na wszystkich warstwach). Nowe światło z cieniem zgłaszaj tak samo.
+   - Mapa cienia słońca: w WebGPU odświeżanie jest per światło (`renderer.shadowMap` ma tylko `enabled` / `type`). Słońce gry zgłasza się `Core3D.setSunShadowLight(light)` — dostaje własny węzeł cienia `PassShadowNode` (`autoUpdate = false`), a Core3D odświeża mapę PRZED passem, który ją czyta, z rzucającymi z warstw tego passa (ortho: warstwa 0; FG: warstwa 2 i trzymacze rozgrzewki cienia na warstwie 31), jak `WebGLShadowMap` w bazie — planety i ring-planety czytają ostatnią mapę (pułapka 23). Bez rzucających w kadrze cienia i bez innych odbiorców mapa i łapacz są pomijane (`_passSunShadow`). Nowe światło z cieniem zgłaszaj tak samo — bez tego ShadowNode three odświeża mapę raz na klatkę rAF ze wszystkimi warstwami kamery cienia.
    - Warp „Nurt” (zadanie 22, `src/3d/warp/`, sterownik `WarpNurt` w `warpNurt.js`): OŚRODEK = 1 mln drobin (`medium.js`, compute przez `Core3D.addFxStep`, krok stały 1/240 s z dosuwaniem w renderze) w passie `warp` (warstwa 8, `WARP_MEDIUM_RENDER_LAYER`, zaraz po ring-planetach, kamera perspektywy, siatka w kamerze gry, dane względem niej). Pass rysuje się tylko po `Core3D.setWarpLayerActive(true)` — sterownik zgłasza go, gdy w zasięgu pudła ośrodka wokół kamery są przegródki (bańka gracza, nić zwiastuna, punkt zbierania, pchnięcie) albo szczeliny; 4 s po ostatniej zasypia: poza warpem ani kroku compute, ani draw calla (daleki przylot też go nie budzi — `cullWarpFrameToView`). BAŃKI zgłaszają: skok gracza (`player.js` na automacie `GameState.warp`, bez zmian rozgrywki), przyloty i odloty NPC (`arrivals.js`; warp-in piratów wykrywany z `npc.state === 'warping_in'`, wezwania przez `WarpNurt.arriveAll`, plan z wyprzedzeniem `planArrival` / `planFleetArrival`, odlot `depart`) — do 16 naraz. W skoku ośrodek płynie z prędkością WIDOCZNĄ (bieg I 16 tys., II 21 tys. j/s), nie prawdziwą, plus zmiana offsetu kamery gry względem statku (kop warpa i wyprzedzenie riga — 22-B, `camFollow`); bańka gracza dostaje prędkość widoczną STATKU (przepływ + `vRel`), smugi drobin — prędkość kamery (bańka z prędkością kamery odwracała opływ przy kopie). ZGIĘCIE TŁA nie jest osobnym passem: soczewkę bańki i wciąganie w szczeliny liczy materiał mgławicy (`skyBend.js`, blok `WARP_SKY_BEND`; tylko mgławica, jak w demie), gwiazdy — smugi z `WARP_STARS`. Fale = sama refrakcja (`Core3D.fxDistortion().shock`), błyski / szczeliny / smugi sylwetki = duszki w passie ortho (`sprites.js`, kolano bloomu `bloomKnee.js` — demo liczyło bloom bez ×3 gry), odsłanianie, szew i żar brzegu kadłuba = uniformy per obiekt `uWarpA/B/C` w materiale kadłuba (`hullWarp`, `hexShips3D.tsl.js`). Dawne API soczewki (`setWarpLensWorld` … `suppressShadowShafts`) usunięte razem z `warpLens3D` / `warpWorldLens` / `warpFx3D` / `warpLensPass`. Nie próbkuj gotowej klatki 2D i nie wycinaj statku maską — tak powstało kiedyś „jajko” wokół kadłuba. Warstwa 9 to tło menu (`MENU_BACKDROP_LAYER`, rysuje ją tylko `Core3D.renderBackdrop`).
-   - Cienie słońca (shadow shafts) to MASKA widoczności, nie filtr obrazu: `Core3D._renderSunShadowMask` liczy ją raz na klatkę (pass TSL — `createShadowShaftsPass`, jeden quad) przed pre-passem halo (`sunShadowTarget`, `src/3d/sunShadowMask.js`; R = cień powierzchni, G = smuga tła z ringami, B = mrok pola). Nowy materiał (TSL) oświetlany słońcem w płaszczyźnie gry importuje z `sunShadowMask.js` funkcje i mnoży przez `sunVisibility()` człon słońca, a otoczenie przez `sunFill(vis)` (w pełnym cieniu `SUN_SHADOW_FILL` = 0,4); światła, żar i glow zostają; bez modelu światła — `sunShadeUnlit(color)`; tło — `sunShaftBackdrop(color)`; wbudowane materiały three — `applySunShadowToBuiltinMaterial` (hak w polach materiału: `setupLightingModel` gasi `direct()` modelu klasy, `outputNode` kładzie smugę — NodeLibrary kopiuje pola na materiał węzłowy). Funkcje czytają maskę po `screenUV` (tylko w węzłach fragmentów) na wspólnych węzłach `sunShadowUniforms` (`.value` jak dawniej; uniformy w grupie renderu). `SUN_SHADOW_GLSL` zostaje TYLKO dla nieprzeniesionych ShaderMaterial (`sunShadowMaskGLSL.js`, na WebGPU i tak zamienniki). Emitery (broń, dysze, błyski, światła pozycyjne, tarcze) i ring „Halo” (własny model słońca) maski NIE czytają. Nie przywracaj quada mnożącego gotowy obraz — gasił broń z warstwy 0 pod progiem bloomu i kładł drugi cień na ring.
+   - Cienie słońca (shadow shafts) to MASKA widoczności, nie filtr obrazu: `Core3D._renderSunShadowMask` liczy ją raz na klatkę (pass TSL — `createShadowShaftsPass`, jeden quad) przed pre-passem halo (`sunShadowTarget`, `src/3d/sunShadowMask.js`; R = cień powierzchni, G = smuga tła z ringami, B = mrok pola). Nowy materiał (TSL) oświetlany słońcem w płaszczyźnie gry importuje z `sunShadowMask.js` funkcje i mnoży przez `sunVisibility()` człon słońca, a otoczenie przez `sunFill(vis)` (w pełnym cieniu `SUN_SHADOW_FILL` = 0,4); światła, żar i glow zostają; bez modelu światła — `sunShadeUnlit(color)`; tło — `sunShaftBackdrop(color)`; wbudowane materiały three — `applySunShadowToBuiltinMaterial` (hak w polach materiału: `setupLightingModel` gasi `direct()` modelu klasy, `outputNode` kładzie smugę — NodeLibrary kopiuje pola na materiał węzłowy). Funkcje czytają maskę po `screenUV` (tylko w węzłach fragmentów) na wspólnych węzłach `sunShadowUniforms` (`.value` jak dawniej; uniformy w grupie renderu). `SUN_SHADOW_GLSL` (`sunShadowMaskGLSL.js`) to napis tylko dla modułów GLSL poza grą (Z4/Z5/Z7) — gra go nie używa. Parzystość maski z bazą WebGL w grze: `scripts/webgpu/maska-slonca.mjs --root <worktree tagu>`. Emitery (broń, dysze, błyski, światła pozycyjne, tarcze) i ring „Halo” (własny model słońca) maski NIE czytają. Nie przywracaj quada mnożącego gotowy obraz — gasił broń z warstwy 0 pod progiem bloomu i kładł drugi cień na ring.
    - Cień kadłubów w passie shadow shafts = pole odległości sylwetki (`src/3d/hullShadowSdf.js`: warstwa tablicy tekstur na kształt, pieczenie z budżetem w `updateHexShips3D`, wgranie jednej warstwy przez `Core3D.uploadTextureLayer`). Okluder statku zgłaszaj przez `Core3D.pushShaftHullSdf` z danymi z `packHullShaftOccluder` (to samo przekształcenie co mesh kadłuba). Zmieniając `hullSdfShadow` (TSL), zmień też lustro `traceHullShadowCpu` — na nim stoją testy; maskę w grze porównuje z bazą WebGL `scripts/webgpu/maska-slonca.mjs`.
+   - Cele pomocnicze, do których rysują materiały SCENY (pre-pass halo, zniekształcenia), mają format / typ / MSAA / głębię `composerTarget`: three buduje materiały (NodeBuilder) i pipeline'y per KONTEKST renderu, a kontekst to stan załączników celu — inny format = budowa wszystkiego w kadrze na zimno przy pierwszym użyciu. Tablice warstw (`DataArrayTexture`): three r183 w WebGPU ignoruje `layerUpdates` i na `needsUpdate` wgrywa całą tablicę — jedna warstwa przez `Core3D.uploadTextureLayer`; zakresy tekstur backend też ignoruje (każda zmiana = pełne `writeTexture`), zakresy buforów honoruje — dane zmieniane częściowo trzymaj w buforze storage (wzór: obrażenia mostków).
 
 2. **Moduły 3D (`world3d.js`, `stations3D.js`, `hexShips3D.js`)**
    - Używaj `Core3D.scene` i `Core3D.camera`.
-   - Nie twórz lokalnych rendererów ani dodatkowych canvasów WebGL.
-   - Świat leży przy 5–10 mln j.: pozycja świata liczona na GPU we float32 drga ~1 px względem kadłubów. Nie wpisuj bezwzględnych pozycji do macierzy instancji ani atrybutów — duży offset w `mesh.position` (three składa `modelViewMatrix` w double), dane względem niego, w shaderze `modelViewMatrix * instanceMatrix`. Wzór: `Bridge3D._setOrigin` (`docs/PORT-mostki.md` §8.12).
-   - Początek przy kamerze daje `sceneOriginNearCamera` (`src/3d/sceneOrigin.js`); dane przepisywane co klatkę — początek co klatkę (np. `shipLights3D.js`, `fxParticles3D.js`), bufor pisany raz przy emisji (pierścień) — początek „lepki” z przesunięciem żywych danych dopiero po odjeździe kamery (`sparkSystem3D.js`; pule GPU: `FxPoolOrigin` + kernel przesunięcia w `src/3d/fx/gpuPoolOrigin.js`, np. efekty broni). Pozycje świata w pulach CPU: `Float64Array`. Pomiar przed/po: `dema/precyzja-drzenie.js` (bloom wyłącza `perfToggles.bloom = false` — od zadania 02 post czyta go w każdym renderze).
-   - Przezroczysty materiał z `side: DoubleSide` three rysuje DWA razy (tył, potem przód) i przed każdym ustawia `needsUpdate` — każdy draw liczy program od nowa (`getProgram`). Nie dotyczy `ShaderMaterial` (ma `forceSinglePass = true`), dotyczy `MeshBasicMaterial` i innych wbudowanych: efekty addytywne bez zapisu głębi i płaskie siatki dostają `forceSinglePass: true` (pociski, błyski, wiązki, iskry raila).
+   - Nie twórz lokalnych rendererów, urządzeń GPU ani dodatkowych kanw 3D — wszystko rysuje `Core3D` (wyjątek poza renderem: solver sprężyn `destructorGpuSoftBody*` ma własne `GPUDevice`, PLAN §11). Materiały i shadery tylko w TSL (§ „Render: WebGPU + TSL”).
+   - Świat leży przy 5–10 mln j.: pozycja świata liczona na GPU we float32 drga ~1 px względem kadłubów. Nie wpisuj bezwzględnych pozycji do macierzy instancji ani atrybutów — duży offset w `mesh.position` (`renderer.highPrecision = true`: three składa `modelViewMatrix` na CPU w double), dane względem niego, w grafie TSL węzeł `modelViewMatrix` (ręczne `cameraViewMatrix.mul(modelWorldMatrix)` omija `highPrecision` — PLAN §4); `positionWorld` we fragmencie to float32 (pas asteroid czyta pozycje lokalne). Wzór: `Bridge3D._setOrigin` (`docs/PORT-mostki.md` §8.12).
+   - Początek przy kamerze daje `sceneOriginNearCamera` (`src/3d/sceneOrigin.js`); dane przepisywane co klatkę — początek co klatkę (np. `shipLights3D.js`, `fxParticles3D.js`), bufor pisany raz przy emisji (pierścień) — początek „lepki” z przesunięciem żywych danych dopiero po odjeździe kamery (`sparkSystem3D.js`; pule GPU: `FxPoolOrigin` + kernel przesunięcia w `src/3d/fx/gpuPoolOrigin.js`, np. efekty broni). Pozycje świata w pulach CPU: `Float64Array`. Pomiar przed/po: `dema/precyzja-drzenie.js` (bloom wyłącza `perfToggles.bloom = false` — post czyta go w każdym renderze), drżenie efektów w grze: `scripts/webgpu/drzenie-gra.mjs`.
+   - Przezroczysty materiał z `side: DoubleSide` bez `forceSinglePass` three rysuje DWA razy — w WebGPU najpierw WSZYSTKIE tyły, potem wszystkie przody (pułapka 21), więc nakładające się siatki mieszają się inaczej niż obiekt po obiekcie, a każdy obiekt kosztuje drugi rysunek. Materiał węzłowy nie ma `forceSinglePass` z urzędu (dawny `ShaderMaterial` miał): efekty addytywne bez zapisu głębi i płaskie przezroczyste siatki dostają `forceSinglePass: true` (pociski, błyski, wiązki, chmury ringu).
 
 3. **Destruction + ship integration**
    - Zachowaj spójność osi/rotacji między `shipEntity.js` i `hullBodies.js` (odbicie y, kotwica środka sprite'a).
@@ -528,6 +530,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 
 ### Lista kontrolna PR
 - [ ] Brak nowych rendererów (WebGPU / WebGL) poza `Core3D`.
+- [ ] Nowy kod renderu w TSL — bez GLSL, `ShaderMaterial` i API WebGL (`tests/graBezGlsl.test.mjs`); nowy materiał / obiekt w rozgrzewce (`Core3D.warmup`).
 - [ ] Brak alokacji w pętli render/update tam, gdzie były bufory/pule.
 - [ ] Brak regresji sterowania i kolizji 2D.
 - [ ] Spójność osi/rotacji (sprite, thrusters, impact/local transforms).
@@ -540,6 +543,9 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 
 **Gdzie dodawać nowe efekty 3D?**
 W `src/3d/*`, z wykorzystaniem `Core3D`.
+
+**Jak napisać nowy materiał albo efekt 3D?**
+W TSL (`three/tsl`): graf raz na moduł / rodzaj, obiekty na wspólnych węzłach, wartości per obiekt w `material.uniforms` (§ „Render: WebGPU + TSL”); efekty GPU jako krok `Core3D.addFxStep`, światła przez `Core3D.fx.lights`, refrakcja przez `Core3D.fxDistortion()`; obiekty do rejestru `Core3D.warmup`. Najpierw przeczytaj pułapki three r183 / TSL / WGSL.
 
 **Czy można dodać drugi bloom/composer lokalnie w module?**
 Nie. Postprocessing powinien być centralny w `Core3D`.
