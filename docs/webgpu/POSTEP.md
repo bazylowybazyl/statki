@@ -55,7 +55,7 @@ Pliki: `zadania/NN-*.md`; kolejność i uzasadnienie: `PLAN.md` §9. Status: `cz
 | 15 | Mostki, rdzenie, reaktory, światła (+ `mostki-demo`, `rdzen-demo`) | 04 | 05–14, 16–20 | xhigh | zrobione, scalone (ca83cd4) | 90b73f3, 67f5d8b, 0d20cf4, b366146, 0c292d4, f1bf060, 5e383a0, e39d5ab, 172d1d3 (scalenia `main` 45a927b, 7286401, c60ee1c, 7f49da8, ab7ca8a) | −998 linii GLSL w 5 modułach; jeden graf bryły mostka na 11 rodzajów; obrażenia mostka w buforze storage (µs zamiast 0,7–1,3 ms); `bitwa__fg` i `split` 0% vs baza |
 | 16 | Zniszczenie stacji (+ scena bazy `stacja-rozpad`) | 03 | 04–15, 17–19 | xhigh | zrobione, scalone (82573e5) | 2dd8c5f, e676d1b, b00dd2f (scalenia `main` 99d1f12, 05f429b) | klatka rozpadu bez budów (Neptun 64 → 4,9 ms); kawałki tną się maską TSL; sesja bazy „stacja” (5 scen, szum 0%); odłamki paneli czarne jak w WebGL (decyzja wyglądu) |
 | 17 | Broń 1/2 z dema `bronie-webgpu`: efekty wszystkich broni (pociski, smugi, trafienia, wiązki, PD, flak) | 12, 04 | 05–11, 13–16, 19 | max | zrobione, scalone (753700e) | 25123a4, e002a65, 5374728, 4e2d332, e575f23, 3992955, fae3257 (scalenia `main` 6ebbc29, 91d7964, 1bb1866, c243359) | 27 broni na recepturach dema (`src/3d/weapons/`, `WeaponFx`); PD i flak w 3D; −8 modułów; zero obiektów na strzał; nowe efekty — ocena obrazu zamiast tolerancji |
-| 18 | Broń 2/2: obrażenia z dema — mapa ran, przebicia, rykoszety, ładowanie, serie; światła efektów na poszyciu | 17, 04 | 05–11, 13–16, 19 | max | część 18-A zrobiona i scalona (4e165fb): moduły mechaniki + zapytania `HullBodies` bez wpięcia; 18-C (mapa ran, światła efektów na poszyciu) zrobione i scalone (1dd742a); 18-B + 18-D (wpięcie mechaniki, odrzut z danych) w toku (worktree `statki-wt/18b`) | 8eaa828…2da882d | zatwierdzona zmiana rozgrywki |
+| 18 | Broń 2/2: obrażenia z dema — mapa ran, przebicia, rykoszety, ładowanie, serie; światła efektów na poszyciu | 17, 04 | 05–11, 13–16, 19 | max | część 18-A zrobiona i scalona (4e165fb): moduły mechaniki + zapytania `HullBodies` bez wpięcia; zrobione, scalone: 18-A (4e165fb), 18-C (1dd742a), 18-B + 18-D (f088bac) | 8eaa828…2da882d (18-A); 18-C: 7e7fd3d…ee1fc5d; 18-B/D: 56fb84e, cb65bbc, ae676eb, 1ead12b, 0bee2ae | zatwierdzona zmiana rozgrywki; wygląd przebić / rykoszetów / ładowania / ran do oceny użytkownika |
 | 19 | Rakiety z dema `rakiety-webgpu`: dym GPU, dysze, kule ognia, Supernowa, iskry | 12 | 05–11, 13–18 | max | zrobione, scalone (2adf8fb) | 877f8ac, 1d60e1e, 079805c, 2025ba7, b2dabc4, b697ae9 (scalenia `main` 144b0f7, 6f0774a, 26636ce) | lot w `rocketSystem3D`; fala `shockwave3D` i `weapon3DSystem.js` usunięte; DIST przez OR; receptura tarczy (propozycja) |
 | 20 | Koniec overlaya: wybuch reaktora w Core3D, usunięcie drugiego renderera | 17, 18, 19 | 13–16 | xhigh | w toku (podagent, worktree `statki-wt/20`; równolegle z 18-B/C — overlay ma już tylko wybuch reaktora) | | jeden renderer, jeden bloom |
 | 21 | Asteroidy z dema `asteroidy-webgpu` + kolizje z olbrzymami | 12, 04, 05 (+ commit dema) | 13–20 | max | zrobione, scalone (ee034ed); demo: 84198d3 | d6d7af1, 04cf318, 295f6fb, 55ea8d4, d9a27af, 41c62ac, 810c0a7, 111b917, 6ee3721, 7985de5, ab13869, ab22fb3, e7e824e | zielone światło użytkownika; pas w passach Core3D (18 modułów TSL), olbrzymy z kolizjami; stare pole (zderzenia z małymi skałami, niszczenie, łup) znika — do decyzji użytkownika |
@@ -740,3 +740,25 @@ Todo (2): „PORT poprawka 1 / 3 (TODO integracji)” w `tests/shipCore.test.mjs
   lista „do decyzji użytkownika” wyżej. Inwentarz z HEAD ee034ed: wszystkie pliki z GLSL 16 (było 24), materiały 30,
   3281 linii; port bez zmian (6 / 7 / 1165). Testy: 1563 / **5** porażek bazowych (`asteroidHexAdapter:309` zniknęła
   z modułem) / 3 todo; `npm test` OK.
+- **Części 18-B i 18-D scalone do `main`** (56fb84e, cb65bbc, ae676eb, 1ead12b, 0bee2ae; scalenia `main` 7bb3c20, cc1ffe8;
+  scalenie f088bac) — **zatwierdzona zmiana rozgrywki**: przebicia Mjolnira / Valkyrie na wylot (`bulletsAndCollisionsStep`:
+  `b.mech`, `stepInsideHull`, przebiegi `hullPass`, limit kadłubów = `penetration`, krater wylotu / zakleszczenia bez HP),
+  rykoszety Vulcana / Gatlinga S (hash numeru pocisku, obrażenia × 0,3, smugowiec z tego samego hasha — bez
+  `Math.random`), ładowanie Mjolnira (3 s, postój |v| ≤ 30 j/s, |ω| ≤ 0,05 rad/s) i Valkyrie (0,28 s) u gracza, P2 i AI
+  (AI tylko przy widocznym celu i czystej linii ognia) z paskiem na HUD i komunikatami, seria Hexlance'a z `burstCount` (4);
+  18-D: odrzut / wstrząs / `impactScale` tylko z danych broni (`src/game/weaponFeel.js`, `FX_PROFILE` = same klucze
+  wieżyczek). Mapa ran: warianty `impact` / `ricochet` (nowe płytkie osmalenie `vulcan.ricochet`) / `exit` / `stuck`
+  (8. argument `applyHexImpact`), pas rzazu `stampKerf` z gry (Mjolnir przez kolumnę 3 okrętów: 21 stempli, 0 przepadło).
+  **Bilans (1000 strzałów):** Mjolnir kolumna fregata + niszczyciel + pancernik 150 → 549 dps (+266%, 2,94 kadłuba na strzał),
+  pojedynczy cel 312,5 → 227,3 dps (−27% — ładowanie w cyklu); Valkyrie pojedynczy −8,5% (166,7 → 152,4), kolumna +59%
+  (przebija fregatę w 100%, grzęźnie w pancerniku 83%, w lotniskowcu 99%); Vulcan / Gatling S rykoszetują 2,2–5,9% trafień
+  (dps −1,5…−4,2%); Hexlance na naciśnięcie +53% (pancernik) / +57% (lotniskowiec). Odrzut / wstrząs zmienione tylko dla
+  broni bez wpisu w dawnym `FX_PROFILE` (Tempest S/L 4 / 2,5, Helios S / Lance 6 / 3, Gatling S 3 / 2, Autokanon L 8 / 4,
+  CIWS Mk II 1,5 / 1); wstrząs trafienia × `impactScale`: Mjolnir 5 → 16 px (sufit kamery), Yamato 6 → 16 px, Valkyrie 2,5
+  → 8,75 px. Bitwa floty: stan gry i obraz scen `bitwa` / `bitwa-blisko` / `wybuch` / `wraki` / `warp` = `main`; A/B pętli
+  pocisków dla broni bez mechaniki bit w bit (3 ziarna). Harness 85 scen, 0 błędów, 0 NaN; zrzuty obok dema (przebicie,
+  rykoszet, ładowanie, seria) w `.tmp/webgpu/zadania/18b/obok-dema/` — **do oceny użytkownika**. Decyzje (MECHANIKA-BRONI
+  §8.5–8.6): mechanika tylko na kadłubach belkowych (myśliwce i heksy bez zmian), pocisk w materiale nie widzi innych
+  kolizji, rzaz przerzedzony do gęstości dema, naciśnięcie broni z ładowaniem czeka do 1,5 s na wycelowanie, rykoszet na
+  mapie ran = osmalenie. Otwarte: ścieżka AI z ładowaniem uśpiona (domyślne loadouty NPC nie mają tych broni),
+  `impactScale` nie działa na wiązki, nowa baza galerii z `main`. Testy: 1590 / 5 porażek bazowych / 3 todo; `npm test` OK.
