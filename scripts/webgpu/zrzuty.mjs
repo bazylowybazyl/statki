@@ -32,6 +32,7 @@ import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { parseArgs, startVite, startChrome, attachLogs, waitFor, evaluate, screenshotPng, writeJson, sleep, repo, osobneLosowanieUuid } from './wspolne.mjs';
 import { compareDirs } from './porownaj.mjs';
+import { BELT_SCENES, STORM_STAGE } from './asteroidy-gra.mjs';
 
 const args = parseArgs();
 const backends = (args.backend || 'webgl') === 'oba' ? ['webgl', 'webgpu'] : [args.backend || 'webgl'];
@@ -81,10 +82,42 @@ const CZESCI_RINGU = args['czesci-ringu']
   ? (args['czesci-ringu'] === '1' ? ['HaloTerrain', 'HaloStructure', 'HaloStructure_topWall', 'HaloClouds', 'HaloAirShell'] : args['czesci-ringu'].split(','))
   : null;
 
+// Pas asteroid (zadanie 21): miejsca i zoom scen dema dema/asteroidy-webgpu (world.js dema w stronie — pole
+// dema = pole gry), wzory w BELT_SCENES (asteroidy-gra.mjs: te same sceny z diagnostyką, kolizją i wydajnością;
+// asteroidy-demo.mjs: zrzuty dema w tych miejscach). W = world.js dema, B = pas gry.
+const BELT_JS = (id, extra = '') => `const W = await import('/dema/asteroidy-webgpu/world.js'); const B = window.__asteroidBelt;
+         ${BELT_SCENES[id].js}
+         await H.step(2); S.cam(ship.pos.x, ship.pos.y, window.camera.zoom);${extra}`;
+
 // ── Sceny ─────────────────────────────────────────────────────────────────────
 // js: ciało funkcji async w stronie (S = pomocniki scen, H = zegar); hud: czy zostawić HUD DOM;
 // warm: prawdziwe klatki przy stojącym czasie przed zrzutem (kompilacja, wgrywanie tekstur).
 const SCENES = {
+  'pas-pole': {
+    opis: `Pas asteroid — ${BELT_SCENES.pole.opis}`,
+    hud: false, warm: 30, warstwy: true,
+    js: BELT_JS('pole')
+  },
+  'pas-noc': {
+    opis: `Pas asteroid — ${BELT_SCENES.noc.opis}`,
+    hud: false, warm: 30,
+    js: BELT_JS('noc')
+  },
+  'pas-burza': {
+    opis: `Pas asteroid — ${BELT_SCENES.burza.opis}; burza powtarzalna (STORM_STAGE: piorun przed dziobem, błysk w chmurach)`,
+    hud: false, warm: 30, warstwy: true,
+    js: BELT_JS('burza', `
+         await H.step(40);
+         { const sim = B.storm.sim, sx = ship.pos.x, sy = ship.pos.y, sa = ship.angle; const force = (x, y) => B.forceStrike(x, y);
+           await (async () => { ${STORM_STAGE} })(); }
+         await H.step(20);`)
+  },
+  'pas-olbrzym': {
+    opis: `Pas asteroid — ${BELT_SCENES.olbrzym.opis} (siatka SDF z workerów — czekanie w czasie rzeczywistym)`,
+    hud: false, warm: 30,
+    js: BELT_JS('olbrzym', `
+         for (let i = 0; i < 360 && !B.giants.entries.some((e) => e.id === 'warren' && e.view); i++) { await H.frames(2); await new Promise((r) => setTimeout(r, 500)); }`)
+  },
   menu: {
     opis: 'Menu główne: Ziemia z ringiem w kamerze kinowej (MenuBackdrop3D), intro po 150 klatkach',
     hud: true, warm: 60,
@@ -262,7 +295,10 @@ const SESSIONS = [
   { id: 'mars', query: 'dev=1&haloTest=mars&haloAt=port', start: 'single', ring: 'mars', scenes: ['mars-ring'] },
   { id: 'jowisz', query: 'dev=1&haloTest=jupiter&haloAt=port', start: 'single', ring: 'jupiter', scenes: ['jowisz-ring'] },
   { id: 'kosmos', query: 'dev=1', start: 'single', sprites: true, scenes: ['kalibracja', 'kalibracja-sprzatanie', 'bitwa', 'bitwa-blisko', 'wybuch', 'wraki', 'warp'] },
-  { id: 'split', query: 'dev=1', start: 'split', sprites: true, scenes: ['split'] }
+  { id: 'split', query: 'dev=1', start: 'split', sprites: true, scenes: ['split'] },
+  // Zadanie 21: pas asteroid z dema WebGPU (osobna sesja — nie przesuwa scen pozostałych; bazy WebGL brak: stare pole
+  // było wyłączone, porównanie ze zrzutami dema — asteroidy-demo.mjs).
+  { id: 'pas', query: 'dev=1', start: 'single', belt: true, scenes: ['pas-pole', 'pas-noc', 'pas-burza', 'pas-olbrzym'] }
 ];
 
 // Ostrzeżenia/błędy bez znaczenia dla portu (środowisko headless, zasoby spoza renderu).
@@ -300,6 +336,7 @@ async function runSession(session, backend, outDir, base) {
       if (session.ring) await ev('(() => { window.__harness.scene.cam(window.ship.pos.x, window.ship.pos.y, 0.2); return true; })()');
       if (session.ring && !await waitFor(cdp, `window.__harness.scene.ringReady('${session.ring}')`, 240000, 400)) throw new Error(`ring ${session.ring} bez map`);
       if (session.sprites && !await waitFor(cdp, 'window.DevScene.preloadHullSprites()', 120000, 250)) throw new Error('nie wczytano sprite’ów kadłubów');
+      if (session.belt && !await waitFor(cdp, '!!(window.__asteroidBelt && window.__asteroidBelt.ready)', 180000, 400)) throw new Error('pas asteroid nie gotowy');
     }
     // Od tej chwili strona dostaje klatki tylko na żądanie (step/frames) — powtarzalna liczba klatek.
     if (!args['bez-hold']) await ev('window.__harness.hold(true)');
