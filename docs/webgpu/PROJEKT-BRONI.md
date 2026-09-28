@@ -268,7 +268,9 @@ Kod: `src/3d/hullDamageMap.js` (sloty, LRU, kolejka, zadania, krok klatki efekt�
   sloty poza kadrem nadrabiają jednym krokiem przy powrocie / stemplu; po `DMG_HOT_SEC` (6,3 s od sufitu żaru 6)
   zadanie zeruje żar i jony, slot przestaje być gorący. Rozmiar dispatchu — potęga dwójki (three alokuje przy zmianie).
 - **Materiał (§3.5):** jak w projekcie (slot per obiekt przez holder + `perObject`, próbka dwuliniowa, `discard` tylko z
-  kanału otworu, żar = `max(żar skóry, żar rany)` + jony); osmalenie przyciemnia albedo przed wszystkimi światłami.
+  kanału otworu, żar = `max(żar skóry, żar rany)` + jony); osmalenie przyciemnia albedo przed wszystkimi światłami;
+  nowy hak `hullDamageLacquer` — waga lakieru × (1 − 0,85·osmalenie) × (1 − lej): odbicie nieba lakieru nie zależy
+  od albedo, więc czarny lej z pełnym lakierem po ostygnięciu wyglądał jak zwykła blacha.
 - **Światła efektów (krok 5):** `hullEffectLighting` — model powierzchni dema broni (Lambert z zawinięciem 0,25,
   Blinn–Phong 40, albedo 0,633, połysk × (1 − 0,8·osmalenie)) po `Core3D.fx.grid.loop` z pozycją z widoku (dokładna
   przy 5–10 mln j.) i węzłem właściciela `uGridOwner` (0 = nic nie pomija; dla przyszłych świateł statków w siatce);
