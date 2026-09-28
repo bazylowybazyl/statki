@@ -1303,9 +1303,14 @@ if (!ringOk) reportError(`Budowa ringu nie wyszła: ${ring.error?.message || rin
 // i doków, szkło kopuł, pociągi, światła dachu i doków), miasto (ogrody, przemysł,
 // drzewa). Bryły jednego zestawu dzielą materiał — mierzona pierwsza (prostopadłościan).
 // Przy okazji rozgrzewa pipeline'y.
+// Zadanie 10: hale K-7 (graf na ring — jedna budowa na rodzaj materiału dla 4 hal; dach i płyta dachu to drugi
+// stan materiału) i ringi-archetypy Marsa i Jowisza (nazwy nieobecne w danym ringu są pomijane).
 const COMPILE_MEASURED = ['HaloTerrain', 'HaloStructure', 'HaloStructure_topWall', 'HaloClouds', 'HaloAirShell',
   'HaloMega_detail_box', 'HaloMega_landmark_box', 'HaloMega_domeGlass', 'HaloMega_trains', 'HaloMega_lights', 'HaloMega_dockLights',
-  'HaloCity_garden', 'HaloCity_industry', 'HaloTrees'];
+  'HaloCity_garden', 'HaloCity_industry', 'HaloTrees',
+  'K7_bg_box', 'K7_plates', 'K7_labels', 'K7_hoses',
+  'EcumeneSurface_0', 'EcuCity', 'EcuTrees', 'EcuStructureFG', 'EcumeneShell', 'EcumeneShellFG', 'EcumeneDomeGlass', 'EcumeneDomeLattice',
+  'FableSurface', 'FabStruct', 'FabTrees', 'FabStructFG', 'FableHull', 'FableHullFG', 'FableDomeGlass', 'FableDomeLattice', 'ArchLights'];
 async function measureCompile(name) {
   const mesh = ring.group.getObjectByName(name);
   if (!mesh || typeof renderer.compileAsync !== 'function') return null;

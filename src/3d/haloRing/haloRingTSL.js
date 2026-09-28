@@ -177,11 +177,15 @@ export const haloFusedMulAddInt = (a, b, c) => {
 // argumentów ma znaczenie (który iloczyn baza scaliła): tylko tam, gdzie pomiar ją potwierdził.
 const fmaF32 = wgslFn('fn haloFma( a : f32, b : f32, c : f32 ) -> f32 { return fma( a, b, c ); }');
 const fmaV2 = wgslFn('fn haloFmaV2( a : f32, b : f32, c : vec2<f32> ) -> vec2<f32> { return fma( vec2<f32>( a ), vec2<f32>( b ), c ); }');
+const fmaVec2 = wgslFn('fn haloFmaVec2( a : vec2<f32>, b : vec2<f32>, c : vec2<f32> ) -> vec2<f32> { return fma( a, b, c ); }');
 const asFloat = (x) => (typeof x === 'number' ? float(x) : x);
+const asVec2 = (x) => (typeof x === 'number' ? vec2(x, x) : (Array.isArray(x) ? vec2(x[0], x[1]) : x));
 /** a·b + c z jednym zaokrągleniem (fma WGSL) — skalary. */
 export const haloFma = (a, b, c) => fmaF32(asFloat(a), asFloat(b), asFloat(c));
 /** vec2(a·b + c.x, a·b + c.y) z jednym zaokrągleniem na składową (jak mad wektorowy w bazie). */
 export const haloFmaV2 = (a, b, c) => fmaV2(asFloat(a), asFloat(b), c);
+/** a·b + c na wektorach vec2 (zadanie 10: hasze ringów-archetypów, np. p·0,7071 + stała); b — liczba, [x, y] albo węzeł. */
+export const haloFmaVec2 = (a, b, c) => fmaVec2(asVec2(a), asVec2(b), asVec2(c));
 
 // smoothstep zapisany wzorem (jak rozwija go HLSL): t = clamp((x − e0)/(e1 − e0)),
 // t²(3 − 2t). Działa też dla e0 > e1 (GLSL ringu używa odwróconych krawędzi —

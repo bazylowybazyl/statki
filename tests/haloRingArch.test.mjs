@@ -177,14 +177,24 @@ test('bryły portu: 8 zatok i 4 tranzyty w stylu dema, przy podłodze', () => {
   }
 });
 
-test('shadery archetypów: pułapki ANGLE, precyzja (modelViewMatrix), bez udawanego ruchu', () => {
-  const glsl = read('src/3d/haloRing/arch/archGLSL.js') + read('src/3d/haloRing/arch/ecumene.js') + read('src/3d/haloRing/arch/fable.js');
-  assert.doesNotMatch(glsl, /\bflat\b\s*[=;,)]/, 'słowo zarezerwowane flat');
-  assert.doesNotMatch(glsl, /modelMatrix\s*\*\s*vec4/, 'pozycje świata we float32 (ring przy planecie miliony j. od zera)');
-  // ziarno instancji kwantowane (szum okien z interpolacji „stałego” atrybutu)
-  assert.match(read('src/3d/haloRing/arch/archGLSL.js'), /floor\(vInst\.y \* 1000\.0 \+ 0\.5\)/);
+test('shadery archetypów (TSL, zadanie 10): bez GLSL, precyzja (modelViewMatrix), ziarno kwantowane, bez udawanego ruchu', () => {
+  // dawne archGLSL.js zastąpione archTSL.js (odpowiedniki TSL dawnych reguł; WGSL — tests/haloRingK7ArchTSL.test.mjs)
+  const files = ['archTSL.js', 'archMaterials.js', 'ecumene.js', 'fable.js', 'archRing.js'];
+  // kod bez komentarzy (komentarze opisują dawne nazwy GLSL, np. gl_PointSize)
+  const src = files.map((f) => read(`src/3d/haloRing/arch/${f}`).replace(/\/\/.*$/gm, '')).join('\n');
+  assert.doesNotMatch(src, /\/\* glsl \*\/|new THREE\.ShaderMaterial|gl_FragColor|gl_Position|gl_PointSize|from '\.\.\/haloRingGLSL\.js'|from '\.\/archGLSL\.js'/, 'bez GLSL');
+  // pozycje przez modelViewMatrix (three składa go w double; ring przy planecie miliony j. od zera) — nie
+  // modelWorldMatrix · pozycja we float32
+  assert.doesNotMatch(src, /modelWorldMatrix\.mul\(/, 'pozycje świata we float32');
+  const lib = read('src/3d/haloRing/arch/archTSL.js');
+  assert.ok((lib.match(/cameraProjectionMatrix\.mul\(modelViewMatrix\.mul\(/g) || []).length >= 4, 'wierzchołki przez modelViewMatrix');
+  // ziarno instancji kwantowane (szum okien z interpolacji „stałego” atrybutu): floor(vInst.y · 1000 + 0,5)
+  assert.match(lib, /const seedI = floor\(mad\(vInst\.y, 1000\.0, 0\.5\)\)/);
   // ring nie udaje życia: bez smug ruchu aut i impulsów maglevu dema
-  assert.doesNotMatch(read('src/3d/haloRing/arch/fable.js'), /traffic1|traffic2|uTime \* 2\.2/);
+  assert.doesNotMatch(read('src/3d/haloRing/arch/fable.js'), /traffic1|traffic2|uTime\.mul\(2\.2\)|uTime \* 2\.2/);
+  // partie instancji bez THREE.InstancedMesh (uuid w kluczu programu = NodeBuilder na partię), światła bez THREE.Points
+  // (punkt WebGPU ma 1 px)
+  assert.doesNotMatch(src, /new THREE\.InstancedMesh\(|new THREE\.Points\(/);
 });
 
 test('gra: klej tworzy ring-archetyp dla Marsa i Jowisza, Ziemia zostaje na silniku Halo', () => {
