@@ -50,7 +50,7 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
 | Składanie klatki | **Bez zmian:** `drawHexShips3D` kopiuje kanwę WebGPU do `#c` w tym samym zadaniu JS; podzielony ekran = 2× `renderSingle` + wycinki. Kopiować zawsze w zadaniu renderu — po `await` kanwa bywa już pusta. Warstwa bez kopii (kanwa 3D pod 2D) — do oceny w zadaniu 23 (zysk znikomy) | SPIKE 5, 5k |
 | Split w jednym renderze | `makeSplitScreenRenderPass` (gałąź split), `renderSplitScreen`, `_renderDirect` są martwe (gra robi split przez 2× `renderSingle`) i na WebGPU i tak nie działają: `clear()` czyści CAŁY cel, nożyczek nie respektuje. **Usuwamy** (zadanie 01) | SPIKE 13 |
 | Viewport celu | `rt.viewport` / `rt.scissor` / `rt.scissorTest` (`renderer.setViewport` działa tylko na kanwę) | SPIKE 13 |
-| Overlay efektów | `overlay3D` / `rocketOverlay3D` (`src/effects3d/overlay.js`) mają dziś **własny `WebGLRenderer`** (iskry, trafienia, wybuchy, Yamato, Supernowa, rakiety). Zostaje na nim w czasie portu (wyjątek przejściowy — stare efekty działają bez zamienników). Zadania 17–19 zabierają z niego efekty (zastąpione nowymi w scenie Core3D), 20 przenosi ostatni — wybuch reaktora — do Core3D i **usuwa overlay**: jedna kanwa 3D, jeden bloom. `CanvasTarget` + `setCanvasTarget()` działa (SPIKE 5), ale nie jest potrzebny | SPIKE 5, decyzja §1 p. 6 |
+| Overlay efektów | **Usunięty w zadaniu 20.** `overlay3D` / `rocketOverlay3D` (`src/effects3d/overlay.js`) miały **własny `WebGLRenderer`** (iskry, trafienia, wybuchy, Yamato, Supernowa, rakiety) — wyjątek przejściowy na czas portu. Zadania 17–19 zabrały z niego efekty (zastąpione nowymi w scenie Core3D), 20 przeniosło ostatni — wybuch reaktora — do Core3D (`src/effects3d/reactorblow.js`) i usunęło overlay: jedna kanwa 3D, jeden bloom. `CanvasTarget` + `setCanvasTarget()` działa (SPIKE 5), ale nie jest potrzebny | SPIKE 5, decyzja §1 p. 6 |
 | Cienie | Mapa cienia per światło: `sun.shadow.autoUpdate = false`, `needsUpdate = true` **raz na klatkę** na starcie `Core3D.render()`. ShadowNode aktualizuje najwyżej raz na klatkę rAF (bramka `frameId` z wewnętrznej pętli renderera; `_cameraFrameId` na `WeakMap` przez `[]` = jeden slot dla wszystkich kamer), pierwsza aktualizacja mapy trwa dwa rendery. `renderer.shadowMap.autoUpdate/needsUpdate` z WebGL znikają. Warstwy: gra ustawia słońcu `shadow.camera.layers.enableAll()` — zachowanie jak w WebGL | SPIKE 9 |
 | Pomiar GPU | `trackTimestamp: true` + `renderer.resolveTimestampsAsync('render')` raz na klatkę (jedno zapytanie w locie) → `Core3D.gpuFrameMs` (PerfHUD bez zmian). `EXT_disjoint_timer_query_webgl2` znika | SPIKE 8 |
 | `renderer.info` | Draw calle = `info.render.drawCalls` (w WebGL `render.calls`); `render.calls` liczy wywołania `render()` i nie zeruje się w `reset()`. `info.autoReset = false` + ręczny reset raz na klatkę (przy `true` wewnętrzna pętla zeruje liczniki co rAF). `window.__rendererInfo.calls` dalej = draw calle (harness i PerfHUD) | SPIKE 14 |
@@ -215,7 +215,7 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   klucz programu** — rysunek instancjonowany trzyma `mesh.count ≥ 2` (druga instancja pusta, niewidoczna).
   **Receptury z losowaniem**: własny strumień `fxRandom` — `Math.random` w efektach przesuwa sekwencję losowań gry
   (rozrzut, zapalniki). Stare moduły wizualne nadal losują z `Math.random` gry (`mainExhaust3D`, `rand` / `coneDir`
-  banku `Fx3D`, `shieldImpactFx`, efekty rakiet, overlay), a liczba ich losowań zależy od stanu pul (budżet iskier
+  banku `Fx3D`, `shieldImpactFx`, efekty rakiet, wybuch reaktora), a liczba ich losowań zależy od stanu pul (budżet iskier
   banku `Fx3D`), zoomu i kadru — przebieg bitwy zależy więc od wizualiów: po 17 (bronie nie zajmują już banku `Fx3D`)
   iskry dysz MAIN dostają więcej budżetu i deterministyczna bitwa 48 okrętów rozjeżdża się z `main` od 2. klatki
   (ślad losowań: pierwsza różnica w `mainExhaust3D.spawnSpark`; wywołania logiki gry identyczne do tego miejsca).
@@ -250,6 +250,29 @@ materiały jako **magentowe zamienniki**. Kolejność zadań minimalizuje ten ok
   płaszczyzna, więc przesunięcie próbki o `off` px = `uv + dFdx(uv)·off.x + dFdy(uv)·off.y` w jej materiale (gałąź po
   jednolitym warunku — bez zgłoszeń shader liczy to co wcześniej). **Świeży kadłub (przylot) nie ma jeszcze SDF sylwetki**
   (`hullShadowSdf.js` piecze z budżetem) — żar brzegu z alfy mipmapy sprite'a (`sprite.level(log2(szerokość brzegu))`).
+- **Pułapki z zadania 20 (wybuch reaktora, koniec overlaya):** **Efektu z własnym złożeniem (osobny bloom, tone
+  mapping, blend kanwy) nie przeniesiesz mnożnikami barw.** Overlay pokazywał nad grą ≈ `alfa · sRGB(ACES(1,2 · H))`
+  (`mix-blend-mode: screen`, alfa = min(1; 1,5 · max H)) — ciemne partie gasły do zera, a jego bloom (1,6 / próg 0,15,
+  ~14× prawie wszystkiego) rozlewał rdzeń w białą kulę z ostrym brzegiem. W Core3D: `reactorLook` (odwrotność ACES
+  i sRGB gry z obrazu overlaya — pojedyncza cząstka na czarnym tle wygląda jak w bazie), poświata rdzenia z bloomu
+  overlaya liczona analitycznie w shaderze (sumy gaussów mipów w px ekranu, kwad powiększony na zasięg poświaty)
+  i **sufit rdzenia pod progiem bloomu gry** (0,88 < 0,9 — bloom gry, ~7,65× liniowo, spłaszczał stromy spadek
+  jasności overlaya), iskry i kolce przez bloom gry z mnożnikiem wyjścia, a rozlane iskry z poświatą kreski (mipy 0–1
+  bloomu overlaya w shaderze). **Odwzorowanie na cząstkę nie oddaje nasycenia SUMY:** overlay liczył alfę i ACES na
+  sumie cząstek, więc gęsta chmura dochodziła do bieli i dalej nie rosła, a u nas każda cząstka jest odwzorowana osobno
+  (do ~7 HDR) i sumy rosną bez końca w bloom gry — poświata iskier w młodej, gęstej chmurze przerastała białą kulę
+  overlaya 2–4×, stąd poświata dopiero od 0,6 s życia iskry (chmura rozlana). **Płaskie kwady „leżące” w płaszczyźnie gry
+  były w overlayu zwrócone TYŁEM do kamery** i FrontSide je odrzucał — pierścień fraktalny i ciemna fala wybuchu nigdy
+  nie były widoczne (jak kwady WASH banku `Fx3D` w 12-B); przepisany „kształt” rysował jasny cyjanowy pas — przed portem
+  płaskiego kwadu sprawdź, czy baza go w ogóle pokazuje. **Kamera overlaya obcinała głębią** (y = 120, near/far ±1000):
+  iskry lecące ku kamerze / od niej znikały poza pasem — Core3D obcina jawnie w wierzchołkach (`REACTOR_SLAB_*`).
+  **Wycinek puli bez alokacji:** three r183 po zapisie atrybutu woła `clearUpdateRanges()` (a ponowne `addUpdateRange`
+  alokuje), przy `DynamicDrawUsage` wysyła CAŁY bufor przy każdym renderze — pula trzyma dwa zakresy na stałe (drugi na
+  zawinięcie pierścienia), `attr.clearUpdateRanges` podmieniony na potwierdzenie wysyłki, wycinek kumulowany do
+  potwierdzenia (klatka bez rysunku siatki nie gubi zapisu; `particlePool.js`). **Test alokacji a TurboFan:** kompilacja
+  współbieżna instaluje kod dopiero, gdy wątek główny odda sterowanie — w synchronicznej rozgrzewce funkcja zostaje
+  w interpreterze (każda liczba zmiennoprzecinkowa w pudełku, ~140 B na klatkę wybuchu); rozgrzewka → `await setTimeout`
+  → pomiar, minimum z kilku rund (`tests/reactorBlow.test.mjs`).
 - **TSL, nie `wgslFn`.** Tekstowy WGSL tylko dla wyizolowanej czystej funkcji, gdy TSL jest naprawdę niewygodny — z
   uzasadnieniem w commicie (zamyka drogę do zapasowego backendu WebGL2). Wyjątek z uzasadnieniem: `haloFma` (09),
   `haloFmaVec2` (10 — ten sam `fma` WGSL na wektorach, hasze archetypów).
@@ -401,7 +424,7 @@ efektów i nowe efekty z dem → koniec overlaya → wydajność → sprzątanie
 „Równolegle z” = rozłączne pliki; każda równoległa sesja we własnym worktree (`README.md`). Zalecane maks. 2–3 naraz
 (GPU wspólne dla pomiarów harnessu).
 
-**Scena overlay** (`src/effects3d/overlay.js`, do zadania 20 na własnym `WebGLRenderer`): iskry trafień i tarcia
+**Scena overlay** (`src/effects3d/overlay.js`, na własnym `WebGLRenderer` — usunięta w zadaniu 20): iskry trafień i tarcia
 (`SparkSystem3D`, `index.html: SparkSystem3D.init(ov.scene)`), wybuchy i trafienia (`reactorblow`, `yamato`,
 `supernovaMissileBlow`, `railgunExplosion`, `armataImpact`, `autocannonImpact`) i rakiety (warstwa raw). Materiału w tej
 scenie nie da się przenieść na TSL, dopóki rysuje ją `WebGLRenderer` — dlatego stare efekty overlaya działają w porcie

@@ -34,7 +34,7 @@
 3. Finalna klatka 3D (kanwa WebGPU `#webgl-layer`) jest kopiowana na główny canvas przez `drawHexShips3D(ctx, W, H)` — w TYM SAMYM zadaniu JS co render (po `await` kanwa WebGPU bywa pusta). Podzielony ekran = 2× `Core3D.renderSingle` + wycinki (jeden render z nożyczkami nie istnieje: `clear()` w WebGPU czyści cały cel).
 4. HUD/overlays 2D są rysowane na końcu.
 
-**Zasada żelazna**: _Nie twórz nowych rendererów (`WebGPURenderer`, `WebGLRenderer`) poza `Core3D`._ Wyjątek przejściowy: overlay efektów (`src/effects3d/overlay.js`) do zadania 20 portu.
+**Zasada żelazna**: _Nie twórz nowych rendererów (`WebGPURenderer`, `WebGLRenderer`) poza `Core3D`._ Bez wyjątków — dawny overlay efektów (drugi `WebGLRenderer`, kanwa `overlay3d`) usunięty w zadaniu 20 portu; pilnuje `tests/overlayContextMerge.test.mjs`.
 
 ---
 
@@ -50,8 +50,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   `src/3d/tsl/`. Konwencje (adapter `material.uniforms`, graf węzłów współdzielony zamiast materiału na encję, rozgrzewka
   passów, światła, precyzja): `PLAN.md` §3–§6.
 - **Magenta = nieprzeniesiony materiał.** Każdy `ShaderMaterial` bez portu rysuje się magentowym zamiennikiem (licznik
-  w harnessie) — to stan przejściowy, nie błąd do obchodzenia. Overlay efektów (`src/effects3d/overlay.js`) do zadania 20
-  zostaje na własnym `WebGLRenderer` (jedyny wyjątek od zasady żelaznej).
+  w harnessie) — to stan przejściowy, nie błąd do obchodzenia.
 - **Core3D na WebGPU (zadanie 01):** tylko WebGPU — przed rendererem `navigator.gpu.requestAdapter()`, bez adaptera
   renderer nie powstaje, `Core3D.ready` → `false`, menu pokazuje „Gra wymaga przeglądarki z WebGPU” (bez zapasu WebGL2:
   `_getFallback = null`). `init()` jest synchroniczne jak dawniej (scena, kamery, cele → `isInitialized`), urządzenie
@@ -131,7 +130,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   układem geometrii bryły; pass cienia — trzymacze na warstwie 31 przez 2 klatki; pule odłamków paneli —
   `PanelShardManager.prewarm`. Klatka rozpadu bez budowy materiałów (`scripts/webgpu/rozpad-stacji.mjs`). Odłamki paneli są
   CZARNE jak w WebGL (pułapka 22) — barwy z `instanceColor` to decyzja wyglądu (kolor pul 0xffffff). Scena bazy
-  `stacja-rozpad` (sesja „stacja”, warianty `__3d` / `__fg-3d` bez overlaya); różnice na sylwetkach vs wnętrza:
+  `stacja-rozpad` (sesja „stacja”, warianty `__3d` / `__fg-3d` bez wybuchu reaktora); różnice na sylwetkach vs wnętrza:
   `scripts/webgpu/krawedzie.mjs`.
 - **Nowe efekty broni i rakiet z dem** (`dema/bronie-webgpu`, `dema/rakiety-webgpu` — decyzja użytkownika 2026-09-27)
   zastępują stare (zadania 12, 17–20); wspólne klocki w `src/3d/fx/`. Broń (zadanie 17): `src/3d/weapons/` — § „Efekty broni” niżej. Starych efektów broni, rakiet, iskier i trafień nie
@@ -149,6 +148,19 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
   zmiennoprzecinkowych w argumentach / wyniku wywołań (V8 opakowuje je w obiekty, gdy nie wklei funkcji) — wpisy robocze
   pul (`pool.s` + `push()`), bufor świateł (`stageLights` / `flushLights`), kinematyka rakiet w tablicach (`_kin`),
   liczby losowe `fillRandom` (ten sam ciąg co fxRandom), `Math.sqrt` zamiast `Math.hypot`. Harness: sesja „rakiety”.
+- **Wybuch reaktora (zadanie 20, `src/effects3d/reactorblow.js`, materiały `reactorblow.tsl.js`, pule `particlePool.js`):**
+  overlay efektów (drugi `WebGLRenderer`, własny bloom 1,6 / próg 0,15, kanwa składana `screen`) usunięty — wybuch żyje
+  w scenie Core3D: pule ognia (100 000) i dymu (15 000) w passie ortho (warstwa 0), materiał TSL raz na pulę, ruch
+  analityczny w wierzchołkach, początek puli przy wybuchu (przestawiany, gdy pula bezczynna), krok efektów „reaktor”
+  (fazy, światło rdzenia i rozbłysku → `grid.addWorld`, wysyłka zapisanych wycinków pul, rozgrzewka `prewarmPass`).
+  Wejścia bez zmian: `triggerReactorBlow3D` (śmierć okrętu), `Destruction3D` (`reactorFactory` — rozpad stacji),
+  `window.makeReactorBlow({ x, y, size, profile })`; profile i czasy 1:1, losowania z `Math.random` gry w dawnej
+  kolejności (przebieg sceny jak w bazie). Wygląd dawnego złożenia pod post gry: `reactorLook` (odwrotność ACES i sRGB
+  gry z obrazu overlaya), poświata rdzenia z bloomu overlaya liczona w shaderze, rdzeń z sufitem 0,88 pod progiem bloomu
+  gry, iskry i kolce przez bloom gry, rozlane iskry (od 0,6 s) z poświatą kreski z mipów 0–1 bloomu overlaya
+  (`REACTOR_LOOK`; na żywo `window.__reactorBlow3D.setLook`). Płaskie kwady (pierścień,
+  fala dymu) były w overlayu odwrócone tyłem i niewidoczne — zostają 1:1 (FrontSide; podgląd `setFlatVisible(true)`).
+  Harness: sesja „reaktor”, wariant `__reaktor` (`--reaktor`: sam wybuch na czarnym tle, baza — ten sam skrypt w tagu).
 - **Stara soczewka warpa i stare asteroidy nie przechodzą** (stare pole **wyłączone** w grze: `OLD_ASTEROIDS_ENABLED`,
   `?asteroidyStare`) — zastępują je nowe z dem WebGPU (`dema/asteroidy-webgpu` → zadanie 21, `dema/warp-webgpu` →
   zadanie 22: warp „Nurt” w grze, opis w „Warp „Nurt”” niżej). Moduły ruchu v2 spoza gry (Z4/Z5/Z7) przechodzą na TSL przy swojej integracji.
@@ -383,13 +395,13 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 - Moduły: `weaponFxTable.js` (`WEAPON_FX`: broń → rodzina receptury, `SIZE_POWER`, `projectileFamilyFor` dla pocisków spoza tabeli), `recipes.js` (receptury rodzin: `preFire`, `muzzle`, `projectile(size)`, `fly`, `impact`, `charge`, `kerf`, `exit`, `stuck`, `burst`, `beam`), `gpuFx.js` (pule ADD / SPARK / SMOKE / DEBRIS / DIST / ARC — paczki rozwijane w kernelu, nośnik w paczce, początek przy kamerze), `projectiles.js` (8 stylów, jeden draw call), `trails.js` (smugi), `beams.js` (wiązka ciągła, impuls, laser PD), `weaponFx.js` (fasada `WeaponFx`).
 - Zdarzenia: strzał = `WeaponShotBus.emit` z `fireWeaponCore` (kierunek lufy `dirX/dirY`; wiązka: `_beamEventScratch` z `kind` continuous / pulse / pd, trafiona encja i normalna powierzchni sprzed krateru); lot = `WeaponFx.sync(bullets)` raz na klatkę renderu (`updateHexShips3D`, po `Turret2D.sync`); trafienie = `spawnBulletImpactEffect(b, x, y, scale, hit)` (dane z `writeImpactHit` — normalna, encja, prędkość względna) za bramkami kadru / rozmiaru i cooldownu komórki; PD gracza (`ciwsStep`, poza szyną) → `WeaponFx.pdShot` / `pdLaser`, pęknięcie flaku → `flakBurst`, Hexlance (`superweapon.js`) → `hexlanceCharge / Fire / Begin / Step / End / Impact / Kerf / Exit`, warsztat rdzeni (`coreFx3D.js`) → `muzzleAt`, `hexlanceImpact / Kerf` z mocą klasy, śmierć NPC (`CanvasVFX.spawnExplosionPlasma`) → `droneBlast`. Kanwa nie rysuje wiązek ani błysków broni.
 - **Nowa broń:** dane w `MASTER_WEAPONS` (`src/data/weapons.js`) + wpis w `WEAPON_FX` (istniejąca rodzina albo nowa receptura) + klucz wieżyczki (`normalizeWeaponFxKey`, `FX_PROFILE` w `turret2D.js`). Testy `weaponFxTable` / `weaponRecipes` / `beamRenderPath` pilnują, że każda broń ma recepturę (wiązka — `beam`).
-- **Nowa receptura:** paczki przez budowniczego puli `E(pool, rodzaj, n, P, D).speed(a, b)…emit()` (metody budowniczego zostają krótkie — V8 wkleja je, łańcuch nie alokuje), losowanie tylko `fxRandom` (nigdy `Math.random` — sekwencja rozgrywki; stare wizualia — `mainExhaust3D`, `rand` / `coneDir` banku `Fx3D`, `shieldImpactFx`, overlay — jeszcze losują z `Math.random` gry i przez to przebieg bitwy zależy od nich, PLAN §3), zdarzenia opóźnione `ctx.after(opóźnienie, AFTER.RODZAJ, liczby…, encja)` bez domknięć, światła przez `ctx.lights.flash / point` (siatka świateł), wstrząs `ctx.shake` (wylot — `camera.addShake` porównany z resztą; trafienie — tylko gdy gracz strzelał albo oberwał). Barwy w pasmach HDR (rdzenie i błyski > 0,9, ciała 0,3–1,3, smugi: ciało ≤ 1,4); w gorących pętlach `Math.sqrt`, nie `Math.hypot` (alokuje), liczby double do niewklejonych wywołań przez `Float64Array`.
+- **Nowa receptura:** paczki przez budowniczego puli `E(pool, rodzaj, n, P, D).speed(a, b)…emit()` (metody budowniczego zostają krótkie — V8 wkleja je, łańcuch nie alokuje), losowanie tylko `fxRandom` (nigdy `Math.random` — sekwencja rozgrywki; stare wizualia — `mainExhaust3D`, `rand` / `coneDir` banku `Fx3D`, `shieldImpactFx`, wybuch reaktora — jeszcze losują z `Math.random` gry i przez to przebieg bitwy zależy od nich, PLAN §3), zdarzenia opóźnione `ctx.after(opóźnienie, AFTER.RODZAJ, liczby…, encja)` bez domknięć, światła przez `ctx.lights.flash / point` (siatka świateł), wstrząs `ctx.shake` (wylot — `camera.addShake` porównany z resztą; trafienie — tylko gdy gracz strzelał albo oberwał). Barwy w pasmach HDR (rdzenie i błyski > 0,9, ciała 0,3–1,3, smugi: ciało ≤ 1,4); w gorących pętlach `Math.sqrt`, nie `Math.hypot` (alokuje), liczby double do niewklejonych wywołań przez `Float64Array`.
 - Budżety: pełnych wylotów i trafień po 48 na klatkę (ponad — tani błysk), LOD wylotu po rozmiarze wieżyczki na ekranie, impulsy w pierścieniu `PULSE_CAP` (1024), stany pocisków 4096, zdarzenia opóźnione 512. Dym i odłamki czytają maskę słońca (`sunVisibility`), emisja nie.
 - Mechanika z dema (przebicia, rykoszety, ładowanie Mjolnira / Valkyrie, mapa ran na kadłubie) — zadanie 18: haki `ctx.stamp` (mapa ran, 18-C), `ctx.ricochet`, `WeaponFx.charge` i receptury `kerf / exit / stuck` czekają na logikę gry.
 
 ### Nośnik prędkości: pociski i efekty lecą z tym, z czego wyszły
 - Pocisk dziedziczy 100% prędkości lufy (ruch + obrót kadłuba, `writePointVelocity`, `src/game/carrierVelocity.js`) i niesie znaczniki: `ivx/ivy` (odziedziczona część), `clock` (gracz/P2 — `CLOCK_RENDER`, reszta `CLOCK_SIM`), `bornSim` (czas pozy lufy). Nowe źródło pocisków robi to samo — bez znaczników smuga, zasięg i kierunek trafienia liczą się w świecie.
-- Efekt rodzi się z nośnikiem: `ActiveCarrier.set(writeCarrier(encja, x, y, zRekorduRenderu, scratch))` → spawn → `ActiveCarrier.clear()`, bez wołania w środku innych emiterów. Czytają go Fx3D, CanvasVFX, SparkSystem3D, overlay (efekty z `followCarrier`) i pule broni `WeaponFx` (paczka niesie nośnik — `writeCarrierPacket`, rysunek `fxCarrierOffset`). Wylot = kadłub strzelca, trafienie = trafiony kadłub, pęknięcie i odłamki pocisku = jego `ivx/ivy`. Dysze MAIN celowo bez nośnika (smuga ma zostawać za statkiem).
+- Efekt rodzi się z nośnikiem: `ActiveCarrier.set(writeCarrier(encja, x, y, zRekorduRenderu, scratch))` → spawn → `ActiveCarrier.clear()`, bez wołania w środku innych emiterów. Czytają go Fx3D, CanvasVFX, SparkSystem3D i pule broni `WeaponFx` (paczka niesie nośnik — `writeCarrierPacket`, rysunek `fxCarrierOffset`). Wylot = kadłub strzelca, trafienie = trafiony kadłub, pęknięcie i odłamki pocisku = jego `ivx/ivy`. Dysze MAIN celowo bez nośnika (smuga ma zostawać za statkiem).
 - Rysowanie: `pos + v · (T − t0)` z `SimClock` (`src/game/simClock.js`): `sim` rośnie w `physicsStep` zaraz po całkowaniu pozycji gracza, `render` = czas interpolowanej pozy gracza (`beginRender` przed `render`). Nie przesuwaj niesionych efektów zegarem klatki — rozjadą się z kadłubem w pauzie i przy interpolacji. Czas pozy: z rekordów Turret2D `fromRender = true`, z pozy fizycznej `false`.
 - Wyprzedzenie liczy ruch celu WZGLĘDEM strzelca (`getLeadAim(..., shooterVel)`, `leadTarget`), smuga pocisku = ruch względem strzelca, kierunek wgniecenia = prędkość pocisku względem celu, zasięg Hexlance'a i rakiet = droga własna.
 - Rakiety 3D: `rocketSystem3D.fire(..., launchVx, launchVy)` — układ rakiety to pęd wyrzutni (stały, bez dopasowania do celu), lot kinematyczny w nim; przy wyrzutni w spoczynku zachowanie jak dawniej. Canvasowe rakiety i torpedy naprowadzają ruch własny w układzie `ivx/ivy`.
@@ -418,8 +430,8 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 
 1. **Core3D (`src/3d/core3d.js`)**
    - Modyfikacje renderera, passów scen (runner `_runScenePass`: tło → planety → halo → ring-planety → ortho → tarcze → FG, wszystko do `composerTarget` HalfFloat MSAA 4, czyszczona tylko głębia) i postu (`RenderPipeline`) rób wyłącznie tutaj.
-   - Parametry bloomu (strength/radius/threshold, także dla overlay3D) żyją w `src/3d/bloomConfig.js` — jedyne źródło prawdy; tuner (panel Bloom) nadpisuje je trwale tylko z `?dev` w URL.
-   - Bloom przepuszcza przez próg CAŁY teksel (nie nadmiar) i dokłada ~9 × strength jego energii (radius tylko przesuwa wagę między mipami; rozmycia gubią ~3%): Core3D 0,85 → ~7,5×, overlay3D 1,6 przy progu 0,15 → ~14× prawie wszystkiego. Jasność nowego emitera dobieraj z tym w głowie. Core3D od zadania 02: `BloomGry` (BloomNode + ×3 `BLOOM_ZGODNOSC_WEBGL`, `src/3d/tsl/postGry.js`) — obraz 1:1 z dawnym `UnrealBloomPass` (strażnik różnic three: `tests/webgpuPost.test.mjs`); overlay3D do zadania 20 na starym passie.
+   - Bloom jest JEDEN — w poście Core3D (od zadania 20 bez overlaya i jego bloomu). Parametry (strength/radius/threshold) żyją w `src/3d/bloomConfig.js` — jedyne źródło prawdy; tuner (panel Bloom) nadpisuje je trwale tylko z `?dev` w URL (stare zapisy `overlay*` tuner kasuje).
+   - Bloom przepuszcza przez próg CAŁY teksel (nie nadmiar) i dokłada ~9 × strength jego energii (radius tylko przesuwa wagę między mipami; rozmycia gubią ~3%): Core3D 0,85 → ~7,5× (dawny overlay3D: 1,6 przy progu 0,15 → ~14× prawie wszystkiego). Jasność nowego emitera dobieraj z tym w głowie. Core3D od zadania 02: `BloomGry` (BloomNode + ×3 `BLOOM_ZGODNOSC_WEBGL`, `src/3d/tsl/postGry.js`) — obraz 1:1 z dawnym `UnrealBloomPass` (strażnik różnic three: `tests/webgpuPost.test.mjs`).
    - Pipeline jest HDR-first: emitery (pociski, beamy, dysze) mnożą kolory >1.0, próg bloomu ~0.9 odcina zwykłe powierzchnie. Nowe efekty, które mają świecić, muszą wypychać luminancję >1.
    - Nie duplikuj postprocessingu w innych modułach. Nowe efekty GPU: compute przez `Core3D.addFxStep` (raz na klatkę, przed passami), światła przez siatkę (`Core3D.fx.lights` / `ctx.grid`), refrakcja przez `Core3D.fxDistortion()` albo warstwę DIST (`FX_DISTORT_LAYER`) — nie własne `renderer.compute` w pętli gry, własne cele ani passy (`docs/webgpu/FX-INFRA.md` §10).
    - Passy planet (warstwa 3), halo (5), ring-planet (6) i tarcz (7) są pomijane, gdy nikt nie zgłosi na nich widocznej zawartości (`Core3D.layerActivity`). Dodając obiekt na te warstwy, zgłaszaj go co klatkę (`Core3D.markPlanetLayersActive` / `Core3D.setShieldLayerActive`) — inaczej zniknie.
@@ -464,7 +476,7 @@ Plan: `docs/webgpu/PLAN.md`; stan zadań i dziennik: `docs/webgpu/POSTEP.md`; ja
 
 
 ### Lista kontrolna PR
-- [ ] Brak nowych rendererów (WebGPU / WebGL) poza `Core3D` (wyjątek przejściowy: overlay efektów do zadania 20).
+- [ ] Brak nowych rendererów (WebGPU / WebGL) poza `Core3D`.
 - [ ] Brak alokacji w pętli render/update tam, gdzie były bufory/pule.
 - [ ] Brak regresji sterowania i kolizji 2D.
 - [ ] Spójność osi/rotacji (sprite, thrusters, impact/local transforms).
