@@ -187,18 +187,23 @@ test('wybuchy overlaya bez PointLight (scena bez materiałów oświetlanych, św
   }
 });
 
-test('martwe: bez regl z unpkg, soczewka warpu bez własnego kontekstu WebGL (API Core3D)', () => {
+test('martwe: bez regl z unpkg, warp „Nurt” bez własnego kontekstu i bez próbkowania gotowej klatki (Core3D)', () => {
   assert.doesNotMatch(indexHtml, /unpkg\.com\/regl/);
-  // Soczewka zgłasza się do Core3D (warpLensPass.js) — żadnego trzeciego
-  // kontekstu ani uploadu całej kanwy 2D jako tekstury co klatkę.
-  const lens = readSrc('src/vfx/warpLensPass.js');
-  assert.doesNotMatch(lens, /WarpBlackHole|getContext\(|texImage2D/);
-  assert.match(lens, /Core3D\.setWarpLensWorld\(/);
-  // Port WebGPU: warp poza portem — pass soczewki i jej cele usunięte z Core3D,
-  // API zostaje jako no-op (nowy warp wejdzie w TSL w miejscu opisanym w render()).
-  assert.doesNotMatch(core3d, /import[^;]*warpLens3D/);
+  // Zadanie 22: stara soczewka (warpLensPass / warpLens3D / warpWorldLens / warpFx3D) usunięta
+  // razem z no-opami API Core3D; nowy warp to moduły src/3d/warp/ na scenie i kroku efektów Core3D.
+  assert.doesNotMatch(indexHtml, /import[^;]*warpLensPass|updateWarpLens3D\(/);
+  assert.doesNotMatch(core3d, /import[^;]*warpLens3D|setWarpLensWorld\(|pushWarpSpaceWorld\(|setWarpViewWorld\(/);
   assert.doesNotMatch(core3d, /warpLensTarget|warpStarTarget|_prepareWarpLens|createWarpLensShader/);
-  assert.match(core3d, /setWarpLensWorld\(worldX, worldY, angle, radiusAlong, radiusAcross, swallow\) \{ \},/);
+  const nurt = readSrc('src/3d/warp/warpNurt.js');
+  for (const file of ['warpNurt.js', 'medium.js', 'sprites.js', 'skyBend.js', 'stars.js']) {
+    const src = readSrc(`src/3d/warp/${file}`);
+    // Jeden renderer (Core3D), bez kanwy 2D jako tekstury i bez celu z gotową klatką („jajko”).
+    assert.doesNotMatch(src, /new THREE\.(WebGPURenderer|WebGLRenderer)|getContext\(|texImage2D|composerTarget\.texture/, file);
+  }
+  assert.match(nurt, /Core3D\.addFxStep\(/);
+  assert.match(nurt, /Core3D\.setWarpLayerActive\(/);
+  assert.match(core3d, /this\.renderPassWarp = makeScenePass\('warp', 'warp', WARP_MEDIUM_RENDER_LAYER, false, false, false\);/);
+  assert.match(core3d, /if \(pass === this\.renderPassWarp\) return activity\.warp === true;/);
 });
 
 test('warstwa raw rakiet i pule odłamków paneli: puste siatki są niewidoczne', () => {

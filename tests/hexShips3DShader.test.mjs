@@ -97,9 +97,12 @@ test('graf na wariant: materiały kadłubów jednego wariantu mają ten sam kluc
 
 test('WGSL kadłuba: tekstury per obiekt w liście aktualizacji, lampy w jednym buforze storage, ≤ 12 buforów uniformów', () => {
   for (const [v, r] of Object.entries(built)) {
-    // Sprite, mapa normalnych i mapa kształtu lakieru — per obiekt (węzeł w updateNodes).
+    // Sprite, mapa normalnych i mapa kształtu lakieru — per obiekt (węzeł w updateNodes). Sprite
+    // dwa razy: próbka zwykła i z jawnym poziomem mip (pas żaru brzegu warpa „Nurt”, zadanie 22) —
+    // klon tego samego węzła, to samo wiązanie tekstury (liczba tekstur w WGSL bez zmian).
     const keys = r.updateNodes.filter((n) => n.hullKey).map((n) => n.hullKey).sort();
-    assert.deepEqual(keys, ['uNormalMap', 'uShapeMap', 'uSprite'], v);
+    assert.deepEqual(keys, ['uNormalMap', 'uShapeMap', 'uSprite', 'uSprite'], v);
+    assert.ok((r.fragment.match(/: texture_2d<f32>/g) || []).length <= 6, `${v}: bez nowego wiązania tekstury`);
     for (const stage of [r.vertex, r.fragment]) {
       assert.ok((stage.match(/var<uniform>/g) || []).length <= 12, `${v}: limit 12 buforów uniformów na etap`);
     }

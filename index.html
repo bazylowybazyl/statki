@@ -1086,7 +1086,7 @@
       PLAYER_HULL_MARKET_ORDER
     } from "./src/data/playerHullMarket.js";
     import { publishGameState } from "./src/game/gameState.js";
-    import { updateWarpLens3D } from "./src/vfx/warpLensPass.js";
+    import { WarpNurt } from "./src/3d/warp/warpNurt.js";
     import { createPlayerHullCatalog } from "./src/data/playerHullCatalog.js";
     import {
       targetingStrokeGlass,
@@ -1269,6 +1269,9 @@
         BridgeFx3D.attach(Core3D.scene);
         // Model 3D mostka (docs/PORT-mostki.md §8) — ta sama scena, bez renderera.
         Bridge3D.attach(Core3D.scene);
+        // Warp „Nurt” (src/3d/warp/, zadanie 22): ośrodek (compute), szczeliny, błyski, gwiazdy,
+        // zgięcie mgławicy, fale — sam wygląd, słucha automatu warpa i przylotów NPC.
+        WarpNurt.init();
       }
     }
 
@@ -1464,7 +1467,7 @@
             if (!carrier) return;
             spawnCallInShip('fighter', { anchor: carrier, mode });
           } else {
-            spawnCallInShip(key, { mode });
+            WarpNurt.arriveAll(spawnCallInShip(key, { mode }));
           }
           // Rozkaz skrzydła zostaje, jaki był (ATAK nie znika po przyzwaniu).
         });
@@ -1543,7 +1546,7 @@
         const mode = getSupportSpawnMode();
         // Rozkaz skrzydła zostaje, jaki był — dawniej każde przyzwanie
         // przestawiało CAŁE skrzydło na ESKORTĘ i kasowało kliknięty ATAK.
-        spawnCallInShip(key, { spawnPos: world, pos: world, mode });
+        WarpNurt.arriveAll(spawnCallInShip(key, { spawnPos: world, pos: world, mode }));
       }
       mouse.left = false;
       mouse.click = false;
@@ -1671,7 +1674,7 @@
       for (let i = 0; i < count; i++) {
         const t = count === 1 ? 0.5 : i / (count - 1);
         const pos = { x: startWorld.x + dx * t, y: startWorld.y + dy * t };
-        spawnCallInShip(key, { spawnPos: pos, pos, mode, singleModule: true });
+        WarpNurt.arriveAll(spawnCallInShip(key, { spawnPos: pos, pos, mode, singleModule: true }));
       }
       toast(`LINIA: ${count}x ${key}`);
     }
@@ -9697,6 +9700,20 @@
         preloadHullSprites() {
           const entries = Object.values(HULL_SPRITE_PATHS_BY_ID).map((src) => loadHullSprite(src)).filter(Boolean);
           return entries.every((e) => e.ready || e.error);
+        },
+        // Warp „Nurt” (zadanie 22): kursor w kierunku `heading` od środka ekranu — ładowanie warpa
+        // obraca statek ku kursorowi (automat gry), więc kurs skoku w harnessie jest powtarzalny.
+        aimWarp(heading) {
+          mouse.x = W / 2 + Math.cos(heading) * 400;
+          mouse.y = H / 2 + Math.sin(heading) * 400;
+          return true;
+        },
+        // Wyjście z warpa jak klawisz gracza (attemptWarp w stanie active).
+        exitWarp() {
+          if (warp.state !== 'active') return false;
+          warp.state = 'idle';
+          exitWarp();
+          return true;
         }
       });
     }
@@ -20164,7 +20181,8 @@
               npc.isCollidable = true;
               npc.vx *= 0.1;
               npc.vy *= 0.1;
-              spawnShockwave(npc.x, npc.y, { maxR: 600, maxLife: 0.5, color: 'rgba(255, 100, 100,' });
+              // Przylot widać w warpie „Nurt” (WarpNurt: wyrzut z tunelu w chwili warp-in) — dawny
+              // czerwony pierścień 2D i smuga cząstek usunięte w zadaniu 22.
               if (npc.type === 'battleship') camera.addShake(8, 0.4);
               else camera.addShake(3, 0.2);
               npc.warpData = null;
@@ -20176,12 +20194,6 @@
               npc.vy = dirY * npc.warpData.speed;
               npc.desiredAngle = Math.atan2(npc.vy, npc.vx);
               npcRotationStep(npc, dt, frameNorm);
-
-              spawnParticle(
-                { x: npc.x, y: npc.y },
-                { x: -dirX * 500, y: -dirY * 500 },
-                0.2, '#ffaaaa', 4, false
-              );
 
               npc.x += npc.vx * dt;
               npc.y += npc.vy * dt;
@@ -20620,7 +20632,8 @@
     setWarpGear(1, true);
 
     function exitWarp() {
-      spawnShockwave(ship.pos.x, ship.pos.y, { maxR: 1200, maxLife: 0.7 });
+      // Wyjście widać w warpie „Nurt” (src/3d/warp/player.js: front, fala refrakcji, błysk, szew
+      // i żar) — dawny świecący pierścień 2D (spawnShockwave) usunięty w zadaniu 22.
       camera.addShake(18, 0.22);
 
       warp.entryProgress = 0;
@@ -20803,13 +20816,8 @@
       if (DevFlags.unlimitedWarp) {
         warp.fuel = warp.fuelMax;
       }
-
-      // Efekty wizualne
-      spawnParticle({ x: ship.pos.x, y: ship.pos.y }, { x: 0, y: 0 }, 0.14, '#bfe7ff', 8, true);
-      for (let i = 0; i < 18; i++) {
-        const a = Math.random() * Math.PI * 2;
-        spawnParticle({ x: ship.pos.x, y: ship.pos.y }, { x: Math.cos(a) * 320, y: Math.sin(a) * 320 }, 0.18 + Math.random() * 0.18, '#cce6ff', 1.4, false);
-      }
+      // Skok widać w warpie „Nurt” (src/3d/warp/player.js: kop — smugi gwiazd, fala, błysk za
+      // rufą, ośrodek); dawny rozprysk cząstek 2D usunięty w zadaniu 22.
     }
 	const _p1ForceScratch = { localFx: 0, localFy: 0, localTorque: 0 };
 	const _p2ForceScratch = { localFx: 0, localFy: 0, localTorque: 0 };
@@ -22274,42 +22282,6 @@
       }
     }
 
-    // ======= Efekty VFX =======
-    function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
-      if (progress <= 0) return;
-      const eased = smoothstep01(progress);
-      const baseAlpha = 0.3 + 0.5 * eased;
-      const glowR = radius * (0.65 + 0.25 * eased);
-      const ringR = radius * (0.9 + 0.35 * eased);
-      const lineBase = (6 + 22 * eased) * spriteScale;
-      const arcLine = (10 + 18 * eased) * spriteScale;
-
-      ctx.save();
-      ctx.globalCompositeOperation = 'lighter';
-
-      const glow = ctx.createRadialGradient(0, 0, glowR * 0.35, 0, 0, glowR);
-      glow.addColorStop(0, `rgba(186,232,255,${baseAlpha})`);
-      glow.addColorStop(1, 'rgba(125,211,252,0)');
-      ctx.fillStyle = glow;
-      ctx.beginPath(); ctx.arc(0, 0, glowR, 0, Math.PI * 2); ctx.fill();
-
-      ctx.lineWidth = lineBase;
-      ctx.strokeStyle = `rgba(125,211,252,${0.35 + 0.4 * eased})`;
-      ctx.beginPath(); ctx.arc(0, 0, ringR, 0, Math.PI * 2); ctx.stroke();
-
-      const segments = 4;
-      const arcLen = Math.PI * (0.22 + 0.4 * eased);
-      ctx.lineWidth = arcLine;
-      ctx.strokeStyle = `rgba(206,244,255,${0.45 + 0.45 * eased})`;
-      for (let i = 0; i < segments; i++) {
-        const offset = (vfxTime * 1.4 + i / segments) * Math.PI * 2;
-        ctx.beginPath();
-        ctx.arc(0, 0, ringR, offset, offset + arcLen);
-        ctx.stroke();
-      }
-
-      ctx.restore();
-    }
     // ============== SPLIT SCREEN STATE (early declaration) ==============
     let splitScreenMode = false;
     let player2Ship = null;
@@ -23221,6 +23193,24 @@
     }
     // ============== END SPLIT SCREEN RENDER ==============
 
+    // Warp „Nurt” (src/3d/warp/warpNurt.js): jeden obiekt wejścia na grę (bez alokacji na klatkę).
+    const _warpNurtCtx = { dt: 0, cam: null, camShake: null, ship: null, warp: null, npcs: null };
+    function _warpNurtFrame(dt, camNoShake, camShake) {
+      const o = _warpNurtCtx;
+      o.dt = dt;
+      o.cam = camNoShake;
+      o.camShake = camShake;
+      o.ship = ship;
+      o.warp = warp;
+      o.npcs = npcs;
+      return o;
+    }
+    // Wstrząs efektu warpa (kop przy skoku, wyrzut okrętu z tunelu) — nie słabszy od bieżącego.
+    WarpNurt.onShake = (mag, dur) => {
+      const cur = (camera.shakeDur > 0) ? camera.shakeMag * Math.max(0, camera.shakeTime / camera.shakeDur) : 0;
+      if (mag > cur) camera.addShake(mag, dur);
+    };
+
     function render(alpha, frameDt) {
       const tRenderProfile0 = performance.now();
       let tRenderProfileSection = tRenderProfile0;
@@ -23369,6 +23359,9 @@
       // 1. Zaktualizuj wszystkie obiekty 3D na podstawie logiki gry
       let tRender3dSub = performance.now();
       if (renderDbgEnabled) tRenderSection = tRender3dSub;
+      // Warp „Nurt” (src/3d/warp/warpNurt.js): przed planetami — ustawia na tę klatkę limit
+      // kamery gwiazd, smugi gwiazd, zgięcie mgławicy, ośrodek i efekty przylotów NPC.
+      WarpNurt.update(_warpNurtFrame(PAUSED ? 0 : frameDt, camNoShake, cam));
       if (window.updatePlanets3D) window.updatePlanets3D(frameDt, camNoShake);
       const render3dPlanetsMs = performance.now() - tRender3dSub;
       PerfHUD.addTiming('render3dPlanetsUpdateTime', render3dPlanetsMs);
@@ -23502,12 +23495,8 @@
       PerfHUD.addTiming('render3dShieldsUpdateTime', render3dShieldsMs);
       if (renderDbgEnabled) RenderLiveDebug.record('updateShields3D', render3dShieldsMs);
 
-      // Soczewka skoku (src/vfx/warpLensPass.js): parametry idą do Core3D PRZED
-      // drawHexShips3D. Port WebGPU: warp poza portem — Core3D.setWarpLensWorld
-      // to no-op, skok działa bez efektu zgięcia do wpięcia nowego warpa.
-      tRender3dSub = performance.now();
-      updateWarpLens3D(interpPos, interpAngle, frameDt);
-      if (renderDbgEnabled) RenderLiveDebug.record('warpLens', performance.now() - tRender3dSub);
+      // Warp „Nurt” (WarpNurt.update wyżej, przed planetami) zastąpił dawną soczewkę skoku
+      // (warpLensPass.js — usunięta w zadaniu 22 razem z warpLens3D / warpWorldLens / warpFx3D).
       PerfHUD.addTiming('render3dUpdateTime', performance.now() - tRenderProfileSection);
       tRenderProfileSection = performance.now();
 
@@ -23818,17 +23807,8 @@
 
           // --- 1. OBLICZANIE ACTIVE THRUSTERS ---
           // Gdy statek gracza jest renderowany w 3D, pomijamy 2D exhausty, bo nakładają się na kadłub.
-          // --- 2. Rysowanie Warp Glow (ładowanie) ---
-          let warpGlowProgress = 0;
-          if (warp.state === 'charging') {
-            warpGlowProgress = clamp(warp.charge / warp.chargeTime, 0, 1);
-          } else if (warp.state === 'active' && warp.entryProgress < 1) {
-            warpGlowProgress = 1 - smoothstep01(warp.entryProgress);
-          }
-          if (warpGlowProgress > 0) {
-            const chargeRadius = Math.max(visualW, visualH) * 0.7;
-            drawWarpChargeEffectLocal(warpGlowProgress, chargeRadius, spriteScale);
-          }
+          // --- 2. Ładowanie warpa: bez dawnego świecącego pierścienia na kanwie 2D — bańkę
+          // pokazuje ośrodek warpa „Nurt” (src/3d/warp/, zadanie 22).
 
           // --- 3. Rysowanie KADLUBA ---
           if (ship.hexGrid || ship.beamHull) {

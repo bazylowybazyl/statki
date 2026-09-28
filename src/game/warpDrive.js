@@ -166,6 +166,130 @@ export function sampleWarpArrival(a, t, out = {}) {
   return out;
 }
 
+/** Czasy odlotu (s) dla kadłuba referencyjnego — oś z dema „Nurt” (dema/warp-webgpu/arrivals.js). */
+export const WARP_DEPARTURE_BASE = Object.freeze({
+  charge: 1.6,        // ładowanie: punkt skoku przed dziobem (+ chargePerSize × skala)
+  chargePerSize: 0.8,
+  split: 0.45,        // szczelina otwiera się tyle przed wejściem
+  dive: 0.34,         // wejście w szczelinę (+ divePerSize × skala)
+  divePerSize: 0.12,
+  close: 0.45,        // zamknięcie szczeliny za rufą
+  tail: 0.2,          // koniec osi po zamknięciu
+  diveReach: 2.6      // droga okrętu w szczelinie (× długość kadłuba)
+});
+
+/**
+ * Odlot okrętu przez tunel (wspak przylotu): ładowanie — punkt skoku przed
+ * dziobem, szczelina otwiera się przed nim, okręt przyspiesza i znika w niej
+ * od dziobu, szczelina się zamyka. Czysty opis osi i geometrii (jak
+ * createWarpArrival); pozycja (x, y) i kąt w świecie gry (y w dół) to miejsce
+ * okrętu przed wejściem w szczelinę.
+ * @param {object} o { x, y, angle, hullLength, hullWidth, startTime, palette, entity, id }
+ */
+export function createWarpDeparture(o = {}) {
+  const hullLength = Math.max(40, Number(o.hullLength) || WARP_REF_HULL_LENGTH);
+  const hullWidth = Math.max(16, Number(o.hullWidth) || hullLength * 0.45);
+  const s = warpSizeScale(hullLength);
+  const B = WARP_DEPARTURE_BASE;
+  const t0 = Number(o.startTime) || 0;
+  const charge = B.charge + B.chargePerSize * s;
+  const dive = B.dive + B.divePerSize * s;
+  const angle = Number(o.angle) || 0;
+  const dirX = Math.cos(angle);
+  const dirY = Math.sin(angle);
+  const x = Number(o.x) || 0;
+  const y = Number(o.y) || 0;
+  const seamLength = hullLength * WARP_ARRIVAL_SHAPE.seamLength;
+  const tDive = t0 + charge;
+  const tGone = tDive + dive;
+  // Szczelina przed dziobem; jej tylny koniec = ujście (dziób w chwili wejścia).
+  const ahead = hullLength * 0.5 + seamLength * 0.5;
+  return {
+    id: o.id ?? null,
+    x, y, angle, dirX, dirY,
+    hullLength,
+    hullWidth,
+    sizeScale: s,
+    palette: o.palette || 'terran',
+    entity: o.entity || null,
+    t0,
+    charge,
+    dive,
+    close: B.close,
+    tSplit: tDive - B.split,
+    tDive,
+    tGone,
+    tEnd: tGone + B.close + B.tail,
+    seamLength,
+    seamHalfWidth: seamLength * WARP_ARRIVAL_SHAPE.seamOpen,
+    cx: x + dirX * ahead,
+    cy: y + dirY * ahead,
+    mouth: hullLength * 0.5,
+    diveReach: hullLength * B.diveReach,
+    fired: { split: false, dive: false, gone: false }
+  };
+}
+
+/**
+ * Próbka osi odlotu w chwili t (pola 0..1 poza drogą i prędkością). `out`
+ * wypełniany w miejscu: phase ('wait' | 'charge' | 'dive' | 'close' | 'done'),
+ * build (narastanie ładowania), riftOpen / riftLen (szczelina), dist [j.]
+ * i speed [j/s] okrętu w szczelinie, revealLine (lokalne x ujścia względem
+ * środka kadłuba: widać tylko część kadłuba za nią), shipVisible, smear, heat,
+ * flash (błysk w ujściu), waveT (fala z ujścia, poza 0..1 = brak), shake.
+ */
+export function sampleWarpDeparture(d, t, out = {}) {
+  let phase;
+  if (t < d.t0) phase = 'wait';
+  else if (t < d.tDive) phase = 'charge';
+  else if (t < d.tGone) phase = 'dive';
+  else if (t < d.tEnd) phase = 'close';
+  else phase = 'done';
+  out.phase = phase;
+  const u = clamp01((t - d.t0) / Math.max(0.01, d.charge));
+  const build = t < d.t0 ? 0 : u * u * (3 - 2 * u);
+  out.build = build;
+  out.u = u;
+  // Szczelina: otwiera się pod koniec ładowania, zamyka po wejściu okrętu.
+  let open = 0;
+  let len = 0;
+  if (t >= d.tSplit) {
+    const o = clamp01((t - d.tSplit) / Math.max(0.01, d.tDive - d.tSplit));
+    open = 0.08 + 0.92 * easeOutCubic(o);
+    len = 0.25 + 0.75 * easeOutCubic(o);
+  }
+  if (t >= d.tGone) {
+    const c = clamp01((t - d.tGone) / Math.max(0.01, d.close));
+    open *= 1 - c * c * c;
+    len *= 1 - 0.55 * c;
+  }
+  if (phase === 'wait' || phase === 'done') { open = 0; len = 0; }
+  out.riftOpen = open;
+  out.riftLen = len;
+  // Wejście w szczelinę: przyspieszenie (droga ∝ w²).
+  let dist = 0;
+  let speed = 0;
+  if (t >= d.tDive) {
+    const w = clamp01((t - d.tDive) / Math.max(0.01, d.dive));
+    dist = d.diveReach * w * w;
+    speed = t < d.tGone ? 2 * d.diveReach * w / Math.max(0.01, d.dive) : 0;
+    out.diveW = w;
+  } else {
+    out.diveW = 0;
+  }
+  out.dist = dist;
+  out.speed = speed;
+  out.revealLine = d.mouth - dist;
+  out.shipVisible = t < d.tDive || out.revealLine > -d.hullLength * 0.55;
+  out.smear = t >= d.tDive && t < d.tGone + 0.12 ? Math.max(0, 1 - out.diveW * 0.4) : 0;
+  out.heat = Math.max(0.25 * build * build, t >= d.tDive ? 0.6 * (1 - out.diveW) : 0);
+  const afterDive = t - d.tDive;
+  out.flash = afterDive >= 0 && afterDive < 0.2 ? (1 - afterDive / 0.2) ** 2 : 0;
+  out.waveT = afterDive >= 0 ? afterDive / 1.1 : -1;
+  out.shake = afterDive >= 0 && afterDive < 0.4 ? (1 - afterDive / 0.4) : 0;
+  return out;
+}
+
 /**
  * Plan przylotu floty (wezwanie, zasadzka): zwiastuny startują razem,
  * a wyrzuty idą po kolei od najmniejszego okrętu; największy (okręt

@@ -35,6 +35,7 @@ import {
   HULL_FLAT_NORMAL_TEXTURE,
   HULL_LIGHT_ZONE_OFFSET,
   HULL_SHARED,
+  HULL_WARP_OFF,
   HullDebrisNodeMaterial,
   HullLightStore,
   HullNodeMaterial
@@ -1023,7 +1024,21 @@ function createHullUniforms(entity, texture, normalTexture, shapeUniform, srcWid
       // sprite'em (HullLacquer.acquireShapeUniform) — pieczenie podmienia teksturę wszystkim.
       uShapeMap: shapeUniform,
       uLacquerWeight: { value: 0 },
-      uLacquerGlint: { value: 1 }
+      uLacquerGlint: { value: 1 },
+      // Warp „Nurt” (zadanie 22): odsłanianie, szew i żar brzegu — wartości pisze sterownik
+      // warpa w entity.__warpHullU ({ a, b, c } — Vector4, px sprite'a); bez nich wyłączone.
+      uWarpA: warpHullHolder(entity, 'a'),
+      uWarpB: warpHullHolder(entity, 'b'),
+      uWarpC: warpHullHolder(entity, 'c')
+  };
+}
+
+function warpHullHolder(entity, key) {
+  return {
+    get value() {
+      const w = entity ? entity.__warpHullU : null;
+      return w ? w[key] : HULL_WARP_OFF[key];
+    }
   };
 }
 
@@ -2223,6 +2238,16 @@ export function invalidateHexShipEntity3D(entity) {
   disposeMeshData(data);
   state.entityMeshes.delete(entity);
   return true;
+}
+
+/**
+ * Sprite kadłuba encji (tekstura z mipmapami, flipY = false) — smuga sylwetki warpa
+ * (src/3d/warp/warpNurt.js). null, gdy encja nie ma jeszcze siatki.
+ */
+export function getEntityHullSprite(entity) {
+  const data = entity ? state.entityMeshes.get(entity) : null;
+  const tex = data?.mesh?.material?.uniforms?.uSprite?.value;
+  return (tex && tex.isTexture && tex !== HULL_EMPTY_SPRITE_TEXTURE) ? tex : null;
 }
 
 // === ZIMNE WRAKI (src/game/coldWrecks.js) ===

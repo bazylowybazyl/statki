@@ -340,7 +340,9 @@ test('backdrop keeps the long shaft; ring-anchored bodies get eclipses', () => {
   assert.ok(!/SUN_SHADOW_GLSL|attachSunShadowUniforms/.test(planetSource), 'planety bez GLSL maski');
   // Tło: długa smuga cienia na mgławicy i gwiazdach.
   assert.match(planetTsl, /return vec4\(sunShaftBackdrop\(color\.mul\(boost\)\), 1\.0\);/);
-  assert.match(planetTsl, /finalColor\.assign\(sunShaftBackdrop\(finalColor\)\);/);
+  // Gwiazdy: punkty i smugi warpa (zadanie 22) — obie gałęzie ze smugą tła.
+  assert.match(planetTsl, /const finalColor = sunShaftBackdrop\(vColor\)\.toVar\(\);/);
+  assert.match(planetTsl, /sunShaftBackdrop\(tint\)/);
   const beltSource = readFileSync(new URL('../src/3d/asteroidBeltBackdrop3D.js', import.meta.url), 'utf8');
   assert.match(beltSource, /col = sunShaftBackdrop\(col\);/);
   assert.match(beltSource, /applySunShadowToBuiltinMaterial\(this\.dustMaterial, 'backdrop'\);/);
